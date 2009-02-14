@@ -1,3 +1,145 @@
+samba (2:3.3.0-2) unstable; urgency=low
+
+  * Upload to unstable
+
+ -- Christian Perrier <bubulle@debian.org>  Sat, 14 Feb 2009 13:38:14 +0100
+
+samba (2:3.3.0-1) experimental; urgency=low
+
+  * New upstream release. Fixes the following bugs:
+    - smb file deletion gvfs. Closes: #510564
+    - smbclient du command does not recuse properly. Closes: #509258
+    - mention possible workgroup field in credential files in mount.cifs(8)
+      Closes: #400734
+    - bashism in /usr/share/doc/samba-doc/examples/perfcounter/perfcountd.init
+      Closes: #489656
+    - describe '-g' option in smbclient man page. Closes: #510812
+    - fix swat status table layout. Closes: #511275
+
+  [ Jelmer Vernooij ]
+  * Use alternatives for the smbtatus, nmblookup, net and 
+    testparm binaries and various data files in samba-common 
+    to allow installation of Samba 3 together with Samba 4. 
+  * Add myself to uploaders.
+
+  [ Christian Perrier ]
+  * Add mbc_getOptionCaseSensitive@Base, smbc_setOptionCaseSensitive@Base,
+    smbc_set_credentials@Base, smbc_urldecode@Base and smbc_urlencode@Base to
+    libsmbclient's symbols file with 3.3.0 as version number
+  * Also add 18 symbols to libwbclient0's symbols file with 3.3.0 as
+    version number
+
+ -- Christian Perrier <bubulle@debian.org>  Fri, 30 Jan 2009 21:41:49 +0100
+
+samba (2:3.3.0~rc2-4) experimental; urgency=low
+
+  [ Steve Langasek ]
+  * Revert one of the template depersonalization changes from the -2 upload,
+    because it loses important context
+
+  [ Christian Perrier ]
+  * Use double quotation marks in debconf templates
+  * Add 'status" option to init scripts. Thansk to Dustin Kirkland for
+    providing the patch. Closes: #488275
+  * Move WHATSNEW.txt, README, Roadmap to samba-common. Closes: #491997
+  * [Lintian] Add ${misc:Depends} to dependencies of binary packages
+    that didn't have it already as we're using debhelper in the source
+    package
+  * [Lintian] Don't ignore errors in swat.postrm
+  * [Lintian] Fix "local foo=bar" bashisms in samba-common.dhcp, samba.config
+    and samba-common.config
+  * smb.conf.5-undefined-configure.patch: fix syntax error in smb.conf(5)
+    Closes: #512843
+
+  [ Debconf translations ]
+  * Asturian added. Closes: #511730
+
+ -- Christian Perrier <bubulle@debian.org>  Sat, 24 Jan 2009 16:04:57 +0100
+
+samba (2:3.3.0~rc2-3) experimental; urgency=low
+
+  * Fix around the libsmbclient/libsmbclient-dev descriptions, which got
+    swapped in the last upload.
+  * Drop a boilerplate sentence from the samba-common, smbclient, swat, 
+    samba-doc, samba-doc-pdf, samba-dbg, and libwbclient0 descriptions
+    that's not relevant for these packages.
+  * Hyphenate "command-line" in the smbclient short description.
+  * Fix up the smbclient description, which got crossed with the smbfs one.
+  * Fix the smbfs description, which was not actually fixed in the previous
+    upload.  Really closes: #496206.
+  * Further minor adjustments to the description of the swat package.
+  * Fix various inaccuracies in the winbind package description.
+  * Clarify in the description that samba-tools are extra, only useful for
+    testing.
+
+ -- Steve Langasek <vorlon@debian.org>  Tue, 30 Dec 2008 18:42:05 -0800
+
+samba (2:3.3.0~rc2-2) experimental; urgency=low
+
+  [ Steve Langasek ]
+  * Handle clearing out netbios settings whenever the DHCP server has gone
+    away.  Closes: #299618.
+
+  [ Christian Perrier ]
+  * Point the correct document about password encryption in debconf templates
+    Corrected in translations as well. Closes: #502838
+  * Reword debconf templates to avoid mentioning the local host as a "server".
+    Closes: #171177
+  * Use this opportunity for other minor rewording:
+    - replace "SMB" by "SMB/CIFS"
+    - more strongly discouraging the use of plain text passwords
+    - unpersonnalization
+  * Reword the libpam-smbpass package description
+    Thanks to Justin B. Rye for the very useful suggestions
+    Closes: #496196
+  * Improve the package descriptions by rewording the description overhaul
+    Also improve the specific information for samba and samba-dbg
+    Thanks again to Justin B. Rye for the invaluable help
+    Closes: #496200
+  * Improve libsmbclient package description. Closes: #496197
+  * Improve libwbclient0 package description. Closes: #496199
+  * Improve samba-doc package description. Closes: #496202
+  * Improve samba-tools package description. Closes: #496203
+  * Improve samba-common package description. Closes: #496204
+  * Improve smbclient package description. Closes: #496205
+  * Improve smbfs package description. Closes: #496206
+  * Improve swat package description. Closes: #496207
+  * Improve winbind package description. Closes: #496208
+  * Improve samba-doc-pdf package description. Closes: #496211
+  * Update French debconf translation
+
+ -- Christian Perrier <bubulle@debian.org>  Mon, 29 Dec 2008 11:50:04 +0100
+
+samba (2:3.3.0~rc2-1) experimental; urgency=low
+
+  * New upstream release
+
+ -- Christian Perrier <bubulle@debian.org>  Wed, 17 Dec 2008 08:22:18 +0100
+
+samba (2:3.3.0~rc1-2) experimental; urgency=low
+
+  * Provide idmap_adex and idmap_hash in winbind.
+    Thanks to Jelmer Jaarsma for reporting and providing a patch
+  * Merged from unstable (needed for the above to work):
+    Add missing rfc2307.so and sfu*.so links that prevent using the
+    'winbind nss info' feature properly
+    Thans to Martin Dag Nilsson for reporting and Jelmer Jaarsma for
+    the patch. Closes: #506109
+
+ -- Christian Perrier <bubulle@debian.org>  Thu, 04 Dec 2008 19:59:23 +0100
+
+samba (2:3.3.0~rc1-1) experimental; urgency=low
+
+  * New upstream release
+
+ -- Christian Perrier <bubulle@debian.org>  Fri, 28 Nov 2008 10:51:32 +0100
+
+samba (2:3.3.0~pre2-1) experimental; urgency=low
+
+  * New upstream release.
+
+ -- Christian Perrier <bubulle@debian.org>  Fri, 07 Nov 2008 20:52:36 +0100
+
 samba (2:3.2.4-1) unstable; urgency=low
 
   [ Steve Langasek ]

@@ -7,11 +7,11 @@ Fixes: #49011
 Status wrt upstream: Can remain Debian-specific if upstream doesn't want to
                      change their default behaviour
 
-Index: samba-3.2.0rc1/source/param/loadparm.c
+Index: samba-3.3.0rc2/source/param/loadparm.c
 ===================================================================
---- samba-3.2.0rc1.orig/source/param/loadparm.c
-+++ samba-3.2.0rc1/source/param/loadparm.c
-@@ -121,6 +121,9 @@
+--- samba-3.3.0rc2.orig/source/param/loadparm.c
++++ samba-3.3.0rc2/source/param/loadparm.c
+@@ -120,6 +120,9 @@
  	char *szAddPrinterCommand;
  	char *szDeletePrinterCommand;
  	char *szOs2DriverMap;
@@ -21,7 +21,7 @@ Index: samba-3.2.0rc1/source/param/loadparm.c
  	char *szLockDir;
  	char *szPidDir;
  	char *szRootdir;
-@@ -3677,6 +3680,26 @@
+@@ -3705,6 +3708,26 @@
  		.enum_list	= NULL,
  		.flags		= FLAG_ADVANCED,
  	},
@@ -48,7 +48,7 @@ Index: samba-3.2.0rc1/source/param/loadparm.c
  	{
  		.label		= "lock directory",
  		.type		= P_STRING,
-@@ -3695,6 +3718,7 @@
+@@ -3723,6 +3746,7 @@
  		.enum_list	= NULL,
  		.flags		= FLAG_HIDE,
  	},
@@ -56,28 +56,56 @@ Index: samba-3.2.0rc1/source/param/loadparm.c
  	{
  		.label		= "pid directory",
  		.type		= P_STRING,
-Index: samba-3.2.0rc1/source/m4/check_path.m4
+Index: samba-3.3.0rc2/source/m4/check_path.m4
 ===================================================================
---- samba-3.2.0rc1.orig/source/m4/check_path.m4
-+++ samba-3.2.0rc1/source/m4/check_path.m4
-@@ -33,7 +33,7 @@
- [AS_HELP_STRING([--with-fhs],[Use FHS-compliant paths (default=no)])],
- [ case "$withval" in
-   yes)
--    lockdir="\${VARDIR}/lib/samba"
-+    lockdir="\${VARDIR}/run/samba"
-     piddir="\${VARDIR}/run"
-     mandir="\${prefix}/share/man"
-     logfilebase="\${VARDIR}/log/samba"
-@@ -41,9 +41,9 @@
-     test "${libdir}" || libdir="\${prefix}/lib/samba"
+--- samba-3.3.0rc2.orig/source/m4/check_path.m4
++++ samba-3.3.0rc2/source/m4/check_path.m4
+@@ -26,9 +26,9 @@
+ pammodulesdir="${libdir}/security"
+ configdir="${libdir}"
+ swatdir="\${prefix}/swat"
+-codepagedir="\${MODULESDIR}"
+-statedir="\${LOCKDIR}"
+-cachedir="\${LOCKDIR}"
++codepagedir="\${prefix}/share/samba"
++statedir="\${VARDIR}/lib/samba"
++cachedir="\${VARDIR}/cache/samba"
+ localedir="\${prefix}/share/locale"
+ 
+ AC_ARG_WITH(fhs,
+@@ -43,10 +43,10 @@
+     test "${libdir}" || libdir="\${prefix}/lib"
+     modulesdir="${libdir}/samba"
      configdir="\${sysconfdir}/samba"
-     swatdir="\${DATADIR}/samba/swat"
--    codepagedir="\${LIBDIR}"
-+    codepagedir="\${DATADIR}/samba"
+-    swatdir="\${DATADIR}/samba/swat"
+-    codepagedir="\${MODULESDIR}"
++    swatdir="\${prefix}/swat"
++    codepagedir="\${prefix}/share/samba"
      statedir="\${VARDIR}/lib/samba"
 -    cachedir="\${VARDIR}/lib/samba"
 +    cachedir="\${VARDIR}/cache/samba"
      AC_DEFINE(FHS_COMPATIBLE, 1, [Whether to use fully FHS-compatible paths])
      ;;
    esac])
+Index: samba-3.3.0rc2/source/configure
+===================================================================
+--- samba-3.3.0rc2.orig/source/configure
++++ samba-3.3.0rc2/source/configure
+@@ -2245,7 +2245,7 @@
+ swatdir="\${prefix}/swat"
+ codepagedir="\${MODULESDIR}"
+ statedir="\${LOCKDIR}"
+-cachedir="\${LOCKDIR}"
++cachedir="\${prefix}/cache/samba"
+ localedir="\${prefix}/share/locale"
+ 
+ 
+@@ -2262,7 +2262,7 @@
+     modulesdir="${libdir}/samba"
+     configdir="\${sysconfdir}/samba"
+     swatdir="\${DATADIR}/samba/swat"
+-    codepagedir="\${MODULESDIR}"
++    codepagedir="\${prefix}/share/samba"
+     statedir="\${VARDIR}/lib/samba"
+     cachedir="\${VARDIR}/lib/samba"
+ 
