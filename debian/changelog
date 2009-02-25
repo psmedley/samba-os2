@@ -1,3 +1,21 @@
+samba (2:3.3.0-4) unstable; urgency=low
+
+  [ Steve Langasek ]
+  * Build-Depend on libcap2-dev.  Closes: #515851.
+  * debian/patches/fhs-filespaths-debatable.patch: Add a missing prototype
+    for cache_path, which causes nearly undiagnoseable crashes when building
+    with -fPIE, because of a wrong return type!  LP: #330626.
+
+  [ Debconf translations ]
+  * Belarusian added.  Closes: #516052.
+  * Traditional Chinese updated. Closes: #516594
+  * Swedish updated.  Closes: #516681.
+
+  [ Mathieu Parent ]
+  * enable clustering by default (CTDB). Closes: #514050 
+
+ -- Steve Langasek <vorlon@debian.org>  Tue, 24 Feb 2009 16:58:58 -0800
+
 samba (2:3.3.0-3) unstable; urgency=low
 
   [ Steve Langasek ]
