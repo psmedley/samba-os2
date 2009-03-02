@@ -1,3 +1,37 @@
+samba (2:3.3.1-1) unstable; urgency=low
+
+  [ Christian Perrier ]
+  * New upstream release. Closes: #516981
+    Upstream fixes in that release:
+    - Fixed various spelling errors/typos in manpages
+      Closes: #516047
+    - Fix renaming/deleting of files using Windows clients.
+      Closes: #516160
+    - Fix syntax error in mount.cifs(8). Closes: #454799
+  * Use a slave alternative for smbstatus.1 even though that manpage
+    is not provided by samba4
+
+  [ Jelmer Vernooij ]
+  * Fix slave links for manual pages in samba-common. Closes: #517204.
+
+  [ Steve Langasek ]
+  * Add Vcs-{Browser,Svn} fields to debian/control.
+  * When populating the sambashare group, it's not an error if the user
+    simply doesn't exist; test for this case and let the install continue
+    instead of aborting.  LP: #206036.
+  * debian/libpam-smbpass.pam-config, debian/libpam-smbpass.postinst,
+    debian/libpam-smbpass.files, debian/rules: provide a config block
+    for the new PAM framework, allowing this PAM module to
+    auto-configure itself
+  * debian/control: make libpam-smbpass depend on
+    libpam-runtime (>= 1.0.1-2ubuntu1) for the above
+  * debian/patches/fix_wrong_gnu_ld_version_check.patch: new patch to fix
+    wrong detection of the GNU ld version, so that the symbol export scripts
+    will be properly applied when building.
+  * refresh debian/libsmbclient.symbols for 3.3.1.
+
+ -- Steve Langasek <vorlon@debian.org>  Mon, 02 Mar 2009 00:30:35 -0800
+
 samba (2:3.3.0-4) unstable; urgency=low
 
   [ Steve Langasek ]

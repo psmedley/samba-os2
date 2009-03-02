@@ -7,6 +7,8 @@ Build-Depends: debhelper, libpam0g-dev, libreadline5-dev, libcups2-dev | libcups
 Build-Conflicts: libfam-dev
 Standards-Version: 3.8.0
 Homepage: http://www.samba.org
+Vcs-Browser: http://svn.debian.org/wsvn/pkg-samba/trunk/samba
+Vcs-Svn: svn://svn.debian.org/svn/pkg-samba/trunk/samba
 
 Package: samba
 Architecture: any
@@ -130,7 +132,8 @@ Package: libpam-smbpass
 Section: admin
 Priority: extra
 Architecture: any
-Depends: ${shlibs:Depends}, samba-common (= ${binary:Version}), ${misc:Depends}
+Depends: ${shlibs:Depends}, samba-common (= ${binary:Version}), ${misc:Depends},
+	 libpam-runtime (>= 1.0.1-6)
 Suggests: samba
 Description: pluggable authentication module for Samba
  This is a module for PAM that enables a system administrator to migrate
