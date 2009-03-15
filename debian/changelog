@@ -1,3 +1,19 @@
+samba (2:3.3.2-1) unstable; urgency=low
+
+  [ Christian Perrier ]
+  * New upstream release. Closes: #519626
+    - mounts with -o guest will now automatically try to connect anonymously.
+      Closes: #423971.
+    - fix for brokenness when using 'force group'.  Closes: #517760.
+    - fix for saving files on Samba shares using MS Office 2007.
+      LP: #337037.
+  * Re-fix slave links for manual pages in samba-common. Closes: #517204.
+
+  [ Steve Langasek ]
+  * Add missing debhelper token to libpam-smbpass.prerm.
+
+ -- Christian Perrier <bubulle@debian.org>  Sun, 15 Mar 2009 12:16:48 +0100
+
 samba (2:3.3.1-1) unstable; urgency=low
 
   [ Christian Perrier ]
