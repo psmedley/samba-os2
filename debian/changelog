@@ -1,3 +1,27 @@
+samba (2:3.3.2-2) unstable; urgency=low
+
+  [ Steve Langasek ]
+  * libcap2-dev is only available on Linux, so make this build-dependency
+    conditional.  Closes: #519911.
+
+  [ Christian Perrier ]
+  * Switch samba-dbg to "Section: debug"
+  * Update debian/copyright for year 2009. Thanks to debian-devel
+    for the reminder.
+  * Dropping Adam Conrad from Uploaders
+  * Dropping Eloy Paris from Uploaders with special thanks for his tremendous
+    work maintaining the package between 1997 and 2004.
+
+  [ Mathieu Parent ]
+  * ensure clustering is enabled with --with-cluster-support=yes
+  * build-depends on ctdb >= 1.0.73. Closes: #520202.
+  * samba suggests ctdb
+
+  [ Debconf translations ]
+  * Esperanto updated.  Closes: #519237.
+
+ -- Christian Perrier <bubulle@debian.org>  Sun, 29 Mar 2009 09:23:35 +0200
+
 samba (2:3.3.2-1) unstable; urgency=low
 
   [ Christian Perrier ]
