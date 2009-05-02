@@ -1,19 +1,26 @@
-Index: samba/source/Makefile.in
+Comment by Michael Adam <obnox@samba.org>:
+
+While this patch is clever in one respect, it has bad side effects:
+Functions that not used are removed from the binaries.
+For functions that are only used in shared objects, this is very bad,
+since these will refuse to work (load).
+
+Example: librpc/gen_ndr/ndr_xattr.c:ndr_pull_xattr_NTACL() is only
+used in the acl_tdb and acl_xattr vfs modules.
+So the symbol is not present in smbd, and thus these modules will
+not work. The _do_ not work in the 3.3. packages that are out there.
+
+I recommend not using this patch!
+
+Better reduction is done by fixing the linking dependencies... :-(
+
+Michael
+
+Index: samba-3.3.4/source/Makefile.in
 ===================================================================
---- samba.orig/source/Makefile.in
-+++ samba/source/Makefile.in
-@@ -1328,267 +1328,356 @@
- 
- bin/smbd@EXEEXT@: $(BINARY_PREREQS) $(SMBD_OBJ) @LIBTALLOC_TARGET@ @LIBTDB_TARGET@ @LIBWBCLIENT_SHARED@ @BUILD_POPT@
- 	@echo Linking $@
--	@$(CC) $(FLAGS) -o $@ $(SMBD_OBJ) $(LDFLAGS) $(LDAP_LIBS) \
-+	@$(AR) -rc $@.a $(SMBD_OBJ)
-+	@$(CC) $(FLAGS) -o $@ $@.a $(LDFLAGS) $(LDAP_LIBS) \
- 		$(KRB5LIBS) $(DYNEXP) $(PRINT_LIBS) $(AUTH_LIBS) \
- 		$(ACL_LIBS) $(PASSDB_LIBS) $(LIBS) $(DNSSD_LIBS) $(AVAHI_LIBS) \
- 		$(POPT_LIBS) @SMBD_LIBS@ $(LIBTALLOC_LIBS) $(LIBTDB_LIBS) \
- 		$(WINBIND_LIBS)
-+	@rm -f $@.a
+--- samba-3.3.4.orig/source/Makefile.in	2009-05-02 14:33:23.654935629 +0200
++++ samba-3.3.4/source/Makefile.in	2009-05-02 14:34:41.393926942 +0200
+@@ -1336,182 +1336,243 @@
  
  bin/nmbd@EXEEXT@: $(BINARY_PREREQS) $(NMBD_OBJ) @BUILD_POPT@ @LIBTALLOC_TARGET@ @LIBTDB_TARGET@
  	@echo Linking $@
@@ -289,14 +296,7 @@ Index: samba/source/Makefile.in
  
  bin/vfstest@EXEEXT@: $(BINARY_PREREQS) $(VFSTEST_OBJ) @BUILD_POPT@ @LIBTALLOC_TARGET@ @LIBTDB_TARGET@ @LIBWBCLIENT_SHARED@
  	@echo Linking $@
--	@$(CC) $(FLAGS) -o $@ $(VFSTEST_OBJ) $(LDFLAGS) $(TERMLDFLAGS) $(AVAHI_LIBS) \
-+	@$(AR) -rc $@.a $(VFSTEST_OBJ)
-+	@$(CC) $(FLAGS) -o $@ $@.a $(LDFLAGS) $(TERMLDFLAGS) $(AVAHI_LIBS) \
- 		$(TERMLIBS) $(DYNEXP) $(PRINT_LIBS) $(AUTH_LIBS) $(DNSSD_LIBS) \
- 		$(ACL_LIBS) $(LIBS) $(POPT_LIBS) $(KRB5LIBS) $(LDAP_LIBS) \
- 		@SMBD_LIBS@ $(NSCD_LIBS) $(LIBTALLOC_LIBS) $(LIBTDB_LIBS) \
- 		$(WINBIND_LIBS)
-+	@rm -f $@.a
+@@ -1523,72 +1584,96 @@
  
  bin/smbiconv@EXEEXT@: $(BINARY_PREREQS) $(SMBICONV_OBJ) @BUILD_POPT@ @LIBTALLOC_TARGET@ @LIBTDB_TARGET@
  	@echo Linking $@
@@ -405,16 +405,7 @@ Index: samba/source/Makefile.in
  
  
  #####################################################################
-@@ -2181,16 +2270,20 @@
- 
- bin/winbindd@EXEEXT@: $(BINARY_PREREQS) $(WINBINDD_OBJ) @BUILD_POPT@ @LIBTALLOC_TARGET@ @LIBTDB_TARGET@ @LIBWBCLIENT_SHARED@
- 	@echo "Linking $@"
--	@$(CC) $(FLAGS) -o $@ $(WINBINDD_OBJ) $(LDFLAGS) $(DYNEXP) $(LIBS) \
-+	@$(AR) -rc $@.a $(WINBINDD_OBJ)
-+	@$(CC) $(FLAGS) -o $@ $@.a $(LDFLAGS) $(DYNEXP) $(LIBS) \
- 		$(POPT_LIBS) $(KRB5LIBS) $(LDAP_LIBS) \
- 		$(PASSDB_LIBS) $(LIBTALLOC_LIBS) $(LIBTDB_LIBS) $(WINBIND_LIBS)
-+	@rm -f $@.a
+@@ -2187,10 +2272,12 @@
  
  bin/vlp@EXEEXT@: $(BINARY_PREREQS) $(VLP_OBJ) @LIBTALLOC_TARGET@ @LIBTDB_TARGET@ @LIBWBCLIENT_SHARED@
  	@echo "Linking $@"
@@ -428,7 +419,7 @@ Index: samba/source/Makefile.in
  
  @WINBIND_NSS@: $(BINARY_PREREQS) $(WINBIND_NSS_OBJ)
  	@echo "Linking $@"
-@@ -2477,9 +2570,11 @@
+@@ -2477,9 +2564,11 @@
  
  bin/wbinfo@EXEEXT@: $(BINARY_PREREQS) $(WBINFO_OBJ) @BUILD_POPT@ @LIBTALLOC_TARGET@ @LIBTDB_TARGET@ @LIBWBCLIENT_SHARED@
  	@echo Linking $@
@@ -441,7 +432,7 @@ Index: samba/source/Makefile.in
  
  bin/ntlm_auth@EXEEXT@: $(BINARY_PREREQS) $(NTLM_AUTH_OBJ) $(PARAM_OBJ) \
  	$(LIB_NONSMBD_OBJ) @BUILD_POPT@ @LIBTALLOC_TARGET@ @LIBTDB_TARGET@ @LIBWBCLIENT_SHARED@
-@@ -2497,23 +2592,31 @@
+@@ -2497,23 +2586,31 @@
  
  bin/tdbbackup@EXEEXT@: $(BINARY_PREREQS) $(TDBBACKUP_OBJ) @LIBTALLOC_TARGET@ @LIBTDB_TARGET@
  	@echo Linking $@
