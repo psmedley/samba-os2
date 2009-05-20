@@ -1,12 +1,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.74.0 <http://docbook.sf.net/>
-.\"      Date: 04/28/2009
+.\"      Date: 04/30/2009
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 3.3
+.\"    Source: Samba 3.4
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "04/28/2009" "Samba 3\&.3" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "04/30/2009" "Samba 3\&.4" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * (re)Define some macros
 .\" -----------------------------------------------------------------
@@ -1037,6 +1037,26 @@ Default:
 .sp
 Example:
 \fI\fIabort shutdown script\fR\fR\fI = \fR\fI\FC/sbin/shutdown \-c\F[]\fR\fI \fR
+.RE
+
+public
+.\" public
+.PP
+.RS 4
+This parameter is a synonym for
+access based share enum\&.
+.RE
+
+access based share enum (S)
+.\" access based share enum
+.PP
+.RS 4
+If this parameter is
+\fByes\fR
+for a service, then the share hosted by the service will only be visible to users who have read or write access to the share during share enumeration (for example net view \e\esambaserver)\&. This has parallels to access based enumeration, the main difference being that only share permissions are evaluated, and security descriptors on files contained on the share are not used in computing enumeration access rights\&.
+.sp
+Default:
+\fI\fIaccess based share enum\fR\fR\fI = \fR\fI\FCno\F[]\fR\fI \fR
 .RE
 
 acl check permissions (S)
@@ -7612,6 +7632,15 @@ Example:
 \fI\fIpath\fR\fR\fI = \fR\fI\FC/home/fred\F[]\fR\fI \fR
 .RE
 
+perfcount module (G)
+.\" perfcount module
+.PP
+.RS 4
+This parameter specifies the perfcount backend to be used when monitoring SMB operations\&. Only one perfcount module may be used, and it must implement all of the apis contained in the smb_perfcount_handler structure defined in smb\&.h\&.
+.sp
+\fINo default\fR
+.RE
+
 pid directory (G)
 .\" pid directory
 .PP
@@ -9647,7 +9676,7 @@ call to ensure the data is written to disk\&. Note that the
 \fIstrict sync\fR
 parameter must be set to
 \fByes\fR
-in order for this parameter to have any affect\&.
+in order for this parameter to have any effect\&.
 .sp
 Default:
 \fI\fIsync always\fR\fR\fI = \fR\fI\FCno\F[]\fR\fI \fR
@@ -9815,47 +9844,6 @@ If this parameter is enabled for a printer, then any attempt to open the printer
 .sp
 Default:
 \fI\fIuse client driver\fR\fR\fI = \fR\fI\FCno\F[]\fR\fI \fR
-.RE
-
-use kerberos keytab (G)
-.\" use kerberos keytab
-.PP
-.RS 4
-Specifies whether Samba should attempt to maintain service principals in the systems keytab file for
-\fBhost/FQDN\fR
-and
-\fBcifs/FQDN\fR\&.
-.sp
-When you are using the heimdal Kerberos libraries, you must also specify the following in
-\FC/etc/krb5\&.conf\F[]:
-.sp
-.if n \{\
-.RS 4
-.\}
-.fam C
-.ps -1
-.nf
-.if t \{\
-.sp -1
-.\}
-.BB lightgray adjust-for-leading-newline
-.sp -1
-
-[libdefaults]
-default_keytab_name = FILE:/etc/krb5\&.keytab
-.EB lightgray adjust-for-leading-newline
-.if t \{\
-.sp 1
-.\}
-.fi
-.fam
-.ps +1
-.if n \{\
-.RE
-.\}
-.sp
-Default:
-\fI\fIuse kerberos keytab\fR\fR\fI = \fR\fI\FCFalse\F[]\fR\fI \fR
 .RE
 
 use mmap (G)

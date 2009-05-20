@@ -1,7 +1,5 @@
 documentation.patch
 fhs-filespaths.patch
-fhs-filespaths-debatable.patch
-fhs-assignpaths.patch
 installswat.sh.patch
 non-linux-ports.patch
 pam-examples.patch
@@ -10,12 +8,12 @@ smbclient-pager.patch
 undefined-symbols.patch
 VERSION.patch
 adapt_machine_creation_script.patch
-proper-static-lib-linking.patch 
 autoconf.patch
 smbpasswd-syslog.patch
 usershare.patch
 swat-de.patch
 smbtar-bashism.patch
 no-unnecessary-cups.patch
-shrink-dead-code.patch
 fix-manpages-warnings.patch
+smbclient-link.patch
+codepages-location.patch
