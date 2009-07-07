@@ -82,6 +82,8 @@ static void terminate(void)
 	/* If there was an async dns child - kill it. */
 	kill_async_dns_child();
 
+	pidfile_unlink();
+
 	exit(0);
 }
 
@@ -913,8 +915,8 @@ static bool open_sockets(bool isdaemon, int port)
 
 	pidfile_create("nmbd");
 
-	if (!reinit_after_fork(nmbd_messaging_context(),
-			       nmbd_event_context(), false)) {
+	if (!NT_STATUS_IS_OK(reinit_after_fork(nmbd_messaging_context(),
+					       nmbd_event_context(), false))) {
 		DEBUG(0,("reinit_after_fork() failed\n"));
 		exit(1);
 	}

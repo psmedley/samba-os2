@@ -1074,8 +1074,8 @@ bool pdb_new_rid(uint32 *rid)
 		DEBUG(0, ("'algorithmic rid base' is set but a passdb backend "
 			  "without algorithmic RIDs is chosen.\n"));
 		DEBUGADD(0, ("Please map all used groups using 'net groupmap "
-			     "add', set the maximum used RID using\n"));
-		DEBUGADD(0, ("'net setmaxrid' and remove the parameter\n"));
+			     "add', set the maximum used RID\n"));
+		DEBUGADD(0, ("and remove the parameter\n"));
 		return False;
 	}
 
@@ -1210,7 +1210,7 @@ static bool pdb_default_uid_to_sid(struct pdb_methods *methods, uid_t uid,
 
 	if (!ret) {
 		DEBUG(5, ("pdb_default_uid_to_rid: Did not find user "
-			  "%s (%d)\n", unix_pw->pw_name, uid));
+			  "%s (%u)\n", unix_pw->pw_name, (unsigned int)uid));
 		TALLOC_FREE(sampw);
 		return False;
 	}

@@ -356,6 +356,7 @@ static void smbd_accept_connection(struct tevent_context *ev,
 
 	pid = sys_fork();
 	if (pid == 0) {
+		NTSTATUS status = NT_STATUS_OK;
 		/* Child code ... */
 		am_parent = 0;
 
@@ -374,10 +375,15 @@ static void smbd_accept_connection(struct tevent_context *ev,
 		talloc_free(s->parent);
 		s = NULL;
 
-		if (!reinit_after_fork(
-			    smbd_messaging_context(),
-			    smbd_event_context(),
-			    true)) {
+		status = reinit_after_fork(smbd_messaging_context(),
+					   smbd_event_context(), true);
+		if (!NT_STATUS_IS_OK(status)) {
+			if (NT_STATUS_EQUAL(status,
+					    NT_STATUS_TOO_MANY_OPENED_FILES)) {
+				DEBUG(0,("child process cannot initialize "
+					 "because too many files are open\n"));
+				goto exit;
+			}
 			DEBUG(0,("reinit_after_fork() failed\n"));
 			smb_panic("reinit_after_fork() failed");
 		}
@@ -386,6 +392,7 @@ static void smbd_accept_connection(struct tevent_context *ev,
 		smbd_setup_sig_hup_handler();
 
 		smbd_process();
+	 exit:
 		exit_server_cleanly("end of child");
 		return;
 	} else if (pid < 0) {
@@ -835,6 +842,9 @@ static void exit_server_common(enum server_exit_reason how,
 	} else {    
 		DEBUG(3,("Server exit (%s)\n",
 			(reason ? reason : "normal exit")));
+		if (am_parent) {
+			pidfile_unlink();
+		}
 	}
 
 	/* if we had any open SMB connections when we exited then we
@@ -1038,6 +1048,11 @@ extern void build_options(bool screen);
 	BlockSignals(False, SIGUSR1);
 	BlockSignals(False, SIGTERM);
 
+	/* Ensure we leave no zombies until we
+	 * correctly set up child handling below. */
+
+	CatchChild();
+
 	/* we want total control over the permissions on created files,
 	   so set our umask to 0 */
 	umask(0);
@@ -1122,8 +1137,8 @@ extern void build_options(bool screen);
 	if (is_daemon)
 		pidfile_create("smbd");
 
-	if (!reinit_after_fork(smbd_messaging_context(),
-			       smbd_event_context(), false)) {
+	if (!NT_STATUS_IS_OK(reinit_after_fork(smbd_messaging_context(),
+			     smbd_event_context(), false))) {
 		DEBUG(0,("reinit_after_fork() failed\n"));
 		exit(1);
 	}
@@ -1203,6 +1218,13 @@ extern void build_options(bool screen);
 
 		/* close our standard file descriptors */
 		close_low_fds(False); /* Don't close stderr */
+
+#ifdef HAVE_ATEXIT
+		atexit(killkids);
+#endif
+
+	        /* Stop zombies */
+		smbd_setup_sig_chld_handler();
 
 		smbd_process();
 

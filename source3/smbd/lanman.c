@@ -1214,6 +1214,7 @@ static int get_server_info(uint32 servertype,
 			continue;
 		}
 		fstrcpy(s->comment, p);
+		string_truncate(s->comment, MAX_SERVER_STRING_LENGTH);
 
 		s->domain[0] = '\0';
 		if (!next_token_talloc(frame,&ptr,&p, NULL)) {
@@ -2869,23 +2870,20 @@ static bool api_WPrintQueueCtrl(connection_struct *conn,uint16 vuid,
 
 	switch (function) {
 	case 74: /* Pause queue */
-		if (print_queue_pause(conn->server_info, snum, &werr)) {
-			errcode = NERR_Success;
-		}
+		werr = print_queue_pause(conn->server_info, snum);
 		break;
 	case 75: /* Resume queue */
-		if (print_queue_resume(conn->server_info, snum, &werr)) {
-			errcode = NERR_Success;
-		}
+		werr = print_queue_resume(conn->server_info, snum);
 		break;
 	case 103: /* Purge */
-		if (print_queue_purge(conn->server_info, snum, &werr)) {
-			errcode = NERR_Success;
-		}
+		werr = print_queue_purge(conn->server_info, snum);
+		break;
+	default:
+		werr = WERR_NOT_SUPPORTED;
 		break;
 	}
 
-	if (!W_ERROR_IS_OK(werr)) errcode = W_ERROR_V(werr);
+	errcode = W_ERROR_V(werr);
 
  out:
 	SSVAL(*rparam,0,errcode);

@@ -678,63 +678,73 @@ static int net_sam_rights_grant(struct net_context *c, int argc,
 	enum lsa_SidType type;
 	const char *dom, *name;
 	SE_PRIV mask;
+	int i;
 
-	if (argc != 2 || c->display_usage) {
+	if (argc < 2 || c->display_usage) {
 		d_fprintf(stderr, "usage: net sam rights grant <name> "
-			  "<right>\n");
+			"<rights> ...\n");
 		return -1;
 	}
 
 	if (!lookup_name(talloc_tos(), argv[0], LOOKUP_NAME_LOCAL,
-			 &dom, &name, &sid, &type)) {
+			&dom, &name, &sid, &type)) {
 		d_fprintf(stderr, "Could not find name %s\n", argv[0]);
 		return -1;
 	}
 
-	if (!se_priv_from_name(argv[1], &mask)) {
-		d_fprintf(stderr, "%s unknown\n", argv[1]);
-		return -1;
+	for (i=1; i < argc; i++) {
+		if (!se_priv_from_name(argv[i], &mask)) {
+			d_fprintf(stderr, "%s unknown\n", argv[i]);
+			return -1;
+		}
+
+		if (!grant_privilege(&sid, &mask)) {
+			d_fprintf(stderr, "Could not grant privilege\n");
+			return -1;
+		}
+
+		d_printf("Granted %s to %s\\%s\n", argv[i], dom, name);
 	}
 
-	if (!grant_privilege(&sid, &mask)) {
-		d_fprintf(stderr, "Could not grant privilege\n");
-		return -1;
-	}
-
-	d_printf("Granted %s to %s\\%s\n", argv[1], dom, name);
 	return 0;
 }
 
-static int net_sam_rights_revoke(struct net_context *c, int argc, const char **argv)
+static int net_sam_rights_revoke(struct net_context *c, int argc,
+				const char **argv)
 {
 	DOM_SID sid;
 	enum lsa_SidType type;
 	const char *dom, *name;
 	SE_PRIV mask;
+	int i;
 
-	if (argc != 2 || c->display_usage) {
+	if (argc < 2 || c->display_usage) {
 		d_fprintf(stderr, "usage: net sam rights revoke <name> "
-			  "<right>\n");
+			"<rights>\n");
 		return -1;
 	}
 
 	if (!lookup_name(talloc_tos(), argv[0], LOOKUP_NAME_LOCAL,
-			 &dom, &name, &sid, &type)) {
+			&dom, &name, &sid, &type)) {
 		d_fprintf(stderr, "Could not find name %s\n", argv[0]);
 		return -1;
 	}
 
-	if (!se_priv_from_name(argv[1], &mask)) {
-		d_fprintf(stderr, "%s unknown\n", argv[1]);
-		return -1;
+	for (i=1; i < argc; i++) {
+
+		if (!se_priv_from_name(argv[i], &mask)) {
+			d_fprintf(stderr, "%s unknown\n", argv[i]);
+			return -1;
+		}
+
+		if (!revoke_privilege(&sid, &mask)) {
+			d_fprintf(stderr, "Could not revoke privilege\n");
+			return -1;
+		}
+
+		d_printf("Revoked %s from %s\\%s\n", argv[i], dom, name);
 	}
 
-	if (!revoke_privilege(&sid, &mask)) {
-		d_fprintf(stderr, "Could not revoke privilege\n");
-		return -1;
-	}
-
-	d_printf("Revoked %s from %s\\%s\n", argv[1], dom, name);
 	return 0;
 }
 
@@ -753,17 +763,17 @@ static int net_sam_rights(struct net_context *c, int argc, const char **argv)
 			"grant",
 			net_sam_rights_grant,
 			NET_TRANSPORT_LOCAL,
-			"Grant a right",
+			"Grant right(s)",
 			"net sam rights grant\n"
-			"    Grant a right"
+			"    Grant right(s)"
 		},
 		{
 			"revoke",
 			net_sam_rights_revoke,
 			NET_TRANSPORT_LOCAL,
-			"Revoke a right",
+			"Revoke right(s)",
 			"net sam rights revoke\n"
-			"    Revoke a right"
+			"    Revoke right(s)"
 		},
 		{NULL, NULL, 0, NULL, NULL}
 	};
@@ -1490,7 +1500,7 @@ static int net_sam_provision(struct net_context *c, int argc, const char **argv)
 		uname = talloc_strdup(tc, "domusers");
 		wname = talloc_strdup(tc, "Domain Users");
 		dn = talloc_asprintf(tc, "cn=%s,%s", "domusers", lp_ldap_group_suffix());
-		gidstr = talloc_asprintf(tc, "%d", domusers_gid);
+		gidstr = talloc_asprintf(tc, "%u", (unsigned int)domusers_gid);
 		gtype = talloc_asprintf(tc, "%d", SID_NAME_DOM_GRP);
 
 		if (!uname || !wname || !dn || !gidstr || !gtype) {
@@ -1545,7 +1555,7 @@ domu_done:
 		uname = talloc_strdup(tc, "domadmins");
 		wname = talloc_strdup(tc, "Domain Admins");
 		dn = talloc_asprintf(tc, "cn=%s,%s", "domadmins", lp_ldap_group_suffix());
-		gidstr = talloc_asprintf(tc, "%d", domadmins_gid);
+		gidstr = talloc_asprintf(tc, "%u", (unsigned int)domadmins_gid);
 		gtype = talloc_asprintf(tc, "%d", SID_NAME_DOM_GRP);
 
 		if (!uname || !wname || !dn || !gidstr || !gtype) {
@@ -1608,8 +1618,8 @@ doma_done:
 		}
 		name = talloc_strdup(tc, "Administrator");
 		dn = talloc_asprintf(tc, "uid=Administrator,%s", lp_ldap_user_suffix());
-		uidstr = talloc_asprintf(tc, "%d", uid);
-		gidstr = talloc_asprintf(tc, "%d", domadmins_gid);
+		uidstr = talloc_asprintf(tc, "%u", (unsigned int)uid);
+		gidstr = talloc_asprintf(tc, "%u", (unsigned int)domadmins_gid);
 		dir = talloc_sub_specified(tc, lp_template_homedir(),
 						"Administrator",
 						get_global_sam_name(),
@@ -1699,8 +1709,8 @@ doma_done:
 		sid_compose(&sid, get_global_sam_sid(), DOMAIN_USER_RID_GUEST);
 
 		dn = talloc_asprintf(tc, "uid=%s,%s", pwd->pw_name, lp_ldap_user_suffix ());
-		uidstr = talloc_asprintf(tc, "%d", pwd->pw_uid);
-		gidstr = talloc_asprintf(tc, "%d", pwd->pw_gid);
+		uidstr = talloc_asprintf(tc, "%u", (unsigned int)pwd->pw_uid);
+		gidstr = talloc_asprintf(tc, "%u", (unsigned int)pwd->pw_gid);
 		if (!dn || !uidstr || !gidstr) {
 			d_fprintf(stderr, "Out of Memory!\n");
 			goto failed;
@@ -1765,7 +1775,7 @@ doma_done:
 		uname = talloc_strdup(tc, "domguests");
 		wname = talloc_strdup(tc, "Domain Guests");
 		dn = talloc_asprintf(tc, "cn=%s,%s", "domguests", lp_ldap_group_suffix());
-		gidstr = talloc_asprintf(tc, "%d", pwd->pw_gid);
+		gidstr = talloc_asprintf(tc, "%u", (unsigned int)pwd->pw_gid);
 		gtype = talloc_asprintf(tc, "%d", SID_NAME_DOM_GRP);
 
 		if (!uname || !wname || !dn || !gidstr || !gtype) {
