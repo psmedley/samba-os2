@@ -1,3 +1,62 @@
+samba (2:3.4.0-5) unstable; urgency=low
+
+  * Move /etc/pam.d/samba back to samba-common, because it's shared with
+    samba4.  Closes: #545764.
+
+ -- Steve Langasek <vorlon@debian.org>  Tue, 08 Sep 2009 18:43:17 -0700
+
+samba (2:3.4.0-4) unstable; urgency=low
+
+  [ Steve Langasek ]
+  * debian/samba.pamd: include common-session-noninteractive instead of
+    common-session, to avoid pulling in modules specific to interactive
+    logins such as pam_ck_connector.
+  * debian/control: samba depends on libpam-runtime (>= 1.0.1-11) for the
+    above.
+  * rename debian/samba.pamd to debian/samba.pam and call dh_installpam
+    from debian/rules install, bringing us a smidge closer to a stock
+    debhelper build
+  * don't call pyversions from debian/rules, this throws a useless error
+    message during build.
+  * fix up the list of files that need to be removed by hand in the clean
+    target; the majority of these are now correctly handled upstream.
+  * debian/rules: fix the update-arch target for the case of unversioned
+    build-deps.
+  * Pull avr32 into the list of supported Linux archs.  Closes: #543543.
+  * Fix LSB header in winbind.init; thanks to Petter Reinholdtsen for the
+    patch. Closes: #541367.
+
+  [ Christian Perrier ]
+  * Use DEP-3 for patches meta-information
+
+  [ Steve Langasek ]
+  * Change swat update-inetd call to use --remove only on purge,
+    and --disable on removal.
+  * Add missing build-dependency on pkg-config, needed to fix libtalloc
+    detection
+  * debian/patches/external-talloc-support.patch: fix the Makefile so it
+    works when using external talloc instead of giving a missing-depend
+    error.
+  * debian/patches/autoconf.patch: resurrect this patch, needed for the
+    above.
+  * debian/rules: build with --without-libtalloc
+    --enable-external-libtalloc, also needed to fix the build failure.
+
+ -- Steve Langasek <vorlon@debian.org>  Mon, 07 Sep 2009 22:58:29 -0700
+
+samba (2:3.4.0-3) unstable; urgency=low
+
+  [ Steve Langasek ]
+  * debian/control: samba-common-bin has no reason to depend on
+    libpam-modules.
+
+  [ Christian Perrier ]
+  * Fix "invalid argument" when trying to copy a file from smb share
+    Use an upstream patch that will be included in 3.4.1
+    Closes: #536757
+
+ -- Christian Perrier <bubulle@debian.org>  Fri, 21 Aug 2009 11:08:43 +0200
+
 samba (2:3.4.0-2) unstable; urgency=low
 
   [ Debconf translations ]
