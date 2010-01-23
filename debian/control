@@ -20,7 +20,7 @@ Vcs-Svn: svn://svn.debian.org/svn/pkg-samba/trunk/samba
 
 Package: samba
 Architecture: any
-Depends: samba-common (= ${source:Version}), ${shlibs:Depends}, ${misc:Depends}, libpam-runtime (>= 1.0.1-11), libpam-modules, lsb-base (>= 3.2-13), procps, update-inetd, adduser
+Depends: samba-common (= ${source:Version}), libwbclient0 (= ${binary:Version}),${shlibs:Depends}, ${misc:Depends}, libpam-runtime (>= 1.0.1-11), libpam-modules, lsb-base (>= 3.2-13), procps, update-inetd, adduser
 Recommends: logrotate
 Suggests: openbsd-inetd | inet-superserver, smbldap-tools, ldb-tools, ctdb
 Replaces: samba-common (<= 2.0.5a-2)
@@ -190,7 +190,7 @@ Package: winbind
 Section: net
 Priority: optional
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, samba-common (= ${source:Version}), lsb-base (>= 3.0-6), adduser
+Depends: ${shlibs:Depends}, ${misc:Depends}, libwbclient0 (= ${binary:Version}), samba-common (= ${source:Version}), lsb-base (>= 3.0-6), adduser
 Replaces: samba (<= 2.2.3-2)
 Description: Samba nameservice integration server
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,

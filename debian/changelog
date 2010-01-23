@@ -1,3 +1,18 @@
+samba (2:3.4.5~dfsg-1) unstable; urgency=low
+
+  * New upstream release. Bugs fixed by this release:
+    - Memory leak in smbd. Closes: #538819, #558453
+  * Declare a versioned dependency of winbind and samba on libwbclient0
+    Closes: #550481
+  * A few lintian fixes:
+  * Drop /var/run/samba from samba-common. The directory is created
+    by init scripts when needed.
+  * No longer prepend a path to the mksmbpasswd call in samba.postinst.
+    This prevents the local administrator to use a replacement version
+    for some local reason.
+
+ -- Christian Perrier <bubulle@debian.org>  Sat, 23 Jan 2010 12:16:42 +0100
+
 samba (2:3.4.4~dfsg-1) unstable; urgency=low
 
   * New upstream version.
