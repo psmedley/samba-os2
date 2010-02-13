@@ -1,3 +1,19 @@
+samba (2:3.4.5~dfsg-2) unstable; urgency=low
+
+  [ Steve langasek ]
+  * Revert the "bashisms" fix from version 2:3.3.0~rc2-4; "local foo=bar"
+    is explicitly allowed by Policy now, and this change introduced a
+    syntax error.  Closes: #566946.
+
+  [ Christian Perrier ]
+  * No longer maker (u)mount.cifs setuid root. Add a notice
+    about this in the package's NEWS.Debian file
+    Closes: #567554 
+  * Use dh_lintian instead of manual install of lintian overrides
+  * Updated Standards to 3.8.4 (checked, no change)
+
+ -- Christian Perrier <bubulle@debian.org>  Sat, 13 Feb 2010 14:36:33 +0100
+
 samba (2:3.4.5~dfsg-1) unstable; urgency=low
 
   * New upstream release. Bugs fixed by this release:
