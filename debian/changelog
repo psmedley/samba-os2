@@ -1,3 +1,18 @@
+samba (2:3.4.7~dfsg-1) unstable; urgency=low
+
+  [ Steve Langasek ]
+  * Add a PAM profile for pam_winbind.  Closes: #566890, LP: #282751.
+  * Add the correct versioned build dependency on libtalloc-dev as
+    we need 2.0.1 to build samba. Closes: #572603
+  * Add avr32 to arches with a build dependency on ctdb. Closes: #572126
+
+  [ Christian Perrier ] 
+  * New upstream release. Security fix: all smbd processes inherited
+    CAP_DAC_OVERRIDE capabilities, allowing all file system access to be
+    allowed even when permissions should have denied access.
+
+ -- Christian Perrier <bubulle@debian.org>  Tue, 09 Mar 2010 10:52:24 +0100
+
 samba (2:3.4.6~dfsg-1) unstable; urgency=low
 
   * New upstream release
