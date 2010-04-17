@@ -1,3 +1,26 @@
+samba (2:3.4.7~dfsg-2) unstable; urgency=low
+
+  [ Christian Perrier ]
+  * Drop smbfs package (now provided by cifs-utils as a dummy transition
+    package)
+
+  [ Debconf translations ]
+  * Portuguese (Miguel Figueiredo).  Closes: #575958
+
+  [ Steve Langasek ]
+  * winbind.prerm: don't forget to remove the PAM profile on package
+    removal :/
+  * Fix winbind.pam-config to not interfere with password changes for
+    non-winbind accounts.  Closes: #573323, LP: #546874.
+  * debian/samba.if-up, debian/rules: add an if-up.d script for samba to
+    try to start nmbd, if it's not running because /etc/init.d/samba ran
+    before the network was up at boot time.  Closes: #576415, LP: #462169.
+  * debian/samba.if-up: allow "NetworkManager" as a recognized address
+    family... it's obviously /not/ an address family, but it's what gets
+    sent when using NM, so we'll cope for now.
+
+ -- Christian Perrier <bubulle@debian.org>  Sat, 17 Apr 2010 07:49:49 +0200
+
 samba (2:3.4.7~dfsg-1) unstable; urgency=low
 
   [ Steve Langasek ]
