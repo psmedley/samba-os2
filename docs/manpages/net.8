@@ -1,12 +1,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.74.0 <http://docbook.sf.net/>
-.\"      Date: 02/22/2010
+.\"      Date: 03/30/2010
 .\"    Manual: System Administration tools
-.\"    Source: Samba 3.4
+.\"    Source: Samba 3.5
 .\"  Language: English
 .\"
-.TH "NET" "8" "02/22/2010" "Samba 3\&.4" "System Administration tools"
+.TH "NET" "8" "03/30/2010" "Samba 3\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * (re)Define some macros
 .\" -----------------------------------------------------------------
@@ -719,7 +719,7 @@ Add a interdomain trust account for
 \fIDOMAIN$\fR
 with the account flag
 \fB\'I\'\fR
-(interdomain trust account)\&. If the command is used against localhost it has the same effect as
+(interdomain trust account)\&. This is required for incoming trusts to work\&. It makes Samba be a trusted domain of the foreign (trusting) domain\&. Users of the Samba domain will be made available in the foreign domain\&. If the command is used against localhost it has the same effect as
 \FCsmbpasswd \-a \-i DOMAIN\F[]\&. Please note that both commands expect a appropriate UNIX account\&.
 .SS "RPC TRUSTDOM DEL DOMAIN"
 .PP
@@ -728,13 +728,13 @@ Remove interdomain trust account for
 \FCsmbpasswd \-x DOMAIN$\F[]\&.
 .SS "RPC TRUSTDOM ESTABLISH DOMAIN"
 .PP
-Establish a trust relationship to a trusting domain\&. Interdomain account must already be created on the remote PDC\&.
+Establish a trust relationship to a trusted domain\&. Interdomain account must already be created on the remote PDC\&. This is required for outgoing trusts to work\&. It makes Samba be a trusting domain of a foreign (trusted) domain\&. Users of the foreign domain will be made available in our domain\&. You\'ll need winbind and a working idmap config to make them appear in your system\&.
 .SS "RPC TRUSTDOM REVOKE DOMAIN"
 .PP
 Abandon relationship to trusted domain
 .SS "RPC TRUSTDOM LIST"
 .PP
-List all current interdomain trust relationships\&.
+List all interdomain trust relationships\&.
 .SS "RPC RIGHTS"
 .PP
 This subcommand is used to view and manage Samba\'s rights assignments (also referred to as privileges)\&. There are three options currently available:
@@ -762,7 +762,6 @@ Force shutting down all applications\&.
 .RS 4
 Timeout before system will be shut down\&. An interactive user of the system can use this time to cancel the shutdown\&.
 .RE
-\'>
 .PP
 \-C message
 .RS 4
@@ -923,7 +922,7 @@ To set this up, first set up your smb\&.conf by adding to the [global] section: 
 .PP
 The usershare commands are:
 .RS 4
-net usershare add sharename path [comment] [acl] [guest_ok=[y|n]] \- to add or change a user defined share\&.
+net usershare add sharename path [comment [acl] [guest_ok=[y|n]]] \- to add or change a user defined share\&.
 .RE
 .RS 4
 net usershare delete sharename \- to delete a user defined share\&.

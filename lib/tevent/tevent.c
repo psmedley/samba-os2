@@ -176,6 +176,13 @@ int tevent_common_context_destructor(struct tevent_context *ev)
 		sn = se->next;
 		se->event_ctx = NULL;
 		DLIST_REMOVE(ev->signal_events, se);
+		/*
+		 * This is important, Otherwise signals
+		 * are handled twice in child. eg, SIGHUP.
+		 * one added in parent, and another one in
+		 * the child. -- BoYang
+		 */
+		tevent_cleanup_pending_signal_handlers(se);
 	}
 
 	return 0;
@@ -429,7 +436,7 @@ void tevent_loop_set_nesting_hook(struct tevent_context *ev,
 				  tevent_nesting_hook hook,
 				  void *private_data)
 {
-	if (ev->nesting.hook_fn &&
+	if (ev->nesting.hook_fn && 
 	    (ev->nesting.hook_fn != hook ||
 	     ev->nesting.hook_private != private_data)) {
 		/* the way the nesting hook code is currently written

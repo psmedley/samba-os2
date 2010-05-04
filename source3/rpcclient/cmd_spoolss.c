@@ -24,6 +24,7 @@
 
 #include "includes.h"
 #include "rpcclient.h"
+#include "../librpc/gen_ndr/cli_spoolss.h"
 
 #define RPCCLIENT_PRINTERNAME(_printername, _cli, _arg) \
 { \
@@ -687,9 +688,10 @@ static WERROR cmd_spoolss_getprinter(struct rpc_pipe_client *cli,
 /****************************************************************************
 ****************************************************************************/
 
-static void display_reg_value(REGISTRY_VALUE value)
+static void display_reg_value(struct regval_blob value)
 {
-	char *text = NULL;
+	const char *text = NULL;
+	DATA_BLOB blob;
 
 	switch(value.type) {
 	case REG_DWORD:
@@ -697,11 +699,8 @@ static void display_reg_value(REGISTRY_VALUE value)
 		       *((uint32_t *) value.data_p));
 		break;
 	case REG_SZ:
-		rpcstr_pull_talloc(talloc_tos(),
-				&text,
-				value.data_p,
-				value.size,
-				STR_TERMINATE);
+		blob = data_blob_const(value.data_p, value.size);
+		pull_reg_sz(talloc_tos(), &blob, &text);
 		printf("%s: REG_SZ: %s\n", value.valuename, text ? text : "");
 		break;
 	case REG_BINARY: {
@@ -723,18 +722,17 @@ static void display_reg_value(REGISTRY_VALUE value)
 		break;
 	}
 	case REG_MULTI_SZ: {
-		uint32_t i, num_values;
-		char **values;
+		uint32_t i;
+		const char **values;
+		blob = data_blob_const(value.data_p, value.size);
 
-		if (!W_ERROR_IS_OK(reg_pull_multi_sz(NULL, value.data_p,
-						     value.size, &num_values,
-						     &values))) {
-			d_printf("reg_pull_multi_sz failed\n");
+		if (!pull_reg_multi_sz(NULL, &blob, &values)) {
+			d_printf("pull_reg_multi_sz failed\n");
 			break;
 		}
 
 		printf("%s: REG_MULTI_SZ: \n", value.valuename);
-		for (i=0; i<num_values; i++) {
+		for (i=0; values[i] != NULL; i++) {
 			d_printf("%s\n", values[i]);
 		}
 		TALLOC_FREE(values);
@@ -751,20 +749,29 @@ static void display_reg_value(REGISTRY_VALUE value)
 
 static void display_printer_data(const char *v,
 				 enum winreg_Type type,
-				 union spoolss_PrinterData *r)
+				 uint8_t *data,
+				 uint32_t length)
 {
 	int i;
+	union spoolss_PrinterData r;
+	DATA_BLOB blob = data_blob_const(data, length);
+	WERROR result;
+
+	result = pull_spoolss_PrinterData(talloc_tos(), &blob, &r, type);
+	if (!W_ERROR_IS_OK(result)) {
+		return;
+	}
 
 	switch (type) {
 	case REG_DWORD:
-		printf("%s: REG_DWORD: 0x%08x\n", v, r->value);
+		printf("%s: REG_DWORD: 0x%08x\n", v, r.value);
 		break;
 	case REG_SZ:
-		printf("%s: REG_SZ: %s\n", v, r->string);
+		printf("%s: REG_SZ: %s\n", v, r.string);
 		break;
 	case REG_BINARY: {
 		char *hex = hex_encode_talloc(NULL,
-			r->binary.data, r->binary.length);
+			r.binary.data, r.binary.length);
 		size_t len;
 		printf("%s: REG_BINARY:", v);
 		len = strlen(hex);
@@ -783,8 +790,8 @@ static void display_printer_data(const char *v,
 	}
 	case REG_MULTI_SZ:
 		printf("%s: REG_MULTI_SZ: ", v);
-		for (i=0; r->string_array[i] != NULL; i++) {
-			printf("%s ", r->string_array[i]);
+		for (i=0; r.string_array[i] != NULL; i++) {
+			printf("%s ", r.string_array[i]);
 		}
 		printf("\n");
 		break;
@@ -806,7 +813,8 @@ static WERROR cmd_spoolss_getprinterdata(struct rpc_pipe_client *cli,
 	fstring 	printername;
 	const char *valuename;
 	enum winreg_Type type;
-	union spoolss_PrinterData data;
+	uint8_t *data;
+	uint32_t needed;
 
 	if (argc != 3) {
 		printf("Usage: %s <printername> <valuename>\n", argv[0]);
@@ -839,13 +847,14 @@ static WERROR cmd_spoolss_getprinterdata(struct rpc_pipe_client *cli,
 					       valuename,
 					       0,
 					       &type,
+					       &needed,
 					       &data);
 	if (!W_ERROR_IS_OK(result))
 		goto done;
 
 	/* Display printer data */
 
-	display_printer_data(valuename, type, &data);
+	display_printer_data(valuename, type, data, needed);
 
  done:
 	if (is_valid_policy_hnd(&pol))
@@ -866,10 +875,9 @@ static WERROR cmd_spoolss_getprinterdataex(struct rpc_pipe_client *cli,
 	NTSTATUS	status;
 	fstring 	printername;
 	const char *valuename, *keyname;
-	REGISTRY_VALUE value;
 
 	enum winreg_Type type;
-	uint8_t *buffer = NULL;
+	uint8_t *data = NULL;
 	uint32_t offered = 0;
 	uint32_t needed;
 
@@ -901,24 +909,32 @@ static WERROR cmd_spoolss_getprinterdataex(struct rpc_pipe_client *cli,
 
 	/* Get printer info */
 
+	data = talloc_zero_array(mem_ctx, uint8_t, offered);
+	if (!data) {
+		goto done;
+	}
+
 	status = rpccli_spoolss_GetPrinterDataEx(cli, mem_ctx,
 						 &pol,
 						 keyname,
 						 valuename,
 						 &type,
-						 buffer,
+						 data,
 						 offered,
 						 &needed,
 						 &result);
 	if (W_ERROR_EQUAL(result, WERR_MORE_DATA)) {
 		offered = needed;
-		buffer = talloc_array(mem_ctx, uint8_t, needed);
+		data = talloc_zero_array(mem_ctx, uint8_t, offered);
+		if (!data) {
+			goto done;
+		}
 		status = rpccli_spoolss_GetPrinterDataEx(cli, mem_ctx,
 							 &pol,
 							 keyname,
 							 valuename,
 							 &type,
-							 buffer,
+							 data,
 							 offered,
 							 &needed,
 							 &result);
@@ -928,22 +944,13 @@ static WERROR cmd_spoolss_getprinterdataex(struct rpc_pipe_client *cli,
 		goto done;
 	}
 
-	if (!W_ERROR_IS_OK(result)) {
-		goto done;
-	}
-
-
 	if (!W_ERROR_IS_OK(result))
 		goto done;
 
 	/* Display printer data */
 
-	fstrcpy(value.valuename, valuename);
-	value.type = type;
-	value.size = needed;
-	value.data_p = buffer;
+	display_printer_data(valuename, type, data, needed);
 
-	display_reg_value(value);
 
  done:
 	if (is_valid_policy_hnd(&pol))
@@ -1689,8 +1696,8 @@ static WERROR cmd_spoolss_addprinterex(struct rpc_pipe_client *cli,
 	info2.comment		= "Created by rpcclient";
 	info2.printprocessor	= "winprint";
 	info2.datatype		= "RAW";
-	info2.devmode		= NULL;
-	info2.secdesc		= NULL;
+	info2.devmode_ptr	= 0;
+	info2.secdesc_ptr	= 0;
 	info2.attributes 	= PRINTER_ATTRIBUTE_SHARED;
 	info2.priority 		= 0;
 	info2.defaultpriority	= 0;
@@ -2381,6 +2388,7 @@ static WERROR cmd_spoolss_setprinterdata(struct rpc_pipe_client *cli,
 	union spoolss_PrinterInfo info;
 	enum winreg_Type type;
 	union spoolss_PrinterData data;
+	DATA_BLOB blob;
 
 	/* parse the command arguments */
 	if (argc < 5) {
@@ -2483,12 +2491,17 @@ static WERROR cmd_spoolss_setprinterdata(struct rpc_pipe_client *cli,
 		goto done;
 	}
 
+	result = push_spoolss_PrinterData(mem_ctx, &blob, type, &data);
+	if (!W_ERROR_IS_OK(result)) {
+		goto done;
+	}
+
 	status = rpccli_spoolss_SetPrinterData(cli, mem_ctx,
 					       &pol,
 					       argv[3], /* value_name */
 					       type,
-					       data,
-					       0, /* autocalculated size */
+					       blob.data,
+					       blob.length,
 					       &result);
 	if (!W_ERROR_IS_OK(result)) {
 		printf ("Unable to set [%s=%s]!\n", argv[3], argv[4]);
@@ -2828,7 +2841,7 @@ static WERROR cmd_spoolss_enum_data(struct rpc_pipe_client *cli,
 							&data_needed,
 							&result);
 		if (NT_STATUS_IS_OK(status) && W_ERROR_IS_OK(result)) {
-			REGISTRY_VALUE v;
+			struct regval_blob v;
 			fstrcpy(v.valuename, value_name);
 			v.type = type;
 			v.size = data_offered;
@@ -2895,7 +2908,8 @@ static WERROR cmd_spoolss_enum_data_ex( struct rpc_pipe_client *cli,
 	for (i=0; i < count; i++) {
 		display_printer_data(info[i].value_name,
 				     info[i].type,
-				     info[i].data);
+				     info[i].data->data,
+				     info[i].data->length);
 	}
 
  done:
@@ -2919,16 +2933,21 @@ static WERROR cmd_spoolss_enum_printerkey(struct rpc_pipe_client *cli,
 	struct policy_handle hnd;
 	const char **key_buffer = NULL;
 	int i;
+	uint32_t offered = 0;
 
-	if (argc < 2 || argc > 3) {
-		printf("Usage: %s printername [keyname]\n", argv[0]);
+	if (argc < 2 || argc > 4) {
+		printf("Usage: %s printername [keyname] [offered]\n", argv[0]);
 		return WERR_OK;
 	}
 
-	if (argc == 3) {
+	if (argc >= 3) {
 		keyname = argv[2];
 	} else {
 		keyname = "";
+	}
+
+	if (argc == 4) {
+		offered = atoi(argv[3]);
 	}
 
 	/* Open printer handle */
@@ -2949,7 +2968,7 @@ static WERROR cmd_spoolss_enum_printerkey(struct rpc_pipe_client *cli,
 					       &hnd,
 					       keyname,
 					       &key_buffer,
-					       0);
+					       offered);
 
 	if (!W_ERROR_IS_OK(result)) {
 		goto done;
@@ -3150,7 +3169,7 @@ static bool compare_printer_secdesc( struct rpc_pipe_client *cli1, struct policy
 		goto done;
 	}
 
-	if (!sec_desc_equal( sd1, sd2 ) ) {
+	if (!security_descriptor_equal( sd1, sd2 ) ) {
 		printf("Security Descriptors *not* equal!\n");
 		result = false;
 		goto done;
@@ -3430,6 +3449,48 @@ static WERROR cmd_spoolss_enum_monitors(struct rpc_pipe_client *cli,
 	return werror;
 }
 
+static WERROR cmd_spoolss_create_printer_ic(struct rpc_pipe_client *cli,
+					    TALLOC_CTX *mem_ctx, int argc,
+					    const char **argv)
+{
+	WERROR result;
+	NTSTATUS status;
+	struct policy_handle handle, gdi_handle;
+	const char *printername;
+	struct spoolss_DevmodeContainer devmode_ctr;
+
+	RPCCLIENT_PRINTERNAME(printername, cli, argv[1]);
+
+	result = rpccli_spoolss_openprinter_ex(cli, mem_ctx,
+					       printername,
+					       SEC_FLAG_MAXIMUM_ALLOWED,
+					       &handle);
+	if (!W_ERROR_IS_OK(result)) {
+		return result;
+	}
+
+	ZERO_STRUCT(devmode_ctr);
+
+	status = rpccli_spoolss_CreatePrinterIC(cli, mem_ctx,
+						&handle,
+						&gdi_handle,
+						&devmode_ctr,
+						&result);
+	if (!W_ERROR_IS_OK(result)) {
+		goto done;
+	}
+
+ done:
+	if (is_valid_policy_hnd(&gdi_handle)) {
+		rpccli_spoolss_DeletePrinterIC(cli, mem_ctx, &gdi_handle, NULL);
+	}
+	if (is_valid_policy_hnd(&handle)) {
+		rpccli_spoolss_ClosePrinter(cli, mem_ctx, &handle, NULL);
+	}
+
+	return result;
+}
+
 /* List of commands exported by this module */
 struct cmd_set spoolss_commands[] = {
 
@@ -3469,6 +3530,7 @@ struct cmd_set spoolss_commands[] = {
 	{ "enumprocs",		RPC_RTYPE_WERROR, NULL, cmd_spoolss_enum_procs,         &ndr_table_spoolss.syntax_id, NULL, "Enumerate Print Processors",          "" },
 	{ "enumprocdatatypes",	RPC_RTYPE_WERROR, NULL, cmd_spoolss_enum_proc_data_types, &ndr_table_spoolss.syntax_id, NULL, "Enumerate Print Processor Data Types", "" },
 	{ "enummonitors",	RPC_RTYPE_WERROR, NULL, cmd_spoolss_enum_monitors,      &ndr_table_spoolss.syntax_id, NULL, "Enumerate Print Monitors", "" },
+	{ "createprinteric",	RPC_RTYPE_WERROR, NULL, cmd_spoolss_create_printer_ic,  &ndr_table_spoolss.syntax_id, NULL, "Create Printer IC", "" },
 
 	{ NULL }
 };
