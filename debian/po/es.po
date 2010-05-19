@@ -42,6 +42,7 @@ msgstr ""
 "PO-Revision-Date: 2006-10-08 13:43+0200\n"
 "Last-Translator: Steve Langasek <vorlon@debian.org>\n"
 "Language-Team: Debian Spanish <debian-l10n-spanish@lists.debian.org>\n"
+"Language: \n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -200,7 +201,8 @@ msgstr ""
 "sistemas Windows. Para hacer esto es necesario crear un fichero, distinto "
 "del /etc/passwd, donde se guarden las contraseñas de los usuarios. El "
 "fichero se puede crear automaticamente, aunque es necesario añadir las "
-"contraseñas manualmente mediante el programa «smbpasswd» y mantenerlas al día."
+"contraseñas manualmente mediante el programa «smbpasswd» y mantenerlas al "
+"día."
 
 #. Type: boolean
 #. Description
