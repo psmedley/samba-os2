@@ -20,6 +20,7 @@
 */
 
 #include "includes.h"
+#include "dbwrap.h"
 #ifdef CLUSTER_SUPPORT
 #include "ctdb_private.h"
 #endif
@@ -103,9 +104,7 @@ struct db_context *db_open(TALLOC_CTX *mem_ctx,
 	struct db_context *result = NULL;
 #ifdef CLUSTER_SUPPORT
 	const char *sockname = lp_ctdbd_socket();
-#endif
 
-#ifdef CLUSTER_SUPPORT
 	if(!sockname || !*sockname) {
 		sockname = CTDB_PATH;
 	}

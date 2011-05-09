@@ -21,6 +21,8 @@
 */
 
 #include "includes.h"
+#include "nmbd/nmbd.h"
+#include "smbprofile.h"
 
 /* Election parameters. */
 extern time_t StartupTime;

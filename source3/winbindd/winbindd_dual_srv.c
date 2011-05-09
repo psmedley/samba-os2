@@ -23,15 +23,19 @@
 #include "includes.h"
 #include "winbindd/winbindd.h"
 #include "winbindd/winbindd_proto.h"
+#include "rpc_client/cli_pipe.h"
 #include "librpc/gen_ndr/srv_wbint.h"
-#include "../librpc/gen_ndr/cli_netlogon.h"
+#include "../librpc/gen_ndr/ndr_netlogon_c.h"
+#include "idmap.h"
+#include "../libcli/security/security.h"
+#include "ntdomain.h"
 
-void _wbint_Ping(pipes_struct *p, struct wbint_Ping *r)
+void _wbint_Ping(struct pipes_struct *p, struct wbint_Ping *r)
 {
 	*r->out.out_data = r->in.in_data;
 }
 
-NTSTATUS _wbint_LookupSid(pipes_struct *p, struct wbint_LookupSid *r)
+NTSTATUS _wbint_LookupSid(struct pipes_struct *p, struct wbint_LookupSid *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
 	char *dom_name;
@@ -55,7 +59,25 @@ NTSTATUS _wbint_LookupSid(pipes_struct *p, struct wbint_LookupSid *r)
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_LookupName(pipes_struct *p, struct wbint_LookupName *r)
+NTSTATUS _wbint_LookupSids(struct pipes_struct *p, struct wbint_LookupSids *r)
+{
+	struct winbindd_domain *domain = wb_child_domain();
+
+	if (domain == NULL) {
+		return NT_STATUS_REQUEST_NOT_ACCEPTED;
+	}
+
+	/*
+	 * This breaks the winbindd_domain->methods abstraction: This
+	 * is only called for remote domains, and both winbindd_msrpc
+	 * and winbindd_ad call into lsa_lookupsids anyway. Caching is
+	 * done at the wbint RPC layer.
+	 */
+	return rpc_lookup_sids(p->mem_ctx, domain, r->in.sids,
+			       &r->out.domains, &r->out.names);
+}
+
+NTSTATUS _wbint_LookupName(struct pipes_struct *p, struct wbint_LookupName *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
 
@@ -68,7 +90,7 @@ NTSTATUS _wbint_LookupName(pipes_struct *p, struct wbint_LookupName *r)
 		r->out.sid, r->out.type);
 }
 
-NTSTATUS _wbint_Sid2Uid(pipes_struct *p, struct wbint_Sid2Uid *r)
+NTSTATUS _wbint_Sid2Uid(struct pipes_struct *p, struct wbint_Sid2Uid *r)
 {
 	uid_t uid;
 	NTSTATUS status;
@@ -82,7 +104,7 @@ NTSTATUS _wbint_Sid2Uid(pipes_struct *p, struct wbint_Sid2Uid *r)
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_Sid2Gid(pipes_struct *p, struct wbint_Sid2Gid *r)
+NTSTATUS _wbint_Sid2Gid(struct pipes_struct *p, struct wbint_Sid2Gid *r)
 {
 	gid_t gid;
 	NTSTATUS status;
@@ -96,19 +118,111 @@ NTSTATUS _wbint_Sid2Gid(pipes_struct *p, struct wbint_Sid2Gid *r)
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_Uid2Sid(pipes_struct *p, struct wbint_Uid2Sid *r)
+NTSTATUS _wbint_Sids2UnixIDs(struct pipes_struct *p,
+			     struct wbint_Sids2UnixIDs *r)
+{
+	uint32_t i, j;
+	struct id_map *ids = NULL;
+	struct id_map **id_ptrs = NULL;
+	struct dom_sid *sids = NULL;
+	uint32_t *id_idx = NULL;
+	NTSTATUS status = NT_STATUS_NO_MEMORY;
+
+	for (i=0; i<r->in.domains->count; i++) {
+		struct lsa_DomainInfo *d = &r->in.domains->domains[i];
+		struct idmap_domain *dom;
+		uint32_t num_ids;
+
+		dom = idmap_find_domain(d->name.string);
+		if (dom == NULL) {
+			DEBUG(10, ("idmap domain %s not found\n",
+				   d->name.string));
+			continue;
+		}
+
+		num_ids = 0;
+
+		for (j=0; j<r->in.ids->num_ids; j++) {
+			if (r->in.ids->ids[j].domain_index == i) {
+				num_ids += 1;
+			}
+		}
+
+		ids = TALLOC_REALLOC_ARRAY(talloc_tos(), ids,
+					   struct id_map, num_ids);
+		if (ids == NULL) {
+			goto nomem;
+		}
+		id_ptrs = TALLOC_REALLOC_ARRAY(talloc_tos(), id_ptrs,
+					       struct id_map *, num_ids+1);
+		if (id_ptrs == NULL) {
+			goto nomem;
+		}
+		id_idx = TALLOC_REALLOC_ARRAY(talloc_tos(), id_idx,
+					      uint32_t, num_ids);
+		if (id_idx == NULL) {
+			goto nomem;
+		}
+		sids = TALLOC_REALLOC_ARRAY(talloc_tos(), sids,
+					    struct dom_sid, num_ids);
+		if (sids == NULL) {
+			goto nomem;
+		}
+
+		num_ids = 0;
+
+		for (j=0; j<r->in.ids->num_ids; j++) {
+			struct wbint_TransID *id = &r->in.ids->ids[j];
+
+			if (id->domain_index != i) {
+				continue;
+			}
+			id_idx[num_ids] = j;
+			id_ptrs[num_ids] = &ids[num_ids];
+
+			ids[num_ids].sid = &sids[num_ids];
+			sid_compose(ids[num_ids].sid, d->sid, id->rid);
+			ids[num_ids].xid.type = id->type;
+			ids[num_ids].status = ID_UNKNOWN;
+			num_ids += 1;
+		}
+		id_ptrs[num_ids] = NULL;
+
+		status = dom->methods->sids_to_unixids(dom, id_ptrs);
+		DEBUG(10, ("sids_to_unixids returned %s\n",
+			   nt_errstr(status)));
+
+		for (j=0; j<num_ids; j++) {
+			struct wbint_TransID *id = &r->in.ids->ids[id_idx[j]];
+
+			if (ids[j].status != ID_MAPPED) {
+				continue;
+			}
+			id->unix_id = ids[j].xid.id;
+		}
+	}
+	status = NT_STATUS_OK;
+nomem:
+	TALLOC_FREE(ids);
+	TALLOC_FREE(id_ptrs);
+	TALLOC_FREE(id_idx);
+	TALLOC_FREE(sids);
+	return status;
+}
+
+NTSTATUS _wbint_Uid2Sid(struct pipes_struct *p, struct wbint_Uid2Sid *r)
 {
 	return idmap_uid_to_sid(r->in.dom_name ? r->in.dom_name : "",
 				r->out.sid, r->in.uid);
 }
 
-NTSTATUS _wbint_Gid2Sid(pipes_struct *p, struct wbint_Gid2Sid *r)
+NTSTATUS _wbint_Gid2Sid(struct pipes_struct *p, struct wbint_Gid2Sid *r)
 {
 	return idmap_gid_to_sid(r->in.dom_name ? r->in.dom_name : "",
 				r->out.sid, r->in.gid);
 }
 
-NTSTATUS _wbint_AllocateUid(pipes_struct *p, struct wbint_AllocateUid *r)
+NTSTATUS _wbint_AllocateUid(struct pipes_struct *p, struct wbint_AllocateUid *r)
 {
 	struct unixid xid;
 	NTSTATUS status;
@@ -121,7 +235,7 @@ NTSTATUS _wbint_AllocateUid(pipes_struct *p, struct wbint_AllocateUid *r)
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_AllocateGid(pipes_struct *p, struct wbint_AllocateGid *r)
+NTSTATUS _wbint_AllocateGid(struct pipes_struct *p, struct wbint_AllocateGid *r)
 {
 	struct unixid xid;
 	NTSTATUS status;
@@ -134,7 +248,7 @@ NTSTATUS _wbint_AllocateGid(pipes_struct *p, struct wbint_AllocateGid *r)
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_QueryUser(pipes_struct *p, struct wbint_QueryUser *r)
+NTSTATUS _wbint_QueryUser(struct pipes_struct *p, struct wbint_QueryUser *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
 
@@ -146,7 +260,7 @@ NTSTATUS _wbint_QueryUser(pipes_struct *p, struct wbint_QueryUser *r)
 					   r->out.info);
 }
 
-NTSTATUS _wbint_LookupUserAliases(pipes_struct *p,
+NTSTATUS _wbint_LookupUserAliases(struct pipes_struct *p,
 				  struct wbint_LookupUserAliases *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
@@ -160,7 +274,7 @@ NTSTATUS _wbint_LookupUserAliases(pipes_struct *p,
 		&r->out.rids->num_rids, &r->out.rids->rids);
 }
 
-NTSTATUS _wbint_LookupUserGroups(pipes_struct *p,
+NTSTATUS _wbint_LookupUserGroups(struct pipes_struct *p,
 				 struct wbint_LookupUserGroups *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
@@ -174,7 +288,7 @@ NTSTATUS _wbint_LookupUserGroups(pipes_struct *p,
 		&r->out.sids->num_sids, &r->out.sids->sids);
 }
 
-NTSTATUS _wbint_QuerySequenceNumber(pipes_struct *p,
+NTSTATUS _wbint_QuerySequenceNumber(struct pipes_struct *p,
 				    struct wbint_QuerySequenceNumber *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
@@ -186,7 +300,7 @@ NTSTATUS _wbint_QuerySequenceNumber(pipes_struct *p,
 	return domain->methods->sequence_number(domain, r->out.sequence);
 }
 
-NTSTATUS _wbint_LookupGroupMembers(pipes_struct *p,
+NTSTATUS _wbint_LookupGroupMembers(struct pipes_struct *p,
 				   struct wbint_LookupGroupMembers *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
@@ -224,7 +338,8 @@ NTSTATUS _wbint_LookupGroupMembers(pipes_struct *p,
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_QueryUserList(pipes_struct *p, struct wbint_QueryUserList *r)
+NTSTATUS _wbint_QueryUserList(struct pipes_struct *p,
+			      struct wbint_QueryUserList *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
 
@@ -237,11 +352,12 @@ NTSTATUS _wbint_QueryUserList(pipes_struct *p, struct wbint_QueryUserList *r)
 		&r->out.users->userinfos);
 }
 
-NTSTATUS _wbint_QueryGroupList(pipes_struct *p, struct wbint_QueryGroupList *r)
+NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
+			       struct wbint_QueryGroupList *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
 	uint32_t i, num_groups;
-	struct acct_info *groups;
+	struct wb_acct_info *groups;
 	struct wbint_Principal *result;
 	NTSTATUS status;
 
@@ -274,10 +390,12 @@ NTSTATUS _wbint_QueryGroupList(pipes_struct *p, struct wbint_QueryGroupList *r)
 
 	r->out.groups->num_principals = num_groups;
 	r->out.groups->principals = result;
+
+	TALLOC_FREE(groups);
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_DsGetDcName(pipes_struct *p, struct wbint_DsGetDcName *r)
+NTSTATUS _wbint_DsGetDcName(struct pipes_struct *p, struct wbint_DsGetDcName *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
 	struct rpc_pipe_client *netlogon_pipe;
@@ -285,6 +403,7 @@ NTSTATUS _wbint_DsGetDcName(pipes_struct *p, struct wbint_DsGetDcName *r)
 	NTSTATUS status;
 	WERROR werr;
 	unsigned int orig_timeout;
+	struct dcerpc_binding_handle *b;
 
 	if (domain == NULL) {
 		return dsgetdcname(p->mem_ctx, winbind_messaging_context(),
@@ -301,14 +420,16 @@ NTSTATUS _wbint_DsGetDcName(pipes_struct *p, struct wbint_DsGetDcName *r)
 		return status;
 	}
 
+	b = netlogon_pipe->binding_handle;
+
 	/* This call can take a long time - allow the server to time out.
 	   35 seconds should do it. */
 
 	orig_timeout = rpccli_set_timeout(netlogon_pipe, 35000);
 
 	if (domain->active_directory) {
-		status = rpccli_netr_DsRGetDCName(
-			netlogon_pipe, p->mem_ctx, domain->dcname,
+		status = dcerpc_netr_DsRGetDCName(b,
+			p->mem_ctx, domain->dcname,
 			r->in.domain_name, NULL, r->in.domain_guid,
 			r->in.flags, r->out.dc_info, &werr);
 		if (NT_STATUS_IS_OK(status) && W_ERROR_IS_OK(werr)) {
@@ -327,22 +448,22 @@ NTSTATUS _wbint_DsGetDcName(pipes_struct *p, struct wbint_DsGetDcName *r)
 	}
 
 	if (r->in.flags & DS_PDC_REQUIRED) {
-		status = rpccli_netr_GetDcName(
-			netlogon_pipe, p->mem_ctx, domain->dcname,
+		status = dcerpc_netr_GetDcName(b,
+			p->mem_ctx, domain->dcname,
 			r->in.domain_name, &dc_info->dc_unc, &werr);
 	} else {
-		status = rpccli_netr_GetAnyDCName(
-			netlogon_pipe, p->mem_ctx, domain->dcname,
+		status = dcerpc_netr_GetAnyDCName(b,
+			p->mem_ctx, domain->dcname,
 			r->in.domain_name, &dc_info->dc_unc, &werr);
 	}
 
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(10, ("rpccli_netr_Get[Any]DCName failed: %s\n",
+		DEBUG(10, ("dcerpc_netr_Get[Any]DCName failed: %s\n",
 			   nt_errstr(status)));
 		goto done;
 	}
 	if (!W_ERROR_IS_OK(werr)) {
-		DEBUG(10, ("rpccli_netr_Get[Any]DCName failed: %s\n",
+		DEBUG(10, ("dcerpc_netr_Get[Any]DCName failed: %s\n",
 			   win_errstr(werr)));
 		status = werror_to_ntstatus(werr);
 		goto done;
@@ -358,7 +479,7 @@ done:
 	return status;
 }
 
-NTSTATUS _wbint_LookupRids(pipes_struct *p, struct wbint_LookupRids *r)
+NTSTATUS _wbint_LookupRids(struct pipes_struct *p, struct wbint_LookupRids *r)
 {
 	struct winbindd_domain *domain = wb_child_domain();
 	char *domain_name;
@@ -400,7 +521,7 @@ NTSTATUS _wbint_LookupRids(pipes_struct *p, struct wbint_LookupRids *r)
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_CheckMachineAccount(pipes_struct *p,
+NTSTATUS _wbint_CheckMachineAccount(struct pipes_struct *p,
 				    struct wbint_CheckMachineAccount *r)
 {
 	struct winbindd_domain *domain;
@@ -452,7 +573,7 @@ again:
 	return status;
 }
 
-NTSTATUS _wbint_ChangeMachineAccount(pipes_struct *p,
+NTSTATUS _wbint_ChangeMachineAccount(struct pipes_struct *p,
 				     struct wbint_ChangeMachineAccount *r)
 {
 	struct winbindd_domain *domain;
@@ -512,7 +633,7 @@ again:
 	return status;
 }
 
-NTSTATUS _wbint_PingDc(pipes_struct *p, struct wbint_PingDc *r)
+NTSTATUS _wbint_PingDc(struct pipes_struct *p, struct wbint_PingDc *r)
 {
 	NTSTATUS status;
 	struct winbindd_domain *domain;
@@ -520,6 +641,7 @@ NTSTATUS _wbint_PingDc(pipes_struct *p, struct wbint_PingDc *r)
 	union netr_CONTROL_QUERY_INFORMATION info;
 	WERROR werr;
 	fstring logon_server;
+	struct dcerpc_binding_handle *b;
 
 	domain = wb_child_domain();
 	if (domain == NULL) {
@@ -532,6 +654,8 @@ NTSTATUS _wbint_PingDc(pipes_struct *p, struct wbint_PingDc *r)
 		return status;
         }
 
+	b = netlogon_pipe->binding_handle;
+
 	fstr_sprintf(logon_server, "\\\\%s", domain->dcname);
 
 	/*
@@ -540,90 +664,29 @@ NTSTATUS _wbint_PingDc(pipes_struct *p, struct wbint_PingDc *r)
 	 * call to work, but the main point here is testing that the
 	 * netlogon pipe works.
 	 */
-	status = rpccli_netr_LogonControl(netlogon_pipe, p->mem_ctx,
+	status = dcerpc_netr_LogonControl(b, p->mem_ctx,
 					  logon_server, NETLOGON_CONTROL_QUERY,
 					  2, &info, &werr);
 
 	if (NT_STATUS_EQUAL(status, NT_STATUS_IO_TIMEOUT)) {
-		DEBUG(2, ("rpccli_netr_LogonControl timed out\n"));
+		DEBUG(2, ("dcerpc_netr_LogonControl timed out\n"));
 		invalidate_cm_connection(&domain->conn);
 		return status;
 	}
 
-	if (!NT_STATUS_EQUAL(status, NT_STATUS_CTL_FILE_NOT_SUPPORTED)) {
-		DEBUG(2, ("rpccli_netr_LogonControl returned %s, expected "
-			  "NT_STATUS_CTL_FILE_NOT_SUPPORTED\n",
-			  nt_errstr(status)));
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(2, ("dcerpc_netr_LogonControl failed: %s\n",
+			nt_errstr(status)));
 		return status;
+	}
+
+	if (!W_ERROR_EQUAL(werr, WERR_NOT_SUPPORTED)) {
+		DEBUG(2, ("dcerpc_netr_LogonControl returned %s, expected "
+			  "WERR_NOT_SUPPORTED\n",
+			  win_errstr(werr)));
+		return werror_to_ntstatus(werr);
 	}
 
 	DEBUG(5, ("winbindd_dual_ping_dc succeeded\n"));
 	return NT_STATUS_OK;
-}
-
-NTSTATUS _wbint_SetMapping(pipes_struct *p, struct wbint_SetMapping *r)
-{
-	struct id_map map;
-
-	map.sid = r->in.sid;
-	map.xid.id = r->in.id;
-	map.status = ID_MAPPED;
-
-	switch (r->in.type) {
-	case WBINT_ID_TYPE_UID:
-		map.xid.type = ID_TYPE_UID;
-		break;
-	case WBINT_ID_TYPE_GID:
-		map.xid.type = ID_TYPE_GID;
-		break;
-	default:
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	return idmap_set_mapping(&map);
-}
-
-NTSTATUS _wbint_RemoveMapping(pipes_struct *p, struct wbint_RemoveMapping *r)
-{
-	struct id_map map;
-
-	map.sid = r->in.sid;
-	map.xid.id = r->in.id;
-	map.status = ID_MAPPED;
-
-	switch (r->in.type) {
-	case WBINT_ID_TYPE_UID:
-		map.xid.type = ID_TYPE_UID;
-		break;
-	case WBINT_ID_TYPE_GID:
-		map.xid.type = ID_TYPE_GID;
-		break;
-	default:
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	return idmap_remove_mapping(&map);
-}
-
-NTSTATUS _wbint_SetHWM(pipes_struct *p, struct wbint_SetHWM *r)
-{
-	struct unixid id;
-	NTSTATUS status;
-
-	id.id = r->in.id;
-
-	switch (r->in.type) {
-	case WBINT_ID_TYPE_UID:
-		id.type = ID_TYPE_UID;
-		status = idmap_set_uid_hwm(&id);
-		break;
-	case WBINT_ID_TYPE_GID:
-		id.type = ID_TYPE_GID;
-		status = idmap_set_gid_hwm(&id);
-		break;
-	default:
-		status = NT_STATUS_INVALID_PARAMETER;
-		break;
-	}
-	return status;
 }

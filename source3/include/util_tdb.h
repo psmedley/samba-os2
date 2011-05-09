@@ -20,16 +20,14 @@
 #ifndef __TDBUTIL_H__
 #define __TDBUTIL_H__
 
-#include "tdb.h"
+#include <tdb.h>
 
-#include "talloc.h" /* for tdb_wrap_open() */
+#include <talloc.h> /* for tdb_wrap_open() */
 #include "../libcli/util/ntstatus.h" /* for map_nt_error_from_tdb() */
 #include "../../lib/util/util_tdb.h"
 
 struct tdb_wrap {
 	struct tdb_context *tdb;
-	const char *name;
-	struct tdb_wrap *next, *prev;
 };
 
 int tdb_chainlock_with_timeout( struct tdb_context *tdb, TDB_DATA key,

@@ -6,18 +6,18 @@ Bug-Debian: http://bugs.debian.org/479512
 Bug: https://bugzilla.samba.org/show_bug.cgi?id=5525
 Forwarded: yes
 
-Index: experimental/source3/smbd/server.c
+Index: experimental/source3/smbd/server_reload.c
 ===================================================================
---- experimental.orig/source3/smbd/server.c
-+++ experimental/source3/smbd/server.c
-@@ -710,6 +710,10 @@
- 	int pnum = lp_servicenumber(PRINTERS_NAME);
- 	const char *pname;
+--- experimental.orig/source3/smbd/server_reload.c
++++ experimental/source3/smbd/server_reload.c
+@@ -45,6 +45,10 @@
+ 	NTSTATUS status;
+ 	bool skip = false;
  
 +	if (!lp_load_printers()
 +	    && (lp_auto_services() == NULL || !strcmp(lp_auto_services(),"")))
 +		return;
 +
- 	pcap_cache_reload();
+ 	SMB_ASSERT(pcap_cache_loaded());
+ 	DEBUG(10, ("reloading printer services from pcap cache\n"));
  
- 	/* remove stale printers */

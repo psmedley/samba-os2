@@ -19,6 +19,15 @@
 
 #include "includes.h"
 #include "lib/smbconf/smbconf_private.h"
+#include "registry.h"
+#include "registry/reg_api.h"
+#include "registry/reg_backend_db.h"
+#include "registry/reg_util_token.h"
+#include "registry/reg_api_util.h"
+#include "registry/reg_init_smbconf.h"
+#include "lib/smbconf/smbconf_init.h"
+#include "lib/smbconf/smbconf_reg.h"
+#include "../libcli/registry/util_reg.h"
 
 #define INCLUDES_VALNAME "includes"
 
@@ -203,8 +212,10 @@ static WERROR smbconf_reg_set_value(struct registry_key *key,
 	ZERO_STRUCT(val);
 
 	val.type = REG_SZ;
-	val.v.sz.str = CONST_DISCARD(char *, canon_valstr);
-	val.v.sz.len = strlen(canon_valstr) + 1;
+	if (!push_reg_sz(talloc_tos(), &val.data, canon_valstr)) {
+		werr = WERR_NOMEM;
+		goto done;
+	}
 
 	werr = reg_setvalue(key, canon_valname, &val);
 	if (!W_ERROR_IS_OK(werr)) {
@@ -226,29 +237,38 @@ static WERROR smbconf_reg_set_multi_sz_value(struct registry_key *key,
 	struct registry_value *value;
 	uint32_t count;
 	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	const char **array;
 
 	if (strings == NULL) {
 		werr = WERR_INVALID_PARAM;
 		goto done;
 	}
 
-	value = TALLOC_ZERO_P(tmp_ctx, struct registry_value);
-
-	value->type = REG_MULTI_SZ;
-	value->v.multi_sz.num_strings = num_strings;
-	value->v.multi_sz.strings = TALLOC_ARRAY(tmp_ctx, char *, num_strings);
-	if (value->v.multi_sz.strings == NULL) {
+	array = talloc_zero_array(tmp_ctx, const char *, num_strings + 1);
+	if (array == NULL) {
 		werr = WERR_NOMEM;
 		goto done;
 	}
+
+	value = TALLOC_ZERO_P(tmp_ctx, struct registry_value);
+	if (value == NULL) {
+		werr = WERR_NOMEM;
+		goto done;
+	}
+
+	value->type = REG_MULTI_SZ;
+
 	for (count = 0; count < num_strings; count++) {
-		value->v.multi_sz.strings[count] =
-			talloc_strdup(value->v.multi_sz.strings,
-				      strings[count]);
-		if (value->v.multi_sz.strings[count] == NULL) {
+		array[count] = talloc_strdup(value, strings[count]);
+		if (array[count] == NULL) {
 			werr = WERR_NOMEM;
 			goto done;
 		}
+	}
+
+	if (!push_reg_multi_sz(value, &value->data, array)) {
+		werr = WERR_NOMEM;
+		goto done;
 	}
 
 	werr = reg_setvalue(key, valname, value);
@@ -281,18 +301,30 @@ static char *smbconf_format_registry_value(TALLOC_CTX *mem_ctx,
 
 	switch (value->type) {
 	case REG_DWORD:
-		result = talloc_asprintf(mem_ctx, "%d", value->v.dword);
+		if (value->data.length >= 4) {
+			uint32_t v = IVAL(value->data.data, 0);
+			result = talloc_asprintf(mem_ctx, "%d", v);
+		}
 		break;
 	case REG_SZ:
-	case REG_EXPAND_SZ:
-		result = talloc_asprintf(mem_ctx, "%s", value->v.sz.str);
+	case REG_EXPAND_SZ: {
+		const char *s;
+		if (!pull_reg_sz(mem_ctx, &value->data, &s)) {
+			break;
+		}
+		result = talloc_strdup(mem_ctx, s);
 		break;
+	}
 	case REG_MULTI_SZ: {
 		uint32 j;
-		for (j = 0; j < value->v.multi_sz.num_strings; j++) {
+		const char **a = NULL;
+		if (!pull_reg_multi_sz(mem_ctx, &value->data, &a)) {
+			break;
+		}
+		for (j = 0; a[j] != NULL; j++) {
 			result = talloc_asprintf(mem_ctx, "%s\"%s\" ",
 						 result ? result : "" ,
-						 value->v.multi_sz.strings[j]);
+						 a[j]);
 			if (result == NULL) {
 				break;
 			}
@@ -301,7 +333,7 @@ static char *smbconf_format_registry_value(TALLOC_CTX *mem_ctx,
 	}
 	case REG_BINARY:
 		result = talloc_asprintf(mem_ctx, "binary (%d bytes)",
-					 (int)value->v.binary.length);
+					 (int)value->data.length);
 		break;
 	default:
 		result = talloc_asprintf(mem_ctx, "<unprintable>");
@@ -319,6 +351,7 @@ static WERROR smbconf_reg_get_includes_internal(TALLOC_CTX *mem_ctx,
 	uint32_t count;
 	struct registry_value *value = NULL;
 	char **tmp_includes = NULL;
+	const char **array = NULL;
 	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 
 	if (!smbconf_value_exists(key, INCLUDES_VALNAME)) {
@@ -339,12 +372,16 @@ static WERROR smbconf_reg_get_includes_internal(TALLOC_CTX *mem_ctx,
 		goto done;
 	}
 
-	for (count = 0; count < value->v.multi_sz.num_strings; count++)
-	{
+	if (!pull_reg_multi_sz(tmp_ctx, &value->data, &array)) {
+		werr = WERR_NOMEM;
+		goto done;
+	}
+
+	for (count = 0; array[count] != NULL; count++) {
 		werr = smbconf_add_string_to_array(tmp_ctx,
 					&tmp_includes,
 					count,
-					value->v.multi_sz.strings[count]);
+					array[count]);
 		if (!W_ERROR_IS_OK(werr)) {
 			goto done;
 		}
@@ -535,7 +572,7 @@ done:
 static WERROR smbconf_reg_init(struct smbconf_ctx *ctx, const char *path)
 {
 	WERROR werr = WERR_OK;
-	struct nt_user_token *token;
+	struct security_token *token;
 
 	if (path == NULL) {
 		path = KEY_SMBCONF;
@@ -663,7 +700,7 @@ static WERROR smbconf_reg_drop(struct smbconf_ctx *ctx)
 	struct registry_key *new_key = NULL;
 	TALLOC_CTX* mem_ctx = talloc_stackframe();
 	enum winreg_CreateAction action;
-	struct nt_user_token *token;
+	struct security_token *token;
 
 	werr = ntstatus_to_werror(registry_create_admin_token(ctx, &token));
 	if (!W_ERROR_IS_OK(werr)) {
@@ -677,6 +714,10 @@ static WERROR smbconf_reg_drop(struct smbconf_ctx *ctx)
 		goto done;
 	}
 	p = strrchr(path, '\\');
+	if (p == NULL) {
+		werr = WERR_INVALID_PARAM;
+		goto done;
+	}
 	*p = '\0';
 	werr = reg_open_path(mem_ctx, path, REG_KEY_WRITE, token,
 			     &parent_key);
@@ -685,7 +726,7 @@ static WERROR smbconf_reg_drop(struct smbconf_ctx *ctx)
 		goto done;
 	}
 
-	werr = reg_deletekey_recursive(mem_ctx, parent_key, p+1);
+	werr = reg_deletekey_recursive(parent_key, p+1);
 
 	if (!W_ERROR_IS_OK(werr)) {
 		goto done;
@@ -877,8 +918,7 @@ static WERROR smbconf_reg_delete_share(struct smbconf_ctx *ctx,
 	TALLOC_CTX *mem_ctx = talloc_stackframe();
 
 	if (servicename != NULL) {
-		werr = reg_deletekey_recursive(mem_ctx, rpd(ctx)->base_key,
-					       servicename);
+		werr = reg_deletekey_recursive(rpd(ctx)->base_key, servicename);
 	} else {
 		werr = smbconf_reg_delete_values(rpd(ctx)->base_key);
 	}

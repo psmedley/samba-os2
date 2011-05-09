@@ -18,6 +18,11 @@
  */
 
 #include "includes.h"
+#include "popt_common.h"
+#include "lib/smbconf/smbconf.h"
+#include "lib/smbconf/smbconf_init.h"
+#include "lib/smbconf/smbconf_reg.h"
+#include "lib/smbconf/smbconf_txt.h"
 
 static void print_strings(const char *prefix,
 			  uint32_t num_strings, const char **strings)
@@ -289,7 +294,7 @@ int main(int argc, const char **argv)
 	};
 
 	load_case_tables();
-	dbf = x_stderr;
+	setup_logging(argv[0], DEBUG_STDERR);
 
 	/* parse options */
 	pc = poptGetContext("smbconftort", argc, (const char **)argv,

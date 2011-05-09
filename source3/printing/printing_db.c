@@ -20,6 +20,7 @@
 */
 
 #include "includes.h"
+#include "system/filesys.h"
 #include "printing.h"
 
 static struct tdb_print_db *print_db_head;
@@ -98,7 +99,7 @@ struct tdb_print_db *get_print_db_byname(const char *printername)
 		return NULL;
 	}
 
-	if (geteuid() != 0) {
+	if (geteuid() != sec_initial_uid()) {
 		become_root();
 		done_become_root = True;
 	}

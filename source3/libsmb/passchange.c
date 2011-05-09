@@ -18,6 +18,11 @@
 */
 
 #include "includes.h"
+#include "../librpc/gen_ndr/ndr_samr.h"
+#include "rpc_client/cli_pipe.h"
+#include "rpc_client/cli_samr.h"
+#include "libsmb/clirap.h"
+#include "libsmb/nmblib.h"
 
 /*************************************************************
  Change a password on a remote machine using IPC calls.
@@ -300,7 +305,7 @@ NTSTATUS remote_password_change(const char *remote_machine, const char *user_nam
 		} else {
 			if (asprintf(err_str, "SAMR connection to machine %s "
 				 "failed. Error was %s, but LANMAN password "
-				 "changed are disabled\n",
+				 "changes are disabled\n",
 				nt_errstr(result), remote_machine) == -1) {
 				*err_str = NULL;
 			}

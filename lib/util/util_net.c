@@ -27,6 +27,7 @@
 #include "system/network.h"
 #include "system/locale.h"
 #include "system/filesys.h"
+#include "lib/util/util_net.h"
 #undef strcasecmp
 
 /*******************************************************************
@@ -35,7 +36,7 @@
 
 void zero_sockaddr(struct sockaddr_storage *pss)
 {
-	memset(pss, '\0', sizeof(*pss));
+	ZERO_STRUCTP(pss);
 	/* Ensure we're at least a valid sockaddr-storage. */
 	pss->ss_family = AF_INET;
 }
@@ -49,13 +50,14 @@ bool interpret_string_addr_internal(struct addrinfo **ppres,
 	int ret;
 	struct addrinfo hints;
 
-	memset(&hints, '\0', sizeof(hints));
+	ZERO_STRUCT(hints);
+
 	/* By default make sure it supports TCP. */
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = flags;
 
-	/* Linux man page on getaddinfo() says port will be
-	   uninitialized when service string in NULL */
+	/* Linux man page on getaddrinfo() says port will be
+	   uninitialized when service string is NULL */
 
 	ret = getaddrinfo(str, NULL,
 			&hints,
@@ -382,16 +384,16 @@ bool is_loopback_addr(const struct sockaddr *pss)
 /**
  * Check if a struct sockaddr has an unspecified address.
  */
-bool is_zero_addr(const struct sockaddr *pss)
+bool is_zero_addr(const struct sockaddr_storage *pss)
 {
 #if defined(HAVE_IPV6)
-	if (pss->sa_family == AF_INET6) {
+	if (pss->ss_family == AF_INET6) {
 		const struct in6_addr *pin6 =
 			&((const struct sockaddr_in6 *)pss)->sin6_addr;
 		return IN6_IS_ADDR_UNSPECIFIED(pin6);
 	}
 #endif
-	if (pss->sa_family == AF_INET) {
+	if (pss->ss_family == AF_INET) {
 		const struct in_addr *pin = &((const struct sockaddr_in *)pss)->sin_addr;
 		return is_zero_ip_v4(*pin);
 	}

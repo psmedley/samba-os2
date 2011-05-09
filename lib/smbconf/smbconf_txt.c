@@ -27,6 +27,7 @@
 
 #include "includes.h"
 #include "smbconf_private.h"
+#include "lib/smbconf/smbconf_txt.h"
 
 struct txt_cache {
 	uint32_t current_share;
@@ -452,11 +453,7 @@ static WERROR smbconf_txt_get_share(struct smbconf_ctx *ctx,
 	}
 
 	tmp_service->num_params = count;
-	if (count > 0) {
-		*service = talloc_move(mem_ctx, &tmp_service);
-	} else {
-		*service = NULL;
-	}
+	*service = talloc_move(mem_ctx, &tmp_service);
 
 done:
 	talloc_free(tmp_ctx);

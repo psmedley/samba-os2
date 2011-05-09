@@ -19,7 +19,21 @@
 */
 
 #include "includes.h"
-#include "nsswitch/libwbclient/wbc_async.h"
+#include "system/shmem.h"
+#include "wbc_async.h"
+#include "torture/proto.h"
+#include "libcli/security/security.h"
+#include "tldap.h"
+#include "tldap_util.h"
+#include "../librpc/gen_ndr/svcctl.h"
+#include "memcache.h"
+#include "nsswitch/winbind_client.h"
+#include "dbwrap.h"
+#include "talloc_dict.h"
+#include "async_smb.h"
+#include "libsmb/clirap.h"
+#include "trans2.h"
+#include "libsmb/nmblib.h"
 
 extern char *optarg;
 extern int optind;
@@ -42,26 +56,11 @@ static fstring multishare_conn_fname;
 static bool use_multishare_conn = False;
 static bool do_encrypt;
 static const char *local_path = NULL;
+static int signing_state = Undefined;
 
 bool torture_showall = False;
 
 static double create_procs(bool (*fn)(int), bool *result);
-
-
-static struct timeval tp1,tp2;
-
-
-void start_timer(void)
-{
-	GetTimeOfDay(&tp1);
-}
-
-double end_timer(void)
-{
-	GetTimeOfDay(&tp2);
-	return((tp2.tv_sec - tp1.tv_sec) + 
-	       (tp2.tv_usec - tp1.tv_usec)*1.0e-6);
-}
 
 
 /* return a pointer to a anonymous shared memory segment of size "size"
@@ -184,7 +183,7 @@ static struct cli_state *open_nbt_connection(void)
 
         zero_sockaddr(&ss);
 
-	if (!(c = cli_initialise())) {
+	if (!(c = cli_initialise_ex(signing_state))) {
 		printf("Failed initialize cli_struct to connect with %s\n", host);
 		return NULL;
 	}
@@ -226,6 +225,120 @@ static struct cli_state *open_nbt_connection(void)
 
 	return c;
 }
+
+/****************************************************************************
+ Send a corrupt session request. See rfc1002.txt 4.3 and 4.3.2.
+****************************************************************************/
+
+static bool cli_bad_session_request(struct cli_state *cli,
+                         struct nmb_name *calling, struct nmb_name *called)
+{
+        char *p;
+        int len = 4;
+        int namelen = 0;
+        char *tmp;
+
+        memcpy(&(cli->calling), calling, sizeof(*calling));
+        memcpy(&(cli->called ), called , sizeof(*called ));
+
+        /* put in the destination name */
+
+        tmp = name_mangle(talloc_tos(), cli->called.name,
+                          cli->called.name_type);
+        if (tmp == NULL) {
+                return false;
+        }
+
+        p = cli->outbuf+len;
+        namelen = name_len((unsigned char *)tmp, talloc_get_size(tmp));
+        if (namelen > 0) {
+                memcpy(p, tmp, namelen);
+                len += namelen;
+        }
+        TALLOC_FREE(tmp);
+
+	/* Deliberately corrupt the name len (first byte) */
+	*p = 100;
+
+        /* and my name */
+
+        tmp = name_mangle(talloc_tos(), cli->calling.name,
+                          cli->calling.name_type);
+        if (tmp == NULL) {
+                return false;
+        }
+
+        p = cli->outbuf+len;
+        namelen = name_len((unsigned char *)tmp, talloc_get_size(tmp));
+        if (namelen > 0) {
+                memcpy(p, tmp, namelen);
+                len += namelen;
+        }
+        TALLOC_FREE(tmp);
+	/* Deliberately corrupt the name len (first byte) */
+	*p = 100;
+
+        /* send a session request (RFC 1002) */
+        /* setup the packet length
+         * Remove four bytes from the length count, since the length
+         * field in the NBT Session Service header counts the number
+         * of bytes which follow.  The cli_send_smb() function knows
+         * about this and accounts for those four bytes.
+         * CRH.
+         */
+        len -= 4;
+        _smb_setlen(cli->outbuf,len);
+        SCVAL(cli->outbuf,0,0x81);
+
+        cli_send_smb(cli);
+        DEBUG(5,("Sent session request\n"));
+
+        if (!cli_receive_smb(cli))
+                return False;
+
+        if (CVAL(cli->inbuf,0) != 0x82) {
+                /* This is the wrong place to put the error... JRA. */
+                cli->rap_error = CVAL(cli->inbuf,4);
+                return False;
+        }
+        return(True);
+}
+
+static struct cli_state *open_bad_nbt_connection(void)
+{
+	struct nmb_name called, calling;
+	struct sockaddr_storage ss;
+	struct cli_state *c;
+	NTSTATUS status;
+
+	make_nmb_name(&calling, myname, 0x0);
+	make_nmb_name(&called , host, 0x20);
+
+        zero_sockaddr(&ss);
+
+	if (!(c = cli_initialise_ex(signing_state))) {
+		printf("Failed initialize cli_struct to connect with %s\n", host);
+		return NULL;
+	}
+
+	c->port = 139;
+
+	status = cli_connect(c, host, &ss);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("Failed to connect with %s. Error %s\n", host, nt_errstr(status) );
+		return NULL;
+	}
+
+	c->timeout = 4000; /* set a short timeout (4 seconds) */
+
+	if (!cli_bad_session_request(c, &calling, &called)) {
+		printf("Failed to connect with %s. Error %s\n", host, nt_errstr(status) );
+		return NULL;
+	}
+
+	return c;
+}
+
 
 /* Insert a NULL at the first separator of the given path and return a pointer
  * to the remainder of the string.
@@ -289,7 +402,6 @@ static bool torture_open_connection_share(struct cli_state **c,
 				   const char *hostname, 
 				   const char *sharename)
 {
-	bool retry;
 	int flags = 0;
 	NTSTATUS status;
 
@@ -304,7 +416,7 @@ static bool torture_open_connection_share(struct cli_state **c,
 				     hostname, NULL, port_to_use, 
 				     sharename, "?????", 
 				     username, workgroup, 
-				     password, flags, Undefined, &retry);
+				     password, flags, signing_state);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("failed to open share connection: //%s/%s port:%d - %s\n",
 			hostname, sharename, port_to_use, nt_errstr(status));
@@ -379,8 +491,11 @@ bool torture_cli_session_setup2(struct cli_state *cli, uint16 *new_vuid)
 bool torture_close_connection(struct cli_state *c)
 {
 	bool ret = True;
-	if (!cli_tdis(c)) {
-		printf("tdis failed (%s)\n", cli_errstr(c));
+	NTSTATUS status;
+
+	status = cli_tdis(c);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("tdis failed (%s)\n", nt_errstr(status));
 		ret = False;
 	}
 
@@ -556,7 +671,7 @@ static bool rw_torture3(struct cli_state *c, char *lockfname)
 	unsigned countprev = 0;
 	ssize_t sent = 0;
 	bool correct = True;
-	NTSTATUS status;
+	NTSTATUS status = NT_STATUS_OK;
 
 	srandom(1);
 	for (i = 0; i < sizeof(buf); i += sizeof(uint32))
@@ -566,6 +681,10 @@ static bool rw_torture3(struct cli_state *c, char *lockfname)
 
 	if (procnum == 0)
 	{
+		if (!NT_STATUS_IS_OK(cli_unlink(c, lockfname, aSYSTEM | aHIDDEN))) {
+			printf("unlink failed (%s) (normal, this file should not exist)\n", cli_errstr(c));
+		}
+
 		if (!NT_STATUS_IS_OK(cli_open(c, lockfname, O_RDWR | O_CREAT | O_EXCL, 
 				 DENY_NONE, &fnum))) {
 			printf("first open read/write of %s failed (%s)\n",
@@ -776,7 +895,7 @@ static bool run_readwritemulti(int dummy)
 	return test;
 }
 
-static bool run_readwritelarge(int dummy)
+static bool run_readwritelarge_internal(int max_xmit_k)
 {
 	static struct cli_state *cli1;
 	uint16_t fnum1;
@@ -791,9 +910,17 @@ static bool run_readwritelarge(int dummy)
 	cli_sockopt(cli1, sockops);
 	memset(buf,'\0',sizeof(buf));
 
-	cli1->max_xmit = 128*1024;
+	cli1->max_xmit = max_xmit_k*1024;
 
-	printf("starting readwritelarge\n");
+	if (signing_state == Required) {
+		/* Horrible cheat to force
+		   multiple signed outstanding
+		   packets against a Samba server.
+		*/
+		cli1->is_samba = false;
+	}
+
+	printf("starting readwritelarge_internal\n");
 
 	cli_unlink(cli1, lockfname, aSYSTEM | aHIDDEN);
 
@@ -804,16 +931,18 @@ static bool run_readwritelarge(int dummy)
 
 	cli_write(cli1, fnum1, 0, buf, 0, sizeof(buf));
 
-	if (!cli_qfileinfo(cli1, fnum1, NULL, &fsize, NULL, NULL, NULL, NULL, NULL)) {
+	if (!NT_STATUS_IS_OK(cli_qfileinfo_basic(
+				     cli1, fnum1, NULL, &fsize, NULL, NULL,
+				     NULL, NULL, NULL))) {
 		printf("qfileinfo failed (%s)\n", cli_errstr(cli1));
 		correct = False;
 	}
 
 	if (fsize == sizeof(buf))
-		printf("readwritelarge test 1 succeeded (size = %lx)\n", 
+		printf("readwritelarge_internal test 1 succeeded (size = %lx)\n",
 		       (unsigned long)fsize);
 	else {
-		printf("readwritelarge test 1 failed (size = %lx)\n", 
+		printf("readwritelarge_internal test 1 failed (size = %lx)\n",
 		       (unsigned long)fsize);
 		correct = False;
 	}
@@ -835,18 +964,20 @@ static bool run_readwritelarge(int dummy)
 
 	cli1->max_xmit = 4*1024;
 
-	cli_smbwrite(cli1, fnum1, buf, 0, sizeof(buf));
+	cli_smbwrite(cli1, fnum1, buf, 0, sizeof(buf), NULL);
 
-	if (!cli_qfileinfo(cli1, fnum1, NULL, &fsize, NULL, NULL, NULL, NULL, NULL)) {
+	if (!NT_STATUS_IS_OK(cli_qfileinfo_basic(
+				     cli1, fnum1, NULL, &fsize, NULL, NULL,
+				     NULL, NULL, NULL))) {
 		printf("qfileinfo failed (%s)\n", cli_errstr(cli1));
 		correct = False;
 	}
 
 	if (fsize == sizeof(buf))
-		printf("readwritelarge test 2 succeeded (size = %lx)\n", 
+		printf("readwritelarge_internal test 2 succeeded (size = %lx)\n",
 		       (unsigned long)fsize);
 	else {
-		printf("readwritelarge test 2 failed (size = %lx)\n", 
+		printf("readwritelarge_internal test 2 failed (size = %lx)\n",
 		       (unsigned long)fsize);
 		correct = False;
 	}
@@ -857,7 +988,8 @@ static bool run_readwritelarge(int dummy)
 		printf("set allocation size to zero failed (%s)\n", cli_errstr(&cli1));
 		return False;
 	}
-	if (!cli_qfileinfo(cli1, fnum1, NULL, &fsize, NULL, NULL, NULL, NULL, NULL)) {
+	if (!cli_qfileinfo_basic(cli1, fnum1, NULL, &fsize, NULL, NULL, NULL,
+				 NULL, NULL)) {
 		printf("qfileinfo failed (%s)\n", cli_errstr(cli1));
 		correct = False;
 	}
@@ -874,6 +1006,20 @@ static bool run_readwritelarge(int dummy)
 		correct = False;
 	}
 	return correct;
+}
+
+static bool run_readwritelarge(int dummy)
+{
+	return run_readwritelarge_internal(128);
+}
+
+static bool run_readwritelarge_signtest(int dummy)
+{
+	bool ret;
+	signing_state = Required;
+	ret = run_readwritelarge_internal(2);
+	signing_state = Undefined;
+	return ret;
 }
 
 int line_count = 0;
@@ -1207,8 +1353,9 @@ static bool run_tcon_test(int dummy)
 
 	cli->cnum = cnum2;
 
-	if (!cli_tdis(cli)) {
-		printf("secondary tdis failed (%s)\n", cli_errstr(cli));
+	status = cli_tdis(cli);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("secondary tdis failed (%s)\n", nt_errstr(status));
 		return False;
 	}
 
@@ -1245,11 +1392,13 @@ static bool run_tcon2_test(int dummy)
 
 	status = cli_raw_tcon(cli, service, password, "?????", &max_xmit, &cnum);
 
+	SAFE_FREE(service);
+
 	if (!NT_STATUS_IS_OK(status)) {
-		printf("tcon2 failed : %s\n", cli_errstr(cli));
+		printf("tcon2 failed : %s\n", nt_errstr(status));
 	} else {
-		printf("tcon OK : max_xmit=%d cnum=%d tid=%d\n", 
-		       (int)max_xmit, (int)cnum, SVAL(cli->inbuf, smb_tid));
+		printf("tcon OK : max_xmit=%d cnum=%d\n",
+		       (int)max_xmit, (int)cnum);
 	}
 
 	if (!torture_close_connection(cli)) {
@@ -1314,7 +1463,6 @@ static bool tcon_devtest(struct cli_state *cli,
 static bool run_tcon_devtype_test(int dummy)
 {
 	static struct cli_state *cli1 = NULL;
-	bool retry;
 	int flags = 0;
 	NTSTATUS status;
 	bool ret = True;
@@ -1323,7 +1471,7 @@ static bool run_tcon_devtype_test(int dummy)
 				     host, NULL, port_to_use,
 				     NULL, NULL,
 				     username, workgroup,
-				     password, flags, Undefined, &retry);
+				     password, flags, signing_state);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("could not open connection\n");
@@ -2277,6 +2425,7 @@ static bool run_locktest9(int dummy)
 	pid_t child_pid;
 	char c = '\0';
 	int ret;
+	struct timeval start;
 	double seconds;
 	NTSTATUS status;
 
@@ -2349,7 +2498,7 @@ static bool run_locktest9(int dummy)
 	CatchSignal(SIGALRM, alarm_handler_parent);
 	alarm(20);
 
-	start_timer();
+	start = timeval_current();
 
 	if (!cli_lock(cli1, fnum, 0, 4, -1, WRITE_LOCK)) {
 		d_fprintf(stderr, "Unable to apply write lock on range 0:4, error was "
@@ -2358,7 +2507,7 @@ static bool run_locktest9(int dummy)
 	}
 	alarm(0);
 
-	seconds = end_timer();
+	seconds = timeval_elapsed(&start);
 
 	printf("Parent got the lock after %.2f seconds.\n",
 		seconds);
@@ -2632,21 +2781,41 @@ static void rand_buf(char *buf, int len)
 /* send smb negprot commands, not reading the response */
 static bool run_negprot_nowait(int dummy)
 {
+	struct tevent_context *ev;
 	int i;
-	static struct cli_state *cli;
+	struct cli_state *cli;
 	bool correct = True;
 
 	printf("starting negprot nowait test\n");
 
+	ev = tevent_context_init(talloc_tos());
+	if (ev == NULL) {
+		return false;
+	}
+
 	if (!(cli = open_nbt_connection())) {
+		TALLOC_FREE(ev);
 		return False;
 	}
 
 	for (i=0;i<50000;i++) {
-		cli_negprot_sendsync(cli);
+		struct tevent_req *req;
+
+		req = cli_negprot_send(ev, ev, cli);
+		if (req == NULL) {
+			TALLOC_FREE(ev);
+			return false;
+		}
+		if (!tevent_req_poll(req, ev)) {
+			d_fprintf(stderr, "tevent_req_poll failed: %s\n",
+				  strerror(errno));
+			TALLOC_FREE(ev);
+			return false;
+		}
+		TALLOC_FREE(req);
 	}
 
-	if (!torture_close_connection(cli)) {
+	if (torture_close_connection(cli)) {
 		correct = False;
 	}
 
@@ -2655,6 +2824,21 @@ static bool run_negprot_nowait(int dummy)
 	return correct;
 }
 
+/* send smb negprot commands, not reading the response */
+static bool run_bad_nbt_session(int dummy)
+{
+	static struct cli_state *cli;
+
+	printf("starting bad nbt session test\n");
+
+	if (!(cli = open_bad_nbt_connection())) {
+		return False;
+	}
+
+	cli_shutdown(cli);
+	printf("finished bad nbt session test\n");
+	return true;
+}
 
 /* send random IPC commands */
 static bool run_randomipc(int dummy)
@@ -2827,6 +3011,8 @@ static bool run_trans2test(int dummy)
 	const char *fname2 = "\\trans2\\trans2.tst";
 	char pname[1024];
 	bool correct = True;
+	NTSTATUS status;
+	uint32_t fs_attr;
 
 	printf("starting trans2 test\n");
 
@@ -2834,16 +3020,25 @@ static bool run_trans2test(int dummy)
 		return False;
 	}
 
+	status = cli_get_fs_attr_info(cli, &fs_attr);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ERROR: cli_get_fs_attr_info returned %s\n",
+		       nt_errstr(status));
+		correct = false;
+	}
+
 	cli_unlink(cli, fname, aSYSTEM | aHIDDEN);
 	cli_open(cli, fname, 
 			O_RDWR | O_CREAT | O_TRUNC, DENY_NONE, &fnum);
-	if (!cli_qfileinfo(cli, fnum, NULL, &size, &c_time_ts, &a_time_ts, &w_time_ts,
-			   &m_time_ts, NULL)) {
+	if (!NT_STATUS_IS_OK(cli_qfileinfo_basic(
+				     cli, fnum, NULL, &size, &c_time_ts,
+				     &a_time_ts, &w_time_ts,
+				     &m_time_ts, NULL))) {
 		printf("ERROR: qfileinfo failed (%s)\n", cli_errstr(cli));
 		correct = False;
 	}
 
-	if (!cli_qfilename(cli, fnum, pname, sizeof(pname))) {
+	if (!NT_STATUS_IS_OK(cli_qfilename(cli, fnum, pname, sizeof(pname)))) {
 		printf("ERROR: qfilename failed (%s)\n", cli_errstr(cli));
 		correct = False;
 	}
@@ -2866,8 +3061,10 @@ static bool run_trans2test(int dummy)
 	}
 	cli_close(cli, fnum);
 
-	if (!cli_qpathinfo(cli, fname, &c_time, &a_time, &m_time, &size, NULL)) {
-		printf("ERROR: qpathinfo failed (%s)\n", cli_errstr(cli));
+	status = cli_qpathinfo1(cli, fname, &c_time, &a_time, &m_time, &size,
+				NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ERROR: qpathinfo failed (%s)\n", nt_errstr(status));
 		correct = False;
 	} else {
 		if (c_time != m_time) {
@@ -2892,9 +3089,10 @@ static bool run_trans2test(int dummy)
 	cli_open(cli, fname, 
 			O_RDWR | O_CREAT | O_TRUNC, DENY_NONE, &fnum);
 	cli_close(cli, fnum);
-	if (!cli_qpathinfo2(cli, fname, &c_time_ts, &a_time_ts, &w_time_ts, 
-			    &m_time_ts, &size, NULL, NULL)) {
-		printf("ERROR: qpathinfo2 failed (%s)\n", cli_errstr(cli));
+	status = cli_qpathinfo2(cli, fname, &c_time_ts, &a_time_ts, &w_time_ts,
+				&m_time_ts, &size, NULL, NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ERROR: qpathinfo2 failed (%s)\n", nt_errstr(status));
 		correct = False;
 	} else {
 		if (w_time_ts.tv_sec < 60*60*24*2) {
@@ -2914,9 +3112,10 @@ static bool run_trans2test(int dummy)
 		correct = False;
 	}
 	sleep(3);
-	if (!cli_qpathinfo2(cli, "\\trans2\\", &c_time_ts, &a_time_ts, &w_time_ts, 
-			    &m_time_ts, &size, NULL, NULL)) {
-		printf("ERROR: qpathinfo2 failed (%s)\n", cli_errstr(cli));
+	status = cli_qpathinfo2(cli, "\\trans2\\", &c_time_ts, &a_time_ts,
+				&w_time_ts, &m_time_ts, &size, NULL, NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ERROR: qpathinfo2 failed (%s)\n", nt_errstr(status));
 		correct = False;
 	}
 
@@ -2924,9 +3123,10 @@ static bool run_trans2test(int dummy)
 			O_RDWR | O_CREAT | O_TRUNC, DENY_NONE, &fnum);
 	cli_write(cli, fnum,  0, (char *)&fnum, 0, sizeof(fnum));
 	cli_close(cli, fnum);
-	if (!cli_qpathinfo2(cli, "\\trans2\\", &c_time_ts, &a_time_ts, &w_time_ts, 
-			    &m_time2_ts, &size, NULL, NULL)) {
-		printf("ERROR: qpathinfo2 failed (%s)\n", cli_errstr(cli));
+	status = cli_qpathinfo2(cli, "\\trans2\\", &c_time_ts, &a_time_ts,
+				&w_time_ts, &m_time2_ts, &size, NULL, NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ERROR: qpathinfo2 failed (%s)\n", nt_errstr(status));
 		correct = False;
 	} else {
 		if (memcmp(&m_time_ts, &m_time2_ts, sizeof(struct timespec))
@@ -2951,22 +3151,24 @@ static bool run_trans2test(int dummy)
   This checks new W2K calls.
 */
 
-static bool new_trans(struct cli_state *pcli, int fnum, int level)
+static NTSTATUS new_trans(struct cli_state *pcli, int fnum, int level)
 {
-	char *buf = NULL;
+	uint8_t *buf = NULL;
 	uint32 len;
-	bool correct = True;
+	NTSTATUS status;
 
-	if (!cli_qfileinfo_test(pcli, fnum, level, &buf, &len)) {
-		printf("ERROR: qfileinfo (%d) failed (%s)\n", level, cli_errstr(pcli));
-		correct = False;
+	status = cli_qfileinfo(talloc_tos(), pcli, fnum, level, 0,
+			       pcli->max_xmit, &buf, &len);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ERROR: qfileinfo (%d) failed (%s)\n", level,
+		       nt_errstr(status));
 	} else {
 		printf("qfileinfo: level %d, len = %u\n", level, len);
 		dump_data(0, (uint8 *)buf, len);
 		printf("\n");
 	}
-	SAFE_FREE(buf);
-	return correct;
+	TALLOC_FREE(buf);
+	return status;
 }
 
 static bool run_w2ktest(int dummy)
@@ -3243,6 +3445,151 @@ static bool run_oplock3(int dummy)
 /* What are we looking for here?  What's sucess and what's FAILURE? */
 }
 
+/* handler for oplock 4 tests */
+bool *oplock4_shared_correct;
+
+static NTSTATUS oplock4_handler(struct cli_state *cli, uint16_t fnum, unsigned char level)
+{
+	printf("got oplock break fnum=%d level=%d\n",
+	       fnum, level);
+	*oplock4_shared_correct = true;
+	cli_oplock_ack(cli, fnum, level);
+	return NT_STATUS_UNSUCCESSFUL; /* Cause cli_receive_smb to return. */
+}
+
+static bool run_oplock4(int dummy)
+{
+	struct cli_state *cli1, *cli2;
+	const char *fname = "\\lockt4.lck";
+	const char *fname_ln = "\\lockt4_ln.lck";
+	uint16_t fnum1, fnum2;
+	int saved_use_oplocks = use_oplocks;
+	NTSTATUS status;
+	bool correct = true;
+
+	oplock4_shared_correct = (bool *)shm_setup(sizeof(bool));
+	*oplock4_shared_correct = false;
+
+	printf("starting oplock test 4\n");
+
+	if (!torture_open_connection(&cli1, 0)) {
+		use_level_II_oplocks = false;
+		use_oplocks = saved_use_oplocks;
+		return false;
+	}
+
+	if (!torture_open_connection(&cli2, 1)) {
+		use_level_II_oplocks = false;
+		use_oplocks = saved_use_oplocks;
+		return false;
+	}
+
+	cli_unlink(cli1, fname, aSYSTEM | aHIDDEN);
+	cli_unlink(cli1, fname_ln, aSYSTEM | aHIDDEN);
+
+	cli_sockopt(cli1, sockops);
+	cli_sockopt(cli2, sockops);
+
+	/* Create the file. */
+	if (!NT_STATUS_IS_OK(cli_open(cli1, fname, O_RDWR|O_CREAT|O_EXCL, DENY_NONE, &fnum1))) {
+		printf("open of %s failed (%s)\n", fname, cli_errstr(cli1));
+		return false;
+	}
+
+	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
+		printf("close1 failed (%s)\n", cli_errstr(cli1));
+		return false;
+	}
+
+	/* Now create a hardlink. */
+	if (!NT_STATUS_IS_OK(cli_nt_hardlink(cli1, fname, fname_ln))) {
+		printf("nt hardlink failed (%s)\n", cli_errstr(cli1));
+		return false;
+	}
+
+	/* Prove that opening hardlinks cause deny modes to conflict. */
+	if (!NT_STATUS_IS_OK(cli_open(cli1, fname, O_RDWR, DENY_ALL, &fnum1))) {
+		printf("open of %s failed (%s)\n", fname, cli_errstr(cli1));
+		return false;
+	}
+
+	status = cli_open(cli1, fname_ln, O_RDWR, DENY_NONE, &fnum2);
+	if (NT_STATUS_IS_OK(status)) {
+		printf("open of %s succeeded - should fail with sharing violation.\n",
+			fname_ln);
+		return false;
+	}
+
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_SHARING_VIOLATION)) {
+		printf("open of %s should fail with sharing violation. Got %s\n",
+			fname_ln, nt_errstr(status));
+		return false;
+	}
+
+	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
+		printf("close1 failed (%s)\n", cli_errstr(cli1));
+		return false;
+	}
+
+	cli1->use_oplocks = true;
+	cli1->use_level_II_oplocks = true;
+
+	cli2->use_oplocks = true;
+	cli2->use_level_II_oplocks = true;
+
+	cli_oplock_handler(cli1, oplock4_handler);
+	if (!NT_STATUS_IS_OK(cli_open(cli1, fname, O_RDWR, DENY_NONE, &fnum1))) {
+		printf("open of %s failed (%s)\n", fname, cli_errstr(cli1));
+		return false;
+	}
+
+	if (fork() == 0) {
+		/* Child code */
+		if (!NT_STATUS_IS_OK(cli_open(cli2, fname_ln, O_RDWR, DENY_NONE, &fnum2))) {
+			printf("open of %s failed (%s)\n", fname_ln, cli_errstr(cli1));
+			*oplock4_shared_correct = false;
+			exit(0);
+		}
+
+		if (!NT_STATUS_IS_OK(cli_close(cli2, fnum2))) {
+			printf("close2 failed (%s)\n", cli_errstr(cli1));
+			*oplock4_shared_correct = false;
+		}
+
+		exit(0);
+	}
+
+	sleep(2);
+
+	/* Process the oplock break. */
+	cli_receive_smb(cli1);
+
+	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
+		printf("close1 failed (%s)\n", cli_errstr(cli1));
+		correct = false;
+	}
+
+	if (!NT_STATUS_IS_OK(cli_unlink(cli1, fname, aSYSTEM | aHIDDEN))) {
+		printf("unlink failed (%s)\n", cli_errstr(cli1));
+		correct = false;
+	}
+	if (!NT_STATUS_IS_OK(cli_unlink(cli1, fname_ln, aSYSTEM | aHIDDEN))) {
+		printf("unlink failed (%s)\n", cli_errstr(cli1));
+		correct = false;
+	}
+
+	if (!torture_close_connection(cli1)) {
+		correct = false;
+	}
+
+	if (!*oplock4_shared_correct) {
+		correct = false;
+	}
+
+	printf("finished oplock test 4\n");
+
+	return correct;
+}
 
 
 /*
@@ -3277,17 +3624,6 @@ static bool run_deletetest(int dummy)
 		correct = False;
 		goto fail;
 	}
-
-#if 0 /* JRATEST */
-        {
-                uint32 *accinfo = NULL;
-                uint32 len;
-                cli_qfileinfo_test(cli1, fnum1, SMB_FILE_ACCESS_INFORMATION, (char **)&accinfo, &len);
-		if (accinfo)
-	                printf("access mode = 0x%lx\n", *accinfo);
-                SAFE_FREE(accinfo);
-        }
-#endif
 
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
 		printf("[1] close failed (%s)\n", cli_errstr(cli1));
@@ -3692,6 +4028,116 @@ static bool run_deletetest(int dummy)
 	return correct;
 }
 
+static bool run_deletetest_ln(int dummy)
+{
+	struct cli_state *cli;
+	const char *fname = "\\delete1";
+	const char *fname_ln = "\\delete1_ln";
+	uint16_t fnum;
+	uint16_t fnum1;
+	NTSTATUS status;
+	bool correct = true;
+	time_t t;
+
+	printf("starting deletetest-ln\n");
+
+	if (!torture_open_connection(&cli, 0)) {
+		return false;
+	}
+
+	cli_unlink(cli, fname, aSYSTEM | aHIDDEN);
+	cli_unlink(cli, fname_ln, aSYSTEM | aHIDDEN);
+
+	cli_sockopt(cli, sockops);
+
+	/* Create the file. */
+	if (!NT_STATUS_IS_OK(cli_open(cli, fname, O_RDWR|O_CREAT|O_EXCL, DENY_NONE, &fnum))) {
+		printf("open of %s failed (%s)\n", fname, cli_errstr(cli));
+		return false;
+	}
+
+	if (!NT_STATUS_IS_OK(cli_close(cli, fnum))) {
+		printf("close1 failed (%s)\n", cli_errstr(cli));
+		return false;
+	}
+
+	/* Now create a hardlink. */
+	if (!NT_STATUS_IS_OK(cli_nt_hardlink(cli, fname, fname_ln))) {
+		printf("nt hardlink failed (%s)\n", cli_errstr(cli));
+		return false;
+	}
+
+	/* Open the original file. */
+	status = cli_ntcreate(cli, fname, 0, FILE_READ_DATA,
+			FILE_ATTRIBUTE_NORMAL,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			FILE_OPEN_IF, 0, 0, &fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ntcreate of %s failed (%s)\n", fname, nt_errstr(status));
+		return false;
+	}
+
+	/* Unlink the hard link path. */
+	status = cli_ntcreate(cli, fname_ln, 0, DELETE_ACCESS,
+			FILE_ATTRIBUTE_NORMAL,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			FILE_OPEN_IF, 0, 0, &fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ntcreate of %s failed (%s)\n", fname_ln, nt_errstr(status));
+		return false;
+	}
+	status = cli_nt_delete_on_close(cli, fnum1, true);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("(%s) failed to set delete_on_close %s: %s\n",
+			__location__, fname_ln, nt_errstr(status));
+		return false;
+	}
+
+	status = cli_close(cli, fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("close %s failed (%s)\n",
+			fname_ln, nt_errstr(status));
+		return false;
+	}
+
+	status = cli_close(cli, fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("close %s failed (%s)\n",
+			fname, nt_errstr(status));
+		return false;
+	}
+
+	/* Ensure the original file is still there. */
+        status = cli_getatr(cli, fname, NULL, NULL, &t);
+        if (!NT_STATUS_IS_OK(status)) {
+                printf("%s getatr on file %s failed (%s)\n",
+			__location__,
+			fname,
+			nt_errstr(status));
+                correct = False;
+        }
+
+	/* Ensure the link path is gone. */
+	status = cli_getatr(cli, fname_ln, NULL, NULL, &t);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_NAME_NOT_FOUND)) {
+                printf("%s, getatr for file %s returned wrong error code %s "
+			"- should have been deleted\n",
+			__location__,
+			fname_ln, nt_errstr(status));
+                correct = False;
+        }
+
+	cli_unlink(cli, fname, aSYSTEM | aHIDDEN);
+	cli_unlink(cli, fname_ln, aSYSTEM | aHIDDEN);
+
+	if (!torture_close_connection(cli)) {
+		correct = false;
+	}
+
+	printf("finished deletetest-ln\n");
+
+	return correct;
+}
 
 /*
   print out server properties
@@ -3790,6 +4236,7 @@ static bool run_rename(int dummy)
 	const char *fname1 = "\\test1.txt";
 	bool correct = True;
 	uint16_t fnum1;
+	uint16_t attr;
 	NTSTATUS status;
 
 	printf("starting rename test\n");
@@ -3944,11 +4391,28 @@ static bool run_rename(int dummy)
           } */
 
         /*--*/
-
-
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
 		printf("close - 5 failed (%s)\n", cli_errstr(cli1));
 		return False;
+	}
+
+	/* Check that the renamed file has FILE_ATTRIBUTE_ARCHIVE. */
+	if (!NT_STATUS_IS_OK(cli_getatr(cli1, fname1, &attr, NULL, NULL))) {
+		printf("getatr on file %s failed - %s ! \n",
+			fname1,
+			cli_errstr(cli1));
+		correct = False;
+	} else {
+		if (attr != FILE_ATTRIBUTE_ARCHIVE) {
+			printf("Renamed file %s has wrong attr 0x%x "
+				"(should be 0x%x)\n",
+				fname1,
+				attr,
+				(unsigned int)FILE_ATTRIBUTE_ARCHIVE);
+			correct = False;
+		} else {
+			printf("Renamed file %s has archive bit set\n", fname1);
+		}
 	}
 
 	cli_unlink(cli1, fname, aSYSTEM | aHIDDEN);
@@ -4002,6 +4466,7 @@ static bool run_opentest(int dummy)
 	SMB_OFF_T fsize;
 	bool correct = True;
 	char *tmp_path;
+	NTSTATUS status;
 
 	printf("starting open test\n");
 
@@ -4130,8 +4595,7 @@ static bool run_opentest(int dummy)
 
 	cli_unlink(cli1, fname, aSYSTEM | aHIDDEN);
 
-
-	printf("testing ctemp\n");
+	printf("Do ctemp tests\n");
 	if (!NT_STATUS_IS_OK(cli_ctemp(cli1, talloc_tos(), "\\", &fnum1, &tmp_path))) {
 		printf("ctemp failed (%s)\n", cli_errstr(cli1));
 		return False;
@@ -4159,22 +4623,22 @@ static bool run_opentest(int dummy)
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli1, fname, 0, FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OVERWRITE_IF, 0, 0, &fnum1))) {
-		printf("test 1 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #1 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli2, fname, 0, FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OPEN_IF, 0, 0, &fnum2))) {
-		printf("test 1 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #1 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
-		printf("test 1 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #1 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 	if (!NT_STATUS_IS_OK(cli_close(cli2, fnum2))) {
-		printf("test 1 close 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #1 close 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
@@ -4186,22 +4650,22 @@ static bool run_opentest(int dummy)
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli1, fname, 0, DELETE_ACCESS|FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OVERWRITE_IF, 0, 0, &fnum1))) {
-		printf("test 2 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #2 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli2, fname, 0, FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OPEN_IF, 0, 0, &fnum2))) {
-		printf("test 2 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #2 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
-		printf("test 1 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #2 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 	if (!NT_STATUS_IS_OK(cli_close(cli2, fnum2))) {
-		printf("test 1 close 2 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #2 close 2 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
@@ -4213,22 +4677,22 @@ static bool run_opentest(int dummy)
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli1, fname, 0, FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OVERWRITE_IF, 0, 0, &fnum1))) {
-		printf("test 3 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #3 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli2, fname, 0, DELETE_ACCESS|FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OPEN_IF, 0, 0, &fnum2))) {
-		printf("test 3 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #3 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
-		printf("test 3 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #3 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 	if (!NT_STATUS_IS_OK(cli_close(cli2, fnum2))) {
-		printf("test 3 close 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #3 close 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
@@ -4240,20 +4704,20 @@ static bool run_opentest(int dummy)
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli1, fname, 0, DELETE_ACCESS|FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OVERWRITE_IF, 0, 0, &fnum1))) {
-		printf("test 4 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #4 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (NT_STATUS_IS_OK(cli_ntcreate(cli2, fname, 0, DELETE_ACCESS|FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OPEN_IF, 0, 0, &fnum2))) {
-		printf("test 4 open 2 of %s SUCCEEDED - should have failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #4 open 2 of %s SUCCEEDED - should have failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
-	printf("test 3 open 2 of %s gave %s (correct error should be %s)\n", fname, cli_errstr(cli2), "sharing violation");
+	printf("TEST #4 open 2 of %s gave %s (correct error should be %s)\n", fname, cli_errstr(cli2), "sharing violation");
 
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
-		printf("test 4 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #4 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
@@ -4265,23 +4729,23 @@ static bool run_opentest(int dummy)
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli1, fname, 0, DELETE_ACCESS|FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_DELETE, FILE_OVERWRITE_IF, 0, 0, &fnum1))) {
-		printf("test 5 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #5 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli2, fname, 0, DELETE_ACCESS|FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_DELETE, FILE_OPEN_IF, 0, 0, &fnum2))) {
-		printf("test 5 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #5 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
-		printf("test 5 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #5 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_close(cli2, fnum2))) {
-		printf("test 5 close 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #5 close 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
@@ -4293,23 +4757,23 @@ static bool run_opentest(int dummy)
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli1, fname, 0, FILE_READ_DATA, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OVERWRITE_IF, 0, 0, &fnum1))) {
-		printf("test 6 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #6 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli2, fname, 0, FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_READ, FILE_OPEN_IF, 0, 0, &fnum2))) {
-		printf("test 6 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #6 open 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
-		printf("test 6 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #6 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (!NT_STATUS_IS_OK(cli_close(cli2, fnum2))) {
-		printf("test 6 close 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #6 close 2 of %s failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
@@ -4321,26 +4785,51 @@ static bool run_opentest(int dummy)
 
 	if (!NT_STATUS_IS_OK(cli_ntcreate(cli1, fname, 0, FILE_READ_DATA, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_NONE, FILE_OVERWRITE_IF, 0, 0, &fnum1))) {
-		printf("test 7 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #7 open 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	if (NT_STATUS_IS_OK(cli_ntcreate(cli2, fname, 0, DELETE_ACCESS|FILE_READ_ATTRIBUTES, FILE_ATTRIBUTE_NORMAL,
 				   FILE_SHARE_READ|FILE_SHARE_DELETE, FILE_OPEN_IF, 0, 0, &fnum2))) {
-		printf("test 7 open 2 of %s SUCCEEDED - should have failed (%s)\n", fname, cli_errstr(cli2));
+		printf("TEST #7 open 2 of %s SUCCEEDED - should have failed (%s)\n", fname, cli_errstr(cli2));
 		return False;
 	}
 
-	printf("test 7 open 2 of %s gave %s (correct error should be %s)\n", fname, cli_errstr(cli2), "sharing violation");
+	printf("TEST #7 open 2 of %s gave %s (correct error should be %s)\n", fname, cli_errstr(cli2), "sharing violation");
 
 	if (!NT_STATUS_IS_OK(cli_close(cli1, fnum1))) {
-		printf("test 7 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
+		printf("TEST #7 close 1 of %s failed (%s)\n", fname, cli_errstr(cli1));
 		return False;
 	}
 
 	printf("non-io open test #7 passed.\n");
 
 	cli_unlink(cli1, fname, aSYSTEM | aHIDDEN);
+
+	printf("TEST #8 testing open without WRITE_ATTRIBUTES, updating close write time.\n");
+	status = cli_ntcreate(cli1, fname, 0, FILE_WRITE_DATA, FILE_ATTRIBUTE_NORMAL,
+				FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+				FILE_OVERWRITE_IF, 0, 0, &fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("TEST #8 open of %s failed (%s)\n", fname, nt_errstr(status));
+		correct = false;
+		goto out;
+	}
+
+	/* Write to ensure we have to update the file time. */
+	if (cli_write(cli1, fnum1, 0, "TEST DATA\n", 0, 10) != 10) {
+		printf("TEST #8 cli_write failed: %s\n", cli_errstr(cli1));
+		correct = false;
+		goto out;
+	}
+
+        status = cli_close(cli1, fnum1);
+        if (!NT_STATUS_IS_OK(status)) {
+                printf("TEST #8 close of %s failed (%s)\n", fname, nt_errstr(status));
+		correct = false;
+        }
+
+  out:
 
 	if (!torture_close_connection(cli1)) {
 		correct = False;
@@ -4350,6 +4839,36 @@ static bool run_opentest(int dummy)
 	}
 
 	return correct;
+}
+
+NTSTATUS torture_setup_unix_extensions(struct cli_state *cli)
+{
+	uint16 major, minor;
+	uint32 caplow, caphigh;
+	NTSTATUS status;
+
+	if (!SERVER_HAS_UNIX_CIFS(cli)) {
+		printf("Server doesn't support UNIX CIFS extensions.\n");
+		return NT_STATUS_NOT_SUPPORTED;
+	}
+
+	status = cli_unix_extensions_version(cli, &major, &minor, &caplow,
+					     &caphigh);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("Server didn't return UNIX CIFS extensions: %s\n",
+		       nt_errstr(status));
+		return status;
+	}
+
+	status = cli_set_unix_extensions_capabilities(cli, major, minor,
+						      caplow, caphigh);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("Server doesn't support setting UNIX CIFS extensions: "
+		       "%s.\n", nt_errstr(status));
+		return status;
+        }
+
+	return NT_STATUS_OK;
 }
 
 /*
@@ -4364,8 +4883,6 @@ static bool run_simple_posix_open_test(int dummy)
 	const char *dname = "posix:dir";
 	char buf[10];
 	char namebuf[11];
-	uint16 major, minor;
-	uint32 caplow, caphigh;
 	uint16_t fnum1 = (uint16_t)-1;
 	SMB_STRUCT_STAT sbuf;
 	bool correct = false;
@@ -4379,24 +4896,10 @@ static bool run_simple_posix_open_test(int dummy)
 
 	cli_sockopt(cli1, sockops);
 
-	if (!SERVER_HAS_UNIX_CIFS(cli1)) {
-		printf("Server doesn't support UNIX CIFS extensions.\n");
-		return false;
-	}
-
-	status = cli_unix_extensions_version(cli1, &major, &minor, &caplow,
-					     &caphigh);
+	status = torture_setup_unix_extensions(cli1);
 	if (!NT_STATUS_IS_OK(status)) {
-		printf("Server didn't return UNIX CIFS extensions: %s\n",
-		       nt_errstr(status));
 		return false;
 	}
-
-	if (!cli_set_unix_extensions_capabilities(cli1,
-			major, minor, caplow, caphigh)) {
-		printf("Server doesn't support setting UNIX CIFS extensions.\n");
-		return false;
-        }
 
 	cli_setatr(cli1, fname, 0, 0);
 	cli_posix_unlink(cli1, fname);
@@ -4752,9 +5255,14 @@ static bool run_openattrtest(int dummy)
 	return correct;
 }
 
-static void list_fn(const char *mnt, file_info *finfo, const char *name, void *state)
+static NTSTATUS list_fn(const char *mnt, struct file_info *finfo,
+		    const char *name, void *state)
 {
-
+	int *matched = (int *)state;
+	if (matched != NULL) {
+		*matched += 1;
+	}
+	return NT_STATUS_OK;
 }
 
 /*
@@ -4765,8 +5273,9 @@ static bool run_dirtest(int dummy)
 	int i;
 	static struct cli_state *cli;
 	uint16_t fnum;
-	double t1;
+	struct timeval core_start;
 	bool correct = True;
+	int matched;
 
 	printf("starting directory test\n");
 
@@ -4787,13 +5296,21 @@ static bool run_dirtest(int dummy)
 		cli_close(cli, fnum);
 	}
 
-	t1 = end_timer();
+	core_start = timeval_current();
 
-	printf("Matched %d\n", cli_list(cli, "a*.*", 0, list_fn, NULL));
-	printf("Matched %d\n", cli_list(cli, "b*.*", 0, list_fn, NULL));
-	printf("Matched %d\n", cli_list(cli, "xyzabc", 0, list_fn, NULL));
+	matched = 0;
+	cli_list(cli, "a*.*", 0, list_fn, &matched);
+	printf("Matched %d\n", matched);
 
-	printf("dirtest core %g seconds\n", end_timer() - t1);
+	matched = 0;
+	cli_list(cli, "b*.*", 0, list_fn, &matched);
+	printf("Matched %d\n", matched);
+
+	matched = 0;
+	cli_list(cli, "xyzabc", 0, list_fn, &matched);
+	printf("Matched %d\n", matched);
+
+	printf("dirtest core %g seconds\n", timeval_elapsed(&core_start));
 
 	srandom(0);
 	for (i=0;i<torture_numops;i++) {
@@ -4811,14 +5328,15 @@ static bool run_dirtest(int dummy)
 	return correct;
 }
 
-static void del_fn(const char *mnt, file_info *finfo, const char *mask, void *state)
+static NTSTATUS del_fn(const char *mnt, struct file_info *finfo, const char *mask,
+		   void *state)
 {
 	struct cli_state *pcli = (struct cli_state *)state;
 	fstring fname;
 	slprintf(fname, sizeof(fname), "\\LISTDIR\\%s", finfo->name);
 
 	if (strcmp(finfo->name, ".") == 0 || strcmp(finfo->name, "..") == 0)
-		return;
+		return NT_STATUS_OK;
 
 	if (finfo->mode & aDIR) {
 		if (!NT_STATUS_IS_OK(cli_rmdir(pcli, fname)))
@@ -4827,6 +5345,7 @@ static void del_fn(const char *mnt, file_info *finfo, const char *mask, void *st
 		if (!NT_STATUS_IS_OK(cli_unlink(pcli, fname, aSYSTEM | aHIDDEN)))
 			printf("del_fn: failed to unlink %s\n,", fname );
 	}
+	return NT_STATUS_OK;
 }
 
 
@@ -4856,13 +5375,13 @@ bool torture_ioctl_test(int dummy)
 	}
 
 	status = cli_raw_ioctl(cli, fnum, 0x2d0000 | (0x0420<<2), &blob);
-	printf("ioctl device info: %s\n", cli_errstr(cli));
+	printf("ioctl device info: %s\n", nt_errstr(status));
 
 	status = cli_raw_ioctl(cli, fnum, IOCTL_QUERY_JOB_INFO, &blob);
-	printf("ioctl job info: %s\n", cli_errstr(cli));
+	printf("ioctl job info: %s\n", nt_errstr(status));
 
 	for (device=0;device<0x100;device++) {
-		printf("testing device=0x%x\n", device);
+		printf("ioctl test with device = 0x%x\n", device);
 		for (function=0;function<0x100;function++) {
 			uint32 code = (device<<16) | function;
 
@@ -4975,6 +5494,7 @@ static bool run_eatest(int dummy)
 	size_t num_eas;
 	struct ea_struct *ea_list = NULL;
 	TALLOC_CTX *mem_ctx = talloc_init("eatest");
+	NTSTATUS status;
 
 	printf("starting eatest\n");
 
@@ -4998,8 +5518,10 @@ static bool run_eatest(int dummy)
 
 		slprintf(ea_name, sizeof(ea_name), "EA_%d", i);
 		memset(ea_val, (char)i+1, i+1);
-		if (!cli_set_ea_fnum(cli, fnum, ea_name, ea_val, i+1)) {
-			printf("ea_set of name %s failed - %s\n", ea_name, cli_errstr(cli));
+		status = cli_set_ea_fnum(cli, fnum, ea_name, ea_val, i+1);
+		if (!NT_STATUS_IS_OK(status)) {
+			printf("ea_set of name %s failed - %s\n", ea_name,
+			       nt_errstr(status));
 			talloc_destroy(mem_ctx);
 			return False;
 		}
@@ -5011,15 +5533,18 @@ static bool run_eatest(int dummy)
 
 		slprintf(ea_name, sizeof(ea_name), "EA_%d", i+10);
 		memset(ea_val, (char)i+1, i+1);
-		if (!cli_set_ea_path(cli, fname, ea_name, ea_val, i+1)) {
-			printf("ea_set of name %s failed - %s\n", ea_name, cli_errstr(cli));
+		status = cli_set_ea_path(cli, fname, ea_name, ea_val, i+1);
+		if (!NT_STATUS_IS_OK(status)) {
+			printf("ea_set of name %s failed - %s\n", ea_name,
+			       nt_errstr(status));
 			talloc_destroy(mem_ctx);
 			return False;
 		}
 	}
 
-	if (!cli_get_ea_list_path(cli, fname, mem_ctx, &num_eas, &ea_list)) {
-		printf("ea_get list failed - %s\n", cli_errstr(cli));
+	status = cli_get_ea_list_path(cli, fname, mem_ctx, &num_eas, &ea_list);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ea_get list failed - %s\n", nt_errstr(status));
 		correct = False;
 	}
 
@@ -5045,16 +5570,19 @@ static bool run_eatest(int dummy)
 	for (i = 0; i < 20; i++) {
 		fstring ea_name;
 		slprintf(ea_name, sizeof(ea_name), "ea_%d", i);
-		if (!cli_set_ea_path(cli, fname, ea_name, "", 0)) {
-			printf("ea_set of name %s failed - %s\n", ea_name, cli_errstr(cli));
+		status = cli_set_ea_path(cli, fname, ea_name, "", 0);
+		if (!NT_STATUS_IS_OK(status)) {
+			printf("ea_set of name %s failed - %s\n", ea_name,
+			       nt_errstr(status));
 			talloc_destroy(mem_ctx);
 			return False;
 		}
 	}
 #endif
 
-	if (!cli_get_ea_list_path(cli, fname, mem_ctx, &num_eas, &ea_list)) {
-		printf("ea_get list failed - %s\n", cli_errstr(cli));
+	status = cli_get_ea_list_path(cli, fname, mem_ctx, &num_eas, &ea_list);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("ea_get list failed - %s\n", nt_errstr(status));
 		correct = False;
 	}
 
@@ -5071,8 +5599,10 @@ static bool run_eatest(int dummy)
 	}
 
 	/* Try and delete a non existant EA. */
-	if (!cli_set_ea_path(cli, fname, "foo", "", 0)) {
-		printf("deleting non-existant EA 'foo' should succeed. %s\n", cli_errstr(cli));
+	status = cli_set_ea_path(cli, fname, "foo", "", 0);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("deleting non-existant EA 'foo' should succeed. %s\n",
+		       nt_errstr(status));
 		correct = False;
 	}
 
@@ -5126,7 +5656,8 @@ static bool run_dirtest1(int dummy)
 	}
 
 	/* Now ensure that doing an old list sees both files and directories. */
-	num_seen = cli_list_old(cli, "\\LISTDIR\\*", aDIR, list_fn, NULL);
+	num_seen = 0;
+	cli_list_old(cli, "\\LISTDIR\\*", aDIR, list_fn, &num_seen);
 	printf("num_seen = %d\n", num_seen );
 	/* We should see 100 files + 1000 directories + . and .. */
 	if (num_seen != 2002)
@@ -5135,12 +5666,14 @@ static bool run_dirtest1(int dummy)
 	/* Ensure if we have the "must have" bits we only see the
 	 * relevent entries.
 	 */
-	num_seen = cli_list_old(cli, "\\LISTDIR\\*", (aDIR<<8)|aDIR, list_fn, NULL);
+	num_seen = 0;
+	cli_list_old(cli, "\\LISTDIR\\*", (aDIR<<8)|aDIR, list_fn, &num_seen);
 	printf("num_seen = %d\n", num_seen );
 	if (num_seen != 1002)
 		correct = False;
 
-	num_seen = cli_list_old(cli, "\\LISTDIR\\*", (aARCH<<8)|aDIR, list_fn, NULL);
+	num_seen = 0;
+	cli_list_old(cli, "\\LISTDIR\\*", (aARCH<<8)|aDIR, list_fn, &num_seen);
 	printf("num_seen = %d\n", num_seen );
 	if (num_seen != 1000)
 		correct = False;
@@ -5312,9 +5845,10 @@ static bool run_sesssetup_bench(int dummy)
 
 		d_printf("\r%d   ", (int)c->vuid);
 
-		if (!cli_ulogoff(c)) {
+		status = cli_ulogoff(c);
+		if (!NT_STATUS_IS_OK(status)) {
 			d_printf("(%s) cli_ulogoff failed: %s\n",
-				 __location__, cli_errstr(c));
+				 __location__, nt_errstr(status));
 			return false;
 		}
 		c->vuid = 0;
@@ -5450,7 +5984,7 @@ static bool run_chain2(int dummy)
 
 	printf("starting chain2 test\n");
 	status = cli_start_connection(&cli1, global_myname(), host, NULL,
-				      port_to_use, Undefined, 0, NULL);
+				      port_to_use, Undefined, 0);
 	if (!NT_STATUS_IS_OK(status)) {
 		return False;
 	}
@@ -5787,7 +6321,8 @@ static bool run_notify_bench(int dummy)
 	struct tevent_context *ev;
 	NTSTATUS status;
 	uint16_t dnum;
-	struct tevent_req *req1, *req2;
+	struct tevent_req *req1;
+	struct tevent_req *req2 = NULL;
 	int i, num_unc_names;
 	int num_finished = 0;
 
@@ -5923,10 +6458,11 @@ static bool run_mangle1(int dummy)
 	}
 	cli_close(cli, fnum);
 
-	if (!cli_qpathinfo(cli, alt_name, &change_time, &access_time,
-			   &write_time, &size, &mode)) {
-		d_printf("cli_qpathinfo(%s) failed: %s\n", alt_name,
-			 cli_errstr(cli));
+	status = cli_qpathinfo1(cli, alt_name, &change_time, &access_time,
+				&write_time, &size, &mode);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("cli_qpathinfo1(%s) failed: %s\n", alt_name,
+			 nt_errstr(status));
 		return false;
 	}
 
@@ -5955,6 +6491,7 @@ static bool run_windows_write(int dummy)
 	int i;
 	bool ret = false;
 	const char *fname = "\\writetest.txt";
+	struct timeval start_time;
 	double seconds;
 	double kbytes;
 
@@ -5970,7 +6507,7 @@ static bool run_windows_write(int dummy)
 
 	cli_sockopt(cli1, sockops);
 
-	start_timer();
+	start_time = timeval_current();
 
 	for (i=0; i<torture_numops; i++) {
 		char c = 0;
@@ -5992,7 +6529,7 @@ static bool run_windows_write(int dummy)
 		}
 	}
 
-	seconds = end_timer();
+	seconds = timeval_elapsed(&start_time);
 	kbytes = (double)torture_blocksize * torture_numops;
 	kbytes /= 1024;
 
@@ -6032,6 +6569,7 @@ static bool run_uid_regression_test(int dummy)
 	int16_t old_vuid;
 	int16_t old_cnum;
 	bool correct = True;
+	NTSTATUS status;
 
 	printf("starting uid regression test\n");
 
@@ -6044,9 +6582,10 @@ static bool run_uid_regression_test(int dummy)
 	/* Ok - now save then logoff our current user. */
 	old_vuid = cli->vuid;
 
-	if (!cli_ulogoff(cli)) {
+	status = cli_ulogoff(cli);
+	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("(%s) cli_ulogoff failed: %s\n",
-			__location__, cli_errstr(cli));
+			 __location__, nt_errstr(status));
 		correct = false;
 		goto out;
 	}
@@ -6054,11 +6593,18 @@ static bool run_uid_regression_test(int dummy)
 	cli->vuid = old_vuid;
 
 	/* Try an operation. */
-	if (!NT_STATUS_IS_OK(cli_mkdir(cli, "\\uid_reg_test"))) {
-		/* We expect bad uid. */
+	status = cli_mkdir(cli, "\\uid_reg_test");
+	if (NT_STATUS_IS_OK(status)) {
+		d_printf("(%s) cli_mkdir succeeded\n",
+			 __location__);
+		correct = false;
+		goto out;
+	} else {
+		/* Should be bad uid. */
 		if (!check_error(__LINE__, cli, ERRSRV, ERRbaduid,
-				NT_STATUS_NO_SUCH_USER)) {
-			return False;
+				NT_STATUS_USER_SESSION_DELETED)) {
+			correct = false;
+			goto out;
 		}
 	}
 
@@ -6068,23 +6614,31 @@ static bool run_uid_regression_test(int dummy)
 	cli->vuid = 0;
 
 	/* This should succeed. */
-	if (cli_tdis(cli)) {
-		printf("First tdis with invalid vuid should succeed.\n");
+	status = cli_tdis(cli);
+
+	if (NT_STATUS_IS_OK(status)) {
+		d_printf("First tdis with invalid vuid should succeed.\n");
 	} else {
-		printf("First tdis failed (%s)\n", cli_errstr(cli));
+		d_printf("First tdis failed (%s)\n", nt_errstr(status));
+		correct = false;
+		goto out;
 	}
 
 	cli->vuid = old_vuid;
 	cli->cnum = old_cnum;
 
 	/* This should fail. */
-	if (cli_tdis(cli)) {
-		printf("Second tdis with invalid vuid should fail - succeeded instead !.\n");
+	status = cli_tdis(cli);
+	if (NT_STATUS_IS_OK(status)) {
+		d_printf("Second tdis with invalid vuid should fail - succeeded instead !.\n");
+		correct = false;
+		goto out;
 	} else {
 		/* Should be bad tid. */
 		if (!check_error(__LINE__, cli, ERRSRV, ERRinvnid,
 				NT_STATUS_NETWORK_NAME_DELETED)) {
-			return False;
+			correct = false;
+			goto out;
 		}
 	}
 
@@ -6100,30 +6654,40 @@ static bool run_uid_regression_test(int dummy)
 static const char *illegal_chars = "*\\/?<>|\":";
 static char force_shortname_chars[] = " +,.[];=\177";
 
-static void shortname_del_fn(const char *mnt, file_info *finfo, const char *mask, void *state)
+static NTSTATUS shortname_del_fn(const char *mnt, struct file_info *finfo,
+			     const char *mask, void *state)
 {
 	struct cli_state *pcli = (struct cli_state *)state;
 	fstring fname;
+	NTSTATUS status = NT_STATUS_OK;
+
 	slprintf(fname, sizeof(fname), "\\shortname\\%s", finfo->name);
 
 	if (strcmp(finfo->name, ".") == 0 || strcmp(finfo->name, "..") == 0)
-		return;
+		return NT_STATUS_OK;
 
 	if (finfo->mode & aDIR) {
-		if (!NT_STATUS_IS_OK(cli_rmdir(pcli, fname)))
+		status = cli_rmdir(pcli, fname);
+		if (!NT_STATUS_IS_OK(status)) {
 			printf("del_fn: failed to rmdir %s\n,", fname );
+		}
 	} else {
-		if (!NT_STATUS_IS_OK(cli_unlink(pcli, fname, aSYSTEM | aHIDDEN)))
+		status = cli_unlink(pcli, fname, aSYSTEM | aHIDDEN);
+		if (!NT_STATUS_IS_OK(status)) {
 			printf("del_fn: failed to unlink %s\n,", fname );
+		}
 	}
+	return status;
 }
 
 struct sn_state {
+	int matched;
 	int i;
 	bool val;
 };
 
-static void shortname_list_fn(const char *mnt, file_info *finfo, const char *name, void *state)
+static NTSTATUS shortname_list_fn(const char *mnt, struct file_info *finfo,
+			      const char *name, void *state)
 {
 	struct sn_state *s = (struct sn_state  *)state;
 	int i = s->i;
@@ -6146,6 +6710,8 @@ static void shortname_list_fn(const char *mnt, file_info *finfo, const char *nam
 			__location__, finfo->short_name, finfo->name);
 		s->val = true;
 	}
+	s->matched += 1;
+	return NT_STATUS_OK;
 }
 
 static bool run_shortname_test(int dummy)
@@ -6200,7 +6766,11 @@ static bool run_shortname_test(int dummy)
 			goto out;
 		}
 		cli_close(cli, fnum);
-		if (cli_list(cli, "\\shortname\\test*.*", 0, shortname_list_fn, &s) != 1) {
+
+		s.matched = 0;
+		cli_list(cli, "\\shortname\\test*.*", 0, shortname_list_fn,
+			 &s);
+		if (s.matched != 1) {
 			d_printf("(%s) failed to list %s: %s\n",
 				__location__, fname, cli_errstr(cli));
 			correct = false;
@@ -6261,6 +6831,7 @@ static bool run_tldap(int dummy)
 	struct tevent_context *ev;
 	struct tevent_req *req;
 	char *basedn;
+	const char *filter;
 
 	if (!resolve_name(host, &addr, 0, false)) {
 		d_printf("could not find host %s\n", host);
@@ -6314,9 +6885,94 @@ static bool run_tldap(int dummy)
 
 	TALLOC_FREE(req);
 
+	/* test search filters against rootDSE */
+	filter = "(&(|(name=samba)(nextRid<=10000000)(usnChanged>=10)(samba~=ambas)(!(name=s*m*a)))"
+		   "(|(name:=samba)(name:dn:2.5.13.5:=samba)(:dn:2.5.13.5:=samba)(!(name=*samba))))";
+
+	rc = tldap_search(ld, "", TLDAP_SCOPE_BASE, filter,
+			  NULL, 0, 0, NULL, 0, NULL, 0, 0, 0, 0,
+			  talloc_tos(), NULL, NULL);
+	if (rc != TLDAP_SUCCESS) {
+		d_printf("tldap_search with complex filter failed: %s\n",
+			 tldap_errstr(talloc_tos(), ld, rc));
+		return false;
+	}
+
 	TALLOC_FREE(ld);
 	return true;
 }
+
+/* Torture test to ensure no regression of :
+https://bugzilla.samba.org/show_bug.cgi?id=7084
+*/
+
+static bool run_dir_createtime(int dummy)
+{
+	struct cli_state *cli;
+	const char *dname = "\\testdir";
+	const char *fname = "\\testdir\\testfile";
+	NTSTATUS status;
+	struct timespec create_time;
+	struct timespec create_time1;
+	uint16_t fnum;
+	bool ret = false;
+
+	if (!torture_open_connection(&cli, 0)) {
+		return false;
+	}
+
+	cli_unlink(cli, fname, aSYSTEM | aHIDDEN);
+	cli_rmdir(cli, dname);
+
+	status = cli_mkdir(cli, dname);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("mkdir failed: %s\n", nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_qpathinfo2(cli, dname, &create_time, NULL, NULL, NULL,
+				NULL, NULL, NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_qpathinfo2 returned %s\n",
+		       nt_errstr(status));
+		goto out;
+	}
+
+	/* Sleep 3 seconds, then create a file. */
+	sleep(3);
+
+	status = cli_open(cli, fname, O_RDWR | O_CREAT | O_EXCL,
+                         DENY_NONE, &fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_open failed: %s\n", nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_qpathinfo2(cli, dname, &create_time1, NULL, NULL, NULL,
+				NULL, NULL, NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_qpathinfo2 (2) returned %s\n",
+		       nt_errstr(status));
+		goto out;
+	}
+
+	if (timespec_compare(&create_time1, &create_time)) {
+		printf("run_dir_createtime: create time was updated (error)\n");
+	} else {
+		printf("run_dir_createtime: create time was not updated (correct)\n");
+		ret = true;
+	}
+
+  out:
+
+	cli_unlink(cli, fname, aSYSTEM | aHIDDEN);
+	cli_rmdir(cli, dname);
+	if (!torture_close_connection(cli)) {
+		ret = false;
+	}
+	return ret;
+}
+
 
 static bool run_streamerror(int dummy)
 {
@@ -6334,6 +6990,7 @@ static bool run_streamerror(int dummy)
 		return false;
 	}
 
+	cli_unlink(cli, "\\testdir\\*", aSYSTEM | aHIDDEN);
 	cli_rmdir(cli, dname);
 
 	status = cli_mkdir(cli, dname);
@@ -6342,7 +6999,7 @@ static bool run_streamerror(int dummy)
 		return false;
 	}
 
-	cli_qpathinfo(cli, streamname, &change_time, &access_time, &write_time,
+	cli_qpathinfo1(cli, streamname, &change_time, &access_time, &write_time,
 		      &size, &mode);
 	status = cli_nt_error(cli);
 
@@ -6649,6 +7306,134 @@ static bool run_local_talloc_dict(int dummy)
 	return true;
 }
 
+static bool run_local_string_to_sid(int dummy) {
+	struct dom_sid sid;
+
+	if (string_to_sid(&sid, "S--1-5-32-545")) {
+		printf("allowing S--1-5-32-545\n");
+		return false;
+	}
+	if (string_to_sid(&sid, "S-1-5-32-+545")) {
+		printf("allowing S-1-5-32-+545\n");
+		return false;
+	}
+	if (string_to_sid(&sid, "S-1-2-3-4-5-6-7-8-9-0-1-2-3-4-5-6-7-8-9-0")) {
+		printf("allowing S-1-2-3-4-5-6-7-8-9-0-1-2-3-4-5-6-7-8-9-0\n");
+		return false;
+	}
+	if (string_to_sid(&sid, "S-1-5-32-545-abc")) {
+		printf("allowing S-1-5-32-545-abc\n");
+		return false;
+	}
+	if (!string_to_sid(&sid, "S-1-5-32-545")) {
+		printf("could not parse S-1-5-32-545\n");
+		return false;
+	}
+	if (!dom_sid_equal(&sid, &global_sid_Builtin_Users)) {
+		printf("mis-parsed S-1-5-32-545 as %s\n",
+		       sid_string_tos(&sid));
+		return false;
+	}
+	return true;
+}
+
+static bool run_local_binary_to_sid(int dummy) {
+	struct dom_sid *sid = talloc(NULL, struct dom_sid);
+	static const char good_binary_sid[] = {
+		0x1, /* revision number */
+		15, /* num auths */
+		0x1, 0x1, 0x1, 0x1, 0x1, 0x1, /* id_auth */
+		0x1, 0x1, 0x1, 0x1, /* auth[0] */
+		0x1, 0x1, 0x1, 0x1, /* auth[1] */
+		0x1, 0x1, 0x1, 0x1, /* auth[2] */
+		0x1, 0x1, 0x1, 0x1, /* auth[3] */
+		0x1, 0x1, 0x1, 0x1, /* auth[4] */
+		0x1, 0x1, 0x1, 0x1, /* auth[5] */
+		0x1, 0x1, 0x1, 0x1, /* auth[6] */
+		0x1, 0x1, 0x1, 0x1, /* auth[7] */
+		0x1, 0x1, 0x1, 0x1, /* auth[8] */
+		0x1, 0x1, 0x1, 0x1, /* auth[9] */
+		0x1, 0x1, 0x1, 0x1, /* auth[10] */
+		0x1, 0x1, 0x1, 0x1, /* auth[11] */
+		0x1, 0x1, 0x1, 0x1, /* auth[12] */
+		0x1, 0x1, 0x1, 0x1, /* auth[13] */
+		0x1, 0x1, 0x1, 0x1, /* auth[14] */
+	};
+
+	static const char long_binary_sid[] = {
+		0x1, /* revision number */
+		15, /* num auths */
+		0x1, 0x1, 0x1, 0x1, 0x1, 0x1, /* id_auth */
+		0x1, 0x1, 0x1, 0x1, /* auth[0] */
+		0x1, 0x1, 0x1, 0x1, /* auth[1] */
+		0x1, 0x1, 0x1, 0x1, /* auth[2] */
+		0x1, 0x1, 0x1, 0x1, /* auth[3] */
+		0x1, 0x1, 0x1, 0x1, /* auth[4] */
+		0x1, 0x1, 0x1, 0x1, /* auth[5] */
+		0x1, 0x1, 0x1, 0x1, /* auth[6] */
+		0x1, 0x1, 0x1, 0x1, /* auth[7] */
+		0x1, 0x1, 0x1, 0x1, /* auth[8] */
+		0x1, 0x1, 0x1, 0x1, /* auth[9] */
+		0x1, 0x1, 0x1, 0x1, /* auth[10] */
+		0x1, 0x1, 0x1, 0x1, /* auth[11] */
+		0x1, 0x1, 0x1, 0x1, /* auth[12] */
+		0x1, 0x1, 0x1, 0x1, /* auth[13] */
+		0x1, 0x1, 0x1, 0x1, /* auth[14] */
+		0x1, 0x1, 0x1, 0x1, /* auth[15] */
+		0x1, 0x1, 0x1, 0x1, /* auth[16] */
+		0x1, 0x1, 0x1, 0x1, /* auth[17] */
+	};
+
+	static const char long_binary_sid2[] = {
+		0x1, /* revision number */
+		32, /* num auths */
+		0x1, 0x1, 0x1, 0x1, 0x1, 0x1, /* id_auth */
+		0x1, 0x1, 0x1, 0x1, /* auth[0] */
+		0x1, 0x1, 0x1, 0x1, /* auth[1] */
+		0x1, 0x1, 0x1, 0x1, /* auth[2] */
+		0x1, 0x1, 0x1, 0x1, /* auth[3] */
+		0x1, 0x1, 0x1, 0x1, /* auth[4] */
+		0x1, 0x1, 0x1, 0x1, /* auth[5] */
+		0x1, 0x1, 0x1, 0x1, /* auth[6] */
+		0x1, 0x1, 0x1, 0x1, /* auth[7] */
+		0x1, 0x1, 0x1, 0x1, /* auth[8] */
+		0x1, 0x1, 0x1, 0x1, /* auth[9] */
+		0x1, 0x1, 0x1, 0x1, /* auth[10] */
+		0x1, 0x1, 0x1, 0x1, /* auth[11] */
+		0x1, 0x1, 0x1, 0x1, /* auth[12] */
+		0x1, 0x1, 0x1, 0x1, /* auth[13] */
+		0x1, 0x1, 0x1, 0x1, /* auth[14] */
+		0x1, 0x1, 0x1, 0x1, /* auth[15] */
+		0x1, 0x1, 0x1, 0x1, /* auth[16] */
+		0x1, 0x1, 0x1, 0x1, /* auth[17] */
+		0x1, 0x1, 0x1, 0x1, /* auth[18] */
+		0x1, 0x1, 0x1, 0x1, /* auth[19] */
+		0x1, 0x1, 0x1, 0x1, /* auth[20] */
+		0x1, 0x1, 0x1, 0x1, /* auth[21] */
+		0x1, 0x1, 0x1, 0x1, /* auth[22] */
+		0x1, 0x1, 0x1, 0x1, /* auth[23] */
+		0x1, 0x1, 0x1, 0x1, /* auth[24] */
+		0x1, 0x1, 0x1, 0x1, /* auth[25] */
+		0x1, 0x1, 0x1, 0x1, /* auth[26] */
+		0x1, 0x1, 0x1, 0x1, /* auth[27] */
+		0x1, 0x1, 0x1, 0x1, /* auth[28] */
+		0x1, 0x1, 0x1, 0x1, /* auth[29] */
+		0x1, 0x1, 0x1, 0x1, /* auth[30] */
+		0x1, 0x1, 0x1, 0x1, /* auth[31] */
+	};
+
+	if (!sid_parse(good_binary_sid, sizeof(good_binary_sid), sid)) {
+		return false;
+	}
+	if (sid_parse(long_binary_sid2, sizeof(long_binary_sid2), sid)) {
+		return false;
+	}
+	if (sid_parse(long_binary_sid, sizeof(long_binary_sid), sid)) {
+		return false;
+	}
+	return true;
+}
+
 /* Split a path name into filename and stream name components. Canonicalise
  * such that an implicit $DATA token is always explicit.
  *
@@ -6771,7 +7556,7 @@ static bool test_stream_name(const char *fname, const char *expected_base,
 	return true;
 
  error:
-	d_fprintf(stderr, "test_stream(%s, %s, %s, %s)\n",
+	d_fprintf(stderr, "Do test_stream(%s, %s, %s, %s)\n",
 		  fname, expected_base ? expected_base : "<NULL>",
 		  expected_stream ? expected_stream : "<NULL>",
 		  nt_errstr(expected_status));
@@ -7161,6 +7946,48 @@ static bool run_local_dbtrans(int dummy)
 	return true;
 }
 
+/*
+ * Just a dummy test to be run under a debugger. There's no real way
+ * to inspect the tevent_select specific function from outside of
+ * tevent_select.c.
+ */
+
+static bool run_local_tevent_select(int dummy)
+{
+	struct tevent_context *ev;
+	struct tevent_fd *fd1, *fd2;
+	bool result = false;
+
+	ev = tevent_context_init_byname(NULL, "select");
+	if (ev == NULL) {
+		d_fprintf(stderr, "tevent_context_init_byname failed\n");
+		goto fail;
+	}
+
+	fd1 = tevent_add_fd(ev, ev, 2, 0, NULL, NULL);
+	if (fd1 == NULL) {
+		d_fprintf(stderr, "tevent_add_fd failed\n");
+		goto fail;
+	}
+	fd2 = tevent_add_fd(ev, ev, 3, 0, NULL, NULL);
+	if (fd2 == NULL) {
+		d_fprintf(stderr, "tevent_add_fd failed\n");
+		goto fail;
+	}
+	TALLOC_FREE(fd2);
+
+	fd2 = tevent_add_fd(ev, ev, 1, 0, NULL, NULL);
+	if (fd2 == NULL) {
+		d_fprintf(stderr, "tevent_add_fd failed\n");
+		goto fail;
+	}
+
+	result = true;
+fail:
+	TALLOC_FREE(ev);
+	return result;
+}
+
 static double create_procs(bool (*fn)(int), bool *result)
 {
 	int i, status;
@@ -7168,6 +7995,7 @@ static double create_procs(bool (*fn)(int), bool *result)
 	volatile bool *child_status_out;
 	int synccount;
 	int tries = 8;
+	struct timeval start;
 
 	synccount = 0;
 
@@ -7188,7 +8016,7 @@ static double create_procs(bool (*fn)(int), bool *result)
 		child_status_out[i] = True;
 	}
 
-	start_timer();
+	start = timeval_current();
 
 	for (i=0;i<nprocs;i++) {
 		procnum = i;
@@ -7209,7 +8037,7 @@ static double create_procs(bool (*fn)(int), bool *result)
 
 			child_status[i] = getpid();
 
-			while (child_status[i] && end_timer() < 5) smb_msleep(2);
+			while (child_status[i] && timeval_elapsed(&start) < 5) smb_msleep(2);
 
 			child_status_out[i] = fn(i);
 			_exit(0);
@@ -7223,16 +8051,16 @@ static double create_procs(bool (*fn)(int), bool *result)
 		}
 		if (synccount == nprocs) break;
 		smb_msleep(10);
-	} while (end_timer() < 30);
+	} while (timeval_elapsed(&start) < 30);
 
 	if (synccount != nprocs) {
 		printf("FAILED TO START %d CLIENTS (started %d)\n", nprocs, synccount);
 		*result = False;
-		return end_timer();
+		return timeval_elapsed(&start);
 	}
 
 	/* start the client load */
-	start_timer();
+	start = timeval_current();
 
 	for (i=0;i<nprocs;i++) {
 		child_status[i] = 0;
@@ -7251,7 +8079,7 @@ static double create_procs(bool (*fn)(int), bool *result)
 			*result = False;
 		}
 	}
-	return end_timer();
+	return timeval_elapsed(&start);
 }
 
 #define FLAG_MULTIPROC 1
@@ -7280,11 +8108,14 @@ static struct {
 	{"RANDOMIPC", run_randomipc, 0},
 	{"NEGNOWAIT", run_negprot_nowait, 0},
 	{"NBENCH",  run_nbench, 0},
+	{"NBENCH2", run_nbench2, 0},
 	{"OPLOCK1",  run_oplock1, 0},
 	{"OPLOCK2",  run_oplock2, 0},
 	{"OPLOCK3",  run_oplock3, 0},
+	{"OPLOCK4",  run_oplock4, 0},
 	{"DIR",  run_dirtest, 0},
 	{"DIR1",  run_dirtest1, 0},
+	{"DIR-CREATETIME",  run_dir_createtime, 0},
 	{"DENY1",  torture_denytest1, 0},
 	{"DENY2",  torture_denytest2, 0},
 	{"TCON",  run_tcon_test, 0},
@@ -7292,16 +8123,21 @@ static struct {
 	{"RW1",  run_readwritetest, 0},
 	{"RW2",  run_readwritemulti, FLAG_MULTIPROC},
 	{"RW3",  run_readwritelarge, 0},
+	{"RW-SIGNING",  run_readwritelarge_signtest, 0},
 	{"OPEN", run_opentest, 0},
 	{"POSIX", run_simple_posix_open_test, 0},
+	{"POSIX-APPEND", run_posix_append, 0},
+	{"ASYNC-ECHO", run_async_echo, 0},
 	{ "UID-REGRESSION-TEST", run_uid_regression_test, 0},
 	{ "SHORTNAME-TEST", run_shortname_test, 0},
+	{ "ADDRCHANGE", run_addrchange, 0},
 #if 1
 	{"OPENATTR", run_openattrtest, 0},
 #endif
 	{"XCOPY", run_xcopy, 0},
 	{"RENAME", run_rename, 0},
 	{"DELETE", run_deletetest, 0},
+	{"DELETE-LN", run_deletetest_ln, 0},
 	{"PROPERTIES", run_properties, 0},
 	{"MANGLE", torture_mangle, 0},
 	{"MANGLE1", run_mangle1, 0},
@@ -7326,6 +8162,8 @@ static struct {
 	{ "TLDAP", run_tldap },
 	{ "STREAMERROR", run_streamerror },
 	{ "NOTIFY-BENCH", run_notify_bench },
+	{ "BAD-NBT-SESSION", run_bad_nbt_session },
+	{ "SMB-ANY-CONNECT", run_smb_any_connect },
 	{ "LOCAL-SUBSTITUTE", run_local_substitute, 0},
 	{ "LOCAL-GENCACHE", run_local_gencache, 0},
 	{ "LOCAL-TALLOC-DICT", run_local_talloc_dict, 0},
@@ -7334,7 +8172,10 @@ static struct {
 	{ "LOCAL-MEMCACHE", run_local_memcache, 0},
 	{ "LOCAL-STREAM-NAME", run_local_stream_name, 0},
 	{ "LOCAL-WBCLIENT", run_local_wbclient, 0},
+	{ "LOCAL-string_to_sid", run_local_string_to_sid, 0},
+	{ "LOCAL-binary_to_sid", run_local_binary_to_sid, 0},
 	{ "LOCAL-DBTRANS", run_local_dbtrans, 0},
+	{ "LOCAL-TEVENT-SELECT", run_local_tevent_select, 0},
 	{NULL, NULL, 0}};
 
 
@@ -7370,12 +8211,13 @@ static bool run_test(const char *name)
 					printf("TEST %s FAILED!\n", name);
 				}
 			} else {
-				start_timer();
+				struct timeval start;
+				start = timeval_current();
 				if (!torture_ops[i].fn(0)) {
 					ret = False;
 					printf("TEST %s FAILED!\n", name);
 				}
-				t = end_timer();
+				t = timeval_elapsed(&start);
 			}
 			printf("%s took %g secs\n\n", name, t);
 		}
@@ -7440,15 +8282,13 @@ static void usage(void)
 	TALLOC_CTX *frame = talloc_stackframe();
 	int seed = time(NULL);
 
-	dbf = x_stdout;
-
 #ifdef HAVE_SETBUFFER
 	setbuffer(stdout, NULL, 0);
 #endif
 
-	load_case_tables();
+	setup_logging("smbtorture", DEBUG_STDOUT);
 
-	setup_logging("smbtorture", true);
+	load_case_tables();
 
 	if (is_default_dyn_CONFIGFILE()) {
 		if(getenv("SMB_CONF_PATH")) {
@@ -7514,7 +8354,7 @@ static void usage(void)
 			torture_numops = atoi(optarg);
 			break;
 		case 'd':
-			DEBUGLEVEL = atoi(optarg);
+			lp_set_cmdline("log level", optarg);
 			break;
 		case 'O':
 			sockops = optarg;
