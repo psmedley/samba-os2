@@ -1,3 +1,12 @@
+samba (2:3.6.1-2) unstable; urgency=low
+
+  * Merge changes from 3.5.11~dfsg-4 and unreleased -5 in unstable branch
+  * debian/patches/initialize_password_db-null-deref: Avoid null
+    dereference in initialize_password_db().  Closes LP: #829221.
+  * Mark samba-common Multi-Arch: foreign.
+
+ -- Christian Perrier <bubulle@debian.org>  Sun, 27 Nov 2011 19:06:39 +0100
+
 samba (2:3.6.1-1) experimental; urgency=low
 
   * New upstream release
@@ -56,6 +65,62 @@ samba (2:3.6.0~pre3-1) experimental; urgency=low
     CTDB_CONTROL_SCHEDULE_FOR_DELETION. 
 
  -- Christian Perrier <bubulle@debian.org>  Mon, 09 May 2011 11:29:52 +0200
+
+samba (2:3.5.11~dfsg-4) unstable; urgency=low
+
+  * Lintian override for libpam-winbind; it's not a shared library so doesn't
+    really need the pre-depends on multiarch-support.
+  * export DEB_BUILD_MAINT_OPTIONS := hardening=+bindnow, taken from Ubuntu.
+
+ -- Steve Langasek <vorlon@debian.org>  Fri, 21 Oct 2011 16:01:29 -0700
+
+samba (2:3.5.11~dfsg-3) unstable; urgency=low
+
+  * Split winbind into separate packages, winbind and libpam-winbind,
+    with the latter marked Multi-Arch: same and the former marked
+    Multi-Arch: foreign, so that we can install multiple copies of the
+    pam module and nss modules on the same system.
+
+ -- Steve Langasek <vorlon@debian.org>  Fri, 21 Oct 2011 20:00:13 +0000
+
+samba (2:3.5.11~dfsg-2) unstable; urgency=low
+
+  * Don't export DEB_HOST_ARCH_OS in debian/rules, this is only used locally.
+  * Use dh_links instead of manually creating directories and symlinks from
+    debian/rules.
+  * Switch from dh_movefiles to dh_install and adjust for debhelper compat
+    level 7, in preparation for moving to dh(1).
+  * Where possible, use dh_installman and dh_install's support for target
+    directories instead of moving files around in debian/rules.
+  * We don't need to mess with perms on usr/include/libsmbclient.h anymore
+    in debian/rules, the upstream install target gets it right
+  * Use debian/clean instead of removing left-behind files by hand in the
+    clean target
+  * Convert debian/rules to dh(1).
+  * Don't run debconf-updatepo on clean; not worth the divergence in
+    debian/rules anymore :)
+  * Don't install debian/README.build in the package; this is really only
+    relevant in the source.
+  * Bump to debhelper compat level 9 and build libraries for multiarch.
+  * Drop Makefile.internal from libsmbclient-dev examples so that we can mark
+    libsmbclient-dev Multi-Arch: same.
+  * Bump build-depends on debhelper to 8.9.4, so we ensure we have
+    dpkg-buildflags by default and get full build hardening enabled out of
+    the box - critical for a server like samba.
+  * Use DH_ALWAYS_EXCLUDE instead of passing override options to
+    dh_installexamples.
+  * Pass --sourcedirectory=source3 to dh instead of having to pass it to each
+    dh_auto_* command.
+  * Ironically, this means that we have to manually disable dh_auto_test,
+    which now finds the makefile targets but doesn't work unless we build an
+    extra wrapper library into our binaries that we don't want.
+  * Drop a few configure options from debian/rules that shadow the built-in
+    defaults.
+  * debian/libsmbclient.lintian-overrides: yes, we know the package name
+    doesn't match the soname - and it never should until there's an ABI
+    change.
+
+ -- Steve Langasek <vorlon@debian.org>  Fri, 07 Oct 2011 21:36:43 -0700
 
 samba (2:3.5.11~dfsg-1) unstable; urgency=low
 
