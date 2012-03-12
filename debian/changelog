@@ -1,3 +1,30 @@
+samba (2:3.6.3-2) unstable; urgency=low
+
+  [ Christian Perrier ]
+  * Fix example samba.ldif syntax. Closes: #659963
+  * Set minimal version of tdb ot 1.2.6 in Build-Depends
+    (thanks, backports!)
+  * Lower priority of debconf question to medium after some pondering.
+    After all, we have a sane default. Closes: #662801
+  * Merge some Ubuntu patches:
+    - samba.config: Avoid scary pdbedit warnings on first import.
+    - samba.postinst: Add more informative error message for the case
+      where smb.conf was manually deleted.
+
+  [ Maarten Bezemer ]
+  * Removed references to the testprns command from documentation
+  * Added notes that the smbsh command is not available in this package
+    Closes: #662243
+
+  [ Debconf translations ]
+  * Indonesian (Arief S Fitrianto).  Closes: #660312
+  * Slovak (Ivan Masár).  Closes: #661125
+
+  [ Steve Langasek ]
+  * Use Debian copyright-format 1.0 in debian/copyright.
+
+ -- Christian Perrier <bubulle@debian.org>  Mon, 12 Mar 2012 20:49:24 +0100
+
 samba (2:3.6.3-1) unstable; urgency=low
 
   [ Christian Perrier ]
