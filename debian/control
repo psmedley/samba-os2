@@ -3,7 +3,7 @@ Section: net
 Priority: optional
 Maintainer: Debian Samba Maintainers <pkg-samba-maint@lists.alioth.debian.org>
 Uploaders: Steve Langasek <vorlon@debian.org>, Christian Perrier <bubulle@debian.org>, Noèl Köthe <noel@debian.org>, Jelmer Vernooij <jelmer@debian.org>
-Build-Depends: debhelper (>= 8.9.4~), libpam0g-dev, libreadline-dev,
+Build-Depends: debhelper (>= 9~), libpam0g-dev, libreadline-dev,
 	libcups2-dev | libcupsys2-dev,
 	libacl1-dev [linux-any],
 	libkrb5-dev(>= 1.10+dfsg~), libldap2-dev , po-debconf, libpopt-dev, uuid-dev,
@@ -14,7 +14,7 @@ Build-Depends: debhelper (>= 8.9.4~), libpam0g-dev, libreadline-dev,
 	libctdb-dev (>= 1.10+git20110412) [linux-any],
 	pkg-config
 Build-Conflicts: libfam-dev
-Standards-Version: 3.9.2
+Standards-Version: 3.9.3
 Homepage: http://www.samba.org
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-samba/trunk/samba/
 Vcs-Svn: svn://svn.debian.org/svn/pkg-samba/trunk/samba
