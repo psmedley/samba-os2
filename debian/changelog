@@ -1,3 +1,28 @@
+samba (2:3.6.5-5) unstable; urgency=low
+
+  [ Christian Perrier ]
+  * Make libpam-winbind depend on libnss-winbind.
+
+  [ Ivo De Decker ]
+  * Update symbols file for libsmbclient and libwbclient0
+  * Add lintian overrides for examples in samba-doc
+  * libpam-winbind: change Depends on libnss-winbind to Recommends
+  * libnss-winbind: Suggests libpam-winbind
+  * Update package description for winbind, libpam-winbind and libnss-winbind
+    to better reflect their content
+  * Backport vfs_shadow_copy2 from master, to allow shadow copy to work
+    without wide links
+
+  [ Luk Claes ]
+  * Ship wbclient.pc file in multiarch safe directory (Closes: #674215).
+
+  [ Sam Morris ]
+  * Add libutil_drop_AI_ADDRCONFIG.patch  that allows running nmbd when
+    no network interfaces have been assigned an address, therefore
+    removing the need for an if-up script. Closes: #640668,#640508
+
+ -- Christian Perrier <bubulle@debian.org>  Sun, 03 Jun 2012 20:00:56 +0200
+
 samba (2:3.6.5-3) unstable; urgency=low
 
   [ Luk Claes ]
@@ -6,7 +31,7 @@ samba (2:3.6.5-3) unstable; urgency=low
 
   [ Christian Perrier ]
   * Add Breaks and Replaces on libpam-winbind for newly created
-    libnss-winbind. Thanks to Clin Watson for pointing this and shame
+    libnss-winbind. Thanks to Colin Watson for pointing this and shame
     on me for not properly checking the transition. Closes: #673122
 
  -- Christian Perrier <bubulle@debian.org>  Thu, 17 May 2012 10:34:38 +0200
