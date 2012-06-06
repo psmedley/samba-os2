@@ -11,7 +11,7 @@ Build-Depends: debhelper (>= 9~), libpam0g-dev, libreadline-dev,
 	libtdb-dev (>= 1.2.6~),
 	libcap-dev [linux-any],
 	libkeyutils-dev [linux-any],
-	libctdb-dev (>= 1.10+git20110412) [linux-any],
+	libctdb-dev (>= 1.10+git20110412),
 	pkg-config
 Build-Conflicts: libfam-dev,python-ldb,python-ldb-dev
 Standards-Version: 3.9.3
@@ -21,6 +21,7 @@ Vcs-Svn: svn://svn.debian.org/svn/pkg-samba/trunk/samba
 
 Package: samba
 Architecture: any
+Pre-Depends: ${misc:Pre-Depends}
 Depends: samba-common (= ${source:Version}), libwbclient0 (= ${binary:Version}),${shlibs:Depends}, ${misc:Depends}, libpam-runtime (>= 1.0.1-11), libpam-modules, lsb-base (>= 3.2-13), procps, update-inetd, adduser
 Recommends: logrotate, tdb-tools
 Suggests: openbsd-inetd | inet-superserver, smbldap-tools, ldb-tools, ctdb
