@@ -1,3 +1,14 @@
+samba (2:3.6.12-1) experimental; urgency=low
+
+  * Team upload.
+  * Security update, fixing the following issues:
+    - CVE-2013-0213: Clickjacking issue in SWAT
+    - CVE-2013-0214: Potential XSRF in SWAT
+  * New upstream release
+  * Install pkgconfig file in libsmbclient-dev. Closes: #700643
+
+ -- Ivo De Decker <ivo.dedecker@ugent.be>  Sun, 17 Feb 2013 22:25:34 +0100
+
 samba (2:3.6.10-1) experimental; urgency=low
 
   * New upstream release
