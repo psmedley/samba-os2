@@ -1,3 +1,48 @@
+samba (2:4.0.6+dfsg-1) experimental; urgency=low
+
+  * Team upload.
+
+  [ Andrew Bartlett ]
+  * Converted to full AD DC package on the basis of the 3.6 package
+    - Samba now can be an Active Directory Domain controller
+    - The samba4-* packages are replaced by this package.
+    - This package now uses the s3fs file server by default, not the ntvfs
+      file server used in the samba4 packages.
+  * Provides a new library based package
+    - Upstream's new build system uses libraries extensively, so new
+      packages reflect that.
+    - This provides the libraries that Openchange and other projects depend on
+  * Move binary files out of /var/lib/samba to /var/lib/samba/private,
+    where they belong according to upstream Samba:
+    - schannel_store.tdb
+    - idmap2.tdb
+    - passdb.tdb
+    - secrets.tdb
+  * Remove most of the samba4 references, except for binaries ending in 4
+  * Removed debconf support for encrypted passwords
+  * Samba 3.x users upgrading can either upgrade to an AD DC or continue
+    using Samba without major changes.
+
+  [ Christian Perrier ]
+  * Move libnss_winbind.so.2 and libnss_wins.so.2 to /lib as in 3.6.*
+  * Use the same set of configure arguments than 3.6.15 (except those
+    eventually specific to version 4 and above)
+  * Add libctdb-dev to build dependencies as we're building with cluster
+    support just like 3.6 packages
+  * Re-introduce mksmbpasswd for compatibility with 3.* packages
+
+  [ Ivo De Decker ]
+  * Specify all paths using configure options, so that we can finally get rid
+    of the fhs patch. Closes: #705449
+
+  [ Steve Langasek ]
+  * Make samba-common Conflicts: swat, which is now obsolete and no longer
+    built from samba 4.0; the old versions of swat in the archive are
+    incompatible with smb.conf from samba 4.0, so force them off the system
+    to avoid configuration corruption.
+
+ -- Ivo De Decker <ivo.dedecker@ugent.be>  Thu, 20 Jun 2013 21:51:49 +0200
+
 samba (2:3.6.16-1) unstable; urgency=low
 
   * Team upload.

@@ -1,4 +1,3 @@
-usr/bin/findsmb
 usr/bin/smbclient
 usr/bin/smbget
 usr/bin/smbtar
@@ -7,6 +6,7 @@ usr/bin/smbspool
 usr/bin/smbtree
 usr/bin/smbcacls
 usr/bin/smbcquotas
+usr/bin/cifsdd
 usr/share/man/man1/findsmb.1
 usr/share/man/man1/smbclient.1
 usr/share/man/man1/smbget.1

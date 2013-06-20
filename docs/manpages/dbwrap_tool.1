@@ -2,12 +2,12 @@
 .\"     Title: dbwrap_tool
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.76.1 <http://docbook.sf.net/>
-.\"      Date: 06/19/2013
+.\"      Date: 05/21/2013
 .\"    Manual: System Administration tools
-.\"    Source: Samba 3.6
+.\"    Source: Samba 4.0
 .\"  Language: English
 .\"
-.TH "DBWRAP_TOOL" "1" "06/19/2013" "Samba 3\&.6" "System Administration tools"
+.TH "DBWRAP_TOOL" "1" "05/21/2013" "Samba 4\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 dbwrap_tool \- low level TDB/CTDB manipulation tool using the dbwrap interface
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-dbwrap_tool {<database>} {<operation>} [<key>\ [<type>\ [<value>]\ ]]
+dbwrap_tool [\-d\ <debug\ level>] [\-s\ <config\ file>] [\-l\ <log\ file\ base>] [\-V] [\-\-option=<name>=<value>] {<database>} {<operation>} [<key>\ [<type>\ [<value>]\ ]]
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -97,6 +97,17 @@ erase: remove all records
 listkeys: list all available records
 .RE
 .sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+listwatchers: list processes, which are waiting for changes in a record
+.RE
+.sp
 .RE
 .PP
 The following types are available:
@@ -134,10 +145,19 @@ uint32: unsigned 32bit integer
 string: "hello world"
 .RE
 .sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+hex: hex strings like "68656C6C6F20776F726C6400" ("hello world")
+.RE
+.sp
 .RE
 .SH "OPTIONS"
-.PP
-None\&.
 .SH "COMMANDS"
 .SS "fetch"
 .HP \w'\ 'u
@@ -153,11 +173,14 @@ dbwrap_tool <database> delete <key>
 		
 .SS "erase"
 .HP \w'\ 'u
-dbwrap_tool <database> erase
-		
+dbwrap_tool <database> erase 
 .SS "listkeys"
 .HP \w'\ 'u
 dbwrap_tool <database> listkeys
+		
+.SS "listwatchers"
+.HP \w'\ 'u
+dbwrap_tool <database> listwatchers
 		
 .SH "EXAMPLES"
 .PP
@@ -181,8 +204,12 @@ winbindd_idmap\&.tdb remove "USER HWM"
 .PP
 Store and overwrite record "USER HWM" with value 214
 .RS 4
+uint32:
 dbwrap_tool
 winbindd_idmap\&.tdb store "USER HWM" uint32 214
+hex:
+dbwrap_tool
+winbindd_idmap\&.tdb store "USER HWM" hex D6000000
 .RE
 .SH "NOTES"
 .PP

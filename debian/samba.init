@@ -12,12 +12,6 @@
 ### END INIT INFO
 
 
-# Defaults
-RUN_MODE="daemons"
-
-# Reads config file (will override defaults above)
-[ -r /etc/default/samba ] && . /etc/default/samba
-
 PIDDIR=/var/run/samba
 NMBDPID=$PIDDIR/nmbd.pid
 SMBDPID=$PIDDIR/smbd.pid
@@ -32,6 +26,11 @@ test -x /usr/sbin/nmbd -a -x /usr/sbin/smbd || exit 0
 
 case "$1" in
 	start)
+		SERVER_ROLE=`samba-tool testparm --parameter-name="server role"  2>/dev/null | tail -1`
+		if [ "$SERVER_ROLE" = "active directory domain controller" ]; then
+		    exit 0
+		fi
+
 		log_daemon_msg "Starting Samba daemons"
 		# Make sure we have our PIDDIR, even if it's on a tmpfs
 		install -o root -g root -m 755 -d $PIDDIR
