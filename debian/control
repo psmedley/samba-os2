@@ -8,7 +8,7 @@ Uploaders: Steve Langasek <vorlon@debian.org>,
            Jelmer Vernooij <jelmer@debian.org>,
            Steinar H. Gunderson <sesse@debian.org>,
 Homepage: http://www.samba.org
-Standards-Version: 3.9.3
+Standards-Version: 3.9.4
 Build-Depends: bison,
                comerr-dev,
                debhelper (>> 9),
@@ -17,6 +17,7 @@ Build-Depends: bison,
                flex,
                heimdal-multidev (>= 1.6~),
                libacl1-dev,
+               libaio-dev,
                libattr1-dev,
                libblkid-dev,
                libbsd-dev,
@@ -44,6 +45,7 @@ Build-Depends: bison,
                python-talloc-dev (>= 2.0.7~),
                python-tdb (>= 1.2.11~),
                python-testtools,
+               python3,
                subunit (>= 0.0.6),
                xsltproc,
                zlib1g-dev (>= 1:1.2.3)
@@ -57,22 +59,39 @@ Pre-Depends: dpkg (>= 1.15.6~), ${misc:Pre-Depends}
 Depends: adduser,
          libpam-modules,
          libpam-runtime (>= 1.0.1-11),
-         libsmbd0 (= ${binary:Version}),
-         libwbclient0 (= ${binary:Version}),
          lsb-base (>= 3.2-13),
          procps,
+         python,
+         python-dnspython,
+         python-samba,
          samba-common (= ${source:Version}),
+         samba-common-bin (=${binary:Version}),
+         samba-dsdb-modules,
+         tdb-tools,
          update-inetd,
          ${misc:Depends},
+         ${python:Depends},
          ${shlibs:Depends}
-Recommends: logrotate, tdb-tools
-Suggests: ctdb,
+Recommends: attr, logrotate
+Suggests: bind9 (>= 1:9.5.1),
+          bind9utils,
+          ctdb,
           ldb-tools,
-          openbsd-inetd | inet-superserver,
+          ntp,
           smbldap-tools,
           winbind
-Replaces: samba-common (<= 2.0.5a-2), samba-doc (<< 2:4.0.5~)
-Conflicts: samba-doc (<< 2:4.0.5~), samba4 (<< 4.0.0~alpha6-2)
+Enhances: bind9, ntp
+Replaces: libsamdb0 (<< 4.0.0~alpha17~),
+          samba-ad-dc,
+          samba-common (<= 2.0.5a-2),
+          samba-doc (<< 2:4.0.5~),
+          samba4
+Conflicts: libldb1 (<< 1:1.1.15),
+           samba (<< 2:3.3.0~rc2-5),
+           samba-ad-dc,
+           samba-doc (<< 2:4.0.5~),
+           samba-tools,
+           samba4 (<< 4.0.0~alpha6-2)
 Description: SMB/CIFS file, print, and login server for Unix
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file and printer sharing with
@@ -80,112 +99,57 @@ Description: SMB/CIFS file, print, and login server for Unix
  as an NT4-style domain controller, and can integrate with both NT4 domains
  and Active Directory realms as a member server.
  .
- This package provides the components necessary to use Samba as a
- stand-alone file and print server.  For use in an NT4 domain or Active
- Directory realm, you will also need the winbind package.
+ This package provides the components necessary to use Samba as a stand-alone
+ file and print server or as an NT4 or Active Directory domain controller.
+ For use in an NT4 domain or Active Directory realm, you will also need the
+ winbind package.
  .
  This package is not required for connecting to existing SMB/CIFS servers
  (see smbclient) or for mounting remote filesystems (see cifs-utils).
 
-Package: samba-ad-dc
-Architecture: any
-Recommends: attr, bind9 (>= 1:9.5.1), bind9utils, ldb-tools
-Suggests: ntp, samba-gtk, swat2
-Enhances: bind9, ntp
-Conflicts: libldb1 (<< 1:1.1.15),
-           samba (<< 2:3.3.0~rc2-5),
-           samba-doc (<< 2:4.0.5~),
-           samba-tools
-Replaces: libsamdb0 (<< 4.0.0~alpha17~), samba-doc (<< 2:4.0.5~), samba4
-Depends: python,
-         python-dnspython,
-         python-samba,
-         samba,
-         samba-common-bin (=${binary:Version}),
-         samba-dsdb-modules,
-         tdb-tools,
-         ${misc:Depends},
-         ${python:Depends},
-         ${shlibs:Depends}
-Description: SMB/CIFS file, NT domain and active directory server
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the main daemon for the active directory server.
-
-Package: libsamdb0
+Package: samba-libs
 Pre-Depends: ${misc:Pre-Depends}
 Multi-Arch: same
 Architecture: any
+Section: libs
 Depends: ${ldb:Depends}, ${misc:Depends}, ${shlibs:Depends}
-Conflicts: samba-ldb-tools
-Replaces: samba-ldb-tools
-Recommends: samba-dsdb-modules
-Description: SAM database
+Breaks: libdcerpc-server0 (<< 2:4.0.9),
+        libdcerpc0 (<< 2:4.0.9),
+        libgensec0 (<< 2:4.0.9),
+        libndr-standard0 (<< 2:4.0.9),
+        libndr0 (<< 2:4.0.9),
+        libnetapi0 (<< 2:4.0.9),
+        libregistry0 (<< 2:4.0.9),
+        libsamba-credentials0 (<< 2:4.0.9),
+        libsamba-hostconfig0 (<< 2:4.0.9),
+        libsamba-policy0 (<< 2:4.0.9),
+        libsamba-util0 (<< 2:4.0.9),
+        libsamdb0 (<< 2:4.0.9),
+        libsmbclient-raw0 (<< 2:4.0.9),
+        libsmbd0 (<< 2:4.0.9),
+        libtorture0 (<< 2:4.0.9)
+Replaces: libdcerpc-server0 (<< 2:4.0.9),
+          libdcerpc0 (<< 2:4.0.9),
+          libgensec0 (<< 2:4.0.9),
+          libndr-standard0 (<< 2:4.0.9),
+          libndr0 (<< 2:4.0.9),
+          libnetapi0 (<< 2:4.0.9),
+          libregistry0 (<< 2:4.0.9),
+          libsamba-credentials0 (<< 2:4.0.9),
+          libsamba-hostconfig0 (<< 2:4.0.9),
+          libsamba-policy0 (<< 2:4.0.9),
+          libsamba-util0 (<< 2:4.0.9),
+          libsamdb0 (<< 2:4.0.9),
+          libsmbclient-raw0 (<< 2:4.0.9),
+          libsmbd0 (<< 2:4.0.9),
+          libtorture0 (<< 2:4.0.9)
+Description: Samba core libraries
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,
  and other Unix systems.  Samba can also function as a domain controller
  or member server in both NT4-style and Active Directory domains.
  .
- This package contains the library for accessing the SAM database.
-
-Package: libsamdb-dev
-Architecture: any
-Section: libdevel
-Depends: libsamdb0 (=${binary:Version}), pkg-config, ${misc:Depends}
-Description: SAM database - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the files required for development.
-
-Package: libsmbd0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Replaces: python-samba (<< 2:4.0.6~),
-          samba (<< ${binary:Version}),
-          samba-doc (<< 2:4.0.5~)
-Conflicts: samba-doc (<< 2:4.0.5~)
-Breaks: samba (<< ${binary:Version})
-Description: Samba file server libraries and plugins
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the library on which smbd is based, and which the python bindings use.
-
-Package: libsamba-policy0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Depends: ${ldb:Depends}, ${misc:Depends}, ${shlibs:Depends}
-Description: Samba policy management
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the library for policy management.
-
-Package: libsamba-policy-dev
-Architecture: any
-Section: libdevel
-Depends: libsamba-policy0 (=${binary:Version}), pkg-config, ${misc:Depends}
-Description: Samba policy management - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the files required for development using the policy
- management library.
+ This package contains the shared libraries.
 
 Package: samba-common
 Architecture: all
@@ -252,24 +216,6 @@ Description: command-line SMB/CIFS clients for Unix
  Utilities for mounting shares locally are found in the package
  cifs-utils.
 
-Package: samba4-clients
-Architecture: any
-Depends: samba-common-bin (=${binary:Version}),
-         smbclient,
-         ${misc:Depends},
-         ${shlibs:Depends}
-Replaces: samba-doc (<< 2:4.0.5~)
-Conflicts: samba-common (<< 2:3.3.0~rc2-5), samba-doc (<< 2:4.0.5~)
-Description: client utilities from Samba
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains some client components of the Samba suite. In
- particular it includes the command line utilities smbclient, net,
- and some ACL tools.
-
 Package: samba-testsuite
 Architecture: any
 Recommends: subunit
@@ -302,7 +248,8 @@ Description: tools for viewing and manipulating the Windows registry
 Package: libparse-pidl-perl
 Architecture: any
 Depends: libparse-yapp-perl, ${misc:Depends}, ${perl:Depends}
-Recommends: libdcerpc-dev
+Recommends: samba-dev
+Suggests: libwireshark-dev
 Section: perl
 Description: IDL compiler written in Perl
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
@@ -322,9 +269,40 @@ Depends: libc6-dev,
          libpopt-dev,
          libtalloc-dev,
          libtdb-dev (>= 1.2.11),
+         samba-libs (= ${binary:Version}),
          ${misc:Depends}
-Replaces: samba4-dev
 Section: devel
+Replaces: libdcerpc-dev (<< 2:4.0.9),
+          libdcerpc-server-dev (<< 2:4.0.9),
+          libgensec-dev (<< 2:4.0.9),
+          libndr-dev (<< 2:4.0.9),
+          libndr-standard-dev (<< 2:4.0.9),
+          libnetapi-dev (<< 2:4.0.9),
+          libregistry-dev (<< 2:4.0.9),
+          libsamba-credentials-dev (<< 2:4.0.9),
+          libsamba-hostconfig-dev (<< 2:4.0.9),
+          libsamba-policy-dev (<< 2:4.0.9),
+          libsamba-util-dev (<< 2:4.0.9),
+          libsamdb (<< 2:4.0.9),
+          libsmbclient-raw-dev (<< 2:4.0.9),
+          libsmbd-dev (<< 2:4.0.9),
+          libtorture-dev (<< 2:4.0.9),
+          samba4-dev
+Breaks: libdcerpc-dev (<< 2:4.0.9),
+        libdcerpc-server-dev (<< 2:4.0.9),
+        libgensec-dev (<< 2:4.0.9),
+        libndr-dev (<< 2:4.0.9),
+        libndr-standard-dev (<< 2:4.0.9),
+        libnetapi-dev (<< 2:4.0.9),
+        libregistry-dev (<< 2:4.0.9),
+        libsamba-credentials-dev (<< 2:4.0.9),
+        libsamba-hostconfig-dev (<< 2:4.0.9),
+        libsamba-policy-dev (<< 2:4.0.9),
+        libsamba-util-dev (<< 2:4.0.9),
+        libsamdb (<< 2:4.0.9),
+        libsmbclient-raw-dev (<< 2:4.0.9),
+        libsmbd-dev (<< 2:4.0.9),
+        libtorture-dev (<< 2:4.0.9)
 Description: tools for extending Samba
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,
@@ -348,276 +326,14 @@ Description: Samba documentation
  This package contains all the manpage documentation for the Samba
  suite.
 
-Package: libgensec0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Depends: samba-common (=${source:Version}), ${misc:Depends}, ${shlibs:Depends}
-Replaces: winbind4 (<< 4.0.0~alpha17~git20110724.dfsg1-1)
-Description: Generic Security Library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This library provides a generalized API for several security protocols.
-
-Package: libgensec-dev
-Architecture: any
-Section: libdevel
-Replaces: samba4-dev (<< 4.0.0~alpha17~)
-Depends: libgensec0 (=${binary:Version}), pkg-config, ${misc:Depends}
-Description: Generic Security Library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This library provides a generalized API for several security protocols.
- .
- This package contains the files required for development.
-
-Package: libndr0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Section: libs
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: NDR marshalling library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the library for encoding and decoding data structures
- using the Network Data Representation format as used by DCE/RPC.
-
-Package: libndr-dev
-Architecture: any
-Section: libdevel
-Depends: libndr0 (=${binary:Version}), pkg-config, ${misc:Depends}
-Description: NDR marshalling library - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the library for encoding and decoding data structures
- using the Network Data Representation format as used by DCE/RPC.
- .
- This package contains the files required for development.
-
-Package: libndr-standard0
-Section: libs
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Replaces: libsamba-util0 (<< 4.0.0~alpha17~git20110724.dfsg1-1),
-          libsmbclient-raw0 (<< 4.0.0~alpha18-1)
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: Standard NDR interfaces
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains NDR encoders/decoders for the set of standard
- DCE/RPC interfaces found on Windows and Samba servers.
-
-Package: libndr-standard-dev
-Architecture: any
-Section: libdevel
-Depends: libndr-standard0 (=${binary:Version}), pkg-config, ${misc:Depends}
-Replaces: libsmbclient-raw-dev (<< 4.0.0~alpha18-1)
-Description: Standard NDR interfaces - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains NDR encoders/decoders for the set of standard
- DCE/RPC interfaces found on Windows and Samba servers.
- .
- This package contains the files required for development.
-
-Package: libdcerpc0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Replaces: libgensec0 (<< 4.0.0~alpha17~git20110724.dfsg1-1)
-Description: DCE/RPC client library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- Client-side implementation of the DCE/RPC protocol.
- Support for the following transports is provided:
-  - ncacn_np
-  - ncacn_ip_tcp
-  - ncalrpc
-  - ncacn_sock_unix
-
-Package: libdcerpc-dev
-Architecture: any
-Section: libdevel
-Depends: libdcerpc0 (=${binary:Version}),
-         libndr-dev (=${binary:Version}),
-         libsamba-util-dev (=${binary:Version}),
-         pkg-config,
-         ${misc:Depends}
-Description: DCE/RPC library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- Client-side implementation of the DCE/RPC protocol.
- Support for the following transports is provided:
-  - ncacn_np
-  - ncacn_ip_tcp
-  - ncalrpc
-  - ncacn_sock_unix
- .
- This package contains the files required for development.
-
-Package: libdcerpc-server0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Section: libs
-Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: DCE/RPC server library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- Server-side implementation of the DCE/RPC protocol.
-
-Package: libdcerpc-server-dev
-Architecture: any
-Replaces: samba4-dev (<< 4.0.0~alpha18)
-Section: libdevel
-Depends: libdcerpc-dev (= ${binary:Version}),
-         libdcerpc-server0 (= ${binary:Version}),
-         ${misc:Depends}
-Description: DCE/RPC server library - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- Server-side implementation of the DCE/RPC protocol.
- .
- This package contains the files required for development.
-
-Package: libregistry0
-Architecture: any
-Section: libs
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Description: Registry library
- The Samba registry library provides read and write access to Windows
- registries. At the moment the following formats are supported:
-  - The default Windows NT, 2000 and XP registry format (such as NTUSER.DAT
-    files)
-  - Remote Windows and Samba registries over the DCE/RPC protocol
-  - Samba native registry files (basically LDB files)
- .
- The library also contains support for applying and generating
- registry patch files.
-
-Package: libregistry-dev
-Architecture: any
-Section: libdevel
-Depends: libndr-dev (=${binary:Version}),
-         libregistry0 (=${binary:Version}),
-         pkg-config,
-         ${misc:Depends}
-Description: Registry library - development files
- The Samba registry library provides read and write access to Windows
- registries. At the moment the following formats are supported:
-  - The default Windows NT, 2000 and XP registry format (such as NTUSER.DAT
-    files)
-  - Remote Windows and Samba registries over the DCE/RPC protocol
-  - Samba native registry files (basically LDB files)
- .
- The library also contains support for applying and generating
- registry patch files.
- .
- This package contains the files required for development.
-
-Package: libsamba-hostconfig0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Replaces: libsamba-util0 (<< 4.0.0~alpha17~git20110724.dfsg1-1)
-Section: libs
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: Samba host configuration library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- Library for accessing the Samba4 host-specific configuration files.
-
-Package: libsamba-hostconfig-dev
-Architecture: any
-Section: libdevel
-Depends: libsamba-hostconfig0 (=${binary:Version}), pkg-config, ${misc:Depends}
-Description: Samba host configuration library - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- Library for accessing the Samba4 host-specific configuration files.
- .
- This package contains the development files.
-
-Package: libtorture0
-Multi-Arch: same
-Pre-Depends: ${misc:Pre-Depends}
-Architecture: any
-Section: libs
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: Library for running Samba unit tests
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- Library for running Samba unittests.
-
-Package: libtorture-dev
-Architecture: any
-Section: libdevel
-Depends: pkg-config, ${misc:Depends}
-Description: Library for running unit tests - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- Library for running unittests.
- .
- This package contains the development files.
-
 Package: python-samba
 Pre-Depends: ${misc:Pre-Depends}
 Architecture: any
 Section: python
 Provides: ${python:Provides}
-Depends: libnetapi0 (=${binary:Version}),
-         libsamba-hostconfig0 (=${binary:Version}),
-         libsamba-util0 (=${binary:Version}),
-         libsmbd0 (=${binary:Version}),
-         python-ldb,
+Depends: python-ldb,
          python-tdb,
+         python-crypto,
          ${misc:Depends},
          ${python:Depends},
          ${shlibs:Depends}
@@ -628,37 +344,6 @@ Description: Python bindings for Samba
  or member server in both NT4-style and Active Directory domains.
  .
  This package contains Python bindings for most Samba libraries.
-
-Package: libsamba-util-dev
-Architecture: any
-Section: libdevel
-Replaces: samba4-dev (<< 4.0.0~alpha18)
-Depends: pkg-config, ${misc:Depends}
-Description: Samba utility function library - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- libsamba-util is a collection of generic data structures and functions
- used within Samba.
- .
- This package contains the development files.
-
-Package: libsamba-util0
-Architecture: any
-Section: libs
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: Samba utility function library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- libsamba-util is a collection of generic data structures and functions
- used within Samba.
 
 Package: samba-dsdb-modules
 Architecture: any
@@ -674,66 +359,6 @@ Description: Samba Directory Services Database
  .
  This package contains LDB plugins which add support for various Active
  Directory features to the LDB library.
-
-Package: libsmbclient-raw0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Replaces: python-samba (<< 4.0.0~alpha18)
-Description: SMB client library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the client-side implementation of the SMB protocol.
-
-Package: libsmbclient-raw-dev
-Architecture: any
-Section: libdevel
-Depends: libsamba-util-dev (=${binary:Version}),
-         libsmbclient-raw0 (=${binary:Version}),
-         pkg-config,
-         ${misc:Depends}
-Description: SMB client library - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the files required for development using the SMB client
- library.
-
-Package: libsamba-credentials0
-Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: Samba Credentials management library
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the library for credentials management.
-
-Package: libsamba-credentials-dev
-Architecture: any
-Section: libdevel
-Replaces: samba4-dev (<< 4.0.0~alpha17~)
-Depends: libsamba-credentials0 (= ${binary:Version}),
-         libsamba-util-dev (= ${binary:Version}),
-         pkg-config,
-         ${misc:Depends}
-Description: Samba Credentials management - development files
- Samba is an implementation of the SMB/CIFS protocol for Unix systems,
- providing support for cross-platform file sharing with Microsoft Windows, OS X,
- and other Unix systems.  Samba can also function as a domain controller
- or member server in both NT4-style and Active Directory domains.
- .
- This package contains the files required for development using the
- credentials management library.
 
 Package: libpam-smbpass
 Section: admin
@@ -781,33 +406,6 @@ Description: development files for libsmbclient
  enables client applications to talk to Microsoft Windows and Samba servers
  using the SMB/CIFS protocol.
 
-Package: libnetapi0
-Section: libs
-Priority: optional
-Architecture: any
-Multi-Arch: same
-Pre-Depends: dpkg (>= 1.15.6~), ${misc:Pre-Depends}
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: shared library for administrative communication with DCE/RPC servers
- This package provides libnetapi, a library that
- enables client applications to talk administrative and other related
- (but not file sharing) protocols to Microsoft Windows and Samba servers
- using the DCE/RPC protocol.
-
-Package: libnetapi-dev
-Section: libdevel
-Priority: extra
-Architecture: any
-Multi-Arch: same
-Depends: libnetapi0 (= ${binary:Version}), ${misc:Depends}
-Pre-Depends: dpkg (>= 1.15.6~)
-Description: development files for libnetapi
- This package provides the development files (static library and headers)
- required for building applications against libnetapi, a library that
- enables client applications to talk administrative and other related
- (but not file sharing) protocols to Microsoft Windows and Samba servers
- using the DCE/RPC protocol.
-
 Package: libsmbsharemodes0
 Section: libs
 Priority: optional
@@ -817,19 +415,21 @@ Pre-Depends: dpkg (>= 1.15.6~), ${misc:Pre-Depends}
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Description: shared library for non-samba access to the samba 'share modes' database
  This package provides libsmbsharemodes, a library that
- enables server applications to honour or apply the share modes that are used over CIFS.
+ enables server applications to honour or apply the share modes that are used
+ over CIFS.
 
 Package: libsmbsharemodes-dev
 Section: libdevel
 Priority: extra
 Architecture: any
 Multi-Arch: same
-Depends: ${misc:Depends}
+Depends: libsmbsharemodes0 (= ${binary:Version}), ${misc:Depends}
 Pre-Depends: dpkg (>= 1.15.6~)
 Description: development files for libsmbsharemodes
  This package provides the development files (headers)
  required for building applications against libsmbsharemodes, a library that
- enables server applications to honour or apply the share modes that are used over CIFS.
+ enables server applications to honour or apply the share modes that are used
+ over CIFS.
 
 Package: winbind
 Pre-Depends: ${misc:Pre-Depends}
@@ -861,7 +461,6 @@ Multi-Arch: same
 Pre-Depends: dpkg (>= 1.15.6~), ${misc:Pre-Depends}
 Depends: libpam-runtime (>= 1.0.1-6),
          libpam0g (>= 1.1.3-2~),
-         libwbclient0 (= ${binary:Version}),
          samba-common (= ${source:Version}),
          winbind (= ${binary:Version}),
          ${misc:Depends},
@@ -889,8 +488,7 @@ Priority: optional
 Architecture: any
 Multi-Arch: same
 Pre-Depends: dpkg (>= 1.15.6~)
-Depends: libwbclient0 (= ${binary:Version}),
-         samba-common (= ${source:Version}),
+Depends: samba-common (= ${source:Version}),
          winbind (= ${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
