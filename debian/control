@@ -17,7 +17,7 @@ Build-Depends: bison,
                flex,
                heimdal-multidev (>= 1.6~),
                libacl1-dev,
-               libaio-dev,
+               libaio-dev [linux-any],
                libattr1-dev,
                libblkid-dev,
                libbsd-dev,
@@ -49,8 +49,8 @@ Build-Depends: bison,
                subunit (>= 0.0.6),
                xsltproc,
                zlib1g-dev (>= 1:1.2.3)
-Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-samba/samba4.git
-Vcs-Git: git://git.debian.org/pkg-samba/samba4
+Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-samba/samba.git
+Vcs-Git: git://anonscm.debian.org/pkg-samba/samba.git
 XS-Testsuite: autopkgtest
 
 Package: samba
@@ -59,7 +59,7 @@ Pre-Depends: dpkg (>= 1.15.6~), ${misc:Pre-Depends}
 Depends: adduser,
          libpam-modules,
          libpam-runtime (>= 1.0.1-11),
-         lsb-base (>= 3.2-13),
+         lsb-base (>= 4.1+Debian),
          procps,
          python,
          python-dnspython,
