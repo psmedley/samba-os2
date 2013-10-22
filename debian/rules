@@ -16,11 +16,15 @@ LDB_NEXT_VERSION = $(shell python -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = s
 LDB_DEPENDS = "libldb1 (<< 1:$(LDB_NEXT_VERSION)~), libldb1 (>> 1:$(LDB_VERSION)~)"
 export PYTHON=$(shell which `pyversions -d`)
 export PYTHON_CONFIG="$(PYTHON)-config"
-WAF = $(PYTHON) ./buildtools/bin/waf
+WAF = $(PYTHON) ./buildtools/bin/waf -v
 
 # turn DEB_BUILD_OPTIONS='foo,bar' into DEB_BUILD_OPT_FOO and DEB_BUILD_OPT_BAR
 d_b_o:=$(shell echo "$$DEB_BUILD_OPTIONS"|sed 's/[^-[:alnum:]]/ /g'|tr a-z A-Z)
 $(foreach o, $(d_b_o), $(eval DEB_BUILD_OPT_$o := 1))
+
+# for xsltproc wrapper
+export PATH:=$(CURDIR)/debian/bin:$(PATH)
+export SOURCE_DATE=$(shell debian/get_source_changedate.pl)
 
 ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
 WAF += -j $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
@@ -139,6 +143,9 @@ override_dh_install:
 
 override_dh_python2:
 	dh_python2 --no-guessing-versions
+
+override_dh_installpam:
+	dh_installpam --name=samba
 
 get-packaged-orig-source:
 	./debian/build-orig.sh
