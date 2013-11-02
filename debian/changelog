@@ -1,3 +1,33 @@
+samba (2:4.0.10+dfsg-4) unstable; urgency=low
+
+  [ Christian Perrier ]
+  * Mark one debconf string as non-translatable
+
+  [ Debconf translations ]
+  * French updated (Christian Perrier).
+  * Swedish (Martin Bagge / brother).  Closes: #727186
+  * Hebrew (Omer Zak).
+  * Japanese (Kenshi Muto).  Closes: #727218
+  * Indonesian (Al Qalit).  Closes: #727543
+  * Russian (Yuri Kozlov).  Closes: #727612
+  * Esperanto (Felipe Castro).  Closes: #727619
+  * Polish (Michał Kułach).  Closes: #727646
+  * Danish (Joe Hansen).  Closes: #727764
+  * Czech (Miroslav Kure).  Closes: #728100
+  * Basque (Iñaki Larrañaga Murgoitio).  Closes: #728315
+
+  [ Jelmer Vernooij ]
+  * Move libtorture0 to samba-testsuite to reduce size of samba-libs and
+    prevent dependency on libsubunit0.
+
+  [ Ivo De Decker ]
+  * Handle move of tdb files to private dir in samba-libs.preinst.
+    Closes: #726472
+  * Also do the tdb move in libpam-smbpass.preinst, to avoid breaking the pam
+    module if the upgrade fails.
+
+ -- Ivo De Decker <ivo.dedecker@ugent.be>  Sat, 02 Nov 2013 11:27:25 +0100
+
 samba (2:4.0.10+dfsg-3) unstable; urgency=low
 
   [ Ivo De Decker ]
