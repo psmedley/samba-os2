@@ -1,3 +1,27 @@
+samba (2:4.0.13+dfsg-1) unstable; urgency=high
+
+  [ Steve Langasek ]
+  * Move update-alternatives upgrade removal handling to the postinst, where
+    it belongs.  Closes: #730090.
+  * Really remove all references to encrypted passwords: the
+    samba-common.config script still included references, which could cause
+    upgrade failures in some cases.  Closes: #729167.
+
+  [ Ivo De Decker ]
+  * New upstream security release. Fixes:
+    - CVE-2013-4408: DCE-RPC fragment length field is incorrectly checked
+    - CVE-2012-6150: pam_winbind login without require_membership_of
+                     restrictions
+  * Add empty prerm scripts for samba and samba-common-bin.prerm, to allow
+    upgrades from earlier versions with broken prerm script (bug introduced in
+    2:4.0.10+dfsg-3)
+  * Don't fail in postinst when removing old alternatives fails.
+
+  [ Jelmer Vernooij ]
+  * Fix invocations of 'update-alternatives --remove-all'. Closes: #731192
+
+ -- Ivo De Decker <ivo.dedecker@ugent.be>  Mon, 09 Dec 2013 18:34:07 +0100
+
 samba (2:4.0.12+dfsg-1) unstable; urgency=low
 
   [ Ivo De Decker ]
