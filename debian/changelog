@@ -1,3 +1,27 @@
+samba (2:4.1.4+dfsg-2) unstable; urgency=medium
+
+  [ Jelmer Vernooij ]
+  * Depend on newer version of ctdb, as Samba won't build against older
+    versions without --enable-old-ctdb.
+  * Bump standards version to 3.9.5 (no changes).
+  * Move libpac, db_glue and hdb module from samba-libs to samba package
+    to reduce size and dependency set of libs package.
+  * Fix compatibility with newer versions of the Heimdal HDB API.
+    + Update 26_heimdal_compat: Fix initialization of HDB plugin. Thanks Jeff
+      Clark. Closes: #732342
+    + Add dependency on specific version of the Heimdal HDB API.
+      Closes: #732344
+
+  [ Steve Langasek ]
+  * dhcp3-client is superseded by dhcp-client; update the references in
+    the package.  Closes: #736070.
+  * Move the dhcp client hook from /etc/dhcp3 to /etc/dhcp.
+    Closes: #649100.
+  * debian/bin/xsltproc: don't use $FAKETIME as the variable name in our
+    wrapper script, this seems to make faketime unhappy.
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Sat, 18 Jan 2014 20:26:35 +0000
+
 samba (2:4.1.4+dfsg-1) unstable; urgency=medium
 
   * New upstream release.
