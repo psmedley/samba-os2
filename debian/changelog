@@ -1,3 +1,14 @@
+samba (2:4.1.5+dfsg-1) unstable; urgency=medium
+
+  [ Jelmer Vernooij ]
+  * Fix watch file.
+
+  [ Ivo De Decker ]
+  * New upstream release.
+  * Remove the part of patch 26_heimdal_compat integrated upstream.
+
+ -- Ivo De Decker <ivo.dedecker@ugent.be>  Sat, 22 Feb 2014 23:17:59 +0100
+
 samba (2:4.1.4+dfsg-3) unstable; urgency=medium
 
   * Move samba.dckeytab module to samba package, as it relies on hdb.
