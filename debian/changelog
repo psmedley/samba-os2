@@ -1,3 +1,13 @@
+samba (2:4.1.11+dfsg-2) unstable; urgency=medium
+
+  * Updated Italian translation. Thanks Luca Monducci. Closes: #760743
+  * Use HTTP in watch file, as ftp.samba.org is not working reliably for
+    me.
+  * Use Excluded-Files in debian/copyright for DFSG-nonfree files.
+  * Update Dutch translation. Thanks Frans Spiesschaert. Closes: #763650
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Sun, 07 Sep 2014 20:52:27 +0200
+
 samba (2:4.1.11+dfsg-1) unstable; urgency=high
 
   * New upstream release. Fixes:
