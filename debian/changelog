@@ -1,3 +1,14 @@
+samba (2:4.1.13+dfsg-2) unstable; urgency=medium
+
+  * Mask /etc/init.d/samba init script for systemd. This should make systemd
+    ignore the samba init script. Thanks to Michael Biebl for the suggestion.
+    Closes: #740942
+  * Disable samba init script on upgrade from wheezy to jessie.
+    Thanks again to Michael Biebl for the report.
+    Closes: #766690
+
+ -- Ivo De Decker <ivodd@debian.org>  Sat, 25 Oct 2014 00:49:12 +0200
+
 samba (2:4.1.13+dfsg-1) unstable; urgency=medium
 
   * New upstream release.
