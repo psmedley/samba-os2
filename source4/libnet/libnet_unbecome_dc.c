@@ -543,7 +543,9 @@ static void unbecomeDC_drsuapi_connect_send(struct libnet_UnbecomeDC_state *s)
 	struct composite_context *creq;
 	char *binding_str;
 
-	binding_str = talloc_asprintf(s, "ncacn_ip_tcp:%s[seal]", s->source_dsa.dns_name);
+	binding_str = talloc_asprintf(s, "ncacn_ip_tcp:%s[seal,target_hostname=%s]",
+				      s->source_dsa.address,
+				      s->source_dsa.dns_name);
 	if (composite_nomem(binding_str, c)) return;
 
 	c->status = dcerpc_parse_binding(s, binding_str, &s->drsuapi.binding);
@@ -551,7 +553,10 @@ static void unbecomeDC_drsuapi_connect_send(struct libnet_UnbecomeDC_state *s)
 	if (!composite_is_ok(c)) return;
 
 	if (DEBUGLEVEL >= 10) {
-		s->drsuapi.binding->flags |= DCERPC_DEBUG_PRINT_BOTH;
+		c->status = dcerpc_binding_set_flags(s->drsuapi.binding,
+						     DCERPC_DEBUG_PRINT_BOTH,
+						     0);
+		if (!composite_is_ok(c)) return;
 	}
 
 	creq = dcerpc_pipe_connect_b_send(s, s->drsuapi.binding, &ndr_table_drsuapi,
@@ -635,15 +640,6 @@ static void unbecomeDC_drsuapi_bind_recv(struct tevent_req *subreq)
 			s->drsuapi.remote_info28.repl_epoch		= 0;
 			break;
 		}
-		case 48: {
-			struct drsuapi_DsBindInfo48 *info48;
-			info48 = &s->drsuapi.bind_r.out.bind_info->info.info48;
-			s->drsuapi.remote_info28.supported_extensions	= info48->supported_extensions;
-			s->drsuapi.remote_info28.site_guid		= info48->site_guid;
-			s->drsuapi.remote_info28.pid			= info48->pid;
-			s->drsuapi.remote_info28.repl_epoch		= info48->repl_epoch;
-			break;
-		}
 		case 28: {
 			s->drsuapi.remote_info28 = s->drsuapi.bind_r.out.bind_info->info.info28;
 			break;
@@ -655,6 +651,15 @@ static void unbecomeDC_drsuapi_bind_recv(struct tevent_req *subreq)
 			s->drsuapi.remote_info28.site_guid		= info32->site_guid;
 			s->drsuapi.remote_info28.pid			= info32->pid;
 			s->drsuapi.remote_info28.repl_epoch		= info32->repl_epoch;
+			break;
+		}
+		case 48: {
+			struct drsuapi_DsBindInfo48 *info48;
+			info48 = &s->drsuapi.bind_r.out.bind_info->info.info48;
+			s->drsuapi.remote_info28.supported_extensions	= info48->supported_extensions;
+			s->drsuapi.remote_info28.site_guid		= info48->site_guid;
+			s->drsuapi.remote_info28.pid			= info48->pid;
+			s->drsuapi.remote_info28.repl_epoch		= info48->repl_epoch;
 			break;
 		}
 		case 52: {

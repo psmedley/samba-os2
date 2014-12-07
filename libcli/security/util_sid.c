@@ -96,6 +96,23 @@ const struct dom_sid global_sid_Unix_Users =			/* Unmapped Unix users */
 const struct dom_sid global_sid_Unix_Groups =			/* Unmapped Unix groups */
 { 1, 1, {0,0,0,0,0,22}, {2,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 
+/*
+ * http://technet.microsoft.com/en-us/library/hh509017(v=ws.10).aspx
+ */
+const struct dom_sid global_sid_Unix_NFS =             /* MS NFS and Apple style */
+{ 1, 1, {0,0,0,0,0,5}, {88,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
+const struct dom_sid global_sid_Unix_NFS_Users =		/* Unix uid, MS NFS and Apple style */
+{ 1, 2, {0,0,0,0,0,5}, {88,1,0,0,0,0,0,0,0,0,0,0,0,0,0}};
+const struct dom_sid global_sid_Unix_NFS_Groups =		/* Unix gid, MS NFS and Apple style */
+{ 1, 2, {0,0,0,0,0,5}, {88,2,0,0,0,0,0,0,0,0,0,0,0,0,0}};
+const struct dom_sid global_sid_Unix_NFS_Mode =			/* Unix mode */
+{ 1, 2, {0,0,0,0,0,5}, {88,3,0,0,0,0,0,0,0,0,0,0,0,0,0}};
+/* Unused, left here for documentary purposes */
+#if 0
+const struct dom_sid global_sid_Unix_NFS_Other =		/* Unix other, MS NFS and Apple style */
+{ 1, 2, {0,0,0,0,0,5}, {88,4,0,0,0,0,0,0,0,0,0,0,0,0,0}};
+#endif
+
 /* Unused, left here for documentary purposes */
 #if 0
 #define SECURITY_NULL_SID_AUTHORITY    0
@@ -225,10 +242,10 @@ void sid_copy(struct dom_sid *dst, const struct dom_sid *src)
 {
 	int i;
 
-	ZERO_STRUCTP(dst);
-
-	dst->sid_rev_num = src->sid_rev_num;
-	dst->num_auths = src->num_auths;
+	*dst = (struct dom_sid) {
+		.sid_rev_num = src->sid_rev_num,
+		.num_auths = src->num_auths,
+	};
 
 	memcpy(&dst->id_auth[0], &src->id_auth[0], sizeof(src->id_auth));
 

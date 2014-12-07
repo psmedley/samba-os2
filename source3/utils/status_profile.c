@@ -24,7 +24,6 @@
 bool status_profile_dump(bool be_verbose);
 bool status_profile_rates(bool be_verbose);
 
-#ifdef WITH_PROFILE
 static void profile_separator(const char * title)
 {
     char line[79 + 1];
@@ -39,14 +38,12 @@ static void profile_separator(const char * title)
     line[sizeof(line) - 1] = '\0';
     d_printf("%s\n", line);
 }
-#endif
 
 /*******************************************************************
  dump the elements of the profile structure
   ******************************************************************/
 bool status_profile_dump(bool verbose)
 {
-#ifdef WITH_PROFILE
 	if (!profile_setup(NULL, True)) {
 		fprintf(stderr,"Failed to initialise profile memory\n");
 		return False;
@@ -136,14 +133,14 @@ bool status_profile_dump(bool verbose)
 	d_printf("non_oplock_writes:              %u\n", profile_p->writecache_non_oplock_writes);
 	d_printf("direct_writes:                  %u\n", profile_p->writecache_direct_writes);
 	d_printf("init_writes:                    %u\n", profile_p->writecache_init_writes);
-	d_printf("flushed_writes[SEEK]:           %u\n", profile_p->writecache_flushed_writes[SEEK_FLUSH]);
-	d_printf("flushed_writes[READ]:           %u\n", profile_p->writecache_flushed_writes[READ_FLUSH]);
-	d_printf("flushed_writes[WRITE]:          %u\n", profile_p->writecache_flushed_writes[WRITE_FLUSH]);
-	d_printf("flushed_writes[READRAW]:        %u\n", profile_p->writecache_flushed_writes[READRAW_FLUSH]);
-	d_printf("flushed_writes[OPLOCK_RELEASE]: %u\n", profile_p->writecache_flushed_writes[OPLOCK_RELEASE_FLUSH]);
-	d_printf("flushed_writes[CLOSE]:          %u\n", profile_p->writecache_flushed_writes[CLOSE_FLUSH]);
-	d_printf("flushed_writes[SYNC]:           %u\n", profile_p->writecache_flushed_writes[SYNC_FLUSH]);
-	d_printf("flushed_writes[SIZECHANGE]:     %u\n", profile_p->writecache_flushed_writes[SIZECHANGE_FLUSH]);
+	d_printf("flushed_writes[SEEK]:           %u\n", profile_p->writecache_flushed_writes[SAMBA_SEEK_FLUSH]);
+	d_printf("flushed_writes[READ]:           %u\n", profile_p->writecache_flushed_writes[SAMBA_READ_FLUSH]);
+	d_printf("flushed_writes[WRITE]:          %u\n", profile_p->writecache_flushed_writes[SAMBA_WRITE_FLUSH]);
+	d_printf("flushed_writes[READRAW]:        %u\n", profile_p->writecache_flushed_writes[SAMBA_READRAW_FLUSH]);
+	d_printf("flushed_writes[OPLOCK_RELEASE]: %u\n", profile_p->writecache_flushed_writes[SAMBA_OPLOCK_RELEASE_FLUSH]);
+	d_printf("flushed_writes[CLOSE]:          %u\n", profile_p->writecache_flushed_writes[SAMBA_CLOSE_FLUSH]);
+	d_printf("flushed_writes[SYNC]:           %u\n", profile_p->writecache_flushed_writes[SAMBA_SYNC_FLUSH]);
+	d_printf("flushed_writes[SIZECHANGE]:     %u\n", profile_p->writecache_flushed_writes[SAMBA_SIZECHANGE_FLUSH]);
 	d_printf("num_perfect_writes:             %u\n", profile_p->writecache_num_perfect_writes);
 	d_printf("num_write_caches:               %u\n", profile_p->writecache_num_write_caches);
 	d_printf("allocated_write_caches:         %u\n", profile_p->writecache_allocated_write_caches);
@@ -437,15 +434,8 @@ bool status_profile_dump(bool verbose)
 	d_printf("smb2_break_count:               %u\n", profile_p->smb2_break_count);
 	d_printf("smb2_break_time:                %u\n", profile_p->smb2_break_time);
 
-#else /* WITH_PROFILE */
-
-	fprintf(stderr, "Profile data unavailable\n");
-#endif /* WITH_PROFILE */
-
 	return True;
 }
-
-#ifdef WITH_PROFILE
 
 /* Convert microseconds to milliseconds. */
 #define usec_to_msec(s) ((s) / 1000)
@@ -566,14 +556,3 @@ bool status_profile_rates(bool verbose)
 
 	return True;
 }
-
-#else /* WITH_PROFILE */
-
-bool status_profile_rates(bool verbose)
-{
-	fprintf(stderr, "Profile data unavailable\n");
-	return False;
-}
-
-#endif /* WITH_PROFILE */
-

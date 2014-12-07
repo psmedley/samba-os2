@@ -29,7 +29,7 @@
 
 #define DO_STRUCT_REQ_REP_EXT(op,req,rep,expected,strict,warnaction,cmt) do { \
 	NSS_STATUS __got, __expected = (expected); \
-	__got = winbindd_request_response(op, req, rep); \
+	__got = winbindd_request_response(NULL, op, req, rep); \
 	if (__got != __expected) { \
 		const char *__cmt = (cmt); \
 		if (strict) { \
@@ -1034,7 +1034,7 @@ static bool torture_winbind_struct_lookup_name_sid(struct torture_context *tortu
 	get_winbind_domain(torture, &domain);
 	do {
 		count++;
-		invalid_name = talloc_asprintf(torture, "%s\\%s%u",
+		invalid_name = talloc_asprintf(torture, "%s/%s%u",
 					       domain,
 					       invalid_user, count);
 	} while(name_is_in_list(invalid_name, (const char **)users) ||

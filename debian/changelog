@@ -1,3 +1,42 @@
+samba (2:4.2.1+dfsg-1) experimental; urgency=medium
+
+  [ Jelmer Vernooij ]
+  * New upstream release.
+   + Drop patch do-not-install-smbclient4-and-nmbclient4: applied upstream.
+   + Drop patch
+     bug_598313_upstream_7499-nss_wins-dont-clobber-daemons-logs.patch:
+     present upstream.
+   + Refresh patch 26_heimdal_compat.26_heimdal_compat.
+   + Add build-dependency on libarchive-dev.
+  * Drop samba_bug_11077_torturetest.patch: applied upstream.
+  * Drop dependency on ctdb - now bundled with Samba.
+  * Use bundled Heimdal as the system Heimdal doesn't contain the
+    changes required for Samba.
+  * Add patch heimdal-rfc3454.txt: patch in truncated rfc3454.txt for
+    building bundled heimdal.
+  * Drop patches 25_heimdal_api_changes and 26_heimdal_compat.
+  * Disable cluster support; it breaks the build.
+  * Add patch no_wrapper: avoid dependencies on
+    {nss,uid,socket}_wrapper.
+  * Move some libraries around.
+  * Move ownership of var/lib/samba and var/lib/samba/private to samba-
+    common, remove obsolete samba4.dirs. Closes: #793866
+  * Remove ctdb-tests and ctdb-pcp-pmda packages as they contain problems
+    and unclear what they are useful for, now ctdb now longer provides
+    an external API.
+
+  [ Mathieu Parent ]
+  * Merge ctdb source package
+    - initial merge
+    - libctdb-dev has been dropped
+    - ctdb-dbg renamed to ctdb-tests, debug files moved to samba-dbg
+    - ctdb-tests depends on python
+  * Fix CTDB socketpath parsing
+  * Fix CTDB build with PMDA
+  * ctdb: Fix privacy breach on google.com (from documentation)
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Sun, 07 Dec 2014 15:34:36 +0000
+
 samba (2:4.1.17+dfsg-2) unstable; urgency=medium
 
   [ Andreas Beckmann ]

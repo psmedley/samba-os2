@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 APPNAME = 'tevent'
-VERSION = '0.9.18'
+VERSION = '0.9.24'
 
 blddir = 'bin'
 
@@ -10,7 +10,7 @@ import sys, os
 # find the buildtools directory
 srcdir = '.'
 while not os.path.exists(srcdir+'/buildtools') and len(srcdir.split('/')) < 5:
-    srcdir = '../' + srcdir
+    srcdir = srcdir + '/..'
 sys.path.insert(0, srcdir + '/buildtools/wafsamba')
 
 import wafsamba, samba_dist, Options, Logs
@@ -88,6 +88,9 @@ def build(bld):
 
     if bld.CONFIG_SET('HAVE_EPOLL'):
         SRC += ' tevent_epoll.c'
+
+    if bld.CONFIG_SET('HAVE_SOLARIS_PORTS'):
+        SRC += ' tevent_port.c'
 
     if bld.env.standalone_tevent:
         bld.env.PKGCONFIGDIR = '${LIBDIR}/pkgconfig'

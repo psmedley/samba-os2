@@ -21,7 +21,12 @@
 #ifndef _SAMBA_UTIL_H_
 #define _SAMBA_UTIL_H_
 
+#ifndef SAMBA_UTIL_CORE_ONLY
 #include "lib/util/charset/charset.h"
+#else
+#include "charset_compat.h"
+#endif
+
 #include "lib/util/attr.h"
 
 /* for TALLOC_CTX */
@@ -45,42 +50,23 @@ extern const char *panic_action;
 #include "lib/util/byteorder.h"
 #include "lib/util/talloc_stack.h"
 
-/**
- * assert macros 
- */
-#define SMB_ASSERT(b) \
-do { \
-	if (!(b)) { \
-		DEBUG(0,("PANIC: assert failed at %s(%d): %s\n", \
-			 __FILE__, __LINE__, #b)); \
-		smb_panic("assert failed: " #b); \
-	} \
-} while(0)
-
 #ifndef ABS
 #define ABS(a) ((a)>0?(a):(-(a)))
 #endif
 
 #include "lib/util/memory.h"
 
+#include "../libcli/util/ntstatus.h"
 #include "lib/util/string_wrappers.h"
+
+#include "fault.h"
 
 /**
  * Write backtrace to debug log
  */
 _PUBLIC_ void call_backtrace(void);
 
-/**
- Something really nasty happened - panic !
-**/
-typedef void (*smb_panic_handler_t)(const char *why);
-
-_PUBLIC_ void fault_configure(smb_panic_handler_t panic_handler);
-_PUBLIC_ void fault_setup(void);
-_PUBLIC_ void fault_setup_disable(void);
 _PUBLIC_ void dump_core_setup(const char *progname, const char *logfile);
-_PUBLIC_ _NORETURN_ void smb_panic(const char *reason);
-
 
 /**
   register a fault handler. 
@@ -88,31 +74,7 @@ _PUBLIC_ _NORETURN_ void smb_panic(const char *reason);
 */
 _PUBLIC_ bool register_fault_handler(const char *name, void (*fault_handler)(int sig));
 
-/* The following definitions come from lib/util/signal.c  */
-
-
-/**
- Block sigs.
-**/
-void BlockSignals(bool block, int signum);
-
-/**
- Catch a signal. This should implement the following semantics:
-
- 1) The handler remains installed after being called.
- 2) The signal should be blocked during handler execution.
-**/
-void (*CatchSignal(int signum,void (*handler)(int )))(int);
-
-/**
- Ignore SIGCLD via whatever means is necessary for this OS.
-**/
-void (*CatchChild(void))(int);
-
-/**
- Catch SIGCLD but leave the child around so it's status can be reaped.
-**/
-void (*CatchChildLeaveStatus(void))(int);
+#include "lib/util/signal.h" /* Avoid /usr/include/signal.h */
 
 struct sockaddr;
 
@@ -252,32 +214,7 @@ _PUBLIC_ void hex_encode(const unsigned char *buff_in, size_t len, char **out_he
  */
 _PUBLIC_ char *hex_encode_talloc(TALLOC_CTX *mem_ctx, const unsigned char *buff_in, size_t len);
 
-/**
- Substitute a string for a pattern in another string. Make sure there is 
- enough room!
-
- This routine looks for pattern in s and replaces it with 
- insert. It may do multiple replacements.
-
- Any of " ; ' $ or ` in the insert string are replaced with _
- if len==0 then the string cannot be extended. This is different from the old
- use of len==0 which was for no length checks to be done.
-**/
-_PUBLIC_ void string_sub(char *s,const char *pattern, const char *insert, size_t len);
-
-_PUBLIC_ void string_sub_once(char *s, const char *pattern,
-			      const char *insert, size_t len);
-
-_PUBLIC_ char *string_sub_talloc(TALLOC_CTX *mem_ctx, const char *s, 
-				const char *pattern, const char *insert);
-
-/**
- Similar to string_sub() but allows for any character to be substituted. 
- Use with caution!
- if len==0 then the string cannot be extended. This is different from the old
- use of len==0 which was for no length checks to be done.
-**/
-_PUBLIC_ void all_string_sub(char *s,const char *pattern,const char *insert, size_t len);
+#include "substitute.h"
 
 /**
  Unescape a URL encoded string, in place.
@@ -530,6 +467,14 @@ _PUBLIC_ const char **str_list_copy_const(TALLOC_CTX *mem_ctx,
  */
 _PUBLIC_ const char **const_str_list(char **list);
 
+/**
+ * str_list_make, v3 version. The v4 version does not
+ * look at quoted strings with embedded blanks, so
+ * do NOT merge this function please!
+ */
+char **str_list_make_v3(TALLOC_CTX *mem_ctx, const char *string,
+	const char *sep);
+
 
 /* The following definitions come from lib/util/util_file.c  */
 
@@ -577,12 +522,6 @@ the list.
 **/
 _PUBLIC_ char **fd_lines_load(int fd, int *numlines, size_t maxsize, TALLOC_CTX *mem_ctx);
 
-/**
-take a list of lines and modify them to produce a list where \ continues
-a line
-**/
-_PUBLIC_ void file_lines_slashcont(char **lines);
-
 _PUBLIC_ bool file_save_mode(const char *fname, const void *packet,
 			     size_t length, mode_t mode);
 /**
@@ -591,7 +530,6 @@ _PUBLIC_ bool file_save_mode(const char *fname, const void *packet,
 _PUBLIC_ bool file_save(const char *fname, const void *packet, size_t length);
 _PUBLIC_ int vfdprintf(int fd, const char *format, va_list ap) PRINTF_ATTRIBUTE(2,0);
 _PUBLIC_ int fdprintf(int fd, const char *format, ...) PRINTF_ATTRIBUTE(2,3);
-_PUBLIC_ bool large_file_support(const char *path);
 
 /*
   compare two files, return true if the two files have the same content
@@ -641,25 +579,13 @@ _PUBLIC_ bool file_check_permissions(const char *fname,
  * @retval true if the directory already existed and has the right permissions 
  * or was successfully created.
  */
-_PUBLIC_ bool directory_create_or_exist(const char *dname, uid_t uid, 
-			       mode_t dir_perms);
+_PUBLIC_ bool directory_create_or_exist(const char *dname, mode_t dir_perms);
 
 _PUBLIC_ bool directory_create_or_exist_strict(const char *dname,
 					       uid_t uid,
 					       mode_t dir_perms);
 
-/**
- Set a fd into blocking/nonblocking mode. Uses POSIX O_NONBLOCK if available,
- else
-  if SYSV use O_NDELAY
-  if BSD use FNDELAY
-**/
-_PUBLIC_ int set_blocking(int fd, bool set);
-
-/**
-   set close on exec on a file descriptor if available
- **/
-_PUBLIC_ bool smb_set_close_on_exec(int fd);
+#include "blocking.h"
 
 /**
  Sleep for a specified number of milliseconds.
@@ -792,44 +718,8 @@ int ms_fnmatch_protocol(const char *pattern, const char *string, int protocol);
 /** a generic fnmatch function - uses for non-CIFS pattern matching */
 int gen_fnmatch(const char *pattern, const char *string);
 
-/* The following definitions come from lib/util/idtree.c  */
-
-
-/**
-  initialise a idr tree. The context return value must be passed to
-  all subsequent idr calls. To destroy the idr tree use talloc_free()
-  on this context
- */
-_PUBLIC_ struct idr_context *idr_init(TALLOC_CTX *mem_ctx);
-
-/**
-  allocate the next available id, and assign 'ptr' into its slot.
-  you can retrieve later this pointer using idr_find()
-*/
-_PUBLIC_ int idr_get_new(struct idr_context *idp, void *ptr, int limit);
-
-/**
-   allocate a new id, giving the first available value greater than or
-   equal to the given starting id
-*/
-_PUBLIC_ int idr_get_new_above(struct idr_context *idp, void *ptr, int starting_id, int limit);
-
-/**
-  allocate a new id randomly in the given range
-*/
-_PUBLIC_ int idr_get_new_random(struct idr_context *idp, void *ptr, int limit);
-
-/**
-  find a pointer value previously set with idr_get_new given an id
-*/
-_PUBLIC_ void *idr_find(struct idr_context *idp, int id);
-
-/**
-  remove an id from the idr tree
-*/
-_PUBLIC_ int idr_remove(struct idr_context *idp, int id);
-
-/* The following definitions come from lib/util/become_daemon.c  */
+#include "idtree.h"
+#include "idtree_random.h"
 
 /**
  Close the low 3 fd's and open dev/null in their place
@@ -982,6 +872,12 @@ char *data_path(TALLOC_CTX *mem_ctx, const char *name);
 const char *shlib_ext(void);
 
 struct server_id;
+
+struct server_id_buf { char buf[48]; }; /* probably a bit too large ... */
+char *server_id_str_buf(struct server_id id, struct server_id_buf *dst);
+
+bool server_id_same_process(const struct server_id *p1,
+			    const struct server_id *p2);
 bool server_id_equal(const struct server_id *p1, const struct server_id *p2);
 char *server_id_str(TALLOC_CTX *mem_ctx, const struct server_id *id);
 struct server_id server_id_from_string(uint32_t local_vnn,

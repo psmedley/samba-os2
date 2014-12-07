@@ -40,12 +40,10 @@ def set_options(opt):
     opt.RECURSE('lib/ntdb')
     opt.RECURSE('selftest')
     opt.RECURSE('source4/lib/tls')
-    opt.RECURSE('lib/nss_wrapper')
-    opt.RECURSE('lib/socket_wrapper')
-    opt.RECURSE('lib/uid_wrapper')
     opt.RECURSE('pidl')
     opt.RECURSE('source3')
     opt.RECURSE('lib/util')
+    opt.RECURSE('ctdb')
 
     opt.add_option('--with-system-mitkrb5',
                    help='enable system MIT krb5 build (includes Samba 4 client and Samba 3 code base).'+
@@ -63,6 +61,14 @@ def set_options(opt):
     opt.add_option('--without-pie',
                   help=("Disable Position Independent Executable builds"),
                   action="store_false", dest='enable_pie')
+
+    opt.add_option('--with-relro',
+                  help=("Build with full RELocation Read-Only (RELRO)" +
+                        "(default if supported by compiler)"),
+                  action="store_true", dest='enable_relro')
+    opt.add_option('--without-relro',
+                  help=("Disable RELRO builds"),
+                  action="store_false", dest='enable_relro')
 
     opt.add_option('--with-systemd',
                    help=("Enable systemd integration"),
@@ -91,6 +97,7 @@ def configure(conf):
 
     conf.ADD_EXTRA_INCLUDES('#include/public #source4 #lib #source4/lib #source4/include #include #lib/replace')
 
+    conf.env.replace_add_global_pthread = True
     conf.RECURSE('lib/replace')
 
     conf.SAMBA_CHECK_PERL(mandatory=True)
@@ -114,6 +121,21 @@ def configure(conf):
         raise Utils.WafError('Python version 3.x is not supported by Samba yet')
 
     conf.RECURSE('dynconfig')
+
+    if conf.CHECK_FOR_THIRD_PARTY():
+        conf.RECURSE('third_party/zlib')
+        conf.RECURSE('third_party/popt')
+    else:
+        if not conf.CHECK_ZLIB():
+            raise Utils.WafError('zlib development packages have not been found.\nIf third_party is installed, check that it is in the proper place.')
+        else:
+            conf.define('USING_SYSTEM_ZLIB',1)
+
+        if not conf.CHECK_POPT():
+            raise Utils.WafError('popt development packages have not been found.\nIf third_party is installed, check that it is in the proper place.')
+        else:
+            conf.define('USING_SYSTEM_POPT', 1)
+
     conf.RECURSE('lib/ldb')
 
     if Options.options.with_system_mitkrb5:
@@ -132,21 +154,21 @@ def configure(conf):
     conf.RECURSE('lib/util')
     conf.RECURSE('lib/ccan')
     conf.RECURSE('lib/ntdb')
-    conf.RECURSE('lib/zlib')
     conf.RECURSE('lib/util/charset')
     conf.RECURSE('source4/auth')
     conf.RECURSE('lib/nss_wrapper')
     conf.RECURSE('nsswitch')
     conf.RECURSE('lib/socket_wrapper')
     conf.RECURSE('lib/uid_wrapper')
-    conf.RECURSE('lib/popt')
-    conf.RECURSE('lib/iniparser/src')
     conf.RECURSE('lib/subunit/c')
     conf.RECURSE('libcli/smbreadline')
     conf.RECURSE('lib/crypto')
     conf.RECURSE('pidl')
     conf.RECURSE('selftest')
     conf.RECURSE('source3')
+    conf.RECURSE('lib/texpect')
+    if conf.env.with_ctdb:
+        conf.RECURSE('ctdb')
 
     conf.SAMBA_CHECK_UNDEFINED_SYMBOL_FLAGS()
 
@@ -182,13 +204,24 @@ def configure(conf):
                          msg="Checking compiler for PIE support"):
 		conf.env['ENABLE_PIE'] = True
 
+    if Options.options.enable_relro != False:
+        if Options.options.enable_relro == True:
+            need_relro = True
+        else:
+            # not specified, only build RELROs if supported by compiler
+            need_relro = False
+        if conf.check_cc(cflags='', ldflags='-Wl,-z,relro,-z,now', mandatory=need_relro,
+                         msg="Checking compiler for full RELRO support"):
+            conf.env['ENABLE_RELRO'] = True
+
     if Options.options.enable_systemd != False:
         conf.check_cfg(package='libsystemd-daemon', args='--cflags --libs',
                        msg='Checking for libsystemd-daemon', uselib_store="SYSTEMD-DAEMON")
         conf.CHECK_HEADERS('systemd/sd-daemon.h', lib='systemd-daemon')
         conf.CHECK_LIB('systemd-daemon', shlib=True)
 
-    if conf.CONFIG_SET('HAVE_SYSTEMD_SD_DAEMON_H'):
+    if (conf.CONFIG_SET('HAVE_SYSTEMD_SD_DAEMON_H') and
+        conf.CONFIG_SET('HAVE_LIBSYSTEMD_DAEMON')):
         conf.DEFINE('HAVE_SYSTEMD', '1')
         conf.env['ENABLE_SYSTEMD'] = True
     else:
@@ -203,7 +236,9 @@ def etags(ctx):
     source_root = os.path.dirname(Utils.g_module.root_path)
     cmd = 'rm -f %s/TAGS && (find %s -name "*.[ch]" | egrep -v \.inst\. | xargs -n 100 etags -a)' % (source_root, source_root)
     print("Running: %s" % cmd)
-    os.system(cmd)
+    status = os.system(cmd)
+    if os.WEXITSTATUS(status):
+        raise Utils.WafError('etags failed')
 
 def ctags(ctx):
     "build 'tags' file using ctags"
@@ -211,7 +246,9 @@ def ctags(ctx):
     source_root = os.path.dirname(Utils.g_module.root_path)
     cmd = 'ctags --python-kinds=-i $(find %s -name "*.[ch]" | grep -v "*_proto\.h" | egrep -v \.inst\.) $(find %s -name "*.py")' % (source_root, source_root)
     print("Running: %s" % cmd)
-    os.system(cmd)
+    status = os.system(cmd)
+    if os.WEXITSTATUS(status):
+        raise Utils.WafError('ctags failed')
 
 # putting this here enabled build in the list
 # of commands in --help
@@ -234,14 +271,18 @@ def pydoctor(ctx):
     cmd='PYTHONPATH=%s pydoctor --introspect-c-modules --project-name=Samba --project-url=http://www.samba.org --make-html --docformat=restructuredtext --add-package bin/python/samba --add-module %s --add-module %s --add-module %s' % (
         bp, mpaths['tdb'], mpaths['ldb'], mpaths['talloc'], mpaths['ntdb'])
     print("Running: %s" % cmd)
-    os.system(cmd)
+    status = os.system(cmd)
+    if os.WEXITSTATUS(status):
+        raise Utils.WafError('pydoctor failed')
 
 
 def pep8(ctx):
     '''run pep8 validator'''
     cmd='PYTHONPATH=bin/python pep8 -r bin/python/samba'
     print("Running: %s" % cmd)
-    os.system(cmd)
+    status = os.system(cmd)
+    if os.WEXITSTATUS(status):
+        raise Utils.WafError('pep8 failed')
 
 
 def wafdocs(ctx):
@@ -255,12 +296,17 @@ def wafdocs(ctx):
     for f in list:
         cmd += ' --add-module %s' % f
     print("Running: %s" % cmd)
-    os.system(cmd)
+    status = os.system(cmd)
+    if os.WEXITSTATUS(status):
+        raise Utils.WafError('wafdocs failed')
 
 
 def dist():
     '''makes a tarball for distribution'''
     sambaversion = samba_version.load_version(env=None)
+
+    os.system("make -C ctdb/doc")
+    samba_dist.DIST_FILES('ctdb/doc:ctdb/doc', extend=True)
 
     os.system(srcdir + "/release-scripts/build-manpages-nogit")
     samba_dist.DIST_FILES('bin/docs:docs', extend=True)

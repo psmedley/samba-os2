@@ -45,10 +45,26 @@ int
 SMBC_check_server(SMBCCTX * context,
                   SMBCSRV * server)
 {
+	time_t now;
+
 	if (!cli_state_is_connected(server->cli)) {
 		return 1;
 	}
 
+	now = time_mono(NULL);
+
+	if (server->last_echo_time == (time_t)0 ||
+			now > server->last_echo_time +
+				(server->cli->timeout/1000)) {
+		unsigned char data[16] = {0};
+		NTSTATUS status = cli_echo(server->cli,
+					1,
+					data_blob_const(data, sizeof(data)));
+		if (!NT_STATUS_IS_OK(status)) {
+			return 1;
+		}
+		server->last_echo_time = now;
+	}
 	return 0;
 }
 
@@ -451,8 +467,8 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 	cli_set_timeout(c, smbc_getTimeout(context));
 
 	status = smbXcli_negprot(c->conn, c->timeout,
-				 lp_cli_minprotocol(),
-				 lp_cli_maxprotocol());
+				 lp_client_min_protocol(),
+				 lp_client_max_protocol());
 	if (!NT_STATUS_IS_OK(status)) {
 		cli_shutdown(c);
 		errno = ETIMEDOUT;
@@ -802,7 +818,7 @@ SMBC_attr_server(TALLOC_CTX *ctx,
                 ipc_srv->cli = ipc_cli;
 
                 nt_status = cli_rpc_pipe_open_noauth(
-			ipc_srv->cli, &ndr_table_lsarpc.syntax_id, &pipe_hnd);
+			ipc_srv->cli, &ndr_table_lsarpc, &pipe_hnd);
                 if (!NT_STATUS_IS_OK(nt_status)) {
                         DEBUG(1, ("cli_nt_session_open fail!\n"));
                         errno = ENOTSUP;

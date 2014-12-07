@@ -23,7 +23,8 @@
 #include "includes.h"
 #include "../libcli/smb/smb_common.h"
 
-ssize_t smb2_lease_pull(uint8_t *buf, size_t len, struct smb2_lease *lease)
+ssize_t smb2_lease_pull(const uint8_t *buf, size_t len,
+			struct smb2_lease *lease)
 {
 	int version;
 
@@ -42,15 +43,16 @@ ssize_t smb2_lease_pull(uint8_t *buf, size_t len, struct smb2_lease *lease)
 	lease->lease_state = IVAL(buf, 16);
 	lease->lease_flags = IVAL(buf, 20);
 	lease->lease_duration = BVAL(buf, 24);
+	lease->lease_version = version;
 
 	switch (version) {
 	case 1:
-		memcpy(&lease->parent_lease_key, buf+32, 16);
-		lease->lease_epoch = SVAL(buf, 48);
-		break;
-	case 2:
 		ZERO_STRUCT(lease->parent_lease_key);
 		lease->lease_epoch = 0;
+		break;
+	case 2:
+		memcpy(&lease->parent_lease_key, buf+32, 16);
+		lease->lease_epoch = SVAL(buf, 48);
 		break;
 	}
 
@@ -83,4 +85,18 @@ bool smb2_lease_push(const struct smb2_lease *lease, uint8_t *buf, size_t len)
 	}
 
 	return true;
+}
+
+bool smb2_lease_key_equal(const struct smb2_lease_key *k1,
+			  const struct smb2_lease_key *k2)
+{
+	return ((k1->data[0] == k2->data[0]) && (k1->data[1] == k2->data[1]));
+}
+
+bool smb2_lease_equal(const struct GUID *g1,
+		      const struct smb2_lease_key *k1,
+		      const struct GUID *g2,
+		      const struct smb2_lease_key *k2)
+{
+	return GUID_equal(g1, g2) && smb2_lease_key_equal(k1, k2);
 }

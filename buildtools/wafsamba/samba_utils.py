@@ -214,7 +214,8 @@ def TO_LIST(str, delimiter=None):
     if str is None:
         return []
     if isinstance(str, list):
-        return str
+        # we need to return a new independent list...
+        return list(str)
     if len(str) == 0:
         return []
     lst = str.split(delimiter)
@@ -391,7 +392,7 @@ try:
     # Even if hashlib.md5 exists, it may be unusable.
     # Try to use MD5 function. In FIPS mode this will cause an exception
     # and we'll get to the replacement code
-    foo = md5.md5('abcd')
+    foo = md5('abcd')
 except:
     try:
         import md5

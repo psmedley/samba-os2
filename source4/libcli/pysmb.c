@@ -38,11 +38,7 @@
 #include "libcli/security/security_descriptor.h"
 #include "librpc/rpc/pyrpc_util.h"
 
-#ifndef Py_RETURN_NONE
-#define Py_RETURN_NONE	return Py_INCREF(Py_None), Py_None
-#endif
-
-staticforward PyTypeObject PySMB;
+static PyTypeObject PySMB;
 
 void initsmb(void);
 

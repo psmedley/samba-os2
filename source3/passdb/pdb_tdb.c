@@ -226,7 +226,7 @@ static bool tdbsam_convert_backup(const char *dbname, struct db_context **pp_db)
 
 	tmp_db = db_open(NULL, tmp_fname, 0,
 			 TDB_DEFAULT, O_CREAT|O_RDWR, 0600,
-			 DBWRAP_LOCK_ORDER_1);
+			 DBWRAP_LOCK_ORDER_1, DBWRAP_FLAG_NONE);
 	if (tmp_db == NULL) {
 		DEBUG(0, ("tdbsam_convert_backup: Failed to create backup TDB passwd "
 			  "[%s]\n", tmp_fname));
@@ -293,7 +293,7 @@ static bool tdbsam_convert_backup(const char *dbname, struct db_context **pp_db)
 
 	orig_db = db_open(NULL, dbname, 0,
 			  TDB_DEFAULT, O_CREAT|O_RDWR, 0600,
-			  DBWRAP_LOCK_ORDER_1);
+			  DBWRAP_LOCK_ORDER_1, DBWRAP_FLAG_NONE);
 	if (orig_db == NULL) {
 		DEBUG(0, ("tdbsam_convert_backup: Failed to re-open "
 			  "converted passdb TDB [%s]\n", dbname));
@@ -329,15 +329,21 @@ static bool tdbsam_upgrade_next_rid(struct db_context *db)
 	uint32 rid;
 	bool ok = false;
 	NTSTATUS status;
+	char *db_path;
 
 	status = dbwrap_fetch_uint32_bystring(db, NEXT_RID_STRING, &rid);
 	if (NT_STATUS_IS_OK(status)) {
 		return true;
 	}
 
-	tdb = tdb_open_log(state_path("winbindd_idmap.tdb"), 0,
-			   TDB_DEFAULT, O_RDONLY, 0644);
+	db_path = state_path("winbindd_idmap.tdb");
+	if (db_path == NULL) {
+		return false;
+	}
 
+	tdb = tdb_open_log(db_path, 0,
+			   TDB_DEFAULT, O_RDONLY, 0644);
+	TALLOC_FREE(db_path);
 	if (tdb) {
 		ok = tdb_fetch_uint32(tdb, "RID_COUNTER", &rid);
 		if (!ok) {
@@ -444,7 +450,7 @@ static bool tdbsam_open( const char *name )
 	/* Try to open tdb passwd.  Create a new one if necessary */
 
 	db_sam = db_open(NULL, name, 0, TDB_DEFAULT, O_CREAT|O_RDWR, 0600,
-			 DBWRAP_LOCK_ORDER_1);
+			 DBWRAP_LOCK_ORDER_1, DBWRAP_FLAG_NONE);
 	if (db_sam == NULL) {
 		DEBUG(0, ("tdbsam_open: Failed to open/create TDB passwd "
 			  "[%s]\n", name));
@@ -593,6 +599,12 @@ static NTSTATUS tdbsam_getsampwnam (struct pdb_methods *my_methods,
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(5,("pdb_getsampwnam (TDB): error fetching database.\n"));
 		DEBUGADD(5, (" Key: %s\n", keystr));
+		return NT_STATUS_NO_SUCH_USER;
+	}
+
+	if (data.dsize == 0) {
+		DEBUG(5, ("%s: Got 0-sized record for key %s\n", __func__,
+			  keystr));
 		return NT_STATUS_NO_SUCH_USER;
 	}
 
@@ -1002,7 +1014,7 @@ static NTSTATUS tdbsam_rename_sam_account(struct pdb_methods *my_methods,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	rename_script = lp_renameuser_script(new_acct);
+	rename_script = lp_rename_user_script(new_acct);
 	if (!rename_script) {
 		TALLOC_FREE(new_acct);
 		return NT_STATUS_NO_MEMORY;

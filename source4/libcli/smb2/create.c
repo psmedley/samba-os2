@@ -294,6 +294,21 @@ struct smb2_request *smb2_create_send(struct smb2_tree *tree, struct smb2_create
 		return NULL;
 	}
 
+	if (((io->in.fname == NULL) || (strlen(io->in.fname) == 0)) &&
+	    (blob.length == 0)) {
+		struct smb2_request_buffer *buf = &req->out;
+
+		status = smb2_grow_buffer(buf, 1);
+		if (!NT_STATUS_IS_OK(status)) {
+			talloc_free(req);
+			return NULL;
+		}
+		buf->dynamic[0] = 0;
+		buf->dynamic += 1;
+		buf->body_size += 1;
+		buf->size += 1;
+	}
+
 	data_blob_free(&blob);
 
 	smb2_transport_send(req);
@@ -370,9 +385,11 @@ NTSTATUS smb2_create_recv(struct smb2_request *req, TALLOC_CTX *mem_ctx, struct 
 			switch (io->out.blobs.blobs[i].data.length) {
 			case 32:
 				ls = &io->out.lease_response;
+				ls->lease_version = 1;
 				break;
 			case 52:
 				ls = &io->out.lease_response_v2;
+				ls->lease_version = 2;
 				break;
 			default:
 				smb2_request_destroy(req);

@@ -30,6 +30,7 @@
 #include "passdb/pdb_ldap_schema.h"
 #include "lib/privileges.h"
 #include "secrets.h"
+#include "idmap.h"
 
 /*
  * Set a user's data
@@ -912,6 +913,7 @@ static int net_sam_mapunixgroup(struct net_context *c, int argc, const char **ar
 static NTSTATUS unmap_unix_group(const struct group *grp)
 {
         struct dom_sid dom_sid;
+	struct unixid id;
 
         if (!lookup_name(talloc_tos(), grp->gr_name, LOOKUP_NAME_LOCAL,
                         NULL, NULL, NULL, NULL)) {
@@ -919,7 +921,9 @@ static NTSTATUS unmap_unix_group(const struct group *grp)
                 return NT_STATUS_NO_SUCH_GROUP;
         }
 
-        if (!pdb_gid_to_sid(grp->gr_gid, &dom_sid)) {
+	id.id = grp->gr_gid;
+	id.type = ID_TYPE_GID;
+        if (!pdb_id_to_sid(&id, &dom_sid)) {
                 return NT_STATUS_UNSUCCESSFUL;
         }
 
@@ -1216,10 +1220,12 @@ static int net_sam_addmem(struct net_context *c, int argc, const char **argv)
 
 	if ((grouptype == SID_NAME_ALIAS) || (grouptype == SID_NAME_WKN_GRP)) {
 		if ((membertype != SID_NAME_USER) &&
+		    (membertype != SID_NAME_ALIAS) &&
 		    (membertype != SID_NAME_DOM_GRP)) {
-			d_fprintf(stderr, _("%s is a local group, only users "
-				  "and domain groups can be added.\n"
-				  "%s is a %s\n"), argv[0], argv[1],
+			d_fprintf(stderr, _("Can't add %s: only users, domain "
+					    "groups and domain local groups "
+					    "can be added. %s is a %s\n"),
+				  argv[0], argv[1],
 				  sid_type_lookup(membertype));
 			return -1;
 		}
@@ -1948,7 +1954,7 @@ doma_done:
 		goto failed;
 	}
 
-	if (!pdb_getsampwnam(samuser, lp_guestaccount())) {
+	if (!pdb_getsampwnam(samuser, lp_guest_account())) {
 		LDAPMod **mods = NULL;
 		struct dom_sid sid;
 		char *dn;
@@ -1960,7 +1966,7 @@ doma_done:
 
 		sid_compose(&sid, get_global_sam_sid(), DOMAIN_RID_GUEST);
 
-		pwd = Get_Pwnam_alloc(tc, lp_guestaccount());
+		pwd = Get_Pwnam_alloc(tc, lp_guest_account());
 
 		if (!pwd) {
 			if (domusers_gid == -1) {
@@ -1973,7 +1979,7 @@ doma_done:
 				d_fprintf(stderr, _("talloc failed\n"));
 				goto done;
 			}
-			pwd->pw_name = talloc_strdup(pwd, lp_guestaccount());
+			pwd->pw_name = talloc_strdup(pwd, lp_guest_account());
 
 			if (is_ipa) {
 				pwd->pw_uid = 999;
@@ -2042,7 +2048,7 @@ doma_done:
 		}
 
 		if (is_ipa) {
-			if (!pdb_getsampwnam(samuser, lp_guestaccount())) {
+			if (!pdb_getsampwnam(samuser, lp_guest_account())) {
 				d_fprintf(stderr, _("Failed to read just "
 						    "created user.\n"));
 				goto failed;
@@ -2054,7 +2060,7 @@ doma_done:
 
 	d_printf(_("Checking Guest's group.\n"));
 
-	pwd = Get_Pwnam_alloc(tc, lp_guestaccount());
+	pwd = Get_Pwnam_alloc(tc, lp_guest_account());
 	if (!pwd) {
 		d_fprintf(stderr,
 			  _("Failed to find just created Guest account!\n"

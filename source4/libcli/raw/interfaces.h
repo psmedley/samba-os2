@@ -25,6 +25,7 @@
 #include "source4/libcli/raw/smb.h"
 #include "../libcli/smb/smb_common.h"
 #include "librpc/gen_ndr/misc.h" /* for struct GUID */
+#include "librpc/gen_ndr/smb2_lease_struct.h"
 
 /* this structure is just a wrapper for a string, the only reason we
    bother with this is that it allows us to check the length provided
@@ -56,6 +57,7 @@ struct smb2_handle {
 
 struct smb2_lease_break {
 	struct smb2_lease current_lease;
+	uint16_t new_epoch; /* only for v2 leases */
 	uint32_t break_flags;
 	uint32_t new_lease_state;
 	uint32_t break_reason; /* should be 0 */
@@ -1808,6 +1810,8 @@ union smb_read {
 			uint16_t remaining;
 			uint16_t compaction_mode;
 			uint32_t nread;
+			uint16_t flags2;
+			uint16_t data_offset;
 		} out;
 	} readx, generic;
 
@@ -2736,6 +2740,7 @@ union smb_search_data {
 		uint32_t  attrib;
 		uint32_t  ea_size;
 		uint64_t file_id;
+		uint8_t short_name_buf[24];
 		struct smb_wire_string short_name;
 		struct smb_wire_string name;
 	} id_both_directory_info;

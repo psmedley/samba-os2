@@ -115,15 +115,15 @@ static bool Ucrit_addPid( struct server_id pid )
 	return True;
 }
 
-static void print_share_mode(const struct share_mode_entry *e,
-			     const char *sharepath,
-			     const char *fname,
-			     void *dummy)
+static int print_share_mode(const struct share_mode_entry *e,
+			    const char *sharepath,
+			    const char *fname,
+			    void *dummy)
 {
 	static int count;
 
 	if (do_checks && !is_valid_share_mode_entry(e)) {
-		return;
+		return 0;
 	}
 
 	if (count==0) {
@@ -135,7 +135,7 @@ static void print_share_mode(const struct share_mode_entry *e,
 
 	if (do_checks && !serverid_exists(&e->pid)) {
 		/* the process for this entry does not exist any more */
-		return;
+		return 0;
 	}
 
 	if (Ucrit_checkPid(e->pid)) {
@@ -177,12 +177,23 @@ static void print_share_mode(const struct share_mode_entry *e,
 			d_printf("BATCH           ");
 		} else if (e->op_type & LEVEL_II_OPLOCK) {
 			d_printf("LEVEL_II        ");
+		} else if (e->op_type == LEASE_OPLOCK) {
+			uint32_t lstate = e->lease->current_state;
+			d_printf("LEASE(%s%s%s)%s%s%s      ",
+				 (lstate & SMB2_LEASE_READ)?"R":"",
+				 (lstate & SMB2_LEASE_WRITE)?"W":"",
+				 (lstate & SMB2_LEASE_HANDLE)?"H":"",
+				 (lstate & SMB2_LEASE_READ)?"":" ",
+				 (lstate & SMB2_LEASE_WRITE)?"":" ",
+				 (lstate & SMB2_LEASE_HANDLE)?"":" ");
 		} else {
 			d_printf("NONE            ");
 		}
 
 		d_printf(" %s   %s   %s",sharepath, fname, time_to_asc((time_t)e->time.tv_sec));
 	}
+
+	return 0;
 }
 
 static void print_brl(struct file_id id,
@@ -240,10 +251,10 @@ static void print_brl(struct file_id id,
 		}
 	}
 
-	d_printf("%-10s %-15s %-4s %-9.0f %-9.0f %-24s %-24s\n", 
+	d_printf("%-10s %-15s %-4s %-9jd %-9jd %-24s %-24s\n",
 		 procid_str_static(&pid), file_id_string_tos(&id),
 		 desc,
-		 (double)start, (double)size,
+		 (intmax_t)start, (intmax_t)size,
 		 sharepath, fname);
 
 	TALLOC_FREE(fname);
@@ -303,10 +314,10 @@ static int traverse_sessionid(const char *key, struct sessionid *session,
 		}
 	}
 
-	d_printf("%-7s   %-12s  %-12s  %-12s (%s)\n",
+	d_printf("%-7s   %-12s  %-12s  %-12s (%s) %-12s\n",
 		 procid_str_static(&session->pid),
 		 uid_str, gid_str,
-		 session->remote_machine, session->hostname);
+		 session->remote_machine, session->hostname, session->protocol_ver);
 
 	return 0;
 }
@@ -336,7 +347,7 @@ static void print_notify_recs(const char *path,
 	printf("\n");
 }
 
- int main(int argc, char *argv[])
+int main(int argc, const char *argv[])
 {
 	int c;
 	int profile_only = 0;
@@ -376,7 +387,7 @@ static void print_notify_recs(const char *path,
 		goto done;
 	}
 
-	pc = poptGetContext(NULL, argc, (const char **) argv, long_options, 
+	pc = poptGetContext(NULL, argc, argv, long_options,
 			    POPT_CONTEXT_KEEP_FIRST);
 
 	while ((c = poptGetNextOpt(pc)) != -1) {
@@ -475,8 +486,8 @@ static void print_notify_recs(const char *path,
 
 	if ( show_processes ) {
 		d_printf("\nSamba version %s\n",samba_version_string());
-		d_printf("PID     Username      Group         Machine                        \n");
-		d_printf("-------------------------------------------------------------------\n");
+		d_printf("PID     Username      Group         Machine            Protocol Version       \n");
+		d_printf("------------------------------------------------------------------------------\n");
 
 		sessionid_traverse_read(traverse_sessionid, NULL);
 
@@ -511,7 +522,7 @@ static void print_notify_recs(const char *path,
 		struct db_context *db;
 		db = db_open(NULL, lock_path("locking.tdb"), 0,
 			     TDB_CLEAR_IF_FIRST|TDB_INCOMPATIBLE_HASH, O_RDONLY, 0,
-			     DBWRAP_LOCK_ORDER_1);
+			     DBWRAP_LOCK_ORDER_1, DBWRAP_FLAG_NONE);
 
 		if (!db) {
 			d_printf("%s not initialised\n",
@@ -529,7 +540,7 @@ static void print_notify_recs(const char *path,
 			goto done;
 		}
 
-		result = share_mode_forall(print_share_mode, NULL);
+		result = share_entry_forall(print_share_mode, NULL);
 
 		if (result == 0) {
 			d_printf("No locked files\n");

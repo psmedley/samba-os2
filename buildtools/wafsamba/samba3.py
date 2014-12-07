@@ -6,16 +6,17 @@ from optparse import SUPPRESS_HELP
 from samba_utils import os_path_relpath, TO_LIST
 from samba_autoconf import library_flags
 
+
 def SAMBA3_ADD_OPTION(opt, option, help=(), dest=None, default=True,
                       with_name="with", without_name="without"):
     if default is None:
-        default_str="auto"
-    elif default == True:
-        default_str="yes"
-    elif default == False:
-        default_str="no"
+        default_str = "auto"
+    elif default is True:
+        default_str = "yes"
+    elif default is False:
+        default_str = "no"
     else:
-        default_str=str(default)
+        default_str = str(default)
 
     if help == ():
         help = ("Build with %s support (default=%s)" % (option, default_str))
@@ -93,12 +94,6 @@ def s3_fix_kwargs(bld, kwargs):
         extra_includes += popt_cpppath
     else:
         extra_includes += [ '../lib/popt' ]
-
-    if bld.CONFIG_SET('USING_SYSTEM_INIPARSER'):
-        (iniparser_includes, iniparser_ldflags, iniparser_cpppath) = library_flags(bld, 'iniparser')
-        extra_includes += iniparser_cpppath
-    else:
-        extra_includes += [ '../lib/iniparser' ]
 
     # s3 builds assume that they will have a bunch of extra include paths
     includes = []

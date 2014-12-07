@@ -34,6 +34,7 @@
 #include "../librpc/gen_ndr/lsa.h"
 #include <tevent.h>
 struct unixid;
+struct cli_credentials;
 
 /* group mapping headers */
 
@@ -414,9 +415,12 @@ enum pdb_policy_type {
  * Changed to 20, pdb_secret calls
  * Changed to 21, set/enum_upn_suffixes. AB.
  * Changed to 22, idmap control functions
+ * Changed to 23, new idmap control functions
+ * Changed to 24, removed uid_to_sid and gid_to_sid, replaced with id_to_sid
+ * Leave at 24, add optional get_trusteddom_creds()
  */
 
-#define PASSDB_INTERFACE_VERSION 22
+#define PASSDB_INTERFACE_VERSION 24
 
 struct pdb_methods 
 {
@@ -559,10 +563,16 @@ struct pdb_methods
 			       struct pdb_search *search,
 			       const struct dom_sid *sid);
 
-	bool (*uid_to_sid)(struct pdb_methods *methods, uid_t uid,
-			   struct dom_sid *sid);
-	bool (*gid_to_sid)(struct pdb_methods *methods, gid_t gid,
-			   struct dom_sid *sid);
+	/* 
+	 * Instead of passing down a gid or uid, this function sends down a pointer
+	 * to a unixid. 
+	 *
+	 * This acts as an in-out variable so that the idmap functions can correctly
+	 * receive ID_TYPE_BOTH, filling in cache details correctly rather than forcing
+	 * the cache to store ID_TYPE_UID or ID_TYPE_GID. 
+	 */
+	bool (*id_to_sid)(struct pdb_methods *methods, struct unixid *id,
+			  struct dom_sid *sid);
 	bool (*sid_to_id)(struct pdb_methods *methods, const struct dom_sid *sid,
 			  struct unixid *id);
 
@@ -573,6 +583,10 @@ struct pdb_methods
 	bool (*get_trusteddom_pw)(struct pdb_methods *methods,
 				  const char *domain, char** pwd, 
 				  struct dom_sid *sid, time_t *pass_last_set_time);
+	NTSTATUS (*get_trusteddom_creds)(struct pdb_methods *methods,
+					 const char *domain,
+					 TALLOC_CTX *mem_ctx,
+					 struct cli_credentials **creds);
 	bool (*set_trusteddom_pw)(struct pdb_methods *methods, 
 				  const char* domain, const char* pwd,
 				  const struct dom_sid *sid);
@@ -630,6 +644,7 @@ struct pdb_methods
 	bool (*is_responsible_for_wellknown)(struct pdb_methods *methods);
 	bool (*is_responsible_for_unix_users)(struct pdb_methods *methods);
 	bool (*is_responsible_for_unix_groups)(struct pdb_methods *methods);
+	bool (*is_responsible_for_everything_else)(struct pdb_methods *methods);
 
 	void *private_data;  /* Private data of some kind */
 
@@ -713,6 +728,11 @@ bool get_trust_pw_clear(const char *domain, char **ret_pwd,
 bool get_trust_pw_hash(const char *domain, uint8_t ret_pwd[16],
 		       const char **account_name,
 		       enum netr_SchannelType *channel);
+struct cli_credentials;
+NTSTATUS pdb_get_trust_credentials(const char *netbios_domain,
+				   const char *dns_domain, /* optional */
+				   TALLOC_CTX *mem_ctx,
+				   struct cli_credentials **_creds);
 
 /* The following definitions come from passdb/pdb_compat.c  */
 
@@ -882,8 +902,15 @@ NTSTATUS pdb_lookup_names(const struct dom_sid *domain_sid,
 bool pdb_get_account_policy(enum pdb_policy_type type, uint32_t *value);
 bool pdb_set_account_policy(enum pdb_policy_type type, uint32_t value);
 bool pdb_get_seq_num(time_t *seq_num);
-bool pdb_uid_to_sid(uid_t uid, struct dom_sid *sid);
-bool pdb_gid_to_sid(gid_t gid, struct dom_sid *sid);
+/* 
+ * Instead of passing down a gid or uid, this function sends down a pointer
+ * to a unixid. 
+ *
+ * This acts as an in-out variable so that the idmap functions can correctly
+ * receive ID_TYPE_BOTH, filling in cache details correctly rather than forcing
+ * the cache to store ID_TYPE_UID or ID_TYPE_GID. 
+ */
+bool pdb_id_to_sid(struct unixid *id, struct dom_sid *sid);
 bool pdb_sid_to_id(const struct dom_sid *sid, struct unixid *id);
 uint32_t pdb_capabilities(void);
 bool pdb_new_rid(uint32_t *rid);
@@ -898,6 +925,8 @@ uint32_t pdb_search_entries(struct pdb_search *search,
 			  struct samr_displayentry **result);
 bool pdb_get_trusteddom_pw(const char *domain, char** pwd, struct dom_sid *sid,
 			   time_t *pass_last_set_time);
+NTSTATUS pdb_get_trusteddom_creds(const char *domain, TALLOC_CTX *mem_ctx,
+				  struct cli_credentials **creds);
 bool pdb_set_trusteddom_pw(const char* domain, const char* pwd,
 			   const struct dom_sid *sid);
 bool pdb_del_trusteddom_pw(const char *domain);
@@ -939,6 +968,7 @@ bool pdb_is_responsible_for_builtin(void);
 bool pdb_is_responsible_for_wellknown(void);
 bool pdb_is_responsible_for_unix_users(void);
 bool pdb_is_responsible_for_unix_groups(void);
+bool pdb_is_responsible_for_everything_else(void);
 
 /* The following definitions come from passdb/pdb_util.c  */
 

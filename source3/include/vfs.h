@@ -154,8 +154,15 @@
 /* Leave at 31 - not yet released. add SMB_VFS_COPY_CHUNK() */
 /* Leave at 31 - not yet released. Remove the unused
 		fsp->pending_break_messages array */
+/* Leave at 31 - not yet released. add SMB_VFS_[GET/SET]_COMPRESSION() */
 
-#define SMB_VFS_INTERFACE_VERSION 31
+/* Bump to version 32 - Samba 4.2 will ship with that. */
+/* Version 32 - Add "lease" to CREATE_FILE operation */
+/* Version 32 - Add "lease" to struct files_struct */
+/* Version 32 - Add SMB_VFS_READDIR_ATTR() */
+/* Version 32 - Add in and our create context blobs to create_file */
+
+#define SMB_VFS_INTERFACE_VERSION 32
 
 /*
     All intercepted VFS operations must be declared as static functions inside module source
@@ -198,6 +205,13 @@ struct fd_handle {
 	unsigned long gen_id;
 };
 
+struct fsp_lease {
+	size_t ref_count;
+	struct smbd_server_connection *sconn;
+	struct tevent_timer *timeout;
+	struct smb2_lease lease;
+};
+
 typedef struct files_struct {
 	struct files_struct *next, *prev;
 	uint64_t fnum;
@@ -221,6 +235,7 @@ typedef struct files_struct {
 	bool write_time_forced;
 
 	int oplock_type;
+	struct fsp_lease *lease; /* Not yet used. Placeholder for leases. */
 	int sent_oplock_break;
 	struct tevent_timer *oplock_timeout;
 	struct lock_struct last_lock_failure;
@@ -232,7 +247,6 @@ typedef struct files_struct {
 	bool modified;
 	bool is_directory;
 	bool aio_write_behind;
-	bool lockdb_clean;
 	bool initial_delete_on_close; /* Only set at NTCreateX if file was created. */
 	bool delete_on_close;
 	bool posix_open;
@@ -402,6 +416,7 @@ struct smb_request {
 	bool encrypted;
 	connection_struct *conn;
 	struct smbd_server_connection *sconn;
+	struct smbXsrv_connection *xconn;
 	struct smb_perfcount_data pcd;
 
 	/*
@@ -533,12 +548,15 @@ struct vfs_fn_pointers {
 				   uint32_t create_options,
 				   uint32_t file_attributes,
 				   uint32_t oplock_request,
+				   struct smb2_lease *lease,
 				   uint64_t allocation_size,
 				   uint32_t private_flags,
 				   struct security_descriptor *sd,
 				   struct ea_list *ea_list,
 				   files_struct **result,
-				   int *pinfo);
+				   int *pinfo,
+				   const struct smb2_create_blobs *in_context_blobs,
+				   struct smb2_create_blobs *out_context_blobs);
 	int (*close_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp);
 	ssize_t (*read_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp, void *data, size_t n);
 	ssize_t (*pread_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp, void *data, size_t n, off_t offset);
@@ -626,6 +644,15 @@ struct vfs_fn_pointers {
 	NTSTATUS (*copy_chunk_recv_fn)(struct vfs_handle_struct *handle,
 				       struct tevent_req *req,
 				       off_t *copied);
+	NTSTATUS (*get_compression_fn)(struct vfs_handle_struct *handle,
+				       TALLOC_CTX *mem_ctx,
+				       struct files_struct *fsp,
+				       struct smb_filename *smb_fname,
+				       uint16_t *_compression_fmt);
+	NTSTATUS (*set_compression_fn)(struct vfs_handle_struct *handle,
+				       TALLOC_CTX *mem_ctx,
+				       struct files_struct *fsp,
+				       uint16_t compression_fmt);
 
 	NTSTATUS (*streaminfo_fn)(struct vfs_handle_struct *handle,
 				  struct files_struct *fsp,
@@ -646,8 +673,7 @@ struct vfs_fn_pointers {
 	NTSTATUS (*brl_lock_windows_fn)(struct vfs_handle_struct *handle,
 					struct byte_range_lock *br_lck,
 					struct lock_struct *plock,
-					bool blocking_lock,
-					struct blocking_lock_record *blr);
+					bool blocking_lock);
 
 	bool (*brl_unlock_windows_fn)(struct vfs_handle_struct *handle,
 				      struct messaging_context *msg_ctx,
@@ -656,8 +682,7 @@ struct vfs_fn_pointers {
 
 	bool (*brl_cancel_windows_fn)(struct vfs_handle_struct *handle,
 				      struct byte_range_lock *br_lck,
-				      struct lock_struct *plock,
-				      struct blocking_lock_record *blr);
+				      struct lock_struct *plock);
 
 	bool (*strict_lock_fn)(struct vfs_handle_struct *handle,
 			       struct files_struct *fsp,
@@ -768,6 +793,11 @@ struct vfs_fn_pointers {
 					 TALLOC_CTX *mem_ctx,
 					 struct files_struct **fsp,
 					 DATA_BLOB *new_cookie);
+
+	NTSTATUS (*readdir_attr_fn)(struct vfs_handle_struct *handle,
+				    const struct smb_filename *fname,
+				    TALLOC_CTX *mem_ctx,
+				    struct readdir_attr_data **attr_data);
 };
 
 /*
@@ -931,12 +961,15 @@ NTSTATUS smb_vfs_call_create_file(struct vfs_handle_struct *handle,
 				  uint32_t create_options,
 				  uint32_t file_attributes,
 				  uint32_t oplock_request,
+				  struct smb2_lease *lease,
 				  uint64_t allocation_size,
 				  uint32_t private_flags,
 				  struct security_descriptor *sd,
 				  struct ea_list *ea_list,
 				  files_struct **result,
-				  int *pinfo);
+				  int *pinfo,
+				  const struct smb2_create_blobs *in_context_blobs,
+				  struct smb2_create_blobs *out_context_blobs);
 int smb_vfs_call_close(struct vfs_handle_struct *handle,
 		       struct files_struct *fsp);
 ssize_t smb_vfs_call_read(struct vfs_handle_struct *handle,
@@ -1067,16 +1100,14 @@ const char *smb_vfs_call_connectpath(struct vfs_handle_struct *handle,
 NTSTATUS smb_vfs_call_brl_lock_windows(struct vfs_handle_struct *handle,
 				       struct byte_range_lock *br_lck,
 				       struct lock_struct *plock,
-				       bool blocking_lock,
-				       struct blocking_lock_record *blr);
+				       bool blocking_lock);
 bool smb_vfs_call_brl_unlock_windows(struct vfs_handle_struct *handle,
 				     struct messaging_context *msg_ctx,
 				     struct byte_range_lock *br_lck,
 				     const struct lock_struct *plock);
 bool smb_vfs_call_brl_cancel_windows(struct vfs_handle_struct *handle,
 				     struct byte_range_lock *br_lck,
-				     struct lock_struct *plock,
-				     struct blocking_lock_record *blr);
+				     struct lock_struct *plock);
 bool smb_vfs_call_strict_lock(struct vfs_handle_struct *handle,
 			      struct files_struct *fsp,
 			      struct lock_struct *plock);
@@ -1109,6 +1140,15 @@ struct tevent_req *smb_vfs_call_copy_chunk_send(struct vfs_handle_struct *handle
 NTSTATUS smb_vfs_call_copy_chunk_recv(struct vfs_handle_struct *handle,
 				      struct tevent_req *req,
 				      off_t *copied);
+NTSTATUS smb_vfs_call_get_compression(struct vfs_handle_struct *handle,
+				      TALLOC_CTX *mem_ctx,
+				      struct files_struct *fsp,
+				      struct smb_filename *smb_fname,
+				      uint16_t *_compression_fmt);
+NTSTATUS smb_vfs_call_set_compression(struct vfs_handle_struct *handle,
+				      TALLOC_CTX *mem_ctx,
+				      struct files_struct *fsp,
+				      uint16_t compression_fmt);
 NTSTATUS smb_vfs_call_fget_nt_acl(struct vfs_handle_struct *handle,
 				  struct files_struct *fsp,
 				  uint32 security_info,
@@ -1205,6 +1245,10 @@ NTSTATUS smb_vfs_call_durable_reconnect(struct vfs_handle_struct *handle,
 					TALLOC_CTX *mem_ctx,
 					struct files_struct **fsp,
 					DATA_BLOB *new_cookie);
+NTSTATUS smb_vfs_call_readdir_attr(struct vfs_handle_struct *handle,
+				   const struct smb_filename *fname,
+				   TALLOC_CTX *mem_ctx,
+				   struct readdir_attr_data **attr_data);
 
 NTSTATUS smb_register_vfs(int version, const char *name,
 			  const struct vfs_fn_pointers *fns);

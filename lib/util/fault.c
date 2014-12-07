@@ -18,8 +18,9 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/filesys.h"
+#include "system/wait.h"
 #include "version.h"
 
 #ifdef HAVE_SYS_SYSCTL_H
@@ -30,6 +31,11 @@
 #ifdef HAVE_SYS_PRCTL_H
 #include <sys/prctl.h>
 #endif
+
+#include "debug.h"
+#include "lib/util/signal.h" /* Avoid /usr/include/signal.h */
+#include "substitute.h"
+#include "fault.h"
 
 static struct {
 	bool disabled;
@@ -114,6 +120,7 @@ _PUBLIC_ const char *panic_action = NULL;
 /*
    default smb_panic() implementation
 */
+static void smb_panic_default(const char *why) _NORETURN_;
 static void smb_panic_default(const char *why)
 {
 #if defined(HAVE_PRCTL) && defined(PR_SET_PTRACER)

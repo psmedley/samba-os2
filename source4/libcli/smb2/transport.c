@@ -48,8 +48,6 @@ struct smb2_transport *smb2_transport_init(struct smbcli_socket *sock,
 					   struct smbcli_options *options)
 {
 	struct smb2_transport *transport;
-	struct GUID client_guid;
-	uint32_t smb2_capabilities = 0;
 
 	transport = talloc_zero(parent_ctx, struct smb2_transport);
 	if (!transport) return NULL;
@@ -57,21 +55,24 @@ struct smb2_transport *smb2_transport_init(struct smbcli_socket *sock,
 	transport->ev = sock->event.ctx;
 	transport->options = *options;
 
+	if (transport->options.max_protocol == PROTOCOL_DEFAULT) {
+		transport->options.max_protocol = PROTOCOL_LATEST;
+	}
+
+	if (transport->options.max_protocol < PROTOCOL_SMB2_02) {
+		transport->options.max_protocol = PROTOCOL_LATEST;
+	}
+
 	TALLOC_FREE(sock->event.fde);
 	TALLOC_FREE(sock->event.te);
-
-	client_guid = GUID_random();
-
-	/* TODO: hand this in via the options? */
-	smb2_capabilities = SMB2_CAP_ALL;
 
 	transport->conn = smbXcli_conn_create(transport,
 					      sock->sock->fd,
 					      sock->hostname,
 					      options->signing,
 					      0, /* smb1_capabilities */
-					      &client_guid,
-					      smb2_capabilities);
+					      &options->client_guid,
+					      options->smb2_capabilities);
 	if (transport->conn == NULL) {
 		talloc_free(transport);
 		return NULL;
@@ -397,6 +398,7 @@ static void smb2_transport_break_handler(struct tevent_req *subreq)
 		struct smb2_lease_break lb;
 
 		ZERO_STRUCT(lb);
+		lb.new_epoch =			SVAL(body, 0x2);
 		lb.break_flags =		SVAL(body, 0x4);
 		memcpy(&lb.current_lease.lease_key, body+0x8,
 		    sizeof(struct smb2_lease_key));

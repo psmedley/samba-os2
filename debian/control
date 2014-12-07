@@ -5,54 +5,51 @@ Maintainer: Debian Samba Maintainers <pkg-samba-maint@lists.alioth.debian.org>
 Uploaders: Steve Langasek <vorlon@debian.org>,
            Christian Perrier <bubulle@debian.org>,
            Jelmer Vernooij <jelmer@debian.org>,
-           Ivo De Decker <ivodd@debian.org>
+           Ivo De Decker <ivodd@debian.org>,
+           Mathieu Parent <sathieu@debian.org>
 Homepage: http://www.samba.org
 Standards-Version: 3.9.6
 Build-Depends: bison,
-               comerr-dev,
                debhelper (>> 9),
+               dh-systemd (>= 1.5),
                docbook-xml,
                docbook-xsl,
                faketime,
                flex,
-               heimdal-dev,
-# heimdal-multidev is pulled in by heimdal-dev, but it's listed here for when
-# heimdal-dev is removed because other build-deps pull in libkrb5-dev (like
-# libcups2-dev did in the past)
-               heimdal-multidev (>= 1.6~),
                libacl1-dev,
                libaio-dev [linux-any],
+               libarchive-dev,
                libattr1-dev,
                libblkid-dev,
                libbsd-dev,
                libcap-dev [linux-any],
-               libctdb-dev (>= 2),
                libcups2-dev,
                libgnutls28-dev,
                libheimntlm0-heimdal (>= 1.6~),
                libldap2-dev,
-               libldb-dev (>= 2:1.1.17~),
+               libldb-dev (>= 1:1.1.20~),
                libncurses5-dev,
                libntdb-dev (>= 1.0),
                libpam0g-dev,
                libparse-yapp-perl,
+               libpcap-dev [hurd-i386 kfreebsd-any],
                libpopt-dev,
                libreadline-dev,
                libsubunit-dev,
-               libtalloc-dev (>= 2.0.8~),
-               libtdb-dev (>= 1.2.11~),
-               libtevent-dev (>= 0.9.18~),
+               libtalloc-dev (>= 2.1.2~),
+               libtdb-dev (>= 1.3.4~),
+               libtevent-dev (>= 0.9.24~),
                perl,
                perl-modules,
                pkg-config,
                po-debconf,
                python-all-dev (>= 2.6.6-3),
                python-dnspython,
-               python-ldb (>= 2:1.1.17~),
-               python-ldb-dev (>= 2:1.1.17~),
+               python-ldb (>= 1:1.1.20~),
+               python-ldb-dev (>= 1:1.1.20~),
                python-ntdb,
-               python-talloc-dev (>= 2.0.8~),
-               python-tdb (>= 1.2.11~),
+               python-talloc-dev (>= 2.1.2~),
+               python-tdb (>= 1.3.4~),
                python-testtools,
                python3,
                subunit (>= 0.0.6),
@@ -443,31 +440,6 @@ Description: development files for libsmbclient
  enables client applications to talk to Microsoft Windows and Samba servers
  using the SMB/CIFS protocol.
 
-Package: libsmbsharemodes0
-Section: libs
-Priority: optional
-Architecture: any
-Multi-Arch: same
-Pre-Depends: dpkg (>= 1.15.6~), ${misc:Pre-Depends}
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: shared library for non-samba access to the samba 'share modes' database
- This package provides libsmbsharemodes, a library that
- enables server applications to honour or apply the share modes that are used
- over CIFS.
-
-Package: libsmbsharemodes-dev
-Section: libdevel
-Priority: extra
-Architecture: any
-Multi-Arch: same
-Depends: libsmbsharemodes0 (= ${binary:Version}), ${misc:Depends}
-Pre-Depends: dpkg (>= 1.15.6~)
-Description: development files for libsmbsharemodes
- This package provides the development files (headers)
- required for building applications against libsmbsharemodes, a library that
- enables server applications to honour or apply the share modes that are used
- over CIFS.
-
 Package: winbind
 Pre-Depends: ${misc:Pre-Depends}
 Architecture: any
@@ -602,3 +574,37 @@ Description: Samba winbind client library - development files
  required for building applications against libwbclient, a library for client
  applications that interact via the winbind pipe protocol with a Samba
  winbind server.
+
+Package: ctdb
+Architecture: any
+Multi-Arch: foreign
+Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base, iproute2 [linux-any], psmisc, tdb-tools, time, sudo
+Recommends: ethtool [linux-any]
+Suggests: logrotate, lsof
+Description: clustered database to store temporary data
+ CTDB is a cluster implementation of the TDB database used by Samba and other
+ projects to store temporary data. If an application is already using TDB for
+ temporary data it is very easy to convert that application to be cluster aware
+ and use CTDB instead.
+ .
+ CTDB provides the same types of functions as TDB but in a clustered fashion,
+ providing a TDB-style database that spans multiple physical hosts in a cluster.
+ .
+ Features include:
+  * CTDB provides a TDB that has consistent data and consistent locking across
+    all nodes in a cluster.
+  * CTDB is very fast.
+  * In case of node failures, CTDB will automatically recover and repair all TDB
+    databases that it manages.
+  * CTDB is the core component that provides pCIFS ("parallel CIFS") with
+    Samba3/4.
+  * CTDB provides HA features such as node monitoring, node failover, and IP
+    takeover.
+  * CTDB provides a reliable messaging transport to allow applications linked
+    with CTDB to communicate to other instances of the application running on
+    different nodes in the cluster.
+  * CTDB has pluggable transport backends. Currently implemented backends are
+    TCP and Infiniband.
+  * CTDB supports a system of application specific management scripts, allowing
+    applications that depend on network or filesystem resources to be managed in
+    a highly available manner on a cluster.

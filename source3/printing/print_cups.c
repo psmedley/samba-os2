@@ -483,6 +483,7 @@ static bool cups_pcap_load_async(struct tevent_context *ev,
 	close(fds[0]);
 	cups_cache_reload_async(fds[1]);
 	close(fds[1]);
+	TALLOC_FREE(msg_ctx);
 	_exit(0);
 }
 
@@ -1155,7 +1156,7 @@ static int cups_queue_get(const char *sharename,
 	ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_LANGUAGE,
                      "attributes-natural-language", NULL, language->language);
 
-        ippAddStrings(request, IPP_TAG_OPERATION, IPP_TAG_NAME,
+        ippAddStrings(request, IPP_TAG_OPERATION, IPP_TAG_KEYWORD,
 	              "requested-attributes",
 		      (sizeof(jattrs) / sizeof(jattrs[0])),
 		      NULL, jattrs);

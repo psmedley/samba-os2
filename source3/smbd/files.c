@@ -94,10 +94,11 @@ NTSTATUS file_new(struct smb_request *req, connection_struct *conn,
 	GetTimeOfDay(&fsp->open_time);
 
 	if (req) {
+		struct smbXsrv_connection *xconn = req->xconn;
 		struct smbXsrv_open *op = NULL;
 		NTTIME now = timeval_to_nttime(&fsp->open_time);
 
-		status = smbXsrv_open_create(sconn->conn,
+		status = smbXsrv_open_create(xconn,
 					     conn->session_info,
 					     now, &op);
 		if (!NT_STATUS_IS_OK(status)) {
@@ -321,8 +322,8 @@ files_struct *file_find_dif(struct smbd_server_connection *sconn,
 			}
 			/* Paranoia check. */
 			if ((fsp->fh->fd == -1) &&
-			    (fsp->oplock_type != NO_OPLOCK) &&
-			    (fsp->oplock_type != FAKE_LEVEL_II_OPLOCK)) {
+			    (fsp->oplock_type != NO_OPLOCK &&
+			     fsp->oplock_type != LEASE_OPLOCK)) {
 				DEBUG(0,("file_find_dif: file %s file_id = "
 					 "%s, gen = %u oplock_type = %u is a "
 					 "stat open with oplock type !\n",
@@ -384,6 +385,24 @@ files_struct *file_find_di_next(files_struct *start_fsp)
 		}
 	}
 
+	return NULL;
+}
+
+struct files_struct *file_find_one_fsp_from_lease_key(
+	struct smbd_server_connection *sconn,
+	const struct smb2_lease_key *lease_key)
+{
+	struct files_struct *fsp;
+
+	for (fsp = sconn->files; fsp; fsp=fsp->next) {
+		if ((fsp->lease != NULL) &&
+		    (fsp->lease->lease.lease_key.data[0] ==
+		     lease_key->data[0]) &&
+		    (fsp->lease->lease.lease_key.data[1] ==
+		     lease_key->data[1])) {
+			return fsp;
+		}
+	}
 	return NULL;
 }
 
@@ -470,6 +489,14 @@ void fsp_free(files_struct *fsp)
 		TALLOC_FREE(fsp->fh);
 	} else {
 		fsp->fh->ref_count--;
+	}
+
+	if (fsp->lease != NULL) {
+		if (fsp->lease->ref_count == 1) {
+			TALLOC_FREE(fsp->lease);
+		} else {
+			fsp->lease->ref_count--;
+		}
 	}
 
 	fsp->conn->num_files_open--;
@@ -559,13 +586,13 @@ files_struct *file_fsp(struct smb_request *req, uint16 fid)
 		return req->chain_fsp;
 	}
 
-	if (req->sconn->conn == NULL) {
+	if (req->xconn == NULL) {
 		return NULL;
 	}
 
 	now = timeval_to_nttime(&req->request_time);
 
-	status = smb1srv_open_lookup(req->sconn->conn,
+	status = smb1srv_open_lookup(req->xconn,
 				     fid, now, &op);
 	if (!NT_STATUS_IS_OK(status)) {
 		return NULL;
@@ -595,7 +622,7 @@ struct files_struct *file_fsp_get(struct smbd_smb2_request *smb2req,
 
 	now = timeval_to_nttime(&smb2req->request_time);
 
-	status = smb2srv_open_lookup(smb2req->sconn->conn,
+	status = smb2srv_open_lookup(smb2req->xconn,
 				     persistent_id, volatile_id,
 				     now, &op);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -699,23 +726,24 @@ NTSTATUS dup_file_fsp(struct smb_request *req, files_struct *from,
 NTSTATUS file_name_hash(connection_struct *conn,
 			const char *name, uint32_t *p_name_hash)
 {
-	char *fullpath = NULL;
+	char tmpbuf[PATH_MAX];
+	char *fullpath, *to_free;
+	size_t len;
 
 	/* Set the hash of the full pathname. */
-	fullpath = talloc_asprintf(talloc_tos(),
-			"%s/%s",
-			conn->connectpath,
-			name);
-	if (!fullpath) {
+
+	len = full_path_tos(conn->connectpath, name, tmpbuf, sizeof(tmpbuf),
+			    &fullpath, &to_free);
+	if (len == -1) {
 		return NT_STATUS_NO_MEMORY;
 	}
-	*p_name_hash = hash(fullpath, talloc_get_size(fullpath), 0);
+	*p_name_hash = hash(fullpath, len+1, 0);
 
 	DEBUG(10,("file_name_hash: %s hash 0x%x\n",
-		fullpath,
+		  fullpath,
 		(unsigned int)*p_name_hash ));
 
-	TALLOC_FREE(fullpath);
+	TALLOC_FREE(to_free);
 	return NT_STATUS_OK;
 }
 
@@ -738,4 +766,17 @@ NTSTATUS fsp_set_smb_fname(struct files_struct *fsp,
 	return file_name_hash(fsp->conn,
 			smb_fname_str_dbg(fsp->fsp_name),
 			&fsp->name_hash);
+}
+
+const struct GUID *fsp_client_guid(const files_struct *fsp)
+{
+	return &fsp->conn->sconn->client->connections->smb2.client.guid;
+}
+
+uint32_t fsp_lease_type(struct files_struct *fsp)
+{
+	if (fsp->oplock_type == LEASE_OPLOCK) {
+		return fsp->lease->lease.lease_state;
+	}
+	return map_oplock_to_lease_type(fsp->oplock_type);
 }

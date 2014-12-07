@@ -21,7 +21,9 @@
 #include "lib/util/tevent_unix.h"
 #include "ctdb_conn.h"
 
-#ifdef CLUSTER_SUPPORT
+#include <tdb.h>
+
+#include <ctdb_protocol.h>
 
 #include "lib/async_req/async_sock.h"
 
@@ -177,7 +179,7 @@ struct tevent_req *ctdb_conn_control_send(TALLOC_CTX *mem_ctx,
 	hdr = &state->req.hdr;
 	hdr->length = offsetof(struct ctdb_req_control, data) + datalen;
 	hdr->ctdb_magic    = CTDB_MAGIC;
-	hdr->ctdb_version  = CTDB_VERSION;
+	hdr->ctdb_version  = CTDB_PROTOCOL;
 	hdr->operation     = CTDB_REQ_CONTROL;
 	hdr->reqid         = 1; /* FIXME */
 	hdr->destnode      = vnn;
@@ -304,7 +306,7 @@ struct tevent_req *ctdb_conn_msg_write_send(TALLOC_CTX *mem_ctx,
 
 	h->length = offsetof(struct ctdb_req_message, data) + msg_len;
 	h->ctdb_magic = CTDB_MAGIC;
-	h->ctdb_version = CTDB_VERSION;
+	h->ctdb_version = CTDB_PROTOCOL;
 	h->generation = 1;
 	h->operation  = CTDB_REQ_MESSAGE;
 	h->destnode   = vnn;
@@ -545,77 +547,3 @@ int ctdb_msg_read_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 	*pmsg_len = msg->datalen;
 	return 0;
 }
-
-#else
-
-struct dummy_state {
-	uint8_t dummy;
-};
-
-static struct tevent_req *dummy_send(TALLOC_CTX *mem_ctx,
-				     struct tevent_context *ev)
-{
-	struct tevent_req *req;
-	struct dummy_state *state;
-	req = tevent_req_create(mem_ctx, &state, struct dummy_state);
-	if (req == NULL) {
-		return NULL;
-	}
-	tevent_req_done(req);
-	return tevent_req_post(req, ev);
-}
-
-struct tevent_req *ctdb_conn_init_send(TALLOC_CTX *mem_ctx,
-				       struct tevent_context *ev,
-				       const char *sock)
-{
-	return dummy_send(mem_ctx, ev);
-}
-
-int ctdb_conn_init_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
-			struct ctdb_conn **pconn)
-{
-	return ENOSYS;
-}
-
-struct tevent_req *ctdb_conn_msg_write_send(TALLOC_CTX *mem_ctx,
-					    struct tevent_context *ev,
-					    struct ctdb_conn *conn,
-					    uint32_t vnn, uint64_t srvid,
-					    uint8_t *msg, size_t msg_len)
-{
-	return dummy_send(mem_ctx, ev);
-}
-
-int ctdb_conn_msg_write_recv(struct tevent_req *req)
-{
-	return ENOSYS;
-}
-
-struct tevent_req *ctdb_msg_channel_init_send(
-	TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-	const char *sock, uint64_t srvid)
-{
-	return dummy_send(mem_ctx, ev);
-}
-
-int ctdb_msg_channel_init_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
-			       struct ctdb_msg_channel **pchannel)
-{
-	return ENOSYS;
-}
-
-struct tevent_req *ctdb_msg_read_send(TALLOC_CTX *mem_ctx,
-				      struct tevent_context *ev,
-				      struct ctdb_msg_channel *channel)
-{
-	return dummy_send(mem_ctx, ev);
-}
-
-int ctdb_msg_read_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
-		       uint8_t **pmsg, size_t *pmsg_len)
-{
-	return ENOSYS;
-}
-
-#endif
