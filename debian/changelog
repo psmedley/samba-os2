@@ -1,3 +1,30 @@
+samba (2:4.3.3+dfsg-1) unstable; urgency=medium
+
+  * New upstream release. Closes: #808133.
+   + Drop subunit dependency, no longer used.
+   + Drop ntdb dependencies, no longer used.
+   + Fixes:
+    - CVE-2015-5252: Insufficient symlink verification in smbd
+    - CVE-2015-5296: Samba client requesting encryption vulnerable
+                     downgrade attack
+    - CVE-2015-5299: Missing access control check in shadow copy code
+    - CVE-2015-7540: Remote DoS in Samba (AD) LDAP server
+    - CVE-2015-8467: Denial of service attack against Windows Active Directory
+                     server
+    - CVE-2015-3223: Denial of service in Samba Active Directory server
+    - CVE-2015-5330: Remote memory read in Samba LDAP server
+  * Remove libpam-smbpasswd, which is broken and slated for removal
+    upstream. Closes: #799840
+  * Remove lib/zlib/contrib/dotzlib/DotZLib.chm from excluded files in
+    copyright; no longer shipped upstream.
+  * Remove wins2dns.awk example script.
+  * Remove the samba-doc package, and move examples files from it to
+    relevant other packages. Closes: #769385
+  * Move samba-dsdb-modules back from Depends to Recommends, as using
+    Samba as a standalone server doesn't require the dsdb modules.
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Fri, 18 Dec 2015 01:18:42 +0000
+
 samba (2:4.3.0+dfsg-2) experimental; urgency=medium
 
   * Re-enable cluster support.
@@ -54,6 +81,31 @@ samba (2:4.2.1+dfsg-1) experimental; urgency=medium
   * ctdb: Fix privacy breach on google.com (from documentation)
 
  -- Jelmer Vernooij <jelmer@debian.org>  Sun, 07 Dec 2014 15:34:36 +0000
+
+samba (2:4.1.20+dfsg-1) unstable; urgency=medium
+
+  * New upstream release (last compatible with current OpenChange).
+  * samba_bug_11077_torturetest.patch: refresh.
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Sun, 20 Sep 2015 17:48:59 +0000
+
+samba (2:4.1.17+dfsg-5) unstable; urgency=medium
+
+  * Rebuild against new ldb. Closes: #799569
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Sun, 20 Sep 2015 13:20:53 +0000
+
+samba (2:4.1.17+dfsg-4) unstable; urgency=medium
+
+  * Add pidl_reproducible.patch: Make pidl output reproducible.
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Tue, 28 Apr 2015 00:10:21 +0000
+
+samba (2:4.1.17+dfsg-3) unstable; urgency=medium
+
+  * Rebuild against new ldb. Closes: #783424
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Mon, 27 Apr 2015 00:09:50 +0000
 
 samba (2:4.1.17+dfsg-2) unstable; urgency=medium
 

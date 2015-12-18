@@ -79,8 +79,9 @@ def find_version(path):
     v = open(path, 'r')
     try:
         for l in v.readlines():
-            if l.startswith("VERSION = '"):
-                return tuple([int(x) for x in l.strip()[len("VERSION = '"):-1].split(".")])
+            if l.startswith("VERSION = '") or l.startswith("SYSTEM_VERSION = '"):
+                (key, value) = l.split('=')
+                return tuple([int(x) for x in value.strip().strip("'").split(".")])
         raise KeyError
     finally:
         v.close()
@@ -120,9 +121,9 @@ def update_control():
     update_deps(source, "Build-Depends", "python-tdb", min_tdb_version)
     update_deps(source, "Build-Depends", "libtalloc-dev", min_talloc_version)
     update_deps(source, "Build-Depends", "python-talloc-dev", min_talloc_version)
-    update_deps(source, "Build-Depends", "libldb-dev", min_ldb_version, 1)
-    update_deps(source, "Build-Depends", "python-ldb-dev", min_ldb_version, 1)
-    update_deps(source, "Build-Depends", "python-ldb", min_ldb_version, 1)
+    update_deps(source, "Build-Depends", "libldb-dev", min_ldb_version, 2)
+    update_deps(source, "Build-Depends", "python-ldb-dev", min_ldb_version, 2)
+    update_deps(source, "Build-Depends", "python-ldb", min_ldb_version, 2)
     update_deps(source, "Build-Depends", "libtevent-dev", min_tevent_version)
 
     with open("debian/control", "wb+") as o:

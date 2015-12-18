@@ -114,6 +114,11 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 	const char *domain;
 	NTSTATUS status;
 	int flags = 0;
+	int signing_state = get_cmdline_auth_info_signing_state(auth_info);
+
+	if (force_encrypt) {
+		signing_state = SMB_SIGNING_REQUIRED;
+	}
 
 	/* make a copy so we don't modify the global string 'service' */
 	servicename = talloc_strdup(ctx,share);
@@ -152,7 +157,7 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 
 	status = cli_connect_nb(
 		server, NULL, port, name_type, NULL,
-		get_cmdline_auth_info_signing_state(auth_info),
+		signing_state,
 		flags, &c);
 
 	if (!NT_STATUS_IS_OK(status)) {
@@ -958,11 +963,11 @@ NTSTATUS cli_resolve_path(TALLOC_CTX *ctx,
 
 	status = cli_dfs_get_referral(ctx, cli_ipc, dfs_path, &refs,
 				      &num_refs, &consumed);
-	if (!NT_STATUS_IS_OK(status) || !num_refs) {
+	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
 
-	if (!refs[0].dfspath) {
+	if (!num_refs || !refs[0].dfspath) {
 		return NT_STATUS_NOT_FOUND;
 	}
 

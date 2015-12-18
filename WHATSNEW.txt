@@ -1,4 +1,319 @@
                    =============================
+                   Release Notes for Samba 4.3.3
+                         December 16, 2015
+                   =============================
+
+
+This is a security release in order to address the following CVEs:
+
+o  CVE-2015-3223 (Denial of service in Samba Active Directory
+		  server)
+o  CVE-2015-5252 (Insufficient symlink verification in smbd)
+o  CVE-2015-5299 (Missing access control check in shadow copy
+		  code)
+o  CVE-2015-5296 (Samba client requesting encryption vulnerable
+		  to downgrade attack)
+o  CVE-2015-8467 (Denial of service attack against Windows
+		  Active Directory server)
+o  CVE-2015-5330 (Remote memory read in Samba LDAP server)
+
+Please note that if building against a system libldb, the required
+version has been bumped to ldb-1.1.24.  This is needed to ensure
+we build against a system ldb library that contains the fixes
+for CVE-2015-5330 and CVE-2015-3223.
+
+=======
+Details
+=======
+
+o  CVE-2015-3223:
+   All versions of Samba from 4.0.0 to 4.3.2 inclusive (resp. all
+   ldb versions up to 1.1.23 inclusive) are vulnerable to
+   a denial of service attack in the samba daemon LDAP server.
+
+   A malicious client can send packets that cause the LDAP server in the
+   samba daemon process to become unresponsive, preventing the server
+   from servicing any other requests.
+
+   This flaw is not exploitable beyond causing the code to loop expending
+   CPU resources.
+
+o  CVE-2015-5252:
+   All versions of Samba from 3.0.0 to 4.3.2 inclusive are vulnerable to
+   a bug in symlink verification, which under certain circumstances could
+   allow client access to files outside the exported share path.
+
+   If a Samba share is configured with a path that shares a common path
+   prefix with another directory on the file system, the smbd daemon may
+   allow the client to follow a symlink pointing to a file or directory
+   in that other directory, even if the share parameter "wide links" is
+   set to "no" (the default).
+
+o  CVE-2015-5299:
+   All versions of Samba from 3.2.0 to 4.3.2 inclusive are vulnerable to
+   a missing access control check in the vfs_shadow_copy2 module. When
+   looking for the shadow copy directory under the share path the current
+   accessing user should have DIRECTORY_LIST access rights in order to
+   view the current snapshots.
+
+   This was not being checked in the affected versions of Samba.
+
+o  CVE-2015-5296:
+   Versions of Samba from 3.2.0 to 4.3.2 inclusive do not ensure that
+   signing is negotiated when creating an encrypted client connection to
+   a server.
+
+   Without this a man-in-the-middle attack could downgrade the connection
+   and connect using the supplied credentials as an unsigned, unencrypted
+   connection.
+
+o  CVE-2015-8467:
+   Samba, operating as an AD DC, is sometimes operated in a domain with a
+   mix of Samba and Windows Active Directory Domain Controllers.
+
+   All versions of Samba from 4.0.0 to 4.3.2 inclusive, when deployed as
+   an AD DC in the same domain with Windows DCs, could be used to
+   override the protection against the MS15-096 / CVE-2015-2535 security
+   issue in Windows.
+
+   Prior to MS16-096 it was possible to bypass the quota of machine
+   accounts a non-administrative user could create.  Pure Samba domains
+   are not impacted, as Samba does not implement the
+   SeMachineAccountPrivilege functionality to allow non-administrator
+   users to create new computer objects.
+
+o  CVE-2015-5330:
+   All versions of Samba from 4.0.0 to 4.3.2 inclusive (resp. all
+   ldb versions up to 1.1.23 inclusive) are vulnerable to
+   a remote memory read attack in the samba daemon LDAP server.
+
+   A malicious client can send packets that cause the LDAP server in the
+   samba daemon process to return heap memory beyond the length of the
+   requested value.
+
+   This memory may contain data that the client should not be allowed to
+   see, allowing compromise of the server.
+
+   The memory may either be returned to the client in an error string, or
+   stored in the database by a suitabily privileged user.  If untrusted
+   users can create objects in your database, please confirm that all DN
+   and name attributes are reasonable.
+
+
+Changes since 4.3.2:
+--------------------
+
+o  Andrew Bartlett <abartlet@samba.org>
+   * BUG 11552: CVE-2015-8467: samdb: Match MS15-096 behaviour for
+     userAccountControl.
+
+o  Jeremy Allison <jra@samba.org>
+   * BUG 11325: CVE-2015-3223: Fix LDAP \00 search expression attack DoS.
+   * BUG 11395: CVE-2015-5252: Fix insufficient symlink verification (file
+     access outside the share).
+   * BUG 11529: CVE-2015-5299: s3-shadow-copy2: Fix missing access check on
+     snapdir.
+
+o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+   * BUG 11599: CVE-2015-5330: Fix remote read memory exploit in LDB.
+
+o  Stefan Metzmacher <metze@samba.org>
+   * BUG 11536: CVE-2015-5296: Add man in the middle protection when forcing
+     smb encryption on the client side.
+
+
+#######################################
+Reporting bugs & Development Discussion
+#######################################
+
+Please discuss this release on the samba-technical mailing list or by
+joining the #samba-technical IRC channel on irc.freenode.net.
+
+If you do report problems then please try to send high quality
+feedback. If you don't provide vital information to help us track down
+the problem then you will probably be ignored.  All bug reports should
+be filed under the "Samba 4.1 and newer" product in the project's Bugzilla
+database (https://bugzilla.samba.org/).
+
+
+======================================================================
+== Our Code, Our Bugs, Our Responsibility.
+== The Samba Team
+======================================================================
+
+
+Older release notes to follow:
+------------------------------
+
+                   =============================
+                   Release Notes for Samba 4.3.2
+                         December 01, 2015
+                   =============================
+
+
+This is the latest stable release of Samba 4.3.
+
+
+Changes since 4.3.1:
+--------------------
+
+o   Michael Adam <obnox@samba.org>
+    * BUG 11577: ctdb: Open the RO tracking db with perms 0600 instead of 0000.
+
+o   Jeremy Allison <jra@samba.org>
+    * BUG 11452: s3-smbd: Fix old DOS client doing wildcard delete - gives an
+      attribute type of zero.
+    * BUG 11565: auth: gensec: Fix a memory leak.
+    * BUG 11566: lib: util: Make non-critical message a warning.
+    * BUG 11589: s3: smbd: If EAs are turned off on a share don't allow an SMB2
+      create containing them.
+    * BUG 11615: s3: smbd: have_file_open_below() fails to enumerate open files
+      below an open directory handle.
+
+o   Ralph Boehme <slow@samba.org>
+    * BUG 11562: s4:lib/messaging: Use correct path for names.tdb.
+    * BUG 11564: async_req: Fix non-blocking connect().
+
+o   Volker Lendecke <vl@samba.org>
+    * BUG 11243: vfs_gpfs: Re-enable share modes.
+    * BUG 11570: smbd: Send SMB2 oplock breaks unencrypted.
+    * BUG 11612: winbind: Fix crash on invalid idmap configs.
+
+o   YvanM <yvan.masson@openmailbox.org>
+    * BUG 11584: manpage: Correct small typo error.
+
+o   Stefan Metzmacher <metze@samba.org>
+    * BUG 11327: dcerpc.idl: Accept invalid dcerpc_bind_nak pdus.
+    * BUG 11581: s3:smb2_server: Make the logic of SMB2_CANCEL DLIST_REMOVE()
+      clearer.
+
+o   Marc Muehlfeld <mmuehlfeld@samba.org>
+    * BUG 9912: Changing log level of two entries to DBG_NOTICE.
+    * BUG 11581: s3-smbd: Fix use after issue in smbd_smb2_request_dispatch().
+
+o   Noel Power <noel.power@suse.com>
+    * BUG 11569: Fix winbindd crashes with samlogon for trusted domain user.
+    * BUG 11597: Backport some valgrind fixes from upstream master.
+
+o   Andreas Schneider <asn@samba.org
+    * BUG 11563: Fix segfault of 'net ads (join|leave) -S INVALID' with
+      nss_wins.
+
+o   Tom Schulz <schulz@adi.com>
+    * BUG 11511: Add libreplace dependency to texpect, fixes a linking error on
+      Solaris.
+    * BUG 11512: s4: Fix linking of 'smbtorture' on Solaris.
+
+o   Uri Simchoni <uri@samba.org>
+    * BUG 11608: auth: Consistent handling of well-known alias as primary gid.
+
+#######################################
+Reporting bugs & Development Discussion
+#######################################
+
+Please discuss this release on the samba-technical mailing list or by
+joining the #samba-technical IRC channel on irc.freenode.net.
+
+If you do report problems then please try to send high quality
+feedback. If you don't provide vital information to help us track down
+the problem then you will probably be ignored.  All bug reports should
+be filed under the "Samba 4.1 and newer" product in the project's Bugzilla
+database (https://bugzilla.samba.org/).
+
+
+======================================================================
+== Our Code, Our Bugs, Our Responsibility.
+== The Samba Team
+======================================================================
+
+
+----------------------------------------------------------------------
+
+
+                   =============================
+                   Release Notes for Samba 4.3.1
+                         October 20, 2015
+                   =============================
+
+
+This is the latest stable release of Samba 4.3.
+
+
+Changes since 4.3.0:
+--------------------
+
+o   Jeremy Allison <jra@samba.org>
+    * BUG 10252: s3: smbd: Fix our access-based enumeration on "hide unreadable"
+      to match Windows.
+    * BUG 10634: smbd: Fix file name buflen and padding in notify repsonse.
+    * BUG 11486: s3: smbd: Fix mkdir race condition.
+    * BUG 11522: s3: smbd: Fix opening/creating :stream files on the root share
+      directory.
+    * BUG 11535: s3: smbd: Fix NULL pointer bug introduced by previous 'raw'
+    * stream fix (bug #11522).
+    * BUG 11555: s3: lsa: lookup_name() logic for unqualified (no DOMAIN\
+      component) names is incorrect.
+
+o   Ralph Boehme <slow@samba.org>
+    * BUG 11535: s3: smbd: Fix a crash in unix_convert().
+    * BUG 11543: vfs_fruit: Return value of ad_pack in vfs_fruit.c.
+    * BUG 11549: s3:locking: Initialize lease pointer in
+      share_mode_traverse_fn().
+    * BUG 11550: s3:smbstatus: Add stream name to share_entry_forall().
+    * BUG 11555: s3:lib: Validate domain name in lookup_wellknown_name().
+
+o   Günther Deschner <gd@samba.org>
+    * BUG 11038: kerberos: Make sure we only use prompter type when available.
+
+o   Volker Lendecke <vl@samba.org>
+    * BUG 11038: winbind: Fix 100% loop.
+    * BUG 11053: source3/lib/msghdr.c: Fix compiling error on Solaris.
+
+o   Stefan Metzmacher <metze@samba.org>
+    * BUG 11316: s3:ctdbd_conn: make sure we destroy tevent_fd before closing
+      the socket.
+    * BUG 11515: s4:lib/messaging: Use 'msg.lock' and 'msg.sock' for messaging
+      related subdirs.
+    * BUG 11526: lib/param: Fix hiding of FLAG_SYNONYM values.
+
+o   Björn Jacke <bj@sernet.de>
+    * BUG 10365: nss_winbind: Fix hang on Solaris on big groups.
+    * BUG 11355: build: Use as-needed linker flag also on OpenBSD.
+
+o   Har Gagan Sahai <SHarGagan@novell.com>
+    * BUG 11509: s3: dfs: Fix a crash when the dfs targets are disabled.
+
+o   Andreas Schneider <asn@samba.org>
+    * BUG 11502: pam_winbind: Fix a segfault if initialization fails.
+
+o   Uri Simchoni <uri@samba.org>
+    * BUG 11528: net: Fix a crash with 'net ads keytab create'.
+    * BUG 11547: vfs_commit: set the fd on open before calling SMB_VFS_FSTAT.
+
+#######################################
+Reporting bugs & Development Discussion
+#######################################
+
+Please discuss this release on the samba-technical mailing list or by
+joining the #samba-technical IRC channel on irc.freenode.net.
+
+If you do report problems then please try to send high quality
+feedback. If you don't provide vital information to help us track down
+the problem then you will probably be ignored.  All bug reports should
+be filed under the "Samba 4.1 and newer" product in the project's Bugzilla
+database (https://bugzilla.samba.org/).
+
+
+======================================================================
+== Our Code, Our Bugs, Our Responsibility.
+== The Samba Team
+======================================================================
+
+
+----------------------------------------------------------------------
+
+
+                   =============================
                    Release Notes for Samba 4.3.0
                            September 8, 2015
                    =============================
@@ -387,7 +702,7 @@ o   Björn Baumbach <bb@sernet.de>
 o   Justin Maggard <jmaggard@netgear.com>
     * BUG 11320: "force group" with local group not working
 
-o   Martin Schwenke <martin@meltin.net
+o   Martin Schwenke <martin@meltin.net>
     * BUG 11424: Build broken with --disable-python
 
 
