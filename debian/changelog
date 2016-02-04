@@ -1,3 +1,13 @@
+samba (2:4.3.3+dfsg-2) unstable; urgency=medium
+
+  [ Jelmer Vernooij ]
+  * Add dependency on libtevent-dev in samba-dev.
+
+  [ Mathieu Parent ]
+  * Fix CTDB behavior since CVE-2015-8543 (Closes: #813406)
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 04 Feb 2016 13:25:01 +0100
+
 samba (2:4.3.3+dfsg-1) unstable; urgency=medium
 
   * New upstream release. Closes: #808133.
