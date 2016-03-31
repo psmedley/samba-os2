@@ -80,7 +80,8 @@ Suggests: bind9 (>= 1:9.5.1),
           ldb-tools,
           ntp,
           smbldap-tools,
-          winbind
+          winbind,
+          ufw
 Enhances: bind9, ntp
 Breaks: qtsmbstatus-server (<< 2.2.1-3~)
 Replaces: libsamdb0 (<< 4.0.0~alpha17~),
@@ -116,7 +117,7 @@ Pre-Depends: ${misc:Pre-Depends}
 Multi-Arch: same
 Architecture: any
 Section: libs
-Depends: ${ldb:Depends}, ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends}
 Breaks: libdcerpc-server0 (<< 2:4.0.9),
         libdcerpc0 (<< 2:4.0.9),
         libgensec0 (<< 2:4.0.9),
@@ -354,7 +355,7 @@ Architecture: any
 Replaces: libgensec0 (<< 4.0.0~alpha17~git20110724.dfsg1-1),
           samba-libs (<< 2:4.1.9+dfsg-2)
 Section: libs
-Depends: ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends}, ${ldb:Depends}
 Enhances: libldb1
 Description: Samba Directory Services Database
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
@@ -408,7 +409,7 @@ Description: development files for libsmbclient
 Package: winbind
 Pre-Depends: ${misc:Pre-Depends}
 Architecture: any
-Depends: samba (=${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
+Depends: samba-common (= ${source:Version}), samba-common-bin (=${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
 Enhances: libkrb5-26-heimdal
 Replaces: samba-doc (<< 2:4.0.5~), winbind4
 Conflicts: samba-doc (<< 2:4.0.5~)

@@ -1,3 +1,30 @@
+samba (2:4.3.6+dfsg-2) unstable; urgency=low
+
+  [ Mathieu Parent ]
+  * Fix FTBFS when built with dpkg-buildpackage -A (Closes: #818146). Patch by
+    Santiago Vila
+  * Drop samba from winbind depends and use samba-common* instead
+    (Closes: #732604)
+  * Add an override to script-not-executable etc/ctdb/events.d/10.external
+  * Add ufw integration (from Ubuntu)
+  * Don't build ctdb twice:
+    - Shorten build time
+    - Fix ctdb log path from /var/log/log.ctdb to /var/log/ctdb/log.ctdb
+    - Remove unused /usr/lib/*/ctdb/*.so files
+
+  [ Steven Chamberlain ]
+  * ctdb: Fix detection of gnukfreebsd (Closes: #802621)
+
+  [ Jelmer Vernooij ]
+  * Add no_build_options.patch: make package more reproducible by
+    disabling build options output.
+
+  [ Andrew Bartlett ]
+  * Allow to build/run the AD DC provision/dbcheck against talloc
+    2.1.6 (Closes: #820015)
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 31 Mar 2016 22:26:11 +0200
+
 samba (2:4.3.6+dfsg-1) unstable; urgency=medium
 
   * New upstream release.
@@ -6,6 +33,22 @@ samba (2:4.3.6+dfsg-1) unstable; urgency=medium
     - CVE-2016-0771 (Out-of-bounds read in internal DNS server.
 
  -- Jelmer Vernooij <jelmer@debian.org>  Sat, 27 Feb 2016 23:28:53 +0000
+
+samba (2:4.3.5+dfsg-3) unstable; urgency=medium
+
+  * Fix dhclient hook if samba is not installed. Thanks, Jan Braun.
+    Closes: #801976
+  * Rebuild against current version of ldb in the archive. Closes:
+    #817036
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Tue, 08 Mar 2016 00:24:10 +0000
+
+samba (2:4.3.5+dfsg-2) unstable; urgency=medium
+
+  * Move strict ldb dependency to samba-dsdb-modules package, which
+    actually contains the modules. Closes: #816210
+
+ -- Jelmer Vernooij <jelmer@debian.org>  Sun, 06 Mar 2016 22:51:53 +0000
 
 samba (2:4.3.5+dfsg-1) unstable; urgency=medium
 
