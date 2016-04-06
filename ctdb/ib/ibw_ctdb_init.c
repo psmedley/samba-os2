@@ -20,27 +20,31 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "includes.h"
-#include <system/network.h>
+#include "replace.h"
+#include "system/network.h"
+
 #include <assert.h>
+#include <talloc.h>
+#include <tevent.h>
+
+#include "lib/util/dlinklist.h"
+#include "lib/util/debug.h"
+
 #include "ctdb_private.h"
+
+#include "common/common.h"
+#include "common/logging.h"
+
 #include "ibwrapper.h"
 #include "ibw_ctdb.h"
-#include "lib/util/dlinklist.h"
 
 static int ctdb_ibw_listen(struct ctdb_context *ctdb, int backlog)
 {
 	struct ibw_ctx *ictx = talloc_get_type(ctdb->private_data, struct ibw_ctx);
-	struct sockaddr_in my_addr;
 
 	assert(ictx!=NULL);
-	memset(&my_addr, 0, sizeof(struct sockaddr_in));
-	my_addr.sin_port = htons(ctdb->address.port);
-	my_addr.sin_family = PF_INET;
-	if (ctdb_ibw_get_address(ctdb, ctdb->address.address, &my_addr.sin_addr))
-		return -1;
 
-	if (ibw_bind(ictx, &my_addr)) {
+	if (ibw_bind(ictx, &ctdb->address->ip)) {
 		DEBUG(DEBUG_CRIT, ("ctdb_ibw_listen: ibw_bind failed\n"));
 		return -1;
 	}
@@ -105,7 +109,7 @@ static int ctdb_ibw_start(struct ctdb_context *ctdb)
 	/* everything async here */
 	for (i=0;i<ctdb->num_nodes;i++) {
 		struct ctdb_node *node = ctdb->nodes[i];
-		if (!ctdb_same_address(&ctdb->address, &node->address)) {
+		if (!ctdb_same_address(ctdb->address, &node->address)) {
 			ctdb_ibw_node_connect(node);
 		}
 	}

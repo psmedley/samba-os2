@@ -79,15 +79,23 @@ DATA_BLOB spnego_gen_negTokenInit(TALLOC_CTX *ctx,
 
 	if (!asn1_pop_tag(data)) goto err;
 
-	ret = data_blob_talloc(ctx, data->data, data->length);
-
-  err:
-
-	if (data->has_error) {
-		DEBUG(1,("Failed to build negTokenInit at offset %d\n", (int)data->ofs));
+	if (!asn1_extract_blob(data, ctx, &ret)) {
+		goto err;
 	}
 
 	asn1_free(data);
+	data = NULL;
+
+  err:
+
+	if (data != NULL) {
+		if (asn1_has_error(data)) {
+			DEBUG(1, ("Failed to build negTokenInit at offset %d\n",
+				  (int)asn1_current_ofs(data)));
+		}
+
+		asn1_free(data);
+	}
 
 	return ret;
 }
@@ -143,7 +151,7 @@ bool spnego_parse_negTokenInit(TALLOC_CTX *ctx,
 		if (!asn1_read_OID(data,ctx, &OIDs[i])) {
 			goto err;
 		}
-		if (data->has_error) {
+		if (asn1_has_error(data)) {
 			goto err;
 		}
 	}
@@ -209,11 +217,11 @@ bool spnego_parse_negTokenInit(TALLOC_CTX *ctx,
 
 	if (!asn1_end_tag(data)) goto err;
 
-	ret = !data->has_error;
+	ret = !asn1_has_error(data);
 
   err:
 
-	if (data->has_error) {
+	if (asn1_has_error(data)) {
 		int j;
 		if (principal) {
 			TALLOC_FREE(*principal);
@@ -250,15 +258,23 @@ DATA_BLOB spnego_gen_krb5_wrap(TALLOC_CTX *ctx, const DATA_BLOB ticket, const ui
 	if (!asn1_write(data, ticket.data, ticket.length)) goto err;
 	if (!asn1_pop_tag(data)) goto err;
 
-	ret = data_blob_talloc(ctx, data->data, data->length);
-
-  err:
-
-	if (data->has_error) {
-		DEBUG(1,("Failed to build krb5 wrapper at offset %d\n", (int)data->ofs));
+	if (!asn1_extract_blob(data, ctx, &ret)) {
+		goto err;
 	}
 
 	asn1_free(data);
+	data = NULL;
+
+  err:
+
+	if (data != NULL) {
+		if (asn1_has_error(data)) {
+			DEBUG(1, ("Failed to build krb5 wrapper at offset %d\n",
+				  (int)asn1_current_ofs(data)));
+		}
+
+		asn1_free(data);
+	}
 
 	return ret;
 }
@@ -342,11 +358,11 @@ bool spnego_parse_challenge(TALLOC_CTX *ctx, const DATA_BLOB blob,
 	if (!asn1_end_tag(data)) goto err;
 	if (!asn1_end_tag(data)) goto err;
 
-	ret = !data->has_error;
+	ret = !asn1_has_error(data);
 
   err:
 
-	if (data->has_error) {
+	if (asn1_has_error(data)) {
 		data_blob_free(chal1);
 		data_blob_free(chal2);
 	}
@@ -377,7 +393,9 @@ DATA_BLOB spnego_gen_auth(TALLOC_CTX *ctx, DATA_BLOB blob)
 	if (!asn1_pop_tag(data)) goto err;
 	if (!asn1_pop_tag(data)) goto err;
 
-	ret = data_blob_talloc(ctx, data->data, data->length);
+	if (!asn1_extract_blob(data, ctx, &ret)) {
+		goto err;
+	}
 
  err:
 
@@ -431,7 +449,7 @@ bool spnego_parse_auth_response(TALLOC_CTX *ctx,
 			if (!asn1_end_tag(data)) goto err;
 		}
 	} else if (negResult == SPNEGO_ACCEPT_INCOMPLETE) {
-		data->has_error = 1;
+		asn1_set_error(data);
 		goto err;
 	}
 
@@ -452,12 +470,13 @@ bool spnego_parse_auth_response(TALLOC_CTX *ctx,
 	if (!asn1_end_tag(data)) goto err;
 	if (!asn1_end_tag(data)) goto err;
 
-	ret = !data->has_error;
+	ret = !asn1_has_error(data);
 
   err:
 
-	if (data->has_error) {
-		DEBUG(3,("spnego_parse_auth_response failed at %d\n", (int)data->ofs));
+	if (asn1_has_error(data)) {
+		DEBUG(3, ("spnego_parse_auth_response failed at %d\n",
+			  (int)asn1_current_ofs(data)));
 		asn1_free(data);
 		data_blob_free(auth);
 		return false;

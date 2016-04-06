@@ -20,10 +20,21 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "includes.h"
-#include <system/network.h>
+#include "replace.h"
+#include "system/network.h"
+
 #include <assert.h>
+#include <talloc.h>
+#include <tevent.h>
+
+#include "lib/util/time.h"
+#include "lib/util/debug.h"
+
 #include "ctdb_private.h"
+
+#include "common/common.h"
+#include "common/logging.h"
+
 #include "ibwrapper.h"
 #include "ibw_ctdb.h"
 
@@ -49,30 +60,23 @@ int ctdb_ibw_node_connect(struct ctdb_node *node)
 
 	assert(cn!=NULL);
 	assert(cn->conn!=NULL);
-	struct sockaddr_in sock_out;
 
-	memset(&sock_out, 0, sizeof(struct sockaddr_in));
-	sock_out.sin_port = htons(node->address.port);
-	sock_out.sin_family = PF_INET;
-	if (ctdb_ibw_get_address(node->ctdb, node->address.address, &sock_out.sin_addr)) {
-		DEBUG(DEBUG_ERR, ("ctdb_ibw_node_connect failed\n"));
-		return -1;
-	}
-
-	rc = ibw_connect(cn->conn, &sock_out, node);
+	rc = ibw_connect(cn->conn, &node->address.ip, node);
 	if (rc) {
 		DEBUG(DEBUG_ERR, ("ctdb_ibw_node_connect/ibw_connect failed - retrying...\n"));
 		/* try again once a second */
-		event_add_timed(node->ctdb->ev, node, timeval_current_ofs(1, 0), 
-			ctdb_ibw_node_connect_event, node);
+		tevent_add_timer(node->ctdb->ev, node,
+				 timeval_current_ofs(1, 0),
+				 ctdb_ibw_node_connect_event, node);
 	}
 
 	/* continues at ibw_ctdb.c/IBWC_CONNECTED in good case */
 	return 0;
 }
 
-void ctdb_ibw_node_connect_event(struct event_context *ev, struct timed_event *te, 
-	struct timeval t, void *private_data)
+void ctdb_ibw_node_connect_event(struct tevent_context *ev,
+				 struct tevent_timer *te,
+				 struct timeval t, void *private_data)
 {
 	struct ctdb_node *node = talloc_get_type(private_data, struct ctdb_node);
 
@@ -138,8 +142,9 @@ int ctdb_ibw_connstate_handler(struct ibw_ctx *ctx, struct ibw_conn *conn)
 				DEBUG(DEBUG_DEBUG, ("IBWC_ERROR, reconnecting...\n"));
 				talloc_free(cn->conn); /* internal queue content is destroyed */
 				cn->conn = (void *)ibw_conn_new(ictx, node);
-				event_add_timed(node->ctdb->ev, node, timeval_current_ofs(1, 0),
-					ctdb_ibw_node_connect_event, node);
+				tevent_add_timer(node->ctdb->ev, node,
+						 timeval_current_ofs(1, 0),
+						 ctdb_ibw_node_connect_event, node);
 			}
 		} break;
 		default:

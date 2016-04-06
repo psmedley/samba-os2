@@ -18,14 +18,24 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/filesys.h"
-#include "popt.h"
-#include "cmdline.h"
-#include "ctdb_private.h"
+#include "system/network.h"
+#include "system/time.h"
 
-#include <sys/time.h>
-#include <time.h>
+#include <popt.h>
+#include <talloc.h>
+#include <tevent.h>
+
+#include "lib/util/debug.h"
+#include "lib/util/time.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/cmdline.h"
+#include "common/common.h"
+#include "common/logging.h"
 
 static struct timeval tp1,tp2;
 
@@ -45,7 +55,7 @@ static int num_records = 10;
 static int delete_pct = 75;
 static int base_rec;
 
-static void store_records(struct ctdb_context *ctdb, struct event_context *ev)
+static void store_records(struct ctdb_context *ctdb, struct tevent_context *ev)
 {
 	TDB_DATA key, data;
 	struct ctdb_db_context *ctdb_db;
@@ -158,7 +168,7 @@ int main(int argc, const char *argv[])
 	const char **extra_argv;
 	int extra_argc = 0;
 	poptContext pc;
-	struct event_context *ev;
+	struct tevent_context *ev;
 
 	pc = poptGetContext(argv[0], argc, argv, popt_options, POPT_CONTEXT_KEEP_FIRST);
 
@@ -178,7 +188,7 @@ int main(int argc, const char *argv[])
 		while (extra_argv[extra_argc]) extra_argc++;
 	}
 
-	ev = event_context_init(NULL);
+	ev = tevent_context_init(NULL);
 
 	ctdb = ctdb_cmdline_client(ev, timeval_current_ofs(3, 0));
 

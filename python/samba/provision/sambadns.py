@@ -35,7 +35,8 @@ from samba.dcerpc import dnsp, misc, security
 from samba.dsdb import (
     DS_DOMAIN_FUNCTION_2000,
     DS_DOMAIN_FUNCTION_2003,
-    DS_DOMAIN_FUNCTION_2008_R2
+    DS_DOMAIN_FUNCTION_2008_R2,
+    DS_DOMAIN_FUNCTION_2012_R2
     )
 from samba.descriptor import (
     get_domain_descriptor,
@@ -967,7 +968,7 @@ def is_valid_dns_backend(dns_backend):
 
 
 def is_valid_os_level(os_level):
-    return DS_DOMAIN_FUNCTION_2000 <= os_level <= DS_DOMAIN_FUNCTION_2008_R2
+    return DS_DOMAIN_FUNCTION_2000 <= os_level <= DS_DOMAIN_FUNCTION_2012_R2
 
 
 def create_dns_legacy(samdb, domainsid, forestdn, dnsadmins_sid):
@@ -1177,6 +1178,16 @@ def setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
                         dnsdomain=names.dnsdomain,
                         dns_keytab_path=paths.dns_keytab, dnspass=dnspass,
                         key_version_number=key_version_number)
+
+    dns_keytab_path = os.path.join(paths.private_dir, paths.dns_keytab)
+    if os.path.isfile(dns_keytab_path) and paths.bind_gid is not None:
+        try:
+            os.chmod(dns_keytab_path, 0640)
+            os.chown(dns_keytab_path, -1, paths.bind_gid)
+        except OSError:
+            if not os.environ.has_key('SAMBA_SELFTEST'):
+                logger.info("Failed to chown %s to bind gid %u",
+                            dns_keytab_path, paths.bind_gid)
 
     create_dns_dir(logger, paths)
 

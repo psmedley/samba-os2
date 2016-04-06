@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import string, Logs, Utils, Options, sys, Build, os, intltool, optparse, textwrap
+import string, Logs, Utils, Options, Build, os, optparse, textwrap
 from samba_utils import EXPAND_VARIABLES, os_path_relpath
 
 class SambaIndentedHelpFormatter (optparse.IndentedHelpFormatter):
@@ -374,7 +374,7 @@ def dynconfig_cflags(bld, list=None):
         if list and not varname in list:
             continue
         value = bld.env[varname]
-        if not Options.is_install:
+        if not bld.is_install:
             override = get_override(bld)
             if varname in override:
                 value = os.path.join(bld.env.srcdir, override[varname])
@@ -399,7 +399,7 @@ def pathconfig_entities(bld, list=None):
         if list and not varname in list:
             continue
         value = bld.env[varname]
-        if not Options.is_install:
+        if not bld.is_install:
             override = get_override(bld)
             if varname in override:
                 value = os.path.join(bld.env.srcdir, override[varname])
@@ -412,7 +412,7 @@ def build(bld):
     version_header = 'version.h'
     bld.SAMBA_SUBSYSTEM('DYNCONFIG',
                         'dynconfig.c',
-                        deps='replace talloc',
+                        deps='replace',
                         public_headers=os_path_relpath(os.path.join(Options.launch_dir, version_header), bld.curdir),
                         header_path='samba',
                         cflags=cflags)

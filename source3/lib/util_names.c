@@ -171,3 +171,17 @@ const char *get_global_sam_name(void)
 	return lp_netbios_name();
 }
 
+
+/******************************************************************
+ Get the default domain/netbios name to be used when
+ testing authentication.
+******************************************************************/
+
+const char *my_sam_name(void)
+{
+	if (lp_server_role() == ROLE_STANDALONE) {
+		return lp_netbios_name();
+	}
+
+	return lp_workgroup();
+}

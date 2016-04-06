@@ -24,16 +24,22 @@
   needs, and inspired by 'common/system_aix.c' for the pcap usage.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/network.h"
 #include "system/filesys.h"
 #include "system/wait.h"
-#include "../include/ctdb_private.h"
+
+#include "lib/util/debug.h"
+
+#include "protocol/protocol.h"
+
 #include <net/ethernet.h>
 #include <netinet/ip6.h>
 #include <net/if_arp.h>
 #include <pcap.h>
 
+#include "common/logging.h"
+#include "common/system.h"
 
 #ifndef ETHERTYPE_IP6
 #define ETHERTYPE_IP6 0x86dd
@@ -75,7 +81,7 @@ static uint16_t tcp_checksum6(uint16_t *data, size_t n, struct ip6_hdr *ip6)
  */
 int ctdb_sys_send_arp(const ctdb_sock_addr *addr, const char *iface)
 {
-	/* FIXME FreeBSD: We dont do gratuitous arp yet */
+	/* FIXME FreeBSD: We don't do gratuitous arp yet */
 	return -1;
 }
 
@@ -214,7 +220,7 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 			return -1;
 
 		}
-		/* sendto() dont like if the port is set and the socket is
+		/* sendto() don't like if the port is set and the socket is
 		   in raw mode.
 		*/
 		tmpdest = discard_const(dest);
@@ -368,42 +374,4 @@ int ctdb_get_peer_pid(const int fd, pid_t *peer_pid)
 {
 	/* FIXME FreeBSD: get_peer_pid not implemented */
 	return 1;
-}
-
-char *ctdb_get_process_name(pid_t pid)
-{
-	char path[32];
-	char buf[PATH_MAX];
-	char *ptr;
-	int n;
-
-	snprintf(path, sizeof(path), "/proc/%d/exe", pid);
-	n = readlink(path, buf, sizeof(buf));
-	if (n < 0) {
-		return NULL;
-	}
-
-	/* Remove any extra fields */
-	buf[n] = '\0';
-	ptr = strtok(buf, " ");
-	return strdup(ptr);
-	return NULL;
-}
-
-int ctdb_set_process_name(const char *name)
-{
-	/* FIXME FreeBSD: set_process_name not implemented */
-	return -ENOSYS;
-}
-
-bool ctdb_get_lock_info(pid_t req_pid, struct ctdb_lock_info *lock_info)
-{
-	/* FIXME FreeBSD: get_lock_info not implemented */
-	return false;
-}
-
-bool ctdb_get_blocker_pid(struct ctdb_lock_info *reqlock, pid_t *blocker_pid)
-{
-	/* FIXME FreeBSD: get_blocker_pid not implemented */
-	return false;
 }

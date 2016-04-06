@@ -15,7 +15,7 @@ samba_dist.DIST_DIRS('.')
 samba_dist.DIST_BLACKLIST('.gitignore .bzrignore source4/selftest/provisions')
 
 # install in /usr/local/samba by default
-Options.default_prefix = '/usr/local/samba'
+default_prefix = Options.default_prefix = '/usr/local/samba'
 
 # This callback optionally takes a list of paths as arguments:
 # --with-system_mitkrb5 /path/to/krb5 /another/path
@@ -52,6 +52,14 @@ def set_options(opt):
     opt.add_option('--without-ad-dc',
                    help='disable AD DC functionality (enables Samba 4 client and Samba 3 code base).',
                    action='store_true', dest='without_ad_dc', default=False)
+
+    opt.add_option('--with-ntvfs-fileserver',
+                   help='enable the depricated NTVFS file server from the original Samba4 branch (default if --enable-selftest specicifed).  Conflicts with --with-system-mitkrb5 and --without-ad-dc',
+                   action='store_true', dest='with_ntvfs_fileserver')
+
+    opt.add_option('--without-ntvfs-fileserver',
+                   help='disable the depricated NTVFS file server from the original Samba4 branch',
+                   action='store_false', dest='with_ntvfs_fileserver')
 
     opt.add_option('--with-pie',
                   help=("Build Position Independent Executables " +
@@ -132,6 +140,7 @@ def configure(conf):
         conf.PROCESS_SEPARATE_RULE('system_mitkrb5')
     if not (Options.options.without_ad_dc or Options.options.with_system_mitkrb5):
         conf.DEFINE('AD_DC_BUILD_IS_ENABLED', 1)
+
     # Only process heimdal_build for non-MIT KRB5 builds
     # When MIT KRB5 checks are done as above, conf.env.KRB5_VENDOR will be set
     # to the lowcased output of 'krb5-config --vendor'.
@@ -154,10 +163,24 @@ def configure(conf):
         conf.RECURSE('lib/resolv_wrapper')
         conf.RECURSE('lib/socket_wrapper')
         conf.RECURSE('lib/uid_wrapper')
+        if Options.options.with_ntvfs_fileserver != False:
+            if not (Options.options.without_ad_dc or Options.options.with_system_mitkrb5):
+                conf.DEFINE('WITH_NTVFS_FILESERVER', 1)
+        if Options.options.with_ntvfs_fileserver == False:
+            if not (Options.options.without_ad_dc or Options.options.with_system_mitkrb5):
+                raise Utils.WafError('--without-ntvfs-fileserver conflicts with --enable-selftest while building the AD DC')
+
+    if Options.options.with_ntvfs_fileserver == True:
+        if Options.options.without_ad_dc:
+            raise Utils.WafError('--with-ntvfs-fileserver conflicts with --without-ad-dc')
+        if Options.options.with_system_mitkrb5:
+            raise Utils.WafError('--with-ntvfs-fileserver conflicts with --with-system-mitkrb5')
+        conf.DEFINE('WITH_NTVFS_FILESERVER', 1)
     conf.RECURSE('source3')
     conf.RECURSE('lib/texpect')
     if conf.env.with_ctdb:
         conf.RECURSE('ctdb')
+    conf.RECURSE('lib/socket')
 
     conf.SAMBA_CHECK_UNDEFINED_SYMBOL_FLAGS()
 

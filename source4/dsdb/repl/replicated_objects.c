@@ -138,7 +138,7 @@ WERROR dsdb_repl_resolve_working_schema(struct ldb_context *ldb,
 		}
 
 		schema_list_item->obj = cur;
-		DLIST_ADD_END(schema_list, schema_list_item, struct schema_list);
+		DLIST_ADD_END(schema_list, schema_list_item);
 	}
 
 	/* resolve objects until all are resolved and in local schema */
@@ -188,6 +188,7 @@ WERROR dsdb_repl_resolve_working_schema(struct ldb_context *ldb,
 			 * an object. We should convert more objects on next pass.
 			 */
 			werr = dsdb_convert_object_ex(ldb, working_schema,
+						      NULL,
 						      pfm_remote,
 						      cur, &empty_key,
 						      ignore_attids,
@@ -338,6 +339,7 @@ static bool dsdb_attid_in_list(const uint32_t attid_list[], uint32_t attid)
 
 WERROR dsdb_convert_object_ex(struct ldb_context *ldb,
 			      const struct dsdb_schema *schema,
+			      struct ldb_dn *partition_dn,
 			      const struct dsdb_schema_prefixmap *pfm_remote,
 			      const struct drsuapi_DsReplicaObjectListItemEx *in,
 			      const DATA_BLOB *gensec_skey,
@@ -347,7 +349,7 @@ WERROR dsdb_convert_object_ex(struct ldb_context *ldb,
 			      struct dsdb_extended_replicated_object *out)
 {
 	NTSTATUS nt_status;
-	WERROR status;
+	WERROR status = WERR_OK;
 	uint32_t i;
 	struct ldb_message *msg;
 	struct replPropertyMetaDataBlob *md;
@@ -444,15 +446,42 @@ WERROR dsdb_convert_object_ex(struct ldb_context *ldb,
 		}
 
 		for (j=0; j<a->value_ctr.num_values; j++) {
-			status = drsuapi_decrypt_attribute(a->value_ctr.values[j].blob, gensec_skey, rid, a);
-			W_ERROR_NOT_OK_RETURN(status);
+			status = drsuapi_decrypt_attribute(a->value_ctr.values[j].blob,
+							   gensec_skey, rid,
+							   dsdb_repl_flags, a);
+			if (!W_ERROR_IS_OK(status)) {
+				break;
+			}
+		}
+		if (W_ERROR_EQUAL(status, WERR_TOO_MANY_SECRETS)) {
+			WERROR get_name_status = dsdb_attribute_drsuapi_to_ldb(ldb, schema, pfm_remote,
+									       a, msg->elements, e, NULL);
+			if (W_ERROR_IS_OK(get_name_status)) {
+				DEBUG(0, ("Unxpectedly got secret value %s on %s from DRS server\n",
+					  e->name, ldb_dn_get_linearized(msg->dn)));
+			} else {
+				DEBUG(0, ("Unxpectedly got secret value on %s from DRS server",
+					  ldb_dn_get_linearized(msg->dn)));
+			}
+		} else if (!W_ERROR_IS_OK(status)) {
+			return status;
 		}
 
+		/*
+		 * This function also fills in the local attid value,
+		 * based on comparing the remote and local prefixMap
+		 * tables.  If we don't convert the value, then we can
+		 * have invalid values in the replPropertyMetaData we
+		 * store on disk, as the prefixMap is per host, not
+		 * per-domain.  This may be why Microsoft added the
+		 * msDS-IntID feature, however this is not used for
+		 * extra attributes in the schema partition itself.
+		 */
 		status = dsdb_attribute_drsuapi_to_ldb(ldb, schema, pfm_remote,
-						       a, msg->elements, e);
+						       a, msg->elements, e,
+						       &m->attid);
 		W_ERROR_NOT_OK_RETURN(status);
 
-		m->attid			= a->attid;
 		m->version			= d->version;
 		m->originating_change_time	= d->originating_change_time;
 		m->originating_invocation_id	= d->originating_invocation_id;
@@ -531,6 +560,17 @@ WERROR dsdb_convert_object_ex(struct ldb_context *ldb,
 	}
 
 	instanceType = ldb_msg_find_attr_as_int(msg, "instanceType", 0);
+
+	if (instanceType & INSTANCE_TYPE_IS_NC_HEAD && partition_dn) {
+		int partition_dn_cmp = ldb_dn_compare(partition_dn, msg->dn);
+		if (partition_dn_cmp != 0) {
+			DEBUG(4, ("Remote server advised us of a new partition %s while processing %s, ignoring\n",
+				  ldb_dn_get_linearized(msg->dn),
+				  ldb_dn_get_linearized(partition_dn)));
+			return WERR_DS_ADD_REPLICA_INHIBITED;
+		}
+	}
+
 	if (dsdb_repl_flags & DSDB_REPL_FLAG_PARTIAL_REPLICA) {
 		/* the instanceType type for partial_replica
 		   replication is sent via DRS with TYPE_WRITE set, but
@@ -661,10 +701,10 @@ WERROR dsdb_replicated_objects_convert(struct ldb_context *ldb,
 	out->source_dsa		= source_dsa;
 	out->uptodateness_vector= uptodateness_vector;
 
-	out->num_objects	= object_count;
+	out->num_objects	= 0;
 	out->objects		= talloc_array(out,
 					       struct dsdb_extended_replicated_object,
-					       out->num_objects);
+					       object_count);
 	W_ERROR_HAVE_NO_MEMORY_AND_FREE(out->objects, out);
 
 	/* pass the linked attributes down to the repl_meta_data
@@ -673,16 +713,30 @@ WERROR dsdb_replicated_objects_convert(struct ldb_context *ldb,
 	out->linked_attributes       = linked_attributes;
 
 	for (i=0, cur = first_object; cur; cur = cur->next_object, i++) {
-		if (i == out->num_objects) {
+		if (i == object_count) {
 			talloc_free(out);
 			return WERR_FOOBAR;
 		}
 
-		status = dsdb_convert_object_ex(ldb, schema, pfm_remote,
+		status = dsdb_convert_object_ex(ldb, schema, out->partition_dn,
+						pfm_remote,
 						cur, gensec_skey,
 						NULL,
 						dsdb_repl_flags,
-						out->objects, &out->objects[i]);
+						out->objects,
+						&out->objects[out->num_objects]);
+
+		/*
+		 * Check to see if we have been advised of a
+		 * subdomain or new application partition.  We don't
+		 * want to start on that here, instead the caller
+		 * should consider if it would like to replicate it
+		 * based on the cross-ref object.
+		 */
+		if (W_ERROR_EQUAL(status, WERR_DS_ADD_REPLICA_INHIBITED)) {
+			continue;
+		}
+
 		if (!W_ERROR_IS_OK(status)) {
 			talloc_free(out);
 			DEBUG(0,("Failed to convert object %s: %s\n",
@@ -690,8 +744,18 @@ WERROR dsdb_replicated_objects_convert(struct ldb_context *ldb,
 				 win_errstr(status)));
 			return status;
 		}
+
+		/* Assuming we didn't skip or error, increment the number of objects */
+		out->num_objects++;
 	}
-	if (i != out->num_objects) {
+	out->objects = talloc_realloc(out, out->objects,
+				      struct dsdb_extended_replicated_object,
+				      out->num_objects);
+	if (out->num_objects != 0 && out->objects == NULL) {
+		talloc_free(out);
+		return WERR_FOOBAR;
+	}
+	if (i != object_count) {
 		talloc_free(out);
 		return WERR_FOOBAR;
 	}
@@ -902,7 +966,7 @@ WERROR dsdb_replicated_objects_commit(struct ldb_context *ldb,
 
 		ret = ldb_build_mod_req(&req, ldb, objects,
 				msg,
-				LDB_SCOPE_BASE,
+				NULL,
 				NULL,
 				ldb_op_default_callback,
 				NULL);
@@ -984,7 +1048,7 @@ static WERROR dsdb_origin_object_convert(struct ldb_context *ldb,
 		e = &msg->elements[i];
 
 		status = dsdb_attribute_drsuapi_to_ldb(ldb, schema, schema->prefixmap,
-						       a, msg->elements, e);
+						       a, msg->elements, e, NULL);
 		W_ERROR_NOT_OK_RETURN(status);
 	}
 

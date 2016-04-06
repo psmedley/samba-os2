@@ -43,7 +43,7 @@ static bool torture_local_dlinklist_simple(struct torture_context *tctx)
 	torture_comment(tctx, "add 5 elements at end\n");
 	for (i=0; i<5; i++) {
 		el = talloc(mem_ctx, struct listel);
-		DLIST_ADD_END(l1, el, NULL);
+		DLIST_ADD_END(l1, el);
 	}
 
 	torture_comment(tctx, "delete 3 from front\n");
@@ -57,7 +57,7 @@ static bool torture_local_dlinklist_simple(struct torture_context *tctx)
 	for (i=0; i < 3; i++) {
 		el = DLIST_TAIL(l1);
 		DLIST_REMOVE(l1, el);
-		DLIST_ADD_END(l2, el, NULL);
+		DLIST_ADD_END(l2, el);
 	}
 
 	torture_comment(tctx, "count forward\n");
@@ -87,7 +87,7 @@ static bool torture_local_dlinklist_simple(struct torture_context *tctx)
 	torture_assert(tctx, el2->next->next == el, "3rd in list");
 
 	torture_comment(tctx, "check DLIST_DEMOTE\n");
-	DLIST_DEMOTE(l1, el, NULL);
+	DLIST_DEMOTE(l1, el);
 	torture_assert(tctx, el->next == NULL, "last in list");
 	torture_assert(tctx, el2->prev == el, "backlink from head");
 
@@ -100,7 +100,7 @@ static bool torture_local_dlinklist_simple(struct torture_context *tctx)
 	torture_assert_int_equal(tctx, i, 6, "should have 6 elements");
 
 	torture_comment(tctx, "check DLIST_CONCATENATE\n");
-	DLIST_CONCATENATE(l1, l2, NULL);
+	DLIST_CONCATENATE(l1, l2);
 	torture_comment(tctx, "count forward\n");
 	for (i=0,el=l1; el; el=el->next) i++;
 	torture_assert_int_equal(tctx, i, 12, "should have 12 elements");

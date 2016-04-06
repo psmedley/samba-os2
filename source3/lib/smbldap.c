@@ -237,7 +237,7 @@
 					&blob)) {
 		return false;
 	}
-	ret = sid_parse((char *)blob.data, blob.length, sid);
+	ret = sid_parse(blob.data, blob.length, sid);
 	TALLOC_FREE(blob.data);
 	return ret;
 }
@@ -301,7 +301,7 @@ static void smbldap_set_mod_internal(LDAPMod *** modlist, int modop, const char 
 		return;	
 	}
 
-#if 0	/* commented out after discussion with abartlet.  Do not reenable.
+#if 0	/* commented out after discussion with abartlet.  Do not re-enable.
 	   left here so other do not re-add similar code   --jerry */
        	if (value == NULL || *value == '\0')
 		return;
@@ -545,7 +545,7 @@ static void smbldap_store_state(LDAP *ld, struct smbldap_state *smbldap_state)
 	t = SMB_XMALLOC_P(struct smbldap_state_lookup);
 	ZERO_STRUCTP(t);
 
-	DLIST_ADD_END(smbldap_state_lookup_list, t, struct smbldap_state_lookup *);
+	DLIST_ADD_END(smbldap_state_lookup_list, t);
 	t->ld = ld;
 	t->smbldap_state = smbldap_state;
 }

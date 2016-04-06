@@ -1,11 +1,11 @@
 # a waf tool to add autoconf-like macros to the configure section
 # and for SAMBA_ macros for building libraries, binaries etc
 
-import Build, os, sys, Options, Utils, Task, re, fnmatch, Logs
-from TaskGen import feature, before
+import os, sys, re, fnmatch, shlex
+import Build, Options, Utils, Task, Logs, Configure
+from TaskGen import feature, before, after
 from Configure import conf, ConfigurationContext
 from Logs import debug
-import shlex
 
 # TODO: make this a --option
 LIB_PATH="shared"
@@ -35,22 +35,6 @@ def GET_TARGET_TYPE(ctx, target):
     return cache[target]
 
 
-######################################################
-# this is used as a decorator to make functions only
-# run once. Based on the idea from
-# http://stackoverflow.com/questions/815110/is-there-a-decorator-to-simply-cache-function-return-values
-def runonce(function):
-    runonce_ret = {}
-    def runonce_wrapper(*args):
-        if args in runonce_ret:
-            return runonce_ret[args]
-        else:
-            ret = function(*args)
-            runonce_ret[args] = ret
-            return ret
-    return runonce_wrapper
-
-
 def ADD_LD_LIBRARY_PATH(path):
     '''add something to LD_LIBRARY_PATH'''
     if 'LD_LIBRARY_PATH' in os.environ:
@@ -66,7 +50,7 @@ def ADD_LD_LIBRARY_PATH(path):
 def needs_private_lib(bld, target):
     '''return True if a target links to a private library'''
     for lib in getattr(target, "final_libs", []):
-        t = bld.name_to_obj(lib, bld.env)
+        t = bld.get_tgen_by_name(lib)
         if t and getattr(t, 'private_library', False):
             return True
     return False
@@ -135,28 +119,6 @@ def dict_concat(d1, d2):
         if t not in d1:
             d1[t] = d2[t]
 
-
-def exec_command(self, cmd, **kw):
-    '''this overrides the 'waf -v' debug output to be in a nice
-    unix like format instead of a python list.
-    Thanks to ita on #waf for this'''
-    import Utils, Logs
-    _cmd = cmd
-    if isinstance(cmd, list):
-        _cmd = ' '.join(cmd)
-    debug('runner: %s' % _cmd)
-    if self.log:
-        self.log.write('%s\n' % cmd)
-        kw['log'] = self.log
-    try:
-        if not kw.get('cwd', None):
-            kw['cwd'] = self.cwd
-    except AttributeError:
-        self.cwd = kw['cwd'] = self.bldnode.abspath()
-    return Utils.exec_command(cmd, **kw)
-Build.BuildContext.exec_command = exec_command
-
-
 def ADD_COMMAND(opt, name, function):
     '''add a new top level command to waf'''
     Utils.g_module.__dict__[name] = function
@@ -164,7 +126,7 @@ def ADD_COMMAND(opt, name, function):
 Options.Handler.ADD_COMMAND = ADD_COMMAND
 
 
-@feature('cc', 'cshlib', 'cprogram')
+@feature('c', 'cc', 'cshlib', 'cprogram')
 @before('apply_core','exec_rule')
 def process_depends_on(self):
     '''The new depends_on attribute for build rules
@@ -173,7 +135,7 @@ def process_depends_on(self):
     if getattr(self , 'depends_on', None):
         lst = self.to_list(self.depends_on)
         for x in lst:
-            y = self.bld.name_to_obj(x, self.env)
+            y = self.bld.get_tgen_by_name(x)
             self.bld.ASSERT(y is not None, "Failed to find dependency %s of %s" % (x, self.name))
             y.post()
             if getattr(y, 'more_includes', None):
@@ -386,7 +348,7 @@ def RUN_COMMAND(cmd,
     return -1
 
 
-def RUN_PYTHON_TESTS(testfiles, pythonpath=None):
+def RUN_PYTHON_TESTS(testfiles, pythonpath=None, extra_env=None):
     env = LOAD_ENVIRONMENT()
     if pythonpath is None:
         pythonpath = os.path.join(Utils.g_module.blddir, 'python')
@@ -394,6 +356,9 @@ def RUN_PYTHON_TESTS(testfiles, pythonpath=None):
     for interp in env.python_interpreters:
         for testfile in testfiles:
             cmd = "PYTHONPATH=%s %s %s" % (pythonpath, interp, testfile)
+            if extra_env:
+                for key, value in extra_env.items():
+                    cmd = "%s=%s %s" % (key, value, cmd)
             print('Running Python test with %s: %s' % (interp, testfile))
             ret = RUN_COMMAND(cmd)
             if ret:
@@ -644,7 +609,7 @@ def get_tgt_list(bld):
         type = targets[tgt]
         if not type in ['SUBSYSTEM', 'MODULE', 'BINARY', 'LIBRARY', 'ASN1', 'PYTHON']:
             continue
-        t = bld.name_to_obj(tgt, bld.env)
+        t = bld.get_tgen_by_name(tgt)
         if t is None:
             Logs.error("Target %s of type %s has no task generator" % (tgt, type))
             sys.exit(1)
@@ -657,11 +622,10 @@ def PROCESS_SEPARATE_RULE(self, rule):
         You should have file named wscript_<stage>_rule in the current directory
         where stage is either 'configure' or 'build'
     '''
-    ctxclass = self.__class__.__name__
     stage = ''
-    if ctxclass == 'ConfigurationContext':
+    if isinstance(self, Configure.ConfigurationContext):
         stage = 'configure'
-    elif ctxclass == 'BuildContext':
+    elif isinstance(self, Build.BuildContext):
         stage = 'build'
     file_path = os.path.join(self.curdir, WSCRIPT_FILE+'_'+stage+'_'+rule)
     txt = load_file(file_path)
@@ -682,3 +646,26 @@ def AD_DC_BUILD_IS_ENABLED(self):
     return False
 
 Build.BuildContext.AD_DC_BUILD_IS_ENABLED = AD_DC_BUILD_IS_ENABLED
+
+@feature('cprogram', 'cshlib', 'cstaticlib')
+@after('apply_lib_vars')
+@before('apply_obj_vars')
+def samba_before_apply_obj_vars(self):
+    """before apply_obj_vars for uselib, this removes the standard paths"""
+
+    def is_standard_libpath(env, path):
+        for _path in env.STANDARD_LIBPATH:
+            if _path == os.path.normpath(path):
+                return True
+        return False
+
+    v = self.env
+
+    for i in v['RPATH']:
+        if is_standard_libpath(v, i):
+            v['RPATH'].remove(i)
+
+    for i in v['LIBPATH']:
+        if is_standard_libpath(v, i):
+            v['LIBPATH'].remove(i)
+

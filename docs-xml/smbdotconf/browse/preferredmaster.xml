@@ -1,7 +1,8 @@
 <samba:parameter name="preferred master"
                  context="G"
-				 type="boolean-auto"
-                 generated_function="0"
+                 type="enum"
+                 enumlist="enum_bool_auto"
+                 function="_preferred_master"
                  xmlns:samba="http://www.samba.org/samba/DTD/samba-doc">
 <synonym>prefered master</synonym>
  <description>

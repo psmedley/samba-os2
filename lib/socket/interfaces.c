@@ -24,6 +24,12 @@
 #include "system/network.h"
 #include "interfaces.h"
 #include "lib/util/tsort.h"
+#include "librpc/gen_ndr/ioctl.h"
+
+#ifdef HAVE_ETHTOOL
+#include "linux/sockios.h"
+#include "linux/ethtool.h"
+#endif
 
 /****************************************************************************
  Create a struct sockaddr_storage with the netmask bits set to 1.
@@ -119,6 +125,53 @@ void make_net(struct sockaddr_storage *pss_out,
 	make_bcast_or_net(pss_out, pss_in, nmask, false);
 }
 
+#ifdef HAVE_ETHTOOL
+static void query_iface_speed_from_name(const char *name, uint64_t *speed)
+{
+	int ret = 0;
+	struct ethtool_cmd ecmd;
+	struct ethtool_value edata;
+	struct ifreq ifr;
+	int fd;
+
+	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+	if (fd == -1) {
+		DBG_ERR("Failed to open socket.");
+		return;
+	}
+
+	if (strlen(name) >= IF_NAMESIZE) {
+		DBG_ERR("Interface name too long.");
+		goto done;
+	}
+
+	ZERO_STRUCT(ifr);
+	strncpy(ifr.ifr_name, name, IF_NAMESIZE);
+
+	ifr.ifr_data = (void *)&edata;
+	edata.cmd = ETHTOOL_GLINK;
+	ret = ioctl(fd, SIOCETHTOOL, &ifr);
+	if (ret == -1) {
+		goto done;
+	}
+	if (edata.data == 0) {
+		/* no link detected */
+		*speed = 0;
+		goto done;
+	}
+
+	ifr.ifr_data = (void *)&ecmd;
+	ecmd.cmd = ETHTOOL_GSET;
+	ret = ioctl(fd, SIOCETHTOOL, &ifr);
+	if (ret == -1) {
+		goto done;
+	}
+	*speed = ((uint64_t)ethtool_cmd_speed(&ecmd)) * 1000 * 1000;
+
+done:
+	(void)close(fd);
+}
+#endif
 
 /****************************************************************************
  Try the "standard" getifaddrs/freeifaddrs interfaces.
@@ -161,6 +214,7 @@ static int _get_interfaces(TALLOC_CTX *mem_ctx, struct iface_struct **pifaces)
 
 	/* Loop through interfaces, looking for given IP address */
 	for (ifptr = iflist; ifptr != NULL; ifptr = ifptr->ifa_next) {
+		uint64_t if_speed = 1000 * 1000 * 1000; /* 1Gbps */
 
 		if (!ifptr->ifa_addr || !ifptr->ifa_netmask) {
 			continue;
@@ -213,6 +267,18 @@ static int _get_interfaces(TALLOC_CTX *mem_ctx, struct iface_struct **pifaces)
 		} else {
 			continue;
 		}
+
+		ifaces[total].if_index = if_nametoindex(ifptr->ifa_name);
+		if (ifaces[total].if_index == 0) {
+			DBG_ERR("Failed to retrieve interface index for '%s': "
+				"%s\n", ifptr->ifa_name, strerror(errno));
+		}
+
+#ifdef HAVE_ETHTOOL
+		query_iface_speed_from_name(ifptr->ifa_name, &if_speed);
+#endif
+		ifaces[total].linkspeed = if_speed;
+		ifaces[total].capability = FSCTL_NET_IFACE_NONE_CAPABLE;
 
 		if (strlcpy(ifaces[total].name, ifptr->ifa_name,
 			sizeof(ifaces[total].name)) >=

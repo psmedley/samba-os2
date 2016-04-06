@@ -586,6 +586,12 @@ static bool ldb_dn_explode(struct ldb_dn *dn)
 
 				p++;
 				*d++ = '\0';
+
+				/*
+				 * This talloc_memdup() is OK with the
+				 * +1 because *d has been set to '\0'
+				 * just above
+				 */
 				dn->components[dn->comp_num].value.data = \
 					(uint8_t *)talloc_memdup(dn->components, dt, l + 1);
 				dn->components[dn->comp_num].value.length = l;
@@ -708,6 +714,11 @@ static bool ldb_dn_explode(struct ldb_dn *dn)
 	}
 
 	*d++ = '\0';
+	/*
+	 * This talloc_memdup() is OK with the
+	 * +1 because *d has been set to '\0'
+	 * just above.
+	 */
 	dn->components[dn->comp_num].value.length = l;
 	dn->components[dn->comp_num].value.data =
 		(uint8_t *)talloc_memdup(dn->components, dt, l + 1);
@@ -1901,17 +1912,37 @@ int ldb_dn_set_component(struct ldb_dn *dn, int num,
 		return LDB_ERR_OTHER;
 	}
 
+	if (num < 0) {
+		return LDB_ERR_OTHER;
+	}
+
+	if (val.length > val.length + 1) {
+		return LDB_ERR_OTHER;
+	}
+
 	n = talloc_strdup(dn, name);
 	if ( ! n) {
 		return LDB_ERR_OTHER;
 	}
 
 	v.length = val.length;
-	v.data = (uint8_t *)talloc_memdup(dn, val.data, v.length+1);
+
+	/*
+	 * This is like talloc_memdup(dn, v.data, v.length + 1), but
+	 * avoids the over-read
+	 */
+	v.data = (uint8_t *)talloc_size(dn, v.length+1);
 	if ( ! v.data) {
 		talloc_free(n);
 		return LDB_ERR_OTHER;
 	}
+	memcpy(v.data, val.data, val.length);
+
+	/*
+	 * Enforce NUL termination outside the stated length, as is
+	 * traditional in LDB
+	 */
+	v.data[v.length] = '\0';
 
 	talloc_free(dn->components[num].name);
 	talloc_free(dn->components[num].value.data);
@@ -2153,4 +2184,9 @@ bool ldb_dn_minimise(struct ldb_dn *dn)
 	LDB_FREE(dn->ext_linearized);
 
 	return true;
+}
+
+struct ldb_context *ldb_dn_get_ldb_context(struct ldb_dn *dn)
+{
+	return dn->ldb;
 }

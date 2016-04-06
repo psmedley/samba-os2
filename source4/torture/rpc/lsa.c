@@ -36,6 +36,7 @@
 #include "source4/auth/kerberos/kerberos_util.h"
 #include "lib/util/util_net.h"
 #include "../lib/crypto/crypto.h"
+#include "libcli/resolve/resolve.h"
 #define TEST_MACHINENAME "lsatestmach"
 #define TRUSTPW "12345678"
 
@@ -3216,7 +3217,7 @@ static bool check_pw_with_krb5(struct torture_context *tctx,
 	k5ret = smb_krb5_init_context(ctx, tctx->lp_ctx, &ctx->smb_krb5_context);
 	torture_assert_int_equal(tctx, k5ret, 0, "smb_krb5_init_context failed");
 
-	ok = interpret_string_addr_internal(&ctx->server, host, AI_NUMERICHOST);
+	ok = interpret_string_addr_internal(&ctx->server, host, 0);
 	torture_assert(tctx, ok, "Failed to parse target server");
 	talloc_set_destructor(ctx, check_pw_with_krb5_ctx_destructor);
 
@@ -4127,6 +4128,8 @@ static bool check_dom_trust_pw(struct dcerpc_pipe *p,
 	char *workstation = NULL;
 	const char *binding = torture_setting_string(tctx, "binding", NULL);
 	const char *host = torture_setting_string(tctx, "host", NULL);
+	const char *ip;
+	struct nbt_name nbt_name;
 	struct dcerpc_binding *b2;
 	struct netlogon_creds_CredentialState *creds;
 	struct samr_CryptPassword samr_crypt_password;
@@ -4182,11 +4185,22 @@ static bool check_dom_trust_pw(struct dcerpc_pipe *p,
 	cli_credentials_set_workstation(incoming_creds, workstation, CRED_SPECIFIED);
 	cli_credentials_set_secure_channel_type(incoming_creds, secure_channel_type);
 
+	make_nbt_name_server(&nbt_name, host);
+
+	status = resolve_name_ex(lpcfg_resolve_context(tctx->lp_ctx),
+				 0, 0, &nbt_name, tctx, &ip, tctx->ev);
+	torture_assert_ntstatus_ok(tctx, status,
+			talloc_asprintf(tctx,"Failed to resolve %s: %s",
+					nbt_name.name, nt_errstr(status)));
+
 	rc = tsocket_address_inet_from_strings(tctx, "ip",
-					       host,
+					       ip,
 					       lpcfg_cldap_port(tctx->lp_ctx),
 					       &dest_addr);
-	torture_assert_int_equal(tctx, rc, 0, "tsocket_address_inet_from_strings");
+	torture_assert_int_equal(tctx, rc, 0,
+				 talloc_asprintf(tctx,
+						 "tsocket_address_inet_from_strings failed parsing %s:%d",
+						 host, lpcfg_cldap_port(tctx->lp_ctx)));
 
 	/* cldap_socket_init should now know about the dest. address */
 	status = cldap_socket_init(tctx, NULL, dest_addr, &cldap);

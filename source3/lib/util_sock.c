@@ -28,8 +28,8 @@
 #include "../lib/util/tevent_unix.h"
 #include "../lib/util/tevent_ntstatus.h"
 #include "../lib/tsocket/tsocket.h"
-#include "lib/sys_rw.h"
-#include "lib/sys_rw_data.h"
+#include "lib/util/sys_rw.h"
+#include "lib/util/sys_rw_data.h"
 
 const char *client_addr(int fd, char *addr, size_t addrlen)
 {
@@ -1070,7 +1070,7 @@ int get_remote_hostname(const struct tsocket_address *remote_address,
 	lookup_nc(&nc);
 
 	if (nc.name == NULL) {
-		*name = talloc_strdup(mem_ctx, "UNKOWN");
+		*name = talloc_strdup(mem_ctx, "UNKNOWN");
 	} else {
 		*name = talloc_strdup(mem_ctx, nc.name);
 	}

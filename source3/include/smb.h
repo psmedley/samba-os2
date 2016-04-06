@@ -30,7 +30,7 @@
 #include "libds/common/roles.h"
 
 /* logged when starting the various Samba daemons */
-#define COPYRIGHT_STARTUP_MESSAGE	"Copyright Andrew Tridgell and the Samba Team 1992-2015"
+#define COPYRIGHT_STARTUP_MESSAGE	"Copyright Andrew Tridgell and the Samba Team 1992-2016"
 
 #define SAFETY_MARGIN 1024
 #define LARGE_WRITEX_HDR_SIZE 65
@@ -181,6 +181,9 @@ struct interface {
 	struct sockaddr_storage ip;
 	struct sockaddr_storage netmask;
 	struct sockaddr_storage bcast;
+	uint32_t if_index;
+	uint64_t linkspeed;
+	uint32_t capability;
 };
 
 #define SHARE_MODE_FLAG_POSIX_OPEN	0x1
@@ -483,11 +486,6 @@ Offset  Data			length.
 
 
 #define SMB_SUCCESS 0  /* The request was successful. */
-
-#ifdef WITH_DFS
-void dfs_unlogin(void);
-extern int dcelogin_atmost_once;
-#endif
 
 #ifdef NOSTRDUP
 char *strdup(char *s);

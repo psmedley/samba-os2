@@ -422,6 +422,11 @@ const struct ldb_dn_extended_syntax *ldb_dn_extended_syntax_by_name(struct ldb_c
  */
 #define LDB_ATTR_FLAG_SINGLE_VALUE (1<<4)
 
+/*
+ * The values should always be base64 encoded
+ */
+#define LDB_ATTR_FLAG_FORCE_BASE64_LDIF        (1<<5)
+
 /**
   LDAP attribute syntax for a DN
 
@@ -652,6 +657,8 @@ typedef int (*ldb_qsort_cmp_fn_t) (void *v1, void *v2, void *opaque);
 */
 #define LDB_CONTROL_DIRSYNC_OID		"1.2.840.113556.1.4.841"
 #define LDB_CONTROL_DIRSYNC_NAME	"dirsync"
+#define LDB_CONTROL_DIRSYNC_EX_OID	"1.2.840.113556.1.4.2090"
+#define LDB_CONTROL_DIRSYNC_EX_NAME	"dirsync_ex"
 
 
 /**

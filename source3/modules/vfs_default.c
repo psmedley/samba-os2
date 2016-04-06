@@ -32,7 +32,7 @@
 #include "lib/util/tevent_unix.h"
 #include "lib/asys/asys.h"
 #include "lib/util/tevent_ntstatus.h"
-#include "lib/sys_rw.h"
+#include "lib/util/sys_rw.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_VFS
@@ -58,19 +58,23 @@ static uint64_t vfswrap_disk_free(vfs_handle_struct *handle, const char *path,
 				  uint64_t *bsize, uint64_t *dfree,
 				  uint64_t *dsize)
 {
-	uint64_t result;
+	if (sys_fsusage(path, dfree, dsize) != 0) {
+		return (uint64_t)-1;
+	}
 
-	result = sys_disk_free(handle->conn, path, bsize, dfree, dsize);
-	return result;
+	*bsize = 512;
+	return *dfree / 2;
 }
 
-static int vfswrap_get_quota(struct vfs_handle_struct *handle, enum SMB_QUOTA_TYPE qtype, unid_t id, SMB_DISK_QUOTA *qt)
+static int vfswrap_get_quota(struct vfs_handle_struct *handle, const char *path,
+			     enum SMB_QUOTA_TYPE qtype, unid_t id,
+			     SMB_DISK_QUOTA *qt)
 {
 #ifdef HAVE_SYS_QUOTAS
 	int result;
 
 	START_PROFILE(syscall_get_quota);
-	result = sys_get_quota(handle->conn->connectpath, qtype, id, qt);
+	result = sys_get_quota(path, qtype, id, qt);
 	END_PROFILE(syscall_get_quota);
 	return result;
 #else
@@ -471,8 +475,9 @@ static int vfswrap_mkdir(vfs_handle_struct *handle, const char *path, mode_t mod
 
 	if (lp_inherit_acls(SNUM(handle->conn))
 	    && parent_dirname(talloc_tos(), path, &parent, NULL)
-	    && (has_dacl = directory_has_default_acl(handle->conn, parent)))
+	    && (has_dacl = directory_has_default_acl(handle->conn, parent))) {
 		mode = (0777 & lp_directory_mask(SNUM(handle->conn)));
+	}
 
 	TALLOC_FREE(parent);
 
@@ -690,39 +695,42 @@ static void vfswrap_asys_finished(struct tevent_context *ev,
 
 static bool vfswrap_init_asys_ctx(struct smbd_server_connection *conn)
 {
+	struct asys_context *ctx;
+	struct tevent_fd *fde;
 	int ret;
 	int fd;
 
 	if (conn->asys_ctx != NULL) {
 		return true;
 	}
-	ret = asys_context_init(&conn->asys_ctx, aio_pending_size);
+
+	ret = asys_context_init(&ctx, lp_aio_max_threads());
 	if (ret != 0) {
 		DEBUG(1, ("asys_context_init failed: %s\n", strerror(ret)));
 		return false;
 	}
 
-	fd = asys_signalfd(conn->asys_ctx);
+	fd = asys_signalfd(ctx);
 
 	ret = set_blocking(fd, false);
 	if (ret != 0) {
-		DBG_WARNING("set_blocking failed: %s\n", strerror(ret));
+		DBG_WARNING("set_blocking failed: %s\n", strerror(errno));
 		goto fail;
 	}
 
-	conn->asys_fde = tevent_add_fd(conn->ev_ctx, conn, fd,
-				       TEVENT_FD_READ,
-				       vfswrap_asys_finished,
-				       conn->asys_ctx);
-	if (conn->asys_fde == NULL) {
+	fde = tevent_add_fd(conn->ev_ctx, conn, fd, TEVENT_FD_READ,
+			    vfswrap_asys_finished, ctx);
+	if (fde == NULL) {
 		DEBUG(1, ("tevent_add_fd failed\n"));
 		goto fail;
 	}
+
+	conn->asys_ctx = ctx;
+	conn->asys_fde = fde;
 	return true;
 
 fail:
-	asys_context_destroy(conn->asys_ctx);
-	conn->asys_ctx = NULL;
+	asys_context_destroy(ctx);
 	return false;
 }
 
@@ -846,14 +854,14 @@ static void vfswrap_asys_finished(struct tevent_context *ev,
 					uint16_t flags, void *p)
 {
 	struct asys_context *asys_ctx = (struct asys_context *)p;
-	struct asys_result results[outstanding_aio_calls];
+	struct asys_result results[get_outstanding_aio_calls()];
 	int i, ret;
 
 	if ((flags & TEVENT_FD_READ) == 0) {
 		return;
 	}
 
-	ret = asys_results(asys_ctx, results, outstanding_aio_calls);
+	ret = asys_results(asys_ctx, results, get_outstanding_aio_calls());
 	if (ret < 0) {
 		DEBUG(1, ("asys_results returned %s\n", strerror(-ret)));
 		return;
@@ -1277,7 +1285,7 @@ static NTSTATUS vfswrap_fsctl(struct vfs_handle_struct *handle,
 		/* unknown 4 bytes: this is not the length of the sid :-(  */
 		/*unknown = IVAL(pdata,0);*/
 
-		if (!sid_parse(in_data + 4, sid_len, &sid)) {
+		if (!sid_parse(_in_data + 4, sid_len, &sid)) {
 			return NT_STATUS_INVALID_PARAMETER;
 		}
 		DEBUGADD(10, ("for SID: %s\n", sid_string_dbg(&sid)));

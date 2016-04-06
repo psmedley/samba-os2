@@ -325,6 +325,90 @@ static bool test_CreateEnum(struct torture_context *tctx,
 	return true;
 }
 
+static bool test_CreateEnumEx_int(struct torture_context *tctx,
+				  struct dcerpc_pipe *p,
+				  struct policy_handle *Cluster)
+{
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct clusapi_CreateEnumEx r;
+	uint32_t dwType[] = {
+		CLUSTER_ENUM_NODE,
+		CLUSTER_ENUM_RESTYPE,
+		CLUSTER_ENUM_RESOURCE,
+		CLUSTER_ENUM_GROUP,
+		CLUSTER_ENUM_NETWORK,
+		CLUSTER_ENUM_NETINTERFACE,
+		CLUSTER_ENUM_INTERNAL_NETWORK,
+		CLUSTER_ENUM_SHARED_VOLUME_RESOURCE
+	};
+	uint32_t dwType_invalid[] = {
+		0x00000040,
+		0x00000080,
+		0x00000100 /* and many more ... */
+	};
+	struct ENUM_LIST *ReturnIdEnum;
+	struct ENUM_LIST *ReturnNameEnum;
+	WERROR rpc_status;
+	int i;
+
+	for (i=0; i < ARRAY_SIZE(dwType); i++) {
+
+		r.in.hCluster = *Cluster;
+		r.in.dwType = dwType[i];
+		r.in.dwOptions = 0;
+		r.out.ReturnIdEnum = &ReturnIdEnum;
+		r.out.ReturnNameEnum = &ReturnNameEnum;
+		r.out.rpc_status = &rpc_status;
+
+		torture_assert_ntstatus_ok(tctx,
+			dcerpc_clusapi_CreateEnumEx_r(b, tctx, &r),
+			"CreateEnumEx failed");
+		torture_assert_werr_ok(tctx,
+			r.out.result,
+			"CreateEnumEx failed");
+	}
+
+	for (i=0; i < ARRAY_SIZE(dwType_invalid); i++) {
+
+		r.in.hCluster = *Cluster;
+		r.in.dwType = dwType_invalid[i];
+		r.in.dwOptions = 0;
+		r.out.ReturnIdEnum = &ReturnIdEnum;
+		r.out.ReturnNameEnum = &ReturnNameEnum;
+		r.out.rpc_status = &rpc_status;
+
+		torture_assert_ntstatus_ok(tctx,
+			dcerpc_clusapi_CreateEnumEx_r(b, tctx, &r),
+			"CreateEnumEx failed");
+		torture_assert_werr_equal(tctx,
+			r.out.result,
+			WERR_INVALID_PARAMETER,
+			"CreateEnumEx failed");
+	}
+
+	return true;
+}
+
+static bool test_CreateEnumEx(struct torture_context *tctx,
+			      void *data)
+{
+	struct torture_clusapi_context *t =
+		talloc_get_type_abort(data, struct torture_clusapi_context);
+	struct policy_handle Cluster;
+	bool ret;
+
+	if (!test_OpenCluster_int(tctx, t->p, &Cluster)) {
+		return false;
+	}
+
+	ret = test_CreateEnumEx_int(tctx, t->p, &Cluster);
+
+	test_CloseCluster_int(tctx, t->p, &Cluster);
+
+	return ret;
+}
+
+
 static bool test_GetQuorumResource(struct torture_context *tctx,
 				   void *data)
 {
@@ -387,10 +471,12 @@ static bool test_SetQuorumResource(struct torture_context *tctx,
 	return true;
 }
 
-bool test_OpenResource_int(struct torture_context *tctx,
-			   struct dcerpc_pipe *p,
-			   const char *lpszResourceName,
-			   struct policy_handle *hResource)
+static bool test_OpenResource_int_exp(struct torture_context *tctx,
+				      struct dcerpc_pipe *p,
+				      const char *lpszResourceName,
+				      struct policy_handle *hResource,
+				      WERROR expected_Status,
+				      WERROR expected_rpc_status)
 {
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	struct clusapi_OpenResource r;
@@ -405,11 +491,25 @@ bool test_OpenResource_int(struct torture_context *tctx,
 	torture_assert_ntstatus_ok(tctx,
 		dcerpc_clusapi_OpenResource_r(b, tctx, &r),
 		"OpenResource failed");
-	torture_assert_werr_ok(tctx,
-		*r.out.Status,
+	torture_assert_werr_equal(tctx,
+		*r.out.Status, expected_Status,
+		"OpenResource failed");
+	torture_assert_werr_equal(tctx,
+		*r.out.rpc_status, expected_rpc_status,
 		"OpenResource failed");
 
 	return true;
+}
+
+bool test_OpenResource_int(struct torture_context *tctx,
+			   struct dcerpc_pipe *p,
+			   const char *lpszResourceName,
+			   struct policy_handle *hResource)
+{
+	return test_OpenResource_int_exp(tctx, p,
+					 lpszResourceName,
+					 hResource,
+					 WERR_OK, WERR_OK);
 }
 
 static bool test_OpenResourceEx_int(struct torture_context *tctx,
@@ -475,6 +575,22 @@ static bool test_OpenResource(struct torture_context *tctx,
 	}
 
 	test_CloseResource_int(tctx, t->p, &hResource);
+
+	if (!test_OpenResource_int_exp(tctx, t->p, "", &hResource, WERR_RESOURCE_NOT_FOUND, WERR_OK)) {
+		return false;
+	}
+
+	torture_assert(tctx,
+		ndr_policy_handle_empty(&hResource),
+		"expected empty policy handle");
+
+	if (!test_OpenResource_int_exp(tctx, t->p, "jfUF38fjSNcfn", &hResource, WERR_RESOURCE_NOT_FOUND, WERR_OK)) {
+		return false;
+	}
+
+	torture_assert(tctx,
+		ndr_policy_handle_empty(&hResource),
+		"expected empty policy handle");
 
 	return true;
 }
@@ -830,9 +946,13 @@ bool test_OnlineResource_int(struct torture_context *tctx,
 	torture_assert_ntstatus_ok(tctx,
 		dcerpc_clusapi_OnlineResource_r(b, tctx, &r),
 		"OnlineResource failed");
-	torture_assert_werr_ok(tctx,
-		r.out.result,
-		"OnlineResource failed");
+	if (!W_ERROR_IS_OK(r.out.result) &&
+	    !W_ERROR_EQUAL(r.out.result, WERR_IO_PENDING)) {
+		torture_result(tctx, TORTURE_FAIL,
+			       "OnlineResource failed with %s",
+			        win_errstr(r.out.result));
+		return false;
+	}
 
 	return true;
 }
@@ -870,9 +990,13 @@ bool test_OfflineResource_int(struct torture_context *tctx,
 	torture_assert_ntstatus_ok(tctx,
 		dcerpc_clusapi_OfflineResource_r(b, tctx, &r),
 		"OfflineResource failed");
-	torture_assert_werr_ok(tctx,
-		r.out.result,
-		"OfflineResource failed");
+	if (!W_ERROR_IS_OK(r.out.result) &&
+	    !W_ERROR_EQUAL(r.out.result, WERR_IO_PENDING)) {
+		torture_result(tctx, TORTURE_FAIL,
+			       "OfflineResource failed with %s",
+			       win_errstr(r.out.result));
+		return false;
+	}
 
 	return true;
 }
@@ -940,6 +1064,90 @@ static bool test_CreateResEnum(struct torture_context *tctx,
 	return ret;
 }
 
+static bool test_GetResourceDependencyExpression_int(struct torture_context *tctx,
+						     struct dcerpc_pipe *p,
+						     struct policy_handle *hResource)
+{
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct clusapi_GetResourceDependencyExpression r;
+	const char *lpszDependencyExpression;
+	WERROR rpc_status;
+
+	r.in.hResource = *hResource;
+	r.out.lpszDependencyExpression = &lpszDependencyExpression;
+	r.out.rpc_status = &rpc_status;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_GetResourceDependencyExpression_r(b, tctx, &r),
+		"GetResourceDependencyExpression failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"GetResourceDependencyExpression failed");
+
+	return true;
+}
+
+static bool test_GetResourceDependencyExpression(struct torture_context *tctx,
+						 void *data)
+{
+	struct torture_clusapi_context *t =
+		talloc_get_type_abort(data, struct torture_clusapi_context);
+	struct policy_handle hResource;
+	bool ret = true;
+
+	if (!test_OpenResource_int(tctx, t->p, "Cluster Name", &hResource)) {
+		return false;
+	}
+
+	ret = test_GetResourceDependencyExpression_int(tctx, t->p, &hResource);
+
+	test_CloseResource_int(tctx, t->p, &hResource);
+
+	return ret;
+}
+
+static bool test_GetResourceNetworkName_int(struct torture_context *tctx,
+					    struct dcerpc_pipe *p,
+					    struct policy_handle *hResource)
+{
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct clusapi_GetResourceNetworkName r;
+	const char *lpszName;
+	WERROR rpc_status;
+
+	r.in.hResource = *hResource;
+	r.out.lpszName = &lpszName;
+	r.out.rpc_status = &rpc_status;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_GetResourceNetworkName_r(b, tctx, &r),
+		"GetResourceNetworkName failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"GetResourceNetworkName failed");
+
+	return true;
+}
+
+static bool test_GetResourceNetworkName(struct torture_context *tctx,
+					void *data)
+{
+	struct torture_clusapi_context *t =
+		talloc_get_type_abort(data, struct torture_clusapi_context);
+	struct policy_handle hResource;
+	bool ret = true;
+
+	if (!test_OpenResource_int(tctx, t->p, "Network Name", &hResource)) {
+		return false;
+	}
+
+	ret = test_GetResourceNetworkName_int(tctx, t->p, &hResource);
+
+	test_CloseResource_int(tctx, t->p, &hResource);
+
+	return ret;
+}
+
 static bool test_one_resource(struct torture_context *tctx,
 			      struct dcerpc_pipe *p,
 			      const char *resource_name)
@@ -967,6 +1175,12 @@ static bool test_one_resource(struct torture_context *tctx,
 	torture_assert(tctx,
 		test_CreateResEnum_int(tctx, p, &hResource),
 		"failed to query resource enum");
+	torture_assert(tctx,
+		test_GetResourceDependencyExpression_int(tctx, p, &hResource),
+		"failed to query resource dependency expression");
+	torture_assert(tctx,
+		test_GetResourceNetworkName_int(tctx, p, &hResource),
+		"failed to query resource network name");
 
 	test_CloseResource_int(tctx, p, &hResource);
 
@@ -1211,6 +1425,111 @@ static bool test_GetNodeId(struct torture_context *tctx,
 	}
 
 	ret = test_GetNodeId_int(tctx, t->p, &hNode);
+
+	test_CloseNode_int(tctx, t->p, &hNode);
+
+	return ret;
+}
+
+static bool test_NodeControl_int(struct torture_context *tctx,
+				 struct dcerpc_pipe *p,
+				 struct policy_handle *hNode,
+				 enum clusapi_NodeControlCode dwControlCode)
+{
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct clusapi_NodeControl r;
+	uint32_t lpBytesReturned;
+	uint32_t lpcbRequired;
+	WERROR rpc_status;
+
+	r.in.hNode = *hNode;
+	r.in.dwControlCode = 0;
+	r.in.lpInBuffer = NULL;
+	r.in.nInBufferSize = 0;
+	r.in.nOutBufferSize = 0;
+	r.out.lpOutBuffer = NULL;
+	r.out.lpBytesReturned = &lpBytesReturned;
+	r.out.lpcbRequired = &lpcbRequired;
+	r.out.rpc_status = &rpc_status;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_NodeControl_r(b, tctx, &r),
+		"NodeControl failed");
+	torture_assert_werr_equal(tctx,
+		r.out.result,
+		WERR_INVALID_FUNCTION,
+		"NodeControl failed");
+
+	r.in.dwControlCode = dwControlCode;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_NodeControl_r(b, tctx, &r),
+		"NodeControl failed");
+
+	if (W_ERROR_EQUAL(r.out.result, WERR_MORE_DATA)) {
+		r.out.lpOutBuffer = talloc_zero_array(tctx, uint8_t, *r.out.lpcbRequired);
+		r.in.nOutBufferSize = *r.out.lpcbRequired;
+		torture_assert_ntstatus_ok(tctx,
+			dcerpc_clusapi_NodeControl_r(b, tctx, &r),
+			"NodeControl failed");
+	}
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"NodeControl failed");
+
+	/* now try what happens when we query with a buffer large enough to hold
+	 * the entire packet */
+
+	r.in.nOutBufferSize = 0x400;
+	r.out.lpOutBuffer = talloc_zero_array(tctx, uint8_t, r.in.nOutBufferSize);
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_NodeControl_r(b, tctx, &r),
+		"NodeControl failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"NodeControl failed");
+	torture_assert(tctx, *r.out.lpBytesReturned < r.in.nOutBufferSize,
+		"lpBytesReturned expected to be smaller than input size nOutBufferSize");
+
+	if (dwControlCode == CLUSCTL_NODE_GET_ID) {
+		const char *str;
+		DATA_BLOB blob = data_blob_const(r.out.lpOutBuffer, *r.out.lpBytesReturned);
+
+		torture_assert(tctx, *r.out.lpBytesReturned < 4, "unexpected size");
+		torture_assert(tctx, *r.out.lpBytesReturned % 2, "must be a multiple of 2");
+
+		torture_assert(tctx,
+			pull_reg_sz(tctx, &blob, &str),
+			"failed to pull unicode string");
+
+		torture_comment(tctx, "got this node id: '%s'", str);
+	}
+
+	return true;
+}
+
+static bool test_NodeControl(struct torture_context *tctx,
+			     void *data)
+{
+	struct torture_clusapi_context *t =
+		talloc_get_type_abort(data, struct torture_clusapi_context);
+	struct policy_handle hNode;
+	bool ret = true;
+
+	if (!test_OpenNode_int(tctx, t->p, t->NodeName, &hNode)) {
+		return false;
+	}
+
+	ret = test_NodeControl_int(tctx, t->p, &hNode, CLUSCTL_NODE_GET_RO_COMMON_PROPERTIES);
+	if (ret) {
+		return false;
+	}
+
+	ret = test_NodeControl_int(tctx, t->p, &hNode, CLUSCTL_NODE_GET_ID);
+	if (ret) {
+		return false;
+	}
 
 	test_CloseNode_int(tctx, t->p, &hNode);
 
@@ -1610,6 +1929,97 @@ static bool test_GetGroupId(struct torture_context *tctx,
 	return ret;
 }
 
+static bool test_GroupControl_int(struct torture_context *tctx,
+				  struct dcerpc_pipe *p,
+				  struct policy_handle *hGroup,
+				  enum clusapi_GroupControlCode dwControlCode)
+{
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct clusapi_GroupControl r;
+	uint32_t lpBytesReturned;
+	uint32_t lpcbRequired;
+	WERROR rpc_status;
+
+	r.in.hGroup = *hGroup;
+	r.in.dwControlCode = 0;
+	r.in.lpInBuffer = NULL;
+	r.in.nInBufferSize = 0;
+	r.in.nOutBufferSize = 0;
+	r.out.lpOutBuffer = NULL;
+	r.out.lpBytesReturned = &lpBytesReturned;
+	r.out.lpcbRequired = &lpcbRequired;
+	r.out.rpc_status = &rpc_status;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_GroupControl_r(b, tctx, &r),
+		"GroupControl failed");
+	torture_assert_werr_equal(tctx,
+		r.out.result,
+		WERR_INVALID_FUNCTION,
+		"GroupControl failed");
+
+	r.in.dwControlCode = dwControlCode;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_GroupControl_r(b, tctx, &r),
+		"GroupControl failed");
+
+	if (W_ERROR_EQUAL(r.out.result, WERR_MORE_DATA)) {
+		r.out.lpOutBuffer = talloc_zero_array(tctx, uint8_t, *r.out.lpcbRequired);
+		r.in.nOutBufferSize = *r.out.lpcbRequired;
+		torture_assert_ntstatus_ok(tctx,
+			dcerpc_clusapi_GroupControl_r(b, tctx, &r),
+			"GroupControl failed");
+	}
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"GroupControl failed");
+
+	/* now try what happens when we query with a buffer large enough to hold
+	 * the entire packet */
+
+	r.in.nOutBufferSize = 0x400;
+	r.out.lpOutBuffer = talloc_zero_array(tctx, uint8_t, r.in.nOutBufferSize);
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_GroupControl_r(b, tctx, &r),
+		"GroupControl failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"GroupControl failed");
+	torture_assert(tctx, *r.out.lpBytesReturned < r.in.nOutBufferSize,
+		"lpBytesReturned expected to be smaller than input size nOutBufferSize");
+
+	return true;
+}
+
+static bool test_GroupControl(struct torture_context *tctx,
+			      void *data)
+{
+	struct torture_clusapi_context *t =
+		talloc_get_type_abort(data, struct torture_clusapi_context);
+	struct policy_handle hGroup;
+	bool ret = true;
+
+	if (!test_OpenGroup_int(tctx, t->p, "Cluster Group", &hGroup)) {
+		return false;
+	}
+
+	ret = test_GroupControl_int(tctx, t->p, &hGroup, CLUSCTL_GROUP_GET_CHARACTERISTICS);
+	if (ret) {
+		return false;
+	}
+
+	ret = test_GroupControl_int(tctx, t->p, &hGroup, CLUSCTL_GROUP_GET_RO_COMMON_PROPERTIES);
+	if (ret) {
+		return false;
+	}
+
+	test_CloseGroup_int(tctx, t->p, &hGroup);
+
+	return ret;
+}
+
 static bool test_OnlineGroup_int(struct torture_context *tctx,
 				 struct dcerpc_pipe *p,
 				 struct policy_handle *hGroup)
@@ -1849,6 +2259,21 @@ static bool test_ClusterControl_int(struct torture_context *tctx,
 	torture_assert_werr_ok(tctx,
 		r.out.result,
 		"ClusterControl failed");
+
+	/* now try what happens when we query with a buffer large enough to hold
+	 * the entire packet */
+
+	r.in.nOutBufferSize = 0x400;
+	r.out.lpOutBuffer = talloc_zero_array(tctx, uint8_t, r.in.nOutBufferSize);
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_ClusterControl_r(b, tctx, &r),
+		"ClusterControl failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"ClusterControl failed");
+	torture_assert(tctx, *r.out.lpBytesReturned < r.in.nOutBufferSize,
+		"lpBytesReturned expected to be smaller than input size nOutBufferSize");
 
 	return true;
 }
@@ -2878,6 +3303,8 @@ void torture_tcase_cluster(struct torture_tcase *tcase)
 				      test_GetClusterVersion);
 	torture_tcase_add_simple_test(tcase, "CreateEnum",
 				      test_CreateEnum);
+	torture_tcase_add_simple_test(tcase, "CreateEnumEx",
+				      test_CreateEnumEx);
 	torture_tcase_add_simple_test(tcase, "GetClusterVersion2",
 				      test_GetClusterVersion2);
 	torture_tcase_add_simple_test(tcase, "BackupClusterDatabase",
@@ -2925,6 +3352,10 @@ void torture_tcase_resource(struct torture_tcase *tcase)
 	test = torture_tcase_add_simple_test(tcase, "OfflineResource",
 				      test_OfflineResource);
 	test->dangerous = true;
+	torture_tcase_add_simple_test(tcase, "GetResourceDependencyExpression",
+				      test_GetResourceDependencyExpression);
+	torture_tcase_add_simple_test(tcase, "GetResourceNetworkName",
+				      test_GetResourceNetworkName);
 	torture_tcase_add_simple_test(tcase, "all_resources",
 				      test_all_resources);
 }
@@ -2943,6 +3374,8 @@ void torture_tcase_node(struct torture_tcase *tcase)
 				      test_GetNodeState);
 	torture_tcase_add_simple_test(tcase, "GetNodeId",
 				      test_GetNodeId);
+	torture_tcase_add_simple_test(tcase, "NodeControl",
+				      test_NodeControl);
 	test = torture_tcase_add_simple_test(tcase, "PauseNode",
 					     test_PauseNode);
 	test->dangerous = true;
@@ -2969,6 +3402,8 @@ void torture_tcase_group(struct torture_tcase *tcase)
 				      test_GetGroupState);
 	torture_tcase_add_simple_test(tcase, "GetGroupId",
 				      test_GetGroupId);
+	torture_tcase_add_simple_test(tcase, "GroupControl",
+				      test_GroupControl);
 	torture_tcase_add_simple_test(tcase, "OnlineGroup",
 				      test_OnlineGroup);
 	test = torture_tcase_add_simple_test(tcase, "OfflineGroup",

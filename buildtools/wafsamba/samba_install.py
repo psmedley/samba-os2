@@ -3,9 +3,10 @@
 # with all the configure options that affect rpath and shared
 # library use
 
-import Options
+import os
+import Utils
 from TaskGen import feature, before, after
-from samba_utils import *
+from samba_utils import LIB_PATH, MODE_755, install_rpath, build_rpath
 
 @feature('install_bin')
 @after('apply_core')
@@ -18,7 +19,7 @@ def install_binary(self):
     install_ldflags = install_rpath(self)
     build_ldflags   = build_rpath(bld)
 
-    if not Options.is_install:
+    if not self.bld.is_install:
         # just need to set rpath if we are not installing
         self.env.RPATH = build_ldflags
         return
@@ -67,7 +68,7 @@ def install_library(self):
         install_ldflags = install_rpath(self)
         build_ldflags   = build_rpath(bld)
 
-        if not Options.is_install or not getattr(self, 'samba_install', True):
+        if not self.bld.is_install or not getattr(self, 'samba_install', True):
             # just need to set the build rpath if we are not installing
             self.env.RPATH = build_ldflags
             return
@@ -91,6 +92,7 @@ def install_library(self):
             t = self.clone(self.env)
             t.posted = False
             t.target += '.inst'
+            t.name = self.name + '.inst'
             self.env.RPATH = build_ldflags
         else:
             t = self
@@ -224,7 +226,6 @@ def symlink_bin(self):
     if self.target.endswith('.inst'):
         return
 
-    blddir = os.path.dirname(self.bld.srcnode.abspath(self.bld.env))
     if not self.link_task.outputs or not self.link_task.outputs[0]:
         raise Utils.WafError('no outputs found for %s in symlink_bin' % self.name)
     binpath = self.link_task.outputs[0].abspath(self.env)

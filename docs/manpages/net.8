@@ -2,12 +2,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 02/24/2016
+.\"      Date: 03/22/2016
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.3
+.\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "NET" "8" "02/24/2016" "Samba 4\&.3" "System Administration tools"
+.TH "NET" "8" "03/22/2016" "Samba 4\&.4" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -185,12 +185,12 @@ When calling "net rpc vampire keytab" this option enforces a full re\-creation o
 .PP
 \-\-single\-obj\-repl
 .RS 4
-When calling "net rpc vampire keytab" this option allows to replicate just a single object to the generated keytab file\&.
+When calling "net rpc vampire keytab" this option allows one to replicate just a single object to the generated keytab file\&.
 .RE
 .PP
 \-\-clean\-old\-entries
 .RS 4
-When calling "net rpc vampire keytab" this option allows to cleanup old entries from the generated keytab file\&.
+When calling "net rpc vampire keytab" this option allows one to cleanup old entries from the generated keytab file\&.
 .RE
 .PP
 \-\-db
@@ -230,7 +230,7 @@ Includes timestamps to be copied in "net rpc share migrate"\&.
 .PP
 \-X|\-\-exclude DIRECTORY
 .RS 4
-Allows to exclude directories when copying with "net rpc share migrate"\&.
+Allows one to exclude directories when copying with "net rpc share migrate"\&.
 .RE
 .PP
 \-\-destination SERVERNAME
@@ -276,6 +276,11 @@ Create a new database from scratch (used in "net registry check")\&.
 \-\-precheck PRECHECK_DB_FILENAME
 .RS 4
 Defines filename for database prechecking (used in "net registry import")\&.
+.RE
+.PP
+\-\-no\-dns\-updates
+.RS 4
+Do not perform DNS updates as part of "net ads join"\&.
 .RE
 .PP
 \-e|\-\-encrypt
@@ -349,7 +354,7 @@ Tries to set the date and time of the local server to that on the remote server 
 .SS "TIME ZONE"
 .PP
 Displays the timezone in hours from GMT on the remote server\&. The remote server must be specified with the \-S option\&.
-.SS "[RPC|ADS] JOIN [TYPE] [\-U username[%password]] [createupn=UPN] [createcomputer=OU] [machinepass=PASS] [osName=string osVer=string] [options]"
+.SS "[RPC|ADS] JOIN [TYPE] [\-\-no\-dns\-updates] [\-U username[%password]] [createupn=UPN] [createcomputer=OU] [machinepass=PASS] [osName=string osVer=string] [options]"
 .PP
 Join a domain\&. If the account already exists on the server, and [TYPE] is MEMBER, the machine will attempt to join automatically\&. (Assuming that the machine has been created in server manager) Otherwise, a password will be prompted for, and a new account may be created\&.
 .PP
@@ -979,7 +984,7 @@ Print out workgroup name for specified kerberos realm\&.
 .PP
 List, modify or delete the value of the "msDS\-SupportedEncryptionTypes" attribute of an account in AD\&.
 .PP
-This attribute allows to control which Kerberos encryption types are used for the generation of initial and service tickets\&. The value consists of an integer bitmask with the following values:
+This attribute allows one to control which Kerberos encryption types are used for the generation of initial and service tickets\&. The value consists of an integer bitmask with the following values:
 .PP
 0x00000001 DES\-CBC\-CRC
 .PP
@@ -998,7 +1003,7 @@ Example:
 \fBnet ads enctypes list Computername\fR
 .SS "ADS ENCTYPES SET \fI<ACCOUNTNAME>\fR \fI[enctypes]\fR"
 .PP
-Set the value of the "msDS\-SupportedEncryptionTypes" attribute of the LDAP object of ACCOUNTNAME to a given value\&. If the value is ommitted, the value is set to 31 which enables all the currently supported encryption types\&.
+Set the value of the "msDS\-SupportedEncryptionTypes" attribute of the LDAP object of ACCOUNTNAME to a given value\&. If the value is omitted, the value is set to 31 which enables all the currently supported encryption types\&.
 .PP
 Example:
 \fBnet ads enctypes set Computername 24\fR

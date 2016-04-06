@@ -16,32 +16,32 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
-#include "includes.h"
-#include "tdb.h"
+#include "replace.h"
 #include "system/time.h"
 #include "system/network.h"
 #include "system/filesys.h"
 #include "system/wait.h"
-#include "../include/ctdb_client.h"
-#include "../include/ctdb_private.h"
 
+#include <talloc.h>
+#include <tevent.h>
 
-static void
-ctdb_ban_node_event(struct event_context *ev, struct timed_event *te, 
-			       struct timeval t, void *private_data)
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/common.h"
+#include "common/logging.h"
+
+static void ctdb_ban_node_event(struct tevent_context *ev,
+				struct tevent_timer *te,
+				struct timeval t, void *private_data)
 {
 	struct ctdb_context *ctdb = talloc_get_type(private_data, struct ctdb_context);
-	bool freeze_failed = false;
-	int i;
 
 	/* Make sure we were able to freeze databases during banning */
-	for (i=1; i<=NUM_DB_PRIORITIES; i++) {
-		if (ctdb->freeze_mode[i] != CTDB_FREEZE_FROZEN) {
-			freeze_failed = true;
-			break;
-		}
-	}
-	if (freeze_failed) {
+	if (!ctdb_db_all_frozen(ctdb)) {
 		DEBUG(DEBUG_ERR, ("Banning timedout, but still unable to freeze databases\n"));
 		ctdb_ban_self(ctdb);
 		return;
@@ -58,10 +58,9 @@ ctdb_ban_node_event(struct event_context *ev, struct timed_event *te,
 
 void ctdb_local_node_got_banned(struct ctdb_context *ctdb)
 {
-	uint32_t i;
+	struct ctdb_db_context *ctdb_db;
 
-	/* make sure we are frozen */
-	DEBUG(DEBUG_NOTICE,("This node has been banned - forcing freeze and recovery\n"));
+	DEBUG(DEBUG_NOTICE,("This node has been banned - forcing recovery\n"));
 
 	/* Reset the generation id to 1 to make us ignore any
 	   REQ/REPLY CALL/DMASTER someone sends to us.
@@ -69,43 +68,29 @@ void ctdb_local_node_got_banned(struct ctdb_context *ctdb)
 	   anymore.
 	*/
 	ctdb->vnn_map->generation = INVALID_GENERATION;
-
-	ctdb->recovery_mode = CTDB_RECOVERY_ACTIVE;
-	for (i=1; i<=NUM_DB_PRIORITIES; i++) {
-		ctdb_start_freeze(ctdb, i);
+	for (ctdb_db = ctdb->db_list; ctdb_db != NULL; ctdb_db = ctdb_db->next) {
+		ctdb_db->generation = INVALID_GENERATION;
 	}
+
+	/* Recovery daemon will set the recovery mode ACTIVE and freeze
+	 * databases.
+	 */
+
 	ctdb_release_all_ips(ctdb);
 }
 
 int32_t ctdb_control_set_ban_state(struct ctdb_context *ctdb, TDB_DATA indata)
 {
-	struct ctdb_ban_time *bantime = (struct ctdb_ban_time *)indata.dptr;
+	struct ctdb_ban_state *bantime = (struct ctdb_ban_state *)indata.dptr;
 	bool already_banned;
 
 	DEBUG(DEBUG_INFO,("SET BAN STATE\n"));
 
 	if (bantime->pnn != ctdb->pnn) {
-		if (bantime->pnn >= ctdb->num_nodes) {
-			DEBUG(DEBUG_ERR,(__location__ " ERROR: Invalid ban request. PNN:%d is invalid. Max nodes %d\n", bantime->pnn, ctdb->num_nodes));
-			return -1;
-		}
-		if (bantime->time == 0) {
-			DEBUG(DEBUG_NOTICE,("unbanning node %d\n", bantime->pnn));
-			ctdb->nodes[bantime->pnn]->flags &= ~NODE_FLAGS_BANNED;
-		} else {
-			DEBUG(DEBUG_NOTICE,("banning node %d\n", bantime->pnn));
-			if (ctdb->tunable.enable_bans == 0) {
-				/* FIXME: This is bogus. We really should be
-				 * taking decision based on the tunables on
-				 * the banned node and not local node.
-				 */
-				DEBUG(DEBUG_WARNING,("Bans are disabled - ignoring ban of node %u\n", bantime->pnn));
-				return 0;
-			}
-
-			ctdb->nodes[bantime->pnn]->flags |= NODE_FLAGS_BANNED;
-		}
-		return 0;
+		DEBUG(DEBUG_WARNING,
+		      ("SET_BAN_STATE control for PNN %d ignored\n",
+		       bantime->pnn));
+		return -1;
 	}
 
 	already_banned = false;
@@ -126,18 +111,20 @@ int32_t ctdb_control_set_ban_state(struct ctdb_context *ctdb, TDB_DATA indata)
 		return 0;
 	}
 
-	ctdb->banning_ctx = talloc(ctdb, struct ctdb_ban_time);
+	ctdb->banning_ctx = talloc(ctdb, struct ctdb_ban_state);
 	if (ctdb->banning_ctx == NULL) {
 		DEBUG(DEBUG_CRIT,(__location__ " ERROR Failed to allocate new banning state\n"));
 		return -1;
 	}
-	*((struct ctdb_ban_time *)(ctdb->banning_ctx)) = *bantime;
+	*((struct ctdb_ban_state *)(ctdb->banning_ctx)) = *bantime;
 
 
 	DEBUG(DEBUG_ERR,("Banning this node for %d seconds\n", bantime->time));
 	ctdb->nodes[bantime->pnn]->flags |= NODE_FLAGS_BANNED;
 
-	event_add_timed(ctdb->ev, ctdb->banning_ctx, timeval_current_ofs(bantime->time,0), ctdb_ban_node_event, ctdb);
+	tevent_add_timer(ctdb->ev, ctdb->banning_ctx,
+			 timeval_current_ofs(bantime->time,0),
+			 ctdb_ban_node_event, ctdb);
 
 	if (!already_banned) {
 		ctdb_local_node_got_banned(ctdb);
@@ -147,20 +134,20 @@ int32_t ctdb_control_set_ban_state(struct ctdb_context *ctdb, TDB_DATA indata)
 
 int32_t ctdb_control_get_ban_state(struct ctdb_context *ctdb, TDB_DATA *outdata)
 {
-	struct ctdb_ban_time *bantime;
+	struct ctdb_ban_state *bantime;
 
-	bantime = talloc(outdata, struct ctdb_ban_time);
+	bantime = talloc(outdata, struct ctdb_ban_state);
 	CTDB_NO_MEMORY(ctdb, bantime);
 
 	if (ctdb->banning_ctx != NULL) {
-		*bantime = *(struct ctdb_ban_time *)(ctdb->banning_ctx);
+		*bantime = *(struct ctdb_ban_state *)(ctdb->banning_ctx);
 	} else {
 		bantime->pnn = ctdb->pnn;
 		bantime->time = 0;
 	}
 
 	outdata->dptr  = (uint8_t *)bantime;
-	outdata->dsize = sizeof(struct ctdb_ban_time);
+	outdata->dsize = sizeof(struct ctdb_ban_state);
 
 	return 0;
 }
@@ -169,7 +156,7 @@ int32_t ctdb_control_get_ban_state(struct ctdb_context *ctdb, TDB_DATA *outdata)
 void ctdb_ban_self(struct ctdb_context *ctdb)
 {
 	TDB_DATA data;
-	struct ctdb_ban_time bantime;
+	struct ctdb_ban_state bantime;
 
 	bantime.pnn  = ctdb->pnn;
 	bantime.time = ctdb->tunable.recovery_ban_period;

@@ -143,7 +143,7 @@ bool setup_kaddr( krb5_address *pkaddr, struct sockaddr_storage *paddr)
 *
 * @param context	The krb5_context
 * @param host_princ	The krb5_principal to use
-* @param salt		The optional salt, if ommitted, salt is calculated with
+* @param salt		The optional salt, if omitted, salt is calculated with
 *			the provided principal.
 * @param password	The krb5_data containing the password
 * @param enctype	The krb5_enctype to use for the keyblock generation
@@ -1276,7 +1276,7 @@ krb5_error_code smb_krb5_enctype_to_string(krb5_context context,
 
 /**********************************************************************
  * Open a krb5 keytab with flags, handles readonly or readwrite access and
- * allows to process non-default keytab names.
+ * allows one to process non-default keytab names.
  * @param context krb5_context
  * @param keytab_name_req string
  * @param write_access bool if writable keytab is required
@@ -1717,6 +1717,14 @@ krb5_error_code kerberos_kinit_password_cc(krb5_context ctx, krb5_ccache cc,
 		return code;
 	}
 
+#ifndef SAMBA4_USES_HEIMDAL /* MIT */
+	/*
+	 * We need to store the principal as returned from the KDC to the
+	 * credentials cache. If we don't do that the KRB5 library is not
+	 * able to find the tickets it is looking for
+	 */
+	principal = my_creds.client;
+#endif
 	code = krb5_cc_initialize(ctx, cc, principal);
 	if (code) {
 		goto done;
@@ -2135,7 +2143,7 @@ krb5_error_code smb_krb5_make_principal(krb5_context context,
 	va_list ap;
 
 	if (_realm) {
-		realm = _realm;
+		realm = discard_const_p(char, _realm);
 		free_realm = false;
 	} else {
 		code = krb5_get_default_realm(context, &realm);
@@ -2316,7 +2324,8 @@ char *smb_krb5_principal_get_realm(krb5_context context,
 	return strdup(discard_const_p(char, krb5_principal_get_realm(context, principal)));
 #elif defined(krb5_princ_realm) /* MIT */
 	krb5_data *realm;
-	realm = krb5_princ_realm(context, principal);
+	realm = discard_const_p(krb5_data,
+				krb5_princ_realm(context, principal));
 	return strndup(realm->data, realm->length);
 #else
 #error UNKNOWN_GET_PRINC_REALM_FUNCTIONS

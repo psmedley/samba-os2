@@ -61,6 +61,8 @@ extern const char *panic_action;
 
 #include "fault.h"
 
+#include "lib/util/util.h"
+
 /**
  * Write backtrace to debug log
  */
@@ -583,35 +585,6 @@ _PUBLIC_ bool process_exists_by_pid(pid_t pid);
 _PUBLIC_ bool fcntl_lock(int fd, int op, off_t offset, off_t count, int type);
 
 /**
- * Write dump of binary data to a callback
- */
-void dump_data_cb(const uint8_t *buf, int len,
-		  bool omit_zero_bytes,
-		  void (*cb)(const char *buf, void *private_data),
-		  void *private_data);
-
-/**
- * Write dump of binary data to a FILE
- */
-void dump_data_file(const uint8_t *buf, int len, bool omit_zero_bytes,
-		    FILE *f);
-
-/**
- * Write dump of binary data to the log file.
- *
- * The data is only written if the log level is at least level.
- */
-_PUBLIC_ void dump_data(int level, const uint8_t *buf,int len);
-
-/**
- * Write dump of binary data to the log file.
- *
- * The data is only written if the log level is at least level for
- * debug class dbgc_class.
- */
-_PUBLIC_ void dump_data_dbgc(int dbgc_class, int level, const uint8_t *buf, int len);
-
-/**
  * Write dump of binary data to the log file.
  *
  * The data is only written if the log level is at least level.
@@ -847,6 +820,7 @@ struct server_id;
 
 struct server_id_buf { char buf[48]; }; /* probably a bit too large ... */
 char *server_id_str_buf(struct server_id id, struct server_id_buf *dst);
+size_t server_id_str_buf_unique(struct server_id id, char *buf, size_t buflen);
 
 bool server_id_same_process(const struct server_id *p1,
 			    const struct server_id *p2);

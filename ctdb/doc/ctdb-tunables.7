@@ -2,12 +2,12 @@
 .\"     Title: ctdb-tunables
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 12/10/2015
+.\"      Date: 01/27/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB\-TUNABLES" "7" "12/10/2015" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB\-TUNABLES" "7" "01/27/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -105,19 +105,16 @@ Default: 20
 How often will ctdb record and store the "tickle" information used to kickstart stalled tcp connections after a recovery\&.
 .SS "EventScriptTimeout"
 .PP
+Default: 30
+.PP
+Maximum time in seconds to allow an event to run before timing out\&. This is the total time for all enabled scripts that are run for an event, not just a single event script\&.
+.PP
+Note that timeouts are ignored for some events ("takeip", "releaseip", "startrecovery", "recovered") and converted to success\&. The logic here is that the callers of these events implement their own additional timeout\&.
+.SS "MonitorTimeoutCount"
+.PP
 Default: 20
 .PP
-How long should ctdb let an event script run before aborting it and marking the node unhealthy\&.
-.SS "EventScriptTimeoutCount"
-.PP
-Default: 1
-.PP
-How many events in a row needs to timeout before we flag the node UNHEALTHY\&. This setting is useful if your scripts can not be written so that they do not hang for benign reasons\&.
-.SS "EventScriptUnhealthyOnTimeout"
-.PP
-Default: 0
-.PP
-This setting can be be used to make ctdb never become UNHEALTHY if your eventscripts keep hanging/timing out\&.
+How many monitor events in a row need to timeout before a node is flagged as UNHEALTHY\&. This setting is useful if scripts can not be written so that they do not hang for benign reasons\&.
 .SS "RecoveryGracePeriod"
 .PP
 Default: 120

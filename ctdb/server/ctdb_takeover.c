@@ -18,30 +18,38 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
-#include "includes.h"
-#include "tdb.h"
-#include "lib/util/dlinklist.h"
+#include "replace.h"
 #include "system/network.h"
 #include "system/filesys.h"
+#include "system/time.h"
 #include "system/wait.h"
-#include "../include/ctdb_private.h"
-#include "../common/rb_tree.h"
 
+#include <talloc.h>
+#include <tevent.h>
+
+#include "lib/util/dlinklist.h"
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+#include "lib/util/util_process.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/rb_tree.h"
+#include "common/reqid.h"
+#include "common/system.h"
+#include "common/common.h"
+#include "common/logging.h"
+
+#include "server/ipalloc.h"
 
 #define TAKEOVER_TIMEOUT() timeval_current_ofs(ctdb->tunable.takeover_timeout,0)
 
 #define CTDB_ARP_INTERVAL 1
 #define CTDB_ARP_REPEAT   3
 
-/* Flags used in IP allocation algorithms. */
-struct ctdb_ipflags {
-	bool noiptakeover;
-	bool noiphost;
-	enum ctdb_runstate runstate;
-};
-
-struct ctdb_iface {
-	struct ctdb_iface *prev, *next;
+struct ctdb_interface {
+	struct ctdb_interface *prev, *next;
 	const char *name;
 	bool link_up;
 	uint32_t references;
@@ -58,9 +66,9 @@ static const char *ctdb_vnn_iface_string(const struct ctdb_vnn *vnn)
 
 static int ctdb_add_local_iface(struct ctdb_context *ctdb, const char *iface)
 {
-	struct ctdb_iface *i;
+	struct ctdb_interface *i;
 
-	/* Verify that we dont have an entry for this ip yet */
+	/* Verify that we don't have an entry for this ip yet */
 	for (i=ctdb->ifaces;i;i=i->next) {
 		if (strcmp(i->name, iface) == 0) {
 			return 0;
@@ -68,7 +76,7 @@ static int ctdb_add_local_iface(struct ctdb_context *ctdb, const char *iface)
 	}
 
 	/* create a new structure for this interface */
-	i = talloc_zero(ctdb, struct ctdb_iface);
+	i = talloc_zero(ctdb, struct ctdb_interface);
 	CTDB_NO_MEMORY_FATAL(ctdb, i);
 	i->name = talloc_strdup(i, iface);
 	CTDB_NO_MEMORY(ctdb, i->name);
@@ -109,7 +117,7 @@ static bool vnn_has_interface_with_name(struct ctdb_vnn *vnn,
 static void ctdb_remove_orphaned_ifaces(struct ctdb_context *ctdb,
 					struct ctdb_vnn *vnn)
 {
-	struct ctdb_iface *i, *next;
+	struct ctdb_interface *i, *next;
 
 	/* For each interface, check if there's an IP using it. */
 	for (i = ctdb->ifaces; i != NULL; i = next) {
@@ -147,10 +155,10 @@ static void ctdb_remove_orphaned_ifaces(struct ctdb_context *ctdb,
 }
 
 
-static struct ctdb_iface *ctdb_find_iface(struct ctdb_context *ctdb,
-					  const char *iface)
+static struct ctdb_interface *ctdb_find_iface(struct ctdb_context *ctdb,
+					      const char *iface)
 {
-	struct ctdb_iface *i;
+	struct ctdb_interface *i;
 
 	for (i=ctdb->ifaces;i;i=i->next) {
 		if (strcmp(i->name, iface) == 0) {
@@ -161,12 +169,12 @@ static struct ctdb_iface *ctdb_find_iface(struct ctdb_context *ctdb,
 	return NULL;
 }
 
-static struct ctdb_iface *ctdb_vnn_best_iface(struct ctdb_context *ctdb,
-					      struct ctdb_vnn *vnn)
+static struct ctdb_interface *ctdb_vnn_best_iface(struct ctdb_context *ctdb,
+						  struct ctdb_vnn *vnn)
 {
 	int i;
-	struct ctdb_iface *cur = NULL;
-	struct ctdb_iface *best = NULL;
+	struct ctdb_interface *cur = NULL;
+	struct ctdb_interface *best = NULL;
 
 	for (i=0; vnn->ifaces[i]; i++) {
 
@@ -196,7 +204,7 @@ static struct ctdb_iface *ctdb_vnn_best_iface(struct ctdb_context *ctdb,
 static int32_t ctdb_vnn_assign_iface(struct ctdb_context *ctdb,
 				     struct ctdb_vnn *vnn)
 {
-	struct ctdb_iface *best = NULL;
+	struct ctdb_interface *best = NULL;
 
 	if (vnn->iface) {
 		DEBUG(DEBUG_INFO, (__location__ " public address '%s' "
@@ -248,6 +256,11 @@ static bool ctdb_vnn_available(struct ctdb_context *ctdb,
 {
 	int i;
 
+	/* Nodes that are not RUNNING can not host IPs */
+	if (ctdb->runstate != CTDB_RUNSTATE_RUNNING) {
+		return false;
+	}
+
 	if (vnn->delete_pending) {
 		return false;
 	}
@@ -257,7 +270,7 @@ static bool ctdb_vnn_available(struct ctdb_context *ctdb,
 	}
 
 	for (i=0; vnn->ifaces[i]; i++) {
-		struct ctdb_iface *cur;
+		struct ctdb_interface *cur;
 
 		cur = ctdb_find_iface(ctdb, vnn->ifaces[i]);
 		if (cur == NULL) {
@@ -286,7 +299,7 @@ struct ctdb_takeover_arp {
  */
 struct ctdb_tcp_list {
 	struct ctdb_tcp_list *prev, *next;
-	struct ctdb_tcp_connection connection;
+	struct ctdb_connection connection;
 };
 
 /*
@@ -303,7 +316,8 @@ struct ctdb_client_ip {
 /*
   send a gratuitous arp
  */
-static void ctdb_control_send_arp(struct event_context *ev, struct timed_event *te, 
+static void ctdb_control_send_arp(struct tevent_context *ev,
+				  struct tevent_timer *te,
 				  struct timeval t, void *private_data)
 {
 	struct ctdb_takeover_arp *arp = talloc_get_type(private_data, 
@@ -321,20 +335,20 @@ static void ctdb_control_send_arp(struct event_context *ev, struct timed_event *
 	tcparray = arp->tcparray;
 	if (tcparray) {
 		for (i=0;i<tcparray->num;i++) {
-			struct ctdb_tcp_connection *tcon;
+			struct ctdb_connection *tcon;
 
 			tcon = &tcparray->connections[i];
 			DEBUG(DEBUG_INFO,("sending tcp tickle ack for %u->%s:%u\n",
-				(unsigned)ntohs(tcon->dst_addr.ip.sin_port), 
-				ctdb_addr_to_str(&tcon->src_addr),
-				(unsigned)ntohs(tcon->src_addr.ip.sin_port)));
+				(unsigned)ntohs(tcon->dst.ip.sin_port),
+				ctdb_addr_to_str(&tcon->src),
+				(unsigned)ntohs(tcon->src.ip.sin_port)));
 			ret = ctdb_sys_send_tcp(
-				&tcon->src_addr, 
-				&tcon->dst_addr,
+				&tcon->src,
+				&tcon->dst,
 				0, 0, 0);
 			if (ret != 0) {
 				DEBUG(DEBUG_CRIT,(__location__ " Failed to send tcp tickle ack for %s\n",
-					ctdb_addr_to_str(&tcon->src_addr)));
+					ctdb_addr_to_str(&tcon->src)));
 			}
 		}
 	}
@@ -346,9 +360,9 @@ static void ctdb_control_send_arp(struct event_context *ev, struct timed_event *
 		return;
 	}
 
-	event_add_timed(arp->ctdb->ev, arp->vnn->takeover_ctx, 
-			timeval_current_ofs(CTDB_ARP_INTERVAL, 100000), 
-			ctdb_control_send_arp, arp);
+	tevent_add_timer(arp->ctdb->ev, arp->vnn->takeover_ctx,
+			 timeval_current_ofs(CTDB_ARP_INTERVAL, 100000),
+			 ctdb_control_send_arp, arp);
 }
 
 static int32_t ctdb_announce_vnn_iface(struct ctdb_context *ctdb,
@@ -383,20 +397,20 @@ static int32_t ctdb_announce_vnn_iface(struct ctdb_context *ctdb,
 		vnn->tcp_update_needed = true;
 	}
 
-	event_add_timed(arp->ctdb->ev, vnn->takeover_ctx,
-			timeval_zero(), ctdb_control_send_arp, arp);
+	tevent_add_timer(arp->ctdb->ev, vnn->takeover_ctx,
+			 timeval_zero(), ctdb_control_send_arp, arp);
 
 	return 0;
 }
 
 struct takeover_callback_state {
-	struct ctdb_req_control *c;
+	struct ctdb_req_control_old *c;
 	ctdb_sock_addr *addr;
 	struct ctdb_vnn *vnn;
 };
 
 struct ctdb_do_takeip_state {
-	struct ctdb_req_control *c;
+	struct ctdb_req_control_old *c;
 	struct ctdb_vnn *vnn;
 };
 
@@ -461,7 +475,7 @@ static int ctdb_takeip_destructor(struct ctdb_do_takeip_state *state)
   take over an ip address
  */
 static int32_t ctdb_do_takeip(struct ctdb_context *ctdb,
-			      struct ctdb_req_control *c,
+			      struct ctdb_req_control_old *c,
 			      struct ctdb_vnn *vnn)
 {
 	int ret;
@@ -520,8 +534,8 @@ static int32_t ctdb_do_takeip(struct ctdb_context *ctdb,
 }
 
 struct ctdb_do_updateip_state {
-	struct ctdb_req_control *c;
-	struct ctdb_iface *old;
+	struct ctdb_req_control_old *c;
+	struct ctdb_interface *old;
 	struct ctdb_vnn *vnn;
 };
 
@@ -584,12 +598,12 @@ static int ctdb_updateip_destructor(struct ctdb_do_updateip_state *state)
   update (move) an ip address
  */
 static int32_t ctdb_do_updateip(struct ctdb_context *ctdb,
-				struct ctdb_req_control *c,
+				struct ctdb_req_control_old *c,
 				struct ctdb_vnn *vnn)
 {
 	int ret;
 	struct ctdb_do_updateip_state *state;
-	struct ctdb_iface *old = vnn->iface;
+	struct ctdb_interface *old = vnn->iface;
 	const char *new_name;
 
 	if (vnn->update_in_flight) {
@@ -680,7 +694,7 @@ static struct ctdb_vnn *find_public_ip_vnn(struct ctdb_context *ctdb, ctdb_sock_
   take over an ip address
  */
 int32_t ctdb_control_takeover_ip(struct ctdb_context *ctdb,
-				 struct ctdb_req_control *c,
+				 struct ctdb_req_control_old *c,
 				 TDB_DATA indata,
 				 bool *async_reply)
 {
@@ -690,7 +704,7 @@ int32_t ctdb_control_takeover_ip(struct ctdb_context *ctdb,
 	bool have_ip = false;
 	bool do_updateip = false;
 	bool do_takeip = false;
-	struct ctdb_iface *best_iface = NULL;
+	struct ctdb_interface *best_iface = NULL;
 
 	if (pip->pnn != ctdb->pnn) {
 		DEBUG(DEBUG_ERR,(__location__" takeoverip called for an ip '%s' "
@@ -820,9 +834,9 @@ static void release_kill_clients(struct ctdb_context *ctdb, ctdb_sock_addr *addr
 			ctdb_addr_to_str(&ip->addr)));
 
 		if (ctdb_same_ip(&tmp_addr, addr)) {
-			struct ctdb_client *client = ctdb_reqid_find(ctdb, 
-								     ip->client_id, 
-								     struct ctdb_client);
+			struct ctdb_client *client = reqid_find(ctdb->idr,
+								ip->client_id,
+								struct ctdb_client);
 			DEBUG(DEBUG_INFO,("matched client %u with IP %s and pid %u\n", 
 				ip->client_id,
 				ctdb_addr_to_str(&ip->addr),
@@ -912,7 +926,7 @@ static int ctdb_releaseip_destructor(struct takeover_callback_state *state)
   release an ip address
  */
 int32_t ctdb_control_release_ip(struct ctdb_context *ctdb, 
-				struct ctdb_req_control *c,
+				struct ctdb_req_control_old *c,
 				TDB_DATA indata, 
 				bool *async_reply)
 {
@@ -1045,7 +1059,7 @@ static int ctdb_add_public_address(struct ctdb_context *ctdb,
 	}
 	free(tmp);
 
-	/* Verify that we dont have an entry for this ip yet */
+	/* Verify that we don't have an entry for this ip yet */
 	for (vnn=ctdb->vnn;vnn;vnn=vnn->next) {
 		if (ctdb_same_sockaddr(addr, &vnn->public_address)) {
 			DEBUG(DEBUG_CRIT,("Same ip '%s' specified multiple times in the public address list \n", 
@@ -1167,7 +1181,7 @@ int ctdb_set_single_public_ip(struct ctdb_context *ctdb,
 			      const char *ip)
 {
 	struct ctdb_vnn *svnn;
-	struct ctdb_iface *cur = NULL;
+	struct ctdb_interface *cur = NULL;
 	bool ok;
 	int ret;
 
@@ -1214,146 +1228,10 @@ int ctdb_set_single_public_ip(struct ctdb_context *ctdb,
 	return 0;
 }
 
-struct ctdb_public_ip_list {
-	struct ctdb_public_ip_list *next;
-	uint32_t pnn;
-	ctdb_sock_addr addr;
-};
-
-/* Given a physical node, return the number of
-   public addresses that is currently assigned to this node.
-*/
-static int node_ip_coverage(struct ctdb_context *ctdb, 
-	int32_t pnn,
-	struct ctdb_public_ip_list *ips)
-{
-	int num=0;
-
-	for (;ips;ips=ips->next) {
-		if (ips->pnn == pnn) {
-			num++;
-		}
-	}
-	return num;
-}
-
-
-/* Can the given node host the given IP: is the public IP known to the
- * node and is NOIPHOST unset?
-*/
-static bool can_node_host_ip(struct ctdb_context *ctdb, int32_t pnn, 
-			     struct ctdb_ipflags ipflags,
-			     struct ctdb_public_ip_list *ip)
-{
-	struct ctdb_all_public_ips *public_ips;
-	int i;
-
-	if (ipflags.noiphost) {
-		return false;
-	}
-
-	public_ips = ctdb->nodes[pnn]->available_public_ips;
-
-	if (public_ips == NULL) {
-		return false;
-	}
-
-	for (i=0; i<public_ips->num; i++) {
-		if (ctdb_same_ip(&ip->addr, &public_ips->ips[i].addr)) {
-			/* yes, this node can serve this public ip */
-			return true;
-		}
-	}
-
-	return false;
-}
-
-static bool can_node_takeover_ip(struct ctdb_context *ctdb, int32_t pnn, 
-				 struct ctdb_ipflags ipflags,
-				 struct ctdb_public_ip_list *ip)
-{
-	if (ipflags.noiptakeover) {
-		return false;
-	}
-
-	return can_node_host_ip(ctdb, pnn, ipflags, ip);
-}
-
-/* search the node lists list for a node to takeover this ip.
-   pick the node that currently are serving the least number of ips
-   so that the ips get spread out evenly.
-*/
-static int find_takeover_node(struct ctdb_context *ctdb, 
-		struct ctdb_ipflags *ipflags,
-		struct ctdb_public_ip_list *ip,
-		struct ctdb_public_ip_list *all_ips)
-{
-	int pnn, min=0, num;
-	int i, numnodes;
-
-	numnodes = talloc_array_length(ipflags);
-	pnn    = -1;
-	for (i=0; i<numnodes; i++) {
-		/* verify that this node can serve this ip */
-		if (!can_node_takeover_ip(ctdb, i, ipflags[i], ip)) {
-			/* no it couldnt   so skip to the next node */
-			continue;
-		}
-
-		num = node_ip_coverage(ctdb, i, all_ips);
-		/* was this the first node we checked ? */
-		if (pnn == -1) {
-			pnn = i;
-			min  = num;
-		} else {
-			if (num < min) {
-				pnn = i;
-				min  = num;
-			}
-		}
-	}	
-	if (pnn == -1) {
-		DEBUG(DEBUG_WARNING,(__location__ " Could not find node to take over public address '%s'\n",
-			ctdb_addr_to_str(&ip->addr)));
-
-		return -1;
-	}
-
-	ip->pnn = pnn;
-	return 0;
-}
-
-#define IP_KEYLEN	4
-static uint32_t *ip_key(ctdb_sock_addr *ip)
-{
-	static uint32_t key[IP_KEYLEN];
-
-	bzero(key, sizeof(key));
-
-	switch (ip->sa.sa_family) {
-	case AF_INET:
-		key[3]	= htonl(ip->ip.sin_addr.s_addr);
-		break;
-	case AF_INET6: {
-		uint32_t *s6_a32 = (uint32_t *)&(ip->ip6.sin6_addr.s6_addr);
-		key[0]	= htonl(s6_a32[0]);
-		key[1]	= htonl(s6_a32[1]);
-		key[2]	= htonl(s6_a32[2]);
-		key[3]	= htonl(s6_a32[3]);
-		break;
-	}
-	default:
-		DEBUG(DEBUG_ERR, (__location__ " ERROR, unknown family passed :%u\n", ip->sa.sa_family));
-		return key;
-	}
-
-	return key;
-}
-
 static void *add_ip_callback(void *parm, void *data)
 {
-	struct ctdb_public_ip_list *this_ip = parm; 
-	struct ctdb_public_ip_list *prev_ip = data; 
+	struct public_ip_list *this_ip = parm;
+	struct public_ip_list *prev_ip = data;
 
 	if (prev_ip == NULL) {
 		return parm;
@@ -1367,29 +1245,88 @@ static void *add_ip_callback(void *parm, void *data)
 
 static int getips_count_callback(void *param, void *data)
 {
-	struct ctdb_public_ip_list **ip_list = (struct ctdb_public_ip_list **)param;
-	struct ctdb_public_ip_list *new_ip = (struct ctdb_public_ip_list *)data;
+	struct public_ip_list **ip_list = (struct public_ip_list **)param;
+	struct public_ip_list *new_ip = (struct public_ip_list *)data;
 
 	new_ip->next = *ip_list;
 	*ip_list     = new_ip;
 	return 0;
 }
 
-static struct ctdb_public_ip_list *
-create_merged_ip_list(struct ctdb_context *ctdb)
+static int verify_remote_ip_allocation(struct ctdb_context *ctdb,
+				       struct ctdb_public_ip_list_old *ips,
+				       uint32_t pnn);
+
+static int ctdb_reload_remote_public_ips(struct ctdb_context *ctdb,
+					 struct ipalloc_state *ipalloc_state,
+					 struct ctdb_node_map_old *nodemap)
+{
+	int j;
+	int ret;
+
+	if (ipalloc_state->num != nodemap->num) {
+		DEBUG(DEBUG_ERR,
+		      (__location__
+		       " ipalloc_state->num (%d) != nodemap->num (%d) invalid param\n",
+		       ipalloc_state->num, nodemap->num));
+		return -1;
+	}
+
+	for (j=0; j<nodemap->num; j++) {
+		if (nodemap->nodes[j].flags & NODE_FLAGS_INACTIVE) {
+			continue;
+		}
+
+		/* Retrieve the list of known public IPs from the node */
+		ret = ctdb_ctrl_get_public_ips_flags(ctdb,
+					TAKEOVER_TIMEOUT(),
+					j,
+					ipalloc_state->known_public_ips,
+					0,
+					&ipalloc_state->known_public_ips[j]);
+		if (ret != 0) {
+			DEBUG(DEBUG_ERR,
+			      ("Failed to read known public IPs from node: %u\n",
+			       j));
+			return -1;
+		}
+
+		if (ctdb->do_checkpublicip) {
+			verify_remote_ip_allocation(ctdb,
+						    ipalloc_state->known_public_ips[j],
+						    j);
+		}
+
+		/* Retrieve the list of available public IPs from the node */
+		ret = ctdb_ctrl_get_public_ips_flags(ctdb,
+					TAKEOVER_TIMEOUT(),
+					j,
+					ipalloc_state->available_public_ips,
+					CTDB_PUBLIC_IP_FLAGS_ONLY_AVAILABLE,
+					&ipalloc_state->available_public_ips[j]);
+		if (ret != 0) {
+			DEBUG(DEBUG_ERR,
+			      ("Failed to read available public IPs from node: %u\n",
+			       j));
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static struct public_ip_list *
+create_merged_ip_list(struct ctdb_context *ctdb, struct ipalloc_state *ipalloc_state)
 {
 	int i, j;
-	struct ctdb_public_ip_list *ip_list;
-	struct ctdb_all_public_ips *public_ips;
+	struct public_ip_list *ip_list;
+	struct ctdb_public_ip_list_old *public_ips;
 
-	if (ctdb->ip_tree != NULL) {
-		talloc_free(ctdb->ip_tree);
-		ctdb->ip_tree = NULL;
-	}
+	TALLOC_FREE(ctdb->ip_tree);
 	ctdb->ip_tree = trbt_create(ctdb, 0);
 
-	for (i=0;i<ctdb->num_nodes;i++) {
-		public_ips = ctdb->nodes[i]->known_public_ips;
+	for (i=0; i < ctdb->num_nodes; i++) {
+		public_ips = ipalloc_state->known_public_ips[i];
 
 		if (ctdb->nodes[i]->flags & NODE_FLAGS_DELETED) {
 			continue;
@@ -1398,12 +1335,12 @@ create_merged_ip_list(struct ctdb_context *ctdb)
 		/* there were no public ips for this node */
 		if (public_ips == NULL) {
 			continue;
-		}		
+		}
 
-		for (j=0;j<public_ips->num;j++) {
-			struct ctdb_public_ip_list *tmp_ip; 
+		for (j=0; j < public_ips->num; j++) {
+			struct public_ip_list *tmp_ip;
 
-			tmp_ip = talloc_zero(ctdb->ip_tree, struct ctdb_public_ip_list);
+			tmp_ip = talloc_zero(ctdb->ip_tree, struct public_ip_list);
 			CTDB_NO_MEMORY_NULL(ctdb, tmp_ip);
 			/* Do not use information about IP addresses hosted
 			 * on other nodes, it may not be accurate */
@@ -1428,676 +1365,7 @@ create_merged_ip_list(struct ctdb_context *ctdb)
 	return ip_list;
 }
 
-/* 
- * This is the length of the longtest common prefix between the IPs.
- * It is calculated by XOR-ing the 2 IPs together and counting the
- * number of leading zeroes.  The implementation means that all
- * addresses end up being 128 bits long.
- *
- * FIXME? Should we consider IPv4 and IPv6 separately given that the
- * 12 bytes of 0 prefix padding will hurt the algorithm if there are
- * lots of nodes and IP addresses?
- */
-static uint32_t ip_distance(ctdb_sock_addr *ip1, ctdb_sock_addr *ip2)
-{
-	uint32_t ip1_k[IP_KEYLEN];
-	uint32_t *t;
-	int i;
-	uint32_t x;
-
-	uint32_t distance = 0;
-
-	memcpy(ip1_k, ip_key(ip1), sizeof(ip1_k));
-	t = ip_key(ip2);
-	for (i=0; i<IP_KEYLEN; i++) {
-		x = ip1_k[i] ^ t[i];
-		if (x == 0) {
-			distance += 32;
-		} else {
-			/* Count number of leading zeroes. 
-			 * FIXME? This could be optimised...
-			 */
-			while ((x & (1 << 31)) == 0) {
-				x <<= 1;
-				distance += 1;
-			}
-		}
-	}
-
-	return distance;
-}
-
-/* Calculate the IP distance for the given IP relative to IPs on the
-   given node.  The ips argument is generally the all_ips variable
-   used in the main part of the algorithm.
- */
-static uint32_t ip_distance_2_sum(ctdb_sock_addr *ip,
-				  struct ctdb_public_ip_list *ips,
-				  int pnn)
-{
-	struct ctdb_public_ip_list *t;
-	uint32_t d;
-
-	uint32_t sum = 0;
-
-	for (t=ips; t != NULL; t=t->next) {
-		if (t->pnn != pnn) {
-			continue;
-		}
-
-		/* Optimisation: We never calculate the distance
-		 * between an address and itself.  This allows us to
-		 * calculate the effect of removing an address from a
-		 * node by simply calculating the distance between
-		 * that address and all of the exitsing addresses.
-		 * Moreover, we assume that we're only ever dealing
-		 * with addresses from all_ips so we can identify an
-		 * address via a pointer rather than doing a more
-		 * expensive address comparison. */
-		if (&(t->addr) == ip) {
-			continue;
-		}
-
-		d = ip_distance(ip, &(t->addr));
-		sum += d * d;  /* Cheaper than pulling in math.h :-) */
-	}
-
-	return sum;
-}
-
-/* Return the LCP2 imbalance metric for addresses currently assigned
-   to the given node.
- */
-static uint32_t lcp2_imbalance(struct ctdb_public_ip_list * all_ips, int pnn)
-{
-	struct ctdb_public_ip_list *t;
-
-	uint32_t imbalance = 0;
-
-	for (t=all_ips; t!=NULL; t=t->next) {
-		if (t->pnn != pnn) {
-			continue;
-		}
-		/* Pass the rest of the IPs rather than the whole
-		   all_ips input list.
-		*/
-		imbalance += ip_distance_2_sum(&(t->addr), t->next, pnn);
-	}
-
-	return imbalance;
-}
-
-/* Allocate any unassigned IPs just by looping through the IPs and
- * finding the best node for each.
- */
-static void basic_allocate_unassigned(struct ctdb_context *ctdb,
-				      struct ctdb_ipflags *ipflags,
-				      struct ctdb_public_ip_list *all_ips)
-{
-	struct ctdb_public_ip_list *tmp_ip;
-
-	/* loop over all ip's and find a physical node to cover for 
-	   each unassigned ip.
-	*/
-	for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
-		if (tmp_ip->pnn == -1) {
-			if (find_takeover_node(ctdb, ipflags, tmp_ip, all_ips)) {
-				DEBUG(DEBUG_WARNING,("Failed to find node to cover ip %s\n",
-					ctdb_addr_to_str(&tmp_ip->addr)));
-			}
-		}
-	}
-}
-
-/* Basic non-deterministic rebalancing algorithm.
- */
-static void basic_failback(struct ctdb_context *ctdb,
-			   struct ctdb_ipflags *ipflags,
-			   struct ctdb_public_ip_list *all_ips,
-			   int num_ips)
-{
-	int i, numnodes;
-	int maxnode, maxnum, minnode, minnum, num, retries;
-	struct ctdb_public_ip_list *tmp_ip;
-
-	numnodes = talloc_array_length(ipflags);
-	retries = 0;
-
-try_again:
-	maxnum=0;
-	minnum=0;
-
-	/* for each ip address, loop over all nodes that can serve
-	   this ip and make sure that the difference between the node
-	   serving the most and the node serving the least ip's are
-	   not greater than 1.
-	*/
-	for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
-		if (tmp_ip->pnn == -1) {
-			continue;
-		}
-
-		/* Get the highest and lowest number of ips's served by any 
-		   valid node which can serve this ip.
-		*/
-		maxnode = -1;
-		minnode = -1;
-		for (i=0; i<numnodes; i++) {
-			/* only check nodes that can actually serve this ip */
-			if (!can_node_takeover_ip(ctdb, i, ipflags[i], tmp_ip)) {
-				/* no it couldnt   so skip to the next node */
-				continue;
-			}
-
-			num = node_ip_coverage(ctdb, i, all_ips);
-			if (maxnode == -1) {
-				maxnode = i;
-				maxnum  = num;
-			} else {
-				if (num > maxnum) {
-					maxnode = i;
-					maxnum  = num;
-				}
-			}
-			if (minnode == -1) {
-				minnode = i;
-				minnum  = num;
-			} else {
-				if (num < minnum) {
-					minnode = i;
-					minnum  = num;
-				}
-			}
-		}
-		if (maxnode == -1) {
-			DEBUG(DEBUG_WARNING,(__location__ " Could not find maxnode. May not be able to serve ip '%s'\n",
-				ctdb_addr_to_str(&tmp_ip->addr)));
-
-			continue;
-		}
-
-		/* if the spread between the smallest and largest coverage by
-		   a node is >=2 we steal one of the ips from the node with
-		   most coverage to even things out a bit.
-		   try to do this a limited number of times since we dont
-		   want to spend too much time balancing the ip coverage.
-		*/
-		if ( (maxnum > minnum+1)
-		     && (retries < (num_ips + 5)) ){
-			struct ctdb_public_ip_list *tmp;
-
-			/* Reassign one of maxnode's VNNs */
-			for (tmp=all_ips;tmp;tmp=tmp->next) {
-				if (tmp->pnn == maxnode) {
-					(void)find_takeover_node(ctdb, ipflags, tmp, all_ips);
-					retries++;
-					goto try_again;;
-				}
-			}
-		}
-	}
-}
-
-static void lcp2_init(struct ctdb_context *tmp_ctx,
-		      struct ctdb_ipflags *ipflags,
-		      struct ctdb_public_ip_list *all_ips,
-		      uint32_t *force_rebalance_nodes,
-		      uint32_t **lcp2_imbalances,
-		      bool **rebalance_candidates)
-{
-	int i, numnodes;
-	struct ctdb_public_ip_list *tmp_ip;
-
-	numnodes = talloc_array_length(ipflags);
-
-	*rebalance_candidates = talloc_array(tmp_ctx, bool, numnodes);
-	CTDB_NO_MEMORY_FATAL(tmp_ctx, *rebalance_candidates);
-	*lcp2_imbalances = talloc_array(tmp_ctx, uint32_t, numnodes);
-	CTDB_NO_MEMORY_FATAL(tmp_ctx, *lcp2_imbalances);
-
-	for (i=0; i<numnodes; i++) {
-		(*lcp2_imbalances)[i] = lcp2_imbalance(all_ips, i);
-		/* First step: assume all nodes are candidates */
-		(*rebalance_candidates)[i] = true;
-	}
-
-	/* 2nd step: if a node has IPs assigned then it must have been
-	 * healthy before, so we remove it from consideration.  This
-	 * is overkill but is all we have because we don't maintain
-	 * state between takeover runs.  An alternative would be to
-	 * keep state and invalidate it every time the recovery master
-	 * changes.
-	 */
-	for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
-		if (tmp_ip->pnn != -1) {
-			(*rebalance_candidates)[tmp_ip->pnn] = false;
-		}
-	}
-
-	/* 3rd step: if a node is forced to re-balance then
-	   we allow failback onto the node */
-	if (force_rebalance_nodes == NULL) {
-		return;
-	}
-	for (i = 0; i < talloc_array_length(force_rebalance_nodes); i++) {
-		uint32_t pnn = force_rebalance_nodes[i];
-		if (pnn >= numnodes) {
-			DEBUG(DEBUG_ERR,
-			      (__location__ "unknown node %u\n", pnn));
-			continue;
-		}
-
-		DEBUG(DEBUG_NOTICE,
-		      ("Forcing rebalancing of IPs to node %u\n", pnn));
-		(*rebalance_candidates)[pnn] = true;
-	}
-}
-
-/* Allocate any unassigned addresses using the LCP2 algorithm to find
- * the IP/node combination that will cost the least.
- */
-static void lcp2_allocate_unassigned(struct ctdb_context *ctdb,
-				     struct ctdb_ipflags *ipflags,
-				     struct ctdb_public_ip_list *all_ips,
-				     uint32_t *lcp2_imbalances)
-{
-	struct ctdb_public_ip_list *tmp_ip;
-	int dstnode, numnodes;
-
-	int minnode;
-	uint32_t mindsum, dstdsum, dstimbl, minimbl;
-	struct ctdb_public_ip_list *minip;
-
-	bool should_loop = true;
-	bool have_unassigned = true;
-
-	numnodes = talloc_array_length(ipflags);
-
-	while (have_unassigned && should_loop) {
-		should_loop = false;
-
-		DEBUG(DEBUG_DEBUG,(" ----------------------------------------\n"));
-		DEBUG(DEBUG_DEBUG,(" CONSIDERING MOVES (UNASSIGNED)\n"));
-
-		minnode = -1;
-		mindsum = 0;
-		minip = NULL;
-
-		/* loop over each unassigned ip. */
-		for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
-			if (tmp_ip->pnn != -1) {
-				continue;
-			}
-
-			for (dstnode=0; dstnode<numnodes; dstnode++) {
-				/* only check nodes that can actually takeover this ip */
-				if (!can_node_takeover_ip(ctdb, dstnode,
-							  ipflags[dstnode],
-							  tmp_ip)) {
-					/* no it couldnt   so skip to the next node */
-					continue;
-				}
-
-				dstdsum = ip_distance_2_sum(&(tmp_ip->addr), all_ips, dstnode);
-				dstimbl = lcp2_imbalances[dstnode] + dstdsum;
-				DEBUG(DEBUG_DEBUG,(" %s -> %d [+%d]\n",
-						   ctdb_addr_to_str(&(tmp_ip->addr)),
-						   dstnode,
-						   dstimbl - lcp2_imbalances[dstnode]));
-
-
-				if ((minnode == -1) || (dstdsum < mindsum)) {
-					minnode = dstnode;
-					minimbl = dstimbl;
-					mindsum = dstdsum;
-					minip = tmp_ip;
-					should_loop = true;
-				}
-			}
-		}
-
-		DEBUG(DEBUG_DEBUG,(" ----------------------------------------\n"));
-
-		/* If we found one then assign it to the given node. */
-		if (minnode != -1) {
-			minip->pnn = minnode;
-			lcp2_imbalances[minnode] = minimbl;
-			DEBUG(DEBUG_INFO,(" %s -> %d [+%d]\n",
-					  ctdb_addr_to_str(&(minip->addr)),
-					  minnode,
-					  mindsum));
-		}
-
-		/* There might be a better way but at least this is clear. */
-		have_unassigned = false;
-		for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
-			if (tmp_ip->pnn == -1) {
-				have_unassigned = true;
-			}
-		}
-	}
-
-	/* We know if we have an unassigned addresses so we might as
-	 * well optimise.
-	 */
-	if (have_unassigned) {
-		for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
-			if (tmp_ip->pnn == -1) {
-				DEBUG(DEBUG_WARNING,("Failed to find node to cover ip %s\n",
-						     ctdb_addr_to_str(&tmp_ip->addr)));
-			}
-		}
-	}
-}
-
-/* LCP2 algorithm for rebalancing the cluster.  Given a candidate node
- * to move IPs from, determines the best IP/destination node
- * combination to move from the source node.
- */
-static bool lcp2_failback_candidate(struct ctdb_context *ctdb,
-				    struct ctdb_ipflags *ipflags,
-				    struct ctdb_public_ip_list *all_ips,
-				    int srcnode,
-				    uint32_t *lcp2_imbalances,
-				    bool *rebalance_candidates)
-{
-	int dstnode, mindstnode, numnodes;
-	uint32_t srcimbl, srcdsum, dstimbl, dstdsum;
-	uint32_t minsrcimbl, mindstimbl;
-	struct ctdb_public_ip_list *minip;
-	struct ctdb_public_ip_list *tmp_ip;
-
-	/* Find an IP and destination node that best reduces imbalance. */
-	srcimbl = 0;
-	minip = NULL;
-	minsrcimbl = 0;
-	mindstnode = -1;
-	mindstimbl = 0;
-
-	numnodes = talloc_array_length(ipflags);
-
-	DEBUG(DEBUG_DEBUG,(" ----------------------------------------\n"));
-	DEBUG(DEBUG_DEBUG,(" CONSIDERING MOVES FROM %d [%d]\n",
-			   srcnode, lcp2_imbalances[srcnode]));
-
-	for (tmp_ip=all_ips; tmp_ip; tmp_ip=tmp_ip->next) {
-		/* Only consider addresses on srcnode. */
-		if (tmp_ip->pnn != srcnode) {
-			continue;
-		}
-
-		/* What is this IP address costing the source node? */
-		srcdsum = ip_distance_2_sum(&(tmp_ip->addr), all_ips, srcnode);
-		srcimbl = lcp2_imbalances[srcnode] - srcdsum;
-
-		/* Consider this IP address would cost each potential
-		 * destination node.  Destination nodes are limited to
-		 * those that are newly healthy, since we don't want
-		 * to do gratuitous failover of IPs just to make minor
-		 * balance improvements.
-		 */
-		for (dstnode=0; dstnode<numnodes; dstnode++) {
-			if (!rebalance_candidates[dstnode]) {
-				continue;
-			}
-
-			/* only check nodes that can actually takeover this ip */
-			if (!can_node_takeover_ip(ctdb, dstnode,
-						  ipflags[dstnode], tmp_ip)) {
-				/* no it couldnt   so skip to the next node */
-				continue;
-			}
-
-			dstdsum = ip_distance_2_sum(&(tmp_ip->addr), all_ips, dstnode);
-			dstimbl = lcp2_imbalances[dstnode] + dstdsum;
-			DEBUG(DEBUG_DEBUG,(" %d [%d] -> %s -> %d [+%d]\n",
-					   srcnode, -srcdsum,
-					   ctdb_addr_to_str(&(tmp_ip->addr)),
-					   dstnode, dstdsum));
-
-			if ((dstimbl < lcp2_imbalances[srcnode]) &&
-			    (dstdsum < srcdsum) &&			\
-			    ((mindstnode == -1) ||				\
-			     ((srcimbl + dstimbl) < (minsrcimbl + mindstimbl)))) {
-
-				minip = tmp_ip;
-				minsrcimbl = srcimbl;
-				mindstnode = dstnode;
-				mindstimbl = dstimbl;
-			}
-		}
-	}
-	DEBUG(DEBUG_DEBUG,(" ----------------------------------------\n"));
-
-        if (mindstnode != -1) {
-		/* We found a move that makes things better... */
-		DEBUG(DEBUG_INFO,("%d [%d] -> %s -> %d [+%d]\n",
-				  srcnode, minsrcimbl - lcp2_imbalances[srcnode],
-				  ctdb_addr_to_str(&(minip->addr)),
-				  mindstnode, mindstimbl - lcp2_imbalances[mindstnode]));
-
-
-		lcp2_imbalances[srcnode] = minsrcimbl;
-		lcp2_imbalances[mindstnode] = mindstimbl;
-		minip->pnn = mindstnode;
-
-		return true;
-	}
-
-        return false;
-	
-}
-
-struct lcp2_imbalance_pnn {
-	uint32_t imbalance;
-	int pnn;
-};
-
-static int lcp2_cmp_imbalance_pnn(const void * a, const void * b)
-{
-	const struct lcp2_imbalance_pnn * lipa = (const struct lcp2_imbalance_pnn *) a;
-	const struct lcp2_imbalance_pnn * lipb = (const struct lcp2_imbalance_pnn *) b;
-
-	if (lipa->imbalance > lipb->imbalance) {
-		return -1;
-	} else if (lipa->imbalance == lipb->imbalance) {
-		return 0;
-	} else {
-		return 1;
-	}
-}
-
-/* LCP2 algorithm for rebalancing the cluster.  This finds the source
- * node with the highest LCP2 imbalance, and then determines the best
- * IP/destination node combination to move from the source node.
- */
-static void lcp2_failback(struct ctdb_context *ctdb,
-			  struct ctdb_ipflags *ipflags,
-			  struct ctdb_public_ip_list *all_ips,
-			  uint32_t *lcp2_imbalances,
-			  bool *rebalance_candidates)
-{
-	int i, numnodes;
-	struct lcp2_imbalance_pnn * lips;
-	bool again;
-
-	numnodes = talloc_array_length(ipflags);
-
-try_again:
-	/* Put the imbalances and nodes into an array, sort them and
-	 * iterate through candidates.  Usually the 1st one will be
-	 * used, so this doesn't cost much...
-	 */
-	DEBUG(DEBUG_DEBUG,("+++++++++++++++++++++++++++++++++++++++++\n"));
-	DEBUG(DEBUG_DEBUG,("Selecting most imbalanced node from:\n"));
-	lips = talloc_array(ctdb, struct lcp2_imbalance_pnn, numnodes);
-	for (i=0; i<numnodes; i++) {
-		lips[i].imbalance = lcp2_imbalances[i];
-		lips[i].pnn = i;
-		DEBUG(DEBUG_DEBUG,(" %d [%d]\n", i, lcp2_imbalances[i]));
-	}
-	qsort(lips, numnodes, sizeof(struct lcp2_imbalance_pnn),
-	      lcp2_cmp_imbalance_pnn);
-
-	again = false;
-	for (i=0; i<numnodes; i++) {
-		/* This means that all nodes had 0 or 1 addresses, so
-		 * can't be imbalanced.
-		 */
-		if (lips[i].imbalance == 0) {
-			break;
-		}
-
-		if (lcp2_failback_candidate(ctdb,
-					    ipflags,
-					    all_ips,
-					    lips[i].pnn,
-					    lcp2_imbalances,
-					    rebalance_candidates)) {
-			again = true;
-			break;
-		}
-	}
-
-	talloc_free(lips);
-	if (again) {
-		goto try_again;
-	}
-}
-
-static void unassign_unsuitable_ips(struct ctdb_context *ctdb,
-				    struct ctdb_ipflags *ipflags,
-				    struct ctdb_public_ip_list *all_ips)
-{
-	struct ctdb_public_ip_list *tmp_ip;
-
-	/* verify that the assigned nodes can serve that public ip
-	   and set it to -1 if not
-	*/
-	for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
-		if (tmp_ip->pnn == -1) {
-			continue;
-		}
-		if (!can_node_host_ip(ctdb, tmp_ip->pnn,
-				      ipflags[tmp_ip->pnn], tmp_ip) != 0) {
-			/* this node can not serve this ip. */
-			DEBUG(DEBUG_DEBUG,("Unassign IP: %s from %d\n",
-					   ctdb_addr_to_str(&(tmp_ip->addr)),
-					   tmp_ip->pnn));
-			tmp_ip->pnn = -1;
-		}
-	}
-}
-
-static void ip_alloc_deterministic_ips(struct ctdb_context *ctdb,
-				       struct ctdb_ipflags *ipflags,
-				       struct ctdb_public_ip_list *all_ips)
-{
-	struct ctdb_public_ip_list *tmp_ip;
-	int i, numnodes;
-
-	numnodes = talloc_array_length(ipflags);
-
-	DEBUG(DEBUG_NOTICE,("Deterministic IPs enabled. Resetting all ip allocations\n"));
-       /* Allocate IPs to nodes in a modulo fashion so that IPs will
-        *  always be allocated the same way for a specific set of
-        *  available/unavailable nodes.
-	*/
-
-	for (i=0,tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next,i++) {
-		tmp_ip->pnn = i % numnodes;
-	}
-
-	/* IP failback doesn't make sense with deterministic
-	 * IPs, since the modulo step above implicitly fails
-	 * back IPs to their "home" node.
-	 */
-	if (1 == ctdb->tunable.no_ip_failback) {
-		DEBUG(DEBUG_WARNING, ("WARNING: 'NoIPFailback' set but ignored - incompatible with 'DeterministicIPs\n"));
-	}
-
-	unassign_unsuitable_ips(ctdb, ipflags, all_ips);
-
-	basic_allocate_unassigned(ctdb, ipflags, all_ips);
-
-	/* No failback here! */
-}
-
-static void ip_alloc_nondeterministic_ips(struct ctdb_context *ctdb,
-					  struct ctdb_ipflags *ipflags,
-					  struct ctdb_public_ip_list *all_ips)
-{
-	/* This should be pushed down into basic_failback. */
-	struct ctdb_public_ip_list *tmp_ip;
-	int num_ips = 0;
-	for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
-		num_ips++;
-	}
-
-	unassign_unsuitable_ips(ctdb, ipflags, all_ips);
-
-	basic_allocate_unassigned(ctdb, ipflags, all_ips);
-
-	/* If we don't want IPs to fail back then don't rebalance IPs. */
-	if (1 == ctdb->tunable.no_ip_failback) {
-		return;
-	}
-
-	/* Now, try to make sure the ip adresses are evenly distributed
-	   across the nodes.
-	*/
-	basic_failback(ctdb, ipflags, all_ips, num_ips);
-}
-
-static void ip_alloc_lcp2(struct ctdb_context *ctdb,
-			  struct ctdb_ipflags *ipflags,
-			  struct ctdb_public_ip_list *all_ips,
-			  uint32_t *force_rebalance_nodes)
-{
-	uint32_t *lcp2_imbalances;
-	bool *rebalance_candidates;
-	int numnodes, num_rebalance_candidates, i;
-
-	TALLOC_CTX *tmp_ctx = talloc_new(ctdb);
-
-	unassign_unsuitable_ips(ctdb, ipflags, all_ips);
-
-	lcp2_init(tmp_ctx, ipflags, all_ips,force_rebalance_nodes,
-		  &lcp2_imbalances, &rebalance_candidates);
-
-	lcp2_allocate_unassigned(ctdb, ipflags, all_ips, lcp2_imbalances);
-
-	/* If we don't want IPs to fail back then don't rebalance IPs. */
-	if (1 == ctdb->tunable.no_ip_failback) {
-		goto finished;
-	}
-
-	/* It is only worth continuing if we have suitable target
-	 * nodes to transfer IPs to.  This check is much cheaper than
-	 * continuing on...
-	 */
-	numnodes = talloc_array_length(ipflags);
-	num_rebalance_candidates = 0;
-	for (i=0; i<numnodes; i++) {
-		if (rebalance_candidates[i]) {
-			num_rebalance_candidates++;
-		}
-	}
-	if (num_rebalance_candidates == 0) {
-		goto finished;
-	}
-
-	/* Now, try to make sure the ip adresses are evenly distributed
-	   across the nodes.
-	*/
-	lcp2_failback(ctdb, ipflags, all_ips,
-		      lcp2_imbalances, rebalance_candidates);
-
-finished:
-	talloc_free(tmp_ctx);
-}
-
-static bool all_nodes_are_disabled(struct ctdb_node_map *nodemap)
+static bool all_nodes_are_disabled(struct ctdb_node_map_old *nodemap)
 {
 	int i;
 
@@ -2109,37 +1377,6 @@ static bool all_nodes_are_disabled(struct ctdb_node_map *nodemap)
 	}
 
 	return true;
-}
-
-/* The calculation part of the IP allocation algorithm. */
-static void ctdb_takeover_run_core(struct ctdb_context *ctdb,
-				   struct ctdb_ipflags *ipflags,
-				   struct ctdb_public_ip_list **all_ips_p,
-				   uint32_t *force_rebalance_nodes)
-{
-	/* since nodes only know about those public addresses that
-	   can be served by that particular node, no single node has
-	   a full list of all public addresses that exist in the cluster.
-	   Walk over all node structures and create a merged list of
-	   all public addresses that exist in the cluster.
-
-	   keep the tree of ips around as ctdb->ip_tree
-	*/
-	*all_ips_p = create_merged_ip_list(ctdb);
-
-        if (1 == ctdb->tunable.lcp2_public_ip_assignment) {
-		ip_alloc_lcp2(ctdb, ipflags, *all_ips_p, force_rebalance_nodes);
-	} else if (1 == ctdb->tunable.deterministic_public_ips) {
-		ip_alloc_deterministic_ips(ctdb, ipflags, *all_ips_p);
-	} else {
-		ip_alloc_nondeterministic_ips(ctdb, ipflags, *all_ips_p);
-	}
-
-	/* at this point ->pnn is the node which will own each IP
-	   or -1 if there is no node that can cover this ip
-	*/
-
-	return;
 }
 
 struct get_tunable_callback_data {
@@ -2210,7 +1447,7 @@ static void get_tunable_fail_callback(struct ctdb_context *ctdb, uint32_t pnn,
 
 static uint32_t *get_tunable_from_nodes(struct ctdb_context *ctdb,
 					TALLOC_CTX *tmp_ctx,
-					struct ctdb_node_map *nodemap,
+					struct ctdb_node_map_old *nodemap,
 					const char *tunable,
 					uint32_t default_value)
 {
@@ -2254,98 +1491,6 @@ static uint32_t *get_tunable_from_nodes(struct ctdb_context *ctdb,
 	return tvals;
 }
 
-struct get_runstate_callback_data {
-	enum ctdb_runstate *out;
-	bool fatal;
-};
-
-static void get_runstate_callback(struct ctdb_context *ctdb, uint32_t pnn,
-				  int32_t res, TDB_DATA outdata,
-				  void *callback_data)
-{
-	struct get_runstate_callback_data *cd =
-		(struct get_runstate_callback_data *)callback_data;
-	int size;
-
-	if (res != 0) {
-		/* Already handled in fail callback */
-		return;
-	}
-
-	if (outdata.dsize != sizeof(uint32_t)) {
-		DEBUG(DEBUG_ERR,("Wrong size of returned data when getting runstate from node %d. Expected %d bytes but received %d bytes\n",
-				 pnn, (int)sizeof(uint32_t),
-				 (int)outdata.dsize));
-		cd->fatal = true;
-		return;
-	}
-
-	size = talloc_array_length(cd->out);
-	if (pnn >= size) {
-		DEBUG(DEBUG_ERR,("Got reply from node %d but nodemap only has %d entries\n",
-				 pnn, size));
-		return;
-	}
-
-	cd->out[pnn] = (enum ctdb_runstate)*(uint32_t *)outdata.dptr;
-}
-
-static void get_runstate_fail_callback(struct ctdb_context *ctdb, uint32_t pnn,
-				       int32_t res, TDB_DATA outdata,
-				       void *callback)
-{
-	struct get_runstate_callback_data *cd =
-		(struct get_runstate_callback_data *)callback;
-
-	switch (res) {
-	case -ETIME:
-		DEBUG(DEBUG_ERR,
-		      ("Timed out getting runstate from node %d\n", pnn));
-		cd->fatal = true;
-		break;
-	default:
-		DEBUG(DEBUG_WARNING,
-		      ("Error getting runstate from node %d - assuming runstates not supported\n",
-		       pnn));
-	}
-}
-
-static enum ctdb_runstate * get_runstate_from_nodes(struct ctdb_context *ctdb,
-						    TALLOC_CTX *tmp_ctx,
-						    struct ctdb_node_map *nodemap,
-						    enum ctdb_runstate default_value)
-{
-	uint32_t *nodes;
-	enum ctdb_runstate *rs;
-	struct get_runstate_callback_data callback_data;
-	int i;
-
-	rs = talloc_array(tmp_ctx, enum ctdb_runstate, nodemap->num);
-	CTDB_NO_MEMORY_NULL(ctdb, rs);
-	for (i=0; i<nodemap->num; i++) {
-		rs[i] = default_value;
-	}
-
-	callback_data.out = rs;
-	callback_data.fatal = false;
-
-	nodes = list_of_connected_nodes(ctdb, nodemap, tmp_ctx, true);
-	if (ctdb_client_async_control(ctdb, CTDB_CONTROL_GET_RUNSTATE,
-				      nodes, 0, TAKEOVER_TIMEOUT(),
-				      true, tdb_null,
-				      get_runstate_callback,
-				      get_runstate_fail_callback,
-				      &callback_data) != 0) {
-		if (callback_data.fatal) {
-			free(rs);
-			rs = NULL;
-		}
-	}
-	talloc_free(nodes);
-
-	return rs;
-}
-
 /* Set internal flags for IP allocation:
  *   Clear ip flags
  *   Set NOIPTAKOVER ip flags from per-node NoIPTakeover tunable
@@ -2355,38 +1500,23 @@ static enum ctdb_runstate * get_runstate_from_nodes(struct ctdb_context *ctdb,
  *   else
  *     Set NOIPHOST ip flags for disabled nodes
  */
-static struct ctdb_ipflags *
-set_ipflags_internal(struct ctdb_context *ctdb,
-		     TALLOC_CTX *tmp_ctx,
-		     struct ctdb_node_map *nodemap,
-		     uint32_t *tval_noiptakeover,
-		     uint32_t *tval_noiphostonalldisabled,
-		     enum ctdb_runstate *runstate)
+static void set_ipflags_internal(struct ipalloc_state *ipalloc_state,
+				 struct ctdb_node_map_old *nodemap,
+				 uint32_t *tval_noiptakeover,
+				 uint32_t *tval_noiphostonalldisabled)
 {
 	int i;
-	struct ctdb_ipflags *ipflags;
-
-	/* Clear IP flags - implicit due to talloc_zero */
-	ipflags = talloc_zero_array(tmp_ctx, struct ctdb_ipflags, nodemap->num);
-	CTDB_NO_MEMORY_NULL(ctdb, ipflags);
 
 	for (i=0;i<nodemap->num;i++) {
 		/* Can not take IPs on node with NoIPTakeover set */
 		if (tval_noiptakeover[i] != 0) {
-			ipflags[i].noiptakeover = true;
+			ipalloc_state->noiptakeover[i] = true;
 		}
 
-		/* Can not host IPs on node not in RUNNING state */
-		if (runstate[i] != CTDB_RUNSTATE_RUNNING) {
-			ipflags[i].noiphost = true;
-			continue;
-		}
 		/* Can not host IPs on INACTIVE node */
 		if (nodemap->nodes[i].flags & NODE_FLAGS_INACTIVE) {
-			ipflags[i].noiphost = true;
+			ipalloc_state->noiphost[i] = true;
 		}
-		/* Remember the runstate */
-		ipflags[i].runstate = runstate[i];
 	}
 
 	if (all_nodes_are_disabled(nodemap)) {
@@ -2395,7 +1525,7 @@ set_ipflags_internal(struct ctdb_context *ctdb,
 		 */
 		for (i=0;i<nodemap->num;i++) {
 			if (tval_noiphostonalldisabled[i] != 0) {
-				ipflags[i].noiphost = true;
+				ipalloc_state->noiphost[i] = true;
 			}
 		}
 	} else {
@@ -2404,59 +1534,102 @@ set_ipflags_internal(struct ctdb_context *ctdb,
 		 */
 		for (i=0;i<nodemap->num;i++) {
 			if (nodemap->nodes[i].flags & NODE_FLAGS_DISABLED) {
-				ipflags[i].noiphost = true;
+				ipalloc_state->noiphost[i] = true;
 			}
 		}
 	}
-
-	return ipflags;
 }
 
-static struct ctdb_ipflags *set_ipflags(struct ctdb_context *ctdb,
-					TALLOC_CTX *tmp_ctx,
-					struct ctdb_node_map *nodemap)
+static bool set_ipflags(struct ctdb_context *ctdb,
+			struct ipalloc_state *ipalloc_state,
+			struct ctdb_node_map_old *nodemap)
 {
 	uint32_t *tval_noiptakeover;
 	uint32_t *tval_noiphostonalldisabled;
-	struct ctdb_ipflags *ipflags;
-	enum ctdb_runstate *runstate;
 
-
-	tval_noiptakeover = get_tunable_from_nodes(ctdb, tmp_ctx, nodemap,
+	tval_noiptakeover = get_tunable_from_nodes(ctdb, ipalloc_state, nodemap,
 						   "NoIPTakeover", 0);
 	if (tval_noiptakeover == NULL) {
-		return NULL;
+		return false;
 	}
 
 	tval_noiphostonalldisabled =
-		get_tunable_from_nodes(ctdb, tmp_ctx, nodemap,
+		get_tunable_from_nodes(ctdb, ipalloc_state, nodemap,
 				       "NoIPHostOnAllDisabled", 0);
 	if (tval_noiphostonalldisabled == NULL) {
 		/* Caller frees tmp_ctx */
-		return NULL;
+		return false;
 	}
 
-	/* Any nodes where CTDB_CONTROL_GET_RUNSTATE is not supported
-	 * will default to CTDB_RUNSTATE_RUNNING.  This ensures
-	 * reasonable behaviour on a mixed cluster during upgrade.
-	 */
-	runstate = get_runstate_from_nodes(ctdb, tmp_ctx, nodemap,
-					   CTDB_RUNSTATE_RUNNING);
-	if (runstate == NULL) {
-		/* Caller frees tmp_ctx */
-		return NULL;
-	}
-
-	ipflags = set_ipflags_internal(ctdb, tmp_ctx, nodemap,
-				       tval_noiptakeover,
-				       tval_noiphostonalldisabled,
-				       runstate);
+	set_ipflags_internal(ipalloc_state, nodemap,
+			     tval_noiptakeover,
+			     tval_noiphostonalldisabled);
 
 	talloc_free(tval_noiptakeover);
 	talloc_free(tval_noiphostonalldisabled);
-	talloc_free(runstate);
 
-	return ipflags;
+	return true;
+}
+
+static struct ipalloc_state * ipalloc_state_init(struct ctdb_context *ctdb,
+						 TALLOC_CTX *mem_ctx)
+{
+	struct ipalloc_state *ipalloc_state =
+		talloc_zero(mem_ctx, struct ipalloc_state);
+	if (ipalloc_state == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
+		return NULL;
+	}
+
+	ipalloc_state->num = ctdb->num_nodes;
+	ipalloc_state->known_public_ips =
+		talloc_zero_array(ipalloc_state,
+				  struct ctdb_public_ip_list_old *,
+				  ipalloc_state->num);
+	if (ipalloc_state->known_public_ips == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
+		talloc_free(ipalloc_state);
+		return NULL;
+	}
+	ipalloc_state->available_public_ips =
+		talloc_zero_array(ipalloc_state,
+				  struct ctdb_public_ip_list_old *,
+				  ipalloc_state->num);
+	if (ipalloc_state->available_public_ips == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
+		talloc_free(ipalloc_state);
+		return NULL;
+	}
+	ipalloc_state->noiptakeover =
+		talloc_zero_array(ipalloc_state,
+				  bool,
+				  ipalloc_state->num);
+	if (ipalloc_state->noiptakeover == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
+		talloc_free(ipalloc_state);
+		return NULL;
+	}
+	ipalloc_state->noiphost =
+		talloc_zero_array(ipalloc_state,
+				  bool,
+				  ipalloc_state->num);
+	if (ipalloc_state->noiphost == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
+		talloc_free(ipalloc_state);
+		return NULL;
+	}
+
+	if (1 == ctdb->tunable.lcp2_public_ip_assignment) {
+		ipalloc_state->algorithm = IPALLOC_LCP2;
+	} else if (1 == ctdb->tunable.deterministic_public_ips) {
+		ipalloc_state->algorithm = IPALLOC_DETERMINISTIC;
+	} else {
+		ipalloc_state->algorithm = IPALLOC_NONDETERMINISTIC;
+	}
+
+	ipalloc_state->no_ip_failback = ctdb->tunable.no_ip_failback;
+
+	return ipalloc_state;
 }
 
 struct iprealloc_callback_data {
@@ -2464,7 +1637,7 @@ struct iprealloc_callback_data {
 	int retry_count;
 	client_async_callback fail_callback;
 	void *fail_callback_data;
-	struct ctdb_node_map *nodemap;
+	struct ctdb_node_map_old *nodemap;
 };
 
 static void iprealloc_fail_callback(struct ctdb_context *ctdb, uint32_t pnn,
@@ -2525,7 +1698,7 @@ struct takeover_callback_data {
 	bool *node_failed;
 	client_async_callback fail_callback;
 	void *fail_callback_data;
-	struct ctdb_node_map *nodemap;
+	struct ctdb_node_map_old *nodemap;
 };
 
 static void takeover_run_fail_callback(struct ctdb_context *ctdb,
@@ -2556,22 +1729,47 @@ static void takeover_run_fail_callback(struct ctdb_context *ctdb,
 }
 
 /*
-  make any IP alias changes for public addresses that are necessary 
+ * Recalculate the allocation of public IPs to nodes and have the
+ * nodes host their allocated addresses.
+ *
+ * - Allocate memory for IP allocation state, including per node
+ *   arrays
+ * - Populate IP allocation algorithm in IP allocation state
+ * - Populate local value of tunable NoIPFailback in IP allocation
+     state - this is really a cluster-wide configuration variable and
+     only the value form the master node is used
+ * - Retrieve tunables NoIPTakeover and NoIPHostOnAllDisabled from all
+ *   connected nodes - this is done separately so tunable values can
+ *   be faked in unit testing
+ * - Populate NoIPTakover tunable in IP allocation state
+ * - Populate NoIPHost in IP allocation state, derived from node flags
+ *   and NoIPHostOnAllDisabled tunable
+ * - Retrieve and populate known and available IP lists in IP
+ *   allocation state
+ * - If no available IP addresses then early exit
+ * - Build list of (known IPs, currently assigned node)
+ * - Populate list of nodes to force rebalance - internal structure,
+ *   currently no way to fetch, only used by LCP2 for nodes that have
+ *   had new IP addresses added
+ * - Run IP allocation algorithm
+ * - Send RELEASE_IP to all nodes for IPs they should not host
+ * - Send TAKE_IP to all nodes for IPs they should host
+ * - Send IPREALLOCATED to all nodes (with backward compatibility hack)
  */
-int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map *nodemap,
+int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map_old *nodemap,
 		      uint32_t *force_rebalance_nodes,
 		      client_async_callback fail_callback, void *callback_data)
 {
 	int i, j, ret;
 	struct ctdb_public_ip ip;
 	uint32_t *nodes;
-	struct ctdb_public_ip_list *all_ips, *tmp_ip;
+	struct public_ip_list *all_ips, *tmp_ip;
 	TDB_DATA data;
 	struct timeval timeout;
 	struct client_async_data *async_data;
 	struct ctdb_client_control_state *state;
 	TALLOC_CTX *tmp_ctx = talloc_new(ctdb);
-	struct ctdb_ipflags *ipflags;
+	struct ipalloc_state *ipalloc_state;
 	struct takeover_callback_data *takeover_data;
 	struct iprealloc_callback_data iprealloc_data;
 	bool *retry_data;
@@ -2585,18 +1783,29 @@ int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map *nodemap,
 		goto ipreallocated;
 	}
 
-	ipflags = set_ipflags(ctdb, tmp_ctx, nodemap);
-	if (ipflags == NULL) {
+	ipalloc_state = ipalloc_state_init(ctdb, tmp_ctx);
+	if (ipalloc_state == NULL) {
+		talloc_free(tmp_ctx);
+		return -1;
+	}
+
+	if (!set_ipflags(ctdb, ipalloc_state, nodemap)) {
 		DEBUG(DEBUG_ERR,("Failed to set IP flags - aborting takeover run\n"));
 		talloc_free(tmp_ctx);
 		return -1;
 	}
 
-	/* Short-circuit IP allocation if no nodes are in the RUNNING
-	 * runstate yet, since no nodes will be able to host IPs */
+	/* Fetch known/available public IPs from each active node */
+	ret = ctdb_reload_remote_public_ips(ctdb, ipalloc_state, nodemap);
+	if (ret != 0) {
+		talloc_free(tmp_ctx);
+		return -1;
+	}
+
+	/* Short-circuit IP allocation if no node has available IPs */
 	can_host_ips = false;
-	for (i=0; i<nodemap->num; i++) {
-		if (ipflags[i].runstate == CTDB_RUNSTATE_RUNNING) {
+	for (i=0; i < ipalloc_state->num; i++) {
+		if (ipalloc_state->available_public_ips[i] != NULL) {
 			can_host_ips = true;
 		}
 	}
@@ -2605,8 +1814,21 @@ int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map *nodemap,
 		return 0;
 	}
 
+	/* since nodes only know about those public addresses that
+	   can be served by that particular node, no single node has
+	   a full list of all public addresses that exist in the cluster.
+	   Walk over all node structures and create a merged list of
+	   all public addresses that exist in the cluster.
+
+	   keep the tree of ips around as ctdb->ip_tree
+	*/
+	all_ips = create_merged_ip_list(ctdb, ipalloc_state);
+	ipalloc_state->all_ips = all_ips;
+
+	ipalloc_state->force_rebalance_nodes = force_rebalance_nodes;
+
 	/* Do the IP reassignment calculations */
-	ctdb_takeover_run_core(ctdb, ipflags, &all_ips, force_rebalance_nodes);
+	ipalloc(ipalloc_state);
 
 	/* Now tell all nodes to release any public IPs should not
 	 * host.  This will be a NOOP on nodes that don't currently
@@ -2645,7 +1867,7 @@ int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map *nodemap,
 		for (tmp_ip=all_ips;tmp_ip;tmp_ip=tmp_ip->next) {
 			if (tmp_ip->pnn == nodemap->nodes[i].pnn) {
 				/* This node should be serving this
-				   vnn so dont tell it to release the ip
+				   vnn so don't tell it to release the ip
 				*/
 				continue;
 			}
@@ -2799,10 +2021,10 @@ static int ctdb_client_ip_destructor(struct ctdb_client_ip *ip)
 int32_t ctdb_control_tcp_client(struct ctdb_context *ctdb, uint32_t client_id,
 				TDB_DATA indata)
 {
-	struct ctdb_client *client = ctdb_reqid_find(ctdb, client_id, struct ctdb_client);
-	struct ctdb_control_tcp_addr *tcp_sock = NULL;
+	struct ctdb_client *client = reqid_find(ctdb->idr, client_id, struct ctdb_client);
+	struct ctdb_connection *tcp_sock = NULL;
 	struct ctdb_tcp_list *tcp;
-	struct ctdb_tcp_connection t;
+	struct ctdb_connection t;
 	int ret;
 	TDB_DATA data;
 	struct ctdb_client_ip *ip;
@@ -2814,15 +2036,15 @@ int32_t ctdb_control_tcp_client(struct ctdb_context *ctdb, uint32_t client_id,
 		return 0;
 	}
 
-	tcp_sock = (struct ctdb_control_tcp_addr *)indata.dptr;
+	tcp_sock = (struct ctdb_connection *)indata.dptr;
 
 	addr = tcp_sock->src;
 	ctdb_canonicalize_ip(&addr,  &tcp_sock->src);
-	addr = tcp_sock->dest;
-	ctdb_canonicalize_ip(&addr, &tcp_sock->dest);
+	addr = tcp_sock->dst;
+	ctdb_canonicalize_ip(&addr, &tcp_sock->dst);
 
 	ZERO_STRUCT(addr);
-	memcpy(&addr, &tcp_sock->dest, sizeof(addr));
+	memcpy(&addr, &tcp_sock->dst, sizeof(addr));
 	vnn = find_public_ip_vnn(ctdb, &addr);
 	if (vnn == NULL) {
 		switch (addr.sa.sa_family) {
@@ -2863,13 +2085,13 @@ int32_t ctdb_control_tcp_client(struct ctdb_context *ctdb, uint32_t client_id,
 	tcp = talloc(client, struct ctdb_tcp_list);
 	CTDB_NO_MEMORY(ctdb, tcp);
 
-	tcp->connection.src_addr = tcp_sock->src;
-	tcp->connection.dst_addr = tcp_sock->dest;
+	tcp->connection.src = tcp_sock->src;
+	tcp->connection.dst = tcp_sock->dst;
 
 	DLIST_ADD(client->tcp_list, tcp);
 
-	t.src_addr = tcp_sock->src;
-	t.dst_addr = tcp_sock->dest;
+	t.src = tcp_sock->src;
+	t.dst = tcp_sock->dst;
 
 	data.dptr = (uint8_t *)&t;
 	data.dsize = sizeof(t);
@@ -2877,13 +2099,13 @@ int32_t ctdb_control_tcp_client(struct ctdb_context *ctdb, uint32_t client_id,
 	switch (addr.sa.sa_family) {
 	case AF_INET:
 		DEBUG(DEBUG_INFO,("registered tcp client for %u->%s:%u (client_id %u pid %u)\n",
-			(unsigned)ntohs(tcp_sock->dest.ip.sin_port), 
+			(unsigned)ntohs(tcp_sock->dst.ip.sin_port),
 			ctdb_addr_to_str(&tcp_sock->src),
 			(unsigned)ntohs(tcp_sock->src.ip.sin_port), client_id, client->pid));
 		break;
 	case AF_INET6:
 		DEBUG(DEBUG_INFO,("registered tcp client for %u->%s:%u (client_id %u pid %u)\n",
-			(unsigned)ntohs(tcp_sock->dest.ip6.sin6_port), 
+			(unsigned)ntohs(tcp_sock->dst.ip6.sin6_port),
 			ctdb_addr_to_str(&tcp_sock->src),
 			(unsigned)ntohs(tcp_sock->src.ip6.sin6_port), client_id, client->pid));
 		break;
@@ -2907,8 +2129,8 @@ int32_t ctdb_control_tcp_client(struct ctdb_context *ctdb, uint32_t client_id,
 /*
   find a tcp address on a list
  */
-static struct ctdb_tcp_connection *ctdb_tcp_find(struct ctdb_tcp_array *array, 
-					   struct ctdb_tcp_connection *tcp)
+static struct ctdb_connection *ctdb_tcp_find(struct ctdb_tcp_array *array,
+					   struct ctdb_connection *tcp)
 {
 	int i;
 
@@ -2917,8 +2139,8 @@ static struct ctdb_tcp_connection *ctdb_tcp_find(struct ctdb_tcp_array *array,
 	}
 
 	for (i=0;i<array->num;i++) {
-		if (ctdb_same_sockaddr(&array->connections[i].src_addr, &tcp->src_addr) &&
-		    ctdb_same_sockaddr(&array->connections[i].dst_addr, &tcp->dst_addr)) {
+		if (ctdb_same_sockaddr(&array->connections[i].src, &tcp->src) &&
+		    ctdb_same_sockaddr(&array->connections[i].dst, &tcp->dst)) {
 			return &array->connections[i];
 		}
 	}
@@ -2934,9 +2156,9 @@ static struct ctdb_tcp_connection *ctdb_tcp_find(struct ctdb_tcp_array *array,
  */
 int32_t ctdb_control_tcp_add(struct ctdb_context *ctdb, TDB_DATA indata, bool tcp_update_needed)
 {
-	struct ctdb_tcp_connection *p = (struct ctdb_tcp_connection *)indata.dptr;
+	struct ctdb_connection *p = (struct ctdb_connection *)indata.dptr;
 	struct ctdb_tcp_array *tcparray;
-	struct ctdb_tcp_connection tcp;
+	struct ctdb_connection tcp;
 	struct ctdb_vnn *vnn;
 
 	/* If we don't have public IPs, tickles are useless */
@@ -2944,10 +2166,10 @@ int32_t ctdb_control_tcp_add(struct ctdb_context *ctdb, TDB_DATA indata, bool tc
 		return 0;
 	}
 
-	vnn = find_public_ip_vnn(ctdb, &p->dst_addr);
+	vnn = find_public_ip_vnn(ctdb, &p->dst);
 	if (vnn == NULL) {
 		DEBUG(DEBUG_INFO,(__location__ " got TCP_ADD control for an address which is not a public address '%s'\n",
-			ctdb_addr_to_str(&p->dst_addr)));
+			ctdb_addr_to_str(&p->dst)));
 
 		return -1;
 	}
@@ -2962,11 +2184,11 @@ int32_t ctdb_control_tcp_add(struct ctdb_context *ctdb, TDB_DATA indata, bool tc
 		vnn->tcp_array = tcparray;
 
 		tcparray->num = 0;
-		tcparray->connections = talloc_size(tcparray, sizeof(struct ctdb_tcp_connection));
+		tcparray->connections = talloc_size(tcparray, sizeof(struct ctdb_connection));
 		CTDB_NO_MEMORY(ctdb, tcparray->connections);
 
-		tcparray->connections[tcparray->num].src_addr = p->src_addr;
-		tcparray->connections[tcparray->num].dst_addr = p->dst_addr;
+		tcparray->connections[tcparray->num].src = p->src;
+		tcparray->connections[tcparray->num].dst = p->dst;
 		tcparray->num++;
 
 		if (tcp_update_needed) {
@@ -2977,29 +2199,29 @@ int32_t ctdb_control_tcp_add(struct ctdb_context *ctdb, TDB_DATA indata, bool tc
 
 
 	/* Do we already have this tickle ?*/
-	tcp.src_addr = p->src_addr;
-	tcp.dst_addr = p->dst_addr;
+	tcp.src = p->src;
+	tcp.dst = p->dst;
 	if (ctdb_tcp_find(tcparray, &tcp) != NULL) {
 		DEBUG(DEBUG_DEBUG,("Already had tickle info for %s:%u for vnn:%u\n",
-			ctdb_addr_to_str(&tcp.dst_addr),
-			ntohs(tcp.dst_addr.ip.sin_port),
+			ctdb_addr_to_str(&tcp.dst),
+			ntohs(tcp.dst.ip.sin_port),
 			vnn->pnn));
 		return 0;
 	}
 
 	/* A new tickle, we must add it to the array */
 	tcparray->connections = talloc_realloc(tcparray, tcparray->connections,
-					struct ctdb_tcp_connection,
+					struct ctdb_connection,
 					tcparray->num+1);
 	CTDB_NO_MEMORY(ctdb, tcparray->connections);
 
-	tcparray->connections[tcparray->num].src_addr = p->src_addr;
-	tcparray->connections[tcparray->num].dst_addr = p->dst_addr;
+	tcparray->connections[tcparray->num].src = p->src;
+	tcparray->connections[tcparray->num].dst = p->dst;
 	tcparray->num++;
 
 	DEBUG(DEBUG_INFO,("Added tickle info for %s:%u from vnn %u\n",
-		ctdb_addr_to_str(&tcp.dst_addr),
-		ntohs(tcp.dst_addr.ip.sin_port),
+		ctdb_addr_to_str(&tcp.dst),
+		ntohs(tcp.dst.ip.sin_port),
 		vnn->pnn));
 
 	if (tcp_update_needed) {
@@ -3010,41 +2232,33 @@ int32_t ctdb_control_tcp_add(struct ctdb_context *ctdb, TDB_DATA indata, bool tc
 }
 
 
-/*
-  called by a daemon to inform us of a TCP connection that one of its
-  clients managing that should tickled with an ACK when IP takeover is
-  done
- */
-static void ctdb_remove_tcp_connection(struct ctdb_context *ctdb, struct ctdb_tcp_connection *conn)
+static void ctdb_remove_connection(struct ctdb_vnn *vnn, struct ctdb_connection *conn)
 {
-	struct ctdb_tcp_connection *tcpp;
-	struct ctdb_vnn *vnn = find_public_ip_vnn(ctdb, &conn->dst_addr);
+	struct ctdb_connection *tcpp;
 
 	if (vnn == NULL) {
-		DEBUG(DEBUG_ERR,(__location__ " unable to find public address %s\n",
-			ctdb_addr_to_str(&conn->dst_addr)));
 		return;
 	}
 
 	/* if the array is empty we cant remove it
-	   and we dont need to do anything
+	   and we don't need to do anything
 	 */
 	if (vnn->tcp_array == NULL) {
 		DEBUG(DEBUG_INFO,("Trying to remove tickle that doesnt exist (array is empty) %s:%u\n",
-			ctdb_addr_to_str(&conn->dst_addr),
-			ntohs(conn->dst_addr.ip.sin_port)));
+			ctdb_addr_to_str(&conn->dst),
+			ntohs(conn->dst.ip.sin_port)));
 		return;
 	}
 
 
 	/* See if we know this connection
-	   if we dont know this connection  then we dont need to do anything
+	   if we don't know this connection  then we dont need to do anything
 	 */
 	tcpp = ctdb_tcp_find(vnn->tcp_array, conn);
 	if (tcpp == NULL) {
 		DEBUG(DEBUG_INFO,("Trying to remove tickle that doesnt exist %s:%u\n",
-			ctdb_addr_to_str(&conn->dst_addr),
-			ntohs(conn->dst_addr.ip.sin_port)));
+			ctdb_addr_to_str(&conn->dst),
+			ntohs(conn->dst.ip.sin_port)));
 		return;
 	}
 
@@ -3068,8 +2282,8 @@ static void ctdb_remove_tcp_connection(struct ctdb_context *ctdb, struct ctdb_tc
 	vnn->tcp_update_needed = true;
 
 	DEBUG(DEBUG_INFO,("Removed tickle info for %s:%u\n",
-		ctdb_addr_to_str(&conn->src_addr),
-		ntohs(conn->src_addr.ip.sin_port)));
+		ctdb_addr_to_str(&conn->src),
+		ntohs(conn->src.ip.sin_port)));
 }
 
 
@@ -3079,14 +2293,23 @@ static void ctdb_remove_tcp_connection(struct ctdb_context *ctdb, struct ctdb_tc
  */
 int32_t ctdb_control_tcp_remove(struct ctdb_context *ctdb, TDB_DATA indata)
 {
-	struct ctdb_tcp_connection *conn = (struct ctdb_tcp_connection *)indata.dptr;
+	struct ctdb_vnn *vnn;
+	struct ctdb_connection *conn = (struct ctdb_connection *)indata.dptr;
 
 	/* If we don't have public IPs, tickles are useless */
 	if (ctdb->vnn == NULL) {
 		return 0;
 	}
 
-	ctdb_remove_tcp_connection(ctdb, conn);
+	vnn = find_public_ip_vnn(ctdb, &conn->dst);
+	if (vnn == NULL) {
+		DEBUG(DEBUG_ERR,
+		      (__location__ " unable to find public address %s\n",
+		       ctdb_addr_to_str(&conn->dst)));
+		return 0;
+	}
+
+	ctdb_remove_connection(vnn, conn);
 
 	return 0;
 }
@@ -3121,9 +2344,32 @@ int32_t ctdb_control_startup(struct ctdb_context *ctdb, uint32_t pnn)
 void ctdb_takeover_client_destructor_hook(struct ctdb_client *client)
 {
 	while (client->tcp_list) {
+		struct ctdb_vnn *vnn;
 		struct ctdb_tcp_list *tcp = client->tcp_list;
+		struct ctdb_connection *conn = &tcp->connection;
+
 		DLIST_REMOVE(client->tcp_list, tcp);
-		ctdb_remove_tcp_connection(client->ctdb, &tcp->connection);
+
+		vnn = find_public_ip_vnn(client->ctdb,
+					 &conn->dst);
+		if (vnn == NULL) {
+			DEBUG(DEBUG_ERR,
+			      (__location__ " unable to find public address %s\n",
+			       ctdb_addr_to_str(&conn->dst)));
+			continue;
+		}
+
+		/* If the IP address is hosted on this node then
+		 * remove the connection. */
+		if (vnn->pnn == client->ctdb->pnn) {
+			ctdb_remove_connection(vnn, conn);
+		}
+
+		/* Otherwise this function has been called because the
+		 * server IP address has been released to another node
+		 * and the client has exited.  This means that we
+		 * should not delete the connection information.  The
+		 * takeover node processes connections too. */
 	}
 }
 
@@ -3183,10 +2429,10 @@ void ctdb_release_all_ips(struct ctdb_context *ctdb)
   get list of public IPs
  */
 int32_t ctdb_control_get_public_ips(struct ctdb_context *ctdb, 
-				    struct ctdb_req_control *c, TDB_DATA *outdata)
+				    struct ctdb_req_control_old *c, TDB_DATA *outdata)
 {
 	int i, num, len;
-	struct ctdb_all_public_ips *ips;
+	struct ctdb_public_ip_list_old *ips;
 	struct ctdb_vnn *vnn;
 	bool only_available = false;
 
@@ -3200,7 +2446,7 @@ int32_t ctdb_control_get_public_ips(struct ctdb_context *ctdb,
 		num++;
 	}
 
-	len = offsetof(struct ctdb_all_public_ips, ips) + 
+	len = offsetof(struct ctdb_public_ip_list_old, ips) +
 		num*sizeof(struct ctdb_public_ip);
 	ips = talloc_zero_size(outdata, len);
 	CTDB_NO_MEMORY(ctdb, ips);
@@ -3215,7 +2461,7 @@ int32_t ctdb_control_get_public_ips(struct ctdb_context *ctdb,
 		i++;
 	}
 	ips->num = i;
-	len = offsetof(struct ctdb_all_public_ips, ips) +
+	len = offsetof(struct ctdb_public_ip_list_old, ips) +
 		i*sizeof(struct ctdb_public_ip);
 
 	outdata->dsize = len;
@@ -3226,13 +2472,13 @@ int32_t ctdb_control_get_public_ips(struct ctdb_context *ctdb,
 
 
 int32_t ctdb_control_get_public_ip_info(struct ctdb_context *ctdb,
-					struct ctdb_req_control *c,
+					struct ctdb_req_control_old *c,
 					TDB_DATA indata,
 					TDB_DATA *outdata)
 {
 	int i, num, len;
 	ctdb_sock_addr *addr;
-	struct ctdb_control_public_ip_info *info;
+	struct ctdb_public_ip_info_old *info;
 	struct ctdb_vnn *vnn;
 
 	addr = (ctdb_sock_addr *)indata.dptr;
@@ -3259,8 +2505,8 @@ int32_t ctdb_control_get_public_ip_info(struct ctdb_context *ctdb,
 		num++;
 	}
 
-	len = offsetof(struct ctdb_control_public_ip_info, ifaces) +
-		num*sizeof(struct ctdb_control_iface_info);
+	len = offsetof(struct ctdb_public_ip_info_old, ifaces) +
+		num*sizeof(struct ctdb_iface);
 	info = talloc_zero_size(outdata, len);
 	CTDB_NO_MEMORY(ctdb, info);
 
@@ -3269,7 +2515,7 @@ int32_t ctdb_control_get_public_ip_info(struct ctdb_context *ctdb,
 	info->active_idx = 0xFFFFFFFF;
 
 	for (i=0; vnn->ifaces[i]; i++) {
-		struct ctdb_iface *cur;
+		struct ctdb_interface *cur;
 
 		cur = ctdb_find_iface(ctdb, vnn->ifaces[i]);
 		if (cur == NULL) {
@@ -3285,8 +2531,8 @@ int32_t ctdb_control_get_public_ip_info(struct ctdb_context *ctdb,
 		info->ifaces[i].references = cur->references;
 	}
 	info->num = i;
-	len = offsetof(struct ctdb_control_public_ip_info, ifaces) +
-		i*sizeof(struct ctdb_control_iface_info);
+	len = offsetof(struct ctdb_public_ip_info_old, ifaces) +
+		i*sizeof(struct ctdb_iface);
 
 	outdata->dsize = len;
 	outdata->dptr  = (uint8_t *)info;
@@ -3295,12 +2541,12 @@ int32_t ctdb_control_get_public_ip_info(struct ctdb_context *ctdb,
 }
 
 int32_t ctdb_control_get_ifaces(struct ctdb_context *ctdb,
-				struct ctdb_req_control *c,
+				struct ctdb_req_control_old *c,
 				TDB_DATA *outdata)
 {
 	int i, num, len;
-	struct ctdb_control_get_ifaces *ifaces;
-	struct ctdb_iface *cur;
+	struct ctdb_iface_list_old *ifaces;
+	struct ctdb_interface *cur;
 
 	/* count how many public ip structures we have */
 	num = 0;
@@ -3308,8 +2554,8 @@ int32_t ctdb_control_get_ifaces(struct ctdb_context *ctdb,
 		num++;
 	}
 
-	len = offsetof(struct ctdb_control_get_ifaces, ifaces) +
-		num*sizeof(struct ctdb_control_iface_info);
+	len = offsetof(struct ctdb_iface_list_old, ifaces) +
+		num*sizeof(struct ctdb_iface);
 	ifaces = talloc_zero_size(outdata, len);
 	CTDB_NO_MEMORY(ctdb, ifaces);
 
@@ -3321,8 +2567,8 @@ int32_t ctdb_control_get_ifaces(struct ctdb_context *ctdb,
 		i++;
 	}
 	ifaces->num = i;
-	len = offsetof(struct ctdb_control_get_ifaces, ifaces) +
-		i*sizeof(struct ctdb_control_iface_info);
+	len = offsetof(struct ctdb_iface_list_old, ifaces) +
+		i*sizeof(struct ctdb_iface);
 
 	outdata->dsize = len;
 	outdata->dptr  = (uint8_t *)ifaces;
@@ -3331,14 +2577,14 @@ int32_t ctdb_control_get_ifaces(struct ctdb_context *ctdb,
 }
 
 int32_t ctdb_control_set_iface_link(struct ctdb_context *ctdb,
-				    struct ctdb_req_control *c,
+				    struct ctdb_req_control_old *c,
 				    TDB_DATA indata)
 {
-	struct ctdb_control_iface_info *info;
-	struct ctdb_iface *iface;
+	struct ctdb_iface *info;
+	struct ctdb_interface *iface;
 	bool link_up = false;
 
-	info = (struct ctdb_control_iface_info *)indata.dptr;
+	info = (struct ctdb_iface *)indata.dptr;
 
 	if (info->name[CTDB_IFACE_SIZE] != '\0') {
 		int len = strnlen(info->name, CTDB_IFACE_SIZE);
@@ -3394,7 +2640,7 @@ struct ctdb_kill_tcp {
 	struct ctdb_vnn *vnn;
 	struct ctdb_context *ctdb;
 	int capture_fd;
-	struct fd_event *fde;
+	struct tevent_fd *fde;
 	trbt_tree_t *connections;
 	void *private_data;
 };
@@ -3461,7 +2707,8 @@ static uint32_t *killtcp_key(ctdb_sock_addr *src, ctdb_sock_addr *dst)
 /*
   called when we get a read event on the raw socket
  */
-static void capture_tcp_handler(struct event_context *ev, struct fd_event *fde, 
+static void capture_tcp_handler(struct tevent_context *ev,
+				struct tevent_fd *fde,
 				uint16_t flags, void *private_data)
 {
 	struct ctdb_kill_tcp *killtcp = talloc_get_type(private_data, struct ctdb_kill_tcp);
@@ -3469,7 +2716,7 @@ static void capture_tcp_handler(struct event_context *ev, struct fd_event *fde,
 	ctdb_sock_addr src, dst;
 	uint32_t ack_seq, seq;
 
-	if (!(flags & EVENT_FD_READ)) {
+	if (!(flags & TEVENT_FD_READ)) {
 		return;
 	}
 
@@ -3533,7 +2780,8 @@ static int tickle_connection_traverse(void *param, void *data)
 /* 
    called every second until all sentenced connections have been reset
  */
-static void ctdb_tickle_sentenced_connections(struct event_context *ev, struct timed_event *te, 
+static void ctdb_tickle_sentenced_connections(struct tevent_context *ev,
+					      struct tevent_timer *te,
 					      struct timeval t, void *private_data)
 {
 	struct ctdb_kill_tcp *killtcp = talloc_get_type(private_data, struct ctdb_kill_tcp);
@@ -3556,8 +2804,9 @@ static void ctdb_tickle_sentenced_connections(struct event_context *ev, struct t
 
 	/* try tickling them again in a seconds time
 	 */
-	event_add_timed(killtcp->ctdb->ev, killtcp, timeval_current_ofs(1, 0), 
-			ctdb_tickle_sentenced_connections, killtcp);
+	tevent_add_timer(killtcp->ctdb->ev, killtcp,
+			 timeval_current_ofs(1, 0),
+			 ctdb_tickle_sentenced_connections, killtcp);
 }
 
 /*
@@ -3591,7 +2840,7 @@ static int ctdb_killtcp_destructor(struct ctdb_kill_tcp *killtcp)
 /* nothing fancy here, just unconditionally replace any existing
    connection structure with the new one.
 
-   dont even free the old one if it did exist, that one is talloc_stolen
+   don't even free the old one if it did exist, that one is talloc_stolen
    by the same node in the tree anyway and will be deleted when the new data 
    is deleted
 */
@@ -3668,7 +2917,7 @@ static int ctdb_killtcp_add_connection(struct ctdb_context *ctdb,
 			add_killtcp_callback, con);
 
 	/* 
-	   If we dont have a socket to listen on yet we must create it
+	   If we don't have a socket to listen on yet we must create it
 	 */
 	if (killtcp->capture_fd == -1) {
 		const char *iface = ctdb_vnn_iface_string(vnn);
@@ -3683,16 +2932,17 @@ static int ctdb_killtcp_add_connection(struct ctdb_context *ctdb,
 
 
 	if (killtcp->fde == NULL) {
-		killtcp->fde = event_add_fd(ctdb->ev, killtcp, killtcp->capture_fd, 
-					    EVENT_FD_READ,
-					    capture_tcp_handler, killtcp);
+		killtcp->fde = tevent_add_fd(ctdb->ev, killtcp,
+					     killtcp->capture_fd,
+					     TEVENT_FD_READ,
+					     capture_tcp_handler, killtcp);
 		tevent_fd_set_auto_close(killtcp->fde);
 
 		/* We also need to set up some events to tickle all these connections
 		   until they are all reset
 		*/
-		event_add_timed(ctdb->ev, killtcp, timeval_current_ofs(1, 0), 
-				ctdb_tickle_sentenced_connections, killtcp);
+		tevent_add_timer(ctdb->ev, killtcp, timeval_current_ofs(1, 0),
+				 ctdb_tickle_sentenced_connections, killtcp);
 	}
 
 	/* tickle him once now */
@@ -3714,9 +2964,9 @@ failed:
  */
 int32_t ctdb_control_kill_tcp(struct ctdb_context *ctdb, TDB_DATA indata)
 {
-	struct ctdb_control_killtcp *killtcp = (struct ctdb_control_killtcp *)indata.dptr;
+	struct ctdb_connection *killtcp = (struct ctdb_connection *)indata.dptr;
 
-	return ctdb_killtcp_add_connection(ctdb, &killtcp->src_addr, &killtcp->dst_addr);
+	return ctdb_killtcp_add_connection(ctdb, &killtcp->src, &killtcp->dst);
 }
 
 /*
@@ -3727,25 +2977,22 @@ int32_t ctdb_control_kill_tcp(struct ctdb_context *ctdb, TDB_DATA indata)
  */
 int32_t ctdb_control_set_tcp_tickle_list(struct ctdb_context *ctdb, TDB_DATA indata)
 {
-	struct ctdb_control_tcp_tickle_list *list = (struct ctdb_control_tcp_tickle_list *)indata.dptr;
+	struct ctdb_tickle_list_old *list = (struct ctdb_tickle_list_old *)indata.dptr;
 	struct ctdb_tcp_array *tcparray;
 	struct ctdb_vnn *vnn;
 
 	/* We must at least have tickles.num or else we cant verify the size
 	   of the received data blob
 	 */
-	if (indata.dsize < offsetof(struct ctdb_control_tcp_tickle_list, 
-					tickles.connections)) {
-		DEBUG(DEBUG_ERR,("Bad indata in ctdb_control_set_tcp_tickle_list. Not enough data for the tickle.num field\n"));
+	if (indata.dsize < offsetof(struct ctdb_tickle_list_old, connections)) {
+		DEBUG(DEBUG_ERR,("Bad indata in ctdb_tickle_list. Not enough data for the tickle.num field\n"));
 		return -1;
 	}
 
 	/* verify that the size of data matches what we expect */
-	if (indata.dsize < offsetof(struct ctdb_control_tcp_tickle_list, 
-				tickles.connections)
-			 + sizeof(struct ctdb_tcp_connection)
-				 * list->tickles.num) {
-		DEBUG(DEBUG_ERR,("Bad indata in ctdb_control_set_tcp_tickle_list\n"));
+	if (indata.dsize < offsetof(struct ctdb_tickle_list_old, connections)
+			 + sizeof(struct ctdb_connection) * list->num) {
+		DEBUG(DEBUG_ERR,("Bad indata in ctdb_tickle_list\n"));
 		return -1;
 	}
 
@@ -3760,6 +3007,13 @@ int32_t ctdb_control_set_tcp_tickle_list(struct ctdb_context *ctdb, TDB_DATA ind
 		return 1;
 	}
 
+	if (vnn->pnn == ctdb->pnn) {
+		DEBUG(DEBUG_INFO,
+		      ("Ignoring redundant set tcp tickle list, this node hosts '%s'\n",
+		       ctdb_addr_to_str(&list->addr)));
+		return 0;
+	}
+
 	/* remove any old ticklelist we might have */
 	talloc_free(vnn->tcp_array);
 	vnn->tcp_array = NULL;
@@ -3767,13 +3021,13 @@ int32_t ctdb_control_set_tcp_tickle_list(struct ctdb_context *ctdb, TDB_DATA ind
 	tcparray = talloc(vnn, struct ctdb_tcp_array);
 	CTDB_NO_MEMORY(ctdb, tcparray);
 
-	tcparray->num = list->tickles.num;
+	tcparray->num = list->num;
 
-	tcparray->connections = talloc_array(tcparray, struct ctdb_tcp_connection, tcparray->num);
+	tcparray->connections = talloc_array(tcparray, struct ctdb_connection, tcparray->num);
 	CTDB_NO_MEMORY(ctdb, tcparray->connections);
 
-	memcpy(tcparray->connections, &list->tickles.connections[0],
-	       sizeof(struct ctdb_tcp_connection)*tcparray->num);
+	memcpy(tcparray->connections, &list->connections[0],
+	       sizeof(struct ctdb_connection)*tcparray->num);
 
 	/* We now have a new fresh tickle list array for this vnn */
 	vnn->tcp_array = tcparray;
@@ -3788,7 +3042,7 @@ int32_t ctdb_control_set_tcp_tickle_list(struct ctdb_context *ctdb, TDB_DATA ind
 int32_t ctdb_control_get_tcp_tickle_list(struct ctdb_context *ctdb, TDB_DATA indata, TDB_DATA *outdata)
 {
 	ctdb_sock_addr *addr = (ctdb_sock_addr *)indata.dptr;
-	struct ctdb_control_tcp_tickle_list *list;
+	struct ctdb_tickle_list_old *list;
 	struct ctdb_tcp_array *tcparray;
 	int num;
 	struct ctdb_vnn *vnn;
@@ -3808,19 +3062,18 @@ int32_t ctdb_control_get_tcp_tickle_list(struct ctdb_context *ctdb, TDB_DATA ind
 		num = 0;
 	}
 
-	outdata->dsize = offsetof(struct ctdb_control_tcp_tickle_list, 
-				tickles.connections)
-			+ sizeof(struct ctdb_tcp_connection) * num;
+	outdata->dsize = offsetof(struct ctdb_tickle_list_old, connections)
+			+ sizeof(struct ctdb_connection) * num;
 
 	outdata->dptr  = talloc_size(outdata, outdata->dsize);
 	CTDB_NO_MEMORY(ctdb, outdata->dptr);
-	list = (struct ctdb_control_tcp_tickle_list *)outdata->dptr;
+	list = (struct ctdb_tickle_list_old *)outdata->dptr;
 
 	list->addr = *addr;
-	list->tickles.num = num;
+	list->num = num;
 	if (num) {
-		memcpy(&list->tickles.connections[0], tcparray->connections, 
-			sizeof(struct ctdb_tcp_connection) * num);
+		memcpy(&list->connections[0], tcparray->connections,
+			sizeof(struct ctdb_connection) * num);
 	}
 
 	return 0;
@@ -3836,7 +3089,7 @@ static int ctdb_send_set_tcp_tickles_for_ip(struct ctdb_context *ctdb,
 {
 	int ret, num;
 	TDB_DATA data;
-	struct ctdb_control_tcp_tickle_list *list;
+	struct ctdb_tickle_list_old *list;
 
 	if (tcparray) {
 		num = tcparray->num;
@@ -3844,17 +3097,16 @@ static int ctdb_send_set_tcp_tickles_for_ip(struct ctdb_context *ctdb,
 		num = 0;
 	}
 
-	data.dsize = offsetof(struct ctdb_control_tcp_tickle_list, 
-				tickles.connections) +
-			sizeof(struct ctdb_tcp_connection) * num;
+	data.dsize = offsetof(struct ctdb_tickle_list_old, connections) +
+			sizeof(struct ctdb_connection) * num;
 	data.dptr = talloc_size(ctdb, data.dsize);
 	CTDB_NO_MEMORY(ctdb, data.dptr);
 
-	list = (struct ctdb_control_tcp_tickle_list *)data.dptr;
+	list = (struct ctdb_tickle_list_old *)data.dptr;
 	list->addr = *addr;
-	list->tickles.num = num;
+	list->num = num;
 	if (tcparray) {
-		memcpy(&list->tickles.connections[0], tcparray->connections, sizeof(struct ctdb_tcp_connection) * num);
+		memcpy(&list->connections[0], tcparray->connections, sizeof(struct ctdb_connection) * num);
 	}
 
 	ret = ctdb_daemon_send_control(ctdb, CTDB_BROADCAST_ALL, 0,
@@ -3874,9 +3126,9 @@ static int ctdb_send_set_tcp_tickles_for_ip(struct ctdb_context *ctdb,
 /*
   perform tickle updates if required
  */
-static void ctdb_update_tcp_tickles(struct event_context *ev, 
-				struct timed_event *te, 
-				struct timeval t, void *private_data)
+static void ctdb_update_tcp_tickles(struct tevent_context *ev,
+				    struct tevent_timer *te,
+				    struct timeval t, void *private_data)
 {
 	struct ctdb_context *ctdb = talloc_get_type(private_data, struct ctdb_context);
 	int ret;
@@ -3907,11 +3159,10 @@ static void ctdb_update_tcp_tickles(struct event_context *ev,
 		}
 	}
 
-	event_add_timed(ctdb->ev, ctdb->tickle_update_context,
-			     timeval_current_ofs(ctdb->tunable.tickle_update_interval, 0), 
-			     ctdb_update_tcp_tickles, ctdb);
-}		
-	
+	tevent_add_timer(ctdb->ev, ctdb->tickle_update_context,
+			 timeval_current_ofs(ctdb->tunable.tickle_update_interval, 0),
+			 ctdb_update_tcp_tickles, ctdb);
+}
 
 /*
   start periodic update of tcp tickles
@@ -3920,9 +3171,9 @@ void ctdb_start_tcp_tickle_update(struct ctdb_context *ctdb)
 {
 	ctdb->tickle_update_context = talloc_new(ctdb);
 
-	event_add_timed(ctdb->ev, ctdb->tickle_update_context,
-			     timeval_current_ofs(ctdb->tunable.tickle_update_interval, 0), 
-			     ctdb_update_tcp_tickles, ctdb);
+	tevent_add_timer(ctdb->ev, ctdb->tickle_update_context,
+			 timeval_current_ofs(ctdb->tunable.tickle_update_interval, 0),
+			 ctdb_update_tcp_tickles, ctdb);
 }
 
 
@@ -3938,8 +3189,9 @@ struct control_gratious_arp {
 /*
   send a control_gratuitous arp
  */
-static void send_gratious_arp(struct event_context *ev, struct timed_event *te, 
-				  struct timeval t, void *private_data)
+static void send_gratious_arp(struct tevent_context *ev,
+			      struct tevent_timer *te,
+			      struct timeval t, void *private_data)
 {
 	int ret;
 	struct control_gratious_arp *arp = talloc_get_type(private_data, 
@@ -3958,9 +3210,9 @@ static void send_gratious_arp(struct event_context *ev, struct timed_event *te,
 		return;
 	}
 
-	event_add_timed(arp->ctdb->ev, arp, 
-			timeval_current_ofs(CTDB_ARP_INTERVAL, 0), 
-			send_gratious_arp, arp);
+	tevent_add_timer(arp->ctdb->ev, arp,
+			 timeval_current_ofs(CTDB_ARP_INTERVAL, 0),
+			 send_gratious_arp, arp);
 }
 
 
@@ -3969,24 +3221,24 @@ static void send_gratious_arp(struct event_context *ev, struct timed_event *te,
  */
 int32_t ctdb_control_send_gratious_arp(struct ctdb_context *ctdb, TDB_DATA indata)
 {
-	struct ctdb_control_gratious_arp *gratious_arp = (struct ctdb_control_gratious_arp *)indata.dptr;
+	struct ctdb_addr_info_old *gratious_arp = (struct ctdb_addr_info_old *)indata.dptr;
 	struct control_gratious_arp *arp;
 
 	/* verify the size of indata */
-	if (indata.dsize < offsetof(struct ctdb_control_gratious_arp, iface)) {
+	if (indata.dsize < offsetof(struct ctdb_addr_info_old, iface)) {
 		DEBUG(DEBUG_ERR,(__location__ " Too small indata to hold a ctdb_control_gratious_arp structure. Got %u require %u bytes\n", 
 				 (unsigned)indata.dsize, 
-				 (unsigned)offsetof(struct ctdb_control_gratious_arp, iface)));
+				 (unsigned)offsetof(struct ctdb_addr_info_old, iface)));
 		return -1;
 	}
 	if (indata.dsize != 
-		( offsetof(struct ctdb_control_gratious_arp, iface)
+		( offsetof(struct ctdb_addr_info_old, iface)
 		+ gratious_arp->len ) ){
 
 		DEBUG(DEBUG_ERR,(__location__ " Wrong size of indata. Was %u bytes "
 			"but should be %u bytes\n", 
 			 (unsigned)indata.dsize, 
-			 (unsigned)(offsetof(struct ctdb_control_gratious_arp, iface)+gratious_arp->len)));
+			 (unsigned)(offsetof(struct ctdb_addr_info_old, iface)+gratious_arp->len)));
 		return -1;
 	}
 
@@ -3999,31 +3251,31 @@ int32_t ctdb_control_send_gratious_arp(struct ctdb_context *ctdb, TDB_DATA indat
 	arp->iface = talloc_strdup(arp, gratious_arp->iface);
 	CTDB_NO_MEMORY(ctdb, arp->iface);
 	arp->count = 0;
-	
-	event_add_timed(arp->ctdb->ev, arp, 
-			timeval_zero(), send_gratious_arp, arp);
+
+	tevent_add_timer(arp->ctdb->ev, arp,
+			 timeval_zero(), send_gratious_arp, arp);
 
 	return 0;
 }
 
 int32_t ctdb_control_add_public_address(struct ctdb_context *ctdb, TDB_DATA indata)
 {
-	struct ctdb_control_ip_iface *pub = (struct ctdb_control_ip_iface *)indata.dptr;
+	struct ctdb_addr_info_old *pub = (struct ctdb_addr_info_old *)indata.dptr;
 	int ret;
 
 	/* verify the size of indata */
-	if (indata.dsize < offsetof(struct ctdb_control_ip_iface, iface)) {
-		DEBUG(DEBUG_ERR,(__location__ " Too small indata to hold a ctdb_control_ip_iface structure\n"));
+	if (indata.dsize < offsetof(struct ctdb_addr_info_old, iface)) {
+		DEBUG(DEBUG_ERR,(__location__ " Too small indata to hold a ctdb_addr_info structure\n"));
 		return -1;
 	}
 	if (indata.dsize != 
-		( offsetof(struct ctdb_control_ip_iface, iface)
+		( offsetof(struct ctdb_addr_info_old, iface)
 		+ pub->len ) ){
 
 		DEBUG(DEBUG_ERR,(__location__ " Wrong size of indata. Was %u bytes "
 			"but should be %u bytes\n", 
 			 (unsigned)indata.dsize, 
-			 (unsigned)(offsetof(struct ctdb_control_ip_iface, iface)+pub->len)));
+			 (unsigned)(offsetof(struct ctdb_addr_info_old, iface)+pub->len)));
 		return -1;
 	}
 
@@ -4040,7 +3292,7 @@ int32_t ctdb_control_add_public_address(struct ctdb_context *ctdb, TDB_DATA inda
 }
 
 struct delete_ip_callback_state {
-	struct ctdb_req_control *c;
+	struct ctdb_req_control_old *c;
 };
 
 /*
@@ -4060,25 +3312,25 @@ static void delete_ip_callback(struct ctdb_context *ctdb,
 }
 
 int32_t ctdb_control_del_public_address(struct ctdb_context *ctdb,
-					struct ctdb_req_control *c,
+					struct ctdb_req_control_old *c,
 					TDB_DATA indata, bool *async_reply)
 {
-	struct ctdb_control_ip_iface *pub = (struct ctdb_control_ip_iface *)indata.dptr;
+	struct ctdb_addr_info_old *pub = (struct ctdb_addr_info_old *)indata.dptr;
 	struct ctdb_vnn *vnn;
 
 	/* verify the size of indata */
-	if (indata.dsize < offsetof(struct ctdb_control_ip_iface, iface)) {
-		DEBUG(DEBUG_ERR,(__location__ " Too small indata to hold a ctdb_control_ip_iface structure\n"));
+	if (indata.dsize < offsetof(struct ctdb_addr_info_old, iface)) {
+		DEBUG(DEBUG_ERR,(__location__ " Too small indata to hold a ctdb_addr_info structure\n"));
 		return -1;
 	}
 	if (indata.dsize != 
-		( offsetof(struct ctdb_control_ip_iface, iface)
+		( offsetof(struct ctdb_addr_info_old, iface)
 		+ pub->len ) ){
 
 		DEBUG(DEBUG_ERR,(__location__ " Wrong size of indata. Was %u bytes "
 			"but should be %u bytes\n", 
 			 (unsigned)indata.dsize, 
-			 (unsigned)(offsetof(struct ctdb_control_ip_iface, iface)+pub->len)));
+			 (unsigned)(offsetof(struct ctdb_addr_info_old, iface)+pub->len)));
 		return -1;
 	}
 
@@ -4149,7 +3401,7 @@ int32_t ctdb_control_del_public_address(struct ctdb_context *ctdb,
 
 
 struct ipreallocated_callback_state {
-	struct ctdb_req_control *c;
+	struct ctdb_req_control_old *c;
 };
 
 static void ctdb_ipreallocated_callback(struct ctdb_context *ctdb,
@@ -4173,7 +3425,7 @@ static void ctdb_ipreallocated_callback(struct ctdb_context *ctdb,
 
 /* A control to run the ipreallocated event */
 int32_t ctdb_control_ipreallocated(struct ctdb_context *ctdb,
-				   struct ctdb_req_control *c,
+				   struct ctdb_req_control_old *c,
 				   bool *async_reply)
 {
 	int ret;
@@ -4207,15 +3459,15 @@ int32_t ctdb_control_ipreallocated(struct ctdb_context *ctdb,
    node has the expected ip allocation.
    This is verified against ctdb->ip_tree
 */
-int verify_remote_ip_allocation(struct ctdb_context *ctdb,
-				struct ctdb_all_public_ips *ips,
-				uint32_t pnn)
+static int verify_remote_ip_allocation(struct ctdb_context *ctdb,
+				       struct ctdb_public_ip_list_old *ips,
+				       uint32_t pnn)
 {
-	struct ctdb_public_ip_list *tmp_ip; 
+	struct public_ip_list *tmp_ip;
 	int i;
 
 	if (ctdb->ip_tree == NULL) {
-		/* dont know the expected allocation yet, assume remote node
+		/* don't know the expected allocation yet, assume remote node
 		   is correct. */
 		return 0;
 	}
@@ -4250,7 +3502,7 @@ int verify_remote_ip_allocation(struct ctdb_context *ctdb,
 
 int update_ip_assignment_tree(struct ctdb_context *ctdb, struct ctdb_public_ip *ip)
 {
-	struct ctdb_public_ip_list *tmp_ip;
+	struct public_ip_list *tmp_ip;
 
 	/* IP tree is never built if DisableIPFailover is set */
 	if (ctdb->tunable.disable_ip_failover != 0) {
@@ -4281,11 +3533,11 @@ void clear_ip_assignment_tree(struct ctdb_context *ctdb)
 
 struct ctdb_reloadips_handle {
 	struct ctdb_context *ctdb;
-	struct ctdb_req_control *c;
+	struct ctdb_req_control_old *c;
 	int status;
 	int fd[2];
 	pid_t child;
-	struct fd_event *fde;
+	struct tevent_fd *fde;
 };
 
 static int ctdb_reloadips_destructor(struct ctdb_reloadips_handle *h)
@@ -4301,17 +3553,18 @@ static int ctdb_reloadips_destructor(struct ctdb_reloadips_handle *h)
 	return 0;
 }
 
-static void ctdb_reloadips_timeout_event(struct event_context *ev,
-				struct timed_event *te,
-				struct timeval t, void *private_data)
+static void ctdb_reloadips_timeout_event(struct tevent_context *ev,
+					 struct tevent_timer *te,
+					 struct timeval t, void *private_data)
 {
 	struct ctdb_reloadips_handle *h = talloc_get_type(private_data, struct ctdb_reloadips_handle);
 
 	talloc_free(h);
-}	
+}
 
-static void ctdb_reloadips_child_handler(struct event_context *ev, struct fd_event *fde, 
-			     uint16_t flags, void *private_data)
+static void ctdb_reloadips_child_handler(struct tevent_context *ev,
+					 struct tevent_fd *fde,
+					 uint16_t flags, void *private_data)
 {
 	struct ctdb_reloadips_handle *h = talloc_get_type(private_data, struct ctdb_reloadips_handle);
 
@@ -4331,7 +3584,7 @@ static void ctdb_reloadips_child_handler(struct event_context *ev, struct fd_eve
 static int ctdb_reloadips_child(struct ctdb_context *ctdb)
 {
 	TALLOC_CTX *mem_ctx = talloc_new(NULL);
-	struct ctdb_all_public_ips *ips;
+	struct ctdb_public_ip_list_old *ips;
 	struct ctdb_vnn *vnn;
 	struct client_async_data *async_data;
 	struct timeval timeout;
@@ -4376,14 +3629,13 @@ static int ctdb_reloadips_child(struct ctdb_context *ctdb)
 
 		if (vnn == NULL) {
 			/* Delete IP ips->ips[i] */
-			struct ctdb_control_ip_iface *pub;
+			struct ctdb_addr_info_old *pub;
 
 			DEBUG(DEBUG_NOTICE,
 			      ("IP %s no longer configured, deleting it\n",
 			       ctdb_addr_to_str(&ips->ips[i].addr)));
 
-			pub = talloc_zero(mem_ctx,
-					  struct ctdb_control_ip_iface);
+			pub = talloc_zero(mem_ctx, struct ctdb_addr_info_old);
 			CTDB_NO_MEMORY(ctdb, pub);
 
 			pub->addr  = ips->ips[i].addr;
@@ -4392,7 +3644,7 @@ static int ctdb_reloadips_child(struct ctdb_context *ctdb)
 
 			timeout = TAKEOVER_TIMEOUT();
 
-			data.dsize = offsetof(struct ctdb_control_ip_iface,
+			data.dsize = offsetof(struct ctdb_addr_info_old,
 					      iface) + pub->len;
 			data.dptr = (uint8_t *)pub;
 
@@ -4423,7 +3675,7 @@ static int ctdb_reloadips_child(struct ctdb_context *ctdb)
 		}
 		if (i == ips->num) {
 			/* Add IP ips->ips[i] */
-			struct ctdb_control_ip_iface *pub;
+			struct ctdb_addr_info_old *pub;
 			const char *ifaces = NULL;
 			uint32_t len;
 			int iface = 0;
@@ -4460,7 +3712,7 @@ static int ctdb_reloadips_child(struct ctdb_context *ctdb)
 
 			len   = strlen(ifaces) + 1;
 			pub = talloc_zero_size(mem_ctx,
-					       offsetof(struct ctdb_control_ip_iface, iface) + len);
+					       offsetof(struct ctdb_addr_info_old, iface) + len);
 			CTDB_NO_MEMORY(ctdb, pub);
 
 			pub->addr  = vnn->public_address;
@@ -4470,7 +3722,7 @@ static int ctdb_reloadips_child(struct ctdb_context *ctdb)
 
 			timeout = TAKEOVER_TIMEOUT();
 
-			data.dsize = offsetof(struct ctdb_control_ip_iface,
+			data.dsize = offsetof(struct ctdb_addr_info_old,
 					      iface) + pub->len;
 			data.dptr = (uint8_t *)pub;
 
@@ -4506,7 +3758,7 @@ failed:
    and drop any addresses we should nnot longer host, and add new addresses
    that we are now able to host
 */
-int32_t ctdb_control_reload_public_ips(struct ctdb_context *ctdb, struct ctdb_req_control *c, bool *async_reply)
+int32_t ctdb_control_reload_public_ips(struct ctdb_context *ctdb, struct ctdb_req_control_old *c, bool *async_reply)
 {
 	struct ctdb_reloadips_handle *h;
 	pid_t parent = getpid();
@@ -4544,7 +3796,7 @@ int32_t ctdb_control_reload_public_ips(struct ctdb_context *ctdb, struct ctdb_re
 		close(h->fd[0]);
 		debug_extra = talloc_asprintf(NULL, "reloadips:");
 
-		ctdb_set_process_name("ctdb_reloadips");
+		prctl_set_comment("ctdb_reloadips");
 		if (switch_from_server_to_client(ctdb, "reloadips-child") != 0) {
 			DEBUG(DEBUG_CRIT,("ERROR: Failed to switch reloadips child into client mode\n"));
 			res = -1;
@@ -4571,14 +3823,12 @@ int32_t ctdb_control_reload_public_ips(struct ctdb_context *ctdb, struct ctdb_re
 	talloc_set_destructor(h, ctdb_reloadips_destructor);
 
 
-	h->fde = event_add_fd(ctdb->ev, h, h->fd[0],
-			EVENT_FD_READ, ctdb_reloadips_child_handler,
-			(void *)h);
+	h->fde = tevent_add_fd(ctdb->ev, h, h->fd[0], TEVENT_FD_READ,
+			       ctdb_reloadips_child_handler, (void *)h);
 	tevent_fd_set_auto_close(h->fde);
 
-	event_add_timed(ctdb->ev, h,
-			timeval_current_ofs(120, 0),
-			ctdb_reloadips_timeout_event, h);
+	tevent_add_timer(ctdb->ev, h, timeval_current_ofs(120, 0),
+			 ctdb_reloadips_timeout_event, h);
 
 	/* we reply later */
 	*async_reply = true;

@@ -21,11 +21,15 @@
 #include "replace.h"
 #include "system/network.h"
 #include "system/syslog.h"
+
 #include "lib/util/debug.h"
 #include "lib/util/blocking.h"
 #include "lib/util/time_basic.h"
 #include "lib/util/samba_util.h" /* get_myname */
-#include "ctdb_logging.h"
+
+#include "ctdb_private.h"
+
+#include "common/logging.h"
 
 /* Linux and FreeBSD define this appropriately - try good old /dev/log
  * for anything that doesn't... */

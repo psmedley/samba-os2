@@ -145,7 +145,6 @@
 ^samba4.raw.acls.*.create_file
 ^samba4.smb2.create.*.acldir
 ^samba4.smb2.create.*.impersonation
-^samba4.smb2.create.*.mkdir-dup # bug 11486
 ^samba4.smb2.acls.*.generic
 ^samba4.smb2.acls.*.inheritflags
 ^samba4.smb2.acls.*.owner
@@ -205,8 +204,6 @@
 ^samba3.smb2.setinfo.setinfo
 ^samba3.smb2.session.*reauth5 # some special anonymous checks?
 ^samba3.smb2.compound.interim2 # wrong return code (STATUS_CANCELLED)
-^samba3.smb2.replay.replay1
-^samba3.smb2.replay.replay2
 ^samba3.smb2.replay.replay3
 ^samba3.smb2.replay.replay4
 ^samba3.smb2.lock.*replay
@@ -294,19 +291,6 @@
 # This fails because it requires the tombstone_reanimation module to be enabled
 #
 ^samba4.ldap.acl.python\(.*\).__main__.AclUndeleteTests.test_undelete\(.*\)
-#
-# This fails because the code for transitive extended matching rule
-# LDAP_MATCH_RULE_TRANSITIVE_EVAL had to be disabled
-#
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_extended_dn
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_g1_member_of_g4
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_object_dn_binary
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_one_way_links
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_u1_groups
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_u1_member_of_g4
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_u2_groups
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_u3_groups
-^samba4.ldap.match_rules.python.__main__.MatchRulesTests.test_u4_groups
 #
 # This fails because our python bindings create python Lists, not a type
 # we can watch for set methods on.

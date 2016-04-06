@@ -51,7 +51,7 @@ static bool init_aio_threadpool(struct tevent_context *ev_ctx,
 		return true;
 	}
 
-	ret = pthreadpool_init(aio_pending_size, pp_pool);
+	ret = pthreadpool_init(lp_aio_max_threads(), pp_pool);
 	if (ret) {
 		errno = ret;
 		return false;
@@ -69,7 +69,7 @@ static bool init_aio_threadpool(struct tevent_context *ev_ctx,
 	}
 
 	DEBUG(10,("init_aio_threadpool: initialized with up to %d threads\n",
-		  aio_pending_size));
+		  (int)lp_aio_max_threads()));
 
 	return true;
 }
@@ -341,7 +341,7 @@ static struct aio_open_private_data *create_private_open_data(const files_struct
 	}
 
 	talloc_set_destructor(opd, opd_destructor);
-	DLIST_ADD_END(open_pd_list, opd, struct aio_open_private_data *);
+	DLIST_ADD_END(open_pd_list, opd);
 	return opd;
 }
 

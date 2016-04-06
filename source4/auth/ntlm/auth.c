@@ -32,6 +32,7 @@
 #include "system/kerberos.h"
 #include "auth/kerberos/kerberos.h"
 #include "auth/kerberos/kerberos_util.h"
+#include "libds/common/roles.h"
 
 static NTSTATUS auth_generate_session_info_wrapper(struct auth4_context *auth_context,
 						   TALLOC_CTX *mem_ctx,
@@ -574,7 +575,7 @@ _PUBLIC_ NTSTATUS auth_context_create_methods(TALLOC_CTX *mem_ctx, const char * 
 		}
 		method->auth_ctx	= ctx;
 		method->depth		= i;
-		DLIST_ADD_END(ctx->methods, method, struct auth_method_context *);
+		DLIST_ADD_END(ctx->methods, method);
 	}
 
 	ctx->check_ntlm_password = auth_check_password_wrapper;

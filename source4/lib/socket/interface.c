@@ -135,7 +135,7 @@ static void add_interface(TALLOC_CTX *mem_ctx, const struct iface_struct *ifs, s
 	   this needs to be a ADD_END, as some tests (such as the
 	   spoolss notify test) depend on the interfaces ordering
 	*/
-	DLIST_ADD_END(*interfaces, iface, NULL);
+	DLIST_ADD_END(*interfaces, iface);
 }
 
 /**
@@ -176,6 +176,15 @@ static void interpret_interface(TALLOC_CTX *mem_ctx,
 	}
 	if (added) {
 		return;
+	}
+
+	p = strchr_m(token, ';');
+	if (p != NULL) {
+		/*
+		 * skip smbd-specific extra data:
+		 * link speed, capabilities, and interface index
+		 */
+		*p = 0;
 	}
 
 	/* maybe it is a DNS name */

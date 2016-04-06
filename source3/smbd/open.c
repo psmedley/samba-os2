@@ -153,7 +153,7 @@ NTSTATUS smbd_check_access_rights(struct connection_struct *conn,
 	 * Samba 3.6 and earlier granted execute access even
 	 * if the ACL did not contain execute rights.
 	 * Samba 4.0 is more correct and checks it.
-	 * The compatibilty mode allows to skip this check
+	 * The compatibilty mode allows one to skip this check
 	 * to smoothen upgrades.
 	 */
 	if (lp_acl_allow_execute_always(SNUM(conn))) {
@@ -809,6 +809,7 @@ static NTSTATUS open_file(files_struct *fsp,
 			wild = smb_fname->base_name;
 		}
 		if ((local_flags & O_CREAT) && !file_existed &&
+		    !(fsp->posix_flags & FSP_POSIX_FLAGS_PATHNAMES) &&
 		    ms_has_wild(wild))  {
 			return NT_STATUS_OBJECT_NAME_INVALID;
 		}
@@ -2354,7 +2355,6 @@ static int disposition_to_open_flags(uint32_t create_disposition)
 }
 
 static int calculate_open_access_flags(uint32_t access_mask,
-				       int oplock_request,
 				       uint32_t private_flags)
 {
 	bool need_write, need_read;
@@ -2529,7 +2529,8 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 	}
 
 	/* this is for OS/2 long file names - say we don't support them */
-	if (!lp_posix_pathnames() && strstr(smb_fname->base_name,".+,;=[].")) {
+	if (req != NULL && !req->posix_pathnames &&
+			strstr(smb_fname->base_name,".+,;=[].")) {
 		/* OS/2 Workplace shell fix may be main code stream in a later
 		 * release. */
 		DEBUG(5,("open_file_ntcreate: OS/2 long filenames are not "
@@ -2641,8 +2642,7 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 	 * mean the same thing under DOS and Unix.
 	 */
 
-	flags = calculate_open_access_flags(access_mask, oplock_request,
-					    private_flags);
+	flags = calculate_open_access_flags(access_mask, private_flags);
 
 	/*
 	 * Currently we only look at FILE_WRITE_THROUGH for create options.
@@ -2705,7 +2705,9 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 	fsp->access_mask = open_access_mask; /* We change this to the
 					      * requested access_mask after
 					      * the open is done. */
-	fsp->posix_flags |= posix_open ? FSP_POSIX_FLAGS_OPEN : 0;
+	if (posix_open) {
+		fsp->posix_flags |= FSP_POSIX_FLAGS_ALL;
+	}
 
 	if (timeval_is_zero(&request_time)) {
 		request_time = fsp->open_time;
@@ -3622,8 +3624,18 @@ static NTSTATUS open_directory(connection_struct *conn,
 		return status;
 	}
 
-	/* Ensure there was no race condition. */
-	if (!check_same_stat(&smb_dname->st, &fsp->fsp_name->st)) {
+	if(!S_ISDIR(fsp->fsp_name->st.st_ex_mode)) {
+		DEBUG(5,("open_directory: %s is not a directory !\n",
+			 smb_fname_str_dbg(smb_dname)));
+                fd_close(fsp);
+                file_free(req, fsp);
+		return NT_STATUS_NOT_A_DIRECTORY;
+	}
+
+	/* Ensure there was no race condition.  We need to check
+	 * dev/inode but not permissions, as these can change
+	 * legitimately */
+	if (!check_same_dev_ino(&smb_dname->st, &fsp->fsp_name->st)) {
 		DEBUG(5,("open_directory: stat struct differs for "
 			"directory %s.\n",
 			smb_fname_str_dbg(smb_dname)));
@@ -4823,6 +4835,8 @@ NTSTATUS get_relative_fid_filename(connection_struct *conn,
 	files_struct *dir_fsp;
 	char *parent_fname = NULL;
 	char *new_base_name = NULL;
+	uint32_t ucf_flags = ((req != NULL && req->posix_pathnames) ?
+			UCF_POSIX_PATHNAMES : 0);
 	NTSTATUS status;
 
 	if (root_dir_fid == 0 || !smb_fname) {
@@ -4917,7 +4931,7 @@ NTSTATUS get_relative_fid_filename(connection_struct *conn,
 				conn,
 				req->flags2 & FLAGS2_DFS_PATHNAMES,
 				new_base_name,
-				0,
+				ucf_flags,
 				NULL,
 				smb_fname_out);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -5034,7 +5048,7 @@ NTSTATUS create_file_default(connection_struct *conn,
 			status = NT_STATUS_NOT_A_DIRECTORY;
 			goto fail;
 		}
-		if (lp_posix_pathnames()) {
+		if (req != NULL && req->posix_pathnames) {
 			ret = SMB_VFS_LSTAT(conn, smb_fname);
 		} else {
 			ret = SMB_VFS_STAT(conn, smb_fname);

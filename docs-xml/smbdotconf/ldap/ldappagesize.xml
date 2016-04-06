@@ -1,7 +1,7 @@
 <samba:parameter name="ldap page size"
-	context="G"
-	type="integer"
-        xmlns:samba="http://www.samba.org/samba/DTD/samba-doc">
+                 context="G"
+                 type="integer"
+                 xmlns:samba="http://www.samba.org/samba/DTD/samba-doc">
 <description>
 	<para>
 	This parameter specifies the number of entries per page.
@@ -12,6 +12,6 @@
 	This parameter specifies the size of these pages.
 	</para>
 </description>
-<value type="default">1024</value>
+<value type="default">1000</value>
 <value type="example">512</value>
 </samba:parameter>

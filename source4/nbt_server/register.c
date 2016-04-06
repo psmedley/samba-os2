@@ -30,6 +30,7 @@
 #include "librpc/gen_ndr/ndr_nbt.h"
 #include "dsdb/samdb/samdb.h"
 #include "param/param.h"
+#include "libds/common/roles.h"
 
 static void nbtd_start_refresh_timer(struct nbtd_iface_name *iname);
 
@@ -198,7 +199,7 @@ static void nbtd_register_name_iface(struct nbtd_interface *iface,
 	iname->registration_time = timeval_zero();
 	iname->wins_server       = NULL;
 
-	DLIST_ADD_END(iface->names, iname, struct nbtd_iface_name *);
+	DLIST_ADD_END(iface->names, iname);
 
 	if (nb_flags & NBT_NM_PERMANENT) {
 		/* permanent names are not announced and are immediately active */

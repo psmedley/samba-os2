@@ -541,6 +541,7 @@ long long int rep_strtoll(const char *str, char **endptr, int base)
 #undef strtoll
 long long int rep_strtoll(const char *str, char **endptr, int base)
 {
+	int saved_errno = errno;
 	long long int nb = strtoll(str, endptr, base);
 	/* With glibc EINVAL is only returned if base is not ok */
 	if (errno == EINVAL) {
@@ -549,7 +550,7 @@ long long int rep_strtoll(const char *str, char **endptr, int base)
 			 * able to make the convertion.
 			 * Let's reset errno.
 			 */
-			errno = 0;
+			errno = saved_errno;
 		}
 	}
 	return nb;
@@ -573,25 +574,23 @@ unsigned long long int rep_strtoull(const char *str, char **endptr, int base)
 }
 #else
 #ifdef HAVE_BSD_STRTOLL
-#ifdef HAVE_STRTOUQ
+#undef strtoull
 unsigned long long int rep_strtoull(const char *str, char **endptr, int base)
 {
-	unsigned long long int nb = strtouq(str, endptr, base);
-	/* In linux EINVAL is only returned if base is not ok */
+	int saved_errno = errno;
+	unsigned long long int nb = strtoull(str, endptr, base);
+	/* With glibc EINVAL is only returned if base is not ok */
 	if (errno == EINVAL) {
 		if (base == 0 || (base >1 && base <37)) {
 			/* Base was ok so it's because we were not
 			 * able to make the convertion.
 			 * Let's reset errno.
 			 */
-			errno = 0;
+			errno = saved_errno;
 		}
 	}
 	return nb;
 }
-#else
-#error "You need the strtouq function"
-#endif /* HAVE_STRTOUQ */
 #endif /* HAVE_BSD_STRTOLL */
 #endif /* HAVE_STRTOULL */
 
@@ -829,7 +828,7 @@ int rep_clock_gettime(clockid_t clk_id, struct timespec *tp)
 	struct timeval tval;
 	switch (clk_id) {
 		case 0: /* CLOCK_REALTIME :*/
-#ifdef HAVE_GETTIMEOFDAY_TZ
+#if defined(HAVE_GETTIMEOFDAY_TZ) || defined(HAVE_GETTIMEOFDAY_TZ_VOID)
 			gettimeofday(&tval,NULL);
 #else
 			gettimeofday(&tval);

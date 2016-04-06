@@ -2,12 +2,12 @@
 .\"     Title: ctdb
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 12/10/2015
+.\"      Date: 01/27/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB" "1" "12/10/2015" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB" "1" "01/27/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -114,7 +114,7 @@ Change the debug level for the command\&. Default is NOTICE (2)\&.
 \-\-socket=\fIFILENAME\fR
 .RS 4
 Specify that FILENAME is the name of the Unix domain socket to use when connecting to the local CTDB daemon\&. The default is
-/tmp/ctdb\&.socket\&.
+/usr/local/var/run/ctdb/ctdbd\&.socket\&.
 .RE
 .SH "ADMINISTRATIVE COMMANDS"
 .PP
@@ -265,14 +265,6 @@ exits with 0 if it was able to retrieve status for all nodes\&.
 provides status information for all nodes\&.
 \fBctdb nodestatus\fR
 defaults to providing status for only the current node\&. If PNN\-LIST is provided then status is given for the indicated node(s)\&.
-.sp
-By default,
-\fBctdb nodestatus\fR
-gathers status from the local node\&. However, if invoked with "\-n all" (or similar) then status is gathered from the given node(s)\&. In particular
-\fBctdb nodestatus all\fR
-and
-\fBctdb nodestatus \-n all\fR
-will produce different output\&. It is possible to provide 2 different nodespecs (with and without "\-n") but the output is usually confusing!
 .RE
 .PP
 A common invocation in scripts is
@@ -412,11 +404,8 @@ This command will "ping" specified CTDB nodes in the cluster to verify that they
 .RS 4
 .\}
 .nf
-# ctdb ping \-n all
+# ctdb ping
 response from 0 time=0\&.000054 sec  (3 clients)
-response from 1 time=0\&.000144 sec  (2 clients)
-response from 2 time=0\&.000105 sec  (2 clients)
-response from 3 time=0\&.000114 sec  (2 clients)
 	
 .fi
 .if n \{\
@@ -460,7 +449,7 @@ name:eth2 link:up references:1
 .RE
 .SS "ip"
 .PP
-This command will display the list of public addresses that are provided by the cluster and which physical node is currently serving this ip\&. By default this command will ONLY show those public addresses that are known to the node itself\&. To see the full list of all public ips across the cluster you must use "ctdb ip \-n all"\&.
+This command will display the list of public addresses that are provided by the cluster and which physical node is currently serving this ip\&. By default this command will ONLY show those public addresses that are known to the node itself\&. To see the full list of all public ips across the cluster you must use "ctdb ip all"\&.
 .sp
 .it 1 an-trap
 .nr an-no-space-flag 1
@@ -603,7 +592,7 @@ TakeoverTimeout         = 9
 MonitorInterval         = 15
 TickleUpdateInterval    = 20
 EventScriptTimeout      = 30
-EventScriptTimeoutCount = 1
+MonitorTimeoutCount     = 1
 RecoveryGracePeriod     = 120
 RecoveryBanPeriod       = 300
 DatabaseHashSize        = 100001
@@ -709,7 +698,6 @@ Example output:
 RECMASTER: YES
 LMASTER: YES
 LVS: NO
-NATGW: YES
       
 .fi
 .if n \{\
@@ -840,9 +828,7 @@ If no FILE is specified then a recovery lock file will no longer be used\&.
 .PP
 This command only affects the run\-time setting of a single CTDB node\&. This setting
 \fImust\fR
-be changed on all nodes simultaneously by specifying
-\fB\-n all\fR
-(or similar)\&. For information about configuring the recovery lock file please see the
+be changed on all nodes simultaneously\&. For information about configuring the recovery lock file please see the
 CTDB_RECOVERY_LOCK
 entry in
 \fBctdbd.conf\fR(5)
@@ -924,32 +910,152 @@ See also "ctdb getcapabilities"
 .PP
 This command is used when adding new nodes, or removing existing nodes from an existing cluster\&.
 .PP
-Procedure to add a node:
+Procedure to add nodes:
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 1.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  1." 4.2
+.\}
+To expand an existing cluster, first ensure with
+\fBctdb status\fR
+that all nodes are up and running and that they are all healthy\&. Do not try to expand a cluster unless it is completely healthy!
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 2.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  2." 4.2
+.\}
+On all nodes, edit
+/usr/local/etc/ctdb/nodes
+and
+\fIadd the new nodes at the end of this file\fR\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 3.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  3." 4.2
+.\}
+Verify that all the nodes have identical
+/usr/local/etc/ctdb/nodes
+files after adding the new nodes\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 4.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  4." 4.2
+.\}
+Run
+\fBctdb reloadnodes\fR
+to force all nodes to reload the nodes file\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 5.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  5." 4.2
+.\}
+Use
+\fBctdb status\fR
+on all nodes and verify that they now show the additional nodes\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 6.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  6." 4.2
+.\}
+Install and configure the new node and bring it online\&.
+.RE
 .PP
-1, To expand an existing cluster, first ensure with \*(Aqctdb status\*(Aq that all nodes are up and running and that they are all healthy\&. Do not try to expand a cluster unless it is completely healthy!
-.PP
-2, On all nodes, edit /etc/ctdb/nodes and add the new node as the last entry to the file\&. The new node MUST be added to the end of this file!
-.PP
-3, Verify that all the nodes have identical /etc/ctdb/nodes files after you edited them and added the new node!
-.PP
-4, Run \*(Aqctdb reloadnodes\*(Aq to force all nodes to reload the nodesfile\&.
-.PP
-5, Use \*(Aqctdb status\*(Aq on all nodes and verify that they now show the additional node\&.
-.PP
-6, Install and configure the new node and bring it online\&.
-.PP
-Procedure to remove a node:
-.PP
-1, To remove a node from an existing cluster, first ensure with \*(Aqctdb status\*(Aq that all nodes, except the node to be deleted, are up and running and that they are all healthy\&. Do not try to remove a node from a cluster unless the cluster is completely healthy!
-.PP
-2, Shutdown and poweroff the node to be removed\&.
-.PP
-3, On all other nodes, edit the /etc/ctdb/nodes file and comment out the node to be removed\&. Do not delete the line for that node, just comment it out by adding a \*(Aq#\*(Aq at the beginning of the line\&.
-.PP
-4, Run \*(Aqctdb reloadnodes\*(Aq to force all nodes to reload the nodesfile\&.
-.PP
-5, Use \*(Aqctdb status\*(Aq on all nodes and verify that the deleted node no longer shows up in the list\&.\&.
-.PP
+Procedure to remove nodes:
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 1.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  1." 4.2
+.\}
+To remove nodes from an existing cluster, first ensure with
+\fBctdb status\fR
+that all nodes, except the node to be deleted, are up and running and that they are all healthy\&. Do not try to remove nodes from a cluster unless the cluster is completely healthy!
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 2.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  2." 4.2
+.\}
+Shutdown and power off the node to be removed\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 3.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  3." 4.2
+.\}
+On all other nodes, edit the
+/usr/local/etc/ctdb/nodes
+file and
+\fIcomment out\fR
+the nodes to be removed\&.
+\fIDo not delete the lines for the deleted nodes\fR, just comment them out by adding a \*(Aq#\*(Aq at the beginning of the lines\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 4.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  4." 4.2
+.\}
+Run
+\fBctdb reloadnodes\fR
+to force all nodes to reload the nodes file\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 5.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  5." 4.2
+.\}
+Use
+\fBctdb status\fR
+on all nodes and verify that the deleted nodes are no longer listed\&.
+.RE
 .SS "reloadips [\fIPNN\-LIST\fR]"
 .PP
 This command reloads the public addresses configuration file on the specified nodes\&. When it completes addresses will be reconfigured and reassigned across the cluster as necessary\&.
@@ -977,24 +1083,24 @@ Most databases are not persistent and only store the state information that the 
 .nf
 # ctdb getdbmap
 Number of databases:10
-dbid:0x435d3410 name:notify\&.tdb path:/var/ctdb/notify\&.tdb\&.0 
-dbid:0x42fe72c5 name:locking\&.tdb path:/var/ctdb/locking\&.tdb\&.0
-dbid:0x1421fb78 name:brlock\&.tdb path:/var/ctdb/brlock\&.tdb\&.0 
-dbid:0x17055d90 name:connections\&.tdb path:/var/ctdb/connections\&.tdb\&.0 
-dbid:0xc0bdde6a name:sessionid\&.tdb path:/var/ctdb/sessionid\&.tdb\&.0 
-dbid:0x122224da name:test\&.tdb path:/var/ctdb/test\&.tdb\&.0 
-dbid:0x2672a57f name:idmap2\&.tdb path:/var/ctdb/persistent/idmap2\&.tdb\&.0 PERSISTENT
-dbid:0xb775fff6 name:secrets\&.tdb path:/var/ctdb/persistent/secrets\&.tdb\&.0 PERSISTENT
-dbid:0xe98e08b6 name:group_mapping\&.tdb path:/var/ctdb/persistent/group_mapping\&.tdb\&.0 PERSISTENT
-dbid:0x7bbbd26c name:passdb\&.tdb path:/var/ctdb/persistent/passdb\&.tdb\&.0 PERSISTENT
+dbid:0x435d3410 name:notify\&.tdb path:/usr/local/var/lib/ctdb/notify\&.tdb\&.0
+dbid:0x42fe72c5 name:locking\&.tdb path:/usr/local/var/lib/ctdb/locking\&.tdb\&.0
+dbid:0x1421fb78 name:brlock\&.tdb path:/usr/local/var/lib/ctdb/brlock\&.tdb\&.0
+dbid:0x17055d90 name:connections\&.tdb path:/usr/local/var/lib/ctdb/connections\&.tdb\&.0
+dbid:0xc0bdde6a name:sessionid\&.tdb path:/usr/local/var/lib/ctdb/sessionid\&.tdb\&.0
+dbid:0x122224da name:test\&.tdb path:/usr/local/var/lib/ctdb/test\&.tdb\&.0
+dbid:0x2672a57f name:idmap2\&.tdb path:/usr/local/var/lib/ctdb/persistent/idmap2\&.tdb\&.0 PERSISTENT
+dbid:0xb775fff6 name:secrets\&.tdb path:/usr/local/var/lib/ctdb/persistent/secrets\&.tdb\&.0 PERSISTENT
+dbid:0xe98e08b6 name:group_mapping\&.tdb path:/usr/local/var/lib/ctdb/persistent/group_mapping\&.tdb\&.0 PERSISTENT
+dbid:0x7bbbd26c name:passdb\&.tdb path:/usr/local/var/lib/ctdb/persistent/passdb\&.tdb\&.0 PERSISTENT
 
 # ctdb getdbmap  # example for unhealthy database
 Number of databases:1
-dbid:0xb775fff6 name:secrets\&.tdb path:/var/ctdb/persistent/secrets\&.tdb\&.0 PERSISTENT UNHEALTHY
+dbid:0xb775fff6 name:secrets\&.tdb path:/usr/local/var/lib/ctdb/persistent/secrets\&.tdb\&.0 PERSISTENT UNHEALTHY
 
 # ctdb \-X getdbmap
 |ID|Name|Path|Persistent|Unhealthy|
-|0x7bbbd26c|passdb\&.tdb|/var/ctdb/persistent/passdb\&.tdb\&.0|1|0|
+|0x7bbbd26c|passdb\&.tdb|/usr/local/var/lib/ctdb/persistent/passdb\&.tdb\&.0|1|0|
 	
 .fi
 .if n \{\
@@ -1090,9 +1196,6 @@ Set the internal state of network interface IFACE\&. This is typically used in t
 script in the "monitor" event\&.
 .PP
 Example: ctdb setifacelink eth0 up
-.SS "setnatgwstate on|off"
-.PP
-Enable or disable the NAT gateway master capability on a node\&.
 .SS "tickle \fISRC\-IPADDR\fR:\fISRC\-PORT\fR \fIDST\-IPADDR\fR:\fIDST\-PORT\fR"
 .PP
 Send a TCP tickle to the source host for the specified TCP connection\&. A TCP tickle is a TCP ACK packet with an invalid sequence and acknowledge number and will when received by the source host result in it sending an immediate correct ACK back to the other end\&.
@@ -1152,16 +1255,16 @@ This command displays more details about a database\&.
 # ctdb getdbstatus test\&.tdb\&.0
 dbid: 0x122224da
 name: test\&.tdb
-path: /var/ctdb/test\&.tdb\&.0
+path: /usr/local/var/lib/ctdb/test\&.tdb\&.0
 PERSISTENT: no
 HEALTH: OK
 
 # ctdb getdbstatus registry\&.tdb  # with a corrupted TDB
 dbid: 0xf2a58948
 name: registry\&.tdb
-path: /var/ctdb/persistent/registry\&.tdb\&.0
+path: /usr/local/var/lib/ctdb/persistent/registry\&.tdb\&.0
 PERSISTENT: yes
-HEALTH: NO\-HEALTHY\-NODES \- ERROR \- Backup of corrupted TDB in \*(Aq/var/ctdb/persistent/registry\&.tdb\&.0\&.corrupted\&.20091208091949\&.0Z\*(Aq
+HEALTH: NO\-HEALTHY\-NODES \- ERROR \- Backup of corrupted TDB in \*(Aq/usr/local/var/lib/ctdb/persistent/registry\&.tdb\&.0\&.corrupted\&.20091208091949\&.0Z\*(Aq
 	
 .fi
 .if n \{\

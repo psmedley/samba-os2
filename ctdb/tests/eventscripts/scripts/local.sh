@@ -13,6 +13,7 @@ if [ -d "${TEST_SUBDIR}/stubs" ] ; then
 	/*) : ;;
 	*) EVENTSCRIPTS_PATH="${PWD}/${EVENTSCRIPTS_PATH}" ;;
     esac
+    export CTDB_HELPER_BINDIR="$EVENTSCRIPTS_PATH"
 fi
 
 export EVENTSCRIPTS_PATH
@@ -25,17 +26,17 @@ if [ -d "$EVENTSCRIPTS_TESTS_VAR_DIR" -a \
     rm -r "$EVENTSCRIPTS_TESTS_VAR_DIR"
 fi
 mkdir -p "$EVENTSCRIPTS_TESTS_VAR_DIR"
-export CTDB_VARDIR="$EVENTSCRIPTS_TESTS_VAR_DIR/ctdb"
+export CTDB_SCRIPT_VARDIR="$EVENTSCRIPTS_TESTS_VAR_DIR/script-state"
 
 export CTDB_LOGGING="file:${EVENTSCRIPTS_TESTS_VAR_DIR}/log.ctdb"
 touch "${CTDB_LOGGING#file:}" || \
     die "Unable to setup logging for \"$CTDB_LOGGING\""
 
-if [ -d "${TEST_SUBDIR}/etc" ] ; then    
+if [ -d "${TEST_SUBDIR}/etc" ] ; then
     cp -a "${TEST_SUBDIR}/etc" "$EVENTSCRIPTS_TESTS_VAR_DIR"
-    export CTDB_ETCDIR="${EVENTSCRIPTS_TESTS_VAR_DIR}/etc"
+    export CTDB_SYS_ETCDIR="${EVENTSCRIPTS_TESTS_VAR_DIR}/etc"
 else
-    die "Unable to setup \$CTDB_ETCDIR"
+    die "Unable to setup \$CTDB_SYS_ETCDIR"
 fi
 
 if [ -d "${TEST_SUBDIR}/etc-ctdb" ] ; then
@@ -112,7 +113,10 @@ setup_generic ()
 
 
     export CTDB_DBDIR="${EVENTSCRIPTS_TESTS_VAR_DIR}/db"
-    mkdir -p "${CTDB_DBDIR}/persistent"
+    export CTDB_DBDIR_PERSISTENT="${CTDB_DBDIR}/persistent"
+    export CTDB_DBDIR_STATE="${CTDB_DBDIR}/state"
+    mkdir -p "$CTDB_DBDIR_PERSISTENT"
+    mkdir -p "$CTDB_DBDIR_STATE"
 
     export FAKE_TDBTOOL_SUPPORTS_CHECK="yes"
     export FAKE_TDB_IS_OK
@@ -288,8 +292,8 @@ ctdb_set_pnn ()
     export FAKE_CTDB_PNN="$1"
     echo "Setting up PNN ${FAKE_CTDB_PNN}"
 
-    export CTDB_VARDIR="$EVENTSCRIPTS_TESTS_VAR_DIR/ctdb/${FAKE_CTDB_PNN}"
-    mkdir -p "$CTDB_VARDIR"
+    export CTDB_SCRIPT_VARDIR="$EVENTSCRIPTS_TESTS_VAR_DIR/script-state/${FAKE_CTDB_PNN}"
+    mkdir -p "$CTDB_SCRIPT_VARDIR"
 }
 
 setup_ctdb ()
@@ -327,27 +331,35 @@ setup_config ()
     cat >"$FAKE_CTDB_EXTRA_CONFIG"
 }
 
+validate_percentage ()
+{
+    case "$1" in
+	[0-9]|[0-9][0-9]|100) return 0 ;;
+	*) echo "WARNING: ${1} is an invalid percentage${2:+\" in }${2}${2:+\"}"
+	   return 1
+    esac
+}
+
 setup_memcheck ()
 {
+    _mem_usage="${1:-10}" # Default is 10%
+    _swap_usage="${2:-0}" # Default is  0%
+
     setup_ctdb
 
-    _swap_total="5857276"
+    _swap_total=5857276
+    _swap_free=$(( (100 - $_swap_usage) * $_swap_total / 100 ))
 
-    if [ "$1" = "bad" ] ; then
-	_swap_free="   4352"
-	_mem_cached=" 112"
-	_mem_free=" 468"
-    else
-	_swap_free="$_swap_total"
-	_mem_cached="1112"
-	_mem_free="1468"
-    fi
+    _mem_total=3940712
+    _mem_free=225268
+    _mem_buffers=146120
+    _mem_cached=$(( $_mem_total * (100 - $_mem_usage) / 100 - $_mem_free - $_mem_buffers ))
 
     export FAKE_PROC_MEMINFO="\
-MemTotal:        3940712 kB
-MemFree:          225268 kB
-Buffers:          146120 kB
-Cached:          1139348 kB
+MemTotal:        ${_mem_total} kB
+MemFree:          ${_mem_free} kB
+Buffers:          ${_mem_buffers} kB
+Cached:          ${_mem_cached} kB
 SwapCached:        56016 kB
 Active:          2422104 kB
 Inactive:        1019928 kB
@@ -361,15 +373,18 @@ SwapTotal:       ${_swap_total} kB
 SwapFree:        ${_swap_free} kB
 ..."
 
-    export FAKE_FREE_M="\
-             total       used       free     shared    buffers     cached
-Mem:          3848       3634        213          0        142       ${_mem_cached}
--/+ buffers/cache:       2379       ${_mem_free}
-Swap:         5719        246       5473"
+    export CTDB_MONITOR_MEMORY_USAGE
+    export CTDB_MONITOR_SWAP_USAGE
+}
 
-    export CTDB_MONITOR_FREE_MEMORY
-    export CTDB_MONITOR_FREE_MEMORY_WARN
-    export CTDB_CHECK_SWAP_IS_NOT_USED
+setup_fscheck ()
+{
+    export FAKE_FS_USE="${1:-10}"  # Default is 10% usage
+
+    # Causes some variables to be exported
+    setup_ctdb
+
+    export CTDB_MONITOR_FILESYSTEM_USAGE
 }
 
 ctdb_get_interfaces ()
@@ -470,7 +485,7 @@ create_policy_routing_config ()
     fi |
     while read _dev _ip _bits ; do
 	_net=$(ipv4_host_addr_to_net "$_ip" "$_bits")
-	_gw="${_net%.*}.1" # a dumb, calculated default
+	_gw="${_net%.*}.254" # a dumb, calculated default
 
 	echo "$_ip $_net"
 
@@ -499,7 +514,7 @@ check_routes ()
     fi | {
 	while read _dev _ip _bits ; do
 	    _net=$(ipv4_host_addr_to_net "$_ip" "$_bits")
-	    _gw="${_net%.*}.1" # a dumb, calculated default
+	    _gw="${_net%.*}.254" # a dumb, calculated default
 
 	    _policy_rules="${_policy_rules}
 ${CTDB_PER_IP_ROUTING_RULE_PREF}:	from $_ip lookup ctdb.$_ip "
@@ -587,35 +602,43 @@ EOF
 
 setup_ctdb_natgw ()
 {
-    debug "Setting up NAT gateway"
+	debug "Setting up NAT gateway"
 
-    natgw_config_dir="${TEST_VAR_DIR}/natgw_config"
-    mkdir -p "$natgw_config_dir"
+	natgw_config_dir="${TEST_VAR_DIR}/natgw_config"
+	mkdir -p "$natgw_config_dir"
 
-    # These will accumulate, 1 per test... but will be cleaned up at
-    # the end.
-    export CTDB_NATGW_NODES=$(mktemp --tmpdir="$natgw_config_dir")
+	# These will accumulate, 1 per test... but will be cleaned up at
+	# the end.
+	export CTDB_NATGW_NODES=$(mktemp --tmpdir="$natgw_config_dir")
 
-    # Read from stdin
-    while read _ip _master _dev ; do
-	echo "$_ip"
-	if [ "$_master" = "master" ] ; then
-	    export FAKE_CTDB_NATGW_MASTER="$_ip"
-	fi
-    done >"$CTDB_NATGW_NODES"
+	# Read from stdin
+	while read _ip _opts ; do
+		case "$_opts" in
+		master)
+			export FAKE_CTDB_NATGW_MASTER="$_ip"
+			echo "$_ip"
+			;;
+		slave-only)
+			printf "%s\tslave-only\n" "$_ip"
+			;;
+		*)
+			echo "$_ip"
+			;;
+		esac
+	done >"$CTDB_NATGW_NODES"
 
-    # Assume all of the nodes are on a /24 network and have IPv4
-    # addresses:
-    read _ip <"$CTDB_NATGW_NODES"
-    export CTDB_NATGW_PRIVATE_NETWORK="${_ip%.*}.0/24"
+	# Assume all of the nodes are on a /24 network and have IPv4
+	# addresses:
+	read _ip <"$CTDB_NATGW_NODES"
+	export CTDB_NATGW_PRIVATE_NETWORK="${_ip%.*}.0/24"
 
-    # These are fixed.  Probably don't use the same network for the
-    # private node IPs.  To unset the default gateway just set it to
-    # "".  :-)
-    export CTDB_NATGW_PUBLIC_IP="10.1.1.121/24"
-    export CTDB_NATGW_PUBLIC_IFACE="eth1"
-    export CTDB_NATGW_DEFAULT_GATEWAY="10.1.1.254"
-    export CTDB_NATGW_SLAVE_ONLY=""
+	# These are fixed.  Probably don't use the same network for the
+	# private node IPs.  To unset the default gateway just set it to
+	# "".  :-)
+	export CTDB_NATGW_PUBLIC_IP="10.1.1.121/24"
+	export CTDB_NATGW_PUBLIC_IFACE="eth1"
+	export CTDB_NATGW_DEFAULT_GATEWAY="10.1.1.254"
+	export CTDB_NATGW_SLAVE_ONLY=""
 }
 
 ok_natgw_master_ip_addr_show ()
@@ -791,6 +814,9 @@ setup_nfs ()
 
     export RPCNFSDCOUNT
 
+    # This doesn't even need to exist
+    export CTDB_NFS_EXPORTS_FILE="$EVENTSCRIPTS_TESTS_VAR_DIR/etc-exports"
+
     # Reset the failcounts for nfs services.
     eventscript_call eval rm -f '$ctdb_fail_dir/nfs_*'
 
@@ -867,7 +893,7 @@ rpc_services_up ()
 
 nfs_load_config ()
 {
-    _etc="$CTDB_ETCDIR" # shortcut for readability
+    _etc="$CTDB_SYS_ETCDIR" # shortcut for readability
     for _c in "$_etc/sysconfig/nfs" "$_etc/default/nfs" "$_etc/ctdb/sysconfig/nfs" ; do
 	if [ -r "$_c" ] ; then
 	    . "$_c"
@@ -1152,7 +1178,7 @@ simple_test ()
 
 ##################################################
 CTDB_BASE="$CTDB_BASE"
-CTDB_ETCDIR="$CTDB_ETCDIR"
+CTDB_SYS_ETCDIR="$CTDB_SYS_ETCDIR"
 ctdb client is "$(which ctdb)"
 ip command is "$(which ip)"
 EOF

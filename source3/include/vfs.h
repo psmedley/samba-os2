@@ -167,8 +167,11 @@
 /* Version 33 - Add snapshot create/delete calls */
 /* Version 33 - Add OS X SMB2 AAPL copyfile extension flag to fsp */
 /* Version 33 - Remove notify_watch_fn */
+/* Bump to version 34 - Samba 4.4 will ship with that */
+/* Version 34 - Remove bool posix_open, add uint64_t posix_flags */
+/* Version 34 - Added bool posix_pathnames to struct smb_request */
 
-#define SMB_VFS_INTERFACE_VERSION 33
+#define SMB_VFS_INTERFACE_VERSION 34
 
 /*
     All intercepted VFS operations must be declared as static functions inside module source
@@ -218,9 +221,6 @@ struct fsp_lease {
 	struct smb2_lease lease;
 };
 
-/* VFS ABI stability hack */
-#define posix_flags posix_open
-
 typedef struct files_struct {
 	struct files_struct *next, *prev;
 	uint64_t fnum;
@@ -258,7 +258,7 @@ typedef struct files_struct {
 	bool aio_write_behind;
 	bool initial_delete_on_close; /* Only set at NTCreateX if file was created. */
 	bool delete_on_close;
-	uint8_t posix_flags;
+	uint64_t posix_flags;
 	bool is_sparse;
 	bool backup_intent; /* Handle was successfully opened with backup intent
 				and opener has privilege to do so. */
@@ -302,9 +302,11 @@ typedef struct files_struct {
 
 #define FSP_POSIX_FLAGS_OPEN		0x01
 #define FSP_POSIX_FLAGS_RENAME		0x02
+#define FSP_POSIX_FLAGS_PATHNAMES	0x04
 
 #define FSP_POSIX_FLAGS_ALL			\
 	(FSP_POSIX_FLAGS_OPEN |			\
+	 FSP_POSIX_FLAGS_PATHNAMES |		\
 	 FSP_POSIX_FLAGS_RENAME)
 
 struct vuid_cache_entry {
@@ -463,6 +465,8 @@ struct smb_request {
 	struct smb_request **chain;
 
 	struct timeval request_time;
+
+	bool posix_pathnames;
 };
 
 /*
@@ -522,7 +526,9 @@ struct vfs_fn_pointers {
 	void (*disconnect_fn)(struct vfs_handle_struct *handle);
 	uint64_t (*disk_free_fn)(struct vfs_handle_struct *handle, const char *path, uint64_t *bsize,
 			      uint64_t *dfree, uint64_t *dsize);
-	int (*get_quota_fn)(struct vfs_handle_struct *handle, enum SMB_QUOTA_TYPE qtype, unid_t id, SMB_DISK_QUOTA *qt);
+	int (*get_quota_fn)(struct vfs_handle_struct *handle, const char *path,
+			    enum SMB_QUOTA_TYPE qtype, unid_t id,
+			    SMB_DISK_QUOTA *qt);
 	int (*set_quota_fn)(struct vfs_handle_struct *handle, enum SMB_QUOTA_TYPE qtype, unid_t id, SMB_DISK_QUOTA *qt);
 	int (*get_shadow_copy_data_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp, struct shadow_copy_data *shadow_copy_data, bool labels);
 	int (*statvfs_fn)(struct vfs_handle_struct *handle, const char *path, struct vfs_statvfs_struct *statbuf);
@@ -927,7 +933,7 @@ void smb_vfs_call_disconnect(struct vfs_handle_struct *handle);
 uint64_t smb_vfs_call_disk_free(struct vfs_handle_struct *handle,
 				const char *path, uint64_t *bsize,
 				uint64_t *dfree, uint64_t *dsize);
-int smb_vfs_call_get_quota(struct vfs_handle_struct *handle,
+int smb_vfs_call_get_quota(struct vfs_handle_struct *handle, const char *path,
 			   enum SMB_QUOTA_TYPE qtype, unid_t id,
 			   SMB_DISK_QUOTA *qt);
 int smb_vfs_call_set_quota(struct vfs_handle_struct *handle,

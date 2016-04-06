@@ -19,16 +19,27 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
-#include "tdb.h"
+#include "replace.h"
 #include "system/network.h"
 #include "system/filesys.h"
-#include "system/dir.h"
-#include "../include/ctdb_private.h"
+#include "system/time.h"
+
+#include <talloc.h>
+#include <tevent.h>
+
 #include "lib/tdb_wrap/tdb_wrap.h"
 #include "lib/util/dlinklist.h"
-#include "../include/ctdb_private.h"
-#include "../common/rb_tree.h"
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+#include "lib/util/util_process.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/rb_tree.h"
+#include "common/system.h"
+#include "common/common.h"
+#include "common/logging.h"
 
 #define TIMELIMIT() timeval_current_ofs(10, 0)
 
@@ -202,7 +213,8 @@ static int add_record_to_vacuum_fetch_list(struct vacuum_data *vdata,
 }
 
 
-static void ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
+static void ctdb_vacuum_event(struct tevent_context *ev,
+			      struct tevent_timer *te,
 			      struct timeval t, void *private_data);
 
 static int vacuum_record_parser(TDB_DATA key, TDB_DATA data, void *private_data)
@@ -811,7 +823,7 @@ static void ctdb_process_delete_list(struct ctdb_db_context *ctdb_db,
 	struct ctdb_context *ctdb = ctdb_db->ctdb;
 	struct delete_records_list *recs;
 	TDB_DATA indata;
-	struct ctdb_node_map *nodemap;
+	struct ctdb_node_map_old *nodemap;
 	uint32_t *active_nodes;
 	int num_active_nodes;
 	TALLOC_CTX *tmp_ctx;
@@ -897,7 +909,7 @@ static void ctdb_process_delete_list(struct ctdb_db_context *ctdb_db,
 
 	for (i = 0; i < num_active_nodes; i++) {
 		struct ctdb_marshall_buffer *records;
-		struct ctdb_rec_data *rec;
+		struct ctdb_rec_data_old *rec;
 		int32_t res;
 		TDB_DATA outdata;
 
@@ -919,7 +931,7 @@ static void ctdb_process_delete_list(struct ctdb_db_context *ctdb_db,
 		 * the list to process further.
 		 */
 		records = (struct ctdb_marshall_buffer *)outdata.dptr;
-		rec = (struct ctdb_rec_data *)&records->data[0];
+		rec = (struct ctdb_rec_data_old *)&records->data[0];
 		while (records->count-- > 1) {
 			TDB_DATA reckey, recdata;
 			struct ctdb_ltdb_header *rechdr;
@@ -961,7 +973,7 @@ static void ctdb_process_delete_list(struct ctdb_db_context *ctdb_db,
 				vdata->count.delete_list.left--;
 			}
 
-			rec = (struct ctdb_rec_data *)(rec->length + (uint8_t *)rec);
+			rec = (struct ctdb_rec_data_old *)(rec->length + (uint8_t *)rec);
 		}
 	}
 
@@ -1004,7 +1016,7 @@ static void ctdb_process_delete_list(struct ctdb_db_context *ctdb_db,
 
 	for (i = 0; i < num_active_nodes; i++) {
 		struct ctdb_marshall_buffer *records;
-		struct ctdb_rec_data *rec;
+		struct ctdb_rec_data_old *rec;
 		int32_t res;
 		TDB_DATA outdata;
 
@@ -1026,7 +1038,7 @@ static void ctdb_process_delete_list(struct ctdb_db_context *ctdb_db,
 		 * the list to delete locally.
 		 */
 		records = (struct ctdb_marshall_buffer *)outdata.dptr;
-		rec = (struct ctdb_rec_data *)&records->data[0];
+		rec = (struct ctdb_rec_data_old *)&records->data[0];
 		while (records->count-- > 1) {
 			TDB_DATA reckey, recdata;
 			struct ctdb_ltdb_header *rechdr;
@@ -1068,7 +1080,7 @@ static void ctdb_process_delete_list(struct ctdb_db_context *ctdb_db,
 				vdata->count.delete_list.left--;
 			}
 
-			rec = (struct ctdb_rec_data *)(rec->length + (uint8_t *)rec);
+			rec = (struct ctdb_rec_data_old *)(rec->length + (uint8_t *)rec);
 		}
 	}
 
@@ -1368,9 +1380,9 @@ static int vacuum_child_destructor(struct ctdb_vacuum_child_context *child_ctx)
 
 	DLIST_REMOVE(ctdb->vacuumers, child_ctx);
 
-	event_add_timed(ctdb->ev, child_ctx->vacuum_handle,
-			timeval_current_ofs(get_vacuum_interval(ctdb_db), 0), 
-			ctdb_vacuum_event, child_ctx->vacuum_handle);
+	tevent_add_timer(ctdb->ev, child_ctx->vacuum_handle,
+			 timeval_current_ofs(get_vacuum_interval(ctdb_db), 0),
+			 ctdb_vacuum_event, child_ctx->vacuum_handle);
 
 	return 0;
 }
@@ -1378,8 +1390,9 @@ static int vacuum_child_destructor(struct ctdb_vacuum_child_context *child_ctx)
 /*
  * this event is generated when a vacuum child process times out
  */
-static void vacuum_child_timeout(struct event_context *ev, struct timed_event *te,
-					 struct timeval t, void *private_data)
+static void vacuum_child_timeout(struct tevent_context *ev,
+				 struct tevent_timer *te,
+				 struct timeval t, void *private_data)
 {
 	struct ctdb_vacuum_child_context *child_ctx = talloc_get_type(private_data, struct ctdb_vacuum_child_context);
 
@@ -1394,8 +1407,9 @@ static void vacuum_child_timeout(struct event_context *ev, struct timed_event *t
 /*
  * this event is generated when a vacuum child process has completed
  */
-static void vacuum_child_handler(struct event_context *ev, struct fd_event *fde,
-			     uint16_t flags, void *private_data)
+static void vacuum_child_handler(struct tevent_context *ev,
+				 struct tevent_fd *fde,
+				 uint16_t flags, void *private_data)
 {
 	struct ctdb_vacuum_child_context *child_ctx = talloc_get_type(private_data, struct ctdb_vacuum_child_context);
 	char c = 0;
@@ -1418,9 +1432,9 @@ static void vacuum_child_handler(struct event_context *ev, struct fd_event *fde,
 /*
  * this event is called every time we need to start a new vacuum process
  */
-static void
-ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
-			       struct timeval t, void *private_data)
+static void ctdb_vacuum_event(struct tevent_context *ev,
+			      struct tevent_timer *te,
+			      struct timeval t, void *private_data)
 {
 	struct ctdb_vacuum_handle *vacuum_handle = talloc_get_type(private_data, struct ctdb_vacuum_handle);
 	struct ctdb_db_context *ctdb_db = vacuum_handle->ctdb_db;
@@ -1429,7 +1443,7 @@ ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
 	struct tevent_fd *fde;
 	int ret;
 
-	/* we dont vacuum if we are in recovery mode, or db frozen */
+	/* we don't vacuum if we are in recovery mode, or db frozen */
 	if (ctdb->recovery_mode == CTDB_RECOVERY_ACTIVE ||
 	    ctdb->freeze_mode[ctdb_db->priority] != CTDB_FREEZE_NONE) {
 		DEBUG(DEBUG_INFO, ("Not vacuuming %s (%s)\n", ctdb_db->db_name,
@@ -1437,9 +1451,9 @@ ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
 				   : ctdb->freeze_mode[ctdb_db->priority] == CTDB_FREEZE_PENDING
 				   ? "freeze pending"
 				   : "frozen"));
-		event_add_timed(ctdb->ev, vacuum_handle,
-			timeval_current_ofs(get_vacuum_interval(ctdb_db), 0),
-			ctdb_vacuum_event, vacuum_handle);
+		tevent_add_timer(ctdb->ev, vacuum_handle,
+				 timeval_current_ofs(get_vacuum_interval(ctdb_db), 0),
+				 ctdb_vacuum_event, vacuum_handle);
 		return;
 	}
 
@@ -1448,9 +1462,9 @@ ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
 	 * new vacuuming event to stagger vacuuming events.
 	 */
 	if (ctdb->vacuumers != NULL) {
-		event_add_timed(ctdb->ev, vacuum_handle,
-				timeval_current_ofs(0, 500*1000),
-				ctdb_vacuum_event, vacuum_handle);
+		tevent_add_timer(ctdb->ev, vacuum_handle,
+				 timeval_current_ofs(0, 500*1000),
+				 ctdb_vacuum_event, vacuum_handle);
 		return;
 	}
 
@@ -1465,9 +1479,9 @@ ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
 	if (ret != 0) {
 		talloc_free(child_ctx);
 		DEBUG(DEBUG_ERR, ("Failed to create pipe for vacuum child process.\n"));
-		event_add_timed(ctdb->ev, vacuum_handle,
-			timeval_current_ofs(get_vacuum_interval(ctdb_db), 0),
-			ctdb_vacuum_event, vacuum_handle);
+		tevent_add_timer(ctdb->ev, vacuum_handle,
+				 timeval_current_ofs(get_vacuum_interval(ctdb_db), 0),
+				 ctdb_vacuum_event, vacuum_handle);
 		return;
 	}
 
@@ -1481,9 +1495,9 @@ ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
 		close(child_ctx->fd[1]);
 		talloc_free(child_ctx);
 		DEBUG(DEBUG_ERR, ("Failed to fork vacuum child process.\n"));
-		event_add_timed(ctdb->ev, vacuum_handle,
-			timeval_current_ofs(get_vacuum_interval(ctdb_db), 0),
-			ctdb_vacuum_event, vacuum_handle);
+		tevent_add_timer(ctdb->ev, vacuum_handle,
+				 timeval_current_ofs(get_vacuum_interval(ctdb_db), 0),
+				 ctdb_vacuum_event, vacuum_handle);
 		return;
 	}
 
@@ -1494,7 +1508,7 @@ ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
 		close(child_ctx->fd[0]);
 
 		DEBUG(DEBUG_INFO,("Vacuuming child process %d for db %s started\n", getpid(), ctdb_db->db_name));
-		ctdb_set_process_name("ctdb_vacuum");
+		prctl_set_comment("ctdb_vacuum");
 		if (switch_from_server_to_client(ctdb, "vacuum-%s", ctdb_db->db_name) != 0) {
 			DEBUG(DEBUG_CRIT, (__location__ "ERROR: failed to switch vacuum daemon into client mode. Shutting down.\n"));
 			_exit(1);
@@ -1531,14 +1545,14 @@ ctdb_vacuum_event(struct event_context *ev, struct timed_event *te,
 				 "in parent context. Shutting down\n");
 	}
 
-	event_add_timed(ctdb->ev, child_ctx,
-		timeval_current_ofs(ctdb->tunable.vacuum_max_run_time, 0),
-		vacuum_child_timeout, child_ctx);
+	tevent_add_timer(ctdb->ev, child_ctx,
+			 timeval_current_ofs(ctdb->tunable.vacuum_max_run_time, 0),
+			 vacuum_child_timeout, child_ctx);
 
 	DEBUG(DEBUG_DEBUG, (__location__ " Created PIPE FD:%d to child vacuum process\n", child_ctx->fd[0]));
 
-	fde = event_add_fd(ctdb->ev, child_ctx, child_ctx->fd[0],
-			   EVENT_FD_READ, vacuum_child_handler, child_ctx);
+	fde = tevent_add_fd(ctdb->ev, child_ctx, child_ctx->fd[0],
+			    TEVENT_FD_READ, vacuum_child_handler, child_ctx);
 	tevent_fd_set_auto_close(fde);
 
 	vacuum_handle->child_ctx = child_ctx;
@@ -1573,9 +1587,9 @@ int ctdb_vacuum_init(struct ctdb_db_context *ctdb_db)
 	ctdb_db->vacuum_handle->ctdb_db         = ctdb_db;
 	ctdb_db->vacuum_handle->fast_path_count = 0;
 
-	event_add_timed(ctdb_db->ctdb->ev, ctdb_db->vacuum_handle, 
-			timeval_current_ofs(get_vacuum_interval(ctdb_db), 0), 
-			ctdb_vacuum_event, ctdb_db->vacuum_handle);
+	tevent_add_timer(ctdb_db->ctdb->ev, ctdb_db->vacuum_handle,
+			 timeval_current_ofs(get_vacuum_interval(ctdb_db), 0),
+			 ctdb_vacuum_event, ctdb_db->vacuum_handle);
 
 	return 0;
 }
@@ -1645,11 +1659,11 @@ static int insert_record_into_delete_queue(struct ctdb_db_context *ctdb_db,
 
 	hash = (uint32_t)ctdb_hash(&key);
 
-	DEBUG(DEBUG_INFO, (__location__ " schedule for deletion: db[%s] "
-			   "db_id[0x%08x] "
-			   "key_hash[0x%08x] "
-			   "lmaster[%u] "
-			   "migrated_with_data[%s]\n",
+	DEBUG(DEBUG_DEBUG, (__location__ " schedule for deletion: db[%s] "
+			    "db_id[0x%08x] "
+			    "key_hash[0x%08x] "
+			    "lmaster[%u] "
+			    "migrated_with_data[%s]\n",
 			    ctdb_db->db_name, ctdb_db->db_id,
 			    hash,
 			    ctdb_lmaster(ctdb_db->ctdb, &key),
@@ -1732,7 +1746,7 @@ int32_t ctdb_local_schedule_for_deletion(struct ctdb_db_context *ctdb_db,
 		return ret;
 	}
 
-	/* if we dont have a connection to the daemon we can not send
+	/* if we don't have a connection to the daemon we can not send
 	   a control. For example sometimes from update_record control child
 	   process.
 	*/

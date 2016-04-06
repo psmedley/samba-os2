@@ -63,7 +63,9 @@ static bool gencache_init(void)
 	int open_flags = O_RDWR|O_CREAT;
 
 	/* skip file open if it's already opened */
-	if (cache) return True;
+	if (cache) {
+		return true;
+	}
 
 	cache_fname = cache_path("gencache.tdb");
 	if (cache_fname == NULL) {
@@ -112,7 +114,7 @@ static bool gencache_init(void)
 
 	if (!cache) {
 		DEBUG(5, ("Attempt to open gencache.tdb has failed.\n"));
-		return False;
+		return false;
 	}
 
 	cache_fname = lock_path("gencache_notrans.tdb");
@@ -139,7 +141,7 @@ static bool gencache_init(void)
 	}
 	TALLOC_FREE(cache_fname);
 
-	return True;
+	return true;
 }
 
 static TDB_DATA last_stabilize_key(void)
@@ -281,6 +283,8 @@ bool gencache_set_data_blob(const char *keystr, const DATA_BLOB *blob,
 			    time_t timeout)
 {
 	int ret;
+	fstring hdr;
+	int hdr_len;
 	char* val;
 	time_t last_stabilize;
 	static int writecount;
@@ -295,7 +299,9 @@ bool gencache_set_data_blob(const char *keystr, const DATA_BLOB *blob,
 		return false;
 	}
 
-	if (!gencache_init()) return False;
+	if (!gencache_init()) {
+		return false;
+	}
 
 	if (gencache_have_val(keystr, blob, timeout)) {
 		DEBUG(10, ("Did not store value for %s, we already got it\n",
@@ -303,18 +309,22 @@ bool gencache_set_data_blob(const char *keystr, const DATA_BLOB *blob,
 		return true;
 	}
 
-	val = talloc_asprintf(talloc_tos(), CACHE_DATA_FMT, (int)timeout);
-	if (val == NULL) {
-		return False;
+	hdr_len = fstr_sprintf(hdr, CACHE_DATA_FMT, (int)timeout);
+
+	if (hdr_len == -1) {
+		return false;
 	}
-	val = talloc_realloc(NULL, val, char, talloc_array_length(val)-1);
+	if ((blob->length + (size_t)hdr_len) < blob->length) {
+		return false;
+	}
+
+	val = talloc_array(talloc_tos(), char, hdr_len + blob->length);
 	if (val == NULL) {
 		return false;
 	}
-	val = (char *)talloc_append_blob(NULL, val, *blob);
-	if (val == NULL) {
-		return false;
-	}
+
+	memcpy(val, hdr, hdr_len);
+	memcpy(val+hdr_len, blob->data, blob->length);
 
 	DEBUG(10, ("Adding cache entry with key=[%s] and timeout="
 	           "[%s] (%d seconds %s)\n", keystr,
@@ -383,7 +393,9 @@ bool gencache_del(const char *keystr)
 		return false;
 	}
 
-	if (!gencache_init()) return False;	
+	if (!gencache_init()) {
+		return false;
+	}
 
 	DEBUG(10, ("Deleting cache entry (key=[%s])\n", keystr));
 
@@ -569,7 +581,7 @@ static void gencache_get_data_blob_parser(time_t timeout, DATA_BLOB blob,
  *        timeout
  *
  * @retval true when entry is successfuly fetched
- * @retval False for failure
+ * @retval false for failure
  **/
 
 bool gencache_get_data_blob(const char *keystr, TALLOC_CTX *mem_ctx,
@@ -604,7 +616,7 @@ bool gencache_get_data_blob(const char *keystr, TALLOC_CTX *mem_ctx,
 		*timeout = state.timeout;
 	}
 
-	return True;
+	return true;
 
 fail:
 	if (was_expired != NULL) {
@@ -793,14 +805,14 @@ static int wipe_fn(struct tdb_context *tdb, TDB_DATA key, TDB_DATA val,
  *        timeout
  *
  * @retval true when entry is successfuly fetched
- * @retval False for failure
+ * @retval false for failure
  **/
 
 bool gencache_get(const char *keystr, TALLOC_CTX *mem_ctx, char **value,
 		  time_t *ptimeout)
 {
 	DATA_BLOB blob;
-	bool ret = False;
+	bool ret = false;
 
 	ret = gencache_get_data_blob(keystr, mem_ctx, &blob, ptimeout, NULL);
 	if (!ret) {

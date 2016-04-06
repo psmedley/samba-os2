@@ -2,12 +2,12 @@
 .\"     Title: pdbedit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 02/24/2016
+.\"      Date: 03/22/2016
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.3
+.\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "PDBEDIT" "8" "02/24/2016" "Samba 4\&.3" "System Administration tools"
+.TH "PDBEDIT" "8" "03/22/2016" "Samba 4\&.4" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 pdbedit \- manage the SAM database (Database of Samba Users)
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-pdbedit [\-a] [\-b\ passdb\-backend] [\-c\ account\-control] [\-C\ value] [\-d\ debuglevel] [\-D\ drive] [\-e\ passdb\-backend] [\-f\ fullname] [\-\-force\-initialized\-passwords] [\-g] [\-h\ homedir] [\-i\ passdb\-backend] [\-I\ domain] [\-K] [\-L] [\-m] [\-M\ SID|RID] [\-N\ description] [\-P\ account\-policy] [\-p\ profile] [\-\-policies\-reset] [\-r] [\-s\ configfile] [\-S\ script] [\-t] [\-\-time\-format] [\-u\ username] [\-U\ SID|RID] [\-v] [\-V] [\-w] [\-x] [\-y] [\-z] [\-Z]
+pdbedit [\-a] [\-b\ passdb\-backend] [\-c\ account\-control] [\-C\ value] [\-d\ debuglevel] [\-D\ drive] [\-e\ passdb\-backend] [\-f\ fullname] [\-\-force\-initialized\-passwords] [\-g] [\-h\ homedir] [\-i\ passdb\-backend] [\-I\ domain] [\-K] [\-L] [\-m] [\-M\ SID|RID] [\-N\ description] [\-P\ account\-policy] [\-p\ profile] [\-\-policies\-reset] [\-r] [\-s\ configfile] [\-S\ script] [\-\-set\-nt\-hash] [\-t] [\-\-time\-format] [\-u\ username] [\-U\ SID|RID] [\-v] [\-V] [\-w] [\-x] [\-y] [\-z] [\-Z]
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -66,7 +66,7 @@ samba:45:Test User
 .PP
 \-v|\-\-verbose
 .RS 4
-This option enables the verbose listing format\&. It causes pdbedit to list the users in the database, printing out the account fields in a descriptive format\&.
+This option enables the verbose listing format\&. It causes pdbedit to list the users in the database, printing out the account fields in a descriptive format\&. Used together with \-w also shows passwords hashes\&.
 .sp
 Example:
 pdbedit \-L \-v
@@ -105,7 +105,7 @@ This option sets the "smbpasswd" listing format\&. It will make pdbedit list the
 smbpasswd
 file format\&. (see the
 \fBsmbpasswd\fR(5)
-for details)
+for details)\&. Instead used together with (\-v) displays the passwords hashes in verbose output\&.
 .sp
 Example:
 pdbedit \-L \-w
@@ -165,6 +165,14 @@ This option can be used while adding or modifying a user account\&. It will spec
 .sp
 Example:
 \-S "\e\e\e\eBERSERKER\e\enetlogon\e\esorce\&.bat"
+.RE
+.PP
+\-\-set\-nt\-hash
+.RS 4
+This option can be used while modifying a user account\&. It will set the user\*(Aqs password using the nt\-hash value given as hexadecimal string\&. Useful to synchronize passwords\&.
+.sp
+Example:
+\-\-set\-nt\-hash 8846F7EAEE8FB117AD06BDD830B7586C
 .RE
 .PP
 \-p|\-\-profile profile
@@ -497,7 +505,7 @@ If you specify
 \fI\-i in\-backend \-e out\-backend\fR
 applies to the account policies instead of the user database\&.
 .sp
-This option will allow to migrate account policies from their default tdb\-store into a passdb backend, e\&.g\&. an LDAP directory server\&.
+This option will allow one to migrate account policies from their default tdb\-store into a passdb backend, e\&.g\&. an LDAP directory server\&.
 .sp
 Example:
 pdbedit \-y \-i tdbsam: \-e ldapsam:ldap://my\&.ldap\&.host

@@ -17,11 +17,21 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
-#include "tdb.h"
+#include "replace.h"
 #include "system/network.h"
 #include "system/filesys.h"
-#include "../include/ctdb_private.h"
+
+#include <talloc.h>
+#include <tevent.h>
+
+#include "lib/util/time.h"
+#include "lib/util/debug.h"
+
+#include "ctdb_private.h"
+
+#include "common/common.h"
+#include "common/logging.h"
+
 #include "ctdb_tcp.h"
 
 static int tnode_destructor(struct ctdb_tcp_node *tnode)
@@ -93,9 +103,10 @@ static int ctdb_tcp_connect_node(struct ctdb_node *node)
 	/* startup connection to the other server - will happen on
 	   next event loop */
 	if (!ctdb_same_address(ctdb->address, &node->address)) {
-		tnode->connect_te = event_add_timed(ctdb->ev, tnode, 
-						    timeval_zero(), 
-						    ctdb_tcp_node_connect, node);
+		tnode->connect_te = tevent_add_timer(ctdb->ev, tnode,
+						    timeval_zero(),
+						    ctdb_tcp_node_connect,
+						    node);
 	}
 
 	return 0;
@@ -114,8 +125,9 @@ static void ctdb_tcp_restart(struct ctdb_node *node)
 
 	ctdb_tcp_stop_connection(node);
 
-	tnode->connect_te = event_add_timed(node->ctdb->ev, tnode, timeval_zero(), 
-					    ctdb_tcp_node_connect, node);
+	tnode->connect_te = tevent_add_timer(node->ctdb->ev, tnode,
+					     timeval_zero(),
+					     ctdb_tcp_node_connect, node);
 }
 
 

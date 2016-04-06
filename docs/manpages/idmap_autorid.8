@@ -2,12 +2,12 @@
 .\"     Title: idmap_autorid
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 02/24/2016
+.\"      Date: 03/22/2016
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.3
+.\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "IDMAP_AUTORID" "8" "02/24/2016" "Samba 4\&.3" "System Administration tools"
+.TH "IDMAP_AUTORID" "8" "03/22/2016" "Samba 4\&.4" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -39,6 +39,11 @@ The mappings of which domain is mapped to which range is stored in autorid\&.tdb
 .PP
 Due to the algorithm being used, it is the module that is most easy to use as it only requires a minimal configuration\&.
 .SH "IDMAP OPTIONS"
+.PP
+range = low \- high
+.RS 4
+Defines the available matching uid and gid range for which the backend is authoritative\&. Note that the range acts as a filter\&. If algorithmically determined UID or GID fall outside the range, they are ignored and the corresponding map is discarded\&. It is intended as a way to avoid accidental UID/GID overlaps between local and remotely defined IDs\&.
+.RE
 .PP
 rangesize = numberofidsperdomain
 .RS 4

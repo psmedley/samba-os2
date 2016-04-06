@@ -40,13 +40,25 @@
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_DNS
 
-static WERROR create_response_rr(const struct dns_name_question *question,
-				 const struct dnsp_DnssrvRpcRecord *rec,
-				 struct dns_res_rec **answers, uint16_t *ancount)
+static WERROR add_response_rr(const char *name,
+			      const struct dnsp_DnssrvRpcRecord *rec,
+			      struct dns_res_rec **answers)
 {
 	struct dns_res_rec *ans = *answers;
-	uint16_t ai = *ancount;
+	uint16_t ai = talloc_array_length(ans);
 	enum ndr_err_code ndr_err;
+
+	if (ai == UINT16_MAX) {
+		return WERR_BUFFER_OVERFLOW;
+	}
+
+	/*
+	 * "ans" is always non-NULL and thus its own talloc context
+	 */
+	ans = talloc_realloc(ans, ans, struct dns_res_rec, ai+1);
+	if (ans == NULL) {
+		return WERR_NOMEM;
+	}
 
 	ZERO_STRUCT(ans[ai]);
 
@@ -90,6 +102,7 @@ static WERROR create_response_rr(const struct dns_name_question *question,
 		break;
 	case DNS_QTYPE_PTR:
 		ans[ai].rdata.ptr_record = talloc_strdup(ans, rec->data.ptr);
+		W_ERROR_HAVE_NO_MEMORY(ans[ai].rdata.ptr_record);
 		break;
 	case DNS_QTYPE_MX:
 		ans[ai].rdata.mx_record.preference = rec->data.mx.wPriority;
@@ -112,16 +125,140 @@ static WERROR create_response_rr(const struct dns_name_question *question,
 		return DNS_ERR(NOT_IMPLEMENTED);
 	}
 
-	ans[ai].name = talloc_strdup(ans, question->name);
+	ans[ai].name = talloc_strdup(ans, name);
 	W_ERROR_HAVE_NO_MEMORY(ans[ai].name);
 	ans[ai].rr_type = rec->wType;
 	ans[ai].rr_class = DNS_QCLASS_IN;
 	ans[ai].ttl = rec->dwTtlSeconds;
 	ans[ai].length = UINT16_MAX;
-	ai++;
 
 	*answers = ans;
-	*ancount = ai;
+
+	return WERR_OK;
+}
+
+static WERROR add_dns_res_rec(struct dns_res_rec **pdst,
+			      const struct dns_res_rec *src)
+{
+	struct dns_res_rec *dst = *pdst;
+	uint16_t di = talloc_array_length(dst);
+	enum ndr_err_code ndr_err;
+
+	if (di == UINT16_MAX) {
+		return WERR_BUFFER_OVERFLOW;
+	}
+
+	dst = talloc_realloc(dst, dst, struct dns_res_rec, di+1);
+	if (dst == NULL) {
+		return WERR_NOMEM;
+	}
+
+	ZERO_STRUCT(dst[di]);
+
+	dst[di] = (struct dns_res_rec) {
+		.name = talloc_strdup(dst, src->name),
+		.rr_type = src->rr_type,
+		.rr_class = src->rr_class,
+		.ttl = src->ttl,
+		.length = src->length
+	};
+
+	if (dst[di].name == NULL) {
+		return WERR_NOMEM;
+	}
+
+	switch (src->rr_type) {
+	case DNS_QTYPE_CNAME:
+		dst[di].rdata.cname_record = talloc_strdup(
+			dst, src->rdata.cname_record);
+		if (dst[di].rdata.cname_record == NULL) {
+			return WERR_NOMEM;
+		}
+		break;
+	case DNS_QTYPE_A:
+		dst[di].rdata.ipv4_record = talloc_strdup(
+			dst, src->rdata.ipv4_record);
+		if (dst[di].rdata.ipv4_record == NULL) {
+			return WERR_NOMEM;
+		}
+		break;
+	case DNS_QTYPE_AAAA:
+		dst[di].rdata.ipv6_record = talloc_strdup(
+			dst, src->rdata.ipv6_record);
+		if (dst[di].rdata.ipv6_record == NULL) {
+			return WERR_NOMEM;
+		}
+		break;
+	case DNS_TYPE_NS:
+		dst[di].rdata.ns_record = talloc_strdup(
+			dst, src->rdata.ns_record);
+		if (dst[di].rdata.ns_record == NULL) {
+			return WERR_NOMEM;
+		}
+		break;
+	case DNS_QTYPE_SRV:
+		dst[di].rdata.srv_record = (struct dns_srv_record) {
+			.priority = src->rdata.srv_record.priority,
+			.weight   = src->rdata.srv_record.weight,
+			.port     = src->rdata.srv_record.port,
+			.target   = talloc_strdup(
+				dst, src->rdata.srv_record.target)
+		};
+		if (dst[di].rdata.srv_record.target == NULL) {
+			return WERR_NOMEM;
+		}
+		break;
+	case DNS_QTYPE_SOA:
+		dst[di].rdata.soa_record = (struct dns_soa_record) {
+			.mname	 = talloc_strdup(
+				dst, src->rdata.soa_record.mname),
+			.rname	 = talloc_strdup(
+				dst, src->rdata.soa_record.rname),
+			.serial	 = src->rdata.soa_record.serial,
+			.refresh = src->rdata.soa_record.refresh,
+			.retry   = src->rdata.soa_record.retry,
+			.expire  = src->rdata.soa_record.expire,
+			.minimum = src->rdata.soa_record.minimum
+		};
+
+		if ((dst[di].rdata.soa_record.mname == NULL) ||
+		    (dst[di].rdata.soa_record.rname == NULL)) {
+			return WERR_NOMEM;
+		}
+
+		break;
+	case DNS_QTYPE_PTR:
+		dst[di].rdata.ptr_record = talloc_strdup(
+			dst, src->rdata.ptr_record);
+		if (dst[di].rdata.ptr_record == NULL) {
+			return WERR_NOMEM;
+		}
+		break;
+	case DNS_QTYPE_MX:
+		dst[di].rdata.mx_record = (struct dns_mx_record) {
+			.preference = src->rdata.mx_record.preference,
+			.exchange   = talloc_strdup(
+				src, src->rdata.mx_record.exchange)
+		};
+
+		if (dst[di].rdata.mx_record.exchange == NULL) {
+			return WERR_NOMEM;
+		}
+		break;
+	case DNS_QTYPE_TXT:
+		ndr_err = ndr_dnsp_string_list_copy(dst,
+						    &src->rdata.txt_record.txt,
+						    &dst[di].rdata.txt_record.txt);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			return WERR_NOMEM;
+		}
+		break;
+	default:
+		DBG_WARNING("Got unhandled type %u query.\n", src->rr_type);
+		return DNS_ERR(NOT_IMPLEMENTED);
+	}
+
+	*pdst = dst;
 
 	return WERR_OK;
 }
@@ -135,8 +272,8 @@ struct ask_forwarder_state {
 static void ask_forwarder_done(struct tevent_req *subreq);
 
 static struct tevent_req *ask_forwarder_send(
-	struct dns_server *dns,
 	TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+	struct dns_server *dns,
 	const char *forwarder, struct dns_name_question *question)
 {
 	struct tevent_req *req, *subreq;
@@ -199,12 +336,14 @@ static void ask_forwarder_done(struct tevent_req *subreq)
 		req, struct ask_forwarder_state);
 	DATA_BLOB in_blob;
 	enum ndr_err_code ndr_err;
-	WERROR ret;
+	int ret;
 
 	ret = dns_udp_request_recv(subreq, state,
 				   &in_blob.data, &in_blob.length);
 	TALLOC_FREE(subreq);
-	if (tevent_req_werror(req, ret)) {
+
+	if (ret != 0) {
+		tevent_req_werror(req, unix_to_werror(ret));
 		return;
 	}
 
@@ -249,97 +388,309 @@ static WERROR ask_forwarder_recv(
 	return WERR_OK;
 }
 
-static WERROR handle_question(struct dns_server *dns,
-			      TALLOC_CTX *mem_ctx,
-			      const struct dns_name_question *question,
-			      struct dns_res_rec **answers, uint16_t *ancount)
+static WERROR add_zone_authority_record(struct dns_server *dns,
+					TALLOC_CTX *mem_ctx,
+					const struct dns_name_question *question,
+					struct dns_res_rec **nsrecs)
 {
-	struct dns_res_rec *ans = *answers;
-	WERROR werror, werror_return;
-	unsigned int ri;
+	const char *zone = NULL;
 	struct dnsp_DnssrvRpcRecord *recs;
-	uint16_t rec_count, ai = *ancount;
+	struct dns_res_rec *ns = *nsrecs;
+	uint16_t rec_count;
 	struct ldb_dn *dn = NULL;
+	unsigned int ri;
+	WERROR werror;
 
-	werror = dns_name2dn(dns, mem_ctx, question->name, &dn);
-	W_ERROR_NOT_OK_RETURN(werror);
+	zone = dns_get_authoritative_zone(dns, question->name);
+	DEBUG(10, ("Creating zone authority record for '%s'\n", zone));
+
+	werror = dns_name2dn(dns, mem_ctx, zone, &dn);
+	if (!W_ERROR_IS_OK(werror)) {
+		return werror;
+	}
 
 	werror = dns_lookup_records(dns, mem_ctx, dn, &recs, &rec_count);
-	W_ERROR_NOT_OK_RETURN(werror);
-
-	ans = talloc_realloc(mem_ctx, ans, struct dns_res_rec, rec_count + ai);
-	if (ans == NULL) {
-		return WERR_NOMEM;
+	if (!W_ERROR_IS_OK(werror)) {
+		return werror;
 	}
-
-	/* Set up for an NXDOMAIN reply if no match is found */
-	werror_return = DNS_ERR(NAME_ERROR);
 
 	for (ri = 0; ri < rec_count; ri++) {
-		if ((recs[ri].wType == DNS_TYPE_CNAME) &&
-		    ((question->question_type == DNS_QTYPE_A) ||
-		     (question->question_type == DNS_QTYPE_AAAA))) {
-			struct dns_name_question *new_q =
-				talloc(mem_ctx, struct dns_name_question);
-
-			if (new_q == NULL) {
-				return WERR_NOMEM;
-			}
-
-			/* We reply with one more record, so grow the array */
-			ans = talloc_realloc(mem_ctx, ans, struct dns_res_rec,
-					     rec_count + 1);
-			if (ans == NULL) {
-				TALLOC_FREE(new_q);
-				return WERR_NOMEM;
-			}
-
-			/* First put in the CNAME record */
-			werror = create_response_rr(question, &recs[ri], &ans, &ai);
+		if (recs[ri].wType == DNS_TYPE_SOA) {
+			werror = add_response_rr(zone, &recs[ri], &ns);
 			if (!W_ERROR_IS_OK(werror)) {
 				return werror;
 			}
-
-			/* And then look up the name it points at.. */
-
-			/* First build up the new question */
-			new_q->question_type = question->question_type;
-			new_q->question_class = question->question_class;
-			if (new_q->question_type == DNS_QTYPE_A) {
-				new_q->name = talloc_strdup(new_q, recs[ri].data.ipv4);
-			} else if (new_q->question_type == DNS_QTYPE_AAAA) {
-				new_q->name = talloc_strdup(new_q, recs[ri].data.ipv6);
-			}
-			if (new_q->name == NULL) {
-				TALLOC_FREE(new_q);
-				return WERR_NOMEM;
-			}
-			/* and then call the lookup again */
-			werror = handle_question(dns, mem_ctx, new_q, &ans, &ai);
-			if (!W_ERROR_IS_OK(werror)) {
-				return werror;
-			}
-			werror_return = WERR_OK;
-
-
-			continue;
 		}
-		if ((question->question_type != DNS_QTYPE_ALL) &&
-		    (recs[ri].wType != (enum dns_record_type) question->question_type)) {
-			werror_return = WERR_OK;
-			continue;
-		}
-		werror = create_response_rr(question, &recs[ri], &ans, &ai);
-		if (!W_ERROR_IS_OK(werror)) {
-			return werror;
-		}
-		werror_return = WERR_OK;
 	}
 
-	*ancount = ai;
-	*answers = ans;
+	*nsrecs = ns;
 
-	return werror_return;
+	return WERR_OK;
+}
+
+static struct tevent_req *handle_authoritative_send(
+	TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+	struct dns_server *dns, const char *forwarder,
+	struct dns_name_question *question,
+	struct dns_res_rec **answers, struct dns_res_rec **nsrecs);
+static WERROR handle_authoritative_recv(struct tevent_req *req);
+
+struct handle_dnsrpcrec_state {
+	struct dns_res_rec **answers;
+	struct dns_res_rec **nsrecs;
+};
+
+static void handle_dnsrpcrec_gotauth(struct tevent_req *subreq);
+static void handle_dnsrpcrec_gotforwarded(struct tevent_req *subreq);
+
+static struct tevent_req *handle_dnsrpcrec_send(
+	TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+	struct dns_server *dns, const char *forwarder,
+	const struct dns_name_question *question,
+	struct dnsp_DnssrvRpcRecord *rec,
+	struct dns_res_rec **answers, struct dns_res_rec **nsrecs)
+{
+	struct tevent_req *req, *subreq;
+	struct handle_dnsrpcrec_state *state;
+	struct dns_name_question *new_q;
+	bool resolve_cname;
+	WERROR werr;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct handle_dnsrpcrec_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	state->answers = answers;
+	state->nsrecs = nsrecs;
+
+	resolve_cname = ((rec->wType == DNS_TYPE_CNAME) &&
+			 ((question->question_type == DNS_QTYPE_A) ||
+			  (question->question_type == DNS_QTYPE_AAAA)));
+
+	if (!resolve_cname) {
+		if ((question->question_type != DNS_QTYPE_ALL) &&
+		    (rec->wType !=
+		     (enum dns_record_type) question->question_type)) {
+			tevent_req_done(req);
+			return tevent_req_post(req, ev);
+		}
+
+		werr = add_response_rr(question->name, rec, state->answers);
+		if (tevent_req_werror(req, werr)) {
+			return tevent_req_post(req, ev);
+		}
+
+		tevent_req_done(req);
+		return tevent_req_post(req, ev);
+	}
+
+	werr = add_response_rr(question->name, rec, state->answers);
+	if (tevent_req_werror(req, werr)) {
+		return tevent_req_post(req, ev);
+	}
+
+	new_q = talloc(state, struct dns_name_question);
+	if (tevent_req_nomem(new_q, req)) {
+		return tevent_req_post(req, ev);
+	}
+
+	*new_q = (struct dns_name_question) {
+		.question_type = question->question_type,
+		.question_class = question->question_class,
+		.name = rec->data.cname
+	};
+
+	if (dns_authorative_for_zone(dns, new_q->name)) {
+		subreq = handle_authoritative_send(
+			state, ev, dns, forwarder, new_q,
+			state->answers, state->nsrecs);
+		if (tevent_req_nomem(subreq, req)) {
+			return tevent_req_post(req, ev);
+		}
+		tevent_req_set_callback(subreq, handle_dnsrpcrec_gotauth, req);
+		return req;
+	}
+
+	subreq = ask_forwarder_send(state, ev, dns, forwarder, new_q);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, handle_dnsrpcrec_gotforwarded, req);
+
+	return req;
+}
+
+static void handle_dnsrpcrec_gotauth(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	WERROR werr;
+
+	werr = handle_authoritative_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (tevent_req_werror(req, werr)) {
+		return;
+	}
+	tevent_req_done(req);
+}
+
+static void handle_dnsrpcrec_gotforwarded(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct handle_dnsrpcrec_state *state = tevent_req_data(
+		req, struct handle_dnsrpcrec_state);
+	struct dns_res_rec *answers, *nsrecs, *additional;
+	uint16_t ancount = 0;
+	uint16_t nscount = 0;
+	uint16_t arcount = 0;
+	uint16_t i;
+	WERROR werr;
+
+	werr = ask_forwarder_recv(subreq, state, &answers, &ancount,
+				  &nsrecs, &nscount, &additional, &arcount);
+	if (tevent_req_werror(req, werr)) {
+		return;
+	}
+
+	for (i=0; i<ancount; i++) {
+		werr = add_dns_res_rec(state->answers, &answers[i]);
+		if (tevent_req_werror(req, werr)) {
+			return;
+		}
+	}
+
+	for (i=0; i<nscount; i++) {
+		werr = add_dns_res_rec(state->nsrecs, &nsrecs[i]);
+		if (tevent_req_werror(req, werr)) {
+			return;
+		}
+	}
+
+	tevent_req_done(req);
+}
+
+static WERROR handle_dnsrpcrec_recv(struct tevent_req *req)
+{
+	return tevent_req_simple_recv_werror(req);
+}
+
+struct handle_authoritative_state {
+	struct tevent_context *ev;
+	struct dns_server *dns;
+	struct dns_name_question *question;
+	const char *forwarder;
+
+	struct dnsp_DnssrvRpcRecord *recs;
+	uint16_t rec_count;
+	uint16_t recs_done;
+
+	struct dns_res_rec **answers;
+	struct dns_res_rec **nsrecs;
+};
+
+static void handle_authoritative_done(struct tevent_req *subreq);
+
+static struct tevent_req *handle_authoritative_send(
+	TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+	struct dns_server *dns, const char *forwarder,
+	struct dns_name_question *question,
+	struct dns_res_rec **answers, struct dns_res_rec **nsrecs)
+{
+	struct tevent_req *req, *subreq;
+	struct handle_authoritative_state *state;
+	struct ldb_dn *dn = NULL;
+	WERROR werr;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct handle_authoritative_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	state->ev = ev;
+	state->dns = dns;
+	state->question = question;
+	state->forwarder = forwarder;
+	state->answers = answers;
+	state->nsrecs = nsrecs;
+
+	werr = dns_name2dn(dns, state, question->name, &dn);
+	if (tevent_req_werror(req, werr)) {
+		return tevent_req_post(req, ev);
+	}
+
+	werr = dns_lookup_records(dns, state, dn, &state->recs,
+				  &state->rec_count);
+	TALLOC_FREE(dn);
+	if (tevent_req_werror(req, werr)) {
+		return tevent_req_post(req, ev);
+	}
+
+	if (state->rec_count == 0) {
+		tevent_req_werror(req, DNS_ERR(NAME_ERROR));
+		return tevent_req_post(req, ev);
+	}
+
+	subreq = handle_dnsrpcrec_send(
+		state, state->ev, state->dns, state->forwarder,
+		state->question, &state->recs[state->recs_done],
+		state->answers, state->nsrecs);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, handle_authoritative_done, req);
+	return req;
+}
+
+static void handle_authoritative_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct handle_authoritative_state *state = tevent_req_data(
+		req, struct handle_authoritative_state);
+	WERROR werr;
+
+	werr = handle_dnsrpcrec_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (tevent_req_werror(req, werr)) {
+		return;
+	}
+
+	state->recs_done += 1;
+
+	if (state->recs_done == state->rec_count) {
+		tevent_req_done(req);
+		return;
+	}
+
+	subreq = handle_dnsrpcrec_send(
+		state, state->ev, state->dns, state->forwarder,
+		state->question, &state->recs[state->recs_done],
+		state->answers, state->nsrecs);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, handle_authoritative_done, req);
+}
+
+static WERROR handle_authoritative_recv(struct tevent_req *req)
+{
+	struct handle_authoritative_state *state = tevent_req_data(
+		req, struct handle_authoritative_state);
+	WERROR werr;
+
+	if (tevent_req_is_werror(req, &werr)) {
+		return werr;
+	}
+
+	werr = add_zone_authority_record(state->dns, state, state->question,
+					 state->nsrecs);
+	if (!W_ERROR_IS_OK(werr)) {
+		return werr;
+	}
+
+	return WERR_OK;
 }
 
 static NTSTATUS create_tkey(struct dns_server *dns,
@@ -569,6 +920,7 @@ struct dns_server_process_query_state {
 	uint16_t arcount;
 };
 
+static void dns_server_process_query_got_auth(struct tevent_req *subreq);
 static void dns_server_process_query_got_response(struct tevent_req *subreq);
 
 struct tevent_req *dns_server_process_query_send(
@@ -608,16 +960,32 @@ struct tevent_req *dns_server_process_query_send(
 	}
 
 	if (dns_authorative_for_zone(dns, in->questions[0].name)) {
-		WERROR err;
 
 		req_state->flags |= DNS_FLAG_AUTHORITATIVE;
-		err = handle_question(dns, state, &in->questions[0],
-				      &state->answers, &state->ancount);
-		if (tevent_req_werror(req, err)) {
+
+		/*
+		 * Initialize the response arrays, so that we can use
+		 * them as their own talloc contexts when doing the
+		 * realloc
+		 */
+		state->answers = talloc_array(state, struct dns_res_rec, 0);
+		if (tevent_req_nomem(state->answers, req)) {
 			return tevent_req_post(req, ev);
 		}
-		tevent_req_done(req);
-		return tevent_req_post(req, ev);
+		state->nsrecs = talloc_array(state, struct dns_res_rec, 0);
+		if (tevent_req_nomem(state->nsrecs, req)) {
+			return tevent_req_post(req, ev);
+		}
+
+		subreq = handle_authoritative_send(
+			state, ev, dns, lpcfg_dns_forwarder(dns->task->lp_ctx),
+			&in->questions[0], &state->answers, &state->nsrecs);
+		if (tevent_req_nomem(subreq, req)) {
+			return tevent_req_post(req, ev);
+		}
+		tevent_req_set_callback(
+			subreq, dns_server_process_query_got_auth, req);
+		return req;
 	}
 
 	if ((req_state->flags & DNS_FLAG_RECURSION_DESIRED) &&
@@ -626,8 +994,7 @@ struct tevent_req *dns_server_process_query_send(
 			  in->questions[0].name));
 
 		subreq = ask_forwarder_send(
-			dns,
-			state, ev, lpcfg_dns_forwarder(dns->task->lp_ctx),
+			state, ev, dns, lpcfg_dns_forwarder(dns->task->lp_ctx),
 			&in->questions[0]);
 		if (tevent_req_nomem(subreq, req)) {
 			return tevent_req_post(req, ev);
@@ -660,6 +1027,26 @@ static void dns_server_process_query_got_response(struct tevent_req *subreq)
 	tevent_req_done(req);
 }
 
+static void dns_server_process_query_got_auth(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct dns_server_process_query_state *state = tevent_req_data(
+		req, struct dns_server_process_query_state);
+	WERROR werr;
+
+	werr = handle_authoritative_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (tevent_req_werror(req, werr)) {
+		return;
+	}
+	state->ancount = talloc_array_length(state->answers);
+	state->nscount = talloc_array_length(state->nsrecs);
+	state->arcount = talloc_array_length(state->additional);
+
+	tevent_req_done(req);
+}
+
 WERROR dns_server_process_query_recv(
 	struct tevent_req *req, TALLOC_CTX *mem_ctx,
 	struct dns_res_rec **answers,    uint16_t *ancount,
@@ -668,10 +1055,14 @@ WERROR dns_server_process_query_recv(
 {
 	struct dns_server_process_query_state *state = tevent_req_data(
 		req, struct dns_server_process_query_state);
-	WERROR err;
+	WERROR err = WERR_OK;
 
 	if (tevent_req_is_werror(req, &err)) {
-		return err;
+
+		if ((!W_ERROR_EQUAL(err, DNS_ERR(NAME_ERROR))) &&
+		    (!W_ERROR_EQUAL(err, WERR_DNS_ERROR_NAME_DOES_NOT_EXIST))) {
+			return err;
+		}
 	}
 	*answers = talloc_move(mem_ctx, &state->answers);
 	*ancount = state->ancount;
@@ -679,5 +1070,5 @@ WERROR dns_server_process_query_recv(
 	*nscount = state->nscount;
 	*additional = talloc_move(mem_ctx, &state->additional);
 	*arcount = state->arcount;
-	return WERR_OK;
+	return err;
 }

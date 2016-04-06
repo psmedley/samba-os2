@@ -25,7 +25,7 @@
 #include <tevent.h>
 
 int messaging_dgm_init(struct tevent_context *ev,
-		       uint64_t unique,
+		       uint64_t *unique,
 		       const char *socket_dir,
 		       const char *lockfile_dir,
 		       void (*recv_cb)(const uint8_t *msg,
@@ -35,6 +35,7 @@ int messaging_dgm_init(struct tevent_context *ev,
 				       void *private_data),
 		       void *recv_cb_private_data);
 void messaging_dgm_destroy(void);
+int messaging_dgm_get_unique(pid_t pid, uint64_t *unique);
 int messaging_dgm_send(pid_t pid,
 		       const struct iovec *iov, int iovlen,
 		       const int *fds, size_t num_fds);

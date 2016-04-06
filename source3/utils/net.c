@@ -795,7 +795,7 @@ static struct functable net_func[] = {
 		{"port",	'p', POPT_ARG_INT,    &c->opt_port},
 		{"myname",	'n', POPT_ARG_STRING, &c->opt_requester_name},
 		{"server",	'S', POPT_ARG_STRING, &c->opt_host},
-		{"encrypt",	'e', POPT_ARG_NONE,   NULL, 'e', N_("Encrypt SMB transport (UNIX extended servers only)") },
+		{"encrypt",	'e', POPT_ARG_NONE,   NULL, 'e', N_("Encrypt SMB transport") },
 		{"container",	'c', POPT_ARG_STRING, &c->opt_container},
 		{"comment",	'C', POPT_ARG_STRING, &c->opt_comment},
 		{"maxusers",	'M', POPT_ARG_INT,    &c->opt_maxusers},
@@ -839,6 +839,8 @@ static struct functable net_func[] = {
 		{"wipe", 0, POPT_ARG_NONE, &c->opt_wipe},
 		/* Options for 'net registry import' */
 		{"precheck", 0, POPT_ARG_STRING, &c->opt_precheck},
+		/* Options for 'net ads join' */
+		{"no-dns-updates", 0, POPT_ARG_NONE, &c->opt_no_dns_updates},
 		POPT_COMMON_SAMBA
 		{ 0, 0, 0, 0}
 	};
@@ -948,11 +950,11 @@ static struct functable net_func[] = {
 	}
 
 	if (!c->opt_workgroup) {
-		c->opt_workgroup = smb_xstrdup(lp_workgroup());
+		c->opt_workgroup = talloc_strdup(c, lp_workgroup());
 	}
 
 	if (!c->opt_target_workgroup) {
-		c->opt_target_workgroup = smb_xstrdup(lp_workgroup());
+		c->opt_target_workgroup = talloc_strdup(c, lp_workgroup());
 	}
 
 	if (!init_names())

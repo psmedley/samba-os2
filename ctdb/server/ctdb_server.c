@@ -17,12 +17,22 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
-#include "tdb.h"
-#include "lib/util/dlinklist.h"
+#include "replace.h"
 #include "system/network.h"
 #include "system/filesys.h"
-#include "../include/ctdb_private.h"
+
+#include <talloc.h>
+#include <tevent.h>
+
+#include "lib/util/dlinklist.h"
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/common.h"
+#include "common/logging.h"
 
 /*
   choose the transport we will use
@@ -79,7 +89,7 @@ int ctdb_set_recovery_lock_file(struct ctdb_context *ctdb, const char *file)
 /* Load a nodes list file into a nodes array */
 static int convert_node_map_to_list(struct ctdb_context *ctdb,
 				    TALLOC_CTX *mem_ctx,
-				    struct ctdb_node_map *node_map,
+				    struct ctdb_node_map_old *node_map,
 				    struct ctdb_node ***nodes,
 				    uint32_t *num_nodes)
 {
@@ -119,7 +129,7 @@ static int convert_node_map_to_list(struct ctdb_context *ctdb,
 /* Load the nodes list from a file */
 void ctdb_load_nodes_file(struct ctdb_context *ctdb)
 {
-	struct ctdb_node_map *node_map;
+	struct ctdb_node_map_old *node_map;
 	int ret;
 
 	node_map = ctdb_read_nodes_file(ctdb, ctdb->nodes_file);
@@ -203,7 +213,7 @@ void ctdb_input_pkt(struct ctdb_context *ctdb, struct ctdb_req_header *hdr)
 	case CTDB_REPLY_CALL:
 	case CTDB_REQ_DMASTER:
 	case CTDB_REPLY_DMASTER:
-		/* we dont allow these calls when banned */
+		/* we don't allow these calls when banned */
 		if (ctdb->nodes[ctdb->pnn]->flags & NODE_FLAGS_BANNED) {
 			DEBUG(DEBUG_DEBUG,(__location__ " ctdb operation %u"
 				" request %u"
@@ -346,7 +356,8 @@ struct queue_next {
 /*
   triggered when a deferred packet is due
  */
-static void queue_next_trigger(struct event_context *ev, struct timed_event *te, 
+static void queue_next_trigger(struct tevent_context *ev,
+			       struct tevent_timer *te,
 			       struct timeval t, void *private_data)
 {
 	struct queue_next *q = talloc_get_type(private_data, struct queue_next);
@@ -376,7 +387,7 @@ static void ctdb_defer_packet(struct ctdb_context *ctdb, struct ctdb_req_header 
 	/* use this to put packets directly into our recv function */
 	ctdb_input_pkt(q->ctdb, q->hdr);
 #else
-	event_add_timed(ctdb->ev, q, timeval_zero(), queue_next_trigger, q);
+	tevent_add_timer(ctdb->ev, q, timeval_zero(), queue_next_trigger, q);
 #endif
 }
 

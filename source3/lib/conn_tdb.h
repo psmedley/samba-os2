@@ -33,6 +33,10 @@ struct connections_data {
 	fstring addr;
 	fstring machine;
 	time_t start;
+	uint8_t encryption_flags;
+	uint16_t cipher;
+	uint16_t dialect;
+	uint8_t signing_flags;
 };
 
 /* The following definitions come from lib/conn_tdb.c  */

@@ -2,12 +2,12 @@
 .\"     Title: smbgetrc
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 02/24/2016
+.\"      Date: 03/22/2016
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.3
+.\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "SMBGETRC" "5" "02/24/2016" "Samba 4\&.3" "File Formats and Conventions"
+.TH "SMBGETRC" "5" "03/22/2016" "Samba 4\&.4" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -56,14 +56,9 @@ recursive on|off
 Whether directories should be downloaded recursively
 .RE
 .PP
-username \fIname\fR
+user \fIname[%password]\fR
 .RS 4
-Username to use when logging in to the remote server\&. Use an empty string for anonymous access\&.
-.RE
-.PP
-password \fIpass\fR
-.RS 4
-Password to use when logging in\&.
+Username (and password) to use when logging in to the remote server\&. Use an empty string for anonymous access\&.
 .RE
 .PP
 workgroup \fIwg\fR

@@ -18,18 +18,30 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/filesys.h"
+#include "system/network.h"
+#include "system/time.h"
 #include "system/wait.h"
+
+#include <talloc.h>
+#include <tevent.h>
+
 #include "lib/tdb_wrap/tdb_wrap.h"
-#include "tdb.h"
-#include "../include/ctdb_private.h"
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+
+#include "ctdb_private.h"
+
+#include "common/reqid.h"
+#include "common/common.h"
+#include "common/logging.h"
 
 struct ctdb_persistent_state {
 	struct ctdb_context *ctdb;
 	struct ctdb_db_context *ctdb_db; /* used by trans3_commit */
 	struct ctdb_client *client; /* used by trans3_commit */
-	struct ctdb_req_control *c;
+	struct ctdb_req_control_old *c;
 	const char *errormsg;
 	uint32_t num_pending;
 	int32_t status;
@@ -91,8 +103,9 @@ static void ctdb_persistent_callback(struct ctdb_context *ctdb,
 /*
   called if persistent store times out
  */
-static void ctdb_persistent_store_timeout(struct event_context *ev, struct timed_event *te, 
-					 struct timeval t, void *private_data)
+static void ctdb_persistent_store_timeout(struct tevent_context *ev,
+					  struct tevent_timer *te,
+					  struct timeval t, void *private_data)
 {
 	struct ctdb_persistent_state *state = talloc_get_type(private_data, struct ctdb_persistent_state);
 
@@ -160,7 +173,7 @@ static int ctdb_persistent_state_destructor(struct ctdb_persistent_state *state)
  * This is used to roll out a transaction to all nodes.
  */
 int32_t ctdb_control_trans3_commit(struct ctdb_context *ctdb,
-				   struct ctdb_req_control *c,
+				   struct ctdb_req_control_old *c,
 				   TDB_DATA recdata, bool *async_reply)
 {
 	struct ctdb_client *client;
@@ -174,7 +187,7 @@ int32_t ctdb_control_trans3_commit(struct ctdb_context *ctdb,
 		return -1;
 	}
 
-	client = ctdb_reqid_find(ctdb, c->client_id, struct ctdb_client);
+	client = reqid_find(ctdb->idr, c->client_id, struct ctdb_client);
 	if (client == NULL) {
 		DEBUG(DEBUG_ERR,(__location__ " can not match persistent_store "
 				 "to a client. Returning error\n"));
@@ -256,9 +269,9 @@ int32_t ctdb_control_trans3_commit(struct ctdb_context *ctdb,
 	talloc_steal(state, c);
 
 	/* but we won't wait forever */
-	event_add_timed(ctdb->ev, state,
-			timeval_current_ofs(ctdb->tunable.control_timeout, 0),
-			ctdb_persistent_store_timeout, state);
+	tevent_add_timer(ctdb->ev, state,
+			 timeval_current_ofs(ctdb->tunable.control_timeout, 0),
+			 ctdb_persistent_store_timeout, state);
 
 	return 0;
 }
@@ -274,10 +287,10 @@ int32_t ctdb_control_trans3_commit(struct ctdb_context *ctdb,
   for now we ignore the recdata that the client has passed to us.
  */
 int32_t ctdb_control_start_persistent_update(struct ctdb_context *ctdb, 
-				      struct ctdb_req_control *c,
+				      struct ctdb_req_control_old *c,
 				      TDB_DATA recdata)
 {
-	struct ctdb_client *client = ctdb_reqid_find(ctdb, c->client_id, struct ctdb_client);
+	struct ctdb_client *client = reqid_find(ctdb->idr, c->client_id, struct ctdb_client);
 
 	if (client == NULL) {
 		DEBUG(DEBUG_ERR,(__location__ " can not match start_persistent_update to a client. Returning error\n"));
@@ -295,10 +308,10 @@ int32_t ctdb_control_start_persistent_update(struct ctdb_context *ctdb,
   called to tell ctdbd that it is no longer doing a persistent update 
 */
 int32_t ctdb_control_cancel_persistent_update(struct ctdb_context *ctdb, 
-					      struct ctdb_req_control *c,
+					      struct ctdb_req_control_old *c,
 					      TDB_DATA recdata)
 {
-	struct ctdb_client *client = ctdb_reqid_find(ctdb, c->client_id, struct ctdb_client);
+	struct ctdb_client *client = reqid_find(ctdb->idr, c->client_id, struct ctdb_client);
 
 	if (client == NULL) {
 		DEBUG(DEBUG_ERR,(__location__ " can not match cancel_persistent_update to a client. Returning error\n"));

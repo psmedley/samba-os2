@@ -25,7 +25,7 @@ import time
 import shutil
 import sys
 import subprocess
-
+import logging
 import samba.tests
 from samba.kcc import ldif_import_export, KCC
 from samba import ldb
@@ -127,9 +127,28 @@ class LdifImportExportTests(samba.tests.TestCaseInTempDir):
             self.remove_files(dburl)
 
 
-    def samdb_to_ldif_file(self):
-        #samdb_to_ldif_file(samdb, dburl, lp, creds, ldif_file):
-        pass
+    def test_samdb_to_ldif_file(self):
+        dburl = os.path.join(self.tempdir, "ldap")
+        dburl2 = os.path.join(self.tempdir, "ldap_roundtrip")
+        ldif_file = os.path.join(self.tempdir, "ldif")
+        samdb = ldif_import_export.ldif_to_samdb(dburl, self.lp,
+                                                 MULTISITE_LDIF)
+        self.assertIsInstance(samdb, SamDB)
+        ldif_import_export.samdb_to_ldif_file(samdb, dburl,
+                                              lp=self.lp, creds=None,
+                                              ldif_file=ldif_file)
+        self.assertGreater(os.path.getsize(ldif_file), 1000,
+                           "LDIF should be larger than 1000 bytes")
+        samdb = ldif_import_export.ldif_to_samdb(dburl2, self.lp,
+                                                 ldif_file)
+        self.assertIsInstance(samdb, SamDB)
+        dsa = ("CN=WIN01,CN=Servers,CN=Default-First-Site-Name,CN=Sites,"
+               "CN=Configuration,DC=ad,DC=samba,DC=example,DC=com")
+        res = samdb.search(ldb.Dn(samdb, "CN=NTDS Settings," + dsa),
+                           scope=ldb.SCOPE_BASE, attrs=["objectGUID"])
+        self.remove_files(dburl)
+        self.remove_files(dburl2)
+        self.remove_files(ldif_file)
 
 
 class KCCMultisiteLdifTests(samba.tests.TestCaseInTempDir):
@@ -150,7 +169,7 @@ class KCCMultisiteLdifTests(samba.tests.TestCaseInTempDir):
         my_kcc = KCC(unix_now, readonly=readonly, verify=verify,
                      dot_file_dir=dot_file_dir)
         tmpdb = os.path.join(self.tempdir, 'tmpdb')
-        my_kcc.import_ldif(tmpdb, self.lp, self.creds, MULTISITE_LDIF)
+        my_kcc.import_ldif(tmpdb, self.lp, MULTISITE_LDIF)
         self.remove_files(tmpdb)
         return my_kcc
 
@@ -166,9 +185,9 @@ class KCCMultisiteLdifTests(samba.tests.TestCaseInTempDir):
         """
         my_kcc = self._get_kcc('test-verify', verify=True)
         tmpdb = os.path.join(self.tempdir, 'verify-tmpdb')
-        my_kcc.import_ldif(tmpdb, self.lp, self.creds, MULTISITE_LDIF)
+        my_kcc.import_ldif(tmpdb, self.lp, MULTISITE_LDIF)
 
-        my_kcc.run("ldap://%s" % tmpdb,
+        my_kcc.run(None,
                    self.lp, self.creds,
                    attempt_live_connections=False)
         self.remove_files(tmpdb)
@@ -179,8 +198,8 @@ class KCCMultisiteLdifTests(samba.tests.TestCaseInTempDir):
         my_kcc = self._get_kcc('test-dotfiles', dot_file_dir=self.tempdir)
         tmpdb = os.path.join(self.tempdir, 'dotfile-tmpdb')
         files = [tmpdb]
-        my_kcc.import_ldif(tmpdb, self.lp, self.creds, MULTISITE_LDIF)
-        my_kcc.run("ldap://%s" % tmpdb,
+        my_kcc.import_ldif(tmpdb, self.lp, MULTISITE_LDIF)
+        my_kcc.run(None,
                    self.lp, self.creds,
                    attempt_live_connections=False)
 

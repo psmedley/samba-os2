@@ -1,5 +1,10 @@
-samba (2:4.3.6+dfsg-2) unstable; urgency=low
+samba (2:4.4.0+dfsg-1) experimental; urgency=medium
+  [ Andrew Bartlett ]
+  * New upstream release.
 
+ -- Andrew Bartlett <abartlet+debian@catalyst.net.nz>  Wed, 06 Apr 2016 17:08:20 +1200
+
+samba (2:4.3.6+dfsg-2) unstable; urgency=low
   [ Mathieu Parent ]
   * Fix FTBFS when built with dpkg-buildpackage -A (Closes: #818146). Patch by
     Santiago Vila

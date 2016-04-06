@@ -22,7 +22,7 @@
 #include "smbd/smbd.h"
 #include "librpc/gen_ndr/xattr.h"
 #include "librpc/gen_ndr/ndr_xattr.h"
-#include "../lib/crypto/crypto.h"
+#include "../lib/crypto/sha256.h"
 #include "auth.h"
 
 #undef DBGC_CLASS
@@ -214,6 +214,7 @@ static struct vfs_fn_pointers vfs_acl_xattr_fns = {
 	.sys_acl_set_fd_fn = sys_acl_set_fd_xattr
 };
 
+static_decl_vfs;
 NTSTATUS vfs_acl_xattr_init(void)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, "acl_xattr",

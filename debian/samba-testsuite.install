@@ -3,7 +3,7 @@ usr/bin/locktest
 usr/bin/masktest
 usr/bin/ndrdump
 usr/bin/smbtorture
-usr/lib/*/libtorture.so.*
+usr/lib/*/samba/libtorture.so.*
 usr/lib/*/samba/libdlz-bind9-for-torture.so.0
 usr/share/man/man1/gentest.1
 usr/share/man/man1/locktest.1

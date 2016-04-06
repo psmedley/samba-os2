@@ -40,7 +40,7 @@ static void msg_dgm_ref_recv(const uint8_t *msg, size_t msg_len,
 			     int *fds, size_t num_fds, void *private_data);
 
 void *messaging_dgm_ref(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			uint64_t unique,
+			uint64_t *unique,
 			const char *socket_dir,
 			const char *lockfile_dir,
 			void (*recv_cb)(const uint8_t *msg, size_t msg_len,
@@ -73,6 +73,7 @@ void *messaging_dgm_ref(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 
 		ret = messaging_dgm_init(ev, unique, socket_dir, lockfile_dir,
 					 msg_dgm_ref_recv, NULL);
+		DBG_DEBUG("messaging_dgm_init returned %s\n", strerror(ret));
 		if (ret != 0) {
 			DEBUG(10, ("messaging_dgm_init failed: %s\n",
 				   strerror(ret)));
@@ -82,6 +83,16 @@ void *messaging_dgm_ref(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		}
 		dgm_pid = getpid();
 	} else {
+		int ret;
+		ret = messaging_dgm_get_unique(getpid(), unique);
+		DBG_DEBUG("messaging_dgm_get_unique returned %s\n",
+			  strerror(ret));
+		if (ret != 0) {
+			TALLOC_FREE(result);
+			*err = ret;
+			return NULL;
+		}
+
 		result->tevent_handle = messaging_dgm_register_tevent_context(
 			result, ev);
 		if (result->tevent_handle == NULL) {
@@ -90,6 +101,8 @@ void *messaging_dgm_ref(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			return NULL;
 		}
 	}
+
+	DBG_DEBUG("unique = %"PRIu64"\n", *unique);
 
 	refs = tmp_refs;
 
@@ -125,6 +138,8 @@ static int msg_dgm_ref_destructor(struct msg_dgm_ref *r)
 	DLIST_REMOVE(refs, r);
 
 	TALLOC_FREE(r->tevent_handle);
+
+	DBG_DEBUG("refs=%p\n", refs);
 
 	if (refs == NULL) {
 		messaging_dgm_destroy();

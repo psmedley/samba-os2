@@ -18,10 +18,22 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/filesys.h"
-#include "popt.h"
-#include <poll.h>
+#include "system/network.h"
+
+#include <popt.h>
+#include <talloc.h>
+#include <tevent.h>
+#include <tdb.h>
+
+#include "lib/util/time.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/common.h"
+#include "common/cmdline.h"
 
 const char *TESTKEY = "testkey";
 
@@ -52,7 +64,7 @@ int main(int argc, const char *argv[])
 {
 	struct ctdb_context *ctdb;
 	struct ctdb_db_context *ctdb_db;
-	struct event_context *ev;
+	struct tevent_context *ev;
 
 	TDB_DATA key;
 
@@ -84,7 +96,7 @@ int main(int argc, const char *argv[])
 		while (extra_argv[extra_argc]) extra_argc++;
 	}
 
-	ev = event_context_init(NULL);
+	ev = tevent_context_init(NULL);
 
 	ctdb = ctdb_cmdline_client(ev, timeval_current_ofs(3, 0));
 	if (ctdb == NULL) {
@@ -108,7 +120,7 @@ int main(int argc, const char *argv[])
 		uint32_t recmode=1;
 		ctdb_ctrl_getrecmode(ctdb, ctdb, timeval_zero(), CTDB_CURRENT_NODE, &recmode);
 		if (recmode == 0) break;
-		event_loop_once(ev);
+		tevent_loop_once(ev);
 	}
 
 	fetch_readonly_once(ctdb, ctdb_db, key);

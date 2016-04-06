@@ -26,7 +26,6 @@
 #include "lib/util/dlinklist.h"
 #include "librpc/gen_ndr/ndr_dnsserver.h"
 #include "dnsserver.h"
-#include "lib/ldb/include/ldb_private.h"
 
 struct dnsserver_state {
 	struct loadparm_context *lp_ctx;
@@ -63,14 +62,14 @@ static void dnsserver_reload_zones(struct dnsserver_state *dsstate)
 				if (z->zoneinfo == NULL) {
 					continue;
 				}
-				DLIST_ADD_END(new_list, z, NULL);
+				DLIST_ADD_END(new_list, z);
 				p->zones_count++;
 				dsstate->zones_count++;
 			} else {
 				/* Existing zone */
 				talloc_free(z);
 				DLIST_REMOVE(old_list, zmatch);
-				DLIST_ADD_END(new_list, zmatch, NULL);
+				DLIST_ADD_END(new_list, zmatch);
 			}
 			z = znext;
 		}
@@ -147,7 +146,7 @@ static struct dnsserver_state *dnsserver_connect(struct dcesrv_call_state *dce_c
 				if (z->zoneinfo == NULL) {
 					goto failed;
 				}
-				DLIST_ADD_END(dsstate->zones, z, NULL);
+				DLIST_ADD_END(dsstate->zones, z);
 				p->zones_count++;
 				dsstate->zones_count++;
 			} else {

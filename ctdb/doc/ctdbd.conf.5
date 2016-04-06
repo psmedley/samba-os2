@@ -2,12 +2,12 @@
 .\"     Title: ctdbd.conf
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 12/10/2015
+.\"      Date: 01/27/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDBD\&.CONF" "5" "12/10/2015" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDBD\&.CONF" "5" "01/27/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -32,7 +32,7 @@ ctdbd.conf \- CTDB daemon configuration file
 .SH "DESCRIPTION"
 .PP
 This file contains CTDB configuration variables that are affect the operation of CTDB\&. The default location of this file is
-/etc/ctdb/ctdbd\&.conf\&.
+/usr/local/etc/ctdb/ctdbd\&.conf\&.
 .PP
 This file is a shell script (see
 \fBsh\fR(1)) but is usually limited to simple variable assignments and shell\-style comments\&.
@@ -44,7 +44,7 @@ Variables defined in this document can also be set in a distribution\-specific c
 (Red Hat) or
 /etc/default/ctdb
 (Debian)\&. However, these files should be reserved for variables used by the initscript\&. A historical alternative is
-/etc/ctdb/sysconfig/ctdb
+/usr/local/etc/ctdb/sysconfig/ctdb
 \- this is deprecated\&.
 .SH "INITSCRIPT CONFIGURATION"
 .PP
@@ -59,7 +59,7 @@ FILENAME is the name of the file used to contain the process ID (PID) of the mai
 \fBctdbd_wrapper\fR(1)\&.
 .sp
 Default is
-/var/run/ctdb/ctdbd\&.pid\&. Corresponds to
+/usr/local/var/run/ctdb/ctdbd\&.pid\&. Corresponds to
 \fB\-\-pidfile\fR\&.
 .RE
 .SH "GLOBAL CONFIGURATION"
@@ -69,16 +69,6 @@ These options may be used in the initscripts, daemon and scripts\&.
 CTDB_BASE=\fIDIRECTORY\fR
 .RS 4
 DIRECTORY containing CTDB scripts and configuration files\&.
-.RE
-.PP
-CTDB_VARDIR=\fIDIRECTORY\fR
-.RS 4
-DIRECTORY containing CTDB files that are modified at runtime\&.
-.sp
-Defaults to
-/var/ctdb, unless
-/var/lib/ctdb
-already exists in which case it is used\&.
 .RE
 .SH "DAEMON CONFIGURATION"
 .PP
@@ -106,21 +96,34 @@ Defaults to yes\&. Corresponds to
 CTDB_DBDIR=\fIDIRECTORY\fR
 .RS 4
 Defaults to
-\fICTDB_VARDIR\fR\&. Corresponds to
+/usr/local/var/lib/ctdb\&.
+.sp
+Apart from a DIRECTORY, this can take a special value of the form
+\fBtmpfs\fR[:\fIOPTIONS\fR]\&. OPTIONS is a comma\-separated list of any permissible options to the tmpfs filesystem\&. The only pre\-specified default is
+\fBmode=700\fR, which can overriden by specifying
+\fBmode\fR
+in OPTIONS\&. It probably makes sense to specify a maximum
+\fBsize\fR\&.
+.sp
+Corresponds to
 \fB\-\-dbdir\fR\&.
 .RE
 .PP
 CTDB_DBDIR_PERSISTENT=\fIDIRECTORY\fR
 .RS 4
 Defaults to
-\fICTDB_VARDIR\fR/persistent\&. Corresponds to
+/usr/local/var/lib/ctdb/persistent\&.
+.sp
+Corresponds to
 \fB\-\-dbdir\-persistent\fR\&.
 .RE
 .PP
 CTDB_DBDIR_STATE=\fIDIRECTORY\fR
 .RS 4
 Defaults to
-\fICTDB_VARDIR\fR/state\&. Corresponds to
+/usr/local/var/lib/ctdb/state\&.
+.sp
+Corresponds to
 \fB\-\-dbdir\-state\fR\&.
 .RE
 .PP
@@ -136,14 +139,13 @@ CTDB_EVENT_SCRIPT_DIR=\fIDIRECTORY\fR
 .RS 4
 Default is
 \fICTDB_BASE\fR/events\&.d, so usually
-/etc/ctdb/events\&.d\&. Corresponds to
+/usr/local/etc/ctdb/events\&.d\&. Corresponds to
 \fB\-\-event\-script\-dir\fR\&.
 .RE
 .PP
 CTDB_LOGGING=\fISTRING\fR
 .RS 4
-STRING specifies where ctdbd will write its log\&. The default is file:/var/log/log\&.ctdb
-or similar \- the prefix may differ depending on how CTDB was built\&. Corresponds to
+STRING specifies where ctdbd will write its log\&. The default is file:/usr/local/var/log/log\&.ctdb\&. Corresponds to
 \fB\-\-logging\fR\&.
 .sp
 Valid values are:
@@ -151,7 +153,7 @@ Valid values are:
 file:\fIFILENAME\fR
 .RS 4
 FILENAME where ctdbd will write its log\&. This is usually
-/var/log/log\&.ctdb\&.
+/usr/local/var/log/log\&.ctdb\&.
 .RE
 .PP
 syslog[:\fIMETHOD\fR]
@@ -188,14 +190,14 @@ CTDB_NODES=\fIFILENAME\fR
 .RS 4
 Default is
 \fICTDB_BASE\fR/nodes, so usually
-/etc/ctdb/nodes\&. Corresponds to
+/usr/local/etc/ctdb/nodes\&. Corresponds to
 \fB\-\-nlist\fR\&.
 .RE
 .PP
 CTDB_NOTIFY_SCRIPT=\fIFILENAME\fR
 .RS 4
 No default, usually
-/etc/ctdb/notify\&.sh\&. Corresponds to
+/usr/local/etc/ctdb/notify\&.sh\&. Corresponds to
 \fB\-\-notification\-script\fR\&.
 .RE
 .PP
@@ -205,7 +207,7 @@ Default 0\&. Corresponds to
 \fB\-\-max\-persistent\-check\-errors\fR\&.
 .RE
 .PP
-CTDB_NODE_ADDRESS=\fIFILENAME\fR
+CTDB_NODE_ADDRESS=\fIIPADDR\fR
 .RS 4
 IPADDR is the private IP address that ctdbd will bind to\&. Corresponds to
 \fB\-\-listen\fR\&.
@@ -219,7 +221,7 @@ This option is only required when automatic address detection can not be used\&.
 CTDB_PUBLIC_ADDRESSES=\fIFILENAME\fR
 .RS 4
 No default, usually
-/etc/ctdb/public_addresses\&. Corresponds to
+/usr/local/etc/ctdb/public_addresses\&. Corresponds to
 \fB\-\-public\-addresses\fR\&.
 .RE
 .PP
@@ -250,10 +252,10 @@ Defaults to ERR (0)\&. Corresponds to
 CTDB_SOCKET=\fIFILENAME\fR
 .RS 4
 Defaults to
-/tmp/ctdb\&.socket\&. Corresponds to
+/usr/local/var/run/ctdb/ctdbd\&.socket\&. Corresponds to
 \fB\-\-socket\fR\&.
 .sp
-If you change this then you probably want to set this in root\*(Aqs enviroment (perhaps in a file in
+If you change this then you probably want to set this in root\*(Aqs environment (perhaps in a file in
 /etc/profile\&.d) so that you can use the
 \fBctdb\fR(1)
 command in a straightforward manner\&.
@@ -326,15 +328,23 @@ File format:
 .RS 4
 .\}
 .nf
-\fIIPADDR\fR
+\fIIPADDR\fR [slave\-only]
 	      
 .fi
 .if n \{\
 .RE
 .\}
 .sp
+IPADDR is the private IP address of each node in the NAT gateway group\&.
+.sp
+If "slave\-only" is specified then the corresponding node can not be the NAT gateway master node\&. In this case
+\fICTDB_NATGW_PUBLIC_IFACE\fR
+and
+\fICTDB_NATGW_PUBLIC_IP\fR
+are optional and unused\&.
+.sp
 No default, usually
-/etc/ctdb/natgw_nodes
+/usr/local/etc/ctdb/natgw_nodes
 when enabled\&.
 .RE
 .PP
@@ -359,17 +369,6 @@ IPADDR/MASK indicates the IP address that is used for outgoing traffic (originat
 be a configured public IP address\&.
 .sp
 No default\&.
-.RE
-.PP
-CTDB_NATGW_SLAVE_ONLY=yes|no
-.RS 4
-When set to "yes" a node can not be a NAT gateway master node\&. In this case
-\fICTDB_NATGW_PUBLIC_IFACE\fR
-and
-\fICTDB_NATGW_PUBLIC_IP\fR
-are optional and unused\&.
-.sp
-Default is no\&.
 .RE
 .PP
 CTDB_NATGW_STATIC_ROUTES=\fIIPADDR/MASK[@GATEWAY]\fR \&.\&.\&.
@@ -399,7 +398,7 @@ No default\&.
 .RS 4
 .\}
 .nf
-CTDB_NATGW_NODES=/etc/ctdb/natgw_nodes
+CTDB_NATGW_NODES=/usr/local/etc/ctdb/natgw_nodes
 CTDB_NATGW_PRIVATE_NETWORK=192\&.168\&.1\&.0/24
 CTDB_NATGW_DEFAULT_GATEWAY=10\&.0\&.0\&.1
 CTDB_NATGW_PUBLIC_IP=10\&.0\&.0\&.227/24
@@ -416,7 +415,7 @@ A variation that ensures that infrastructure (ADS, DNS, \&.\&.\&.) directly atta
 .RS 4
 .\}
 .nf
-CTDB_NATGW_NODES=/etc/ctdb/natgw_nodes
+CTDB_NATGW_NODES=/usr/local/etc/ctdb/natgw_nodes
 CTDB_NATGW_PRIVATE_NETWORK=192\&.168\&.1\&.0/24
 CTDB_NATGW_PUBLIC_IP=10\&.0\&.0\&.227/24
 CTDB_NATGW_PUBLIC_IFACE=eth0
@@ -464,7 +463,7 @@ File format:
 .\}
 .sp
 No default, usually
-/etc/ctdb/policy_routing
+/usr/local/etc/ctdb/policy_routing
 when enabled\&.
 .RE
 .PP
@@ -504,7 +503,7 @@ No default, usually 1000 and 9000\&.
 .RS 4
 .\}
 .nf
-CTDB_PER_IP_ROUTING_CONF=/etc/ctdb/policy_routing
+CTDB_PER_IP_ROUTING_CONF=/usr/local/etc/ctdb/policy_routing
 CTDB_PER_IP_ROUTING_RULE_PREF=100
 CTDB_PER_IP_ROUTING_TABLE_ID_LOW=1000
 CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
@@ -521,6 +520,8 @@ CTDB_PARTIALLY_ONLINE_INTERFACES=yes|no
 Whether one or more offline interfaces should cause a monitor event to fail if there are other interfaces that are up\&. If this is "yes" and a node has some interfaces that are down then
 \fBctdb status\fR
 will display the node as "PARTIALLYONLINE"\&.
+.sp
+Note that CTDB_PARTIALLY_ONLINE_INTERFACES=yes is incompatible with NAT gateway, since NAT gateway relies on the interface configured by CTDB_NATGW_PUBLIC_IFACE to be up\&.
 .sp
 Default is "no"\&.
 .RE
@@ -796,7 +797,9 @@ Default is no\&.
 .RE
 .SS "SYSTEM RESOURCE MONITORING CONFIGURATION"
 .PP
-CTDB can experience seemingly random (performance and other) issues if system resources become too contrained\&. Options in this section can be enabled to allow certain system resources to be checked\&.
+CTDB can experience seemingly random (performance and other) issues if system resources become too constrained\&. Options in this section can be enabled to allow certain system resources to be checked\&. They allows warnings to be logged and nodes to be marked unhealthy when system resource usage reaches the configured thresholds\&.
+.PP
+Some checks are enabled by default\&. It is recommended that these checks remain enabled or are augmented by extra checks\&. There is no supported way of completely disabling the checks\&.
 .sp
 .it 1 an-trap
 .nr an-no-space-flag 1
@@ -806,52 +809,40 @@ CTDB can experience seemingly random (performance and other) issues if system re
 \fBEventscripts\fR
 .RS 4
 .RS 4
-00\&.ctdb
-.RE
-.RS 4
-40\&.fs_use
+05\&.system
 .RE
 .PP
-Filesystem usage monitoring is in
-40\&.fs_use\&. This eventscript is not enabled by default\&. Use
-\fBctdb enablescript\fR
-to enable it\&.
+Filesystem and memory usage monitoring is in
+05\&.system\&.
 .RE
 .PP
-CTDB_CHECK_FS_USE=\fIFS\-LIMIT\-LIST\fR
+CTDB_MONITOR_FILESYSTEM_USAGE=\fIFS\-LIMIT\-LIST\fR
 .RS 4
 FS\-LIMIT\-LIST is a space\-separated list of
-\fIFILESYSTEM\fR:\fILIMIT\fR
-pairs indicating that a node should be flagged unhealthy if the space used on FILESYSTEM reaches LIMIT%\&.
+\fIFILESYSTEM\fR:\fIWARN_LIMIT\fR[:\fIUNHEALTHY_LIMIT\fR]
+triples indicating that warnings should be logged if the space used on FILESYSTEM reaches WARN_LIMIT%\&. If usage reaches UNHEALTHY_LIMIT then the node should be flagged unhealthy\&. Either WARN_LIMIT or UNHEALTHY_LIMIT may be left blank, meaning that check will be omitted\&.
 .sp
-No default\&.
-.sp
-Note that this feature uses the
-40\&.fs_use
-eventscript, which is not enabled by default\&. Use
-\fBctdb enablescript\fR
-to enable it\&.
+Default is to warn for each filesystem containing a database directory (\fBCTDB_DBDIR\fR,
+\fBCTDB_DBDIR_PERSISTENT\fR,
+\fBCTDB_DBDIR_STATE\fR) with a threshold of 90%\&.
 .RE
 .PP
-CTDB_CHECK_SWAP_IS_NOT_USED=yes|no
+CTDB_MONITOR_MEMORY_USAGE=\fIMEM\-LIMITS\fR
 .RS 4
-Should a warning be logged if swap space is in use\&.
+MEM\-LIMITS takes the form
+\fIWARN_LIMIT\fR[:\fIUNHEALTHY_LIMIT\fR]
+indicating that warnings should be logged if memory usage reaches WARN_LIMIT%\&. If usage reaches UNHEALTHY_LIMIT then the node should be flagged unhealthy\&. Either WARN_LIMIT or UNHEALTHY_LIMIT may be left blank, meaning that check will be omitted\&.
 .sp
-Default is no\&.
+Default is 80, so warnings will be logged when memory usage reaches 80%\&.
 .RE
 .PP
-CTDB_MONITOR_FREE_MEMORY=\fINUM\fR
+CTDB_MONITOR_SWAP_USAGE=\fISWAP\-LIMITS\fR
 .RS 4
-NUM is a lower limit on available system memory, expressed in megabytes\&. If this is set and the amount of available memory falls below this limit then some debug information will be logged, the node will be disabled and then CTDB will be shut down\&.
+SWAP\-LIMITS takes the form
+\fIWARN_LIMIT\fR[:\fIUNHEALTHY_LIMIT\fR]
+indicating that warnings should be logged if swap usage reaches WARN_LIMIT%\&. If usage reaches UNHEALTHY_LIMIT then the node should be flagged unhealthy\&. Either WARN_LIMIT or UNHEALTHY_LIMIT may be left blank, meaning that check will be omitted\&.
 .sp
-No default\&.
-.RE
-.PP
-CTDB_MONITOR_FREE_MEMORY_WARN=\fINUM\fR
-.RS 4
-NUM is a lower limit on available system memory, expressed in megabytes\&. If this is set and the amount of available memory falls below this limit then a warning will be logged\&.
-.sp
-No default\&.
+Default is 25, so warnings will be logged when swap usage reaches 25%\&.
 .RE
 .SS "MISCELLANEOUS SERVICE\-RELATED CONFIGURATION"
 .PP
@@ -935,7 +926,7 @@ No default, usually
 \fICTDB_BASE\fR/debug_locks\&.sh\&.
 .RE
 .PP
-CTDB_ETCDIR=\fIDIRECTORY\fR
+CTDB_SYS_ETCDIR=\fIDIRECTORY\fR
 .RS 4
 DIRECTORY containing system configuration files\&. This is used to provide alternate configuration when testing and should not need to be changed from the default\&.
 .sp
@@ -1006,7 +997,7 @@ If "yes", this causes
 to be run under
 \fBvalgrind\fR(1)
 with logs going to
-/var/log/ctdb_valgrind\&. If neither "yes" nor "no" then the value is assumed to be a COMMAND (e\&.g\&. a
+/usr/local/var/log/ctdb_valgrind\&. If neither "yes" nor "no" then the value is assumed to be a COMMAND (e\&.g\&. a
 \fBvalgrind\fR
 variation, a
 \fBgdb\fR(1)
@@ -1019,9 +1010,17 @@ option is passed to
 .sp
 Default is no\&.
 .RE
+.PP
+CTDB_VARDIR=\fIDIRECTORY\fR
+.RS 4
+DIRECTORY containing CTDB files that are modified at runtime\&.
+.sp
+Defaults to
+/usr/local/var/lib/ctdb\&.
+.RE
 .SH "FILES"
 .RS 4
-/etc/ctdb/ctdbd\&.conf
+/usr/local/etc/ctdb/ctdbd\&.conf
 .RE
 .RS 4
 /etc/sysconfig/ctdb
@@ -1030,7 +1029,7 @@ Default is no\&.
 /etc/default/ctdb
 .RE
 .RS 4
-/etc/ctdb/sysconfig/ctdb
+/usr/local/etc/ctdb/sysconfig/ctdb
 .RE
 .SH "SEE ALSO"
 .PP

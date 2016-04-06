@@ -2,12 +2,12 @@
 .\"     Title: vfs_shadow_copy2
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 02/24/2016
+.\"      Date: 03/22/2016
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.3
+.\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "VFS_SHADOW_COPY2" "8" "02/24/2016" "Samba 4\&.3" "System Administration tools"
+.TH "VFS_SHADOW_COPY2" "8" "03/22/2016" "Samba 4\&.4" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -250,7 +250,7 @@ Default: shadow:snapdir = \&.snapshots
 .PP
 shadow:basedir = BASEDIR
 .RS 4
-The basedir option allows to specify a directory between the share\*(Aqs mount point and the share root, relative to which the file system\*(Aqs snapshots are taken\&.
+The basedir option allows one to specify a directory between the share\*(Aqs mount point and the share root, relative to which the file system\*(Aqs snapshots are taken\&.
 .sp
 For example, if
 .sp
@@ -310,6 +310,69 @@ shadow:basedir
 and disable the basedir setting\&.
 .RE
 .PP
+shadow:snapsharepath = SNAPSHAREPATH
+.RS 4
+With this parameter, one can specify the path of the share\*(Aqs root directory in snapshots, relative to the snapshot\*(Aqs root directory\&. It is an alternative method to
+shadow:basedir, allowing greater control\&.
+.sp
+For example, if within each snapshot the files of the share have a
+path/to/share/
+prefix, then
+shadow:snapsharepath
+can be set to
+path/to/share\&.
+.sp
+With this parameter, it is no longer assumed that a snapshot represents an image of the original file system or a portion of it\&. For example, a system could perform backups of only files contained in shares, and then expose the backup files in a logical structure:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+share1/
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+share2/
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\&.\&.\&./
+.RE
+.sp
+.RE
+Note that the
+shadow:snapdirseverywhere
+and the
+shadow:basedir
+options are incompatible with
+shadow:snapsharepath
+and disable
+shadow:snapsharepath
+setting\&.
+.sp
+Example: shadow:snapsharepath = path/to/share
+.sp
+Default: shadow:snapsharepath = NOT SPECIFIED
+.RE
+.PP
 shadow:sort = asc/desc
 .RS 4
 By default, this module sorts the shadow copy data alphabetically before sending it to the client\&. With this parameter, one can specify the sort order\&. Possible known values are desc (descending, the default) and asc (ascending)\&. If the file system lists directories alphabetically sorted, one can turn off sorting in this module by specifying any other value\&.
@@ -337,7 +400,7 @@ Default: shadow:format = "@GMT\-%Y\&.%m\&.%d\-%H\&.%M\&.%S"
 .PP
 shadow:sscanf = yes/no
 .RS 4
-This paramter can be used to specify that the time in format string is given as an unsigned long integer (%lu) rather than a time strptime() can parse\&. The result must be a unix time_t time\&.
+This parameter can be used to specify that the time in format string is given as an unsigned long integer (%lu) rather than a time strptime() can parse\&. The result must be a unix time_t time\&.
 .sp
 Default: shadow:sscanf = no
 .RE
@@ -387,11 +450,11 @@ shadow:snapdirseverywhere = yes\&. Setting this option makes the module not stop
 An example where this is needed are independent filesets in IBM\*(Aqs GPFS, but other filesystems might support snapshotting only particular subtrees of the filesystem as well\&.
 .sp
 Note that
-shadow:snapdirseverywhere
+shadow:crossmountpoints
 depends on
 shadow:snapdir
 and needs it to be a relative path\&. Setting an absolute snapdir path disables
-shadow:snapdirseverywhere\&.
+shadow:crossmountpoints\&.
 .sp
 Note that this option is incompatible with the
 shadow:basedir

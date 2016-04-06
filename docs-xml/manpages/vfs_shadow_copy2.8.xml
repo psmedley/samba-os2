@@ -7,7 +7,7 @@
 	<manvolnum>8</manvolnum>
 	<refmiscinfo class="source">Samba</refmiscinfo>
 	<refmiscinfo class="manual">System Administration tools</refmiscinfo>
-	<refmiscinfo class="version">4.3</refmiscinfo>
+	<refmiscinfo class="version">4.4</refmiscinfo>
 </refmeta>
 
 
@@ -182,7 +182,7 @@
 		</term>
                 <listitem>
 		<para>
-		The basedir option allows to specify a directory
+		The basedir option allows one to specify a directory
 		between the share's mount point and the share root,
 		relative to which the file system's snapshots are taken.
 		</para>
@@ -224,6 +224,46 @@
 		</para>
                 </listitem>
                 </varlistentry>
+
+		<varlistentry>
+		<term>shadow:snapsharepath = SNAPSHAREPATH
+		</term>
+		<listitem>
+		<para>
+		With this parameter, one can specify the path of the share's
+		root directory in snapshots, relative to the snapshot's
+		root directory. It is an alternative method to
+		<command>shadow:basedir</command>, allowing greater control.
+		</para>
+		<para>
+		For example, if within each
+		snapshot the files of the share have a
+		<command>path/to/share/</command> prefix, then
+		<command>shadow:snapsharepath</command> can be
+		set to <command>path/to/share</command>.
+		</para>
+		<para>
+		With this parameter, it is no longer assumed that a
+		snapshot represents an image of the original file system or
+		a portion of it. For example, a system could perform
+		backups of only files contained in shares, and then
+		expose the backup files in a logical structure:
+		</para>
+		<itemizedlist>
+		<listitem><para>share1/</para></listitem>
+		<listitem><para>share2/</para></listitem>
+		<listitem><para>.../</para></listitem>
+		</itemizedlist>
+		<para>
+		Note that the <command>shadow:snapdirseverywhere</command>
+		and the <command>shadow:basedir</command> options
+		are incompatible with <command>shadow:snapsharepath</command>
+		and disable <command>shadow:snapsharepath</command> setting.
+		</para>
+		<para>Example: shadow:snapsharepath = path/to/share</para>
+		<para>Default: shadow:snapsharepath = NOT SPECIFIED</para>
+                </listitem>
+		</varlistentry>
 
 		<varlistentry>
                 <term>shadow:sort = asc/desc
@@ -272,7 +312,7 @@
 		<term>shadow:sscanf = yes/no</term>
 		<listitem>
 		<para>
-		This paramter can be used to specify that the time in
+		This parameter can be used to specify that the time in
 		format string is given as an unsigned long integer (%lu)
 		rather than a time strptime() can parse.
 		The result must be a unix time_t time.
@@ -351,10 +391,10 @@
 		only particular subtrees of the filesystem as well.
 		</para>
 		<para>
-		Note that <command>shadow:snapdirseverywhere</command>
+		Note that <command>shadow:crossmountpoints</command>
 		depends on <command>shadow:snapdir</command> and needs it to be
 		a relative path. Setting an absolute snapdir path disables
-		<command>shadow:snapdirseverywhere</command>.
+		<command>shadow:crossmountpoints</command>.
 		</para>
 		<para>
 		Note that this option is incompatible with the

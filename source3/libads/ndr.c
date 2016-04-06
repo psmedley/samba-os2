@@ -37,6 +37,7 @@ static void ndr_print_ads_auth_flags(struct ndr_print *ndr, const char *name, ui
 	ndr_print_bitmap_flag(ndr, sizeof(uint32_t), "ADS_AUTH_SASL_SIGN", ADS_AUTH_SASL_SIGN, r);
 	ndr_print_bitmap_flag(ndr, sizeof(uint32_t), "ADS_AUTH_SASL_SEAL", ADS_AUTH_SASL_SEAL, r);
 	ndr_print_bitmap_flag(ndr, sizeof(uint32_t), "ADS_AUTH_SASL_FORCE", ADS_AUTH_SASL_FORCE, r);
+	ndr_print_bitmap_flag(ndr, sizeof(uint32_t), "ADS_AUTH_USER_CREDS", ADS_AUTH_USER_CREDS, r);
 	ndr->depth--;
 }
 
@@ -50,7 +51,6 @@ void ndr_print_ads_struct(struct ndr_print *ndr, const char *name, const struct 
 	ndr_print_string(ndr, "realm", r->server.realm);
 	ndr_print_string(ndr, "workgroup", r->server.workgroup);
 	ndr_print_string(ndr, "ldap_server", r->server.ldap_server);
-	ndr_print_bool(ndr, "foreign", r->server.foreign);
 	ndr->depth--;
 	ndr_print_struct(ndr, name, "auth");
 	ndr->depth++;

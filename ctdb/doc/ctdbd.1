@@ -2,12 +2,12 @@
 .\"     Title: ctdbd
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 12/10/2015
+.\"      Date: 01/27/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDBD" "1" "12/10/2015" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDBD" "1" "01/27/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -60,24 +60,24 @@ for more information\&.
 .RS 4
 DIRECTORY on local storage where ctdbd keeps a local copy of TDB databases\&. This directory is local for each node and should not be stored on the shared cluster filesystem\&.
 .sp
-This directory would usually be
-/var/lib/ctdb
+Defaults to
+/usr/local/var/lib/ctdb\&.
 .RE
 .PP
 \-\-dbdir\-persistent=\fIDIRECTORY\fR
 .RS 4
 DIRECTORY on local storage where ctdbd keeps a local copy of persistent TDB databases\&. This directory is local for each node and should not be stored on the shared cluster filesystem\&.
 .sp
-This directory would usually be
-/var/lib/ctdb/persistent
+Defaults to
+/usr/local/var/lib/ctdb/persistent\&.
 .RE
 .PP
 \-\-dbdir\-state=\fIDIRECTORY\fR
 .RS 4
 DIRECTORY on local storage where ctdbd keep internal state TDB files\&. This directory is local for each node and should not be stored on the shared cluster filesystem\&.
 .sp
-This directory would usually be
-/var/lib/ctdb/state
+Defaults to
+/usr/local/var/lib/ctdb/state\&.
 .RE
 .PP
 \-\-event\-script\-dir=\fIDIRECTORY\fR
@@ -90,7 +90,7 @@ for more information\&.
 .sp
 Default is
 \fBCTDB_BASE\fR/events\&.d, so usually
-/etc/ctdb/events\&.d, which is part of the CTDB installation\&.
+/usr/local/etc/ctdb/events\&.d, which is part of the CTDB installation\&.
 .RE
 .PP
 \-\-listen=\fIIPADDR\fR
@@ -105,15 +105,14 @@ This option is only required when automatic address detection can not be used\&.
 .PP
 \-\-logging=\fISTRING\fR
 .RS 4
-STRING specifies where ctdbd will write its log\&. The default is file:/var/log/log\&.ctdb
-or similar \- the prefix may differ depending on how CTDB was built\&.
+STRING specifies where ctdbd will write its log\&. The default is file:/usr/local/var/log/log\&.ctdb\&.
 .sp
 Valid values are:
 .PP
 file:\fIFILENAME\fR
 .RS 4
 FILENAME where ctdbd will write its log\&. This is usually
-/var/log/log\&.ctdb\&.
+/usr/local/var/log/log\&.ctdb\&.
 .RE
 .PP
 syslog[:\fIMETHOD\fR]
@@ -168,7 +167,7 @@ in the cluster\&.
 .sp
 Default is
 \fBCTDB_BASE\fR/nodes, so usually
-/etc/ctdb/nodes\&.
+/usr/local/etc/ctdb/nodes\&.
 .RE
 .PP
 \-\-no\-lmaster
@@ -198,7 +197,7 @@ for more information\&.
 FILENAME specifying a script to be invoked by ctdbd when certain state changes occur\&.
 .sp
 This file is usually
-/etc/ctdb/notify\&.sh\&.
+/usr/local/etc/ctdb/notify\&.sh\&.
 .sp
 Please see the
 NOTIFICATION SCRIPT
@@ -221,7 +220,7 @@ FILENAME specifying a file containing the public IP addresses to use on the clus
 The IP addresses specified in this file can differ across nodes\&.
 .sp
 This is usually the file
-/etc/ctdb/public_addresses
+/usr/local/etc/ctdb/public_addresses
 .RE
 .PP
 \-\-public\-interface=\fIINTERFACE\fR
@@ -244,7 +243,7 @@ section in
 .PP
 \-\-single\-public\-ip=\fIIPADDR\fR
 .RS 4
-IPADDR specifies the single IP that CTDB will use in conjuction with LVS\&.
+IPADDR specifies the single IP that CTDB will use in conjunction with LVS\&.
 .sp
 Please see the
 LVS
@@ -281,11 +280,6 @@ NODE STATES
 section in
 \fBctdb\fR(7)
 for more information about the STOPPED state\&.
-.RE
-.PP
-\-\-syslog
-.RS 4
-Send log messages to syslog instead of the CTDB logfile\&. This option overrides \-\-logfile\&. The default is to log to a file\&.
 .RE
 .PP
 \-\-transport=tcp|infiniband
@@ -327,8 +321,7 @@ run as a real\-time process and instead run ctdbd as a normal userspace process\
 FILENAME specifies the name of the Unix domain socket that ctdbd will create\&. This socket is used by local clients to communicate with ctdbd\&.
 .sp
 The default is
-/tmp/ctdb\&.socket
-\&. You only need to use this option if you plan to run multiple ctdbd daemons on the same physical host, usually for testing\&.
+/usr/local/var/run/ctdb/ctdbd\&.socket\&. You only need to use this option if you plan to run multiple ctdbd daemons on the same physical host, usually for testing\&.
 .RE
 .PP
 \-\-script\-log\-level=\fIDEBUGLEVEL\fR

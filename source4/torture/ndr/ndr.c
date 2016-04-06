@@ -130,7 +130,7 @@ _PUBLIC_ struct torture_test *_torture_suite_add_ndr_pullpush_test(
 	test->fn = check_fn;
 	test->dangerous = false;
 
-	DLIST_ADD_END(tcase->tests, test, struct torture_test *);
+	DLIST_ADD_END(tcase->tests, test);
 
 	return test;
 }
@@ -226,7 +226,7 @@ _PUBLIC_ struct torture_test *_torture_suite_add_ndr_pull_inout_test(
 	test->fn = check_fn;
 	test->dangerous = false;
 
-	DLIST_ADD_END(tcase->tests, test, struct torture_test *);
+	DLIST_ADD_END(tcase->tests, test);
 
 	return test;
 }
@@ -417,6 +417,8 @@ struct torture_suite *torture_local_ndr(TALLOC_CTX *mem_ctx)
 	torture_suite_add_suite(suite, ndr_ntlmssp_suite(suite));
 	torture_suite_add_suite(suite, ndr_backupkey_suite(suite));
 	torture_suite_add_suite(suite, ndr_witness_suite(suite));
+	torture_suite_add_suite(suite, ndr_clusapi_suite(suite));
+	torture_suite_add_suite(suite, ndr_negoex_suite(suite));
 	torture_suite_add_suite(suite, ndr_string_suite(suite));
 
 	torture_suite_add_simple_test(suite, "string terminator",

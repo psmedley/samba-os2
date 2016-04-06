@@ -55,9 +55,11 @@ static bool mangled_equal(const char *name1,
 ****************************************************************************/
 
 static NTSTATUS determine_path_error(const char *name,
-			bool allow_wcard_last_component)
+			bool allow_wcard_last_component,
+			bool posix_pathnames)
 {
 	const char *p;
+	bool name_has_wild = false;
 
 	if (!allow_wcard_last_component) {
 		/* Error code within a pathname. */
@@ -74,7 +76,11 @@ static NTSTATUS determine_path_error(const char *name,
 
 	p = strchr(name, '/');
 
-	if (!p && (ms_has_wild(name) || ISDOT(name))) {
+	if (!posix_pathnames) {
+		name_has_wild = ms_has_wild(name);
+	}
+
+	if (!p && (name_has_wild || ISDOT(name))) {
 		/* Error code at the end of a pathname. */
 		return NT_STATUS_OBJECT_NAME_INVALID;
 	} else {
@@ -122,12 +128,17 @@ static NTSTATUS check_parent_exists(TALLOC_CTX *ctx,
 	const char *last_component = NULL;
 	NTSTATUS status;
 	int ret;
+	bool parent_fname_has_wild = false;
 
 	ZERO_STRUCT(parent_fname);
 	if (!parent_dirname(ctx, smb_fname->base_name,
 				&parent_fname.base_name,
 				&last_component)) {
 		return NT_STATUS_NO_MEMORY;
+	}
+
+	if (!posix_pathnames) {
+		parent_fname_has_wild = ms_has_wild(parent_fname.base_name);
 	}
 
 	/*
@@ -137,7 +148,7 @@ static NTSTATUS check_parent_exists(TALLOC_CTX *ctx,
 	 * optimization.
 	 */
 	if ((smb_fname->base_name == last_component) ||
-			ms_has_wild(parent_fname.base_name)) {
+			parent_fname_has_wild) {
 		return NT_STATUS_OK;
 	}
 
@@ -224,12 +235,20 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 		      uint32_t ucf_flags)
 {
 	struct smb_filename *smb_fname = NULL;
-	char *start, *end;
+
+	/*
+	 * This looks strange. But we need "start" initialized to "" here but
+	 * it can't be a const char *, so 'char *start = "";' does not work.
+	 */
+	char cnull = '\0';
+	char *start = &cnull;
+
+	char *end;
 	char *dirpath = NULL;
 	char *stream = NULL;
 	bool component_was_mangled = False;
 	bool name_has_wildcard = False;
-	bool posix_pathnames = false;
+	bool posix_pathnames = (ucf_flags & UCF_POSIX_PATHNAMES);
 	bool allow_wcard_last_component =
 	    (ucf_flags & UCF_ALWAYS_ALLOW_WCARD_LCOMP);
 	bool save_last_component = ucf_flags & UCF_SAVE_LCOMP;
@@ -299,7 +318,8 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 			status = NT_STATUS_OBJECT_NAME_INVALID;
 		} else {
 			status =determine_path_error(&orig_path[2],
-			    allow_wcard_last_component);
+			    allow_wcard_last_component,
+			    posix_pathnames);
 		}
 		goto err;
 	}
@@ -347,9 +367,6 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 			goto err;
 		}
 	}
-
-	posix_pathnames = (lp_posix_pathnames() ||
-				(ucf_flags & UCF_POSIX_PATHNAMES));
 
 	/*
 	 * Strip off the stream, and add it back when we're done with the
@@ -438,11 +455,14 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 	 * is true.
 	 */
 
-	name_has_wildcard = ms_has_wild(smb_fname->base_name);
-	if (name_has_wildcard && !allow_wcard_last_component) {
-		/* Wildcard not valid anywhere. */
-		status = NT_STATUS_OBJECT_NAME_INVALID;
-		goto fail;
+	if (!posix_pathnames) {
+		/* POSIX pathnames have no wildcards. */
+		name_has_wildcard = ms_has_wild(smb_fname->base_name);
+		if (name_has_wildcard && !allow_wcard_last_component) {
+			/* Wildcard not valid anywhere. */
+			status = NT_STATUS_OBJECT_NAME_INVALID;
+			goto fail;
+		}
 	}
 
 	DEBUG(5,("unix_convert begin: name = %s, dirpath = %s, start = %s\n",
@@ -628,7 +648,8 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 				status = NT_STATUS_OBJECT_NAME_INVALID;
 			} else {
 				status = determine_path_error(end+1,
-						allow_wcard_last_component);
+						allow_wcard_last_component,
+						posix_pathnames);
 			}
 			goto fail;
 		}
@@ -636,7 +657,9 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 		/* The name cannot have a wildcard if it's not
 		   the last component. */
 
-		name_has_wildcard = ms_has_wild(start);
+		if (!posix_pathnames) {
+			name_has_wildcard = ms_has_wild(start);
+		}
 
 		/* Wildcards never valid within a pathname. */
 		if (name_has_wildcard && end) {

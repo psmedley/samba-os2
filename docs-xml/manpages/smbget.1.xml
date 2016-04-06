@@ -7,7 +7,7 @@
 	<manvolnum>1</manvolnum>
 	<refmiscinfo class="source">Samba</refmiscinfo>
 	<refmiscinfo class="manual">User Commands</refmiscinfo>
-	<refmiscinfo class="version">4.3</refmiscinfo>
+	<refmiscinfo class="version">4.4</refmiscinfo>
 </refmeta>
 
 
@@ -22,20 +22,18 @@
 		<arg choice="opt">-a, --guest</arg>
 		<arg choice="opt">-r, --resume</arg>
 		<arg choice="opt">-R, --recursive</arg>
-		<arg choice="opt">-u, --username=STRING</arg>
-		<arg choice="opt">-p, --password=STRING</arg>
+		<arg choice="opt">-U, --username=STRING</arg>
 		<arg choice="opt">-w, --workgroup=STRING</arg>
 		<arg choice="opt">-n, --nonprompt</arg>
 		<arg choice="opt">-d, --debuglevel=INT</arg>
 		<arg choice="opt">-D, --dots</arg>
-		<arg choice="opt">-P, --keep-permissions</arg>
 		<arg choice="opt">-o, --outputfile</arg>
 		<arg choice="opt">-f, --rcfile</arg>
 		<arg choice="opt">-q, --quiet</arg>
 		<arg choice="opt">-v, --verbose</arg>
 		<arg choice="opt">-b, --blocksize</arg>
 		<arg choice="opt">-O, --stdout</arg>
-		<arg choice="opt">-U, --update</arg>
+		<arg choice="opt">-u, --update</arg>
 		<arg choice="opt">-?, --help</arg>
 		<arg choice="opt">--usage</arg>
 		<arg choice="req">smb://host/share/path/to/file</arg>
@@ -78,13 +76,8 @@
 	</varlistentry>
 
 	<varlistentry>
-		<term>-u, --username=STRING</term>
-		<listitem><para>Username to use</para></listitem>
-	</varlistentry>
-
-	<varlistentry>
-		<term>-p, --password=STRING</term>
-		<listitem><para>Password to use</para></listitem>
+		<term> -U, --username=<replaceable>username[%password]</replaceable></term>
+		<listitem><para>Username (and password) to use</para></listitem>
 	</varlistentry>
 
 	<varlistentry>
@@ -105,11 +98,6 @@
 	<varlistentry>
 		<term>-D, --dots</term>
 		<listitem><para>Show dots as progress indication</para></listitem>
-	</varlistentry>
-
-	<varlistentry>
-		<term>-P, --keep-permissions</term>
-		<listitem><para>Set same permissions on local file as are set on remote file.</para></listitem>
 	</varlistentry>
 
 	<varlistentry>
@@ -153,7 +141,7 @@
 	</varlistentry>
 
 	<varlistentry>
-		<term>-U, --update</term>
+		<term>-u, --update</term>
 		<listitem><para>Download only when remote file is newer than local file or local file is missing.</para></listitem>
 	</varlistentry>
 

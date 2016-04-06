@@ -43,7 +43,7 @@
 #include "lib/util/tevent_unix.h"
 #include "lib/tevent/tevent_internal.h"
 #include "smbd/globals.h"
-#include "lib/sys_rw.h"
+#include "lib/util/sys_rw.h"
 
 #define DEFAULT_VOLFILE_SERVER "localhost"
 
@@ -296,6 +296,7 @@ static uint64_t vfs_gluster_disk_free(struct vfs_handle_struct *handle,
 }
 
 static int vfs_gluster_get_quota(struct vfs_handle_struct *handle,
+				 const char *path,
 				 enum SMB_QUOTA_TYPE qtype, unid_t id,
 				 SMB_DISK_QUOTA *qt)
 {
@@ -487,10 +488,27 @@ static ssize_t vfs_gluster_pread(struct vfs_handle_struct *handle,
 	return glfs_pread(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle, fsp), data, n, offset, 0);
 }
 
+struct glusterfs_aio_state;
+
+struct glusterfs_aio_wrapper {
+	struct glusterfs_aio_state *state;
+};
+
 struct glusterfs_aio_state {
 	ssize_t ret;
 	int err;
+	struct tevent_req *req;
+	bool cancelled;
 };
+
+static int aio_wrapper_destructor(struct glusterfs_aio_wrapper *wrap)
+{
+	if (wrap->state != NULL) {
+		wrap->state->cancelled = true;
+	}
+
+	return 0;
+}
 
 /*
  * This function is the callback that will be called on glusterfs
@@ -499,12 +517,10 @@ struct glusterfs_aio_state {
  */
 static void aio_glusterfs_done(glfs_fd_t *fd, ssize_t ret, void *data)
 {
-	struct tevent_req *req = NULL;
 	struct glusterfs_aio_state *state = NULL;
 	int sts = 0;
 
-	req = talloc_get_type_abort(data, struct tevent_req);
-	state = tevent_req_data(req, struct glusterfs_aio_state);
+	state = (struct glusterfs_aio_state *)data;
 
 	if (ret < 0) {
 		state->ret = -1;
@@ -515,10 +531,10 @@ static void aio_glusterfs_done(glfs_fd_t *fd, ssize_t ret, void *data)
 	}
 
 	/*
-	 * Write the pointer to each req that needs to be completed
-	 * by calling tevent_req_done(). tevent_req_done() cannot
-	 * be called here, as it is not designed to be executed
-	 * in the multithread environment, tevent_req_done() must be
+	 * Write the state pointer to glusterfs_aio_state to the
+	 * pipe, so we can call tevent_req_done() from the main thread,
+	 * because tevent_req_done() is not designed to be executed in
+	 * the multithread environment, so tevent_req_done() must be
 	 * executed from the smbd main thread.
 	 *
 	 * write(2) on pipes with sizes under _POSIX_PIPE_BUF
@@ -529,7 +545,7 @@ static void aio_glusterfs_done(glfs_fd_t *fd, ssize_t ret, void *data)
 	 * that we can trust it here.
 	 */
 
-	sts = sys_write(write_fd, &req, sizeof(struct tevent_req *));
+	sts = sys_write(write_fd, &state, sizeof(struct glusterfs_aio_state *));
 	if (sts < 0) {
 		DEBUG(0,("\nWrite to pipe failed (%s)", strerror(errno)));
 	}
@@ -545,6 +561,7 @@ static void aio_tevent_fd_done(struct tevent_context *event_ctx,
 				uint16_t flags, void *data)
 {
 	struct tevent_req *req = NULL;
+	struct glusterfs_aio_state *state = NULL;
 	int sts = 0;
 
 	/*
@@ -557,10 +574,19 @@ static void aio_tevent_fd_done(struct tevent_context *event_ctx,
 	 * can trust it here.
 	 */
 
-	sts = sys_read(read_fd, &req, sizeof(struct tevent_req *));
+	sts = sys_read(read_fd, &state, sizeof(struct glusterfs_aio_state *));
+
 	if (sts < 0) {
 		DEBUG(0,("\nRead from pipe failed (%s)", strerror(errno)));
 	}
+
+	/* if we've cancelled the op, there is no req, so just clean up. */
+	if (state->cancelled == true) {
+		TALLOC_FREE(state);
+		return;
+	}
+
+	req = state->req;
 
 	if (req) {
 		tevent_req_done(req);
@@ -610,34 +636,135 @@ fail:
 	return false;
 }
 
-static struct tevent_req *vfs_gluster_pread_send(struct vfs_handle_struct
-						 *handle, TALLOC_CTX *mem_ctx,
-						 struct tevent_context *ev,
-						 files_struct *fsp, void *data,
-						 size_t n, off_t offset)
+static struct glusterfs_aio_state *aio_state_create(TALLOC_CTX *mem_ctx)
 {
 	struct tevent_req *req = NULL;
 	struct glusterfs_aio_state *state = NULL;
-	int ret = 0;
+	struct glusterfs_aio_wrapper *wrapper = NULL;
 
-	req = tevent_req_create(mem_ctx, &state, struct glusterfs_aio_state);
+	req = tevent_req_create(mem_ctx, &wrapper, struct glusterfs_aio_wrapper);
+
 	if (req == NULL) {
 		return NULL;
 	}
+
+	state = talloc(NULL, struct glusterfs_aio_state);
+
+	if (state == NULL) {
+		TALLOC_FREE(req);
+		return NULL;
+	}
+
+	talloc_set_destructor(wrapper, aio_wrapper_destructor);
+	state->cancelled = false;
+	state->ret = 0;
+	state->err = 0;
+	state->req = req;
+
+	wrapper->state = state;
+
+	return state;
+}
+
+static struct tevent_req *vfs_gluster_pread_send(struct vfs_handle_struct
+						  *handle, TALLOC_CTX *mem_ctx,
+						  struct tevent_context *ev,
+						  files_struct *fsp,
+						  void *data, size_t n,
+						  off_t offset)
+{
+	struct glusterfs_aio_state *state = NULL;
+	struct tevent_req *req = NULL;
+	int ret = 0;
+
+	state = aio_state_create(mem_ctx);
+
+	if (state == NULL) {
+		return NULL;
+	}
+
+	req = state->req;
 
 	if (!init_gluster_aio(handle)) {
 		tevent_req_error(req, EIO);
 		return tevent_req_post(req, ev);
 	}
+
 	ret = glfs_pread_async(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle,
 				fsp), data, n, offset, 0, aio_glusterfs_done,
-				req);
+				state);
 	if (ret < 0) {
 		tevent_req_error(req, -ret);
 		return tevent_req_post(req, ev);
 	}
 
 	return req;
+}
+
+static struct tevent_req *vfs_gluster_pwrite_send(struct vfs_handle_struct
+						  *handle, TALLOC_CTX *mem_ctx,
+						  struct tevent_context *ev,
+						  files_struct *fsp,
+						  const void *data, size_t n,
+						  off_t offset)
+{
+	struct glusterfs_aio_state *state = NULL;
+	struct tevent_req *req = NULL;
+	int ret = 0;
+
+	state = aio_state_create(mem_ctx);
+
+	if (state == NULL) {
+		return NULL;
+	}
+
+	req = state->req;
+
+	if (!init_gluster_aio(handle)) {
+		tevent_req_error(req, EIO);
+		return tevent_req_post(req, ev);
+	}
+
+	ret = glfs_pwrite_async(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle,
+				fsp), data, n, offset, 0, aio_glusterfs_done,
+				state);
+	if (ret < 0) {
+		tevent_req_error(req, -ret);
+		return tevent_req_post(req, ev);
+	}
+
+	return req;
+}
+
+static ssize_t vfs_gluster_recv(struct tevent_req *req, int *err)
+{
+	struct glusterfs_aio_wrapper *wrapper = NULL;
+	int ret = 0;
+
+	wrapper = tevent_req_data(req, struct glusterfs_aio_wrapper);
+
+	if (wrapper == NULL) {
+		return -1;
+	}
+
+	if (wrapper->state == NULL) {
+		return -1;
+	}
+
+	if (tevent_req_is_unix_error(req, err)) {
+		return -1;
+	}
+	if (wrapper->state->ret == -1) {
+		*err = wrapper->state->err;
+	}
+
+	ret = wrapper->state->ret;
+
+	/* Clean up the state, it is in a NULL context. */
+
+	TALLOC_FREE(wrapper->state);
+
+	return ret;
 }
 
 static ssize_t vfs_gluster_write(struct vfs_handle_struct *handle,
@@ -651,53 +778,6 @@ static ssize_t vfs_gluster_pwrite(struct vfs_handle_struct *handle,
 				  size_t n, off_t offset)
 {
 	return glfs_pwrite(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle, fsp), data, n, offset, 0);
-}
-
-static struct tevent_req *vfs_gluster_pwrite_send(struct vfs_handle_struct
-						  *handle, TALLOC_CTX *mem_ctx,
-						  struct tevent_context *ev,
-						  files_struct *fsp,
-						  const void *data, size_t n,
-						  off_t offset)
-{
-	struct tevent_req *req = NULL;
-	struct glusterfs_aio_state *state = NULL;
-	int ret = 0;
-
-	req = tevent_req_create(mem_ctx, &state, struct glusterfs_aio_state);
-	if (req == NULL) {
-		return NULL;
-	}
-	if (!init_gluster_aio(handle)) {
-		tevent_req_error(req, EIO);
-		return tevent_req_post(req, ev);
-	}
-	ret = glfs_pwrite_async(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle,
-				fsp), data, n, offset, 0, aio_glusterfs_done,
-				req);
-	if (ret < 0) {
-		tevent_req_error(req, -ret);
-		return tevent_req_post(req, ev);
-	}
-	return req;
-}
-
-static ssize_t vfs_gluster_recv(struct tevent_req *req, int *err)
-{
-	struct glusterfs_aio_state *state = NULL;
-
-	state = tevent_req_data(req, struct glusterfs_aio_state);
-	if (state == NULL) {
-		return -1;
-	}
-
-	if (tevent_req_is_unix_error(req, err)) {
-		return -1;
-	}
-	if (state->ret == -1) {
-		*err = state->err;
-	}
-	return state->ret;
 }
 
 static off_t vfs_gluster_lseek(struct vfs_handle_struct *handle,
@@ -746,10 +826,14 @@ static struct tevent_req *vfs_gluster_fsync_send(struct vfs_handle_struct
 	struct glusterfs_aio_state *state = NULL;
 	int ret = 0;
 
-	req = tevent_req_create(mem_ctx, &state, struct glusterfs_aio_state);
-	if (req == NULL) {
+	state = aio_state_create(mem_ctx);
+
+	if (state == NULL) {
 		return NULL;
 	}
+
+	req = state->req;
+
 	if (!init_gluster_aio(handle)) {
 		tevent_req_error(req, EIO);
 		return tevent_req_post(req, ev);

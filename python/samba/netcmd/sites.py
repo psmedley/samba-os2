@@ -16,15 +16,15 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import os
-from samba import sites
+from samba import sites, subnets
 from samba.samdb import SamDB
 import samba.getopt as options
 from samba.auth import system_session
 from samba.netcmd import (
     Command,
     CommandError,
-    SuperCommand
+    SuperCommand,
+    Option,
     )
 
 
@@ -41,25 +41,29 @@ class cmd_sites_create(Command):
         "credopts": options.CredentialsOptions,
     }
 
-    def run(self, sitename, sambaopts=None, credopts=None, versionopts=None):
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+    ]
+
+    def run(self, sitename, H=None, sambaopts=None, credopts=None,
+            versionopts=None):
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp, fallback_machine=True)
-        url =  lp.private_path("sam.ldb")
-
-        if not os.path.exists(url):
-            raise CommandError("secret database not found at %s " % url)
-        samdb = SamDB(url=url, session_info=system_session(),
+        samdb = SamDB(url=H, session_info=system_session(),
                       credentials=creds, lp=lp)
 
         samdb.transaction_start()
         try:
-            ok = sites.create_site(samdb, samdb.get_config_basedn(), sitename)
+            sites.create_site(samdb, samdb.get_config_basedn(), sitename)
             samdb.transaction_commit()
         except sites.SiteAlreadyExistsException, e:
             samdb.transaction_cancel()
-            raise CommandError("Error while creating site %s, error: %s" % (sitename, str(e)))
+            raise CommandError("Error while creating site %s, error: %s" %
+                               (sitename, str(e)))
 
         self.outf.write("Site %s created !\n" % sitename)
+
 
 class cmd_sites_delete(Command):
     """Delete an existing site."""
@@ -74,19 +78,21 @@ class cmd_sites_delete(Command):
         "credopts": options.CredentialsOptions,
     }
 
-    def run(self, sitename, sambaopts=None, credopts=None, versionopts=None):
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+    ]
+
+    def run(self, sitename, H=None, sambaopts=None, credopts=None,
+            versionopts=None):
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp, fallback_machine=True)
-        url =  lp.private_path("sam.ldb")
-
-        if not os.path.exists(url):
-            raise CommandError("secret database not found at %s " % url)
-        samdb = SamDB(url=url, session_info=system_session(),
-            credentials=creds, lp=lp)
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
 
         samdb.transaction_start()
         try:
-            ok = sites.delete_site(samdb, samdb.get_config_basedn(), sitename)
+            sites.delete_site(samdb, samdb.get_config_basedn(), sitename)
             samdb.transaction_commit()
         except sites.SiteException, e:
             samdb.transaction_cancel()
@@ -96,10 +102,127 @@ class cmd_sites_delete(Command):
         self.outf.write("Site %s removed!\n" % sitename)
 
 
+class cmd_sites_subnet_create(Command):
+    """Create a new subnet."""
+    synopsis = "%prog <subnet> <site-of-subnet> [options]"
+    takes_args = ["subnetname", "site_of_subnet"]
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "versionopts": options.VersionOptions,
+        "credopts": options.CredentialsOptions,
+    }
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+    ]
+
+    def run(self, subnetname, site_of_subnet, H=None, sambaopts=None,
+            credopts=None, versionopts=None):
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp)
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
+
+        samdb.transaction_start()
+        try:
+            subnets.create_subnet(samdb, samdb.get_config_basedn(), subnetname,
+                                  site_of_subnet)
+            samdb.transaction_commit()
+        except subnets.SubnetException, e:
+            samdb.transaction_cancel()
+            raise CommandError("Error while creating subnet %s: %s" %
+                               (subnetname, e))
+
+        self.outf.write("Subnet %s created !\n" % subnetname)
+
+
+class cmd_sites_subnet_delete(Command):
+    """Delete an existing subnet."""
+
+    synopsis = "%prog <subnet> [options]"
+
+    takes_args = ["subnetname"]
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "versionopts": options.VersionOptions,
+        "credopts": options.CredentialsOptions,
+    }
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+    ]
+
+    def run(self, subnetname, H=None, sambaopts=None, credopts=None,
+            versionopts=None):
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp)
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
+
+        samdb.transaction_start()
+        try:
+            subnets.delete_subnet(samdb, samdb.get_config_basedn(), subnetname)
+            samdb.transaction_commit()
+        except subnets.SubnetException, e:
+            samdb.transaction_cancel()
+            raise CommandError("Error while removing subnet %s, error: %s" %
+                               (subnetname, e))
+
+        self.outf.write("Subnet %s removed!\n" % subnetname)
+
+
+class cmd_sites_subnet_set_site(Command):
+    """Assign a subnet to a site."""
+    synopsis = "%prog <subnet> <site-of-subnet> [options]"
+    takes_args = ["subnetname", "site_of_subnet"]
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "versionopts": options.VersionOptions,
+        "credopts": options.CredentialsOptions,
+    }
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+    ]
+
+    def run(self, subnetname, site_of_subnet, H=None, sambaopts=None,
+            credopts=None, versionopts=None):
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp)
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
+
+        samdb.transaction_start()
+        try:
+            subnets.set_subnet_site(samdb, samdb.get_config_basedn(),
+                                    subnetname, site_of_subnet)
+            samdb.transaction_commit()
+        except subnets.SubnetException, e:
+            samdb.transaction_cancel()
+            raise CommandError("Error assigning subnet %s to site %s: %s" %
+                               (subnetname, site_of_subnet, e))
+
+        print >> self.outf, ("Subnet %s shifted to site %s" %
+                             (subnet_name, site_of_subnet))
+
+
+class cmd_sites_subnet(SuperCommand):
+    """Subnet management subcommands."""
+    subcommands = {
+        "create": cmd_sites_subnet_create(),
+        "remove": cmd_sites_subnet_delete(),
+        "set-site": cmd_sites_subnet_set_site(),
+    }
 
 class cmd_sites(SuperCommand):
     """Sites management."""
-
     subcommands = {}
     subcommands["create"] = cmd_sites_create()
     subcommands["remove"] = cmd_sites_delete()
+    subcommands["subnet"] = cmd_sites_subnet()

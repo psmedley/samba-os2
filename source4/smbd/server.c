@@ -44,6 +44,7 @@
 #include "dynconfig/dynconfig.h"
 #include "lib/util/samba_modules.h"
 #include "nsswitch/winbind_client.h"
+#include "libds/common/roles.h"
 
 /*
   recursively delete a directory tree
@@ -370,7 +371,7 @@ static int binary_smbd_main(const char *binary_name, int argc, const char *argv[
 	umask(0);
 
 	DEBUG(0,("%s version %s started.\n", binary_name, SAMBA_VERSION_STRING));
-	DEBUGADD(0,("Copyright Andrew Tridgell and the Samba Team 1992-2015\n"));
+	DEBUGADD(0,("Copyright Andrew Tridgell and the Samba Team 1992-2016\n"));
 
 	if (sizeof(uint16_t) < 2 || sizeof(uint32_t) < 4 || sizeof(uint64_t) < 8) {
 		DEBUG(0,("ERROR: Samba is not configured correctly for the word size on your machine\n"));
@@ -391,12 +392,6 @@ static int binary_smbd_main(const char *binary_name, int argc, const char *argv[
 	}
 
 	pidfile_create(lpcfg_pid_directory(cmdline_lp_ctx), binary_name);
-
-	/* Set up a database to hold a random seed, in case we don't
-	 * have /dev/urandom */
-	if (!randseed_init(talloc_autofree_context(), cmdline_lp_ctx)) {
-		return 1;
-	}
 
 	if (lpcfg_server_role(cmdline_lp_ctx) == ROLE_ACTIVE_DIRECTORY_DC) {
 		if (!open_schannel_session_store(talloc_autofree_context(), cmdline_lp_ctx)) {

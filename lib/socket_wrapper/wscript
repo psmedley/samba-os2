@@ -2,7 +2,7 @@
 
 import os
 
-VERSION="1.1.3"
+VERSION="1.1.4"
 
 def configure(conf):
     if conf.CHECK_BUNDLED_SYSTEM('socket_wrapper', minversion=VERSION, set_target=False):
@@ -107,7 +107,6 @@ def build(bld):
         # breaks preloading!
         bld.SAMBA_LIBRARY('socket_wrapper',
                           source='socket_wrapper.c',
-                          cflags='-DNDEBUG',
                           deps='dl',
                           install=False,
                           realname='libsocket-wrapper.so')

@@ -379,6 +379,7 @@ static NTSTATUS smbd_smb2_create_durable_lease_check(
 	const struct smb2_lease *lease_ptr)
 {
 	struct smb_filename *smb_fname = NULL;
+	uint32_t ucf_flags = UCF_PREP_CREATEFILE;
 	NTSTATUS status;
 
 	if (lease_ptr == NULL) {
@@ -404,7 +405,7 @@ static NTSTATUS smbd_smb2_create_durable_lease_check(
 	}
 
 	status = filename_convert(talloc_tos(), fsp->conn, false,
-				  requested_filename, UCF_PREP_CREATEFILE,
+				  requested_filename, ucf_flags,
 				  NULL, &smb_fname);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(10, ("filename_convert returned %s\n",
@@ -473,7 +474,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 	struct smb2_create_blob *dhnq = NULL;
 	struct smb2_create_blob *dh2q = NULL;
 	struct smb2_create_blob *rqls = NULL;
-	struct smbXsrv_open *op = NULL;
+	bool replay_operation = false;
 
 	if(lp_fake_oplocks(SNUM(smb2req->tcon->compat))) {
 		requested_oplock_level = SMB2_OPLOCK_LEVEL_NONE;
@@ -554,10 +555,6 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 		 * (Note that the cases of an additional dh2q or dh2c blob
 		 *  which require a different error code, have been treated
 		 *  above.)
-		 *
-		 * TODO:
-		 * This is only true for the oplock case:
-		 * For leases, lease request is required additionally.
 		 */
 
 		if (dhnq) {
@@ -594,10 +591,6 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 		 * (Note that the cases of an additional dhnq, dhnc or dh2q
 		 *  blob which require a different error code, have been
 		 *  treated above.)
-		 *
-		 * TODO:
-		 * This is only true for the oplock case:
-		 * For leases, lease request is required additionally!
 		 */
 
 		num_blobs_allowed = 1;
@@ -675,7 +668,11 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 		struct smb2_lease lease;
 		struct smb2_lease *lease_ptr = NULL;
 		ssize_t lease_len = -1;
+		bool need_replay_cache = false;
+		struct smbXsrv_open *op = NULL;
+#if 0
 		struct smb2_create_blob *svhdx = NULL;
+#endif
 
 		exta = smb2_create_blob_find(&in_context_blobs,
 					     SMB2_CREATE_TAG_EXTA);
@@ -689,6 +686,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 					     SMB2_CREATE_TAG_TWRP);
 		qfid = smb2_create_blob_find(&in_context_blobs,
 					     SMB2_CREATE_TAG_QFID);
+#if 0
 		if (smb2req->xconn->protocol >= PROTOCOL_SMB3_02) {
 			/*
 			 * This was introduced with SMB3_02
@@ -696,6 +694,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			svhdx = smb2_create_blob_find(&in_context_blobs,
 						      SVHDX_OPEN_DEVICE_CONTEXT);
 		}
+#endif
 
 		fname = talloc_strdup(state, in_name);
 		if (tevent_req_nomem(fname, req)) {
@@ -781,6 +780,8 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			const uint8_t *p = dh2q->data.data;
 			uint32_t durable_v2_timeout = 0;
 			DATA_BLOB create_guid_blob;
+			const uint8_t *hdr;
+			uint32_t flags;
 
 			if (dh2q->data.length != 32) {
 				tevent_req_nterror(req, NT_STATUS_INVALID_PARAMETER);
@@ -807,6 +808,12 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			update_open = true;
 
 			/*
+			 * And we need to create a cache for replaying the
+			 * create.
+			 */
+			need_replay_cache = true;
+
+			/*
 			 * durable handle v2 request processed below
 			 */
 			durable_requested = true;
@@ -818,6 +825,38 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 				 * This matches Windows 2012.
 				 */
 				durable_timeout_msec = (60*1000);
+			}
+
+			/*
+			 * Check for replay operation.
+			 * Only consider it when we have dh2q.
+			 * If we do not have a replay operation, verify that
+			 * the create_guid is not cached for replay.
+			 */
+			hdr = SMBD_SMB2_IN_HDR_PTR(smb2req);
+			flags = IVAL(hdr, SMB2_HDR_FLAGS);
+			replay_operation =
+				!!(flags & SMB2_HDR_FLAG_REPLAY_OPERATION);
+
+			status = smb2srv_open_lookup_replay_cache(
+					smb2req->xconn, create_guid,
+					0 /* now */, &op);
+
+			if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_FOUND)) {
+				replay_operation = false;
+			} else if (tevent_req_nterror(req, status)) {
+				DBG_WARNING("smb2srv_open_lookup_replay_cache "
+					    "failed: %s\n", nt_errstr(status));
+				return tevent_req_post(req, ev);
+			} else if (!replay_operation) {
+				/*
+				 * If a create without replay operation flag
+				 * is sent but with a create_guid that is
+				 * currently in the replay cache -- fail.
+				 */
+				status = NT_STATUS_DUPLICATE_OBJECTID;
+				(void)tevent_req_nterror(req, status);
+				return tevent_req_post(req, ev);
 			}
 		}
 
@@ -914,13 +953,32 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 				DEBUG(10, ("v2 lease key only for SMB3\n"));
 				lease_ptr = NULL;
 			}
-		}
 
-		if (svhdx != NULL) {
-			/* SharedVHD is not yet supported */
-			tevent_req_nterror(
-				req, NT_STATUS_INVALID_DEVICE_REQUEST);
-			return tevent_req_post(req, ev);
+			/*
+			 * Replay with a lease is only allowed if the
+			 * established open carries a lease with the
+			 * same lease key.
+			 */
+			if (replay_operation) {
+				struct smb2_lease *op_ls =
+						&op->compat->lease->lease;
+				int op_oplock = op->compat->oplock_type;
+
+				if (map_samba_oplock_levels_to_smb2(op_oplock)
+				    != SMB2_OPLOCK_LEVEL_LEASE)
+				{
+					status = NT_STATUS_ACCESS_DENIED;
+					(void)tevent_req_nterror(req, status);
+					return tevent_req_post(req, ev);
+				}
+				if (!smb2_lease_key_equal(&lease.lease_key,
+							  &op_ls->lease_key))
+				{
+					status = NT_STATUS_ACCESS_DENIED;
+					(void)tevent_req_nterror(req, status);
+					return tevent_req_post(req, ev);
+				}
+			}
 		}
 
 		/* these are ignored for SMB2 */
@@ -933,9 +991,16 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 
 		/*
 		 * For the backend file open procedure, there are
-		 * two possible modes: durable_reconnect or not.
+		 * three possible modes: replay operation (in which case
+		 * there is nothing else to do), durable_reconnect or
+		 * new open.
 		 */
-		if (do_durable_reconnect) {
+		if (replay_operation) {
+			result = op->compat;
+			result->op = op;
+			update_open = false;
+			info = op->create_action;
+		} else if (do_durable_reconnect) {
 			DATA_BLOB new_cookie = data_blob_null;
 			NTTIME now = timeval_to_nttime(&smb2req->request_time);
 
@@ -1007,6 +1072,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			info = FILE_WAS_OPENED;
 		} else {
 			struct smb_filename *smb_fname = NULL;
+			uint32_t ucf_flags = UCF_PREP_CREATEFILE;
 
 			if (requested_oplock_level == SMB2_OPLOCK_LEVEL_LEASE) {
 				if (lease_ptr == NULL) {
@@ -1034,7 +1100,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 						  smb1req->conn,
 						  smb1req->flags2 & FLAGS2_DFS_PATHNAMES,
 						  fname,
-						  UCF_PREP_CREATEFILE,
+						  ucf_flags,
 						  NULL, /* ppath_contains_wcards */
 						  &smb_fname);
 			if (!NT_STATUS_IS_OK(status)) {
@@ -1144,7 +1210,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			}
 		}
 
-		if (durable_requested &&
+		if (!replay_operation && durable_requested &&
 		    (fsp_lease_type(result) & SMB2_LEASE_HANDLE))
 		{
 			status = SMB_VFS_DURABLE_COOKIE(result,
@@ -1154,7 +1220,8 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 				op->global->backend_cookie = data_blob_null;
 			}
 		}
-		if (op->global->backend_cookie.length > 0) {
+		if (!replay_operation && op->global->backend_cookie.length > 0)
+		{
 			update_open = true;
 
 			op->global->durable = true;
@@ -1163,6 +1230,9 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 
 		if (update_open) {
 			op->global->create_guid = _create_guid;
+			if (need_replay_cache) {
+				op->flags |= SMBXSRV_OPEN_NEED_REPLAY_CACHE;
+			}
 
 			status = smbXsrv_open_update(op);
 			DEBUG(10, ("smb2_create_send: smbXsrv_open_update "
@@ -1188,7 +1258,18 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			}
 		}
 
-		if (dh2q && op->global->durable) {
+		if (dh2q && op->global->durable &&
+		    /*
+		     * For replay operations, we return the dh2q blob
+		     * in the case of oplocks not based on the state of
+		     * the open, but on whether it could have been granted
+		     * for the request data. In the case of leases instead,
+		     * the state of the open is used...
+		     */
+		    (!replay_operation ||
+		     in_oplock_level == SMB2_OPLOCK_LEVEL_BATCH ||
+		     in_oplock_level == SMB2_OPLOCK_LEVEL_LEASE))
+		{
 			uint8_t p[8] = { 0, };
 			DATA_BLOB blob = data_blob_const(p, sizeof(p));
 			uint32_t durable_v2_response_flags = 0;
@@ -1260,7 +1341,9 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 
 	smb2req->compat_chain_fsp = smb1req->chain_fsp;
 
-	if(lp_fake_oplocks(SNUM(smb2req->tcon->compat))) {
+	if (replay_operation) {
+		state->out_oplock_level = in_oplock_level;
+	} else if (lp_fake_oplocks(SNUM(smb2req->tcon->compat))) {
 		state->out_oplock_level	= in_oplock_level;
 	} else {
 		state->out_oplock_level	= map_samba_oplock_levels_to_smb2(result->oplock_type);
@@ -1272,6 +1355,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 	} else {
 		state->out_create_action = info;
 	}
+	result->op->create_action = state->out_create_action;
 	state->out_file_attributes = dos_mode(result->conn,
 					   result->fsp_name);
 

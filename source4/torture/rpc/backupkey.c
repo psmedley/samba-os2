@@ -3,6 +3,7 @@
    test suite for backupkey remote protocol rpc operations
 
    Copyright (C) Matthieu Patou 2010-2011
+   Copyright (C) Andreas Schneider <asn@samba.org> 2015
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -24,23 +25,18 @@
 #include "torture/rpc/torture_rpc.h"
 #include "torture/ndr/ndr.h"
 
-#ifdef SAMBA4_USES_HEIMDAL
 #include "librpc/gen_ndr/ndr_backupkey_c.h"
 #include "librpc/gen_ndr/ndr_backupkey.h"
 #include "librpc/gen_ndr/ndr_lsa_c.h"
 #include "librpc/gen_ndr/ndr_security.h"
 #include "lib/cmdline/popt_common.h"
 #include "libcli/auth/proto.h"
-#include "lib/crypto/arcfour.h"
-#include <com_err.h>
-#include <hcrypto/sha.h>
 #include <system/network.h>
-#include <hx509.h>
-#include <der.h>
-#include <hcrypto/rsa.h>
-#include <hcrypto/hmac.h>
-#include <hcrypto/sha.h>
-#include <hcrypto/evp.h>
+
+#include <gnutls/gnutls.h>
+#include <gnutls/crypto.h>
+#include <gnutls/x509.h>
+#include <gnutls/abstract.h>
 
 enum test_wrong {
 	WRONG_MAGIC,
@@ -255,7 +251,7 @@ static DATA_BLOB *create_unencryptedsecret(TALLOC_CTX *mem_ctx,
 
 /*
  * Create an access check structure, the format depends on the version parameter.
- * If broken is specified then we create a stucture that isn't conform to the 
+ * If broken is specified then we create a stucture that isn't conform to the
  * specification.
  *
  * If the structure can't be created then NULL is returned.
@@ -278,7 +274,7 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 
 	if (version == 2) {
 		struct bkrp_access_check_v2 access_struct;
-		struct sha sctx;
+		gnutls_hash_hd_t dig_ctx;
 		uint8_t nonce[32];
 
 		ZERO_STRUCT(access_struct);
@@ -299,11 +295,12 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 		 * so we reduce the size of what has to be calculated
 		 */
 
-		SHA1_Init(&sctx);
-		SHA1_Update(&sctx, blob->data,
+		gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA1);
+		gnutls_hash(dig_ctx,
+			    blob->data,
 			    blob->length - sizeof(access_struct.hash));
-		SHA1_Final(blob->data + blob->length - sizeof(access_struct.hash),
-			   &sctx);
+		gnutls_hash_deinit(dig_ctx,
+				   blob->data + blob->length - sizeof(access_struct.hash));
 
 		/* Altering the SHA */
 		if (broken) {
@@ -313,7 +310,7 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 
 	if (version == 3) {
 		struct bkrp_access_check_v3 access_struct;
-		struct hc_sha512state sctx;
+		gnutls_hash_hd_t dig_ctx;
 		uint8_t nonce[32];
 
 		ZERO_STRUCT(access_struct);
@@ -333,11 +330,12 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 		* so we reduce the size of what has to be calculated
 		*/
 
-		SHA512_Init(&sctx);
-		SHA512_Update(&sctx, blob->data,
-			      blob->length - sizeof(access_struct.hash));
-		SHA512_Final(blob->data + blob->length - sizeof(access_struct.hash),
-			     &sctx);
+		gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA512);
+		gnutls_hash(dig_ctx,
+			    blob->data,
+			    blob->length - sizeof(access_struct.hash));
+		gnutls_hash_deinit(dig_ctx,
+				   blob->data + blob->length - sizeof(access_struct.hash));
 
 		/* Altering the SHA */
 		if (broken) {
@@ -354,53 +352,56 @@ static DATA_BLOB *encrypt_blob(struct torture_context *tctx,
 				    DATA_BLOB *key,
 				    DATA_BLOB *iv,
 				    DATA_BLOB *to_encrypt,
-				    const AlgorithmIdentifier *alg)
+				    gnutls_cipher_algorithm_t cipher_algo)
 {
-	hx509_crypto crypto;
-	hx509_context hctx;
-	heim_octet_string ivos;
-	heim_octet_string *encrypted;
-	DATA_BLOB *blob = talloc_zero(mem_ctx, DATA_BLOB);
-	int res;
+	gnutls_cipher_hd_t cipher_handle = { 0 };
+	gnutls_datum_t gkey = {
+		.data = key->data,
+		.size = key->length,
+	};
+	gnutls_datum_t giv = {
+		.data = iv->data,
+		.size = iv->length,
+	};
+	DATA_BLOB *blob;
+	int rc;
 
-	ivos.data = talloc_array(mem_ctx, uint8_t, iv->length);
-	ivos.length = iv->length;
-	memcpy(ivos.data, iv->data, iv->length);
+	blob = talloc(mem_ctx, DATA_BLOB);
+	if (blob == NULL) {
+		return NULL;
+	}
 
-	hx509_context_init(&hctx);
-	res = hx509_crypto_init(hctx, NULL, &alg->algorithm, &crypto);
-	if (res) {
+	*blob = data_blob_talloc_zero(mem_ctx, to_encrypt->length);
+	if (blob->data == NULL) {
+		talloc_free(blob);
+		return NULL;
+	}
+
+	rc = gnutls_cipher_init(&cipher_handle,
+				cipher_algo,
+				&gkey,
+				&giv);
+	if (rc != GNUTLS_E_SUCCESS) {
 		torture_comment(tctx,
-				"error while doing the init of the crypto object\n");
-		hx509_context_free(&hctx);
+				"gnutls_cipher_init failed: %s\n",
+				gnutls_strerror(rc));
+		talloc_free(blob);
 		return NULL;
 	}
-	res = hx509_crypto_set_key_data(crypto, key->data, key->length);
-	if (res) {
+
+	rc = gnutls_cipher_encrypt2(cipher_handle,
+				    to_encrypt->data,
+				    to_encrypt->length,
+				    blob->data,
+				    blob->length);
+	gnutls_cipher_deinit(cipher_handle);
+	if (rc != GNUTLS_E_SUCCESS) {
 		torture_comment(tctx,
-				"error while setting the key of the crypto object\n");
-		hx509_context_free(&hctx);
+				"gnutls_cipher_decrypt2 failed: %s\n",
+				gnutls_strerror(rc));
 		return NULL;
 	}
 
-	hx509_crypto_set_padding(crypto, HX509_CRYPTO_PADDING_NONE);
-	res = hx509_crypto_encrypt(crypto,
-				   to_encrypt->data,
-				   to_encrypt->length,
-				   &ivos,
-				   &encrypted);
-	if (res) {
-		torture_comment(tctx, "error while encrypting\n");
-		hx509_crypto_destroy(crypto);
-		hx509_context_free(&hctx);
-		return NULL;
-	}
-
-	*blob = data_blob_talloc(blob, encrypted->data, encrypted->length);
-	der_free_octet_string(encrypted);
-	free(encrypted);
-	hx509_crypto_destroy(crypto);
-	hx509_context_free(&hctx);
 	return blob;
 }
 
@@ -413,42 +414,68 @@ static struct GUID *get_cert_guid(struct torture_context *tctx,
 				  uint8_t *cert_data,
 				  uint32_t cert_len)
 {
-	hx509_context hctx;
-	hx509_cert cert;
-	heim_bit_string subjectuniqid;
-	DATA_BLOB data;
-	int hret;
-	uint32_t size;
+	gnutls_x509_crt_t x509_cert = NULL;
+	gnutls_datum_t x509_crt_data = {
+		.data = cert_data,
+		.size = cert_len,
+	};
+	uint8_t dummy[1] = {0};
+	DATA_BLOB issuer_unique_id = {
+		.data = dummy,
+		.length = 0,
+	};
 	struct GUID *guid = talloc_zero(mem_ctx, struct GUID);
 	NTSTATUS status;
+	int rc;
 
-	hx509_context_init(&hctx);
-
-	hret = hx509_cert_init_data(hctx, cert_data, cert_len, &cert);
-	if (hret) {
-		torture_comment(tctx, "error while loading the cert\n");
-		hx509_context_free(&hctx);
-		return NULL;
-	}
-	hret = hx509_cert_get_issuer_unique_id(hctx, cert, &subjectuniqid);
-	if (hret) {
-		torture_comment(tctx, "error while getting the issuer_uniq_id\n");
-		hx509_cert_free(cert);
-		hx509_context_free(&hctx);
+	rc = gnutls_x509_crt_init(&x509_cert);
+	if (rc != GNUTLS_E_SUCCESS) {
+		torture_comment(tctx,
+				"gnutls_x509_crt_init failed - %s",
+				gnutls_strerror(rc));
 		return NULL;
 	}
 
-	/* The subjectuniqid is a bit string,
-	 * which means that the real size has to be divided by 8
-	 * to have the number of bytes
-	 */
-	hx509_cert_free(cert);
-	hx509_context_free(&hctx);
-	size = subjectuniqid.length / 8;
-	data = data_blob_const(subjectuniqid.data, size);
+	rc = gnutls_x509_crt_import(x509_cert,
+				    &x509_crt_data,
+				    GNUTLS_X509_FMT_DER);
+	if (rc != GNUTLS_E_SUCCESS) {
+		torture_comment(tctx,
+				"gnutls_x509_crt_import failed - %s",
+				gnutls_strerror(rc));
+		gnutls_x509_crt_deinit(x509_cert);
+		return NULL;
+	}
 
-	status = GUID_from_data_blob(&data, guid);
-	der_free_bit_string(&subjectuniqid);
+	/* Get the buffer size */
+	rc = gnutls_x509_crt_get_issuer_unique_id(x509_cert,
+						  (char *)issuer_unique_id.data,
+						  &issuer_unique_id.length);
+	if (rc != GNUTLS_E_SHORT_MEMORY_BUFFER ||
+	    issuer_unique_id.length == 0) {
+		gnutls_x509_crt_deinit(x509_cert);
+		return NULL;
+	}
+
+	issuer_unique_id = data_blob_talloc_zero(mem_ctx,
+						 issuer_unique_id.length);
+	if (issuer_unique_id.data == NULL) {
+		gnutls_x509_crt_deinit(x509_cert);
+		return NULL;
+	}
+
+	rc = gnutls_x509_crt_get_issuer_unique_id(x509_cert,
+						  (char *)issuer_unique_id.data,
+						  &issuer_unique_id.length);
+	gnutls_x509_crt_deinit(x509_cert);
+	if (rc != GNUTLS_E_SUCCESS) {
+		torture_comment(tctx,
+				"gnutls_x509_crt_get_issuer_unique_id failed - %s",
+				gnutls_strerror(rc));
+		return NULL;
+	}
+
+	status = GUID_from_data_blob(&issuer_unique_id, guid);
 	if (!NT_STATUS_IS_OK(status)) {
 		return NULL;
 	}
@@ -466,54 +493,76 @@ static DATA_BLOB *encrypt_blob_pk(struct torture_context *tctx,
 				  uint32_t cert_len,
 				  DATA_BLOB *to_encrypt)
 {
-	hx509_context hctx;
-	hx509_cert cert;
-	heim_octet_string secretdata;
-	heim_octet_string encrypted;
-	heim_oid encryption_oid;
+	gnutls_x509_crt_t x509_cert;
+	gnutls_datum_t x509_crt_data = {
+		.data = cert_data,
+		.size = cert_len,
+	};
+	gnutls_pubkey_t pubkey;
+	gnutls_datum_t plaintext = {
+		.data = to_encrypt->data,
+		.size = to_encrypt->length,
+	};
+	gnutls_datum_t ciphertext = {
+		.data = NULL,
+	};
 	DATA_BLOB *blob;
-	int hret;
+	int rc;
 
-	hx509_context_init(&hctx);
-
-	hret = hx509_cert_init_data(hctx, cert_data, cert_len, &cert);
-	if (hret) {
-		torture_comment(tctx, "error while loading the cert\n");
-		hx509_context_free(&hctx);
+	rc = gnutls_x509_crt_init(&x509_cert);
+	if (rc != GNUTLS_E_SUCCESS) {
 		return NULL;
 	}
 
-	secretdata.data = to_encrypt->data;
-	secretdata.length = to_encrypt->length;
-	hret = hx509_cert_public_encrypt(hctx, &secretdata,
-					  cert, &encryption_oid,
-					  &encrypted);
-	hx509_cert_free(cert);
-	hx509_context_free(&hctx);
-	if (hret) {
-		torture_comment(tctx, "error while encrypting\n");
+	rc = gnutls_x509_crt_import(x509_cert,
+				    &x509_crt_data,
+				    GNUTLS_X509_FMT_DER);
+	if (rc != GNUTLS_E_SUCCESS) {
+		gnutls_x509_crt_deinit(x509_cert);
+		return NULL;
+	}
+
+	rc = gnutls_pubkey_init(&pubkey);
+	if (rc != GNUTLS_E_SUCCESS) {
+		gnutls_x509_crt_deinit(x509_cert);
+		return NULL;
+	}
+
+	rc = gnutls_pubkey_import_x509(pubkey,
+				       x509_cert,
+				       0);
+	gnutls_x509_crt_deinit(x509_cert);
+	if (rc != GNUTLS_E_SUCCESS) {
+		gnutls_pubkey_deinit(pubkey);
+		return NULL;
+	}
+
+	rc = gnutls_pubkey_encrypt_data(pubkey,
+					0,
+					&plaintext,
+					&ciphertext);
+	gnutls_pubkey_deinit(pubkey);
+	if (rc != GNUTLS_E_SUCCESS) {
 		return NULL;
 	}
 
 	blob = talloc_zero(mem_ctx, DATA_BLOB);
 	if (blob == NULL) {
-		der_free_oid(&encryption_oid);
-		der_free_octet_string(&encrypted);
+		gnutls_pubkey_deinit(pubkey);
 		return NULL;
 	}
 
-	*blob = data_blob_talloc(blob, encrypted.data, encrypted.length);
-	der_free_octet_string(&encrypted);
-	der_free_oid(&encryption_oid);
+	*blob = data_blob_talloc(blob, ciphertext.data, ciphertext.size);
+	gnutls_free(ciphertext.data);
 	if (blob->data == NULL) {
+		gnutls_pubkey_deinit(pubkey);
 		return NULL;
 	}
 
 	return blob;
 }
 
-
-static struct bkrp_BackupKey *createRetreiveBackupKeyGUIDStruct(struct torture_context *tctx,
+static struct bkrp_BackupKey *createRetrieveBackupKeyGUIDStruct(struct torture_context *tctx,
 				struct dcerpc_pipe *p, int version, DATA_BLOB *out)
 {
 	struct dcerpc_binding *binding;
@@ -576,8 +625,7 @@ static struct bkrp_BackupKey *createRestoreGUIDStruct(struct torture_context *tc
 	DATA_BLOB *enc_xs = NULL;
 	DATA_BLOB *blob2;
 	DATA_BLOB enc_sec_reverted;
-	DATA_BLOB des3_key;
-	DATA_BLOB aes_key;
+	DATA_BLOB key;
 	DATA_BLOB iv;
 	DATA_BLOB out_blob;
 	struct GUID *guid, *g;
@@ -586,7 +634,8 @@ static struct bkrp_BackupKey *createRestoreGUIDStruct(struct torture_context *tc
 	enum ndr_err_code ndr_err;
 	NTSTATUS status;
 	const char *user;
-	struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, version, &out_blob);
+	gnutls_cipher_algorithm_t cipher_algo;
+	struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, version, &out_blob);
 	if (r == NULL) {
 		return NULL;
 	}
@@ -605,7 +654,7 @@ static struct bkrp_BackupKey *createRestoreGUIDStruct(struct torture_context *tc
 			       "Get GUID");
 
 	/*
-	 * We have to set it outside of the function createRetreiveBackupKeyGUIDStruct
+	 * We have to set it outside of the function createRetrieveBackupKeyGUIDStruct
 	 * the len of the blob, this is due to the fact that they don't have the
 	 * same size (one is 32bits the other 64bits)
 	 */
@@ -622,7 +671,7 @@ static struct bkrp_BackupKey *createRestoreGUIDStruct(struct torture_context *tc
 	}
 
 	if (broken_magic_access){
-		/* The start of the access_check structure contains the 
+		/* The start of the access_check structure contains the
 		 * GUID of the certificate
 		 */
 		xs->data[0]++;
@@ -653,27 +702,23 @@ static struct bkrp_BackupKey *createRestoreGUIDStruct(struct torture_context *tc
 	}
 
 	size = sec->length;
-	if (version ==2) {
-		const AlgorithmIdentifier *alg = hx509_crypto_des_rsdi_ede3_cbc();
-		iv.data = sec->data+(size - 8);
-		iv.length = 8;
-
-		des3_key.data = sec->data+(size - 32);
-		des3_key.length = 24;
-
-		enc_xs = encrypt_blob(tctx, tctx, &des3_key, &iv, xs, alg);
+	switch (version) {
+	case 2:
+		cipher_algo = GNUTLS_CIPHER_3DES_CBC;
+		break;
+	case 3:
+		cipher_algo = GNUTLS_CIPHER_AES_256_CBC;
+		break;
+	default:
+		return NULL;
 	}
-	if (version == 3) {
-		const AlgorithmIdentifier *alg = hx509_crypto_aes256_cbc();
-		iv.data = sec->data+(size-16);
-		iv.length = 16;
+	iv.length = gnutls_cipher_get_iv_size(cipher_algo);
+	iv.data = sec->data + (size - iv.length);
 
-		aes_key.data = sec->data+(size-48);
-		aes_key.length = 32;
+	key.length = gnutls_cipher_get_key_size(cipher_algo);
+	key.data = sec->data + (size - (key.length + iv.length));
 
-		enc_xs = encrypt_blob(tctx, tctx, &aes_key, &iv, xs, alg);
-	}
-
+	enc_xs = encrypt_blob(tctx, tctx, &key, &iv, xs, cipher_algo);
 	if (!enc_xs) {
 		return NULL;
 	}
@@ -740,12 +785,12 @@ static struct bkrp_BackupKey *createRestoreGUIDStruct(struct torture_context *tc
 /* Check that we are able to receive the certificate of the DCs
  * used for client wrap version of the backup key protocol
  */
-static bool test_RetreiveBackupKeyGUID(struct torture_context *tctx,
+static bool test_RetrieveBackupKeyGUID(struct torture_context *tctx,
 					struct dcerpc_pipe *p)
 {
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	DATA_BLOB out_blob;
-	struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+	struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 
@@ -774,7 +819,7 @@ static bool test_RetreiveBackupKeyGUID(struct torture_context *tctx,
 	return true;
 }
 
-/* Test to check the failure to recover a secret because the 
+/* Test to check the failure to recover a secret because the
  * secret blob is not reversed
  */
 static bool test_RestoreGUID_ko(struct torture_context *tctx,
@@ -786,6 +831,8 @@ static bool test_RestoreGUID_ko(struct torture_context *tctx,
 	struct bkrp_client_side_unwrapped resp;
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
+
+	gnutls_global_init();
 
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
@@ -799,10 +846,13 @@ static bool test_RestoreGUID_ko(struct torture_context *tctx,
 		torture_assert_int_equal(tctx, NDR_ERR_CODE_IS_SUCCESS(ndr_err), 0, "Unable to unmarshall bkrp_client_side_unwrapped");
 		torture_assert_werr_equal(tctx, r->out.result, WERR_INVALID_PARAM, "Wrong error code");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -816,6 +866,8 @@ static bool test_RestoreGUID_wrongversion(struct torture_context *tctx,
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 
+	gnutls_global_init();
+
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
@@ -828,10 +880,13 @@ static bool test_RestoreGUID_wrongversion(struct torture_context *tctx,
 		torture_assert_int_equal(tctx, NDR_ERR_CODE_IS_SUCCESS(ndr_err), 0, "Unable to unmarshall bkrp_client_side_unwrapped");
 		torture_assert_werr_equal(tctx, r->out.result, WERR_INVALID_PARAM, "Wrong error code on wrong version");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -845,6 +900,8 @@ static bool test_RestoreGUID_wronguser(struct torture_context *tctx,
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 
+	gnutls_global_init();
+
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
@@ -857,10 +914,13 @@ static bool test_RestoreGUID_wronguser(struct torture_context *tctx,
 		torture_assert_int_equal(tctx, NDR_ERR_CODE_IS_SUCCESS(ndr_err), 0, "Unable to unmarshall bkrp_client_side_unwrapped");
 		torture_assert_werr_equal(tctx, r->out.result, WERR_INVALID_ACCESS, "Restore GUID");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -873,6 +933,8 @@ static bool test_RestoreGUID_v3(struct torture_context *tctx,
 	struct bkrp_client_side_unwrapped resp;
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
+
+	gnutls_global_init();
 
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
@@ -887,10 +949,13 @@ static bool test_RestoreGUID_v3(struct torture_context *tctx,
 		torture_assert_werr_equal(tctx, r->out.result, WERR_OK, "Restore GUID");
 		torture_assert_str_equal(tctx, (char*)resp.secret.data, secret, "Wrong secret");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -902,6 +967,8 @@ static bool test_RestoreGUID(struct torture_context *tctx,
 	struct bkrp_client_side_unwrapped resp;
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
+
+	gnutls_global_init();
 
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
@@ -919,10 +986,13 @@ static bool test_RestoreGUID(struct torture_context *tctx,
 					     "Unable to unmarshall bkrp_client_side_unwrapped");
 		torture_assert_str_equal(tctx, (char*)resp.secret.data, secret, "Wrong secret");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -936,6 +1006,8 @@ static bool test_RestoreGUID_badmagiconsecret(struct torture_context *tctx,
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 
+	gnutls_global_init();
+
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
@@ -948,10 +1020,13 @@ static bool test_RestoreGUID_badmagiconsecret(struct torture_context *tctx,
 		torture_assert_int_equal(tctx, NDR_ERR_CODE_IS_SUCCESS(ndr_err), 0, "Unable to unmarshall bkrp_client_side_unwrapped");
 		torture_assert_werr_equal(tctx, r->out.result, WERR_INVALID_DATA, "Wrong error code while providing bad magic in secret");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -962,6 +1037,8 @@ static bool test_RestoreGUID_emptyrequest(struct torture_context *tctx,
 	DATA_BLOB out_blob;
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
+
+	gnutls_global_init();
 
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
@@ -977,10 +1054,13 @@ static bool test_RestoreGUID_emptyrequest(struct torture_context *tctx,
 		out_blob.length = *r->out.data_out_len;
 		torture_assert_werr_equal(tctx, r->out.result, WERR_INVALID_PARAM, "Bad error code on wrong has in access check");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -994,6 +1074,8 @@ static bool test_RestoreGUID_badcertguid(struct torture_context *tctx,
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 
+	gnutls_global_init();
+
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
@@ -1005,18 +1087,21 @@ static bool test_RestoreGUID_badcertguid(struct torture_context *tctx,
 		ndr_err = ndr_pull_struct_blob(&out_blob, tctx, &resp, (ndr_pull_flags_fn_t)ndr_pull_bkrp_client_side_unwrapped);
 		torture_assert_int_equal(tctx, NDR_ERR_CODE_IS_SUCCESS(ndr_err), 0, "Unable to unmarshall bkrp_client_side_unwrapped");
 
-		/* 
+		/*
 		 * Windows 2012R2 has, presumably, a programming error
-		 * returning an NTSTATUS code on this interface 
+		 * returning an NTSTATUS code on this interface
 		 */
 		if (W_ERROR_V(r->out.result) != NT_STATUS_V(NT_STATUS_OBJECT_NAME_NOT_FOUND)) {
 			torture_assert_werr_equal(tctx, r->out.result, WERR_INVALID_DATA, "Bad error code on wrong has in access check");
 		}
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -1030,6 +1115,8 @@ static bool test_RestoreGUID_badmagicaccesscheck(struct torture_context *tctx,
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 
+	gnutls_global_init();
+
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
@@ -1042,10 +1129,13 @@ static bool test_RestoreGUID_badmagicaccesscheck(struct torture_context *tctx,
 		torture_assert_int_equal(tctx, NDR_ERR_CODE_IS_SUCCESS(ndr_err), 0, "Unable to unmarshall bkrp_client_side_unwrapped");
 		torture_assert_werr_equal(tctx, r->out.result, WERR_INVALID_DATA, "Bad error code on wrong has in access check");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -1059,6 +1149,8 @@ static bool test_RestoreGUID_badhashaccesscheck(struct torture_context *tctx,
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 
+	gnutls_global_init();
+
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
@@ -1071,35 +1163,31 @@ static bool test_RestoreGUID_badhashaccesscheck(struct torture_context *tctx,
 		torture_assert_int_equal(tctx, NDR_ERR_CODE_IS_SUCCESS(ndr_err), 0, "Unable to unmarshall bkrp_client_side_unwrapped");
 		torture_assert_werr_equal(tctx, r->out.result, WERR_INVALID_DATA, "Bad error code on wrong has in access check");
 	} else {
-		struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+		struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 		torture_assert_ntstatus_equal(tctx, dcerpc_bkrp_BackupKey_r(b, tctx, r),
 			NT_STATUS_ACCESS_DENIED, "Get GUID");
 	}
+
+	gnutls_global_init();
+
 	return true;
 }
 
-/* 
+/*
  * Check that the RSA modulus in the certificate of the DCs has 2048 bits.
  */
-static bool test_RetreiveBackupKeyGUID_2048bits(struct torture_context *tctx,
-					struct dcerpc_pipe *p)
+static bool test_RetrieveBackupKeyGUID_validate(struct torture_context *tctx,
+						struct dcerpc_pipe *p)
 {
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	DATA_BLOB out_blob;
-	struct bkrp_BackupKey *r = createRetreiveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
+	struct bkrp_BackupKey *r = createRetrieveBackupKeyGUIDStruct(tctx, p, 2, &out_blob);
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 
-	hx509_context hctx;
-	int hret;
-	hx509_cert cert;
-	SubjectPublicKeyInfo spki;
-	RSA *rsa;
-	int RSA_returned_bits;
+	gnutls_global_init();
 
-	torture_assert(tctx, r != NULL, "createRetreiveBackupKeyGUIDStruct failed");
-	
-	hx509_context_init(&hctx);
+	torture_assert(tctx, r != NULL, "test_RetrieveBackupKeyGUID_validate failed");
 
 	if (r == NULL) {
 		return false;
@@ -1108,7 +1196,30 @@ static bool test_RetreiveBackupKeyGUID_2048bits(struct torture_context *tctx,
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
-		const unsigned char *spki_spk_data;
+		gnutls_x509_crt_t x509_cert = NULL;
+		gnutls_pubkey_t pubkey = NULL;
+		gnutls_datum_t x509_crt_data;
+		gnutls_pk_algorithm_t pubkey_algo;
+		uint8_t dummy[1] = {0};
+		DATA_BLOB subject_unique_id = {
+			.data = dummy,
+			.length = 0,
+		};
+		DATA_BLOB issuer_unique_id = {
+			.data = dummy,
+			.length = 0,
+		};
+		DATA_BLOB reversed = {
+			.data = dummy,
+			.length = 0,
+		};
+		DATA_BLOB serial_number;
+		unsigned int RSA_returned_bits = 0;
+		int version;
+		size_t i;
+		int cmp;
+		int rc;
+
 		torture_assert_ntstatus_ok(tctx,
 				dcerpc_bkrp_BackupKey_r(b, tctx, r),
 				"Get GUID");
@@ -1118,39 +1229,153 @@ static bool test_RetreiveBackupKeyGUID_2048bits(struct torture_context *tctx,
 
 		out_blob.length = *r->out.data_out_len;
 
-		hret = hx509_cert_init_data(hctx, out_blob.data, out_blob.length, &cert);
-		torture_assert_int_equal(tctx, hret, 0, "hx509_cert_init_data failed");
+		x509_crt_data.data = out_blob.data;
+		x509_crt_data.size = out_blob.length;
 
-		hret = hx509_cert_get_SPKI(hctx, cert , &spki);
-		torture_assert_int_equal(tctx, hret, 0, "hx509_cert_get_SPKI failed");
+		rc = gnutls_x509_crt_init(&x509_cert);
+		if (rc != GNUTLS_E_SUCCESS) {
+			return NULL;
+		}
 
-		/* We must take a copy, as d2i_RSAPublicKey *changes* the input parameter */
-		spki_spk_data = spki.subjectPublicKey.data;
-		rsa = d2i_RSAPublicKey(NULL, &spki_spk_data, spki.subjectPublicKey.length / 8);
-		torture_assert_int_equal(tctx, rsa != NULL, 1, "d2i_RSAPublicKey failed");
+		rc = gnutls_x509_crt_import(x509_cert,
+					    &x509_crt_data,
+					    GNUTLS_X509_FMT_DER);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SUCCESS,
+					 "gnutls_x509_crt_import failed");
 
-		RSA_returned_bits = BN_num_bits(rsa->n);
+		/* Compare unique ids */
+
+		/* Get buffer size */
+		rc = gnutls_x509_crt_get_subject_unique_id(x509_cert,
+							   (char *)subject_unique_id.data,
+							   &subject_unique_id.length);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SHORT_MEMORY_BUFFER,
+					 "gnutls_x509_crt_get_subject_unique_id "
+					 "get buffer size failed");
+
+		subject_unique_id = data_blob_talloc_zero(tctx,
+							  subject_unique_id.length);
+
+		rc = gnutls_x509_crt_get_subject_unique_id(x509_cert,
+							   (char *)subject_unique_id.data,
+							   &subject_unique_id.length);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SUCCESS,
+					 "gnutls_x509_crt_get_subject_unique_id failed");
+
+		rc = gnutls_x509_crt_get_issuer_unique_id(x509_cert,
+							  (char *)issuer_unique_id.data,
+							  &issuer_unique_id.length);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SHORT_MEMORY_BUFFER,
+					 "gnutls_x509_crt_get_issuer_unique_id "
+					 "get buffer size failed");
+
+		issuer_unique_id = data_blob_talloc_zero(tctx,
+							 issuer_unique_id.length);
+
+		rc = gnutls_x509_crt_get_issuer_unique_id(x509_cert,
+							  (char *)issuer_unique_id.data,
+							  &issuer_unique_id.length);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SUCCESS,
+					 "gnutls_x509_crt_get_issuer_unique_id failed");
+
+		cmp = data_blob_cmp(&subject_unique_id, &issuer_unique_id);
+		torture_assert(tctx,
+			       cmp == 0,
+			       "The GUID to identify the public key is not "
+			       "identical");
+
+		rc = gnutls_x509_crt_get_serial(x509_cert,
+						reversed.data,
+						&reversed.length);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SHORT_MEMORY_BUFFER,
+					 "gnutls_x509_crt_get_serial "
+					 "get buffer size failed");
+
+		reversed = data_blob_talloc_zero(tctx,
+						 reversed.length);
+
+		rc = gnutls_x509_crt_get_serial(x509_cert,
+						reversed.data,
+						&reversed.length);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SUCCESS,
+					 "gnutls_x509_crt_get_serial failed");
+
+		/*
+		 * Heimdal sometimes adds a leading byte to the data buffer of
+		 * the serial number. So lets uses the subject_unique_id size
+		 * and ignore the leading byte.
+		 */
+		serial_number = data_blob_talloc_zero(tctx,
+						      subject_unique_id.length);
+
+		for (i = 0; i < serial_number.length; i++) {
+			serial_number.data[i] = reversed.data[reversed.length - i - 1];
+		}
+
+		cmp = data_blob_cmp(&subject_unique_id, &serial_number);
+		torture_assert(tctx,
+			       cmp == 0,
+			       "The GUID to identify the public key is not "
+			       "identical");
+
+		/* Check certificate version */
+		version = gnutls_x509_crt_get_version(x509_cert);
+		torture_assert_int_equal(tctx,
+					 version,
+					 3,
+					 "Invalid certificate version");
+
+		/* Get the public key */
+		rc = gnutls_pubkey_init(&pubkey);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SUCCESS,
+					 "gnutls_pubkey_init failed");
+
+		rc = gnutls_pubkey_import_x509(pubkey,
+					       x509_cert,
+					       0);
+		gnutls_x509_crt_deinit(x509_cert);
+		torture_assert_int_equal(tctx,
+					 rc,
+					 GNUTLS_E_SUCCESS,
+					 "gnutls_pubkey_import_x509 failed");
+
+		pubkey_algo = gnutls_pubkey_get_pk_algorithm(pubkey,
+							     &RSA_returned_bits);
+		gnutls_pubkey_deinit(pubkey);
+		torture_assert_int_equal(tctx,
+					 pubkey_algo,
+					 GNUTLS_PK_RSA,
+					 "gnutls_pubkey_get_pk_algorithm did "
+					 "not return a RSA key");
 		torture_assert_int_equal(tctx,
 						RSA_returned_bits,
 						2048,
 						"RSA Key doesn't have 2048 bits");
-
-		RSA_free(rsa);
-
-		/* 
-		 * Because we prevented spki from being changed above,
-		 * we can now safely call this to free it 
-		 */
-		free_SubjectPublicKeyInfo(&spki);
-		hx509_cert_free(cert);
-		hx509_context_free(&hctx);
-
 	} else {
 		torture_assert_ntstatus_equal(tctx,
 						dcerpc_bkrp_BackupKey_r(b, tctx, r),
 						NT_STATUS_ACCESS_DENIED,
 						"Get GUID");
 	}
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -1197,7 +1422,7 @@ static bool test_ServerWrap_encrypt_decrypt(struct torture_context *tctx,
 			       r.out.result,
 			       "encrypt");
 	encrypted.length = *r.out.data_out_len;
-	
+
 	/* Decrypt */
 	torture_assert_ntstatus_ok(tctx,
 				   GUID_from_string(BACKUPKEY_RESTORE_GUID, &guid),
@@ -1300,7 +1525,7 @@ static bool test_ServerWrap_decrypt_wrong_keyGUID(struct torture_context *tctx,
 	ndr_err = ndr_push_struct_blob(&encrypted, tctx, &server_side_wrapped,
 				       (ndr_push_flags_fn_t)ndr_push_bkrp_server_side_wrapped);
 	torture_assert_ndr_err_equal(tctx, ndr_err, NDR_ERR_SUCCESS, "push of server_side_wrapped");
-	
+
 	/* Decrypt */
 	torture_assert_ntstatus_ok(tctx,
 				   GUID_from_string(BACKUPKEY_RESTORE_GUID, &guid),
@@ -1554,7 +1779,7 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 	struct GUID preferred_key_guid;
 	DATA_BLOB plaintext = data_blob_const(secret, sizeof(secret));
 	DATA_BLOB preferred_key, preferred_key_clear, session_key,
-		decrypt_key, decrypt_key_clear, encrypted_blob, symkey_blob,
+		decrypt_key, decrypt_key_clear, encrypted_blob,
 		sid_blob;
 	struct bkrp_dc_serverwrap_key server_key;
 	struct lsa_DATA_BUF_PTR bufp1;
@@ -1564,14 +1789,17 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 	uint8_t symkey[20]; /* SHA-1 hash len */
 	uint8_t mackey[20]; /* SHA-1 hash len */
 	uint8_t mac[20]; /* SHA-1 hash len */
-	unsigned int hash_len;
-	HMAC_CTX ctx;
+	gnutls_hmac_hd_t hmac_hnd;
+	gnutls_cipher_hd_t cipher_hnd;
+	gnutls_datum_t cipher_key;
+	int rc;
+
 	ZERO_STRUCT(r);
 	ZERO_STRUCT(r_secret);
 	ZERO_STRUCT(r_query_secret);
 
 	/* Now read BCKUPKEY_P and prove we can do a matching decrypt and encrypt */
-	
+
 	torture_assert_ntstatus_ok(tctx,
 				   torture_rpc_connection(tctx, &lsa_p, &ndr_table_lsarpc),
 				   "Opening LSA pipe");
@@ -1579,18 +1807,18 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 
 	torture_assert(tctx, test_lsa_OpenPolicy2(lsa_b, tctx, &handle), "OpenPolicy failed");
 	r_secret.in.name.string = "G$BCKUPKEY_P";
-	
+
 	r_secret.in.handle = handle;
 	r_secret.in.access_mask = SEC_FLAG_MAXIMUM_ALLOWED;
 	r_secret.out.sec_handle = &sec_handle;
-	
+
 	torture_comment(tctx, "Testing OpenSecret\n");
-	
+
 	torture_assert_ntstatus_ok(tctx, dcerpc_lsa_OpenSecret_r(lsa_b, tctx, &r_secret),
 				   "OpenSecret failed");
 	torture_assert_ntstatus_ok(tctx, r_secret.out.result,
 				   "OpenSecret failed");
-	
+
 	r_query_secret.in.sec_handle = &sec_handle;
 	r_query_secret.in.new_val = &bufp1;
 	bufp1.buf = NULL;
@@ -1599,41 +1827,41 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 		"QuerySecret failed");
 	torture_assert_ntstatus_ok(tctx, r_query_secret.out.result,
 				   "QuerySecret failed");
-	
-	
+
+
 	preferred_key.data = r_query_secret.out.new_val->buf->data;
 	preferred_key.length = r_query_secret.out.new_val->buf->size;
 	torture_assert_ntstatus_ok(tctx, dcerpc_fetch_session_key(lsa_p, &session_key),
 				   "dcerpc_fetch_session_key failed");
-	
+
 	torture_assert_ntstatus_ok(tctx,
 				   sess_decrypt_blob(tctx,
 						     &preferred_key, &session_key, &preferred_key_clear),
 				   "sess_decrypt_blob failed");
-	
+
 	torture_assert_ntstatus_ok(tctx, GUID_from_ndr_blob(&preferred_key_clear, &preferred_key_guid),
 				   "GUID parse failed");
-	
+
 	torture_assert_guid_equal(tctx, server_side_wrapped->guid,
 				  preferred_key_guid,
 				  "GUID didn't match value pointed at by G$BCKUPKEY_P");
 
 	/* And read BCKUPKEY_<guid> and get the actual key */
-	
+
 	key_guid_string = GUID_string(tctx, &server_side_wrapped->guid);
 	r_secret.in.name.string = talloc_asprintf(tctx, "G$BCKUPKEY_%s", key_guid_string);
-	
+
 	r_secret.in.handle = handle;
 	r_secret.in.access_mask = SEC_FLAG_MAXIMUM_ALLOWED;
 	r_secret.out.sec_handle = &sec_handle;
-	
+
 	torture_comment(tctx, "Testing OpenSecret\n");
-	
+
 	torture_assert_ntstatus_ok(tctx, dcerpc_lsa_OpenSecret_r(lsa_b, tctx, &r_secret),
 				   "OpenSecret failed");
 	torture_assert_ntstatus_ok(tctx, r_secret.out.result,
 				   "OpenSecret failed");
-	
+
 	r_query_secret.in.sec_handle = &sec_handle;
 	r_query_secret.in.new_val = &bufp1;
 
@@ -1641,16 +1869,16 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 				   "QuerySecret failed");
 	torture_assert_ntstatus_ok(tctx, r_query_secret.out.result,
 				   "QuerySecret failed");
-	
-	
+
+
 	decrypt_key.data = r_query_secret.out.new_val->buf->data;
 	decrypt_key.length = r_query_secret.out.new_val->buf->size;
-	
+
 	torture_assert_ntstatus_ok(tctx,
 				   sess_decrypt_blob(tctx,
 						     &decrypt_key, &session_key, &decrypt_key_clear),
 				   "sess_decrypt_blob failed");
-	
+
 	torture_assert_ndr_err_equal(tctx, ndr_pull_struct_blob(&decrypt_key_clear, tctx, &server_key,
 								(ndr_pull_flags_fn_t)ndr_pull_bkrp_dc_serverwrap_key),
 				     NDR_ERR_SUCCESS, "Failed to parse server_key");
@@ -1659,19 +1887,42 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 
 	/*
 	 * This is *not* the leading 64 bytes, as indicated in MS-BKRP 3.1.4.1.1
-	 * BACKUPKEY_BACKUP_GUID, it really is the whole key 
+	 * BACKUPKEY_BACKUP_GUID, it really is the whole key
 	 */
-	HMAC(EVP_sha1(), server_key.key, sizeof(server_key.key),
-	     server_side_wrapped->r2, sizeof(server_side_wrapped->r2),
-	     symkey, &hash_len);
-	
+	gnutls_hmac_init(&hmac_hnd,
+			 GNUTLS_MAC_SHA1,
+			 server_key.key,
+			 sizeof(server_key.key));
+	gnutls_hmac(hmac_hnd,
+		    server_side_wrapped->r2,
+		    sizeof(server_side_wrapped->r2));
+	gnutls_hmac_output(hmac_hnd, symkey);
+
 	/* rc4 decrypt sid and secret using sym key */
-	symkey_blob = data_blob_const(symkey, sizeof(symkey));
-	
+	cipher_key.data = symkey;
+	cipher_key.size = sizeof(symkey);
+
 	encrypted_blob = data_blob_talloc(tctx, server_side_wrapped->rc4encryptedpayload,
 					  server_side_wrapped->ciphertext_length);
-	
-	arcfour_crypt_blob(encrypted_blob.data, encrypted_blob.length, &symkey_blob);
+
+	rc = gnutls_cipher_init(&cipher_hnd,
+				GNUTLS_CIPHER_ARCFOUR_128,
+				&cipher_key,
+				NULL);
+	torture_assert_int_equal(tctx,
+				 rc,
+				 GNUTLS_E_SUCCESS,
+				 "gnutls_cipher_init failed");
+	rc = gnutls_cipher_encrypt2(cipher_hnd,
+				    encrypted_blob.data,
+				    encrypted_blob.length,
+				    encrypted_blob.data,
+				    encrypted_blob.length);
+	torture_assert_int_equal(tctx,
+				 rc,
+				 GNUTLS_E_SUCCESS,
+				 "gnutls_cipher_encrypt failed");
+	gnutls_cipher_deinit(cipher_hnd);
 
 	torture_assert_ndr_err_equal(tctx, ndr_pull_struct_blob(&encrypted_blob, tctx, &rc4payload,
 				       (ndr_pull_flags_fn_t)ndr_pull_bkrp_rc4encryptedpayload),
@@ -1683,24 +1934,30 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 
 	/*
 	 * This is *not* the leading 64 bytes, as indicated in MS-BKRP 3.1.4.1.1
-	 * BACKUPKEY_BACKUP_GUID, it really is the whole key 
+	 * BACKUPKEY_BACKUP_GUID, it really is the whole key
 	 */
-	HMAC(EVP_sha1(), server_key.key, sizeof(server_key.key),
-	     rc4payload.r3, sizeof(rc4payload.r3),
-	     mackey, &hash_len);
-	
+	gnutls_hmac(hmac_hnd,
+		    rc4payload.r3,
+		    sizeof(rc4payload.r3));
+	gnutls_hmac_deinit(hmac_hnd, mackey);
+
 	torture_assert_ndr_err_equal(tctx, ndr_push_struct_blob(&sid_blob, tctx, &rc4payload.sid,
 								(ndr_push_flags_fn_t)ndr_push_dom_sid),
 				     NDR_ERR_SUCCESS, "unable to push SID");
 
-	HMAC_CTX_init(&ctx);
-	HMAC_Init_ex(&ctx, mackey, hash_len, EVP_sha1(), NULL);
+	gnutls_hmac_init(&hmac_hnd,
+			 GNUTLS_MAC_SHA1,
+			 mackey,
+			 sizeof(mackey));
 	/* SID field */
-	HMAC_Update(&ctx, sid_blob.data, sid_blob.length);
+	gnutls_hmac(hmac_hnd,
+		    sid_blob.data,
+		    sid_blob.length);
 	/* Secret field */
-	HMAC_Update(&ctx, rc4payload.secret_data.data, rc4payload.secret_data.length);
-	HMAC_Final(&ctx, mac, &hash_len);
-	HMAC_CTX_cleanup(&ctx);
+	gnutls_hmac(hmac_hnd,
+		    rc4payload.secret_data.data,
+		    rc4payload.secret_data.length);
+	gnutls_hmac_output(hmac_hnd, mac);
 
 	torture_assert_mem_equal(tctx, mac, rc4payload.mac, sizeof(mac), "mac not correct");
 	torture_assert_int_equal(tctx, rc4payload.secret_data.length,
@@ -1714,7 +1971,7 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 
 	torture_assert_sid_equal(tctx, &rc4payload.sid, caller_sid, "Secret saved with wrong SID");
 
-	
+
 	/* RE-encrypt */
 
 	if (wrong == WRONG_SID) {
@@ -1729,17 +1986,18 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 				     NDR_ERR_SUCCESS,
 				     "push of sid failed");
 
-	HMAC_CTX_init(&ctx);
-	HMAC_Init_ex(&ctx, mackey, 20, EVP_sha1(), NULL);
 	/* SID field */
-	HMAC_Update(&ctx, sid_blob.data, sid_blob.length);
+	gnutls_hmac(hmac_hnd,
+		    sid_blob.data,
+		    sid_blob.length);
 	/* Secret field */
-	HMAC_Update(&ctx, rc4payload.secret_data.data, rc4payload.secret_data.length);
-	HMAC_Final(&ctx, rc4payload.mac, &hash_len);
-	HMAC_CTX_cleanup(&ctx);
+	gnutls_hmac(hmac_hnd,
+		    rc4payload.secret_data.data,
+		    rc4payload.secret_data.length);
+	gnutls_hmac_deinit(hmac_hnd, rc4payload.mac);
 
 	dump_data_pw("rc4payload.mac: \n", rc4payload.mac, sizeof(rc4payload.mac));
-	
+
 	torture_assert_ndr_err_equal(tctx,
 				     ndr_push_struct_blob(&encrypted_blob, tctx, &rc4payload,
 							  (ndr_push_flags_fn_t)ndr_push_bkrp_rc4encryptedpayload),
@@ -1747,13 +2005,34 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 				     "push of rc4payload failed");
 
 	if (wrong == WRONG_KEY) {
-		symkey_blob.data[0] = 78;
-		symkey_blob.data[1] = 78;
-		symkey_blob.data[2] = 78;
+		symkey[0] = 78;
+		symkey[1] = 78;
+		symkey[2] = 78;
 	}
-	
+
 	/* rc4 encrypt sid and secret using sym key */
-	arcfour_crypt_blob(encrypted_blob.data, encrypted_blob.length, &symkey_blob);
+	cipher_key.data = symkey;
+	cipher_key.size = sizeof(symkey);
+
+	rc = gnutls_cipher_init(&cipher_hnd,
+				GNUTLS_CIPHER_ARCFOUR_128,
+				&cipher_key,
+				NULL);
+	torture_assert_int_equal(tctx,
+				 rc,
+				 GNUTLS_E_SUCCESS,
+				 "gnutls_cipher_init failed");
+	rc = gnutls_cipher_encrypt2(cipher_hnd,
+				    encrypted_blob.data,
+				    encrypted_blob.length,
+				    encrypted_blob.data,
+				    encrypted_blob.length);
+	torture_assert_int_equal(tctx,
+				 rc,
+				 GNUTLS_E_SUCCESS,
+				 "gnutls_cipher_encrypt failed");
+	gnutls_cipher_deinit(cipher_hnd);
+
 
 	/* re-create server wrap structure */
 
@@ -1766,7 +2045,7 @@ static bool test_ServerWrap_encrypt_decrypt_manual(struct torture_context *tctx,
 					 encrypted_blob.length,
 					 "expected encrypted data not to change");
 	}
-						 
+
 	server_side_wrapped->payload_length = rc4payload.secret_data.length;
 	server_side_wrapped->ciphertext_length = encrypted_blob.length;
 	server_side_wrapped->rc4encryptedpayload = encrypted_blob.data;
@@ -1793,6 +2072,8 @@ static bool test_ServerWrap_decrypt_wrong_stuff(struct torture_context *tctx,
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 	ZERO_STRUCT(r);
+
+	gnutls_global_init();
 
 	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 
@@ -1846,7 +2127,7 @@ static bool test_ServerWrap_decrypt_wrong_stuff(struct torture_context *tctx,
 		repush = true;
 		break;
 	case WRONG_CIPHERTEXT_LENGTH:
-		/* 
+		/*
 		 * Change the ciphertext len.  We can't push this if
 		 * we have it wrong, so do it raw
 		 */
@@ -1857,7 +2138,7 @@ static bool test_ServerWrap_decrypt_wrong_stuff(struct torture_context *tctx,
 		repush = true;
 		break;
 	case SHORT_CIPHERTEXT_LENGTH:
-		/* 
+		/*
 		 * Change the ciphertext len.  We can't push this if
 		 * we have it wrong, so do it raw
 		 */
@@ -1868,7 +2149,7 @@ static bool test_ServerWrap_decrypt_wrong_stuff(struct torture_context *tctx,
 		repush = true;
 		break;
 	case ZERO_CIPHERTEXT_LENGTH:
-		/* 
+		/*
 		 * Change the ciphertext len.  We can't push this if
 		 * we have it wrong, so do it raw
 		 */
@@ -1890,7 +2171,7 @@ static bool test_ServerWrap_decrypt_wrong_stuff(struct torture_context *tctx,
 					       (ndr_push_flags_fn_t)ndr_push_bkrp_server_side_wrapped);
 		torture_assert_ndr_err_equal(tctx, ndr_err, NDR_ERR_SUCCESS, "push of server_side_wrapped");
 	}
-	
+
 	/* Decrypt */
 	torture_assert_ntstatus_ok(tctx,
 				   GUID_from_string(BACKUPKEY_RESTORE_GUID, &guid),
@@ -1928,7 +2209,7 @@ static bool test_ServerWrap_decrypt_wrong_stuff(struct torture_context *tctx,
 					  WERR_INVALID_PARAM,
 					  "decrypt should fail with WERR_INVALID_PARAM");
 	}
-	
+
 	/* Decrypt */
 	torture_assert_ntstatus_ok(tctx,
 				   GUID_from_string(BACKUPKEY_RESTORE_GUID_WIN2K, &guid),
@@ -1966,7 +2247,9 @@ static bool test_ServerWrap_decrypt_wrong_stuff(struct torture_context *tctx,
 					  WERR_INVALID_PARAM,
 					  "decrypt should fail with WERR_INVALID_PARAM");
 	}
-	
+
+	gnutls_global_deinit();
+
 	return true;
 }
 
@@ -2035,28 +2318,18 @@ static bool test_ServerWrap_encrypt_decrypt_wrong_sid(struct torture_context *tc
 {
 	return test_ServerWrap_decrypt_wrong_stuff(tctx, p, WRONG_SID);
 }
-#else
-static bool test_skip(struct torture_context *tctx,
-		      void *data)
-{
-	torture_skip(tctx, "Skip backupkey test with MIT Kerberos");
-
-	return true;
-}
-#endif
 
 struct torture_suite *torture_rpc_backupkey(TALLOC_CTX *mem_ctx)
 {
 	struct torture_suite *suite = torture_suite_create(mem_ctx, "backupkey");
 
-#ifdef SAMBA4_USES_HEIMDAL
 	struct torture_rpc_tcase *tcase;
 
 	tcase = torture_suite_add_rpc_iface_tcase(suite, "backupkey",
 						  &ndr_table_backupkey);
 
 	torture_rpc_tcase_add_test(tcase, "retreive_backup_key_guid",
-				   test_RetreiveBackupKeyGUID);
+				   test_RetrieveBackupKeyGUID);
 
 	torture_rpc_tcase_add_test(tcase, "restore_guid",
 				   test_RestoreGUID);
@@ -2093,8 +2366,8 @@ struct torture_suite *torture_rpc_backupkey(TALLOC_CTX *mem_ctx)
 	torture_rpc_tcase_add_test(tcase, "empty_request_restore_guid",
 				   test_RestoreGUID_emptyrequest);
 
-	torture_rpc_tcase_add_test(tcase, "retreive_backup_key_guid_2048_bits",
-				   test_RetreiveBackupKeyGUID_2048bits);
+	torture_rpc_tcase_add_test(tcase, "retreive_backup_key_guid_validate",
+				   test_RetrieveBackupKeyGUID_validate);
 
 	torture_rpc_tcase_add_test(tcase, "server_wrap_encrypt_decrypt",
 				   test_ServerWrap_encrypt_decrypt);
@@ -2132,22 +2405,14 @@ struct torture_suite *torture_rpc_backupkey(TALLOC_CTX *mem_ctx)
 	torture_rpc_tcase_add_test(tcase, "server_wrap_decrypt_zero_ciphertext_length",
 				   test_ServerWrap_decrypt_zero_ciphertext_length);
 
-	torture_rpc_tcase_add_test(tcase, "server_wrap_encrypt_decrypt_remote_key", 
+	torture_rpc_tcase_add_test(tcase, "server_wrap_encrypt_decrypt_remote_key",
 				   test_ServerWrap_encrypt_decrypt_remote_key);
-	
+
 	torture_rpc_tcase_add_test(tcase, "server_wrap_encrypt_decrypt_wrong_key",
 				   test_ServerWrap_encrypt_decrypt_wrong_key);
 
 	torture_rpc_tcase_add_test(tcase, "server_wrap_encrypt_decrypt_wrong_sid",
 				   test_ServerWrap_encrypt_decrypt_wrong_sid);
-#else
-	struct torture_tcase *tcase;
-
-	tcase = torture_suite_add_tcase(suite, "backupkey");
-
-	torture_tcase_add_simple_test(tcase, "skip",
-				      test_skip);
-#endif
 
 	return suite;
 }

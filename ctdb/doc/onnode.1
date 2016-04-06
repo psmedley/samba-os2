@@ -2,12 +2,12 @@
 .\"     Title: onnode
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 12/10/2015
+.\"      Date: 01/27/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "ONNODE" "1" "12/10/2015" "ctdb" "CTDB \- clustered TDB database"
+.TH "ONNODE" "1" "01/27/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -52,8 +52,8 @@ Execute COMMAND in the current working directory on the specified nodes\&.
 .PP
 \-f \fIFILENAME\fR
 .RS 4
-Specify an alternative nodes FILENAME to use instead of the default\&. This option overrides the CTDB_NODES_FILE environment variable\&. See the discussion of
-/etc/ctdb/nodes
+Specify an alternative nodes FILENAME to use instead of the default\&. This option overrides the CTDB_NODES_FILE and CTDB_NODES variables\&. See the discussion of
+/usr/local/etc/ctdb/nodes
 in the FILES section for more details\&.
 .RE
 .PP
@@ -162,7 +162,7 @@ The following command would show the last 5 lines of log on each node, preceded 
 .RS 4
 .\}
 .nf
-      onnode all "hostname; tail \-5 /var/log/log\&.ctdb"
+      onnode all "hostname; tail \-5 /usr/local/var/log/log\&.ctdb"
     
 .fi
 .if n \{\
@@ -199,7 +199,7 @@ The following command would run \&./foo in the current working directory, in par
 \fBCTDB_BASE\fR
 .RS 4
 Directory containing CTDB configuration files\&. The default is
-/etc/ctdb\&.
+/usr/local/etc/ctdb\&.
 .RE
 .PP
 \fBCTDB_NODES_FILE\fR
@@ -210,21 +210,34 @@ section for more details\&.
 .RE
 .SH "FILES"
 .PP
-/etc/ctdb/nodes
+/usr/local/etc/ctdb/nodes
 .RS 4
 Default file containing a list of each node\*(Aqs IP address or hostname\&.
 .sp
-Actually, the default is
+As above, a file specified via the
+\fB\-f\fR
+or
+\fBCTDB_NODES_FILE\fR
+is given precedence\&. If a relative path is specified and no corresponding file exists relative to the current directory then the file is also searched for in the
+$CTDB_BASE
+directory\&.
+.sp
+If
+\fBCTDB_NODES_FILE\fR
+is not set and
+\fBCTDB_NODES\fR
+is set in configuration then the file pointed to by
+\fBCTDB_NODES\fR
+is used\&.
+.sp
+Otherwise the default is
 $CTDB_BASE/nodes, where
 \fBCTDB_BASE\fR
 defaults to
-/etc/ctdb\&. If a relative path is given (via the \-f option or
-\fBCTDB_BASE\fR) and no corresponding file exists relative to the current directory then the file is also searched for in the
-$CTDB_BASE
-directory\&.
+/usr/local/etc/ctdb\&.
 .RE
 .PP
-/etc/ctdb/onnode\&.conf
+/usr/local/etc/ctdb/onnode\&.conf
 .RS 4
 If this file exists it is sourced by onnode\&. The main purpose is to allow the administrator to set
 \fBSSH\fR

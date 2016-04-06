@@ -320,6 +320,39 @@ Samba tries to avoid "typedef struct { .. } x_t;" so we do always try to use
 "struct x { .. };". We know there are still such typedefs in the code,
 but for new code, please don't do that anymore.
 
+Initialize pointers
+-------------------
+
+All pointer variables MUST be initialized to NULL. History has
+demonstrated that uninitialized pointer variables have lead to various
+bugs and security issues.
+
+Pointers MUST be initialized even if the assignment directly follows
+the declaration, like pointer2 in the example below, because the
+instructions sequence may change over time.
+
+Good Example:
+
+	char *pointer1 = NULL;
+	char *pointer2 = NULL;
+
+	pointer2 = some_func2();
+
+	...
+
+	pointer1 = some_func1();
+
+Bad Example:
+
+	char *pointer1;
+	char *pointer2;
+
+	pointer2 = some_func2();
+
+	...
+
+	pointer1 = some_func1();
+
 Make use of helper variables
 ----------------------------
 
@@ -329,7 +362,7 @@ it's also easier to use the "step" command within gdb.
 
 Good Example:
 
-	char *name;
+	char *name = NULL;
 
 	name = get_some_name();
 	if (name == NULL) {
@@ -384,15 +417,21 @@ The only exception is the test code that depends repeated use of calls
 like CHECK_STATUS, CHECK_VAL and others.
 
 
-Function names in DEBUG statements
-----------------------------------
+DEBUG statements
+----------------
 
-Many DEBUG statements contain the name of the function they appear in. This is
-not a good idea, as this is prone to bitrot. Function names change, code
-moves, but the DEBUG statements are not adapted. Use %s and __func__ for this:
+Use these following macros instead of DEBUG:
 
-Bad Example:
-	DEBUG(0, ("strstr_m: src malloc fail\n"));
+DBG_ERR	log level 0		error conditions
+DBG_WARNING	log level 1		warning conditions
+DBG_NOTICE	log level 3		normal, but significant, condition
+DBG_INFO	log level 5		informational message
+DBG_DEBUG	log level 10		debug-level message
 
-Good Example:
-	DEBUG(0, ("%s: src malloc fail\n", __func__));
+Example usage:
+
+DBG_ERR("Memory allocation failed\n");
+DBG_DEBUG("Received %d bytes\n", count);
+
+The messages from these macros are automatically prefixed with the
+function name.

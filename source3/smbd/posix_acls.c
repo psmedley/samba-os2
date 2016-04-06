@@ -1688,7 +1688,7 @@ static bool add_current_ace_to_acl(files_struct *fsp, struct security_ace *psa,
 		    (SEC_ACE_FLAG_OBJECT_INHERIT|SEC_ACE_FLAG_CONTAINER_INHERIT)) {
 
 			canon_ace *current_dir_ace = current_ace;
-			DLIST_ADD_END(*dir_ace, current_ace, canon_ace *);
+			DLIST_ADD_END(*dir_ace, current_ace);
 
 			/*
 			 * Note if this was an allow ace. We can't process
@@ -1790,7 +1790,7 @@ static bool add_current_ace_to_acl(files_struct *fsp, struct security_ace *psa,
 	 */
 
 	if (current_ace && !(psa->flags & SEC_ACE_FLAG_INHERIT_ONLY)) {
-		DLIST_ADD_END(*file_ace, current_ace, canon_ace *);
+		DLIST_ADD_END(*file_ace, current_ace);
 
 		/*
 		 * Note if this was an allow ace. We can't process
@@ -2319,7 +2319,7 @@ static void process_deny_list(connection_struct *conn, canon_ace **pp_ace_list )
 
 			curr_ace->attr = ALLOW_ACE;
 			curr_ace->perms = (mode_t)0;
-			DLIST_DEMOTE(ace_list, curr_ace, canon_ace *);
+			DLIST_DEMOTE(ace_list, curr_ace);
 			continue;
 		}
 
@@ -2344,7 +2344,7 @@ static void process_deny_list(connection_struct *conn, canon_ace **pp_ace_list )
 
 		curr_ace->attr = ALLOW_ACE;
 		curr_ace->perms = (new_perms & ~curr_ace->perms);
-		DLIST_DEMOTE(ace_list, curr_ace, canon_ace *);
+		DLIST_DEMOTE(ace_list, curr_ace);
 	}
 
 	/* Pass 3 above - deal with deny group entries. */
@@ -2391,7 +2391,7 @@ static void process_deny_list(connection_struct *conn, canon_ace **pp_ace_list )
 			curr_ace->perms = allow_everyone_p->perms & ~curr_ace->perms;
 		else
 			curr_ace->perms = (mode_t)0;
-		DLIST_DEMOTE(ace_list, curr_ace, canon_ace *);
+		DLIST_DEMOTE(ace_list, curr_ace);
 	}
 
 	/* Doing this fourth pass allows Windows semantics to be layered
@@ -2589,7 +2589,7 @@ static void arrange_posix_perms(const char *filename, canon_ace **pp_list_head)
 	}
 
 	if (other_ace) {
-		DLIST_DEMOTE(l_head, other_ace, canon_ace *);
+		DLIST_DEMOTE(l_head, other_ace);
 	}
 
 	/* We have probably changed the head of the list. */
@@ -2624,7 +2624,6 @@ static canon_ace *canonicalise_acl(struct connection_struct *conn,
 
 		entry_id = SMB_ACL_NEXT_ENTRY;
 
-		/* Is this a MASK entry ? */
 		if (sys_acl_get_tag_type(entry, &tagtype) == -1)
 			continue;
 
@@ -2695,14 +2694,15 @@ static canon_ace *canonicalise_acl(struct connection_struct *conn,
 		if ((ace = talloc(talloc_tos(), canon_ace)) == NULL)
 			goto fail;
 
-		ZERO_STRUCTP(ace);
-		ace->type = tagtype;
-		ace->perms = convert_permset_to_mode_t(permset);
-		ace->attr = ALLOW_ACE;
-		ace->trustee = sid;
-		ace->unix_ug = unix_ug;
-		ace->owner_type = owner_type;
-		ace->ace_flags = get_pai_flags(pal, ace, is_default_acl);
+		*ace = (canon_ace) {
+			.type = tagtype,
+			.perms = convert_permset_to_mode_t(permset),
+			.attr = ALLOW_ACE,
+			.trustee = sid,
+			.unix_ug = unix_ug,
+			.owner_type = owner_type,
+			.ace_flags = get_pai_flags(pal, ace, is_default_acl)
+		};
 
 		DLIST_ADD(l_head, ace);
 	}

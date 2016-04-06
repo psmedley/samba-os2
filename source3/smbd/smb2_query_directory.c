@@ -225,7 +225,7 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 	uint32_t dirtype = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_DIRECTORY;
 	bool dont_descend = false;
 	bool ask_sharemode = true;
-	bool wcard_has_wild;
+	bool wcard_has_wild = false;
 	struct tm tm;
 	char *p;
 
@@ -325,7 +325,9 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 		dptr_CloseDir(fsp);
 	}
 
-	wcard_has_wild = ms_has_wild(in_file_name);
+	if (!smbreq->posix_pathnames) {
+		wcard_has_wild = ms_has_wild(in_file_name);
+	}
 
 	/* Ensure we've canonicalized any search path if not a wildcard. */
 	if (!wcard_has_wild) {
@@ -333,6 +335,10 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 		const char *fullpath;
 		char tmpbuf[PATH_MAX];
 		char *to_free = NULL;
+		uint32_t ucf_flags = UCF_SAVE_LCOMP |
+				     UCF_ALWAYS_ALLOW_WCARD_LCOMP |
+				     (smbreq->posix_pathnames ?
+					UCF_POSIX_PATHNAMES : 0);
 
 		if (ISDOT(fsp->fsp_name->base_name)) {
 			fullpath = in_file_name;
@@ -353,7 +359,7 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 				conn,
 				false, /* Not a DFS path. */
 				fullpath,
-				UCF_SAVE_LCOMP | UCF_ALWAYS_ALLOW_WCARD_LCOMP,
+				ucf_flags,
 				&wcard_has_wild,
 				&smb_fname);
 

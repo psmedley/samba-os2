@@ -22,6 +22,7 @@
  */
 
 #include "replace.h"
+#include "system/time.h"
 #include "lib/util/time_basic.h"
 
 /**
@@ -29,7 +30,7 @@ a gettimeofday wrapper
 **/
 _PUBLIC_ void GetTimeOfDay(struct timeval *tval)
 {
-#ifdef HAVE_GETTIMEOFDAY_TZ
+#if defined(HAVE_GETTIMEOFDAY_TZ) || defined(HAVE_GETTIMEOFDAY_TZ_VOID)
 	gettimeofday(tval,NULL);
 #else
 	gettimeofday(tval);

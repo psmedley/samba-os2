@@ -60,7 +60,7 @@ static void reply_smb20xx(struct smb_request *req, uint16_t dialect)
 
 	req->outbuf = NULL;
 
-	smbd_smb2_first_negprot(req->xconn, smb2_inpdu, len);
+	smbd_smb2_process_negprot(req->xconn, 0, smb2_inpdu, len);
 	return;
 }
 
@@ -258,8 +258,15 @@ NTSTATUS smbd_smb2_request_process_negprot(struct smbd_smb2_request *req)
 		}
 	}
 
-	if (get_remote_arch() != RA_SAMBA) {
+	switch (get_remote_arch()) {
+	case RA_VISTA:
+	case RA_SAMBA:
+	case RA_CIFSFS:
+	case RA_OSX:
+		break;
+	default:
 		set_remote_arch(RA_VISTA);
+		break;
 	}
 
 	fstr_sprintf(remote_proto, "SMB%X_%02X",
@@ -485,6 +492,14 @@ NTSTATUS smbd_smb2_request_process_negprot(struct smbd_smb2_request *req)
 		xconn->smb2.server.cipher = SMB2_ENCRYPTION_AES128_CCM;
 	}
 
+	if (protocol >= PROTOCOL_SMB2_22 &&
+	    xconn->client->server_multi_channel_enabled)
+	{
+		if (in_capabilities & SMB2_CAP_MULTI_CHANNEL) {
+			capabilities |= SMB2_CAP_MULTI_CHANNEL;
+		}
+	}
+
 	security_offset = SMB2_HDR_BODY + 0x40;
 
 #if 1
@@ -579,6 +594,8 @@ NTSTATUS smbd_smb2_request_process_negprot(struct smbd_smb2_request *req)
 	req->sconn->using_smb2 = true;
 
 	if (dialect != SMB2_DIALECT_REVISION_2FF) {
+		struct smbXsrv_client_global0 *global0 = NULL;
+
 		status = smbXsrv_connection_init_tables(xconn, protocol);
 		if (!NT_STATUS_IS_OK(status)) {
 			return smbd_smb2_request_error(req, status);
@@ -605,6 +622,62 @@ NTSTATUS smbd_smb2_request_process_negprot(struct smbd_smb2_request *req)
 		xconn->smb2.server.max_trans = max_trans;
 		xconn->smb2.server.max_read  = max_read;
 		xconn->smb2.server.max_write = max_write;
+
+		if (xconn->protocol < PROTOCOL_SMB2_10) {
+			/*
+			 * SMB2_02 doesn't support client guids
+			 */
+			return smbd_smb2_request_done(req, outbody, &outdyn);
+		}
+
+		if (!xconn->client->server_multi_channel_enabled) {
+			/*
+			 * Only deal with the client guid database
+			 * if multi-channel is enabled.
+			 */
+			return smbd_smb2_request_done(req, outbody, &outdyn);
+		}
+
+		if (xconn->smb2.client.guid_verified) {
+			/*
+			 * The connection was passed from another
+			 * smbd process.
+			 */
+			return smbd_smb2_request_done(req, outbody, &outdyn);
+		}
+
+		status = smb2srv_client_lookup_global(xconn->client,
+						xconn->smb2.client.guid,
+						req, &global0);
+		/*
+		 * TODO: check for races...
+		 */
+		if (NT_STATUS_EQUAL(status, NT_STATUS_OBJECTID_NOT_FOUND)) {
+			/*
+			 * This stores the new client information in
+			 * smbXsrv_client_global.tdb
+			 */
+			xconn->client->global->client_guid =
+						xconn->smb2.client.guid;
+			status = smbXsrv_client_update(xconn->client);
+			if (!NT_STATUS_IS_OK(status)) {
+				return status;
+			}
+
+			xconn->smb2.client.guid_verified = true;
+		} else if (NT_STATUS_IS_OK(status)) {
+			status = smb2srv_client_connection_pass(req,
+								global0);
+			if (!NT_STATUS_IS_OK(status)) {
+				return smbd_smb2_request_error(req, status);
+			}
+
+			smbd_server_connection_terminate(xconn,
+							 "passed connection");
+			return NT_STATUS_OBJECTID_EXISTS;
+		} else {
+			return smbd_smb2_request_error(req, status);
+		}
 	}
 
 	return smbd_smb2_request_done(req, outbody, &outdyn);

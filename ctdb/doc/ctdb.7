@@ -2,12 +2,12 @@
 .\"     Title: ctdb
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 12/10/2015
+.\"      Date: 01/27/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB" "7" "12/10/2015" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB" "7" "01/27/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -129,14 +129,14 @@ Private addresses are listed in the file specified by the
 \fICTDB_NODES\fR
 configuration variable (see
 \fBctdbd.conf\fR(5), default
-/etc/ctdb/nodes)\&. This file contains the list of private addresses for all nodes in the cluster, one per line\&. This file must be the same on all nodes in the cluster\&.
+/usr/local/etc/ctdb/nodes)\&. This file contains the list of private addresses for all nodes in the cluster, one per line\&. This file must be the same on all nodes in the cluster\&.
 .PP
 Private addresses should not be used by clients to connect to services provided by the cluster\&.
 .PP
 It is strongly recommended that the private addresses are configured on a private network that is separate from client networks\&.
 .PP
 Example
-/etc/ctdb/nodes
+/usr/local/etc/ctdb/nodes
 for a four node cluster:
 .sp
 .if n \{\
@@ -162,10 +162,10 @@ The public address configuration is stored in a file on each node specified by t
 \fICTDB_PUBLIC_ADDRESSES\fR
 configuration variable (see
 \fBctdbd.conf\fR(5), recommended
-/etc/ctdb/public_addresses)\&. This file contains a list of the public addresses that the node is capable of hosting, one per line\&. Each entry also contains the netmask and the interface to which the address should be assigned\&.
+/usr/local/etc/ctdb/public_addresses)\&. This file contains a list of the public addresses that the node is capable of hosting, one per line\&. Each entry also contains the netmask and the interface to which the address should be assigned\&.
 .PP
 Example
-/etc/ctdb/public_addresses
+/usr/local/etc/ctdb/public_addresses
 for a node that can host 4 public addresses, on 2 different interfaces:
 .sp
 .if n \{\
@@ -190,19 +190,19 @@ Example: 4 nodes partitioned into two subgroups:
 .RS 4
 .\}
 .nf
-Node 0:/etc/ctdb/public_addresses
+Node 0:/usr/local/etc/ctdb/public_addresses
 	10\&.1\&.1\&.1/24 eth1
 	10\&.1\&.1\&.2/24 eth1
 
-Node 1:/etc/ctdb/public_addresses
+Node 1:/usr/local/etc/ctdb/public_addresses
 	10\&.1\&.1\&.1/24 eth1
 	10\&.1\&.1\&.2/24 eth1
 
-Node 2:/etc/ctdb/public_addresses
+Node 2:/usr/local/etc/ctdb/public_addresses
 	10\&.1\&.2\&.1/24 eth2
 	10\&.1\&.2\&.2/24 eth2
 
-Node 3:/etc/ctdb/public_addresses
+Node 3:/usr/local/etc/ctdb/public_addresses
 	10\&.1\&.2\&.1/24 eth2
 	10\&.1\&.2\&.2/24 eth2
       
@@ -298,13 +298,6 @@ LVS
 section for more details\&.
 .RE
 .PP
-NATGW
-.RS 4
-Indicates that this node is configured to become the NAT gateway master in a NAT gateway group\&. See the
-NAT GATEWAY
-section for more details\&.
-.RE
-.PP
 The RECMASTER and LMASTER capabilities can be disabled when CTDB is used to create a cluster spanning across WAN links\&. In this case CTDB acts as a WAN accelerator\&.
 .SH "LVS"
 .PP
@@ -397,6 +390,11 @@ CTDB_LVS_PUBLIC_IP=10\&.1\&.1\&.237
 .RE
 .\}
 .sp
+.SH "TRACKING AND RESETTING TCP CONNECTIONS"
+.PP
+CTDB tracks TCP connections from clients to public IP addresses, on known ports\&. When an IP address moves from one node to another, all existing TCP connections to that IP address are reset\&. The node taking over this IP address will also send gratuitous ARPs (for IPv4, or neighbour advertisement, for IPv6)\&. This allows clients to reconnect quickly, rather than waiting for TCP timeouts, which can be very long\&.
+.PP
+It is important that established TCP connections do not survive a release and take of a public IP address on the same node\&. Such connections can get out of sync with sequence and ACK numbers, potentially causing a disruptive ACK storm\&.
 .SH "NAT GATEWAY"
 .PP
 NAT gateway (NATGW) is an optional feature that is used to configure fallback routing for nodes\&. This allows cluster nodes to connect to external services (e\&.g\&. DNS, AD, NIS and LDAP) when they do not host any public addresses (e\&.g\&. when they are unhealthy)\&.
@@ -419,7 +417,7 @@ NATGW is usually configured similar to the following example configuration:
 .RS 4
 .\}
 .nf
-CTDB_NATGW_NODES=/etc/ctdb/natgw_nodes
+CTDB_NATGW_NODES=/usr/local/etc/ctdb/natgw_nodes
 CTDB_NATGW_PRIVATE_NETWORK=192\&.168\&.1\&.0/24
 CTDB_NATGW_PUBLIC_IP=10\&.0\&.0\&.227/24
 CTDB_NATGW_PUBLIC_IFACE=eth0
@@ -430,14 +428,14 @@ CTDB_NATGW_DEFAULT_GATEWAY=10\&.0\&.0\&.1
 .RE
 .\}
 .PP
-Normally any node in a NATGW group can act as the NATGW master\&. Some configurations may have special nodes that lack connectivity to a public network\&. In such cases,
-\fICTDB_NATGW_SLAVE_ONLY\fR
-can be used to limit the NATGW functionality of thos nodes\&.
+Normally any node in a NATGW group can act as the NATGW master\&. Some configurations may have special nodes that lack connectivity to a public network\&. In such cases, those nodes can be flagged with the "slave\-only" option in the
+\fICTDB_NATGW_NODES\fR
+file to limit the NATGW functionality of those nodes\&.
 .PP
 See the
 NAT GATEWAY
 section in
-\fBctdb.conf\fR(5)
+\fBctdbd.conf\fR(5)
 for more details of NATGW configuration\&.
 .SS "Implementation details"
 .PP
@@ -625,12 +623,12 @@ Here is a more complete example configuration\&.
 .RS 4
 .\}
 .nf
-/etc/ctdb/public_addresses:
+/usr/local/etc/ctdb/public_addresses:
 
   192\&.168\&.1\&.98	eth2,eth3
   192\&.168\&.1\&.99	eth2,eth3
 
-/etc/ctdb/policy_routing:
+/usr/local/etc/ctdb/policy_routing:
 
   192\&.168\&.1\&.98 192\&.168\&.1\&.0/24
   192\&.168\&.1\&.98 192\&.168\&.200\&.0/24	192\&.168\&.1\&.254
@@ -654,9 +652,9 @@ This is activated by setting the
 configuration variable\&. The specified script must be executable\&.
 .PP
 Use of the provided
-/etc/ctdb/notify\&.sh
+/usr/local/etc/ctdb/notify\&.sh
 script is recommended\&. It executes files in
-/etc/ctdb/notify\&.d/\&.
+/usr/local/etc/ctdb/notify\&.d/\&.
 .PP
 CTDB currently generates notifications after CTDB changes to these states:
 .RS 4

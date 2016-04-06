@@ -19,12 +19,24 @@
  * 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
+#include "replace.h"
+#include "system/network.h"
+
+#include <talloc.h>
+#include <tevent.h>
+
+#include "lib/util/time.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/system.h"
+#include "common/common.h"
+
 #include <pcp/pmapi.h>
 #include <pcp/impl.h>
 #include <pcp/pmda.h>
-#include "includes.h"
-#include "ctdb_private.h"
-#include "ctdb_protocol.h"
+
 #include "domain.h"
 
 /*
@@ -158,7 +170,7 @@ static pmdaMetric metrictab[] = {
 		PMDA_PMUNITS(0,0,0,0,0,0) }, },
 };
 
-static struct event_context *ev;
+static struct tevent_context *ev;
 static struct ctdb_context *ctdb;
 static struct ctdb_statistics *stats;
 
@@ -182,7 +194,7 @@ pmda_ctdb_daemon_connect(void)
 	int ret;
 	struct sockaddr_un addr;
 
-	ev = event_context_init(NULL);
+	ev = tevent_context_init(NULL);
 	if (ev == NULL) {
 		fprintf(stderr, "Failed to init event ctx\n");
 		return -1;

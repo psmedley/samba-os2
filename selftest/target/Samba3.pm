@@ -593,6 +593,18 @@ sub setup_fileserver($$)
 	push(@dirs, "$dfree_share_dir/subdir1");
 	push(@dirs, "$dfree_share_dir/subdir2");
 
+	my $valid_users_sharedir="$share_dir/valid_users";
+	push(@dirs,$valid_users_sharedir);
+
+	my $offline_sharedir="$share_dir/offline";
+	push(@dirs,$offline_sharedir);
+
+	my $force_user_valid_users_dir = "$share_dir/force_user_valid_users";
+	push(@dirs, $force_user_valid_users_dir);
+
+	my $smbget_sharedir="$share_dir/smbget";
+	push(@dirs,$smbget_sharedir);
+
 	my $fileserver_options = "
 [lowercase]
 	path = $lower_case_share_dir
@@ -612,11 +624,32 @@ sub setup_fileserver($$)
 	path = $dfree_share_dir
 	comment = smb username is [%U]
 	dfree command = $srcdir_abs/testprogs/blackbox/dfree.sh
-	";
+[valid-users-access]
+	path = $valid_users_sharedir
+	valid users = +userdup
+[offline]
+	path = $offline_sharedir
+	vfs objects = offline
+
+# BUG: https://bugzilla.samba.org/show_bug.cgi?id=9878
+# RH BUG: https://bugzilla.redhat.com/show_bug.cgi?id=1077651
+[force_user_valid_users]
+	path = $force_user_valid_users_dir
+	comment = force user with valid users combination test share
+	valid users = +force_user
+	force user = force_user
+	force group = everyone
+	write list = force_user
+
+[smbget]
+	path = $smbget_sharedir
+	comment = smb username is [%U]
+	guest ok = yes
+";
 
 	my $vars = $self->provision($path,
 				    "FILESERVER",
-				    "fileserver_secret",
+				    "fileserver",
 				    $fileserver_options,
 				    undef,
 				    undef,
@@ -665,6 +698,17 @@ sub setup_fileserver($$)
 		print $fh $full_path;
 		close $fh;
 	}
+
+	##
+	## create a listable file in valid_users_share
+	##
+        my $valid_users_target = "$valid_users_sharedir/foo";
+        unless (open(VALID_USERS_TARGET, ">$valid_users_target")) {
+                warn("Unable to open $valid_users_target");
+                return undef;
+        }
+        close(VALID_USERS_TARGET);
+        chmod 0644, $valid_users_target;
 
 	return $vars;
 }
@@ -848,6 +892,7 @@ sub check_or_start($$$$$) {
 		$ENV{NSS_WRAPPER_HOSTNAME} = $env_vars->{NSS_WRAPPER_HOSTNAME};
 		$ENV{NSS_WRAPPER_MODULE_SO_PATH} = $env_vars->{NSS_WRAPPER_MODULE_SO_PATH};
 		$ENV{NSS_WRAPPER_MODULE_FN_PREFIX} = $env_vars->{NSS_WRAPPER_MODULE_FN_PREFIX};
+		$ENV{UID_WRAPPER_ROOT} = "1";
 
 		$ENV{ENVNAME} = "$ENV{ENVNAME}.nmbd";
 
@@ -911,6 +956,7 @@ sub check_or_start($$$$$) {
 		} else {
 			$ENV{RESOLV_WRAPPER_HOSTS} = $env_vars->{RESOLV_WRAPPER_HOSTS};
 		}
+		$ENV{UID_WRAPPER_ROOT} = "1";
 
 		$ENV{ENVNAME} = "$ENV{ENVNAME}.winbindd";
 
@@ -974,6 +1020,7 @@ sub check_or_start($$$$$) {
 		} else {
 			$ENV{RESOLV_WRAPPER_HOSTS} = $env_vars->{RESOLV_WRAPPER_HOSTS};
 		}
+		$ENV{UID_WRAPPER_ROOT} = "1";
 
 		$ENV{ENVNAME} = "$ENV{ENVNAME}.smbd";
 
@@ -1016,6 +1063,22 @@ sub check_or_start($$$$$) {
 	close(STDIN_READER);
 
 	return $self->wait_for_start($env_vars, $nmbd, $winbindd, $smbd);
+}
+
+sub createuser($$$$)
+{
+	my ($self, $username, $password, $conffile) = @_;
+	my $cmd = "UID_WRAPPER_ROOT=1 " . Samba::bindir_path($self, "smbpasswd")." -c $conffile -L -s -a $username > /dev/null";
+	unless (open(PWD, "|$cmd")) {
+	    warn("Unable to set password for $username account\n$cmd");
+	    return undef;
+	}
+	print PWD "$password\n$password\n";
+	unless (close(PWD)) {
+	    warn("Unable to set password for $username account\n$cmd");
+	    return undef;
+	}
+	print "DONE\n";
 }
 
 sub provision($$$$$$$$)
@@ -1093,6 +1156,12 @@ sub provision($$$$$$$$)
 
 	my $manglenames_shrdir="$shrdir/manglenames";
 	push(@dirs,$manglenames_shrdir);
+
+	my $widelinks_shrdir="$shrdir/widelinks";
+	push(@dirs,$widelinks_shrdir);
+
+	my $widelinks_linkdir="$shrdir/widelinks_foo";
+	push(@dirs,$widelinks_linkdir);
 
 	my $shadow_tstdir="$shrdir/shadow";
 	push(@dirs,$shadow_tstdir);
@@ -1192,7 +1261,27 @@ sub provision($$$$$$$$)
         my $manglename_target = "$manglenames_shrdir/foo:bar";
 	mkdir($manglename_target, 0777);
 
+	##
+	## create symlinks for widelinks tests.
+	##
+	my $widelinks_target = "$widelinks_linkdir/target";
+	unless (open(WIDELINKS_TARGET, ">$widelinks_target")) {
+		warn("Unable to open $widelinks_target");
+		return undef;
+	}
+	close(WIDELINKS_TARGET);
+	chmod 0666, $widelinks_target;
+	##
+	## This link should get ACCESS_DENIED
+	##
+	symlink "$widelinks_target", "$widelinks_shrdir/source";
+	##
+	## This link should be allowed
+	##
+	symlink "$widelinks_shrdir", "$widelinks_shrdir/dot";
+
 	my $conffile="$libdir/server.conf";
+	my $dfqconffile="$libdir/dfq.conf";
 
 	my $nss_wrapper_pl = "$ENV{PERL} $self->{srcdir}/lib/nss_wrapper/nss_wrapper.pl";
 	my $nss_wrapper_passwd = "$privatedir/passwd";
@@ -1212,12 +1301,15 @@ sub provision($$$$$$$$)
 	##
 
 	my ($max_uid, $max_gid);
-	my ($uid_nobody, $uid_root, $uid_pdbtest, $uid_pdbtest2);
+	my ($uid_nobody, $uid_root, $uid_pdbtest, $uid_pdbtest2, $uid_userdup);
 	my ($uid_pdbtest_wkn);
+	my ($uid_smbget);
+	my ($uid_force_user);
 	my ($gid_nobody, $gid_nogroup, $gid_root, $gid_domusers, $gid_domadmins);
-	my ($gid_everyone);
+	my ($gid_userdup, $gid_everyone);
+	my ($gid_force_user);
 
-	if ($unix_uid < 0xffff - 4) {
+	if ($unix_uid < 0xffff - 7) {
 		$max_uid = 0xffff;
 	} else {
 		$max_uid = $unix_uid;
@@ -1227,9 +1319,12 @@ sub provision($$$$$$$$)
 	$uid_nobody = $max_uid - 2;
 	$uid_pdbtest = $max_uid - 3;
 	$uid_pdbtest2 = $max_uid - 4;
+	$uid_userdup = $max_uid - 5;
 	$uid_pdbtest_wkn = $max_uid - 6;
+	$uid_force_user = $max_uid - 7;
+	$uid_smbget = $max_uid - 8;
 
-	if ($unix_gids[0] < 0xffff - 7) {
+	if ($unix_gids[0] < 0xffff - 8) {
 		$max_gid = 0xffff;
 	} else {
 		$max_gid = $unix_gids[0];
@@ -1240,7 +1335,9 @@ sub provision($$$$$$$$)
 	$gid_root = $max_gid - 3;
 	$gid_domusers = $max_gid - 4;
 	$gid_domadmins = $max_gid - 5;
+	$gid_userdup = $max_gid - 6;
 	$gid_everyone = $max_gid - 7;
+	$gid_force_user = $max_gid - 8;
 
 	##
 	## create conffile
@@ -1317,6 +1414,7 @@ sub provision($$$$$$$$)
 	create mask = 755
 	dos filemode = yes
 	strict rename = yes
+	strict sync = yes
 	vfs objects = acl_xattr fake_acls xattr_tdb streams_depot
 
 	printing = vlp
@@ -1498,6 +1596,11 @@ sub provision($$$$$$$$)
 	path = $shrdir/%R
 	guest ok = yes
 
+[widelinks_share]
+	path = $widelinks_shrdir
+	wide links = no
+	guest ok = yes
+
 [fsrvp_share]
 	path = $shrdir
 	comment = fake shapshots using rsync
@@ -1557,14 +1660,33 @@ sub provision($$$$$$$$)
 	shadow:mountpoint = $shadow_mntdir
 	shadow:snapdirseverywhere = yes
 
+[shadow8]
+	path = $shadow_shrdir
+	comment = previous versions using snapsharepath
+	vfs objects = shadow_copy2
+	shadow:mountpoint = $shadow_mntdir
+	shadow:snapdir = $shadow_tstdir/.snapshots
+	shadow:snapsharepath = share
+
 [shadow_wl]
 	path = $shadow_shrdir
 	comment = previous versions with wide links allowed
 	vfs objects = shadow_copy2
 	shadow:mountpoint = $shadow_mntdir
 	wide links = yes
+[dfq]
+	path = $shrdir/dfree
+	vfs objects = fake_dfq
+	admin users = $unix_name
+	include = $dfqconffile
 	";
 	close(CONF);
+
+	unless (open(DFQCONF, ">$dfqconffile")) {
+	        warn("Unable to open $dfqconffile");
+		return undef;
+	}
+	close(DFQCONF);
 
 	##
 	## create a test account
@@ -1578,7 +1700,10 @@ sub provision($$$$$$$$)
 $unix_name:x:$unix_uid:$unix_gids[0]:$unix_name gecos:$prefix_abs:/bin/false
 pdbtest:x:$uid_pdbtest:$gid_nogroup:pdbtest gecos:$prefix_abs:/bin/false
 pdbtest2:x:$uid_pdbtest2:$gid_nogroup:pdbtest gecos:$prefix_abs:/bin/false
+userdup:x:$uid_userdup:$gid_userdup:userdup gecos:$prefix_abs:/bin/false
 pdbtest_wkn:x:$uid_pdbtest_wkn:$gid_everyone:pdbtest_wkn gecos:$prefix_abs:/bin/false
+force_user:x:$uid_force_user:$gid_force_user:force user gecos:$prefix_abs:/bin/false
+smbget_user:x:$uid_smbget:$gid_domusers:smbget_user gecos:$prefix_abs:/bin/false
 ";
 	if ($unix_uid != 0) {
 		print PASSWD "root:x:$uid_root:$gid_root:root gecos:$prefix_abs:/bin/false
@@ -1595,7 +1720,9 @@ nogroup:x:$gid_nogroup:nobody
 $unix_name-group:x:$unix_gids[0]:
 domusers:X:$gid_domusers:
 domadmins:X:$gid_domadmins:
+userdup:x:$gid_userdup:$unix_name
 everyone:x:$gid_everyone:
+force_user:x:$gid_force_user:
 ";
 	if ($unix_gids[0] != 0) {
 		print GROUP "root:x:$gid_root:
@@ -1648,17 +1775,9 @@ everyone:x:$gid_everyone:
 		$ENV{RESOLV_WRAPPER_HOSTS} = $dns_host_file;
 	}
 
-        my $cmd = "UID_WRAPPER_ROOT=1 " . Samba::bindir_path($self, "smbpasswd")." -c $conffile -L -s -a $unix_name > /dev/null";
-	unless (open(PWD, "|$cmd")) {
-             warn("Unable to set password for test account\n$cmd");
-             return undef;
-        }
-	print PWD "$password\n$password\n";
-	unless (close(PWD)) {
-             warn("Unable to set password for test account\n$cmd");
-             return undef; 
-        }
-	print "DONE\n";
+	createuser($self, $unix_name, $password, $conffile) || die("Unable to create user");
+	createuser($self, "force_user", $password, $conffile) || die("Unable to create force_user");
+	createuser($self, "smbget_user", $password, $conffile) || die("Unable to create smbget_user");
 
 	open(DNS_UPDATE_LIST, ">$prefix/dns_update_list") or die("Unable to open $$prefix/dns_update_list");
 	print DNS_UPDATE_LIST "A $server. $server_ip\n";

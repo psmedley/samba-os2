@@ -1,11 +1,11 @@
-<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1"><title>ctdbd</title><meta name="generator" content="DocBook XSL Stylesheets V1.78.1"></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="refentry"><a name="ctdbd.1"></a><div class="titlepage"></div><div class="refnamediv"><h2>Name</h2><p>ctdbd &#8212; The CTDB cluster daemon</p></div><div class="refsynopsisdiv"><h2>Synopsis</h2><div class="cmdsynopsis"><p><code class="command">ctdbd</code>  [<em class="replaceable"><code>OPTION</code></em>...]</p></div></div><div class="refsect1"><a name="idp52630160"></a><h2>DESCRIPTION</h2><p>
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1"><title>ctdbd</title><meta name="generator" content="DocBook XSL Stylesheets V1.78.1"></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="refentry"><a name="ctdbd.1"></a><div class="titlepage"></div><div class="refnamediv"><h2>Name</h2><p>ctdbd &#8212; The CTDB cluster daemon</p></div><div class="refsynopsisdiv"><h2>Synopsis</h2><div class="cmdsynopsis"><p><code class="command">ctdbd</code>  [<em class="replaceable"><code>OPTION</code></em>...]</p></div></div><div class="refsect1"><a name="idp49146288"></a><h2>DESCRIPTION</h2><p>
       ctdbd is the main CTDB daemon.
     </p><p>
       Note that ctdbd is not usually invoked directly.  It is invoked
       via <span class="citerefentry"><span class="refentrytitle">ctdbd_wrapper</span>(1)</span> or via the initscript.
     </p><p>
       See <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span> for an overview of CTDB.
-    </p></div><div class="refsect1"><a name="idp52972944"></a><h2>GENERAL OPTIONS</h2><div class="variablelist"><dl class="variablelist"><dt><span class="term">-d, --debug=<em class="parameter"><code>DEBUGLEVEL</code></em></span></dt><dd><p>
+    </p></div><div class="refsect1"><a name="idp49554896"></a><h2>GENERAL OPTIONS</h2><div class="variablelist"><dl class="variablelist"><dt><span class="term">-d, --debug=<em class="parameter"><code>DEBUGLEVEL</code></em></span></dt><dd><p>
 	    This option sets the debug level to DEBUGLEVEL, which
 	    controls what will be written by the logging
 	    subsystem.  The default is 2.
@@ -18,29 +18,27 @@
 	    TDB databases.  This directory is local for each node and
 	    should not be stored on the shared cluster filesystem.
 	  </p><p>
-	    This directory would usually be <code class="filename">/var/lib/ctdb</code>
+	    Defaults to <code class="filename">/usr/local/var/lib/ctdb</code>.
 	  </p></dd><dt><span class="term">--dbdir-persistent=<em class="parameter"><code>DIRECTORY</code></em></span></dt><dd><p>
 	    DIRECTORY on local storage where ctdbd keeps a local copy of
 	    persistent TDB databases.  This directory is local for each
 	    node and should not be stored on the shared cluster
 	    filesystem.
 	  </p><p>
-	    This directory would usually be
-	    <code class="filename">/var/lib/ctdb/persistent</code>
+	    Defaults to <code class="filename">/usr/local/var/lib/ctdb/persistent</code>.
 	  </p></dd><dt><span class="term">--dbdir-state=<em class="parameter"><code>DIRECTORY</code></em></span></dt><dd><p>
 	    DIRECTORY on local storage where ctdbd keep internal state
 	    TDB files.  This directory is local for each node and
 	    should not be stored on the shared cluster filesystem.
 	  </p><p>
-	    This directory would usually be
-	    <code class="filename">/var/lib/ctdb/state</code>
+	    Defaults to <code class="filename">/usr/local/var/lib/ctdb/state</code>.
 	  </p></dd><dt><span class="term">--event-script-dir=<em class="parameter"><code>DIRECTORY</code></em></span></dt><dd><p>
 	    DIRECTORY where the CTDB event scripts are stored.  See the
 	    <em class="citetitle">EVENT SCRIPTS</em> section in
 	    <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span> for more information.
 	  </p><p>
 	    Default is <code class="envar">CTDB_BASE</code>/events.d, so usually
-	    <code class="filename">/etc/ctdb/events.d</code>, which is part of
+	    <code class="filename">/usr/local/etc/ctdb/events.d</code>, which is part of
 	    the CTDB installation.
 	  </p></dd><dt><span class="term">--listen=<em class="parameter"><code>IPADDR</code></em></span></dt><dd><p>
 	    IPADDR is the private IP address that ctdbd will bind to.
@@ -57,14 +55,13 @@
 	    net.ipv4.ip_nonlocal_bind=1.
 	  </p></dd><dt><span class="term">--logging=<em class="parameter"><code>STRING</code></em></span></dt><dd><p>
 	    STRING specifies where ctdbd will write its log. The
-	    default is file:<code class="filename">/var/log/log.ctdb</code> or
-	    similar - the prefix may differ depending on how CTDB was
-	    built.
+	    default is
+	    file:<code class="filename">/usr/local/var/log/log.ctdb</code>.
 	  </p><p>
 	    Valid values are:
 	  </p><div class="variablelist"><dl class="variablelist"><dt><span class="term">file:<em class="parameter"><code>FILENAME</code></em></span></dt><dd><p>
 		  FILENAME where ctdbd will write its log. This is usually
-		  <code class="filename">/var/log/log.ctdb</code>.
+		  <code class="filename">/usr/local/var/log/log.ctdb</code>.
 		</p></dd><dt><span class="term">syslog[<span class="optional">:<em class="parameter"><code>METHOD</code></em></span>]</span></dt><dd><p>
 		  CTDB will log to syslog.  By default this will use
 		  the syslog(3) API.
@@ -115,7 +112,7 @@
 	    cluster.
 	  </p><p>
 	    Default is <code class="envar">CTDB_BASE</code>/nodes, so usually
-	    <code class="filename">/etc/ctdb/nodes</code>.
+	    <code class="filename">/usr/local/etc/ctdb/nodes</code>.
 	  </p></dd><dt><span class="term">--no-lmaster</span></dt><dd><p>
 	    This argument specifies that this node can NOT become an lmaster
 	    for records in the database. This means that it will never show up
@@ -138,7 +135,7 @@
 	    certain state changes occur.
 	  </p><p>
 	    This file is usually
-	    <code class="filename">/etc/ctdb/notify.sh</code>.
+	    <code class="filename">/usr/local/etc/ctdb/notify.sh</code>.
 	  </p><p>
 	    Please see the <em class="citetitle">NOTIFICATION SCRIPT</em>
 	    section in <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span> for more
@@ -160,7 +157,7 @@
 	    nodes.
 	  </p><p>
 	    This is usually the file
-	    <code class="filename">/etc/ctdb/public_addresses</code>
+	    <code class="filename">/usr/local/etc/ctdb/public_addresses</code>
 	  </p></dd><dt><span class="term">--public-interface=<em class="parameter"><code>INTERFACE</code></em></span></dt><dd><p>
 	    INTERFACE on which to attach public IP addresses or on which
 	    to attach the single-public-ip when used.
@@ -178,7 +175,7 @@
 	    <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span>.
 	  </p></dd><dt><span class="term">--single-public-ip=<em class="parameter"><code>IPADDR</code></em></span></dt><dd><p>
 	    IPADDR specifies the single IP that CTDB will use in
-	    conjuction with LVS.
+	    conjunction with LVS.
 	  </p><p>
 	    Please see the <em class="citetitle">LVS</em> section in
 	    <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span> for more
@@ -203,10 +200,6 @@
 	    Please see the <em class="citetitle">NODE STATES</em> section
 	    in <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span> for more
 	    information about the STOPPED state.
-	  </p></dd><dt><span class="term">--syslog</span></dt><dd><p>
-	    Send log messages to syslog instead of the CTDB logfile.
-	    This option overrides --logfile.  The default is to log to
-	    a file.
 	  </p></dd><dt><span class="term">--transport=tcp|infiniband</span></dt><dd><p>
 	    This option specifies which transport to use for ctdbd
 	    internode communications. The default is "tcp".
@@ -214,7 +207,7 @@
 	    The "infiniband" support is not regularly tested.
 	  </p></dd><dt><span class="term">-?, --help</span></dt><dd><p>
 	    Display a summary of options.
-	  </p></dd></dl></div></div><div class="refsect1"><a name="idp54745248"></a><h2>DEBUGGING OPTIONS</h2><div class="variablelist"><dl class="variablelist"><dt><span class="term">-i, --interactive</span></dt><dd><p>
+	  </p></dd></dl></div></div><div class="refsect1"><a name="idp55026688"></a><h2>DEBUGGING OPTIONS</h2><div class="variablelist"><dl class="variablelist"><dt><span class="term">-i, --interactive</span></dt><dd><p>
 	    Enable interactive mode.  This will make ctdbd run in the
 	    foreground and not detach from the terminal.  By default
 	    ctdbd will detach itself and run in the background as a
@@ -243,10 +236,10 @@
 	    ctdbd will create. This socket is used by local clients to
 	    communicate with ctdbd.
 	  </p><p>
-	    The default is <code class="filename">/tmp/ctdb.socket</code> . You
-	    only need to use this option if you plan to run multiple
-	    ctdbd daemons on the same physical host, usually for
-	    testing.
+	    The default is <code class="filename">/usr/local/var/run/ctdb/ctdbd.socket</code>.
+	    You only need to use this option if you plan to run
+	    multiple ctdbd daemons on the same physical host, usually
+	    for testing.
 	  </p></dd><dt><span class="term">--script-log-level=<em class="parameter"><code>DEBUGLEVEL</code></em></span></dt><dd><p>
 	    This option sets the debug level of event script output to
 	    DEBUGLEVEL.  The default is ERR (0).
@@ -271,7 +264,7 @@
 	    This is a debugging option. This option is only used when
 	    debugging ctdbd.  This enables additional debugging
 	    capabilities and implies --nosetsched.
-	  </p></dd></dl></div></div><div class="refsect1"><a name="idp54766736"></a><h2>SEE ALSO</h2><p>
+	  </p></dd></dl></div></div><div class="refsect1"><a name="idp55048176"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(1)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">ctdbd_wrapper</span>(1)</span>,

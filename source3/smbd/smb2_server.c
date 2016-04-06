@@ -200,11 +200,12 @@ bool smbd_is_smb2_header(const uint8_t *inbuf, size_t size)
 	return true;
 }
 
-static NTSTATUS smbd_initialize_smb2(struct smbXsrv_connection *xconn)
+static NTSTATUS smbd_initialize_smb2(struct smbXsrv_connection *xconn,
+				     uint64_t expected_seq_low)
 {
 	TALLOC_FREE(xconn->transport.fde);
 
-	xconn->smb2.credits.seq_low = 0;
+	xconn->smb2.credits.seq_low = expected_seq_low;
 	xconn->smb2.credits.seq_range = 1;
 	xconn->smb2.credits.granted = 1;
 	xconn->smb2.credits.max = lp_smb2_max_credits();
@@ -393,7 +394,8 @@ static NTSTATUS smbd_smb2_inbuf_parse_compound(struct smbXsrv_connection *xconn,
 				goto inval;
 			}
 
-			status = smb2srv_session_lookup(xconn, uid, now, &s);
+			status = smb2srv_session_lookup_conn(xconn, uid, now,
+							     &s);
 			if (s == NULL) {
 				DEBUG(1, ("invalid session[%llu] in "
 					  "SMB2_TRANSFORM header\n",
@@ -1048,7 +1050,7 @@ static NTSTATUS smbd_smb2_request_setup_out(struct smbd_smb2_request *req)
 		return NT_STATUS_INVALID_PARAMETER_MIX;
 	}
 
-	DLIST_ADD_END(xconn->smb2.requests, req, struct smbd_smb2_request *);
+	DLIST_ADD_END(xconn->smb2.requests, req);
 
 	return NT_STATUS_OK;
 }
@@ -1057,8 +1059,21 @@ void smbd_server_connection_terminate_ex(struct smbXsrv_connection *xconn,
 					 const char *reason,
 					 const char *location)
 {
-	DEBUG(10,("smbd_server_connection_terminate_ex: reason[%s] at %s\n",
-		  reason, location));
+	struct smbXsrv_client *client = xconn->client;
+
+	DEBUG(10,("smbd_server_connection_terminate_ex: conn[%s] reason[%s] at %s\n",
+		  smbXsrv_connection_dbg(xconn), reason, location));
+
+	if (client->connections->next != NULL) {
+		/* TODO: cancel pending requests */
+		DLIST_REMOVE(client->connections, xconn);
+		TALLOC_FREE(xconn);
+		return;
+	}
+
+	/*
+	 * The last connection was disconnected
+	 */
 	exit_server_cleanly(reason);
 }
 
@@ -1289,7 +1304,7 @@ static NTSTATUS smb2_send_async_interim_response(const struct smbd_smb2_request 
 	nreq->queue_entry.mem_ctx = nreq;
 	nreq->queue_entry.vector = nreq->out.vector;
 	nreq->queue_entry.count = nreq->out.vector_count;
-	DLIST_ADD_END(xconn->smb2.send_queue, &nreq->queue_entry, NULL);
+	DLIST_ADD_END(xconn->smb2.send_queue, &nreq->queue_entry);
 	xconn->smb2.send_queue_len++;
 
 	status = smbd_smb2_flush_send_queue(xconn);
@@ -1676,7 +1691,7 @@ static void smbd_smb2_request_pending_timer(struct tevent_context *ev,
 	state->queue_entry.mem_ctx = state;
 	state->queue_entry.vector = state->vector;
 	state->queue_entry.count = ARRAY_SIZE(state->vector);
-	DLIST_ADD_END(xconn->smb2.send_queue, &state->queue_entry, NULL);
+	DLIST_ADD_END(xconn->smb2.send_queue, &state->queue_entry);
 	xconn->smb2.send_queue_len++;
 
 	status = smbd_smb2_flush_send_queue(xconn);
@@ -1833,10 +1848,26 @@ static NTSTATUS smbd_smb2_request_check_session(struct smbd_smb2_request *req)
 
 	req->last_session_id = 0;
 
-	/* lookup an existing session */
-	status = smb2srv_session_lookup(req->xconn,
-					in_session_id, now,
-					&session);
+	/* look an existing session up */
+	switch (in_opcode) {
+	case SMB2_OP_SESSSETUP:
+		/*
+		 * For a session bind request, we don't have the
+		 * channel set up at this point yet, so we defer
+		 * the verification that the connection belongs
+		 * to the session to the session setup code, which
+		 * can look at the session binding flags.
+		 */
+		status = smb2srv_session_lookup_client(req->xconn->client,
+						       in_session_id, now,
+						       &session);
+		break;
+	default:
+		status = smb2srv_session_lookup_conn(req->xconn,
+						     in_session_id, now,
+						     &session);
+		break;
+	}
 	if (session) {
 		req->session = session;
 		req->last_session_id = in_session_id;
@@ -1986,6 +2017,96 @@ NTSTATUS smbd_smb2_request_verify_sizes(struct smbd_smb2_request *req,
 	return NT_STATUS_OK;
 }
 
+bool smbXsrv_is_encrypted(uint8_t encryption_flags)
+{
+	return (!(encryption_flags & SMBXSRV_PROCESSED_UNENCRYPTED_PACKET)
+		&&
+		(encryption_flags & (SMBXSRV_PROCESSED_ENCRYPTED_PACKET |
+				     SMBXSRV_ENCRYPTION_DESIRED |
+				     SMBXSRV_ENCRYPTION_REQUIRED)));
+}
+
+bool smbXsrv_is_partially_encrypted(uint8_t encryption_flags)
+{
+	return ((encryption_flags & SMBXSRV_PROCESSED_ENCRYPTED_PACKET) &&
+		(encryption_flags & SMBXSRV_PROCESSED_UNENCRYPTED_PACKET));
+}
+
+/* Set a flag if not already set, return true if set */
+bool smbXsrv_set_crypto_flag(uint8_t *flags, uint8_t flag)
+{
+	if ((flag == 0) || (*flags & flag)) {
+		return false;
+	}
+
+	*flags |= flag;
+	return true;
+}
+
+/*
+ * Update encryption state tracking flags, this can be used to
+ * determine whether whether the session or tcon is "encrypted".
+ */
+static void smb2srv_update_crypto_flags(struct smbd_smb2_request *req,
+					uint16_t opcode,
+					bool *update_session_globalp,
+					bool *update_tcon_globalp)
+{
+	/* Default: assume unecrypted and unsigned */
+	struct smbXsrv_session *session = req->session;
+	struct smbXsrv_tcon *tcon = req->tcon;
+	uint8_t encrypt_flag = SMBXSRV_PROCESSED_UNENCRYPTED_PACKET;
+	uint8_t sign_flag = SMBXSRV_PROCESSED_UNSIGNED_PACKET;
+	bool update_session = false;
+	bool update_tcon = false;
+
+	if (req->was_encrypted && req->do_encryption) {
+		encrypt_flag = SMBXSRV_PROCESSED_ENCRYPTED_PACKET;
+		sign_flag = SMBXSRV_PROCESSED_SIGNED_PACKET;
+	} else {
+		/* Unencrypted packet, can be signed */
+		if (req->do_signing) {
+			sign_flag = SMBXSRV_PROCESSED_SIGNED_PACKET;
+		} else if (opcode == SMB2_OP_CANCEL) {
+			/* Cancel requests are allowed to skip signing */
+			sign_flag &= ~SMBXSRV_PROCESSED_UNSIGNED_PACKET;
+		}
+	}
+
+	update_session |= smbXsrv_set_crypto_flag(
+		&session->global->encryption_flags, encrypt_flag);
+	update_session |= smbXsrv_set_crypto_flag(
+		&session->global->signing_flags, sign_flag);
+
+	if (tcon) {
+		update_tcon |= smbXsrv_set_crypto_flag(
+			&tcon->global->encryption_flags, encrypt_flag);
+		update_tcon |= smbXsrv_set_crypto_flag(
+			&tcon->global->signing_flags, sign_flag);
+	}
+
+	*update_session_globalp = update_session;
+	*update_tcon_globalp = update_tcon;
+	return;
+}
+
+bool smbXsrv_is_signed(uint8_t signing_flags)
+{
+	/*
+	 * Signing is always enabled, so unless we got an unsigned
+	 * packet and at least one signed packet that was not
+	 * encrypted, the session or tcon is "signed".
+	 */
+	return (!(signing_flags & SMBXSRV_PROCESSED_UNSIGNED_PACKET) &&
+		(signing_flags & SMBXSRV_PROCESSED_SIGNED_PACKET));
+}
+
+bool smbXsrv_is_partially_signed(uint8_t signing_flags)
+{
+	return ((signing_flags & SMBXSRV_PROCESSED_UNSIGNED_PACKET) &&
+		(signing_flags & SMBXSRV_PROCESSED_SIGNED_PACKET));
+}
+
 NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 {
 	struct smbXsrv_connection *xconn = req->xconn;
@@ -2048,9 +2169,9 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 	session_status = smbd_smb2_request_check_session(req);
 	x = req->session;
 	if (x != NULL) {
-		signing_required = x->global->signing_required;
-		encryption_desired = x->encryption_desired;
-		encryption_required = x->global->encryption_required;
+		signing_required = x->global->signing_flags & SMBXSRV_SIGNING_REQUIRED;
+		encryption_desired = x->global->encryption_flags & SMBXSRV_ENCRYPTION_DESIRED;
+		encryption_required = x->global->encryption_flags & SMBXSRV_ENCRYPTION_REQUIRED;
 	}
 
 	req->do_signing = false;
@@ -2103,6 +2224,9 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 	}
 	if (opcode == SMB2_OP_CANCEL) {
 		allowed_flags |= SMB2_HDR_FLAG_ASYNC;
+	}
+	if (xconn->protocol >= PROTOCOL_SMB2_22) {
+		allowed_flags |= SMB2_HDR_FLAG_REPLAY_OPERATION;
 	}
 	if ((flags & ~allowed_flags) != 0) {
 		return smbd_smb2_request_error(req, NT_STATUS_INVALID_PARAMETER);
@@ -2206,10 +2330,10 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 		if (!NT_STATUS_IS_OK(status)) {
 			return smbd_smb2_request_error(req, status);
 		}
-		if (req->tcon->encryption_desired) {
+		if (req->tcon->global->encryption_flags & SMBXSRV_ENCRYPTION_DESIRED) {
 			encryption_desired = true;
 		}
-		if (req->tcon->global->encryption_required) {
+		if (req->tcon->global->encryption_flags & SMBXSRV_ENCRYPTION_REQUIRED) {
 			encryption_required = true;
 		}
 		if (encryption_required && !req->was_encrypted) {
@@ -2220,6 +2344,28 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 
 	if (req->was_encrypted || encryption_desired) {
 		req->do_encryption = true;
+	}
+
+	if (req->session) {
+		bool update_session_global = false;
+		bool update_tcon_global = false;
+
+		smb2srv_update_crypto_flags(req, opcode,
+					    &update_session_global,
+					    &update_tcon_global);
+
+		if (update_session_global) {
+			status = smbXsrv_session_update(x);
+			if (!NT_STATUS_IS_OK(status)) {
+				return smbd_smb2_request_error(req, status);
+			}
+		}
+		if (update_tcon_global) {
+			status = smbXsrv_tcon_update(req->tcon);
+			if (!NT_STATUS_IS_OK(status)) {
+				return smbd_smb2_request_error(req, status);
+			}
+		}
 	}
 
 	if (call->fileid_ofs != 0) {
@@ -2619,7 +2765,7 @@ static NTSTATUS smbd_smb2_request_reply(struct smbd_smb2_request *req)
 	req->queue_entry.mem_ctx = req;
 	req->queue_entry.vector = req->out.vector;
 	req->queue_entry.count = req->out.vector_count;
-	DLIST_ADD_END(xconn->smb2.send_queue, &req->queue_entry, NULL);
+	DLIST_ADD_END(xconn->smb2.send_queue, &req->queue_entry);
 	xconn->smb2.send_queue_len++;
 
 	status = smbd_smb2_flush_send_queue(xconn);
@@ -2784,9 +2930,9 @@ NTSTATUS smbd_smb2_request_error_ex(struct smbd_smb2_request *req,
 	uint8_t *outhdr = SMBD_SMB2_OUT_HDR_PTR(req);
 	size_t unread_bytes = smbd_smb2_unread_bytes(req);
 
-	DEBUG(10,("smbd_smb2_request_error_ex: idx[%d] status[%s] |%s| at %s\n",
-		  req->current_idx, nt_errstr(status), info ? " +info" : "",
-		  location));
+	DBG_NOTICE("smbd_smb2_request_error_ex: idx[%d] status[%s] |%s| "
+		   "at %s\n", req->current_idx, nt_errstr(status),
+		   info ? " +info" : "", location);
 
 	if (unread_bytes) {
 		/* Recvfile error. Drain incoming socket. */
@@ -2864,8 +3010,8 @@ static NTSTATUS smbd_smb2_send_break(struct smbXsrv_connection *xconn,
 
 	if (session != NULL) {
 		session_wire_id = session->global->session_wire_id;
-		do_encryption = session->encryption_desired;
-		if (tcon->encryption_desired) {
+		do_encryption = session->global->encryption_flags & SMBXSRV_ENCRYPTION_DESIRED;
+		if (tcon->global->encryption_flags & SMBXSRV_ENCRYPTION_DESIRED) {
 			do_encryption = true;
 		}
 	}
@@ -2961,7 +3107,7 @@ static NTSTATUS smbd_smb2_send_break(struct smbXsrv_connection *xconn,
 	state->queue_entry.mem_ctx = state;
 	state->queue_entry.vector = state->vector;
 	state->queue_entry.count = ARRAY_SIZE(state->vector);
-	DLIST_ADD_END(xconn->smb2.send_queue, &state->queue_entry, NULL);
+	DLIST_ADD_END(xconn->smb2.send_queue, &state->queue_entry);
 	xconn->smb2.send_queue_len++;
 
 	status = smbd_smb2_flush_send_queue(xconn);
@@ -3143,8 +3289,9 @@ static NTSTATUS smbd_smb2_request_next_incoming(struct smbXsrv_connection *xconn
 	return NT_STATUS_OK;
 }
 
-void smbd_smb2_first_negprot(struct smbXsrv_connection *xconn,
-			     const uint8_t *inpdu, size_t size)
+void smbd_smb2_process_negprot(struct smbXsrv_connection *xconn,
+			       uint64_t expected_seq_low,
+			       const uint8_t *inpdu, size_t size)
 {
 	struct smbd_server_connection *sconn = xconn->client->sconn;
 	NTSTATUS status;
@@ -3153,7 +3300,7 @@ void smbd_smb2_first_negprot(struct smbXsrv_connection *xconn,
 	DEBUG(10,("smbd_smb2_first_negprot: packet length %u\n",
 		 (unsigned int)size));
 
-	status = smbd_initialize_smb2(xconn);
+	status = smbd_initialize_smb2(xconn, expected_seq_low);
 	if (!NT_STATUS_IS_OK(status)) {
 		smbd_server_connection_terminate(xconn, nt_errstr(status));
 		return;

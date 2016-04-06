@@ -22,9 +22,6 @@
 #include "librpc/gen_ndr/smbXsrv.h"
 #include "smbprofile.h"
 
-extern int aio_pending_size;
-extern int outstanding_aio_calls;
-
 #ifdef USE_DMAPI
 struct smbd_dmapi_context;
 extern struct smbd_dmapi_context *dmapi_ctx;
@@ -226,8 +223,9 @@ NTSTATUS smbd_add_connection(struct smbXsrv_client *client, int sock_fd,
 
 void reply_smb2002(struct smb_request *req, uint16_t choice);
 void reply_smb20ff(struct smb_request *req, uint16_t choice);
-void smbd_smb2_first_negprot(struct smbXsrv_connection *xconn,
-			     const uint8_t *inpdu, size_t size);
+void smbd_smb2_process_negprot(struct smbXsrv_connection *xconn,
+			       uint64_t expected_seq_low,
+			       const uint8_t *inpdu, size_t size);
 
 DATA_BLOB smbd_smb2_generate_outbody(struct smbd_smb2_request *req, size_t size);
 
@@ -503,6 +501,7 @@ struct smbXsrv_connection {
 		struct {
 			uint32_t capabilities;
 			struct GUID guid;
+			bool guid_verified;
 			uint16_t security_mode;
 			uint16_t num_dialects;
 			uint16_t *dialects;
@@ -529,6 +528,22 @@ const char *smbXsrv_connection_dbg(const struct smbXsrv_connection *xconn);
 NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id);
 uint32_t smbXsrv_version_global_current(void);
 
+struct smbXsrv_client_table;
+NTSTATUS smbXsrv_client_global_init(void);
+NTSTATUS smbXsrv_client_create(TALLOC_CTX *mem_ctx,
+			       struct tevent_context *ev_ctx,
+			       struct messaging_context *msg_ctx,
+			       NTTIME now,
+			       struct smbXsrv_client **_client);
+NTSTATUS smbXsrv_client_update(struct smbXsrv_client *client);
+NTSTATUS smbXsrv_client_remove(struct smbXsrv_client *client);
+NTSTATUS smb2srv_client_lookup_global(struct smbXsrv_client *client,
+				      struct GUID client_guid,
+				      TALLOC_CTX *mem_ctx,
+				      struct smbXsrv_client_global0 **_pass);
+NTSTATUS smb2srv_client_connection_pass(struct smbd_smb2_request *smb2req,
+					struct smbXsrv_client_global0 *global);
+
 NTSTATUS smbXsrv_connection_init_tables(struct smbXsrv_connection *conn,
 					enum protocol_types protocol);
 
@@ -536,11 +551,24 @@ NTSTATUS smbXsrv_session_global_init(void);
 NTSTATUS smbXsrv_session_create(struct smbXsrv_connection *conn,
 				NTTIME now,
 				struct smbXsrv_session **_session);
+NTSTATUS smbXsrv_session_add_channel(struct smbXsrv_session *session,
+				     struct smbXsrv_connection *conn,
+				     struct smbXsrv_channel_global0 **_c);
 NTSTATUS smbXsrv_session_update(struct smbXsrv_session *session);
 struct smbXsrv_channel_global0;
 NTSTATUS smbXsrv_session_find_channel(const struct smbXsrv_session *session,
 				      const struct smbXsrv_connection *conn,
 				      struct smbXsrv_channel_global0 **_c);
+NTSTATUS smbXsrv_session_find_auth(const struct smbXsrv_session *session,
+				   const struct smbXsrv_connection *conn,
+				   NTTIME now,
+				   struct smbXsrv_session_auth0 **_a);
+NTSTATUS smbXsrv_session_create_auth(struct smbXsrv_session *session,
+				     struct smbXsrv_connection *conn,
+				     NTTIME now,
+				     uint8_t in_flags,
+				     uint8_t in_security_mode,
+				     struct smbXsrv_session_auth0 **_a);
 struct tevent_req *smb2srv_session_shutdown_send(TALLOC_CTX *mem_ctx,
 					struct tevent_context *ev,
 					struct smbXsrv_session *session,
@@ -553,9 +581,12 @@ NTSTATUS smb1srv_session_lookup(struct smbXsrv_connection *conn,
 				uint16_t vuid, NTTIME now,
 				struct smbXsrv_session **session);
 NTSTATUS smb2srv_session_table_init(struct smbXsrv_connection *conn);
-NTSTATUS smb2srv_session_lookup(struct smbXsrv_connection *conn,
-				uint64_t session_id, NTTIME now,
-				struct smbXsrv_session **session);
+NTSTATUS smb2srv_session_lookup_conn(struct smbXsrv_connection *conn,
+				     uint64_t session_id, NTTIME now,
+				     struct smbXsrv_session **session);
+NTSTATUS smb2srv_session_lookup_client(struct smbXsrv_client *client,
+				       uint64_t session_id, NTTIME now,
+				       struct smbXsrv_session **session);
 struct smbXsrv_session_global0;
 NTSTATUS smbXsrv_session_global_traverse(
 			int (*fn)(struct smbXsrv_session_global0 *, void *),
@@ -610,6 +641,10 @@ NTSTATUS smb2srv_open_lookup(struct smbXsrv_connection *conn,
 			     uint64_t volatile_id,
 			     NTTIME now,
 			     struct smbXsrv_open **_open);
+NTSTATUS smb2srv_open_lookup_replay_cache(struct smbXsrv_connection *conn,
+					  const struct GUID *create_guid,
+					  NTTIME now,
+					  struct smbXsrv_open **_open);
 NTSTATUS smb2srv_open_recreate(struct smbXsrv_connection *conn,
 			       struct auth_session_info *session_info,
 			       uint64_t persistent_id,
@@ -622,6 +657,11 @@ NTSTATUS smbXsrv_open_global_traverse(
 	void *private_data);
 
 NTSTATUS smbXsrv_open_cleanup(uint64_t persistent_id);
+bool smbXsrv_is_encrypted(uint8_t encryption_flags);
+bool smbXsrv_is_partially_encrypted(uint8_t encryption_flags);
+bool smbXsrv_set_crypto_flag(uint8_t *flags, uint8_t flag);
+bool smbXsrv_is_signed(uint8_t signing_flags);
+bool smbXsrv_is_partially_signed(uint8_t signing_flags);
 
 struct smbd_smb2_send_queue {
 	struct smbd_smb2_send_queue *prev, *next;

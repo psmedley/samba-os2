@@ -1,7 +1,8 @@
 <samba:parameter name="unix charset"
-	context="G"
-	type="string"
+                 context="G"
+                 type="string"
                  constant="1"
+                 handler="handle_charset"
                  xmlns:samba="http://www.samba.org/samba/DTD/samba-doc">
 <description>
         <para>Specifies the charset the unix machine 

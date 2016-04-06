@@ -17,12 +17,22 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
-#include "tdb.h"
+#include "replace.h"
 #include "system/network.h"
 #include "system/filesys.h"
 #include "system/wait.h"
-#include "../include/ctdb_private.h"
+
+#include <tdb.h>
+
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+
+#include "ctdb_private.h"
+
+#include "common/reqid.h"
+#include "common/system.h"
+#include "common/common.h"
+#include "common/logging.h"
 
 /*
   return error string for last error
@@ -199,64 +209,16 @@ uint32_t ctdb_hash(const TDB_DATA *key)
 	return tdb_jenkins_hash(discard_const(key));
 }
 
-/*
-  a type checking varient of idr_find
- */
-static void *_idr_find_type(struct idr_context *idp, int id, const char *type, const char *location)
-{
-	void *p = idr_find(idp, id);
-	if (p && talloc_check_name(p, type) == NULL) {
-		DEBUG(DEBUG_ERR,("%s idr_find_type expected type %s  but got %s\n",
-			 location, type, talloc_get_name(p)));
-		return NULL;
-	}
-	return p;
-}
-
-uint32_t ctdb_reqid_new(struct ctdb_context *ctdb, void *state)
-{
-	int id = idr_get_new_above(ctdb->idr, state, ctdb->lastid+1, INT_MAX);
-	if (id < 0) {
-		DEBUG(DEBUG_DEBUG, ("Reqid wrap!\n"));
-		id = idr_get_new(ctdb->idr, state, INT_MAX);
-	}
-	ctdb->lastid = id;
-	return id;
-}
-
-void *_ctdb_reqid_find(struct ctdb_context *ctdb, uint32_t reqid, const char *type, const char *location)
-{
-	void *p;
-
-	p = _idr_find_type(ctdb->idr, reqid, type, location);
-	if (p == NULL) {
-		DEBUG(DEBUG_WARNING, ("Could not find idr:%u\n",reqid));
-	}
-
-	return p;
-}
-
-
-void ctdb_reqid_remove(struct ctdb_context *ctdb, uint32_t reqid)
-{
-	int ret;
-
-	ret = idr_remove(ctdb->idr, reqid);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR, ("Removing idr that does not exist\n"));
-	}
-}
-
 
 static uint32_t ctdb_marshall_record_size(TDB_DATA key,
 					  struct ctdb_ltdb_header *header,
 					  TDB_DATA data)
 {
-	return offsetof(struct ctdb_rec_data, data) + key.dsize +
+	return offsetof(struct ctdb_rec_data_old, data) + key.dsize +
 	       data.dsize + (header ? sizeof(*header) : 0);
 }
 
-static void ctdb_marshall_record_copy(struct ctdb_rec_data *rec,
+static void ctdb_marshall_record_copy(struct ctdb_rec_data_old *rec,
 				      uint32_t reqid,
 				      TDB_DATA key,
 				      struct ctdb_ltdb_header *header,
@@ -287,17 +249,18 @@ static void ctdb_marshall_record_copy(struct ctdb_rec_data *rec,
   note that header may be NULL. If not NULL then it is included in the data portion
   of the record
  */
-struct ctdb_rec_data *ctdb_marshall_record(TALLOC_CTX *mem_ctx, uint32_t reqid,
-					   TDB_DATA key,
-					   struct ctdb_ltdb_header *header,
-					   TDB_DATA data)
+struct ctdb_rec_data_old *ctdb_marshall_record(TALLOC_CTX *mem_ctx,
+					       uint32_t reqid,
+					       TDB_DATA key,
+					       struct ctdb_ltdb_header *header,
+					       TDB_DATA data)
 {
 	size_t length;
-	struct ctdb_rec_data *d;
+	struct ctdb_rec_data_old *d;
 
 	length = ctdb_marshall_record_size(key, header, data);
 
-	d = (struct ctdb_rec_data *)talloc_size(mem_ctx, length);
+	d = (struct ctdb_rec_data_old *)talloc_size(mem_ctx, length);
 	if (d == NULL) {
 		return NULL;
 	}
@@ -316,7 +279,7 @@ struct ctdb_marshall_buffer *ctdb_marshall_add(TALLOC_CTX *mem_ctx,
 					       struct ctdb_ltdb_header *header,
 					       TDB_DATA data)
 {
-	struct ctdb_rec_data *r;
+	struct ctdb_rec_data_old *r;
 	struct ctdb_marshall_buffer *m2;
 	uint32_t length, offset;
 
@@ -338,7 +301,7 @@ struct ctdb_marshall_buffer *ctdb_marshall_add(TALLOC_CTX *mem_ctx,
 		m2->db_id = db_id;
 	}
 
-	r = (struct ctdb_rec_data *)((uint8_t *)m2 + offset);
+	r = (struct ctdb_rec_data_old *)((uint8_t *)m2 + offset);
 	ctdb_marshall_record_copy(r, reqid, key, header, data, length);
 	m2->count++;
 
@@ -360,15 +323,17 @@ TDB_DATA ctdb_marshall_finish(struct ctdb_marshall_buffer *m)
      - pass r==NULL to start
      - loop the number of times indicated by m->count
 */
-struct ctdb_rec_data *ctdb_marshall_loop_next(struct ctdb_marshall_buffer *m, struct ctdb_rec_data *r,
-					      uint32_t *reqid,
-					      struct ctdb_ltdb_header *header,
-					      TDB_DATA *key, TDB_DATA *data)
+struct ctdb_rec_data_old *ctdb_marshall_loop_next(
+				struct ctdb_marshall_buffer *m,
+				struct ctdb_rec_data_old *r,
+				uint32_t *reqid,
+				struct ctdb_ltdb_header *header,
+				TDB_DATA *key, TDB_DATA *data)
 {
 	if (r == NULL) {
-		r = (struct ctdb_rec_data *)&m->data[0];
+		r = (struct ctdb_rec_data_old *)&m->data[0];
 	} else {
-		r = (struct ctdb_rec_data *)(r->length + (uint8_t *)r);
+		r = (struct ctdb_rec_data_old *)(r->length + (uint8_t *)r);
 	}
 
 	if (reqid != NULL) {
@@ -491,7 +456,7 @@ unsigned ctdb_addr_to_port(ctdb_sock_addr *addr)
 /* Add a node to a node map with given address and flags */
 static bool node_map_add(TALLOC_CTX *mem_ctx,
 			 const char *nstr, uint32_t flags,
-			 struct ctdb_node_map **node_map)
+			 struct ctdb_node_map_old **node_map)
 {
 	ctdb_sock_addr addr;
 	uint32_t num;
@@ -504,7 +469,7 @@ static bool node_map_add(TALLOC_CTX *mem_ctx,
 	}
 
 	num = (*node_map)->num + 1;
-	s = offsetof(struct ctdb_node_map, nodes) +
+	s = offsetof(struct ctdb_node_map_old, nodes) +
 		num * sizeof(struct ctdb_node_and_flags);
 	*node_map = talloc_realloc_size(mem_ctx, *node_map, s);
 	if (*node_map == NULL) {
@@ -523,16 +488,16 @@ static bool node_map_add(TALLOC_CTX *mem_ctx,
 }
 
 /* Read a nodes file into a node map */
-struct ctdb_node_map *ctdb_read_nodes_file(TALLOC_CTX *mem_ctx,
+struct ctdb_node_map_old *ctdb_read_nodes_file(TALLOC_CTX *mem_ctx,
 					   const char *nlist)
 {
 	char **lines;
 	int nlines;
 	int i;
-	struct ctdb_node_map *ret;
+	struct ctdb_node_map_old *ret;
 
 	/* Allocate node map header */
-	ret = talloc_zero_size(mem_ctx, offsetof(struct ctdb_node_map, nodes));
+	ret = talloc_zero_size(mem_ctx, offsetof(struct ctdb_node_map_old, nodes));
 	if (ret == NULL) {
 		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
 		return false;
@@ -592,17 +557,17 @@ struct ctdb_node_map *ctdb_read_nodes_file(TALLOC_CTX *mem_ctx,
 	return ret;
 }
 
-struct ctdb_node_map *
+struct ctdb_node_map_old *
 ctdb_node_list_to_map(struct ctdb_node **nodes, uint32_t num_nodes,
 		      TALLOC_CTX *mem_ctx)
 {
 	uint32_t i;
 	size_t size;
-	struct ctdb_node_map *node_map;
+	struct ctdb_node_map_old *node_map;
 
-	size = offsetof(struct ctdb_node_map, nodes) +
+	size = offsetof(struct ctdb_node_map_old, nodes) +
 		num_nodes * sizeof(struct ctdb_node_and_flags);
-	node_map  = (struct ctdb_node_map *)talloc_zero_size(mem_ctx, size);
+	node_map  = (struct ctdb_node_map_old *)talloc_zero_size(mem_ctx, size);
 	if (node_map == NULL) {
 		DEBUG(DEBUG_ERR,
 		      (__location__ " Failed to allocate nodemap array\n"));

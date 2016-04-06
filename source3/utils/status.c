@@ -31,6 +31,7 @@
  */
 
 #include "includes.h"
+#include "smbd/globals.h"
 #include "system/filesys.h"
 #include "popt_common.h"
 #include "dbwrap/dbwrap.h"
@@ -266,11 +267,45 @@ static void print_brl(struct file_id id,
 	TALLOC_FREE(share_mode);
 }
 
+static const char *session_dialect_str(uint16_t dialect)
+{
+	static fstring unkown_dialect;
+
+	switch(dialect){
+	case SMB2_DIALECT_REVISION_000:
+		return "NT1";
+	case SMB2_DIALECT_REVISION_202:
+		return "SMB2_02";
+	case SMB2_DIALECT_REVISION_210:
+		return "SMB2_10";
+	case SMB2_DIALECT_REVISION_222:
+		return "SMB2_22";
+	case SMB2_DIALECT_REVISION_224:
+		return "SMB2_24";
+	case SMB3_DIALECT_REVISION_300:
+		return "SMB3_00";
+	case SMB3_DIALECT_REVISION_302:
+		return "SMB3_02";
+	case SMB3_DIALECT_REVISION_310:
+		return "SMB3_10";
+	case SMB3_DIALECT_REVISION_311:
+		return "SMB3_11";
+	}
+
+	fstr_sprintf(unkown_dialect, "Unknown (0x%04x)", dialect);
+	return unkown_dialect;
+}
+
 static int traverse_connections(const struct connections_key *key,
 				const struct connections_data *crec,
-				void *state)
+				void *private_data)
 {
+	TALLOC_CTX *mem_ctx = (TALLOC_CTX *)private_data;
 	struct server_id_buf tmp;
+	char *timestr = NULL;
+	int result = 0;
+	const char *encryption = "-";
+	const char *signing = "-";
 
 	if (crec->cnum == TID_FIELD_INVALID)
 		return 0;
@@ -280,19 +315,61 @@ static int traverse_connections(const struct connections_key *key,
 		return 0;
 	}
 
-	d_printf("%-10s   %s   %-12s  %s",
+	timestr = timestring(mem_ctx, crec->start);
+	if (timestr == NULL) {
+		return -1;
+	}
+
+	if (smbXsrv_is_encrypted(crec->encryption_flags)) {
+		switch (crec->cipher) {
+		case SMB_ENCRYPTION_GSSAPI:
+			encryption = "GSSAPI";
+			break;
+		case SMB2_ENCRYPTION_AES128_CCM:
+			encryption = "AES-128-CCM";
+			break;
+		case SMB2_ENCRYPTION_AES128_GCM:
+			encryption = "AES-128-GCM";
+			break;
+		default:
+			encryption = "???";
+			result = -1;
+			break;
+		}
+	}
+
+	if (smbXsrv_is_signed(crec->signing_flags)) {
+		if (crec->dialect >= SMB3_DIALECT_REVISION_302) {
+			signing = "AES-128-CMAC";
+		} else if (crec->dialect >= SMB2_DIALECT_REVISION_202) {
+			signing = "HMAC-SHA256";
+		} else {
+			signing = "HMAC-MD5";
+		}
+	}
+
+	d_printf("%-12s %-7s %-13s %-32s %-12s %-12s\n",
 		 crec->servicename, server_id_str_buf(crec->pid, &tmp),
 		 crec->machine,
-		 time_to_asc(crec->start));
+		 timestr,
+		 encryption,
+		 signing);
 
-	return 0;
+	TALLOC_FREE(timestr);
+
+	return result;
 }
 
 static int traverse_sessionid(const char *key, struct sessionid *session,
 			      void *private_data)
 {
+	TALLOC_CTX *mem_ctx = (TALLOC_CTX *)private_data;
 	fstring uid_str, gid_str;
 	struct server_id_buf tmp;
+	char *machine_hostname = NULL;
+	int result = 0;
+	const char *encryption = "-";
+	const char *signing = "-";
 
 	if (do_checks &&
 	    (!process_exists(session->pid) ||
@@ -322,12 +399,74 @@ static int traverse_sessionid(const char *key, struct sessionid *session,
 		}
 	}
 
-	d_printf("%-7s   %-12s  %-12s  %-12s (%s) %-12s\n",
+	machine_hostname = talloc_asprintf(mem_ctx, "%s (%s)",
+					   session->remote_machine,
+					   session->hostname);
+	if (machine_hostname == NULL) {
+		return -1;
+	}
+
+	if (smbXsrv_is_encrypted(session->encryption_flags)) {
+		switch (session->cipher) {
+		case SMB2_ENCRYPTION_AES128_CCM:
+			encryption = "AES-128-CCM";
+			break;
+		case SMB2_ENCRYPTION_AES128_GCM:
+			encryption = "AES-128-GCM";
+			break;
+		default:
+			encryption = "???";
+			result = -1;
+			break;
+		}
+	} else if (smbXsrv_is_partially_encrypted(session->encryption_flags)) {
+		switch (session->cipher) {
+		case SMB_ENCRYPTION_GSSAPI:
+			encryption = "partial(GSSAPI)";
+			break;
+		case SMB2_ENCRYPTION_AES128_CCM:
+			encryption = "partial(AES-128-CCM)";
+			break;
+		case SMB2_ENCRYPTION_AES128_GCM:
+			encryption = "partial(AES-128-GCM)";
+			break;
+		default:
+			encryption = "???";
+			result = -1;
+			break;
+		}
+	}
+
+	if (smbXsrv_is_signed(session->signing_flags)) {
+		if (session->connection_dialect >= SMB3_DIALECT_REVISION_302) {
+			signing = "AES-128-CMAC";
+		} else if (session->connection_dialect >= SMB2_DIALECT_REVISION_202) {
+			signing = "HMAC-SHA256";
+		} else {
+			signing = "HMAC-MD5";
+		}
+	} else if (smbXsrv_is_partially_signed(session->signing_flags)) {
+		if (session->connection_dialect >= SMB3_DIALECT_REVISION_302) {
+			signing = "partial(AES-128-CMAC)";
+		} else if (session->connection_dialect >= SMB2_DIALECT_REVISION_202) {
+			signing = "partial(HMAC-SHA256)";
+		} else {
+			signing = "partial(HMAC-MD5)";
+		}
+	}
+
+
+	d_printf("%-7s %-12s %-12s %-41s %-17s %-20s %-21s\n",
 		 server_id_str_buf(session->pid, &tmp),
 		 uid_str, gid_str,
-		 session->remote_machine, session->hostname, session->protocol_ver);
+		 machine_hostname,
+		 session_dialect_str(session->connection_dialect),
+		 encryption,
+		 signing);
 
-	return 0;
+	TALLOC_FREE(machine_hostname);
+
+	return result;
 }
 
 
@@ -456,18 +595,15 @@ int main(int argc, const char *argv[])
 	}
 
 
-	if (lp_clustering()) {
-		/*
-		 * This implicitly initializes the global ctdbd
-		 * connection, usable by the db_open() calls further
-		 * down.
-		 */
-		msg_ctx = messaging_init(NULL, samba_tevent_context_init(NULL));
-		if (msg_ctx == NULL) {
-			fprintf(stderr, "messaging_init failed\n");
-			ret = -1;
-			goto done;
-		}
+	/*
+	 * This implicitly initializes the global ctdbd connection,
+	 * usable by the db_open() calls further down.
+	 */
+	msg_ctx = messaging_init(NULL, samba_tevent_context_init(NULL));
+	if (msg_ctx == NULL) {
+		fprintf(stderr, "messaging_init failed\n");
+		ret = -1;
+		goto done;
 	}
 
 	if (!lp_load_global(get_dyn_CONFIGFILE())) {
@@ -492,10 +628,10 @@ int main(int argc, const char *argv[])
 
 	if ( show_processes ) {
 		d_printf("\nSamba version %s\n",samba_version_string());
-		d_printf("PID     Username      Group         Machine            Protocol Version       \n");
-		d_printf("------------------------------------------------------------------------------\n");
+		d_printf("%-7s %-12s %-12s %-41s %-17s %-20s %-21s\n", "PID", "Username", "Group", "Machine", "Protocol Version", "Encryption", "Signing");
+		d_printf("----------------------------------------------------------------------------------------------------------------------------------------\n");
 
-		sessionid_traverse_read(traverse_sessionid, NULL);
+		sessionid_traverse_read(traverse_sessionid, frame);
 
 		if (processes_only) {
 			goto done;
@@ -503,25 +639,14 @@ int main(int argc, const char *argv[])
 	}
 
 	if ( show_shares ) {
-		if (verbose) {
-			db_path = lock_path("connections.tdb");
-			if (db_path == NULL) {
-				d_printf("Out of memory - exiting\n");
-				ret = -1;
-				goto done;
-			}
-			d_printf("Opened %s\n", db_path);
-			TALLOC_FREE(db_path);
-		}
-
 		if (brief) {
 			goto done;
 		}
 
-		d_printf("\nService      pid     machine       Connected at\n");
-		d_printf("-------------------------------------------------------\n");
+		d_printf("\n%-12s %-7s %-13s %-32s %-12s %-12s\n", "Service", "pid", "Machine", "Connected at", "Encryption", "Signing");
+		d_printf("---------------------------------------------------------------------------------------------\n");
 
-		connections_forall_read(traverse_connections, NULL);
+		connections_forall_read(traverse_connections, frame);
 
 		d_printf("\n");
 
@@ -581,16 +706,6 @@ int main(int argc, const char *argv[])
 
 	if (show_notify) {
 		struct notify_context *n;
-
-		if (msg_ctx == NULL) {
-			msg_ctx = messaging_init(
-				NULL, samba_tevent_context_init(NULL));
-			if (msg_ctx == NULL) {
-				fprintf(stderr, "messaging_init failed\n");
-				ret = -1;
-				goto done;
-			}
-		}
 
 		n = notify_init(talloc_tos(), msg_ctx,
 				messaging_tevent_context(msg_ctx));

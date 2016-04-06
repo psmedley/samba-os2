@@ -24,9 +24,6 @@
 #include "messages.h"
 #include <tdb.h>
 
-int aio_pending_size = 100;	/* tevent supports 100 signals SA_SIGINFO */
-int outstanding_aio_calls = 0;
-
 #ifdef USE_DMAPI
 struct smbd_dmapi_context *dmapi_ctx = NULL;
 #endif

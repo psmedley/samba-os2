@@ -24,6 +24,7 @@
 #include <talloc.h>
 #include "libcli/util/ntstatus.h"
 #include "tdb.h"
+#include "lib/param/loadparm.h"
 
 struct db_record;
 struct db_context;
@@ -83,17 +84,18 @@ int dbwrap_wipe(struct db_context *db);
 int dbwrap_check(struct db_context *db);
 int dbwrap_get_seqnum(struct db_context *db);
 /* Returns 0 if unknown. */
-int dbwrap_hash_size(struct db_context *db);
 int dbwrap_transaction_start(struct db_context *db);
 NTSTATUS dbwrap_transaction_start_nonblock(struct db_context *db);
 int dbwrap_transaction_commit(struct db_context *db);
 int dbwrap_transaction_cancel(struct db_context *db);
-void dbwrap_db_id(struct db_context *db, const uint8_t **id, size_t *idlen);
+size_t dbwrap_db_id(struct db_context *db, uint8_t *id, size_t idlen);
 bool dbwrap_is_persistent(struct db_context *db);
 const char *dbwrap_name(struct db_context *db);
 
 /* The following definitions come from lib/dbwrap_util.c  */
 
+NTSTATUS dbwrap_purge(struct db_context *db, TDB_DATA key);
+NTSTATUS dbwrap_purge_bystring(struct db_context *db, const char *key);
 NTSTATUS dbwrap_delete_bystring(struct db_context *db, const char *key);
 NTSTATUS dbwrap_store_bystring(struct db_context *db, const char *key,
 			       TDB_DATA data, int flags);

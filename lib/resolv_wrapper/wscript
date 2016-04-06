@@ -2,7 +2,7 @@
 
 import os
 
-VERSION="1.1.2"
+VERSION="1.1.3"
 
 def configure(conf):
     if conf.CHECK_BUNDLED_SYSTEM('resolv_wrapper', minversion=VERSION, set_target=False):
@@ -92,7 +92,6 @@ def build(bld):
         # breaks preloading!
         bld.SAMBA_LIBRARY('resolv_wrapper',
                           source='resolv_wrapper.c',
-                          cflags='-DNDEBUG',
                           deps='dl resolv',
                           install=False,
                           realname='libresolv-wrapper.so')

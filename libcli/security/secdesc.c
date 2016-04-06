@@ -396,25 +396,6 @@ struct sec_desc_buf *dup_sec_desc_buf(TALLOC_CTX *ctx, struct sec_desc_buf *src)
 	return make_sec_desc_buf( ctx, src->sd_size, src->sd);
 }
 
-/*******************************************************************
- Modify a SID's permissions in a struct security_descriptor.
-********************************************************************/
-
-NTSTATUS sec_desc_mod_sid(struct security_descriptor *sd, struct dom_sid *sid, uint32_t mask)
-{
-	NTSTATUS status;
-
-	if (!sd || !sid)
-		return NT_STATUS_INVALID_PARAMETER;
-
-	status = sec_ace_mod_sid(sd->dacl->aces, sd->dacl->num_aces, sid, mask);
-
-	if (!NT_STATUS_IS_OK(status))
-		return status;
-
-	return NT_STATUS_OK;
-}
-
 /*
  * Determine if an struct security_ace is inheritable
  */
@@ -586,7 +567,7 @@ NTSTATUS se_create_child_secdesc(TALLOC_CTX *ctx,
 			  " inherited as %s:%d/0x%02x/0x%08x\n",
 			  dom_sid_string(frame, &ace->trustee),
 			  ace->type, ace->flags, ace->access_mask,
-			  dom_sid_string(frame, &ace->trustee),
+			  dom_sid_string(frame, &new_ace->trustee),
 			  new_ace->type, new_ace->flags,
 			  new_ace->access_mask));
 

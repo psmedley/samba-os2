@@ -47,6 +47,7 @@
 #include "auth/credentials/credentials.h"
 #include "librpc/gen_ndr/ndr_irpc.h"
 #include "lib/messaging/irpc.h"
+#include "libds/common/roles.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_DNS
@@ -234,8 +235,12 @@ static WERROR dns_process_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 	if (tevent_req_is_werror(req, &ret)) {
 		return ret;
 	}
-	if (state->dns_err != DNS_RCODE_OK) {
+	if ((state->dns_err != DNS_RCODE_OK) &&
+	    (state->dns_err != DNS_RCODE_NXDOMAIN)) {
 		goto drop;
+	}
+	if (state->dns_err != DNS_RCODE_OK) {
+		state->out_packet.operation |= state->dns_err;
 	}
 	state->out_packet.operation |= state->state.flags;
 
@@ -721,27 +726,6 @@ static NTSTATUS dns_startup_interfaces(struct dns_server *dns,
 	return NT_STATUS_OK;
 }
 
-static int dns_server_sort_zones(struct ldb_message **m1, struct ldb_message **m2)
-{
-	const char *n1, *n2;
-	size_t l1, l2;
-
-	n1 = ldb_msg_find_attr_as_string(*m1, "name", NULL);
-	n2 = ldb_msg_find_attr_as_string(*m2, "name", NULL);
-
-	l1 = strlen(n1);
-	l2 = strlen(n2);
-
-	/* If the string lengths are not equal just sort by length */
-	if (l1 != l2) {
-		/* If m1 is the larger zone name, return it first */
-		return l2 - l1;
-	}
-
-	/*TODO: We need to compare DNs here, we want the DomainDNSZones first */
-	return 0;
-}
-
 static struct dns_server_tkey_store *tkey_store_init(TALLOC_CTX *mem_ctx,
 						     uint16_t size)
 {
@@ -765,51 +749,14 @@ static struct dns_server_tkey_store *tkey_store_init(TALLOC_CTX *mem_ctx,
 
 static NTSTATUS dns_server_reload_zones(struct dns_server *dns)
 {
-	int ret;
-	static const char * const attrs[] = { "name", NULL};
-	struct ldb_result *res;
-	int i;
+	NTSTATUS status;
 	struct dns_server_zone *new_list = NULL;
 	struct dns_server_zone *old_list = NULL;
 	struct dns_server_zone *old_zone;
-
-	// TODO: this search does not work against windows
-	ret = dsdb_search(dns->samdb, dns, &res, NULL, LDB_SCOPE_SUBTREE,
-			  attrs, DSDB_SEARCH_SEARCH_ALL_PARTITIONS, "(objectClass=dnsZone)");
-	if (ret != LDB_SUCCESS) {
-		return NT_STATUS_INTERNAL_DB_CORRUPTION;
+	status = dns_common_zones(dns->samdb, dns, &new_list);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
 	}
-
-	TYPESAFE_QSORT(res->msgs, res->count, dns_server_sort_zones);
-
-	for (i=0; i < res->count; i++) {
-		struct dns_server_zone *z;
-
-		z = talloc_zero(dns, struct dns_server_zone);
-		if (z == NULL) {
-			return NT_STATUS_NO_MEMORY;
-		}
-
-		z->name = ldb_msg_find_attr_as_string(res->msgs[i], "name", NULL);
-		z->dn = talloc_move(z, &res->msgs[i]->dn);
-		/*
-		 * Ignore the RootDNSServers zone and zones that we don't support yet
-		 * RootDNSServers should never be returned (Windows DNS server don't)
-		 * ..TrustAnchors should never be returned as is, (Windows returns
-		 * TrustAnchors) and for the moment we don't support DNSSEC so we'd better
-		 * not return this zone.
-		 */
-		if ((strcmp(z->name, "RootDNSServers") == 0) ||
-		    (strcmp(z->name, "..TrustAnchors") == 0))
-		{
-			DEBUG(10, ("Ignoring zone %s\n", z->name));
-			talloc_free(z);
-			continue;
-		}
-		DLIST_ADD_END(new_list, z, NULL);
-	}
-
-	old_list = dns->zones;
 	dns->zones = new_list;
 	while ((old_zone = DLIST_TAIL(old_list)) != NULL) {
 		DLIST_REMOVE(old_list, old_zone);

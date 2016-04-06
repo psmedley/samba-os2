@@ -2,12 +2,12 @@
 .\"     Title: smbget
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 02/24/2016
+.\"      Date: 03/22/2016
 .\"    Manual: User Commands
-.\"    Source: Samba 4.3
+.\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "SMBGET" "1" "02/24/2016" "Samba 4\&.3" "User Commands"
+.TH "SMBGET" "1" "03/22/2016" "Samba 4\&.4" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 smbget \- wget\-like utility for download files over SMB
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-smbget [\-a,\ \-\-guest] [\-r,\ \-\-resume] [\-R,\ \-\-recursive] [\-u,\ \-\-username=STRING] [\-p,\ \-\-password=STRING] [\-w,\ \-\-workgroup=STRING] [\-n,\ \-\-nonprompt] [\-d,\ \-\-debuglevel=INT] [\-D,\ \-\-dots] [\-P,\ \-\-keep\-permissions] [\-o,\ \-\-outputfile] [\-f,\ \-\-rcfile] [\-q,\ \-\-quiet] [\-v,\ \-\-verbose] [\-b,\ \-\-blocksize] [\-O,\ \-\-stdout] [\-U,\ \-\-update] [\-?,\ \-\-help] [\-\-usage] {smb://host/share/path/to/file} [smb://url2/] [\&.\&.\&.]
+smbget [\-a,\ \-\-guest] [\-r,\ \-\-resume] [\-R,\ \-\-recursive] [\-U,\ \-\-username=STRING] [\-w,\ \-\-workgroup=STRING] [\-n,\ \-\-nonprompt] [\-d,\ \-\-debuglevel=INT] [\-D,\ \-\-dots] [\-o,\ \-\-outputfile] [\-f,\ \-\-rcfile] [\-q,\ \-\-quiet] [\-v,\ \-\-verbose] [\-b,\ \-\-blocksize] [\-O,\ \-\-stdout] [\-u,\ \-\-update] [\-?,\ \-\-help] [\-\-usage] {smb://host/share/path/to/file} [smb://url2/] [\&.\&.\&.]
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -59,14 +59,9 @@ Automatically resume aborted files
 Recursively download files
 .RE
 .PP
-\-u, \-\-username=STRING
+\-U, \-\-username=\fIusername[%password]\fR
 .RS 4
-Username to use
-.RE
-.PP
-\-p, \-\-password=STRING
-.RS 4
-Password to use
+Username (and password) to use
 .RE
 .PP
 \-w, \-\-workgroup=STRING
@@ -87,11 +82,6 @@ Debuglevel to use
 \-D, \-\-dots
 .RS 4
 Show dots as progress indication
-.RE
-.PP
-\-P, \-\-keep\-permissions
-.RS 4
-Set same permissions on local file as are set on remote file\&.
 .RE
 .PP
 \-o, \-\-outputfile
@@ -134,7 +124,7 @@ Show help message
 Display brief usage message
 .RE
 .PP
-\-U, \-\-update
+\-u, \-\-update
 .RS 4
 Download only when remote file is newer than local file or local file is missing\&.
 .RE

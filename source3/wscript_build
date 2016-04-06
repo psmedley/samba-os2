@@ -105,29 +105,20 @@ bld.SAMBA3_SUBSYSTEM('TLDAP',
 # when modules are not linked statically. In the latter case
 # symbols will not be present in the libpdb anyway so no hurt is
 # done to the version script.
-static_pdb_match = ['tdbsam', 'smbpasswd', 'wbc_sam']
 private_pdb_match = []
-
-# AD DC module when linked statically will pull in few source4/winbind
-# dependencies which are not used outside AD DC module
-static_pdb_match.append('samba_dsdb')
 private_pdb_match.append('!idmap_init')
 private_pdb_match.append('!idmap_sids_to_xids')
 private_pdb_match.append('!idmap_xids_to_sids')
 
-# ldap module is actually three modules merged together: ldapsam, ipa, and nds
-static_pdb_match = static_pdb_match + ['ldap', 'ipa', 'nds']
 ldapsam_pdb_match = ['!priv2ld', '!smbldap_search_domain_info',
                      '!ldapsam_*', '!groupmap_attr_list*', '!get_userattr_list',
                      '!dominfo_attr_list', '!get_attr_key2string',
                      '!sidmap_attr_list', '!attrib_map_*', '!idpool_attr_list',
                      '!get_attr_list']
 private_pdb_match.append('!pdb_nds_*')
-private_pdb_match.append('!pdb_init_ldapsam')
 private_pdb_match.append('!pdb_ldapsam_init*')
+private_pdb_match.append('!pdb_*_init')
 private_pdb_match = private_pdb_match + ldapsam_pdb_match
-
-private_pdb_match = private_pdb_match + map(lambda x: '!pdb_%s_init' % x, static_pdb_match)
 
 bld.SAMBA3_LIBRARY('samba-passdb',
                    source='',
@@ -142,7 +133,7 @@ bld.SAMBA3_LIBRARY('samba-passdb',
                    passdb/lookup_sid.h''',
                    abi_match=private_pdb_match,
                    abi_directory='passdb/ABI',
-                   vnum='0.24.1')
+                   vnum='0.25.0')
 
 bld.SAMBA3_SUBSYSTEM('pdb',
                    source='''passdb/pdb_get_set.c
@@ -180,7 +171,16 @@ bld.SAMBA3_SUBSYSTEM('param',
                    lib/sharesec.c
                    lib/ldap_debug_handler.c
                    lib/util_names.c''',
-                   deps='samba-util PARAM_UTIL ldap lber LOADPARM_CTX samba3core smbconf param_local.h param_global.h cups''')
+                   deps='''samba-util
+                   PARAM_UTIL
+                   ldap
+                   lber
+                   LOADPARM_CTX
+                   samba3core
+                   smbconf
+                   param_local.h
+                   param_global.h
+                   cups''')
 
 # this includes only the low level parse code, not stuff
 # that requires knowledge of security contexts
@@ -247,26 +247,24 @@ bld.SAMBA3_SUBSYSTEM('KRBCLIENT',
                      source='libads/kerberos.c libads/ads_status.c',
                      public_deps='krb5samba k5crypto gssapi LIBTSOCKET CLDAP LIBNMB')
 
-bld.SAMBA3_LIBRARY('sys_rw',
-                   source='lib/sys_rw.c lib/sys_rw_data.c',
-                   deps='replace iov_buf',
-                   private_library=True)
-
 bld.SAMBA3_SUBSYSTEM('samba3util',
                    source='''lib/system.c
                    lib/sendfile.c
                    lib/recvfile.c
                    lib/time.c
                    lib/util_sid.c
+                   lib/util_specialsids.c
                    lib/util_file.c
                    lib/util.c
+                   lib/util_path.c
+                   lib/util_procid.c
                    lib/util_sock.c
                    lib/util_tsock.c
                    lib/util_transfer_file.c
                    lib/sock_exec.c''',
                    deps='ndr LIBTSOCKET samba-security NDR_SECURITY samba-util util_tdb sys_rw iov_buf')
 
-if bld.CONFIG_GET("CTDB_CFLAGS") and bld.CONFIG_GET("CTDB_INCLUDE"):
+if bld.env.with_ctdb:
     SAMBA_CLUSTER_SUPPORT_SOURCES='''
                      lib/cluster_support.c
                      lib/dbwrap/dbwrap_ctdb.c
@@ -291,8 +289,6 @@ else:
 bld.SAMBA3_LIBRARY('samba-cluster-support',
                    source=SAMBA_CLUSTER_SUPPORT_SOURCES,
                    deps=SAMBA_CLUSTER_SUPPORT_DEPS,
-                   cflags=bld.CONFIG_GET("CTDB_CFLAGS"),
-                   includes=bld.CONFIG_GET("CTDB_INCLUDE"),
                    allow_undefined_symbols=True,
                    private_library=True)
 
@@ -304,7 +300,8 @@ bld.SAMBA3_SUBSYSTEM('TDB_LIB',
 
 bld.SAMBA3_LIBRARY('messages_dgm',
                    source='''lib/messages_dgm.c lib/messages_dgm_ref.c''',
-                   deps='talloc UNIX_MSG POLL_FUNCS_TEVENT samba-debug',
+                   deps='''talloc UNIX_MSG POLL_FUNCS_TEVENT samba-debug
+                           genrand''',
                    private_library=True)
 
 bld.SAMBA3_LIBRARY('messages_util',
@@ -595,6 +592,7 @@ bld.SAMBA3_LIBRARY('smbd_base',
                    smbd/smb2_setinfo.c
                    smbd/smb2_break.c
                    smbd/smbXsrv_version.c
+                   smbd/smbXsrv_client.c
                    smbd/smbXsrv_session.c
                    smbd/smbXsrv_tcon.c
                    smbd/smbXsrv_open.c
@@ -641,6 +639,7 @@ bld.SAMBA3_LIBRARY('smbd_base',
                    notifyd
                    ''' +
                    bld.env['dmapi_lib'] +
+                   bld.env['legacy_quota_libs'] +
                    NOTIFY_DEPS,
                    private_library=True)
 
@@ -811,7 +810,7 @@ bld.SAMBA3_LIBRARY('CHARSET3',
 
 bld.SAMBA3_SUBSYSTEM('errors3',
                      source='libsmb/errormap.c libsmb/smberr.c lib/errmap_unix.c',
-                     deps='errors')
+                     deps='samba-errors')
 
 bld.SAMBA3_SUBSYSTEM('LIBCLI_SAMR',
                     source='rpc_client/cli_samr.c',
@@ -863,7 +862,7 @@ bld.SAMBA3_SUBSYSTEM('LIBLSA',
 ########################## BINARIES #################################
 
 bld.SAMBA3_BINARY('smbd/smbd',
-                 source='smbd/server.c',
+                 source='smbd/server.c smbd/smbd_cleanupd.c',
                  deps='smbd_base EPMD LSASD FSSD MDSSD',
                  install_path='${SBINDIR}')
 
@@ -1077,7 +1076,8 @@ bld.SAMBA3_BINARY('client/smbclient',
                  msrpc3
                  RPC_NDR_SRVSVC
                  cli_smb_common
-                 ''' + bld.env['archive_lib'])
+		 archive
+                 ''')
 
 bld.SAMBA3_BINARY('net',
                  source='''utils/net.c
@@ -1192,6 +1192,7 @@ bld.SAMBA3_BINARY('smbspool_krb5_wrapper',
                  DYNCONFIG
                  cups
                  ''',
+                 install_path='${LIBEXECDIR}/samba',
                  enabled=bld.CONFIG_SET('HAVE_CUPS'))
 
 bld.SAMBA3_BINARY('testparm',
@@ -1200,13 +1201,6 @@ bld.SAMBA3_BINARY('testparm',
                  talloc
                  param
                  popt_samba3''')
-
-bld.SAMBA3_BINARY('smbta-util',
-                 source='utils/smbta-util.c',
-                 deps='''
-                 talloc
-                 secrets3
-                 param''')
 
 smbstatus_source = 'utils/status.c smbd/notify_msg.c'
 
@@ -1319,6 +1313,7 @@ bld.SAMBA3_BINARY('smbtorture' + bld.env.suffix3,
                  LOCKING
                  NDR_OPEN_FILES
                  idmap
+                 IDMAP_TDB_COMMON
                  samba-cluster-support
                  ''',
                  cflags='-DWINBINDD_SOCKET_DIR=\"%s\"' % bld.env.WINBINDD_SOCKET_DIR,
@@ -1495,13 +1490,13 @@ bld.SAMBA3_BINARY('vlp',
 
 bld.SAMBA3_PYTHON('pysmbd',
                   source='smbd/pysmbd.c',
-                  deps='smbd_base pyrpc_util',
+                  deps='smbd_base pyrpc_util pytalloc-util',
                   realname='samba/samba3/smbd.so'
                   )
 
 bld.SAMBA3_PYTHON('pylibsmb',
                   source='libsmb/pylibsmb.c',
-                  deps='smbclient samba-credentials',
+                  deps='smbclient samba-credentials pytalloc-util',
                   realname='samba/samba3/libsmb_samba_internal.so'
                   )
 
@@ -1535,7 +1530,6 @@ bld.RECURSE('librpc')
 bld.RECURSE('librpc/idl')
 bld.RECURSE('libsmb')
 bld.RECURSE('modules')
-bld.RECURSE('pam_smbpass')
 bld.RECURSE('param')
 bld.RECURSE('passdb')
 bld.RECURSE('rpc_server')

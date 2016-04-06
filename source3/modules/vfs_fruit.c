@@ -29,7 +29,7 @@
 #include "messages.h"
 #include "libcli/security/security.h"
 #include "../libcli/smb/smb2_create_ctx.h"
-#include "lib/sys_rw.h"
+#include "lib/util/sys_rw.h"
 #include "lib/util/tevent_ntstatus.h"
 
 /*
@@ -1840,7 +1840,7 @@ static NTSTATUS check_aapl(vfs_handle_struct *handle,
 	}
 
 	if (aapl->data.length != 24) {
-		DEBUG(1, ("unexpected AAPL ctxt legnth: %ju\n",
+		DEBUG(1, ("unexpected AAPL ctxt length: %ju\n",
 			  (uintmax_t)aapl->data.length));
 		return NT_STATUS_INVALID_PARAMETER;
 	}
@@ -3394,7 +3394,7 @@ static NTSTATUS fruit_create_file(vfs_handle_struct *handle,
 
 	status = check_aapl(handle, req, in_context_blobs, out_context_blobs);
 	if (!NT_STATUS_IS_OK(status)) {
-		return status;
+		goto fail;
 	}
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config, struct fruit_config_data,

@@ -49,6 +49,7 @@ class dbcheck(object):
         self.remove_all_unknown_attributes = False
         self.remove_all_empty_attributes = False
         self.fix_all_normalisation = False
+        self.fix_all_duplicates = False
         self.fix_all_DN_GUIDs = False
         self.fix_all_binary_dn = False
         self.remove_all_deleted_DN_links = False
@@ -64,6 +65,8 @@ class dbcheck(object):
         self.move_to_lost_and_found = False
         self.fix_instancetype = False
         self.fix_replmetadata_zero_invocationid = False
+        self.fix_replmetadata_duplicate_attid = False
+        self.fix_replmetadata_wrong_attid = False
         self.fix_replmetadata_unsorted_attid = False
         self.fix_deleted_deleted_objects = False
         self.fix_dn = False
@@ -289,6 +292,23 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                           "Failed to normalise attribute %s" % attrname,
                           validate=False):
             self.report("Normalised attribute %s" % attrname)
+
+    def err_duplicate_values(self, dn, attrname, dup_values, values):
+        '''fix attribute normalisation errors'''
+        self.report("ERROR: Duplicate values for attribute '%s' in '%s'" % (attrname, dn))
+        self.report("Values contain a duplicate: [%s]/[%s]!" % (','.join(dup_values), ','.join(values)))
+        if not self.confirm_all("Fix duplicates for '%s' from '%s'?" % (attrname, dn), 'fix_all_duplicates'):
+            self.report("Not fixing attribute '%s'" % attrname)
+            return
+
+        m = ldb.Message()
+        m.dn = dn
+        m[attrname] = ldb.MessageElement(values, ldb.FLAG_MOD_REPLACE, attrname)
+
+        if self.do_modify(m, ["relax:0", "show_recycled:1"],
+                          "Failed to remove duplicate value on attribute %s" % attrname,
+                          validate=False):
+            self.report("Removed duplicate value on attribute %s" % attrname)
 
     def is_deleted_objects_dn(self, dsdb_dn):
         '''see if a dsdb_Dn is the special Deleted Objects DN'''
@@ -701,12 +721,14 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
 
         return 0
 
-    def process_metadata(self, val):
+    def process_metadata(self, dn, val):
         '''Read metadata properties and list attributes in it.
            raises KeyError if the attid is unknown.'''
 
         set_att = set()
+        wrong_attids = set()
         list_attid = []
+        in_schema_nc = dn.is_child_of(self.schema_dn)
 
         repl = ndr_unpack(drsblobs.replPropertyMetaDataBlob, str(val))
         obj = repl.ctr
@@ -715,8 +737,12 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             att = self.samdb_schema.get_lDAPDisplayName_by_attid(o.attid)
             set_att.add(att.lower())
             list_attid.append(o.attid)
+            correct_attid = self.samdb_schema.get_attid_from_lDAPDisplayName(att,
+                                                                             is_schema_nc=in_schema_nc)
+            if correct_attid != o.attid:
+                wrong_attids.add(o.attid)
 
-        return (set_att, list_attid)
+        return (set_att, list_attid, wrong_attids)
 
 
     def fix_metadata(self, dn, attr):
@@ -990,7 +1016,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
 
             if not self.confirm_all('Fix %s on %s by setting originating_invocation_id on some elements to our invocationID %s?'
                                     % (attr, dn, self.samdb.get_invocation_id()), 'fix_replmetadata_zero_invocationid'):
-                self.report('Not fixing %s on %s\n' % (attr, dn))
+                self.report('Not fixing zero originating_invocation_id in %s on %s\n' % (attr, dn))
                 return
 
             nmsg = ldb.Message()
@@ -1015,30 +1041,100 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 return
 
 
-    def err_replmetadata_unsorted_attid(self, dn, attr, repl_meta_data):
+    def err_replmetadata_incorrect_attid(self, dn, attr, repl_meta_data, wrong_attids):
         repl = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
                           str(repl_meta_data))
+        fix = False
+
+        set_att = set()
+        remove_attid = set()
+        hash_att = {}
+
+        in_schema_nc = dn.is_child_of(self.schema_dn)
+
         ctr = repl.ctr
-        found = False
+        # Sort the array, except for the last element.  This strange
+        # construction, creating a new list, due to bugs in samba's
+        # array handling in IDL generated objects.
+        ctr.array = sorted(ctr.array[:-1], key=lambda o: o.attid) + [ctr.array[-1]]
+        # Now walk it in reverse, so we see the low (and so incorrect,
+        # the correct values are above 0x80000000) values first and
+        # remove the 'second' value we see.
+        for o in reversed(ctr.array):
+            print "%s: 0x%08x" % (dn, o.attid)
+            att = self.samdb_schema.get_lDAPDisplayName_by_attid(o.attid)
+            if att.lower() in set_att:
+                self.report('ERROR: duplicate attributeID values for %s in %s on %s\n' % (att, attr, dn))
+                if not self.confirm_all('Fix %s on %s by removing the duplicate value 0x%08x for %s (keeping 0x%08x)?'
+                                        % (attr, dn, o.attid, att, hash_att[att].attid),
+                                        'fix_replmetadata_duplicate_attid'):
+                    self.report('Not fixing duplicate value 0x%08x for %s in %s on %s\n'
+                                % (o.attid, att, attr, dn))
+                    return
+                fix = True
+                remove_attid.add(o.attid)
+                # We want to set the metadata for the most recent
+                # update to have been applied locally, that is the metadata
+                # matching the (eg string) value in the attribute
+                if o.local_usn > hash_att[att].local_usn:
+                    # This is always what we would have sent over DRS,
+                    # because the DRS server will have sent the
+                    # msDS-IntID, but with the values from both
+                    # attribute entries.
+                    hash_att[att].version = o.version
+                    hash_att[att].originating_change_time = o.originating_change_time
+                    hash_att[att].originating_invocation_id = o.originating_invocation_id
+                    hash_att[att].originating_usn = o.originating_usn
+                    hash_att[att].local_usn = o.local_usn
 
-        self.report('ERROR: unsorted attributeID values in %s on %s\n' % (attr, dn))
-        if not self.confirm_all('Fix %s on %s by sorting the attribute list?'
-                                % (attr, dn), 'fix_replmetadata_unsorted_attid'):
-            self.report('Not fixing %s on %s\n' % (attr, dn))
-            return
+                # Do not re-add the value to the set or overwrite the hash value
+                continue
 
-        # Sort the array, except for the last element
-        ctr.array[:-1] = sorted(ctr.array[:-1], key=lambda o: o.attid)
+            hash_att[att] = o
+            set_att.add(att.lower())
 
+        # Generate a real list we can sort on properly
+        new_list = [o for o in ctr.array if o.attid not in remove_attid]
+
+        if (len(wrong_attids) > 0):
+            for o in new_list:
+                if o.attid in wrong_attids:
+                    att = self.samdb_schema.get_lDAPDisplayName_by_attid(o.attid)
+                    correct_attid = self.samdb_schema.get_attid_from_lDAPDisplayName(att, is_schema_nc=in_schema_nc)
+                    self.report('ERROR: incorrect attributeID values in %s on %s\n' % (attr, dn))
+                    if not self.confirm_all('Fix %s on %s by replacing incorrect value 0x%08x for %s (new 0x%08x)?'
+                                            % (attr, dn, o.attid, att, hash_att[att].attid), 'fix_replmetadata_wrong_attid'):
+                        self.report('Not fixing incorrect value 0x%08x with 0x%08x for %s in %s on %s\n'
+                                    % (o.attid, correct_attid, att, attr, dn))
+                        return
+                    fix = True
+                    o.attid = correct_attid
+            if fix:
+                # Sort the array, except for the last element (we changed
+                # the value so must re-sort)
+                new_list[:-1] = sorted(new_list[:-1], key=lambda o: o.attid)
+
+        # If we did not already need to fix it, then ask about sorting
+        if not fix:
+            self.report('ERROR: unsorted attributeID values in %s on %s\n' % (attr, dn))
+            if not self.confirm_all('Fix %s on %s by sorting the attribute list?'
+                                    % (attr, dn), 'fix_replmetadata_unsorted_attid'):
+                self.report('Not fixing %s on %s\n' % (attr, dn))
+                return
+
+            # The actual sort done is done at the top of the function
+
+        ctr.count = len(new_list)
+        ctr.array = new_list
         replBlob = ndr_pack(repl)
 
         nmsg = ldb.Message()
         nmsg.dn = dn
         nmsg[attr] = ldb.MessageElement(replBlob, ldb.FLAG_MOD_REPLACE, attr)
         if self.do_modify(nmsg, ["local_oid:%s:0" % dsdb.DSDB_CONTROL_DBCHECK_MODIFY_RO_REPLICA,
-                                 "local_oid:1.3.6.1.4.1.7165.4.3.14:0",
-                                 "local_oid:1.3.6.1.4.1.7165.4.3.25:0"],
-                          "Failed to fix attribute %s" % attr):
+                             "local_oid:1.3.6.1.4.1.7165.4.3.14:0",
+                             "local_oid:1.3.6.1.4.1.7165.4.3.25:0"],
+                      "Failed to fix attribute %s" % attr):
             self.report("Fixed attribute '%s' of '%s'\n" % (attr, dn))
 
 
@@ -1230,15 +1326,19 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                     # based on what other attributes we see.
 
                 try:
-                    (set_attrs_from_md, list_attid_from_md) = self.process_metadata(obj[attrname])
+                    (set_attrs_from_md, list_attid_from_md, wrong_attids) \
+                        = self.process_metadata(dn, obj[attrname])
                 except KeyError:
                     error_count += 1
                     self.err_replmetadata_unknown_attid(dn, attrname, obj[attrname])
                     continue
 
-                if sorted(list_attid_from_md[:-1]) != list_attid_from_md[:-1]:
-                    error_count += 1
-                    self.err_replmetadata_unsorted_attid(dn, attrname, obj[attrname])
+                if len(set_attrs_from_md) < len(list_attid_from_md) \
+                   or len(wrong_attids) > 0 \
+                   or sorted(list_attid_from_md[:-1]) != list_attid_from_md[:-1]:
+                    error_count +=1
+                    self.err_replmetadata_incorrect_attid(dn, attrname, obj[attrname], wrong_attids)
+
                 else:
                     # Here we check that the first attid is 0
                     # (objectClass) and that the last on is the RDN
@@ -1286,8 +1386,20 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 continue
 
             if str(attrname).lower() == 'objectclass':
-                normalised = self.samdb.dsdb_normalise_attributes(self.samdb_schema, attrname, list(obj[attrname]))
-                if list(normalised) != list(obj[attrname]):
+                normalised = self.samdb.dsdb_normalise_attributes(self.samdb_schema, attrname, obj[attrname])
+                # Do not consider the attribute incorrect if:
+                #  - The sorted (alphabetically) list is the same, inclding case
+                #  - The first and last elements are the same
+                #
+                # This avoids triggering an error due to
+                # non-determinism in the sort routine in (at least)
+                # 4.3 and earlier, and the fact that any AUX classes
+                # in these attributes are also not sorted when
+                # imported from Windows (they are just in the reverse
+                # order of last set)
+                if sorted(normalised) != sorted(obj[attrname]) \
+                   or normalised[0] != obj[attrname][0] \
+                   or normalised[-1] != obj[attrname][-1]:
                     self.err_normalise_mismatch_replace(dn, attrname, list(obj[attrname]))
                     error_count += 1
                 continue
@@ -1353,13 +1465,21 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 # it's some form of DN, do specialised checking on those
                 error_count += self.check_dn(obj, attrname, syntax_oid)
 
+            values = set()
             # check for incorrectly normalised attributes
             for val in obj[attrname]:
+                values.add(str(val))
+
                 normalised = self.samdb.dsdb_normalise_attributes(self.samdb_schema, attrname, [val])
                 if len(normalised) != 1 or normalised[0] != val:
                     self.err_normalise_mismatch(dn, attrname, obj[attrname])
                     error_count += 1
                     break
+
+            if len(obj[attrname]) != len(values):
+                   self.err_duplicate_values(dn, attrname, obj[attrname], list(values))
+                   error_count += 1
+                   break
 
             if str(attrname).lower() == "instancetype":
                 calculated_instancetype = self.calculate_instancetype(dn)

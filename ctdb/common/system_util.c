@@ -18,13 +18,19 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/filesys.h"
 #include "system/shmem.h"
+#include "system/network.h"
 
 #include <libgen.h>
 
-#include "ctdb_private.h"
+#include "lib/util/debug.h"
+
+#include "protocol/protocol.h"
+
+#include "common/logging.h"
+#include "common/system.h"
 
 #if HAVE_SCHED_H
 #include <sched.h>

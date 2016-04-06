@@ -17,17 +17,29 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
-#include "tdb.h"
+#include "replace.h"
 #include "system/network.h"
 #include "system/filesys.h"
 #include "system/dir.h"
 #include "system/time.h"
-#include "../include/ctdb_private.h"
-#include "../common/rb_tree.h"
+#include "system/locale.h"
+
+#include <talloc.h>
+#include <tevent.h>
+
 #include "lib/tdb_wrap/tdb_wrap.h"
 #include "lib/util/dlinklist.h"
-#include <ctype.h>
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/rb_tree.h"
+#include "common/reqid.h"
+#include "common/system.h"
+#include "common/common.h"
+#include "common/logging.h"
 
 #define PERSISTENT_HEALTH_TDB "persistent_health.tdb"
 
@@ -241,6 +253,7 @@ store:
 
 struct lock_fetch_state {
 	struct ctdb_context *ctdb;
+	struct ctdb_db_context *ctdb_db;
 	void (*recv_pkt)(void *, struct ctdb_req_header *);
 	void *recv_context;
 	struct ctdb_req_header *hdr;
@@ -255,7 +268,7 @@ static void lock_fetch_callback(void *p, bool locked)
 {
 	struct lock_fetch_state *state = talloc_get_type(p, struct lock_fetch_state);
 	if (!state->ignore_generation &&
-	    state->generation != state->ctdb->vnn_map->generation) {
+	    state->generation != state->ctdb_db->generation) {
 		DEBUG(DEBUG_NOTICE,("Discarding previous generation lockwait packet\n"));
 		talloc_free(state->hdr);
 		return;
@@ -321,10 +334,11 @@ int ctdb_ltdb_lock_requeue(struct ctdb_db_context *ctdb_db,
 
 	state = talloc(hdr, struct lock_fetch_state);
 	state->ctdb = ctdb_db->ctdb;
+	state->ctdb_db = ctdb_db;
 	state->hdr = hdr;
 	state->recv_pkt = recv_pkt;
 	state->recv_context = recv_context;
-	state->generation = ctdb_db->ctdb->vnn_map->generation;
+	state->generation = ctdb_db->generation;
 	state->ignore_generation = ignore_generation;
 
 	/* now the contended path */
@@ -1009,6 +1023,7 @@ again:
 		return -1;
 	}
 
+	ctdb_db->generation = ctdb->vnn_map->generation;
 
 	DEBUG(DEBUG_NOTICE,("Attached to database '%s' with flags 0x%x\n",
 			    ctdb_db->db_path, tdb_flags));
@@ -1021,7 +1036,7 @@ again:
 struct ctdb_deferred_attach_context {
 	struct ctdb_deferred_attach_context *next, *prev;
 	struct ctdb_context *ctdb;
-	struct ctdb_req_control *c;
+	struct ctdb_req_control_old *c;
 };
 
 
@@ -1032,7 +1047,9 @@ static int ctdb_deferred_attach_destructor(struct ctdb_deferred_attach_context *
 	return 0;
 }
 
-static void ctdb_deferred_attach_timeout(struct event_context *ev, struct timed_event *te, struct timeval t, void *private_data)
+static void ctdb_deferred_attach_timeout(struct tevent_context *ev,
+					 struct tevent_timer *te,
+					 struct timeval t, void *private_data)
 {
 	struct ctdb_deferred_attach_context *da_ctx = talloc_get_type(private_data, struct ctdb_deferred_attach_context);
 	struct ctdb_context *ctdb = da_ctx->ctdb;
@@ -1041,7 +1058,9 @@ static void ctdb_deferred_attach_timeout(struct event_context *ev, struct timed_
 	talloc_free(da_ctx);
 }
 
-static void ctdb_deferred_attach_callback(struct event_context *ev, struct timed_event *te, struct timeval t, void *private_data)
+static void ctdb_deferred_attach_callback(struct tevent_context *ev,
+					  struct tevent_timer *te,
+					  struct timeval t, void *private_data)
 {
 	struct ctdb_deferred_attach_context *da_ctx = talloc_get_type(private_data, struct ctdb_deferred_attach_context);
 	struct ctdb_context *ctdb = da_ctx->ctdb;
@@ -1060,7 +1079,9 @@ int ctdb_process_deferred_attach(struct ctdb_context *ctdb)
 	 */
 	while ((da_ctx = ctdb->deferred_attach) != NULL) {
 		DLIST_REMOVE(ctdb->deferred_attach, da_ctx);
-		event_add_timed(ctdb->ev, da_ctx, timeval_current_ofs(1,0), ctdb_deferred_attach_callback, da_ctx);
+		tevent_add_timer(ctdb->ev, da_ctx,
+				 timeval_current_ofs(1,0),
+				 ctdb_deferred_attach_callback, da_ctx);
 	}
 
 	return 0;
@@ -1072,7 +1093,7 @@ int ctdb_process_deferred_attach(struct ctdb_context *ctdb)
 int32_t ctdb_control_db_attach(struct ctdb_context *ctdb, TDB_DATA indata,
 			       TDB_DATA *outdata, uint64_t tdb_flags, 
 			       bool persistent, uint32_t client_id,
-			       struct ctdb_req_control *c,
+			       struct ctdb_req_control_old *c,
 			       bool *async_reply)
 {
 	const char *db_name = (const char *)indata.dptr;
@@ -1087,13 +1108,13 @@ int32_t ctdb_control_db_attach(struct ctdb_context *ctdb, TDB_DATA indata,
 		return -1;
 	}
 
-	/* dont allow any local clients to attach while we are in recovery mode
+	/* don't allow any local clients to attach while we are in recovery mode
 	 * except for the recovery daemon.
 	 * allow all attach from the network since these are always from remote
 	 * recovery daemons.
 	 */
 	if (client_id != 0) {
-		client = ctdb_reqid_find(ctdb, client_id, struct ctdb_client);
+		client = reqid_find(ctdb->idr, client_id, struct ctdb_client);
 	}
 	if (client != NULL) {
 		/* If the node is inactive it is not part of the cluster
@@ -1120,7 +1141,9 @@ int32_t ctdb_control_db_attach(struct ctdb_context *ctdb, TDB_DATA indata,
 			talloc_set_destructor(da_ctx, ctdb_deferred_attach_destructor);
 			DLIST_ADD(ctdb->deferred_attach, da_ctx);
 
-			event_add_timed(ctdb->ev, da_ctx, timeval_current_ofs(ctdb->tunable.deferred_attach_timeout, 0), ctdb_deferred_attach_timeout, da_ctx);
+			tevent_add_timer(ctdb->ev, da_ctx,
+					 timeval_current_ofs(ctdb->tunable.deferred_attach_timeout, 0),
+					 ctdb_deferred_attach_timeout, da_ctx);
 
 			DEBUG(DEBUG_ERR,("DB Attach to database %s deferred for client with pid:%d since node is in recovery mode.\n", db_name, client->pid));
 			*async_reply = true;
@@ -1233,7 +1256,7 @@ int32_t ctdb_control_db_detach(struct ctdb_context *ctdb, TDB_DATA indata,
 	 * Do the actual detach only if the control comes from other daemons.
 	 */
 	if (client_id != 0) {
-		client = ctdb_reqid_find(ctdb, client_id, struct ctdb_client);
+		client = reqid_find(ctdb->idr, client_id, struct ctdb_client);
 		if (client != NULL) {
 			/* forward the control to all the nodes */
 			ctdb_daemon_send_control(ctdb, CTDB_BROADCAST_ALL, 0,
@@ -1498,7 +1521,8 @@ int32_t ctdb_ltdb_update_seqnum(struct ctdb_context *ctdb, uint32_t db_id, uint3
 /*
   timer to check for seqnum changes in a ltdb and propogate them
  */
-static void ctdb_ltdb_seqnum_check(struct event_context *ev, struct timed_event *te, 
+static void ctdb_ltdb_seqnum_check(struct tevent_context *ev,
+				   struct tevent_timer *te,
 				   struct timeval t, void *p)
 {
 	struct ctdb_db_context *ctdb_db = talloc_get_type(p, struct ctdb_db_context);
@@ -1517,9 +1541,10 @@ static void ctdb_ltdb_seqnum_check(struct event_context *ev, struct timed_event 
 
 	/* setup a new timer */
 	ctdb_db->seqnum_update =
-		event_add_timed(ctdb->ev, ctdb_db, 
-				timeval_current_ofs(ctdb->tunable.seqnum_interval/1000, (ctdb->tunable.seqnum_interval%1000)*1000),
-				ctdb_ltdb_seqnum_check, ctdb_db);
+		tevent_add_timer(ctdb->ev, ctdb_db,
+				 timeval_current_ofs(ctdb->tunable.seqnum_interval/1000,
+						     (ctdb->tunable.seqnum_interval%1000)*1000),
+				 ctdb_ltdb_seqnum_check, ctdb_db);
 }
 
 /*
@@ -1535,10 +1560,11 @@ int32_t ctdb_ltdb_enable_seqnum(struct ctdb_context *ctdb, uint32_t db_id)
 	}
 
 	if (ctdb_db->seqnum_update == NULL) {
-		ctdb_db->seqnum_update =
-			event_add_timed(ctdb->ev, ctdb_db, 
-					timeval_current_ofs(ctdb->tunable.seqnum_interval/1000, (ctdb->tunable.seqnum_interval%1000)*1000),
-					ctdb_ltdb_seqnum_check, ctdb_db);
+		ctdb_db->seqnum_update = tevent_add_timer(
+			ctdb->ev, ctdb_db,
+			timeval_current_ofs(ctdb->tunable.seqnum_interval/1000,
+					    (ctdb->tunable.seqnum_interval%1000)*1000),
+			ctdb_ltdb_seqnum_check, ctdb_db);
 	}
 
 	tdb_enable_seqnum(ctdb_db->ltdb->tdb);
@@ -1600,12 +1626,26 @@ int ctdb_set_db_sticky(struct ctdb_context *ctdb, struct ctdb_db_context *ctdb_d
 	return 0;
 }
 
+void ctdb_db_statistics_reset(struct ctdb_db_context *ctdb_db)
+{
+	struct ctdb_db_statistics_old *s = &ctdb_db->statistics;
+	int i;
+
+	for (i=0; i<MAX_HOT_KEYS; i++) {
+		if (s->hot_keys[i].key.dsize > 0) {
+			talloc_free(s->hot_keys[i].key.dptr);
+		}
+	}
+
+	ZERO_STRUCT(ctdb_db->statistics);
+}
+
 int32_t ctdb_control_get_db_statistics(struct ctdb_context *ctdb,
 				uint32_t db_id,
 				TDB_DATA *outdata)
 {
 	struct ctdb_db_context *ctdb_db;
-	struct ctdb_db_statistics *stats;
+	struct ctdb_db_statistics_old *stats;
 	int i;
 	int len;
 	char *ptr;
@@ -1616,7 +1656,7 @@ int32_t ctdb_control_get_db_statistics(struct ctdb_context *ctdb,
 		return -1;
 	}
 
-	len = offsetof(struct ctdb_db_statistics, hot_keys_wire);
+	len = offsetof(struct ctdb_db_statistics_old, hot_keys_wire);
 	for (i = 0; i < MAX_HOT_KEYS; i++) {
 		len += ctdb_db->statistics.hot_keys[i].key.dsize;
 	}
@@ -1628,7 +1668,7 @@ int32_t ctdb_control_get_db_statistics(struct ctdb_context *ctdb,
 	}
 
 	memcpy(stats, &ctdb_db->statistics,
-	       offsetof(struct ctdb_db_statistics, hot_keys_wire));
+	       offsetof(struct ctdb_db_statistics_old, hot_keys_wire));
 
 	stats->num_hot_keys = MAX_HOT_KEYS;
 

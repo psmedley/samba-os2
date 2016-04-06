@@ -175,7 +175,6 @@ static uint64_t cephwrap_disk_free(struct vfs_handle_struct *handle,
 		*bsize = statvfs_buf.f_bsize;
 		*dfree = statvfs_buf.f_bavail;
 		*dsize = statvfs_buf.f_blocks;
-		disk_norm(bsize, dfree, dsize);
 		DEBUG(10, ("[CEPH] bsize: %llu, dfree: %llu, dsize: %llu\n",
 			llu(*bsize), llu(*dfree), llu(*dsize)));
 		return *dfree;
@@ -185,7 +184,9 @@ static uint64_t cephwrap_disk_free(struct vfs_handle_struct *handle,
 	}
 }
 
-static int cephwrap_get_quota(struct vfs_handle_struct *handle,  enum SMB_QUOTA_TYPE qtype, unid_t id, SMB_DISK_QUOTA *qt)
+static int cephwrap_get_quota(struct vfs_handle_struct *handle,
+			      const char *path, enum SMB_QUOTA_TYPE qtype,
+			      unid_t id, SMB_DISK_QUOTA *qt)
 {
 	/* libceph: Ceph does not implement this */
 #if 0

@@ -281,10 +281,6 @@ bld.SAMBA3_MODULE('vfs_gpfs',
                  enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_gpfs'),
                  includes=bld.CONFIG_GET('CPPPATH_GPFS'))
 
-vfs_notify_fam_deps='samba-util '
-if bld.CONFIG_SET('SAMBA_FAM_LIBS'):
-   vfs_notify_fam_deps += bld.CONFIG_GET('SAMBA_FAM_LIBS')
-
 bld.SAMBA3_MODULE('vfs_readahead',
                  subsystem='vfs',
                  source='vfs_readahead.c',
@@ -324,14 +320,6 @@ bld.SAMBA3_MODULE('vfs_aio_pthread',
                  init_function='',
                  internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_aio_pthread'),
                  enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_aio_pthread'))
-
-bld.SAMBA3_MODULE('vfs_aio_posix',
-                 subsystem='vfs',
-                 source='vfs_aio_posix.c',
-                 deps='samba-util tevent',
-                 init_function='',
-                 internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_aio_posix'),
-                 enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_aio_posix'))
 
 bld.SAMBA3_MODULE('vfs_aio_linux',
                  subsystem='vfs',
@@ -373,14 +361,6 @@ bld.SAMBA3_MODULE('vfs_acl_tdb',
                  internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_acl_tdb'),
                  enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_acl_tdb'))
 
-bld.SAMBA3_MODULE('vfs_smb_traffic_analyzer',
-                 subsystem='vfs',
-                 source='vfs_smb_traffic_analyzer.c',
-                 deps='samba-util',
-                 init_function='',
-                 internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_smb_traffic_analyzer'),
-                 enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_smb_traffic_analyzer'))
-
 bld.SAMBA3_MODULE('vfs_dirsort',
                  subsystem='vfs',
                  source='vfs_dirsort.c',
@@ -388,14 +368,6 @@ bld.SAMBA3_MODULE('vfs_dirsort',
                  init_function='',
                  internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_dirsort'),
                  enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_dirsort'))
-
-bld.SAMBA3_MODULE('vfs_scannedonly',
-                 subsystem='vfs',
-                 source='vfs_scannedonly.c',
-                 deps='samba-util',
-                 init_function='',
-                 internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_scannedonly'),
-                 enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_scannedonly'))
 
 bld.SAMBA3_MODULE('vfs_crossrename',
                  subsystem='vfs',
@@ -511,3 +483,17 @@ bld.SAMBA3_MODULE('vfs_vxfs',
                  init_function='',
                  internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_vxfs'),
                  enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_vxfs'))
+
+bld.SAMBA3_MODULE('vfs_offline',
+                 subsystem='vfs',
+                 source='vfs_offline.c',
+                 init_function='',
+                 internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_offline'),
+                 enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_offline'))
+
+bld.SAMBA3_MODULE('vfs_fake_dfq',
+                 subsystem='vfs',
+                 source='vfs_fake_dfq.c',
+                 init_function='',
+                 internal_module=bld.SAMBA3_IS_STATIC_MODULE('vfs_fake_dfq'),
+                 enabled=bld.SAMBA3_IS_ENABLED_MODULE('vfs_fake_dfq'))

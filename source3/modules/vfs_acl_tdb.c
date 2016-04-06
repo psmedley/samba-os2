@@ -23,7 +23,7 @@
 #include "system/filesys.h"
 #include "librpc/gen_ndr/xattr.h"
 #include "librpc/gen_ndr/ndr_xattr.h"
-#include "../lib/crypto/crypto.h"
+#include "../lib/crypto/sha256.h"
 #include "dbwrap/dbwrap.h"
 #include "dbwrap/dbwrap_open.h"
 #include "auth.h"
@@ -403,6 +403,7 @@ static struct vfs_fn_pointers vfs_acl_tdb_fns = {
 	.sys_acl_set_fd_fn = sys_acl_set_fd_tdb
 };
 
+static_decl_vfs;
 NTSTATUS vfs_acl_tdb_init(void)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, "acl_tdb",

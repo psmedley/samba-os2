@@ -1,9 +1,9 @@
 # based on playground/evil in the waf svn tree
 
-import os, datetime
-import Scripting, Utils, Options, Logs, Environment, fnmatch
-from Constants import *
-from samba_utils import *
+import os, datetime, fnmatch
+import Scripting, Utils, Options, Logs, Environment
+from Constants import SRCDIR, BLDDIR
+from samba_utils import LOCAL_CACHE, os_path_relpath
 
 def run_task(t, k):
     '''run a single build task'''
@@ -130,7 +130,6 @@ def fake_build_environment(info=True, flush=False):
 
     Options.commands['install'] = False
     Options.commands['uninstall'] = False
-    Options.is_install = False
 
     bld.is_install = 0 # False
 

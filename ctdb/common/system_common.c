@@ -18,10 +18,15 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/network.h"
 
-#include "ctdb_private.h"
+#include "lib/util/debug.h"
+
+#include "protocol/protocol.h"
+
+#include "common/logging.h"
+#include "common/system.h"
 
 /*
   uint16 checksum for n bytes

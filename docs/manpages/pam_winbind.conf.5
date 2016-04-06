@@ -2,12 +2,12 @@
 .\"     Title: pam_winbind.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 02/24/2016
+.\"      Date: 03/22/2016
 .\"    Manual: 5
-.\"    Source: Samba 4.3
+.\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "PAM_WINBIND\&.CONF" "5" "02/24/2016" "Samba 4\&.3" "5"
+.TH "PAM_WINBIND\&.CONF" "5" "03/22/2016" "Samba 4\&.4" "5"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -110,7 +110,7 @@ Leave empty to just do kerberos authentication without having a ticket cache aft
 .PP
 cached_login = yes|no
 .RS 4
-Winbind allows to logon using cached credentials when
+Winbind allows one to logon using cached credentials when
 \fIwinbind offline logon\fR
 is enabled\&. To use this feature from the PAM module this option must be set\&. Defaults to "no"\&.
 .RE

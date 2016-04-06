@@ -28,10 +28,12 @@
 #include "ctdbd_conn.h"
 #include "../lib/util/util_pw.h"
 #include "messages.h"
+#include "messages_dgm.h"
 #include "libcli/security/security.h"
 #include "serverid.h"
-#include "lib/sys_rw.h"
-#include "lib/sys_rw_data.h"
+#include "lib/util/sys_rw.h"
+#include "lib/util/sys_rw_data.h"
+#include "lib/util/util_process.h"
 
 #ifdef HAVE_SYS_PRCTL_H
 #include <sys/prctl.h>
@@ -430,7 +432,8 @@ static void reinit_after_fork_pipe_handler(struct tevent_context *ev,
 
 NTSTATUS reinit_after_fork(struct messaging_context *msg_ctx,
 			   struct tevent_context *ev_ctx,
-			   bool parent_longlived)
+			   bool parent_longlived,
+			   const char *comment)
 {
 	NTSTATUS status = NT_STATUS_OK;
 
@@ -438,12 +441,6 @@ NTSTATUS reinit_after_fork(struct messaging_context *msg_ctx,
 		close(reinit_after_fork_pipe[1]);
 		reinit_after_fork_pipe[1] = -1;
 	}
-
-	/* Reset the state of the random
-	 * number generation system, so
-	 * children do not get the same random
-	 * numbers as each other */
-	set_need_random_reseed();
 
 	/* tdb needs special fork handling */
 	if (tdb_reopen_all(parent_longlived ? 1 : 0) != 0) {
@@ -481,6 +478,11 @@ NTSTATUS reinit_after_fork(struct messaging_context *msg_ctx,
 				 nt_errstr(status)));
 		}
 	}
+
+	if (comment) {
+		prctl_set_comment(comment);
+	}
+
  done:
 	return status;
 }
@@ -1494,78 +1496,6 @@ char *myhostname_upper(void)
 	return ret;
 }
 
-/**
- * @brief Returns an absolute path to a file concatenating the provided
- * @a rootpath and @a basename
- *
- * @param name Filename, relative to @a rootpath
- *
- * @retval Pointer to a string containing the full path.
- **/
-
-static char *xx_path(const char *name, const char *rootpath)
-{
-	char *fname = NULL;
-
-	fname = talloc_strdup(talloc_tos(), rootpath);
-	if (!fname) {
-		return NULL;
-	}
-	trim_string(fname,"","/");
-
-	if (!directory_exist(fname)) {
-		if (mkdir(fname,0755) == -1) {
-			/* Did someone else win the race ? */
-			if (errno != EEXIST) {
-				DEBUG(1, ("Unable to create directory %s for file %s. "
-					"Error was %s\n", fname, name, strerror(errno)));
-				return NULL;
-			}
-		}
-	}
-
-	return talloc_asprintf_append(fname, "/%s", name);
-}
-
-/**
- * @brief Returns an absolute path to a file in the Samba lock directory.
- *
- * @param name File to find, relative to LOCKDIR.
- *
- * @retval Pointer to a talloc'ed string containing the full path.
- **/
-
-char *lock_path(const char *name)
-{
-	return xx_path(name, lp_lock_directory());
-}
-
-/**
- * @brief Returns an absolute path to a file in the Samba state directory.
- *
- * @param name File to find, relative to STATEDIR.
- *
- * @retval Pointer to a talloc'ed string containing the full path.
- **/
-
-char *state_path(const char *name)
-{
-	return xx_path(name, lp_state_directory());
-}
-
-/**
- * @brief Returns an absolute path to a file in the Samba cache directory.
- *
- * @param name File to find, relative to CACHEDIR.
- *
- * @retval Pointer to a talloc'ed string containing the full path.
- **/
-
-char *cache_path(const char *name)
-{
-	return xx_path(name, lp_cache_directory());
-}
-
 /*******************************************************************
  Given a filename - get its directory name
 ********************************************************************/
@@ -1608,11 +1538,6 @@ bool parent_dirname(TALLOC_CTX *mem_ctx, const char *dir, char **parent,
 bool ms_has_wild(const char *s)
 {
 	char c;
-
-	if (lp_posix_pathnames()) {
-		/* With posix pathnames no characters are wild. */
-		return False;
-	}
 
 	while ((c = *s++)) {
 		switch (c) {
@@ -1893,32 +1818,6 @@ bool name_to_fqdn(fstring fqdn, const char *name)
 	return true;
 }
 
-/**********************************************************************
- Append a DATA_BLOB to a talloc'ed object
-***********************************************************************/
-
-void *talloc_append_blob(TALLOC_CTX *mem_ctx, void *buf, DATA_BLOB blob)
-{
-	size_t old_size = 0;
-	char *result;
-
-	if (blob.length == 0) {
-		return buf;
-	}
-
-	if (buf != NULL) {
-		old_size = talloc_get_size(buf);
-	}
-
-	result = (char *)TALLOC_REALLOC(mem_ctx, buf, old_size + blob.length);
-	if (result == NULL) {
-		return NULL;
-	}
-
-	memcpy(result + old_size, blob.data, blob.length);
-	return result;
-}
-
 uint32_t map_share_mode_to_deny_mode(uint32_t share_access, uint32_t private_options)
 {
 	switch (share_access & ~FILE_SHARE_DELETE) {
@@ -1940,70 +1839,9 @@ uint32_t map_share_mode_to_deny_mode(uint32_t share_access, uint32_t private_opt
 	return (uint32_t)-1;
 }
 
-pid_t procid_to_pid(const struct server_id *proc)
-{
-	return proc->pid;
-}
-
-static uint32_t my_vnn = NONCLUSTER_VNN;
-
-void set_my_vnn(uint32_t vnn)
-{
-	DEBUG(10, ("vnn pid %d = %u\n", (int)getpid(), (unsigned int)vnn));
-	my_vnn = vnn;
-}
-
-uint32_t get_my_vnn(void)
-{
-	return my_vnn;
-}
-
-static uint64_t my_unique_id = 0;
-
-void set_my_unique_id(uint64_t unique_id)
-{
-	my_unique_id = unique_id;
-}
-
-struct server_id pid_to_procid(pid_t pid)
-{
-	struct server_id result;
-	result.pid = pid;
-	result.task_id = 0;
-	result.unique_id = my_unique_id;
-	result.vnn = my_vnn;
-	return result;
-}
-
-struct server_id procid_self(void)
-{
-	return pid_to_procid(getpid());
-}
-
-bool procid_is_me(const struct server_id *pid)
-{
-	if (pid->pid != getpid())
-		return False;
-	if (pid->task_id != 0)
-		return False;
-	if (pid->vnn != my_vnn)
-		return False;
-	return True;
-}
-
 struct server_id interpret_pid(const char *pid_string)
 {
 	return server_id_from_string(get_my_vnn(), pid_string);
-}
-
-bool procid_valid(const struct server_id *pid)
-{
-	return (pid->pid != (uint64_t)-1);
-}
-
-bool procid_is_local(const struct server_id *pid)
-{
-	return pid->vnn == my_vnn;
 }
 
 /****************************************************************

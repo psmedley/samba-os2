@@ -17,14 +17,28 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/filesys.h"
-#include "popt.h"
 #include "system/time.h"
 #include "system/wait.h"
 #include "system/network.h"
-#include "cmdline.h"
-#include "../include/ctdb_private.h"
+
+#include <popt.h>
+#include <talloc.h>
+/* Allow use of deprecated function tevent_loop_allow_nesting() */
+#define TEVENT_DEPRECATED
+#include <tevent.h>
+
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+
+#include "ctdb_private.h"
+
+#include "common/reqid.h"
+#include "common/system.h"
+#include "common/cmdline.h"
+#include "common/common.h"
+#include "common/logging.h"
 
 static struct {
 	const char *nlist;
@@ -78,7 +92,7 @@ static void ctdb_recv_pkt(struct ctdb_context *ctdb, uint8_t *data, uint32_t len
 	if (ctdb_validate_pnn(ctdb, hdr->srcnode)) {
 		/* as a special case, redirected calls don't increment the rx_cnt */
 		if (hdr->operation != CTDB_REQ_CALL ||
-		    ((struct ctdb_req_call *)hdr)->hopcount == 0) {
+		    ((struct ctdb_req_call_old *)hdr)->hopcount == 0) {
 			ctdb->nodes[hdr->srcnode]->rx_cnt++;
 		}
 	}
@@ -139,7 +153,7 @@ int main(int argc, const char *argv[])
 	const char **extra_argv;
 	int extra_argc = 0;
 	poptContext pc;
-	struct event_context *ev;
+	struct tevent_context *ev;
 
 	pc = poptGetContext(argv[0], argc, argv, popt_options, POPT_CONTEXT_KEEP_FIRST);
 
@@ -163,7 +177,7 @@ int main(int argc, const char *argv[])
 
 	fault_setup();
 
-	ev = event_context_init(NULL);
+	ev = tevent_context_init(NULL);
 	tevent_loop_allow_nesting(ev);
 
 	ctdb = ctdb_cmdline_init(ev);
@@ -185,8 +199,13 @@ int main(int argc, const char *argv[])
 	ctdb->recovery_mode    = CTDB_RECOVERY_NORMAL;
 	ctdb->recovery_master  = (uint32_t)-1;
 	ctdb->upcalls          = &ctdb_upcalls;
-	ctdb->idr              = idr_init(ctdb);
 	ctdb->recovery_lock_fd = -1;
+
+	ret = reqid_init(ctdb, 0, &ctdb->idr);;
+	if (ret != 0) {
+		DEBUG(DEBUG_ALERT, ("reqid_init failed (%s)\n", strerror(ret)));
+		exit(1);
+	}
 
 	ctdb_tunables_set_defaults(ctdb);
 
@@ -212,12 +231,12 @@ int main(int argc, const char *argv[])
 	}
 
 	/* set ctdbd capabilities */
-	ctdb->capabilities = 0;
-	if (options.no_lmaster == 0) {
-		ctdb->capabilities |= CTDB_CAP_LMASTER;
+	ctdb->capabilities = CTDB_CAP_DEFAULT;
+	if (options.no_lmaster != 0) {
+		ctdb->capabilities &= ~CTDB_CAP_LMASTER;
 	}
-	if (options.no_recmaster == 0) {
-		ctdb->capabilities |= CTDB_CAP_RECMASTER;
+	if (options.no_recmaster != 0) {
+		ctdb->capabilities &= ~CTDB_CAP_RECMASTER;
 	}
 	if (options.lvs != 0) {
 		ctdb->capabilities |= CTDB_CAP_LVS;

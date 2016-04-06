@@ -485,7 +485,7 @@ NTSTATUS dptr_create(connection_struct *conn,
 		if (smb_dname == NULL) {
 			return NT_STATUS_NO_MEMORY;
 		}
-		if (lp_posix_pathnames()) {
+		if (req != NULL && req->posix_pathnames) {
 			ret = SMB_VFS_LSTAT(conn, smb_dname);
 		} else {
 			ret = SMB_VFS_STAT(conn, smb_dname);
@@ -545,7 +545,8 @@ NTSTATUS dptr_create(connection_struct *conn,
 		TALLOC_FREE(dir_hnd);
 		return NT_STATUS_NO_MEMORY;
 	}
-	if (lp_posix_pathnames() || (wcard[0] == '.' && wcard[1] == 0)) {
+	if ((req != NULL && req->posix_pathnames) ||
+			(wcard[0] == '.' && wcard[1] == 0)) {
 		dptr->has_wild = True;
 	} else {
 		dptr->has_wild = wcard_has_wild;
@@ -1523,9 +1524,8 @@ bool is_visible_file(connection_struct *conn, const char *dir_path,
 			if (SMB_VFS_STAT(conn, smb_fname_base) != 0) {
 				ret = true;
 				goto out;
-			} else {
-				*pst = smb_fname_base->st;
 			}
+			*pst = smb_fname_base->st;
 		}
 
 		/* Honour _hide unreadable_ option */
@@ -1944,7 +1944,6 @@ static int files_below_forall(connection_struct *conn,
 					  &state.dirpath, &to_free);
 	if (state.dirpath_len == -1) {
 		return -1;
-
 	}
 
 	ret = share_mode_forall(files_below_forall_fn, &state);
@@ -1965,7 +1964,7 @@ static int have_file_open_below_fn(struct file_id fid,
 	return 1;
 }
 
-static bool have_file_open_below(connection_struct *conn,
+bool have_file_open_below(connection_struct *conn,
 				 const struct smb_filename *name)
 {
 	struct have_file_open_below_state state = {
@@ -2037,7 +2036,7 @@ NTSTATUS can_delete_directory_fsp(files_struct *fsp)
 		return status;
 	}
 
-	if (!lp_posix_pathnames() &&
+	if (!(fsp->posix_flags & FSP_POSIX_FLAGS_RENAME) &&
 	    lp_strict_rename(SNUM(conn)) &&
 	    have_file_open_below(fsp->conn, fsp->fsp_name))
 	{

@@ -412,7 +412,8 @@ static NTSTATUS dbwrap_delete_action(struct db_context * db, void *private_data)
 
 	status = dbwrap_record_delete(rec);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(5, ("delete_rec returned %s\n", nt_errstr(status)));
+		DBG_INFO("dbwrap_record_delete returned %s\n",
+			 nt_errstr(status));
 	}
 
 	talloc_free(rec);
@@ -525,6 +526,23 @@ NTSTATUS dbwrap_trans_traverse(struct db_context *db,
 		.private_data = private_data,
 	};
 	return dbwrap_trans_do(db, dbwrap_trans_traverse_action, &ctx);
+}
+
+NTSTATUS dbwrap_purge(struct db_context *db, TDB_DATA key)
+{
+	NTSTATUS status;
+
+	status = dbwrap_delete(db, key);
+	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_FOUND)) {
+		status = NT_STATUS_OK;
+	}
+
+	return status;
+}
+
+NTSTATUS dbwrap_purge_bystring(struct db_context *db, const char *key)
+{
+	return dbwrap_purge(db, string_term_tdb_data(key));
 }
 
 NTSTATUS dbwrap_delete_bystring(struct db_context *db, const char *key)

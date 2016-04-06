@@ -169,7 +169,6 @@ CFLAGS="$RPM_OPT_FLAGS $EXTRA -D_GNU_SOURCE" ./configure \
 	--with-ads \
 	--with-automount \
 	--enable-fhs \
-	--with-pam_smbpass \
 	--with-libsmbclient \
 	--without-smbwrapper \
 	--with-pam \
@@ -181,7 +180,6 @@ CFLAGS="$RPM_OPT_FLAGS $EXTRA -D_GNU_SOURCE" ./configure \
 	--with-ctdb=/usr/include \
 	--without-ldb \
 	--without-dnsupdate \
-	--with-aio-support \
 	--disable-external-libtalloc \
 	--disable-external-libtdb
 
@@ -199,7 +197,7 @@ fi
 
 
 make -j %{numcpu} %{?_smp_mflags} \
-	everything modules pam_smbpass
+	everything modules
 
 # check that desired suppor has been compiled into smbd:
 export LD_LIBRARY_PATH=./bin
@@ -419,10 +417,8 @@ exit 0
 %{_libarchdir}/samba/vfs/readahead.so
 %{_libarchdir}/samba/vfs/readonly.so
 %{_libarchdir}/samba/vfs/recycle.so
-%{_libarchdir}/samba/vfs/scannedonly.so
 %{_libarchdir}/samba/vfs/shadow_copy.so
 %{_libarchdir}/samba/vfs/shadow_copy2.so
-%{_libarchdir}/samba/vfs/smb_traffic_analyzer.so
 %{_libarchdir}/samba/vfs/streams_depot.so
 %{_libarchdir}/samba/vfs/streams_xattr.so
 %{_libarchdir}/samba/vfs/syncops.so
@@ -431,7 +427,6 @@ exit 0
 %{_libarchdir}/samba/vfs/tsmsm.so
 %endif
 %{_libarchdir}/samba/vfs/xattr_tdb.so
-%{_libarchdir}/samba/vfs/aio_posix.so
 %{_libarchdir}/samba/vfs/aio_pthread.so
 %{_libarchdir}/samba/vfs/media_harmony.so
 
@@ -446,7 +441,6 @@ exit 0
 %{_mandir}/man8/smbd.8*
 %{_mandir}/man8/eventlogadm.8*
 %{_mandir}/man8/vfs_*.8*
-%{_mandir}/man8/smbta-util.8*
 
 
 ##########
@@ -494,7 +488,6 @@ exit 0
 %{_bindir}/smbtar
 %{_bindir}/smbtree
 %{_bindir}/sharesec
-%{_bindir}/smbta-util
 
 %{_mandir}/man8/smbspool.8*
 %{_mandir}/man1/smbget.1*
@@ -523,7 +516,6 @@ exit 0
 %attr(755,root,root) /%{_libarch}/libnss_winbind.so
 %attr(755,root,root) /%{_libarch}/libnss_winbind.so.2
 %attr(755,root,root) /%{_libarch}/security/pam_winbind.so
-%attr(755,root,root) /%{_libarch}/security/pam_smbpass.so
 /usr/share/locale/*/LC_MESSAGES/pam_winbind.mo
 /usr/share/locale/*/LC_MESSAGES/net.mo
 

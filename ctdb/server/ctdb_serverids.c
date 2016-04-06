@@ -16,13 +16,23 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
-#include "includes.h"
-#include "../include/ctdb_private.h"
-#include "../common/rb_tree.h"
+#include "replace.h"
+#include "system/network.h"
+
+#include <talloc.h>
+
+#include "lib/util/debug.h"
+
+#include "ctdb_private.h"
+
+#include "common/rb_tree.h"
+#include "common/reqid.h"
+#include "common/common.h"
+#include "common/logging.h"
 
 
 #define SERVER_ID_KEY_SIZE 3
-static uint32_t *get_server_id_key(struct ctdb_server_id *server_id)
+static uint32_t *get_server_id_key(struct ctdb_client_id *server_id)
 {
 	static uint32_t key[SERVER_ID_KEY_SIZE];
 
@@ -57,8 +67,8 @@ int32_t ctdb_control_register_server_id(struct ctdb_context *ctdb,
 				 uint32_t client_id,
 				 TDB_DATA indata)
 {
-	struct ctdb_server_id *server_id;
-	struct ctdb_client *client = ctdb_reqid_find(ctdb, client_id, struct ctdb_client);
+	struct ctdb_client_id *server_id;
+	struct ctdb_client *client = reqid_find(ctdb->idr, client_id, struct ctdb_client);
 
 
 	if (client == NULL) {
@@ -72,9 +82,9 @@ int32_t ctdb_control_register_server_id(struct ctdb_context *ctdb,
 	   when the structure is free'd it will be automatically
 	   removed from the tree
 	*/
-	server_id = talloc_zero(client, struct ctdb_server_id);
+	server_id = talloc_zero(client, struct ctdb_client_id);
 	CTDB_NO_MEMORY(ctdb, server_id);
-	memcpy(server_id, indata.dptr, sizeof(struct ctdb_server_id));
+	memcpy(server_id, indata.dptr, sizeof(struct ctdb_client_id));
 
 	trbt_insertarray32_callback(ctdb->server_ids, SERVER_ID_KEY_SIZE,
 		get_server_id_key(server_id), 
@@ -90,7 +100,7 @@ int32_t ctdb_control_register_server_id(struct ctdb_context *ctdb,
 int32_t ctdb_control_check_server_id(struct ctdb_context *ctdb, 
 				 TDB_DATA indata)
 {
-	struct ctdb_server_id *server_id = (struct ctdb_server_id *)indata.dptr;
+	struct ctdb_client_id *server_id = (struct ctdb_client_id *)indata.dptr;
 
 	return trbt_lookuparray32(ctdb->server_ids, 
 				  SERVER_ID_KEY_SIZE,
@@ -103,7 +113,7 @@ int32_t ctdb_control_check_server_id(struct ctdb_context *ctdb,
 int32_t ctdb_control_unregister_server_id(struct ctdb_context *ctdb, 
 				 TDB_DATA indata)
 {
-	struct ctdb_server_id *server_id = (struct ctdb_server_id *)indata.dptr;
+	struct ctdb_client_id *server_id = (struct ctdb_client_id *)indata.dptr;
 
 	talloc_free(trbt_lookuparray32(ctdb->server_ids, 
 			SERVER_ID_KEY_SIZE,
@@ -116,7 +126,7 @@ int32_t ctdb_control_unregister_server_id(struct ctdb_context *ctdb,
 
 struct count_server_ids {
 	int count;
-	struct ctdb_server_id_list *list;
+	struct ctdb_client_id_list_old *list;
 };
 
 static int server_id_count(void *param, void *data)
@@ -137,8 +147,8 @@ static int server_id_store(void *param, void *data)
 {
 	struct count_server_ids *svid = talloc_get_type(param, 
 						struct count_server_ids);
-	struct ctdb_server_id *server_id = talloc_get_type(data, 
-						struct ctdb_server_id);
+	struct ctdb_client_id *server_id = talloc_get_type(data,
+						struct ctdb_client_id);
 
 	if (svid == NULL) {
 		DEBUG(DEBUG_ERR, (__location__ " Got null pointer for svid\n"));
@@ -150,7 +160,7 @@ static int server_id_store(void *param, void *data)
 		return -1;
 	}
 
-	memcpy(&svid->list->server_ids[svid->count], server_id, sizeof(struct ctdb_server_id));
+	memcpy(&svid->list->server_ids[svid->count], server_id, sizeof(struct ctdb_client_id));
 	svid->count++;
 	return 0;
 }
@@ -172,15 +182,14 @@ int32_t ctdb_control_get_server_id_list(struct ctdb_context *ctdb, TDB_DATA *out
 			server_id_count, svid);
 
 
-	outdata->dsize = offsetof(struct ctdb_server_id_list, 
-				server_ids)
-			+ sizeof(struct ctdb_server_id) * svid->count;
+	outdata->dsize = offsetof(struct ctdb_client_id_list_old, server_ids)
+			+ sizeof(struct ctdb_client_id) * svid->count;
 	outdata->dptr  = talloc_size(outdata, outdata->dsize);
 	CTDB_NO_MEMORY(ctdb, outdata->dptr);
 
 
 	/* now fill the structure in */
-	svid->list = (struct ctdb_server_id_list *)(outdata->dptr);
+	svid->list = (struct ctdb_client_id_list_old *)(outdata->dptr);
 	svid->list->num = svid->count;
 	svid->count=0;
 	trbt_traversearray32(ctdb->server_ids, SERVER_ID_KEY_SIZE,

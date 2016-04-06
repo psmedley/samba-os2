@@ -296,7 +296,7 @@ struct cli_pull_state {
 	 * The maximum is 256:
 	 * - which would be a window of 256 MByte
 	 *   for SMB2 with multi-credit
-	 *   or smb1 unix extentions.
+	 *   or smb1 unix extensions.
 	 */
 	uint16_t max_chunks;
 	uint16_t num_chunks;
@@ -437,7 +437,7 @@ static void cli_pull_setup_chunks(struct tevent_req *req)
 		state->next_offset += chunk->total_size;
 		state->remaining -= chunk->total_size;
 
-		DLIST_ADD_END(state->chunks, chunk, NULL);
+		DLIST_ADD_END(state->chunks, chunk);
 		state->num_chunks++;
 		state->num_waiting++;
 
@@ -1111,7 +1111,7 @@ struct cli_push_state {
 	 * The maximum is 256:
 	 * - which would be a window of 256 MByte
 	 *   for SMB2 with multi-credit
-	 *   or smb1 unix extentions.
+	 *   or smb1 unix extensions.
 	 */
 	uint16_t max_chunks;
 	uint16_t num_chunks;
@@ -1250,7 +1250,7 @@ static void cli_push_setup_chunks(struct tevent_req *req)
 		}
 		state->next_offset += chunk->total_size;
 
-		DLIST_ADD_END(state->chunks, chunk, NULL);
+		DLIST_ADD_END(state->chunks, chunk);
 		state->num_chunks++;
 		state->num_waiting++;
 

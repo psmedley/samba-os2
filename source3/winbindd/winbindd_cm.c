@@ -3152,7 +3152,7 @@ retry:
 
 	if (lp_winbind_sealed_pipes() || lp_require_strong_key()) {
 		result = NT_STATUS_DOWNGRADE_DETECTED;
-		DEBUG(1, ("Unwilling to make LSA connection to domain %s"
+		DEBUG(1, ("Unwilling to make LSA connection to domain %s "
 			  "without connection level security, "
 			  "must set 'winbind sealed pipes = false' and "
 			  "'require strong key = false' to proceed: %s\n",
@@ -3285,7 +3285,6 @@ static NTSTATUS cm_connect_netlogon_transport(struct winbindd_domain *domain,
 	sec_chan_type = cli_credentials_get_secure_channel_type(creds);
 	if (sec_chan_type == SEC_CHAN_NULL) {
 		return NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
-		goto no_schannel;
 	}
 
 	result = rpccli_create_netlogon_creds_with_creds(creds,
@@ -3324,7 +3323,6 @@ static NTSTATUS cm_connect_netlogon_transport(struct winbindd_domain *domain,
 	conn->netlogon_flags = netlogon_creds->negotiate_flags;
 	TALLOC_FREE(netlogon_creds);
 
- no_schannel:
 	if (!(conn->netlogon_flags & NETLOGON_NEG_AUTHENTICATED_RPC)) {
 		if (lp_winbind_sealed_pipes() || lp_require_strong_key()) {
 			result = NT_STATUS_DOWNGRADE_DETECTED;

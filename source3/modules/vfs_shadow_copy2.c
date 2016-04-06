@@ -45,9 +45,8 @@ struct shadow_copy2_config {
 	bool fixinodes;
 	char *sort_order;
 	bool snapdir_absolute;
-	char *basedir;
 	char *mount_point;
-	char *rel_connectpath; /* share root, relative to the basedir */
+	char *rel_connectpath; /* share root, relative to a snapshot root */
 	char *snapshot_basepath; /* the absolute version of snapdir */
 };
 
@@ -1865,6 +1864,39 @@ static uint64_t shadow_copy2_disk_free(vfs_handle_struct *handle,
 	return ret;
 }
 
+static int shadow_copy2_get_quota(vfs_handle_struct *handle, const char *path,
+				  enum SMB_QUOTA_TYPE qtype, unid_t id,
+				  SMB_DISK_QUOTA *dq)
+{
+	time_t timestamp;
+	char *stripped;
+	int ret;
+	int saved_errno;
+	char *conv;
+
+	if (!shadow_copy2_strip_snapshot(talloc_tos(), handle, path, &timestamp,
+					 &stripped)) {
+		return -1;
+	}
+	if (timestamp == 0) {
+		return SMB_VFS_NEXT_GET_QUOTA(handle, path, qtype, id, dq);
+	}
+
+	conv = shadow_copy2_convert(talloc_tos(), handle, stripped, timestamp);
+	TALLOC_FREE(stripped);
+	if (conv == NULL) {
+		return -1;
+	}
+
+	ret = SMB_VFS_NEXT_GET_QUOTA(handle, conv, qtype, id, dq);
+
+	saved_errno = errno;
+	TALLOC_FREE(conv);
+	errno = saved_errno;
+
+	return ret;
+}
+
 static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 				const char *service, const char *user)
 {
@@ -1873,7 +1905,8 @@ static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 	const char *snapdir;
 	const char *gmt_format;
 	const char *sort_order;
-	const char *basedir;
+	const char *basedir = NULL;
+	const char *snapsharepath = NULL;
 	const char *mount_point;
 
 	DEBUG(10, (__location__ ": cnum[%u], connectpath[%s]\n",
@@ -1928,6 +1961,11 @@ static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 						"shadow", "crossmountpoints",
 						false);
 
+	if (config->crossmountpoints && !config->snapdirseverywhere) {
+		DBG_WARNING("Warning: 'crossmountpoints' depends on "
+			    "'snapdirseverywhere'. Disabling crossmountpoints.\n");
+	}
+
 	config->fixinodes = lp_parm_bool(SNUM(handle->conn),
 					 "shadow", "fixinodes",
 					 false);
@@ -1954,11 +1992,12 @@ static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 			char *p;
 			p = strstr(handle->conn->connectpath, mount_point);
 			if (p != handle->conn->connectpath) {
-				DEBUG(1, ("Warning: mount_point (%s) is not a "
-					  "subdirectory of the share root "
-					  "(%s). Ignoring provided value.\n",
-					  mount_point,
-					  handle->conn->connectpath));
+				DBG_WARNING("Warning: the share root (%s) is "
+					    "not a subdirectory of the "
+					    "specified mountpoint (%s). "
+					    "Ignoring provided value.\n",
+					    handle->conn->connectpath,
+					    mount_point);
 				mount_point = NULL;
 			}
 		}
@@ -1990,6 +2029,7 @@ static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 				  "relative ('%s'), but it has to be an "
 				  "absolute path. Disabling basedir.\n",
 				  basedir));
+			basedir = NULL;
 		} else {
 			char *p;
 			p = strstr(basedir, config->mount_point);
@@ -1999,37 +2039,58 @@ static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 					  "mount point (%s). "
 					  "Disabling basedir\n",
 					  basedir, config->mount_point));
-			} else {
-				config->basedir = talloc_strdup(config,
-								basedir);
-				if (config->basedir == NULL) {
-					DEBUG(0, ("talloc_strdup() failed\n"));
-					errno = ENOMEM;
-					return -1;
-				}
+				basedir = NULL;
 			}
 		}
 	}
 
-	if (config->snapdirseverywhere && config->basedir != NULL) {
+	if (config->snapdirseverywhere && basedir != NULL) {
 		DEBUG(1, (__location__ " Warning: 'basedir' is incompatible "
 			  "with 'snapdirseverywhere'. Disabling basedir.\n"));
-		TALLOC_FREE(config->basedir);
+		basedir = NULL;
 	}
 
-	if (config->crossmountpoints && config->basedir != NULL) {
-		DEBUG(1, (__location__ " Warning: 'basedir' is incompatible "
-			  "with 'crossmountpoints'. Disabling basedir.\n"));
-		TALLOC_FREE(config->basedir);
+	snapsharepath = lp_parm_const_string(SNUM(handle->conn), "shadow",
+					     "snapsharepath", NULL);
+	if (snapsharepath != NULL) {
+		if (snapsharepath[0] == '/') {
+			DBG_WARNING("Warning: 'snapsharepath' is "
+				    "absolute ('%s'), but it has to be a "
+				    "relative path. Disabling snapsharepath.\n",
+				    snapsharepath);
+			snapsharepath = NULL;
+		}
+		if (config->snapdirseverywhere && snapsharepath != NULL) {
+			DBG_WARNING("Warning: 'snapsharepath' is incompatible "
+				    "with 'snapdirseverywhere'. Disabling "
+				    "snapsharepath.\n");
+			snapsharepath = NULL;
+		}
 	}
 
-	if (config->basedir == NULL) {
-		config->basedir = config->mount_point;
+	if (basedir != NULL && snapsharepath != NULL) {
+		DBG_WARNING("Warning: 'snapsharepath' is incompatible with "
+			    "'basedir'. Disabling snapsharepath\n");
+		snapsharepath = NULL;
 	}
 
-	if (strlen(config->basedir) != strlen(handle->conn->connectpath)) {
+	if (snapsharepath != NULL) {
+		config->rel_connectpath = talloc_strdup(config, snapsharepath);
+		if (config->rel_connectpath == NULL) {
+			DBG_ERR("talloc_strdup() failed\n");
+			errno = ENOMEM;
+			return -1;
+		}
+	}
+
+	if (basedir == NULL) {
+		basedir = config->mount_point;
+	}
+
+	if (config->rel_connectpath == NULL &&
+	    strlen(basedir) != strlen(handle->conn->connectpath)) {
 		config->rel_connectpath = talloc_strdup(config,
-			handle->conn->connectpath + strlen(config->basedir));
+			handle->conn->connectpath + strlen(basedir));
 		if (config->rel_connectpath == NULL) {
 			DEBUG(0, ("talloc_strdup() failed\n"));
 			errno = ENOMEM;
@@ -2067,7 +2128,6 @@ static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 
 	DEBUG(10, ("shadow_copy2_connect: configuration:\n"
 		   "  share root: '%s'\n"
-		   "  basedir: '%s'\n"
 		   "  mountpoint: '%s'\n"
 		   "  rel share root: '%s'\n"
 		   "  snapdir: '%s'\n"
@@ -2080,7 +2140,6 @@ static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 		   "  sort order: %s\n"
 		   "",
 		   handle->conn->connectpath,
-		   config->basedir,
 		   config->mount_point,
 		   config->rel_connectpath,
 		   config->snapdir,
@@ -2105,6 +2164,7 @@ static struct vfs_fn_pointers vfs_shadow_copy2_fns = {
 	.connect_fn = shadow_copy2_connect,
 	.opendir_fn = shadow_copy2_opendir,
 	.disk_free_fn = shadow_copy2_disk_free,
+	.get_quota_fn = shadow_copy2_get_quota,
 	.rename_fn = shadow_copy2_rename,
 	.link_fn = shadow_copy2_link,
 	.symlink_fn = shadow_copy2_symlink,

@@ -6,7 +6,6 @@ usr/bin/profiles
 usr/bin/sharesec
 usr/bin/smbcontrol
 usr/bin/smbstatus
-usr/bin/smbta-util
 usr/lib/*/samba/libHDB-SAMBA4.so.0
 usr/lib/*/samba/libdb-glue.so.*
 usr/lib/*/samba/libhdb-samba4.so.11
@@ -33,5 +32,4 @@ usr/share/man/man8/nmbd.8
 usr/share/man/man8/pdbedit.8
 usr/share/man/man8/samba.8
 usr/share/man/man8/smbd.8
-usr/share/man/man8/smbta-util.8
 usr/share/samba/setup

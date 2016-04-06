@@ -17,14 +17,26 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
-#include "../include/ctdb_client.h"
-#include "../include/ctdb_private.h"
+#include "replace.h"
+#include "system/filesys.h"
+#include "system/network.h"
 #include "system/syslog.h"
 #include "system/time.h"
-#include "system/filesys.h"
-#include "lib/util/debug.h"
+
+#include <talloc.h>
+#include <tevent.h>
+
 #include "lib/util/dlinklist.h"
+#include "lib/util/debug.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/system.h"
+#include "common/common.h"
+#include "common/logging.h"
+
+const char *debug_extra = "";
 
 struct ctdb_log_backend {
 	struct ctdb_log_backend *prev, *next;
@@ -59,7 +71,7 @@ void ctdb_log_register_backend(const char *prefix, ctdb_log_setup_fn_t setup)
 	b->prefix = prefix;
 	b->setup = setup;
 
-	DLIST_ADD_END(log_state->backends, b, NULL);
+	DLIST_ADD_END(log_state->backends, b);
 }
 
 
@@ -117,15 +129,15 @@ static void write_to_log(struct ctdb_log_state *log,
 /*
   called when log data comes in from a child process
  */
-static void ctdb_child_log_handler(struct event_context *ev,
-				   struct fd_event *fde,
+static void ctdb_child_log_handler(struct tevent_context *ev,
+				   struct tevent_fd *fde,
 				   uint16_t flags, void *private)
 {
 	struct ctdb_log_state *log = talloc_get_type(private, struct ctdb_log_state);
 	char *p;
 	int n;
 
-	if (!(flags & EVENT_FD_READ)) {
+	if (!(flags & TEVENT_FD_READ)) {
 		return;
 	}
 
@@ -235,7 +247,7 @@ struct ctdb_log_state *ctdb_vfork_with_logging(TALLOC_CTX *mem_ctx,
 	log->pfd = p[0];
 	set_close_on_exec(log->pfd);
 	talloc_set_destructor(log, log_context_destructor);
-	fde = tevent_add_fd(ctdb->ev, log, log->pfd, EVENT_FD_READ,
+	fde = tevent_add_fd(ctdb->ev, log, log->pfd, TEVENT_FD_READ,
 			    ctdb_child_log_handler, log);
 	tevent_fd_set_auto_close(fde);
 
@@ -292,8 +304,8 @@ int ctdb_set_child_logging(struct ctdb_context *ctdb)
 	close(old_stdout);
 	close(old_stderr);
 
-	fde = event_add_fd(ctdb->ev, log_state, p[0],
-			   EVENT_FD_READ, ctdb_child_log_handler, log_state);
+	fde = tevent_add_fd(ctdb->ev, log_state, p[0], TEVENT_FD_READ,
+			    ctdb_child_log_handler, log_state);
 	tevent_fd_set_auto_close(fde);
 
 	log_state->pfd = p[0];

@@ -136,10 +136,10 @@ enum uwrap_dbglvl_e {
 #ifdef NDEBUG
 # define UWRAP_LOG(...)
 #else /* NDEBUG */
-static void uwrap_log(enum uwrap_dbglvl_e dbglvl, const char *format, ...) PRINTF_ATTRIBUTE(2, 3);
-# define UWRAP_LOG(dbglvl, ...) uwrap_log((dbglvl), __VA_ARGS__)
+static void uwrap_log(enum uwrap_dbglvl_e dbglvl, const char *function, const char *format, ...) PRINTF_ATTRIBUTE(3, 4);
+# define UWRAP_LOG(dbglvl, ...) uwrap_log((dbglvl), __func__, __VA_ARGS__)
 
-static void uwrap_log(enum uwrap_dbglvl_e dbglvl, const char *format, ...)
+static void uwrap_log(enum uwrap_dbglvl_e dbglvl, const char *function, const char *format, ...)
 {
 	char buffer[1024];
 	va_list va;
@@ -156,28 +156,28 @@ static void uwrap_log(enum uwrap_dbglvl_e dbglvl, const char *format, ...)
 	va_end(va);
 
 	if (lvl >= dbglvl) {
+		const char *prefix;
 		switch (dbglvl) {
 			case UWRAP_LOG_ERROR:
-				fprintf(stderr,
-					"UWRAP_ERROR(%d): %s\n",
-					(int)getpid(), buffer);
+				prefix = "UWRAP_ERROR";
 				break;
 			case UWRAP_LOG_WARN:
-				fprintf(stderr,
-					"UWRAP_WARN(%d): %s\n",
-					(int)getpid(), buffer);
+				prefix = "UWRAP_WARN";
 				break;
 			case UWRAP_LOG_DEBUG:
-				fprintf(stderr,
-					"UWRAP_DEBUG(%d): %s\n",
-					(int)getpid(), buffer);
+				prefix = "UWRAP_DEBUG";
 				break;
 			case UWRAP_LOG_TRACE:
-				fprintf(stderr,
-					"UWRAP_TRACE(%d): %s\n",
-					(int)getpid(), buffer);
+				prefix = "UWRAP_TRACE";
 				break;
 		}
+
+		fprintf(stderr,
+			"%s(%d) - %s: %s\n",
+			prefix,
+			(int)getpid(),
+			function,
+			buffer);
 	}
 }
 #endif /* NDEBUG */
@@ -812,6 +812,11 @@ static void uwrap_thread_prepare(void)
 {
 	struct uwrap_thread *id = uwrap_tls_id;
 
+	/* uid_wrapper is loaded but not enabled */
+	if (id == NULL) {
+		return;
+	}
+
 	UWRAP_LOCK_ALL;
 
 	/*
@@ -826,6 +831,12 @@ static void uwrap_thread_prepare(void)
 static void uwrap_thread_parent(void)
 {
 	struct uwrap_thread *id = uwrap_tls_id;
+
+	/* uid_wrapper is loaded but not enabled */
+	if (id == NULL) {
+		return;
+	}
+
 	id->enabled = true;
 
 	UWRAP_UNLOCK_ALL;
@@ -835,6 +846,11 @@ static void uwrap_thread_child(void)
 {
 	struct uwrap_thread *id = uwrap_tls_id;
 	struct uwrap_thread *u = uwrap.ids;
+
+	/* uid_wrapper is loaded but not enabled */
+	if (id == NULL) {
+		return;
+	}
 
 	/*
 	 * "Garbage collector" - Inspired by DESTRUCTOR.
@@ -952,8 +968,9 @@ static void uwrap_init(void)
 		id->enabled = true;
 
 		UWRAP_LOG(UWRAP_LOG_DEBUG,
-			  "Enabled uid_wrapper as %s",
-			  uwrap.myuid == 0 ? "root" : "user");
+			  "Enabled uid_wrapper as %s (real uid=%u)",
+			  id->ruid == 0 ? "root" : "user",
+			  (unsigned int)uwrap.myuid);
 	}
 
 	UWRAP_UNLOCK(uwrap_id);
@@ -977,33 +994,61 @@ bool uid_wrapper_enabled(void)
 	return enabled;
 }
 
-#ifdef HAVE_GETRESUID
-static int uwrap_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid)
+/*
+ * UWRAP_SETxUID FUNCTIONS
+ */
+
+static int uwrap_setresuid_args(uid_t ruid, uid_t euid, uid_t suid)
 {
 	struct uwrap_thread *id = uwrap_tls_id;
 
-	UWRAP_LOCK(uwrap_id);
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "ruid %d -> %d, euid %d -> %d, suid %d -> %d",
+		  id->ruid, ruid, id->euid, euid, id->suid, suid);
 
-	*ruid = id->ruid;
-	*euid = id->euid;
-	*suid = id->suid;
-
-	UWRAP_UNLOCK(uwrap_id);
+	if (id->euid != 0) {
+		if (ruid != (uid_t)-1 &&
+		    ruid != id->ruid &&
+		    ruid != id->euid &&
+		    ruid != id->suid) {
+			errno = EPERM;
+			return -1;
+		}
+		if (euid != (uid_t)-1 &&
+		    euid != id->ruid &&
+		    euid != id->euid &&
+		    euid != id->suid) {
+			errno = EPERM;
+			return -1;
+		}
+		if (suid != (uid_t)-1 &&
+		    suid != id->ruid &&
+		    suid != id->euid &&
+		    suid != id->suid) {
+			errno = EPERM;
+			return -1;
+		}
+	}
 
 	return 0;
 }
-#endif
 
 static int uwrap_setresuid_thread(uid_t ruid, uid_t euid, uid_t suid)
 {
 	struct uwrap_thread *id = uwrap_tls_id;
+	int rc;
 
-	if (ruid == (uid_t)-1 && euid == (uid_t)-1 && suid == (uid_t)-1) {
-		errno = EINVAL;
-		return -1;
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "ruid %d -> %d, euid %d -> %d, suid %d -> %d",
+		  id->ruid, ruid, id->euid, euid, id->suid, suid);
+
+	rc = uwrap_setresuid_args(ruid, euid, suid);
+	if (rc != 0) {
+		return rc;
 	}
 
 	UWRAP_LOCK(uwrap_id);
+
 	if (ruid != (uid_t)-1) {
 		id->ruid = ruid;
 	}
@@ -1021,33 +1066,22 @@ static int uwrap_setresuid_thread(uid_t ruid, uid_t euid, uid_t suid)
 	return 0;
 }
 
-#ifdef HAVE_GETRESGID
-static int uwrap_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid)
-{
-	struct uwrap_thread *id = uwrap_tls_id;
-
-	UWRAP_LOCK(uwrap_id);
-
-	*rgid = id->rgid;
-	*egid = id->egid;
-	*sgid = id->sgid;
-
-	UWRAP_UNLOCK(uwrap_id);
-
-	return 0;
-}
-#endif
-
 static int uwrap_setresuid(uid_t ruid, uid_t euid, uid_t suid)
 {
-	struct uwrap_thread *id;
+	struct uwrap_thread *id = uwrap_tls_id;
+	int rc;
 
-	if (ruid == (uid_t)-1 && euid == (uid_t)-1 && suid == (uid_t)-1) {
-		errno = EINVAL;
-		return -1;
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "ruid %d -> %d, euid %d -> %d, suid %d -> %d",
+		  id->ruid, ruid, id->euid, euid, id->suid, suid);
+
+	rc = uwrap_setresuid_args(ruid, euid, suid);
+	if (rc != 0) {
+		return rc;
 	}
 
 	UWRAP_LOCK(uwrap_id);
+
 	for (id = uwrap.ids; id; id = id->next) {
 		if (ruid != (uid_t)-1) {
 			id->ruid = ruid;
@@ -1067,6 +1101,435 @@ static int uwrap_setresuid(uid_t ruid, uid_t euid, uid_t suid)
 	return 0;
 }
 
+static int uwrap_setreuid_args(uid_t ruid, uid_t euid,
+			       uid_t *_new_ruid,
+			       uid_t *_new_euid,
+			       uid_t *_new_suid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+	uid_t new_ruid = -1, new_euid = -1, new_suid = -1;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "ruid %d -> %d, euid %d -> %d",
+		  id->ruid, ruid, id->euid, euid);
+
+	if (ruid != (uid_t)-1) {
+		new_ruid = ruid;
+		if (ruid != id->ruid &&
+		    ruid != id->euid &&
+		    id->euid != 0) {
+			errno = EPERM;
+			return -1;
+		}
+	}
+
+	if (euid != (uid_t)-1) {
+		new_euid = euid;
+		if (euid != id->ruid &&
+		    euid != id->euid &&
+		    euid != id->suid &&
+		    id->euid != 0) {
+			errno = EPERM;
+			return -1;
+		}
+	}
+
+	if (ruid != (uid_t) -1 ||
+	    (euid != (uid_t)-1 && id->ruid != euid)) {
+		new_suid = new_euid;
+	}
+
+	*_new_ruid = new_ruid;
+	*_new_euid = new_euid;
+	*_new_suid = new_suid;
+
+	return 0;
+}
+
+static int uwrap_setreuid_thread(uid_t ruid, uid_t euid)
+{
+#ifndef NDEBUG
+	struct uwrap_thread *id = uwrap_tls_id;
+#endif
+	uid_t new_ruid = -1, new_euid = -1, new_suid = -1;
+	int rc;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "ruid %d -> %d, euid %d -> %d",
+		  id->ruid, ruid, id->euid, euid);
+
+	rc = uwrap_setreuid_args(ruid, euid, &new_ruid, &new_euid, &new_suid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	return uwrap_setresuid_thread(new_ruid, new_euid, new_suid);
+}
+
+#ifdef HAVE_SETREUID
+static int uwrap_setreuid(uid_t ruid, uid_t euid)
+{
+#ifndef NDEBUG
+	struct uwrap_thread *id = uwrap_tls_id;
+#endif
+	uid_t new_ruid = -1, new_euid = -1, new_suid = -1;
+	int rc;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "ruid %d -> %d, euid %d -> %d",
+		  id->ruid, ruid, id->euid, euid);
+
+	rc = uwrap_setreuid_args(ruid, euid, &new_ruid, &new_euid, &new_suid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	return uwrap_setresuid(new_ruid, new_euid, new_suid);
+}
+#endif
+
+static int uwrap_setuid_args(uid_t uid,
+			     uid_t *new_ruid,
+			     uid_t *new_euid,
+			     uid_t *new_suid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "uid %d -> %d",
+		  id->ruid, uid);
+
+	if (uid == (uid_t)-1) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (id->euid == 0) {
+		*new_suid = *new_ruid = uid;
+	} else if (uid != id->ruid &&
+		   uid != id->suid) {
+		errno = EPERM;
+		return -1;
+	}
+
+	*new_euid = uid;
+
+	return 0;
+}
+
+static int uwrap_setuid_thread(uid_t uid)
+{
+	uid_t new_ruid = -1, new_euid = -1, new_suid = -1;
+	int rc;
+
+	rc = uwrap_setuid_args(uid, &new_ruid, &new_euid, &new_suid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	return uwrap_setresuid_thread(new_ruid, new_euid, new_suid);
+}
+
+static int uwrap_setuid(uid_t uid)
+{
+	uid_t new_ruid = -1, new_euid = -1, new_suid = -1;
+	int rc;
+
+	rc = uwrap_setuid_args(uid, &new_ruid, &new_euid, &new_suid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	return uwrap_setresuid(new_ruid, new_euid, new_suid);
+}
+
+/*
+ * UWRAP_GETxUID FUNCTIONS
+ */
+
+#ifdef HAVE_GETRESUID
+static int uwrap_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+
+	UWRAP_LOCK(uwrap_id);
+
+	*ruid = id->ruid;
+	*euid = id->euid;
+	*suid = id->suid;
+
+	UWRAP_UNLOCK(uwrap_id);
+
+	return 0;
+}
+#endif
+
+#ifdef HAVE_GETRESGID
+static int uwrap_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+
+	UWRAP_LOCK(uwrap_id);
+
+	*rgid = id->rgid;
+	*egid = id->egid;
+	*sgid = id->sgid;
+
+	UWRAP_UNLOCK(uwrap_id);
+
+	return 0;
+}
+#endif
+
+/*
+ * UWRAP_SETxGID FUNCTIONS
+ */
+
+static int uwrap_setresgid_args(gid_t rgid, gid_t egid, gid_t sgid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "rgid %d -> %d, egid %d -> %d, sgid %d -> %d",
+		  id->rgid, rgid, id->egid, egid, id->sgid, sgid);
+
+	if (id->euid != 0) {
+		if (rgid != (gid_t)-1 &&
+		    rgid != id->rgid &&
+		    rgid != id->egid &&
+		    rgid != id->sgid) {
+			errno = EPERM;
+			return -1;
+		}
+		if (egid != (gid_t)-1 &&
+		    egid != id->rgid &&
+		    egid != id->egid &&
+		    egid != id->sgid) {
+			errno = EPERM;
+			return -1;
+		}
+		if (sgid != (gid_t)-1 &&
+		    sgid != id->rgid &&
+		    sgid != id->egid &&
+		    sgid != id->sgid) {
+			errno = EPERM;
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static int uwrap_setresgid_thread(gid_t rgid, gid_t egid, gid_t sgid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+	int rc;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "rgid %d -> %d, egid %d -> %d, sgid %d -> %d",
+		  id->rgid, rgid, id->egid, egid, id->sgid, sgid);
+
+	rc = uwrap_setresgid_args(rgid, egid, sgid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	UWRAP_LOCK(uwrap_id);
+
+	if (rgid != (gid_t)-1) {
+		id->rgid = rgid;
+	}
+
+	if (egid != (gid_t)-1) {
+		id->egid = egid;
+	}
+
+	if (sgid != (gid_t)-1) {
+		id->sgid = sgid;
+	}
+
+	UWRAP_UNLOCK(uwrap_id);
+
+	return 0;
+}
+
+static int uwrap_setresgid(gid_t rgid, gid_t egid, gid_t sgid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+	int rc;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "rgid %d -> %d, egid %d -> %d, sgid %d -> %d",
+		  id->rgid, rgid, id->egid, egid, id->sgid, sgid);
+
+	rc = uwrap_setresgid_args(rgid, egid, sgid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	UWRAP_LOCK(uwrap_id);
+
+	for (id = uwrap.ids; id; id = id->next) {
+		if (rgid != (gid_t)-1) {
+			id->rgid = rgid;
+		}
+
+		if (egid != (gid_t)-1) {
+			id->egid = egid;
+		}
+
+		if (sgid != (gid_t)-1) {
+			id->sgid = sgid;
+		}
+	}
+
+	UWRAP_UNLOCK(uwrap_id);
+
+	return 0;
+}
+
+static int uwrap_setregid_args(gid_t rgid, gid_t egid,
+			       gid_t *_new_rgid,
+			       gid_t *_new_egid,
+			       gid_t *_new_sgid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+	gid_t new_rgid = -1, new_egid = -1, new_sgid = -1;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "rgid %d -> %d, egid %d -> %d",
+		  id->rgid, rgid, id->egid, egid);
+
+	if (rgid != (gid_t)-1) {
+		new_rgid = rgid;
+		if (rgid != id->rgid &&
+		    rgid != id->egid &&
+		    id->euid != 0) {
+			errno = EPERM;
+			return -1;
+		}
+	}
+
+	if (egid != (gid_t)-1) {
+		new_egid = egid;
+		if (egid != id->rgid &&
+		    egid != id->egid &&
+		    egid != id->sgid &&
+		    id->euid != 0) {
+			errno = EPERM;
+			return -1;
+		}
+	}
+
+	if (rgid != (gid_t) -1 ||
+	    (egid != (gid_t)-1 && id->rgid != egid)) {
+		new_sgid = new_egid;
+	}
+
+	*_new_rgid = new_rgid;
+	*_new_egid = new_egid;
+	*_new_sgid = new_sgid;
+
+	return 0;
+}
+
+static int uwrap_setregid_thread(gid_t rgid, gid_t egid)
+{
+#ifndef NDEBUG
+	struct uwrap_thread *id = uwrap_tls_id;
+#endif
+	gid_t new_rgid = -1, new_egid = -1, new_sgid = -1;
+	int rc;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "rgid %d -> %d, egid %d -> %d",
+		  id->rgid, rgid, id->egid, egid);
+
+	rc = uwrap_setregid_args(rgid, egid, &new_rgid, &new_egid, &new_sgid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	return uwrap_setresgid_thread(new_rgid, new_egid, new_sgid);
+}
+
+#ifdef HAVE_SETREGID
+static int uwrap_setregid(gid_t rgid, gid_t egid)
+{
+#ifndef NDEBUG
+	struct uwrap_thread *id = uwrap_tls_id;
+#endif
+	gid_t new_rgid = -1, new_egid = -1, new_sgid = -1;
+	int rc;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "rgid %d -> %d, egid %d -> %d",
+		  id->rgid, rgid, id->egid, egid);
+
+	rc = uwrap_setregid_args(rgid, egid, &new_rgid, &new_egid, &new_sgid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	return uwrap_setresgid(new_rgid, new_egid, new_sgid);
+}
+#endif
+
+static int uwrap_setgid_args(gid_t gid,
+			     gid_t *new_rgid,
+			     gid_t *new_egid,
+			     gid_t *new_sgid)
+{
+	struct uwrap_thread *id = uwrap_tls_id;
+
+	UWRAP_LOG(UWRAP_LOG_TRACE,
+		  "gid %d -> %d",
+		  id->rgid, gid);
+
+	if (gid == (gid_t)-1) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (id->euid == 0) {
+		*new_sgid = *new_rgid = gid;
+	} else if (gid != id->rgid &&
+		   gid != id->sgid) {
+		errno = EPERM;
+		return -1;
+	}
+
+	*new_egid = gid;
+
+	return 0;
+}
+
+static int uwrap_setgid_thread(gid_t gid)
+{
+	gid_t new_rgid = -1, new_egid = -1, new_sgid = -1;
+	int rc;
+
+	rc = uwrap_setgid_args(gid, &new_rgid, &new_egid, &new_sgid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	return uwrap_setresgid_thread(new_rgid, new_egid, new_sgid);
+}
+
+static int uwrap_setgid(gid_t gid)
+{
+	gid_t new_rgid = -1, new_egid = -1, new_sgid = -1;
+	int rc;
+
+	rc = uwrap_setgid_args(gid, &new_rgid, &new_egid, &new_sgid);
+	if (rc != 0) {
+		return rc;
+	}
+
+	return uwrap_setresgid(new_rgid, new_egid, new_sgid);
+}
+
 /*
  * SETUID
  */
@@ -1077,19 +1540,20 @@ int setuid(uid_t uid)
 	}
 
 	uwrap_init();
-	return uwrap_setresuid(uid, -1, -1);
+	return uwrap_setuid(uid);
 }
 
 #ifdef HAVE_SETEUID
 int seteuid(uid_t euid)
 {
+	if (!uid_wrapper_enabled()) {
+		return libc_seteuid(euid);
+	}
+
+	/* On FreeBSD the uid_t -1 is set and doesn't produce and error */
 	if (euid == (uid_t)-1) {
 		errno = EINVAL;
 		return -1;
-	}
-
-	if (!uid_wrapper_enabled()) {
-		return libc_seteuid(euid);
 	}
 
 	uwrap_init();
@@ -1100,17 +1564,12 @@ int seteuid(uid_t euid)
 #ifdef HAVE_SETREUID
 int setreuid(uid_t ruid, uid_t euid)
 {
-	if (ruid == (uid_t)-1 && euid == (uid_t)-1) {
-		errno = EINVAL;
-		return -1;
-	}
-
 	if (!uid_wrapper_enabled()) {
 		return libc_setreuid(ruid, euid);
 	}
 
 	uwrap_init();
-	return uwrap_setresuid(ruid, euid, -1);
+	return uwrap_setreuid(ruid, euid);
 }
 #endif
 
@@ -1194,61 +1653,6 @@ uid_t geteuid(void)
 	return uwrap_geteuid();
 }
 
-static int uwrap_setresgid_thread(gid_t rgid, gid_t egid, gid_t sgid)
-{
-	struct uwrap_thread *id = uwrap_tls_id;
-
-	if (rgid == (gid_t)-1 && egid == (gid_t)-1 && sgid == (gid_t)-1) {
-		errno = EINVAL;
-		return -1;
-	}
-
-	UWRAP_LOCK(uwrap_id);
-	if (rgid != (gid_t)-1) {
-		id->rgid = rgid;
-	}
-
-	if (egid != (gid_t)-1) {
-		id->egid = egid;
-	}
-
-	if (sgid != (gid_t)-1) {
-		id->sgid = sgid;
-	}
-
-	UWRAP_UNLOCK(uwrap_id);
-
-	return 0;
-}
-
-static int uwrap_setresgid(gid_t rgid, gid_t egid, gid_t sgid)
-{
-	struct uwrap_thread *id;
-
-	if (rgid == (gid_t)-1 && egid == (gid_t)-1 && sgid == (gid_t)-1) {
-		errno = EINVAL;
-		return -1;
-	}
-
-	UWRAP_LOCK(uwrap_id);
-	for (id = uwrap.ids; id; id = id->next) {
-		if (rgid != (gid_t)-1) {
-			id->rgid = rgid;
-		}
-
-		if (egid != (gid_t)-1) {
-			id->egid = egid;
-		}
-
-		if (sgid != (gid_t)-1) {
-			id->sgid = sgid;
-		}
-	}
-	UWRAP_UNLOCK(uwrap_id);
-
-	return 0;
-}
-
 /*
  * SETGID
  */
@@ -1259,7 +1663,7 @@ int setgid(gid_t gid)
 	}
 
 	uwrap_init();
-	return uwrap_setresgid(gid, -1, -1);
+	return uwrap_setgid(gid);
 }
 
 #ifdef HAVE_SETEGID
@@ -1267,6 +1671,12 @@ int setegid(gid_t egid)
 {
 	if (!uid_wrapper_enabled()) {
 		return libc_setegid(egid);
+	}
+
+	/* On FreeBSD the uid_t -1 is set and doesn't produce and error */
+	if (egid == (gid_t)-1) {
+		errno = EINVAL;
+		return -1;
 	}
 
 	uwrap_init();
@@ -1282,7 +1692,7 @@ int setregid(gid_t rgid, gid_t egid)
 	}
 
 	uwrap_init();
-	return uwrap_setresgid(rgid, egid, -1);
+	return uwrap_setregid(rgid, egid);
 }
 #endif
 
@@ -1509,7 +1919,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 			{
 				gid_t gid = (gid_t) va_arg(vp, gid_t);
 
-				rc = uwrap_setresgid_thread(gid, -1, -1);
+				rc = uwrap_setgid_thread(gid);
 			}
 			break;
 		case SYS_setregid:
@@ -1520,7 +1930,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 				gid_t rgid = (gid_t) va_arg(vp, gid_t);
 				gid_t egid = (gid_t) va_arg(vp, gid_t);
 
-				rc = uwrap_setresgid_thread(rgid, egid, -1);
+				rc = uwrap_setregid_thread(rgid, egid);
 			}
 			break;
 #ifdef SYS_setresgid
@@ -1537,7 +1947,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 			}
 			break;
 #endif /* SYS_setresgid */
-#ifdef SYS_getresgid
+#if defined(SYS_getresgid) && defined(HAVE_GETRESGID)
 		case SYS_getresgid:
 #ifdef HAVE_LINUX_32BIT_SYSCALLS
 		case SYS_getresgid32:
@@ -1550,7 +1960,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 				rc = uwrap_getresgid(rgid, egid, sgid);
 			}
 			break;
-#endif /* SYS_getresgid */
+#endif /* SYS_getresgid && HAVE_GETRESGID */
 
 		/* uid */
 		case SYS_getuid:
@@ -1578,7 +1988,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 			{
 				uid_t uid = (uid_t) va_arg(vp, uid_t);
 
-				rc = uwrap_setresuid_thread(uid, -1, -1);
+				rc = uwrap_setuid_thread(uid);
 			}
 			break;
 		case SYS_setreuid:
@@ -1589,7 +1999,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 				uid_t ruid = (uid_t) va_arg(vp, uid_t);
 				uid_t euid = (uid_t) va_arg(vp, uid_t);
 
-				rc = uwrap_setresuid_thread(ruid, euid, -1);
+				rc = uwrap_setreuid_thread(ruid, euid);
 			}
 			break;
 #ifdef SYS_setresuid
@@ -1606,7 +2016,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 			}
 			break;
 #endif /* SYS_setresuid */
-#ifdef SYS_getresuid
+#if defined(SYS_getresuid) && defined(HAVE_GETRESUID)
 		case SYS_getresuid:
 #ifdef HAVE_LINUX_32BIT_SYSCALLS
 		case SYS_getresuid32:
@@ -1619,7 +2029,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 				rc = uwrap_getresuid(ruid, euid, suid);
 			}
 			break;
-#endif /* SYS_getresuid */
+#endif /* SYS_getresuid && HAVE_GETRESUID*/
 		/* groups */
 		case SYS_setgroups:
 #ifdef HAVE_LINUX_32BIT_SYSCALLS
@@ -1634,7 +2044,7 @@ static long int uwrap_syscall (long int sysno, va_list vp)
 			break;
 		default:
 			UWRAP_LOG(UWRAP_LOG_DEBUG,
-				  "UID_WRAPPER calling non-wrapped syscall %lu\n",
+				  "UID_WRAPPER calling non-wrapped syscall %lu",
 				  sysno);
 
 			rc = libc_vsyscall(sysno, vp);

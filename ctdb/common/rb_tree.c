@@ -17,8 +17,14 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
-#include "rb_tree.h"
+#include "replace.h"
+
+#include <talloc.h>
+
+#include "lib/util/debug.h"
+
+#include "common/logging.h"
+#include "common/rb_tree.h"
 
 #define NO_MEMORY_FATAL(p) do { if (!(p)) { \
           DEBUG(DEBUG_CRIT,("Out of memory for %s at %s\n", #p, __location__)); \
@@ -58,9 +64,9 @@ static int tree_destructor(trbt_tree_t *tree)
 
 	/* traverse the tree and remove the node destructor and steal
 	   the node to the temporary context.
-	   we dont want to use the existing destructor for the node
+	   we don't want to use the existing destructor for the node
 	   since that will remove the nodes one by one from the tree.
-	   since the entire tree will be completely destroyed we dont care
+	   since the entire tree will be completely destroyed we don't care
 	   if it is inconsistent or unbalanced while freeing the
 	   individual nodes
 	*/
@@ -498,7 +504,7 @@ delete_node(trbt_node_t *node, bool from_destructor)
 	   Once the delete of the node is finished, we remove this dummy
 	   node, which is simple to do since it is guaranteed that it will
 	   still not have any children after the delete operation.
-	   This is because we dont represent the leaf-nodes as actual nodes
+	   This is because we don't represent the leaf-nodes as actual nodes
 	   in this implementation.
 	 */
 	if (!child) {

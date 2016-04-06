@@ -20,9 +20,10 @@
 
 #include "includes.h"
 #include "../lib/util/tevent_ntstatus.h"
+#include "lib/util_tsock.h"
 #include "lib/tsocket/tsocket.h"
 #include "libsmb/nmblib.h"
-#include "lib/sys_rw.h"
+#include "lib/util/sys_rw.h"
 
 static const char *nmbd_socket_dir(void)
 {

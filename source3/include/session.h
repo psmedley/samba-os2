@@ -38,6 +38,9 @@ struct sessionid {
 	struct server_id pid;
 	fstring ip_addr_str;
 	time_t connect_start;
-	fstring protocol_ver;
+	uint16_t connection_dialect;
+	uint8_t encryption_flags;
+	uint16_t cipher;
+	uint8_t signing_flags;
 };
 

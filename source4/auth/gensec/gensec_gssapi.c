@@ -87,7 +87,9 @@ static NTSTATUS gensec_gssapi_start(struct gensec_security *gensec_security)
 {
 	struct gensec_gssapi_state *gensec_gssapi_state;
 	krb5_error_code ret;
+#ifdef SAMBA4_USES_HEIMDAL
 	const char *realm;
+#endif
 
 	gensec_gssapi_state = talloc_zero(gensec_security, struct gensec_gssapi_state);
 	if (!gensec_gssapi_state) {
@@ -276,6 +278,7 @@ static NTSTATUS gensec_gssapi_client_creds(struct gensec_security *gensec_securi
 	case KRB5KDC_ERR_CLIENT_REVOKED:
 		DEBUG(1, ("Account locked out: %s\n", error_string));
 		return NT_STATUS_ACCOUNT_LOCKED_OUT;
+	case KRB5_REALM_UNKNOWN:
 	case KRB5_KDC_UNREACH:
 		DEBUG(3, ("Cannot reach a KDC we require to contact %s : %s\n", gensec_gssapi_state->target_principal, error_string));
 		return NT_STATUS_NO_LOGON_SERVERS;
@@ -416,8 +419,8 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
 		{
 #ifdef SAMBA4_USES_HEIMDAL
 			struct gsskrb5_send_to_kdc send_to_kdc;
-#endif
 			krb5_error_code ret;
+#endif
 
 			nt_status = gensec_gssapi_client_creds(gensec_security, ev);
 			if (!NT_STATUS_IS_OK(nt_status)) {

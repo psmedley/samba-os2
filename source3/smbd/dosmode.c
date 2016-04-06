@@ -31,36 +31,43 @@ static NTSTATUS get_file_handle_for_metadata(connection_struct *conn,
 				files_struct **ret_fsp,
 				bool *need_close);
 
-static void dos_mode_debug_print(uint32_t mode)
+static void dos_mode_debug_print(const char *func, uint32_t mode)
 {
-	DEBUG(8,("dos_mode returning "));
+	fstring modestr;
+
+	if (DEBUGLEVEL < DBGLVL_INFO) {
+		return;
+	}
+
+	modestr[0] = '\0';
 
 	if (mode & FILE_ATTRIBUTE_HIDDEN) {
-		DEBUG(8, ("h"));
+		fstrcat(modestr, "h");
 	}
 	if (mode & FILE_ATTRIBUTE_READONLY) {
-		DEBUG(8, ("r"));
+		fstrcat(modestr, "r");
 	}
 	if (mode & FILE_ATTRIBUTE_SYSTEM) {
-		DEBUG(8, ("s"));
+		fstrcat(modestr, "s");
 	}
 	if (mode & FILE_ATTRIBUTE_DIRECTORY) {
-		DEBUG(8, ("d"));
+		fstrcat(modestr, "d");
 	}
 	if (mode & FILE_ATTRIBUTE_ARCHIVE) {
-		DEBUG(8, ("a"));
+		fstrcat(modestr, "a");
 	}
 	if (mode & FILE_ATTRIBUTE_SPARSE) {
-		DEBUG(8, ("[sparse]"));
+		fstrcat(modestr, "[sparse]");
 	}
 	if (mode & FILE_ATTRIBUTE_OFFLINE) {
-		DEBUG(8, ("[offline]"));
+		fstrcat(modestr, "[offline]");
 	}
 	if (mode & FILE_ATTRIBUTE_COMPRESSED) {
-		DEBUG(8, ("[compressed]"));
+		fstrcat(modestr, "[compressed]");
 	}
 
-	DEBUG(8,("\n"));
+	DBG_INFO("%s returning (0x%x): \"%s\"\n", func, (unsigned)mode,
+		 modestr);
 }
 
 static uint32_t filter_mode_by_protocol(uint32_t mode)
@@ -240,15 +247,8 @@ static uint32_t dos_mode_from_sbuf(connection_struct *conn,
 
 	result |= set_link_read_only_flag(&smb_fname->st);
 
-	DEBUG(8,("dos_mode_from_sbuf returning "));
+	dos_mode_debug_print(__func__, result);
 
-	if (result & FILE_ATTRIBUTE_HIDDEN) DEBUG(8, ("h"));
-	if (result & FILE_ATTRIBUTE_READONLY ) DEBUG(8, ("r"));
-	if (result & FILE_ATTRIBUTE_SYSTEM) DEBUG(8, ("s"));
-	if (result & FILE_ATTRIBUTE_DIRECTORY   ) DEBUG(8, ("d"));
-	if (result & FILE_ATTRIBUTE_ARCHIVE  ) DEBUG(8, ("a"));
-
-	DEBUG(8,("\n"));
 	return result;
 }
 
@@ -279,7 +279,7 @@ static bool get_ea_dos_attribute(connection_struct *conn,
 				   SAMBA_XATTR_DOS_ATTRIB, attrstr,
 				   sizeof(attrstr));
 	if (sizeret == -1) {
-		DBG_INFO("get_ea_dos_attribute: Cannot get attribute "
+		DBG_INFO("Cannot get attribute "
 			 "from EA on file %s: Error = %s\n",
 			 smb_fname_str_dbg(smb_fname), strerror(errno));
 		return False;
@@ -358,15 +358,7 @@ static bool get_ea_dos_attribute(connection_struct *conn,
 	/* FILE_ATTRIBUTE_SPARSE is valid on get but not on set. */
 	*pattr |= (uint32_t)(dosattr & (SAMBA_ATTRIBUTES_MASK|FILE_ATTRIBUTE_SPARSE));
 
-	DEBUG(8,("get_ea_dos_attribute returning (0x%x)", dosattr));
-
-	if (dosattr & FILE_ATTRIBUTE_HIDDEN) DEBUG(8, ("h"));
-	if (dosattr & FILE_ATTRIBUTE_READONLY ) DEBUG(8, ("r"));
-	if (dosattr & FILE_ATTRIBUTE_SYSTEM) DEBUG(8, ("s"));
-	if (dosattr & FILE_ATTRIBUTE_DIRECTORY   ) DEBUG(8, ("d"));
-	if (dosattr & FILE_ATTRIBUTE_ARCHIVE  ) DEBUG(8, ("a"));
-
-	DEBUG(8,("\n"));
+	dos_mode_debug_print(__func__, *pattr);
 
 	return True;
 }
@@ -421,7 +413,7 @@ static bool set_ea_dos_attribute(connection_struct *conn,
 		files_struct *fsp = NULL;
 
 		if((errno != EPERM) && (errno != EACCES)) {
-			DBG_INFO("set_ea_dos_attributes: Cannot set "
+			DBG_INFO("Cannot set "
 				 "attribute EA on file %s: Error = %s\n",
 				 smb_fname_str_dbg(smb_fname), strerror(errno));
 			return false;
@@ -521,16 +513,7 @@ uint32_t dos_mode_msdfs(connection_struct *conn,
 	 */
 	result |= FILE_ATTRIBUTE_REPARSE_POINT;
 
-	DEBUG(8,("dos_mode_msdfs returning "));
-
-	if (result & FILE_ATTRIBUTE_HIDDEN) DEBUG(8, ("h"));
-	if (result & FILE_ATTRIBUTE_READONLY ) DEBUG(8, ("r"));
-	if (result & FILE_ATTRIBUTE_SYSTEM) DEBUG(8, ("s"));
-	if (result & FILE_ATTRIBUTE_DIRECTORY   ) DEBUG(8, ("d"));
-	if (result & FILE_ATTRIBUTE_ARCHIVE  ) DEBUG(8, ("a"));
-	if (result & FILE_ATTRIBUTE_SPARSE ) DEBUG(8, ("[sparse]"));
-
-	DEBUG(8,("\n"));
+	dos_mode_debug_print(__func__, result);
 
 	return(result);
 }
@@ -635,7 +618,7 @@ uint32_t dos_mode(connection_struct *conn, struct smb_filename *smb_fname)
 
 	result = filter_mode_by_protocol(result);
 
-	dos_mode_debug_print(result);
+	dos_mode_debug_print(__func__, result);
 
 	return result;
 }

@@ -666,14 +666,14 @@ static uint64_t smb_full_audit_disk_free(vfs_handle_struct *handle,
 }
 
 static int smb_full_audit_get_quota(struct vfs_handle_struct *handle,
-			   enum SMB_QUOTA_TYPE qtype, unid_t id,
-			   SMB_DISK_QUOTA *qt)
+				    const char *path, enum SMB_QUOTA_TYPE qtype,
+				    unid_t id, SMB_DISK_QUOTA *qt)
 {
 	int result;
 
-	result = SMB_VFS_NEXT_GET_QUOTA(handle, qtype, id, qt);
+	result = SMB_VFS_NEXT_GET_QUOTA(handle, path, qtype, id, qt);
 
-	do_log(SMB_VFS_OP_GET_QUOTA, (result >= 0), handle, "");
+	do_log(SMB_VFS_OP_GET_QUOTA, (result >= 0), handle, "%s", path);
 
 	return result;
 }
@@ -2323,6 +2323,7 @@ static struct vfs_fn_pointers vfs_full_audit_fns = {
 	.set_offline_fn = smb_full_audit_set_offline,
 };
 
+static_decl_vfs;
 NTSTATUS vfs_full_audit_init(void)
 {
 	NTSTATUS ret = smb_register_vfs(SMB_VFS_INTERFACE_VERSION,

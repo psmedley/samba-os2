@@ -106,15 +106,15 @@ struct tevent_context *tevent_context_init(TALLOC_CTX *mem_ctx);
 
 int ctdb_ctrl_getnodemap(struct ctdb_context *ctdb,
 		    struct timeval timeout, uint32_t destnode,
-		    TALLOC_CTX *mem_ctx, struct ctdb_node_map **nodemap);
+		    TALLOC_CTX *mem_ctx, struct ctdb_node_map_old **nodemap);
 int ctdb_ctrl_getnodesfile(struct ctdb_context *ctdb,
 			   struct timeval timeout, uint32_t destnode,
 			   TALLOC_CTX *mem_ctx,
-			   struct ctdb_node_map **nodemap);
+			   struct ctdb_node_map_old **nodemap);
 int ctdb_ctrl_get_ifaces(struct ctdb_context *ctdb,
 			 struct timeval timeout, uint32_t destnode,
 			 TALLOC_CTX *mem_ctx,
-			 struct ctdb_control_get_ifaces **ifaces);
+			 struct ctdb_iface_list_old **ifaces);
 int ctdb_ctrl_getpnn(struct ctdb_context *ctdb, struct timeval timeout,
 		     uint32_t destnode);
 int ctdb_ctrl_getrecmode(struct ctdb_context *ctdb,
@@ -132,7 +132,7 @@ int ctdb_ctrl_getdbseqnum(struct ctdb_context *ctdb, struct timeval timeout,
 			  uint32_t destnode, uint32_t dbid, uint64_t *seqnum);
 int ctdb_client_set_message_handler(struct ctdb_context *ctdb,
 				    uint64_t srvid,
-				    ctdb_msg_fn_t handler,
+				    srvid_handler_fn handler,
 				    void *private_data);
 int ctdb_client_remove_message_handler(struct ctdb_context *ctdb,
 				       uint64_t srvid,
@@ -164,21 +164,19 @@ struct ctdb_node_capabilities *
 ctdb_get_capabilities(struct ctdb_context *ctdb,
 		      TALLOC_CTX *mem_ctx,
 		      struct timeval timeout,
-		      struct ctdb_node_map *nodemap);
+		      struct ctdb_node_map_old *nodemap);
 
 #undef TIMELIMIT
-#include "tools/ctdb_vacuum.c"
 
 /* CTDB_COMMON_OBJ */
 #include "common/ctdb_io.c"
 #include "common/ctdb_util.c"
 #include "common/ctdb_ltdb.c"
-#include "common/ctdb_message.c"
+#include "common/db_hash.c"
+#include "common/srvid.c"
 #include "common/rb_tree.c"
-#include "common/system_common.c"
-#include "common/ctdb_logging.c"
-#include "common/ctdb_fork.c"
-#include "common/system_util.c"
+#include "common/reqid.c"
+#include "common/logging.c"
 
 /* CTDB_CLIENT_OBJ */
 #include "client/ctdb_client.c"

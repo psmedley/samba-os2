@@ -1380,8 +1380,8 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 		}
 		netr_attempts = 0;
 		if (domain->conn.netlogon_creds == NULL) {
-			DEBUG(3, ("No security credentials available for "
-				  "domain [%s]\n", domainname));
+			DBG_NOTICE("No security credentials available for "
+				  "domain [%s]\n", domainname);
 			result = NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
 		} else if (interactive && username != NULL && password != NULL) {
 			result = rpccli_netlogon_password_logon(domain->conn.netlogon_creds,
@@ -1431,8 +1431,9 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 		   rpc changetrustpw' */
 
 		if ( NT_STATUS_EQUAL(result, NT_STATUS_ACCESS_DENIED) ) {
-			DEBUG(3,("winbind_samlogon_retry_loop: sam_logon returned "
-				 "ACCESS_DENIED.  Maybe the trust account "
+			DEBUG(1,("winbind_samlogon_retry_loop: sam_logon returned "
+				 "ACCESS_DENIED.  Maybe the DC has Restrict "
+				 "NTLM set or the trust account "
 				"password was changed and we didn't know it. "
 				 "Killing connections to domain %s\n",
 				domainname));
@@ -1840,7 +1841,7 @@ process_result:
 						      cached_info3->base.full_name.string);
 			} else {
 
-				/* this might fail so we dont check the return code */
+				/* this might fail so we don't check the return code */
 				wcache_query_user_fullname(domain,
 						info3,
 						&user_sid,
@@ -2001,7 +2002,7 @@ process_result:
 						      cached_info3->base.full_name.string);
 			} else {
 
-				/* this might fail so we dont check the return code */
+				/* this might fail so we don't check the return code */
 				wcache_query_user_fullname(domain,
 						*info3,
 						&user_sid,

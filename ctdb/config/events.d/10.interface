@@ -22,18 +22,6 @@ loadconfig
 	exit 0
 }
 
-mark_up ()
-{
-    up_interfaces_found=true
-    ctdb setifacelink $1 up >/dev/null 2>&1
-}
-
-mark_down ()
-{
-    fail=true
-    ctdb setifacelink $1 down >/dev/null 2>&1
-}
-
 # This sets $all_interfaces as a side-effect.
 get_all_interfaces ()
 {
@@ -42,7 +30,6 @@ get_all_interfaces ()
 
     # Add some special interfaces if they're defined
     [ "$CTDB_PUBLIC_INTERFACE" ] && all_interfaces="$CTDB_PUBLIC_INTERFACE $all_interfaces"
-    [ "$CTDB_NATGW_PUBLIC_IFACE" ] && all_interfaces="$CTDB_NATGW_PUBLIC_IFACE $all_interfaces"
 
     # Get the interfaces for which CTDB has public IPs configured.
     # That is, for all but the 1st line, get the 1st field.
@@ -52,113 +39,39 @@ get_all_interfaces ()
     all_interfaces=$(echo $all_interfaces $ctdb_ifaces | tr ' ' '\n' | sort -u)
 }
 
-get_real_iface ()
-{
-    # Output of "ip link show <iface>"
-    _iface_info="$1"
-
-    # Extract the full interface description to see if it is a VLAN
-    _t=$(echo "$_iface_info" |
-		awk 'NR == 1 { iface = $2; sub(":$", "", iface) ; \
-			       print iface }')
-    case "$_t" in
-	*@*)
-	    # VLAN: use the underlying interface, after the '@'
-	    echo "${_t##*@}"
-	    ;;
-	*)
-	    # Not a regular VLAN.  For backward compatibility, assume
-	    # there is some other sort of VLAN that doesn't have the
-	    # '@' in the output and only use what is before a '.'.  If
-	    # there is no '.' then this will be the whole interface
-	    # name.
-	    echo "${_t%%.*}"
-    esac
-}
-
 monitor_interfaces()
 {
 	get_all_interfaces
 
-	fail=false
+	down_interfaces_found=false
 	up_interfaces_found=false
 
 	# Note that this loop must not exit early.  It must process
 	# all interfaces so that the correct state for each interface
-	# is set in CTDB using mark_up/mark_down.  If there is a
-	# problem with an interface then set fail=true and continue.
-	for iface in $all_interfaces ; do
-
-	    _iface_info=$(ip link show $iface 2>&1) || {
-		echo "ERROR: Interface $iface does not exist but it is used by public addresses."
-		mark_down $iface
-		continue
-	    }
-
-	    # These interfaces are sometimes bond devices
-	    # When we use VLANs for bond interfaces, there will only
-	    # be an entry in /proc for the underlying real interface
-	    realiface=$(get_real_iface "$_iface_info")
-	    bi=$(get_proc "net/bonding/$realiface" 2>/dev/null) && {
-		echo "$bi" | grep -q 'Currently Active Slave: None' && {
-			echo "ERROR: No active slaves for bond device $realiface"
-			mark_down $iface
-			continue
-		}
-		echo "$bi" | grep -q '^MII Status: up' || {
-			echo "ERROR: public network interface $realiface is down"
-			mark_down $iface
-			continue
-		}
-		echo "$bi" | grep -q '^Bonding Mode: IEEE 802.3ad Dynamic link aggregation' && {
-			# This works around a bug in the driver where the
-			# overall bond status can be up but none of the actual
-			# physical interfaces have a link.
-			echo "$bi" | grep 'MII Status:' | tail -n +2 | grep -q '^MII Status: up' || {
-				echo "ERROR: No active slaves for 802.ad bond device $realiface"
-				mark_down $iface
-				continue
-			}
-		}
-		mark_up $iface
-		continue
-	    }
-
-	    case $iface in
-	    lo*)
-		# loopback is always working
-		mark_up $iface
-		;;
-	    ib*)
-		# we dont know how to test ib links
-		mark_up $iface
-		;;
-	    *)
-		ethtool $iface | grep -q 'Link detected: yes' || {
-		    # On some systems, this is not successful when a
-		    # cable is plugged but the interface has not been
-		    # brought up previously. Bring the interface up
-		    # and try again...
-		    ip link set $iface up
-		    ethtool $iface | grep -q 'Link detected: yes' || {
-			echo "ERROR: No link on the public network interface $iface"
-			mark_down $iface
-			continue
-		    }
-		}
-		mark_up $iface
-		;;
-	    esac
-
+	# is set in CTDB using setifacelink.
+	for _iface in $all_interfaces ; do
+		if interface_monitor "$_iface" ; then
+			up_interfaces_found=true
+			ctdb setifacelink "$_iface" up >/dev/null 2>&1
+		else
+			down_interfaces_found=true
+			ctdb setifacelink "$_iface" down >/dev/null 2>&1
+		fi
 	done
 
-	$fail || return 0
+	if ! $down_interfaces_found ; then
+		return 0
+	fi
 
-	$up_interfaces_found && \
-	    [ "$CTDB_PARTIALLY_ONLINE_INTERFACES" = "yes" ] && \
-	    return 0
+	if ! $up_interfaces_found ; then
+		return 1
+	fi
 
-	return 1
+	if [ "$CTDB_PARTIALLY_ONLINE_INTERFACES" != "yes" ]; then
+		return 1
+	fi
+
+	return 0
 }
 
 # Sets: iface, ip, maskbits, family
@@ -191,10 +104,8 @@ get_iface_ip_maskbits_family ()
 
 ctdb_check_args "$@"
 
-case "$1" in 
-     #############################
-     # called when ctdbd starts up
-     init)
+case "$1" in
+    init)
 	# make sure that we only respond to ARP messages from the NIC where
 	# a particular ip address is associated.
 	get_proc sys/net/ipv4/conf/all/arp_filter >/dev/null 2>&1 && {
@@ -210,17 +121,11 @@ case "$1" in
 	drop_all_public_ips
 	;;
 
-     #############################
-     # called after ctdbd has done its initial recovery
-     # and we start the services to become healthy
-     startup)
+    startup)
 	monitor_interfaces
 	;;
 
-
-     ################################################
-     # called when ctdbd wants to claim an IP address
-     takeip)
+    takeip)
 	iface=$2
 	ip=$3
 	maskbits=$4
@@ -239,10 +144,7 @@ case "$1" in
 	flush_route_cache
 	;;
 
-
-     ##################################################
-     # called when ctdbd wants to release an IP address
-     releaseip)
+    releaseip)
 	# releasing an IP is a bit more complex than it seems. Once the IP
 	# is released, any open tcp connections to that IP on this host will end
 	# up being stuck. Some of them (such as NFS connections) will be unkillable
@@ -272,9 +174,7 @@ case "$1" in
 	flush_route_cache
 	;;
 
-     ##################################################
-     # called when ctdbd wants to update an IP address
-     updateip)
+    updateip)
 	# moving an IP is a bit more complex than it seems.
 	# First we drop all traffic on the old interface.
 	# Then we try to add the ip to the new interface and before
@@ -291,7 +191,7 @@ case "$1" in
 	_ip=$4
 	_maskbits=$5
 
-	get_iface_ip_maskbits_family "$_oiface" "$ip" "$maskbits"
+	get_iface_ip_maskbits_family "$_oiface" "$_ip" "$_maskbits"
 	oiface="$iface"
 
 	# we do an extra delete to cope with the script being killed
@@ -317,12 +217,10 @@ case "$1" in
 
 	# tickle all existing connections, so that dropped packets
 	# are retransmited and the tcp streams work
-
 	tickle_tcp_connections $ip
-
 	;;
 
-     monitor)
+    monitor)
 	monitor_interfaces || exit 1
 	;;
     *)
@@ -331,4 +229,3 @@ case "$1" in
 esac
 
 exit 0
-

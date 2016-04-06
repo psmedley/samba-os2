@@ -18,25 +18,36 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/filesys.h"
-#include "popt.h"
-#include "cmdline.h"
+#include "system/network.h"
 
-#include <sys/time.h>
-#include <time.h>
+#include <popt.h>
+#include <talloc.h>
+#include <tevent.h>
+#include <tdb.h>
+
+#include "lib/util/time.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/cmdline.h"
+#include "common/common.h"
 
 static const char *dbname = "test.tdb";
 
-static int traverse_callback(struct ctdb_context *ctdb, TDB_DATA key, TDB_DATA data, void *private_data)
+static int traverse_callback(TDB_DATA key, TDB_DATA data, void *private_data)
 {
 	uint32_t *count = private_data;
-	
+
 	(*count)++;
 	return 0;
 }
 
-static void traverse_loop(struct ctdb_context *ctdb, struct ctdb_db_context *ctdb_db, struct event_context *ev)
+static void traverse_loop(struct ctdb_context *ctdb,
+			  struct ctdb_db_context *ctdb_db,
+			  struct tevent_context *ev)
 {
 	uint32_t count;
 
@@ -64,7 +75,7 @@ int main(int argc, const char *argv[])
 	const char **extra_argv;
 	int extra_argc = 0;
 	poptContext pc;
-	struct event_context *ev;
+	struct tevent_context *ev;
 
 	pc = poptGetContext(argv[0], argc, argv, popt_options, POPT_CONTEXT_KEEP_FIRST);
 
@@ -86,7 +97,7 @@ int main(int argc, const char *argv[])
 		while (extra_argv[extra_argc]) extra_argc++;
 	}
 
-	ev = event_context_init(NULL);
+	ev = tevent_context_init(NULL);
 
 	ctdb = ctdb_cmdline_client(ev, timeval_current_ofs(3, 0));
 	if (ctdb == NULL) {
@@ -105,7 +116,7 @@ int main(int argc, const char *argv[])
 		uint32_t recmode=1;
 		ctdb_ctrl_getrecmode(ctdb, ctdb, timeval_zero(), CTDB_CURRENT_NODE, &recmode);
 		if (recmode == 0) break;
-		event_loop_once(ev);
+		tevent_loop_once(ev);
 	}
 
 	while (1) {

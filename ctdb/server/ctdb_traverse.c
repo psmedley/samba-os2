@@ -17,13 +17,28 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
 #include "system/filesys.h"
+#include "system/network.h"
 #include "system/wait.h"
+#include "system/time.h"
+
+#include <talloc.h>
+#include <tevent.h>
+
 #include "lib/tdb_wrap/tdb_wrap.h"
-#include "tdb.h"
-#include "../include/ctdb_private.h"
 #include "lib/util/dlinklist.h"
+#include "lib/util/debug.h"
+#include "lib/util/samba_util.h"
+#include "lib/util/util_process.h"
+
+#include "ctdb_private.h"
+#include "ctdb_client.h"
+
+#include "common/reqid.h"
+#include "common/system.h"
+#include "common/common.h"
+#include "common/logging.h"
 
 typedef void (*ctdb_traverse_fn_t)(void *private_data, TDB_DATA key, TDB_DATA data);
 
@@ -97,7 +112,7 @@ static int ctdb_traverse_local_fn(struct tdb_context *tdb, TDB_DATA key, TDB_DAT
 {
 	struct ctdb_traverse_local_handle *h = talloc_get_type(p,
 							       struct ctdb_traverse_local_handle);
-	struct ctdb_rec_data *d;
+	struct ctdb_rec_data_old *d;
 	struct ctdb_ltdb_header *hdr;
 	int res, status;
 	TDB_DATA outdata;
@@ -198,12 +213,12 @@ static struct ctdb_traverse_local_handle *ctdb_traverse_local(struct ctdb_db_con
 		int res, status;
 		pid_t parent = getpid();
 		struct ctdb_context *ctdb = ctdb_db->ctdb;
-		struct ctdb_rec_data *d;
+		struct ctdb_rec_data_old *d;
 		TDB_DATA outdata;
 
 		close(h->fd[0]);
 
-		ctdb_set_process_name("ctdb_traverse");
+		prctl_set_comment("ctdb_traverse");
 		if (switch_from_server_to_client(ctdb, "traverse_local-%s:",
 						 ctdb_db->db_name) != 0) {
 			DEBUG(DEBUG_CRIT, ("Failed to switch traverse child into client mode\n"));
@@ -258,7 +273,7 @@ static struct ctdb_traverse_local_handle *ctdb_traverse_local(struct ctdb_db_con
 
 	DLIST_ADD(ctdb_db->traverse, h);
 
-	h->fde = tevent_add_fd(ctdb_db->ctdb->ev, h, h->fd[0], EVENT_FD_READ,
+	h->fde = tevent_add_fd(ctdb_db->ctdb->ev, h, h->fd[0], TEVENT_FD_READ,
 			       ctdb_traverse_child_handler, h);
 	if (h->fde == NULL) {
 		close(h->fd[0]);
@@ -286,29 +301,13 @@ struct ctdb_traverse_all_handle {
  */
 static int ctdb_traverse_all_destructor(struct ctdb_traverse_all_handle *state)
 {
-	ctdb_reqid_remove(state->ctdb, state->reqid);
+	reqid_remove(state->ctdb->idr, state->reqid);
 	return 0;
 }
 
-struct ctdb_traverse_all {
-	uint32_t db_id;
-	uint32_t reqid;
-	uint32_t pnn;
-	uint32_t client_reqid;
-	uint64_t srvid;
-};
-
-struct ctdb_traverse_all_ext {
-	uint32_t db_id;
-	uint32_t reqid;
-	uint32_t pnn;
-	uint32_t client_reqid;
-	uint64_t srvid;
-	bool withemptyrecords;
-};
-
 /* called when a traverse times out */
-static void ctdb_traverse_all_timeout(struct event_context *ev, struct timed_event *te, 
+static void ctdb_traverse_all_timeout(struct tevent_context *ev,
+				      struct tevent_timer *te,
 				      struct timeval t, void *private_data)
 {
 	struct ctdb_traverse_all_handle *state = talloc_get_type(private_data, struct ctdb_traverse_all_handle);
@@ -360,7 +359,7 @@ static struct ctdb_traverse_all_handle *ctdb_daemon_traverse_all(struct ctdb_db_
 
 	state->ctdb         = ctdb;
 	state->ctdb_db      = ctdb_db;
-	state->reqid        = ctdb_reqid_new(ctdb_db->ctdb, state);
+	state->reqid        = reqid_new(ctdb_db->ctdb->idr, state);
 	state->callback     = callback;
 	state->private_data = start_state;
 	state->null_count   = 0;
@@ -436,9 +435,9 @@ static struct ctdb_traverse_all_handle *ctdb_daemon_traverse_all(struct ctdb_db_
 			    ctdb_db->db_name, state->reqid));
 
 	/* timeout the traverse */
-	event_add_timed(ctdb->ev, state, 
-			timeval_current_ofs(ctdb->tunable.traverse_timeout, 0), 
-			ctdb_traverse_all_timeout, state);
+	tevent_add_timer(ctdb->ev, state,
+			 timeval_current_ofs(ctdb->tunable.traverse_timeout, 0),
+			 ctdb_traverse_all_timeout, state);
 
 	return state;
 }
@@ -563,7 +562,7 @@ int32_t ctdb_control_traverse_all(struct ctdb_context *ctdb, TDB_DATA data, TDB_
  */
 int32_t ctdb_control_traverse_data(struct ctdb_context *ctdb, TDB_DATA data, TDB_DATA *outdata)
 {
-	struct ctdb_rec_data *d = (struct ctdb_rec_data *)data.dptr;
+	struct ctdb_rec_data_old *d = (struct ctdb_rec_data_old *)data.dptr;
 	struct ctdb_traverse_all_handle *state;
 	TDB_DATA key;
 	ctdb_traverse_fn_t callback;
@@ -574,7 +573,7 @@ int32_t ctdb_control_traverse_data(struct ctdb_context *ctdb, TDB_DATA data, TDB
 		return -1;
 	}
 
-	state = ctdb_reqid_find(ctdb, d->reqid, struct ctdb_traverse_all_handle);
+	state = reqid_find(ctdb->idr, d->reqid, struct ctdb_traverse_all_handle);
 	if (state == NULL || d->reqid != state->reqid) {
 		/* traverse might have been terminated already */
 		return -1;
@@ -661,7 +660,7 @@ static int ctdb_traverse_start_destructor(struct traverse_start_state *state)
 static void traverse_start_callback(void *p, TDB_DATA key, TDB_DATA data)
 {
 	struct traverse_start_state *state;
-	struct ctdb_rec_data *d;
+	struct ctdb_rec_data_old *d;
 	TDB_DATA cdata;
 
 	state = talloc_get_type(p, struct traverse_start_state);
@@ -674,7 +673,7 @@ static void traverse_start_callback(void *p, TDB_DATA key, TDB_DATA data)
 	cdata.dptr = (uint8_t *)d;
 	cdata.dsize = d->length;
 
-	ctdb_dispatch_message(state->ctdb, state->srvid, cdata);
+	srvid_dispatch(state->ctdb->srv, state->srvid, 0, cdata);
 	if (key.dsize == 0 && data.dsize == 0) {
 		DEBUG(DEBUG_NOTICE, ("Ending traverse on DB %s (id %d), records %d\n",
 				     state->h->ctdb_db->db_name, state->h->reqid,
@@ -707,7 +706,7 @@ int32_t ctdb_control_traverse_start_ext(struct ctdb_context *ctdb,
 	struct ctdb_traverse_start_ext *d = (struct ctdb_traverse_start_ext *)data.dptr;
 	struct traverse_start_state *state;
 	struct ctdb_db_context *ctdb_db;
-	struct ctdb_client *client = ctdb_reqid_find(ctdb, client_id, struct ctdb_client);
+	struct ctdb_client *client = reqid_find(ctdb->idr, client_id, struct ctdb_client);
 
 	if (client == NULL) {
 		DEBUG(DEBUG_ERR,(__location__ " No client found\n"));

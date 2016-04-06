@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 02/24/2016
+.\"      Date: 03/22/2016
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.3
+.\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "02/24/2016" "Samba 4\&.3" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "03/22/2016" "Samba 4\&.4" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1184,6 +1184,22 @@ Example:
 \fI\fIafs username map\fR\fR\fI = \fR\fI%u@afs\&.samba\&.org\fR\fI \fR
 .RE
 
+aio max threads (G)
+.\" aio max threads
+.PP
+.RS 4
+The integer parameter specifies the maximum number of threads each smbd process will create when doing parallel asynchronous IO calls\&. If the number of outstanding calls is greater than this number the requests will not be refused but go onto a queue and will be scheduled in turn as outstanding requests complete\&.
+.sp
+Related command:
+\m[blue]\fBaio read size\fR\m[]
+.sp
+Related command:
+\m[blue]\fBaio write size\fR\m[]
+.sp
+Default:
+\fI\fIaio max threads\fR\fR\fI = \fR\fI100\fR\fI \fR
+.RE
+
 aio read size (S)
 .\" aio read size
 .PP
@@ -1394,6 +1410,31 @@ Default:
 .sp
 Example:
 \fI\fIauth methods\fR\fR\fI = \fR\fIguest sam winbind\fR\fI \fR
+.RE
+
+preload
+.\" preload
+.PP
+.RS 4
+This parameter is a synonym for
+auto services\&.
+.RE
+
+auto services (G)
+.\" auto services
+.PP
+.RS 4
+This is a list of services that you want to be automatically added to the browse lists\&. This is most useful for homes and printers services that would otherwise not be visible\&.
+.sp
+Note that if you just want all printers in your printcap file loaded then the
+\m[blue]\fBload printers\fR\m[]
+option is easier\&.
+.sp
+Default:
+\fI\fIauto services\fR\fR\fI = \fR\fI\fR\fI \fR
+.sp
+Example:
+\fI\fIauto services\fR\fR\fI = \fR\fIfred lp colorlp\fR\fI \fR
 .RE
 
 available (S)
@@ -2525,26 +2566,6 @@ Default:
 \fI\fIdebug prefix timestamp\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
-timestamp logs
-.\" timestamp logs
-.PP
-.RS 4
-This parameter is a synonym for
-debug timestamp\&.
-.RE
-
-debug timestamp (G)
-.\" debug timestamp
-.PP
-.RS 4
-Samba debug log messages are timestamped by default\&. If you are running at a high
-\m[blue]\fBdebug level\fR\m[]
-these timestamps can be distracting\&. This boolean parameter allows timestamping to be turned off\&.
-.sp
-Default:
-\fI\fIdebug timestamp\fR\fR\fI = \fR\fIyes\fR\fI \fR
-.RE
-
 debug uid (G)
 .\" debug uid
 .PP
@@ -3188,7 +3209,7 @@ dos filetimes (S)
 .\" dos filetimes
 .PP
 .RS 4
-Under DOS and Windows, if a user can write to a file they can change the timestamp on it\&. Under POSIX semantics, only the owner of the file or root may change the timestamp\&. By default, Samba emulates the DOS semantics and allows to change the timestamp on a file if the user
+Under DOS and Windows, if a user can write to a file they can change the timestamp on it\&. Under POSIX semantics, only the owner of the file or root may change the timestamp\&. By default, Samba emulates the DOS semantics and allows one to change the timestamp on a file if the user
 smbd
 is acting on behalf has write permissions\&. Due to changes in Microsoft Office 2000 and beyond, the default for this parameter has been changed from "no" to "yes" in Samba 3\&.0\&.14 and above\&. Microsoft Excel will display dialog box warnings about the file being changed by another user if this parameter is not set to "yes" and files are being shared between users\&.
 .sp
@@ -4165,8 +4186,8 @@ Default:
 \fI\fIidmap cache time\fR\fR\fI = \fR\fI604800\fR\fI \fR
 .RE
 
-idmap config:OPTION (G)
-.\" idmap config:OPTION
+idmap config DOMAIN : OPTION (G)
+.\" idmap config DOMAIN : OPTION
 .PP
 .RS 4
 ID mapping in Samba is the mapping between Windows SIDs and Unix user and group IDs\&. This is performed by Winbindd with a configurable plugin interface\&. Samba\*(Aqs ID mapping is configured by options starting with the
@@ -4284,7 +4305,7 @@ Example:
 \fI\fIidmap uid\fR\fR\fI = \fR\fI10000\-20000\fR\fI \fR
 .RE
 
-include (G)
+include (S)
 .\" include
 .PP
 .RS 4
@@ -4450,6 +4471,12 @@ The "mask" parameters can either be a bit length (such as 24 for a C class netwo
 The "IP" parameters above can either be a full dotted decimal IP address or a hostname which will be looked up via the OS\*(Aqs normal hostname resolution mechanisms\&.
 .sp
 By default Samba enables all active interfaces that are broadcast capable except the loopback adaptor (IP address 127\&.0\&.0\&.1)\&.
+.sp
+In order to support SMB3 multi\-channel configurations, smbd understands some extra data that can be appended after the actual interface with this extended syntax:
+.sp
+interface[;key1=value1[,key2=value2[\&.\&.\&.]]]
+.sp
+Known keys are speed, capability, and if_index\&. Speed is specified in bits per second\&. Known capabilities are RSS and RDMA\&. The if_index should be used with care: the values must not coincide with indexes used by the kernel\&. Note that these options are mainly intended for testing and development rather than for production use\&. At least on Linux systems, these values should be auto\-detected, but the settings can serve as last a resort when autodetection is not working or is not available\&.
 .sp
 The example below configures three network interfaces corresponding to the eth0 device and IP addresses 192\&.168\&.2\&.10 and 192\&.168\&.3\&.10\&. The netmasks of the latter two interfaces would be set to 255\&.255\&.255\&.0\&.
 .sp
@@ -4676,7 +4703,7 @@ The LANMAN encrypted response is easily broken, due to its case\-insensitive nat
 .sp
 When this parameter is set to
 no
-this will also result in sambaLMPassword in Samba\*(Aqs passdb being blanked after the next password change\&. As a result of that lanman clients won\*(Aqt be able to authenticate, even if lanman auth is reenabled later on\&.
+this will also result in sambaLMPassword in Samba\*(Aqs passdb being blanked after the next password change\&. As a result of that lanman clients won\*(Aqt be able to authenticate, even if lanman auth is re\-enabled later on\&.
 .sp
 Unlike the
 encrypt passwords
@@ -4884,7 +4911,7 @@ This parameter specifies the number of entries per page\&.
 If the LDAP server supports paged results, clients can request subsets of search results (pages) instead of the entire list\&. This parameter specifies the size of these pages\&.
 .sp
 Default:
-\fI\fIldap page size\fR\fR\fI = \fR\fI1024\fR\fI \fR
+\fI\fIldap page size\fR\fR\fI = \fR\fI1000\fR\fI \fR
 .sp
 Example:
 \fI\fIldap page size\fR\fR\fI = \fR\fI512\fR\fI \fR
@@ -5493,7 +5520,7 @@ The value of the parameter (a astring) allows the debug level (logging level) to
 smb\&.conf
 file\&.
 .sp
-This parameter has been extended since the 2\&.2\&.x series, now it allows to specify the debug level for multiple debug classes\&. This is to give greater flexibility in the configuration of the system\&. The following debug classes are currently implemented:
+This parameter has been extended since the 2\&.2\&.x series, now it allows one to specify the debug level for multiple debug classes\&. This is to give greater flexibility in the configuration of the system\&. The following debug classes are currently implemented:
 .sp
 .RS 4
 .ie n \{\
@@ -6105,15 +6132,19 @@ machine password timeout (G)
 .\" machine password timeout
 .PP
 .RS 4
-If a Samba server is a member of a Windows NT Domain (see the
+If a Samba server is a member of a Windows NT or Active Directory Domain (see the
 \m[blue]\fBsecurity = domain\fR\m[]
-parameter) then periodically a running smbd process will try and change the MACHINE ACCOUNT PASSWORD stored in the TDB called
-private/secrets\&.tdb\&. This parameter specifies how often this password will be changed, in seconds\&. The default is one week (expressed in seconds), the same as a Windows NT Domain member server\&.
+and
+\m[blue]\fBsecurity = ads\fR\m[]
+parameters), then periodically a running winbindd process will try and change the MACHINE ACCOUNT PASSWORD stored in the TDB called
+secrets\&.tdb\&. This parameter specifies how often this password will be changed, in seconds\&. The default is one week (expressed in seconds), the same as a Windows NT Domain member server\&.
 .sp
 See also
 \fBsmbpasswd\fR(8), and the
 \m[blue]\fBsecurity = domain\fR\m[]
-parameter\&.
+and
+\m[blue]\fBsecurity = ads\fR\m[]
+parameters\&.
 .sp
 Default:
 \fI\fImachine password timeout\fR\fR\fI = \fR\fI604800\fR\fI \fR
@@ -7916,31 +7947,6 @@ Default:
 \fI\fIpreferred master\fR\fR\fI = \fR\fIauto\fR\fI \fR
 .RE
 
-auto services
-.\" auto services
-.PP
-.RS 4
-This parameter is a synonym for
-preload\&.
-.RE
-
-preload (G)
-.\" preload
-.PP
-.RS 4
-This is a list of services that you want to be automatically added to the browse lists\&. This is most useful for homes and printers services that would otherwise not be visible\&.
-.sp
-Note that if you just want all printers in your printcap file loaded then the
-\m[blue]\fBload printers\fR\m[]
-option is easier\&.
-.sp
-Default:
-\fI\fIpreload\fR\fR\fI = \fR\fI\fR\fI \fR
-.sp
-Example:
-\fI\fIpreload\fR\fR\fI = \fR\fIfred lp colorlp\fR\fI \fR
-.RE
-
 preload modules (G)
 .\" preload modules
 .PP
@@ -8363,14 +8369,6 @@ Example:
 \fI\fIread list\fR\fR\fI = \fR\fImary, @students\fR\fI \fR
 .RE
 
-write ok
-.\" write ok
-.PP
-.RS 4
-This parameter is a synonym for
-read only\&.
-.RE
-
 read only (S)
 .\" read only
 .PP
@@ -8394,7 +8392,7 @@ read raw (G)
 .PP
 .RS 4
 This is ignored if
-\m[blue]\fBasync echo handler\fR\m[]
+\m[blue]\fBasync smb echo handler\fR\m[]
 is set, because this feature is incompatible with raw read SMB requests
 .sp
 If enabled, raw reads allow reads of 65535 bytes in one packet\&. This typically provides a major performance benefit for some very, very old clients\&.
@@ -8796,7 +8794,7 @@ by default\&.
 .sp
 Choosing the
 \fIfork\fR
-option will cause samba to fork a separate proces for each daemon configured this way\&. Each daemon may in turn fork a number of children used to handle requests from multiple smbds and direct tcp/ip connections (if the Endpoint Mapper is enabled)\&. Communication with smbd happens over named pipes and require that said pipes are forward to the external daemon (see
+option will cause samba to fork a separate process for each daemon configured this way\&. Each daemon may in turn fork a number of children used to handle requests from multiple smbds and direct tcp/ip connections (if the Endpoint Mapper is enabled)\&. Communication with smbd happens over named pipes and require that said pipes are forward to the external daemon (see
 \m[blue]\fBrpc_server\fR\m[])\&.
 .sp
 Forked RPC Daemons support dynamically forking children to handle connections\&. The heuristics about how many children to keep around and how fast to allow them to fork and also how many clients each child is allowed to handle concurrently is defined by parametrical options named after the daemon\&. Five options are currently supported:
@@ -9046,7 +9044,7 @@ in smbd\&. The defaults may vary depending on the service\&.
 .sp
 Choosing the
 \fIexternal\fR
-option allows to run a separate daemon or even a completely independent (3rd party) server capable of interfacing with samba via the MS\-RPC interface over named pipes\&.
+option allows one to run a separate daemon or even a completely independent (3rd party) server capable of interfacing with samba via the MS\-RPC interface over named pipes\&.
 .sp
 Currently in Samba3 we support four daemons, spoolssd, epmd, lsasd and mdssd\&. These daemons can be enabled using the
 \fIrpc_daemon\fR
@@ -9448,6 +9446,22 @@ Example:
 \fI\fIserver min protocol\fR\fR\fI = \fR\fINT1\fR\fI \fR
 .RE
 
+server multi channel support (G)
+.\" server multi channel support
+.PP
+.RS 4
+This boolean parameter controls whether
+\fBsmbd\fR(8)
+will support SMB3 multi\-channel\&.
+.sp
+This parameter has been added with version 4\&.4\&.
+.sp
+Warning: Note that this feature is considered experimental in Samba 4\&.4\&. Use it at your own risk: Even though it may seem to work well in testing, it may result in data corruption under some race conditions\&. Future 4\&.4\&.x release may improve this situation\&.
+.sp
+Default:
+\fI\fIserver multi channel support\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
 server role (G)
 .\" server role
 .PP
@@ -9477,7 +9491,7 @@ if you want to mainly setup shares without a password (guest shares)\&. This is 
 .sp
 This is the default server role in Samba, and causes Samba to consult the
 \m[blue]\fBsecurity\fR\m[]
-parameter (if set) to determine the server role, giving compatable behaviours to previous Samba versions\&.
+parameter (if set) to determine the server role, giving compatible behaviours to previous Samba versions\&.
 .sp
 \fISERVER ROLE = STANDALONE\fR
 .sp
@@ -9509,7 +9523,7 @@ that a valid UNIX user must still exist as well as the account on the Domain Con
 .sp
 This mode of operation runs a classic Samba primary domain controller, providing domain logon services to Windows and Samba clients of an NT4\-like domain\&. Clients must be joined to the domain to create a secure, trusted path across the network\&. There must be only one PDC per NetBIOS scope (typcially a broadcast network or clients served by a single WINS server)\&.
 .sp
-\fISERVER ROLE = NETBIOS BACKUP DOMAIN CONTROLLER\fR
+\fISERVER ROLE = CLASSIC BACKUP DOMAIN CONTROLLER\fR
 .sp
 This mode of operation runs a classic Samba backup domain controller, providing domain logon services to Windows and Samba clients of an NT4\-like domain\&. As a BDC, this allows multiple Samba servers to provide redundant logon services to a single NetBIOS scope\&.
 .sp
@@ -9522,7 +9536,7 @@ Default:
 \fI\fIserver role\fR\fR\fI = \fR\fIAUTO\fR\fI \fR
 .sp
 Example:
-\fI\fIserver role\fR\fR\fI = \fR\fIDOMAIN CONTROLLER\fR\fI \fR
+\fI\fIserver role\fR\fR\fI = \fR\fIACTIVE DIRECTORY DOMAIN CONTROLLER\fR\fI \fR
 .RE
 
 server schannel (G)
@@ -10891,7 +10905,11 @@ By default a Windows SMB server prevents directory renames when there are open f
 .sp
 This boolean parameter allows Samba to match the Windows behavior\&. Setting this to "yes" is a very expensive change, as it forces Samba to travers the entire open file handle database on every directory rename request\&. In a clustered Samba system the cost is even greater than the non\-clustered case\&.
 .sp
-For this reason the default is "no", and it is recommended to be left that way unless a specific Windows application requires it to be changed\&.
+When set to "no" smbd only checks the local process the client is attached to for open files below a directory being renamed, instead of checking for open files across all smbd processes\&.
+.sp
+Because of the expense in fully searching the database, the default is "no", and it is recommended to be left that way unless a specific Windows application requires it to be changed\&.
+.sp
+If the client has requested UNIX extensions (POSIX pathnames) then renames are always allowed and this parameter has no effect\&.
 .sp
 Default:
 \fI\fIstrict rename\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -10901,11 +10919,15 @@ strict sync (S)
 .\" strict sync
 .PP
 .RS 4
-Many Windows applications (including the Windows 98 explorer shell) seem to confuse flushing buffer contents to disk with doing a sync to disk\&. Under UNIX, a sync call forces the process to be suspended until the kernel has ensured that all outstanding data in kernel disk buffers has been safely stored onto stable storage\&. This is very slow and should only be done rarely\&. Setting this parameter to
+Many Windows applications (including the Windows 98 explorer shell) seem to confuse flushing buffer contents to disk with doing a sync to disk\&. Under UNIX, a sync call forces the thread to be suspended until the kernel has ensured that all outstanding data in kernel disk buffers has been safely stored onto stable storage\&. This is very slow and should only be done rarely\&. Setting this parameter to
 \fBno\fR
 (the default) means that
 \fBsmbd\fR(8)
 ignores the Windows applications requests for a sync call\&. There is only a possibility of losing data if the operating system itself that Samba is running on crashes, so there is little danger in this default setting\&. In addition, this fixes many performance problems that people have reported with the new Windows98 explorer shell file copies\&.
+.sp
+The flush request from SMB2/3 clients is handled asynchronously, so for these clients setting the parameter to
+\fByes\fR
+does not block the processing of other requests in the smbd process\&.
 .sp
 Default:
 \fI\fIstrict sync\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -11036,6 +11058,26 @@ Default:
 \fI\fItime server\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
+debug timestamp
+.\" debug timestamp
+.PP
+.RS 4
+This parameter is a synonym for
+timestamp logs\&.
+.RE
+
+timestamp logs (G)
+.\" timestamp logs
+.PP
+.RS 4
+Samba debug log messages are timestamped by default\&. If you are running at a high
+\m[blue]\fBdebug level\fR\m[]
+these timestamps can be distracting\&. This boolean parameter allows timestamping to be turned off\&.
+.sp
+Default:
+\fI\fItimestamp logs\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
 tls cafile (G)
 .\" tls cafile
 .PP
@@ -11082,7 +11124,7 @@ tls dh params file (G)
 .\" tls dh params file
 .PP
 .RS 4
-This option can be set to a file with Diffie\-Hellman parameters which will be used with EDH ciphers\&.
+This option can be set to a file with Diffie\-Hellman parameters which will be used with DH ciphers\&.
 .sp
 This path is relative to
 \m[blue]\fBprivate dir\fR\m[]
@@ -12005,7 +12047,7 @@ winbind offline logon (G)
 .\" winbind offline logon
 .PP
 .RS 4
-This parameter is designed to control whether Winbind should allow to login with the
+This parameter is designed to control whether Winbind should allow one to login with the
 \fIpam_winbind\fR
 module using Cached Credentials\&. If enabled, winbindd will store user credentials from successful logins encrypted in a local cache\&.
 .sp
@@ -12300,6 +12342,14 @@ This parameter is a synonym for
 writeable\&.
 .RE
 
+write ok
+.\" write ok
+.PP
+.RS 4
+This parameter is a synonym for
+writeable\&.
+.RE
+
 writeable (S)
 .\" writeable
 .PP
@@ -12354,7 +12404,7 @@ write raw (G)
 .PP
 .RS 4
 This is ignored if
-\m[blue]\fBasync echo handler\fR\m[]
+\m[blue]\fBasync smb echo handler\fR\m[]
 is set, because this feature is incompatible with raw write SMB requests
 .sp
 If enabled, raw writes allow writes of 65535 bytes in one packet\&. This typically provides a major performance benefit for some very, very old clients\&.

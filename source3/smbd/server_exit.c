@@ -178,12 +178,6 @@ static void exit_server_common(enum server_exit_reason how,
 		serverid_deregister(messaging_server_id(msg_ctx));
 	}
 
-#ifdef WITH_DFS
-	if (dcelogin_atmost_once) {
-		dfs_unlogin();
-	}
-#endif
-
 #ifdef USE_DMAPI
 	/* Destroy Samba DMAPI session only if we are master smbd process */
 	if (am_parent) {
@@ -275,8 +269,8 @@ void smbd_exit_server_cleanly(const char *const explanation)
  */
 NTSTATUS smbd_reinit_after_fork(struct messaging_context *msg_ctx,
 				struct tevent_context *ev_ctx,
-				bool parent_longlived)
+				bool parent_longlived, const char *comment)
 {
 	am_parent = NULL;
-	return reinit_after_fork(msg_ctx, ev_ctx, parent_longlived);
+	return reinit_after_fork(msg_ctx, ev_ctx, parent_longlived, comment);
 }

@@ -203,11 +203,12 @@ enum swrap_dbglvl_e {
 #define SOCKET_TYPE_CHAR_UDP_V6		'Y'
 
 /*
- * Cut down to 1500 byte packets for stream sockets,
- * which makes it easier to format PCAP capture files
- * (as the caller will simply continue from here)
+ * Set the packet MTU to 1500 bytes for stream sockets to make it it easier to
+ * format PCAP capture files (as the caller will simply continue from here).
  */
-#define SOCKET_MAX_PACKET 1500
+#define SOCKET_WRAPPER_MTU_DEFAULT 1500
+#define SOCKET_WRAPPER_MTU_MIN     512
+#define SOCKET_WRAPPER_MTU_MAX     32768
 
 #define SOCKET_MAX_SOCKETS 1024
 
@@ -910,6 +911,38 @@ static const char *socket_wrapper_dir(void)
 
 	SWRAP_LOG(SWRAP_LOG_TRACE, "socket_wrapper_dir: %s", s);
 	return s;
+}
+
+static unsigned int socket_wrapper_mtu(void)
+{
+	static unsigned int max_mtu = 0;
+	unsigned int tmp;
+	const char *s;
+	char *endp;
+
+	if (max_mtu != 0) {
+		return max_mtu;
+	}
+
+	max_mtu = SOCKET_WRAPPER_MTU_DEFAULT;
+
+	s = getenv("SOCKET_WRAPPER_MTU");
+	if (s == NULL) {
+		goto done;
+	}
+
+	tmp = strtol(s, &endp, 10);
+	if (s == endp) {
+		goto done;
+	}
+
+	if (tmp < SOCKET_WRAPPER_MTU_MIN || tmp > SOCKET_WRAPPER_MTU_MAX) {
+		goto done;
+	}
+	max_mtu = tmp;
+
+done:
+	return max_mtu;
 }
 
 bool socket_wrapper_enabled(void)
@@ -3743,7 +3776,9 @@ static ssize_t swrap_sendmsg_before(int fd,
 	}
 
 	switch (si->type) {
-	case SOCK_STREAM:
+	case SOCK_STREAM: {
+		unsigned long mtu;
+
 		if (!si->connected) {
 			errno = ENOTCONN;
 			return -1;
@@ -3753,22 +3788,23 @@ static ssize_t swrap_sendmsg_before(int fd,
 			break;
 		}
 
+		mtu = socket_wrapper_mtu();
 		for (i = 0; i < (size_t)msg->msg_iovlen; i++) {
 			size_t nlen;
 			nlen = len + msg->msg_iov[i].iov_len;
-			if (nlen > SOCKET_MAX_PACKET) {
+			if (nlen > mtu) {
 				break;
 			}
 		}
 		msg->msg_iovlen = i;
 		if (msg->msg_iovlen == 0) {
 			*tmp_iov = msg->msg_iov[0];
-			tmp_iov->iov_len = MIN(tmp_iov->iov_len, SOCKET_MAX_PACKET);
+			tmp_iov->iov_len = MIN(tmp_iov->iov_len, (size_t)mtu);
 			msg->msg_iov = tmp_iov;
 			msg->msg_iovlen = 1;
 		}
 		break;
-
+	}
 	case SOCK_DGRAM:
 		if (si->connected) {
 			if (msg->msg_name) {
@@ -3958,7 +3994,8 @@ static int swrap_recvmsg_before(int fd,
 	(void)fd; /* unused */
 
 	switch (si->type) {
-	case SOCK_STREAM:
+	case SOCK_STREAM: {
+		unsigned int mtu;
 		if (!si->connected) {
 			errno = ENOTCONN;
 			return -1;
@@ -3968,22 +4005,23 @@ static int swrap_recvmsg_before(int fd,
 			break;
 		}
 
+		mtu = socket_wrapper_mtu();
 		for (i = 0; i < (size_t)msg->msg_iovlen; i++) {
 			size_t nlen;
 			nlen = len + msg->msg_iov[i].iov_len;
-			if (nlen > SOCKET_MAX_PACKET) {
+			if (nlen > mtu) {
 				break;
 			}
 		}
 		msg->msg_iovlen = i;
 		if (msg->msg_iovlen == 0) {
 			*tmp_iov = msg->msg_iov[0];
-			tmp_iov->iov_len = MIN(tmp_iov->iov_len, SOCKET_MAX_PACKET);
+			tmp_iov->iov_len = MIN(tmp_iov->iov_len, (size_t)mtu);
 			msg->msg_iov = tmp_iov;
 			msg->msg_iovlen = 1;
 		}
 		break;
-
+	}
 	case SOCK_DGRAM:
 		if (msg->msg_name == NULL) {
 			errno = EINVAL;
@@ -4051,6 +4089,19 @@ static int swrap_recvmsg_after(int fd,
 		avail += msg->msg_iov[i].iov_len;
 	}
 
+	/* Convert the socket address before we leave */
+	if (si->type == SOCK_DGRAM && un_addr != NULL) {
+		rc = sockaddr_convert_from_un(si,
+					      un_addr,
+					      un_addrlen,
+					      si->family,
+					      msg->msg_name,
+					      &msg->msg_namelen);
+		if (rc == -1) {
+			goto done;
+		}
+	}
+
 	if (avail == 0) {
 		rc = 0;
 		goto done;
@@ -4096,16 +4147,6 @@ static int swrap_recvmsg_after(int fd,
 		}
 
 		if (un_addr != NULL) {
-			rc = sockaddr_convert_from_un(si,
-						      un_addr,
-						      un_addrlen,
-						      si->family,
-						      msg->msg_name,
-						      &msg->msg_namelen);
-			if (rc == -1) {
-				goto done;
-			}
-
 			swrap_pcap_dump_packet(si,
 					  msg->msg_name,
 					  SWRAP_RECVFROM,
@@ -4549,9 +4590,6 @@ static ssize_t swrap_recvmsg(int s, struct msghdr *omsg, int flags)
 
 	ret = libc_recvmsg(s, &msg, flags);
 
-	msg.msg_name = omsg->msg_name;
-	msg.msg_namelen = omsg->msg_namelen;
-
 #ifdef HAVE_STRUCT_MSGHDR_MSG_CONTROL
 	msg_ctrllen_filled += msg.msg_controllen;
 	msg_ctrllen_left -= msg.msg_controllen;
@@ -4593,6 +4631,25 @@ static ssize_t swrap_recvmsg(int s, struct msghdr *omsg, int flags)
 #endif
 	omsg->msg_iovlen = msg.msg_iovlen;
 
+	/*
+	 * From the manpage:
+	 *
+	 * The  msg_name  field  points  to a caller-allocated buffer that is
+	 * used to return the source address if the socket is unconnected.  The
+	 * caller should set msg_namelen to the size of this buffer before this
+	 * call; upon return from a successful call, msg_name will contain the
+	 * length of the returned address.  If the application  does  not  need
+	 * to know the source address, msg_name can be specified as NULL.
+	 */
+	if (si->type == SOCK_STREAM) {
+		omsg->msg_namelen = 0;
+	} else if (omsg->msg_name != NULL &&
+	           omsg->msg_namelen != 0 &&
+	           omsg->msg_namelen >= msg.msg_namelen) {
+		memcpy(omsg->msg_name, msg.msg_name, msg.msg_namelen);
+		omsg->msg_namelen = msg.msg_namelen;
+	}
+
 	return ret;
 }
 
@@ -4627,8 +4684,11 @@ static ssize_t swrap_sendmsg(int s, const struct msghdr *omsg, int flags)
 	tmp.iov_len = 0;
 
 	ZERO_STRUCT(msg);
-	msg.msg_name = omsg->msg_name;             /* optional address */
-	msg.msg_namelen = omsg->msg_namelen;       /* size of address */
+
+	if (si->connected == 0) {
+		msg.msg_name = omsg->msg_name;             /* optional address */
+		msg.msg_namelen = omsg->msg_namelen;       /* size of address */
+	}
 	msg.msg_iov = omsg->msg_iov;               /* scatter/gather array */
 	msg.msg_iovlen = omsg->msg_iovlen;         /* # elements in msg_iov */
 #ifdef HAVE_STRUCT_MSGHDR_MSG_CONTROL
@@ -5070,5 +5130,12 @@ void swrap_destructor(void)
 			swrap_close(f->fd);
 		}
 		s = sockets;
+	}
+
+	if (swrap.libc_handle != NULL) {
+		dlclose(swrap.libc_handle);
+	}
+	if (swrap.libsocket_handle) {
+		dlclose(swrap.libsocket_handle);
 	}
 }

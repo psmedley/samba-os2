@@ -439,13 +439,13 @@ static void dcesrv_call_set_list(struct dcesrv_call_state *call,
 	case DCESRV_LIST_NONE:
 		break;
 	case DCESRV_LIST_CALL_LIST:
-		DLIST_ADD_END(call->conn->call_list, call, struct dcesrv_call_state *);
+		DLIST_ADD_END(call->conn->call_list, call);
 		break;
 	case DCESRV_LIST_FRAGMENTED_CALL_LIST:
-		DLIST_ADD_END(call->conn->incoming_fragmented_call_list, call, struct dcesrv_call_state *);
+		DLIST_ADD_END(call->conn->incoming_fragmented_call_list, call);
 		break;
 	case DCESRV_LIST_PENDING_CALL_LIST:
-		DLIST_ADD_END(call->conn->pending_call_list, call, struct dcesrv_call_state *);
+		DLIST_ADD_END(call->conn->pending_call_list, call);
 		break;
 	}
 }
@@ -486,7 +486,7 @@ static NTSTATUS dcesrv_bind_nak(struct dcesrv_call_state *call, uint32_t reason)
 
 	dcerpc_set_frag_length(&rep->blob, rep->blob.length);
 
-	DLIST_ADD_END(call->replies, rep, struct data_blob_list_item *);
+	DLIST_ADD_END(call->replies, rep);
 	dcesrv_call_set_list(call, DCESRV_LIST_CALL_LIST);
 
 	if (call->conn->call_list && call->conn->call_list->replies) {
@@ -695,7 +695,7 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 
 	dcerpc_set_frag_length(&rep->blob, rep->blob.length);
 
-	DLIST_ADD_END(call->replies, rep, struct data_blob_list_item *);
+	DLIST_ADD_END(call->replies, rep);
 	dcesrv_call_set_list(call, DCESRV_LIST_CALL_LIST);
 
 	if (call->conn->call_list && call->conn->call_list->replies) {
@@ -860,7 +860,7 @@ static NTSTATUS dcesrv_alter_resp(struct dcesrv_call_state *call,
 
 	dcerpc_set_frag_length(&rep->blob, rep->blob.length);
 
-	DLIST_ADD_END(call->replies, rep, struct data_blob_list_item *);
+	DLIST_ADD_END(call->replies, rep);
 	dcesrv_call_set_list(call, DCESRV_LIST_CALL_LIST);
 
 	if (call->conn->call_list && call->conn->call_list->replies) {
@@ -1230,7 +1230,15 @@ _PUBLIC_ NTSTATUS dcesrv_init_context(TALLOC_CTX *mem_ctx,
 
 	dce_ctx = talloc(mem_ctx, struct dcesrv_context);
 	NT_STATUS_HAVE_NO_MEMORY(dce_ctx);
+
+	if (uid_wrapper_enabled()) {
+		setenv("UID_WRAPPER_MYUID", "1", 1);
+	}
 	dce_ctx->initial_euid = geteuid();
+	if (uid_wrapper_enabled()) {
+		unsetenv("UID_WRAPPER_MYUID");
+	}
+
 	dce_ctx->endpoint_list	= NULL;
 	dce_ctx->lp_ctx = lp_ctx;
 	dce_ctx->assoc_groups_idr = idr_init(dce_ctx);
@@ -1385,7 +1393,7 @@ static void dcesrv_terminate_connection(struct dcesrv_connection *dce_conn, cons
 	if (dce_conn->terminate == NULL) {
 		dce_conn->terminate = "dcesrv: defered terminating connection - no memory";
 	}
-	DLIST_ADD_END(dce_ctx->broken_connections, dce_conn, NULL);
+	DLIST_ADD_END(dce_ctx->broken_connections, dce_conn);
 }
 
 static void dcesrv_cleanup_broken_connections(struct dcesrv_context *dce_ctx)

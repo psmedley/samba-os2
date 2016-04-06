@@ -65,7 +65,7 @@ check_tdb ()
 check_persistent_databases ()
 {
     _dir="${CTDB_DBDIR_PERSISTENT:-${CTDB_DBDIR:-${CTDB_VARDIR}}/persistent}"
-    mkdir -p "$_dir" 2>/dev/null
+    [ -d "$_dir" ] || return 0
 
     [ "${CTDB_MAX_PERSISTENT_CHECK_ERRORS:-0}" = "0" ] || return 0
 
@@ -80,7 +80,7 @@ check_persistent_databases ()
 check_non_persistent_databases ()
 {
     _dir="${CTDB_DBDIR:-${CTDB_VARDIR}}"
-    mkdir -p "$_dir" 2>/dev/null
+    [ -d "$_dir" ] || return 0
 
     for _db in $(ls "${_dir}/"*.tdb.*[0-9] 2>/dev/null) ; do
 	check_tdb $_db || {
@@ -116,61 +116,16 @@ set_ctdb_variables ()
     done
 }
 
-monitor_system_memory ()
-{
-    # If monitoring free memory then calculate how much there is
-    if [ -n "$CTDB_MONITOR_FREE_MEMORY_WARN" -o \
-	-n "$CTDB_MONITOR_FREE_MEMORY" ] ; then
-	free_mem=$(free -m | awk '$2 == "buffers/cache:" { print $4 }')
-    fi
-
-    # Shutdown CTDB when memory is below the configured limit
-    if [ -n "$CTDB_MONITOR_FREE_MEMORY" ] ; then
-	if [ $free_mem -le $CTDB_MONITOR_FREE_MEMORY ] ; then
-	    echo "CRITICAL: OOM - ${free_mem}MB free <= ${CTDB_MONITOR_FREE_MEMORY}MB (CTDB threshold)"
-	    echo "CRITICAL: Shutting down CTDB!!!"
-	    get_proc "meminfo"
-	    ps auxfww
-	    set_proc "sysrq-trigger" "m"
-	    ctdb disable
-	    sleep 3
-	    ctdb shutdown
-	fi
-    fi
-
-    # Warn when low on memory
-    if [ -n "$CTDB_MONITOR_FREE_MEMORY_WARN" ] ; then
-	if [ $free_mem -le $CTDB_MONITOR_FREE_MEMORY_WARN ] ; then
-	    echo "WARNING: free memory is low - ${free_mem}MB free <=  ${CTDB_MONITOR_FREE_MEMORY_WARN}MB (CTDB threshold)"
-	fi
-    fi
-
-    # We should never enter swap, so SwapTotal == SwapFree.
-    if [ "$CTDB_CHECK_SWAP_IS_NOT_USED" = "yes" ] ; then
-	set -- $(get_proc "meminfo" | awk '$1 ~ /Swap(Total|Free):/ { print $2 }')
-	if [ "$1" != "$2" ] ; then
-	    echo We are swapping:
-	    get_proc "meminfo"
-	    ps auxfww
-	fi
-    fi
-}
-
 ############################################################
 
 ctdb_check_args "$@"
 
-case "$1" in 
+case "$1" in
      init)
         # make sure we have a blank state directory for the scripts to work with
-	rm -rf $CTDB_VARDIR/state
-	# Look at the pattern - this should not be -rf!!!
-	rm -f $ctdb_managed_dir/*
-	mkdir -p $CTDB_VARDIR/state || {
-	    ret=$?
-	    echo "mkdir -p $CTDB_VARDIR/state - failed - $ret"
-	    exit $ret
-	}
+	rm -rf "$CTDB_SCRIPT_VARDIR"
+	mkdir -p "$CTDB_SCRIPT_VARDIR" || \
+	    die "mkdir -p ${CTDB_SCRIPT_VARDIR} - failed - ${ret}" $?
 
 	if select_tdb_checker ; then
 	    check_persistent_databases || exit $?
@@ -186,9 +141,6 @@ case "$1" in
 
     startup)
 	ctdb attach ctdb.tdb persistent
-	;;
-    monitor)
-	monitor_system_memory
 	;;
 
     *)

@@ -54,6 +54,10 @@ struct gpfs_config_data {
 	bool recalls;
 };
 
+struct gpfs_fsp_extension {
+	bool offline;
+};
+
 static inline unsigned int gpfs_acl_flags(gpfs_acl_t *gacl)
 {
 	if (gacl->acl_level == GPFS_ACL_LEVEL_V4FLAGS) {
@@ -122,6 +126,8 @@ static int vfs_gpfs_kernel_flock(vfs_handle_struct *handle, files_struct *fsp,
 	struct gpfs_config_data *config;
 	int ret = 0;
 
+	START_PROFILE(syscall_kernel_flock);
+
 	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct gpfs_config_data,
 				return -1);
@@ -140,8 +146,6 @@ static int vfs_gpfs_kernel_flock(vfs_handle_struct *handle, files_struct *fsp,
 		DEBUG(2,("%s: kernel_flock on stream\n", fsp_str_dbg(fsp)));
 		return 0;
 	}
-
-	START_PROFILE(syscall_kernel_flock);
 
 	kernel_flock(fsp->fh->fd, share_mode, access_mask);
 
@@ -196,11 +200,11 @@ static int vfs_gpfs_setlease(vfs_handle_struct *handle, files_struct *fsp,
 	struct gpfs_config_data *config;
 	int ret=0;
 
+	START_PROFILE(syscall_linux_setlease);
+
 	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct gpfs_config_data,
 				return -1);
-
-	START_PROFILE(syscall_linux_setlease);
 
 	if (linux_set_lease_sighandler(fsp->fh->fd) == -1) {
 		ret = -1;
@@ -436,7 +440,8 @@ again:
  * On failure returns -1 if there is system (GPFS) error, check errno.
  * Returns 0 on success
  */
-static int gpfs_get_nfs4_acl(TALLOC_CTX *mem_ctx, const char *fname, SMB4ACL_T **ppacl)
+static int gpfs_get_nfs4_acl(TALLOC_CTX *mem_ctx, const char *fname,
+			     struct SMB4ACL_T **ppacl)
 {
 	gpfs_aclCount_t i;
 	struct gpfs_acl *gacl = NULL;
@@ -537,7 +542,7 @@ static NTSTATUS gpfsacl_fget_nt_acl(vfs_handle_struct *handle,
 	TALLOC_CTX *mem_ctx,
 	struct security_descriptor **ppdesc)
 {
-	SMB4ACL_T *pacl = NULL;
+	struct SMB4ACL_T *pacl = NULL;
 	int	result;
 	struct gpfs_config_data *config;
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -584,7 +589,7 @@ static NTSTATUS gpfsacl_get_nt_acl(vfs_handle_struct *handle,
 	uint32_t security_info,
 	TALLOC_CTX *mem_ctx, struct security_descriptor **ppdesc)
 {
-	SMB4ACL_T *pacl = NULL;
+	struct SMB4ACL_T *pacl = NULL;
 	int	result;
 	struct gpfs_config_data *config;
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -627,12 +632,12 @@ static NTSTATUS gpfsacl_get_nt_acl(vfs_handle_struct *handle,
 
 static struct gpfs_acl *vfs_gpfs_smbacl2gpfsacl(TALLOC_CTX *mem_ctx,
 						files_struct *fsp,
-						SMB4ACL_T *smbacl,
+						struct SMB4ACL_T *smbacl,
 						bool controlflags)
 {
 	struct gpfs_acl *gacl;
 	gpfs_aclLen_t gacl_len;
-	SMB4ACE_T *smbace;
+	struct SMB4ACE_T *smbace;
 
 	gacl_len = offsetof(gpfs_acl_t, ace_v4) + sizeof(unsigned int)
 		+ smb_get_naces(smbacl) * sizeof(gpfs_ace_v4_t);
@@ -720,7 +725,7 @@ static struct gpfs_acl *vfs_gpfs_smbacl2gpfsacl(TALLOC_CTX *mem_ctx,
 
 static bool gpfsacl_process_smbacl(vfs_handle_struct *handle,
 				   files_struct *fsp,
-				   SMB4ACL_T *smbacl)
+				   struct SMB4ACL_T *smbacl)
 {
 	int ret;
 	struct gpfs_acl *gacl;
@@ -1295,12 +1300,12 @@ static uint32_t gpfsacl_mask_filter(uint32_t aceType, uint32_t aceMask, uint32_t
 static int gpfsacl_emu_chmod(vfs_handle_struct *handle,
 			     const char *path, mode_t mode)
 {
-	SMB4ACL_T *pacl = NULL;
+	struct SMB4ACL_T *pacl = NULL;
 	int     result;
 	bool    haveAllowEntry[SMB_ACE4_WHO_EVERYONE + 1] = {False, False, False, False};
 	int     i;
 	files_struct fake_fsp = { 0 }; /* TODO: rationalize parametrization */
-	SMB4ACE_T       *smbace;
+	struct SMB4ACE_T *smbace;
 	TALLOC_CTX *frame = talloc_stackframe();
 
 	DEBUG(10, ("gpfsacl_emu_chmod invoked for %s mode %o\n", path, mode));
@@ -1955,18 +1960,42 @@ static bool vfs_gpfs_is_offline(struct vfs_handle_struct *handle,
 	return SMB_VFS_NEXT_IS_OFFLINE(handle, fname, sbuf);
 }
 
+static bool vfs_gpfs_fsp_is_offline(struct vfs_handle_struct *handle,
+				    struct files_struct *fsp)
+{
+	struct gpfs_fsp_extension *ext;
+
+	ext = VFS_FETCH_FSP_EXTENSION(handle, fsp);
+	if (ext == NULL) {
+		/*
+		 * Something bad happened, always ask.
+		 */
+		return vfs_gpfs_is_offline(handle, fsp->fsp_name,
+					   &fsp->fsp_name->st);
+	}
+
+	if (ext->offline) {
+		/*
+		 * As long as it's offline, ask.
+		 */
+		ext->offline = vfs_gpfs_is_offline(handle, fsp->fsp_name,
+						   &fsp->fsp_name->st);
+	}
+
+	return ext->offline;
+}
+
 static bool vfs_gpfs_aio_force(struct vfs_handle_struct *handle,
 			       struct files_struct *fsp)
 {
-	return vfs_gpfs_is_offline(handle, fsp->fsp_name, &fsp->fsp_name->st);
+	return vfs_gpfs_fsp_is_offline(handle, fsp);
 }
 
 static ssize_t vfs_gpfs_sendfile(vfs_handle_struct *handle, int tofd,
 				 files_struct *fsp, const DATA_BLOB *hdr,
 				 off_t offset, size_t n)
 {
-	if (SMB_VFS_IS_OFFLINE(handle->conn, fsp->fsp_name, &fsp->fsp_name->st))
-	{
+	if (vfs_gpfs_fsp_is_offline(handle, fsp)) {
 		errno = ENOSYS;
 		return -1;
 	}
@@ -2175,8 +2204,31 @@ static uint64_t vfs_gpfs_disk_free(vfs_handle_struct *handle, const char *path,
 	vfs_gpfs_disk_free_quota(qi_user, cur_time, dfree, dsize);
 	vfs_gpfs_disk_free_quota(qi_group, cur_time, dfree, dsize);
 
-	disk_norm(bsize, dfree, dsize);
-	return *dfree;
+	return *dfree / 2;
+}
+
+static int vfs_gpfs_get_quota(vfs_handle_struct *handle, const char *path,
+			  enum SMB_QUOTA_TYPE qtype, unid_t id,
+			  SMB_DISK_QUOTA *dq)
+{
+	switch(qtype) {
+		/*
+		 * User/group quota are being used for disk-free
+		 * determination, which in this module is done directly
+		 * by the disk-free function. It's important that this
+		 * module does not return wrong quota values by mistake,
+		 * which would modify the correct values set by disk-free.
+		 * User/group quota are also being used for processing
+		 * NT_TRANSACT_GET_USER_QUOTA in smb1 protocol, which is
+		 * currently not supported by this module.
+		 */
+		case SMB_USER_QUOTA_TYPE:
+		case SMB_GROUP_QUOTA_TYPE:
+			errno = ENOSYS;
+			return -1;
+		default:
+			return SMB_VFS_NEXT_GET_QUOTA(handle, path, qtype, id, dq);
+	}
 }
 
 static uint32_t vfs_gpfs_capabilities(struct vfs_handle_struct *handle,
@@ -2202,25 +2254,42 @@ static int vfs_gpfs_open(struct vfs_handle_struct *handle,
 			 int flags, mode_t mode)
 {
 	struct gpfs_config_data *config;
+	int ret;
+	struct gpfs_fsp_extension *ext;
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct gpfs_config_data,
 				return -1);
 
-	if (config->hsm && !config->recalls) {
-		if (SMB_VFS_IS_OFFLINE(handle->conn, smb_fname, &smb_fname->st))
-		{
-			DEBUG(10, ("Refusing access to offline file %s\n",
-				  fsp_str_dbg(fsp)));
-			errno = EACCES;
-			return -1;
-		}
+	if (config->hsm && !config->recalls &&
+	    vfs_gpfs_fsp_is_offline(handle, fsp)) {
+		DEBUG(10, ("Refusing access to offline file %s\n",
+			   fsp_str_dbg(fsp)));
+		errno = EACCES;
+		return -1;
 	}
 
 	if (config->syncio) {
 		flags |= O_SYNC;
 	}
-	return SMB_VFS_NEXT_OPEN(handle, smb_fname, fsp, flags, mode);
+
+	ext = VFS_ADD_FSP_EXTENSION(handle, fsp, struct gpfs_fsp_extension,
+				    NULL);
+	if (ext == NULL) {
+		errno = ENOMEM;
+		return -1;
+	}
+
+	/*
+	 * Assume the file is offline until gpfs tells us it's online.
+	 */
+	*ext = (struct gpfs_fsp_extension) { .offline = true };
+
+	ret = SMB_VFS_NEXT_OPEN(handle, smb_fname, fsp, flags, mode);
+	if (ret == -1) {
+		VFS_REMOVE_FSP_EXTENSION(handle, fsp);
+	}
+	return ret;
 }
 
 static ssize_t vfs_gpfs_pread(vfs_handle_struct *handle, files_struct *fsp,
@@ -2229,8 +2298,7 @@ static ssize_t vfs_gpfs_pread(vfs_handle_struct *handle, files_struct *fsp,
 	ssize_t ret;
 	bool was_offline;
 
-	was_offline = SMB_VFS_IS_OFFLINE(handle->conn, fsp->fsp_name,
-					 &fsp->fsp_name->st);
+	was_offline = vfs_gpfs_fsp_is_offline(handle, fsp);
 
 	ret = SMB_VFS_NEXT_PREAD(handle, fsp, data, n, offset);
 
@@ -2266,8 +2334,7 @@ static struct tevent_req *vfs_gpfs_pread_send(struct vfs_handle_struct *handle,
 	if (req == NULL) {
 		return NULL;
 	}
-	state->was_offline = SMB_VFS_IS_OFFLINE(handle->conn, fsp->fsp_name,
-						&fsp->fsp_name->st);
+	state->was_offline = vfs_gpfs_fsp_is_offline(handle, fsp);
 	state->fsp = fsp;
 	subreq = SMB_VFS_NEXT_PREAD_SEND(state, ev, handle, fsp, data,
 					 n, offset);
@@ -2317,8 +2384,7 @@ static ssize_t vfs_gpfs_pwrite(vfs_handle_struct *handle, files_struct *fsp,
 	ssize_t ret;
 	bool was_offline;
 
-	was_offline = SMB_VFS_IS_OFFLINE(handle->conn, fsp->fsp_name,
-					 &fsp->fsp_name->st);
+	was_offline = vfs_gpfs_fsp_is_offline(handle, fsp);
 
 	ret = SMB_VFS_NEXT_PWRITE(handle, fsp, data, n, offset);
 
@@ -2355,8 +2421,7 @@ static struct tevent_req *vfs_gpfs_pwrite_send(
 	if (req == NULL) {
 		return NULL;
 	}
-	state->was_offline = SMB_VFS_IS_OFFLINE(handle->conn, fsp->fsp_name,
-						&fsp->fsp_name->st);
+	state->was_offline = vfs_gpfs_fsp_is_offline(handle, fsp);
 	state->fsp = fsp;
 	subreq = SMB_VFS_NEXT_PWRITE_SEND(state, ev, handle, fsp, data,
 					 n, offset);
@@ -2404,6 +2469,7 @@ static ssize_t vfs_gpfs_pwrite_recv(struct tevent_req *req, int *err)
 static struct vfs_fn_pointers vfs_gpfs_fns = {
 	.connect_fn = vfs_gpfs_connect,
 	.disk_free_fn = vfs_gpfs_disk_free,
+	.get_quota_fn = vfs_gpfs_get_quota,
 	.fs_capabilities_fn = vfs_gpfs_capabilities,
 	.kernel_flock_fn = vfs_gpfs_kernel_flock,
 	.linux_setlease_fn = vfs_gpfs_setlease,
