@@ -14,3 +14,4 @@ Fix-privacy-breach-on-google.com.patch
 fix-cluster-build.diff
 ctdb-Fix-detection-of-gnukfreebsd.patch
 no_build_options.patch
+security-2016-04-12-prerequisite-v4-4-regression-fixes.metze01.txt

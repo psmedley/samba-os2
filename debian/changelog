@@ -1,3 +1,19 @@
+samba (2:4.4.1+dfsg-1) experimental; urgency=medium
+
+  * New upstream release
+   + Fixes (Patches by Stefan Metzmacher of SerNet and others on the Samba Team):
+    - CVE-2015-5370 (Multiple errors in DCE-RPC code)
+    - CVE-2016-2110 (Man in the middle attacks possible with NTLMSSP)
+    - CVE-2016-2111 (NETLOGON Spoofing Vulnerability)
+    - CVE-2016-2112 (LDAP client and server don't enforce integrity)
+    - CVE-2016-2113 (Missing TLS certificate validation)
+    - CVE-2016-2114 ("server signing = mandatory" not enforced)
+    - CVE-2016-2115 (SMB IPC traffic is not integrity protected)
+    - CVE-2016-2118 (SAMR and LSA man in the middle attacks possible)
+  * Additional regression fix for 'net ads join' to a Windows 2003 domain by metze
+
+ -- Andrew Bartlett <abartlet+debian@catalyst.net.nz>  Mon, 11 Apr 2016 16:09:59 +1200
+
 samba (2:4.4.0+dfsg-1) experimental; urgency=medium
   [ Andrew Bartlett ]
   * New upstream release.

@@ -1,3 +1,88 @@
+samba (2:4.4.1+dfsg-1) experimental; urgency=medium
+
+    This Samba security addresses both Denial of Service and Man in
+    the Middle vulnerabilities.
+
+    Both of these changes implement new smb.conf options and a number
+    of stricter behaviours to prevent Man in the Middle attacks on our
+    network services, as a client and as a server.
+
+    Between these changes, compatibility with a large number of older
+    software versions has been lost in the default configuration.
+
+    See the release notes in WHATNEW.txt for more information.
+
+
+    Here are some additional hints how to work around the new stricter default behaviors:
+
+    * As an AD DC server, only Windows 2000 and Samba 3.6 and above as
+      a domain member are supported out of the box. Other smb file
+      servers as domain members are also fine out of the box.
+
+    * As an AD DC server, with default setting of "ldap server require
+      strong auth", LDAP clients connecting over ldaps:// or START_TLS
+      will be allowed to perform simple LDAP bind only.
+
+      The preferred configuration for LDAP clients is to use SASL
+      GSSAPI directly over ldap:// without using ldaps:// or
+      START_TLS.
+
+      To use LDAP with START_TLS and SASL GSSAPI (either Kerberos or
+      NTLMSSP) sign/seal protection must be used by the client and
+      server should be configured with "ldap server require strong
+      auth = allow_sasl_over_tls".
+
+      Consult OpenLDAP documentation how to set sign/seal protection
+      in ldap.conf.
+
+      For SSSD client configured with "id_provider = ad" or
+      "id_provider = ldap" with "auth_provider = krb5", see
+      sssd-ldap(5) manual for details on TLS session handling.
+
+    * As a File Server, compatibility with the Linux Kernel cifs
+      client depends on which configuration options are selected, please
+      use "sec=krb5(i)" or "sec=ntlmssp(i)", not "sec=ntlmv2".
+
+    * As a file or printer client and as a domain member, out of the
+      box compatibility with Samba less than 4.0 and other SMB/CIFS
+      servers, depends on support for SMB signing or SMB2 on the
+      server, which is often disabled or absent. You may need to
+      adjust the "client ipc signing" to "no" in these cases.
+
+    * In case of an upgrade from versions before 4.2.0, you might run
+      into problems as a domain member. The out of the box compatibility
+      with Samba 3.x domain controllers requires NETLOGON features only
+      available in Samba 3.2 and above.
+    
+    However, all of these can be worked around by setting smb.conf
+    options in Samba, see WHATSNEW.txt the 4.2.0 release notes at
+    https://www.samba.org/samba/history/samba-4.2.0.html and the Samba
+    wiki for details, workarounds and suggested security-improving
+    changes to these and other software packages.
+
+
+    Suggested further improvements after patching:
+
+    It is recommended that administrators set these additional options,
+    if compatible with their network environment:
+
+        server signing = mandatory
+	ntlm auth = no
+
+    Without "server signing = mandatory", Man in the Middle attacks
+    are still possible against our file server and
+    classic/NT4-like/Samba3 Domain controller. (It is now enforced on
+    Samba's AD DC.) Note that this has heavy impact on the file server
+    performance, so you need to decide between performance and
+    security. These Man in the Middle attacks for smb file servers are
+    well known for decades.
+
+    Without "ntlm auth = no", there may still be clients not using
+    NTLMv2, and these observed passwords may be brute-forced easily using
+    cloud-computing resources or rainbow tables.
+
+ -- Andrew Bartlett <abartlet+debian@catalyst.net.nz>  Tue, 12 Apr 2016 16:18:57 +1200
+
 samba (2:4.0.10+dfsg-3) unstable; urgency=low
 
     The SWAT package is no longer available.
