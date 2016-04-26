@@ -4,12 +4,12 @@ Priority: optional
 Maintainer: Debian Samba Maintainers <pkg-samba-maint@lists.alioth.debian.org>
 Uploaders: Steve Langasek <vorlon@debian.org>,
            Christian Perrier <bubulle@debian.org>,
-           Jelmer Vernooij <jelmer@debian.org>,
+           Jelmer Vernooĳ <jelmer@debian.org>,
            Ivo De Decker <ivodd@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
            Andrew Bartlett <abartlet+debian@catalyst.net.nz>
 Homepage: http://www.samba.org
-Standards-Version: 3.9.7
+Standards-Version: 3.9.8
 Build-Depends: bison,
                debhelper (>> 9),
                dh-systemd (>= 1.5),
@@ -38,7 +38,6 @@ Build-Depends: bison,
                libtdb-dev (>= 1.3.8~),
                libtevent-dev (>= 0.9.25~),
                perl,
-               perl-modules,
                pkg-config,
                po-debconf,
                python-all-dev (>= 2.6.6-3),

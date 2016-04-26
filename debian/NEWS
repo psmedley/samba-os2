@@ -67,7 +67,7 @@ samba (2:4.4.1+dfsg-1) experimental; urgency=medium
     if compatible with their network environment:
 
         server signing = mandatory
-	ntlm auth = no
+        ntlm auth = no
 
     Without "server signing = mandatory", Man in the Middle attacks
     are still possible against our file server and
