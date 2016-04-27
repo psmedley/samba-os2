@@ -1,0 +1,12 @@
+diff --git a/buildtools/wafsamba/wscript b/buildtools/wafsamba/wscript
+index d6bb688..7831b75 100755
+--- a/buildtools/wafsamba/wscript
++++ b/buildtools/wafsamba/wscript
+@@ -296,7 +296,6 @@ def configure(conf):
+ 
+     conf.CHECK_COMMAND(['uname', '-a'],
+                        msg='Checking build system',
+-                       define='BUILD_SYSTEM',
+                        on_target=False)
+     conf.CHECK_UNAME()
+ 

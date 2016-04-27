@@ -53,7 +53,7 @@ samba (2:4.4.1+dfsg-1) experimental; urgency=medium
       into problems as a domain member. The out of the box compatibility
       with Samba 3.x domain controllers requires NETLOGON features only
       available in Samba 3.2 and above.
-    
+
     However, all of these can be worked around by setting smb.conf
     options in Samba, see WHATSNEW.txt the 4.2.0 release notes at
     https://www.samba.org/samba/history/samba-4.2.0.html and the Samba

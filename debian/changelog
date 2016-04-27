@@ -1,3 +1,9 @@
+samba (2:4.4.2+dfsg-2) unstable; urgency=medium
+
+  * Merge in 4.3 package changes.
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Wed, 27 Apr 2016 01:29:47 +0000
+
 samba (2:4.4.2+dfsg-1) unstable; urgency=medium
 
   * New upstream release.
@@ -28,6 +34,36 @@ samba (2:4.4.0+dfsg-1) experimental; urgency=medium
   * New upstream release.
 
  -- Andrew Bartlett <abartlet+debian@catalyst.net.nz>  Wed, 06 Apr 2016 17:08:20 +1200
+
+samba (2:4.3.8+dfsg-1) unstable; urgency=low
+
+  [ Jelmer Vernooĳ ]
+  * Add patch no_build_system.patch: drop host-specific define that
+    prevents reproducible builds.
+  * New upstream release.
+   + Drop patch
+     security-2016-04-12-prerequisite-v4-3-regression-fixes.metze01.txt,
+     now included upstream.
+  * Bump version in Replaces: samba-libs for samba-vfs-modules to
+    4.3.2+dfsg-1, to fix jessie->stretch upgrades. Closes: #821070
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Sat, 16 Apr 2016 01:18:36 +0000
+
+samba (2:4.3.7+dfsg-1) unstable; urgency=high
+
+  * New upstream release.
+   + Fixes (Patches by Stefan Metzmacher of SerNet and others on the Samba Team):
+    - CVE-2015-5370 (Multiple errors in DCE-RPC code)
+    - CVE-2016-2110 (Man in the middle attacks possible with NTLMSSP)
+    - CVE-2016-2111 (NETLOGON Spoofing Vulnerability)
+    - CVE-2016-2112 (LDAP client and server don't enforce integrity)
+    - CVE-2016-2113 (Missing TLS certificate validation)
+    - CVE-2016-2114 ("server signing = mandatory" not enforced)
+    - CVE-2016-2115 (SMB IPC traffic is not integrity protected)
+    - CVE-2016-2118 (SAMR and LSA man in the middle attacks possible)
+  * Additional regression fix for 'net ads join' to a Windows 2003 domain by metze
+
+ -- Andrew Bartlett <abartlet+debian@catalyst.net.nz>  Wed, 13 Apr 2016 10:24:17 +1200
 
 samba (2:4.3.6+dfsg-2) unstable; urgency=low
   [ Mathieu Parent ]

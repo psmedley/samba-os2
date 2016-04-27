@@ -367,7 +367,7 @@ Description: Samba Directory Services Database
 
 Package: samba-vfs-modules
 Architecture: any
-Replaces: samba-libs (<< 2:4.1.1+dfsg-1)
+Replaces: samba-libs (<< 4.3.2+dfsg-1)
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Enhances: samba
 Description: Samba Virtual FileSystem plugins
