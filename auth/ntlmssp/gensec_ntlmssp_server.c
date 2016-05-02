@@ -131,20 +131,13 @@ NTSTATUS gensec_ntlmssp_server_start(struct gensec_security *gensec_security)
 		ntlmssp_state->allow_lm_key = true;
 	}
 
-	if (lpcfg_map_to_guest(gensec_security->settings->lp_ctx) != NEVER_MAP_TO_GUEST) {
+	ntlmssp_state->force_old_spnego = false;
+
+	if (gensec_setting_bool(gensec_security->settings, "ntlmssp_server", "force_old_spnego", false)) {
 		/*
-		 * map to guest is not secure anyway, so
-		 * try to make it work and don't try to
-		 * negotiate new_spnego and MIC checking
+		 * For testing Windows 2000 mode
 		 */
 		ntlmssp_state->force_old_spnego = true;
-	}
-
-	if (role == ROLE_ACTIVE_DIRECTORY_DC) {
-		/*
-		 * map to guest is not supported on an AD DC.
-		 */
-		ntlmssp_state->force_old_spnego = false;
 	}
 
 	ntlmssp_state->neg_flags =

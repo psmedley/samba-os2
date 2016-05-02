@@ -134,6 +134,7 @@ static ADS_STATUS ads_sasl_spnego_gensec_bind(ADS_STRUCT *ads,
 	struct auth_generic_state *auth_generic_state;
 	bool use_spnego_principal = lp_client_use_spnego_principal();
 	const char *sasl_list[] = { sasl, NULL };
+	NTTIME end_nt_time;
 
 	nt_status = auth_generic_client_prepare(NULL, &auth_generic_state);
 	if (!NT_STATUS_IS_OK(nt_status)) {
@@ -307,6 +308,14 @@ static ADS_STATUS ads_sasl_spnego_gensec_bind(ADS_STRUCT *ads,
 		}
 	}
 
+	ads->auth.tgs_expire = LONG_MAX;
+	end_nt_time = gensec_expire_time(auth_generic_state->gensec_security);
+	if (end_nt_time != GENSEC_EXPIRE_TIME_INFINITY) {
+		struct timeval tv;
+		nttime_to_timeval(&tv, end_nt_time);
+		ads->auth.tgs_expire = tv.tv_sec;
+	}
+
 	if (ads->ldap.wrap_type > ADS_SASLWRAP_TYPE_PLAIN) {
 		size_t max_wrapped = gensec_max_wrapped_size(auth_generic_state->gensec_security);
 		ads->ldap.out.max_unwrapped = gensec_max_input_size(auth_generic_state->gensec_security);
@@ -319,7 +328,7 @@ static ADS_STATUS ads_sasl_spnego_gensec_bind(ADS_STRUCT *ads,
 		 * arcfour-hmac-md5.
 		 */
 		ads->ldap.in.min_wrapped = MIN(ads->ldap.out.sig_size, 0x2C);
-		ads->ldap.in.max_wrapped = max_wrapped;
+		ads->ldap.in.max_wrapped = ADS_SASL_WRAPPING_IN_MAX_WRAPPED;
 		status = ads_setup_sasl_wrapping(ads, &ads_sasl_gensec_ops, auth_generic_state->gensec_security);
 		if (!ADS_ERR_OK(status)) {
 			DEBUG(0, ("ads_setup_sasl_wrapping() failed: %s\n",
@@ -977,7 +986,7 @@ static ADS_STATUS ads_sasl_gssapi_do_bind(ADS_STRUCT *ads, const gss_name_t serv
 
 		ads->ldap.out.sig_size = max_msg_size - ads->ldap.out.max_unwrapped;
 		ads->ldap.in.min_wrapped = 0x2C; /* taken from a capture with LDAP unbind */
-		ads->ldap.in.max_wrapped = max_msg_size;
+		ads->ldap.in.max_wrapped = ADS_SASL_WRAPPING_IN_MAX_WRAPPED;
 		status = ads_setup_sasl_wrapping(ads, &ads_sasl_gssapi_ops, context_handle);
 		if (!ADS_ERR_OK(status)) {
 			DEBUG(0, ("ads_setup_sasl_wrapping() failed: %s\n",

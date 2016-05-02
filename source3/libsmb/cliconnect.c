@@ -242,6 +242,7 @@ static void cli_session_setup_lanman2_done(struct tevent_req *subreq)
 	p = bytes;
 
 	cli_state_set_uid(state->cli, SVAL(inhdr, HDR_UID));
+	smb1cli_session_set_action(cli->smb1.session, SVAL(vwv+2, 0));
 
 	status = smb_bytes_talloc_string(cli,
 					inhdr,
@@ -445,6 +446,7 @@ static void cli_session_setup_guest_done(struct tevent_req *subreq)
 	p = bytes;
 
 	cli_state_set_uid(state->cli, SVAL(inhdr, HDR_UID));
+	smb1cli_session_set_action(cli->smb1.session, SVAL(vwv+2, 0));
 
 	status = smb_bytes_talloc_string(cli,
 					inhdr,
@@ -604,6 +606,7 @@ static void cli_session_setup_plain_done(struct tevent_req *subreq)
 	p = bytes;
 
 	cli_state_set_uid(state->cli, SVAL(inhdr, HDR_UID));
+	smb1cli_session_set_action(cli->smb1.session, SVAL(vwv+2, 0));
 
 	status = smb_bytes_talloc_string(cli,
 					inhdr,
@@ -915,6 +918,7 @@ static void cli_session_setup_nt1_done(struct tevent_req *subreq)
 	p = bytes;
 
 	cli_state_set_uid(state->cli, SVAL(inhdr, HDR_UID));
+	smb1cli_session_set_action(cli->smb1.session, SVAL(vwv+2, 0));
 
 	status = smb_bytes_talloc_string(cli,
 					inhdr,
@@ -1160,6 +1164,7 @@ static void cli_sesssetup_blob_done(struct tevent_req *subreq)
 	state->inbuf = in;
 	inhdr = in + NBT_HDR_SIZE;
 	cli_state_set_uid(state->cli, SVAL(inhdr, HDR_UID));
+	smb1cli_session_set_action(cli->smb1.session, SVAL(vwv+2, 0));
 
 	blob_length = SVAL(vwv+3, 0);
 	if (blob_length > num_bytes) {
@@ -1324,6 +1329,17 @@ static struct tevent_req *cli_session_setup_gensec_send(
 
 	talloc_set_destructor(
 		state, cli_session_setup_gensec_state_destructor);
+
+	if (user == NULL || strlen(user) == 0) {
+		if (pass != NULL && strlen(pass) == 0) {
+			/*
+			 * some callers pass "" as no password
+			 *
+			 * gensec only handles NULL as no password.
+			 */
+			pass = NULL;
+		}
+	}
 
 	status = auth_generic_client_prepare(state, &state->auth_generic);
 	if (tevent_req_nterror(req, status)) {
@@ -1556,6 +1572,27 @@ static void cli_session_setup_gensec_remote_done(struct tevent_req *subreq)
 	}
 
 	if (NT_STATUS_IS_OK(status)) {
+		struct smbXcli_session *session = NULL;
+		bool is_guest = false;
+
+		if (smbXcli_conn_protocol(state->cli->conn) >= PROTOCOL_SMB2_02) {
+			session = state->cli->smb2.session;
+		} else {
+			session = state->cli->smb1.session;
+		}
+
+		is_guest = smbXcli_session_is_guest(session);
+		if (is_guest) {
+			/*
+			 * We can't finish the gensec handshake, we don't
+			 * have a negotiated session key.
+			 *
+			 * So just pretend we are completely done.
+			 */
+			state->blob_in = data_blob_null;
+			state->local_ready = true;
+		}
+
 		state->remote_ready = true;
 	}
 
@@ -1606,6 +1643,19 @@ static void cli_session_setup_gensec_ready(struct tevent_req *req)
 		}
 	}
 
+	if (state->is_anonymous) {
+		/*
+		 * Windows server does not set the
+		 * SMB2_SESSION_FLAG_IS_NULL flag.
+		 *
+		 * This fix makes sure we do not try
+		 * to verify a signature on the final
+		 * session setup response.
+		 */
+		tevent_req_done(req);
+		return;
+	}
+
 	status = gensec_session_key(state->auth_generic->gensec_security,
 				    state, &state->session_key);
 	if (tevent_req_nterror(req, status)) {
@@ -1614,20 +1664,6 @@ static void cli_session_setup_gensec_ready(struct tevent_req *req)
 
 	if (smbXcli_conn_protocol(state->cli->conn) >= PROTOCOL_SMB2_02) {
 		struct smbXcli_session *session = state->cli->smb2.session;
-
-		if (state->is_anonymous) {
-			/*
-			 * Windows server does not set the
-			 * SMB2_SESSION_FLAG_IS_GUEST nor
-			 * SMB2_SESSION_FLAG_IS_NULL flag.
-			 *
-			 * This fix makes sure we do not try
-			 * to verify a signature on the final
-			 * session setup response.
-			 */
-			tevent_req_done(req);
-			return;
-		}
 
 		status = smb2cli_session_set_session_key(session,
 							 state->session_key,
@@ -2058,6 +2094,21 @@ struct tevent_req *cli_session_setup_send(TALLOC_CTX *mem_ctx,
 		return req;
 	}
 
+	/*
+	 * if the server supports extended security then use SPNEGO
+	 * even for anonymous connections.
+	 */
+	if (smb1cli_conn_capabilities(cli->conn) & CAP_EXTENDED_SECURITY) {
+		subreq = cli_session_setup_spnego_send(
+			state, ev, cli, user, pass, workgroup);
+		if (tevent_req_nomem(subreq, req)) {
+			return tevent_req_post(req, ev);
+		}
+		tevent_req_set_callback(subreq, cli_session_setup_done_spnego,
+					req);
+		return req;
+	}
+
 	/* if no user is supplied then we have to do an anonymous connection.
 	   passwords are ignored */
 
@@ -2106,18 +2157,7 @@ struct tevent_req *cli_session_setup_send(TALLOC_CTX *mem_ctx,
 		return req;
 	}
 
-	/* if the server supports extended security then use SPNEGO */
-
-	if (smb1cli_conn_capabilities(cli->conn) & CAP_EXTENDED_SECURITY) {
-		subreq = cli_session_setup_spnego_send(
-			state, ev, cli, user, pass, workgroup);
-		if (tevent_req_nomem(subreq, req)) {
-			return tevent_req_post(req, ev);
-		}
-		tevent_req_set_callback(subreq, cli_session_setup_done_spnego,
-					req);
-		return req;
-	} else {
+	{
 		/* otherwise do a NT1 style session setup */
 		if (lp_client_ntlmv2_auth() && lp_client_use_spnego()) {
 			/*

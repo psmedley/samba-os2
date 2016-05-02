@@ -172,19 +172,14 @@ NTSTATUS gensec_ntlmssp_resume_ccache(struct gensec_security *gensec_security,
 
 	if (ntlmssp_state->neg_flags & NTLMSSP_NEGOTIATE_SIGN) {
 		gensec_security->want_features |= GENSEC_FEATURE_SIGN;
-
-		ntlmssp_state->required_flags |= NTLMSSP_NEGOTIATE_SIGN;
 	}
 
 	if (ntlmssp_state->neg_flags & NTLMSSP_NEGOTIATE_SEAL) {
 		gensec_security->want_features |= GENSEC_FEATURE_SEAL;
-
-		ntlmssp_state->required_flags |= NTLMSSP_NEGOTIATE_SIGN;
-		ntlmssp_state->required_flags |= NTLMSSP_NEGOTIATE_SEAL;
 	}
 
-	ntlmssp_state->neg_flags |= ntlmssp_state->required_flags;
 	ntlmssp_state->conf_flags = ntlmssp_state->neg_flags;
+	ntlmssp_state->required_flags = 0;
 
 	if (DEBUGLEVEL >= 10) {
 		struct NEGOTIATE_MESSAGE *negotiate = talloc(
@@ -789,6 +784,9 @@ NTSTATUS gensec_ntlmssp_client_start(struct gensec_security *gensec_security)
 
 	ntlmssp_state->use_ntlmv2 = lpcfg_client_ntlmv2_auth(gensec_security->settings->lp_ctx);
 
+	ntlmssp_state->force_old_spnego = gensec_setting_bool(gensec_security->settings,
+						"ntlmssp_client", "force_old_spnego", false);
+
 	ntlmssp_state->expected_state = NTLMSSP_INITIAL;
 
 	ntlmssp_state->neg_flags =
@@ -848,8 +846,11 @@ NTSTATUS gensec_ntlmssp_client_start(struct gensec_security *gensec_security)
 		 * Without this, Windows will not create the master key
 		 * that it thinks is only used for NTLMSSP signing and
 		 * sealing.  (It is actually pulled out and used directly)
+		 *
+		 * We don't require this here as some servers (e.g. NetAPP)
+		 * doesn't support this.
 		 */
-		ntlmssp_state->required_flags |= NTLMSSP_NEGOTIATE_SIGN;
+		ntlmssp_state->neg_flags |= NTLMSSP_NEGOTIATE_SIGN;
 	}
 	if (gensec_security->want_features & GENSEC_FEATURE_SIGN) {
 		ntlmssp_state->required_flags |= NTLMSSP_NEGOTIATE_SIGN;

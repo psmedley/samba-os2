@@ -80,6 +80,8 @@ override_dh_auto_clean:
 	rm -rf buildtools/bin/.waf-*
 	rm -rf bin
 	rm -f .lock-wscript
+	rm -f ctdb/README.eventscripts
+	rm -f ctdb/README.notify.d
 
 override_dh_auto_install:
 	DESTDIR="$(DESTDIR)" $(WAF) install

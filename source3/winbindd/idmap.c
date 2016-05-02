@@ -120,6 +120,47 @@ static bool idmap_init(void)
 	return true;
 }
 
+bool domain_has_idmap_config(const char *domname)
+{
+	int i;
+	char *config_option;
+	const char *range = NULL;
+	const char *backend = NULL;
+	bool ok;
+
+	ok = idmap_init();
+	if (!ok) {
+		return false;
+	}
+
+	for (i=0; i<num_domains; i++) {
+		if (strequal(idmap_domains[i]->name, domname)) {
+			return true;
+		}
+	}
+
+	/* fallback: also check loadparm */
+
+	config_option = talloc_asprintf(talloc_tos(), "idmap config %s",
+					domname);
+	if (config_option == NULL) {
+		DEBUG(0, ("out of memory\n"));
+		return false;
+	}
+
+	range = lp_parm_const_string(-1, config_option, "range", NULL);
+	backend = lp_parm_const_string(-1, config_option, "backend", NULL);
+	if (range != NULL && backend != NULL) {
+		DEBUG(5, ("idmap configuration specified for domain '%s'\n",
+			domname));
+		TALLOC_FREE(config_option);
+		return true;
+	}
+
+	TALLOC_FREE(config_option);
+	return false;
+}
+
 static bool idmap_found_domain_backend(
 	const char *string, regmatch_t matches[], void *private_data)
 {

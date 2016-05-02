@@ -59,6 +59,8 @@ struct spnego_state {
 	bool needs_mic_check;
 	bool done_mic_check;
 
+	bool simulate_w2k;
+
 	/*
 	 * The following is used to implement
 	 * the update token fragmentation
@@ -88,6 +90,9 @@ static NTSTATUS gensec_spnego_client_start(struct gensec_security *gensec_securi
 	spnego_state->out_max_length = gensec_max_update_size(gensec_security);
 	spnego_state->out_status = NT_STATUS_MORE_PROCESSING_REQUIRED;
 
+	spnego_state->simulate_w2k = gensec_setting_bool(gensec_security->settings,
+						"spnego", "simulate_w2k", false);
+
 	gensec_security->private_data = spnego_state;
 	return NT_STATUS_OK;
 }
@@ -108,6 +113,9 @@ static NTSTATUS gensec_spnego_server_start(struct gensec_security *gensec_securi
 	spnego_state->mech_types = data_blob(NULL, 0);
 	spnego_state->out_max_length = gensec_max_update_size(gensec_security);
 	spnego_state->out_status = NT_STATUS_MORE_PROCESSING_REQUIRED;
+
+	spnego_state->simulate_w2k = gensec_setting_bool(gensec_security->settings,
+						"spnego", "simulate_w2k", false);
 
 	gensec_security->private_data = spnego_state;
 	return NT_STATUS_OK;
@@ -661,7 +669,7 @@ static NTSTATUS gensec_spnego_create_negTokenInit(struct gensec_security *gensec
 	talloc_free(spnego_state->sub_sec_security);
 	spnego_state->sub_sec_security = NULL;
 
-	DEBUG(1, ("Failed to setup SPNEGO negTokenInit request: %s\n", nt_errstr(nt_status)));
+	DEBUG(10, ("Failed to setup SPNEGO negTokenInit request: %s\n", nt_errstr(nt_status)));
 	return nt_status;
 }
 
@@ -775,11 +783,23 @@ static NTSTATUS gensec_spnego_update(struct gensec_security *gensec_security, TA
 								     spnego.negTokenInit.mechToken, 
 								     &unwrapped_out);
 
+			if (spnego_state->simulate_w2k) {
+				/*
+				 * Windows 2000 returns the unwrapped token
+				 * also in the mech_list_mic field.
+				 *
+				 * In order to verify our client code,
+				 * we need a way to have a server with this
+				 * broken behaviour
+				 */
+				mech_list_mic = unwrapped_out;
+			}
+
 			nt_status = gensec_spnego_server_negTokenTarg(spnego_state,
 								      out_mem_ctx,
 								      nt_status,
 								      unwrapped_out,
-								      null_data_blob,
+								      mech_list_mic,
 								      out);
 
 			spnego_free_data(&spnego);
@@ -885,6 +905,7 @@ static NTSTATUS gensec_spnego_update(struct gensec_security *gensec_security, TA
 	case SPNEGO_SERVER_TARG:
 	{
 		NTSTATUS nt_status;
+		bool have_sign = true;
 		bool new_spnego = false;
 
 		if (!in.length) {
@@ -947,18 +968,23 @@ static NTSTATUS gensec_spnego_update(struct gensec_security *gensec_security, TA
 			goto server_response;
 		}
 
+		have_sign = gensec_have_feature(spnego_state->sub_sec_security,
+						GENSEC_FEATURE_SIGN);
+		if (spnego_state->simulate_w2k) {
+			have_sign = false;
+		}
 		new_spnego = gensec_have_feature(spnego_state->sub_sec_security,
 						 GENSEC_FEATURE_NEW_SPNEGO);
 		if (spnego.negTokenTarg.mechListMIC.length > 0) {
 			new_spnego = true;
 		}
 
-		if (new_spnego) {
+		if (have_sign && new_spnego) {
 			spnego_state->needs_mic_check = true;
 			spnego_state->needs_mic_sign = true;
 		}
 
-		if (spnego.negTokenTarg.mechListMIC.length > 0) {
+		if (have_sign && spnego.negTokenTarg.mechListMIC.length > 0) {
 			nt_status = gensec_check_packet(spnego_state->sub_sec_security,
 							spnego_state->mech_types.data,
 							spnego_state->mech_types.length,
@@ -1078,6 +1104,24 @@ static NTSTATUS gensec_spnego_update(struct gensec_security *gensec_security, TA
 		}
 
 		if (spnego.negTokenTarg.mechListMIC.length > 0) {
+			DATA_BLOB *m = &spnego.negTokenTarg.mechListMIC;
+			const DATA_BLOB *r = &spnego.negTokenTarg.responseToken;
+
+			/*
+			 * Windows 2000 has a bug, it repeats the
+			 * responseToken in the mechListMIC field.
+			 */
+			if (m->length == r->length) {
+				int cmp;
+
+				cmp = memcmp(m->data, r->data, m->length);
+				if (cmp == 0) {
+					data_blob_free(m);
+				}
+			}
+		}
+
+		if (spnego.negTokenTarg.mechListMIC.length > 0) {
 			if (spnego_state->no_response_expected) {
 				spnego_state->needs_mic_check = true;
 			}
@@ -1124,8 +1168,14 @@ static NTSTATUS gensec_spnego_update(struct gensec_security *gensec_security, TA
 		if (spnego_state->no_response_expected &&
 		    !spnego_state->done_mic_check)
 		{
+			bool have_sign = true;
 			bool new_spnego = false;
 
+			have_sign = gensec_have_feature(spnego_state->sub_sec_security,
+							GENSEC_FEATURE_SIGN);
+			if (spnego_state->simulate_w2k) {
+				have_sign = false;
+			}
 			new_spnego = gensec_have_feature(spnego_state->sub_sec_security,
 							 GENSEC_FEATURE_NEW_SPNEGO);
 
@@ -1152,16 +1202,12 @@ static NTSTATUS gensec_spnego_update(struct gensec_security *gensec_security, TA
 			}
 
 			if (spnego_state->mic_requested) {
-				bool sign;
-
-				sign = gensec_have_feature(spnego_state->sub_sec_security,
-							   GENSEC_FEATURE_SIGN);
-				if (sign) {
+				if (have_sign) {
 					new_spnego = true;
 				}
 			}
 
-			if (new_spnego) {
+			if (have_sign && new_spnego) {
 				spnego_state->needs_mic_check = true;
 				spnego_state->needs_mic_sign = true;
 			}
