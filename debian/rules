@@ -65,7 +65,8 @@ conf_args = \
 		--minimum-library-version="$(shell ./debian/autodeps.py --minimum-library-version)" \
 		--with-cluster-support \
 		--with-socketpath=/var/run/ctdb/ctdbd.socket \
-		--with-logdir=/var/log/ctdb
+		--with-logdir=/var/log/ctdb \
+		--enable-selftest
 
 %:
 	dh $* --with python2 --with systemd
@@ -90,8 +91,11 @@ override_dh_auto_build:
 	DESTDIR="$(DESTDIR)" $(WAF)
 
 override_dh_auto_test:
-	# Running make test requires configuration with --enable-selftest, which
-	# we don't want to do for production systems.
+ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
+	make quicktest
+else
+    @echo "** tests disabled"
+endif
 
 override_dh_systemd_start:
 	dh_systemd_start -pctdb --no-start --no-restart-on-upgrade

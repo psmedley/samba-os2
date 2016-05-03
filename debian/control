@@ -49,7 +49,13 @@ Build-Depends: bison,
                python-testtools,
                python3,
                xsltproc,
-               zlib1g-dev (>= 1:1.2.3)
+               zlib1g-dev (>= 1:1.2.3),
+               ldb-tools,
+               libnss-wrapper,
+               libresolv-wrapper,
+               libsocket-wrapper,
+               libuid-wrapper,
+               python-crypto
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-samba/samba.git
 Vcs-Git: git://anonscm.debian.org/pkg-samba/samba.git -b master
 XS-Testsuite: autopkgtest

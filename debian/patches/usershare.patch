@@ -34,3 +34,27 @@ index c576b22..ef37e7a 100644
  	/* By default disallow sharing of directories not owned by the sharer. */
  	Globals.usershare_owner_only = true;
  	/* By default disallow guest access to usershares. */
+diff --git a/docs-xml/smbdotconf/misc/usersharemaxshares.xml b/docs-xml/smbdotconf/misc/usersharemaxshares.xml
+index 1d2bab7..55b68e4 100644
+--- a/docs-xml/smbdotconf/misc/usersharemaxshares.xml
++++ b/docs-xml/smbdotconf/misc/usersharemaxshares.xml
+@@ -9,5 +9,5 @@
+ 	</para>
+ 
+ </description>
+-<value type="default">0</value>
++<value type="default">100</value>
+ </samba:parameter>
+diff --git a/lib/param/loadparm.c b/lib/param/loadparm.c
+index 7b75f13..a59f1fd 100644
+--- a/lib/param/loadparm.c
++++ b/lib/param/loadparm.c
+@@ -2769,6 +2769,8 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
+ 
+ 	lpcfg_do_global_parameter(lp_ctx, "init logon delay", "100");
+ 
++	lpcfg_do_global_parameter(lp_ctx, "usershare max shares", "100");
++
+ 	lpcfg_do_global_parameter(lp_ctx, "usershare owner only", "yes");
+ 
+ 	lpcfg_do_global_parameter(lp_ctx, "-valid", "yes");
