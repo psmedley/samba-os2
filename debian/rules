@@ -92,9 +92,9 @@ override_dh_auto_build:
 
 override_dh_auto_test:
 ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
-	make quicktest
+	make quicktest || echo 'Test failure ignored'
 else
-    @echo "** tests disabled"
+	@echo "** tests disabled"
 endif
 
 override_dh_systemd_start:

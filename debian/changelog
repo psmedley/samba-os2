@@ -1,3 +1,10 @@
+samba (2:4.4.3+dfsg-4) unstable; urgency=medium
+
+  * Fix build with DEB_BUILD_OPTIONS=nocheck
+  * Still run "make quicktest" but ignore failures
+
+ -- Mathieu Parent <sathieu@debian.org>  Sat, 07 May 2016 13:18:53 +0200
+
 samba (2:4.4.3+dfsg-3) unstable; urgency=medium
 
   * Skip raw.write tests for now as they fail on 32-bit
