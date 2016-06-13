@@ -6,31 +6,6 @@ Files-Excluded:
   source4/heimdal/lib/wind/rfc*.txt
   source4/ldap_server/devdocs
 
-Files: debian/*
-Copyright:
-  2005-2012 Jelmer Vernooij <jelmer@debian.org>
-  2005-2006 Steinar H. Gunderson
-  2001-2011 Steve Langasek <vorlon@debian.org>,
-  2005-2012 Christian Perrier <bubulle@debian.org>,
-  2005-2008 Noèl Köthe <noel@debian.org>,
-  2005-2008 Peter Eisentraut <petere@debian.org>, et al.
-License: GPL-3
- This program is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; version 3 dated June, 2007.
- .
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
- .
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
- .
- On Debian systems, the full text of the GPL v3 can be found in
- /usr/share/common-licenses/GPL-3
-
 Files: *
 Copyright: 1992-2012 Andrew Tridgell and the Samba Team
 License: GPL-3+
@@ -158,3 +133,28 @@ License: MS-ADSL
  in order for you to develop an implementation. If you have access to
  Microsoft programming tools and environments you are free to take
  advantage of them.
+
+Files: debian/*
+Copyright:
+  2005-2012 Jelmer Vernooij <jelmer@debian.org>
+  2005-2006 Steinar H. Gunderson
+  2001-2011 Steve Langasek <vorlon@debian.org>,
+  2005-2012 Christian Perrier <bubulle@debian.org>,
+  2005-2008 Noèl Köthe <noel@debian.org>,
+  2005-2008 Peter Eisentraut <petere@debian.org>, et al.
+License: GPL-3
+ This program is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; version 3 dated June, 2007.
+ .
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ .
+ You should have received a copy of the GNU General Public License
+ along with this program; if not, write to the Free Software
+ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+ .
+ On Debian systems, the full text of the GPL v3 can be found in
+ /usr/share/common-licenses/GPL-3

@@ -34,7 +34,7 @@ if dpkg --compare-versions "$2" lt-nl 2:3.6.15-2; then
 	fi
 
 	# Remove NetBIOS entries from /etc/inetd.conf
-	if [ -x /usr/sbin/update-inetd ]; then
+	if [ -x "`which update-inetd 2>/dev/null`" ]; then
 		update-inetd --remove netbios-ssn
 	fi
 fi

@@ -1,3 +1,32 @@
+samba (2:4.4.4+dfsg-1) unstable; urgency=medium
+
+  * New upstream release.
+  * The "Thanks lintian" release
+  * Fixes:
+    - Ensure that dpkg-buildflags are passed, and enable all hardening
+    - systemd
+      + Enable systemd (sd_notify) on Linux, and install systemd files
+      + Remove obsolete syslog.target from service files
+      + Add documentation field to unit files
+    - Drop fix-cluster-build.diff: no more needed
+    - Use secure Vcs-* URLs
+    - Fix copyright file
+    - samba.postinst: command-with-path-in-maintainer-script update-inetd
+    - samba-common-bin: package-contains-empty-directory usr/lib/samba/
+    - winbind: package-contains-empty-directory usr/lib/samba/nss_info/
+    - Add Description to init files
+  * No-op fixes:
+    - d/control: Drop XS-Testsuite field
+    - Drop redundant "Priority: optional" fields
+    - Drop redundant "Section: net" fields
+    - Describe non-standard-dir-perm var/spool/samba/
+    - Describe no_build_system.patch
+    - Remove README.build-upstream, as packaging/Debian/ is now empty
+    - Verify upstream tarball from uscan
+    - Update README.source and remove build-orig.sh
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 13 Jun 2016 21:52:52 +0200
+
 samba (2:4.4.3+dfsg-4) unstable; urgency=medium
 
   * Fix build with DEB_BUILD_OPTIONS=nocheck

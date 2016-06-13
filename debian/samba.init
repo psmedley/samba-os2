@@ -6,7 +6,8 @@
 # Required-Stop:
 # Default-Start:
 # Default-Stop:
-# Short-Description: ensure Samba daemons are started (nmbd and smbd)
+# Short-Description: ensure Samba daemons are started (nmbd, smbd and samba)
+# Description: Starts Samba, a Windows AD and SMB/CIFS fileserver for UNIX
 ### END INIT INFO
 
 set -e

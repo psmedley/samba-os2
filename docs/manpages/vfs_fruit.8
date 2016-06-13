@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 05/02/2016
+.\"      Date: 06/06/2016
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "05/02/2016" "Samba 4\&.4" "System Administration tools"
+.TH "VFS_FRUIT" "8" "06/06/2016" "Samba 4\&.4" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -295,6 +295,14 @@ WARNING: the copyfile request is blocking the client while the server does the c
 \&.
 	      The default is
 \fIno\fR\&.
+.RE
+.PP
+fruit:posix_rename = yes | no
+.RS 4
+Whether to enable POSIX directory rename behaviour for OS X clients\&. Without this, directories can\*(Aqt be renamed if any client has any file inside it (recursive!) open\&.
+.sp
+The default is
+\fIyes\fR\&.
 .RE
 .SH "EXAMPLES"
 .sp

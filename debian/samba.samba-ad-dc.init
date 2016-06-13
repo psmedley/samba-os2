@@ -6,7 +6,8 @@
 # Required-Stop:     $network $local_fs $remote_fs
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: start Samba daemons for the AD DC
+# Short-Description: Samba daemons for the AD DC
+# Description:  Meta-service to provide AD and SMB/CIFS services to clients
 ### END INIT INFO
 
 #

@@ -7,7 +7,9 @@
 # X-Start-Before:    smbd
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: start Samba NetBIOS nameserver (nmbd)
+# Short-Description: Samba NetBIOS nameserver (nmbd)
+# Description: NetBIOS name server to provide NetBIOS over IP naming services
+#              to clients
 ### END INIT INFO
 
 

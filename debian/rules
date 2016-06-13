@@ -3,11 +3,16 @@
 #
 DESTDIR = $(CURDIR)/debian/tmp
 
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+
+DEB_HOST_ARCH_OS ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 
 PYVERS=$(shell pyversions -vr)
 
-DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 LDB_VERSION = $(shell pkg-config --modversion ldb)
 LDB_EPOCH = $(shell dpkg-query -f '$${Version}' -W libldb-dev | sed 's/:.*//')
 LDB_NEXT_VERSION = $(shell python -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = str(int(x[-1])+1); print '.'.join(x)")
@@ -68,12 +73,19 @@ conf_args = \
 		--with-logdir=/var/log/ctdb \
 		--enable-selftest
 
+ifeq ($(DEB_HOST_ARCH_OS), linux)
+	conf_args += \
+		--with-systemd
+else
+	conf_args += \
+		--without-systemd
+endif
+
 %:
 	dh $* --with python2 --with systemd
 
 override_dh_auto_configure:
-	$(shell dpkg-buildflags --export=configure) $(WAF) configure \
-		$(conf_args)
+	$(WAF) configure $(conf_args)
 
 override_dh_auto_clean:
 	-$(WAF) clean
@@ -104,10 +116,10 @@ override_dh_installdocs-arch:
 	cp ctdb/config/events.d/README ctdb/README.eventscripts
 	cp ctdb/config/notify.d.README ctdb/README.notify.d
 	dh_installdocs
-ifeq ($(DEB_BUILD_ARCH_OS), hurd)
+ifeq ($(DEB_HOST_ARCH_OS), hurd)
 	dh_installdocs -pctdb debian/ctdb.README.hurd
 endif
-ifeq ($(DEB_BUILD_ARCH_OS), kfreebsd)
+ifeq ($(DEB_HOST_ARCH_OS), kfreebsd)
 	dh_installdocs -pctdb debian/ctdb.README.kfreebsd
 endif
 	#patch doc
@@ -139,8 +151,6 @@ override_dh_install:
 	   $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/plugin/krb5
 	install -m 0755 debian/setoption.py $(DESTDIR)/usr/share/samba
 	install -m 0755 debian/addshare.py $(DESTDIR)/usr/share/samba
-	mkdir -p $(DESTDIR)/usr/lib/tmpfiles.d
-	echo "d /run/samba 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/samba.conf
 	# Install samba-common's conffiles - they'll get moved later to their
 	# correct place by dh_install
 	cp debian/smb.conf* $(DESTDIR)/usr/share/samba/
@@ -166,9 +176,23 @@ override_dh_install:
 	rm $(DESTDIR)/usr/bin/ctdb_run_cluster_tests
 	rm -rf $(DESTDIR)/usr/lib/*/ctdb-tests
 	rm -rf $(DESTDIR)/usr/share/ctdb-tests
-	# Install ctdb conffiles
+	# Install systemd configs
 	mkdir -p $(DESTDIR)/lib/systemd/system/
 	install -m 0644 ctdb/config/ctdb.service $(DESTDIR)/lib/systemd/system/
+	install -m 0644 packaging/systemd/*.service $(DESTDIR)/lib/systemd/system/
+	mv $(DESTDIR)/lib/systemd/system/nmb.service $(DESTDIR)/lib/systemd/system/nmbd.service
+	mv $(DESTDIR)/lib/systemd/system/smb.service $(DESTDIR)/lib/systemd/system/smbd.service
+	mv $(DESTDIR)/lib/systemd/system/samba.service $(DESTDIR)/lib/systemd/system/samba-ad-dc.service
+	sed -i \
+	  -e 's|/etc/sysconfig/|/etc/default/|' \
+	  -e 's|/nmb\.service|nmbd.service|' \
+	  -e 's|/smb\.service|smbd.service|' \
+	  -e 's|/samba\.service|samba-ad-dc.service|' \
+	  $(DESTDIR)/lib/systemd/system/*.service
+	mkdir -p $(DESTDIR)/usr/lib/tmpfiles.d
+	echo "d /run/samba 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/samba.conf
+	#install -m 0644 packaging/systemd/samba.sysconfig $(DESTDIR)/etc/default/samba
+	#
 	dh_install --sourcedir=$(DESTDIR) --list-missing --fail-missing
 
 override_dh_python2:

@@ -14,6 +14,9 @@ usr/lib/*/samba/libkdc-samba4.so.2
 usr/lib/*/samba/libkdc-samba4.so.2.0.0
 usr/lib/*/samba/libpac.so.*
 usr/lib/*/samba/service/*.so
+lib/systemd/system/nmbd.service
+lib/systemd/system/samba-ad-dc.service
+lib/systemd/system/smbd.service
 usr/sbin/mksmbpasswd
 usr/sbin/nmbd
 usr/sbin/samba
