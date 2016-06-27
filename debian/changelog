@@ -1,3 +1,10 @@
+samba (2:4.4.4+dfsg-2) unstable; urgency=medium
+
+  * Mask samba-ad-dc.service unless needed (Closes: #828137)
+  * Fix kill path in systemd units (Closes: #828730)
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 27 Jun 2016 21:37:58 +0200
+
 samba (2:4.4.4+dfsg-1) unstable; urgency=medium
 
   * New upstream release.
