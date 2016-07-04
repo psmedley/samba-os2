@@ -18,3 +18,4 @@ Skip-raw.write-tests.patch
 systemd-syslog.target-is-obsolete.patch
 Add-documentation-to-systemd-Unit-files.patch
 fix_kill_path_in_units.patch
+gcc_6.patch

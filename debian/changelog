@@ -1,3 +1,10 @@
+samba (2:4.4.4+dfsg-3) unstable; urgency=medium
+
+  * Add patch gcc_6.patch, fixing compatibility with gcc 6.
+    Closes: #812264
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Mon, 04 Jul 2016 12:20:56 +0000
+
 samba (2:4.4.4+dfsg-2) unstable; urgency=medium
 
   * Mask samba-ad-dc.service unless needed (Closes: #828137)
