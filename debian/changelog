@@ -1,3 +1,11 @@
+samba (2:4.4.5+dfsg-1) unstable; urgency=medium
+
+  * New upstream release.
+   + Fixes CVE-2016-2119: Client side SMB2/3 required signing can be
+     downgraded. Closes: #830195
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Thu, 07 Jul 2016 10:51:40 +0000
+
 samba (2:4.4.4+dfsg-3) unstable; urgency=medium
 
   * Add patch gcc_6.patch, fixing compatibility with gcc 6.
