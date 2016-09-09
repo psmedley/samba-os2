@@ -184,6 +184,7 @@ override_dh_install:
 	  -e 's|/nmb\.service|nmbd.service|' \
 	  -e 's|/smb\.service|smbd.service|' \
 	  -e 's|/samba\.service|samba-ad-dc.service|' \
+	  -e 's|^PIDFile=/run/|PIDFile=/var/run/samba/|' \
 	  $(DESTDIR)/lib/systemd/system/*.service
 	mkdir -p $(DESTDIR)/usr/lib/tmpfiles.d
 	echo "d /run/samba 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/samba.conf
@@ -237,8 +238,7 @@ override_dh_makeshlibs:
 	debian/make_shlibs
 
 override_dh_strip:
-	# add debug symbols for all samba packages to the same debug package
-	dh_strip -a --dbg-package=samba-dbg
+	dh_strip --dbgsym-migration='samba-dbg (<< 2:4.4.5+dfsg-3~)'
 
 override_dh_fixperms:
 	dh_fixperms

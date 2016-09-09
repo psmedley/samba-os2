@@ -8,6 +8,11 @@ if [ "$1" = purge ]; then
 		. /usr/share/debconf/confmodule
 		db_purge
 	fi
+
+	if [ "$(readlink /etc/systemd/system/samba-ad-dc.service)" = '/dev/null' ]; then
+		# Remove masking done by postinst (#832352)
+		rm /etc/systemd/system/samba-ad-dc.service
+	fi
 fi
 
 #DEBHELPER#

@@ -2,7 +2,3 @@
 # They can be enabled with "ctdb enablescript <script>" command which sets the
 # executable bit
 ctdb: script-not-executable etc/ctdb/events.d/10.external
-ctdb: script-not-executable etc/ctdb/events.d/20.multipathd
-ctdb: script-not-executable etc/ctdb/events.d/31.clamd
-ctdb: script-not-executable etc/ctdb/events.d/40.fs_use
-ctdb: script-not-executable etc/ctdb/events.d/99.timeout
