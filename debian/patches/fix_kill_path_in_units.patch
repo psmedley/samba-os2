@@ -12,10 +12,10 @@ Debian-bug: https://bugs.debian.org/828730
  packaging/systemd/winbind.service | 2 +-
  4 files changed, 4 insertions(+), 4 deletions(-)
 
-diff --git a/packaging/systemd/nmb.service b/packaging/systemd/nmb.service
-index 2c152ba..c02e65d 100644
---- a/packaging/systemd/nmb.service
-+++ b/packaging/systemd/nmb.service
+Index: samba/packaging/systemd/nmb.service
+===================================================================
+--- samba.orig/packaging/systemd/nmb.service
++++ samba/packaging/systemd/nmb.service
 @@ -9,7 +9,7 @@ NotifyAccess=all
  PIDFile=/run/nmbd.pid
  EnvironmentFile=-/etc/sysconfig/samba
@@ -25,10 +25,10 @@ index 2c152ba..c02e65d 100644
  LimitCORE=infinity
  
  [Install]
-diff --git a/packaging/systemd/samba.service b/packaging/systemd/samba.service
-index 6512bef..11d2e47 100644
---- a/packaging/systemd/samba.service
-+++ b/packaging/systemd/samba.service
+Index: samba/packaging/systemd/samba.service
+===================================================================
+--- samba.orig/packaging/systemd/samba.service
++++ samba/packaging/systemd/samba.service
 @@ -10,7 +10,7 @@ PIDFile=/run/samba.pid
  LimitNOFILE=16384
  EnvironmentFile=-/etc/sysconfig/samba
@@ -38,10 +38,10 @@ index 6512bef..11d2e47 100644
  
  [Install]
  WantedBy=multi-user.target
-diff --git a/packaging/systemd/smb.service b/packaging/systemd/smb.service
-index 491f45e..cc7831c 100644
---- a/packaging/systemd/smb.service
-+++ b/packaging/systemd/smb.service
+Index: samba/packaging/systemd/smb.service
+===================================================================
+--- samba.orig/packaging/systemd/smb.service
++++ samba/packaging/systemd/smb.service
 @@ -10,7 +10,7 @@ PIDFile=/run/smbd.pid
  LimitNOFILE=16384
  EnvironmentFile=-/etc/sysconfig/samba
@@ -51,10 +51,10 @@ index 491f45e..cc7831c 100644
  LimitCORE=infinity
  
  [Install]
-diff --git a/packaging/systemd/winbind.service b/packaging/systemd/winbind.service
-index cd28767..e7f1651 100644
---- a/packaging/systemd/winbind.service
-+++ b/packaging/systemd/winbind.service
+Index: samba/packaging/systemd/winbind.service
+===================================================================
+--- samba.orig/packaging/systemd/winbind.service
++++ samba/packaging/systemd/winbind.service
 @@ -9,7 +9,7 @@ NotifyAccess=all
  PIDFile=/run/winbindd.pid
  EnvironmentFile=-/etc/sysconfig/samba
@@ -64,6 +64,3 @@ index cd28767..e7f1651 100644
  LimitCORE=infinity
  
  [Install]
--- 
-2.8.1
-

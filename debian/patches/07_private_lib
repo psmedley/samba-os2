@@ -4,9 +4,11 @@ Last-Update: 2012-02-24
 Applied-Upstream: no
 
 === modified file 'buildtools/wafsamba/samba_utils.py'
---- old/buildtools/wafsamba/samba_utils.py	2012-02-12 17:44:09 +0000
-+++ new/buildtools/wafsamba/samba_utils.py	2012-02-24 14:11:05 +0000
-@@ -79,7 +79,7 @@
+Index: samba/buildtools/wafsamba/samba_utils.py
+===================================================================
+--- samba.orig/buildtools/wafsamba/samba_utils.py
++++ samba/buildtools/wafsamba/samba_utils.py
+@@ -63,7 +63,7 @@ def install_rpath(target):
      ret = set()
      if bld.env.RPATH_ON_INSTALL:
          ret.add(bld.EXPAND_VARIABLES(bld.env.LIBDIR))
@@ -15,4 +17,3 @@ Applied-Upstream: no
          ret.add(bld.EXPAND_VARIABLES(bld.env.PRIVATELIBDIR))
      return list(ret)
  
-

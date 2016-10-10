@@ -11,21 +11,21 @@ Subject: Add documentation to systemd Unit files
  packaging/systemd/winbind.service | 1 +
  5 files changed, 5 insertions(+)
 
-diff --git a/ctdb/config/ctdb.service b/ctdb/config/ctdb.service
-index ea37c30..f4abfb6 100644
---- a/ctdb/config/ctdb.service
-+++ b/ctdb/config/ctdb.service
+Index: samba/ctdb/config/ctdb.service
+===================================================================
+--- samba.orig/ctdb/config/ctdb.service
++++ samba/ctdb/config/ctdb.service
 @@ -1,5 +1,6 @@
  [Unit]
  Description=CTDB
 +Documentation=man:ctdbd(1) man:ctdb(7)
- After=network.target
+ After=network-online.target time-sync.target
  
  [Service]
-diff --git a/packaging/systemd/nmb.service b/packaging/systemd/nmb.service
-index 98d8080..3033c6b 100644
---- a/packaging/systemd/nmb.service
-+++ b/packaging/systemd/nmb.service
+Index: samba/packaging/systemd/nmb.service
+===================================================================
+--- samba.orig/packaging/systemd/nmb.service
++++ samba/packaging/systemd/nmb.service
 @@ -1,5 +1,6 @@
  [Unit]
  Description=Samba NMB Daemon
@@ -33,10 +33,10 @@ index 98d8080..3033c6b 100644
  After=network.target
  
  [Service]
-diff --git a/packaging/systemd/samba.service b/packaging/systemd/samba.service
-index 83e0daf..6512bef 100644
---- a/packaging/systemd/samba.service
-+++ b/packaging/systemd/samba.service
+Index: samba/packaging/systemd/samba.service
+===================================================================
+--- samba.orig/packaging/systemd/samba.service
++++ samba/packaging/systemd/samba.service
 @@ -1,5 +1,6 @@
  [Unit]
  Description=Samba AD Daemon
@@ -44,10 +44,10 @@ index 83e0daf..6512bef 100644
  After=network.target
  
  [Service]
-diff --git a/packaging/systemd/smb.service b/packaging/systemd/smb.service
-index 949f798..a732d19 100644
---- a/packaging/systemd/smb.service
-+++ b/packaging/systemd/smb.service
+Index: samba/packaging/systemd/smb.service
+===================================================================
+--- samba.orig/packaging/systemd/smb.service
++++ samba/packaging/systemd/smb.service
 @@ -1,5 +1,6 @@
  [Unit]
  Description=Samba SMB Daemon
@@ -55,10 +55,10 @@ index 949f798..a732d19 100644
  After=network.target nmb.service winbind.service
  
  [Service]
-diff --git a/packaging/systemd/winbind.service b/packaging/systemd/winbind.service
-index 26c6752..a937f51 100644
---- a/packaging/systemd/winbind.service
-+++ b/packaging/systemd/winbind.service
+Index: samba/packaging/systemd/winbind.service
+===================================================================
+--- samba.orig/packaging/systemd/winbind.service
++++ samba/packaging/systemd/winbind.service
 @@ -1,5 +1,6 @@
  [Unit]
  Description=Samba Winbind Daemon
@@ -66,6 +66,3 @@ index 26c6752..a937f51 100644
  After=network.target nmb.service
  
  [Service]
--- 
-2.8.1
-

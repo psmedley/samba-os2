@@ -3377,8 +3377,8 @@ NTSTATUS smbd_do_qfsinfo(struct smbXsrv_connection *xconn,
 		{
 			uint64_t dfree,dsize,bsize,block_size,sectors_per_unit;
 			data_len = 18;
-			df_ret = get_dfree_info(conn, filename, &bsize, &dfree,
-						&dsize);
+			df_ret = get_dfree_info(conn, &smb_fname, &bsize,
+						&dfree, &dsize);
 			if (df_ret == (uint64_t)-1) {
 				return map_nt_error_from_unix(errno);
 			}
@@ -3528,8 +3528,8 @@ cBytesSector=%u, cUnitTotal=%u, cUnitAvail=%d\n", (unsigned int)st.st_ex_dev, (u
 		{
 			uint64_t dfree,dsize,bsize,block_size,sectors_per_unit;
 			data_len = 24;
-			df_ret = get_dfree_info(conn, filename, &bsize, &dfree,
-						&dsize);
+			df_ret = get_dfree_info(conn, &smb_fname, &bsize,
+						&dfree, &dsize);
 			if (df_ret == (uint64_t)-1) {
 				return map_nt_error_from_unix(errno);
 			}
@@ -3562,8 +3562,8 @@ cBytesSector=%u, cUnitTotal=%u, cUnitAvail=%d\n", (unsigned int)bsize, (unsigned
 		{
 			uint64_t dfree,dsize,bsize,block_size,sectors_per_unit;
 			data_len = 32;
-			df_ret = get_dfree_info(conn, filename, &bsize, &dfree,
-						&dsize);
+			df_ret = get_dfree_info(conn, &smb_fname, &bsize,
+						&dfree, &dsize);
 			if (df_ret == (uint64_t)-1) {
 				return map_nt_error_from_unix(errno);
 			}
@@ -4152,7 +4152,7 @@ static void call_trans2setfsinfo(connection_struct *conn,
 
 			/* Here is where we must switch to posix pathname processing... */
 			if (xconn->smb1.unix_info.client_cap_low & CIFS_UNIX_POSIX_PATHNAMES_CAP) {
-				lp_set_posix_pathnames();
+				(void)lp_set_posix_pathnames(true);
 				mangle_change_to_posix();
 			}
 
@@ -5700,7 +5700,8 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 			}
 			if (info_level == SMB_QUERY_FILE_UNIX_BASIC ||
 					info_level == SMB_QUERY_FILE_UNIX_INFO2 ||
-					info_level == SMB_QUERY_FILE_UNIX_LINK) {
+					info_level == SMB_QUERY_FILE_UNIX_LINK ||
+					req->posix_pathnames) {
 				ucf_flags |= UCF_UNIX_NAME_LOOKUP;
 			}
 		}
@@ -5761,7 +5762,7 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 				return;
 			}
 
-			if (INFO_LEVEL_IS_UNIX(info_level)) {
+			if (INFO_LEVEL_IS_UNIX(info_level) || req->posix_pathnames) {
 				/* Always do lstat for UNIX calls. */
 				if (SMB_VFS_LSTAT(conn, smb_fname_base) != 0) {
 					DEBUG(3,("call_trans2qfilepathinfo: "
@@ -5807,7 +5808,7 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 			}
 		}
 
-		if (INFO_LEVEL_IS_UNIX(info_level)) {
+		if (INFO_LEVEL_IS_UNIX(info_level) || req->posix_pathnames) {
 			/* Always do lstat for UNIX calls. */
 			if (SMB_VFS_LSTAT(conn, smb_fname)) {
 				DEBUG(3,("call_trans2qfilepathinfo: "

@@ -27,21 +27,13 @@
 #include "torture/smb2/proto.h"
 
 
-#define CHECK_STATUS(status, correct) do { \
-	if (!NT_STATUS_EQUAL(status, correct)) { \
-		printf("(%s) Incorrect status %s - should be %s\n", \
-		       __location__, nt_errstr(status), nt_errstr(correct)); \
-		ret = false; \
-		goto done; \
-	}} while (0)
+#define CHECK_STATUS(_status, _expected) \
+	torture_assert_ntstatus_equal_goto(torture, _status, _expected, \
+		 ret, done, "Incorrect status")
 
-#define CHECK_VALUE(v, correct) do { \
-	if ((v) != (correct)) { \
-		printf("(%s) Incorrect value %s=%u - should be %u\n", \
-		       __location__, #v, (unsigned)v, (unsigned)correct); \
-		ret = false; \
-		goto done; \
-	}} while (0)
+#define CHECK_VALUE(v, correct) \
+	torture_assert_int_equal_goto(torture, v, correct, \
+		 ret, done, "Incorrect value")
 
 #define FNAME "smb2_readtest.dat"
 #define DNAME "smb2_readtest.dir"
@@ -234,6 +226,79 @@ done:
 	return ret;
 }
 
+static bool test_read_access(struct torture_context *torture,
+			     struct smb2_tree *tree)
+{
+	bool ret = true;
+	NTSTATUS status;
+	struct smb2_handle h;
+	uint8_t buf[64 * 1024];
+	struct smb2_read rd;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+
+	ZERO_STRUCT(buf);
+
+	/* create a file */
+	smb2_util_unlink(tree, FNAME);
+
+	status = torture_smb2_testfile(tree, FNAME, &h);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_util_write(tree, h, buf, 0, ARRAY_SIZE(buf));
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_util_close(tree, h);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	/* open w/ READ access - success */
+	status = torture_smb2_testfile_access(
+	    tree, FNAME, &h, SEC_FILE_READ_ATTRIBUTE | SEC_FILE_READ_DATA);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	ZERO_STRUCT(rd);
+	rd.in.file.handle = h;
+	rd.in.length = 5;
+	rd.in.offset = 0;
+	status = smb2_read(tree, tree, &rd);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_util_close(tree, h);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	/* open w/ EXECUTE access - success */
+	status = torture_smb2_testfile_access(
+	    tree, FNAME, &h, SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	ZERO_STRUCT(rd);
+	rd.in.file.handle = h;
+	rd.in.length = 5;
+	rd.in.offset = 0;
+	status = smb2_read(tree, tree, &rd);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_util_close(tree, h);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	/* open without READ or EXECUTE access - access denied */
+	status = torture_smb2_testfile_access(tree, FNAME, &h,
+					      SEC_FILE_READ_ATTRIBUTE);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	ZERO_STRUCT(rd);
+	rd.in.file.handle = h;
+	rd.in.length = 5;
+	rd.in.offset = 0;
+	status = smb2_read(tree, tree, &rd);
+	CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+
+	status = smb2_util_close(tree, h);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+done:
+	talloc_free(tmp_ctx);
+	return ret;
+}
 
 /* 
    basic testing of SMB2 read
@@ -245,6 +310,7 @@ struct torture_suite *torture_smb2_read_init(void)
 	torture_suite_add_1smb2_test(suite, "eof", test_read_eof);
 	torture_suite_add_1smb2_test(suite, "position", test_read_position);
 	torture_suite_add_1smb2_test(suite, "dir", test_read_dir);
+	torture_suite_add_1smb2_test(suite, "access", test_read_access);
 
 	suite->description = talloc_strdup(suite, "SMB2-READ tests");
 

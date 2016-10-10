@@ -146,8 +146,28 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 
 	tkey = dns_find_tkey(dns->tkeys, state->tsig->name);
 	if (tkey == NULL) {
+		/*
+		 * We must save the name for use in the TSIG error
+		 * response and have no choice here but to save the
+		 * keyname from the TSIG request.
+		 */
+		state->key_name = talloc_strdup(state->mem_ctx,
+						state->tsig->name);
+		if (state->key_name == NULL) {
+			return WERR_NOMEM;
+		}
 		state->tsig_error = DNS_RCODE_BADKEY;
 		return DNS_ERR(NOTAUTH);
+	}
+
+	/*
+	 * Remember the keyname that found an existing tkey, used
+	 * later to fetch the key with dns_find_tkey() when signing
+	 * and adding a TSIG record with MAC.
+	 */
+	state->key_name = talloc_strdup(state->mem_ctx, tkey->name);
+	if (state->key_name == NULL) {
+		return WERR_NOMEM;
 	}
 
 	/* FIXME: check TSIG here */
@@ -207,9 +227,6 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 		return WERR_NOMEM;
 	}
 
-	/*FIXME: Why is there too much padding? */
-	buffer_len -= 2;
-
 	/* Now we also need to count down the additional record counter */
 	arcount = RSVAL(buffer, 10);
 	RSSVAL(buffer, 10, arcount-1);
@@ -217,7 +234,8 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 	status = gensec_check_packet(tkey->gensec, buffer, buffer_len,
 				    buffer, buffer_len, &sig);
 	if (NT_STATUS_EQUAL(NT_STATUS_ACCESS_DENIED, status)) {
-		return DNS_ERR(BADKEY);
+		state->tsig_error = DNS_RCODE_BADSIG;
+		return DNS_ERR(NOTAUTH);
 	}
 
 	if (!NT_STATUS_IS_OK(status)) {
@@ -226,45 +244,29 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 	}
 
 	state->authenticated = true;
-	state->key_name = talloc_strdup(state->mem_ctx, tkey->name);
-	if (state->key_name == NULL) {
-		return WERR_NOMEM;
-	}
 
 	return WERR_OK;
 }
 
-WERROR dns_sign_tsig(struct dns_server *dns,
-		     TALLOC_CTX *mem_ctx,
-		     struct dns_request_state *state,
-		     struct dns_name_packet *packet,
-		     uint16_t error)
+static WERROR dns_tsig_compute_mac(TALLOC_CTX *mem_ctx,
+				   struct dns_request_state *state,
+				   struct dns_name_packet *packet,
+				   struct dns_server_tkey *tkey,
+				   time_t current_time,
+				   DATA_BLOB *_psig)
 {
-	WERROR werror;
 	NTSTATUS status;
 	enum ndr_err_code ndr_err;
-	time_t current_time = time(NULL);
 	DATA_BLOB packet_blob, tsig_blob, sig;
 	uint8_t *buffer = NULL;
+	uint8_t *p = NULL;
 	size_t buffer_len = 0;
-	struct dns_server_tkey * tkey = NULL;
-	struct dns_res_rec *tsig = talloc_zero(mem_ctx, struct dns_res_rec);
-
 	struct dns_fake_tsig_rec *check_rec = talloc_zero(mem_ctx,
 			struct dns_fake_tsig_rec);
-
-	if (tsig == NULL) {
-		return WERR_NOMEM;
-	}
+	size_t mac_size = 0;
 
 	if (check_rec == NULL) {
 		return WERR_NOMEM;
-	}
-
-	tkey = dns_find_tkey(dns->tkeys, state->key_name);
-	if (tkey == NULL) {
-		/* FIXME: read up on what to do when we can't find a key */
-		return WERR_OK;
 	}
 
 	/* first build and verify check packet */
@@ -301,15 +303,44 @@ WERROR dns_sign_tsig(struct dns_server *dns,
 		return DNS_ERR(SERVER_FAILURE);
 	}
 
-	buffer_len = packet_blob.length + tsig_blob.length;
+	if (state->tsig != NULL) {
+		mac_size = state->tsig->rdata.tsig_record.mac_size;
+	}
+
+	buffer_len = mac_size;
+
+	buffer_len += packet_blob.length;
+	if (buffer_len < packet_blob.length) {
+		return WERR_INVALID_PARAM;
+	}
+	buffer_len += tsig_blob.length;
+	if (buffer_len < tsig_blob.length) {
+		return WERR_INVALID_PARAM;
+	}
+
 	buffer = talloc_zero_array(mem_ctx, uint8_t, buffer_len);
 	if (buffer == NULL) {
 		return WERR_NOMEM;
 	}
 
-	memcpy(buffer, packet_blob.data, packet_blob.length);
-	memcpy(buffer+packet_blob.length, tsig_blob.data, tsig_blob.length);
+	p = buffer;
 
+	/*
+	 * RFC 2845 "4.2 TSIG on Answers", how to lay out the buffer
+	 * that we're going to sign:
+	 * 1. MAC of request (if present)
+	 * 2. Outgoing packet
+	 * 3. TSIG record
+	 */
+	if (mac_size > 0) {
+		memcpy(p, state->tsig->rdata.tsig_record.mac, mac_size);
+		p += mac_size;
+	}
+
+	memcpy(p, packet_blob.data, packet_blob.length);
+	p += packet_blob.length;
+
+	memcpy(p, tsig_blob.data, tsig_blob.length);
 
 	status = gensec_sign_packet(tkey->gensec, mem_ctx, buffer, buffer_len,
 				    buffer, buffer_len, &sig);
@@ -317,26 +348,63 @@ WERROR dns_sign_tsig(struct dns_server *dns,
 		return ntstatus_to_werror(status);
 	}
 
-	tsig->name = talloc_strdup(tsig, check_rec->name);
+	*_psig = sig;
+	return WERR_OK;
+}
+
+WERROR dns_sign_tsig(struct dns_server *dns,
+		     TALLOC_CTX *mem_ctx,
+		     struct dns_request_state *state,
+		     struct dns_name_packet *packet,
+		     uint16_t error)
+{
+	WERROR werror;
+	time_t current_time = time(NULL);
+	struct dns_res_rec *tsig = NULL;
+	DATA_BLOB sig = (DATA_BLOB) {
+		.data = NULL,
+		.length = 0
+	};
+
+	tsig = talloc_zero(mem_ctx, struct dns_res_rec);
+	if (tsig == NULL) {
+		return WERR_NOMEM;
+	}
+
+	if (state->tsig_error == DNS_RCODE_OK) {
+		struct dns_server_tkey *tkey = dns_find_tkey(
+			dns->tkeys, state->key_name);
+		if (tkey == NULL) {
+			return DNS_ERR(SERVER_FAILURE);
+		}
+
+		werror = dns_tsig_compute_mac(mem_ctx, state, packet,
+					      tkey, current_time, &sig);
+		if (!W_ERROR_IS_OK(werror)) {
+			return werror;
+		}
+	}
+
+	tsig->name = talloc_strdup(tsig, state->key_name);
 	if (tsig->name == NULL) {
 		return WERR_NOMEM;
 	}
-	tsig->rr_class = check_rec->rr_class;
+	tsig->rr_class = DNS_QCLASS_ANY;
 	tsig->rr_type = DNS_QTYPE_TSIG;
 	tsig->ttl = 0;
 	tsig->length = UINT16_MAX;
-	tsig->rdata.tsig_record.algorithm_name = talloc_strdup(tsig,
-			check_rec->algorithm_name);
-	tsig->rdata.tsig_record.time_prefix = check_rec->time_prefix;
-	tsig->rdata.tsig_record.time = check_rec->time;
-	tsig->rdata.tsig_record.fudge = check_rec->fudge;
+	tsig->rdata.tsig_record.algorithm_name = talloc_strdup(tsig, "gss-tsig");
+	tsig->rdata.tsig_record.time_prefix = 0;
+	tsig->rdata.tsig_record.time = current_time;
+	tsig->rdata.tsig_record.fudge = 300;
 	tsig->rdata.tsig_record.error = state->tsig_error;
 	tsig->rdata.tsig_record.original_id = packet->id;
 	tsig->rdata.tsig_record.other_size = 0;
 	tsig->rdata.tsig_record.other_data = NULL;
-	tsig->rdata.tsig_record.mac_size = sig.length;
-	tsig->rdata.tsig_record.mac = talloc_memdup(tsig, sig.data, sig.length);
-
+	if (sig.length > 0) {
+		tsig->rdata.tsig_record.mac_size = sig.length;
+		tsig->rdata.tsig_record.mac = talloc_memdup(tsig, sig.data, sig.length);
+	}
 
 	if (packet->arcount == 0) {
 		packet->additional = talloc_zero(mem_ctx, struct dns_res_rec);

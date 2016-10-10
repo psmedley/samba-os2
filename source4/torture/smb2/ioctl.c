@@ -273,20 +273,36 @@ static bool test_setup_create_fill(struct torture_context *torture,
 				   uint32_t file_attributes)
 {
 	bool ok;
+	uint32_t initial_access = desired_access;
+
+	if (size > 0) {
+		initial_access |= SEC_FILE_APPEND_DATA;
+	}
 
 	smb2_util_unlink(tree, fname);
 
 	ok = test_setup_open(torture, tree, mem_ctx,
 			     fname,
 			     fh,
-			     desired_access,
+			     initial_access,
 			     file_attributes);
-	torture_assert(torture, ok, "file open");
+	torture_assert(torture, ok, "file create");
 
 	if (size > 0) {
 		ok = write_pattern(torture, tree, mem_ctx, *fh, 0, size, 0);
 		torture_assert(torture, ok, "write pattern");
 	}
+
+	if (initial_access != desired_access) {
+		smb2_util_close(tree, *fh);
+		ok = test_setup_open(torture, tree, mem_ctx,
+				     fname,
+				     fh,
+				     desired_access,
+				     file_attributes);
+		torture_assert(torture, ok, "file open");
+	}
+
 	return true;
 }
 
@@ -1239,16 +1255,66 @@ static bool test_ioctl_copy_chunk_bad_access(struct torture_context *torture,
 	struct srv_copychunk_copy cc_copy;
 	enum ndr_err_code ndr_ret;
 	bool ok;
-
-	/* no read permission on src */
-	ok = test_setup_copy_chunk(torture, tree, tmp_ctx,
-				   1, /* 1 chunk */
+	/* read permission on src */
+	ok = test_setup_copy_chunk(torture, tree, tmp_ctx, 1, /* 1 chunk */
 				   &src_h, 4096, /* fill 4096 byte src file */
-				   SEC_RIGHTS_FILE_WRITE,
-				   &dest_h, 0,	/* 0 byte dest file */
-				   SEC_RIGHTS_FILE_ALL,
-				   &cc_copy,
-				   &ioctl);
+				   SEC_FILE_READ_DATA | SEC_FILE_READ_ATTRIBUTE,
+				   &dest_h, 0, /* 0 byte dest file */
+				   SEC_RIGHTS_FILE_ALL, &cc_copy, &ioctl);
+	if (!ok) {
+		torture_fail(torture, "setup copy chunk error");
+	}
+
+	cc_copy.chunks[0].source_off = 0;
+	cc_copy.chunks[0].target_off = 0;
+	cc_copy.chunks[0].length = 4096;
+
+	ndr_ret = ndr_push_struct_blob(
+	    &ioctl.smb2.in.out, tmp_ctx, &cc_copy,
+	    (ndr_push_flags_fn_t)ndr_push_srv_copychunk_copy);
+	torture_assert_ndr_success(torture, ndr_ret,
+				   "ndr_push_srv_copychunk_copy");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_equal(torture, status, NT_STATUS_OK,
+				      "FSCTL_SRV_COPYCHUNK");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+
+	/* execute permission on src */
+	ok = test_setup_copy_chunk(torture, tree, tmp_ctx, 1, /* 1 chunk */
+				   &src_h, 4096, /* fill 4096 byte src file */
+				   SEC_FILE_EXECUTE | SEC_FILE_READ_ATTRIBUTE,
+				   &dest_h, 0, /* 0 byte dest file */
+				   SEC_RIGHTS_FILE_ALL, &cc_copy, &ioctl);
+	if (!ok) {
+		torture_fail(torture, "setup copy chunk error");
+	}
+
+	cc_copy.chunks[0].source_off = 0;
+	cc_copy.chunks[0].target_off = 0;
+	cc_copy.chunks[0].length = 4096;
+
+	ndr_ret = ndr_push_struct_blob(
+	    &ioctl.smb2.in.out, tmp_ctx, &cc_copy,
+	    (ndr_push_flags_fn_t)ndr_push_srv_copychunk_copy);
+	torture_assert_ndr_success(torture, ndr_ret,
+				   "ndr_push_srv_copychunk_copy");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_equal(torture, status, NT_STATUS_OK,
+				      "FSCTL_SRV_COPYCHUNK");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+
+	/* neither read nor execute permission on src */
+	ok = test_setup_copy_chunk(torture, tree, tmp_ctx, 1, /* 1 chunk */
+				   &src_h, 4096, /* fill 4096 byte src file */
+				   SEC_FILE_READ_ATTRIBUTE, &dest_h,
+				   0, /* 0 byte dest file */
+				   SEC_RIGHTS_FILE_ALL, &cc_copy, &ioctl);
 	if (!ok) {
 		torture_fail(torture, "setup copy chunk error");
 	}
@@ -1272,15 +1338,14 @@ static bool test_ioctl_copy_chunk_bad_access(struct torture_context *torture,
 	smb2_util_close(tree, dest_h);
 
 	/* no write permission on dest */
-	ok = test_setup_copy_chunk(torture, tree, tmp_ctx,
-				   1, /* 1 chunk */
-				   &src_h, 4096, /* fill 4096 byte src file */
-				   SEC_RIGHTS_FILE_ALL,
-				   &dest_h, 0,	/* 0 byte dest file */
-				   (SEC_RIGHTS_FILE_READ
-				    | SEC_RIGHTS_FILE_EXECUTE),
-				   &cc_copy,
-				   &ioctl);
+	ok = test_setup_copy_chunk(
+	    torture, tree, tmp_ctx, 1, /* 1 chunk */
+	    &src_h, 4096,	      /* fill 4096 byte src file */
+	    SEC_FILE_READ_DATA | SEC_FILE_READ_ATTRIBUTE, &dest_h,
+	    0, /* 0 byte dest file */
+	    (SEC_RIGHTS_FILE_ALL &
+	     ~(SEC_FILE_WRITE_DATA | SEC_FILE_APPEND_DATA)),
+	    &cc_copy, &ioctl);
 	if (!ok) {
 		torture_fail(torture, "setup copy chunk error");
 	}
@@ -1304,15 +1369,12 @@ static bool test_ioctl_copy_chunk_bad_access(struct torture_context *torture,
 	smb2_util_close(tree, dest_h);
 
 	/* no read permission on dest */
-	ok = test_setup_copy_chunk(torture, tree, tmp_ctx,
-				   1, /* 1 chunk */
+	ok = test_setup_copy_chunk(torture, tree, tmp_ctx, 1, /* 1 chunk */
 				   &src_h, 4096, /* fill 4096 byte src file */
-				   SEC_RIGHTS_FILE_ALL,
-				   &dest_h, 0,	/* 0 byte dest file */
-				   (SEC_RIGHTS_FILE_WRITE
-				    | SEC_RIGHTS_FILE_EXECUTE),
-				   &cc_copy,
-				   &ioctl);
+				   SEC_FILE_READ_DATA | SEC_FILE_READ_ATTRIBUTE,
+				   &dest_h, 0, /* 0 byte dest file */
+				   (SEC_RIGHTS_FILE_ALL & ~SEC_FILE_READ_DATA),
+				   &cc_copy, &ioctl);
 	if (!ok) {
 		torture_fail(torture, "setup copy chunk error");
 	}

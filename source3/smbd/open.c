@@ -883,6 +883,25 @@ static NTSTATUS open_file(files_struct *fsp,
 			return status;
 		}
 
+		if (local_flags & O_NONBLOCK) {
+			/*
+			 * GPFS can return ETIMEDOUT for pread on
+			 * nonblocking file descriptors when files
+			 * migrated to tape need to be recalled. I
+			 * could imagine this happens elsehwere
+			 * too. With blocking file descriptors this
+			 * does not happen.
+			 */
+			ret = set_blocking(fsp->fh->fd, true);
+			if (ret == -1) {
+				status = map_nt_error_from_unix(errno);
+				DBG_WARNING("Could not set fd to blocking: "
+					    "%s\n", strerror(errno));
+				fd_close(fsp);
+				return status;
+			}
+		}
+
 		ret = SMB_VFS_FSTAT(fsp, &smb_fname->st);
 		if (ret == -1) {
 			/* If we have an fd, this stat should succeed. */
@@ -2517,7 +2536,19 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 	if (!posix_open) {
 		new_dos_attributes &= SAMBA_ATTRIBUTES_MASK;
 		if (file_existed) {
-			existing_dos_attributes = dos_mode(conn, smb_fname);
+			/*
+			 * Only use strored DOS attributes for checks
+			 * against requested attributes (below via
+			 * open_match_attributes()), cf bug #11992
+			 * for details. -slow
+			 */
+			bool ok;
+			uint32_t attr = 0;
+
+			ok = get_ea_dos_attribute(conn, smb_fname, &attr);
+			if (ok) {
+				existing_dos_attributes = attr;
+			}
 		}
 	}
 
@@ -3859,6 +3890,7 @@ NTSTATUS open_streams_for_delete(connection_struct *conn,
 	unsigned int num_streams = 0;
 	TALLOC_CTX *frame = talloc_stackframe();
 	NTSTATUS status;
+	bool saved_posix_pathnames;
 
 	status = vfs_streaminfo(conn, NULL, fname, talloc_tos(),
 				&num_streams, &stream_info);
@@ -3890,6 +3922,13 @@ NTSTATUS open_streams_for_delete(connection_struct *conn,
 		status = NT_STATUS_NO_MEMORY;
 		goto fail;
 	}
+
+	/*
+	 * Any stream names *must* be treated as Windows
+	 * pathnames, even if we're using UNIX extensions.
+	 */
+
+	saved_posix_pathnames = lp_set_posix_pathnames(false);
 
 	for (i=0; i<num_streams; i++) {
 		struct smb_filename *smb_fname;
@@ -3958,6 +3997,8 @@ NTSTATUS open_streams_for_delete(connection_struct *conn,
 	}
 
  fail:
+
+	(void)lp_set_posix_pathnames(saved_posix_pathnames);
 	TALLOC_FREE(frame);
 	return status;
 }

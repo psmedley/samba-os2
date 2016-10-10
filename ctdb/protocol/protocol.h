@@ -121,6 +121,12 @@ struct ctdb_call {
 /* SRVID prefix used by CTDB */
 #define CTDB_SRVID_PREFIX	0xF000000000000000LL
 
+/* SRVID prefix used during recovery for pulling and pushing databases */
+#define CTDB_SRVID_RECOVERY	0xF001000000000000LL
+
+/* SRVID to assign of banning credits */
+#define CTDB_SRVID_BANNING	0xF002000000000000LL
+
 /* SRVID to inform of election data */
 #define CTDB_SRVID_ELECTION	0xF100000000000000LL
 
@@ -355,6 +361,9 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_DB_TRANSACTION_START    = 143,
 		    CTDB_CONTROL_DB_TRANSACTION_COMMIT   = 144,
 		    CTDB_CONTROL_DB_TRANSACTION_CANCEL	 = 145,
+		    CTDB_CONTROL_DB_PULL                 = 146,
+		    CTDB_CONTROL_DB_PUSH_START           = 147,
+		    CTDB_CONTROL_DB_PUSH_CONFIRM         = 148,
 };
 
 #define CTDB_MONITORING_ACTIVE		0
@@ -455,6 +464,12 @@ struct ctdb_pulldb {
 	uint32_t db_id;
 #define CTDB_LMASTER_ANY	0xffffffff
 	uint32_t lmaster;
+};
+
+struct ctdb_pulldb_ext {
+	uint32_t db_id;
+	uint32_t lmaster;
+	uint64_t srvid;
 };
 
 #define CTDB_RECOVERY_NORMAL		0
@@ -619,6 +634,7 @@ struct ctdb_tunable_list {
 	uint32_t samba3_hack;
 	uint32_t mutex_enabled;
 	uint32_t lock_processes_per_db;
+	uint32_t rec_buffer_size_limit;
 };
 
 struct ctdb_tickle_list {
@@ -704,8 +720,10 @@ struct ctdb_public_ip_list {
  * Node features
  */
 #define CTDB_CAP_PARALLEL_RECOVERY	0x00010000
+#define CTDB_CAP_FRAGMENTED_CONTROLS	0x00020000
 
-#define CTDB_CAP_FEATURES		(CTDB_CAP_PARALLEL_RECOVERY)
+#define CTDB_CAP_FEATURES		(CTDB_CAP_PARALLEL_RECOVERY | \
+					 CTDB_CAP_FRAGMENTED_CONTROLS)
 
 #define CTDB_CAP_DEFAULT		(CTDB_CAP_RECMASTER | \
 					 CTDB_CAP_LMASTER   | \
@@ -855,6 +873,7 @@ struct ctdb_req_control_data {
 		struct ctdb_vnn_map *vnnmap;
 		uint32_t loglevel;
 		struct ctdb_pulldb *pulldb;
+		struct ctdb_pulldb_ext *pulldb_ext;
 		struct ctdb_rec_buffer *recbuf;
 		uint32_t recmode;
 		const char *db_name;
@@ -923,6 +942,7 @@ struct ctdb_reply_control_data {
 		struct ctdb_uint8_array *u8_array;
 		struct ctdb_db_statistics *dbstats;
 		enum ctdb_runstate runstate;
+		uint32_t num_records;
 	} data;
 };
 
@@ -976,7 +996,7 @@ union ctdb_message_data {
 	uint32_t db_id;
 	/* SRVID_MEM_DUMP, SRVID_TAKEOVER_RUN */
 	struct ctdb_srvid_message *msg;
-	/* SRVID_REBALANCE_NODE */
+	/* SRVID_BANNING, SRVID_REBALANCE_NODE */
 	uint32_t pnn;
 	/* SRVID_DISABLE_TAKEOVER_RUNS, SRVID_DISABLE_RECOVERIES */
 	struct ctdb_disable_message *disable;

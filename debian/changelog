@@ -1,10 +1,21 @@
+samba (2:4.4.6+dfsg-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Use epoch in samba-vfs-modules Breaks and Replaces (Closes: #833164)
+  * Only fix PIDFile in {nmbd,samba-ad-dc,smbd,winbind}.service (i.e. not
+    ctdb.service) Closes: #838000.
+  * logrotate: Only reload smbd when needed. Thanks Roland Hieber.
+    Closes: #838796.
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 10 Oct 2016 22:23:45 +0200
+
 samba (2:4.4.5+dfsg-3) unstable; urgency=medium
 
   [ Jelmer Vernooĳ ]
   * Add strict dependencies on samba-libs, because of use of private
     libraries without stable ABI across Samba binary packages.
   * Add Breaks clauses for older versions of samba-libs and samba to
-    samba-vfs-modules, as some files have moved. Closes: #833614,
+    samba-vfs-modules, as some files have moved. Closes: #833164,
     #832880
 
   [ Mathieu Parent ]
@@ -16,8 +27,8 @@ samba (2:4.4.5+dfsg-3) unstable; urgency=medium
   * Remove Christian Perrier from uploaders (Closes: #836715). Thanks for all
     you work, and thanks for bringing me in the team and as a DD.
   * Update Turkish translation. Thanks Atila KOÇ. Closes: #791903
-  * Don't use strict dependency for libwbclient0 to samba-libs to avoid
-    circular dependency
+  * Drop dependency on samba-libs in libwbclient0 to avoid
+    circular dependency.
 
  -- Mathieu Parent <sathieu@debian.org>  Fri, 09 Sep 2016 13:00:54 +0200
 

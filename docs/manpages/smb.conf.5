@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 07/05/2016
+.\"      Date: 09/22/2016
 .\"    Manual: File Formats and Conventions
 .\"    Source: Samba 4.4
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "07/05/2016" "Samba 4\&.4" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "09/22/2016" "Samba 4\&.4" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -2594,7 +2594,7 @@ dcerpc endpoint servers (G)
 Specifies which DCE/RPC endpoint servers should be run\&.
 .sp
 Default:
-\fI\fIdcerpc endpoint servers\fR\fR\fI = \fR\fIepmapper, wkssvc, rpcecho, samr, netlogon, lsarpc, spoolss, drsuapi, dssetup, unixinfo, browser, eventlog6, backupkey, dnsserver\fR\fI \fR
+\fI\fIdcerpc endpoint servers\fR\fR\fI = \fR\fIepmapper, wkssvc, rpcecho, samr, netlogon, lsarpc, drsuapi, dssetup, unixinfo, browser, eventlog6, backupkey, dnsserver\fR\fI \fR
 .sp
 Example:
 \fI\fIdcerpc endpoint servers\fR\fR\fI = \fR\fIrpcecho\fR\fI \fR
@@ -5254,7 +5254,7 @@ script\&.
 LDAP connections should be secured where possible\&. This may be done setting
 \fIeither\fR
 this parameter to
-\fIStart_tls\fR\fIor\fR
+\fIstart tls\fR\fIor\fR
 by specifying
 \fIldaps://\fR
 in the URL argument of
@@ -5293,7 +5293,7 @@ Please note that this parameter does only affect
 \fIrpc\fR
 methods\&. To enable the LDAPv3 StartTLS extended operation (RFC2830) for
 \fIads\fR, set
-\m[blue]\fBldap ssl = yes\fR\m[]\fIand\fR\m[blue]\fBldap ssl ads = yes\fR\m[]\&. See
+\m[blue]\fBldap ssl = start tls\fR\m[]\fIand\fR\m[blue]\fBldap ssl ads = yes\fR\m[]\&. See
 smb\&.conf(5)
 for more information on
 \m[blue]\fBldap ssl ads\fR\m[]\&.

@@ -44,7 +44,6 @@ bool dcesrv_auth_bind(struct dcesrv_call_state *call)
 	struct dcesrv_connection *dce_conn = call->conn;
 	struct dcesrv_auth *auth = &dce_conn->auth_state;
 	NTSTATUS status;
-	uint32_t auth_length;
 
 	if (pkt->auth_length == 0) {
 		auth->auth_type = DCERPC_AUTH_TYPE_NONE;
@@ -55,8 +54,14 @@ bool dcesrv_auth_bind(struct dcesrv_call_state *call)
 
 	status = dcerpc_pull_auth_trailer(pkt, call, &pkt->u.bind.auth_info,
 					  &call->in_auth_info,
-					  &auth_length, false);
+					  NULL, true);
 	if (!NT_STATUS_IS_OK(status)) {
+		/*
+		 * This will cause a
+		 * DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED
+		 * in the caller
+		 */
+		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
 		return false;
 	}
 
@@ -241,7 +246,6 @@ bool dcesrv_auth_auth3(struct dcesrv_call_state *call)
 	struct ncacn_packet *pkt = &call->pkt;
 	struct dcesrv_connection *dce_conn = call->conn;
 	NTSTATUS status;
-	uint32_t auth_length;
 
 	if (pkt->auth_length == 0) {
 		return false;
@@ -257,8 +261,13 @@ bool dcesrv_auth_auth3(struct dcesrv_call_state *call)
 	}
 
 	status = dcerpc_pull_auth_trailer(pkt, call, &pkt->u.auth3.auth_info,
-					  &call->in_auth_info, &auth_length, true);
+					  &call->in_auth_info, NULL, true);
 	if (!NT_STATUS_IS_OK(status)) {
+		/*
+		 * Windows returns DCERPC_NCA_S_FAULT_REMOTE_NO_MEMORY
+		 * instead of DCERPC_NCA_S_PROTO_ERROR.
+		 */
+		call->fault_code = DCERPC_NCA_S_FAULT_REMOTE_NO_MEMORY;
 		return false;
 	}
 
@@ -324,7 +333,6 @@ bool dcesrv_auth_alter(struct dcesrv_call_state *call)
 	struct ncacn_packet *pkt = &call->pkt;
 	struct dcesrv_connection *dce_conn = call->conn;
 	NTSTATUS status;
-	uint32_t auth_length;
 
 	/* on a pure interface change there is no auth blob */
 	if (pkt->auth_length == 0) {
@@ -335,6 +343,7 @@ bool dcesrv_auth_alter(struct dcesrv_call_state *call)
 	}
 
 	if (dce_conn->auth_state.auth_finished) {
+		call->fault_code = DCERPC_FAULT_ACCESS_DENIED;
 		return false;
 	}
 
@@ -344,8 +353,14 @@ bool dcesrv_auth_alter(struct dcesrv_call_state *call)
 	}
 
 	status = dcerpc_pull_auth_trailer(pkt, call, &pkt->u.alter.auth_info,
-					  &call->in_auth_info, &auth_length, true);
+					  &call->in_auth_info, NULL, true);
 	if (!NT_STATUS_IS_OK(status)) {
+		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
+		return false;
+	}
+
+	if (call->in_auth_info.auth_type == DCERPC_AUTH_TYPE_NONE) {
+		call->fault_code = DCERPC_FAULT_ACCESS_DENIED;
 		return false;
 	}
 

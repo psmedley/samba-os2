@@ -6,10 +6,10 @@ Subject: Skip raw.write tests for now as they fail on 32-bit
  selftest/quick | 3 ++-
  1 file changed, 2 insertions(+), 1 deletion(-)
 
-diff --git a/selftest/quick b/selftest/quick
-index 7605f3f..19903c6 100644
---- a/selftest/quick
-+++ b/selftest/quick
+Index: samba/selftest/quick
+===================================================================
+--- samba.orig/selftest/quick
++++ samba/selftest/quick
 @@ -14,7 +14,8 @@ raw.qfileinfo
  raw.mkdir
  raw.seek
@@ -20,6 +20,3 @@ index 7605f3f..19903c6 100644
  raw.read
  raw.close
  raw.ioctl
--- 
-2.8.1
-

@@ -97,7 +97,6 @@ usr/lib/*/libsamdb.so
 usr/lib/*/libsmbconf.so
 usr/lib/*/libsmbldap.so
 usr/lib/*/libtevent-util.so
-usr/lib/*/libtevent-unix-util.so
 usr/lib/*/pkgconfig/dcerpc.pc
 usr/lib/*/pkgconfig/dcerpc_samr.pc
 usr/lib/*/pkgconfig/dcerpc_server.pc

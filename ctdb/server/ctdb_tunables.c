@@ -41,7 +41,7 @@ static const struct {
 	{ "TraverseTimeout",     20, offsetof(struct ctdb_tunable_list, traverse_timeout), false },
 	{ "KeepaliveInterval",    5,  offsetof(struct ctdb_tunable_list, keepalive_interval), false },
 	{ "KeepaliveLimit",       5,  offsetof(struct ctdb_tunable_list, keepalive_limit), false },
-	{ "RecoverTimeout",     120,  offsetof(struct ctdb_tunable_list, recover_timeout), false },
+	{ "RecoverTimeout",      30,  offsetof(struct ctdb_tunable_list, recover_timeout), false },
 	{ "RecoverInterval",      1,  offsetof(struct ctdb_tunable_list, recover_interval), false },
 	{ "ElectionTimeout",      3,  offsetof(struct ctdb_tunable_list, election_timeout), false },
 	{ "TakeoverTimeout",      9,  offsetof(struct ctdb_tunable_list, takeover_timeout), false },
@@ -93,6 +93,7 @@ static const struct {
 	{ "Samba3AvoidDeadlocks", 0, offsetof(struct ctdb_tunable_list, samba3_hack), false },
 	{ "TDBMutexEnabled", 0, offsetof(struct ctdb_tunable_list, mutex_enabled), false },
 	{ "LockProcessesPerDB", 200, offsetof(struct ctdb_tunable_list, lock_processes_per_db), false },
+	{ "RecBufferSizeLimit", 1000000, offsetof(struct ctdb_tunable_list, rec_buffer_size_limit), false },
 };
 
 /*

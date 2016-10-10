@@ -460,6 +460,9 @@ sub setup_admember_rfc2307($$$$)
 	server signing = on
         workgroup = $dcvars->{DOMAIN}
         realm = $dcvars->{REALM}
+        idmap config * : backend = autorid
+        idmap config * : range = 1000000-1999999
+        idmap config * : rangesize = 100000
         idmap config $dcvars->{DOMAIN} : backend = rfc2307
         idmap config $dcvars->{DOMAIN} : range = 2000000-2999999
         idmap config $dcvars->{DOMAIN} : ldap_server = ad
@@ -550,6 +553,13 @@ sub setup_simpleserver($$)
         vfs objects = aio_fork
         read only = no
         vfs_aio_fork:erratic_testing_mode=yes
+
+[dosmode]
+	path = $prefix_abs/share
+	vfs objects =
+	store dos attributes = yes
+	hide files = /hidefile/
+	hide dot files = yes
 ";
 
 	my $vars = $self->provision($path,
@@ -593,6 +603,7 @@ sub setup_fileserver($$)
 	push(@dirs, $dfree_share_dir);
 	push(@dirs, "$dfree_share_dir/subdir1");
 	push(@dirs, "$dfree_share_dir/subdir2");
+	push(@dirs, "$dfree_share_dir/subdir3");
 
 	my $valid_users_sharedir="$share_dir/valid_users";
 	push(@dirs,$valid_users_sharedir);
@@ -1079,7 +1090,6 @@ sub createuser($$$$)
 	    warn("Unable to set password for $username account\n$cmd");
 	    return undef;
 	}
-	print "DONE\n";
 }
 
 sub provision($$$$$$$$)
@@ -1309,8 +1319,10 @@ sub provision($$$$$$$$)
 	my ($gid_nobody, $gid_nogroup, $gid_root, $gid_domusers, $gid_domadmins);
 	my ($gid_userdup, $gid_everyone);
 	my ($gid_force_user);
+	my ($uid_user1);
+	my ($uid_user2);
 
-	if ($unix_uid < 0xffff - 7) {
+	if ($unix_uid < 0xffff - 10) {
 		$max_uid = 0xffff;
 	} else {
 		$max_uid = $unix_uid;
@@ -1324,6 +1336,8 @@ sub provision($$$$$$$$)
 	$uid_pdbtest_wkn = $max_uid - 6;
 	$uid_force_user = $max_uid - 7;
 	$uid_smbget = $max_uid - 8;
+	$uid_user1 = $max_uid - 9;
+	$uid_user2 = $max_uid - 10;
 
 	if ($unix_gids[0] < 0xffff - 8) {
 		$max_gid = 0xffff;
@@ -1677,9 +1691,23 @@ sub provision($$$$$$$$)
 	wide links = yes
 [dfq]
 	path = $shrdir/dfree
-	vfs objects = fake_dfq
+	vfs objects = acl_xattr fake_acls xattr_tdb fake_dfq
 	admin users = $unix_name
 	include = $dfqconffile
+[dfq_owner]
+	path = $shrdir/dfree
+	vfs objects = acl_xattr fake_acls xattr_tdb fake_dfq
+	inherit owner = yes
+	include = $dfqconffile
+
+[acl_xattr_ign_sysacl_posix]
+	copy = tmp
+	acl_xattr:ignore system acls = yes
+	acl_xattr:default acl style = posix
+[acl_xattr_ign_sysacl_windows]
+	copy = tmp
+	acl_xattr:ignore system acls = yes
+	acl_xattr:default acl style = windows
 	";
 	close(CONF);
 
@@ -1705,6 +1733,8 @@ userdup:x:$uid_userdup:$gid_userdup:userdup gecos:$prefix_abs:/bin/false
 pdbtest_wkn:x:$uid_pdbtest_wkn:$gid_everyone:pdbtest_wkn gecos:$prefix_abs:/bin/false
 force_user:x:$uid_force_user:$gid_force_user:force user gecos:$prefix_abs:/bin/false
 smbget_user:x:$uid_smbget:$gid_domusers:smbget_user gecos:$prefix_abs:/bin/false
+user1:x:$uid_user1:$gid_nogroup:user1 gecos:$prefix_abs:/bin/false
+user2:x:$uid_user2:$gid_nogroup:user2 gecos:$prefix_abs:/bin/false
 ";
 	if ($unix_uid != 0) {
 		print PASSWD "root:x:$uid_root:$gid_root:root gecos:$prefix_abs:/bin/false
@@ -1779,11 +1809,15 @@ force_user:x:$gid_force_user:
 	createuser($self, $unix_name, $password, $conffile) || die("Unable to create user");
 	createuser($self, "force_user", $password, $conffile) || die("Unable to create force_user");
 	createuser($self, "smbget_user", $password, $conffile) || die("Unable to create smbget_user");
+	createuser($self, "user1", $password, $conffile) || die("Unable to create user1");
+	createuser($self, "user2", $password, $conffile) || die("Unable to create user2");
 
 	open(DNS_UPDATE_LIST, ">$prefix/dns_update_list") or die("Unable to open $$prefix/dns_update_list");
 	print DNS_UPDATE_LIST "A $server. $server_ip\n";
 	print DNS_UPDATE_LIST "AAAA $server. $server_ipv6\n";
 	close(DNS_UPDATE_LIST);
+
+	print "DONE\n";
 
 	$ret{SERVER_IP} = $server_ip;
 	$ret{SERVER_IPV6} = $server_ipv6;

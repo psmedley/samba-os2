@@ -19,6 +19,7 @@
 
 #include "replace.h"
 #include "system/network.h"
+#include "system/filesys.h"
 
 #include <assert.h>
 
@@ -180,6 +181,22 @@ static void verify_ctdb_pulldb(struct ctdb_pulldb *p1, struct ctdb_pulldb *p2)
 {
 	assert(p1->db_id == p2->db_id);
 	assert(p1->lmaster == p2->lmaster);
+}
+
+static void fill_ctdb_pulldb_ext(TALLOC_CTX *mem_ctx,
+				 struct ctdb_pulldb_ext *p)
+{
+	p->db_id = rand32();
+	p->lmaster = rand32();
+	p->srvid = rand64();
+}
+
+static void verify_ctdb_pulldb_ext(struct ctdb_pulldb_ext *p1,
+				   struct ctdb_pulldb_ext *p2)
+{
+	assert(p1->db_id == p2->db_id);
+	assert(p1->lmaster == p2->lmaster);
+	assert(p1->srvid == p2->srvid);
 }
 
 static void fill_ctdb_ltdb_header(TALLOC_CTX *mem_ctx,
@@ -1177,6 +1194,7 @@ DEFINE_TEST(struct ctdb_statistics, ctdb_statistics);
 DEFINE_TEST(struct ctdb_vnn_map, ctdb_vnn_map);
 DEFINE_TEST(struct ctdb_dbid_map, ctdb_dbid_map);
 DEFINE_TEST(struct ctdb_pulldb, ctdb_pulldb);
+DEFINE_TEST(struct ctdb_pulldb_ext, ctdb_pulldb_ext);
 DEFINE_TEST(struct ctdb_rec_data, ctdb_rec_data);
 DEFINE_TEST(struct ctdb_rec_buffer, ctdb_rec_buffer);
 DEFINE_TEST(struct ctdb_traverse_start, ctdb_traverse_start);
@@ -1218,6 +1236,52 @@ DEFINE_TEST(struct ctdb_srvid_message, ctdb_srvid_message);
 DEFINE_TEST(struct ctdb_disable_message, ctdb_disable_message);
 DEFINE_TEST(struct ctdb_g_lock_list, ctdb_g_lock_list);
 
+static void test_ctdb_rec_buffer_read_write(void)
+{
+	TALLOC_CTX *mem_ctx = talloc_new(NULL);
+	struct ctdb_rec_buffer *p1, **p2;
+	const char *filename = "ctdb_rec_buffer_test.dat";
+	int count = 100;
+	int fd, i, ret;
+	off_t offset;
+
+	p1 = talloc_array(mem_ctx, struct ctdb_rec_buffer, count);
+	assert(p1 != NULL);
+	for (i=0; i<count; i++) {
+		fill_ctdb_rec_buffer(mem_ctx, &p1[i]);
+	}
+
+	fd = open(filename, O_RDWR|O_CREAT, 0600);
+	assert(fd != -1);
+	unlink(filename);
+
+	for (i=0; i<count; i++) {
+		ret = ctdb_rec_buffer_write(&p1[i], fd);
+		assert(ret == 0);
+	}
+
+	offset = lseek(fd, 0, SEEK_CUR);
+	assert(offset != -1);
+	offset = lseek(fd, -offset, SEEK_CUR);
+	assert(offset == 0);
+
+	p2 = talloc_array(mem_ctx, struct ctdb_rec_buffer *, count);
+	assert(p2 != NULL);
+
+	for (i=0; i<count; i++) {
+		ret = ctdb_rec_buffer_read(fd, mem_ctx, &p2[i]);
+		assert(ret == 0);
+	}
+
+	close(fd);
+
+	for (i=0; i<count; i++) {
+		verify_ctdb_rec_buffer(&p1[i], p2[i]);
+	}
+
+	talloc_free(mem_ctx);
+}
+
 int main(int argc, char *argv[])
 {
 	if (argc == 2) {
@@ -1240,6 +1304,7 @@ int main(int argc, char *argv[])
 	TEST_FUNC(ctdb_vnn_map)();
 	TEST_FUNC(ctdb_dbid_map)();
 	TEST_FUNC(ctdb_pulldb)();
+	TEST_FUNC(ctdb_pulldb_ext)();
 	TEST_FUNC(ctdb_rec_data)();
 	TEST_FUNC(ctdb_rec_buffer)();
 	TEST_FUNC(ctdb_traverse_start)();
@@ -1280,6 +1345,8 @@ int main(int argc, char *argv[])
 	TEST_FUNC(ctdb_srvid_message)();
 	TEST_FUNC(ctdb_disable_message)();
 	TEST_FUNC(ctdb_g_lock_list)();
+
+	test_ctdb_rec_buffer_read_write();
 
 	return 0;
 }

@@ -49,7 +49,6 @@ struct ctdb_reply_control_wire {
 static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 {
 	size_t len = 0;
-	uint64_t u64;
 
 	if (cd == NULL) {
 		return 0;
@@ -384,8 +383,7 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 		break;
 
 	case CTDB_CONTROL_GET_DB_SEQNUM:
-		u64 = cd->data.db_id;
-		len = ctdb_uint64_len(u64);
+		len = ctdb_uint64_len((uint64_t)cd->data.db_id);
 		break;
 
 	case CTDB_CONTROL_DB_SET_HEALTHY:
@@ -481,6 +479,18 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 	case CTDB_CONTROL_DB_TRANSACTION_CANCEL:
 		len = ctdb_uint32_len(cd->data.db_id);
 		break;
+
+	case CTDB_CONTROL_DB_PULL:
+		len = ctdb_pulldb_ext_len(cd->data.pulldb_ext);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_START:
+		len = ctdb_pulldb_ext_len(cd->data.pulldb_ext);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_CONFIRM:
+		len = ctdb_uint32_len(cd->data.db_id);
+		break;
 	}
 
 	return len;
@@ -489,8 +499,6 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 				       uint8_t *buf)
 {
-	uint64_t u64;
-
 	switch (cd->opcode) {
 	case CTDB_CONTROL_PROCESS_EXISTS:
 		ctdb_pid_push(cd->data.pid, buf);
@@ -712,8 +720,7 @@ static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 		break;
 
 	case CTDB_CONTROL_GET_DB_SEQNUM:
-		u64 = cd->data.db_id;
-		ctdb_uint64_push(u64, buf);
+		ctdb_uint32_push(cd->data.db_id, buf);
 		break;
 
 	case CTDB_CONTROL_DB_SET_HEALTHY:
@@ -791,6 +798,18 @@ static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 	case CTDB_CONTROL_DB_TRANSACTION_CANCEL:
 		ctdb_uint32_push(cd->data.db_id, buf);
 		break;
+
+	case CTDB_CONTROL_DB_PULL:
+		ctdb_pulldb_ext_push(cd->data.pulldb_ext, buf);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_START:
+		ctdb_pulldb_ext_push(cd->data.pulldb_ext, buf);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_CONFIRM:
+		ctdb_uint32_push(cd->data.db_id, buf);
+		break;
 	}
 }
 
@@ -800,7 +819,6 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 				      struct ctdb_req_control_data *cd)
 {
 	int ret = 0;
-	uint64_t u64 = 0;
 
 	cd->opcode = opcode;
 
@@ -1079,8 +1097,8 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 		break;
 
 	case CTDB_CONTROL_GET_DB_SEQNUM:
-		ret = ctdb_uint64_pull(buf, buflen, mem_ctx, &u64);
-		cd->data.db_id = (uint32_t)u64;
+		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
+				       &cd->data.db_id);
 		break;
 
 	case CTDB_CONTROL_DB_SET_HEALTHY:
@@ -1176,6 +1194,21 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 	case CTDB_CONTROL_DB_TRANSACTION_CANCEL:
 		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
 					&cd->data.db_id);
+		break;
+
+	case CTDB_CONTROL_DB_PULL:
+		ret = ctdb_pulldb_ext_pull(buf, buflen, mem_ctx,
+					   &cd->data.pulldb_ext);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_START:
+		ret = ctdb_pulldb_ext_pull(buf, buflen, mem_ctx,
+					   &cd->data.pulldb_ext);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_CONFIRM:
+		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
+				       &cd->data.db_id);
 		break;
 	}
 
@@ -1574,6 +1607,17 @@ static size_t ctdb_reply_control_data_len(struct ctdb_reply_control_data *cd)
 
 	case CTDB_CONTROL_DB_TRANSACTION_CANCEL:
 		break;
+
+	case CTDB_CONTROL_DB_PULL:
+		len = ctdb_uint32_len(cd->data.num_records);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_START:
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_CONFIRM:
+		len = ctdb_uint32_len(cd->data.num_records);
+		break;
 	}
 
 	return len;
@@ -1725,6 +1769,14 @@ static void ctdb_reply_control_data_push(struct ctdb_reply_control_data *cd,
 
 	case CTDB_CONTROL_GET_NODES_FILE:
 		ctdb_node_map_push(cd->data.nodemap, buf);
+		break;
+
+	case CTDB_CONTROL_DB_PULL:
+		ctdb_uint32_push(cd->data.num_records, buf);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_CONFIRM:
+		ctdb_uint32_push(cd->data.num_records, buf);
 		break;
 	}
 }
@@ -1912,6 +1964,16 @@ static int ctdb_reply_control_data_pull(uint8_t *buf, size_t buflen,
 	case CTDB_CONTROL_GET_NODES_FILE:
 		ret = ctdb_node_map_pull(buf, buflen, mem_ctx,
 					 &cd->data.nodemap);
+		break;
+
+	case CTDB_CONTROL_DB_PULL:
+		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
+				       &cd->data.num_records);
+		break;
+
+	case CTDB_CONTROL_DB_PUSH_CONFIRM:
+		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
+				       &cd->data.num_records);
 		break;
 	}
 

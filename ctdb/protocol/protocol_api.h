@@ -52,6 +52,10 @@ int ctdb_rec_buffer_traverse(struct ctdb_rec_buffer *recbuf,
 			     ctdb_rec_parser_func_t func,
 			     void *private_data);
 
+int ctdb_rec_buffer_write(struct ctdb_rec_buffer *recbuf, int fd);
+int ctdb_rec_buffer_read(int fd, TALLOC_CTX *mem_ctx,
+			 struct ctdb_rec_buffer **out);
+
 size_t ctdb_server_id_len(struct ctdb_server_id *sid);
 void ctdb_server_id_push(struct ctdb_server_id *sid, uint8_t *buf);
 int ctdb_server_id_pull(uint8_t *buf, size_t buflen,
@@ -633,6 +637,20 @@ int ctdb_reply_control_db_transaction_commit(struct ctdb_reply_control *reply);
 void ctdb_req_control_db_transaction_cancel(struct ctdb_req_control *request,
 					    uint32_t db_id);
 int ctdb_reply_control_db_transaction_cancel(struct ctdb_reply_control *reply);
+
+void ctdb_req_control_db_pull(struct ctdb_req_control *request,
+			      struct ctdb_pulldb_ext *pulldb_ext);
+int ctdb_reply_control_db_pull(struct ctdb_reply_control *reply,
+			       uint32_t *num_records);
+
+void ctdb_req_control_db_push_start(struct ctdb_req_control *request,
+				    struct ctdb_pulldb_ext *pulldb_ext);
+int ctdb_reply_control_db_push_start(struct ctdb_reply_control *reply);
+
+void ctdb_req_control_db_push_confirm(struct ctdb_req_control *request,
+				      uint32_t db_id);
+int ctdb_reply_control_db_push_confirm(struct ctdb_reply_control *reply,
+				       uint32_t *num_records);
 
 /* From protocol/protocol_message.c */
 

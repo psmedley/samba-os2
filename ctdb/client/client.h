@@ -72,9 +72,37 @@ struct tevent_req *ctdb_client_message_send(TALLOC_CTX *mem_ctx,
 
 bool ctdb_client_message_recv(struct tevent_req *req, int *perr);
 
+struct tevent_req *ctdb_client_message_multi_send(
+				TALLOC_CTX *mem_ctx,
+				struct tevent_context *ev,
+				struct ctdb_client_context *client,
+				uint32_t *pnn_list, int count,
+				struct ctdb_req_message *message);
+
+bool ctdb_client_message_multi_recv(struct tevent_req *req, int *perr,
+				    TALLOC_CTX *mem_ctx, int **perr_list);
+
 int ctdb_client_message(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			struct ctdb_client_context *client,
 			uint32_t destnode, struct ctdb_req_message *message);
+
+struct tevent_req *ctdb_client_set_message_handler_send(
+					TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct ctdb_client_context *client,
+					uint64_t srvid,
+					srvid_handler_fn handler,
+					void *private_data);
+bool ctdb_client_set_message_handler_recv(struct tevent_req *req, int *perr);
+
+struct tevent_req *ctdb_client_remove_message_handler_send(
+					TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct ctdb_client_context *client,
+					uint64_t srvid,
+					void *private_data);
+bool ctdb_client_remove_message_handler_recv(struct tevent_req *req,
+					     int *perr);
 
 int ctdb_client_set_message_handler(TALLOC_CTX *mem_ctx,
 				    struct tevent_context *ev,
@@ -708,6 +736,21 @@ int ctdb_ctrl_db_transaction_cancel(TALLOC_CTX *mem_ctx,
 				    struct ctdb_client_context *client,
 				    int destnode, struct timeval timeout,
 				    uint32_t db_id);
+
+int ctdb_ctrl_db_pull(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+		      struct ctdb_client_context *client,
+		      int destnode, struct timeval timeout,
+		      struct ctdb_pulldb_ext *pulldb, uint32_t *num_records);
+
+int ctdb_ctrl_db_push_start(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+			    struct ctdb_client_context *client,
+			    int destnode, struct timeval timeout,
+			    struct ctdb_pulldb_ext *pulldb);
+
+int ctdb_ctrl_db_push_confirm(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+			      struct ctdb_client_context *client,
+			      int destnode, struct timeval timeout,
+			      uint32_t db_id, uint32_t *num_records);
 
 /* from client/client_db.c */
 

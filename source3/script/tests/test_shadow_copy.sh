@@ -42,9 +42,11 @@ build_files()
     local prefix
     local version
     local destdir
+    local content
     rootdir=$1
     prefix=$2
     version=$3
+    content=$4
     if [ -n "$prefix" ] ; then
         destdir=$rootdir/$prefix
     else
@@ -56,27 +58,27 @@ build_files()
         #non-snapshot files
         # for non-snapshot version, create legit files
         # so that wide-link checks focus on snapshot files
-        touch $destdir/foo
+        echo "$content" > $destdir/foo
         mkdir -p $destdir/bar
-        touch $destdir/bar/baz
-        touch $destdir/bar/lfoo
-        touch $destdir/bar/letcpasswd
-        touch $destdir/bar/loutside
+        echo "$content" > $destdir/bar/baz
+        echo "$content" > $destdir/bar/lfoo
+        echo "$content" > $destdir/bar/letcpasswd
+        echo "$content" > $destdir/bar/loutside
     elif [ "$version" = "fullsnap" ] ; then
         #snapshot files
-        touch $destdir/foo
+        echo "$content" > $destdir/foo
         mkdir -p $destdir/bar
-        touch $destdir/bar/baz
+        echo "$content" > $destdir/bar/baz
         ln -fs ../foo $destdir/bar/lfoo
         ln -fs /etc/passwd $destdir/bar/letcpasswd
         ln -fs ../../outside $destdir/bar/loutside
-        touch `dirname $destdir`/outside
+        echo "$content" > `dirname $destdir`/outside
     else #subshare snapshot - at bar
-        touch $destdir/baz
+        echo "$content" > $destdir/baz
         ln -fs ../foo $destdir/lfoo
         ln -fs /etc/passwd $destdir/letcpasswd
         ln -fs ../../outside $destdir/loutside
-        touch `dirname $destdir`/../outside
+        echo "$content" > `dirname $destdir`/../outside
     fi
 
 }
@@ -117,7 +119,7 @@ build_snapshots()
     for i in `seq $start $end` ; do
         snapname=${SNAPSHOTS[$i]}
         mkdir $snapdir/$snapname
-        build_files $snapdir/$snapname "$prefix" $version
+        build_files $snapdir/$snapname "$prefix" $version "$snapname"
     done
 }
 
@@ -127,18 +129,72 @@ test_count_versions()
     local share
     local path
     local expected_count
+    local skip_content
     local versions
+    local tstamps
+    local tstamp
+    local content
+    local is_dir
 
     share=$1
     path=$2
     expected_count=$3
+    skip_content=$4
     versions=`$SMBCLIENT -U$USERNAME%$PASSWORD "//$SERVER/$share" -I $SERVER_IP -c "allinfo $path" | grep "^create_time:" | wc -l`
-    if [ "$versions" = "$expected_count" ] ; then
-        true
-    else
+    if [ "$versions" != "$expected_count" ] ; then
         echo "expected $expected_count versions of $path, got $versions"
-        false
+        return 1
     fi
+
+    is_dir=0
+    $SMBCLIENT -U$USERNAME%$PASSWORD "//$SERVER/$share" -I $SERVER_IP -c "allinfo $path" | grep "^attributes:.*D" && is_dir=1
+    if [ $is_dir = 1 ] ; then
+        skip_content=1
+    fi
+
+    #readable snapshots
+    tstamps=`$SMBCLIENT -U$USERNAME%$PASSWORD "//$SERVER/$share" -I $SERVER_IP -c "allinfo $path" | awk '/^@GMT-/ {snapshot=$1} /^create_time:/ {printf "%s\n", snapshot}'`
+    for tstamp in $tstamps ; do
+        if [ $is_dir = 0 ] ;
+        then
+            if ! $SMBCLIENT -U$USERNAME%$PASSWORD "//$SERVER/$share" -I $SERVER_IP -c "get $tstamp\\$path $WORKDIR/foo" ; then
+                echo "Failed getting \\\\$SERVER\\$share\\$tstamp\\$path"
+                return 1
+            fi
+        else
+            if ! $SMBCLIENT -U$USERNAME%$PASSWORD "//$SERVER/$share" -I $SERVER_IP -c "ls $tstamp\\$path\\*" ; then
+                echo "Failed listing \\\\$SERVER\\$share\\$tstamp\\$path"
+                return 1
+            fi
+        fi
+
+        #also check the content, but not for wide links
+        if [ "x$skip_content" != "x1" ] ; then
+            content=`cat $WORKDIR/foo`
+            if [ "$content" != "$tstamp" ] ; then
+                echo "incorrect content of \\\\$SERVER\\$share\\$tstamp\\$path expected [$tstamp]  got [$content]"
+                return 1
+            fi
+        fi
+    done
+
+    #non-readable snapshots
+    tstamps=`$SMBCLIENT -U$USERNAME%$PASSWORD "//$SERVER/$share" -I $SERVER_IP -c "allinfo $path" | \
+        awk '/^@GMT-/ {if (snapshot!=""){printf "%s\n", snapshot} ; snapshot=$1} /^create_time:/ {snapshot=""} END {if (snapshot!=""){printf "%s\n", snapshot}}'`
+    for tstamp in $tstamps ; do
+        if [ $is_dir = 0 ] ;
+        then
+            if $SMBCLIENT -U$USERNAME%$PASSWORD "//$SERVER/$share" -I $SERVER_IP -c "get $tstamp\\$path $WORKDIR/foo" ; then
+                echo "Unexpected success getting \\\\$SERVER\\$share\\$tstamp\\$path"
+                return 1
+            fi
+        else
+            if $SMBCLIENT -U$USERNAME%$PASSWORD "//$SERVER/$share" -I $SERVER_IP -c "ls $tstamp\\$path\\*" ; then
+                echo "Unexpected success listing \\\\$SERVER\\$share\\$tstamp\\$path"
+                return 1
+            fi
+        fi
+    done
 }
 
 # Test fetching a previous version of a file
@@ -194,11 +250,15 @@ test_shadow_copy_fixed()
         failed=`expr $failed + 1`
 
     testit "$msg - abs symlink outside" \
-        test_count_versions $share bar/letcpasswd $ncopies_blocked || \
+        test_count_versions $share bar/letcpasswd $ncopies_blocked  1 || \
         failed=`expr $failed + 1`
 
     testit "$msg - rel symlink outside" \
-        test_count_versions $share bar/loutside $ncopies_blocked || \
+        test_count_versions $share bar/loutside $ncopies_blocked 1 || \
+        failed=`expr $failed + 1`
+
+    testit "$msg - list directory" \
+        test_count_versions $share bar $ncopies_allowed || \
         failed=`expr $failed + 1`
 }
 
@@ -262,7 +322,7 @@ test_shadow_copy_everywhere()
 }
 
 #build "latest" files
-build_files $WORKDIR/mount base/share "latest"
+build_files $WORKDIR/mount base/share "latest" "latest"
 
 failed=0
 

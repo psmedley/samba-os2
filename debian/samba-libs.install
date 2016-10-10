@@ -21,7 +21,6 @@ usr/lib/*/samba/libsmbclient-raw.so.0*
 usr/lib/*/libsmbconf.so.0
 usr/lib/*/libsmbldap.so.0
 usr/lib/*/libtevent-util.so.*
-usr/lib/*/libtevent-unix-util.so.*
 usr/lib/*/samba/auth/
 usr/lib/*/samba/bind9/dlz_bind9.so
 usr/lib/*/samba/bind9/dlz_bind9_*.so
@@ -91,7 +90,6 @@ usr/lib/*/samba/libnet-keytab.so.0
 usr/lib/*/samba/libnetif.so.*
 usr/lib/*/samba/libnpa-tstream.so.0
 usr/lib/*/samba/libnss-info.so.0
-usr/lib/*/samba/libntvfs.so.*
 usr/lib/*/samba/libpopt-samba3.so.0
 usr/lib/*/samba/libposix-eadb.so.0
 usr/lib/*/samba/libprinting-migrate.so.0

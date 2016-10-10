@@ -13,10 +13,10 @@ Ref: https://lintian.debian.org/tags/systemd-service-file-refers-to-obsolete-tar
  packaging/systemd/winbind.service | 2 +-
  4 files changed, 4 insertions(+), 4 deletions(-)
 
-diff --git a/packaging/systemd/nmb.service b/packaging/systemd/nmb.service
-index 3d71a7d..98d8080 100644
---- a/packaging/systemd/nmb.service
-+++ b/packaging/systemd/nmb.service
+Index: samba/packaging/systemd/nmb.service
+===================================================================
+--- samba.orig/packaging/systemd/nmb.service
++++ samba/packaging/systemd/nmb.service
 @@ -1,6 +1,6 @@
  [Unit]
  Description=Samba NMB Daemon
@@ -25,10 +25,10 @@ index 3d71a7d..98d8080 100644
  
  [Service]
  Type=notify
-diff --git a/packaging/systemd/samba.service b/packaging/systemd/samba.service
-index 824f89c..83e0daf 100644
---- a/packaging/systemd/samba.service
-+++ b/packaging/systemd/samba.service
+Index: samba/packaging/systemd/samba.service
+===================================================================
+--- samba.orig/packaging/systemd/samba.service
++++ samba/packaging/systemd/samba.service
 @@ -1,6 +1,6 @@
  [Unit]
  Description=Samba AD Daemon
@@ -37,10 +37,10 @@ index 824f89c..83e0daf 100644
  
  [Service]
  Type=notify
-diff --git a/packaging/systemd/smb.service b/packaging/systemd/smb.service
-index 9810891..949f798 100644
---- a/packaging/systemd/smb.service
-+++ b/packaging/systemd/smb.service
+Index: samba/packaging/systemd/smb.service
+===================================================================
+--- samba.orig/packaging/systemd/smb.service
++++ samba/packaging/systemd/smb.service
 @@ -1,6 +1,6 @@
  [Unit]
  Description=Samba SMB Daemon
@@ -49,10 +49,10 @@ index 9810891..949f798 100644
  
  [Service]
  Type=notify
-diff --git a/packaging/systemd/winbind.service b/packaging/systemd/winbind.service
-index f711a17..26c6752 100644
---- a/packaging/systemd/winbind.service
-+++ b/packaging/systemd/winbind.service
+Index: samba/packaging/systemd/winbind.service
+===================================================================
+--- samba.orig/packaging/systemd/winbind.service
++++ samba/packaging/systemd/winbind.service
 @@ -1,6 +1,6 @@
  [Unit]
  Description=Samba Winbind Daemon
@@ -61,6 +61,3 @@ index f711a17..26c6752 100644
  
  [Service]
  Type=notify
--- 
-2.8.1
-

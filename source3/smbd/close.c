@@ -168,6 +168,7 @@ NTSTATUS delete_all_streams(connection_struct *conn, const char *fname)
 	unsigned int num_streams = 0;
 	TALLOC_CTX *frame = talloc_stackframe();
 	NTSTATUS status;
+	bool saved_posix_pathnames;
 
 	status = vfs_streaminfo(conn, NULL, fname, talloc_tos(),
 				&num_streams, &stream_info);
@@ -191,6 +192,13 @@ NTSTATUS delete_all_streams(connection_struct *conn, const char *fname)
 		TALLOC_FREE(frame);
 		return NT_STATUS_OK;
 	}
+
+	/*
+	 * Any stream names *must* be treated as Windows
+	 * pathnames, even if we're using UNIX extensions.
+	 */
+
+	saved_posix_pathnames = lp_set_posix_pathnames(false);
 
 	for (i=0; i<num_streams; i++) {
 		int res;
@@ -223,6 +231,8 @@ NTSTATUS delete_all_streams(connection_struct *conn, const char *fname)
 	}
 
  fail:
+
+	(void)lp_set_posix_pathnames(saved_posix_pathnames);
 	TALLOC_FREE(frame);
 	return status;
 }
@@ -266,6 +276,11 @@ static NTSTATUS close_remove_share_mode(files_struct *fsp,
 		DEBUG(0, ("close_remove_share_mode: Could not get share mode "
 			  "lock for file %s\n", fsp_str_dbg(fsp)));
 		return NT_STATUS_INVALID_PARAMETER;
+	}
+
+	/* Remove the oplock before potentially deleting the file. */
+	if(fsp->oplock_type) {
+		remove_oplock_under_lock(fsp, lck);
 	}
 
 	if (fsp->write_time_forced) {
@@ -734,11 +749,6 @@ static NTSTATUS close_normal_file(struct smb_request *req, files_struct *fsp,
 		print_spool_end(fsp, close_type);
 		file_free(req, fsp);
 		return NT_STATUS_OK;
-	}
-
-	/* Remove the oplock before potentially deleting the file. */
-	if(fsp->oplock_type) {
-		remove_oplock(fsp);
 	}
 
 	/* If this is an old DOS or FCB open and we have multiple opens on

@@ -560,7 +560,7 @@ def send_email(subject, text, log_tar):
     s.quit()
 
 def email_failure(status, failed_task, failed_stage, failed_tag, errstr,
-                  elapsed_time, log_base=None):
+                  elapsed_time, log_base=None, add_log_tail=True):
     '''send an email to options.email about the failure'''
     elapsed_minutes = elapsed_time / 60.0
     user = os.getenv("USER")
@@ -598,9 +598,26 @@ The top commit for the tree that was built was:
 
 ''' % (log_base, failed_tag, log_base, failed_tag, log_base, top_commit_msg)
 
+    if add_log_tail:
+        f = open("%s/%s.stdout" % (gitroot, failed_tag), 'r')
+        lines = f.readlines()
+        log_tail = "".join(lines[-50:])
+        num_lines = len(lines)
+        if num_lines < 50:
+            # Also include stderr (compile failures) if < 50 lines of stdout
+            f = open("%s/%s.stderr" % (gitroot, failed_tag), 'r')
+            log_tail += "".join(f.readlines()[-(50-num_lines):])
+
+        text += '''
+The last 50 lines of log messages:
+
+%s
+    ''' % log_tail
+        f.close()
+
     logs = os.path.join(gitroot, 'logs.tar.gz')
-    send_email('autobuild failure on %s for task %s during %s'
-               % (platform.node(), failed_task, failed_stage),
+    send_email('autobuild[%s] failure on %s for task %s during %s'
+               % (options.branch, platform.node(), failed_task, failed_stage),
                text, logs)
 
 def email_success(elapsed_time, log_base=None):
@@ -631,7 +648,7 @@ The top commit for the tree that was built was:
 ''' % top_commit_msg
 
     logs = os.path.join(gitroot, 'logs.tar.gz')
-    send_email('autobuild sucess on %s ' % platform.node(),
+    send_email('autobuild[%s] success on %s' % (options.branch, platform.node()),
                text, logs)
 
 
@@ -733,7 +750,7 @@ else:
 
 AUTOBUILD FAILURE
 
-Your autobuild on %s failed after %.1f minutes
+Your autobuild[%s] on %s failed after %.1f minutes
 when trying to test %s with the following error:
 
    %s
@@ -742,7 +759,7 @@ the autobuild has been abandoned. Please fix the error and resubmit.
 
 ####################################################################
 
-''' % (platform.node(), elapsed_minutes, failed_task, errstr)
+''' % (options.branch, platform.node(), elapsed_minutes, failed_task, errstr)
 
 cleanup()
 print(errstr)

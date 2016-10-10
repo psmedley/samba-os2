@@ -257,9 +257,9 @@ static uint32_t dos_mode_from_sbuf(connection_struct *conn,
  This can also pull the create time into the stat struct inside smb_fname.
 ****************************************************************************/
 
-static bool get_ea_dos_attribute(connection_struct *conn,
-				 struct smb_filename *smb_fname,
-				 uint32_t *pattr)
+bool get_ea_dos_attribute(connection_struct *conn,
+			  struct smb_filename *smb_fname,
+			  uint32_t *pattr)
 {
 	struct xattr_DOSATTRIB dosattrib;
 	enum ndr_err_code ndr_err;
@@ -552,6 +552,40 @@ err_out:
 	return status;
 }
 
+static uint32_t dos_mode_from_name(connection_struct *conn,
+				   const struct smb_filename *smb_fname,
+				   uint32_t dosmode)
+{
+	const char *p = NULL;
+	uint32_t result = dosmode;
+
+	if (!(result & FILE_ATTRIBUTE_HIDDEN) &&
+	    lp_hide_dot_files(SNUM(conn)))
+	{
+		p = strrchr_m(smb_fname->base_name, '/');
+		if (p) {
+			p++;
+		} else {
+			p = smb_fname->base_name;
+		}
+
+		/* Only . and .. are not hidden. */
+		if ((p[0] == '.') &&
+		    !((p[1] == '\0') || (p[1] == '.' && p[2] == '\0')))
+		{
+			result |= FILE_ATTRIBUTE_HIDDEN;
+		}
+	}
+
+	if (!(result & FILE_ATTRIBUTE_HIDDEN) &&
+	    IS_HIDDEN_PATH(conn, smb_fname->base_name))
+	{
+		result |= FILE_ATTRIBUTE_HIDDEN;
+	}
+
+	return result;
+}
+
 /****************************************************************************
  Change a unix mode to a dos mode.
  May also read the create timespec into the stat struct in smb_fname
@@ -567,23 +601,6 @@ uint32_t dos_mode(connection_struct *conn, struct smb_filename *smb_fname)
 
 	if (!VALID_STAT(smb_fname->st)) {
 		return 0;
-	}
-
-	/* First do any modifications that depend on the path name. */
-	/* hide files with a name starting with a . */
-	if (lp_hide_dot_files(SNUM(conn))) {
-		const char *p = strrchr_m(smb_fname->base_name,'/');
-		if (p) {
-			p++;
-		} else {
-			p = smb_fname->base_name;
-		}
-
-		/* Only . and .. are not hidden. */
-		if (p[0] == '.' && !((p[1] == '\0') ||
-				(p[1] == '.' && p[2] == '\0'))) {
-			result |= FILE_ATTRIBUTE_HIDDEN;
-		}
 	}
 
 	/* Get the DOS attributes from an EA by preference. */
@@ -605,12 +622,7 @@ uint32_t dos_mode(connection_struct *conn, struct smb_filename *smb_fname)
 		}
 	}
 
-	/* Optimization : Only call is_hidden_path if it's not already
-	   hidden. */
-	if (!(result & FILE_ATTRIBUTE_HIDDEN) &&
-	    IS_HIDDEN_PATH(conn, smb_fname->base_name)) {
-		result |= FILE_ATTRIBUTE_HIDDEN;
-	}
+	result |= dos_mode_from_name(conn, smb_fname, result);
 
 	if (result == 0) {
 		result = FILE_ATTRIBUTE_NORMAL;

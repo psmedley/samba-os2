@@ -2,8 +2,10 @@ Description: Add "Debian" as vendor suffix
 Author: Eloy A. Paris <peloy@debian.org>
 Forwarded: not-needed
 
---- samba-4.0.3+dfsg1.orig/VERSION
-+++ samba-4.0.3+dfsg1/VERSION
+Index: samba/VERSION
+===================================================================
+--- samba.orig/VERSION
++++ samba/VERSION
 @@ -123,5 +123,5 @@ SAMBA_VERSION_RELEASE_NICKNAME=
  #  ->  "3.0.0rc2-VendorVersion"                        #
  #                                                      #

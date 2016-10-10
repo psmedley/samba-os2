@@ -1,7 +1,9 @@
 === modified file 'source4/param/wscript_build'
---- a/source4/param/wscript_build
-+++ b/source4/param/wscript_build
-@@ -18,7 +18,7 @@
+Index: samba/source4/param/wscript_build
+===================================================================
+--- samba.orig/source4/param/wscript_build
++++ samba/source4/param/wscript_build
+@@ -18,7 +18,7 @@ bld.SAMBA_MODULE('share_classic',
  	source='share_classic.c',
  	subsystem='share',
  	init_function='share_classic_init',
@@ -10,7 +12,7 @@
  	)
  
  
-@@ -26,7 +26,8 @@
+@@ -26,7 +26,8 @@ bld.SAMBA_MODULE('share_ldb',
  	source='share_ldb.c',
  	subsystem='share',
  	init_function='share_ldb_init',

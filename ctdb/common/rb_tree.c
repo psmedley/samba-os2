@@ -216,21 +216,21 @@ static inline int trbt_get_color_right(trbt_node_t *node)
 /* setting a NULL node to black is a nop */
 static inline void trbt_set_color(trbt_node_t *node, int color)
 {
-	if ( (node==NULL) && (color==TRBT_BLACK) ) {
+	if (node == NULL) {
 		return;
 	}
 	node->rb_color = color;
 }
 static inline void trbt_set_color_left(trbt_node_t *node, int color)
 {
-	if ( ((node==NULL)||(node->left==NULL)) && (color==TRBT_BLACK) ) {
+	if (node == NULL || node->left == NULL) {
 		return;
 	}
 	node->left->rb_color = color;
 }
 static inline void trbt_set_color_right(trbt_node_t *node, int color)
 {
-	if ( ((node==NULL)||(node->right==NULL)) && (color==TRBT_BLACK) ) {
+	if (node == NULL || node->right == NULL) {
 		return;
 	}
 	node->right->rb_color = color;

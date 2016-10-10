@@ -2,8 +2,10 @@ Description: Patch in symbol table from rfc3454, for Heimdal scripts.
 Author: Brian May <bam@debian.org>
 Status: cherry-picked from heimdal package
 
---- /dev/null	2015-06-04 12:39:41.770564441 +0000
-+++ a/source4/heimdal/lib/wind/rfc3454.txt-table	2015-06-05 23:09:32.545337704 +0000
+Index: samba/source4/heimdal/lib/wind/rfc3454.txt-table
+===================================================================
+--- /dev/null
++++ samba/source4/heimdal/lib/wind/rfc3454.txt-table
 @@ -0,0 +1,7074 @@
 +   ----- Start Table A.1 -----
 +
@@ -7079,11 +7081,11 @@ Status: cherry-picked from heimdal package
 +
 +   ----- End Table D.2 -----
 +
-diff --git a/source4/heimdal_build/wscript_build b/source4/heimdal_build/wscript_build
-index 0eb1e38..633fec9 100644
---- a/source4/heimdal_build/wscript_build
-+++ b/source4/heimdal_build/wscript_build
-@@ -843,7 +843,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND'):
+Index: samba/source4/heimdal_build/wscript_build
+===================================================================
+--- samba.orig/source4/heimdal_build/wscript_build
++++ samba/source4/heimdal_build/wscript_build
+@@ -843,7 +843,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND
      HEIMDAL_GENERATOR(
          name="HEIMDAL_ERRORLIST",
          rule="${PYTHON} '${SRC[0].abspath()}' '${SRC[1].abspath()}' '${SRC[1].parent.abspath(env)}'",
@@ -7092,7 +7094,7 @@ index 0eb1e38..633fec9 100644
          target = '../heimdal/lib/wind/errorlist_table.c ../heimdal/lib/wind/errorlist_table.h'
          )
  
-@@ -865,7 +865,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND'):
+@@ -865,7 +865,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND
      HEIMDAL_GENERATOR(
          name = 'HEIMDAL_BIDI_TABLE',
          rule="${PYTHON} '${SRC[0].abspath()}' '${SRC[1].abspath()}' '${SRC[1].parent.abspath(env)}'",
@@ -7101,7 +7103,7 @@ index 0eb1e38..633fec9 100644
          target = '../heimdal/lib/wind/bidi_table.h ../heimdal/lib/wind/bidi_table.c'
      )
  
-@@ -873,7 +873,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND'):
+@@ -873,7 +873,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND
      HEIMDAL_GENERATOR(
          name = 'HEIMDAL_MAP_TABLE',
          rule="${PYTHON} '${SRC[0].abspath()}' '${SRC[2].abspath()}' '${SRC[2].parent.abspath(env)}'",

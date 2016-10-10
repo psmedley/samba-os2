@@ -252,6 +252,7 @@ struct ctdb_recoverd {
 	struct ctdb_iface_list_old *ifaces;
 	uint32_t *force_rebalance_nodes;
 	struct ctdb_node_capabilities *caps;
+	bool frozen_on_inactive;
 };
 
 #define CONTROL_TIMEOUT() timeval_current_ofs(ctdb->tunable.recover_timeout, 0)
@@ -1781,6 +1782,8 @@ static int db_recovery_parallel(struct ctdb_recoverd *rec, TALLOC_CTX *mem_ctx)
 		goto fail;
 	}
 
+	setenv("CTDB_DBDIR_STATE", rec->ctdb->db_directory_state, 1);
+
 	if (!ctdb_vfork_with_logging(state, rec->ctdb, "recovery", prog, nargs,
 				     args, NULL, NULL, &state->pid)) {
 		DEBUG(DEBUG_ERR,
@@ -1981,6 +1984,15 @@ static int db_recovery_serial(struct ctdb_recoverd *rec, TALLOC_CTX *mem_ctx,
 
 	DEBUG(DEBUG_NOTICE, (__location__ " Recovery - disabled recovery mode\n"));
 
+	/* execute the "recovered" event script on all nodes */
+	ret = run_recovered_eventscript(rec, nodemap, "do_recovery");
+	if (ret!=0) {
+		DEBUG(DEBUG_ERR, (__location__ " Unable to run the 'recovered' event on cluster. Recovery process failed.\n"));
+		return -1;
+	}
+
+	DEBUG(DEBUG_NOTICE, (__location__ " Recovery - finished the recovered event\n"));
+
 	return 0;
 }
 
@@ -2155,15 +2167,6 @@ static int do_recovery(struct ctdb_recoverd *rec,
 	}
 
 	do_takeover_run(rec, nodemap, false);
-
-	/* execute the "recovered" event script on all nodes */
-	ret = run_recovered_eventscript(rec, nodemap, "do_recovery");
-	if (ret!=0) {
-		DEBUG(DEBUG_ERR, (__location__ " Unable to run the 'recovered' event on cluster. Recovery process failed.\n"));
-		goto fail;
-	}
-
-	DEBUG(DEBUG_NOTICE, (__location__ " Recovery - finished the recovered event\n"));
 
 	/* send a message to all clients telling them that the cluster 
 	   has been reconfigured */
@@ -2658,6 +2661,30 @@ static void process_ipreallocate_requests(struct ctdb_context *ctdb,
 	srvid_requests_reply(ctdb, &current, result);
 }
 
+/*
+ * handler for assigning banning credits
+ */
+static void banning_handler(uint64_t srvid, TDB_DATA data, void *private_data)
+{
+	struct ctdb_recoverd *rec = talloc_get_type(
+		private_data, struct ctdb_recoverd);
+	uint32_t ban_pnn;
+
+	/* Ignore if we are not recmaster */
+	if (rec->ctdb->pnn != rec->recmaster) {
+		return;
+	}
+
+	if (data.dsize != sizeof(uint32_t)) {
+		DEBUG(DEBUG_ERR, (__location__ "invalid data size %zu\n",
+				  data.dsize));
+		return;
+	}
+
+	ban_pnn = *(uint32_t *)data.dptr;
+
+	ctdb_set_culprit_count(rec, ban_pnn, rec->nodemap->num);
+}
 
 /*
   handler for recovery master elections
@@ -3489,11 +3516,18 @@ static void main_loop(struct ctdb_context *ctdb, struct ctdb_recoverd *rec,
 
 				return;
 			}
-			ret = ctdb_ctrl_freeze(ctdb, CONTROL_TIMEOUT(), CTDB_CURRENT_NODE);
+		}
+		if (! rec->frozen_on_inactive) {
+			ret = ctdb_ctrl_freeze(ctdb, CONTROL_TIMEOUT(),
+					       CTDB_CURRENT_NODE);
 			if (ret != 0) {
-				DEBUG(DEBUG_ERR,(__location__ " Failed to freeze node in STOPPED or BANNED state\n"));
+				DEBUG(DEBUG_ERR,
+				      (__location__ " Failed to freeze node "
+				       "in STOPPED or BANNED state\n"));
 				return;
 			}
+
+			rec->frozen_on_inactive = true;
 		}
 
 		/* If this node is stopped or banned then it is not the recovery
@@ -3502,6 +3536,8 @@ static void main_loop(struct ctdb_context *ctdb, struct ctdb_recoverd *rec,
 		 */
 		return;
 	}
+
+	rec->frozen_on_inactive = false;
 
 	/* If we are not the recmaster then do some housekeeping */
 	if (rec->recmaster != pnn) {
@@ -3882,9 +3918,14 @@ static void monitor_cluster(struct ctdb_context *ctdb)
 	CTDB_NO_MEMORY_FATAL(ctdb, rec->recovery);
 
 	rec->priority_time = timeval_current();
+	rec->frozen_on_inactive = false;
 
 	/* register a message port for sending memory dumps */
 	ctdb_client_set_message_handler(ctdb, CTDB_SRVID_MEM_DUMP, mem_dump_handler, rec);
+
+	/* when a node is assigned banning credits */
+	ctdb_client_set_message_handler(ctdb, CTDB_SRVID_BANNING,
+					banning_handler, rec);
 
 	/* register a message port for recovery elections */
 	ctdb_client_set_message_handler(ctdb, CTDB_SRVID_ELECTION, election_handler, rec);

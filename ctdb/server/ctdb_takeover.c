@@ -403,12 +403,6 @@ static int32_t ctdb_announce_vnn_iface(struct ctdb_context *ctdb,
 	return 0;
 }
 
-struct takeover_callback_state {
-	struct ctdb_req_control_old *c;
-	ctdb_sock_addr *addr;
-	struct ctdb_vnn *vnn;
-};
-
 struct ctdb_do_takeip_state {
 	struct ctdb_req_control_old *c;
 	struct ctdb_vnn *vnn;
@@ -501,7 +495,7 @@ static int32_t ctdb_do_takeip(struct ctdb_context *ctdb,
 	state = talloc(vnn, struct ctdb_do_takeip_state);
 	CTDB_NO_MEMORY(ctdb, state);
 
-	state->c = talloc_steal(ctdb, c);
+	state->c = NULL;
 	state->vnn   = vnn;
 
 	vnn->update_in_flight = true;
@@ -530,6 +524,7 @@ static int32_t ctdb_do_takeip(struct ctdb_context *ctdb,
 		return -1;
 	}
 
+	state->c = talloc_steal(ctdb, c);
 	return 0;
 }
 
@@ -638,7 +633,7 @@ static int32_t ctdb_do_updateip(struct ctdb_context *ctdb,
 	state = talloc(vnn, struct ctdb_do_updateip_state);
 	CTDB_NO_MEMORY(ctdb, state);
 
-	state->c = talloc_steal(ctdb, c);
+	state->c = NULL;
 	state->old = old;
 	state->vnn = vnn;
 
@@ -670,6 +665,7 @@ static int32_t ctdb_do_updateip(struct ctdb_context *ctdb,
 		return -1;
 	}
 
+	state->c = talloc_steal(ctdb, c);
 	return 0;
 }
 
@@ -815,44 +811,6 @@ int32_t ctdb_control_takeover_ip(struct ctdb_context *ctdb,
 	return 0;
 }
 
-/*
-  kill any clients that are registered with a IP that is being released
- */
-static void release_kill_clients(struct ctdb_context *ctdb, ctdb_sock_addr *addr)
-{
-	struct ctdb_client_ip *ip;
-
-	DEBUG(DEBUG_INFO,("release_kill_clients for ip %s\n",
-		ctdb_addr_to_str(addr)));
-
-	for (ip=ctdb->client_ip_list; ip; ip=ip->next) {
-		ctdb_sock_addr tmp_addr;
-
-		tmp_addr = ip->addr;
-		DEBUG(DEBUG_INFO,("checking for client %u with IP %s\n", 
-			ip->client_id,
-			ctdb_addr_to_str(&ip->addr)));
-
-		if (ctdb_same_ip(&tmp_addr, addr)) {
-			struct ctdb_client *client = reqid_find(ctdb->idr,
-								ip->client_id,
-								struct ctdb_client);
-			DEBUG(DEBUG_INFO,("matched client %u with IP %s and pid %u\n", 
-				ip->client_id,
-				ctdb_addr_to_str(&ip->addr),
-				client->pid));
-
-			if (client->pid != 0) {
-				DEBUG(DEBUG_INFO,(__location__ " Killing client pid %u for IP %s on client_id %u\n",
-					(unsigned)client->pid,
-					ctdb_addr_to_str(addr),
-					ip->client_id));
-				kill(client->pid, SIGKILL);
-			}
-		}
-	}
-}
-
 static void do_delete_ip(struct ctdb_context *ctdb, struct ctdb_vnn *vnn)
 {
 	DLIST_REMOVE(ctdb->vnn, vnn);
@@ -861,15 +819,47 @@ static void do_delete_ip(struct ctdb_context *ctdb, struct ctdb_vnn *vnn)
 	talloc_free(vnn);
 }
 
+static struct ctdb_vnn *release_ip_post(struct ctdb_context *ctdb,
+					struct ctdb_vnn *vnn,
+					ctdb_sock_addr *addr)
+{
+	TDB_DATA data;
+
+	/* Send a message to all clients of this node telling them
+	 * that the cluster has been reconfigured and they should
+	 * close any connections on this IP address
+	 */
+	data.dptr = (uint8_t *)ctdb_addr_to_str(addr);
+	data.dsize = strlen((char *)data.dptr)+1;
+	DEBUG(DEBUG_INFO, ("Sending RELEASE_IP message for %s\n", data.dptr));
+	ctdb_daemon_send_message(ctdb, ctdb->pnn, CTDB_SRVID_RELEASE_IP, data);
+
+	ctdb_vnn_unassign_iface(ctdb, vnn);
+
+	/* Process the IP if it has been marked for deletion */
+	if (vnn->delete_pending) {
+		do_delete_ip(ctdb, vnn);
+		return NULL;
+	}
+
+	return vnn;
+}
+
+struct release_ip_callback_state {
+	struct ctdb_req_control_old *c;
+	ctdb_sock_addr *addr;
+	struct ctdb_vnn *vnn;
+	uint32_t target_pnn;
+};
+
 /*
   called when releaseip event finishes
  */
-static void release_ip_callback(struct ctdb_context *ctdb, int status, 
+static void release_ip_callback(struct ctdb_context *ctdb, int status,
 				void *private_data)
 {
-	struct takeover_callback_state *state = 
-		talloc_get_type(private_data, struct takeover_callback_state);
-	TDB_DATA data;
+	struct release_ip_callback_state *state =
+		talloc_get_type(private_data, struct release_ip_callback_state);
 
 	if (status == -ETIME) {
 		ctdb_ban_self(ctdb);
@@ -887,34 +877,15 @@ static void release_ip_callback(struct ctdb_context *ctdb, int status,
 		}
 	}
 
-	/* send a message to all clients of this node telling them
-	   that the cluster has been reconfigured and they should
-	   release any sockets on this IP */
-	data.dptr = (uint8_t *)talloc_strdup(state, ctdb_addr_to_str(state->addr));
-	CTDB_NO_MEMORY_VOID(ctdb, data.dptr);
-	data.dsize = strlen((char *)data.dptr)+1;
-
-	DEBUG(DEBUG_INFO,(__location__ " sending RELEASE_IP for '%s'\n", data.dptr));
-
-	ctdb_daemon_send_message(ctdb, ctdb->pnn, CTDB_SRVID_RELEASE_IP, data);
-
-	/* kill clients that have registered with this IP */
-	release_kill_clients(ctdb, state->addr);
-
-	ctdb_vnn_unassign_iface(ctdb, state->vnn);
-
-	/* Process the IP if it has been marked for deletion */
-	if (state->vnn->delete_pending) {
-		do_delete_ip(ctdb, state->vnn);
-		state->vnn = NULL;
-	}
+	state->vnn->pnn = state->target_pnn;
+	state->vnn = release_ip_post(ctdb, state->vnn, state->addr);
 
 	/* the control succeeded */
 	ctdb_request_control_reply(ctdb, state->c, NULL, 0, NULL);
 	talloc_free(state);
 }
 
-static int ctdb_releaseip_destructor(struct takeover_callback_state *state)
+static int ctdb_releaseip_destructor(struct release_ip_callback_state *state)
 {
 	if (state->vnn != NULL) {
 		state->vnn->update_in_flight = false;
@@ -931,7 +902,7 @@ int32_t ctdb_control_release_ip(struct ctdb_context *ctdb,
 				bool *async_reply)
 {
 	int ret;
-	struct takeover_callback_state *state;
+	struct release_ip_callback_state *state;
 	struct ctdb_public_ip *pip = (struct ctdb_public_ip *)indata.dptr;
 	struct ctdb_vnn *vnn;
 	char *iface;
@@ -943,16 +914,20 @@ int32_t ctdb_control_release_ip(struct ctdb_context *ctdb,
 			ctdb_addr_to_str(&pip->addr)));
 		return 0;
 	}
-	vnn->pnn = pip->pnn;
 
 	/* stop any previous arps */
 	talloc_free(vnn->takeover_ctx);
 	vnn->takeover_ctx = NULL;
 
-	/* Some ctdb tool commands (e.g. moveip, rebalanceip) send
-	 * lazy multicast to drop an IP from any node that isn't the
-	 * intended new node.  The following causes makes ctdbd ignore
-	 * a release for any address it doesn't host.
+	/* RELEASE_IP controls are sent to all nodes that should not
+	 * be hosting a particular IP.  This serves 2 purposes.  The
+	 * first is to help resolve any inconsistencies.  If a node
+	 * does unexpectly host an IP then it will be released.  The
+	 * 2nd is to use a "redundant release" to tell non-takeover
+	 * nodes where an IP is moving to.  This is how "ctdb ip" can
+	 * report the (likely) location of an IP by only asking the
+	 * local node.  Redundant releases need to update the PNN but
+	 * are otherwise ignored.
 	 */
 	if (ctdb->tunable.disable_ip_failover == 0 && ctdb->do_checkpublicip) {
 		if (!ctdb_sys_have_ip(&pip->addr)) {
@@ -960,6 +935,7 @@ int32_t ctdb_control_release_ip(struct ctdb_context *ctdb,
 				ctdb_addr_to_str(&pip->addr),
 				vnn->public_netmask_bits,
 				ctdb_vnn_iface_string(vnn)));
+			vnn->pnn = pip->pnn;
 			ctdb_vnn_unassign_iface(ctdb, vnn);
 			return 0;
 		}
@@ -968,6 +944,7 @@ int32_t ctdb_control_release_ip(struct ctdb_context *ctdb,
 			DEBUG(DEBUG_DEBUG,("Redundant release of IP %s/%u (ip not held)\n",
 					   ctdb_addr_to_str(&pip->addr),
 					   vnn->public_netmask_bits));
+			vnn->pnn = pip->pnn;
 			return 0;
 		}
 	}
@@ -993,7 +970,7 @@ int32_t ctdb_control_release_ip(struct ctdb_context *ctdb,
 		iface,
 		pip->pnn));
 
-	state = talloc(ctdb, struct takeover_callback_state);
+	state = talloc(ctdb, struct release_ip_callback_state);
 	if (state == NULL) {
 		ctdb_set_error(ctdb, "Out of memory at %s:%d",
 			       __FILE__, __LINE__);
@@ -1001,8 +978,8 @@ int32_t ctdb_control_release_ip(struct ctdb_context *ctdb,
 		return -1;
 	}
 
-	state->c = talloc_steal(state, c);
-	state->addr = talloc(state, ctdb_sock_addr);       
+	state->c = NULL;
+	state->addr = talloc(state, ctdb_sock_addr);
 	if (state->addr == NULL) {
 		ctdb_set_error(ctdb, "Out of memory at %s:%d",
 			       __FILE__, __LINE__);
@@ -1011,6 +988,7 @@ int32_t ctdb_control_release_ip(struct ctdb_context *ctdb,
 		return -1;
 	}
 	*state->addr = pip->addr;
+	state->target_pnn = pip->pnn;
 	state->vnn   = vnn;
 
 	vnn->update_in_flight = true;
@@ -1034,6 +1012,7 @@ int32_t ctdb_control_release_ip(struct ctdb_context *ctdb,
 
 	/* tell the control that we will be reply asynchronously */
 	*async_reply = true;
+	state->c = talloc_steal(state, c);
 	return 0;
 }
 
@@ -1775,6 +1754,10 @@ int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map_old *nodem
 	bool *retry_data;
 	bool can_host_ips;
 
+	/* Default timeout for early jump to IPREALLOCATED.  See below
+	 * for explanation of 3 times... */
+	timeout = timeval_current_ofs(3 * ctdb->tunable.takeover_timeout, 0);
+
 	/*
 	 * ip failover is completely disabled, just send out the 
 	 * ipreallocated event.
@@ -1852,6 +1835,20 @@ int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map_old *nodem
 
 	ZERO_STRUCT(ip); /* Avoid valgrind warnings for union */
 
+	/* Each of the following stages (RELEASE_IP, TAKEOVER_IP,
+	 * IPREALLOCATED) notionally has a timeout of TakeoverTimeout
+	 * seconds.  However, RELEASE_IP can take longer due to TCP
+	 * connection killing, so sometimes needs more time.
+	 * Therefore, use a cumulative timeout of TakeoverTimeout * 3
+	 * seconds across all 3 stages.  No explicit expiry checks are
+	 * needed before each stage because tevent is smart enough to
+	 * fire the timeouts even if they are in the past.  Initialise
+	 * this here so it explicitly covers the stages we're
+	 * interested in but, in particular, not the time taken by the
+	 * ipalloc().
+	 */
+	timeout = timeval_current_ofs(3 * ctdb->tunable.takeover_timeout, 0);
+
 	/* Send a RELEASE_IP to all nodes that should not be hosting
 	 * each IP.  For each IP, all but one of these will be
 	 * redundant.  However, the redundant ones are used to tell
@@ -1874,7 +1871,6 @@ int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map_old *nodem
 			ip.pnn  = tmp_ip->pnn;
 			ip.addr = tmp_ip->addr;
 
-			timeout = TAKEOVER_TIMEOUT();
 			data.dsize = sizeof(ip);
 			data.dptr  = (uint8_t *)&ip;
 			state = ctdb_control_send(ctdb, nodemap->nodes[i].pnn,
@@ -1917,7 +1913,6 @@ int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map_old *nodem
 		ip.pnn  = tmp_ip->pnn;
 		ip.addr = tmp_ip->addr;
 
-		timeout = TAKEOVER_TIMEOUT();
 		data.dsize = sizeof(ip);
 		data.dptr  = (uint8_t *)&ip;
 		state = ctdb_control_send(ctdb, tmp_ip->pnn,
@@ -1955,7 +1950,7 @@ ipreallocated:
 
 	nodes = list_of_connected_nodes(ctdb, nodemap, tmp_ctx, true);
 	ret = ctdb_client_async_control(ctdb, CTDB_CONTROL_IPREALLOCATED,
-					nodes, 0, TAKEOVER_TIMEOUT(),
+					nodes, 0, timeout,
 					false, tdb_null,
 					NULL, iprealloc_fail_callback,
 					&iprealloc_data);
@@ -2376,19 +2371,19 @@ void ctdb_takeover_client_destructor_hook(struct ctdb_client *client)
 
 void ctdb_release_all_ips(struct ctdb_context *ctdb)
 {
-	struct ctdb_vnn *vnn;
+	struct ctdb_vnn *vnn, *next;
 	int count = 0;
 
 	if (ctdb->tunable.disable_ip_failover == 1) {
 		return;
 	}
 
-	for (vnn=ctdb->vnn;vnn;vnn=vnn->next) {
+	for (vnn = ctdb->vnn; vnn != NULL; vnn = next) {
+		/* vnn can be freed below in release_ip_post() */
+		next = vnn->next;
+
 		if (!ctdb_sys_have_ip(&vnn->public_address)) {
 			ctdb_vnn_unassign_iface(ctdb, vnn);
-			continue;
-		}
-		if (!vnn->iface) {
 			continue;
 		}
 
@@ -2412,12 +2407,26 @@ void ctdb_release_all_ips(struct ctdb_context *ctdb)
 				    ctdb_vnn_iface_string(vnn)));
 
 		ctdb_event_script_args(ctdb, CTDB_EVENT_RELEASE_IP, "%s %s %u",
-				  ctdb_vnn_iface_string(vnn),
-				  ctdb_addr_to_str(&vnn->public_address),
-				  vnn->public_netmask_bits);
-		release_kill_clients(ctdb, &vnn->public_address);
-		ctdb_vnn_unassign_iface(ctdb, vnn);
-		vnn->update_in_flight = false;
+				       ctdb_vnn_iface_string(vnn),
+				       ctdb_addr_to_str(&vnn->public_address),
+				       vnn->public_netmask_bits);
+		/* releaseip timeouts are converted to success, so to
+		 * detect failures just check if the IP address is
+		 * still there...
+		 */
+		if (ctdb_sys_have_ip(&vnn->public_address)) {
+			DEBUG(DEBUG_ERR,
+			      (__location__
+			       " IP address %s not released\n",
+			       ctdb_addr_to_str(&vnn->public_address)));
+			vnn->update_in_flight = false;
+			continue;
+		}
+
+		vnn = release_ip_post(ctdb, vnn, &vnn->public_address);
+		if (vnn != NULL) {
+			vnn->update_in_flight = false;
+		}
 		count++;
 	}
 
