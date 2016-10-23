@@ -1,4 +1,4 @@
-From 35a19090e779a5d103bdcefe5d7a30433bbf9882 Mon Sep 17 00:00:00 2001
+From e13b5ac52204bb8fb5569162d64a0e02111c86de Mon Sep 17 00:00:00 2001
 From: Stefan Metzmacher <metze@samba.org>
 Date: Wed, 27 Feb 2013 09:29:47 +0100
 Subject: [PATCH 01/12] s3:nmbd: fix talloc_zero_array() check in
@@ -34,7 +34,7 @@ index b608354..c9a2dc7 100644
 1.9.1
 
 
-From ecacd6cebf3dada3ac01de44caa06e405065c0df Mon Sep 17 00:00:00 2001
+From 5822d51b20780248082b9885af55d01250a09d48 Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 12:05:59 -0700
 Subject: [PATCH 02/12] s3: nmbd: Add fd, triggered elements to struct
@@ -125,7 +125,7 @@ index c9a2dc7..619cc9a 100644
 1.9.1
 
 
-From 17aad0878872da07b070306443e6b3c50001df28 Mon Sep 17 00:00:00 2001
+From ce0a36819b6d1fcf6c97a004227bdcb4a53143bc Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 12:12:43 -0700
 Subject: [PATCH 03/12] s3: nmbd: Ensure attrs array mirrors fd's array for
@@ -174,7 +174,7 @@ index 619cc9a..2648679 100644
 1.9.1
 
 
-From a65704b53d1f0a93dee6a6b1cfb7315aa6ff1483 Mon Sep 17 00:00:00 2001
+From 2d8baf18040b67f2d4504bded60cf03f65072cc5 Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 12:16:58 -0700
 Subject: [PATCH 04/12] s3: nmbd: Now attrs array mirrors fd's array use it in
@@ -230,7 +230,7 @@ index 2648679..7321922 100644
 1.9.1
 
 
-From b762d20cc16352ba70f5edda081d5a51583e549f Mon Sep 17 00:00:00 2001
+From 6ad7738fd892b2edd75dc699e962dd557ebcf1b2 Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 12:18:37 -0700
 Subject: [PATCH 05/12] s3: nmbd: Add (currently unused) timeout and fd
@@ -288,7 +288,7 @@ index 7321922..caef1db 100644
 1.9.1
 
 
-From c237b8fd76b5e744d0e79b3bbeb9b34f0482d824 Mon Sep 17 00:00:00 2001
+From 01573b2d214a20819226908f3e3653a513e78c11 Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 12:22:53 -0700
 Subject: [PATCH 06/12] s3: nmbd: Add a talloc_stackframe().
@@ -381,7 +381,7 @@ index caef1db..c0c4925 100644
 1.9.1
 
 
-From 2e6a084a0d942b2397cbff9e0a53964fe77569ac Mon Sep 17 00:00:00 2001
+From 0a9d66eda6e3dd65ff669355081fc60f420968f3 Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 12:31:00 -0700
 Subject: [PATCH 07/12] s3: nmbd: Change over to using tevent functions from
@@ -510,7 +510,7 @@ index c0c4925..3e94e6e 100644
 1.9.1
 
 
-From 4a13bd3d5179475a96fca997d627ff8f9a1cf4ab Mon Sep 17 00:00:00 2001
+From 99f98b3b484d34294c09e127d14191f7d069932a Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 12:37:52 -0700
 Subject: [PATCH 08/12] s3: nmbd: Final changeover to stock tevent for nmbd.
@@ -683,7 +683,7 @@ index 3e94e6e..de5ae1e 100644
 1.9.1
 
 
-From cc1473a389433aa9d5b49de80dcd3dd56fe112a5 Mon Sep 17 00:00:00 2001
+From 9c5022ebec416cdfaa5c94097fea2eaf9b50d24a Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 19:07:39 -0700
 Subject: [PATCH 09/12] s3: winbind: Remove dump_event_list() calls.
@@ -727,7 +727,7 @@ index 17a89a7..c16b94e 100644
 1.9.1
 
 
-From 2c0b80d14c41f1a3a013444a65bb5dec81524efd Mon Sep 17 00:00:00 2001
+From 74deb057bffa9ab18d22862b3bbd159c92a849dc Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 19:11:17 -0700
 Subject: [PATCH 10/12] s3: server: s3_tevent_context_init() ->
@@ -760,10 +760,10 @@ index d49e334..50072e6 100644
  	if (!server_event_ctx) {
  		smb_panic("Could not init server's event context");
 diff --git a/source3/rpc_server/rpc_ncacn_np.c b/source3/rpc_server/rpc_ncacn_np.c
-index 5647596..9af8761 100644
+index f9c73de..083cbbe 100644
 --- a/source3/rpc_server/rpc_ncacn_np.c
 +++ b/source3/rpc_server/rpc_ncacn_np.c
-@@ -709,9 +709,9 @@ NTSTATUS make_external_rpc_pipe(TALLOC_CTX *mem_ctx,
+@@ -708,9 +708,9 @@ NTSTATUS make_external_rpc_pipe(TALLOC_CTX *mem_ctx,
  		goto out;
  	}
  
@@ -775,7 +775,7 @@ index 5647596..9af8761 100644
  		status = NT_STATUS_NO_MEMORY;
  		goto out;
  	}
-@@ -817,9 +817,9 @@ struct np_proxy_state *make_external_rpc_pipe_p(TALLOC_CTX *mem_ctx,
+@@ -816,9 +816,9 @@ struct np_proxy_state *make_external_rpc_pipe_p(TALLOC_CTX *mem_ctx,
  		goto fail;
  	}
  
@@ -788,10 +788,10 @@ index 5647596..9af8761 100644
  	}
  
 diff --git a/source3/smbd/process.c b/source3/smbd/process.c
-index 25c6d05..47fd16f 100644
+index e3c32f9..8f097ec 100644
 --- a/source3/smbd/process.c
 +++ b/source3/smbd/process.c
-@@ -3223,9 +3223,9 @@ static void smbd_echo_loop(struct smbXsrv_connection *xconn,
+@@ -3224,9 +3224,9 @@ static void smbd_echo_loop(struct smbXsrv_connection *xconn,
  	}
  	state->xconn = xconn;
  	state->parent_pipe = parent_pipe;
@@ -804,10 +804,10 @@ index 25c6d05..47fd16f 100644
  		return;
  	}
 diff --git a/source3/smbd/server.c b/source3/smbd/server.c
-index e6c6c33..23bc183 100644
+index 97c0fdc..6d0c664 100644
 --- a/source3/smbd/server.c
 +++ b/source3/smbd/server.c
-@@ -1412,7 +1412,6 @@ extern void build_options(bool screen);
+@@ -1670,7 +1670,6 @@ extern void build_options(bool screen);
  	 * Initialize the event context. The event context needs to be
  	 * initialized before the messaging context, cause the messaging
  	 * context holds an event context.
@@ -819,7 +819,7 @@ index e6c6c33..23bc183 100644
 1.9.1
 
 
-From ff39a78de0ed24e8e26ad7b20eb77968e3fdef7a Mon Sep 17 00:00:00 2001
+From bc6a9794fe2b7fb95423c99174f5e31df9be35ee Mon Sep 17 00:00:00 2001
 From: Jeremy Allison <jra@samba.org>
 Date: Fri, 23 Sep 2016 20:00:33 -0700
 Subject: [PATCH 11/12] s3: events. Move events.c to util_event.c
@@ -1542,10 +1542,10 @@ index 0000000..4ca2840
 +	return result;
 +}
 diff --git a/source3/wscript_build b/source3/wscript_build
-index 3f6a43e..75623dd 100755
+index 8546e8d..d19b583 100755
 --- a/source3/wscript_build
 +++ b/source3/wscript_build
-@@ -330,7 +330,7 @@ bld.SAMBA3_SUBSYSTEM('samba3core',
+@@ -333,7 +333,7 @@ bld.SAMBA3_SUBSYSTEM('samba3core',
                     lib/dmallocmsg.c
                     intl/lang_tdb.c
                     lib/gencache.c
@@ -1558,7 +1558,7 @@ index 3f6a43e..75623dd 100755
 1.9.1
 
 
-From 267beb126d3ee8e0f183fcc6e9bf4629c57b9f9a Mon Sep 17 00:00:00 2001
+From cf8c45874d968494b622e7b0c22ada4d054c5c05 Mon Sep 17 00:00:00 2001
 From: Volker Lendecke <vl@samba.org>
 Date: Sat, 24 Sep 2016 10:45:13 -0700
 Subject: [PATCH 12/12] glusterfs: Avoid tevent_internal.h
@@ -1581,7 +1581,7 @@ Autobuild-Date(master): Sat Sep 24 23:41:56 CEST 2016 on sn-devel-144
  1 file changed, 1 deletion(-)
 
 diff --git a/source3/modules/vfs_glusterfs.c b/source3/modules/vfs_glusterfs.c
-index 84530a8..b2ff4a9 100644
+index fbcaf5c..a467235 100644
 --- a/source3/modules/vfs_glusterfs.c
 +++ b/source3/modules/vfs_glusterfs.c
 @@ -41,7 +41,6 @@
@@ -1591,7 +1591,7 @@ index 84530a8..b2ff4a9 100644
 -#include "lib/tevent/tevent_internal.h"
  #include "smbd/globals.h"
  #include "lib/util/sys_rw.h"
- 
+ #include "smbprofile.h"
 -- 
 1.9.1
 

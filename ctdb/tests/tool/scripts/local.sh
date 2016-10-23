@@ -2,31 +2,25 @@
 
 # Augment PATH with stubs/ directory.
 
-if [ -d "${TEST_SUBDIR}/stubs" ] ; then
-    PATH="${TEST_SUBDIR}/stubs:$PATH"
-fi
-
 if "$TEST_VERBOSE" ; then
     debug () { echo "$@" ; }
 else
     debug () { : ; }
 fi
 
+ctdbd_socket="${TEST_VAR_DIR}/ctdbd.socket.$$"
+ctdbd_pidfile="${TEST_VAR_DIR}/ctdbd.pid.$$"
+
 define_test ()
 {
     _f=$(basename "$0" ".sh")
 
     case "$_f" in
-	func.*)
-	    _func="${_f#func.}"
-	    _func="${_func%.*}" # Strip test number
-	    export CTDB_TEST_PROG="ctdb_functest"
-	    test_args="$_func"
-	    ;;
-	stubby.*)
-	    _cmd="${_f#stubby.}"
+	ctdb.*)
+	    _cmd="${_f#ctdb.}"
 	    _cmd="${_cmd%.*}" # Strip test number
-	    export CTDB_TEST_PROG="ctdb_stubtest"
+	    export CTDB="ctdb --socket $ctdbd_socket"
+	    export CTDB_DEBUGLEVEL=2
 	    test_args="$_cmd"
 	    ;;
 	*)
@@ -34,6 +28,31 @@ define_test ()
     esac
 
     printf "%-28s - %s\n" "$_f" "$1"
+}
+
+cleanup_ctdbd ()
+{
+	debug "Cleaning up fake ctdbd"
+
+	pid=$(cat "$ctdbd_pidfile" 2>/dev/null || echo)
+	if [ -n "$pid" ] ; then
+		kill $pid || true
+		rm -f "$ctdbd_pidfile"
+	fi
+	rm -f "$ctdbd_socket"
+}
+
+setup_ctdbd ()
+{
+	debug "Setting up fake ctdbd"
+
+	$VALGRIND fake_ctdbd -s "$ctdbd_socket" -p "$ctdbd_pidfile"
+	test_cleanup cleanup_ctdbd
+}
+
+ctdbd_getpid ()
+{
+	cat "$ctdbd_pidfile"
 }
 
 setup_natgw ()
@@ -53,11 +72,33 @@ setup_natgw ()
 	natgw_config_dir="${TEST_VAR_DIR}/natgw_config"
 	mkdir -p "$natgw_config_dir"
 
-	# These will accumulate, 1 per test... but will be cleaned up
-	# at the end.
 	export CTDB_NATGW_NODES=$(mktemp --tmpdir="$natgw_config_dir")
+	test_cleanup "rm -f $CTDB_NATGW_NODES"
 
 	cat >"$CTDB_NATGW_NODES"
+}
+
+setup_lvs ()
+{
+	debug "Setting up LVS"
+
+	# Use in-tree binaries if running against local daemons.
+	# Otherwise CTDB need to be installed on all nodes.
+	if [ -n "$ctdb_dir" -a -d "${ctdb_dir}/bin" ] ; then
+		if [ -z "$CTDB_LVS_HELPER" ] ; then
+			export CTDB_LVS_HELPER="${ctdb_dir}/tools/ctdb_lvs"
+		fi
+		# Only want to find functions file, so this is OK
+		export CTDB_BASE="${ctdb_dir}/config"
+	fi
+
+	lvs_config_dir="${TEST_VAR_DIR}/lvs_config"
+	mkdir -p "$lvs_config_dir"
+
+	export CTDB_LVS_NODES=$(mktemp --tmpdir="$lvs_config_dir")
+	test_cleanup "rm -f ${CTDB_LVS_NODES}"
+
+	cat >"$CTDB_LVS_NODES"
 }
 
 setup_nodes ()
@@ -67,11 +108,10 @@ setup_nodes ()
     _v="CTDB_NODES${_pnn:+_}${_pnn}"
     debug "Setting up ${_v}"
 
-    # These will accumulate, 1 per test... but will be cleaned up at
-    # the end.
     eval export "${_v}"=$(mktemp --tmpdir="$TEST_VAR_DIR")
 
     eval _f="\${${_v}}"
+    test_cleanup "rm -f ${_f}"
     cat >"$_f"
 
     # You can't be too careful about what might be in the
@@ -84,10 +124,14 @@ setup_nodes ()
     fi
 }
 
+simple_test_other ()
+{
+	(unit_test $CTDB -d $CTDB_DEBUGLEVEL "$@")
+	status=$?
+	[ $status -eq 0 ] || exit $status
+}
+
 simple_test ()
 {
-    : ${CTDB_DEBUGLEVEL:=3}
-    export CTDB_DEBUGLEVEL
-
-    unit_test ctdb $test_args "$@"
+	simple_test_other $test_args "$@"
 }

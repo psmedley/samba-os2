@@ -23,14 +23,18 @@
 #include <talloc.h>
 #include <tdb.h>
 
-#include "protocol_private.h"
+#include "protocol_api.h"
 
 #define CTDB_DS_ALIGNMENT 8
 
-int allocate_pkt(TALLOC_CTX *mem_ctx, size_t length,
-		 uint8_t **buf, size_t *buflen)
+int ctdb_allocate_pkt(TALLOC_CTX *mem_ctx, size_t length,
+		      uint8_t **buf, size_t *buflen)
 {
 	size_t new_length;
+
+	if (buf == NULL || buflen == NULL) {
+		return EINVAL;
+	}
 
 	new_length = (length + CTDB_DS_ALIGNMENT-1) & ~(CTDB_DS_ALIGNMENT-1);
 

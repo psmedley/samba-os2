@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/22/2016
+.\"      Date: 09/07/2016
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.4
+.\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "09/22/2016" "Samba 4\&.4" "System Administration tools"
+.TH "VFS_FRUIT" "8" "09/07/2016" "Samba 4\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -51,6 +51,10 @@ The module enables alternate data streams (ADS) support for a share, intercepts 
 vfs_streams_xattr
 which must be loaded together with
 vfs_fruit\&.
+.PP
+vfs_fruit requires "ea support = yes"\&.
+.PP
+Be careful when mixing shares with and without vfs_fruit\&. OS X clients negotiate SMB2 AAPL protocol extensions on the first tcon, so mixing shares with and without fruit will globally disable AAPL if the first tcon is without fruit\&.
 .PP
 Having shares with ADS support enabled for OS X client is worthwhile because it resembles the behaviour of Apple\*(Aqs own SMB server implementation and it avoids certain severe performance degradations caused by Samba\*(Aqs case sensitivity semantics\&.
 .PP
@@ -311,6 +315,7 @@ The default is
 .\}
 .nf
         \fI[share]\fR
+	\m[blue]\fBea support = yes\fR\m[]
 	\m[blue]\fBvfs objects = catia fruit streams_xattr\fR\m[]
 	\m[blue]\fBfruit:resource = file\fR\m[]
 	\m[blue]\fBfruit:metadata = netatalk\fR\m[]

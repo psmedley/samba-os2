@@ -39,9 +39,6 @@ import talloc
 import random
 import time
 
-# this makes debugging easier
-talloc.enable_null_tracking()
-
 class DCJoinException(Exception):
 
     def __init__(self, msg):
@@ -117,6 +114,9 @@ class dc_join(object):
             ctx.acct_dn = None
             ctx.myname = ctx.server.split('.')[0]
             ctx.ntds_guid = None
+
+            # Save this early
+            ctx.remote_dc_ntds_guid = ctx.samdb.get_ntds_GUID()
         else:
             # work out the DNs of all the objects we will be adding
             ctx.myname = netbios_name
@@ -140,10 +140,11 @@ class dc_join(object):
         ctx.domaindns_zone = 'DC=DomainDnsZones,%s' % ctx.base_dn
         ctx.forestdns_zone = 'DC=ForestDnsZones,%s' % ctx.root_dn
 
+        expr = "(&(objectClass=crossRef)(ncName=%s))" % ldb.binary_encode(ctx.domaindns_zone)
         res_domaindns = ctx.samdb.search(scope=ldb.SCOPE_ONELEVEL,
                                          attrs=[],
                                          base=ctx.samdb.get_partitions_dn(),
-                                         expression="(&(objectClass=crossRef)(ncName=%s))" % ctx.domaindns_zone)
+                                         expression=expr)
         if dns_backend is None:
             ctx.dns_backend = "NONE"
         else:
@@ -167,6 +168,7 @@ class dc_join(object):
         ctx.managedby = None
         ctx.subdomain = False
         ctx.adminpass = None
+        ctx.partition_dn = None
 
     def del_noerror(ctx, dn, recursive=False):
         if recursive:
@@ -182,71 +184,97 @@ class dc_join(object):
         except Exception:
             pass
 
+    def cleanup_old_accounts(ctx):
+        res = ctx.samdb.search(base=ctx.samdb.get_default_basedn(),
+                               expression='sAMAccountName=%s' % ldb.binary_encode(ctx.samname),
+                               attrs=["msDS-krbTgtLink", "objectSID"])
+        if len(res) == 0:
+            return
+
+        creds = Credentials()
+        creds.guess(ctx.lp)
+        try:
+            creds.set_machine_account(ctx.lp)
+            machine_samdb = SamDB(url="ldap://%s" % ctx.server,
+                                  session_info=system_session(),
+                                credentials=creds, lp=ctx.lp)
+        except:
+            pass
+        else:
+            token_res = machine_samdb.search(scope=ldb.SCOPE_BASE, base="", attrs=["tokenGroups"])
+            if token_res[0]["tokenGroups"][0] \
+               == res[0]["objectSID"][0]:
+                raise DCJoinException("Not removing account %s which "
+                                   "looks like a Samba DC account "
+                                   "maching the password we already have.  "
+                                   "To override, remove secrets.ldb and secrets.tdb"
+                                % ctx.samname)
+
+        ctx.del_noerror(res[0].dn, recursive=True)
+
+        if "msDS-Krbtgtlink" in res[0]:
+            new_krbtgt_dn = res[0]["msDS-Krbtgtlink"][0]
+            del_noerror(ctx.new_krbtgt_dn)
+
+        res = ctx.samdb.search(base=ctx.samdb.get_default_basedn(),
+                               expression='(&(sAMAccountName=%s)(servicePrincipalName=%s))' %
+                               (ldb.binary_encode("dns-%s" % ctx.myname),
+                                ldb.binary_encode("dns/%s" % ctx.dnshostname)),
+                               attrs=[])
+        if res:
+            ctx.del_noerror(res[0].dn, recursive=True)
+
+        res = ctx.samdb.search(base=ctx.samdb.get_default_basedn(),
+                               expression='(sAMAccountName=%s)' % ldb.binary_encode("dns-%s" % ctx.myname),
+                            attrs=[])
+        if res:
+            raise DCJoinException("Not removing account %s which looks like "
+                               "a Samba DNS service account but does not "
+                               "have servicePrincipalName=%s" %
+                               (ldb.binary_encode("dns-%s" % ctx.myname),
+                                ldb.binary_encode("dns/%s" % ctx.dnshostname)))
+
+
     def cleanup_old_join(ctx):
         """Remove any DNs from a previous join."""
-        try:
-            # find the krbtgt link
-            print("checking sAMAccountName")
-            if ctx.subdomain:
-                res = None
-            else:
-                res = ctx.samdb.search(base=ctx.samdb.get_default_basedn(),
-                                       expression='sAMAccountName=%s' % ldb.binary_encode(ctx.samname),
-                                       attrs=["msDS-krbTgtLink"])
-                if res:
-                    ctx.del_noerror(res[0].dn, recursive=True)
+        # find the krbtgt link
+        if not ctx.subdomain:
+            ctx.cleanup_old_accounts()
 
-                res = ctx.samdb.search(base=ctx.samdb.get_default_basedn(),
-                                       expression='(&(sAMAccountName=%s)(servicePrincipalName=%s))' % (ldb.binary_encode("dns-%s" % ctx.myname), ldb.binary_encode("dns/%s" % ctx.dnshostname)),
-                                       attrs=[])
-                if res:
-                    ctx.del_noerror(res[0].dn, recursive=True)
+        if ctx.connection_dn is not None:
+            ctx.del_noerror(ctx.connection_dn)
+        if ctx.krbtgt_dn is not None:
+            ctx.del_noerror(ctx.krbtgt_dn)
+        ctx.del_noerror(ctx.ntds_dn)
+        ctx.del_noerror(ctx.server_dn, recursive=True)
+        if ctx.topology_dn:
+            ctx.del_noerror(ctx.topology_dn)
+        if ctx.partition_dn:
+            ctx.del_noerror(ctx.partition_dn)
 
-                res = ctx.samdb.search(base=ctx.samdb.get_default_basedn(),
-                                       expression='(sAMAccountName=%s)' % ldb.binary_encode("dns-%s" % ctx.myname),
-                                       attrs=[])
-                if res:
-                    raise RuntimeError("Not removing account %s which looks like a Samba DNS service account but does not have servicePrincipalName=%s" % (ldb.binary_encode("dns-%s" % ctx.myname), ldb.binary_encode("dns/%s" % ctx.dnshostname)))
+        if ctx.subdomain:
+            binding_options = "sign"
+            lsaconn = lsa.lsarpc("ncacn_ip_tcp:%s[%s]" % (ctx.server, binding_options),
+                                 ctx.lp, ctx.creds)
 
-            if ctx.connection_dn is not None:
-                ctx.del_noerror(ctx.connection_dn)
-            if ctx.krbtgt_dn is not None:
-                ctx.del_noerror(ctx.krbtgt_dn)
-            ctx.del_noerror(ctx.ntds_dn)
-            ctx.del_noerror(ctx.server_dn, recursive=True)
-            if ctx.topology_dn:
-                ctx.del_noerror(ctx.topology_dn)
-            if ctx.partition_dn:
-                ctx.del_noerror(ctx.partition_dn)
-            if res:
-                ctx.new_krbtgt_dn = res[0]["msDS-Krbtgtlink"][0]
-                ctx.del_noerror(ctx.new_krbtgt_dn)
+            objectAttr = lsa.ObjectAttribute()
+            objectAttr.sec_qos = lsa.QosInfo()
 
-            if ctx.subdomain:
-                binding_options = "sign"
-                lsaconn = lsa.lsarpc("ncacn_ip_tcp:%s[%s]" % (ctx.server, binding_options),
-                                     ctx.lp, ctx.creds)
+            pol_handle = lsaconn.OpenPolicy2(''.decode('utf-8'),
+                                             objectAttr, security.SEC_FLAG_MAXIMUM_ALLOWED)
 
-                objectAttr = lsa.ObjectAttribute()
-                objectAttr.sec_qos = lsa.QosInfo()
+            name = lsa.String()
+            name.string = ctx.realm
+            info = lsaconn.QueryTrustedDomainInfoByName(pol_handle, name, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
 
-                pol_handle = lsaconn.OpenPolicy2(''.decode('utf-8'),
-                                                 objectAttr, security.SEC_FLAG_MAXIMUM_ALLOWED)
+            lsaconn.DeleteTrustedDomain(pol_handle, info.info_ex.sid)
 
-                name = lsa.String()
-                name.string = ctx.realm
-                info = lsaconn.QueryTrustedDomainInfoByName(pol_handle, name, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
+            name = lsa.String()
+            name.string = ctx.forest_domain_name
+            info = lsaconn.QueryTrustedDomainInfoByName(pol_handle, name, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
 
-                lsaconn.DeleteTrustedDomain(pol_handle, info.info_ex.sid)
+            lsaconn.DeleteTrustedDomain(pol_handle, info.info_ex.sid)
 
-                name = lsa.String()
-                name.string = ctx.forest_domain_name
-                info = lsaconn.QueryTrustedDomainInfoByName(pol_handle, name, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
-
-                lsaconn.DeleteTrustedDomain(pol_handle, info.info_ex.sid)
-
-        except Exception:
-            pass
 
     def promote_possible(ctx):
         """confirm that the account is just a bare NT4 BDC or a member server, so can be safely promoted"""
@@ -293,21 +321,22 @@ class dc_join(object):
         '''get netbios name of the domain from the partitions record'''
         partitions_dn = ctx.samdb.get_partitions_dn()
         res = ctx.samdb.search(base=partitions_dn, scope=ldb.SCOPE_ONELEVEL, attrs=["nETBIOSName"],
-                               expression='ncName=%s' % ctx.samdb.get_default_basedn())
+                               expression='ncName=%s' % ldb.binary_encode(str(ctx.samdb.get_default_basedn())))
         return res[0]["nETBIOSName"][0]
 
     def get_forest_domain_name(ctx):
         '''get netbios name of the domain from the partitions record'''
         partitions_dn = ctx.samdb.get_partitions_dn()
         res = ctx.samdb.search(base=partitions_dn, scope=ldb.SCOPE_ONELEVEL, attrs=["nETBIOSName"],
-                               expression='ncName=%s' % ctx.samdb.get_root_basedn())
+                               expression='ncName=%s' % ldb.binary_encode(str(ctx.samdb.get_root_basedn())))
         return res[0]["nETBIOSName"][0]
 
     def get_parent_partition_dn(ctx):
         '''get the parent domain partition DN from parent DNS name'''
         res = ctx.samdb.search(base=ctx.config_dn, attrs=[],
                                expression='(&(objectclass=crossRef)(dnsRoot=%s)(systemFlags:%s:=%u))' %
-                               (ctx.parent_dnsdomain, ldb.OID_COMPARATOR_AND, samba.dsdb.SYSTEM_FLAG_CR_NTDS_DOMAIN))
+                               (ldb.binary_encode(ctx.parent_dnsdomain),
+                                ldb.OID_COMPARATOR_AND, samba.dsdb.SYSTEM_FLAG_CR_NTDS_DOMAIN))
         return str(res[0].dn)
 
     def get_naming_master(ctx):
@@ -571,6 +600,35 @@ class dc_join(object):
         if ctx.ntds_dn:
             ctx.join_add_ntdsdsa()
 
+            # Add the Replica-Locations or RO-Replica-Locations attributes
+            # TODO Is this supposed to be for the schema partition too?
+            expr = "(&(objectClass=crossRef)(ncName=%s))" % ldb.binary_encode(ctx.domaindns_zone)
+            domain = (ctx.samdb.search(scope=ldb.SCOPE_ONELEVEL,
+                                      attrs=[],
+                                      base=ctx.samdb.get_partitions_dn(),
+                                      expression=expr), ctx.domaindns_zone)
+
+            expr = "(&(objectClass=crossRef)(ncName=%s))" % ldb.binary_encode(ctx.forestdns_zone)
+            forest = (ctx.samdb.search(scope=ldb.SCOPE_ONELEVEL,
+                                      attrs=[],
+                                      base=ctx.samdb.get_partitions_dn(),
+                                      expression=expr), ctx.forestdns_zone)
+
+            for part, zone in (domain, forest):
+                if zone not in ctx.nc_list:
+                    continue
+
+                if len(part) == 1:
+                    m = ldb.Message()
+                    m.dn = part[0].dn
+                    attr = "msDS-NC-Replica-Locations"
+                    if ctx.RODC:
+                        attr = "msDS-NC-RO-Replica-Locations"
+
+                    m[attr] = ldb.MessageElement(ctx.ntds_dn,
+                                                 ldb.FLAG_MOD_ADD, attr)
+                    ctx.samdb.modify(m)
+
         if ctx.connection_dn is not None:
             print "Adding %s" % ctx.connection_dn
             rec = {
@@ -830,7 +888,7 @@ class dc_join(object):
                     repl.replicate(ctx.base_dn, source_dsa_invocation_id,
                                 destination_dsa_guid, rodc=ctx.RODC,
                                 replica_flags=ctx.domain_replica_flags)
-                    ctx.domain_replica_flags ^= drsuapi.DRSUAPI_DRS_CRITICAL_ONLY | drsuapi.DRSUAPI_DRS_GET_ANC
+                    ctx.domain_replica_flags ^= drsuapi.DRSUAPI_DRS_CRITICAL_ONLY
                 else:
                     ctx.domain_replica_flags |= drsuapi.DRSUAPI_DRS_GET_ANC
                 repl.replicate(ctx.base_dn, source_dsa_invocation_id,
@@ -838,16 +896,15 @@ class dc_join(object):
                                replica_flags=ctx.domain_replica_flags)
             print "Done with always replicated NC (base, config, schema)"
 
+            # At this point we should already have an entry in the ForestDNS
+            # and DomainDNS NC (those under CN=Partions,DC=...) in order to
+            # indicate that we hold a replica for this NC.
             for nc in (ctx.domaindns_zone, ctx.forestdns_zone):
                 if nc in ctx.nc_list:
                     print "Replicating %s" % (str(nc))
                     repl.replicate(nc, source_dsa_invocation_id,
                                     destination_dsa_guid, rodc=ctx.RODC,
                                     replica_flags=ctx.replica_flags)
-
-            # FIXME At this point we should add an entry in the forestdns and domaindns NC
-            # (those under CN=Partions,DC=...)
-            # in order to indicate that we hold a replica for this NC
 
             if ctx.RODC:
                 repl.replicate(ctx.acct_dn, source_dsa_invocation_id,
@@ -929,7 +986,7 @@ class dc_join(object):
 
         # We want to appear to be the server we just cloned
         if ctx.clone_only:
-            guid = ctx.samdb.get_ntds_GUID()
+            guid = ctx.remote_dc_ntds_guid
         else:
             guid = ctx.ntds_guid
 
@@ -1100,7 +1157,10 @@ class dc_join(object):
                 ctx.join_setup_trusts()
             ctx.join_finalise()
         except:
-            print "Join failed - cleaning up"
+            try:
+                print "Join failed - cleaning up"
+            except IOError:
+                pass
             if not ctx.clone_only:
                 ctx.cleanup_old_join()
             raise
@@ -1183,6 +1243,7 @@ def join_DC(logger=None, server=None, creds=None, lp=None, site=None, netbios_na
     ctx.replica_flags = (drsuapi.DRSUAPI_DRS_WRIT_REP |
                          drsuapi.DRSUAPI_DRS_INIT_SYNC |
                          drsuapi.DRSUAPI_DRS_PER_SYNC |
+                         drsuapi.DRSUAPI_DRS_GET_ANC |
                          drsuapi.DRSUAPI_DRS_FULL_SYNC_IN_PROGRESS |
                          drsuapi.DRSUAPI_DRS_NEVER_SYNCED)
     ctx.domain_replica_flags = ctx.replica_flags
@@ -1207,6 +1268,7 @@ def join_clone(logger=None, server=None, creds=None, lp=None,
     ctx.replica_flags = (drsuapi.DRSUAPI_DRS_WRIT_REP |
                          drsuapi.DRSUAPI_DRS_INIT_SYNC |
                          drsuapi.DRSUAPI_DRS_PER_SYNC |
+                         drsuapi.DRSUAPI_DRS_GET_ANC |
                          drsuapi.DRSUAPI_DRS_FULL_SYNC_IN_PROGRESS |
                          drsuapi.DRSUAPI_DRS_NEVER_SYNCED)
     if not include_secrets:
@@ -1262,6 +1324,7 @@ def join_subdomain(logger=None, server=None, creds=None, lp=None, site=None,
     ctx.replica_flags = (drsuapi.DRSUAPI_DRS_WRIT_REP |
                          drsuapi.DRSUAPI_DRS_INIT_SYNC |
                          drsuapi.DRSUAPI_DRS_PER_SYNC |
+                         drsuapi.DRSUAPI_DRS_GET_ANC |
                          drsuapi.DRSUAPI_DRS_FULL_SYNC_IN_PROGRESS |
                          drsuapi.DRSUAPI_DRS_NEVER_SYNCED)
     ctx.domain_replica_flags = ctx.replica_flags

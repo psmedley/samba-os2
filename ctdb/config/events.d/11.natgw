@@ -6,10 +6,12 @@
 #
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
+. "${CTDB_BASE}/functions"
 
+# service_name is used by various functions
+# shellcheck disable=SC2034
 service_name=natgw
 
 loadconfig
@@ -17,30 +19,17 @@ loadconfig
 [ -n "$CTDB_NATGW_NODES" ] || exit 0
 export CTDB_NATGW_NODES
 
-ctdb_setup_service_state_dir
+service_state_dir=$(ctdb_setup_service_state_dir) || exit $?
 
 natgw_cfg_new="${service_state_dir}/cfg_new"
 natgw_cfg_old="${service_state_dir}/cfg_old"
 natgw_master_old="${service_state_dir}/master_old"
 
-# Cached retrieval of private IP address from local node.  This never
-# changes.  Sets $ip_address to avoid an unnecessary subprocess.
-ctdb_get_ip_address ()
-{
-    _ip_addr_file="${service_state_dir}/my-ip-address"
-    if [ ! -f "$_ip_addr_file" ] ; then
-	ctdb -X nodestatus |
-	    awk -F '|' 'NR == 2 { print $3 }' >"$_ip_addr_file"
-    fi
-
-    read ip_address <"$_ip_addr_file"
-}
-
 ctdb_natgw_slave_only ()
 {
-    ctdb_get_ip_address
+    _ip_address=$(ctdb_get_ip_address)
 
-    awk -v my_ip="$ip_address" \
+    awk -v my_ip="$_ip_address" \
 	'$1 == my_ip { if ($2 ~ "slave-only") { exit 0 } else { exit 1 } }' \
 	"$CTDB_NATGW_NODES"
 }
@@ -104,7 +93,7 @@ _natgw_clear ()
     _maskbits="${CTDB_NATGW_PUBLIC_IP#*/}"
 
     delete_ip_from_iface \
-	$CTDB_NATGW_PUBLIC_IFACE $_ip $_maskbits >/dev/null 2>&1
+	"$CTDB_NATGW_PUBLIC_IFACE" "$_ip" "$_maskbits" >/dev/null 2>&1
     for _net_gw in $CTDB_NATGW_STATIC_ROUTES ; do
 	_net="${_net_gw%@*}"
 	ip route del "$_net" metric 10 >/dev/null 2>/dev/null
@@ -113,16 +102,16 @@ _natgw_clear ()
     # Delete the masquerading setup from a previous iteration where we
     # were the NAT-GW
     iptables -D POSTROUTING -t nat \
-	-s $CTDB_NATGW_PRIVATE_NETWORK ! -d $CTDB_NATGW_PRIVATE_NETWORK \
+	-s "$CTDB_NATGW_PRIVATE_NETWORK" ! -d "$CTDB_NATGW_PRIVATE_NETWORK" \
 	-j MASQUERADE >/dev/null 2>/dev/null
 
-    iptables -D INPUT -p tcp --syn -d $_ip/32 -j REJECT 2>/dev/null
+    iptables -D INPUT -p tcp --syn -d "${_ip}/32" -j REJECT 2>/dev/null
 }
 
 natgw_clear ()
 {
     if [ -r "$natgw_cfg_old" ] ; then
-	(. $natgw_cfg_old ; _natgw_clear)
+	(. "$natgw_cfg_old" ; _natgw_clear)
     else
 	_natgw_clear
     fi
@@ -132,17 +121,17 @@ natgw_set_master ()
 {
     set_proc sys/net/ipv4/ip_forward 1
     iptables -A POSTROUTING -t nat \
-	-s $CTDB_NATGW_PRIVATE_NETWORK ! -d $CTDB_NATGW_PRIVATE_NETWORK \
+	-s "$CTDB_NATGW_PRIVATE_NETWORK" ! -d "$CTDB_NATGW_PRIVATE_NETWORK" \
 	-j MASQUERADE
 
     # block all incoming connections to the NATGW IP address
     ctdb_natgw_public_ip_host="${CTDB_NATGW_PUBLIC_IP%/*}/32"
     iptables -D INPUT -p tcp --syn \
-	-d $ctdb_natgw_public_ip_host -j REJECT 2>/dev/null
+	-d "$ctdb_natgw_public_ip_host" -j REJECT 2>/dev/null
     iptables -I INPUT -p tcp --syn \
-	-d $ctdb_natgw_public_ip_host -j REJECT 2>/dev/null
+	-d "$ctdb_natgw_public_ip_host" -j REJECT 2>/dev/null
 
-    ip addr add $CTDB_NATGW_PUBLIC_IP dev $CTDB_NATGW_PUBLIC_IFACE
+    ip addr add "$CTDB_NATGW_PUBLIC_IP" dev "$CTDB_NATGW_PUBLIC_IFACE"
     for _net_gw in $CTDB_NATGW_STATIC_ROUTES ; do
 	_net="${_net_gw%@*}"
 	if [ "$_net" != "$_net_gw" ] ; then
@@ -168,8 +157,10 @@ natgw_set_slave ()
 
 natgw_ensure_master ()
 {
+    # Intentional word splitting here
+    # shellcheck disable=SC2046
     set -- $("${CTDB_HELPER_BINDIR}/ctdb_natgw" master)
-    natgwmaster="${1:--1}" # Default is -1 if natgwlist fails
+    natgwmaster="${1:--1}" # Default is -1, for failure above
     natgwip="$2"
 
     if [ "$natgwmaster" = "-1" ]; then
@@ -197,11 +188,11 @@ natgw_save_state ()
 
 
 case "$1" in
-    setup)
+setup)
 	natgw_check_config
 	;;
 
-    startup)
+startup)
 	natgw_check_config
 
 	# Error if CTDB_NATGW_PUBLIC_IP is listed in public addresses
@@ -215,10 +206,8 @@ case "$1" in
 	set_proc sys/net/ipv4/conf/all/arp_announce 2
 	;;
 
-    updatenatgw|ipreallocated)
+updatenatgw|ipreallocated)
 	natgw_check_config
-
-	ctdb_get_pnn
 
 	natgw_ensure_master
 
@@ -226,6 +215,7 @@ case "$1" in
 
 	natgw_clear
 
+	pnn=$(ctdb_get_pnn)
 	if [ "$pnn" = "$natgwmaster" ]; then
 	    natgw_set_master
 	else
@@ -239,21 +229,17 @@ case "$1" in
 	natgw_save_state
 	;;
 
-    shutdown|removenatgw)
+shutdown|removenatgw)
 	natgw_check_config
 	natgw_clear
 	;;
 
-    monitor)
+monitor)
 	natgw_check_config
 
 	if [ -n "$CTDB_NATGW_PUBLIC_IFACE" ] ; then
 	    interface_monitor "$CTDB_NATGW_PUBLIC_IFACE" || exit 1
 	fi
-	;;
-
-    *)
-	ctdb_standard_event_handler "@"
 	;;
 esac
 

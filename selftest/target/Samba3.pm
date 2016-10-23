@@ -213,6 +213,7 @@ sub setup_nt4_dc($$)
 	domain master = yes
 	domain logons = yes
 	lanman auth = yes
+	ntlm auth = yes
 	raw NTLMv2 auth = yes
 
 	rpc_server:epmapper = external
@@ -309,10 +310,13 @@ sub setup_nt4_member($$$)
 
 	print "PROVISIONING MEMBER...";
 
+	my $require_mutexes = "dbwrap_tdb_require_mutexes:* = yes";
+	$require_mutexes = "" if ($ENV{SELFTEST_DONT_REQUIRE_TDB_MUTEX_SUPPORT} eq "1");
+
 	my $member_options = "
 	security = domain
-	server signing = on
 	dbwrap_tdb_mutexes:* = yes
+	${require_mutexes}
 ";
 	my $ret = $self->provision($prefix,
 				   "LOCALNT4MEMBER3",
@@ -339,6 +343,7 @@ sub setup_nt4_member($$$)
 	my $net = Samba::bindir_path($self, "net");
 	my $cmd = "";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
+	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
 	$cmd .= "$net join $ret->{CONFIGURATION} $nt4_dc_vars->{DOMAIN} member";
 	$cmd .= " -U$nt4_dc_vars->{USERNAME}\%$nt4_dc_vars->{PASSWORD}";
 
@@ -374,9 +379,9 @@ sub setup_admember($$$$)
 
 	my $member_options = "
 	security = ads
-	server signing = on
         workgroup = $dcvars->{DOMAIN}
         realm = $dcvars->{REALM}
+        netbios aliases = foo bar
 ";
 
 	my $ret = $self->provision($prefix,
@@ -414,6 +419,7 @@ sub setup_admember($$$$)
 		$cmd .= "RESOLV_WRAPPER_HOSTS=\"$ret->{RESOLV_WRAPPER_HOSTS}\" ";
 	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
+	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
 	$cmd .= "$net join $ret->{CONFIGURATION}";
 	$cmd .= " -U$dcvars->{USERNAME}\%$dcvars->{PASSWORD}";
 
@@ -457,7 +463,6 @@ sub setup_admember_rfc2307($$$$)
 
 	my $member_options = "
 	security = ads
-	server signing = on
         workgroup = $dcvars->{DOMAIN}
         realm = $dcvars->{REALM}
         idmap config * : backend = autorid
@@ -505,6 +510,7 @@ sub setup_admember_rfc2307($$$$)
 		$cmd .= "RESOLV_WRAPPER_HOSTS=\"$ret->{RESOLV_WRAPPER_HOSTS}\" ";
 	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
+	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
 	$cmd .= "$net join $ret->{CONFIGURATION}";
 	$cmd .= " -U$dcvars->{USERNAME}\%$dcvars->{PASSWORD}";
 
@@ -545,8 +551,13 @@ sub setup_simpleserver($$)
 
 	my $simpleserver_options = "
 	lanman auth = yes
-	vfs objects = xattr_tdb streams_depot
+	ntlm auth = yes
+	vfs objects = xattr_tdb streams_depot time_audit full_audit
 	change notify = no
+
+	full_audit:syslog = no
+	full_audit:success = none
+	full_audit:failure = none
 
 [vfs_aio_fork]
 	path = $prefix_abs/share
@@ -657,6 +668,10 @@ sub setup_fileserver($$)
 	path = $smbget_sharedir
 	comment = smb username is [%U]
 	guest ok = yes
+[ign_sysacls]
+	path = $share_dir
+	comment = ignore system acls
+	acl_xattr:ignore system acls = yes
 ";
 
 	my $vars = $self->provision($path,
@@ -830,6 +845,7 @@ sub setup_maptoguest($$)
 
 	my $options = "
 map to guest = bad user
+ntlm auth = yes
 ";
 
 	my $vars = $self->provision($path,
@@ -1402,7 +1418,6 @@ sub provision($$$$$$$$)
 
 	kernel oplocks = no
 	kernel change notify = no
-	smb2 leases = yes
 
 	logging = file
 	printing = bsd
@@ -1418,7 +1433,6 @@ sub provision($$$$$$$$)
 #	min receivefile size = 4000
 
 	read only = no
-	server signing = auto
 
 	smbd:sharedelay = 100000
 	smbd:writetimeupdatedelay = 500000
@@ -1523,6 +1537,7 @@ sub provision($$$$$$$$)
 [valid-users-tmp]
 	path = $shrdir
 	valid users = $unix_name
+	access based share enum = yes
 [msdfs-share]
 	path = $msdfs_shrdir
 	msdfs root = yes
@@ -1581,7 +1596,7 @@ sub provision($$$$$$$$)
 	force create mode = 0
 	directory mask = 0777
 	force directory mode = 0
-	vfs objects = xattr_tdb
+	vfs objects = xattr_tdb streams_depot
 [aio]
 	copy = tmp
 	aio read size = 1
@@ -1683,6 +1698,75 @@ sub provision($$$$$$$$)
 	shadow:snapdir = $shadow_tstdir/.snapshots
 	shadow:snapsharepath = share
 
+[shadow_fmt0]
+	comment = Testing shadow:format with default option
+	vfs object = shadow_copy2
+	path = $shadow_shrdir
+	read only = no
+	guest ok = yes
+	shadow:mountpoint = $shadow_mntdir
+	shadow:basedir = $shadow_basedir
+	shadow:snapdir = $shadow_basedir/.snapshots
+	shadow:format = \@GMT-%Y.%m.%d-%H.%M.%S
+
+[shadow_fmt1]
+	comment = Testing shadow:format with only date component
+	vfs object = shadow_copy2
+	path = $shadow_shrdir
+	read only = no
+	guest ok = yes
+	shadow:mountpoint = $shadow_mntdir
+	shadow:basedir = $shadow_basedir
+	shadow:snapdir = $shadow_basedir/.snapshots
+	shadow:format = \@GMT-%Y-%m-%d
+
+[shadow_fmt2]
+	comment = Testing shadow:format with some hardcoded prefix
+	vfs object = shadow_copy2
+	path = $shadow_shrdir
+	read only = no
+	guest ok = yes
+	shadow:mountpoint = $shadow_mntdir
+	shadow:basedir = $shadow_basedir
+	shadow:snapdir = $shadow_basedir/.snapshots
+	shadow:format = snap\@GMT-%Y.%m.%d-%H.%M.%S
+
+[shadow_fmt3]
+	comment = Testing shadow:format with modified format
+	vfs object = shadow_copy2
+	path = $shadow_shrdir
+	read only = no
+	guest ok = yes
+	shadow:mountpoint = $shadow_mntdir
+	shadow:basedir = $shadow_basedir
+	shadow:snapdir = $shadow_basedir/.snapshots
+	shadow:format = \@GMT-%Y.%m.%d-%H_%M_%S-snap
+
+[shadow_fmt4]
+	comment = Testing shadow:snapprefix regex
+	vfs object = shadow_copy2
+	path = $shadow_shrdir
+	read only = no
+	guest ok = yes
+	shadow:mountpoint = $shadow_mntdir
+	shadow:basedir = $shadow_basedir
+	shadow:snapdir = $shadow_basedir/.snapshots
+	shadow:snapprefix = \^s[a-z]*p\$
+	shadow:format = _GMT-%Y.%m.%d-%H.%M.%S
+
+[shadow_fmt5]
+	comment = Testing shadow:snapprefix with delim regex
+	vfs object = shadow_copy2
+	path = $shadow_shrdir
+	read only = no
+	guest ok = yes
+	shadow:mountpoint = $shadow_mntdir
+	shadow:basedir = $shadow_basedir
+	shadow:snapdir = $shadow_basedir/.snapshots
+	shadow:delimiter = \@GMT
+	shadow:snapprefix = [a-z]*
+	shadow:format = \@GMT-%Y.%m.%d-%H.%M.%S
+
 [shadow_wl]
 	path = $shadow_shrdir
 	comment = previous versions with wide links allowed
@@ -1699,7 +1783,6 @@ sub provision($$$$$$$$)
 	vfs objects = acl_xattr fake_acls xattr_tdb fake_dfq
 	inherit owner = yes
 	include = $dfqconffile
-
 [acl_xattr_ign_sysacl_posix]
 	copy = tmp
 	acl_xattr:ignore system acls = yes
@@ -1903,11 +1986,11 @@ sub wait_for_start($$$$$)
 	    do {
 		$ret = system("SELFTEST_WINBINDD_SOCKET_DIR=" . $envvars->{SELFTEST_WINBINDD_SOCKET_DIR} . " " . Samba::bindir_path($self, "wbinfo") . " --ping-dc");
 		if ($ret != 0) {
-		    sleep(2);
+		    sleep(1);
 		}
 		$count++;
-	    } while ($ret != 0 && $count < 10);
-	    if ($count == 10) {
+	    } while ($ret != 0 && $count < 20);
+	    if ($count == 20) {
 		print "WINBINDD not reachable after 20 seconds\n";
 		teardown_env($self, $envvars);
 		return 0;
@@ -1922,11 +2005,11 @@ sub wait_for_start($$$$$)
 	    do {
 		$ret = system(Samba::bindir_path($self, "smbclient") ." $envvars->{CONFIGURATION} -L $envvars->{SERVER} -U% -p 139");
 		if ($ret != 0) {
-		    sleep(2);
+		    sleep(1);
 		}
 		$count++
-	    } while ($ret != 0 && $count < 10);
-	    if ($count == 10) {
+	    } while ($ret != 0 && $count < 20);
+	    if ($count == 20) {
 		print "SMBD failed to start up in a reasonable time (20sec)\n";
 		teardown_env($self, $envvars);
 		return 0;

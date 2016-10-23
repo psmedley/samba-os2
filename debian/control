@@ -26,7 +26,7 @@ Build-Depends: bison,
                libcups2-dev,
                libgnutls28-dev,
                libldap2-dev,
-               libldb-dev (>= 2:1.1.26~),
+               libldb-dev (>= 2:1.1.27~),
                libncurses5-dev,
                libpam0g-dev,
                libparse-yapp-perl,
@@ -34,9 +34,9 @@ Build-Depends: bison,
                libpopt-dev,
                libreadline-dev,
                libsystemd-dev [linux-any],
-               libtalloc-dev (>= 2.1.6~),
-               libtdb-dev (>= 1.3.8~),
-               libtevent-dev (>= 0.9.25~),
+               libtalloc-dev (>= 2.1.8~),
+               libtdb-dev (>= 1.3.10~),
+               libtevent-dev (>= 0.9.29~),
                perl,
                pkg-config,
                po-debconf,
@@ -44,7 +44,7 @@ Build-Depends: bison,
                python-dnspython,
                python-ldb (>= 2:1.1.26~),
                python-ldb-dev (>= 2:1.1.26~),
-               python-talloc-dev (>= 2.1.6~),
+               python-talloc-dev (>= 2.1.8~),
                python-tdb (>= 1.3.8~),
                python-testtools,
                python3,
@@ -408,7 +408,7 @@ Description: development files for libsmbclient
 Package: winbind
 Pre-Depends: ${misc:Pre-Depends}
 Architecture: any
-Depends: samba-common (= ${source:Version}), samba-common-bin (=${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
+Depends: lsb-base (>= 3.0-6), samba-common (= ${source:Version}), samba-common-bin (=${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
 Enhances: libkrb5-26-heimdal
 Replaces: samba-doc (<< 2:4.0.5~), winbind4
 Conflicts: samba-doc (<< 2:4.0.5~)
@@ -523,7 +523,7 @@ Package: ctdb
 Architecture: any
 Multi-Arch: foreign
 Depends: iproute2 [linux-any],
-         lsb-base,
+         lsb-base (>= 3.0-6),
          psmisc,
          sudo,
          tdb-tools,

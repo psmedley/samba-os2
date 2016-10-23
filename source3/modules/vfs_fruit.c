@@ -576,10 +576,11 @@ static bool ad_pack(struct adouble *ad)
 /**
  * Unpack an AppleDouble blob into a struct adoble
  **/
-static bool ad_unpack(struct adouble *ad, const int nentries, size_t filesize)
+static bool ad_unpack(struct adouble *ad, const size_t nentries,
+		      size_t filesize)
 {
 	size_t bufsize = talloc_get_size(ad->ad_data);
-	int adentries, i;
+	size_t adentries, i;
 	uint32_t eid, len, off;
 
 	/*
@@ -603,7 +604,8 @@ static bool ad_unpack(struct adouble *ad, const int nentries, size_t filesize)
 
 	adentries = RSVAL(ad->ad_data, ADEDOFF_NENTRIES);
 	if (adentries != nentries) {
-		DEBUG(1, ("invalid number of entries: %d\n", adentries));
+		DEBUG(1, ("invalid number of entries: %zu\n",
+			  adentries));
 		return false;
 	}
 
@@ -1533,7 +1535,7 @@ static bool del_fruit_stream(TALLOC_CTX *mem_ctx, unsigned int *num_streams,
 			     const char *name)
 {
 	struct stream_struct *tmp = *streams;
-	int i;
+	unsigned int i;
 
 	if (*num_streams == 0) {
 		return true;
@@ -2015,7 +2017,7 @@ static NTSTATUS check_ms_nfs(vfs_handle_struct *handle,
 			     mode_t *pmode,
 			     bool *pdo_chmod)
 {
-	int i;
+	uint32_t i;
 	struct fruit_config_data *config = NULL;
 
 	*pdo_chmod = false;
@@ -2136,7 +2138,10 @@ static int fruit_open_meta(vfs_handle_struct *handle,
 
 	/* Create an smb_filename with stream_name == NULL. */
 	smb_fname_base = synthetic_smb_fname(talloc_tos(),
-					     smb_fname->base_name, NULL, NULL);
+					smb_fname->base_name,
+					NULL,
+					NULL,
+					smb_fname->flags);
 
 	if (smb_fname_base == NULL) {
 		errno = ENOMEM;
@@ -2285,7 +2290,10 @@ static int fruit_open_rsrc(vfs_handle_struct *handle,
 
 	/* Create an smb_filename with stream_name == NULL. */
 	smb_fname_base = synthetic_smb_fname(talloc_tos(),
-					     adpath, NULL, NULL);
+					adpath,
+					NULL,
+					NULL,
+					smb_fname->flags);
 	if (smb_fname_base == NULL) {
 		errno = ENOMEM;
 		rc = -1;
@@ -2493,15 +2501,17 @@ static int fruit_unlink(vfs_handle_struct *handle,
 }
 
 static int fruit_chmod(vfs_handle_struct *handle,
-		       const char *path,
+		       const struct smb_filename *smb_fname,
 		       mode_t mode)
 {
 	int rc = -1;
 	char *adp = NULL;
 	struct fruit_config_data *config = NULL;
 	SMB_STRUCT_STAT sb;
+	const char *path = smb_fname->base_name;
+	struct smb_filename *smb_fname_adp = NULL;
 
-	rc = SMB_VFS_NEXT_CHMOD(handle, path, mode);
+	rc = SMB_VFS_NEXT_CHMOD(handle, smb_fname, mode);
 	if (rc != 0) {
 		return rc;
 	}
@@ -2526,26 +2536,39 @@ static int fruit_chmod(vfs_handle_struct *handle,
 
 	DEBUG(10, ("fruit_chmod: %s\n", adp));
 
-	rc = SMB_VFS_NEXT_CHMOD(handle, adp, mode);
+	smb_fname_adp = synthetic_smb_fname(talloc_tos(),
+					adp,
+					NULL,
+					NULL,
+					smb_fname->flags);
+	if (smb_fname_adp == NULL) {
+		TALLOC_FREE(adp);
+		errno = ENOMEM;
+		return -1;
+	}
+
+	rc = SMB_VFS_NEXT_CHMOD(handle, smb_fname_adp, mode);
 	if (errno == ENOENT) {
 		rc = 0;
 	}
 
+	TALLOC_FREE(smb_fname_adp);
 	TALLOC_FREE(adp);
 	return rc;
 }
 
 static int fruit_chown(vfs_handle_struct *handle,
-		       const char *path,
+		       const struct smb_filename *smb_fname,
 		       uid_t uid,
 		       gid_t gid)
 {
 	int rc = -1;
 	char *adp = NULL;
 	struct fruit_config_data *config = NULL;
+	struct smb_filename *adp_smb_fname = NULL;
 	SMB_STRUCT_STAT sb;
 
-	rc = SMB_VFS_NEXT_CHOWN(handle, path, uid, gid);
+	rc = SMB_VFS_NEXT_CHOWN(handle, smb_fname, uid, gid);
 	if (rc != 0) {
 		return rc;
 	}
@@ -2557,34 +2580,48 @@ static int fruit_chown(vfs_handle_struct *handle,
 		return rc;
 	}
 
-	/* FIXME: direct sys_lstat(), missing smb_fname */
-	rc = sys_lstat(path, &sb, false);
+	/* FIXME: direct sys_lstat(), need non-const smb_fname */
+	rc = sys_lstat(smb_fname->base_name, &sb, false);
 	if (rc != 0 || !S_ISREG(sb.st_ex_mode)) {
 		return rc;
 	}
 
-	rc = adouble_path(talloc_tos(), path, &adp);
+	rc = adouble_path(talloc_tos(), smb_fname->base_name, &adp);
 	if (rc != 0) {
 		goto done;
 	}
 
 	DEBUG(10, ("fruit_chown: %s\n", adp));
 
-	rc = SMB_VFS_NEXT_CHOWN(handle, adp, uid, gid);
+	adp_smb_fname = synthetic_smb_fname(talloc_tos(),
+					adp,
+					NULL,
+					NULL,
+					smb_fname->flags);
+	if (adp_smb_fname == NULL) {
+		errno = ENOMEM;
+		rc = -1;
+		goto done;
+	}
+
+	rc = SMB_VFS_NEXT_CHOWN(handle, adp_smb_fname, uid, gid);
 	if (errno == ENOENT) {
 		rc = 0;
 	}
 
  done:
 	TALLOC_FREE(adp);
+	TALLOC_FREE(adp_smb_fname);
 	return rc;
 }
 
-static int fruit_rmdir(struct vfs_handle_struct *handle, const char *path)
+static int fruit_rmdir(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
 	DIR *dh = NULL;
 	struct dirent *de;
 	struct fruit_config_data *config;
+	const char *path = smb_fname->base_name;
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct fruit_config_data, return -1);
@@ -2622,7 +2659,7 @@ exit_rmdir:
 	if (dh) {
 		closedir(dh);
 	}
-	return SMB_VFS_NEXT_RMDIR(handle, path);
+	return SMB_VFS_NEXT_RMDIR(handle, smb_fname);
 }
 
 static ssize_t fruit_pread(vfs_handle_struct *handle,
@@ -2634,7 +2671,7 @@ static ssize_t fruit_pread(vfs_handle_struct *handle,
 		handle, fsp);
 	struct fruit_config_data *config = NULL;
 	AfpInfo *ai = NULL;
-	ssize_t len;
+	ssize_t len = -1;
 	char *name = NULL;
 	char *tmp_base_name = NULL;
 	NTSTATUS status;
@@ -3145,24 +3182,18 @@ exit:
 
 static NTSTATUS fruit_streaminfo(vfs_handle_struct *handle,
 				 struct files_struct *fsp,
-				 const char *fname,
+				 const struct smb_filename *smb_fname,
 				 TALLOC_CTX *mem_ctx,
 				 unsigned int *pnum_streams,
 				 struct stream_struct **pstreams)
 {
 	struct fruit_config_data *config = NULL;
-	struct smb_filename *smb_fname = NULL;
 	struct adouble *ad = NULL;
 	NTSTATUS status;
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config, struct fruit_config_data,
 				return NT_STATUS_UNSUCCESSFUL);
-	DEBUG(10, ("fruit_streaminfo called for %s\n", fname));
-
-	smb_fname = synthetic_smb_fname(talloc_tos(), fname, NULL, NULL);
-	if (smb_fname == NULL) {
-		return NT_STATUS_NO_MEMORY;
-	}
+	DEBUG(10, ("fruit_streaminfo called for %s\n", smb_fname->base_name));
 
 	if (config->meta == FRUIT_META_NETATALK) {
 		ad = ad_get(talloc_tos(), handle,
@@ -3174,7 +3205,6 @@ static NTSTATUS fruit_streaminfo(vfs_handle_struct *handle,
 				    smb_roundup(handle->conn,
 						AFP_INFO_SIZE))) {
 				TALLOC_FREE(ad);
-				TALLOC_FREE(smb_fname);
 				return NT_STATUS_NO_MEMORY;
 			}
 		}
@@ -3193,16 +3223,13 @@ static NTSTATUS fruit_streaminfo(vfs_handle_struct *handle,
 						ad_getentrylen(
 							ad, ADEID_RFORK)))) {
 				TALLOC_FREE(ad);
-				TALLOC_FREE(smb_fname);
 				return NT_STATUS_NO_MEMORY;
 			}
 		}
 		TALLOC_FREE(ad);
 	}
 
-	TALLOC_FREE(smb_fname);
-
-	status = SMB_VFS_NEXT_STREAMINFO(handle, fsp, fname, mem_ctx,
+	status = SMB_VFS_NEXT_STREAMINFO(handle, fsp, smb_fname, mem_ctx,
 					 pnum_streams, pstreams);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
@@ -3213,7 +3240,6 @@ static NTSTATUS fruit_streaminfo(vfs_handle_struct *handle,
 		if (!del_fruit_stream(mem_ctx, pnum_streams, pstreams,
 				      ":" NETATALK_META_XATTR ":$DATA")) {
 				TALLOC_FREE(ad);
-				TALLOC_FREE(smb_fname);
 				return NT_STATUS_NO_MEMORY;
 		}
 	}
@@ -3624,7 +3650,7 @@ static NTSTATUS fruit_fset_nt_acl(vfs_handle_struct *handle,
 {
 	NTSTATUS status;
 	bool do_chmod;
-	mode_t ms_nfs_mode;
+	mode_t ms_nfs_mode = 0;
 	int result;
 
 	DBG_DEBUG("fruit_fset_nt_acl: %s\n", fsp_str_dbg(fsp));
@@ -3646,7 +3672,7 @@ static NTSTATUS fruit_fset_nt_acl(vfs_handle_struct *handle,
 			result = SMB_VFS_FCHMOD(fsp, ms_nfs_mode);
 		} else {
 			result = SMB_VFS_CHMOD(fsp->conn,
-					       fsp->fsp_name->base_name,
+					       fsp->fsp_name,
 					       ms_nfs_mode);
 		}
 
@@ -3746,7 +3772,7 @@ static void fruit_copy_chunk_done(struct tevent_req *subreq)
 	NTSTATUS status;
 	unsigned int num_streams = 0;
 	struct stream_struct *streams = NULL;
-	int i;
+	unsigned int i;
 	struct smb_filename *src_fname_tmp = NULL;
 	struct smb_filename *dst_fname_tmp = NULL;
 
@@ -3768,8 +3794,8 @@ static void fruit_copy_chunk_done(struct tevent_req *subreq)
 	 * streams, because we're in vfs_fruit. We don't do this async
 	 * because streams are few and small.
 	 */
-	status = vfs_streaminfo(state->handle->conn, NULL,
-				state->src_fsp->fsp_name->base_name,
+	status = vfs_streaminfo(state->handle->conn, state->src_fsp,
+				state->src_fsp->fsp_name,
 				req, &num_streams, &streams);
 	if (tevent_req_nterror(req, status)) {
 		return;
@@ -3782,15 +3808,15 @@ static void fruit_copy_chunk_done(struct tevent_req *subreq)
 	}
 
 	for (i = 0; i < num_streams; i++) {
-		DEBUG(10, ("%s: stream: '%s'/%ju\n",
-			   __func__, streams[i].name,
-			   (uintmax_t)streams[i].size));
+		DEBUG(10, ("%s: stream: '%s'/%zu\n",
+			  __func__, streams[i].name, (size_t)streams[i].size));
 
 		src_fname_tmp = synthetic_smb_fname(
 			req,
 			state->src_fsp->fsp_name->base_name,
 			streams[i].name,
-			NULL);
+			NULL,
+			state->src_fsp->fsp_name->flags);
 		if (tevent_req_nomem(src_fname_tmp, req)) {
 			return;
 		}
@@ -3804,7 +3830,8 @@ static void fruit_copy_chunk_done(struct tevent_req *subreq)
 			req,
 			state->dst_fsp->fsp_name->base_name,
 			streams[i].name,
-			NULL);
+			NULL,
+			state->dst_fsp->fsp_name->flags);
 		if (tevent_req_nomem(dst_fname_tmp, req)) {
 			TALLOC_FREE(src_fname_tmp);
 			return;

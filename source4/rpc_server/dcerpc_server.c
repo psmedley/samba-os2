@@ -169,7 +169,7 @@ static struct dcesrv_endpoint *find_endpoint(struct dcesrv_context *dce_ctx,
   find a registered context_id from a bind or alter_context
 */
 static struct dcesrv_connection_context *dcesrv_find_context(struct dcesrv_connection *conn, 
-								   uint32_t context_id)
+							     uint16_t context_id)
 {
 	struct dcesrv_connection_context *c;
 	for (c=conn->contexts;c;c=c->next) {
@@ -668,7 +668,7 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 	struct data_blob_list_item *rep;
 	NTSTATUS status;
 	uint32_t result=0, reason=0;
-	uint32_t context_id;
+	uint16_t context_id;
 	const struct dcesrv_interface *iface;
 	uint32_t extra_flags = 0;
 	uint16_t max_req = 0;
@@ -765,8 +765,6 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 		context->conn = call->conn;
 		context->iface = iface;
 		context->context_id = context_id;
-		/* legacy for openchange dcesrv_mapiproxy.c */
-		context->assoc_group = call->conn->assoc_group;
 		context->private_data = NULL;
 		DLIST_ADD(call->conn->contexts, context);
 		call->context = context;
@@ -957,7 +955,7 @@ static NTSTATUS dcesrv_auth3(struct dcesrv_call_state *call)
 /*
   handle a bind request
 */
-static NTSTATUS dcesrv_alter_new_context(struct dcesrv_call_state *call, uint32_t context_id)
+static NTSTATUS dcesrv_alter_new_context(struct dcesrv_call_state *call, uint16_t context_id)
 {
 	uint32_t if_version, transfer_syntax_version;
 	struct dcesrv_connection_context *context;
@@ -992,8 +990,6 @@ static NTSTATUS dcesrv_alter_new_context(struct dcesrv_call_state *call, uint32_
 	context->conn = call->conn;
 	context->iface = iface;
 	context->context_id = context_id;
-	/* legacy for openchange dcesrv_mapiproxy.c */
-	context->assoc_group = call->conn->assoc_group;
 	context->private_data = NULL;
 	DLIST_ADD(call->conn->contexts, context);
 	call->context = context;
@@ -2085,8 +2081,16 @@ static void dcesrv_sock_accept(struct stream_connection *srv_conn)
 	if (transport == NCALRPC) {
 		uid_t uid;
 		gid_t gid;
+		int sock_fd;
 
-		ret = getpeereid(socket_get_fd(srv_conn->socket), &uid, &gid);
+		sock_fd = socket_get_fd(srv_conn->socket);
+		if (sock_fd == -1) {
+			stream_terminate_connection(
+				srv_conn, "socket_get_fd failed\n");
+			return;
+		}
+
+		ret = getpeereid(sock_fd, &uid, &gid);
 		if (ret == -1) {
 			status = map_nt_error_from_unix_common(errno);
 			DEBUG(0, ("dcesrv_sock_accept: "

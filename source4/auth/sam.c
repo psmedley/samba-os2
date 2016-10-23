@@ -52,6 +52,7 @@
 	"objectSid",				\
 						\
 	"pwdLastSet",				\
+	"msDS-UserPasswordExpiryTimeComputed",	\
 	"accountExpires"
 
 const char *krbtgt_attrs[] = {
@@ -187,8 +188,8 @@ _PUBLIC_ NTSTATUS authsam_account_ok(TALLOC_CTX *mem_ctx,
 
 	/* Check for when we must change this password, taking the
 	 * userAccountControl flags into account */
-	must_change_time = samdb_result_force_password_change(sam_ctx, mem_ctx, 
-							      domain_dn, msg);
+	must_change_time = samdb_result_nttime(msg,
+			"msDS-UserPasswordExpiryTimeComputed", 0);
 
 	workstation_list = ldb_msg_find_attr_as_string(msg, "userWorkstations", NULL);
 
@@ -283,6 +284,7 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 					   struct ldb_context *sam_ctx,
 					   const char *netbios_name,
 					   const char *domain_name,
+					   const char *dns_domain_name,
 					   struct ldb_dn *domain_dn, 
 					   struct ldb_message *msg,
 					   DATA_BLOB user_sess_key,
@@ -400,10 +402,31 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 	info->account_name = talloc_steal(info,
 		ldb_msg_find_attr_as_string(msg, "sAMAccountName", NULL));
 
+	info->user_principal_name = talloc_steal(info,
+		ldb_msg_find_attr_as_string(msg, "userPrincipalName", NULL));
+	if (info->user_principal_name == NULL && dns_domain_name != NULL) {
+		info->user_principal_name = talloc_asprintf(info, "%s@%s",
+					info->account_name,
+					dns_domain_name);
+		if (info->user_principal_name == NULL) {
+			TALLOC_FREE(user_info_dc);
+			return NT_STATUS_NO_MEMORY;
+		}
+		info->user_principal_constructed = true;
+	}
+
 	info->domain_name = talloc_strdup(info, domain_name);
 	if (info->domain_name == NULL) {
 		TALLOC_FREE(user_info_dc);
 		return NT_STATUS_NO_MEMORY;
+	}
+
+	if (dns_domain_name != NULL) {
+		info->dns_domain_name = talloc_strdup(info, dns_domain_name);
+		if (info->dns_domain_name == NULL) {
+			TALLOC_FREE(user_info_dc);
+			return NT_STATUS_NO_MEMORY;
+		}
 	}
 
 	str = ldb_msg_find_attr_as_string(msg, "displayName", "");
@@ -455,9 +478,8 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 	info->allow_password_change
 		= samdb_result_allow_password_change(sam_ctx, mem_ctx, 
 			domain_dn, msg, "pwdLastSet");
-	info->force_password_change
-		= samdb_result_force_password_change(sam_ctx, mem_ctx,
-			domain_dn, msg);
+	info->force_password_change = samdb_result_nttime(msg,
+		"msDS-UserPasswordExpiryTimeComputed", 0);
 	info->logon_count = ldb_msg_find_attr_as_uint(msg, "logonCount", 0);
 	info->bad_password_count = ldb_msg_find_attr_as_uint(msg, "badPwdCount",
 		0);
@@ -629,7 +651,8 @@ NTSTATUS authsam_get_user_info_dc_principal(TALLOC_CTX *mem_ctx,
 
 	nt_status = authsam_make_user_info_dc(tmp_ctx, sam_ctx,
 					     lpcfg_netbios_name(lp_ctx),
-					     lpcfg_workgroup(lp_ctx),
+					     lpcfg_sam_name(lp_ctx),
+					     lpcfg_sam_dnsname(lp_ctx),
 					     domain_dn,
 					     msg,
 					     user_sess_key, lm_sess_key,
@@ -808,21 +831,25 @@ NTSTATUS authsam_logon_success_accounting(struct ldb_context *sam_ctx,
 	struct timeval tv_now;
 	NTTIME now;
 	NTTIME lastLogonTimestamp;
-	NTTIME lastLogon;
-
-	lockoutTime = ldb_msg_find_attr_as_int64(msg, "lockoutTime", 0);
-	badPwdCount = ldb_msg_find_attr_as_int(msg, "badPwdCount", 0);
-	lastLogonTimestamp = \
-		ldb_msg_find_attr_as_int64(msg, "lastLogonTimestamp", 0);
-	lastLogon = ldb_msg_find_attr_as_int64(msg, "lastLogon", 0);
-
-	DEBUG(5, ("lastLogonTimestamp is %lld\n",
-		  (long long int)lastLogonTimestamp));
 
 	mem_ctx = talloc_new(msg);
 	if (mem_ctx == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
+
+	lockoutTime = ldb_msg_find_attr_as_int64(msg, "lockoutTime", 0);
+	if (interactive_or_kerberos) {
+		badPwdCount = ldb_msg_find_attr_as_int(msg, "badPwdCount", 0);
+	} else {
+		badPwdCount = samdb_result_effective_badPwdCount(sam_ctx, mem_ctx,
+								 domain_dn, msg);
+	}
+	lastLogonTimestamp =
+		ldb_msg_find_attr_as_int64(msg, "lastLogonTimestamp", 0);
+
+	DEBUG(5, ("lastLogonTimestamp is %lld\n",
+		  (long long int)lastLogonTimestamp));
+
 	msg_mod = ldb_msg_new(mem_ctx);
 	if (msg_mod == NULL) {
 		TALLOC_FREE(mem_ctx);
@@ -850,7 +877,7 @@ NTSTATUS authsam_logon_success_accounting(struct ldb_context *sam_ctx,
 	tv_now = timeval_current();
 	now = timeval_to_nttime(&tv_now);
 
-	if (interactive_or_kerberos || lastLogon == 0 ||
+	if (interactive_or_kerberos ||
 	    (badPwdCount != 0 && lockoutTime == 0)) {
 		ret = samdb_msg_add_int64(sam_ctx, msg_mod, msg_mod,
 					  "lastLogon", now);
@@ -859,6 +886,22 @@ NTSTATUS authsam_logon_success_accounting(struct ldb_context *sam_ctx,
 			return NT_STATUS_NO_MEMORY;
 		}
 	}
+
+	if (interactive_or_kerberos) {
+		int logonCount;
+
+		logonCount = ldb_msg_find_attr_as_int(msg, "logonCount", 0);
+
+		logonCount += 1;
+
+		ret = samdb_msg_add_int(sam_ctx, msg_mod, msg_mod,
+					"logonCount", logonCount);
+		if (ret != LDB_SUCCESS) {
+			TALLOC_FREE(mem_ctx);
+			return NT_STATUS_NO_MEMORY;
+		}
+	}
+
 	status = authsam_update_lastlogon_timestamp(sam_ctx, msg_mod, domain_dn,
 						    lastLogonTimestamp, now);
 	if (!NT_STATUS_IS_OK(status)) {

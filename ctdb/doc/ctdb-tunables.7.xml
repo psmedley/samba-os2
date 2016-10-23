@@ -394,6 +394,22 @@
     </refsect2>
 
     <refsect2>
+      <title>QueueBufferSize</title>
+      <para>Default: 1024</para>
+      <para>
+	This is the maximum amount of data (in bytes) ctdb will read
+	from a socket at a time.
+      </para>
+      <para>
+	For a busy setup, if ctdb is not able to process the TCP sockets
+	fast enough (large amount of data in Recv-Q for tcp sockets),
+	then this tunable value should be increased.  However, large
+	values can keep ctdb busy processing packets and prevent ctdb
+	from handling other events.
+      </para>
+    </refsect2>
+
+    <refsect2>
       <title>RecBufferSizeLimit</title>
       <para>Default: 1000000</para>
       <para>
@@ -534,20 +550,6 @@
       <para>
 	Once a recovery has completed, no additional recoveries are
 	permitted until this timeout in seconds has expired.
-      </para>
-    </refsect2>
-
-    <refsect2>
-      <title>Samba3AvoidDeadlocks</title>
-      <para>Default: 0</para>
-      <para>
-        If set to non-zero, enable code that prevents deadlocks with Samba
-        (only for Samba 3.x).
-      </para> <para>
-	This should be set to 1 only when using Samba version 3.x
-	to enable special code in ctdb to avoid deadlock with Samba
-	version 3.x.  This code is not required for Samba version 4.x
-	and must not be enabled for Samba 4.x.
       </para>
     </refsect2>
 

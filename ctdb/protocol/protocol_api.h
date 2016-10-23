@@ -76,81 +76,97 @@ void ctdb_req_header_fill(struct ctdb_req_header *h, uint32_t generation,
 			  uint32_t operation, uint32_t destnode,
 			  uint32_t srcnode, uint32_t reqid);
 
-int ctdb_req_header_pull(uint8_t *pkt, size_t pkt_len,
+size_t ctdb_req_header_len(struct ctdb_req_header *h);
+void ctdb_req_header_push(struct ctdb_req_header *h, uint8_t *buf);
+int ctdb_req_header_pull(uint8_t *buf, size_t buflen,
 			 struct ctdb_req_header *h);
 
 int ctdb_req_header_verify(struct ctdb_req_header *h, uint32_t operation);
 
 /* From protocol/protocol_call.c */
 
+size_t ctdb_req_call_len(struct ctdb_req_header *h,
+			 struct ctdb_req_call *c);
+
 int ctdb_req_call_push(struct ctdb_req_header *h,
 		       struct ctdb_req_call *c,
-		       TALLOC_CTX *mem_ctx,
-		       uint8_t **pkt, size_t *pkt_len);
+		       uint8_t *buf, size_t *buflen);
 
-int ctdb_req_call_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_req_call_pull(uint8_t *buf, size_t buflen,
 		       struct ctdb_req_header *h,
 		       TALLOC_CTX *mem_ctx,
 		       struct ctdb_req_call *c);
 
+size_t ctdb_reply_call_len(struct ctdb_req_header *h,
+			   struct ctdb_reply_call *c);
+
 int ctdb_reply_call_push(struct ctdb_req_header *h,
 			 struct ctdb_reply_call *c,
-			 TALLOC_CTX *mem_ctx,
-			 uint8_t **pkt, size_t *pkt_len);
+			 uint8_t *buf, size_t *buflen);
 
-int ctdb_reply_call_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_reply_call_pull(uint8_t *buf, size_t buflen,
 			 struct ctdb_req_header *h,
 			 TALLOC_CTX *mem_ctx,
 			 struct ctdb_reply_call *c);
 
+size_t ctdb_reply_error_len(struct ctdb_req_header *h,
+			    struct ctdb_reply_error *c);
+
 int ctdb_reply_error_push(struct ctdb_req_header *h,
 			  struct ctdb_reply_error *c,
-			  TALLOC_CTX *mem_ctx,
-			  uint8_t **pkt, size_t *pkt_len);
+			  uint8_t *buf, size_t *buflen);
 
-int ctdb_reply_error_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_reply_error_pull(uint8_t *buf, size_t buflen,
 			  struct ctdb_req_header *h,
 			  TALLOC_CTX *mem_ctx,
 			  struct ctdb_reply_error *c);
 
+size_t ctdb_req_dmaster_len(struct ctdb_req_header *h,
+			    struct ctdb_req_dmaster *c);
+
 int ctdb_req_dmaster_push(struct ctdb_req_header *h,
 			  struct ctdb_req_dmaster *c,
-			  TALLOC_CTX *mem_ctx,
-			  uint8_t **pkt, size_t *pkt_len);
+			  uint8_t *buf, size_t *buflen);
 
-int ctdb_req_dmaster_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_req_dmaster_pull(uint8_t *buf, size_t buflen,
 			  struct ctdb_req_header *h,
 			  TALLOC_CTX *mem_ctx,
 			  struct ctdb_req_dmaster *c);
 
+size_t ctdb_reply_dmaster_len(struct ctdb_req_header *h,
+			      struct ctdb_reply_dmaster *c);
+
 int ctdb_reply_dmaster_push(struct ctdb_req_header *h,
 			    struct ctdb_reply_dmaster *c,
-			    TALLOC_CTX *mem_ctx,
-			    uint8_t **pkt, size_t *pkt_len);
+			    uint8_t *buf, size_t *buflen);
 
-int ctdb_reply_dmaster_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_reply_dmaster_pull(uint8_t *buf, size_t buflen,
 			    struct ctdb_req_header *h,
 			    TALLOC_CTX *mem_ctx,
 			    struct ctdb_reply_dmaster *c);
 
 /* From protocol/protocol_control.c */
 
+size_t ctdb_req_control_len(struct ctdb_req_header *h,
+			    struct ctdb_req_control *c);
+
 int ctdb_req_control_push(struct ctdb_req_header *h,
 			  struct ctdb_req_control *c,
-			  TALLOC_CTX *mem_ctx,
-			  uint8_t **pkt, size_t *pkt_len);
+			  uint8_t *buf, size_t *buflen);
 
-int ctdb_req_control_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_req_control_pull(uint8_t *buf, size_t buflen,
 			  struct ctdb_req_header *h,
 			  TALLOC_CTX *mem_ctx,
 			  struct ctdb_req_control *c);
 
+size_t ctdb_reply_control_len(struct ctdb_req_header *h,
+			      struct ctdb_reply_control *c);
+
 int ctdb_reply_control_push(struct ctdb_req_header *h,
 			    struct ctdb_reply_control *c,
-			    TALLOC_CTX *mem_ctx,
-			    uint8_t **pkt, size_t *pkt_len);
+			    uint8_t *buf, size_t *buflen);
 
-int ctdb_reply_control_pull(uint8_t *pkt, size_t pkt_len, uint32_t opcode,
+int ctdb_reply_control_pull(uint8_t *buf, size_t buflen, uint32_t opcode,
 			    struct ctdb_req_header *h,
 			    TALLOC_CTX *mem_ctx,
 			    struct ctdb_reply_control *c);
@@ -270,10 +286,6 @@ void ctdb_req_control_freeze(struct ctdb_req_control *request,
 			     uint32_t priority);
 int ctdb_reply_control_freeze(struct ctdb_reply_control *reply);
 
-void ctdb_req_control_thaw(struct ctdb_req_control *request,
-			   uint32_t priority);
-int ctdb_reply_control_thaw(struct ctdb_reply_control *reply);
-
 void ctdb_req_control_get_pnn(struct ctdb_req_control *request);
 int ctdb_reply_control_get_pnn(struct ctdb_reply_control *reply,
 			       uint32_t *pnn);
@@ -323,10 +335,6 @@ int ctdb_reply_control_get_all_tunables(struct ctdb_reply_control *reply,
 					TALLOC_CTX *mem_ctx,
 					struct ctdb_tunable_list **tun_list);
 
-void ctdb_req_control_kill_tcp(struct ctdb_req_control *request,
-			       struct ctdb_connection *conn);
-int ctdb_reply_control_kill_tcp(struct ctdb_reply_control *reply);
-
 void ctdb_req_control_get_tcp_tickle_list(struct ctdb_req_control *request,
 					  ctdb_sock_addr *addr);
 int ctdb_reply_control_get_tcp_tickle_list(struct ctdb_reply_control *reply,
@@ -336,23 +344,6 @@ int ctdb_reply_control_get_tcp_tickle_list(struct ctdb_reply_control *reply,
 void ctdb_req_control_set_tcp_tickle_list(struct ctdb_req_control *request,
 					  struct ctdb_tickle_list *tickles);
 int ctdb_reply_control_set_tcp_tickle_list(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_register_server_id(struct ctdb_req_control *request,
-					 struct ctdb_client_id *sid);
-int ctdb_reply_control_register_server_id(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_unregister_server_id(struct ctdb_req_control *request,
-					   struct ctdb_client_id *sid);
-int ctdb_reply_control_unregister_server_id(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_check_server_id(struct ctdb_req_control *request,
-				      struct ctdb_client_id *sid);
-int ctdb_reply_control_check_server_id(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_get_server_id_list(struct ctdb_req_control *request);
-int ctdb_reply_control_get_server_id_list(struct ctdb_reply_control *reply,
-					  TALLOC_CTX *mem_ctx,
-					  struct ctdb_client_id_map **cid_map);
 
 void ctdb_req_control_db_attach_persistent(struct ctdb_req_control *request,
 					   const char *name,
@@ -367,14 +358,6 @@ int ctdb_reply_control_update_record(struct ctdb_reply_control *reply);
 void ctdb_req_control_send_gratuitous_arp(struct ctdb_req_control *request,
 					  struct ctdb_addr_info *addr_info);
 int ctdb_reply_control_send_gratuitous_arp(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_transaction_start(struct ctdb_req_control *request,
-					uint32_t tid);
-int ctdb_reply_control_transaction_start(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_transaction_commit(struct ctdb_req_control *request,
-					 uint32_t tid);
-int ctdb_reply_control_transaction_commit(struct ctdb_reply_control *reply);
 
 void ctdb_req_control_wipe_database(struct ctdb_req_control *request,
 				    struct ctdb_transdb *transdb);
@@ -462,19 +445,11 @@ int ctdb_reply_control_get_reclock_file(struct ctdb_reply_control *reply,
 					TALLOC_CTX *mem_ctx,
 					const char **reclock_file);
 
-void ctdb_req_control_set_reclock_file(struct ctdb_req_control *request,
-				       const char *reclock_file);
-int ctdb_reply_control_set_reclock_file(struct ctdb_reply_control *reply);
-
 void ctdb_req_control_stop_node(struct ctdb_req_control *request);
 int ctdb_reply_control_stop_node(struct ctdb_reply_control *reply);
 
 void ctdb_req_control_continue_node(struct ctdb_req_control *request);
 int ctdb_reply_control_continue_node(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_set_natgwstate(struct ctdb_req_control *request,
-				     uint32_t natgw_role);
-int ctdb_reply_control_set_natgwstate(struct ctdb_reply_control *reply);
 
 void ctdb_req_control_set_lmasterrole(struct ctdb_req_control *request,
 				      uint32_t lmaster_role);
@@ -500,19 +475,6 @@ void ctdb_req_control_get_ban_state(struct ctdb_req_control *request);
 int ctdb_reply_control_get_ban_state(struct ctdb_reply_control *reply,
 				     TALLOC_CTX *mem_ctx,
 				     struct ctdb_ban_state **ban_state);
-
-void ctdb_req_control_set_db_priority(struct ctdb_req_control *request,
-				      struct ctdb_db_priority *db_prio);
-int ctdb_reply_control_set_db_priority(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_get_db_priority(struct ctdb_req_control *request,
-				      uint32_t db_id);
-int ctdb_reply_control_get_db_priority(struct ctdb_reply_control *reply,
-				       uint32_t *priority);
-
-void ctdb_req_control_transaction_cancel(struct ctdb_req_control *request,
-					 uint32_t tid);
-int ctdb_reply_control_transaction_cancel(struct ctdb_reply_control *reply);
 
 void ctdb_req_control_register_notify(struct ctdb_req_control *request,
 				      struct ctdb_notify_data *notify);
@@ -652,27 +614,40 @@ void ctdb_req_control_db_push_confirm(struct ctdb_req_control *request,
 int ctdb_reply_control_db_push_confirm(struct ctdb_reply_control *reply,
 				       uint32_t *num_records);
 
+/* From protocol/protocol_debug.c */
+
+void ctdb_packet_print(uint8_t *buf, size_t buflen, FILE *fp);
+
 /* From protocol/protocol_message.c */
+
+size_t ctdb_req_message_len(struct ctdb_req_header *h,
+			    struct ctdb_req_message *c);
 
 int ctdb_req_message_push(struct ctdb_req_header *h,
 			  struct ctdb_req_message *c,
-			  TALLOC_CTX *mem_ctx,
-			  uint8_t **pkt, size_t *pkt_len);
+			  uint8_t *buf, size_t *buflen);
 
-int ctdb_req_message_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_req_message_pull(uint8_t *buf, size_t buflen,
 			  struct ctdb_req_header *h,
 			  TALLOC_CTX *mem_ctx,
 			  struct ctdb_req_message *c);
 
-int ctdb_req_message_data_push(struct ctdb_req_header *h,
-			       struct ctdb_req_message_data *message,
-			       TALLOC_CTX *mem_ctx,
-			       uint8_t **pkt, size_t *pkt_len);
+size_t ctdb_req_message_data_len(struct ctdb_req_header *h,
+				 struct ctdb_req_message_data *c);
 
-int ctdb_req_message_data_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_req_message_data_push(struct ctdb_req_header *h,
+			       struct ctdb_req_message_data *c,
+			       uint8_t *buf, size_t *buflen);
+
+int ctdb_req_message_data_pull(uint8_t *buf, size_t buflen,
 			       struct ctdb_req_header *h,
 			       TALLOC_CTX *mem_ctx,
-			       struct ctdb_req_message_data *message);
+			       struct ctdb_req_message_data *c);
+
+/* From protocol/protocol_packet.c */
+
+int ctdb_allocate_pkt(TALLOC_CTX *mem_ctx, size_t datalen,
+		      uint8_t **buf, size_t *buflen);
 
 /* From protocol/protocol_util.c */
 
@@ -683,5 +658,7 @@ const char *ctdb_event_to_string(enum ctdb_event event);
 enum ctdb_event ctdb_event_from_string(const char *event_str);
 
 const char *ctdb_sock_addr_to_string(TALLOC_CTX *mem_ctx, ctdb_sock_addr *addr);
+bool ctdb_sock_addr_same_ip(ctdb_sock_addr *addr1, ctdb_sock_addr *addr2);
+bool ctdb_sock_addr_same(ctdb_sock_addr *addr1, ctdb_sock_addr *addr2);
 
 #endif /* __CTDB_PROTOCOL_API_H__ */

@@ -2,12 +2,12 @@
 .\"     Title: ctdbd.conf
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 01/27/2016
+.\"      Date: 07/28/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDBD\&.CONF" "5" "01/27/2016" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDBD\&.CONF" "5" "07/28/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -181,17 +181,20 @@ As with "udp" but messages are sent in RFC5424 format\&. This method will log th
 .RE
 .RE
 .PP
-CTDB_LVS_PUBLIC_IP=\fIIPADDR\fR
-.RS 4
-No default\&. Corresponds to "\fB\-\-lvs\fR\fB\-\-single\-public\-ip IPADDR"\fR\&.
-.RE
-.PP
 CTDB_NODES=\fIFILENAME\fR
 .RS 4
 Default is
 \fICTDB_BASE\fR/nodes, so usually
 /usr/local/etc/ctdb/nodes\&. Corresponds to
 \fB\-\-nlist\fR\&.
+.RE
+.PP
+CTDB_NOSETSCHED=yes|no
+.RS 4
+Defaults to no\&. Corresponds to
+\fB\-\-nosetsched\fR\&.
+.sp
+Usually CTDB runs with real\-time priority\&. If you are running CTDB on a platform that does not support real\-time priority, you can set this\&.
 .RE
 .PP
 CTDB_NOTIFY_SCRIPT=\fIFILENAME\fR
@@ -231,9 +234,11 @@ No default\&. Corresponds to
 \fB\-\-public\-interface\fR\&.
 .RE
 .PP
-CTDB_RECOVERY_LOCK=\fIFILENAME\fR
+CTDB_RECOVERY_LOCK=\fILOCK\fR
 .RS 4
-Defaults to
+LOCK specifies the cluster\-wide mutex used to detect and prevent a partitioned cluster (or "split brain")\&.
+.sp
+No default, but the default configuration file specifies
 /some/place/on/shared/storage, which should be change to a useful value\&. Corresponds to
 \fB\-\-reclock\fR\&.
 .sp
@@ -513,6 +518,65 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 .RE
 .\}
 .RE
+.SS "LVS"
+.PP
+For a general description see the
+LVS
+section in
+\fBctdb\fR(7)\&.
+.sp
+.it 1 an-trap
+.nr an-no-space-flag 1
+.nr an-break-flag 1
+.br
+.ps +1
+\fBEventscript\fR
+.RS 4
+.RS 4
+91\&.lvs
+.RE
+.RE
+.PP
+CTDB_LVS_NODES=\fIFILENAME\fR
+.RS 4
+FILENAME contains the list of nodes that belong to the same LVS group\&.
+.sp
+File format:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+\fIIPADDR\fR [slave\-only]
+	      
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+IPADDR is the private IP address of each node in the LVS group\&.
+.sp
+If "slave\-only" is specified then the corresponding node can not be the LVS master node\&. In this case
+\fICTDB_LVS_PUBLIC_IFACE\fR
+and
+\fICTDB_LVS_PUBLIC_IP\fR
+are optional and unused\&.
+.sp
+No default, usually
+/usr/local/etc/ctdb/lvs_nodes
+when enabled\&.
+.RE
+.PP
+CTDB_LVS_PUBLIC_IFACE=\fIINTERFACE\fR
+.RS 4
+INTERFACE is the network interface that clients will use to connection to
+\fICTDB_LVS_PUBLIC_IP\fR\&. This is optional for slave\-only nodes\&. No default\&.
+.RE
+.PP
+CTDB_LVS_PUBLIC_IP=\fIIPADDR\fR
+.RS 4
+CTDB_LVS_PUBLIC_IP is the LVS public address\&. No default\&.
+.RE
 .SS "MISCELLANEOUS NETWORK CONFIGURATION"
 .PP
 CTDB_PARTIALLY_ONLINE_INTERFACES=yes|no
@@ -613,13 +677,6 @@ This includes parameters for the kernel NFS server\&. Alternative NFS subsystems
 .RE
 .RE
 .PP
-CTDB_CLUSTER_FILESYSTEM_TYPE=gpfs
-.RS 4
-The type of cluster filesystem to use with NFS\-ganesha\&. Currently only "gpfs" is supported\&.
-.sp
-Default is "gpfs"\&.
-.RE
-.PP
 CTDB_MANAGES_NFS=yes|no
 .RS 4
 Should CTDB manage NFS?
@@ -662,6 +719,16 @@ should connect to when doing
 check on IPv6 RPC service during monitoring\&. Optimally this would be "localhost6" (or similar)\&. However, this can add some performance overheads\&.
 .sp
 Default is "::1"\&.
+.RE
+.PP
+CTDB_NFS_STATE_FS_TYPE=\fITYPE\fR
+.RS 4
+The type of filesystem used for a clustered NFS\*(Aq shared state\&. No default\&.
+.RE
+.PP
+CTDB_NFS_STATE_MNT=\fIDIR\fR
+.RS 4
+The directory where a clustered NFS\*(Aq shared state will be located\&. No default\&.
 .RE
 .SS "APACHE HTTPD"
 .PP

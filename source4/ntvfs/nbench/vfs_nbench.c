@@ -26,6 +26,7 @@
 #include "includes.h"
 #include "ntvfs/ntvfs.h"
 #include "system/filesys.h"
+#include "lib/util/sys_rw.h"
 
 NTSTATUS ntvfs_nbench_init(void);
 
@@ -46,12 +47,17 @@ static void nbench_log(struct ntvfs_request *req,
 	struct nbench_private *nprivates = req->async_states->ntvfs->private_data;
 	va_list ap;
 	char *s = NULL;
+	int ret;
 
 	va_start(ap, format);
-	vasprintf(&s, format, ap);
+	ret = vasprintf(&s, format, ap);
 	va_end(ap);
 
-	write(nprivates->log_fd, s, strlen(s));
+	if (ret == -1) {
+		return;
+	}
+
+	sys_write_v(nprivates->log_fd, s, strlen(s));
 	free(s);
 }
 

@@ -24,8 +24,6 @@
 #include "system/locale.h"
 
 #include <talloc.h>
-/* Allow use of deprecated function tevent_loop_allow_nesting() */
-#define TEVENT_DEPRECATED
 #include <tevent.h>
 #include <tdb.h>
 
@@ -278,6 +276,7 @@ done:
 int ctdb_socket_connect(struct ctdb_context *ctdb)
 {
 	struct sockaddr_un addr;
+	int ret;
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
@@ -290,15 +289,28 @@ int ctdb_socket_connect(struct ctdb_context *ctdb)
 	}
 
 	if (connect(ctdb->daemon.sd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+		DEBUG(DEBUG_ERR,
+		      (__location__
+		       "Failed to connect client socket to daemon (%s)\n",
+		       strerror(errno)));
 		close(ctdb->daemon.sd);
 		ctdb->daemon.sd = -1;
-		DEBUG(DEBUG_ERR,(__location__ " Failed to connect client socket to daemon. Errno:%s(%d)\n", strerror(errno), errno));
 		return -1;
 	}
 
-	set_nonblocking(ctdb->daemon.sd);
+	ret = set_blocking(ctdb->daemon.sd, false);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      (__location__
+		       " failed to set socket non-blocking (%s)\n",
+		       strerror(errno)));
+		close(ctdb->daemon.sd);
+		ctdb->daemon.sd = -1;
+		return -1;
+	}
+
 	set_close_on_exec(ctdb->daemon.sd);
-	
+
 	ctdb->daemon.queue = ctdb_queue_setup(ctdb, ctdb, ctdb->daemon.sd, 
 					      CTDB_DS_ALIGNMENT, 
 					      ctdb_client_read_cb, ctdb, "to-ctdbd");
@@ -1172,6 +1184,7 @@ int ctdb_control_recv(struct ctdb_context *ctdb,
 	}
 
 	if (state->errormsg) {
+		int s = (state->status == 0 ? -1 : state->status);
 		DEBUG(DEBUG_ERR,("ctdb_control error: '%s'\n", state->errormsg));
 		if (errormsg) {
 			(*errormsg) = talloc_move(mem_ctx, &state->errormsg);
@@ -1180,7 +1193,7 @@ int ctdb_control_recv(struct ctdb_context *ctdb,
 			state->async.fn(state);
 		}
 		talloc_free(tmp_ctx);
-		return (status == 0 ? -1 : state->status);
+		return s;
 	}
 
 	if (outdata) {
@@ -2428,87 +2441,22 @@ int ctdb_ctrl_getpid(struct ctdb_context *ctdb, struct timeval timeout, uint32_t
 	return 0;
 }
 
-
-/*
-  async freeze send control
- */
-struct ctdb_client_control_state *
-ctdb_ctrl_freeze_send(struct ctdb_context *ctdb, TALLOC_CTX *mem_ctx, struct timeval timeout, uint32_t destnode, uint32_t priority)
-{
-	return ctdb_control_send(ctdb, destnode, priority, 
-			   CTDB_CONTROL_FREEZE, 0, tdb_null, 
-			   mem_ctx, &timeout, NULL);
-}
-
-/* 
-   async freeze recv control
-*/
-int ctdb_ctrl_freeze_recv(struct ctdb_context *ctdb, TALLOC_CTX *mem_ctx, struct ctdb_client_control_state *state)
-{
-	int ret;
-	int32_t res;
-
-	ret = ctdb_control_recv(ctdb, state, mem_ctx, NULL, &res, NULL);
-	if ( (ret != 0) || (res != 0) ){
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_ctrl_freeze_recv failed\n"));
-		return -1;
-	}
-
-	return 0;
-}
-
-/*
-  freeze databases of a certain priority
- */
-int ctdb_ctrl_freeze_priority(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode, uint32_t priority)
-{
-	TALLOC_CTX *tmp_ctx = talloc_new(ctdb);
-	struct ctdb_client_control_state *state;
-	int ret;
-
-	state = ctdb_ctrl_freeze_send(ctdb, tmp_ctx, timeout, destnode, priority);
-	ret = ctdb_ctrl_freeze_recv(ctdb, tmp_ctx, state);
-	talloc_free(tmp_ctx);
-
-	return ret;
-}
-
 /* Freeze all databases */
-int ctdb_ctrl_freeze(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode)
-{
-	int i;
-
-	for (i=1; i<=NUM_DB_PRIORITIES; i++) {
-		if (ctdb_ctrl_freeze_priority(ctdb, timeout, destnode, i) != 0) {
-			return -1;
-		}
-	}
-	return 0;
-}
-
-/*
-  thaw databases of a certain priority
- */
-int ctdb_ctrl_thaw_priority(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode, uint32_t priority)
+int ctdb_ctrl_freeze(struct ctdb_context *ctdb, struct timeval timeout,
+		     uint32_t destnode)
 {
 	int ret;
 	int32_t res;
 
-	ret = ctdb_control(ctdb, destnode, priority, 
-			   CTDB_CONTROL_THAW, 0, tdb_null, 
+	ret = ctdb_control(ctdb, destnode, 0,
+			   CTDB_CONTROL_FREEZE, 0, tdb_null,
 			   NULL, NULL, &res, &timeout, NULL);
 	if (ret != 0 || res != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control thaw failed\n"));
+		DEBUG(DEBUG_ERR, ("ctdb_ctrl_freeze_priority failed\n"));
 		return -1;
 	}
 
 	return 0;
-}
-
-/* thaw all databases */
-int ctdb_ctrl_thaw(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode)
-{
-	return ctdb_ctrl_thaw_priority(ctdb, timeout, destnode, 0);
 }
 
 /*
@@ -3106,31 +3054,6 @@ int ctdb_ctrl_del_public_ip(struct ctdb_context *ctdb,
 }
 
 /*
-  kill a tcp connection
- */
-int ctdb_ctrl_killtcp(struct ctdb_context *ctdb, 
-		      struct timeval timeout, 
-		      uint32_t destnode,
-		      struct ctdb_connection *killtcp)
-{
-	TDB_DATA data;
-	int32_t res;
-	int ret;
-
-	data.dsize = sizeof(struct ctdb_connection);
-	data.dptr  = (unsigned char *)killtcp;
-
-	ret = ctdb_control(ctdb, destnode, 0, CTDB_CONTROL_KILL_TCP, 0, data, NULL,
-			   NULL, &res, &timeout, NULL);
-	if (ret != 0 || res != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for killtcp failed\n"));
-		return -1;
-	}
-
-	return 0;
-}
-
-/*
   send a gratious arp
  */
 int ctdb_ctrl_gratious_arp(struct ctdb_context *ctdb,
@@ -3196,117 +3119,6 @@ int ctdb_ctrl_get_tcp_tickles(struct ctdb_context *ctdb,
 	*list = (struct ctdb_tickle_list_old *)outdata.dptr;
 
 	return status;
-}
-
-/*
-  register a server id
- */
-int ctdb_ctrl_register_server_id(struct ctdb_context *ctdb,
-				 struct timeval timeout,
-				 struct ctdb_client_id *id)
-{
-	TDB_DATA data;
-	int32_t res;
-	int ret;
-
-	data.dsize = sizeof(struct ctdb_client_id);
-	data.dptr  = (unsigned char *)id;
-
-	ret = ctdb_control(ctdb, CTDB_CURRENT_NODE, 0, 
-			CTDB_CONTROL_REGISTER_SERVER_ID, 
-			0, data, NULL,
-			NULL, &res, &timeout, NULL);
-	if (ret != 0 || res != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for register server id failed\n"));
-		return -1;
-	}
-
-	return 0;
-}
-
-/*
-  unregister a server id
- */
-int ctdb_ctrl_unregister_server_id(struct ctdb_context *ctdb,
-				   struct timeval timeout,
-				   struct ctdb_client_id *id)
-{
-	TDB_DATA data;
-	int32_t res;
-	int ret;
-
-	data.dsize = sizeof(struct ctdb_client_id);
-	data.dptr  = (unsigned char *)id;
-
-	ret = ctdb_control(ctdb, CTDB_CURRENT_NODE, 0, 
-			CTDB_CONTROL_UNREGISTER_SERVER_ID, 
-			0, data, NULL,
-			NULL, &res, &timeout, NULL);
-	if (ret != 0 || res != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for unregister server id failed\n"));
-		return -1;
-	}
-
-	return 0;
-}
-
-
-/*
-  check if a server id exists
-
-  if a server id does exist, return *status == 1, otherwise *status == 0
- */
-int ctdb_ctrl_check_server_id(struct ctdb_context *ctdb,
-			      struct timeval timeout, uint32_t destnode,
-			      struct ctdb_client_id *id, uint32_t *status)
-{
-	TDB_DATA data;
-	int32_t res;
-	int ret;
-
-	data.dsize = sizeof(struct ctdb_client_id);
-	data.dptr  = (unsigned char *)id;
-
-	ret = ctdb_control(ctdb, destnode, 0, CTDB_CONTROL_CHECK_SERVER_ID, 
-			0, data, NULL,
-			NULL, &res, &timeout, NULL);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for check server id failed\n"));
-		return -1;
-	}
-
-	if (res) {
-		*status = 1;
-	} else {
-		*status = 0;
-	}
-
-	return 0;
-}
-
-/*
-   get the list of server ids that are registered on a node
-*/
-int ctdb_ctrl_get_server_id_list(struct ctdb_context *ctdb,
-				 TALLOC_CTX *mem_ctx,
-				 struct timeval timeout, uint32_t destnode,
-				 struct ctdb_client_id_list_old **svid_list)
-{
-	int ret;
-	TDB_DATA outdata;
-	int32_t res;
-
-	ret = ctdb_control(ctdb, destnode, 0, 
-			   CTDB_CONTROL_GET_SERVER_ID_LIST, 0, tdb_null, 
-			   mem_ctx, &outdata, &res, &timeout, NULL);
-	if (ret != 0 || res != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for get_server_id_list failed\n"));
-		return -1;
-	}
-
-	*svid_list = (struct ctdb_client_id_list_old *)talloc_steal(mem_ctx, outdata.dptr);
-
-	return 0;
 }
 
 /*
@@ -3859,24 +3671,13 @@ static bool ctdb_server_id_equal(struct ctdb_server_id *id1, struct ctdb_server_
 	return true;
 }
 
-static bool server_id_exists(struct ctdb_context *ctdb, struct ctdb_server_id *id)
+static bool server_id_exists(struct ctdb_context *ctdb,
+			     struct ctdb_server_id *id)
 {
-	struct ctdb_client_id sid;
 	int ret;
-	uint32_t result = 0;
 
-	sid.type = SERVER_TYPE_SAMBA;
-	sid.pnn = id->vnn;
-	sid.server_id = id->pid;
-
-	ret = ctdb_ctrl_check_server_id(ctdb, timeval_current_ofs(3,0),
-					id->vnn, &sid, &result);
-	if (ret != 0) {
-		/* If control times out, assume server_id exists. */
-		return true;
-	}
-
-	if (result) {
+	ret = ctdb_ctrl_process_exists(ctdb, id->vnn, id->pid);
+	if (ret == 0) {
 		return true;
 	}
 
@@ -4106,7 +3907,6 @@ struct ctdb_transaction_handle *ctdb_transaction_start(struct ctdb_db_context *c
 						       TALLOC_CTX *mem_ctx)
 {
 	struct ctdb_transaction_handle *h;
-	struct ctdb_client_id id;
 
 	h = talloc_zero(mem_ctx, struct ctdb_transaction_handle);
 	if (h == NULL) {
@@ -4127,17 +3927,6 @@ struct ctdb_transaction_handle *ctdb_transaction_start(struct ctdb_db_context *c
 				   "g_lock.tdb", false, 0);
 	if (!h->g_lock_db) {
 		DEBUG(DEBUG_ERR, (__location__ " unable to attach to g_lock.tdb\n"));
-		talloc_free(h);
-		return NULL;
-	}
-
-	id.type = SERVER_TYPE_SAMBA;
-	id.pnn = ctdb_get_pnn(ctdb_db->ctdb);
-	id.server_id = getpid();
-
-	if (ctdb_ctrl_register_server_id(ctdb_db->ctdb, timeval_current_ofs(3,0),
-					 &id) != 0) {
-		DEBUG(DEBUG_ERR, (__location__ " unable to register server id\n"));
 		talloc_free(h);
 		return NULL;
 	}
@@ -4322,7 +4111,7 @@ int ctdb_transaction_commit(struct ctdb_transaction_handle *h)
 	}
 
 again:
-	timeout = timeval_current_ofs(3,0);
+	timeout = timeval_current_ofs(30,0);
 	ret = ctdb_control(h->ctdb_db->ctdb, CTDB_CURRENT_NODE,
 			   h->ctdb_db->db_id,
 			   CTDB_CONTROL_TRANS3_COMMIT, 0,
@@ -4474,34 +4263,6 @@ int ctdb_ctrl_getreclock(struct ctdb_context *ctdb, struct timeval timeout,
 }
 
 /*
-  set the reclock filename for a node
- */
-int ctdb_ctrl_setreclock(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode, const char *reclock)
-{
-	int ret;
-	TDB_DATA data;
-	int32_t res;
-
-	if (reclock == NULL) {
-	        data.dsize = 0;
-		data.dptr  = NULL;
-	} else {
-	        data.dsize = strlen(reclock) + 1;
-		data.dptr  = discard_const(reclock);
-	}
-
-	ret = ctdb_control(ctdb, destnode, 0, 
-			   CTDB_CONTROL_SET_RECLOCK_FILE, 0, data, 
-			   NULL, NULL, &res, &timeout, NULL);
-	if (ret != 0 || res != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for setreclock failed\n"));
-		return -1;
-	}
-
-	return 0;
-}
-
-/*
   stop a node
  */
 int ctdb_ctrl_stop_node(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode)
@@ -4530,29 +4291,6 @@ int ctdb_ctrl_continue_node(struct ctdb_context *ctdb, struct timeval timeout, u
 			   ctdb, NULL, NULL, &timeout, NULL);
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,("Failed to continue node\n"));
-		return -1;
-	}
-
-	return 0;
-}
-
-/*
-  set the natgw state for a node
- */
-int ctdb_ctrl_setnatgwstate(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode, uint32_t natgwstate)
-{
-	int ret;
-	TDB_DATA data;
-	int32_t res;
-
-	data.dsize = sizeof(natgwstate);
-	data.dptr  = (uint8_t *)&natgwstate;
-
-	ret = ctdb_control(ctdb, destnode, 0, 
-			   CTDB_CONTROL_SET_NATGWSTATE, 0, data, 
-			   NULL, NULL, &res, &timeout, NULL);
-	if (ret != 0 || res != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for setnatgwstate failed\n"));
 		return -1;
 	}
 
@@ -4691,59 +4429,6 @@ int ctdb_ctrl_get_ban(struct ctdb_context *ctdb, struct timeval timeout,
 	}
 
 	*bantime = (struct ctdb_ban_state *)talloc_steal(mem_ctx, outdata.dptr);
-	talloc_free(tmp_ctx);
-
-	return 0;
-}
-
-
-int ctdb_ctrl_set_db_priority(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode, struct ctdb_db_priority *db_prio)
-{
-	int ret;
-	int32_t res;
-	TDB_DATA data;
-	TALLOC_CTX *tmp_ctx = talloc_new(NULL);
-
-	data.dptr = (uint8_t*)db_prio;
-	data.dsize = sizeof(*db_prio);
-
-	ret = ctdb_control(ctdb, destnode, 0, 
-			   CTDB_CONTROL_SET_DB_PRIORITY, 0, data,
-			   tmp_ctx, NULL, &res, &timeout, NULL);
-	if (ret != 0 || res != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for set_db_priority failed\n"));
-		talloc_free(tmp_ctx);
-		return -1;
-	}
-
-	talloc_free(tmp_ctx);
-
-	return 0;
-}
-
-int ctdb_ctrl_get_db_priority(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode, uint32_t db_id, uint32_t *priority)
-{
-	int ret;
-	int32_t res;
-	TDB_DATA data;
-	TALLOC_CTX *tmp_ctx = talloc_new(NULL);
-
-	data.dptr = (uint8_t*)&db_id;
-	data.dsize = sizeof(db_id);
-
-	ret = ctdb_control(ctdb, destnode, 0, 
-			   CTDB_CONTROL_GET_DB_PRIORITY, 0, data,
-			   tmp_ctx, NULL, &res, &timeout, NULL);
-	if (ret != 0 || res < 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for get_db_priority failed\n"));
-		talloc_free(tmp_ctx);
-		return -1;
-	}
-
-	if (priority) {
-		*priority = res;
-	}
-
 	talloc_free(tmp_ctx);
 
 	return 0;

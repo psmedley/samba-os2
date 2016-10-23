@@ -765,6 +765,14 @@ static int ctdb_event_script_callback_v(struct ctdb_context *ctdb,
 					void *private_data,
 					enum ctdb_event call,
 					const char *fmt, va_list ap)
+					PRINTF_ATTRIBUTE(6,0);
+
+static int ctdb_event_script_callback_v(struct ctdb_context *ctdb,
+					const void *mem_ctx,
+					void (*callback)(struct ctdb_context *, int, void *),
+					void *private_data,
+					enum ctdb_event call,
+					const char *fmt, va_list ap)
 {
 	struct ctdb_event_script_state *state;
 
@@ -967,7 +975,7 @@ int ctdb_event_script_args(struct ctdb_context *ctdb, enum ctdb_event call,
 	while (status.done == false && tevent_loop_once(ctdb->ev) == 0) /* noop */;
 
 	if (status.status == -ETIME) {
-		DEBUG(DEBUG_ERR, (__location__ " eventscript for '%s' timedout."
+		DEBUG(DEBUG_ERR, (__location__ " eventscript for '%s' timed out."
 				  " Immediately banning ourself for %d seconds\n",
 				  ctdb_eventscript_call_names[call],
 				  ctdb->tunable.recovery_ban_period));

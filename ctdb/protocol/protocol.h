@@ -118,9 +118,6 @@ struct ctdb_call {
 /* SRVID to catch all messages */
 #define CTDB_SRVID_ALL (~(uint64_t)0)
 
-/* SRVID prefix used by CTDB */
-#define CTDB_SRVID_PREFIX	0xF000000000000000LL
-
 /* SRVID prefix used during recovery for pulling and pushing databases */
 #define CTDB_SRVID_RECOVERY	0xF001000000000000LL
 
@@ -181,9 +178,6 @@ struct ctdb_call {
 /* SRVID to inform recovery daemon to disable the public ip checks */
 #define CTDB_SRVID_DISABLE_IP_CHECK  0xFC00000000000000LL
 
-/* SRVID to inform recovery daemon of ipreallocate resposnes from ctdbd */
-#define CTDB_SRVID_TAKEOVER_RUN_RESPONSE  0xFD00000000000000LL
-
 /* A range of ports reserved for registering a PID (top 8 bits)
  * All ports matching the 8 top bits are reserved for exclusive use by
  * registering a SRVID that matches the process-id of the requesting process
@@ -209,14 +203,17 @@ struct ctdb_call {
  */
 #define CTDB_SRVID_ISCSID_RANGE  0xDE00000000000000LL
 
-/* A range of ports reserved for testing (top 8 bits)
+/* A range of ports reserved for CTDB tool (top 8 bits)
+ * All ports matching the 8 top bits are reserved for exclusive use by
+ * CTDB tool
+ */
+#define CTDB_SRVID_TOOL_RANGE  0xCE00000000000000LL
+
+/* Range of ports reserved for test applications (top 8 bits)
  * All ports matching the 8 top bits are reserved for exclusive use by
  * test applications
  */
-#define CTDB_SRVID_TEST_RANGE  0xCE00000000000000LL
-
-/* Range of ports reserved for traversals */
-#define CTDB_SRVID_TRAVERSE_RANGE  0xBE00000000000000LL
+#define CTDB_SRVID_TEST_RANGE  0xBE00000000000000LL
 
 
 enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
@@ -253,7 +250,7 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_GET_RECMASTER           = 31,
 		    CTDB_CONTROL_SET_RECMASTER           = 32,
 		    CTDB_CONTROL_FREEZE                  = 33,
-		    CTDB_CONTROL_THAW                    = 34,
+		    CTDB_CONTROL_THAW                    = 34, /* obsolete */
 		    CTDB_CONTROL_GET_PNN                 = 35,
 		    CTDB_CONTROL_SHUTDOWN                = 36,
 		    CTDB_CONTROL_GET_MONMODE             = 37,
@@ -273,19 +270,19 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_GET_PUBLIC_IPSv4        = 51, /* obsolete */
 		    CTDB_CONTROL_MODIFY_FLAGS            = 52,
 		    CTDB_CONTROL_GET_ALL_TUNABLES        = 53,
-		    CTDB_CONTROL_KILL_TCP                = 54,
+		    CTDB_CONTROL_KILL_TCP                = 54, /* obsolete */
 		    CTDB_CONTROL_GET_TCP_TICKLE_LIST     = 55,
 		    CTDB_CONTROL_SET_TCP_TICKLE_LIST     = 56,
-		    CTDB_CONTROL_REGISTER_SERVER_ID      = 57,
-		    CTDB_CONTROL_UNREGISTER_SERVER_ID    = 58,
-		    CTDB_CONTROL_CHECK_SERVER_ID         = 59,
-		    CTDB_CONTROL_GET_SERVER_ID_LIST      = 60,
+		    CTDB_CONTROL_REGISTER_SERVER_ID      = 57, /* obsolete */
+		    CTDB_CONTROL_UNREGISTER_SERVER_ID    = 58, /* obsolete */
+		    CTDB_CONTROL_CHECK_SERVER_ID         = 59, /* obsolete */
+		    CTDB_CONTROL_GET_SERVER_ID_LIST      = 60, /* obsolete */
 		    CTDB_CONTROL_DB_ATTACH_PERSISTENT    = 61,
 		    CTDB_CONTROL_PERSISTENT_STORE        = 62, /* obsolete */
 		    CTDB_CONTROL_UPDATE_RECORD           = 63,
 		    CTDB_CONTROL_SEND_GRATUITOUS_ARP     = 64,
-		    CTDB_CONTROL_TRANSACTION_START       = 65,
-		    CTDB_CONTROL_TRANSACTION_COMMIT      = 66,
+		    CTDB_CONTROL_TRANSACTION_START       = 65, /* obsolete */
+		    CTDB_CONTROL_TRANSACTION_COMMIT      = 66, /* obsolete */
 		    CTDB_CONTROL_WIPE_DATABASE           = 67,
 		    /* #68 removed */
 		    CTDB_CONTROL_UPTIME                  = 69,
@@ -316,19 +313,19 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_TRAVERSE_KILL           = 97,
 		    CTDB_CONTROL_RECD_RECLOCK_LATENCY    = 98,
 		    CTDB_CONTROL_GET_RECLOCK_FILE        = 99,
-		    CTDB_CONTROL_SET_RECLOCK_FILE        = 100,
+		    CTDB_CONTROL_SET_RECLOCK_FILE        = 100, /* obsolete */
 		    CTDB_CONTROL_STOP_NODE               = 101,
 		    CTDB_CONTROL_CONTINUE_NODE           = 102,
-		    CTDB_CONTROL_SET_NATGWSTATE          = 103,
+		    CTDB_CONTROL_SET_NATGWSTATE          = 103, /* obsolete */
 		    CTDB_CONTROL_SET_LMASTERROLE         = 104,
 		    CTDB_CONTROL_SET_RECMASTERROLE       = 105,
 		    CTDB_CONTROL_ENABLE_SCRIPT           = 107,
 		    CTDB_CONTROL_DISABLE_SCRIPT          = 108,
 		    CTDB_CONTROL_SET_BAN_STATE           = 109,
 		    CTDB_CONTROL_GET_BAN_STATE           = 110,
-		    CTDB_CONTROL_SET_DB_PRIORITY         = 111,
-		    CTDB_CONTROL_GET_DB_PRIORITY         = 112,
-		    CTDB_CONTROL_TRANSACTION_CANCEL      = 113,
+		    CTDB_CONTROL_SET_DB_PRIORITY         = 111, /* obsolete */
+		    CTDB_CONTROL_GET_DB_PRIORITY         = 112, /* obsolete */
+		    CTDB_CONTROL_TRANSACTION_CANCEL      = 113, /* obsolete */
 		    CTDB_CONTROL_REGISTER_NOTIFY         = 114,
 		    CTDB_CONTROL_DEREGISTER_NOTIFY       = 115,
 		    CTDB_CONTROL_TRANS2_ACTIVE           = 116, /* obsolete */
@@ -366,7 +363,7 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_DB_PUSH_CONFIRM         = 148,
 };
 
-#define CTDB_MONITORING_ACTIVE		0
+#define CTDB_MONITORING_ENABLED		0
 #define CTDB_MONITORING_DISABLED	1
 
 #define MAX_COUNT_BUCKETS 16
@@ -474,8 +471,6 @@ struct ctdb_pulldb_ext {
 
 #define CTDB_RECOVERY_NORMAL		0
 #define CTDB_RECOVERY_ACTIVE		1
-
-#define CTDB_NUM_DB_PRIORITIES		3
 
 /*
   the extended header for records in the ltdb
@@ -635,35 +630,13 @@ struct ctdb_tunable_list {
 	uint32_t mutex_enabled;
 	uint32_t lock_processes_per_db;
 	uint32_t rec_buffer_size_limit;
+	uint32_t queue_buffer_size;
 };
 
 struct ctdb_tickle_list {
 	ctdb_sock_addr addr;
 	uint32_t num;
 	struct ctdb_connection *conn;
-};
-
-enum ctdb_client_type {
-	SERVER_TYPE_CTDB = 0,
-	SERVER_TYPE_SAMBA = 1,
-	SERVER_TYPE_NFSD = 2,
-	SERVER_TYPE_ISCSID = 3
-};
-
-struct ctdb_client_id {
-	enum ctdb_client_type type;
-	uint32_t pnn;
-	uint32_t server_id;
-};
-
-struct ctdb_client_id_list {
-	uint32_t num;
-	struct ctdb_client_id *cid;
-};
-
-struct ctdb_client_id_map {
-	int count;
-	struct ctdb_client_id_list *list;
 };
 
 struct ctdb_addr_info {
@@ -711,10 +684,8 @@ struct ctdb_public_ip_list {
  */
 #define CTDB_CAP_RECMASTER		0x00000001
 #define CTDB_CAP_LMASTER		0x00000002
-/* This capability is set if CTDB_LVS_PUBLIC_IP is set */
-#define CTDB_CAP_LVS			0x00000004
-/* This capability is set if NATGW is enabled */
-#define CTDB_CAP_NATGW			0x00000008
+#define CTDB_CAP_LVS			0x00000004 /* obsolete */
+#define CTDB_CAP_NATGW			0x00000008 /* obsolete */
 
 /*
  * Node features
@@ -777,11 +748,6 @@ struct ctdb_script_list {
 struct ctdb_ban_state {
 	uint32_t pnn;
 	uint32_t time;
-};
-
-struct ctdb_db_priority {
-	uint32_t db_id;
-	uint32_t priority;
 };
 
 struct ctdb_notify_data {
@@ -889,17 +855,14 @@ struct ctdb_req_control_data {
 		struct ctdb_tickle_list *tickles;
 		struct ctdb_client_id *cid;
 		struct ctdb_addr_info *addr_info;
-		uint32_t tid;
 		struct ctdb_transdb *transdb;
 		const char *event_str;
 		struct ctdb_public_ip *pubip;
 		enum ctdb_event event;
 		double reclock_latency;
-		const char *reclock_file;
 		uint32_t role;
 		const char *script;
 		struct ctdb_ban_state *ban_state;
-		struct ctdb_db_priority *db_prio;
 		struct ctdb_notify_data *notify;
 		uint64_t srvid;
 		struct ctdb_iface *iface;

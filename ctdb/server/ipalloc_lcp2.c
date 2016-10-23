@@ -201,7 +201,8 @@ static void lcp2_allocate_unassigned(struct ipalloc_state *ipalloc_state,
 	int dstnode, numnodes;
 
 	int minnode;
-	uint32_t mindsum, dstdsum, dstimbl, minimbl;
+	uint32_t mindsum, dstdsum, dstimbl;
+	uint32_t minimbl = 0;
 	struct public_ip_list *minip;
 
 	bool should_loop = true;
@@ -486,7 +487,7 @@ bool ipalloc_lcp2(struct ipalloc_state *ipalloc_state)
 	lcp2_allocate_unassigned(ipalloc_state, lcp2_imbalances);
 
 	/* If we don't want IPs to fail back then don't rebalance IPs. */
-	if (1 == ipalloc_state->no_ip_failback) {
+	if (ipalloc_state->no_ip_failback) {
 		goto finished;
 	}
 

@@ -39,6 +39,7 @@
 #include "source3/include/secrets.h"
 #include "source4/auth/auth_sam.h"
 #include "auth/credentials/credentials.h"
+#include "lib/util/base64.h"
 
 struct pdb_samba_dsdb_state {
 	struct tevent_context *ev;
@@ -365,7 +366,7 @@ static int pdb_samba_dsdb_replace_by_sam(struct pdb_samba_dsdb_state *state,
 	/* If we set a plaintext password, the system will
 	 * force the pwdLastSet to now() */
 	if (need_update(sam, PDB_PASSLASTSET)) {
-		dsdb_flags = DSDB_PASSWORD_BYPASS_LAST_SET;
+		dsdb_flags |= DSDB_PASSWORD_BYPASS_LAST_SET;
 
 		ret |= pdb_samba_dsdb_add_time(msg, "pwdLastSet",
 					   pdb_get_pass_last_set_time(sam));
@@ -472,7 +473,7 @@ static int pdb_samba_dsdb_replace_by_sam(struct pdb_samba_dsdb_state *state,
 		}
 		if (changed_lm_pw || changed_nt_pw || changed_history) {
 			/* These attributes can only be modified directly by using a special control */
-			dsdb_flags = DSDB_BYPASS_PASSWORD_HASH;
+			dsdb_flags |= DSDB_BYPASS_PASSWORD_HASH;
 		}
 	}
 
@@ -659,7 +660,13 @@ static NTSTATUS pdb_samba_dsdb_getsamupriv(struct pdb_samba_dsdb_state *state,
 static NTSTATUS pdb_samba_dsdb_getsampwfilter(struct pdb_methods *m,
 					  struct pdb_samba_dsdb_state *state,
 					  struct samu *sam_acct,
-					  const char *exp_fmt, ...) _PRINTF_ATTRIBUTE(4, 5)
+					  const char *exp_fmt, ...)
+					  PRINTF_ATTRIBUTE(4,5);
+
+static NTSTATUS pdb_samba_dsdb_getsampwfilter(struct pdb_methods *m,
+					  struct pdb_samba_dsdb_state *state,
+					  struct samu *sam_acct,
+					  const char *exp_fmt, ...)
 {
 	struct ldb_message *priv;
 	NTSTATUS status;
@@ -884,8 +891,13 @@ static NTSTATUS pdb_samba_dsdb_update_login_attempts(struct pdb_methods *m,
 	return NT_STATUS_NOT_IMPLEMENTED;
 }
 
+static NTSTATUS pdb_samba_dsdb_getgrfilter(struct pdb_methods *m,
+					   GROUP_MAP *map,
+					   const char *exp_fmt, ...)
+					   PRINTF_ATTRIBUTE(3,4);
+
 static NTSTATUS pdb_samba_dsdb_getgrfilter(struct pdb_methods *m, GROUP_MAP *map,
-				    const char *exp_fmt, ...) _PRINTF_ATTRIBUTE(4, 5)
+				    const char *exp_fmt, ...)
 {
 	struct pdb_samba_dsdb_state *state = talloc_get_type_abort(
 		m->private_data, struct pdb_samba_dsdb_state);
@@ -1013,7 +1025,7 @@ static NTSTATUS pdb_samba_dsdb_getgrsid(struct pdb_methods *m, GROUP_MAP *map,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	status = pdb_samba_dsdb_getgrfilter(m, map, filter);
+	status = pdb_samba_dsdb_getgrfilter(m, map, "%s", filter);
 	TALLOC_FREE(filter);
 	return status;
 }
@@ -1057,7 +1069,7 @@ static NTSTATUS pdb_samba_dsdb_getgrnam(struct pdb_methods *m, GROUP_MAP *map,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	status = pdb_samba_dsdb_getgrfilter(m, map, filter);
+	status = pdb_samba_dsdb_getgrfilter(m, map, "%s", filter);
 	TALLOC_FREE(filter);
 	return status;
 }
@@ -1897,9 +1909,15 @@ static void pdb_samba_dsdb_search_end(struct pdb_search *search)
 }
 
 static bool pdb_samba_dsdb_search_filter(struct pdb_methods *m,
+					 struct pdb_search *search,
+					 struct pdb_samba_dsdb_search_state **pstate,
+					 const char *exp_fmt, ...)
+					 PRINTF_ATTRIBUTE(4, 5);
+
+static bool pdb_samba_dsdb_search_filter(struct pdb_methods *m,
 				     struct pdb_search *search,
 				     struct pdb_samba_dsdb_search_state **pstate,
-				     const char *exp_fmt, ...) _PRINTF_ATTRIBUTE(4, 5)
+				     const char *exp_fmt, ...)
 {
 	struct pdb_samba_dsdb_state *state = talloc_get_type_abort(
 		m->private_data, struct pdb_samba_dsdb_state);

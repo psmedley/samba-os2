@@ -42,6 +42,7 @@
 #include "../libcli/smb/read_smb.h"
 #include "../libcli/smb/smbXcli_base.h"
 #include "lib/util/sys_rw_data.h"
+#include "lib/util/base64.h"
 
 extern char *optarg;
 extern int optind;
@@ -6013,6 +6014,151 @@ static bool run_acl_symlink_test(int dummy)
 }
 
 /*
+  Test POSIX can delete a file containing streams.
+ */
+static bool run_posix_stream_delete(int dummy)
+{
+	struct cli_state *cli1 = NULL;
+	struct cli_state *cli2 = NULL;
+	const char *fname = "streamfile";
+	const char *stream_fname = "streamfile:Zone.Identifier:$DATA";
+	uint16_t fnum1 = (uint16_t)-1;
+	bool correct = false;
+	NTSTATUS status;
+	TALLOC_CTX *frame = NULL;
+
+	frame = talloc_stackframe();
+
+	printf("Starting POSIX stream delete test\n");
+
+	if (!torture_open_connection(&cli1, 0) ||
+			!torture_open_connection(&cli2, 1)) {
+		TALLOC_FREE(frame);
+		return false;
+	}
+
+	smbXcli_conn_set_sockopt(cli1->conn, sockops);
+	smbXcli_conn_set_sockopt(cli2->conn, sockops);
+
+	status = torture_setup_unix_extensions(cli2);
+	if (!NT_STATUS_IS_OK(status)) {
+		goto out;
+	}
+
+	cli_setatr(cli1, fname, 0, 0);
+	cli_unlink(cli1, fname, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN);
+
+	/* Create the file. */
+	status = cli_ntcreate(cli1,
+			fname,
+			0,
+			READ_CONTROL_ACCESS,
+			0,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			FILE_CREATE,
+			0x0,
+			0x0,
+			&fnum1,
+			NULL);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_ntcreate of %s failed (%s)\n",
+			fname,
+			nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_close(cli1, fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_close of %s failed (%s)\n",
+			fname,
+			nt_errstr(status));
+		goto out;
+	}
+	fnum1 = (uint16_t)-1;
+
+	/* Now create the stream. */
+	status = cli_ntcreate(cli1,
+			stream_fname,
+			0,
+			FILE_WRITE_DATA,
+			0,
+			FILE_SHARE_READ|FILE_SHARE_WRITE,
+			FILE_CREATE,
+			0x0,
+			0x0,
+			&fnum1,
+			NULL);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_ntcreate of %s failed (%s)\n",
+			stream_fname,
+			nt_errstr(status));
+		goto out;
+	}
+
+	/* Leave the stream handle open... */
+
+	/* POSIX unlink should fail. */
+	status = cli_posix_unlink(cli2, fname);
+	if (NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_unlink of %s succeeded, should have failed\n",
+			fname);
+		goto out;
+	}
+
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_SHARING_VIOLATION)) {
+		printf("cli_posix_unlink of %s failed with (%s) "
+			"should have been NT_STATUS_SHARING_VIOLATION\n",
+			fname,
+			nt_errstr(status));
+		goto out;
+	}
+
+	/* Close the stream handle. */
+	status = cli_close(cli1, fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_close of %s failed (%s)\n",
+			stream_fname,
+			nt_errstr(status));
+		goto out;
+	}
+	fnum1 = (uint16_t)-1;
+
+	/* POSIX unlink after stream handle closed should succeed. */
+	status = cli_posix_unlink(cli2, fname);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_unlink of %s failed (%s)\n",
+			fname,
+			nt_errstr(status));
+		goto out;
+	}
+
+	printf("POSIX stream delete test passed\n");
+	correct = true;
+
+  out:
+
+	if (fnum1 != (uint16_t)-1) {
+		cli_close(cli1, fnum1);
+		fnum1 = (uint16_t)-1;
+	}
+
+	cli_setatr(cli1, fname, 0, 0);
+	cli_unlink(cli1, fname, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN);
+
+	if (!torture_close_connection(cli1)) {
+		correct = false;
+	}
+	if (!torture_close_connection(cli2)) {
+		correct = false;
+	}
+
+	TALLOC_FREE(frame);
+	return correct;
+}
+
+/*
   Test setting EA's are rejected on symlinks.
  */
 static bool run_ea_symlink_test(int dummy)
@@ -6179,6 +6325,125 @@ static bool run_ea_symlink_test(int dummy)
 
 	cli_setatr(cli, sname, 0, 0);
 	cli_posix_unlink(cli, sname);
+	cli_setatr(cli, fname, 0, 0);
+	cli_posix_unlink(cli, fname);
+
+	if (!torture_close_connection(cli)) {
+		correct = false;
+	}
+
+	TALLOC_FREE(frame);
+	return correct;
+}
+
+/*
+  Test POSIX locks are OFD-locks.
+ */
+static bool run_posix_ofd_lock_test(int dummy)
+{
+	static struct cli_state *cli;
+	const char *fname = "posix_file";
+	uint16_t fnum1 = (uint16_t)-1;
+	uint16_t fnum2 = (uint16_t)-1;
+	bool correct = false;
+	NTSTATUS status;
+	TALLOC_CTX *frame = NULL;
+
+	frame = talloc_stackframe();
+
+	printf("Starting POSIX ofd-lock test\n");
+
+	if (!torture_open_connection(&cli, 0)) {
+		TALLOC_FREE(frame);
+		return false;
+	}
+
+	smbXcli_conn_set_sockopt(cli->conn, sockops);
+
+	status = torture_setup_unix_extensions(cli);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(frame);
+		return false;
+	}
+
+	cli_setatr(cli, fname, 0, 0);
+	cli_posix_unlink(cli, fname);
+
+	/* Open the file twice. */
+	status = cli_posix_open(cli, fname, O_RDWR|O_CREAT|O_EXCL,
+				0600, &fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("First POSIX open of %s failed\n", fname);
+		goto out;
+	}
+
+	status = cli_posix_open(cli, fname, O_RDWR, 0, &fnum2);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("First POSIX open of %s failed\n", fname);
+		goto out;
+	}
+
+	/* Set a 0-50 lock on fnum1. */
+	status = cli_posix_lock(cli, fnum1, 0, 50, false, WRITE_LOCK);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("POSIX lock (1) failed %s\n", nt_errstr(status));
+		goto out;
+	}
+
+	/* Set a 60-100 lock on fnum2. */
+	status = cli_posix_lock(cli, fnum2, 60, 100, false, WRITE_LOCK);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("POSIX lock (2) failed %s\n", nt_errstr(status));
+		goto out;
+	}
+
+	/* close fnum1 - 0-50 lock should go away. */
+	status = cli_close(cli, fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("close failed (%s)\n",
+			nt_errstr(status));
+		goto out;
+	}
+	fnum1 = (uint16_t)-1;
+
+	/* Change the lock context. */
+	cli_setpid(cli, cli_getpid(cli) + 1);
+
+	/* Re-open fnum1. */
+	status = cli_posix_open(cli, fname, O_RDWR, 0, &fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("Third POSIX open of %s failed\n", fname);
+		goto out;
+	}
+
+	/* 60-100 lock should still be there. */
+	status = cli_posix_lock(cli, fnum1, 60, 100, false, WRITE_LOCK);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_FILE_LOCK_CONFLICT)) {
+		printf("POSIX lock 60-100 not there %s\n", nt_errstr(status));
+		goto out;
+	}
+
+	/* 0-50 lock should be gone. */
+	status = cli_posix_lock(cli, fnum1, 0, 50, false, WRITE_LOCK);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("POSIX lock 0-50 failed %s\n", nt_errstr(status));
+		goto out;
+	}
+
+	printf("POSIX OFD lock test passed\n");
+	correct = true;
+
+  out:
+
+	if (fnum1 != (uint16_t)-1) {
+		cli_close(cli, fnum1);
+		fnum1 = (uint16_t)-1;
+	}
+	if (fnum2 != (uint16_t)-1) {
+		cli_close(cli, fnum2);
+		fnum2 = (uint16_t)-1;
+	}
+
 	cli_setatr(cli, fname, 0, 0);
 	cli_posix_unlink(cli, fname);
 
@@ -8275,14 +8540,14 @@ static bool run_shortname_test(int dummy)
 
 static void pagedsearch_cb(struct tevent_req *req)
 {
-	int rc;
+	TLDAPRC rc;
 	struct tldap_message *msg;
 	char *dn;
 
 	rc = tldap_search_paged_recv(req, talloc_tos(), &msg);
-	if (rc != TLDAP_SUCCESS) {
+	if (!TLDAP_RC_IS_SUCCESS(rc)) {
 		d_printf("tldap_search_paged_recv failed: %s\n",
-			 tldap_err2string(rc));
+			 tldap_rc2string(rc));
 		return;
 	}
 	if (tldap_msg_type(msg) != TLDAP_RES_SEARCH_ENTRY) {
@@ -8300,7 +8565,8 @@ static void pagedsearch_cb(struct tevent_req *req)
 static bool run_tldap(int dummy)
 {
 	struct tldap_context *ld;
-	int fd, rc;
+	int fd;
+	TLDAPRC rc;
 	NTSTATUS status;
 	struct sockaddr_storage addr;
 	struct tevent_context *ev;
@@ -8326,7 +8592,7 @@ static bool run_tldap(int dummy)
 	}
 
 	rc = tldap_fetch_rootdse(ld);
-	if (rc != TLDAP_SUCCESS) {
+	if (!TLDAP_RC_IS_SUCCESS(rc)) {
 		d_printf("tldap_fetch_rootdse failed: %s\n",
 			 tldap_errstr(talloc_tos(), ld, rc));
 		return false;
@@ -8366,8 +8632,8 @@ static bool run_tldap(int dummy)
 
 	rc = tldap_search(ld, "", TLDAP_SCOPE_BASE, filter,
 			  NULL, 0, 0, NULL, 0, NULL, 0, 0, 0, 0,
-			  talloc_tos(), NULL, NULL);
-	if (rc != TLDAP_SUCCESS) {
+			  talloc_tos(), NULL);
+	if (!TLDAP_RC_IS_SUCCESS(rc)) {
 		d_printf("tldap_search with complex filter failed: %s\n",
 			 tldap_errstr(talloc_tos(), ld, rc));
 		return false;
@@ -8499,6 +8765,164 @@ static bool run_streamerror(int dummy)
 
 	cli_rmdir(cli, dname);
 	return ret;
+}
+
+struct pidtest_state {
+	bool success;
+	uint16_t vwv[1];
+	DATA_BLOB data;
+};
+
+static void pid_echo_done(struct tevent_req *subreq);
+
+static struct tevent_req *pid_echo_send(TALLOC_CTX *mem_ctx,
+			struct tevent_context *ev,
+			struct cli_state *cli)
+{
+	struct tevent_req *req, *subreq;
+	struct pidtest_state *state;
+
+	req = tevent_req_create(mem_ctx, &state, struct pidtest_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	SSVAL(state->vwv, 0, 1);
+	state->data = data_blob_const("hello", 5);
+
+	subreq = smb1cli_req_send(state,
+				ev,
+				cli->conn,
+				SMBecho,
+				0, 0, /* *_flags */
+				0, 0, /* *_flags2 */
+				cli->timeout,
+				0xDEADBEEF, /* pid */
+				NULL, /* tcon */
+				NULL, /* session */
+				ARRAY_SIZE(state->vwv), state->vwv,
+				state->data.length, state->data.data);
+
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, pid_echo_done, req);
+	return req;
+}
+
+static void pid_echo_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct pidtest_state *state = tevent_req_data(
+		req, struct pidtest_state);
+	NTSTATUS status;
+	uint32_t num_bytes;
+	uint8_t *bytes = NULL;
+	struct iovec *recv_iov = NULL;
+	uint8_t *phdr = NULL;
+	uint16_t pidlow = 0;
+	uint16_t pidhigh = 0;
+	struct smb1cli_req_expected_response expected[] = {
+	{
+		.status = NT_STATUS_OK,
+		.wct    = 1,
+	},
+	};
+
+	status = smb1cli_req_recv(subreq, state,
+				&recv_iov,
+				&phdr,
+				NULL, /* pwct */
+				NULL, /* pvwv */
+				NULL, /* pvwv_offset */
+				&num_bytes,
+				&bytes,
+				NULL, /* pbytes_offset */
+				NULL, /* pinbuf */
+				expected, ARRAY_SIZE(expected));
+
+	TALLOC_FREE(subreq);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		tevent_req_nterror(req, status);
+		return;
+	}
+
+	if (num_bytes != state->data.length) {
+		tevent_req_nterror(req, NT_STATUS_INVALID_NETWORK_RESPONSE);
+		return;
+	}
+
+	if (memcmp(bytes, state->data.data, num_bytes) != 0) {
+		tevent_req_nterror(req, NT_STATUS_INVALID_NETWORK_RESPONSE);
+		return;
+	}
+
+	/* Check pid low/high == DEADBEEF */
+	pidlow = SVAL(phdr, HDR_PID);
+	if (pidlow != 0xBEEF){
+		printf("Incorrect pidlow 0x%x, should be 0xBEEF\n",
+			(unsigned int)pidlow);
+		tevent_req_nterror(req, NT_STATUS_INVALID_NETWORK_RESPONSE);
+		return;
+	}
+	pidhigh = SVAL(phdr, HDR_PIDHIGH);
+	if (pidhigh != 0xDEAD){
+		printf("Incorrect pidhigh 0x%x, should be 0xDEAD\n",
+			(unsigned int)pidhigh);
+		tevent_req_nterror(req, NT_STATUS_INVALID_NETWORK_RESPONSE);
+		return;
+	}
+
+	tevent_req_done(req);
+}
+
+static NTSTATUS pid_echo_recv(struct tevent_req *req)
+{
+	return tevent_req_simple_recv_ntstatus(req);
+}
+
+static bool run_pidhigh(int dummy)
+{
+	bool success = false;
+	struct cli_state *cli = NULL;
+	NTSTATUS status;
+	struct tevent_context *ev = NULL;
+	struct tevent_req *req = NULL;
+	TALLOC_CTX *frame = talloc_stackframe();
+
+	printf("starting pid high test\n");
+	if (!torture_open_connection(&cli, 0)) {
+		return false;
+	}
+	smbXcli_conn_set_sockopt(cli->conn, sockops);
+
+	ev = samba_tevent_context_init(frame);
+	if (ev == NULL) {
+                goto fail;
+	}
+
+	req = pid_echo_send(frame, ev, cli);
+	if (req == NULL) {
+		goto fail;
+	}
+
+	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
+		goto fail;
+	}
+
+	status = pid_echo_recv(req);
+	if (NT_STATUS_IS_OK(status)) {
+		printf("pid high test ok\n");
+		success = true;
+	}
+
+ fail:
+
+	TALLOC_FREE(frame);
+	torture_close_connection(cli);
+	return success;
 }
 
 static bool run_local_substitute(int dummy)
@@ -9157,7 +9581,7 @@ static NTSTATUS split_ntfs_stream_name(TALLOC_CTX *mem_ctx, const char *fname,
 
 	sname = strchr_m(fname, ':');
 
-	if (lp_posix_pathnames() || (sname == NULL)) {
+	if (sname == NULL) {
 		if (pbase != NULL) {
 			base = talloc_strdup(mem_ctx, fname);
 			NT_STATUS_HAVE_NO_MEMORY(base);
@@ -10018,6 +10442,8 @@ static struct {
 	{"POSIX-APPEND", run_posix_append, 0},
 	{"POSIX-SYMLINK-ACL", run_acl_symlink_test, 0},
 	{"POSIX-SYMLINK-EA", run_ea_symlink_test, 0},
+	{"POSIX-STREAM-DELETE", run_posix_stream_delete, 0},
+	{"POSIX-OFD-LOCK", run_posix_ofd_lock_test, 0},
 	{"CASE-INSENSITIVE-CREATE", run_case_insensitive_create, 0},
 	{"ASYNC-ECHO", run_async_echo, 0},
 	{ "UID-REGRESSION-TEST", run_uid_regression_test, 0},
@@ -10075,6 +10501,7 @@ static struct {
 	{ "CLEANUP3", run_cleanup3 },
 	{ "CLEANUP4", run_cleanup4 },
 	{ "OPLOCK-CANCEL", run_oplock_cancel },
+	{ "PIDHIGH", run_pidhigh },
 	{ "LOCAL-SUBSTITUTE", run_local_substitute, 0},
 	{ "LOCAL-GENCACHE", run_local_gencache, 0},
 	{ "LOCAL-TALLOC-DICT", run_local_talloc_dict, 0},
@@ -10099,7 +10526,6 @@ static struct {
 	{ "LOCAL-TEVENT-SELECT", run_local_tevent_select, 0},
 	{ "LOCAL-CONVERT-STRING", run_local_convert_string, 0},
 	{ "LOCAL-CONV-AUTH-INFO", run_local_conv_auth_info, 0},
-	{ "LOCAL-sprintf_append", run_local_sprintf_append, 0},
 	{ "LOCAL-hex_encode_buf", run_local_hex_encode_buf, 0},
 	{ "LOCAL-IDMAP-TDB-COMMON", run_idmap_tdb_common_test, 0},
 	{ "LOCAL-remove_duplicate_addrs2", run_local_remove_duplicate_addrs2, 0},

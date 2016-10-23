@@ -39,11 +39,13 @@
 #include "libcli/auth/libcli_auth.h"
 #include "librpc/gen_ndr/ndr_drsblobs.h"
 #include "system/locale.h"
+#include "system/filesys.h"
 #include "lib/util/tsort.h"
 #include "dsdb/common/util.h"
 #include "lib/socket/socket.h"
 #include "librpc/gen_ndr/irpc.h"
 #include "libds/common/flag_mapping.h"
+#include "../lib/util/util_runcmd.h"
 
 /*
   search the sam for the specified attributes in a specific domain, filter on
@@ -476,45 +478,6 @@ NTTIME samdb_result_allow_password_change(struct ldb_context *sam_ldb,
 }
 
 /*
-  construct the force_password_change field from the PwdLastSet
-  attribute, the userAccountControl and the domain password settings
-*/
-NTTIME samdb_result_force_password_change(struct ldb_context *sam_ldb, 
-					  TALLOC_CTX *mem_ctx, 
-					  struct ldb_dn *domain_dn, 
-					  struct ldb_message *msg)
-{
-	int64_t attr_time = ldb_msg_find_attr_as_int64(msg, "pwdLastSet", 0);
-	uint32_t userAccountControl = ldb_msg_find_attr_as_uint(msg,
-								"userAccountControl",
-								0);
-	int64_t maxPwdAge;
-
-	/* Machine accounts don't expire, and there is a flag for 'no expiry' */
-	if (!(userAccountControl & UF_NORMAL_ACCOUNT)
-	    || (userAccountControl & UF_DONT_EXPIRE_PASSWD)) {
-		return 0x7FFFFFFFFFFFFFFFULL;
-	}
-
-	if (attr_time == 0) {
-		return 0;
-	}
-	if (attr_time == -1) {
-		return 0x7FFFFFFFFFFFFFFFULL;
-	}
-
-	maxPwdAge = samdb_search_int64(sam_ldb, mem_ctx, 0, domain_dn,
-				       "maxPwdAge", NULL);
-	if (maxPwdAge == 0 || maxPwdAge == -0x8000000000000000ULL) {
-		return 0x7FFFFFFFFFFFFFFFULL;
-	} else {
-		attr_time -= maxPwdAge;
-	}
-
-	return attr_time;
-}
-
-/*
   pull a samr_Password structutre from a result set. 
 */
 struct samr_Password *samdb_result_hash(TALLOC_CTX *mem_ctx, const struct ldb_message *msg, const char *attr)
@@ -597,7 +560,7 @@ NTSTATUS samdb_result_passwords_from_history(TALLOC_CTX *mem_ctx,
 
 NTSTATUS samdb_result_passwords_no_lockout(TALLOC_CTX *mem_ctx,
 					   struct loadparm_context *lp_ctx,
-					   struct ldb_message *msg,
+					   const struct ldb_message *msg,
 					   struct samr_Password **lm_pwd,
 					   struct samr_Password **nt_pwd)
 {
@@ -637,7 +600,7 @@ NTSTATUS samdb_result_passwords_no_lockout(TALLOC_CTX *mem_ctx,
 
 NTSTATUS samdb_result_passwords(TALLOC_CTX *mem_ctx,
 				struct loadparm_context *lp_ctx,
-				struct ldb_message *msg,
+				const struct ldb_message *msg,
 				struct samr_Password **lm_pwd,
 				struct samr_Password **nt_pwd)
 {
@@ -691,7 +654,7 @@ struct samr_LogonHours samdb_result_logon_hours(TALLOC_CTX *mem_ctx, struct ldb_
   (if not null) the attributes 'attr' be already
   included in msg
 */
-uint32_t samdb_result_acct_flags(struct ldb_message *msg, const char *attr)
+uint32_t samdb_result_acct_flags(const struct ldb_message *msg, const char *attr)
 {
 	uint32_t userAccountControl = ldb_msg_find_attr_as_uint(msg, "userAccountControl", 0);
 	uint32_t attr_flags = 0;
@@ -772,22 +735,50 @@ struct ldb_message_element *samdb_find_attribute(struct ldb_context *ldb,
 	return NULL;
 }
 
-int samdb_find_or_add_attribute(struct ldb_context *ldb, struct ldb_message *msg, const char *name, const char *set_value)
+static int samdb_find_or_add_attribute_ex(struct ldb_context *ldb,
+					  struct ldb_message *msg,
+					  const char *name,
+					  const char *set_value,
+					  unsigned attr_flags,
+					  bool *added)
 {
 	int ret;
 	struct ldb_message_element *el;
 
+	SMB_ASSERT(attr_flags != 0);
+
        	el = ldb_msg_find_element(msg, name);
 	if (el) {
+		if (added != NULL) {
+			*added = false;
+		}
+
 		return LDB_SUCCESS;
 	}
 
-	ret = ldb_msg_add_string(msg, name, set_value);
+	ret = ldb_msg_add_empty(msg, name,
+				attr_flags,
+				&el);
 	if (ret != LDB_SUCCESS) {
 		return ret;
 	}
-	msg->elements[msg->num_elements - 1].flags = LDB_FLAG_MOD_ADD;
+
+	if (set_value != NULL) {
+		ret = ldb_msg_add_string(msg, name, set_value);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+	}
+
+	if (added != NULL) {
+		*added = true;
+	}
 	return LDB_SUCCESS;
+}
+
+int samdb_find_or_add_attribute(struct ldb_context *ldb, struct ldb_message *msg, const char *name, const char *set_value)
+{
+	return samdb_find_or_add_attribute_ex(ldb, msg, name, set_value, LDB_FLAG_MOD_ADD, NULL);
 }
 
 /*
@@ -1775,7 +1766,7 @@ int samdb_server_reference_dn(struct ldb_context *ldb, TALLOC_CTX *mem_ctx, stru
 
 	server_dn = samdb_server_dn(ldb, mem_ctx);
 	if (server_dn == NULL) {
-		return LDB_ERR_NO_SUCH_OBJECT;
+		return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
 	}
 
 	ret = samdb_reference_dn(ldb, mem_ctx, server_dn, "serverReference", dn);
@@ -2003,6 +1994,15 @@ int samdb_search_for_parent_domain(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 	return ret;
 }
 
+static void pwd_timeout_debug(struct tevent_context *unused1,
+			      struct tevent_timer *unused2,
+			      struct timeval unused3,
+			      void *unused4)
+{
+	DEBUG(0, ("WARNING: check_password_complexity: password script "
+		  "took more than 1 second to run\n"));
+}
+
 
 /*
  * Performs checks on a user password (plaintext UNIX format - attribute
@@ -2011,12 +2011,15 @@ int samdb_search_for_parent_domain(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
  *
  * Result codes from "enum samr_ValidationStatus" (consider "samr.idl")
  */
-enum samr_ValidationStatus samdb_check_password(const DATA_BLOB *utf8_blob,
+enum samr_ValidationStatus samdb_check_password(TALLOC_CTX *mem_ctx,
+						struct loadparm_context *lp_ctx,
+						const DATA_BLOB *utf8_blob,
 						const uint32_t pwdProperties,
 						const uint32_t minPwdLength)
 {
 	const char *utf8_pw = (const char *)utf8_blob->data;
 	size_t utf8_len = strlen_m(utf8_pw);
+	char *password_script = NULL;
 
 	/* checks if the "minPwdLength" property is satisfied */
 	if (minPwdLength > utf8_len) {
@@ -2031,6 +2034,75 @@ enum samr_ValidationStatus samdb_check_password(const DATA_BLOB *utf8_blob,
 	if (utf8_len == 0) {
 		return SAMR_VALIDATION_STATUS_NOT_COMPLEX_ENOUGH;
 	}
+
+	password_script = lpcfg_check_password_script(lp_ctx, mem_ctx);
+	if (password_script != NULL && *password_script != '\0') {
+		int check_ret = 0;
+		int error = 0;
+		struct tevent_context *event_ctx = NULL;
+		struct tevent_req *req = NULL;
+		struct samba_runcmd_state *run_cmd = NULL;
+		const char * const cmd[4] = {
+			"/bin/sh", "-c",
+			password_script,
+			NULL
+		};
+
+		event_ctx = tevent_context_init(mem_ctx);
+		if (event_ctx == NULL) {
+			TALLOC_FREE(password_script);
+			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
+		}
+
+		/* Gives a warning after 1 second, terminates after 10 */
+		tevent_add_timer(event_ctx, event_ctx,
+				 tevent_timeval_current_ofs(1, 0),
+				 pwd_timeout_debug, NULL);
+
+		req = samba_runcmd_send(event_ctx, event_ctx,
+					tevent_timeval_current_ofs(10, 0),
+					100, 100, cmd, NULL);
+		run_cmd = tevent_req_data(req, struct samba_runcmd_state);
+		if (write(run_cmd->fd_stdin, utf8_pw, utf8_len) != utf8_len) {
+			TALLOC_FREE(password_script);
+			TALLOC_FREE(event_ctx);
+			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
+		}
+
+		close(run_cmd->fd_stdin);
+		run_cmd->fd_stdin = -1;
+
+		if (!tevent_req_poll(req, event_ctx)) {
+			TALLOC_FREE(password_script);
+			TALLOC_FREE(event_ctx);
+			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
+		}
+
+		check_ret = samba_runcmd_recv(req, &error);
+		TALLOC_FREE(event_ctx);
+
+		if (error == ETIMEDOUT) {
+			DEBUG(0, ("check_password_complexity: check password script took too long!\n"));
+			TALLOC_FREE(password_script);
+			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
+		} else {
+			DEBUG(5,("check_password_complexity: check password script (%s) "
+				 "returned [%d]\n", password_script, check_ret));
+
+			if (check_ret != 0) {
+				DEBUG(1,("check_password_complexity: "
+					 "check password script said new password is not good "
+					 "enough!\n"));
+				TALLOC_FREE(password_script);
+				return SAMR_VALIDATION_STATUS_NOT_COMPLEX_ENOUGH;
+			}
+		}
+
+		TALLOC_FREE(password_script);
+		return SAMR_VALIDATION_STATUS_SUCCESS;
+	}
+
+	TALLOC_FREE(password_script);
 
 	if (!check_password_quality(utf8_pw)) {
 		return SAMR_VALIDATION_STATUS_NOT_COMPLEX_ENOUGH;
@@ -2250,6 +2322,7 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 		status = NT_STATUS_UNSUCCESSFUL;
 		if (errmsg != NULL) {
 			werr = W_ERROR(strtol(errmsg, &endptr, 16));
+			DBG_WARNING("%s\n", errmsg);
 		}
 		if (endptr != errmsg) {
 			if (W_ERROR_EQUAL(werr, WERR_INVALID_PASSWORD)) {
@@ -2988,7 +3061,7 @@ int dsdb_find_guid_attr_by_dn(struct ldb_context *ldb,
 	}
 	if (res->count < 1) {
 		talloc_free(tmp_ctx);
-		return LDB_ERR_NO_SUCH_OBJECT;
+		return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
 	}
 	*guid = samdb_result_guid(res->msgs[0], attribute);
 	talloc_free(tmp_ctx);
@@ -3064,12 +3137,12 @@ int dsdb_find_sid_by_dn(struct ldb_context *ldb,
 	}
 	if (res->count < 1) {
 		talloc_free(tmp_ctx);
-		return LDB_ERR_NO_SUCH_OBJECT;
+		return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
 	}
 	s = samdb_result_dom_sid(tmp_ctx, res->msgs[0], "objectSid");
 	if (s == NULL) {
 		talloc_free(tmp_ctx);
-		return LDB_ERR_NO_SUCH_OBJECT;
+		return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
 	}
 	*sid = *s;
 	talloc_free(tmp_ctx);
@@ -3481,7 +3554,7 @@ int samdb_ntds_site_settings_options(struct ldb_context *ldb_ctx,
 failed:
 	DEBUG(1,("Failed to find our NTDS Site Settings options in ldb!\n"));
 	talloc_free(tmp_ctx);
-	return LDB_ERR_NO_SUCH_OBJECT;
+	return ldb_error(ldb_ctx, LDB_ERR_NO_SUCH_OBJECT, __func__);
 }
 
 /*
@@ -3519,7 +3592,7 @@ int samdb_ntds_options(struct ldb_context *ldb, uint32_t *options)
 failed:
 	DEBUG(1,("Failed to find our own NTDS Settings options in the ldb!\n"));
 	talloc_free(tmp_ctx);
-	return LDB_ERR_NO_SUCH_OBJECT;
+	return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
 }
 
 const char* samdb_ntds_object_category(TALLOC_CTX *tmp_ctx, struct ldb_context *ldb)
@@ -3554,16 +3627,17 @@ const char *samdb_cn_to_lDAPDisplayName(TALLOC_CTX *mem_ctx, const char *cn)
 	size_t i;
 
 	tokens = str_list_make(mem_ctx, cn, " -_");
-	if (tokens == NULL)
+	if (tokens == NULL || tokens[0] == NULL) {
 		return NULL;
+	}
 
 	/* "tolower()" and "toupper()" should also work properly on 0x00 */
 	tokens[0][0] = tolower(tokens[0][0]);
-	for (i = 1; i < str_list_length((const char * const *)tokens); i++)
+	for (i = 1; tokens[i] != NULL; i++)
 		tokens[i][0] = toupper(tokens[i][0]);
 
 	ret = talloc_strdup(mem_ctx, tokens[0]);
-	for (i = 1; i < str_list_length((const char * const *)tokens); i++)
+	for (i = 1; tokens[i] != NULL; i++)
 		ret = talloc_asprintf_append_buffer(ret, "%s", tokens[i]);
 
 	talloc_free(tokens);
@@ -3640,18 +3714,22 @@ NTSTATUS dsdb_get_extended_dn_guid(struct ldb_dn *dn, struct GUID *guid, const c
 NTSTATUS dsdb_get_extended_dn_uint64(struct ldb_dn *dn, uint64_t *val, const char *component_name)
 {
 	const struct ldb_val *v;
-	char *s;
 
 	v = ldb_dn_get_extended_component(dn, component_name);
 	if (v == NULL) {
 		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
-	s = talloc_strndup(dn, (const char *)v->data, v->length);
-	NT_STATUS_HAVE_NO_MEMORY(s);
 
-	*val = strtoull(s, NULL, 0);
+	/* Just check we don't allow the caller to fill our stack */
+	if (v->length >= 64) {
+		return NT_STATUS_INVALID_PARAMETER;
+	} else {
+		char s[v->length+1];
+		memcpy(s, v->data, v->length);
+		s[v->length] = 0;
 
-	talloc_free(s);
+		*val = strtoull(s, NULL, 0);
+	}
 	return NT_STATUS_OK;
 }
 
@@ -3669,19 +3747,22 @@ NTSTATUS dsdb_get_extended_dn_nttime(struct ldb_dn *dn, NTTIME *nttime, const ch
 NTSTATUS dsdb_get_extended_dn_uint32(struct ldb_dn *dn, uint32_t *val, const char *component_name)
 {
 	const struct ldb_val *v;
-	char *s;
 
 	v = ldb_dn_get_extended_component(dn, component_name);
 	if (v == NULL) {
 		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
 
-	s = talloc_strndup(dn, (const char *)v->data, v->length);
-	NT_STATUS_HAVE_NO_MEMORY(s);
+	/* Just check we don't allow the caller to fill our stack */
+	if (v->length >= 32) {
+		return NT_STATUS_INVALID_PARAMETER;
+	} else {
+		char s[v->length + 1];
+		memcpy(s, v->data, v->length);
+		s[v->length] = 0;
+		*val = strtoul(s, NULL, 0);
+	}
 
-	*val = strtoul(s, NULL, 0);
-
-	talloc_free(s);
 	return NT_STATUS_OK;
 }
 
@@ -3691,7 +3772,6 @@ NTSTATUS dsdb_get_extended_dn_uint32(struct ldb_dn *dn, uint32_t *val, const cha
 NTSTATUS dsdb_get_extended_dn_sid(struct ldb_dn *dn, struct dom_sid *sid, const char *component_name)
 {
 	const struct ldb_val *sid_blob;
-	struct TALLOC_CTX *tmp_ctx;
 	enum ndr_err_code ndr_err;
 
 	sid_blob = ldb_dn_get_extended_component(dn, component_name);
@@ -3699,17 +3779,13 @@ NTSTATUS dsdb_get_extended_dn_sid(struct ldb_dn *dn, struct dom_sid *sid, const 
 		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
 
-	tmp_ctx = talloc_new(NULL);
-
-	ndr_err = ndr_pull_struct_blob_all(sid_blob, tmp_ctx, sid,
-					   (ndr_pull_flags_fn_t)ndr_pull_dom_sid);
+	ndr_err = ndr_pull_struct_blob_all_noalloc(sid_blob, sid,
+						   (ndr_pull_flags_fn_t)ndr_pull_dom_sid);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-		talloc_free(tmp_ctx);
 		return status;
 	}
 
-	talloc_free(tmp_ctx);
 	return NT_STATUS_OK;
 }
 
@@ -3720,13 +3796,13 @@ NTSTATUS dsdb_get_extended_dn_sid(struct ldb_dn *dn, struct dom_sid *sid, const 
  */
 uint32_t dsdb_dn_rmd_flags(struct ldb_dn *dn)
 {
-	const struct ldb_val *v;
-	char buf[32];
-	v = ldb_dn_get_extended_component(dn, "RMD_FLAGS");
-	if (!v || v->length > sizeof(buf)-1) return 0;
-	strncpy(buf, (const char *)v->data, v->length);
-	buf[v->length] = 0;
-	return strtoul(buf, NULL, 10);
+	uint32_t rmd_flags = 0;
+	NTSTATUS status = dsdb_get_extended_dn_uint32(dn, &rmd_flags,
+						      "RMD_FLAGS");
+	if (NT_STATUS_IS_OK(status)) {
+		return rmd_flags;
+	}
+	return 0;
 }
 
 /*
@@ -3766,7 +3842,7 @@ bool dsdb_dn_is_deleted_val(const struct ldb_val *val)
   return true if a ldb_val containing a DN in storage form is
   in the upgraded w2k3 linked attribute format
  */
-bool dsdb_dn_is_upgraded_link_val(struct ldb_val *val)
+bool dsdb_dn_is_upgraded_link_val(const struct ldb_val *val)
 {
 	return memmem(val->data, val->length, "<RMD_VERSION=", 13) != NULL;
 }
@@ -3897,7 +3973,7 @@ int dsdb_find_nc_root(struct ldb_context *samdb, TALLOC_CTX *mem_ctx, struct ldb
        }
 
        talloc_free(tmp_ctx);
-       return LDB_ERR_NO_SUCH_OBJECT;
+       return ldb_error(samdb, LDB_ERR_NO_SUCH_OBJECT, __func__);
 }
 
 
@@ -3930,7 +4006,7 @@ int dsdb_tombstone_lifetime(struct ldb_context *ldb, uint32_t *lifetime)
 	struct ldb_dn *dn;
 	dn = ldb_get_config_basedn(ldb);
 	if (!dn) {
-		return LDB_ERR_NO_SUCH_OBJECT;
+		return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
 	}
 	dn = ldb_dn_copy(ldb, dn);
 	if (!dn) {
@@ -3982,7 +4058,7 @@ int dsdb_load_udv_v2(struct ldb_context *samdb, struct ldb_dn *dn, TALLOC_CTX *m
 	static const struct timeval tv1970;
 	NTTIME nt1970 = timeval_to_nttime(&tv1970);
 
-	ret = ldb_search(samdb, mem_ctx, &r, dn, LDB_SCOPE_BASE, attrs, NULL);
+	ret = dsdb_search_dn(samdb, mem_ctx, &r, dn, attrs, DSDB_SEARCH_SHOW_RECYCLED|DSDB_SEARCH_SHOW_DELETED);
 	if (ret != LDB_SUCCESS) {
 		return ret;
 	}
@@ -4213,6 +4289,13 @@ int dsdb_request_add_controls(struct ldb_request *req, uint32_t dsdb_flags)
 		 * action
 		 */
 		ret = ldb_request_add_control(req, DSDB_CONTROL_PASSWORD_BYPASS_LAST_SET_OID, false, NULL);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+	}
+
+	if (dsdb_flags & DSDB_REPLMD_VANISH_LINKS) {
+		ret = ldb_request_add_control(req, DSDB_CONTROL_REPLMD_VANISH_LINKS, true, NULL);
 		if (ret != LDB_SUCCESS) {
 			return ret;
 		}
@@ -4489,7 +4572,7 @@ int dsdb_search(struct ldb_context *ldb,
 		if (res->count == 0) {
 			talloc_free(tmp_ctx);
 			ldb_reset_err_string(ldb);
-			return LDB_ERR_NO_SUCH_OBJECT;
+			return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
 		}
 		if (res->count != 1) {
 			talloc_free(tmp_ctx);
@@ -4867,6 +4950,17 @@ bool is_attr_in_list(const char * const * attrs, const char *attr)
 	return false;
 }
 
+int dsdb_werror_at(struct ldb_context *ldb, int ldb_ecode, WERROR werr,
+		   const char *location, const char *func,
+		   const char *reason)
+{
+	if (reason == NULL) {
+		reason = win_errstr(werr);
+	}
+	ldb_asprintf_errstring(ldb, "%08X: %s at %s:%s",
+			       W_ERROR_V(werr), reason, location, func);
+	return ldb_ecode;
+}
 
 /*
   map an ldb error code to an approximate NTSTATUS code
@@ -5068,7 +5162,7 @@ _PUBLIC_ char *NS_GUID_string(TALLOC_CTX *mem_ctx, const struct GUID *guid)
  * This also requires that the domain_msg have (if present):
  *  - lockOutObservationWindow
  */
-static int dsdb_effective_badPwdCount(struct ldb_message *user_msg,
+static int dsdb_effective_badPwdCount(const struct ldb_message *user_msg,
 				      int64_t lockOutObservationWindow,
 				      NTTIME now)
 {
@@ -5093,7 +5187,7 @@ static int dsdb_effective_badPwdCount(struct ldb_message *user_msg,
 int samdb_result_effective_badPwdCount(struct ldb_context *sam_ldb,
 				       TALLOC_CTX *mem_ctx,
 				       struct ldb_dn *domain_dn,
-				       struct ldb_message *user_msg)
+				       const struct ldb_message *user_msg)
 {
 	struct timeval tv_now = timeval_current();
 	NTTIME now = timeval_to_nttime(&tv_now);
@@ -5216,16 +5310,24 @@ NTSTATUS dsdb_update_bad_pwd_count(TALLOC_CTX *mem_ctx,
  * 	codePage, countryCode, lastLogoff, lastLogon
  * 	logonCount, pwdLastSet
  */
-int dsdb_user_obj_set_defaults(struct ldb_context *ldb, struct ldb_message *usr_obj)
+int dsdb_user_obj_set_defaults(struct ldb_context *ldb,
+			       struct ldb_message *usr_obj,
+			       struct ldb_request *req)
 {
 	int i, ret;
 	const struct attribute_values {
 		const char *name;
 		const char *value;
+		const char *add_value;
+		const char *mod_value;
+		const char *control;
+		unsigned add_flags;
+		unsigned mod_flags;
 	} map[] = {
 		{
 			.name = "accountExpires",
-			.value = "9223372036854775807"
+			.add_value = "9223372036854775807",
+			.mod_value = "0",
 		},
 		{
 			.name = "badPasswordTime",
@@ -5256,16 +5358,64 @@ int dsdb_user_obj_set_defaults(struct ldb_context *ldb, struct ldb_message *usr_
 			.value = "0"
 		},
 		{
+			.name = "logonHours",
+			.add_flags = DSDB_FLAG_INTERNAL_FORCE_META_DATA,
+		},
+		{
 			.name = "pwdLastSet",
-			.value = "0"
-		}
+			.value = "0",
+			.control = DSDB_CONTROL_PASSWORD_DEFAULT_LAST_SET_OID,
+		},
+		{
+			.name = "adminCount",
+			.mod_value = "0",
+		},
+		{
+			.name = "operatorCount",
+			.mod_value = "0",
+		},
 	};
 
 	for (i = 0; i < ARRAY_SIZE(map); i++) {
-		ret = samdb_find_or_add_attribute(ldb, usr_obj,
-						  map[i].name, map[i].value);
+		bool added = false;
+		const char *value = NULL;
+		unsigned flags = 0;
+
+		if (req != NULL && req->operation == LDB_ADD) {
+			value = map[i].add_value;
+			flags = map[i].add_flags;
+		} else {
+			value = map[i].mod_value;
+			flags = map[i].mod_flags;
+		}
+
+		if (value == NULL) {
+			value = map[i].value;
+		}
+
+		if (value != NULL) {
+			flags |= LDB_FLAG_MOD_ADD;
+		}
+
+		if (flags == 0) {
+			continue;
+		}
+
+		ret = samdb_find_or_add_attribute_ex(ldb, usr_obj,
+						     map[i].name,
+						     value, flags,
+						     &added);
 		if (ret != LDB_SUCCESS) {
 			return ret;
+		}
+
+		if (req != NULL && added && map[i].control != NULL) {
+			ret = ldb_request_add_control(req,
+						      map[i].control,
+						      false, NULL);
+			if (ret != LDB_SUCCESS) {
+				return ret;
+			}
 		}
 	}
 

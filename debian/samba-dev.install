@@ -40,6 +40,7 @@ usr/include/samba-4.0/ndr.h
 usr/include/samba-4.0/ndr/ndr_dcerpc.h
 usr/include/samba-4.0/ndr/ndr_drsblobs.h
 usr/include/samba-4.0/ndr/ndr_drsuapi.h
+usr/include/samba-4.0/ndr/ndr_krb5pac.h
 usr/include/samba-4.0/ndr/ndr_nbt.h
 usr/include/samba-4.0/ndr/ndr_svcctl.h
 usr/include/samba-4.0/netapi.h

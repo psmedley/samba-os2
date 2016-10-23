@@ -449,7 +449,7 @@ static int ltdb_delete_internal(struct ldb_module *module, struct ldb_dn *dn)
 
 	/* in case any attribute of the message was indexed, we need
 	   to fetch the old record */
-	ret = ltdb_search_dn1(module, dn, msg);
+	ret = ltdb_search_dn1(module, dn, msg, LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC);
 	if (ret != LDB_SUCCESS) {
 		/* not finding the old record is an error */
 		goto done;
@@ -858,14 +858,22 @@ int ltdb_modify_internal(struct ldb_module *module,
 				goto done;
 			}
 
-			/* TODO: This is O(n^2) - replace with more efficient check */
-			for (j=0; j<el->num_values; j++) {
-				if (ldb_msg_find_val(el, &el->values[j]) != &el->values[j]) {
-					ldb_asprintf_errstring(ldb,
-							       "attribute '%s': value #%u on '%s' provided more than once",
-							       el->name, j, ldb_dn_get_linearized(msg2->dn));
-					ret = LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
-					goto done;
+			/*
+			 * We don't need to check this if we have been
+			 * pre-screened by the repl_meta_data module
+			 * in Samba, or someone else who can claim to
+			 * know what they are doing. 
+			 */
+			if (!(el->flags & LDB_FLAG_INTERNAL_DISABLE_SINGLE_VALUE_CHECK)) { 
+				/* TODO: This is O(n^2) - replace with more efficient check */
+				for (j=0; j<el->num_values; j++) {
+					if (ldb_msg_find_val(el, &el->values[j]) != &el->values[j]) {
+						ldb_asprintf_errstring(ldb,
+								       "attribute '%s': value #%u on '%s' provided more than once",
+								       el->name, j, ldb_dn_get_linearized(msg2->dn));
+						ret = LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
+						goto done;
+					}
 				}
 			}
 
@@ -1025,7 +1033,8 @@ static int ltdb_rename(struct ltdb_context *ctx)
 	}
 
 	/* we need to fetch the old record to re-add under the new name */
-	ret = ltdb_search_dn1(module, req->op.rename.olddn, msg);
+	ret = ltdb_search_dn1(module, req->op.rename.olddn, msg,
+			      LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC);
 	if (ret != LDB_SUCCESS) {
 		/* not finding the old record is an error */
 		return ret;
@@ -1054,7 +1063,7 @@ static int ltdb_rename(struct ltdb_context *ctx)
 			talloc_free(tdb_key.dptr);
 			ldb_asprintf_errstring(ldb_module_get_ctx(module),
 					       "Entry %s already exists",
-					       ldb_dn_get_linearized(msg->dn));
+					       ldb_dn_get_linearized(req->op.rename.newdn));
 			/* finding the new record already in the DB is an error */
 			talloc_free(msg);
 			return LDB_ERR_ENTRY_ALREADY_EXISTS;
@@ -1224,7 +1233,7 @@ static int ltdb_sequence_number(struct ltdb_context *ctx,
 		goto done;
 	}
 
-	ret = ltdb_search_dn1(module, dn, msg);
+	ret = ltdb_search_dn1(module, dn, msg, 0);
 	if (ret != LDB_SUCCESS) {
 		goto done;
 	}

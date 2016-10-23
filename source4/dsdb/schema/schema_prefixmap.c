@@ -148,7 +148,10 @@ struct dsdb_schema_prefixmap *dsdb_schema_pfm_copy_shallow(TALLOC_CTX *mem_ctx,
  * \param bin_oid OID prefix to be added to prefixMap
  * \param pfm_id Location where to store prefixMap entry ID
  */
-static WERROR _dsdb_schema_pfm_add_entry(struct dsdb_schema_prefixmap *pfm, DATA_BLOB bin_oid, uint32_t *_idx)
+WERROR dsdb_schema_pfm_add_entry(struct dsdb_schema_prefixmap *pfm,
+				 DATA_BLOB bin_oid,
+				 const uint32_t *remote_id,
+				 uint32_t *_idx)
 {
 	uint32_t i;
 	struct dsdb_schema_prefixmap_oid * pfm_entry;
@@ -170,15 +173,34 @@ static WERROR _dsdb_schema_pfm_add_entry(struct dsdb_schema_prefixmap *pfm, DATA
 	pfm_entry = &pfm->prefixes[pfm->length];
 	pfm_entry->id = 0;
 	for (i = 0; i < pfm->length; i++) {
-		if (pfm_entry->id < pfm->prefixes[i].id)
+		if (pfm_entry->id < pfm->prefixes[i].id) {
 			pfm_entry->id = pfm->prefixes[i].id;
+		}
+
+		if (remote_id == NULL) {
+			continue;
+		}
+
+		if (pfm->prefixes[i].id == *remote_id) {
+			/*
+			 * We can't use the remote id.
+			 * it's already in use.
+			 */
+			remote_id = NULL;
+		}
 	}
 
 	/* add new bin-oid prefix */
-	pfm_entry->id++;
+	if (remote_id != NULL) {
+		pfm_entry->id = *remote_id;
+	} else {
+		pfm_entry->id++;
+	}
 	pfm_entry->bin_oid = bin_oid;
 
-	*_idx = pfm->length;
+	if (_idx != NULL) {
+		*_idx = pfm->length;
+	}
 	pfm->length++;
 
 	return WERR_OK;
@@ -316,7 +338,7 @@ static WERROR dsdb_schema_pfm_make_attid_impl(struct dsdb_schema_prefixmap *pfm,
 		}
 
 		/* entry does not exists, add it */
-		werr = _dsdb_schema_pfm_add_entry(pfm, bin_oid, &idx);
+		werr = dsdb_schema_pfm_add_entry(pfm, bin_oid, NULL, &idx);
 		W_ERROR_NOT_OK_RETURN(werr);
 	}
 
@@ -510,7 +532,7 @@ WERROR dsdb_schema_pfm_from_drsuapi_pfm(const struct drsuapi_DsReplicaOIDMapping
 					bool have_schema_info,
 					TALLOC_CTX *mem_ctx,
 					struct dsdb_schema_prefixmap **_pfm,
-					const char **_schema_info)
+					struct dsdb_schema_info **_schema_info)
 {
 	WERROR werr;
 	uint32_t i;
@@ -561,12 +583,12 @@ WERROR dsdb_schema_pfm_from_drsuapi_pfm(const struct drsuapi_DsReplicaOIDMapping
 		 *  but set it here for clarity */
 		i = ctr->num_mappings - 1;
 
-		*_schema_info = hex_encode_talloc(mem_ctx,
-						  ctr->mappings[i].oid.binary_oid,
-						  ctr->mappings[i].oid.length);
-		if (!*_schema_info) {
+		blob = data_blob_const(ctr->mappings[i].oid.binary_oid,
+				       ctr->mappings[i].oid.length);
+		werr = dsdb_schema_info_from_blob(&blob, mem_ctx, _schema_info);
+		if (!W_ERROR_IS_OK(werr)) {
 			talloc_free(pfm);
-			return WERR_NOMEM;
+			return werr;
 		}
 	}
 
@@ -585,7 +607,7 @@ WERROR dsdb_schema_pfm_from_drsuapi_pfm(const struct drsuapi_DsReplicaOIDMapping
  * \param _ctr Out pointer to drsuapi_DsReplicaOIDMapping_Ctr prefix map structure
  */
 WERROR dsdb_drsuapi_pfm_from_schema_pfm(const struct dsdb_schema_prefixmap *pfm,
-					const char *schema_info,
+					const struct dsdb_schema_info *schema_info,
 					TALLOC_CTX *mem_ctx,
 					struct drsuapi_DsReplicaOIDMapping_Ctr **_ctr)
 {
@@ -628,14 +650,16 @@ WERROR dsdb_drsuapi_pfm_from_schema_pfm(const struct dsdb_schema_prefixmap *pfm,
 
 	/* make schema_info entry if needed */
 	if (schema_info) {
+		WERROR werr;
+
 		/* by this time, i should have this value,
 		 *  but set it here for clarity */
 		i = ctr->num_mappings - 1;
 
-		blob = strhex_to_data_blob(ctr, schema_info);
-		if (!blob.data) {
+		werr = dsdb_blob_from_schema_info(schema_info, ctr, &blob);
+		if (!W_ERROR_IS_OK(werr)) {
 			talloc_free(ctr);
-			return WERR_NOMEM;
+			return werr;
 		}
 
 		ctr->mappings[i].id_prefix = 0;

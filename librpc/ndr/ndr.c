@@ -254,6 +254,17 @@ _PUBLIC_ enum ndr_err_code ndr_push_expand(struct ndr_push *ndr, uint32_t extra_
 				      size);
 	}
 
+	if (ndr->fixed_buf_size) {
+		if (ndr->alloc_size >= size) {
+			return NDR_ERR_SUCCESS;
+		}
+		return ndr_push_error(ndr,
+				      NDR_ERR_BUFSIZE,
+				      "Overflow of fixed buffer in "
+				      "push_expand to %u",
+				      size);
+	}
+	
 	if (ndr->alloc_size > size) {
 		return NDR_ERR_SUCCESS;
 	}
@@ -954,15 +965,13 @@ _PUBLIC_ enum ndr_err_code ndr_token_retrieve(struct ndr_token_list **list, cons
 */
 _PUBLIC_ uint32_t ndr_token_peek(struct ndr_token_list **list, const void *key)
 {
-	enum ndr_err_code status;
-	uint32_t v;
-
-	status = ndr_token_retrieve_cmp_fn(list, key, &v, NULL, false);
-	if (!NDR_ERR_CODE_IS_SUCCESS(status)) {
-		return 0;
+	struct ndr_token_list *tok;
+	for (tok = *list; tok; tok = tok->next) {
+		if (tok->key == key) {
+			return tok->value;
+		}
 	}
-
-	return v;
+	return 0;
 }
 
 /*
@@ -1106,6 +1115,20 @@ _PUBLIC_ uint32_t ndr_print_get_switch_value(struct ndr_print *ndr, const void *
 	return ndr_token_peek(&ndr->switch_list, p);
 }
 
+/* retrieve a switch value and remove it from the list */
+_PUBLIC_ uint32_t ndr_pull_steal_switch_value(struct ndr_pull *ndr, const void *p)
+{
+	enum ndr_err_code status;
+	uint32_t v;
+
+	status = ndr_token_retrieve(&ndr->switch_list, p, &v);
+	if (!NDR_ERR_CODE_IS_SUCCESS(status)) {
+		return 0;
+	}
+
+	return v;
+}
+
 /*
   pull a struct from a blob using NDR
 */
@@ -1145,6 +1168,45 @@ _PUBLIC_ enum ndr_err_code ndr_pull_struct_blob_all(const DATA_BLOB *blob, TALLO
 		return ret;
 	}
 	talloc_free(ndr);
+	return NDR_ERR_SUCCESS;
+}
+
+/*
+  pull a struct from a blob using NDR - failing if all bytes are not consumed
+
+  This only works for structures with NO allocated memory, like
+  objectSID and GUID.  This helps because we parse these a lot.
+*/
+_PUBLIC_ enum ndr_err_code ndr_pull_struct_blob_all_noalloc(const DATA_BLOB *blob,
+							    void *p, ndr_pull_flags_fn_t fn)
+{
+	/*
+	 * We init this structure on the stack here, to avoid a
+	 * talloc() as otherwise this call to the fn() is assured not
+	 * to be doing any allocation, eg SIDs and GUIDs.
+	 *
+	 * This allows us to keep the safety of the PIDL-generated
+	 * code without the talloc() overhead.
+	 */
+	struct ndr_pull ndr = {
+		.data = blob->data,
+		.data_size = blob->length,
+		.current_mem_ctx = (void *)-1
+	};
+	uint32_t highest_ofs;
+	NDR_CHECK(fn(&ndr, NDR_SCALARS|NDR_BUFFERS, p));
+	if (ndr.offset > ndr.relative_highest_offset) {
+		highest_ofs = ndr.offset;
+	} else {
+		highest_ofs = ndr.relative_highest_offset;
+	}
+	if (highest_ofs < ndr.data_size) {
+		enum ndr_err_code ret;
+		ret = ndr_pull_error(&ndr, NDR_ERR_UNREAD_BYTES,
+				     "not all bytes consumed ofs[%u] size[%u]",
+				     highest_ofs, ndr.data_size);
+		return ret;
+	}
 	return NDR_ERR_SUCCESS;
 }
 
@@ -1209,6 +1271,35 @@ _PUBLIC_ enum ndr_err_code ndr_push_struct_blob(DATA_BLOB *blob, TALLOC_CTX *mem
 	*blob = ndr_push_blob(ndr);
 	talloc_steal(mem_ctx, blob->data);
 	talloc_free(ndr);
+
+	return NDR_ERR_SUCCESS;
+}
+
+/* 
+  push a struct into a provided blob using NDR. 
+ 
+  We error because we want to have the performance issue (extra
+  talloc() calls) show up as an error, not just slower code.  This is
+  used for things like GUIDs, which we expect to be a fixed size, and
+  SIDs that we can pre-calculate the size for.
+*/
+_PUBLIC_ enum ndr_err_code ndr_push_struct_into_fixed_blob(
+	DATA_BLOB *blob, const void *p, ndr_push_flags_fn_t fn)
+{
+	struct ndr_push ndr = {
+		.data = blob->data,
+		.alloc_size = blob->length,
+		.fixed_buf_size = true
+	};
+
+	NDR_CHECK(fn(&ndr, NDR_SCALARS|NDR_BUFFERS, p));
+
+	if (ndr.offset != blob->length) {
+		return ndr_push_error(&ndr, NDR_ERR_BUFSIZE,
+				      "buffer was either to large or small "
+				      "ofs[%u] size[%zu]",
+				      ndr.offset, blob->length);
+	}
 
 	return NDR_ERR_SUCCESS;
 }
@@ -1389,9 +1480,44 @@ _PUBLIC_ enum ndr_err_code ndr_push_short_relative_ptr2(struct ndr_push *ndr, co
 {
 	uint32_t save_offset;
 	uint32_t ptr_offset = 0xFFFF;
+	uint32_t relative_offset;
+	size_t pad;
+	size_t align = 1;
+
 	if (p == NULL) {
 		return NDR_ERR_SUCCESS;
 	}
+
+	if (ndr->offset < ndr->relative_base_offset) {
+		return ndr_push_error(ndr, NDR_ERR_BUFSIZE,
+				      "ndr_push_relative_ptr2 ndr->offset(%u) < ndr->relative_base_offset(%u)",
+				      ndr->offset, ndr->relative_base_offset);
+	}
+
+	relative_offset = ndr->offset - ndr->relative_base_offset;
+
+	if (ndr->flags & LIBNDR_FLAG_NOALIGN) {
+		align = 1;
+	} else if (ndr->flags & LIBNDR_FLAG_ALIGN2) {
+		align = 2;
+	} else if (ndr->flags & LIBNDR_FLAG_ALIGN4) {
+		align = 4;
+	} else if (ndr->flags & LIBNDR_FLAG_ALIGN8) {
+		align = 8;
+	}
+
+	pad = ndr_align_size(relative_offset, align);
+	if (pad != 0) {
+		NDR_CHECK(ndr_push_zero(ndr, pad));
+	}
+
+	relative_offset = ndr->offset - ndr->relative_base_offset;
+	if (relative_offset > UINT16_MAX) {
+		return ndr_push_error(ndr, NDR_ERR_BUFSIZE,
+				      "ndr_push_relative_ptr2 relative_offset(%u) > UINT16_MAX",
+				      relative_offset);
+	}
+
 	save_offset = ndr->offset;
 	NDR_CHECK(ndr_token_retrieve(&ndr->relative_list, p, &ptr_offset));
 	if (ptr_offset > ndr->offset) {
@@ -1400,12 +1526,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_short_relative_ptr2(struct ndr_push *ndr, co
 				      ptr_offset, ndr->offset);
 	}
 	ndr->offset = ptr_offset;
-	if (save_offset < ndr->relative_base_offset) {
-		return ndr_push_error(ndr, NDR_ERR_BUFSIZE,
-				      "ndr_push_relative_ptr2 save_offset(%u) < ndr->relative_base_offset(%u)",
-				      save_offset, ndr->relative_base_offset);
-	}
-	NDR_CHECK(ndr_push_uint16(ndr, NDR_SCALARS, save_offset - ndr->relative_base_offset));
+	NDR_CHECK(ndr_push_uint16(ndr, NDR_SCALARS, relative_offset));
 	ndr->offset = save_offset;
 	return NDR_ERR_SUCCESS;
 }

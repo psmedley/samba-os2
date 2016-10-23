@@ -27,6 +27,7 @@
 
 #include "lib/util/debug.h"
 #include "lib/util/time.h"
+#include "lib/util/blocking.h"
 
 #include "ctdb_private.h"
 
@@ -138,6 +139,7 @@ void ctdb_tcp_node_connect(struct tevent_context *ev, struct tevent_timer *te,
 	int sockin_size;
 	int sockout_size;
         ctdb_sock_addr sock_out;
+	int ret;
 
 	ctdb_tcp_stop_connection(node);
 
@@ -145,10 +147,21 @@ void ctdb_tcp_node_connect(struct tevent_context *ev, struct tevent_timer *te,
 
 	tnode->fd = socket(sock_out.sa.sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if (tnode->fd == -1) {
-		DEBUG(DEBUG_ERR, (__location__ "Failed to create socket\n"));
+		DEBUG(DEBUG_ERR, (__location__ " Failed to create socket\n"));
 		return;
 	}
-	set_nonblocking(tnode->fd);
+
+	ret = set_blocking(tnode->fd, false);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      (__location__
+		       " failed to set socket non-blocking (%s)\n",
+		       strerror(errno)));
+		close(tnode->fd);
+		tnode->fd = -1;
+		return;
+	}
+
 	set_close_on_exec(tnode->fd);
 
 	DEBUG(DEBUG_DEBUG, (__location__ " Created TCP SOCKET FD:%d\n", tnode->fd));
@@ -181,13 +194,15 @@ void ctdb_tcp_node_connect(struct tevent_context *ev, struct tevent_timer *te,
 		DEBUG(DEBUG_ERR, (__location__ " unknown family %u\n",
 			sock_in.sa.sa_family));
 		close(tnode->fd);
+		tnode->fd = -1;
 		return;
 	}
 
 	if (bind(tnode->fd, (struct sockaddr *)&sock_in, sockin_size) == -1) {
-		DEBUG(DEBUG_ERR, (__location__ "Failed to bind socket %s(%d)\n",
+		DEBUG(DEBUG_ERR, (__location__ " Failed to bind socket %s(%d)\n",
 				  strerror(errno), errno));
 		close(tnode->fd);
+		tnode->fd = -1;
 		return;
 	}
 
@@ -228,6 +243,7 @@ static void ctdb_listen_event(struct tevent_context *ev, struct tevent_fd *fde,
 	int fd, nodeid;
 	struct ctdb_incoming *in;
 	int one = 1;
+	int ret;
 
 	memset(&addr, 0, sizeof(addr));
 	len = sizeof(addr);
@@ -246,7 +262,17 @@ static void ctdb_listen_event(struct tevent_context *ev, struct tevent_fd *fde,
 	in->fd = fd;
 	in->ctdb = ctdb;
 
-	set_nonblocking(in->fd);
+	ret = set_blocking(in->fd, false);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      (__location__
+		       " failed to set socket non-blocking (%s)\n",
+		       strerror(errno)));
+		close(in->fd);
+		in->fd = -1;
+		return;
+	}
+
 	set_close_on_exec(in->fd);
 
 	DEBUG(DEBUG_DEBUG, (__location__ " Created SOCKET FD:%d to incoming ctdb connection\n", fd));

@@ -271,27 +271,7 @@ class MatchRulesTests(samba.tests.TestCase):
 
     def tearDown(self):
         super(MatchRulesTests, self).tearDown()
-        delete_force(self.ldb, "cn=u4,%s" % self.ou_users)
-        delete_force(self.ldb, "cn=u3,%s" % self.ou_users)
-        delete_force(self.ldb, "cn=u2,%s" % self.ou_users)
-        delete_force(self.ldb, "cn=u1,%s" % self.ou_users)
-        delete_force(self.ldb, "cn=g4,%s" % self.ou_groups)
-        delete_force(self.ldb, "cn=g3,%s" % self.ou_groups)
-        delete_force(self.ldb, "cn=g2,%s" % self.ou_groups)
-        delete_force(self.ldb, "cn=g1,%s" % self.ou_groups)
-        delete_force(self.ldb, "cn=c1,%s" % self.ou_computers)
-        delete_force(self.ldb, "cn=c2,%s" % self.ou_computers)
-        delete_force(self.ldb, "cn=c3,%s" % self.ou_computers)
-        delete_force(self.ldb, self.ou_users)
-        delete_force(self.ldb, self.ou_groups)
-        delete_force(self.ldb, self.ou_computers)
-        delete_force(self.ldb, "OU=o4,OU=o3,OU=o2,OU=o1,%s" % self.ou)
-        delete_force(self.ldb, "OU=o3,OU=o2,OU=o1,%s" % self.ou)
-        delete_force(self.ldb, "OU=o2,OU=o1,%s" % self.ou)
-        delete_force(self.ldb, "OU=o1,%s" % self.ou)
-        delete_force(self.ldb, "CN=e2,%s" % self.ou)
-        delete_force(self.ldb, "CN=e1,%s" % self.ou)
-        delete_force(self.ldb, self.ou)
+        self.ldb.delete(self.ou, controls=['tree_delete:0'])
 
     def test_u1_member_of_g4(self):
         # Search without transitive match must return 0 results
@@ -722,7 +702,7 @@ class MatchRulesTests(samba.tests.TestCase):
         self.assertEqual(len(res1), 2)
         dn_list = [str(res.dn).lower() for res in res1]
         self.assertTrue(("CN=e1,%s" % self.ou).lower() in dn_list)
-        self.assertTrue(("CN=e1,%s" % self.ou).lower() in dn_list)
+        self.assertTrue(("CN=e2,%s" % self.ou).lower() in dn_list)
 
         res1 = self.ldb.search(self.ou,
                         scope=SCOPE_ONELEVEL,
@@ -730,7 +710,7 @@ class MatchRulesTests(samba.tests.TestCase):
         self.assertEqual(len(res1), 2)
         dn_list = [str(res.dn).lower() for res in res1]
         self.assertTrue(("CN=e1,%s" % self.ou).lower() in dn_list)
-        self.assertTrue(("CN=e1,%s" % self.ou).lower() in dn_list)
+        self.assertTrue(("CN=e2,%s" % self.ou).lower() in dn_list)
 
     def test_not_linked_attrs(self):
         res1 = self.ldb.search(self.base_dn,
@@ -1141,22 +1121,7 @@ class MatchRuleConditionTests(samba.tests.TestCase):
 
     def tearDown(self):
         super(MatchRuleConditionTests, self).tearDown()
-        delete_force(self.ldb, "cn=u4,%s" % self.ou_users)
-        delete_force(self.ldb, "cn=u3,%s" % self.ou_users)
-        delete_force(self.ldb, "cn=u2,%s" % self.ou_users)
-        delete_force(self.ldb, "cn=u1,%s" % self.ou_users)
-        delete_force(self.ldb, "cn=g4,%s" % self.ou_groups)
-        delete_force(self.ldb, "cn=g3,%s" % self.ou_groups)
-        delete_force(self.ldb, "cn=g2,%s" % self.ou_groups)
-        delete_force(self.ldb, "cn=g1,%s" % self.ou_groups)
-        delete_force(self.ldb, "cn=c1,%s" % self.ou_computers)
-        delete_force(self.ldb, "cn=c2,%s" % self.ou_computers)
-        delete_force(self.ldb, "cn=c3,%s" % self.ou_computers)
-        delete_force(self.ldb, "cn=c4,%s" % self.ou_computers)
-        delete_force(self.ldb, self.ou_users)
-        delete_force(self.ldb, self.ou_groups)
-        delete_force(self.ldb, self.ou_computers)
-        delete_force(self.ldb, self.ou)
+        self.ldb.delete(self.ou, controls=['tree_delete:0'])
 
 
     def test_g1_members(self):

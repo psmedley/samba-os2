@@ -85,12 +85,22 @@ static void verify_buffer(void *p1, void *p2, size_t len)
  * Functions to fill and verify data types
  */
 
-static void fill_tdb_data(TALLOC_CTX *mem_ctx, TDB_DATA *p)
+static void fill_tdb_data_nonnull(TALLOC_CTX *mem_ctx, TDB_DATA *p)
 {
 	p->dsize = rand_int(1024) + 1;
 	p->dptr = talloc_array(mem_ctx, uint8_t, p->dsize);
 	assert(p->dptr != NULL);
 	fill_buffer(p->dptr, p->dsize);
+}
+
+static void fill_tdb_data(TALLOC_CTX *mem_ctx, TDB_DATA *p)
+{
+	if (rand_int(5) == 0) {
+		p->dsize = 0;
+		p->dptr = NULL;
+	} else {
+		fill_tdb_data_nonnull(mem_ctx, p);
+	}
 }
 
 static void verify_tdb_data(TDB_DATA *p1, TDB_DATA *p2)
@@ -115,12 +125,16 @@ static void fill_ctdb_vnn_map(TALLOC_CTX *mem_ctx, struct ctdb_vnn_map *p)
 	int i;
 
 	p->generation = rand32();
-	p->size = rand_int(20) + 1;
-	p->map = talloc_array(mem_ctx, uint32_t, p->size);
-	assert(p->map != NULL);
+	p->size = rand_int(20);
+	if (p->size > 0) {
+		p->map = talloc_array(mem_ctx, uint32_t, p->size);
+		assert(p->map != NULL);
 
-	for (i=0; i<p->size; i++) {
-		p->map[i] = rand32();
+		for (i=0; i<p->size; i++) {
+			p->map[i] = rand32();
+		}
+	} else {
+		p->map = NULL;
 	}
 }
 
@@ -152,11 +166,15 @@ static void fill_ctdb_dbid_map(TALLOC_CTX *mem_ctx, struct ctdb_dbid_map *p)
 {
 	int i;
 
-	p->num = rand_int(40) + 1;
-	p->dbs = talloc_array(mem_ctx, struct ctdb_dbid, p->num);
-	assert(p->dbs != NULL);
-	for (i=0; i<p->num; i++) {
-		fill_ctdb_dbid(mem_ctx, &p->dbs[i]);
+	p->num = rand_int(40);
+	if (p->num > 0) {
+		p->dbs = talloc_array(mem_ctx, struct ctdb_dbid, p->num);
+		assert(p->dbs != NULL);
+		for (i=0; i<p->num; i++) {
+			fill_ctdb_dbid(mem_ctx, &p->dbs[i]);
+		}
+	} else {
+		p->dbs = NULL;
 	}
 }
 
@@ -225,7 +243,7 @@ static void fill_ctdb_rec_data(TALLOC_CTX *mem_ctx, struct ctdb_rec_data *p)
 	} else {
 		p->header = NULL;
 	}
-	fill_tdb_data(mem_ctx, &p->key);
+	fill_tdb_data_nonnull(mem_ctx, &p->key);
 	fill_tdb_data(mem_ctx, &p->data);
 }
 
@@ -254,12 +272,15 @@ static void fill_ctdb_rec_buffer(TALLOC_CTX *mem_ctx, struct ctdb_rec_buffer *p)
 	p->buf = NULL;
 	p->buflen = 0;
 
-	count = rand_int(100) + 1;
-	for (i=0; i<count; i++) {
-		fill_ctdb_rec_data(mem_ctx, &rec);
-		ret = ctdb_rec_buffer_add(mem_ctx, p, rec.reqid, rec.header,
-					  rec.key, rec.data);
-		assert(ret == 0);
+	count = rand_int(100);
+	if (count > 0) {
+		for (i=0; i<count; i++) {
+			fill_ctdb_rec_data(mem_ctx, &rec);
+			ret = ctdb_rec_buffer_add(mem_ctx, p, rec.reqid,
+						  rec.header,
+						  rec.key, rec.data);
+			assert(ret == 0);
+		}
 	}
 }
 
@@ -486,11 +507,15 @@ static void fill_ctdb_tickle_list(TALLOC_CTX *mem_ctx,
 	int i;
 
 	fill_ctdb_sock_addr(mem_ctx, &p->addr);
-	p->num = rand_int(1000) + 1;
-	p->conn = talloc_array(mem_ctx, struct ctdb_connection, p->num);
-	assert(p->conn != NULL);
-	for (i=0; i<p->num; i++) {
-		fill_ctdb_connection(mem_ctx, &p->conn[i]);
+	p->num = rand_int(1000);
+	if (p->num > 0) {
+		p->conn = talloc_array(mem_ctx, struct ctdb_connection, p->num);
+		assert(p->conn != NULL);
+		for (i=0; i<p->num; i++) {
+			fill_ctdb_connection(mem_ctx, &p->conn[i]);
+		}
+	} else {
+		p->conn = NULL;
 	}
 }
 
@@ -503,70 +528,6 @@ static void verify_ctdb_tickle_list(struct ctdb_tickle_list *p1,
 	assert(p1->num == p2->num);
 	for (i=0; i<p1->num; i++) {
 		verify_ctdb_connection(&p1->conn[i], &p2->conn[i]);
-	}
-}
-
-static void fill_ctdb_client_id(TALLOC_CTX *mem_ctx,
-				struct ctdb_client_id *p)
-{
-	p->type = rand8();
-	p->pnn = rand32();
-	p->server_id = rand32();
-}
-
-static void verify_ctdb_client_id(struct ctdb_client_id *p1,
-				  struct ctdb_client_id *p2)
-{
-	assert(p1->type == p2->type);
-	assert(p1->pnn == p2->pnn);
-	assert(p1->server_id == p2->server_id);
-}
-
-static void fill_ctdb_client_id_list(TALLOC_CTX *mem_ctx,
-				     struct ctdb_client_id_list *p)
-{
-	int i;
-
-	p->num = rand_int(1000) + 1;
-	p->cid = talloc_array(mem_ctx, struct ctdb_client_id, p->num);
-	assert(p->cid != NULL);
-	for (i=0; i<p->num; i++) {
-		fill_ctdb_client_id(mem_ctx, &p->cid[i]);
-	}
-}
-
-static void verify_ctdb_client_id_list(struct ctdb_client_id_list *p1,
-				       struct ctdb_client_id_list *p2)
-{
-	int i;
-
-	assert(p1->num == p2->num);
-	for (i=0; i<p1->num; i++) {
-		verify_ctdb_client_id(&p1->cid[i], &p2->cid[i]);
-	}
-}
-
-static void fill_ctdb_client_id_map(TALLOC_CTX *mem_ctx,
-				    struct ctdb_client_id_map *p)
-{
-	int i;
-
-	p->count = rand_int(10) + 1;
-	p->list = talloc_array(mem_ctx, struct ctdb_client_id_list, p->count);
-	assert(p->list != NULL);
-	for (i=0; i<p->count; i++) {
-		fill_ctdb_client_id_list(mem_ctx, &p->list[i]);
-	}
-}
-
-static void verify_ctdb_client_id_map(struct ctdb_client_id_map *p1,
-				      struct ctdb_client_id_map *p2)
-{
-	int i;
-
-	assert(p1->count == p2->count);
-	for (i=0; i<p1->count; i++) {
-		verify_ctdb_client_id_list(&p1->list[i], &p2->list[i]);
 	}
 }
 
@@ -630,14 +591,14 @@ static void fill_ctdb_public_ip_list(TALLOC_CTX *mem_ctx,
 	int i;
 
 	p->num = rand_int(32);
-	if (p->num == 0) {
+	if (p->num > 0) {
+		p->ip = talloc_array(mem_ctx, struct ctdb_public_ip, p->num);
+		assert(p->ip != NULL);
+		for (i=0; i<p->num; i++) {
+			fill_ctdb_public_ip(mem_ctx, &p->ip[i]);
+		}
+	} else {
 		p->ip = NULL;
-		return;
-	}
-	p->ip = talloc_array(mem_ctx, struct ctdb_public_ip, p->num);
-	assert(p->ip != NULL);
-	for (i=0; i<p->num; i++) {
-		fill_ctdb_public_ip(mem_ctx, &p->ip[i]);
 	}
 }
 
@@ -672,11 +633,16 @@ static void fill_ctdb_node_map(TALLOC_CTX *mem_ctx, struct ctdb_node_map *p)
 {
 	int i;
 
-	p->num = rand_int(32) + 1;
-	p->node = talloc_array(mem_ctx, struct ctdb_node_and_flags, p->num);
-	assert(p->node != NULL);
-	for (i=0; i<p->num; i++) {
-		fill_ctdb_node_and_flags(mem_ctx, &p->node[i]);
+	p->num = rand_int(32);
+	if (p->num > 0) {
+		p->node = talloc_array(mem_ctx, struct ctdb_node_and_flags,
+				       p->num);
+		assert(p->node != NULL);
+		for (i=0; i<p->num; i++) {
+			fill_ctdb_node_and_flags(mem_ctx, &p->node[i]);
+		}
+	} else {
+		p->node = NULL;
 	}
 }
 
@@ -706,11 +672,16 @@ static void fill_ctdb_script_list(TALLOC_CTX *mem_ctx,
 {
 	int i;
 
-	p->num_scripts = rand_int(32) + 1;
-	p->script = talloc_array(mem_ctx, struct ctdb_script, p->num_scripts);
-	assert(p->script != NULL);
-	for (i=0; i<p->num_scripts; i++) {
-		fill_ctdb_script(mem_ctx, &p->script[i]);
+	p->num_scripts = rand_int(32);
+	if (p->num_scripts > 0) {
+		p->script = talloc_array(mem_ctx, struct ctdb_script,
+					 p->num_scripts);
+		assert(p->script != NULL);
+		for (i=0; i<p->num_scripts; i++) {
+			fill_ctdb_script(mem_ctx, &p->script[i]);
+		}
+	} else {
+		p->script = NULL;
 	}
 }
 
@@ -736,20 +707,6 @@ static void verify_ctdb_ban_state(struct ctdb_ban_state *p1,
 {
 	assert(p1->pnn == p2->pnn);
 	assert(p1->time == p2->time);
-}
-
-static void fill_ctdb_db_priority(TALLOC_CTX *mem_ctx,
-				  struct ctdb_db_priority *p)
-{
-	p->db_id = rand32();
-	p->priority = rand32();
-}
-
-static void verify_ctdb_db_priority(struct ctdb_db_priority *p1,
-				    struct ctdb_db_priority *p2)
-{
-	assert(p1->db_id == p2->db_id);
-	assert(p1->priority == p2->priority);
 }
 
 static void fill_ctdb_notify_data(TALLOC_CTX *mem_ctx,
@@ -781,11 +738,15 @@ static void fill_ctdb_iface_list(TALLOC_CTX *mem_ctx,
 {
 	int i;
 
-	p->num = rand_int(32) + 1;
-	p->iface = talloc_array(mem_ctx, struct ctdb_iface, p->num);
-	assert(p->iface != NULL);
-	for (i=0; i<p->num; i++) {
-		fill_ctdb_iface(mem_ctx, &p->iface[i]);
+	p->num = rand_int(32);
+	if (p->num > 0) {
+		p->iface = talloc_array(mem_ctx, struct ctdb_iface, p->num);
+		assert(p->iface != NULL);
+		for (i=0; i<p->num; i++) {
+			fill_ctdb_iface(mem_ctx, &p->iface[i]);
+		}
+	} else {
+		p->iface = NULL;
 	}
 }
 
@@ -823,12 +784,17 @@ static void fill_ctdb_statistics_list(TALLOC_CTX *mem_ctx,
 {
 	int i;
 
-	p->num = rand_int(10) + 1;
-	p->stats = talloc_array(mem_ctx, struct ctdb_statistics, p->num);
-	assert(p->stats != NULL);
+	p->num = rand_int(10);
+	if (p->num > 0) {
+		p->stats = talloc_array(mem_ctx, struct ctdb_statistics,
+					p->num);
+		assert(p->stats != NULL);
 
-	for (i=0; i<p->num; i++) {
-		fill_ctdb_statistics(mem_ctx, &p->stats[i]);
+		for (i=0; i<p->num; i++) {
+			fill_ctdb_statistics(mem_ctx, &p->stats[i]);
+		}
+	} else {
+		p->stats = NULL;
 	}
 }
 
@@ -847,7 +813,7 @@ static void fill_ctdb_key_data(TALLOC_CTX *mem_ctx, struct ctdb_key_data *p)
 {
 	p->db_id = rand32();
 	fill_ctdb_ltdb_header(mem_ctx, &p->header);
-	fill_tdb_data(mem_ctx, &p->key);
+	fill_tdb_data_nonnull(mem_ctx, &p->key);
 }
 
 static void verify_ctdb_key_data(struct ctdb_key_data *p1,
@@ -863,12 +829,16 @@ static void fill_ctdb_uint8_array(TALLOC_CTX *mem_ctx,
 {
 	int i;
 
-	p->num = rand_int(1024) + 1;
-	p->val = talloc_array(mem_ctx, uint8_t, p->num);
-	assert(p->val != NULL);
+	p->num = rand_int(1024);
+	if (p->num > 0) {
+		p->val = talloc_array(mem_ctx, uint8_t, p->num);
+		assert(p->val != NULL);
 
-	for (i=0; i<p->num; i++) {
-		p->val[i] = rand8();
+		for (i=0; i<p->num; i++) {
+			p->val[i] = rand8();
+		}
+	} else {
+		p->val = NULL;
 	}
 }
 
@@ -888,12 +858,16 @@ static void fill_ctdb_uint64_array(TALLOC_CTX *mem_ctx,
 {
 	int i;
 
-	p->num = rand_int(1024) + 1;
-	p->val = talloc_array(mem_ctx, uint64_t, p->num);
-	assert(p->val != NULL);
+	p->num = rand_int(1024);
+	if (p->num > 0) {
+		p->val = talloc_array(mem_ctx, uint64_t, p->num);
+		assert(p->val != NULL);
 
-	for (i=0; i<p->num; i++) {
-		p->val[i] = rand64();
+		for (i=0; i<p->num; i++) {
+			p->val[i] = rand64();
+		}
+	} else {
+		p->val = NULL;
 	}
 }
 
@@ -909,7 +883,7 @@ static void verify_ctdb_uint64_array(struct ctdb_uint64_array *p1,
 }
 
 static void fill_ctdb_db_statistics(TALLOC_CTX *mem_ctx,
-				   struct ctdb_db_statistics *p)
+				    struct ctdb_db_statistics *p)
 {
 	int i;
 
@@ -1208,9 +1182,6 @@ DEFINE_TEST(struct ctdb_node_flag_change, ctdb_node_flag_change);
 DEFINE_TEST(struct ctdb_var_list, ctdb_var_list);
 DEFINE_TEST(struct ctdb_tunable_list, ctdb_tunable_list);
 DEFINE_TEST(struct ctdb_tickle_list, ctdb_tickle_list);
-DEFINE_TEST(struct ctdb_client_id, ctdb_client_id);
-DEFINE_TEST(struct ctdb_client_id_list, ctdb_client_id_list);
-DEFINE_TEST(struct ctdb_client_id_map, ctdb_client_id_map);
 DEFINE_TEST(struct ctdb_addr_info, ctdb_addr_info);
 DEFINE_TEST(struct ctdb_transdb, ctdb_transdb);
 DEFINE_TEST(struct ctdb_uptime, ctdb_uptime);
@@ -1221,7 +1192,6 @@ DEFINE_TEST(struct ctdb_node_map, ctdb_node_map);
 DEFINE_TEST(struct ctdb_script, ctdb_script);
 DEFINE_TEST(struct ctdb_script_list, ctdb_script_list);
 DEFINE_TEST(struct ctdb_ban_state, ctdb_ban_state);
-DEFINE_TEST(struct ctdb_db_priority, ctdb_db_priority);
 DEFINE_TEST(struct ctdb_notify_data, ctdb_notify_data);
 DEFINE_TEST(struct ctdb_iface, ctdb_iface);
 DEFINE_TEST(struct ctdb_iface_list, ctdb_iface_list);
@@ -1318,9 +1288,6 @@ int main(int argc, char *argv[])
 	TEST_FUNC(ctdb_var_list)();
 	TEST_FUNC(ctdb_tunable_list)();
 	TEST_FUNC(ctdb_tickle_list)();
-	TEST_FUNC(ctdb_client_id)();
-	TEST_FUNC(ctdb_client_id_list)();
-	TEST_FUNC(ctdb_client_id_map)();
 	TEST_FUNC(ctdb_addr_info)();
 	TEST_FUNC(ctdb_transdb)();
 	TEST_FUNC(ctdb_uptime)();
@@ -1331,7 +1298,6 @@ int main(int argc, char *argv[])
 	TEST_FUNC(ctdb_script)();
 	TEST_FUNC(ctdb_script_list)();
 	TEST_FUNC(ctdb_ban_state)();
-	TEST_FUNC(ctdb_db_priority)();
 	TEST_FUNC(ctdb_notify_data)();
 	TEST_FUNC(ctdb_iface)();
 	TEST_FUNC(ctdb_iface_list)();

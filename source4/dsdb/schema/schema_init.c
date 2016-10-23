@@ -39,7 +39,6 @@ struct dsdb_schema *dsdb_new_schema(TALLOC_CTX *mem_ctx)
 	if (!schema) {
 		return NULL;
 	}
-	schema->refresh_interval = 120;
 
 	return schema;
 }
@@ -65,7 +64,11 @@ struct dsdb_schema *dsdb_schema_copy_shallow(TALLOC_CTX *mem_ctx,
 		goto failed;
 	}
 
-	schema_copy->schema_info = talloc_strdup(schema_copy, schema->schema_info);
+	schema_copy->schema_info = talloc(schema_copy, struct dsdb_schema_info);
+	if (!schema_copy->schema_info) {
+		goto failed;
+	}
+	*schema_copy->schema_info = *schema->schema_info;
 
 	/* copy classes and attributes*/
 	for (cls = schema->classes; cls; cls = cls->next) {
@@ -88,8 +91,6 @@ struct dsdb_schema *dsdb_schema_copy_shallow(TALLOC_CTX *mem_ctx,
 	}
 	schema_copy->num_attributes = schema->num_attributes;
 
-	schema_copy->refresh_interval = schema->refresh_interval;
-
 	/* rebuild indexes */
 	ret = dsdb_setup_sorted_accessors(ldb, schema_copy);
 	if (ret != LDB_SUCCESS) {
@@ -110,8 +111,8 @@ WERROR dsdb_load_prefixmap_from_drsuapi(struct dsdb_schema *schema,
 					const struct drsuapi_DsReplicaOIDMapping_Ctr *ctr)
 {
 	WERROR werr;
-	const char *schema_info;
-	struct dsdb_schema_prefixmap *pfm;
+	struct dsdb_schema_info *schema_info = NULL;
+	struct dsdb_schema_prefixmap *pfm = NULL;
 
 	werr = dsdb_schema_pfm_from_drsuapi_pfm(ctr, true, schema, &pfm, &schema_info);
 	W_ERROR_NOT_OK_RETURN(werr);
@@ -120,7 +121,7 @@ WERROR dsdb_load_prefixmap_from_drsuapi(struct dsdb_schema *schema,
 	talloc_free(schema->prefixmap);
 	schema->prefixmap = pfm;
 
-	talloc_free(discard_const(schema->schema_info));
+	talloc_free(schema->schema_info);
 	schema->schema_info = schema_info;
 
 	return WERR_OK;
@@ -172,8 +173,8 @@ WERROR dsdb_load_oid_mappings_ldb(struct dsdb_schema *schema,
 				  const struct ldb_val *schemaInfo)
 {
 	WERROR werr;
-	const char *schema_info;
-	struct dsdb_schema_prefixmap *pfm;
+	struct dsdb_schema_info *schema_info = NULL;
+	struct dsdb_schema_prefixmap *pfm = NULL;
 	TALLOC_CTX *mem_ctx;
 
 	/* verify schemaInfo blob is valid one */
@@ -195,19 +196,18 @@ WERROR dsdb_load_oid_mappings_ldb(struct dsdb_schema *schema,
 	}
 
 	/* decode schema_info */
-	schema_info = hex_encode_talloc(mem_ctx,
-					schemaInfo->data,
-					schemaInfo->length);
-	if (!schema_info) {
+	werr = dsdb_schema_info_from_blob(schemaInfo, mem_ctx, &schema_info);
+	if (!W_ERROR_IS_OK(werr)) {
+		DEBUG(0, (__location__ " dsdb_schema_info_from_blob failed: %s\n", win_errstr(werr)));
 		talloc_free(mem_ctx);
-		return WERR_NOMEM;
+		return werr;
 	}
 
 	/* store prefixMap and schema_info into cached Schema */
 	talloc_free(schema->prefixmap);
 	schema->prefixmap = talloc_steal(schema, pfm);
 
-	talloc_free(discard_const(schema->schema_info));
+	talloc_free(schema->schema_info);
 	schema->schema_info = talloc_steal(schema, schema_info);
 
 	/* clean up locally allocated mem */
@@ -260,8 +260,8 @@ WERROR dsdb_get_oid_mappings_ldb(const struct dsdb_schema *schema,
 	talloc_free(ctr);
 	W_ERROR_NOT_OK_RETURN(status);
 
-	*schemaInfo = strhex_to_data_blob(mem_ctx, schema->schema_info);
-	W_ERROR_HAVE_NO_MEMORY(schemaInfo->data);
+	status = dsdb_blob_from_schema_info(schema->schema_info, mem_ctx, schemaInfo);
+	W_ERROR_NOT_OK_RETURN(status);
 
 	return WERR_OK;
 }
@@ -276,6 +276,7 @@ WERROR dsdb_create_prefix_mapping(struct ldb_context *ldb, struct dsdb_schema *s
 	uint32_t attid;
 	TALLOC_CTX *mem_ctx;
 	struct dsdb_schema_prefixmap *pfm;
+	struct dsdb_schema_prefixmap *orig_pfm = NULL;
 
 	mem_ctx = talloc_new(ldb);
 	W_ERROR_HAVE_NO_MEMORY(mem_ctx);
@@ -312,8 +313,11 @@ WERROR dsdb_create_prefix_mapping(struct ldb_context *ldb, struct dsdb_schema *s
 		return status;
 	}
 
-	talloc_unlink(schema, schema->prefixmap);
-	schema->prefixmap = talloc_steal(schema, pfm);
+	/*
+	 * We temporary replcate schema->prefixmap.
+	 */
+	orig_pfm = schema->prefixmap;
+	schema->prefixmap = pfm;
 
 	/* Update prefixMap in ldb*/
 	status = dsdb_write_prefixes_from_schema_to_ldb(mem_ctx, ldb, schema);
@@ -326,6 +330,13 @@ WERROR dsdb_create_prefix_mapping(struct ldb_context *ldb, struct dsdb_schema *s
 
 	DEBUG(2,(__location__ " Added prefixMap %s - now have %u prefixes\n",
 		 full_oid, schema->prefixmap->length));
+
+	/*
+	 * We restore the original prefix map.
+	 *
+	 * The next schema reload should get an updated prefix map!
+	 */
+	schema->prefixmap = orig_pfm;
 
 	talloc_free(mem_ctx);
 	return status;
@@ -623,13 +634,23 @@ WERROR dsdb_attribute_from_ldb(const struct dsdb_schema *schema,
 	}
 
 	GET_STRING_LDB(msg, "cn", attr, attr, cn, false);
+
+	/*
+	 * This allows for the fact that the CN attribute is not
+	 * replicated over DRS, it is only replicated under the alias
+	 * 'name'.
+	 */
+	if (attr->cn == NULL) {
+		GET_STRING_LDB(msg, "name", attr, attr, cn, true);
+	}
+
 	GET_STRING_LDB(msg, "lDAPDisplayName", attr, attr, lDAPDisplayName, true);
 	GET_STRING_LDB(msg, "attributeID", attr, attr, attributeID_oid, true);
 	if (!schema->prefixmap || schema->prefixmap->length == 0) {
 		/* set an invalid value */
 		attr->attributeID_id = DRSUAPI_ATTID_INVALID;
 	} else {
-		status = dsdb_schema_pfm_make_attid(schema->prefixmap,
+		status = dsdb_schema_pfm_attid_from_oid(schema->prefixmap,
 						    attr->attributeID_oid,
 						    &attr->attributeID_id);
 		if (!W_ERROR_IS_OK(status)) {
@@ -767,15 +788,25 @@ WERROR dsdb_set_class_from_ldb_dups(struct dsdb_schema *schema,
 		return WERR_NOMEM;
 	}
 	GET_STRING_LDB(msg, "cn", obj, obj, cn, false);
+
+	/*
+	 * This allows for the fact that the CN attribute is not
+	 * replicated over DRS, it is only replicated under the alias
+	 * 'name'.
+	 */
+	if (obj->cn == NULL) {
+		GET_STRING_LDB(msg, "name", obj, obj, cn, true);
+	}
+
 	GET_STRING_LDB(msg, "lDAPDisplayName", obj, obj, lDAPDisplayName, true);
 	GET_STRING_LDB(msg, "governsID", obj, obj, governsID_oid, true);
 	if (!schema->prefixmap || schema->prefixmap->length == 0) {
 		/* set an invalid value */
 		obj->governsID_id = DRSUAPI_ATTID_INVALID;
 	} else {
-		status = dsdb_schema_pfm_make_attid(schema->prefixmap,
-						    obj->governsID_oid,
-						    &obj->governsID_id);
+		status = dsdb_schema_pfm_attid_from_oid(schema->prefixmap,
+							obj->governsID_oid,
+							&obj->governsID_id);
 		if (!W_ERROR_IS_OK(status)) {
 			DEBUG(0,("%s: '%s': unable to map governsID %s: %s\n",
 				__location__, obj->lDAPDisplayName, obj->governsID_oid,
@@ -915,9 +946,6 @@ int dsdb_schema_from_ldb_results(TALLOC_CTX *mem_ctx, struct ldb_context *ldb,
 
 	if (lp_opaque) {
 		struct loadparm_context *lp_ctx = talloc_get_type_abort(lp_opaque, struct loadparm_context);
-		schema->refresh_interval = lpcfg_parm_int(lp_ctx, NULL, "dsdb", "schema_reload_interval", schema->refresh_interval);
-		lp_ctx = talloc_get_type(ldb_get_opaque(ldb, "loadparm"),
-					 struct loadparm_context);
 		schema->fsmo.update_allowed = lpcfg_parm_bool(lp_ctx, NULL,
 							      "dsdb", "schema update allowed",
 							      false);

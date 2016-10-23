@@ -22,6 +22,7 @@
 #include "torture/ndr/ndr.h"
 #include "librpc/gen_ndr/ndr_drsblobs.h"
 #include "torture/ndr/proto.h"
+#include "lib/util/base64.h"
 
 static const uint8_t forest_trust_info_data_out[] = {
 	0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
@@ -179,22 +180,381 @@ static bool trust_domain_passwords_check_in(struct torture_context *tctx,
 	return true;
 }
 
+static const uint8_t supplementalCredentials_empty1[] = {
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+static bool supplementalCredentials_empty1_check(struct torture_context *tctx,
+					struct supplementalCredentialsBlob *r)
+{
+	torture_assert_int_equal(tctx, r->unknown1, 0, "unknown1");
+	torture_assert_int_equal(tctx, r->__ndr_size, 0, "__ndr_size");
+	torture_assert_int_equal(tctx, r->unknown2, 0, "unknown2");
+	torture_assert(tctx, r->sub.prefix == NULL, "prefix");
+	torture_assert_int_equal(tctx, r->sub.signature, 0, "signature");
+	torture_assert_int_equal(tctx, r->sub.num_packages, 0, "num_packages");
+	torture_assert_int_equal(tctx, r->unknown3, 0, "unknown3");
+
+	return true;
+}
+
+static const uint8_t supplementalCredentials_empty2[] = {
+	0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x00,
+	0x20, 0x00, 0x20, 0x00, 0x50, 0x00, 0x00 /* was 0x30 */
+	/*
+	 * I've changed the last byte as Samba sets it to 0x00
+	 * and it's random on Windows.
+	 */
+};
+
+static bool supplementalCredentials_empty2_check(struct torture_context *tctx,
+					struct supplementalCredentialsBlob *r)
+{
+	torture_assert_int_equal(tctx, r->unknown1, 0, "unknown1");
+	torture_assert_int_equal(tctx, r->__ndr_size, 0x62, "__ndr_size");
+	torture_assert_int_equal(tctx, r->unknown2, 0, "unknown2");
+	torture_assert_str_equal(tctx, r->sub.prefix, SUPPLEMENTAL_CREDENTIALS_PREFIX, "prefix");
+	torture_assert_int_equal(tctx, r->sub.signature, SUPPLEMENTAL_CREDENTIALS_SIGNATURE, "signature");
+	torture_assert_int_equal(tctx, r->sub.num_packages, 0, "num_packages");
+	torture_assert_int_equal(tctx, r->unknown3, 0x00, "unknown3"); /* This is typically not initialized */
+
+	return true;
+}
+
+static const char *alpha13_supplementalCredentials =
+	"AAAAAPgFAAAAAAAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAg"
+	"ACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAI"
+	"AAgACAAIAAgACAAUAADACAANAEBAFAAcgBpAG0AYQByAHkAOgBLAGUAcgBiAGUAcgBvAHMAMDMwMD"
+	"AwMDAwMjAwMDAwMDNFMDAzRTAwNEMwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMwMDAwMDAwODAwMDA"
+	"wMDhBMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxMDAwMDAwMDgwMDAwMDA5MjAwMDAwMDAwMDAwMDAw"
+	"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA0MTAwNEMwMDUwMDA0ODAwNDEwMDMxMDAzM"
+	"zAwMkUwMDUzMDA0MTAwNEQwMDQyMDA0MTAwMkUwMDQzMDA0RjAwNTIwMDUwMDA0MTAwNjQwMDZEMD"
+	"A2OTAwNkUwMDY5MDA3MzAwNzQwMDcyMDA2MTAwNzQwMDZGMDA3MjAwMkMwREQ2QzRFQzJGMDhDQjJ"
+	"DMERENkM0RUMyRjA4Q0IQAEAAAgBQAGEAYwBrAGEAZwBlAHMANEIwMDY1MDA3MjAwNjIwMDY1MDA3"
+	"MjAwNkYwMDczMDAwMDAwNTcwMDQ0MDA2OTAwNjcwMDY1MDA3MzAwNzQwMB4AwAMBAFAAcgBpAG0AY"
+	"QByAHkAOgBXAEQAaQBnAGUAcwB0ADMxMDAwMTFEMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDQ1OE"
+	"FFNDY1NjY0NkVENUIxRTZCRUQ3NjBGMzZCMUM1RDBEMzRDNDE2MERBOEQ0QzM4M0U1OTQxMzM3MDl"
+	"COUQyMDYzMTUxQTI3ODBFODkzMDQ1OTg3N0IyRURGMUU0MDQ1OEFFNDY1NjY0NkVENUIxRTZCRUQ3"
+	"NjBGMzZCMUMzOTAyNDNBNENBQUUxNDUzMEVERDMwRTUyRjg1OTREQkEzNDBEMUExQzEyNkQ5QUVDN"
+	"kI3MDE3QzEzRTFEODY0NzNDQTk4RUZCOUI2OTRBODFEMjUyNkIwNzc1ODYzNUQ2MUE2MEMxNjIyMD"
+	"kxRDE2RDY4NEE1RTk2QzI0QkIwOENBMzQzNjI3M0E3Mzk0NTA1QkZEOUI1NTMzRUMwOUE3M0MyMDF"
+	"EQTA5RTVBREZEOUMwMzExRTZEMUJBNEIzNEEzN0FFODMyMUE5RTZFREMyQzA5NERBMDcwRUI4NTgz"
+	"QTYxQTYwQzE2MjIwOTFEMTZENjg0QTVFOTZDMjRCQjA4RTgzRENFNUNBOTJERkI4ODNFQTYwNUM4M"
+	"jc1OTVGRDE0QjBBM0M2RkRCOTQ2QjM5MkYxMDgzNjEyM0NGQjVFQThFNEZFNjAxNzBFRTA4OTQ2N0"
+	"MyNUJEMEY0OTAxMDc3MzYyNTk4RUFGRUI5MjAzNEJFMjEyRDVDNTM5MTdBQzE0RTRDM0RFRTcwQjh"
+	"BRDU2QUQ5NUMwNkNGNzU3M0VDOTY5MzlGOTYzNDQzNkFDQzY4QjYzRUFEM0ZDRDQ0QUM2RjY5QzND"
+	"MTdDQjlBODA5MDA5M0M0NDQyOERDQTg0ODNERTU5M0JDQUM5NThDNUE0Rjg4NTVDODY5QjAzMTlFR"
+	"jVCMUM3OTkyQTc5Q0I4N0I3NjFBMEU0QjUzQkYzNTQ0REQxNTQ0OEUwMTAzREJBMkMyRjZDMUVDNE"
+	"IwMjU5REZCODdFQTNDMDVDRjNEMUY2QzIwNkFDQkZGNTZDOUVGRDI3QUY2NTBDRjJGQjgxRThERTA"
+	"1QzVGQzE5QjE0QkE4M0UwN0ZCRkM0MUM5RENFQTlFNDY1RTBEODVDNDg2MUZCQTBGQzQyNDI0REEx"
+	"OTU4Mzk5REE3QTY3MTE3RUM5NTUxQTI1QzBFMzg1OEM2OUZFREFGRjUwRjUwQ0RFQzA0MTdFMUQ0M"
+	"UJFRjlBNzM5QzM0QzBDOTk3NzI5MERGRTIyNzJCQzVDOTMyMTVGMzkwRUE4QzYxRTIzQ0UwMDBDNg"
+	"A=";
+	
+static bool alpha13_supplementalCredentials_check(struct torture_context *tctx,
+						  struct supplementalCredentialsBlob *r)
+{
+	torture_assert_int_equal(tctx, r->unknown1, 0, "unknown1");
+	torture_assert_int_equal(tctx, r->__ndr_size, 0x5F8, "__ndr_size");
+	torture_assert_int_equal(tctx, r->unknown2, 0, "unknown2");
+	torture_assert_str_equal(tctx, r->sub.prefix, SUPPLEMENTAL_CREDENTIALS_PREFIX, "prefix");
+	torture_assert_int_equal(tctx, r->sub.signature, SUPPLEMENTAL_CREDENTIALS_SIGNATURE, "signature");
+	torture_assert_int_equal(tctx, r->sub.num_packages, 3, "num_packages");
+	torture_assert_str_equal(tctx, r->sub.packages[0].name, "Primary:Kerberos", "name of package 0");
+	torture_assert_str_equal(tctx, r->sub.packages[1].name, "Packages", "name of package 1");
+	torture_assert_str_equal(tctx, r->sub.packages[2].name, "Primary:WDigest", "name of package 2");
+	torture_assert_int_equal(tctx, r->unknown3, 0x00, "unknown3"); /* This is typically not initialized */
+
+	return true;
+}
+
+static const char *release_4_1_0rc3_supplementalCredentials =
+	"AAAAALgIAAAAAAAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAg"
+	"ACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAI"
+	"AAgACAAIAAgACAAUAAEADYAEAIBAFAAcgBpAG0AYQByAHkAOgBLAGUAcgBiAGUAcgBvAHMALQBOAG"
+	"UAdwBlAHIALQBLAGUAeQBzADA0MDAwMDAwMDQwMDAwMDAwMDAwMDAwMDUwMDA1MDAwNzgwMDAwMDA"
+	"wMDEwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDEyMDAwMDAwMjAwMDAwMDBDODAwMDAwMDAw"
+	"MDAwMDAwMDAwMDAwMDAwMDEwMDAwMDExMDAwMDAwMTAwMDAwMDBFODAwMDAwMDAwMDAwMDAwMDAwM"
+	"DAwMDAwMDEwMDAwMDAzMDAwMDAwMDgwMDAwMDBGODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMD"
+	"AwMDAxMDAwMDAwMDgwMDAwMDAwMDAxMDAwMDUyMDA0NTAwNEMwMDQ1MDA0MTAwNTMwMDQ1MDAyRDA"
+	"wMzQwMDJEMDAzMTAwMkQwMDMwMDA1MjAwNDMwMDMzMDAyRTAwNTMwMDQxMDA0RDAwNDIwMDQxMDAy"
+	"RTAwNDMwMDRGMDA1MjAwNTAwMDQxMDA2NDAwNkQwMDY5MDA2RTAwNjkwMDczMDA3NDAwNzIwMDYxM"
+	"DA3NDAwNkYwMDcyMDA2MTQzNDMxNERDMjZFNzM0MTBERkQ2OUVENDc1Mjk1QTU1RjJGREUyNEQ2Qj"
+	"FEMEMzMzk4QkY2NDI3OUI4REMwNjg0Nzc5ODgzNkUwOTE1NTMwMjYwMDlCMkUzMzBDQjBBNzFBOTQ"
+	"xRjdGOEY3OTYyQTcxQTk0MUY3RjhGNzk2MiAAWAEBAFAAcgBpAG0AYQByAHkAOgBLAGUAcgBiAGUA"
+	"cgBvAHMAMDMwMDAwMDAwMjAwMDAwMDUwMDA1MDAwNEMwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMwM"
+	"DAwMDAwODAwMDAwMDlDMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxMDAwMDAwMDgwMDAwMDBBNDAwMD"
+	"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA1MjAwNDUwMDRDMDA0NTA"
+	"wNDEwMDUzMDA0NTAwMkQwMDM0MDAyRDAwMzEwMDJEMDAzMDAwNTIwMDQzMDAzMzAwMkUwMDUzMDA0"
+	"MTAwNEQwMDQyMDA0MTAwMkUwMDQzMDA0RjAwNTIwMDUwMDA0MTAwNjQwMDZEMDA2OTAwNkUwMDY5M"
+	"DA3MzAwNzQwMDcyMDA2MTAwNzQwMDZGMDA3MjAwQTcxQTk0MUY3RjhGNzk2MkE3MUE5NDFGN0Y4Rj"
+	"c5NjIQAJAAAgBQAGEAYwBrAGEAZwBlAHMANEIwMDY1MDA3MjAwNjIwMDY1MDA3MjAwNkYwMDczMDA"
+	"yRDAwNEUwMDY1MDA3NzAwNjUwMDcyMDAyRDAwNEIwMDY1MDA3OTAwNzMwMDAwMDA0QjAwNjUwMDcy"
+	"MDA2MjAwNjUwMDcyMDA2RjAwNzMwMDAwMDA1NzAwNDQwMDY5MDA2NzAwNjUwMDczMDA3NDAwHgDAA"
+	"wEAUAByAGkAbQBhAHIAeQA6AFcARABpAGcAZQBzAHQAMzEwMDAxMUQwMDAwMDAwMDAwMDAwMDAwMD"
+	"AwMDAwMDBFNDUwOUQ2MERDRDZERkIxOTlBMDY5QjU4NUUyOTdCMEU0RTgwMzc4QUQxMDhFQjdENUJ"
+	"COUQwNjBDMEVFRURBOUNEMzhGQTk3RjBERUJGNkRCMTkxNDA4RkIwQTQ2OThFNDUwOUQ2MERDRDZE"
+	"RkIxOTlBMDY5QjU4NUUyOTdCMDg2NjhCREI1QjM4ODg1M0Y5NDc0OTI0RjQzRkYzMEY0NDBFREJEN"
+	"UU3MUU0Mjg4QjNFRkYyRUFEQUQyQjcwMTNBRTEwODQ0MjlCQTc4RTUwRkYyMTAxRkFEQzEwMEI1Mz"
+	"NGODYwNzYyQzc1OTU0MTNEMENCRUNEODNDODJDRUE3Njk3MjgxQjI5QTU5M0U3MzRFQUQzMEZBMkE"
+	"3N0EzQkVERjA4MjEzMDNGMTUwOThFMUM1RkMzNjhDQzY2MTZEMTI1MDU4NzQ4RTUyRkMzM0YzQ0ZC"
+	"MUE0NUIzMzNEMUJDM0Y4NjA3NjJDNzU5NTQxM0QwQ0JFQ0Q4M0M4MkNFQTczNDk4MDNFN0FEODUyN"
+	"zEyMTlBNzEyMEQ4MkE4NjA2RDlERUQxMDA2NDk2MTkyQjZEQTM0RkQxMDdGOThDMjdDOTUyQzMwND"
+	"Q0MUFDODcwMTYwODdGNDU0ODUwMTRCQ0Q1QTNDNUU4NjBFQ0Y5RTQzMzJCODI1OTUyOTJFODYxNkF"
+	"DREU1RUJERjFFMkIzNDZCNTcyRUE2RjM4MkQyOTJCNkE4MDk3NzY1RDMyMTI0M0Y4QjFCRjAzNEFB"
+	"MjZGNEI3ODYwRUJGMzY4NDc5MTExRjQzRkMyRTVFQkUzQkNGRkE3N0RDOTdEQTJBQ0I0ODQ1NjIwQ"
+	"zg3QkNFMTYwQkE3RTEyOTFFQ0MwODdFQkE4Qzg1QkNDQjc4MzVGRTYyRUU4RTA0QTBBNzQwOENDQT"
+	"MxRkVDRjdFQTQ0MjI4QjJCRjVFQjg5MEQ2QjBEODgwNzVEMzhFREYxQzc5NEY1MDgxNUE2MzcxNTM"
+	"5QURCQTEyNkFDODc0Q0EyNzNBMzgwRTM0NjRFQkZERDE4MTgzRDY1MDlDOTJEQzVCQzhCNTg4M0Iy"
+	"QTlGRTcyMUQ0RkQ0MEQ3QkI0QzlENjcxOTYxNTRFRTQ4QkIzMDkxNEE3QkREODcyOTMyMjc1M0JDR"
+	"Dk2QkI5QzY1MzdFQjc1ODg3MUZDQzhGMEUxQjkyRTgyNEIxQTBDMjU1NjE2QURCMzYyMDc5NTQ5OT"
+	"Q5MUJCRTY5NTA0AA==";
+
+static bool release_4_1_0rc3_supplementalCredentials_check(struct torture_context *tctx,
+						  struct supplementalCredentialsBlob *r)
+{
+	torture_assert_int_equal(tctx, r->unknown1, 0, "unknown1");
+	torture_assert_int_equal(tctx, r->__ndr_size, 0x8b8, "__ndr_size");
+	torture_assert_int_equal(tctx, r->unknown2, 0, "unknown2");
+	torture_assert_str_equal(tctx, r->sub.prefix, SUPPLEMENTAL_CREDENTIALS_PREFIX, "prefix");
+	torture_assert_int_equal(tctx, r->sub.signature, SUPPLEMENTAL_CREDENTIALS_SIGNATURE, "signature");
+	torture_assert_int_equal(tctx, r->sub.num_packages, 4, "num_packages");
+	torture_assert_str_equal(tctx, r->sub.packages[0].name, "Primary:Kerberos-Newer-Keys", "name of package 0");
+	torture_assert_str_equal(tctx, r->sub.packages[1].name, "Primary:Kerberos", "name of package 0");
+	torture_assert_str_equal(tctx, r->sub.packages[2].name, "Packages", "name of package 1");
+	torture_assert_str_equal(tctx, r->sub.packages[3].name, "Primary:WDigest", "name of package 2");
+	torture_assert_int_equal(tctx, r->unknown3, 0x00, "unknown3"); /* This is typically not initialized */
+
+	return true;
+}
+
+static const char *release_4_5_0pre_GPG_supplementalCredentials =
+	"AAAAADAQAAAAAAAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAg"
+	"ACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAI"
+	"AAgACAAIAAgACAAUAAFADYAdAQBAFAAcgBpAG0AYQByAHkAOgBLAGUAcgBiAGUAcgBvAHMALQBOAG"
+	"UAdwBlAHIALQBLAGUAeQBzADA0MDAwMDAwMDQwMDAwMDAwNDAwMDQwMDQyMDA0MjAwMzgwMTAwMDA"
+	"wMDEwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDEyMDAwMDAwMjAwMDAwMDA3QTAxMDAwMDAw"
+	"MDAwMDAwMDAwMDAwMDAwMDEwMDAwMDExMDAwMDAwMTAwMDAwMDA5QTAxMDAwMDAwMDAwMDAwMDAwM"
+	"DAwMDAwMDEwMDAwMDAzMDAwMDAwMDgwMDAwMDBBQTAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMD"
+	"AwMDAxMDAwMDAwMDgwMDAwMDBCMjAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDEyMDAwMDA"
+	"wMjAwMDAwMDBCQTAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDExMDAwMDAwMTAwMDAwMDBE"
+	"QTAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAzMDAwMDAwMDgwMDAwMDBFQTAxMDAwMDAwM"
+	"DAwMDAwMDAwMDAwMDAwMDEwMDAwMDAxMDAwMDAwMDgwMDAwMDBGMjAxMDAwMDAwMDAwMDAwMDAwMD"
+	"AwMDAwMDEwMDAwMDEyMDAwMDAwMjAwMDAwMDBGQTAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDA"
+	"wMDExMDAwMDAwMTAwMDAwMDAxQTAyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAzMDAwMDAw"
+	"MDgwMDAwMDAyQTAyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAxMDAwMDAwMDgwMDAwMDAzM"
+	"jAyMDAwMDQxMDA0NDAwNDQwMDRGMDA0RDAwMkUwMDUzMDA0MTAwNEQwMDQyMDA0MTAwMkUwMDQ1MD"
+	"A1ODAwNDEwMDREMDA1MDAwNEMwMDQ1MDAyRTAwNDMwMDRGMDA0RDAwNzAwMDZGMDA3MzAwNjkwMDc"
+	"4MDA3NTAwNzMwMDY1MDA3MjAwMzEwMDM3NkI0RjI5OEM2QTJBNjJGNUJFQjMyOEZDQjUxMUFFREIz"
+	"NTI3NzY1NzQ2MDkzMzcyMTZDODk5MUQ0NUM3RTI4REZDMDA2Q0MzNzlFNzEyRkU0QTIxRTNBMDg1N"
+	"zM5MDM0QzgyNjBFMUY0NTRBN0MzNEM4MjYwRTFGNDU0QTdDODBDNDA1QjgxMkM2OEFCN0Q2QjZGRT"
+	"ZFRjRCQTM1N0ZBMTA1NjRDRjZFOUVFRUY2MUZEQUNGOEREM0Y3RkI0MDAzQjhBM0U1Qzk3NzgxOUF"
+	"BNkM0NzRFQTJDRkQxRjlFMkE4NjQwQUU5NDhBQzhGMTJBODY0MEFFOTQ4QUM4RjFEMDlDMjJGMTU0"
+	"MDZBQjk1QTUzRUQ5NkYxREFFRkJCNEY4NzUwMDQ4OEE1NzE0OEJFRTIzMkZGMjE4Q0Y3REE1MkZBQ"
+	"jYyQTEwQzk5NzUwMkYzNEQ1MEQzOTZEODgwODA0MEYxNkI3Q0VDN0ZDRTAxNDBGMTZCN0NFQzdGQ0"
+	"UwMSAArAEBAFAAcgBpAG0AYQByAHkAOgBLAGUAcgBiAGUAcgBvAHMAMDMwMDAwMDAwMjAwMDIwMDQ"
+	"yMDA0MjAwNzQwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMwMDAwMDAwODAwMDAwMEI2MDAwMDAwMDAw"
+	"MDAwMDAwMDAwMDAwMDAxMDAwMDAwMDgwMDAwMDBCRTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMzAwM"
+	"DAwMDA4MDAwMDAwQzYwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAwODAwMDAwMENFMDAwMD"
+	"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDQxMDA0NDAwNDQwMDRGMDA"
+	"0RDAwMkUwMDUzMDA0MTAwNEQwMDQyMDA0MTAwMkUwMDQ1MDA1ODAwNDEwMDREMDA1MDAwNEMwMDQ1"
+	"MDAyRTAwNDMwMDRGMDA0RDAwNzAwMDZGMDA3MzAwNjkwMDc4MDA3NTAwNzMwMDY1MDA3MjAwMzEwM"
+	"DM0QzgyNjBFMUY0NTRBN0MzNEM4MjYwRTFGNDU0QTdDMkE4NjQwQUU5NDhBQzhGMTJBODY0MEFFOT"
+	"Q4QUM4RjEeAMADAQBQAHIAaQBtAGEAcgB5ADoAVwBEAGkAZwBlAHMAdAAzMTAwMDExRDAwMDAwMDA"
+	"wMDAwMDAwMDAwMDAwMDAwMENFMERENjk2NEU0ODNDN0YxRTIzMjk0RjRGMTMwMUJGRjI3Rjg5NTA1"
+	"MEEwMEVCODZBMTgwNzMyMkM1MzQzMUYxMEY2OTU2MUIyQUJFRjg2ODIyMjE2RTc5RTFGN0VGMUNFM"
+	"ERENjk2NEU0ODNDN0YxRTIzMjk0RjRGMTMwMUJGRjI3Rjg5NTA1MEEwMEVCODZBMTgwNzMyMkM1Mz"
+	"QzMUY0MURCMkRENzJCQzRERTgzRkUzMTBFQTEzRjQwNTE0RkNFMERENjk2NEU0ODNDN0YxRTIzMjk"
+	"0RjRGMTMwMUJGMUY2NjY3RjcyN0I2RjA4RERBOUFENjUyODdGMjVGNEQxRjY2NjdGNzI3QjZGMDhE"
+	"REE5QUQ2NTI4N0YyNUY0RDMwNDUyNUJCNTQwNDQ2NjE4OTRFM0YyRDQ4RUI5MTAyMzhGOTZFNDVBM"
+	"Tk2RkU5MjczQjREOUQxRUVEM0ExM0UxRjY2NjdGNzI3QjZGMDhEREE5QUQ2NTI4N0YyNUY0RDE0Qj"
+	"cyMDdGQUNGMEM2NDE5REMxRjNGMDIyMUYyREVBMzhGOTZFNDVBMTk2RkU5MjczQjREOUQxRUVEM0E"
+	"xM0VFMUJGMUI3NzY3NkZCNDcwODMwREYwMDM4RTIyRUY0QUUxQkYxQjc3Njc2RkI0NzA4MzBERjAw"
+	"MzhFMjJFRjRBRDVEQjFFOEJDNDE3QUEwMjlCNUU5MDFGQTA4OTQ0MjcxM0Q2ODUyNkE2MUVENDE1N"
+	"kQ5REY3OTA1MkUyQzZDQTExMUY4NTc4MkZFODRCNUQ2RDlDMzJBMDYxNkY3Q0U0QzkxMjUzQzU1Mz"
+	"QxN0MzMTY5MjM4Qzg1MjlDMkY3RjE0NzMzMUUyRDg5N0UyRDlBRjlDMzhGRDI2RjIwMkY0NTQ3MzM"
+	"xRTJEODk3RTJEOUFGOUMzOEZEMjZGMjAyRjQ1MUY2RDAyN0VDNjc1REZFNEQyMjlEOTA0MDFDOTZG"
+	"MEY0MjdCMjA5Nzg2MEJBQkI4QjUzQ0U0MUFBNzA0QTI0OTQyN0IyMDk3ODYwQkFCQjhCNTNDRTQxQ"
+	"UE3MDRBMjQ5QTYwN0E2M0ZERTJFRjAzN0U1M0NEQzkyNEM1NTI0QUIxQzA2OUZDRDNFOThGMDNFNz"
+	"lBOEJFN0NBQzMzOERDNUVERDY5RDEwNThENEY2QzQ2NTNCNTE4NTNFMjI1OUI5Q0M3NjZGRjRFNDg"
+	"5RUI4MEZFQTRGMThFMTIyMTJEQTkQALQAAgBQAGEAYwBrAGEAZwBlAHMANEIwMDY1MDA3MjAwNjIw"
+	"MDY1MDA3MjAwNkYwMDczMDAyRDAwNEUwMDY1MDA3NzAwNjUwMDcyMDAyRDAwNEIwMDY1MDA3OTAwN"
+	"zMwMDAwMDA0QjAwNjUwMDcyMDA2MjAwNjUwMDcyMDA2RjAwNzMwMDAwMDA1NzAwNDQwMDY5MDA2Nz"
+	"AwNjUwMDczMDA3NDAwMDAwMDUzMDA2MTAwNkQwMDYyMDA2MTAwNDcwMDUwMDA0NzAwIAB2BAEAUAB"
+	"yAGkAbQBhAHIAeQA6AFMAYQBtAGIAYQBHAFAARwAyRDJEMkQyRDJENDI0NTQ3NDk0RTIwNTA0NzUw"
+	"MjA0RDQ1NTM1MzQxNDc0NTJEMkQyRDJEMkQwQTU2NjU3MjczNjk2RjZFM0EyMDQ3NkU3NTUwNDcyM"
+	"Dc2MzIwQTBBNjg1MTQ1NEQ0MTJGMzM3ODZCNDY2QTY4NDQzMzRCNkU0MTUxNjYyRjY1NDczNjc5NE"
+	"I2ODU5NjQ2OTZFNzEyRjRGMzg0QTcyNzg0QzQzMzY0NDc3NkU2NjZGNzA0QzRGNzQyRjM2NEY0QzM"
+	"yNDQ0MzQzNjc1NTUxNkM0MjUwNjMwQTMzNDE2NTMyNkU2QzU5NDUzMTc0MkYzNzdBNEM2NzY1NTA2"
+	"NDZBNDM2RjZBN0E0OTQzMzEzOTcxMzA0RjM5MkY1NzM0NEIzNTU0N0E3MzY5NjU2RjZDNkU0NTQ0N"
+	"jQzMjY3NTc0Njc1NTAzNzc4NEQ2NjQyNzI0RTY0NzM3QTM3MEE2RTYyNDg1NzdBNDc2NDM4NzU1Nj"
+	"JCNzQ0NDJGNkEzMDM4Nzk2NzcxNDI2ODdBNEI0QTU1NkE0OTU5NTY2MTUwNTQ3NjY2MzQ3NjMwNDM"
+	"3NjQ1NjI2NTQ0NDg0QzZDNTI3QTQ0Njc0Nzc5NDc3MzMxMzU0ODY0MzI1MDRDNDgzMjBBNkU2RDM1"
+	"NzU0OTc0NTk0OTY0NTczOTQyNkMzOTM4Mzk2MTU1MzczNjZENEU1MjU0NkIzOTMwMzE1MjM5NEM2O"
+	"TcwNTA2RDQ4NzU0MTc4NTE0NzQ0NTI3NTcxNEI2Rjc0NTg2QzU3NDY3NjM0NjE2NDY2NTU1NDZEMz"
+	"U2RTZCNTAwQTQ0Mzg3MzczNDU2QjMyNDM1NTZBNEQ0RjQ3NkI3MDJGMkYyQjM3MzQ0QjRBNzI2OTV"
+	"BMzg3NTcxMzE1NzMxNTY3ODY3NzE2RTc1NDY1ODREMzM3MjQyMzkzNjY2NDM1QTU4NDM0RDJGNDQ1"
+	"MjRDNjc1MzY4NjMzMDU4NTM0MjQ4MEE2ODQxNDE2QzVBMkI3MzYzNEQ1QTQ3Mzg0OTU3MkIzOTU2N"
+	"EI1QTU2NDY2QTZCNTk0RTZGNzI1MjRDNEE1QTZFNzY3MDU2NEQ2ODc2NTY2RTM1Mzk0QTYxNDE2Mj"
+	"U1NDY3MzUwNTk0Qjc0Nzg3ODJCNDU2RjZFMzczNzM4NDE1OTBBMzkzNDRCNzY1MDZFNEI1MzMzNzA"
+	"zMTQ5NjM2ODU3NTQ2QTc2NEM3MTc2NTk2Njc2NzM1NzRENjc2OTY0NEQzMDc5NUE1OTU5NEE2NzUx"
+	"NTM2QjdBNDczNzUzNEQ1OTY0NTA1QTc3NzkzMjQxNEQ2QTRFMzU0QTQzNTI2RDQ3NjkwQTY0NjUzN"
+	"jJGMzc2RjRFNTU1OTMxNEE1NTUwNTY0Njc1MzkyQjUyNUE2RDY4NjkzNTM1NEY3NzJGN0E0RjU1Nz"
+	"czMzcwNDc2NzBBM0Q3MTY4NkM0NjBBMkQyRDJEMkQyRDQ1NEU0NDIwNTA0NzUwMjA0RDQ1NTM1MzQ"
+	"xNDc0NTJEMkQyRDJEMkQwQQA=";
+
+static bool release_4_5_0pre_GPG_supplementalCredentials_check(struct torture_context *tctx,
+							      struct supplementalCredentialsBlob *r)
+{
+	torture_assert_int_equal(tctx, r->unknown1, 0, "unknown1");
+	torture_assert_int_equal(tctx, r->__ndr_size, 0x1030, "__ndr_size");
+	torture_assert_int_equal(tctx, r->unknown2, 0, "unknown2");
+	torture_assert_str_equal(tctx, r->sub.prefix, SUPPLEMENTAL_CREDENTIALS_PREFIX, "prefix");
+	torture_assert_int_equal(tctx, r->sub.signature, SUPPLEMENTAL_CREDENTIALS_SIGNATURE, "signature");
+	torture_assert_int_equal(tctx, r->sub.num_packages, 5, "num_packages");
+	torture_assert_str_equal(tctx, r->sub.packages[0].name, "Primary:Kerberos-Newer-Keys", "name of package 0");
+	torture_assert_str_equal(tctx, r->sub.packages[1].name, "Primary:Kerberos", "name of package 1");
+	torture_assert_str_equal(tctx, r->sub.packages[2].name, "Primary:WDigest", "name of package 2");
+	torture_assert_str_equal(tctx, r->sub.packages[3].name, "Packages", "name of package 3");
+	torture_assert_str_equal(tctx, r->sub.packages[4].name, "Primary:SambaGPG", "name of package 4");
+	torture_assert_int_equal(tctx, r->unknown3, 0x00, "unknown3"); /* This is typically not initialized */
+
+	return true;
+}
+
+static const char *win2012R2_supplementalCredentials =
+	"AAAAACgIAAAAAAAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAg"
+	"ACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAI"
+	"AAgACAAIAAgACAAUAAEADYA3AEBAFAAcgBpAG0AYQByAHkAOgBLAGUAcgBiAGUAcgBvAHMALQBOAG"
+	"UAdwBlAHIALQBLAGUAeQBzADA0MDAwMDAwMDMwMDAwMDAwMDAwMDAwMDNlMDAzZTAwNzgwMDAwMDA"
+	"wMDEwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDEyMDAwMDAwMjAwMDAwMDBiNjAwMDAwMDAw"
+	"MDAwMDAwMDAwMDAwMDAwMDEwMDAwMDExMDAwMDAwMTAwMDAwMDBkNjAwMDAwMDAwMDAwMDAwMDAwM"
+	"DAwMDAwMDEwMDAwMDAzMDAwMDAwMDgwMDAwMDBlNjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD"
+	"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMyMDAzMDAwMzAwMDM4MDA1MjAwMzIwMDJlMDA0ODA"
+	"wNGYwMDU3MDA1NDAwNGYwMDJlMDA0MTAwNDIwMDQxMDA1MjAwNTQwMDRjMDA0NTAwNTQwMDJlMDA0"
+	"ZTAwNDUwMDU0MDA2YjAwNzIwMDYyMDA3NDAwNjcwMDc0MDAwNzNhYTVmMjVmZjU2MzUyZTI2ZWYxZ"
+	"DMxMGJhZjAzMWY0MWZmMmFkNzZlNzA1YzgzNTQyZmJlZGJhNjY0ZjM0YTBmYTAyYzQxNWE3MmFiNj"
+	"JkYjdlNzliNDBmNjJhNjhjMjVlZjc0YzE5ZDM1OGZkIAD8AAEAUAByAGkAbQBhAHIAeQA6AEsAZQB"
+	"yAGIAZQByAG8AcwAwMzAwMDAwMDAxMDAwMDAwM2UwMDNlMDAzODAwMDAwMDAwMDAwMDAwMDAwMDAw"
+	"MDAwMzAwMDAwMDA4MDAwMDAwNzYwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM"
+	"DAwMDAwMDAwMzIwMDMwMDAzMDAwMzgwMDUyMDAzMjAwMmUwMDQ4MDA0ZjAwNTcwMDU0MDA0ZjAwMm"
+	"UwMDQxMDA0MjAwNDEwMDUyMDA1NDAwNGMwMDQ1MDA1NDAwMmUwMDRlMDA0NTAwNTQwMDZiMDA3MjA"
+	"wNjIwMDc0MDA2NzAwNzQwMGMyNWVmNzRjMTlkMzU4ZmQQAJAAAgBQAGEAYwBrAGEAZwBlAHMANGIw"
+	"MDY1MDA3MjAwNjIwMDY1MDA3MjAwNmYwMDczMDAyZDAwNGUwMDY1MDA3NzAwNjUwMDcyMDAyZDAwN"
+	"GIwMDY1MDA3OTAwNzMwMDAwMDA0YjAwNjUwMDcyMDA2MjAwNjUwMDcyMDA2ZjAwNzMwMDAwMDA1Nz"
+	"AwNDQwMDY5MDA2NzAwNjUwMDczMDA3NDAwHgDAAwEAUAByAGkAbQBhAHIAeQA6AFcARABpAGcAZQB"
+	"zAHQAMzEwMDAxMWQwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA3ZGE1MjA2NjllNTdkYzhjMzI1NDQ0"
+	"Y2ZkYjU5ZjkxZGZiZDE1MzZhNDIxMjgyNjc4MjE4MWI5OTM2ZjczYWIzOWYyN2QxYjM4YmRlNzhiO"
+	"TVhOTJmNDM1YWQyNDAzNDU3ZGE1MjA2NjllNTdkYzhjMzI1NDQ0Y2ZkYjU5ZjkxZGZiZDE1MzZhND"
+	"IxMjgyNjc4MjE4MWI5OTM2ZjczYWIzNjFjNTgyZGY1NWZiOGZmMzMyMzc0ZDU4NDExNWI2Y2U3ZGE"
+	"1MjA2NjllNTdkYzhjMzI1NDQ0Y2ZkYjU5ZjkxZDU3NGM4MmQxMWZjNzcyOGNiYmY0NWI1Yjc0NmMx"
+	"NmY0NjhhZmFhYTI0OTEwODM2ZWMyMGYyMTBjNmQ1ODZmZTE3ZjQxN2RkOWIzMjE5OWJiOTkzZmMxN"
+	"mQ3NzA5MjFiMDU3NGM4MmQxMWZjNzcyOGNiYmY0NWI1Yjc0NmMxNmY0NjhhZmFhYTI0OTEwODM2ZW"
+	"MyMGYyMTBjNmQ1ODZmZTE5ODZlNWM1ZDM2NjllZDI0ZDgyM2RlNWYyZmZhNjk1ZTU3NGM4MmQxMWZ"
+	"jNzcyOGNiYmY0NWI1Yjc0NmMxNmY0OGNjZGJjMWZhZWM0OWFmOGY2ZGQ0N2M5MmViM2JmNjMwMzAy"
+	"Njc2NmI4ZWQzYjU0ZTQyNGU1ZDNlNDVkNjlkNmIwYzI3Y2ZhMzZmNjliN2NmNDVjMGNhYjU3NmY1M"
+	"zRiOWU3NTJhOWUyNTYzMmU4M2FkMmE5MDBmMWUyOGY5ZjE0MjFkYzUwODMyMjQ1Nzc3NTg5ODIyZT"
+	"EwNGY2NjNkNjY3YzJiZTc3Y2E4MzMwNzVkZmRlZTRlYTUwZWIxNzc3YjMxOGNmZTJlMzQzOTg0ZDU"
+	"xOTBlODAwMzA4ZmMxODBiMzE4Y2ZlMmUzNDM5ODRkNTE5MGU4MDAzMDhmYzE4MDRhYmIyZDQzMjE0"
+	"ZGQxNGFkNDA0YzdiYzE4ZGI0NzFjNDRjZjcyZmI2YmUwM2IwZWRiZjNhNzYyNTgwZGIzOTYzZjk5M"
+	"zVjNmM4N2Q2NWJhZmU0NGY4Zjc2NzViODE3NjgwN2RmZThiZGZlYjJiMTcyMzc4MWQzMThhZGRkZW"
+	"NmNzQ5MmIwZjE3ZmIwZmRmMjhkN2E2MWMzNTFlYTRkYWU2MDc0MzMxMTAwYjk5YWJiOTY1NTk5ZDY"
+	"1NjkxNDVjOWM5MTJjOWI2Yzk0ZjNiMDA3ZmM5YTA2OGFiMDhkNTA5gA==";
+
+
+static bool win2012R2_supplementalCredentials_check(struct torture_context *tctx,
+						  struct supplementalCredentialsBlob *r)
+{
+	torture_assert_int_equal(tctx, r->unknown1, 0, "unknown1");
+	torture_assert_int_equal(tctx, r->__ndr_size, 0x828, "__ndr_size");
+	torture_assert_int_equal(tctx, r->unknown2, 0, "unknown2");
+	torture_assert_str_equal(tctx, r->sub.prefix, SUPPLEMENTAL_CREDENTIALS_PREFIX, "prefix");
+	torture_assert_int_equal(tctx, r->sub.signature, SUPPLEMENTAL_CREDENTIALS_SIGNATURE, "signature");
+	torture_assert_int_equal(tctx, r->sub.num_packages, 4, "num_packages");
+	torture_assert_str_equal(tctx, r->sub.packages[0].name, "Primary:Kerberos-Newer-Keys", "name of package 0");
+	torture_assert_str_equal(tctx, r->sub.packages[1].name, "Primary:Kerberos", "name of package 0");
+	torture_assert_str_equal(tctx, r->sub.packages[2].name, "Packages", "name of package 1");
+	torture_assert_str_equal(tctx, r->sub.packages[3].name, "Primary:WDigest", "name of package 2");
+	torture_assert_int_equal(tctx, r->unknown3, 0x00, "unknown3"); /* This is typically not initialized, we force to 0 */
+
+	return true;
+}
+
 struct torture_suite *ndr_drsblobs_suite(TALLOC_CTX *ctx)
 {
+	DATA_BLOB win2012R2_supplementalCredentials_blob;
 	struct torture_suite *suite = torture_suite_create(ctx, "drsblobs");
-
+	struct torture_suite *empty1_suite = torture_suite_create(ctx, "empty1");
+	struct torture_suite *empty2_suite = torture_suite_create(ctx, "empty2");
+	struct torture_suite *alpha13_suite = torture_suite_create(ctx, "alpha13");
+	struct torture_suite *release_4_1_0rc3_suite = torture_suite_create(ctx, "release-4-1-0rc3");
+	struct torture_suite *release_4_5_0pre_GPG_suite = torture_suite_create(ctx, "release-4-5-0pre-GPG");
+	struct torture_suite *win2012R2_suite = torture_suite_create(ctx, "win2012R2_suite");
+	torture_suite_add_suite(suite, empty1_suite);
+	torture_suite_add_suite(suite, empty2_suite);
+	torture_suite_add_suite(suite, alpha13_suite);
+	torture_suite_add_suite(suite, release_4_1_0rc3_suite);
+	torture_suite_add_suite(suite, release_4_5_0pre_GPG_suite);
+	torture_suite_add_suite(suite, win2012R2_suite);
+	
 	torture_suite_add_ndr_pull_test(suite, ForestTrustInfo, forest_trust_info_data_out, forest_trust_info_check_out);
 	torture_suite_add_ndr_pull_test(suite, trustDomainPasswords, trust_domain_passwords_in, trust_domain_passwords_check_in);
 
-	torture_suite_add_ndr_pullpush_test(suite,
+	torture_suite_add_ndr_pull_validate_test(suite,
 					    trustAuthInOutBlob,
 					    base64_decode_data_blob_talloc(suite, trustAuthIncoming),
 					    NULL);
 
-	torture_suite_add_ndr_pullpush_test(suite,
+	torture_suite_add_ndr_pull_validate_test(suite,
 					    trustAuthInOutBlob,
 					    base64_decode_data_blob_talloc(suite, trustAuthOutgoing),
 					    NULL);
+
+	torture_suite_add_ndr_pull_validate_test(empty1_suite, supplementalCredentialsBlob,
+					data_blob_const(supplementalCredentials_empty1,
+						sizeof(supplementalCredentials_empty1)),
+					supplementalCredentials_empty1_check);
+
+	torture_suite_add_ndr_pull_validate_test(empty2_suite, supplementalCredentialsBlob,
+					data_blob_const(supplementalCredentials_empty2,
+						sizeof(supplementalCredentials_empty2)),
+					supplementalCredentials_empty2_check);
+
+	torture_suite_add_ndr_pull_validate_test(alpha13_suite,
+						 supplementalCredentialsBlob,
+						 base64_decode_data_blob_talloc(suite, alpha13_supplementalCredentials),
+						 alpha13_supplementalCredentials_check);
+
+	torture_suite_add_ndr_pull_validate_test(release_4_1_0rc3_suite,
+						 supplementalCredentialsBlob,
+						 base64_decode_data_blob_talloc(suite, release_4_1_0rc3_supplementalCredentials),
+						 release_4_1_0rc3_supplementalCredentials_check);
+
+	torture_suite_add_ndr_pull_validate_test(release_4_5_0pre_GPG_suite,
+						 supplementalCredentialsBlob,
+						 base64_decode_data_blob_talloc(suite, release_4_5_0pre_GPG_supplementalCredentials),
+						 release_4_5_0pre_GPG_supplementalCredentials_check);
+
+	/* This last byte is typically not initialized, we force to zero to allow pull/push */
+	win2012R2_supplementalCredentials_blob = base64_decode_data_blob_talloc(suite, win2012R2_supplementalCredentials);
+	win2012R2_supplementalCredentials_blob.data[win2012R2_supplementalCredentials_blob.length-1] = 0;
+	torture_suite_add_ndr_pull_validate_test(win2012R2_suite,
+						 supplementalCredentialsBlob,
+						 win2012R2_supplementalCredentials_blob,
+						 win2012R2_supplementalCredentials_check);
 
 	return suite;
 }

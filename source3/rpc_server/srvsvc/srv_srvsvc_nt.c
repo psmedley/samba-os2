@@ -37,6 +37,7 @@
 #include "smbd/globals.h"
 #include "auth.h"
 #include "messages.h"
+#include "serverid.h"
 #include "lib/conn_tdb.h"
 
 extern const struct generic_mapping file_generic_mapping;
@@ -1125,7 +1126,8 @@ static WERROR init_srv_conn_info_1(const char *name,
 				   uint32_t *resume_handle_p,
 				   uint32_t *total_entries)
 {
-	uint32_t num_entries = 0, snum = 0;
+	uint32_t num_entries = 0;
+	int snum = 0;
 	uint32_t resume_handle = resume_handle_p ? *resume_handle_p : 0;
 	char *share_name = NULL;
 	struct server_id *svrid_arr = NULL;

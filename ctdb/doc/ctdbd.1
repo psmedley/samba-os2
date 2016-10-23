@@ -2,12 +2,12 @@
 .\"     Title: ctdbd
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 01/27/2016
+.\"      Date: 07/28/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDBD" "1" "01/27/2016" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDBD" "1" "07/28/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -143,15 +143,6 @@ As with "udp" but messages are sent in RFC5424 format\&. This method will log th
 .RE
 .RE
 .PP
-\-\-lvs
-.RS 4
-This option is used to activate the LVS capability on a CTDB node\&. Please see the
-LVS
-section in
-\fBctdb\fR(7)
-for more information\&.
-.RE
-.PP
 \-\-max\-persistent\-check\-errors=\fINUM\fR
 .RS 4
 NUM specifies the maximum number of health check failures allowed for persistent databases during startup\&.
@@ -225,31 +216,19 @@ This is usually the file
 .PP
 \-\-public\-interface=\fIINTERFACE\fR
 .RS 4
-INTERFACE on which to attach public IP addresses or on which to attach the single\-public\-ip when used\&.
+Default INTERFACE on which to attach public IP addresses\&.
 .sp
 When using public IP addresses, this is only required if interfaces are not explicitly specified in the public addresses file\&.
 .RE
 .PP
-\-\-reclock=\fIFILE\fR
+\-\-reclock=\fILOCK\fR
 .RS 4
-FILE is the name of the recovery lock file, stored in
-\fIshared storage\fR, that CTDB uses to prevent split brains\&.
+LOCK specifies the cluster\-wide mutex used to detect and prevent a partitioned cluster (or "split brain")\&.
 .sp
 For information about the recovery lock please see the
 RECOVERY LOCK
 section in
 \fBctdb\fR(7)\&.
-.RE
-.PP
-\-\-single\-public\-ip=\fIIPADDR\fR
-.RS 4
-IPADDR specifies the single IP that CTDB will use in conjunction with LVS\&.
-.sp
-Please see the
-LVS
-section in
-\fBctdb\fR(7)
-for more information\&.
 .RE
 .PP
 \-\-start\-as\-disabled

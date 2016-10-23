@@ -14,10 +14,19 @@
 # * Set CTDB_NFS_CALLOUT in your CTDB configuration to point to this
 #   script
 #
-# * Rename nfs-checks.d/{20.nfs.check,30.nlockmgr.check,50.mountd.check}
-#   so that they no longer have the ".check" suffix
+# * Rename the following files in nfs-checks.d so that they no longer
+#   have the ".check" suffix:
+#     * 10.status.check
+#     * 20.nfs.check
+#     * 30.nlockmgr.check
+#     * 40.mountd.check
+#     * 50.rquotad.check
 #
 # * Install 20.nfs-ganesha.check to nfs-checks.d/20.nfs.check
+#
+# * It is recommended, but not required, to install the grace_period
+#   script (usually shipped in a utils package for NFS-Ganesha) to
+#   /usr/bin/grace_period
 
 # I (Martin Schwenke) hereby relicense all of my contributions to this
 # callout (and, previously, to 60.ganesha) to a license compatible
@@ -30,14 +39,34 @@
 # Exit on 1st error
 set -e
 
-if [ -z "$CTDB_CLUSTER_FILESYSTEM_TYPE" ] ; then
-    CTDB_CLUSTER_FILESYSTEM_TYPE="gpfs"
-fi
+# Filesystem type and mount point for the (typically clustered)
+# volume that will contain the NFS-Ganesha state.
+state_fs="${CTDB_NFS_STATE_FS_TYPE:-gpfs}"
+state_dir="${CTDB_NFS_STATE_MNT}" # No sane default.
 
-# Override for unit testing
-if [ -z "$PROCFS_PATH" ] ; then
-    PROCFS_PATH="/proc"
-fi
+# To change the following, edit the default values below.  Do not set
+# these - they aren't configuration variables, just hooks for testing.
+nfs_exports_file="${CTDB_NFS_EXPORTS_FILE:-/etc/ganesha/ganesha.conf}"
+nfs_service="${CTDB_NFS_SERVICE:-nfs-ganesha}"
+ganesha_rec_subdir=${CTDB_GANESHA_REC_SUBDIR:-.ganesha}
+procfs=${PROCFS_PATH:-/proc}
+
+case $state_fs in
+    gpfs)
+        GANRECDIR="/var/lib/nfs/ganesha"
+        ;;
+    glusterfs)
+        if [ -z "${state_dir}" ]; then
+            echo "CTDB_NFS_STATE_MNT not defined for GlusterFS"
+            exit 1
+        fi
+        host=`hostname`
+        NODESTATEDIR="$state_dir/nfs-ganesha/$host"
+        GANSTATEDIR="$state_dir/nfs-ganesha/.noderefs"
+        NODESTATELN="$GANSTATEDIR/$host"
+        ;;
+esac
+
 
 ##################################################
 
@@ -56,8 +85,6 @@ EOF
 
 ##################################################
 # Basic service stop and start
-
-nfs_service="nfs-ganesha-$CTDB_CLUSTER_FILESYSTEM_TYPE"
 
 basic_stop ()
 {
@@ -117,52 +144,82 @@ service_start ()
 ##################################################
 # Nitty gritty - monitoring and IP handling
 
-GANRECDIR="/var/lib/nfs/ganesha"
-GANRECDIR2="/var/lib/nfs/ganesha/recevents"
-GANRECDIR3="/var/lib/nfs/ganesha_local"
+# Check that a symlink exists, create it otherwise.
+# Usage: check_ln <TARGET> <LINK>
+check_ln ()
+{
+    if [ ! -L "${2}" ] ; then
+        rm -vrf "${2}"
+    else
+        _t=$(readlink "${2}")
+        if [ "$_t" != "${1}" ] ; then
+            rm -v "${2}"
+        fi
+    fi
+    # This is not an "else".  It also re-creates the link if it was
+    # removed above!
+    if [ ! -e "${2}" ]; then
+        ln -sfv "${1}" "${2}"
+    fi
+}
 
+# Return 'active' if the shared filesystem is accessible.
 get_cluster_fs_state ()
 {
-    case $CTDB_CLUSTER_FILESYSTEM_TYPE in
+    case $state_fs in
         gpfs)
             /usr/lpp/mmfs/bin/mmgetstate | awk 'NR == 4 { print $3 }'
             ;;
+        glusterfs)
+            # Since we're past create_ganesha_recdirs(), we're active.
+            echo "active"
+            ;;
         *)
-            die "File system $CTDB_CLUSTER_FILESYSTEM_TYPE not supported"
+            echo "File system $state_fs not supported"
+            exit 1
             ;;
    esac
 }
 
 create_ganesha_recdirs ()
 {
-    [ -n "$CTDB_GANESHA_REC_SUBDIR" ] || CTDB_GANESHA_REC_SUBDIR=".ganesha"
-
-    _mounts=$(mount -t $CTDB_CLUSTER_FILESYSTEM_TYPE)
+    if ! _mounts=$(mount | grep $state_fs); then
+      echo "Failed to find mounts of type $state_fs"
+      exit 1
+    fi
     if [ -z "$_mounts" ]; then
-      echo "startup $CTDB_CLUSTER_FILESYSTEM_TYPE not ready"
+      echo "startup $state_fs not ready"
       exit 0
     fi
-    _mntpt=$(echo "$_mounts" | sort | awk 'NR == 1 {print $3}')
-    _link_dst="${_mntpt}/${CTDB_GANESHA_REC_SUBDIR}"
-    mkdir -vp "$_link_dst"
-    if [ -e "$GANRECDIR" ]; then
-        if [ ! -L "$GANRECDIR" ] ; then
-            rm -vrf "$GANRECDIR"
-	else
-	    _t=$(readlink "$GANRECDIR")
-	    if [ "$_t" != "$_link_dst" ] ; then
-		rm -v "$GANRECDIR"
-	    fi
-        fi
-    fi
-    # This is not an "else".  It also re-creates the link if it was
-    # removed above!
-    if [ ! -e "$GANRECDIR" ]; then
-        ln -sv "$_link_dst" "$GANRECDIR"
-    fi
 
-    mkdir -p "$GANRECDIR2"
-    mkdir -p "$GANRECDIR3"
+    case $state_fs in
+        gpfs)
+            _mntpt=$(echo "$_mounts" | sort | awk 'NR == 1 {print $3}')
+            _link_dst="${_mntpt}/${ganesha_rec_subdir}"
+            mkdir -vp "$_link_dst"
+            check_ln "$_link_dst" "$GANRECDIR"
+            ;;
+        glusterfs)
+            [ -d /var/lib/nfs.backup ] || mv /var/lib/nfs /var/lib/nfs.backup
+            check_ln ${NODESTATEDIR} /var/lib/nfs
+
+            mkdir -p ${NODESTATEDIR}/ganesha/v4recov
+            mkdir -p ${NODESTATEDIR}/ganesha/v4old
+            mkdir -p ${NODESTATEDIR}/statd/sm
+            mkdir -p ${NODESTATEDIR}/statd/sm.bak
+            touch ${NODESTATEDIR}/state
+            touch ${NODESTATEDIR}/statd/state
+
+            mkdir -p ${GANSTATEDIR}
+            check_ln ${NODESTATEDIR} ${NODESTATELN}
+            for node in `ls ${GANSTATEDIR}`; do
+                if [ "${node}" != "${host}" ]; then
+                    check_ln ${GANSTATEDIR}/${node}/ganesha ${NODESTATEDIR}/ganesha/${node}
+                    check_ln ${GANSTATEDIR}/${node}/statd ${NODESTATEDIR}/statd/${node}
+                fi
+            done
+            ;;
+   esac
 }
 
 service_check ()
@@ -172,35 +229,15 @@ service_check ()
     # Always succeed if cluster filesystem is not active
     _cluster_fs_state=$(get_cluster_fs_state)
     if [ $_cluster_fs_state != "active" ] ; then
-	exit 0
+	return 0
     fi
 
     # Check that NFS Ganesha is running, according to PID file
     _pidfile="/var/run/ganesha.pid"
-    _ganesha="/usr/bin/$CTDB_CLUSTER_FILESYSTEM_TYPE.ganesha.nfsd"
+    _ganesha="/usr/bin/ganesha.nfsd"
     if ! { read _pid < "$_pidfile" && \
-	   grep "$_ganesha" "${PROCFS_PATH}/${_pid}/cmdline" ; } >/dev/null 2>&1 ; then
+	   grep "$_ganesha" "${procfs}/${_pid}/cmdline" ; } >/dev/null 2>&1 ; then
 	echo "ERROR: NFS Ganesha not running according to PID file"
-	return 1
-    fi
-
-    # Check red conditions against limit
-    _reds_max=2
-    _reds=$(ls $GANRECDIR3 | grep -c "red")
-
-    if [ $_reds -ge $_reds_max ] ; then
-	echo "Too many red conditions (${_reds}/${_reds_max})"
-	return 1
-    fi
-
-    # Check for stall
-    _stall_max=120
-    _now=$(date +"%s")
-    _last=$(ls -t $GANRECDIR3 | sed -n -e '1s@_.*@@p')
-    [ -n $_last ] || _last=$_now  # Handle startup
-    _stall=$(($_now - $_last))
-    if [ $_stall -ge $_stall_max ] ; then
-	echo "ERROR: Stalled for ${_stall} second(s)"
 	return 1
     fi
 
@@ -209,41 +246,31 @@ service_check ()
 
 #-------------------------------------------------
 
-get_nodenum ()
-{
-    _nodenum_file="${GANRECDIR}/gpfs_nodenum"
-
-    if [ ! -f "$_nodenum_file" ]; then
-	/usr/lpp/mmfs/bin/mmlsconfig myNodeConfigNumber |
-	    awk '{print $2}' >"$_nodenum_file"
-    fi
-
-    cat "$_nodenum_file"
-}
-
 nfs_releaseip ()
 {
-    case  $CLUSTER_FILESYSTEM_TYPE in
-	gpfs)
-	    _nnum=$(get_nodenum)
-	    _tdate=$(date +"%s")
-	    _touchtgt="releaseip_${_tdate}_${_nnum}_${2}_${3}_${1}"
-	    touch "${GANRECDIR2}/${_touchtgt}"
-	    touch "$GANRECDIR2/my${_touchtgt}"
-	    ;;
-    esac
+    if [ -x "/usr/bin/grace_period" ]; then
+        /usr/bin/grace_period "2:${2}"
+    else
+        dbus-send --print-reply --system --dest=org.ganesha.nfsd \
+        /org/ganesha/nfsd/admin org.ganesha.nfsd.admin.grace \
+        string:"2:${2}"
+    fi
 }
 
 nfs_takeip ()
 {
-    case  $CLUSTER_FILESYSTEM_TYPE in
-	gpfs)
-	    _nnum=$(get_nodenum)
-	    _tdate=$(date +"%s")
-	    _touchtgt="takeip_${_tdate}_${_nnum}_${2}_${3}_${1}"
-	    touch "${GANRECDIR2}/${_touchtgt}"
-	    ;;
+    case  $state_fs in
+        glusterfs)
+            check_ln ${NODESTATEDIR} ${GANSTATEDIR}/${2}
+            ;;
     esac
+    if [ -x "/usr/bin/grace_period" ]; then
+        /usr/bin/grace_period "5:${2}"
+    else
+        dbus-send --print-reply --system --dest=org.ganesha.nfsd \
+        /org/ganesha/nfsd/admin org.ganesha.nfsd.admin.grace \
+        string:"5:${2}"
+    fi
 }
 
 ##################################################
@@ -256,11 +283,12 @@ nfs_shutdown ()
 
 nfs_startup ()
 {
+    basic_stop "nfs" || true
+
     create_ganesha_recdirs
 
-    basic_stop "nfs" || true
     basic_start "nfs"
-    _f="${PROCFS_PATH}/sys/net/ipv4/tcp_tw_recycle"
+    _f="${procfs}/sys/net/ipv4/tcp_tw_recycle"
     if [ "$_f" ] ; then
 	echo 1 >"$_f"
     fi
@@ -271,9 +299,25 @@ nfs_startup ()
 
 nfs_monitor_list_shares ()
 {
-    grep Path /etc/ganesha/$CTDB_CLUSTER_FILESYSTEM_TYPE.ganesha.exports.conf |
+    grep Path $nfs_exports_file |
 	cut -f2 -d\" |
 	sort -u
+}
+
+##################################################
+
+nfs_register ()
+{
+    cat <<EOF
+shutdown
+startup
+stop
+start
+check
+releaseip
+takeip
+monitor-list-shares
+EOF
 }
 
 ##################################################
@@ -290,7 +334,8 @@ case "$action" in
     releaseip)           nfs_releaseip "$@"      ;;
     takeip)              nfs_takeip "$@"         ;;
     monitor-list-shares) nfs_monitor_list_shares ;;
-    register|monitor-pre|monitor-post)
+    register)            nfs_register            ;;
+    monitor-pre|monitor-post|releaseip-pre|takeip-pre)
 	# Not required/implemented
 	:
 	;;

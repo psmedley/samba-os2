@@ -302,7 +302,8 @@ int main(int argc, const char **argv)
 	int opt;
 	poptContext pc;
 	char buffer[4096];
-	long data_offset, data_length;
+	long data_offset = 0;
+	long data_length;
 	long data_bytes_read = 0;
 	int in_packet = 0;
 	struct poptOption long_options[] = {
@@ -350,7 +351,13 @@ int main(int argc, const char **argv)
 	if(!hexformat)print_pcap_header(out);
 
 	while(!feof(in)) {
-		fgets(buffer, sizeof(buffer), in); line_num++;
+		char *p;
+		p = fgets(buffer, sizeof(buffer), in);
+		if (p == NULL) {
+			fprintf(stderr, "error reading from input file\n");
+			break;
+		}
+		line_num++;
 		if(buffer[0] == '[') { /* Header */
 			if(strstr(buffer, "show_msg")) {
 				in_packet++;

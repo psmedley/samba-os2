@@ -177,8 +177,7 @@ int dsdb_module_search_tree(struct ldb_module *module,
 	if (dsdb_flags & DSDB_SEARCH_ONE_ONLY) {
 		if (res->count == 0) {
 			talloc_free(tmp_ctx);
-			ldb_reset_err_string(ldb_module_get_ctx(module));
-			return LDB_ERR_NO_SUCH_OBJECT;
+			return ldb_error(ldb_module_get_ctx(module), LDB_ERR_NO_SUCH_OBJECT, __func__);
 		}
 		if (res->count != 1) {
 			talloc_free(tmp_ctx);
@@ -279,7 +278,7 @@ int dsdb_module_dn_by_guid(struct ldb_module *module, TALLOC_CTX *mem_ctx,
 	}
 	if (res->count == 0) {
 		talloc_free(tmp_ctx);
-		return LDB_ERR_NO_SUCH_OBJECT;
+		return ldb_error(ldb_module_get_ctx(module), LDB_ERR_NO_SUCH_OBJECT, __func__);
 	}
 	if (res->count != 1) {
 		ldb_asprintf_errstring(ldb_module_get_ctx(module), "More than one object found matching objectGUID %s\n",
@@ -1468,7 +1467,7 @@ int dsdb_fix_dn_rdncase(struct ldb_context *ldb, struct ldb_dn *dn)
  * @return LDB_SUCCESS or error including out of memory error
  */
 int dsdb_make_object_category(struct ldb_context *ldb, const struct dsdb_schema *schema,
-			      struct ldb_message *obj,
+			      const struct ldb_message *obj,
 			      TALLOC_CTX *mem_ctx, const char **pobjectcategory)
 {
 	const struct dsdb_class			*objectclass;

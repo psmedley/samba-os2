@@ -232,12 +232,13 @@ static NTSTATUS libnet_vampire_cb_apply_schema(struct libnet_vampire_cb_state *s
 	struct repsFromTo1 *s_dsa;
 	char *tmp_dns_name;
 	struct ldb_context *schema_ldb;
+	struct ldb_dn *partition_dn;
 	struct ldb_message *msg;
 	struct ldb_message_element *prefixMap_el;
 	uint32_t i;
 	int ret;
 	bool ok;
-	uint64_t seq_num;
+	uint64_t seq_num = 0;
 	uint32_t cycle_before_switching;
 
 	DEBUG(0,("Analyze and apply schema objects\n"));
@@ -331,7 +332,10 @@ static NTSTATUS libnet_vampire_cb_apply_schema(struct libnet_vampire_cb_state *s
 						 "become dc",
 						 "schema convert retrial", 1);
 
-	status = dsdb_repl_resolve_working_schema(s->ldb, s,
+	provision_schema->resolving_in_progress = true;
+	s->self_made_schema->resolving_in_progress = true;
+
+	status = dsdb_repl_resolve_working_schema(s->ldb,
 						  pfm_remote,
 						  cycle_before_switching,
 						  provision_schema,
@@ -347,6 +351,8 @@ static NTSTATUS libnet_vampire_cb_apply_schema(struct libnet_vampire_cb_state *s
 	/* free temp objects for 1st conversion phase */
 	talloc_unlink(s, provision_schema);
 
+	s->self_made_schema->resolving_in_progress = false;
+
 	/*
 	 * attach the schema we just brought over DRS to the ldb,
 	 * so we can use it in dsdb_convert_object_ex below
@@ -361,10 +367,16 @@ static NTSTATUS libnet_vampire_cb_apply_schema(struct libnet_vampire_cb_state *s
 	s->schema = s->self_made_schema;
 	s->self_made_schema = NULL;
 
+	partition_dn = ldb_dn_new(s, s->ldb, c->partition->nc.dn);
+	if (partition_dn == NULL) {
+		DEBUG(0,("Failed to parse partition DN from DRS.\n"));
+		return NT_STATUS_FOOBAR;
+	}
+
 	/* Now convert the schema elements again, using the schema we finalised, ready to actually import */
 	status = dsdb_replicated_objects_convert(s->ldb,
 						 s->schema,
-						 c->partition->nc.dn,
+						 partition_dn,
 						 mapping_ctr,
 						 object_count,
 						 first_object,
@@ -559,6 +571,8 @@ NTSTATUS libnet_vampire_cb_store_chunk(void *private_data,
 	uint32_t i;
 	uint64_t seq_num;
 	bool is_exop = false;
+	struct ldb_dn *partition_dn = NULL;
+	struct ldb_dn *nc_root = NULL;
 
 	s_dsa			= talloc_zero(s, struct repsFromTo1);
 	NT_STATUS_HAVE_NO_MEMORY(s_dsa);
@@ -653,7 +667,14 @@ NTSTATUS libnet_vampire_cb_store_chunk(void *private_data,
 	}
 	s->total_objects += object_count;
 
+	partition_dn = ldb_dn_new(s, s->ldb, c->partition->nc.dn);
+	if (partition_dn == NULL) {
+		DEBUG(0,("Failed to parse partition DN from DRS.\n"));
+		return NT_STATUS_FOOBAR;
+	}
+
 	if (is_exop) {
+		int ret;
 		if (nc_object_count) {
 			DEBUG(0,("Exop on[%s] objects[%u/%u] linked_values[%u/%u]\n",
 				c->partition->nc.dn, s->total_objects, nc_object_count,
@@ -661,6 +682,13 @@ NTSTATUS libnet_vampire_cb_store_chunk(void *private_data,
 		} else {
 			DEBUG(0,("Exop on[%s] objects[%u] linked_values[%u]\n",
 			c->partition->nc.dn, s->total_objects, linked_attributes_count));
+		}
+		ret = dsdb_find_nc_root(s->ldb, s,
+					partition_dn, &nc_root);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(0,(__location__ ": Failed to find nc_root for %s\n",
+				 ldb_dn_get_linearized(partition_dn)));
+			return NT_STATUS_INTERNAL_ERROR;
 		}
 	} else {
 		if (nc_object_count) {
@@ -671,6 +699,7 @@ NTSTATUS libnet_vampire_cb_store_chunk(void *private_data,
 			DEBUG(0,("Partition[%s] objects[%u] linked_values[%u]\n",
 			c->partition->nc.dn, s->total_objects, linked_attributes_count));
 		}
+		nc_root = partition_dn;
 	}
 
 
@@ -690,7 +719,7 @@ NTSTATUS libnet_vampire_cb_store_chunk(void *private_data,
 
 	status = dsdb_replicated_objects_convert(s->ldb,
 						 schema,
-						 c->partition->nc.dn,
+						 nc_root,
 						 mapping_ctr,
 						 object_count,
 						 first_object,

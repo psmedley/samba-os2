@@ -94,10 +94,14 @@ sub prepare_keyblobs($)
 	my $dcdir = "$cadir/DCs/$dcdnsname";
 	my $dccert = "$dcdir/DC-$dcdnsname-cert.pem";
 	my $dckey_private = "$dcdir/DC-$dcdnsname-private-key.pem";
-	my $userprincipalname = "administrator\@$ctx->{dnsname}";
-	my $userdir = "$cadir/Users/$userprincipalname";
-	my $usercert = "$userdir/USER-$userprincipalname-cert.pem";
-	my $userkey_private = "$userdir/USER-$userprincipalname-private-key.pem";
+	my $adminprincipalname = "administrator\@$ctx->{dnsname}";
+	my $admindir = "$cadir/Users/$adminprincipalname";
+	my $admincert = "$admindir/USER-$adminprincipalname-cert.pem";
+	my $adminkey_private = "$admindir/USER-$adminprincipalname-private-key.pem";
+	my $pkinitprincipalname = "pkinit\@$ctx->{dnsname}";
+	my $pkinitdir = "$cadir/Users/$pkinitprincipalname";
+	my $pkinitcert = "$pkinitdir/USER-$pkinitprincipalname-cert.pem";
+	my $pkinitkey_private = "$pkinitdir/USER-$pkinitprincipalname-private-key.pem";
 
 	my $tlsdir = "$ctx->{tlsdir}";
 	my $pkinitdir = "$ctx->{prefix_abs}/pkinit";
@@ -107,8 +111,10 @@ sub prepare_keyblobs($)
 	my $crlfile = "$tlsdir/crl.pem";
 	my $certfile = "$tlsdir/cert.pem";
 	my $keyfile = "$tlsdir/key.pem";
-	my $usercertfile = "$pkinitdir/USER-$userprincipalname-cert.pem";
-	my $userkeyfile = "$pkinitdir/USER-$userprincipalname-private-key.pem";
+	my $admincertfile = "$pkinitdir/USER-$adminprincipalname-cert.pem";
+	my $adminkeyfile = "$pkinitdir/USER-$adminprincipalname-private-key.pem";
+	my $pkinitcertfile = "$pkinitdir/USER-$pkinitprincipalname-cert.pem";
+	my $pkinitkeyfile = "$pkinitdir/USER-$pkinitprincipalname-private-key.pem";
 
 	mkdir($tlsdir, 0700);
 	mkdir($pkinitdir, 0700);
@@ -156,22 +162,18 @@ EOF
 	copy_file_content(${cacrl_pem}, ${crlfile});
 	copy_file_content(${dccert}, ${certfile});
 	copy_file_content(${dckey_private}, ${keyfile});
-	if (-e ${userkey_private}) {
-		copy_file_content(${usercert}, ${usercertfile});
-		copy_file_content(${userkey_private}, ${userkeyfile});
+	if (-e ${adminkey_private}) {
+		copy_file_content(${admincert}, ${admincertfile});
+		copy_file_content(${adminkey_private}, ${adminkeyfile});
+	}
+	if (-e ${pkinitkey_private}) {
+		copy_file_content(${pkinitcert}, ${pkinitcertfile});
+		copy_file_content(${pkinitkey_private}, ${pkinitkeyfile});
 	}
 
 	# COMPAT stuff to be removed in a later commit
 	my $kdccertfile = "$tlsdir/kdc.pem";
 	copy_file_content(${dccert}, ${kdccertfile});
-	if (-e ${userkey_private}) {
-		my $adminkeyfile = "$tlsdir/adminkey.pem";
-		my $admincertfile = "$tlsdir/admincert.pem";
-		my $admincertupnfile = "$tlsdir/admincertupn.pem";
-		copy_file_content(${userkey_private}, ${adminkeyfile});
-		copy_file_content(${usercert}, ${admincertfile});
-		copy_file_content(${usercert}, ${admincertupnfile});
-	}
 
 	umask $oldumask;
 }
@@ -296,6 +298,8 @@ sub get_interface($)
     $interfaces{"promotedvdc"} = 33;
     $interfaces{"rfc2307member"} = 34;
     $interfaces{"fileserver"} = 35;
+    $interfaces{"fakednsforwarder1"} = 36;
+    $interfaces{"fakednsforwarder2"} = 37;
 
     # update lib/socket_wrapper/socket_wrapper.c
     #  #define MAX_WRAPPED_INTERFACES 40
@@ -311,20 +315,21 @@ sub get_interface($)
 sub cleanup_child($$)
 {
     my ($pid, $name) = @_;
-    my $childpid = -1;
 
-    if (defined($pid)) {
-        $childpid = waitpid($pid, WNOHANG);
+    if (!defined($pid)) {
+        print STDERR "cleanup_child: pid not defined ... not calling waitpid\n";
+        return -1;
     }
+
+    my $childpid = waitpid($pid, WNOHANG);
 
     if ($childpid == 0) {
     } elsif ($childpid < 0) {
-	printf STDERR "%s child process %d isn't here any more\n",
+	printf STDERR "%s child process %d isn't here any more\n", $name, $pid;
 	return $childpid;
-    }
-    elsif ($? & 127) {
+    } elsif ($? & 127) {
 	printf STDERR "%s child process %d, died with signal %d, %s coredump\n",
-	$name, $childpid, ($? & 127),  ($? & 128) ? 'with' : 'without';
+		$name, $childpid, ($? & 127),  ($? & 128) ? 'with' : 'without';
     } else {
 	printf STDERR "%s child process %d exited with value %d\n", $name, $childpid, $? >> 8;
     }

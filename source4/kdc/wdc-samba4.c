@@ -25,13 +25,24 @@
 #include "kdc/kdc-glue.h"
 #include "kdc/pac-glue.h"
 
-/* Given the right private pointer from hdb_samba4, get a PAC from the attached ldb messages */
+/*
+ * Given the right private pointer from hdb_samba4,
+ * get a PAC from the attached ldb messages.
+ *
+ * For PKINIT we also get pk_reply_key and can add PAC_CREDENTIAL_INFO.
+ */
 static krb5_error_code samba_wdc_get_pac(void *priv, krb5_context context,
 					 struct hdb_entry_ex *client,
+					 const krb5_keyblock *pk_reply_key,
 					 krb5_pac *pac)
 {
 	TALLOC_CTX *mem_ctx;
-	DATA_BLOB *pac_blob;
+	DATA_BLOB *logon_blob = NULL;
+	DATA_BLOB *cred_ndr = NULL;
+	DATA_BLOB **cred_ndr_ptr = NULL;
+	DATA_BLOB _cred_blob = data_blob_null;
+	DATA_BLOB *cred_blob = NULL;
+	DATA_BLOB *upn_blob = NULL;
 	krb5_error_code ret;
 	NTSTATUS nt_status;
 	struct samba_kdc_entry *skdc_entry =
@@ -43,16 +54,44 @@ static krb5_error_code samba_wdc_get_pac(void *priv, krb5_context context,
 		return ENOMEM;
 	}
 
-	nt_status = samba_kdc_get_pac_blob(mem_ctx, skdc_entry, &pac_blob);
+	if (pk_reply_key != NULL) {
+		cred_ndr_ptr = &cred_ndr;
+	}
+
+	nt_status = samba_kdc_get_pac_blobs(mem_ctx, skdc_entry,
+					    &logon_blob,
+					    cred_ndr_ptr,
+					    &upn_blob);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		talloc_free(mem_ctx);
 		return EINVAL;
 	}
 
-	ret = samba_make_krb5_pac(context, pac_blob, NULL, pac);
+	if (pk_reply_key != NULL && cred_ndr != NULL) {
+		ret = samba_kdc_encrypt_pac_credentials(context,
+							pk_reply_key,
+							cred_ndr,
+							mem_ctx,
+							&_cred_blob);
+		if (ret != 0) {
+			talloc_free(mem_ctx);
+			return ret;
+		}
+		cred_blob = &_cred_blob;
+	}
+
+	ret = samba_make_krb5_pac(context, logon_blob, cred_blob,
+				  upn_blob, NULL, pac);
 
 	talloc_free(mem_ctx);
 	return ret;
+}
+
+static krb5_error_code samba_wdc_get_pac_compat(void *priv, krb5_context context,
+						struct hdb_entry_ex *client,
+						krb5_pac *pac)
+{
+	return samba_wdc_get_pac(priv, context, client, NULL, pac);
 }
 
 /* Resign (and reform, including possibly new groups) a PAC */
@@ -72,13 +111,25 @@ static krb5_error_code samba_wdc_reget_pac(void *priv, krb5_context context,
 		talloc_get_type_abort(krbtgt->ctx,
 		struct samba_kdc_entry);
 	TALLOC_CTX *mem_ctx = talloc_named(p, 0, "samba_kdc_reget_pac context");
-	DATA_BLOB *pac_blob;
+	krb5_pac new_pac = NULL;
+	DATA_BLOB *pac_blob = NULL;
+	DATA_BLOB *upn_blob = NULL;
 	DATA_BLOB *deleg_blob = NULL;
 	krb5_error_code ret;
 	NTSTATUS nt_status;
 	struct PAC_SIGNATURE_DATA *pac_srv_sig;
 	struct PAC_SIGNATURE_DATA *pac_kdc_sig;
 	bool is_in_db, is_untrusted;
+	size_t num_types = 0;
+	uint32_t *types = NULL;
+	uint32_t forced_next_type = 0;
+	size_t i = 0;
+	ssize_t logon_info_idx = -1;
+	ssize_t delegation_idx = -1;
+	ssize_t logon_name_idx = -1;
+	ssize_t upn_dns_info_idx = -1;
+	ssize_t srv_checksum_idx = -1;
+	ssize_t kdc_checksum_idx = -1;
 
 	if (!mem_ctx) {
 		return ENOMEM;
@@ -109,7 +160,8 @@ static krb5_error_code samba_wdc_reget_pac(void *priv, krb5_context context,
 		client_skdc_entry = talloc_get_type_abort(client->ctx,
 							  struct samba_kdc_entry);
 
-		nt_status = samba_kdc_get_pac_blob(mem_ctx, client_skdc_entry, &pac_blob);
+		nt_status = samba_kdc_get_pac_blobs(mem_ctx, client_skdc_entry,
+						    &pac_blob, NULL, &upn_blob);
 		if (!NT_STATUS_IS_OK(nt_status)) {
 			talloc_free(mem_ctx);
 			return EINVAL;
@@ -174,10 +226,245 @@ static krb5_error_code samba_wdc_reget_pac(void *priv, krb5_context context,
 		}
 	}
 
-	/* We now completely regenerate this pac */
-	krb5_pac_free(context, *pac);
+	/* Check the types of the given PAC */
+	ret = krb5_pac_get_types(context, *pac, &num_types, &types);
+	if (ret != 0) {
+		talloc_free(mem_ctx);
+		return ret;
+	}
 
-	ret = samba_make_krb5_pac(context, pac_blob, deleg_blob, pac);
+	for (i = 0; i < num_types; i++) {
+		switch (types[i]) {
+		case PAC_TYPE_LOGON_INFO:
+			if (logon_info_idx != -1) {
+				DEBUG(1, ("logon type[%d] twice [%d] and [%d]: \n",
+					  (int)types[i],
+					  (int)logon_info_idx,
+					  (int)i));
+				SAFE_FREE(types);
+				talloc_free(mem_ctx);
+				return EINVAL;
+			}
+			logon_info_idx = i;
+			break;
+		case PAC_TYPE_CONSTRAINED_DELEGATION:
+			if (delegation_idx != -1) {
+				DEBUG(1, ("logon type[%d] twice [%d] and [%d]: \n",
+					  (int)types[i],
+					  (int)logon_info_idx,
+					  (int)i));
+				SAFE_FREE(types);
+				talloc_free(mem_ctx);
+				return EINVAL;
+			}
+			delegation_idx = i;
+			break;
+		case PAC_TYPE_LOGON_NAME:
+			if (logon_name_idx != -1) {
+				DEBUG(1, ("logon type[%d] twice [%d] and [%d]: \n",
+					  (int)types[i],
+					  (int)logon_info_idx,
+					  (int)i));
+				SAFE_FREE(types);
+				talloc_free(mem_ctx);
+				return EINVAL;
+			}
+			logon_name_idx = i;
+			break;
+		case PAC_TYPE_UPN_DNS_INFO:
+			if (upn_dns_info_idx != -1) {
+				DEBUG(1, ("logon type[%d] twice [%d] and [%d]: \n",
+					  (int)types[i],
+					  (int)logon_info_idx,
+					  (int)i));
+				SAFE_FREE(types);
+				talloc_free(mem_ctx);
+				return EINVAL;
+			}
+			upn_dns_info_idx = i;
+			break;
+		case PAC_TYPE_SRV_CHECKSUM:
+			if (srv_checksum_idx != -1) {
+				DEBUG(1, ("logon type[%d] twice [%d] and [%d]: \n",
+					  (int)types[i],
+					  (int)logon_info_idx,
+					  (int)i));
+				SAFE_FREE(types);
+				talloc_free(mem_ctx);
+				return EINVAL;
+			}
+			srv_checksum_idx = i;
+			break;
+		case PAC_TYPE_KDC_CHECKSUM:
+			if (kdc_checksum_idx != -1) {
+				DEBUG(1, ("logon type[%d] twice [%d] and [%d]: \n",
+					  (int)types[i],
+					  (int)logon_info_idx,
+					  (int)i));
+				SAFE_FREE(types);
+				talloc_free(mem_ctx);
+				return EINVAL;
+			}
+			kdc_checksum_idx = i;
+			break;
+		default:
+			continue;
+		}
+	}
+
+	if (logon_info_idx == -1) {
+		DEBUG(1, ("PAC_TYPE_LOGON_INFO missing\n"));
+		SAFE_FREE(types);
+		talloc_free(mem_ctx);
+		return EINVAL;
+	}
+	if (logon_name_idx == -1) {
+		DEBUG(1, ("PAC_TYPE_LOGON_NAME missing\n"));
+		SAFE_FREE(types);
+		talloc_free(mem_ctx);
+		return EINVAL;
+	}
+	if (srv_checksum_idx == -1) {
+		DEBUG(1, ("PAC_TYPE_SRV_CHECKSUM missing\n"));
+		SAFE_FREE(types);
+		talloc_free(mem_ctx);
+		return EINVAL;
+	}
+	if (kdc_checksum_idx == -1) {
+		DEBUG(1, ("PAC_TYPE_KDC_CHECKSUM missing\n"));
+		SAFE_FREE(types);
+		talloc_free(mem_ctx);
+		return EINVAL;
+	}
+
+	/* Build an updated PAC */
+	ret = krb5_pac_init(context, &new_pac);
+	if (ret != 0) {
+		SAFE_FREE(types);
+		talloc_free(mem_ctx);
+		return ret;
+	}
+
+	for (i = 0;;) {
+		const uint8_t zero_byte = 0;
+		krb5_data type_data;
+		DATA_BLOB type_blob = data_blob_null;
+		uint32_t type;
+
+		if (forced_next_type != 0) {
+			/*
+			 * We need to inject possible missing types
+			 */
+			type = forced_next_type;
+			forced_next_type = 0;
+		} else if (i < num_types) {
+			type = types[i];
+			i++;
+		} else {
+			break;
+		}
+
+		switch (type) {
+		case PAC_TYPE_LOGON_INFO:
+			type_blob = *pac_blob;
+
+			if (delegation_idx == -1 && deleg_blob != NULL) {
+				/* inject CONSTRAINED_DELEGATION behind */
+				forced_next_type = PAC_TYPE_CONSTRAINED_DELEGATION;
+			}
+			break;
+		case PAC_TYPE_CONSTRAINED_DELEGATION:
+			if (deleg_blob != NULL) {
+				type_blob = *deleg_blob;
+			}
+			break;
+		case PAC_TYPE_CREDENTIAL_INFO:
+			/*
+			 * Note that we copy the credential blob,
+			 * as it's only usable with the PKINIT based
+			 * AS-REP reply key, it's only available on the
+			 * host which did the AS-REQ/AS-REP exchange.
+			 *
+			 * This matches Windows 2008R2...
+			 */
+			break;
+		case PAC_TYPE_LOGON_NAME:
+			/*
+			 * this is generated in the main KDC code
+			 * we just add a place holder here.
+			 */
+			type_blob = data_blob_const(&zero_byte, 1);
+
+			if (upn_dns_info_idx == -1 && upn_blob != NULL) {
+				/* inject UPN_DNS_INFO behind */
+				forced_next_type = PAC_TYPE_UPN_DNS_INFO;
+			}
+			break;
+		case PAC_TYPE_UPN_DNS_INFO:
+			/*
+			 * Replace in the RODC case, otherwise
+			 * upn_blob is NULL and we just copy.
+			 */
+			if (upn_blob != NULL) {
+				type_blob = *upn_blob;
+			}
+			break;
+		case PAC_TYPE_SRV_CHECKSUM:
+			/*
+			 * this are generated in the main KDC code
+			 * we just add a place holder here.
+			 */
+			type_blob = data_blob_const(&zero_byte, 1);
+			break;
+		case PAC_TYPE_KDC_CHECKSUM:
+			/*
+			 * this are generated in the main KDC code
+			 * we just add a place holders here.
+			 */
+			type_blob = data_blob_const(&zero_byte, 1);
+			break;
+		default:
+			/* just copy... */
+			break;
+		}
+
+		if (type_blob.length != 0) {
+			ret = krb5_copy_data_contents(&type_data,
+						      type_blob.data,
+						      type_blob.length);
+			if (ret != 0) {
+				SAFE_FREE(types);
+				krb5_pac_free(context, new_pac);
+				talloc_free(mem_ctx);
+				return ret;
+			}
+		} else {
+			ret = krb5_pac_get_buffer(context, *pac,
+						  type, &type_data);
+			if (ret != 0) {
+				SAFE_FREE(types);
+				krb5_pac_free(context, new_pac);
+				talloc_free(mem_ctx);
+				return ret;
+			}
+		}
+
+		ret = krb5_pac_add_buffer(context, new_pac,
+					  type, &type_data);
+		kerberos_free_data_contents(context, &type_data);
+		if (ret != 0) {
+			SAFE_FREE(types);
+			krb5_pac_free(context, new_pac);
+			talloc_free(mem_ctx);
+			return ret;
+		}
+	}
+
+	SAFE_FREE(types);
+
+	/* We now replace the pac */
+	krb5_pac_free(context, *pac);
+	*pac = new_pac;
 
 	talloc_free(mem_ctx);
 	return ret;
@@ -326,9 +613,10 @@ struct krb5plugin_windc_ftable windc_plugin_table = {
 	.minor_version = KRB5_WINDC_PLUGIN_MINOR,
 	.init = samba_wdc_plugin_init,
 	.fini = samba_wdc_plugin_fini,
-	.pac_generate = samba_wdc_get_pac,
+	.pac_generate = samba_wdc_get_pac_compat,
 	.pac_verify = samba_wdc_reget_pac,
 	.client_access = samba_wdc_check_client_access,
+	.pac_pk_generate = samba_wdc_get_pac,
 };
 
 

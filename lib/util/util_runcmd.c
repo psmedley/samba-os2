@@ -1,5 +1,5 @@
 /*
-   Unix SMB/CIFS mplementation.
+   Unix SMB/CIFS implementation.
 
    run a child command
 
@@ -27,20 +27,8 @@
 
 #include "includes.h"
 #include "system/filesys.h"
-#include <tevent.h>
 #include "../lib/util/tevent_unix.h"
-
-struct samba_runcmd_state {
-	int stdout_log_level;
-	int stderr_log_level;
-	struct tevent_fd *fde_stdout;
-	struct tevent_fd *fde_stderr;
-	int fd_stdin, fd_stdout, fd_stderr;
-	char *arg0;
-	pid_t pid;
-	char buf[1024];
-	uint16_t buf_used;
-};
+#include "../lib/util/util_runcmd.h"
 
 static int samba_runcmd_state_destructor(struct samba_runcmd_state *state)
 {
@@ -304,8 +292,8 @@ static void samba_runcmd_io_handler(struct tevent_context *ev,
 				return;
 			}
 			status = WEXITSTATUS(status);
-			DEBUG(3,("Child %s exited with status %d - %s\n",
-				 state->arg0, status, strerror(status)));
+			DEBUG(3,("Child %s exited with status %d\n",
+				 state->arg0, status));
 			if (status != 0) {
 				tevent_req_error(req, status);
 				return;

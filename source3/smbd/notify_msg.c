@@ -30,27 +30,28 @@
 #include "lib/util/server_id_db.h"
 #include "smbd/notifyd/notifyd.h"
 
-struct notify_list {
-	struct notify_list *next, *prev;
-	void (*callback)(void *private_data, struct timespec when,
-			 const struct notify_event *ctx);
-	void *private_data;
-	char path[1];
-};
-
 struct notify_context {
 	struct server_id notifyd;
 	struct messaging_context *msg_ctx;
-	struct notify_list *list;
+
+	struct smbd_server_connection *sconn;
+	void (*callback)(struct smbd_server_connection *sconn,
+			 void *private_data, struct timespec when,
+			 const struct notify_event *ctx);
 };
 
 static void notify_handler(struct messaging_context *msg, void *private_data,
 			   uint32_t msg_type, struct server_id src,
 			   DATA_BLOB *data);
+static int notify_context_destructor(struct notify_context *ctx);
 
-struct notify_context *notify_init(TALLOC_CTX *mem_ctx,
-				   struct messaging_context *msg,
-				   struct tevent_context *ev)
+struct notify_context *notify_init(
+	TALLOC_CTX *mem_ctx, struct messaging_context *msg,
+	struct tevent_context *ev,
+	struct smbd_server_connection *sconn,
+	void (*callback)(struct smbd_server_connection *sconn,
+			 void *, struct timespec,
+			 const struct notify_event *))
 {
 	struct server_id_db *names_db;
 	struct notify_context *ctx;
@@ -61,7 +62,9 @@ struct notify_context *notify_init(TALLOC_CTX *mem_ctx,
 		return NULL;
 	}
 	ctx->msg_ctx = msg;
-	ctx->list = NULL;
+
+	ctx->sconn = sconn;
+	ctx->callback = callback;
 
 	names_db = messaging_names_db(msg);
 	if (!server_id_db_lookup_one(names_db, "notify-daemon",
@@ -71,15 +74,35 @@ struct notify_context *notify_init(TALLOC_CTX *mem_ctx,
 		return NULL;
 	}
 
-	status = messaging_register(msg, ctx, MSG_PVFS_NOTIFY, notify_handler);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(1, ("messaging_register failed: %s\n",
-			  nt_errstr(status)));
-		TALLOC_FREE(ctx);
-		return NULL;
+	{
+		struct server_id_buf tmp;
+		DBG_DEBUG("notifyd=%s\n",
+			  server_id_str_buf(ctx->notifyd, &tmp));
 	}
 
+	if (callback != NULL) {
+		status = messaging_register(msg, ctx, MSG_PVFS_NOTIFY,
+					    notify_handler);
+		if (!NT_STATUS_IS_OK(status)) {
+			DEBUG(1, ("messaging_register failed: %s\n",
+				  nt_errstr(status)));
+			TALLOC_FREE(ctx);
+			return NULL;
+		}
+	}
+
+	talloc_set_destructor(ctx, notify_context_destructor);
+
 	return ctx;
+}
+
+static int notify_context_destructor(struct notify_context *ctx)
+{
+	if (ctx->callback != NULL) {
+		messaging_deregister(ctx->msg_ctx, MSG_PVFS_NOTIFY, ctx);
+	}
+
+	return 0;
 }
 
 static void notify_handler(struct messaging_context *msg, void *private_data,
@@ -90,7 +113,6 @@ static void notify_handler(struct messaging_context *msg, void *private_data,
 		private_data, struct notify_context);
 	struct notify_event_msg *event_msg;
 	struct notify_event event;
-	struct notify_list *listel;
 
 	if (data->length < offsetof(struct notify_event_msg, path) + 1) {
 		DEBUG(1, ("message too short: %u\n", (unsigned)data->length));
@@ -111,22 +133,13 @@ static void notify_handler(struct messaging_context *msg, void *private_data,
 		   "path=%s\n", __func__, (unsigned)event.action,
 		   event.private_data, event.path));
 
-	for (listel = ctx->list; listel != NULL; listel = listel->next) {
-		if (listel->private_data == event.private_data) {
-			listel->callback(listel->private_data, event_msg->when,
-					 &event);
-			break;
-		}
-	}
+	ctx->callback(ctx->sconn, event.private_data, event_msg->when, &event);
 }
 
 NTSTATUS notify_add(struct notify_context *ctx,
 		    const char *path, uint32_t filter, uint32_t subdir_filter,
-		    void (*callback)(void *, struct timespec,
-				     const struct notify_event *),
 		    void *private_data)
 {
-	struct notify_list *listel;
 	struct notify_rec_change_msg msg = {};
 	struct iovec iov[2];
 	size_t pathlen;
@@ -141,15 +154,6 @@ NTSTATUS notify_add(struct notify_context *ctx,
 		   (unsigned)subdir_filter, private_data));
 
 	pathlen = strlen(path)+1;
-
-	listel = (struct notify_list *)talloc_size(
-		ctx, offsetof(struct notify_list, path) + pathlen);
-	if (listel == NULL) {
-		return NT_STATUS_NO_MEMORY;
-	}
-	listel->callback = callback;
-	listel->private_data = private_data;
-	memcpy(listel->path, path, pathlen);
 
 	clock_gettime_mono(&msg.instance.creation_time);
 	msg.instance.filter = filter;
@@ -166,19 +170,17 @@ NTSTATUS notify_add(struct notify_context *ctx,
 		iov, ARRAY_SIZE(iov), NULL, 0);
 
 	if (!NT_STATUS_IS_OK(status)) {
-		TALLOC_FREE(listel);
 		DEBUG(10, ("messaging_send_iov returned %s\n",
 			   nt_errstr(status)));
 		return status;
 	}
 
-	DLIST_ADD(ctx->list, listel);
 	return NT_STATUS_OK;
 }
 
-NTSTATUS notify_remove(struct notify_context *ctx, void *private_data)
+NTSTATUS notify_remove(struct notify_context *ctx, void *private_data,
+		       char *path)
 {
-	struct notify_list *listel;
 	struct notify_rec_change_msg msg = {};
 	struct iovec iov[2];
 	NTSTATUS status;
@@ -188,29 +190,17 @@ NTSTATUS notify_remove(struct notify_context *ctx, void *private_data)
 		return NT_STATUS_NOT_IMPLEMENTED;
 	}
 
-	for (listel = ctx->list; listel != NULL; listel = listel->next) {
-		if (listel->private_data == private_data) {
-			DLIST_REMOVE(ctx->list, listel);
-			break;
-		}
-	}
-	if (listel == NULL) {
-		DEBUG(10, ("%p not found\n", private_data));
-		return NT_STATUS_NOT_FOUND;
-	}
-
 	msg.instance.private_data = private_data;
 
 	iov[0].iov_base = &msg;
 	iov[0].iov_len = offsetof(struct notify_rec_change_msg, path);
-	iov[1].iov_base = discard_const_p(char, listel->path);
-	iov[1].iov_len = strlen(listel->path)+1;
+	iov[1].iov_base = path;
+	iov[1].iov_len = strlen(path)+1;
 
 	status = messaging_send_iov(
 		ctx->msg_ctx, ctx->notifyd, MSG_SMB_NOTIFY_REC_CHANGE,
 		iov, ARRAY_SIZE(iov), NULL, 0);
 
-	TALLOC_FREE(listel);
 	return status;
 }
 

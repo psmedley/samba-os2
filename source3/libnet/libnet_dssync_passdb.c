@@ -28,6 +28,7 @@
 #include "dbwrap/dbwrap_rbt.h"
 #include "../libds/common/flag_mapping.h"
 #include "passdb.h"
+#include "lib/util/base64.h"
 
 /****************************************************************
 ****************************************************************/
@@ -1240,10 +1241,14 @@ static NTSTATUS sam_account_from_object(struct samu *account,
 	}
 
 	if (userParameters.data) {
-		char *newstr;
+		char *newstr = NULL;
 		old_string = pdb_get_munged_dial(account);
-		newstr = (userParameters.length == 0) ? NULL :
-			base64_encode_data_blob(talloc_tos(), userParameters);
+
+		if (userParameters.length != 0) {
+			newstr = base64_encode_data_blob(talloc_tos(),
+							 userParameters);
+			SMB_ASSERT(newstr != NULL);
+		}
 
 		if (STRING_CHANGED_NC(old_string, newstr))
 			pdb_set_munged_dial(account, newstr, PDB_CHANGED);
@@ -1804,7 +1809,7 @@ static NTSTATUS parse_object(struct dssync_passdb *pctx,
 	for (a=0; a < ARRAY_SIZE(dssync_object_table); a++) {
 		if (sam_type == dssync_object_table[a].type) {
 			if (dssync_object_table[a].fn) {
-				struct dssync_passdb_obj *obj;
+				struct dssync_passdb_obj *obj = NULL;
 				status = dssync_create_obj(pctx, pctx->all,
 							   sam_type, cur, &obj);
 				if (!NT_STATUS_IS_OK(status)) {

@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/22/2016
+.\"      Date: 09/07/2016
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.4
+.\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "09/22/2016" "Samba 4\&.4" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "09/07/2016" "Samba 4\&.5" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1780,6 +1780,12 @@ The name of a program that can be used to check password complexity\&. The passw
 .sp
 The program must return 0 on a good password, or any other value if the password is bad\&. In case the password is considered weak (the program does not return 0) the user will be notified and the password change will fail\&.
 .sp
+In Samba AD, this script will be run
+\fIAS ROOT\fR
+by
+\fBsamba\fR(8)
+without any substitutions\&.
+.sp
 Note: In the example directory is a sample program called
 crackcheck
 that uses cracklib to check the password quality\&.
@@ -2797,7 +2803,9 @@ delete group script (G)
 .PP
 .RS 4
 This is the full pathname to a script that will be run
-\fIAS ROOT\fR\fBsmbd\fR(8)
+\fIAS ROOT\fR
+by
+\fBsmbd\fR(8)
 when a group is requested to be deleted\&. It will expand any
 \fI%g\fR
 to the group name passed\&. This script is only useful for installations using the Windows NT domain administration tools\&.
@@ -3163,7 +3171,7 @@ dns forwarder (G)
 .\" dns forwarder
 .PP
 .RS 4
-This option specifies the DNS server that DNS requests will be forwarded to if they can not be handled by Samba itself\&.
+This option specifies the list of DNS servers that DNS requests will be forwarded to if they can not be handled by Samba itself\&.
 .sp
 The DNS forwarder is only used if the internal DNS server in Samba is used\&.
 .sp
@@ -7344,8 +7352,12 @@ If this option, and
 lanman auth
 are both disabled, then only NTLMv2 logins will be permited\&. Not all clients support NTLMv2, and most will require special configuration to use it\&.
 .sp
+The primary user of NTLMv1 is MSCHAPv2 for VPNs and 802\&.1x\&.
+.sp
+The default changed from "yes" to "no" with Samba 4\&.5\&.
+.sp
 Default:
-\fI\fIntlm auth\fR\fR\fI = \fR\fIyes\fR\fI \fR
+\fI\fIntlm auth\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 nt pipe support (G)
@@ -7519,25 +7531,6 @@ is set to Active Directory Domain Controller
 .sp
 Default:
 \fI\fIold password allowed period\fR\fR\fI = \fR\fI60\fR\fI \fR
-.RE
-
-only user (S)
-.\" only user
-.PP
-.RS 4
-To restrict a service to a particular set of users you can use the
-\m[blue]\fBvalid users\fR\m[]
-parameter\&.
-.sp
-This parameter is deprecated
-.sp
-However, it currently operates only in conjunction with
-\m[blue]\fBusername\fR\m[]\&. The supported way to restrict a service to a particular set of users is the
-\m[blue]\fBvalid users\fR\m[]
-parameter\&.
-.sp
-Default:
-\fI\fIonly user\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 oplock break wait time (G)
@@ -7894,6 +7887,55 @@ Default:
 .sp
 Example:
 \fI\fIpasswd program\fR\fR\fI = \fR\fI/bin/passwd %u\fR\fI \fR
+.RE
+
+password hash gpg key ids (G)
+.\" password hash gpg key ids
+.PP
+.RS 4
+If
+samba
+is running as an active directory domain controller, it is possible to store the cleartext password of accounts in a PGP/OpenGPG encrypted form\&.
+.sp
+You can specify one or more recipients by key id or user id\&. Note that 32bit key ids are not allowed, specify at least 64bit\&.
+.sp
+The value is stored as \*(AqPrimary:SambaGPG\*(Aq in the
+supplementalCredentials
+attribute\&.
+.sp
+As password changes can occur on any domain controller, you should configure this on each of them\&. Note that this feature is currently available only on Samba domain controllers\&.
+.sp
+This option is only available if
+samba
+was compiled with
+gpgme
+support\&.
+.sp
+You may need to export the
+GNUPGHOME
+environment variable before starting
+samba\&.
+\fIIt is strongly recommended to only store the public key in this location\&. The private key is not used for encryption and should be only stored where decryption is required\&.\fR
+.sp
+Being able to restore the cleartext password helps, when they need to be imported into other authentication systems later (see
+samba\-tool user getpassword) or you want to keep the passwords in sync with another system, e\&.g\&. an OpenLDAP server (see
+samba\-tool user syncpasswords)\&.
+.sp
+While this option needs to be configured on all domain controllers, the
+samba\-tool user syncpasswords
+command should run on a single domain controller only (typically the PDC\-emulator)\&.
+.sp
+Default:
+\fI\fIpassword hash gpg key ids\fR\fR\fI = \fR\fI\fR\fI \fR
+.sp
+Example:
+\fI\fIpassword hash gpg key ids\fR\fR\fI = \fR\fI4952E40301FAB41A\fR\fI \fR
+.sp
+Example:
+\fI\fIpassword hash gpg key ids\fR\fR\fI = \fR\fIselftest@samba\&.example\&.com\fR\fI \fR
+.sp
+Example:
+\fI\fIpassword hash gpg key ids\fR\fR\fI = \fR\fIselftest@samba\&.example\&.com, 4952E40301FAB41A\fR\fI \fR
 .RE
 
 password server (G)
@@ -10155,7 +10197,7 @@ smb2 leases (G)
 .RS 4
 This boolean option tells
 smbd
-whether to globally negotiate SMB2 leases on file open requests\&. Leasing is an SMB2\-only feature which allows clients to aggressively cache files locally above and beyond the caching allowed by SMB1 oplocks\&. This (experimental) parameter is set to off by default until the SMB2 leasing code is declared fully stable\&.
+whether to globally negotiate SMB2 leases on file open requests\&. Leasing is an SMB2\-only feature which allows clients to aggressively cache files locally above and beyond the caching allowed by SMB1 oplocks\&.
 .sp
 This is only available with
 \m[blue]\fBoplocks = yes\fR\m[]
@@ -10164,10 +10206,8 @@ and
 .sp
 Note that the write cache won\*(Aqt be used for file handles with a smb2 write lease\&.
 .sp
-The Samba implementation of leases is currently marked as experimental!
-.sp
 Default:
-\fI\fIsmb2 leases\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fIsmb2 leases\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
 smb2 max credits (G)
@@ -11440,6 +11480,14 @@ parameter is called
 \fIAS ROOT\fR
 \- to allow the new UNIX password to be set without access to the old UNIX password (as the SMB password change code has no access to the old password cleartext, only the new)\&.
 .sp
+This option has no effect if
+samba
+is running as an active directory domain controller, in that case have a look at the
+\m[blue]\fBpassword hash gpg key ids\fR\m[]
+option and the
+samba\-tool user syncpasswords
+command\&.
+.sp
 Default:
 \fI\fIunix password sync\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
@@ -11470,44 +11518,6 @@ by default on HPUX\&. On all other systems this parameter should be left alone\&
 .sp
 Default:
 \fI\fIuse mmap\fR\fR\fI = \fR\fIyes\fR\fI \fR
-.RE
-
-user
-.\" user
-.PP
-.RS 4
-This parameter is a synonym for
-username\&.
-.RE
-
-users
-.\" users
-.PP
-.RS 4
-This parameter is a synonym for
-username\&.
-.RE
-
-username (S)
-.\" username
-.PP
-.RS 4
-To restrict a service to a particular set of users you can use the
-\m[blue]\fBvalid users\fR\m[]
-parameter\&.
-.sp
-This parameter is deprecated
-.sp
-However, it currently operates only in conjunction with
-\m[blue]\fBonly user\fR\m[]\&. The supported way to restrict a service to a particular set of users is the
-\m[blue]\fBvalid users\fR\m[]
-parameter\&.
-.sp
-Default:
-\fI\fIusername\fR\fR\fI = \fR\fI # The guest account if a guest service, else <empty string>\&.\fR\fI \fR
-.sp
-Example:
-\fI\fIusername\fR\fR\fI = \fR\fIfred, mary, jack, jane, @users, @pcgroup\fR\fI \fR
 .RE
 
 username level (G)

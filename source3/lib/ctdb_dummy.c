@@ -58,19 +58,14 @@ int ctdbd_register_ips(struct ctdbd_connection *conn,
 	return ENOSYS;
 }
 
-bool ctdb_processes_exist(struct ctdbd_connection *conn,
-			  const struct server_id *pids, int num_pids,
-			  bool *results)
-{
-	return false;
-}
-
 bool ctdbd_process_exists(struct ctdbd_connection *conn, uint32_t vnn, pid_t pid)
 {
 	return false;
 }
 
 struct db_context *db_open_ctdb(TALLOC_CTX *mem_ctx,
+				struct messaging_context *msg_ctx,
+				struct ctdbd_connection *conn,
 				const char *name,
 				int hash_size, int tdb_flags,
 				int open_flags, mode_t mode,
@@ -84,6 +79,13 @@ struct db_context *db_open_ctdb(TALLOC_CTX *mem_ctx,
 int messaging_ctdbd_init(struct messaging_context *msg_ctx,
 			 TALLOC_CTX *mem_ctx,
 			      struct messaging_backend **presult)
+{
+	return ENOSYS;
+}
+
+int messaging_ctdbd_reinit(struct messaging_context *msg_ctx,
+			   TALLOC_CTX *mem_ctx,
+			   struct messaging_backend *backend)
 {
 	return ENOSYS;
 }

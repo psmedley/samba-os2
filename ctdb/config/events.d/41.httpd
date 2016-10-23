@@ -2,19 +2,23 @@
 # event script to manage httpd in a cluster environment
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
+. "${CTDB_BASE}/functions"
 
 detect_init_style
 
 case $CTDB_INIT_STYLE in
-    redhat)
+redhat)
 	service_name="httpd"
+	# service_config is used by loadconfig()
+	# shellcheck disable=SC2034
 	service_config="http"
 	;;
-    suse|debian|*)
+suse|debian|*)
 	service_name="apache2"
+	# service_config is used by loadconfig()
+	# shellcheck disable=SC2034
 	service_config="apache2"
 	;;
 esac
@@ -24,7 +28,7 @@ esac
 cleanup_httpd_semaphore_leak() {
     killall -q -0 "$service_name" ||
     for i in $(ipcs -s | awk '$3 == "apache" { print $2 }') ; do
-	ipcrm -s $i
+	ipcrm -s "$i"
     done
 }
 
@@ -48,37 +52,32 @@ ctdb_start_stop_service
 is_ctdb_managed_service || exit 0
 
 case "$1" in
-    startup)
+startup)
 	ctdb_service_start
 	;;
 
-    shutdown)
+shutdown)
 	ctdb_service_stop
 	;;
 
-    monitor)
+monitor)
 	if ctdb_check_tcp_ports 80 >/dev/null 2>/dev/null ; then
-	    ctdb_counter_init
+		ctdb_counter_init
 	else
-	    ctdb_counter_incr
-
-	    ctdb_check_counter warn -eq 2 || {
-		echo "HTTPD is not running. Trying to restart HTTPD."
-		service_stop
-		service_start
-		exit 0
-	    }
-            ctdb_check_counter warn -ge 5 || {
-		echo "HTTPD is not running. Trying to restart HTTPD."
-		service_stop
-		service_start
-		exit 1
-	    }
+		ctdb_counter_incr
+		num_fails=$(ctdb_counter_get)
+		if [ "$num_fails" -eq 2 ] ; then
+			echo "HTTPD is not running. Trying to restart HTTPD."
+			service_stop
+			service_start
+			exit 0
+		elif [ "$num_fails" -ge 5 ] ; then
+			echo "HTTPD is not running. Trying to restart HTTPD."
+			service_stop
+			service_start
+			exit 1
+		fi
 	fi
-	;;
-
-    *)
-	ctdb_standard_event_handler "$@"
 	;;
 esac
 

@@ -12,6 +12,7 @@ from ldb import (LdbError, ERR_NO_SUCH_OBJECT, Message,
 import samba.tests
 import samba.dsdb as dsdb
 import samba.getopt as options
+import random
 
 parser = optparse.OptionParser("urgent_replication.py [options] <host>")
 sambaopts = options.SambaOptions(parser)
@@ -146,35 +147,31 @@ systemFlags: 33554432""", ["relax:0"])
     def test_attributeSchema_object(self):
         """Test if the urgent replication is activated when handling an attributeSchema object"""
 
-        try:
-            self.ldb.add_ldif(
-                              """dn: CN=test attributeSchema,cn=Schema,CN=Configuration,%s""" % self.base_dn + """
+        self.ldb.add_ldif(
+            """dn: CN=test attributeSchema,cn=Schema,CN=Configuration,%s""" % self.base_dn + """
 objectClass: attributeSchema
 cn: test attributeSchema
 instanceType: 4
 isSingleValued: FALSE
 showInAdvancedViewOnly: FALSE
-attributeID: 0.9.2342.19200300.100.1.1
+attributeID: 1.3.6.1.4.1.7165.4.6.1.4.""" + str(random.randint(1,100000)) + """
 attributeSyntax: 2.5.5.12
 adminDisplayName: test attributeSchema
 adminDescription: test attributeSchema
 oMSyntax: 64
 systemOnly: FALSE
 searchFlags: 8
-lDAPDisplayName: test attributeSchema
+lDAPDisplayName: testAttributeSchema
 name: test attributeSchema""")
 
-            # urgent replication should be enabled when creating
-            res = self.ldb.load_partition_usn("cn=Schema,cn=Configuration," + self.base_dn)
-            self.assertEquals(res["uSNHighest"], res["uSNUrgent"])
-
-        except LdbError:
-            print "Not testing urgent replication when creating attributeSchema object ...\n"
+        # urgent replication should be enabled when creating
+        res = self.ldb.load_partition_usn("cn=Schema,cn=Configuration," + self.base_dn)
+        self.assertEquals(res["uSNHighest"], res["uSNUrgent"])
 
         # urgent replication should be enabled when modifying
         m = Message()
         m.dn = Dn(self.ldb, "CN=test attributeSchema,CN=Schema,CN=Configuration," + self.base_dn)
-        m["lDAPDisplayName"] = MessageElement("updated test attributeSchema", FLAG_MOD_REPLACE,
+        m["lDAPDisplayName"] = MessageElement("updatedTestAttributeSchema", FLAG_MOD_REPLACE,
           "lDAPDisplayName")
         self.ldb.modify(m)
         res = self.ldb.load_partition_usn("cn=Schema,cn=Configuration," + self.base_dn)
@@ -189,13 +186,13 @@ objectClass: classSchema
 cn: test classSchema
 instanceType: 4
 subClassOf: top
-governsID: 1.2.840.113556.1.5.999
+governsId: 1.3.6.1.4.1.7165.4.6.2.4.""" + str(random.randint(1,100000)) + """
 rDNAttID: cn
 showInAdvancedViewOnly: TRUE
 adminDisplayName: test classSchema
 adminDescription: test classSchema
 objectClassCategory: 1
-lDAPDisplayName: test classSchema
+lDAPDisplayName: testClassSchema
 name: test classSchema
 systemOnly: FALSE
 systemPossSuperiors: dfsConfiguration
@@ -215,7 +212,7 @@ defaultHidingValue: TRUE""")
         # urgent replication should be enabled when modifying 
         m = Message()
         m.dn = Dn(self.ldb, "CN=test classSchema,CN=Schema,CN=Configuration," + self.base_dn)
-        m["lDAPDisplayName"] = MessageElement("updated test classSchema", FLAG_MOD_REPLACE,
+        m["lDAPDisplayName"] = MessageElement("updatedTestClassSchema", FLAG_MOD_REPLACE,
           "lDAPDisplayName")
         self.ldb.modify(m)
         res = self.ldb.load_partition_usn("cn=Schema,cn=Configuration," + self.base_dn)
@@ -299,7 +296,7 @@ rIDAvailablePool: 133001-1073741823""", ["relax:0"])
         # urgent replication should be enabled when modifying userAccountControl
         m = Message()
         m.dn = Dn(self.ldb, "cn=user UrgAttr test,cn=users," + self.base_dn)
-        m["userAccountControl"] = MessageElement(str(dsdb.UF_NORMAL_ACCOUNT+dsdb.UF_SMARTCARD_REQUIRED), FLAG_MOD_REPLACE,
+        m["userAccountControl"] = MessageElement(str(dsdb.UF_NORMAL_ACCOUNT+dsdb.UF_DONT_EXPIRE_PASSWD), FLAG_MOD_REPLACE,
           "userAccountControl")
         self.ldb.modify(m)
         res = self.ldb.load_partition_usn(self.base_dn)
@@ -317,7 +314,7 @@ rIDAvailablePool: 133001-1073741823""", ["relax:0"])
         # urgent replication should be enabled when modifying pwdLastSet
         m = Message()
         m.dn = Dn(self.ldb, "cn=user UrgAttr test,cn=users," + self.base_dn)
-        m["pwdLastSet"] = MessageElement("1", FLAG_MOD_REPLACE,
+        m["pwdLastSet"] = MessageElement("-1", FLAG_MOD_REPLACE,
           "pwdLastSet")
         self.ldb.modify(m)
         res = self.ldb.load_partition_usn(self.base_dn)

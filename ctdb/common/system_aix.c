@@ -25,6 +25,7 @@
 #include "system/wait.h"
 
 #include "lib/util/debug.h"
+#include "lib/util/blocking.h"
 
 #include "protocol/protocol.h"
 
@@ -65,7 +66,7 @@ int ctdb_sys_open_sending_socket(void)
 		return -1;
 	}
 
-	set_nonblocking(s);
+	set_blocking(s, false);
 	set_close_on_exec(s);
 
 	return s;
@@ -117,7 +118,7 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 		struct ip ip;
 		struct tcphdr tcp;
 	} ip4pkt;
-
+	int saved_errno;
 
 	/* for now, we only handle AF_INET addresses */
 	if (src->ip.sin_family != AF_INET || dest->ip.sin_family != AF_INET) {
@@ -142,9 +143,6 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 		return -1;
 	}
 
-	set_nonblocking(s);
-	set_close_on_exec(s);
-
 	memset(&ip4pkt, 0, sizeof(ip4pkt));
 	ip4pkt.ip.ip_v     = 4;
 	ip4pkt.ip.ip_hl    = sizeof(ip4pkt.ip)/4;
@@ -167,9 +165,13 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 	ip4pkt.tcp.th_win   = htons(1234);
 	ip4pkt.tcp.th_sum    = tcp_checksum((uint16_t *)&ip4pkt.tcp, sizeof(ip4pkt.tcp), &ip4pkt.ip);
 
-	ret = sendto(s, &ip4pkt, sizeof(ip4pkt), 0, (struct sockaddr *)dest, sizeof(*dest));
+	ret = sendto(s, &ip4pkt, sizeof(ip4pkt), 0,
+		     (struct sockaddr *)dest, sizeof(*dest));
+	saved_errno = errno;
+	close(s);
 	if (ret != sizeof(ip4pkt)) {
-		DEBUG(DEBUG_CRIT,(__location__ " failed sendto (%s)\n", strerror(errno)));
+		DEBUG(DEBUG_ERR,
+		      ("Failed sendto (%s)\n", strerror(saved_errno)));
 		return -1;
 	}
 
@@ -269,9 +271,10 @@ static int aix_get_mac_addr(const char *device_name, uint8_t mac[6])
 	return -1;
 }
 
-int ctdb_sys_read_tcp_packet(int s, void *private_data, 
-			ctdb_sock_addr *src, ctdb_sock_addr *dst,
-			uint32_t *ack_seq, uint32_t *seq)
+int ctdb_sys_read_tcp_packet(int s, void *private_data,
+			     ctdb_sock_addr *src, ctdb_sock_addr *dst,
+			     uint32_t *ack_seq, uint32_t *seq,
+			     int *rst, uint16_t *window)
 {
 	int ret;
 	struct ether_header *eth;
@@ -326,7 +329,12 @@ int ctdb_sys_read_tcp_packet(int s, void *private_data,
 		dst->ip.sin_port        = tcp->th_dport;
 		*ack_seq                = tcp->th_ack;
 		*seq                    = tcp->th_seq;
-
+		if (window != NULL) {
+			*window = tcp->th_win;
+		}
+		if (rst != NULL) {
+			*rst = tcp->th_flags & TH_RST;
+		}
 
 		return 0;
 #ifndef ETHERTYPE_IP6
@@ -355,6 +363,12 @@ int ctdb_sys_read_tcp_packet(int s, void *private_data,
 
 		*ack_seq             = tcp->th_ack;
 		*seq                 = tcp->th_seq;
+		if (window != NULL) {
+			*window = tcp->th_win;
+		}
+		if (rst != NULL) {
+			*rst = tcp->th_flags & TH_RST;
+		}
 
 		return 0;
 	}
@@ -374,7 +388,7 @@ int ctdb_get_peer_pid(const int fd, pid_t *peer_pid)
 	struct peercred_struct cr;
 	socklen_t crl = sizeof(struct peercred_struct);
 	int ret;
-	if ((ret = getsockopt(fd, SOL_SOCKET, SO_PEERID, &cr, &crl) == 0)) {
+	if ((ret = getsockopt(fd, SOL_SOCKET, SO_PEERID, &cr, &crl)) == 0) {
 		*peer_pid = cr.pid;
 	}
 	return ret;

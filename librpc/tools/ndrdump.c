@@ -184,6 +184,12 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 	return NT_STATUS_OK;
 }
 
+static void ndr_print_dummy(struct ndr_print *ndr, const char *format, ...)
+{
+	/* This is here so that you can turn ndr printing off for the purposes
+	   of benchmarking ndr parsing. */
+}
+
  int main(int argc, const char *argv[])
 {
 	const struct ndr_interface_table *p = NULL;
@@ -206,8 +212,9 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 	bool validate = false;
 	bool dumpdata = false;
 	bool assume_ndr64 = false;
+	bool quiet = false;
 	int opt;
-	enum {OPT_CONTEXT_FILE=1000, OPT_VALIDATE, OPT_DUMP_DATA, OPT_LOAD_DSO, OPT_NDR64};
+	enum {OPT_CONTEXT_FILE=1000, OPT_VALIDATE, OPT_DUMP_DATA, OPT_LOAD_DSO, OPT_NDR64, OPT_QUIET};
 	struct poptOption long_options[] = {
 		POPT_AUTOHELP
 		{"context-file", 'c', POPT_ARG_STRING, NULL, OPT_CONTEXT_FILE, "In-filename to parse first", "CTX-FILE" },
@@ -215,6 +222,7 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 		{"dump-data", 0, POPT_ARG_NONE, NULL, OPT_DUMP_DATA, "dump the hex data", NULL },	
 		{"load-dso", 'l', POPT_ARG_STRING, NULL, OPT_LOAD_DSO, "load from shared object file", NULL },
 		{"ndr64", 0, POPT_ARG_NONE, NULL, OPT_NDR64, "Assume NDR64 data", NULL },
+		{"quiet", 0, POPT_ARG_NONE, NULL, OPT_QUIET, "Don't actually dump anything", NULL },
 		POPT_COMMON_SAMBA
 		POPT_COMMON_VERSION
 		{ NULL }
@@ -254,6 +262,9 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 			break;
 		case OPT_NDR64:
 			assume_ndr64 = true;
+			break;
+		case OPT_QUIET:
+			quiet = true;
 			break;
 		}
 	}
@@ -399,7 +410,11 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 	}
 
 	ndr_print = talloc_zero(mem_ctx, struct ndr_print);
-	ndr_print->print = ndr_print_printf_helper;
+	if (quiet) {
+		ndr_print->print = ndr_print_dummy;
+	} else {
+		ndr_print->print = ndr_print_printf_helper;
+	}
 	ndr_print->depth = 1;
 
 	ndr_err = ndr_pop_dcerpc_sec_verification_trailer(ndr_pull, mem_ctx, &sec_vt);
@@ -448,7 +463,7 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 	}
 
 	if (dumpdata) {
-		printf("%d bytes consumed\n", ndr_pull->offset);
+		printf("%d bytes consumed\n", highest_ofs);
 		ndrdump_data(blob.data, blob.length, dumpdata);
 	}
 
@@ -472,6 +487,7 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 		struct ndr_push *ndr_v_push;
 		struct ndr_pull *ndr_v_pull;
 		struct ndr_print *ndr_v_print;
+		uint32_t highest_v_ofs;
 		uint32_t i;
 		uint8_t byte_a, byte_b;
 		bool differ;
@@ -508,11 +524,17 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 			exit(1);
 		}
 
+		if (ndr_v_pull->offset > ndr_v_pull->relative_highest_offset) {
+			highest_v_ofs = ndr_v_pull->offset;
+		} else {
+			highest_v_ofs = ndr_v_pull->relative_highest_offset;
+		}
 
-		if (ndr_v_pull->offset != ndr_v_pull->data_size) {
-			printf("WARNING! %d unread bytes in validation\n", ndr_v_pull->data_size - ndr_v_pull->offset);
-			ndrdump_data(ndr_v_pull->data+ndr_v_pull->offset,
-				     ndr_v_pull->data_size - ndr_v_pull->offset,
+		if (highest_v_ofs != ndr_v_pull->data_size) {
+			printf("WARNING! %d unread bytes in validation\n",
+			       ndr_v_pull->data_size - highest_v_ofs);
+			ndrdump_data(ndr_v_pull->data + highest_v_ofs,
+				     ndr_v_pull->data_size - highest_v_ofs,
 				     dumpdata);
 		}
 
@@ -526,9 +548,9 @@ static NTSTATUS ndrdump_pull_and_print_pipes(const char *function,
 			       (unsigned long long)blob.length, (unsigned long long)v_blob.length);
 		}
 
-		if (ndr_pull->offset != ndr_v_pull->offset) {
+		if (highest_ofs != highest_v_ofs) {
 			printf("WARNING! orig pulled bytes:%llu validated pulled bytes:%llu\n", 
-			       (unsigned long long)ndr_pull->offset, (unsigned long long)ndr_v_pull->offset);
+			       (unsigned long long)highest_ofs, (unsigned long long)highest_v_ofs);
 		}
 
 		differ = false;

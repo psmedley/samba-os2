@@ -555,7 +555,7 @@ uid_t get_uid_from_request(struct winbindd_request *request)
 
 	uid = request->data.auth.uid;
 
-	if (uid < 0) {
+	if (uid == (uid_t)-1) {
 		DEBUG(1,("invalid uid: '%u'\n", (unsigned int)uid));
 		return -1;
 	}
@@ -1233,6 +1233,7 @@ static NTSTATUS winbindd_dual_auth_passdb(TALLOC_CTX *mem_ctx,
 					  const DATA_BLOB *challenge,
 					  const DATA_BLOB *lm_resp,
 					  const DATA_BLOB *nt_resp,
+					  bool interactive,
 					  struct netr_SamInfo3 **pinfo3)
 {
 	struct auth_context *auth_context;
@@ -1269,6 +1270,10 @@ static NTSTATUS winbindd_dual_auth_passdb(TALLOC_CTX *mem_ctx,
 
 	/* We don't want to come back to winbindd or to do PAM account checks */
 	user_info->flags |= USER_INFO_LOCAL_SAM_ONLY | USER_INFO_INFO3_AND_NO_AUTHZ;
+
+	if (interactive) {
+		user_info->flags |= USER_INFO_INTERACTIVE_LOGON;
+	}
 
 	status = make_auth_context_fixed(frame, &auth_context, challenge->data);
 
@@ -1541,7 +1546,9 @@ static NTSTATUS winbindd_dual_pam_auth_samlogon(TALLOC_CTX *mem_ctx,
 
 		result = winbindd_dual_auth_passdb(
 			mem_ctx, 0, name_domain, name_user,
-			&chal_blob, &lm_resp, &nt_resp, info3);
+			&chal_blob, &lm_resp, &nt_resp,
+			true, /* interactive */
+			info3);
 
 		/* 
 		 * We need to try the remote NETLOGON server if this is NOT_IMPLEMENTED 
@@ -1955,7 +1962,9 @@ NTSTATUS winbind_dual_SamLogon(struct winbindd_domain *domain,
 			mem_ctx,
 			logon_parameters,
 			name_domain, name_user,
-			&chal_blob, &lm_response, &nt_response, info3);
+			&chal_blob, &lm_response, &nt_response,
+			false, /* interactive */
+			info3);
 
 		/* 
 		 * We need to try the remote NETLOGON server if this is NOT_IMPLEMENTED 
@@ -2302,7 +2311,7 @@ enum winbindd_result winbindd_dual_pam_logoff(struct winbindd_domain *domain,
 
 #ifdef HAVE_KRB5
 
-	if (state->request->data.logoff.uid < 0) {
+	if (state->request->data.logoff.uid == (uid_t)-1) {
 		DEBUG(0,("winbindd_pam_logoff: invalid uid\n"));
 		goto process_result;
 	}

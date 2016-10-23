@@ -71,6 +71,8 @@ pid_t ctdb_fork(struct ctdb_context *ctdb)
 
 	pid = fork();
 	if (pid == -1) {
+		DEBUG(DEBUG_ERR,
+		      (__location__ " fork() failed (%s)\n", strerror(errno)));
 		return -1;
 	}
 	if (pid == 0) {
@@ -89,7 +91,7 @@ pid_t ctdb_fork(struct ctdb_context *ctdb)
 			close(ctdb->daemon.sd);
 			ctdb->daemon.sd = -1;
 		}
-		if (ctdb->methods != NULL) {
+		if (ctdb->methods != NULL && ctdb->methods->shutdown != NULL) {
 			ctdb->methods->shutdown(ctdb);
 		}
 

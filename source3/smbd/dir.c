@@ -52,7 +52,7 @@ struct smb_Dir {
 	connection_struct *conn;
 	DIR *dir;
 	long offset;
-	char *dir_path;
+	struct smb_filename *dir_smb_fname;
 	size_t name_cache_size;
 	struct name_cache_entry *name_cache;
 	unsigned int name_cache_index;
@@ -70,7 +70,7 @@ struct dptr_struct {
 	bool expect_close;
 	char *wcard;
 	uint32_t attr;
-	char *path;
+	struct smb_filename *smb_dname;
 	bool has_wild; /* Set to true if the wcard entry has MS wildcard characters in it. */
 	bool did_stat; /* Optimisation for non-wcard searches. */
 	bool priv;     /* Directory handle opened with privilege. */
@@ -166,10 +166,15 @@ static struct dptr_struct *dptr_get(struct smbd_server_connection *sconn,
 				if (sconn->searches.dirhandles_open >= MAX_OPEN_DIRECTORIES)
 					dptr_idleoldest(sconn);
 				DEBUG(4,("dptr_get: Reopening dptr key %d\n",key));
-				if (!(dptr->dir_hnd = OpenDir(
-					      NULL, dptr->conn, dptr->path,
-					      dptr->wcard, dptr->attr))) {
-					DEBUG(4,("dptr_get: Failed to open %s (%s)\n",dptr->path,
+
+				if (!(dptr->dir_hnd = OpenDir(NULL,
+							dptr->conn,
+							dptr->smb_dname,
+							dptr->wcard,
+							dptr->attr))) {
+					DEBUG(4,("dptr_get: Failed to "
+						"open %s (%s)\n",
+						dptr->smb_dname->base_name,
 						strerror(errno)));
 					return NULL;
 				}
@@ -189,7 +194,7 @@ const char *dptr_path(struct smbd_server_connection *sconn, int key)
 {
 	struct dptr_struct *dptr = dptr_get(sconn, key, false);
 	if (dptr)
-		return(dptr->path);
+		return(dptr->smb_dname->base_name);
 	return(NULL);
 }
 
@@ -339,8 +344,10 @@ void dptr_closepath(struct smbd_server_connection *sconn,
 	struct dptr_struct *dptr, *next;
 	for(dptr = sconn->searches.dirptrs; dptr; dptr = next) {
 		next = dptr->next;
-		if (spid == dptr->spid && strequal(dptr->path,path))
+		if (spid == dptr->spid &&
+				strequal(dptr->smb_dname->base_name,path)) {
 			dptr_close_internal(dptr);
+		}
 	}
 }
 
@@ -387,7 +394,7 @@ static void dptr_close_oldest(struct smbd_server_connection *sconn,
 
 static struct smb_Dir *open_dir_with_privilege(connection_struct *conn,
 					struct smb_request *req,
-					const char *path,
+					const struct smb_filename *smb_dname,
 					const char *wcard,
 					uint32_t attr)
 {
@@ -401,13 +408,16 @@ static struct smb_Dir *open_dir_with_privilege(connection_struct *conn,
 		return NULL;
 	}
 
-	if (vfs_ChDir(conn, path) == -1) {
+	if (vfs_ChDir(conn, smb_dname->base_name) == -1) {
 		return NULL;
 	}
 
 	/* Now check the stat value is the same. */
-	smb_fname_cwd = synthetic_smb_fname(talloc_tos(), ".", NULL, NULL);
-
+	smb_fname_cwd = synthetic_smb_fname(talloc_tos(),
+					".",
+					NULL,
+					NULL,
+					smb_dname->flags);
 	if (smb_fname_cwd == NULL) {
 		goto out;
 	}
@@ -419,12 +429,12 @@ static struct smb_Dir *open_dir_with_privilege(connection_struct *conn,
 	if (!check_same_stat(&smb_fname_cwd->st, &priv_paths->parent_name.st)) {
 		DEBUG(0,("open_dir_with_privilege: stat mismatch between %s "
 			"and %s\n",
-			path,
+			smb_dname->base_name,
 			smb_fname_str_dbg(&priv_paths->parent_name)));
 		goto out;
 	}
 
-	dir_hnd = OpenDir(NULL, conn, ".", wcard, attr);
+	dir_hnd = OpenDir(NULL, conn, smb_fname_cwd, wcard, attr);
 
   out:
 
@@ -444,18 +454,24 @@ static struct smb_Dir *open_dir_with_privilege(connection_struct *conn,
 NTSTATUS dptr_create(connection_struct *conn,
 		struct smb_request *req,
 		files_struct *fsp,
-		const char *path, bool old_handle, bool expect_close,uint16_t spid,
-		const char *wcard, bool wcard_has_wild, uint32_t attr, struct dptr_struct **dptr_ret)
+		const struct smb_filename *smb_dname,
+		bool old_handle,
+		bool expect_close,
+		uint16_t spid,
+		const char *wcard,
+		bool wcard_has_wild,
+		uint32_t attr,
+		struct dptr_struct **dptr_ret)
 {
 	struct smbd_server_connection *sconn = conn->sconn;
 	struct dptr_struct *dptr = NULL;
 	struct smb_Dir *dir_hnd;
 
 	if (fsp && fsp->is_directory && fsp->fh->fd != -1) {
-		path = fsp->fsp_name->base_name;
+		smb_dname = fsp->fsp_name;
 	}
 
-	DEBUG(5,("dptr_create dir=%s\n", path));
+	DEBUG(5,("dptr_create dir=%s\n", smb_dname->base_name));
 
 	if (sconn == NULL) {
 		DEBUG(0,("dptr_create: called with fake connection_struct\n"));
@@ -470,48 +486,57 @@ NTSTATUS dptr_create(connection_struct *conn,
 		if (!(fsp->access_mask & SEC_DIR_LIST)) {
 			DEBUG(5,("dptr_create: directory %s "
 				"not open for LIST access\n",
-				path));
+				smb_dname->base_name));
 			return NT_STATUS_ACCESS_DENIED;
 		}
 		dir_hnd = OpenDir_fsp(NULL, conn, fsp, wcard, attr);
 	} else {
 		int ret;
 		bool backup_intent = (req && req->priv_paths);
-		struct smb_filename *smb_dname;
 		NTSTATUS status;
+		struct smb_filename *smb_dname_cp =
+			cp_smb_filename(talloc_tos(), smb_dname);
 
-		smb_dname = synthetic_smb_fname(talloc_tos(), path,
-						NULL, NULL);
-		if (smb_dname == NULL) {
+		if (smb_dname_cp == NULL) {
 			return NT_STATUS_NO_MEMORY;
 		}
+
 		if (req != NULL && req->posix_pathnames) {
-			ret = SMB_VFS_LSTAT(conn, smb_dname);
+			ret = SMB_VFS_LSTAT(conn, smb_dname_cp);
 		} else {
-			ret = SMB_VFS_STAT(conn, smb_dname);
+			ret = SMB_VFS_STAT(conn, smb_dname_cp);
 		}
 		if (ret == -1) {
-			return map_nt_error_from_unix(errno);
+			status = map_nt_error_from_unix(errno);
+			TALLOC_FREE(smb_dname_cp);
+			return status;
 		}
-		if (!S_ISDIR(smb_dname->st.st_ex_mode)) {
+		if (!S_ISDIR(smb_dname_cp->st.st_ex_mode)) {
+			TALLOC_FREE(smb_dname_cp);
 			return NT_STATUS_NOT_A_DIRECTORY;
 		}
 		status = smbd_check_access_rights(conn,
-						smb_dname,
+						smb_dname_cp,
 						backup_intent,
 						SEC_DIR_LIST);
 		if (!NT_STATUS_IS_OK(status)) {
+			TALLOC_FREE(smb_dname_cp);
 			return status;
 		}
 		if (backup_intent) {
 			dir_hnd = open_dir_with_privilege(conn,
 						req,
-						path,
+						smb_dname_cp,
 						wcard,
 						attr);
 		} else {
-			dir_hnd = OpenDir(NULL, conn, path, wcard, attr);
+			dir_hnd = OpenDir(NULL,
+					conn,
+					smb_dname_cp,
+					wcard,
+					attr);
 		}
+		TALLOC_FREE(smb_dname_cp);
 	}
 
 	if (!dir_hnd) {
@@ -529,8 +554,8 @@ NTSTATUS dptr_create(connection_struct *conn,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	dptr->path = talloc_strdup(dptr, path);
-	if (!dptr->path) {
+	dptr->smb_dname = cp_smb_filename(dptr, smb_dname);
+	if (!dptr->smb_dname) {
 		TALLOC_FREE(dptr);
 		TALLOC_FREE(dir_hnd);
 		return NT_STATUS_NO_MEMORY;
@@ -626,7 +651,9 @@ NTSTATUS dptr_create(connection_struct *conn,
 
 done:
 	DEBUG(3,("creating new dirptr %d for path %s, expect_close = %d\n",
-		dptr->dnum,path,expect_close));  
+		dptr->dnum,
+		dptr->smb_dname->base_name,
+		expect_close));
 
 	*dptr_ret = dptr;
 
@@ -695,7 +722,11 @@ static const char *dptr_normal_ReadDirName(struct dptr_struct *dptr,
 
 	while ((name = ReadDirName(dptr->dir_hnd, poffset, pst, &talloced))
 	       != NULL) {
-		if (is_visible_file(dptr->conn, dptr->path, name, pst, True)) {
+		if (is_visible_file(dptr->conn,
+				dptr->smb_dname->base_name,
+				name,
+				pst,
+				true)) {
 			*ptalloced = talloced;
 			return name;
 		}
@@ -749,9 +780,11 @@ static char *dptr_ReadDirName(TALLOC_CTX *ctx,
 	dptr->did_stat = true;
 
 	/* First check if it should be visible. */
-	if (!is_visible_file(dptr->conn, dptr->path, dptr->wcard,
-	    pst, true))
-	{
+	if (!is_visible_file(dptr->conn,
+			dptr->smb_dname->base_name,
+			dptr->wcard,
+			pst,
+			true)) {
 		/* This only returns false if the file was found, but
 		   is explicitly not visible. Set us to end of
 		   directory, but return NULL as we know we can't ever
@@ -766,7 +799,7 @@ static char *dptr_ReadDirName(TALLOC_CTX *ctx,
 
 	pathreal = talloc_asprintf(ctx,
 				"%s/%s",
-				dptr->path,
+				dptr->smb_dname->base_name,
 				dptr->wcard);
 	if (!pathreal)
 		return NULL;
@@ -801,8 +834,11 @@ static char *dptr_ReadDirName(TALLOC_CTX *ctx,
 	 * Try case-insensitive stat if the fs has the ability. This avoids
 	 * scanning the whole directory.
 	 */
-	ret = SMB_VFS_GET_REAL_FILENAME(dptr->conn, dptr->path, dptr->wcard,
-					ctx, &found_name);
+	ret = SMB_VFS_GET_REAL_FILENAME(dptr->conn,
+					dptr->smb_dname->base_name,
+					dptr->wcard,
+					ctx,
+					&found_name);
 	if (ret == 0) {
 		name = found_name;
 		goto clean;
@@ -1012,7 +1048,7 @@ struct dptr_struct *dptr_fetch(struct smbd_server_connection *sconn,
 	seekoff = map_wire_to_dir_offset(dptr, wire_offset);
 	SeekDir(dptr->dir_hnd,seekoff);
 	DEBUG(3,("fetching dirptr %d for path %s at offset %d\n",
-		key, dptr->path, (int)seekoff));
+		key, dptr->smb_dname->base_name, (int)seekoff));
 	return(dptr);
 }
 
@@ -1029,7 +1065,9 @@ struct dptr_struct *dptr_fetch_lanman2(struct smbd_server_connection *sconn,
 		DEBUG(3,("fetched null dirptr %d\n",dptr_num));
 		return(NULL);
 	}
-	DEBUG(3,("fetching dirptr %d for path %s\n",dptr_num,dptr->path));
+	DEBUG(3,("fetching dirptr %d for path %s\n",
+		dptr_num,
+		dptr->smb_dname->base_name));
 	return(dptr);
 }
 
@@ -1069,13 +1107,14 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 	connection_struct *conn = dirptr->conn;
 	size_t slashlen;
 	size_t pathlen;
-	bool dirptr_path_is_dot = ISDOT(dirptr->path);
+	const char *dpath = dirptr->smb_dname->base_name;
+	bool dirptr_path_is_dot = ISDOT(dpath);
 
 	*_smb_fname = NULL;
 	*_mode = 0;
 
-	pathlen = strlen(dirptr->path);
-	slashlen = ( dirptr->path[pathlen-1] != '/') ? 1 : 0;
+	pathlen = strlen(dpath);
+	slashlen = ( dpath[pathlen-1] != '/') ? 1 : 0;
 
 	while (true) {
 		long cur_offset;
@@ -1141,7 +1180,7 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 		if (dirptr_path_is_dot) {
 			memcpy(pathreal, dname, talloc_get_size(dname));
 		} else {
-			memcpy(pathreal, dirptr->path, pathlen);
+			memcpy(pathreal, dpath, pathlen);
 			pathreal[pathlen] = '/';
 			memcpy(pathreal + slashlen + pathlen, dname,
 			       talloc_get_size(dname));
@@ -1386,7 +1425,7 @@ static bool user_can_read_file(connection_struct *conn,
         }
 
 	status = SMB_VFS_GET_NT_ACL(conn,
-			smb_fname->base_name,
+			smb_fname,
 			(SECINFO_OWNER |
 			 SECINFO_GROUP |
 			 SECINFO_DACL),
@@ -1509,8 +1548,11 @@ bool is_visible_file(connection_struct *conn, const char *dir_path,
 		}
 
 		/* Create an smb_filename with stream_name == NULL. */
-		smb_fname_base = synthetic_smb_fname(talloc_tos(), entry, NULL,
-						     pst);
+		smb_fname_base = synthetic_smb_fname(talloc_tos(),
+						entry,
+						NULL,
+						pst,
+						0);
 		if (smb_fname_base == NULL) {
 			ret = false;
 			goto out;
@@ -1589,7 +1631,7 @@ static int smb_Dir_destructor(struct smb_Dir *dirp)
 ********************************************************************/
 
 struct smb_Dir *OpenDir(TALLOC_CTX *mem_ctx, connection_struct *conn,
-			const char *name,
+			const struct smb_filename *smb_dname,
 			const char *mask,
 			uint32_t attr)
 {
@@ -1603,8 +1645,8 @@ struct smb_Dir *OpenDir(TALLOC_CTX *mem_ctx, connection_struct *conn,
 	dirp->conn = conn;
 	dirp->name_cache_size = lp_directory_name_cache_size(SNUM(conn));
 
-	dirp->dir_path = talloc_strdup(dirp, name);
-	if (!dirp->dir_path) {
+	dirp->dir_smb_fname = cp_smb_filename(dirp, smb_dname);
+	if (!dirp->dir_smb_fname) {
 		errno = ENOMEM;
 		goto fail;
 	}
@@ -1614,10 +1656,12 @@ struct smb_Dir *OpenDir(TALLOC_CTX *mem_ctx, connection_struct *conn,
 	}
 	talloc_set_destructor(dirp, smb_Dir_destructor);
 
-	dirp->dir = SMB_VFS_OPENDIR(conn, dirp->dir_path, mask, attr);
+	dirp->dir = SMB_VFS_OPENDIR(conn, dirp->dir_smb_fname, mask, attr);
+
 	if (!dirp->dir) {
-		DEBUG(5,("OpenDir: Can't open %s. %s\n", dirp->dir_path,
-			 strerror(errno) ));
+		DEBUG(5,("OpenDir: Can't open %s. %s\n",
+			dirp->dir_smb_fname->base_name,
+			strerror(errno) ));
 		goto fail;
 	}
 
@@ -1647,8 +1691,8 @@ static struct smb_Dir *OpenDir_fsp(TALLOC_CTX *mem_ctx, connection_struct *conn,
 	dirp->conn = conn;
 	dirp->name_cache_size = lp_directory_name_cache_size(SNUM(conn));
 
-	dirp->dir_path = talloc_strdup(dirp, fsp->fsp_name->base_name);
-	if (!dirp->dir_path) {
+	dirp->dir_smb_fname = cp_smb_filename(dirp, fsp->fsp_name);
+	if (!dirp->dir_smb_fname) {
 		errno = ENOMEM;
 		goto fail;
 	}
@@ -1665,7 +1709,7 @@ static struct smb_Dir *OpenDir_fsp(TALLOC_CTX *mem_ctx, connection_struct *conn,
 		} else {
 			DEBUG(10,("OpenDir_fsp: SMB_VFS_FDOPENDIR on %s returned "
 				"NULL (%s)\n",
-				dirp->dir_path,
+				dirp->dir_smb_fname->base_name,
 				strerror(errno)));
 			if (errno != ENOSYS) {
 				return NULL;
@@ -1675,12 +1719,16 @@ static struct smb_Dir *OpenDir_fsp(TALLOC_CTX *mem_ctx, connection_struct *conn,
 
 	if (dirp->dir == NULL) {
 		/* FDOPENDIR didn't work. Use OPENDIR instead. */
-		dirp->dir = SMB_VFS_OPENDIR(conn, dirp->dir_path, mask, attr);
+		dirp->dir = SMB_VFS_OPENDIR(conn,
+					dirp->dir_smb_fname,
+					mask,
+					attr);
 	}
 
 	if (!dirp->dir) {
-		DEBUG(5,("OpenDir_fsp: Can't open %s. %s\n", dirp->dir_path,
-			 strerror(errno) ));
+		DEBUG(5,("OpenDir_fsp: Can't open %s. %s\n",
+			dirp->dir_smb_fname->base_name,
+			strerror(errno) ));
 		goto fail;
 	}
 

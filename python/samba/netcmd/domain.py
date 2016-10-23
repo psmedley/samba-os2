@@ -173,7 +173,7 @@ class cmd_domain_provision(Command):
     takes_options = [
          Option("--interactive", help="Ask for names", action="store_true"),
          Option("--domain", type="string", metavar="DOMAIN",
-                help="set domain"),
+                help="NetBIOS domain name to use"),
          Option("--domain-guid", type="string", metavar="GUID",
                 help="set domainguid (otherwise random)"),
          Option("--domain-sid", type="string", metavar="SID",
@@ -789,12 +789,12 @@ class cmd_domain_demote(Command):
                         pass
                     else:
                         self.errf.write(
-                            "Error while demoting, "
-                        "re-enabling inbound replication\n")
+                            "Error while replicating out last local changes from '%s' for demotion, "
+                            "re-enabling inbound replication\n" % part)
                         dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
                         nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
                         samdb.modify(nmsg)
-                        raise CommandError("Error while sending a DsReplicaSync for partion %s" % str(part), e)
+                        raise CommandError("Error while sending a DsReplicaSync for partition '%s'" % str(part), string)
         try:
             remote_samdb = SamDB(url="ldap://%s" % server,
                                 session_info=system_session(),
@@ -940,7 +940,7 @@ class cmd_domain_demote(Command):
             else:
                 raise CommandError("Error while sending a removeDsServer of %s: " % server_dsa_dn, e)
 
-        remove_dc.remove_sysvol_references(remote_samdb, dc_name)
+        remove_dc.remove_sysvol_references(remote_samdb, logger, dc_name)
 
         # These are objects under the computer account that should be deleted
         for s in ("CN=Enterprise,CN=NTFRS Subscriptions",

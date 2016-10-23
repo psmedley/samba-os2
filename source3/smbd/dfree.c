@@ -20,6 +20,7 @@
 #include "includes.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
+#include "lib/util_file.h"
 
 /****************************************************************************
  Normalise for DOS usage.
@@ -84,7 +85,7 @@ uint64_t sys_disk_free(connection_struct *conn, struct smb_filename *fname,
 
 		DEBUG (3, ("disk_free: Running command '%s'\n", syscmd));
 
-		lines = file_lines_pload(syscmd, NULL);
+		lines = file_lines_pload(talloc_tos(), syscmd, NULL);
 		if (lines != NULL) {
 			char *line = lines[0];
 

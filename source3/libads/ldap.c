@@ -2118,10 +2118,6 @@ ADS_STATUS ads_create_machine_acct(ADS_STRUCT *ads,
 		goto done;
 	}
 
-#ifndef ENCTYPE_ARCFOUR_HMAC
-	acct_control |= UF_USE_DES_KEY_ONLY;
-#endif
-
 	if (!(controlstr = talloc_asprintf(ctx, "%u", acct_control))) {
 		goto done;
 	}

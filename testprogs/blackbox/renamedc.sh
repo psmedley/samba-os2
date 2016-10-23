@@ -64,6 +64,12 @@ testrenamedc2() {
 		-s $PREFIX/renamedc_test/etc/smb.conf
 }
 
+dbcheck_fix() {
+	$BINDIR/samba-tool dbcheck --cross-ncs -s $PREFIX/renamedc_test/etc/smb.conf --fix \
+		--quiet --yes fix_all_string_dn_component_mismatch \
+		--attrs="fsmoRoleOwner interSiteTopologyGenerator msDS-NC-Replica-Locations"
+}
+
 dbcheck() {
 	$BINDIR/samba-tool dbcheck --cross-ncs -s $PREFIX/renamedc_test/etc/smb.conf
 }
@@ -77,6 +83,7 @@ testit "confirmrenamedc_sAMAccountName" confirmrenamedc_sAMAccountName || failed
 testit "confirmrenamedc_dNSHostName" confirmrenamedc_dNSHostName || failed=`expr $failed + 1`
 testit "confirmrenamedc_rootdse_dnsHostName" confirmrenamedc_rootdse_dnsHostName || failed=`expr $failed + 1`
 testit "confirmrenamedc_rootdse_dsServiceName" confirmrenamedc_rootdse_dsServiceName || failed=`expr $failed + 1`
+testit_expect_failure "dbcheck_fix" dbcheck_fix || failed=`expr $failed + 1`
 testit "dbcheck" dbcheck || failed=`expr $failed + 1`
 testit "renamedc2" testrenamedc2 || failed=`expr $failed + 1`
 

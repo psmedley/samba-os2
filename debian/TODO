@@ -27,9 +27,6 @@ Other TODOs
   - documentation2.patch is upstream
   - The former documentation.patch needs to be rewritten against the xml input
 
-- Decide if we care about findsmb, and if so patch upstream to restore it
-
-
 - Add script to verify that headers are usable through current dependencies
   (to prevent bugs like #525888)
 

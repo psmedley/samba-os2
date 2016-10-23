@@ -45,11 +45,17 @@ uint32_t ctdb_client_pnn(struct ctdb_client_context *client);
 
 void ctdb_client_wait(struct tevent_context *ev, bool *done);
 
+int ctdb_client_wait_timeout(struct tevent_context *ev, bool *done,
+			     struct timeval timeout);
+
 struct tevent_req *ctdb_recovery_wait_send(TALLOC_CTX *mem_ctx,
 					   struct tevent_context *ev,
 					   struct ctdb_client_context *client);
 
 bool ctdb_recovery_wait_recv(struct tevent_req *req, int *perr);
+
+bool ctdb_recovery_wait(struct tevent_context *ev,
+			struct ctdb_client_context *client);
 
 /* from client/client_call.c */
 
@@ -86,6 +92,13 @@ int ctdb_client_message(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			struct ctdb_client_context *client,
 			uint32_t destnode, struct ctdb_req_message *message);
 
+int ctdb_client_message_multi(TALLOC_CTX *mem_ctx,
+			      struct tevent_context *ev,
+			      struct ctdb_client_context *client,
+			      uint32_t *pnn_list, int count,
+			      struct ctdb_req_message *message,
+			      int **perr_list);
+
 struct tevent_req *ctdb_client_set_message_handler_send(
 					TALLOC_CTX *mem_ctx,
 					struct tevent_context *ev,
@@ -104,14 +117,12 @@ struct tevent_req *ctdb_client_remove_message_handler_send(
 bool ctdb_client_remove_message_handler_recv(struct tevent_req *req,
 					     int *perr);
 
-int ctdb_client_set_message_handler(TALLOC_CTX *mem_ctx,
-				    struct tevent_context *ev,
+int ctdb_client_set_message_handler(struct tevent_context *ev,
 				    struct ctdb_client_context *client,
 				    uint64_t srvid, srvid_handler_fn handler,
 				    void *private_data);
 
-int ctdb_client_remove_message_handler(TALLOC_CTX *mem_ctx,
-				       struct tevent_context *ev,
+int ctdb_client_remove_message_handler(struct tevent_context *ev,
 				       struct ctdb_client_context *client,
 				       uint64_t srvid, void *private_data);
 
@@ -325,11 +336,6 @@ int ctdb_ctrl_freeze(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		     int destnode, struct timeval timeout,
 		     int priority);
 
-int ctdb_ctrl_thaw(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-		   struct ctdb_client_context *client,
-		   int destnode, struct timeval timeout,
-		   int priority);
-
 int ctdb_ctrl_get_pnn(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		      struct ctdb_client_context *client,
 		      int destnode, struct timeval timeout,
@@ -380,11 +386,6 @@ int ctdb_ctrl_get_all_tunables(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			       int destnode, struct timeval timeout,
 			       struct ctdb_tunable_list **tun_list);
 
-int ctdb_ctrl_kill_tcp(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-		       struct ctdb_client_context *client,
-		       int destnode, struct timeval timeout,
-		       struct ctdb_connection *conn);
-
 int ctdb_ctrl_get_tcp_tickle_list(TALLOC_CTX *mem_ctx,
 				  struct tevent_context *ev,
 				  struct ctdb_client_context *client,
@@ -398,29 +399,6 @@ int ctdb_ctrl_set_tcp_tickle_list(TALLOC_CTX *mem_ctx,
 				  int destnode, struct timeval timeout,
 				  struct ctdb_tickle_list *tickles);
 
-int ctdb_ctrl_register_server_id(TALLOC_CTX *mem_ctx,
-				 struct tevent_context *ev,
-				 struct ctdb_client_context *client,
-				 int destnode, struct timeval timeout,
-				 struct ctdb_client_id *cid);
-
-int ctdb_ctrl_unregister_server_id(TALLOC_CTX *mem_ctx,
-				   struct tevent_context *ev,
-				   struct ctdb_client_context *client,
-				   int destnode, struct timeval timeout,
-				   struct ctdb_client_id *cid);
-
-int ctdb_ctrl_check_server_id(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			      struct ctdb_client_context *client,
-			      int destnode, struct timeval timeout,
-			      struct ctdb_client_id *cid);
-
-int ctdb_ctrl_get_server_id_list(TALLOC_CTX *mem_ctx,
-				 struct tevent_context *ev,
-				 struct ctdb_client_context *client,
-				 int destnode, struct timeval timeout,
-				 struct ctdb_client_id_map **cid_map);
-
 int ctdb_ctrl_db_attach_persistent(TALLOC_CTX *mem_ctx,
 				   struct tevent_context *ev,
 				   struct ctdb_client_context *client,
@@ -433,17 +411,6 @@ int ctdb_ctrl_send_gratuitous_arp(TALLOC_CTX *mem_ctx,
 				  struct ctdb_client_context *client,
 				  int destnode, struct timeval timeout,
 				  struct ctdb_addr_info *addr_info);
-
-int ctdb_ctrl_transaction_start(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-				struct ctdb_client_context *client,
-				int destnode, struct timeval timeout,
-				uint32_t tid);
-
-int ctdb_ctrl_transaction_commit(TALLOC_CTX *mem_ctx,
-				 struct tevent_context *ev,
-				 struct ctdb_client_context *client,
-				 int destnode, struct timeval timeout,
-				 uint32_t tid);
 
 int ctdb_ctrl_wipe_database(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			    struct ctdb_client_context *client,
@@ -532,11 +499,6 @@ int ctdb_ctrl_get_reclock_file(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			       int destnode, struct timeval timeout,
 			       const char **reclock_file);
 
-int ctdb_ctrl_set_reclock_file(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			       struct ctdb_client_context *client,
-			       int destnode, struct timeval timeout,
-			       const char *reclock_file);
-
 int ctdb_ctrl_stop_node(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			struct ctdb_client_context *client,
 			int destnode, struct timeval timeout);
@@ -544,11 +506,6 @@ int ctdb_ctrl_stop_node(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 int ctdb_ctrl_continue_node(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			    struct ctdb_client_context *client,
 			    int destnode, struct timeval timeout);
-
-int ctdb_ctrl_set_natgwstate(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			     struct ctdb_client_context *client,
-			     int destnode, struct timeval timeout,
-			     uint32_t natgw_role);
 
 int ctdb_ctrl_set_lmasterrole(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			      struct ctdb_client_context *client,
@@ -579,22 +536,6 @@ int ctdb_ctrl_get_ban_state(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			    struct ctdb_client_context *client,
 			    int destnode, struct timeval timeout,
 			    struct ctdb_ban_state **ban_state);
-
-int ctdb_ctrl_set_db_priority(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			      struct ctdb_client_context *client,
-			      int destnode, struct timeval timeout,
-			      uint32_t db_id, int priority);
-
-int ctdb_ctrl_get_db_priority(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			      struct ctdb_client_context *client,
-			      int destnode, struct timeval timeout,
-			      uint32_t db_id, uint32_t *priority);
-
-int ctdb_ctrl_transaction_cancel(TALLOC_CTX *mem_ctx,
-				 struct tevent_context *ev,
-				 struct ctdb_client_context *client,
-				 int destnode, struct timeval timeout,
-				 uint32_t tid);
 
 int ctdb_ctrl_register_notify(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			      struct ctdb_client_context *client,
@@ -763,7 +704,7 @@ struct tevent_req *ctdb_attach_send(TALLOC_CTX *mem_ctx,
 bool ctdb_attach_recv(struct tevent_req *req, int *perr,
 		      struct ctdb_db_context **out);
 
-int ctdb_attach(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+int ctdb_attach(struct tevent_context *ev,
 		struct ctdb_client_context *client,
 		struct timeval timeout,
 		const char *db_name, uint8_t db_flags,
@@ -778,6 +719,10 @@ uint32_t ctdb_db_id(struct ctdb_db_context *db);
 int ctdb_db_traverse(struct ctdb_db_context *db, bool readonly,
 		     bool extract_header,
 		     ctdb_rec_parser_func_t parser, void *private_data);
+
+int ctdb_ltdb_fetch(struct ctdb_db_context *db, TDB_DATA key,
+		    struct ctdb_ltdb_header *header,
+		    TALLOC_CTX *mem_ctx, TDB_DATA *data);
 
 struct tevent_req *ctdb_fetch_lock_send(TALLOC_CTX *mem_ctx,
 					struct tevent_context *ev,
@@ -797,6 +742,12 @@ int ctdb_fetch_lock(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		    struct ctdb_ltdb_header *header, TDB_DATA *data);
 
 int ctdb_store_record(struct ctdb_record_handle *h, TDB_DATA data);
+
+struct tevent_req *ctdb_delete_record_send(TALLOC_CTX *mem_ctx,
+					   struct tevent_context *ev,
+					   struct ctdb_record_handle *h);
+
+bool ctdb_delete_record_recv(struct tevent_req *req, int *perr);
 
 int ctdb_delete_record(struct ctdb_record_handle *h);
 
@@ -849,11 +800,20 @@ int ctdb_transaction_delete_record(struct ctdb_transaction_handle *h,
 struct tevent_req *ctdb_transaction_commit_send(
 					TALLOC_CTX *mem_ctx,
 					struct tevent_context *ev,
+					struct timeval timeout,
 					struct ctdb_transaction_handle *h);
 
 bool ctdb_transaction_commit_recv(struct tevent_req *req, int *perr);
 
 int ctdb_transaction_commit(struct ctdb_transaction_handle *h);
+
+struct tevent_req *ctdb_transaction_cancel_send(
+					TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct timeval timeout,
+					struct ctdb_transaction_handle *h);
+
+bool ctdb_transaction_cancel_recv(struct tevent_req *req, int *perr);
 
 int ctdb_transaction_cancel(struct ctdb_transaction_handle *h);
 
@@ -874,6 +834,10 @@ int ctdb_ctrl_modflags(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		       struct ctdb_client_context *client,
 		       uint32_t destnode, struct timeval timeout,
 		       uint32_t set, uint32_t clear);
+
+struct ctdb_server_id ctdb_client_get_server_id(
+				struct ctdb_client_context *client,
+				uint32_t task_id);
 
 bool ctdb_server_id_equal(struct ctdb_server_id *sid1,
 			  struct ctdb_server_id *sid2);

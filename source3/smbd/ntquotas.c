@@ -53,14 +53,6 @@ static uint64_t limit_unix2nt(uint64_t in, uint64_t bsize)
 
 	ret = (uint64_t)(in*bsize);
 	
-	if (ret < in) {
-		/* we overflow */
-		ret = SMB_NTQUOTAS_NO_LIMIT;
-	}
-
-	if (in == SMB_QUOTAS_NO_LIMIT)
-		ret = SMB_NTQUOTAS_NO_LIMIT;
-
 	return ret;
 }
 
@@ -76,7 +68,8 @@ static uint64_t limit_blk2inodes(uint64_t in)
 	return ret;	
 }
 
-int vfs_get_ntquota(files_struct *fsp, enum SMB_QUOTA_TYPE qtype, struct dom_sid *psid, SMB_NTQUOTA_STRUCT *qt)
+NTSTATUS vfs_get_ntquota(files_struct *fsp, enum SMB_QUOTA_TYPE qtype,
+			 struct dom_sid *psid, SMB_NTQUOTA_STRUCT *qt)
 {
 	int ret;
 	SMB_DISK_QUOTA D;
@@ -84,8 +77,9 @@ int vfs_get_ntquota(files_struct *fsp, enum SMB_QUOTA_TYPE qtype, struct dom_sid
 
 	ZERO_STRUCT(D);
 
-	if (!fsp||!fsp->conn||!qt)
-		return (-1);
+	if (!fsp || !fsp->conn || !qt) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
 
 	ZERO_STRUCT(*qt);
 
@@ -94,6 +88,7 @@ int vfs_get_ntquota(files_struct *fsp, enum SMB_QUOTA_TYPE qtype, struct dom_sid
 	if (psid && !sid_to_uid(psid, &id.uid)) {
 		DEBUG(0,("sid_to_uid: failed, SID[%s]\n",
 			 sid_string_dbg(psid)));
+		return NT_STATUS_NO_SUCH_USER;
 	}
 
 	ret = SMB_VFS_GET_QUOTA(fsp->conn, ".", qtype, id, &D);
@@ -102,7 +97,7 @@ int vfs_get_ntquota(files_struct *fsp, enum SMB_QUOTA_TYPE qtype, struct dom_sid
 		qt->sid    = *psid;
 
 	if (ret!=0) {
-		return ret;
+		return map_nt_error_from_unix(errno);
 	}
 		
 	qt->usedspace = (uint64_t)D.curblocks*D.bsize;
@@ -110,8 +105,7 @@ int vfs_get_ntquota(files_struct *fsp, enum SMB_QUOTA_TYPE qtype, struct dom_sid
 	qt->hardlim = limit_unix2nt(D.hardlimit, D.bsize);
 	qt->qflags = D.qflags;
 
-	
-	return 0;
+	return NT_STATUS_OK;
 }
 
 int vfs_set_ntquota(files_struct *fsp, enum SMB_QUOTA_TYPE qtype, struct dom_sid *psid, SMB_NTQUOTA_STRUCT *qt)
@@ -181,6 +175,7 @@ int vfs_get_user_ntquota_list(files_struct *fsp, SMB_NTQUOTA_LIST **qt_list)
 		SMB_NTQUOTA_STRUCT tmp_qt;
 		SMB_NTQUOTA_LIST *tmp_list_ent;
 		struct dom_sid	sid;
+		NTSTATUS status;
 
 		ZERO_STRUCT(tmp_qt);
 
@@ -191,7 +186,14 @@ int vfs_get_user_ntquota_list(files_struct *fsp, SMB_NTQUOTA_LIST **qt_list)
 
 		uid_to_sid(&sid, usr->pw_uid);
 
-		if (vfs_get_ntquota(fsp, SMB_USER_QUOTA_TYPE, &sid, &tmp_qt)!=0) {
+		status =
+		    vfs_get_ntquota(fsp, SMB_USER_QUOTA_TYPE, &sid, &tmp_qt);
+		if (!NT_STATUS_IS_OK(status)) {
+			DEBUG(5, ("failed getting quota for uid[%ld] - %s\n",
+				  (long)usr->pw_uid, nt_errstr(status)));
+			continue;
+		}
+		if (tmp_qt.softlim == 0 && tmp_qt.hardlim == 0) {
 			DEBUG(5,("no quota entry for sid[%s] path[%s]\n",
 				 sid_string_dbg(&sid),
 				 fsp->conn->connectpath));

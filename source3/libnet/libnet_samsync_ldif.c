@@ -29,6 +29,7 @@
 #include "transfer_file.h"
 #include "passdb.h"
 #include "passdb/pdb_ldap_schema.h"
+#include "lib/util/base64.h"
 
 #ifdef HAVE_LDAP
 
@@ -508,6 +509,9 @@ static NTSTATUS map_populate_groups(TALLOC_CTX *mem_ctx,
  * This is a crap routine, but I think it's the quickest way to solve the
  * UTF8->base64 problem.
  */
+
+static int fprintf_attr(FILE *add_fd, const char *attr_name,
+			const char *fmt, ...) PRINTF_ATTRIBUTE(3,4);
 
 static int fprintf_attr(FILE *add_fd, const char *attr_name,
 			const char *fmt, ...)

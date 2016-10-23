@@ -28,7 +28,8 @@
 #include "lib/util/tevent_unix.h"
 #include "lib/util/sys_rw.h"
 #include "lib/util/sys_rw_data.h"
-#include "lib/msghdr.h"
+#include "lib/util/msghdr.h"
+#include "smbprofile.h"
 
 #if !defined(HAVE_STRUCT_MSGHDR_MSG_CONTROL) && !defined(HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS)
 # error Can not pass file descriptors
@@ -128,6 +129,7 @@ struct rw_cmd {
 struct rw_ret {
 	ssize_t size;
 	int ret_errno;
+	uint64_t duration;
 };
 
 struct aio_child_list;
@@ -310,6 +312,7 @@ static void aio_child_loop(int sockfd, struct mmap_area *map)
 		ssize_t ret;
 		struct rw_cmd cmd_struct;
 		struct rw_ret ret_struct;
+		struct timespec start, end;
 
 		ret = read_fd(sockfd, &cmd_struct, sizeof(cmd_struct), &fd);
 		if (ret != sizeof(cmd_struct)) {
@@ -341,6 +344,8 @@ static void aio_child_loop(int sockfd, struct mmap_area *map)
 
 		ZERO_STRUCT(ret_struct);
 
+		PROFILE_TIMESTAMP(&start);
+
 		switch (cmd_struct.cmd) {
 		case READ_CMD:
 			ret_struct.size = sys_pread(
@@ -366,6 +371,8 @@ static void aio_child_loop(int sockfd, struct mmap_area *map)
 			errno = EINVAL;
 		}
 
+		PROFILE_TIMESTAMP(&end);
+		ret_struct.duration = nsec_time_diff(&end, &start);
 		DEBUG(10, ("aio_child_loop: syscall returned %d\n",
 			   (int)ret_struct.size));
 
@@ -404,7 +411,7 @@ static int aio_child_destructor(struct aio_child *child)
 	 * closing the sockfd makes the child not return from recvmsg() on RHEL
 	 * 5.5 so instead force the child to exit by writing bad data to it
 	 */
-	write(child->sockfd, &c, sizeof(c));
+	sys_write_v(child->sockfd, &c, sizeof(c));
 	close(child->sockfd);
 	DLIST_REMOVE(child->list->children, child);
 	return 0;
@@ -534,7 +541,7 @@ static int get_idle_child(struct vfs_handle_struct *handle,
 struct aio_fork_pread_state {
 	struct aio_child *child;
 	ssize_t ret;
-	int err;
+	struct vfs_aio_state vfs_aio_state;
 };
 
 static void aio_fork_pread_done(struct tevent_req *subreq);
@@ -632,28 +639,28 @@ static void aio_fork_pread_done(struct tevent_req *subreq)
 
 	retbuf = (struct rw_ret *)buf;
 	state->ret = retbuf->size;
-	state->err = retbuf->ret_errno;
+	state->vfs_aio_state.error = retbuf->ret_errno;
+	state->vfs_aio_state.duration = retbuf->duration;
 	tevent_req_done(req);
 }
 
-static ssize_t aio_fork_pread_recv(struct tevent_req *req, int *err)
+static ssize_t aio_fork_pread_recv(struct tevent_req *req,
+				   struct vfs_aio_state *vfs_aio_state)
 {
 	struct aio_fork_pread_state *state = tevent_req_data(
 		req, struct aio_fork_pread_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	if (state->ret == -1) {
-		*err = state->err;
-	}
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 
 struct aio_fork_pwrite_state {
 	struct aio_child *child;
 	ssize_t ret;
-	int err;
+	struct vfs_aio_state vfs_aio_state;
 };
 
 static void aio_fork_pwrite_done(struct tevent_req *subreq);
@@ -748,28 +755,28 @@ static void aio_fork_pwrite_done(struct tevent_req *subreq)
 
 	retbuf = (struct rw_ret *)buf;
 	state->ret = retbuf->size;
-	state->err = retbuf->ret_errno;
+	state->vfs_aio_state.error = retbuf->ret_errno;
+	state->vfs_aio_state.duration = retbuf->duration;
 	tevent_req_done(req);
 }
 
-static ssize_t aio_fork_pwrite_recv(struct tevent_req *req, int *err)
+static ssize_t aio_fork_pwrite_recv(struct tevent_req *req,
+				    struct vfs_aio_state *vfs_aio_state)
 {
 	struct aio_fork_pwrite_state *state = tevent_req_data(
 		req, struct aio_fork_pwrite_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	if (state->ret == -1) {
-		*err = state->err;
-	}
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 
 struct aio_fork_fsync_state {
 	struct aio_child *child;
 	ssize_t ret;
-	int err;
+	struct vfs_aio_state vfs_aio_state;
 };
 
 static void aio_fork_fsync_done(struct tevent_req *subreq);
@@ -856,21 +863,21 @@ static void aio_fork_fsync_done(struct tevent_req *subreq)
 
 	retbuf = (struct rw_ret *)buf;
 	state->ret = retbuf->size;
-	state->err = retbuf->ret_errno;
+	state->vfs_aio_state.error = retbuf->ret_errno;
+	state->vfs_aio_state.duration = retbuf->duration;
 	tevent_req_done(req);
 }
 
-static int aio_fork_fsync_recv(struct tevent_req *req, int *err)
+static int aio_fork_fsync_recv(struct tevent_req *req,
+			       struct vfs_aio_state *vfs_aio_state)
 {
 	struct aio_fork_fsync_state *state = tevent_req_data(
 		req, struct aio_fork_fsync_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	if (state->ret == -1) {
-		*err = state->err;
-	}
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 

@@ -29,7 +29,7 @@ from cStringIO import StringIO
 from samba.netcmd.main import cmd_sambatool
 import samba.tests
 
-class SambaToolCmdTest(samba.tests.TestCaseInTempDir):
+class SambaToolCmdTest(samba.tests.BlackboxTestCase):
 
     def getSamDB(self, *argv):
         """a convenience function to get a samdb instance so that we can query it"""
@@ -67,7 +67,7 @@ class SambaToolCmdTest(samba.tests.TestCaseInTempDir):
         cmd = cmd_sambatool.subcommands[name]
         cmd.outf = StringIO()
         cmd.errf = StringIO()
-        result = cmd._run(name, *args)
+        result = cmd._run("samba-tool %s" % name, *args)
         return (result, cmd.outf.getvalue(), cmd.errf.getvalue())
 
     def runsubcmd(self, name, sub, *args):
@@ -78,11 +78,12 @@ class SambaToolCmdTest(samba.tests.TestCaseInTempDir):
         cmd = cmd_sambatool.subcommands[name].subcommands[sub]
         cmd.outf = StringIO()
         cmd.errf = StringIO()
-        result = cmd._run(name, *args)
+        result = cmd._run("samba-tool %s %s" % (name, sub), *args)
         return (result, cmd.outf.getvalue(), cmd.errf.getvalue())
 
-    def assertCmdSuccess(self, val, msg=""):
-        self.assertIsNone(val, msg)
+    def assertCmdSuccess(self, exit, out, err, msg=""):
+        self.assertIsNone(exit, msg="exit[%s] stdout[%s] stderr[%s]: %s" % (
+                          exit, out, err, msg))
 
     def assertCmdFail(self, val, msg=""):
         self.assertIsNotNone(val, msg)

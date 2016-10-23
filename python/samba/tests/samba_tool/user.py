@@ -17,12 +17,16 @@
 
 import os
 import time
+import base64
 import ldb
 from samba.tests.samba_tool.base import SambaToolCmdTest
 from samba import (
+        credentials,
         nttime2unix,
         dsdb
         )
+from samba.ndr import ndr_unpack
+from samba.dcerpc import drsblobs
 
 class UserCmdTestCase(SambaToolCmdTest):
     """Tests for samba-tool user subcommands"""
@@ -47,7 +51,7 @@ class UserCmdTestCase(SambaToolCmdTest):
         for user in self.users:
             (result, out, err) = user["createUserFn"](user)
 
-            self.assertCmdSuccess(result)
+            self.assertCmdSuccess(result, out, err)
             self.assertEquals(err,"","Shouldn't be any error messages")
             self.assertIn("User '%s' created successfully" % user["name"], out)
 
@@ -72,7 +76,7 @@ class UserCmdTestCase(SambaToolCmdTest):
         # try to delete all the 4 users we just added
         for user in self.users:
             (result, out, err) = self.runsubcmd("user", "delete", user["name"])
-            self.assertCmdSuccess(result, "Can we delete users")
+            self.assertCmdSuccess(result, out, err, "Can we delete users")
             found = self._find_user(user["name"])
             self.assertIsNone(found)
 
@@ -89,7 +93,7 @@ class UserCmdTestCase(SambaToolCmdTest):
                                                  "-H", "ldap://%s" % os.environ["DC_SERVER"],
                                                  "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
 
-            self.assertCmdSuccess(result)
+            self.assertCmdSuccess(result, out, err)
             self.assertEquals(err,"","Shouldn't be any error messages")
             self.assertIn("User '%s' created successfully" % user["name"], out)
 
@@ -98,7 +102,88 @@ class UserCmdTestCase(SambaToolCmdTest):
             self.assertEquals("%s" % found.get("cn"), "%(name)s" % user)
             self.assertEquals("%s" % found.get("name"), "%(name)s" % user)
 
+    def _verify_supplementalCredentials(self, ldif,
+                                        min_packages=3,
+                                        max_packages=6):
+        msgs = self.samdb.parse_ldif(ldif)
+        (changetype, obj) = next(msgs)
 
+        self.assertIn("supplementalCredentials", obj, "supplementalCredentials attribute required")
+        sc_blob = obj["supplementalCredentials"][0]
+        sc = ndr_unpack(drsblobs.supplementalCredentialsBlob, sc_blob)
+
+        self.assertGreaterEqual(sc.sub.num_packages,
+                                min_packages, "min_packages check")
+        self.assertLessEqual(sc.sub.num_packages,
+                             max_packages, "max_packages check")
+
+        if max_packages == 0:
+            return
+
+        def find_package(packages, name, start_idx=0):
+            for i in xrange(start_idx, len(packages)):
+                if packages[i].name == name:
+                    return (i, packages[i])
+            return (None, None)
+
+        # The ordering is this
+        #
+        # Primary:Kerberos-Newer-Keys (optional)
+        # Primary:Kerberos
+        # Primary:WDigest
+        # Primary:CLEARTEXT (optional)
+        # Primary:SambaGPG (optional)
+        #
+        # And the 'Packages' package is insert before the last
+        # other package.
+
+        nidx = 0
+        (pidx, pp) = find_package(sc.sub.packages, "Packages", start_idx=nidx)
+        self.assertIsNotNone(pp, "Packages required")
+        self.assertEqual(pidx + 1, sc.sub.num_packages - 1,
+                         "Packages needs to be at num_packages - 1")
+
+        (knidx, knp) = find_package(sc.sub.packages, "Primary:Kerberos-Newer-Keys",
+                                    start_idx=nidx)
+        if knidx is not None:
+            self.assertEqual(knidx, nidx, "Primary:Kerberos-Newer-Keys at wrong position")
+            nidx = nidx + 1
+            if nidx == pidx:
+                nidx = nidx + 1
+
+        (kidx, kp) = find_package(sc.sub.packages, "Primary:Kerberos",
+                                    start_idx=nidx)
+        self.assertIsNotNone(pp, "Primary:Kerberos required")
+        self.assertEqual(kidx, nidx, "Primary:Kerberos at wrong position")
+        nidx = nidx + 1
+        if nidx == pidx:
+            nidx = nidx + 1
+
+        (widx, wp) = find_package(sc.sub.packages, "Primary:WDigest",
+                                  start_idx=nidx)
+        self.assertIsNotNone(pp, "Primary:WDigest required")
+        self.assertEqual(widx, nidx, "Primary:WDigest at wrong position")
+        nidx = nidx + 1
+        if nidx == pidx:
+            nidx = nidx + 1
+
+        (cidx, cp) = find_package(sc.sub.packages, "Primary:CLEARTEXT",
+                                    start_idx=nidx)
+        if cidx is not None:
+            self.assertEqual(cidx, nidx, "Primary:CLEARTEXT at wrong position")
+            nidx = nidx + 1
+            if nidx == pidx:
+                nidx = nidx + 1
+
+        (gidx, gp) = find_package(sc.sub.packages, "Primary:SambaGPG",
+                                  start_idx=nidx)
+        if gidx is not None:
+            self.assertEqual(gidx, nidx, "Primary:SambaGPG at wrong position")
+            nidx = nidx + 1
+            if nidx == pidx:
+                nidx = nidx + 1
+
+        self.assertEqual(nidx, sc.sub.num_packages, "Unknown packages found")
 
     def test_setpassword(self):
         for user in self.users:
@@ -108,18 +193,102 @@ class UserCmdTestCase(SambaToolCmdTest):
                                                 "--newpassword=%s" % newpasswd,
                                                 "-H", "ldap://%s" % os.environ["DC_SERVER"],
                                                 "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
-            # self.assertCmdSuccess(result, "Ensure setpassword runs")
+            self.assertCmdSuccess(result, out, err, "Ensure setpassword runs")
             self.assertEquals(err,"","setpassword with url")
             self.assertMatch(out, "Changed password OK", "setpassword with url")
 
+        attributes = "sAMAccountName,unicodePwd,supplementalCredentials,virtualClearTextUTF8,virtualClearTextUTF16,virtualSSHA,virtualSambaGPG"
+        (result, out, err) = self.runsubcmd("user", "syncpasswords",
+                                            "--cache-ldb-initialize",
+                                            "--attributes=%s" % attributes,
+                                            "--decrypt-samba-gpg")
+        self.assertCmdSuccess(result, out, err, "Ensure syncpasswords --cache-ldb-initialize runs")
+        self.assertEqual(err,"","getpassword without url")
+        cache_attrs = {
+            "objectClass": { "value": "userSyncPasswords" },
+            "samdbUrl": { },
+            "dirsyncFilter": { },
+            "dirsyncAttribute": { },
+            "dirsyncControl": { "value": "dirsync:1:0:0"},
+            "passwordAttribute": { },
+            "decryptSambaGPG": { },
+            "currentTime": { },
+        }
+        for a in cache_attrs.keys():
+            v = cache_attrs[a].get("value", "")
+            self.assertMatch(out, "%s: %s" % (a, v),
+                "syncpasswords --cache-ldb-initialize: %s: %s out[%s]" % (a, v, out))
+
+        (result, out, err) = self.runsubcmd("user", "syncpasswords", "--no-wait")
+        self.assertCmdSuccess(result, out, err, "Ensure syncpasswords --no-wait runs")
+        self.assertEqual(err,"","syncpasswords --no-wait")
+        self.assertMatch(out, "dirsync_loop(): results 0",
+            "syncpasswords --no-wait: 'dirsync_loop(): results 0': out[%s]" % (out))
+        for user in self.users:
+            self.assertMatch(out, "sAMAccountName: %s" % (user["name"]),
+                "syncpasswords --no-wait: 'sAMAccountName': %s out[%s]" % (user["name"], out))
+
         for user in self.users:
             newpasswd = self.randomPass()
+            creds = credentials.Credentials()
+            creds.set_anonymous()
+            creds.set_password(newpasswd)
+            nthash = creds.get_nt_hash()
+            unicodePwd = base64.b64encode(creds.get_nt_hash())
+            virtualClearTextUTF8 = base64.b64encode(newpasswd)
+            virtualClearTextUTF16 = base64.b64encode(unicode(newpasswd, 'utf-8').encode('utf-16-le'))
+
             (result, out, err) = self.runsubcmd("user", "setpassword",
                                                 user["name"],
                                                 "--newpassword=%s" % newpasswd)
-            # self.assertCmdSuccess(result, "Ensure setpassword runs")
+            self.assertCmdSuccess(result, out, err, "Ensure setpassword runs")
             self.assertEquals(err,"","setpassword without url")
             self.assertMatch(out, "Changed password OK", "setpassword without url")
+
+            (result, out, err) = self.runsubcmd("user", "syncpasswords", "--no-wait")
+            self.assertCmdSuccess(result, out, err, "Ensure syncpasswords --no-wait runs")
+            self.assertEqual(err,"","syncpasswords --no-wait")
+            self.assertMatch(out, "dirsync_loop(): results 0",
+                "syncpasswords --no-wait: 'dirsync_loop(): results 0': out[%s]" % (out))
+            self.assertMatch(out, "sAMAccountName: %s" % (user["name"]),
+                "syncpasswords --no-wait: 'sAMAccountName': %s out[%s]" % (user["name"], out))
+            self.assertMatch(out, "# unicodePwd::: REDACTED SECRET ATTRIBUTE",
+                    "getpassword '# unicodePwd::: REDACTED SECRET ATTRIBUTE': out[%s]" % out)
+            self.assertMatch(out, "unicodePwd:: %s" % unicodePwd,
+                    "getpassword unicodePwd: out[%s]" % out)
+            self.assertMatch(out, "# supplementalCredentials::: REDACTED SECRET ATTRIBUTE",
+                    "getpassword '# supplementalCredentials::: REDACTED SECRET ATTRIBUTE': out[%s]" % out)
+            self.assertMatch(out, "supplementalCredentials:: ",
+                    "getpassword supplementalCredentials: out[%s]" % out)
+            if "virtualSambaGPG:: " in out:
+                self.assertMatch(out, "virtualClearTextUTF8:: %s" % virtualClearTextUTF8,
+                    "getpassword virtualClearTextUTF8: out[%s]" % out)
+                self.assertMatch(out, "virtualClearTextUTF16:: %s" % virtualClearTextUTF16,
+                    "getpassword virtualClearTextUTF16: out[%s]" % out)
+                self.assertMatch(out, "virtualSSHA: ",
+                    "getpassword virtualSSHA: out[%s]" % out)
+
+            (result, out, err) = self.runsubcmd("user", "getpassword",
+                                                user["name"],
+                                                "--attributes=%s" % attributes,
+                                                "--decrypt-samba-gpg")
+            self.assertCmdSuccess(result, out, err, "Ensure getpassword runs")
+            self.assertEqual(err,"","getpassword without url")
+            self.assertMatch(out, "Got password OK", "getpassword without url")
+            self.assertMatch(out, "sAMAccountName: %s" % (user["name"]),
+                    "getpassword: 'sAMAccountName': %s out[%s]" % (user["name"], out))
+            self.assertMatch(out, "unicodePwd:: %s" % unicodePwd,
+                    "getpassword unicodePwd: out[%s]" % out)
+            self.assertMatch(out, "supplementalCredentials:: ",
+                    "getpassword supplementalCredentials: out[%s]" % out)
+            self._verify_supplementalCredentials(out.replace("\nGot password OK\n", ""))
+            if "virtualSambaGPG:: " in out:
+                self.assertMatch(out, "virtualClearTextUTF8:: %s" % virtualClearTextUTF8,
+                    "getpassword virtualClearTextUTF8: out[%s]" % out)
+                self.assertMatch(out, "virtualClearTextUTF16:: %s" % virtualClearTextUTF16,
+                    "getpassword virtualClearTextUTF16: out[%s]" % out)
+                self.assertMatch(out, "virtualSSHA: ",
+                    "getpassword virtualSSHA: out[%s]" % out)
 
         for user in self.users:
             newpasswd = self.randomPass()
@@ -129,7 +298,7 @@ class UserCmdTestCase(SambaToolCmdTest):
                                                 "--must-change-at-next-login",
                                                 "-H", "ldap://%s" % os.environ["DC_SERVER"],
                                                 "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
-            # self.assertCmdSuccess(result, "Ensure setpassword runs")
+            self.assertCmdSuccess(result, out, err, "Ensure setpassword runs")
             self.assertEquals(err,"","setpassword with forced change")
             self.assertMatch(out, "Changed password OK", "setpassword with forced change")
 
@@ -144,7 +313,7 @@ class UserCmdTestCase(SambaToolCmdTest):
                                                 "--days=2",
                                                 "-H", "ldap://%s" % os.environ["DC_SERVER"],
                                                 "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
-            self.assertCmdSuccess(result, "Can we run setexpiry with names")
+            self.assertCmdSuccess(result, out, err, "Can we run setexpiry with names")
             self.assertIn("Expiry for user '%s' set to 2 days." % user["name"], out)
 
         for user in self.users:
@@ -164,7 +333,7 @@ class UserCmdTestCase(SambaToolCmdTest):
                                                 "--days=4",
                                                 "-H", "ldap://%s" % os.environ["DC_SERVER"],
                                                 "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
-        self.assertCmdSuccess(result, "Can we run setexpiry with a filter")
+        self.assertCmdSuccess(result, out, err, "Can we run setexpiry with a filter")
 
         for user in self.users:
             found = self._find_user(user["name"])
@@ -181,7 +350,7 @@ class UserCmdTestCase(SambaToolCmdTest):
                                             "-H", "ldap://%s" % os.environ["DC_SERVER"],
                                             "-U%s%%%s" % (os.environ["DC_USERNAME"],
                                                           os.environ["DC_PASSWORD"]))
-        self.assertCmdSuccess(result, "Error running list")
+        self.assertCmdSuccess(result, out, err, "Error running list")
 
         search_filter = ("(&(objectClass=user)(userAccountControl:%s:=%u))" %
                          (ldb.OID_COMPARATOR_AND, dsdb.UF_NORMAL_ACCOUNT))
@@ -241,8 +410,7 @@ class UserCmdTestCase(SambaToolCmdTest):
                                                 "-H", "ldap://%s" % os.environ["DC_SERVER"],
                                                 "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
 
-        msg = "command should return %s" % err
-        self.assertCmdSuccess(result, msg)
+        self.assertCmdSuccess(result, out, err)
         self.assertEquals(err,"","Shouldn't be any error messages")
         self.assertIn("User '%s' created successfully" % user["name"], out)
 
@@ -271,8 +439,7 @@ class UserCmdTestCase(SambaToolCmdTest):
                                                 "-H", "ldap://%s" % os.environ["DC_SERVER"],
                                                 "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
 
-        msg = "command should return %s" % err
-        self.assertCmdSuccess(result, msg)
+        self.assertCmdSuccess(result, out, err)
         self.assertEquals(err,"","Shouldn't be any error messages")
         self.assertIn("User '%s' created successfully" % user["name"], out)
 

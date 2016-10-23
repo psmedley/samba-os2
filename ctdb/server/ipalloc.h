@@ -22,10 +22,10 @@
 #ifndef __CTDB_IPALLOC_H__
 #define __CTDB_IPALLOC_H__
 
+#include <talloc.h>
+
 #include "replace.h"
 #include "system/network.h"
-
-#include "include/ctdb_protocol.h"
 
 struct public_ip_list {
 	struct public_ip_list *next;
@@ -43,21 +43,25 @@ enum ipalloc_algorithm {
 	IPALLOC_LCP2,
 };
 
-struct ipalloc_state {
-	uint32_t num;
+struct ipalloc_state;
 
-	/* Arrays with data for each node */
-	struct ctdb_public_ip_list_old **known_public_ips;
-	struct ctdb_public_ip_list_old **available_public_ips;
-	bool *noiptakeover;
-	bool *noiphost;
+struct ipalloc_state * ipalloc_state_init(TALLOC_CTX *mem_ctx,
+					  uint32_t num_nodes,
+					  enum ipalloc_algorithm algorithm,
+					  bool no_ip_failback,
+					  uint32_t *force_rebalance_nodes);
 
-	struct public_ip_list *all_ips;
-	enum ipalloc_algorithm algorithm;
-	uint32_t no_ip_failback;
-	uint32_t *force_rebalance_nodes;
-};
+void ipalloc_set_node_flags(struct ipalloc_state *ipalloc_state,
+			    struct ctdb_node_map *nodemap,
+			    uint32_t *tval_noiptakeover,
+			    uint32_t *tval_noiphostonalldisabled);
 
-bool ipalloc(struct ipalloc_state *ipalloc_state);
+bool ipalloc_set_public_ips(struct ipalloc_state *ipalloc_state,
+			    struct ctdb_public_ip_list *known_ips,
+			    struct ctdb_public_ip_list *available_ips);
+
+bool ipalloc_can_host_ips(struct ipalloc_state *ipalloc_state);
+
+struct public_ip_list *ipalloc(struct ipalloc_state *ipalloc_state);
 
 #endif /* __CTDB_IPALLOC_H__ */

@@ -29,6 +29,7 @@
 #include "system/wait.h"
 
 #include "lib/util/debug.h"
+#include "lib/util/blocking.h"
 
 #include "protocol/protocol.h"
 
@@ -135,6 +136,7 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 		struct ip6_hdr ip6;
 		struct tcphdr tcp;
 	} ip6pkt;
+	int saved_errno;
 
 	switch (src->ip.sin_family) {
 	case AF_INET:
@@ -177,13 +179,13 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 			return -1;
 		}
 
-		set_nonblocking(s);
-		set_close_on_exec(s);
-
-		ret = sendto(s, &ip4pkt, sizeof(ip4pkt), 0, &dest->ip, sizeof(dest->ip));
+		ret = sendto(s, &ip4pkt, sizeof(ip4pkt), 0,
+			     &dest->ip, sizeof(dest->ip));
+		saved_errno = errno;
 		close(s);
 		if (ret != sizeof(ip4pkt)) {
-			DEBUG(DEBUG_CRIT,(__location__ " failed sendto (%s)\n", strerror(errno)));
+			DEBUG(DEBUG_ERR,
+			      ("Failed sendto (%s)\n", strerror(saved_errno)));
 			return -1;
 		}
 		break;
@@ -222,12 +224,15 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 		tmpport = tmpdest->ip6.sin6_port;
 
 		tmpdest->ip6.sin6_port = 0;
-		ret = sendto(s, &ip6pkt, sizeof(ip6pkt), 0, &dest->ip6, sizeof(dest->ip6));
+		ret = sendto(s, &ip6pkt, sizeof(ip6pkt), 0,
+			     &dest->ip6, sizeof(dest->ip6));
+		saved_errno = errno;
 		tmpdest->ip6.sin6_port = tmpport;
 		close(s);
 
 		if (ret != sizeof(ip6pkt)) {
-			DEBUG(DEBUG_CRIT,(__location__ " failed sendto (%s)\n", strerror(errno)));
+			DEBUG(DEBUG_ERR,
+			      ("Failed sendto (%s)\n", strerror(saved_errno)));
 			return -1;
 		}
 		break;
@@ -270,9 +275,10 @@ int ctdb_sys_close_capture_socket(void *private_data)
 /*
   called when the raw socket becomes readable
  */
-int ctdb_sys_read_tcp_packet(int s, void *private_data, 
-			ctdb_sock_addr *src, ctdb_sock_addr *dst,
-			uint32_t *ack_seq, uint32_t *seq)
+int ctdb_sys_read_tcp_packet(int s, void *private_data,
+			     ctdb_sock_addr *src, ctdb_sock_addr *dst,
+			     uint32_t *ack_seq, uint32_t *seq,
+			     int *rst, uint16_t *window)
 {
 	int ret;
 #define RCVPKTSIZE 100
@@ -325,6 +331,12 @@ int ctdb_sys_read_tcp_packet(int s, void *private_data,
 		dst->ip.sin_port        = tcp->dest;
 		*ack_seq                = tcp->ack_seq;
 		*seq                    = tcp->seq;
+		if (window != NULL) {
+			*window = tcp->window;
+		}
+		if (rst != NULL) {
+			*rst = tcp->rst;
+		}
 
 		return 0;
 	} else if (ntohs(eth->ether_type) == ETHERTYPE_IP6) {
@@ -350,6 +362,12 @@ int ctdb_sys_read_tcp_packet(int s, void *private_data,
 
 		*ack_seq             = tcp->ack_seq;
 		*seq                 = tcp->seq;
+		if (window != NULL) {
+			*window = tcp->window;
+		}
+		if (rst != NULL) {
+			*rst = tcp->rst;
+		}
 
 		return 0;
 	}

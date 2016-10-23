@@ -27,6 +27,7 @@
 #include "lib/util/sys_rw.h"
 #include <sys/eventfd.h>
 #include <libaio.h>
+#include "smbprofile.h"
 
 static int event_fd = -1;
 static io_context_t io_ctx;
@@ -139,7 +140,8 @@ static bool init_aio_linux(struct vfs_handle_struct *handle)
 struct aio_linux_state {
 	struct iocb event_iocb;
 	ssize_t ret;
-	int err;
+	struct vfs_aio_state vfs_aio_state;
+	struct timespec start;
 };
 
 static struct tevent_req *aio_linux_pread_send(
@@ -167,6 +169,7 @@ static struct tevent_req *aio_linux_pread_send(
 
 	piocb = &state->event_iocb;
 
+	PROFILE_TIMESTAMP(&state->start);
 	ret = io_submit(io_ctx, 1, &piocb);
 	if (ret < 0) {
 		tevent_req_error(req, -ret);
@@ -203,6 +206,7 @@ static struct tevent_req *aio_linux_pwrite_send(
 
 	piocb = &state->event_iocb;
 
+	PROFILE_TIMESTAMP(&state->start);
 	ret = io_submit(io_ctx, 1, &piocb);
 	if (ret < 0) {
 		tevent_req_error(req, -ret);
@@ -237,6 +241,7 @@ static struct tevent_req *aio_linux_fsync_send(
 
 	piocb = &state->event_iocb;
 
+	PROFILE_TIMESTAMP(&state->start);
 	ret = io_submit(io_ctx, 1, &piocb);
 	if (ret < 0) {
 		tevent_req_error(req, -ret);
@@ -252,9 +257,12 @@ static void aio_linux_done(struct tevent_context *event_ctx,
 			   uint16_t flags, void *private_data)
 {
 	uint64_t num_events = 0;
+	struct timespec end;
 
 	DEBUG(10, ("aio_linux_done called with flags=%d\n",
 		   (int)flags));
+
+	PROFILE_TIMESTAMP(&end);
 
 	/* Read the number of events available. */
 	if (sys_read(event_fd, &num_events, sizeof(num_events)) !=
@@ -289,36 +297,36 @@ static void aio_linux_done(struct tevent_context *event_ctx,
 
 		if (finished.res < 0) {
 			state->ret = -1;
-			state->err = -finished.res;
+			state->vfs_aio_state.error = -finished.res;
 		} else {
 			state->ret = finished.res;
-			state->err = 0;
 		}
+		state->vfs_aio_state.duration = nsec_time_diff(&end, &state->start);
 		tevent_req_done(req);
 		num_events -= 1;
 	}
 }
 
-static ssize_t aio_linux_recv(struct tevent_req *req, int *err)
+static ssize_t aio_linux_recv(struct tevent_req *req,
+			      struct vfs_aio_state *vfs_aio_state)
 {
 	struct aio_linux_state *state = tevent_req_data(
 		req, struct aio_linux_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	if (state->ret == -1) {
-		*err = state->err;
-	}
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 
-static int aio_linux_int_recv(struct tevent_req *req, int *err)
+static int aio_linux_int_recv(struct tevent_req *req,
+			      struct vfs_aio_state *vfs_aio_state)
 {
 	/*
 	 * Use implicit conversion ssize_t->int
 	 */
-	return aio_linux_recv(req, err);
+	return aio_linux_recv(req, vfs_aio_state);
 }
 
 static struct vfs_fn_pointers vfs_aio_linux_fns = {

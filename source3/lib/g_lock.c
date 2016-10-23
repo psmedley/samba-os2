@@ -24,10 +24,7 @@
 #include "dbwrap/dbwrap_watch.h"
 #include "g_lock.h"
 #include "util_tdb.h"
-#include "ctdbd_conn.h"
-#include "../lib/util/select.h"
 #include "../lib/util/tevent_ntstatus.h"
-#include "system/select.h"
 #include "messages.h"
 #include "serverid.h"
 
@@ -51,6 +48,7 @@ struct g_lock_ctx *g_lock_ctx_init(TALLOC_CTX *mem_ctx,
 				   struct messaging_context *msg)
 {
 	struct g_lock_ctx *result;
+	struct db_context *backend;
 	char *db_path;
 
 	result = talloc(mem_ctx, struct g_lock_ctx);
@@ -65,18 +63,24 @@ struct g_lock_ctx *g_lock_ctx_init(TALLOC_CTX *mem_ctx,
 		return NULL;
 	}
 
-	result->db = db_open(result, db_path, 0,
-			     TDB_CLEAR_IF_FIRST|TDB_INCOMPATIBLE_HASH,
-			     O_RDWR|O_CREAT, 0600,
-			     DBWRAP_LOCK_ORDER_2,
-			     DBWRAP_FLAG_NONE);
+	backend = db_open(result, db_path, 0,
+			  TDB_CLEAR_IF_FIRST|TDB_INCOMPATIBLE_HASH,
+			  O_RDWR|O_CREAT, 0600,
+			  DBWRAP_LOCK_ORDER_2,
+			  DBWRAP_FLAG_NONE);
 	TALLOC_FREE(db_path);
-	if (result->db == NULL) {
+	if (backend == NULL) {
 		DEBUG(1, ("g_lock_init: Could not open g_lock.tdb\n"));
 		TALLOC_FREE(result);
 		return NULL;
 	}
-	dbwrap_watch_db(result->db, msg);
+
+	result->db = db_open_watched(result, backend, msg);
+	if (result->db == NULL) {
+		DBG_WARNING("g_lock_init: db_open_watched failed\n");
+		TALLOC_FREE(result);
+		return NULL;
+	}
 	return result;
 }
 
@@ -99,7 +103,7 @@ static bool g_lock_parse(TALLOC_CTX *mem_ctx, TDB_DATA data,
 	struct g_lock_rec *locks;
 
 	if ((data.dsize % sizeof(struct g_lock_rec)) != 0) {
-		DEBUG(1, ("invalid lock record length %d\n", (int)data.dsize));
+		DEBUG(1, ("invalid lock record length %zu\n", data.dsize));
 		return false;
 	}
 	num_locks = data.dsize / sizeof(struct g_lock_rec);
@@ -114,7 +118,8 @@ static bool g_lock_parse(TALLOC_CTX *mem_ctx, TDB_DATA data,
 }
 
 static NTSTATUS g_lock_trylock(struct db_record *rec, struct server_id self,
-			       enum g_lock_type type)
+			       enum g_lock_type type,
+			       struct server_id *blocker)
 {
 	TDB_DATA data;
 	unsigned i, num_locks;
@@ -145,6 +150,7 @@ static NTSTATUS g_lock_trylock(struct db_record *rec, struct server_id self,
 
 			if (serverid_exists(&pid)) {
 				status = NT_STATUS_LOCK_NOT_GRANTED;
+				*blocker = locks[i].pid;
 				goto done;
 			}
 
@@ -206,7 +212,7 @@ struct tevent_req *g_lock_lock_send(TALLOC_CTX *mem_ctx,
 	struct tevent_req *req, *subreq;
 	struct g_lock_lock_state *state;
 	struct db_record *rec;
-	struct server_id self;
+	struct server_id self, blocker;
 	NTSTATUS status;
 
 	req = tevent_req_create(mem_ctx, &state, struct g_lock_lock_state);
@@ -228,7 +234,7 @@ struct tevent_req *g_lock_lock_send(TALLOC_CTX *mem_ctx,
 
 	self = messaging_server_id(state->ctx->msg);
 
-	status = g_lock_trylock(rec, self, state->type);
+	status = g_lock_trylock(rec, self, state->type, &blocker);
 	if (NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(rec);
 		tevent_req_done(req);
@@ -239,8 +245,7 @@ struct tevent_req *g_lock_lock_send(TALLOC_CTX *mem_ctx,
 		tevent_req_nterror(req, status);
 		return tevent_req_post(req, ev);
 	}
-	subreq = dbwrap_record_watch_send(state, state->ev, rec,
-					  state->ctx->msg);
+	subreq = dbwrap_watched_watch_send(state, state->ev, rec, blocker);
 	TALLOC_FREE(rec);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
@@ -262,10 +267,12 @@ static void g_lock_lock_retry(struct tevent_req *subreq)
 	struct g_lock_lock_state *state = tevent_req_data(
 		req, struct g_lock_lock_state);
 	struct server_id self = messaging_server_id(state->ctx->msg);
+	struct server_id blocker;
 	struct db_record *rec;
 	NTSTATUS status;
 
-	status = dbwrap_record_watch_recv(subreq, talloc_tos(), &rec);
+	status = dbwrap_watched_watch_recv(subreq, talloc_tos(), &rec, NULL,
+					   NULL);
 	TALLOC_FREE(subreq);
 
 	if (NT_STATUS_EQUAL(status, NT_STATUS_IO_TIMEOUT)) {
@@ -282,7 +289,7 @@ static void g_lock_lock_retry(struct tevent_req *subreq)
 	if (tevent_req_nterror(req, status)) {
 		return;
 	}
-	status = g_lock_trylock(rec, self, state->type);
+	status = g_lock_trylock(rec, self, state->type, &blocker);
 	if (NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(rec);
 		tevent_req_done(req);
@@ -293,8 +300,7 @@ static void g_lock_lock_retry(struct tevent_req *subreq)
 		tevent_req_nterror(req, status);
 		return;
 	}
-	subreq = dbwrap_record_watch_send(state, state->ev, rec,
-					  state->ctx->msg);
+	subreq = dbwrap_watched_watch_send(state, state->ev, rec, blocker);
 	TALLOC_FREE(rec);
 	if (tevent_req_nomem(subreq, req)) {
 		return;

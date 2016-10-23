@@ -1174,6 +1174,8 @@ tgs_parse_request(krb5_context context,
     Key *tkey;
     krb5_keyblock *subkey = NULL;
     unsigned usage;
+    krb5uint32 kvno = 0;
+    krb5uint32 *kvno_ptr = NULL;
 
     *auth_data = NULL;
     *csec  = NULL;
@@ -1201,7 +1203,12 @@ tgs_parse_request(krb5_context context,
 				       ap_req.ticket.sname,
 				       ap_req.ticket.realm);
 
-    ret = _kdc_db_fetch(context, config, princ, HDB_F_GET_KRBTGT, ap_req.ticket.enc_part.kvno, NULL, krbtgt);
+    if (ap_req.ticket.enc_part.kvno) {
+	    kvno = *ap_req.ticket.enc_part.kvno;
+	    kvno_ptr = &kvno;
+    }
+    ret = _kdc_db_fetch(context, config, princ, HDB_F_GET_KRBTGT, kvno_ptr,
+			NULL, krbtgt);
 
     if(ret == HDB_ERR_NOT_FOUND_HERE) {
 	char *p;
@@ -1541,6 +1548,8 @@ tgs_build_reply(krb5_context context,
 	hdb_entry_ex *uu;
 	krb5_principal p;
 	Key *uukey;
+	krb5uint32 second_kvno = 0;
+	krb5uint32 *kvno_ptr = NULL;
 
 	if(b->additional_tickets == NULL ||
 	   b->additional_tickets->len == 0){
@@ -1557,8 +1566,12 @@ tgs_build_reply(krb5_context context,
 	    goto out;
 	}
 	_krb5_principalname2krb5_principal(context, &p, t->sname, t->realm);
+	if(t->enc_part.kvno){
+	    second_kvno = *t->enc_part.kvno;
+	    kvno_ptr = &second_kvno;
+	}
 	ret = _kdc_db_fetch(context, config, p,
-			    HDB_F_GET_KRBTGT, t->enc_part.kvno,
+			    HDB_F_GET_KRBTGT, kvno_ptr,
 			    NULL, &uu);
 	krb5_free_principal(context, p);
 	if(ret){
@@ -1977,7 +1990,7 @@ server_lookup:
 		    krb5_free_error_message(context, msg);
 		    goto out;
 		}
-		ret = _kdc_pac_generate(context, s4u2self_impersonated_client, &p);
+		ret = _kdc_pac_generate(context, s4u2self_impersonated_client, NULL, &p);
 		if (ret) {
 		    kdc_log(context, config, 0, "PAC generation failed for -- %s",
 			    tpn);

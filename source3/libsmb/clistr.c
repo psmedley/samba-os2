@@ -37,3 +37,46 @@ size_t clistr_pull_talloc(TALLOC_CTX *ctx,
 				  src_len,
 				  flags);
 }
+
+bool clistr_is_previous_version_path(const char *path,
+		const char **startp,
+		const char **endp,
+		time_t *ptime)
+{
+	char *q;
+	time_t timestamp;
+	struct tm tm;
+	const char *p = strstr_m(path, "@GMT-");
+
+	if (p == NULL) {
+		return false;
+	}
+	if (p > path && (p[-1] != '\\')) {
+		return false;
+	}
+	q = strptime(p, GMT_FORMAT, &tm);
+	if (q == NULL) {
+		return false;
+	}
+	tm.tm_isdst = -1;
+	timestamp = timegm(&tm);
+	if (timestamp == (time_t)-1) {
+		return false;
+	}
+	if (q[0] != '\0' && q[0] != '\\') {
+		return false;
+	}
+	if (startp) {
+		*startp = p;
+	}
+	if (endp) {
+		if (q[0] == '\\') {
+			q++;
+		}
+		*endp = q;
+	}
+	if (ptime) {
+		*ptime = timestamp;
+	}
+	return true;
+}

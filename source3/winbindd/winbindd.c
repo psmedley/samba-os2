@@ -122,8 +122,7 @@ struct imessaging_context *winbind_imessaging_context(void)
 	 * Note we MUST use the NULL context here, not the autofree context,
 	 * to avoid side effects in forked children exiting.
 	 */
-	msg = imessaging_init(NULL, lp_ctx, myself, winbind_event_context(),
-			      false);
+	msg = imessaging_init(NULL, lp_ctx, myself, winbind_event_context());
 	talloc_unlink(NULL, lp_ctx);
 
 	if (msg == NULL) {
@@ -432,7 +431,7 @@ static void winbindd_sig_chld_handler(struct tevent_context *ev,
 {
 	pid_t pid;
 
-	while ((pid = sys_waitpid(-1, NULL, WNOHANG)) > 0) {
+	while ((pid = waitpid(-1, NULL, WNOHANG)) > 0) {
 		winbind_child_died(pid);
 	}
 }
@@ -608,16 +607,10 @@ static struct winbindd_async_dispatch_table async_nonpriv_table[] = {
 	  winbindd_lookupsids_send, winbindd_lookupsids_recv },
 	{ WINBINDD_LOOKUPNAME, "LOOKUPNAME",
 	  winbindd_lookupname_send, winbindd_lookupname_recv },
-	{ WINBINDD_SID_TO_UID, "SID_TO_UID",
-	  winbindd_sid_to_uid_send, winbindd_sid_to_uid_recv },
-	{ WINBINDD_SID_TO_GID, "SID_TO_GID",
-	  winbindd_sid_to_gid_send, winbindd_sid_to_gid_recv },
-	{ WINBINDD_UID_TO_SID, "UID_TO_SID",
-	  winbindd_uid_to_sid_send, winbindd_uid_to_sid_recv },
-	{ WINBINDD_GID_TO_SID, "GID_TO_SID",
-	  winbindd_gid_to_sid_send, winbindd_gid_to_sid_recv },
 	{ WINBINDD_SIDS_TO_XIDS, "SIDS_TO_XIDS",
 	  winbindd_sids_to_xids_send, winbindd_sids_to_xids_recv },
+	{ WINBINDD_XIDS_TO_SIDS, "XIDS_TO_SIDS",
+	  winbindd_xids_to_sids_send, winbindd_xids_to_sids_recv },
 	{ WINBINDD_GETPWSID, "GETPWSID",
 	  winbindd_getpwsid_send, winbindd_getpwsid_recv },
 	{ WINBINDD_GETPWNAM, "GETPWNAM",

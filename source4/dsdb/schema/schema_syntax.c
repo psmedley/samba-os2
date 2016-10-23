@@ -97,7 +97,7 @@ static bool dsdb_syntax_attid_from_remote_attid(const struct dsdb_syntax_ctx *ct
 		return false;
 	}
 
-	werr = dsdb_schema_pfm_make_attid(ctx->schema->prefixmap, oid, id_local);
+	werr = dsdb_schema_pfm_attid_from_oid(ctx->schema->prefixmap, oid, id_local);
 	if (!W_ERROR_IS_OK(werr)) {
 		DEBUG(0,("OID->ATTID failed (%s) for: %s\n", win_errstr(werr), oid));
 		return false;
@@ -996,7 +996,7 @@ static WERROR _dsdb_syntax_OID_obj_drsuapi_to_ldb(const struct dsdb_syntax_ctx *
 	W_ERROR_HAVE_NO_MEMORY(out->values);
 
 	for (i=0; i < out->num_values; i++) {
-		uint32_t v;
+		uint32_t v, vo;
 		const struct dsdb_class *c;
 		const char *str;
 
@@ -1009,6 +1009,7 @@ static WERROR _dsdb_syntax_OID_obj_drsuapi_to_ldb(const struct dsdb_syntax_ctx *
 		}
 
 		v = IVAL(in->value_ctr.values[i].blob->data, 0);
+		vo = v;
 
 		/* convert remote ATTID to local ATTID */
 		if (!dsdb_syntax_attid_from_remote_attid(ctx, mem_ctx, v, &v)) {
@@ -1018,8 +1019,11 @@ static WERROR _dsdb_syntax_OID_obj_drsuapi_to_ldb(const struct dsdb_syntax_ctx *
 
 		c = dsdb_class_by_governsID_id(ctx->schema, v);
 		if (!c) {
-			DEBUG(1,(__location__ ": Unknown governsID 0x%08X\n", v));
-			return WERR_FOOBAR;
+			int dbg_level = ctx->schema->resolving_in_progress ? 10 : 0;
+			DEBUG(dbg_level,(__location__ ": %s unknown local governsID 0x%08X remote 0x%08X%s\n",
+			      attr->lDAPDisplayName, v, vo,
+			      ctx->schema->resolving_in_progress ? "resolving in progress" : ""));
+			return WERR_DS_OBJ_CLASS_NOT_DEFINED;
 		}
 
 		str = talloc_strdup(out->values, c->lDAPDisplayName);
@@ -1049,7 +1053,7 @@ static WERROR _dsdb_syntax_OID_attr_drsuapi_to_ldb(const struct dsdb_syntax_ctx 
 	W_ERROR_HAVE_NO_MEMORY(out->values);
 
 	for (i=0; i < out->num_values; i++) {
-		uint32_t v;
+		uint32_t v, vo;
 		const struct dsdb_attribute *a;
 		const char *str;
 
@@ -1064,6 +1068,7 @@ static WERROR _dsdb_syntax_OID_attr_drsuapi_to_ldb(const struct dsdb_syntax_ctx 
 		}
 
 		v = IVAL(in->value_ctr.values[i].blob->data, 0);
+		vo = v;
 
 		/* convert remote ATTID to local ATTID */
 		if (!dsdb_syntax_attid_from_remote_attid(ctx, mem_ctx, v, &v)) {
@@ -1073,8 +1078,11 @@ static WERROR _dsdb_syntax_OID_attr_drsuapi_to_ldb(const struct dsdb_syntax_ctx 
 
 		a = dsdb_attribute_by_attributeID_id(ctx->schema, v);
 		if (!a) {
-			DEBUG(1,(__location__ ": Unknown attributeID_id 0x%08X\n", v));
-			return WERR_FOOBAR;
+			int dbg_level = ctx->schema->resolving_in_progress ? 10 : 0;
+			DEBUG(dbg_level,(__location__ ": %s unknown local attributeID_id 0x%08X remote 0x%08X%s\n",
+			      attr->lDAPDisplayName, v, vo,
+			      ctx->schema->resolving_in_progress ? "resolving in progress" : ""));
+			return WERR_DS_ATT_NOT_DEF_IN_SCHEMA;
 		}
 
 		str = talloc_strdup(out->values, a->lDAPDisplayName);
@@ -2395,7 +2403,8 @@ static const struct dsdb_syntax dsdb_syntaxes[] = {
 		.validate_ldb		= dsdb_syntax_DATA_BLOB_validate_ldb,
 		.equality               = "octetStringMatch",
 		.comment                = "Octet String",
-		.userParameters         = true
+		.userParameters         = true,
+		.ldb_syntax             = LDB_SYNTAX_SAMBA_OCTET_STRING
 	},{
 		.name			= "String(Sid)",
 		.ldap_oid		= LDB_SYNTAX_OCTET_STRING,
@@ -2449,7 +2458,7 @@ static const struct dsdb_syntax dsdb_syntaxes[] = {
 		.drsuapi_to_ldb		= dsdb_syntax_DATA_BLOB_drsuapi_to_ldb,
 		.ldb_to_drsuapi		= dsdb_syntax_DATA_BLOB_ldb_to_drsuapi,
 		.validate_ldb		= dsdb_syntax_DATA_BLOB_validate_ldb,
-		.ldb_syntax		= LDB_SYNTAX_OCTET_STRING,
+		.ldb_syntax		= LDB_SYNTAX_SAMBA_OCTET_STRING,
 	},{
 		.name			= "String(Teletex)",
 		.ldap_oid		= "1.2.840.113556.1.4.905",
@@ -2472,7 +2481,7 @@ static const struct dsdb_syntax dsdb_syntaxes[] = {
 		.validate_ldb		= dsdb_syntax_DATA_BLOB_validate_ldb,
 		.equality               = "caseExactIA5Match",
 		.comment                = "Printable String",
-		.ldb_syntax		= LDB_SYNTAX_OCTET_STRING,
+		.ldb_syntax		= LDB_SYNTAX_SAMBA_OCTET_STRING,
 	},{
 		.name			= "String(UTC-Time)",
 		.ldap_oid		= "1.3.6.1.4.1.1466.115.121.1.53",
@@ -2510,7 +2519,7 @@ static const struct dsdb_syntax dsdb_syntaxes[] = {
 		 * as Directory String (LDB_SYNTAX_DIRECTORY_STRING), but case sensitive.
 		 * But according to ms docs binary compare should do the job:
 		 * http://msdn.microsoft.com/en-us/library/cc223200(v=PROT.10).aspx */
-		.ldb_syntax		= LDB_SYNTAX_OCTET_STRING,
+		.ldb_syntax		= LDB_SYNTAX_SAMBA_OCTET_STRING,
 	},{
 		.name			= "String(Unicode)",
 		.ldap_oid		= LDB_SYNTAX_DIRECTORY_STRING,
@@ -2696,45 +2705,52 @@ const struct dsdb_syntax *dsdb_syntax_for_attribute(const struct dsdb_attribute 
 	return NULL;
 }
 
-WERROR dsdb_attribute_drsuapi_to_ldb(struct ldb_context *ldb,
-				     const struct dsdb_schema *schema,
-				     const struct dsdb_schema_prefixmap *pfm_remote,
-				     const struct drsuapi_DsReplicaAttribute *in,
-				     TALLOC_CTX *mem_ctx,
-				     struct ldb_message_element *out,
-				     enum drsuapi_DsAttributeId *local_attid_as_enum)
+WERROR dsdb_attribute_drsuapi_remote_to_local(const struct dsdb_syntax_ctx *ctx,
+					      enum drsuapi_DsAttributeId remote_attid_as_enum,
+					      enum drsuapi_DsAttributeId *local_attid_as_enum,
+					      const struct dsdb_attribute **_sa)
 {
+	TALLOC_CTX *frame = talloc_stackframe();
 	const struct dsdb_attribute *sa;
-	struct dsdb_syntax_ctx syntax_ctx;
 	uint32_t attid_local;
+	bool ok;
 
-	/* use default syntax conversion context */
-	dsdb_syntax_ctx_init(&syntax_ctx, ldb, schema);
-	syntax_ctx.pfm_remote = pfm_remote;
+	if (ctx->pfm_remote == NULL) {
+		smb_panic(__location__);
+	}
 
-	switch (dsdb_pfm_get_attid_type(in->attid)) {
+	switch (dsdb_pfm_get_attid_type(remote_attid_as_enum)) {
 	case DSDB_ATTID_TYPE_PFM:
 		/* map remote ATTID to local ATTID */
-		if (!dsdb_syntax_attid_from_remote_attid(&syntax_ctx, mem_ctx, in->attid, &attid_local)) {
+		ok = dsdb_syntax_attid_from_remote_attid(ctx, frame,
+							 remote_attid_as_enum,
+							 &attid_local);
+		if (!ok) {
 			DEBUG(0,(__location__ ": Can't find local ATTID for 0x%08X\n",
-				 in->attid));
+				 remote_attid_as_enum));
+			TALLOC_FREE(frame);
 			return WERR_DS_ATT_NOT_DEF_IN_SCHEMA;
 		}
 		break;
 	case DSDB_ATTID_TYPE_INTID:
 		/* use IntId value directly */
-		attid_local = in->attid;
+		attid_local = remote_attid_as_enum;
 		break;
 	default:
 		/* we should never get here */
 		DEBUG(0,(__location__ ": Invalid ATTID type passed for conversion - 0x%08X\n",
-			 in->attid));
+			 remote_attid_as_enum));
+		TALLOC_FREE(frame);
 		return WERR_INVALID_PARAMETER;
 	}
 
-	sa = dsdb_attribute_by_attributeID_id(schema, attid_local);
+	sa = dsdb_attribute_by_attributeID_id(ctx->schema, attid_local);
 	if (!sa) {
-		DEBUG(1,(__location__ ": Unknown attributeID_id 0x%08X\n", in->attid));
+		int dbg_level = ctx->schema->resolving_in_progress ? 10 : 0;
+		DEBUG(dbg_level,(__location__ ": Unknown local attributeID_id 0x%08X remote 0x%08X%s\n",
+		      attid_local, remote_attid_as_enum,
+		      ctx->schema->resolving_in_progress ? "resolving in progress" : ""));
+		TALLOC_FREE(frame);
 		return WERR_DS_ATT_NOT_DEF_IN_SCHEMA;
 	}
 
@@ -2745,6 +2761,38 @@ WERROR dsdb_attribute_drsuapi_to_ldb(struct ldb_context *ldb,
 	 */
 	if (local_attid_as_enum != NULL) {
 		*local_attid_as_enum = (enum drsuapi_DsAttributeId)attid_local;
+	}
+
+	if (_sa != NULL) {
+		*_sa = sa;
+	}
+
+	TALLOC_FREE(frame);
+	return WERR_OK;
+}
+
+WERROR dsdb_attribute_drsuapi_to_ldb(struct ldb_context *ldb,
+				     const struct dsdb_schema *schema,
+				     const struct dsdb_schema_prefixmap *pfm_remote,
+				     const struct drsuapi_DsReplicaAttribute *in,
+				     TALLOC_CTX *mem_ctx,
+				     struct ldb_message_element *out,
+				     enum drsuapi_DsAttributeId *local_attid_as_enum)
+{
+	struct dsdb_syntax_ctx syntax_ctx;
+	const struct dsdb_attribute *sa = NULL;
+	WERROR werr;
+
+	/* use default syntax conversion context */
+	dsdb_syntax_ctx_init(&syntax_ctx, ldb, schema);
+	syntax_ctx.pfm_remote = pfm_remote;
+
+	werr = dsdb_attribute_drsuapi_remote_to_local(&syntax_ctx,
+						      in->attid,
+						      local_attid_as_enum,
+						      &sa);
+	if (!W_ERROR_IS_OK(werr)) {
+		return werr;
 	}
 
 	return sa->syntax->drsuapi_to_ldb(&syntax_ctx, sa, in, mem_ctx, out);

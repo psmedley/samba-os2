@@ -960,6 +960,55 @@ sub assign($$$)
 	}
 }
 
+sub ConvertStringFromPythonData($$$$$)
+{
+	my ($self, $mem_ctx, $py_var, $target, $fail) = @_;
+
+	$self->pidl("{");
+	$self->indent;
+	$self->pidl("const char *test_str;");
+	$self->pidl("const char *talloc_str;");
+	$self->pidl("PyObject *unicode = NULL;");
+	$self->pidl("if (PyUnicode_Check($py_var)) {");
+	$self->indent;
+	# FIXME: Use Unix charset setting rather than utf-8
+	$self->pidl("unicode = PyUnicode_AsEncodedString($py_var, \"utf-8\", \"ignore\");");
+	$self->pidl("if (unicode == NULL) {");
+	$self->indent;
+	$self->pidl("PyErr_NoMemory();");
+	$self->pidl("$fail");
+	$self->deindent;
+	$self->pidl("}");
+
+	$self->pidl("test_str = PyString_AS_STRING(unicode);");
+	$self->deindent;
+	$self->pidl("} else if (PyString_Check($py_var)) {");
+	$self->indent;
+	$self->pidl("test_str = PyString_AS_STRING($py_var);");
+	$self->deindent;
+	$self->pidl("} else {");
+	$self->indent;
+	$self->pidl("PyErr_Format(PyExc_TypeError, \"Expected string or unicode object, got %s\", Py_TYPE($py_var)->tp_name);");
+	$self->pidl("$fail");
+	$self->deindent;
+	$self->pidl("}");
+	$self->pidl("talloc_str = talloc_strdup($mem_ctx, test_str);");
+	$self->pidl("if (unicode != NULL) {");
+	$self->indent;
+	$self->pidl("Py_DECREF(unicode);");
+	$self->deindent;
+	$self->pidl("}");
+	$self->pidl("if (talloc_str == NULL) {");
+	$self->indent;
+	$self->pidl("PyErr_NoMemory();");
+	$self->pidl("$fail");
+	$self->deindent;
+	$self->pidl("}");
+	$self->pidl("$target = talloc_str;");
+	$self->deindent;
+	$self->pidl("}");
+}
+
 sub ConvertObjectFromPythonData($$$$$$;$)
 {
 	my ($self, $mem_ctx, $cvar, $ctype, $target, $fail, $location) = @_;
@@ -978,21 +1027,21 @@ sub ConvertObjectFromPythonData($$$$$$;$)
 	my $ctype_alias = "";
 	my $uint_max = "";
 	if ($actual_ctype->{TYPE} eq "ENUM") {
-	        # Importantly, ENUM values are unsigned in pidl, and
-	        # typically map to uint32
-	        $ctype_alias = enum_type_fn($actual_ctype);
+		# Importantly, ENUM values are unsigned in pidl, and
+		# typically map to uint32
+		$ctype_alias = enum_type_fn($actual_ctype);
 	} elsif ($actual_ctype->{TYPE} eq "BITMAP") {
-	        $ctype_alias = bitmap_type_fn($actual_ctype);
+		$ctype_alias = bitmap_type_fn($actual_ctype);
 	} elsif ($actual_ctype->{TYPE} eq "SCALAR") {
-	        $ctype_alias = expandAlias($actual_ctype->{NAME});
+		$ctype_alias = expandAlias($actual_ctype->{NAME});
 	}
 
 	# This is the unsigned Python Integer -> C integer validation
-	# case.  The signed case is below.
+	# case.	 The signed case is below.
 	if ($ctype_alias  =~ /^(uint[0-9]*|hyper|udlong|udlongr
-                                |NTTIME_hyper|NTTIME|NTTIME_1sec
-                                |uid_t|gid_t)$/x) {
-	        $self->pidl("{");
+				|NTTIME_hyper|NTTIME|NTTIME_1sec
+				|uid_t|gid_t)$/x) {
+		$self->pidl("{");
 		$self->indent;
 		$self->pidl("const unsigned long long uint_max = ndr_sizeof2uintmax(sizeof($target));");
 		$self->pidl("if (PyLong_Check($cvar)) {");
@@ -1043,7 +1092,7 @@ sub ConvertObjectFromPythonData($$$$$$;$)
 	# above, so while it looks like a duplicate, it is not
 	# actually a duplicate.
 	if ($ctype_alias  =~ /^(dlong|char|int[0-9]*|time_t)$/x) {
-	        $self->pidl("{");
+		$self->pidl("{");
 		$self->indent;
 		$self->pidl("const long long int_max = ndr_sizeof2intmax(sizeof($target));");
 		$self->pidl("const long long int_min = -int_max - 1;");
@@ -1114,33 +1163,17 @@ sub ConvertObjectFromPythonData($$$$$$;$)
 	}
 
 	if ($actual_ctype->{TYPE} eq "SCALAR" and
-		($actual_ctype->{NAME} eq "string" or $actual_ctype->{NAME} eq "nbt_string" or $actual_ctype->{NAME} eq "nbt_name" or $actual_ctype->{NAME} eq "wrepl_nbt_name")) {
-		$self->pidl("$target = talloc_strdup($mem_ctx, PyString_AS_STRING($cvar));");
-		return;
-	}
-
-	if ($actual_ctype->{TYPE} eq "SCALAR" and ($actual_ctype->{NAME} eq "dns_string" or $actual_ctype->{NAME} eq "dns_name")) {
-		$self->pidl("$target = talloc_strdup($mem_ctx, PyString_AS_STRING($cvar));");
-		return;
-	}
-
-	if ($actual_ctype->{TYPE} eq "SCALAR" and $actual_ctype->{NAME} eq "ipv4address") {
-		$self->pidl("$target = PyString_AS_STRING($cvar);");
-		return;
-	}
-
-	if ($actual_ctype->{TYPE} eq "SCALAR" and $actual_ctype->{NAME} eq "ipv6address") {
-		$self->pidl("$target = PyString_AsString($cvar);");
-		return;
-	}
-
-	if ($actual_ctype->{TYPE} eq "SCALAR" and $actual_ctype->{NAME} eq "dnsp_name") {
-		$self->pidl("$target = PyString_AS_STRING($cvar);");
-		return;
-	}
-
-	if ($actual_ctype->{TYPE} eq "SCALAR" and $actual_ctype->{NAME} eq "dnsp_string") {
-		$self->pidl("$target = PyString_AS_STRING($cvar);");
+		($actual_ctype->{NAME} eq "string"
+		 or $actual_ctype->{NAME} eq "nbt_string"
+		 or $actual_ctype->{NAME} eq "nbt_name"
+		 or $actual_ctype->{NAME} eq "wrepl_nbt_name"
+		 or $actual_ctype->{NAME} eq "dns_string"
+		 or $actual_ctype->{NAME} eq "dnsp_string"
+		 or $actual_ctype->{NAME} eq "dns_name"
+		 or $actual_ctype->{NAME} eq "ipv4address"
+		 or $actual_ctype->{NAME} eq "ipv6address"
+		 or $actual_ctype->{NAME} eq "dnsp_name")) {
+	        $self->ConvertStringFromPythonData($mem_ctx, $cvar, $target, $fail);
 		return;
 	}
 
@@ -1185,6 +1218,14 @@ sub ConvertObjectFromPythonLevel($$$$$$$$)
 		$pl = GetPrevLevel($e, $pl);
 	}
 
+        $self->pidl("if ($py_var == NULL) {");
+        $self->indent;
+        $self->pidl("PyErr_Format(PyExc_AttributeError, \"Cannot delete NDR object: " .
+                    mapTypeName($var_name) . "\");");
+        $self->pidl($fail);
+        $self->deindent;
+        $self->pidl("}");
+
 	if ($l->{TYPE} eq "POINTER") {
 		if ($l->{POINTER_TYPE} ne "ref") {
 			$self->pidl("if ($py_var == Py_None) {");
@@ -1218,21 +1259,7 @@ sub ConvertObjectFromPythonLevel($$$$$$$$)
 		}
 
 		if (is_charset_array($e, $l)) {
-			$self->pidl("if (PyUnicode_Check($py_var)) {");
-			$self->indent;
-			# FIXME: Use Unix charset setting rather than utf-8
-			$self->pidl($var_name . " = PyString_AS_STRING(PyUnicode_AsEncodedString($py_var, \"utf-8\", \"ignore\"));");
-			$self->deindent;
-			$self->pidl("} else if (PyString_Check($py_var)) {");
-			$self->indent;
-			$self->pidl($var_name . " = PyString_AS_STRING($py_var);");
-			$self->deindent;
-			$self->pidl("} else {");
-			$self->indent;
-			$self->pidl("PyErr_Format(PyExc_TypeError, \"Expected string or unicode object, got %s\", Py_TYPE($py_var)->tp_name);");
-			$self->pidl("$fail");
-			$self->deindent;
-			$self->pidl("}");
+		        $self->ConvertStringFromPythonData($mem_ctx, $py_var, $var_name, $fail);
 		} else {
 			my $counter = "$e->{NAME}_cntr_$l->{LEVEL_INDEX}";
 			$self->pidl("PY_CHECK_TYPE(&PyList_Type, $py_var, $fail);");
@@ -1520,7 +1547,7 @@ sub Parse($$$$$)
 #include \"$ndr_hdr\"
 
 /*
- * These functions are here to ensure they can be optomised out by
+ * These functions are here to ensure they can be optimized out by
  * the compiler based on the constant input values
  */
 

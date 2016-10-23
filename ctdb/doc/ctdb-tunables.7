@@ -2,12 +2,12 @@
 .\"     Title: ctdb-tunables
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/22/2016
+.\"      Date: 07/28/2016
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB\-TUNABLES" "7" "09/22/2016" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB\-TUNABLES" "7" "07/28/2016" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -205,6 +205,13 @@ When set to 1, ctdb will not allow IP addresses to be failed over onto this node
 Default: 10*1024*1024
 .PP
 This is the size of a record buffer to pre\-allocate for sending reply to PULLDB control\&. Usually record buffer starts with size of the first record and gets reallocated every time a new record is added to the record buffer\&. For a large number of records, this can be very inefficient to grow the record buffer one record at a time\&.
+.SS "QueueBufferSize"
+.PP
+Default: 1024
+.PP
+This is the maximum amount of data (in bytes) ctdb will read from a socket at a time\&.
+.PP
+For a busy setup, if ctdb is not able to process the TCP sockets fast enough (large amount of data in Recv\-Q for tcp sockets), then this tunable value should be increased\&. However, large values can keep ctdb busy processing packets and prevent ctdb from handling other events\&.
 .SS "RecBufferSizeLimit"
 .PP
 Default: 1000000
@@ -280,13 +287,6 @@ are exceeded\&.
 Default: 10
 .PP
 Once a recovery has completed, no additional recoveries are permitted until this timeout in seconds has expired\&.
-.SS "Samba3AvoidDeadlocks"
-.PP
-Default: 0
-.PP
-If set to non\-zero, enable code that prevents deadlocks with Samba (only for Samba 3\&.x)\&.
-.PP
-This should be set to 1 only when using Samba version 3\&.x to enable special code in ctdb to avoid deadlock with Samba version 3\&.x\&. This code is not required for Samba version 4\&.x and must not be enabled for Samba 4\&.x\&.
 .SS "SeqnumInterval"
 .PP
 Default: 1000

@@ -301,6 +301,14 @@ void torture_result(struct torture_context *test,
 	} \
 	} while (0)
 
+#define torture_assert_krb5_error_equal(torture_ctx, got, expected, cmt) \
+	do { krb5_error_code __got = got, __expected = expected; \
+	if (__got != __expected) { \
+		torture_result(torture_ctx, TORTURE_FAIL, __location__": "#got" was %d (%s), expected %d (%s): %s", __got, error_message(__got), __expected, error_message(__expected), cmt); \
+		return false; \
+	} \
+	} while (0)
+
 #define torture_assert_casestr_equal(torture_ctx,got,expected,cmt) \
 	do { const char *__got = (got), *__expected = (expected); \
 	if (!strequal(__got, __expected)) { \
@@ -349,6 +357,12 @@ void torture_result(struct torture_context *test,
 	} \
 	} while(0)
 
+static inline void torture_dump_data_str_cb(const char *buf, void *private_data)
+{
+	char **dump = (char **)private_data;
+	*dump = talloc_strdup_append_buffer(*dump, buf);
+}
+
 #define torture_assert_data_blob_equal(torture_ctx,got,expected,cmt)\
 	do { const DATA_BLOB __got = (got), __expected = (expected); \
 	if (__got.length != __expected.length) { \
@@ -358,6 +372,36 @@ void torture_result(struct torture_context *test,
 		return false; \
 	} \
 	if (memcmp(__got.data, __expected.data, __got.length) != 0) { \
+		char *__dump = NULL; \
+		uint8_t __byte_a = 0x00;\
+		uint8_t __byte_b = 0x00;\
+		int __i;\
+		for (__i=0; __i < __expected.length; __i++) {\
+			__byte_a = __expected.data[__i];\
+			if (__i == __got.length) {\
+				__byte_b = 0x00;\
+				break;\
+			}\
+			__byte_b = __got.data[__i];\
+			if (__byte_a != __byte_b) {\
+				break;\
+			}\
+		}\
+		torture_warning(torture_ctx, "blobs differ at byte 0x%02X (%u)", __i, __i);\
+		torture_warning(torture_ctx, "expected byte[0x%02X] = 0x%02X got byte[0x%02X] = 0x%02X",\
+				__i, __byte_a, __i, __byte_b);\
+		__dump = talloc_strdup(torture_ctx, ""); \
+		dump_data_cb(__got.data, __got.length, true, \
+			     torture_dump_data_str_cb, &__dump); \
+		torture_warning(torture_ctx, "got[0x%02X]: \n%s", \
+				(int)__got.length, __dump); \
+		TALLOC_FREE(__dump); \
+		__dump = talloc_strdup(torture_ctx, ""); \
+		dump_data_cb(__expected.data, __expected.length, true, \
+			     torture_dump_data_str_cb, &__dump); \
+		torture_warning(torture_ctx, "expected[0x%02X]: \n%s", \
+				(int)__expected.length, __dump); \
+		TALLOC_FREE(__dump); \
 		torture_result(torture_ctx, TORTURE_FAIL, \
 			       __location__": "#got" of len %d did not match "#expected": %s", (int)__got.length, cmt); \
 		return false; \

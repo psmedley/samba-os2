@@ -217,14 +217,17 @@ static int syncops_mknod(vfs_handle_struct *handle,
         SYNCOPS_NEXT(MKNOD, fname, (handle, fname, mode, dev));
 }
 
-static int syncops_mkdir(vfs_handle_struct *handle,  const char *fname, mode_t mode)
+static int syncops_mkdir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
-        SYNCOPS_NEXT(MKDIR, fname, (handle, fname, mode));
+        SYNCOPS_NEXT_SMB_FNAME(MKDIR, smb_fname, (handle, smb_fname, mode));
 }
 
-static int syncops_rmdir(vfs_handle_struct *handle,  const char *fname)
+static int syncops_rmdir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
-        SYNCOPS_NEXT(RMDIR, fname, (handle, fname));
+        SYNCOPS_NEXT_SMB_FNAME(RMDIR, smb_fname, (handle, smb_fname));
 }
 
 /* close needs to be handled specially */

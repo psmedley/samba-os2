@@ -24,23 +24,17 @@
 #include "dbwrap/dbwrap.h"
 #include "messages.h"
 
-void dbwrap_watch_db(struct db_context *db, struct messaging_context *msg);
-
-struct tevent_req *dbwrap_record_watch_send(TALLOC_CTX *mem_ctx,
-					    struct tevent_context *ev,
-					    struct db_record *rec,
-					    struct messaging_context *msg);
-NTSTATUS dbwrap_record_watch_recv(struct tevent_req *req,
-				  TALLOC_CTX *mem_ctx,
-				  struct db_record **prec);
-
-void dbwrap_watchers_traverse_read(
-	int (*fn)(const uint8_t *db_id, size_t db_id_len, const TDB_DATA key,
-		  const struct server_id *watchers, size_t num_watchers,
-		  void *private_data),
-	void *private_data);
-
-void dbwrap_watchers_wakeall(struct messaging_context *msg);
-
+struct db_context *db_open_watched(TALLOC_CTX *mem_ctx,
+				   struct db_context *backend,
+				   struct messaging_context *msg);
+struct tevent_req *dbwrap_watched_watch_send(TALLOC_CTX *mem_ctx,
+					     struct tevent_context *ev,
+					     struct db_record *rec,
+					     struct server_id blocker);
+NTSTATUS dbwrap_watched_watch_recv(struct tevent_req *req,
+				   TALLOC_CTX *mem_ctx,
+				   struct db_record **prec,
+				   bool *blockerdead,
+				   struct server_id *blocker);
 
 #endif /* __DBWRAP_WATCH_H__ */

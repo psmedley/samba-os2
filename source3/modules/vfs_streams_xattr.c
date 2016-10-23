@@ -242,14 +242,17 @@ static int streams_xattr_fstat(vfs_handle_struct *handle, files_struct *fsp,
 	}
 
 	/* Create an smb_filename with stream_name == NULL. */
-	smb_fname_base = synthetic_smb_fname(talloc_tos(), io->base,
-					     NULL, NULL);
+	smb_fname_base = synthetic_smb_fname(talloc_tos(),
+					io->base,
+					NULL,
+					NULL,
+					fsp->fsp_name->flags);
 	if (smb_fname_base == NULL) {
 		errno = ENOMEM;
 		return -1;
 	}
 
-	if (lp_posix_pathnames()) {
+	if (smb_fname_base->flags & SMB_FILENAME_POSIX_PATH) {
 		ret = SMB_VFS_LSTAT(handle->conn, smb_fname_base);
 	} else {
 		ret = SMB_VFS_STAT(handle->conn, smb_fname_base);
@@ -427,8 +430,11 @@ static int streams_xattr_open(vfs_handle_struct *handle,
 	}
 
 	/* Create an smb_filename with stream_name == NULL. */
-	smb_fname_base = synthetic_smb_fname(
-		talloc_tos(), smb_fname->base_name, NULL, NULL);
+	smb_fname_base = synthetic_smb_fname(talloc_tos(),
+				smb_fname->base_name,
+				NULL,
+				NULL,
+				smb_fname->flags);
 	if (smb_fname_base == NULL) {
 		errno = ENOMEM;
 		goto fail;
@@ -683,11 +689,12 @@ static int streams_xattr_rename(vfs_handle_struct *handle,
 	return ret;
 }
 
-static NTSTATUS walk_xattr_streams(vfs_handle_struct *handle, files_struct *fsp,
-				   const char *fname,
-				   bool (*fn)(struct ea_struct *ea,
-					      void *private_data),
-				   void *private_data)
+static NTSTATUS walk_xattr_streams(vfs_handle_struct *handle,
+				files_struct *fsp,
+				const struct smb_filename *smb_fname,
+				bool (*fn)(struct ea_struct *ea,
+					void *private_data),
+				void *private_data)
 {
 	NTSTATUS status;
 	char **names;
@@ -697,8 +704,12 @@ static NTSTATUS walk_xattr_streams(vfs_handle_struct *handle, files_struct *fsp,
 	SMB_VFS_HANDLE_GET_DATA(handle, config, struct streams_xattr_config,
 				return NT_STATUS_UNSUCCESSFUL);
 
-	status = get_ea_names_from_file(talloc_tos(), handle->conn, fsp, fname,
-					&names, &num_names);
+	status = get_ea_names_from_file(talloc_tos(),
+				handle->conn,
+				fsp,
+				smb_fname,
+				&names,
+				&num_names);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -729,11 +740,17 @@ static NTSTATUS walk_xattr_streams(vfs_handle_struct *handle, files_struct *fsp,
 			continue;
 		}
 
-		status = get_ea_value(names, handle->conn, fsp, fname,
-				      names[i], &ea);
+		status = get_ea_value(names,
+					handle->conn,
+					fsp,
+					smb_fname->base_name,
+					names[i],
+					&ea);
 		if (!NT_STATUS_IS_OK(status)) {
 			DEBUG(10, ("Could not get ea %s for file %s: %s\n",
-				   names[i], fname, nt_errstr(status)));
+				names[i],
+				smb_fname->base_name,
+				nt_errstr(status)));
 			continue;
 		}
 
@@ -811,7 +828,7 @@ static bool collect_one_stream(struct ea_struct *ea, void *private_data)
 
 static NTSTATUS streams_xattr_streaminfo(vfs_handle_struct *handle,
 					 struct files_struct *fsp,
-					 const char *fname,
+					 const struct smb_filename *smb_fname,
 					 TALLOC_CTX *mem_ctx,
 					 unsigned int *pnum_streams,
 					 struct stream_struct **pstreams)
@@ -823,21 +840,10 @@ static NTSTATUS streams_xattr_streaminfo(vfs_handle_struct *handle,
 
 	if ((fsp != NULL) && (fsp->fh->fd != -1)) {
 		ret = SMB_VFS_FSTAT(fsp, &sbuf);
-	}
-	else {
-		struct smb_filename *smb_fname = NULL;
-		smb_fname = synthetic_smb_fname(talloc_tos(), fname, NULL,
-						NULL);
-		if (smb_fname == NULL) {
-			return NT_STATUS_NO_MEMORY;
-		}
-		if (lp_posix_pathnames()) {
-			ret = SMB_VFS_LSTAT(handle->conn, smb_fname);
-		} else {
-			ret = SMB_VFS_STAT(handle->conn, smb_fname);
-		}
-		sbuf = smb_fname->st;
-		TALLOC_FREE(smb_fname);
+	} else {
+		ret = vfs_stat_smb_basename(handle->conn,
+				smb_fname,
+				&sbuf);
 	}
 
 	if (ret == -1) {
@@ -860,7 +866,7 @@ static NTSTATUS streams_xattr_streaminfo(vfs_handle_struct *handle,
 		 */
 		status = NT_STATUS_OK;
 	} else {
-		status = walk_xattr_streams(handle, fsp, fname,
+		status = walk_xattr_streams(handle, fsp, smb_fname,
 				    collect_one_stream, &state);
 	}
 
@@ -877,7 +883,12 @@ static NTSTATUS streams_xattr_streaminfo(vfs_handle_struct *handle,
 	*pnum_streams = state.num_streams;
 	*pstreams = state.streams;
 
-	return SMB_VFS_NEXT_STREAMINFO(handle, fsp, fname, mem_ctx, pnum_streams, pstreams);
+	return SMB_VFS_NEXT_STREAMINFO(handle,
+			fsp,
+			smb_fname,
+			mem_ctx,
+			pnum_streams,
+			pstreams);
 }
 
 static uint32_t streams_xattr_fs_capabilities(struct vfs_handle_struct *handle,

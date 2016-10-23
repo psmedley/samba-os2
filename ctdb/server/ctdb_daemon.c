@@ -33,6 +33,7 @@
 #include "lib/util/dlinklist.h"
 #include "lib/util/debug.h"
 #include "lib/util/samba_util.h"
+#include "lib/util/blocking.h"
 
 #include "ctdb_version.h"
 #include "ctdb_private.h"
@@ -929,6 +930,7 @@ static void ctdb_accept_client(struct tevent_context *ev,
 	struct ctdb_client *client;
 	struct ctdb_client_pid_list *client_pid;
 	pid_t peer_pid = 0;
+	int ret;
 
 	memset(&addr, 0, sizeof(addr));
 	len = sizeof(addr);
@@ -937,7 +939,16 @@ static void ctdb_accept_client(struct tevent_context *ev,
 		return;
 	}
 
-	set_nonblocking(fd);
+	ret = set_blocking(fd, false);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      (__location__
+		       " failed to set socket non-blocking (%s)\n",
+		       strerror(errno)));
+		close(fd);
+		return;
+	}
+
 	set_close_on_exec(fd);
 
 	DEBUG(DEBUG_DEBUG,(__location__ " Created SOCKET FD:%d to connected child\n", fd));
@@ -983,6 +994,7 @@ static void ctdb_accept_client(struct tevent_context *ev,
 static int ux_socket_bind(struct ctdb_context *ctdb)
 {
 	struct sockaddr_un addr;
+	int ret;
 
 	ctdb->daemon.sd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (ctdb->daemon.sd == -1) {
@@ -1006,7 +1018,15 @@ static int ux_socket_bind(struct ctdb_context *ctdb)
 	unlink(ctdb->daemon.name);
 
 	set_close_on_exec(ctdb->daemon.sd);
-	set_nonblocking(ctdb->daemon.sd);
+
+	ret = set_blocking(ctdb->daemon.sd, false);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      (__location__
+		       " failed to set socket non-blocking (%s)\n",
+		       strerror(errno)));
+		goto failed;
+	}
 
 	if (bind(ctdb->daemon.sd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
 		DEBUG(DEBUG_CRIT,("Unable to bind on ctdb socket '%s'\n", ctdb->daemon.name));
@@ -1025,6 +1045,8 @@ static int ux_socket_bind(struct ctdb_context *ctdb)
 		goto failed;
 	}
 
+	DEBUG(DEBUG_NOTICE, ("Listening to ctdb socket %s\n",
+			     ctdb->daemon.name));
 	return 0;
 
 failed:
@@ -1280,6 +1302,7 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 
 	ctdb_set_child_logging(ctdb);
 
+	TALLOC_FREE(ctdb->srv);
 	if (srvid_init(ctdb, &ctdb->srv) != 0) {
 		DEBUG(DEBUG_CRIT,("Failed to setup message srvid context\n"));
 		exit(1);
@@ -1712,9 +1735,9 @@ int32_t ctdb_control_register_notify(struct ctdb_context *ctdb, uint32_t client_
 	nl->ctdb       = ctdb;
 	nl->srvid      = notify->srvid;
 	nl->data.dsize = notify->len;
-	nl->data.dptr  = talloc_size(nl, nl->data.dsize);
+	nl->data.dptr  = talloc_memdup(nl, notify->notify_data,
+				       nl->data.dsize);
 	CTDB_NO_MEMORY(ctdb, nl->data.dptr);
-	memcpy(nl->data.dptr, notify->notify_data, nl->data.dsize);
 	
 	DLIST_ADD(client->notify, nl);
 	talloc_set_destructor(nl, ctdb_client_notify_destructor);
@@ -1823,7 +1846,7 @@ void ctdb_shutdown_sequence(struct ctdb_context *ctdb, int exit_code)
 	ctdb_stop_monitoring(ctdb);
 	ctdb_release_all_ips(ctdb);
 	ctdb_event_script(ctdb, CTDB_EVENT_SHUTDOWN);
-	if (ctdb->methods != NULL) {
+	if (ctdb->methods != NULL && ctdb->methods->shutdown != NULL) {
 		ctdb->methods->shutdown(ctdb);
 	}
 

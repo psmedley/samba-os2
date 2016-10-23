@@ -40,16 +40,16 @@ class DrsDeleteObjectTestCase(drs_base.DrsBaseTestCase):
 
     def setUp(self):
         super(DrsDeleteObjectTestCase, self).setUp()
+        # disable automatic replication temporary
+        self._disable_all_repl(self.dnsname_dc1)
+        self._disable_all_repl(self.dnsname_dc2)
         # make sure DCs are synchronized before the test
         self._net_drs_replicate(DC=self.dnsname_dc2, fromDC=self.dnsname_dc1, forced=True)
         self._net_drs_replicate(DC=self.dnsname_dc1, fromDC=self.dnsname_dc2, forced=True)
-        # disable automatic replication temporary
-        self._disable_inbound_repl(self.dnsname_dc1)
-        self._disable_inbound_repl(self.dnsname_dc2)
 
     def tearDown(self):
-        self._enable_inbound_repl(self.dnsname_dc1)
-        self._enable_inbound_repl(self.dnsname_dc2)
+        self._enable_all_repl(self.dnsname_dc1)
+        self._enable_all_repl(self.dnsname_dc2)
         super(DrsDeleteObjectTestCase, self).tearDown()
 
     def _make_username(self):
@@ -68,8 +68,10 @@ class DrsDeleteObjectTestCase(drs_base.DrsBaseTestCase):
         # Deleted Object base DN
         dodn = self._deleted_objects_dn(sam_ldb)
         # now check properties of the user
-        name_orig = obj_orig["cn"][0]
-        name_cur  = user_cur["cn"][0]
+        cn_orig = obj_orig["cn"][0]
+        cn_cur  = user_cur["cn"][0]
+        name_orig = obj_orig["name"][0]
+        name_cur  = user_cur["name"][0]
         if is_deleted:
             self.assertEquals(user_cur["isDeleted"][0],"TRUE")
             self.assertFalse("objectCategory" in user_cur)
@@ -80,9 +82,15 @@ class DrsDeleteObjectTestCase(drs_base.DrsBaseTestCase):
             self.assertTrue(dodn in str(user_cur["dn"]),
                             "User %s is deleted but it is not located under %s (found at %s)!" % (name_orig, dodn, user_cur["dn"]))
             self.assertEquals(name_cur, name_orig + "\nDEL:" + guid_str)
+            self.assertEquals(name_cur, user_cur.dn.get_rdn_value())
+            self.assertEquals(cn_cur, cn_orig + "\nDEL:" + guid_str)
+            self.assertEquals(name_cur, cn_cur)
         else:
             self.assertFalse("isDeleted" in user_cur)
             self.assertEquals(name_cur, name_orig)
+            self.assertEquals(name_cur, user_cur.dn.get_rdn_value())
+            self.assertEquals(cn_cur, cn_orig)
+            self.assertEquals(name_cur, cn_cur)
             self.assertEquals(obj_orig["dn"], user_cur["dn"])
             self.assertTrue(dodn not in str(user_cur["dn"]))
         return user_cur

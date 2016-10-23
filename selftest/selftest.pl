@@ -321,6 +321,7 @@ $ENV{KRB5CCNAME} = "$prefix/krb5ticket";
 $ENV{PREFIX_ABS} = $prefix_abs;
 $ENV{SRCDIR} = $srcdir;
 $ENV{SRCDIR_ABS} = $srcdir_abs;
+$ENV{GNUPGHOME} = "$srcdir_abs/selftest/gnupg";
 $ENV{BINDIR} = $bindir_abs;
 
 my $tls_enabled = not $opt_quick;
@@ -833,6 +834,10 @@ my @exported_envvars = (
 	"WINBINDD_PRIV_PIPE_DIR",
 	"NMBD_SOCKET_DIR",
 	"LOCAL_PATH",
+	"DNS_FORWARDER1",
+	"DNS_FORWARDER2",
+	"RESOLV_CONF",
+	"UNACCEPTABLE_PASSWORD",
 
 	# nss_wrapper
 	"NSS_WRAPPER_PASSWD",

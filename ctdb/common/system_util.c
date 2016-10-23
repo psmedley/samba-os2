@@ -23,6 +23,7 @@
 #include "system/shmem.h"
 #include "system/network.h"
 
+#include <talloc.h>
 #include <libgen.h>
 
 #include "lib/util/debug.h"
@@ -118,39 +119,6 @@ void reset_scheduler(void)
 #endif
 #endif
 }
-
-void set_nonblocking(int fd)
-{
-	int v;
-
-	v = fcntl(fd, F_GETFL, 0);
-	if (v == -1) {
-		DEBUG(DEBUG_WARNING, ("Failed to get file status flags - %s\n",
-				      strerror(errno)));
-		return;
-	}
-        if (fcntl(fd, F_SETFL, v | O_NONBLOCK) == -1) {
-		DEBUG(DEBUG_WARNING, ("Failed to set non_blocking on fd - %s\n",
-				      strerror(errno)));
-	}
-}
-
-void set_close_on_exec(int fd)
-{
-	int v;
-
-	v = fcntl(fd, F_GETFD, 0);
-	if (v == -1) {
-		DEBUG(DEBUG_WARNING, ("Failed to get file descriptor flags - %s\n",
-				      strerror(errno)));
-		return;
-	}
-	if (fcntl(fd, F_SETFD, v | FD_CLOEXEC) != 0) {
-		DEBUG(DEBUG_WARNING, ("Failed to set close_on_exec on fd - %s\n",
-				      strerror(errno)));
-	}
-}
-
 
 bool parse_ipv4(const char *s, unsigned port, struct sockaddr_in *sin)
 {
@@ -419,4 +387,68 @@ ssize_t sys_write(int fd, const void *buf, size_t count)
         } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
 #endif
         return ret;
+}
+
+void ctdb_wait_for_process_to_exit(pid_t pid)
+{
+	while (kill(pid, 0) == 0 || errno != ESRCH) {
+		sleep(5);
+	}
+}
+
+int ctdb_parse_connections(FILE *fp, TALLOC_CTX *mem_ctx,
+			   int *num_conn, struct ctdb_connection **out)
+{
+	struct ctdb_connection *conn = NULL;
+	char line[128], src[128], dst[128]; /* long enough for IPv6 */
+	int line_num, ret;
+	int num = 0, max = 0;
+
+	line_num = 0;
+	while (! feof(fp)) {
+		if (fgets(line, sizeof(line), fp) == NULL) {
+			break;
+		}
+		line_num += 1;
+
+		/* Skip empty lines */
+		if (line[0] == '\n') {
+			continue;
+		}
+
+		ret = sscanf(line, "%s %s\n", src, dst);
+		if (ret != 2) {
+			DEBUG(DEBUG_ERR, ("Bad line [%d]: %s\n",
+					  line_num, line));
+			talloc_free(conn);
+			return EINVAL;
+		}
+
+		if (num >= max) {
+			max += 1024;
+			conn = talloc_realloc(mem_ctx, conn,
+					      struct ctdb_connection, max);
+			if (conn == NULL) {
+				return ENOMEM;
+			}
+		}
+
+		if (! parse_ip_port(src, &conn[num].src)) {
+			DEBUG(DEBUG_ERR, ("Invalid IP address %s\n", src));
+			talloc_free(conn);
+			return EINVAL;
+		}
+
+		if (! parse_ip_port(dst, &conn[num].dst)) {
+			DEBUG(DEBUG_ERR, ("Invalid IP address %s\n", dst));
+			talloc_free(conn);
+			return EINVAL;
+		}
+
+		num += 1;
+	}
+
+	*num_conn = num;
+	*out = conn;
+	return 0;
 }

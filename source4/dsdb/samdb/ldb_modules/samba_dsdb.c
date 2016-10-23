@@ -261,10 +261,12 @@ static int samba_dsdb_init(struct ldb_module *module)
 	*/
 	static const char *modules_list1[] = {"resolve_oids",
 					     "rootdse",
+					     "dsdb_notification",
 					     "schema_load",
 					     "lazy_commit",
 					     "dirsync",
 					     "paged_results",
+					     "vlv",
 					     "ranged_results",
 					     "anr",
 					     "server_sort",
@@ -273,12 +275,12 @@ static int samba_dsdb_init(struct ldb_module *module)
 					     NULL };
 	/* extended_dn_in or extended_dn_in_openldap goes here */
 	static const char *modules_list1a[] = {"objectclass",
+					     "tombstone_reanimate",
 					     "descriptor",
 					     "acl",
 					     "aclread",
 					     "samldb",
 					     "password_hash",
-					     "operational",
 					     "instancetype",
 					     "objectclass_attrs",
 					     NULL };
@@ -292,6 +294,7 @@ static int samba_dsdb_init(struct ldb_module *module)
 		"rdn_name",
 		"subtree_delete",
 		"repl_meta_data",
+		"operational",
 		"subtree_rename",
 		"linked_attributes",
 		NULL};
@@ -310,9 +313,9 @@ static int samba_dsdb_init(struct ldb_module *module)
 
 	const char **backend_modules;
 	static const char *fedora_ds_backend_modules[] = {
-		"nsuniqueid", "paged_searches", "simple_dn", NULL };
+		"dsdb_flags_ignore", "nsuniqueid", "paged_searches", "simple_dn", NULL };
 	static const char *openldap_backend_modules[] = {
-		"entryuuid", "simple_dn", NULL };
+		"dsdb_flags_ignore", "entryuuid", "simple_dn", NULL };
 
 	static const char *samba_dsdb_attrs[] = { "backendType", NULL };
 	static const char *partition_attrs[] = { "ldapBackend", NULL };
@@ -490,8 +493,108 @@ static const struct ldb_module_ops ldb_samba_dsdb_module_ops = {
 	.init_context	   = samba_dsdb_init,
 };
 
+static struct ldb_message *dsdb_flags_ignore_fixup(TALLOC_CTX *mem_ctx,
+						const struct ldb_message *_msg)
+{
+	struct ldb_message *msg = NULL;
+	unsigned int i;
+
+	/* we have to copy the message as the caller might have it as a const */
+	msg = ldb_msg_copy_shallow(mem_ctx, _msg);
+	if (msg == NULL) {
+		return NULL;
+	}
+
+	for (i=0; i < msg->num_elements;) {
+		struct ldb_message_element *e = &msg->elements[i];
+
+		if (!(e->flags & DSDB_FLAG_INTERNAL_FORCE_META_DATA)) {
+			i++;
+			continue;
+		}
+
+		e->flags &= ~DSDB_FLAG_INTERNAL_FORCE_META_DATA;
+
+		if (e->num_values != 0) {
+			i++;
+			continue;
+		}
+
+		ldb_msg_remove_element(msg, e);
+	}
+
+	return msg;
+}
+
+static int dsdb_flags_ignore_add(struct ldb_module *module, struct ldb_request *req)
+{
+	struct ldb_context *ldb = ldb_module_get_ctx(module);
+	struct ldb_request *down_req = NULL;
+	struct ldb_message *msg = NULL;
+	int ret;
+
+	msg = dsdb_flags_ignore_fixup(req, req->op.add.message);
+	if (msg == NULL) {
+		return ldb_module_oom(module);
+	}
+
+	ret = ldb_build_add_req(&down_req, ldb, req,
+				msg,
+				req->controls,
+				req, dsdb_next_callback,
+				req);
+	LDB_REQ_SET_LOCATION(down_req);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+
+	/* go on with the call chain */
+	return ldb_next_request(module, down_req);
+}
+
+static int dsdb_flags_ignore_modify(struct ldb_module *module, struct ldb_request *req)
+{
+	struct ldb_context *ldb = ldb_module_get_ctx(module);
+	struct ldb_request *down_req = NULL;
+	struct ldb_message *msg = NULL;
+	int ret;
+
+	msg = dsdb_flags_ignore_fixup(req, req->op.mod.message);
+	if (msg == NULL) {
+		return ldb_module_oom(module);
+	}
+
+	ret = ldb_build_mod_req(&down_req, ldb, req,
+				msg,
+				req->controls,
+				req, dsdb_next_callback,
+				req);
+	LDB_REQ_SET_LOCATION(down_req);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+
+	/* go on with the call chain */
+	return ldb_next_request(module, down_req);
+}
+
+static const struct ldb_module_ops ldb_dsdb_flags_ignore_module_ops = {
+	.name   = "dsdb_flags_ignore",
+	.add    = dsdb_flags_ignore_add,
+	.modify = dsdb_flags_ignore_modify,
+};
+
 int ldb_samba_dsdb_module_init(const char *version)
 {
+	int ret;
 	LDB_MODULE_CHECK_VERSION(version);
-	return ldb_register_module(&ldb_samba_dsdb_module_ops);
+	ret = ldb_register_module(&ldb_samba_dsdb_module_ops);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+	ret = ldb_register_module(&ldb_dsdb_flags_ignore_module_ops);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+	return LDB_SUCCESS;
 }

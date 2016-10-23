@@ -9,36 +9,26 @@ done
 # Use in-tree binaries if running against local daemons.
 # Otherwise CTDB need to be installed on all nodes.
 if [ -n "$ctdb_dir" -a -d "${ctdb_dir}/bin" ] ; then
-    PATH="${ctdb_dir}/bin:${PATH}"
-    export CTDB_LOCK_HELPER="${ctdb_dir}/bin/ctdb_lock_helper"
-    export CTDB_EVENT_HELPER="${ctdb_dir}/bin/ctdb_event_helper"
-    export CTDB_RECOVERY_HELPER="${ctdb_dir}/bin/ctdb_recovery_helper"
+	# ctdbd_wrapper is in config/ directory
+	PATH="${ctdb_dir}/bin:${ctdb_dir}/config:${PATH}"
+	hdir="${ctdb_dir}/bin"
+	export CTDB_LOCK_HELPER="${hdir}/ctdb_lock_helper"
+	export CTDB_EVENT_HELPER="${hdir}/ctdb_event_helper"
+	export CTDB_RECOVERY_HELPER="${hdir}/ctdb_recovery_helper"
+	export CTDB_CLUSTER_MUTEX_HELPER="${hdir}/ctdb_mutex_fcntl_helper"
 fi
 
 export CTDB_NODES="${TEST_VAR_DIR}/nodes.txt"
 
 #######################################
 
-daemons_stop ()
+config_from_environment ()
 {
-    echo "Attempting to politely shutdown daemons..."
-    onnode -q all $CTDB shutdown || true
-
-    echo "Sleeping for a while..."
-    sleep_for 1
-
-    local pat="ctdbd --socket=${TEST_VAR_DIR}/.* --nlist .* --nopublicipcheck"
-    if pgrep -f "$pat" >/dev/null ; then
-	echo "Killing remaining daemons..."
-	pkill -f "$pat"
-
-	if pgrep -f "$pat" >/dev/null ; then
-	    echo "Once more with feeling.."
-	    pkill -9 -f "$pat"
-	fi
-    fi
-
-    rm -rf "${TEST_VAR_DIR}/test.db"
+	# Override from the environment.  This would be easier if env was
+	# guaranteed to quote its output so it could be reused.
+	env |
+	grep '^CTDB_' |
+	sed -e 's@=\([^"]\)@="\1@' -e 's@[^"]$@&"@' -e 's@="$@&"@'
 }
 
 setup_ctdb ()
@@ -46,14 +36,12 @@ setup_ctdb ()
     mkdir -p "${TEST_VAR_DIR}/test.db/persistent"
 
     local public_addresses_all="${TEST_VAR_DIR}/public_addresses_all"
-    local no_public_addresses="${TEST_VAR_DIR}/no_public_addresses.txt"
-    rm -f $CTDB_NODES $public_addresses_all $no_public_addresses
+    rm -f $CTDB_NODES $public_addresses_all
 
     # If there are (strictly) greater than 2 nodes then we'll randomly
     # choose a node to have no public addresses.
     local no_public_ips=-1
     [ $TEST_LOCAL_DAEMONS -gt 2 ] && no_public_ips=$(($RANDOM % $TEST_LOCAL_DAEMONS))
-    echo "$no_public_ips" >$no_public_addresses
 
     # When running certain tests we add and remove eventscripts, so we
     # need to be able to modify the events.d/ directory.  Therefore,
@@ -87,48 +75,90 @@ setup_ctdb ()
 	    fi
 	fi
     done
-}
 
-daemons_start_1 ()
-{
-    local pnn="$1"
-    shift # "$@" gets passed to ctdbd
+    local pnn
+    for pnn in $(seq 0 $(($TEST_LOCAL_DAEMONS - 1))) ; do
+	local public_addresses_mine="${TEST_VAR_DIR}/public_addresses.${pnn}"
+	local public_addresses
 
-    local public_addresses_all="${TEST_VAR_DIR}/public_addresses_all"
-    local public_addresses_mine="${TEST_VAR_DIR}/public_addresses.${pnn}"
-    local no_public_addresses="${TEST_VAR_DIR}/no_public_addresses.txt"
+	if  [ "$no_public_ips" = $pnn ] ; then
+	    echo "Node $no_public_ips will have no public IPs."
+	    public_addresses="/dev/null"
+	else
+	    cp "$public_addresses_all" "$public_addresses_mine"
+	    public_addresses="$public_addresses_mine"
+	fi
 
-    local no_public_ips=-1
-    [ -r $no_public_addresses ] && read no_public_ips <$no_public_addresses
+	local node_ip=$(sed -n -e "$(($pnn + 1))p" "$CTDB_NODES")
 
-    if  [ "$no_public_ips" = $pnn ] ; then
-	echo "Node $no_public_ips will have no public IPs."
-    fi
+	local pidfile="${TEST_VAR_DIR}/ctdbd.${pnn}.pid"
+	local conf="${TEST_VAR_DIR}/ctdbd.${pnn}.conf"
+	cat >"$conf" <<EOF
+CTDB_RECOVERY_LOCK="${TEST_VAR_DIR}/rec.lock"
+CTDB_NODES="$CTDB_NODES"
+CTDB_NODE_ADDRESS="${node_ip}"
+CTDB_EVENT_SCRIPT_DIR="${TEST_VAR_DIR}/events.d"
+CTDB_LOGGING="file:${TEST_VAR_DIR}/daemon.${pnn}.log"
+CTDB_DEBUGLEVEL=3
+CTDB_DBDIR="${TEST_VAR_DIR}/test.db"
+CTDB_DBDIR_PERSISTENT="${TEST_VAR_DIR}/test.db/persistent"
+CTDB_DBDIR_STATE="${TEST_VAR_DIR}/test.db/state"
+CTDB_PUBLIC_ADDRESSES="${public_addresses}"
+CTDB_SOCKET="${TEST_VAR_DIR}/sock.$pnn"
+CTDB_NOSETSCHED=yes
+EOF
 
-    local node_ip=$(sed -n -e "$(($pnn + 1))p" "$CTDB_NODES")
-    local ctdb_options="--sloppy-start --reclock=${TEST_VAR_DIR}/rec.lock --nlist $CTDB_NODES --nopublicipcheck --listen=${node_ip} --event-script-dir=${TEST_VAR_DIR}/events.d --logging=file:${TEST_VAR_DIR}/daemon.${pnn}.log -d 3 --dbdir=${TEST_VAR_DIR}/test.db --dbdir-persistent=${TEST_VAR_DIR}/test.db/persistent --dbdir-state=${TEST_VAR_DIR}/test.db/state --nosetsched"
-
-    if [ $pnn -eq $no_public_ips ] ; then
-	ctdb_options="$ctdb_options --public-addresses=/dev/null"
-    else
-	cp "$public_addresses_all" "$public_addresses_mine"
-	ctdb_options="$ctdb_options --public-addresses=$public_addresses_mine"
-    fi
-
-    # We'll use "pkill -f" to kill the daemons with
-    # "--socket=.* --nlist .* --nopublicipcheck" as context.
-    $VALGRIND ctdbd --socket="${TEST_VAR_DIR}/sock.$pnn" $ctdb_options "$@" ||return 1
+	# Append any configuration variables set in environment to
+	# configuration file so they affect CTDB after each restart.
+	config_from_environment >>"$conf"
+    done
 }
 
 daemons_start ()
 {
-    # "$@" gets passed to ctdbd
-
     echo "Starting $TEST_LOCAL_DAEMONS ctdb daemons..."
 
-    for i in $(seq 0 $(($TEST_LOCAL_DAEMONS - 1))) ; do
-	daemons_start_1 $i "$@"
+    local pnn
+    for pnn in $(seq 0 $(($TEST_LOCAL_DAEMONS - 1))) ; do
+	local pidfile="${TEST_VAR_DIR}/ctdbd.${pnn}.pid"
+	local conf="${TEST_VAR_DIR}/ctdbd.${pnn}.conf"
+
+	# If there is any CTDB configuration in the environment then
+	# append it to the regular configuration in a temporary
+	# configuration file and use it just this once.
+	local tmp_conf=""
+	local env_conf=$(config_from_environment)
+	if [ -n "$env_conf" ] ; then
+		tmp_conf=$(mktemp --tmpdir="$TEST_VAR_DIR")
+		cat "$conf" >"$tmp_conf"
+		echo "$env_conf" >>"$tmp_conf"
+		conf="$tmp_conf"
+	fi
+
+	CTDBD="${VALGRIND} ctdbd --sloppy-start --nopublicipcheck" \
+	     CTDBD_CONF="$conf" \
+	     ctdbd_wrapper "$pidfile" start
+
+	if [ -n "$tmp_conf" ] ; then
+		rm -f "$tmp_conf"
+	fi
     done
+}
+
+daemons_stop ()
+{
+    echo "Stopping $TEST_LOCAL_DAEMONS ctdb daemons..."
+
+    local pnn
+    for pnn in $(seq 0 $(($TEST_LOCAL_DAEMONS - 1))) ; do
+	local pidfile="${TEST_VAR_DIR}/ctdbd.${pnn}.pid"
+	local conf="${TEST_VAR_DIR}/ctdbd.${pnn}.conf"
+
+	CTDBD_CONF="$conf" \
+	     ctdbd_wrapper "$pidfile" stop
+    done
+
+    rm -rf "${TEST_VAR_DIR}/test.db"
 }
 
 maybe_stop_ctdb ()
@@ -141,5 +171,5 @@ maybe_stop_ctdb ()
 _restart_ctdb_all ()
 {
     daemons_stop
-    daemons_start "$@"
+    daemons_start
 }

@@ -217,6 +217,13 @@ static NTSTATUS idmap_autorid_id_to_sid(struct autorid_global_config *cfg,
 		return NT_STATUS_OK;
 	}
 
+	if (data.dptr[data.dsize-1] != '\0') {
+		DBG_WARNING("Invalid range %"PRIu32"\n", range_number);
+		TALLOC_FREE(data.dptr);
+		map->status = ID_UNKNOWN;
+		return NT_STATUS_OK;
+	}
+
 	if (strncmp((const char *)data.dptr,
 		    ALLOC_RANGE,
 		    strlen(ALLOC_RANGE)) == 0) {
@@ -231,8 +238,8 @@ static NTSTATUS idmap_autorid_id_to_sid(struct autorid_global_config *cfg,
 	}
 
 	ok = dom_sid_parse_endp((const char *)data.dptr, &domsid, &q);
-	TALLOC_FREE(data.dptr);
 	if (!ok) {
+		TALLOC_FREE(data.dptr);
 		map->status = ID_UNKNOWN;
 		return NT_STATUS_OK;
 	}
@@ -240,9 +247,12 @@ static NTSTATUS idmap_autorid_id_to_sid(struct autorid_global_config *cfg,
 		if (sscanf(q+1, "%"SCNu32, &domain_range_index) != 1) {
 			DEBUG(10, ("Domain range index not found, "
 				   "ignoring mapping request\n"));
+			TALLOC_FREE(data.dptr);
 			map->status = ID_UNKNOWN;
 			return NT_STATUS_OK;
 		}
+
+	TALLOC_FREE(data.dptr);
 
 	reduced_rid = normalized_id % cfg->rangesize;
 	rid = reduced_rid + domain_range_index * cfg->rangesize;

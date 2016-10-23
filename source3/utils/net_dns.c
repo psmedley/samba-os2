@@ -32,7 +32,7 @@
 DNS_ERROR DoDNSUpdate(char *pszServerName,
 		      const char *pszDomainName, const char *pszHostName,
 		      const struct sockaddr_storage *sslist, size_t num_addrs,
-		      uint32_t flags)
+		      uint32_t flags, bool remove_host)
 {
 	DNS_ERROR err;
 	struct dns_connection *conn;
@@ -48,7 +48,7 @@ DNS_ERROR DoDNSUpdate(char *pszServerName,
 		return ERROR_DNS_INVALID_PARAMETER;
 	}
 
-	if ( (num_addrs <= 0) || !sslist ) {
+	if ( !remove_host && ((num_addrs <= 0) || !sslist) ) {
 		return ERROR_DNS_INVALID_PARAMETER;
 	}
 
@@ -72,7 +72,6 @@ DNS_ERROR DoDNSUpdate(char *pszServerName,
 		if (!ERR_DNS_IS_OK(err)) goto error;
 
 		err = dns_update_transaction(mem_ctx, conn, req, &resp);
-		if (!ERR_DNS_IS_OK(err)) goto error;
 
 		if (!ERR_DNS_IS_OK(err)) {
 			DEBUG(3,("DoDNSUpdate: failed to probe DNS\n"));
@@ -213,14 +212,39 @@ DNS_ERROR do_gethostbyname(const char *server, const char *host)
 	struct dns_connection *conn = NULL;
 	struct dns_request *req, *resp;
 	DNS_ERROR err;
+	int ans = 0;
 
 	err = dns_open_connection(server, DNS_UDP, NULL, &conn);
-	if (!ERR_DNS_IS_OK(err)) goto error;
+	if (!ERR_DNS_IS_OK(err)) {
+		goto error;
+	}
 
 	err = dns_create_query(conn, host, QTYPE_A, DNS_CLASS_IN, &req);
-	if (!ERR_DNS_IS_OK(err)) goto error;
+	if (!ERR_DNS_IS_OK(err)) {
+		goto error;
+	}
 
 	err = dns_transaction(conn, conn, req, &resp);
+	if (!ERR_DNS_IS_OK(err)) {
+		goto error;
+	}
+
+	if (resp->num_answers == 0) {
+		printf("%s", "No answers!\n");
+		goto error;
+	}
+
+	for (ans = 0; ans < resp->num_answers; ans++) {
+		struct in_addr resp_ip;
+
+		if (ans > 0)
+			printf("%s", " ");
+
+		resp_ip.s_addr = *((uint32_t *)resp->answers[ans]->data);
+		printf("%s", inet_ntoa(resp_ip));
+	}
+
+	printf("%s", "\n");
 
  error:
 	TALLOC_FREE(conn);

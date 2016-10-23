@@ -20,6 +20,8 @@
 #ifndef __CTDB_SYSTEM_H__
 #define __CTDB_SYSTEM_H__
 
+#include <talloc.h>
+
 /* From system_common.c */
 
 uint32_t uint16_checksum(uint16_t *data, size_t n);
@@ -35,8 +37,9 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 int ctdb_sys_open_capture_socket(const char *iface, void **private_data);
 int ctdb_sys_close_capture_socket(void *private_data);
 int ctdb_sys_read_tcp_packet(int s, void *private_data,
-			ctdb_sock_addr *src, ctdb_sock_addr *dst,
-			uint32_t *ack_seq, uint32_t *seq);
+			     ctdb_sock_addr *src, ctdb_sock_addr *dst,
+			     uint32_t *ack_seq, uint32_t *seq,
+			     int *rst, uint16_t *window);
 bool ctdb_sys_check_iface_exists(const char *iface);
 int ctdb_get_peer_pid(const int fd, pid_t *peer_pid);
 
@@ -44,8 +47,6 @@ int ctdb_get_peer_pid(const int fd, pid_t *peer_pid);
 
 bool set_scheduler(void);
 void reset_scheduler(void);
-void set_nonblocking(int fd);
-void set_close_on_exec(int fd);
 
 bool parse_ipv4(const char *s, unsigned port, struct sockaddr_in *sin);
 bool parse_ip(const char *addr, const char *ifaces, unsigned port,
@@ -61,5 +62,10 @@ void mkdir_p_or_die(const char *dir, int mode);
 
 ssize_t sys_read(int fd, void *buf, size_t count);
 ssize_t sys_write(int fd, const void *buf, size_t count);
+
+void ctdb_wait_for_process_to_exit(pid_t pid);
+
+int ctdb_parse_connections(FILE *fp, TALLOC_CTX *mem_ctx,
+			   int *num_conn, struct ctdb_connection **out);
 
 #endif /* __CTDB_SYSTEM_H__ */

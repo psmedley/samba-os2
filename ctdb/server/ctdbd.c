@@ -48,19 +48,17 @@ static struct {
 	const char *event_script_dir;
 	const char *notification_script;
 	const char *logging;
-	const char *recovery_lock_file;
+	const char *recovery_lock;
 	const char *db_dir;
 	const char *db_dir_persistent;
 	const char *db_dir_state;
 	const char *public_interface;
-	const char *single_public_ip;
 	int         valgrinding;
 	int         nosetsched;
 	int         start_as_disabled;
 	int         start_as_stopped;
 	int         no_lmaster;
 	int         no_recmaster;
-	int         lvs;
 	int	    script_log_level;
 	int         no_publicipcheck;
 	int         max_persistent_check_errors;
@@ -122,7 +120,6 @@ int main(int argc, const char *argv[])
 		{ "interactive", 'i', POPT_ARG_NONE, &interactive, 0, "don't fork", NULL },
 		{ "public-addresses", 0, POPT_ARG_STRING, &options.public_address_list, 0, "public address list file", "filename" },
 		{ "public-interface", 0, POPT_ARG_STRING, &options.public_interface, 0, "public interface", "interface"},
-		{ "single-public-ip", 0, POPT_ARG_STRING, &options.single_public_ip, 0, "single public ip", "ip-address"},
 		{ "event-script-dir", 0, POPT_ARG_STRING, &options.event_script_dir, 0, "event script directory", "dirname" },
 		{ "logging", 0, POPT_ARG_STRING, &options.logging, 0, "logging method to be used", NULL },
 		{ "nlist", 0, POPT_ARG_STRING, &options.nlist, 0, "node list file", "filename" },
@@ -132,7 +129,7 @@ int main(int argc, const char *argv[])
 		{ "dbdir", 0, POPT_ARG_STRING, &options.db_dir, 0, "directory for the tdb files", NULL },
 		{ "dbdir-persistent", 0, POPT_ARG_STRING, &options.db_dir_persistent, 0, "directory for persistent tdb files", NULL },
 		{ "dbdir-state", 0, POPT_ARG_STRING, &options.db_dir_state, 0, "directory for internal state tdb files", NULL },
-		{ "reclock", 0, POPT_ARG_STRING, &options.recovery_lock_file, 0, "location of recovery lock file", "filename" },
+		{ "reclock", 0, POPT_ARG_STRING, &options.recovery_lock, 0, "recovery lock", "lock" },
 		{ "pidfile", 0, POPT_ARG_STRING, &ctdbd_pidfile, 0, "location of PID file", "filename" },
 		{ "valgrinding", 0, POPT_ARG_NONE, &options.valgrinding, 0, "disable setscheduler SCHED_FIFO call, use mmap for tdbs", NULL },
 		{ "nosetsched", 0, POPT_ARG_NONE, &options.nosetsched, 0, "disable setscheduler SCHED_FIFO call, use mmap for tdbs", NULL },
@@ -140,7 +137,6 @@ int main(int argc, const char *argv[])
 		{ "start-as-stopped", 0, POPT_ARG_NONE, &options.start_as_stopped, 0, "Node starts in stopped state", NULL },
 		{ "no-lmaster", 0, POPT_ARG_NONE, &options.no_lmaster, 0, "disable lmaster role on this node", NULL },
 		{ "no-recmaster", 0, POPT_ARG_NONE, &options.no_recmaster, 0, "disable recmaster role on this node", NULL },
-		{ "lvs", 0, POPT_ARG_NONE, &options.lvs, 0, "lvs is enabled on this node", NULL },
 		{ "script-log-level", 0, POPT_ARG_INT, &options.script_log_level, 0, "log level of event script output", NULL },
 		{ "nopublicipcheck", 0, POPT_ARG_NONE, &options.no_publicipcheck, 0, "don't check we have/don't have the correct public ip addresses", NULL },
 		{ "max-persistent-check-errors", 0, POPT_ARG_INT,
@@ -203,8 +199,13 @@ int main(int argc, const char *argv[])
 	ctdb->recovery_mode    = CTDB_RECOVERY_NORMAL;
 	ctdb->recovery_master  = (uint32_t)-1;
 	ctdb->upcalls          = &ctdb_upcalls;
-	ctdb->recovery_lock_fd = -1;
 
+	if (options.recovery_lock == NULL) {
+		DEBUG(DEBUG_WARNING, ("Recovery lock not set\n"));
+	}
+	ctdb->recovery_lock = options.recovery_lock;
+
+	TALLOC_FREE(ctdb->idr);
 	ret = reqid_init(ctdb, 0, &ctdb->idr);;
 	if (ret != 0) {
 		DEBUG(DEBUG_ALERT, ("reqid_init failed (%s)\n", strerror(ret)));
@@ -212,12 +213,6 @@ int main(int argc, const char *argv[])
 	}
 
 	ctdb_tunables_set_defaults(ctdb);
-
-	ret = ctdb_set_recovery_lock_file(ctdb, options.recovery_lock_file);
-	if (ret == -1) {
-		DEBUG(DEBUG_ALERT,("ctdb_set_recovery_lock_file failed - %s\n", ctdb_errstr(ctdb)));
-		exit(1);
-	}
 
 	ret = ctdb_set_transport(ctdb, options.transport);
 	if (ret == -1) {
@@ -241,9 +236,6 @@ int main(int argc, const char *argv[])
 	}
 	if (options.no_recmaster != 0) {
 		ctdb->capabilities &= ~CTDB_CAP_RECMASTER;
-	}
-	if (options.lvs != 0) {
-		ctdb->capabilities |= CTDB_CAP_LVS;
 	}
 
 	/* Initialise this node's PNN to the unknown value.  This will
@@ -286,20 +278,6 @@ int main(int argc, const char *argv[])
 		CTDB_NO_MEMORY(ctdb, ctdb->default_public_interface);
 	}
 
-	if (options.single_public_ip) {
-		if (options.public_interface == NULL) {
-			DEBUG(DEBUG_ALERT,("--single_public_ip used but --public_interface is not specified. You must specify the public interface when using single public ip. Exiting\n"));
-			exit(10);
-		}
-
-		ret = ctdb_set_single_public_ip(ctdb, options.public_interface,
-						options.single_public_ip);
-		if (ret != 0) {
-			DEBUG(DEBUG_ALERT,("Invalid --single-public-ip argument : %s . This is not a valid ip address. Exiting.\n", options.single_public_ip));
-			exit(10);
-		}
-	}
-
 	if (options.event_script_dir != NULL) {
 		ctdb->event_script_dir = options.event_script_dir;
 	} else {
@@ -319,15 +297,14 @@ int main(int argc, const char *argv[])
 		}
 	}
 
-	ctdb->valgrinding = options.valgrinding;
-	if (options.valgrinding || options.nosetsched) {
-		ctdb->do_setsched = 0;
-	} else {
-		ctdb->do_setsched = 1;
+	ctdb->valgrinding = (options.valgrinding == 1);
+	ctdb->do_setsched = (options.nosetsched != 1);
+	if (ctdb->valgrinding) {
+		ctdb->do_setsched = false;
 	}
 
 	ctdb->public_addresses_file = options.public_address_list;
-	ctdb->do_checkpublicip = !options.no_publicipcheck;
+	ctdb->do_checkpublicip = (options.no_publicipcheck == 0);
 
 	if (options.max_persistent_check_errors < 0) {
 		ctdb->max_persistent_check_errors = 0xFFFFFFFFFFFFFFFFLL;

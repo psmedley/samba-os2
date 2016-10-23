@@ -53,10 +53,14 @@ class dbcheck(object):
         self.fix_all_duplicates = False
         self.fix_all_DN_GUIDs = False
         self.fix_all_binary_dn = False
-        self.remove_all_deleted_DN_links = False
-        self.fix_all_target_mismatch = False
+        self.remove_implausible_deleted_DN_links = False
+        self.remove_plausible_deleted_DN_links = False
+        self.fix_all_string_dn_component_mismatch = False
+        self.fix_all_GUID_dn_component_mismatch = False
+        self.fix_all_SID_dn_component_mismatch = False
         self.fix_all_metadata = False
         self.fix_time_metadata = False
+        self.fix_undead_linked_attributes = False
         self.fix_all_missing_backlinks = False
         self.fix_all_orphaned_backlinks = False
         self.fix_rmd_flags = False
@@ -70,6 +74,7 @@ class dbcheck(object):
         self.fix_replmetadata_wrong_attid = False
         self.fix_replmetadata_unsorted_attid = False
         self.fix_deleted_deleted_objects = False
+        self.fix_incorrect_deleted_objects = False
         self.fix_dn = False
         self.fix_base64_userparameters = False
         self.fix_utf8_userparameters = False
@@ -85,9 +90,11 @@ class dbcheck(object):
         self.class_schemaIDGUID = {}
         self.wellknown_sds = get_wellknown_sds(self.samdb)
         self.fix_all_missing_objectclass = False
+        self.fix_missing_deleted_objects = False
+        self.fix_replica_locations = False
 
         self.dn_set = set()
-
+        self.link_id_cache = {}
         self.name_map = {}
         try:
             res = samdb.search(base="CN=DnsAdmins,CN=Users,%s" % samdb.domain_dn(), scope=ldb.SCOPE_BASE,
@@ -116,26 +123,50 @@ class dbcheck(object):
                 self.write_ncs = None
 
         res = self.samdb.search(base="", scope=ldb.SCOPE_BASE, attrs=['namingContexts'])
+        self.deleted_objects_containers = []
+        self.ncs_lacking_deleted_containers = []
+        self.dns_partitions = []
         try:
-            ncs = res[0]["namingContexts"]
-            self.deleted_objects_containers = []
-            for nc in ncs:
-                try:
-                    dn = self.samdb.get_wellknown_dn(ldb.Dn(self.samdb, nc),
-                                                     dsdb.DS_GUID_DELETED_OBJECTS_CONTAINER)
-                    self.deleted_objects_containers.append(dn)
-                except KeyError:
-                    pass
+            self.ncs = res[0]["namingContexts"]
         except KeyError:
             pass
         except IndexError:
             pass
+
+        for nc in self.ncs:
+            try:
+                dn = self.samdb.get_wellknown_dn(ldb.Dn(self.samdb, nc),
+                                                 dsdb.DS_GUID_DELETED_OBJECTS_CONTAINER)
+                self.deleted_objects_containers.append(dn)
+            except KeyError:
+                self.ncs_lacking_deleted_containers.append(ldb.Dn(self.samdb, nc))
+
+        domaindns_zone = 'DC=DomainDnsZones,%s' % self.samdb.get_default_basedn()
+        forestdns_zone = 'DC=ForestDnsZones,%s' % self.samdb.get_root_basedn()
+        domain = self.samdb.search(scope=ldb.SCOPE_ONELEVEL,
+                                   attrs=["msDS-NC-Replica-Locations", "msDS-NC-RO-Replica-Locations"],
+                                   base=self.samdb.get_partitions_dn(),
+                                   expression="(&(objectClass=crossRef)(ncName=%s))" % domaindns_zone)
+        if len(domain) == 1:
+            self.dns_partitions.append((ldb.Dn(self.samdb, forestdns_zone), domain[0]))
+
+        forest = self.samdb.search(scope=ldb.SCOPE_ONELEVEL,
+                                   attrs=["msDS-NC-Replica-Locations", "msDS-NC-RO-Replica-Locations"],
+                                   base=self.samdb.get_partitions_dn(),
+                                   expression="(&(objectClass=crossRef)(ncName=%s))" % forestdns_zone)
+        if len(forest) == 1:
+            self.dns_partitions.append((ldb.Dn(self.samdb, domaindns_zone), forest[0]))
+
 
     def check_database(self, DN=None, scope=ldb.SCOPE_SUBTREE, controls=[], attrs=['*']):
         '''perform a database check, returning the number of errors found'''
         res = self.samdb.search(base=DN, scope=scope, attrs=['dn'], controls=controls)
         self.report('Checking %u objects' % len(res))
         error_count = 0
+
+        error_count += self.check_deleted_objects_containers()
+
+        self.attribute_or_class_ids = set()
 
         for object in res:
             self.dn_set.add(str(object.dn))
@@ -148,6 +179,104 @@ class dbcheck(object):
             self.report("Please use --fix to fix these errors")
 
         self.report('Checked %u objects (%u errors)' % (len(res), error_count))
+        return error_count
+
+    def check_deleted_objects_containers(self):
+        """This function only fixes conflicts on the Deleted Objects
+        containers, not the attributes"""
+        error_count = 0
+        for nc in self.ncs_lacking_deleted_containers:
+            if nc == self.schema_dn:
+                continue
+            error_count += 1
+            self.report("ERROR: NC %s lacks a reference to a Deleted Objects container" % nc)
+            if not self.confirm_all('Fix missing Deleted Objects container for %s?' % (nc), 'fix_missing_deleted_objects'):
+                continue
+
+            dn = ldb.Dn(self.samdb, "CN=Deleted Objects")
+            dn.add_base(nc)
+
+            conflict_dn = None
+            try:
+                # If something already exists here, add a conflict
+                res = self.samdb.search(base=dn, scope=ldb.SCOPE_BASE, attrs=[],
+                                        controls=["show_deleted:1", "extended_dn:1:1",
+                                                  "show_recycled:1", "reveal_internals:0"])
+                if len(res) != 0:
+                    guid = res[0].dn.get_extended_component("GUID")
+                    conflict_dn = ldb.Dn(self.samdb,
+                                         "CN=Deleted Objects\\0ACNF:%s" % str(misc.GUID(guid)))
+                    conflict_dn.add_base(nc)
+
+            except ldb.LdbError, (enum, estr):
+                if enum == ldb.ERR_NO_SUCH_OBJECT:
+                    pass
+                else:
+                    self.report("Couldn't check for conflicting Deleted Objects container: %s" % estr)
+                    return 1
+
+            if conflict_dn is not None:
+                try:
+                    self.samdb.rename(dn, conflict_dn, ["show_deleted:1", "relax:0", "show_recycled:1"])
+                except ldb.LdbError, (enum, estr):
+                    self.report("Couldn't move old Deleted Objects placeholder: %s to %s: %s" % (dn, conflict_dn, estr))
+                    return 1
+
+            # Refresh wellKnownObjects links
+            res = self.samdb.search(base=nc, scope=ldb.SCOPE_BASE,
+                                    attrs=['wellKnownObjects'],
+                                    controls=["show_deleted:1", "extended_dn:0",
+                                              "show_recycled:1", "reveal_internals:0"])
+            if len(res) != 1:
+                self.report("wellKnownObjects was not found for NC %s" % nc)
+                return 1
+
+            # Prevent duplicate deleted objects containers just in case
+            wko = res[0]["wellKnownObjects"]
+            listwko = []
+            proposed_objectguid = None
+            for o in wko:
+                dsdb_dn = dsdb_Dn(self.samdb, o, dsdb.DSDB_SYNTAX_BINARY_DN)
+                if self.is_deleted_objects_dn(dsdb_dn):
+                    self.report("wellKnownObjects had duplicate Deleted Objects value %s" % o)
+                    # We really want to put this back in the same spot
+                    # as the original one, so that on replication we
+                    # merge, rather than conflict.
+                    proposed_objectguid = dsdb_dn.dn.get_extended_component("GUID")
+                listwko.append(o)
+
+            if proposed_objectguid is not None:
+                guid_suffix = "\nobjectGUID: %s" % str(misc.GUID(proposed_objectguid))
+            else:
+                wko_prefix = "B:32:%s" % dsdb.DS_GUID_DELETED_OBJECTS_CONTAINER
+                listwko.append('%s:%s' % (wko_prefix, dn))
+                guid_suffix = ""
+
+            # Insert a brand new Deleted Objects container
+            self.samdb.add_ldif("""dn: %s
+objectClass: top
+objectClass: container
+description: Container for deleted objects
+isDeleted: TRUE
+isCriticalSystemObject: TRUE
+showInAdvancedViewOnly: TRUE
+systemFlags: -1946157056%s""" % (dn, guid_suffix),
+                                controls=["relax:0", "provision:0"])
+
+            delta = ldb.Message()
+            delta.dn = ldb.Dn(self.samdb, str(res[0]["dn"]))
+            delta["wellKnownObjects"] = ldb.MessageElement(listwko,
+                                                           ldb.FLAG_MOD_REPLACE,
+                                                           "wellKnownObjects")
+
+            # Insert the link to the brand new container
+            if self.do_modify(delta, ["relax:0"],
+                              "NC %s lacks Deleted Objects WKGUID" % nc,
+                              validate=False):
+                self.report("Added %s well known guid link" % dn)
+
+            self.deleted_objects_containers.append(dn)
+
         return error_count
 
     def report(self, msg):
@@ -171,14 +300,14 @@ class dbcheck(object):
         '''confirm a change with support for "all" '''
         if not self.fix:
             return False
-        if self.quiet:
-            return self.yes
         if getattr(self, all_attr) == 'NONE':
             return False
         if getattr(self, all_attr) == 'ALL':
             forced = True
         else:
             forced = self.yes
+        if self.quiet:
+            return forced
         c = common.confirm(msg, forced=forced, allow_all=True)
         if c == 'ALL':
             setattr(self, all_attr, 'ALL')
@@ -234,6 +363,17 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             self.report("%s : %s" % (msg, err))
             return False
         return True
+
+    def get_attr_linkID_and_reverse_name(self, attrname):
+        if attrname in self.link_id_cache:
+            return self.link_id_cache[attrname]
+        linkID = self.samdb_schema.get_linkId_from_lDAPDisplayName(attrname)
+        if linkID:
+            revname = self.samdb_schema.get_backlink_from_lDAPDisplayName(attrname)
+        else:
+            revname = None
+        self.link_id_cache[attrname] = (linkID, revname)
+        return linkID, revname
 
     def err_empty_attribute(self, dn, attrname):
         '''fix empty attributes'''
@@ -331,28 +471,35 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                           "Failed to remove DN %s" % dn):
             self.report("Removed DN %s" % dn)
 
-    def err_deleted_dn(self, dn, attrname, val, dsdb_dn, correct_dn):
+    def err_deleted_dn(self, dn, attrname, val, dsdb_dn, correct_dn, remove_plausible=False):
         """handle a DN pointing to a deleted object"""
         self.report("ERROR: target DN is deleted for %s in object %s - %s" % (attrname, dn, val))
-        self.report("Target GUID points at deleted DN %s" % correct_dn)
-        if not self.confirm_all('Remove DN link?', 'remove_all_deleted_DN_links'):
-            self.report("Not removing")
-            return
+        self.report("Target GUID points at deleted DN %r" % str(correct_dn))
+        if not remove_plausible:
+            if not self.confirm_all('Remove DN link?', 'remove_implausible_deleted_DN_links'):
+                self.report("Not removing")
+                return
+        else:
+            if not self.confirm_all('Remove stale DN link?', 'remove_plausible_deleted_DN_links'):
+                self.report("Not removing")
+                return
+
         m = ldb.Message()
         m.dn = dn
         m['old_value'] = ldb.MessageElement(val, ldb.FLAG_MOD_DELETE, attrname)
-        if self.do_modify(m, ["show_recycled:1", "local_oid:%s:0" % dsdb.DSDB_CONTROL_DBCHECK],
+        if self.do_modify(m, ["show_recycled:1",
+                              "local_oid:%s:0" % dsdb.DSDB_CONTROL_REPLMD_VANISH_LINKS],
                           "Failed to remove deleted DN attribute %s" % attrname):
             self.report("Removed deleted DN on attribute %s" % attrname)
 
     def err_missing_dn_GUID(self, dn, attrname, val, dsdb_dn):
         """handle a missing target DN (both GUID and DN string form are missing)"""
         # check if its a backlink
-        linkID = self.samdb_schema.get_linkId_from_lDAPDisplayName(attrname)
+        linkID, _ = self.get_attr_linkID_and_reverse_name(attrname)
         if (linkID & 1 == 0) and str(dsdb_dn).find('\\0ADEL') == -1:
             self.report("Not removing dangling forward link")
             return
-        self.err_deleted_dn(dn, attrname, val, dsdb_dn, dsdb_dn)
+        self.err_deleted_dn(dn, attrname, val, dsdb_dn, dsdb_dn, False)
 
     def err_incorrect_dn_GUID(self, dn, attrname, val, dsdb_dn, errstr):
         """handle a missing GUID extended DN component"""
@@ -400,21 +547,22 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                           "Failed to fix %s on attribute %s" % (errstr, attrname)):
             self.report("Fixed %s on attribute %s" % (errstr, attrname))
 
-    def err_dn_target_mismatch(self, dn, attrname, val, dsdb_dn, correct_dn, errstr):
+    def err_dn_component_target_mismatch(self, dn, attrname, val, dsdb_dn, correct_dn, mismatch_type):
         """handle a DN string being incorrect"""
-        self.report("ERROR: incorrect DN string component for %s in object %s - %s" % (attrname, dn, val))
+        self.report("ERROR: incorrect DN %s component for %s in object %s - %s" % (mismatch_type, attrname, dn, val))
         dsdb_dn.dn = correct_dn
 
-        if not self.confirm_all('Change DN to %s?' % str(dsdb_dn), 'fix_all_target_mismatch'):
-            self.report("Not fixing %s" % errstr)
+        if not self.confirm_all('Change DN to %s?' % str(dsdb_dn),
+                                'fix_all_%s_dn_component_mismatch' % mismatch_type):
+            self.report("Not fixing %s component mismatch" % mismatch_type)
             return
         m = ldb.Message()
         m.dn = dn
         m['old_value'] = ldb.MessageElement(val, ldb.FLAG_MOD_DELETE, attrname)
         m['new_value'] = ldb.MessageElement(str(dsdb_dn), ldb.FLAG_MOD_ADD, attrname)
         if self.do_modify(m, ["show_recycled:1"],
-                          "Failed to fix incorrect DN string on attribute %s" % attrname):
-            self.report("Fixed incorrect DN string on attribute %s" % (attrname))
+                          "Failed to fix incorrect DN %s on attribute %s" % (mismatch_type, attrname)):
+            self.report("Fixed incorrect DN %s on attribute %s" % (mismatch_type, attrname))
 
     def err_unknown_attribute(self, obj, attrname):
         '''handle an unknown attribute error'''
@@ -428,6 +576,22 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         if self.do_modify(m, ["relax:0", "show_recycled:1"],
                           "Failed to remove unknown attribute %s" % attrname):
             self.report("Removed unknown attribute %s" % (attrname))
+
+    def err_undead_linked_attribute(self, obj, attrname, val):
+        '''handle a link that should not be there on a deleted object'''
+        self.report("ERROR: linked attribute '%s' to '%s' is present on "
+                    "deleted object %s" % (attrname, val, obj.dn))
+        if not self.confirm_all('Remove linked attribute %s' % attrname, 'fix_undead_linked_attributes'):
+            self.report("Not removing linked attribute %s" % attrname)
+            return
+        m = ldb.Message()
+        m.dn = obj.dn
+        m['old_value'] = ldb.MessageElement(val, ldb.FLAG_MOD_DELETE, attrname)
+
+        if self.do_modify(m, ["show_recycled:1", "show_deleted:1", "reveal_internals:0",
+                              "local_oid:%s:0" % dsdb.DSDB_CONTROL_REPLMD_VANISH_LINKS],
+                          "Failed to delete forward link %s" % attrname):
+            self.report("Fixed undead forward link %s" % (attrname))
 
     def err_missing_backlink(self, obj, attrname, val, backlink_name, target_dn):
         '''handle a missing backlink value'''
@@ -624,6 +788,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
     def check_dn(self, obj, attrname, syntax_oid):
         '''check a DN attribute for correctness'''
         error_count = 0
+        obj_guid = obj['objectGUID'][0]
+
         for val in obj[attrname]:
             dsdb_dn = dsdb_Dn(self.samdb, val, syntax_oid)
 
@@ -636,8 +802,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 continue
 
             guidstr = str(misc.GUID(guid))
-
-            attrs = ['isDeleted']
+            attrs = ['isDeleted', 'replPropertyMetaData']
 
             if (str(attrname).lower() == 'msds-hasinstantiatedncs') and (obj.dn == self.ntds_dsa):
                 fixing_msDS_HasInstantiatedNCs = True
@@ -645,15 +810,16 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             else:
                 fixing_msDS_HasInstantiatedNCs = False
 
-            linkID = self.samdb_schema.get_linkId_from_lDAPDisplayName(attrname)
-            reverse_link_name = self.samdb_schema.get_backlink_from_lDAPDisplayName(attrname)
+            linkID, reverse_link_name = self.get_attr_linkID_and_reverse_name(attrname)
             if reverse_link_name is not None:
                 attrs.append(reverse_link_name)
 
             # check its the right GUID
             try:
                 res = self.samdb.search(base="<GUID=%s>" % guidstr, scope=ldb.SCOPE_BASE,
-                                        attrs=attrs, controls=["extended_dn:1:1", "show_recycled:1"])
+                                        attrs=attrs, controls=["extended_dn:1:1", "show_recycled:1",
+                                                               "reveal_internals:0"
+                                        ])
             except ldb.LdbError, (enum, estr):
                 error_count += 1
                 self.err_incorrect_dn_GUID(obj.dn, attrname, val, dsdb_dn, "incorrect GUID")
@@ -672,42 +838,81 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             is_deleted = 'isDeleted' in obj and obj['isDeleted'][0].upper() == 'TRUE'
             target_is_deleted = 'isDeleted' in res[0] and res[0]['isDeleted'][0].upper() == 'TRUE'
 
-            # the target DN is not allowed to be deleted, unless the target DN is the
-            # special Deleted Objects container
-            if target_is_deleted and not is_deleted and not self.is_deleted_objects_dn(dsdb_dn):
+
+            if is_deleted and not obj.dn in self.deleted_objects_containers and linkID:
+                # A fully deleted object should not have any linked
+                # attributes. (MS-ADTS 3.1.1.5.5.1.1 Tombstone
+                # Requirements and 3.1.1.5.5.1.3 Recycled-Object
+                # Requirements)
+                self.err_undead_linked_attribute(obj, attrname, val)
                 error_count += 1
-                self.err_deleted_dn(obj.dn, attrname, val, dsdb_dn, res[0].dn)
+                continue
+            elif target_is_deleted and not self.is_deleted_objects_dn(dsdb_dn) and linkID:
+                # the target DN is not allowed to be deleted, unless the target DN is the
+                # special Deleted Objects container
+                error_count += 1
+                local_usn = dsdb_dn.dn.get_extended_component("RMD_LOCAL_USN")
+                if local_usn:
+                    if 'replPropertyMetaData' in res[0]:
+                        repl = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                                          str(res[0]['replPropertyMetadata']))
+                        found_data = False
+                        for o in repl.ctr.array:
+                            if o.attid == drsuapi.DRSUAPI_ATTID_isDeleted:
+                                deleted_usn = o.local_usn
+                                if deleted_usn >= int(local_usn):
+                                    # If the object was deleted after the link
+                                    # was last modified then, clean it up here
+                                    found_data = True
+                                    break
+
+                        if found_data:
+                            self.err_deleted_dn(obj.dn, attrname,
+                                                val, dsdb_dn, res[0].dn, True)
+                            continue
+
+                self.err_deleted_dn(obj.dn, attrname, val, dsdb_dn, res[0].dn, False)
                 continue
 
             # check the DN matches in string form
-            if res[0].dn.extended_str() != dsdb_dn.dn.extended_str():
+            if str(res[0].dn) != str(dsdb_dn.dn):
                 error_count += 1
-                self.err_dn_target_mismatch(obj.dn, attrname, val, dsdb_dn,
-                                            res[0].dn, "incorrect string version of DN")
+                self.err_dn_component_target_mismatch(obj.dn, attrname, val, dsdb_dn,
+                                                      res[0].dn, "string")
                 continue
 
-            if is_deleted and not target_is_deleted and reverse_link_name is not None:
-                revealed_dn = self.find_revealed_link(obj.dn, attrname, guid)
-                rmd_flags = revealed_dn.dn.get_extended_component("RMD_FLAGS")
-                if rmd_flags is not None and (int(rmd_flags) & 1) == 0:
-                    # the RMD_FLAGS for this link should be 1, as the target is deleted
-                    self.err_incorrect_rmd_flags(obj, attrname, revealed_dn)
-                    continue
+            if res[0].dn.get_extended_component("GUID") != dsdb_dn.dn.get_extended_component("GUID"):
+                error_count += 1
+                self.err_dn_component_target_mismatch(obj.dn, attrname, val, dsdb_dn,
+                                                      res[0].dn, "GUID")
+                continue
+
+            if res[0].dn.get_extended_component("SID") != dsdb_dn.dn.get_extended_component("SID"):
+                error_count += 1
+                self.err_dn_component_target_mismatch(obj.dn, attrname, val, dsdb_dn,
+                                                      res[0].dn, "SID")
+                continue
+
 
             # check the reverse_link is correct if there should be one
             if reverse_link_name is not None:
                 match_count = 0
                 if reverse_link_name in res[0]:
                     for v in res[0][reverse_link_name]:
-                        if v == obj.dn.extended_str():
+                        v_guid = dsdb_Dn(self.samdb, v).dn.get_extended_component("GUID")
+                        if v_guid == obj_guid:
                             match_count += 1
                 if match_count != 1:
-                    error_count += 1
-                    if linkID & 1:
-                        self.err_orphaned_backlink(obj, attrname, val, reverse_link_name, dsdb_dn.dn)
-                    else:
-                        self.err_missing_backlink(obj, attrname, val, reverse_link_name, dsdb_dn.dn)
+                    if target_is_deleted:
+                        error_count += 1
+                        if linkID & 1:
+                            self.err_missing_backlink(obj, attrname, val, reverse_link_name, dsdb_dn.dn)
+                        else:
+                            self.err_orphaned_backlink(obj, attrname, val, reverse_link_name, dsdb_dn.dn)
                     continue
+
+
+
 
         return error_count
 
@@ -1063,7 +1268,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         # Sort the array, except for the last element.  This strange
         # construction, creating a new list, due to bugs in samba's
         # array handling in IDL generated objects.
-        ctr.array = sorted(ctr.array[:-1], key=lambda o: o.attid) + [ctr.array[-1]]
+        ctr.array = sorted(ctr.array[:], key=lambda o: o.attid)
         # Now walk it in reverse, so we see the low (and so incorrect,
         # the correct values are above 0x80000000) values first and
         # remove the 'second' value we see.
@@ -1117,9 +1322,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                     fix = True
                     o.attid = correct_attid
             if fix:
-                # Sort the array, except for the last element (we changed
-                # the value so must re-sort)
-                new_list[:-1] = sorted(new_list[:-1], key=lambda o: o.attid)
+                # Sort the array, (we changed the value so must re-sort)
+                new_list[:] = sorted(new_list[:], key=lambda o: o.attid)
 
         # If we did not already need to fix it, then ask about sorting
         if not fix:
@@ -1150,20 +1354,30 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         if "description" not in obj:
             self.report("ERROR: description not present on Deleted Objects container %s" % obj.dn)
             faulty = True
-        if "showInAdvancedViewOnly" not in obj:
+        if "showInAdvancedViewOnly" not in obj or obj['showInAdvancedViewOnly'][0].upper() == 'FALSE':
             self.report("ERROR: showInAdvancedViewOnly not present on Deleted Objects container %s" % obj.dn)
             faulty = True
         if "objectCategory" not in obj:
             self.report("ERROR: objectCategory not present on Deleted Objects container %s" % obj.dn)
             faulty = True
-        if "isCriticalSystemObject" not in obj:
+        if "isCriticalSystemObject" not in obj or obj['isCriticalSystemObject'][0].upper() == 'FALSE':
             self.report("ERROR: isCriticalSystemObject not present on Deleted Objects container %s" % obj.dn)
             faulty = True
         if "isRecycled" in obj:
             self.report("ERROR: isRecycled present on Deleted Objects container %s" % obj.dn)
             faulty = True
+        if "isDeleted" in obj and obj['isDeleted'][0].upper() == 'FALSE':
+            self.report("ERROR: isDeleted not set on Deleted Objects container %s" % obj.dn)
+            faulty = True
+        if "objectClass" not in obj or (len(obj['objectClass']) != 2 or
+                                        obj['objectClass'][0] != 'top' or
+                                        obj['objectClass'][1] != 'container'):
+            self.report("ERROR: objectClass incorrectly set on Deleted Objects container %s" % obj.dn)
+            faulty = True
+        if "systemFlags" not in obj or obj['systemFlags'][0] != '-1946157056':
+            self.report("ERROR: systemFlags incorrectly set on Deleted Objects container %s" % obj.dn)
+            faulty = True
         return faulty
-
 
     def err_deleted_deleted_objects(self, obj):
         nmsg = ldb.Message()
@@ -1180,6 +1394,10 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         if "isRecycled" in obj:
             nmsg["isRecycled"] = ldb.MessageElement("TRUE", ldb.FLAG_MOD_DELETE, "isRecycled")
 
+        nmsg["isDeleted"] = ldb.MessageElement("TRUE", ldb.FLAG_MOD_REPLACE, "isDeleted")
+        nmsg["systemFlags"] = ldb.MessageElement("-1946157056", ldb.FLAG_MOD_REPLACE, "systemFlags")
+        nmsg["objectClass"] = ldb.MessageElement(["top", "container"], ldb.FLAG_MOD_REPLACE, "objectClass")
+
         if not self.confirm_all('Fix Deleted Objects container %s by restoring default attributes?'
                                 % (dn), 'fix_deleted_deleted_objects'):
             self.report('Not fixing missing/incorrect attributes on %s\n' % (dn))
@@ -1189,6 +1407,23 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                           "Failed to fix Deleted Objects container  %s" % dn):
             self.report("Fixed Deleted Objects container '%s'\n" % (dn))
 
+    def err_replica_locations(self, obj, cross_ref, attr):
+        nmsg = ldb.Message()
+        nmsg.dn = cross_ref
+        target = self.samdb.get_dsServiceName()
+
+        if self.samdb.am_rodc():
+            self.report('Not fixing %s for the RODC' % (attr, obj.dn))
+            return
+
+        if not self.confirm_all('Add yourself to the replica locations for %s?'
+                                % (obj.dn), 'fix_replica_locations'):
+            self.report('Not fixing missing/incorrect attributes on %s\n' % (obj.dn))
+            return
+
+        nmsg[attr] = ldb.MessageElement(target, ldb.FLAG_MOD_ADD, attr)
+        if self.do_modify(nmsg, [], "Failed to add %s for %s" % (attr, obj.dn)):
+            self.report("Fixed %s for %s" % (attr, obj.dn))
 
     def is_fsmo_role(self, dn):
         if dn == self.samdb.domain_dn:
@@ -1236,6 +1471,10 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         '''check one object'''
         if self.verbose:
             self.report("Checking object %s" % dn)
+
+        # If we modify the pass-by-reference attrs variable, then we get a
+        # replPropertyMetadata for every object that we check.
+        attrs = list(attrs)
         if "dn" in map(str.lower, attrs):
             attrs.append("name")
         if "distinguishedname" in map(str.lower, attrs):
@@ -1248,6 +1487,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             attrs.append("systemFlags")
         if '*' in attrs:
             attrs.append("replPropertyMetaData")
+        else:
+            attrs.append("objectGUID")
 
         try:
             sd_flags = 0
@@ -1262,6 +1503,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                         "show_recycled:1",
                                         "show_deleted:1",
                                         "sd_flags:1:%d" % sd_flags,
+                                        "reveal_internals:0",
                                     ],
                                     attrs=attrs)
         except ldb.LdbError, (enum, estr):
@@ -1284,9 +1526,12 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         nc_dn = self.samdb.get_nc_root(obj.dn)
         try:
             deleted_objects_dn = self.samdb.get_wellknown_dn(nc_dn,
-                                                 samba.dsdb.DS_GUID_DELETED_OBJECTS_CONTAINER)
-        except KeyError, e:
-            deleted_objects_dn = ldb.Dn(self.samdb, "CN=Deleted Objects,%s" % nc_dn)
+                                                             samba.dsdb.DS_GUID_DELETED_OBJECTS_CONTAINER)
+        except KeyError:
+            # We have no deleted objects DN for schema, and we check for this above for the other
+            # NCs
+            deleted_objects_dn = None
+
 
         object_rdn_attr = None
         object_rdn_val = None
@@ -1295,7 +1540,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         systemFlags = 0
 
         for attrname in obj:
-            if attrname == 'dn':
+            if attrname == 'dn' or attrname == "distinguishedName":
                 continue
 
             if str(attrname).lower() == 'objectclass':
@@ -1342,20 +1587,13 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
 
                 if len(set_attrs_from_md) < len(list_attid_from_md) \
                    or len(wrong_attids) > 0 \
-                   or sorted(list_attid_from_md[:-1]) != list_attid_from_md[:-1]:
+                   or sorted(list_attid_from_md) != list_attid_from_md:
                     error_count +=1
                     self.err_replmetadata_incorrect_attid(dn, attrname, obj[attrname], wrong_attids)
 
                 else:
                     # Here we check that the first attid is 0
-                    # (objectClass) and that the last on is the RDN
-                    # from the DN.
-                    rdn_attid = self.samdb_schema.get_attid_from_lDAPDisplayName(dn.get_rdn_name())
-                    if list_attid_from_md[-1] != rdn_attid:
-                        error_count += 1
-                        self.report("ERROR: Not fixing incorrect final attributeID in '%s' on '%s', it should match the RDN %s" %
-                                    (attrname, str(dn), dn.get_rdn_name()))
-
+                    # (objectClass).
                     if list_attid_from_md[0] != 0:
                         error_count += 1
                         self.report("ERROR: Not fixing incorrect inital attributeID in '%s' on '%s', it should be objectClass" %
@@ -1445,6 +1683,14 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                     self.err_doubled_userParameters(obj, attrname, obj[attrname])
                     continue
 
+            if attrname.lower() == 'attributeid' or attrname.lower() == 'governsid':
+                if obj[attrname][0] in self.attribute_or_class_ids:
+                    error_count += 1
+                    self.report('Error: %s %s on %s already exists as an attributeId or governsId'
+                                % (attrname, obj.dn, obj[attrname][0]))
+                else:
+                    self.attribute_or_class_ids.add(obj[attrname][0])
+
             # check for empty attributes
             for val in obj[attrname]:
                 if val == '':
@@ -1461,32 +1707,35 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 error_count += 1
                 continue
 
+            linkID, reverse_link_name = self.get_attr_linkID_and_reverse_name(attrname)
+
             flag = self.samdb_schema.get_systemFlags_from_lDAPDisplayName(attrname)
             if (not flag & dsdb.DS_FLAG_ATTR_NOT_REPLICATED
                 and not flag & dsdb.DS_FLAG_ATTR_IS_CONSTRUCTED
-                and not self.samdb_schema.get_linkId_from_lDAPDisplayName(attrname)):
+                and not linkID):
                 set_attrs_seen.add(str(attrname).lower())
 
             if syntax_oid in [ dsdb.DSDB_SYNTAX_BINARY_DN, dsdb.DSDB_SYNTAX_OR_NAME,
                                dsdb.DSDB_SYNTAX_STRING_DN, ldb.SYNTAX_DN ]:
                 # it's some form of DN, do specialised checking on those
                 error_count += self.check_dn(obj, attrname, syntax_oid)
+            else:
 
-            values = set()
-            # check for incorrectly normalised attributes
-            for val in obj[attrname]:
-                values.add(str(val))
+                values = set()
+                # check for incorrectly normalised attributes
+                for val in obj[attrname]:
+                    values.add(str(val))
 
-                normalised = self.samdb.dsdb_normalise_attributes(self.samdb_schema, attrname, [val])
-                if len(normalised) != 1 or normalised[0] != val:
-                    self.err_normalise_mismatch(dn, attrname, obj[attrname])
+                    normalised = self.samdb.dsdb_normalise_attributes(self.samdb_schema, attrname, [val])
+                    if len(normalised) != 1 or normalised[0] != val:
+                        self.err_normalise_mismatch(dn, attrname, obj[attrname])
+                        error_count += 1
+                        break
+
+                if len(obj[attrname]) != len(values):
+                    self.err_duplicate_values(dn, attrname, obj[attrname], list(values))
                     error_count += 1
                     break
-
-            if len(obj[attrname]) != len(values):
-                   self.err_duplicate_values(dn, attrname, obj[attrname], list(values))
-                   error_count += 1
-                   break
 
             if str(attrname).lower() == "instancetype":
                 calculated_instancetype = self.calculate_instancetype(dn)
@@ -1576,6 +1825,27 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             if self.is_deleted_deleted_objects(obj):
                 self.err_deleted_deleted_objects(obj)
                 error_count += 1
+
+        for (dns_part, msg) in self.dns_partitions:
+            if dn == dns_part and 'repsFrom' in obj:
+                location = "msDS-NC-Replica-Locations"
+                if self.samdb.am_rodc():
+                    location = "msDS-NC-RO-Replica-Locations"
+
+                if location not in msg:
+                    # There are no replica locations!
+                    self.err_replica_locations(obj, msg.dn, location)
+                    error_count += 1
+                    continue
+
+                found = False
+                for loc in msg[location]:
+                    if loc == self.samdb.get_dsServiceName():
+                        found = True
+                if not found:
+                    # This DC is not in the replica locations
+                    self.err_replica_locations(obj, msg.dn, location)
+                    error_count += 1
 
         return error_count
 

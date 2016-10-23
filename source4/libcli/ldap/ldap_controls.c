@@ -1,5 +1,5 @@
 /* 
-   Unix SMB/CIFS mplementation.
+   Unix SMB/CIFS implementation.
    LDAP protocol helper functions for SAMBA
    
    Copyright (C) Simo Sorce 2005
@@ -20,6 +20,9 @@
 */
 
 #include "includes.h"
+
+#include <ldb.h>
+
 #include "../lib/util/asn1.h"
 #include "libcli/ldap/libcli_ldap.h"
 #include "libcli/ldap/ldap_proto.h"
@@ -114,9 +117,9 @@ static bool decode_server_sort_request(void *mem_ctx, DATA_BLOB in, void *_out)
 		if (!lssc [num]->attributeName) {
 			return false;
 		}
-	
-		if (asn1_peek_tag(data, ASN1_OCTET_STRING)) {
-			if (!asn1_read_OctetString(data, mem_ctx, &rule)) {
+
+		if (asn1_peek_tag(data, ASN1_CONTEXT_SIMPLE(0))) {
+			if (!asn1_read_ContextSimple(data, mem_ctx, 0, &rule)) {
 				return false;
 			}
 			lssc[num]->orderingRule = talloc_strndup(lssc[num], (const char *)rule.data, rule.length);
@@ -554,12 +557,8 @@ static bool decode_vlv_request(void *mem_ctx, DATA_BLOB in, void *_out)
 	if (asn1_peek_tag(data, ASN1_CONTEXT(0))) {
 
 		lvrc->type = 0;
-		
-		if (!asn1_start_tag(data, ASN1_CONTEXT(0))) {
-			return false;
-		}
 
-		if (!asn1_start_tag(data, ASN1_SEQUENCE(0))) {
+		if (!asn1_start_tag(data, ASN1_CONTEXT(0))) {
 			return false;
 		}
 
@@ -571,10 +570,6 @@ static bool decode_vlv_request(void *mem_ctx, DATA_BLOB in, void *_out)
 			return false;
 		}
 
-		if (!asn1_end_tag(data)) { /*SEQUENCE*/
-			return false;
-		}
-
 		if (!asn1_end_tag(data)) { /*CONTEXT*/
 			return false;
 		}
@@ -583,13 +578,10 @@ static bool decode_vlv_request(void *mem_ctx, DATA_BLOB in, void *_out)
 
 		lvrc->type = 1;
 
-		if (!asn1_start_tag(data, ASN1_CONTEXT(1))) {
+		if (!asn1_read_ContextSimple(data, mem_ctx, 1, &assertion_value)){
 			return false;
 		}
 
-		if (!asn1_read_OctetString(data, mem_ctx, &assertion_value)) {
-			return false;
-		}
 		lvrc->match.gtOrEq.value_len = assertion_value.length;
 		if (lvrc->match.gtOrEq.value_len) {
 			lvrc->match.gtOrEq.value = talloc_memdup(lvrc, assertion_value.data, assertion_value.length);
@@ -599,10 +591,6 @@ static bool decode_vlv_request(void *mem_ctx, DATA_BLOB in, void *_out)
 			}
 		} else {
 			lvrc->match.gtOrEq.value = NULL;
-		}
-
-		if (!asn1_end_tag(data)) { /*CONTEXT*/
-			return false;
 		}
 	}
 
@@ -672,7 +660,7 @@ static bool decode_vlv_response(void *mem_ctx, DATA_BLOB in, void *_out)
 		if (!asn1_read_OctetString(data, mem_ctx, &context_id)) {
 			return false;
 		}
-		lvrc->contextId = talloc_strndup(lvrc, (const char *)context_id.data, context_id.length);
+		lvrc->contextId = talloc_memdup(lvrc, (const char *)context_id.data, context_id.length);
 		if (!lvrc->contextId) {
 			return false;
 		}
@@ -754,7 +742,8 @@ static bool encode_server_sort_request(void *mem_ctx, void *in, DATA_BLOB *out)
 		}
 
 		if (lssc[num]->orderingRule) {
-			if (!asn1_write_OctetString(data, lssc[num]->orderingRule, strlen(lssc[num]->orderingRule))) {
+			DATA_BLOB order = data_blob_string_const(lssc[num]->orderingRule);
+			if (!asn1_write_ContextSimple(data, 0, &order)) {
 				return false;
 			}
 		}
@@ -1004,10 +993,6 @@ static bool encode_vlv_request(void *mem_ctx, void *in, DATA_BLOB *out)
 			return false;
 		}
 		
-		if (!asn1_push_tag(data, ASN1_SEQUENCE(0))) {
-			return false;
-		}
-		
 		if (!asn1_write_Integer(data, lvrc->match.byOffset.offset)) {
 			return false;
 		}
@@ -1016,19 +1001,15 @@ static bool encode_vlv_request(void *mem_ctx, void *in, DATA_BLOB *out)
 			return false;
 		}
 
-		if (!asn1_pop_tag(data)) { /*SEQUENCE*/
-			return false;
-		}
-
 		if (!asn1_pop_tag(data)) { /*CONTEXT*/
 			return false;
 		}
 	} else {
-		if (!asn1_push_tag(data, ASN1_CONTEXT(1))) {
+		if (!asn1_push_tag(data, ASN1_CONTEXT_SIMPLE(1))) {
 			return false;
 		}
 		
-		if (!asn1_write_OctetString(data, lvrc->match.gtOrEq.value, lvrc->match.gtOrEq.value_len)) {
+		if (!asn1_write(data, lvrc->match.gtOrEq.value, lvrc->match.gtOrEq.value_len)) {
 			return false;
 		}
 

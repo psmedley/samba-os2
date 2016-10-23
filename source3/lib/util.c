@@ -1150,13 +1150,13 @@ void set_namearray(name_compare_entry **ppname_array, const char *namelist_in)
  F_UNLCK in *ptype if the region is unlocked). False if the call failed.
 ****************************************************************************/
 
-bool fcntl_getlock(int fd, off_t *poffset, off_t *pcount, int *ptype, pid_t *ppid)
+bool fcntl_getlock(int fd, int op, off_t *poffset, off_t *pcount, int *ptype, pid_t *ppid)
 {
 	struct flock lock;
 	int ret;
 
-	DEBUG(8,("fcntl_getlock fd=%d offset=%.0f count=%.0f type=%d\n",
-		    fd,(double)*poffset,(double)*pcount,*ptype));
+	DEBUG(8,("fcntl_getlock fd=%d op=%d offset=%.0f count=%.0f type=%d\n",
+		    fd,op,(double)*poffset,(double)*pcount,*ptype));
 
 	lock.l_type = *ptype;
 	lock.l_whence = SEEK_SET;
@@ -1164,7 +1164,7 @@ bool fcntl_getlock(int fd, off_t *poffset, off_t *pcount, int *ptype, pid_t *ppi
 	lock.l_len = *pcount;
 	lock.l_pid = 0;
 
-	ret = sys_fcntl_ptr(fd,F_GETLK,&lock);
+	ret = sys_fcntl_ptr(fd,op,&lock);
 
 	if (ret == -1) {
 		int sav = errno;
@@ -1183,6 +1183,37 @@ bool fcntl_getlock(int fd, off_t *poffset, off_t *pcount, int *ptype, pid_t *ppi
 			fd, (int)lock.l_type, (unsigned int)lock.l_pid));
 	return True;
 }
+
+#if defined(HAVE_OFD_LOCKS)
+int map_process_lock_to_ofd_lock(int op, bool *use_ofd_locks)
+{
+	switch (op) {
+	case F_GETLK:
+	case F_OFD_GETLK:
+		op = F_OFD_GETLK;
+		break;
+	case F_SETLK:
+	case F_OFD_SETLK:
+		op = F_OFD_SETLK;
+		break;
+	case F_SETLKW:
+	case F_OFD_SETLKW:
+		op = F_OFD_SETLKW;
+		break;
+	default:
+		*use_ofd_locks = false;
+		return -1;
+	}
+	*use_ofd_locks = true;
+	return op;
+}
+#else /* HAVE_OFD_LOCKS */
+int map_process_lock_to_ofd_lock(int op, bool *use_ofd_locks)
+{
+	*use_ofd_locks = false;
+	return op;
+}
+#endif /* HAVE_OFD_LOCKS */
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_ALL
@@ -1230,14 +1261,46 @@ void ra_lanman_string( const char *native_lanman )
 		set_remote_arch( RA_WIN2K3 );
 }
 
-static const char *remote_arch_str;
+static const char *remote_arch_strings[] = {
+	[RA_UNKNOWN] =	"UNKNOWN",
+	[RA_WFWG] =	"WfWg",
+	[RA_OS2] =	"OS2",
+	[RA_WIN95] =	"Win95",
+	[RA_WINNT] =	"WinNT",
+	[RA_WIN2K] =	"Win2K",
+	[RA_WINXP] =	"WinXP",
+	[RA_WIN2K3] =	"Win2K3",
+	[RA_VISTA] =	"Vista",
+	[RA_SAMBA] =	"Samba",
+	[RA_CIFSFS] =	"CIFSFS",
+	[RA_WINXP64] =	"WinXP64",
+	[RA_OSX] =	"OSX",
+};
 
 const char *get_remote_arch_str(void)
 {
-	if (!remote_arch_str) {
-		return "UNKNOWN";
+	if (ra_type >= ARRAY_SIZE(remote_arch_strings)) {
+		/*
+		 * set_remote_arch() already checks this so ra_type
+		 * should be in the allowed range, but anyway, let's
+		 * do another bound check here.
+		 */
+		DBG_ERR("Remote arch info out of sync [%d] missing\n", ra_type);
+		ra_type = RA_UNKNOWN;
 	}
-	return remote_arch_str;
+	return remote_arch_strings[ra_type];
+}
+
+enum remote_arch_types get_remote_arch_from_str(const char *remote_arch_string)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(remote_arch_strings); i++) {
+		if (strcmp(remote_arch_string, remote_arch_strings[i]) == 0) {
+			return i;
+		}
+	}
+	return RA_UNKNOWN;
 }
 
 /*******************************************************************
@@ -1246,52 +1309,20 @@ const char *get_remote_arch_str(void)
 
 void set_remote_arch(enum remote_arch_types type)
 {
-	ra_type = type;
-	switch( type ) {
-	case RA_WFWG:
-		remote_arch_str = "WfWg";
-		break;
-	case RA_OS2:
-		remote_arch_str = "OS2";
-		break;
-	case RA_WIN95:
-		remote_arch_str = "Win95";
-		break;
-	case RA_WINNT:
-		remote_arch_str = "WinNT";
-		break;
-	case RA_WIN2K:
-		remote_arch_str = "Win2K";
-		break;
-	case RA_WINXP:
-		remote_arch_str = "WinXP";
-		break;
-	case RA_WINXP64:
-		remote_arch_str = "WinXP64";
-		break;
-	case RA_WIN2K3:
-		remote_arch_str = "Win2K3";
-		break;
-	case RA_VISTA:
-		remote_arch_str = "Vista";
-		break;
-	case RA_SAMBA:
-		remote_arch_str = "Samba";
-		break;
-	case RA_CIFSFS:
-		remote_arch_str = "CIFSFS";
-		break;
-	case RA_OSX:
-		remote_arch_str = "OSX";
-		break;
-	default:
+	if (ra_type >= ARRAY_SIZE(remote_arch_strings)) {
+		/*
+		 * This protects against someone adding values to enum
+		 * remote_arch_types without updating
+		 * remote_arch_strings array.
+		 */
+		DBG_ERR("Remote arch info out of sync [%d] missing\n", ra_type);
 		ra_type = RA_UNKNOWN;
-		remote_arch_str = "UNKNOWN";
-		break;
+		return;
 	}
 
+	ra_type = type;
 	DEBUG(10,("set_remote_arch: Client arch is \'%s\'\n",
-				remote_arch_str));
+		  get_remote_arch_str()));
 }
 
 /*******************************************************************
@@ -1301,6 +1332,146 @@ void set_remote_arch(enum remote_arch_types type)
 enum remote_arch_types get_remote_arch(void)
 {
 	return ra_type;
+}
+
+#define RA_CACHE_TTL 7*24*3600
+
+static bool remote_arch_cache_key(const struct GUID *client_guid,
+				  fstring key)
+{
+	struct GUID_txt_buf guid_buf;
+	const char *guid_string = NULL;
+
+	guid_string = GUID_buf_string(client_guid, &guid_buf);
+	if (guid_string == NULL) {
+		return false;
+	}
+
+	fstr_sprintf(key, "RA/%s", guid_string);
+	return true;
+}
+
+struct ra_parser_state {
+	bool found;
+	enum remote_arch_types ra;
+};
+
+static void ra_parser(time_t timeout, DATA_BLOB blob, void *priv_data)
+{
+	struct ra_parser_state *state = (struct ra_parser_state *)priv_data;
+	const char *ra_str = NULL;
+
+	if (timeout <= time(NULL)) {
+		return;
+	}
+
+	if ((blob.length == 0) || (blob.data[blob.length-1] != '\0')) {
+		DBG_ERR("Remote arch cache key not a string\n");
+		return;
+	}
+
+	ra_str = (const char *)blob.data;
+	DBG_INFO("Got remote arch [%s] from cache\n", ra_str);
+
+	state->ra = get_remote_arch_from_str(ra_str);
+	state->found = true;
+	return;
+}
+
+static bool remote_arch_cache_get(const struct GUID *client_guid)
+{
+	bool ok;
+	fstring ra_key;
+	struct ra_parser_state state = (struct ra_parser_state) {
+		.found = false,
+		.ra = RA_UNKNOWN,
+	};
+
+	ok = remote_arch_cache_key(client_guid, ra_key);
+	if (!ok) {
+		return false;
+	}
+
+	ok = gencache_parse(ra_key, ra_parser, &state);
+	if (!ok || !state.found) {
+		return true;
+	}
+
+	if (state.ra == RA_UNKNOWN) {
+		return true;
+	}
+
+	set_remote_arch(state.ra);
+	return true;
+}
+
+static bool remote_arch_cache_set(const struct GUID *client_guid)
+{
+	bool ok;
+	fstring ra_key;
+	const char *ra_str = NULL;
+
+	if (get_remote_arch() == RA_UNKNOWN) {
+		return true;
+	}
+
+	ok = remote_arch_cache_key(client_guid, ra_key);
+	if (!ok) {
+		return false;
+	}
+
+	ra_str = get_remote_arch_str();
+	if (ra_str == NULL) {
+		return false;
+	}
+
+	ok = gencache_set(ra_key, ra_str, time(NULL) + RA_CACHE_TTL);
+	if (!ok) {
+		return false;
+	}
+
+	return true;
+}
+
+bool remote_arch_cache_update(const struct GUID *client_guid)
+{
+	bool ok;
+
+	if (get_remote_arch() == RA_UNKNOWN) {
+
+		become_root();
+		ok = remote_arch_cache_get(client_guid);
+		unbecome_root();
+
+		return ok;
+	}
+
+	become_root();
+	ok = remote_arch_cache_set(client_guid);
+	unbecome_root();
+
+	return ok;
+}
+
+bool remote_arch_cache_delete(const struct GUID *client_guid)
+{
+	bool ok;
+	fstring ra_key;
+
+	ok = remote_arch_cache_key(client_guid, ra_key);
+	if (!ok) {
+		return false;
+	}
+
+	become_root();
+	ok = gencache_del(ra_key);
+	unbecome_root();
+
+	if (!ok) {
+		return false;
+	}
+
+	return true;
 }
 
 const char *tab_depth(int level, int depth)

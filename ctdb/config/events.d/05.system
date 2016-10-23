@@ -2,12 +2,13 @@
 # ctdb event script for checking local file system utilization
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
+. "${CTDB_BASE}/functions"
+
 loadconfig
 
-ctdb_setup_service_state_dir "system-monitoring"
+service_state_dir=$(ctdb_setup_service_state_dir "system-monitoring") || exit $?
 
 validate_percentage ()
 {
@@ -47,7 +48,7 @@ check_thresholds ()
         fi
     fi
 
-    if validate_percentage "$_warn_threshold" "$_what" ; then
+    if validate_percentage "$_warn_threshold" "$_thing" ; then
         if [ "$_usage" -ge "$_warn_threshold" ] ; then
 	    if [ -r "$_cache" ] ; then
 		read _prev <"$_cache"
@@ -134,6 +135,8 @@ monitor_memory_usage ()
     fi
 
     _meminfo=$(get_proc "meminfo")
+    # Intentional word splitting here
+    # shellcheck disable=SC2046
     set -- $(echo "$_meminfo" | awk '
 $1 == "MemAvailable:" { memavail += $2 }
 $1 == "MemFree:"      { memfree  += $2 }
@@ -144,8 +147,8 @@ $1 == "SwapFree:"     { swapfree  = $2 }
 $1 == "SwapTotal:"    { swaptotal = $2 }
 END {
     if (memavail != 0) { memfree = memavail ; }
-    print int((memtotal -  memfree)  / memtotal * 100),
-          int((swaptotal - swapfree) / swaptotal * 100)
+    if (memtotal != 0) { print int((memtotal - memfree) / memtotal * 100) ; } else { print 0 ; }
+    if (swaptotal != 0) { print int((swaptotal - swapfree) / swaptotal * 100) ; } else { print 0 ; }
 }')
     _mem_usage="$1"
     _swap_usage="$2"
@@ -163,13 +166,9 @@ END {
 
 
 case "$1" in
-    monitor)
+monitor)
 	monitor_filesystem_usage
 	monitor_memory_usage
-	;;
-
-    *)
-	ctdb_standard_event_handler "$@"
 	;;
 esac
 

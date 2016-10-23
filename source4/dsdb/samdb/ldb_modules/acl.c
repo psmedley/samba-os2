@@ -55,6 +55,7 @@ struct acl_private {
 	uint64_t cached_schema_metadata_usn;
 	uint64_t cached_schema_loaded_usn;
 	const char **confidential_attrs;
+	bool userPassword_support;
 };
 
 struct acl_context {
@@ -107,6 +108,8 @@ static int acl_module_init(struct ldb_module *module)
 					NULL, "acl", "search", true);
 	ldb_module_set_private(module, data);
 
+	data->userPassword_support = dsdb_user_password_support(module, module, NULL);
+	
 	mem_ctx = talloc_new(module);
 	if (!mem_ctx) {
 		return ldb_oom(ldb);
@@ -518,7 +521,7 @@ static int acl_validate_spn_value(TALLOC_CTX *mem_ctx,
 				  const char *netbios_name,
 				  const char *ntds_guid)
 {
-	int ret;
+	int ret, princ_size;
 	krb5_context krb_ctx;
 	krb5_error_code kerr;
 	krb5_principal principal;
@@ -552,7 +555,9 @@ static int acl_validate_spn_value(TALLOC_CTX *mem_ctx,
 		return LDB_ERR_CONSTRAINT_VIOLATION;
 	}
 
-	if (krb5_princ_size(krb_ctx, principal) < 2) {
+	princ_size = krb5_princ_size(krb_ctx, principal);
+	if (princ_size < 2) {
+		DBG_WARNING("princ_size=%d\n", princ_size);
 		goto fail;
 	}
 
@@ -569,21 +574,29 @@ static int acl_validate_spn_value(TALLOC_CTX *mem_ctx,
 
 	if (serviceName) {
 		if (!is_dc) {
+			DBG_WARNING("is_dc=false, serviceName=%s,"
+				    "serviceType=%s\n", serviceName,
+				  serviceType);
 			goto fail;
 		}
 		if (strcasecmp(serviceType, "ldap") == 0) {
 			if (strcasecmp(serviceName, netbios_name) != 0 &&
 			    strcasecmp(serviceName, forest_name) != 0) {
+				DBG_WARNING("serviceName=%s\n", serviceName);
 				goto fail;
 			}
 
 		} else if (strcasecmp(serviceType, "gc") == 0) {
 			if (strcasecmp(serviceName, forest_name) != 0) {
+				DBG_WARNING("serviceName=%s\n", serviceName);
 				goto fail;
 			}
 		} else {
 			if (strcasecmp(serviceName, base_domain) != 0 &&
 			    strcasecmp(serviceName, netbios_name) != 0) {
+				DBG_WARNING("serviceType=%s, "
+					    "serviceName=%s\n",
+					    serviceType, serviceName);
 				goto fail;
 			}
 		}
@@ -591,11 +604,15 @@ static int acl_validate_spn_value(TALLOC_CTX *mem_ctx,
 	/* instanceName can be samAccountName without $ or dnsHostName
 	 * or "ntds_guid._msdcs.forest_domain for DC objects */
 	if (strlen(instanceName) == (strlen(samAccountName) - 1)
-	    && strncasecmp(instanceName, samAccountName, strlen(samAccountName) - 1) == 0) {
+	    && strncasecmp(instanceName, samAccountName,
+			   strlen(samAccountName) - 1) == 0) {
 		goto success;
-	} else if (dnsHostName != NULL && strcasecmp(instanceName, dnsHostName) == 0) {
+	}
+	if ((dnsHostName != NULL) &&
+	    (strcasecmp(instanceName, dnsHostName) == 0)) {
 		goto success;
-	} else if (is_dc) {
+	}
+	if (is_dc) {
 		const char *guid_str;
 		guid_str = talloc_asprintf(mem_ctx,"%s._msdcs.%s",
 					   ntds_guid,
@@ -608,6 +625,14 @@ static int acl_validate_spn_value(TALLOC_CTX *mem_ctx,
 fail:
 	krb5_free_principal(krb_ctx, principal);
 	krb5_free_context(krb_ctx);
+	ldb_debug_set(ldb, LDB_DEBUG_WARNING,
+		      "acl: spn validation failed for "
+		      "spn[%s] uac[0x%x] account[%s] hostname[%s] "
+		      "nbname[%s] ntds[%s] forest[%s] domain[%s]\n",
+		      spn_value, (unsigned)userAccountControl,
+		      samAccountName, dnsHostName,
+		      netbios_name, ntds_guid,
+		      forest_name, base_domain);
 	return LDB_ERR_CONSTRAINT_VIOLATION;
 
 success:
@@ -1626,7 +1651,6 @@ static int acl_search_update_confidential_attrs(struct acl_context *ac,
 	}
 
 	if ((ac->schema == data->cached_schema_ptr) &&
-	    (ac->schema->loaded_usn == data->cached_schema_loaded_usn) &&
 	    (ac->schema->metadata_usn == data->cached_schema_metadata_usn))
 	{
 		return LDB_SUCCESS;
@@ -1662,7 +1686,6 @@ static int acl_search_update_confidential_attrs(struct acl_context *ac,
 	}
 
 	data->cached_schema_ptr = ac->schema;
-	data->cached_schema_loaded_usn = ac->schema->loaded_usn;
 	data->cached_schema_metadata_usn = ac->schema->metadata_usn;
 
 	return LDB_SUCCESS;
@@ -1851,8 +1874,9 @@ static int acl_search(struct ldb_module *module, struct ldb_request *req)
 		return ldb_next_request(module, req);
 	}
 
-	if (!ac->am_system) {
-		ac->userPassword = dsdb_user_password_support(module, ac, req);
+	data = talloc_get_type(ldb_module_get_private(ac->module), struct acl_private);
+	if (data != NULL) {
+		ac->userPassword = data->userPassword_support;
 	}
 
 	ret = acl_search_update_confidential_attrs(ac, data);

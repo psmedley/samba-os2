@@ -33,6 +33,7 @@
 
 #include "includes.h"
 #include "printing/pcap.h"
+#include "lib/util_file.h"
 
 #if defined(SYSV) || defined(HPUX)
 bool sysv_cache_reload(struct pcap_cache **_pcache)
@@ -47,8 +48,8 @@ bool sysv_cache_reload(struct pcap_cache **_pcache)
 	DEBUG(5, ("reloading sysv printcap cache\n"));
 #endif
 
-	if ((lines = file_lines_pload("/usr/bin/lpstat -v", NULL)) == NULL)
-	{
+	lines = file_lines_pload(talloc_tos(), "/usr/bin/lpstat -v", NULL);
+	if (lines == NULL) {
 #if defined(HPUX)
       
        	       /*

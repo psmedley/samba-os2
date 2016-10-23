@@ -18,23 +18,24 @@
 # bond1 10.3.3.0/24 10.0.0.1
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
+. "${CTDB_BASE}/functions"
+
 loadconfig
 
-[ -f $CTDB_BASE/static-routes ] || {
+[ -f "${CTDB_BASE}/static-routes" ] || {
     exit 0
 }
 
 case "$1" in
-    ipreallocated)
+ipreallocated)
         while read iface dest gw; do
             ip route add "$dest" via "$gw" dev "$iface" >/dev/null 2>&1
         done <"${CTDB_BASE}/static-routes"
         ;;
 
-    updateip)
+updateip)
 	oiface=$2
 	niface=$3
 	while read iface dest gw; do
@@ -42,10 +43,6 @@ case "$1" in
 		ip route add "$dest" via "$gw" dev "$iface" >/dev/null 2>&1
 	    fi
 	done <"${CTDB_BASE}/static-routes"
-	;;
-
-    *)
-	ctdb_standard_event_handler "$@"
 	;;
 esac
 

@@ -22,7 +22,8 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
+#include "lib/util/base64.h"
 
 static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -38,7 +39,7 @@ _PUBLIC_ DATA_BLOB base64_decode_data_blob_talloc(TALLOC_CTX *mem_ctx, const cha
 
 	n=i=0;
 
-	while (*s && (p=strchr_m(b64,*s))) {
+	while (*s && (p=strchr(b64,*s))) {
 		idx = (int)(p - b64);
 		byte_offset = (i*6)/8;
 		bit_offset = (i*6)%8;
@@ -48,8 +49,7 @@ _PUBLIC_ DATA_BLOB base64_decode_data_blob_talloc(TALLOC_CTX *mem_ctx, const cha
 			n = byte_offset+1;
 		} else {
 			d[byte_offset] |= (idx >> (bit_offset-2));
-			d[byte_offset+1] = 0;
-			d[byte_offset+1] |= (idx << (8-(bit_offset-2))) & 0xFF;
+			d[byte_offset+1] = (idx << (8-(bit_offset-2))) & 0xFF;
 			n = byte_offset+2;
 		}
 		s++; i++;
@@ -115,7 +115,9 @@ _PUBLIC_ char *base64_encode_data_blob(TALLOC_CTX *mem_ctx, DATA_BLOB data)
 					   * random but should be enough for
 					   * the = and \0 */
 	result = talloc_array(mem_ctx, char, output_len); /* get us plenty of space */
-	SMB_ASSERT(result != NULL);
+	if (result == NULL) {
+		return NULL;
+	}
 
 	while (len--) {
 		int c = (unsigned char) *(data.data++);

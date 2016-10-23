@@ -172,8 +172,8 @@ void cli_nt_pipes_close(struct cli_state *cli);
 void cli_shutdown(struct cli_state *cli);
 const char *cli_state_remote_realm(struct cli_state *cli);
 uint16_t cli_state_get_vc_num(struct cli_state *cli);
-uint16_t cli_setpid(struct cli_state *cli, uint16_t pid);
-uint16_t cli_getpid(struct cli_state *cli);
+uint32_t cli_setpid(struct cli_state *cli, uint32_t pid);
+uint32_t cli_getpid(struct cli_state *cli);
 bool cli_state_has_tcon(struct cli_state *cli);
 uint16_t cli_state_get_tid(struct cli_state *cli);
 uint16_t cli_state_set_tid(struct cli_state *cli, uint16_t tid);
@@ -682,6 +682,27 @@ NTSTATUS cli_force_encryption(struct cli_state *c,
 			const char *username,
 			const char *password,
 			const char *domain);
+struct tevent_req *cli_posix_whoami_send(TALLOC_CTX *mem_ctx,
+			struct tevent_context *ev,
+			struct cli_state *cli);
+NTSTATUS cli_posix_whoami_recv(struct tevent_req *req,
+			TALLOC_CTX *mem_ctx,
+			uint64_t *puid,
+			uint64_t *pgid,
+			uint32_t *pnum_gids,
+			uint64_t **pgids,
+			uint32_t *pnum_sids,
+			struct dom_sid **psids,
+			bool *pguest);
+NTSTATUS cli_posix_whoami(struct cli_state *cli,
+			TALLOC_CTX *mem_ctx,
+			uint64_t *puid,
+			uint64_t *pgid,
+			uint32_t *num_gids,
+			uint64_t **gids,
+			uint32_t *num_sids,
+			struct dom_sid **sids,
+			bool *pguest);
 
 /* The following definitions come from libsmb/clilist.c  */
 
@@ -847,12 +868,16 @@ size_t clistr_pull_talloc(TALLOC_CTX *ctx,
 			  const void *src,
 			  int src_len,
 			  int flags);
+bool clistr_is_previous_version_path(const char *path,
+			const char **startp,
+			const char **endp,
+			time_t *ptime);
 
 /* The following definitions come from libsmb/clitrans.c  */
 
 struct tevent_req *cli_trans_send(
 	TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-	struct cli_state *cli, uint8_t cmd,
+	struct cli_state *cli, uint16_t additional_flags2, uint8_t cmd,
 	const char *pipe_name, uint16_t fid, uint16_t function, int flags,
 	uint16_t *setup, uint8_t num_setup, uint8_t max_setup,
 	uint8_t *param, uint32_t num_param, uint32_t max_param,

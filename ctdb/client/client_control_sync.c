@@ -760,35 +760,6 @@ int ctdb_ctrl_freeze(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	return 0;
 }
 
-int ctdb_ctrl_thaw(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-		   struct ctdb_client_context *client,
-		   int destnode, struct timeval timeout,
-		   int priority)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_thaw(&request, priority);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control THAW failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_thaw(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control THAW failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
 int ctdb_ctrl_get_pnn(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		      struct ctdb_client_context *client,
 		      int destnode, struct timeval timeout,
@@ -1084,35 +1055,6 @@ int ctdb_ctrl_get_all_tunables(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	return 0;
 }
 
-int ctdb_ctrl_kill_tcp(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-		       struct ctdb_client_context *client,
-		       int destnode, struct timeval timeout,
-		       struct ctdb_connection *conn)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_kill_tcp(&request, conn);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control KILL_TCP failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_kill_tcp(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control KILL_TCP failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
 int ctdb_ctrl_get_tcp_tickle_list(TALLOC_CTX *mem_ctx,
 				  struct tevent_context *ev,
 				  struct ctdb_client_context *client,
@@ -1174,125 +1116,6 @@ int ctdb_ctrl_set_tcp_tickle_list(TALLOC_CTX *mem_ctx,
 	return 0;
 }
 
-int ctdb_ctrl_register_server_id(TALLOC_CTX *mem_ctx,
-				 struct tevent_context *ev,
-				 struct ctdb_client_context *client,
-				 int destnode, struct timeval timeout,
-				 struct ctdb_client_id *cid)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_register_server_id(&request, cid);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control REGISTER_SERVER_ID failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_register_server_id(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control REGISTER_SERVER_ID failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_unregister_server_id(TALLOC_CTX *mem_ctx,
-				   struct tevent_context *ev,
-				   struct ctdb_client_context *client,
-				   int destnode, struct timeval timeout,
-				   struct ctdb_client_id *cid)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_unregister_server_id(&request, cid);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control UNREGISTER_SERVER_ID failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_unregister_server_id(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control UNREGISTER_SERVER_ID failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_check_server_id(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			      struct ctdb_client_context *client,
-			      int destnode, struct timeval timeout,
-			      struct ctdb_client_id *cid)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_check_server_id(&request, cid);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control CHECK_SERVER_ID failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_check_server_id(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control CHECK_SERVER_ID failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_get_server_id_list(TALLOC_CTX *mem_ctx,
-				 struct tevent_context *ev,
-				 struct ctdb_client_context *client,
-				 int destnode, struct timeval timeout,
-				 struct ctdb_client_id_map **cid_map)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_get_server_id_list(&request);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control GET_SERVER_ID_LIST failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_get_server_id_list(reply, mem_ctx, cid_map);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control GET_SERVER_ID_LIST failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
 int ctdb_ctrl_db_attach_persistent(TALLOC_CTX *mem_ctx,
 				   struct tevent_context *ev,
 				   struct ctdb_client_context *client,
@@ -1348,66 +1171,6 @@ int ctdb_ctrl_send_gratuitous_arp(TALLOC_CTX *mem_ctx,
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
 		      ("Control SEND_GRATUITOUS_ARP failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_transaction_start(TALLOC_CTX *mem_ctx,
-				struct tevent_context *ev,
-				struct ctdb_client_context *client,
-				int destnode, struct timeval timeout,
-				uint32_t tid)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_transaction_start(&request, tid);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control TRANSACTION_START failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_transaction_start(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control TRANSACTION_START failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_transaction_commit(TALLOC_CTX *mem_ctx,
-				 struct tevent_context *ev,
-				 struct ctdb_client_context *client,
-				 int destnode, struct timeval timeout,
-				 uint32_t tid)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_transaction_commit(&request, tid);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control TRANSACTION_COMMIT failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_transaction_commit(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control TRANSACTION_COMMIT failed, ret=%d\n", ret));
 		return ret;
 	}
 
@@ -1937,35 +1700,6 @@ int ctdb_ctrl_get_reclock_file(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	return 0;
 }
 
-int ctdb_ctrl_set_reclock_file(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			       struct ctdb_client_context *client,
-			       int destnode, struct timeval timeout,
-			       const char *reclock_file)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_set_reclock_file(&request, reclock_file);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control SET_RECLOCK_FILE failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_set_reclock_file(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control SET_RECLOCK_FILE failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
 int ctdb_ctrl_stop_node(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			struct ctdb_client_context *client,
 			int destnode, struct timeval timeout)
@@ -2016,35 +1750,6 @@ int ctdb_ctrl_continue_node(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
 		      ("Control CONTINUE_NODE failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_set_natgwstate(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			     struct ctdb_client_context *client,
-			     int destnode, struct timeval timeout,
-			     uint32_t natgw_role)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_set_natgwstate(&request, natgw_role);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control SET_NATGWSTATE failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_set_natgwstate(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control SET_NATGWSTATE failed, ret=%d\n", ret));
 		return ret;
 	}
 
@@ -2219,97 +1924,6 @@ int ctdb_ctrl_get_ban_state(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
 		      ("Control GET_BAN_STATE failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_set_db_priority(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			      struct ctdb_client_context *client,
-			      int destnode, struct timeval timeout,
-			      uint32_t db_id, int priority)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	struct ctdb_db_priority db_prio;
-	int ret;
-
-	db_prio.db_id = db_id;
-	db_prio.priority = priority;
-
-	ctdb_req_control_set_db_priority(&request, &db_prio);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control SET_DB_PRIORITY failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_set_db_priority(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control SET_DB_PRIORITY failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_get_db_priority(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			      struct ctdb_client_context *client,
-			      int destnode, struct timeval timeout,
-			      uint32_t db_id, uint32_t *priority)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_get_db_priority(&request, db_id);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control GET_DB_PRIORITY failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_get_db_priority(reply, priority);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control GET_DB_PRIORITY failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_transaction_cancel(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-				 struct ctdb_client_context *client,
-				 int destnode, struct timeval timeout,
-				 uint32_t tid)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_transaction_cancel(&request, tid);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control TRANSACTION_CANCEL failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_transaction_cancel(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control TRANSACTION_CANCEL failed, ret=%d\n", ret));
 		return ret;
 	}
 

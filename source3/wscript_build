@@ -96,6 +96,7 @@ bld.SAMBA3_SUBSYSTEM('GROUPDB',
 bld.SAMBA3_SUBSYSTEM('TLDAP',
                     source='''lib/tldap.c
                     lib/tldap_util.c
+                    lib/tldap_gensec_bind.c
                     ''',
                     deps='asn1util LIBTSOCKET samba3util')
 
@@ -261,6 +262,7 @@ bld.SAMBA3_SUBSYSTEM('samba3util',
                    lib/util_sock.c
                    lib/util_tsock.c
                    lib/util_transfer_file.c
+                   lib/sys_popen.c
                    lib/sock_exec.c''',
                    deps='ndr LIBTSOCKET samba-security NDR_SECURITY samba-util util_tdb sys_rw iov_buf')
 
@@ -315,6 +317,7 @@ bld.SAMBA3_SUBSYSTEM('samba3core',
                    lib/id_cache.c
                    lib/talloc_dict.c
                    lib/serverid.c
+                   lib/server_id_watch.c
                    lib/server_id_db_util.c
                    lib/addrchange.c
                    ../lib/util/debug_s3.c
@@ -342,7 +345,8 @@ bld.SAMBA3_SUBSYSTEM('samba3core',
                    lib/tevent_wait.c
                    lib/idmap_cache.c
                    lib/util_ea.c
-                   lib/background.c''',
+                   lib/background.c
+                   lib/cleanupdb.c''',
                    deps='''
                         samba3util
                         LIBTSOCKET
@@ -781,11 +785,6 @@ bld.SAMBA3_SUBSYSTEM('tdb-wrap3',
                     source='lib/util_tdb.c',
                     deps='talloc samba3-util')
 
-bld.SAMBA3_LIBRARY('msghdr',
-                   source='lib/msghdr.c',
-                   deps='replace iov_buf',
-                   private_library=True)
-
 bld.SAMBA3_LIBRARY('samba3-util',
                    source='''lib/util_sec.c lib/util_str.c lib/adt_tree.c lib/util_malloc.c lib/namearray.c lib/file_id.c''',
                    deps='samba-util charset',
@@ -919,9 +918,8 @@ bld.SAMBA3_BINARY('winbindd/winbindd',
                  winbindd/wb_lookupsid.c
                  winbindd/wb_lookupsids.c
                  winbindd/wb_lookupname.c
-                 winbindd/wb_uid2sid.c
-                 winbindd/wb_gid2sid.c
                  winbindd/wb_sids2xids.c
+                 winbindd/wb_xids2sids.c
                  winbindd/wb_queryuser.c
                  winbindd/wb_lookupuseraliases.c
                  winbindd/wb_lookupusergroups.c
@@ -940,11 +938,8 @@ bld.SAMBA3_BINARY('winbindd/winbindd',
                  winbindd/winbindd_lookupsid.c
                  winbindd/winbindd_lookupsids.c
                  winbindd/winbindd_lookupname.c
-                 winbindd/winbindd_sid_to_uid.c
-                 winbindd/winbindd_sid_to_gid.c
-                 winbindd/winbindd_uid_to_sid.c
-                 winbindd/winbindd_gid_to_sid.c
                  winbindd/winbindd_sids_to_xids.c
+                 winbindd/winbindd_xids_to_sids.c
                  winbindd/winbindd_allocate_uid.c
                  winbindd/winbindd_allocate_gid.c
                  winbindd/winbindd_getpwsid.c
@@ -1293,7 +1288,6 @@ bld.SAMBA3_BINARY('smbtorture' + bld.env.suffix3,
                  torture/test_messaging_read.c
                  torture/test_messaging_fd_passing.c
                  torture/test_oplock_cancel.c
-                 torture/t_strappend.c
                  torture/bench_pthreadpool.c
                  torture/wbc_async.c''',
                  deps='''
@@ -1490,7 +1484,7 @@ bld.SAMBA3_PYTHON('pysmbd',
 
 bld.SAMBA3_PYTHON('pylibsmb',
                   source='libsmb/pylibsmb.c',
-                  deps='smbclient samba-credentials pytalloc-util',
+                  deps='smbclient samba-credentials pycredentials',
                   realname='samba/samba3/libsmb_samba_internal.so'
                   )
 
@@ -1518,7 +1512,6 @@ bld.RECURSE('auth')
 bld.RECURSE('libgpo/gpext')
 bld.RECURSE('lib/pthreadpool')
 bld.RECURSE('lib/asys')
-bld.RECURSE('lib/poll_funcs')
 bld.RECURSE('lib/unix_msg')
 bld.RECURSE('librpc')
 bld.RECURSE('librpc/idl')

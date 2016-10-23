@@ -303,22 +303,26 @@
       </varlistentry>
 
       <varlistentry>
-	<term>CTDB_LVS_PUBLIC_IP=<parameter>IPADDR</parameter></term>
-	<listitem>
-	  <para>
-	    No default.  Corresponds to "<option>--lvs</option>
-	    <option>--single-public-ip IPADDR"</option>.
-	  </para>
-	</listitem>
-      </varlistentry>
-
-      <varlistentry>
 	<term>CTDB_NODES=<parameter>FILENAME</parameter></term>
 	<listitem>
 	  <para>
 	    Default is <varname>CTDB_BASE</varname>/nodes, so usually
 	    <filename>/usr/local/etc/ctdb/nodes</filename>.  Corresponds to
 	    <option>--nlist</option>.
+	  </para>
+	</listitem>
+      </varlistentry>
+
+      <varlistentry>
+	<term>CTDB_NOSETSCHED=yes|no</term>
+	<listitem>
+	  <para>
+	    Defaults to no.  Corresponds to <option>--nosetsched</option>.
+	  </para>
+	  <para>
+	    Usually CTDB runs with real-time priority.	If you are running
+	    CTDB on a platform that does not support real-time priority,
+	    you can set this.
 	  </para>
 	</listitem>
       </varlistentry>
@@ -389,10 +393,14 @@
       </varlistentry>
 
       <varlistentry>
-	<term>CTDB_RECOVERY_LOCK=<parameter>FILENAME</parameter></term>
+	<term>CTDB_RECOVERY_LOCK=<parameter>LOCK</parameter></term>
 	<listitem>
 	  <para>
-	    Defaults to
+	    LOCK specifies the cluster-wide mutex used to detect and
+	    prevent a partitioned cluster (or "split brain").
+	  </para>
+	  <para>
+	    No default, but the default configuration file specifies
 	    <filename>/some/place/on/shared/storage</filename>, which
 	    should be change to a useful value.  Corresponds to
 	    <option>--reclock</option>.
@@ -818,6 +826,81 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
     </refsect2>
 
     <refsect2>
+      <title>LVS</title>
+
+      <para>
+	For a general description see the <citetitle>LVS</citetitle>
+	section in <citerefentry><refentrytitle>ctdb</refentrytitle>
+	<manvolnum>7</manvolnum></citerefentry>.
+      </para>
+
+      <refsect3>
+	<title>Eventscript</title>
+
+	<simplelist>
+	  <member><filename>91.lvs</filename></member>
+	</simplelist>
+      </refsect3>
+
+      <variablelist>
+
+	<varlistentry>
+	  <term>CTDB_LVS_NODES=<parameter>FILENAME</parameter></term>
+	  <listitem>
+	    <para>
+	      FILENAME contains the list of nodes that belong to the
+	      same LVS group.
+	    </para>
+	    <para>
+	      File format:
+	      <screen>
+<parameter>IPADDR</parameter> <optional>slave-only</optional>
+	      </screen>
+	    </para>
+	    <para>
+	      IPADDR is the private IP address of each node in the LVS
+	      group.
+	    </para>
+	    <para>
+	      If "slave-only" is specified then the corresponding node
+	      can not be the LVS master node.  In this case
+	      <varname>CTDB_LVS_PUBLIC_IFACE</varname> and
+	      <varname>CTDB_LVS_PUBLIC_IP</varname> are optional and
+	      unused.
+	    </para>
+	    <para>
+	      No default, usually
+	      <filename>/usr/local/etc/ctdb/lvs_nodes</filename> when enabled.
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+	<varlistentry>
+	  <term>CTDB_LVS_PUBLIC_IFACE=<parameter>INTERFACE</parameter></term>
+	  <listitem>
+	    <para>
+	      INTERFACE is the network interface that clients will use
+	      to connection to <varname>CTDB_LVS_PUBLIC_IP</varname>.
+	      This is optional for slave-only nodes.
+	      No default.
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+	<varlistentry>
+	  <term>CTDB_LVS_PUBLIC_IP=<parameter>IPADDR</parameter></term>
+	  <listitem>
+	    <para>
+	      CTDB_LVS_PUBLIC_IP is the LVS public address.  No
+	      default.
+	  </para>
+	  </listitem>
+	</varlistentry>
+
+      </variablelist>
+    </refsect2>
+
+    <refsect2>
       <title>MISCELLANEOUS NETWORK CONFIGURATION</title>
 
       <variablelist>
@@ -993,19 +1076,6 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
       <variablelist>
 
 	<varlistentry>
-	  <term>CTDB_CLUSTER_FILESYSTEM_TYPE=gpfs</term>
-	  <listitem>
-	    <para>
-	      The type of cluster filesystem to use with NFS-ganesha.
-	      Currently only "gpfs" is supported.
-	    </para>
-	    <para>
-	      Default is "gpfs".
-	    </para>
-	  </listitem>
-	</varlistentry>
-
-	<varlistentry>
 	  <term>CTDB_MANAGES_NFS=yes|no</term>
 	  <listitem>
 	    <para>
@@ -1075,6 +1145,26 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 	    </para>
 	    <para>
 	      Default is "::1".
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+	<varlistentry>
+	  <term>CTDB_NFS_STATE_FS_TYPE=<parameter>TYPE</parameter></term>
+	  <listitem>
+	    <para>
+	      The type of filesystem used for a clustered NFS' shared
+	      state. No default.
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+	<varlistentry>
+	  <term>CTDB_NFS_STATE_MNT=<parameter>DIR</parameter></term>
+	  <listitem>
+	    <para>
+	      The directory where a clustered NFS' shared state will be
+	      located. No default.
 	    </para>
 	  </listitem>
 	</varlistentry>

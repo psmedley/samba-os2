@@ -28,6 +28,7 @@
 #include "libnet/libnet_samsync.h"
 #include "../libcli/security/security.h"
 #include "passdb.h"
+#include "lib/util/base64.h"
 
 /* Convert a struct samu_DELTA to a struct samu. */
 #define STRING_CHANGED (old_string && !new_string) ||\
@@ -126,12 +127,15 @@ static NTSTATUS sam_account_from_delta(struct samu *account,
 
 	if (r->parameters.array) {
 		DATA_BLOB mung;
-		char *newstr;
+		char *newstr = NULL;
 		old_string = pdb_get_munged_dial(account);
 		mung.length = r->parameters.length * 2;
 		mung.data = (uint8_t *) r->parameters.array;
-		newstr = (mung.length == 0) ? NULL :
-			base64_encode_data_blob(talloc_tos(), mung);
+
+		if (mung.length != 0) {
+			newstr = base64_encode_data_blob(talloc_tos(), mung);
+			SMB_ASSERT(newstr != NULL);
+		}
 
 		if (STRING_CHANGED_NC(old_string, newstr))
 			pdb_set_munged_dial(account, newstr, PDB_CHANGED);

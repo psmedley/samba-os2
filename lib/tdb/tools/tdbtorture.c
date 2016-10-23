@@ -223,8 +223,12 @@ static void usage(void)
 
 static void send_count_and_suicide(int sig)
 {
+	ssize_t ret;
+
 	/* This ensures our successor can continue where we left off. */
-	write(count_pipe, &loopnum, sizeof(loopnum));
+	do {
+		ret = write(count_pipe, &loopnum, sizeof(loopnum));
+	} while (ret == -1 && errno == EINTR);
 	/* This gives a unique signature. */
 	kill(getpid(), SIGUSR2);
 }
@@ -427,8 +431,12 @@ int main(int argc, char * const *argv)
 			    || WTERMSIG(status) == SIGUSR1) {
 				/* SIGUSR2 means they wrote to pipe. */
 				if (WTERMSIG(status) == SIGUSR2) {
-					read(pfds[0], &done[j],
-					     sizeof(done[j]));
+					ssize_t ret;
+
+					do {
+						ret = read(pfds[0], &done[j],
+							   sizeof(done[j]));
+					} while (ret == -1 && errno == EINTR);
 				}
 				pids[j] = fork();
 				if (pids[j] == 0)

@@ -116,60 +116,66 @@ static void audit_disconnect(vfs_handle_struct *handle)
 	return;
 }
 
-static DIR *audit_opendir(vfs_handle_struct *handle, const char *fname, const char *mask, uint32_t attr)
+static DIR *audit_opendir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			const char *mask,
+			uint32_t attr)
 {
 	DIR *result;
 
-	result = SMB_VFS_NEXT_OPENDIR(handle, fname, mask, attr);
+	result = SMB_VFS_NEXT_OPENDIR(handle, smb_fname, mask, attr);
 
 	if (lp_syslog() > 0) {
 		syslog(audit_syslog_priority(handle), "opendir %s %s%s\n",
-		       fname,
+		       smb_fname->base_name,
 		       (result == NULL) ? "failed: " : "",
 		       (result == NULL) ? strerror(errno) : "");
 	}
 	DEBUG(1, ("vfs_extd_audit: opendir %s %s %s\n",
-	       fname,
+	       smb_fname->base_name,
 	       (result == NULL) ? "failed: " : "",
 	       (result == NULL) ? strerror(errno) : ""));
 
 	return result;
 }
 
-static int audit_mkdir(vfs_handle_struct *handle, const char *path, mode_t mode)
+static int audit_mkdir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	int result;
 
-	result = SMB_VFS_NEXT_MKDIR(handle, path, mode);
+	result = SMB_VFS_NEXT_MKDIR(handle, smb_fname, mode);
 
 	if (lp_syslog() > 0) {
 		syslog(audit_syslog_priority(handle), "mkdir %s %s%s\n",
-		       path,
+		       smb_fname->base_name,
 		       (result < 0) ? "failed: " : "",
 		       (result < 0) ? strerror(errno) : "");
 	}
 	DEBUG(0, ("vfs_extd_audit: mkdir %s %s %s\n",
-	       path,
+	       smb_fname->base_name,
 	       (result < 0) ? "failed: " : "",
 	       (result < 0) ? strerror(errno) : ""));
 
 	return result;
 }
 
-static int audit_rmdir(vfs_handle_struct *handle, const char *path)
+static int audit_rmdir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
 	int result;
 
-	result = SMB_VFS_NEXT_RMDIR(handle, path);
+	result = SMB_VFS_NEXT_RMDIR(handle, smb_fname);
 
 	if (lp_syslog() > 0) {
 		syslog(audit_syslog_priority(handle), "rmdir %s %s%s\n",
-		       path,
+		       smb_fname->base_name,
 		       (result < 0) ? "failed: " : "",
 		       (result < 0) ? strerror(errno) : "");
 	}
 	DEBUG(0, ("vfs_extd_audit: rmdir %s %s %s\n",
-               path,
+               smb_fname->base_name,
 	       (result < 0) ? "failed: " : "",
 	       (result < 0) ? strerror(errno) : ""));
 
@@ -264,40 +270,44 @@ static int audit_unlink(vfs_handle_struct *handle,
 	return result;
 }
 
-static int audit_chmod(vfs_handle_struct *handle, const char *path, mode_t mode)
+static int audit_chmod(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	int result;
 
-	result = SMB_VFS_NEXT_CHMOD(handle, path, mode);
+	result = SMB_VFS_NEXT_CHMOD(handle, smb_fname, mode);
 
 	if (lp_syslog() > 0) {
 		syslog(audit_syslog_priority(handle), "chmod %s mode 0x%x %s%s\n",
-		       path, mode,
+		       smb_fname->base_name, mode,
 		       (result < 0) ? "failed: " : "",
 		       (result < 0) ? strerror(errno) : "");
 	}
 	DEBUG(1, ("vfs_extd_audit: chmod %s mode 0x%x %s %s\n",
-	       path, (unsigned int)mode,
+	       smb_fname->base_name, (unsigned int)mode,
 	       (result < 0) ? "failed: " : "",
 	       (result < 0) ? strerror(errno) : ""));
 
 	return result;
 }
 
-static int audit_chmod_acl(vfs_handle_struct *handle, const char *path, mode_t mode)
+static int audit_chmod_acl(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	int result;
 
-	result = SMB_VFS_NEXT_CHMOD_ACL(handle, path, mode);
+	result = SMB_VFS_NEXT_CHMOD_ACL(handle, smb_fname, mode);
 
 	if (lp_syslog() > 0) {
 		syslog(audit_syslog_priority(handle), "chmod_acl %s mode 0x%x %s%s\n",
-		       path, mode,
+		       smb_fname->base_name, mode,
 		       (result < 0) ? "failed: " : "",
 		       (result < 0) ? strerror(errno) : "");
 	}
 	DEBUG(1, ("vfs_extd_audit: chmod_acl %s mode 0x%x %s %s\n",
-	        path, (unsigned int)mode,
+	       smb_fname->base_name, (unsigned int)mode,
 	       (result < 0) ? "failed: " : "",
 	       (result < 0) ? strerror(errno) : ""));
 

@@ -486,7 +486,12 @@ class KCC(object):
 
         mydsa = self.my_dsa
 
-        self._ensure_connections_are_loaded(mydsa.connect_table.values())
+        try:
+            self._ensure_connections_are_loaded(mydsa.connect_table.values())
+        except KCCError:
+            # RODC never actually added any connections to begin with
+            if mydsa.is_ro():
+                return
 
         local_connections = []
 
@@ -518,14 +523,28 @@ class KCC(object):
 
         :return: None
         """
+        # TODO Figure out how best to handle the RODC case
+        # The RODC is ITSG, but shouldn't act on anyone's behalf.
+        if self.my_dsa.is_ro():
+            return
+
         # Find the intersite connections
         local_dsas = self.my_site.dsa_table
         connections_and_dsas = []
         for dsa in local_dsas.values():
             for cn in dsa.connect_table.values():
+                if cn.to_be_deleted:
+                    continue
                 s_dnstr = cn.get_from_dnstr()
+                if s_dnstr is None:
+                    continue
                 if s_dnstr not in local_dsas:
                     from_dsa = self.get_dsa(s_dnstr)
+                    # Samba ONLY: ISTG removes connections to dead DCs
+                    if from_dsa is None and '\\0ADEL' in s_dnstr:
+                        logger.info("DSA appears deleted, removing connection %s" % s_dnstr)
+                        cn.to_be_deleted = True
+                        continue
                     connections_and_dsas.append((cn, dsa, from_dsa))
 
         self._ensure_connections_are_loaded(x[0] for x in connections_and_dsas)
@@ -617,6 +636,12 @@ class KCC(object):
         times = convert_schedule_to_repltimes(cn_conn.schedule)
         if times != t_repsFrom.schedule:
             t_repsFrom.schedule = times
+
+        # Bit DRS_ADD_REF is set in replicaFlags unconditionally
+        # Samba ONLY:
+        if ((t_repsFrom.replica_flags &
+             drsuapi.DRSUAPI_DRS_ADD_REF) == 0x0):
+            t_repsFrom.replica_flags |= drsuapi.DRSUAPI_DRS_ADD_REF
 
         # Bit DRS_PER_SYNC is set in replicaFlags if and only
         # if nTDSConnection schedule has a value v that specifies
@@ -840,8 +865,12 @@ class KCC(object):
         """
         count = 0
 
+        ro = False
         if current_dsa is None:
             current_dsa = self.my_dsa
+
+        if current_dsa.is_ro():
+            ro = True
 
         if current_dsa.is_translate_ntdsconn_disabled():
             DEBUG_FN("skipping translate_ntdsconn() "
@@ -871,17 +900,35 @@ class KCC(object):
         # If we have the replica and its not needed
         # then we add it to the "to be deleted" list.
         for dnstr in current_rep_table:
-            if dnstr not in needed_rep_table:
-                delete_reps.add(dnstr)
+            # If we're on the RODC, hardcode the update flags
+            if ro:
+                c_rep = current_rep_table[dnstr]
+                c_rep.load_repsFrom(self.samdb)
+                for t_repsFrom in c_rep.rep_repsFrom:
+                    replica_flags = (drsuapi.DRSUAPI_DRS_INIT_SYNC |
+                                     drsuapi.DRSUAPI_DRS_PER_SYNC |
+                                     drsuapi.DRSUAPI_DRS_ADD_REF |
+                                     drsuapi.DRSUAPI_DRS_SPECIAL_SECRET_PROCESSING |
+                                     drsuapi.DRSUAPI_DRS_GET_ALL_GROUP_MEMBERSHIP |
+                                     drsuapi.DRSUAPI_DRS_NONGC_RO_REP)
+                    if t_repsFrom.replica_flags != replica_flags:
+                        t_repsFrom.replica_flags = replica_flags
+                c_rep.commit_repsFrom(self.samdb)
+            else:
+                if dnstr not in needed_rep_table:
+                    delete_reps.add(dnstr)
 
         DEBUG_FN('current %d needed %d delete %d' % (len(current_rep_table),
                  len(needed_rep_table), len(delete_reps)))
 
         if delete_reps:
+            # TODO Must delete repsFrom/repsTo for these replicas
             DEBUG('deleting these reps: %s' % delete_reps)
             for dnstr in delete_reps:
                 del current_rep_table[dnstr]
 
+        # HANDLE REPS-FROM
+        #
         # Now perform the scan of replicas we'll need
         # and compare any current repsFrom against the
         # connections
@@ -892,7 +939,7 @@ class KCC(object):
             n_rep.load_repsFrom(self.samdb)
             n_rep.load_fsmo_roles(self.samdb)
 
-            # Loop thru the existing repsFrom tupples (if any)
+            # Loop thru the existing repsFrom tuples (if any)
             # XXX This is a list and could contain duplicates
             #     (multiple load_repsFrom calls)
             for t_repsFrom in n_rep.rep_repsFrom:
@@ -951,7 +998,7 @@ class KCC(object):
                 if s_dsa is None:
                     continue
 
-                # Loop thru the existing repsFrom tupples (if any) and
+                # Loop thru the existing repsFrom tuples (if any) and
                 # if we already have a tuple for this connection then
                 # no need to proceed to add.  It will have been changed
                 # to have the correct attributes above
@@ -978,7 +1025,7 @@ class KCC(object):
                 if t_repsFrom.is_modified():
                     n_rep.rep_repsFrom.append(t_repsFrom)
 
-            if self.readonly:
+            if self.readonly or ro:
                 # Display any to be deleted or modified repsFrom
                 text = n_rep.dumpstr_to_be_deleted()
                 if text:
@@ -993,6 +1040,74 @@ class KCC(object):
             else:
                 # Commit any modified repsFrom to the NC replica
                 n_rep.commit_repsFrom(self.samdb)
+
+        # HANDLE REPS-TO:
+        #
+        # Now perform the scan of replicas we'll need
+        # and compare any current repsTo against the
+        # connections
+
+        # RODC should never push to anybody (should we check this?)
+        if ro:
+            return
+
+        for n_rep in needed_rep_table.values():
+
+            # load any repsTo and fsmo roles as we'll
+            # need them during connection translation
+            n_rep.load_repsTo(self.samdb)
+
+            # Loop thru the existing repsTo tuples (if any)
+            # XXX This is a list and could contain duplicates
+            #     (multiple load_repsTo calls)
+            for t_repsTo in n_rep.rep_repsTo:
+
+                # for each tuple t in n!repsTo, let s be the nTDSDSA
+                # object such that s!objectGUID = t.uuidDsa
+                guidstr = str(t_repsTo.source_dsa_obj_guid)
+                s_dsa = self.get_dsa_by_guidstr(guidstr)
+
+                # Source dsa is gone from config (strange)
+                # so cleanup stale repsTo for unlisted DSA
+                if s_dsa is None:
+                    logger.warning("repsTo source DSA guid (%s) not found" %
+                                   guidstr)
+                    t_repsTo.to_be_deleted = True
+                    continue
+
+                # Find the connection that this repsTo would use. If
+                # there isn't a good one (i.e. non-RODC_TOPOLOGY,
+                # meaning non-FRS), we delete the repsTo.
+                s_dnstr = s_dsa.dsa_dnstr
+                if '\\0ADEL' in s_dnstr:
+                    logger.warning("repsTo source DSA guid (%s) appears deleted" %
+                                   guidstr)
+                    t_repsTo.to_be_deleted = True
+                    continue
+
+                connections = s_dsa.get_connection_by_from_dnstr(self.my_dsa_dnstr)
+                if len(connections) > 0:
+                    # Then this repsTo is tentatively valid
+                    continue
+                else:
+                    # There is no plausible connection for this repsTo
+                    t_repsTo.to_be_deleted = True
+
+            if self.readonly:
+                # Display any to be deleted or modified repsTo
+                text = n_rep.dumpstr_reps_to()
+                if text:
+                    logger.info("REMOVING REPS-TO:\n%s" % text)
+
+                # Peform deletion from our tables but perform
+                # no database modification
+                n_rep.commit_repsTo(self.samdb, ro=True)
+            else:
+                # Commit any modified repsTo to the NC replica
+                n_rep.commit_repsTo(self.samdb)
+
+        # TODO Remove any duplicate repsTo values. This should never happen in
+        # any normal situations.
 
     def merge_failed_links(self, ping=None):
         """Merge of kCCFailedLinks and kCCFailedLinks from bridgeheads.
@@ -1770,7 +1885,9 @@ class KCC(object):
         DEBUG_FN("intersite(): exit all_connected=%d" % all_connected)
         return all_connected
 
-    def update_rodc_connection(self):
+    # This function currently does no actions. The reason being that we cannot
+    # perform modifies in this way on the RODC.
+    def update_rodc_connection(self, ro=True):
         """Updates the RODC NTFRS connection object.
 
         If the local DSA is not an RODC, this does nothing.
@@ -1804,7 +1921,7 @@ class KCC(object):
                 con.schedule = cn2.schedule
                 con.to_be_modified = True
 
-            self.my_dsa.commit_connections(self.samdb, ro=self.readonly)
+            self.my_dsa.commit_connections(self.samdb, ro=ro)
 
     def intrasite_max_node_edges(self, node_count):
         """Find the maximum number of edges directed to an intrasite node
@@ -2189,9 +2306,9 @@ class KCC(object):
 
                 while candidates and not tnode.has_sufficient_edges():
                     other = random.choice(candidates)
-                    DEBUG("trying to add candidate %s" % other.dsa_dstr)
+                    DEBUG("trying to add candidate %s" % other.dsa_dnstr)
                     if not tnode.add_edge_from(other):
-                        debug.DEBUG_RED("could not add %s" % other.dsa_dstr)
+                        debug.DEBUG_RED("could not add %s" % other.dsa_dnstr)
                     candidates.remove(other)
             else:
                 DEBUG_FN("not adding links to %s: nodes %s, links is %s/%s" %

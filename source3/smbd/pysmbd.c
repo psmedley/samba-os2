@@ -124,7 +124,9 @@ static NTSTATUS set_nt_acl_conn(const char *fname,
 	   so set our umask to 0 */
 	saved_umask = umask(0);
 
-	smb_fname = synthetic_smb_fname_split(fsp, fname, NULL);
+	smb_fname = synthetic_smb_fname_split(fsp,
+					fname,
+					lp_posix_pathnames());
 	if (smb_fname == NULL) {
 		TALLOC_FREE(frame);
 		umask(saved_umask);
@@ -195,8 +197,24 @@ static NTSTATUS get_nt_acl_conn(TALLOC_CTX *mem_ctx,
 				struct security_descriptor **sd)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
-	NTSTATUS status = SMB_VFS_GET_NT_ACL( conn, fname, security_info_wanted,
-				     mem_ctx, sd);
+	NTSTATUS status;
+	struct smb_filename *smb_fname = synthetic_smb_fname(talloc_tos(),
+					fname,
+					NULL,
+					NULL,
+					lp_posix_pathnames() ?
+						SMB_FILENAME_POSIX_PATH : 0);
+
+	if (smb_fname == NULL) {
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = SMB_VFS_GET_NT_ACL(conn,
+				smb_fname,
+				security_info_wanted,
+				mem_ctx,
+				sd);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(0,("get_nt_acl_conn: get_nt_acl returned %s.\n", nt_errstr(status)));
 	}
@@ -361,6 +379,7 @@ static PyObject *py_smbd_chown(PyObject *self, PyObject *args, PyObject *kwargs)
 	int uid, gid;
 	TALLOC_CTX *frame;
 	mode_t saved_umask;
+	struct smb_filename *smb_fname = NULL;
 
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "sii|z",
 					 discard_const_p(char *, kwnames),
@@ -378,7 +397,20 @@ static PyObject *py_smbd_chown(PyObject *self, PyObject *args, PyObject *kwargs)
 	   so set our umask to 0 */
 	saved_umask = umask(0);
 
-	ret = SMB_VFS_CHOWN( conn, fname, uid, gid);
+	smb_fname = synthetic_smb_fname(talloc_tos(),
+					fname,
+					NULL,
+					NULL,
+					lp_posix_pathnames() ?
+						SMB_FILENAME_POSIX_PATH : 0);
+	if (smb_fname == NULL) {
+		umask(saved_umask);
+		TALLOC_FREE(frame);
+		errno = ENOMEM;
+		return PyErr_SetFromErrno(PyExc_OSError);
+	}
+
+	ret = SMB_VFS_CHOWN(conn, smb_fname, uid, gid);
 	if (ret != 0) {
 		umask(saved_umask);
 		TALLOC_FREE(frame);
@@ -420,7 +452,9 @@ static PyObject *py_smbd_unlink(PyObject *self, PyObject *args, PyObject *kwargs
 		return NULL;
 	}
 
-	smb_fname = synthetic_smb_fname_split(frame, fname, NULL);
+	smb_fname = synthetic_smb_fname_split(frame,
+					fname,
+					lp_posix_pathnames());
 	if (smb_fname == NULL) {
 		TALLOC_FREE(frame);
 		return PyErr_NoMemory();

@@ -1811,7 +1811,7 @@ static bool test_smb2_oplock_batch10(struct torture_context *tctx,
 	{
 		struct smb2_write wr;
 		DATA_BLOB data;
-		data = data_blob_talloc(tree1, NULL, UINT16_MAX);
+		data = data_blob_talloc_zero(tree1, UINT16_MAX);
 		data.data[0] = (const uint8_t)'x';
 		ZERO_STRUCT(wr);
 		wr.in.file.handle = h1;
@@ -3339,6 +3339,9 @@ static bool test_smb2_oplock_brl1(struct torture_context *tctx,
 	ZERO_STRUCT(break_info);
 
 	torture_comment(tctx, "a self BRL acquisition should break to none\n");
+
+	ZERO_STRUCT(lock);
+
 	lock[0].offset = 0;
 	lock[0].length = 4;
 	lock[0].flags = SMB2_LOCK_FLAG_EXCLUSIVE |
@@ -3447,6 +3450,8 @@ static bool test_smb2_oplock_brl2(struct torture_context *tctx, struct smb2_tree
 
 	torture_comment(tctx, "a self BRL acquisition should not break to "
 			"none\n");
+
+	ZERO_STRUCT(lock);
 
 	lock[0].offset = 0;
 	lock[0].length = 4;
@@ -3559,6 +3564,8 @@ static bool test_smb2_oplock_brl3(struct torture_context *tctx, struct smb2_tree
 	ZERO_STRUCT(break_info);
 
 	torture_comment(tctx, "a self BRL acquisition should break to none\n");
+
+	ZERO_STRUCT(lock);
 
 	lock[0].offset = 0;
 	lock[0].length = 4;

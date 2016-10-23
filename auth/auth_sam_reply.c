@@ -25,14 +25,14 @@
 #include "libcli/security/security.h"
 #include "auth/auth_sam_reply.h"
 
-NTSTATUS auth_convert_user_info_dc_sambaseinfo(TALLOC_CTX *mem_ctx,
-					      struct auth_user_info_dc *user_info_dc,
-					      struct netr_SamBaseInfo **_sam)
+static NTSTATUS auth_convert_user_info_dc_sambaseinfo(TALLOC_CTX *mem_ctx,
+				const struct auth_user_info_dc *user_info_dc,
+				struct netr_SamBaseInfo *sam)
 {
 	NTSTATUS status;
-	struct auth_user_info *info;
-	struct netr_SamBaseInfo *sam = talloc_zero(mem_ctx, struct netr_SamBaseInfo);
-	NT_STATUS_HAVE_NO_MEMORY(sam);
+	const struct auth_user_info *info;
+
+	ZERO_STRUCTP(sam);
 
 	if (user_info_dc->num_sids > PRIMARY_USER_SID_INDEX) {
 		status = dom_sid_split_rid(sam, &user_info_dc->sids[PRIMARY_USER_SID_INDEX],
@@ -66,12 +66,23 @@ NTSTATUS auth_convert_user_info_dc_sambaseinfo(TALLOC_CTX *mem_ctx,
 	sam->allow_password_change = info->allow_password_change;
 	sam->force_password_change = info->force_password_change;
 
-	sam->account_name.string = info->account_name;
-	sam->full_name.string = info->full_name;
-	sam->logon_script.string = info->logon_script;
-	sam->profile_path.string = info->profile_path;
-	sam->home_directory.string = info->home_directory;
-	sam->home_drive.string = info->home_drive;
+#define _COPY_STRING_TALLOC(src_name, dst_name) do { \
+	if (info->src_name != NULL) {\
+		sam->dst_name.string = talloc_strdup(mem_ctx, info->src_name); \
+		if (sam->dst_name.string == NULL) { \
+			return NT_STATUS_NO_MEMORY; \
+		} \
+	} \
+} while(0)
+	_COPY_STRING_TALLOC(account_name, account_name);
+	_COPY_STRING_TALLOC(full_name, full_name);
+	_COPY_STRING_TALLOC(logon_script, logon_script);
+	_COPY_STRING_TALLOC(profile_path, profile_path);
+	_COPY_STRING_TALLOC(home_directory, home_directory);
+	_COPY_STRING_TALLOC(home_drive, home_drive);
+	_COPY_STRING_TALLOC(logon_server, logon_server);
+	_COPY_STRING_TALLOC(domain_name, logon_domain);
+#undef _COPY_STRING_TALLOC
 
 	sam->logon_count = info->logon_count;
 	sam->bad_password_count = info->bad_password_count;
@@ -80,7 +91,7 @@ NTSTATUS auth_convert_user_info_dc_sambaseinfo(TALLOC_CTX *mem_ctx,
 
 	if (user_info_dc->num_sids > 2) {
 		size_t i;
-		sam->groups.rids = talloc_array(sam, struct samr_RidWithAttribute,
+		sam->groups.rids = talloc_array(mem_ctx, struct samr_RidWithAttribute,
 						user_info_dc->num_sids);
 
 		if (sam->groups.rids == NULL)
@@ -106,8 +117,6 @@ NTSTATUS auth_convert_user_info_dc_sambaseinfo(TALLOC_CTX *mem_ctx,
 		sam->user_flags |= NETLOGON_GUEST;
 	}
 	sam->acct_flags = user_info_dc->info->acct_flags;
-	sam->logon_server.string = user_info_dc->info->logon_server;
-	sam->logon_domain.string = user_info_dc->info->domain_name;
 	sam->sub_auth_status = 0;
 	sam->last_successful_logon = 0;
 	sam->last_failed_logon = 0;
@@ -125,61 +134,132 @@ NTSTATUS auth_convert_user_info_dc_sambaseinfo(TALLOC_CTX *mem_ctx,
 		       sizeof(sam->LMSessKey.key));
 	}
 
-	*_sam = sam;
+	return NT_STATUS_OK;
+}
 
+/* Note that the validity of the _sam6 structure is only as long as
+ * the user_info_dc it was generated from */
+NTSTATUS auth_convert_user_info_dc_saminfo6(TALLOC_CTX *mem_ctx,
+					    const struct auth_user_info_dc *user_info_dc,
+					    struct netr_SamInfo6 **_sam6)
+{
+	NTSTATUS status;
+	struct netr_SamInfo6 *sam6 = NULL;
+	size_t i;
+
+	sam6 = talloc_zero(mem_ctx, struct netr_SamInfo6);
+	if (sam6 == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = auth_convert_user_info_dc_sambaseinfo(sam6,
+						       user_info_dc,
+						       &sam6->base);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(sam6);
+		return status;
+	}
+
+	sam6->sids = talloc_array(sam6, struct netr_SidAttr,
+				  user_info_dc->num_sids);
+	if (sam6->sids == NULL) {
+		TALLOC_FREE(sam6);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	/* We don't put the user and group SIDs in there */
+	for (i=2; i<user_info_dc->num_sids; i++) {
+		if (dom_sid_in_domain(sam6->base.domain_sid, &user_info_dc->sids[i])) {
+			continue;
+		}
+		sam6->sids[sam6->sidcount].sid = dom_sid_dup(sam6->sids, &user_info_dc->sids[i]);
+		if (sam6->sids[sam6->sidcount].sid == NULL) {
+			TALLOC_FREE(sam6);
+			return NT_STATUS_NO_MEMORY;
+		}
+		sam6->sids[sam6->sidcount].attributes =
+			SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED;
+		sam6->sidcount += 1;
+	}
+	if (sam6->sidcount) {
+		sam6->base.user_flags |= NETLOGON_EXTRA_SIDS;
+	} else {
+		sam6->sids = NULL;
+	}
+
+	if (user_info_dc->info->dns_domain_name != NULL) {
+		sam6->dns_domainname.string = talloc_strdup(sam6,
+					user_info_dc->info->dns_domain_name);
+		if (sam6->dns_domainname.string == NULL) {
+			TALLOC_FREE(sam6);
+			return NT_STATUS_NO_MEMORY;
+		}
+	}
+
+	if (user_info_dc->info->user_principal_name != NULL) {
+		sam6->principal_name.string = talloc_strdup(sam6,
+					user_info_dc->info->user_principal_name);
+		if (sam6->principal_name.string == NULL) {
+			TALLOC_FREE(sam6);
+			return NT_STATUS_NO_MEMORY;
+		}
+	}
+
+	*_sam6 = sam6;
+	return NT_STATUS_OK;
+}
+
+/* Note that the validity of the _sam2 structure is only as long as
+ * the user_info_dc it was generated from */
+NTSTATUS auth_convert_user_info_dc_saminfo2(TALLOC_CTX *mem_ctx,
+					   const struct auth_user_info_dc *user_info_dc,
+					   struct netr_SamInfo2 **_sam2)
+{
+	NTSTATUS status;
+	struct netr_SamInfo6 *sam6 = NULL;
+	struct netr_SamInfo2 *sam2 = NULL;
+
+	sam2 = talloc_zero(mem_ctx, struct netr_SamInfo2);
+	if (sam2 == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = auth_convert_user_info_dc_saminfo6(sam2, user_info_dc, &sam6);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(sam2);
+		return status;
+	}
+	sam2->base	= sam6->base;
+
+	*_sam2 = sam2;
 	return NT_STATUS_OK;
 }
 
 /* Note that the validity of the _sam3 structure is only as long as
  * the user_info_dc it was generated from */
 NTSTATUS auth_convert_user_info_dc_saminfo3(TALLOC_CTX *mem_ctx,
-					   struct auth_user_info_dc *user_info_dc,
+					   const struct auth_user_info_dc *user_info_dc,
 					   struct netr_SamInfo3 **_sam3)
 {
-	struct netr_SamBaseInfo *sam;
-	struct netr_SamInfo3 *sam3 = talloc_zero(mem_ctx, struct netr_SamInfo3);
 	NTSTATUS status;
-	size_t i;
-	NT_STATUS_HAVE_NO_MEMORY(sam3);
+	struct netr_SamInfo6 *sam6 = NULL;
+	struct netr_SamInfo3 *sam3 = NULL;
 
-	status = auth_convert_user_info_dc_sambaseinfo(sam3, user_info_dc, &sam);
-	if (!NT_STATUS_IS_OK(status)) {
-		talloc_free(sam3);
-		return status;
-	}
-	sam3->base = *sam;
-	sam3->sidcount	= 0;
-	sam3->sids	= NULL;
-
-
-	sam3->sids = talloc_array(sam, struct netr_SidAttr,
-				  user_info_dc->num_sids);
-	if (sam3->sids == NULL) {
-		TALLOC_FREE(sam3);
+	sam3 = talloc_zero(mem_ctx, struct netr_SamInfo3);
+	if (sam3 == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	/* We don't put the user and group SIDs in there */
-	for (i=2; i<user_info_dc->num_sids; i++) {
-		if (dom_sid_in_domain(sam->domain_sid, &user_info_dc->sids[i])) {
-			continue;
-		}
-		sam3->sids[sam3->sidcount].sid = dom_sid_dup(sam3->sids, &user_info_dc->sids[i]);
-		if (sam3->sids[sam3->sidcount].sid == NULL) {
-			TALLOC_FREE(sam3);
-			return NT_STATUS_NO_MEMORY;
-		}
-		sam3->sids[sam3->sidcount].attributes =
-			SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED;
-		sam3->sidcount += 1;
+	status = auth_convert_user_info_dc_saminfo6(sam3, user_info_dc, &sam6);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(sam3);
+		return status;
 	}
-	if (sam3->sidcount) {
-		sam3->base.user_flags |= NETLOGON_EXTRA_SIDS;
-	} else {
-		sam3->sids = NULL;
-	}
-	*_sam3 = sam3;
+	sam3->base	= sam6->base;
+	sam3->sidcount	= sam6->sidcount;
+	sam3->sids	= sam6->sids;
 
+	*_sam3 = sam3;
 	return NT_STATUS_OK;
 }
 
@@ -191,7 +271,7 @@ NTSTATUS auth_convert_user_info_dc_saminfo3(TALLOC_CTX *mem_ctx,
 
 NTSTATUS make_user_info_SamBaseInfo(TALLOC_CTX *mem_ctx,
 				    const char *account_name,
-				    struct netr_SamBaseInfo *base,
+				    const struct netr_SamBaseInfo *base,
 				    bool authenticated,
 				    struct auth_user_info **_user_info)
 {
@@ -259,13 +339,17 @@ NTSTATUS make_user_info_SamBaseInfo(TALLOC_CTX *mem_ctx,
 NTSTATUS make_user_info_dc_netlogon_validation(TALLOC_CTX *mem_ctx,
 					      const char *account_name,
 					      uint16_t validation_level,
-					      union netr_Validation *validation,
+					      const union netr_Validation *validation,
 					       bool authenticated,
 					      struct auth_user_info_dc **_user_info_dc)
 {
 	NTSTATUS status;
-	struct auth_user_info_dc *user_info_dc;
-	struct netr_SamBaseInfo *base = NULL;
+	struct auth_user_info_dc *user_info_dc = NULL;
+	const struct netr_SamBaseInfo *base = NULL;
+	uint32_t sidcount = 0;
+	const struct netr_SidAttr *sids = NULL;
+	const char *dns_domainname = NULL;
+	const char *principal = NULL;
 	uint32_t i;
 
 	switch (validation_level) {
@@ -280,12 +364,18 @@ NTSTATUS make_user_info_dc_netlogon_validation(TALLOC_CTX *mem_ctx,
 			return NT_STATUS_INVALID_PARAMETER;
 		}
 		base = &validation->sam3->base;
+		sidcount = validation->sam3->sidcount;
+		sids = validation->sam3->sids;
 		break;
 	case 6:
 		if (!validation || !validation->sam6) {
 			return NT_STATUS_INVALID_PARAMETER;
 		}
 		base = &validation->sam6->base;
+		sidcount = validation->sam6->sidcount;
+		sids = validation->sam6->sids;
+		dns_domainname = validation->sam6->dns_domainname.string;
+		principal = validation->sam6->principal_name.string;
 		break;
 	default:
 		return NT_STATUS_INVALID_LEVEL;
@@ -339,26 +429,29 @@ NTSTATUS make_user_info_dc_netlogon_validation(TALLOC_CTX *mem_ctx,
            http://www.microsoft.com/windows2000/techinfo/administration/security/sidfilter.asp
          */
 
-	if (validation_level == 3) {
-		struct dom_sid *dgrps = user_info_dc->sids;
-		size_t sidcount;
+	/*
+	 * The IDL layer would be a better place to check this, but to
+	 * guard the integer addition below, we double-check
+	 */
+	if (sidcount > UINT16_MAX) {
+		return NT_STATUS_INVALID_PARAMETER;
+	}
 
-		/* The IDL layer would be a better place to check this, but to
-		 * guard the integer addition below, we double-check */
-		if (validation->sam3->sidcount > 65535) {
-			return NT_STATUS_INVALID_PARAMETER;
+	if (sidcount > 0) {
+		struct dom_sid *dgrps = user_info_dc->sids;
+		size_t dgrps_count;
+
+		dgrps_count = user_info_dc->num_sids + sidcount;
+		dgrps = talloc_realloc(user_info_dc, dgrps, struct dom_sid,
+				       dgrps_count);
+		if (dgrps == NULL) {
+			return NT_STATUS_NO_MEMORY;
 		}
 
-		sidcount = user_info_dc->num_sids + validation->sam3->sidcount;
-		if (validation->sam3->sidcount > 0) {
-			dgrps = talloc_realloc(user_info_dc, dgrps, struct dom_sid, sidcount);
-			NT_STATUS_HAVE_NO_MEMORY(dgrps);
-
-			for (i = 0; i < validation->sam3->sidcount; i++) {
-				if (validation->sam3->sids[i].sid) {
-					dgrps[user_info_dc->num_sids] = *validation->sam3->sids[i].sid;
-					user_info_dc->num_sids++;
-				}
+		for (i = 0; i < sidcount; i++) {
+			if (sids[i].sid) {
+				dgrps[user_info_dc->num_sids] = *sids[i].sid;
+				user_info_dc->num_sids++;
 			}
 		}
 
@@ -370,6 +463,22 @@ NTSTATUS make_user_info_dc_netlogon_validation(TALLOC_CTX *mem_ctx,
 	status = make_user_info_SamBaseInfo(user_info_dc, account_name, base, authenticated, &user_info_dc->info);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
+	}
+
+	if (dns_domainname != NULL) {
+		user_info_dc->info->dns_domain_name = talloc_strdup(user_info_dc->info,
+								    dns_domainname);
+		if (user_info_dc->info->dns_domain_name == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+	}
+
+	if (principal != NULL) {
+		user_info_dc->info->user_principal_name = talloc_strdup(user_info_dc->info,
+									principal);
+		if (user_info_dc->info->user_principal_name == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
 	}
 
 	/* ensure we are never given NULL session keys */
@@ -396,15 +505,20 @@ NTSTATUS make_user_info_dc_netlogon_validation(TALLOC_CTX *mem_ctx,
  * Make a user_info_dc struct from the PAC_LOGON_INFO supplied in the krb5 logon
  */
 NTSTATUS make_user_info_dc_pac(TALLOC_CTX *mem_ctx,
-			      struct PAC_LOGON_INFO *pac_logon_info,
+			      const struct PAC_LOGON_INFO *pac_logon_info,
+			      const struct PAC_UPN_DNS_INFO *pac_upn_dns_info,
 			      struct auth_user_info_dc **_user_info_dc)
 {
 	uint32_t i;
 	NTSTATUS nt_status;
 	union netr_Validation validation;
 	struct auth_user_info_dc *user_info_dc;
+	const struct PAC_DOMAIN_GROUP_MEMBERSHIP *rg = NULL;
+	size_t sidcount;
 
-	validation.sam3 = &pac_logon_info->info3;
+	rg = &pac_logon_info->resource_groups;
+
+	validation.sam3 = discard_const_p(struct netr_SamInfo3, &pac_logon_info->info3);
 
 	nt_status = make_user_info_dc_netlogon_validation(mem_ctx, "", 3, &validation,
 							  true, /* This user was authenticated */
@@ -413,11 +527,19 @@ NTSTATUS make_user_info_dc_pac(TALLOC_CTX *mem_ctx,
 		return nt_status;
 	}
 
-	if (pac_logon_info->res_groups.count > 0) {
-		size_t sidcount;
+	if (pac_logon_info->info3.base.user_flags & NETLOGON_RESOURCE_GROUPS) {
+		rg = &pac_logon_info->resource_groups;
+	}
+
+	if (rg == NULL) {
+		*_user_info_dc = user_info_dc;
+		return NT_STATUS_OK;
+	}
+
+	if (rg->groups.count > 0) {
 		/* The IDL layer would be a better place to check this, but to
 		 * guard the integer addition below, we double-check */
-		if (pac_logon_info->res_groups.count > 65535) {
+		if (rg->groups.count > 65535) {
 			talloc_free(user_info_dc);
 			return NT_STATUS_INVALID_PARAMETER;
 		}
@@ -427,12 +549,13 @@ NTSTATUS make_user_info_dc_pac(TALLOC_CTX *mem_ctx,
 		  trusted domains, and verify that the SID
 		  matches.
 		*/
-		if (!pac_logon_info->res_group_dom_sid) {
+		if (rg->domain_sid == NULL) {
+			talloc_free(user_info_dc);
 			DEBUG(0, ("Cannot operate on a PAC without a resource domain SID"));
 			return NT_STATUS_INVALID_PARAMETER;
 		}
 
-		sidcount = user_info_dc->num_sids + pac_logon_info->res_groups.count;
+		sidcount = user_info_dc->num_sids + rg->groups.count;
 		user_info_dc->sids
 			= talloc_realloc(user_info_dc, user_info_dc->sids, struct dom_sid, sidcount);
 		if (user_info_dc->sids == NULL) {
@@ -440,15 +563,39 @@ NTSTATUS make_user_info_dc_pac(TALLOC_CTX *mem_ctx,
 			return NT_STATUS_NO_MEMORY;
 		}
 
-		for (i = 0; pac_logon_info->res_group_dom_sid && i < pac_logon_info->res_groups.count; i++) {
-			user_info_dc->sids[user_info_dc->num_sids] = *pac_logon_info->res_group_dom_sid;
-			if (!sid_append_rid(&user_info_dc->sids[user_info_dc->num_sids],
-					    pac_logon_info->res_groups.rids[i].rid)) {
+		for (i = 0; i < rg->groups.count; i++) {
+			bool ok;
+
+			user_info_dc->sids[user_info_dc->num_sids] = *rg->domain_sid;
+			ok = sid_append_rid(&user_info_dc->sids[user_info_dc->num_sids],
+					    rg->groups.rids[i].rid);
+			if (!ok) {
 				return NT_STATUS_INVALID_PARAMETER;
 			}
 			user_info_dc->num_sids++;
 		}
 	}
+
+	if (pac_upn_dns_info != NULL) {
+		user_info_dc->info->user_principal_name =
+			talloc_strdup(user_info_dc->info,
+				      pac_upn_dns_info->upn_name);
+		if (user_info_dc->info->user_principal_name == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+
+		user_info_dc->info->dns_domain_name =
+			talloc_strdup(user_info_dc->info,
+				      pac_upn_dns_info->dns_domain_name);
+		if (user_info_dc->info->dns_domain_name == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+
+		if (pac_upn_dns_info->flags & PAC_UPN_DNS_FLAG_CONSTRUCTED) {
+			user_info_dc->info->user_principal_constructed = true;
+		}
+	}
+
 	*_user_info_dc = user_info_dc;
 	return NT_STATUS_OK;
 }

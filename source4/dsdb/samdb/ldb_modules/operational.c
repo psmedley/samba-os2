@@ -352,26 +352,29 @@ static int construct_parent_guid(struct ldb_module *module,
 	if (parent_dn == NULL) {
 		DEBUG(4,(__location__ ": Failed to find parent for dn %s\n",
 					 ldb_dn_get_linearized(msg->dn)));
-		return LDB_SUCCESS;
+		return LDB_ERR_OTHER;
 	}
 	ret = dsdb_module_search_dn(module, msg, &parent_res, parent_dn, attrs2,
 	                            DSDB_FLAG_NEXT_MODULE |
 	                            DSDB_SEARCH_SHOW_RECYCLED, parent);
-	talloc_free(parent_dn);
-
 	/* not NC, so the object should have a parent*/
 	if (ret == LDB_ERR_NO_SUCH_OBJECT) {
-		return ldb_error(ldb_module_get_ctx(module), LDB_ERR_OPERATIONS_ERROR, 
-				 talloc_asprintf(msg, "Parent dn for %s does not exist", 
+		ret = ldb_error(ldb_module_get_ctx(module), LDB_ERR_OPERATIONS_ERROR, 
+				 talloc_asprintf(msg, "Parent dn %s for %s does not exist",
+						 ldb_dn_get_linearized(parent_dn),
 						 ldb_dn_get_linearized(msg->dn)));
+		talloc_free(parent_dn);
+		return ret;
 	} else if (ret != LDB_SUCCESS) {
+		talloc_free(parent_dn);
 		return ret;
 	}
+	talloc_free(parent_dn);
 
 	parent_guid = ldb_msg_find_ldb_val(parent_res->msgs[0], "objectGUID");
 	if (!parent_guid) {
 		talloc_free(parent_res);
-		return LDB_SUCCESS;
+		return LDB_ERR_INVALID_ATTRIBUTE_SYNTAX;
 	}
 
 	v = data_blob_dup_talloc(parent_res, *parent_guid);
@@ -1037,7 +1040,7 @@ static int operational_search_post_process(struct ldb_module *module,
 failed:
 	ldb_debug_set(ldb, LDB_DEBUG_WARNING,
 		      "operational_search_post_process failed for attribute '%s' - %s",
-		      attrs_from_user[a], ldb_errstring(ldb));
+		      list_replace[a].attr, ldb_errstring(ldb));
 	return -1;
 }
 

@@ -520,6 +520,45 @@ NTSTATUS set_conn_force_user_group(connection_struct *conn, int snum)
 	return NT_STATUS_OK;
 }
 
+static NTSTATUS notify_init_sconn(struct smbd_server_connection *sconn)
+{
+	NTSTATUS status;
+
+	if (sconn->notify_ctx != NULL) {
+		return NT_STATUS_OK;
+	}
+
+	sconn->notify_ctx = notify_init(sconn, sconn->msg_ctx, sconn->ev_ctx,
+					sconn, notify_callback);
+	if (sconn->notify_ctx == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = messaging_register(sconn->msg_ctx, sconn,
+				    MSG_SMB_NOTIFY_CANCEL_DELETED,
+				    smbd_notify_cancel_deleted);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_DEBUG("messaging_register failed: %s\n",
+			  nt_errstr(status));
+		TALLOC_FREE(sconn->notify_ctx);
+		return status;
+	}
+
+	status = messaging_register(sconn->msg_ctx, sconn,
+				    MSG_SMB_NOTIFY_STARTED,
+				    smbd_notifyd_restarted);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_DEBUG("messaging_register failed: %s\n",
+			  nt_errstr(status));
+		messaging_deregister(sconn->msg_ctx,
+				     MSG_SMB_NOTIFY_CANCEL_DELETED, sconn);
+		TALLOC_FREE(sconn->notify_ctx);
+		return status;
+	}
+
+	return NT_STATUS_OK;
+}
+
 /****************************************************************************
   Make a connection, given the snum to connect to, and the vuser of the
   connecting user if appropriate.
@@ -689,17 +728,10 @@ static NTSTATUS make_connection_snum(struct smbXsrv_connection *xconn,
 
 	if ((!conn->printer) && (!conn->ipc) &&
 	    lp_change_notify()) {
-		if (sconn->notify_ctx == NULL) {
-			sconn->notify_ctx = notify_init(
-				sconn, sconn->msg_ctx, sconn->ev_ctx);
-			status = messaging_register(
-				sconn->msg_ctx, sconn,
-				MSG_SMB_NOTIFY_CANCEL_DELETED,
-				smbd_notify_cancel_deleted);
-		}
-		if (sconn->sys_notify_ctx == NULL) {
-			sconn->sys_notify_ctx = sys_notify_context_create(
-				sconn, sconn->ev_ctx);
+
+		status = notify_init_sconn(sconn);
+		if (!NT_STATUS_IS_OK(status)) {
+			goto err_root_exit;
 		}
 	}
 
@@ -822,8 +854,11 @@ static NTSTATUS make_connection_snum(struct smbXsrv_connection *xconn,
 		set_namearray( &conn->aio_write_behind_list,
 				lp_aio_write_behind(talloc_tos(), snum));
 	}
-	smb_fname_cpath = synthetic_smb_fname(talloc_tos(), conn->connectpath,
-					      NULL, NULL);
+	smb_fname_cpath = synthetic_smb_fname(talloc_tos(),
+					conn->connectpath,
+					NULL,
+					NULL,
+					0);
 	if (smb_fname_cpath == NULL) {
 		status = NT_STATUS_NO_MEMORY;
 		goto err_root_exit;

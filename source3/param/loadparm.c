@@ -118,7 +118,6 @@ static struct loadparm_service sDefault =
 	.usershare_last_mod = {0, 0},
 	.szService = NULL,
 	.path = NULL,
-	.username = NULL,
 	.invalid_users = NULL,
 	.valid_users = NULL,
 	.admin_users = NULL,
@@ -202,7 +201,6 @@ static struct loadparm_service sDefault =
 	.oplocks = true,
 	.kernel_oplocks = false,
 	.level2_oplocks = true,
-	.only_user = false,
 	.mangled_names = true,
 	.wide_links = false,
 	.follow_symlinks = true,
@@ -692,7 +690,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.client_lanman_auth = false;	/* Do NOT use the LanMan hash if it is available */
 	Globals.client_plaintext_auth = false;	/* Do NOT use a plaintext password even if is requested by the server */
 	Globals.lanman_auth = false;	/* Do NOT use the LanMan hash, even if it is supplied */
-	Globals.ntlm_auth = true;	/* Do use NTLMv1 if it is supplied by the client (otherwise NTLMv2) */
+	Globals.ntlm_auth = false;	/* Do NOT use NTLMv1 if it is supplied by the client (otherwise NTLMv2) */
 	Globals.raw_ntlmv2_auth = false; /* Reject NTLMv2 without NTLMSSP */
 	Globals.client_ntlmv2_auth = true; /* Client should always use use NTLMv2, as we can't tell that the server supports it, but most modern servers do */
 	/* Note, that we will also use NTLM2 session security (which is different), if it is available */
@@ -864,7 +862,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.smb2_max_write = DEFAULT_SMB2_MAX_WRITE;
 	Globals.smb2_max_trans = DEFAULT_SMB2_MAX_TRANSACT;
 	Globals.smb2_max_credits = DEFAULT_SMB2_MAX_CREDITS;
-	Globals.smb2_leases = false;
+	Globals.smb2_leases = true;
 
 	lpcfg_string_set(Globals.ctx, &Globals.ncalrpc_dir,
 			 get_dyn_NCALRPCDIR());
@@ -1383,7 +1381,6 @@ static void free_service_byindex(int idx)
 static int add_a_service(const struct loadparm_service *pservice, const char *name)
 {
 	int i;
-	int num_to_alloc = iNumServices + 1;
 	struct loadparm_service **tsp = NULL;
 
 	/* it might already exist */
@@ -1404,7 +1401,7 @@ static int add_a_service(const struct loadparm_service *pservice, const char *na
 		/* if not, then create one */
 		tsp = talloc_realloc(NULL, ServicePtrs,
 				     struct loadparm_service *,
-				     num_to_alloc);
+				     iNumServices + 1);
 		if (tsp == NULL) {
 			DEBUG(0, ("add_a_service: failed to enlarge "
 				  "ServicePtrs!\n"));
@@ -1572,7 +1569,6 @@ static bool lp_add_ipc(const char *ipc_name, bool guest_ok)
 	}
 
 	lpcfg_string_set(ServicePtrs[i], &ServicePtrs[i]->path, tmpdir());
-	lpcfg_string_set(ServicePtrs[i], &ServicePtrs[i]->username, "");
 	lpcfg_string_set(ServicePtrs[i], &ServicePtrs[i]->comment, comment);
 	lpcfg_string_set(ServicePtrs[i], &ServicePtrs[i]->fstype, "IPC");
 	ServicePtrs[i]->max_connections = 0;
@@ -4337,14 +4333,13 @@ bool lp_posix_pathnames(void)
 }
 
 /*******************************************************************
- Set posix pathnames to new value. Returns old value.
+ Change everything needed to ensure POSIX pathname processing (currently
+ not much).
 ********************************************************************/
 
-bool lp_set_posix_pathnames(bool newval)
+void lp_set_posix_pathnames(void)
 {
-	bool oldval = posix_pathnames;
-	posix_pathnames = newval;
-	return oldval;
+	posix_pathnames = true;
 }
 
 /*******************************************************************

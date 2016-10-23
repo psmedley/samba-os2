@@ -22,9 +22,6 @@
 
 #include "protocol.h"
 
-int allocate_pkt(TALLOC_CTX *mem_ctx, size_t length,
-		 uint8_t **buf, size_t *buflen);
-
 size_t ctdb_uint32_len(uint32_t val);
 void ctdb_uint32_push(uint32_t val, uint8_t *buf);
 int ctdb_uint32_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
@@ -157,22 +154,6 @@ void ctdb_tickle_list_push(struct ctdb_tickle_list *tickles, uint8_t *buf);
 int ctdb_tickle_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 			  struct ctdb_tickle_list **out);
 
-size_t ctdb_client_id_len(struct ctdb_client_id *cid);
-void ctdb_client_id_push(struct ctdb_client_id *cid, uint8_t *buf);
-int ctdb_client_id_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
-			struct ctdb_client_id **out);
-
-size_t ctdb_client_id_list_len(struct ctdb_client_id_list *cid_list);
-void ctdb_client_id_list_push(struct ctdb_client_id_list *cid_list,
-			      uint8_t *buf);
-int ctdb_client_id_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
-			     struct ctdb_client_id_list **out);
-
-size_t ctdb_client_id_map_len(struct ctdb_client_id_map *cid_map);
-void ctdb_client_id_map_push(struct ctdb_client_id_map *cid_map, uint8_t *buf);
-int ctdb_client_id_map_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
-			    struct ctdb_client_id_map **out);
-
 size_t ctdb_addr_info_len(struct ctdb_addr_info *addr_info);
 void ctdb_addr_info_push(struct ctdb_addr_info *addr_info, uint8_t *buf);
 int ctdb_addr_info_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
@@ -223,11 +204,6 @@ size_t ctdb_ban_state_len(struct ctdb_ban_state *ban_state);
 void ctdb_ban_state_push(struct ctdb_ban_state *ban_state, uint8_t *buf);
 int ctdb_ban_state_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 			struct ctdb_ban_state **out);
-
-size_t ctdb_db_priority_len(struct ctdb_db_priority *db_prio);
-void ctdb_db_priority_push(struct ctdb_db_priority *db_prio, uint8_t *buf);
-int ctdb_db_priority_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
-			  struct ctdb_db_priority **out);
 
 size_t ctdb_notify_data_len(struct ctdb_notify_data *notify);
 void ctdb_notify_data_push(struct ctdb_notify_data *notify, uint8_t *buf);

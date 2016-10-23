@@ -31,6 +31,7 @@ usr/share/man/man1/sharesec.1
 usr/share/man/man1/smbcontrol.1
 usr/share/man/man1/smbstatus.1
 usr/share/man/man8/eventlogadm.8
+usr/share/man/man8/idmap_script.8
 usr/share/man/man8/nmbd.8
 usr/share/man/man8/pdbedit.8
 usr/share/man/man8/samba.8

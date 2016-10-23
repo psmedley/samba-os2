@@ -2,64 +2,18 @@
 # script to manage nfs in a clustered environment
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
+. "${CTDB_BASE}/functions"
 
+# service_name is used by various functions
+# shellcheck disable=SC2034
 service_name="nfs"
+
 loadconfig
-ctdb_setup_service_state_dir
+service_state_dir=$(ctdb_setup_service_state_dir) || exit $?
 
 ######################################################################
-
-if [ -z "$CTDB_NFS_CALLOUT" ] ; then
-    CTDB_NFS_CALLOUT="${CTDB_BASE}/nfs-linux-kernel-callout"
-fi
-# Always export, for statd callout
-export CTDB_NFS_CALLOUT
-
-# If the callout wants to use this then it must create it
-export CTDB_NFS_CALLOUT_STATE_DIR="${service_state_dir}/callout-state"
-
-nfs_callout_cache="${service_state_dir}/nfs_callout_cache"
-nfs_callout_cache_callout="${nfs_callout_cache}/CTDB_NFS_CALLOUT"
-nfs_callout_cache_ops="${nfs_callout_cache}/ops"
-
-nfs_callout_register ()
-{
-    mkdir -p "$nfs_callout_cache_ops"
-    rm -f "$nfs_callout_cache_ops"/*
-
-    echo "$CTDB_NFS_CALLOUT" >"$nfs_callout_cache_callout"
-
-    _t=$(eval "$CTDB_NFS_CALLOUT" "register")
-    if [ -n "$_t" ] ; then
-	echo "$_t" |
-	    while IFS="" read _op ; do
-		touch "${nfs_callout_cache_ops}/${_op}"
-	    done
-    else
-	touch "${nfs_callout_cache_ops}/ALL"
-    fi
-}
-
-nfs_callout ()
-{
-    # Re-run registration if $CTDB_NFS_CALLOUT has changed
-    _prev=""
-    if [ -r "$nfs_callout_cache_callout" ] ; then
-	read _prev <"$nfs_callout_cache_callout"
-    fi
-    if [ "$CTDB_NFS_CALLOUT" != "$_prev" ] ; then
-	nfs_callout_register
-    fi
-
-    # Run the operation if it is registered...
-    if [ -e "${nfs_callout_cache_ops}/${1}" ] || \
-	   [ -e "${nfs_callout_cache_ops}/ALL" ]; then
-	eval "$CTDB_NFS_CALLOUT" "$@"
-    fi
-}
 
 service_reconfigure ()
 {
@@ -74,12 +28,12 @@ service_reconfigure ()
 ######################################################
 # Check the health of NFS services
 #
-# Use .check files in given directory.
+# Use .check files in $CTDB_NFS_CHECKS_DIR.
 # Default is "${CTDB_BASE}/nfs-checks.d/"
 ######################################################
 nfs_check_services ()
 {
-    _dir="${1:-${CTDB_NFS_CHECKS_DIR:-${CTDB_BASE}/nfs-checks.d}}"
+    _dir="${CTDB_NFS_CHECKS_DIR:-${CTDB_BASE}/nfs-checks.d}"
 
     # Files must end with .check - avoids editor backups, RPM fu, ...
     for _f in "$_dir"/[0-9][0-9].*.check ; do
@@ -129,6 +83,9 @@ nfs_check_service ()
 {
     _progname="$1"
 
+    # This sub-shell is created to intentionally limit the scope of
+    # variable values read from the .check files.
+    # shellcheck disable=SC2030
     (
 	# Subshell to restrict scope variables...
 
@@ -168,11 +125,15 @@ nfs_check_service ()
 	    # Using eval means variables can contain semicolon separated commands
 	    if eval "$service_check_cmd" ; then
 		_ok=true
+	    else
+		_err="monitoring service \"${_progname}\" failed"
 	    fi
 	else
 	    if nfs_check_rpcinfo \
 		   "$_progname" "$version" "$family" >/dev/null ; then
 		_ok=true
+	    else
+		_err="$ctdb_check_rpc_out"
 	    fi
 	fi
 
@@ -187,17 +148,17 @@ nfs_check_service ()
 	_failcount=$(ctdb_counter_get "$_service_name")
 
 	_unhealthy=false
-	if [ $unhealthy_after -gt 0 ] ; then
-	    if [ $_failcount -ge $unhealthy_after ] ; then
+	if [ "$unhealthy_after" -gt 0 ] ; then
+	    if [ "$_failcount" -ge "$unhealthy_after" ] ; then
 		_unhealthy=true
-		echo "ERROR: $ctdb_check_rpc_out"
+		echo "ERROR: $_err"
 	    fi
 	fi
 
-	if [ $restart_every -gt 0 ] ; then
-	    if [ $(($_failcount % $restart_every)) -eq 0 ] ; then
+	if [ "$restart_every" -gt 0 ] ; then
+	    if [ $((_failcount % restart_every)) -eq 0 ] ; then
 		if ! $_unhealthy ; then
-		    echo "WARNING: $ctdb_check_rpc_out"
+		    echo "WARNING: $_err"
 		fi
 		nfs_restart_service
 	    fi
@@ -211,7 +172,10 @@ nfs_check_service ()
     ) || exit 1
 }
 
-# Uses: stop_service, start_service, debug_stuck_threads
+# Uses: service_stop_cmd, service_start_cmd, service_debug_cmd
+# This function is called within the sub-shell that shellcheck thinks
+# loses the above variable values.
+# shellcheck disable=SC2031
 nfs_restart_service ()
 {
     if [ -z "$service_stop_cmd" -o -z "$service_start_cmd" ] ; then
@@ -244,8 +208,10 @@ ctdb_check_rpc ()
 	    _localhost="${CTDB_RPCINFO_LOCALHOST:-127.0.0.1}"
     esac
 
-    if ! ctdb_check_rpc_out=$(rpcinfo -T $_family $_localhost \
-				      $_progname $_version 2>&1) ; then
+    # $_version is not quoted because it is optional
+    # shellcheck disable=SC2086
+    if ! ctdb_check_rpc_out=$(rpcinfo -T "$_family" "$_localhost" \
+				      "$_progname" $_version 2>&1) ; then
 	ctdb_check_rpc_out="$_progname failed RPC check:
 $ctdb_check_rpc_out"
 	echo "$ctdb_check_rpc_out"
@@ -262,10 +228,10 @@ nfs_check_rpcinfo ()
     for _family in $_families ; do
 	if [ -n "$_versions" ] ; then
 	    for _version in $_versions ; do
-		ctdb_check_rpc $_progname $_version $_family || return $?
+		ctdb_check_rpc "$_progname" "$_version" "$_family" || return $?
 	    done
 	else
-	    ctdb_check_rpc $_progname "" $_family || return $?
+	    ctdb_check_rpc "$_progname" "" "$_family" || return $?
 	fi
     done
 }
@@ -282,6 +248,8 @@ nfs_update_lock_info ()
 
 ######################################################################
 
+nfs_callout_init "$service_state_dir"
+
 ctdb_start_stop_service
 
 is_ctdb_managed_service || exit 0
@@ -289,25 +257,25 @@ is_ctdb_managed_service || exit 0
 ctdb_service_check_reconfigure
 
 case "$1" in
-    startup)
+startup)
 	nfs_callout "$@"
 	;;
 
-    shutdown)
+shutdown)
 	 nfs_callout "$@"
 	;;
 
-    takeip)
+takeip)
 	nfs_callout "$@"
 	ctdb_service_set_reconfigure
 	;;
 
-    releaseip)
+releaseip)
 	nfs_callout "$@"
 	ctdb_service_set_reconfigure
 	;;
 
-    monitor)
+monitor)
 	nfs_callout "monitor-pre" || exit $?
 
 	# Check that directories for shares actually exist
@@ -323,10 +291,6 @@ case "$1" in
 
 	nfs_callout "monitor-post" || exit $?
        	;;
-
-    *)
-	ctdb_standard_event_handler "$@"
-	;;
 esac
 
 exit 0

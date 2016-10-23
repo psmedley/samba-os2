@@ -866,6 +866,8 @@ static bool torture_smb2_notify_mask(struct torture_context *torture,
 	torture_comment(torture, "TESTING CHANGE NOTIFY COMPLETION FILTERS\n");
 
 
+	ZERO_STRUCT(h1);
+	ZERO_STRUCT(h2);
 	/*
 	  get a handle on the directory
 	*/
@@ -1881,7 +1883,9 @@ static bool torture_smb2_notify_tree(struct torture_context *torture,
 	do {
 		/* count events that have happened in each dir */
 		for (i=0;i<ARRAY_SIZE(dirs);i++) {
+			notify.smb2.in.completion_filter = dirs[i].filter;
 			notify.smb2.in.file.handle = dirs[i].h1;
+			notify.smb2.in.recursive = dirs[i].recursive;
 			req = smb2_notify_send(tree, &(notify.smb2));
 			smb2_cancel(req);
 			notify.smb2.out.num_changes = 0;

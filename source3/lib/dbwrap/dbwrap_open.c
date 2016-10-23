@@ -28,6 +28,7 @@
 #include "lib/cluster_support.h"
 #include "util_tdb.h"
 #include "ctdbd_conn.h"
+#include "messages.h"
 
 bool db_is_local(const char *name)
 {
@@ -97,6 +98,7 @@ struct db_context *db_open(TALLOC_CTX *mem_ctx,
 	if (tdb_flags & TDB_CLEAR_IF_FIRST) {
 		const char *base;
 		bool try_mutex = false;
+		bool require_mutex = false;
 
 		base = strrchr_m(name, '/');
 		if (base != NULL) {
@@ -109,6 +111,15 @@ struct db_context *db_open(TALLOC_CTX *mem_ctx,
 		try_mutex = lp_parm_bool(-1, "dbwrap_tdb_mutexes", base, try_mutex);
 
 		if (try_mutex && tdb_runtime_check_for_robust_mutexes()) {
+			tdb_flags |= TDB_MUTEX_LOCKING;
+		}
+
+		require_mutex = lp_parm_bool(-1, "dbwrap_tdb_require_mutexes",
+					   "*", require_mutex);
+		require_mutex = lp_parm_bool(-1, "dbwrap_tdb_require_mutexes",
+					   base, require_mutex);
+
+		if (require_mutex) {
 			tdb_flags |= TDB_MUTEX_LOCKING;
 		}
 	}
@@ -133,7 +144,19 @@ struct db_context *db_open(TALLOC_CTX *mem_ctx,
 		}
 		/* allow ctdb for individual databases to be disabled */
 		if (lp_parm_bool(-1, "ctdb", partname, True)) {
-			result = db_open_ctdb(mem_ctx, partname, hash_size,
+			struct messaging_context *msg_ctx;
+			struct ctdbd_connection *conn;
+
+			conn = messaging_ctdbd_connection();
+			if (conn == NULL) {
+				DBG_WARNING("No ctdb connection\n");
+				errno = EIO;
+				return NULL;
+			}
+			msg_ctx = server_messaging_context();
+
+			result = db_open_ctdb(mem_ctx, msg_ctx, conn, partname,
+					      hash_size,
 					      tdb_flags, open_flags, mode,
 					      lock_order, dbwrap_flags);
 			if (result == NULL) {

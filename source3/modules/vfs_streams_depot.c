@@ -123,7 +123,9 @@ static char *stream_dir(vfs_handle_struct *handle,
 	struct file_id id;
 	uint8_t id_buf[16];
 	bool check_valid;
-	const char *rootdir;
+	char *rootdir = NULL;
+	struct smb_filename *rootdir_fname = NULL;
+	struct smb_filename *tmp_fname = NULL;
 
 	check_valid = lp_parm_bool(SNUM(handle->conn),
 		      "streams_depot", "check_valid", true);
@@ -135,16 +137,34 @@ static char *stream_dir(vfs_handle_struct *handle,
 		goto fail;
 	}
 
-	rootdir = lp_parm_const_string(
+	rootdir = lp_parm_talloc_string(talloc_tos(),
 		SNUM(handle->conn), "streams_depot", "directory",
 		tmp);
+	if (rootdir == NULL) {
+		errno = ENOMEM;
+		goto fail;
+	}
+
+	rootdir_fname = synthetic_smb_fname(talloc_tos(),
+					rootdir,
+					NULL,
+					NULL,
+					smb_fname->flags);
+	if (rootdir_fname == NULL) {
+		errno = ENOMEM;
+		goto fail;
+	}
 
 	/* Stat the base file if it hasn't already been done. */
 	if (base_sbuf == NULL) {
 		struct smb_filename *smb_fname_base;
 
 		smb_fname_base = synthetic_smb_fname(
-			talloc_tos(), smb_fname->base_name, NULL, NULL);
+					talloc_tos(),
+					smb_fname->base_name,
+					NULL,
+					NULL,
+					smb_fname->flags);
 		if (smb_fname_base == NULL) {
 			errno = ENOMEM;
 			goto fail;
@@ -185,7 +205,11 @@ static char *stream_dir(vfs_handle_struct *handle,
 		return NULL;
 	}
 
-	smb_fname_hash = synthetic_smb_fname(talloc_tos(), result, NULL, NULL);
+	smb_fname_hash = synthetic_smb_fname(talloc_tos(),
+					result,
+					NULL,
+					NULL,
+					smb_fname->flags);
 	if (smb_fname_hash == NULL) {
 		errno = ENOMEM;
 		goto fail;
@@ -222,7 +246,7 @@ static char *stream_dir(vfs_handle_struct *handle,
 			      smb_fname_hash->base_name));
 			recursive_rmdir(talloc_tos(), handle->conn,
 					smb_fname_hash);
-			SMB_VFS_NEXT_RMDIR(handle, smb_fname_hash->base_name);
+			SMB_VFS_NEXT_RMDIR(handle, smb_fname_hash);
 		} else {
 			newname = talloc_asprintf(talloc_tos(), "lost-%lu",
 						  random());
@@ -236,7 +260,11 @@ static char *stream_dir(vfs_handle_struct *handle,
 			}
 
 			smb_fname_new = synthetic_smb_fname(
-				talloc_tos(), newname, NULL, NULL);
+						talloc_tos(),
+						newname,
+						NULL,
+						NULL,
+						smb_fname->flags);
 			TALLOC_FREE(newname);
 			if (smb_fname_new == NULL) {
 				errno = ENOMEM;
@@ -261,7 +289,7 @@ static char *stream_dir(vfs_handle_struct *handle,
 		goto fail;
 	}
 
-	if ((SMB_VFS_NEXT_MKDIR(handle, rootdir, 0755) != 0)
+	if ((SMB_VFS_NEXT_MKDIR(handle, rootdir_fname, 0755) != 0)
 	    && (errno != EEXIST)) {
 		goto fail;
 	}
@@ -272,12 +300,23 @@ static char *stream_dir(vfs_handle_struct *handle,
 		goto fail;
 	}
 
-	if ((SMB_VFS_NEXT_MKDIR(handle, tmp, 0755) != 0)
+	tmp_fname = synthetic_smb_fname(talloc_tos(),
+					tmp,
+					NULL,
+					NULL,
+					smb_fname->flags);
+	if (tmp_fname == NULL) {
+		errno = ENOMEM;
+		goto fail;
+	}
+
+	if ((SMB_VFS_NEXT_MKDIR(handle, tmp_fname, 0755) != 0)
 	    && (errno != EEXIST)) {
 		goto fail;
 	}
 
 	TALLOC_FREE(tmp);
+	TALLOC_FREE(tmp_fname);
 
 	tmp = talloc_asprintf(result, "%s/%2.2X/%2.2X", rootdir, first,
 			      second);
@@ -286,14 +325,26 @@ static char *stream_dir(vfs_handle_struct *handle,
 		goto fail;
 	}
 
-	if ((SMB_VFS_NEXT_MKDIR(handle, tmp, 0755) != 0)
+	tmp_fname = synthetic_smb_fname(talloc_tos(),
+					tmp,
+					NULL,
+					NULL,
+					smb_fname->flags);
+	if (tmp_fname == NULL) {
+		errno = ENOMEM;
+		goto fail;
+	}
+
+	if ((SMB_VFS_NEXT_MKDIR(handle, tmp_fname, 0755) != 0)
 	    && (errno != EEXIST)) {
 		goto fail;
 	}
 
 	TALLOC_FREE(tmp);
+	TALLOC_FREE(tmp_fname);
 
-	if ((SMB_VFS_NEXT_MKDIR(handle, result, 0755) != 0)
+	/* smb_fname_hash is the struct smb_filename version of 'result' */
+	if ((SMB_VFS_NEXT_MKDIR(handle, smb_fname_hash, 0755) != 0)
 	    && (errno != EEXIST)) {
 		goto fail;
 	}
@@ -302,10 +353,16 @@ static char *stream_dir(vfs_handle_struct *handle,
 		goto fail;
 	}
 
+	TALLOC_FREE(rootdir_fname);
+	TALLOC_FREE(rootdir);
+	TALLOC_FREE(tmp_fname);
 	TALLOC_FREE(smb_fname_hash);
 	return result;
 
  fail:
+	TALLOC_FREE(rootdir_fname);
+	TALLOC_FREE(rootdir);
+	TALLOC_FREE(tmp_fname);
 	TALLOC_FREE(smb_fname_hash);
 	TALLOC_FREE(result);
 	return NULL;
@@ -367,8 +424,11 @@ static NTSTATUS stream_smb_fname(vfs_handle_struct *handle,
 	DEBUG(10, ("stream filename = %s\n", stream_fname));
 
 	/* Create an smb_filename with stream_name == NULL. */
-	*smb_fname_out = synthetic_smb_fname(
-		talloc_tos(), stream_fname, NULL, NULL);
+	*smb_fname_out = synthetic_smb_fname(talloc_tos(),
+					stream_fname,
+					NULL,
+					NULL,
+					smb_fname->flags);
 	if (*smb_fname_out == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -390,6 +450,7 @@ static NTSTATUS walk_streams(vfs_handle_struct *handle,
 			     void *private_data)
 {
 	char *dirname;
+	struct smb_filename *dir_smb_fname = NULL;
 	DIR *dirhandle = NULL;
 	const char *dirent = NULL;
 	char *talloced = NULL;
@@ -409,7 +470,19 @@ static NTSTATUS walk_streams(vfs_handle_struct *handle,
 
 	DEBUG(10, ("walk_streams: dirname=%s\n", dirname));
 
-	dirhandle = SMB_VFS_NEXT_OPENDIR(handle, dirname, NULL, 0);
+	dir_smb_fname = synthetic_smb_fname(talloc_tos(),
+					dirname,
+					NULL,
+					NULL,
+					smb_fname_base->flags);
+	if (dir_smb_fname == NULL) {
+		TALLOC_FREE(dirname);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	dirhandle = SMB_VFS_NEXT_OPENDIR(handle, dir_smb_fname, NULL, 0);
+
+	TALLOC_FREE(dir_smb_fname);
 
 	if (dirhandle == NULL) {
 		TALLOC_FREE(dirname);
@@ -567,8 +640,11 @@ static int streams_depot_open(vfs_handle_struct *handle,
 	}
 
 	/* Ensure the base file still exists. */
-	smb_fname_base = synthetic_smb_fname(
-		talloc_tos(), smb_fname->base_name, NULL, NULL);
+	smb_fname_base = synthetic_smb_fname(talloc_tos(),
+					smb_fname->base_name,
+					NULL,
+					NULL,
+					smb_fname->flags);
 	if (smb_fname_base == NULL) {
 		ret = -1;
 		errno = ENOMEM;
@@ -628,14 +704,17 @@ static int streams_depot_unlink(vfs_handle_struct *handle,
 	 * We potentially need to delete the per-inode streams directory
 	 */
 
-	smb_fname_base = synthetic_smb_fname(
-		talloc_tos(), smb_fname->base_name, NULL, NULL);
+	smb_fname_base = synthetic_smb_fname(talloc_tos(),
+					smb_fname->base_name,
+					NULL,
+					NULL,
+					smb_fname->flags);
 	if (smb_fname_base == NULL) {
 		errno = ENOMEM;
 		return -1;
 	}
 
-	if (lp_posix_pathnames()) {
+	if (smb_fname_base->flags & SMB_FILENAME_POSIX_PATH) {
 		ret = SMB_VFS_NEXT_LSTAT(handle, smb_fname_base);
 	} else {
 		ret = SMB_VFS_NEXT_STAT(handle, smb_fname_base);
@@ -652,7 +731,20 @@ static int streams_depot_unlink(vfs_handle_struct *handle,
 					   &smb_fname_base->st, false);
 
 		if (dirname != NULL) {
-			SMB_VFS_NEXT_RMDIR(handle, dirname);
+			struct smb_filename *smb_fname_dir =
+				synthetic_smb_fname(talloc_tos(),
+						dirname,
+						NULL,
+						NULL,
+						smb_fname->flags);
+			if (smb_fname_dir == NULL) {
+				TALLOC_FREE(smb_fname_base);
+				TALLOC_FREE(dirname);
+				errno = ENOMEM;
+				return -1;
+			}
+			SMB_VFS_NEXT_RMDIR(handle, smb_fname_dir);
+			TALLOC_FREE(smb_fname_dir);
 		}
 		TALLOC_FREE(dirname);
 	}
@@ -661,24 +753,30 @@ static int streams_depot_unlink(vfs_handle_struct *handle,
 	return ret;
 }
 
-static int streams_depot_rmdir(vfs_handle_struct *handle, const char *path)
+static int streams_depot_rmdir(vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname)
 {
 	struct smb_filename *smb_fname_base = NULL;
 	int ret = -1;
 
-	DEBUG(10, ("streams_depot_rmdir called for %s\n", path));
+	DEBUG(10, ("streams_depot_rmdir called for %s\n",
+		smb_fname->base_name));
 
 	/*
 	 * We potentially need to delete the per-inode streams directory
 	 */
 
-	smb_fname_base = synthetic_smb_fname(talloc_tos(), path, NULL, NULL);
+	smb_fname_base = synthetic_smb_fname(talloc_tos(),
+				smb_fname->base_name,
+				NULL,
+				NULL,
+				smb_fname->flags);
 	if (smb_fname_base == NULL) {
 		errno = ENOMEM;
 		return -1;
 	}
 
-	if (lp_posix_pathnames()) {
+	if (smb_fname_base->flags & SMB_FILENAME_POSIX_PATH) {
 		ret = SMB_VFS_NEXT_LSTAT(handle, smb_fname_base);
 	} else {
 		ret = SMB_VFS_NEXT_STAT(handle, smb_fname_base);
@@ -689,13 +787,26 @@ static int streams_depot_rmdir(vfs_handle_struct *handle, const char *path)
 		return -1;
 	}
 
-	ret = SMB_VFS_NEXT_RMDIR(handle, path);
+	ret = SMB_VFS_NEXT_RMDIR(handle, smb_fname_base);
 	if (ret == 0) {
 		char *dirname = stream_dir(handle, smb_fname_base,
 					   &smb_fname_base->st, false);
 
 		if (dirname != NULL) {
-			SMB_VFS_NEXT_RMDIR(handle, dirname);
+			struct smb_filename *smb_fname_dir =
+				synthetic_smb_fname(talloc_tos(),
+						dirname,
+						NULL,
+						NULL,
+						smb_fname->flags);
+			if (smb_fname_dir == NULL) {
+				TALLOC_FREE(smb_fname_base);
+				TALLOC_FREE(dirname);
+				errno = ENOMEM;
+				return -1;
+			}
+			SMB_VFS_NEXT_RMDIR(handle, smb_fname_dir);
+			TALLOC_FREE(smb_fname_dir);
 		}
 		TALLOC_FREE(dirname);
 	}
@@ -807,7 +918,7 @@ static bool collect_one_stream(const char *dirname,
 		goto out;
 	}
 
-	smb_fname = synthetic_smb_fname(talloc_tos(), sname, NULL, NULL);
+	smb_fname = synthetic_smb_fname(talloc_tos(), sname, NULL, NULL, 0);
 	if (smb_fname == NULL) {
 		state->status = NT_STATUS_NO_MEMORY;
 		ret = false;
@@ -840,17 +951,21 @@ static bool collect_one_stream(const char *dirname,
 
 static NTSTATUS streams_depot_streaminfo(vfs_handle_struct *handle,
 					 struct files_struct *fsp,
-					 const char *fname,
+					 const struct smb_filename *smb_fname,
 					 TALLOC_CTX *mem_ctx,
 					 unsigned int *pnum_streams,
 					 struct stream_struct **pstreams)
 {
-	struct smb_filename *smb_fname_base;
+	struct smb_filename *smb_fname_base = NULL;
 	int ret;
 	NTSTATUS status;
 	struct streaminfo_state state;
 
-	smb_fname_base = synthetic_smb_fname(talloc_tos(), fname, NULL, NULL);
+	smb_fname_base = synthetic_smb_fname(talloc_tos(),
+					smb_fname->base_name,
+					NULL,
+					NULL,
+					smb_fname->flags);
 	if (smb_fname_base == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -859,7 +974,7 @@ static NTSTATUS streams_depot_streaminfo(vfs_handle_struct *handle,
 		ret = SMB_VFS_NEXT_FSTAT(handle, fsp, &smb_fname_base->st);
 	}
 	else {
-		if (lp_posix_pathnames()) {
+		if (smb_fname_base->flags & SMB_FILENAME_POSIX_PATH) {
 			ret = SMB_VFS_NEXT_LSTAT(handle, smb_fname_base);
 		} else {
 			ret = SMB_VFS_NEXT_STAT(handle, smb_fname_base);
@@ -904,7 +1019,12 @@ static NTSTATUS streams_depot_streaminfo(vfs_handle_struct *handle,
 
 	*pnum_streams = state.num_streams;
 	*pstreams = state.streams;
-	status = SMB_VFS_NEXT_STREAMINFO(handle, fsp, fname, mem_ctx, pnum_streams, pstreams);
+	status = SMB_VFS_NEXT_STREAMINFO(handle,
+				fsp,
+				smb_fname_base,
+				mem_ctx,
+				pnum_streams,
+				pstreams);
 
  out:
 	TALLOC_FREE(smb_fname_base);

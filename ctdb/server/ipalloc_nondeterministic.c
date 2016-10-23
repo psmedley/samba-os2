@@ -28,6 +28,8 @@
 #include "common/logging.h"
 #include "common/common.h"
 
+#include "protocol/protocol_api.h"
+
 #include "server/ipalloc_private.h"
 
 /* Basic non-deterministic rebalancing algorithm.
@@ -92,7 +94,8 @@ try_again:
 		if (maxnode == -1) {
 			DEBUG(DEBUG_WARNING,
 			      (__location__ " Could not find maxnode. May not be able to serve ip '%s'\n",
-			       ctdb_addr_to_str(&t->addr)));
+			       ctdb_sock_addr_to_string(ipalloc_state,
+							&t->addr)));
 
 			continue;
 		}
@@ -134,7 +137,7 @@ bool ipalloc_nondeterministic(struct ipalloc_state *ipalloc_state)
 	basic_allocate_unassigned(ipalloc_state);
 
 	/* If we don't want IPs to fail back then don't rebalance IPs. */
-	if (1 == ipalloc_state->no_ip_failback) {
+	if (ipalloc_state->no_ip_failback) {
 		return true;
 	}
 

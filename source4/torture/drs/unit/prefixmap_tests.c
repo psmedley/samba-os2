@@ -26,7 +26,7 @@
 #include "torture/rpc/drsuapi.h"
 #include "torture/drs/proto.h"
 #include "param/param.h"
-
+#include "librpc/ndr/libndr.h"
 
 /**
  * Private data to be shared among all test in Test case
@@ -36,7 +36,6 @@ struct drsut_prefixmap_data {
 	struct dsdb_schema_prefixmap *pfm_full;
 
 	/* default schemaInfo value to test with */
-	const char *schi_default_str;
 	struct dsdb_schema_info *schi_default;
 
 	struct ldb_context *ldb_ctx;
@@ -539,7 +538,8 @@ static bool torture_drs_unit_pfm_oid_from_attid_check_attid(struct torture_conte
 static bool torture_drs_unit_pfm_to_from_drsuapi(struct torture_context *tctx, struct drsut_prefixmap_data *priv)
 {
 	WERROR werr;
-	const char *schema_info;
+	struct dsdb_schema_info *schema_info;
+	DATA_BLOB schema_info_blob;
 	struct dsdb_schema_prefixmap *pfm;
 	struct drsuapi_DsReplicaOIDMapping_Ctr *ctr;
 	TALLOC_CTX *mem_ctx;
@@ -548,19 +548,20 @@ static bool torture_drs_unit_pfm_to_from_drsuapi(struct torture_context *tctx, s
 	torture_assert(tctx, mem_ctx, "Unexpected: Have no memory!");
 
 	/* convert Schema_prefixMap to drsuapi_prefixMap */
-	werr = dsdb_drsuapi_pfm_from_schema_pfm(priv->pfm_full, priv->schi_default_str, mem_ctx, &ctr);
+	werr = dsdb_drsuapi_pfm_from_schema_pfm(priv->pfm_full, priv->schi_default, mem_ctx, &ctr);
 	torture_assert_werr_ok(tctx, werr, "dsdb_drsuapi_pfm_from_schema_pfm() failed");
 	torture_assert(tctx, ctr && ctr->mappings, "drsuapi_prefixMap not constructed correctly");
 	torture_assert_int_equal(tctx, ctr->num_mappings, priv->pfm_full->length + 1,
 				 "drs_mappings count does not match");
 	/* look for schema_info entry - it should be the last one */
-	schema_info = hex_encode_talloc(mem_ctx,
-					ctr->mappings[ctr->num_mappings - 1].oid.binary_oid,
-					ctr->mappings[ctr->num_mappings - 1].oid.length);
-	torture_assert_str_equal(tctx,
-				 schema_info,
-				 priv->schi_default_str,
-				 "schema_info not stored correctly or not last entry");
+	schema_info_blob = data_blob_const(ctr->mappings[ctr->num_mappings - 1].oid.binary_oid,
+					   ctr->mappings[ctr->num_mappings - 1].oid.length);
+	werr = dsdb_schema_info_from_blob(&schema_info_blob, tctx, &schema_info);
+	torture_assert_werr_ok(tctx, werr, "dsdb_schema_info_from_blob failed");
+	torture_assert_int_equal(tctx, schema_info->revision,  priv->schi_default->revision,
+				 "schema_info (revision) not stored correctly or not last entry");
+	torture_assert(tctx, GUID_equal(&schema_info->invocation_id, &priv->schi_default->invocation_id),
+		       "schema_info (invocation_id) not stored correctly or not last entry");
 
 	/* compare schema_prefixMap and drsuapi_prefixMap */
 	werr = dsdb_schema_pfm_contains_drsuapi_pfm(priv->pfm_full, ctr);
@@ -569,7 +570,10 @@ static bool torture_drs_unit_pfm_to_from_drsuapi(struct torture_context *tctx, s
 	/* convert back drsuapi_prefixMap to schema_prefixMap */
 	werr = dsdb_schema_pfm_from_drsuapi_pfm(ctr, true, mem_ctx, &pfm, &schema_info);
 	torture_assert_werr_ok(tctx, werr, "dsdb_schema_pfm_from_drsuapi_pfm() failed");
-	torture_assert_str_equal(tctx, schema_info, priv->schi_default_str, "Fetched schema_info is different");
+	torture_assert_int_equal(tctx, schema_info->revision,  priv->schi_default->revision,
+				 "Fetched schema_info is different (revision)");
+	torture_assert(tctx, GUID_equal(&schema_info->invocation_id, &priv->schi_default->invocation_id),
+		       "Fetched schema_info is different (invocation_id)");
 
 	/* compare against the original */
 	if (!_torture_drs_pfm_compare_same(tctx, priv->pfm_full, pfm, true)) {
@@ -599,7 +603,6 @@ static bool torture_drs_unit_pfm_to_from_drsuapi(struct torture_context *tctx, s
 static bool torture_drs_unit_pfm_to_from_ldb_val(struct torture_context *tctx, struct drsut_prefixmap_data *priv)
 {
 	WERROR werr;
-	const char *schema_info;
 	struct dsdb_schema *schema;
 	struct ldb_val pfm_ldb_val;
 	struct ldb_val schema_info_ldb_val;
@@ -613,7 +616,7 @@ static bool torture_drs_unit_pfm_to_from_ldb_val(struct torture_context *tctx, s
 
 	/* set priv->pfm_full as prefixMap for new schema object */
 	schema->prefixmap = priv->pfm_full;
-	schema->schema_info = priv->schi_default_str;
+	schema->schema_info = priv->schi_default;
 
 	/* convert schema_prefixMap to ldb_val blob */
 	werr = dsdb_get_oid_mappings_ldb(schema, mem_ctx, &pfm_ldb_val, &schema_info_ldb_val);
@@ -622,14 +625,6 @@ static bool torture_drs_unit_pfm_to_from_ldb_val(struct torture_context *tctx, s
 		       "pfm_ldb_val not constructed correctly");
 	torture_assert(tctx, schema_info_ldb_val.data && schema_info_ldb_val.length,
 		       "schema_info_ldb_val not constructed correctly");
-	/* look for schema_info entry - it should be the last one */
-	schema_info = hex_encode_talloc(mem_ctx,
-					schema_info_ldb_val.data,
-					schema_info_ldb_val.length);
-	torture_assert_str_equal(tctx,
-				 schema_info,
-				 priv->schi_default_str,
-				 "schema_info not stored correctly or not last entry");
 
 	/* convert pfm_ldb_val back to schema_prefixMap */
 	schema->prefixmap = NULL;
@@ -641,6 +636,10 @@ static bool torture_drs_unit_pfm_to_from_ldb_val(struct torture_context *tctx, s
 		talloc_free(mem_ctx);
 		return false;
 	}
+	torture_assert_int_equal(tctx, schema->schema_info->revision, priv->schi_default->revision,
+				 "Fetched schema_info is different (revision)");
+	torture_assert(tctx, GUID_equal(&schema->schema_info->invocation_id, &priv->schi_default->invocation_id),
+		       "Fetched schema_info is different (invocation_id)");
 
 	talloc_free(mem_ctx);
 	return true;
@@ -664,7 +663,7 @@ static bool torture_drs_unit_pfm_read_write_ldb(struct torture_context *tctx, st
 	torture_assert(tctx, schema, "Unexpected: failed to allocate schema object");
 	/* set priv->pfm_full as prefixMap for new schema object */
 	schema->prefixmap = priv->pfm_full;
-	schema->schema_info = priv->schi_default_str;
+	schema->schema_info = priv->schi_default;
 
 	/* write prfixMap to ldb */
 	werr = dsdb_write_prefixes_from_schema_to_ldb(mem_ctx, priv->ldb_ctx, schema);
@@ -693,6 +692,7 @@ static bool torture_drs_unit_dsdb_create_prefix_mapping(struct torture_context *
 	uint32_t i;
 	struct dsdb_schema *schema;
 	TALLOC_CTX *mem_ctx;
+	struct dsdb_schema_prefixmap *pfm_ldb = NULL;
 
 	mem_ctx = talloc_new(tctx);
 	torture_assert(tctx, mem_ctx, "Unexpected: Have no memory!");
@@ -701,7 +701,7 @@ static bool torture_drs_unit_dsdb_create_prefix_mapping(struct torture_context *
 	schema = dsdb_new_schema(mem_ctx);
 	torture_assert(tctx, schema, "Unexpected: failed to allocate schema object");
 	/* set priv->pfm_full as prefixMap for new schema object */
-	schema->schema_info = priv->schi_default_str;
+	schema->schema_info = priv->schi_default;
 	werr = _drsut_prefixmap_new(_prefixmap_test_new_data, ARRAY_SIZE(_prefixmap_test_new_data),
 				    schema, &schema->prefixmap);
 	torture_assert_werr_ok(tctx, werr, "_drsut_prefixmap_new() failed");
@@ -709,44 +709,58 @@ static bool torture_drs_unit_dsdb_create_prefix_mapping(struct torture_context *
 	werr = dsdb_write_prefixes_from_schema_to_ldb(mem_ctx, priv->ldb_ctx, schema);
 	torture_assert_werr_ok(tctx, werr, "dsdb_write_prefixes_from_schema_to_ldb() failed");
 
-	for (i = 0; i < ARRAY_SIZE(_prefixmap_test_data); i++) {
-		struct dsdb_schema_prefixmap *pfm_ldb;
-		struct dsdb_schema_prefixmap *pfm_prev;
+	/* read from ldb what we have written */
+	werr = dsdb_read_prefixes_from_ldb(priv->ldb_ctx, mem_ctx, &pfm_ldb);
+	torture_assert_werr_ok(tctx, werr, "dsdb_read_prefixes_from_ldb() failed");
+	/* compare data written/read */
+	if (!_torture_drs_pfm_compare_same(tctx, schema->prefixmap, pfm_ldb, true)) {
+		torture_fail(tctx, "pfm in LDB is different");
+	}
+	TALLOC_FREE(pfm_ldb);
 
-		/* add ref to prefixMap so we can use it later */
-		pfm_prev = talloc_reference(schema, schema->prefixmap);
+	for (i = 0; i < ARRAY_SIZE(_prefixmap_test_data); i++) {
+		struct dsdb_schema_prefixmap *pfm_prev;
+		struct dsdb_schema_prefixmap *pfm_new;
+
+		pfm_prev = schema->prefixmap;
+
+		pfm_new = dsdb_schema_pfm_copy_shallow(schema, pfm_prev);
+		torture_assert(tctx, pfm_new != NULL, "dsdb_schema_pfm_copy_shallow() failed");
+
+		if (!_prefixmap_test_data[i].exists) {
+			uint32_t attid;
+
+			werr = dsdb_schema_pfm_make_attid(pfm_new,
+							  _prefixmap_test_data[i].oid,
+							  &attid);
+			torture_assert_werr_ok(tctx, werr, "dsdb_schema_pfm_make_attid() failed");
+		}
 
 		/* call dsdb_create_prefix_mapping() and check result accordingly */
 		werr = dsdb_create_prefix_mapping(priv->ldb_ctx, schema, _prefixmap_test_data[i].oid);
 		torture_assert_werr_ok(tctx, werr, "dsdb_create_prefix_mapping() failed");
 
-		/* verify pfm has been altered or not if needed */
-		if (_prefixmap_test_data[i].exists) {
-			torture_assert(tctx, pfm_prev == schema->prefixmap,
-				       "schema->prefixmap has been reallocated!");
-			if (!_torture_drs_pfm_compare_same(tctx, pfm_prev, schema->prefixmap, true)) {
-				torture_fail(tctx, "schema->prefixmap has changed");
-			}
-		} else {
-			torture_assert(tctx, pfm_prev != schema->prefixmap,
-				       "schema->prefixmap should be reallocated!");
-			if (_torture_drs_pfm_compare_same(tctx, pfm_prev, schema->prefixmap, true)) {
-				torture_fail(tctx, "schema->prefixmap should be changed");
-			}
+		/*
+		 * The prefix should not change, only on reload
+		 */
+		torture_assert(tctx, pfm_prev == schema->prefixmap,
+			       "schema->prefixmap has been reallocated!");
+		if (!_torture_drs_pfm_compare_same(tctx, pfm_prev, schema->prefixmap, true)) {
+			torture_fail(tctx, "schema->prefixmap has changed");
 		}
 
 		/* read from ldb what we have written */
 		werr = dsdb_read_prefixes_from_ldb(priv->ldb_ctx, mem_ctx, &pfm_ldb);
 		torture_assert_werr_ok(tctx, werr, "dsdb_read_prefixes_from_ldb() failed");
 		/* compare data written/read */
-		if (!_torture_drs_pfm_compare_same(tctx, schema->prefixmap, pfm_ldb, true)) {
-			torture_fail(tctx, "schema->prefixmap and pfm in LDB are different");
+		if (!_torture_drs_pfm_compare_same(tctx, pfm_new, pfm_ldb, true)) {
+			torture_fail(tctx, talloc_asprintf(tctx, "%u: pfm in LDB is different", i));
 		}
 		/* free mem for pfm read from LDB */
-		talloc_free(pfm_ldb);
+		TALLOC_FREE(pfm_ldb);
 
-		/* release prefixMap pointer */
-		talloc_unlink(schema, pfm_prev);
+		/* prepare for the next round */
+		schema->prefixmap = pfm_new;
 	}
 
 	talloc_free(mem_ctx);
@@ -826,8 +840,6 @@ static bool torture_drs_unit_prefixmap_setup(struct torture_context *tctx, struc
 
 	werr = dsdb_blob_from_schema_info(priv->schi_default, priv, &blob);
 	torture_assert_werr_ok(tctx, werr, "dsdb_blob_from_schema_info() failed");
-
-	priv->schi_default_str = data_blob_hex_string_upper(priv, &blob);
 
 	/* create temporary LDB and populate with data */
 	if (!torture_drs_unit_ldb_setup(tctx, priv)) {

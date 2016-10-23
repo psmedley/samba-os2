@@ -7,7 +7,7 @@
 	<manvolnum>1</manvolnum>
 	<refmiscinfo class="source">Samba</refmiscinfo>
 	<refmiscinfo class="manual">User Commands</refmiscinfo>
-	<refmiscinfo class="version">4.4</refmiscinfo>
+	<refmiscinfo class="version">4.5</refmiscinfo>
 </refmeta>
 
 
@@ -920,6 +920,14 @@
 		<listitem><para>This command depends on the server supporting the CIFS
 		UNIX extensions and will fail if the server does not. Deletes a remote file
 		using the CIFS UNIX extensions.
+		</para></listitem>
+		</varlistentry>
+
+		<varlistentry>
+		<term>posix_whoami</term>
+		<listitem><para>Query the remote server for the user token using the CIFS UNIX
+		extensions WHOAMI call. Prints out the guest status, user, group, group list and
+		sid list that the remote server is using on behalf of the logged on user.
 		</para></listitem>
 		</varlistentry>
 

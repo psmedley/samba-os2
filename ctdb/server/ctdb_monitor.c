@@ -136,7 +136,7 @@ static void ctdb_health_callback(struct ctdb_context *ctdb, int status, void *p)
 
 	ZERO_STRUCT(rd);
 	rd.pnn   = ctdb->pnn;
-	rd.srvid = CTDB_SRVID_TAKEOVER_RUN_RESPONSE;
+	rd.srvid = 0;
 
 	rddata.dptr = (uint8_t *)&rd;
 	rddata.dsize = sizeof(rd);
@@ -242,7 +242,7 @@ static void ctdb_startup_callback(struct ctdb_context *ctdb, int status, void *p
 	ctdb->monitor->next_interval = 2;
 	ctdb_run_notification_script(ctdb, "startup");
 
-	ctdb->monitor->monitoring_mode = CTDB_MONITORING_ACTIVE;
+	ctdb->monitor->monitoring_mode = CTDB_MONITORING_ENABLED;
 
 	tevent_add_timer(ctdb->ev, ctdb->monitor->monitor_context,
 			 timeval_current_ofs(ctdb->monitor->next_interval, 0),
@@ -354,7 +354,7 @@ static void ctdb_wait_until_recovered(struct tevent_context *ev,
 	if (ret != 0) {
 		ctdb->db_persistent_check_errors++;
 		if (ctdb->db_persistent_check_errors < ctdb->max_persistent_check_errors) {
-			DEBUG(ctdb->db_persistent_check_errors==1?DEBUG_ERR:DEBUG_WARNING,
+			DEBUG(DEBUG_ERR,
 			      (__location__ "ctdb_recheck_persistent_health() "
 			      "failed (%llu of %llu times) - retry later\n",
 			      (unsigned long long)ctdb->db_persistent_check_errors,
@@ -436,7 +436,7 @@ void ctdb_disable_monitoring(struct ctdb_context *ctdb)
  */
 void ctdb_enable_monitoring(struct ctdb_context *ctdb)
 {
-	ctdb->monitor->monitoring_mode  = CTDB_MONITORING_ACTIVE;
+	ctdb->monitor->monitoring_mode  = CTDB_MONITORING_ENABLED;
 	ctdb->monitor->next_interval = 5;
 	DEBUG(DEBUG_INFO,("Monitoring has been enabled\n"));
 }

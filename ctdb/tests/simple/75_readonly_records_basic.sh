@@ -123,12 +123,14 @@ echo "Create test database \"${testdb}\""
 try_command_on_node 0 $CTDB attach $testdb
 
 echo "Create some records..."
-try_command_on_node all $CTDB_TEST_WRAPPER ctdb_update_record
+try_command_on_node all $CTDB_TEST_WRAPPER $VALGRIND update_record \
+	-D ${testdb} -k testkey
 
 ######################################################################
 
 echo "Try some readonly fetches, these should all be upgraded to full fetchlocks..."
-try_command_on_node all $CTDB_TEST_WRAPPER "ctdb_fetch_readonly_once </dev/null"
+try_command_on_node all $CTDB_TEST_WRAPPER $VALGRIND fetch_readonly \
+	-D ${testdb} -k testkey
 
 check_no_readonly
 
@@ -152,10 +154,12 @@ fi
 
 echo "Create 1 read-only delegation ..."
 # dmaster=1
-try_command_on_node 1 $CTDB_TEST_WRAPPER ctdb_update_record
+try_command_on_node 1 $CTDB_TEST_WRAPPER $VALGRIND update_record \
+	-D ${testdb} -k testkey
 
 # Fetch read-only to node 0
-try_command_on_node 0 $CTDB_TEST_WRAPPER "ctdb_fetch_readonly_once </dev/null"
+try_command_on_node 0 $CTDB_TEST_WRAPPER $VALGRIND fetch_readonly \
+	-D ${testdb} -k testkey
 
 check_readonly 1 0
 
@@ -163,7 +167,8 @@ check_readonly 1 0
 
 echo "Verify that a fetchlock revokes read-only delegations..."
 # Node 1 becomes dmaster
-try_command_on_node 1 $CTDB_TEST_WRAPPER ctdb_update_record
+try_command_on_node 1 $CTDB_TEST_WRAPPER $VALGRIND update_record \
+	-D ${testdb} -k testkey
 
 check_no_readonly
 
@@ -171,14 +176,15 @@ check_no_readonly
 
 echo "Create more read-only delegations..."
 dmaster=1
-try_command_on_node $dmaster $CTDB_TEST_WRAPPER ctdb_update_record
+try_command_on_node $dmaster $CTDB_TEST_WRAPPER $VALGRIND update_record \
+	-D ${testdb} -k testkey
 
 others=""
 for n in $all_nodes ; do
     if [ "$n" != "$dmaster" ] ; then
 	# Fetch read-only copy to this node
-	try_command_on_node $n \
-	    $CTDB_TEST_WRAPPER "ctdb_fetch_readonly_once </dev/null"
+	try_command_on_node $n $CTDB_TEST_WRAPPER $VALGRIND fetch_readonly \
+		-D ${testdb} -k testkey
 	others="${others} ${n}"
     fi
 done

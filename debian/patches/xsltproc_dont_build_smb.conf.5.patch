@@ -9,7 +9,7 @@ Index: samba/docs-xml/wscript_build
 ===================================================================
 --- samba.orig/docs-xml/wscript_build
 +++ samba/docs-xml/wscript_build
-@@ -132,7 +132,7 @@ def SMBDOTCONF_MANPAGE(bld, target):
+@@ -133,7 +133,7 @@ def SMBDOTCONF_MANPAGE(bld, target):
  
  if ('XSLTPROC_MANPAGES' in bld.env and bld.env['XSLTPROC_MANPAGES']):
  

@@ -105,108 +105,6 @@ static void ping_message(struct messaging_context *msg_ctx,
 	messaging_send(msg_ctx, src, MSG_PONG, data);
 }
 
-/****************************************************************************
- Register/replace a dispatch function for a particular message type.
- JRA changed Dec 13 2006. Only one message handler now permitted per type.
- *NOTE*: Dispatch functions must be able to cope with incoming
- messages on an *odd* byte boundary.
-****************************************************************************/
-
-struct msg_all {
-	struct messaging_context *msg_ctx;
-	int msg_type;
-	uint32_t msg_flag;
-	const void *buf;
-	size_t len;
-	int n_sent;
-};
-
-/****************************************************************************
- Send one of the messages for the broadcast.
-****************************************************************************/
-
-static int traverse_fn(struct db_record *rec, const struct server_id *id,
-		       uint32_t msg_flags, void *state)
-{
-	struct msg_all *msg_all = (struct msg_all *)state;
-	NTSTATUS status;
-
-	/* Don't send if the receiver hasn't registered an interest. */
-
-	if((msg_flags & msg_all->msg_flag) == 0) {
-		return 0;
-	}
-
-	/* If the msg send fails because the pid was not found (i.e. smbd died), 
-	 * the msg has already been deleted from the messages.tdb.*/
-
-	status = messaging_send_buf(msg_all->msg_ctx, *id, msg_all->msg_type,
-				    (const uint8_t *)msg_all->buf, msg_all->len);
-
-	if (NT_STATUS_EQUAL(status, NT_STATUS_INVALID_HANDLE)) {
-		struct server_id_buf idbuf;
-
-		/*
-		 * If the pid was not found delete the entry from
-		 * serverid.tdb
-		 */
-
-		DEBUG(2, ("pid %s doesn't exist\n",
-			  server_id_str_buf(*id, &idbuf)));
-
-		dbwrap_record_delete(rec);
-	}
-	msg_all->n_sent++;
-	return 0;
-}
-
-/**
- * Send a message to all smbd processes.
- *
- * It isn't very efficient, but should be OK for the sorts of
- * applications that use it. When we need efficient broadcast we can add
- * it.
- *
- * @param n_sent Set to the number of messages sent.  This should be
- * equal to the number of processes, but be careful for races.
- *
- * @retval True for success.
- **/
-bool message_send_all(struct messaging_context *msg_ctx,
-		      int msg_type,
-		      const void *buf, size_t len,
-		      int *n_sent)
-{
-	struct msg_all msg_all;
-
-	msg_all.msg_type = msg_type;
-	if (msg_type < 0x100) {
-		msg_all.msg_flag = FLAG_MSG_GENERAL;
-	} else if (msg_type > 0x100 && msg_type < 0x200) {
-		msg_all.msg_flag = FLAG_MSG_NMBD;
-	} else if (msg_type > 0x200 && msg_type < 0x300) {
-		msg_all.msg_flag = FLAG_MSG_PRINT_GENERAL;
-	} else if (msg_type > 0x300 && msg_type < 0x400) {
-		msg_all.msg_flag = FLAG_MSG_SMBD;
-	} else if (msg_type > 0x400 && msg_type < 0x600) {
-		msg_all.msg_flag = FLAG_MSG_WINBIND;
-	} else if (msg_type > 4000 && msg_type < 5000) {
-		msg_all.msg_flag = FLAG_MSG_DBWRAP;
-	} else {
-		return false;
-	}
-
-	msg_all.buf = buf;
-	msg_all.len = len;
-	msg_all.n_sent = 0;
-	msg_all.msg_ctx = msg_ctx;
-
-	serverid_traverse(traverse_fn, &msg_all);
-	if (n_sent)
-		*n_sent = msg_all.n_sent;
-	return true;
-}
-
 static void messaging_recv_cb(const uint8_t *msg, size_t msg_len,
 			      int *fds, size_t num_fds,
 			      void *private_data)
@@ -379,6 +277,11 @@ struct messaging_context *messaging_init(TALLOC_CTX *mem_ctx,
 	register_dmalloc_msgs(ctx);
 	debug_register_msgs(ctx);
 
+	{
+		struct server_id_buf tmp;
+		DBG_DEBUG("my id: %s\n", server_id_str_buf(ctx->id, &tmp));
+	}
+
 	return ctx;
 }
 
@@ -393,6 +296,7 @@ struct server_id messaging_server_id(const struct messaging_context *msg_ctx)
 NTSTATUS messaging_reinit(struct messaging_context *msg_ctx)
 {
 	int ret;
+	char *lck_path;
 
 	TALLOC_FREE(msg_ctx->msg_dgm_ref);
 
@@ -400,9 +304,14 @@ NTSTATUS messaging_reinit(struct messaging_context *msg_ctx)
 		.pid = getpid(), .vnn = msg_ctx->id.vnn
 	};
 
+	lck_path = lock_path("msg.lock");
+	if (lck_path == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
 	msg_ctx->msg_dgm_ref = messaging_dgm_ref(
 		msg_ctx, msg_ctx->event_ctx, &msg_ctx->id.unique_id,
-		private_path("msg.sock"), lock_path("msg.lock"),
+		private_path("msg.sock"), lck_path,
 		messaging_recv_cb, msg_ctx, &ret);
 
 	if (msg_ctx->msg_dgm_ref == NULL) {
@@ -410,11 +319,9 @@ NTSTATUS messaging_reinit(struct messaging_context *msg_ctx)
 		return map_nt_error_from_unix(ret);
 	}
 
-	TALLOC_FREE(msg_ctx->remote);
-
 	if (lp_clustering()) {
-		ret = messaging_ctdbd_init(msg_ctx, msg_ctx,
-					   &msg_ctx->remote);
+		ret = messaging_ctdbd_reinit(msg_ctx, msg_ctx,
+					     msg_ctx->remote);
 
 		if (ret != 0) {
 			DEBUG(1, ("messaging_ctdbd_init failed: %s\n",
@@ -507,10 +414,12 @@ NTSTATUS messaging_send(struct messaging_context *msg_ctx,
 			struct server_id server, uint32_t msg_type,
 			const DATA_BLOB *data)
 {
-	struct iovec iov;
+	struct iovec iov = {0};
 
-	iov.iov_base = data->data;
-	iov.iov_len = data->length;
+	if (data != NULL) {
+		iov.iov_base = data->data;
+		iov.iov_len = data->length;
+	};
 
 	return messaging_send_iov(msg_ctx, server, msg_type, &iov, 1, NULL, 0);
 }
@@ -541,7 +450,7 @@ int messaging_send_iov_from(struct messaging_context *msg_ctx,
 		return EINVAL;
 	}
 
-	if (!procid_is_local(&dst)) {
+	if (dst.vnn != msg_ctx->id.vnn) {
 		if (num_fds > 0) {
 			return ENOSYS;
 		}

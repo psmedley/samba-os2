@@ -95,10 +95,12 @@ static NTSTATUS skel_get_dfs_referrals(struct vfs_handle_struct *handle,
 	return SMB_VFS_NEXT_GET_DFS_REFERRALS(handle, r);
 }
 
-static DIR *skel_opendir(vfs_handle_struct *handle, const char *fname,
-			 const char *mask, uint32_t attr)
+static DIR *skel_opendir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			const char *mask,
+			uint32_t attr)
 {
-	return SMB_VFS_NEXT_OPENDIR(handle, fname, mask, attr);
+	return SMB_VFS_NEXT_OPENDIR(handle, smb_fname, mask, attr);
 }
 
 static NTSTATUS skel_snap_check_path(struct vfs_handle_struct *handle,
@@ -157,14 +159,17 @@ static void skel_rewind_dir(vfs_handle_struct *handle, DIR *dirp)
 	SMB_VFS_NEXT_REWINDDIR(handle, dirp);
 }
 
-static int skel_mkdir(vfs_handle_struct *handle, const char *path, mode_t mode)
+static int skel_mkdir(vfs_handle_struct *handle,
+		const struct smb_filename *smb_fname,
+		mode_t mode)
 {
-	return SMB_VFS_NEXT_MKDIR(handle, path, mode);
+	return SMB_VFS_NEXT_MKDIR(handle, smb_fname, mode);
 }
 
-static int skel_rmdir(vfs_handle_struct *handle, const char *path)
+static int skel_rmdir(vfs_handle_struct *handle,
+		const struct smb_filename *smb_fname)
 {
-	return SMB_VFS_NEXT_RMDIR(handle, path);
+	return SMB_VFS_NEXT_RMDIR(handle, smb_fname);
 }
 
 static int skel_closedir(vfs_handle_struct *handle, DIR *dir)
@@ -238,7 +243,7 @@ static ssize_t skel_pread(vfs_handle_struct *handle, files_struct *fsp,
 
 struct skel_pread_state {
 	ssize_t ret;
-	int err;
+	struct vfs_aio_state vfs_aio_state;
 };
 
 static void skel_pread_done(struct tevent_req *subreq);
@@ -272,20 +277,21 @@ static void skel_pread_done(struct tevent_req *subreq)
 	struct skel_pread_state *state =
 	    tevent_req_data(req, struct skel_pread_state);
 
-	state->ret = SMB_VFS_PREAD_RECV(subreq, &state->err);
+	state->ret = SMB_VFS_PREAD_RECV(subreq, &state->vfs_aio_state);
 	TALLOC_FREE(subreq);
 	tevent_req_done(req);
 }
 
-static ssize_t skel_pread_recv(struct tevent_req *req, int *err)
+static ssize_t skel_pread_recv(struct tevent_req *req,
+			       struct vfs_aio_state *vfs_aio_state)
 {
 	struct skel_pread_state *state =
 	    tevent_req_data(req, struct skel_pread_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	*err = state->err;
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 
@@ -303,7 +309,7 @@ static ssize_t skel_pwrite(vfs_handle_struct *handle, files_struct *fsp,
 
 struct skel_pwrite_state {
 	ssize_t ret;
-	int err;
+	struct vfs_aio_state vfs_aio_state;
 };
 
 static void skel_pwrite_done(struct tevent_req *subreq);
@@ -338,20 +344,21 @@ static void skel_pwrite_done(struct tevent_req *subreq)
 	struct skel_pwrite_state *state =
 	    tevent_req_data(req, struct skel_pwrite_state);
 
-	state->ret = SMB_VFS_PWRITE_RECV(subreq, &state->err);
+	state->ret = SMB_VFS_PWRITE_RECV(subreq, &state->vfs_aio_state);
 	TALLOC_FREE(subreq);
 	tevent_req_done(req);
 }
 
-static ssize_t skel_pwrite_recv(struct tevent_req *req, int *err)
+static ssize_t skel_pwrite_recv(struct tevent_req *req,
+				struct vfs_aio_state *vfs_aio_state)
 {
 	struct skel_pwrite_state *state =
 	    tevent_req_data(req, struct skel_pwrite_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	*err = state->err;
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 
@@ -388,7 +395,7 @@ static int skel_fsync(vfs_handle_struct *handle, files_struct *fsp)
 
 struct skel_fsync_state {
 	int ret;
-	int err;
+	struct vfs_aio_state vfs_aio_state;
 };
 
 static void skel_fsync_done(struct tevent_req *subreq);
@@ -420,20 +427,21 @@ static void skel_fsync_done(struct tevent_req *subreq)
 	struct skel_fsync_state *state =
 	    tevent_req_data(req, struct skel_fsync_state);
 
-	state->ret = SMB_VFS_FSYNC_RECV(subreq, &state->err);
+	state->ret = SMB_VFS_FSYNC_RECV(subreq, &state->vfs_aio_state);
 	TALLOC_FREE(subreq);
 	tevent_req_done(req);
 }
 
-static int skel_fsync_recv(struct tevent_req *req, int *err)
+static int skel_fsync_recv(struct tevent_req *req,
+			   struct vfs_aio_state *vfs_aio_state)
 {
 	struct skel_fsync_state *state =
 	    tevent_req_data(req, struct skel_fsync_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	*err = state->err;
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 
@@ -467,9 +475,11 @@ static int skel_unlink(vfs_handle_struct *handle,
 	return SMB_VFS_NEXT_UNLINK(handle, smb_fname);
 }
 
-static int skel_chmod(vfs_handle_struct *handle, const char *path, mode_t mode)
+static int skel_chmod(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
-	return SMB_VFS_NEXT_CHMOD(handle, path, mode);
+	return SMB_VFS_NEXT_CHMOD(handle, smb_fname, mode);
 }
 
 static int skel_fchmod(vfs_handle_struct *handle, files_struct *fsp,
@@ -478,10 +488,12 @@ static int skel_fchmod(vfs_handle_struct *handle, files_struct *fsp,
 	return SMB_VFS_NEXT_FCHMOD(handle, fsp, mode);
 }
 
-static int skel_chown(vfs_handle_struct *handle, const char *path, uid_t uid,
-		      gid_t gid)
+static int skel_chown(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
-	return SMB_VFS_NEXT_CHOWN(handle, path, uid, gid);
+	return SMB_VFS_NEXT_CHOWN(handle, smb_fname, uid, gid);
 }
 
 static int skel_fchown(vfs_handle_struct *handle, files_struct *fsp,
@@ -490,10 +502,12 @@ static int skel_fchown(vfs_handle_struct *handle, files_struct *fsp,
 	return SMB_VFS_NEXT_FCHOWN(handle, fsp, uid, gid);
 }
 
-static int skel_lchown(vfs_handle_struct *handle, const char *path, uid_t uid,
-		       gid_t gid)
+static int skel_lchown(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
-	return SMB_VFS_NEXT_LCHOWN(handle, path, uid, gid);
+	return SMB_VFS_NEXT_LCHOWN(handle, smb_fname, uid, gid);
 }
 
 static int skel_chdir(vfs_handle_struct *handle, const char *path)
@@ -685,14 +699,17 @@ static NTSTATUS skel_set_compression(struct vfs_handle_struct *handle,
 
 static NTSTATUS skel_streaminfo(struct vfs_handle_struct *handle,
 				struct files_struct *fsp,
-				const char *fname,
+				const struct smb_filename *smb_fname,
 				TALLOC_CTX *mem_ctx,
 				unsigned int *num_streams,
 				struct stream_struct **streams)
 {
 	return SMB_VFS_NEXT_STREAMINFO(handle,
-				       fsp,
-				       fname, mem_ctx, num_streams, streams);
+				fsp,
+				smb_fname,
+				mem_ctx,
+				num_streams,
+				streams);
 }
 
 static int skel_get_real_filename(struct vfs_handle_struct *handle,
@@ -784,6 +801,42 @@ static NTSTATUS skel_readdir_attr(struct vfs_handle_struct *handle,
 	return SMB_VFS_NEXT_READDIR_ATTR(handle, fname, mem_ctx, pattr_data);
 }
 
+static NTSTATUS skel_get_dos_attributes(struct vfs_handle_struct *handle,
+				struct smb_filename *smb_fname,
+				uint32_t *dosmode)
+{
+	return SMB_VFS_NEXT_GET_DOS_ATTRIBUTES(handle,
+				smb_fname,
+				dosmode);
+}
+
+static NTSTATUS skel_fget_dos_attributes(struct vfs_handle_struct *handle,
+				struct files_struct *fsp,
+				uint32_t *dosmode)
+{
+	return SMB_VFS_NEXT_FGET_DOS_ATTRIBUTES(handle,
+				fsp,
+				dosmode);
+}
+
+static NTSTATUS skel_set_dos_attributes(struct vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				uint32_t dosmode)
+{
+	return SMB_VFS_NEXT_SET_DOS_ATTRIBUTES(handle,
+				smb_fname,
+				dosmode);
+}
+
+static NTSTATUS skel_fset_dos_attributes(struct vfs_handle_struct *handle,
+				struct files_struct *fsp,
+				uint32_t dosmode)
+{
+	return SMB_VFS_NEXT_FSET_DOS_ATTRIBUTES(handle,
+				fsp,
+				dosmode);
+}
+
 static NTSTATUS skel_fget_nt_acl(vfs_handle_struct *handle, files_struct *fsp,
 				 uint32_t security_info,
 				 TALLOC_CTX *mem_ctx,
@@ -794,12 +847,16 @@ static NTSTATUS skel_fget_nt_acl(vfs_handle_struct *handle, files_struct *fsp,
 }
 
 static NTSTATUS skel_get_nt_acl(vfs_handle_struct *handle,
-				const char *name, uint32_t security_info,
+				const struct smb_filename *smb_fname,
+				uint32_t security_info,
 				TALLOC_CTX *mem_ctx,
 				struct security_descriptor **ppdesc)
 {
-	return SMB_VFS_NEXT_GET_NT_ACL(handle, name, security_info, mem_ctx,
-				       ppdesc);
+	return SMB_VFS_NEXT_GET_NT_ACL(handle,
+				smb_fname,
+				security_info,
+				mem_ctx,
+				ppdesc);
 }
 
 static NTSTATUS skel_fset_nt_acl(vfs_handle_struct *handle, files_struct *fsp,
@@ -809,10 +866,11 @@ static NTSTATUS skel_fset_nt_acl(vfs_handle_struct *handle, files_struct *fsp,
 	return SMB_VFS_NEXT_FSET_NT_ACL(handle, fsp, security_info_sent, psd);
 }
 
-static int skel_chmod_acl(vfs_handle_struct *handle, const char *name,
-			  mode_t mode)
+static int skel_chmod_acl(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
-	return SMB_VFS_NEXT_CHMOD_ACL(handle, name, mode);
+	return SMB_VFS_NEXT_CHMOD_ACL(handle, smb_fname, mode);
 }
 
 static int skel_fchmod_acl(vfs_handle_struct *handle, files_struct *fsp,
@@ -1033,6 +1091,12 @@ struct vfs_fn_pointers skel_transparent_fns = {
 	.translate_name_fn = skel_translate_name,
 	.fsctl_fn = skel_fsctl,
 	.readdir_attr_fn = skel_readdir_attr,
+
+	/* DOS attributes. */
+	.get_dos_attributes_fn = skel_get_dos_attributes,
+	.fget_dos_attributes_fn = skel_fget_dos_attributes,
+	.set_dos_attributes_fn = skel_set_dos_attributes,
+	.fset_dos_attributes_fn = skel_fset_dos_attributes,
 
 	/* NT ACL operations. */
 

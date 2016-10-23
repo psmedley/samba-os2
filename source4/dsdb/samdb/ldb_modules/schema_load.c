@@ -35,13 +35,15 @@
 
 #include "system/filesys.h"
 struct schema_load_private_data {
+	struct ldb_module *module;
 	bool in_transaction;
 	struct tdb_wrap *metadata;
+	uint64_t schema_seq_num_cache;
+	int tdb_seqnum;
 };
 
 static int dsdb_schema_from_db(struct ldb_module *module,
 			       TALLOC_CTX *mem_ctx,
-			       uint64_t current_usn,
 			       uint64_t schema_seq_num,
 			       struct dsdb_schema **schema);
 
@@ -94,7 +96,7 @@ static int schema_metadata_open(struct ldb_module *module)
 				       struct loadparm_context);
 
 	data->metadata = tdb_wrap_open(data, filename, 10,
-				       lpcfg_tdb_flags(lp_ctx, TDB_DEFAULT),
+				       lpcfg_tdb_flags(lp_ctx, TDB_DEFAULT|TDB_SEQNUM),
 				       open_flags, 0660);
 	if (data->metadata == NULL) {
 		talloc_free(tmp_ctx);
@@ -105,24 +107,34 @@ static int schema_metadata_open(struct ldb_module *module)
 	return LDB_SUCCESS;
 }
 
-static int schema_metadata_get_uint64(struct ldb_module *module,
+static int schema_metadata_get_uint64(struct schema_load_private_data *data,
 					 const char *key, uint64_t *value,
 					 uint64_t default_value)
 {
-	struct schema_load_private_data *data = talloc_get_type(ldb_module_get_private(module), struct schema_load_private_data);
 	struct tdb_context *tdb;
 	TDB_DATA tdb_key, tdb_data;
 	char *value_str;
 	TALLOC_CTX *tmp_ctx;
+	int tdb_seqnum;
 
-	if (!data || !data->metadata) {
+	if (!data) {
 		*value = default_value;
+		return LDB_SUCCESS;
+	}
+
+	if (!data->metadata) {
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+
+	tdb_seqnum = tdb_get_seqnum(data->metadata->tdb);
+	if (tdb_seqnum == data->tdb_seqnum) {
+		*value = data->schema_seq_num_cache;
 		return LDB_SUCCESS;
 	}
 
 	tmp_ctx = talloc_new(NULL);
 	if (tmp_ctx == NULL) {
-		return ldb_module_oom(module);
+		return ldb_module_oom(data->module);
 	}
 
 	tdb = data->metadata->tdb;
@@ -138,7 +150,7 @@ static int schema_metadata_get_uint64(struct ldb_module *module,
 			return LDB_SUCCESS;
 		} else {
 			talloc_free(tmp_ctx);
-			return ldb_module_error(module, LDB_ERR_OPERATIONS_ERROR,
+			return ldb_module_error(data->module, LDB_ERR_OPERATIONS_ERROR,
 						tdb_errorstr(tdb));
 		}
 	}
@@ -147,10 +159,18 @@ static int schema_metadata_get_uint64(struct ldb_module *module,
 	if (value_str == NULL) {
 		SAFE_FREE(tdb_data.dptr);
 		talloc_free(tmp_ctx);
-		return ldb_module_oom(module);
+		return ldb_module_oom(data->module);
 	}
 
-	*value = strtoull(value_str, NULL, 10);
+	/*
+	 * Now store it in the cache.  We don't mind that tdb_seqnum
+	 * may be stale now, that just means the cache won't be used
+	 * next time
+	 */
+	data->tdb_seqnum = tdb_seqnum;
+	data->schema_seq_num_cache = strtoull(value_str, NULL, 10);
+
+	*value = data->schema_seq_num_cache;
 
 	SAFE_FREE(tdb_data.dptr);
 	talloc_free(tmp_ctx);
@@ -162,12 +182,10 @@ static struct dsdb_schema *dsdb_schema_refresh(struct ldb_module *module, struct
 					       struct dsdb_schema *schema, bool is_global_schema)
 {
 	TALLOC_CTX *mem_ctx;
-	uint64_t current_usn, schema_seq_num = 0;
+	uint64_t schema_seq_num = 0;
 	int ret;
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	struct dsdb_schema *new_schema;
-	struct ldb_dn *schema_dn = ldb_get_schema_basedn(ldb);
-	time_t ts, lastts;	
 	
 	struct schema_load_private_data *private_data = talloc_get_type(ldb_module_get_private(module), struct schema_load_private_data);
 	if (!private_data) {
@@ -195,39 +213,31 @@ static struct dsdb_schema *dsdb_schema_refresh(struct ldb_module *module, struct
 	 * continue to hit the database to get the highest USN.
 	 */
 
-	ret = schema_metadata_get_uint64(module, DSDB_METADATA_SCHEMA_SEQ_NUM, &schema_seq_num, 0);
+	ret = schema_metadata_get_uint64(private_data, DSDB_METADATA_SCHEMA_SEQ_NUM, &schema_seq_num, 0);
 
 	if (schema != NULL) {
-		lastts = schema->last_refresh;
-		ts = time(NULL);
-		if (lastts > (ts - schema->refresh_interval)) {
-			DEBUG(11, ("Less than %d seconds since last reload, "
-				   "returning cached version ts = %d\n",
-				   (int)schema->refresh_interval,
-				   (int)lastts));
-			TALLOC_FREE(mem_ctx);
-			return schema;
-		}
-
 		if (ret == LDB_SUCCESS) {
-			schema->metadata_usn = schema_seq_num;
+			if (schema->metadata_usn == schema_seq_num) {
+				TALLOC_FREE(mem_ctx);
+				return schema;
+			} else {
+				DEBUG(3, ("Schema refresh needed %lld != %lld\n",
+					  (unsigned long long)schema->metadata_usn,
+					  (unsigned long long)schema_seq_num));
+			}
 		} else {
 			/* From an old provision it can happen that the tdb didn't exists yet */
 			DEBUG(0, ("Error while searching for the schema usn in the metadata ignoring: %d:%s:%s\n",
 			      ret, ldb_strerror(ret), ldb_errstring(ldb)));
-			schema->metadata_usn = 0;
+			TALLOC_FREE(mem_ctx);
+			return schema;
 		}
-		schema->last_refresh = ts;
-
+	} else {
+		DEBUG(10, ("Initial schema load needed, as we have no existing schema, seq_num: %lld\n",
+			  (unsigned long long)schema_seq_num));
 	}
 
-	ret = dsdb_module_load_partition_usn(module, schema_dn, &current_usn, NULL, NULL);
-	if (ret != LDB_SUCCESS || (schema && (current_usn == schema->loaded_usn))) {
-		TALLOC_FREE(mem_ctx);
-		return schema;
-	}
-
-	ret = dsdb_schema_from_db(module, mem_ctx, current_usn, schema_seq_num, &new_schema);
+	ret = dsdb_schema_from_db(module, mem_ctx, schema_seq_num, &new_schema);
 	if (ret != LDB_SUCCESS) {
 		ldb_debug_set(ldb, LDB_DEBUG_FATAL,
 			      "dsdb_schema_from_db() failed: %d:%s: %s",
@@ -258,7 +268,6 @@ static struct dsdb_schema *dsdb_schema_refresh(struct ldb_module *module, struct
 
 static int dsdb_schema_from_db(struct ldb_module *module,
 			       TALLOC_CTX *mem_ctx,
-			       uint64_t current_usn,
 			       uint64_t schema_seq_num,
 			       struct dsdb_schema **schema)
 {
@@ -329,9 +338,7 @@ static int dsdb_schema_from_db(struct ldb_module *module,
 		goto failed;
 	}
 
-	(*schema)->loaded_usn = current_usn;
 	(*schema)->metadata_usn = schema_seq_num;
-	(*schema)->last_refresh = time(NULL);
 
 	talloc_steal(mem_ctx, *schema);
 
@@ -351,13 +358,14 @@ static int schema_load_init(struct ldb_module *module)
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	struct dsdb_schema *schema;
 	void *readOnlySchema;
-	int ret;
+	int ret, metadata_ret;
 
 	private_data = talloc_zero(module, struct schema_load_private_data);
 	if (private_data == NULL) {
 		return ldb_oom(ldb);
 	}
-
+	private_data->module = module;
+	
 	ldb_module_set_private(module, private_data);
 
 	ret = ldb_next_init(module);
@@ -367,10 +375,12 @@ static int schema_load_init(struct ldb_module *module)
 
 	schema = dsdb_get_schema(ldb, NULL);
 
+	metadata_ret = schema_metadata_open(module);
+
 	/* We might already have a schema */
 	if (schema != NULL) {
-		/* Hook up the refresh function */
-		if (dsdb_uses_global_schema(ldb)) {
+		/* If we have the metadata.tdb, then hook up the refresh function */
+		if (metadata_ret == LDB_SUCCESS && dsdb_uses_global_schema(ldb)) {
 			ret = dsdb_set_schema_refresh_function(ldb, dsdb_schema_refresh, module);
 
 			if (ret != LDB_SUCCESS) {
@@ -391,7 +401,7 @@ static int schema_load_init(struct ldb_module *module)
 	 * have to update the backend server schema too */
 	if (readOnlySchema != NULL) {
 		struct dsdb_schema *new_schema;
-		ret = dsdb_schema_from_db(module, private_data, 0, 0, &new_schema);
+		ret = dsdb_schema_from_db(module, private_data, 0, &new_schema);
 		if (ret != LDB_SUCCESS) {
 			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
 				      "schema_load_init: dsdb_schema_from_db() failed: %d:%s: %s",
@@ -408,7 +418,7 @@ static int schema_load_init(struct ldb_module *module)
 			return ret;
 		}
 
-	} else {
+	} else if (metadata_ret == LDB_SUCCESS) {
 		ret = dsdb_set_schema_refresh_function(ldb, dsdb_schema_refresh, module);
 
 		if (ret != LDB_SUCCESS) {
@@ -417,6 +427,10 @@ static int schema_load_init(struct ldb_module *module)
 				      ret, ldb_strerror(ret), ldb_errstring(ldb));
 			return ret;
 		}
+	} else {
+		ldb_debug_set(ldb, LDB_DEBUG_FATAL,
+			      "schema_load_init: failed to open metadata.tdb");
+		return metadata_ret;
 	}
 
 	schema = dsdb_get_schema(ldb, NULL);
@@ -433,25 +447,10 @@ static int schema_load_init(struct ldb_module *module)
 
 static int schema_search(struct ldb_module *module, struct ldb_request *req)
 {
-	struct dsdb_schema *schema;
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
-	uint64_t value;
-	int ret;
-	struct schema_load_private_data *private_data =
-		talloc_get_type(ldb_module_get_private(module), struct schema_load_private_data);
 
-	schema = dsdb_get_schema(ldb, NULL);
-	if (schema && private_data && !private_data->in_transaction) {
-		ret = schema_metadata_get_uint64(module, DSDB_METADATA_SCHEMA_SEQ_NUM, &value, 0);
-		if (ret == LDB_SUCCESS && schema->metadata_usn < value) {
-			/* The usn of the schema was changed in the metadata,
-			* this indicate that another process has modified the schema and
-			* that a reload is needed.
-			*/
-			schema->last_refresh = 0;
-			schema = dsdb_get_schema(ldb, NULL);
-		}
-	}
+	/* Try the schema refresh now */
+	dsdb_get_schema(ldb, NULL);
 
 	return ldb_next_request(module, req);
 }
@@ -460,23 +459,15 @@ static int schema_load_start_transaction(struct ldb_module *module)
 {
 	struct schema_load_private_data *private_data =
 		talloc_get_type(ldb_module_get_private(module), struct schema_load_private_data);
-	struct dsdb_schema *schema;
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
-	uint64_t value;
-	int ret;
+	struct dsdb_schema *schema;
 
+	/* Try the schema refresh now */
 	schema = dsdb_get_schema(ldb, NULL);
-	if (!private_data->metadata) {
-		schema_metadata_open(module);
-	}
-	ret = schema_metadata_get_uint64(module, DSDB_METADATA_SCHEMA_SEQ_NUM, &value, 0);
-	if (ret == LDB_SUCCESS && schema->metadata_usn < value) {
-		/* The usn of the schema was changed in the metadata,
-		 * this indicate that another process has modified the schema and
-		 * that a reload is needed.
-		 */
-		schema->last_refresh = 0;
-		schema = dsdb_get_schema(ldb, NULL);
+	if (schema == NULL) {
+		ldb_debug_set(ldb, LDB_DEBUG_FATAL,
+			      "schema_load_init: dsdb_get_schema failed");
+		return LDB_ERR_OPERATIONS_ERROR;
 	}
 	private_data->in_transaction = true;
 
@@ -505,22 +496,13 @@ static int schema_load_del_transaction(struct ldb_module *module)
 
 static int schema_load_extended(struct ldb_module *module, struct ldb_request *req)
 {
-	time_t *lastts;
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
-	struct dsdb_schema *schema;
 
 	if (strcmp(req->op.extended.oid, DSDB_EXTENDED_SCHEMA_UPDATE_NOW_OID) != 0) {
 		return ldb_next_request(module, req);
 	}
-	lastts = (time_t *)ldb_get_opaque(ldb, DSDB_OPAQUE_LAST_SCHEMA_UPDATE_MSG_OPAQUE_NAME);
-	if (!lastts) {
-		lastts = talloc(ldb, time_t);
-	}
-	schema = dsdb_get_schema(ldb, NULL);
 	/* Force a refresh */
-	schema->last_refresh = 0;
-	*lastts = 0;
-	ldb_set_opaque(ldb, DSDB_OPAQUE_LAST_SCHEMA_UPDATE_MSG_OPAQUE_NAME, lastts);
+	dsdb_get_schema(ldb, NULL);
 
 	/* Pass to next module, the partition one should finish the chain */
 	return ldb_next_request(module, req);

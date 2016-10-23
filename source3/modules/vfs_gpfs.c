@@ -22,7 +22,6 @@
 
 #include "includes.h"
 #include "smbd/smbd.h"
-#include "librpc/gen_ndr/ndr_xattr.h"
 #include "include/smbprofile.h"
 #include "modules/non_posix_acls.h"
 #include "libcli/security/security.h"
@@ -359,6 +358,21 @@ static void gpfs_dumpacl(int level, struct gpfs_acl *gacl)
 	}
 }
 
+static int gpfs_getacl_with_capability(const char *fname, int flags, void *buf)
+{
+	int ret, saved_errno;
+
+	set_effective_capability(DAC_OVERRIDE_CAPABILITY);
+
+	ret = gpfswrap_getacl(discard_const_p(char, fname), flags, buf);
+	saved_errno = errno;
+
+	drop_effective_capability(DAC_OVERRIDE_CAPABILITY);
+
+	errno = saved_errno;
+	return ret;
+}
+
 /*
  * get the ACL from GPFS, allocated on the specified mem_ctx
  * internally retries when initial buffer was too small
@@ -379,6 +393,7 @@ static void *vfs_gpfs_getacl(TALLOC_CTX *mem_ctx,
 	int ret, flags;
 	unsigned int *len;
 	size_t struct_size;
+	bool use_capability = false;
 
 again:
 
@@ -407,8 +422,18 @@ again:
 	/* set the length of the buffer as input value */
 	*len = size;
 
-	errno = 0;
-	ret = gpfswrap_getacl(discard_const_p(char, fname), flags, aclbuf);
+	if (use_capability) {
+		ret = gpfs_getacl_with_capability(fname, flags, aclbuf);
+	} else {
+		ret = gpfswrap_getacl(discard_const_p(char, fname),
+				      flags, aclbuf);
+		if ((ret != 0) && (errno == EACCES)) {
+			DBG_DEBUG("Retry with DAC capability for %s\n", fname);
+			use_capability = true;
+			ret = gpfs_getacl_with_capability(fname, flags, aclbuf);
+		}
+	}
+
 	if ((ret != 0) && (errno == ENOSPC)) {
 		/*
 		 * get the size needed to accommodate the complete buffer
@@ -585,9 +610,10 @@ static NTSTATUS gpfsacl_fget_nt_acl(vfs_handle_struct *handle,
 }
 
 static NTSTATUS gpfsacl_get_nt_acl(vfs_handle_struct *handle,
-	const char *name,
-	uint32_t security_info,
-	TALLOC_CTX *mem_ctx, struct security_descriptor **ppdesc)
+				   const struct smb_filename *smb_fname,
+				   uint32_t security_info,
+				   TALLOC_CTX *mem_ctx,
+				   struct security_descriptor **ppdesc)
 {
 	struct SMB4ACL_T *pacl = NULL;
 	int	result;
@@ -602,25 +628,27 @@ static NTSTATUS gpfsacl_get_nt_acl(vfs_handle_struct *handle,
 				return NT_STATUS_INTERNAL_ERROR);
 
 	if (!config->acl) {
-		status = SMB_VFS_NEXT_GET_NT_ACL(handle, name, security_info,
+		status = SMB_VFS_NEXT_GET_NT_ACL(handle, smb_fname,
+						 security_info,
 						 mem_ctx, ppdesc);
 		TALLOC_FREE(frame);
 		return status;
 	}
 
-	result = gpfs_get_nfs4_acl(frame, name, &pacl);
+	result = gpfs_get_nfs4_acl(frame, smb_fname->base_name, &pacl);
 
 	if (result == 0) {
-		status = smb_get_nt_acl_nfs4(handle->conn, name, security_info,
-					   mem_ctx, ppdesc, pacl);
+		status = smb_get_nt_acl_nfs4(handle->conn, smb_fname,
+					     security_info, mem_ctx, ppdesc,
+					     pacl);
 		TALLOC_FREE(frame);
 		return status;
 	}
 
 	if (result > 0) {
 		DEBUG(10, ("retrying with posix acl...\n"));
-		status =  posix_get_nt_acl(handle->conn, name, security_info,
-					   mem_ctx, ppdesc);
+		status = posix_get_nt_acl(handle->conn, smb_fname,
+					  security_info, mem_ctx, ppdesc);
 		TALLOC_FREE(frame);
 		return status;
 	}
@@ -1377,7 +1405,7 @@ static int gpfsacl_emu_chmod(vfs_handle_struct *handle,
 
 	/* don't add complementary DENY ACEs here */
 	fake_fsp.fsp_name = synthetic_smb_fname(
-		frame, path, NULL, NULL);
+		frame, path, NULL, NULL, 0);
 	if (fake_fsp.fsp_name == NULL) {
 		errno = ENOMEM;
 		TALLOC_FREE(frame);
@@ -1393,29 +1421,35 @@ static int gpfsacl_emu_chmod(vfs_handle_struct *handle,
 	return 0; /* ok for [f]chmod */
 }
 
-static int vfs_gpfs_chmod(vfs_handle_struct *handle, const char *path, mode_t mode)
+static int vfs_gpfs_chmod(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	struct smb_filename *smb_fname_cpath;
 	int rc;
 
-	smb_fname_cpath = synthetic_smb_fname(talloc_tos(), path, NULL, NULL);
+	smb_fname_cpath = cp_smb_filename(talloc_tos(), smb_fname);
 	if (smb_fname_cpath == NULL) {
 		errno = ENOMEM;
 		return -1;
 	}
 
 	if (SMB_VFS_NEXT_STAT(handle, smb_fname_cpath) != 0) {
+		TALLOC_FREE(smb_fname_cpath);
 		return -1;
 	}
 
 	/* avoid chmod() if possible, to preserve acls */
 	if ((smb_fname_cpath->st.st_ex_mode & ~S_IFMT) == mode) {
+		TALLOC_FREE(smb_fname_cpath);
 		return 0;
 	}
 
-	rc = gpfsacl_emu_chmod(handle, path, mode);
+	rc = gpfsacl_emu_chmod(handle, smb_fname->base_name, mode);
 	if (rc == 1)
-		return SMB_VFS_NEXT_CHMOD(handle, path, mode);
+		return SMB_VFS_NEXT_CHMOD(handle, smb_fname, mode);
+
+	TALLOC_FREE(smb_fname_cpath);
 	return rc;
 }
 
@@ -1440,161 +1474,184 @@ static int vfs_gpfs_fchmod(vfs_handle_struct *handle, files_struct *fsp, mode_t 
 		 return rc;
 }
 
-static int gpfs_set_xattr(struct vfs_handle_struct *handle,  const char *path,
-                           const char *name, const void *value, size_t size,  int flags){
-	struct xattr_DOSATTRIB dosattrib;
-        enum ndr_err_code ndr_err;
-        DATA_BLOB blob;
-        unsigned int dosmode=0;
-        struct gpfs_winattr attrs;
-        int ret = 0;
-	struct gpfs_config_data *config;
+static uint32_t vfs_gpfs_winattrs_to_dosmode(unsigned int winattrs)
+{
+	uint32_t dosmode = 0;
 
-	SMB_VFS_HANDLE_GET_DATA(handle, config,
-				struct gpfs_config_data,
-				return -1);
-
-	if (!config->winattr) {
-		DEBUG(10, ("gpfs_set_xattr:name is %s -> next\n",name));
-		return SMB_VFS_NEXT_SETXATTR(handle,path,name,value,size,flags);
+	if (winattrs & GPFS_WINATTR_ARCHIVE){
+		dosmode |= FILE_ATTRIBUTE_ARCHIVE;
 	}
-
-        DEBUG(10, ("gpfs_set_xattr: %s \n",path));
-
-        /* Only handle DOS Attributes */
-        if (strcmp(name,SAMBA_XATTR_DOS_ATTRIB) != 0){
-		DEBUG(5, ("gpfs_set_xattr:name is %s\n",name));
-		return SMB_VFS_NEXT_SETXATTR(handle,path,name,value,size,flags);
-        }
-
-	blob.data = discard_const_p(uint8_t, value);
-	blob.length = size;
-
-	ndr_err = ndr_pull_struct_blob(&blob, talloc_tos(), &dosattrib,
-			(ndr_pull_flags_fn_t)ndr_pull_xattr_DOSATTRIB);
-
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		DEBUG(1, ("gpfs_set_xattr: bad ndr decode "
-			  "from EA on file %s: Error = %s\n",
-			  path, ndr_errstr(ndr_err)));
-		return false;
+	if (winattrs & GPFS_WINATTR_HIDDEN){
+		dosmode |= FILE_ATTRIBUTE_HIDDEN;
 	}
-
-	if (dosattrib.version != 3) {
-		DEBUG(1, ("gpfs_set_xattr: expected dosattrib version 3, got "
-			  "%d\n", (int)dosattrib.version));
-		return false;
+	if (winattrs & GPFS_WINATTR_SYSTEM){
+		dosmode |= FILE_ATTRIBUTE_SYSTEM;
 	}
-	if (!(dosattrib.info.info3.valid_flags & XATTR_DOSINFO_ATTRIB)) {
-		DEBUG(10, ("gpfs_set_xattr: XATTR_DOSINFO_ATTRIB not "
-			   "valid, ignoring\n"));
-		return true;
+	if (winattrs & GPFS_WINATTR_READONLY){
+		dosmode |= FILE_ATTRIBUTE_READONLY;
 	}
-
-	dosmode = dosattrib.info.info3.attrib;
-
-        attrs.winAttrs = 0;
-        /*Just map RD_ONLY, ARCHIVE, SYSTEM HIDDEN and SPARSE. Ignore the others*/
-        if (dosmode & FILE_ATTRIBUTE_ARCHIVE){
-                attrs.winAttrs |= GPFS_WINATTR_ARCHIVE;
-        }
-        if (dosmode & FILE_ATTRIBUTE_HIDDEN){
-                        attrs.winAttrs |= GPFS_WINATTR_HIDDEN;
-                }
-        if (dosmode & FILE_ATTRIBUTE_SYSTEM){
-                        attrs.winAttrs |= GPFS_WINATTR_SYSTEM;
-                }
-        if (dosmode & FILE_ATTRIBUTE_READONLY){
-                        attrs.winAttrs |= GPFS_WINATTR_READONLY;
-        }
-        if (dosmode & FILE_ATTRIBUTE_SPARSE) {
-		attrs.winAttrs |= GPFS_WINATTR_SPARSE_FILE;
-	}
-
-
-	ret = gpfswrap_set_winattrs_path(discard_const_p(char, path),
-					 GPFS_WINATTR_SET_ATTRS, &attrs);
-        if ( ret == -1){
-		if (errno == ENOSYS) {
-			return SMB_VFS_NEXT_SETXATTR(handle, path, name, value,
-						     size, flags);
-		}
-
-                DEBUG(1, ("gpfs_set_xattr:Set GPFS attributes failed %d\n",ret));
-                return -1;
-        }
-
-        DEBUG(10, ("gpfs_set_xattr:Set attributes: 0x%x\n",attrs.winAttrs));
-        return 0;
-}
-
-static ssize_t gpfs_get_xattr(struct vfs_handle_struct *handle,  const char *path,
-                              const char *name, void *value, size_t size){
-        char *attrstr = value;
-        unsigned int dosmode = 0;
-        struct gpfs_winattr attrs;
-        int ret = 0;
-	struct gpfs_config_data *config;
-
-	SMB_VFS_HANDLE_GET_DATA(handle, config,
-				struct gpfs_config_data,
-				return -1);
-
-	if (!config->winattr) {
-		DEBUG(10, ("gpfs_get_xattr:name is %s -> next\n",name));
-		return SMB_VFS_NEXT_GETXATTR(handle,path,name,value,size);
-	}
-
-        DEBUG(10, ("gpfs_get_xattr: %s \n",path));
-
-        /* Only handle DOS Attributes */
-        if (strcmp(name,SAMBA_XATTR_DOS_ATTRIB) != 0){
-		DEBUG(5, ("gpfs_get_xattr:name is %s\n",name));
-                return SMB_VFS_NEXT_GETXATTR(handle,path,name,value,size);
-        }
-
-	ret = gpfswrap_get_winattrs_path(discard_const_p(char, path), &attrs);
-        if ( ret == -1){
-		int dbg_lvl;
-
-		if (errno == ENOSYS) {
-			return SMB_VFS_NEXT_GETXATTR(handle, path, name, value,
-						     size);
-		}
-
-		if (errno != EPERM && errno != EACCES) {
-			dbg_lvl = 1;
-		} else {
-			dbg_lvl = 5;
-		}
-		DEBUG(dbg_lvl, ("gpfs_get_xattr: Get GPFS attributes failed: "
-			      "%d (%s)\n", ret, strerror(errno)));
-                return -1;
-        }
-
-        DEBUG(10, ("gpfs_get_xattr:Got attributes: 0x%x\n",attrs.winAttrs));
-
-        /*Just map RD_ONLY, ARCHIVE, SYSTEM, HIDDEN and SPARSE. Ignore the others*/
-        if (attrs.winAttrs & GPFS_WINATTR_ARCHIVE){
-                dosmode |= FILE_ATTRIBUTE_ARCHIVE;
-        }
-        if (attrs.winAttrs & GPFS_WINATTR_HIDDEN){
-                dosmode |= FILE_ATTRIBUTE_HIDDEN;
-        }
-        if (attrs.winAttrs & GPFS_WINATTR_SYSTEM){
-                dosmode |= FILE_ATTRIBUTE_SYSTEM;
-        }
-        if (attrs.winAttrs & GPFS_WINATTR_READONLY){
-                dosmode |= FILE_ATTRIBUTE_READONLY;
-        }
-        if (attrs.winAttrs & GPFS_WINATTR_SPARSE_FILE) {
+	if (winattrs & GPFS_WINATTR_SPARSE_FILE) {
 		dosmode |= FILE_ATTRIBUTE_SPARSE;
 	}
 
-        snprintf(attrstr, size, "0x%2.2x",
-		 (unsigned int)(dosmode & SAMBA_ATTRIBUTES_MASK));
-        DEBUG(10, ("gpfs_get_xattr: returning %s\n",attrstr));
-        return 4;
+	return dosmode;
+}
+
+static unsigned int vfs_gpfs_dosmode_to_winattrs(uint32_t dosmode)
+{
+	unsigned int winattrs = 0;
+
+	if (dosmode & FILE_ATTRIBUTE_ARCHIVE){
+		winattrs |= GPFS_WINATTR_ARCHIVE;
+	}
+	if (dosmode & FILE_ATTRIBUTE_HIDDEN){
+		winattrs |= GPFS_WINATTR_HIDDEN;
+	}
+	if (dosmode & FILE_ATTRIBUTE_SYSTEM){
+		winattrs |= GPFS_WINATTR_SYSTEM;
+	}
+	if (dosmode & FILE_ATTRIBUTE_READONLY){
+		winattrs |= GPFS_WINATTR_READONLY;
+	}
+	if (dosmode & FILE_ATTRIBUTE_SPARSE) {
+		winattrs |= GPFS_WINATTR_SPARSE_FILE;
+	}
+
+	return winattrs;
+}
+
+static NTSTATUS vfs_gpfs_get_dos_attributes(struct vfs_handle_struct *handle,
+					    struct smb_filename *smb_fname,
+					    uint32_t *dosmode)
+{
+	struct gpfs_config_data *config;
+	struct gpfs_winattr attrs = { };
+	int ret;
+
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
+				struct gpfs_config_data,
+				return NT_STATUS_INTERNAL_ERROR);
+
+	if (!config->winattr) {
+		return SMB_VFS_NEXT_GET_DOS_ATTRIBUTES(handle,
+						       smb_fname, dosmode);
+	}
+
+	ret = gpfswrap_get_winattrs_path(smb_fname->base_name, &attrs);
+	if (ret == -1 && errno == ENOSYS) {
+		return SMB_VFS_NEXT_GET_DOS_ATTRIBUTES(handle, smb_fname,
+						       dosmode);
+	}
+
+	if (ret == -1) {
+		DBG_WARNING("Getting winattrs failed for %s: %s\n",
+			    smb_fname->base_name, strerror(errno));
+		return map_nt_error_from_unix(errno);
+	}
+
+	*dosmode |= vfs_gpfs_winattrs_to_dosmode(attrs.winAttrs);
+
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS vfs_gpfs_fget_dos_attributes(struct vfs_handle_struct *handle,
+					     struct files_struct *fsp,
+					     uint32_t *dosmode)
+{
+	struct gpfs_config_data *config;
+	struct gpfs_winattr attrs = { };
+	int ret;
+
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
+				struct gpfs_config_data,
+				return NT_STATUS_INTERNAL_ERROR);
+
+	if (!config->winattr) {
+		return SMB_VFS_NEXT_FGET_DOS_ATTRIBUTES(handle, fsp, dosmode);
+	}
+
+	ret = gpfswrap_get_winattrs(fsp->fh->fd, &attrs);
+	if (ret == -1 && errno == ENOSYS) {
+		return SMB_VFS_NEXT_FGET_DOS_ATTRIBUTES(handle, fsp, dosmode);
+	}
+
+	if (ret == -1) {
+		DBG_WARNING("Getting winattrs failed for %s: %s\n",
+			    fsp->fsp_name->base_name, strerror(errno));
+		return map_nt_error_from_unix(errno);
+	}
+
+	*dosmode |= vfs_gpfs_winattrs_to_dosmode(attrs.winAttrs);
+
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS vfs_gpfs_set_dos_attributes(struct vfs_handle_struct *handle,
+					   const struct smb_filename *smb_fname,
+					   uint32_t dosmode)
+{
+	struct gpfs_config_data *config;
+	struct gpfs_winattr attrs = { };
+	int ret;
+
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
+				struct gpfs_config_data,
+				return NT_STATUS_INTERNAL_ERROR);
+
+	if (!config->winattr) {
+		return SMB_VFS_NEXT_SET_DOS_ATTRIBUTES(handle,
+						       smb_fname, dosmode);
+	}
+
+	attrs.winAttrs = vfs_gpfs_dosmode_to_winattrs(dosmode);
+	ret = gpfswrap_set_winattrs_path(smb_fname->base_name,
+					 GPFS_WINATTR_SET_ATTRS, &attrs);
+
+	if (ret == -1 && errno == ENOSYS) {
+		return SMB_VFS_NEXT_SET_DOS_ATTRIBUTES(handle,
+						       smb_fname, dosmode);
+	}
+
+	if (ret == -1) {
+		DBG_WARNING("Setting winattrs failed for %s: %s\n",
+			    smb_fname->base_name, strerror(errno));
+		return map_nt_error_from_unix(errno);
+	}
+
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS vfs_gpfs_fset_dos_attributes(struct vfs_handle_struct *handle,
+					     struct files_struct *fsp,
+					     uint32_t dosmode)
+{
+	struct gpfs_config_data *config;
+	struct gpfs_winattr attrs = { };
+	int ret;
+
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
+				struct gpfs_config_data,
+				return NT_STATUS_INTERNAL_ERROR);
+
+	if (!config->winattr) {
+		return SMB_VFS_NEXT_FSET_DOS_ATTRIBUTES(handle, fsp, dosmode);
+	}
+
+	attrs.winAttrs = vfs_gpfs_dosmode_to_winattrs(dosmode);
+	ret = gpfswrap_set_winattrs(fsp->fh->fd,
+				    GPFS_WINATTR_SET_ATTRS, &attrs);
+
+	if (ret == -1 && errno == ENOSYS) {
+		return SMB_VFS_NEXT_FSET_DOS_ATTRIBUTES(handle, fsp, dosmode);
+	}
+
+	if (ret == -1) {
+		DBG_WARNING("Setting winattrs failed for %s: %s\n",
+			    fsp->fsp_name->base_name, strerror(errno));
+		return map_nt_error_from_unix(errno);
+	}
+
+	return NT_STATUS_OK;
 }
 
 #if defined(HAVE_FSTATAT)
@@ -2314,8 +2371,8 @@ static ssize_t vfs_gpfs_pread(vfs_handle_struct *handle, files_struct *fsp,
 struct vfs_gpfs_pread_state {
 	struct files_struct *fsp;
 	ssize_t ret;
-	int err;
 	bool was_offline;
+	struct vfs_aio_state vfs_aio_state;
 };
 
 static void vfs_gpfs_pread_done(struct tevent_req *subreq);
@@ -2352,21 +2409,22 @@ static void vfs_gpfs_pread_done(struct tevent_req *subreq)
 	struct vfs_gpfs_pread_state *state = tevent_req_data(
 		req, struct vfs_gpfs_pread_state);
 
-	state->ret = SMB_VFS_PREAD_RECV(subreq, &state->err);
+	state->ret = SMB_VFS_PREAD_RECV(subreq, &state->vfs_aio_state);
 	TALLOC_FREE(subreq);
 	tevent_req_done(req);
 }
 
-static ssize_t vfs_gpfs_pread_recv(struct tevent_req *req, int *err)
+static ssize_t vfs_gpfs_pread_recv(struct tevent_req *req,
+				   struct vfs_aio_state *vfs_aio_state)
 {
 	struct vfs_gpfs_pread_state *state = tevent_req_data(
 		req, struct vfs_gpfs_pread_state);
 	struct files_struct *fsp = state->fsp;
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	*err = state->err;
+	*vfs_aio_state = state->vfs_aio_state;
 
 	if ((state->ret != -1) && state->was_offline) {
 		DEBUG(10, ("sending notify\n"));
@@ -2400,8 +2458,8 @@ static ssize_t vfs_gpfs_pwrite(vfs_handle_struct *handle, files_struct *fsp,
 struct vfs_gpfs_pwrite_state {
 	struct files_struct *fsp;
 	ssize_t ret;
-	int err;
 	bool was_offline;
+	struct vfs_aio_state vfs_aio_state;
 };
 
 static void vfs_gpfs_pwrite_done(struct tevent_req *subreq);
@@ -2439,21 +2497,22 @@ static void vfs_gpfs_pwrite_done(struct tevent_req *subreq)
 	struct vfs_gpfs_pwrite_state *state = tevent_req_data(
 		req, struct vfs_gpfs_pwrite_state);
 
-	state->ret = SMB_VFS_PWRITE_RECV(subreq, &state->err);
+	state->ret = SMB_VFS_PWRITE_RECV(subreq, &state->vfs_aio_state);
 	TALLOC_FREE(subreq);
 	tevent_req_done(req);
 }
 
-static ssize_t vfs_gpfs_pwrite_recv(struct tevent_req *req, int *err)
+static ssize_t vfs_gpfs_pwrite_recv(struct tevent_req *req,
+				    struct vfs_aio_state *vfs_aio_state)
 {
 	struct vfs_gpfs_pwrite_state *state = tevent_req_data(
 		req, struct vfs_gpfs_pwrite_state);
 	struct files_struct *fsp = state->fsp;
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	*err = state->err;
+	*vfs_aio_state = state->vfs_aio_state;
 
 	if ((state->ret != -1) && state->was_offline) {
 		DEBUG(10, ("sending notify\n"));
@@ -2474,6 +2533,10 @@ static struct vfs_fn_pointers vfs_gpfs_fns = {
 	.kernel_flock_fn = vfs_gpfs_kernel_flock,
 	.linux_setlease_fn = vfs_gpfs_setlease,
 	.get_real_filename_fn = vfs_gpfs_get_real_filename,
+	.get_dos_attributes_fn = vfs_gpfs_get_dos_attributes,
+	.fget_dos_attributes_fn = vfs_gpfs_fget_dos_attributes,
+	.set_dos_attributes_fn = vfs_gpfs_set_dos_attributes,
+	.fset_dos_attributes_fn = vfs_gpfs_fset_dos_attributes,
 	.fget_nt_acl_fn = gpfsacl_fget_nt_acl,
 	.get_nt_acl_fn = gpfsacl_get_nt_acl,
 	.fset_nt_acl_fn = gpfsacl_fset_nt_acl,
@@ -2487,8 +2550,6 @@ static struct vfs_fn_pointers vfs_gpfs_fns = {
 	.chmod_fn = vfs_gpfs_chmod,
 	.fchmod_fn = vfs_gpfs_fchmod,
 	.close_fn = vfs_gpfs_close,
-	.setxattr_fn = gpfs_set_xattr,
-	.getxattr_fn = gpfs_get_xattr,
 	.stat_fn = vfs_gpfs_stat,
 	.fstat_fn = vfs_gpfs_fstat,
 	.lstat_fn = vfs_gpfs_lstat,

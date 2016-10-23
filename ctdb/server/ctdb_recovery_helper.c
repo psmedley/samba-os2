@@ -40,6 +40,8 @@ static int recover_timeout = 30;
 
 #define TIMEOUT()	timeval_current_ofs(recover_timeout, 0)
 
+static void LOG(const char *fmt, ...) PRINTF_ATTRIBUTE(1,2);
+
 static void LOG(const char *fmt, ...)
 {
 	va_list ap;
@@ -1398,7 +1400,6 @@ static struct tevent_req *collect_all_db_send(
 	state->pnn_list = pnn_list;
 	state->count = count;
 	state->caps = caps;
-	state->ban_credits = ban_credits;
 	state->db_id = db_id;
 	state->recdb = recdb;
 	state->index = 0;
@@ -1553,7 +1554,7 @@ static void recover_db_name_done(struct tevent_req *subreq)
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
-		LOG("control GET_DBNAME failed for db=0x%x\n, ret=%d",
+		LOG("control GET_DBNAME failed for db=0x%x, ret=%d\n",
 		    state->db_id, ret);
 		tevent_req_error(req, ret);
 		return;
@@ -1561,7 +1562,7 @@ static void recover_db_name_done(struct tevent_req *subreq)
 
 	ret = ctdb_reply_control_get_dbname(reply, state, &state->db_name);
 	if (ret != 0) {
-		LOG("control GET_DBNAME failed for db=0x%x\n, ret=%d\n",
+		LOG("control GET_DBNAME failed for db=0x%x, ret=%d\n",
 		    state->db_id, ret);
 		tevent_req_error(req, EPROTO);
 		return;
@@ -1684,7 +1685,7 @@ static void recover_db_transaction_started(struct tevent_req *subreq)
 						       state->count,
 						       err_list, &pnn);
 		if (ret2 != 0) {
-			LOG("control TRANSACTION_DB failed for db=%s,"
+			LOG("control TRANSACTION_DB failed for db=%s on node %u,"
 			    " ret=%d\n", state->db_name, pnn, ret2);
 		} else {
 			LOG("control TRANSACTION_DB failed for db=%s,"
@@ -1778,7 +1779,7 @@ static void recover_db_wipedb_done(struct tevent_req *subreq)
 			    " ret=%d\n", state->db_name, pnn, ret2);
 		} else {
 			LOG("control WIPEDB failed for db %s, ret=%d\n",
-			    state->db_name, pnn, ret);
+			    state->db_name, ret);
 		}
 		tevent_req_error(req, ret);
 		return;
@@ -1847,10 +1848,10 @@ static void recover_db_transaction_committed(struct tevent_req *subreq)
 						       err_list, &pnn);
 		if (ret2 != 0) {
 			LOG("control DB_TRANSACTION_COMMIT failed for db %s"
-			    " on node %u, ret=%d", state->db_name, pnn, ret2);
+			    " on node %u, ret=%d\n", state->db_name, pnn, ret2);
 		} else {
-			LOG("control DB_TRANSACTION_COMMIT failed for db %s\n,"
-			    " ret=%d", state->db_name, ret);
+			LOG("control DB_TRANSACTION_COMMIT failed for db %s,"
+			    " ret=%d\n", state->db_name, ret);
 		}
 		tevent_req_error(req, ret);
 		return;
@@ -2080,8 +2081,8 @@ static bool db_recovery_recv(struct tevent_req *req, int *count)
  * - Send START_RECOVERY
  * - Update vnnmap on all nodes
  * - Run database recovery
- * - Send END_RECOVERY
  * - Set RECOVERY_NORMAL
+ * - Send END_RECOVERY
  */
 
 struct recovery_state {

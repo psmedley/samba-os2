@@ -62,13 +62,15 @@ ctdbd_is_running ()
 	    echo "$_pid"
 
 	    # Return value of kill is used
-	    kill -0 $_pid 2>/dev/null
+	    kill -0 "$_pid" 2>/dev/null
 	else
 	    # Missing/empty PID file
 	    return 1
 	fi
     else
 	if _pid=$(pgrep -f "${ctdbd}\>") ; then
+		# Use word splitting to squash whitespace
+		# shellcheck disable=SC2086
 	    echo $_pid | sed -e 's@ @,@g'
 	    return 0
 	else
@@ -112,6 +114,8 @@ dbdir_tmpfs_stop ()
     fi
 }
 
+# Only the nested function references its arguments
+# shellcheck disable=SC2120
 build_ctdb_options ()
 {
     ctdb_options=""
@@ -163,7 +167,7 @@ build_ctdb_options ()
     maybe_set "--start-as-stopped "      "$CTDB_START_AS_STOPPED"     "yes"
     maybe_set "--no-recmaster"           "$CTDB_CAPABILITY_RECMASTER" "no"
     maybe_set "--no-lmaster"             "$CTDB_CAPABILITY_LMASTER"   "no"
-    maybe_set "--lvs --single-public-ip" "$CTDB_LVS_PUBLIC_IP"
+    maybe_set "--nosetsched"             "$CTDB_NOSETSCHED"           "yes"
     maybe_set "--script-log-level"       "$CTDB_SCRIPT_LOG_LEVEL"
     maybe_set "--max-persistent-check-errors" "$CTDB_MAX_PERSISTENT_CHECK_ERRORS"
 }
@@ -200,21 +204,28 @@ start()
 
     dbdir_tmpfs_start
 
+    # build_ctdb_options() takes no arguments
+    # shellcheck disable=SC2119
     build_ctdb_options
 
     export_debug_variables
 
+    # Explicitly trying to disable core files, no other way
+    # shellcheck disable=SC2039
     if [ "$CTDB_SUPPRESS_COREFILE" = "yes" ]; then
 	ulimit -c 0
     else
 	ulimit -c unlimited
     fi
 
+    # Unsupported option easily avoided by not using configuration variable
+    # shellcheck disable=SC2039
     if [ -n "$CTDB_MAX_OPEN_FILES" ]; then
-	ulimit -n $CTDB_MAX_OPEN_FILES
+	ulimit -n "$CTDB_MAX_OPEN_FILES"
     fi
 
-    mkdir -p $(dirname "$pidfile")
+    _d=$(dirname "$pidfile")
+    mkdir -p "$_d"
 
     if [ -n "$CTDB_VALGRIND" -a "$CTDB_VALGRIND" != "no" ] ; then
 	if [ "$CTDB_VALGRIND" = "yes" ] ; then
@@ -243,7 +254,7 @@ start()
     _pid=""
     _timeout="${CTDB_STARTUP_TIMEOUT:-10}"
     _count=0
-    while [ $_count -lt $_timeout ] ; do
+    while [ "$_count" -lt "$_timeout" ] ; do
 	# If we don't have the PID then try to read it.
 	[ -n "$_pid" ] || read _pid 2>/dev/null <"$pidfile"
 
@@ -257,12 +268,12 @@ start()
 		return 1
 	    fi
 
-	    if ctdb runstate first_recovery startup running >/dev/null 2>&1 ; then
+	    if $CTDB runstate first_recovery startup running >/dev/null 2>&1 ; then
 		return 0
 	    fi
 	fi
 
-	_count=$(($_count + 1))
+	_count=$((_count + 1))
 	sleep 1
     done
 
@@ -279,19 +290,19 @@ stop()
 	return 0
     fi
 
-    ctdb shutdown
+    $CTDB shutdown
 
     # Wait for remaining CTDB processes to exit...
     _timeout=${CTDB_SHUTDOWN_TIMEOUT:-30}
     _count=0
     _terminated=false
-    while [ $_count -lt $_timeout ] ; do
+    while [ "$_count" -lt "$_timeout" ] ; do
 	if ! pkill -0 -s "$_session" 2>/dev/null ; then
 	    _terminated=true
 	    break
 	fi
 
-	_count=$(($_count + 1))
+	_count=$((_count + 1))
 	sleep 1
     done
 

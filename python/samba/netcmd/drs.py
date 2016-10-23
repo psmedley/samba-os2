@@ -276,6 +276,8 @@ def drs_local_replicate(self, SOURCE_DC, NC):
         raise CommandError("Error replicating DN %s" % NC, e)
     self.samdb.transaction_commit()
 
+    self.message("Replicate from %s to %s was successful." % (SOURCE_DC, self.local_samdb.url))
+
 
 
 class cmd_drs_replicate(Command):
@@ -297,11 +299,14 @@ class cmd_drs_replicate(Command):
         Option("--sync-all", help="use SYNC_ALL to replicate from all DCs", action="store_true"),
         Option("--full-sync", help="resync all objects", action="store_true"),
         Option("--local", help="pull changes directly into the local database (destination DC is ignored)", action="store_true"),
+        Option("--local-online", help="pull changes into the local database (destination DC is ignored) as a normal online replication", action="store_true"),
+        Option("--async-op", help="use ASYNC_OP for the replication", action="store_true"),
         ]
 
     def run(self, DEST_DC, SOURCE_DC, NC,
             add_ref=False, sync_forced=False, sync_all=False, full_sync=False,
-            local=False, sambaopts=None, credopts=None, versionopts=None, server=None):
+            local=False, local_online=False, async_op=False,
+            sambaopts=None, credopts=None, versionopts=None, server=None):
 
         self.server = DEST_DC
         self.lp = sambaopts.get_loadparm()
@@ -312,7 +317,18 @@ class cmd_drs_replicate(Command):
             drs_local_replicate(self, SOURCE_DC, NC)
             return
 
-        drsuapi_connect(self)
+        if local_online:
+            server_bind = drsuapi.drsuapi("irpc:dreplsrv", lp_ctx=self.lp)
+            server_bind_handle = misc.policy_handle()
+        else:
+            drsuapi_connect(self)
+            server_bind = self.drsuapi
+            server_bind_handle = self.drsuapi_handle
+
+        if not async_op:
+            # Give the sync replication 5 minutes time
+            server_bind.request_timeout = 5 * 60
+
         samdb_connect(self)
 
         # we need to find the NTDS GUID of the source DC
@@ -345,12 +361,17 @@ class cmd_drs_replicate(Command):
             req_options |= drsuapi.DRSUAPI_DRS_SYNC_ALL
         if full_sync:
             req_options |= drsuapi.DRSUAPI_DRS_FULL_SYNC_NOW
+        if async_op:
+            req_options |= drsuapi.DRSUAPI_DRS_ASYNC_OP
 
         try:
-            drs_utils.sendDsReplicaSync(self.drsuapi, self.drsuapi_handle, source_dsa_guid, NC, req_options)
+            drs_utils.sendDsReplicaSync(server_bind, server_bind_handle, source_dsa_guid, NC, req_options)
         except drs_utils.drsException, estr:
             raise CommandError("DsReplicaSync failed", estr)
-        self.message("Replicate from %s to %s was successful." % (SOURCE_DC, DEST_DC))
+        if async_op:
+            self.message("Replicate from %s to %s was started." % (SOURCE_DC, DEST_DC))
+        else:
+            self.message("Replicate from %s to %s was successful." % (SOURCE_DC, DEST_DC))
 
 
 

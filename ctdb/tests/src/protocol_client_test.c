@@ -40,7 +40,7 @@
 static void verify_ctdb_req_header(struct ctdb_req_header *h,
 				   struct ctdb_req_header *h2)
 {
-	verify_buffer(h, h2, sizeof(struct ctdb_req_header));
+	verify_buffer(h, h2, ctdb_req_header_len(h));
 }
 
 static void fill_ctdb_req_call(TALLOC_CTX *mem_ctx,
@@ -50,7 +50,7 @@ static void fill_ctdb_req_call(TALLOC_CTX *mem_ctx,
 	c->db_id = rand32();
 	c->callid = rand32();
 	c->hopcount = rand32();
-	fill_tdb_data(mem_ctx, &c->key);
+	fill_tdb_data_nonnull(mem_ctx, &c->key);
 	fill_tdb_data(mem_ctx, &c->calldata);
 }
 
@@ -99,7 +99,7 @@ static void fill_ctdb_req_dmaster(TALLOC_CTX *mem_ctx,
 	c->db_id = rand32();
 	c->rsn = rand64();
 	c->dmaster = rand32();
-	fill_tdb_data(mem_ctx, &c->key);
+	fill_tdb_data_nonnull(mem_ctx, &c->key);
 	fill_tdb_data(mem_ctx, &c->data);
 }
 
@@ -118,7 +118,7 @@ static void fill_ctdb_reply_dmaster(TALLOC_CTX *mem_ctx,
 {
 	c->db_id = rand32();
 	c->rsn = rand64();
-	fill_tdb_data(mem_ctx, &c->key);
+	fill_tdb_data_nonnull(mem_ctx, &c->key);
 	fill_tdb_data(mem_ctx, &c->data);
 }
 
@@ -252,9 +252,6 @@ static void fill_ctdb_req_control_data(TALLOC_CTX *mem_ctx,
 	case CTDB_CONTROL_FREEZE:
 		break;
 
-	case CTDB_CONTROL_THAW:
-		break;
-
 	case CTDB_CONTROL_GET_PNN:
 		break;
 
@@ -308,12 +305,6 @@ static void fill_ctdb_req_control_data(TALLOC_CTX *mem_ctx,
 	case CTDB_CONTROL_GET_ALL_TUNABLES:
 		break;
 
-	case CTDB_CONTROL_KILL_TCP:
-		cd->data.conn = talloc(mem_ctx, struct ctdb_connection);
-		assert(cd->data.conn != NULL);
-		fill_ctdb_connection(mem_ctx, cd->data.conn);
-		break;
-
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		cd->data.addr = talloc(mem_ctx, ctdb_sock_addr);
 		assert(cd->data.addr != NULL);
@@ -324,27 +315,6 @@ static void fill_ctdb_req_control_data(TALLOC_CTX *mem_ctx,
 		cd->data.tickles = talloc(mem_ctx, struct ctdb_tickle_list);
 		assert(cd->data.tickles != NULL);
 		fill_ctdb_tickle_list(mem_ctx, cd->data.tickles);
-		break;
-
-	case CTDB_CONTROL_REGISTER_SERVER_ID:
-		cd->data.cid = talloc(mem_ctx, struct ctdb_client_id);
-		assert(cd->data.cid != NULL);
-		fill_ctdb_client_id(mem_ctx, cd->data.cid);
-		break;
-
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
-		cd->data.cid = talloc(mem_ctx, struct ctdb_client_id);
-		assert(cd->data.cid != NULL);
-		fill_ctdb_client_id(mem_ctx, cd->data.cid);
-		break;
-
-	case CTDB_CONTROL_CHECK_SERVER_ID:
-		cd->data.cid = talloc(mem_ctx, struct ctdb_client_id);
-		assert(cd->data.cid != NULL);
-		fill_ctdb_client_id(mem_ctx, cd->data.cid);
-		break;
-
-	case CTDB_CONTROL_GET_SERVER_ID_LIST:
 		break;
 
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
@@ -362,14 +332,6 @@ static void fill_ctdb_req_control_data(TALLOC_CTX *mem_ctx,
 		cd->data.addr_info = talloc(mem_ctx, struct ctdb_addr_info);
 		assert(cd->data.addr_info != NULL);
 		fill_ctdb_addr_info(mem_ctx, cd->data.addr_info);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_START:
-		cd->data.tid = rand32();
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_COMMIT:
-		cd->data.tid = rand32();
 		break;
 
 	case CTDB_CONTROL_WIPE_DATABASE:
@@ -466,19 +428,10 @@ static void fill_ctdb_req_control_data(TALLOC_CTX *mem_ctx,
 	case CTDB_CONTROL_GET_RECLOCK_FILE:
 		break;
 
-	case CTDB_CONTROL_SET_RECLOCK_FILE:
-		fill_ctdb_string(mem_ctx, &cd->data.reclock_file);
-		assert(cd->data.reclock_file != NULL);
-		break;
-
 	case CTDB_CONTROL_STOP_NODE:
 		break;
 
 	case CTDB_CONTROL_CONTINUE_NODE:
-		break;
-
-	case CTDB_CONTROL_SET_NATGWSTATE:
-		cd->data.role = rand_int(2);
 		break;
 
 	case CTDB_CONTROL_SET_LMASTERROLE:
@@ -506,21 +459,6 @@ static void fill_ctdb_req_control_data(TALLOC_CTX *mem_ctx,
 		break;
 
 	case CTDB_CONTROL_GET_BAN_STATE:
-		break;
-
-	case CTDB_CONTROL_SET_DB_PRIORITY:
-		cd->data.db_prio = talloc(mem_ctx, struct ctdb_db_priority);
-		assert(cd->data.db_prio != NULL);
-		fill_ctdb_db_priority(mem_ctx, cd->data.db_prio);
-		break;
-
-	case CTDB_CONTROL_GET_DB_PRIORITY:
-		cd->data.db_prio = talloc(mem_ctx, struct ctdb_db_priority);
-		assert(cd->data.db_prio != NULL);
-		fill_ctdb_db_priority(mem_ctx, cd->data.db_prio);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_CANCEL:
 		break;
 
 	case CTDB_CONTROL_REGISTER_NOTIFY:
@@ -786,9 +724,6 @@ static void verify_ctdb_req_control_data(struct ctdb_req_control_data *cd,
 	case CTDB_CONTROL_FREEZE:
 		break;
 
-	case CTDB_CONTROL_THAW:
-		break;
-
 	case CTDB_CONTROL_GET_PNN:
 		break;
 
@@ -832,31 +767,12 @@ static void verify_ctdb_req_control_data(struct ctdb_req_control_data *cd,
 	case CTDB_CONTROL_GET_ALL_TUNABLES:
 		break;
 
-	case CTDB_CONTROL_KILL_TCP:
-		verify_ctdb_connection(cd->data.conn, cd2->data.conn);
-		break;
-
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		verify_ctdb_sock_addr(cd->data.addr, cd2->data.addr);
 		break;
 
 	case CTDB_CONTROL_SET_TCP_TICKLE_LIST:
 		verify_ctdb_tickle_list(cd->data.tickles, cd2->data.tickles);
-		break;
-
-	case CTDB_CONTROL_REGISTER_SERVER_ID:
-		verify_ctdb_client_id(cd->data.cid, cd2->data.cid);
-		break;
-
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
-		verify_ctdb_client_id(cd->data.cid, cd2->data.cid);
-		break;
-
-	case CTDB_CONTROL_CHECK_SERVER_ID:
-		verify_ctdb_client_id(cd->data.cid, cd2->data.cid);
-		break;
-
-	case CTDB_CONTROL_GET_SERVER_ID_LIST:
 		break;
 
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
@@ -869,14 +785,6 @@ static void verify_ctdb_req_control_data(struct ctdb_req_control_data *cd,
 
 	case CTDB_CONTROL_SEND_GRATUITOUS_ARP:
 		verify_ctdb_addr_info(cd->data.addr_info, cd2->data.addr_info);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_START:
-		assert(cd->data.tid == cd2->data.tid);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_COMMIT:
-		assert(cd->data.tid == cd2->data.tid);
 		break;
 
 	case CTDB_CONTROL_WIPE_DATABASE:
@@ -959,19 +867,10 @@ static void verify_ctdb_req_control_data(struct ctdb_req_control_data *cd,
 	case CTDB_CONTROL_GET_RECLOCK_FILE:
 		break;
 
-	case CTDB_CONTROL_SET_RECLOCK_FILE:
-		verify_ctdb_string(cd->data.reclock_file,
-				   cd2->data.reclock_file);
-		break;
-
 	case CTDB_CONTROL_STOP_NODE:
 		break;
 
 	case CTDB_CONTROL_CONTINUE_NODE:
-		break;
-
-	case CTDB_CONTROL_SET_NATGWSTATE:
-		assert(cd->data.role == cd2->data.role);
 		break;
 
 	case CTDB_CONTROL_SET_LMASTERROLE:
@@ -995,17 +894,6 @@ static void verify_ctdb_req_control_data(struct ctdb_req_control_data *cd,
 		break;
 
 	case CTDB_CONTROL_GET_BAN_STATE:
-		break;
-
-	case CTDB_CONTROL_SET_DB_PRIORITY:
-		verify_ctdb_db_priority(cd->data.db_prio, cd2->data.db_prio);
-		break;
-
-	case CTDB_CONTROL_GET_DB_PRIORITY:
-		assert(cd->data.db_id == cd2->data.db_id);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_CANCEL:
 		break;
 
 	case CTDB_CONTROL_REGISTER_NOTIFY:
@@ -1277,9 +1165,6 @@ static void fill_ctdb_reply_control_data(TALLOC_CTX *mem_ctx,
 	case CTDB_CONTROL_FREEZE:
 		break;
 
-	case CTDB_CONTROL_THAW:
-		break;
-
 	case CTDB_CONTROL_GET_PNN:
 		break;
 
@@ -1323,9 +1208,6 @@ static void fill_ctdb_reply_control_data(TALLOC_CTX *mem_ctx,
 		fill_ctdb_tunable_list(mem_ctx, cd->data.tun_list);
 		break;
 
-	case CTDB_CONTROL_KILL_TCP:
-		break;
-
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		cd->data.tickles = talloc(mem_ctx, struct ctdb_tickle_list);
 		assert(cd->data.tickles != NULL);
@@ -1335,21 +1217,6 @@ static void fill_ctdb_reply_control_data(TALLOC_CTX *mem_ctx,
 	case CTDB_CONTROL_SET_TCP_TICKLE_LIST:
 		break;
 
-	case CTDB_CONTROL_REGISTER_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_CHECK_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_GET_SERVER_ID_LIST:
-		cd->data.cid_map = talloc(mem_ctx, struct ctdb_client_id_map);
-		assert(cd->data.cid_map != NULL);
-		fill_ctdb_client_id_map(mem_ctx, cd->data.cid_map);
-		break;
-
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
 		break;
 
@@ -1357,12 +1224,6 @@ static void fill_ctdb_reply_control_data(TALLOC_CTX *mem_ctx,
 		break;
 
 	case CTDB_CONTROL_SEND_GRATUITOUS_ARP:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_START:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_COMMIT:
 		break;
 
 	case CTDB_CONTROL_WIPE_DATABASE:
@@ -1452,16 +1313,10 @@ static void fill_ctdb_reply_control_data(TALLOC_CTX *mem_ctx,
 		assert(cd->data.reclock_file != NULL);
 		break;
 
-	case CTDB_CONTROL_SET_RECLOCK_FILE:
-		break;
-
 	case CTDB_CONTROL_STOP_NODE:
 		break;
 
 	case CTDB_CONTROL_CONTINUE_NODE:
-		break;
-
-	case CTDB_CONTROL_SET_NATGWSTATE:
 		break;
 
 	case CTDB_CONTROL_SET_LMASTERROLE:
@@ -1483,15 +1338,6 @@ static void fill_ctdb_reply_control_data(TALLOC_CTX *mem_ctx,
 		cd->data.ban_state = talloc(mem_ctx, struct ctdb_ban_state);
 		assert(cd->data.ban_state != NULL);
 		fill_ctdb_ban_state(mem_ctx, cd->data.ban_state);
-		break;
-
-	case CTDB_CONTROL_SET_DB_PRIORITY:
-		break;
-
-	case CTDB_CONTROL_GET_DB_PRIORITY:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_CANCEL:
 		break;
 
 	case CTDB_CONTROL_REGISTER_NOTIFY:
@@ -1704,9 +1550,6 @@ static void verify_ctdb_reply_control_data(struct ctdb_reply_control_data *cd,
 	case CTDB_CONTROL_FREEZE:
 		break;
 
-	case CTDB_CONTROL_THAW:
-		break;
-
 	case CTDB_CONTROL_GET_PNN:
 		break;
 
@@ -1747,27 +1590,11 @@ static void verify_ctdb_reply_control_data(struct ctdb_reply_control_data *cd,
 		verify_ctdb_tunable_list(cd->data.tun_list, cd2->data.tun_list);
 		break;
 
-	case CTDB_CONTROL_KILL_TCP:
-		break;
-
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		verify_ctdb_tickle_list(cd->data.tickles, cd2->data.tickles);
 		break;
 
 	case CTDB_CONTROL_SET_TCP_TICKLE_LIST:
-		break;
-
-	case CTDB_CONTROL_REGISTER_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_CHECK_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_GET_SERVER_ID_LIST:
-		verify_ctdb_client_id_map(cd->data.cid_map, cd2->data.cid_map);
 		break;
 
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
@@ -1777,12 +1604,6 @@ static void verify_ctdb_reply_control_data(struct ctdb_reply_control_data *cd,
 		break;
 
 	case CTDB_CONTROL_SEND_GRATUITOUS_ARP:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_START:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_COMMIT:
 		break;
 
 	case CTDB_CONTROL_WIPE_DATABASE:
@@ -1858,16 +1679,10 @@ static void verify_ctdb_reply_control_data(struct ctdb_reply_control_data *cd,
 				   cd2->data.reclock_file);
 		break;
 
-	case CTDB_CONTROL_SET_RECLOCK_FILE:
-		break;
-
 	case CTDB_CONTROL_STOP_NODE:
 		break;
 
 	case CTDB_CONTROL_CONTINUE_NODE:
-		break;
-
-	case CTDB_CONTROL_SET_NATGWSTATE:
 		break;
 
 	case CTDB_CONTROL_SET_LMASTERROLE:
@@ -1887,15 +1702,6 @@ static void verify_ctdb_reply_control_data(struct ctdb_reply_control_data *cd,
 
 	case CTDB_CONTROL_GET_BAN_STATE:
 		verify_ctdb_ban_state(cd->data.ban_state, cd2->data.ban_state);
-		break;
-
-	case CTDB_CONTROL_SET_DB_PRIORITY:
-		break;
-
-	case CTDB_CONTROL_GET_DB_PRIORITY:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_CANCEL:
 		break;
 
 	case CTDB_CONTROL_REGISTER_NOTIFY:
@@ -2039,7 +1845,7 @@ static void test_ctdb_req_header(void)
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
 	size_t pkt_len;
-	struct ctdb_req_header *h, h2;
+	struct ctdb_req_header h, h2;
 	int ret;
 
 	printf("ctdb_req_header\n");
@@ -2048,18 +1854,21 @@ static void test_ctdb_req_header(void)
 	mem_ctx = talloc_new(NULL);
 	assert(mem_ctx != NULL);
 
-	ret = allocate_pkt(mem_ctx, sizeof(struct ctdb_req_header),
-			   &pkt, &pkt_len);
-	assert(ret == 0);
-
-	h = (struct ctdb_req_header *)pkt;
-	ctdb_req_header_fill(h, GENERATION, OPERATION, DESTNODE, SRCNODE,
+	ctdb_req_header_fill(&h, GENERATION, OPERATION, DESTNODE, SRCNODE,
 			     REQID);
+
+	ret = ctdb_allocate_pkt(mem_ctx, ctdb_req_header_len(&h),
+				&pkt, &pkt_len);
+	assert(ret == 0);
+	assert(pkt != NULL);
+	assert(pkt_len >= ctdb_req_header_len(&h));
+
+	ctdb_req_header_push(&h, pkt);
 
 	ret = ctdb_req_header_pull(pkt, pkt_len, &h2);
 	assert(ret == 0);
 
-	verify_ctdb_req_header(h, &h2);
+	verify_ctdb_req_header(&h, &h2);
 
 	talloc_free(mem_ctx);
 }
@@ -2068,7 +1877,7 @@ static void test_req_call_test(void)
 {
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
-	size_t pkt_len;
+	size_t datalen, pkt_len, len;
 	int ret;
 	struct ctdb_req_header h, h2;
 	struct ctdb_req_call c, c2;
@@ -2083,11 +1892,21 @@ static void test_req_call_test(void)
 			     DESTNODE, SRCNODE, REQID);
 
 	fill_ctdb_req_call(mem_ctx, &c);
-	ret = ctdb_req_call_push(&h, &c, mem_ctx, &pkt, &pkt_len);
+	datalen = ctdb_req_call_len(&h, &c);
+	ret = ctdb_allocate_pkt(mem_ctx, datalen, &pkt, &pkt_len);
+	assert(ret == 0);
+	assert(pkt != NULL);
+	assert(pkt_len >= datalen);
+	len = 0;
+	ret = ctdb_req_call_push(&h, &c, pkt, &len);
+	assert(ret == EMSGSIZE);
+	assert(len == datalen);
+	ret = ctdb_req_call_push(&h, &c, pkt, &pkt_len);
 	assert(ret == 0);
 	ret = ctdb_req_call_pull(pkt, pkt_len, &h2, mem_ctx, &c2);
 	assert(ret == 0);
 	verify_ctdb_req_header(&h, &h2);
+	assert(h2.length == pkt_len);
 	verify_ctdb_req_call(&c, &c2);
 
 	talloc_free(mem_ctx);
@@ -2097,7 +1916,7 @@ static void test_reply_call_test(void)
 {
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
-	size_t pkt_len;
+	size_t datalen, pkt_len, len;
 	int ret;
 	struct ctdb_req_header h, h2;
 	struct ctdb_reply_call c, c2;
@@ -2112,11 +1931,21 @@ static void test_reply_call_test(void)
 			     DESTNODE, SRCNODE, REQID);
 
 	fill_ctdb_reply_call(mem_ctx, &c);
-	ret = ctdb_reply_call_push(&h, &c, mem_ctx, &pkt, &pkt_len);
+	datalen = ctdb_reply_call_len(&h, &c);
+	ret = ctdb_allocate_pkt(mem_ctx, datalen, &pkt, &pkt_len);
+	assert(ret == 0);
+	assert(pkt != NULL);
+	assert(pkt_len >= datalen);
+	len = 0;
+	ret = ctdb_reply_call_push(&h, &c, pkt, &len);
+	assert(ret == EMSGSIZE);
+	assert(len == datalen);
+	ret = ctdb_reply_call_push(&h, &c, pkt, &pkt_len);
 	assert(ret == 0);
 	ret = ctdb_reply_call_pull(pkt, pkt_len, &h2, mem_ctx, &c2);
 	assert(ret == 0);
 	verify_ctdb_req_header(&h, &h2);
+	assert(h2.length == pkt_len);
 	verify_ctdb_reply_call(&c, &c2);
 
 	talloc_free(mem_ctx);
@@ -2126,7 +1955,7 @@ static void test_reply_error_test(void)
 {
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
-	size_t pkt_len;
+	size_t datalen, pkt_len, len;
 	int ret;
 	struct ctdb_req_header h, h2;
 	struct ctdb_reply_error c, c2;
@@ -2141,11 +1970,21 @@ static void test_reply_error_test(void)
 			     DESTNODE, SRCNODE, REQID);
 
 	fill_ctdb_reply_error(mem_ctx, &c);
-	ret = ctdb_reply_error_push(&h, &c, mem_ctx, &pkt, &pkt_len);
+	datalen = ctdb_reply_error_len(&h, &c);
+	ret = ctdb_allocate_pkt(mem_ctx, datalen, &pkt, &pkt_len);
+	assert(ret == 0);
+	assert(pkt != NULL);
+	assert(pkt_len >= datalen);
+	len = 0;
+	ret = ctdb_reply_error_push(&h, &c, pkt, &len);
+	assert(ret == EMSGSIZE);
+	assert(len == datalen);
+	ret = ctdb_reply_error_push(&h, &c, pkt, &pkt_len);
 	assert(ret == 0);
 	ret = ctdb_reply_error_pull(pkt, pkt_len, &h2, mem_ctx, &c2);
 	assert(ret == 0);
 	verify_ctdb_req_header(&h, &h2);
+	assert(h2.length == pkt_len);
 	verify_ctdb_reply_error(&c, &c2);
 
 	talloc_free(mem_ctx);
@@ -2155,7 +1994,7 @@ static void test_req_dmaster_test(void)
 {
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
-	size_t pkt_len;
+	size_t datalen, pkt_len, len;
 	int ret;
 	struct ctdb_req_header h, h2;
 	struct ctdb_req_dmaster c, c2;
@@ -2170,11 +2009,21 @@ static void test_req_dmaster_test(void)
 			     DESTNODE, SRCNODE, REQID);
 
 	fill_ctdb_req_dmaster(mem_ctx, &c);
-	ret = ctdb_req_dmaster_push(&h, &c, mem_ctx, &pkt, &pkt_len);
+	datalen = ctdb_req_dmaster_len(&h, &c);
+	ret = ctdb_allocate_pkt(mem_ctx, datalen, &pkt, &pkt_len);
+	assert(ret == 0);
+	assert(pkt != NULL);
+	assert(pkt_len >= datalen);
+	len = 0;
+	ret = ctdb_req_dmaster_push(&h, &c, pkt, &len);
+	assert(ret == EMSGSIZE);
+	assert(len == datalen);
+	ret = ctdb_req_dmaster_push(&h, &c, pkt, &pkt_len);
 	assert(ret == 0);
 	ret = ctdb_req_dmaster_pull(pkt, pkt_len, &h2, mem_ctx, &c2);
 	assert(ret == 0);
 	verify_ctdb_req_header(&h, &h2);
+	assert(h2.length == pkt_len);
 	verify_ctdb_req_dmaster(&c, &c2);
 
 	talloc_free(mem_ctx);
@@ -2184,7 +2033,7 @@ static void test_reply_dmaster_test(void)
 {
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
-	size_t pkt_len;
+	size_t datalen, pkt_len, len;
 	int ret;
 	struct ctdb_req_header h, h2;
 	struct ctdb_reply_dmaster c, c2;
@@ -2199,17 +2048,27 @@ static void test_reply_dmaster_test(void)
 			     DESTNODE, SRCNODE, REQID);
 
 	fill_ctdb_reply_dmaster(mem_ctx, &c);
-	ret = ctdb_reply_dmaster_push(&h, &c, mem_ctx, &pkt, &pkt_len);
+	datalen = ctdb_reply_dmaster_len(&h, &c);
+	ret = ctdb_allocate_pkt(mem_ctx, datalen, &pkt, &pkt_len);
+	assert(ret == 0);
+	assert(pkt != NULL);
+	assert(pkt_len >= datalen);
+	len = 0;
+	ret = ctdb_reply_dmaster_push(&h, &c, pkt, &len);
+	assert(ret == EMSGSIZE);
+	assert(len == datalen);
+	ret = ctdb_reply_dmaster_push(&h, &c, pkt, &pkt_len);
 	assert(ret == 0);
 	ret = ctdb_reply_dmaster_pull(pkt, pkt_len, &h2, mem_ctx, &c2);
 	assert(ret == 0);
 	verify_ctdb_req_header(&h, &h2);
+	assert(h2.length == pkt_len);
 	verify_ctdb_reply_dmaster(&c, &c2);
 
 	talloc_free(mem_ctx);
 }
 
-#define NUM_CONTROLS	146
+#define NUM_CONTROLS	149
 
 static void test_req_control_data_test(void)
 {
@@ -2275,7 +2134,7 @@ static void test_req_control_test(void)
 {
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
-	size_t pkt_len;
+	size_t datalen, pkt_len, len;
 	int ret;
 	struct ctdb_req_header h, h2;
 	struct ctdb_req_control c, c2;
@@ -2294,11 +2153,21 @@ static void test_req_control_test(void)
 		printf("%u.. ", opcode);
 		fflush(stdout);
 		fill_ctdb_req_control(mem_ctx, &c, opcode);
-		ret = ctdb_req_control_push(&h, &c, mem_ctx, &pkt, &pkt_len);
+		datalen = ctdb_req_control_len(&h, &c);
+		ret = ctdb_allocate_pkt(mem_ctx, datalen, &pkt, &pkt_len);
+		assert(ret == 0);
+		assert(pkt != NULL);
+		assert(pkt_len >= datalen);
+		len = 0;
+		ret = ctdb_req_control_push(&h, &c, pkt, &len);
+		assert(ret == EMSGSIZE);
+		assert(len == datalen);
+		ret = ctdb_req_control_push(&h, &c, pkt, &pkt_len);
 		assert(ret == 0);
 		ret = ctdb_req_control_pull(pkt, pkt_len, &h2, mem_ctx, &c2);
 		assert(ret == 0);
 		verify_ctdb_req_header(&h, &h2);
+		assert(h2.length == pkt_len);
 		verify_ctdb_req_control(&c, &c2);
 
 		talloc_free(mem_ctx);
@@ -2312,7 +2181,7 @@ static void test_reply_control_test(void)
 {
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
-	size_t pkt_len;
+	size_t datalen, pkt_len, len;
 	int ret;
 	struct ctdb_req_header h, h2;
 	struct ctdb_reply_control c, c2;
@@ -2331,11 +2200,21 @@ static void test_reply_control_test(void)
 		printf("%u.. ", opcode);
 		fflush(stdout);
 		fill_ctdb_reply_control(mem_ctx, &c, opcode);
-		ret = ctdb_reply_control_push(&h, &c, mem_ctx, &pkt, &pkt_len);
+		datalen = ctdb_reply_control_len(&h, &c);
+		ret = ctdb_allocate_pkt(mem_ctx, datalen, &pkt, &pkt_len);
+		assert(ret == 0);
+		assert(pkt != NULL);
+		assert(pkt_len >= datalen);
+		len = 0;
+		ret = ctdb_reply_control_push(&h, &c, pkt, &len);
+		assert(ret == EMSGSIZE);
+		assert(len == datalen);
+		ret = ctdb_reply_control_push(&h, &c, pkt, &pkt_len);
 		assert(ret == 0);
 		ret = ctdb_reply_control_pull(pkt, pkt_len, opcode, &h2, mem_ctx, &c2);
 		assert(ret == 0);
 		verify_ctdb_req_header(&h, &h2);
+		assert(h2.length == pkt_len);
 		verify_ctdb_reply_control(&c, &c2);
 
 		talloc_free(mem_ctx);
@@ -2349,7 +2228,7 @@ static void test_req_message_test(void)
 {
 	TALLOC_CTX *mem_ctx;
 	uint8_t *pkt;
-	size_t pkt_len;
+	size_t datalen, pkt_len, len;
 	int ret;
 	struct ctdb_req_header h, h2;
 	struct ctdb_req_message_data c, c2;
@@ -2364,11 +2243,21 @@ static void test_req_message_test(void)
 			     DESTNODE, SRCNODE, REQID);
 
 	fill_ctdb_req_message_data(mem_ctx, &c);
-	ret = ctdb_req_message_data_push(&h, &c, mem_ctx, &pkt, &pkt_len);
+	datalen = ctdb_req_message_data_len(&h, &c);
+	ret = ctdb_allocate_pkt(mem_ctx, datalen, &pkt, &pkt_len);
+	assert(ret == 0);
+	assert(pkt != NULL);
+	assert(pkt_len >= datalen);
+	len = 0;
+	ret = ctdb_req_message_data_push(&h, &c, pkt, &len);
+	assert(ret == EMSGSIZE);
+	assert(len == datalen);
+	ret = ctdb_req_message_data_push(&h, &c, pkt, &pkt_len);
 	assert(ret == 0);
 	ret = ctdb_req_message_data_pull(pkt, pkt_len, &h2, mem_ctx, &c2);
 	assert(ret == 0);
 	verify_ctdb_req_header(&h, &h2);
+	assert(h2.length == pkt_len);
 	verify_ctdb_req_message_data(&c, &c2);
 
 	talloc_free(mem_ctx);

@@ -60,7 +60,7 @@ pidfile="${CTDB_PIDFILE:-/var/run/ctdb/ctdbd.pid}"
 
 start()
 {
-    echo -n "Starting ctdbd service: "
+    printf "Starting ctdbd service: "
 
     case "$CTDB_INIT_STYLE" in
 	suse)
@@ -85,7 +85,7 @@ start()
 
 stop()
 {
-    echo -n "Shutting down ctdbd service: "
+    printf "Shutting down ctdbd service: "
 
     case "$CTDB_INIT_STYLE" in
 	suse)
@@ -95,6 +95,9 @@ stop()
 	redhat)
 	    "$ctdbd_wrapper" "$pidfile" "stop"
 	    RETVAL=$?
+	    # Common idiom in Red Hat init scripts - success() always
+	    # succeeds so this does behave like if-then-else
+	    # shellcheck disable=SC2015
             [ $RETVAL -eq 0 ] && success || failure
 	    echo ""
 	    [ $RETVAL -eq 0 ] && rm -f /var/lock/subsys/ctdb
@@ -121,7 +124,8 @@ check_status ()
     # status.  Note that this probably won't work if
     # $CTDB_VALGRIND="yes" but this doesn't need full backward
     # compatibility because it is a debug option.
-    if [ -d $(dirname "$pidfile") ] ; then
+    _d=$(dirname "$pidfile")
+    if [ -d "$_d" ] ; then
 	_pf_opt="-p $pidfile"
     else
 	_pf_opt=""

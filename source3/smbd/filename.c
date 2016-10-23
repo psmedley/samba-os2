@@ -273,6 +273,8 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 		goto done;
 	}
 
+	smb_fname->flags = posix_pathnames ? SMB_FILENAME_POSIX_PATH : 0;
+
 	DEBUG(5, ("unix_convert called on file \"%s\"\n", orig_path));
 
 	/*
@@ -1128,6 +1130,7 @@ static int get_real_filename_full_scan(connection_struct *conn,
 	char *talloced = NULL;
 	char *unmangled_name = NULL;
 	long curpos;
+	struct smb_filename *smb_fname = NULL;
 
 	/* handle null paths */
 	if ((path == NULL) || (*path == 0)) {
@@ -1168,12 +1171,25 @@ static int get_real_filename_full_scan(connection_struct *conn,
 		}
 	}
 
-	/* open the directory */
-	if (!(cur_dir = OpenDir(talloc_tos(), conn, path, NULL, 0))) {
-		DEBUG(3,("scan dir didn't open dir [%s]\n",path));
+	smb_fname = synthetic_smb_fname(talloc_tos(),
+					path,
+					NULL,
+					NULL,
+					0);
+	if (smb_fname == NULL) {
 		TALLOC_FREE(unmangled_name);
 		return -1;
 	}
+
+	/* open the directory */
+	if (!(cur_dir = OpenDir(talloc_tos(), conn, smb_fname, NULL, 0))) {
+		DEBUG(3,("scan dir didn't open dir [%s]\n",path));
+		TALLOC_FREE(unmangled_name);
+		TALLOC_FREE(smb_fname);
+		return -1;
+	}
+
+	TALLOC_FREE(smb_fname);
 
 	/* now scan for matching names */
 	curpos = 0;
@@ -1274,7 +1290,7 @@ static NTSTATUS build_stream_path(TALLOC_CTX *mem_ctx,
 	}
 
 	/* Fall back to a case-insensitive scan of all streams on the file. */
-	status = vfs_streaminfo(conn, NULL, smb_fname->base_name, mem_ctx,
+	status = vfs_streaminfo(conn, NULL, smb_fname, mem_ctx,
 				&num_streams, &streams);
 
 	if (NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_NAME_NOT_FOUND)) {
@@ -1357,7 +1373,6 @@ static NTSTATUS filename_convert_internal(TALLOC_CTX *ctx,
 				struct smb_filename **pp_smb_fname)
 {
 	NTSTATUS status;
-	bool allow_wcards = (ucf_flags & (UCF_COND_ALLOW_WCARD_LCOMP|UCF_ALWAYS_ALLOW_WCARD_LCOMP));
 	char *fname = NULL;
 
 	*pp_smb_fname = NULL;
@@ -1365,7 +1380,7 @@ static NTSTATUS filename_convert_internal(TALLOC_CTX *ctx,
 	status = resolve_dfspath_wcard(ctx, conn,
 				dfs_path,
 				name_in,
-				allow_wcards,
+				ucf_flags,
 				!conn->sconn->using_smb2,
 				&fname,
 				ppath_contains_wcard);
@@ -1382,11 +1397,12 @@ static NTSTATUS filename_convert_internal(TALLOC_CTX *ctx,
 		ZERO_STRUCT(st);
 		st.st_ex_nlink = 1;
 		*pp_smb_fname = synthetic_smb_fname_split(ctx,
-							  name_in,
-							  &st);
+					name_in,
+					(ucf_flags & UCF_POSIX_PATHNAMES));
 		if (*pp_smb_fname == NULL) {
 			return NT_STATUS_NO_MEMORY;
 		}
+		(*pp_smb_fname)->st = st;
 		return NT_STATUS_OK;
 	}
 

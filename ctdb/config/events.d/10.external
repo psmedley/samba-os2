@@ -8,9 +8,10 @@
 # * For connection tracking/killing to work this script must be enabled.
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
+. "${CTDB_BASE}/functions"
+
 loadconfig
 
 if [ -z "$CTDB_PUBLIC_ADDRESSES" ] ; then
@@ -26,14 +27,15 @@ fi
 
 takeover_assigned_ips ()
 {
-    ctdb_get_pnn
+    _pnn=$(ctdb_get_pnn)
 
-    ctdb -X ip |
+    $CTDB -X ip |
     awk -F'|' '{print $2}' |
     while read ip ; do
-	if [ -n "$(ip_maskbits_iface $ip)" ] ; then
-	    echo "Assigning $ip to this node ($pnn)"
-	    ctdb moveip "$ip" "$pnn"
+	_ip_details=$(ip_maskbits_iface "$ip")
+	if [ -n "$_ip_details" ] ; then
+	    echo "Assigning $ip to this node (${_pnn})"
+	    $CTDB moveip "$ip" "$_pnn"
 	fi
     done
 }

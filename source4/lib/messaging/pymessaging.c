@@ -115,7 +115,7 @@ static PyObject *py_imessaging_connect(PyTypeObject *self, PyObject *args, PyObj
 		ret->msg_ctx = imessaging_init(ret->mem_ctx,
 					       lp_ctx,
 					       server_id,
-					       ev, true);
+					       ev);
 	} else {
 		ret->msg_ctx = imessaging_client_init(ret->mem_ctx,
 						      lp_ctx,
@@ -399,4 +399,6 @@ void initmessaging(void)
 
 	Py_INCREF((PyObject *)&imessaging_Type);
 	PyModule_AddObject(mod, "Messaging", (PyObject *)&imessaging_Type);
+	PyModule_AddObject(mod, "IRPC_CALL_TIMEOUT", PyInt_FromLong(IRPC_CALL_TIMEOUT));
+	PyModule_AddObject(mod, "IRPC_CALL_TIMEOUT_INF", PyInt_FromLong(IRPC_CALL_TIMEOUT_INF));
 }

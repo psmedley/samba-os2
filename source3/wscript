@@ -57,7 +57,7 @@ def set_options(opt):
     opt.SAMBA3_ADD_OPTION('profiling-data', default=False)
     opt.SAMBA3_ADD_OPTION('libarchive', default=None)
 
-    opt.SAMBA3_ADD_OPTION('cluster-support', default=None)
+    opt.SAMBA3_ADD_OPTION('cluster-support', default=False)
 
     opt.SAMBA3_ADD_OPTION('regedit', default=None)
 
@@ -69,6 +69,7 @@ def set_options(opt):
                    action="store", dest='libcephfs_dir', default=None)
 
     opt.SAMBA3_ADD_OPTION('glusterfs', with_name="enable", without_name="disable", default=True)
+    opt.SAMBA3_ADD_OPTION('cephfs', with_name="enable", without_name="disable", default=True)
 
     opt.add_option('--enable-vxfs',
                   help=("enable support for VxFS (default=no)"),
@@ -207,6 +208,7 @@ main() {
 
     if samba_fam_libs is not None:
         conf.DEFINE('SAMBA_FAM_LIBS', samba_fam_libs)
+        conf.DEFINE('HAVE_FAM', 1)
     else:
         if Options.options.with_fam == True:
             conf.fatal('FAM support requested, but no suitable FAM library found')
@@ -1088,6 +1090,66 @@ syscall(SYS_setgroups32, 0, NULL);
                 execute=True,
                 msg='Checking whether fcntl locking is available')
 
+    conf.CHECK_CODE('''
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+
+#define DATA "ofdtest.fcntl"
+
+int main() {
+        struct flock lck = {
+           .l_whence = SEEK_SET,
+           .l_type = F_WRLCK,
+           .l_start = 0,
+           .l_len = 1,
+           .l_pid = 0,
+        };
+        int ret;
+        int fd1;
+        int fd2;
+        char *testdir = getenv("TESTDIR");
+
+        if (testdir) {
+           if (chdir(testdir) != 0) {
+              goto err;
+           }
+        }
+
+        unlink(DATA);
+        fd1 = open(DATA, O_RDWR|O_CREAT|O_EXCL, 0600);
+        fd2 = open(DATA, O_RDWR);
+        if (fd1 == -1 || fd2 == -1) {
+           goto err;
+        }
+        ret = fcntl(fd1,F_OFD_SETLKW,&lck);
+        if (ret == -1) {
+          goto err;
+        }
+        ret = fcntl(fd2,F_OFD_SETLK,&lck);
+        if (ret != -1) {
+          goto err;
+        }
+        if (errno != EAGAIN) {
+          goto err;
+        }
+        ret = fcntl(fd2,F_OFD_GETLK,&lck);
+        if (ret == -1) {
+          goto err;
+        }
+        unlink(DATA);
+        exit(0);
+err:
+        unlink(DATA);
+        exit(1);
+}''',
+            'HAVE_OFD_LOCKS',
+            addmain=False,
+            execute=True,
+            msg="Checking whether fcntl lock supports open file description locks")
+
 # glibc up to 2.3.6 had dangerously broken posix_fallocate(). DON'T USE IT.
     if not conf.CHECK_CODE('''
 #define _XOPEN_SOURCE 600
@@ -1517,8 +1579,12 @@ main() {
         conf.env['CPPPATH_CEPHFS'] = Options.options.libcephfs_dir + '/include'
         conf.env['LIBPATH_CEPHFS'] = Options.options.libcephfs_dir + '/lib'
 
-    if conf.CHECK_HEADERS('cephfs/libcephfs.h', False, False, 'cephfs') and conf.CHECK_LIB('cephfs'):
-        conf.DEFINE('HAVE_CEPH', '1')
+    if conf.CHECK_HEADERS('cephfs/libcephfs.h', False, False, 'cephfs') and conf.CHECK_LIB('cephfs', shlib=True) and Options.options.with_cephfs:
+        if Options.options.with_acl_support:
+            conf.DEFINE('HAVE_CEPH', '1')
+        else:
+            Logs.warn("ceph support disabled due to --without-acl-support")
+            conf.undefine('HAVE_CEPH')
 
     if Options.options.with_glusterfs:
         conf.CHECK_CFG(package='glusterfs-api', args='"glusterfs-api >= 4" --cflags --libs',
@@ -1527,9 +1593,12 @@ main() {
         conf.CHECK_LIB('gfapi', shlib=True)
 
         if conf.CONFIG_SET('HAVE_API_GLFS_H'):
-            conf.DEFINE('HAVE_GLUSTERFS', '1')
+            if Options.options.with_acl_support:
+                 conf.DEFINE('HAVE_GLUSTERFS', '1')
+            else:
+                Logs.warn("GlusterFS support disabled due to --without-acl-support")
+                conf.undefine('HAVE_GLUSTERFS')
         else:
-            conf.SET_TARGET_TYPE('gfapi', 'EMPTY')
             conf.undefine('HAVE_GLUSTERFS')
     else:
         conf.SET_TARGET_TYPE('gfapi', 'EMPTY')
@@ -1588,6 +1657,7 @@ main() {
         if not conf.env.with_spotlight:
             conf.fatal("Spotlight support requested but tracker-sparql library missing")
         Logs.info("building with Spotlight support")
+        default_static_modules.extend(TO_LIST('rpc_mdssvc_module'))
 
     forced_static_modules.extend(TO_LIST('auth_domain auth_builtin auth_sam auth_winbind'))
     default_static_modules.extend(TO_LIST('''pdb_smbpasswd pdb_tdbsam pdb_wbc_sam
@@ -1751,7 +1821,7 @@ main() {
     static_list = {}
     shared_list = {}
 
-    prefixes = ['vfs', 'pdb', 'auth', 'nss_info', 'charset', 'idmap', 'gpext', 'perfcount']
+    prefixes = ['vfs', 'pdb', 'auth', 'nss_info', 'charset', 'idmap', 'gpext', 'perfcount', 'rpc']
     conf.env['MODULE_PREFIXES'] = prefixes
     for p in prefixes:
         for m in final_static_modules:

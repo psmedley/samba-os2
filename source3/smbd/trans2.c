@@ -60,7 +60,7 @@ static char *store_file_unix_basic_info2(connection_struct *conn,
 
 static NTSTATUS refuse_symlink(connection_struct *conn,
 			const files_struct *fsp,
-			const char *name)
+			const struct smb_filename *smb_fname)
 {
 	SMB_STRUCT_STAT sbuf;
 	const SMB_STRUCT_STAT *pst = NULL;
@@ -69,7 +69,7 @@ static NTSTATUS refuse_symlink(connection_struct *conn,
 		pst = &fsp->fsp_name->st;
 	} else {
 		int ret = vfs_stat_smb_basename(conn,
-				name,
+				smb_fname,
 				&sbuf);
 		if (ret == -1) {
 			return map_nt_error_from_unix(errno);
@@ -230,9 +230,12 @@ NTSTATUS get_ea_value(TALLOC_CTX *mem_ctx, connection_struct *conn,
 	return NT_STATUS_OK;
 }
 
-NTSTATUS get_ea_names_from_file(TALLOC_CTX *mem_ctx, connection_struct *conn,
-				files_struct *fsp, const char *fname,
-				char ***pnames, size_t *pnum_names)
+NTSTATUS get_ea_names_from_file(TALLOC_CTX *mem_ctx,
+				connection_struct *conn,
+				files_struct *fsp,
+				const struct smb_filename *smb_fname,
+				char ***pnames,
+				size_t *pnum_names)
 {
 	/* Get a list of all xattrs. Max namesize is 64k. */
 	size_t ea_namelist_size = 1024;
@@ -253,7 +256,7 @@ NTSTATUS get_ea_names_from_file(TALLOC_CTX *mem_ctx, connection_struct *conn,
 		return NT_STATUS_OK;
 	}
 
-	status = refuse_symlink(conn, fsp, fname);
+	status = refuse_symlink(conn, fsp, smb_fname);
 	if (!NT_STATUS_IS_OK(status)) {
 		/*
 		 * Just return no EA's on a symlink.
@@ -285,8 +288,10 @@ NTSTATUS get_ea_names_from_file(TALLOC_CTX *mem_ctx, connection_struct *conn,
 			sizeret = SMB_VFS_FLISTXATTR(fsp, ea_namelist,
 						     ea_namelist_size);
 		} else {
-			sizeret = SMB_VFS_LISTXATTR(conn, fname, ea_namelist,
-						    ea_namelist_size);
+			sizeret = SMB_VFS_LISTXATTR(conn,
+					smb_fname->base_name,
+					ea_namelist,
+					ea_namelist_size);
 		}
 
 		if ((sizeret == -1) && (errno == ERANGE)) {
@@ -355,20 +360,36 @@ NTSTATUS get_ea_names_from_file(TALLOC_CTX *mem_ctx, connection_struct *conn,
  Return a linked list of the total EA's. Plus the total size
 ****************************************************************************/
 
-static NTSTATUS get_ea_list_from_file_path(TALLOC_CTX *mem_ctx, connection_struct *conn, files_struct *fsp,
-				      const char *fname, size_t *pea_total_len, struct ea_list **ea_list)
+static NTSTATUS get_ea_list_from_file_path(TALLOC_CTX *mem_ctx,
+				connection_struct *conn,
+				files_struct *fsp,
+				const struct smb_filename *smb_fname,
+				size_t *pea_total_len,
+				struct ea_list **ea_list)
 {
 	/* Get a list of all xattrs. Max namesize is 64k. */
 	size_t i, num_names;
 	char **names;
 	struct ea_list *ea_list_head = NULL;
+	bool posix_pathnames = false;
 	NTSTATUS status;
 
 	*pea_total_len = 0;
 	*ea_list = NULL;
 
-	status = get_ea_names_from_file(talloc_tos(), conn, fsp, fname,
-					&names, &num_names);
+	if (fsp) {
+		posix_pathnames =
+			(fsp->fsp_name->flags & SMB_FILENAME_POSIX_PATH);
+	} else {
+		posix_pathnames = (smb_fname->flags & SMB_FILENAME_POSIX_PATH);
+	}
+
+	status = get_ea_names_from_file(talloc_tos(),
+				conn,
+				fsp,
+				smb_fname,
+				&names,
+				&num_names);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
@@ -391,7 +412,7 @@ static NTSTATUS get_ea_list_from_file_path(TALLOC_CTX *mem_ctx, connection_struc
 		 * Filter out any underlying POSIX EA names
 		 * that a Windows client can't handle.
 		 */
-		if (!lp_posix_pathnames() &&
+		if (!posix_pathnames &&
 				is_invalid_windows_ea_name(names[i])) {
 			continue;
 		}
@@ -401,9 +422,12 @@ static NTSTATUS get_ea_list_from_file_path(TALLOC_CTX *mem_ctx, connection_struc
 			return NT_STATUS_NO_MEMORY;
 		}
 
-		status = get_ea_value(listp, conn, fsp,
-				      fname, names[i],
-				      &listp->ea);
+		status = get_ea_value(listp,
+					conn,
+					fsp,
+					smb_fname->base_name,
+					names[i],
+					&listp->ea);
 
 		if (!NT_STATUS_IS_OK(status)) {
 			TALLOC_FREE(listp);
@@ -458,7 +482,12 @@ static NTSTATUS get_ea_list_from_file(TALLOC_CTX *mem_ctx, connection_struct *co
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
-	return get_ea_list_from_file_path(mem_ctx, conn, fsp, smb_fname->base_name, pea_total_len, ea_list);
+	return get_ea_list_from_file_path(mem_ctx,
+				conn,
+				fsp,
+				smb_fname,
+				pea_total_len,
+				ea_list);
 }
 
 /****************************************************************************
@@ -601,7 +630,12 @@ static unsigned int estimate_ea_size(connection_struct *conn, files_struct *fsp,
 	if (is_ntfs_stream_smb_fname(smb_fname)) {
 		fsp = NULL;
 	}
-	(void)get_ea_list_from_file_path(mem_ctx, conn, fsp, smb_fname->base_name, &total_ea_len, &ea_list);
+	(void)get_ea_list_from_file_path(mem_ctx,
+				conn,
+				fsp,
+				smb_fname,
+				&total_ea_len,
+				&ea_list);
 	if(conn->sconn->using_smb2) {
 		NTSTATUS status;
 		unsigned int ret_data_size;
@@ -630,12 +664,20 @@ static unsigned int estimate_ea_size(connection_struct *conn, files_struct *fsp,
  Ensure the EA name is case insensitive by matching any existing EA name.
 ****************************************************************************/
 
-static void canonicalize_ea_name(connection_struct *conn, files_struct *fsp, const char *fname, fstring unix_ea_name)
+static void canonicalize_ea_name(connection_struct *conn,
+			files_struct *fsp,
+			const struct smb_filename *smb_fname,
+			fstring unix_ea_name)
 {
 	size_t total_ea_len;
 	TALLOC_CTX *mem_ctx = talloc_tos();
 	struct ea_list *ea_list;
-	NTSTATUS status = get_ea_list_from_file_path(mem_ctx, conn, fsp, fname, &total_ea_len, &ea_list);
+	NTSTATUS status = get_ea_list_from_file_path(mem_ctx,
+					conn,
+					fsp,
+					smb_fname,
+					&total_ea_len,
+					&ea_list);
 	if (!NT_STATUS_IS_OK(status)) {
 		return;
 	}
@@ -658,13 +700,20 @@ NTSTATUS set_ea(connection_struct *conn, files_struct *fsp,
 		const struct smb_filename *smb_fname, struct ea_list *ea_list)
 {
 	NTSTATUS status;
-	char *fname = NULL;
+	bool posix_pathnames = false;
 
 	if (!lp_ea_support(SNUM(conn))) {
 		return NT_STATUS_EAS_NOT_SUPPORTED;
 	}
 
-	status = refuse_symlink(conn, fsp, smb_fname->base_name);
+	if (fsp) {
+		posix_pathnames =
+			(fsp->fsp_name->flags & SMB_FILENAME_POSIX_PATH);
+	} else {
+		posix_pathnames = (smb_fname->flags & SMB_FILENAME_POSIX_PATH);
+	}
+
+	status = refuse_symlink(conn, fsp, smb_fname);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -684,11 +733,9 @@ NTSTATUS set_ea(connection_struct *conn, files_struct *fsp,
 	 * we set *any* of them.
 	 */
 
-	if (ea_list_has_invalid_name(ea_list)) {
+	if (!posix_pathnames && ea_list_has_invalid_name(ea_list)) {
 		return STATUS_INVALID_EA_NAME;
 	}
-
-	fname = smb_fname->base_name;
 
 	for (;ea_list; ea_list = ea_list->next) {
 		int ret;
@@ -697,7 +744,10 @@ NTSTATUS set_ea(connection_struct *conn, files_struct *fsp,
 		fstrcpy(unix_ea_name, "user."); /* All EA's must start with user. */
 		fstrcat(unix_ea_name, ea_list->ea.name);
 
-		canonicalize_ea_name(conn, fsp, fname, unix_ea_name);
+		canonicalize_ea_name(conn,
+				fsp,
+				smb_fname,
+				unix_ea_name);
 
 		DEBUG(10,("set_ea: ea_name %s ealen = %u\n", unix_ea_name, (unsigned int)ea_list->ea.value.length));
 
@@ -715,8 +765,10 @@ NTSTATUS set_ea(connection_struct *conn, files_struct *fsp,
 				ret = SMB_VFS_FREMOVEXATTR(fsp, unix_ea_name);
 			} else {
 				DEBUG(10,("set_ea: deleting ea name %s on file %s.\n",
-					unix_ea_name, fname));
-				ret = SMB_VFS_REMOVEXATTR(conn, fname, unix_ea_name);
+					unix_ea_name, smb_fname->base_name));
+				ret = SMB_VFS_REMOVEXATTR(conn,
+						smb_fname->base_name,
+						unix_ea_name);
 			}
 #ifdef ENOATTR
 			/* Removing a non existent attribute always succeeds. */
@@ -735,9 +787,13 @@ NTSTATUS set_ea(connection_struct *conn, files_struct *fsp,
 							ea_list->ea.value.data, ea_list->ea.value.length, 0);
 			} else {
 				DEBUG(10,("set_ea: setting ea name %s on file %s.\n",
-					unix_ea_name, fname));
-				ret = SMB_VFS_SETXATTR(conn, fname, unix_ea_name,
-							ea_list->ea.value.data, ea_list->ea.value.length, 0);
+					unix_ea_name, smb_fname->base_name));
+				ret = SMB_VFS_SETXATTR(conn,
+						smb_fname->base_name,
+						unix_ea_name,
+						ea_list->ea.value.data,
+						ea_list->ea.value.length,
+						0);
 			}
 		}
 
@@ -1257,7 +1313,8 @@ static void call_trans2open(connection_struct *conn,
 			goto out;
 		}
 
-		if (ea_list_has_invalid_name(ea_list)) {
+		if (!req->posix_pathnames &&
+				ea_list_has_invalid_name(ea_list)) {
 			int param_len = 30;
 			*pparams = (char *)SMB_REALLOC(*pparams, param_len);
 			if(*pparams == NULL ) {
@@ -2530,7 +2587,6 @@ static void call_trans2findfirst(connection_struct *conn,
 	struct ea_list *ea_list = NULL;
 	NTSTATUS ntstatus = NT_STATUS_OK;
 	bool ask_sharemode = lp_parm_bool(SNUM(conn), "smbd", "search ask sharemode", true);
-	TALLOC_CTX *ctx = talloc_tos();
 	struct dptr_struct *dirptr = NULL;
 	struct smbd_server_connection *sconn = req->sconn;
 	uint32_t ucf_flags = UCF_SAVE_LCOMP | UCF_ALWAYS_ALLOW_WCARD_LCOMP |
@@ -2593,7 +2649,7 @@ close_if_end = %d requires_resume_key = %d backup_priv = %d level = 0x%x, max_da
 	}
 
 	if (req->posix_pathnames) {
-		srvstr_get_path_wcard_posix(ctx,
+		srvstr_get_path_wcard_posix(talloc_tos(),
 				params,
 				req->flags2,
 				&directory,
@@ -2603,7 +2659,7 @@ close_if_end = %d requires_resume_key = %d backup_priv = %d level = 0x%x, max_da
 				&ntstatus,
 				&mask_contains_wcard);
 	} else {
-		srvstr_get_path_wcard(ctx,
+		srvstr_get_path_wcard(talloc_tos(),
 				params,
 				req->flags2,
 				&directory,
@@ -2621,7 +2677,7 @@ close_if_end = %d requires_resume_key = %d backup_priv = %d level = 0x%x, max_da
 	if (backup_priv) {
 		become_root();
 		as_root = true;
-		ntstatus = filename_convert_with_privilege(ctx,
+		ntstatus = filename_convert_with_privilege(talloc_tos(),
 				conn,
 				req,
 				directory,
@@ -2629,7 +2685,7 @@ close_if_end = %d requires_resume_key = %d backup_priv = %d level = 0x%x, max_da
 				&mask_contains_wcard,
 				&smb_dname);
 	} else {
-		ntstatus = filename_convert(ctx, conn,
+		ntstatus = filename_convert(talloc_tos(), conn,
 				    req->flags2 & FLAGS2_DFS_PATHNAMES,
 				    directory,
 				    ucf_flags,
@@ -2655,7 +2711,7 @@ close_if_end = %d requires_resume_key = %d backup_priv = %d level = 0x%x, max_da
 	if(p == NULL) {
 		/* Windows and OS/2 systems treat search on the root '\' as if it were '\*' */
 		if((directory[0] == '.') && (directory[1] == '\0')) {
-			mask = talloc_strdup(ctx,"*");
+			mask = talloc_strdup(talloc_tos(),"*");
 			if (!mask) {
 				reply_nterror(req, NT_STATUS_NO_MEMORY);
 				goto out;
@@ -2673,6 +2729,8 @@ close_if_end = %d requires_resume_key = %d backup_priv = %d level = 0x%x, max_da
 			reply_nterror(req, NT_STATUS_NO_MEMORY);
 			goto out;
 		}
+		/* Ensure smb_dname->base_name matches. */
+		smb_dname->base_name = directory;
 	}
 
 	DEBUG(5,("dir=%s, mask = %s\n",directory, mask));
@@ -2699,7 +2757,7 @@ total_data=%u (should be %u)\n", (unsigned int)total_data, (unsigned int)IVAL(pd
 		}
 
 		/* Pull out the list of names. */
-		ea_list = read_ea_name_list(ctx, pdata + 4, ea_size - 4);
+		ea_list = read_ea_name_list(talloc_tos(), pdata + 4, ea_size - 4);
 		if (!ea_list) {
 			reply_nterror(req, NT_STATUS_INVALID_PARAMETER);
 			goto out;
@@ -2738,7 +2796,7 @@ total_data=%u (should be %u)\n", (unsigned int)total_data, (unsigned int)IVAL(pd
 	ntstatus = dptr_create(conn,
 				req,
 				NULL, /* fsp */
-				directory,
+				smb_dname,
 				False,
 				True,
 				req->smbpid,
@@ -2768,9 +2826,12 @@ total_data=%u (should be %u)\n", (unsigned int)total_data, (unsigned int)IVAL(pd
 		a different TRANS2 call. */
 
 	DEBUG(8,("dirpath=<%s> dontdescend=<%s>\n",
-		 directory,lp_dont_descend(ctx, SNUM(conn))));
-	if (in_list(directory,lp_dont_descend(ctx, SNUM(conn)),conn->case_sensitive))
+		 directory,lp_dont_descend(talloc_tos(), SNUM(conn))));
+	if (in_list(directory,
+			lp_dont_descend(talloc_tos(), SNUM(conn)),
+			conn->case_sensitive)) {
 		dont_descend = True;
+	}
 
 	p = pdata;
 	space_remaining = max_data_bytes;
@@ -2785,7 +2846,7 @@ total_data=%u (should be %u)\n", (unsigned int)total_data, (unsigned int)IVAL(pd
 			out_of_space = True;
 			finished = False;
 		} else {
-			ntstatus = get_lanman2_dir_entry(ctx,
+			ntstatus = get_lanman2_dir_entry(talloc_tos(),
 					conn,
 					dirptr,
 					req->flags2,
@@ -3651,9 +3712,11 @@ cBytesSector=%u, cUnitTotal=%u, cUnitAvail=%d\n", (unsigned int)bsize, (unsigned
 				return NT_STATUS_ACCESS_DENIED;
 			}
 
-			if (vfs_get_ntquota(&fsp, SMB_USER_FS_QUOTA_TYPE, NULL, &quotas)!=0) {
+			status = vfs_get_ntquota(&fsp, SMB_USER_FS_QUOTA_TYPE,
+						 NULL, &quotas);
+			if (!NT_STATUS_IS_OK(status)) {
 				DEBUG(0,("vfs_get_ntquota() failed for service [%s]\n",lp_servicename(talloc_tos(), SNUM(conn))));
-				return map_nt_error_from_unix(errno);
+				return status;
 			}
 
 			data_len = 48;
@@ -4152,7 +4215,7 @@ static void call_trans2setfsinfo(connection_struct *conn,
 
 			/* Here is where we must switch to posix pathname processing... */
 			if (xconn->smb1.unix_info.client_cap_low & CIFS_UNIX_POSIX_PATHNAMES_CAP) {
-				(void)lp_set_posix_pathnames(true);
+				lp_set_posix_pathnames();
 				mangle_change_to_posix();
 			}
 
@@ -5254,8 +5317,12 @@ NTSTATUS smbd_do_qfilepathinfo(connection_struct *conn,
 				return NT_STATUS_INVALID_PARAMETER;
 			}
 
-			status = vfs_streaminfo(conn, fsp, smb_fname->base_name,
-						talloc_tos(), &num_streams, &streams);
+			status = vfs_streaminfo(conn,
+						fsp,
+						smb_fname,
+						talloc_tos(),
+						&num_streams,
+						&streams);
 
 			if (!NT_STATUS_IS_OK(status)) {
 				DEBUG(10, ("could not get stream info: %s\n",
@@ -5390,7 +5457,7 @@ NTSTATUS smbd_do_qfilepathinfo(connection_struct *conn,
 
 				status = refuse_symlink(conn,
 						fsp,
-						smb_fname->base_name);
+						smb_fname);
 				if (!NT_STATUS_IS_OK(status)) {
 					return status;
 				}
@@ -5700,8 +5767,7 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 			}
 			if (info_level == SMB_QUERY_FILE_UNIX_BASIC ||
 					info_level == SMB_QUERY_FILE_UNIX_INFO2 ||
-					info_level == SMB_QUERY_FILE_UNIX_LINK ||
-					req->posix_pathnames) {
+					info_level == SMB_QUERY_FILE_UNIX_LINK) {
 				ucf_flags |= UCF_UNIX_NAME_LOOKUP;
 			}
 		}
@@ -5755,14 +5821,17 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 
 			/* Create an smb_filename with stream_name == NULL. */
 			smb_fname_base = synthetic_smb_fname(
-				talloc_tos(), smb_fname->base_name,
-				NULL, NULL);
+						talloc_tos(),
+						smb_fname->base_name,
+						NULL,
+						NULL,
+						smb_fname->flags);
 			if (smb_fname_base == NULL) {
 				reply_nterror(req, NT_STATUS_NO_MEMORY);
 				return;
 			}
 
-			if (INFO_LEVEL_IS_UNIX(info_level) || req->posix_pathnames) {
+			if (INFO_LEVEL_IS_UNIX(info_level)) {
 				/* Always do lstat for UNIX calls. */
 				if (SMB_VFS_LSTAT(conn, smb_fname_base) != 0) {
 					DEBUG(3,("call_trans2qfilepathinfo: "
@@ -5808,7 +5877,7 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 			}
 		}
 
-		if (INFO_LEVEL_IS_UNIX(info_level) || req->posix_pathnames) {
+		if (INFO_LEVEL_IS_UNIX(info_level)) {
 			/* Always do lstat for UNIX calls. */
 			if (SMB_VFS_LSTAT(conn, smb_fname)) {
 				DEBUG(3,("call_trans2qfilepathinfo: "
@@ -6154,8 +6223,11 @@ static NTSTATUS smb_set_file_dosmode(connection_struct *conn,
 	}
 
 	/* Always operate on the base_name, even if a stream was passed in. */
-	smb_fname_base = synthetic_smb_fname(
-		talloc_tos(), smb_fname->base_name, NULL, &smb_fname->st);
+	smb_fname_base = synthetic_smb_fname(talloc_tos(),
+					smb_fname->base_name,
+					NULL,
+					&smb_fname->st,
+					smb_fname->flags);
 	if (smb_fname_base == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -6657,9 +6729,11 @@ static NTSTATUS smb2_file_rename_information(connection_struct *conn,
 		}
 
 		/* Create an smb_fname to call rename_internals_fsp() with. */
-		smb_fname_dst = synthetic_smb_fname(
-			talloc_tos(), fsp->base_fsp->fsp_name->base_name,
-			newname, NULL);
+		smb_fname_dst = synthetic_smb_fname(talloc_tos(),
+					fsp->base_fsp->fsp_name->base_name,
+					newname,
+					NULL,
+					fsp->base_fsp->fsp_name->flags);
 		if (smb_fname_dst == NULL) {
 			status = NT_STATUS_NO_MEMORY;
 			goto out;
@@ -6843,7 +6917,7 @@ static NTSTATUS smb_file_rename_information(connection_struct *conn,
 	status = resolve_dfspath_wcard(ctx, conn,
 				       req->flags2 & FLAGS2_DFS_PATHNAMES,
 				       newname,
-				       true,
+				       UCF_COND_ALLOW_WCARD_LCOMP,
 				       !conn->sconn->using_smb2,
 				       &newname,
 				       &dest_has_wcard);
@@ -6863,9 +6937,11 @@ static NTSTATUS smb_file_rename_information(connection_struct *conn,
 		}
 
 		/* Create an smb_fname to call rename_internals_fsp() with. */
-		smb_fname_dst = synthetic_smb_fname(
-			talloc_tos(), fsp->base_fsp->fsp_name->base_name,
-			newname, NULL);
+		smb_fname_dst = synthetic_smb_fname(talloc_tos(),
+					fsp->base_fsp->fsp_name->base_name,
+					newname,
+					NULL,
+					fsp->base_fsp->fsp_name->flags);
 		if (smb_fname_dst == NULL) {
 			status = NT_STATUS_NO_MEMORY;
 			goto out;
@@ -6935,8 +7011,11 @@ static NTSTATUS smb_file_rename_information(connection_struct *conn,
 				goto out;
 			}
 			/* Create an smb_fname to call rename_internals_fsp() */
-			smb_fname_dst = synthetic_smb_fname(
-				ctx, base_name, NULL, NULL);
+			smb_fname_dst = synthetic_smb_fname(ctx,
+						base_name,
+						NULL,
+						NULL,
+						smb_fname_src->flags);
 			if (smb_fname_dst == NULL) {
 				status = NT_STATUS_NO_MEMORY;
 				goto out;
@@ -7010,7 +7089,7 @@ static NTSTATUS smb_set_posix_acl(connection_struct *conn,
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
-	status = refuse_symlink(conn, fsp, smb_fname->base_name);
+	status = refuse_symlink(conn, fsp, smb_fname);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -7602,7 +7681,7 @@ static NTSTATUS smb_set_file_unix_basic(connection_struct *conn,
 		if (fsp && fsp->fh->fd != -1) {
 			ret = SMB_VFS_FCHMOD(fsp, unixmode);
 		} else {
-			ret = SMB_VFS_CHMOD(conn, smb_fname->base_name, unixmode);
+			ret = SMB_VFS_CHMOD(conn, smb_fname, unixmode);
 		}
 		if (ret != 0) {
 			return map_nt_error_from_unix(errno);
@@ -7629,7 +7708,7 @@ static NTSTATUS smb_set_file_unix_basic(connection_struct *conn,
 			 * UNIX extensions calls must always operate
 			 * on symlinks.
 			 */
-			ret = SMB_VFS_LCHOWN(conn, smb_fname->base_name,
+			ret = SMB_VFS_LCHOWN(conn, smb_fname,
 					     set_owner, (gid_t)-1);
 		}
 
@@ -7661,7 +7740,7 @@ static NTSTATUS smb_set_file_unix_basic(connection_struct *conn,
 			 * UNIX extensions calls must always operate
 			 * on symlinks.
 			 */
-			ret = SMB_VFS_LCHOWN(conn, smb_fname->base_name, (uid_t)-1,
+			ret = SMB_VFS_LCHOWN(conn, smb_fname, (uid_t)-1,
 				  set_grp);
 		}
 		if (ret != 0) {

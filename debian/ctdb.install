@@ -9,11 +9,15 @@ usr/lib/*/ctdb/ctdb_recovery_helper
 usr/bin/ltdbtool
 usr/bin/onnode
 usr/bin/ping_pong
-usr/lib/*/ctdb/smnotify
+usr/lib/*/ctdb/ctdb_killtcp
+usr/lib/*/ctdb/ctdb_lvs
+usr/lib/*/ctdb/ctdb_mutex_fcntl_helper
 usr/lib/*/ctdb/ctdb_natgw
+usr/lib/*/ctdb/smnotify
 usr/sbin/ctdbd
 usr/sbin/ctdbd_wrapper
 usr/share/man/man1/ctdb.1
+usr/share/man/man1/ctdb_diagnostics.1
 usr/share/man/man1/ctdbd.1
 usr/share/man/man1/ctdbd_wrapper.1
 usr/share/man/man1/ltdbtool.1

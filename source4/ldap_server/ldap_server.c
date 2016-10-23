@@ -62,9 +62,12 @@ static void ldapsrv_terminate_connection(struct ldapsrv_connection *conn,
 		return;
 	}
 
+	DLIST_REMOVE(conn->service->connections, conn);
+
 	conn->limits.endtime = timeval_current_ofs(0, 500);
 
 	tevent_queue_stop(conn->sockets.send_queue);
+	TALLOC_FREE(conn->sockets.read_req);
 	if (conn->active_call) {
 		tevent_req_cancel(conn->active_call);
 		conn->active_call = NULL;
@@ -166,6 +169,7 @@ static int ldapsrv_load_limits(struct ldapsrv_connection *conn)
 	conn->limits.initial_timeout = 120;
 	conn->limits.conn_idle_time = 900;
 	conn->limits.max_page_size = 1000;
+	conn->limits.max_notifications = 5;
 	conn->limits.search_timeout = 120;
 
 
@@ -230,6 +234,10 @@ static int ldapsrv_load_limits(struct ldapsrv_connection *conn)
 		}
 		if (strcasecmp("MaxPageSize", policy_name) == 0) {
 			conn->limits.max_page_size = policy_value;
+			continue;
+		}
+		if (strcasecmp("MaxNotificationPerConn", policy_name) == 0) {
+			conn->limits.max_notifications = policy_value;
 			continue;
 		}
 		if (strcasecmp("MaxQueryDuration", policy_name) == 0) {
@@ -352,6 +360,8 @@ static void ldapsrv_accept(struct stream_connection *c,
 	/* register the server */	
 	irpc_add_name(c->msg_ctx, "ldap_server");
 
+	DLIST_ADD_END(ldapsrv_service->connections, conn);
+
 	if (port != 636 && port != 3269) {
 		ldapsrv_call_read_next(conn);
 		return;
@@ -410,12 +420,20 @@ static bool ldapsrv_call_read_next(struct ldapsrv_connection *conn)
 {
 	struct tevent_req *subreq;
 
-	if (timeval_is_zero(&conn->limits.endtime)) {
+	if (conn->pending_calls != NULL) {
+		conn->limits.endtime = timeval_zero();
+
+		ldapsrv_notification_retry_setup(conn->service, false);
+	} else if (timeval_is_zero(&conn->limits.endtime)) {
 		conn->limits.endtime =
 			timeval_current_ofs(conn->limits.initial_timeout, 0);
 	} else {
 		conn->limits.endtime =
 			timeval_current_ofs(conn->limits.conn_idle_time, 0);
+	}
+
+	if (conn->sockets.read_req != NULL) {
+		return true;
 	}
 
 	/*
@@ -457,10 +475,13 @@ static bool ldapsrv_call_read_next(struct ldapsrv_connection *conn)
 				"no memory for tstream_read_pdu_blob_send");
 		return false;
 	}
-	tevent_req_set_endtime(subreq,
-			       conn->connection->event.ctx,
-			       conn->limits.endtime);
+	if (!timeval_is_zero(&conn->limits.endtime)) {
+		tevent_req_set_endtime(subreq,
+				       conn->connection->event.ctx,
+				       conn->limits.endtime);
+	}
 	tevent_req_set_callback(subreq, ldapsrv_call_read_done, conn);
+	conn->sockets.read_req = subreq;
 	return true;
 }
 
@@ -475,6 +496,8 @@ static void ldapsrv_call_read_done(struct tevent_req *subreq)
 	struct ldapsrv_call *call;
 	struct asn1_data *asn1;
 	DATA_BLOB blob;
+
+	conn->sockets.read_req = NULL;
 
 	call = talloc_zero(conn, struct ldapsrv_call);
 	if (!call) {
@@ -542,6 +565,7 @@ static void ldapsrv_call_read_done(struct tevent_req *subreq)
 	conn->active_call = subreq;
 }
 
+
 static void ldapsrv_call_writev_done(struct tevent_req *subreq);
 
 static void ldapsrv_call_process_done(struct tevent_req *subreq)
@@ -588,7 +612,9 @@ static void ldapsrv_call_process_done(struct tevent_req *subreq)
 	}
 
 	if (blob.length == 0) {
-		TALLOC_FREE(call);
+		if (!call->notification.busy) {
+			TALLOC_FREE(call);
+		}
 
 		ldapsrv_call_read_next(conn);
 		return;
@@ -652,7 +678,9 @@ static void ldapsrv_call_writev_done(struct tevent_req *subreq)
 		return;
 	}
 
-	TALLOC_FREE(call);
+	if (!call->notification.busy) {
+		TALLOC_FREE(call);
+	}
 
 	ldapsrv_call_read_next(conn);
 }
@@ -684,6 +712,112 @@ static void ldapsrv_call_postprocess_done(struct tevent_req *subreq)
 	TALLOC_FREE(call);
 
 	ldapsrv_call_read_next(conn);
+}
+
+static void ldapsrv_notification_retry_done(struct tevent_req *subreq);
+
+void ldapsrv_notification_retry_setup(struct ldapsrv_service *service, bool force)
+{
+	struct ldapsrv_connection *conn = NULL;
+	struct timeval retry;
+	size_t num_pending = 0;
+	size_t num_active = 0;
+
+	if (force) {
+		TALLOC_FREE(service->notification.retry);
+		service->notification.generation += 1;
+	}
+
+	if (service->notification.retry != NULL) {
+		return;
+	}
+
+	for (conn = service->connections; conn != NULL; conn = conn->next) {
+		if (conn->pending_calls == NULL) {
+			continue;
+		}
+
+		num_pending += 1;
+
+		if (conn->pending_calls->notification.generation !=
+		    service->notification.generation)
+		{
+			num_active += 1;
+		}
+	}
+
+	if (num_pending == 0) {
+		return;
+	}
+
+	if (num_active != 0) {
+		retry = timeval_current_ofs(0, 100);
+	} else {
+		retry = timeval_current_ofs(5, 0);
+	}
+
+	service->notification.retry = tevent_wakeup_send(service,
+							 service->task->event_ctx,
+							 retry);
+	if (service->notification.retry == NULL) {
+		/* retry later */
+		return;
+	}
+
+	tevent_req_set_callback(service->notification.retry,
+				ldapsrv_notification_retry_done,
+				service);
+}
+
+static void ldapsrv_notification_retry_done(struct tevent_req *subreq)
+{
+	struct ldapsrv_service *service =
+		tevent_req_callback_data(subreq,
+		struct ldapsrv_service);
+	struct ldapsrv_connection *conn = NULL;
+	struct ldapsrv_connection *conn_next = NULL;
+	bool ok;
+
+	service->notification.retry = NULL;
+
+	ok = tevent_wakeup_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (!ok) {
+		/* ignore */
+	}
+
+	for (conn = service->connections; conn != NULL; conn = conn_next) {
+		struct ldapsrv_call *call = conn->pending_calls;
+
+		conn_next = conn->next;
+
+		if (conn->pending_calls == NULL) {
+			continue;
+		}
+
+		if (conn->active_call != NULL) {
+			continue;
+		}
+
+		DLIST_DEMOTE(conn->pending_calls, call);
+		call->notification.generation =
+				service->notification.generation;
+
+		/* queue the call in the global queue */
+		subreq = ldapsrv_process_call_send(call,
+						   conn->connection->event.ctx,
+						   conn->service->call_queue,
+						   call);
+		if (subreq == NULL) {
+			ldapsrv_terminate_connection(conn,
+					"ldapsrv_process_call_send failed");
+			continue;
+		}
+		tevent_req_set_callback(subreq, ldapsrv_call_process_done, call);
+		conn->active_call = subreq;
+	}
+
+	ldapsrv_notification_retry_setup(service, false);
 }
 
 struct ldapsrv_process_call_state {

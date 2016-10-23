@@ -318,6 +318,9 @@ static bool test_stream_io(struct torture_context *tctx,
 	const char *three[] = { "::$DATA", ":Stream One:$DATA",
 				":Second Stream:$DATA" };
 
+	ZERO_STRUCT(h);
+	ZERO_STRUCT(h2);
+
 	sname1 = talloc_asprintf(mem_ctx, "%s:%s", fname, "Stream One");
 	sname2 = talloc_asprintf(mem_ctx, "%s:%s:$DaTa", fname,
 				 "Second Stream");
@@ -570,6 +573,10 @@ static bool test_stream_sharemodes(struct torture_context *tctx,
 	const char *sname1, *sname2;
 	bool ret = true;
 	struct smb2_handle h, h1, h2;
+
+	ZERO_STRUCT(h);
+	ZERO_STRUCT(h1);
+	ZERO_STRUCT(h2);
 
 	sname1 = talloc_asprintf(mem_ctx, "%s:%s", fname, "Stream One");
 	sname2 = talloc_asprintf(mem_ctx, "%s:%s:$DaTa", fname,
@@ -833,6 +840,11 @@ static bool test_stream_names(struct torture_context *tctx,
 		":MStream Two:$DATA",
 		":?Stream*:$DATA"
 	};
+
+	ZERO_STRUCT(h);
+	ZERO_STRUCT(h1);
+	ZERO_STRUCT(h2);
+	ZERO_STRUCT(h3);
 
 	sname1 = talloc_asprintf(mem_ctx, "%s:%s", fname, "\x05Stream\n One");
 	sname1b = talloc_asprintf(mem_ctx, "%s:", sname1);
@@ -1322,6 +1334,9 @@ static bool test_stream_rename2(struct torture_context *tctx,
 	struct smb2_handle h, h1;
 	union smb_setfileinfo sinfo;
 
+	ZERO_STRUCT(h);
+	ZERO_STRUCT(h1);
+
 	sname1 = talloc_asprintf(mem_ctx, "%s:%s", fname1, "Stream One");
 	sname2 = talloc_asprintf(mem_ctx, "%s:%s", fname1, "Stream Two");
 
@@ -1669,6 +1684,9 @@ static bool test_stream_attributes(struct torture_context *tctx,
 	union smb_fileinfo finfo;
 	union smb_setfileinfo sfinfo;
 	time_t basetime = (time(NULL) - 86400) & ~1;
+
+	ZERO_STRUCT(h);
+	ZERO_STRUCT(h1);
 
 	torture_comment(tctx, "(%s) testing attribute setting on stream\n",
 			__location__);

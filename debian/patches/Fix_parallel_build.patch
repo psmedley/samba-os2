@@ -1,0 +1,28 @@
+From 2f579b37764e14c1b09581dbd4841def7b72b64e Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Wed, 12 Oct 2016 20:46:57 +0200
+Subject: [PATCH] ctdb/wscript: Call CHECK_XSLTPROC_MANPAGES() before checking
+ XSLTPROC_MANPAGES
+
+This should fix parallel builds, including tests.reproducible-builds.org
+
+Thanks HW42 on IRC
+---
+ ctdb/wscript | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/ctdb/wscript b/ctdb/wscript
+index 618dd29..6dbff3d 100755
+--- a/ctdb/wscript
++++ b/ctdb/wscript
+@@ -228,6 +228,7 @@ def configure(conf):
+         conf.DEFINE('SAMBA_UTIL_CORE_ONLY', 1, add_to_cflags=True)
+         conf.SAMBA_CONFIG_H()
+ 
++    conf.CHECK_XSLTPROC_MANPAGES()
+     if 'XSLTPROC_MANPAGES' in conf.env and conf.env['XSLTPROC_MANPAGES']:
+         conf.env.ctdb_generate_manpages = True
+     else:
+-- 
+2.9.3
+

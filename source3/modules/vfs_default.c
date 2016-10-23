@@ -133,7 +133,7 @@ static uint32_t vfswrap_fs_capabilities(struct vfs_handle_struct *handle,
 	 * use when setting a timestamp. */
 
 	smb_fname_cpath = synthetic_smb_fname(talloc_tos(), conn->connectpath,
-					      NULL, NULL);
+					      NULL, NULL, 0);
 	if (smb_fname_cpath == NULL) {
 		return caps;
 	}
@@ -375,12 +375,15 @@ static NTSTATUS vfswrap_snap_delete(struct vfs_handle_struct *handle,
 
 /* Directory operations */
 
-static DIR *vfswrap_opendir(vfs_handle_struct *handle, const char *fname, const char *mask, uint32_t attr)
+static DIR *vfswrap_opendir(vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				const char *mask,
+				uint32_t attr)
 {
 	DIR *result;
 
 	START_PROFILE(syscall_opendir);
-	result = opendir(fname);
+	result = opendir(smb_fname->base_name);
 	END_PROFILE(syscall_opendir);
 	return result;
 }
@@ -416,13 +419,20 @@ static struct dirent *vfswrap_readdir(vfs_handle_struct *handle,
 		if (result != NULL) {
 			/* See if we can efficiently return this. */
 			struct stat st;
-			int flags = (lp_posix_pathnames() ?
-				AT_SYMLINK_NOFOLLOW : 0);
+			int flags = AT_SYMLINK_NOFOLLOW;
 			int ret = fstatat(dirfd(dirp),
 					result->d_name,
 					&st,
 					flags);
-			if (ret == 0) {
+			/*
+			 * As this is an optimization,
+			 * ignore it if we stat'ed a
+			 * symlink. Make the caller
+			 * do it again as we don't
+			 * know if they wanted the link
+			 * info, or its target info.
+			 */
+			if ((ret == 0) && (!S_ISLNK(st.st_mode))) {
 				init_stat_ex_from_stat(sbuf,
 					&st,
 					lp_fake_directory_create_times(
@@ -465,10 +475,13 @@ static void vfswrap_rewinddir(vfs_handle_struct *handle, DIR *dirp)
 	END_PROFILE(syscall_rewinddir);
 }
 
-static int vfswrap_mkdir(vfs_handle_struct *handle, const char *path, mode_t mode)
+static int vfswrap_mkdir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	int result;
 	bool has_dacl = False;
+	const char *path = smb_fname->base_name;
 	char *parent = NULL;
 
 	START_PROFILE(syscall_mkdir);
@@ -492,20 +505,23 @@ static int vfswrap_mkdir(vfs_handle_struct *handle, const char *path, mode_t mod
 		 * mess up any inherited ACL bits that were set. JRA.
 		 */
 		int saved_errno = errno; /* We may get ENOSYS */
-		if ((SMB_VFS_CHMOD_ACL(handle->conn, path, mode) == -1) && (errno == ENOSYS))
+		if ((SMB_VFS_CHMOD_ACL(handle->conn, smb_fname, mode) == -1) &&
+				(errno == ENOSYS)) {
 			errno = saved_errno;
+		}
 	}
 
 	END_PROFILE(syscall_mkdir);
 	return result;
 }
 
-static int vfswrap_rmdir(vfs_handle_struct *handle, const char *path)
+static int vfswrap_rmdir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
 	int result;
 
 	START_PROFILE(syscall_rmdir);
-	result = rmdir(path);
+	result = rmdir(smb_fname->base_name);
 	END_PROFILE(syscall_rmdir);
 	return result;
 }
@@ -738,7 +754,7 @@ struct vfswrap_asys_state {
 	struct asys_context *asys_ctx;
 	struct tevent_req *req;
 	ssize_t ret;
-	int err;
+	struct vfs_aio_state vfs_aio_state;
 	SMBPROFILE_BASIC_ASYNC_STATE(profile_basic);
 	SMBPROFILE_BYTES_ASYNC_STATE(profile_bytes);
 };
@@ -885,33 +901,36 @@ static void vfswrap_asys_finished(struct tevent_context *ev,
 		SMBPROFILE_BASIC_ASYNC_END(state->profile_basic);
 		SMBPROFILE_BYTES_ASYNC_END(state->profile_bytes);
 		state->ret = result->ret;
-		state->err = result->err;
+		state->vfs_aio_state.error = result->err;
+		state->vfs_aio_state.duration = result->duration;
 		tevent_req_defer_callback(req, ev);
 		tevent_req_done(req);
 	}
 }
 
-static ssize_t vfswrap_asys_ssize_t_recv(struct tevent_req *req, int *err)
+static ssize_t vfswrap_asys_ssize_t_recv(struct tevent_req *req,
+					 struct vfs_aio_state *vfs_aio_state)
 {
 	struct vfswrap_asys_state *state = tevent_req_data(
 		req, struct vfswrap_asys_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	*err = state->err;
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 
-static int vfswrap_asys_int_recv(struct tevent_req *req, int *err)
+static int vfswrap_asys_int_recv(struct tevent_req *req,
+				 struct vfs_aio_state *vfs_aio_state)
 {
 	struct vfswrap_asys_state *state = tevent_req_data(
 		req, struct vfswrap_asys_state);
 
-	if (tevent_req_is_unix_error(req, err)) {
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
 		return -1;
 	}
-	*err = state->err;
+	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
 }
 
@@ -1408,6 +1427,34 @@ static NTSTATUS vfswrap_fsctl(struct vfs_handle_struct *handle,
 	return NT_STATUS_NOT_SUPPORTED;
 }
 
+static NTSTATUS vfswrap_get_dos_attributes(struct vfs_handle_struct *handle,
+					   struct smb_filename *smb_fname,
+					   uint32_t *dosmode)
+{
+	return get_ea_dos_attribute(handle->conn, smb_fname, dosmode);
+}
+
+static NTSTATUS vfswrap_fget_dos_attributes(struct vfs_handle_struct *handle,
+					    struct files_struct *fsp,
+					    uint32_t *dosmode)
+{
+	return get_ea_dos_attribute(handle->conn, fsp->fsp_name, dosmode);
+}
+
+static NTSTATUS vfswrap_set_dos_attributes(struct vfs_handle_struct *handle,
+					   const struct smb_filename *smb_fname,
+					   uint32_t dosmode)
+{
+	return set_ea_dos_attribute(handle->conn, smb_fname, dosmode);
+}
+
+static NTSTATUS vfswrap_fset_dos_attributes(struct vfs_handle_struct *handle,
+					    struct files_struct *fsp,
+					    uint32_t dosmode)
+{
+	return set_ea_dos_attribute(handle->conn, fsp->fsp_name, dosmode);
+}
+
 struct vfs_cc_state {
 	off_t copied;
 	uint8_t *buf;
@@ -1666,7 +1713,9 @@ static int vfswrap_unlink(vfs_handle_struct *handle,
 	return result;
 }
 
-static int vfswrap_chmod(vfs_handle_struct *handle, const char *path, mode_t mode)
+static int vfswrap_chmod(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	int result;
 
@@ -1681,7 +1730,10 @@ static int vfswrap_chmod(vfs_handle_struct *handle, const char *path, mode_t mod
 
 	{
 		int saved_errno = errno; /* We might get ENOSYS */
-		if ((result = SMB_VFS_CHMOD_ACL(handle->conn, path, mode)) == 0) {
+		result = SMB_VFS_CHMOD_ACL(handle->conn,
+				smb_fname,
+				mode);
+		if (result == 0) {
 			END_PROFILE(syscall_chmod);
 			return result;
 		}
@@ -1689,7 +1741,7 @@ static int vfswrap_chmod(vfs_handle_struct *handle, const char *path, mode_t mod
 		errno = saved_errno;
 	}
 
-	result = chmod(path, mode);
+	result = chmod(smb_fname->base_name, mode);
 	END_PROFILE(syscall_chmod);
 	return result;
 }
@@ -1727,12 +1779,15 @@ static int vfswrap_fchmod(vfs_handle_struct *handle, files_struct *fsp, mode_t m
 	return result;
 }
 
-static int vfswrap_chown(vfs_handle_struct *handle, const char *path, uid_t uid, gid_t gid)
+static int vfswrap_chown(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
 	int result;
 
 	START_PROFILE(syscall_chown);
-	result = chown(path, uid, gid);
+	result = chown(smb_fname->base_name, uid, gid);
 	END_PROFILE(syscall_chown);
 	return result;
 }
@@ -1752,12 +1807,15 @@ static int vfswrap_fchown(vfs_handle_struct *handle, files_struct *fsp, uid_t ui
 #endif
 }
 
-static int vfswrap_lchown(vfs_handle_struct *handle, const char *path, uid_t uid, gid_t gid)
+static int vfswrap_lchown(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
 	int result;
 
 	START_PROFILE(syscall_lchown);
-	result = lchown(path, uid, gid);
+	result = lchown(smb_fname->base_name, uid, gid);
 	END_PROFILE(syscall_lchown);
 	return result;
 }
@@ -2043,6 +2101,14 @@ static bool vfswrap_lock(vfs_handle_struct *handle, files_struct *fsp, int op, o
 	bool result;
 
 	START_PROFILE(syscall_fcntl_lock);
+
+	if (fsp->use_ofd_locks || !lp_parm_bool(SNUM(fsp->conn),
+						"smbd",
+						"force process locks",
+						false)) {
+		op = map_process_lock_to_ofd_lock(op, &fsp->use_ofd_locks);
+	}
+
 	result =  fcntl_lock(fsp->fh->fd, op, offset, count, type);
 	END_PROFILE(syscall_fcntl_lock);
 	return result;
@@ -2060,9 +2126,18 @@ static int vfswrap_kernel_flock(vfs_handle_struct *handle, files_struct *fsp,
 static bool vfswrap_getlock(vfs_handle_struct *handle, files_struct *fsp, off_t *poffset, off_t *pcount, int *ptype, pid_t *ppid)
 {
 	bool result;
+	int op = F_GETLK;
 
 	START_PROFILE(syscall_fcntl_getlock);
-	result =  fcntl_getlock(fsp->fh->fd, poffset, pcount, ptype, ppid);
+
+	if (fsp->use_ofd_locks || !lp_parm_bool(SNUM(fsp->conn),
+						"smbd",
+						"force process locks",
+						false)) {
+		op = map_process_lock_to_ofd_lock(op, &fsp->use_ofd_locks);
+	}
+
+	result = fcntl_getlock(fsp->fh->fd, op, poffset, pcount, ptype, ppid);
 	END_PROFILE(syscall_fcntl_getlock);
 	return result;
 }
@@ -2128,20 +2203,7 @@ static char *vfswrap_realpath(vfs_handle_struct *handle, const char *path)
 	char *result;
 
 	START_PROFILE(syscall_realpath);
-#ifdef REALPATH_TAKES_NULL
-	result = realpath(path, NULL);
-#else
-	result = SMB_MALLOC_ARRAY(char, PATH_MAX+1);
-	if (result) {
-		char *resolved_path = realpath(path, result);
-		if (!resolved_path) {
-			SAFE_FREE(result);
-		} else {
-			/* SMB_ASSERT(result == resolved_path) ? */
-			result = resolved_path;
-		}
-	}
-#endif
+	result = sys_realpath(path);
 	END_PROFILE(syscall_realpath);
 	return result;
 }
@@ -2175,7 +2237,7 @@ static struct file_id vfswrap_file_id_create(struct vfs_handle_struct *handle,
 
 static NTSTATUS vfswrap_streaminfo(vfs_handle_struct *handle,
 				   struct files_struct *fsp,
-				   const char *fname,
+				   const struct smb_filename *smb_fname,
 				   TALLOC_CTX *mem_ctx,
 				   unsigned int *pnum_streams,
 				   struct stream_struct **pstreams)
@@ -2195,17 +2257,19 @@ static NTSTATUS vfswrap_streaminfo(vfs_handle_struct *handle,
 		ret = SMB_VFS_FSTAT(fsp, &sbuf);
 	}
 	else {
-		struct smb_filename smb_fname;
+		struct smb_filename smb_fname_cp;
 
-		ZERO_STRUCT(smb_fname);
-		smb_fname.base_name = discard_const_p(char, fname);
+		ZERO_STRUCT(smb_fname_cp);
+		smb_fname_cp.base_name = discard_const_p(char,
+					smb_fname->base_name);
+		smb_fname_cp.flags = smb_fname->flags;
 
-		if (lp_posix_pathnames()) {
-			ret = SMB_VFS_LSTAT(handle->conn, &smb_fname);
+		if (smb_fname_cp.flags & SMB_FILENAME_POSIX_PATH) {
+			ret = SMB_VFS_LSTAT(handle->conn, &smb_fname_cp);
 		} else {
-			ret = SMB_VFS_STAT(handle->conn, &smb_fname);
+			ret = SMB_VFS_STAT(handle->conn, &smb_fname_cp);
 		}
-		sbuf = smb_fname.st;
+		sbuf = smb_fname_cp.st;
 	}
 
 	if (ret == -1) {
@@ -2323,7 +2387,7 @@ static NTSTATUS vfswrap_fget_nt_acl(vfs_handle_struct *handle,
 }
 
 static NTSTATUS vfswrap_get_nt_acl(vfs_handle_struct *handle,
-				   const char *name,
+				   const struct smb_filename *smb_fname,
 				   uint32_t security_info,
 				   TALLOC_CTX *mem_ctx,
 				   struct security_descriptor **ppdesc)
@@ -2331,8 +2395,11 @@ static NTSTATUS vfswrap_get_nt_acl(vfs_handle_struct *handle,
 	NTSTATUS result;
 
 	START_PROFILE(get_nt_acl);
-	result = posix_get_nt_acl(handle->conn, name, security_info,
-				  mem_ctx, ppdesc);
+	result = posix_get_nt_acl(handle->conn,
+				smb_fname,
+				security_info,
+				mem_ctx,
+				ppdesc);
 	END_PROFILE(get_nt_acl);
 	return result;
 }
@@ -2356,7 +2423,9 @@ static NTSTATUS vfswrap_audit_file(struct vfs_handle_struct *handle,
 	return NT_STATUS_OK; /* Nothing to do here ... */
 }
 
-static int vfswrap_chmod_acl(vfs_handle_struct *handle, const char *name, mode_t mode)
+static int vfswrap_chmod_acl(vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				mode_t mode)
 {
 #ifdef HAVE_NO_ACL
 	errno = ENOSYS;
@@ -2365,7 +2434,7 @@ static int vfswrap_chmod_acl(vfs_handle_struct *handle, const char *name, mode_t
 	int result;
 
 	START_PROFILE(chmod_acl);
-	result = chmod_acl(handle->conn, name, mode);
+	result = chmod_acl(handle->conn, smb_fname->base_name, mode);
 	END_PROFILE(chmod_acl);
 	return result;
 #endif
@@ -2624,6 +2693,10 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.strict_unlock_fn = vfswrap_strict_unlock,
 	.translate_name_fn = vfswrap_translate_name,
 	.fsctl_fn = vfswrap_fsctl,
+	.set_dos_attributes_fn = vfswrap_set_dos_attributes,
+	.fset_dos_attributes_fn = vfswrap_fset_dos_attributes,
+	.get_dos_attributes_fn = vfswrap_get_dos_attributes,
+	.fget_dos_attributes_fn = vfswrap_fget_dos_attributes,
 	.copy_chunk_send_fn = vfswrap_copy_chunk_send,
 	.copy_chunk_recv_fn = vfswrap_copy_chunk_recv,
 	.get_compression_fn = vfswrap_get_compression,

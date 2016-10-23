@@ -10,7 +10,7 @@
 # Copyright (C) 2015 Christof Schmitt
 
 if [ $# -lt 3 ]; then
-Usage: test_sharesec.sh SERVERCONFFILE SHARESEC SHARE
+	echo Usage: test_sharesec.sh SERVERCONFFILE SHARESEC SHARE
 exit 1
 fi
 
@@ -94,8 +94,22 @@ testit "Query ACL with three entries after removal" $CMD --view || \
 COUNT=$($CMD --view | grep ACL: | sed -e 's/^ACL://' | wc -l)
 testit "Verify ACL count after removal" test $COUNT -eq 3 || \
 	failed=$(expr $failed + 1)
-ACL="$($CMD --view | grep S-1-5-32-546')"
+ACL="$($CMD --view | grep S-1-5-32-546)"
 testit "Verify removal" test -e "$ACL" || failed=$(expr $failed + 1)
+
+testit "Set ACL as hex value" $CMD --add S-1-5-32-547:0x1/0x0/0x001F01FF || \
+	failed=$(expr $failed + 1)
+ACL="$($CMD --view | grep S-1-5-32-547 | sed -e 's/^ACL://')"
+testit "Verify numerically set entry" \
+	test "$ACL" = S-1-5-32-547:DENIED/0x0/FULL || \
+	failed=$(expr $failed + 1)
+
+testit "Set ACL as dec value" $CMD --add S-1-5-32-548:1/0/0x001F01FF || \
+	failed=$(expr $failed + 1)
+ACL="$($CMD --view | grep S-1-5-32-548 | sed -e 's/^ACL://')"
+testit "Verify numerically set entry" \
+	test "$ACL" = S-1-5-32-548:DENIED/0x0/FULL || \
+	failed=$(expr $failed + 1)
 
 testit "Set back to default ACL " $CMD --replace  S-1-1-0:ALLOWED/0x0/FULL || \
 	failed=$(expr $failed + 1)

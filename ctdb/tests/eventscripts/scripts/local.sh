@@ -20,6 +20,8 @@ export EVENTSCRIPTS_PATH
 
 PATH="${EVENTSCRIPTS_PATH}:${PATH}"
 
+export CTDB="ctdb"
+
 export EVENTSCRIPTS_TESTS_VAR_DIR="${TEST_VAR_DIR}/unit_eventscripts"
 if [ -d "$EVENTSCRIPTS_TESTS_VAR_DIR" -a \
     "$EVENTSCRIPTS_TESTS_VAR_DIR" != "/unit_eventscripts" ] ; then
@@ -541,6 +543,83 @@ EOF
 
 ######################################################################
 
+setup_ctdb_lvs ()
+{
+	lvs_state_dir="${EVENTSCRIPTS_TESTS_VAR_DIR}/lvs"
+	mkdir -p "$lvs_state_dir"
+
+	export FAKE_LVS_STATE_DIR="${lvs_state_dir}/state"
+	mkdir "$FAKE_LVS_STATE_DIR"
+
+	lvs_header=$(ipvsadm -l -n)
+
+	export CTDB_LVS_PUBLIC_IP="$1"
+	export CTDB_LVS_PUBLIC_IFACE="$2"
+
+	[ -n "$CTDB_LVS_PUBLIC_IP" ] || return 0
+	[ -n "$CTDB_LVS_PUBLIC_IFACE" ] || return 0
+
+	export CTDB_LVS_NODES=$(mktemp --tmpdir="$lvs_state_dir")
+	export FAKE_CTDB_LVS_MASTER=""
+
+	# Read from stdin
+	_pnn=0
+	while read _ip _opts ; do
+		case "$_opts" in
+		master)
+			FAKE_CTDB_LVS_MASTER="$_pnn"
+			echo "$_ip"
+			;;
+		slave-only)
+			printf "%s\tslave-only\n" "$_ip"
+			;;
+		*)
+			echo "$_ip"
+			;;
+		esac
+		_pnn=$(($_pnn + 1))
+	done >"$CTDB_LVS_NODES"
+}
+
+check_ipvsadm ()
+{
+	if [ "$1" = "NULL" ] ; then
+		required_result 0 <<EOF
+$lvs_header
+EOF
+	else
+		required_result 0 <<EOF
+$lvs_header
+$(cat)
+EOF
+	fi
+
+	simple_test_command ipvsadm -l -n
+}
+
+check_lvs_ip ()
+{
+	_scope="$1"
+
+	if [ "$_scope" = "NULL" ] ; then
+		required_result 0 <<EOF
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+EOF
+	else
+		required_result 0 <<EOF
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet ${CTDB_LVS_PUBLIC_IP}/32 scope ${_scope} lo
+       valid_lft forever preferred_lft forever
+EOF
+	fi
+
+	simple_test_command ip addr show dev lo
+}
+
+######################################################################
+
 ctdb_catdb_format_pairs ()
 {
     _count=0
@@ -1027,7 +1106,8 @@ program $_rpc_service${_ver:+ version }${_ver} is not available"
 	    echo 0 >"$_rc_file"
 	fi
 
-	if [ $restart_every -gt 0 -a $(($_numfails % $restart_every)) -eq 0 ] ; then
+	if [ $restart_every -gt 0 ] && \
+		   [ $(($_numfails % $restart_every)) -eq 0 ] ; then
 	    if ! $_unhealthy ; then
 		echo "WARNING: ${_rpc_check_out}" >>"$_out"
 	    fi
@@ -1046,6 +1126,27 @@ program $_rpc_service${_ver:+ version }${_ver} is not available"
     required_result $_rc <"$_out"
 
     rm -f "$_out" "$_rc_file"
+}
+
+######################################################################
+
+# Recovery lock fakery
+
+cleanup_reclock ()
+{
+	_pattern="${script_dir}/${script}"
+	while pgrep -f "$_pattern" >/dev/null ; do
+		echo "Waiting for backgrounded ${script} to exit..."
+		(FAKE_SLEEP_REALLY=yes sleep 1)
+	done
+}
+
+setup_reclock ()
+{
+	CTDB_RECOVERY_LOCK=$(mktemp --tmpdir="$EVENTSCRIPTS_TESTS_VAR_DIR")
+	export CTDB_RECOVERY_LOCK
+
+	test_cleanup cleanup_reclock
 }
 
 ######################################################################

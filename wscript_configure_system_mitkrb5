@@ -26,6 +26,10 @@ if conf.env.KRB5_CONFIG:
     krb5_define_syslib(conf, "krb5", conf.env['LIB_KRB5'])
 
     conf.CHECK_CFG(path=conf.env.KRB5_CONFIG, args="--cflags --libs",
+                   package="kdb", uselib_store="KDB5")
+    krb5_define_syslib(conf, "kdb5", conf.env['LIB_KDB5'])
+
+    conf.CHECK_CFG(path=conf.env.KRB5_CONFIG, args="--cflags --libs",
                package="gssapi", uselib_store="GSSAPI")
     krb5_define_syslib(conf, "gssapi", conf.env['LIB_GSSAPI'])
     if 'k5crypto' in conf.env['LIB_GSSAPI']:
@@ -57,6 +61,7 @@ if conf.env.KRB5_CONFIG:
 conf.CHECK_CFG(args="--cflags --libs", package="com_err", uselib_store="com_err")
 conf.CHECK_FUNCS_IN('_et_list', 'com_err')
 conf.CHECK_HEADERS('com_err.h', lib='com_err')
+conf.CHECK_HEADERS('kdb.h', lib='kdb5')
 
 conf.CHECK_HEADERS('krb5.h krb5/locate_plugin.h', lib='krb5')
 possible_gssapi_headers="gssapi.h gssapi/gssapi_generic.h gssapi/gssapi.h gssapi/gssapi_ext.h gssapi/gssapi_krb5.h gssapi/gssapi_oid.h"
@@ -91,6 +96,8 @@ conf.CHECK_FUNCS_IN('''
 conf.CHECK_VARIABLE('GSS_KRB5_CRED_NO_CI_FLAGS_X', headers=possible_gssapi_headers)
 conf.CHECK_FUNCS_IN('krb5_mk_req_extended krb5_kt_compare', 'krb5')
 conf.CHECK_FUNCS('''
+       krb5_auth_con_getrecvsubkey
+       krb5_auth_con_getsendsubkey
        krb5_set_default_in_tkt_etypes krb5_set_default_tgs_enctypes
        krb5_set_default_tgs_ktypes krb5_principal2salt
        krb5_c_string_to_key krb5_get_pw_salt krb5_string_to_key_salt krb5_auth_con_setkey
@@ -111,6 +118,7 @@ conf.CHECK_FUNCS('''
        krb5_get_init_creds_keyblock krb5_get_init_creds_keytab
        krb5_make_principal krb5_build_principal_alloc_va
        krb5_cc_get_lifetime krb5_cc_retrieve_cred
+       krb5_cc_copy_creds
        krb5_free_checksum_contents krb5_c_make_checksum krb5_create_checksum
        krb5_config_get_bool_default krb5_get_profile
        krb5_data_copy

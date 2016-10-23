@@ -118,7 +118,7 @@ NTSTATUS file_new(struct smb_request *req, connection_struct *conn,
 	 * few NULL checks, so make sure it's initialized with something. to
 	 * be safe until an audit can be done.
 	 */
-	fsp->fsp_name = synthetic_smb_fname(fsp, "", NULL, NULL);
+	fsp->fsp_name = synthetic_smb_fname(fsp, "", NULL, NULL, 0);
 	if (fsp->fsp_name == NULL) {
 		file_free(NULL, fsp);
 		return NT_STATUS_NO_MEMORY;
@@ -478,6 +478,10 @@ void fsp_free(files_struct *fsp)
 {
 	struct smbd_server_connection *sconn = fsp->conn->sconn;
 
+	if (fsp == sconn->fsp_fi_cache.fsp) {
+		ZERO_STRUCT(sconn->fsp_fi_cache);
+	}
+
 	DLIST_REMOVE(sconn->files, fsp);
 	SMB_ASSERT(sconn->num_files > 0);
 	sconn->num_files--;
@@ -514,9 +518,21 @@ void file_free(struct smb_request *req, files_struct *fsp)
 	uint64_t fnum = fsp->fnum;
 
 	if (fsp->notify) {
-		struct notify_context *notify_ctx =
-			fsp->conn->sconn->notify_ctx;
-		notify_remove(notify_ctx, fsp);
+		size_t len = fsp_fullbasepath(fsp, NULL, 0);
+		char fullpath[len+1];
+
+		fsp_fullbasepath(fsp, fullpath, sizeof(fullpath));
+
+		/*
+		 * Avoid /. at the end of the path name. notify can't
+		 * deal with it.
+		 */
+		if (len > 1 && fullpath[len-1] == '.' &&
+		    fullpath[len-2] == '/') {
+			fullpath[len-2] = '\0';
+		}
+
+		notify_remove(fsp->conn->sconn->notify_ctx, fsp, fullpath);
 		TALLOC_FREE(fsp->notify);
 	}
 
@@ -538,11 +554,6 @@ void file_free(struct smb_request *req, files_struct *fsp)
 	 */
 	if (req != NULL && req->smb2req) {
 		remove_smb2_chained_fsp(fsp);
-	}
-
-	/* Closing a file can invalidate the positive cache. */
-	if (fsp == sconn->fsp_fi_cache.fsp) {
-		ZERO_STRUCT(sconn->fsp_fi_cache);
 	}
 
 	/* Drop all remaining extensions. */
@@ -780,4 +791,15 @@ uint32_t fsp_lease_type(struct files_struct *fsp)
 		return fsp->lease->lease.lease_state;
 	}
 	return map_oplock_to_lease_type(fsp->oplock_type);
+}
+
+size_t fsp_fullbasepath(struct files_struct *fsp, char *buf, size_t buflen)
+{
+	int len;
+
+	len = snprintf(buf, buflen, "%s/%s", fsp->conn->connectpath,
+		       fsp->fsp_name->base_name);
+	SMB_ASSERT(len>0);
+
+	return len;
 }

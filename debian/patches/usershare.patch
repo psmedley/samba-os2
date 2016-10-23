@@ -11,7 +11,7 @@ Index: samba/docs/manpages/net.8
 ===================================================================
 --- samba.orig/docs/manpages/net.8
 +++ samba/docs/manpages/net.8
-@@ -1063,9 +1063,9 @@ Something we failed to parse\&. Default
+@@ -1201,9 +1201,9 @@ Something we failed to parse\&. Default
  .RE
  .SS "USERSHARE"
  .PP
@@ -27,7 +27,7 @@ Index: samba/source3/param/loadparm.c
 ===================================================================
 --- samba.orig/source3/param/loadparm.c
 +++ samba/source3/param/loadparm.c
-@@ -844,7 +844,7 @@ static void init_globals(struct loadparm
+@@ -842,7 +842,7 @@ static void init_globals(struct loadparm
  	lpcfg_string_set(Globals.ctx, &Globals.usershare_path, s);
  	TALLOC_FREE(s);
  	lpcfg_string_set(Globals.ctx, &Globals.usershare_template_share, "");

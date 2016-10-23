@@ -121,118 +121,124 @@ NTSTATUS _wbint_LookupName(struct pipes_struct *p, struct wbint_LookupName *r)
 NTSTATUS _wbint_Sids2UnixIDs(struct pipes_struct *p,
 			     struct wbint_Sids2UnixIDs *r)
 {
-	uint32_t i, j;
-	struct id_map *ids = NULL;
-	struct id_map **id_ptrs = NULL;
-	struct dom_sid *sids = NULL;
-	uint32_t *id_idx = NULL;
+	uint32_t i;
+
+	struct lsa_DomainInfo *d;
+	struct wbint_TransID *ids;
+	uint32_t num_ids;
+
+	struct id_map **id_map_ptrs = NULL;
+	struct idmap_domain *dom;
 	NTSTATUS status = NT_STATUS_NO_MEMORY;
 
-	for (i=0; i<r->in.domains->count; i++) {
-		struct lsa_DomainInfo *d = &r->in.domains->domains[i];
-		struct idmap_domain *dom;
-		uint32_t num_ids;
+	if (r->in.domains->count != 1) {
+		return NT_STATUS_INVALID_PARAMETER;
+	}
 
-		dom = idmap_find_domain_with_sid(d->name.string, d->sid);
-		if (dom == NULL) {
-			DEBUG(10, ("idmap domain %s:%s not found\n",
-				   d->name.string, sid_string_dbg(d->sid)));
-			continue;
+	d = &r->in.domains->domains[0];
+	ids = r->in.ids->ids;
+	num_ids = r->in.ids->num_ids;
+
+	dom = idmap_find_domain_with_sid(d->name.string, d->sid);
+	if (dom == NULL) {
+		DEBUG(10, ("idmap domain %s:%s not found\n",
+			   d->name.string, sid_string_dbg(d->sid)));
+
+		for (i=0; i<num_ids; i++) {
+
+			ids[i].xid = (struct unixid) {
+				.id = UINT32_MAX,
+				.type = ID_TYPE_NOT_SPECIFIED
+			};
 		}
 
-		num_ids = 0;
+		return NT_STATUS_OK;
+	}
 
-		for (j=0; j<r->in.ids->num_ids; j++) {
-			if (r->in.ids->ids[j].domain_index == i) {
-				num_ids += 1;
-			}
-		}
+	id_map_ptrs = id_map_ptrs_init(talloc_tos(), num_ids);
+	if (id_map_ptrs == NULL) {
+		goto nomem;
+	}
 
-		ids = talloc_realloc(talloc_tos(), ids,
-					   struct id_map, num_ids);
-		if (ids == NULL) {
-			goto nomem;
-		}
-		id_ptrs = talloc_realloc(talloc_tos(), id_ptrs,
-					       struct id_map *, num_ids+1);
-		if (id_ptrs == NULL) {
-			goto nomem;
-		}
-		id_idx = talloc_realloc(talloc_tos(), id_idx,
-					      uint32_t, num_ids);
-		if (id_idx == NULL) {
-			goto nomem;
-		}
-		sids = talloc_realloc(talloc_tos(), sids,
-					    struct dom_sid, num_ids);
-		if (sids == NULL) {
-			goto nomem;
-		}
+	/*
+	 * Convert the input data into a list of id_map structs
+	 * suitable for handing in to the idmap sids_to_unixids
+	 * method.
+	 */
 
-		num_ids = 0;
+	for (i=0; i<num_ids; i++) {
+		struct id_map *m = id_map_ptrs[i];
 
-		/*
-		 * Convert the input data into a list of
-		 * id_map structs suitable for handing in
-		 * to the idmap sids_to_unixids method.
-		 */
-		for (j=0; j<r->in.ids->num_ids; j++) {
-			struct wbint_TransID *id = &r->in.ids->ids[j];
+		sid_compose(m->sid, d->sid, ids[i].rid);
+		m->status = ID_UNKNOWN;
+		m->xid = (struct unixid) { .type = ids[i].type };
+	}
 
-			if (id->domain_index != i) {
-				continue;
-			}
-			id_idx[num_ids] = j;
-			id_ptrs[num_ids] = &ids[num_ids];
+	status = dom->methods->sids_to_unixids(dom, id_map_ptrs);
 
-			ids[num_ids].sid = &sids[num_ids];
-			sid_compose(ids[num_ids].sid, d->sid, id->rid);
-			ids[num_ids].xid.type = id->type;
-			ids[num_ids].status = ID_UNKNOWN;
-			num_ids += 1;
-		}
-		id_ptrs[num_ids] = NULL;
-
-		status = dom->methods->sids_to_unixids(dom, id_ptrs);
+	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(10, ("sids_to_unixids returned %s\n",
 			   nt_errstr(status)));
+		goto done;
+	}
 
-		/*
-		 * Extract the results for handing them back to the caller.
-		 */
-		for (j=0; j<num_ids; j++) {
-			struct wbint_TransID *id = &r->in.ids->ids[id_idx[j]];
+	/*
+	 * Extract the results for handing them back to the caller.
+	 */
 
-			if (!idmap_unix_id_is_in_range(ids[j].xid.id, dom)) {
-				ids[j].status = ID_UNMAPPED;
-			}
+	for (i=0; i<num_ids; i++) {
+		struct id_map *m = id_map_ptrs[i];
 
-			if (ids[j].status != ID_MAPPED) {
-				id->xid.id = UINT32_MAX;
-				id->xid.type = ID_TYPE_NOT_SPECIFIED;
-				continue;
-			}
+		if (!idmap_unix_id_is_in_range(m->xid.id, dom)) {
+			m->status = ID_UNMAPPED;
+		}
 
-			id->xid = ids[j].xid;
+		if (m->status == ID_MAPPED) {
+			ids[i].xid = m->xid;
+		} else {
+			ids[i].xid.id = UINT32_MAX;
+			ids[i].xid.type = ID_TYPE_NOT_SPECIFIED;
 		}
 	}
-	status = NT_STATUS_OK;
+
+	goto done;
 nomem:
-	TALLOC_FREE(ids);
-	TALLOC_FREE(id_ptrs);
-	TALLOC_FREE(id_idx);
-	TALLOC_FREE(sids);
+	status = NT_STATUS_NO_MEMORY;
+done:
+	TALLOC_FREE(id_map_ptrs);
 	return status;
 }
 
-NTSTATUS _wbint_Uid2Sid(struct pipes_struct *p, struct wbint_Uid2Sid *r)
+NTSTATUS _wbint_UnixIDs2Sids(struct pipes_struct *p,
+			     struct wbint_UnixIDs2Sids *r)
 {
-	return idmap_uid_to_sid(r->out.sid, r->in.uid);
-}
+	struct id_map **maps;
+	NTSTATUS status;
+	uint32_t i;
 
-NTSTATUS _wbint_Gid2Sid(struct pipes_struct *p, struct wbint_Gid2Sid *r)
-{
-	return idmap_gid_to_sid(r->out.sid, r->in.gid);
+	maps = id_map_ptrs_init(talloc_tos(), r->in.num_ids);
+	if (maps == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	for (i=0; i<r->in.num_ids; i++) {
+		maps[i]->status = ID_UNKNOWN;
+		maps[i]->xid = r->in.xids[i];
+	}
+
+	status = idmap_backend_unixids_to_sids(maps, r->in.domain_name);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(maps);
+		return status;
+	}
+
+	for (i=0; i<r->in.num_ids; i++) {
+		sid_copy(&r->out.sids[i], maps[i]->sid);
+	}
+
+	TALLOC_FREE(maps);
+
+	return NT_STATUS_OK;
 }
 
 NTSTATUS _wbint_AllocateUid(struct pipes_struct *p, struct wbint_AllocateUid *r)

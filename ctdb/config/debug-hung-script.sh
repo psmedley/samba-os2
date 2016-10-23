@@ -4,9 +4,9 @@
 # for other operating systems.
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; echo "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. "$CTDB_BASE/functions"
+. "${CTDB_BASE}/functions"
 
 loadconfig ctdb
 
@@ -25,7 +25,7 @@ fi
     echo "===== Start of hung script debug for PID=\"$1\", event=\"$2\" ====="
 
     echo "pstree -p -a ${1}:"
-    out=$(pstree -p -a $1)
+    out=$(pstree -p -a "$1")
     echo "$out"
 
     # Check for processes matching a regular expression and print
@@ -47,7 +47,7 @@ fi
 
     if [ "$2" != "init" ] ; then
 	echo "---- ctdb scriptstatus ${2}: ----"
-	ctdb scriptstatus "$2"
+	$CTDB scriptstatus "$2"
     fi
 
     echo "===== End of hung script debug for PID=\"$1\", event=\"$2\" ====="

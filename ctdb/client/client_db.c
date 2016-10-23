@@ -121,6 +121,9 @@ static void ctdb_set_db_flags_nodemap_done(struct tevent_req *subreq)
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("set_db_flags: 0x%08x GET_NODEMAP failed, ret=%d\n",
+		       state->db_id, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -128,6 +131,9 @@ static void ctdb_set_db_flags_nodemap_done(struct tevent_req *subreq)
 	ret = ctdb_reply_control_get_nodemap(reply, state, &nodemap);
 	talloc_free(reply);
 	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("set_db_flags: 0x%08x GET_NODEMAP parse failed, ret=%d\n",
+		      state->db_id, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -136,6 +142,9 @@ static void ctdb_set_db_flags_nodemap_done(struct tevent_req *subreq)
 					       state, &state->pnn_list);
 	talloc_free(nodemap);
 	if (state->count <= 0) {
+		DEBUG(DEBUG_ERR,
+		      ("set_db_flags: 0x%08x no connected nodes, count=%d\n",
+		       state->db_id, state->count));
 		tevent_req_error(req, ENOMEM);
 		return;
 	}
@@ -184,6 +193,9 @@ static void ctdb_set_db_flags_readonly_done(struct tevent_req *subreq)
 						NULL);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("set_db_flags: 0x%08x SET_DB_READONLY failed, ret=%d\n",
+		       state->db_id, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -208,6 +220,9 @@ static void ctdb_set_db_flags_sticky_done(struct tevent_req *subreq)
 						NULL);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("set_db_flags: 0x%08x SET_DB_STICKY failed, ret=%d\n",
+		       state->db_id, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -316,6 +331,8 @@ static void ctdb_attach_mutex_done(struct tevent_req *subreq)
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR, ("attach: %s GET_TUNABLE failed, ret=%d\n",
+				  state->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -326,13 +343,14 @@ static void ctdb_attach_mutex_done(struct tevent_req *subreq)
 		mutex_enabled = 0;
 	}
 
-	state->tdb_flags = TDB_DEFAULT;
-	if (! state->db->persistent) {
-		state->tdb_flags |= (TDB_INCOMPATIBLE_HASH |
-				     TDB_CLEAR_IF_FIRST);
-	}
-	if (mutex_enabled == 1) {
-		state->tdb_flags |= TDB_MUTEX_LOCKING;
+	if (state->db->persistent) {
+		state->tdb_flags = TDB_DEFAULT;
+	} else {
+		state->tdb_flags = (TDB_NOSYNC | TDB_INCOMPATIBLE_HASH |
+				    TDB_CLEAR_IF_FIRST);
+		if (mutex_enabled == 1) {
+			state->tdb_flags |= TDB_MUTEX_LOCKING;
+		}
 	}
 
 	if (state->db->persistent) {
@@ -367,6 +385,12 @@ static void ctdb_attach_dbid_done(struct tevent_req *subreq)
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR, ("attach: %s %s failed, ret=%d\n",
+				  state->db->db_name,
+				  (state->db->persistent
+					? "DB_ATTACH_PERSISTENT"
+					: "DB_ATTACH"),
+				  ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -379,6 +403,8 @@ static void ctdb_attach_dbid_done(struct tevent_req *subreq)
 	}
 	talloc_free(reply);
 	if (ret != 0) {
+		DEBUG(DEBUG_ERR, ("attach: %s failed to get db_id, ret=%d\n",
+				  state->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -407,6 +433,8 @@ static void ctdb_attach_dbpath_done(struct tevent_req *subreq)
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR, ("attach: %s GETDBPATH failed, ret=%d\n",
+				  state->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -415,6 +443,8 @@ static void ctdb_attach_dbpath_done(struct tevent_req *subreq)
 					   &state->db->db_path);
 	talloc_free(reply);
 	if (ret != 0) {
+		DEBUG(DEBUG_ERR, ("attach: %s GETDBPATH parse failed, ret=%d\n",
+				  state->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -443,19 +473,25 @@ static void ctdb_attach_health_done(struct tevent_req *subreq)
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR, ("attach: %s DB_GET_HEALTH failed, ret=%d\n",
+				  state->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
 
 	ret = ctdb_reply_control_db_get_health(reply, state, &reason);
 	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("attach: %s DB_GET_HEALTH parse failed, ret=%d\n",
+		       state->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
 
 	if (reason != NULL) {
 		/* Database unhealthy, avoid attach */
-		/* FIXME: Log here */
+		DEBUG(DEBUG_ERR, ("attach: %s database unhealthy (%s)\n",
+				  state->db->db_name, reason));
 		tevent_req_error(req, EIO);
 		return;
 	}
@@ -481,6 +517,8 @@ static void ctdb_attach_flags_done(struct tevent_req *subreq)
 	status = ctdb_set_db_flags_recv(subreq, &ret);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR, ("attach: %s set db flags 0x%08x failed\n",
+				  state->db->db_name, state->db_flags));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -488,6 +526,8 @@ static void ctdb_attach_flags_done(struct tevent_req *subreq)
 	state->db->ltdb = tdb_wrap_open(state->db, state->db->db_path, 0,
 					state->tdb_flags, O_RDWR, 0);
 	if (tevent_req_nomem(state->db->ltdb, req)) {
+		DEBUG(DEBUG_ERR, ("attach: %s tdb_wrap_open failed\n",
+				  state->db->db_name));
 		return;
 	}
 	DLIST_ADD(state->client->db, state->db);
@@ -515,19 +555,26 @@ bool ctdb_attach_recv(struct tevent_req *req, int *perr,
 	return true;
 }
 
-int ctdb_attach(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+int ctdb_attach(struct tevent_context *ev,
 		struct ctdb_client_context *client,
 		struct timeval timeout,
 		const char *db_name, uint8_t db_flags,
 		struct ctdb_db_context **out)
 {
+	TALLOC_CTX *mem_ctx;
 	struct tevent_req *req;
 	bool status;
 	int ret;
 
+	mem_ctx = talloc_new(client);
+	if (mem_ctx == NULL) {
+		return ENOMEM;
+	}
+
 	req = ctdb_attach_send(mem_ctx, ev, client, timeout,
 			       db_name, db_flags);
 	if (req == NULL) {
+		talloc_free(mem_ctx);
 		return ENOMEM;
 	}
 
@@ -535,6 +582,7 @@ int ctdb_attach(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 
 	status = ctdb_attach_recv(req, &ret, out);
 	if (! status) {
+		talloc_free(mem_ctx);
 		return ret;
 	}
 
@@ -544,6 +592,7 @@ int ctdb_attach(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	ctdb_set_call(db, CTDB_FETCH_WITH_HEADER_FUNC, ctdb_fetch_with_header_func);
 	*/
 
+	talloc_free(mem_ctx);
 	return 0;
 }
 
@@ -638,9 +687,9 @@ int ctdb_db_traverse(struct ctdb_db_context *db, bool readonly,
 	return state.error;
 }
 
-static int ctdb_ltdb_fetch(struct ctdb_db_context *db, TDB_DATA key,
-			   struct ctdb_ltdb_header *header,
-			   TALLOC_CTX *mem_ctx, TDB_DATA *data)
+int ctdb_ltdb_fetch(struct ctdb_db_context *db, TDB_DATA key,
+		    struct ctdb_ltdb_header *header,
+		    TALLOC_CTX *mem_ctx, TDB_DATA *data)
 {
 	TDB_DATA rec;
 	int ret;
@@ -747,6 +796,8 @@ struct tevent_req *ctdb_fetch_lock_send(TALLOC_CTX *mem_ctx,
 
 	/* Check that database is not persistent */
 	if (db->persistent) {
+		DEBUG(DEBUG_ERR, ("fetch_lock: %s database not volatile\n",
+				  db->db_name));
 		tevent_req_error(req, EINVAL);
 		return tevent_req_post(req, ev);
 	}
@@ -773,8 +824,11 @@ static int ctdb_fetch_lock_check(struct tevent_req *req)
 	int ret, err = 0;
 	bool do_migrate = false;
 
-	ret = tdb_chainlock(state->h->db->ltdb->tdb, state->h->key);
+	ret = tdb_chainlock(h->db->ltdb->tdb, h->key);
 	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("fetch_lock: %s tdb_chainlock failed, %s\n",
+		       h->db->db_name, tdb_errorstr(h->db->ltdb->tdb)));
 		err = EIO;
 		goto failed;
 	}
@@ -834,8 +888,9 @@ failed:
 	}
 	ret = tdb_chainunlock(h->db->ltdb->tdb, h->key);
 	if (ret != 0) {
-		DEBUG(DEBUG_ERR, ("tdb_chainunlock failed on %s\n",
-				  h->db->db_name));
+		DEBUG(DEBUG_ERR,
+		      ("fetch_lock: %s tdb_chainunlock failed, %s\n",
+		       h->db->db_name, tdb_errorstr(h->db->ltdb->tdb)));
 		return EIO;
 	}
 
@@ -860,6 +915,7 @@ static void ctdb_fetch_lock_migrate(struct tevent_req *req)
 	request.db_id = state->h->db->db_id;
 	request.callid = CTDB_NULL_FUNC;
 	request.key = state->h->key;
+	request.calldata = tdb_null;
 
 	subreq = ctdb_client_call_send(state, state->ev, state->client,
 				       &request);
@@ -883,6 +939,8 @@ static void ctdb_fetch_lock_migrate_done(struct tevent_req *subreq)
 	status = ctdb_client_call_recv(subreq, state, &reply, &ret);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR, ("fetch_lock: %s CALL failed, ret=%d\n",
+				  state->h->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -895,7 +953,9 @@ static void ctdb_fetch_lock_migrate_done(struct tevent_req *subreq)
 
 	ret = ctdb_fetch_lock_check(req);
 	if (ret != 0) {
-		tevent_req_error(req, ret);
+		if (ret != EAGAIN) {
+			tevent_req_error(req, ret);
+		}
 		return;
 	}
 
@@ -904,7 +964,14 @@ static void ctdb_fetch_lock_migrate_done(struct tevent_req *subreq)
 
 static int ctdb_record_handle_destructor(struct ctdb_record_handle *h)
 {
-	tdb_chainunlock(h->db->ltdb->tdb, h->key);
+	int ret;
+
+	ret = tdb_chainunlock(h->db->ltdb->tdb, h->key);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("fetch_lock: %s tdb_chainunlock failed, %s\n",
+		       h->db->db_name, tdb_errorstr(h->db->ltdb->tdb)));
+	}
 	free(h->data.dptr);
 	return 0;
 }
@@ -921,6 +988,7 @@ struct ctdb_record_handle *ctdb_fetch_lock_recv(struct tevent_req *req,
 
 	if (tevent_req_is_unix_error(req, &err)) {
 		if (perr != NULL) {
+			TALLOC_FREE(state->h);
 			*perr = err;
 		}
 		return NULL;
@@ -1006,8 +1074,9 @@ int ctdb_store_record(struct ctdb_record_handle *h, TDB_DATA data)
 
 	ret = tdb_store(h->db->ltdb->tdb, h->key, rec, TDB_REPLACE);
 	if (ret != 0) {
-		DEBUG(DEBUG_ERR, ("Failed to store record in DB %s\n",
-				  h->db->db_name));
+		DEBUG(DEBUG_ERR,
+		      ("store_record: %s tdb_store failed, %s\n",
+		       h->db->db_name, tdb_errorstr(h->db->ltdb->tdb)));
 		return EIO;
 	}
 
@@ -1015,21 +1084,43 @@ int ctdb_store_record(struct ctdb_record_handle *h, TDB_DATA data)
 	return 0;
 }
 
-int ctdb_delete_record(struct ctdb_record_handle *h)
+struct ctdb_delete_record_state {
+	struct ctdb_record_handle *h;
+};
+
+static void ctdb_delete_record_done(struct tevent_req *subreq);
+
+struct tevent_req *ctdb_delete_record_send(TALLOC_CTX *mem_ctx,
+					   struct tevent_context *ev,
+					   struct ctdb_record_handle *h)
 {
-	TDB_DATA rec;
+	struct tevent_req *req, *subreq;
+	struct ctdb_delete_record_state *state;
 	struct ctdb_key_data key;
+	struct ctdb_req_control request;
+	TDB_DATA rec;
 	int ret;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct ctdb_delete_record_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	state->h = h;
 
 	/* Cannot delete the record if it was obtained as a readonly copy */
 	if (h->readonly) {
-		return EINVAL;
+		DEBUG(DEBUG_ERR, ("fetch_lock delete: %s readonly record\n",
+				  h->db->db_name));
+		tevent_req_error(req, EINVAL);
+		return tevent_req_post(req, ev);
 	}
 
 	rec.dsize = ctdb_ltdb_header_len(&h->header);
 	rec.dptr = talloc_size(h, rec.dsize);
-	if (rec.dptr == NULL) {
-		return ENOMEM;
+	if (tevent_req_nomem(rec.dptr, req)) {
+		return tevent_req_post(req, ev);
 	}
 
 	ctdb_ltdb_header_push(&h->header, rec.dptr);
@@ -1037,22 +1128,91 @@ int ctdb_delete_record(struct ctdb_record_handle *h)
 	ret = tdb_store(h->db->ltdb->tdb, h->key, rec, TDB_REPLACE);
 	talloc_free(rec.dptr);
 	if (ret != 0) {
-		DEBUG(DEBUG_ERR, ("Failed to delete record in DB %s\n",
-				  h->db->db_name));
-		return EIO;
+		DEBUG(DEBUG_ERR,
+		      ("fetch_lock delete: %s tdb_sore failed, %s\n",
+		       h->db->db_name, tdb_errorstr(h->db->ltdb->tdb)));
+		tevent_req_error(req, EIO);
+		return tevent_req_post(req, ev);
 	}
 
 	key.db_id = h->db->db_id;
 	key.header = h->header;
 	key.key = h->key;
 
-	ret = ctdb_ctrl_schedule_for_deletion(h, h->ev, h->client,
-					      h->client->pnn,
-					      tevent_timeval_zero(), &key);
-	if (ret != 0) {
-		DEBUG(DEBUG_WARNING,
-		      ("Failed to mark record to be deleted in DB %s\n",
-		       h->db->db_name));
+	ctdb_req_control_schedule_for_deletion(&request, &key);
+	subreq = ctdb_client_control_send(state, ev, h->client,
+					  ctdb_client_pnn(h->client),
+					  tevent_timeval_zero(),
+					  &request);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, ctdb_delete_record_done, req);
+
+	return req;
+}
+
+static void ctdb_delete_record_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct ctdb_delete_record_state *state = tevent_req_data(
+		req, struct ctdb_delete_record_state);
+	int ret;
+	bool status;
+
+	status = ctdb_client_control_recv(subreq, &ret, NULL, NULL);
+	TALLOC_FREE(subreq);
+	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("delete_record: %s SCHDULE_FOR_DELETION failed, "
+		       "ret=%d\n", state->h->db->db_name, ret));
+		tevent_req_error(req, ret);
+		return;
+	}
+
+	tevent_req_done(req);
+}
+
+bool ctdb_delete_record_recv(struct tevent_req *req, int *perr)
+{
+	int err;
+
+	if (tevent_req_is_unix_error(req, &err)) {
+		if (perr != NULL) {
+			*perr = err;
+		}
+		return false;
+	}
+
+	return true;
+}
+
+
+int ctdb_delete_record(struct ctdb_record_handle *h)
+{
+	struct tevent_context *ev = h->ev;
+	TALLOC_CTX *mem_ctx;
+	struct tevent_req *req;
+	int ret;
+	bool status;
+
+	mem_ctx = talloc_new(NULL);
+	if (mem_ctx == NULL) {
+		return ENOMEM;
+	}
+
+	req = ctdb_delete_record_send(mem_ctx, ev, h);
+	if (req == NULL) {
+		talloc_free(mem_ctx);
+		return ENOMEM;
+	}
+
+	tevent_req_poll(req, ev);
+
+	status = ctdb_delete_record_recv(req, &ret);
+	talloc_free(mem_ctx);
+	if (! status) {
 		return ret;
 	}
 
@@ -1138,6 +1298,8 @@ static void ctdb_g_lock_lock_fetched(struct tevent_req *subreq)
 	state->h = ctdb_fetch_lock_recv(subreq, NULL, state, &data, &ret);
 	TALLOC_FREE(subreq);
 	if (state->h == NULL) {
+		DEBUG(DEBUG_ERR, ("g_lock_lock: %s fetch lock failed\n",
+				  (char *)state->key.dptr));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -1151,6 +1313,8 @@ static void ctdb_g_lock_lock_fetched(struct tevent_req *subreq)
 				    &state->lock_list);
 	talloc_free(data.dptr);
 	if (ret != 0) {
+		DEBUG(DEBUG_ERR, ("g_lock_lock: %s invalid lock data\n",
+				  (char *)state->key.dptr));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -1172,6 +1336,8 @@ static void ctdb_g_lock_lock_process_locks(struct tevent_req *req)
 
 		/* We should not ask for the same lock more than once */
 		if (ctdb_server_id_equal(&lock->sid, &state->my_sid)) {
+			DEBUG(DEBUG_ERR, ("g_lock_lock: %s deadlock\n",
+					  (char *)state->key.dptr));
 			tevent_req_error(req, EDEADLK);
 			return;
 		}
@@ -1186,15 +1352,11 @@ static void ctdb_g_lock_lock_process_locks(struct tevent_req *req)
 
 	if (check_server) {
 		struct ctdb_req_control request;
-		struct ctdb_uint64_array u64_array;
 
-		u64_array.num = 1;
-		u64_array.val = &lock->sid.unique_id;
-
-		ctdb_req_control_check_srvids(&request, &u64_array);
+		ctdb_req_control_process_exists(&request, lock->sid.pid);
 		subreq = ctdb_client_control_send(state, state->ev,
 						  state->client,
-						  state->client->pnn,
+						  lock->sid.vnn,
 						  tevent_timeval_zero(),
 						  &request);
 		if (tevent_req_nomem(subreq, req)) {
@@ -1225,6 +1387,7 @@ static void ctdb_g_lock_lock_process_locks(struct tevent_req *req)
 		return;
 	}
 
+	TALLOC_FREE(state->h);
 	tevent_req_done(req);
 }
 
@@ -1235,37 +1398,31 @@ static void ctdb_g_lock_lock_checked(struct tevent_req *subreq)
 	struct ctdb_g_lock_lock_state *state = tevent_req_data(
 		req, struct ctdb_g_lock_lock_state);
 	struct ctdb_reply_control *reply;
-	struct ctdb_uint8_array *u8_array;
-	int ret;
+	int ret, value;
 	bool status;
-	int8_t val;
 
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("g_lock_lock: %s PROCESS_EXISTS failed, ret=%d\n",
+		       (char *)state->key.dptr, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
 
-	ret = ctdb_reply_control_check_srvids(reply, state, &u8_array);
+	ret = ctdb_reply_control_process_exists(reply, &value);
 	if (ret != 0) {
-		tevent_req_error(req, ENOMEM);
+		tevent_req_error(req, ret);
 		return;
 	}
+	talloc_free(reply);
 
-	if (u8_array->num != 1) {
-		talloc_free(u8_array);
-		tevent_req_error(req, EIO);
-		return;
-	}
-
-	val = u8_array->val[0];
-	talloc_free(u8_array);
-
-	if (val == 1) {
+	if (value == 0) {
 		/* server process exists, need to retry */
+		TALLOC_FREE(state->h);
 		subreq = tevent_wakeup_send(state, state->ev,
-					    tevent_timeval_current_ofs(1,0));
+					    tevent_timeval_current_ofs(0,1000));
 		if (tevent_req_nomem(subreq, req)) {
 			return;
 		}
@@ -1305,83 +1462,6 @@ static int ctdb_g_lock_lock_update(struct tevent_req *req)
 	talloc_free(data.dptr);
 	return ret;
 }
-
-#if 0
-static int ctdb_g_lock_lock_update(struct ctdb_g_lock_lock_state *state,
-				   struct ctdb_g_lock_list *lock_list,
-				   struct ctdb_record_handle *h)
-{
-	struct ctdb_g_lock *lock;
-	bool conflict = false;
-	bool modified = false;
-	int ret, i;
-
-	for (i=0; i<lock_list->num; i++) {
-		lock = &lock_list->lock[i];
-
-		/* We should not ask for lock more than once */
-		if (ctdb_server_id_equal(&lock->sid, &state->my_sid)) {
-			return EDEADLK;
-		}
-
-		if (ctdb_g_lock_conflicts(lock->type, state->lock_type)) {
-			bool exists;
-
-			conflict = true;
-			ret = ctdb_server_id_exists(state->client, &lock->sid,
-						    &exists);
-			if (ret != 0) {
-				return ret;
-			}
-
-			if (exists) {
-				break;
-			}
-
-			/* Server does not exist, delete conflicting entry */
-			lock_list->lock[i] = lock_list->lock[lock_list->num-1];
-			lock_list->num -= 1;
-			modified = true;
-		}
-	}
-
-	if (! conflict) {
-		lock = talloc_realloc(lock_list, lock_list->lock,
-				      struct ctdb_g_lock, lock_list->num+1);
-		if (lock == NULL) {
-			return ENOMEM;
-		}
-
-		lock[lock_list->num].type = state->lock_type;
-		lock[lock_list->num].sid = state->my_sid;
-		lock_list->lock = lock;
-		lock_list->num += 1;
-		modified = true;
-	}
-
-	if (modified) {
-		TDB_DATA data;
-
-		data.dsize = ctdb_g_lock_list_len(lock_list);
-		data.dptr = talloc_size(state, data.dsize);
-		if (data.dptr == NULL) {
-			return ENOMEM;
-		}
-
-		ctdb_g_lock_list_push(lock_list, data.dptr);
-		ret = ctdb_store_record(h, data);
-		talloc_free(data.dptr);
-		if (ret != 0) {
-			return ret;
-		}
-	}
-
-	if (conflict) {
-		return EAGAIN;
-	}
-	return 0;
-}
-#endif
 
 static void ctdb_g_lock_lock_retry(struct tevent_req *subreq)
 {
@@ -1436,6 +1516,7 @@ struct ctdb_g_lock_unlock_state {
 
 static void ctdb_g_lock_unlock_fetched(struct tevent_req *subreq);
 static int ctdb_g_lock_unlock_update(struct tevent_req *req);
+static void ctdb_g_lock_unlock_deleted(struct tevent_req *subreq);
 
 struct tevent_req *ctdb_g_lock_unlock_send(TALLOC_CTX *mem_ctx,
 					   struct tevent_context *ev,
@@ -1482,6 +1563,8 @@ static void ctdb_g_lock_unlock_fetched(struct tevent_req *subreq)
 	state->h = ctdb_fetch_lock_recv(subreq, NULL, state, &data, &ret);
 	TALLOC_FREE(subreq);
 	if (state->h == NULL) {
+		DEBUG(DEBUG_ERR, ("g_lock_unlock: %s fetch lock failed\n",
+				  (char *)state->key.dptr));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -1489,6 +1572,8 @@ static void ctdb_g_lock_unlock_fetched(struct tevent_req *subreq)
 	ret = ctdb_g_lock_list_pull(data.dptr, data.dsize, state,
 				    &state->lock_list);
 	if (ret != 0) {
+		DEBUG(DEBUG_ERR, ("g_lock_unlock: %s invalid lock data\n",
+				  (char *)state->key.dptr));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -1499,6 +1584,17 @@ static void ctdb_g_lock_unlock_fetched(struct tevent_req *subreq)
 		return;
 	}
 
+	if (state->lock_list->num == 0) {
+		subreq = ctdb_delete_record_send(state, state->ev, state->h);
+		if (tevent_req_nomem(subreq, req)) {
+			return;
+		}
+		tevent_req_set_callback(subreq, ctdb_g_lock_unlock_deleted,
+					req);
+		return;
+	}
+
+	TALLOC_FREE(state->h);
 	tevent_req_done(req);
 }
 
@@ -1523,9 +1619,7 @@ static int ctdb_g_lock_unlock_update(struct tevent_req *req)
 		state->lock_list->num -= 1;
 	}
 
-	if (state->lock_list->num == 0) {
-		ctdb_delete_record(state->h);
-	} else {
+	if (state->lock_list->num != 0) {
 		TDB_DATA data;
 
 		data.dsize = ctdb_g_lock_list_len(state->lock_list);
@@ -1543,6 +1637,28 @@ static int ctdb_g_lock_unlock_update(struct tevent_req *req)
 	}
 
 	return 0;
+}
+
+static void ctdb_g_lock_unlock_deleted(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct ctdb_g_lock_unlock_state *state = tevent_req_data(
+		req, struct ctdb_g_lock_unlock_state);
+	int ret;
+	bool status;
+
+	status = ctdb_delete_record_recv(subreq, &ret);
+	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("g_lock_unlock %s delete record failed, ret=%d\n",
+		       (char *)state->key.dptr, ret));
+		tevent_req_error(req, ret);
+		return;
+	}
+
+	TALLOC_FREE(state->h);
+	tevent_req_done(req);
 }
 
 bool ctdb_g_lock_unlock_recv(struct tevent_req *req, int *perr)
@@ -1575,9 +1691,7 @@ struct ctdb_transaction_start_state {
 };
 
 static void ctdb_transaction_g_lock_attached(struct tevent_req *subreq);
-static void ctdb_transaction_register_done(struct tevent_req *subreq);
 static void ctdb_transaction_g_lock_done(struct tevent_req *subreq);
-static int ctdb_transaction_handle_destructor(struct ctdb_transaction_handle *h);
 
 struct tevent_req *ctdb_transaction_start_send(TALLOC_CTX *mem_ctx,
 					       struct tevent_context *ev,
@@ -1616,13 +1730,9 @@ struct tevent_req *ctdb_transaction_start_send(TALLOC_CTX *mem_ctx,
 	h->readonly = readonly;
 	h->updated = false;
 
-	/* SRVID is unique for databases, so client can have transactions active
-	 * for multiple databases */
-	h->sid.pid = getpid();
-	h->sid.task_id = db->db_id;
-	h->sid.vnn = state->destnode;
-	h->sid.unique_id = h->sid.task_id;
-	h->sid.unique_id = (h->sid.unique_id << 32) | h->sid.pid;
+	/* SRVID is unique for databases, so client can have transactions
+	 * active for multiple databases */
+	h->sid = ctdb_client_get_server_id(client, db->db_id);
 
 	h->recbuf = ctdb_rec_buffer_init(h, db->db_id);
 	if (tevent_req_nomem(h->recbuf, req)) {
@@ -1651,53 +1761,22 @@ static void ctdb_transaction_g_lock_attached(struct tevent_req *subreq)
 		subreq, struct tevent_req);
 	struct ctdb_transaction_start_state *state = tevent_req_data(
 		req, struct ctdb_transaction_start_state);
-	struct ctdb_req_control request;
 	bool status;
 	int ret;
 
 	status = ctdb_attach_recv(subreq, &ret, &state->h->db_g_lock);
 	TALLOC_FREE(subreq);
 	if (! status) {
-		tevent_req_error(req, ret);
-		return;
-	}
-
-	ctdb_req_control_register_srvid(&request, state->h->sid.unique_id);
-	subreq = ctdb_client_control_send(state, state->ev, state->client,
-					  state->destnode, state->timeout,
-					  &request);
-	if (tevent_req_nomem(subreq, req)) {
-		return;
-	}
-	tevent_req_set_callback(subreq, ctdb_transaction_register_done, req);
-}
-
-static void ctdb_transaction_register_done(struct tevent_req *subreq)
-{
-	struct tevent_req *req = tevent_req_callback_data(
-		subreq, struct tevent_req);
-	struct ctdb_transaction_start_state *state = tevent_req_data(
-		req, struct ctdb_transaction_start_state);
-	struct ctdb_reply_control *reply;
-	bool status;
-	int ret;
-
-	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
-	TALLOC_FREE(subreq);
-	if (! status) {
-		tevent_req_error(req, ret);
-		return;
-	}
-
-	ret = ctdb_reply_control_register_srvid(reply);
-	talloc_free(reply);
-	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("transaction_start: %s attach g_lock.tdb failed\n",
+		       state->h->db->db_name));
 		tevent_req_error(req, ret);
 		return;
 	}
 
 	subreq = ctdb_g_lock_lock_send(state, state->ev, state->client,
-				       state->h->db_g_lock, state->h->lock_name,
+				       state->h->db_g_lock,
+				       state->h->lock_name,
 				       &state->h->sid, state->h->readonly);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
@@ -1709,12 +1788,17 @@ static void ctdb_transaction_g_lock_done(struct tevent_req *subreq)
 {
 	struct tevent_req *req = tevent_req_callback_data(
 		subreq, struct tevent_req);
+	struct ctdb_transaction_start_state *state = tevent_req_data(
+		req, struct ctdb_transaction_start_state);
 	int ret;
 	bool status;
 
 	status = ctdb_g_lock_lock_recv(subreq, &ret);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("transaction_start: %s g_lock lock failed, ret=%d\n",
+		       state->h->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -1728,7 +1812,6 @@ struct ctdb_transaction_handle *ctdb_transaction_start_recv(
 {
 	struct ctdb_transaction_start_state *state = tevent_req_data(
 		req, struct ctdb_transaction_start_state);
-	struct ctdb_transaction_handle *h = state->h;
 	int err;
 
 	if (tevent_req_is_unix_error(req, &err)) {
@@ -1738,22 +1821,7 @@ struct ctdb_transaction_handle *ctdb_transaction_start_recv(
 		return NULL;
 	}
 
-	talloc_set_destructor(h, ctdb_transaction_handle_destructor);
-	return h;
-}
-
-static int ctdb_transaction_handle_destructor(struct ctdb_transaction_handle *h)
-{
-	int ret;
-
-	ret = ctdb_ctrl_deregister_srvid(h, h->ev, h->client, h->client->pnn,
-					 tevent_timeval_zero(),
-					 h->sid.unique_id);
-	if (ret != 0) {
-		DEBUG(DEBUG_WARNING, ("Failed to deregister SRVID\n"));
-	}
-
-	return 0;
+	return state->h;
 }
 
 int ctdb_transaction_start(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
@@ -1789,19 +1857,28 @@ struct ctdb_transaction_record_fetch_state {
 	bool found;
 };
 
-static int ctdb_transaction_record_fetch_traverse(uint32_t reqid,
-						  struct ctdb_ltdb_header *header,
-						  TDB_DATA key,
-						  TDB_DATA data,
-						  void *private_data)
+static int ctdb_transaction_record_fetch_traverse(
+				uint32_t reqid,
+				struct ctdb_ltdb_header *nullheader,
+				TDB_DATA key, TDB_DATA data,
+				void *private_data)
 {
 	struct ctdb_transaction_record_fetch_state *state =
 		(struct ctdb_transaction_record_fetch_state *)private_data;
 
 	if (state->key.dsize == key.dsize &&
 	    memcmp(state->key.dptr, key.dptr, key.dsize) == 0) {
+		int ret;
+
+		ret = ctdb_ltdb_header_extract(&data, &state->header);
+		if (ret != 0) {
+			DEBUG(DEBUG_ERR,
+			      ("record_fetch: Failed to extract header, "
+			       "ret=%d\n", ret));
+			return 1;
+		}
+
 		state->data = data;
-		state->header = *header;
 		state->found = true;
 	}
 
@@ -1921,6 +1998,42 @@ int ctdb_transaction_delete_record(struct ctdb_transaction_handle *h,
 	return ctdb_transaction_store_record(h, key, tdb_null);
 }
 
+static int ctdb_transaction_fetch_db_seqnum(struct ctdb_transaction_handle *h,
+					    uint64_t *seqnum)
+{
+	const char *keyname = CTDB_DB_SEQNUM_KEY;
+	TDB_DATA key, data;
+	struct ctdb_ltdb_header header;
+	int ret;
+
+	key.dptr = discard_const(keyname);
+	key.dsize = strlen(keyname) + 1;
+
+	ret = ctdb_ltdb_fetch(h->db, key, &header, h, &data);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("transaction_commit: %s seqnum fetch failed, ret=%d\n",
+		       h->db->db_name, ret));
+		return ret;
+	}
+
+	if (data.dsize == 0) {
+		/* initial data */
+		*seqnum = 0;
+		return 0;
+	}
+
+	if (data.dsize != sizeof(uint64_t)) {
+		talloc_free(data.dptr);
+		return EINVAL;
+	}
+
+	*seqnum = *(uint64_t *)data.dptr;
+
+	talloc_free(data.dptr);
+	return 0;
+}
+
 static int ctdb_transaction_store_db_seqnum(struct ctdb_transaction_handle *h,
 					    uint64_t seqnum)
 {
@@ -1938,20 +2051,23 @@ static int ctdb_transaction_store_db_seqnum(struct ctdb_transaction_handle *h,
 
 struct ctdb_transaction_commit_state {
 	struct tevent_context *ev;
+	struct timeval timeout;
 	struct ctdb_transaction_handle *h;
 	uint64_t seqnum;
 };
 
 static void ctdb_transaction_commit_done(struct tevent_req *subreq);
-static void ctdb_transaction_commit_try(struct tevent_req *subreq);
+static void ctdb_transaction_commit_g_lock_done(struct tevent_req *subreq);
 
 struct tevent_req *ctdb_transaction_commit_send(
 					TALLOC_CTX *mem_ctx,
 					struct tevent_context *ev,
+					struct timeval timeout,
 					struct ctdb_transaction_handle *h)
 {
 	struct tevent_req *req, *subreq;
 	struct ctdb_transaction_commit_state *state;
+	struct ctdb_req_control request;
 	int ret;
 
 	req = tevent_req_create(mem_ctx, &state,
@@ -1961,11 +2077,10 @@ struct tevent_req *ctdb_transaction_commit_send(
 	}
 
 	state->ev = ev;
+	state->timeout = timeout;
 	state->h = h;
 
-	ret = ctdb_ctrl_get_db_seqnum(state, ev, h->client,
-				      h->client->pnn, tevent_timeval_zero(),
-				      h->db->db_id, &state->seqnum);
+	ret = ctdb_transaction_fetch_db_seqnum(h, &state->seqnum);
 	if (ret != 0) {
 		tevent_req_error(req, ret);
 		return tevent_req_post(req, ev);
@@ -1977,40 +2092,16 @@ struct tevent_req *ctdb_transaction_commit_send(
 		return tevent_req_post(req, ev);
 	}
 
-	subreq = ctdb_recovery_wait_send(state, ev, h->client);
+	ctdb_req_control_trans3_commit(&request, h->recbuf);
+	subreq = ctdb_client_control_send(state, ev, h->client,
+					  ctdb_client_pnn(h->client),
+					  timeout, &request);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
-	tevent_req_set_callback(subreq, ctdb_transaction_commit_try, req);
+	tevent_req_set_callback(subreq, ctdb_transaction_commit_done, req);
 
 	return req;
-}
-
-static void ctdb_transaction_commit_try(struct tevent_req *subreq)
-{
-	struct tevent_req *req = tevent_req_callback_data(
-		subreq, struct tevent_req);
-	struct ctdb_transaction_commit_state *state = tevent_req_data(
-		req, struct ctdb_transaction_commit_state);
-	struct ctdb_req_control request;
-	int ret;
-	bool status;
-
-	status = ctdb_recovery_wait_recv(subreq, &ret);
-	TALLOC_FREE(subreq);
-	if (! status) {
-		tevent_req_error(req, ret);
-		return;
-	}
-
-	ctdb_req_control_trans3_commit(&request, state->h->recbuf);
-	subreq = ctdb_client_control_send(state, state->ev, state->h->client,
-					  state->h->client->pnn,
-					  tevent_timeval_zero(), &request);
-	if (tevent_req_nomem(subreq, req)) {
-		return;
-	}
-	tevent_req_set_callback(subreq, ctdb_transaction_commit_done, req);
 }
 
 static void ctdb_transaction_commit_done(struct tevent_req *subreq)
@@ -2019,6 +2110,7 @@ static void ctdb_transaction_commit_done(struct tevent_req *subreq)
 		subreq, struct tevent_req);
 	struct ctdb_transaction_commit_state *state = tevent_req_data(
 		req, struct ctdb_transaction_commit_state);
+	struct ctdb_transaction_handle *h = state->h;
 	struct ctdb_reply_control *reply;
 	uint64_t seqnum;
 	int ret;
@@ -2027,101 +2119,245 @@ static void ctdb_transaction_commit_done(struct tevent_req *subreq)
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("transaction_commit: %s TRANS3_COMMIT failed, ret=%d\n",
+		       h->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
 
 	ret = ctdb_reply_control_trans3_commit(reply);
-	if (ret < 0) {
+	talloc_free(reply);
+
+	if (ret != 0) {
 		/* Control failed due to recovery */
-		subreq = ctdb_recovery_wait_send(state, state->ev,
-						 state->h->client);
-		if (tevent_req_nomem(subreq, req)) {
+
+		ret = ctdb_transaction_fetch_db_seqnum(h, &seqnum);
+		if (ret != 0) {
+			tevent_req_error(req, ret);
 			return;
 		}
-		tevent_req_set_callback(subreq, ctdb_transaction_commit_try,
-					req);
-		return;
+
+		if (seqnum == state->seqnum) {
+			struct ctdb_req_control request;
+
+			/* try again */
+			ctdb_req_control_trans3_commit(&request,
+						       state->h->recbuf);
+			subreq = ctdb_client_control_send(
+					state, state->ev, state->h->client,
+					ctdb_client_pnn(state->h->client),
+					state->timeout, &request);
+			if (tevent_req_nomem(subreq, req)) {
+				return;
+			}
+			tevent_req_set_callback(subreq,
+						ctdb_transaction_commit_done,
+						req);
+			return;
+		}
+
+		if (seqnum != state->seqnum + 1) {
+			DEBUG(DEBUG_ERR,
+			      ("transaction_commit: %s seqnum mismatch "
+			       "0x%"PRIx64" != 0x%"PRIx64" + 1\n",
+			       state->h->db->db_name, seqnum, state->seqnum));
+			tevent_req_error(req, EIO);
+			return;
+		}
 	}
 
-	ret = ctdb_ctrl_get_db_seqnum(state, state->ev, state->h->client,
-				      state->h->client->pnn,
-				      tevent_timeval_zero(),
-				      state->h->db->db_id, &seqnum);
-	if (ret != 0) {
+	/* trans3_commit successful */
+	subreq = ctdb_g_lock_unlock_send(state, state->ev, h->client,
+					 h->db_g_lock, h->lock_name, h->sid);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, ctdb_transaction_commit_g_lock_done,
+				req);
+}
+
+static void ctdb_transaction_commit_g_lock_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct ctdb_transaction_commit_state *state = tevent_req_data(
+		req, struct ctdb_transaction_commit_state);
+	int ret;
+	bool status;
+
+	status = ctdb_g_lock_unlock_recv(subreq, &ret);
+	TALLOC_FREE(subreq);
+	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("transaction_commit: %s g_lock unlock failed, ret=%d\n",
+		       state->h->db->db_name, ret));
 		tevent_req_error(req, ret);
 		return;
 	}
 
-	if (seqnum == state->seqnum) {
-		subreq = ctdb_recovery_wait_send(state, state->ev,
-						 state->h->client);
-		if (tevent_req_nomem(subreq, req)) {
-			return;
-		}
-		tevent_req_set_callback(subreq, ctdb_transaction_commit_try,
-					req);
-		return;
-	}
-
-	if (seqnum != state->seqnum + 1) {
-		tevent_req_error(req, EIO);
-		return;
-	}
-
+	talloc_free(state->h);
 	tevent_req_done(req);
 }
 
 bool ctdb_transaction_commit_recv(struct tevent_req *req, int *perr)
 {
-	struct ctdb_transaction_commit_state *state = tevent_req_data(
-		req, struct ctdb_transaction_commit_state);
 	int err;
 
 	if (tevent_req_is_unix_error(req, &err)) {
 		if (perr != NULL) {
 			*perr = err;
 		}
-		TALLOC_FREE(state->h);
 		return false;
 	}
 
-	TALLOC_FREE(state->h);
 	return true;
 }
 
 int ctdb_transaction_commit(struct ctdb_transaction_handle *h)
 {
+	struct tevent_context *ev = h->ev;
+	TALLOC_CTX *mem_ctx;
 	struct tevent_req *req;
 	int ret;
 	bool status;
 
 	if (h->readonly || ! h->updated) {
-		talloc_free(h);
-		return 0;
+		return ctdb_transaction_cancel(h);
 	}
 
-	req = ctdb_transaction_commit_send(h, h->ev, h);
-	if (req == NULL) {
-		talloc_free(h);
+	mem_ctx = talloc_new(NULL);
+	if (mem_ctx == NULL) {
 		return ENOMEM;
 	}
 
-	tevent_req_poll(req, h->ev);
+	req = ctdb_transaction_commit_send(mem_ctx, ev,
+					   tevent_timeval_zero(), h);
+	if (req == NULL) {
+		talloc_free(mem_ctx);
+		return ENOMEM;
+	}
+
+	tevent_req_poll(req, ev);
 
 	status = ctdb_transaction_commit_recv(req, &ret);
 	if (! status) {
-		talloc_free(h);
+		talloc_free(mem_ctx);
 		return ret;
 	}
 
-	talloc_free(h);
+	talloc_free(mem_ctx);
 	return 0;
+}
+
+struct ctdb_transaction_cancel_state {
+	struct tevent_context *ev;
+	struct ctdb_transaction_handle *h;
+	struct timeval timeout;
+};
+
+static void ctdb_transaction_cancel_done(struct tevent_req *subreq);
+
+struct tevent_req *ctdb_transaction_cancel_send(
+					TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct timeval timeout,
+					struct ctdb_transaction_handle *h)
+{
+	struct tevent_req *req, *subreq;
+	struct ctdb_transaction_cancel_state *state;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct ctdb_transaction_cancel_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	state->ev = ev;
+	state->h = h;
+	state->timeout = timeout;
+
+	subreq = ctdb_g_lock_unlock_send(state, state->ev, state->h->client,
+					 state->h->db_g_lock,
+					 state->h->lock_name, state->h->sid);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, ctdb_transaction_cancel_done,
+				req);
+
+	return req;
+}
+
+static void ctdb_transaction_cancel_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct ctdb_transaction_cancel_state *state = tevent_req_data(
+		req, struct ctdb_transaction_cancel_state);
+	int ret;
+	bool status;
+
+	status = ctdb_g_lock_unlock_recv(subreq, &ret);
+	TALLOC_FREE(subreq);
+	if (! status) {
+		DEBUG(DEBUG_ERR,
+		      ("transaction_cancel: %s g_lock unlock failed, ret=%d\n",
+		       state->h->db->db_name, ret));
+		talloc_free(state->h);
+		tevent_req_error(req, ret);
+		return;
+	}
+
+	talloc_free(state->h);
+	tevent_req_done(req);
+}
+
+bool ctdb_transaction_cancel_recv(struct tevent_req *req, int *perr)
+{
+	int err;
+
+	if (tevent_req_is_unix_error(req, &err)) {
+		if (perr != NULL) {
+			*perr = err;
+		}
+		return false;
+	}
+
+	return true;
 }
 
 int ctdb_transaction_cancel(struct ctdb_transaction_handle *h)
 {
-	talloc_free(h);
+	struct tevent_context *ev = h->ev;
+	struct tevent_req *req;
+	TALLOC_CTX *mem_ctx;
+	int ret;
+	bool status;
+
+	mem_ctx = talloc_new(NULL);
+	if (mem_ctx == NULL) {
+		talloc_free(h);
+		return ENOMEM;
+	}
+
+	req = ctdb_transaction_cancel_send(mem_ctx, ev,
+					   tevent_timeval_zero(), h);
+	if (req == NULL) {
+		talloc_free(mem_ctx);
+		talloc_free(h);
+		return ENOMEM;
+	}
+
+	tevent_req_poll(req, ev);
+
+	status = ctdb_transaction_cancel_recv(req, &ret);
+	if (! status) {
+		talloc_free(mem_ctx);
+		return ret;
+	}
+
+	talloc_free(mem_ctx);
 	return 0;
 }
 

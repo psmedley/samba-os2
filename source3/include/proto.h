@@ -243,7 +243,6 @@ int sys_fallocate(int fd, uint32_t mode, off_t offset, off_t len);
 void kernel_flock(int fd, uint32_t share_mode, uint32_t access_mask);
 DIR *sys_fdopendir(int fd);
 int sys_mknod(const char *path, mode_t mode, SMB_DEV_T dev);
-int sys_waitpid(pid_t pid,int *status,int options);
 char *sys_getwd(void);
 void set_effective_capability(enum smbd_capability capability);
 void drop_effective_capability(enum smbd_capability capability);
@@ -252,8 +251,6 @@ void sys_srandom(unsigned int seed);
 int groups_max(void);
 int sys_getgroups(int setlen, gid_t *gidset);
 int sys_setgroups(gid_t UNUSED(primary_gid), int setlen, gid_t *gidset);
-int sys_popen(const char *command);
-int sys_pclose(int fd);
 ssize_t sys_getxattr (const char *path, const char *name, void *value, size_t size);
 ssize_t sys_fgetxattr (int filedes, const char *name, void *value, size_t size);
 ssize_t sys_listxattr (const char *path, char *list, size_t size);
@@ -264,6 +261,7 @@ int sys_setxattr (const char *path, const char *name, const void *value, size_t 
 int sys_fsetxattr (int filedes, const char *name, const void *value, size_t size, int flags);
 uint32_t unix_dev_major(SMB_DEV_T dev);
 uint32_t unix_dev_minor(SMB_DEV_T dev);
+char *sys_realpath(const char *path);
 #if 0
 int sys_get_number_of_cores(void);
 #endif
@@ -387,12 +385,16 @@ bool is_in_path(const char *name, name_compare_entry *namelist, bool case_sensit
 void set_namearray(name_compare_entry **ppname_array, const char *namelist);
 void free_namearray(name_compare_entry *name_array);
 bool fcntl_lock(int fd, int op, off_t offset, off_t count, int type);
-bool fcntl_getlock(int fd, off_t *poffset, off_t *pcount, int *ptype, pid_t *ppid);
+bool fcntl_getlock(int fd, int op, off_t *poffset, off_t *pcount, int *ptype, pid_t *ppid);
+int map_process_lock_to_ofd_lock(int op, bool *use_ofd_locks);
 bool is_myname(const char *s);
 void ra_lanman_string( const char *native_lanman );
 const char *get_remote_arch_str(void);
+enum remote_arch_types get_remote_arch_from_str(const char *remote_arch_string);
 void set_remote_arch(enum remote_arch_types type);
 enum remote_arch_types get_remote_arch(void);
+bool remote_arch_cache_update(const struct GUID *client_guid);
+bool remote_arch_cache_delete(const struct GUID *client_guid);
 const char *tab_depth(int level, int depth);
 int str_checksum(const char *s);
 void zero_free(void *p, size_t size);
@@ -450,11 +452,6 @@ const char *builtin_domain_name(void);
 bool sid_check_is_builtin(const struct dom_sid *sid);
 bool sid_check_is_in_builtin(const struct dom_sid *sid);
 bool sid_check_is_wellknown_builtin(const struct dom_sid *sid);
-
-/* The following definitions come from lib/util_file.c  */
-
-char **file_lines_pload(const char *syscmd, int *numlines);
-void file_lines_free(char **lines);
 
 /* The following definitions come from lib/util_nscd.c  */
 
@@ -663,11 +660,12 @@ int ipstr_list_parse(const char *ipstr_list, struct ip_service **ip_list);
 void ipstr_list_free(char* ipstr_list);
 uint64_t STR_TO_SMB_BIG_UINT(const char *nptr, const char **entptr);
 uint64_t conv_str_size(const char * str);
-void sprintf_append(TALLOC_CTX *mem_ctx, char **string, ssize_t *len,
-		    size_t *bufsize, const char *fmt, ...);
-int asprintf_strupper_m(char **strp, const char *fmt, ...);
-char *talloc_asprintf_strupper_m(TALLOC_CTX *t, const char *fmt, ...);
-char *talloc_asprintf_strlower_m(TALLOC_CTX *t, const char *fmt, ...);
+int asprintf_strupper_m(char **strp, const char *fmt, ...)
+			PRINTF_ATTRIBUTE(2,3);
+char *talloc_asprintf_strupper_m(TALLOC_CTX *t, const char *fmt, ...)
+				 PRINTF_ATTRIBUTE(2,3);
+char *talloc_asprintf_strlower_m(TALLOC_CTX *t, const char *fmt, ...)
+				 PRINTF_ATTRIBUTE(2,3);
 bool validate_net_name( const char *name,
 		const char *invalid_chars,
 		int max_len);
@@ -1020,7 +1018,7 @@ bool lp_use_sendfile(int snum, struct smb_signing_state *signing_state);
 void set_use_sendfile(int snum, bool val);
 void lp_set_mangling_method(const char *new_method);
 bool lp_posix_pathnames(void);
-bool lp_set_posix_pathnames(bool newval);
+void lp_set_posix_pathnames(void);
 enum brl_flavour lp_posix_cifsu_locktype(files_struct *fsp);
 void lp_set_posix_default_cifsx_readwrite_locktype(enum brl_flavour val);
 int lp_min_receive_file_size(void);
@@ -1148,10 +1146,11 @@ NTSTATUS get_full_smb_filename(TALLOC_CTX *ctx, const struct smb_filename *smb_f
 struct smb_filename *synthetic_smb_fname(TALLOC_CTX *mem_ctx,
 					 const char *base_name,
 					 const char *stream_name,
-					 const SMB_STRUCT_STAT *psbuf);
+					 const SMB_STRUCT_STAT *psbuf,
+					 uint32_t flags);
 struct smb_filename *synthetic_smb_fname_split(TALLOC_CTX *ctx,
-					       const char *fname,
-					       const SMB_STRUCT_STAT *psbuf);
+						const char *fname,
+						bool posix_path);
 const char *smb_fname_str_dbg(const struct smb_filename *smb_fname);
 const char *fsp_str_dbg(const struct files_struct *fsp);
 const char *fsp_fnum_dbg(const struct files_struct *fsp);
@@ -1161,6 +1160,10 @@ bool is_ntfs_stream_smb_fname(const struct smb_filename *smb_fname);
 bool is_ntfs_default_stream_smb_fname(const struct smb_filename *smb_fname);
 bool is_invalid_windows_ea_name(const char *name);
 bool ea_list_has_invalid_name(struct ea_list *ea_list);
+bool split_stream_filename(TALLOC_CTX *ctx,
+			const char *filename_in,
+			char **filename_out,
+			char **streamname_out);
 
 /* The following definitions come from lib/dummyroot.c */
 

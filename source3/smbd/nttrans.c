@@ -694,11 +694,11 @@ void reply_ntcreate_and_X(struct smb_request *req)
 
 		/* Do we have any EA's ? */
 		status = get_ea_names_from_file(ctx, conn, fsp,
-				smb_fname->base_name, NULL, &num_names);
+				smb_fname, NULL, &num_names);
 		if (NT_STATUS_IS_OK(status) && num_names) {
 			file_status &= ~NO_EAS;
 		}
-		status = vfs_streaminfo(conn, NULL, smb_fname->base_name, ctx,
+		status = vfs_streaminfo(conn, NULL, smb_fname, ctx,
 			&num_streams, &streams);
 		/* There is always one stream, ::$DATA. */
 		if (NT_STATUS_IS_OK(status) && num_streams > 1) {
@@ -1178,7 +1178,8 @@ static void call_nt_transact_create(connection_struct *conn,
 			goto out;
 		}
 
-		if (ea_list_has_invalid_name(ea_list)) {
+		if (!req->posix_pathnames &&
+				ea_list_has_invalid_name(ea_list)) {
 			/* Realloc the size of parameters and data we will return */
 			if (flags & EXTENDED_RESPONSE_REQUIRED) {
 				/* Extended response is 32 more byyes. */
@@ -1339,11 +1340,11 @@ static void call_nt_transact_create(connection_struct *conn,
 
 		/* Do we have any EA's ? */
 		status = get_ea_names_from_file(ctx, conn, fsp,
-				smb_fname->base_name, NULL, &num_names);
+				smb_fname, NULL, &num_names);
 		if (NT_STATUS_IS_OK(status) && num_names) {
 			file_status &= ~NO_EAS;
 		}
-		status = vfs_streaminfo(conn, NULL, smb_fname->base_name, ctx,
+		status = vfs_streaminfo(conn, NULL, smb_fname, ctx,
 			&num_streams, &streams);
 		/* There is always one stream, ::$DATA. */
 		if (NT_STATUS_IS_OK(status) && num_streams > 1) {
@@ -2508,13 +2509,11 @@ static void call_nt_transact_get_user_quota(connection_struct *conn,
 				return;
 			}
 
-			if (vfs_get_ntquota(fsp, SMB_USER_QUOTA_TYPE, &sid, &qt)!=0) {
-				ZERO_STRUCT(qt);
-				/*
-				 * we have to return zero's in all fields
-				 * instead of returning an error here
-				 * --metze
-				 */
+			nt_status = vfs_get_ntquota(fsp, SMB_USER_QUOTA_TYPE,
+						    &sid, &qt);
+			if (!NT_STATUS_IS_OK(nt_status)) {
+				reply_nterror(req, nt_status);
+				return;
 			}
 
 			/* Realloc the size of parameters and data we will return */

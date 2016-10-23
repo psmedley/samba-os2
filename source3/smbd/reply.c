@@ -1794,6 +1794,7 @@ void reply_search(struct smb_request *req)
 	/* dirtype &= ~FILE_ATTRIBUTE_DIRECTORY; */
 
 	if (status_len == 0) {
+		struct smb_filename *smb_dname = NULL;
 		uint32_t ucf_flags = UCF_ALWAYS_ALLOW_WCARD_LCOMP |
 			(req->posix_pathnames ? UCF_POSIX_PATHNAMES : 0);
 		nt_status = filename_convert(ctx, conn,
@@ -1832,10 +1833,20 @@ void reply_search(struct smb_request *req)
 		memset((char *)status,'\0',21);
 		SCVAL(status,0,(dirtype & 0x1F));
 
+		smb_dname = synthetic_smb_fname(talloc_tos(),
+					directory,
+					NULL,
+					NULL,
+					smb_fname->flags);
+		if (smb_dname == NULL) {
+			reply_nterror(req, NT_STATUS_NO_MEMORY);
+			goto out;
+		}
+
 		nt_status = dptr_create(conn,
 					NULL, /* req */
 					NULL, /* fsp */
-					directory,
+					smb_dname,
 					True,
 					expect_close,
 					req->smbpid,
@@ -1843,6 +1854,9 @@ void reply_search(struct smb_request *req)
 					mask_contains_wcard,
 					dirtype,
 					&dirptr);
+
+		TALLOC_FREE(smb_dname);
+
 		if (!NT_STATUS_IS_OK(nt_status)) {
 			reply_nterror(req, nt_status);
 			goto out;
@@ -2988,6 +3002,7 @@ NTSTATUS unlink_internals(connection_struct *conn, struct smb_request *req,
 	char *fname_mask = NULL;
 	int count=0;
 	NTSTATUS status = NT_STATUS_OK;
+	struct smb_filename *smb_fname_dir = NULL;
 	TALLOC_CTX *ctx = talloc_tos();
 
 	/* Split up the directory from the filename/mask. */
@@ -3082,7 +3097,17 @@ NTSTATUS unlink_internals(connection_struct *conn, struct smb_request *req,
 			goto out;
 		}
 
-		dir_hnd = OpenDir(talloc_tos(), conn, fname_dir, fname_mask,
+		smb_fname_dir = synthetic_smb_fname(talloc_tos(),
+					fname_dir,
+					NULL,
+					NULL,
+					smb_fname->flags);
+		if (smb_fname_dir == NULL) {
+			status = NT_STATUS_NO_MEMORY;
+			goto out;
+		}
+
+		dir_hnd = OpenDir(talloc_tos(), conn, smb_fname_dir, fname_mask,
 				  dirtype);
 		if (dir_hnd == NULL) {
 			status = map_nt_error_from_unix(errno);
@@ -3172,6 +3197,7 @@ NTSTATUS unlink_internals(connection_struct *conn, struct smb_request *req,
 	}
 
  out:
+	TALLOC_FREE(smb_fname_dir);
 	TALLOC_FREE(fname_dir);
 	TALLOC_FREE(fname_mask);
 	return status;
@@ -6617,59 +6643,75 @@ NTSTATUS rename_internals_fsp(connection_struct *conn,
 	if (!conn->case_sensitive && conn->case_preserve &&
 	    strequal(fsp->fsp_name->base_name, smb_fname_dst->base_name) &&
 	    strequal(fsp->fsp_name->stream_name, smb_fname_dst->stream_name)) {
-		char *last_slash;
-		char *fname_dst_lcomp_base_mod = NULL;
-		struct smb_filename *smb_fname_orig_lcomp = NULL;
+		char *fname_dst_parent = NULL;
+		const char *fname_dst_lcomp = NULL;
+		char *orig_lcomp_path = NULL;
+		char *orig_lcomp_stream = NULL;
+		bool ok = true;
 
 		/*
-		 * Get the last component of the destination name.
+		 * Split off the last component of the processed
+		 * destination name. We will compare this to
+		 * the split components of smb_fname_dst->original_lcomp.
 		 */
-		last_slash = strrchr_m(smb_fname_dst->base_name, '/');
-		if (last_slash) {
-			fname_dst_lcomp_base_mod = talloc_strdup(ctx, last_slash + 1);
-		} else {
-			fname_dst_lcomp_base_mod = talloc_strdup(ctx, smb_fname_dst->base_name);
-		}
-		if (!fname_dst_lcomp_base_mod) {
+		if (!parent_dirname(ctx,
+				smb_fname_dst->base_name,
+				&fname_dst_parent,
+				&fname_dst_lcomp)) {
 			status = NT_STATUS_NO_MEMORY;
 			goto out;
 		}
 
 		/*
-		 * Create an smb_filename struct using the original last
-		 * component of the destination.
+		 * The original_lcomp component contains
+		 * the last_component of the path + stream
+		 * name (if a stream exists).
+		 *
+		 * Split off the stream name so we
+		 * can check them separately.
 		 */
-		smb_fname_orig_lcomp = synthetic_smb_fname_split(
-			ctx, smb_fname_dst->original_lcomp, NULL);
-		if (smb_fname_orig_lcomp == NULL) {
+
+		if (fsp->posix_flags & FSP_POSIX_FLAGS_PATHNAMES) {
+			/* POSIX - no stream component. */
+			orig_lcomp_path = talloc_strdup(ctx,
+						smb_fname_dst->original_lcomp);
+			if (orig_lcomp_path == NULL) {
+				ok = false;
+			}
+		} else {
+			ok = split_stream_filename(ctx,
+					smb_fname_dst->original_lcomp,
+					&orig_lcomp_path,
+					&orig_lcomp_stream);
+		}
+
+		if (!ok) {
+			TALLOC_FREE(fname_dst_parent);
 			status = NT_STATUS_NO_MEMORY;
-			TALLOC_FREE(fname_dst_lcomp_base_mod);
 			goto out;
 		}
 
 		/* If the base names only differ by case, use original. */
-		if(!strcsequal(fname_dst_lcomp_base_mod,
-			       smb_fname_orig_lcomp->base_name)) {
+		if(!strcsequal(fname_dst_lcomp, orig_lcomp_path)) {
 			char *tmp;
 			/*
 			 * Replace the modified last component with the
 			 * original.
 			 */
-			if (last_slash) {
-				*last_slash = '\0'; /* Truncate at the '/' */
+			if (!ISDOT(fname_dst_parent)) {
 				tmp = talloc_asprintf(smb_fname_dst,
 					"%s/%s",
-					smb_fname_dst->base_name,
-					smb_fname_orig_lcomp->base_name);
+					fname_dst_parent,
+					orig_lcomp_path);
 			} else {
-				tmp = talloc_asprintf(smb_fname_dst,
-					"%s",
-					smb_fname_orig_lcomp->base_name);
+				tmp = talloc_strdup(smb_fname_dst,
+					orig_lcomp_path);
 			}
 			if (tmp == NULL) {
 				status = NT_STATUS_NO_MEMORY;
-				TALLOC_FREE(fname_dst_lcomp_base_mod);
-				TALLOC_FREE(smb_fname_orig_lcomp);
+				TALLOC_FREE(fname_dst_parent);
+				TALLOC_FREE(orig_lcomp_path);
+				TALLOC_FREE(orig_lcomp_stream);
 				goto out;
 			}
 			TALLOC_FREE(smb_fname_dst->base_name);
@@ -6678,22 +6720,23 @@ NTSTATUS rename_internals_fsp(connection_struct *conn,
 
 		/* If the stream_names only differ by case, use original. */
 		if(!strcsequal(smb_fname_dst->stream_name,
-			       smb_fname_orig_lcomp->stream_name)) {
-			char *tmp = NULL;
+			       orig_lcomp_stream)) {
 			/* Use the original stream. */
-			tmp = talloc_strdup(smb_fname_dst,
-					    smb_fname_orig_lcomp->stream_name);
+			char *tmp = talloc_strdup(smb_fname_dst,
+					    orig_lcomp_stream);
 			if (tmp == NULL) {
 				status = NT_STATUS_NO_MEMORY;
-				TALLOC_FREE(fname_dst_lcomp_base_mod);
-				TALLOC_FREE(smb_fname_orig_lcomp);
+				TALLOC_FREE(fname_dst_parent);
+				TALLOC_FREE(orig_lcomp_path);
+				TALLOC_FREE(orig_lcomp_stream);
 				goto out;
 			}
 			TALLOC_FREE(smb_fname_dst->stream_name);
 			smb_fname_dst->stream_name = tmp;
 		}
-		TALLOC_FREE(fname_dst_lcomp_base_mod);
-		TALLOC_FREE(smb_fname_orig_lcomp);
+		TALLOC_FREE(fname_dst_parent);
+		TALLOC_FREE(orig_lcomp_path);
+		TALLOC_FREE(orig_lcomp_stream);
 	}
 
 	/*
@@ -6786,7 +6829,7 @@ NTSTATUS rename_internals_fsp(connection_struct *conn,
 			  smb_fname_str_dbg(smb_fname_dst)));
 
 		if (!fsp->is_directory &&
-		    !lp_posix_pathnames() &&
+		    !(fsp->posix_flags & FSP_POSIX_FLAGS_PATHNAMES) &&
 		    (lp_map_archive(SNUM(conn)) ||
 		    lp_store_dos_attributes(SNUM(conn)))) {
 			/* We must set the archive bit on the newly
@@ -6866,6 +6909,7 @@ NTSTATUS rename_internals(TALLOC_CTX *ctx,
 			uint32_t access_mask)
 {
 	char *fname_src_dir = NULL;
+	struct smb_filename *smb_fname_src_dir = NULL;
 	char *fname_src_mask = NULL;
 	int count=0;
 	NTSTATUS status = NT_STATUS_OK;
@@ -7038,7 +7082,17 @@ NTSTATUS rename_internals(TALLOC_CTX *ctx,
 		goto out;
 	}
 
-	dir_hnd = OpenDir(talloc_tos(), conn, fname_src_dir, fname_src_mask,
+	smb_fname_src_dir = synthetic_smb_fname(talloc_tos(),
+				fname_src_dir,
+				NULL,
+				NULL,
+				smb_fname_src->flags);
+	if (smb_fname_src_dir == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto out;
+	}
+
+	dir_hnd = OpenDir(talloc_tos(), conn, smb_fname_src_dir, fname_src_mask,
 			  attrs);
 	if (dir_hnd == NULL) {
 		status = map_nt_error_from_unix(errno);
@@ -7194,6 +7248,7 @@ NTSTATUS rename_internals(TALLOC_CTX *ctx,
 
  out:
 	TALLOC_FREE(talloced);
+	TALLOC_FREE(smb_fname_src_dir);
 	TALLOC_FREE(fname_src_dir);
 	TALLOC_FREE(fname_src_mask);
 	return status;
@@ -7517,6 +7572,7 @@ void reply_copy(struct smb_request *req)
 {
 	connection_struct *conn = req->conn;
 	struct smb_filename *smb_fname_src = NULL;
+	struct smb_filename *smb_fname_src_dir = NULL;
 	struct smb_filename *smb_fname_dst = NULL;
 	char *fname_src = NULL;
 	char *fname_dst = NULL;
@@ -7742,7 +7798,21 @@ void reply_copy(struct smb_request *req)
 			goto out;
 		}
 
-		dir_hnd = OpenDir(ctx, conn, fname_src_dir, fname_src_mask, 0);
+		smb_fname_src_dir = synthetic_smb_fname(talloc_tos(),
+					fname_src_dir,
+					NULL,
+					NULL,
+					smb_fname_src->flags);
+		if (smb_fname_src_dir == NULL) {
+			reply_nterror(req, NT_STATUS_NO_MEMORY);
+			goto out;
+		}
+
+		dir_hnd = OpenDir(ctx,
+				conn,
+				smb_fname_src_dir,
+				fname_src_mask,
+				0);
 		if (dir_hnd == NULL) {
 			status = map_nt_error_from_unix(errno);
 			reply_nterror(req, status);
@@ -7852,6 +7922,7 @@ void reply_copy(struct smb_request *req)
 	SSVAL(req->outbuf,smb_vwv0,count);
  out:
 	TALLOC_FREE(smb_fname_src);
+	TALLOC_FREE(smb_fname_src_dir);
 	TALLOC_FREE(smb_fname_dst);
 	TALLOC_FREE(fname_src);
 	TALLOC_FREE(fname_dst);

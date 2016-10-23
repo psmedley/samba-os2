@@ -231,7 +231,7 @@ get_test_ip_mask_and_iface ()
 
 ctdb_get_all_pnns ()
 {
-    try_command_on_node -q all "$CTDB pnn | sed -e 's@PNN:@@'"
+    try_command_on_node -q all "$CTDB pnn"
     all_pnns="$out"
 }
 
@@ -320,7 +320,7 @@ _cluster_is_healthy ()
 
 _cluster_is_recovered ()
 {
-    node_has_status all recovered
+    node_has_status 0 recovered
 }
 
 _cluster_is_ready ()
@@ -524,20 +524,8 @@ wait_until_node_has_some_ips ()
 
 #######################################
 
-_ctdb_hack_options ()
-{
-    local ctdb_options="$*"
-
-    case "$ctdb_options" in
-	*--start-as-stopped*)
-	    export CTDB_START_AS_STOPPED="yes"
-    esac
-}
-
 restart_ctdb_1 ()
 {
-    _ctdb_hack_options "$@"
-
     if [ -e /etc/redhat-release ] ; then
 	service ctdb restart
     else
@@ -548,7 +536,7 @@ restart_ctdb_1 ()
 # Restart CTDB on all nodes.  Override for local daemons.
 _restart_ctdb_all ()
 {
-    onnode -p all $CTDB_TEST_WRAPPER restart_ctdb_1 "$@"
+    onnode -p all $CTDB_TEST_WRAPPER restart_ctdb_1
 }
 
 # Nothing needed for a cluster.  Override for local daemons.
@@ -559,8 +547,6 @@ setup_ctdb ()
 
 restart_ctdb ()
 {
-    # "$@" is passed to restart_ctdb_all.
-
     echo -n "Restarting CTDB"
     if $ctdb_test_restart_scheduled ; then
 	echo -n " (scheduled)"
@@ -569,7 +555,7 @@ restart_ctdb ()
 
     local i
     for i in $(seq 1 5) ; do
-	_restart_ctdb_all "$@" || {
+	_restart_ctdb_all || {
 	    echo "Restart failed.  Trying again in a few seconds..."
 	    sleep_for 5
 	    continue

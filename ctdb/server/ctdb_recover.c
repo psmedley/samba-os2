@@ -30,7 +30,7 @@
 #include "lib/tdb_wrap/tdb_wrap.h"
 #include "lib/util/dlinklist.h"
 #include "lib/util/debug.h"
-#include "lib/util/samba_util.h"
+#include "lib/util/time.h"
 #include "lib/util/util_process.h"
 
 #include "ctdb_private.h"
@@ -39,6 +39,8 @@
 #include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
+
+#include "ctdb_cluster_mutex.h"
 
 int 
 ctdb_control_getvnnmap(struct ctdb_context *ctdb, uint32_t opcode, TDB_DATA indata, TDB_DATA *outdata)
@@ -748,102 +750,66 @@ int32_t ctdb_control_db_push_confirm(struct ctdb_context *ctdb,
 	return 0;
 }
 
-struct ctdb_set_recmode_state {
+struct set_recmode_state {
 	struct ctdb_context *ctdb;
 	struct ctdb_req_control_old *c;
-	uint32_t recmode;
-	int fd[2];
-	struct tevent_timer *te;
-	struct tevent_fd *fde;
-	pid_t child;
-	struct timeval start_time;
 };
 
-/*
-  called if our set_recmode child times out. this would happen if
-  ctdb_recovery_lock() would block.
- */
-static void ctdb_set_recmode_timeout(struct tevent_context *ev,
-				     struct tevent_timer *te,
-				     struct timeval t, void *private_data)
+static void set_recmode_handler(char status,
+				double latency,
+				void *private_data)
 {
-	struct ctdb_set_recmode_state *state = talloc_get_type(private_data, 
-					   struct ctdb_set_recmode_state);
+	struct set_recmode_state *state = talloc_get_type_abort(
+		private_data, struct set_recmode_state);
+	int s = 0;
+	const char *err = NULL;
 
-	/* we consider this a success, not a failure, as we failed to
-	   set the recovery lock which is what we wanted.  This can be
-	   caused by the cluster filesystem being very slow to
-	   arbitrate locks immediately after a node failure.	   
-	 */
-	DEBUG(DEBUG_ERR,(__location__ " set_recmode child process hung/timedout CFS slow to grant locks? (allowing recmode set anyway)\n"));
-	state->ctdb->recovery_mode = state->recmode;
-	ctdb_request_control_reply(state->ctdb, state->c, NULL, 0, NULL);
-	talloc_free(state);
-}
+	switch (status) {
+	case '0':
+		/* Mutex taken */
+		DEBUG(DEBUG_ERR,
+		      ("ERROR: Daemon able to take recovery lock on \"%s\" during recovery\n",
+		       state->ctdb->recovery_lock));
+		s = -1;
+		err = "Took recovery lock from daemon during recovery - probably a cluster filesystem lock coherence problem";
+		break;
 
-
-/* when we free the recmode state we must kill any child process.
-*/
-static int set_recmode_destructor(struct ctdb_set_recmode_state *state)
-{
-	double l = timeval_elapsed(&state->start_time);
-
-	CTDB_UPDATE_RECLOCK_LATENCY(state->ctdb, "daemon reclock", reclock.ctdbd, l);
-
-	if (state->fd[0] != -1) {
-		state->fd[0] = -1;
-	}
-	if (state->fd[1] != -1) {
-		state->fd[1] = -1;
-	}
-	ctdb_kill(state->ctdb, state->child, SIGKILL);
-	return 0;
-}
-
-/* this is called when the client process has completed ctdb_recovery_lock()
-   and has written data back to us through the pipe.
-*/
-static void set_recmode_handler(struct tevent_context *ev,
-				struct tevent_fd *fde,
-				uint16_t flags, void *private_data)
-{
-	struct ctdb_set_recmode_state *state= talloc_get_type(private_data, 
-					     struct ctdb_set_recmode_state);
-	char c = 0;
-	int ret;
-
-	/* we got a response from our child process so we can abort the
-	   timeout.
-	*/
-	talloc_free(state->te);
-	state->te = NULL;
-
-
-	/* If, as expected, the child was unable to take the recovery
-	 * lock then it will have written 0 into the pipe, so
-	 * continue.  However, any other value (e.g. 1) indicates that
-	 * it was able to take the recovery lock when it should have
-	 * been held by the recovery daemon on the recovery master.
-	*/
-	ret = sys_read(state->fd[0], &c, 1);
-	if (ret != 1 || c != 0) {
-		ctdb_request_control_reply(
-			state->ctdb, state->c, NULL, -1,
-			"Took recovery lock from daemon during recovery - probably a cluster filesystem lock coherence problem");
-		talloc_free(state);
-		return;
-	}
-
-	state->ctdb->recovery_mode = state->recmode;
-
-	/* release any deferred attach calls from clients */
-	if (state->recmode == CTDB_RECOVERY_NORMAL) {
+	case '1':
+		/* Contention */
+		DEBUG(DEBUG_DEBUG, (__location__ " Recovery lock check OK\n"));
+		state->ctdb->recovery_mode = CTDB_RECOVERY_NORMAL;
 		ctdb_process_deferred_attach(state->ctdb);
+
+		s = 0;
+
+		CTDB_UPDATE_RECLOCK_LATENCY(state->ctdb, "daemon reclock",
+					    reclock.ctdbd, latency);
+		break;
+
+	case '2':
+		/* Timeout.  Consider this a success, not a failure,
+		 * as we failed to set the recovery lock which is what
+		 * we wanted.  This can be caused by the cluster
+		 * filesystem being very slow to arbitrate locks
+		 * immediately after a node failure. */
+		DEBUG(DEBUG_WARNING,
+		      (__location__
+		       "Time out getting recovery lock, allowing recmode set anyway\n"));
+		state->ctdb->recovery_mode = CTDB_RECOVERY_NORMAL;
+		ctdb_process_deferred_attach(state->ctdb);
+
+		s = 0;
+		break;
+
+	default:
+		DEBUG(DEBUG_ERR,
+		      ("Unexpected error when testing recovery lock\n"));
+		s = -1;
+		err = "Unexpected error when testing recovery lock";
 	}
 
-	ctdb_request_control_reply(state->ctdb, state->c, NULL, 0, NULL);
+	ctdb_request_control_reply(state->ctdb, state->c, NULL, s, err);
 	talloc_free(state);
-	return;
 }
 
 static void
@@ -886,10 +852,9 @@ int32_t ctdb_control_set_recmode(struct ctdb_context *ctdb,
 				 const char **errormsg)
 {
 	uint32_t recmode = *(uint32_t *)indata.dptr;
-	int i, ret;
-	struct ctdb_set_recmode_state *state;
-	pid_t parent = getpid();
 	struct ctdb_db_context *ctdb_db;
+	struct set_recmode_state *state;
+	struct ctdb_cluster_mutex_handle *h;
 
 	/* if we enter recovery but stay in recovery for too long
 	   we will eventually drop all our ip addresses
@@ -914,7 +879,10 @@ int32_t ctdb_control_set_recmode(struct ctdb_context *ctdb,
 		return 0;
 	}
 
-	/* some special handling when ending recovery mode */
+	/* From this point: recmode == CTDB_RECOVERY_NORMAL
+	 *
+	 * Therefore, what follows is special handling when setting
+	 * recovery mode back to normal */
 
 	for (ctdb_db = ctdb->db_list; ctdb_db != NULL; ctdb_db = ctdb_db->next) {
 		if (ctdb_db->generation != ctdb->vnn_map->generation) {
@@ -927,163 +895,38 @@ int32_t ctdb_control_set_recmode(struct ctdb_context *ctdb,
 	}
 
 	/* force the databases to thaw */
-	for (i=1; i<=NUM_DB_PRIORITIES; i++) {
-		if (ctdb_db_prio_frozen(ctdb, i)) {
-			ctdb_control_thaw(ctdb, i, false);
-		}
+	if (ctdb_db_all_frozen(ctdb)) {
+		ctdb_control_thaw(ctdb, false);
 	}
 
-	/* release any deferred attach calls from clients */
-	if (recmode == CTDB_RECOVERY_NORMAL) {
-		ctdb_process_deferred_attach(ctdb);
-	}
-
-	if (ctdb->recovery_lock_file == NULL) {
+	if (ctdb->recovery_lock == NULL) {
 		/* Not using recovery lock file */
-		ctdb->recovery_mode = recmode;
+		ctdb->recovery_mode = CTDB_RECOVERY_NORMAL;
+		ctdb_process_deferred_attach(ctdb);
 		return 0;
 	}
 
-	state = talloc(ctdb, struct ctdb_set_recmode_state);
-	CTDB_NO_MEMORY(ctdb, state);
-
-	state->start_time = timeval_current();
-	state->fd[0] = -1;
-	state->fd[1] = -1;
-
-	/* For the rest of what needs to be done, we need to do this in
-	   a child process since 
-	   1, the call to ctdb_recovery_lock() can block if the cluster
-	      filesystem is in the process of recovery.
-	*/
-	ret = pipe(state->fd);
-	if (ret != 0) {
-		talloc_free(state);
-		DEBUG(DEBUG_CRIT,(__location__ " Failed to open pipe for set_recmode child\n"));
+	state = talloc_zero(ctdb, struct set_recmode_state);
+	if (state == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " out of memory\n"));
 		return -1;
 	}
+	state->ctdb = ctdb;
+	state->c = NULL;
 
-	state->child = ctdb_fork(ctdb);
-	if (state->child == (pid_t)-1) {
-		close(state->fd[0]);
-		close(state->fd[1]);
+	h = ctdb_cluster_mutex(state, ctdb, ctdb->recovery_lock, 5,
+			       set_recmode_handler, state, NULL, NULL);
+	if (h == NULL) {
 		talloc_free(state);
 		return -1;
 	}
 
-	if (state->child == 0) {
-		char cc = 0;
-		close(state->fd[0]);
-
-		prctl_set_comment("ctdb_recmode");
-		debug_extra = talloc_asprintf(NULL, "set_recmode:");
-		/* Daemon should not be able to get the recover lock,
-		 * as it should be held by the recovery master */
-		if (ctdb_recovery_lock(ctdb)) {
-			DEBUG(DEBUG_ERR,
-			      ("ERROR: Daemon able to take recovery lock on \"%s\" during recovery\n",
-			       ctdb->recovery_lock_file));
-			ctdb_recovery_unlock(ctdb);
-			cc = 1;
-		}
-
-		sys_write(state->fd[1], &cc, 1);
-		/* make sure we die when our parent dies */
-		while (ctdb_kill(ctdb, parent, 0) == 0 || errno != ESRCH) {
-			sleep(5);
-			sys_write(state->fd[1], &cc, 1);
-		}
-		_exit(0);
-	}
-	close(state->fd[1]);
-	set_close_on_exec(state->fd[0]);
-
-	state->fd[1] = -1;
-
-	talloc_set_destructor(state, set_recmode_destructor);
-
-	DEBUG(DEBUG_DEBUG, (__location__ " Created PIPE FD:%d for setrecmode\n", state->fd[0]));
-
-	state->te = tevent_add_timer(ctdb->ev, state, timeval_current_ofs(5, 0),
-				     ctdb_set_recmode_timeout, state);
-
-	state->fde = tevent_add_fd(ctdb->ev, state, state->fd[0], TEVENT_FD_READ,
-				   set_recmode_handler, (void *)state);
-
-	if (state->fde == NULL) {
-		talloc_free(state);
-		return -1;
-	}
-	tevent_fd_set_auto_close(state->fde);
-
-	state->ctdb    = ctdb;
-	state->recmode = recmode;
-	state->c       = talloc_steal(state, c);
-
+	state->c = talloc_steal(state, c);
 	*async_reply = true;
 
 	return 0;
 }
 
-
-bool ctdb_recovery_have_lock(struct ctdb_context *ctdb)
-{
-	return ctdb->recovery_lock_fd != -1;
-}
-
-/*
-  try and get the recovery lock in shared storage - should only work
-  on the recovery master recovery daemon. Anywhere else is a bug
- */
-bool ctdb_recovery_lock(struct ctdb_context *ctdb)
-{
-	struct flock lock;
-
-	ctdb->recovery_lock_fd = open(ctdb->recovery_lock_file,
-				      O_RDWR|O_CREAT, 0600);
-	if (ctdb->recovery_lock_fd == -1) {
-		DEBUG(DEBUG_ERR,
-		      ("ctdb_recovery_lock: Unable to open %s - (%s)\n",
-		       ctdb->recovery_lock_file, strerror(errno)));
-		return false;
-	}
-
-	set_close_on_exec(ctdb->recovery_lock_fd);
-
-	lock.l_type = F_WRLCK;
-	lock.l_whence = SEEK_SET;
-	lock.l_start = 0;
-	lock.l_len = 1;
-	lock.l_pid = 0;
-
-	if (fcntl(ctdb->recovery_lock_fd, F_SETLK, &lock) != 0) {
-		int saved_errno = errno;
-		close(ctdb->recovery_lock_fd);
-		ctdb->recovery_lock_fd = -1;
-		/* Fail silently on these errors, since they indicate
-		 * lock contention, but log an error for any other
-		 * failure. */
-		if (saved_errno != EACCES &&
-		    saved_errno != EAGAIN) {
-			DEBUG(DEBUG_ERR,("ctdb_recovery_lock: Failed to get "
-					 "recovery lock on '%s' - (%s)\n",
-					 ctdb->recovery_lock_file,
-					 strerror(saved_errno)));
-		}
-		return false;
-	}
-
-	return true;
-}
-
-void ctdb_recovery_unlock(struct ctdb_context *ctdb)
-{
-	if (ctdb->recovery_lock_fd != -1) {
-		DEBUG(DEBUG_NOTICE, ("Releasing recovery lock\n"));
-		close(ctdb->recovery_lock_fd);
-		ctdb->recovery_lock_fd = -1;
-	}
-}
 
 /*
   delete a record as part of the vacuum process
@@ -1286,40 +1129,123 @@ static void ctdb_start_recovery_callback(struct ctdb_context *ctdb, int status, 
 	talloc_free(state);
 }
 
-/*
-  run the startrecovery eventscript
- */
-int32_t ctdb_control_start_recovery(struct ctdb_context *ctdb, 
-				struct ctdb_req_control_old *c,
-				bool *async_reply)
+static void run_start_recovery_event(struct ctdb_context *ctdb,
+				     struct recovery_callback_state *state)
 {
 	int ret;
-	struct recovery_callback_state *state;
-
-	DEBUG(DEBUG_NOTICE,(__location__ " startrecovery eventscript has been invoked\n"));
-	gettimeofday(&ctdb->last_recovery_started, NULL);
-
-	state = talloc(ctdb, struct recovery_callback_state);
-	CTDB_NO_MEMORY(ctdb, state);
-
-	state->c    = talloc_steal(state, c);
 
 	ctdb_disable_monitoring(ctdb);
 
 	ret = ctdb_event_script_callback(ctdb, state,
-					 ctdb_start_recovery_callback, 
+					 ctdb_start_recovery_callback,
 					 state,
 					 CTDB_EVENT_START_RECOVERY,
 					 "%s", "");
 
 	if (ret != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " Failed to start recovery\n"));
+		DEBUG(DEBUG_ERR,("Unable to run startrecovery event\n"));
+		ctdb_request_control_reply(ctdb, state->c, NULL, -1, NULL);
 		talloc_free(state);
-		return -1;
+		return;
+	}
+
+	return;
+}
+
+static bool reclock_strings_equal(const char *a, const char *b)
+{
+	return (a == NULL && b == NULL) ||
+		(a != NULL && b != NULL && strcmp(a, b) == 0);
+}
+
+static void start_recovery_reclock_callback(struct ctdb_context *ctdb,
+						int32_t status,
+						TDB_DATA data,
+						const char *errormsg,
+						void *private_data)
+{
+	struct recovery_callback_state *state = talloc_get_type_abort(
+		private_data, struct recovery_callback_state);
+	const char *local = ctdb->recovery_lock;
+	const char *remote = NULL;
+
+	if (status != 0) {
+		DEBUG(DEBUG_ERR, (__location__ " GET_RECLOCK failed\n"));
+		ctdb_request_control_reply(ctdb, state->c, NULL,
+					   status, errormsg);
+		talloc_free(state);
+		return;
+	}
+
+	/* Check reclock consistency */
+	if (data.dsize > 0) {
+		/* Ensure NUL-termination */
+		data.dptr[data.dsize-1] = '\0';
+		remote = (const char *)data.dptr;
+	}
+	if (! reclock_strings_equal(local, remote)) {
+		/* Inconsistent */
+		ctdb_request_control_reply(ctdb, state->c, NULL, -1, NULL);
+		DEBUG(DEBUG_ERR,
+		      ("Recovery lock configuration inconsistent: "
+		       "recmaster has %s, this node has %s, shutting down\n",
+		       remote == NULL ? "NULL" : remote,
+		       local == NULL ? "NULL" : local));
+		talloc_free(state);
+		ctdb_shutdown_sequence(ctdb, 1);
+	}
+	DEBUG(DEBUG_INFO,
+	      ("Recovery lock consistency check successful\n"));
+
+	run_start_recovery_event(ctdb, state);
+}
+
+/* Check recovery lock consistency and run eventscripts for the
+ * "startrecovery" event */
+int32_t ctdb_control_start_recovery(struct ctdb_context *ctdb,
+				    struct ctdb_req_control_old *c,
+				    bool *async_reply)
+{
+	int ret;
+	struct recovery_callback_state *state;
+	uint32_t recmaster = c->hdr.srcnode;
+
+	DEBUG(DEBUG_NOTICE, ("Recovery has started\n"));
+	gettimeofday(&ctdb->last_recovery_started, NULL);
+
+	state = talloc(ctdb, struct recovery_callback_state);
+	CTDB_NO_MEMORY(ctdb, state);
+
+	state->c = c;
+
+	/* Although the recovery master sent this node a start
+	 * recovery control, this node might still think the recovery
+	 * master is disconnected.  In this case defer the recovery
+	 * lock consistency check. */
+	if (ctdb->nodes[recmaster]->flags & NODE_FLAGS_DISCONNECTED) {
+		run_start_recovery_event(ctdb, state);
+	} else {
+		/* Ask the recovery master about its reclock setting */
+		ret = ctdb_daemon_send_control(ctdb,
+					       recmaster,
+					       0,
+					       CTDB_CONTROL_GET_RECLOCK_FILE,
+					       0, 0,
+					       tdb_null,
+					       start_recovery_reclock_callback,
+					       state);
+
+		if (ret != 0) {
+			DEBUG(DEBUG_ERR, (__location__ " GET_RECLOCK failed\n"));
+			talloc_free(state);
+			return -1;
+		}
 	}
 
 	/* tell the control that we will be reply asynchronously */
+	state->c = talloc_steal(state, c);
 	*async_reply = true;
+
 	return 0;
 }
 
@@ -1679,12 +1605,14 @@ int32_t ctdb_control_set_recmaster(struct ctdb_context *ctdb, uint32_t opcode, T
 
 	if (ctdb->pnn != new_recmaster && ctdb->recovery_master == ctdb->pnn) {
 		DEBUG(DEBUG_NOTICE,
-		      ("This node (%u) is no longer the recovery master\n", ctdb->pnn));
+		      ("Remote node (%u) is now the recovery master\n",
+		       new_recmaster));
 	}
 
 	if (ctdb->pnn == new_recmaster && ctdb->recovery_master != new_recmaster) {
 		DEBUG(DEBUG_NOTICE,
-		      ("This node (%u) is now the recovery master\n", ctdb->pnn));
+		      ("This node (%u) is now the recovery master\n",
+		       ctdb->pnn));
 	}
 
 	ctdb->recovery_master = new_recmaster;

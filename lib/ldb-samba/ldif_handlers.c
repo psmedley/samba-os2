@@ -85,17 +85,32 @@ static int ldif_write_NDR(struct ldb_context *ldb, void *mem_ctx,
 static int ldif_read_objectSid(struct ldb_context *ldb, void *mem_ctx,
 			       const struct ldb_val *in, struct ldb_val *out)
 {
+	bool ret;
 	enum ndr_err_code ndr_err;
-	struct dom_sid *sid;
-	sid = dom_sid_parse_length(mem_ctx, in);
-	if (sid == NULL) {
+	struct dom_sid sid;
+	if (in->length > DOM_SID_STR_BUFLEN) {
 		return -1;
-	}
-	ndr_err = ndr_push_struct_blob(out, mem_ctx, sid,
-				       (ndr_push_flags_fn_t)ndr_push_dom_sid);
-	talloc_free(sid);
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		return -1;
+	} else {
+		char p[in->length+1];
+		memcpy(p, in->data, in->length);
+		p[in->length] = '\0';
+		
+		ret = dom_sid_parse(p, &sid);
+		if (ret == false) {
+			return -1;
+		}
+		
+		*out = data_blob_talloc(mem_ctx, NULL,
+					ndr_size_dom_sid(&sid, 0));
+		if (out->data == NULL) {
+			return -1;
+		}
+	
+		ndr_err = ndr_push_struct_into_fixed_blob(out, &sid,
+				(ndr_push_flags_fn_t)ndr_push_dom_sid);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			return -1;
+		}
 	}
 	return 0;
 }
@@ -106,21 +121,15 @@ static int ldif_read_objectSid(struct ldb_context *ldb, void *mem_ctx,
 int ldif_write_objectSid(struct ldb_context *ldb, void *mem_ctx,
 				const struct ldb_val *in, struct ldb_val *out)
 {
-	struct dom_sid *sid;
+	struct dom_sid sid;
 	enum ndr_err_code ndr_err;
 
-	sid = talloc(mem_ctx, struct dom_sid);
-	if (sid == NULL) {
-		return -1;
-	}
-	ndr_err = ndr_pull_struct_blob_all(in, sid, sid,
+	ndr_err = ndr_pull_struct_blob_all_noalloc(in, &sid,
 					   (ndr_pull_flags_fn_t)ndr_pull_dom_sid);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		talloc_free(sid);
 		return -1;
 	}
-	*out = data_blob_string_const(dom_sid_string(mem_ctx, sid));
-	talloc_free(sid);
+	*out = data_blob_string_const(dom_sid_string(mem_ctx, &sid));
 	if (out->data == NULL) {
 		return -1;
 	}
@@ -210,7 +219,7 @@ static int extended_dn_read_SID(struct ldb_context *ldb, void *mem_ctx,
 				     (const char *)in->data, in->length);
 
 	/* Check it looks like a SID */
-	ndr_err = ndr_pull_struct_blob_all(out, mem_ctx, &sid,
+	ndr_err = ndr_pull_struct_blob_all_noalloc(out, &sid,
 					   (ndr_pull_flags_fn_t)ndr_pull_dom_sid);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		return -1;
@@ -271,8 +280,6 @@ static bool ldif_comparision_objectGUID_isString(const struct ldb_val *v)
 static int extended_dn_read_GUID(struct ldb_context *ldb, void *mem_ctx,
 			      const struct ldb_val *in, struct ldb_val *out)
 {
-	struct GUID guid;
-	NTSTATUS status;
 
 	if (in->length == 36 && ldif_read_objectGUID(ldb, mem_ctx, in, out) == 0) {
 		return 0;
@@ -291,13 +298,13 @@ static int extended_dn_read_GUID(struct ldb_context *ldb, void *mem_ctx,
 	
 	(*out).length = strhex_to_str((char *)out->data, out->length,
 				      (const char *)in->data, in->length);
-	
+
 	/* Check it looks like a GUID */
-	status = GUID_from_ndr_blob(out, &guid);
-	if (!NT_STATUS_IS_OK(status)) {
+	if ((*out).length != 16) {
 		data_blob_free(out);
 		return -1;
 	}
+
 	return 0;
 }
 
@@ -1239,6 +1246,47 @@ static int samba_syntax_operator_fn(struct ldb_context *ldb, enum ldb_parse_op o
 }
 
 /*
+  compare two binary objects.  This is correct for sorting as the sort order is:
+  
+  a
+  aa
+  b
+  bb
+
+  rather than ldb_comparison_binary() which is:
+
+  a
+  b
+  aa
+  bb
+  
+*/
+static int samba_ldb_comparison_binary(struct ldb_context *ldb, void *mem_ctx,
+				       const struct ldb_val *v1, const struct ldb_val *v2)
+{
+	return data_blob_cmp(v1, v2);
+}
+
+/*
+  when this operator_fn is set for a syntax, the backend calls is in
+  preference to the comparison function. We are told the exact
+  comparison operation that is needed, and we can return errors.
+
+  This mode optimises for ldb_comparison_binary() if we need equality,
+  as this should be faster as it can do a length-check first.
+ */
+static int samba_syntax_binary_operator_fn(struct ldb_context *ldb, enum ldb_parse_op operation,
+					   const struct ldb_schema_attribute *a,
+					   const struct ldb_val *v1, const struct ldb_val *v2, bool *matched)
+{
+	if (operation == LDB_OP_EQUALITY) {
+		*matched = (ldb_comparison_binary(ldb, NULL, v1, v2) == 0);
+		return LDB_SUCCESS;
+	}
+	return samba_syntax_operator_fn(ldb, operation, a, v1, v2, matched);
+}
+
+/*
   see if two DNs match, comparing first by GUID, then by SID, and
   finally by string components
  */
@@ -1334,8 +1382,8 @@ static const struct ldb_schema_syntax samba_syntaxes[] = {
 		.ldif_read_fn	  = ldif_read_ntSecurityDescriptor,
 		.ldif_write_fn	  = ldif_write_ntSecurityDescriptor,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_SDDL_SECURITY_DESCRIPTOR,
 		.ldif_read_fn	  = ldb_handler_copy,
@@ -1362,8 +1410,8 @@ static const struct ldb_schema_syntax samba_syntaxes[] = {
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_schemaInfo,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_PREFIX_MAP,
 		.ldif_read_fn	  = ldif_read_prefixMap,
@@ -1383,22 +1431,22 @@ static const struct ldb_schema_syntax samba_syntaxes[] = {
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_repsFromTo,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_REPLPROPERTYMETADATA,
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_replPropertyMetaData,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_REPLUPTODATEVECTOR,
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_replUpToDateVector,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_REVEALEDUSERS,
 		.ldif_read_fn	  = ldb_handler_copy,
@@ -1411,15 +1459,15 @@ static const struct ldb_schema_syntax samba_syntaxes[] = {
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_trustAuthInOutBlob,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_FORESTTRUSTINFO,
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_ForestTrustInfo,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = DSDB_SYNTAX_BINARY_DN,
 		.ldif_read_fn	  = ldb_handler_copy,
@@ -1453,29 +1501,36 @@ static const struct ldb_schema_syntax samba_syntaxes[] = {
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_dnsRecord,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_DNSPROPERTY,
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_dnsProperty,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_SUPPLEMENTALCREDENTIALS,
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_supplementalCredentialsBlob,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	},{
 		.name		  = LDB_SYNTAX_SAMBA_PARTIALATTRIBUTESET,
 		.ldif_read_fn	  = ldb_handler_copy,
 		.ldif_write_fn	  = ldif_write_partialAttributeSet,
 		.canonicalise_fn  = ldb_handler_copy,
-		.comparison_fn	  = ldb_comparison_binary,
-		.operator_fn      = samba_syntax_operator_fn
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
+	},{
+		.name		  = LDB_SYNTAX_SAMBA_OCTET_STRING,
+		.ldif_read_fn	  = ldb_handler_copy,
+		.ldif_write_fn	  = ldb_handler_copy,
+		.canonicalise_fn  = ldb_handler_copy,
+		.comparison_fn	  = samba_ldb_comparison_binary,
+		.operator_fn      = samba_syntax_binary_operator_fn
 	}
 };
 

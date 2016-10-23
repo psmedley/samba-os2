@@ -51,8 +51,6 @@ confdfq3:df:block size = 4096:disk free = 10:disk size = 80
 confdfq3:u$uid:block size = 4096:hard limit = 40:soft limit = 40:cur blocks = 0
 confdfq4:df:block size = 4096:disk free = 10:disk size = 80
 confdfq4:u$uid:block size = 4096:hard limit = 40:soft limit = 40:cur blocks = 37
-edquot:df:block size = 4096:disk free = 10:disk size = 80
-edquot:u$uid:block size = 4096:hard limit = 40:soft limit = 40:cur blocks = 41:edquot = 1
 slimit:df:block size = 4096:disk free = 10:disk size = 80
 slimit:u$uid:block size = 4096:hard limit = 44:soft limit = 40:cur blocks = 42
 hlimit:df:block size = 4096:disk free = 10:disk size = 80
@@ -67,6 +65,8 @@ trygrp1:g$gid:block size = 4096:hard limit = 60:soft limit = 60:cur blocks = 55
 trygrp2:df:block size = 4096:disk free = 10:disk size = 80
 trygrp2:u$uid:block size = 4096:hard limit = 0:soft limit = 0:cur blocks = 41
 trygrp2:g$gid:block size = 4096:hard limit = 60:soft limit = 60:cur blocks = 56
+blksize:df:block size = 512:disk free = 614400:disk size = 614400
+blksize:u$uid:block size = 1024:hard limit = 512000:soft limit = 0:cur blocks = 0
 notenforce:df:block size = 4096:disk free = 10:disk size = 80
 notenforce:u$uid:block size = 4096:hard limit = 40:soft limit = 40:cur blocks = 37
 notenforce:udflt:block size = 4096:qflags = 0
@@ -82,7 +82,7 @@ ABC
 setup_1_conf() {
     conf_name="$1"
     subdir="$2"
-    absdir=`realpath $WORKDIR/$subdir`
+    absdir=`readlink -f $WORKDIR/$subdir`
     conf_lines | sed -rn "s/^$conf_name:(.*)/\1/p" | tr ":" "\n" | \
     awk  -F '=' -v atdir=$absdir 'NF==1 {section=$1} NF==2 {sub(/\s*$/, "", $1); printf "\tfake_dfq:%s/%s/%s =%s\n", section, $1, atdir, $2}'
 }
@@ -175,13 +175,15 @@ test_smbclient_dfree "Test dfree share root df vs quota case 4" dfq "." "confdfq
 test_smbclient_dfree "Test dfree subdir df vs quota case 4" dfq "subdir1" "confdfq4 subdir1" "160 1024. 12" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
 
 #quota-->disk free special cases
-test_smbclient_dfree "Test quota->dfree edquot" dfq "subdir1" "edquot subdir1" "164 1024. 0" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
 test_smbclient_dfree "Test quota->dfree soft limit" dfq "subdir1" "slimit subdir1" "168 1024. 0" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
 test_smbclient_dfree "Test quota->dfree hard limit" dfq "subdir1" "hlimit subdir1" "180 1024. 0" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
 test_smbclient_dfree "Test quota->dfree inode soft limit" dfq "subdir1" "islimit subdir1" "148 1024. 0" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
 test_smbclient_dfree "Test quota->dfree inode hard limit" dfq "subdir1" "ihlimit subdir1" "148 1024. 0" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
 test_smbclient_dfree "Test quota->dfree err try group" dfq "subdir1" "trygrp1 subdir1" "240 1024. 20" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
 test_smbclient_dfree "Test quota->dfree no-quota try group" dfq "subdir1" "trygrp2 subdir1" "240 1024. 16" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
+
+#block size different in quota and df systems
+test_smbclient_dfree "Test quota->dfree different block size" dfq "subdir1" "blksize subdir1" "307200 1024. 307200" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`
 
 #quota configured but not enforced
 test_smbclient_dfree "Test dfree share root quota not enforced" dfq "." "notenforce ." "320 1024. 40" -U$USERNAME%$PASSWORD --option=clientmaxprotocol=SMB3 || failed=`expr $failed + 1`

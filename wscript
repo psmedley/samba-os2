@@ -39,6 +39,7 @@ def set_options(opt):
     opt.RECURSE('lib/ldb')
     opt.RECURSE('selftest')
     opt.RECURSE('source4/lib/tls')
+    opt.RECURSE('source4/dsdb/samdb/ldb_modules')
     opt.RECURSE('pidl')
     opt.RECURSE('source3')
     opt.RECURSE('lib/util')
@@ -136,6 +137,9 @@ def configure(conf):
 
     conf.RECURSE('lib/ldb')
 
+    if not (Options.options.without_ad_dc):
+        conf.DEFINE('AD_DC_BUILD_IS_ENABLED', 1)
+
     if Options.options.with_system_mitkrb5:
         conf.PROCESS_SEPARATE_RULE('system_mitkrb5')
     if not (Options.options.without_ad_dc or Options.options.with_system_mitkrb5):
@@ -149,6 +153,7 @@ def configure(conf):
     if conf.CONFIG_GET('KRB5_VENDOR') in (None, 'heimdal'):
         conf.RECURSE('source4/heimdal_build')
     conf.RECURSE('source4/lib/tls')
+    conf.RECURSE('source4/dsdb/samdb/ldb_modules')
     conf.RECURSE('source4/ntvfs/sysdep')
     conf.RECURSE('lib/util')
     conf.RECURSE('lib/util/charset')

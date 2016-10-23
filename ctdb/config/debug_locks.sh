@@ -8,9 +8,9 @@
 # rather than mutex locks.
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; echo "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. "$CTDB_BASE/functions"
+. "${CTDB_BASE}/functions"
 
 # Default fallback location for database directories.
 # These can be overwritten from CTDB configuration
@@ -24,20 +24,21 @@ loadconfig ctdb
 
     echo "===== Start of debug locks PID=$$ ====="
 
-    # Create sed expression to convert inodes to names
-    sed_cmd=$( ls -li "$CTDB_DBDIR"/*.tdb.* "$CTDB_DBDIR_PERSISTENT"/*.tdb.* |
-	   sed -e "s#${CTDB_DBDIR}/\(.*\)#\1#" \
-	       -e "s#${CTDB_DBDIR_PERSISTENT}/\(.*\)#\1#" |
-	   awk '{printf "s#[0-9a-f]*:[0-9a-f]*:%s #%s #\n", $1, $10}' )
+    # Create sed expression to convert inodes to names.
+    # Filenames don't contain dashes and we want basenames
+    # shellcheck disable=SC2035
+    sed_cmd=$(cd "$CTDB_DBDIR" &&
+		  stat -c "s#[0-9a-f]*:[0-9a-f]*:%i #%n #" *.tdb.* 2>/dev/null ;
+	      cd "$CTDB_DBDIR_PERSISTENT" &&
+		  stat -c "s#[0-9a-f]*:[0-9a-f]*:%i #%n #" *.tdb.* 2>/dev/null)
 
     # Parse /proc/locks and extract following information
     #    pid process_name tdb_name offsets [W]
-    out=$( cat /proc/locks |
-    grep -F "POSIX  ADVISORY  WRITE" |
+    out=$( grep -F "POSIX  ADVISORY  WRITE" /proc/locks |
     awk '{ if($2 == "->") { print $6, $7, $8, $9, "W" } else { print $5, $6, $7, $8 } }' |
     while read pid rest ; do
-	pname=$(readlink /proc/$pid/exe)
-	echo $pid $pname $rest
+	pname=$(readlink "/proc/${pid}/exe")
+	echo "$pid $pname $rest"
     done | sed -e "$sed_cmd" | grep "\.tdb" )
 
     if [ -n "$out" ]; then
@@ -51,12 +52,16 @@ loadconfig ctdb
 	    pids=$(echo "$out" | grep -v "W$" | grep "$db" | grep -v ctdbd | awk '{print $1}')
 	    all_pids="$all_pids $pids"
 	done
+	# Use word splitting to squash whitespace
+	# shellcheck disable=SC2086
 	pids=$(echo $all_pids | tr " " "\n" | sort -u)
 
 	# For each process waiting, log stack trace
 	for pid in $pids ; do
 	    echo "----- Stack trace for PID=$pid -----"
-	    read x x state x </proc/$pid/stat
+	    # x is intentionally ignored
+	    # shellcheck disable=SC2034
+	    read x x state x <"/proc/${pid}/stat"
 	    if [ "$state" = "D" ] ; then
 		# Don't run gstack on a process in D state since
 		# gstack will hang until the process exits D state.
@@ -68,9 +73,9 @@ loadconfig ctdb
 		# deadlock... but it will probably give us someone to
 		# blame!
 		echo "----- Process in D state, printing kernel stack only"
-		cat /proc/$pid/stack
+		cat "/proc/${pid}/stack"
 	    else
-		gstack $pid
+		gstack "$pid"
 		# gcore -o /var/log/core-deadlock-ctdb $pid
 	    fi
 	done

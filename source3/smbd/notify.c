@@ -33,6 +33,12 @@ struct notify_change_event {
 
 struct notify_change_buf {
 	/*
+	 * Filters for reinitializing after notifyd has been restarted
+	 */
+	uint32_t filter;
+	uint32_t subdir_filter;
+
+	/*
 	 * If no requests are pending, changes are queued here. Simple array,
 	 * we only append.
 	 */
@@ -240,20 +246,41 @@ void change_notify_reply(struct smb_request *req,
 	notify_buf->num_changes = 0;
 }
 
-static void notify_callback(void *private_data, struct timespec when,
-			    const struct notify_event *e)
+struct notify_fsp_state {
+	struct files_struct *notified_fsp;
+	struct timespec when;
+	const struct notify_event *e;
+};
+
+static struct files_struct *notify_fsp_cb(struct files_struct *fsp,
+					  void *private_data)
 {
-	files_struct *fsp = (files_struct *)private_data;
-	DEBUG(10, ("notify_callback called for %s\n", fsp_str_dbg(fsp)));
-	notify_fsp(fsp, when, e->action, e->path);
+	struct notify_fsp_state *state = private_data;
+
+	if (fsp == state->notified_fsp) {
+		DBG_DEBUG("notify_callback called for %s\n", fsp_str_dbg(fsp));
+		notify_fsp(fsp, state->when, state->e->action, state->e->path);
+		return fsp;
+	}
+
+	return NULL;
+}
+
+void notify_callback(struct smbd_server_connection *sconn,
+		     void *private_data, struct timespec when,
+		     const struct notify_event *e)
+{
+	struct notify_fsp_state state = {
+		.notified_fsp = private_data, .when = when, .e = e
+	};
+	files_forall(sconn, notify_fsp_cb, &state);
 }
 
 NTSTATUS change_notify_create(struct files_struct *fsp, uint32_t filter,
 			      bool recursive)
 {
-	char *fullpath;
-	size_t len;
-	uint32_t subdir_filter;
+	size_t len = fsp_fullbasepath(fsp, NULL, 0);
+	char fullpath[len+1];
 	NTSTATUS status = NT_STATUS_NOT_IMPLEMENTED;
 
 	if (fsp->notify != NULL) {
@@ -266,33 +293,25 @@ NTSTATUS change_notify_create(struct files_struct *fsp, uint32_t filter,
 		DEBUG(0, ("talloc failed\n"));
 		return NT_STATUS_NO_MEMORY;
 	}
+	fsp->notify->filter = filter;
+	fsp->notify->subdir_filter = recursive ? filter : 0;
 
-	/* Do notify operations on the base_name. */
-	fullpath = talloc_asprintf(
-		talloc_tos(), "%s/%s", fsp->conn->connectpath,
-		fsp->fsp_name->base_name);
-	if (fullpath == NULL) {
-		DEBUG(0, ("talloc_asprintf failed\n"));
-		TALLOC_FREE(fsp->notify);
-		return NT_STATUS_NO_MEMORY;
-	}
+	fsp_fullbasepath(fsp, fullpath, sizeof(fullpath));
 
 	/*
 	 * Avoid /. at the end of the path name. notify can't deal with it.
 	 */
-	len = strlen(fullpath);
 	if (len > 1 && fullpath[len-1] == '.' && fullpath[len-2] == '/') {
 		fullpath[len-2] = '\0';
 	}
 
-	subdir_filter = recursive ? filter : 0;
-
-	if ((filter != 0) || (subdir_filter != 0)) {
+	if ((fsp->notify->filter != 0) ||
+	    (fsp->notify->subdir_filter != 0)) {
 		status = notify_add(fsp->conn->sconn->notify_ctx,
-				    fullpath, filter, subdir_filter,
-				    notify_callback, fsp);
+				    fullpath, fsp->notify->filter,
+				    fsp->notify->subdir_filter, fsp);
 	}
-	TALLOC_FREE(fullpath);
+
 	return status;
 }
 
@@ -469,6 +488,56 @@ void smbd_notify_cancel_deleted(struct messaging_context *msg,
 
 done:
 	TALLOC_FREE(fid);
+}
+
+static struct files_struct *smbd_notifyd_reregister(struct files_struct *fsp,
+						    void *private_data)
+{
+	DBG_DEBUG("reregister %s\n", fsp->fsp_name->base_name);
+
+	if ((fsp->conn->sconn->notify_ctx != NULL) &&
+	    (fsp->notify != NULL) &&
+	    ((fsp->notify->filter != 0) ||
+	     (fsp->notify->subdir_filter != 0))) {
+		size_t len = fsp_fullbasepath(fsp, NULL, 0);
+		char fullpath[len+1];
+
+		NTSTATUS status;
+
+		fsp_fullbasepath(fsp, fullpath, sizeof(fullpath));
+		if (len > 1 && fullpath[len-1] == '.' &&
+		    fullpath[len-2] == '/') {
+			fullpath[len-2] = '\0';
+		}
+
+		status = notify_add(fsp->conn->sconn->notify_ctx,
+				    fullpath, fsp->notify->filter,
+				    fsp->notify->subdir_filter, fsp);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_DEBUG("notify_add failed: %s\n",
+				  nt_errstr(status));
+		}
+	}
+	return NULL;
+}
+
+void smbd_notifyd_restarted(struct messaging_context *msg,
+			    void *private_data, uint32_t msg_type,
+			    struct server_id server_id, DATA_BLOB *data)
+{
+	struct smbd_server_connection *sconn = talloc_get_type_abort(
+		private_data, struct smbd_server_connection);
+
+	TALLOC_FREE(sconn->notify_ctx);
+
+	sconn->notify_ctx = notify_init(sconn, sconn->msg_ctx, sconn->ev_ctx,
+					sconn, notify_callback);
+	if (sconn->notify_ctx == NULL) {
+		DBG_DEBUG("notify_init failed\n");
+		return;
+	}
+
+	files_forall(sconn, smbd_notifyd_reregister, sconn->notify_ctx);
 }
 
 /****************************************************************************

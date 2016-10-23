@@ -62,6 +62,13 @@ struct tevent_req *_tevent_req_create(TALLOC_CTX *mem_ctx,
 	struct tevent_req *req;
 	void **ppdata = (void **)pdata;
 	void *data;
+	size_t payload;
+
+	payload = sizeof(struct tevent_immediate) + data_size;
+	if (payload < sizeof(struct tevent_immediate)) {
+		/* overflow */
+		return NULL;
+	}
 
 	req = talloc_pooled_object(
 		mem_ctx, struct tevent_req, 2,
@@ -69,21 +76,22 @@ struct tevent_req *_tevent_req_create(TALLOC_CTX *mem_ctx,
 	if (req == NULL) {
 		return NULL;
 	}
-	ZERO_STRUCTP(req);
-	req->internal.private_type	= type;
-	req->internal.create_location	= location;
-	req->internal.state		= TEVENT_REQ_IN_PROGRESS;
-	req->internal.trigger		= tevent_create_immediate(req);
-	if (!req->internal.trigger) {
-		talloc_free(req);
-		return NULL;
-	}
+
+	*req = (struct tevent_req) {
+		.internal.private_type		= type,
+		.internal.create_location	= location,
+		.internal.state			= TEVENT_REQ_IN_PROGRESS,
+		.internal.trigger		= tevent_create_immediate(req)
+	};
 
 	data = talloc_zero_size(req, data_size);
-	if (data == NULL) {
-		talloc_free(req);
-		return NULL;
-	}
+
+	/*
+	 * No need to check for req->internal.trigger!=NULL or
+	 * data!=NULL, this can't fail: talloc_pooled_object has
+	 * already allocated sufficient memory.
+	 */
+
 	talloc_set_name_const(data, type);
 
 	req->data = data;

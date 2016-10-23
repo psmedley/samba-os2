@@ -97,7 +97,9 @@ size_t ctdb_uint8_array_len(struct ctdb_uint8_array *array)
 
 void ctdb_uint8_array_push(struct ctdb_uint8_array *array, uint8_t *buf)
 {
-	memcpy(buf, array->val, array->num * sizeof(uint8_t));
+	if (array->num > 0) {
+		memcpy(buf, array->val, array->num * sizeof(uint8_t));
+	}
 }
 
 int ctdb_uint8_array_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
@@ -112,12 +114,16 @@ int ctdb_uint8_array_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 
 	array->num = buflen / sizeof(uint8_t);
 
-	array->val = talloc_array(array, uint8_t, array->num);
-	if (array->val == NULL) {
-		talloc_free(array);
-		return ENOMEM;
+	if (array->num > 0) {
+		array->val = talloc_array(array, uint8_t, array->num);
+		if (array->val == NULL) {
+			talloc_free(array);
+			return ENOMEM;
+		}
+		memcpy(array->val, buf, buflen);
+	} else {
+		array->val = NULL;
 	}
-	memcpy(array->val, buf, buflen);
 
 	*out = array;
 	return 0;
@@ -130,7 +136,9 @@ size_t ctdb_uint64_array_len(struct ctdb_uint64_array *array)
 
 void ctdb_uint64_array_push(struct ctdb_uint64_array *array, uint8_t *buf)
 {
-	memcpy(buf, array->val, array->num * sizeof(uint64_t));
+	if (array->num > 0) {
+		memcpy(buf, array->val, array->num * sizeof(uint64_t));
+	}
 }
 
 int ctdb_uint64_array_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
@@ -145,12 +153,16 @@ int ctdb_uint64_array_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 
 	array->num = buflen / sizeof(uint64_t);
 
-	array->val = talloc_array(array, uint64_t, array->num);
-	if (array->val == NULL) {
-		talloc_free(array);
-		return ENOMEM;
+	if (array->num > 0) {
+		array->val = talloc_array(array, uint64_t, array->num);
+		if (array->val == NULL) {
+			talloc_free(array);
+			return ENOMEM;
+		}
+		memcpy(array->val, buf, buflen);
+	} else {
+		array->val = NULL;
 	}
-	memcpy(array->val, buf, buflen);
 
 	*out = array;
 	return 0;
@@ -199,6 +211,7 @@ int ctdb_string_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	char *str;
 
 	if (buflen == 0) {
+		*out = NULL;
 		return 0;
 	}
 
@@ -242,7 +255,12 @@ int ctdb_stringn_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < sizeof(uint32_t)) {
 		return EMSGSIZE;
 	}
-
+	if (wire->length > buflen) {
+		return EMSGSIZE;
+	}
+	if (sizeof(uint32_t) + wire->length < sizeof(uint32_t)) {
+		return EMSGSIZE;
+	}
 	if (buflen < sizeof(uint32_t) + wire->length) {
 		return EMSGSIZE;
 	}
@@ -318,6 +336,14 @@ int ctdb_statistics_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < offsetof(struct ctdb_statistics_list_wire, stats)) {
 		return EMSGSIZE;
 	}
+	if (wire->num > buflen / sizeof(struct ctdb_statistics)) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_statistics_list_wire, stats) +
+	    wire->num * sizeof(struct ctdb_statistics) <
+	    offsetof(struct ctdb_statistics_list_wire, stats)) {
+		return EMSGSIZE;
+	}
 	if (buflen < offsetof(struct ctdb_statistics_list_wire, stats) +
 		     wire->num * sizeof(struct ctdb_statistics)) {
 		return EMSGSIZE;
@@ -373,6 +399,14 @@ int ctdb_vnn_map_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < offsetof(struct ctdb_vnn_map_wire, map)) {
 		return EMSGSIZE;
 	}
+	if (wire->size > buflen / sizeof(uint32_t)) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_vnn_map_wire, map) +
+	    wire->size * sizeof(uint32_t) <
+	    offsetof(struct ctdb_vnn_map_wire, map)) {
+		    return EMSGSIZE;
+	}
 	if (buflen < offsetof(struct ctdb_vnn_map_wire, map) +
 		     wire->size * sizeof(uint32_t)) {
 		return EMSGSIZE;
@@ -421,6 +455,13 @@ int ctdb_dbid_map_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	struct ctdb_dbid_map_wire *wire = (struct ctdb_dbid_map_wire *)buf;
 
 	if (buflen < sizeof(uint32_t)) {
+		return EMSGSIZE;
+	}
+	if (wire->num > buflen / sizeof(struct ctdb_dbid)) {
+		return EMSGSIZE;
+	}
+	if (sizeof(uint32_t) + wire->num * sizeof(struct ctdb_dbid) <
+	    sizeof(uint32_t)) {
 		return EMSGSIZE;
 	}
 	if (buflen < sizeof(uint32_t) + wire->num * sizeof(struct ctdb_dbid)) {
@@ -584,14 +625,25 @@ static int ctdb_rec_data_pull_data(uint8_t *buf, size_t buflen,
 				   size_t *reclen)
 {
 	struct ctdb_rec_data_wire *wire = (struct ctdb_rec_data_wire *)buf;
-	size_t offset, n;
+	size_t offset;
 
 	if (buflen < offsetof(struct ctdb_rec_data_wire, data)) {
 		return EMSGSIZE;
 	}
-	n = offsetof(struct ctdb_rec_data_wire, data) +
-		wire->keylen + wire->datalen;
-	if (buflen < n) {
+	if (wire->keylen > buflen || wire->datalen > buflen) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_rec_data_wire, data) + wire->keylen <
+	    offsetof(struct ctdb_rec_data_wire, data)) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_rec_data_wire, data) +
+		wire->keylen + wire->datalen <
+	    offsetof(struct ctdb_rec_data_wire, data)) {
+		return EMSGSIZE;
+	}
+	if (buflen < offsetof(struct ctdb_rec_data_wire, data) +
+			wire->keylen + wire->datalen) {
 		return EMSGSIZE;
 	}
 
@@ -609,7 +661,8 @@ static int ctdb_rec_data_pull_data(uint8_t *buf, size_t buflen,
 	data->dsize = wire->datalen;
 	data->dptr = &wire->data[offset];
 
-	*reclen = n;
+	*reclen = offsetof(struct ctdb_rec_data_wire, data) +
+			wire->keylen + wire->datalen;
 
 	return 0;
 }
@@ -1098,6 +1151,13 @@ int ctdb_tunable_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < offsetof(struct ctdb_tunable_wire, name)) {
 		return EMSGSIZE;
 	}
+	if (wire->length > buflen) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_tunable_wire, name) + wire->length <
+	    offsetof(struct ctdb_tunable_wire, name)) {
+		return EMSGSIZE;
+	}
 	if (buflen < offsetof(struct ctdb_tunable_wire, name) + wire->length) {
 		return EMSGSIZE;
 	}
@@ -1190,6 +1250,12 @@ int ctdb_var_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	const char **list;
 
 	if (buflen < sizeof(uint32_t)) {
+		return EMSGSIZE;
+	}
+	if (wire->length > buflen) {
+		return EMSGSIZE;
+	}
+	if (sizeof(uint32_t) + wire->length < sizeof(uint32_t)) {
 		return EMSGSIZE;
 	}
 	if (buflen < sizeof(uint32_t) + wire->length) {
@@ -1302,6 +1368,14 @@ int ctdb_tickle_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < offsetof(struct ctdb_tickle_list_wire, conn)) {
 		return EMSGSIZE;
 	}
+	if (wire->num > buflen / sizeof(struct ctdb_connection)) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_tickle_list_wire, conn) +
+	    wire->num * sizeof(struct ctdb_connection) <
+	    offsetof(struct ctdb_tickle_list_wire, conn)) {
+		return EMSGSIZE;
+	}
 	if (buflen < offsetof(struct ctdb_tickle_list_wire, conn) +
 		     wire->num * sizeof(struct ctdb_connection)) {
 		return EMSGSIZE;
@@ -1334,215 +1408,6 @@ int ctdb_tickle_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	}
 
 	*out = tickles;
-	return 0;
-}
-
-size_t ctdb_client_id_len(struct ctdb_client_id *cid)
-{
-	return sizeof(struct ctdb_client_id);
-}
-
-void ctdb_client_id_push(struct ctdb_client_id *cid, uint8_t *buf)
-{
-	memcpy(buf, cid, sizeof(struct ctdb_client_id));
-}
-
-static int ctdb_client_id_pull_elems(uint8_t *buf, size_t buflen,
-				     TALLOC_CTX *mem_ctx,
-				     struct ctdb_client_id *out)
-{
-	if (buflen < sizeof(struct ctdb_client_id)) {
-		return EMSGSIZE;
-	}
-
-	memcpy(out, buf, sizeof(struct ctdb_client_id));
-
-	return 0;
-}
-
-int ctdb_client_id_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
-			struct ctdb_client_id **out)
-{
-	struct ctdb_client_id *cid;
-	int ret;
-
-	cid = talloc(mem_ctx, struct ctdb_client_id);
-	if (cid == NULL) {
-		return ENOMEM;
-	}
-
-	ret = ctdb_client_id_pull_elems(buf, buflen, cid, cid);
-	if (ret != 0) {
-		TALLOC_FREE(cid);
-	}
-
-	*out = cid;
-	return ret;
-}
-
-struct ctdb_client_id_list_wire {
-	uint32_t num;
-	struct ctdb_client_id cid[1];
-};
-
-size_t ctdb_client_id_list_len(struct ctdb_client_id_list *cid_list)
-{
-	return sizeof(uint32_t) +
-	       cid_list->num * sizeof(struct ctdb_client_id);
-}
-
-void ctdb_client_id_list_push(struct ctdb_client_id_list *cid_list,
-			      uint8_t *buf)
-{
-	struct ctdb_client_id_list_wire *wire =
-		(struct ctdb_client_id_list_wire *)buf;
-	size_t offset;
-	int i;
-
-	wire->num = cid_list->num;
-
-	offset = offsetof(struct ctdb_client_id_list_wire, cid);
-	for (i=0; i<cid_list->num; i++) {
-		ctdb_client_id_push(&cid_list->cid[i], &buf[offset]);
-		offset += ctdb_client_id_len(&cid_list->cid[i]);
-	}
-}
-
-static int ctdb_client_id_list_pull_elems(uint8_t *buf, size_t buflen,
-					  TALLOC_CTX *mem_ctx,
-					  struct ctdb_client_id_list *out)
-{
-	struct ctdb_client_id_list_wire *wire =
-		(struct ctdb_client_id_list_wire *)buf;
-	size_t offset;
-	int i;
-
-	if (buflen < sizeof(uint32_t)) {
-		return EMSGSIZE;
-	}
-	if (buflen < sizeof(uint32_t) +
-		     wire->num * sizeof(struct ctdb_client_id)) {
-		return EMSGSIZE;
-	}
-
-	out->num = wire->num;
-	out->cid = talloc_array(mem_ctx, struct ctdb_client_id,
-				wire->num);
-	if (out->cid == NULL) {
-		return ENOMEM;
-	}
-
-	offset = offsetof(struct ctdb_client_id_list_wire, cid);
-	for (i=0; i<wire->num; i++) {
-		bool ret;
-		ret = ctdb_client_id_pull_elems(&buf[offset], buflen-offset,
-						out->cid, &out->cid[i]);
-		if (ret != 0) {
-			return ret;
-		}
-		offset += ctdb_client_id_len(&out->cid[i]);
-	}
-
-	return 0;
-}
-
-int ctdb_client_id_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
-			     struct ctdb_client_id_list **out)
-{
-	struct ctdb_client_id_list *cid_list;
-	int ret;
-
-	cid_list = talloc(mem_ctx, struct ctdb_client_id_list);
-	if (cid_list == NULL) {
-		return ENOMEM;
-	}
-
-	ret = ctdb_client_id_list_pull_elems(buf, buflen, cid_list, cid_list);
-	if (ret != 0) {
-		TALLOC_FREE(cid_list);
-	}
-
-	*out = cid_list;
-	return ret;
-}
-
-struct ctdb_client_id_map_wire {
-	int count;
-	struct ctdb_client_id_list list[1];
-};
-
-size_t ctdb_client_id_map_len(struct ctdb_client_id_map *cid_map)
-{
-	int i;
-	size_t len;
-
-	len = sizeof(int);
-	for (i=0; i<cid_map->count; i++) {
-		len += ctdb_client_id_list_len(&cid_map->list[i]);
-	}
-	return len;
-}
-
-void ctdb_client_id_map_push(struct ctdb_client_id_map *cid_map, uint8_t *buf)
-{
-	struct ctdb_client_id_map_wire *wire =
-		(struct ctdb_client_id_map_wire *)buf;
-	size_t offset;
-	int i;
-
-	wire->count = cid_map->count;
-
-	offset = sizeof(int);
-	for (i=0; i<cid_map->count; i++) {
-		ctdb_client_id_list_push(&cid_map->list[i], &buf[offset]);
-		offset += ctdb_client_id_list_len(&cid_map->list[i]);
-	}
-}
-
-int ctdb_client_id_map_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
-			    struct ctdb_client_id_map **out)
-{
-	struct ctdb_client_id_map *cid_map;
-	struct ctdb_client_id_map_wire *wire =
-		(struct ctdb_client_id_map_wire *)buf;
-	size_t offset;
-	int i;
-	bool ret;
-
-	if (buflen < sizeof(int)) {
-		return EMSGSIZE;
-	}
-	if (buflen < sizeof(int) +
-		     wire->count * sizeof(struct ctdb_client_id_list)) {
-		return EMSGSIZE;
-	}
-
-	cid_map = talloc(mem_ctx, struct ctdb_client_id_map);
-	if (cid_map == NULL) {
-		return ENOMEM;
-	}
-
-	cid_map->count = wire->count;
-	cid_map->list = talloc_array(cid_map, struct ctdb_client_id_list,
-				     wire->count);
-	if (cid_map->list == NULL) {
-		return ENOMEM;
-	}
-
-	offset = sizeof(int);
-	for (i=0; i<wire->count; i++) {
-		ret = ctdb_client_id_list_pull_elems(&buf[offset],
-						     buflen-offset,
-						     cid_map->list,
-						     &cid_map->list[i]);
-		if (ret != 0) {
-			talloc_free(cid_map);
-			return ret;
-		}
-		offset += ctdb_client_id_list_len(&cid_map->list[i]);
-	}
-
-	*out = cid_map;
 	return 0;
 }
 
@@ -1586,6 +1451,13 @@ int ctdb_addr_info_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	struct ctdb_addr_info_wire *wire = (struct ctdb_addr_info_wire *)buf;
 
 	if (buflen < offsetof(struct ctdb_addr_info_wire, iface)) {
+		return EMSGSIZE;
+	}
+	if (wire->len > buflen) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_addr_info_wire, iface) + wire->len <
+	    offsetof(struct ctdb_addr_info_wire, iface)) {
 		return EMSGSIZE;
 	}
 	if (buflen < offsetof(struct ctdb_addr_info_wire, iface) + wire->len) {
@@ -1761,6 +1633,13 @@ int ctdb_public_ip_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < sizeof(uint32_t)) {
 		return EMSGSIZE;
 	}
+	if (wire->num > buflen / sizeof(struct ctdb_public_ip)) {
+		return EMSGSIZE;
+	}
+	if (sizeof(uint32_t) + wire->num * sizeof(struct ctdb_public_ip) <
+	    sizeof(uint32_t)) {
+		return EMSGSIZE;
+	}
 	if (buflen < sizeof(uint32_t) +
 		     wire->num * sizeof(struct ctdb_public_ip)) {
 		return EMSGSIZE;
@@ -1877,6 +1756,21 @@ int ctdb_node_map_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	size_t offset;
 	int i;
 	bool ret;
+
+	if (buflen < sizeof(uint32_t)) {
+		return EMSGSIZE;
+	}
+	if (wire->num > buflen / sizeof(struct ctdb_node_and_flags)) {
+		return EMSGSIZE;
+	}
+	if (sizeof(uint32_t) + wire->num * sizeof(struct ctdb_node_and_flags) <
+	    sizeof(uint32_t)) {
+		return EMSGSIZE;
+	}
+	if (buflen < sizeof(uint32_t) +
+		     wire->num * sizeof(struct ctdb_node_and_flags)) {
+		return EMSGSIZE;
+	}
 
 	nodemap = talloc(mem_ctx, struct ctdb_node_map);
 	if (nodemap == NULL) {
@@ -2013,6 +1907,12 @@ int ctdb_script_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < offset) {
 		return EMSGSIZE;
 	}
+	if (wire->num_scripts > buflen / sizeof(struct ctdb_script)) {
+		return EMSGSIZE;
+	}
+	if (offset + wire->num_scripts * sizeof(struct ctdb_script) < offset) {
+		return EMSGSIZE;
+	}
 	if (buflen < offset + wire->num_scripts * sizeof(struct ctdb_script)) {
 		return EMSGSIZE;
 	}
@@ -2074,34 +1974,6 @@ int ctdb_ban_state_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	return 0;
 }
 
-size_t ctdb_db_priority_len(struct ctdb_db_priority *db_prio)
-{
-	return sizeof(struct ctdb_db_priority);
-}
-
-void ctdb_db_priority_push(struct ctdb_db_priority *db_prio, uint8_t *buf)
-{
-	memcpy(buf, db_prio, sizeof(struct ctdb_db_priority));
-}
-
-int ctdb_db_priority_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
-			  struct ctdb_db_priority **out)
-{
-	struct ctdb_db_priority *db_prio;
-
-	if (buflen < sizeof(struct ctdb_db_priority)) {
-		return EMSGSIZE;
-	}
-
-	db_prio = talloc_memdup(mem_ctx, buf, sizeof(struct ctdb_db_priority));
-	if (db_prio == NULL) {
-		return ENOMEM;
-	}
-
-	*out = db_prio;
-	return 0;
-}
-
 struct ctdb_notify_data_wire {
 	uint64_t srvid;
 	uint32_t len;
@@ -2132,6 +2004,13 @@ int ctdb_notify_data_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 		(struct ctdb_notify_data_wire *)buf;
 
 	if (buflen < offsetof(struct ctdb_notify_data_wire, data)) {
+		return EMSGSIZE;
+	}
+	if (wire->len > buflen) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_notify_data_wire, data) + wire->len <
+	    offsetof(struct ctdb_notify_data_wire, data)) {
 		return EMSGSIZE;
 	}
 	if (buflen < offsetof(struct ctdb_notify_data_wire, data) + wire->len) {
@@ -2229,6 +2108,13 @@ int ctdb_iface_list_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < sizeof(uint32_t)) {
 		return EMSGSIZE;
 	}
+	if (wire->num > buflen / sizeof(struct ctdb_iface)) {
+		return EMSGSIZE;
+	}
+	if (sizeof(uint32_t) + wire->num * sizeof(struct ctdb_iface) <
+	    sizeof(uint32_t)) {
+		return EMSGSIZE;
+	}
 	if (buflen < sizeof(uint32_t) + wire->num * sizeof(struct ctdb_iface)) {
 		return EMSGSIZE;
 	}
@@ -2289,6 +2175,18 @@ int ctdb_public_ip_info_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < offsetof(struct ctdb_public_ip_info_wire, ifaces)) {
 		return EMSGSIZE;
 	}
+	if (wire->num > buflen / sizeof(struct ctdb_iface)) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_public_ip_info_wire, ifaces) +
+	    wire->num * sizeof(struct ctdb_iface) <
+	    offsetof(struct ctdb_public_ip_info_wire, ifaces)) {
+		return EMSGSIZE;
+	}
+	if (buflen < offsetof(struct ctdb_public_ip_info_wire, ifaces) +
+		     wire->num * sizeof(struct ctdb_iface)) {
+		return EMSGSIZE;
+	}
 
 	ipinfo = talloc(mem_ctx, struct ctdb_public_ip_info);
 	if (ipinfo == NULL) {
@@ -2346,6 +2244,13 @@ int ctdb_key_data_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	struct ctdb_key_data_wire *wire = (struct ctdb_key_data_wire *)buf;
 
 	if (buflen < offsetof(struct ctdb_key_data_wire, key)) {
+		return EMSGSIZE;
+	}
+	if (wire->keylen > buflen) {
+		return EMSGSIZE;
+	}
+	if (offsetof(struct ctdb_key_data_wire, key) + wire->keylen <
+	    offsetof(struct ctdb_key_data_wire, key)) {
 		return EMSGSIZE;
 	}
 	if (buflen < offsetof(struct ctdb_key_data_wire, key) + wire->keylen) {
@@ -2418,9 +2323,23 @@ int ctdb_db_statistics_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
 	if (buflen < sizeof(struct ctdb_db_statistics)) {
 		return EMSGSIZE;
 	}
+
 	offset = 0;
 	for (i=0; i<wire->dbstats.num_hot_keys; i++) {
+		if (wire->dbstats.hot_keys[i].key.dsize > buflen) {
+			return EMSGSIZE;
+		}
+		if (offset + wire->dbstats.hot_keys[i].key.dsize < offset) {
+			return EMSGSIZE;
+		}
 		offset += wire->dbstats.hot_keys[i].key.dsize;
+		if (offset > buflen) {
+			return EMSGSIZE;
+		}
+	}
+	if (sizeof(struct ctdb_db_statistics) + offset <
+	    sizeof(struct ctdb_db_statistics)) {
+		return EMSGSIZE;
 	}
 	if (buflen < sizeof(struct ctdb_db_statistics) + offset) {
 		return EMSGSIZE;
@@ -2548,7 +2467,9 @@ size_t ctdb_tdb_data_len(TDB_DATA data)
 
 void ctdb_tdb_data_push(TDB_DATA data, uint8_t *buf)
 {
-	memcpy(buf, data.dptr, data.dsize);
+	if (data.dsize > 0) {
+		memcpy(buf, data.dptr, data.dsize);
+	}
 }
 
 int ctdb_tdb_data_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,

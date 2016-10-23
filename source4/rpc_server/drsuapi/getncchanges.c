@@ -4,8 +4,9 @@
    implement the DSGetNCChanges call
 
    Copyright (C) Anatoliy Atanasov 2009
-   Copyright (C) Andrew Tridgell 2009
-   
+   Copyright (C) Andrew Tridgell 2009-2010
+   Copyright (C) Andrew Bartlett 2010-2016
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
@@ -52,8 +53,15 @@ struct drsuapi_getncchanges_state {
 	struct drsuapi_DsReplicaCursor2CtrEx *final_udv;
 	struct drsuapi_DsReplicaLinkedAttribute *la_list;
 	uint32_t la_count;
-	bool la_sorted;
+	struct la_for_sorting *la_sorted;
 	uint32_t la_idx;
+};
+
+/* We must keep the GUIDs in NDR form for sorting */
+struct la_for_sorting {
+	struct drsuapi_DsReplicaLinkedAttribute *link;
+	uint8_t target_guid[16];
+        uint8_t source_guid[16];
 };
 
 static int drsuapi_DsReplicaHighWaterMark_cmp(const struct drsuapi_DsReplicaHighWaterMark *h1,
@@ -116,33 +124,66 @@ static bool udv_filter(const struct drsuapi_DsReplicaCursorCtrEx *udv,
 {
 	const struct drsuapi_DsReplicaCursor *c;
 	if (udv == NULL) return false;
-	BINARY_ARRAY_SEARCH(udv->cursors, udv->count, source_dsa_invocation_id, 
+	BINARY_ARRAY_SEARCH(udv->cursors, udv->count, source_dsa_invocation_id,
 			    originating_invocation_id, udv_compare, c);
 	if (c && originating_usn <= c->highest_usn) {
 		return true;
 	}
 	return false;
-	
+
 }
 
-static int attid_cmp(enum drsuapi_DsAttributeId a1, enum drsuapi_DsAttributeId a2)
+static int uint32_t_cmp(uint32_t a1, uint32_t a2)
 {
 	if (a1 == a2) return 0;
-	return ((uint32_t)a1) > ((uint32_t)a2) ? 1 : -1;
+	return a1 > a2 ? 1 : -1;
 }
 
-/*
-  check if an attribute is in a partial_attribute_set
- */
-static bool check_partial_attribute_set(const struct dsdb_attribute *sa,
-					struct drsuapi_DsPartialAttributeSet *pas)
+static int uint32_t_ptr_cmp(uint32_t *a1, uint32_t *a2, void *unused)
 {
-	enum drsuapi_DsAttributeId *result;
-	BINARY_ARRAY_SEARCH_V(pas->attids, pas->num_attids, (enum drsuapi_DsAttributeId)sa->attributeID_id,
-			      attid_cmp, result);
-	return result != NULL;
+	if (*a1 == *a2) return 0;
+	return *a1 > *a2 ? 1 : -1;
 }
 
+static WERROR getncchanges_attid_remote_to_local(const struct dsdb_schema *schema,
+						 const struct dsdb_syntax_ctx *ctx,
+						 enum drsuapi_DsAttributeId remote_attid_as_enum,
+						 enum drsuapi_DsAttributeId *local_attid_as_enum,
+						 const struct dsdb_attribute **_sa)
+{
+	WERROR werr;
+	const struct dsdb_attribute *sa = NULL;
+
+	if (ctx->pfm_remote == NULL) {
+		DEBUG(7, ("No prefixMap supplied, falling back to local prefixMap.\n"));
+		goto fail;
+	}
+
+	werr = dsdb_attribute_drsuapi_remote_to_local(ctx,
+						      remote_attid_as_enum,
+						      local_attid_as_enum,
+						      _sa);
+	if (!W_ERROR_IS_OK(werr)) {
+		DEBUG(3, ("WARNING: Unable to resolve remote attid, falling back to local prefixMap.\n"));
+		goto fail;
+	}
+
+	return werr;
+fail:
+
+	sa = dsdb_attribute_by_attributeID_id(schema, remote_attid_as_enum);
+	if (sa == NULL) {
+		return WERR_DS_DRA_SCHEMA_MISMATCH;
+	} else {
+		if (local_attid_as_enum != NULL) {
+			*local_attid_as_enum = sa->attributeID_id;
+		}
+		if (_sa != NULL) {
+			*_sa = sa;
+		}
+		return WERR_OK;
+	}
+}
 
 /* 
   drsuapi_DsGetNCChanges for one object
@@ -159,7 +200,8 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 					  struct drsuapi_DsPartialAttributeSet *partial_attribute_set,
 					  struct drsuapi_DsReplicaCursorCtrEx *uptodateness_vector,
 					  enum drsuapi_DsExtendedOperation extended_op,
-					  bool force_object_return)
+					  bool force_object_return,
+					  uint32_t *local_pas)
 {
 	const struct ldb_val *md_value;
 	uint32_t i, n;
@@ -194,7 +236,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 		}
 	}
 	obj->next_object = NULL;
-	
+
 	md_value = ldb_msg_find_ldb_val(msg, "replPropertyMetaData");
 	if (!md_value) {
 		/* nothing to send */
@@ -211,7 +253,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		return WERR_DS_DRA_INTERNAL_ERROR;
 	}
-	
+
 	if (md.version != 1) {
 		return WERR_DS_DRA_INTERNAL_ERROR;
 	}
@@ -224,7 +266,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 
 	rdn_sa = dsdb_attribute_by_lDAPDisplayName(schema, rdn);
 	if (rdn_sa == NULL) {
-		DEBUG(0,(__location__ ": Can't find dsds_attribute for rDN %s in %s\n", 
+		DEBUG(0,(__location__ ": Can't find dsds_attribute for rDN %s in %s\n",
 			 rdn, ldb_dn_get_linearized(msg->dn)));
 		return WERR_DS_DRA_INTERNAL_ERROR;
 	}
@@ -237,7 +279,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 		return WERR_NOMEM;
 	}
 	dom_sid_split_rid(NULL, &obj->object.identifier->sid, NULL, &rid);
-	
+
 	obj->meta_data_ctr->meta_data = talloc_array(obj, struct drsuapi_DsReplicaMetaData, md.ctr.ctr1.count);
 	for (n=i=0; i<md.ctr.ctr1.count; i++) {
 		const struct dsdb_attribute *sa;
@@ -254,10 +296,10 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 
 		sa = dsdb_attribute_by_attributeID_id(schema, md.ctr.ctr1.array[i].attid);
 		if (!sa) {
-			DEBUG(0,(__location__ ": Failed to find attribute in schema for attrid %u mentioned in replPropertyMetaData of %s\n", 
-				 (unsigned int)md.ctr.ctr1.array[i].attid, 
+			DEBUG(0,(__location__ ": Failed to find attribute in schema for attrid %u mentioned in replPropertyMetaData of %s\n",
+				 (unsigned int)md.ctr.ctr1.array[i].attid,
 				 ldb_dn_get_linearized(msg->dn)));
-			return WERR_DS_DRA_INTERNAL_ERROR;		
+			return WERR_DS_DRA_INTERNAL_ERROR;
 		}
 
 		if (sa->linkID) {
@@ -280,14 +322,19 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 		if (md.ctr.ctr1.array[i].attid != DRSUAPI_ATTID_instanceType &&
 		    !force_attribute &&
 		    udv_filter(uptodateness_vector,
-			       &md.ctr.ctr1.array[i].originating_invocation_id, 
+			       &md.ctr.ctr1.array[i].originating_invocation_id,
 			       md.ctr.ctr1.array[i].originating_usn)) {
 			continue;
 		}
 
 		/* filter by partial_attribute_set */
-		if (partial_attribute_set && !check_partial_attribute_set(sa, partial_attribute_set)) {
-			continue;
+		if (partial_attribute_set) {
+			uint32_t *result = NULL;
+			BINARY_ARRAY_SEARCH_V(local_pas, partial_attribute_set->num_attids, sa->attributeID_id,
+					      uint32_t_cmp, result);
+			if (result == NULL) {
+				continue;
+			}
 		}
 
 		obj->meta_data_ctr->meta_data[n].originating_change_time = md.ctr.ctr1.array[i].originating_change_time;
@@ -334,7 +381,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 		struct ldb_message_element *el;
 		WERROR werr;
 		const struct dsdb_attribute *sa;
-	
+
 		sa = dsdb_attribute_by_attributeID_id(schema, attids[i]);
 		if (!sa) {
 			DEBUG(0,("Unable to find attributeID %u in schema\n", attids[i]));
@@ -402,7 +449,8 @@ static WERROR get_nc_changes_add_la(TALLOC_CTX *mem_ctx,
 				    struct ldb_message *msg,
 				    struct dsdb_dn *dsdb_dn,
 				    struct drsuapi_DsReplicaLinkedAttribute **la_list,
-				    uint32_t *la_count)
+				    uint32_t *la_count,
+				    bool is_schema_nc)
 {
 	struct drsuapi_DsReplicaLinkedAttribute *la;
 	bool active;
@@ -474,7 +522,7 @@ static WERROR get_nc_changes_add_la(TALLOC_CTX *mem_ctx,
 			return WERR_OK;
 		}
 	}
-	la->attid = sa->attributeID_id;
+	la->attid = dsdb_attribute_get_attid(sa, is_schema_nc);
 	la->flags = active?DRSUAPI_DS_LINKED_ATTRIBUTE_FLAG_ACTIVE:0;
 
 	status = dsdb_get_extended_dn_uint32(dsdb_dn->dn, &la->meta_data.version, "RMD_VERSION");
@@ -523,6 +571,7 @@ static WERROR get_nc_changes_add_la(TALLOC_CTX *mem_ctx,
 static WERROR get_nc_changes_add_links(struct ldb_context *sam_ctx,
 				       TALLOC_CTX *mem_ctx,
 				       struct ldb_dn *ncRoot_dn,
+				       bool is_schema_nc,
 				       struct dsdb_schema *schema,
 				       uint64_t highest_usn,
 				       uint32_t replica_flags,
@@ -586,8 +635,9 @@ static WERROR get_nc_changes_add_links(struct ldb_context *sam_ctx,
 				continue;
 			}
 
-			werr = get_nc_changes_add_la(mem_ctx, sam_ctx, schema, sa, msg,
-						     dsdb_dn, la_list, la_count);
+			werr = get_nc_changes_add_la(mem_ctx, sam_ctx, schema,
+						     sa, msg, dsdb_dn, la_list,
+						     la_count, is_schema_nc);
 			if (!W_ERROR_IS_OK(werr)) {
 				talloc_free(tmp_ctx);
 				return werr;
@@ -618,75 +668,36 @@ static WERROR get_nc_changes_udv(struct ldb_context *sam_ctx,
 			 ldb_dn_get_linearized(ncRoot_dn), ldb_errstring(sam_ctx)));
 		return WERR_DS_DRA_INTERNAL_ERROR;
 	}
-	
+
 	return WERR_OK;
 }
 
 
 /* comparison function for linked attributes - see CompareLinks() in
  * MS-DRSR section 4.1.10.5.17 */
-static int linked_attribute_compare(const struct drsuapi_DsReplicaLinkedAttribute *la1,
-				    const struct drsuapi_DsReplicaLinkedAttribute *la2,
-				    struct ldb_context *sam_ctx)
+static int linked_attribute_compare(const struct la_for_sorting *la1,
+				    const struct la_for_sorting *la2,
+				    void *opaque)
 {
 	int c;
-	WERROR werr;
-	TALLOC_CTX *tmp_ctx;
-	const struct dsdb_schema *schema;
-	const struct dsdb_attribute *schema_attrib;
-	struct dsdb_dn *dn1, *dn2;
-	struct GUID guid1, guid2;
-	NTSTATUS status;
-
-	c = GUID_compare(&la1->identifier->guid,
-			 &la2->identifier->guid);
-	if (c != 0) return c;
-
-	if (la1->attid != la2->attid) {
-		return la1->attid < la2->attid? -1:1;
+	c = memcmp(la1->source_guid,
+		   la2->source_guid, sizeof(la2->source_guid));
+	if (c != 0) {
+		return c;
 	}
 
-	if ((la1->flags & DRSUAPI_DS_LINKED_ATTRIBUTE_FLAG_ACTIVE) !=
-	    (la2->flags & DRSUAPI_DS_LINKED_ATTRIBUTE_FLAG_ACTIVE)) {
-		return (la1->flags & DRSUAPI_DS_LINKED_ATTRIBUTE_FLAG_ACTIVE)? 1:-1;
+	if (la1->link->attid != la2->link->attid) {
+		return la1->link->attid < la2->link->attid? -1:1;
 	}
 
-	/* we need to get the target GUIDs to compare */
-	tmp_ctx = talloc_new(sam_ctx);
-
-	schema = dsdb_get_schema(sam_ctx, tmp_ctx);
-	schema_attrib = dsdb_attribute_by_attributeID_id(schema, la1->attid);
-
-	werr = dsdb_dn_la_from_blob(sam_ctx, schema_attrib, schema, tmp_ctx, la1->value.blob, &dn1);
-	if (!W_ERROR_IS_OK(werr)) {
-		DEBUG(0,(__location__ ": Bad la1 blob in sort\n"));
-		talloc_free(tmp_ctx);
-		return 0;
+	if ((la1->link->flags & DRSUAPI_DS_LINKED_ATTRIBUTE_FLAG_ACTIVE) !=
+	    (la2->link->flags & DRSUAPI_DS_LINKED_ATTRIBUTE_FLAG_ACTIVE)) {
+		return (la1->link->flags &
+			DRSUAPI_DS_LINKED_ATTRIBUTE_FLAG_ACTIVE)? 1:-1;
 	}
 
-	werr = dsdb_dn_la_from_blob(sam_ctx, schema_attrib, schema, tmp_ctx, la2->value.blob, &dn2);
-	if (!W_ERROR_IS_OK(werr)) {
-		DEBUG(0,(__location__ ": Bad la2 blob in sort\n"));
-		talloc_free(tmp_ctx);
-		return 0;
-	}
-
-	status = dsdb_get_extended_dn_guid(dn1->dn, &guid1, "GUID");
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,(__location__ ": Bad la1 guid in sort\n"));
-		talloc_free(tmp_ctx);
-		return 0;
-	}
-	status = dsdb_get_extended_dn_guid(dn2->dn, &guid2, "GUID");
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,(__location__ ": Bad la2 guid in sort\n"));
-		talloc_free(tmp_ctx);
-		return 0;
-	}
-
-	talloc_free(tmp_ctx);
-
-	return GUID_compare(&guid1, &guid2);
+	return memcmp(la1->target_guid,
+		      la2->target_guid, sizeof(la2->target_guid));
 }
 
 struct drsuapi_changed_objects {
@@ -742,9 +753,10 @@ static int site_res_cmp_usn_order(struct drsuapi_changed_objects *m1,
 static WERROR getncchanges_rid_alloc(struct drsuapi_bind_state *b_state,
 				     TALLOC_CTX *mem_ctx,
 				     struct drsuapi_DsGetNCChangesRequest10 *req10,
-				     struct drsuapi_DsGetNCChangesCtr6 *ctr6)
+				     struct drsuapi_DsGetNCChangesCtr6 *ctr6,
+				     struct ldb_dn **rid_manager_dn)
 {
-	struct ldb_dn *rid_manager_dn, *req_dn;
+	struct ldb_dn *req_dn, *ntds_dn = NULL;
 	int ret;
 	struct ldb_context *ldb = b_state->sam_ctx;
 	struct ldb_result *ext_res;
@@ -757,8 +769,8 @@ static WERROR getncchanges_rid_alloc(struct drsuapi_bind_state *b_state,
 	    - verify that we are the RID Manager
 	 */
 
-	/* work out who is the RID Manager */
-	ret = samdb_rid_manager_dn(ldb, mem_ctx, &rid_manager_dn);
+	/* work out who is the RID Manager, also return to caller */
+	ret = samdb_rid_manager_dn(ldb, mem_ctx, rid_manager_dn);
 	if (ret != LDB_SUCCESS) {
 		DEBUG(0, (__location__ ": Failed to find RID Manager object - %s\n", ldb_errstring(ldb)));
 		return WERR_DS_DRA_INTERNAL_ERROR;
@@ -766,7 +778,7 @@ static WERROR getncchanges_rid_alloc(struct drsuapi_bind_state *b_state,
 
 	req_dn = drs_ObjectIdentifier_to_dn(mem_ctx, ldb, req10->naming_context);
 	if (!ldb_dn_validate(req_dn) ||
-	    ldb_dn_compare(req_dn, rid_manager_dn) != 0) {
+	    ldb_dn_compare(req_dn, *rid_manager_dn) != 0) {
 		/* that isn't the RID Manager DN */
 		DEBUG(0,(__location__ ": RID Alloc request for wrong DN %s\n",
 			 drs_ObjectIdentifier_to_string(mem_ctx, req10->naming_context)));
@@ -774,8 +786,17 @@ static WERROR getncchanges_rid_alloc(struct drsuapi_bind_state *b_state,
 		return WERR_OK;
 	}
 
+	/* TODO: make sure ntds_dn is a valid nTDSDSA object */
+	ret = dsdb_find_dn_by_guid(ldb, mem_ctx, &req10->destination_dsa_guid, 0, &ntds_dn);
+	if (ret != LDB_SUCCESS) {
+		DEBUG(0, (__location__ ": Unable to find NTDS object for guid %s - %s\n",
+			  GUID_string(mem_ctx, &req10->destination_dsa_guid), ldb_errstring(ldb)));
+		ctr6->extended_ret = DRSUAPI_EXOP_ERR_UNKNOWN_CALLER;
+		return WERR_OK;
+	}
+
 	/* find the DN of the RID Manager */
-	ret = samdb_reference_dn_is_our_ntdsa(ldb, rid_manager_dn, "fSMORoleOwner", &is_us);
+	ret = samdb_reference_dn_is_our_ntdsa(ldb, *rid_manager_dn, "fSMORoleOwner", &is_us);
 	if (ret != LDB_SUCCESS) {
 		DEBUG(0,("Failed to find fSMORoleOwner in RID Manager object\n"));
 		ctr6->extended_ret = DRSUAPI_EXOP_ERR_FSMO_NOT_OWNER;
@@ -801,15 +822,6 @@ static WERROR getncchanges_rid_alloc(struct drsuapi_bind_state *b_state,
 			 ldb_errstring(ldb)));
 		return WERR_DS_DRA_INTERNAL_ERROR;
 	}
-
-	/*
-	 * FIXME (kim): this is a temp hack to return just few object,
-	 * but not the whole domain NC.
-	 * We should remove this hack and implement a 'scope'
-	 * building function to return just the set of object
-	 * documented for DRSUAPI_EXOP_FSMO_RID_ALLOC extended_op
-	 */
-	ldb_sequence_number(ldb, LDB_SEQ_HIGHEST_SEQ, &req10->highwatermark.highest_usn);
 
 	ret = ldb_extended(ldb, DSDB_EXTENDED_ALLOCATE_RID_POOL, exop, &ext_res);
 	if (ret != LDB_SUCCESS) {
@@ -1212,11 +1224,13 @@ static WERROR getncchanges_change_master(struct drsuapi_bind_state *b_state,
  */
 static WERROR dcesrv_drsuapi_is_reveal_secrets_request(struct drsuapi_bind_state *b_state,
 						       struct drsuapi_DsGetNCChangesRequest10 *req10,
+						       struct dsdb_schema_prefixmap *pfm_remote,
 						       bool *is_secret_request)
 {
 	enum drsuapi_DsExtendedOperation exop;
 	uint32_t i;
 	struct dsdb_schema *schema;
+	struct dsdb_syntax_ctx syntax_ctx;
 
 	*is_secret_request = true;
 
@@ -1250,14 +1264,24 @@ static WERROR dcesrv_drsuapi_is_reveal_secrets_request(struct drsuapi_bind_state
 	}
 
 	schema = dsdb_get_schema(b_state->sam_ctx, NULL);
+	dsdb_syntax_ctx_init(&syntax_ctx, b_state->sam_ctx, schema);
+	syntax_ctx.pfm_remote = pfm_remote;
 
 	/* check the attributes they asked for */
 	for (i=0; i<req10->partial_attribute_set->num_attids; i++) {
 		const struct dsdb_attribute *sa;
-		sa = dsdb_attribute_by_attributeID_id(schema, req10->partial_attribute_set->attids[i]);
-		if (sa == NULL) {
-			return WERR_DS_DRA_SCHEMA_MISMATCH;
+		WERROR werr = getncchanges_attid_remote_to_local(schema,
+								 &syntax_ctx,
+								 req10->partial_attribute_set->attids[i],
+								 NULL,
+								 &sa);
+
+		if (!W_ERROR_IS_OK(werr)) {
+			DEBUG(0,(__location__": attid 0x%08X not found: %s\n",
+				 req10->partial_attribute_set->attids[i], win_errstr(werr)));
+			return werr;
 		}
+
 		if (!dsdb_attr_in_rodc_fas(sa)) {
 			*is_secret_request = true;
 			return WERR_OK;
@@ -1268,10 +1292,18 @@ static WERROR dcesrv_drsuapi_is_reveal_secrets_request(struct drsuapi_bind_state
 		/* check the extended attributes they asked for */
 		for (i=0; i<req10->partial_attribute_set_ex->num_attids; i++) {
 			const struct dsdb_attribute *sa;
-			sa = dsdb_attribute_by_attributeID_id(schema, req10->partial_attribute_set_ex->attids[i]);
-			if (sa == NULL) {
-				return WERR_DS_DRA_SCHEMA_MISMATCH;
+			WERROR werr = getncchanges_attid_remote_to_local(schema,
+									 &syntax_ctx,
+									 req10->partial_attribute_set_ex->attids[i],
+									 NULL,
+									 &sa);
+
+			if (!W_ERROR_IS_OK(werr)) {
+				DEBUG(0,(__location__": attid 0x%08X not found: %s\n",
+					 req10->partial_attribute_set_ex->attids[i], win_errstr(werr)));
+				return werr;
 			}
+
 			if (!dsdb_attr_in_rodc_fas(sa)) {
 				*is_secret_request = true;
 				return WERR_OK;
@@ -1289,11 +1321,13 @@ static WERROR dcesrv_drsuapi_is_reveal_secrets_request(struct drsuapi_bind_state
  */
 static WERROR dcesrv_drsuapi_is_gc_pas_request(struct drsuapi_bind_state *b_state,
 					       struct drsuapi_DsGetNCChangesRequest10 *req10,
+					       struct dsdb_schema_prefixmap *pfm_remote,
 					       bool *is_gc_pas_request)
 {
 	enum drsuapi_DsExtendedOperation exop;
 	uint32_t i;
 	struct dsdb_schema *schema;
+	struct dsdb_syntax_ctx syntax_ctx;
 
 	exop = req10->extended_op;
 
@@ -1318,14 +1352,24 @@ static WERROR dcesrv_drsuapi_is_gc_pas_request(struct drsuapi_bind_state *b_stat
 	}
 
 	schema = dsdb_get_schema(b_state->sam_ctx, NULL);
+	dsdb_syntax_ctx_init(&syntax_ctx, b_state->sam_ctx, schema);
+	syntax_ctx.pfm_remote = pfm_remote;
 
 	/* check the attributes they asked for */
 	for (i=0; i<req10->partial_attribute_set->num_attids; i++) {
 		const struct dsdb_attribute *sa;
-		sa = dsdb_attribute_by_attributeID_id(schema, req10->partial_attribute_set->attids[i]);
-		if (sa == NULL) {
-			return WERR_DS_DRA_SCHEMA_MISMATCH;
+		WERROR werr = getncchanges_attid_remote_to_local(schema,
+								 &syntax_ctx,
+								 req10->partial_attribute_set->attids[i],
+								 NULL,
+								 &sa);
+
+		if (!W_ERROR_IS_OK(werr)) {
+			DEBUG(0,(__location__": attid 0x%08X not found: %s\n",
+				 req10->partial_attribute_set->attids[i], win_errstr(werr)));
+			return werr;
 		}
+
 		if (!sa->isMemberOfPartialAttributeSet) {
 			*is_gc_pas_request = false;
 			return WERR_OK;
@@ -1336,10 +1380,18 @@ static WERROR dcesrv_drsuapi_is_gc_pas_request(struct drsuapi_bind_state *b_stat
 		/* check the extended attributes they asked for */
 		for (i=0; i<req10->partial_attribute_set_ex->num_attids; i++) {
 			const struct dsdb_attribute *sa;
-			sa = dsdb_attribute_by_attributeID_id(schema, req10->partial_attribute_set_ex->attids[i]);
-			if (sa == NULL) {
-				return WERR_DS_DRA_SCHEMA_MISMATCH;
+			WERROR werr = getncchanges_attid_remote_to_local(schema,
+									 &syntax_ctx,
+									 req10->partial_attribute_set_ex->attids[i],
+									 NULL,
+									 &sa);
+
+			if (!W_ERROR_IS_OK(werr)) {
+				DEBUG(0,(__location__": attid 0x%08X not found: %s\n",
+					 req10->partial_attribute_set_ex->attids[i], win_errstr(werr)));
+				return werr;
 			}
+
 			if (!sa->isMemberOfPartialAttributeSet) {
 				*is_gc_pas_request = false;
 				return WERR_OK;
@@ -1382,6 +1434,9 @@ getncchanges_map_req8(TALLOC_CTX *mem_ctx,
 	return req10;
 }
 
+static const char *collect_objects_attrs[] = { "uSNChanged",
+					       "objectGUID" ,
+					       NULL };
 
 /**
  * Collects object for normal replication cycle.
@@ -1398,9 +1453,6 @@ static WERROR getncchanges_collect_objects(struct drsuapi_bind_state *b_state,
 	enum ldb_scope scope = LDB_SCOPE_SUBTREE;
 	//const char *extra_filter;
 	struct drsuapi_getncchanges_state *getnc_state = b_state->getncchanges_state;
-	const char *attrs[] = { "uSNChanged",
-				"objectGUID" ,
-				NULL };
 
 	if (req10->extended_op == DRSUAPI_EXOP_REPL_OBJ ||
 	    req10->extended_op == DRSUAPI_EXOP_REPL_SECRET) {
@@ -1437,7 +1489,8 @@ static WERROR getncchanges_collect_objects(struct drsuapi_bind_state *b_state,
 	DEBUG(2,(__location__ ": getncchanges on %s using filter %s\n",
 		 ldb_dn_get_linearized(getnc_state->ncRoot_dn), search_filter));
 	ret = drsuapi_search_with_extended_dn(b_state->sam_ctx, getnc_state, search_res,
-					      search_dn, scope, attrs,
+					      search_dn, scope,
+					      collect_objects_attrs,
 					      search_filter);
 	if (ret != LDB_SUCCESS) {
 		return WERR_DS_DRA_INTERNAL_ERROR;
@@ -1462,10 +1515,156 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 		return WERR_OK;
 	}
 
-	/* TODO: implement extended op specific collection
-	 * of objects. Right now we just normal procedure
-	 * for collecting objects */
-	return getncchanges_collect_objects(b_state, mem_ctx, req10, search_dn, extra_filter, search_res);
+	switch (req10->extended_op) {
+	case DRSUAPI_EXOP_FSMO_RID_ALLOC:
+	{
+		int ret;
+		struct ldb_dn *ntds_dn = NULL;
+		struct ldb_dn *server_dn = NULL;
+		struct ldb_dn *machine_dn = NULL;
+		struct ldb_dn *rid_set_dn = NULL;
+		struct ldb_result *search_res2 = NULL;
+		struct ldb_result *search_res3 = NULL;
+		TALLOC_CTX *frame = talloc_stackframe();
+		/* get RID manager, RID set and server DN (in that order) */
+
+		/* This first search will get the RID Manager */
+		ret = drsuapi_search_with_extended_dn(b_state->sam_ctx, frame,
+						      search_res,
+						      search_dn, LDB_SCOPE_BASE,
+						      collect_objects_attrs,
+						      NULL);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Manager object %s - %s",
+				  ldb_dn_get_linearized(search_dn),
+				  ldb_errstring(b_state->sam_ctx)));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		if ((*search_res)->count != 1) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Manager object %s - %u objects returned",
+				  ldb_dn_get_linearized(search_dn),
+				  (*search_res)->count));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		/* Now extend it to the RID set */
+
+		/* Find the computer account DN for the destination
+		 * dsa GUID specified */
+
+		ret = dsdb_find_dn_by_guid(b_state->sam_ctx, frame,
+					   &req10->destination_dsa_guid, 0,
+					   &ntds_dn);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Unable to find NTDS object for guid %s - %s\n",
+				  GUID_string(frame,
+					      &req10->destination_dsa_guid),
+				  ldb_errstring(b_state->sam_ctx)));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		server_dn = ldb_dn_get_parent(frame, ntds_dn);
+		if (!server_dn) {
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		ret = samdb_reference_dn(b_state->sam_ctx, frame, server_dn,
+					 "serverReference", &machine_dn);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to find serverReference in %s - %s",
+				  ldb_dn_get_linearized(server_dn),
+				  ldb_errstring(b_state->sam_ctx)));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		ret = samdb_reference_dn(b_state->sam_ctx, frame, machine_dn,
+					 "rIDSetReferences", &rid_set_dn);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to find rIDSetReferences in %s - %s",
+				  ldb_dn_get_linearized(server_dn),
+				  ldb_errstring(b_state->sam_ctx)));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+
+		/* This first search will get the RID Manager, now get the RID set */
+		ret = drsuapi_search_with_extended_dn(b_state->sam_ctx, frame,
+						      &search_res2,
+						      rid_set_dn, LDB_SCOPE_BASE,
+						      collect_objects_attrs,
+						      NULL);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Set object %s - %s",
+				  ldb_dn_get_linearized(rid_set_dn),
+				  ldb_errstring(b_state->sam_ctx)));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		if (search_res2->count != 1) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Set object %s - %u objects returned",
+				  ldb_dn_get_linearized(rid_set_dn),
+				  search_res2->count));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		/* Finally get the server DN */
+		ret = drsuapi_search_with_extended_dn(b_state->sam_ctx, frame,
+						      &search_res3,
+						      machine_dn, LDB_SCOPE_BASE,
+						      collect_objects_attrs,
+						      NULL);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get server object %s - %s",
+				  ldb_dn_get_linearized(server_dn),
+				  ldb_errstring(b_state->sam_ctx)));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		if (search_res3->count != 1) {
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get server object %s - %u objects returned",
+				  ldb_dn_get_linearized(server_dn),
+				  search_res3->count));
+			TALLOC_FREE(frame);
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+
+		/* Now extend the original search_res with these answers */
+		(*search_res)->count = 3;
+
+		(*search_res)->msgs = talloc_realloc(frame, (*search_res)->msgs,
+						     struct ldb_message *,
+						     (*search_res)->count);
+		if ((*search_res)->msgs == NULL) {
+			TALLOC_FREE(frame);
+			return WERR_NOMEM;
+		}
+
+
+		talloc_steal(mem_ctx, *search_res);
+		(*search_res)->msgs[1] =
+			talloc_steal((*search_res)->msgs, search_res2->msgs[0]);
+		(*search_res)->msgs[2] =
+			talloc_steal((*search_res)->msgs, search_res3->msgs[0]);
+
+		TALLOC_FREE(frame);
+		return WERR_OK;
+	}
+	default:
+		/* TODO: implement extended op specific collection
+		 * of objects. Right now we just normal procedure
+		 * for collecting objects */
+		return getncchanges_collect_objects(b_state, mem_ctx, req10, search_dn, extra_filter, search_res);
+	}
 }
 
 /* 
@@ -1478,7 +1677,7 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 {
 	struct drsuapi_DsReplicaObjectIdentifier *ncRoot;
 	int ret;
-	uint32_t i;
+	uint32_t i, k;
 	struct dsdb_schema *schema;
 	struct drsuapi_DsReplicaOIDMapping_Ctr *ctr;
 	struct drsuapi_DsReplicaObjectListItemEx **currentObject;
@@ -1486,7 +1685,7 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 	DATA_BLOB session_key;
 	WERROR werr;
 	struct dcesrv_handle *h;
-	struct drsuapi_bind_state *b_state;	
+	struct drsuapi_bind_state *b_state;
 	struct drsuapi_getncchanges_state *getnc_state;
 	struct drsuapi_DsGetNCChangesRequest10 *req10;
 	uint32_t options;
@@ -1508,6 +1707,10 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 	bool max_wait_reached = false;
 	bool has_get_all_changes = false;
 	struct GUID invocation_id;
+	static const struct drsuapi_DsReplicaLinkedAttribute no_linked_attr;
+	struct dsdb_schema_prefixmap *pfm_remote = NULL;
+	bool full = true;
+	uint32_t *local_pas = NULL;
 
 	DCESRV_PULL_HANDLE_WERR(h, r->in.bind_handle, DRSUAPI_BIND_HANDLE);
 	b_state = h->data;
@@ -1519,12 +1722,15 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 	*r->out.level_out = 6;
 	/* TODO: linked attributes*/
 	r->out.ctr->ctr6.linked_attributes_count = 0;
-	r->out.ctr->ctr6.linked_attributes = NULL;
+	r->out.ctr->ctr6.linked_attributes = discard_const_p(struct drsuapi_DsReplicaLinkedAttribute, &no_linked_attr);
 
 	r->out.ctr->ctr6.object_count = 0;
 	r->out.ctr->ctr6.nc_object_count = 0;
 	r->out.ctr->ctr6.more_data = false;
 	r->out.ctr->ctr6.uptodateness_vector = NULL;
+	r->out.ctr->ctr6.source_dsa_guid = *(samdb_ntds_objectGUID(sam_ctx));
+	r->out.ctr->ctr6.source_dsa_invocation_id = *(samdb_ntds_invocation_id(sam_ctx));
+	r->out.ctr->ctr6.first_object = NULL;
 
 	/* a RODC doesn't allow for any replication */
 	ret = samdb_rodc(sam_ctx, &am_rodc);
@@ -1564,7 +1770,7 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 	if (samdb_ntds_options(sam_ctx, &options) != LDB_SUCCESS) {
 		return WERR_DS_DRA_INTERNAL_ERROR;
 	}
-	
+
 	if ((options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) &&
 	    !(req10->replica_flags & DRSUAPI_DRS_SYNC_FORCED)) {
 		return WERR_DS_DRA_SOURCE_DISABLED;
@@ -1582,9 +1788,35 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 		return werr;
 	}
 
+	if (dsdb_functional_level(sam_ctx) >= DS_DOMAIN_FUNCTION_2008) {
+		full = req10->partial_attribute_set == NULL &&
+		       req10->partial_attribute_set_ex == NULL;
+	} else {
+		full = (options & DRSUAPI_DRS_WRIT_REP) != 0;
+	}
+
+	werr = dsdb_schema_pfm_from_drsuapi_pfm(&req10->mapping_ctr, true,
+						mem_ctx, &pfm_remote, NULL);
+
+	/* We were supplied a partial attribute set, without the prefix map! */
+	if (!full && !W_ERROR_IS_OK(werr)) {
+		if (req10->mapping_ctr.num_mappings == 0) {
+			/*
+			 * Despite the fact MS-DRSR specifies that this shouldn't
+			 * happen, Windows RODCs will in fact not provide a prefixMap.
+			 */
+			DEBUG(5,(__location__ ": Failed to provide a remote prefixMap,"
+				 " falling back to local prefixMap\n"));
+		} else {
+			DEBUG(0,(__location__ ": Failed to decode remote prefixMap: %s\n",
+				 win_errstr(werr)));
+			return werr;
+		}
+	}
+
 	/* allowed if the GC PAS and client has
 	   GUID_DRS_GET_FILTERED_ATTRIBUTES */
-	werr = dcesrv_drsuapi_is_gc_pas_request(b_state, req10, &is_gc_pas_request);
+	werr = dcesrv_drsuapi_is_gc_pas_request(b_state, req10, pfm_remote, &is_gc_pas_request);
 	if (!W_ERROR_IS_OK(werr)) {
 		return werr;
 	}
@@ -1599,7 +1831,9 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 		}
 	}
 
-	werr = dcesrv_drsuapi_is_reveal_secrets_request(b_state, req10, &is_secret_request);
+	werr = dcesrv_drsuapi_is_reveal_secrets_request(b_state, req10,
+							pfm_remote,
+							&is_secret_request);
 	if (!W_ERROR_IS_OK(werr)) {
 		return werr;
 	}
@@ -1631,7 +1865,7 @@ allowed:
 	if (req10->replica_flags & DRSUAPI_DRS_FULL_SYNC_PACKET) {
 		/* Ignore the _in_ uptpdateness vector*/
 		req10->uptodateness_vector = NULL;
-	} 
+	}
 
 	if (GUID_all_zero(&req10->source_dsa_invocation_id)) {
 		req10->source_dsa_invocation_id = invocation_id;
@@ -1683,8 +1917,9 @@ allowed:
 		getnc_state->ncRoot_dn = drs_ObjectIdentifier_to_dn(getnc_state, sam_ctx, ncRoot);
 
 		/* find out if we are to replicate Schema NC */
-		ret = ldb_dn_compare(getnc_state->ncRoot_dn,
-				     ldb_get_schema_basedn(b_state->sam_ctx));
+		ret = ldb_dn_compare_base(ldb_get_schema_basedn(b_state->sam_ctx),
+					  getnc_state->ncRoot_dn);
+
 		getnc_state->is_schema_nc = (0 == ret);
 
 		if (req10->extended_op != DRSUAPI_EXOP_NONE) {
@@ -1701,9 +1936,11 @@ allowed:
 		case DRSUAPI_EXOP_NONE:
 			break;
 		case DRSUAPI_EXOP_FSMO_RID_ALLOC:
-			werr = getncchanges_rid_alloc(b_state, mem_ctx, req10, &r->out.ctr->ctr6);
+			werr = getncchanges_rid_alloc(b_state, mem_ctx, req10, &r->out.ctr->ctr6, &search_dn);
 			W_ERROR_NOT_OK_RETURN(werr);
-			search_dn = ldb_get_default_basedn(sam_ctx);
+			if (r->out.ctr->ctr6.extended_ret != DRSUAPI_EXOP_ERR_SUCCESS) {
+				return WERR_OK;
+			}
 			break;
 		case DRSUAPI_EXOP_REPL_SECRET:
 			werr = getncchanges_repl_secret(b_state, mem_ctx, req10,
@@ -1716,14 +1953,23 @@ allowed:
 		case DRSUAPI_EXOP_FSMO_REQ_ROLE:
 			werr = getncchanges_change_master(b_state, mem_ctx, req10, &r->out.ctr->ctr6);
 			W_ERROR_NOT_OK_RETURN(werr);
+			if (r->out.ctr->ctr6.extended_ret != DRSUAPI_EXOP_ERR_SUCCESS) {
+				return WERR_OK;
+			}
 			break;
 		case DRSUAPI_EXOP_FSMO_RID_REQ_ROLE:
 			werr = getncchanges_change_master(b_state, mem_ctx, req10, &r->out.ctr->ctr6);
 			W_ERROR_NOT_OK_RETURN(werr);
+			if (r->out.ctr->ctr6.extended_ret != DRSUAPI_EXOP_ERR_SUCCESS) {
+				return WERR_OK;
+			}
 			break;
 		case DRSUAPI_EXOP_FSMO_REQ_PDC:
 			werr = getncchanges_change_master(b_state, mem_ctx, req10, &r->out.ctr->ctr6);
 			W_ERROR_NOT_OK_RETURN(werr);
+			if (r->out.ctr->ctr6.extended_ret != DRSUAPI_EXOP_ERR_SUCCESS) {
+				return WERR_OK;
+			}
 			break;
 		case DRSUAPI_EXOP_REPL_OBJ:
 			werr = getncchanges_repl_obj(b_state, mem_ctx, req10, user_sid, &r->out.ctr->ctr6);
@@ -1750,7 +1996,7 @@ allowed:
 	status = dcesrv_inherited_session_key(dce_call->conn, &session_key);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(0,(__location__ ": Failed to get session key\n"));
-		return WERR_DS_DRA_INTERNAL_ERROR;		
+		return WERR_DS_DRA_INTERNAL_ERROR;
 	}
 
 	/* 
@@ -1809,7 +2055,10 @@ allowed:
 			}
 		}
 
-		if (req10->replica_flags & DRSUAPI_DRS_GET_ANC) {
+		/* RID_ALLOC returns 3 objects in a fixed order */
+		if (req10->extended_op == DRSUAPI_EXOP_FSMO_RID_ALLOC) {
+			/* Do nothing */
+		} else if (req10->replica_flags & DRSUAPI_DRS_GET_ANC) {
 			LDB_TYPESAFE_QSORT(changes,
 					   getnc_state->num_records,
 					   getnc_state,
@@ -1874,15 +2123,21 @@ allowed:
 	r->out.ctr->ctr6.old_highwatermark = req10->highwatermark;
 	r->out.ctr->ctr6.new_highwatermark = req10->highwatermark;
 
-	r->out.ctr->ctr6.first_object = NULL;
 	currentObject = &r->out.ctr->ctr6.first_object;
 
-	/* use this to force single objects at a time, which is useful
-	 * for working out what object is giving problems
-	 */
 	max_objects = lpcfg_parm_int(dce_call->conn->dce_ctx->lp_ctx, NULL, "drs", "max object sync", 1000);
-	if (req10->max_object_count < max_objects) {
-		max_objects = req10->max_object_count;
+	/*
+	 * The client control here only applies in normal replication, not extended
+	 * operations, which return a fixed set, even if the caller
+	 * sets max_object_count == 0
+	 */
+	if (req10->extended_op == DRSUAPI_EXOP_NONE) {
+		/* use this to force single objects at a time, which is useful
+		 * for working out what object is giving problems
+		 */
+		if (req10->max_object_count < max_objects) {
+			max_objects = req10->max_object_count;
+		}
 	}
 	/*
 	 * TODO: work out how the maximum should be calculated
@@ -1895,6 +2150,30 @@ allowed:
 	 * 10 seconds by default.
 	 */
 	max_wait = lpcfg_parm_int(dce_call->conn->dce_ctx->lp_ctx, NULL, "drs", "max work time", 10);
+
+	if (req10->partial_attribute_set != NULL) {
+		struct dsdb_syntax_ctx syntax_ctx;
+		uint32_t j = 0;
+
+		dsdb_syntax_ctx_init(&syntax_ctx, b_state->sam_ctx, schema);
+		syntax_ctx.pfm_remote = pfm_remote;
+
+		local_pas = talloc_array(b_state, uint32_t, req10->partial_attribute_set->num_attids);
+
+		for (j = 0; j < req10->partial_attribute_set->num_attids; j++) {
+			getncchanges_attid_remote_to_local(schema,
+							   &syntax_ctx,
+							   req10->partial_attribute_set->attids[j],
+							   (enum drsuapi_DsAttributeId *)&local_pas[j],
+							   NULL);
+		}
+
+		LDB_TYPESAFE_QSORT(local_pas,
+				   req10->partial_attribute_set->num_attids,
+				   NULL,
+				   uint32_t_ptr_cmp);
+	}
+
 	for (i=getnc_state->num_processed;
 	     i<getnc_state->num_records &&
 		     !null_scope &&
@@ -1948,13 +2227,15 @@ allowed:
 						   req10->partial_attribute_set,
 						   req10->uptodateness_vector,
 						   req10->extended_op,
-						   max_wait_reached);
+						   max_wait_reached,
+						   local_pas);
 		if (!W_ERROR_IS_OK(werr)) {
 			return werr;
 		}
 
 		werr = get_nc_changes_add_links(sam_ctx, getnc_state,
 						getnc_state->ncRoot_dn,
+						getnc_state->is_schema_nc,
 						schema, getnc_state->min_usn,
 						req10->replica_flags,
 						msg,
@@ -1992,7 +2273,7 @@ allowed:
 		}
 
 		r->out.ctr->ctr6.object_count++;
-		
+
 		*currentObject = obj;
 		currentObject = &obj->next_object;
 
@@ -2058,17 +2339,76 @@ allowed:
 		r->out.ctr->ctr6.more_data = true;
 	} else {
 		/* sort the whole array the first time */
-		if (!getnc_state->la_sorted) {
-			LDB_TYPESAFE_QSORT(getnc_state->la_list, getnc_state->la_count,
-					   sam_ctx, linked_attribute_compare);
-			getnc_state->la_sorted = true;
+		if (getnc_state->la_sorted == NULL) {
+			int j;
+			struct la_for_sorting *guid_array = talloc_array(getnc_state, struct la_for_sorting, getnc_state->la_count);
+			if (guid_array == NULL) {
+				DEBUG(0, ("Out of memory allocating %u linked attributes for sorting", getnc_state->la_count));
+				return WERR_NOMEM;
+			}
+			for (j = 0; j < getnc_state->la_count; j++) {
+				/* we need to get the target GUIDs to compare */
+				struct dsdb_dn *dn;
+				const struct drsuapi_DsReplicaLinkedAttribute *la = &getnc_state->la_list[j];
+				const struct dsdb_attribute *schema_attrib;
+				const struct ldb_val *target_guid;
+				DATA_BLOB source_guid;
+				TALLOC_CTX *frame = talloc_stackframe();
+
+				schema_attrib = dsdb_attribute_by_attributeID_id(schema, la->attid);
+
+				werr = dsdb_dn_la_from_blob(sam_ctx, schema_attrib, schema, frame, la->value.blob, &dn);
+				if (!W_ERROR_IS_OK(werr)) {
+					DEBUG(0,(__location__ ": Bad la blob in sort\n"));
+					TALLOC_FREE(frame);
+					return werr;
+				}
+
+				/* Extract the target GUID in NDR form */
+				target_guid = ldb_dn_get_extended_component(dn->dn, "GUID");
+				if (target_guid == NULL
+				    || target_guid->length != sizeof(guid_array[0].target_guid)) {
+					status = NT_STATUS_OBJECT_NAME_NOT_FOUND;
+				} else {
+					/* Repack the source GUID as NDR for sorting */
+					status = GUID_to_ndr_blob(&la->identifier->guid,
+								  frame,
+								  &source_guid);
+				}
+
+				if (!NT_STATUS_IS_OK(status)
+				    || source_guid.length != sizeof(guid_array[0].source_guid)) {
+					DEBUG(0,(__location__ ": Bad la guid in sort\n"));
+					TALLOC_FREE(frame);
+					return ntstatus_to_werror(status);
+				}
+
+				guid_array[j].link = &getnc_state->la_list[j];
+				memcpy(guid_array[j].target_guid, target_guid->data,
+				       sizeof(guid_array[j].target_guid));
+				memcpy(guid_array[j].source_guid, source_guid.data,
+				       sizeof(guid_array[j].source_guid));
+				TALLOC_FREE(frame);
+			}
+
+			LDB_TYPESAFE_QSORT(guid_array, getnc_state->la_count, NULL, linked_attribute_compare);
+			getnc_state->la_sorted = guid_array;
 		}
 
 		link_count = getnc_state->la_count - getnc_state->la_idx;
 		link_count = MIN(max_links, link_count);
 
 		r->out.ctr->ctr6.linked_attributes_count = link_count;
-		r->out.ctr->ctr6.linked_attributes = getnc_state->la_list + getnc_state->la_idx;
+		r->out.ctr->ctr6.linked_attributes = talloc_array(r->out.ctr, struct drsuapi_DsReplicaLinkedAttribute, link_count);
+		if (r->out.ctr->ctr6.linked_attributes == NULL) {
+			DEBUG(0, ("Out of memory allocating %u linked attributes for output", link_count));
+			return WERR_NOMEM;
+		}
+
+		for (k = 0; k < link_count; k++) {
+			r->out.ctr->ctr6.linked_attributes[k]
+				= *getnc_state->la_sorted[getnc_state->la_idx + k].link;
+		}
 
 		getnc_state->la_idx += link_count;
 		link_given = getnc_state->la_idx;

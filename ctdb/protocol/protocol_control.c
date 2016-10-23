@@ -49,6 +49,7 @@ struct ctdb_reply_control_wire {
 static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 {
 	size_t len = 0;
+	uint64_t u64;
 
 	if (cd == NULL) {
 		return 0;
@@ -157,9 +158,6 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 	case CTDB_CONTROL_FREEZE:
 		break;
 
-	case CTDB_CONTROL_THAW:
-		break;
-
 	case CTDB_CONTROL_GET_PNN:
 		break;
 
@@ -202,31 +200,12 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 	case CTDB_CONTROL_GET_ALL_TUNABLES:
 		break;
 
-	case CTDB_CONTROL_KILL_TCP:
-		len = ctdb_connection_len(cd->data.conn);
-		break;
-
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		len = ctdb_sock_addr_len(cd->data.addr);
 		break;
 
 	case CTDB_CONTROL_SET_TCP_TICKLE_LIST:
 		len = ctdb_tickle_list_len(cd->data.tickles);
-		break;
-
-	case CTDB_CONTROL_REGISTER_SERVER_ID:
-		len = ctdb_client_id_len(cd->data.cid);
-		break;
-
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
-		len = ctdb_client_id_len(cd->data.cid);
-		break;
-
-	case CTDB_CONTROL_CHECK_SERVER_ID:
-		len = ctdb_client_id_len(cd->data.cid);
-		break;
-
-	case CTDB_CONTROL_GET_SERVER_ID_LIST:
 		break;
 
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
@@ -239,14 +218,6 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 
 	case CTDB_CONTROL_SEND_GRATUITOUS_ARP:
 		len = ctdb_addr_info_len(cd->data.addr_info);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_START:
-		len = ctdb_uint32_len(cd->data.tid);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_COMMIT:
-		len = ctdb_uint32_len(cd->data.tid);
 		break;
 
 	case CTDB_CONTROL_WIPE_DATABASE:
@@ -322,18 +293,10 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 	case CTDB_CONTROL_GET_RECLOCK_FILE:
 		break;
 
-	case CTDB_CONTROL_SET_RECLOCK_FILE:
-		len = ctdb_string_len(cd->data.reclock_file);
-		break;
-
 	case CTDB_CONTROL_STOP_NODE:
 		break;
 
 	case CTDB_CONTROL_CONTINUE_NODE:
-		break;
-
-	case CTDB_CONTROL_SET_NATGWSTATE:
-		len = ctdb_uint32_len(cd->data.role);
 		break;
 
 	case CTDB_CONTROL_SET_LMASTERROLE:
@@ -359,17 +322,6 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 	case CTDB_CONTROL_GET_BAN_STATE:
 		break;
 
-	case CTDB_CONTROL_SET_DB_PRIORITY:
-		len = ctdb_db_priority_len(cd->data.db_prio);
-		break;
-
-	case CTDB_CONTROL_GET_DB_PRIORITY:
-		len = ctdb_uint32_len(cd->data.db_id);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_CANCEL:
-		break;
-
 	case CTDB_CONTROL_REGISTER_NOTIFY:
 		len = ctdb_notify_data_len(cd->data.notify);
 		break;
@@ -383,7 +335,8 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 		break;
 
 	case CTDB_CONTROL_GET_DB_SEQNUM:
-		len = ctdb_uint64_len((uint64_t)cd->data.db_id);
+		u64 = cd->data.db_id;
+		len = ctdb_uint64_len(u64);
 		break;
 
 	case CTDB_CONTROL_DB_SET_HEALTHY:
@@ -499,6 +452,8 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 				       uint8_t *buf)
 {
+	uint64_t u64;
+
 	switch (cd->opcode) {
 	case CTDB_CONTROL_PROCESS_EXISTS:
 		ctdb_pid_push(cd->data.pid, buf);
@@ -587,28 +542,12 @@ static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 		ctdb_node_flag_change_push(cd->data.flag_change, buf);
 		break;
 
-	case CTDB_CONTROL_KILL_TCP:
-		ctdb_connection_push(cd->data.conn, buf);
-		break;
-
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		ctdb_sock_addr_push(cd->data.addr, buf);
 		break;
 
 	case CTDB_CONTROL_SET_TCP_TICKLE_LIST:
 		ctdb_tickle_list_push(cd->data.tickles, buf);
-		break;
-
-	case CTDB_CONTROL_REGISTER_SERVER_ID:
-		ctdb_client_id_push(cd->data.cid, buf);
-		break;
-
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
-		ctdb_client_id_push(cd->data.cid, buf);
-		break;
-
-	case CTDB_CONTROL_CHECK_SERVER_ID:
-		ctdb_client_id_push(cd->data.cid, buf);
 		break;
 
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
@@ -621,14 +560,6 @@ static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 
 	case CTDB_CONTROL_SEND_GRATUITOUS_ARP:
 		ctdb_addr_info_push(cd->data.addr_info, buf);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_START:
-		ctdb_uint32_push(cd->data.tid, buf);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_COMMIT:
-		ctdb_uint32_push(cd->data.tid, buf);
 		break;
 
 	case CTDB_CONTROL_WIPE_DATABASE:
@@ -671,14 +602,6 @@ static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 		ctdb_double_push(cd->data.reclock_latency, buf);
 		break;
 
-	case CTDB_CONTROL_SET_RECLOCK_FILE:
-		ctdb_string_push(cd->data.reclock_file, buf);
-		break;
-
-	case CTDB_CONTROL_SET_NATGWSTATE:
-		ctdb_uint32_push(cd->data.role, buf);
-		break;
-
 	case CTDB_CONTROL_SET_LMASTERROLE:
 		ctdb_uint32_push(cd->data.role, buf);
 		break;
@@ -699,14 +622,6 @@ static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 		ctdb_ban_state_push(cd->data.ban_state, buf);
 		break;
 
-	case CTDB_CONTROL_SET_DB_PRIORITY:
-		ctdb_db_priority_push(cd->data.db_prio, buf);
-		break;
-
-	case CTDB_CONTROL_GET_DB_PRIORITY:
-		ctdb_uint32_push(cd->data.db_id, buf);
-		break;
-
 	case CTDB_CONTROL_REGISTER_NOTIFY:
 		ctdb_notify_data_push(cd->data.notify, buf);
 		break;
@@ -720,7 +635,8 @@ static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 		break;
 
 	case CTDB_CONTROL_GET_DB_SEQNUM:
-		ctdb_uint32_push(cd->data.db_id, buf);
+		u64 = cd->data.db_id;
+		ctdb_uint64_push(u64, buf);
 		break;
 
 	case CTDB_CONTROL_DB_SET_HEALTHY:
@@ -819,6 +735,7 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 				      struct ctdb_req_control_data *cd)
 {
 	int ret = 0;
+	uint64_t u64 = 0;
 
 	cd->opcode = opcode;
 
@@ -931,11 +848,6 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 						 &cd->data.flag_change);
 		break;
 
-	case CTDB_CONTROL_KILL_TCP:
-		ret = ctdb_connection_pull(buf, buflen, mem_ctx,
-					   &cd->data.conn);
-		break;
-
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		ret = ctdb_sock_addr_pull(buf, buflen, mem_ctx,
 					  &cd->data.addr);
@@ -944,21 +856,6 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 	case CTDB_CONTROL_SET_TCP_TICKLE_LIST:
 		ret = ctdb_tickle_list_pull(buf, buflen, mem_ctx,
 					    &cd->data.tickles);
-		break;
-
-	case CTDB_CONTROL_REGISTER_SERVER_ID:
-		ret = ctdb_client_id_pull(buf, buflen, mem_ctx,
-					  &cd->data.cid);
-		break;
-
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
-		ret = ctdb_client_id_pull(buf, buflen, mem_ctx,
-					  &cd->data.cid);
-		break;
-
-	case CTDB_CONTROL_CHECK_SERVER_ID:
-		ret = ctdb_client_id_pull(buf, buflen, mem_ctx,
-					  &cd->data.cid);
 		break;
 
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
@@ -974,16 +871,6 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 	case CTDB_CONTROL_SEND_GRATUITOUS_ARP:
 		ret = ctdb_addr_info_pull(buf, buflen, mem_ctx,
 					  &cd->data.addr_info);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_START:
-		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
-				     &cd->data.tid);
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_COMMIT:
-		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
-				     &cd->data.tid);
 		break;
 
 	case CTDB_CONTROL_WIPE_DATABASE:
@@ -1036,16 +923,6 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 				       &cd->data.reclock_latency);
 		break;
 
-	case CTDB_CONTROL_SET_RECLOCK_FILE:
-		ret = ctdb_string_pull(buf, buflen, mem_ctx,
-				       &cd->data.reclock_file);
-		break;
-
-	case CTDB_CONTROL_SET_NATGWSTATE:
-		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
-				     &cd->data.role);
-		break;
-
 	case CTDB_CONTROL_SET_LMASTERROLE:
 		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
 				     &cd->data.role);
@@ -1071,16 +948,6 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 					  &cd->data.ban_state);
 		break;
 
-	case CTDB_CONTROL_SET_DB_PRIORITY:
-		ret = ctdb_db_priority_pull(buf, buflen, mem_ctx,
-					    &cd->data.db_prio);
-		break;
-
-	case CTDB_CONTROL_GET_DB_PRIORITY:
-		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
-				     &cd->data.db_id);
-		break;
-
 	case CTDB_CONTROL_REGISTER_NOTIFY:
 		ret = ctdb_notify_data_pull(buf, buflen, mem_ctx,
 					    &cd->data.notify);
@@ -1097,8 +964,8 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 		break;
 
 	case CTDB_CONTROL_GET_DB_SEQNUM:
-		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
-				       &cd->data.db_id);
+		ret = ctdb_uint64_pull(buf, buflen, mem_ctx, &u64);
+		cd->data.db_id = (uint32_t)u64;
 		break;
 
 	case CTDB_CONTROL_DB_SET_HEALTHY:
@@ -1320,9 +1187,6 @@ static size_t ctdb_reply_control_data_len(struct ctdb_reply_control_data *cd)
 	case CTDB_CONTROL_FREEZE:
 		break;
 
-	case CTDB_CONTROL_THAW:
-		break;
-
 	case CTDB_CONTROL_GET_PNN:
 		break;
 
@@ -1362,27 +1226,11 @@ static size_t ctdb_reply_control_data_len(struct ctdb_reply_control_data *cd)
 		len = ctdb_tunable_list_len(cd->data.tun_list);
 		break;
 
-	case CTDB_CONTROL_KILL_TCP:
-		break;
-
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		len = ctdb_tickle_list_len(cd->data.tickles);
 		break;
 
 	case CTDB_CONTROL_SET_TCP_TICKLE_LIST:
-		break;
-
-	case CTDB_CONTROL_REGISTER_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_CHECK_SERVER_ID:
-		break;
-
-	case CTDB_CONTROL_GET_SERVER_ID_LIST:
-		len = ctdb_client_id_map_len(cd->data.cid_map);
 		break;
 
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
@@ -1393,12 +1241,6 @@ static size_t ctdb_reply_control_data_len(struct ctdb_reply_control_data *cd)
 		break;
 
 	case CTDB_CONTROL_SEND_GRATUITOUS_ARP:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_START:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_COMMIT:
 		break;
 
 	case CTDB_CONTROL_WIPE_DATABASE:
@@ -1471,16 +1313,10 @@ static size_t ctdb_reply_control_data_len(struct ctdb_reply_control_data *cd)
 		len = ctdb_string_len(cd->data.reclock_file);
 		break;
 
-	case CTDB_CONTROL_SET_RECLOCK_FILE:
-		break;
-
 	case CTDB_CONTROL_STOP_NODE:
 		break;
 
 	case CTDB_CONTROL_CONTINUE_NODE:
-		break;
-
-	case CTDB_CONTROL_SET_NATGWSTATE:
 		break;
 
 	case CTDB_CONTROL_SET_LMASTERROLE:
@@ -1506,9 +1342,6 @@ static size_t ctdb_reply_control_data_len(struct ctdb_reply_control_data *cd)
 		break;
 
 	case CTDB_CONTROL_GET_DB_PRIORITY:
-		break;
-
-	case CTDB_CONTROL_TRANSACTION_CANCEL:
 		break;
 
 	case CTDB_CONTROL_REGISTER_NOTIFY:
@@ -1688,10 +1521,6 @@ static void ctdb_reply_control_data_push(struct ctdb_reply_control_data *cd,
 		ctdb_tickle_list_push(cd->data.tickles, buf);
 		break;
 
-	case CTDB_CONTROL_GET_SERVER_ID_LIST:
-		ctdb_client_id_map_push(cd->data.cid_map, buf);
-		break;
-
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
 		ctdb_uint32_push(cd->data.db_id, buf);
 		break;
@@ -1863,11 +1692,6 @@ static int ctdb_reply_control_data_pull(uint8_t *buf, size_t buflen,
 					    &cd->data.tickles);
 		break;
 
-	case CTDB_CONTROL_GET_SERVER_ID_LIST:
-		ret = ctdb_client_id_map_pull(buf, buflen, mem_ctx,
-					      &cd->data.cid_map);
-		break;
-
 	case CTDB_CONTROL_DB_ATTACH_PERSISTENT:
 		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
 				       &cd->data.db_id);
@@ -1980,28 +1804,29 @@ static int ctdb_reply_control_data_pull(uint8_t *buf, size_t buflen,
 	return ret;
 }
 
+size_t ctdb_req_control_len(struct ctdb_req_header *h,
+			    struct ctdb_req_control *c)
+{
+	return offsetof(struct ctdb_req_control_wire, data) +
+		ctdb_req_control_data_len(&c->rdata);
+}
+
 int ctdb_req_control_push(struct ctdb_req_header *h,
 			  struct ctdb_req_control *request,
-			  TALLOC_CTX *mem_ctx,
-			  uint8_t **pkt, size_t *pkt_len)
+			  uint8_t *buf, size_t *buflen)
 {
-	struct ctdb_req_control_wire *wire;
-	uint8_t *buf;
-	size_t length, buflen, datalen;
-	int ret;
+	struct ctdb_req_control_wire *wire =
+		(struct ctdb_req_control_wire *)buf;
+	size_t length;
 
-	datalen = ctdb_req_control_data_len(&request->rdata);
-	length = offsetof(struct ctdb_req_control_wire, data) + datalen;
-
-	ret = allocate_pkt(mem_ctx, length, &buf, &buflen);
-	if (ret != 0) {
-		return ret;
+	length = ctdb_req_control_len(h, request);
+	if (*buflen < length) {
+		*buflen = length;
+		return EMSGSIZE;
 	}
 
-	wire = (struct ctdb_req_control_wire *)buf;
-
-	h->length = buflen;
-	memcpy(&wire->hdr, h, sizeof(struct ctdb_req_header));
+	h->length = *buflen;
+	ctdb_req_header_push(h, (uint8_t *)&wire->hdr);
 
 	wire->opcode = request->opcode;
 	wire->pad = request->pad;
@@ -2009,140 +1834,148 @@ int ctdb_req_control_push(struct ctdb_req_header *h,
 	wire->client_id = request->client_id;
 	wire->flags = request->flags;
 
-	wire->datalen = datalen;
+	wire->datalen = ctdb_req_control_data_len(&request->rdata);
 	ctdb_req_control_data_push(&request->rdata, wire->data);
 
-	*pkt = buf;
-	*pkt_len = buflen;
 	return 0;
 }
 
-int ctdb_req_control_pull(uint8_t *pkt, size_t pkt_len,
+int ctdb_req_control_pull(uint8_t *buf, size_t buflen,
 			  struct ctdb_req_header *h,
 			  TALLOC_CTX *mem_ctx,
-			  struct ctdb_req_control *request)
+			  struct ctdb_req_control *c)
 {
 	struct ctdb_req_control_wire *wire =
-		(struct ctdb_req_control_wire *)pkt;
+		(struct ctdb_req_control_wire *)buf;
 	size_t length;
 	int ret;
 
 	length = offsetof(struct ctdb_req_control_wire, data);
-	if (pkt_len < length) {
+	if (buflen < length) {
 		return EMSGSIZE;
 	}
-	if (pkt_len < length + wire->datalen) {
+	if (wire->datalen > buflen) {
 		return EMSGSIZE;
 	}
-
-	memcpy(h, &wire->hdr, sizeof(struct ctdb_req_header));
-
-	request->opcode = wire->opcode;
-	request->pad = wire->pad;
-	request->srvid = wire->srvid;
-	request->client_id = wire->client_id;
-	request->flags = wire->flags;
-
-	ret = ctdb_req_control_data_pull(wire->data, wire->datalen,
-					 request->opcode, mem_ctx,
-					 &request->rdata);
-	if (ret != 0) {
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_reply_control_push(struct ctdb_req_header *h,
-			    struct ctdb_reply_control *reply,
-			    TALLOC_CTX *mem_ctx,
-			    uint8_t **pkt, size_t *pkt_len)
-{
-	struct ctdb_reply_control_wire *wire;
-	uint8_t *buf;
-	size_t length, buflen, datalen, errlen;
-	int ret;
-
-	if (reply->status == 0) {
-		datalen = ctdb_reply_control_data_len(&reply->rdata);
-	} else {
-		datalen = 0;
-	}
-
-	if (reply->errmsg == NULL) {
-		errlen = 0;
-	} else {
-		errlen = strlen(reply->errmsg) + 1;
-	}
-
-	length = offsetof(struct ctdb_reply_control_wire, data) +
-		 datalen + errlen;
-
-	ret = allocate_pkt(mem_ctx, length, &buf, &buflen);
-	if (ret != 0) {
-		return ret;
-	}
-
-	wire = (struct ctdb_reply_control_wire *)buf;
-
-	h->length = buflen;
-	memcpy(&wire->hdr, h, sizeof(struct ctdb_req_header));
-
-	wire->status = reply->status;
-
-	wire->datalen = datalen;
-	if (reply->status == 0) {
-		ctdb_reply_control_data_push(&reply->rdata, wire->data);
-	}
-
-	wire->errorlen = errlen;
-	if (errlen > 0) {
-		memcpy(wire->data + datalen, reply->errmsg, wire->errorlen);
-	}
-
-	*pkt = buf;
-	*pkt_len = buflen;
-	return 0;
-}
-
-int ctdb_reply_control_pull(uint8_t *pkt, size_t pkt_len, uint32_t opcode,
-			    struct ctdb_req_header *h,
-			    TALLOC_CTX *mem_ctx,
-			    struct ctdb_reply_control *reply)
-{
-	struct ctdb_reply_control_wire *wire =
-		(struct ctdb_reply_control_wire *)pkt;
-	size_t length;
-	int ret;
-
-	length = offsetof(struct ctdb_reply_control_wire, data);
-
-	if (pkt_len < length) {
+	if (length + wire->datalen < length) {
 		return EMSGSIZE;
 	}
-	if (pkt_len < length + wire->datalen + wire->errorlen) {
+	if (buflen < length + wire->datalen) {
 		return EMSGSIZE;
 	}
 
-	memcpy(h, &wire->hdr, sizeof(struct ctdb_req_header));
-
-	reply->status = wire->status;
-
-	if (reply->status != -1) {
-		ret = ctdb_reply_control_data_pull(wire->data, wire->datalen,
-						   opcode, mem_ctx,
-						   &reply->rdata);
+	if (h != NULL) {
+		ret = ctdb_req_header_pull((uint8_t *)&wire->hdr, buflen, h);
 		if (ret != 0) {
 			return ret;
 		}
 	}
 
-	if (wire->errorlen > 0) {
-		reply->errmsg = talloc_memdup(mem_ctx,
-					      wire->data + wire->datalen,
-					      wire->errorlen);
+	c->opcode = wire->opcode;
+	c->pad = wire->pad;
+	c->srvid = wire->srvid;
+	c->client_id = wire->client_id;
+	c->flags = wire->flags;
+
+	ret = ctdb_req_control_data_pull(wire->data, wire->datalen,
+					 c->opcode, mem_ctx, &c->rdata);
+	if (ret != 0) {
+		return ret;
+	}
+
+	return 0;
+}
+
+size_t ctdb_reply_control_len(struct ctdb_req_header *h,
+			      struct ctdb_reply_control *c)
+{
+	return offsetof(struct ctdb_reply_control_wire, data) +
+		(c->status == 0 ?
+			ctdb_reply_control_data_len(&c->rdata) :
+			ctdb_string_len(c->errmsg));
+}
+
+int ctdb_reply_control_push(struct ctdb_req_header *h,
+			    struct ctdb_reply_control *reply,
+			    uint8_t *buf, size_t *buflen)
+{
+	struct ctdb_reply_control_wire *wire =
+		(struct ctdb_reply_control_wire *)buf;
+	size_t length;
+
+	length = ctdb_reply_control_len(h, reply);
+	if (*buflen < length) {
+		*buflen = length;
+		return EMSGSIZE;
+	}
+
+	h->length = *buflen;
+	ctdb_req_header_push(h, (uint8_t *)&wire->hdr);
+
+	wire->status = reply->status;
+
+	if (reply->status == 0) {
+		wire->datalen = ctdb_reply_control_data_len(&reply->rdata);
+		wire->errorlen = 0;
+		ctdb_reply_control_data_push(&reply->rdata, wire->data);
 	} else {
-		reply->errmsg = NULL;
+		wire->datalen = 0;
+		wire->errorlen = ctdb_string_len(reply->errmsg);
+		ctdb_string_push(reply->errmsg, wire->data + wire->datalen);
+	}
+
+	return 0;
+}
+
+int ctdb_reply_control_pull(uint8_t *buf, size_t buflen, uint32_t opcode,
+			    struct ctdb_req_header *h,
+			    TALLOC_CTX *mem_ctx,
+			    struct ctdb_reply_control *c)
+{
+	struct ctdb_reply_control_wire *wire =
+		(struct ctdb_reply_control_wire *)buf;
+	size_t length;
+	int ret;
+
+	length = offsetof(struct ctdb_reply_control_wire, data);
+	if (buflen < length) {
+		return EMSGSIZE;
+	}
+	if (wire->datalen > buflen || wire->errorlen > buflen) {
+		return EMSGSIZE;
+	}
+	if (length + wire->datalen < length) {
+		return EMSGSIZE;
+	}
+	if (length + wire->datalen + wire->errorlen < length) {
+		return EMSGSIZE;
+	}
+	if (buflen < length + wire->datalen + wire->errorlen) {
+		return EMSGSIZE;
+	}
+
+	if (h != NULL) {
+		ret = ctdb_req_header_pull((uint8_t *)&wire->hdr, buflen, h);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	c->status = wire->status;
+
+	if (c->status != -1) {
+		ret = ctdb_reply_control_data_pull(wire->data, wire->datalen,
+						   opcode, mem_ctx,
+						   &c->rdata);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	ret = ctdb_string_pull(wire->data + wire->datalen, wire->errorlen,
+			       mem_ctx, &c->errmsg);
+	if (ret != 0) {
+		return ret;
 	}
 
 	return 0;

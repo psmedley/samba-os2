@@ -2,13 +2,20 @@
 # script to check accessibility to the reclock file on a node
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
+. "${CTDB_BASE}/functions"
+
 loadconfig
 
+# If CTDB_RECOVERY_LOCK specifies a helper then exit because this
+# script can't do anything useful.
+case "$CTDB_RECOVERY_LOCK" in
+!*) exit 0 ;;
+esac
+
 case "$1" in
-    init)
+init)
 	ctdb_counter_init
 
 	if [ -n "$CTDB_RECOVERY_LOCK" ] ; then
@@ -17,32 +24,30 @@ case "$1" in
 	fi
 	;;
 
-    monitor)
+monitor)
 	# Early exit if not using a reclock file
 	[ -n "$CTDB_RECOVERY_LOCK" ] || exit 0
 
 	# Try to stat the reclock file as a background process so that
 	# we don't block in case the cluster filesystem is unavailable
 	(
-	    if stat $CTDB_RECOVERY_LOCK ; then
+	    if stat "$CTDB_RECOVERY_LOCK" ; then
 		# We could stat the file, reset the counter
 		ctdb_counter_init
 	    fi
 	) >/dev/null 2>&1 &
 
 	ctdb_counter_incr
-	if ! ctdb_check_counter "quiet" -ge 200 ; then
+	num_fails=$(ctdb_counter_get)
+	if [ "$num_fails" -ge 200 ] ; then
 	    echo "Reclock file \"$CTDB_RECOVERY_LOCK\" can not be accessed. Shutting down."
 	    df
 	    sleep 1
-	    ctdb shutdown
+	    $CTDB shutdown
+	    exit 1
+	elif [ "$num_fails" -ge 4 ] ; then
+		die "ERROR: ${num_fails} consecutive failures checking reclock"
 	fi
-
-	ctdb_check_counter "error" -gt 3
-	;;
-
-    *)
-	ctdb_standard_event_handler "$@"
 	;;
 esac
 

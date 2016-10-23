@@ -484,9 +484,6 @@ Offset  Data			length.
    otherwise NT will not honour the announce packets */
 #define MAX_SERVER_STRING_LENGTH 48
 
-
-#define SMB_SUCCESS 0  /* The request was successful. */
-
 #ifdef NOSTRDUP
 char *strdup(char *s);
 #endif
@@ -529,7 +526,7 @@ http://msdn.microsoft.com/en-us/library/cc246334(PROT.13).aspx
 #define NO_SUBSTREAMS		0x2
 #define NO_REPARSETAG		0x4
 
-/* Remote architectures we know about. */
+/* Remote architectures we know about, keep in sync with remote_arch_strings */
 enum remote_arch_types {RA_UNKNOWN, RA_WFWG, RA_OS2, RA_WIN95, RA_WINNT,
 			RA_WIN2K, RA_WINXP, RA_WIN2K3, RA_VISTA,
 			RA_SAMBA, RA_CIFSFS, RA_WINXP64, RA_OSX};

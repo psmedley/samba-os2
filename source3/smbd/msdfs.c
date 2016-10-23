@@ -82,9 +82,19 @@ static NTSTATUS parse_dfs_path(connection_struct *conn,
 	eos_ptr = &pathname_local[strlen(pathname_local)];
 	p = temp = pathname_local;
 
-	pdp->posix_path = (lp_posix_pathnames() && *pathname == '/');
+	/*
+	 * Non-broken DFS paths *must* start with the
+	 * path separator. For Windows this is always '\\',
+	 * for posix paths this is always '/'.
+	 */
 
-	sepchar = pdp->posix_path ? '/' : '\\';
+	if (*pathname == '/') {
+		pdp->posix_path = true;
+		sepchar = '/';
+	} else {
+		pdp->posix_path = false;
+		sepchar = '\\';
+	}
 
 	if (allow_broken_path && (*pathname != sepchar)) {
 		DEBUG(10,("parse_dfs_path: path %s doesn't start with %c\n",
@@ -92,6 +102,8 @@ static NTSTATUS parse_dfs_path(connection_struct *conn,
 		/*
 		 * Possibly client sent a local path by mistake.
 		 * Try and convert to a local path.
+		 * Note that this is an SMB1-only fallback
+		 * to cope with known broken SMB1 clients.
 		 */
 
 		pdp->hostname = eos_ptr; /* "" */
@@ -657,7 +669,7 @@ static NTSTATUS dfs_path_lookup(TALLOC_CTX *ctx,
 		const char *dfspath, /* Incoming complete dfs path */
 		const struct dfs_path *pdp, /* Parsed out
 					       server+share+extrapath. */
-		bool search_flag, /* Called from a findfirst ? */
+		uint32_t ucf_flags,
 		int *consumedcntp,
 		char **pp_targetpath)
 {
@@ -679,7 +691,7 @@ static NTSTATUS dfs_path_lookup(TALLOC_CTX *ctx,
 	 */
 
 	status = unix_convert(ctx, conn, pdp->reqpath, &smb_fname,
-			      search_flag ? UCF_ALWAYS_ALLOW_WCARD_LCOMP : 0);
+			      ucf_flags);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		if (!NT_STATUS_EQUAL(status,
@@ -695,7 +707,10 @@ static NTSTATUS dfs_path_lookup(TALLOC_CTX *ctx,
 
 	if (is_msdfs_link_internal(ctx, conn, smb_fname->base_name,
 				   pp_targetpath, NULL)) {
-		if (search_flag) {
+		/* XX_ALLOW_WCARD_XXX is called from search functions. */
+		if (ucf_flags &
+				(UCF_COND_ALLOW_WCARD_LCOMP|
+				 UCF_ALWAYS_ALLOW_WCARD_LCOMP)) {
 			DEBUG(6,("dfs_path_lookup (FindFirst) No redirection "
 				 "for dfs link %s.\n", dfspath));
 			status = NT_STATUS_OK;
@@ -805,12 +820,14 @@ static NTSTATUS dfs_path_lookup(TALLOC_CTX *ctx,
 static NTSTATUS dfs_redirect(TALLOC_CTX *ctx,
 			connection_struct *conn,
 			const char *path_in,
-			bool search_wcard_flag,
+			uint32_t ucf_flags,
 			bool allow_broken_path,
 			char **pp_path_out,
 			bool *ppath_contains_wcard)
 {
 	NTSTATUS status;
+	bool search_wcard_flag = (ucf_flags &
+		(UCF_COND_ALLOW_WCARD_LCOMP|UCF_ALWAYS_ALLOW_WCARD_LCOMP));
 	struct dfs_path *pdp = talloc(ctx, struct dfs_path);
 
 	if (!pdp) {
@@ -1311,8 +1328,11 @@ bool create_msdfs_link(const struct junction_map *jucn)
 		if (errno == EEXIST) {
 			struct smb_filename *smb_fname;
 
-			smb_fname = synthetic_smb_fname(talloc_tos(), path,
-							NULL, NULL);
+			smb_fname = synthetic_smb_fname(talloc_tos(),
+						path,
+						NULL,
+						NULL,
+						0);
 			if (smb_fname == NULL) {
 				errno = ENOMEM;
 				goto out;
@@ -1353,7 +1373,11 @@ bool remove_msdfs_link(const struct junction_map *jucn)
 		return false;
 	}
 
-	smb_fname = synthetic_smb_fname(talloc_tos(), path, NULL, NULL);
+	smb_fname = synthetic_smb_fname(talloc_tos(),
+					path,
+					NULL,
+					NULL,
+					0);
 	if (smb_fname == NULL) {
 		errno = ENOMEM;
 		return false;
@@ -1385,6 +1409,7 @@ static int count_dfs_links(TALLOC_CTX *ctx, int snum)
 	connection_struct *conn;
 	NTSTATUS status;
 	char *cwd;
+	struct smb_filename *smb_fname = NULL;
 
 	if(*connect_path == '\0') {
 		return 0;
@@ -1413,8 +1438,17 @@ static int count_dfs_links(TALLOC_CTX *ctx, int snum)
 		goto out;
 	}
 
+	smb_fname = synthetic_smb_fname(talloc_tos(),
+					".",
+					NULL,
+					NULL,
+					0);
+	if (smb_fname == NULL) {
+		goto out;
+	}
+
 	/* Now enumerate all dfs links */
-	dirp = SMB_VFS_OPENDIR(conn, ".", NULL, 0);
+	dirp = SMB_VFS_OPENDIR(conn, smb_fname, NULL, 0);
 	if(!dirp) {
 		goto out;
 	}
@@ -1432,6 +1466,7 @@ static int count_dfs_links(TALLOC_CTX *ctx, int snum)
 	SMB_VFS_CLOSEDIR(conn,dirp);
 
 out:
+	TALLOC_FREE(smb_fname);
 	vfs_ChDir(conn, cwd);
 	SMB_VFS_DISCONNECT(conn);
 	conn_free(conn);
@@ -1456,6 +1491,7 @@ static int form_junctions(TALLOC_CTX *ctx,
 	connection_struct *conn;
 	struct referral *ref = NULL;
 	char *cwd;
+	struct smb_filename *smb_fname = NULL;
 	NTSTATUS status;
 
 	if (jn_remain == 0) {
@@ -1520,8 +1556,17 @@ static int form_junctions(TALLOC_CTX *ctx,
 		goto out;
 	}
 
+	smb_fname = synthetic_smb_fname(talloc_tos(),
+					".",
+					NULL,
+					NULL,
+					0);
+	if (smb_fname == NULL) {
+		goto out;
+	}
+
 	/* Now enumerate all dfs links */
-	dirp = SMB_VFS_OPENDIR(conn, ".", NULL, 0);
+	dirp = SMB_VFS_OPENDIR(conn, smb_fname, NULL, 0);
 	if(!dirp) {
 		goto out;
 	}
@@ -1567,6 +1612,7 @@ out:
 		SMB_VFS_CLOSEDIR(conn,dirp);
 	}
 
+	TALLOC_FREE(smb_fname);
 	vfs_ChDir(conn, cwd);
 	conn_free(conn);
 	return cnt;
@@ -1625,7 +1671,7 @@ NTSTATUS resolve_dfspath_wcard(TALLOC_CTX *ctx,
 				connection_struct *conn,
 				bool dfs_pathnames,
 				const char *name_in,
-				bool allow_wcards,
+				uint32_t ucf_flags,
 				bool allow_broken_path,
 				char **pp_name_out,
 				bool *ppath_contains_wcard)
@@ -1637,7 +1683,7 @@ NTSTATUS resolve_dfspath_wcard(TALLOC_CTX *ctx,
 		status = dfs_redirect(ctx,
 					conn,
 					name_in,
-					allow_wcards,
+					ucf_flags,
 					allow_broken_path,
 					pp_name_out,
 					&path_contains_wcard);

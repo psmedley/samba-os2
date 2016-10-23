@@ -3183,7 +3183,7 @@ static bool check_pw_with_krb5(struct torture_context *tctx,
 	const char *old_password = cli_credentials_get_old_password(credentials);
 	int kvno = cli_credentials_get_kvno(credentials);
 	int expected_kvno = 0;
-	krb5int32 t_kvno = 0;
+	krb5uint32 t_kvno = 0;
 	const char *host = torture_setting_string(tctx, "host", NULL);
 	krb5_error_code k5ret;
 	krb5_boolean k5ok;
@@ -3347,7 +3347,8 @@ static bool check_pw_with_krb5(struct torture_context *tctx,
 	torture_assert(tctx, ctx->error.cname == NULL, assertion_message);
 	torture_assert_str_equal(tctx, ctx->error.realm, realm, assertion_message);
 
-	torture_comment(tctx, "password[%s] old_password[%s]\n",
+	torture_comment(tctx, "(%s:%s) password[%s] old_password[%s]\n",
+			__location__, __FUNCTION__,
 			password, old_password);
 	if (old_password != NULL) {
 		k5ret = krb5_get_init_creds_password(ctx->smb_krb5_context->krb5_context,

@@ -42,12 +42,13 @@ static void ctdb_ban_node_event(struct tevent_context *ev,
 
 	/* Make sure we were able to freeze databases during banning */
 	if (!ctdb_db_all_frozen(ctdb)) {
-		DEBUG(DEBUG_ERR, ("Banning timedout, but still unable to freeze databases\n"));
+		DEBUG(DEBUG_ERR, ("Banning timed out, but not all databases "
+				  "frozen yet - banning this node again.\n"));
 		ctdb_ban_self(ctdb);
 		return;
 	}
 
-	DEBUG(DEBUG_ERR,("Banning timedout\n"));
+	DEBUG(DEBUG_ERR,("Banning timed out\n"));
 	ctdb->nodes[ctdb->pnn]->flags &= ~NODE_FLAGS_BANNED;
 
 	if (ctdb->banning_ctx != NULL) {
@@ -60,7 +61,8 @@ void ctdb_local_node_got_banned(struct ctdb_context *ctdb)
 {
 	struct ctdb_db_context *ctdb_db;
 
-	DEBUG(DEBUG_NOTICE,("This node has been banned - forcing recovery\n"));
+	DEBUG(DEBUG_NOTICE, ("This node has been banned - releasing all public "
+			     "IPs and setting the generation to INVALID.\n"));
 
 	/* Reset the generation id to 1 to make us ignore any
 	   REQ/REPLY CALL/DMASTER someone sends to us.

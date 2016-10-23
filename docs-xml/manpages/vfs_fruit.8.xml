@@ -7,7 +7,7 @@
 	<manvolnum>8</manvolnum>
 	<refmiscinfo class="source">Samba</refmiscinfo>
 	<refmiscinfo class="manual">System Administration tools</refmiscinfo>
-	<refmiscinfo class="version">4.4</refmiscinfo>
+	<refmiscinfo class="version">4.5</refmiscinfo>
 </refmeta>
 
 
@@ -44,6 +44,14 @@
 	other named streams are deferred to
 	<command>vfs_streams_xattr</command> which must be loaded
 	together with <command>vfs_fruit</command>.</para>
+
+	<para>vfs_fruit requires "ea support = yes".</para>
+
+	<para>Be careful when mixing shares with and without
+	vfs_fruit. OS X clients negotiate SMB2 AAPL protocol
+	extensions on the first tcon, so mixing shares with and
+	without fruit will globally disable AAPL if the first tcon is
+	without fruit.</para>
 
 	<para>Having shares with ADS support enabled for OS X client
 	is worthwhile because it resembles the behaviour of Apple's
@@ -245,6 +253,7 @@
 
 <programlisting>
         <smbconfsection name="[share]"/>
+	<smbconfoption name="ea support">yes</smbconfoption>
 	<smbconfoption name="vfs objects">catia fruit streams_xattr</smbconfoption>
 	<smbconfoption name="fruit:resource">file</smbconfoption>
 	<smbconfoption name="fruit:metadata">netatalk</smbconfoption>

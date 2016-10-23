@@ -2,9 +2,9 @@
 # event strict to manage vsftpd in a cluster environment
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
+. "${CTDB_BASE}/functions"
 
 service_name="vsftpd"
 # make sure the service is stopped first
@@ -23,9 +23,6 @@ service_reconfigure ()
     service $service_name restart
 }
 
-service_fail_limit=2
-service_tcp_ports=21
-
 loadconfig
 
 ctdb_start_stop_service
@@ -34,34 +31,31 @@ is_ctdb_managed_service || exit 0
 
 ctdb_service_check_reconfigure
 
-case "$1" in 
-    startup)
+case "$1" in
+startup)
 	ctdb_service_start
 	;;
 
-    shutdown)
+shutdown)
 	ctdb_service_stop
 	;;
 
-    takeip|releaseip)
+takeip|releaseip)
 	ctdb_service_set_reconfigure
 	;;
 
-    monitor)
-	if [ -n "$service_tcp_ports" ] ; then
-	    if ctdb_check_tcp_ports $service_tcp_ports ; then
+monitor)
+	if ctdb_check_tcp_ports 21 ; then
 		ctdb_counter_init
-	    else
+	else
 		ctdb_counter_incr
-		ctdb_check_counter
-		ctdb_check_counter "quiet" -ge 1 || \
-		    echo "WARNING: vsftpd not listening but less than $service_fail_limit consecutive failures, not unhealthy yet" 
-	    fi
-	fi	
-	;;
-
-    *)
-	ctdb_standard_event_handler "$@"
+		num_fails=$(ctdb_counter_get)
+		if [ "$num_fails" -ge 2 ] ; then
+			die "ERROR: ${num_fails} consecutive failures for vsftpd, marking node unhealthy"
+		elif [ "$num_fails" -eq 1 ] ; then
+			echo "WARNING: vsftpd not listening but less than 2 consecutive failures, not unhealthy yet"
+		fi
+	fi
 	;;
 esac
 

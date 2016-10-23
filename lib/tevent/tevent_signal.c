@@ -106,9 +106,13 @@ static void tevent_common_signal_handler(int signum)
 	/* Write to each unique event context. */
 	for (sl = sig_state->sig_handlers[signum]; sl; sl = sl->next) {
 		if (sl->se->event_ctx && sl->se->event_ctx != ev) {
+			ssize_t ret;
+
 			ev = sl->se->event_ctx;
 			/* doesn't matter if this pipe overflows */
-			(void) write(ev->pipe_fds[1], &c, 1);
+			do {
+				ret = write(ev->pipe_fds[1], &c, 1);
+			} while (ret == -1 && errno == EINTR);
 		}
 	}
 
@@ -234,9 +238,13 @@ static int tevent_signal_destructor(struct tevent_signal *se)
 static void signal_pipe_handler(struct tevent_context *ev, struct tevent_fd *fde, 
 				uint16_t flags, void *_private)
 {
+	ssize_t ret;
+
 	char c[16];
 	/* its non-blocking, doesn't matter if we read too much */
-	(void) read(fde->fd, c, sizeof(c));
+	do {
+		ret = read(fde->fd, c, sizeof(c));
+	} while (ret == -1 && errno == EINTR);
 }
 
 /*

@@ -48,13 +48,68 @@ struct inotify_watch_context {
 	int wd;
 	void (*callback)(struct sys_notify_context *ctx, 
 			 void *private_data,
-			 struct notify_event *ev);
+			 struct notify_event *ev,
+			 uint32_t filter);
 	void *private_data;
 	uint32_t mask; /* the inotify mask */
 	uint32_t filter; /* the windows completion filter */
 	const char *path;
 };
 
+
+/*
+  map from a change notify mask to a inotify mask. Remove any bits
+  which we can handle
+*/
+static const struct {
+	uint32_t notify_mask;
+	uint32_t inotify_mask;
+} inotify_mapping[] = {
+	{FILE_NOTIFY_CHANGE_FILE_NAME,   IN_CREATE|IN_DELETE|IN_MOVED_FROM|IN_MOVED_TO},
+	{FILE_NOTIFY_CHANGE_DIR_NAME,    IN_CREATE|IN_DELETE|IN_MOVED_FROM|IN_MOVED_TO},
+	{FILE_NOTIFY_CHANGE_ATTRIBUTES,  IN_ATTRIB|IN_MOVED_TO|IN_MOVED_FROM|IN_MODIFY},
+	{FILE_NOTIFY_CHANGE_LAST_WRITE,  IN_ATTRIB},
+	{FILE_NOTIFY_CHANGE_LAST_ACCESS, IN_ATTRIB},
+	{FILE_NOTIFY_CHANGE_EA,          IN_ATTRIB},
+	{FILE_NOTIFY_CHANGE_SECURITY,    IN_ATTRIB}
+};
+
+static uint32_t inotify_map(uint32_t *filter)
+{
+	int i;
+	uint32_t out=0;
+	for (i=0;i<ARRAY_SIZE(inotify_mapping);i++) {
+		if (inotify_mapping[i].notify_mask & *filter) {
+			out |= inotify_mapping[i].inotify_mask;
+			*filter &= ~inotify_mapping[i].notify_mask;
+		}
+	}
+	return out;
+}
+
+/*
+ * Map inotify mask back to filter. This returns all filters that
+ * could have created the inotify watch.
+ */
+static uint32_t inotify_map_mask_to_filter(uint32_t mask)
+{
+	int i;
+	uint32_t filter = 0;
+
+	for (i = 0; i < ARRAY_SIZE(inotify_mapping); i++) {
+		if (inotify_mapping[0].inotify_mask & mask) {
+			filter |= inotify_mapping[i].notify_mask;
+		}
+	}
+
+	if (mask & IN_ISDIR) {
+		filter &= ~FILE_NOTIFY_CHANGE_FILE_NAME;
+	} else {
+		filter &= ~FILE_NOTIFY_CHANGE_DIR_NAME;
+	}
+
+	return filter;
+}
 
 /*
   destroy the inotify private context
@@ -122,6 +177,7 @@ static void inotify_dispatch(struct inotify_private *in,
 {
 	struct inotify_watch_context *w, *next;
 	struct notify_event ne;
+	uint32_t filter;
 
 	DEBUG(10, ("inotify_dispatch called with mask=%x, name=[%s]\n",
 		   e->mask, e->len ? e->name : ""));
@@ -156,15 +212,17 @@ static void inotify_dispatch(struct inotify_private *in,
 	}
 	ne.path = e->name;
 
-	DEBUG(10, ("inotify_dispatch: ne.action = %d, ne.path = %s\n",
-		   ne.action, ne.path));
+	filter = inotify_map_mask_to_filter(e->mask);
+
+	DBG_DEBUG("ne.action = %d, ne.path = %s, filter = %d\n",
+		  ne.action, ne.path, filter);
 
 	/* find any watches that have this watch descriptor */
 	for (w=in->watches;w;w=next) {
 		next = w->next;
 		if (w->wd == e->wd && filter_match(w, e)) {
 			ne.dir = w->path;
-			w->callback(in->ctx, w->private_data, &ne);
+			w->callback(in->ctx, w->private_data, &ne, filter);
 		}
 	}
 
@@ -185,7 +243,8 @@ static void inotify_dispatch(struct inotify_private *in,
 			if (w->wd == e->wd && filter_match(w, e) &&
 			    !(w->filter & FILE_NOTIFY_CHANGE_CREATION)) {
 				ne.dir = w->path;
-				w->callback(in->ctx, w->private_data, &ne);
+				w->callback(in->ctx, w->private_data, &ne,
+					    filter);
 			}
 		}
 	}
@@ -286,37 +345,6 @@ static int inotify_setup(struct sys_notify_context *ctx)
 	return 0;
 }
 
-
-/*
-  map from a change notify mask to a inotify mask. Remove any bits
-  which we can handle
-*/
-static const struct {
-	uint32_t notify_mask;
-	uint32_t inotify_mask;
-} inotify_mapping[] = {
-	{FILE_NOTIFY_CHANGE_FILE_NAME,   IN_CREATE|IN_DELETE|IN_MOVED_FROM|IN_MOVED_TO},
-	{FILE_NOTIFY_CHANGE_DIR_NAME,    IN_CREATE|IN_DELETE|IN_MOVED_FROM|IN_MOVED_TO},
-	{FILE_NOTIFY_CHANGE_ATTRIBUTES,  IN_ATTRIB|IN_MOVED_TO|IN_MOVED_FROM|IN_MODIFY},
-	{FILE_NOTIFY_CHANGE_LAST_WRITE,  IN_ATTRIB},
-	{FILE_NOTIFY_CHANGE_LAST_ACCESS, IN_ATTRIB},
-	{FILE_NOTIFY_CHANGE_EA,          IN_ATTRIB},
-	{FILE_NOTIFY_CHANGE_SECURITY,    IN_ATTRIB}
-};
-
-static uint32_t inotify_map(uint32_t *filter)
-{
-	int i;
-	uint32_t out=0;
-	for (i=0;i<ARRAY_SIZE(inotify_mapping);i++) {
-		if (inotify_mapping[i].notify_mask & *filter) {
-			out |= inotify_mapping[i].inotify_mask;
-			*filter &= ~inotify_mapping[i].notify_mask;
-		}
-	}
-	return out;
-}
-
 /*
   destroy a watch
 */
@@ -355,7 +383,8 @@ int inotify_watch(TALLOC_CTX *mem_ctx,
 		  uint32_t *subdir_filter,
 		  void (*callback)(struct sys_notify_context *ctx,
 				   void *private_data,
-				   struct notify_event *ev),
+				   struct notify_event *ev,
+				   uint32_t filter),
 		  void *private_data,
 		  void *handle_p)
 {

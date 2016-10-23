@@ -1,18 +1,18 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    simple ASN1 routines
    Copyright (C) Andrew Tridgell 2001
-   
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -143,7 +143,7 @@ bool asn1_pop_tag(struct asn1_data *data)
 	}
 	len = data->ofs - (nesting->start+1);
 	/* yes, this is ugly. We don't know in advance how many bytes the length
-	   of a tag will take, so we assumed 1 byte. If we were wrong then we 
+	   of a tag will take, so we assumed 1 byte. If we were wrong then we
 	   need to correct our mistake */
 	if (len > 0xFFFFFF) {
 		data->data[nesting->start] = 0x84;
@@ -593,12 +593,24 @@ static bool asn1_peek_tag_needed_size(struct asn1_data *data, uint8_t tag,
 		}
 		taglen = b;
 		while (n > 1) {
+			size_t tmp_taglen;
+
 			if (!asn1_read_uint8(data, &b)) {
 				data->ofs = start_ofs;
 				data->has_error = false;
 				return false;
 			}
-			taglen = (taglen << 8) | b;
+
+			tmp_taglen = (taglen << 8) | b;
+
+			if ((tmp_taglen >> 8) != taglen) {
+				/* overflow */
+				data->ofs = start_ofs;
+				data->has_error = false;
+				return false;
+			}
+			taglen = tmp_taglen;
+
 			n--;
 		}
 	} else {
@@ -617,7 +629,7 @@ bool asn1_start_tag(struct asn1_data *data, uint8_t tag)
 {
 	uint8_t b;
 	struct nesting *nesting;
-	
+
 	if (!asn1_read_uint8(data, &b))
 		return false;
 
@@ -641,9 +653,20 @@ bool asn1_start_tag(struct asn1_data *data, uint8_t tag)
 			return false;
 		nesting->taglen = b;
 		while (n > 1) {
-			if (!asn1_read_uint8(data, &b)) 
+			size_t taglen;
+
+			if (!asn1_read_uint8(data, &b))
 				return false;
-			nesting->taglen = (nesting->taglen << 8) | b;
+
+			taglen = (nesting->taglen << 8) | b;
+
+			if ((taglen >> 8) != nesting->taglen) {
+				/* overflow */
+				data->has_error = true;
+				return false;
+			}
+			nesting->taglen = taglen;
+
 			n--;
 		}
 	} else {
@@ -698,6 +721,10 @@ int asn1_tag_remaining(struct asn1_data *data)
 		data->has_error = true;
 		return -1;
 	}
+	if (remaining < 0) {
+		data->has_error = true;
+		return -1;
+	}
 	return remaining;
 }
 
@@ -718,9 +745,7 @@ static bool _ber_read_OID_String_impl(TALLOC_CTX *mem_ctx, DATA_BLOB blob,
 
 	b = blob.data;
 
-	tmp_oid = talloc_asprintf(mem_ctx, "%u",  b[0]/40);
-	if (!tmp_oid) goto nomem;
-	tmp_oid = talloc_asprintf_append_buffer(tmp_oid, ".%u",  b[0]%40);
+	tmp_oid = talloc_asprintf(mem_ctx, "%u.%u", b[0]/40, b[0]%40);
 	if (!tmp_oid) goto nomem;
 
 	if (bytes_eaten != NULL) {
@@ -902,7 +927,8 @@ bool asn1_read_OctetString(struct asn1_data *data, TALLOC_CTX *mem_ctx, DATA_BLO
 	return false;
 }
 
-bool asn1_read_ContextSimple(struct asn1_data *data, uint8_t num, DATA_BLOB *blob)
+bool asn1_read_ContextSimple(struct asn1_data *data, TALLOC_CTX *mem_ctx, uint8_t num,
+			     DATA_BLOB *blob)
 {
 	int len;
 	ZERO_STRUCTP(blob);
@@ -912,12 +938,14 @@ bool asn1_read_ContextSimple(struct asn1_data *data, uint8_t num, DATA_BLOB *blo
 		data->has_error = true;
 		return false;
 	}
-	*blob = data_blob(NULL, len);
+	*blob = data_blob_talloc(mem_ctx, NULL, len + 1);
 	if ((len != 0) && (!blob->data)) {
 		data->has_error = true;
 		return false;
 	}
 	if (!asn1_read(data, blob->data, len)) return false;
+	blob->length--;
+	blob->data[len] = 0;
 	return asn1_end_tag(data);
 }
 
@@ -940,8 +968,7 @@ bool asn1_read_implicit_Integer(struct asn1_data *data, int *i)
 		}
 		*i = (*i << 8) + b;
 	}
-	return !data->has_error;	
-	
+	return !data->has_error;
 }
 
 /* read an integer */
@@ -951,7 +978,7 @@ bool asn1_read_Integer(struct asn1_data *data, int *i)
 
 	if (!asn1_start_tag(data, ASN1_INTEGER)) return false;
 	if (!asn1_read_implicit_Integer(data, i)) return false;
-	return asn1_end_tag(data);	
+	return asn1_end_tag(data);
 }
 
 /* read a BIT STRING */
@@ -991,7 +1018,7 @@ bool asn1_read_BitString(struct asn1_data *data, TALLOC_CTX *mem_ctx, DATA_BLOB 
 bool asn1_read_enumerated(struct asn1_data *data, int *v)
 {
 	*v = 0;
-	
+
 	if (!asn1_start_tag(data, ASN1_ENUMERATED)) return false;
 	while (!data->has_error && asn1_tag_remaining(data)>0) {
 		uint8_t b;
@@ -1000,7 +1027,7 @@ bool asn1_read_enumerated(struct asn1_data *data, int *v)
 		}
 		*v = (*v << 8) + b;
 	}
-	return asn1_end_tag(data);	
+	return asn1_end_tag(data);
 }
 
 /* check a enumerated value is correct */
@@ -1089,7 +1116,7 @@ int asn1_peek_full_tag(DATA_BLOB blob, uint8_t tag, size_t *packet_size)
 	if (size > blob.length) {
 		*packet_size = size;
 		return EAGAIN;
-	}		
+	}
 
 	*packet_size = size;
 	return 0;

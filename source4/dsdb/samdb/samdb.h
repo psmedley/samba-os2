@@ -66,9 +66,6 @@ struct dsdb_control_current_partition {
 
 
 #define DSDB_CONTROL_REPLICATED_UPDATE_OID "1.3.6.1.4.1.7165.4.3.3"
-struct dsdb_control_replicated_update {
-	uint32_t dsdb_repl_flags;
-};
 
 #define DSDB_CONTROL_DN_STORAGE_FORMAT_OID "1.3.6.1.4.1.7165.4.3.4"
 /* DSDB_CONTROL_DN_STORAGE_FORMAT_OID has NULL data and behaves very
@@ -158,16 +155,44 @@ struct dsdb_control_password_change {
 */
 #define DSDB_CONTROL_CHANGEREPLMETADATA_RESORT_OID "1.3.6.1.4.1.7165.4.3.25"
 
+/*
+ * pass the default state of pwdLastSet between the "samldb" and "password_hash"
+ * modules.
+ */
+#define DSDB_CONTROL_PASSWORD_DEFAULT_LAST_SET_OID "1.3.6.1.4.1.7165.4.3.26"
+
+/*
+ * pass the userAccountControl changes between the "samldb" and "password_hash"
+ * modules.
+ */
+#define DSDB_CONTROL_PASSWORD_USER_ACCOUNT_CONTROL_OID "1.3.6.1.4.1.7165.4.3.27"
+struct dsdb_control_password_user_account_control {
+	uint32_t req_flags; /* the flags given by the client request */
+	uint32_t old_flags; /* the old flags stored (0 on add) */
+	uint32_t new_flags; /* the new flags stored */
+};
+
+/*
+ * Ignores strict checking when adding objects to samldb.
+ * This is used when provisioning, as checking all objects when added
+ * was slow due to an unindexed search.
+ */
+#define DSDB_CONTROL_SKIP_DUPLICATES_CHECK_OID "1.3.6.1.4.1.7165.4.3.28"
+
+/* passed when we want to thoroughly delete linked attributes */
+#define DSDB_CONTROL_REPLMD_VANISH_LINKS "1.3.6.1.4.1.7165.4.3.29"
+
 #define DSDB_EXTENDED_REPLICATED_OBJECTS_OID "1.3.6.1.4.1.7165.4.4.1"
 struct dsdb_extended_replicated_object {
 	struct ldb_message *msg;
-	struct ldb_val guid_value;
-	struct ldb_val parent_guid_value;
+	struct GUID object_guid;
+	struct GUID *parent_guid;
 	const char *when_changed;
 	struct replPropertyMetaDataBlob *meta_data;
 
 	/* Only used for internal processing in repl_meta_data */
 	struct ldb_dn *last_known_parent;
+	struct ldb_dn *local_parent_dn;
 };
 
 struct dsdb_extended_replicated_objects {
@@ -175,7 +200,7 @@ struct dsdb_extended_replicated_objects {
 	 * this is the version of the dsdb_extended_replicated_objects
 	 * version 0: initial implementation
 	 */
-#define DSDB_EXTENDED_REPLICATED_OBJECTS_VERSION 2
+#define DSDB_EXTENDED_REPLICATED_OBJECTS_VERSION 3
 	uint32_t version;
 
 	/* DSDB_REPL_FLAG_* flags */
@@ -190,7 +215,11 @@ struct dsdb_extended_replicated_objects {
 	struct dsdb_extended_replicated_object *objects;
 
 	uint32_t linked_attributes_count;
-	const struct drsuapi_DsReplicaLinkedAttribute *linked_attributes;
+	struct drsuapi_DsReplicaLinkedAttribute *linked_attributes;
+
+	WERROR error;
+
+	bool originating_updates;
 };
 
 #define DSDB_EXTENDED_CREATE_PARTITION_OID "1.3.6.1.4.1.7165.4.4.4"
@@ -230,7 +259,6 @@ struct dsdb_openldap_dereference_result_control {
 
 struct samldb_msds_intid_persistant {
 	uint32_t msds_intid;
-	uint64_t usn;
 };
 
 #define SAMLDB_MSDS_INTID_OPAQUE "SAMLDB_MSDS_INTID_OPAQUE"
@@ -243,7 +271,6 @@ struct dsdb_extended_dn_store_format {
 	bool store_extended_dn_in_ldb;
 };
 
-#define DSDB_OPAQUE_LAST_SCHEMA_UPDATE_MSG_OPAQUE_NAME "DSDB_OPAQUE_LAST_SCHEMA_UPDATE"
 #define DSDB_OPAQUE_PARTITION_MODULE_MSG_OPAQUE_NAME "DSDB_OPAQUE_PARTITION_MODULE_MSG"
 
 /* this takes a struct dsdb_fsmo_extended_op */
@@ -270,4 +297,11 @@ struct dsdb_extended_sec_desc_propagation_op {
 #define DSDB_SAMDB_MINIMUM_ALLOWED_RID   1000
 
 #define DSDB_METADATA_SCHEMA_SEQ_NUM	"SCHEMA_SEQ_NUM"
+
+/*
+ * must be in LDB_FLAG_INTERNAL_MASK
+ * see also the values in lib/ldb/include/ldb_module.h
+ */
+#define DSDB_FLAG_INTERNAL_FORCE_META_DATA 0x10000
+
 #endif /* __SAMDB_H__ */

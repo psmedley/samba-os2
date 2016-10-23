@@ -5,6 +5,7 @@
 import optparse
 import sys
 import os
+import time
 
 sys.path.insert(0, "bin/python")
 import samba
@@ -27,7 +28,7 @@ from samba.samdb import SamDB
 from samba.dsdb import (UF_NORMAL_ACCOUNT, UF_ACCOUNTDISABLE,
     UF_WORKSTATION_TRUST_ACCOUNT, UF_SERVER_TRUST_ACCOUNT,
     UF_PARTIAL_SECRETS_ACCOUNT, UF_TEMP_DUPLICATE_ACCOUNT,
-    UF_INTERDOMAIN_TRUST_ACCOUNT,
+    UF_INTERDOMAIN_TRUST_ACCOUNT, UF_SMARTCARD_REQUIRED,
     UF_PASSWD_NOTREQD, UF_LOCKOUT, UF_PASSWORD_EXPIRED, ATYPE_NORMAL_ACCOUNT,
     GTYPE_SECURITY_BUILTIN_LOCAL_GROUP, GTYPE_SECURITY_DOMAIN_LOCAL_GROUP,
     GTYPE_SECURITY_GLOBAL_GROUP, GTYPE_SECURITY_UNIVERSAL_GROUP,
@@ -40,8 +41,12 @@ from samba.dsdb import (UF_NORMAL_ACCOUNT, UF_ACCOUNTDISABLE,
 from samba.dcerpc.security import (DOMAIN_RID_USERS, DOMAIN_RID_ADMINS,
     DOMAIN_RID_DOMAIN_MEMBERS, DOMAIN_RID_DCS, DOMAIN_RID_READONLY_DCS)
 
+from samba.ndr import ndr_unpack
+from samba.dcerpc import drsblobs
+from samba.dcerpc import drsuapi
 from samba.dcerpc import security
 from samba.tests import delete_force
+from samba import gensec
 
 parser = optparse.OptionParser("sam.py [options] <host>")
 sambaopts = options.SambaOptions(parser)
@@ -62,6 +67,7 @@ host = args[0]
 
 lp = sambaopts.get_loadparm()
 creds = credopts.get_credentials(lp)
+creds.set_gensec_features(creds.get_gensec_features() | gensec.FEATURE_SEAL)
 
 class SamTests(samba.tests.TestCase):
 
@@ -1412,6 +1418,215 @@ class SamTests(samba.tests.TestCase):
 
         delete_force(self.ldb, "cn=ldaptestgroup,cn=users," + self.base_dn)
 
+    def test_pwdLastSet(self):
+        """Test the pwdLastSet behaviour"""
+        print "Testing pwdLastSet behaviour\n"
+
+        ldb.add({
+            "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+            "objectclass": "user",
+            "pwdLastSet": "0"})
+
+        res1 = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                          scope=SCOPE_BASE,
+                          attrs=["sAMAccountType", "userAccountControl", "pwdLastSet"])
+        self.assertTrue(len(res1) == 1)
+        self.assertEqual(int(res1[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res1[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT | UF_ACCOUNTDISABLE | UF_PASSWD_NOTREQD)
+        self.assertEqual(int(res1[0]["pwdLastSet"][0]), 0)
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+        ldb.add({
+            "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+            "objectclass": "user",
+            "pwdLastSet": "-1"})
+
+        res1 = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                          scope=SCOPE_BASE,
+                          attrs=["sAMAccountType", "userAccountControl", "pwdLastSet"])
+        self.assertTrue(len(res1) == 1)
+        self.assertEqual(int(res1[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res1[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT | UF_ACCOUNTDISABLE | UF_PASSWD_NOTREQD)
+        self.assertNotEqual(int(res1[0]["pwdLastSet"][0]), 0)
+        lastset = int(res1[0]["pwdLastSet"][0])
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+        try:
+            ldb.add({
+                "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+                "objectclass": "user",
+                "pwdLastSet": str(1)})
+            self.fail()
+        except LdbError, (num, msg):
+            self.assertEquals(num, ERR_OTHER)
+            self.assertTrue('00000057' in msg)
+
+        try:
+            ldb.add({
+                "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+                "objectclass": "user",
+                "pwdLastSet": str(lastset)})
+            self.fail()
+        except LdbError, (num, msg):
+            self.assertEquals(num, ERR_OTHER)
+            self.assertTrue('00000057' in msg)
+
+        ldb.add({
+            "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+            "objectclass": "user"})
+
+        res1 = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                          scope=SCOPE_BASE,
+                          attrs=["sAMAccountType", "userAccountControl", "pwdLastSet"])
+        self.assertTrue(len(res1) == 1)
+        self.assertEqual(int(res1[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res1[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT | UF_ACCOUNTDISABLE | UF_PASSWD_NOTREQD)
+        self.assertEqual(int(res1[0]["pwdLastSet"][0]), 0)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["pls1"] = MessageElement(str(0),
+                                   FLAG_MOD_REPLACE,
+                                   "pwdLastSet")
+        ldb.modify(m)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["pls1"] = MessageElement(str(0),
+                                   FLAG_MOD_DELETE,
+                                   "pwdLastSet")
+        m["pls2"] = MessageElement(str(0),
+                                   FLAG_MOD_ADD,
+                                   "pwdLastSet")
+        ldb.modify(m)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["pls1"] = MessageElement(str(-1),
+                                   FLAG_MOD_REPLACE,
+                                   "pwdLastSet")
+        ldb.modify(m)
+        res1 = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                          scope=SCOPE_BASE,
+                          attrs=["sAMAccountType", "userAccountControl", "pwdLastSet"])
+        self.assertTrue(len(res1) == 1)
+        self.assertEqual(int(res1[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res1[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT | UF_ACCOUNTDISABLE | UF_PASSWD_NOTREQD)
+        self.assertGreater(int(res1[0]["pwdLastSet"][0]), lastset)
+        lastset = int(res1[0]["pwdLastSet"][0])
+
+        try:
+            m = Message()
+            m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+            m["pls1"] = MessageElement(str(0),
+                                       FLAG_MOD_DELETE,
+                                       "pwdLastSet")
+            m["pls2"] = MessageElement(str(0),
+                                       FLAG_MOD_ADD,
+                                       "pwdLastSet")
+            ldb.modify(m)
+            self.fail()
+        except LdbError, (num, msg):
+            self.assertEquals(num, ERR_NO_SUCH_ATTRIBUTE)
+            self.assertTrue('00002085' in msg)
+
+        try:
+            m = Message()
+            m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+            m["pls1"] = MessageElement(str(-1),
+                                       FLAG_MOD_DELETE,
+                                       "pwdLastSet")
+            m["pls2"] = MessageElement(str(0),
+                                       FLAG_MOD_ADD,
+                                       "pwdLastSet")
+            ldb.modify(m)
+            self.fail()
+        except LdbError, (num, msg):
+            self.assertEquals(num, ERR_NO_SUCH_ATTRIBUTE)
+            self.assertTrue('00002085' in msg)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["pls1"] = MessageElement(str(lastset),
+                                   FLAG_MOD_DELETE,
+                                   "pwdLastSet")
+        m["pls2"] = MessageElement(str(-1),
+                                   FLAG_MOD_ADD,
+                                   "pwdLastSet")
+        time.sleep(0.2)
+        ldb.modify(m)
+        res1 = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                          scope=SCOPE_BASE,
+                          attrs=["sAMAccountType", "userAccountControl", "pwdLastSet"])
+        self.assertTrue(len(res1) == 1)
+        self.assertEqual(int(res1[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res1[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT | UF_ACCOUNTDISABLE | UF_PASSWD_NOTREQD)
+        self.assertEqual(int(res1[0]["pwdLastSet"][0]), lastset)
+
+        try:
+            m = Message()
+            m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+            m["pls1"] = MessageElement(str(lastset),
+                                       FLAG_MOD_DELETE,
+                                       "pwdLastSet")
+            m["pls2"] = MessageElement(str(lastset),
+                                       FLAG_MOD_ADD,
+                                       "pwdLastSet")
+            ldb.modify(m)
+            self.fail()
+        except LdbError, (num, msg):
+            self.assertEquals(num, ERR_OTHER)
+            self.assertTrue('00000057' in msg)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["pls1"] = MessageElement(str(lastset),
+                                   FLAG_MOD_DELETE,
+                                   "pwdLastSet")
+        m["pls2"] = MessageElement(str(0),
+                                   FLAG_MOD_ADD,
+                                   "pwdLastSet")
+        ldb.modify(m)
+        res1 = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                          scope=SCOPE_BASE,
+                          attrs=["sAMAccountType", "userAccountControl", "pwdLastSet"])
+        self.assertTrue(len(res1) == 1)
+        self.assertEqual(int(res1[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res1[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT | UF_ACCOUNTDISABLE | UF_PASSWD_NOTREQD)
+        uac = int(res1[0]["userAccountControl"][0])
+        self.assertEqual(int(res1[0]["pwdLastSet"][0]), 0)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["uac1"] = MessageElement(str(uac|UF_PASSWORD_EXPIRED),
+                                   FLAG_MOD_REPLACE,
+                                   "userAccountControl")
+        ldb.modify(m)
+        res1 = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                          scope=SCOPE_BASE,
+                          attrs=["sAMAccountType", "userAccountControl", "pwdLastSet"])
+        self.assertTrue(len(res1) == 1)
+        self.assertEqual(int(res1[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res1[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT | UF_ACCOUNTDISABLE | UF_PASSWD_NOTREQD)
+        self.assertEqual(int(res1[0]["pwdLastSet"][0]), 0)
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+
     def test_userAccountControl(self):
         """Test the userAccountControl behaviour"""
         print "Testing userAccountControl behaviour\n"
@@ -2066,6 +2281,467 @@ class SamTests(samba.tests.TestCase):
         delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
         delete_force(self.ldb, "cn=ldaptestuser2,cn=users," + self.base_dn)
         delete_force(self.ldb, "cn=ldaptestcomputer,cn=computers," + self.base_dn)
+
+    def find_repl_meta_data(self, rpmd, attid):
+        for i in xrange(0, rpmd.ctr.count):
+            m = rpmd.ctr.array[i]
+            if m.attid == attid:
+                return m
+        return None
+
+    def test_smartcard_required1(self):
+        """Test the UF_SMARTCARD_REQUIRED behaviour"""
+        print "Testing UF_SMARTCARD_REQUIRED behaviour\n"
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+        ldb.add({
+            "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+            "objectclass": "user",
+            "userAccountControl": str(UF_NORMAL_ACCOUNT),
+            "unicodePwd": "\"thatsAcomplPASS2\"".encode('utf-16-le')
+            })
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT)
+        self.assertNotEqual(int(res[0]["pwdLastSet"][0]), 0)
+        lastset = int(res[0]["pwdLastSet"][0])
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 1)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 1)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 1)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 1)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 1)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNotNone(spcbmd)
+        self.assertEqual(spcbmd.version, 1)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["userAccountControl"] = MessageElement(
+          str(UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED),
+          FLAG_MOD_REPLACE, "userAccountControl")
+        ldb.modify(m)
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED)
+        self.assertEqual(int(res[0]["pwdLastSet"][0]), lastset)
+        lastset1 = int(res[0]["pwdLastSet"][0])
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 2)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 2)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 2)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 2)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 2)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNotNone(spcbmd)
+        self.assertEqual(spcbmd.version, 2)
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+    def test_smartcard_required2(self):
+        """Test the UF_SMARTCARD_REQUIRED behaviour"""
+        print "Testing UF_SMARTCARD_REQUIRED behaviour\n"
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+        ldb.add({
+            "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+            "objectclass": "user",
+            "userAccountControl": str(UF_NORMAL_ACCOUNT|UF_ACCOUNTDISABLE),
+            })
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT|UF_ACCOUNTDISABLE)
+        self.assertEqual(int(res[0]["pwdLastSet"][0]), 0)
+        self.assertTrue("msDS-KeyVersionNumber" in res[0])
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 1)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 1)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 1)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 1)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 1)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNone(spcbmd)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["userAccountControl"] = MessageElement(
+          str(UF_NORMAL_ACCOUNT|UF_ACCOUNTDISABLE|UF_SMARTCARD_REQUIRED),
+          FLAG_MOD_REPLACE, "userAccountControl")
+        ldb.modify(m)
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT|UF_ACCOUNTDISABLE|UF_SMARTCARD_REQUIRED)
+        self.assertEqual(int(res[0]["pwdLastSet"][0]), 0)
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 2)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 2)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 2)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 2)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 2)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNotNone(spcbmd)
+        self.assertEqual(spcbmd.version, 1)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["userAccountControl"] = MessageElement(
+          str(UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED),
+          FLAG_MOD_REPLACE, "userAccountControl")
+        ldb.modify(m)
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED)
+        self.assertEqual(int(res[0]["pwdLastSet"][0]), 0)
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 2)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 2)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 2)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 2)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 2)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNotNone(spcbmd)
+        self.assertEqual(spcbmd.version, 1)
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+    def test_smartcard_required3(self):
+        """Test the UF_SMARTCARD_REQUIRED behaviour"""
+        print "Testing UF_SMARTCARD_REQUIRED behaviour\n"
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+        ldb.add({
+            "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+            "objectclass": "user",
+            "userAccountControl": str(UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED|UF_ACCOUNTDISABLE),
+            })
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED|UF_ACCOUNTDISABLE)
+        self.assertEqual(int(res[0]["pwdLastSet"][0]), 0)
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 1)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 1)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 1)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 1)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 1)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNotNone(spcbmd)
+        self.assertEqual(spcbmd.version, 1)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["userAccountControl"] = MessageElement(
+          str(UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED),
+          FLAG_MOD_REPLACE, "userAccountControl")
+        ldb.modify(m)
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED)
+        self.assertEqual(int(res[0]["pwdLastSet"][0]), 0)
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 1)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 1)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 1)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 1)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 1)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNotNone(spcbmd)
+        self.assertEqual(spcbmd.version, 1)
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+    def test_smartcard_required3(self):
+        """Test the UF_SMARTCARD_REQUIRED behaviour"""
+        print "Testing UF_SMARTCARD_REQUIRED behaviour\n"
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+
+        ldb.add({
+            "dn": "cn=ldaptestuser,cn=users," + self.base_dn,
+            "objectclass": "user",
+            "userAccountControl": str(UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED|UF_ACCOUNTDISABLE),
+            })
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED|UF_ACCOUNTDISABLE)
+        self.assertEqual(int(res[0]["pwdLastSet"][0]), 0)
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 1)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 1)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 1)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 1)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 1)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNotNone(spcbmd)
+        self.assertEqual(spcbmd.version, 1)
+
+        m = Message()
+        m.dn = Dn(ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
+        m["userAccountControl"] = MessageElement(
+          str(UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED),
+          FLAG_MOD_REPLACE, "userAccountControl")
+        ldb.modify(m)
+
+        res = ldb.search("cn=ldaptestuser,cn=users," + self.base_dn,
+                         scope=SCOPE_BASE,
+                         attrs=["sAMAccountType", "userAccountControl",
+                                "pwdLastSet", "msDS-KeyVersionNumber",
+                                "replPropertyMetaData"])
+        self.assertTrue(len(res) == 1)
+        self.assertEqual(int(res[0]["sAMAccountType"][0]),
+                         ATYPE_NORMAL_ACCOUNT)
+        self.assertEqual(int(res[0]["userAccountControl"][0]),
+                         UF_NORMAL_ACCOUNT|UF_SMARTCARD_REQUIRED)
+        self.assertEqual(int(res[0]["pwdLastSet"][0]), 0)
+        self.assertEqual(int(res[0]["msDS-KeyVersionNumber"][0]), 1)
+        self.assertTrue(len(res[0]["replPropertyMetaData"]) == 1)
+        rpmd = ndr_unpack(drsblobs.replPropertyMetaDataBlob,
+                          res[0]["replPropertyMetaData"][0])
+        lastsetmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_pwdLastSet)
+        self.assertIsNotNone(lastsetmd)
+        self.assertEqual(lastsetmd.version, 1)
+        nthashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_unicodePwd)
+        self.assertIsNotNone(nthashmd)
+        self.assertEqual(nthashmd.version, 1)
+        nthistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_ntPwdHistory)
+        self.assertIsNotNone(nthistmd)
+        self.assertEqual(nthistmd.version, 1)
+        lmhashmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_dBCSPwd)
+        self.assertIsNotNone(lmhashmd)
+        self.assertEqual(lmhashmd.version, 1)
+        lmhistmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_lmPwdHistory)
+        self.assertIsNotNone(lmhistmd)
+        self.assertEqual(lmhistmd.version, 1)
+        spcbmd = self.find_repl_meta_data(rpmd,
+                drsuapi.DRSUAPI_ATTID_supplementalCredentials)
+        self.assertIsNotNone(spcbmd)
+        self.assertEqual(spcbmd.version, 1)
+
+        delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
 
     def test_isCriticalSystemObject(self):
         """Test the isCriticalSystemObject behaviour"""
@@ -2916,7 +3592,8 @@ class SamTests(samba.tests.TestCase):
                 # "**ANY**" values means "any"
                 continue
             self.assertEqual(expected_val, actual_val,
-                             "Unexpected value for '%s'" % name)
+                             "Unexpected value[%r] for '%s' expected[%r]" %
+                             (actual_val, name, expected_val))
         # clean up
         delete_force(self.ldb, "cn=ldaptestuser,cn=users," + self.base_dn)
 

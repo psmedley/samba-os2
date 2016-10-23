@@ -28,6 +28,35 @@
 #include "common/system.h"
 
 static char *progname = NULL;
+static bool realtime = true;
+
+static void set_priority(void)
+{
+	const char *ptr;
+
+	ptr = getenv("CTDB_NOSETSCHED");
+	if (ptr != NULL) {
+		realtime = false;
+	}
+
+	if (! realtime) {
+		return;
+	}
+
+	realtime = set_scheduler();
+	if (! realtime) {
+		fprintf(stderr,
+			"%s: Unable to set real-time scheduler priority\n",
+			progname);
+	}
+}
+
+static void reset_priority(void)
+{
+	if (realtime) {
+		reset_scheduler();
+	}
+}
 
 static void send_result(int fd, char result)
 {
@@ -87,11 +116,15 @@ static int lock_record(const char *dbpath, const char *dbflags, const char *dbke
 		return 1;
 	}
 
+	set_priority();
+
 	if (tdb_chainlock(tdb, key) < 0) {
 		fprintf(stderr, "%s: Error getting record lock (%s)\n",
 			progname, tdb_errorstr(tdb));
 		return 1;
 	}
+
+	reset_priority();
 
 	return 0;
 
@@ -112,11 +145,15 @@ static int lock_db(const char *dbpath, const char *dbflags)
 		return 1;
 	}
 
+	set_priority();
+
 	if (tdb_lockall(tdb) < 0) {
 		fprintf(stderr, "%s: Error getting db lock (%s)\n",
 			progname, tdb_errorstr(tdb));
 		return 1;
 	}
+
+	reset_priority();
 
 	return 0;
 }
@@ -134,11 +171,6 @@ int main(int argc, char *argv[])
 	if (argc < 5) {
 		usage();
 		exit(1);
-	}
-
-	if (!set_scheduler()) {
-		fprintf(stderr, "%s: Unable to set real-time scheduler priority\n",
-			progname);
 	}
 
 	log_fd = atoi(argv[1]);
@@ -182,8 +214,6 @@ int main(int argc, char *argv[])
 
 	send_result(write_fd, result);
 
-	while (kill(ppid, 0) == 0 || errno != ESRCH) {
-		sleep(5);
-	}
+	ctdb_wait_for_process_to_exit(ppid);
 	return 0;
 }

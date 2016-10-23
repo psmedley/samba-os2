@@ -53,13 +53,15 @@ NTSTATUS get_full_smb_filename(TALLOC_CTX *ctx,
 struct smb_filename *synthetic_smb_fname(TALLOC_CTX *mem_ctx,
 					 const char *base_name,
 					 const char *stream_name,
-					 const SMB_STRUCT_STAT *psbuf)
+					 const SMB_STRUCT_STAT *psbuf,
+					 uint32_t flags)
 {
 	struct smb_filename smb_fname_loc = { 0, };
 
 	/* Setup the base_name/stream_name. */
 	smb_fname_loc.base_name = discard_const_p(char, base_name);
 	smb_fname_loc.stream_name = discard_const_p(char, stream_name);
+	smb_fname_loc.flags = flags;
 
 	/* Copy the psbuf if one was given. */
 	if (psbuf)
@@ -70,35 +72,37 @@ struct smb_filename *synthetic_smb_fname(TALLOC_CTX *mem_ctx,
 }
 
 /**
- * XXX: This is temporary and there should be no callers of this once
- * smb_filename is plumbed through all path based operations.
+ * There are a few legitimate users of this.
  */
 struct smb_filename *synthetic_smb_fname_split(TALLOC_CTX *ctx,
-					       const char *fname,
-					       const SMB_STRUCT_STAT *psbuf)
+						const char *fname,
+						bool posix_path)
 {
-	const char *stream_name = NULL;
+	char *stream_name = NULL;
 	char *base_name = NULL;
 	struct smb_filename *ret;
+	bool ok;
 
-	if (!lp_posix_pathnames()) {
-		stream_name = strchr_m(fname, ':');
+	if (posix_path) {
+		/* No stream name looked for. */
+		return synthetic_smb_fname(ctx,
+				fname,
+				NULL,
+				NULL,
+				SMB_FILENAME_POSIX_PATH);
 	}
 
-	/* Setup the base_name/stream_name. */
-	if (stream_name) {
-		base_name = talloc_strndup(ctx, fname,
-					   PTR_DIFF(stream_name, fname));
-	} else {
-		base_name = talloc_strdup(ctx, fname);
-	}
-
-	if (!base_name) {
+	ok = split_stream_filename(ctx,
+				fname,
+				&base_name,
+				&stream_name);
+	if (!ok) {
 		return NULL;
 	}
 
-	ret = synthetic_smb_fname(ctx, base_name, stream_name, psbuf);
+	ret = synthetic_smb_fname(ctx, base_name, stream_name, NULL, 0);
 	TALLOC_FREE(base_name);
+	TALLOC_FREE(stream_name);
 	return ret;
 }
 
@@ -214,6 +218,7 @@ struct smb_filename *cp_smb_filename(TALLOC_CTX *mem_ctx,
 		talloc_set_name_const(out->original_lcomp,
 				      out->original_lcomp);
 	}
+	out->flags = in->flags;
 	out->st = in->st;
 	return out;
 }
@@ -228,7 +233,7 @@ bool is_ntfs_stream_smb_fname(const struct smb_filename *smb_fname)
 		SMB_ASSERT(smb_fname->stream_name[0] != '\0');
 	}
 
-	if (lp_posix_pathnames()) {
+	if (smb_fname->flags & SMB_FILENAME_POSIX_PATH) {
 		return false;
 	}
 
@@ -269,14 +274,52 @@ bool is_invalid_windows_ea_name(const char *name)
 
 bool ea_list_has_invalid_name(struct ea_list *ea_list)
 {
-	if (lp_posix_pathnames()) {
-		return false;
-	}
-
 	for (;ea_list; ea_list = ea_list->next) {
 		if (is_invalid_windows_ea_name(ea_list->ea.name)) {
 			return true;
 		}
 	}
 	return false;
+}
+
+/****************************************************************************
+ Split an incoming name into tallocd filename and stream components.
+ Returns true on success, false on out of memory.
+****************************************************************************/
+
+bool split_stream_filename(TALLOC_CTX *ctx,
+				const char *filename_in,
+				char **filename_out,
+				char **streamname_out)
+{
+	const char *stream_name = NULL;
+	char *stream_out = NULL;
+	char *file_out = NULL;
+
+	stream_name = strchr_m(filename_in, ':');
+
+	if (stream_name) {
+		stream_out = talloc_strdup(ctx, stream_name);
+		if (stream_out == NULL) {
+			return false;
+		}
+		file_out = talloc_strndup(ctx,
+					filename_in,
+					PTR_DIFF(stream_name, filename_in));
+	} else {
+		file_out = talloc_strdup(ctx, filename_in);
+	}
+
+	if (file_out == NULL) {
+		TALLOC_FREE(stream_out);
+		return false;
+	}
+
+	if (filename_out) {
+		*filename_out = file_out;
+	}
+	if (streamname_out) {
+		*streamname_out = stream_out;
+	}
+	return true;
 }

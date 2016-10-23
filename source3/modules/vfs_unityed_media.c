@@ -551,24 +551,36 @@ err:
  * Failure: set errno, return NULL
  */
 static DIR *um_opendir(vfs_handle_struct *handle,
-		       const char *fname,
+		       const struct smb_filename *smb_fname,
 		       const char *mask,
 		       uint32_t attr)
 {
 	struct um_dirinfo_struct *dirInfo;
 
-	DEBUG(10, ("Entering with fname '%s'\n", fname));
+	DEBUG(10, ("Entering with fname '%s'\n", smb_fname->base_name));
 
-	if (alloc_set_client_dirinfo(handle, fname, &dirInfo)) {
+	if (alloc_set_client_dirinfo(handle, smb_fname->base_name, &dirInfo)) {
 		goto err;
 	}
 
 	if (!dirInfo->isInMediaFiles) {
 		dirInfo->dirstream = SMB_VFS_NEXT_OPENDIR(
-			handle, fname, mask, attr);
+			handle, smb_fname, mask, attr);
 	} else {
+		struct smb_filename *client_smb_fname =
+			synthetic_smb_fname(talloc_tos(),
+					dirInfo->clientPath,
+					NULL,
+					NULL,
+					smb_fname->flags);
+		if (client_smb_fname == NULL) {
+			goto err;
+		}
+
 		dirInfo->dirstream = SMB_VFS_NEXT_OPENDIR(
-			handle, dirInfo->clientPath, mask, attr);
+			handle, client_smb_fname, mask, attr);
+
+		TALLOC_FREE(client_smb_fname);
 	}
 
 	if (dirInfo->dirstream == NULL) {
@@ -582,7 +594,7 @@ static DIR *um_opendir(vfs_handle_struct *handle,
 	return (DIR*)dirInfo;
 
 err:
-	DEBUG(1, ("Failing with fname '%s'\n", fname));
+	DEBUG(1, ("Failing with fname '%s'\n", smb_fname->base_name));
 	TALLOC_FREE(dirInfo);
 	return NULL;
 }
@@ -766,62 +778,58 @@ static void um_rewinddir(vfs_handle_struct *handle,
 }
 
 static int um_mkdir(vfs_handle_struct *handle,
-		    const char *path,
+		    const struct smb_filename *smb_fname,
 		    mode_t mode)
 {
 	int status;
-	char *clientPath;
-	TALLOC_CTX *ctx;
-
+	const char *path = smb_fname->base_name;
+	struct smb_filename *client_fname = NULL;
 
 	DEBUG(10, ("Entering with path '%s'\n", path));
 
 	if (!is_in_media_files(path) || !is_in_media_dir(path)) {
-		return SMB_VFS_NEXT_MKDIR(handle, path, mode);
+		return SMB_VFS_NEXT_MKDIR(handle, smb_fname, mode);
 	}
 
-	clientPath = NULL;
-	ctx = talloc_tos();
-
-	if ((status = alloc_get_client_path(handle, ctx,
-					    path,
-					    &clientPath))) {
+	status = alloc_get_client_smb_fname(handle,
+				talloc_tos(),
+				smb_fname,
+				&client_fname);
+	if (status != 0) {
 		goto err;
 	}
 
-	status = SMB_VFS_NEXT_MKDIR(handle, clientPath, mode);
+	status = SMB_VFS_NEXT_MKDIR(handle, client_fname, mode);
 err:
-	TALLOC_FREE(clientPath);
+	TALLOC_FREE(client_fname);
 	DEBUG(10, ("Leaving with path '%s'\n", path));
 	return status;
 }
 
 static int um_rmdir(vfs_handle_struct *handle,
-		    const char *path)
+		    const struct smb_filename *smb_fname)
 {
 	int status;
-	char *clientPath;
-	TALLOC_CTX *ctx;
-
+	const char *path = smb_fname->base_name;
+	struct smb_filename *client_fname = NULL;
 
 	DEBUG(10, ("Entering with path '%s'\n", path));
 
 	if (!is_in_media_files(path)) {
-		return SMB_VFS_NEXT_RMDIR(handle, path);
+		return SMB_VFS_NEXT_RMDIR(handle, smb_fname);
 	}
 
-	clientPath = NULL;
-	ctx = talloc_tos();
-
-	if ((status = alloc_get_client_path(handle, ctx,
-					    path,
-					    &clientPath))) {
+	status = alloc_get_client_smb_fname(handle,
+				talloc_tos(),
+				smb_fname,
+				&client_fname);
+	if (status != 0) {
 		goto err;
 	}
 
-	status = SMB_VFS_NEXT_RMDIR(handle, clientPath);
+	status = SMB_VFS_NEXT_RMDIR(handle, client_fname);
 err:
-	TALLOC_FREE(clientPath);
+	TALLOC_FREE(client_fname);
 	DEBUG(10, ("Leaving with path '%s'\n", path));
 	return status;
 }
@@ -1172,81 +1180,87 @@ err:
 }
 
 static int um_chmod(vfs_handle_struct *handle,
-		    const char *path,
-		    mode_t mode)
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	int status;
-	char *client_path = NULL;
+	struct smb_filename *client_fname = NULL;
 
 	DEBUG(10, ("Entering um_chmod\n"));
 
-	if (!is_in_media_files(path)) {
-		return SMB_VFS_NEXT_CHMOD(handle, path, mode);
+	if (!is_in_media_files(smb_fname->base_name)) {
+		return SMB_VFS_NEXT_CHMOD(handle, smb_fname, mode);
 	}
 
-	status = alloc_get_client_path(handle, talloc_tos(),
-				       path, &client_path);
+	status = alloc_get_client_smb_fname(handle,
+				talloc_tos(),
+				smb_fname,
+				&client_fname);
 	if (status != 0) {
 		goto err;
 	}
 
-	status = SMB_VFS_NEXT_CHMOD(handle, client_path, mode);
+	status = SMB_VFS_NEXT_CHMOD(handle, client_fname, mode);
 
 err:
-	TALLOC_FREE(client_path);
+	TALLOC_FREE(client_fname);
 	return status;
 }
 
 static int um_chown(vfs_handle_struct *handle,
-		    const char *path,
-		    uid_t uid,
-		    gid_t gid)
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
 	int status;
-	char *client_path = NULL;
+	struct smb_filename *client_fname = NULL;
 
 	DEBUG(10, ("Entering um_chown\n"));
 
-	if (!is_in_media_files(path)) {
-		return SMB_VFS_NEXT_CHOWN(handle, path, uid, gid);
+	if (!is_in_media_files(smb_fname->base_name)) {
+		return SMB_VFS_NEXT_CHOWN(handle, smb_fname, uid, gid);
 	}
 
-	status = alloc_get_client_path(handle, talloc_tos(),
-				       path, &client_path);
+	status = alloc_get_client_smb_fname(handle,
+				talloc_tos(),
+				smb_fname,
+				&client_fname);
 	if (status != 0) {
 		goto err;
 	}
 
-	status = SMB_VFS_NEXT_CHOWN(handle, client_path, uid, gid);
+	status = SMB_VFS_NEXT_CHOWN(handle, client_fname, uid, gid);
 
 err:
-	TALLOC_FREE(client_path);
+	TALLOC_FREE(client_fname);
 	return status;
 }
 
 static int um_lchown(vfs_handle_struct *handle,
-		     const char *path,
-		     uid_t uid,
-		     gid_t gid)
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
 	int status;
-	char *client_path = NULL;
+	struct smb_filename *client_fname = NULL;
 
 	DEBUG(10, ("Entering um_lchown\n"));
-	if (!is_in_media_files(path)) {
-		return SMB_VFS_NEXT_LCHOWN(handle, path, uid, gid);
+	if (!is_in_media_files(smb_fname->base_name)) {
+		return SMB_VFS_NEXT_LCHOWN(handle, smb_fname, uid, gid);
 	}
 
-	status = alloc_get_client_path(handle, talloc_tos(),
-				       path, &client_path);
+	status = alloc_get_client_smb_fname(handle,
+				talloc_tos(),
+				smb_fname,
+				&client_fname);
 	if (status != 0) {
 		goto err;
 	}
 
-	status = SMB_VFS_NEXT_LCHOWN(handle, client_path, uid, gid);
+	status = SMB_VFS_NEXT_LCHOWN(handle, client_fname, uid, gid);
 
 err:
-	TALLOC_FREE(client_path);
+	TALLOC_FREE(client_fname);
 	return status;
 }
 
@@ -1476,26 +1490,28 @@ err:
 
 static NTSTATUS um_streaminfo(struct vfs_handle_struct *handle,
 			      struct files_struct *fsp,
-			      const char *fname,
+			      const struct smb_filename *smb_fname,
 			      TALLOC_CTX *ctx,
 			      unsigned int *num_streams,
 			      struct stream_struct **streams)
 {
 	NTSTATUS status;
-	char *client_path = NULL;
 	int ret;
+	struct smb_filename *client_fname = NULL;
 
 	DEBUG(10, ("Entering um_streaminfo\n"));
 
-	if (!is_in_media_files(fname)) {
-		return SMB_VFS_NEXT_STREAMINFO(handle, fsp, fname,
+	if (!is_in_media_files(smb_fname->base_name)) {
+		return SMB_VFS_NEXT_STREAMINFO(handle, fsp, smb_fname,
 					       ctx, num_streams, streams);
 	}
 
-	ret = alloc_get_client_path(handle, talloc_tos(),
-				    fname, &client_path);
+	ret = alloc_get_client_smb_fname(handle,
+				talloc_tos(),
+				smb_fname,
+				&client_fname);
 	if (ret != 0) {
-		status = map_nt_error_from_unix(errno);
+		status = NT_STATUS_NO_MEMORY;
 		goto err;
 	}
 
@@ -1505,10 +1521,10 @@ static NTSTATUS um_streaminfo(struct vfs_handle_struct *handle,
 	 * function do, exactly?  Does it need extra modifications for
 	 * the Avid stuff?
 	 */
-	status = SMB_VFS_NEXT_STREAMINFO(handle, fsp, client_path,
+	status = SMB_VFS_NEXT_STREAMINFO(handle, fsp, client_fname,
 					 ctx, num_streams, streams);
 err:
-	TALLOC_FREE(client_path);
+	TALLOC_FREE(client_fname);
 	return status;
 }
 
@@ -1518,61 +1534,77 @@ err:
  */
 
 static NTSTATUS um_get_nt_acl(vfs_handle_struct *handle,
-			      const char *name,
+			      const struct smb_filename *smb_fname,
 			      uint32_t security_info,
 			      TALLOC_CTX *mem_ctx,
 			      struct security_descriptor **ppdesc)
 {
 	NTSTATUS status;
 	char *client_path = NULL;
+	struct smb_filename *client_smb_fname = NULL;
 	int ret;
 
 	DEBUG(10, ("Entering um_get_nt_acl\n"));
 
-	if (!is_in_media_files(name)) {
-		return SMB_VFS_NEXT_GET_NT_ACL(handle, name,
+	if (!is_in_media_files(smb_fname->base_name)) {
+		return SMB_VFS_NEXT_GET_NT_ACL(handle, smb_fname,
 					       security_info,
 					       mem_ctx, ppdesc);
 	}
 
 	ret = alloc_get_client_path(handle, talloc_tos(),
-				    name, &client_path);
+				    smb_fname->base_name, &client_path);
 	if (ret != 0) {
 		status = map_nt_error_from_unix(errno);
 		goto err;
 	}
 
-	status = SMB_VFS_NEXT_GET_NT_ACL(handle, client_path,
+	client_smb_fname = synthetic_smb_fname(talloc_tos(),
+					client_path,
+					NULL,
+					NULL,
+					smb_fname->flags);
+	if (client_smb_fname == NULL) {
+		TALLOC_FREE(client_path);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = SMB_VFS_NEXT_GET_NT_ACL(handle, client_smb_fname,
 					 security_info,
 					 mem_ctx, ppdesc);
 err:
+	TALLOC_FREE(client_smb_fname);
 	TALLOC_FREE(client_path);
 	return status;
 }
 
 static int um_chmod_acl(vfs_handle_struct *handle,
-			const char *path,
+			const struct smb_filename *smb_fname,
 			mode_t mode)
 {
 	int status;
-	char *client_path = NULL;
+	int saved_errno;
+	struct smb_filename *client_fname = NULL;
 
 	DEBUG(10, ("Entering um_chmod_acl\n"));
 
-	if (!is_in_media_files(path)) {
-		return SMB_VFS_NEXT_CHMOD_ACL(handle, path, mode);
+	if (!is_in_media_files(smb_fname->base_name)) {
+		return SMB_VFS_NEXT_CHMOD_ACL(handle, smb_fname, mode);
 	}
 
-	status = alloc_get_client_path(handle, talloc_tos(),
-				       path, &client_path);
+	status = alloc_get_client_smb_fname(handle,
+				talloc_tos(),
+				smb_fname,
+				&client_fname);
 	if (status != 0) {
 		goto err;
 	}
-
-	status = SMB_VFS_NEXT_CHMOD_ACL(handle, client_path, mode);
+	status = SMB_VFS_NEXT_CHMOD_ACL(handle, client_fname, mode);
 
 err:
-	TALLOC_FREE(client_path);
+	saved_errno = errno;
+	TALLOC_FREE(client_fname);
+	errno = saved_errno;
 	return status;
 }
 

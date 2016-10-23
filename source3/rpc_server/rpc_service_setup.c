@@ -38,14 +38,12 @@
 #include "../librpc/gen_ndr/srv_spoolss.h"
 #include "../librpc/gen_ndr/srv_svcctl.h"
 #include "../librpc/gen_ndr/srv_wkssvc.h"
-#include "../librpc/gen_ndr/srv_mdssvc.h"
 
 #include "printing/nt_printing_migrate_internal.h"
 #include "rpc_server/eventlog/srv_eventlog_reg.h"
 #include "rpc_server/svcctl/srv_svcctl_reg.h"
 #include "rpc_server/spoolss/srv_spoolss_nt.h"
 #include "rpc_server/svcctl/srv_svcctl_nt.h"
-#include "rpc_server/mdssvc/srv_mdssvc_nt.h"
 
 #include "librpc/rpc/dcerpc_ep.h"
 #include "rpc_server/rpc_sock_helper.h"
@@ -53,13 +51,16 @@
 #include "rpc_server/rpc_ep_register.h"
 #include "rpc_server/rpc_server.h"
 #include "rpc_server/rpc_config.h"
+#include "rpc_server/rpc_modules.h"
 #include "rpc_server/epmapper/srv_epmapper.h"
 
+static_decl_rpc;
+
 /* Common routine for embedded RPC servers */
-static bool rpc_setup_embedded(struct tevent_context *ev_ctx,
-			       struct messaging_context *msg_ctx,
-			       const struct ndr_interface_table *t,
-			       const char *pipe_name)
+bool rpc_setup_embedded(struct tevent_context *ev_ctx,
+			struct messaging_context *msg_ctx,
+			const struct ndr_interface_table *t,
+			const char *pipe_name)
 {
 	struct dcerpc_binding_vector *v;
 	enum rpc_service_mode_e epm_mode = rpc_epmapper_mode();
@@ -445,61 +446,12 @@ static bool rpc_setup_initshutdown(struct tevent_context *ev_ctx,
 	return rpc_setup_embedded(ev_ctx, msg_ctx, t, NULL);
 }
 
-#ifdef WITH_SPOTLIGHT
-static bool mdssvc_init_cb(void *ptr)
-{
-	struct messaging_context *msg_ctx =
-		talloc_get_type_abort(ptr, struct messaging_context);
-	bool ok;
-
-	ok = init_service_mdssvc(msg_ctx);
-	if (!ok) {
-		return false;
-	}
-
-	return true;
-}
-
-static bool mdssvc_shutdown_cb(void *ptr)
-{
-	shutdown_service_mdssvc();
-
-	return true;
-}
-
-static bool rpc_setup_mdssvc(struct tevent_context *ev_ctx,
-			     struct messaging_context *msg_ctx)
-{
-	const struct ndr_interface_table *t = &ndr_table_mdssvc;
-	const char *pipe_name = "mdssvc";
-	struct rpc_srv_callbacks mdssvc_cb;
-	NTSTATUS status;
-	enum rpc_service_mode_e service_mode = rpc_service_mode(t->name);
-	enum rpc_daemon_type_e mdssvc_type = rpc_mdssd_daemon();
-
-	if (service_mode != RPC_SERVICE_MODE_EMBEDDED
-	    || mdssvc_type != RPC_DAEMON_EMBEDDED) {
-		return true;
-	}
-
-	mdssvc_cb.init         = mdssvc_init_cb;
-	mdssvc_cb.shutdown     = mdssvc_shutdown_cb;
-	mdssvc_cb.private_data = msg_ctx;
-
-	status = rpc_mdssvc_init(&mdssvc_cb);
-	if (!NT_STATUS_IS_OK(status)) {
-		return false;
-	}
-
-	return rpc_setup_embedded(ev_ctx, msg_ctx, t, pipe_name);
-}
-#endif
-
 bool dcesrv_ep_setup(struct tevent_context *ev_ctx,
 		     struct messaging_context *msg_ctx)
 {
 	TALLOC_CTX *tmp_ctx;
 	bool ok;
+	init_module_fn *mod_init_fns = NULL;
 
 	tmp_ctx = talloc_stackframe();
 	if (tmp_ctx == NULL) {
@@ -578,12 +530,37 @@ bool dcesrv_ep_setup(struct tevent_context *ev_ctx,
 		goto done;
 	}
 
-#ifdef WITH_SPOTLIGHT
-	ok = rpc_setup_mdssvc(ev_ctx, msg_ctx);
-	if (!ok) {
+	/* Initialize static subsystems */
+	static_init_rpc;
+
+	/* Initialize shared modules */
+	mod_init_fns = load_samba_modules(tmp_ctx, "rpc");
+	if (mod_init_fns == NULL) {
+		if (errno != ENOENT) {
+			/*
+			 * ENOENT means the directory doesn't exist
+			 * which can happen if all modules are
+			 * static. So ENOENT is ok, everything else is
+			 * not ok.
+			 */
+			DBG_ERR("Loading shared RPC modules failed [%s]\n",
+				strerror(errno));
+			ok = false;
+		}
 		goto done;
 	}
-#endif
+
+	ok = run_init_functions(mod_init_fns);
+	if (!ok) {
+		DBG_ERR("Initializing shared RPC modules failed\n");
+		goto done;
+	}
+
+	ok = setup_rpc_modules(ev_ctx, msg_ctx);
+	if (!ok) {
+		DBG_ERR("Shared RPC modules setup failed\n");
+		goto done;
+	}
 
 done:
 	talloc_free(tmp_ctx);

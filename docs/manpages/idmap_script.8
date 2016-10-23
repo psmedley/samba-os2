@@ -2,12 +2,12 @@
 .\"     Title: idmap_script
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/22/2016
+.\"      Date: 09/07/2016
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.4
+.\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "IDMAP_SCRIPT" "8" "09/22/2016" "Samba 4\&.4" "System Administration tools"
+.TH "IDMAP_SCRIPT" "8" "09/07/2016" "Samba 4\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -134,6 +134,20 @@ This shows a simple script to partially perform the task:
 .\}
 .PP
 Clearly, this script is not enough, as it should probably use wbinfo to determine if an incoming SID is a user or group SID and then look up the mapping in a table or use some other mechanism for mapping SIDs to UIDs and etc\&.
+.PP
+Please be aware that the script is called with the _NO_WINBINDD environment variable set to 1\&. This prevents recursive calls into winbind from the script both via explicit calls to wbinfo and via implicit calls via nss_winbind\&. For example a call to
+ls \-l
+could trigger such an infinite recursion\&.
+.PP
+It is safe to call
+wbinfo \-n
+and
+wbinfo \-s
+from within an idmap script\&. To do so, the script must unset the _NO_WINBINDD environment variable right before the call to
+wbinfo
+and set it to 1 again right after
+wbinfo
+has returned to protect against the recursion\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

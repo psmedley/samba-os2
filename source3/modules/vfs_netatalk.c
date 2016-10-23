@@ -177,11 +177,14 @@ static void atalk_rrmdir(TALLOC_CTX *ctx, char *path)
 
 /* Directory operations */
 
-static DIR *atalk_opendir(struct vfs_handle_struct *handle, const char *fname, const char *mask, uint32_t attr)
+static DIR *atalk_opendir(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			const char *mask,
+			uint32_t attr)
 {
 	DIR *ret = 0;
 
-	ret = SMB_VFS_NEXT_OPENDIR(handle, fname, mask, attr);
+	ret = SMB_VFS_NEXT_OPENDIR(handle, smb_fname, mask, attr);
 
 	/*
 	 * when we try to perform delete operation upon file which has fork
@@ -223,10 +226,12 @@ static DIR *atalk_fdopendir(struct vfs_handle_struct *handle, files_struct *fsp,
 	return ret;
 }
 
-static int atalk_rmdir(struct vfs_handle_struct *handle, const char *path)
+static int atalk_rmdir(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
 	bool add = False;
 	TALLOC_CTX *ctx = 0;
+	const char *path = smb_fname->base_name;
 	char *dpath;
 
 	if (!handle->conn->cwd || !path) goto exit_rmdir;
@@ -248,7 +253,7 @@ static int atalk_rmdir(struct vfs_handle_struct *handle, const char *path)
 
 exit_rmdir:
 	talloc_destroy(ctx);
-	return SMB_VFS_NEXT_RMDIR(handle, path);
+	return SMB_VFS_NEXT_RMDIR(handle, smb_fname);
 }
 
 /* File operations */
@@ -352,25 +357,33 @@ exit_unlink:
 	return ret;
 }
 
-static int atalk_chmod(struct vfs_handle_struct *handle, const char *path, mode_t mode)
+static int atalk_chmod(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	int ret = 0;
+	int ret1 = 0;
 	char *adbl_path = 0;
 	char *orig_path = 0;
 	SMB_STRUCT_STAT adbl_info;
 	SMB_STRUCT_STAT orig_info;
 	TALLOC_CTX *ctx;
 
-	ret = SMB_VFS_NEXT_CHMOD(handle, path, mode);
-
-	if (!path) return ret;
+	ret = SMB_VFS_NEXT_CHMOD(handle, smb_fname, mode);
 
 	if (!(ctx = talloc_init("chmod_file")))
 		return ret;
 
-	if (atalk_build_paths(ctx, handle->conn->cwd, path, &adbl_path,
-			      &orig_path, &adbl_info, &orig_info) != 0)
+	ret1 = atalk_build_paths(ctx,
+			handle->conn->cwd,
+			smb_fname->base_name,
+			&adbl_path,
+			&orig_path,
+			&adbl_info,
+			&orig_info);
+	if (ret1 != 0) {
 		goto exit_chmod;
+	}
 
 	if (!S_ISDIR(orig_info.st_ex_mode) && !S_ISREG(orig_info.st_ex_mode)) {
 		DEBUG(3, ("ATALK: %s has passed..\n", orig_path));		
@@ -384,7 +397,10 @@ exit_chmod:
 	return ret;
 }
 
-static int atalk_chown(struct vfs_handle_struct *handle, const char *path, uid_t uid, gid_t gid)
+static int atalk_chown(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
 	int ret = 0;
 	char *adbl_path = 0;
@@ -393,14 +409,12 @@ static int atalk_chown(struct vfs_handle_struct *handle, const char *path, uid_t
 	SMB_STRUCT_STAT orig_info;
 	TALLOC_CTX *ctx;
 
-	ret = SMB_VFS_NEXT_CHOWN(handle, path, uid, gid);
-
-	if (!path) return ret;
+	ret = SMB_VFS_NEXT_CHOWN(handle, smb_fname, uid, gid);
 
 	if (!(ctx = talloc_init("chown_file")))
 		return ret;
 
-	if (atalk_build_paths(ctx, handle->conn->cwd, path,
+	if (atalk_build_paths(ctx, handle->conn->cwd, smb_fname->base_name,
 			      &adbl_path, &orig_path,
 			      &adbl_info, &orig_info) != 0)
 		goto exit_chown;
@@ -419,7 +433,10 @@ exit_chown:
 	return ret;
 }
 
-static int atalk_lchown(struct vfs_handle_struct *handle, const char *path, uid_t uid, gid_t gid)
+static int atalk_lchown(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
 	int ret = 0;
 	char *adbl_path = 0;
@@ -428,14 +445,12 @@ static int atalk_lchown(struct vfs_handle_struct *handle, const char *path, uid_
 	SMB_STRUCT_STAT orig_info;
 	TALLOC_CTX *ctx;
 
-	ret = SMB_VFS_NEXT_CHOWN(handle, path, uid, gid);
-
-	if (!path) return ret;
+	ret = SMB_VFS_NEXT_LCHOWN(handle, smb_fname, uid, gid);
 
 	if (!(ctx = talloc_init("lchown_file")))
 		return ret;
 
-	if (atalk_build_paths(ctx, handle->conn->cwd, path,
+	if (atalk_build_paths(ctx, handle->conn->cwd, smb_fname->base_name,
 			      &adbl_path, &orig_path,
 			      &adbl_info, &orig_info) != 0)
 		goto exit_lchown;

@@ -620,9 +620,10 @@ void ctdb_request_dmaster(struct ctdb_context *ctdb, struct ctdb_req_header *hdr
 	}
 
 	if (ctdb_lmaster(ctdb, &key) != ctdb->pnn) {
-		DEBUG(DEBUG_ALERT,("pnn %u dmaster request to non-lmaster lmaster=%u gen=%u curgen=%u\n",
-			 ctdb->pnn, ctdb_lmaster(ctdb, &key), 
-			 hdr->generation, ctdb->vnn_map->generation));
+		DEBUG(DEBUG_ERR, ("dmaster request to non-lmaster "
+				  "db=%s lmaster=%u gen=%u curgen=%u\n",
+				  ctdb_db->db_name, ctdb_lmaster(ctdb, &key),
+				  hdr->generation, ctdb_db->generation));
 		ctdb_fatal(ctdb, "ctdb_req_dmaster to non-lmaster");
 	}
 
@@ -1864,10 +1865,7 @@ int ctdb_start_revoke_ro_record(struct ctdb_context *ctdb, struct ctdb_db_contex
 
 child_finished:
 		sys_write(rc->fd[1], &c, 1);
-		/* make sure we die when our parent dies */
-		while (ctdb_kill(ctdb, parent, 0) == 0 || errno != ESRCH) {
-			sleep(5);
-		}
+		ctdb_wait_for_process_to_exit(parent);
 		_exit(0);
 	}
 

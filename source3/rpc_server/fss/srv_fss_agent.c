@@ -20,6 +20,7 @@
 #include "includes.h"
 #include "ntdomain.h"
 #include "include/messages.h"
+#include "serverid.h"
 #include "include/auth.h"
 #include "../libcli/security/security.h"
 #include "../libcli/util/hresult.h"
@@ -62,7 +63,7 @@ static const struct {
 
 static uint32_t fss_ntstatus_map(NTSTATUS status)
 {
-	int i;
+	size_t i;
 
 	if (NT_STATUS_IS_OK(status))
 		return 0;
@@ -173,7 +174,7 @@ static bool snap_path_exists(TALLOC_CTX *ctx, struct messaging_context *msg_ctx,
 		goto out;
 	}
 
-	smb_fname = synthetic_smb_fname(service, sc->sc_path, NULL, NULL);
+	smb_fname = synthetic_smb_fname(service, sc->sc_path, NULL, NULL, 0);
 	if (smb_fname == NULL) {
 		goto out;
 	}

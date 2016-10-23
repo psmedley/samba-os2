@@ -318,8 +318,7 @@ static int32_t ctdb_control_dispatch(struct ctdb_context *ctdb,
 		return ctdb_control_freeze(ctdb, c, async_reply);
 
 	case CTDB_CONTROL_THAW:
-		CHECK_CONTROL_DATA_SIZE(0);
-		return ctdb_control_thaw(ctdb, (uint32_t)c->srvid, true);
+		return control_not_implemented("THAW", NULL);
 
 	case CTDB_CONTROL_SET_RECMODE:
 		CHECK_CONTROL_DATA_SIZE(sizeof(uint32_t));		
@@ -407,9 +406,8 @@ static int32_t ctdb_control_dispatch(struct ctdb_context *ctdb,
 		CHECK_CONTROL_DATA_SIZE(sizeof(struct ctdb_node_flag_change));
 		return ctdb_control_modflags(ctdb, indata);
 
-	case CTDB_CONTROL_KILL_TCP: 
-		CHECK_CONTROL_DATA_SIZE(sizeof(struct ctdb_connection));
-		return ctdb_control_kill_tcp(ctdb, indata);
+	case CTDB_CONTROL_KILL_TCP:
+		return control_not_implemented("KILL_TCP", NULL);
 
 	case CTDB_CONTROL_GET_TCP_TICKLE_LIST:
 		CHECK_CONTROL_DATA_SIZE(sizeof(ctdb_sock_addr));
@@ -419,21 +417,17 @@ static int32_t ctdb_control_dispatch(struct ctdb_context *ctdb,
 		/* data size is verified in the called function */
 		return ctdb_control_set_tcp_tickle_list(ctdb, indata);
 
-	case CTDB_CONTROL_REGISTER_SERVER_ID: 
-		CHECK_CONTROL_DATA_SIZE(sizeof(struct ctdb_client_id));
-		return ctdb_control_register_server_id(ctdb, client_id, indata);
+	case CTDB_CONTROL_REGISTER_SERVER_ID:
+		return control_not_implemented("REGISTER_SERVER_ID", NULL);
 
-	case CTDB_CONTROL_UNREGISTER_SERVER_ID: 
-		CHECK_CONTROL_DATA_SIZE(sizeof(struct ctdb_client_id));
-		return ctdb_control_unregister_server_id(ctdb, indata);
+	case CTDB_CONTROL_UNREGISTER_SERVER_ID:
+		return control_not_implemented("UNREGISTER_SERVER_ID", NULL);
 
-	case CTDB_CONTROL_CHECK_SERVER_ID: 
-		CHECK_CONTROL_DATA_SIZE(sizeof(struct ctdb_client_id));
-		return ctdb_control_check_server_id(ctdb, indata);
+	case CTDB_CONTROL_CHECK_SERVER_ID:
+		return control_not_implemented("CHECK_SERVER_ID", NULL);
 
 	case CTDB_CONTROL_GET_SERVER_ID_LIST:
-		CHECK_CONTROL_DATA_SIZE(0);
-		return ctdb_control_get_server_id_list(ctdb, outdata);
+		return control_not_implemented("SERVER_ID_LIST", NULL);
 
 	case CTDB_CONTROL_PERSISTENT_STORE:
 		return control_not_implemented("PERSISTENT_STORE", NULL);
@@ -445,12 +439,10 @@ static int32_t ctdb_control_dispatch(struct ctdb_context *ctdb,
 		return ctdb_control_send_gratious_arp(ctdb, indata);
 
 	case CTDB_CONTROL_TRANSACTION_START:
-		CHECK_CONTROL_DATA_SIZE(sizeof(uint32_t));
-		return ctdb_control_transaction_start(ctdb, *(uint32_t *)indata.dptr);
+		return control_not_implemented("TRANSACTION_START", NULL);
 
 	case CTDB_CONTROL_TRANSACTION_COMMIT:
-		CHECK_CONTROL_DATA_SIZE(sizeof(uint32_t));
-		return ctdb_control_transaction_commit(ctdb, *(uint32_t *)indata.dptr);
+		return control_not_implemented("TRANSACTION_COMMIT", NULL);
 
 	case CTDB_CONTROL_WIPE_DATABASE:
 		CHECK_CONTROL_DATA_SIZE(sizeof(struct ctdb_transdb));
@@ -472,8 +464,7 @@ static int32_t ctdb_control_dispatch(struct ctdb_context *ctdb,
 		return ctdb_control_add_public_address(ctdb, indata);
 
 	case CTDB_CONTROL_DEL_PUBLIC_IP:
-		return ctdb_control_del_public_address(ctdb, c, indata,
-						       async_reply);
+		return ctdb_control_del_public_address(ctdb, indata);
 
 	case CTDB_CONTROL_GET_CAPABILITIES:
 		return ctdb_control_get_capabilities(ctdb, outdata);
@@ -514,41 +505,13 @@ static int32_t ctdb_control_dispatch(struct ctdb_context *ctdb,
 		return 0;
 	case CTDB_CONTROL_GET_RECLOCK_FILE:
 		CHECK_CONTROL_DATA_SIZE(0);
-		if (ctdb->recovery_lock_file != NULL) {
-			outdata->dptr  = discard_const(ctdb->recovery_lock_file);
-			outdata->dsize = strlen(ctdb->recovery_lock_file) + 1;
+		if (ctdb->recovery_lock != NULL) {
+			outdata->dptr  = discard_const(ctdb->recovery_lock);
+			outdata->dsize = strlen(ctdb->recovery_lock) + 1;
 		}
 		return 0;
-	case CTDB_CONTROL_SET_RECLOCK_FILE: {
-		char *t;
-
-		if (indata.dsize == 0) {
-			TALLOC_FREE(ctdb->recovery_lock_file);
-			return 0;
-		}
-
-		/* Return silent success if unchanged.  Recovery
-		 * master updates all nodes on each recovery - we
-		 * don't need the extra memory allocation or log
-		 * message each time. */
-		if (ctdb->recovery_lock_file != NULL &&
-		    strcmp(discard_const(indata.dptr),
-			   ctdb->recovery_lock_file) == 0) {
-			return 0;
-		}
-
-		t = talloc_strdup(ctdb, discard_const(indata.dptr));
-		if (t == NULL) {
-			DEBUG(DEBUG_ERR, ("Out of memory in SET_RECLOCK_FILE\n"));
-			return -1;
-		}
-
-		talloc_free(ctdb->recovery_lock_file);
-		ctdb->recovery_lock_file = t;
-		DEBUG(DEBUG_NOTICE, ("Updated recovery lock file to %s\n", t));
-
-		return 0;
-	}
+	case CTDB_CONTROL_SET_RECLOCK_FILE:
+		return control_not_implemented("SET_RECLOCK", NULL);
 
 	case CTDB_CONTROL_STOP_NODE:
 		CHECK_CONTROL_DATA_SIZE(0);
@@ -558,18 +521,8 @@ static int32_t ctdb_control_dispatch(struct ctdb_context *ctdb,
 		CHECK_CONTROL_DATA_SIZE(0);
 		return ctdb_control_continue_node(ctdb);
 
-	case CTDB_CONTROL_SET_NATGWSTATE: {
-		uint32_t natgwstate;
-
-		CHECK_CONTROL_DATA_SIZE(sizeof(uint32_t));		
-		natgwstate = *(uint32_t *)indata.dptr;
-		if (natgwstate == 0) {
-			ctdb->capabilities &= ~CTDB_CAP_NATGW;
-		} else {
-			ctdb->capabilities |= CTDB_CAP_NATGW;
-		}
-		return 0;
-	}
+	case CTDB_CONTROL_SET_NATGWSTATE:
+		return control_not_implemented("SET_NATGWSTATE", NULL);
 
 	case CTDB_CONTROL_SET_LMASTERROLE: {
 		uint32_t lmasterrole;
@@ -612,23 +565,13 @@ static int32_t ctdb_control_dispatch(struct ctdb_context *ctdb,
 		return ctdb_control_get_ban_state(ctdb, outdata);
 
 	case CTDB_CONTROL_SET_DB_PRIORITY:
-		CHECK_CONTROL_DATA_SIZE(sizeof(struct ctdb_db_priority));
-		return ctdb_control_set_db_priority(ctdb, indata, client_id);
+		return control_not_implemented("SET_DB_PRIORITY", NULL);
 
-	case CTDB_CONTROL_GET_DB_PRIORITY: {
-		uint32_t db_id;
-		struct ctdb_db_context *ctdb_db;
-
-		CHECK_CONTROL_DATA_SIZE(sizeof(db_id));
-		db_id = *(uint32_t *)indata.dptr;
-		ctdb_db = find_ctdb_db(ctdb, db_id);
-		if (ctdb_db == NULL) return -1;
-		return ctdb_db->priority;
-	}
+	case CTDB_CONTROL_GET_DB_PRIORITY:
+		return control_not_implemented("GET_DB_PRIORITY", NULL);
 
 	case CTDB_CONTROL_TRANSACTION_CANCEL:
-		CHECK_CONTROL_DATA_SIZE(0);
-		return ctdb_control_transaction_cancel(ctdb);
+		return control_not_implemented("TRANSACTION_CANCEL", NULL);
 
 	case CTDB_CONTROL_REGISTER_NOTIFY:
 		return ctdb_control_register_notify(ctdb, client_id, indata);

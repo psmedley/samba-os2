@@ -196,6 +196,9 @@ class NCReplica(NamingContext):
         # RepsFromTo tuples
         self.rep_repsFrom = []
 
+        # RepsFromTo tuples
+        self.rep_repsTo = []
+
         # The (is present) test is a combination of being
         # enumerated in (hasMasterNCs or msDS-hasFullReplicaNCs or
         # hasPartialReplicaNCs) as well as its replica flags found
@@ -218,6 +221,9 @@ class NCReplica(NamingContext):
         text = text + "\n\tfsmo_role_owner=%s" % self.rep_fsmo_role_owner
 
         for rep in self.rep_repsFrom:
+            text = text + "\n%s" % rep
+
+        for rep in self.rep_repsTo:
             text = text + "\n%s" % rep
 
         return "%s\n%s" % (NamingContext.__str__(self), text)
@@ -427,6 +433,9 @@ class NCReplica(NamingContext):
     def dumpstr_to_be_modified(self):
         return '\n'.join(str(x) for x in self.rep_repsFrom if x.is_modified())
 
+    def dumpstr_reps_to(self):
+        return '\n'.join(str(x) for x in self.rep_repsTo if x.to_be_deleted)
+
     def load_fsmo_roles(self, samdb):
         """Given an NC replica which has been discovered thru the nTDSDSA
         database object, load the fSMORoleOwner attribute.
@@ -451,6 +460,95 @@ class NCReplica(NamingContext):
             return True
         return False
 
+    def load_repsTo(self, samdb):
+        """Given an NC replica which has been discovered thru the nTDSDSA
+        database object, load the repsTo attribute for the local replica.
+        held by my dsa.  The repsTo attribute is not replicated so this
+        attribute is relative only to the local DSA that the samdb exists on
+
+        This is responsible for push replication, not scheduled pull
+        replication. Not to be confused for repsFrom.
+        """
+        try:
+            res = samdb.search(base=self.nc_dnstr, scope=ldb.SCOPE_BASE,
+                               attrs=["repsTo"])
+
+        except ldb.LdbError, (enum, estr):
+            raise KCCError("Unable to find NC for (%s) - (%s)" %
+                           (self.nc_dnstr, estr))
+
+        msg = res[0]
+
+        # Possibly no repsTo if this is a singleton DC
+        if "repsTo" in msg:
+            for value in msg["repsTo"]:
+                rep = RepsFromTo(self.nc_dnstr,
+                                 ndr_unpack(drsblobs.repsFromToBlob, value))
+                self.rep_repsTo.append(rep)
+
+    def commit_repsTo(self, samdb, ro=False):
+        """Commit repsTo to the database"""
+
+        # XXX - This is not truly correct according to the MS-TECH
+        #       docs.  To commit a repsTo we should be using RPCs
+        #       IDL_DRSReplicaAdd, IDL_DRSReplicaModify, and
+        #       IDL_DRSReplicaDel to affect a repsTo change.
+        #
+        #       Those RPCs are missing in samba, so I'll have to
+        #       implement them to get this to more accurately
+        #       reflect the reference docs.  As of right now this
+        #       commit to the database will work as its what the
+        #       older KCC also did
+        modify = False
+        newreps = []
+        delreps = []
+
+        for repsTo in self.rep_repsTo:
+
+            # Leave out any to be deleted from
+            # replacement list.  Build a list
+            # of to be deleted reps which we will
+            # remove from rep_repsTo list below
+            if repsTo.to_be_deleted:
+                delreps.append(repsTo)
+                modify = True
+                continue
+
+            if repsTo.is_modified():
+                repsTo.set_unmodified()
+                modify = True
+
+            # current (unmodified) elements also get
+            # appended here but no changes will occur
+            # unless something is "to be modified" or
+            # "to be deleted"
+            newreps.append(ndr_pack(repsTo.ndr_blob))
+
+        # Now delete these from our list of rep_repsTo
+        for repsTo in delreps:
+            self.rep_repsTo.remove(repsTo)
+        delreps = []
+
+        # Nothing to do if no reps have been modified or
+        # need to be deleted or input option has informed
+        # us to be "readonly" (ro).  Leave database
+        # record "as is"
+        if not modify or ro:
+            return
+
+        m = ldb.Message()
+        m.dn = ldb.Dn(samdb, self.nc_dnstr)
+
+        m["repsTo"] = \
+            ldb.MessageElement(newreps, ldb.FLAG_MOD_REPLACE, "repsTo")
+
+        try:
+            samdb.modify(m)
+
+        except ldb.LdbError, estr:
+            raise KCCError("Could not set repsTo for (%s) - (%s)" %
+                           (self.nc_dnstr, estr))
+
 
 class DirectoryServiceAgent(object):
 
@@ -466,7 +564,7 @@ class DirectoryServiceAgent(object):
         self.dsa_ivid = None
         self.dsa_is_ro = False
         self.dsa_is_istg = False
-        self.dsa_options = 0
+        self.options = 0
         self.dsa_behavior = 0
         self.default_dnstr = None  # default domain dn string for dsa
 
@@ -1368,7 +1466,7 @@ class Site(object):
         self.nt_now = nt_now
 
     def load_site(self, samdb):
-        """Loads the NTDS Site Settions options attribute for the site
+        """Loads the NTDS Site Settings options attribute for the site
         as well as querying and loading all DSAs that appear within
         the site.
         """

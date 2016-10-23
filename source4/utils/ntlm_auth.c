@@ -38,6 +38,7 @@
 #include "lib/messaging/irpc.h"
 #include "auth/ntlmssp/ntlmssp.h"
 #include "param/param.h"
+#include "lib/util/base64.h"
 
 #define INITIAL_BUFFER_SIZE 300
 #define MAX_BUFFER_SIZE 63000
@@ -104,6 +105,7 @@ static const char *opt_workstation;
 static const char *opt_password;
 static int opt_multiplex;
 static int use_cached_creds;
+static int opt_allow_mschapv2;
 
 
 static void mux_printf(unsigned int mux_id, const char *format, ...) PRINTF_ATTRIBUTE(2, 3);
@@ -174,6 +176,7 @@ static NTSTATUS local_pw_check_specified(struct loadparm_context *lp_ctx,
 	if (!mem_ctx) {
 		nt_status = NT_STATUS_NO_MEMORY;
 	} else {
+		uint32_t logon_parameters = 0;
 		
 		E_md4hash(opt_password, nt_pw.hash);
 		if (E_deshash(opt_password, lm_pw.hash)) {
@@ -183,10 +186,14 @@ static NTSTATUS local_pw_check_specified(struct loadparm_context *lp_ctx,
 		}
 		nt_pwd = &nt_pw;
 		
+		if (opt_allow_mschapv2) {
+			logon_parameters |= MSV1_0_ALLOW_MSVCHAPV2;
+		}
 		
 		nt_status = ntlm_password_check(mem_ctx, 
 						lpcfg_lanman_auth(lp_ctx),
 						lpcfg_ntlm_auth(lp_ctx),
+						logon_parameters |
 						MSV1_0_ALLOW_SERVER_TRUST_ACCOUNT |
 						MSV1_0_ALLOW_WORKSTATION_TRUST_ACCOUNT,
 						challenge,
@@ -615,6 +622,7 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 			return;
 		} else {
 			base64_key = base64_encode_data_blob(state, session_key);
+			SMB_ASSERT(base64_key != NULL);
 			mux_printf(mux_id, "GK %s\n", base64_key);
 			talloc_free(base64_key);
 		}
@@ -642,6 +650,7 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 
 	if (out.length) {
 		out_base64 = base64_encode_data_blob(mem_ctx, out);
+		SMB_ASSERT(out_base64 != NULL);
 	} else {
 		out_base64 = NULL;
 	}
@@ -1043,6 +1052,7 @@ enum {
 	OPT_REQUIRE_MEMBERSHIP,
 	OPT_MULTIPLEX,
 	OPT_USE_CACHED_CREDS,
+	OPT_ALLOW_MSCHAPV2,
 };
 
 int main(int argc, const char **argv)
@@ -1069,6 +1079,7 @@ int main(int argc, const char **argv)
 		{ "password", 0, POPT_ARG_STRING, &opt_password, OPT_PASSWORD, "User's plaintext password"},		
 		{ "multiplex", 0, POPT_ARG_NONE, &opt_multiplex, OPT_MULTIPLEX, "Multiplex Mode"},
 		{ "use-cached-creds", 0, POPT_ARG_NONE, &use_cached_creds, OPT_USE_CACHED_CREDS, "silently ignored for compatibility reasons"},
+		{ "allow-mschapv2", 0, POPT_ARG_NONE, &opt_allow_mschapv2, OPT_ALLOW_MSCHAPV2, "Explicitly allow MSCHAPv2" },
 		POPT_COMMON_SAMBA
 		POPT_COMMON_VERSION
 		{ NULL }

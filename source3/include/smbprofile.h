@@ -565,6 +565,8 @@ static inline uint64_t profile_timestamp(void)
 #define END_PROFILE_BYTES(x) \
 	SMBPROFILE_BYTES_ASYNC_END(__profasync_##x)
 
+#define PROFILE_TIMESTAMP(x) clock_gettime_mono(x)
+
 #else /* WITH_PROFILE */
 
 #define SMBPROFILE_COUNT_INCREMENT(_name, _area, _v)
@@ -595,6 +597,8 @@ static inline uint64_t profile_timestamp(void)
 #define END_PROFILE(x)
 #define END_PROFILE_BYTES(x)
 
+#define PROFILE_TIMESTAMP(x) (*(x)=(struct timespec){0})
+
 static inline bool smbprofile_dump_pending(void)
 {
 	return false;
@@ -618,8 +622,9 @@ static inline void smbprofile_cleanup(pid_t pid, pid_t dst)
 #endif /* WITH_PROFILE */
 
 /* The following definitions come from profile/profile.c  */
+struct server_id;
 
-void set_profile_level(int level, struct server_id src);
+void set_profile_level(int level, const struct server_id *src);
 
 struct messaging_context;
 bool profile_setup(struct messaging_context *msg_ctx, bool rdonly);

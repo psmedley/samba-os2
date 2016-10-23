@@ -1696,7 +1696,7 @@ static int do_allinfo(const char *name)
 	unsigned int num_streams;
 	struct stream_struct *streams;
 	int num_snapshots;
-	char **snapshots;
+	char **snapshots = NULL;
 	unsigned int i;
 	NTSTATUS status;
 
@@ -1780,6 +1780,20 @@ static int do_allinfo(const char *name)
 		 * Ignore failure, it does not hurt if we can't list
 		 * snapshots
 		 */
+		return 0;
+	}
+	/*
+	 * In order to get shadow copy data over SMB1 we
+	 * must call twice, once with 'get_names = false'
+	 * to get the size, then again with 'get_names = true'
+	 * to get the data or a Windows server fails to return
+	 * valid info. Samba doesn't have this bug. JRA.
+	 */
+
+	status = cli_shadow_copy_data(talloc_tos(), cli, fnum,
+				      false, &snapshots, &num_snapshots);
+	if (!NT_STATUS_IS_OK(status)) {
+		cli_close(cli, fnum);
 		return 0;
 	}
 	status = cli_shadow_copy_data(talloc_tos(), cli, fnum,
@@ -2953,6 +2967,50 @@ static int cmd_unlock(void)
 		d_printf("unlock failed %d: %s\n", fnum, nt_errstr(status));
 	}
 
+	return 0;
+}
+
+static int cmd_posix_whoami(void)
+{
+	TALLOC_CTX *ctx = talloc_tos();
+	NTSTATUS status = NT_STATUS_UNSUCCESSFUL;
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint32_t num_gids = 0;
+	uint32_t num_sids = 0;
+	uint64_t *gids = NULL;
+	struct dom_sid *sids = NULL;
+	bool guest = false;
+	uint32_t i;
+
+	status = cli_posix_whoami(cli,
+			ctx,
+			&uid,
+			&gid,
+			&num_gids,
+			&gids,
+			&num_sids,
+			&sids,
+			&guest);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("posix_whoami failed with error %s\n", nt_errstr(status));
+		return 1;
+	}
+
+	d_printf("GUEST:%s\n", guest ? "True" : "False");
+	d_printf("UID:%" PRIu64 "\n", uid);
+	d_printf("GID:%" PRIu64 "\n", gid);
+	d_printf("NUM_GIDS:%" PRIu32 "\n", num_gids);
+	for (i = 0; i < num_gids; i++) {
+		d_printf("GIDS[%" PRIu32 "]:%" PRIu64 "\n", i, gids[i]);
+	}
+	d_printf("NUM_SIDS:%" PRIu32 "\n", num_sids);
+	for (i = 0; i < num_sids; i++) {
+		char *sid_str = dom_sid_string(ctx, &sids[i]);
+		d_printf("SIDS[%" PRIu32 "]:%s\n", i, sid_str);
+		TALLOC_FREE(sid_str);
+	}
 	return 0;
 }
 
@@ -4931,6 +4989,8 @@ static struct {
   {"posix_mkdir",cmd_posix_mkdir,"<name> 0<mode> creates a directory using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
   {"posix_rmdir",cmd_posix_rmdir,"<name> removes a directory using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
   {"posix_unlink",cmd_posix_unlink,"<name> removes a file using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
+  {"posix_whoami",cmd_posix_whoami,"retun logged on user information "
+			"using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
   {"print",cmd_print,"<file name> print a file",{COMPL_NONE,COMPL_NONE}},
   {"prompt",cmd_prompt,"toggle prompting for filenames for mget and mput",{COMPL_NONE,COMPL_NONE}},
   {"put",cmd_put,"<local name> [remote name] put a file",{COMPL_LOCAL,COMPL_REMOTE}},

@@ -1,17 +1,13 @@
 05_share_ldb_module
 07_private_lib
 bug_221618_precise-64bit-prototype.patch
-bug_601406_fix-perl-path-in-example.patch
 README_nosmbldap-tools.patch
 smbclient-pager.patch
 usershare.patch
 VERSION.patch
-waf_smbpasswd_location
 add-so-version-to-private-libraries
 xsltproc_dont_build_smb.conf.5.patch
 heimdal-rfc3454.txt
-Fix-privacy-breach-on-google.com.patch
-ctdb-Fix-detection-of-gnukfreebsd.patch
 no_build_env.patch
 no_build_system.patch
 Skip-raw.write-tests.patch
@@ -19,3 +15,5 @@ systemd-syslog.target-is-obsolete.patch
 Add-documentation-to-systemd-Unit-files.patch
 fix_kill_path_in_units.patch
 bug_12283_segfault_tevent_internals.patch
+gencache-Bail-out-of-stabilize-if-we-can-not-get-the.patch
+Fix_parallel_build.patch

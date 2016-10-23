@@ -76,6 +76,11 @@ enum dcesrv_call_list {
 	DCESRV_LIST_PENDING_CALL_LIST
 };
 
+struct data_blob_list_item {
+	struct data_blob_list_item *prev,*next;
+	DATA_BLOB blob;
+};
+
 /* the state of an ongoing dcerpc call */
 struct dcesrv_call_state {
 	struct dcesrv_call_state *next, *prev;
@@ -168,10 +173,7 @@ struct dcesrv_auth {
 
 struct dcesrv_connection_context {
 	struct dcesrv_connection_context *next, *prev;
-	uint32_t context_id;
-
-	/* TODO: remove this legacy (for openchange) in master */
-	struct dcesrv_assoc_group *assoc_group;
+	uint16_t context_id;
 
 	/* the connection this is on */
 	struct dcesrv_connection *conn;
@@ -218,16 +220,6 @@ struct dcesrv_connection {
 	uint16_t max_xmit_frag;
 
 	DATA_BLOB partial_input;
-
-	/* This can be removed in master... */
-	struct  {
-		struct dcerpc_auth *auth_info;
-		struct gensec_security *gensec_security;
-		struct auth_session_info *session_info;
-		NTSTATUS (*session_key)(struct dcesrv_connection *, DATA_BLOB *session_key);
-		bool client_hdr_signing;
-		bool hdr_signing;
-	} _unused_auth_state;
 
 	/* the event_context that will be used for this connection */
 	struct tevent_context *event_ctx;

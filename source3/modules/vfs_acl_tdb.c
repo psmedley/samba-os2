@@ -143,7 +143,7 @@ static NTSTATUS acl_tdb_delete(vfs_handle_struct *handle,
 static NTSTATUS get_acl_blob(TALLOC_CTX *ctx,
 			vfs_handle_struct *handle,
 			files_struct *fsp,
-			const char *name,
+			const struct smb_filename *smb_fname,
 			DATA_BLOB *pblob)
 {
 	uint8_t id_buf[16];
@@ -159,7 +159,9 @@ static NTSTATUS get_acl_blob(TALLOC_CTX *ctx,
 		status = vfs_stat_fsp(fsp);
 		sbuf = fsp->fsp_name->st;
 	} else {
-		int ret = vfs_stat_smb_basename(handle->conn, name, &sbuf);
+		int ret = vfs_stat_smb_basename(handle->conn,
+				smb_fname,
+				&sbuf);
 		if (ret == -1) {
 			status = map_nt_error_from_unix(errno);
 		}
@@ -186,7 +188,7 @@ static NTSTATUS get_acl_blob(TALLOC_CTX *ctx,
 	pblob->length = data.dsize;
 
 	DEBUG(10,("get_acl_blob: returned %u bytes from file %s\n",
-		(unsigned int)data.dsize, name ));
+		(unsigned int)data.dsize, smb_fname->base_name ));
 
 	if (pblob->length == 0 || pblob->data == NULL) {
 		return NT_STATUS_NOT_FOUND;
@@ -250,7 +252,7 @@ static int unlink_acl_tdb(vfs_handle_struct *handle,
 		goto out;
 	}
 
-	if (lp_posix_pathnames()) {
+	if (smb_fname_tmp->flags & SMB_FILENAME_POSIX_PATH) {
 		ret = SMB_VFS_LSTAT(handle->conn, smb_fname_tmp);
 	} else {
 		ret = SMB_VFS_STAT(handle->conn, smb_fname_tmp);
@@ -275,19 +277,20 @@ static int unlink_acl_tdb(vfs_handle_struct *handle,
  On rmdir we need to delete the tdb record (if using tdb).
 *********************************************************************/
 
-static int rmdir_acl_tdb(vfs_handle_struct *handle, const char *path)
+static int rmdir_acl_tdb(vfs_handle_struct *handle,
+		const struct smb_filename *smb_fname)
 {
 
 	SMB_STRUCT_STAT sbuf;
 	struct db_context *db = acl_db;
 	int ret = -1;
 
-	ret = vfs_stat_smb_basename(handle->conn, path, &sbuf);
+	ret = vfs_stat_smb_basename(handle->conn, smb_fname, &sbuf);
 	if (ret == -1) {
 		return -1;
 	}
 
-	ret = rmdir_acl_common(handle, path);
+	ret = rmdir_acl_common(handle, smb_fname);
 	if (ret == -1) {
 		return -1;
 	}
@@ -366,11 +369,13 @@ static int sys_acl_set_file_tdb(vfs_handle_struct *handle,
                               SMB_ACL_TYPE_T type,
                               SMB_ACL_T theacl)
 {
-	SMB_STRUCT_STAT sbuf;
 	struct db_context *db = acl_db;
 	int ret = -1;
+	struct smb_filename smb_fname = {
+		.base_name = discard_const_p(char, path)
+	};
 
-	ret = vfs_stat_smb_basename(handle->conn, path, &sbuf);
+	ret = SMB_VFS_STAT(handle->conn, &smb_fname);
 	if (ret == -1) {
 		return -1;
 	}
@@ -383,7 +388,7 @@ static int sys_acl_set_file_tdb(vfs_handle_struct *handle,
 		return -1;
 	}
 
-	acl_tdb_delete(handle, db, &sbuf);
+	acl_tdb_delete(handle, db, &smb_fname.st);
 	return 0;
 }
 

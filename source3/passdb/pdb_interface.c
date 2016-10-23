@@ -25,6 +25,7 @@
 #include "passdb.h"
 #include "secrets.h"
 #include "messages.h"
+#include "serverid.h"
 #include "../librpc/gen_ndr/samr.h"
 #include "../librpc/gen_ndr/drsblobs.h"
 #include "../librpc/gen_ndr/ndr_drsblobs.h"
@@ -1219,7 +1220,7 @@ bool pdb_id_to_sid(struct unixid *id, struct dom_sid *sid)
 
 	ret = pdb->id_to_sid(pdb, id, sid);
 
-	if (ret == true) {
+	if (ret) {
 		idmap_cache_set_sid2unixid(sid, id);
 	}
 

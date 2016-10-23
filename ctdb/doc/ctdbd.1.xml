@@ -229,19 +229,6 @@
       </varlistentry>
 
       <varlistentry>
-	<term>--lvs</term>
-	<listitem>
-	  <para>
-	    This option is used to activate the LVS capability on a CTDB
-	    node.  Please see the <citetitle>LVS</citetitle> section in
-	    <citerefentry><refentrytitle>ctdb</refentrytitle>
-	    <manvolnum>7</manvolnum></citerefentry> for more
-	    information.
-	  </para>
-	</listitem>
-      </varlistentry>
-
-      <varlistentry>
 	<term>--max-persistent-check-errors=<parameter>NUM</parameter></term>
 	<listitem>
 	  <para>
@@ -367,8 +354,7 @@
 	<term>--public-interface=<parameter>INTERFACE</parameter></term>
 	<listitem>
 	  <para>
-	    INTERFACE on which to attach public IP addresses or on which
-	    to attach the single-public-ip when used.
+	    Default INTERFACE on which to attach public IP addresses.
 	  </para>
 	  <para>
 	    When using public IP addresses, this is only required if
@@ -379,34 +365,17 @@
       </varlistentry>
 
       <varlistentry>
-	<term>--reclock=<parameter>FILE</parameter></term>
+	<term>--reclock=<parameter>LOCK</parameter></term>
 	<listitem>
 	  <para>
-	    FILE is the name of the recovery lock file, stored in
-	    <emphasis>shared storage</emphasis>, that CTDB uses to
-	    prevent split brains.
+	    LOCK specifies the cluster-wide mutex used to detect and
+	    prevent a partitioned cluster (or "split brain").
 	  </para>
 	  <para>
 	    For information about the recovery lock please see the
 	    <citetitle>RECOVERY LOCK</citetitle> section in
 	    <citerefentry><refentrytitle>ctdb</refentrytitle>
 	    <manvolnum>7</manvolnum></citerefentry>.
-	  </para>
-	</listitem>
-      </varlistentry>
-
-      <varlistentry>
-	<term>--single-public-ip=<parameter>IPADDR</parameter></term>
-	<listitem>
-	  <para>
-	    IPADDR specifies the single IP that CTDB will use in
-	    conjunction with LVS.
-	  </para>
-	  <para>
-	    Please see the <citetitle>LVS</citetitle> section in
-	    <citerefentry><refentrytitle>ctdb</refentrytitle>
-	    <manvolnum>7</manvolnum></citerefentry> for more
-	    information.
 	  </para>
 	</listitem>
       </varlistentry>

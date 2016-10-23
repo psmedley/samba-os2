@@ -31,8 +31,12 @@
 _PUBLIC_ NTSTATUS GUID_to_ndr_blob(const struct GUID *guid, TALLOC_CTX *mem_ctx, DATA_BLOB *b)
 {
 	enum ndr_err_code ndr_err;
-	ndr_err = ndr_push_struct_blob(b, mem_ctx, guid,
-				       (ndr_push_flags_fn_t)ndr_push_GUID);
+	*b = data_blob_talloc(mem_ctx, NULL, 16);
+	if (b->data == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+	ndr_err = ndr_push_struct_into_fixed_blob(
+		b, guid, (ndr_push_flags_fn_t)ndr_push_GUID);
 	return ndr_map_error2ntstatus(ndr_err);
 }
 
@@ -42,15 +46,9 @@ _PUBLIC_ NTSTATUS GUID_to_ndr_blob(const struct GUID *guid, TALLOC_CTX *mem_ctx,
 */
 _PUBLIC_ NTSTATUS GUID_from_ndr_blob(const DATA_BLOB *b, struct GUID *guid)
 {
-	enum ndr_err_code ndr_err;
-	TALLOC_CTX *mem_ctx;
-
-	mem_ctx = talloc_new(NULL);
-	NT_STATUS_HAVE_NO_MEMORY(mem_ctx);
-
-	ndr_err = ndr_pull_struct_blob_all(b, mem_ctx, guid,
-					   (ndr_pull_flags_fn_t)ndr_pull_GUID);
-	talloc_free(mem_ctx);
+	enum ndr_err_code ndr_err =
+		ndr_pull_struct_blob_all_noalloc(b, guid,
+						 (ndr_pull_flags_fn_t)ndr_pull_GUID);
 	return ndr_map_error2ntstatus(ndr_err);
 }
 
@@ -77,13 +75,10 @@ _PUBLIC_ NTSTATUS GUID_from_data_blob(const DATA_BLOB *s, struct GUID *guid)
 	switch(s->length) {
 	case 36:
 	{
-		TALLOC_CTX *mem_ctx;
-		const char *string;
+		char string[37];
+		memcpy(string, s->data, 36);
+		string[36] = 0;
 
-		mem_ctx = talloc_new(NULL);
-		NT_STATUS_HAVE_NO_MEMORY(mem_ctx);
-		string = talloc_strndup(mem_ctx, (const char *)s->data, s->length);
-		NT_STATUS_HAVE_NO_MEMORY(string);
 		if (11 == sscanf(string,
 				 "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 				 &time_low, &time_mid, &time_hi_and_version, 
@@ -91,26 +86,21 @@ _PUBLIC_ NTSTATUS GUID_from_data_blob(const DATA_BLOB *s, struct GUID *guid)
 				 &node[0], &node[1], &node[2], &node[3], &node[4], &node[5])) {
 			status = NT_STATUS_OK;
 		}
-		talloc_free(mem_ctx);
 		break;
 	}
 	case 38:
 	{
-		TALLOC_CTX *mem_ctx;
-		const char *string;
+		char string[39];
+		memcpy(string, s->data, 38);
+		string[38] = 0;
 
-		mem_ctx = talloc_new(NULL);
-		NT_STATUS_HAVE_NO_MEMORY(mem_ctx);
-		string = talloc_strndup(mem_ctx, (const char *)s->data, s->length);
-		NT_STATUS_HAVE_NO_MEMORY(string);
-		if (11 == sscanf((const char *)s->data, 
+		if (11 == sscanf(string, 
 				 "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
 				 &time_low, &time_mid, &time_hi_and_version, 
 				 &clock_seq[0], &clock_seq[1],
 				 &node[0], &node[1], &node[2], &node[3], &node[4], &node[5])) {
 			status = NT_STATUS_OK;
 		}
-		talloc_free(mem_ctx);
 		break;
 	}
 	case 32:

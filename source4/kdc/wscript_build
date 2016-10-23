@@ -7,7 +7,7 @@ else:
     kdc_include = getattr(bld.env, "CPPPATH_KDC")
 
 bld.SAMBA_MODULE('service_kdc',
-                 source='kdc.c kpasswdd.c proxy.c',
+                 source='kdc-heimdal.c kpasswd-heimdal.c',
                  subsystem='service',
                  init_function='server_service_kdc_init',
                  deps='''
@@ -15,12 +15,11 @@ bld.SAMBA_MODULE('service_kdc',
                       HDB_SAMBA4
                       WDC_SAMBA4
                       samba-hostconfig
-                      LIBTSOCKET
-                      LIBSAMBA_TSOCKET
                       com_err
                       samba_server_gensec
                       PAC_GLUE
                       KDC-GLUE
+                      KDC-SERVER
                       KPASSWD_GLUE
                  ''',
                  internal_module=False)
@@ -43,6 +42,17 @@ bld.SAMBA_LIBRARY('HDB_SAMBA4_PLUGIN',
                   install_path='${MODULESDIR}/hdb',
                   enabled = (bld.CONFIG_SET("USING_SYSTEM_KRB5") and bld.CONFIG_SET("USING_SYSTEM_HDB"))
                   )
+
+bld.SAMBA_SUBSYSTEM('KDC-SERVER',
+                    source='kdc-server.c kdc-proxy.c',
+                    includes=kdc_include,
+                    deps='''
+                         krb5samba
+                         ldb
+                         LIBTSOCKET
+                         LIBSAMBA_TSOCKET
+                    ''',
+                    enabled=bld.CONFIG_SET('SAMBA4_USES_HEIMDAL'))
 
 bld.SAMBA_SUBSYSTEM('KDC-GLUE',
 	source='kdc-glue.c',
@@ -70,6 +80,14 @@ bld.SAMBA_SUBSYSTEM('sdb_hdb',
 	deps='talloc sdb hdb',
 	autoproto='sdb_hdb.h',
 	enabled=bld.CONFIG_SET('SAMBA4_USES_HEIMDAL')
+	)
+
+bld.SAMBA_SUBSYSTEM('sdb_kdb',
+	source='sdb_to_kdb.c',
+	includes=kdc_include,
+	deps='sdb kdb5',
+	autoproto='sdb_kdb.h',
+	enabled=bld.CONFIG_SET('HAVE_KDB_H')
 	)
 
 bld.SAMBA_SUBSYSTEM('PAC_GLUE',
@@ -104,10 +122,19 @@ bld.SAMBA_SUBSYSTEM('MIT_SAMBA',
                          auth4_sam
                          auth_sam_reply
                          samba-credentials
-                         hdb
                          db-glue
                          PAC_GLUE
+                         KPASSWD_GLUE
                          samba-hostconfig
                          com_err
+                         sdb_kdb
+                         kdb5
                          ''',
-                    enabled=not bld.CONFIG_SET('SAMBA4_USES_HEIMDAL'))
+                    enabled=(not bld.CONFIG_SET('SAMBA4_USES_HEIMDAL') and bld.CONFIG_SET('HAVE_KDB_H')) )
+
+bld.SAMBA_BINARY('samba4ktutil',
+                 'ktutil.c',
+                 deps='krb5samba',
+                 install=False)
+
+bld.RECURSE('mit-kdb')

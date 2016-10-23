@@ -166,7 +166,7 @@ static void client_read_handler(uint8_t *buf, size_t buflen,
 	struct ctdb_req_header hdr;
 	int ret;
 
-	ret = ctdb_req_header_pull(discard_const(buf), buflen, &hdr);
+	ret = ctdb_req_header_pull(buf, buflen, &hdr);
 	if (ret != 0) {
 		DEBUG(DEBUG_WARNING, ("invalid header, ret=%d\n", ret));
 		return;
@@ -239,11 +239,55 @@ void ctdb_client_wait(struct tevent_context *ev, bool *done)
 	}
 }
 
+static void ctdb_client_wait_timeout_handler(struct tevent_context *ev,
+					     struct tevent_timer *te,
+					     struct timeval t,
+					     void *private_data)
+{
+	bool *timed_out = (bool *)private_data;
+
+	*timed_out = true;
+}
+
+int ctdb_client_wait_timeout(struct tevent_context *ev, bool *done,
+			     struct timeval timeout)
+{
+	TALLOC_CTX *mem_ctx;
+	struct tevent_timer *timer;
+	bool timed_out = false;
+
+	mem_ctx = talloc_new(ev);
+	if (mem_ctx == NULL) {
+		return ENOMEM;
+	}
+
+	timer = tevent_add_timer(ev, mem_ctx, timeout,
+				 ctdb_client_wait_timeout_handler,
+				 &timed_out);
+	if (timer == NULL) {
+		talloc_free(mem_ctx);
+		return ENOMEM;
+	}
+
+	while (! (*done) && ! timed_out) {
+		tevent_loop_once(ev);
+	}
+
+	talloc_free(mem_ctx);
+
+	if (timed_out) {
+		return ETIME;
+	}
+
+	return 0;
+}
+
 struct ctdb_recovery_wait_state {
 	struct tevent_context *ev;
 	struct ctdb_client_context *client;
 };
 
+static void ctdb_recovery_wait_recmode(struct tevent_req *subreq);
 static void ctdb_recovery_wait_retry(struct tevent_req *subreq);
 
 struct tevent_req *ctdb_recovery_wait_send(TALLOC_CTX *mem_ctx,
@@ -252,8 +296,7 @@ struct tevent_req *ctdb_recovery_wait_send(TALLOC_CTX *mem_ctx,
 {
 	struct tevent_req *req, *subreq;
 	struct ctdb_recovery_wait_state *state;
-	int recmode;
-	int ret;
+	struct ctdb_req_control request;
 
 	req = tevent_req_create(mem_ctx, &state,
 				struct ctdb_recovery_wait_state);
@@ -264,47 +307,36 @@ struct tevent_req *ctdb_recovery_wait_send(TALLOC_CTX *mem_ctx,
 	state->ev = ev;
 	state->client = client;
 
-	ret = ctdb_ctrl_get_recmode(client, ev, client, client->pnn,
-				    tevent_timeval_zero(), &recmode);
-	if (ret != 0) {
-		tevent_req_error(req, ret);
-		return tevent_req_post(req, ev);
-	}
-
-	if (recmode == CTDB_RECOVERY_NORMAL) {
-		tevent_req_done(req);
-		return tevent_req_post(req, ev);
-	}
-
-	subreq = tevent_wakeup_send(state, ev,
-				    tevent_timeval_current_ofs(1, 0));
+	ctdb_req_control_get_recmode(&request);
+	subreq = ctdb_client_control_send(state, ev, client, client->pnn,
+					  tevent_timeval_zero(), &request);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
-	tevent_req_set_callback(subreq, ctdb_recovery_wait_retry, req);
+	tevent_req_set_callback(subreq, ctdb_recovery_wait_recmode, req);
 
 	return req;
 }
 
-static void ctdb_recovery_wait_retry(struct tevent_req *subreq)
+static void ctdb_recovery_wait_recmode(struct tevent_req *subreq)
 {
 	struct tevent_req *req = tevent_req_callback_data(
 		subreq, struct tevent_req);
 	struct ctdb_recovery_wait_state *state = tevent_req_data(
 		req, struct ctdb_recovery_wait_state);
-	int ret, recmode;
+	struct ctdb_reply_control *reply;
+	int recmode;
+	int ret;
 	bool status;
 
-	status = tevent_wakeup_recv(subreq);
+	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
 	if (! status) {
-		tevent_req_error(req, ENOMEM);
+		tevent_req_error(req, ret);
 		return;
 	}
 
-	ret = ctdb_ctrl_get_recmode(state, state->ev, state->client,
-				    ctdb_client_pnn(state->client),
-				    tevent_timeval_zero(), &recmode);
+	ret = ctdb_reply_control_get_recmode(reply, &recmode);
 	if (ret != 0) {
 		tevent_req_error(req, ret);
 		return;
@@ -323,6 +355,32 @@ static void ctdb_recovery_wait_retry(struct tevent_req *subreq)
 	tevent_req_set_callback(subreq, ctdb_recovery_wait_retry, req);
 }
 
+static void ctdb_recovery_wait_retry(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct ctdb_recovery_wait_state *state = tevent_req_data(
+		req, struct ctdb_recovery_wait_state);
+	struct ctdb_req_control request;
+	bool status;
+
+	status = tevent_wakeup_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (! status) {
+		tevent_req_error(req, ENOMEM);
+		return;
+	}
+
+	ctdb_req_control_get_recmode(&request);
+	subreq = ctdb_client_control_send(state, state->ev, state->client,
+					  state->client->pnn,
+					  tevent_timeval_zero(), &request);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, ctdb_recovery_wait_recmode, req);
+}
+
 bool ctdb_recovery_wait_recv(struct tevent_req *req, int *perr)
 {
 	int err;
@@ -335,4 +393,29 @@ bool ctdb_recovery_wait_recv(struct tevent_req *req, int *perr)
 	}
 
 	return true;
+}
+
+bool ctdb_recovery_wait(struct tevent_context *ev,
+			struct ctdb_client_context *client)
+{
+	TALLOC_CTX *mem_ctx;
+	struct tevent_req *req;
+	bool status;
+
+	mem_ctx = talloc_new(client);
+	if (mem_ctx == NULL) {
+		return false;
+	}
+
+	req = ctdb_recovery_wait_send(mem_ctx, ev, client);
+	if (req == NULL) {
+		return false;
+	}
+
+	tevent_req_poll(req, ev);
+
+	status = ctdb_recovery_wait_recv(req, NULL);
+
+	talloc_free(mem_ctx);
+	return status;
 }

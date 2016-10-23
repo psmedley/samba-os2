@@ -549,7 +549,7 @@ bool lpcfg_parm_bool(struct loadparm_context *lp_ctx,
 
 
 /* this is used to prevent lots of mallocs of size 1 */
-static const char lpcfg_string_emtpy[] = "";
+static const char lpcfg_string_empty[] = "";
 
 /**
  Free a string value.
@@ -559,7 +559,7 @@ void lpcfg_string_free(char **s)
 	if (s == NULL) {
 		return;
 	}
-	if (*s == lpcfg_string_emtpy) {
+	if (*s == lpcfg_string_empty) {
 		*s = NULL;
 		return;
 	}
@@ -575,7 +575,7 @@ bool lpcfg_string_set(TALLOC_CTX *mem_ctx, char **dest, const char *src)
 	lpcfg_string_free(dest);
 
 	if ((src == NULL) || (*src == '\0')) {
-		*dest = discard_const_p(char, lpcfg_string_emtpy);
+		*dest = discard_const_p(char, lpcfg_string_empty);
 		return true;
 	}
 
@@ -597,7 +597,7 @@ bool lpcfg_string_set_upper(TALLOC_CTX *mem_ctx, char **dest, const char *src)
 	lpcfg_string_free(dest);
 
 	if ((src == NULL) || (*src == '\0')) {
-		*dest = discard_const_p(char, lpcfg_string_emtpy);
+		*dest = discard_const_p(char, lpcfg_string_empty);
 		return true;
 	}
 
@@ -2571,7 +2571,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 
 	lpcfg_do_global_parameter(lp_ctx, "dcerpc endpoint servers", "epmapper wkssvc rpcecho samr netlogon lsarpc drsuapi dssetup unixinfo browser eventlog6 backupkey dnsserver");
 	lpcfg_do_global_parameter(lp_ctx, "server services", "s3fs rpc nbt wrepl ldap cldap kdc drepl winbindd ntp_signd kcc dnsupdate dns");
-	lpcfg_do_global_parameter(lp_ctx, "kccsrv:samba_kcc", "false");
+	lpcfg_do_global_parameter(lp_ctx, "kccsrv:samba_kcc", "true");
 	/* the winbind method for domain controllers is for both RODC
 	   auth forwarding and for trusted domains */
 	lpcfg_do_global_parameter(lp_ctx, "private dir", dyn_PRIVATE_DIR);
@@ -2630,7 +2630,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "ClientLanManAuth", "False");
 	lpcfg_do_global_parameter(lp_ctx, "ClientNTLMv2Auth", "True");
 	lpcfg_do_global_parameter(lp_ctx, "LanmanAuth", "False");
-	lpcfg_do_global_parameter(lp_ctx, "NTLMAuth", "True");
+	lpcfg_do_global_parameter(lp_ctx, "NTLMAuth", "False");
 	lpcfg_do_global_parameter(lp_ctx, "RawNTLMv2Auth", "False");
 	lpcfg_do_global_parameter(lp_ctx, "client use spnego principal", "False");
 
@@ -2897,6 +2897,8 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "printjob username", "%U");
 
 	lpcfg_do_global_parameter(lp_ctx, "aio max threads", "100");
+
+	lpcfg_do_global_parameter(lp_ctx, "smb2 leases", "yes");
 
 	/* Allow modules to adjust defaults */
 	for (defaults_hook = defaults_hooks; defaults_hook;

@@ -2,19 +2,17 @@
 # ctdb event script for winbind
 
 [ -n "$CTDB_BASE" ] || \
-    export CTDB_BASE=$(cd -P $(dirname "$0") ; dirname "$PWD")
+    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
 
-. $CTDB_BASE/functions
-
-detect_init_style
+. "${CTDB_BASE}/functions"
 
 CTDB_SERVICE_WINBIND=${CTDB_SERVICE_WINBIND:-winbind}
 
+# service_name is used by various functions
+# shellcheck disable=SC2034
 service_name="winbind"
 
 loadconfig
-
-ctdb_setup_service_state_dir
 
 service_start ()
 {
@@ -42,21 +40,17 @@ is_ctdb_managed_service || exit 0
 
 ###########################
 
-case "$1" in 
-     startup)
+case "$1" in
+startup)
 	ctdb_service_start
 	;;
-	
-     shutdown)
+
+shutdown)
 	ctdb_service_stop
 	;;
 
-     monitor)
+monitor)
 	ctdb_check_command wbinfo -p
-	;;
-
-    *)
-	ctdb_standard_event_handler "$@"
 	;;
 esac
 

@@ -1025,7 +1025,7 @@ static int tar_extract(struct tar *t)
 
 	for (;;) {
 		NTSTATUS status;
-		bool skip;
+		bool skip = false;
 		r = archive_read_next_header(t->archive, &entry);
 		if (r == ARCHIVE_EOF) {
 			break;
@@ -1257,7 +1257,7 @@ static int tar_read_inclusion_file(struct tar *t, const char* filename)
 {
 	char *line;
 	int err = 0;
-	int fd;
+	int fd = -1;
 	TALLOC_CTX *ctx = talloc_new(NULL);
 	if (ctx == NULL) {
 		return 1;
@@ -1281,9 +1281,10 @@ static int tar_read_inclusion_file(struct tar *t, const char* filename)
 		}
 	}
 
-	close(fd);
-
 out:
+	if (fd != -1) {
+		close(fd);
+	}
 	talloc_free(ctx);
 	return err;
 }
@@ -1510,7 +1511,7 @@ static NTSTATUS is_subpath(const char *sub, const char *full,
 	}
 	string_replace(f, '\\', '/');
 	s = strlower_talloc(tmp_ctx, sub);
-	if (f == NULL) {
+	if (s == NULL) {
 		status = NT_STATUS_NO_MEMORY;
 		goto out_ctx_free;
 	}

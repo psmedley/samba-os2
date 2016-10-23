@@ -36,6 +36,7 @@
 #include <sys/statvfs.h>
 #include "cephfs/libcephfs.h"
 #include "smbprofile.h"
+#include "modules/posixacl_xattr.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_VFS
@@ -252,14 +253,16 @@ static int cephwrap_statvfs(struct vfs_handle_struct *handle,  const char *path,
 
 /* Directory operations */
 
-static DIR *cephwrap_opendir(struct vfs_handle_struct *handle,  const char *fname, const char *mask, uint32_t attr)
+static DIR *cephwrap_opendir(struct vfs_handle_struct *handle,
+			     const struct smb_filename *smb_fname,
+			     const char *mask, uint32_t attr)
 {
 	int ret = 0;
 	struct ceph_dir_result *result;
-	DEBUG(10, ("[CEPH] opendir(%p, %s)\n", handle, fname));
+	DEBUG(10, ("[CEPH] opendir(%p, %s)\n", handle, smb_fname->base_name));
 
 	/* Returns NULL if it does not exist or there are problems ? */
-	ret = ceph_opendir(handle->data, fname, &result);
+	ret = ceph_opendir(handle->data, smb_fname->base_name, &result);
 	if (ret < 0) {
 		result = NULL;
 		errno = -ret; /* We return result which is NULL in this case */
@@ -326,11 +329,14 @@ static void cephwrap_rewinddir(struct vfs_handle_struct *handle, DIR *dirp)
 	ceph_rewinddir(handle->data, (struct ceph_dir_result *) dirp);
 }
 
-static int cephwrap_mkdir(struct vfs_handle_struct *handle,  const char *path, mode_t mode)
+static int cephwrap_mkdir(struct vfs_handle_struct *handle,
+			  const struct smb_filename *smb_fname,
+			  mode_t mode)
 {
 	int result;
 	bool has_dacl = False;
 	char *parent = NULL;
+	const char *path = smb_fname->base_name;
 
 	DEBUG(10, ("[CEPH] mkdir(%p, %s)\n", handle, path));
 
@@ -357,19 +363,22 @@ static int cephwrap_mkdir(struct vfs_handle_struct *handle,  const char *path, m
 		 * mess up any inherited ACL bits that were set. JRA.
 		 */
 		int saved_errno = errno; /* We may get ENOSYS */
-		if ((SMB_VFS_CHMOD_ACL(handle->conn, path, mode) == -1) && (errno == ENOSYS))
+		if ((SMB_VFS_CHMOD_ACL(handle->conn, smb_fname, mode) == -1) &&
+				(errno == ENOSYS)) {
 			errno = saved_errno;
+		}
 	}
 
 	return result;
 }
 
-static int cephwrap_rmdir(struct vfs_handle_struct *handle,  const char *path)
+static int cephwrap_rmdir(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
 	int result;
 
-	DEBUG(10, ("[CEPH] rmdir(%p, %s)\n", handle, path));
-	result = ceph_rmdir(handle->data, path);
+	DEBUG(10, ("[CEPH] rmdir(%p, %s)\n", handle, smb_fname->base_name));
+	result = ceph_rmdir(handle->data, smb_fname->base_name);
 	DEBUG(10, ("[CEPH] rmdir(...) = %d\n", result));
 	WRAP_RETURN(result);
 }
@@ -623,11 +632,16 @@ static int cephwrap_unlink(struct vfs_handle_struct *handle,
 	WRAP_RETURN(result);
 }
 
-static int cephwrap_chmod(struct vfs_handle_struct *handle,  const char *path, mode_t mode)
+static int cephwrap_chmod(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode)
 {
 	int result;
 
-	DEBUG(10, ("[CEPH] chmod(%p, %s, %d)\n", handle, path, mode));
+	DEBUG(10, ("[CEPH] chmod(%p, %s, %d)\n",
+		handle,
+		smb_fname->base_name,
+		mode));
 
 	/*
 	 * We need to do this due to the fact that the default POSIX ACL
@@ -638,14 +652,17 @@ static int cephwrap_chmod(struct vfs_handle_struct *handle,  const char *path, m
 
 	{
 		int saved_errno = errno; /* We might get ENOSYS */
-		if ((result = SMB_VFS_CHMOD_ACL(handle->conn, path, mode)) == 0) {
+		result = SMB_VFS_CHMOD_ACL(handle->conn,
+					smb_fname,
+					mode);
+		if (result == 0) {
 			return result;
 		}
 		/* Error - return the old errno. */
 		errno = saved_errno;
 	}
 
-	result = ceph_chmod(handle->data, path, mode);
+	result = ceph_chmod(handle->data, smb_fname->base_name, mode);
 	DEBUG(10, ("[CEPH] chmod(...) = %d\n", result));
 	WRAP_RETURN(result);
 }
@@ -681,11 +698,18 @@ static int cephwrap_fchmod(struct vfs_handle_struct *handle, files_struct *fsp, 
 	return -1;
 }
 
-static int cephwrap_chown(struct vfs_handle_struct *handle, const char *path, uid_t uid, gid_t gid)
+static int cephwrap_chown(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
 	int result;
-	DEBUG(10, ("[CEPH] chown(%p, %s, %d, %d)\n", handle, path, uid, gid));
-	result = ceph_chown(handle->data, path, uid, gid);
+	DEBUG(10, ("[CEPH] chown(%p, %s, %d, %d)\n",
+		handle,
+		smb_fname->base_name,
+		uid,
+		gid));
+	result = ceph_chown(handle->data, smb_fname->base_name, uid, gid);
 	DEBUG(10, ("[CEPH] chown(...) = %d\n", result));
 	WRAP_RETURN(result);
 }
@@ -706,12 +730,18 @@ static int cephwrap_fchown(struct vfs_handle_struct *handle, files_struct *fsp, 
 	return result;
 }
 
-static int cephwrap_lchown(struct vfs_handle_struct *handle, const char *path, uid_t uid, gid_t gid)
+static int cephwrap_lchown(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			uid_t uid,
+			gid_t gid)
 {
 	int result;
-
-	DEBUG(10, ("[CEPH] lchown(%p, %s, %d, %d)\n", handle, path, uid, gid));
-	result = ceph_lchown(handle->data, path, uid, gid);
+	DEBUG(10, ("[CEPH] lchown(%p, %s, %d, %d)\n",
+		handle,
+		smb_fname->base_name,
+		uid,
+		gid));
+	result = ceph_lchown(handle->data, smb_fname->base_name, uid, gid);
 	DEBUG(10, ("[CEPH] lchown(...) = %d\n", result));
 	WRAP_RETURN(result);
 }
@@ -1188,47 +1218,6 @@ static int cephwrap_set_offline(struct vfs_handle_struct *handle,
 	return -1;
 }
 
-static SMB_ACL_T cephwrap_sys_acl_get_file(struct vfs_handle_struct *handle,
-					   const char *path_p,
-					   SMB_ACL_TYPE_T type,
-					   TALLOC_CTX *mem_ctx)
-{
-	errno = ENOTSUP;
-	return NULL;
-}
-
-static SMB_ACL_T cephwrap_sys_acl_get_fd(struct vfs_handle_struct *handle,
-					 struct files_struct *fsp,
-					 TALLOC_CTX *mem_ctx)
-{
-	errno = ENOTSUP;
-	return NULL;
-}
-
-static int cephwrap_sys_acl_set_file(struct vfs_handle_struct *handle,
-				     const char *name,
-				     SMB_ACL_TYPE_T acltype,
-				     SMB_ACL_T theacl)
-{
-	errno = ENOTSUP;
-	return -1;
-}
-
-static int cephwrap_sys_acl_set_fd(struct vfs_handle_struct *handle,
-				   struct files_struct *fsp,
-				   SMB_ACL_T theacl)
-{
-	errno = ENOTSUP;
-	return -1;
-}
-
-static int cephwrap_sys_acl_delete_def_file(struct vfs_handle_struct *handle,
-					    const char *path)
-{
-	errno = ENOTSUP;
-	return -1;
-}
-
 static struct vfs_fn_pointers ceph_fns = {
 	/* Disk operations */
 
@@ -1301,11 +1290,13 @@ static struct vfs_fn_pointers ceph_fns = {
 	.fsetxattr_fn = cephwrap_fsetxattr,
 
 	/* Posix ACL Operations */
-	.sys_acl_get_file_fn = cephwrap_sys_acl_get_file,
-	.sys_acl_get_fd_fn = cephwrap_sys_acl_get_fd,
-	.sys_acl_set_file_fn = cephwrap_sys_acl_set_file,
-	.sys_acl_set_fd_fn = cephwrap_sys_acl_set_fd,
-	.sys_acl_delete_def_file_fn = cephwrap_sys_acl_delete_def_file,
+	.sys_acl_get_file_fn = posixacl_xattr_acl_get_file,
+	.sys_acl_get_fd_fn = posixacl_xattr_acl_get_fd,
+	.sys_acl_blob_get_file_fn = posix_sys_acl_blob_get_file,
+	.sys_acl_blob_get_fd_fn = posix_sys_acl_blob_get_fd,
+	.sys_acl_set_file_fn = posixacl_xattr_acl_set_file,
+	.sys_acl_set_fd_fn = posixacl_xattr_acl_set_fd,
+	.sys_acl_delete_def_file_fn = posixacl_xattr_acl_delete_def_file,
 
 	/* aio operations */
 	.aio_force_fn = cephwrap_aio_force,

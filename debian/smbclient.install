@@ -1,4 +1,5 @@
 usr/bin/cifsdd
+usr/bin/findsmb
 usr/bin/rpcclient
 usr/bin/smbcacls
 usr/bin/smbclient

@@ -764,7 +764,7 @@ build_logon_name(krb5_context context,
 
 	s2_len = (ucs2_len + 1) * 2;
 	s2 = malloc(s2_len);
-	if (ucs2 == NULL) {
+	if (s2 == NULL) {
 	    free(ucs2);
 	    return krb5_enomem(context);
 	}
@@ -978,6 +978,40 @@ _krb5_pac_sign(krb5_context context,
     krb5_data logon, d;
 
     krb5_data_zero(&logon);
+
+    for (i = 0; i < p->pac->numbuffers; i++) {
+	if (p->pac->buffers[i].type == PAC_SERVER_CHECKSUM) {
+	    if (p->server_checksum == NULL) {
+		p->server_checksum = &p->pac->buffers[i];
+	    }
+	    if (p->server_checksum != &p->pac->buffers[i]) {
+		ret = EINVAL;
+		krb5_set_error_message(context, ret,
+				       N_("PAC have two server checksums", ""));
+		goto out;
+	    }
+	} else if (p->pac->buffers[i].type == PAC_PRIVSVR_CHECKSUM) {
+	    if (p->privsvr_checksum == NULL) {
+		p->privsvr_checksum = &p->pac->buffers[i];
+	    }
+	    if (p->privsvr_checksum != &p->pac->buffers[i]) {
+		ret = EINVAL;
+		krb5_set_error_message(context, ret,
+				       N_("PAC have two KDC checksums", ""));
+		goto out;
+	    }
+	} else if (p->pac->buffers[i].type == PAC_LOGON_NAME) {
+	    if (p->logon_name == NULL) {
+		p->logon_name = &p->pac->buffers[i];
+	    }
+	    if (p->logon_name != &p->pac->buffers[i]) {
+		ret = EINVAL;
+		krb5_set_error_message(context, ret,
+				       N_("PAC have two logon names", ""));
+		goto out;
+	    }
+	}
+    }
 
     if (p->logon_name == NULL)
 	num++;

@@ -1,6 +1,4 @@
-ctdb/NEWS
 ctdb/README
 ctdb/README.eventscripts
 ctdb/README.notify.d
-ctdb/doc/recovery-process.txt
-ctdb/web
+ctdb/doc/*.txt

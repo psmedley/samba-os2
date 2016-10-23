@@ -325,7 +325,8 @@ struct extended_search_context {
    renames of the target
 */
 static int fix_one_way_link(struct extended_search_context *ac, struct ldb_dn *dn,
-			    bool is_deleted_objects, bool *remove_value)
+			    bool is_deleted_objects, bool *remove_value,
+			    uint32_t linkID)
 {
 	struct GUID guid;
 	NTSTATUS status;
@@ -348,9 +349,9 @@ static int fix_one_way_link(struct extended_search_context *ac, struct ldb_dn *d
 
 	search_flags = DSDB_FLAG_NEXT_MODULE | DSDB_SEARCH_SEARCH_ALL_PARTITIONS | DSDB_SEARCH_ONE_ONLY;
 
-	if (ldb_request_get_control(ac->req, LDB_CONTROL_SHOW_DEACTIVATED_LINK_OID) ||
-	    is_deleted_objects) {
-		search_flags |= DSDB_SEARCH_SHOW_DELETED;
+	if (linkID == 0) {
+		/* You must ALWAYS show one-way links regardless of the state of the target */
+		search_flags |= (DSDB_SEARCH_SHOW_DELETED | DSDB_SEARCH_SHOW_RECYCLED);
 	}
 
 	ret = dsdb_module_search(ac->module, tmp_ctx, &res, NULL, LDB_SCOPE_SUBTREE, attrs,
@@ -472,6 +473,20 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 		}
 	}
 
+	if (!checked_reveal_control) {
+		have_reveal_control =
+			ldb_request_get_control(req, LDB_CONTROL_REVEAL_INTERNALS) != NULL;
+		checked_reveal_control = true;
+	}
+
+	/* 
+	 * Shortcut for repl_meta_data.  We asked for the data
+	 * 'as-is', so stop processing here!
+	 */
+	if (have_reveal_control && p->normalise == false && ac->inject == true) {
+		return ldb_module_send_entry(ac->req, msg, ares->controls);
+	}
+	
 	/* Walk the returned elements (but only if we have a schema to
 	 * interpret the list with) */
 	for (i = 0; ac->schema && i < msg->num_elements; i++) {
@@ -517,12 +532,6 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 			struct dsdb_dn *dsdb_dn = NULL;
 			struct ldb_val *plain_dn = &msg->elements[i].values[j];		
 			bool is_deleted_objects = false;
-
-			if (!checked_reveal_control) {
-				have_reveal_control =
-					ldb_request_get_control(req, LDB_CONTROL_REVEAL_INTERNALS) != NULL;
-				checked_reveal_control = true;
-			}
 
 			/* this is a fast method for detecting deleted
 			   linked attributes, working on the unparsed
@@ -603,7 +612,8 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 			if (attribute->one_way_link &&
 			    strcasecmp(attribute->lDAPDisplayName, "objectCategory") != 0) {
 				bool remove_value;
-				ret = fix_one_way_link(ac, dn, is_deleted_objects, &remove_value);
+				ret = fix_one_way_link(ac, dn, is_deleted_objects, &remove_value,
+						       attribute->linkID);
 				if (ret != LDB_SUCCESS) {
 					talloc_free(dsdb_dn);
 					return ldb_module_done(ac->req, NULL, NULL, ret);

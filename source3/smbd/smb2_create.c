@@ -716,6 +716,12 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 				return tevent_req_post(req, ev);
 			}
 
+			/*
+			 * NB. When SMB2+ unix extensions are added,
+			 * we need to relax this check in invalid
+			 * names - we used to not do this if
+			 * lp_posix_pathnames() was false.
+			 */
 			if (ea_list_has_invalid_name(ea_list)) {
 				tevent_req_nterror(req, STATUS_INVALID_EA_NAME);
 				return tevent_req_post(req, ev);
@@ -836,7 +842,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			hdr = SMBD_SMB2_IN_HDR_PTR(smb2req);
 			flags = IVAL(hdr, SMB2_HDR_FLAGS);
 			replay_operation =
-				!!(flags & SMB2_HDR_FLAG_REPLAY_OPERATION);
+				flags & SMB2_HDR_FLAG_REPLAY_OPERATION;
 
 			status = smb2srv_open_lookup_replay_cache(
 					smb2req->xconn, create_guid,
@@ -907,14 +913,14 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 
 			TALLOC_FREE(fname);
 			fname = talloc_asprintf(state,
-					"@GMT-%04u.%02u.%02u-%02u.%02u.%02u\\%s",
+					"%s\\@GMT-%04u.%02u.%02u-%02u.%02u.%02u",
+					in_name,
 					tm->tm_year + 1900,
 					tm->tm_mon + 1,
 					tm->tm_mday,
 					tm->tm_hour,
 					tm->tm_min,
-					tm->tm_sec,
-					in_name);
+					tm->tm_sec);
 			if (tevent_req_nomem(fname, req)) {
 				return tevent_req_post(req, ev);
 			}

@@ -12,6 +12,10 @@ loadconfig "ctdb"
 
 [ -n "$CTDB_SOCKET" ] && export CTDB_SOCKET
 
+if [ -z "$CTDB" ] ; then
+	CTDB=ctdb
+fi
+
 ############################################################
 
 usage ()
@@ -23,7 +27,6 @@ $0 <option>
   master     Display node number and private IP address of master node
   list       List private IP addresses of nodes in group, annotate master
   status     Show status of nodes in NAT gateway group
-  natgwlist  Combination of "master" and "status", for backward compatiblity
 EOF
     exit 1
 }
@@ -35,14 +38,14 @@ get_nodestatus_X ()
 {
     # Result is cached in global variable nodestatus_X
     [ -n "$nodestatus_X" ] || \
-	nodestatus_X=$(ctdb -X nodestatus all |
+	nodestatus_X=$($CTDB -X nodestatus all |
 			      sed -e '1d' -e 's@^|@@' -e 's@|$@@')
 }
 
 get_nodestatus ()
 {
     # Result is cached in global variable nodestatus
-    [ -n "$nodestatus" ] || nodestatus=$(ctdb nodestatus all)
+    [ -n "$nodestatus" ] || nodestatus=$($CTDB nodestatus all)
     [ $? -ne 255 ] # ctdb nodestatus returns 255 on failure
 }
 
@@ -104,7 +107,7 @@ EOF
     # BANNED or STOPPED)
     awk -F '|' -v ms="$_ms" \
 	'BEGIN { ret = 2 }
-	 ms ~ "@" $2 "@" && \
+	 ms ~ "@" $2 "@" &&
 	     $5 == 0 && $6 == 0 && $8 == 0 { print $1, $2 ; ret=0 ; exit }
 	 END { exit ret }' <<EOF ||
 $nodestatus_X
@@ -113,7 +116,7 @@ EOF
     # DISCONNECTED, DISABLED or STOPPED
     awk -F '|' -v ms="$_ms" \
 	'BEGIN { ret = 2 }
-	 ms ~ "@" $2 "@" && \
+	 ms ~ "@" $2 "@" &&
 	     $3 == 0 && $5 == 0 && $7 == 0 { print $1, $2 ; ret=0 ; exit }
 	 END { exit ret }' <<EOF ||
 $nodestatus_X
@@ -122,7 +125,7 @@ EOF
     # DISABLED
     awk -F '|' -v ms="$_ms" \
 	'BEGIN { ret = 2 }
-	 ms ~ "@" $2 "@" && \
+	 ms ~ "@" $2 "@" &&
 	     $3 == 0 && $5 == 0 { print $1, $2 ; ret=0 ; exit }
 	 END { exit ret }' <<EOF
 $nodestatus_X
@@ -134,6 +137,8 @@ nodes_list ()
 {
     get_natgw_nodes || \
 	die "${prog}: NAT gateway nodes file \"$CTDB_NATGW_NODES\" not found"
+    # Intentional word splitting here
+    # shellcheck disable=SC2046
     set -- $(find_master)  || \
 	die "${prog}: Unable to determine NAT gateway master node"
     _master_ip="$2"
@@ -143,7 +148,15 @@ nodes_list ()
 	if [ "$_ip" = "$_master_ip" ] ; then
 	    _options="MASTER${_options:+,}${_options}"
 	fi
-	printf "${_ip}\t${_options}\n"
+	# There is no other way to do this and keep shellcheck happy.
+	# The tab character must be in the format string and the
+	# format string must contain no variables.  Some shells will
+	# expand a tab if it is in an argument but others won't.
+	if [ -n "$_options" ] ; then
+		printf "%s\t%s\n" "$_ip" "$_options"
+	else
+		echo "$_ip"
+	fi
     done <<EOF
 $natgw_nodes
 EOF
@@ -166,25 +179,9 @@ $natgw_nodes
 EOF
 
     # Print status of nodes in $_ns, along with node count
-    awk -v ns="$_ns" \
-	'BEGIN { out = "" ; count = 0 } \
-         ns ~ "@" $2 "@" { out =  out "\n" $0 ; count += 1 } \
-         END { print "Number of nodes:" count out }' <<EOF
+    awk -v ns="$_ns" 'ns ~ "@" $2 "@" { print $0 }' <<EOF
 $nodestatus
 EOF
-}
-
-# For backward compatibility
-natgwlist ()
-{
-    ret=0
-    find_master
-    if [ $? -eq 2 ] ; then
-	echo "-1 0.0.0.0"
-	ret=2
-    fi
-    nodes_status || return $?
-    return $ret
 }
 
 prog=$(basename "$0")
@@ -194,6 +191,5 @@ case "$cmd" in
     master)    find_master ;;
     list)      nodes_list ;;
     status)    nodes_status ;;
-    natgwlist) natgwlist ;;
     *)         usage ;;
 esac

@@ -2,12 +2,12 @@
 .\"     Title: vfs_shadow_copy2
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/22/2016
+.\"      Date: 09/07/2016
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.4
+.\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "VFS_SHADOW_COPY2" "8" "09/22/2016" "Samba 4\&.4" "System Administration tools"
+.TH "VFS_SHADOW_COPY2" "8" "09/07/2016" "Samba 4\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -465,6 +465,29 @@ setting by itself\&.
 Example: shadow:crossmountpoints = yes
 .sp
 Default: shadow:crossmountpoints = no
+.RE
+.PP
+shadow:snapprefix
+.RS 4
+With growing number of snapshots file\-systems need some mechanism to differentiate one set of snapshots from other, e\&.g\&. monthly, weekly, manual, special events, etc\&. Therefore these file\-systems provide different ways to tag snapshots, e\&.g\&. provide a configurable way to name snapshots, which is not just based on time\&. With only
+shadow:format
+it is very difficult to filter these snapshots\&. With this optional parameter, one can specify a variable prefix component for names of the snapshot directories in the file\-system\&. If this parameter is set, together with the
+shadow:format
+and
+shadow:delimiter
+parameters it determines the possible names of snapshot directories in the file\-system\&. The option only supports Basic Regular Expression (BRE)\&.
+.RE
+.PP
+shadow:delimiter
+.RS 4
+This optional parameter is used as a delimiter between
+shadow:snapprefix
+and
+shadow:format\&. This parameter is used only when
+shadow:snapprefix
+is set\&.
+.sp
+Default: shadow:delimiter = "_GMT"
 .RE
 .SH "EXAMPLES"
 .PP

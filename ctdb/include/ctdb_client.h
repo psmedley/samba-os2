@@ -312,23 +312,8 @@ int ctdb_dump_db(struct ctdb_db_context *ctdb_db,
 int ctdb_ctrl_getpid(struct ctdb_context *ctdb, struct timeval timeout,
 		     uint32_t destnode, uint32_t *pid);
 
-struct ctdb_client_control_state *ctdb_ctrl_freeze_send(
-					struct ctdb_context *ctdb,
-					TALLOC_CTX *mem_ctx,
-					struct timeval timeout,
-					uint32_t destnode, uint32_t priority);
-int ctdb_ctrl_freeze_recv(struct ctdb_context *ctdb, TALLOC_CTX *mem_ctx,
-			  struct ctdb_client_control_state *state);
-
-int ctdb_ctrl_freeze_priority(struct ctdb_context *ctdb, struct timeval timeout,
-			      uint32_t destnode, uint32_t priority);
 int ctdb_ctrl_freeze(struct ctdb_context *ctdb, struct timeval timeout,
 		     uint32_t destnode);
-
-int ctdb_ctrl_thaw_priority(struct ctdb_context *ctdb, struct timeval timeout,
-			    uint32_t destnode, uint32_t priority);
-int ctdb_ctrl_thaw(struct ctdb_context *ctdb, struct timeval timeout,
-		   uint32_t destnode);
 
 int ctdb_ctrl_getpnn(struct ctdb_context *ctdb, struct timeval timeout,
 		     uint32_t destnode);
@@ -406,10 +391,6 @@ int ctdb_ctrl_del_public_ip(struct ctdb_context *ctdb,
 			    struct timeval timeout, uint32_t destnode,
 			    struct ctdb_addr_info_old *pub);
 
-int ctdb_ctrl_killtcp(struct ctdb_context *ctdb,
-		      struct timeval timeout, uint32_t destnode,
-		      struct ctdb_connection *killtcp);
-
 int ctdb_ctrl_gratious_arp(struct ctdb_context *ctdb,
 			   struct timeval timeout, uint32_t destnode,
 			   ctdb_sock_addr *addr, const char *ifname);
@@ -418,20 +399,6 @@ int ctdb_ctrl_get_tcp_tickles(struct ctdb_context *ctdb,
 			      struct timeval timeout, uint32_t destnode,
 			      TALLOC_CTX *mem_ctx, ctdb_sock_addr *addr,
 			      struct ctdb_tickle_list_old **list);
-
-int ctdb_ctrl_register_server_id(struct ctdb_context *ctdb,
-				 struct timeval timeout,
-				 struct ctdb_client_id *id);
-int ctdb_ctrl_unregister_server_id(struct ctdb_context *ctdb,
-				   struct timeval timeout,
-				   struct ctdb_client_id *id);
-int ctdb_ctrl_check_server_id(struct ctdb_context *ctdb,
-			      struct timeval timeout, uint32_t destnode,
-			      struct ctdb_client_id *id, uint32_t *status);
-int ctdb_ctrl_get_server_id_list(struct ctdb_context *ctdb,
-				 TALLOC_CTX *mem_ctx,
-				 struct timeval timeout, uint32_t destnode,
-				 struct ctdb_client_id_list_old **svid_list);
 
 /*
   initialise ctdb subsystem
@@ -573,18 +540,12 @@ int ctdb_ctrl_report_recd_lock_latency(struct ctdb_context *ctdb,
 int ctdb_ctrl_getreclock(struct ctdb_context *ctdb,
 			 struct timeval timeout, uint32_t destnode,
 			 TALLOC_CTX *mem_ctx, const char **reclock);
-int ctdb_ctrl_setreclock(struct ctdb_context *ctdb,
-			 struct timeval timeout, uint32_t destnode,
-			 const char *reclock);
 
 int ctdb_ctrl_stop_node(struct ctdb_context *ctdb, struct timeval timeout,
 			uint32_t destnode);
 int ctdb_ctrl_continue_node(struct ctdb_context *ctdb, struct timeval timeout,
 			    uint32_t destnode);
 
-int ctdb_ctrl_setnatgwstate(struct ctdb_context *ctdb,
-			    struct timeval timeout, uint32_t destnode,
-			    uint32_t natgwstate);
 int ctdb_ctrl_setlmasterrole(struct ctdb_context *ctdb,
 			     struct timeval timeout, uint32_t destnode,
 			     uint32_t lmasterrole);
@@ -602,13 +563,6 @@ int ctdb_ctrl_set_ban(struct ctdb_context *ctdb, struct timeval timeout,
 int ctdb_ctrl_get_ban(struct ctdb_context *ctdb, struct timeval timeout,
 		      uint32_t destnode, TALLOC_CTX *mem_ctx,
 		      struct ctdb_ban_state **bantime);
-
-int ctdb_ctrl_set_db_priority(struct ctdb_context *ctdb,
-			      struct timeval timeout, uint32_t destnode,
-			      struct ctdb_db_priority *db_prio);
-int ctdb_ctrl_get_db_priority(struct ctdb_context *ctdb,
-			      struct timeval timeout, uint32_t destnode,
-			      uint32_t db_id, uint32_t *priority);
 
 int ctdb_ctrl_getstathistory(struct ctdb_context *ctdb,
 			     struct timeval timeout, uint32_t destnode,

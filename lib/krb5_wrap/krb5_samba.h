@@ -74,6 +74,25 @@
 #define CKSUMTYPE_HMAC_MD5 CKSUMTYPE_HMAC_MD5_ARCFOUR
 #endif
 
+/*
+ * CKSUMTYPE_HMAC_SHA1_96_AES_* in Heimdal
+ * CKSUMTYPE_HMAC_SHA1_96_AES* in MIT
+ */
+#if defined(CKSUMTYPE_HMAC_SHA1_96_AES128) && !defined(CKSUMTYPE_HMAC_SHA1_96_AES_128)
+#define CKSUMTYPE_HMAC_SHA1_96_AES_128 CKSUMTYPE_HMAC_SHA1_96_AES128
+#endif
+#if defined(CKSUMTYPE_HMAC_SHA1_96_AES256) && !defined(CKSUMTYPE_HMAC_SHA1_96_AES_256)
+#define CKSUMTYPE_HMAC_SHA1_96_AES_256 CKSUMTYPE_HMAC_SHA1_96_AES256
+#endif
+
+/*
+ * KRB5_KU_OTHER_ENCRYPTED in Heimdal
+ * KRB5_KEYUSAGE_APP_DATA_ENCRYPT in MIT
+ */
+#if defined(KRB5_KEYUSAGE_APP_DATA_ENCRYPT) && !defined(KRB5_KU_OTHER_ENCRYPTED)
+#define KRB5_KU_OTHER_ENCRYPTED KRB5_KEYUSAGE_APP_DATA_ENCRYPT
+#endif
+
 typedef struct {
 #if defined(HAVE_MAGIC_IN_KRB5_ADDRESS) && defined(HAVE_ADDRTYPE_IN_KRB5_ADDRESS) /* MIT */
 	krb5_address **addrs;
@@ -144,12 +163,12 @@ void krb5_free_unparsed_name(krb5_context ctx, char *val);
 
 /* Samba wrapper functions for krb5 functionality. */
 bool setup_kaddr( krb5_address *pkaddr, struct sockaddr_storage *paddr);
-int create_kerberos_key_from_string(krb5_context context,
-				    krb5_principal host_princ,
-				    krb5_data *password,
-				    krb5_keyblock *key,
-				    krb5_enctype enctype,
-				    bool no_salt);
+
+krb5_error_code smb_krb5_mk_error(krb5_context context,
+				  krb5_error_code error_code,
+				  const char *e_text,
+				  krb5_data *e_data,
+				  krb5_data *enc_err);
 
 krb5_error_code get_kerberos_allowed_etypes(krb5_context context, krb5_enctype **enctypes);
 bool get_krb5_smb_session_key(TALLOC_CTX *mem_ctx,
@@ -184,6 +203,10 @@ krb5_enctype smb_get_enctype_from_kt_entry(krb5_keytab_entry *kt_entry);
 krb5_error_code smb_krb5_enctype_to_string(krb5_context context,
 					    krb5_enctype enctype,
 					    char **etype_s);
+krb5_error_code smb_krb5_open_keytab_relative(krb5_context context,
+					      const char *keytab_name_req,
+					      bool write_access,
+					      krb5_keytab *keytab);
 krb5_error_code smb_krb5_open_keytab(krb5_context context,
 				      const char *keytab_name,
 				      bool write_access,
@@ -192,6 +215,24 @@ krb5_error_code smb_krb5_keytab_name(TALLOC_CTX *mem_ctx,
 				     krb5_context context,
 				     krb5_keytab keytab,
 				     const char **keytab_name);
+krb5_error_code smb_krb5_kt_seek_and_delete_old_entries(krb5_context context,
+							krb5_keytab keytab,
+							krb5_kvno kvno,
+							krb5_enctype enctype,
+							const char *princ_s,
+							krb5_principal princ,
+							bool flush,
+							bool keep_old_entries);
+krb5_error_code smb_krb5_kt_add_entry(krb5_context context,
+				      krb5_keytab keytab,
+				      krb5_kvno kvno,
+				      const char *princ_s,
+				      const char *salt_principal,
+				      krb5_enctype enctype,
+				      krb5_data *password,
+				      bool no_salt,
+				      bool keep_old_entries);
+
 krb5_error_code smb_krb5_get_credentials(krb5_context context,
 					 krb5_ccache ccache,
 					 krb5_principal me,
@@ -354,6 +395,9 @@ int smb_krb5_principal_get_type(krb5_context context,
 #if !defined(HAVE_KRB5_WARNX)
 krb5_error_code krb5_warnx(krb5_context context, const char *fmt, ...);
 #endif
+
+krb5_error_code smb_krb5_cc_copy_creds(krb5_context context,
+				       krb5_ccache incc, krb5_ccache outcc);
 
 #endif /* HAVE_KRB5 */
 
