@@ -37,13 +37,17 @@ bld.SAMBA_MODULE('service_drepl',
 	enabled=bld.AD_DC_BUILD_IS_ENABLED()
 	)
 
+bld.SAMBA_LIBRARY('dsdb_garbage_collect_tombstones',
+                  source='kcc/garbage_collect_tombstones.c',
+                  deps='samdb param RPC_NDR_DRSUAPI',
+                  private_library=True)
 
 bld.SAMBA_MODULE('service_kcc',
-	source='kcc/kcc_service.c kcc/kcc_connection.c kcc/kcc_topology.c kcc/kcc_deleted.c kcc/kcc_periodic.c kcc/kcc_drs_replica_info.c',
+	source='kcc/kcc_service.c kcc/kcc_connection.c kcc/kcc_topology.c kcc/kcc_periodic.c kcc/kcc_drs_replica_info.c',
 	autoproto='kcc/kcc_service_proto.h',
 	subsystem='service',
 	init_function='server_service_kcc_init',
-	deps='samdb process_model RPC_NDR_IRPC RPC_NDR_DRSUAPI UTIL_RUNCMD',
+	deps='samdb process_model RPC_NDR_IRPC RPC_NDR_DRSUAPI UTIL_RUNCMD dsdb_garbage_collect_tombstones',
 	internal_module=False,
 	enabled=bld.AD_DC_BUILD_IS_ENABLED()
 	)
@@ -63,6 +67,6 @@ bld.SAMBA_PYTHON('python_dsdb',
 	# the dependency on dcerpc here is because gensec
 	# depends on dcerpc but the waf circular dependency finder
 	# removes it so we end up with unresolved symbols.
-	deps='samdb pyldb-util dcerpc com_err pyrpc_util',
+	deps='samdb pyldb-util dcerpc com_err pyrpc_util pyparam_util dsdb_garbage_collect_tombstones',
 	realname='samba/dsdb.so'
 	)

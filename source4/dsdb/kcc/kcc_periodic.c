@@ -64,7 +64,7 @@ static bool reps_in_list(struct repsFromToBlob *r, struct repsFromToBlob *reps, 
   make sure we only add repsFrom entries for DCs who are masters for
   the partition
  */
-static bool check_MasterNC(struct kccsrv_partition *p, struct repsFromToBlob *r,
+static bool check_MasterNC(struct kccsrv_service *service, struct dsdb_ldb_dn_list_node *p, struct repsFromToBlob *r,
 			   struct ldb_result *res)
 {
 	struct repsFromTo1 *r1 = &r->ctr.ctr1;
@@ -99,7 +99,7 @@ static bool check_MasterNC(struct kccsrv_partition *p, struct repsFromToBlob *r,
 			}
 		}
 		for (j=0; j<el->num_values; j++) {
-			dn = ldb_dn_from_ldb_val(tmp_ctx, p->service->samdb, &el->values[j]);
+			dn = ldb_dn_from_ldb_val(tmp_ctx, service->samdb, &el->values[j]);
 			if (!ldb_dn_validate(dn)) {
 				talloc_free(dn);
 				continue;
@@ -194,7 +194,7 @@ NTSTATUS kccsrv_add_repsFrom(struct kccsrv_service *s, TALLOC_CTX *mem_ctx,
 			    struct repsFromToBlob *reps, uint32_t count,
 			    struct ldb_result *res)
 {
-	struct kccsrv_partition *p;
+	struct dsdb_ldb_dn_list_node *p;
 	bool notify_dreplsrv = false;
 	uint32_t replica_flags = kccsrv_replica_flags(s);
 
@@ -233,7 +233,7 @@ NTSTATUS kccsrv_add_repsFrom(struct kccsrv_service *s, TALLOC_CTX *mem_ctx,
 				/* we don't have the new one - add it
 				 * if it is a master
 				 */
-				if (res && !check_MasterNC(p, &reps[i], res)) {
+				if (res && !check_MasterNC(s, p, &reps[i], res)) {
 					/* its not a master, we don't
 					   want to pull from it */
 					continue;
@@ -253,7 +253,7 @@ NTSTATUS kccsrv_add_repsFrom(struct kccsrv_service *s, TALLOC_CTX *mem_ctx,
 		/* remove any stale ones */
 		for (i=0; i<our_count; i++) {
 			if (!reps_in_list(&our_reps[i], reps, count) ||
-			    (res && !check_MasterNC(p, &our_reps[i], res))) {
+			    (res && !check_MasterNC(s, p, &our_reps[i], res))) {
 				DEBUG(4,(__location__ ": Removed repsFrom for %s\n",
 					 our_reps[i].ctr.ctr1.other_info->dns_name));
 				memmove(&our_reps[i], &our_reps[i+1], (our_count-(i+1))*sizeof(our_reps[0]));
@@ -594,6 +594,54 @@ WERROR kccsrv_periodic_schedule(struct kccsrv_service *service, uint32_t next_in
 	service->periodic.te = new_te;
 
 	return WERR_OK;
+}
+
+/*
+  check to see if any deleted objects need scavenging
+ */
+static NTSTATUS kccsrv_check_deleted(struct kccsrv_service *s, TALLOC_CTX *mem_ctx)
+{
+	time_t current_time = time(NULL);
+	time_t interval = lpcfg_parm_int(s->task->lp_ctx, NULL, "kccsrv",
+					 "check_deleted_interval", 86400);
+	uint32_t tombstoneLifetime;
+	int ret;
+	unsigned int num_objects_removed = 0;
+	unsigned int num_links_removed = 0;
+	NTSTATUS status;
+	char *error_string = NULL;
+
+	if (current_time - s->last_deleted_check < interval) {
+		return NT_STATUS_OK;
+	}
+
+	ret = dsdb_tombstone_lifetime(s->samdb, &tombstoneLifetime);
+	if (ret != LDB_SUCCESS) {
+		DEBUG(1,(__location__ ": Failed to get tombstone lifetime\n"));
+		return NT_STATUS_INTERNAL_DB_CORRUPTION;
+	}
+
+	s->last_deleted_check = current_time;
+
+	status = dsdb_garbage_collect_tombstones(mem_ctx, s->samdb,
+						 s->partitions,
+						 current_time, tombstoneLifetime,
+						 &num_objects_removed,
+						 &num_links_removed,
+						 &error_string);
+
+	if (NT_STATUS_IS_OK(status)) {
+		DEBUG(5, ("garbage_collect_tombstones: Removed %u tombstone objects "
+			  "and %u tombstone links successfully\n",
+			  num_objects_removed, num_links_removed));
+	} else {
+		DEBUG(2, ("garbage_collect_tombstones: Failure removing tombstone "
+			  "objects and links after removing %u tombstone objects "
+			  "and %u tombstone links successfully: %s\n",
+			  num_objects_removed, num_links_removed,
+			  error_string ? error_string : nt_errstr(status)));
+	}
+	return status;
 }
 
 static void kccsrv_periodic_run(struct kccsrv_service *service)

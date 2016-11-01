@@ -2,12 +2,12 @@
 .\"     Title: smbget
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/07/2016
+.\"      Date: 10/24/2016
 .\"    Manual: User Commands
 .\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "SMBGET" "1" "09/07/2016" "Samba 4\&.5" "User Commands"
+.TH "SMBGET" "1" "10/24/2016" "Samba 4\&.5" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -127,11 +127,6 @@ Display brief usage message
 \-u, \-\-update
 .RS 4
 Download only when remote file is newer than local file or local file is missing\&.
-.RE
-.PP
-\-e|\-\-encrypt
-.RS 4
-This command line parameter requires the remote server support the UNIX extensions or that the SMB3 protocol has been selected\&. Requests that the connection be encrypted\&. Negotiates SMB encryption using either SMB3 or POSIX extensions via GSSAPI\&. Uses the given credentials for the encryption negotiation (either kerberos or NTLMv1/v2 if given domain/username/password triple\&. Fails the connection if encryption cannot be negotiated\&.
 .RE
 .SH "SMB URLS"
 .PP

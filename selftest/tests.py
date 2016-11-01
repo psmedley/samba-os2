@@ -90,6 +90,11 @@ plantestsuite(
     ["PYTHON=%s" % python, os.path.join(bbdir, "dbcheck-oldrelease.sh"),
      '$PREFIX_ABS/provision', 'release-4-1-6-partial-object', configuration])
 plantestsuite(
+    "samba4.blackbox.dbcheck.release-4-5-0-pre1", "none",
+    ["PYTHON=%s" % python,
+     os.path.join(bbdir, "dbcheck-oldrelease.sh"),
+     '$PREFIX_ABS/provision', 'release-4-5-0-pre1', configuration])
+plantestsuite(
     "samba4.blackbox.upgradeprovision.alpha13", "none",
     ["PYTHON=%s" % python,
      os.path.join(bbdir, "upgradeprovision-oldrelease.sh"),
@@ -100,9 +105,9 @@ plantestsuite(
      os.path.join(bbdir, "upgradeprovision-oldrelease.sh"),
      '$PREFIX_ABS/provision', 'release-4-0-0', configuration])
 plantestsuite(
-    "samba4.blackbox.upgradeprovision.release-4-5-0-pre1", "none",
+    "samba4.blackbox.tombstones-expunge.release-4-5-0-pre1", "none",
     ["PYTHON=%s" % python,
-     os.path.join(bbdir, "dbcheck-oldrelease.sh"),
+     os.path.join(bbdir, "tombstones-expunge.sh"),
      '$PREFIX_ABS/provision', 'release-4-5-0-pre1', configuration])
 planpythontestsuite("none", "samba.tests.upgradeprovision")
 planpythontestsuite("none", "samba.tests.xattr")

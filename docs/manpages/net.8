@@ -2,12 +2,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/07/2016
+.\"      Date: 10/24/2016
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "NET" "8" "09/07/2016" "Samba 4\&.5" "System Administration tools"
+.TH "NET" "8" "10/24/2016" "Samba 4\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -41,16 +41,6 @@ suite\&.
 The Samba net utility is meant to work just like the net utility available for windows and DOS\&. The first argument should be used to specify the protocol to use when executing a certain command\&. ADS is used for ActiveDirectory, RAP is using for old (Win9x/NT3) clients and RPC can be used for NT4 and Windows 2000\&. If this argument is omitted, net will try to determine it automatically\&. Not all commands are available on all protocols\&.
 .SH "OPTIONS"
 .PP
-\-?|\-\-help
-.RS 4
-Print a summary of command line options\&.
-.RE
-.PP
-\-k|\-\-kerberos
-.RS 4
-Try to authenticate with kerberos\&. Only useful in an Active Directory environment\&.
-.RE
-.PP
 \-w|\-\-workgroup target\-workgroup
 .RS 4
 Sets target workgroup or domain\&. You have to specify either this option or the IP address or the name of a server\&.
@@ -74,23 +64,6 @@ IP address of target server to use\&. You have to specify either this option or 
 \-p|\-\-port port
 .RS 4
 Port on the target server to connect to (usually 139 or 445)\&. Defaults to trying 445 first, then 139\&.
-.RE
-.PP
-\-n|\-\-netbiosname <primary NetBIOS name>
-.RS 4
-This option allows you to override the NetBIOS name that Samba uses for itself\&. This is identical to setting the
-\m[blue]\fBnetbios name\fR\m[]
-parameter in the
-smb\&.conf
-file\&. However, a command line setting will take precedence over settings in
-smb\&.conf\&.
-.RE
-.PP
-\-s|\-\-configfile=<configuration file>
-.RS 4
-The file specified contains the configuration details required by the server\&. The information in this file includes server\-specific information such as what printcap file to use, as well as descriptions of all the services that the server is to provide\&. See
-smb\&.conf
-for more information\&. The default configuration file name is determined at compile time\&.
 .RE
 .PP
 \-S|\-\-server server
@@ -282,53 +255,6 @@ Defines filename for database prechecking (used in "net registry import")\&.
 .RS 4
 Do not perform DNS updates as part of "net ads join"\&.
 .RE
-.PP
-\-e|\-\-encrypt
-.RS 4
-This command line parameter requires the remote server support the UNIX extensions or that the SMB3 protocol has been selected\&. Requests that the connection be encrypted\&. Negotiates SMB encryption using either SMB3 or POSIX extensions via GSSAPI\&. Uses the given credentials for the encryption negotiation (either kerberos or NTLMv1/v2 if given domain/username/password triple\&. Fails the connection if encryption cannot be negotiated\&.
-.RE
-.PP
-\-d|\-\-debuglevel=level
-.RS 4
-\fIlevel\fR
-is an integer from 0 to 10\&. The default value if this parameter is not specified is 1\&.
-.sp
-The higher this value, the more detail will be logged to the log files about the activities of the server\&. At level 0, only critical errors and serious warnings will be logged\&. Level 1 is a reasonable level for day\-to\-day running \- it generates a small amount of information about operations carried out\&.
-.sp
-Levels above 1 will generate considerable amounts of log data, and should only be used when investigating a problem\&. Levels above 3 are designed for use only by developers and generate HUGE amounts of log data, most of which is extremely cryptic\&.
-.sp
-Note that specifying this parameter here will override the
-\m[blue]\fBlog level\fR\m[]
-parameter in the
-smb\&.conf
-file\&.
-.RE
-.PP
-\-V|\-\-version
-.RS 4
-Prints the program version number\&.
-.RE
-.PP
-\-s|\-\-configfile=<configuration file>
-.RS 4
-The file specified contains the configuration details required by the server\&. The information in this file includes server\-specific information such as what printcap file to use, as well as descriptions of all the services that the server is to provide\&. See
-smb\&.conf
-for more information\&. The default configuration file name is determined at compile time\&.
-.RE
-.PP
-\-l|\-\-log\-basename=logdirectory
-.RS 4
-Base directory name for log/debug files\&. The extension
-\fB"\&.progname"\fR
-will be appended (e\&.g\&. log\&.smbclient, log\&.smbd, etc\&.\&.\&.)\&. The log file is never removed by the client\&.
-.RE
-.PP
-\-\-option=<name>=<value>
-.RS 4
-Set the
-\fBsmb.conf\fR(5)
-option "<name>" to value "<value>" from the command line\&. This overrides compiled\-in defaults and options read from the configuration file\&.
-.RE
 .SH "COMMANDS"
 .SS "CHANGESECRETPW"
 .PP
@@ -453,22 +379,6 @@ Delete job with specified id\&.
 .SS "RAP VALIDATE \fIuser\fR [\fIpassword\fR]"
 .PP
 Validate whether the specified user can log in to the remote server\&. If the password is not specified on the commandline, it will be prompted\&.
-.if n \{\
-.sp
-.\}
-.RS 4
-.it 1 an-trap
-.nr an-no-space-flag 1
-.nr an-break-flag 1
-.br
-.ps +1
-\fBNote\fR
-.ps -1
-.br
-.PP
-Currently NOT implemented\&.
-.sp .5v
-.RE
 .SS "RAP GROUPMEMBER"
 .SS "RAP GROUPMEMBER LIST GROUP"
 .PP
@@ -484,61 +394,13 @@ Add member to group\&.
 Execute the specified
 \fIcommand\fR
 on the remote server\&. Only works with OS/2 servers\&.
-.if n \{\
-.sp
-.\}
-.RS 4
-.it 1 an-trap
-.nr an-no-space-flag 1
-.nr an-break-flag 1
-.br
-.ps +1
-\fBNote\fR
-.ps -1
-.br
-.PP
-Currently NOT implemented\&.
-.sp .5v
-.RE
 .SS "RAP SERVICE"
 .SS "RAP SERVICE START NAME [arguments...]"
 .PP
 Start the specified service on the remote server\&. Not implemented yet\&.
-.if n \{\
-.sp
-.\}
-.RS 4
-.it 1 an-trap
-.nr an-no-space-flag 1
-.nr an-break-flag 1
-.br
-.ps +1
-\fBNote\fR
-.ps -1
-.br
-.PP
-Currently NOT implemented\&.
-.sp .5v
-.RE
 .SS "RAP SERVICE STOP"
 .PP
 Stop the specified service on the remote server\&.
-.if n \{\
-.sp
-.\}
-.RS 4
-.it 1 an-trap
-.nr an-no-space-flag 1
-.nr an-break-flag 1
-.br
-.ps +1
-\fBNote\fR
-.ps -1
-.br
-.PP
-Currently NOT implemented\&.
-.sp .5v
-.RE
 .SS "RAP PASSWORD \fIUSER\fR \fIOLDPASS\fR \fINEWPASS\fR"
 .PP
 Change password of

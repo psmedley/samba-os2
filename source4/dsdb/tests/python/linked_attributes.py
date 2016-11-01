@@ -266,11 +266,32 @@ class LATests(samba.tests.TestCase):
         u1, u2 = self.add_objects(2, 'user', 'u_del_link')
         g1, g2 = self.add_objects(2, 'group', 'g_del_link')
 
+        res = self.samdb.search(g1, scope=ldb.SCOPE_BASE,
+                                attrs=['uSNChanged'])
+        old_usn1 = int(res[0]['uSNChanged'][0])
+
         self.add_linked_attribute(g1, u1)
+
+        res = self.samdb.search(g1, scope=ldb.SCOPE_BASE,
+                                attrs=['uSNChanged'])
+        new_usn1 = int(res[0]['uSNChanged'][0])
+
+        self.assertNotEqual(old_usn1, new_usn1, "USN should have incremented")
+
         self.add_linked_attribute(g2, u1)
         self.add_linked_attribute(g2, u2)
 
+        res = self.samdb.search(g2, scope=ldb.SCOPE_BASE,
+                                attrs=['uSNChanged'])
+        old_usn2 = int(res[0]['uSNChanged'][0])
+
         self.remove_linked_attribute(g2, u1)
+
+        res = self.samdb.search(g2, scope=ldb.SCOPE_BASE,
+                                attrs=['uSNChanged'])
+        new_usn2 = int(res[0]['uSNChanged'][0])
+
+        self.assertNotEqual(old_usn2, new_usn2, "USN should have incremented")
 
         self.assert_forward_links(g1, [u1])
         self.assert_forward_links(g2, [u2])
@@ -282,7 +303,7 @@ class LATests(samba.tests.TestCase):
         self.remove_linked_attribute(g2, u1)
         self.assert_forward_links(g2, [])
 
-    def test_la_links_delete_link_reveal(self):
+    def _test_la_links_delete_link_reveal(self):
         u1, u2 = self.add_objects(2, 'user', 'u_del_link_reveal')
         g1, g2 = self.add_objects(2, 'group', 'g_del_link_reveal')
 
@@ -297,6 +318,11 @@ class LATests(samba.tests.TestCase):
                                   show_deactivated_link=0,
                                   reveal_internals=0
         )
+    def test_la_links_delete_link_reveal(self):
+        if opts.no_reveal_internals:
+            print 'skipping because --no-reveal-internals'
+            return
+        self._test_la_links_delete_link_reveal()
 
     def test_la_links_delete_user(self):
         u1, u2 = self.add_objects(2, 'user', 'u_del_user')
@@ -306,10 +332,30 @@ class LATests(samba.tests.TestCase):
         self.add_linked_attribute(g2, u1)
         self.add_linked_attribute(g2, u2)
 
+        res = self.samdb.search(g1, scope=ldb.SCOPE_BASE,
+                                attrs=['uSNChanged'])
+        old_usn1 = int(res[0]['uSNChanged'][0])
+
+        res = self.samdb.search(g2, scope=ldb.SCOPE_BASE,
+                                attrs=['uSNChanged'])
+        old_usn2 = int(res[0]['uSNChanged'][0])
+
         self.samdb.delete(u1)
 
         self.assert_forward_links(g1, [])
         self.assert_forward_links(g2, [u2])
+
+        res = self.samdb.search(g1, scope=ldb.SCOPE_BASE,
+                                attrs=['uSNChanged'])
+        new_usn1 = int(res[0]['uSNChanged'][0])
+
+        res = self.samdb.search(g2, scope=ldb.SCOPE_BASE,
+                                attrs=['uSNChanged'])
+        new_usn2 = int(res[0]['uSNChanged'][0])
+
+        # Assert the USN on the alternate object is unchanged
+        self.assertEqual(old_usn1, new_usn1)
+        self.assertEqual(old_usn2, new_usn2)
 
     def test_la_links_delete_user_reveal(self):
         u1, u2 = self.add_objects(2, 'user', 'u_del_user_reveal')

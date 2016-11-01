@@ -44,6 +44,7 @@
 #include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
+#include "common/pidfile.h"
 
 struct ctdb_client_pid_list {
 	struct ctdb_client_pid_list *next, *prev;
@@ -53,6 +54,7 @@ struct ctdb_client_pid_list {
 };
 
 const char *ctdbd_pidfile = NULL;
+static struct pidfile_context *ctdbd_pidfile_ctx = NULL;
 
 static void daemon_incoming_packet(void *, struct ctdb_req_header *);
 
@@ -1005,17 +1007,16 @@ static int ux_socket_bind(struct ctdb_context *ctdb)
 	addr.sun_family = AF_UNIX;
 	strncpy(addr.sun_path, ctdb->daemon.name, sizeof(addr.sun_path)-1);
 
-	/* First check if an old ctdbd might be running */
-	if (connect(ctdb->daemon.sd,
-		    (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-		DEBUG(DEBUG_CRIT,
-		      ("Something is already listening on ctdb socket '%s'\n",
-		       ctdb->daemon.name));
-		goto failed;
-	}
-
 	/* Remove any old socket */
-	unlink(ctdb->daemon.name);
+	ret = unlink(ctdb->daemon.name);
+	if (ret == 0) {
+		DEBUG(DEBUG_WARNING,
+		      ("Removed stale socket %s\n", ctdb->daemon.name));
+	} else if (errno != ENOENT) {
+		DEBUG(DEBUG_ERR,
+		      ("Failed to remove stale socket %s\n", ctdb->daemon.name));
+		return -1;
+	}
 
 	set_close_on_exec(ctdb->daemon.sd);
 
@@ -1149,32 +1150,21 @@ static void ctdb_tevent_trace(enum tevent_trace_point tp,
 
 static void ctdb_remove_pidfile(void)
 {
-	/* Only the main ctdbd's PID matches the SID */
-	if (ctdbd_pidfile != NULL && getsid(0) == getpid()) {
-		if (unlink(ctdbd_pidfile) == 0) {
-			DEBUG(DEBUG_NOTICE, ("Removed PID file %s\n",
-					     ctdbd_pidfile));
-		} else {
-			DEBUG(DEBUG_WARNING, ("Failed to Remove PID file %s\n",
-					      ctdbd_pidfile));
-		}
-	}
+	TALLOC_FREE(ctdbd_pidfile_ctx);
 }
 
-static void ctdb_create_pidfile(pid_t pid)
+static void ctdb_create_pidfile(TALLOC_CTX *mem_ctx)
 {
 	if (ctdbd_pidfile != NULL) {
-		FILE *fp;
-
-		fp = fopen(ctdbd_pidfile, "w");
-		if (fp == NULL) {
-			DEBUG(DEBUG_ALERT,
-			      ("Failed to open PID file %s\n", ctdbd_pidfile));
+		int ret = pidfile_create(mem_ctx, ctdbd_pidfile,
+					 &ctdbd_pidfile_ctx);
+		if (ret != 0) {
+			DEBUG(DEBUG_ERR,
+			      ("Failed to create PID file %s\n",
+			       ctdbd_pidfile));
 			exit(11);
 		}
 
-		fprintf(fp, "%d\n", pid);
-		fclose(fp);
 		DEBUG(DEBUG_NOTICE, ("Created PID file %s\n", ctdbd_pidfile));
 		atexit(ctdb_remove_pidfile);
 	}
@@ -1236,18 +1226,9 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 	int res, ret = -1;
 	struct tevent_fd *fde;
 
-	/* create a unix domain stream socket to listen to */
-	res = ux_socket_bind(ctdb);
-	if (res!=0) {
-		DEBUG(DEBUG_ALERT,("Cannot continue.  Exiting!\n"));
-		exit(10);
-	}
-
 	if (do_fork && fork()) {
 		return 0;
 	}
-
-	tdb_reopen_all(false);
 
 	if (do_fork) {
 		if (setsid() == -1) {
@@ -1265,7 +1246,14 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 	ctdb->ctdbd_pid = getpid();
 	DEBUG(DEBUG_ERR, ("Starting CTDBD (Version %s) as PID: %u\n",
 			  CTDB_VERSION_STRING, ctdb->ctdbd_pid));
-	ctdb_create_pidfile(ctdb->ctdbd_pid);
+	ctdb_create_pidfile(ctdb);
+
+	/* create a unix domain stream socket to listen to */
+	res = ux_socket_bind(ctdb);
+	if (res!=0) {
+		DEBUG(DEBUG_ALERT,("Cannot continue.  Exiting!\n"));
+		exit(10);
+	}
 
 	/* Make sure we log something when the daemon terminates.
 	 * This must be the first exit handler to run (so the last to

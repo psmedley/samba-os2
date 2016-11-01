@@ -1,4 +1,4 @@
-<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1"><title>ctdb-tunables</title><meta name="generator" content="DocBook XSL Stylesheets V1.78.1"></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="refentry"><a name="ctdb-tunables.7"></a><div class="titlepage"></div><div class="refnamediv"><h2>Name</h2><p>ctdb-tunables &#8212; CTDB tunable configuration variables</p></div><div class="refsect1"><a name="idp53685360"></a><h2>DESCRIPTION</h2><p>
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1"><title>ctdb-tunables</title><meta name="generator" content="DocBook XSL Stylesheets V1.78.1"></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="refentry"><a name="ctdb-tunables.7"></a><div class="titlepage"></div><div class="refnamediv"><h2>Name</h2><p>ctdb-tunables &#8212; CTDB tunable configuration variables</p></div><div class="refsect1"><a name="idp51736928"></a><h2>DESCRIPTION</h2><p>
       CTDB's behaviour can be configured by setting run-time tunable
       variables.  This lists and describes all tunables.  See the
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(1)</span>
@@ -6,37 +6,37 @@
       <span class="command"><strong>getvar</strong></span> commands for more details.
     </p><p>
       The tunable variables are listed alphabetically.
-    </p><div class="refsect2"><a name="idp52870560"></a><h3>AllowClientDBAttach</h3><p>Default: 1</p><p>
+    </p><div class="refsect2"><a name="idp52744848"></a><h3>AllowClientDBAttach</h3><p>Default: 1</p><p>
 	When set to 0, clients are not allowed to attach to any databases.
 	This can be used to temporarily block any new processes from
 	attaching to and accessing the databases.  This is mainly used
 	for detaching a volatile database using 'ctdb detach'.
-      </p></div><div class="refsect2"><a name="idp53408816"></a><h3>AllowUnhealthyDBRead</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp52375424"></a><h3>AllowUnhealthyDBRead</h3><p>Default: 0</p><p>
 	When set to 1, ctdb allows database traverses to read unhealthy
 	databases.  By default, ctdb does not allow reading records from
 	unhealthy databases.
-      </p></div><div class="refsect2"><a name="idp51204704"></a><h3>ControlTimeout</h3><p>Default: 60</p><p>
+      </p></div><div class="refsect2"><a name="idp51755456"></a><h3>ControlTimeout</h3><p>Default: 60</p><p>
 	This is the default setting for timeout for when sending a
 	control message to either the local or a remote ctdb daemon.
-      </p></div><div class="refsect2"><a name="idp53489536"></a><h3>DatabaseHashSize</h3><p>Default: 100001</p><p>
+      </p></div><div class="refsect2"><a name="idp53604368"></a><h3>DatabaseHashSize</h3><p>Default: 100001</p><p>
 	Number of the hash chains for the local store of the tdbs that
 	ctdb manages.
-      </p></div><div class="refsect2"><a name="idp49129360"></a><h3>DatabaseMaxDead</h3><p>Default: 5</p><p>
+      </p></div><div class="refsect2"><a name="idp53442928"></a><h3>DatabaseMaxDead</h3><p>Default: 5</p><p>
 	Maximum number of dead records per hash chain for the tdb databses
 	managed by ctdb.
-      </p></div><div class="refsect2"><a name="idp49047616"></a><h3>DBRecordCountWarn</h3><p>Default: 100000</p><p>
+      </p></div><div class="refsect2"><a name="idp50004960"></a><h3>DBRecordCountWarn</h3><p>Default: 100000</p><p>
 	When set to non-zero, ctdb will log a warning during recovery if
 	a database has more than this many records. This will produce a
 	warning if a database grows uncontrollably with orphaned records.
-      </p></div><div class="refsect2"><a name="idp49049440"></a><h3>DBRecordSizeWarn</h3><p>Default: 10000000</p><p>
+      </p></div><div class="refsect2"><a name="idp50006784"></a><h3>DBRecordSizeWarn</h3><p>Default: 10000000</p><p>
 	When set to non-zero, ctdb will log a warning during recovery
 	if a single record is bigger than this size. This will produce
 	a warning if a database record grows uncontrollably.
-      </p></div><div class="refsect2"><a name="idp49091168"></a><h3>DBSizeWarn</h3><p>Default: 1000000000</p><p>
+      </p></div><div class="refsect2"><a name="idp49089280"></a><h3>DBSizeWarn</h3><p>Default: 1000000000</p><p>
 	When set to non-zero, ctdb will log a warning during recovery if
 	a database size is bigger than this. This will produce a warning
 	if a database grows uncontrollably.
-      </p></div><div class="refsect2"><a name="idp49092960"></a><h3>DeferredAttachTO</h3><p>Default: 120</p><p>
+      </p></div><div class="refsect2"><a name="idp49091072"></a><h3>DeferredAttachTO</h3><p>Default: 120</p><p>
 	When databases are frozen we do not allow clients to attach to
 	the databases. Instead of returning an error immediately to the
 	client, the attach request from the client is deferred until
@@ -45,7 +45,7 @@
       </p><p>
 	This timeout controls how long we will defer the request from the
 	client before timing it out and returning an error to the client.
-      </p></div><div class="refsect2"><a name="idp49095392"></a><h3>DeterministicIPs</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp50940960"></a><h3>DeterministicIPs</h3><p>Default: 0</p><p>
 	When set to 1, ctdb will try to keep public IP addresses locked
 	to specific nodes as far as possible. This makes it easier
 	for debugging since you can know that as long as all nodes are
@@ -56,7 +56,7 @@
 	of public IP assignment changes in the cluster. This tunable may
 	increase the number of IP failover/failbacks that are performed
 	on the cluster by a small margin.
-      </p></div><div class="refsect2"><a name="idp49097968"></a><h3>DisableIPFailover</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp50943536"></a><h3>DisableIPFailover</h3><p>Default: 0</p><p>
 	When set to non-zero, ctdb will not perform failover or
 	failback. Even if a node fails while holding public IPs, ctdb
 	will not recover the IPs or assign them to another node.
@@ -66,19 +66,19 @@
 	nodes. This leads to a service outage until the administrator
 	has manually performed IP failover to replacement nodes using the
 	'ctdb moveip' command.
-      </p></div><div class="refsect2"><a name="idp50047616"></a><h3>ElectionTimeout</h3><p>Default: 3</p><p>
+      </p></div><div class="refsect2"><a name="idp50946032"></a><h3>ElectionTimeout</h3><p>Default: 3</p><p>
 	The number of seconds to wait for the election of recovery
 	master to complete. If the election is not completed during this
 	interval, then that round of election fails and ctdb starts a
 	new election.
-      </p></div><div class="refsect2"><a name="idp50049408"></a><h3>EnableBans</h3><p>Default: 1</p><p>
+      </p></div><div class="refsect2"><a name="idp50947856"></a><h3>EnableBans</h3><p>Default: 1</p><p>
         This parameter allows ctdb to ban a node if the node is misbehaving.
       </p><p>
 	When set to 0, this disables banning completely in the cluster
 	and thus nodes can not get banned, even it they break. Don't
 	set to 0 unless you know what you are doing.  You should set
 	this to the same value on all nodes to avoid unexpected behaviour.
-      </p></div><div class="refsect2"><a name="idp50051664"></a><h3>EventScriptTimeout</h3><p>Default: 30</p><p>
+      </p></div><div class="refsect2"><a name="idp50950112"></a><h3>EventScriptTimeout</h3><p>Default: 30</p><p>
 	Maximum time in seconds to allow an event to run before timing
 	out.  This is the total time for all enabled scripts that are
 	run for an event, not just a single event script.
@@ -87,7 +87,7 @@
 	"releaseip", "startrecovery", "recovered") and converted to
 	success.  The logic here is that the callers of these events
 	implement their own additional timeout.
-      </p></div><div class="refsect2"><a name="idp50054096"></a><h3>FetchCollapse</h3><p>Default: 1</p><p>
+      </p></div><div class="refsect2"><a name="idp50952544"></a><h3>FetchCollapse</h3><p>Default: 1</p><p>
        This parameter is used to avoid multiple migration requests for
        the same record from a single node. All the record requests for
        the same record are queued up and processed when the record is
@@ -100,7 +100,7 @@
 	bounce that record around very fast, and poor performance.
 	This can improve performance and reduce CPU utilization for
 	certain workloads.
-      </p></div><div class="refsect2"><a name="idp48969392"></a><h3>HopcountMakeSticky</h3><p>Default: 50</p><p>
+      </p></div><div class="refsect2"><a name="idp50955216"></a><h3>HopcountMakeSticky</h3><p>Default: 50</p><p>
 	For database(s) marked STICKY (using 'ctdb setdbsticky'),
 	any record that is migrating so fast that hopcount
 	exceeds this limit is marked as STICKY record for
@@ -112,10 +112,10 @@
 	This will improve performance for certain workloads, such as
 	locking.tdb if many clients are opening/closing the same file
 	concurrently.
-      </p></div><div class="refsect2"><a name="idp48972656"></a><h3>KeepaliveInterval</h3><p>Default: 5</p><p>
+      </p></div><div class="refsect2"><a name="idp48971248"></a><h3>KeepaliveInterval</h3><p>Default: 5</p><p>
 	How often in seconds should the nodes send keep-alive packets to
 	each other.
-      </p></div><div class="refsect2"><a name="idp48974256"></a><h3>KeepaliveLimit</h3><p>Default: 5</p><p>
+      </p></div><div class="refsect2"><a name="idp48972848"></a><h3>KeepaliveLimit</h3><p>Default: 5</p><p>
 	After how many keepalive intervals without any traffic should
 	a node wait until marking the peer as DISCONNECTED.
        </p><p>
@@ -126,31 +126,31 @@
 	a recovery. This limit should not be set too high to enable
 	early detection and avoid any application timeouts (e.g. SMB1)
 	to kick in before the fail over is completed.
-      </p></div><div class="refsect2"><a name="idp48977520"></a><h3>LCP2PublicIPs</h3><p>Default: 1</p><p>
+      </p></div><div class="refsect2"><a name="idp48976160"></a><h3>LCP2PublicIPs</h3><p>Default: 1</p><p>
 	When set to 1, ctdb uses the LCP2 ip allocation algorithm.
-      </p></div><div class="refsect2"><a name="idp48979120"></a><h3>LockProcessesPerDB</h3><p>Default: 200</p><p>
+      </p></div><div class="refsect2"><a name="idp48977760"></a><h3>LockProcessesPerDB</h3><p>Default: 200</p><p>
 	This is the maximum number of lock helper processes ctdb will
 	create for obtaining record locks.  When ctdb cannot get a record
 	lock without blocking, it creates a helper process that waits
 	for the lock to be obtained.
-      </p></div><div class="refsect2"><a name="idp48980960"></a><h3>LogLatencyMs</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp48979600"></a><h3>LogLatencyMs</h3><p>Default: 0</p><p>
 	When set to non-zero, ctdb will log if certains operations
 	take longer than this value, in milliseconds, to complete.
 	These operations include "process a record request from client",
 	"take a record or database lock", "update a persistent database
 	record" and "vaccum a database".
-      </p></div><div class="refsect2"><a name="idp48982864"></a><h3>MaxQueueDropMsg</h3><p>Default: 1000000</p><p>
+      </p></div><div class="refsect2"><a name="idp48981504"></a><h3>MaxQueueDropMsg</h3><p>Default: 1000000</p><p>
 	This is the maximum number of messages to be queued up for
 	a client before ctdb will treat the client as hung and will
 	terminate the client connection.
-      </p></div><div class="refsect2"><a name="idp48989696"></a><h3>MonitorInterval</h3><p>Default: 15</p><p>
+      </p></div><div class="refsect2"><a name="idp48983280"></a><h3>MonitorInterval</h3><p>Default: 15</p><p>
 	How often should ctdb run the 'monitor' event in seconds to check
 	for a node's health.
-      </p></div><div class="refsect2"><a name="idp48991296"></a><h3>MonitorTimeoutCount</h3><p>Default: 20</p><p>
+      </p></div><div class="refsect2"><a name="idp48984992"></a><h3>MonitorTimeoutCount</h3><p>Default: 20</p><p>
 	How many 'monitor' events in a row need to timeout before a node
 	is flagged as UNHEALTHY.  This setting is useful if scripts can
 	not be written so that they do not hang for benign reasons.
-      </p></div><div class="refsect2"><a name="idp48993104"></a><h3>NoIPFailback</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp48991568"></a><h3>NoIPFailback</h3><p>Default: 0</p><p>
 	When set to 1, ctdb will not perform failback of IP addresses
 	when a node becomes healthy. When a node becomes UNHEALTHY,
 	ctdb WILL perform failover of public IP addresses, but when the
@@ -168,7 +168,7 @@
 	until there is manual intervention from the administrator. When
 	this parameter is set, you can manually fail public IP addresses
 	over to the new node(s) using the 'ctdb moveip' command.
-      </p></div><div class="refsect2"><a name="idp48996496"></a><h3>NoIPHostOnAllDisabled</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp48994960"></a><h3>NoIPHostOnAllDisabled</h3><p>Default: 0</p><p>
 	If no nodes are HEALTHY then by default ctdb will happily host
 	public IPs on disabled (unhealthy or administratively disabled)
 	nodes.	This can cause problems, for example if the underlying
@@ -176,19 +176,19 @@
 	that node is disabled, any IPs hosted by this node will be
 	released and the node will not takeover any IPs until it is no
 	longer disabled.
-      </p></div><div class="refsect2"><a name="idp48998512"></a><h3>NoIPTakeover</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp48996976"></a><h3>NoIPTakeover</h3><p>Default: 0</p><p>
 	When set to 1, ctdb will not allow IP addresses to be failed
 	over onto this node. Any IP addresses that the node currently
 	hosts will remain on the node but no new IP addresses can be
 	failed over to the node.
-      </p></div><div class="refsect2"><a name="idp49000352"></a><h3>PullDBPreallocation</h3><p>Default: 10*1024*1024</p><p>
+      </p></div><div class="refsect2"><a name="idp48998816"></a><h3>PullDBPreallocation</h3><p>Default: 10*1024*1024</p><p>
 	This is the size of a record buffer to pre-allocate for sending
 	reply to PULLDB control. Usually record buffer starts with size
 	of the first record and gets reallocated every time a new record
 	is added to the record buffer. For a large number of records,
 	this can be very inefficient to grow the record buffer one record
 	at a time.
-      </p></div><div class="refsect2"><a name="idp49002320"></a><h3>QueueBufferSize</h3><p>Default: 1024</p><p>
+      </p></div><div class="refsect2"><a name="idp49000784"></a><h3>QueueBufferSize</h3><p>Default: 1024</p><p>
 	This is the maximum amount of data (in bytes) ctdb will read
 	from a socket at a time.
       </p><p>
@@ -197,29 +197,29 @@
 	then this tunable value should be increased.  However, large
 	values can keep ctdb busy processing packets and prevent ctdb
 	from handling other events.
-      </p></div><div class="refsect2"><a name="idp49004720"></a><h3>RecBufferSizeLimit</h3><p>Default: 1000000</p><p>
+      </p></div><div class="refsect2"><a name="idp49003184"></a><h3>RecBufferSizeLimit</h3><p>Default: 1000000</p><p>
         This is the limit on the size of the record buffer to be sent
         in various controls.  This limit is used by new controls used
         for recovery and controls used in vacuuming.
-      </p></div><div class="refsect2"><a name="idp49006544"></a><h3>RecdFailCount</h3><p>Default: 10</p><p>
+      </p></div><div class="refsect2"><a name="idp49005008"></a><h3>RecdFailCount</h3><p>Default: 10</p><p>
 	If the recovery daemon has failed to ping the main dameon for
 	this many consecutive intervals, the main daemon will consider
 	the recovery daemon as hung and will try to restart it to recover.
-      </p></div><div class="refsect2"><a name="idp49008368"></a><h3>RecdPingTimeout</h3><p>Default: 60</p><p>
+      </p></div><div class="refsect2"><a name="idp49006832"></a><h3>RecdPingTimeout</h3><p>Default: 60</p><p>
 	If the main dameon has not heard a "ping" from the recovery dameon
 	for this many seconds, the main dameon will log a message that
 	the recovery daemon is potentially hung.  This also increments a
 	counter which is checked against <code class="varname">RecdFailCount</code>
 	for detection of hung recovery daemon.
-      </p></div><div class="refsect2"><a name="idp49010640"></a><h3>RecLockLatencyMs</h3><p>Default: 1000</p><p>
+      </p></div><div class="refsect2"><a name="idp49009104"></a><h3>RecLockLatencyMs</h3><p>Default: 1000</p><p>
 	When using a reclock file for split brain prevention, if set
 	to non-zero this tunable will make the recovery dameon log a
 	message if the fcntl() call to lock/testlock the recovery file
 	takes longer than this number of milliseconds.
-      </p></div><div class="refsect2"><a name="idp54933664"></a><h3>RecoverInterval</h3><p>Default: 1</p><p>
+      </p></div><div class="refsect2"><a name="idp49010960"></a><h3>RecoverInterval</h3><p>Default: 1</p><p>
 	How frequently in seconds should the recovery daemon perform the
 	consistency checks to determine if it should perform a recovery.
-      </p></div><div class="refsect2"><a name="idp54935360"></a><h3>RecoverPDBBySeqNum</h3><p>Default: 1</p><p>
+      </p></div><div class="refsect2"><a name="idp49012720"></a><h3>RecoverPDBBySeqNum</h3><p>Default: 1</p><p>
 	When set to zero, database recovery for persistent databases is
 	record-by-record and recovery process simply collects the most
 	recent version of every individual record.
@@ -232,13 +232,13 @@
       </p><p>
 	By default, recovery of persistent databses is done using
 	__db_sequence_number__ record.
-      </p></div><div class="refsect2"><a name="idp54938288"></a><h3>RecoverTimeout</h3><p>Default: 120</p><p>
+      </p></div><div class="refsect2"><a name="idp54880384"></a><h3>RecoverTimeout</h3><p>Default: 120</p><p>
 	This is the default setting for timeouts for controls when sent
 	from the recovery daemon. We allow longer control timeouts from
 	the recovery daemon than from normal use since the recovery
 	dameon often use controls that can take a lot longer than normal
 	controls.
-      </p></div><div class="refsect2"><a name="idp54940112"></a><h3>RecoveryBanPeriod</h3><p>Default: 300</p><p>
+      </p></div><div class="refsect2"><a name="idp54882208"></a><h3>RecoveryBanPeriod</h3><p>Default: 300</p><p>
        The duration in seconds for which a node is banned if the node
        fails during recovery.  After this time has elapsed the node will
        automatically get unbanned and will attempt to rejoin the cluster.
@@ -246,26 +246,26 @@
        A node usually gets banned due to real problems with the node.
        Don't set this value too small.  Otherwise, a problematic node
        will try to re-join cluster too soon causing unnecessary recoveries.
-      </p></div><div class="refsect2"><a name="idp54942512"></a><h3>RecoveryDropAllIPs</h3><p>Default: 120</p><p>
+      </p></div><div class="refsect2"><a name="idp54884608"></a><h3>RecoveryDropAllIPs</h3><p>Default: 120</p><p>
 	If a node is stuck in recovery, or stopped, or banned, for this
 	many seconds, then ctdb will release all public addresses on
 	that node.
-      </p></div><div class="refsect2"><a name="idp54944208"></a><h3>RecoveryGracePeriod</h3><p>Default: 120</p><p>
+      </p></div><div class="refsect2"><a name="idp54886304"></a><h3>RecoveryGracePeriod</h3><p>Default: 120</p><p>
        During recoveries, if a node has not caused recovery failures
        during the last grace period in seconds, any records of
        transgressions that the node has caused recovery failures will be
        forgiven. This resets the ban-counter back to zero for that node.
-      </p></div><div class="refsect2"><a name="idp54946048"></a><h3>RepackLimit</h3><p>Default: 10000</p><p>
+      </p></div><div class="refsect2"><a name="idp54888144"></a><h3>RepackLimit</h3><p>Default: 10000</p><p>
         During vacuuming, if the number of freelist records are more than
         <code class="varname">RepackLimit</code>, then the database is repacked
         to get rid of the freelist records to avoid fragmentation.
       </p><p>
         Databases are repacked only if both <code class="varname">RepackLimit</code>
         and <code class="varname">VacuumLimit</code> are exceeded.
-      </p></div><div class="refsect2"><a name="idp54949248"></a><h3>RerecoveryTimeout</h3><p>Default: 10</p><p>
+      </p></div><div class="refsect2"><a name="idp54891344"></a><h3>RerecoveryTimeout</h3><p>Default: 10</p><p>
 	Once a recovery has completed, no additional recoveries are
 	permitted until this timeout in seconds has expired.
-      </p></div><div class="refsect2"><a name="idp54950928"></a><h3>SeqnumInterval</h3><p>Default: 1000</p><p>
+      </p></div><div class="refsect2"><a name="idp54893024"></a><h3>SeqnumInterval</h3><p>Default: 1000</p><p>
 	Some databases have seqnum tracking enabled, so that samba will
 	be able to detect asynchronously when there has been updates
 	to the database.  Everytime a database is updated its sequence
@@ -274,57 +274,57 @@
 	This tunable is used to specify in milliseconds how frequently
 	ctdb will send out updates to remote nodes to inform them that
 	the sequence number is increased.
-      </p></div><div class="refsect2"><a name="idp54953280"></a><h3>StatHistoryInterval</h3><p>Default: 1</p><p>
+      </p></div><div class="refsect2"><a name="idp54895376"></a><h3>StatHistoryInterval</h3><p>Default: 1</p><p>
 	Granularity of the statistics collected in the statistics
 	history. This is reported by 'ctdb stats' command.
-      </p></div><div class="refsect2"><a name="idp54954944"></a><h3>StickyDuration</h3><p>Default: 600</p><p>
+      </p></div><div class="refsect2"><a name="idp54897040"></a><h3>StickyDuration</h3><p>Default: 600</p><p>
 	Once a record has been marked STICKY, this is the duration in
 	seconds, the record will be flagged as a STICKY record.
-      </p></div><div class="refsect2"><a name="idp54956624"></a><h3>StickyPindown</h3><p>Default: 200</p><p>
+      </p></div><div class="refsect2"><a name="idp54898720"></a><h3>StickyPindown</h3><p>Default: 200</p><p>
 	Once a STICKY record has been migrated onto a node, it will be
 	pinned down on that node for this number of milliseconds. Any
 	request from other nodes to migrate the record off the node will
 	be deferred.
-      </p></div><div class="refsect2"><a name="idp54958384"></a><h3>TakeoverTimeout</h3><p>Default: 9</p><p>
+      </p></div><div class="refsect2"><a name="idp54900480"></a><h3>TakeoverTimeout</h3><p>Default: 9</p><p>
 	This is the duration in seconds in which ctdb tries to complete IP
 	failover.
-      </p></div><div class="refsect2"><a name="idp54960016"></a><h3>TDBMutexEnabled</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp54902016"></a><h3>TDBMutexEnabled</h3><p>Default: 0</p><p>
 	This paramter enables TDB_MUTEX_LOCKING feature on volatile
 	databases if the robust mutexes are supported. This optimizes the
 	record locking using robust mutexes and is much more efficient
 	that using posix locks.
-      </p></div><div class="refsect2"><a name="idp54961792"></a><h3>TickleUpdateInterval</h3><p>Default: 20</p><p>
+      </p></div><div class="refsect2"><a name="idp54903792"></a><h3>TickleUpdateInterval</h3><p>Default: 20</p><p>
 	Every <code class="varname">TickleUpdateInterval</code> seconds, ctdb
 	synchronizes the client connection information across nodes.
-      </p></div><div class="refsect2"><a name="idp54963808"></a><h3>TraverseTimeout</h3><p>Default: 20</p><p>
+      </p></div><div class="refsect2"><a name="idp54905808"></a><h3>TraverseTimeout</h3><p>Default: 20</p><p>
 	This is the duration in seconds for which a database traverse
 	is allowed to run.  If the traverse does not complete during
 	this interval, ctdb will abort the traverse.
-      </p></div><div class="refsect2"><a name="idp54965536"></a><h3>VacuumFastPathCount</h3><p>Default: 60</p><p>
+      </p></div><div class="refsect2"><a name="idp54907536"></a><h3>VacuumFastPathCount</h3><p>Default: 60</p><p>
        During a vacuuming run, ctdb usually processes only the records
        marked for deletion also called the fast path vacuuming. After
        finishing <code class="varname">VacuumFastPathCount</code> number of fast
        path vacuuming runs, ctdb will trigger a scan of complete database
        for any empty records that need to be deleted.
-      </p></div><div class="refsect2"><a name="idp54967792"></a><h3>VacuumInterval</h3><p>Default: 10</p><p>
+      </p></div><div class="refsect2"><a name="idp54909792"></a><h3>VacuumInterval</h3><p>Default: 10</p><p>
         Periodic interval in seconds when vacuuming is triggered for
         volatile databases.
-      </p></div><div class="refsect2"><a name="idp54969456"></a><h3>VacuumLimit</h3><p>Default: 5000</p><p>
+      </p></div><div class="refsect2"><a name="idp54911456"></a><h3>VacuumLimit</h3><p>Default: 5000</p><p>
         During vacuuming, if the number of deleted records are more than
         <code class="varname">VacuumLimit</code>, then databases are repacked to
         avoid fragmentation.
       </p><p>
         Databases are repacked only if both <code class="varname">RepackLimit</code>
         and <code class="varname">VacuumLimit</code> are exceeded.
-      </p></div><div class="refsect2"><a name="idp54972624"></a><h3>VacuumMaxRunTime</h3><p>Default: 120</p><p>
+      </p></div><div class="refsect2"><a name="idp54914624"></a><h3>VacuumMaxRunTime</h3><p>Default: 120</p><p>
         The maximum time in seconds for which the vacuuming process is
         allowed to run.  If vacuuming process takes longer than this
         value, then the vacuuming process is terminated.
-      </p></div><div class="refsect2"><a name="idp54974384"></a><h3>VerboseMemoryNames</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp54916384"></a><h3>VerboseMemoryNames</h3><p>Default: 0</p><p>
 	When set to non-zero, ctdb assigns verbose names for some of
 	the talloc allocated memory objects.  These names are visible
 	in the talloc memory report generated by 'ctdb dumpmemory'.
-      </p></div></div><div class="refsect1"><a name="idp54976256"></a><h2>SEE ALSO</h2><p>
+      </p></div></div><div class="refsect1"><a name="idp54918256"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(1)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">ctdbd</span>(1)</span>,

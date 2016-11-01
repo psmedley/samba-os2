@@ -11,7 +11,7 @@ Index: samba/docs/manpages/net.8
 ===================================================================
 --- samba.orig/docs/manpages/net.8
 +++ samba/docs/manpages/net.8
-@@ -1201,9 +1201,9 @@ Something we failed to parse\&. Default
+@@ -1063,9 +1063,9 @@ Something we failed to parse\&. Default
  .RE
  .SS "USERSHARE"
  .PP

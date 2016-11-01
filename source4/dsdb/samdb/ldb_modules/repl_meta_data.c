@@ -1312,6 +1312,18 @@ static int replmd_update_rpmd_element(struct ldb_context *ldb,
 		} else if (LDB_FLAG_MOD_TYPE(el->flags) == LDB_FLAG_MOD_DELETE) {
 			may_skip = true;
 		}
+	} else if (a->linkID != 0 && LDB_FLAG_MOD_TYPE(el->flags) == LDB_FLAG_MOD_DELETE &&
+		   ldb_request_get_control(req, DSDB_CONTROL_REPLMD_VANISH_LINKS) != NULL) {
+		/*
+		 * We intentionally skip the version bump when attempting to
+		 * vanish links.
+		 *
+		 * The control is set by dbcheck and expunge-tombstones which
+		 * both attempt to be non-replicating. Otherwise, making an
+		 * alteration to the replication state would trigger a
+		 * broadcast of all expunged objects.
+		 */
+		may_skip = true;
 	}
 
 	if (el->flags & DSDB_FLAG_INTERNAL_FORCE_META_DATA) {
@@ -2586,13 +2598,6 @@ static int replmd_modify_handle_linked_attribs(struct ldb_module *module,
 	const struct dsdb_schema *schema;
 	struct GUID old_guid;
 
-	if (seq_num == 0) {
-		/* there the replmd_update_rpmd code has already
-		 * checked and saw that there are no linked
-		 * attributes */
-		return LDB_SUCCESS;
-	}
-
 	if (dsdb_functional_level(ldb) == DS_DOMAIN_FUNCTION_2000) {
 		/*
 		 * Nothing special is required for modifying or vanishing links
@@ -2607,6 +2612,16 @@ static int replmd_modify_handle_linked_attribs(struct ldb_module *module,
 		return LDB_SUCCESS;
 	}
 
+	/*
+	 * TODO:
+	 *
+	 * We should restrict this to the intersection of the list of
+	 * linked attributes in the schema and the list of attributes
+	 * being modified.
+	 *
+	 * This will help performance a little, as otherwise we have
+	 * to allocate the entire object value-by-value.
+	 */
 	ret = dsdb_module_search_dn(module, msg, &res, msg->dn, NULL,
 	                            DSDB_FLAG_NEXT_MODULE |
 	                            DSDB_SEARCH_SHOW_RECYCLED |
@@ -3621,9 +3636,10 @@ static int replmd_delete_internals(struct ldb_module *module, struct ldb_request
 					ldb_asprintf_errstring(ldb,
 							       __location__
 							       ": Failed to remove backlink of "
-							       "%s when deleting %s",
+							       "%s when deleting %s: %s",
 							       el->name,
-							       old_dn_str);
+							       old_dn_str,
+							       ldb_errstring(ldb));
 					talloc_free(tmp_ctx);
 					return LDB_ERR_OPERATIONS_ERROR;
 				}

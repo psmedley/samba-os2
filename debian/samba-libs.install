@@ -54,6 +54,7 @@ usr/lib/*/samba/libdcerpc-samba.so.*
 usr/lib/*/samba/libdcerpc-samba4.so.*
 usr/lib/*/samba/libdfs-server-ad.so.0
 usr/lib/*/samba/libdnsserver-common.so.0
+usr/lib/*/samba/libdsdb-garbage-collect-tombstones.so.0
 usr/lib/*/samba/libdsdb-module.so.*
 usr/lib/*/samba/libevents.so.*
 usr/lib/*/samba/libflag-mapping.so.0

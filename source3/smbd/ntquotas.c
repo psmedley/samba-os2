@@ -226,13 +226,15 @@ int vfs_get_user_ntquota_list(files_struct *fsp, SMB_NTQUOTA_LIST **qt_list)
 	}
 	endpwent();
 
+	if (*qt_list == NULL) {
+		TALLOC_FREE(mem_ctx);
+	}
 	return 0;
 }
 
 static int quota_handle_destructor(SMB_NTQUOTA_HANDLE *handle)
 {
-	if (handle->quota_list)
-		free_ntquota_list(&handle->quota_list);
+	free_ntquota_list(&handle->quota_list);
 	return 0;
 }
 

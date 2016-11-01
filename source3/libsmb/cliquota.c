@@ -34,8 +34,9 @@ NTSTATUS cli_get_quota_handle(struct cli_state *cli, uint16_t *quota_fnum)
 
 void free_ntquota_list(SMB_NTQUOTA_LIST **qt_list)
 {
-	if (!qt_list)
+	if (!qt_list || !*qt_list) {
 		return;
+	}
 
 	if ((*qt_list)->mem_ctx)
 		talloc_destroy((*qt_list)->mem_ctx);
@@ -242,13 +243,15 @@ NTSTATUS cli_list_user_quota(struct cli_state *cli, int quota_fnum,
 			   &rparam, 0, &rparam_count,
 			   &rdata, 0, &rdata_count);
 
-	if (!NT_STATUS_IS_OK(status)) {
+	if (!NT_STATUS_IS_OK(status) &&
+	    !NT_STATUS_EQUAL(status, NT_STATUS_NO_MORE_ENTRIES)) {
 		DEBUG(1, ("NT_TRANSACT_GET_USER_QUOTA failed: %s\n",
 			  nt_errstr(status)));
 		goto cleanup;
 	}
 
-	if (rdata_count == 0) {
+	if (NT_STATUS_EQUAL(status, NT_STATUS_NO_MORE_ENTRIES) ||
+	    rdata_count == 0) {
 		*pqt_list = NULL;
 		return NT_STATUS_OK;
 	}
@@ -304,13 +307,16 @@ NTSTATUS cli_list_user_quota(struct cli_state *cli, int quota_fnum,
 				   &rparam, 0, &rparam_count,
 				   &rdata, 0, &rdata_count);
 
-		if (!NT_STATUS_IS_OK(status)) {
+		if (!NT_STATUS_IS_OK(status) &&
+		    !NT_STATUS_EQUAL(status, NT_STATUS_NO_MORE_ENTRIES)) {
 			DEBUG(1, ("NT_TRANSACT_GET_USER_QUOTA failed: %s\n",
 				  nt_errstr(status)));
 			goto cleanup;
 		}
 
-		if (rdata_count == 0) {
+		if (NT_STATUS_EQUAL(status, NT_STATUS_NO_MORE_ENTRIES) ||
+		    rdata_count == 0) {
+			status = NT_STATUS_OK;
 			break;
 		}
 
@@ -445,7 +451,7 @@ NTSTATUS cli_set_fs_quota_info(struct cli_state *cli, int quota_fnum,
 			   NULL, -1, /* name, fid */
 			   0, 0,     /* function, flags */
 			   setup, 1, 0, /* setup */
-			   param, 8, 0, /* param */
+			   param, 4, 0, /* param */
 			   data, 48, 0, /* data */
 			   NULL,	 /* recv_flags2 */
 			   NULL, 0, NULL, /* rsetup */

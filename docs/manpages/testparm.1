@@ -2,12 +2,12 @@
 .\"     Title: testparm
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/07/2016
+.\"      Date: 10/24/2016
 .\"    Manual: User Commands
 .\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "TESTPARM" "1" "09/07/2016" "Samba 4\&.5" "User Commands"
+.TH "TESTPARM" "1" "10/24/2016" "Samba 4\&.5" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -64,44 +64,6 @@ testparm\&.
 Without this option,
 testparm
 will prompt for a carriage return after printing the service names and before dumping the service definitions\&.
-.RE
-.PP
-\-V|\-\-version
-.RS 4
-Prints the program version number\&.
-.RE
-.PP
-\-\-option=<name>=<value>
-.RS 4
-Set the
-\fBsmb.conf\fR(5)
-option "<name>" to value "<value>" from the command line\&. This overrides compiled\-in defaults and options read from the configuration file\&.
-.RE
-.PP
-\-?|\-\-help
-.RS 4
-Print a summary of command line options\&.
-.RE
-.PP
-\-\-usage
-.RS 4
-Display brief usage message\&.
-.RE
-.PP
-\-d|\-\-debuglevel=level
-.RS 4
-\fIlevel\fR
-is an integer from 0 to 10\&. The default value if this parameter is not specified is 1\&.
-.sp
-The higher this value, the more detail will be logged to the log files about the activities of the server\&. At level 0, only critical errors and serious warnings will be logged\&. Level 1 is a reasonable level for day\-to\-day running \- it generates a small amount of information about operations carried out\&.
-.sp
-Levels above 1 will generate considerable amounts of log data, and should only be used when investigating a problem\&. Levels above 3 are designed for use only by developers and generate HUGE amounts of log data, most of which is extremely cryptic\&.
-.sp
-Note that specifying this parameter here will override the
-\m[blue]\fBlog level\fR\m[]
-parameter in the
-smb\&.conf
-file\&.
 .RE
 .PP
 \-v|\-\-verbose

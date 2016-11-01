@@ -1,10 +1,10 @@
-<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1"><title>ctdb-statistics</title><meta name="generator" content="DocBook XSL Stylesheets V1.78.1"></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="refentry"><a name="ctdb-statistics.7"></a><div class="titlepage"></div><div class="refnamediv"><h2>Name</h2><p>ctdb-statistics &#8212; CTDB statistics output</p></div><div class="refsect1"><a name="idp56986160"></a><h2>OVERALL STATISTICS</h2><p>
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1"><title>ctdb-statistics</title><meta name="generator" content="DocBook XSL Stylesheets V1.78.1"></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="refentry"><a name="ctdb-statistics.7"></a><div class="titlepage"></div><div class="refnamediv"><h2>Name</h2><p>ctdb-statistics &#8212; CTDB statistics output</p></div><div class="refsect1"><a name="idp51736928"></a><h2>OVERALL STATISTICS</h2><p>
       CTDB maintains information about various messages communicated
       and some of the important operations per node.  See the
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(1)</span> commands
       <span class="command"><strong>statistics</strong></span> and <span class="command"><strong>statisticsreset</strong></span>
       for displaying statistics.
-    </p><div class="refsect2"><a name="idp57414512"></a><h3>Example: ctdb statistics</h3><pre class="screen">
+    </p><div class="refsect2"><a name="idp53602192"></a><h3>Example: ctdb statistics</h3><pre class="screen">
 CTDB version 1
 Current time of statistics  :                Fri Sep 12 13:32:32 2014
 Statistics collected since  : (000 01:49:20) Fri Sep 12 11:43:12 2014
@@ -55,151 +55,151 @@ Statistics collected since  : (000 01:49:20) Fri Sep 12 11:43:12 2014
  reclock_recd       MIN/AVG/MAX     0.000000/0.000000/0.000000 sec out of 0
  call_latency       MIN/AVG/MAX     0.000006/0.000719/4.562991 sec out of 126626
  childwrite_latency MIN/AVG/MAX     0.014527/0.014527/0.014527 sec out of 1
-	</pre></div><div class="refsect2"><a name="idp56217280"></a><h3>CTDB version</h3><p>
+	</pre></div><div class="refsect2"><a name="idp52335104"></a><h3>CTDB version</h3><p>
         Version of the ctdb protocol used by the node.
-      </p></div><div class="refsect2"><a name="idp57148592"></a><h3>Current time of statistics</h3><p>
+      </p></div><div class="refsect2"><a name="idp52375424"></a><h3>Current time of statistics</h3><p>
         Time when the statistics are generated.
       </p><p>
         This is useful when collecting statistics output periodically
         for post-processing.
-      </p></div><div class="refsect2"><a name="idp58302496"></a><h3>Statistics collected since</h3><p>
+      </p></div><div class="refsect2"><a name="idp52189088"></a><h3>Statistics collected since</h3><p>
 	Time when ctdb was started or the last time statistics was reset.
 	The output shows the duration and the timestamp.
-      </p></div><div class="refsect2"><a name="idp58400256"></a><h3>num_clients</h3><p>
+      </p></div><div class="refsect2"><a name="idp52514544"></a><h3>num_clients</h3><p>
         Number of processes currently connected to CTDB's unix socket.
         This includes recovery daemon, ctdb tool and samba processes
         (smbd, winbindd).
-      </p></div><div class="refsect2"><a name="idp56435520"></a><h3>frozen</h3><p>
+      </p></div><div class="refsect2"><a name="idp51634192"></a><h3>frozen</h3><p>
 	1 if the the databases are currently frozen, 0 otherwise.
-      </p></div><div class="refsect2"><a name="idp58533648"></a><h3>recovering</h3><p>
+      </p></div><div class="refsect2"><a name="idp52151008"></a><h3>recovering</h3><p>
 	1 if recovery is active, 0 otherwise.
-      </p></div><div class="refsect2"><a name="idp57018336"></a><h3>num_recoveries</h3><p>
+      </p></div><div class="refsect2"><a name="idp50006640"></a><h3>num_recoveries</h3><p>
 	Number of recoveries since the start of ctdb or since the last
 	statistics reset.
-      </p></div><div class="refsect2"><a name="idp54484384"></a><h3>client_packets_sent</h3><p>
+      </p></div><div class="refsect2"><a name="idp49088672"></a><h3>client_packets_sent</h3><p>
 	Number of packets sent to client processes via unix domain socket.
-      </p></div><div class="refsect2"><a name="idp54404224"></a><h3>client_packets_recv</h3><p>
+      </p></div><div class="refsect2"><a name="idp49089856"></a><h3>client_packets_recv</h3><p>
 	Number of packets received from client processes via unix domain socket.
-      </p></div><div class="refsect2"><a name="idp54405408"></a><h3>node_packets_sent</h3><p>
+      </p></div><div class="refsect2"><a name="idp49091040"></a><h3>node_packets_sent</h3><p>
 	Number of packets sent to the other nodes in the cluster via TCP.
-      </p></div><div class="refsect2"><a name="idp54446336"></a><h3>node_packets_recv</h3><p>
+      </p></div><div class="refsect2"><a name="idp50939712"></a><h3>node_packets_recv</h3><p>
 	Number of packets received from the other nodes in the cluster via TCP.
-      </p></div><div class="refsect2"><a name="idp54447520"></a><h3>keepalive_packets_sent</h3><p>
+      </p></div><div class="refsect2"><a name="idp50940896"></a><h3>keepalive_packets_sent</h3><p>
 	Number of keepalive messages sent to other nodes.
       </p><p>
 	CTDB periodically sends keepalive messages to other nodes.
 	See <em class="citetitle">KeepaliveInterval</em> tunable in
 	<span class="citerefentry"><span class="refentrytitle">ctdb-tunables</span>(7)</span> for more details.
-      </p></div><div class="refsect2"><a name="idp54450464"></a><h3>keepalive_packets_recv</h3><p>
+      </p></div><div class="refsect2"><a name="idp50943840"></a><h3>keepalive_packets_recv</h3><p>
 	Number of keepalive messages received from other nodes.
-      </p></div><div class="refsect2"><a name="idp54451648"></a><h3>node</h3><p>
+      </p></div><div class="refsect2"><a name="idp50945024"></a><h3>node</h3><p>
 	This section lists various types of messages processed which
 	originated from other nodes via TCP.
-      </p><div class="refsect3"><a name="idp54452832"></a><h4>req_call</h4><p>
+      </p><div class="refsect3"><a name="idp50946208"></a><h4>req_call</h4><p>
         Number of REQ_CALL messages from the other nodes.
-      </p></div><div class="refsect3"><a name="idp55253984"></a><h4>reply_call</h4><p>
+      </p></div><div class="refsect3"><a name="idp50947392"></a><h4>reply_call</h4><p>
         Number of REPLY_CALL messages from the other nodes.
-      </p></div><div class="refsect3"><a name="idp55255168"></a><h4>req_dmaster</h4><p>
+      </p></div><div class="refsect3"><a name="idp50948576"></a><h4>req_dmaster</h4><p>
         Number of REQ_DMASTER messages from the other nodes.
-      </p></div><div class="refsect3"><a name="idp55256432"></a><h4>reply_dmaster</h4><p>
+      </p></div><div class="refsect3"><a name="idp50949760"></a><h4>reply_dmaster</h4><p>
         Number of REPLY_DMASTER messages from the other nodes.
-      </p></div><div class="refsect3"><a name="idp55257696"></a><h4>reply_error</h4><p>
+      </p></div><div class="refsect3"><a name="idp50950944"></a><h4>reply_error</h4><p>
         Number of REPLY_ERROR messages from the other nodes.
-      </p></div><div class="refsect3"><a name="idp55258960"></a><h4>req_message</h4><p>
+      </p></div><div class="refsect3"><a name="idp50952128"></a><h4>req_message</h4><p>
         Number of REQ_MESSAGE messages from the other nodes.
-      </p></div><div class="refsect3"><a name="idp55260224"></a><h4>req_control</h4><p>
+      </p></div><div class="refsect3"><a name="idp50953392"></a><h4>req_control</h4><p>
         Number of REQ_CONTROL messages from the other nodes.
-      </p></div><div class="refsect3"><a name="idp54321472"></a><h4>reply_control</h4><p>
+      </p></div><div class="refsect3"><a name="idp50954656"></a><h4>reply_control</h4><p>
         Number of REPLY_CONTROL messages from the other nodes.
-      </p></div></div><div class="refsect2"><a name="idp54322864"></a><h3>client</h3><p>
+      </p></div></div><div class="refsect2"><a name="idp48968896"></a><h3>client</h3><p>
 	This section lists various types of messages processed which
 	originated from clients via unix domain socket.
-      </p><div class="refsect3"><a name="idp54324048"></a><h4>req_call</h4><p>
+      </p><div class="refsect3"><a name="idp48970080"></a><h4>req_call</h4><p>
         Number of REQ_CALL messages from the clients.
-      </p></div><div class="refsect3"><a name="idp54325312"></a><h4>req_message</h4><p>
+      </p></div><div class="refsect3"><a name="idp48971344"></a><h4>req_message</h4><p>
         Number of REQ_MESSAGE messages from the clients.
-      </p></div><div class="refsect3"><a name="idp54326576"></a><h4>req_control</h4><p>
+      </p></div><div class="refsect3"><a name="idp48972608"></a><h4>req_control</h4><p>
         Number of REQ_CONTROL messages from the clients.
-      </p></div></div><div class="refsect2"><a name="idp54327968"></a><h3>timeouts</h3><p>
+      </p></div></div><div class="refsect2"><a name="idp48974000"></a><h3>timeouts</h3><p>
 	This section lists timeouts occurred when sending various messages.
-      </p><div class="refsect3"><a name="idp54329120"></a><h4>call</h4><p>
+      </p><div class="refsect3"><a name="idp48975152"></a><h4>call</h4><p>
         Number of timeouts for REQ_CALL messages.
-      </p></div><div class="refsect3"><a name="idp54330384"></a><h4>control</h4><p>
+      </p></div><div class="refsect3"><a name="idp48976416"></a><h4>control</h4><p>
         Number of timeouts for REQ_CONTROL messages.
-      </p></div><div class="refsect3"><a name="idp54331648"></a><h4>traverse</h4><p>
+      </p></div><div class="refsect3"><a name="idp48977680"></a><h4>traverse</h4><p>
         Number of timeouts for database traverse operations.
-      </p></div></div><div class="refsect2"><a name="idp54333040"></a><h3>locks</h3><p>
+      </p></div></div><div class="refsect2"><a name="idp48979072"></a><h3>locks</h3><p>
 	This section lists locking statistics.
-      </p><div class="refsect3"><a name="idp54334096"></a><h4>num_calls</h4><p>
+      </p><div class="refsect3"><a name="idp48980128"></a><h4>num_calls</h4><p>
         Number of completed lock calls.  This includes database locks
         and record locks.
-      </p></div><div class="refsect3"><a name="idp54335280"></a><h4>num_current</h4><p>
+      </p></div><div class="refsect3"><a name="idp48981424"></a><h4>num_current</h4><p>
         Number of scheduled lock calls.  This includes database locks
         and record locks.
-      </p></div><div class="refsect3"><a name="idp54336576"></a><h4>num_pending</h4><p>
+      </p></div><div class="refsect3"><a name="idp48982720"></a><h4>num_pending</h4><p>
         Number of queued lock calls.  This includes database locks and
         record locks.
-      </p></div><div class="refsect3"><a name="idp54337872"></a><h4>num_failed</h4><p>
+      </p></div><div class="refsect3"><a name="idp48984016"></a><h4>num_failed</h4><p>
         Number of failed lock calls.  This includes database locks and
         record locks.
-      </p></div></div><div class="refsect2"><a name="idp54344208"></a><h3>total_calls</h3><p>
+      </p></div></div><div class="refsect2"><a name="idp48990144"></a><h3>total_calls</h3><p>
 	Number of req_call messages processed from clients.  This number
 	should be same as client --&gt; req_call.
-      </p></div><div class="refsect2"><a name="idp54345520"></a><h3>pending_calls</h3><p>
+      </p></div><div class="refsect2"><a name="idp48991424"></a><h3>pending_calls</h3><p>
 	Number of req_call messages which are currenly being processed.
 	This number indicates the number of record migrations in flight.
-      </p></div><div class="refsect2"><a name="idp54346864"></a><h3>childwrite_calls</h3><p>
+      </p></div><div class="refsect2"><a name="idp48992768"></a><h3>childwrite_calls</h3><p>
 	Number of record update calls.	Record update calls are used to
 	update a record under a transaction.
-      </p></div><div class="refsect2"><a name="idp54348176"></a><h3>pending_childwrite_calls</h3><p>
+      </p></div><div class="refsect2"><a name="idp48994080"></a><h3>pending_childwrite_calls</h3><p>
 	Number of record update calls currently active.
-      </p></div><div class="refsect2"><a name="idp54349456"></a><h3>memory_used</h3><p>
+      </p></div><div class="refsect2"><a name="idp48995312"></a><h3>memory_used</h3><p>
 	The amount of memory in bytes currently used by CTDB using
 	talloc.  This includes all the memory used for CTDB's internal
 	data structures.  This does not include the memory mapped TDB
 	databases.
-      </p></div><div class="refsect2"><a name="idp54350864"></a><h3>max_hop_count</h3><p>
+      </p></div><div class="refsect2"><a name="idp48996720"></a><h3>max_hop_count</h3><p>
 	The maximum number of hops required for a record migration request
 	to obtain the record.  High numbers indicate record contention.
-      </p></div><div class="refsect2"><a name="idp54352208"></a><h3>total_ro_delegations</h3><p>
+      </p></div><div class="refsect2"><a name="idp48998064"></a><h3>total_ro_delegations</h3><p>
 	Number of readonly delegations created.
-      </p></div><div class="refsect2"><a name="idp54353392"></a><h3>total_ro_revokes</h3><p>
+      </p></div><div class="refsect2"><a name="idp48999248"></a><h3>total_ro_revokes</h3><p>
 	Number of readonly delegations that were revoked.  The difference
 	between total_ro_revokes and total_ro_delegations gives the
 	number of currently active readonly delegations.
-      </p></div><div class="refsect2"><a name="idp54354784"></a><h3>hop_count_buckets</h3><p>
+      </p></div><div class="refsect2"><a name="idp49000640"></a><h3>hop_count_buckets</h3><p>
 	Distribution of migration requests based on hop counts values.
 	Buckets are 1, &lt; 4, &lt; 8, &lt; 16, &lt; 32, &lt; 64, &lt;
 	128, &lt; 256, &lt; 512, &#8805; 512.
-      </p></div><div class="refsect2"><a name="idp54356048"></a><h3>lock_buckets</h3><p>
+      </p></div><div class="refsect2"><a name="idp49002064"></a><h3>lock_buckets</h3><p>
 	Distribution of record lock requests based on time required to
 	obtain locks.  Buckets are &lt; 1ms, &lt; 10ms, &lt; 100ms,
 	&lt; 1s, &lt; 2s, &lt; 4s, &lt; 8s, &lt; 16s, &lt; 32s, &lt;
 	64s, &#8805; 64s.
-      </p></div><div class="refsect2"><a name="idp54357728"></a><h3>locks_latency</h3><p>
+      </p></div><div class="refsect2"><a name="idp49003456"></a><h3>locks_latency</h3><p>
 	The minimum, the average and the maximum time (in seconds)
 	required to obtain record locks.
-      </p></div><div class="refsect2"><a name="idp54358992"></a><h3>reclock_ctdbd</h3><p>
+      </p></div><div class="refsect2"><a name="idp49004720"></a><h3>reclock_ctdbd</h3><p>
 	The minimum, the average and the maximum time (in seconds)
 	required to check if recovery lock is still held by recovery
 	daemon when recovery mode is changed.  This check is done in ctdb daemon.
-      </p></div><div class="refsect2"><a name="idp54360368"></a><h3>reclock_recd</h3><p>
+      </p></div><div class="refsect2"><a name="idp49006096"></a><h3>reclock_recd</h3><p>
         The minimum, the average and the maximum time (in seconds)
         required to check if recovery lock is still held by recovery
         daemon during recovery.  This check is done in recovery daemon.
-      </p></div><div class="refsect2"><a name="idp54362512"></a><h3>call_latency</h3><p>
+      </p></div><div class="refsect2"><a name="idp49008240"></a><h3>call_latency</h3><p>
 	The minimum, the average and the maximum time (in seconds) required
 	to process a REQ_CALL message from client.  This includes the time
 	required to migrate a record from remote node, if the record is
 	not available on the local node.
-      </p></div><div class="refsect2"><a name="idp54363952"></a><h3>childwrite_latency</h3><p>Default: 0</p><p>
+      </p></div><div class="refsect2"><a name="idp49009680"></a><h3>childwrite_latency</h3><p>Default: 0</p><p>
 	The minimum, the average and the maximum time (in seconds)
 	required to update records under a transaction.
-      </p></div></div><div class="refsect1"><a name="idp54365808"></a><h2>DATABASE STATISTICS</h2><p>
+      </p></div></div><div class="refsect1"><a name="idp49011536"></a><h2>DATABASE STATISTICS</h2><p>
       CTDB maintains per database statistics about important operations.
       See the <span class="citerefentry"><span class="refentrytitle">ctdb</span>(1)</span> command
       <span class="command"><strong>dbstatistics</strong></span> for displaying database statistics.
-    </p><div class="refsect2"><a name="idp59896224"></a><h3>Example: ctdb dbstatistics notify_index.tdb</h3><pre class="screen">
+    </p><div class="refsect2"><a name="idp54878976"></a><h3>Example: ctdb dbstatistics notify_index.tdb</h3><pre class="screen">
 DB Statistics: notify_index.tdb
  ro_delegations                     0
  ro_revokes                         0
@@ -215,45 +215,45 @@ DB Statistics: notify_index.tdb
      Count:7 Key:2f636c75737465726673
      Count:18 Key:2f636c757374657266732f64617461
      Count:7 Key:2f636c757374657266732f646174612f636c69656e7473
-	</pre></div><div class="refsect2"><a name="idp59898256"></a><h3>DB Statistics</h3><p>
+	</pre></div><div class="refsect2"><a name="idp54881008"></a><h3>DB Statistics</h3><p>
 	Name of the database.
-      </p></div><div class="refsect2"><a name="idp59899408"></a><h3>ro_delegations</h3><p>
+      </p></div><div class="refsect2"><a name="idp54882160"></a><h3>ro_delegations</h3><p>
 	Number of readonly delegations created in the database.
-      </p></div><div class="refsect2"><a name="idp59900560"></a><h3>ro_revokes</h3><p>
+      </p></div><div class="refsect2"><a name="idp54883312"></a><h3>ro_revokes</h3><p>
 	Number of readonly delegations revoked.  The difference in
 	ro_delegations and ro_revokes indicates the currently active
 	readonly delegations.
-      </p></div><div class="refsect2"><a name="idp59901888"></a><h3>locks</h3><p>
+      </p></div><div class="refsect2"><a name="idp54884640"></a><h3>locks</h3><p>
 	This section lists locking statistics.
-      </p><div class="refsect3"><a name="idp59902912"></a><h4>total</h4><p>
+      </p><div class="refsect3"><a name="idp54885664"></a><h4>total</h4><p>
         Number of completed lock calls.  This includes database locks
         and record locks.
-      </p></div><div class="refsect3"><a name="idp59904176"></a><h4>failed</h4><p>
+      </p></div><div class="refsect3"><a name="idp54886928"></a><h4>failed</h4><p>
         Number of failed lock calls.  This includes database locks and
         record locks.
-      </p></div><div class="refsect3"><a name="idp59905440"></a><h4>current</h4><p>
+      </p></div><div class="refsect3"><a name="idp54888192"></a><h4>current</h4><p>
         Number of scheduled lock calls.  This includes database locks
         and record locks.
-      </p></div><div class="refsect3"><a name="idp59906704"></a><h4>pending</h4><p>
+      </p></div><div class="refsect3"><a name="idp54889456"></a><h4>pending</h4><p>
         Number of queued lock calls.  This includes database locks and
         record locks.
-      </p></div></div><div class="refsect2"><a name="idp59908096"></a><h3>hop_count_buckets</h3><p>
+      </p></div></div><div class="refsect2"><a name="idp54890848"></a><h3>hop_count_buckets</h3><p>
 	Distribution of migration requests based on hop counts values.
 	Buckets are 1, &lt; 4, &lt; 8, &lt; 16, &lt; 32, &lt; 64, &lt;
 	128, &lt; 256, &lt; 512, &#8805; 512.
-      </p></div><div class="refsect2"><a name="idp59909456"></a><h3>lock_buckets</h3><p>
+      </p></div><div class="refsect2"><a name="idp54892208"></a><h3>lock_buckets</h3><p>
 	Distribution of record lock requests based on time required to
 	obtain locks.  Buckets are &lt; 1ms, &lt; 10ms, &lt; 100ms,
 	&lt; 1s, &lt; 2s, &lt; 4s, &lt; 8s, &lt; 16s, &lt; 32s, &lt;
 	64s, &#8805; 64s.
-      </p></div><div class="refsect2"><a name="idp59910880"></a><h3>locks_latency</h3><p>
+      </p></div><div class="refsect2"><a name="idp54893632"></a><h3>locks_latency</h3><p>
 	The minimum, the average and the maximum time (in seconds)
 	required to obtain record locks.
-      </p></div><div class="refsect2"><a name="idp59912144"></a><h3>Num Hot Keys</h3><p>
+      </p></div><div class="refsect2"><a name="idp54894896"></a><h3>Num Hot Keys</h3><p>
         Number of contended records determined by hop count.  CTDB keeps
         track of top 10 hot records and the output shows hex encoded
         keys for the hot records.
-      </p></div></div><div class="refsect1"><a name="idp59913616"></a><h2>SEE ALSO</h2><p>
+      </p></div></div><div class="refsect1"><a name="idp54896368"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(1)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">ctdbd</span>(1)</span>,

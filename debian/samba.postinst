@@ -87,6 +87,8 @@ if [ "$SERVER_ROLE" != "active directory domain controller" ] \
 ; then
     if [ ! -e /etc/systemd/system/samba-ad-dc.service ]; then
         mkdir -p /etc/systemd/system
+        echo "Samba is not being run as an AD Domain Controller, masking samba-ad-dc-service."
+        echo "Please ignore the following error about deb-systemd-helper not finding samba-ad-dc-service."
         ln -s /dev/null /etc/systemd/system/samba-ad-dc.service
         # In case this system is running systemd, we make systemd reload the unit files
         # to pick up changes.
