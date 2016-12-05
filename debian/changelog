@@ -1,3 +1,9 @@
+samba (2:4.5.1+dfsg-2) unstable; urgency=medium
+
+  * Upload to unstable
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 05 Dec 2016 07:01:35 +0100
+
 samba (2:4.5.1+dfsg-1) experimental; urgency=medium
 
   * New upstream version
@@ -6,7 +12,8 @@ samba (2:4.5.1+dfsg-1) experimental; urgency=medium
     - Remove gencache-Bail-out-of-stabilize-if-we-can-not-get-the.patch
     - Adding libdsdb-garbage-collect-tombstones.so.0 to samba-libs.install
   * CTDB: Fix samba eventscript
-  * nmbd requires a working network (Closes: #698056, #842056, #840608, LP: #1635491)
+  * nmbd requires a working network (Closes: #698056, #842056, #840608,
+    LP: #1635491)
   * Be more verbose about masking samba-ad-dc.service (Closes: #841147)
   * Remove Fix_parallel_build.patch, not working
 
