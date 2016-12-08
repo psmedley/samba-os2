@@ -15,9 +15,11 @@ Merging upstream releases
 Importing a new upstream version can be done like this:
 
 # set target version
-upstream_version=4.4.4
+upstream_version=4.5.3
 # go to git repo
 cd $GIT_DIR
+# Check gbp.conf (especially debian-branch)
+cat debian/gbp.conf
 # Import upstream
 git remote add upstream https://git.samba.org/samba.git
 git fetch upstream

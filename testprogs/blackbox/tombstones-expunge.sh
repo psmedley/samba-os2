@@ -52,7 +52,7 @@ tombstones_expunge() {
 
     $PYTHON $BINDIR/samba-tool domain tombstones expunge -H tdb://$PREFIX_ABS/${RELEASE}/private/sam.ldb --current-time=2016-07-30 --tombstone-lifetime=4 > $tmpfile
     if [ "$?" != "0" ]; then
-	return $?
+	return 1
     fi
     diff $tmpfile $release_dir/expected-expunge-output.txt
     if [ "$?" != "0" ]; then
@@ -63,6 +63,14 @@ tombstones_expunge() {
     TZ=UTC $ldbsearch -H tdb://$PREFIX_ABS/${RELEASE}/private/sam.ldb -s base -b '' | grep highestCommittedUSN > $tmpldif2
 
     diff $tmpldif1 $tmpldif2
+    if [ "$?" != "0" ]; then
+	return 1
+    fi
+}
+
+add_dangling_link() {
+    ldif=$release_dir/add-dangling-link.ldif
+    TZ=UTC $ldbmodify -H tdb://$PREFIX_ABS/${RELEASE}/private/sam.ldb.d/DC%3DRELEASE-4-5-0-PRE1,DC%3DSAMBA,DC%3DCORP.ldb $ldif
     if [ "$?" != "0" ]; then
 	return 1
     fi
@@ -172,6 +180,7 @@ if [ -d $release_dir ]; then
     testit $RELEASE undump
     testit "add_two_more_users" add_two_more_users
     testit "add_four_more_links" add_four_more_links
+    testit "add_dangling_link" add_dangling_link
     testit "remove_one_link" remove_one_link
     testit "remove_one_user" remove_one_user
     testit "check_match_rule_links" check_match_rule_links

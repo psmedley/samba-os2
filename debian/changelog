@@ -1,3 +1,12 @@
+samba (2:4.5.2+dfsg-1) unstable; urgency=medium
+
+  * New upstream version
+    - Remove CTDB-Fix-samba-eventscript.patch: merged
+    - d/rules: /usr/share/ctdb-tests is now /usr/share/ctdb/tests
+  * Update gbp.conf with debian-branch = master
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 08 Dec 2016 20:21:52 +0100
+
 samba (2:4.5.1+dfsg-2) unstable; urgency=medium
 
   * Upload to unstable

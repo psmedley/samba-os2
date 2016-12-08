@@ -32,6 +32,7 @@ from samba.dcerpc import security
 from samba.descriptor import get_wellknown_sds, get_diff_sds
 from samba.auth import system_session, admin_session
 from samba.netcmd import CommandError
+from samba.netcmd.fsmo import get_fsmo_roleowner
 
 
 class dbcheck(object):
@@ -79,6 +80,7 @@ class dbcheck(object):
         self.fix_base64_userparameters = False
         self.fix_utf8_userparameters = False
         self.fix_doubled_userparameters = False
+        self.fix_sid_rid_set_conflict = False
         self.reset_well_known_acls = reset_well_known_acls
         self.reset_all_well_known_acls = False
         self.in_transaction = in_transaction
@@ -92,6 +94,7 @@ class dbcheck(object):
         self.fix_all_missing_objectclass = False
         self.fix_missing_deleted_objects = False
         self.fix_replica_locations = False
+        self.fix_missing_rid_set_master = False
 
         self.dn_set = set()
         self.link_id_cache = {}
@@ -157,6 +160,27 @@ class dbcheck(object):
         if len(forest) == 1:
             self.dns_partitions.append((ldb.Dn(self.samdb, domaindns_zone), forest[0]))
 
+        fsmo_dn = ldb.Dn(self.samdb, "CN=RID Manager$,CN=System," + self.samdb.domain_dn())
+        rid_master = get_fsmo_roleowner(self.samdb, fsmo_dn, "rid")
+        if ldb.Dn(self.samdb, self.samdb.get_dsServiceName()) == rid_master:
+            self.is_rid_master = True
+        else:
+            self.is_rid_master = False
+
+        # To get your rid set
+        # 1. Get server name
+        res = self.samdb.search(base=ldb.Dn(self.samdb, self.samdb.get_serverName()),
+                                scope=ldb.SCOPE_BASE, attrs=["serverReference"])
+        # 2. Get server reference
+        self.server_ref_dn = ldb.Dn(self.samdb, res[0]['serverReference'][0])
+
+        # 3. Get RID Set
+        res = self.samdb.search(base=self.server_ref_dn,
+                                scope=ldb.SCOPE_BASE, attrs=['rIDSetReferences'])
+        if "rIDSetReferences" in res[0]:
+            self.rid_set_dn = ldb.Dn(self.samdb, res[0]['rIDSetReferences'][0])
+        else:
+            self.rid_set_dn = None
 
     def check_database(self, DN=None, scope=ldb.SCOPE_SUBTREE, controls=[], attrs=['*']):
         '''perform a database check, returning the number of errors found'''
@@ -492,8 +516,9 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                           "Failed to remove deleted DN attribute %s" % attrname):
             self.report("Removed deleted DN on attribute %s" % attrname)
 
-    def err_missing_dn_GUID(self, dn, attrname, val, dsdb_dn):
-        """handle a missing target DN (both GUID and DN string form are missing)"""
+    def err_missing_target_dn_or_GUID(self, dn, attrname, val, dsdb_dn):
+        """handle a missing target DN (if specified, GUID form can't be found,
+        and otherwise DN string form can't be found)"""
         # check if its a backlink
         linkID, _ = self.get_attr_linkID_and_reverse_name(attrname)
         if (linkID & 1 == 0) and str(dsdb_dn).find('\\0ADEL') == -1:
@@ -501,7 +526,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             return
         self.err_deleted_dn(dn, attrname, val, dsdb_dn, dsdb_dn, False)
 
-    def err_incorrect_dn_GUID(self, dn, attrname, val, dsdb_dn, errstr):
+    def err_missing_dn_GUID_component(self, dn, attrname, val, dsdb_dn, errstr):
         """handle a missing GUID extended DN component"""
         self.report("ERROR: %s component for %s in object %s - %s" % (errstr, attrname, dn, val))
         controls=["extended_dn:1:1", "show_recycled:1"]
@@ -510,11 +535,13 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                     attrs=[], controls=controls)
         except ldb.LdbError, (enum, estr):
             self.report("unable to find object for DN %s - (%s)" % (dsdb_dn.dn, estr))
-            self.err_missing_dn_GUID(dn, attrname, val, dsdb_dn)
+            if enum != ldb.ERR_NO_SUCH_OBJECT:
+                raise
+            self.err_missing_target_dn_or_GUID(dn, attrname, val, dsdb_dn)
             return
         if len(res) == 0:
             self.report("unable to find object for DN %s" % dsdb_dn.dn)
-            self.err_missing_dn_GUID(dn, attrname, val, dsdb_dn)
+            self.err_missing_target_dn_or_GUID(dn, attrname, val, dsdb_dn)
             return
         dsdb_dn.dn = res[0].dn
 
@@ -624,15 +651,15 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
     def err_orphaned_backlink(self, obj, attrname, val, link_name, target_dn):
         '''handle a orphaned backlink value'''
         self.report("ERROR: orphaned backlink attribute '%s' in %s for link %s in %s" % (attrname, obj.dn, link_name, target_dn))
-        if not self.confirm_all('Remove orphaned backlink %s' % link_name, 'fix_all_orphaned_backlinks'):
-            self.report("Not removing orphaned backlink %s" % link_name)
+        if not self.confirm_all('Remove orphaned backlink %s' % attrname, 'fix_all_orphaned_backlinks'):
+            self.report("Not removing orphaned backlink %s" % attrname)
             return
         m = ldb.Message()
         m.dn = obj.dn
         m['value'] = ldb.MessageElement(val, ldb.FLAG_MOD_DELETE, attrname)
         if self.do_modify(m, ["show_recycled:1", "relax:0"],
-                          "Failed to fix orphaned backlink %s" % link_name):
-            self.report("Fixed orphaned backlink %s" % (link_name))
+                          "Failed to fix orphaned backlink %s" % attrname):
+            self.report("Fixed orphaned backlink %s" % (attrname))
 
     def err_no_fsmoRoleOwner(self, obj):
         '''handle a missing fSMORoleOwner'''
@@ -658,7 +685,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             self.report('Not moving object %s into LostAndFound' % (obj.dn))
             return
 
-        keep_transaction = True
+        keep_transaction = False
         self.samdb.transaction_start()
         try:
             nc_root = self.samdb.get_nc_root(obj.dn);
@@ -797,7 +824,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             guid = dsdb_dn.dn.get_extended_component("GUID")
             if guid is None:
                 error_count += 1
-                self.err_incorrect_dn_GUID(obj.dn, attrname, val, dsdb_dn,
+                self.err_missing_dn_GUID_component(obj.dn, attrname, val, dsdb_dn,
                     "missing GUID")
                 continue
 
@@ -822,7 +849,11 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                         ])
             except ldb.LdbError, (enum, estr):
                 error_count += 1
-                self.err_incorrect_dn_GUID(obj.dn, attrname, val, dsdb_dn, "incorrect GUID")
+                self.report("ERROR: no target object found for GUID component for %s in object %s - %s" % (attrname, obj.dn, val))
+                if enum != ldb.ERR_NO_SUCH_OBJECT:
+                    raise
+
+                self.err_missing_target_dn_or_GUID(obj.dn, attrname, val, dsdb_dn)
                 continue
 
             if fixing_msDS_HasInstantiatedNCs:
@@ -873,6 +904,15 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
 
                 self.err_deleted_dn(obj.dn, attrname, val, dsdb_dn, res[0].dn, False)
                 continue
+
+            # We should not check for incorrect
+            # components on deleted links, as these are allowed to
+            # go stale (we just need the GUID, not the name)
+            rmd_blob = dsdb_dn.dn.get_extended_component("RMD_FLAGS")
+            if rmd_blob is not None:
+                rmd_flags = int(rmd_blob)
+                if rmd_flags & 1:
+                    continue
 
             # check the DN matches in string form
             if str(res[0].dn) != str(dsdb_dn.dn):
@@ -1846,6 +1886,114 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                     # This DC is not in the replica locations
                     self.err_replica_locations(obj, msg.dn, location)
                     error_count += 1
+
+        if dn == self.server_ref_dn:
+            # Check we have a valid RID Set
+            if "*" in attrs or "rIDSetReferences" in attrs:
+                if "rIDSetReferences" not in obj:
+                    # NO RID SET reference
+                    # We are RID master, allocate it.
+                    error_count += 1
+
+                    if self.is_rid_master:
+                        # Allocate a RID Set
+                        if self.confirm_all('Allocate the missing RID set for RID master?',
+                                            'fix_missing_rid_set_master'):
+
+                            # We don't have auto-transaction logic on
+                            # extended operations, so we have to do it
+                            # here.
+
+                            self.samdb.transaction_start()
+
+                            try:
+                                self.samdb.create_own_rid_set()
+
+                            except:
+                                self.samdb.transaction_cancel()
+                                raise
+
+                            self.samdb.transaction_commit()
+
+
+                    elif not self.samdb.am_rodc():
+                        self.report("No RID Set found for this server: %s, and we are not the RID Master (so can not self-allocate)" % dn)
+
+
+        # Check some details of our own RID Set
+        if dn == self.rid_set_dn:
+            res = self.samdb.search(base=self.rid_set_dn, scope=ldb.SCOPE_BASE,
+                                    attrs=["rIDAllocationPool",
+                                           "rIDPreviousAllocationPool",
+                                           "rIDUsedPool",
+                                           "rIDNextRID"])
+            if "rIDAllocationPool" not in res[0]:
+                self.report("No rIDAllocationPool found in %s" % dn)
+                error_count += 1
+            else:
+                next_pool = int(res[0]["rIDAllocationPool"][0])
+
+                high = (0xFFFFFFFF00000000 & next_pool) >> 32
+                low = 0x00000000FFFFFFFF & next_pool
+
+                if high <= low:
+                    self.report("Invalid RID set %d-%s, %d > %d!" % (low, high, low, high))
+                    error_count += 1
+
+                if "rIDNextRID" in res[0]:
+                    next_free_rid = int(res[0]["rIDNextRID"][0])
+                else:
+                    next_free_rid = 0
+
+                if next_free_rid == 0:
+                    next_free_rid = low
+                else:
+                    next_free_rid += 1
+
+                # Check the remainder of this pool for conflicts.  If
+                # ridalloc_allocate_rid() moves to a new pool, this
+                # will be above high, so we will stop.
+                while next_free_rid <= high:
+                    sid = "%s-%d" % (self.samdb.get_domain_sid(), next_free_rid)
+                    try:
+                        res = self.samdb.search(base="<SID=%s>" % sid, scope=ldb.SCOPE_BASE,
+                                                attrs=[])
+                    except ldb.LdbError, (enum, estr):
+                        if enum != ldb.ERR_NO_SUCH_OBJECT:
+                            raise
+                        res = None
+                    if res is not None:
+                        self.report("SID %s for %s conflicts with our current RID set in %s" % (sid, res[0].dn, dn))
+                        error_count += 1
+
+                        if self.confirm_all('Fix conflict between SID %s and RID pool in %s by allocating a new RID?'
+                                            % (sid, dn),
+                                            'fix_sid_rid_set_conflict'):
+                            self.samdb.transaction_start()
+
+                            # This will burn RIDs, which will move
+                            # past the conflict.  We then check again
+                            # to see if the new RID conflicts, until
+                            # the end of the current pool.  We don't
+                            # look at the next pool to avoid burning
+                            # all RIDs in one go in some strange
+                            # failure case.
+                            try:
+                                while True:
+                                    allocated_rid = self.samdb.allocate_rid()
+                                    if allocated_rid >= next_free_rid:
+                                        next_free_rid = allocated_rid + 1
+                                        break
+                            except:
+                                self.samdb.transaction_cancel()
+                                raise
+
+                            self.samdb.transaction_commit()
+                        else:
+                            break
+                    else:
+                        next_free_rid += 1
+
 
         return error_count
 

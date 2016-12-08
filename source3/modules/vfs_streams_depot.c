@@ -130,7 +130,8 @@ static char *stream_dir(vfs_handle_struct *handle,
 	check_valid = lp_parm_bool(SNUM(handle->conn),
 		      "streams_depot", "check_valid", true);
 
-	tmp = talloc_asprintf(talloc_tos(), "%s/.streams", handle->conn->cwd);
+	tmp = talloc_asprintf(talloc_tos(), "%s/.streams",
+		handle->conn->connectpath);
 
 	if (tmp == NULL) {
 		errno = ENOMEM;
@@ -725,8 +726,12 @@ static int streams_depot_unlink(vfs_handle_struct *handle,
 		return -1;
 	}
 
-	ret = SMB_VFS_NEXT_UNLINK(handle, smb_fname);
-	if (ret == 0) {
+	/*
+	 * We know the unlink should succeed as the ACL
+	 * check is already done in the caller. Remove the
+	 * file *after* the streams.
+	 */
+	{
 		char *dirname = stream_dir(handle, smb_fname_base,
 					   &smb_fname_base->st, false);
 
@@ -749,6 +754,7 @@ static int streams_depot_unlink(vfs_handle_struct *handle,
 		TALLOC_FREE(dirname);
 	}
 
+	ret = SMB_VFS_NEXT_UNLINK(handle, smb_fname);
 	TALLOC_FREE(smb_fname_base);
 	return ret;
 }
@@ -787,8 +793,12 @@ static int streams_depot_rmdir(vfs_handle_struct *handle,
 		return -1;
 	}
 
-	ret = SMB_VFS_NEXT_RMDIR(handle, smb_fname_base);
-	if (ret == 0) {
+	/*
+	 * We know the rmdir should succeed as the ACL
+	 * check is already done in the caller. Remove the
+	 * directory *after* the streams.
+	 */
+	{
 		char *dirname = stream_dir(handle, smb_fname_base,
 					   &smb_fname_base->st, false);
 
@@ -811,6 +821,7 @@ static int streams_depot_rmdir(vfs_handle_struct *handle,
 		TALLOC_FREE(dirname);
 	}
 
+	ret = SMB_VFS_NEXT_RMDIR(handle, smb_fname_base);
 	TALLOC_FREE(smb_fname_base);
 	return ret;
 }

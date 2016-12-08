@@ -347,8 +347,12 @@ static int ridalloc_create_rid_set_ntds(struct ldb_module *module, TALLOC_CTX *m
 
 	/* we need this to go all the way to the top of the module
 	 * stack, as we need all the extra attributes added (including
-	 * complex ones like ntsecuritydescriptor) */
-	ret = dsdb_module_add(module, msg, DSDB_FLAG_TOP_MODULE | DSDB_MODIFY_RELAX, parent);
+	 * complex ones like ntsecuritydescriptor).  We must do this
+	 * as system, otherwise a user might end up owning the RID
+	 * set, and that would be bad... */
+	ret = dsdb_module_add(module, msg,
+			      DSDB_FLAG_TOP_MODULE | DSDB_FLAG_AS_SYSTEM
+			      | DSDB_MODIFY_RELAX, parent);
 	if (ret != LDB_SUCCESS) {
 		ldb_asprintf_errstring(ldb, "Failed to add RID Set %s - %s",
 				       ldb_dn_get_linearized(msg->dn),
@@ -401,8 +405,8 @@ static int ridalloc_create_rid_set_ntds(struct ldb_module *module, TALLOC_CTX *m
 /*
   create a RID Set object for this DC
  */
-static int ridalloc_create_own_rid_set(struct ldb_module *module, TALLOC_CTX *mem_ctx,
-				       struct ldb_dn **dn, struct ldb_request *parent)
+int ridalloc_create_own_rid_set(struct ldb_module *module, TALLOC_CTX *mem_ctx,
+				struct ldb_dn **dn, struct ldb_request *parent)
 {
 	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
 	struct ldb_dn *rid_manager_dn, *fsmo_role_dn;
@@ -466,7 +470,8 @@ static int ridalloc_create_own_rid_set(struct ldb_module *module, TALLOC_CTX *me
   get a new RID pool for ourselves
   also returns the first rid for the new pool
  */
-static int ridalloc_new_own_pool(struct ldb_module *module, uint64_t *new_pool, struct ldb_request *parent)
+
+int ridalloc_new_own_pool(struct ldb_module *module, uint64_t *new_pool, struct ldb_request *parent)
 {
 	TALLOC_CTX *tmp_ctx = talloc_new(module);
 	struct ldb_dn *rid_manager_dn, *fsmo_role_dn;
@@ -685,6 +690,11 @@ int ridalloc_allocate_rid(struct ldb_module *module, uint32_t *rid, struct ldb_r
 
 /*
   called by DSDB_EXTENDED_ALLOCATE_RID_POOL extended operation in samldb
+
+  This is for the DRS server to allocate a RID Pool for another server.
+
+  Called by another server over DRS (which calls this extended
+  operation), it runs on the RID Manager only.
  */
 int ridalloc_allocate_rid_pool_fsmo(struct ldb_module *module, struct dsdb_fsmo_extended_op *exop,
 				    struct ldb_request *parent)
