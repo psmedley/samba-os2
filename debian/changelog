@@ -1,3 +1,15 @@
+samba (2:4.5.2+dfsg-2) unstable; urgency=high
+
+  * This is a security release in order to address the following defects:
+    - CVE-2016-2123 (Samba NDR Parsing ndr_pull_dnsp_name Heap-based Buffer
+      Overflow Remote Code Execution Vulnerability).
+    -  CVE-2016-2125 (Unconditional privilege delegation to Kerberos servers in
+      trusted realms).
+    -  CVE-2016-2126 (Flaws in Kerberos PAC validation can trigger privilege
+       elevation).
+
+ -- Mathieu Parent <sathieu@debian.org>  Sat, 17 Dec 2016 22:54:35 +0100
+
 samba (2:4.5.2+dfsg-1) unstable; urgency=medium
 
   * New upstream version
