@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 12/06/2016
+.\"      Date: 01/17/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "12/06/2016" "Samba 4\&.5" "System Administration tools"
+.TH "VFS_FRUIT" "8" "01/17/2017" "Samba 4\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -74,7 +74,21 @@ This module is not stackable other then described in this manpage\&.
 .PP
 fruit:resource = [ file | xattr | stream ]
 .RS 4
-Controls where the OS X resource fork is stored:
+Controls where the OS X resource fork is stored\&.
+.sp
+\fIImportant: \fRDue to a misspelling in the option parser in all Samba versions 4\&.5 and earlier, this options must be given as
+\fIfruit:ressource\fR, ie with two
+\fIs\fR\&.
+.sp
+Users who set this opion to any non\-default setting were still using the default setting of
+\fIfile\fR
+and are advised to adjust their smb\&.conf to reflect the effective setting and set
+\fIfruit:ressource=file\fR
+in their smb\&.conf\&. Removing the option line altogether works as well\&.
+.sp
+Samba 4\&.6 will accept both the correct and the wrong spelling, from Samba 4\&.7 onwards only the correct spelling will be accepted\&.
+.sp
+Settings:
 .sp
 .RS 4
 .ie n \{\
@@ -108,8 +122,12 @@ xattr
 .sp -1
 .IP \(bu 2.3
 .\}
-stream
-\- pass the stream on to the next module in the VFS stack
+stream (experimental)
+\- pass the stream on to the next module in the VFS stack\&.
+\fIWarning: \fR
+this option should not be used with the
+\fIstreams_xattr\fR
+module due to the extended attributes size limitations of most filesytems\&.
 .RE
 .sp
 .RE
@@ -179,7 +197,13 @@ netatalk
 .PP
 fruit:encoding = [ native | private ]
 .RS 4
-Controls how the set of illegal NTFS ASCII character, commonly used by OS X clients, are stored in the filesystem:
+Controls how the set of illegal NTFS ASCII character, commonly used by OS X clients, are stored in the filesystem\&.
+.sp
+\fIImportant:\fR
+this is known to not fully work with
+\fIfruit:metadata=stream\fR
+or
+\fIfruit:resource=stream\fR\&.
 .sp
 .RS 4
 .ie n \{\

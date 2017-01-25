@@ -1374,6 +1374,14 @@ static int control_stats(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	return 0;
 }
 
+static int ctdb_public_ip_cmp(const void *a, const void *b)
+{
+	const struct ctdb_public_ip *ip_a = a;
+	const struct ctdb_public_ip *ip_b = b;
+
+	return ctdb_sock_addr_cmp(&ip_a->addr, &ip_b->addr);
+}
+
 static void print_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		     struct ctdb_public_ip_list *ips,
 		     struct ctdb_public_ip_info **ipinfo,
@@ -1402,8 +1410,7 @@ static void print_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		}
 	}
 
-	/* IPs are reverse sorted */
-	for (i=ips->num-1; i>=0; i--) {
+	for (i = 0; i < ips->num; i++) {
 
 		if (options.machinereadable == 1) {
 			printf("%s%s%s%d%s", options.sep,
@@ -1429,6 +1436,10 @@ static void print_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		avail = NULL;
 		active = NULL;
 
+		if (ipinfo[i] == NULL) {
+			goto skip_ipinfo;
+		}
+
 		for (j=0; j<ipinfo[i]->ifaces->num; j++) {
 			struct ctdb_iface *iface;
 
@@ -1437,7 +1448,7 @@ static void print_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 				conf = talloc_strdup(mem_ctx, iface->name);
 			} else {
 				conf = talloc_asprintf_append(
-						mem_ctx, ",%s", iface->name);
+						conf, ",%s", iface->name);
 			}
 
 			if (ipinfo[i]->active_idx == j) {
@@ -1452,9 +1463,11 @@ static void print_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 				avail = talloc_strdup(mem_ctx, iface->name);
 			} else {
 				avail = talloc_asprintf_append(
-						mem_ctx, ",%s", iface->name);
+						avail, ",%s", iface->name);
 			}
 		}
+
+	skip_ipinfo:
 
 		if (options.machinereadable == 1) {
 			printf("%s%s%s%s%s%s\n",
@@ -1462,8 +1475,9 @@ static void print_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			       avail ? avail : "", options.sep,
 			       conf ? conf : "", options.sep);
 		} else {
-			printf(" node[%u] active[%s] available[%s] configured[%s]\n",
-			       ips->ip[i].pnn, active ? active : "",
+			printf(" node[%d] active[%s] available[%s]"
+			       " configured[%s]\n",
+			       (int)ips->ip[i].pnn, active ? active : "",
 			       avail ? avail : "", conf ? conf : "");
 		}
 	}
@@ -1521,11 +1535,34 @@ static int get_all_public_ips(struct ctdb_context *ctdb, TALLOC_CTX *mem_ctx,
 			ip.pnn = ips->ip[j].pnn;
 			ip.addr = ips->ip[j].addr;
 
-			ret = db_hash_add(ipdb, (uint8_t *)&ip.addr,
-					  sizeof(ip.addr),
-					  (uint8_t *)&ip, sizeof(ip));
-			if (ret != 0) {
-				goto failed;
+			if (pnn_list[i] == ip.pnn) {
+				/* Node claims IP is hosted on it, so
+				 * save that information
+				 */
+				ret = db_hash_add(ipdb, (uint8_t *)&ip.addr,
+						  sizeof(ip.addr),
+						  (uint8_t *)&ip, sizeof(ip));
+				if (ret != 0) {
+					goto failed;
+				}
+			} else {
+				/* Node thinks IP is hosted elsewhere,
+				 * so overwrite with CTDB_UNKNOWN_PNN
+				 * if there's no existing entry
+				 */
+				ret = db_hash_exists(ipdb, (uint8_t *)&ip.addr,
+						     sizeof(ip.addr));
+				if (ret == ENOENT) {
+					ip.pnn = CTDB_UNKNOWN_PNN;
+					ret = db_hash_add(ipdb,
+							  (uint8_t *)&ip.addr,
+							  sizeof(ip.addr),
+							  (uint8_t *)&ip,
+							  sizeof(ip));
+					if (ret != 0) {
+						goto failed;
+					}
+				}
 			}
 		}
 
@@ -1598,6 +1635,9 @@ static int control_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return ret;
 	}
 
+	qsort(ips->ip, ips->num, sizeof(struct ctdb_public_ip),
+	      ctdb_public_ip_cmp);
+
 	ipinfo = talloc_array(mem_ctx, struct ctdb_public_ip_info *, ips->num);
 	if (ipinfo == NULL) {
 		return 1;
@@ -1609,6 +1649,10 @@ static int control_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			pnn = ips->ip[i].pnn;
 		} else {
 			pnn = ctdb->cmd_pnn;
+		}
+		if (pnn == CTDB_UNKNOWN_PNN) {
+			ipinfo[i] = NULL;
+			continue;
 		}
 		ret = ctdb_ctrl_get_public_ip_info(mem_ctx, ctdb->ev,
 						   ctdb->client, pnn,

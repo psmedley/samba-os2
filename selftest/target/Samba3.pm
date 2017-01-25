@@ -1429,6 +1429,7 @@ sub provision($$$$$$$$)
 	winbind enum users = yes
 	winbind enum groups = yes
 	winbind separator = /
+	include system krb5 conf = no
 
 #	min receivefile size = 4000
 
@@ -1609,10 +1610,34 @@ sub provision($$$$$$$$)
 	path = $shrdir
 	vfs objects = catia fruit streams_xattr acl_xattr
 	ea support = yes
-	fruit:ressource = file
+	fruit:resource = file
 	fruit:metadata = netatalk
 	fruit:locking = netatalk
 	fruit:encoding = native
+
+[vfs_fruit_metadata_stream]
+	path = $shrdir
+	vfs objects = fruit streams_xattr acl_xattr
+	ea support = yes
+	fruit:resource = file
+	fruit:metadata = stream
+
+[vfs_fruit_stream_depot]
+	path = $shrdir
+	vfs objects = fruit streams_depot acl_xattr
+	ea support = yes
+	fruit:resource = stream
+	fruit:metadata = stream
+
+[vfs_wo_fruit]
+	path = $shrdir
+	vfs objects = streams_xattr acl_xattr
+	ea support = yes
+
+[vfs_wo_fruit_stream_depot]
+	path = $shrdir
+	vfs objects = streams_depot acl_xattr
+	ea support = yes
 
 [badname-tmp]
 	path = $badnames_shrdir

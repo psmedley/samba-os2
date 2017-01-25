@@ -262,7 +262,20 @@ static void wb_xids2sids_dom_done(struct tevent_req *subreq)
 			continue;
 		}
 
-		sid_copy(&state->all_sids[i], &state->dom_sids[dom_sid_idx++]);
+		sid_copy(&state->all_sids[i], &state->dom_sids[dom_sid_idx]);
+
+		/*
+		 * Prime the cache after an xid2sid call. It's
+		 * important that we use state->dom_xids for the xid
+		 * value, not state->all_xids: state->all_xids carries
+		 * what we asked for, e.g. a
+		 * ID_TYPE_UID. state->dom_xids holds something the
+		 * idmap child possibly changed to ID_TYPE_BOTH.
+		 */
+		idmap_cache_set_sid2unixid(
+			&state->all_sids[i], &state->dom_xids[dom_sid_idx]);
+
+		dom_sid_idx += 1;
 	}
 
 	tevent_req_done(req);
@@ -338,6 +351,32 @@ struct tevent_req *wb_xids2sids_send(TALLOC_CTX *mem_ctx,
 	state->sids = talloc_zero_array(state, struct dom_sid, num_xids);
 	if (tevent_req_nomem(state->sids, req)) {
 		return tevent_req_post(req, ev);
+	}
+
+	if (winbindd_use_idmap_cache()) {
+		uint32_t i;
+
+		for (i=0; i<num_xids; i++) {
+			struct dom_sid sid;
+			bool ok, expired;
+
+			switch (xids[i].type) {
+			    case ID_TYPE_UID:
+				    ok = idmap_cache_find_uid2sid(
+					    xids[i].id, &sid, &expired);
+				    break;
+			    case ID_TYPE_GID:
+				    ok = idmap_cache_find_gid2sid(
+					    xids[i].id, &sid, &expired);
+				    break;
+			    default:
+				    ok = false;
+			}
+
+			if (ok && !expired) {
+				sid_copy(&state->sids[i], &sid);
+			}
+		}
 	}
 
 	wb_xids2sids_init_dom_maps();

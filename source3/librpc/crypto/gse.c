@@ -142,7 +142,6 @@ static NTSTATUS gse_context_init(TALLOC_CTX *mem_ctx,
 	memcpy(&gse_ctx->gss_mech, gss_mech_krb5, sizeof(gss_OID_desc));
 
 	gse_ctx->gss_want_flags = GSS_C_MUTUAL_FLAG |
-				GSS_C_DELEG_FLAG |
 				GSS_C_DELEG_POLICY_FLAG |
 				GSS_C_REPLAY_FLAG |
 				GSS_C_SEQUENCE_FLAG;
@@ -173,8 +172,8 @@ static NTSTATUS gse_context_init(TALLOC_CTX *mem_ctx,
 	k5ret = krb5_cc_resolve(gse_ctx->k5ctx, ccache_name,
 				&gse_ctx->ccache);
 	if (k5ret) {
-		DEBUG(1, ("Failed to resolve credential cache! (%s)\n",
-			  error_message(k5ret)));
+		DEBUG(1, ("Failed to resolve credential cache '%s'! (%s)\n",
+			  ccache_name, error_message(k5ret)));
 		status = NT_STATUS_INTERNAL_ERROR;
 		goto err_out;
 	}
@@ -204,7 +203,6 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
 	struct gse_context *gse_ctx;
 	OM_uint32 gss_maj, gss_min;
 	gss_buffer_desc name_buffer = GSS_C_EMPTY_BUFFER;
-	gss_OID_set_desc mech_set;
 #ifdef HAVE_GSS_KRB5_CRED_NO_CI_FLAGS_X
 	gss_buffer_desc empty_buffer = GSS_C_EMPTY_BUFFER;
 #endif
@@ -249,20 +247,26 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
 	/* TODO: get krb5 ticket using username/password, if no valid
 	 * one already available in ccache */
 
-	mech_set.count = 1;
-	mech_set.elements = &gse_ctx->gss_mech;
-
-	gss_maj = gss_acquire_cred(&gss_min,
-				   GSS_C_NO_NAME,
-				   GSS_C_INDEFINITE,
-				   &mech_set,
-				   GSS_C_INITIATE,
-				   &gse_ctx->creds,
-				   NULL, NULL);
+	gss_maj = gss_krb5_import_cred(&gss_min,
+				       gse_ctx->ccache,
+				       NULL, /* keytab_principal */
+				       NULL, /* keytab */
+				       &gse_ctx->creds);
 	if (gss_maj) {
-		DEBUG(5, ("gss_acquire_creds failed for GSS_C_NO_NAME with [%s] -"
+		char *ccache = NULL;
+		int kret;
+
+		kret = krb5_cc_get_full_name(gse_ctx->k5ctx,
+					     gse_ctx->ccache,
+					     &ccache);
+		if (kret != 0) {
+			ccache = NULL;
+		}
+
+		DEBUG(5, ("gss_krb5_import_cred ccache[%s] failed with [%s] -"
 			  "the caller may retry after a kinit.\n",
-			  gse_errstr(gse_ctx, gss_maj, gss_min)));
+			  ccache, gse_errstr(gse_ctx, gss_maj, gss_min)));
+		SAFE_FREE(ccache);
 		status = NT_STATUS_INTERNAL_ERROR;
 		goto err_out;
 	}
@@ -381,8 +385,6 @@ static NTSTATUS gse_init_server(TALLOC_CTX *mem_ctx,
 		goto done;
 	}
 
-#ifdef HAVE_GSS_KRB5_IMPORT_CRED
-
 	/* This creates a GSSAPI cred_id_t with the keytab set */
 	gss_maj = gss_krb5_import_cred(&gss_min, NULL, NULL, gse_ctx->keytab, 
 				       &gse_ctx->creds);
@@ -401,7 +403,6 @@ static NTSTATUS gse_init_server(TALLOC_CTX *mem_ctx,
 		 * principal in request'.  Work around the issue by
 		 * falling back to the alternate approach below. */
 	} else if (gss_maj == (GSS_S_CALL_BAD_STRUCTURE|GSS_S_BAD_NAME))
-#endif
 	/* FIXME!!!
 	 * This call sets the default keytab for the whole server, not
 	 * just for this context. Need to find a way that does not alter

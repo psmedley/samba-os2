@@ -11,6 +11,7 @@ Homepage: http://www.samba.org
 Standards-Version: 3.9.8
 Build-Depends: bison,
                debhelper (>> 9),
+               dh-python,
                dh-systemd (>= 1.5),
                docbook-xml,
                docbook-xsl,
@@ -25,6 +26,7 @@ Build-Depends: bison,
                libcap-dev [linux-any],
                libcups2-dev,
                libgnutls28-dev,
+               libgpgme11-dev,
                libldap2-dev,
                libldb-dev (>= 2:1.1.27~),
                libncurses5-dev,
@@ -76,7 +78,7 @@ Suggests: bind9 (>= 1:9.5.1),
           bind9utils,
           ctdb,
           ldb-tools,
-          ntp,
+          ntp | chrony (>= 3.0-1),
           smbldap-tools,
           winbind,
           ufw
@@ -334,6 +336,7 @@ Pre-Depends: ${misc:Pre-Depends}
 Architecture: any
 Section: python
 Provides: ${python:Provides}
+Suggests: python-gpgme
 Depends: python-crypto,
          python-ldb,
          python-tdb,
@@ -354,7 +357,7 @@ Replaces: libgensec0 (<< 4.0.0~alpha17~git20110724.dfsg1-1),
           samba-libs (<< 2:4.1.9+dfsg-2)
 Breaks: samba-libs (<< 2:4.1.9+dfsg-2)
 Section: libs
-Depends: ${misc:Depends}, ${shlibs:Depends}, ${ldb:Depends}, samba-libs (= ${binary:Version})
+Depends: libgpgme11, ${misc:Depends}, ${shlibs:Depends}, ${ldb:Depends}, samba-libs (= ${binary:Version})
 Enhances: libldb1
 Description: Samba Directory Services Database
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,

@@ -86,7 +86,27 @@
 	  <varlistentry>
 	    <term>fruit:resource = [ file | xattr | stream ]</term>
 	    <listitem>
-	      <para>Controls where the OS X resource fork is stored:</para>
+	      <para>Controls where the OS X resource fork is stored.</para>
+
+	      <para><emphasis>Important: </emphasis>Due to a
+	      misspelling in the option parser in all Samba versions
+	      4.5 and earlier, this options must be given as
+	      <emphasis>fruit:ressource</emphasis>, ie with two
+	      <emphasis>s</emphasis>.</para>
+
+	      <para>Users who set this opion to any non-default
+	      setting were still using the default setting of
+	      <emphasis>file</emphasis> and are advised to adjust
+	      their smb.conf to reflect the effective setting and set
+	      <emphasis>fruit:ressource=file</emphasis> in their
+	      smb.conf. Removing the option line altogether works as
+	      well.</para>
+
+	      <para>Samba 4.6 will accept both the correct and the
+	      wrong spelling, from Samba 4.7 onwards only the correct
+	      spelling will be accepted.</para>
+
+	      <para>Settings:</para>
 
 	      <itemizedlist>
 		<listitem><para><command>file (default)</command> - use a ._
@@ -99,9 +119,12 @@
 		down to Solaris and derived platforms and
 		ZFS</para></listitem>
 
-		<listitem><para><command>stream</command> - pass the
-		stream on to the next module in the VFS
-		stack</para></listitem>
+		<listitem><para><command>stream (experimental)</command> - pass
+		the stream on to the next module in the VFS stack.
+		<emphasis>Warning: </emphasis> this option should not be used
+		with the <emphasis>streams_xattr</emphasis> module due to the
+		extended attributes size limitations of most
+		filesytems.</para></listitem>
 	      </itemizedlist>
 
 	    </listitem>
@@ -145,9 +168,13 @@
 
 	      <para>Controls how the set of illegal NTFS ASCII
 	      character, commonly used by OS X clients, are stored in
-	      the filesystem:</para>
+	      the filesystem.</para>
 
-	      <itemizedlist>
+	      <para><emphasis>Important:</emphasis> this is known to not fully
+	      work with <emphasis>fruit:metadata=stream</emphasis> or
+	      <emphasis>fruit:resource=stream</emphasis>.</para>
+
+ 	      <itemizedlist>
 
 		<listitem><para><command>private (default)</command> -
 		store characters as encoded by the OS X client: mapped

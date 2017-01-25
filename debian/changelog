@@ -1,3 +1,18 @@
+samba (2:4.5.4+dfsg-1) unstable; urgency=medium
+
+  [ Mathieu Parent ]
+  * New upstream version
+    - Drop security-2016-12-19.patch, was 4.5.3
+  * missing-build-dependency-for-dh_-command dh_python2 => dh-python
+
+  [ Vincent Blut ]
+  * d/control: Suggest chrony as an alternative to ntp (Closes: #851727)
+
+  [ Daniel A ]
+  * add gpgme support (Closes: #850908)
+
+ -- Mathieu Parent <sathieu@debian.org>  Wed, 25 Jan 2017 21:25:40 +0100
+
 samba (2:4.5.2+dfsg-2) unstable; urgency=high
 
   * This is a security release in order to address the following defects:
