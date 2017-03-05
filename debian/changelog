@@ -1,3 +1,17 @@
+samba (2:4.5.5+dfsg-1) unstable; urgency=medium
+
+  * New upstream version
+    - Revert rewrite of the vfs_fruit module (Closes: #856561)
+  * Fix 'winbindd privileged socket directory' (Closes: #754339):
+    - Fix path from /var/run/samba/winbindd_privileged/ to
+      /var/lib/samba/winbindd_privileged/.
+    - Move mkdir+chgrp+chmod to postinst (to handle systemd also).
+    - Thanks to Jim Barber for the report.
+  * logrotate: Use delaycompress on all logs (Closes: #702201)
+    - Thanks to Matthew Gabeler-Lee for the proposed fix.
+
+ -- Mathieu Parent <sathieu@debian.org>  Sun, 05 Mar 2017 23:21:09 +0100
+
 samba (2:4.5.4+dfsg-1) unstable; urgency=medium
 
   [ Mathieu Parent ]

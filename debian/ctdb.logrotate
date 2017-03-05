@@ -4,5 +4,6 @@
 	rotate 7
 	copytruncate
 	compress
+	delaycompress
 	notifempty
 }

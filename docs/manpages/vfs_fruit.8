@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 01/17/2017
+.\"      Date: 01/30/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "01/17/2017" "Samba 4\&.5" "System Administration tools"
+.TH "VFS_FRUIT" "8" "01/30/2017" "Samba 4\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -197,13 +197,7 @@ netatalk
 .PP
 fruit:encoding = [ native | private ]
 .RS 4
-Controls how the set of illegal NTFS ASCII character, commonly used by OS X clients, are stored in the filesystem\&.
-.sp
-\fIImportant:\fR
-this is known to not fully work with
-\fIfruit:metadata=stream\fR
-or
-\fIfruit:resource=stream\fR\&.
+Controls how the set of illegal NTFS ASCII character, commonly used by OS X clients, are stored in the filesystem:
 .sp
 .RS 4
 .ie n \{\

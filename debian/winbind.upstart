@@ -8,9 +8,6 @@ respawn
 
 pre-start script
 	test -x /usr/sbin/winbindd || exit 0
-	mkdir -p /var/run/samba/winbindd_privileged
-	chgrp winbindd_priv /var/run/samba/winbindd_privileged
-	chmod 0750 /var/run/samba/winbindd_privileged
 end script
 
 script

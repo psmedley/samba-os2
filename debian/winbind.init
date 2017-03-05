@@ -40,9 +40,6 @@ case "$1" in
 		fi
 		log_daemon_msg "Starting the Winbind daemon" "winbind"
 
-		mkdir -p /var/run/samba/winbindd_privileged || return 1
-		chgrp winbindd_priv $PIDDIR/winbindd_privileged/ || return 1
-		chmod 0750 $PIDDIR/winbindd_privileged/ || return 1
 		start-stop-daemon --start --quiet --oknodo --exec $DAEMON -- $WINBINDD_OPTS
 
 		log_end_msg $?

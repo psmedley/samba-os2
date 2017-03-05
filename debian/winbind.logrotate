@@ -6,5 +6,6 @@
 	[ ! -f /var/run/samba/winbindd.pid ] || kill -HUP `cat /var/run/samba/winbindd.pid`
 	endscript
 	compress
+	delaycompress
 	notifempty
 }

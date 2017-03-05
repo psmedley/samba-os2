@@ -5,4 +5,9 @@ set -e
 getent group winbindd_priv >/dev/null 2>&1 ||
 	addgroup --system --force-badname --quiet winbindd_priv
 
+winbindd_privileged_socket_directory='/var/lib/samba/winbindd_privileged'
+mkdir -pv "$winbindd_privileged_socket_directory"
+chgrp -c winbindd_priv "$winbindd_privileged_socket_directory"
+chmod -c 0750 "$winbindd_privileged_socket_directory"
+
 #DEBHELPER#

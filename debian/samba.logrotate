@@ -6,6 +6,7 @@
 		[ ! -f /var/run/samba/smbd.pid ] || /etc/init.d/smbd reload > /dev/null
 	endscript
 	compress
+	delaycompress
 	notifempty
 }
 
@@ -17,5 +18,6 @@
 		[ ! -f /var/run/samba/nmbd.pid ] || kill -HUP `cat /var/run/samba/nmbd.pid`
 	endscript
 	compress
+	delaycompress
 	notifempty
 }
