@@ -104,7 +104,7 @@ class dc_join(object):
         if machinepass is not None:
             ctx.acct_pass = machinepass
         else:
-            ctx.acct_pass = samba.generate_random_password(32, 40)
+            ctx.acct_pass = samba.generate_random_machine_password(128, 255)
 
         ctx.dnsdomain = ctx.samdb.domain_dns_name()
         if clone_only:
@@ -667,7 +667,7 @@ class dc_join(object):
                     pass
                 ctx.net.set_password(account_name=ctx.samname,
                                      domain_name=ctx.domain_name,
-                                     newpassword=ctx.acct_pass)
+                                     newpassword=ctx.acct_pass.encode('utf-8'))
 
             res = ctx.samdb.search(base=ctx.acct_dn, scope=ldb.SCOPE_BASE,
                                    attrs=["msDS-KeyVersionNumber"])
@@ -691,7 +691,7 @@ class dc_join(object):
                                                                 {"DNSDOMAIN": ctx.dnsdomain,
                                                                  "DOMAINDN": ctx.base_dn,
                                                                  "HOSTNAME" : ctx.myname,
-                                                                 "DNSPASS_B64": b64encode(ctx.dnspass),
+                                                                 "DNSPASS_B64": b64encode(ctx.dnspass.encode('utf-16-le')),
                                                                  "DNSNAME" : ctx.dnshostname}))
             for changetype, msg in recs:
                 assert changetype == ldb.CHANGETYPE_NONE
@@ -863,7 +863,7 @@ class dc_join(object):
                 repl_creds.guess(ctx.lp)
                 repl_creds.set_kerberos_state(DONT_USE_KERBEROS)
                 repl_creds.set_username(ctx.samname)
-                repl_creds.set_password(ctx.acct_pass)
+                repl_creds.set_password(ctx.acct_pass.encode('utf-8'))
             else:
                 repl_creds = ctx.creds
 
@@ -1314,7 +1314,8 @@ def join_subdomain(logger=None, server=None, creds=None, lp=None, site=None,
     ctx.domsid = security.random_sid()
     ctx.acct_dn = None
     ctx.dnshostname = "%s.%s" % (ctx.myname.lower(), ctx.dnsdomain)
-    ctx.trustdom_pass = samba.generate_random_password(128, 128)
+    # Windows uses 240 bytes as UTF16 so we do
+    ctx.trustdom_pass = samba.generate_random_machine_password(120, 120)
 
     ctx.userAccountControl = samba.dsdb.UF_SERVER_TRUST_ACCOUNT | samba.dsdb.UF_TRUSTED_FOR_DELEGATION
 

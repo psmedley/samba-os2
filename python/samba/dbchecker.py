@@ -59,6 +59,7 @@ class dbcheck(object):
         self.fix_all_string_dn_component_mismatch = False
         self.fix_all_GUID_dn_component_mismatch = False
         self.fix_all_SID_dn_component_mismatch = False
+        self.fix_all_old_dn_string_component_mismatch = False
         self.fix_all_metadata = False
         self.fix_time_metadata = False
         self.fix_undead_linked_attributes = False
@@ -574,6 +575,23 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                           "Failed to fix %s on attribute %s" % (errstr, attrname)):
             self.report("Fixed %s on attribute %s" % (errstr, attrname))
 
+    def err_dn_string_component_old(self, dn, attrname, val, dsdb_dn, correct_dn):
+        """handle a DN string being incorrect"""
+        self.report("NOTE: old (due to rename or delete) DN string component for %s in object %s - %s" % (attrname, dn, val))
+        dsdb_dn.dn = correct_dn
+
+        if not self.confirm_all('Change DN to %s?' % str(dsdb_dn),
+                                'fix_all_old_dn_string_component_mismatch'):
+            self.report("Not fixing old string component")
+            return
+        m = ldb.Message()
+        m.dn = dn
+        m['old_value'] = ldb.MessageElement(val, ldb.FLAG_MOD_DELETE, attrname)
+        m['new_value'] = ldb.MessageElement(str(dsdb_dn), ldb.FLAG_MOD_ADD, attrname)
+        if self.do_modify(m, ["show_recycled:1"],
+                          "Failed to fix old DN string on attribute %s" % (attrname)):
+            self.report("Fixed old DN string on attribute %s" % (attrname))
+
     def err_dn_component_target_mismatch(self, dn, attrname, val, dsdb_dn, correct_dn, mismatch_type):
         """handle a DN string being incorrect"""
         self.report("ERROR: incorrect DN %s component for %s in object %s - %s" % (mismatch_type, attrname, dn, val))
@@ -627,10 +645,9 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             self.report("Not fixing missing backlink %s" % backlink_name)
             return
         m = ldb.Message()
-        m.dn = obj.dn
-        m['old_value'] = ldb.MessageElement(val, ldb.FLAG_MOD_DELETE, attrname)
-        m['new_value'] = ldb.MessageElement(val, ldb.FLAG_MOD_ADD, attrname)
-        if self.do_modify(m, ["show_recycled:1"],
+        m.dn = target_dn
+        m['new_value'] = ldb.MessageElement(val, ldb.FLAG_MOD_ADD, backlink_name)
+        if self.do_modify(m, ["show_recycled:1", "relax:0"],
                           "Failed to fix missing backlink %s" % backlink_name):
             self.report("Fixed missing backlink %s" % (backlink_name))
 
@@ -914,12 +931,16 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 if rmd_flags & 1:
                     continue
 
-            # check the DN matches in string form
-            if str(res[0].dn) != str(dsdb_dn.dn):
-                error_count += 1
-                self.err_dn_component_target_mismatch(obj.dn, attrname, val, dsdb_dn,
-                                                      res[0].dn, "string")
-                continue
+            # assert the DN matches in string form, where a reverse
+            # link exists, otherwise (below) offer to fix it as a non-error.
+            # The string form is essentially only kept for forensics,
+            # as we always re-resolve by GUID in normal operations.
+            if reverse_link_name is not None:
+                if str(res[0].dn) != str(dsdb_dn.dn):
+                    error_count += 1
+                    self.err_dn_component_target_mismatch(obj.dn, attrname, val, dsdb_dn,
+                                                          res[0].dn, "string")
+                    continue
 
             if res[0].dn.get_extended_component("GUID") != dsdb_dn.dn.get_extended_component("GUID"):
                 error_count += 1
@@ -933,9 +954,18 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                                       res[0].dn, "SID")
                 continue
 
+            # Now we have checked the GUID and SID, offer to fix old
+            # DN strings as a non-error (for forward links with no
+            # backlink).  Samba does not maintain this string
+            # otherwise, so we don't increment error_count.
+            if reverse_link_name is None:
+                if str(res[0].dn) != str(dsdb_dn.dn):
+                    self.err_dn_string_component_old(obj.dn, attrname, val, dsdb_dn,
+                                                     res[0].dn)
+                continue
 
-            # check the reverse_link is correct if there should be one
-            if reverse_link_name is not None:
+            else:
+                # check the reverse_link is correct if there should be one
                 match_count = 0
                 if reverse_link_name in res[0]:
                     for v in res[0][reverse_link_name]:
@@ -943,12 +973,16 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                         if v_guid == obj_guid:
                             match_count += 1
                 if match_count != 1:
-                    if target_is_deleted:
-                        error_count += 1
-                        if linkID & 1:
-                            self.err_missing_backlink(obj, attrname, val, reverse_link_name, dsdb_dn.dn)
-                        else:
-                            self.err_orphaned_backlink(obj, attrname, val, reverse_link_name, dsdb_dn.dn)
+                    error_count += 1
+                    if linkID & 1:
+                        # Backlink exists, but forward link does not
+                        # Delete the hanging backlink
+                        self.err_orphaned_backlink(obj, attrname, val, reverse_link_name, dsdb_dn.dn)
+                    else:
+                        # Forward link exists, but backlink does not
+                        # Add the missing backlink (if the target object is not Deleted Objects?)
+                        if not target_is_deleted:
+                            self.err_missing_backlink(obj, attrname, obj.dn.extended_str(), reverse_link_name, dsdb_dn.dn)
                     continue
 
 

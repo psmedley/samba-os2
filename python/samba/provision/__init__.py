@@ -877,7 +877,7 @@ def secretsdb_self_join(secretsdb, domain,
         msg["msDS-KeyVersionNumber"] = [str(key_version_number)]
         msg["privateKeytab"] = ["secrets.keytab"]
 
-    msg["secret"] = [machinepass]
+    msg["secret"] = [machinepass.encode('utf-8')]
     msg["samAccountName"] = ["%s$" % netbiosname]
     msg["secureChannelType"] = [str(secure_channel_type)]
     if domainsid is not None:
@@ -1768,9 +1768,9 @@ def provision_fill(samdb, secrets_ldb, logger, names, paths,
         invocationid = str(uuid.uuid4())
 
     if krbtgtpass is None:
-        krbtgtpass = samba.generate_random_password(128, 255)
+        krbtgtpass = samba.generate_random_machine_password(128, 255)
     if machinepass is None:
-        machinepass  = samba.generate_random_password(128, 255)
+        machinepass = samba.generate_random_machine_password(128, 255)
     if dnspass is None:
         dnspass = samba.generate_random_password(128, 255)
 

@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 01/30/2017
+.\"      Date: 03/09/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "01/30/2017" "Samba 4\&.5" "System Administration tools"
+.TH "VFS_FRUIT" "8" "03/09/2017" "Samba 4\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -197,7 +197,13 @@ netatalk
 .PP
 fruit:encoding = [ native | private ]
 .RS 4
-Controls how the set of illegal NTFS ASCII character, commonly used by OS X clients, are stored in the filesystem:
+Controls how the set of illegal NTFS ASCII character, commonly used by OS X clients, are stored in the filesystem\&.
+.sp
+\fIImportant:\fR
+this is known to not fully work with
+\fIfruit:metadata=stream\fR
+or
+\fIfruit:resource=stream\fR\&.
 .sp
 .RS 4
 .ie n \{\
@@ -300,7 +306,17 @@ Whether support for querying and modifying the UNIX mode of directory entries vi
 .PP
 fruit:veto_appledouble = yes | no
 .RS 4
-Whether \&._ AppleDouble files are vetoed which prevents the client from seing and accessing internal AppleDouble files created by vfs_fruit itself for the purpose of storing a Mac resource fork\&.
+\fINote:\fR
+this option only applies when
+\fIfruit:resource\fR
+is set to
+\fIfile\fR
+(the default)\&.
+.sp
+When
+\fIfruit:resource\fR
+is set to
+\fIfile\fR, vfs_fruit may create \&._ AppleDouble files\&. This options controls whether these \&._ AppleDouble files are vetoed which prevents the client from accessing them\&.
 .sp
 Vetoing \&._ files may break some applications, eg extracting Mac ZIP archives from Mac clients failes, because they contain \&._ files\&. Setting this option to false will fix this, but the abstraction leak of exposing the internally created \&._ files may have other unknown side effects\&.
 .sp

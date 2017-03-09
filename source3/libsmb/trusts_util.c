@@ -47,6 +47,62 @@ static int trust_pw_change_state_destructor(struct trust_pw_change_state *state)
 	return 0;
 }
 
+char *trust_pw_new_value(TALLOC_CTX *mem_ctx,
+			 enum netr_SchannelType sec_channel_type,
+			 int security)
+{
+	/*
+	 * use secure defaults.
+	 */
+	size_t min = 128;
+	size_t max = 255;
+
+	switch (sec_channel_type) {
+	case SEC_CHAN_WKSTA:
+	case SEC_CHAN_BDC:
+		if (security == SEC_DOMAIN) {
+			/*
+			 * The maximum length of a trust account password.
+			 * Used when we randomly create it, 15 char passwords
+			 * exceed NT4's max password length.
+			 */
+			min = 14;
+			max = 14;
+		}
+		break;
+	case SEC_CHAN_DNS_DOMAIN:
+		/*
+		 * new_len * 2 = 498 bytes is the largest possible length
+		 * NL_PASSWORD_VERSION consumes the rest of the possible 512 bytes
+		 * and a confounder with at least 2 bytes is required.
+		 *
+		 * Windows uses new_len = 120 => 240 bytes (utf16)
+		 */
+		min = 120;
+		max = 120;
+		break;
+		/* fall through */
+	case SEC_CHAN_DOMAIN:
+		/*
+		 * The maximum length of a trust account password.
+		 * Used when we randomly create it, 15 char passwords
+		 * exceed NT4's max password length.
+		 */
+		min = 14;
+		max = 14;
+		break;
+	default:
+		break;
+	}
+
+	/*
+	 * Create a random machine account password
+	 * We create a random buffer and convert that to utf8.
+	 * This is similar to what windows is doing.
+	 */
+	return generate_random_machine_password(mem_ctx, min, max);
+}
+
 NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 			 struct messaging_context *msg_ctx,
 			 struct dcerpc_binding_handle *b,
@@ -54,6 +110,7 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 			 bool force)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
+	const char *context_name = NULL;
 	struct trust_pw_change_state *state;
 	struct cli_credentials *creds = NULL;
 	const struct samr_Password *current_nt_hash = NULL;
@@ -65,10 +122,7 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 	struct timeval g_timeout = { 0, };
 	int timeout = 0;
 	struct timeval tv = { 0, };
-	size_t new_len = DEFAULT_TRUST_ACCOUNT_PASSWORD_LENGTH;
-	uint8_t new_password_buffer[256 * 2] = { 0, };
 	char *new_trust_passwd = NULL;
-	size_t len = 0;
 	uint32_t new_version = 0;
 	uint32_t *new_trust_version = NULL;
 	NTSTATUS status;
@@ -134,16 +188,6 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 	case SEC_CHAN_BDC:
 		break;
 	case SEC_CHAN_DNS_DOMAIN:
-		/*
-		 * new_len * 2 = 498 bytes is the largest possible length
-		 * NL_PASSWORD_VERSION consumes the rest of the possible 512 bytes
-		 * and a confounder with at least 2 bytes is required.
-		 *
-		 * Windows uses new_len = 120 => 240 bytes.
-		 */
-		new_len = 120;
-
-		/* fall through */
 	case SEC_CHAN_DOMAIN:
 		status = pdb_get_trusted_domain(frame, domain, &td);
 		if (!NT_STATUS_IS_OK(status)) {
@@ -181,19 +225,21 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 		return NT_STATUS_OK;
 	}
 
+	context_name = netlogon_creds_cli_debug_string(context, talloc_tos());
+	if (context_name == NULL) {
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
+	}
+
 	/*
 	 * Create a random machine account password
 	 * We create a random buffer and convert that to utf8.
 	 * This is similar to what windows is doing.
 	 */
-	generate_secret_buffer(new_password_buffer, new_len * 2);
-	ok = convert_string_talloc(frame,
-				   CH_UTF16MUNGED, CH_UTF8,
-				   new_password_buffer, new_len * 2,
-				   (void *)&new_trust_passwd, &len);
-	ZERO_STRUCT(new_password_buffer);
-	if (!ok) {
-		DEBUG(0, ("convert_string_talloc failed\n"));
+	new_trust_passwd = trust_pw_new_value(frame, sec_channel_type,
+					      lp_security());
+	if (new_trust_passwd == NULL) {
+		DEBUG(0, ("trust_pw_new_value() failed\n"));
 		TALLOC_FREE(frame);
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -215,11 +261,15 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 					 *current_nt_hash,
 					 previous_nt_hash);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0, ("netlogon_creds_cli_auth for domain %s - %s!\n",
-			  domain, nt_errstr(status)));
+		DEBUG(0, ("netlogon_creds_cli_auth(%s) failed for old password - %s!\n",
+			  context_name, nt_errstr(status)));
 		TALLOC_FREE(frame);
 		return status;
 	}
+
+	DEBUG(0,("%s : %s(%s): Verified old password remotely using %s\n",
+		 current_timestring(talloc_tos(), false),
+		 __func__, domain, context_name));
 
 	/*
 	 * Return the result of trying to write the new password
@@ -260,22 +310,57 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 		break;
 	}
 
-	DEBUG(1,("%s : %s(%s): Changed password locally\n",
+	DEBUG(0,("%s : %s(%s): Changed password locally\n",
 		 current_timestring(talloc_tos(), false), __func__, domain));
 
 	status = netlogon_creds_cli_ServerPasswordSet(context, b,
 						      new_trust_passwd,
 						      new_trust_version);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,("%s : %s(%s) remote password change set failed - %s\n",
-			 current_timestring(talloc_tos(), false), __func__,
-			 domain, nt_errstr(status)));
+		DEBUG(0,("%s : %s(%s) remote password change set with %s failed - %s\n",
+			 current_timestring(talloc_tos(), false),
+			 __func__, domain, context_name,
+			 nt_errstr(status)));
 		TALLOC_FREE(frame);
 		return status;
 	}
 
-	DEBUG(1,("%s : %s(%s): Changed password remotely.\n",
-		 current_timestring(talloc_tos(), false), __func__, domain));
+	DEBUG(0,("%s : %s(%s): Changed password remotely using %s\n",
+		 current_timestring(talloc_tos(), false),
+		 __func__, domain, context_name));
+
+	ok = cli_credentials_set_password(creds, new_trust_passwd, CRED_SPECIFIED);
+	if (!ok) {
+		DEBUG(0, ("cli_credentials_set_password failed for domain %s!\n",
+			  domain));
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	current_nt_hash = cli_credentials_get_nt_hash(creds, frame);
+	if (current_nt_hash == NULL) {
+		DEBUG(0, ("cli_credentials_get_nt_hash failed for domain %s!\n",
+			  domain));
+		TALLOC_FREE(frame);
+		return NT_STATUS_TRUSTED_RELATIONSHIP_FAILURE;
+	}
+
+	/*
+	 * Now we verify the new password.
+	 */
+	status = netlogon_creds_cli_auth(context, b,
+					 *current_nt_hash,
+					 NULL); /* previous_nt_hash */
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(0, ("netlogon_creds_cli_auth(%s) failed for new password - %s!\n",
+			  context_name, nt_errstr(status)));
+		TALLOC_FREE(frame);
+		return status;
+	}
+
+	DEBUG(0,("%s : %s(%s): Verified new password remotely using %s\n",
+		 current_timestring(talloc_tos(), false),
+		 __func__, domain, context_name));
 
 	TALLOC_FREE(frame);
 	return NT_STATUS_OK;

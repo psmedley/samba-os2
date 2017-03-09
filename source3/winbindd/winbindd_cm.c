@@ -903,7 +903,6 @@ static NTSTATUS get_trust_credentials(struct winbindd_domain *domain,
 	struct cli_credentials *creds;
 	NTSTATUS status;
 	bool force_machine_account = false;
-	bool ok;
 
 	/* If we are a DC and this is not our own domain */
 
@@ -937,24 +936,7 @@ static NTSTATUS get_trust_credentials(struct winbindd_domain *domain,
 		goto ipc_fallback;
 	}
 
-	if (domain->primary && lp_security() == SEC_ADS) {
-		cli_credentials_set_kerberos_state(creds,
-						   CRED_AUTO_USE_KERBEROS);
-	} else if (domain->active_directory) {
-		cli_credentials_set_kerberos_state(creds,
-						   CRED_MUST_USE_KERBEROS);
-	} else {
-		cli_credentials_set_kerberos_state(creds,
-						   CRED_DONT_USE_KERBEROS);
-	}
-
-	/*
-	 * When we contact our own domain and get a list of the trusted domain
-	 * we have the information if we are able to contact the DC with
-	 * with our machine account password.
-	 */
-	ok = winbindd_can_contact_domain(domain);
-	if (!ok) {
+	if (creds_domain != domain) {
 		/*
 		 * We can only use schannel against a direct trust
 		 */
@@ -1002,6 +984,8 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 	struct named_mutex *mutex;
 
 	NTSTATUS result = NT_STATUS_UNSUCCESSFUL;
+	NTSTATUS tmp_status;
+	NTSTATUS tcon_status = NT_STATUS_NETWORK_NAME_DELETED;
 
 	enum smb_signing_setting smb_sign_client_connections = lp_client_ipc_signing();
 
@@ -1103,6 +1087,10 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		}
 	}
 
+	if (cli_credentials_is_anonymous(creds)) {
+		goto anon_fallback;
+	}
+
 	krb5_state = cli_credentials_get_kerberos_state(creds);
 
 	machine_krb5_principal = cli_credentials_get_principal(creds,
@@ -1138,8 +1126,10 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 			goto session_setup_done;
 		}
 
-		DEBUG(4,("failed kerberos session setup with %s\n",
-			 nt_errstr(result)));
+		DEBUG(1, ("Failed to use kerberos connecting to %s from %s "
+			  "with kerberos principal [%s]\n",
+			  controller, lp_netbios_name(),
+			  machine_krb5_principal));
 	}
 
 	if (krb5_state != CRED_MUST_USE_KERBEROS) {
@@ -1157,10 +1147,15 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 					   machine_password,
 					   strlen(machine_password)+1,
 					   machine_domain);
-	}
 
-	if (NT_STATUS_IS_OK(result)) {
-		goto session_setup_done;
+		if (NT_STATUS_IS_OK(result)) {
+			goto session_setup_done;
+		}
+
+		DEBUG(1, ("Failed to use NTLMSSP connecting to %s from %s "
+			  "with username [%s]\\[%s]\n",
+			  controller, lp_netbios_name(),
+			  machine_domain, machine_account));
 	}
 
 	/*
@@ -1174,10 +1169,6 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 	    || NT_STATUS_EQUAL(result, NT_STATUS_NO_LOGON_SERVERS)
 	    || NT_STATUS_EQUAL(result, NT_STATUS_LOGON_FAILURE))
 	{
-		if (cli_credentials_is_anonymous(creds)) {
-			goto done;
-		}
-
 		if (!cm_is_ipc_credentials(creds)) {
 			goto ipc_fallback;
 		}
@@ -1189,19 +1180,22 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		goto anon_fallback;
 	}
 
-	DEBUG(4, ("authenticated session setup failed with %s\n",
-		nt_errstr(result)));
+	DEBUG(1, ("authenticated session setup to %s using %s failed with %s\n",
+		  controller,
+		  cli_credentials_get_unparsed_name(creds, talloc_tos()),
+		  nt_errstr(result)));
 
 	goto done;
 
  ipc_fallback:
-	result = cm_get_ipc_credentials(talloc_tos(), &creds);
-	if (!NT_STATUS_IS_OK(result)) {
+	TALLOC_FREE(creds);
+	tmp_status = cm_get_ipc_credentials(talloc_tos(), &creds);
+	if (!NT_STATUS_IS_OK(tmp_status)) {
+		result = tmp_status;
 		goto done;
 	}
 
 	if (cli_credentials_is_anonymous(creds)) {
-		TALLOC_FREE(creds);
 		goto anon_fallback;
 	}
 
@@ -1228,6 +1222,11 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		goto session_setup_done;
 	}
 
+	DEBUG(1, ("Failed to use NTLMSSP connecting to %s from %s "
+		  "with username "
+		  "[%s]\\[%s]\n",  controller, lp_netbios_name(),
+		  machine_domain, machine_account));
+
 	/*
 	 * If we are not going to validiate the conneciton
 	 * with SMB signing, then allow us to fall back to
@@ -1242,19 +1241,22 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		goto anon_fallback;
 	}
 
-	DEBUG(4, ("authenticated session setup failed with %s\n",
-		nt_errstr(result)));
+	DEBUG(1, ("authenticated session setup to %s using %s failed with %s\n",
+		  controller,
+		  cli_credentials_get_unparsed_name(creds, talloc_tos()),
+		  nt_errstr(result)));
 
 	goto done;
 
  anon_fallback:
+	TALLOC_FREE(creds);
 
 	if (smb_sign_client_connections == SMB_SIGNING_REQUIRED) {
 		goto done;
 	}
 
 	/* Fall back to anonymous connection, this might fail later */
-	DEBUG(10,("cm_prepare_connection: falling back to anonymous "
+	DEBUG(5,("cm_prepare_connection: falling back to anonymous "
 		"connection for DC %s\n",
 		controller ));
 
@@ -1265,6 +1267,9 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		DEBUG(5, ("Connected anonymously\n"));
 		goto session_setup_done;
 	}
+
+	DEBUG(1, ("anonymous session setup to %s failed with %s\n",
+		  controller, nt_errstr(result)));
 
 	/* We can't session setup */
 	goto done;
@@ -1283,11 +1288,11 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 	}
 
 	result = cli_tree_connect(*cli, "IPC$", "IPC", "", 0);
-
 	if (!NT_STATUS_IS_OK(result)) {
 		DEBUG(1,("failed tcon_X with %s\n", nt_errstr(result)));
 		goto done;
 	}
+	tcon_status = result;
 
 	/* cache the server name for later connections */
 
@@ -1306,7 +1311,13 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
  done:
 	TALLOC_FREE(mutex);
 
+	if (NT_STATUS_IS_OK(result)) {
+		result = tcon_status;
+	}
+
 	if (!NT_STATUS_IS_OK(result)) {
+		DEBUG(1, ("Failed to prepare SMB connection to %s: %s\n",
+			  controller, nt_errstr(result)));
 		winbind_add_failed_connection_entry(domain, controller, result);
 		if ((*cli) != NULL) {
 			cli_shutdown(*cli);
@@ -3293,9 +3304,28 @@ static NTSTATUS cm_connect_netlogon_transport(struct winbindd_domain *domain,
 
 	sec_chan_type = cli_credentials_get_secure_channel_type(creds);
 	if (sec_chan_type == SEC_CHAN_NULL) {
-		DBG_WARNING("get_secure_channel_type gave SEC_CHAN_NULL for %s\n",
-			    domain->name);
-		return NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
+		if (transport == NCACN_IP_TCP) {
+			DBG_NOTICE("get_secure_channel_type gave SEC_CHAN_NULL for %s, "
+				   " deny NCACN_IP_TCP and let the caller fallback to NCACN_NP.\n",
+				   domain->name);
+			return NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
+		}
+
+		DBG_NOTICE("get_secure_channel_type gave SEC_CHAN_NULL for %s, "
+			   "fallback to noauth on NCACN_NP.\n",
+			   domain->name);
+
+		result = cli_rpc_pipe_open_noauth_transport(conn->cli,
+							    transport,
+							    &ndr_table_netlogon,
+							    &conn->netlogon_pipe);
+		if (!NT_STATUS_IS_OK(result)) {
+			invalidate_cm_connection(domain);
+			return result;
+		}
+
+		*cli = conn->netlogon_pipe;
+		return NT_STATUS_OK;
 	}
 
 	result = rpccli_create_netlogon_creds_with_creds(creds,
@@ -3334,11 +3364,6 @@ static NTSTATUS cm_connect_netlogon_transport(struct winbindd_domain *domain,
 	conn->netlogon_flags = netlogon_creds->negotiate_flags;
 	TALLOC_FREE(netlogon_creds);
 
-	/*
-	 * FIXME: Document in which case we are not able to contact
-	 * a DC without schannel. Which information do we try to get
-	 * from this DC?
-	 */
 	if (!(conn->netlogon_flags & NETLOGON_NEG_AUTHENTICATED_RPC)) {
 		if (lp_winbind_sealed_pipes() || lp_require_strong_key()) {
 			result = NT_STATUS_DOWNGRADE_DETECTED;

@@ -180,9 +180,9 @@ override_dh_install:
 	mv $(DESTDIR)/lib/systemd/system/samba.service $(DESTDIR)/lib/systemd/system/samba-ad-dc.service
 	sed -i \
 	  -e 's|/etc/sysconfig/|/etc/default/|' \
-	  -e 's|/nmb\.service|nmbd.service|' \
-	  -e 's|/smb\.service|smbd.service|' \
-	  -e 's|/samba\.service|samba-ad-dc.service|' \
+	  -e 's|nmb\.service|nmbd.service|' \
+	  -e 's|smb\.service|smbd.service|' \
+	  -e 's|samba\.service|samba-ad-dc.service|' \
 	  -e 's|^PIDFile=/run/|PIDFile=/var/run/samba/|' \
 	  $(DESTDIR)/lib/systemd/system/nmbd.service \
 	  $(DESTDIR)/lib/systemd/system/samba-ad-dc.service \

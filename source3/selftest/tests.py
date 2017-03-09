@@ -84,7 +84,7 @@ for t in tests:
     plantestsuite("samba3.smbtorture_s3.vfs_aio_fork(simpleserver).%s" % t, "simpleserver", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER_IP/vfs_aio_fork', '$USERNAME', '$PASSWORD', smbtorture3, "", "-l $LOCAL_PATH"])
 
 posix_tests = ["POSIX", "POSIX-APPEND", "POSIX-SYMLINK-ACL", "POSIX-SYMLINK-EA", "POSIX-OFD-LOCK",
-              "POSIX-STREAM-DELETE" ]
+              "POSIX-STREAM-DELETE", "WINDOWS-BAD-SYMLINK" ]
 
 for t in posix_tests:
     plantestsuite("samba3.smbtorture_s3.plain(nt4_dc).%s" % t, "nt4_dc", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER_IP/posix_share', '$USERNAME', '$PASSWORD', smbtorture3, "", "-l $LOCAL_PATH"])
@@ -119,6 +119,7 @@ local_tests = [
     "LOCAL-MESSAGING-FDPASS2",
     "LOCAL-MESSAGING-FDPASS2a",
     "LOCAL-MESSAGING-FDPASS2b",
+    "LOCAL-CANONICALIZE-PATH",
     "LOCAL-hex_encode_buf",
     "LOCAL-remove_duplicate_addrs2"]
 
@@ -274,7 +275,7 @@ plantestsuite("samba3.async_req", "nt4_dc",
 
 #smbtorture4 tests
 
-base = ["base.attr", "base.charset", "base.chkpath", "base.defer_open", "base.delaywrite", "base.delete",
+base = ["base.attr", "base.charset", "base.chkpath", "base.createx_access", "base.defer_open", "base.delaywrite", "base.delete",
         "base.deny1", "base.deny2", "base.deny3", "base.denydos", "base.dir1", "base.dir2",
         "base.disconnect", "base.fdpass", "base.lock",
         "base.mangle", "base.negnowait", "base.ntdeny1",
@@ -323,12 +324,14 @@ nbt = ["nbt.dgram" ]
 
 libsmbclient = ["libsmbclient"]
 
-vfs = ["vfs.fruit", "vfs.acl_xattr"]
+vfs = ["vfs.fruit", "vfs.acl_xattr", "vfs.fruit_netatalk"]
 
 tests= base + raw + smb2 + rpc + unix + local + rap + nbt + libsmbclient + idmap + vfs
 
 for t in tests:
     if t == "base.delaywrite":
+        plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -U$USERNAME%$PASSWORD -k yes --maximum-runtime=900')
+    if t == "base.createx_access":
         plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -U$USERNAME%$PASSWORD -k yes --maximum-runtime=900')
     elif t == "rap.sam":
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD --option=doscharset=ISO-8859-1')
@@ -404,8 +407,11 @@ for t in tests:
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmpsort -U$USERNAME%$PASSWORD')
         plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -U$USERNAME%$PASSWORD')
     elif t == "vfs.fruit":
+        plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/vfs_fruit -U$USERNAME%$PASSWORD --option=torture:localdir=$SELFTEST_PREFIX/nt4_dc/share --option=torture:share2=vfs_wo_fruit', 'metadata_netatalk')
+        plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/vfs_fruit_metadata_stream --option=torture:share2=vfs_wo_fruit -U$USERNAME%$PASSWORD', 'metadata_stream')
+        plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/vfs_fruit_stream_depot --option=torture:share2=vfs_wo_fruit_stream_depot -U$USERNAME%$PASSWORD', 'streams_depot')
+    elif t == "vfs.fruit_netatalk":
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/vfs_fruit -U$USERNAME%$PASSWORD --option=torture:localdir=$SELFTEST_PREFIX/nt4_dc/share')
-        plansmbtorture4testsuite(t, "ad_dc", '//$SERVER_IP/vfs_fruit -U$USERNAME%$PASSWORD --option=torture:localdir=$SELFTEST_PREFIX/ad_dc/share')
     elif t == "rpc.schannel_anon_setpw":
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$%', description="anonymous password set")
         plansmbtorture4testsuite(t, "nt4_dc_schannel", '//$SERVER_IP/tmp -U$%', description="anonymous password set (schannel enforced server-side)")
@@ -442,8 +448,12 @@ for s in signseal_options:
 
     # We should try more combinations in future, but this is all
     # the pre-calculated credentials cache supports at the moment
+    #
+    # As the ktest env requires SMB3_00 we need to use "smb2" until
+    # dcerpc client code in smbtorture support autonegotiation
+    # of any smb dialect.
     e = ""
-    a = ""
+    a = "smb2"
     binding_string = "ncacn_np:$SERVER[%s%s%s]" % (a, s, e)
     options = binding_string + " -k yes --krb5-ccache=$PREFIX/ktest/krb5_ccache-2"
     plansmbtorture4testsuite(test, "ktest", options, 'krb5 with old ccache ncacn_np with [%s%s%s] ' % (a, s, e))
@@ -482,6 +492,11 @@ plantestsuite("samba3.blackbox.rpcclient.pw-nt-hash", "simpleserver",
               [os.path.join(samba3srcdir, "script/tests/test_rpcclient_pw_nt_hash.sh"),
                "$USERNAME", "$PASSWORD", "$SERVER",
                os.path.join(bindir(), "rpcclient")])
+
+plantestsuite("samba3.blackbox.smbclient.encryption_off", "simpleserver",
+              [os.path.join(samba3srcdir, "script/tests/test_smbclient_encryption_off.sh"),
+               "$USERNAME", "$PASSWORD", "$SERVER",
+               smbclient3])
 
 options_list = ["", "-e"]
 for options in options_list:

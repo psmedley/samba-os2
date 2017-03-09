@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 01/30/2017
+.\"      Date: 03/09/2017
 .\"    Manual: File Formats and Conventions
 .\"    Source: Samba 4.5
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "01/30/2017" "Samba 4\&.5" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "03/09/2017" "Samba 4\&.5" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -10473,7 +10473,9 @@ globally will enable negotiation and turn on data encryption on sessions and sha
 .\}
 Setting it to
 \fIoff\fR
-globally will completely disable the encryption feature\&.
+globally will completely disable the encryption feature for all connections\&. Setting
+\fIsmb encrypt = required\fR
+for individual shares (while it\*(Aqs globally off) will deny access to this shares for all clients\&.
 .RE
 .sp
 .RS 4

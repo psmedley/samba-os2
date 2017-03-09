@@ -554,6 +554,7 @@ sub setup_simpleserver($$)
 	ntlm auth = yes
 	vfs objects = xattr_tdb streams_depot time_audit full_audit
 	change notify = no
+	smb encrypt = off
 
 	full_audit:syslog = no
 	full_audit:success = none
@@ -571,6 +572,11 @@ sub setup_simpleserver($$)
 	store dos attributes = yes
 	hide files = /hidefile/
 	hide dot files = yes
+
+[enc_desired]
+	path = $prefix_abs/share
+	vfs objects =
+	smb encrypt = desired
 ";
 
 	my $vars = $self->provision($path,
@@ -757,6 +763,8 @@ sub setup_ktest($$$)
 	security = ads
         username map = $prefix/lib/username.map
         server signing = required
+	server min protocol = SMB3_00
+	client max protocol = SMB3
 ";
 
 	my $ret = $self->provision($prefix,
@@ -1614,6 +1622,30 @@ sub provision($$$$$$$$)
 	fruit:metadata = netatalk
 	fruit:locking = netatalk
 	fruit:encoding = native
+
+[vfs_fruit_metadata_stream]
+	path = $shrdir
+	vfs objects = fruit streams_xattr acl_xattr
+	ea support = yes
+	fruit:resource = file
+	fruit:metadata = stream
+
+[vfs_fruit_stream_depot]
+	path = $shrdir
+	vfs objects = fruit streams_depot acl_xattr
+	ea support = yes
+	fruit:resource = stream
+	fruit:metadata = stream
+
+[vfs_wo_fruit]
+	path = $shrdir
+	vfs objects = streams_xattr acl_xattr
+	ea support = yes
+
+[vfs_wo_fruit_stream_depot]
+	path = $shrdir
+	vfs objects = streams_depot acl_xattr
+	ea support = yes
 
 [badname-tmp]
 	path = $badnames_shrdir
