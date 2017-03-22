@@ -15,3 +15,4 @@ systemd-syslog.target-is-obsolete.patch
 Add-documentation-to-systemd-Unit-files.patch
 fix_kill_path_in_units.patch
 nmbd-requires-a-working-network.patch
+CVE-2017-2619.patch

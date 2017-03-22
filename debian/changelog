@@ -1,3 +1,10 @@
+samba (2:4.5.6+dfsg-2) unstable; urgency=high
+
+  * This is a security release in order to address the following defects:
+    - CVE-2017-2619: symlink race permits opening files outside share directory
+
+ -- Mathieu Parent <sathieu@debian.org>  Wed, 22 Mar 2017 08:03:34 +0100
+
 samba (2:4.5.6+dfsg-1) unstable; urgency=medium
 
   * New upstream version
