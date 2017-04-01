@@ -1,3 +1,11 @@
+samba (2:4.5.8+dfsg-1) unstable; urgency=high
+
+  * New upstream version
+    - Drop CVE-2017-2619.patch: merged upstream
+    - Fix CVE-2017-2619 regression with "follow symlink = no" (Closes: #858564)
+
+ -- Mathieu Parent <sathieu@debian.org>  Sat, 01 Apr 2017 20:39:17 +0200
+
 samba (2:4.5.6+dfsg-2) unstable; urgency=high
 
   * This is a security release in order to address the following defects:

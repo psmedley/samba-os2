@@ -1179,11 +1179,20 @@ NTSTATUS check_reduced_name_with_privilege(connection_struct *conn,
 /*******************************************************************
  Reduce a file name, removing .. elements and checking that
  it is below dir in the heirachy. This uses realpath.
+
+ If cwd_name == NULL then fname is a client given path relative
+ to the root path of the share.
+
+ If cwd_name != NULL then fname is a client given path relative
+ to cwd_name. cwd_name is relative to the root path of the share.
 ********************************************************************/
 
-NTSTATUS check_reduced_name(connection_struct *conn, const char *fname)
+NTSTATUS check_reduced_name(connection_struct *conn,
+				const char *cwd_name,
+				const char *fname)
 {
 	char *resolved_name = NULL;
+	char *new_fname = NULL;
 	bool allow_symlinks = true;
 	bool allow_widelinks = false;
 
@@ -1307,8 +1316,11 @@ NTSTATUS check_reduced_name(connection_struct *conn, const char *fname)
 			/* fname can't have changed in resolved_path. */
 			const char *p = &resolved_name[rootdir_len];
 
-			/* *p can be '\0' if fname was "." */
-			if (*p == '\0' && ISDOT(fname)) {
+			/*
+			 * UNIX filesystem semantics, names consisting
+			 * only of "." or ".." CANNOT be symlinks.
+			 */
+			if (ISDOT(fname) || ISDOTDOT(fname)) {
 				goto out;
 			}
 
@@ -1322,11 +1334,32 @@ NTSTATUS check_reduced_name(connection_struct *conn, const char *fname)
 			}
 
 			p++;
+
+			/*
+			 * If cwd_name is present and not ".",
+			 * then fname is relative to that, not
+			 * the root of the share. Make sure the
+			 * path we check is the one the client
+			 * sent (cwd_name+fname).
+			 */
+			if (cwd_name != NULL && !ISDOT(cwd_name)) {
+				new_fname = talloc_asprintf(talloc_tos(),
+							"%s/%s",
+							cwd_name,
+							fname);
+				if (new_fname == NULL) {
+					SAFE_FREE(resolved_name);
+					return NT_STATUS_NO_MEMORY;
+				}
+				fname = new_fname;
+			}
+
 			if (strcmp(fname, p)!=0) {
 				DEBUG(2, ("check_reduced_name: Bad access "
 					"attempt: %s is a symlink to %s\n",
 					  fname, p));
 				SAFE_FREE(resolved_name);
+				TALLOC_FREE(new_fname);
 				return NT_STATUS_ACCESS_DENIED;
 			}
 		}
@@ -1336,6 +1369,7 @@ NTSTATUS check_reduced_name(connection_struct *conn, const char *fname)
 
 	DBG_INFO("%s reduced to %s\n", fname, resolved_name);
 	SAFE_FREE(resolved_name);
+	TALLOC_FREE(new_fname);
 	return NT_STATUS_OK;
 }
 
