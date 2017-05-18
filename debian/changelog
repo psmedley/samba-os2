@@ -1,3 +1,9 @@
+samba (2:4.5.8+dfsg-2) unstable; urgency=high
+
+  * CVE-2017-7494: rpc_server3: Refuse to open pipe names with / inside
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 18 May 2017 11:53:47 +0200
+
 samba (2:4.5.8+dfsg-1) unstable; urgency=high
 
   * New upstream version
