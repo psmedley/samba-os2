@@ -68,7 +68,7 @@
  *
  * The AFP_Resource stream is stored in an AppleDouble file prepending
  * "._" to the filename. On Solaris with ZFS the stream is optionally
- * stored in an EA "org.netatalk.ressource".
+ * stored in an EA "org.netatalk.resource".
  *
  *
  * Extended Attributes
@@ -105,17 +105,15 @@ static struct global_fruit_config {
 #define FRUIT_PARAM_TYPE_NAME "fruit"
 #define ADOUBLE_NAME_PREFIX "._"
 
-/*
- * REVIEW:
- * This is hokey, but what else can we do?
- */
 #define NETATALK_META_XATTR "org.netatalk.Metadata"
-#if defined(HAVE_ATTROPEN) || defined(FREEBSD)
+#define NETATALK_RSRC_XATTR "org.netatalk.ResourceFork"
+
+#if defined(HAVE_ATTROPEN)
 #define AFPINFO_EA_NETATALK NETATALK_META_XATTR
-#define AFPRESOURCE_EA_NETATALK "org.netatalk.ResourceFork"
+#define AFPRESOURCE_EA_NETATALK NETATALK_RSRC_XATTR
 #else
 #define AFPINFO_EA_NETATALK "user." NETATALK_META_XATTR
-#define AFPRESOURCE_EA_NETATALK "user.org.netatalk.ResourceFork"
+#define AFPRESOURCE_EA_NETATALK "user." NETATALK_RSRC_XATTR
 #endif
 
 enum apple_fork {APPLE_FORK_DATA, APPLE_FORK_RSRC};
@@ -137,6 +135,7 @@ struct fruit_config_data {
 	bool copyfile_enabled;
 	bool veto_appledouble;
 	bool posix_rename;
+	bool aapl_zero_file_id;
 
 	/*
 	 * Additional options, all enabled by default,
@@ -382,7 +381,7 @@ struct ad_entry_order entry_order_meta_xattr[ADEID_NUM_XATTR + 1] = {
 	{0, 0, 0}
 };
 
-/* AppleDouble ressource fork file (the ones prefixed by "._") */
+/* AppleDouble resource fork file (the ones prefixed by "._") */
 static const
 struct ad_entry_order entry_order_dot_und[ADEID_NUM_DOT_UND + 1] = {
 	{ADEID_FINDERI,    ADEDOFF_FINDERI_DOT_UND,  ADEDLEN_FINDERI},
@@ -391,8 +390,8 @@ struct ad_entry_order entry_order_dot_und[ADEID_NUM_DOT_UND + 1] = {
 };
 
 /*
- * Fake AppleDouble entry oder for ressource fork xattr.  The xattr
- * isn't an AppleDouble file, it simply contains the ressource data,
+ * Fake AppleDouble entry oder for resource fork xattr.  The xattr
+ * isn't an AppleDouble file, it simply contains the resource data,
  * but in order to be able to use some API calls like ad_getentryoff()
  * we build a fake/helper struct adouble with this entry order struct.
  */
@@ -1521,10 +1520,27 @@ static int init_fruit_config(vfs_handle_struct *handle)
 		return -1;
 	}
 
+	/*
+	 * Versions up to Samba 4.5.x had a spelling bug in the
+	 * fruit:resource option calling lp_parm_enum with
+	 * "res*s*ource" (ie two s).
+	 *
+	 * In Samba 4.6 we accept both the wrong and the correct
+	 * spelling, in Samba 4.7 the bad spelling will be removed.
+	 */
 	enumval = lp_parm_enum(SNUM(handle->conn), FRUIT_PARAM_TYPE_NAME,
 			       "ressource", fruit_rsrc, FRUIT_RSRC_ADFILE);
 	if (enumval == -1) {
-		DEBUG(1, ("value for %s: ressource type unknown\n",
+		DEBUG(1, ("value for %s: resource type unknown\n",
+			  FRUIT_PARAM_TYPE_NAME));
+		return -1;
+	}
+	config->rsrc = (enum fruit_rsrc)enumval;
+
+	enumval = lp_parm_enum(SNUM(handle->conn), FRUIT_PARAM_TYPE_NAME,
+			       "resource", fruit_rsrc, enumval);
+	if (enumval == -1) {
+		DEBUG(1, ("value for %s: resource type unknown\n",
 			  FRUIT_PARAM_TYPE_NAME));
 		return -1;
 	}
@@ -1575,6 +1591,9 @@ static int init_fruit_config(vfs_handle_struct *handle)
 
 	config->posix_rename = lp_parm_bool(
 		SNUM(handle->conn), FRUIT_PARAM_TYPE_NAME, "posix_rename", true);
+
+	config->aapl_zero_file_id =
+	    lp_parm_bool(-1, FRUIT_PARAM_TYPE_NAME, "zero_file_id", true);
 
 	config->readdir_attr_rsize = lp_parm_bool(
 		SNUM(handle->conn), "readdir_attr", "aapl_rsize", true);
@@ -2182,9 +2201,23 @@ static NTSTATUS check_aapl(vfs_handle_struct *handle,
 	}
 
 	if (req_bitmap & SMB2_CRTCTX_AAPL_VOLUME_CAPS) {
-		SBVAL(p, 0,
-		      lp_case_sensitive(SNUM(handle->conn->tcon->compat)) ?
-		      SMB2_CRTCTX_AAPL_CASE_SENSITIVE : 0);
+		int val = lp_case_sensitive(SNUM(handle->conn->tcon->compat));
+		uint64_t caps = 0;
+
+		switch (val) {
+		case Auto:
+			break;
+
+		case True:
+			caps |= SMB2_CRTCTX_AAPL_CASE_SENSITIVE;
+			break;
+
+		default:
+			break;
+		}
+
+		SBVAL(p, 0, caps);
+
 		ok = data_blob_append(req, &blob, p, 8);
 		if (!ok) {
 			return NT_STATUS_UNSUCCESSFUL;
@@ -2221,6 +2254,9 @@ static NTSTATUS check_aapl(vfs_handle_struct *handle,
 				      blob);
 	if (NT_STATUS_IS_OK(status)) {
 		global_fruit_config.nego_aapl = true;
+		if (config->aapl_zero_file_id) {
+			aapl_force_zero_file_id(handle->conn->sconn);
+		}
 	}
 
 	return status;
@@ -2947,6 +2983,20 @@ static int fruit_open_rsrc(vfs_handle_struct *handle,
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct fruit_config_data, return -1);
+
+	if (((flags & O_ACCMODE) == O_RDONLY)
+	    && (flags & O_CREAT)
+	    && !VALID_STAT(fsp->fsp_name->st))
+	{
+		/*
+		 * This means the stream doesn't exist. macOS SMB server fails
+		 * this with NT_STATUS_OBJECT_NAME_NOT_FOUND, so must we. Cf bug
+		 * 12565 and the test for this combination in
+		 * test_rfork_create().
+		 */
+		errno = ENOENT;
+		return -1;
+	}
 
 	switch (config->rsrc) {
 	case FRUIT_RSRC_STREAM:

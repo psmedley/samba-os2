@@ -64,14 +64,6 @@ NTSTATUS ncacn_push_auth(DATA_BLOB *blob, TALLOC_CTX *mem_ctx,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	if (!(pkt->drep[0] & DCERPC_DREP_LE)) {
-		ndr->flags |= LIBNDR_FLAG_BIGENDIAN;
-	}
-
-	if (pkt->pfc_flags & DCERPC_PFC_FLAG_OBJECT_UUID) {
-		ndr->flags |= LIBNDR_FLAG_OBJECT_PRESENT;
-	}
-
 	if (auth_info) {
 		pkt->auth_length = auth_info->credentials.length;
 	} else {
@@ -669,7 +661,7 @@ struct composite_context *dcerpc_pipe_auth_send(struct dcerpc_pipe *p,
 	 * if not doing sign or seal
 	 */
 	if (conn->transport.transport == NCACN_NP &&
-	    !(conn->flags & (DCERPC_SIGN|DCERPC_SEAL))) {
+	    !(conn->flags & (DCERPC_PACKET|DCERPC_SIGN|DCERPC_SEAL))) {
 		auth_none_req = dcerpc_bind_auth_none_send(c, s->pipe, s->table);
 		composite_continue(c, auth_none_req, continue_auth_none, c);
 		return c;
@@ -678,7 +670,7 @@ struct composite_context *dcerpc_pipe_auth_send(struct dcerpc_pipe *p,
 
 	/* Perform an authenticated DCE-RPC bind
 	 */
-	if (!(conn->flags & (DCERPC_CONNECT|DCERPC_SEAL))) {
+	if (!(conn->flags & (DCERPC_CONNECT|DCERPC_SEAL|DCERPC_PACKET))) {
 		/*
 		  we are doing an authenticated connection,
 		  which needs to use [connect], [sign] or [seal].
@@ -861,6 +853,7 @@ _PUBLIC_ NTSTATUS dcerpc_secondary_context(struct dcerpc_pipe *p,
 {
 	NTSTATUS status;
 	struct dcerpc_pipe *p2;
+	struct GUID *object = NULL;
 	
 	p2 = talloc_zero(p, struct dcerpc_pipe);
 	if (p2 == NULL) {
@@ -881,7 +874,12 @@ _PUBLIC_ NTSTATUS dcerpc_secondary_context(struct dcerpc_pipe *p,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	p2->binding_handle = dcerpc_pipe_binding_handle(p2);
+	p2->object = dcerpc_binding_get_object(p2->binding);
+	if (!GUID_all_zero(&p2->object)) {
+		object = &p2->object;
+	}
+
+	p2->binding_handle = dcerpc_pipe_binding_handle(p2, object, table);
 	if (p2->binding_handle == NULL) {
 		talloc_free(p2);
 		return NT_STATUS_NO_MEMORY;

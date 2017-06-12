@@ -83,7 +83,10 @@ struct messaging_context {
 	struct server_id_db *names_db;
 };
 
+static struct messaging_rec *messaging_rec_dup(TALLOC_CTX *mem_ctx,
+					       struct messaging_rec *rec);
 static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
+				   struct tevent_context *ev,
 				   struct messaging_rec *rec);
 
 /****************************************************************************
@@ -105,7 +108,55 @@ static void ping_message(struct messaging_context *msg_ctx,
 	messaging_send(msg_ctx, src, MSG_PONG, data);
 }
 
-static void messaging_recv_cb(const uint8_t *msg, size_t msg_len,
+static struct messaging_rec *messaging_rec_create(
+	TALLOC_CTX *mem_ctx, struct server_id src, struct server_id dst,
+	uint32_t msg_type, const struct iovec *iov, int iovlen,
+	const int *fds, size_t num_fds)
+{
+	ssize_t buflen;
+	uint8_t *buf;
+	struct messaging_rec *result;
+
+	if (num_fds > INT8_MAX) {
+		return NULL;
+	}
+
+	buflen = iov_buflen(iov, iovlen);
+	if (buflen == -1) {
+		return NULL;
+	}
+	buf = talloc_array(mem_ctx, uint8_t, buflen);
+	if (buf == NULL) {
+		return NULL;
+	}
+	iov_buf(iov, iovlen, buf, buflen);
+
+	{
+		struct messaging_rec rec;
+		int64_t fds64[num_fds];
+		size_t i;
+
+		for (i=0; i<num_fds; i++) {
+			fds64[i] = fds[i];
+		}
+
+		rec = (struct messaging_rec) {
+			.msg_version = MESSAGE_VERSION, .msg_type = msg_type,
+			.src = src, .dest = dst,
+			.buf.data = buf, .buf.length = buflen,
+			.num_fds = num_fds, .fds = fds64,
+		};
+
+		result = messaging_rec_dup(mem_ctx, &rec);
+	}
+
+	TALLOC_FREE(buf);
+
+	return result;
+}
+
+static void messaging_recv_cb(struct tevent_context *ev,
+			      const uint8_t *msg, size_t msg_len,
 			      int *fds, size_t num_fds,
 			      void *private_data)
 {
@@ -117,12 +168,12 @@ static void messaging_recv_cb(const uint8_t *msg, size_t msg_len,
 	size_t i;
 
 	if (msg_len < MESSAGE_HDR_LENGTH) {
-		DEBUG(1, ("message too short: %u\n", (unsigned)msg_len));
+		DBG_WARNING("message too short: %zu\n", msg_len);
 		goto close_fail;
 	}
 
 	if (num_fds > INT8_MAX) {
-		DEBUG(1, ("too many fds: %u\n", (unsigned)num_fds));
+		DBG_WARNING("too many fds: %zu\n", num_fds);
 		goto close_fail;
 	}
 
@@ -145,13 +196,11 @@ static void messaging_recv_cb(const uint8_t *msg, size_t msg_len,
 
 	message_hdr_get(&rec.msg_type, &rec.src, &rec.dest, msg);
 
-	DEBUG(10, ("%s: Received message 0x%x len %u (num_fds:%u) from %s\n",
-		   __func__, (unsigned)rec.msg_type,
-		   (unsigned)rec.buf.length,
-		   (unsigned)num_fds,
-		   server_id_str_buf(rec.src, &idbuf)));
+	DBG_DEBUG("Received message 0x%x len %zu (num_fds:%zu) from %s\n",
+		  (unsigned)rec.msg_type, rec.buf.length, num_fds,
+		  server_id_str_buf(rec.src, &idbuf));
 
-	messaging_dispatch_rec(msg_ctx, &rec);
+	messaging_dispatch_rec(msg_ctx, ev, &rec);
 	return;
 
 close_fail:
@@ -185,17 +234,54 @@ static const char *private_path(const char *name)
 	return talloc_asprintf(talloc_tos(), "%s/%s", lp_private_dir(), name);
 }
 
-struct messaging_context *messaging_init(TALLOC_CTX *mem_ctx, 
-					 struct tevent_context *ev)
+static NTSTATUS messaging_init_internal(TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct messaging_context **pmsg_ctx)
 {
+	TALLOC_CTX *frame;
 	struct messaging_context *ctx;
+	NTSTATUS status = NT_STATUS_UNSUCCESSFUL;
 	int ret;
 	const char *lck_path;
 	const char *priv_path;
 	bool ok;
 
-	if (!(ctx = talloc_zero(mem_ctx, struct messaging_context))) {
-		return NULL;
+	lck_path = lock_path("msg.lock");
+	if (lck_path == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	ok = directory_create_or_exist_strict(lck_path,
+					      sec_initial_uid(),
+					      0755);
+	if (!ok) {
+		DBG_DEBUG("Could not create lock directory: %s\n",
+			  strerror(errno));
+		return NT_STATUS_ACCESS_DENIED;
+	}
+
+	priv_path = private_path("msg.sock");
+	if (priv_path == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	ok = directory_create_or_exist_strict(priv_path, sec_initial_uid(),
+					      0700);
+	if (!ok) {
+		DBG_DEBUG("Could not create msg directory: %s\n",
+			  strerror(errno));
+		return NT_STATUS_ACCESS_DENIED;
+	}
+
+	frame = talloc_stackframe();
+	if (frame == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	ctx = talloc_zero(frame, struct messaging_context);
+	if (ctx == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto done;
 	}
 
 	ctx->id = (struct server_id) {
@@ -206,46 +292,19 @@ struct messaging_context *messaging_init(TALLOC_CTX *mem_ctx,
 
 	sec_init();
 
-	lck_path = lock_path("msg.lock");
-	if (lck_path == NULL) {
-		TALLOC_FREE(ctx);
-		return NULL;
-	}
-
-	ok = directory_create_or_exist_strict(lck_path, sec_initial_uid(),
-					      0755);
-	if (!ok) {
-		DEBUG(10, ("%s: Could not create lock directory: %s\n",
-			   __func__, strerror(errno)));
-		TALLOC_FREE(ctx);
-		return NULL;
-	}
-
-	priv_path = private_path("msg.sock");
-	if (priv_path == NULL) {
-		TALLOC_FREE(ctx);
-		return NULL;
-	}
-
-	ok = directory_create_or_exist_strict(priv_path, sec_initial_uid(),
-					      0700);
-	if (!ok) {
-		DEBUG(10, ("%s: Could not create msg directory: %s\n",
-			   __func__, strerror(errno)));
-		TALLOC_FREE(ctx);
-		return NULL;
-	}
-
-	ctx->msg_dgm_ref = messaging_dgm_ref(
-		ctx, ctx->event_ctx, &ctx->id.unique_id,
-		priv_path, lck_path, messaging_recv_cb, ctx, &ret);
-
+	ctx->msg_dgm_ref = messaging_dgm_ref(ctx,
+					     ctx->event_ctx,
+					     &ctx->id.unique_id,
+					     priv_path,
+					     lck_path,
+					     messaging_recv_cb,
+					     ctx,
+					     &ret);
 	if (ctx->msg_dgm_ref == NULL) {
 		DEBUG(2, ("messaging_dgm_ref failed: %s\n", strerror(ret)));
-		TALLOC_FREE(ctx);
-		return NULL;
+		status = NT_STATUS_INTERNAL_ERROR;
+		goto done;
 	}
-
 	talloc_set_destructor(ctx, messaging_context_destructor);
 
 	if (lp_clustering()) {
@@ -254,19 +313,21 @@ struct messaging_context *messaging_init(TALLOC_CTX *mem_ctx,
 		if (ret != 0) {
 			DEBUG(2, ("messaging_ctdbd_init failed: %s\n",
 				  strerror(ret)));
-			TALLOC_FREE(ctx);
-			return NULL;
+			status = NT_STATUS_INTERNAL_ERROR;
+			goto done;
 		}
 	}
 	ctx->id.vnn = get_my_vnn();
 
-	ctx->names_db = server_id_db_init(
-		ctx, ctx->id, lp_lock_directory(), 0,
-		TDB_INCOMPATIBLE_HASH|TDB_CLEAR_IF_FIRST);
+	ctx->names_db = server_id_db_init(ctx,
+					  ctx->id,
+					  lp_lock_directory(),
+					  0,
+					  TDB_INCOMPATIBLE_HASH|TDB_CLEAR_IF_FIRST);
 	if (ctx->names_db == NULL) {
-		DEBUG(10, ("%s: server_id_db_init failed\n", __func__));
-		TALLOC_FREE(ctx);
-		return NULL;
+		DBG_DEBUG("server_id_db_init failed\n");
+		status = NT_STATUS_INTERNAL_ERROR;
+		goto done;
 	}
 
 	messaging_register(ctx, NULL, MSG_PING, ping_message);
@@ -282,7 +343,38 @@ struct messaging_context *messaging_init(TALLOC_CTX *mem_ctx,
 		DBG_DEBUG("my id: %s\n", server_id_str_buf(ctx->id, &tmp));
 	}
 
+	*pmsg_ctx = talloc_steal(mem_ctx, ctx);
+
+	status = NT_STATUS_OK;
+done:
+	TALLOC_FREE(frame);
+
+	return status;
+}
+
+struct messaging_context *messaging_init(TALLOC_CTX *mem_ctx,
+					 struct tevent_context *ev)
+{
+	struct messaging_context *ctx = NULL;
+	NTSTATUS status;
+
+	status = messaging_init_internal(mem_ctx,
+					 ev,
+					 &ctx);
+	if (!NT_STATUS_IS_OK(status)) {
+		return NULL;
+	}
+
 	return ctx;
+}
+
+NTSTATUS messaging_init_client(TALLOC_CTX *mem_ctx,
+			       struct tevent_context *ev,
+			       struct messaging_context **pmsg_ctx)
+{
+	return messaging_init_internal(mem_ctx,
+					ev,
+					pmsg_ctx);
 }
 
 struct server_id messaging_server_id(const struct messaging_context *msg_ctx)
@@ -432,6 +524,59 @@ NTSTATUS messaging_send_buf(struct messaging_context *msg_ctx,
 	return messaging_send(msg_ctx, server, msg_type, &blob);
 }
 
+struct messaging_post_state {
+	struct messaging_context *msg_ctx;
+	struct messaging_rec *rec;
+};
+
+static void messaging_post_handler(struct tevent_context *ev,
+				   struct tevent_immediate *ti,
+				   void *private_data);
+
+static int messaging_post_self(struct messaging_context *msg_ctx,
+			       struct server_id src, struct server_id dst,
+			       uint32_t msg_type,
+			       const struct iovec *iov, int iovlen,
+			       const int *fds, size_t num_fds)
+{
+	struct tevent_immediate *ti;
+	struct messaging_post_state *state;
+
+	state = talloc(msg_ctx, struct messaging_post_state);
+	if (state == NULL) {
+		return ENOMEM;
+	}
+	state->msg_ctx = msg_ctx;
+
+	ti = tevent_create_immediate(state);
+	if (ti == NULL) {
+		goto fail;
+	}
+	state->rec = messaging_rec_create(
+		state, src, dst, msg_type, iov, iovlen, fds, num_fds);
+	if (state->rec == NULL) {
+		goto fail;
+	}
+
+	tevent_schedule_immediate(ti, msg_ctx->event_ctx,
+				  messaging_post_handler, state);
+	return 0;
+
+fail:
+	TALLOC_FREE(state);
+	return ENOMEM;
+}
+
+static void messaging_post_handler(struct tevent_context *ev,
+				   struct tevent_immediate *ti,
+				   void *private_data)
+{
+	struct messaging_post_state *state = talloc_get_type_abort(
+		private_data, struct messaging_post_state);
+	messaging_dispatch_rec(state->msg_ctx, ev, state->rec);
+	TALLOC_FREE(state);
+}
+
 int messaging_send_iov_from(struct messaging_context *msg_ctx,
 			    struct server_id src, struct server_id dst,
 			    uint32_t msg_type,
@@ -462,13 +607,24 @@ int messaging_send_iov_from(struct messaging_context *msg_ctx,
 		return ret;
 	}
 
+	if (server_id_equal(&dst, &msg_ctx->id)) {
+		ret = messaging_post_self(msg_ctx, src, dst, msg_type,
+					  iov, iovlen, fds, num_fds);
+		return ret;
+	}
+
 	message_hdr_put(hdr, msg_type, src, dst);
 	iov2[0] = (struct iovec){ .iov_base = hdr, .iov_len = sizeof(hdr) };
 	memcpy(&iov2[1], iov, iovlen * sizeof(*iov));
 
-	become_root();
 	ret = messaging_dgm_send(dst.pid, iov2, iovlen+1, fds, num_fds);
-	unbecome_root();
+
+	if (ret == EACCES) {
+		become_root();
+		ret = messaging_dgm_send(dst.pid, iov2, iovlen+1,
+					 fds, num_fds);
+		unbecome_root();
+	}
 
 	if (ret == ECONNREFUSED) {
 		/*
@@ -504,9 +660,16 @@ static struct messaging_rec *messaging_rec_dup(TALLOC_CTX *mem_ctx,
 {
 	struct messaging_rec *result;
 	size_t fds_size = sizeof(int64_t) * rec->num_fds;
+	size_t payload_len;
+
+	payload_len = rec->buf.length + fds_size;
+	if (payload_len < rec->buf.length) {
+		/* overflow */
+		return NULL;
+	}
 
 	result = talloc_pooled_object(mem_ctx, struct messaging_rec, 2,
-				      rec->buf.length + fds_size);
+				      payload_len);
 	if (result == NULL) {
 		return NULL;
 	}
@@ -528,7 +691,7 @@ static struct messaging_rec *messaging_rec_dup(TALLOC_CTX *mem_ctx,
 struct messaging_filtered_read_state {
 	struct tevent_context *ev;
 	struct messaging_context *msg_ctx;
-	void *tevent_handle;
+	struct messaging_dgm_fde *fde;
 
 	bool (*filter)(struct messaging_rec *rec, void *private_data);
 	void *private_data;
@@ -565,9 +728,8 @@ struct tevent_req *messaging_filtered_read_send(
 	 */
 	tevent_req_defer_callback(req, state->ev);
 
-	state->tevent_handle = messaging_dgm_register_tevent_context(
-		state, ev);
-	if (tevent_req_nomem(state->tevent_handle, req)) {
+	state->fde = messaging_dgm_register_tevent_context(state, ev);
+	if (tevent_req_nomem(state->fde, req)) {
 		return tevent_req_post(req, ev);
 	}
 
@@ -609,7 +771,7 @@ static void messaging_filtered_read_cleanup(struct tevent_req *req,
 
 	tevent_req_set_cleanup_fn(req, NULL);
 
-	TALLOC_FREE(state->tevent_handle);
+	TALLOC_FREE(state->fde);
 
 	/*
 	 * Just set the [new_]waiters entry to NULL, be careful not to mess
@@ -658,7 +820,9 @@ int messaging_filtered_read_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 		tevent_req_received(req);
 		return err;
 	}
-	*presult = talloc_move(mem_ctx, &state->rec);
+	if (presult != NULL) {
+		*presult = talloc_move(mem_ctx, &state->rec);
+	}
 	return 0;
 }
 
@@ -849,17 +1013,14 @@ static bool messaging_append_new_waiters(struct messaging_context *msg_ctx)
 	return true;
 }
 
-/*
-  Dispatch one messaging_rec
-*/
-static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
-				   struct messaging_rec *rec)
+static void messaging_dispatch_classic(struct messaging_context *msg_ctx,
+				       struct messaging_rec *rec)
 {
 	struct messaging_callback *cb, *next;
-	unsigned i;
-	size_t j;
 
 	for (cb = msg_ctx->callbacks; cb != NULL; cb = next) {
+		size_t j;
+
 		next = cb->next;
 		if (cb->msg_type != rec->msg_type) {
 			continue;
@@ -884,6 +1045,21 @@ static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
 		 * code which register more than one handler for the same
 		 * message type
 		 */
+	}
+}
+
+/*
+  Dispatch one messaging_rec
+*/
+static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
+				   struct tevent_context *ev,
+				   struct messaging_rec *rec)
+{
+	unsigned i;
+	size_t j;
+
+	if (ev == msg_ctx->event_ctx) {
+		messaging_dispatch_classic(msg_ctx, rec);
 	}
 
 	if (!messaging_append_new_waiters(msg_ctx)) {
@@ -921,7 +1097,8 @@ static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
 
 		state = tevent_req_data(
 			req, struct messaging_filtered_read_state);
-		if (state->filter(rec, state->private_data)) {
+		if ((ev == state->ev) &&
+		    state->filter(rec, state->private_data)) {
 			messaging_filtered_read_done(req, rec);
 
 			/*
@@ -932,6 +1109,32 @@ static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
 		}
 
 		i += 1;
+	}
+
+	if (ev != msg_ctx->event_ctx) {
+		struct iovec iov;
+		int fds[rec->num_fds];
+		int ret;
+
+		/*
+		 * We've been listening on a nested event
+		 * context. Messages need to be handled in the main
+		 * event context, so post to ourselves
+		 */
+
+		iov.iov_base = rec->buf.data;
+		iov.iov_len = rec->buf.length;
+
+		for (i=0; i<rec->num_fds; i++) {
+			fds[i] = rec->fds[i];
+		}
+
+		ret = messaging_post_self(
+			msg_ctx, rec->src, rec->dest, rec->msg_type,
+			&iov, 1, fds, rec->num_fds);
+		if (ret == 0) {
+			return;
+		}
 	}
 
 	/*

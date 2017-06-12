@@ -317,7 +317,6 @@ die("using an empty absolute prefix isn't allowed") unless $prefix_abs ne "";
 die("using '/' as absolute prefix isn't allowed") unless $prefix_abs ne "/";
 
 $ENV{PREFIX} = $prefix;
-$ENV{KRB5CCNAME} = "$prefix/krb5ticket";
 $ENV{PREFIX_ABS} = $prefix_abs;
 $ENV{SRCDIR} = $srcdir;
 $ENV{SRCDIR_ABS} = $srcdir_abs;
@@ -655,6 +654,7 @@ if ($#testlists == -1) {
 
 $ENV{SELFTEST_PREFIX} = "$prefix_abs";
 $ENV{SELFTEST_TMPDIR} = "$tmpdir_abs";
+$ENV{TMPDIR} = "$tmpdir_abs";
 $ENV{TEST_DATA_PREFIX} = "$tmpdir_abs";
 if ($opt_socket_wrapper) {
 	$ENV{SELFTEST_INTERFACES} = $interfaces;
@@ -667,6 +667,9 @@ if ($opt_quick) {
 	$ENV{SELFTEST_QUICK} = "";
 }
 $ENV{SELFTEST_MAXTIME} = $torture_maxtime;
+
+my $selftest_krbt_ccache_path = "$tmpdir_abs/selftest.krb5_ccache";
+$ENV{KRB5CCNAME} = "FILE:${selftest_krbt_ccache_path}.global";
 
 my @available = ();
 foreach my $fn (@testlists) {
@@ -831,6 +834,7 @@ my @exported_envvars = (
 
 	# misc stuff
 	"KRB5_CONFIG",
+	"KRB5CCNAME",
 	"SELFTEST_WINBINDD_SOCKET_DIR",
 	"WINBINDD_PRIV_PIPE_DIR",
 	"NMBD_SOCKET_DIR",
@@ -885,6 +889,8 @@ sub setup_env($$)
 
 	$option = "client" if $option eq "";
 
+	$ENV{KRB5CCNAME} = "FILE:${selftest_krbt_ccache_path}.${envname}/ignore";
+
 	if (defined(get_running_env($envname))) {
 		$testenv_vars = get_running_env($envname);
 		if (not $testenv_vars->{target}->check_env($testenv_vars)) {
@@ -926,6 +932,9 @@ sub setup_env($$)
 		}
 	}
 
+	my $krb5_ccache_path = "${selftest_krbt_ccache_path}.${envname}.${option}";
+	unlink($krb5_ccache_path);
+	$ENV{KRB5CCNAME} = "FILE:${krb5_ccache_path}";
 	return $testenv_vars;
 }
 

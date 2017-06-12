@@ -331,12 +331,16 @@ done:
 		if (password) {
 			if (impersonate_principal) {
 #ifdef SAMBA4_USES_HEIMDAL
-				ret = kerberos_kinit_s4u2_cc(
-						smb_krb5_context->krb5_context,
-						ccache, princ, password,
-						impersonate_principal,
-						self_service, target_service,
-						krb_options, NULL, &kdc_time);
+				ret = smb_krb5_kinit_s4u2_ccache(smb_krb5_context->krb5_context,
+								 ccache,
+								 princ,
+								 password,
+								 impersonate_principal,
+								 self_service,
+								 target_service,
+								 krb_options,
+								 NULL,
+								 &kdc_time);
 #else
 				talloc_free(mem_ctx);
 				(*error_string) = "INTERNAL error: s4u2 ops "
@@ -344,11 +348,14 @@ done:
 				return EINVAL;
 #endif
 			} else {
-				ret = kerberos_kinit_password_cc(
-						smb_krb5_context->krb5_context,
-						ccache, princ, password,
-						target_service,
-						krb_options, NULL, &kdc_time);
+				ret = smb_krb5_kinit_password_ccache(smb_krb5_context->krb5_context,
+								     ccache,
+								     princ,
+								     password,
+								     target_service,
+								     krb_options,
+								     NULL,
+								     &kdc_time);
 			}
 		} else if (impersonate_principal) {
 			talloc_free(mem_ctx);
@@ -375,10 +382,14 @@ done:
 						 &keyblock);
 			
 			if (ret == 0) {
-				ret = kerberos_kinit_keyblock_cc(smb_krb5_context->krb5_context, ccache, 
-								 princ, &keyblock,
-								 target_service, krb_options,
-								 NULL, &kdc_time);
+				ret = smb_krb5_kinit_keyblock_ccache(smb_krb5_context->krb5_context,
+								     ccache,
+								     princ,
+								     &keyblock,
+								     target_service,
+								     krb_options,
+								     NULL,
+								     &kdc_time);
 				krb5_free_keyblock_contents(smb_krb5_context->krb5_context, &keyblock);
 			}
 		}

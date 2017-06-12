@@ -75,18 +75,31 @@ _PUBLIC_ NTSTATUS torture_rpc_connection(struct torture_context *tctx,
 	NTSTATUS status;
 	struct dcerpc_binding *binding;
 
-	dcerpc_init();
-
 	status = torture_rpc_binding(tctx, &binding);
 	if (NT_STATUS_IS_ERR(status))
 		return status;
 
-	status = dcerpc_pipe_connect_b(tctx, 
+	return torture_rpc_connection_with_binding(tctx, binding, p, table);
+}
+
+/**
+ * open a rpc connection to the chosen binding string
+ */
+_PUBLIC_ NTSTATUS torture_rpc_connection_with_binding(struct torture_context *tctx,
+						      struct dcerpc_binding *binding,
+						      struct dcerpc_pipe **p,
+						      const struct ndr_interface_table *table)
+{
+	NTSTATUS status;
+
+	dcerpc_init();
+
+	status = dcerpc_pipe_connect_b(tctx,
 				     p, binding, table,
 				     cmdline_credentials, tctx->ev, tctx->lp_ctx);
- 
+
 	if (NT_STATUS_IS_ERR(status)) {
-		printf("Failed to connect to remote server: %s %s\n", 
+		torture_warning(tctx, "Failed to connect to remote server: %s %s\n",
 			   dcerpc_binding_string(tctx, binding), nt_errstr(status));
 	}
 
@@ -100,7 +113,8 @@ NTSTATUS torture_rpc_connection_transport(struct torture_context *tctx,
 					  struct dcerpc_pipe **p, 
 					  const struct ndr_interface_table *table,
 					  enum dcerpc_transport_t transport,
-					  uint32_t assoc_group_id)
+					  uint32_t assoc_group_id,
+					  uint32_t extra_flags)
 {
 	NTSTATUS status;
 	struct dcerpc_binding *binding;
@@ -118,6 +132,11 @@ NTSTATUS torture_rpc_connection_transport(struct torture_context *tctx,
 	}
 
 	status = dcerpc_binding_set_assoc_group_id(binding, assoc_group_id);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	status = dcerpc_binding_set_flags(binding, extra_flags, 0);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -495,6 +514,7 @@ NTSTATUS torture_rpc_init(void)
 	torture_suite_add_suite(suite, torture_rpc_spoolss_win(suite));
 	torture_suite_add_suite(suite, torture_rpc_spoolss_driver(suite));
 	torture_suite_add_suite(suite, torture_rpc_spoolss_access(suite));
+	torture_suite_add_suite(suite, torture_rpc_iremotewinspool(suite));
 	torture_suite_add_simple_test(suite, "samr", torture_rpc_samr);
 	torture_suite_add_simple_test(suite, "samr.users", torture_rpc_samr_users);
 	torture_suite_add_simple_test(suite, "samr.passwords", torture_rpc_samr_passwords);

@@ -134,7 +134,7 @@ static struct tevent_req *dns_process_send(TALLOC_CTX *mem_ctx,
 	state->dns = dns;
 
 	if (in->length < 12) {
-		tevent_req_werror(req, WERR_INVALID_PARAM);
+		tevent_req_werror(req, WERR_INVALID_PARAMETER);
 		return tevent_req_post(req, ev);
 	}
 	dump_data_dbgc(DBGC_DNS, 8, in->data, in->length);
@@ -154,7 +154,7 @@ static struct tevent_req *dns_process_send(TALLOC_CTX *mem_ctx,
 
 	if (state->in_packet.operation & DNS_FLAG_REPLY) {
 		DEBUG(1, ("Won't reply to replies.\n"));
-		tevent_req_werror(req, WERR_INVALID_PARAM);
+		tevent_req_werror(req, WERR_INVALID_PARAMETER);
 		return tevent_req_post(req, ev);
 	}
 
@@ -272,7 +272,7 @@ static WERROR dns_process_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 drop:
 	*out = data_blob_talloc(mem_ctx, state->in->data, state->in->length);
 	if (out->data == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	out->data[2] |= 0x80; /* Toggle DNS_FLAG_REPLY */
 	out->data[3] |= state->dns_err;

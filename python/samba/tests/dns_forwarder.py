@@ -185,14 +185,18 @@ class TestDnsForwarding(DNSTest):
                              host, str(port), id])
         self.subprocesses.append(p)
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
-        for i in xrange(30):
-            time.sleep(0.01)
+        for i in xrange(300):
+            time.sleep(0.05)
             s.connect((host, port))
             try:
                 s.send('timeout 0', 0)
             except socket.error, e:
                 if e.errno in (errno.ECONNREFUSED, errno.EHOSTUNREACH):
                     continue
+
+            if p.returncode is not None:
+                self.fail("Toy server has managed to die already!")
+
             return s
 
     def tearDown(self):
@@ -462,8 +466,9 @@ class TestDnsForwarding(DNSTest):
         try:
             data = ad.recv(0xffff + 2, 0)
             data = ndr.ndr_unpack(dns.name_packet, data)
-            self.assertEqual('forwarder1', data.answers[0].rdata)
             self.assert_dns_rcode_equals(data, dns.DNS_RCODE_OK)
+            self.assertEqual(len(data.answers), 1)
+            self.assertEqual('forwarder1', data.answers[0].rdata)
         except socket.timeout:
             self.fail("DNS server is too slow (timeout %s)" % timeout)
 

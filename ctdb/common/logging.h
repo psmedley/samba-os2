@@ -20,22 +20,24 @@
 #ifndef __CTDB_LOGGING_H__
 #define __CTDB_LOGGING_H__
 
-enum debug_level {
-	DEBUG_ERR     =  0,
-	DEBUG_WARNING =  1,
-	DEBUG_NOTICE  =  2,
-	DEBUG_INFO    =  3,
-	DEBUG_DEBUG   =  4,
-};
+#include <talloc.h>
+#include "lib/util/debug.h"
+
+#define DEBUG_ERR     DBGLVL_ERR
+#define DEBUG_WARNING DBGLVL_WARNING
+#define DEBUG_NOTICE  DBGLVL_NOTICE
+#define DEBUG_INFO    DBGLVL_INFO
+#define DEBUG_DEBUG   DBGLVL_DEBUG
 
 /* These are used in many places, so define them here to avoid churn */
 #define DEBUG_ALERT DEBUG_ERR
 #define	DEBUG_CRIT  DEBUG_ERR
 
-bool debug_level_parse(const char *log_string, enum debug_level *log_level);
-const char *debug_level_to_string(enum debug_level log_level);
-enum debug_level debug_level_from_string(const char *log_string);
-int debug_level_to_int(enum debug_level log_level);
-enum debug_level debug_level_from_int(int log_int);
+bool debug_level_parse(const char *log_string, int *log_level);
+const char *debug_level_to_string(int log_level);
+int debug_level_from_string(const char *log_string);
+
+int logging_init(TALLOC_CTX *mem_ctx, const char *logging,
+		 const char *debuglevel, const char *app_name);
 
 #endif /* __CTDB_LOGGING_H__ */

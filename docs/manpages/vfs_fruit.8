@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 03/31/2017
+.\"      Date: 06/06/2017
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.5
+.\"    Source: Samba 4.6
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "03/31/2017" "Samba 4\&.5" "System Administration tools"
+.TH "VFS_FRUIT" "8" "06/06/2017" "Samba 4\&.6" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -70,23 +70,123 @@ Finally, share access modes are optionally checked against Netatalk AFP sharing 
 fruit:locking = netatalk\&.
 .PP
 This module is not stackable other then described in this manpage\&.
+.SH "GLOBAL OPTIONS"
+.PP
+The following options must be set in the global smb\&.conf section and won\*(Aqt take effect when set per share\&.
+.PP
+fruit:aapl = yes | no
+.RS 4
+A
+\fIglobal\fR
+option whether to enable Apple\*(Aqs SMB2+ extension codenamed AAPL\&. Default
+\fIyes\fR\&. This extension enhances several deficiencies when connecting from Macs:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+directory enumeration is enriched with Mac relevant filesystem metadata (UNIX mode, FinderInfo, resource fork size and effective permission), as a result the Mac client doesn\*(Aqt need to fetch this metadata individuallly per directory entry resulting in an often tremendous performance increase\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+The ability to query and modify the UNIX mode of directory entries\&.
+.RE
+.sp
+.RE
+There\*(Aqs a set of per share options that come into play when
+\fIfruit:aapl\fR
+is enabled\&. These opions, listed below, can be used to disable the computation of specific Mac metadata in the directory enumeration context, all are enabled by default:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+readdir_attr:aapl_rsize = yes | no
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+readdir_attr:aapl_finder_info = yes | no
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+readdir_attr:aapl_max_access = yes | no
+.RE
+.sp
+.RE
+See below for a description of these options\&.
+.RE
+.PP
+fruit:nfs_aces = yes | no
+.RS 4
+A
+\fIglobal\fR
+option whether support for querying and modifying the UNIX mode of directory entries via NFS ACEs is enabled, default
+\fIyes\fR\&.
+.RE
+.PP
+fruit:copyfile = yes | no
+.RS 4
+A
+\fIglobal\fR
+option whether to enable OS X specific copychunk ioctl that requests a copy of a whole file along with all attached metadata\&.
+.sp
+WARNING: the copyfile request is blocking the client while the server does the copy\&.
+.sp
+\&.
+	      The default is
+\fIno\fR\&.
+.RE
+.PP
+fruit:zero_file_id = yes | no
+.RS 4
+A
+\fIglobal\fR
+option whether to return zero to queries of on\-disk file identifier, if the client has negotiated AAPL\&.
+.sp
+Mac applications and / or the Mac SMB client code expect the on\-disk file identifier to have the semantics of HFS+ Catalog Node Identifier (CNID)\&. Samba doesn\*(Aqt provide those semantics, and that occasionally cause usability issues or even data loss\&. Returning a file identifier of zero causes the Mac client to stop using and trusting the file id returned from the server\&.
+.sp
+The default is
+\fIyes\fR\&.
+.RE
 .SH "OPTIONS"
+.PP
+The following options can be set either in the global smb\&.conf section or per share\&.
 .PP
 fruit:resource = [ file | xattr | stream ]
 .RS 4
 Controls where the OS X resource fork is stored\&.
 .sp
-\fIImportant: \fRDue to a misspelling in the option parser in all Samba versions 4\&.5 and earlier, this options must be given as
-\fIfruit:ressource\fR, ie with two
-\fIs\fR\&.
-.sp
-Users who set this opion to any non\-default setting were still using the default setting of
-\fIfile\fR
-and are advised to adjust their smb\&.conf to reflect the effective setting and set
-\fIfruit:ressource=file\fR
-in their smb\&.conf\&. Removing the option line altogether works as well\&.
-.sp
-Samba 4\&.6 will accept both the correct and the wrong spelling, from Samba 4\&.7 onwards only the correct spelling will be accepted\&.
+Due to a spelling bug in all Samba versions older then 4\&.6\&.0, this option can also be given as
+\fIfruit:ressource\fR, ie with two s\&.
 .sp
 Settings:
 .sp
@@ -226,82 +326,13 @@ private (default)
 .IP \(bu 2.3
 .\}
 native
-\- store characters with their native ASCII value
+\- store characters with their native ASCII value\&.
+\fIImportant\fR: this option requires the use of
+\fIvfs_catia\fR
+in the VFS module stack as shown in the examples section\&.
 .RE
 .sp
 .RE
-.RE
-.PP
-fruit:aapl = yes | no
-.RS 4
-A global option whether to enable Apple\*(Aqs SMB2+ extension codenamed AAPL\&. Default
-\fIyes\fR\&. This extension enhances several deficiencies when connecting from Macs:
-.sp
-.RS 4
-.ie n \{\
-\h'-04'\(bu\h'+03'\c
-.\}
-.el \{\
-.sp -1
-.IP \(bu 2.3
-.\}
-directory enumeration is enriched with Mac relevant filesystem metadata (UNIX mode, FinderInfo, resource fork size and effective permission), as a result the Mac client doesn\*(Aqt need to fetch this metadata individuallly per directory entry resulting in an often tremendous performance increase\&.
-.RE
-.sp
-.RS 4
-.ie n \{\
-\h'-04'\(bu\h'+03'\c
-.\}
-.el \{\
-.sp -1
-.IP \(bu 2.3
-.\}
-The ability to query and modify the UNIX mode of directory entries\&.
-.RE
-.sp
-.RE
-There\*(Aqs a set of per share options that can be used to disable the computation of specific Mac metadata in the directory enumeration context, all are enabled by default:
-.sp
-.RS 4
-.ie n \{\
-\h'-04'\(bu\h'+03'\c
-.\}
-.el \{\
-.sp -1
-.IP \(bu 2.3
-.\}
-readdir_attr:aapl_rsize = true | false
-.RE
-.sp
-.RS 4
-.ie n \{\
-\h'-04'\(bu\h'+03'\c
-.\}
-.el \{\
-.sp -1
-.IP \(bu 2.3
-.\}
-readdir_attr:aapl_finder_info = true | false
-.RE
-.sp
-.RS 4
-.ie n \{\
-\h'-04'\(bu\h'+03'\c
-.\}
-.el \{\
-.sp -1
-.IP \(bu 2.3
-.\}
-readdir_attr:aapl_max_access = true | false
-.RE
-.sp
-.RE
-.RE
-.PP
-fruit:nfs_aces = yes | no
-.RS 4
-Whether support for querying and modifying the UNIX mode of directory entries via NFS ACEs is enabled, default
-\fIyes\fR\&.
 .RE
 .PP
 fruit:veto_appledouble = yes | no
@@ -324,20 +355,33 @@ The default is
 \fIyes\fR\&.
 .RE
 .PP
-fruit:copyfile = yes | no
-.RS 4
-Whether to enable OS X specific copychunk ioctl that requests a copy of a whole file along with all attached metadata\&.
-.sp
-WARNING: the copyfile request is blocking the client while the server does the copy\&.
-.sp
-\&.
-	      The default is
-\fIno\fR\&.
-.RE
-.PP
 fruit:posix_rename = yes | no
 .RS 4
 Whether to enable POSIX directory rename behaviour for OS X clients\&. Without this, directories can\*(Aqt be renamed if any client has any file inside it (recursive!) open\&.
+.sp
+The default is
+\fIyes\fR\&.
+.RE
+.PP
+readdir_attr:aapl_rsize = yes | no
+.RS 4
+Return resource fork size in SMB2 FIND responses\&.
+.sp
+The default is
+\fIyes\fR\&.
+.RE
+.PP
+readdir_attr:aapl_finder_info = yes | no
+.RS 4
+Return FinderInfo in SMB2 FIND responses\&.
+.sp
+The default is
+\fIyes\fR\&.
+.RE
+.PP
+readdir_attr:aapl_max_access = yes | no
+.RS 4
+Return the user\*(Aqs effective maximum permissions in SMB2 FIND responses\&. This is an expensive computation, setting this to off pretends the use has maximum effective permissions\&.
 .sp
 The default is
 \fIyes\fR\&.

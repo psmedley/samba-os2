@@ -82,6 +82,9 @@ NTSTATUS idmap_autorid_setrange(struct db_context *db,
 				uint32_t domain_range_index,
 				uint32_t rangenum);
 
+NTSTATUS idmap_autorid_acquire_range(struct db_context *db,
+				     struct autorid_range_config *range);
+
 /**
  * Delete a domain#index <-> range maping from the database.
  * The mapping is specified by the sid and index.
@@ -135,8 +138,7 @@ NTSTATUS idmap_autorid_db_init(const char *path,
  * Load the configuration stored in the autorid database.
  */
 NTSTATUS idmap_autorid_loadconfig(struct db_context *db,
-				  TALLOC_CTX *ctx,
-				  struct autorid_global_config **result);
+				  struct autorid_global_config *result);
 
 /**
  * Save the global autorid configuration into the autorid database.

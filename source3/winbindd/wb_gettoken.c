@@ -26,26 +26,29 @@
 struct wb_gettoken_state {
 	struct tevent_context *ev;
 	struct dom_sid usersid;
-	int num_sids;
+	bool expand_local_aliases;
+	uint32_t num_sids;
 	struct dom_sid *sids;
 };
 
-static bool wb_add_rids_to_sids(TALLOC_CTX *mem_ctx,
-				int *pnum_sids, struct dom_sid **psids,
-				const struct dom_sid *domain_sid,
-				int num_rids, uint32_t *rids);
+static NTSTATUS wb_add_rids_to_sids(TALLOC_CTX *mem_ctx,
+				    uint32_t *pnum_sids,
+				    struct dom_sid **psids,
+				    const struct dom_sid *domain_sid,
+				    int num_rids, uint32_t *rids);
 
+static void wb_gettoken_gotuser(struct tevent_req *subreq);
 static void wb_gettoken_gotgroups(struct tevent_req *subreq);
 static void wb_gettoken_gotlocalgroups(struct tevent_req *subreq);
 static void wb_gettoken_gotbuiltins(struct tevent_req *subreq);
 
 struct tevent_req *wb_gettoken_send(TALLOC_CTX *mem_ctx,
 				    struct tevent_context *ev,
-				    const struct dom_sid *sid)
+				    const struct dom_sid *sid,
+				    bool expand_local_aliases)
 {
 	struct tevent_req *req, *subreq;
 	struct wb_gettoken_state *state;
-	struct winbindd_domain *domain;
 
 	req = tevent_req_create(mem_ctx, &state, struct wb_gettoken_state);
 	if (req == NULL) {
@@ -53,28 +56,45 @@ struct tevent_req *wb_gettoken_send(TALLOC_CTX *mem_ctx,
 	}
 	sid_copy(&state->usersid, sid);
 	state->ev = ev;
+	state->expand_local_aliases = expand_local_aliases;
 
-	domain = find_domain_from_sid_noinit(sid);
-	if (domain == NULL) {
-		DEBUG(5, ("Could not find domain from SID %s\n",
-			  sid_string_dbg(sid)));
-		tevent_req_nterror(req, NT_STATUS_NO_SUCH_USER);
-		return tevent_req_post(req, ev);
-	}
-
-	if (lp_winbind_trusted_domains_only() && domain->primary) {
-		DEBUG(7, ("wb_gettoken: My domain -- rejecting getgroups() "
-			  "for %s.\n", sid_string_tos(sid)));
-		tevent_req_nterror(req, NT_STATUS_NO_SUCH_USER);
-		return tevent_req_post(req, ev);
-	}
-
-	subreq = wb_lookupusergroups_send(state, ev, domain, &state->usersid);
+	subreq = wb_queryuser_send(state, ev, &state->usersid);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
-	tevent_req_set_callback(subreq, wb_gettoken_gotgroups, req);
+	tevent_req_set_callback(subreq, wb_gettoken_gotuser, req);
 	return req;
+}
+
+static void wb_gettoken_gotuser(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct wb_gettoken_state *state = tevent_req_data(
+		req, struct wb_gettoken_state);
+	struct wbint_userinfo *info;
+	NTSTATUS status;
+
+	status = wb_queryuser_recv(subreq, state, &info);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+
+	state->sids = talloc_array(state, struct dom_sid, 2);
+	if (tevent_req_nomem(state->sids, req)) {
+		return;
+	}
+	state->num_sids = 2;
+
+	sid_copy(&state->sids[0], &info->user_sid);
+	sid_copy(&state->sids[1], &info->group_sid);
+
+	subreq = wb_lookupusergroups_send(state, state->ev, &info->user_sid);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, wb_gettoken_gotgroups, req);
 }
 
 static void wb_gettoken_gotgroups(struct tevent_req *subreq)
@@ -83,26 +103,31 @@ static void wb_gettoken_gotgroups(struct tevent_req *subreq)
 		subreq, struct tevent_req);
 	struct wb_gettoken_state *state = tevent_req_data(
 		req, struct wb_gettoken_state);
-        struct dom_sid *sids;
+	int i, num_groups;
+	struct dom_sid *groups;
 	struct winbindd_domain *domain;
 	NTSTATUS status;
 
-	status = wb_lookupusergroups_recv(subreq, state, &state->num_sids,
-					  &state->sids);
+	status = wb_lookupusergroups_recv(subreq, state, &num_groups, &groups);
 	TALLOC_FREE(subreq);
-	if (tevent_req_nterror(req, status)) {
+	if (!NT_STATUS_IS_OK(status)) {
+		tevent_req_done(req);
 		return;
 	}
 
-	sids = talloc_realloc(state, state->sids, struct dom_sid,
-			      state->num_sids + 1);
-	if (tevent_req_nomem(sids, req)) {
+	for (i=0; i<num_groups; i++) {
+		status = add_sid_to_array_unique(
+			state, &groups[i], &state->sids, &state->num_sids);
+
+		if (tevent_req_nterror(req, status)) {
+			return;
+		}
+	}
+
+	if (!state->expand_local_aliases) {
+		tevent_req_done(req);
 		return;
 	}
-	memmove(&sids[1], &sids[0], state->num_sids * sizeof(sids[0]));
-	sid_copy(&sids[0], &state->usersid);
-	state->num_sids += 1;
-	state->sids = sids;
 
 	/*
 	 * Expand our domain's aliases
@@ -137,14 +162,10 @@ static void wb_gettoken_gotlocalgroups(struct tevent_req *subreq)
 	if (tevent_req_nterror(req, status)) {
 		return;
 	}
-	domain = find_domain_from_sid_noinit(get_global_sam_sid());
-	if (domain == NULL) {
-		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
-		return;
-	}
-	if (!wb_add_rids_to_sids(state, &state->num_sids, &state->sids,
-				 &domain->sid, num_rids, rids)) {
-		tevent_req_nterror(req, NT_STATUS_NO_MEMORY);
+
+	status = wb_add_rids_to_sids(state, &state->num_sids, &state->sids,
+				     get_global_sam_sid(), num_rids, rids);
+	if (tevent_req_nterror(req, status)) {
 		return;
 	}
 	TALLOC_FREE(rids);
@@ -153,7 +174,7 @@ static void wb_gettoken_gotlocalgroups(struct tevent_req *subreq)
 	 * Now expand the builtin groups
 	 */
 
-	domain = find_builtin_domain();
+	domain = find_domain_from_sid(&global_sid_Builtin);
 	if (domain == NULL) {
 		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
 		return;
@@ -182,9 +203,9 @@ static void wb_gettoken_gotbuiltins(struct tevent_req *subreq)
 	if (tevent_req_nterror(req, status)) {
 		return;
 	}
-	if (!wb_add_rids_to_sids(state, &state->num_sids, &state->sids,
-				 &global_sid_Builtin, num_rids, rids)) {
-		tevent_req_nterror(req, NT_STATUS_NO_MEMORY);
+	status = wb_add_rids_to_sids(state, &state->num_sids, &state->sids,
+				     &global_sid_Builtin, num_rids, rids);
+	if (tevent_req_nterror(req, status)) {
 		return;
 	}
 	tevent_req_done(req);
@@ -205,24 +226,26 @@ NTSTATUS wb_gettoken_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 	return NT_STATUS_OK;
 }
 
-static bool wb_add_rids_to_sids(TALLOC_CTX *mem_ctx,
-				int *pnum_sids, struct dom_sid **psids,
-				const struct dom_sid *domain_sid,
-				int num_rids, uint32_t *rids)
+static NTSTATUS wb_add_rids_to_sids(TALLOC_CTX *mem_ctx,
+				    uint32_t *pnum_sids,
+				    struct dom_sid **psids,
+				    const struct dom_sid *domain_sid,
+				    int num_rids, uint32_t *rids)
 {
-	struct dom_sid *sids;
 	int i;
 
-	sids = talloc_realloc(mem_ctx, *psids, struct dom_sid,
-			      *pnum_sids + num_rids);
-	if (sids == NULL) {
-		return false;
-	}
 	for (i=0; i<num_rids; i++) {
-		sid_compose(&sids[i+*pnum_sids], domain_sid, rids[i]);
+		NTSTATUS status;
+		struct dom_sid sid;
+
+		sid_compose(&sid, domain_sid, rids[i]);
+
+		status = add_sid_to_array_unique(
+			mem_ctx, &sid, psids, pnum_sids);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 	}
 
-	*pnum_sids += num_rids;
-	*psids = sids;
-	return true;
+	return NT_STATUS_OK;
 }

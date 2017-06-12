@@ -7,7 +7,7 @@ else:
     kdc_include = getattr(bld.env, "CPPPATH_KDC")
 
 bld.SAMBA_MODULE('service_kdc',
-                 source='kdc-heimdal.c kpasswd-heimdal.c',
+                 source='kdc-heimdal.c',
                  subsystem='service',
                  init_function='server_service_kdc_init',
                  deps='''
@@ -20,6 +20,7 @@ bld.SAMBA_MODULE('service_kdc',
                       PAC_GLUE
                       KDC-GLUE
                       KDC-SERVER
+                      KPASSWD-SERVICE
                       KPASSWD_GLUE
                  ''',
                  internal_module=False)
@@ -53,6 +54,19 @@ bld.SAMBA_SUBSYSTEM('KDC-SERVER',
                          LIBSAMBA_TSOCKET
                     ''',
                     enabled=bld.CONFIG_SET('SAMBA4_USES_HEIMDAL'))
+
+kpasswd_flavor_src = 'kpasswd-service.c kpasswd-helper.c'
+if bld.CONFIG_SET('SAMBA4_USES_HEIMDAL'):
+    kpasswd_flavor_src = kpasswd_flavor_src + ' kpasswd-service-heimdal.c'
+
+bld.SAMBA_SUBSYSTEM('KPASSWD-SERVICE',
+                    source=kpasswd_flavor_src,
+                    includes=kdc_include,
+                    deps='''
+                         krb5samba
+                         samba_server_gensec
+                         KPASSWD_GLUE
+                         ''')
 
 bld.SAMBA_SUBSYSTEM('KDC-GLUE',
 	source='kdc-glue.c',

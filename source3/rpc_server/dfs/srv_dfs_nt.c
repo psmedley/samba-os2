@@ -61,7 +61,7 @@ WERROR _dfs_Add(struct pipes_struct *p, struct dfs_Add *r)
 
 	jn = talloc_zero(ctx, struct junction_map);
 	if (!jn) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	DEBUG(5,("init_reply_dfs_add: Request to add %s -> %s\\%s.\n",
@@ -71,11 +71,13 @@ WERROR _dfs_Add(struct pipes_struct *p, struct dfs_Add *r)
 			r->in.server,
 			r->in.share);
 	if (!altpath) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/* The following call can change the cwd. */
 	status = get_referred_path(ctx, r->in.path,
+				   p->remote_address,
+				   p->local_address,
 				   true, /*allow_broken_path */
 				   jn, &consumedcnt, &self_ref);
 	if(!NT_STATUS_IS_OK(status)) {
@@ -86,13 +88,13 @@ WERROR _dfs_Add(struct pipes_struct *p, struct dfs_Add *r)
 	old_referral_list = jn->referral_list;
 
 	if (jn->referral_count < 1) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	jn->referral_list = talloc_array(ctx, struct referral, jn->referral_count);
 	if(jn->referral_list == NULL) {
 		DEBUG(0,("init_reply_dfs_add: talloc failed for referral list!\n"));
-		return WERR_DFS_INTERNAL_ERROR;
+		return WERR_NERR_DFSINTERNALERROR;
 	}
 
 	if(old_referral_list && jn->referral_list) {
@@ -105,7 +107,7 @@ WERROR _dfs_Add(struct pipes_struct *p, struct dfs_Add *r)
 	jn->referral_list[jn->referral_count-1].alternate_path = altpath;
 
 	if(!create_msdfs_link(jn)) {
-		return WERR_DFS_CANT_CREATE_JUNCT;
+		return WERR_NERR_DFSCANTCREATEJUNCTIONPOINT;
 	}
 
 	return WERR_OK;
@@ -128,7 +130,7 @@ WERROR _dfs_Remove(struct pipes_struct *p, struct dfs_Remove *r)
 
 	jn = talloc_zero(ctx, struct junction_map);
 	if (!jn) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (r->in.servername && r->in.sharename) {
@@ -136,26 +138,28 @@ WERROR _dfs_Remove(struct pipes_struct *p, struct dfs_Remove *r)
 			r->in.servername,
 			r->in.sharename);
 		if (!altpath) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		if (!strlower_m(altpath)) {
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 		DEBUG(5,("init_reply_dfs_remove: Request to remove %s -> %s\\%s.\n",
 			r->in.dfs_entry_path, r->in.servername, r->in.sharename));
 	}
 
 	status = get_referred_path(ctx, r->in.dfs_entry_path,
+				   p->remote_address,
+				   p->local_address,
 				   true, /*allow_broken_path */
 				   jn, &consumedcnt, &self_ref);
 	if(!NT_STATUS_IS_OK(status)) {
-		return WERR_DFS_NO_SUCH_VOL;
+		return WERR_NERR_DFSNOSUCHVOLUME;
 	}
 
 	/* if no server-share pair given, remove the msdfs link completely */
 	if(!r->in.servername && !r->in.sharename) {
 		if(!remove_msdfs_link(jn)) {
-			return WERR_DFS_NO_SUCH_VOL;
+			return WERR_NERR_DFSNOSUCHVOLUME;
 		}
 	} else {
 		int i=0;
@@ -165,7 +169,7 @@ WERROR _dfs_Remove(struct pipes_struct *p, struct dfs_Remove *r)
 			char *refpath = talloc_strdup(ctx,
 					jn->referral_list[i].alternate_path);
 			if (!refpath) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			trim_char(refpath, '\\', '\\');
 			DEBUG(10,("_dfs_remove:  refpath: .%s.\n", refpath));
@@ -178,17 +182,17 @@ WERROR _dfs_Remove(struct pipes_struct *p, struct dfs_Remove *r)
 		}
 
 		if(!found) {
-			return WERR_DFS_NO_SUCH_SHARE;
+			return WERR_NERR_DFSNOSUCHSHARE;
 		}
 
 		/* Only one referral, remove it */
 		if(jn->referral_count == 1) {
 			if(!remove_msdfs_link(jn)) {
-				return WERR_DFS_NO_SUCH_VOL;
+				return WERR_NERR_DFSNOSUCHVOLUME;
 			}
 		} else {
 			if(!create_msdfs_link(jn)) {
-				return WERR_DFS_CANT_CREATE_JUNCT;
+				return WERR_NERR_DFSCANTCREATEJUNCTIONPOINT;
 			}
 		}
 	}
@@ -301,7 +305,7 @@ WERROR _dfs_Enum(struct pipes_struct *p, struct dfs_Enum *r)
 	case 1:
 		if (num_jn) {
 			if ((r->out.info->e.info1->s = talloc_array(ctx, struct dfs_Info1, num_jn)) == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 		} else {
 			r->out.info->e.info1->s = NULL;
@@ -311,7 +315,7 @@ WERROR _dfs_Enum(struct pipes_struct *p, struct dfs_Enum *r)
 	case 2:
 		if (num_jn) {
 			if ((r->out.info->e.info2->s = talloc_array(ctx, struct dfs_Info2, num_jn)) == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 		} else {
 			r->out.info->e.info2->s = NULL;
@@ -321,7 +325,7 @@ WERROR _dfs_Enum(struct pipes_struct *p, struct dfs_Enum *r)
 	case 3:
 		if (num_jn) {
 			if ((r->out.info->e.info3->s = talloc_array(ctx, struct dfs_Info3, num_jn)) == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 		} else {
 			r->out.info->e.info3->s = NULL;
@@ -329,7 +333,7 @@ WERROR _dfs_Enum(struct pipes_struct *p, struct dfs_Enum *r)
 		r->out.info->e.info3->count = num_jn;
 		break;
 	default:
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	for (i = 0; i < num_jn; i++) {
@@ -344,7 +348,7 @@ WERROR _dfs_Enum(struct pipes_struct *p, struct dfs_Enum *r)
 			init_reply_dfs_info_3(ctx, &jn[i], &r->out.info->e.info3->s[i]);
 			break;
 		default:
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 	}
 
@@ -362,61 +366,63 @@ WERROR _dfs_GetInfo(struct pipes_struct *p, struct dfs_GetInfo *r)
 
 	jn = talloc_zero(ctx, struct junction_map);
 	if (!jn) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	ret = create_junction(ctx, r->in.dfs_entry_path,
 			      true, /* allow broken_path */
 			      jn);
 	if (!ret) {
-		return WERR_DFS_NO_SUCH_SERVER;
+		return WERR_NERR_DFSNOSUCHSERVER;
 	}
 
 	/* The following call can change the cwd. */
 	status = get_referred_path(ctx, r->in.dfs_entry_path,
+				   p->remote_address,
+				   p->local_address,
 				   true, /*allow_broken_path */
 				   jn, &consumedcnt, &self_ref);
 	if(!NT_STATUS_IS_OK(status) ||
 			consumedcnt < strlen(r->in.dfs_entry_path)) {
-		return WERR_DFS_NO_SUCH_VOL;
+		return WERR_NERR_DFSNOSUCHVOLUME;
 	}
 
 	switch (r->in.level) {
 		case 1:
 			r->out.info->info1 = talloc_zero(ctx,struct dfs_Info1);
 			if (!r->out.info->info1) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			ret = init_reply_dfs_info_1(ctx, jn, r->out.info->info1);
 			break;
 		case 2:
 			r->out.info->info2 = talloc_zero(ctx,struct dfs_Info2);
 			if (!r->out.info->info2) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			ret = init_reply_dfs_info_2(ctx, jn, r->out.info->info2);
 			break;
 		case 3:
 			r->out.info->info3 = talloc_zero(ctx,struct dfs_Info3);
 			if (!r->out.info->info3) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			ret = init_reply_dfs_info_3(ctx, jn, r->out.info->info3);
 			break;
 		case 100:
 			r->out.info->info100 = talloc_zero(ctx,struct dfs_Info100);
 			if (!r->out.info->info100) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			ret = init_reply_dfs_info_100(ctx, jn, r->out.info->info100);
 			break;
 		default:
 			r->out.info->info1 = NULL;
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 	}
 
 	if (!ret)
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 
 	return WERR_OK;
 }

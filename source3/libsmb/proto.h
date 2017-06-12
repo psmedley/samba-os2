@@ -30,22 +30,29 @@
 #include "auth_info.h"
 
 struct smb_trans_enc_state;
+struct cli_credentials;
 
 /* The following definitions come from libsmb/cliconnect.c  */
 
-struct tevent_req *cli_session_setup_send(TALLOC_CTX *mem_ctx,
-					  struct tevent_context *ev,
-					  struct cli_state *cli,
-					  const char *user,
-					  const char *pass, int passlen,
-					  const char *ntpass, int ntpasslen,
-					  const char *workgroup);
-NTSTATUS cli_session_setup_recv(struct tevent_req *req);
-NTSTATUS cli_session_setup(struct cli_state *cli,
-			   const char *user,
-			   const char *pass, int passlen,
-			   const char *ntpass, int ntpasslen,
-			   const char *workgroup);
+struct cli_credentials *cli_session_creds_init(TALLOC_CTX *mem_ctx,
+					       const char *username,
+					       const char *domain,
+					       const char *realm,
+					       const char *password,
+					       bool use_kerberos,
+					       bool fallback_after_kerberos,
+					       bool use_ccache,
+					       bool password_is_nt_hash);
+NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
+					struct cli_credentials *creds);
+struct tevent_req *cli_session_setup_creds_send(TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct cli_state *cli,
+					struct cli_credentials *creds);
+NTSTATUS cli_session_setup_creds_recv(struct tevent_req *req);
+NTSTATUS cli_session_setup_creds(struct cli_state *cli,
+				 struct cli_credentials *creds);
+NTSTATUS cli_session_setup_anon(struct cli_state *cli);
 struct tevent_req *cli_session_setup_guest_create(TALLOC_CTX *mem_ctx,
 						  struct tevent_context *ev,
 						  struct cli_state *cli,
@@ -69,8 +76,11 @@ struct tevent_req *cli_tcon_andx_send(TALLOC_CTX *mem_ctx,
 NTSTATUS cli_tcon_andx_recv(struct tevent_req *req);
 NTSTATUS cli_tcon_andx(struct cli_state *cli, const char *share,
 		       const char *dev, const char *pass, int passlen);
+NTSTATUS cli_tree_connect_creds(struct cli_state *cli,
+				const char *share, const char *dev,
+				struct cli_credentials *creds);
 NTSTATUS cli_tree_connect(struct cli_state *cli, const char *share,
-			  const char *dev, const char *pass, int passlen);
+			  const char *dev, const char *pass);
 NTSTATUS cli_tdis(struct cli_state *cli);
 NTSTATUS cli_connect_nb(const char *host, const struct sockaddr_storage *dest_ss,
 			uint16_t port, int name_type, const char *myname,
@@ -80,15 +90,25 @@ NTSTATUS cli_start_connection(struct cli_state **output_cli,
 			      const char *dest_host,
 			      const struct sockaddr_storage *dest_ss, int port,
 			      int signing_state, int flags);
-struct tevent_req *cli_full_connection_send(
+NTSTATUS cli_smb1_setup_encryption(struct cli_state *cli,
+				   struct cli_credentials *creds);
+struct tevent_req *cli_full_connection_creds_send(
 	TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	const char *my_name, const char *dest_host,
 	const struct sockaddr_storage *dest_ss, int port,
 	const char *service, const char *service_type,
-	const char *user, const char *domain,
-	const char *password, int flags, int signing_state);
-NTSTATUS cli_full_connection_recv(struct tevent_req *req,
-				  struct cli_state **output_cli);
+	struct cli_credentials *creds,
+	int flags, int signing_state);
+NTSTATUS cli_full_connection_creds_recv(struct tevent_req *req,
+					struct cli_state **output_cli);
+NTSTATUS cli_full_connection_creds(struct cli_state **output_cli,
+				   const char *my_name,
+				   const char *dest_host,
+				   const struct sockaddr_storage *dest_ss, int port,
+				   const char *service, const char *service_type,
+				   struct cli_credentials *creds,
+				   int flags,
+				   int signing_state);
 NTSTATUS cli_full_connection(struct cli_state **output_cli,
 			     const char *my_name,
 			     const char *dest_host,
@@ -113,6 +133,9 @@ struct cli_state *get_ipc_connect_master_ip_bcast(TALLOC_CTX *ctx,
 
 /* The following definitions come from libsmb/clidfs.c  */
 
+NTSTATUS cli_cm_force_encryption_creds(struct cli_state *c,
+				       struct cli_credentials *creds,
+				       const char *sharename);
 NTSTATUS cli_cm_force_encryption(struct cli_state *c,
 			const char *username,
 			const char *password,
@@ -151,9 +174,7 @@ bool cli_check_msdfs_proxy(TALLOC_CTX *ctx,
 			char **pp_newserver,
 			char **pp_newshare,
 			bool force_encrypt,
-			const char *username,
-			const char *password,
-			const char *domain);
+			struct cli_credentials *creds);
 
 /* The following definitions come from libsmb/clientgen.c  */
 
@@ -378,15 +399,6 @@ NTSTATUS cli_ntcreate(struct cli_state *cli,
 		      uint8_t SecurityFlags,
 		      uint16_t *pfid,
 		      struct smb_create_returns *cr);
-uint8_t *smb_bytes_push_str(uint8_t *buf, bool ucs2, const char *str,
-			    size_t str_len, size_t *pconverted_size);
-uint8_t *smb_bytes_push_bytes(uint8_t *buf, uint8_t prefix,
-			      const uint8_t *bytes, size_t num_bytes);
-uint8_t *trans2_bytes_push_str(uint8_t *buf, bool ucs2,
-			       const char *str, size_t str_len,
-			       size_t *pconverted_size);
-uint8_t *trans2_bytes_push_bytes(uint8_t *buf,
-				 const uint8_t *bytes, size_t num_bytes);
 struct tevent_req *cli_openx_create(TALLOC_CTX *mem_ctx,
 				   struct tevent_context *ev,
 				   struct cli_state *cli, const char *fname,
@@ -673,15 +685,6 @@ NTSTATUS cli_get_posix_fs_info(struct cli_state *cli,
 			       uint64_t *total_file_nodes,
 			       uint64_t *free_file_nodes,
 			       uint64_t *fs_identifier);
-NTSTATUS cli_raw_ntlm_smb_encryption_start(struct cli_state *cli,
-				const char *user,
-				const char *pass,
-				const char *domain);
-NTSTATUS cli_gss_smb_encryption_start(struct cli_state *cli);
-NTSTATUS cli_force_encryption(struct cli_state *c,
-			const char *username,
-			const char *password,
-			const char *domain);
 struct tevent_req *cli_posix_whoami_send(TALLOC_CTX *mem_ctx,
 			struct tevent_context *ev,
 			struct cli_state *cli);
@@ -762,10 +765,34 @@ int cli_printjob_del(struct cli_state *cli, int job);
 
 NTSTATUS cli_get_quota_handle(struct cli_state *cli, uint16_t *quota_fnum);
 void free_ntquota_list(SMB_NTQUOTA_LIST **qt_list);
+bool parse_user_quota_record(const uint8_t *rdata,
+			     unsigned int rdata_count,
+			     unsigned int *offset,
+			     SMB_NTQUOTA_STRUCT *pqt);
+bool add_record_to_ntquota_list(TALLOC_CTX *mem_ctx,
+				SMB_NTQUOTA_STRUCT *pqt,
+				SMB_NTQUOTA_LIST **pqt_list);
+NTSTATUS parse_user_quota_list(const uint8_t *curdata,
+			       uint32_t curdata_size,
+			       TALLOC_CTX *mem_ctx,
+			       SMB_NTQUOTA_LIST **pqt_list);
+NTSTATUS parse_fs_quota_buffer(const uint8_t *rdata,
+			       unsigned int rdata_count,
+			       SMB_NTQUOTA_STRUCT *pqt);
+NTSTATUS build_user_quota_buffer(SMB_NTQUOTA_LIST *qt_list,
+				 uint32_t maxlen,
+				 TALLOC_CTX *mem_ctx,
+				 DATA_BLOB *outbuf,
+				 SMB_NTQUOTA_LIST **end_ptr);
+NTSTATUS build_fs_quota_buffer(TALLOC_CTX *mem_ctx,
+			       const SMB_NTQUOTA_STRUCT *pqt,
+			       DATA_BLOB *blob,
+			       uint32_t maxlen);
 NTSTATUS cli_get_user_quota(struct cli_state *cli, int quota_fnum,
 			    SMB_NTQUOTA_STRUCT *pqt);
-NTSTATUS cli_set_user_quota(struct cli_state *cli, int quota_fnum,
-			    SMB_NTQUOTA_STRUCT *pqt);
+NTSTATUS cli_set_user_quota(struct cli_state *cli,
+			    int quota_fnum,
+			    SMB_NTQUOTA_LIST *qtl);
 NTSTATUS cli_list_user_quota(struct cli_state *cli, int quota_fnum,
 			     SMB_NTQUOTA_LIST **pqt_list);
 NTSTATUS cli_get_fs_quota_info(struct cli_state *cli, int quota_fnum,

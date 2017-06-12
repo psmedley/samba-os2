@@ -274,12 +274,18 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 	const char *server_n = server;
         int is_ipc = (share != NULL && strcmp(share, "IPC$") == 0);
 	uint32_t fs_attrs = 0;
-        const char *username_used;
+	const char *username_used = NULL;
+	const char *password_used = NULL;
  	NTSTATUS status;
 	char *newserver, *newshare;
 	int flags = 0;
 	struct smbXcli_tcon *tcon = NULL;
 	int signing_state = SMB_SIGNING_DEFAULT;
+	struct cli_credentials *creds = NULL;
+	bool use_kerberos = false;
+	bool fallback_after_kerberos = false;
+	bool use_ccache = false;
+	bool pw_nt_hash = false;
 
 	ZERO_STRUCT(c);
 	*in_cache = false;
@@ -343,8 +349,7 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 			status = cli_tree_connect(srv->cli,
 						  srv->cli->share,
 						  "?????",
-						  *pp_password,
-						  strlen(*pp_password)+1);
+						  *pp_password);
 			if (!NT_STATUS_IS_OK(status)) {
                                 errno = map_errno_from_nt_status(status);
                                 cli_shutdown(srv->cli);
@@ -432,18 +437,22 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 
 	if (smbc_getOptionUseKerberos(context)) {
 		flags |= CLI_FULL_CONNECTION_USE_KERBEROS;
+		use_kerberos = true;
 	}
 
 	if (smbc_getOptionFallbackAfterKerberos(context)) {
 		flags |= CLI_FULL_CONNECTION_FALLBACK_AFTER_KERBEROS;
+		fallback_after_kerberos = true;
 	}
 
 	if (smbc_getOptionUseCCache(context)) {
 		flags |= CLI_FULL_CONNECTION_USE_CCACHE;
+		use_ccache = true;
 	}
 
 	if (smbc_getOptionUseNTHash(context)) {
 		flags |= CLI_FULL_CONNECTION_USE_NT_HASH;
+		pw_nt_hash = true;
 	}
 
 	if (context->internal->smb_encryption_level != SMBC_ENCRYPTLEVEL_NONE) {
@@ -491,23 +500,33 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 		smb2cli_conn_set_max_credits(c->conn, DEFAULT_SMB2_MAX_CREDITS);
 	}
 
-        username_used = *pp_username;
+	username_used = *pp_username;
+	password_used = *pp_password;
 
-	if (!NT_STATUS_IS_OK(cli_session_setup(c, username_used,
-					       *pp_password,
-                                               strlen(*pp_password),
-					       *pp_password,
-                                               strlen(*pp_password),
-					       *pp_workgroup))) {
+	creds = cli_session_creds_init(c,
+				       username_used,
+				       *pp_workgroup,
+				       NULL, /* realm */
+				       password_used,
+				       use_kerberos,
+				       fallback_after_kerberos,
+				       use_ccache,
+				       pw_nt_hash);
+	if (creds == NULL) {
+		cli_shutdown(c);
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	status = cli_session_setup_creds(c, creds);
+	if (!NT_STATUS_IS_OK(status)) {
 
                 /* Failed.  Try an anonymous login, if allowed by flags. */
-                username_used = "";
+		username_used = "";
+		password_used = "";
 
                 if (smbc_getOptionNoAutoAnonymousLogin(context) ||
-                    !NT_STATUS_IS_OK(cli_session_setup(c, username_used,
-                                                       *pp_password, 1,
-                                                       *pp_password, 0,
-                                                       *pp_workgroup))) {
+		    !NT_STATUS_IS_OK(cli_session_setup_anon(c))) {
 
                         cli_shutdown(c);
                         errno = EPERM;
@@ -529,9 +548,7 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 				   not support smbc_smb_encrypt_level type */
 				context->internal->smb_encryption_level ?
 					true : false,
-				*pp_username,
-				*pp_password,
-				*pp_workgroup)) {
+				creds)) {
 		cli_shutdown(c);
 		srv = SMBC_server_internal(ctx, context, connect_if_not_found,
 				newserver, port, newshare, pp_workgroup,
@@ -543,8 +560,7 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 
 	/* must be a normal share */
 
-	status = cli_tree_connect(c, share, "?????", *pp_password,
-				  strlen(*pp_password)+1);
+	status = cli_tree_connect_creds(c, share, "?????", creds);
 	if (!NT_STATUS_IS_OK(status)) {
 		errno = map_errno_from_nt_status(status);
 		cli_shutdown(c);
@@ -590,11 +606,11 @@ SMBC_server_internal(TALLOC_CTX *ctx,
         }
 
 	if (context->internal->smb_encryption_level) {
-		/* Attempt UNIX smb encryption. */
-		if (!NT_STATUS_IS_OK(cli_force_encryption(c,
-                                                          username_used,
-                                                          *pp_password,
-                                                          *pp_workgroup))) {
+		/* Attempt encryption. */
+		status = cli_cm_force_encryption_creds(c,
+						       creds,
+						       share);
+		if (!NT_STATUS_IS_OK(status)) {
 
 			/*
 			 * context->smb_encryption_level == 1
@@ -790,11 +806,13 @@ SMBC_attr_server(TALLOC_CTX *ctx,
                 }
 
 		if (context->internal->smb_encryption_level) {
-			/* Attempt UNIX smb encryption. */
-			if (!NT_STATUS_IS_OK(cli_force_encryption(ipc_cli,
-                                                                  *pp_username,
-                                                                  *pp_password,
-                                                                  *pp_workgroup))) {
+			/* Attempt encryption. */
+			nt_status = cli_cm_force_encryption(ipc_cli,
+							    *pp_username,
+							    *pp_password,
+							    *pp_workgroup,
+							    "IPC$");
+			if (!NT_STATUS_IS_OK(nt_status)) {
 
 				/*
 				 * context->smb_encryption_level ==

@@ -2425,7 +2425,7 @@ cpp_quote("#define spoolss_security_descriptor security_descriptor")
 		[default];
 	} spoolss_PrintProcDataTypesInfo;
 
-	[public,noopnum,noprint] WERROR _spoolss_EnumPrintProcDataTypes(
+	[public,noopnum,noprint] WERROR _spoolss_EnumPrintProcessorDataTypes(
 		[in,unique] [string,charset(UTF16)] uint16 *servername,
 		[in,unique] [string,charset(UTF16)] uint16 *print_processor_name,
 		[in] uint32 level,
@@ -2435,12 +2435,12 @@ cpp_quote("#define spoolss_security_descriptor security_descriptor")
 		[out,ref] uint32 *needed,
 		[out,ref] uint32 *count
 	);
-	[public,noopnum,noprint] void __spoolss_EnumPrintProcDataTypes(
+	[public,noopnum,noprint] void __spoolss_EnumPrintProcessorDataTypes(
 		[in] uint32 level,
 		[in] uint32 count,
 		[out,switch_is(level)] spoolss_PrintProcDataTypesInfo info[count]
 	);
-	[nopull,nopush] WERROR spoolss_EnumPrintProcDataTypes(
+	[nopull,nopush] WERROR spoolss_EnumPrintProcessorDataTypes(
 		[in,unique] [string,charset(UTF16)] uint16 *servername,
 		[in,unique] [string,charset(UTF16)] uint16 *print_processor_name,
 		[in] uint32 level,
@@ -2867,10 +2867,10 @@ cpp_quote("#define spoolss_security_descriptor security_descriptor")
 						PRINTER_ALL_ACCESS;
 
 	const int PRINTER_ACE_MANAGE_DOCUMENTS = SEC_GENERIC_ALL |
-						READ_CONTROL_ACCESS;
+						 SEC_STD_READ_CONTROL;
 
-	const int PRINTER_ACE_PRINT	= GENERIC_EXECUTE_ACCESS |
-					  READ_CONTROL_ACCESS |
+	const int PRINTER_ACE_PRINT	= SEC_GENERIC_EXECUTE |
+					  SEC_STD_READ_CONTROL |
 					  PRINTER_ACCESS_USE;
 
 	/******************/
@@ -3248,7 +3248,7 @@ cpp_quote("#define spoolss_security_descriptor security_descriptor")
 		[size_is(Count), unique] RPC_BIDI_RESPONSE_DATA *aData[];
 	} RPC_BIDI_RESPONSE_CONTAINER;
 
-	WERROR spoolss_RpcSendRecvBidiData(
+	WERROR spoolss_SendRecvBidiData(
 		[in] policy_handle hPrinter,
 		[in,unique] [string,charset(UTF16)] uint16 *pAction,
 		[in] RPC_BIDI_REQUEST_CONTAINER *pReqData,
@@ -3277,14 +3277,21 @@ cpp_quote("#define spoolss_security_descriptor security_descriptor")
 
 	/******************/
 	/* Function: 0x66 */
+
+	const string SPOOLSS_CORE_PRINT_PACKAGE_FILES_UNIDRV  = "{D20EA372-DD35-4950-9ED8-A6335AFE79F0}";
+	const string SPOOLSS_CORE_PRINT_PACKAGE_FILES_PSCRIPT = "{D20EA372-DD35-4950-9ED8-A6335AFE79F1}";
+	const string SPOOLSS_CORE_PRINT_PACKAGE_FILES_PCLXL   = "{D20EA372-DD35-4950-9ED8-A6335AFE79F2}";
+	const string SPOOLSS_CORE_PRINT_PACKAGE_FILES_PLOTTER = "{D20EA372-DD35-4950-9ED8-A6335AFE79F4}";
+	const string SPOOLSS_CORE_PRINT_PACKAGE_FILES_XPSDRV  = "{D20EA372-DD35-4950-9ED8-A6335AFE79F5}";
+
 	typedef [public] struct {
 		GUID core_driver_guid;
 		NTTIME driver_date;
 		hyper driver_version;
-		[charset(UTF8)] uint8 formname[520];
+		[charset(UTF16)] uint16 szPackageID[260];
 	} spoolss_CorePrinterDriver;
 
-	[public] WERROR spoolss_GetCorePrinterDrivers(
+	[public] HRESULT spoolss_GetCorePrinterDrivers(
 		[in,unique] [string,charset(UTF16)] uint16 *servername,
 		[in,ref] [string,charset(UTF16)] uint16 *architecture,
 		[in] uint32 core_driver_size,
@@ -3300,7 +3307,7 @@ cpp_quote("#define spoolss_security_descriptor security_descriptor")
 
 	/******************/
 	/* Function: 0x68 */
-	WERROR spoolss_GetPrinterDriverPackagePath(
+	HRESULT spoolss_GetPrinterDriverPackagePath(
 		[in,unique] [string,charset(UTF16)] uint16 *servername,
 		[in,ref] [string,charset(UTF16)] uint16 *architecture,
 		[in,unique] [string,charset(UTF16)] uint16 *language,
@@ -3350,49 +3357,49 @@ cpp_quote("#define spoolss_security_descriptor security_descriptor")
 		kRpcPropertyTypeInt64	= 3,
 		kRpcPropertyTypeByte	= 4,
 		kRpcPropertyTypeBuffer	= 5
-	} RPC_EPrintPropertyType;
+	} spoolss_EPrintPropertyType;
 
 	typedef struct {
 		uint32 cbBuf;
 		[size_is(cbBuf)] uint8 *pBuf;
 	} propertyBlob;
 
-	typedef [ms_union,switch_type(RPC_EPrintPropertyType)] union {
+	typedef [ms_union,switch_type(spoolss_EPrintPropertyType)] union {
 		[case(kRpcPropertyTypeString)] [string,charset(UTF16)] uint16 *propertyString;
 		[case(kRpcPropertyTypeInt32)] uint32 propertyInt32;
 		[case(kRpcPropertyTypeInt64)] hyper propertyInt64;
 		[case(kRpcPropertyTypeByte)] uint8 propertyByte;
 		[case(kRpcPropertyTypeBuffer)] propertyBlob propertyBlob;
-	} RPC_PrintPropertyValueUnion;
+	} spoolss_PrintPropertyValueUnion;
 
 	typedef [public] struct {
-		RPC_EPrintPropertyType ePropertyType;
-		[switch_is(ePropertyType)] RPC_PrintPropertyValueUnion value;
-	} RPC_PrintPropertyValue;
+		spoolss_EPrintPropertyType ePropertyType;
+		[switch_is(ePropertyType)] spoolss_PrintPropertyValueUnion value;
+	} spoolss_PrintPropertyValue;
 
 	typedef [public] struct {
 		[string,charset(UTF16)] uint16 *propertyName;
-		RPC_PrintPropertyValue propertyValue;
-	} RPC_PrintNamedProperty;
+		spoolss_PrintPropertyValue propertyValue;
+	} spoolss_PrintNamedProperty;
 
-	WERROR spoolss_RpcGetJobNamedPropertyValue(
+	WERROR spoolss_GetJobNamedPropertyValue(
 		[in,ref] policy_handle *hPrinter,
 		[in] uint32 JobId,
 		[in] [string,charset(UTF16)] uint16 *pszName,
-		[out,ref] RPC_PrintPropertyValue *pValue
+		[out,ref] spoolss_PrintPropertyValue *pValue
 	);
 
 	/******************/
 	/* Function: 0x6f */
-	[public] WERROR spoolss_RpcSetJobNamedProperty(
+	[public] WERROR spoolss_SetJobNamedProperty(
 		[in,ref] policy_handle *hPrinter,
 		[in] uint32 JobId,
-		[in,ref] RPC_PrintNamedProperty *pProperty
+		[in,ref] spoolss_PrintNamedProperty *pProperty
 	);
 
 	/******************/
 	/* Function: 0x70 */
-	WERROR spoolss_RpcDeleteJobNamedProperty(
+	WERROR spoolss_DeleteJobNamedProperty(
 		[in,ref] policy_handle *hPrinter,
 		[in] uint32 JobId,
 		[in] [string,charset(UTF16)] uint16 *pszName
@@ -3400,10 +3407,107 @@ cpp_quote("#define spoolss_security_descriptor security_descriptor")
 
 	/******************/
 	/* Function: 0x71 */
-	WERROR spoolss_RpcEnumJobNamedProperties(
+	WERROR spoolss_EnumJobNamedProperties(
 		[in,ref] policy_handle *hPrinter,
 		[in] uint32 JobId,
 		[out,ref] uint32 *pcProperties,
-		[out,ref,size_is(,*pcProperties)] RPC_PrintNamedProperty **ppProperties
+		[out,ref,size_is(,*pcProperties)] spoolss_PrintNamedProperty **ppProperties
 	);
+
+	/******************/
+	/* Function: 0x72 */
+	[todo] WERROR spoolss_72(
+	);
+
+	/******************/
+	/* Function: 0x73 */
+	[todo] WERROR spoolss_73(
+	);
+
+	/******************/
+	/* Function: 0x71 */
+	typedef enum {
+		kInvalidJobState = 0,
+		kLogJobPrinted = 1,
+		kLogJobRendered = 2,
+		kLogJobError = 3,
+		kLogJobPipelineError = 4,
+		kLogOfflineFileFull = 5
+	} EBranchOfficeJobEventType;
+
+	typedef struct {
+		DWORD Status;
+		[string,charset(UTF16)] uint16 *pDocumentName;
+		[string,charset(UTF16)] uint16 *pUserName;
+		[string,charset(UTF16)] uint16 *pMachineName;
+		[string,charset(UTF16)] uint16 *pPrinterName;
+		[string,charset(UTF16)] uint16 *pPortName;
+		hyper Size;
+		DWORD TotalPages;
+	} spoolss_BranchOfficeJobDataPrinted;
+
+	typedef struct {
+		hyper Size;
+		DWORD ICMMethod;
+		short Color;
+		short PrintQuality;
+		short YResolution;
+		short Copies;
+		short TTOption;
+	} spoolss_BranchOfficeJobDataRendered;
+
+	typedef struct {
+		WERROR LastError;
+		[string,charset(UTF16)] uint16 *pDocumentName;
+		[string,charset(UTF16)] uint16 *pUserName;
+		[string,charset(UTF16)] uint16 *pPrinterName;
+		[string,charset(UTF16)] uint16 *pDataType;
+		hyper TotalSize;
+		hyper PrintedSize;
+		DWORD TotalPages;
+		DWORD PrintedPages;
+		[string,charset(UTF16)] uint16 *pMachineName;
+		[string,charset(UTF16)] uint16 *pJobError;
+		[string,charset(UTF16)] uint16 *pErrorDescription;
+	} spoolss_BranchOfficeJobDataError;
+
+	typedef struct {
+		[string,charset(UTF16)] uint16 *pDocumentName;
+		[string,charset(UTF16)] uint16 *pPrinterName;
+		[string,charset(UTF16)] uint16 *pExtraErrorInfo;
+	} spoolss_BranchOfficeJobDataPipelineFailed;
+
+	typedef struct {
+		[string,charset(UTF16)] uint16 *pMachineName;
+	} spoolss_BranchOfficeLogOfflineFileFull;
+
+	typedef [ms_union,switch_type(EBranchOfficeJobEventType)] union {
+		[case(kLogJobPrinted)]
+			spoolss_BranchOfficeJobDataPrinted LogJobPrinted;
+		[case(kLogJobRendered)]
+			spoolss_BranchOfficeJobDataRendered LogJobRendered;
+		[case(kLogJobError)]
+			spoolss_BranchOfficeJobDataError LogJobError;
+		[case(kLogJobPipelineError)]
+			spoolss_BranchOfficeJobDataPipelineFailed LogPipelineFailed;
+		[case(kLogOfflineFileFull)]
+			spoolss_BranchOfficeLogOfflineFileFull LogOfflineFileFull;
+	} spoolss_BranchOfficeJobInfo;
+
+	typedef struct {
+		EBranchOfficeJobEventType eEventType;
+		DWORD JobId;
+		[switch_is(eEventType)] spoolss_BranchOfficeJobInfo JobInfo;
+	} spoolss_BranchOfficeJobData;
+
+	typedef [public] struct {
+		DWORD cJobDataEntries;
+		[size_is(cJobDataEntries)] spoolss_BranchOfficeJobData JobData[];
+	} spoolss_BranchOfficeJobDataContainer;
+
+	WERROR spoolss_LogJobInfoForBranchOffice(
+		[in,ref] policy_handle *hPrinter,
+		[in,ref] spoolss_BranchOfficeJobDataContainer *pBranchOfficeJobDataContainer
+	);
+
 }

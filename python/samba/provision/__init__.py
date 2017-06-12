@@ -787,7 +787,7 @@ def setup_name_mappings(idmap, sid, root_uid, nobody_uid,
 
 
 def setup_samdb_partitions(samdb_path, logger, lp, session_info,
-                           provision_backend, names, schema, serverrole,
+                           provision_backend, names, serverrole,
                            erase=False):
     """Setup the partitions for the SAM database.
 
@@ -1191,7 +1191,7 @@ def setup_samdb(path, session_info, provision_backend, lp, names,
     # Also wipes the database
     setup_samdb_partitions(path, logger=logger, lp=lp,
         provision_backend=provision_backend, session_info=session_info,
-        names=names, serverrole=serverrole, schema=schema)
+        names=names, serverrole=serverrole)
 
     # Load the database, but don's load the global schema and don't connect
     # quite yet
@@ -2177,7 +2177,7 @@ def provision(logger, session_info, smbconf=None,
         create_krb5_conf(paths.krb5conf,
                          dnsdomain=names.dnsdomain, hostname=names.hostname,
                          realm=names.realm)
-        logger.info("A Kerberos configuration suitable for Samba 4 has been "
+        logger.info("A Kerberos configuration suitable for Samba AD has been "
                     "generated at %s", paths.krb5conf)
 
         if serverrole == "active directory domain controller":

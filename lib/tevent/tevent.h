@@ -40,6 +40,7 @@ struct tevent_timer;
 struct tevent_immediate;
 struct tevent_signal;
 struct tevent_thread_proxy;
+struct tevent_threaded_context;
 
 /**
  * @defgroup tevent The tevent API
@@ -250,6 +251,16 @@ struct tevent_timer *_tevent_add_timer(struct tevent_context *ev,
 	_tevent_add_timer(ev, mem_ctx, next_event, handler, private_data, \
 			  #handler, __location__)
 #endif
+
+/**
+ * @brief Set the time a tevent_timer fires
+ *
+ * @param[in]  te       The timer event to reset
+ *
+ * @param[in]  next_event  Timeval specifying the absolute time to fire this
+ * event. This is not an offset.
+ */
+void tevent_update_timer(struct tevent_timer *te, struct timeval next_event);
 
 #ifdef DOXYGEN
 /**
@@ -464,11 +475,11 @@ void tevent_set_abort_fn(void (*abort_fn)(const char *reason));
 /* bits for file descriptor event flags */
 
 /**
- * Monitor a file descriptor for write availability
+ * Monitor a file descriptor for data to be read
  */
 #define TEVENT_FD_READ 1
 /**
- * Monitor a file descriptor for data to be read
+ * Monitor a file descriptor for writeability
  */
 #define TEVENT_FD_WRITE 2
 
@@ -1029,6 +1040,13 @@ bool tevent_req_set_endtime(struct tevent_req *req,
 			    struct tevent_context *ev,
 			    struct timeval endtime);
 
+/**
+ * @brief Reset the timer set by tevent_req_set_endtime.
+ *
+ * @param[in]  req      The request to reset the timeout for
+ */
+void tevent_req_reset_endtime(struct tevent_req *req);
+
 #ifdef DOXYGEN
 /**
  * @brief Call the notify callback of the given tevent request manually.
@@ -1392,16 +1410,16 @@ int tevent_timeval_compare(const struct timeval *tv1,
 			   const struct timeval *tv2);
 
 /**
- * @brief Get a zero timval value.
+ * @brief Get a zero timeval value.
  *
- * @return              A zero timval value.
+ * @return              A zero timeval value.
  */
 struct timeval tevent_timeval_zero(void);
 
 /**
  * @brief Get a timeval value for the current time.
  *
- * @return              A timval value with the current time.
+ * @return              A timeval value with the current time.
  */
 struct timeval tevent_timeval_current(void);
 
@@ -1749,6 +1767,79 @@ void tevent_thread_proxy_schedule(struct tevent_thread_proxy *tp,
 				  struct tevent_immediate **pp_im,
 				  tevent_immediate_handler_t handler,
 				  void *pp_private_data);
+
+/*
+ * @brief Create a context for threaded activation of immediates
+ *
+ * A tevent_treaded_context provides a link into an event
+ * context. Using tevent_threaded_schedule_immediate, it is possible
+ * to activate an immediate event from within a thread.
+ *
+ * It is the duty of the caller of tevent_threaded_context_create() to
+ * keep the event context around longer than any
+ * tevent_threaded_context. tevent will abort if ev is talllc_free'ed
+ * with an active tevent_threaded_context.
+ *
+ * If tevent is build without pthread support, this always returns
+ * NULL with errno=ENOSYS.
+ *
+ * @param[in]  mem_ctx  The talloc memory context to use.
+ * @param[in]  ev       The event context to link this to.
+ * @return              The threaded context, or NULL with errno set.
+ *
+ * @see tevent_threaded_schedule_immediate()
+ *
+ * @note Available as of tevent 0.9.30
+ */
+struct tevent_threaded_context *tevent_threaded_context_create(
+	TALLOC_CTX *mem_ctx, struct tevent_context *ev);
+
+#ifdef DOXYGEN
+/*
+ * @brief Activate an immediate from a thread
+ *
+ * Activate an immediate from within a thread.
+ *
+ * This routine does not watch out for talloc hierarchies. This means
+ * that it is highly recommended to create the tevent_immediate in the
+ * thread owning tctx, allocate a threaded job description for the
+ * thread, hand over both pointers to a helper thread and not touch it
+ * in the main thread at all anymore.
+ *
+ * tevent_threaded_schedule_immediate is intended as a job completion
+ * indicator for simple threaded helpers.
+ *
+ * Please be aware that tevent_threaded_schedule_immediate is very
+ * picky about its arguments: An immediate may not already be
+ * activated and the handler must exist. With
+ * tevent_threaded_schedule_immediate memory ownership is transferred
+ * to the main thread holding the tevent context behind tctx, the
+ * helper thread can't access it anymore.
+ *
+ * @param[in]  tctx     The threaded context to go through
+ * @param[in]  im       The immediate event to activate
+ * @param[in]  handler  The immediate handler to call in the main thread
+ * @param[in]  private_data Pointer for the immediate handler
+ *
+ * @see tevent_threaded_context_create()
+ *
+ * @note Available as of tevent 0.9.30
+ */
+void tevent_threaded_schedule_immediate(struct tevent_threaded_context *tctx,
+					struct tevent_immediate *im,
+					tevent_immediate_handler_t handler,
+					void *private_data);
+#else
+void _tevent_threaded_schedule_immediate(struct tevent_threaded_context *tctx,
+					 struct tevent_immediate *im,
+					 tevent_immediate_handler_t handler,
+					 void *private_data,
+					 const char *handler_name,
+					 const char *location);
+#define tevent_threaded_schedule_immediate(tctx, im, handler, private_data) \
+	_tevent_threaded_schedule_immediate(tctx, im, handler, private_data, \
+				   #handler, __location__);
+#endif
 
 #ifdef TEVENT_DEPRECATED
 #ifndef _DEPRECATED_

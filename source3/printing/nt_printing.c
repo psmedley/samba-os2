@@ -678,7 +678,7 @@ static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 	char *printdollar = NULL;
 	int printdollar_snum;
 
-	*perr = WERR_INVALID_PARAM;
+	*perr = WERR_INVALID_PARAMETER;
 
 	/* If architecture is Windows 95/98/ME, the version is always 0. */
 	if (strcmp(architecture, SPL_ARCH_WIN40) == 0) {
@@ -696,11 +696,11 @@ static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 
 	printdollar_snum = find_service(talloc_tos(), "print$", &printdollar);
 	if (!printdollar) {
-		*perr = WERR_NOMEM;
+		*perr = WERR_NOT_ENOUGH_MEMORY;
 		return -1;
 	}
 	if (printdollar_snum == -1) {
-		*perr = WERR_NO_SUCH_SHARE;
+		*perr = WERR_BAD_NET_NAME;
 		return -1;
 	}
 
@@ -738,7 +738,7 @@ static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 					architecture,
 					driverpath_in);
 	if (!driverpath) {
-		*perr = WERR_NOMEM;
+		*perr = WERR_NOT_ENOUGH_MEMORY;
 		goto error_exit;
 	}
 
@@ -751,7 +751,7 @@ static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 	nt_status = vfs_file_exist(conn, smb_fname);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DEBUG(3,("get_correct_cversion: vfs_file_exist failed\n"));
-		*perr = WERR_BADFILE;
+		*perr = WERR_FILE_NOT_FOUND;
 		goto error_exit;
 	}
 
@@ -787,13 +787,13 @@ static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 
 		ret = get_file_version(fsp, smb_fname->base_name, &major, &minor);
 		if (ret == -1) {
-			*perr = WERR_INVALID_PARAM;
+			*perr = WERR_INVALID_PARAMETER;
 			goto error_exit;
 		} else if (!ret) {
 			DEBUG(6,("get_correct_cversion: Version info not "
 				 "found [%s]\n",
 				 smb_fname_str_dbg(smb_fname)));
-			*perr = WERR_INVALID_PARAM;
+			*perr = WERR_INVALID_PARAMETER;
 			goto error_exit;
 		}
 
@@ -874,11 +874,11 @@ static WERROR clean_up_driver_struct_level(TALLOC_CTX *mem_ctx,
 	char *_p;
 
 	if (!*driver_path || !*data_file) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (!strequal(architecture, SPOOLSS_ARCHITECTURE_4_0) && !*config_file) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (flags & APD_COPY_FROM_DIRECTORY) {
@@ -997,6 +997,17 @@ WERROR clean_up_driver_struct(TALLOC_CTX *mem_ctx,
 						    &r->info.info6->version,
 						    flags,
 						    driver_directory);
+	case 8:
+		return clean_up_driver_struct_level(mem_ctx, session_info,
+						    r->info.info8->architecture,
+						    &r->info.info8->driver_path,
+						    &r->info.info8->data_file,
+						    &r->info.info8->config_file,
+						    &r->info.info8->help_file,
+						    r->info.info8->dependent_files,
+						    &r->info.info8->version,
+						    flags,
+						    driver_directory);
 	default:
 		return WERR_NOT_SUPPORTED;
 	}
@@ -1013,6 +1024,23 @@ static void convert_level_6_to_level3(struct spoolss_AddDriverInfo3 *dst,
 
 	dst->driver_name	= src->driver_name;
 	dst->architecture 	= src->architecture;
+	dst->driver_path	= src->driver_path;
+	dst->data_file		= src->data_file;
+	dst->config_file	= src->config_file;
+	dst->help_file		= src->help_file;
+	dst->monitor_name	= src->monitor_name;
+	dst->default_datatype	= src->default_datatype;
+	dst->_ndr_size_dependent_files = src->_ndr_size_dependent_files;
+	dst->dependent_files	= src->dependent_files;
+}
+
+static void convert_level_8_to_level3(struct spoolss_AddDriverInfo3 *dst,
+				      const struct spoolss_AddDriverInfo8 *src)
+{
+	dst->version		= src->version;
+
+	dst->driver_name	= src->driver_name;
+	dst->architecture	= src->architecture;
 	dst->driver_path	= src->driver_path;
 	dst->data_file		= src->data_file;
 	dst->config_file	= src->config_file;
@@ -1061,21 +1089,21 @@ static WERROR move_driver_file_to_download_area(TALLOC_CTX *mem_ctx,
 				   short_architecture, driver_version, driver_file);
 	if (new_name == NULL) {
 		TALLOC_FREE(old_name);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (version != -1 && (version = file_version_is_newer(conn, old_name, new_name)) > 0) {
 
 		status = driver_unix_convert(conn, old_name, &smb_fname_old);
 		if (!NT_STATUS_IS_OK(status)) {
-			ret = WERR_NOMEM;
+			ret = WERR_NOT_ENOUGH_MEMORY;
 			goto out;
 		}
 
 		/* Setup a synthetic smb_filename struct */
 		smb_fname_new = talloc_zero(mem_ctx, struct smb_filename);
 		if (!smb_fname_new) {
-			ret = WERR_NOMEM;
+			ret = WERR_NOT_ENOUGH_MEMORY;
 			goto out;
 		}
 
@@ -1134,9 +1162,13 @@ WERROR move_driver_to_download_area(struct auth_session_info *session_info,
 		convert_level_6_to_level3(&converted_driver, r->info.info6);
 		driver = &converted_driver;
 		break;
+	case 8:
+		convert_level_8_to_level3(&converted_driver, r->info.info8);
+		driver = &converted_driver;
+		break;
 	default:
 		DEBUG(0,("move_driver_to_download_area: Unknown info level (%u)\n", (unsigned int)r->level));
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	short_architecture = get_short_archi(driver->architecture);
@@ -1146,10 +1178,10 @@ WERROR move_driver_to_download_area(struct auth_session_info *session_info,
 
 	printdollar_snum = find_service(ctx, "print$", &printdollar);
 	if (!printdollar) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	if (printdollar_snum == -1) {
-		return WERR_NO_SUCH_SHARE;
+		return WERR_BAD_NET_NAME;
 	}
 
 	nt_status = create_conn_struct_cwd(talloc_tos(),
@@ -1184,12 +1216,12 @@ WERROR move_driver_to_download_area(struct auth_session_info *session_info,
 				short_architecture,
 				driver->version);
 	if (!new_dir) {
-		err = WERR_NOMEM;
+		err = WERR_NOT_ENOUGH_MEMORY;
 		goto err_exit;
 	}
 	nt_status = driver_unix_convert(conn, new_dir, &smb_dname);
 	if (!NT_STATUS_IS_OK(nt_status)) {
-		err = WERR_NOMEM;
+		err = WERR_NOT_ENOUGH_MEMORY;
 		goto err_exit;
 	}
 
@@ -1891,7 +1923,7 @@ WERROR print_access_check(const struct auth_session_info *session_info,
 	/* Get printer security descriptor */
 
 	if(!(mem_ctx = talloc_init("print_access_check"))) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	result = winreg_get_printer_secdesc_internal(mem_ctx,
@@ -1901,7 +1933,7 @@ WERROR print_access_check(const struct auth_session_info *session_info,
 					    &secdesc);
 	if (!W_ERROR_IS_OK(result)) {
 		talloc_destroy(mem_ctx);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (access_type == JOB_ACCESS_ADMINISTER) {

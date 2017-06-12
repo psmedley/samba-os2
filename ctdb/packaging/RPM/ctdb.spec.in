@@ -38,7 +38,7 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-root
 
 # Required minimum library versions when building with system libraries
 %define libtalloc_version 2.0.8
-%define libtdb_version 1.2.11
+%define libtdb_version 1.3.11
 %define libtevent_version 0.9.16
 
 %if ! %with_included_talloc
@@ -213,10 +213,12 @@ rm -rf $RPM_BUILD_ROOT
 %{_bindir}/ctdb_diagnostics
 %{_bindir}/onnode
 %dir %{_libexecdir}/ctdb
+%{_libexecdir}/ctdb/ctdb_eventd
 %{_libexecdir}/ctdb/ctdb_lock_helper
-%{_libexecdir}/ctdb/ctdb_event_helper
 %{_libexecdir}/ctdb/ctdb_recovery_helper
+%{_libexecdir}/ctdb/ctdb_takeover_helper
 %{_libexecdir}/ctdb/ctdb_mutex_fcntl_helper
+%{_libexecdir}/ctdb/ctdb_event
 %{_libexecdir}/ctdb/ctdb_natgw
 %{_libexecdir}/ctdb/ctdb_lvs
 %{_libexecdir}/ctdb/ctdb_killtcp

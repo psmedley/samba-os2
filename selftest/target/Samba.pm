@@ -204,6 +204,13 @@ sub mk_krb5_conf($$)
 
 ";
 
+	if (defined($ctx->{krb5_ccname})) {
+		print KRB5CONF "
+ default_ccache_name = $ctx->{krb5_ccname}
+";
+	}
+
+
         if (defined($ctx->{supported_enctypes})) {
 		print KRB5CONF "
  default_etypes = $ctx->{supported_enctypes}
@@ -283,6 +290,7 @@ sub get_interface($)
 
     # 11-16 used by selftest.pl for client interfaces
 
+    $interfaces{"idmapridmember"} = 20;
     $interfaces{"localdc"} = 21;
     $interfaces{"localvampiredc"} = 22;
     $interfaces{"s4member"} = 23;

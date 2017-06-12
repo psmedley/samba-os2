@@ -22,6 +22,9 @@
 
 /* From common/ctdb_io.c */
 
+typedef void (*ctdb_queue_cb_fn_t)(uint8_t *data, size_t length,
+				   void *private_data);
+
 int ctdb_queue_length(struct ctdb_queue *queue);
 
 int ctdb_queue_send(struct ctdb_queue *queue, uint8_t *data, uint32_t length);
@@ -104,7 +107,7 @@ struct ctdb_rec_data_old *ctdb_marshall_record(TALLOC_CTX *mem_ctx,
 
 struct ctdb_marshall_buffer *ctdb_marshall_add(TALLOC_CTX *mem_ctx,
 					       struct ctdb_marshall_buffer *m,
-					       uint64_t db_id,
+					       uint32_t db_id,
 					       uint32_t reqid,
 					       TDB_DATA key,
 					       struct ctdb_ltdb_header *header,

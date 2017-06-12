@@ -510,7 +510,7 @@ bool disk_quotas(connection_struct *conn, struct smb_filename *fname,
 	 * folder's UID, then available space is governed by
 	 * the quota of the folder's UID, not the creating user.
 	 */
-	if (lp_inherit_owner(SNUM(conn)) &&
+	if (lp_inherit_owner(SNUM(conn)) != INHERIT_OWNER_NO &&
 	    id.uid != fname->st.st_ex_uid && id.uid != sec_initial_uid()) {
 		int save_errno;
 

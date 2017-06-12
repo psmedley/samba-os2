@@ -973,13 +973,12 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 				      bool *retry)
 {
 	bool try_ipc_auth = false;
-	const char *machine_password = NULL;
-	const char *machine_krb5_principal = NULL;
+	const char *machine_principal = NULL;
+	const char *machine_realm = NULL;
 	const char *machine_account = NULL;
 	const char *machine_domain = NULL;
 	int flags = 0;
 	struct cli_credentials *creds = NULL;
-	enum credentials_use_kerberos krb5_state;
 
 	struct named_mutex *mutex;
 
@@ -1024,8 +1023,6 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		result = NT_STATUS_POSSIBLE_DEADLOCK;
 		goto done;
 	}
-
-	flags |= CLI_FULL_CONNECTION_USE_KERBEROS;
 
 	*cli = cli_state_create(NULL, sockfd,
 				controller, domain->alt_name,
@@ -1087,76 +1084,33 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		}
 	}
 
+	machine_principal = cli_credentials_get_principal(creds,
+							talloc_tos());
+	machine_realm = cli_credentials_get_realm(creds);
+	machine_account = cli_credentials_get_username(creds);
+	machine_domain = cli_credentials_get_domain(creds);
+
+	DEBUG(5, ("connecting to %s (%s, %s) with account [%s\\%s] principal "
+		  "[%s] and realm [%s]\n",
+		  controller, domain->name, domain->alt_name,
+		  machine_domain, machine_account,
+		  machine_principal, machine_realm));
+
 	if (cli_credentials_is_anonymous(creds)) {
 		goto anon_fallback;
 	}
 
-	krb5_state = cli_credentials_get_kerberos_state(creds);
+	winbindd_set_locator_kdc_envs(domain);
 
-	machine_krb5_principal = cli_credentials_get_principal(creds,
-							talloc_tos());
-	if (machine_krb5_principal == NULL) {
-		krb5_state = CRED_DONT_USE_KERBEROS;
+	result = cli_session_setup_creds(*cli, creds);
+	if (NT_STATUS_IS_OK(result)) {
+		goto session_setup_done;
 	}
 
-	machine_account = cli_credentials_get_username(creds);
-	machine_password = cli_credentials_get_password(creds);
-	machine_domain = cli_credentials_get_domain(creds);
-
-	if (krb5_state != CRED_DONT_USE_KERBEROS) {
-
-		/* Try a krb5 session */
-
-		(*cli)->use_kerberos = True;
-		DEBUG(5, ("connecting to %s from %s with kerberos principal "
-			  "[%s] and realm [%s]\n", controller, lp_netbios_name(),
-			  machine_krb5_principal, domain->alt_name));
-
-		winbindd_set_locator_kdc_envs(domain);
-
-		result = cli_session_setup(*cli,
-					   machine_krb5_principal,
-					   machine_password,
-					   strlen(machine_password)+1,
-					   machine_password,
-					   strlen(machine_password)+1,
-					   machine_domain);
-
-		if (NT_STATUS_IS_OK(result)) {
-			goto session_setup_done;
-		}
-
-		DEBUG(1, ("Failed to use kerberos connecting to %s from %s "
-			  "with kerberos principal [%s]\n",
-			  controller, lp_netbios_name(),
-			  machine_krb5_principal));
-	}
-
-	if (krb5_state != CRED_MUST_USE_KERBEROS) {
-		/* Fall back to non-kerberos session setup using NTLMSSP SPNEGO with the machine account. */
-		(*cli)->use_kerberos = False;
-
-		DEBUG(5, ("connecting to %s from %s using NTLMSSP with username "
-			  "[%s]\\[%s]\n",  controller, lp_netbios_name(),
-			  machine_domain, machine_account));
-
-		result = cli_session_setup(*cli,
-					   machine_account,
-					   machine_password,
-					   strlen(machine_password)+1,
-					   machine_password,
-					   strlen(machine_password)+1,
-					   machine_domain);
-
-		if (NT_STATUS_IS_OK(result)) {
-			goto session_setup_done;
-		}
-
-		DEBUG(1, ("Failed to use NTLMSSP connecting to %s from %s "
-			  "with username [%s]\\[%s]\n",
-			  controller, lp_netbios_name(),
-			  machine_domain, machine_account));
-	}
+	DEBUG(1, ("authenticated session setup to %s using %s failed with %s\n",
+		  controller,
+		  cli_credentials_get_unparsed_name(creds, talloc_tos()),
+		  nt_errstr(result)));
 
 	/*
 	 * If we are not going to validiate the conneciton
@@ -1180,11 +1134,6 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		goto anon_fallback;
 	}
 
-	DEBUG(1, ("authenticated session setup to %s using %s failed with %s\n",
-		  controller,
-		  cli_credentials_get_unparsed_name(creds, talloc_tos()),
-		  nt_errstr(result)));
-
 	goto done;
 
  ipc_fallback:
@@ -1200,32 +1149,21 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 	}
 
 	machine_account = cli_credentials_get_username(creds);
-	machine_password = cli_credentials_get_password(creds);
 	machine_domain = cli_credentials_get_domain(creds);
-
-	/* Fall back to non-kerberos session setup using NTLMSSP SPNEGO with the ipc creds. */
-	(*cli)->use_kerberos = False;
 
 	DEBUG(5, ("connecting to %s from %s using NTLMSSP with username "
 		  "[%s]\\[%s]\n",  controller, lp_netbios_name(),
 		  machine_domain, machine_account));
 
-	result = cli_session_setup(*cli,
-				   machine_account,
-				   machine_password,
-				   strlen(machine_password)+1,
-				   machine_password,
-				   strlen(machine_password)+1,
-				   machine_domain);
-
+	result = cli_session_setup_creds(*cli, creds);
 	if (NT_STATUS_IS_OK(result)) {
 		goto session_setup_done;
 	}
 
-	DEBUG(1, ("Failed to use NTLMSSP connecting to %s from %s "
-		  "with username "
-		  "[%s]\\[%s]\n",  controller, lp_netbios_name(),
-		  machine_domain, machine_account));
+	DEBUG(1, ("authenticated session setup to %s using %s failed with %s\n",
+		  controller,
+		  cli_credentials_get_unparsed_name(creds, talloc_tos()),
+		  nt_errstr(result)));
 
 	/*
 	 * If we are not going to validiate the conneciton
@@ -1241,11 +1179,6 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		goto anon_fallback;
 	}
 
-	DEBUG(1, ("authenticated session setup to %s using %s failed with %s\n",
-		  controller,
-		  cli_credentials_get_unparsed_name(creds, talloc_tos()),
-		  nt_errstr(result)));
-
 	goto done;
 
  anon_fallback:
@@ -1260,9 +1193,7 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		"connection for DC %s\n",
 		controller ));
 
-	(*cli)->use_kerberos = False;
-
-	result = cli_session_setup(*cli, "", "", 0, "", 0, "");
+	result = cli_session_setup_anon(*cli);
 	if (NT_STATUS_IS_OK(result)) {
 		DEBUG(5, ("Connected anonymously\n"));
 		goto session_setup_done;
@@ -1275,6 +1206,7 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 	goto done;
 
  session_setup_done:
+	TALLOC_FREE(creds);
 
 	/*
 	 * This should be a short term hack until
@@ -1287,7 +1219,7 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		smbXcli_session_set_disconnect_expired((*cli)->smb2.session);
 	}
 
-	result = cli_tree_connect(*cli, "IPC$", "IPC", "", 0);
+	result = cli_tree_connect(*cli, "IPC$", "IPC", NULL);
 	if (!NT_STATUS_IS_OK(result)) {
 		DEBUG(1,("failed tcon_X with %s\n", nt_errstr(result)));
 		goto done;
@@ -1297,7 +1229,7 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 	/* cache the server name for later connections */
 
 	saf_store(domain->name, controller);
-	if (domain->alt_name && (*cli)->use_kerberos) {
+	if (domain->alt_name) {
 		saf_store(domain->alt_name, controller);
 	}
 
@@ -1310,6 +1242,7 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 
  done:
 	TALLOC_FREE(mutex);
+	TALLOC_FREE(creds);
 
 	if (NT_STATUS_IS_OK(result)) {
 		result = tcon_status;
@@ -1849,7 +1782,7 @@ NTSTATUS wb_open_internal_pipe(TALLOC_CTX *mem_ctx,
 						 &cli);
 	} else {
 		status = rpc_pipe_open_internal(mem_ctx,
-						&table->syntax_id,
+						table,
 						session_info,
 						NULL,
 						winbind_messaging_context(),

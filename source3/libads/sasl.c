@@ -372,7 +372,7 @@ static ADS_STATUS ads_init_gssapi_cred(ADS_STRUCT *ads, gss_cred_id_t *cred)
 		goto done;
 	}
 
-	maj = gss_krb5_import_cred(&min, kccache, NULL, NULL, cred);
+	maj = smb_gss_krb5_import_cred(&min, kctx, kccache, NULL, NULL, cred);
 	if (maj != GSS_S_COMPLETE) {
 		status = ADS_ERROR_GSS(maj, min);
 		goto done;
@@ -778,8 +778,8 @@ static ADS_STATUS ads_sasl_spnego_bind(ADS_STRUCT *ads)
 							blob);
 			if (!ADS_ERR_OK(status)) {
 				DEBUG(0,("kinit succeeded but "
-					"ads_sasl_spnego_gensec_bind(KRB5) failed: "
-					"for %s/%s user[%s] realm[%s]: %s\n",
+					"ads_sasl_spnego_gensec_bind(KRB5) failed "
+					"for %s/%s with user[%s] realm[%s]: %s\n",
 					p.service, p.hostname,
 					ads->auth.user_name,
 					ads->auth.realm,
@@ -793,8 +793,9 @@ static ADS_STATUS ads_sasl_spnego_bind(ADS_STRUCT *ads)
 			goto done;
 		}
 
-		DEBUG(1,("ads_sasl_spnego_gensec_bind(KRB5) failed for %s/%s "
-			 "with user[%s] realm[%s]: %s, fallback to NTLMSSP\n",
+		DEBUG(1,("ads_sasl_spnego_gensec_bind(KRB5) failed "
+			 "for %s/%s with user[%s] realm[%s]: %s, "
+			 "fallback to NTLMSSP\n",
 			 p.service, p.hostname,
 			 ads->auth.user_name,
 			 ads->auth.realm,
@@ -812,8 +813,8 @@ static ADS_STATUS ads_sasl_spnego_bind(ADS_STRUCT *ads)
 					     data_blob_null);
 done:
 	if (!ADS_ERR_OK(status)) {
-		DEBUG(1,("ads_sasl_spnego_gensec_bind(%s) failed for %s/%s "
-			 "with user[%s] realm=[%s]: %s\n", mech,
+		DEBUG(1,("ads_sasl_spnego_gensec_bind(%s) failed "
+			 "for %s/%s with user[%s] realm=[%s]: %s\n", mech,
 			  p.service, p.hostname,
 			  ads->auth.user_name,
 			  ads->auth.realm,

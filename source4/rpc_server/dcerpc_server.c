@@ -42,8 +42,9 @@
 #include "lib/util/samba_modules.h"
 #include "librpc/gen_ndr/ndr_dcerpc.h"
 
-extern const struct dcesrv_interface dcesrv_mgmt_interface;
-
+static NTSTATUS dcesrv_negotiate_contexts(struct dcesrv_call_state *call,
+				const struct dcerpc_bind *b,
+				struct dcerpc_ack_ctx *ack_ctx_list);
 
 /*
   find an association group given a assoc_group_id
@@ -189,15 +190,21 @@ static bool interface_match(const struct dcesrv_interface *if1,
 }
 
 /*
-  find the interface operations on an endpoint
+  find the interface operations on any endpoint with this binding
 */
-static const struct dcesrv_interface *find_interface(const struct dcesrv_endpoint *endpoint,
-						     const struct dcesrv_interface *iface)
+static const struct dcesrv_interface *find_interface_by_binding(struct dcesrv_context *dce_ctx,
+								struct dcerpc_binding *binding,
+								const struct dcesrv_interface *iface)
 {
-	struct dcesrv_if_list *ifl;
-	for (ifl=endpoint->interface_list; ifl; ifl=ifl->next) {
-		if (interface_match(&(ifl->iface), iface)) {
-			return &(ifl->iface);
+	struct dcesrv_endpoint *ep;
+	for (ep=dce_ctx->endpoint_list; ep; ep=ep->next) {
+		if (endpoints_match(ep->ep_description, binding)) {
+			struct dcesrv_if_list *ifl;
+			for (ifl=ep->interface_list; ifl; ifl=ifl->next) {
+				if (interface_match(&(ifl->iface), iface)) {
+					return &(ifl->iface);
+				}
+			}
 		}
 	}
 	return NULL;
@@ -216,8 +223,8 @@ static bool interface_match_by_uuid(const struct dcesrv_interface *iface,
 /*
   find the interface operations on an endpoint by uuid
 */
-static const struct dcesrv_interface *find_interface_by_uuid(const struct dcesrv_endpoint *endpoint,
-							     const struct GUID *uuid, uint32_t if_version)
+const struct dcesrv_interface *find_interface_by_uuid(const struct dcesrv_endpoint *endpoint,
+						      const struct GUID *uuid, uint32_t if_version)
 {
 	struct dcesrv_if_list *ifl;
 	for (ifl=endpoint->interface_list; ifl; ifl=ifl->next) {
@@ -244,6 +251,15 @@ static struct dcesrv_call_state *dcesrv_find_fragmented_call(struct dcesrv_conne
 
 /*
   register an interface on an endpoint
+
+  An endpoint is one unix domain socket (for ncalrpc), one TCP port
+  (for ncacn_ip_tcp) or one (forwarded) named pipe (for ncacn_np).
+
+  Each endpoint can have many interfaces such as netlogon, lsa or
+  samr.  Some have essentially the full set.
+
+  This is driven from the set of interfaces listed in each IDL file
+  via the PIDL generated *__op_init_server() functions.
 */
 _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 				   const char *ep_name,
@@ -255,7 +271,23 @@ _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 	struct dcerpc_binding *binding;
 	bool add_ep = false;
 	NTSTATUS status;
+	enum dcerpc_transport_t transport;
+	char *ep_string = NULL;
+	bool use_single_process = true;
 	
+	/*
+	 * If we are not using handles, there is no need for force
+	 * this service into using a single process.
+	 *
+	 * However, due to the way we listen for RPC packets, we can
+	 * only do this if we have a single service per pipe or TCP
+	 * port, so we still force a single combined process for
+	 * ncalrpc.
+	 */
+	if (iface->flags & DCESRV_INTERFACE_FLAGS_HANDLES_NOT_USED) {
+		use_single_process = false;
+	}
+
 	status = dcerpc_parse_binding(dce_ctx, ep_name, &binding);
 
 	if (NT_STATUS_IS_ERR(status)) {
@@ -263,9 +295,71 @@ _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 		return status;
 	}
 
+	transport = dcerpc_binding_get_transport(binding);
+	if (transport == NCACN_IP_TCP) {
+		int port;
+		char port_str[6];
+
+		/* 
+		 * First check if there is already a port specified, eg
+		 * for epmapper on ncacn_ip_tcp:[135]
+		 */
+		const char *endpoint
+			= dcerpc_binding_get_string_option(binding,
+							   "endpoint");
+		if (endpoint == NULL) {
+			port = lpcfg_parm_int(dce_ctx->lp_ctx, NULL,
+					      "rpc server port", iface->name, 0);
+			
+			/*
+			 * For RPC services that are not set to use a single
+			 * process, we do not default to using the 'rpc server
+			 * port' because that would cause a double-bind on
+			 * that port.
+			 */
+			if (port == 0 && !use_single_process) {
+				port = lpcfg_rpc_server_port(dce_ctx->lp_ctx);
+			}
+			if (port != 0) {
+				snprintf(port_str, sizeof(port_str), "%u", port);
+				status = dcerpc_binding_set_string_option(binding,
+									  "endpoint",
+									  port_str);
+				if (!NT_STATUS_IS_OK(status)) {
+					return status;
+				}
+			}
+		}
+	}
+
+	/* see if the interface is already registered on the endpoint */
+	if (find_interface_by_binding(dce_ctx, binding, iface)!=NULL) {
+		DEBUG(0,("dcesrv_interface_register: interface '%s' already registered on endpoint '%s'\n",
+			 iface->name, ep_name));
+		return NT_STATUS_OBJECT_NAME_COLLISION;
+	}
+
 	/* check if this endpoint exists
 	 */
-	if ((ep=find_endpoint(dce_ctx, binding))==NULL) {
+	ep = find_endpoint(dce_ctx, binding);
+
+	if (ep != NULL) {
+		/*
+		 * We want a new port on ncacn_ip_tcp for NETLOGON, so
+		 * it can be multi-process.  Other processes can also
+		 * listen on distinct ports, if they have one forced
+		 * in the code above with eg 'rpc server port:drsuapi = 1027'
+		 *
+		 * If we have mulitiple endpoints on port 0, they each
+		 * get an epemeral port (currently by walking up from
+		 * 1024).
+		 */
+		if (!use_single_process && transport == NCACN_IP_TCP) {
+			add_ep = true;
+		}
+	}
+
+	if (ep == NULL || add_ep) {
 		ep = talloc_zero(dce_ctx, struct dcesrv_endpoint);
 		if (!ep) {
 			return NT_STATUS_NO_MEMORY;
@@ -280,17 +374,21 @@ _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 			return NT_STATUS_NO_MEMORY;
 		}
 
-		memcpy(&(ifl->iface), &dcesrv_mgmt_interface, 
-			   sizeof(struct dcesrv_interface));
+		ifl->iface = dcesrv_get_mgmt_interface();
 
 		DLIST_ADD(ep->interface_list, ifl);
 	}
 
-	/* see if the interface is already registered on te endpoint */
-	if (find_interface(ep, iface)!=NULL) {
-		DEBUG(0,("dcesrv_interface_register: interface '%s' already registered on endpoint '%s'\n",
-			iface->name, ep_name));
-		return NT_STATUS_OBJECT_NAME_COLLISION;
+	/*
+	 * By default don't force into a single process, but if any
+	 * interface on this endpoint on this service uses handles
+	 * (most do), then we must force into single process mode
+	 *
+	 * By overwriting this each time a new interface is added to
+	 * this endpoint, we end up with the most restrictive setting.
+	 */
+	if (use_single_process) {
+		ep->use_single_process = true;
 	}
 
 	/* talloc a new interface list element */
@@ -335,8 +433,12 @@ _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 		DLIST_ADD(dce_ctx->endpoint_list, ep);
 	}
 
+	/* Re-get the string as we may have set a port */
+	ep_string = dcerpc_binding_string(dce_ctx, ep->ep_description);
+
 	DEBUG(4,("dcesrv_interface_register: interface '%s' registered on endpoint '%s'\n",
-		iface->name, ep_name));
+		 iface->name, ep_string));
+	TALLOC_FREE(ep_string);
 
 	return NT_STATUS_OK;
 }
@@ -409,6 +511,11 @@ _PUBLIC_ NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
 	p->max_recv_frag = 5840;
 	p->max_xmit_frag = 5840;
 	p->max_total_request_size = DCERPC_NCACN_REQUEST_DEFAULT_MAX_SIZE;
+
+	/*
+	 * For now we only support NDR32.
+	 */
+	p->preferred_transfer = &ndr_transfer_syntax_ndr;
 
 	*_p = p;
 	return NT_STATUS_OK;
@@ -582,7 +689,11 @@ NTSTATUS dcesrv_interface_bind_require_integrity(struct dcesrv_call_state *dce_c
 		return NT_STATUS_INTERNAL_ERROR;
 	}
 
-	dce_call->context->min_auth_level = DCERPC_AUTH_LEVEL_INTEGRITY;
+	/*
+	 * For connection oriented DCERPC DCERPC_AUTH_LEVEL_PACKET (4)
+	 * has the same behavior as DCERPC_AUTH_LEVEL_INTEGRITY (5).
+	 */
+	dce_call->context->min_auth_level = DCERPC_AUTH_LEVEL_PACKET;
 	return NT_STATUS_OK;
 }
 
@@ -662,19 +773,17 @@ _PUBLIC_ NTSTATUS dcesrv_interface_bind_allow_connect(struct dcesrv_call_state *
 */
 static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 {
-	uint32_t if_version, transfer_syntax_version;
-	struct GUID uuid, *transfer_syntax_uuid;
 	struct ncacn_packet pkt;
 	struct data_blob_list_item *rep;
 	NTSTATUS status;
-	uint32_t result=0, reason=0;
-	uint16_t context_id;
-	const struct dcesrv_interface *iface;
 	uint32_t extra_flags = 0;
 	uint16_t max_req = 0;
 	uint16_t max_rep = 0;
 	const char *ep_prefix = "";
 	const char *endpoint = NULL;
+	struct dcerpc_ack_ctx *ack_ctx_list = NULL;
+	struct dcerpc_ack_ctx *ack_features = NULL;
+	size_t i;
 
 	status = dcerpc_verify_ncacn_packet_header(&call->pkt,
 			DCERPC_PKT_BIND,
@@ -720,103 +829,155 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 		call->conn->assoc_group = dcesrv_assoc_group_new(call->conn,
 								 call->conn->dce_ctx);
 	}
+
+	/*
+	 * The NETLOGON server does not use handles and so
+	 * there is no need to support association groups, but
+	 * we need to give back a number regardless.
+	 *
+	 * We have to do this when it is not run as a single process,
+	 * because then it can't see the other valid association
+	 * groups.  We handle this genericly for all endpoints not
+	 * running in single process mode.
+	 *
+	 * We know which endpoint we are on even before checking the
+	 * iface UUID, so for simplicity we enforce the same policy
+	 * for all interfaces on the endpoint.
+	 *
+	 * This means that where NETLOGON
+	 * shares an endpoint (such as ncalrpc or of 'lsa over
+	 * netlogon' is set) we will still check association groups.
+	 *
+	 */
+
+	if (call->conn->assoc_group == NULL &&
+	    !call->conn->endpoint->use_single_process) {
+		call->conn->assoc_group
+			= dcesrv_assoc_group_new(call->conn,
+						 call->conn->dce_ctx);
+	}
 	if (call->conn->assoc_group == NULL) {
 		return dcesrv_bind_nak(call, 0);
 	}
 
-	if (call->pkt.u.bind.num_contexts < 1 ||
-	    call->pkt.u.bind.ctx_list[0].num_transfer_syntaxes < 1) {
+	if (call->pkt.u.bind.num_contexts < 1) {
 		return dcesrv_bind_nak(call, 0);
 	}
 
-	context_id = call->pkt.u.bind.ctx_list[0].context_id;
-	if_version = call->pkt.u.bind.ctx_list[0].abstract_syntax.if_version;
-	uuid = call->pkt.u.bind.ctx_list[0].abstract_syntax.uuid;
-
-	transfer_syntax_version = call->pkt.u.bind.ctx_list[0].transfer_syntaxes[0].if_version;
-	transfer_syntax_uuid = &call->pkt.u.bind.ctx_list[0].transfer_syntaxes[0].uuid;
-	if (!GUID_equal(&ndr_transfer_syntax_ndr.uuid, transfer_syntax_uuid) != 0 ||
-	    ndr_transfer_syntax_ndr.if_version != transfer_syntax_version) {
-		char *uuid_str = GUID_string(call, transfer_syntax_uuid);
-		/* we only do NDR encoded dcerpc */
-		DEBUG(0,("Non NDR transfer syntax requested - %s\n", uuid_str));
-		talloc_free(uuid_str);
+	ack_ctx_list = talloc_zero_array(call, struct dcerpc_ack_ctx,
+					 call->pkt.u.bind.num_contexts);
+	if (ack_ctx_list == NULL) {
 		return dcesrv_bind_nak(call, 0);
 	}
 
-	iface = find_interface_by_uuid(call->conn->endpoint, &uuid, if_version);
-	if (iface == NULL) {
-		char *uuid_str = GUID_string(call, &uuid);
-		DEBUG(2,("Request for unknown dcerpc interface %s/%d\n", uuid_str, if_version));
-		talloc_free(uuid_str);
+	/*
+	 * Set some sane defaults (required by dcesrv_negotiate_contexts()/
+	 * dcesrv_check_or_create_context()) and do some protocol validation
+	 * and set sane defaults.
+	 */
+	for (i = 0; i < call->pkt.u.bind.num_contexts; i++) {
+		const struct dcerpc_ctx_list *c = &call->pkt.u.bind.ctx_list[i];
+		struct dcerpc_ack_ctx *a = &ack_ctx_list[i];
+		bool is_feature = false;
+		uint64_t features = 0;
 
-		/* we don't know about that interface */
-		result = DCERPC_BIND_PROVIDER_REJECT;
-		reason = DCERPC_BIND_REASON_ASYNTAX;		
-	}
-
-	if (iface) {
-		/* add this context to the list of available context_ids */
-		struct dcesrv_connection_context *context = talloc_zero(call->conn,
-								   struct dcesrv_connection_context);
-		if (context == NULL) {
+		if (c->num_transfer_syntaxes == 0) {
 			return dcesrv_bind_nak(call, 0);
 		}
-		context->conn = call->conn;
-		context->iface = iface;
-		context->context_id = context_id;
-		context->private_data = NULL;
-		DLIST_ADD(call->conn->contexts, context);
-		call->context = context;
-		talloc_set_destructor(context, dcesrv_connection_context_destructor);
 
-		dcesrv_prepare_context_auth(call);
+		a->result = DCERPC_BIND_ACK_RESULT_PROVIDER_REJECTION;
+		a->reason.value = DCERPC_BIND_ACK_REASON_ABSTRACT_SYNTAX_NOT_SUPPORTED;
 
-		status = iface->bind(call, iface, if_version);
-		if (!NT_STATUS_IS_OK(status)) {
-			char *uuid_str = GUID_string(call, &uuid);
-			DEBUG(2,("Request for dcerpc interface %s/%d rejected: %s\n",
-				 uuid_str, if_version, nt_errstr(status)));
-			talloc_free(uuid_str);
-			/* we don't want to trigger the iface->unbind() hook */
-			context->iface = NULL;
-			talloc_free(call->context);
-			call->context = NULL;
+		/*
+		 * It's only treated as bind time feature request, if the first
+		 * transfer_syntax matches, all others are ignored.
+		 */
+		is_feature = dcerpc_extract_bind_time_features(c->transfer_syntaxes[0],
+							       &features);
+		if (!is_feature) {
+			continue;
+		}
+
+		if (ack_features != NULL) {
+			/*
+			 * Only one bind time feature context is allowed.
+			 */
 			return dcesrv_bind_nak(call, 0);
 		}
+		ack_features = a;
+
+		a->result = DCERPC_BIND_ACK_RESULT_NEGOTIATE_ACK;
+		a->reason.negotiate = 0;
+		if (features & DCERPC_BIND_TIME_SECURITY_CONTEXT_MULTIPLEXING) {
+			/* not supported yet */
+		}
+		if (features & DCERPC_BIND_TIME_KEEP_CONNECTION_ON_ORPHAN) {
+			a->reason.negotiate |=
+				DCERPC_BIND_TIME_KEEP_CONNECTION_ON_ORPHAN;
+		}
+
+		call->conn->bind_time_features = a->reason.negotiate;
 	}
+
+	/*
+	 * Try to negotiate one new presentation context.
+	 *
+	 * Deep in here we locate the iface (by uuid) that the client
+	 * requested, from the list of interfaces on the
+	 * call->conn->endpoint, and call iface->bind() on that iface.
+	 *
+	 * call->conn was set up at the accept() of the socket, and
+	 * call->conn->endpoint has a list of interfaces restricted to
+	 * this port or pipe.
+	 */
+	status = dcesrv_negotiate_contexts(call, &call->pkt.u.bind, ack_ctx_list);
+	if (NT_STATUS_EQUAL(status, NT_STATUS_RPC_PROTOCOL_ERROR)) {
+		return dcesrv_bind_nak(call, 0);
+	}
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	/*
+	 * At this point we know which interface (eg netlogon, lsa,
+	 * drsuapi) the caller requested.  This is available on
+	 * call->conntext->iface.
+	 */
 
 	if ((call->pkt.pfc_flags & DCERPC_PFC_FLAG_CONC_MPX) &&
 	    (call->state_flags & DCESRV_CALL_STATE_FLAG_MULTIPLEXED)) {
-		call->context->conn->state_flags |= DCESRV_CALL_STATE_FLAG_MULTIPLEXED;
+		call->conn->state_flags |= DCESRV_CALL_STATE_FLAG_MULTIPLEXED;
 		extra_flags |= DCERPC_PFC_FLAG_CONC_MPX;
 	}
 
 	if (call->state_flags & DCESRV_CALL_STATE_FLAG_PROCESS_PENDING_CALL) {
-		call->context->conn->state_flags |= DCESRV_CALL_STATE_FLAG_PROCESS_PENDING_CALL;
+		call->conn->state_flags |= DCESRV_CALL_STATE_FLAG_PROCESS_PENDING_CALL;
 	}
 
-	/* handle any authentication that is being requested */
+	/*
+	 * After finding the interface and setting up the NDR
+	 * transport negotiation etc, handle any authentication that
+	 * is being requested.
+	 */
 	if (!dcesrv_auth_bind(call)) {
 		struct dcesrv_auth *auth = &call->conn->auth_state;
 
 		TALLOC_FREE(call->context);
 
-		if (call->fault_code == DCERPC_NCA_S_PROTO_ERROR) {
-			return dcesrv_bind_nak(call,
-			DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED);
+		if (auth->auth_level == DCERPC_AUTH_LEVEL_NONE) {
+			/*
+			 * With DCERPC_AUTH_LEVEL_NONE, we get the
+			 * reject_reason in auth->auth_context_id.
+			 */
+			return dcesrv_bind_nak(call, auth->auth_context_id);
 		}
 
-		if (auth->auth_level != DCERPC_AUTH_LEVEL_NONE) {
-			/*
-			 * We only give INVALID_AUTH_TYPE if the auth_level was
-			 * valid.
-			 */
-			return dcesrv_bind_nak(call,
-					DCERPC_BIND_NAK_REASON_INVALID_AUTH_TYPE);
-		}
+		/*
+		 * This must a be a temporary failure e.g. talloc or invalid
+		 * configuration, e.g. no machine account.
+		 */
 		return dcesrv_bind_nak(call,
-					DCERPC_BIND_NAK_REASON_NOT_SPECIFIED);
+				DCERPC_BIND_NAK_REASON_TEMPORARY_CONGESTION);
 	}
 
 	/* setup a bind_ack */
@@ -829,12 +990,9 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 	pkt.u.bind_ack.max_recv_frag = call->conn->max_recv_frag;
 	pkt.u.bind_ack.assoc_group_id = call->conn->assoc_group->id;
 
-	if (iface) {
-		endpoint = dcerpc_binding_get_string_option(
+	endpoint = dcerpc_binding_get_string_option(
 				call->conn->endpoint->ep_description,
 				"endpoint");
-	}
-
 	if (endpoint == NULL) {
 		endpoint = "";
 	}
@@ -856,37 +1014,26 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 		TALLOC_FREE(call->context);
 		return NT_STATUS_NO_MEMORY;
 	}
-	pkt.u.bind_ack.num_results = 1;
-	pkt.u.bind_ack.ctx_list = talloc_zero(call, struct dcerpc_ack_ctx);
-	if (!pkt.u.bind_ack.ctx_list) {
-		talloc_free(call->context);
-		call->context = NULL;
-		return NT_STATUS_NO_MEMORY;
-	}
-	pkt.u.bind_ack.ctx_list[0].result = result;
-	pkt.u.bind_ack.ctx_list[0].reason.value = reason;
-	pkt.u.bind_ack.ctx_list[0].syntax = ndr_transfer_syntax_ndr;
-	pkt.u.bind_ack.auth_info = data_blob(NULL, 0);
+	pkt.u.bind_ack.num_results = call->pkt.u.bind.num_contexts;
+	pkt.u.bind_ack.ctx_list = ack_ctx_list;
+	pkt.u.bind_ack.auth_info = data_blob_null;
 
 	status = dcesrv_auth_bind_ack(call, &pkt);
 	if (!NT_STATUS_IS_OK(status)) {
-		talloc_free(call->context);
-		call->context = NULL;
+		TALLOC_FREE(call->context);
 		return dcesrv_bind_nak(call, 0);
 	}
 
 	rep = talloc_zero(call, struct data_blob_list_item);
 	if (!rep) {
-		talloc_free(call->context);
-		call->context = NULL;
+		TALLOC_FREE(call->context);
 		return NT_STATUS_NO_MEMORY;
 	}
 
 	status = ncacn_push_auth(&rep->blob, call, &pkt,
 				 call->out_auth_info);
 	if (!NT_STATUS_IS_OK(status)) {
-		talloc_free(call->context);
-		call->context = NULL;
+		TALLOC_FREE(call->context);
 		return status;
 	}
 
@@ -952,35 +1099,123 @@ static NTSTATUS dcesrv_auth3(struct dcesrv_call_state *call)
 }
 
 
-/*
-  handle a bind request
-*/
-static NTSTATUS dcesrv_alter_new_context(struct dcesrv_call_state *call, uint16_t context_id)
+static NTSTATUS dcesrv_check_or_create_context(struct dcesrv_call_state *call,
+				const struct dcerpc_bind *b,
+				const struct dcerpc_ctx_list *ctx,
+				struct dcerpc_ack_ctx *ack,
+				bool validate_only,
+				const struct ndr_syntax_id *supported_transfer)
 {
-	uint32_t if_version, transfer_syntax_version;
+	uint32_t if_version;
 	struct dcesrv_connection_context *context;
 	const struct dcesrv_interface *iface;
-	struct GUID uuid, *transfer_syntax_uuid;
+	struct GUID uuid;
 	NTSTATUS status;
+	const struct ndr_syntax_id *selected_transfer = NULL;
+	size_t i;
+	bool ok;
 
-	if_version = call->pkt.u.alter.ctx_list[0].abstract_syntax.if_version;
-	uuid = call->pkt.u.alter.ctx_list[0].abstract_syntax.uuid;
-
-	transfer_syntax_version = call->pkt.u.alter.ctx_list[0].transfer_syntaxes[0].if_version;
-	transfer_syntax_uuid = &call->pkt.u.alter.ctx_list[0].transfer_syntaxes[0].uuid;
-	if (!GUID_equal(transfer_syntax_uuid, &ndr_transfer_syntax_ndr.uuid) ||
-	    ndr_transfer_syntax_ndr.if_version != transfer_syntax_version) {
-		/* we only do NDR encoded dcerpc */
-		return NT_STATUS_RPC_PROTSEQ_NOT_SUPPORTED;
+	if (b == NULL) {
+		return NT_STATUS_INTERNAL_ERROR;
 	}
+	if (ctx == NULL) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+	if (ctx->num_transfer_syntaxes < 1) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+	if (ack == NULL) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+	if (supported_transfer == NULL) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	switch (ack->result) {
+	case DCERPC_BIND_ACK_RESULT_ACCEPTANCE:
+	case DCERPC_BIND_ACK_RESULT_NEGOTIATE_ACK:
+		/*
+		 * We is already completed.
+		 */
+		return NT_STATUS_OK;
+	default:
+		break;
+	}
+
+	ack->result = DCERPC_BIND_ACK_RESULT_PROVIDER_REJECTION;
+	ack->reason.value = DCERPC_BIND_ACK_REASON_ABSTRACT_SYNTAX_NOT_SUPPORTED;
+
+	if_version = ctx->abstract_syntax.if_version;
+	uuid = ctx->abstract_syntax.uuid;
 
 	iface = find_interface_by_uuid(call->conn->endpoint, &uuid, if_version);
 	if (iface == NULL) {
 		char *uuid_str = GUID_string(call, &uuid);
 		DEBUG(2,("Request for unknown dcerpc interface %s/%d\n", uuid_str, if_version));
 		talloc_free(uuid_str);
-		return NT_STATUS_RPC_PROTSEQ_NOT_SUPPORTED;
+		/*
+		 * We report this only via ack->result
+		 */
+		return NT_STATUS_OK;
 	}
+
+	ack->result = DCERPC_BIND_ACK_RESULT_PROVIDER_REJECTION;
+	ack->reason.value = DCERPC_BIND_ACK_REASON_TRANSFER_SYNTAXES_NOT_SUPPORTED;
+
+	if (validate_only) {
+		/*
+		 * We report this only via ack->result
+		 */
+		return NT_STATUS_OK;
+	}
+
+	for (i = 0; i < ctx->num_transfer_syntaxes; i++) {
+		/*
+		 * we only do NDR encoded dcerpc for now.
+		 */
+		ok = ndr_syntax_id_equal(&ctx->transfer_syntaxes[i],
+					 supported_transfer);
+		if (ok) {
+			selected_transfer = supported_transfer;
+			break;
+		}
+	}
+
+	context = dcesrv_find_context(call->conn, ctx->context_id);
+	if (context != NULL) {
+		ok = ndr_syntax_id_equal(&context->iface->syntax_id,
+					 &ctx->abstract_syntax);
+		if (!ok) {
+			return NT_STATUS_RPC_PROTOCOL_ERROR;
+		}
+
+		if (selected_transfer != NULL) {
+			ok = ndr_syntax_id_equal(&context->transfer_syntax,
+						 selected_transfer);
+			if (!ok) {
+				return NT_STATUS_RPC_PROTOCOL_ERROR;
+			}
+
+			ack->result = DCERPC_BIND_ACK_RESULT_ACCEPTANCE;
+			ack->reason.value = DCERPC_BIND_ACK_REASON_NOT_SPECIFIED;
+			ack->syntax = context->transfer_syntax;
+		}
+
+		/*
+		 * We report this only via ack->result
+		 */
+		return NT_STATUS_OK;
+	}
+
+	if (selected_transfer == NULL) {
+		/*
+		 * We report this only via ack->result
+		 */
+		return NT_STATUS_OK;
+	}
+
+	ack->result = DCERPC_BIND_ACK_RESULT_USER_REJECTION;
+	ack->reason.value = DCERPC_BIND_ACK_REASON_LOCAL_LIMIT_EXCEEDED;
 
 	/* add this context to the list of available context_ids */
 	context = talloc_zero(call->conn, struct dcesrv_connection_context);
@@ -988,8 +1223,9 @@ static NTSTATUS dcesrv_alter_new_context(struct dcesrv_call_state *call, uint16_
 		return NT_STATUS_NO_MEMORY;
 	}
 	context->conn = call->conn;
+	context->context_id = ctx->context_id;
 	context->iface = iface;
-	context->context_id = context_id;
+	context->transfer_syntax = *selected_transfer;
 	context->private_data = NULL;
 	DLIST_ADD(call->conn->contexts, context);
 	call->context = context;
@@ -997,81 +1233,94 @@ static NTSTATUS dcesrv_alter_new_context(struct dcesrv_call_state *call, uint16_
 
 	dcesrv_prepare_context_auth(call);
 
+	/*
+	 * Multiplex is supported by default
+	 */
+	call->state_flags |= DCESRV_CALL_STATE_FLAG_MULTIPLEXED;
+
 	status = iface->bind(call, iface, if_version);
+	call->context = NULL;
 	if (!NT_STATUS_IS_OK(status)) {
 		/* we don't want to trigger the iface->unbind() hook */
 		context->iface = NULL;
 		talloc_free(context);
-		call->context = NULL;
-		return status;
+		/*
+		 * We report this only via ack->result
+		 */
+		return NT_STATUS_OK;
 	}
 
+	ack->result = DCERPC_BIND_ACK_RESULT_ACCEPTANCE;
+	ack->reason.value = DCERPC_BIND_ACK_REASON_NOT_SPECIFIED;
+	ack->syntax = context->transfer_syntax;
 	return NT_STATUS_OK;
 }
 
-/* setup and send an alter_resp */
-static NTSTATUS dcesrv_alter_resp(struct dcesrv_call_state *call,
-				uint32_t result,
-				uint32_t reason)
+static NTSTATUS dcesrv_negotiate_contexts(struct dcesrv_call_state *call,
+				const struct dcerpc_bind *b,
+				struct dcerpc_ack_ctx *ack_ctx_list)
 {
-	struct ncacn_packet pkt;
-	uint32_t extra_flags = 0;
-	struct data_blob_list_item *rep = NULL;
 	NTSTATUS status;
+	size_t i;
+	bool validate_only = false;
+	bool preferred_ndr32;
 
-	dcesrv_init_hdr(&pkt, lpcfg_rpc_big_endian(call->conn->dce_ctx->lp_ctx));
-	pkt.auth_length = 0;
-	pkt.call_id = call->pkt.call_id;
-	pkt.ptype = DCERPC_PKT_ALTER_RESP;
-	if (result == 0) {
-		if ((call->pkt.pfc_flags & DCERPC_PFC_FLAG_CONC_MPX) &&
-				call->context->conn->state_flags &
-					DCESRV_CALL_STATE_FLAG_MULTIPLEXED) {
-			extra_flags |= DCERPC_PFC_FLAG_CONC_MPX;
+	/*
+	 * Try to negotiate one new presentation context,
+	 * using our preferred transfer syntax.
+	 */
+	for (i = 0; i < b->num_contexts; i++) {
+		const struct dcerpc_ctx_list *c = &b->ctx_list[i];
+		struct dcerpc_ack_ctx *a = &ack_ctx_list[i];
+
+		status = dcesrv_check_or_create_context(call, b, c, a,
+						validate_only,
+						call->conn->preferred_transfer);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
 		}
-		if (call->state_flags & DCESRV_CALL_STATE_FLAG_PROCESS_PENDING_CALL) {
-			call->context->conn->state_flags |=
-				DCESRV_CALL_STATE_FLAG_PROCESS_PENDING_CALL;
+
+		if (a->result == DCERPC_BIND_ACK_RESULT_ACCEPTANCE) {
+			/*
+			 * We managed to negotiate one context.
+			 *
+			 * => we're done.
+			 */
+			validate_only = true;
 		}
 	}
-	pkt.pfc_flags = DCERPC_PFC_FLAG_FIRST | DCERPC_PFC_FLAG_LAST | extra_flags;
-	pkt.u.alter_resp.max_xmit_frag = call->conn->max_xmit_frag;
-	pkt.u.alter_resp.max_recv_frag = call->conn->max_recv_frag;
-	pkt.u.alter_resp.assoc_group_id = call->conn->assoc_group->id;
-	pkt.u.alter_resp.num_results = 1;
-	pkt.u.alter_resp.ctx_list = talloc_zero(call, struct dcerpc_ack_ctx);
-	if (!pkt.u.alter_resp.ctx_list) {
-		return NT_STATUS_NO_MEMORY;
-	}
-	pkt.u.alter_resp.ctx_list[0].result = result;
-	pkt.u.alter_resp.ctx_list[0].reason.value = reason;
-	pkt.u.alter_resp.ctx_list[0].syntax = ndr_transfer_syntax_ndr;
-	pkt.u.alter_resp.auth_info = data_blob(NULL, 0);
-	pkt.u.alter_resp.secondary_address = "";
 
-	status = dcesrv_auth_alter_ack(call, &pkt);
-	if (!NT_STATUS_IS_OK(status)) {
-		return dcesrv_fault_disconnect(call, DCERPC_FAULT_SEC_PKG_ERROR);
+	preferred_ndr32 = ndr_syntax_id_equal(&ndr_transfer_syntax_ndr,
+					call->conn->preferred_transfer);
+	if (preferred_ndr32) {
+		/*
+		 * We're done.
+		 */
+		return NT_STATUS_OK;
 	}
 
-	rep = talloc_zero(call, struct data_blob_list_item);
-	if (!rep) {
-		return NT_STATUS_NO_MEMORY;
-	}
+	/*
+	 * Try to negotiate one new presentation context,
+	 * using NDR 32 as fallback.
+	 */
+	for (i = 0; i < b->num_contexts; i++) {
+		const struct dcerpc_ctx_list *c = &b->ctx_list[i];
+		struct dcerpc_ack_ctx *a = &ack_ctx_list[i];
 
-	status = ncacn_push_auth(&rep->blob, call, &pkt, call->out_auth_info);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
+		status = dcesrv_check_or_create_context(call, b, c, a,
+						validate_only,
+						&ndr_transfer_syntax_ndr);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 
-	dcerpc_set_frag_length(&rep->blob, rep->blob.length);
-
-	DLIST_ADD_END(call->replies, rep);
-	dcesrv_call_set_list(call, DCESRV_LIST_CALL_LIST);
-
-	if (call->conn->call_list && call->conn->call_list->replies) {
-		if (call->conn->transport.report_output_data) {
-			call->conn->transport.report_output_data(call->conn);
+		if (a->result == DCERPC_BIND_ACK_RESULT_ACCEPTANCE) {
+			/*
+			 * We managed to negotiate one context.
+			 *
+			 * => we're done.
+			 */
+			validate_only = true;
 		}
 	}
 
@@ -1084,8 +1333,12 @@ static NTSTATUS dcesrv_alter_resp(struct dcesrv_call_state *call,
 static NTSTATUS dcesrv_alter(struct dcesrv_call_state *call)
 {
 	NTSTATUS status;
-	const struct dcerpc_ctx_list *ctx = NULL;
 	bool auth_ok = false;
+	struct ncacn_packet pkt;
+	uint32_t extra_flags = 0;
+	struct data_blob_list_item *rep = NULL;
+	struct dcerpc_ack_ctx *ack_ctx_list = NULL;
+	size_t i;
 
 	if (!call->conn->allow_alter) {
 		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
@@ -1117,41 +1370,50 @@ static NTSTATUS dcesrv_alter(struct dcesrv_call_state *call)
 	if (call->pkt.u.alter.num_contexts < 1) {
 		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
 	}
-	ctx = &call->pkt.u.alter.ctx_list[0];
-	if (ctx->num_transfer_syntaxes < 1) {
-		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
+
+	ack_ctx_list = talloc_zero_array(call, struct dcerpc_ack_ctx,
+					 call->pkt.u.alter.num_contexts);
+	if (ack_ctx_list == NULL) {
+		return NT_STATUS_NO_MEMORY;
 	}
 
-	/* see if they are asking for a new interface */
-	call->context = dcesrv_find_context(call->conn, ctx->context_id);
-	if (!call->context) {
-		status = dcesrv_alter_new_context(call, ctx->context_id);
-		if (!NT_STATUS_IS_OK(status)) {
-			return dcesrv_alter_resp(call,
-				DCERPC_BIND_PROVIDER_REJECT,
-				DCERPC_BIND_REASON_ASYNTAX);
-		}
-	} else {
-		bool ok;
+	/*
+	 * Set some sane defaults (required by dcesrv_negotiate_contexts()/
+	 * dcesrv_check_or_create_context()) and do some protocol validation
+	 * and set sane defaults.
+	 */
+	for (i = 0; i < call->pkt.u.alter.num_contexts; i++) {
+		const struct dcerpc_ctx_list *c = &call->pkt.u.alter.ctx_list[i];
+		struct dcerpc_ack_ctx *a = &ack_ctx_list[i];
 
-		ok = ndr_syntax_id_equal(&ctx->abstract_syntax,
-					 &call->context->iface->syntax_id);
-		if (!ok) {
+		if (c->num_transfer_syntaxes == 0) {
 			return dcesrv_fault_disconnect(call,
 					DCERPC_NCA_S_PROTO_ERROR);
 		}
 
-		if (ctx->num_transfer_syntaxes != 1) {
-			return dcesrv_fault_disconnect(call,
-					DCERPC_NCA_S_PROTO_ERROR);
-		}
+		a->result = DCERPC_BIND_ACK_RESULT_PROVIDER_REJECTION;
+		a->reason.value = DCERPC_BIND_ACK_REASON_ABSTRACT_SYNTAX_NOT_SUPPORTED;
+	}
 
-		ok = ndr_syntax_id_equal(&ctx->transfer_syntaxes[0],
-					 &ndr_transfer_syntax_ndr);
-		if (!ok) {
-			return dcesrv_fault_disconnect(call,
-					DCERPC_NCA_S_PROTO_ERROR);
-		}
+	/*
+	 * Try to negotiate one new presentation context.
+	 */
+	status = dcesrv_negotiate_contexts(call, &call->pkt.u.alter, ack_ctx_list);
+	if (NT_STATUS_EQUAL(status, NT_STATUS_RPC_PROTOCOL_ERROR)) {
+		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
+	}
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	if ((call->pkt.pfc_flags & DCERPC_PFC_FLAG_CONC_MPX) &&
+	    (call->state_flags & DCESRV_CALL_STATE_FLAG_MULTIPLEXED)) {
+		call->conn->state_flags |= DCESRV_CALL_STATE_FLAG_MULTIPLEXED;
+		extra_flags |= DCERPC_PFC_FLAG_CONC_MPX;
+	}
+
+	if (call->state_flags & DCESRV_CALL_STATE_FLAG_PROCESS_PENDING_CALL) {
+		call->conn->state_flags |= DCESRV_CALL_STATE_FLAG_PROCESS_PENDING_CALL;
 	}
 
 	/* handle any authentication that is being requested */
@@ -1165,9 +1427,46 @@ static NTSTATUS dcesrv_alter(struct dcesrv_call_state *call)
 		return dcesrv_fault_disconnect(call, DCERPC_FAULT_ACCESS_DENIED);
 	}
 
-	return dcesrv_alter_resp(call,
-				DCERPC_BIND_ACK_RESULT_ACCEPTANCE,
-				DCERPC_BIND_ACK_REASON_NOT_SPECIFIED);
+	dcesrv_init_hdr(&pkt, lpcfg_rpc_big_endian(call->conn->dce_ctx->lp_ctx));
+	pkt.auth_length = 0;
+	pkt.call_id = call->pkt.call_id;
+	pkt.ptype = DCERPC_PKT_ALTER_RESP;
+	pkt.pfc_flags = DCERPC_PFC_FLAG_FIRST | DCERPC_PFC_FLAG_LAST | extra_flags;
+	pkt.u.alter_resp.max_xmit_frag = call->conn->max_xmit_frag;
+	pkt.u.alter_resp.max_recv_frag = call->conn->max_recv_frag;
+	pkt.u.alter_resp.assoc_group_id = call->conn->assoc_group->id;
+	pkt.u.alter_resp.secondary_address = "";
+	pkt.u.alter_resp.num_results = call->pkt.u.alter.num_contexts;
+	pkt.u.alter_resp.ctx_list = ack_ctx_list;
+	pkt.u.alter_resp.auth_info = data_blob_null;
+
+	status = dcesrv_auth_alter_ack(call, &pkt);
+	if (!NT_STATUS_IS_OK(status)) {
+		return dcesrv_fault_disconnect(call, DCERPC_FAULT_SEC_PKG_ERROR);
+	}
+
+	rep = talloc_zero(call, struct data_blob_list_item);
+	if (!rep) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = ncacn_push_auth(&rep->blob, call, &pkt, call->out_auth_info);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	dcerpc_set_frag_length(&rep->blob, rep->blob.length);
+
+	DLIST_ADD_END(call->replies, rep);
+	dcesrv_call_set_list(call, DCESRV_LIST_CALL_LIST);
+
+	if (call->conn->call_list && call->conn->call_list->replies) {
+		if (call->conn->transport.report_output_data) {
+			call->conn->transport.report_output_data(call->conn);
+		}
+	}
+
+	return NT_STATUS_OK;
 }
 
 /*
@@ -1201,7 +1500,7 @@ static NTSTATUS dcesrv_check_verification_trailer(struct dcesrv_call_state *call
 		DCERPC_SEC_VT_CLIENT_SUPPORTS_HEADER_SIGNING : 0;
 	const struct dcerpc_sec_vt_pcontext pcontext = {
 		.abstract_syntax = call->context->iface->syntax_id,
-		.transfer_syntax = ndr_transfer_syntax_ndr,
+		.transfer_syntax = call->context->transfer_syntax,
 	};
 	const struct dcerpc_sec_vt_header2 header2 =
 		dcerpc_sec_vt_header2_from_ncacn_packet(&call->pkt);
@@ -1240,7 +1539,6 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 		dcerpc_binding_get_transport(endpoint->ep_description);
 	struct ndr_pull *pull;
 	NTSTATUS status;
-	struct dcesrv_connection_context *context;
 
 	if (!call->conn->allow_request) {
 		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
@@ -1252,18 +1550,19 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 		call->state_flags &= ~DCESRV_CALL_STATE_FLAG_MAY_ASYNC;
 	}
 
-	context = dcesrv_find_context(call->conn, call->pkt.u.request.context_id);
-	if (context == NULL) {
-		return dcesrv_fault(call, DCERPC_FAULT_UNK_IF);
+	if (call->context == NULL) {
+		return dcesrv_fault_with_flags(call, DCERPC_NCA_S_UNKNOWN_IF,
+					DCERPC_PFC_FLAG_DID_NOT_EXECUTE);
 	}
 
 	switch (call->conn->auth_state.auth_level) {
 	case DCERPC_AUTH_LEVEL_NONE:
+	case DCERPC_AUTH_LEVEL_PACKET:
 	case DCERPC_AUTH_LEVEL_INTEGRITY:
 	case DCERPC_AUTH_LEVEL_PRIVACY:
 		break;
 	default:
-		if (!context->allow_connect) {
+		if (!call->context->allow_connect) {
 			char *addr;
 
 			addr = tsocket_address_string(call->conn->remote_address,
@@ -1272,7 +1571,7 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 			DEBUG(2, ("%s: restrict auth_level_connect access "
 				  "to [%s] with auth[type=0x%x,level=0x%x] "
 				  "on [%s] from [%s]\n",
-				  __func__, context->iface->name,
+				  __func__, call->context->iface->name,
 				  call->conn->auth_state.auth_type,
 				  call->conn->auth_state.auth_level,
 				  derpc_transport_string_by_transport(transport),
@@ -1282,7 +1581,7 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 		break;
 	}
 
-	if (call->conn->auth_state.auth_level < context->min_auth_level) {
+	if (call->conn->auth_state.auth_level < call->context->min_auth_level) {
 		char *addr;
 
 		addr = tsocket_address_string(call->conn->remote_address, call);
@@ -1291,8 +1590,8 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 			  "to [%s] with auth[type=0x%x,level=0x%x] "
 			  "on [%s] from [%s]\n",
 			  __func__,
-			  context->min_auth_level,
-			  context->iface->name,
+			  call->context->min_auth_level,
+			  call->context->iface->name,
 			  call->conn->auth_state.auth_type,
 			  call->conn->auth_state.auth_level,
 			  derpc_transport_string_by_transport(transport),
@@ -1305,7 +1604,6 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 
 	pull->flags |= LIBNDR_FLAG_REF_ALLOC;
 
-	call->context	= context;
 	call->ndr_pull	= pull;
 
 	if (!(call->pkt.drep[0] & DCERPC_DREP_LE)) {
@@ -1324,17 +1622,20 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 	}
 
 	/* unravel the NDR for the packet */
-	status = context->iface->ndr_pull(call, call, pull, &call->r);
+	status = call->context->iface->ndr_pull(call, call, pull, &call->r);
 	if (!NT_STATUS_IS_OK(status)) {
+		uint8_t extra_flags = 0;
 		if (call->fault_code == DCERPC_FAULT_OP_RNG_ERROR) {
 			/* we got an unknown call */
 			DEBUG(3,(__location__ ": Unknown RPC call %u on %s\n",
-				 call->pkt.u.request.opnum, context->iface->name));
+				 call->pkt.u.request.opnum,
+				 call->context->iface->name));
 			dcesrv_save_call(call, "unknown");
+			extra_flags |= DCERPC_PFC_FLAG_DID_NOT_EXECUTE;
 		} else {
 			dcesrv_save_call(call, "pullfail");
 		}
-		return dcesrv_fault(call, call->fault_code);
+		return dcesrv_fault_with_flags(call, call->fault_code, extra_flags);
 	}
 
 	if (pull->offset != pull->data_size) {
@@ -1344,10 +1645,10 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 	}
 
 	/* call the dispatch function */
-	status = context->iface->dispatch(call, call, call->r);
+	status = call->context->iface->dispatch(call, call, call->r);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(5,("dcerpc fault in call %s:%02x - %s\n",
-			 context->iface->name, 
+			 call->context->iface->name,
 			 call->pkt.u.request.opnum,
 			 dcerpc_errstr(pull, call->fault_code)));
 		return dcesrv_fault(call, call->fault_code);
@@ -1462,10 +1763,33 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 		}
 
 		if (call->pkt.pfc_flags & DCERPC_PFC_FLAG_FIRST) {
+			if (dce_conn->pending_call_list != NULL) {
+				/*
+				 * concurrent requests are only allowed
+				 * if DCERPC_PFC_FLAG_CONC_MPX was negotiated.
+				 */
+				if (!(dce_conn->state_flags & DCESRV_CALL_STATE_FLAG_MULTIPLEXED)) {
+					dcesrv_call_disconnect_after(call,
+						"dcesrv_auth_request - "
+						"existing pending call without CONN_MPX");
+					return dcesrv_fault(call,
+						DCERPC_NCA_S_PROTO_ERROR);
+				}
+			}
 			/* only one request is possible in the fragmented list */
 			if (dce_conn->incoming_fragmented_call_list != NULL) {
-				TALLOC_FREE(call);
-				call = dce_conn->incoming_fragmented_call_list;
+				if (!(dce_conn->state_flags & DCESRV_CALL_STATE_FLAG_MULTIPLEXED)) {
+					/*
+					 * Without DCERPC_PFC_FLAG_CONC_MPX
+					 * we need to return the FAULT on the
+					 * already existing call.
+					 *
+					 * This is important to get the
+					 * call_id and context_id right.
+					 */
+					TALLOC_FREE(call);
+					call = dce_conn->incoming_fragmented_call_list;
+				}
 				dcesrv_call_disconnect_after(call,
 					"dcesrv_auth_request - "
 					"existing fragmented call");
@@ -1475,6 +1799,12 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 			if (call->pkt.pfc_flags & DCERPC_PFC_FLAG_PENDING_CANCEL) {
 				return dcesrv_fault_disconnect(call,
 						DCERPC_FAULT_NO_CALL_ACTIVE);
+			}
+			call->context = dcesrv_find_context(call->conn,
+						call->pkt.u.request.context_id);
+			if (call->context == NULL) {
+				return dcesrv_fault_with_flags(call, DCERPC_NCA_S_UNKNOWN_IF,
+					DCERPC_PFC_FLAG_DID_NOT_EXECUTE);
 			}
 		} else {
 			const struct dcerpc_request *nr = &call->pkt.u.request;
@@ -1512,8 +1842,29 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 						DCERPC_NCA_S_PROTO_ERROR);
 			}
 		}
+	}
 
-		if (!dcesrv_auth_request(call, &blob)) {
+	if (call->pkt.ptype == DCERPC_PKT_REQUEST) {
+		bool ok;
+		uint8_t payload_offset = DCERPC_REQUEST_LENGTH;
+
+		if (call->pkt.pfc_flags & DCERPC_PFC_FLAG_OBJECT_UUID) {
+			payload_offset += 16;
+		}
+
+		ok = dcesrv_auth_pkt_pull(call, &blob,
+					  0, /* required_flags */
+					  DCERPC_PFC_FLAG_FIRST |
+					  DCERPC_PFC_FLAG_LAST |
+					  DCERPC_PFC_FLAG_PENDING_CANCEL |
+					  0x08 | /* this is not defined, but should be ignored */
+					  DCERPC_PFC_FLAG_CONC_MPX |
+					  DCERPC_PFC_FLAG_DID_NOT_EXECUTE |
+					  DCERPC_PFC_FLAG_MAYBE |
+					  DCERPC_PFC_FLAG_OBJECT_UUID,
+					  payload_offset,
+					  &call->pkt.u.request.stub_and_verifier);
+		if (!ok) {
 			/*
 			 * We don't use dcesrv_fault_disconnect()
 			 * here, because we don't want to set
@@ -1521,7 +1872,10 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 			 */
 			dcesrv_call_disconnect_after(call,
 						"dcesrv_auth_request - failed");
-			return dcesrv_fault(call, DCERPC_FAULT_ACCESS_DENIED);
+			if (call->fault_code == 0) {
+				call->fault_code = DCERPC_FAULT_ACCESS_DENIED;
+			}
+			return dcesrv_fault(call, call->fault_code);
 		}
 	}
 
@@ -1615,6 +1969,21 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 	case DCERPC_PKT_REQUEST:
 		status = dcesrv_request(call);
 		break;
+	case DCERPC_PKT_CO_CANCEL:
+	case DCERPC_PKT_ORPHANED:
+		/*
+		 * Window just ignores CO_CANCEL and ORPHANED,
+		 * so we do...
+		 */
+		status = NT_STATUS_OK;
+		TALLOC_FREE(call);
+		break;
+	case DCERPC_PKT_BIND_ACK:
+	case DCERPC_PKT_BIND_NAK:
+	case DCERPC_PKT_ALTER_RESP:
+	case DCERPC_PKT_RESPONSE:
+	case DCERPC_PKT_FAULT:
+	case DCERPC_PKT_SHUTDOWN:
 	default:
 		status = dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
 		break;
@@ -1694,11 +2063,9 @@ static int num_ep_servers;
   The 'name' can be later used by other backends to find the operations
   structure for this backend.  
 
-  The 'type' is used to specify whether this is for a disk, printer or IPC$ share
 */
-_PUBLIC_ NTSTATUS dcerpc_register_ep_server(const void *_ep_server)
+_PUBLIC_ NTSTATUS dcerpc_register_ep_server(const struct dcesrv_endpoint_server *ep_server)
 {
-	const struct dcesrv_endpoint_server *ep_server = _ep_server;
 	
 	if (dcesrv_ep_server_byname(ep_server->name) != NULL) {
 		/* its already registered! */
@@ -2025,6 +2392,13 @@ static void dcesrv_sock_accept(struct stream_connection *srv_conn)
 			return;
 		}
 	}
+
+	/*
+	 * This fills in dcesrv_conn->endpoint with the endpoint
+	 * associated with the socket.  From this point on we know
+	 * which (group of) services we are handling, but not the
+	 * specific interface.
+	 */
 
 	status = dcesrv_endpoint_connect(dcesrv_sock->dcesrv_ctx,
 					 srv_conn,
@@ -2355,8 +2729,14 @@ static NTSTATUS add_socket_rpc_tcp_iface(struct dcesrv_context *dce_ctx, struct 
 				     lpcfg_socket_options(dce_ctx->lp_ctx),
 				     dcesrv_sock);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,("service_setup_stream_socket(address=%s,port=%u) failed - %s\n", 
-			 address, port, nt_errstr(status)));
+		struct dcesrv_if_list *iface;
+		DEBUG(0,("service_setup_stream_socket(address=%s,port=%u) for ",
+			 address, port));
+		for (iface = e->interface_list; iface; iface = iface->next) {
+			DEBUGADD(0, ("%s ", iface->iface.name));
+		}
+		DEBUGADD(0, ("failed - %s",
+			     nt_errstr(status)));
 		return status;
 	}
 
@@ -2368,6 +2748,14 @@ static NTSTATUS add_socket_rpc_tcp_iface(struct dcesrv_context *dce_ctx, struct 
 		DEBUG(0,("dcerpc_binding_set_string_option(endpoint, %s) failed - %s\n",
 			 port_str, nt_errstr(status)));
 		return status;
+	} else {
+		struct dcesrv_if_list *iface;
+		DEBUG(4,("Successfully listening on ncacn_ip_tcp endpoint [%s]:[%s] for ",
+			 address, port_str));
+		for (iface = e->interface_list; iface; iface = iface->next) {
+			DEBUGADD(4, ("%s ", iface->iface.name));
+		}
+		DEBUGADD(4, ("\n"));
 	}
 
 	return NT_STATUS_OK;

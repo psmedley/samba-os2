@@ -2,12 +2,12 @@
 .\"     Title: ctdb-tunables
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 10/24/2016
+.\"      Date: 06/06/2017
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB\-TUNABLES" "7" "10/24/2016" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB\-TUNABLES" "7" "06/06/2017" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -37,6 +37,8 @@ CTDB\*(Aqs behaviour can be configured by setting run\-time tunable variables\&.
 and
 \fBgetvar\fR
 commands for more details\&.
+.PP
+Unless otherwise stated, tunables should be set to the same value on all nodes\&. Setting tunables to different values across nodes may produce unexpected results\&. Future releases may set (some or most) tunables globally across the cluster but doing so is currently a manual process\&.
 .PP
 The tunable variables are listed alphabetically\&.
 .SS "AllowClientDBAttach"
@@ -86,13 +88,6 @@ Default: 120
 When databases are frozen we do not allow clients to attach to the databases\&. Instead of returning an error immediately to the client, the attach request from the client is deferred until the database becomes available again at which stage we respond to the client\&.
 .PP
 This timeout controls how long we will defer the request from the client before timing it out and returning an error to the client\&.
-.SS "DeterministicIPs"
-.PP
-Default: 0
-.PP
-When set to 1, ctdb will try to keep public IP addresses locked to specific nodes as far as possible\&. This makes it easier for debugging since you can know that as long as all nodes are healthy public IP X will always be hosted by node Y\&.
-.PP
-The cost of using deterministic IP address assignment is that it disables part of the logic where ctdb tries to reduce the number of public IP assignment changes in the cluster\&. This tunable may increase the number of IP failover/failbacks that are performed on the cluster by a small margin\&.
 .SS "DisableIPFailover"
 .PP
 Default: 0
@@ -111,7 +106,7 @@ Default: 1
 .PP
 This parameter allows ctdb to ban a node if the node is misbehaving\&.
 .PP
-When set to 0, this disables banning completely in the cluster and thus nodes can not get banned, even it they break\&. Don\*(Aqt set to 0 unless you know what you are doing\&. You should set this to the same value on all nodes to avoid unexpected behaviour\&.
+When set to 0, this disables banning completely in the cluster and thus nodes can not get banned, even it they break\&. Don\*(Aqt set to 0 unless you know what you are doing\&.
 .SS "EventScriptTimeout"
 .PP
 Default: 30
@@ -136,6 +131,34 @@ seconds\&. This means that after each migration the sticky record will be kept o
 \fIStickyPindown\fRmilliseconds and prevented from being migrated off the node\&.
 .PP
 This will improve performance for certain workloads, such as locking\&.tdb if many clients are opening/closing the same file concurrently\&.
+.SS "IPAllocAlgorithm"
+.PP
+Default: 2
+.PP
+Selects the algorithm that CTDB should use when doing public IP address allocation\&. Meaningful values are:
+.PP
+0
+.RS 4
+Deterministic IP address allocation\&.
+.sp
+This is a simple and fast option\&. However, it can cause unnecessary address movement during fail\-over because each address has a "home" node\&. Works badly when some nodes do not have any addresses defined\&. Should be used with care when addresses are defined across multiple networks\&.
+.RE
+.PP
+1
+.RS 4
+Non\-deterministic IP address allocation\&.
+.sp
+This is a relatively fast option that attempts to do a minimise unnecessary address movements\&. Addresses do not have a "home" node\&. Rebalancing is limited but it usually adequate\&. Works badly when addresses are defined across multiple networks\&.
+.RE
+.PP
+2
+.RS 4
+LCP2 IP address allocation\&.
+.sp
+Uses a heuristic to assign addresses defined across multiple networks, usually balancing addresses on each network evenly across nodes\&. Addresses do not have a "home" node\&. Minimises unnecessary address movements\&. The algorithm is complex, so is slower than other choices for a large number of addresses\&. However, it can calculate an optimal assignment of 900 addresses in under 10 seconds on modern hardware\&.
+.RE
+.PP
+If the specified value is not one of these then the default will be used\&.
 .SS "KeepaliveInterval"
 .PP
 Default: 5
@@ -151,11 +174,6 @@ If a node has hung, it can take
 \fIKeepaliveInterval\fR
 * (\fIKeepaliveLimit\fR
 + 1) seconds before ctdb determines that the node is DISCONNECTED and performs a recovery\&. This limit should not be set too high to enable early detection and avoid any application timeouts (e\&.g\&. SMB1) to kick in before the fail over is completed\&.
-.SS "LCP2PublicIPs"
-.PP
-Default: 1
-.PP
-When set to 1, ctdb uses the LCP2 ip allocation algorithm\&.
 .SS "LockProcessesPerDB"
 .PP
 Default: 200
@@ -194,12 +212,12 @@ When you enable this tunable, ctdb will no longer attempt to rebalance the clust
 .PP
 Default: 0
 .PP
-If no nodes are HEALTHY then by default ctdb will happily host public IPs on disabled (unhealthy or administratively disabled) nodes\&. This can cause problems, for example if the underlying cluster filesystem is not mounted\&. When set to 1 on a node and that node is disabled, any IPs hosted by this node will be released and the node will not takeover any IPs until it is no longer disabled\&.
+If no nodes are HEALTHY then by default ctdb will happily host public IPs on disabled (unhealthy or administratively disabled) nodes\&. This can cause problems, for example if the underlying cluster filesystem is not mounted\&. When set to 1 and a node is disabled, any IPs hosted by this node will be released and the node will not takeover any IPs until it is no longer disabled\&.
 .SS "NoIPTakeover"
 .PP
 Default: 0
 .PP
-When set to 1, ctdb will not allow IP addresses to be failed over onto this node\&. Any IP addresses that the node currently hosts will remain on the node but no new IP addresses can be failed over to the node\&.
+When set to 1, ctdb will not allow IP addresses to be failed over to other nodes\&. Any IP addresses already hosted on healthy nodes will remain\&. Usually IP addresses hosted on unhealthy nodes will also remain, if NoIPHostOnAllDisabled is 0\&. However, if NoIPHostOnAllDisabled is 1 then IP addresses will be released by unhealthy nodes and will become un\-hosted\&.
 .SS "PullDBPreallocation"
 .PP
 Default: 10*1024*1024
@@ -239,15 +257,6 @@ When using a reclock file for split brain prevention, if set to non\-zero this t
 Default: 1
 .PP
 How frequently in seconds should the recovery daemon perform the consistency checks to determine if it should perform a recovery\&.
-.SS "RecoverPDBBySeqNum"
-.PP
-Default: 1
-.PP
-When set to zero, database recovery for persistent databases is record\-by\-record and recovery process simply collects the most recent version of every individual record\&.
-.PP
-When set to non\-zero, persistent databases will instead be recovered as a whole db and not by individual records\&. The node that contains the highest value stored in the record "__db_sequence_number__" is selected and the copy of that nodes database is used as the recovered database\&.
-.PP
-By default, recovery of persistent databses is done using __db_sequence_number__ record\&.
 .SS "RecoverTimeout"
 .PP
 Default: 120

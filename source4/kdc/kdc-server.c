@@ -83,6 +83,8 @@ static NTSTATUS kdc_proxy_unavailable_error(struct kdc_server *kdc,
 				 KRB5KDC_ERR_SVC_UNAVAILABLE,
 				 NULL,
 				 NULL,
+				 NULL,
+				 NULL,
 				 &enc_error);
 	if (code != 0) {
 		DBG_WARNING("Unable to form krb5 error reply\n");
@@ -90,7 +92,7 @@ static NTSTATUS kdc_proxy_unavailable_error(struct kdc_server *kdc,
 	}
 
 	*out = data_blob_talloc(mem_ctx, enc_error.data, enc_error.length);
-	kerberos_free_data_contents(kdc->smb_krb5_context->krb5_context,
+	smb_krb5_free_data_contents(kdc->smb_krb5_context->krb5_context,
 				    &enc_error);
 	if (!out->data) {
 		return NT_STATUS_NO_MEMORY;

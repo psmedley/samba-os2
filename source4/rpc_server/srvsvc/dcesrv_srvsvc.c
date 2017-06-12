@@ -67,7 +67,7 @@ static WERROR dcesrv_srvsvc_NetCharDevEnum(struct dcesrv_call_state *dce_call, T
 		return WERR_NOT_SUPPORTED;
 
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -90,7 +90,7 @@ static WERROR dcesrv_srvsvc_NetCharDevGetInfo(struct dcesrv_call_state *dce_call
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -135,7 +135,7 @@ static WERROR dcesrv_srvsvc_NetCharDevQEnum(struct dcesrv_call_state *dce_call, 
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -158,7 +158,7 @@ static WERROR dcesrv_srvsvc_NetCharDevQGetInfo(struct dcesrv_call_state *dce_cal
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -185,7 +185,7 @@ static WERROR dcesrv_srvsvc_NetCharDevQSetInfo(struct dcesrv_call_state *dce_cal
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -240,7 +240,7 @@ static WERROR dcesrv_srvsvc_NetConnEnum(struct dcesrv_call_state *dce_call, TALL
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -275,7 +275,7 @@ static WERROR dcesrv_srvsvc_NetFileEnum(struct dcesrv_call_state *dce_call, TALL
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -298,7 +298,7 @@ static WERROR dcesrv_srvsvc_NetFileGetInfo(struct dcesrv_call_state *dce_call, T
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -373,7 +373,7 @@ static WERROR dcesrv_srvsvc_NetSessEnum(struct dcesrv_call_state *dce_call, TALL
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -441,7 +441,7 @@ static WERROR dcesrv_srvsvc_NetShareAdd(struct dcesrv_call_state *dce_call, TALL
 			info[i].value = talloc_strdup(info, "IPC");
 			break;
 		default:
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 		W_ERROR_HAVE_NO_MEMORY(info[i].value);
 		i++;
@@ -539,7 +539,7 @@ static WERROR dcesrv_srvsvc_NetShareAdd(struct dcesrv_call_state *dce_call, TALL
 			info[i].value = talloc_strdup(info, "IPC");
 			break;
 		default:
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 		W_ERROR_HAVE_NO_MEMORY(info[i].value);
 		i++;
@@ -599,7 +599,7 @@ static WERROR dcesrv_srvsvc_NetShareAdd(struct dcesrv_call_state *dce_call, TALL
 		return WERR_OK;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -678,7 +678,7 @@ static WERROR dcesrv_srvsvc_fiel_ShareInfo(struct dcesrv_call_state *dce_call, T
 		return WERR_OK;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -736,7 +736,7 @@ static WERROR dcesrv_srvsvc_NetShareEnumAll(struct dcesrv_call_state *dce_call, 
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 			info.info0 = &ctr0->array[i];
 			status = dcesrv_srvsvc_fiel_ShareInfo(dce_call, mem_ctx, scfg, r->in.info_ctr->level, &info);
@@ -777,7 +777,7 @@ static WERROR dcesrv_srvsvc_NetShareEnumAll(struct dcesrv_call_state *dce_call, 
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 			info.info1 = &ctr1->array[i];
 			status = dcesrv_srvsvc_fiel_ShareInfo(dce_call, mem_ctx, scfg, r->in.info_ctr->level, &info);
@@ -821,7 +821,7 @@ static WERROR dcesrv_srvsvc_NetShareEnumAll(struct dcesrv_call_state *dce_call, 
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 			info.info2 = &ctr2->array[i];
 			status = dcesrv_srvsvc_fiel_ShareInfo(dce_call, mem_ctx, scfg, r->in.info_ctr->level, &info);
@@ -865,7 +865,7 @@ static WERROR dcesrv_srvsvc_NetShareEnumAll(struct dcesrv_call_state *dce_call, 
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 			info.info501 = &ctr501->array[i];
 			status = dcesrv_srvsvc_fiel_ShareInfo(dce_call, mem_ctx, scfg, r->in.info_ctr->level, &info);
@@ -909,7 +909,7 @@ static WERROR dcesrv_srvsvc_NetShareEnumAll(struct dcesrv_call_state *dce_call, 
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 			info.info502 = &ctr502->array[i];
 			status = dcesrv_srvsvc_fiel_ShareInfo(dce_call, mem_ctx, scfg, r->in.info_ctr->level, &info);
@@ -926,7 +926,7 @@ static WERROR dcesrv_srvsvc_NetShareEnumAll(struct dcesrv_call_state *dce_call, 
 		return WERR_OK;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -947,7 +947,7 @@ static WERROR dcesrv_srvsvc_NetShareGetInfo(struct dcesrv_call_state *dce_call, 
 	 */
 
 	if (strcmp("", r->in.share_name) == 0) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	nterr = share_get_context_by_name(mem_ctx, lpcfg_share_backend(dce_call->conn->dce_ctx->lp_ctx), dce_call->event_ctx, dce_call->conn->dce_ctx->lp_ctx, &sctx);
@@ -1062,7 +1062,7 @@ static WERROR dcesrv_srvsvc_NetShareGetInfo(struct dcesrv_call_state *dce_call, 
 		return WERR_OK;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -1142,7 +1142,7 @@ static WERROR dcesrv_srvsvc_fill_share_info(struct share_info *info, int *count,
 			info[i].value = talloc_strdup(info, "IPC");
 			break;
 		default:
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 		W_ERROR_HAVE_NO_MEMORY(info[i].value);
 		i++;
@@ -1169,7 +1169,7 @@ static WERROR dcesrv_srvsvc_fill_share_info(struct share_info *info, int *count,
 		break;
 
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	*count = i;
@@ -1197,7 +1197,7 @@ static WERROR dcesrv_srvsvc_NetShareSetInfo(struct dcesrv_call_state *dce_call, 
 	W_ERROR_HAVE_NO_MEMORY(info);
 
 	if (strcmp("", r->in.share_name) == 0) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	nterr = share_get_context_by_name(mem_ctx, lpcfg_share_backend(dce_call->conn->dce_ctx->lp_ctx), dce_call->event_ctx, dce_call->conn->dce_ctx->lp_ctx, &sctx);
@@ -1319,7 +1319,7 @@ static WERROR dcesrv_srvsvc_NetShareSetInfo(struct dcesrv_call_state *dce_call, 
 		return WERR_OK;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	nterr = share_set(sctx, r->in.share_name, info, count);
@@ -1374,7 +1374,7 @@ static WERROR dcesrv_srvsvc_NetShareCheck(struct dcesrv_call_state *dce_call, TA
 		device = talloc_strdup(mem_ctx, &r->in.device_name[2]);
 	} else {
 		/* no chance we have a share that doesn't start with C:\ */
-		return WERR_DEVICE_NOT_SHARED;
+		return WERR_NERR_DEVICENOTSHARED;
 	}
 	all_string_sub(device, "\\", "/", 0);
 
@@ -1420,7 +1420,7 @@ static WERROR dcesrv_srvsvc_NetShareCheck(struct dcesrv_call_state *dce_call, TA
 		}
 	}
 
-	return WERR_DEVICE_NOT_SHARED;
+	return WERR_NERR_DEVICENOTSHARED;
 }
 
 
@@ -1500,7 +1500,7 @@ static WERROR dcesrv_srvsvc_NetSrvGetInfo(struct dcesrv_call_state *dce_call, TA
 		return WERR_OK;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -1546,7 +1546,7 @@ static WERROR dcesrv_srvsvc_NetDiskEnum(struct dcesrv_call_state *dce_call, TALL
 		return WERR_OK;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -1625,7 +1625,7 @@ static WERROR dcesrv_srvsvc_NetTransportEnum(struct dcesrv_call_state *dce_call,
 		return WERR_NOT_SUPPORTED;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -1753,7 +1753,7 @@ static WERROR dcesrv_srvsvc_NetNameValidate(struct dcesrv_call_state *dce_call, 
 	case 13:
 		return WERR_NOT_SUPPORTED;
 	default:
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 }
 
@@ -1826,7 +1826,7 @@ static WERROR dcesrv_srvsvc_NetShareEnum(struct dcesrv_call_state *dce_call, TAL
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 			
 			type = dcesrv_common_get_share_type(mem_ctx, dce_ctx, scfg);
@@ -1878,7 +1878,7 @@ static WERROR dcesrv_srvsvc_NetShareEnum(struct dcesrv_call_state *dce_call, TAL
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 
 			type = dcesrv_common_get_share_type(mem_ctx, dce_ctx, scfg);
@@ -1932,7 +1932,7 @@ static WERROR dcesrv_srvsvc_NetShareEnum(struct dcesrv_call_state *dce_call, TAL
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 
 			type = dcesrv_common_get_share_type(mem_ctx, dce_ctx, scfg);
@@ -1986,7 +1986,7 @@ static WERROR dcesrv_srvsvc_NetShareEnum(struct dcesrv_call_state *dce_call, TAL
 			nterr = share_get_config(mem_ctx, sctx, snames[i], &scfg);
 			if (!NT_STATUS_IS_OK(nterr)) {
 				DEBUG(1, ("ERROR: Service [%s] disappeared after enumeration", snames[i]));
-				return WERR_GENERAL_FAILURE;
+				return WERR_GEN_FAILURE;
 			}
 
 		       	type = dcesrv_common_get_share_type(mem_ctx, dce_ctx, scfg);
@@ -2010,7 +2010,7 @@ static WERROR dcesrv_srvsvc_NetShareEnum(struct dcesrv_call_state *dce_call, TAL
 		return WERR_OK;
 	}
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 

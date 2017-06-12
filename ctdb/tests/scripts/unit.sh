@@ -75,7 +75,7 @@ cat <<EOF
 Output (Exit status: ${_rc}):
 --------------------------------------------------
 EOF
-	echo "$_out" | cat $TEST_CAT_RESULTS_OPTS
+	echo "$_out" | result_filter | cat $TEST_CAT_RESULTS_OPTS
     fi
 
     if ! $_passed ; then
@@ -205,6 +205,16 @@ script_test ()
     fi
 
     _out=$($_shell "$@" 2>&1)
+
+    result_check || exit $?
+}
+
+# Simple test harness for running tests without tracing
+unit_test_notrace ()
+{
+    test_header "$@"
+
+    _out=$("$@" 2>&1)
 
     result_check || exit $?
 }

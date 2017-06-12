@@ -31,6 +31,7 @@
 #include "rpc_client/cli_samr.h"
 #include "rpc_client/cli_lsarpc.h"
 #include "../libcli/security/security.h"
+#include "libsmb/samlogon_cache.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_WINBIND
@@ -48,21 +49,15 @@ static NTSTATUS winbindd_lookup_names(TALLOC_CTX *mem_ctx,
    application. */
 static NTSTATUS msrpc_query_user_list(struct winbindd_domain *domain,
 				      TALLOC_CTX *mem_ctx,
-				      uint32_t *pnum_info,
-				      struct wbint_userinfo **pinfo)
+				      uint32_t **prids)
 {
 	struct rpc_pipe_client *samr_pipe = NULL;
 	struct policy_handle dom_pol;
-	struct wbint_userinfo *info = NULL;
-	uint32_t num_info = 0;
+	uint32_t *rids = NULL;
 	TALLOC_CTX *tmp_ctx;
 	NTSTATUS status;
 
 	DEBUG(3, ("msrpc_query_user_list\n"));
-
-	if (pnum_info) {
-		*pnum_info = 0;
-	}
 
 	tmp_ctx = talloc_stackframe();
 	if (tmp_ctx == NULL) {
@@ -85,21 +80,17 @@ static NTSTATUS msrpc_query_user_list(struct winbindd_domain *domain,
 				     samr_pipe,
 				     &dom_pol,
 				     &domain->sid,
-				     &num_info,
-				     &info);
+				     &rids);
 	if (!NT_STATUS_IS_OK(status)) {
 		goto done;
 	}
 
-	if (pnum_info) {
-		*pnum_info = num_info;
-	}
-
-	if (pinfo) {
-		*pinfo = talloc_move(mem_ctx, &info);
+	if (prids) {
+		*prids = talloc_move(mem_ctx, &rids);
 	}
 
 done:
+	TALLOC_FREE(rids);
 	TALLOC_FREE(tmp_ctx);
 	return status;
 }
@@ -402,84 +393,6 @@ static NTSTATUS msrpc_rids_to_names(struct winbindd_domain *domain,
 	return result;
 }
 
-/* Lookup user information from a rid or username. */
-static NTSTATUS msrpc_query_user(struct winbindd_domain *domain,
-			   TALLOC_CTX *mem_ctx, 
-			   const struct dom_sid *user_sid,
-			   struct wbint_userinfo *user_info)
-{
-	struct rpc_pipe_client *samr_pipe;
-	struct policy_handle dom_pol;
-	struct netr_SamInfo3 *user;
-	TALLOC_CTX *tmp_ctx;
-	NTSTATUS status;
-
-	DEBUG(3,("msrpc_query_user sid=%s\n", sid_string_dbg(user_sid)));
-
-	tmp_ctx = talloc_stackframe();
-	if (tmp_ctx == NULL) {
-		return NT_STATUS_NO_MEMORY;
-	}
-
-	if (user_info) {
-		user_info->homedir = NULL;
-		user_info->shell = NULL;
-		user_info->primary_gid = (gid_t)-1;
-	}
-
-	/* try netsamlogon cache first */
-	user = netsamlogon_cache_get(tmp_ctx, user_sid);
-	if (user != NULL) {
-		DEBUG(5,("msrpc_query_user: Cache lookup succeeded for %s\n",
-			sid_string_dbg(user_sid)));
-
-		sid_compose(&user_info->user_sid, &domain->sid, user->base.rid);
-		sid_compose(&user_info->group_sid, &domain->sid,
-			    user->base.primary_gid);
-
-		user_info->acct_name = talloc_strdup(user_info,
-						     user->base.account_name.string);
-		user_info->full_name = talloc_strdup(user_info,
-						     user->base.full_name.string);
-
-		if (user_info->full_name == NULL) {
-			/* this might fail so we don't check the return code */
-			wcache_query_user_fullname(domain,
-						   mem_ctx,
-						   user_sid,
-						   &user_info->full_name);
-		}
-
-		status = NT_STATUS_OK;
-		goto done;
-	}
-
-	if ( !winbindd_can_contact_domain( domain ) ) {
-		DEBUG(10,("query_user: No incoming trust for domain %s\n",
-			  domain->name));
-		/* Tell the cache manager not to remember this one */
-		status = NT_STATUS_SYNCHRONIZATION_REQUIRED;
-		goto done;
-	}
-
-	/* no cache; hit the wire */
-	status = cm_connect_sam(domain, tmp_ctx, false, &samr_pipe, &dom_pol);
-	if (!NT_STATUS_IS_OK(status)) {
-		goto done;
-	}
-
-	status = rpc_query_user(tmp_ctx,
-				samr_pipe,
-				&dom_pol,
-				&domain->sid,
-				user_sid,
-				user_info);
-
-done:
-	TALLOC_FREE(tmp_ctx);
-	return status;
-}
-
 /* Lookup groups a user is a member of.  I wish Unix had a call like this! */
 static NTSTATUS msrpc_lookup_usergroups(struct winbindd_domain *domain,
 					TALLOC_CTX *mem_ctx,
@@ -504,8 +417,7 @@ static NTSTATUS msrpc_lookup_usergroups(struct winbindd_domain *domain,
 	}
 
 	/* Check if we have a cached user_info_3 */
-	status = lookup_usergroups_cached(domain,
-					  tmp_ctx,
+	status = lookup_usergroups_cached(tmp_ctx,
 					  user_sid,
 					  &num_groups,
 					  &user_grpsids);
@@ -1249,7 +1161,6 @@ struct winbindd_methods msrpc_methods = {
 	msrpc_name_to_sid,
 	msrpc_sid_to_name,
 	msrpc_rids_to_names,
-	msrpc_query_user,
 	msrpc_lookup_usergroups,
 	msrpc_lookup_useraliases,
 	msrpc_lookup_groupmem,

@@ -500,7 +500,7 @@ static bool PAC_DATA_pkinit(struct torture_context *tctx,
 	torture_assert_int_equal(tctx, plain_data.length, 112, "plain_data.length");
 	plain_data_blob = data_blob_talloc(tctx, plain_data.data, plain_data.length);
 	torture_assert_int_equal(tctx, plain_data_blob.length, 112, "plain_data_blob.length");
-	kerberos_free_data_contents(ctx, &plain_data);
+	smb_krb5_free_data_contents(ctx, &plain_data);
 	krb5_free_keyblock_contents(ctx, &reply_key);
 	krb5_free_context(ctx);
 	torture_assert_data_blob_equal(tctx,
@@ -636,8 +636,7 @@ struct torture_suite *ndr_krb5pac_suite(TALLOC_CTX *ctx)
 
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_DATA_RAW,
-					data_blob_const(PAC_DATA_data,
-							sizeof(PAC_DATA_data)),
+					PAC_DATA_data,
 					NULL);
 	/*
 	 * We can't use torture_suite_add_ndr_pull_validate_test()
@@ -652,8 +651,7 @@ struct torture_suite *ndr_krb5pac_suite(TALLOC_CTX *ctx)
 
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_DATA_RAW,
-					data_blob_const(PAC_DATA_data2,
-							sizeof(PAC_DATA_data2)),
+					PAC_DATA_data2,
 					NULL);
 	/*
 	 * We can't use torture_suite_add_ndr_pull_validate_test()
@@ -668,47 +666,39 @@ struct torture_suite *ndr_krb5pac_suite(TALLOC_CTX *ctx)
 
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_DATA_RAW,
-					data_blob_const(PAC_DATA_data3,
-							sizeof(PAC_DATA_data3)),
+					PAC_DATA_data3,
 					NULL);
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_DATA,
-					data_blob_const(PAC_DATA_data3,
-							sizeof(PAC_DATA_data3)),
+					PAC_DATA_data3,
 					NULL);
 
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_DATA_RAW,
-					data_blob_const(PAC_DATA_pkinit_AS,
-							sizeof(PAC_DATA_pkinit_AS)),
+					PAC_DATA_pkinit_AS,
 					NULL);
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_DATA,
-					data_blob_const(PAC_DATA_pkinit_AS,
-							sizeof(PAC_DATA_pkinit_AS)),
+					PAC_DATA_pkinit_AS,
 					PAC_DATA_pkinit);
 
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_DATA_RAW,
-					data_blob_const(PAC_DATA_pkinit_TGS,
-							sizeof(PAC_DATA_pkinit_TGS)),
+					PAC_DATA_pkinit_TGS,
 					NULL);
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_DATA,
-					data_blob_const(PAC_DATA_pkinit_AS,
-							sizeof(PAC_DATA_pkinit_TGS)),
+					PAC_DATA_pkinit_AS,
 					PAC_DATA_pkinit);
 
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_CREDENTIAL_DATA_NDR,
-					data_blob_const(PAC_DATA_pkinit_PAC_CREDENTIAL_DATA_NDR,
-							sizeof(PAC_DATA_pkinit_PAC_CREDENTIAL_DATA_NDR)),
+					PAC_DATA_pkinit_PAC_CREDENTIAL_DATA_NDR,
 					PAC_CREDENTIAL_DATA_NDR_check);
 
 	torture_suite_add_ndr_pull_validate_test(suite,
 					PAC_CREDENTIAL_NTLM_SECPKG,
-					data_blob_const(PAC_DATA_pkinit_PAC_CREDENTIAL_NTLM_SECPKG,
-							sizeof(PAC_DATA_pkinit_PAC_CREDENTIAL_NTLM_SECPKG)),
+					PAC_DATA_pkinit_PAC_CREDENTIAL_NTLM_SECPKG,
 					PAC_CREDENTIAL_NTLM_SECPKG_check);
 
 	return suite;

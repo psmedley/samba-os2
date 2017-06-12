@@ -427,6 +427,11 @@ const struct ldb_dn_extended_syntax *ldb_dn_extended_syntax_by_name(struct ldb_c
  */
 #define LDB_ATTR_FLAG_FORCE_BASE64_LDIF        (1<<5)
 
+/*
+ * The attribute was loaded from a DB, rather than via the C API
+ */
+#define LDB_ATTR_FLAG_FROM_DB      (1<<6)
+
 /**
   LDAP attribute syntax for a DN
 
@@ -497,6 +502,13 @@ typedef int (*ldb_qsort_cmp_fn_t) (void *v1, void *v2, void *opaque);
 */
 #define LDB_CONTROL_BYPASS_OPERATIONAL_OID "1.3.6.1.4.1.7165.4.3.13"
 #define LDB_CONTROL_BYPASS_OPERATIONAL_NAME "bypassoperational"
+
+/**
+  OID for recalculate RDN (rdn attribute and 'name') control. This control forces
+  the rdn_name module to the recalculate the rdn and name attributes as if the
+  object was just created.
+*/
+#define LDB_CONTROL_RECALCULATE_RDN_OID "1.3.6.1.4.1.7165.4.3.30"
 
 /**
   OID for recalculate SD control. This control force the

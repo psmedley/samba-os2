@@ -62,6 +62,8 @@ bld.SAMBA_SUBSYSTEM('TORTURE_NDR',
                   ndr/clusapi.c
                   ndr/negoex.c
                   ndr/krb5pac.c
+                  ndr/winspool.c
+                  ndr/cabinet.c
 		  ''',
 	autoproto='ndr/proto.h',
 	deps='torture krb5samba'
@@ -129,6 +131,7 @@ bld.SAMBA_MODULE('torture_rpc',
                         rpc/fsrvp.c
                         rpc/clusapi.c
                         rpc/witness.c
+                        rpc/iremotewinspool.c
                         ''' + torture_rpc_backupkey + ntvfs_specific['source'],
                  autoproto='rpc/proto.h',
                  subsystem='smbtorture',
@@ -175,6 +178,7 @@ bld.SAMBA_MODULE('torture_rpc',
                       RPC_NDR_CLUSAPI
                       RPC_NDR_WITNESS
                       RPC_NDR_BACKUPKEY
+                      RPC_NDR_WINSPOOL
                       ''' + ntvfs_specific['deps'],
                  internal_module=True)
 

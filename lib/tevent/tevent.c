@@ -59,10 +59,18 @@
 */
 #include "replace.h"
 #include "system/filesys.h"
+#ifdef HAVE_PTHREAD
+#include "system/threads.h"
+#endif
 #define TEVENT_DEPRECATED 1
 #include "tevent.h"
 #include "tevent_internal.h"
 #include "tevent_util.h"
+#ifdef HAVE_EVENTFD
+#include <sys/eventfd.h>
+#endif
+
+static void tevent_abort(struct tevent_context *ev, const char *reason);
 
 struct tevent_ops_list {
 	struct tevent_ops_list *next, *prev;
@@ -173,6 +181,120 @@ const char **tevent_backend_list(TALLOC_CTX *mem_ctx)
 	return list;
 }
 
+static void tevent_common_wakeup_fini(struct tevent_context *ev);
+
+#ifdef HAVE_PTHREAD
+
+static pthread_mutex_t tevent_contexts_mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct tevent_context *tevent_contexts = NULL;
+static pthread_once_t tevent_atfork_initialized = PTHREAD_ONCE_INIT;
+
+static void tevent_atfork_prepare(void)
+{
+	struct tevent_context *ev;
+	int ret;
+
+	ret = pthread_mutex_lock(&tevent_contexts_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+	for (ev = tevent_contexts; ev != NULL; ev = ev->next) {
+		struct tevent_threaded_context *tctx;
+
+		for (tctx = ev->threaded_contexts; tctx != NULL;
+		     tctx = tctx->next) {
+			ret = pthread_mutex_lock(&tctx->event_ctx_mutex);
+			if (ret != 0) {
+				tevent_abort(ev, "pthread_mutex_lock failed");
+			}
+		}
+
+		ret = pthread_mutex_lock(&ev->scheduled_mutex);
+		if (ret != 0) {
+			tevent_abort(ev, "pthread_mutex_lock failed");
+		}
+	}
+}
+
+static void tevent_atfork_parent(void)
+{
+	struct tevent_context *ev;
+	int ret;
+
+	for (ev = DLIST_TAIL(tevent_contexts); ev != NULL;
+	     ev = DLIST_PREV(ev)) {
+		struct tevent_threaded_context *tctx;
+
+		ret = pthread_mutex_unlock(&ev->scheduled_mutex);
+		if (ret != 0) {
+			tevent_abort(ev, "pthread_mutex_unlock failed");
+		}
+
+		for (tctx = DLIST_TAIL(ev->threaded_contexts); tctx != NULL;
+		     tctx = DLIST_PREV(tctx)) {
+			ret = pthread_mutex_unlock(&tctx->event_ctx_mutex);
+			if (ret != 0) {
+				tevent_abort(
+					ev, "pthread_mutex_unlock failed");
+			}
+		}
+	}
+
+	ret = pthread_mutex_unlock(&tevent_contexts_mutex);
+	if (ret != 0) {
+		abort();
+	}
+}
+
+static void tevent_atfork_child(void)
+{
+	struct tevent_context *ev;
+	int ret;
+
+	for (ev = DLIST_TAIL(tevent_contexts); ev != NULL;
+	     ev = DLIST_PREV(ev)) {
+		struct tevent_threaded_context *tctx;
+
+		for (tctx = DLIST_TAIL(ev->threaded_contexts); tctx != NULL;
+		     tctx = DLIST_PREV(tctx)) {
+			tctx->event_ctx = NULL;
+
+			ret = pthread_mutex_unlock(&tctx->event_ctx_mutex);
+			if (ret != 0) {
+				tevent_abort(
+					ev, "pthread_mutex_unlock failed");
+			}
+		}
+
+		ev->threaded_contexts = NULL;
+
+		ret = pthread_mutex_unlock(&ev->scheduled_mutex);
+		if (ret != 0) {
+			tevent_abort(ev, "pthread_mutex_unlock failed");
+		}
+	}
+
+	ret = pthread_mutex_unlock(&tevent_contexts_mutex);
+	if (ret != 0) {
+		abort();
+	}
+}
+
+static void tevent_prep_atfork(void)
+{
+	int ret;
+
+	ret = pthread_atfork(tevent_atfork_prepare,
+			     tevent_atfork_parent,
+			     tevent_atfork_child);
+	if (ret != 0) {
+		abort();
+	}
+}
+
+#endif
+
 int tevent_common_context_destructor(struct tevent_context *ev)
 {
 	struct tevent_fd *fd, *fn;
@@ -180,12 +302,48 @@ int tevent_common_context_destructor(struct tevent_context *ev)
 	struct tevent_immediate *ie, *in;
 	struct tevent_signal *se, *sn;
 
-	if (ev->pipe_fde) {
-		talloc_free(ev->pipe_fde);
-		close(ev->pipe_fds[0]);
-		close(ev->pipe_fds[1]);
-		ev->pipe_fde = NULL;
+#ifdef HAVE_PTHREAD
+	int ret;
+
+	ret = pthread_mutex_lock(&tevent_contexts_mutex);
+	if (ret != 0) {
+		abort();
 	}
+
+	DLIST_REMOVE(tevent_contexts, ev);
+
+	ret = pthread_mutex_unlock(&tevent_contexts_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+	while (ev->threaded_contexts != NULL) {
+		struct tevent_threaded_context *tctx = ev->threaded_contexts;
+
+		ret = pthread_mutex_lock(&tctx->event_ctx_mutex);
+		if (ret != 0) {
+			abort();
+		}
+
+		/*
+		 * Indicate to the thread that the tevent_context is
+		 * gone. The counterpart of this is in
+		 * _tevent_threaded_schedule_immediate, there we read
+		 * this under the threaded_context's mutex.
+		 */
+
+		tctx->event_ctx = NULL;
+
+		ret = pthread_mutex_unlock(&tctx->event_ctx_mutex);
+		if (ret != 0) {
+			abort();
+		}
+
+		DLIST_REMOVE(ev->threaded_contexts, tctx);
+	}
+#endif
+
+	tevent_common_wakeup_fini(ev);
 
 	for (fd = ev->fd_events; fd; fd = fn) {
 		fn = fd->next;
@@ -254,6 +412,36 @@ struct tevent_context *tevent_context_init_ops(TALLOC_CTX *mem_ctx,
 
 	ev = talloc_zero(mem_ctx, struct tevent_context);
 	if (!ev) return NULL;
+
+#ifdef HAVE_PTHREAD
+
+	ret = pthread_once(&tevent_atfork_initialized, tevent_prep_atfork);
+	if (ret != 0) {
+		talloc_free(ev);
+		return NULL;
+	}
+
+	ret = pthread_mutex_init(&ev->scheduled_mutex, NULL);
+	if (ret != 0) {
+		talloc_free(ev);
+		return NULL;
+	}
+
+	ret = pthread_mutex_lock(&tevent_contexts_mutex);
+	if (ret != 0) {
+		pthread_mutex_destroy(&ev->scheduled_mutex);
+		talloc_free(ev);
+		return NULL;
+	}
+
+	DLIST_ADD(tevent_contexts, ev);
+
+	ret = pthread_mutex_unlock(&tevent_contexts_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+#endif
 
 	talloc_set_destructor(ev, tevent_common_context_destructor);
 
@@ -620,6 +808,28 @@ done:
 	return ret;
 }
 
+bool tevent_common_have_events(struct tevent_context *ev)
+{
+	if (ev->fd_events != NULL) {
+		if (ev->fd_events != ev->wakeup_fde) {
+			return true;
+		}
+		if (ev->fd_events->next != NULL) {
+			return true;
+		}
+
+		/*
+		 * At this point we just have the wakeup pipe event as
+		 * the only fd_event. That one does not count as a
+		 * regular event, so look at the other event types.
+		 */
+	}
+
+	return ((ev->timer_events != NULL) ||
+		(ev->immediate_events != NULL) ||
+		(ev->signal_events != NULL));
+}
+
 /*
   return on failure or (with 0) if all fd events are removed
 */
@@ -629,10 +839,7 @@ int tevent_common_loop_wait(struct tevent_context *ev,
 	/*
 	 * loop as long as we have events pending
 	 */
-	while (ev->fd_events ||
-	       ev->timer_events ||
-	       ev->immediate_events ||
-	       ev->signal_events) {
+	while (tevent_common_have_events(ev)) {
 		int ret;
 		ret = _tevent_loop_once(ev, location);
 		if (ret != 0) {
@@ -669,4 +876,109 @@ int tevent_re_initialise(struct tevent_context *ev)
 	tevent_common_context_destructor(ev);
 
 	return ev->ops->context_init(ev);
+}
+
+static void wakeup_pipe_handler(struct tevent_context *ev,
+				struct tevent_fd *fde,
+				uint16_t flags, void *_private)
+{
+	ssize_t ret;
+
+	do {
+		/*
+		 * This is the boilerplate for eventfd, but it works
+		 * for pipes too. And as we don't care about the data
+		 * we read, we're fine.
+		 */
+		uint64_t val;
+		ret = read(fde->fd, &val, sizeof(val));
+	} while (ret == -1 && errno == EINTR);
+}
+
+/*
+ * Initialize the wakeup pipe and pipe fde
+ */
+
+int tevent_common_wakeup_init(struct tevent_context *ev)
+{
+	int ret, read_fd;
+
+	if (ev->wakeup_fde != NULL) {
+		return 0;
+	}
+
+#ifdef HAVE_EVENTFD
+	ret = eventfd(0, EFD_NONBLOCK);
+	if (ret == -1) {
+		return errno;
+	}
+	read_fd = ev->wakeup_fd = ret;
+#else
+	{
+		int pipe_fds[2];
+		ret = pipe(pipe_fds);
+		if (ret == -1) {
+			return errno;
+		}
+		ev->wakeup_fd = pipe_fds[1];
+		ev->wakeup_read_fd = pipe_fds[0];
+
+		ev_set_blocking(ev->wakeup_fd, false);
+		ev_set_blocking(ev->wakeup_read_fd, false);
+
+		read_fd = ev->wakeup_read_fd;
+	}
+#endif
+
+	ev->wakeup_fde = tevent_add_fd(ev, ev, read_fd, TEVENT_FD_READ,
+				     wakeup_pipe_handler, NULL);
+	if (ev->wakeup_fde == NULL) {
+		close(ev->wakeup_fd);
+#ifndef HAVE_EVENTFD
+		close(ev->wakeup_read_fd);
+#endif
+		return ENOMEM;
+	}
+
+	return 0;
+}
+
+int tevent_common_wakeup_fd(int fd)
+{
+	ssize_t ret;
+
+	do {
+#ifdef HAVE_EVENTFD
+		uint64_t val = 1;
+		ret = write(fd, &val, sizeof(val));
+#else
+		char c = '\0';
+		ret = write(fd, &c, 1);
+#endif
+	} while ((ret == -1) && (errno == EINTR));
+
+	return 0;
+}
+
+int tevent_common_wakeup(struct tevent_context *ev)
+{
+	if (ev->wakeup_fde == NULL) {
+		return ENOTCONN;
+	}
+
+	return tevent_common_wakeup_fd(ev->wakeup_fd);
+}
+
+static void tevent_common_wakeup_fini(struct tevent_context *ev)
+{
+	if (ev->wakeup_fde == NULL) {
+		return;
+	}
+
+	TALLOC_FREE(ev->wakeup_fde);
+
+	close(ev->wakeup_fd);
+#ifndef HAVE_EVENTFD
+	close(ev->wakeup_read_fd);
+#endif
 }

@@ -317,7 +317,7 @@ net_share_enum_rpc(struct cli_state *cli,
 
 	if (total_entries == 0) {
                 /*  Nope.  Go clean up. */
-		result = WERR_GENERAL_FAILURE;
+		result = WERR_GEN_FAILURE;
 		goto done;
 	}
 
@@ -464,7 +464,7 @@ SMBC_opendir_ctx(SMBCCTX *context,
                 int max_lmb_count;
                 struct sockaddr_storage *ip_list;
                 struct sockaddr_storage server_addr;
-                struct user_auth_info u_info;
+                struct user_auth_info *u_info;
 		NTSTATUS status;
 
 		if (share[0] != (char)0 || path[0] != (char)0) {
@@ -483,17 +483,18 @@ SMBC_opendir_ctx(SMBCCTX *context,
                                  ? INT_MAX
                                  : smbc_getOptionBrowseMaxLmbCount(context));
 
-		memset(&u_info, '\0', sizeof(u_info));
-		u_info.username = talloc_strdup(frame,user);
-		u_info.password = talloc_strdup(frame,password);
-		if (!u_info.username || !u_info.password) {
+		u_info = user_auth_info_init(frame);
+		if (u_info == NULL) {
 			if (dir) {
 				SAFE_FREE(dir->fname);
 				SAFE_FREE(dir);
 			}
 			TALLOC_FREE(frame);
+			errno = ENOMEM;
 			return NULL;
 		}
+		set_cmdline_auth_info_username(u_info, user);
+		set_cmdline_auth_info_password(u_info, password);
 
 		/*
                  * We have server and share and path empty but options
@@ -550,7 +551,7 @@ SMBC_opendir_ctx(SMBCCTX *context,
 
                         cli = get_ipc_connect_master_ip(talloc_tos(),
 							&ip_list[i],
-                                                        &u_info,
+                                                        u_info,
 							&wg_ptr);
 			/* cli == NULL is the master browser refused to talk or
 			   could not be found */

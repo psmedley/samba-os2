@@ -211,7 +211,7 @@ static WERROR create_open_service_handle(struct pipes_struct *p,
 	struct service_control_op *s_op;
 
 	if ( !(info = talloc_zero( NULL, SERVICE_INFO )) )
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 
 	/* the Service Manager has a NULL name */
 
@@ -232,20 +232,20 @@ static WERROR create_open_service_handle(struct pipes_struct *p,
 		/* lookup the SERVICE_CONTROL_OPS */
 
 		if ( !(s_op = find_service_by_name( service )) ) {
-			result = WERR_NO_SUCH_SERVICE;
+			result = WERR_SERVICE_DOES_NOT_EXIST;
 			goto done;
 		}
 
 		info->ops = s_op->ops;
 
 		if ( !(info->name  = talloc_strdup( info, s_op->name )) ) {
-			result = WERR_NOMEM;
+			result = WERR_NOT_ENOUGH_MEMORY;
 			goto done;
 		}
 		break;
 
 	default:
-		result = WERR_NO_SUCH_SERVICE;
+		result = WERR_SERVICE_DOES_NOT_EXIST;
 		goto done;
 	}
 
@@ -279,7 +279,7 @@ WERROR _svcctl_OpenSCManagerW(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !(sec_desc = construct_scm_sd( p->mem_ctx )) )
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 
 	se_map_generic( &r->in.access_mask, &scm_generic_map );
 	status = svcctl_access_check( sec_desc, p->session_info->security_token,
@@ -304,14 +304,14 @@ WERROR _svcctl_OpenServiceW(struct pipes_struct *p,
 
 	service = r->in.ServiceName;
 	if (!service) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	DEBUG(5, ("_svcctl_OpenServiceW: Attempting to open Service [%s], \n", service));
 
 	/* based on my tests you can open a service if you have a valid scm handle */
 
 	if ( !find_service_info_by_hnd( p, r->in.scmanager_handle) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	/*
 	 * Perform access checks. Use the system session_info in order to ensure
@@ -324,7 +324,7 @@ WERROR _svcctl_OpenServiceW(struct pipes_struct *p,
 	if (sec_desc == NULL) {
 		DEBUG(0, ("_svcctl_OpenServiceW: Failed to get a valid security "
 			  "descriptor"));
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	se_map_generic( &r->in.access_mask, &svc_generic_map );
@@ -344,7 +344,7 @@ WERROR _svcctl_CloseServiceHandle(struct pipes_struct *p,
 				  struct svcctl_CloseServiceHandle *r)
 {
 	if ( !close_policy_hnd( p, r->in.handle ) )
-		return  WERR_BADFID;
+		return  WERR_INVALID_HANDLE;
 
 	ZERO_STRUCTP(r->out.handle);
 
@@ -365,7 +365,7 @@ WERROR _svcctl_GetServiceDisplayNameW(struct pipes_struct *p,
 	/* can only use an SCM handle here */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SCM) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	service = r->in.service_name;
 
@@ -395,7 +395,7 @@ WERROR _svcctl_QueryServiceStatus(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SERVICE) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !(info->access_granted & SC_RIGHT_SVC_QUERY_STATUS) )
 		return WERR_ACCESS_DENIED;
@@ -462,7 +462,7 @@ WERROR _svcctl_EnumServicesStatusW(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SCM) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !(info->access_granted & SC_RIGHT_MGR_ENUMERATE_SERVICE) ) {
 		return WERR_ACCESS_DENIED;
@@ -473,7 +473,7 @@ WERROR _svcctl_EnumServicesStatusW(struct pipes_struct *p,
 					p->session_info,
 					&services);
 	if (num_services == -1 ) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
         for ( i=0; i<num_services; i++ ) {
@@ -494,7 +494,7 @@ WERROR _svcctl_EnumServicesStatusW(struct pipes_struct *p,
 
 		ndr = ndr_push_init_ctx(p->mem_ctx);
 		if (ndr == NULL) {
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 
 		ndr_err = ndr_push_ENUM_SERVICE_STATUSW_array(
@@ -527,7 +527,7 @@ WERROR _svcctl_StartServiceW(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SERVICE) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !(info->access_granted & SC_RIGHT_SVC_START) )
 		return WERR_ACCESS_DENIED;
@@ -547,7 +547,7 @@ WERROR _svcctl_ControlService(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SERVICE) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	switch ( r->in.control ) {
 	case SVCCTL_CONTROL_STOP:
@@ -564,7 +564,7 @@ WERROR _svcctl_ControlService(struct pipes_struct *p,
 		return info->ops->service_status( info->name,
 						  r->out.service_status );
 	default:
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 }
 
@@ -580,7 +580,7 @@ WERROR _svcctl_EnumDependentServicesW(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SERVICE) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !(info->access_granted & SC_RIGHT_SVC_ENUMERATE_DEPENDENTS) )
 		return WERR_ACCESS_DENIED;
@@ -591,7 +591,7 @@ WERROR _svcctl_EnumDependentServicesW(struct pipes_struct *p,
 	case SERVICE_STATE_ALL:
 		break;
 	default:
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	/* we have to set the outgoing buffer size to the same as the
@@ -619,7 +619,7 @@ WERROR _svcctl_QueryServiceStatusEx(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SERVICE) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !(info->access_granted & SC_RIGHT_SVC_QUERY_STATUS) )
 		return WERR_ACCESS_DENIED;
@@ -643,7 +643,7 @@ WERROR _svcctl_QueryServiceStatusEx(struct pipes_struct *p,
 			ndr_err = ndr_push_struct_blob(&blob, p->mem_ctx, &svc_stat_proc,
 						       (ndr_push_flags_fn_t)ndr_push_SERVICE_STATUS_PROCESS);
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-				return WERR_INVALID_PARAM;
+				return WERR_INVALID_PARAMETER;
 			}
 
 			r->out.buffer = blob.data;
@@ -652,7 +652,7 @@ WERROR _svcctl_QueryServiceStatusEx(struct pipes_struct *p,
 		}
 
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 
@@ -739,7 +739,7 @@ WERROR _svcctl_QueryServiceConfigW(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SERVICE) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !(info->access_granted & SC_RIGHT_SVC_QUERY_CONFIG) )
 		return WERR_ACCESS_DENIED;
@@ -782,7 +782,7 @@ WERROR _svcctl_QueryServiceConfig2W(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SERVICE) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !(info->access_granted & SC_RIGHT_SVC_QUERY_CONFIG) )
 		return WERR_ACCESS_DENIED;
@@ -808,7 +808,7 @@ WERROR _svcctl_QueryServiceConfig2W(struct pipes_struct *p,
 			ndr_err = ndr_push_struct_blob(&blob, p->mem_ctx, &desc_buf,
 						       (ndr_push_flags_fn_t)ndr_push_SERVICE_DESCRIPTION);
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-				return WERR_INVALID_PARAM;
+				return WERR_INVALID_PARAMETER;
 			}
 
 			break;
@@ -826,7 +826,7 @@ WERROR _svcctl_QueryServiceConfig2W(struct pipes_struct *p,
 			ndr_err = ndr_push_struct_blob(&blob, p->mem_ctx, &actions,
 						       (ndr_push_flags_fn_t)ndr_push_SERVICE_FAILURE_ACTIONS);
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-				return WERR_INVALID_PARAM;
+				return WERR_INVALID_PARAMETER;
 			}
 
 			break;
@@ -834,7 +834,7 @@ WERROR _svcctl_QueryServiceConfig2W(struct pipes_struct *p,
 		break;
 
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	buffer_size = blob.length;
@@ -861,7 +861,7 @@ WERROR _svcctl_LockServiceDatabase(struct pipes_struct *p,
 	/* perform access checks */
 
 	if ( !info || (info->type != SVC_HANDLE_IS_SCM) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !(info->access_granted & SC_RIGHT_MGR_LOCK) )
 		return WERR_ACCESS_DENIED;
@@ -882,9 +882,9 @@ WERROR _svcctl_UnlockServiceDatabase(struct pipes_struct *p,
 
 
 	if ( !info || (info->type != SVC_HANDLE_IS_DBLOCK) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
-	return close_policy_hnd( p, r->out.lock) ? WERR_OK : WERR_BADFID;
+	return close_policy_hnd( p, r->out.lock) ? WERR_OK : WERR_INVALID_HANDLE;
 }
 
 /********************************************************************
@@ -904,7 +904,7 @@ WERROR _svcctl_QueryServiceObjectSecurity(struct pipes_struct *p,
 	/* only support the SCM and individual services */
 
 	if ( !info || !(info->type & (SVC_HANDLE_IS_SERVICE|SVC_HANDLE_IS_SCM)) )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	/* check access reights (according to MSDN) */
 
@@ -914,7 +914,7 @@ WERROR _svcctl_QueryServiceObjectSecurity(struct pipes_struct *p,
 	/* TODO: handle something besides SECINFO_DACL */
 
 	if ( (r->in.security_flags & SECINFO_DACL) != SECINFO_DACL )
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 
 	/* Lookup the security descriptor and marshall it up for a reply */
 	sec_desc = svcctl_get_secdesc(p->mem_ctx,
@@ -922,7 +922,7 @@ WERROR _svcctl_QueryServiceObjectSecurity(struct pipes_struct *p,
 				      get_session_info_system(),
 				      info->name);
 	if (sec_desc == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	*r->out.needed = ndr_size_security_descriptor(sec_desc, 0);
@@ -955,7 +955,7 @@ WERROR _svcctl_SetServiceObjectSecurity(struct pipes_struct *p,
 	NTSTATUS status;
 
 	if ( !info || !(info->type & (SVC_HANDLE_IS_SERVICE|SVC_HANDLE_IS_SCM))  )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	/* can't set the security de4scriptor on the ServiceControlManager */
 
@@ -975,9 +975,9 @@ WERROR _svcctl_SetServiceObjectSecurity(struct pipes_struct *p,
 			break;
 
 		case SECINFO_SACL:
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		default:
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 	}
 
 	if ( !(info->access_granted & required_access) )

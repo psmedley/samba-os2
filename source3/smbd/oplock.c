@@ -25,6 +25,7 @@
 #include "smbd/globals.h"
 #include "messages.h"
 #include "../librpc/gen_ndr/open_files.h"
+#include "../librpc/gen_ndr/ndr_open_files.h"
 
 /*
  * helper function used by the kernel oplock backends to post the break message
@@ -149,29 +150,8 @@ static void downgrade_file_oplock(files_struct *fsp)
 	TALLOC_FREE(fsp->oplock_timeout);
 }
 
-uint32_t map_oplock_to_lease_type(uint16_t op_type)
-{
-	uint32_t ret;
-
-	switch(op_type) {
-	case BATCH_OPLOCK:
-	case BATCH_OPLOCK|EXCLUSIVE_OPLOCK:
-		ret = SMB2_LEASE_READ|SMB2_LEASE_WRITE|SMB2_LEASE_HANDLE;
-		break;
-	case EXCLUSIVE_OPLOCK:
-		ret = SMB2_LEASE_READ|SMB2_LEASE_WRITE;
-		break;
-	case LEVEL_II_OPLOCK:
-		ret = SMB2_LEASE_READ;
-		break;
-	default:
-		ret = SMB2_LEASE_NONE;
-		break;
-	}
-	return ret;
-}
-
-uint32_t get_lease_type(struct share_mode_data *d, struct share_mode_entry *e)
+uint32_t get_lease_type(const struct share_mode_data *d,
+			const struct share_mode_entry *e)
 {
 	if (e->op_type == LEASE_OPLOCK) {
 		return d->leases[e->lease_idx].current_state;
@@ -186,13 +166,39 @@ bool update_num_read_oplocks(files_struct *fsp, struct share_mode_lock *lck)
 	uint32_t num_read_oplocks = 0;
 	uint32_t i;
 
-	if (EXCLUSIVE_OPLOCK_TYPE(fsp->oplock_type)) {
+	if (fsp_lease_type_is_exclusive(fsp)) {
+		const struct share_mode_entry *e = NULL;
+		uint32_t e_lease_type = 0;
+
 		/*
-		 * If we're the only one, we don't need a brlock entry
+		 * If we're fully exclusive, we don't need a brlock entry
 		 */
 		remove_stale_share_mode_entries(d);
-		SMB_ASSERT(d->num_share_modes == 1);
-		SMB_ASSERT(EXCLUSIVE_OPLOCK_TYPE(d->share_modes[0].op_type));
+
+		e = find_share_mode_entry(lck, fsp);
+		if (e != NULL) {
+			e_lease_type = get_lease_type(d, e);
+		}
+
+		if (!lease_type_is_exclusive(e_lease_type)) {
+			char *timestr = NULL;
+
+			timestr = timeval_string(talloc_tos(),
+						 &fsp->open_time,
+						 true);
+
+			NDR_PRINT_DEBUG(share_mode_data, d);
+			DBG_ERR("file [%s] file_id [%s] gen_id [%lu] "
+				"open_time[%s] lease_type [0x%x] "
+				"oplock_type [0x%x]\n",
+				fsp_str_dbg(fsp),
+				file_id_string_tos(&fsp->file_id),
+				fsp->fh->gen_id, timestr,
+				e_lease_type, fsp->oplock_type);
+
+			smb_panic("Found non-exclusive lease");
+		}
+
 		return true;
 	}
 
@@ -1064,7 +1070,7 @@ static void contend_level2_oplocks_begin_default(files_struct *fsp,
 	 * the shared memory area whilst doing this.
 	 */
 
-	if (EXCLUSIVE_OPLOCK_TYPE(fsp->oplock_type)) {
+	if (fsp_lease_type_is_exclusive(fsp)) {
 		/*
 		 * There can't be any level2 oplocks, we're alone.
 		 */

@@ -21,7 +21,6 @@
 */
 
 #include "includes.h"
-#include "system/filesys.h"
 #include "popt_common.h"
 #include "lib/param/param.h"
 
@@ -211,131 +210,6 @@ struct poptOption popt_common_option[] = {
 	POPT_TABLEEND
 };
 
-/****************************************************************************
- * get a password from a a file or file descriptor
- * exit on failure
- * ****************************************************************************/
-
-static void get_password_file(struct user_auth_info *auth_info)
-{
-	int fd = -1;
-	char *p;
-	bool close_it = False;
-	char *spec = NULL;
-	char pass[128];
-
-	if ((p = getenv("PASSWD_FD")) != NULL) {
-		if (asprintf(&spec, "descriptor %s", p) < 0) {
-			return;
-		}
-		sscanf(p, "%d", &fd);
-		close_it = false;
-	} else if ((p = getenv("PASSWD_FILE")) != NULL) {
-		fd = open(p, O_RDONLY, 0);
-		spec = SMB_STRDUP(p);
-		if (fd < 0) {
-			fprintf(stderr, "Error opening PASSWD_FILE %s: %s\n",
-					spec, strerror(errno));
-			exit(1);
-		}
-		close_it = True;
-	}
-
-	if (fd < 0) {
-		fprintf(stderr, "fd = %d, < 0\n", fd);
-		exit(1);
-	}
-
-	for(p = pass, *p = '\0'; /* ensure that pass is null-terminated */
-		p && p - pass < sizeof(pass);) {
-		switch (read(fd, p, 1)) {
-		case 1:
-			if (*p != '\n' && *p != '\0') {
-				*++p = '\0'; /* advance p, and null-terminate pass */
-				break;
-			}
-		case 0:
-			if (p - pass) {
-				*p = '\0'; /* null-terminate it, just in case... */
-				p = NULL; /* then force the loop condition to become false */
-				break;
-			} else {
-				fprintf(stderr, "Error reading password from file %s: %s\n",
-						spec, "empty password\n");
-				SAFE_FREE(spec);
-				exit(1);
-			}
-
-		default:
-			fprintf(stderr, "Error reading password from file %s: %s\n",
-					spec, strerror(errno));
-			SAFE_FREE(spec);
-			exit(1);
-		}
-	}
-	SAFE_FREE(spec);
-
-	set_cmdline_auth_info_password(auth_info, pass);
-	if (close_it) {
-		close(fd);
-	}
-}
-
-static void get_credentials_file(struct user_auth_info *auth_info,
-				 const char *file)
-{
-	XFILE *auth;
-	fstring buf;
-	uint16_t len = 0;
-	char *ptr, *val, *param;
-
-	if ((auth=x_fopen(file, O_RDONLY, 0)) == NULL)
-	{
-		/* fail if we can't open the credentials file */
-		d_printf("ERROR: Unable to open credentials file!\n");
-		exit(-1);
-	}
-
-	while (!x_feof(auth))
-	{
-		/* get a line from the file */
-		if (!x_fgets(buf, sizeof(buf), auth))
-			continue;
-		len = strlen(buf);
-
-		if ((len) && (buf[len-1]=='\n'))
-		{
-			buf[len-1] = '\0';
-			len--;
-		}
-		if (len == 0)
-			continue;
-
-		/* break up the line into parameter & value.
-		 * will need to eat a little whitespace possibly */
-		param = buf;
-		if (!(ptr = strchr_m (buf, '=')))
-			continue;
-
-		val = ptr+1;
-		*ptr = '\0';
-
-		/* eat leading white space */
-		while ((*val!='\0') && ((*val==' ') || (*val=='\t')))
-			val++;
-
-		if (strwicmp("password", param) == 0) {
-			set_cmdline_auth_info_password(auth_info, val);
-		} else if (strwicmp("username", param) == 0) {
-			set_cmdline_auth_info_username(auth_info, val);
-		} else if (strwicmp("domain", param) == 0) {
-			set_cmdline_auth_info_domain(auth_info, val);
-		}
-		memset(buf, 0, sizeof(buf));
-	}
-	x_fclose(auth);
-}
-
 /* Handle command line options:
  *		-U,--user
  *		-A,--authentication-file
@@ -347,68 +221,89 @@ static void get_credentials_file(struct user_auth_info *auth_info,
  * 		-C --use-ccache
  */
 
+struct user_auth_info *cmdline_auth_info;
+static bool popt_common_credentials_ignore_missing_conf;
+static bool popt_common_credentials_delay_post;
+
+void popt_common_credentials_set_ignore_missing_conf(void)
+{
+	popt_common_credentials_delay_post = true;
+}
+
+void popt_common_credentials_set_delay_post(void)
+{
+	popt_common_credentials_delay_post = true;
+}
+
+void popt_common_credentials_post(void)
+{
+	struct user_auth_info *auth_info = cmdline_auth_info;
+
+	if (get_cmdline_auth_info_use_machine_account(auth_info) &&
+	    !set_cmdline_auth_info_machine_account_creds(auth_info))
+	{
+		fprintf(stderr,
+			"Failed to use machine account credentials\n");
+		exit(1);
+	}
+
+	set_cmdline_auth_info_getpass(auth_info);
+}
 
 static void popt_common_credentials_callback(poptContext con,
 					enum poptCallbackReason reason,
 					const struct poptOption *opt,
 					const char *arg, const void *data)
 {
-	const void **pp = discard_const(data);
-	void *p = discard_const(*pp);
-	struct user_auth_info *auth_info =
-		talloc_get_type_abort(p,
-		struct user_auth_info);
+	struct user_auth_info *auth_info = cmdline_auth_info;
 
 	if (reason == POPT_CALLBACK_REASON_PRE) {
-		set_cmdline_auth_info_username(auth_info, "GUEST");
+		auth_info = user_auth_info_init(talloc_autofree_context());
+		if (auth_info == NULL) {
+			fprintf(stderr, "user_auth_info_init() failed\n");
+			exit(1);
+		}
+		cmdline_auth_info = auth_info;
+		return;
+	}
 
-		if (getenv("LOGNAME")) {
-			set_cmdline_auth_info_username(auth_info,
-						       getenv("LOGNAME"));
+	if (reason == POPT_CALLBACK_REASON_POST) {
+		bool ok;
+
+		if (override_logfile) {
+			setup_logging(lp_logfile(talloc_tos()), DEBUG_FILE );
 		}
 
-		if (getenv("USER")) {
-			set_cmdline_auth_info_username(auth_info,
-						       getenv("USER"));
+		ok = lp_load_client(get_dyn_CONFIGFILE());
+		if (!ok) {
+			const char *pname = poptGetInvocationName(con);
+
+			fprintf(stderr, "%s: Can't load %s - run testparm to debug it\n",
+				pname, get_dyn_CONFIGFILE());
+			if (!popt_common_credentials_ignore_missing_conf) {
+				exit(1);
+			}
 		}
 
-		if (getenv("PASSWD")) {
-			set_cmdline_auth_info_password(auth_info,
-						       getenv("PASSWD"));
+		load_interfaces();
+
+		set_cmdline_auth_info_guess(auth_info);
+
+		if (popt_common_credentials_delay_post) {
+			return;
 		}
 
-		if (getenv("PASSWD_FD") || getenv("PASSWD_FILE")) {
-			get_password_file(auth_info);
-		}
-
+		popt_common_credentials_post();
 		return;
 	}
 
 	switch(opt->val) {
 	case 'U':
-		{
-			char *lp;
-			char *puser = SMB_STRDUP(arg);
-
-			if ((lp=strchr_m(puser,'%'))) {
-				size_t len;
-				*lp = '\0';
-				set_cmdline_auth_info_username(auth_info,
-							       puser);
-				set_cmdline_auth_info_password(auth_info,
-							       lp+1);
-				len = strlen(lp+1);
-				memset(lp + 1, '\0', len);
-			} else {
-				set_cmdline_auth_info_username(auth_info,
-							       puser);
-			}
-			SAFE_FREE(puser);
-		}
+		set_cmdline_auth_info_username(auth_info, arg);
 		break;
 
 	case 'A':
-		get_credentials_file(auth_info, arg);
+		set_cmdline_auth_info_from_file(auth_info, arg);
 		break;
 
 	case 'k':
@@ -442,13 +337,6 @@ static void popt_common_credentials_callback(poptContext con,
 		set_cmdline_auth_info_use_pw_nt_hash(auth_info, true);
 		break;
 	}
-}
-
-static struct user_auth_info *global_auth_info;
-
-void popt_common_set_auth_info(struct user_auth_info *auth_info)
-{
-	global_auth_info = auth_info;
 }
 
 /**
@@ -499,9 +387,8 @@ void popt_burn_cmdline_password(int argc, char *argv[])
 }
 
 struct poptOption popt_common_credentials[] = {
-	{ NULL, 0, POPT_ARG_CALLBACK|POPT_CBFLAG_PRE,
-	  (void *)popt_common_credentials_callback, 0,
-	  (const void *)&global_auth_info },
+	{ NULL, 0, POPT_ARG_CALLBACK|POPT_CBFLAG_PRE|POPT_CBFLAG_POST,
+	  (void *)popt_common_credentials_callback, 0, NULL },
 	{ "user", 'U', POPT_ARG_STRING, NULL, 'U', "Set the network username", "USERNAME" },
 	{ "no-pass", 'N', POPT_ARG_NONE, NULL, 'N', "Don't ask for a password" },
 	{ "kerberos", 'k', POPT_ARG_NONE, NULL, 'k', "Use kerberos (active directory) authentication" },

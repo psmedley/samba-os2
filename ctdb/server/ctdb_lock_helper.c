@@ -24,10 +24,12 @@
 
 #include <talloc.h>
 #include <tevent.h>
+#include <tdb.h>
 
+#include "lib/util/sys_rw.h"
 #include "lib/util/tevent_unix.h"
 
-#include "ctdb_private.h"
+#include "protocol/protocol.h"
 
 #include "common/system.h"
 
@@ -55,8 +57,7 @@ static void set_priority(void)
 	realtime = set_scheduler();
 	if (! realtime) {
 		fprintf(stderr,
-			"%s: Unable to set real-time scheduler priority\n",
-			progname);
+			"locking: Unable to set real-time scheduler priority\n");
 	}
 }
 
@@ -79,10 +80,8 @@ static void send_result(int fd, char result)
 static void usage(void)
 {
 	fprintf(stderr, "\n");
-	fprintf(stderr, "Usage: %s <log-fd> <ctdbd-pid> <output-fd> RECORD <db-path> <db-flags> <db-key>\n",
-		progname);
-	fprintf(stderr, "       %s <log-fd> <ctdbd-pid> <output-fd> DB <db1-path> <db1-flags>\n",
-		progname);
+	fprintf(stderr, "Usage: %s <ctdbd-pid> <output-fd> RECORD <db-path> <db-flags> <db-key>\n", progname);
+	fprintf(stderr, "       %s <ctdbd-pid> <output-fd> DB <db-path> <db-flags>\n", progname);
 }
 
 static uint8_t *hex_decode_talloc(TALLOC_CTX *mem_ctx,
@@ -121,16 +120,15 @@ static int lock_record(const char *dbpath, const char *dbflags,
 
 	state->tdb = tdb_open(dbpath, 0, tdb_flags, O_RDWR, 0600);
 	if (state->tdb == NULL) {
-		fprintf(stderr, "%s: Error opening database %s\n",
-			progname, dbpath);
+		fprintf(stderr, "locking: Error opening database %s\n", dbpath);
 		return 1;
 	}
 
 	set_priority();
 
 	if (tdb_chainlock(state->tdb, state->key) < 0) {
-		fprintf(stderr, "%s: Error getting record lock (%s)\n",
-			progname, tdb_errorstr(state->tdb));
+		fprintf(stderr, "locking: Error getting record lock (%s)\n",
+			tdb_errorstr(state->tdb));
 		return 1;
 	}
 
@@ -150,16 +148,15 @@ static int lock_db(const char *dbpath, const char *dbflags,
 
 	state->tdb = tdb_open(dbpath, 0, tdb_flags, O_RDWR, 0600);
 	if (state->tdb == NULL) {
-		fprintf(stderr, "%s: Error opening database %s\n",
-			progname, dbpath);
+		fprintf(stderr, "locking: Error opening database %s\n", dbpath);
 		return 1;
 	}
 
 	set_priority();
 
 	if (tdb_lockall(state->tdb) < 0) {
-		fprintf(stderr, "%s: Error getting db lock (%s)\n",
-			progname, tdb_errorstr(state->tdb));
+		fprintf(stderr, "locking: Error getting db lock (%s)\n",
+			tdb_errorstr(state->tdb));
 		return 1;
 	}
 
@@ -271,7 +268,7 @@ int main(int argc, char *argv[])
 	struct tevent_signal *se;
 	struct tevent_req *req;
 	struct lock_state state = { 0 };
-	int write_fd, log_fd;
+	int write_fd;
 	char result = 0;
 	int ppid;
 	const char *lock_type;
@@ -281,21 +278,14 @@ int main(int argc, char *argv[])
 
 	progname = argv[0];
 
-	if (argc < 5) {
+	if (argc < 4) {
 		usage();
 		exit(1);
 	}
 
-	log_fd = atoi(argv[1]);
-	close(STDOUT_FILENO);
-	close(STDERR_FILENO);
-	dup2(log_fd, STDOUT_FILENO);
-	dup2(log_fd, STDERR_FILENO);
-	close(log_fd);
-
-	ppid = atoi(argv[2]);
-	write_fd = atoi(argv[3]);
-	lock_type = argv[4];
+	ppid = atoi(argv[1]);
+	write_fd = atoi(argv[2]);
+	lock_type = argv[3];
 
 	ev = tevent_context_init(NULL);
 	if (ev == NULL) {
@@ -312,15 +302,6 @@ int main(int argc, char *argv[])
 	}
 
 	if (strcmp(lock_type, "RECORD") == 0) {
-		if (argc != 8) {
-			fprintf(stderr, "%s: Invalid number of arguments (%d)\n",
-				progname, argc);
-			usage();
-			exit(1);
-		}
-		result = lock_record(argv[5], argv[6], argv[7], &state);
-
-	} else if (strcmp(lock_type, "DB") == 0) {
 		if (argc != 7) {
 			fprintf(stderr,
 				"locking: Invalid number of arguments (%d)\n",
@@ -328,10 +309,20 @@ int main(int argc, char *argv[])
 			usage();
 			exit(1);
 		}
-		result = lock_db(argv[5], argv[6], &state);
+		result = lock_record(argv[4], argv[5], argv[6], &state);
+
+	} else if (strcmp(lock_type, "DB") == 0) {
+		if (argc != 6) {
+			fprintf(stderr,
+				"locking: Invalid number of arguments (%d)\n",
+				argc);
+			usage();
+			exit(1);
+		}
+		result = lock_db(argv[4], argv[5], &state);
 
 	} else {
-		fprintf(stderr, "%s: Invalid lock-type '%s'\n", progname, lock_type);
+		fprintf(stderr, "locking: Invalid lock-type '%s'\n", lock_type);
 		usage();
 		exit(1);
 	}

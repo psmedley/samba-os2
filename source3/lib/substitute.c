@@ -456,7 +456,7 @@ void standard_sub_basic(const char *smb_name, const char *domain_name,
 
 /****************************************************************************
  Do some standard substitutions in a string.
- This function will return an talloced string that has to be freed.
+ This function will return a talloced string that has to be freed.
 ****************************************************************************/
 
 char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
@@ -524,9 +524,10 @@ char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
 
 				group_name = gidtoname(pass->pw_gid);
 				if (is_domain_name) {
-					p = strchr_m(group_name, *sep);
-					if (p != NULL) {
-						group_name = p + 1;
+					char *group_sep;
+					group_sep = strchr_m(group_name, *sep);
+					if (group_sep != NULL) {
+						group_name = group_sep + 1;
 					}
 				}
 				a_string = realloc_string_sub(a_string,

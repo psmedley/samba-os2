@@ -30,13 +30,13 @@ static WERROR rcinit_stop( const char *service, struct SERVICE_STATUS *status )
 
 	if (asprintf(&command, "%s/%s/%s stop",
 				get_dyn_MODULESDIR(), SVCCTL_SCRIPT_DIR, service) < 0) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/* we've already performed the access check when the service was opened */
 
 	become_root();
-	ret = smbrun( command , &fd );
+	ret = smbrun(command, &fd, NULL);
 	unbecome_root();
 
 	DEBUGADD(5, ("rcinit_start: [%s] returned [%d]\n", command, ret));
@@ -64,13 +64,13 @@ static WERROR rcinit_start( const char *service )
 
 	if (asprintf(&command, "%s/%s/%s start",
 				get_dyn_MODULESDIR(), SVCCTL_SCRIPT_DIR, service) < 0) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/* we've already performed the access check when the service was opened */
 
 	become_root();
-	ret = smbrun( command , &fd );
+	ret = smbrun(command, &fd, NULL);
 	unbecome_root();
 
 	DEBUGADD(5, ("rcinit_start: [%s] returned [%d]\n", command, ret));
@@ -91,7 +91,7 @@ static WERROR rcinit_status( const char *service, struct SERVICE_STATUS *status 
 
 	if (asprintf(&command, "%s/%s/%s status",
 				get_dyn_MODULESDIR(), SVCCTL_SCRIPT_DIR, service) < 0) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/* we've already performed the access check when the service was opened */
@@ -99,7 +99,7 @@ static WERROR rcinit_status( const char *service, struct SERVICE_STATUS *status 
 	   is STOPPED */
 
 	become_root();
-	ret = smbrun( command , &fd );
+	ret = smbrun(command, &fd, NULL);
 	unbecome_root();
 
 	DEBUGADD(5, ("rcinit_start: [%s] returned [%d]\n", command, ret));

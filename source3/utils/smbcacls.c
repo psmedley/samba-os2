@@ -57,7 +57,7 @@ static NTSTATUS cli_lsa_lookup_domain_sid(struct cli_state *cli,
 	NTSTATUS status, result;
 	TALLOC_CTX *frame = talloc_stackframe();
 
-	status = cli_tree_connect(cli, "IPC$", "?????", "", 0);
+	status = cli_tree_connect(cli, "IPC$", "?????", NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		goto done;
 	}
@@ -733,7 +733,7 @@ static int inherit(struct cli_state *cli, const char *filename,
 /*****************************************************
  Return a connection to a server.
 *******************************************************/
-static struct cli_state *connect_one(struct user_auth_info *auth_info,
+static struct cli_state *connect_one(const struct user_auth_info *auth_info,
 				     const char *server, const char *share)
 {
 	struct cli_state *c = NULL;
@@ -744,13 +744,6 @@ static struct cli_state *connect_one(struct user_auth_info *auth_info,
 		flags |= CLI_FULL_CONNECTION_USE_KERBEROS |
 			 CLI_FULL_CONNECTION_FALLBACK_AFTER_KERBEROS;
 	}
-
-	if (get_cmdline_auth_info_use_machine_account(auth_info) &&
-	    !set_cmdline_auth_info_machine_account_creds(auth_info)) {
-		return NULL;
-	}
-
-	set_cmdline_auth_info_getpass(auth_info);
 
 	nt_status = cli_full_connection(&c, lp_netbios_name(), server,
 				NULL, 0,
@@ -829,7 +822,6 @@ int main(int argc, char *argv[])
 	TALLOC_CTX *frame = talloc_stackframe();
 	const char *owner_username = "";
 	char *server;
-	struct user_auth_info *auth_info;
 
 	smb_init_locale();
 
@@ -839,12 +831,7 @@ int main(int argc, char *argv[])
 
 	setlinebuf(stdout);
 
-
-	auth_info = user_auth_info_init(frame);
-	if (auth_info == NULL) {
-		exit(1);
-	}
-	popt_common_set_auth_info(auth_info);
+	popt_common_credentials_set_ignore_missing_conf();
 
 	pc = poptGetContext("smbcacls", argc, argv_const, long_options, 0);
 
@@ -909,9 +896,6 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	lp_load_global(get_dyn_CONFIGFILE());
-	load_interfaces();
-
 	filename = talloc_strdup(frame, poptGetArg(pc));
 	if (!filename) {
 		return -1;
@@ -919,6 +903,7 @@ int main(int argc, char *argv[])
 
 	poptFreeContext(pc);
 	popt_burn_cmdline_password(argc, argv);
+	popt_common_credentials_post();
 
 	string_replace(path,'/','\\');
 
@@ -936,7 +921,7 @@ int main(int argc, char *argv[])
 	share++;
 
 	if (!test_args) {
-		cli = connect_one(auth_info, server, share);
+		cli = connect_one(cmdline_auth_info, server, share);
 		if (!cli) {
 			exit(EXIT_FAILED);
 		}

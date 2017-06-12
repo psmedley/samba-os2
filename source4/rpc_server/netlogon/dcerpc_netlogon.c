@@ -27,7 +27,6 @@
 #include "auth/auth_sam_reply.h"
 #include "dsdb/samdb/samdb.h"
 #include "../lib/util/util_ldb.h"
-#include "../lib/util/memcache.h"
 #include "../libcli/auth/schannel.h"
 #include "libcli/security/security.h"
 #include "param/param.h"
@@ -46,13 +45,21 @@
 
 #define DCESRV_INTERFACE_NETLOGON_BIND(call, iface) \
        dcesrv_interface_netlogon_bind(call, iface)
+
+/*
+ * This #define allows the netlogon interface to accept invalid
+ * association groups, because association groups are to coordinate
+ * handles, and handles are not used in NETLOGON. This in turn avoids
+ * the need to coordinate these across multiple possible NETLOGON
+ * processes
+ */
+#define DCESRV_INTERFACE_NETLOGON_FLAGS DCESRV_INTERFACE_FLAGS_HANDLES_NOT_USED
+
 static NTSTATUS dcesrv_interface_netlogon_bind(struct dcesrv_call_state *dce_call,
 					       const struct dcesrv_interface *iface)
 {
 	return dcesrv_interface_bind_reject_connect(dce_call, iface);
 }
-
-static struct memcache *global_challenge_table;
 
 struct netlogon_server_pipe_state {
 	struct netr_Credential client_challenge;
@@ -64,28 +71,9 @@ static NTSTATUS dcesrv_netr_ServerReqChallenge(struct dcesrv_call_state *dce_cal
 {
 	struct netlogon_server_pipe_state *pipe_state =
 		talloc_get_type(dce_call->context->private_data, struct netlogon_server_pipe_state);
-	DATA_BLOB key, val;
+	NTSTATUS ntstatus;
 
 	ZERO_STRUCTP(r->out.return_credentials);
-
-	if (global_challenge_table == NULL) {
-		/*
-		 * We maintain a global challenge table
-		 * with a fixed size (8k)
-		 *
-		 * This is required for the strange clients
-		 * which use different connections for
-		 * netr_ServerReqChallenge() and netr_ServerAuthenticate3()
-		 *
-		 */
-		global_challenge_table = memcache_init(talloc_autofree_context(),
-						       8192);
-		if (global_challenge_table == NULL) {
-			return NT_STATUS_NO_MEMORY;
-		}
-	}
-
-	/* destroyed on pipe shutdown */
 
 	if (pipe_state) {
 		talloc_free(pipe_state);
@@ -104,10 +92,13 @@ static NTSTATUS dcesrv_netr_ServerReqChallenge(struct dcesrv_call_state *dce_cal
 
 	dce_call->context->private_data = pipe_state;
 
-	key = data_blob_string_const(r->in.computer_name);
-	val = data_blob_const(pipe_state, sizeof(*pipe_state));
-
-	memcache_add(global_challenge_table, SINGLETON_CACHE, key, val);
+	ntstatus = schannel_save_challenge(dce_call->conn->dce_ctx->lp_ctx,
+					   &pipe_state->client_challenge,
+					   &pipe_state->server_challenge,
+					   r->in.computer_name);
+	if (!NT_STATUS_IS_OK(ntstatus)) {
+		return ntstatus;
+	}
 
 	return NT_STATUS_OK;
 }
@@ -117,7 +108,6 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3(struct dcesrv_call_state *dce_ca
 {
 	struct netlogon_server_pipe_state *pipe_state =
 		talloc_get_type(dce_call->context->private_data, struct netlogon_server_pipe_state);
-	DATA_BLOB challenge_key;
 	bool challenge_valid = false;
 	struct netlogon_server_pipe_state challenge;
 	struct netlogon_creds_CredentialState *creds;
@@ -142,7 +132,6 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3(struct dcesrv_call_state *dce_ca
 	ZERO_STRUCTP(r->out.return_credentials);
 	*r->out.rid = 0;
 
-	challenge_key = data_blob_string_const(r->in.computer_name);
 	if (pipe_state != NULL) {
 		dce_call->context->private_data = NULL;
 
@@ -156,11 +145,11 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3(struct dcesrv_call_state *dce_ca
 		 * netr_ServerAuthenticate3() on the same dcerpc connection.
 		 */
 		challenge = *pipe_state;
-		TALLOC_FREE(pipe_state);
+
 		challenge_valid = true;
+
 	} else {
-		DATA_BLOB val;
-		bool ok;
+		NTSTATUS ntstatus;
 
 		/*
 		 * Fallback and try to get the challenge from
@@ -168,17 +157,25 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3(struct dcesrv_call_state *dce_ca
 		 *
 		 * If too many clients are using this code path,
 		 * they may destroy their cache entries as the
-		 * global_challenge_table memcache has a fixed size.
+		 * TDB has a fixed size limited via a lossy hash
 		 *
-		 * Note: this handles global_challenge_table == NULL fine
+		 * The TDB used is the schannel store, which is
+		 * initialised at startup.
+		 *
+		 * NOTE: The challenge is deleted from the DB as soon as it is
+		 * fetched, to prevent reuse.
+		 *
 		 */
-		ok = memcache_lookup(global_challenge_table, SINGLETON_CACHE,
-				     challenge_key, &val);
-		if (ok && val.length == sizeof(challenge)) {
-			memcpy(&challenge, val.data, sizeof(challenge));
-			challenge_valid = true;
-		} else {
+
+		ntstatus = schannel_get_challenge(dce_call->conn->dce_ctx->lp_ctx,
+						  &challenge.client_challenge,
+						  &challenge.server_challenge,
+						  r->in.computer_name);
+
+		if (!NT_STATUS_IS_OK(ntstatus)) {
 			ZERO_STRUCT(challenge);
+		} else {
+			challenge_valid = true;
 		}
 	}
 
@@ -232,15 +229,25 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3(struct dcesrv_call_state *dce_ca
 	}
 
 	/*
-	 * At this point we can cleanup the cache entry,
-	 * if we fail the client needs to call netr_ServerReqChallenge
-	 * again.
-	 *
-	 * Note: this handles global_challenge_table == NULL
-	 * and also a non existing record just fine.
+	 * This talloc_free is important to prevent re-use of the
+	 * challenge.  We have to delay it this far due to NETApp
+	 * servers per:
+	 * https://bugzilla.samba.org/show_bug.cgi?id=11291
 	 */
-	memcache_delete(global_challenge_table,
-			SINGLETON_CACHE, challenge_key);
+	TALLOC_FREE(pipe_state);
+
+	/*
+	 * At this point we must also cleanup the TDB cache
+	 * entry, if we fail the client needs to call
+	 * netr_ServerReqChallenge again.
+	 *
+	 * Note: this handles a non existing record just fine,
+	 * the r->in.computer_name might not be the one used
+	 * in netr_ServerReqChallenge(), but we are trying to
+	 * just tidy up the normal case to prevent re-use.
+	 */
+	schannel_delete_challenge(dce_call->conn->dce_ctx->lp_ctx,
+				  r->in.computer_name);
 
 	/*
 	 * According to Microsoft (see bugid #6099)
@@ -1237,7 +1244,7 @@ static WERROR dcesrv_netr_GetDcName(struct dcesrv_call_state *dce_call, TALLOC_C
 		size_t len = strlen(r->in.domainname);
 
 		if (dot || len > 15) {
-			return WERR_DCNOTFOUND;
+			return WERR_NERR_DCNOTFOUND;
 		}
 
 		/*
@@ -1345,7 +1352,7 @@ static WERROR dcesrv_netr_LogonControl_base_call(struct dcesrv_netr_LogonControl
 			info1 = talloc_zero(state->mem_ctx,
 					    struct netr_NETLOGON_INFO_1);
 			if (info1 == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			state->r.out.query->info1 = info1;
 			return WERR_OK;
@@ -1354,7 +1361,7 @@ static WERROR dcesrv_netr_LogonControl_base_call(struct dcesrv_netr_LogonControl
 			info3 = talloc_zero(state->mem_ctx,
 					    struct netr_NETLOGON_INFO_3);
 			if (info3 == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			state->r.out.query->info3 = info3;
 			return WERR_OK;
@@ -1493,7 +1500,7 @@ static WERROR dcesrv_netr_LogonControl_base_call(struct dcesrv_netr_LogonControl
 						  state->r.in.data,
 						  state->r.out.query);
 	if (subreq == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	state->dce_call->state_flags |= DCESRV_CALL_STATE_FLAG_ASYNC;
 	tevent_req_set_callback(subreq,
@@ -1549,7 +1556,7 @@ static WERROR dcesrv_netr_LogonControl(struct dcesrv_call_state *dce_call, TALLO
 
 	state = talloc_zero(mem_ctx, struct dcesrv_netr_LogonControl_base_state);
 	if (state == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	state->dce_call = dce_call;
@@ -1583,7 +1590,7 @@ static WERROR dcesrv_netr_LogonControl2(struct dcesrv_call_state *dce_call, TALL
 
 	state = talloc_zero(mem_ctx, struct dcesrv_netr_LogonControl_base_state);
 	if (state == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	state->dce_call = dce_call;
@@ -1617,7 +1624,7 @@ static WERROR dcesrv_netr_LogonControl2Ex(struct dcesrv_call_state *dce_call, TA
 
 	state = talloc_zero(mem_ctx, struct dcesrv_netr_LogonControl_base_state);
 	if (state == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	state->dce_call = dce_call;
@@ -2644,7 +2651,7 @@ static WERROR fill_trusted_domains_array(TALLOC_CTX *mem_ctx,
 				    ldb_get_default_basedn(sam_ctx),
 				    "(&(objectClass=container)(cn=System))");
 	if (!system_dn) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	ret = gendb_search(sam_ctx, mem_ctx, system_dn,
@@ -2770,7 +2777,7 @@ static WERROR dcesrv_netr_DsrEnumerateDomainTrusts(struct dcesrv_call_state *dce
 	sam_ctx = samdb_connect(mem_ctx, dce_call->event_ctx, lp_ctx,
 				dce_call->conn->auth_state.session_info, 0);
 	if (sam_ctx == NULL) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	if ((r->in.trust_flags & NETR_TRUST_FLAG_INBOUND) ||
@@ -2788,7 +2795,7 @@ static WERROR dcesrv_netr_DsrEnumerateDomainTrusts(struct dcesrv_call_state *dce
 		ret = gendb_search_dn(sam_ctx, mem_ctx, NULL,
 				      &dom_res, dom_attrs);
 		if (ret != 1) {
-			return WERR_GENERAL_FAILURE;
+			return WERR_GEN_FAILURE;
 		}
 
 		trusts->count = n + 1;
@@ -2903,17 +2910,17 @@ static WERROR dcesrv_netr_DsRGetForestTrustInformation(struct dcesrv_call_state 
 	sam_ctx = samdb_connect(mem_ctx, dce_call->event_ctx, lp_ctx,
 				dce_call->conn->auth_state.session_info, 0);
 	if (sam_ctx == NULL) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	domain_dn = ldb_get_default_basedn(sam_ctx);
 	if (domain_dn == NULL) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	forest_dn = ldb_get_root_basedn(sam_ctx);
 	if (forest_dn == NULL) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	cmp = ldb_dn_compare(domain_dn, forest_dn);
@@ -2958,7 +2965,7 @@ static WERROR dcesrv_netr_DsRGetForestTrustInformation(struct dcesrv_call_state 
 	state = talloc_zero(mem_ctx,
 			struct dcesrv_netr_DsRGetForestTrustInformation_state);
 	if (state == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	state->dce_call = dce_call;
 	state->mem_ctx = mem_ctx;
@@ -2986,7 +2993,7 @@ static WERROR dcesrv_netr_DsRGetForestTrustInformation(struct dcesrv_call_state 
 						r->in.flags,
 						r->out.forest_trust_info);
 	if (subreq == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	state->dce_call->state_flags |= DCESRV_CALL_STATE_FLAG_ASYNC;
 	tevent_req_set_callback(subreq,

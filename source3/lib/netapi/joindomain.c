@@ -44,7 +44,7 @@ WERROR NetJoinDomain_l(struct libnetapi_ctx *mem_ctx,
 		struct libnetapi_private_ctx);
 
 	if (!r->in.domain) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = libnet_init_JoinCtx(mem_ctx, &j);
@@ -116,7 +116,7 @@ WERROR NetJoinDomain_r(struct libnetapi_ctx *ctx,
 	DATA_BLOB session_key;
 
 	if (IS_DC) {
-		return WERR_SETUP_DOMAIN_CONTROLLER;
+		return WERR_NERR_SETUPDOMAINCONTROLLER;
 	}
 
 	werr = libnetapi_open_pipe(ctx, r->in.server,
@@ -181,7 +181,7 @@ WERROR NetUnjoinDomain_l(struct libnetapi_ctx *mem_ctx,
 		struct libnetapi_private_ctx);
 
 	if (!secrets_fetch_domain_sid(lp_workgroup(), &domain_sid)) {
-		return WERR_SETUP_NOT_JOINED;
+		return WERR_NERR_SETUPNOTJOINED;
 	}
 
 	werr = libnet_init_UnjoinCtx(mem_ctx, &u);
@@ -361,7 +361,7 @@ WERROR NetGetJoinInformation_l(struct libnetapi_ctx *ctx,
 		*r->out.name_buffer = talloc_strdup(ctx, lp_workgroup());
 	}
 	if (!*r->out.name_buffer) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	switch (lp_server_role()) {
@@ -412,7 +412,7 @@ WERROR NetGetJoinableOUs_l(struct libnetapi_ctx *ctx,
 
 	ads = ads_init(info->domain_name, info->domain_name, dc);
 	if (!ads) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	SAFE_FREE(ads->auth.user_name);
@@ -432,13 +432,13 @@ WERROR NetGetJoinableOUs_l(struct libnetapi_ctx *ctx,
 	ads_status = ads_connect_user_creds(ads);
 	if (!ADS_ERR_OK(ads_status)) {
 		ads_destroy(&ads);
-		return WERR_DEFAULT_JOIN_REQUIRED;
+		return WERR_NERR_DEFAULTJOINREQUIRED;
 	}
 
 	ads_status = ads_get_joinable_ous(ads, ctx, &p, &s);
 	if (!ADS_ERR_OK(ads_status)) {
 		ads_destroy(&ads);
-		return WERR_DEFAULT_JOIN_REQUIRED;
+		return WERR_NERR_DEFAULTJOINREQUIRED;
 	}
 	*r->out.ous = discard_const_p(const char *, p);
 	*r->out.ou_count = s;

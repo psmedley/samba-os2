@@ -64,6 +64,56 @@ time_t spoolss_Time_to_time_t(const struct spoolss_Time *r)
 /*******************************************************************
  ********************************************************************/
 
+bool spoolss_timestr_to_NTTIME(const char *str,
+			       NTTIME *data)
+{
+	struct tm tm;
+	time_t t;
+
+	if (strequal(str, "01/01/1601")) {
+		*data = 0;
+		return true;
+	}
+
+	ZERO_STRUCT(tm);
+
+	if (sscanf(str, "%d/%d/%d",
+		   &tm.tm_mon, &tm.tm_mday, &tm.tm_year) != 3) {
+		return false;
+	}
+	tm.tm_mon -= 1;
+	tm.tm_year -= 1900;
+	tm.tm_isdst = -1;
+
+	t = mktime(&tm);
+	unix_to_nt_time(data, t);
+
+	return true;
+}
+
+/*******************************************************************
+ ********************************************************************/
+
+bool spoolss_driver_version_to_qword(const char *str,
+				     uint64_t *data)
+{
+	unsigned int v1, v2, v3, v4;
+
+	if (sscanf(str, "%u.%u.%u.%u", &v1, &v2, &v3, &v4) != 4) {
+		return false;
+	}
+
+	*data = ((uint64_t)(v1 & 0xFFFF) << 48) +
+		((uint64_t)(v2 & 0xFFFF) << 32) +
+		((uint64_t)(v3 & 0xFFFF) << 16) +
+		(uint64_t)(v4 & 0xFFFF);
+
+	return true;
+}
+
+/*******************************************************************
+ ********************************************************************/
+
 WERROR pull_spoolss_PrinterData(TALLOC_CTX *mem_ctx,
 				const DATA_BLOB *blob,
 				union spoolss_PrinterData *data,
@@ -73,7 +123,7 @@ WERROR pull_spoolss_PrinterData(TALLOC_CTX *mem_ctx,
 	ndr_err = ndr_pull_union_blob(blob, mem_ctx, data, type,
 			(ndr_pull_flags_fn_t)ndr_pull_spoolss_PrinterData);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 	return WERR_OK;
 }
@@ -89,7 +139,7 @@ WERROR push_spoolss_PrinterData(TALLOC_CTX *mem_ctx, DATA_BLOB *blob,
 	ndr_err = ndr_push_union_blob(blob, mem_ctx, data, type,
 			(ndr_push_flags_fn_t)ndr_push_spoolss_PrinterData);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 	return WERR_OK;
 }
@@ -225,12 +275,12 @@ WERROR spoolss_create_default_devmode(TALLOC_CTX *mem_ctx,
 
 	dm = talloc_zero(mem_ctx, struct spoolss_DeviceMode);
 	if (dm == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	dname = talloc_asprintf(dm, "%s", devicename);
 	if (dname == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	if (strlen(dname) > MAXDEVICENAME) {
 		dname[MAXDEVICENAME] = '\0';
@@ -239,7 +289,7 @@ WERROR spoolss_create_default_devmode(TALLOC_CTX *mem_ctx,
 
 	dm->formname = talloc_strdup(dm, "Letter");
 	if (dm->formname == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	dm->specversion          = DMSPEC_NT4_AND_ABOVE;
@@ -373,7 +423,7 @@ WERROR spoolss_create_default_secdesc(TALLOC_CTX *mem_ctx,
 
 	if (psd == NULL) {
 		DEBUG(0,("construct_default_printer_sd: Failed to make SEC_DESC.\n"));
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	DEBUG(4,("construct_default_printer_sdb: size = %u.\n",

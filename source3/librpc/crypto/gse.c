@@ -120,6 +120,54 @@ static int gse_context_destructor(void *ptr)
 	return 0;
 }
 
+static NTSTATUS gse_setup_server_principal(TALLOC_CTX *mem_ctx,
+					   const char *target_principal,
+					   const char *service,
+					   const char *hostname,
+					   const char *realm,
+					   char **pserver_principal,
+					   gss_name_t *pserver_name)
+{
+	char *server_principal = NULL;
+	gss_buffer_desc name_token;
+	gss_OID name_type;
+	OM_uint32 maj_stat, min_stat = 0;
+
+	if (target_principal != NULL) {
+		server_principal = talloc_strdup(mem_ctx, target_principal);
+		name_type = GSS_C_NULL_OID;
+	} else {
+		server_principal = talloc_asprintf(mem_ctx,
+						   "%s/%s@%s",
+						   service,
+						   hostname,
+						   realm);
+		name_type = GSS_C_NT_USER_NAME;
+	}
+	if (server_principal == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	name_token.value = (uint8_t *)server_principal;
+	name_token.length = strlen(server_principal);
+
+	maj_stat = gss_import_name(&min_stat,
+				   &name_token,
+				   name_type,
+				   pserver_name);
+	if (maj_stat) {
+		DBG_WARNING("GSS Import name of %s failed: %s\n",
+			    server_principal,
+			    gse_errstr(mem_ctx, maj_stat, min_stat));
+		TALLOC_FREE(server_principal);
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+
+	*pserver_principal = server_principal;
+
+	return NT_STATUS_OK;
+}
+
 static NTSTATUS gse_context_init(TALLOC_CTX *mem_ctx,
 				 bool do_sign, bool do_seal,
 				 const char *ccache_name,
@@ -195,6 +243,7 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
 				const char *ccache_name,
 				const char *server,
 				const char *service,
+				const char *realm,
 				const char *username,
 				const char *password,
 				uint32_t add_gss_c_flags,
@@ -202,9 +251,9 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
 {
 	struct gse_context *gse_ctx;
 	OM_uint32 gss_maj, gss_min;
-	gss_buffer_desc name_buffer = GSS_C_EMPTY_BUFFER;
 #ifdef HAVE_GSS_KRB5_CRED_NO_CI_FLAGS_X
 	gss_buffer_desc empty_buffer = GSS_C_EMPTY_BUFFER;
+	gss_OID oid = discard_const(GSS_KRB5_CRED_NO_CI_FLAGS_X);
 #endif
 	NTSTATUS status;
 
@@ -219,39 +268,15 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	/* Guess the realm based on the supplied service, and avoid the GSS libs
-	   doing DNS lookups which may fail.
-
-	   TODO: Loop with the KDC on some more combinations (local
-	   realm in particular), possibly falling back to
-	   GSS_C_NT_HOSTBASED_SERVICE
-	*/
-	name_buffer.value = kerberos_get_principal_from_service_hostname(
-					gse_ctx, service, server, lp_realm());
-	if (!name_buffer.value) {
-		status = NT_STATUS_NO_MEMORY;
-		goto err_out;
-	}
-	name_buffer.length = strlen((char *)name_buffer.value);
-	gss_maj = gss_import_name(&gss_min, &name_buffer,
-				  GSS_C_NT_USER_NAME,
-				  &gse_ctx->server_name);
-	if (gss_maj) {
-		DEBUG(5, ("gss_import_name failed for %s, with [%s]\n",
-			  (char *)name_buffer.value,
-			  gse_errstr(gse_ctx, gss_maj, gss_min)));
-		status = NT_STATUS_INTERNAL_ERROR;
-		goto err_out;
-	}
-
 	/* TODO: get krb5 ticket using username/password, if no valid
 	 * one already available in ccache */
 
-	gss_maj = gss_krb5_import_cred(&gss_min,
-				       gse_ctx->ccache,
-				       NULL, /* keytab_principal */
-				       NULL, /* keytab */
-				       &gse_ctx->creds);
+	gss_maj = smb_gss_krb5_import_cred(&gss_min,
+					   gse_ctx->k5ctx,
+					   gse_ctx->ccache,
+					   NULL, /* keytab_principal */
+					   NULL, /* keytab */
+					   &gse_ctx->creds);
 	if (gss_maj) {
 		char *ccache = NULL;
 		int kret;
@@ -263,7 +288,7 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
 			ccache = NULL;
 		}
 
-		DEBUG(5, ("gss_krb5_import_cred ccache[%s] failed with [%s] -"
+		DEBUG(5, ("smb_gss_krb5_import_cred ccache[%s] failed with [%s] -"
 			  "the caller may retry after a kinit.\n",
 			  ccache, gse_errstr(gse_ctx, gss_maj, gss_min)));
 		SAFE_FREE(ccache);
@@ -282,7 +307,7 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
 	 * http://krbdev.mit.edu/rt/Ticket/Display.html?id=6938
 	 */
 	gss_maj = gss_set_cred_option(&gss_min, &gse_ctx->creds,
-				      GSS_KRB5_CRED_NO_CI_FLAGS_X,
+				      oid,
 				      &empty_buffer);
 	if (gss_maj) {
 		DEBUG(0, ("gss_set_cred_option(GSS_KRB5_CRED_NO_CI_FLAGS_X), "
@@ -294,20 +319,21 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
 #endif
 
 	*_gse_ctx = gse_ctx;
-	TALLOC_FREE(name_buffer.value);
 	return NT_STATUS_OK;
 
 err_out:
-	TALLOC_FREE(name_buffer.value);
 	TALLOC_FREE(gse_ctx);
 	return status;
 }
 
 static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
-					  struct gse_context *gse_ctx,
+					  struct gensec_security *gensec_security,
 					  const DATA_BLOB *token_in,
 					  DATA_BLOB *token_out)
 {
+	struct gse_context *gse_ctx =
+		talloc_get_type_abort(gensec_security->private_data,
+				      struct gse_context);
 	OM_uint32 gss_maj, gss_min;
 	gss_buffer_desc in_data;
 	gss_buffer_desc out_data;
@@ -315,9 +341,131 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
 	NTSTATUS status;
 	OM_uint32 time_rec = 0;
 	struct timeval tv;
+	struct cli_credentials *cli_creds = gensec_get_credentials(gensec_security);
+	const char *target_principal = gensec_get_target_principal(gensec_security);
+	const char *hostname = gensec_get_target_hostname(gensec_security);
+	const char *service = gensec_get_target_service(gensec_security);
+	const char *client_realm = cli_credentials_get_realm(cli_creds);
+	char *server_principal = NULL;
+	char *server_realm = NULL;
+	bool fallback = false;
 
 	in_data.value = token_in->data;
 	in_data.length = token_in->length;
+
+	/*
+	 * With credentials for administrator@FOREST1.EXAMPLE.COM this patch
+	 * changes the target_principal for the ldap service of host
+	 * dc2.forest2.example.com from
+	 *
+	 *   ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM
+	 *
+	 * to
+	 *
+	 *   ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM
+	 *
+	 * Typically ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM should be
+	 * used in order to allow the KDC of FOREST1.EXAMPLE.COM to generate a
+	 * referral ticket for krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM.
+	 *
+	 * The problem is that KDCs only return such referral tickets if
+	 * there's a forest trust between FOREST1.EXAMPLE.COM and
+	 * FOREST2.EXAMPLE.COM. If there's only an external domain trust
+	 * between FOREST1.EXAMPLE.COM and FOREST2.EXAMPLE.COM the KDC of
+	 * FOREST1.EXAMPLE.COM will respond with S_PRINCIPAL_UNKNOWN when being
+	 * asked for ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM.
+	 *
+	 * In the case of an external trust the client can still ask explicitly
+	 * for krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM and the KDC of
+	 * FOREST1.EXAMPLE.COM will generate it.
+	 *
+	 * From there the client can use the
+	 * krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM ticket and ask a KDC
+	 * of FOREST2.EXAMPLE.COM for a service ticket for
+	 * ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM.
+	 *
+	 * With Heimdal we'll get the fallback on S_PRINCIPAL_UNKNOWN behavior
+	 * when we pass ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM as
+	 * target principal. As _krb5_get_cred_kdc_any() first calls
+	 * get_cred_kdc_referral() (which always starts with the client realm)
+	 * and falls back to get_cred_kdc_capath() (which starts with the given
+	 * realm).
+	 *
+	 * MIT krb5 only tries the given realm of the target principal, if we
+	 * want to autodetect support for transitive forest trusts, would have
+	 * to do the fallback ourself.
+	 */
+#ifndef SAMBA4_USES_HEIMDAL
+	if (gse_ctx->server_name == NULL) {
+		OM_uint32 gss_min2 = 0;
+
+		status = gse_setup_server_principal(mem_ctx,
+						    target_principal,
+						    service,
+						    hostname,
+						    client_realm,
+						    &server_principal,
+						    &gse_ctx->server_name);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+
+		gss_maj = gss_init_sec_context(&gss_min,
+					       gse_ctx->creds,
+					       &gse_ctx->gssapi_context,
+					       gse_ctx->server_name,
+					       &gse_ctx->gss_mech,
+					       gse_ctx->gss_want_flags,
+					       0,
+					       GSS_C_NO_CHANNEL_BINDINGS,
+					       &in_data,
+					       NULL,
+					       &out_data,
+					       &gse_ctx->gss_got_flags,
+					       &time_rec);
+		if (gss_maj != GSS_S_FAILURE) {
+			goto init_sec_context_done;
+		}
+		if (gss_min != (OM_uint32)KRB5KDC_ERR_S_PRINCIPAL_UNKNOWN) {
+			goto init_sec_context_done;
+		}
+		if (target_principal != NULL) {
+			goto init_sec_context_done;
+		}
+
+		fallback = true;
+		TALLOC_FREE(server_principal);
+		gss_release_name(&gss_min2, &gse_ctx->server_name);
+	}
+#endif /* !SAMBA4_USES_HEIMDAL */
+
+	if (gse_ctx->server_name == NULL) {
+		server_realm = smb_krb5_get_realm_from_hostname(mem_ctx,
+								hostname,
+								client_realm);
+		if (server_realm == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+
+		if (fallback &&
+		    strequal(client_realm, server_realm)) {
+			goto init_sec_context_done;
+		}
+
+		status = gse_setup_server_principal(mem_ctx,
+						    target_principal,
+						    service,
+						    hostname,
+						    server_realm,
+						    &server_principal,
+						    &gse_ctx->server_name);
+		TALLOC_FREE(server_realm);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+
+		TALLOC_FREE(server_principal);
+	}
 
 	gss_maj = gss_init_sec_context(&gss_min,
 					gse_ctx->creds,
@@ -328,6 +476,10 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
 					0, GSS_C_NO_CHANNEL_BINDINGS,
 					&in_data, NULL, &out_data,
 					&gse_ctx->gss_got_flags, &time_rec);
+	goto init_sec_context_done;
+	/* JUMP! */
+init_sec_context_done:
+
 	switch (gss_maj) {
 	case GSS_S_COMPLETE:
 		/* we are done with it */
@@ -340,9 +492,48 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
 		/* we will need a third leg */
 		status = NT_STATUS_MORE_PROCESSING_REQUIRED;
 		break;
+	case GSS_S_CONTEXT_EXPIRED:
+		/* Make SPNEGO ignore us, we can't go any further here */
+		DBG_NOTICE("Context expired\n");
+		status = NT_STATUS_INVALID_PARAMETER;
+		goto done;
+	case GSS_S_FAILURE:
+		switch (gss_min) {
+		case (OM_uint32)KRB5KDC_ERR_S_PRINCIPAL_UNKNOWN:
+			DBG_NOTICE("Server principal not found\n");
+			/* Make SPNEGO ignore us, we can't go any further here */
+			status = NT_STATUS_INVALID_PARAMETER;
+			goto done;
+		case (OM_uint32)KRB5KRB_AP_ERR_TKT_EXPIRED:
+			DBG_NOTICE("Ticket expired\n");
+			/* Make SPNEGO ignore us, we can't go any further here */
+			status = NT_STATUS_INVALID_PARAMETER;
+			goto done;
+		case (OM_uint32)KRB5KRB_AP_ERR_TKT_NYV:
+			DBG_NOTICE("Clockskew\n");
+			/* Make SPNEGO ignore us, we can't go any further here */
+			status = NT_STATUS_TIME_DIFFERENCE_AT_DC;
+			goto done;
+		case (OM_uint32)KRB5_KDC_UNREACH:
+			DBG_NOTICE("KDC unreachable\n");
+			/* Make SPNEGO ignore us, we can't go any further here */
+			status = NT_STATUS_NO_LOGON_SERVERS;
+			goto done;
+		case (OM_uint32)KRB5KRB_AP_ERR_MSG_TYPE:
+			/* Garbage input, possibly from the auto-mech detection */
+			status = NT_STATUS_INVALID_PARAMETER;
+			goto done;
+		default:
+			DBG_ERR("gss_init_sec_context failed with [%s](%u)\n",
+				gse_errstr(talloc_tos(), gss_maj, gss_min),
+				gss_min);
+			status = NT_STATUS_LOGON_FAILURE;
+			goto done;
+		}
+		break;
 	default:
-		DEBUG(0, ("gss_init_sec_context failed with [%s]\n",
-			  gse_errstr(talloc_tos(), gss_maj, gss_min)));
+		DBG_ERR("gss_init_sec_context failed with [%s]\n",
+			gse_errstr(talloc_tos(), gss_maj, gss_min));
 		status = NT_STATUS_INTERNAL_ERROR;
 		goto done;
 	}
@@ -386,61 +577,15 @@ static NTSTATUS gse_init_server(TALLOC_CTX *mem_ctx,
 	}
 
 	/* This creates a GSSAPI cred_id_t with the keytab set */
-	gss_maj = gss_krb5_import_cred(&gss_min, NULL, NULL, gse_ctx->keytab, 
-				       &gse_ctx->creds);
+	gss_maj = smb_gss_krb5_import_cred(&gss_min, gse_ctx->k5ctx,
+					   NULL, NULL, gse_ctx->keytab,
+					   &gse_ctx->creds);
 
-	if (gss_maj != 0
-	    && gss_maj != (GSS_S_CALL_BAD_STRUCTURE|GSS_S_BAD_NAME)) {
-		DEBUG(0, ("gss_krb5_import_cred failed with [%s]\n",
+	if (gss_maj != 0) {
+		DEBUG(0, ("smb_gss_krb5_import_cred failed with [%s]\n",
 			  gse_errstr(gse_ctx, gss_maj, gss_min)));
 		status = NT_STATUS_INTERNAL_ERROR;
 		goto done;
-
-		/* This is the error the MIT krb5 1.9 gives when it
-		 * implements the function, but we do not specify the
-		 * principal.  However, when we specify the principal
-		 * as host$@REALM the GSS acceptor fails with 'wrong
-		 * principal in request'.  Work around the issue by
-		 * falling back to the alternate approach below. */
-	} else if (gss_maj == (GSS_S_CALL_BAD_STRUCTURE|GSS_S_BAD_NAME))
-	/* FIXME!!!
-	 * This call sets the default keytab for the whole server, not
-	 * just for this context. Need to find a way that does not alter
-	 * the state of the whole server ... */
-	{
-		const char *ktname;
-		gss_OID_set_desc mech_set;
-
-		ret = smb_krb5_keytab_name(gse_ctx, gse_ctx->k5ctx,
-				   gse_ctx->keytab, &ktname);
-		if (ret) {
-			status = NT_STATUS_INTERNAL_ERROR;
-			goto done;
-		}
-
-		ret = gsskrb5_register_acceptor_identity(ktname);
-		if (ret) {
-			status = NT_STATUS_INTERNAL_ERROR;
-			goto done;
-		}
-
-		mech_set.count = 1;
-		mech_set.elements = &gse_ctx->gss_mech;
-
-		gss_maj = gss_acquire_cred(&gss_min,
-				   GSS_C_NO_NAME,
-				   GSS_C_INDEFINITE,
-				   &mech_set,
-				   GSS_C_ACCEPT,
-				   &gse_ctx->creds,
-				   NULL, NULL);
-
-		if (gss_maj) {
-			DEBUG(0, ("gss_acquire_creds failed with [%s]\n",
-				  gse_errstr(gse_ctx, gss_maj, gss_min)));
-			status = NT_STATUS_INTERNAL_ERROR;
-			goto done;
-		}
 	}
 
 	status = NT_STATUS_OK;
@@ -455,10 +600,13 @@ done:
 }
 
 static NTSTATUS gse_get_server_auth_token(TALLOC_CTX *mem_ctx,
-					  struct gse_context *gse_ctx,
+					  struct gensec_security *gensec_security,
 					  const DATA_BLOB *token_in,
 					  DATA_BLOB *token_out)
 {
+	struct gse_context *gse_ctx =
+		talloc_get_type_abort(gensec_security->private_data,
+				      struct gse_context);
 	OM_uint32 gss_maj, gss_min;
 	gss_buffer_desc in_data;
 	gss_buffer_desc out_data;
@@ -593,6 +741,7 @@ static NTSTATUS gensec_gse_client_start(struct gensec_security *gensec_security)
 	const char *service = gensec_get_target_service(gensec_security);
 	const char *username = cli_credentials_get_username(creds);
 	const char *password = cli_credentials_get_password(creds);
+	const char *realm = cli_credentials_get_realm(creds);
 
 	if (!hostname) {
 		DEBUG(1, ("Could not determine hostname for target computer, cannot use kerberos\n"));
@@ -621,7 +770,7 @@ static NTSTATUS gensec_gse_client_start(struct gensec_security *gensec_security)
 	}
 
 	nt_status = gse_init_client(gensec_security, do_sign, do_seal, NULL,
-				    hostname, service,
+				    hostname, service, realm,
 				    username, password, want_flags,
 				    &gse_ctx);
 	if (!NT_STATUS_IS_OK(nt_status)) {
@@ -674,17 +823,16 @@ static NTSTATUS gensec_gse_update(struct gensec_security *gensec_security,
 				  const DATA_BLOB in, DATA_BLOB *out)
 {
 	NTSTATUS status;
-	struct gse_context *gse_ctx =
-		talloc_get_type_abort(gensec_security->private_data,
-		struct gse_context);
 
 	switch (gensec_security->gensec_role) {
 	case GENSEC_CLIENT:
-		status = gse_get_client_auth_token(mem_ctx, gse_ctx,
+		status = gse_get_client_auth_token(mem_ctx,
+						   gensec_security,
 						   &in, out);
 		break;
 	case GENSEC_SERVER:
-		status = gse_get_server_auth_token(mem_ctx, gse_ctx,
+		status = gse_get_server_auth_token(mem_ctx,
+						   gensec_security,
 						   &in, out);
 		break;
 	}
@@ -1121,7 +1269,7 @@ static size_t gensec_gse_sig_size(struct gensec_security *gensec_security,
 
 	gse_ctx->sig_size = gssapi_get_sig_size(gse_ctx->gssapi_context,
 					        &gse_ctx->gss_mech,
-					        gse_ctx->gss_want_flags,
+					        gse_ctx->gss_got_flags,
 					        data_size);
 	return gse_ctx->sig_size;
 }

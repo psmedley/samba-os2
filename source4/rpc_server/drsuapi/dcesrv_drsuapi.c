@@ -510,7 +510,7 @@ static WERROR dcesrv_drsuapi_DsCrackNames(struct dcesrv_call_state *dce_call, TA
 			}
 		}
 	}
-	return WERR_UNKNOWN_LEVEL;
+	return WERR_INVALID_LEVEL;
 }
 
 
@@ -635,7 +635,7 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo_1(struct drsuapi_bind_sta
 	switch (*r->out.level_out) {
 	case -1:
 		/* this level is not like the others */
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	case 1:
 		attrs = attrs_1;
 		break;
@@ -644,7 +644,7 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo_1(struct drsuapi_bind_sta
 		attrs = attrs_2;
 		break;
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	sites_dn = samdb_sites_dn(b_state->sam_ctx, mem_ctx);
@@ -658,7 +658,7 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo_1(struct drsuapi_bind_sta
 	if (ret) {
 		DEBUG(1, ("searching for servers in sites DN %s failed: %s\n", 
 			  ldb_dn_get_linearized(sites_dn), ldb_errstring(b_state->sam_ctx)));
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	switch (*r->out.level_out) {
@@ -680,7 +680,7 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo_1(struct drsuapi_bind_sta
 							  "serverReference");
 
 			if (!ntds_dn || !ldb_dn_add_child_fmt(ntds_dn, "CN=NTDS Settings")) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 
 			ret = ldb_search(b_state->sam_ctx, mem_ctx, &res_account, ref_dn,
@@ -706,7 +706,7 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo_1(struct drsuapi_bind_sta
 								 LDB_SCOPE_BASE, attrs_none, "fSMORoleOwner=%s",
 								 ldb_dn_get_linearized(ntds_dn));
 					if (ret) {
-						return WERR_GENERAL_FAILURE;
+						return WERR_GEN_FAILURE;
 					}
 					if (res_domain->count == 1) {
 						ctr1->array[i].is_pdc = true;
@@ -747,12 +747,12 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo_1(struct drsuapi_bind_sta
 							  "serverReference");
 
 			if (!ntds_dn || !ldb_dn_add_child_fmt(ntds_dn, "CN=NTDS Settings")) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 
 			/* Format is cn=<NETBIOS name>,cn=Servers,cn=<site>,cn=sites.... */
 			if (!site_dn || !ldb_dn_remove_child_components(site_dn, 2)) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 
 			ret = ldb_search(b_state->sam_ctx, mem_ctx, &res_ntds, ntds_dn,
@@ -847,12 +847,12 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo_1(struct drsuapi_bind_sta
 							  "serverReference");
 
 			if (!ntds_dn || !ldb_dn_add_child_fmt(ntds_dn, "CN=NTDS Settings")) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 
 			/* Format is cn=<NETBIOS name>,cn=Servers,cn=<site>,cn=sites.... */
 			if (!site_dn || !ldb_dn_remove_child_components(site_dn, 2)) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 
 			ret = ldb_search(b_state->sam_ctx, mem_ctx, &res_ntds, ntds_dn,
@@ -932,7 +932,7 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo_1(struct drsuapi_bind_sta
 		}
 		break;
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 	return WERR_OK;
 }
@@ -953,7 +953,7 @@ static WERROR dcesrv_drsuapi_DsGetDomainControllerInfo(struct dcesrv_call_state 
 		return dcesrv_drsuapi_DsGetDomainControllerInfo_1(b_state, mem_ctx, r);
 	}
 
-	return WERR_UNKNOWN_LEVEL;
+	return WERR_INVALID_LEVEL;
 }
 
 
@@ -972,7 +972,7 @@ static WERROR dcesrv_drsuapi_DsExecuteKCC(struct dcesrv_call_state *dce_call, TA
 		return status;
 	}
 	if (r->in.req->ctr1.taskID != 0) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 	if (r->in.req->ctr1.flags & DRSUAPI_DS_EXECUTE_KCC_ASYNCHRONOUS_OPERATION) {
 		timeout = IRPC_CALL_TIMEOUT;

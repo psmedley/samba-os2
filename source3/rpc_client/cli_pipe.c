@@ -960,6 +960,10 @@ static void rpc_api_pipe_got_pdu(struct tevent_req *subreq)
 		return;
 	}
 
+	if (DEBUGLEVEL >= 10) {
+		NDR_PRINT_DEBUG(ncacn_packet, state->pkt);
+	}
+
 	status = cli_pipe_validate_current_pdu(state,
 						state->cli, state->pkt,
 						&state->incoming_frag,
@@ -1148,7 +1152,7 @@ static NTSTATUS create_generic_auth_rpc_bind_req(struct rpc_pipe_client *cli,
 		return status;
 	}
 
-	if (cli->auth->auth_level < DCERPC_AUTH_LEVEL_INTEGRITY) {
+	if (cli->auth->auth_level < DCERPC_AUTH_LEVEL_PACKET) {
 		*client_hdr_signing = false;
 		return status;
 	}
@@ -1282,6 +1286,7 @@ struct rpc_api_pipe_req_state {
 	uint8_t op_num;
 	uint32_t call_id;
 	const DATA_BLOB *req_data;
+	const struct GUID *object_uuid;
 	uint32_t req_data_sent;
 	DATA_BLOB req_trailer;
 	uint32_t req_trailer_sent;
@@ -1301,6 +1306,7 @@ static struct tevent_req *rpc_api_pipe_req_send(TALLOC_CTX *mem_ctx,
 					 struct tevent_context *ev,
 					 struct rpc_pipe_client *cli,
 					 uint8_t op_num,
+					 const struct GUID *object_uuid,
 					 const DATA_BLOB *req_data)
 {
 	struct tevent_req *req, *subreq;
@@ -1316,6 +1322,7 @@ static struct tevent_req *rpc_api_pipe_req_send(TALLOC_CTX *mem_ctx,
 	state->ev = ev;
 	state->cli = cli;
 	state->op_num = op_num;
+	state->object_uuid = object_uuid;
 	state->req_data = req_data;
 	state->req_data_sent = 0;
 	state->call_id = get_rpc_call_id();
@@ -1382,7 +1389,7 @@ static NTSTATUS prepare_verification_trailer(struct rpc_api_pipe_req_state *stat
 		return NT_STATUS_OK;
 	}
 
-	if (a->auth_level < DCERPC_AUTH_LEVEL_INTEGRITY) {
+	if (a->auth_level < DCERPC_AUTH_LEVEL_PACKET) {
 		return NT_STATUS_OK;
 	}
 
@@ -1551,6 +1558,12 @@ static NTSTATUS prepare_next_frag(struct rpc_api_pipe_req_state *state,
 	u.request.context_id	= 0;
 	u.request.opnum		= state->op_num;
 
+	if (state->object_uuid) {
+		flags |= DCERPC_PFC_FLAG_OBJECT_UUID;
+		u.request.object.object = *state->object_uuid;
+		frag_len += ndr_size_GUID(state->object_uuid, 0);
+	}
+
 	status = dcerpc_push_ncacn_packet(state,
 					  DCERPC_PKT_REQUEST,
 					  flags,
@@ -1592,8 +1605,8 @@ static NTSTATUS prepare_next_frag(struct rpc_api_pipe_req_state *state,
 	switch (state->cli->auth->auth_level) {
 	case DCERPC_AUTH_LEVEL_NONE:
 	case DCERPC_AUTH_LEVEL_CONNECT:
-	case DCERPC_AUTH_LEVEL_PACKET:
 		break;
+	case DCERPC_AUTH_LEVEL_PACKET:
 	case DCERPC_AUTH_LEVEL_INTEGRITY:
 	case DCERPC_AUTH_LEVEL_PRIVACY:
 		status = dcerpc_add_auth_footer(state->cli->auth, pad_len,
@@ -2248,7 +2261,7 @@ static struct tevent_req *rpccli_bh_raw_call_send(TALLOC_CTX *mem_ctx,
 	}
 
 	subreq = rpc_api_pipe_req_send(state, ev, hs->rpc_cli,
-				       opnum, &state->in_data);
+				       opnum, object, &state->in_data);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -2616,7 +2629,7 @@ NTSTATUS rpccli_ncalrpc_bind_data(TALLOC_CTX *mem_ctx,
 					"host", /* target_service */
 					NAME_NT_AUTHORITY, /* domain */
 					"SYSTEM",
-					"", /* password */
+					NULL, /* password */
 					CRED_DONT_USE_KERBEROS,
 					NULL, /* netlogon_creds_CredentialState */
 					presult);

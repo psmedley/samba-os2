@@ -200,7 +200,7 @@ static bool shadow_copy2_update_snaplist(struct vfs_handle_struct *handle,
 	 * time.
 	 */
 	if (seconds > 0 || (priv->snaps->snaplist == NULL)) {
-		smb_fname.base_name = ".";
+		smb_fname.base_name = discard_const_p(char, ".");
 		fsp.fsp_name = &smb_fname;
 
 		ret = shadow_copy2_get_shadow_copy_data(handle, &fsp,
@@ -444,7 +444,11 @@ static bool make_relative_path(const char *cwd, char *abs_path)
 	if (memcmp(abs_path, cwd, cwd_len) != 0) {
 		return false;
 	}
-	if (abs_path[cwd_len] != '/' && abs_path[cwd_len] != '\0') {
+	/* The cwd_len != 1 case is for $cwd == '/' */
+	if (cwd_len != 1 &&
+	    abs_path[cwd_len] != '/' &&
+	    abs_path[cwd_len] != '\0')
+	{
 		return false;
 	}
 	if (abs_path[cwd_len] == '/') {
@@ -667,10 +671,11 @@ static bool shadow_copy2_strip_snapshot_internal(TALLOC_CTX *mem_ctx,
 		 * with a path prefix.
 		 */
 		if (pstripped != NULL) {
-			if (len_before_gmt > 0) {
+			if (len_before_gmt > 1) {
 				/*
-				 * There is a slash before
-				 * the @GMT-. Remove it.
+				 * There is a path (and not only a slash)
+				 * before the @GMT-. Remove the trailing
+				 * slash character.
 				 */
 				len_before_gmt -= 1;
 			}
@@ -684,7 +689,7 @@ static bool shadow_copy2_strip_snapshot_internal(TALLOC_CTX *mem_ctx,
 				if (make_relative_path(priv->shadow_cwd,
 						stripped) == false) {
 					DEBUG(10, (__location__ ": path '%s' "
-						"doesn't start with cwd '%s\n",
+						"doesn't start with cwd '%s'\n",
 						stripped, priv->shadow_cwd));
 						ret = false;
 					errno = ENOENT;
@@ -726,7 +731,7 @@ static bool shadow_copy2_strip_snapshot_internal(TALLOC_CTX *mem_ctx,
 			if (make_relative_path(priv->shadow_cwd,
 					stripped) == false) {
 				DEBUG(10, (__location__ ": path '%s' "
-					"doesn't start with cwd '%s\n",
+					"doesn't start with cwd '%s'\n",
 					stripped, priv->shadow_cwd));
 				ret = false;
 				errno = ENOENT;
@@ -1873,6 +1878,9 @@ static bool shadow_copy2_snapshot_to_gmt(vfs_handle_struct *handle,
 		}
 		/* Extract the prefix */
 		tmp = strstr(tmpstr, priv->config->delimiter);
+		if (tmp == NULL) {
+			goto done;
+		}
 		*tmp = '\0';
 
 		/* Parse regex */

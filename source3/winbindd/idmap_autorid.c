@@ -78,6 +78,8 @@
 #include "idmap.h"
 #include "idmap_rw.h"
 #include "../libcli/security/dom_sid.h"
+#include "libsmb/samlogon_cache.h"
+#include "passdb/machine_sid.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_IDMAP
@@ -142,7 +144,7 @@ static NTSTATUS idmap_autorid_allocate_id(struct idmap_domain *dom,
 }
 
 /*
- * map a SID to xid using the idmap_tdb like pool
+ * map a xid to SID using the idmap_tdb like pool
  */
 static NTSTATUS idmap_autorid_id_to_sid_alloc(struct idmap_domain *dom,
 					      struct id_map *map)
@@ -169,7 +171,7 @@ static NTSTATUS idmap_autorid_id_to_sid(struct autorid_global_config *cfg,
 					struct id_map *map)
 {
 	uint32_t range_number;
-	uint32_t domain_range_index = 0;
+	uint32_t domain_range_index;
 	uint32_t normalized_id;
 	uint32_t reduced_rid;
 	uint32_t rid;
@@ -217,7 +219,7 @@ static NTSTATUS idmap_autorid_id_to_sid(struct autorid_global_config *cfg,
 		return NT_STATUS_OK;
 	}
 
-	if (data.dptr[data.dsize-1] != '\0') {
+	if ((data.dsize == 0) || (data.dptr[data.dsize-1] != '\0')) {
 		DBG_WARNING("Invalid range %"PRIu32"\n", range_number);
 		TALLOC_FREE(data.dptr);
 		map->status = ID_UNKNOWN;
@@ -243,14 +245,29 @@ static NTSTATUS idmap_autorid_id_to_sid(struct autorid_global_config *cfg,
 		map->status = ID_UNKNOWN;
 		return NT_STATUS_OK;
 	}
-	if ((q != NULL) && (*q != '\0'))
-		if (sscanf(q+1, "%"SCNu32, &domain_range_index) != 1) {
-			DEBUG(10, ("Domain range index not found, "
-				   "ignoring mapping request\n"));
-			TALLOC_FREE(data.dptr);
-			map->status = ID_UNKNOWN;
-			return NT_STATUS_OK;
-		}
+
+	/*
+	 * Allow for sid#range_index, just sid is range index 0
+	 */
+
+	switch (*q) {
+	    case '\0':
+		    domain_range_index = 0;
+		    break;
+	    case '#':
+		    if (sscanf(q+1, "%"SCNu32, &domain_range_index) == 1) {
+			    break;
+		    }
+		    /* If we end up here, something weird is in the record. */
+
+		    /* FALL THROUGH */
+	    default:
+		    DBG_DEBUG("SID/domain range: %s\n",
+			      (const char *)data.dptr);
+		    TALLOC_FREE(data.dptr);
+		    map->status = ID_UNKNOWN;
+		    return NT_STATUS_OK;
+	}
 
 	TALLOC_FREE(data.dptr);
 
@@ -274,8 +291,8 @@ static NTSTATUS idmap_autorid_id_to_sid(struct autorid_global_config *cfg,
 **********************************/
 
 static NTSTATUS idmap_autorid_sid_to_id_rid(
-					struct autorid_global_config *global,
-					struct autorid_range_config *range,
+					uint32_t rangesize,
+					uint32_t low_id,
 					struct id_map *map)
 {
 	uint32_t rid;
@@ -283,9 +300,9 @@ static NTSTATUS idmap_autorid_sid_to_id_rid(
 
 	sid_peek_rid(map->sid, &rid);
 
-	reduced_rid = rid % global->rangesize;
+	reduced_rid = rid % rangesize;
 
-	map->xid.id = reduced_rid + range->low_id;
+	map->xid.id = reduced_rid + low_id;
 	map->xid.type = ID_TYPE_BOTH;
 	map->status = ID_MAPPED;
 
@@ -326,8 +343,9 @@ static NTSTATUS idmap_autorid_unixids_to_sids(struct idmap_domain *dom,
 		if ((!NT_STATUS_IS_OK(ret)) &&
 		    (!NT_STATUS_EQUAL(ret, NT_STATUS_NONE_MAPPED))) {
 			/* some fatal error occurred, log it */
-			DEBUG(3, ("Unexpected error resolving an ID "
-				  " (%d)\n", ids[i]->xid.id));
+			DBG_NOTICE("Unexpected error resolving an ID "
+				   "(%d): %s\n", ids[i]->xid.id,
+				   nt_errstr(ret));
 			goto failure;
 		}
 
@@ -339,7 +357,8 @@ static NTSTATUS idmap_autorid_unixids_to_sids(struct idmap_domain *dom,
 
 	if (num_tomap == num_mapped) {
 		return NT_STATUS_OK;
-	} else if (num_mapped == 0) {
+	}
+	if (num_mapped == 0) {
 		return NT_STATUS_NONE_MAPPED;
 	}
 
@@ -524,7 +543,6 @@ static NTSTATUS idmap_autorid_sid_to_id(struct idmap_tdb_common_context *common,
 	struct autorid_global_config *global =
 		talloc_get_type_abort(common->private_data,
 				      struct autorid_global_config);
-	struct winbindd_tdc_domain *domain;
 	struct autorid_range_config range;
 	uint32_t rid;
 	struct dom_sid domainsid;
@@ -557,38 +575,111 @@ static NTSTATUS idmap_autorid_sid_to_id(struct idmap_tdb_common_context *common,
 		return NT_STATUS_NONE_MAPPED;
 	}
 
-	/*
-	 * Check if the domain is around
-	 */
-	domain = wcache_tdc_fetch_domainbysid(talloc_tos(),
-					      &domainsid);
-	if (domain == NULL) {
-		DEBUG(10, ("Ignoring unknown domain sid %s\n",
-			   sid_string_dbg(&domainsid)));
-		map->status = ID_UNMAPPED;
-		return NT_STATUS_NONE_MAPPED;
-	}
-	TALLOC_FREE(domain);
-
 	sid_to_fstring(range.domsid, &domainsid);
 
 	range.domain_range_index = rid / (global->rangesize);
 
-	ret = idmap_autorid_get_domainrange(autorid_db, &range, dom->read_only);
-	if (NT_STATUS_EQUAL(ret, NT_STATUS_NOT_FOUND) && dom->read_only) {
-		DEBUG(10, ("read-only is enabled, did not allocate "
-			   "new range for domain %s\n",
-			   sid_string_dbg(&domainsid)));
+	ret = idmap_autorid_getrange(autorid_db, range.domsid,
+				     range.domain_range_index,
+				     &range.rangenum, &range.low_id);
+	if (NT_STATUS_IS_OK(ret)) {
+		return idmap_autorid_sid_to_id_rid(
+			global->rangesize, range.low_id, map);
+	}
+
+	if (dom->read_only) {
+		DBG_DEBUG("read-only is enabled, did not allocate "
+			  "new range for domain %s\n", range.domsid);
 		map->status = ID_UNMAPPED;
 		return NT_STATUS_NONE_MAPPED;
 	}
+
+	/*
+	 * Check if we should allocate a domain range. We need to
+	 * protect against unknown domains to not fill our ranges
+	 * needlessly.
+	 */
+
+	if (sid_check_is_builtin(&domainsid) ||
+	    sid_check_is_our_sam(&domainsid)) {
+		goto allocate;
+	}
+
+	{
+		struct winbindd_domain *domain;
+
+		/*
+		 * Deterministic check for domain members: We can be
+		 * sure that the domain we are member of is worth to
+		 * add a mapping for.
+		 */
+
+		domain = find_our_domain();
+		if ((domain != NULL) &&
+		    dom_sid_equal(&domain->sid, &domainsid)) {
+			goto allocate;
+		}
+	}
+
+	/*
+	 * If we have already allocated range index 0, this domain is
+	 * worth allocating for in higher ranges.
+	 */
+	if (range.domain_range_index != 0) {
+		uint32_t zero_rangenum, zero_low_id;
+
+		ret = idmap_autorid_getrange(autorid_db, range.domsid, 0,
+					     &zero_rangenum, &zero_low_id);
+		if (NT_STATUS_IS_OK(ret)) {
+			goto allocate;
+		}
+	}
+
+	/*
+	 * If the caller already did a lookup sid and made sure the
+	 * domain sid is valid, we can allocate a new range.
+	 *
+	 * Currently the winbindd parent already does a lookup sids
+	 * first, but hopefully changes in future. If the
+	 * caller knows the domain sid, ID_TYPE_BOTH should be
+	 * passed instead of ID_TYPE_NOT_SPECIFIED.
+	 */
+	if (map->xid.type != ID_TYPE_NOT_SPECIFIED) {
+		goto allocate;
+	}
+
+	/*
+	 * Check of last resort: A domain is valid if a user from that
+	 * domain has recently logged in. The samlogon_cache these
+	 * days also stores the domain sid.
+	 *
+	 * We used to check the list of trusted domains we received
+	 * from "our" dc, but this is not reliable enough.
+	 */
+	if (netsamlogon_cache_have(&domainsid)) {
+		goto allocate;
+	}
+
+	/*
+	 * Nobody knows this domain, so refuse to allocate a fresh
+	 * range.
+	 */
+
+	DBG_NOTICE("Allocating range for domain %s refused\n", range.domsid);
+	map->status = ID_UNMAPPED;
+	return NT_STATUS_NONE_MAPPED;
+
+allocate:
+	ret = idmap_autorid_acquire_range(autorid_db, &range);
 	if (!NT_STATUS_IS_OK(ret)) {
-		DEBUG(3, ("Could not determine range for domain, "
-			  "check previous messages for reason\n"));
+		DBG_NOTICE("Could not determine range for domain: %s, "
+			   "check previous messages for reason\n",
+			   nt_errstr(ret));
 		return ret;
 	}
 
-	return idmap_autorid_sid_to_id_rid(global, &range, map);
+	return idmap_autorid_sid_to_id_rid(global->rangesize, range.low_id,
+					   map);
 }
 
 /**********************************

@@ -25,6 +25,7 @@
 #include <tevent.h>
 
 #include "lib/util/debug.h"
+#include "lib/util/time.h"
 
 #include "ctdb_private.h"
 #include "ctdb_client.h"
@@ -33,20 +34,6 @@
 #include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
-
-void ctdb_set_child_info(TALLOC_CTX *mem_ctx, const char *child_name_fmt, ...)
-{
-	if (child_name_fmt != NULL) {
-		va_list ap;
-		char *t;
-
-		va_start(ap, child_name_fmt);
-		t = talloc_vasprintf(mem_ctx, child_name_fmt, ap);
-		debug_extra = talloc_asprintf(mem_ctx, "%s:", t);
-		talloc_free(t);
-		va_end(ap);
-	}
-}
 
 void ctdb_track_child(struct ctdb_context *ctdb, pid_t pid)
 {
@@ -68,6 +55,10 @@ void ctdb_track_child(struct ctdb_context *ctdb, pid_t pid)
 pid_t ctdb_fork(struct ctdb_context *ctdb)
 {
 	pid_t pid;
+	struct timeval before;
+	double delta_t;
+
+	before = timeval_current();
 
 	pid = fork();
 	if (pid == -1) {
@@ -76,8 +67,6 @@ pid_t ctdb_fork(struct ctdb_context *ctdb)
 		return -1;
 	}
 	if (pid == 0) {
-		ctdb_set_child_info(ctdb, NULL);
-
 		/* Close the Unix Domain socket and the TCP socket.
 		 * This ensures that none of the child processes will
 		 * look like the main daemon when it is not running.
@@ -102,6 +91,57 @@ pid_t ctdb_fork(struct ctdb_context *ctdb)
 		ctdb->can_send_controls = false;
 
 		return 0;
+	}
+
+	delta_t = timeval_elapsed(&before);
+	if (delta_t > 3.0) {
+		DEBUG(DEBUG_WARNING, ("fork() took %lf seconds\n", delta_t));
+	}
+
+	ctdb_track_child(ctdb, pid);
+	return pid;
+}
+
+/*
+ * vfork + exec
+ */
+pid_t ctdb_vfork_exec(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
+		      const char *helper, int helper_argc,
+		      const char **helper_argv)
+{
+	pid_t pid;
+	struct timeval before;
+	double delta_t;
+	char **argv;
+	int i;
+
+	argv = talloc_array(mem_ctx, char *, helper_argc + 1);
+	if (argv == NULL) {
+		DEBUG(DEBUG_ERR, ("Memory allocation error\n"));
+		return -1;
+	}
+
+	argv[0] = discard_const(helper);
+	for (i=0; i<helper_argc; i++) {
+		argv[i+1] = discard_const(helper_argv[i]);
+	}
+
+	before = timeval_current();
+
+	pid = vfork();
+	if (pid == -1) {
+		DEBUG(DEBUG_ERR, ("vfork() failed (%s)\n", strerror(errno)));
+		return -1;
+	}
+
+	if (pid == 0) {
+		execv(helper, argv);
+		_exit(1);
+	}
+
+	delta_t = timeval_elapsed(&before);
+	if (delta_t > 3.0) {
+		DEBUG(DEBUG_WARNING, ("vfork() took %lf seconds\n", delta_t));
 	}
 
 	ctdb_track_child(ctdb, pid);

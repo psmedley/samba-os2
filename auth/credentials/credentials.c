@@ -36,84 +36,12 @@
  */
 _PUBLIC_ struct cli_credentials *cli_credentials_init(TALLOC_CTX *mem_ctx) 
 {
-	struct cli_credentials *cred = talloc(mem_ctx, struct cli_credentials);
+	struct cli_credentials *cred = talloc_zero(mem_ctx, struct cli_credentials);
 	if (cred == NULL) {
 		return cred;
 	}
 
-	cred->workstation_obtained = CRED_UNINITIALISED;
-	cred->username_obtained = CRED_UNINITIALISED;
-	cred->password_obtained = CRED_UNINITIALISED;
-	cred->domain_obtained = CRED_UNINITIALISED;
-	cred->realm_obtained = CRED_UNINITIALISED;
-	cred->ccache_obtained = CRED_UNINITIALISED;
-	cred->client_gss_creds_obtained = CRED_UNINITIALISED;
-	cred->principal_obtained = CRED_UNINITIALISED;
-	cred->keytab_obtained = CRED_UNINITIALISED;
-	cred->server_gss_creds_obtained = CRED_UNINITIALISED;
-
-	cred->ccache_threshold = CRED_UNINITIALISED;
-	cred->client_gss_creds_threshold = CRED_UNINITIALISED;
-
-	cred->workstation = NULL;
-	cred->username = NULL;
-	cred->password = NULL;
-	cred->old_password = NULL;
-	cred->domain = NULL;
-	cred->realm = NULL;
-	cred->principal = NULL;
-	cred->salt_principal = NULL;
-	cred->impersonate_principal = NULL;
-	cred->self_service = NULL;
-	cred->target_service = NULL;
-
-	cred->bind_dn = NULL;
-
-	cred->nt_hash = NULL;
-	cred->old_nt_hash = NULL;
-
-	cred->lm_response.data = NULL;
-	cred->lm_response.length = 0;
-	cred->nt_response.data = NULL;
-	cred->nt_response.length = 0;
-
-	cred->ccache = NULL;
-	cred->client_gss_creds = NULL;
-	cred->keytab = NULL;
-	cred->server_gss_creds = NULL;
-
-	cred->workstation_cb = NULL;
-	cred->password_cb = NULL;
-	cred->username_cb = NULL;
-	cred->domain_cb = NULL;
-	cred->realm_cb = NULL;
-	cred->principal_cb = NULL;
-
-	cred->priv_data = NULL;
-
-	cred->netlogon_creds = NULL;
-	cred->secure_channel_type = SEC_CHAN_NULL;
-
-	cred->kvno = 0;
-
-	cred->password_last_changed_time = 0;
-
-	cred->smb_krb5_context = NULL;
-
-	cred->machine_account_pending = false;
-	cred->machine_account_pending_lp_ctx = NULL;
-
-	cred->machine_account = false;
-
-	cred->password_tries = 0;
-
-	cred->callback_running = false;
-
-	cli_credentials_set_kerberos_state(cred, CRED_AUTO_USE_KERBEROS);
-	cli_credentials_set_gensec_features(cred, 0);
-	cli_credentials_set_krb_forwardable(cred, CRED_AUTO_KRB_FORWARDABLE);
-
-	cred->forced_sasl_mech = NULL;
+	cred->winbind_separator = '\\';
 
 	return cred;
 }
@@ -285,16 +213,37 @@ _PUBLIC_ const char *cli_credentials_get_principal_and_obtained(struct cli_crede
 
 	if (cred->principal_obtained < cred->username_obtained
 	    || cred->principal_obtained < MAX(cred->domain_obtained, cred->realm_obtained)) {
+		const char *effective_username = NULL;
+		const char *effective_realm = NULL;
+		enum credentials_obtained effective_obtained;
+
+		effective_username = cli_credentials_get_username(cred);
+		if (effective_username == NULL || strlen(effective_username) == 0) {
+			*obtained = cred->username_obtained;
+			return NULL;
+		}
+
 		if (cred->domain_obtained > cred->realm_obtained) {
-			*obtained = MIN(cred->domain_obtained, cred->username_obtained);
-			return talloc_asprintf(mem_ctx, "%s@%s", 
-					       cli_credentials_get_username(cred),
-					       cli_credentials_get_domain(cred));
+			effective_realm = cli_credentials_get_domain(cred);
+			effective_obtained = MIN(cred->domain_obtained,
+						 cred->username_obtained);
 		} else {
-			*obtained = MIN(cred->domain_obtained, cred->username_obtained);
+			effective_realm = cli_credentials_get_realm(cred);
+			effective_obtained = MIN(cred->realm_obtained,
+						 cred->username_obtained);
+		}
+
+		if (effective_realm == NULL || strlen(effective_realm) == 0) {
+			effective_realm = cli_credentials_get_domain(cred);
+			effective_obtained = MIN(cred->domain_obtained,
+						 cred->username_obtained);
+		}
+
+		if (effective_realm != NULL && strlen(effective_realm) != 0) {
+			*obtained = effective_obtained;
 			return talloc_asprintf(mem_ctx, "%s@%s", 
-					       cli_credentials_get_username(cred),
-					       cli_credentials_get_realm(cred));
+					       effective_username,
+					       effective_realm);
 		}
 	}
 	*obtained = cred->principal_obtained;
@@ -319,7 +268,11 @@ _PUBLIC_ bool cli_credentials_set_principal(struct cli_credentials *cred,
 {
 	if (obtained >= cred->principal_obtained) {
 		cred->principal = talloc_strdup(cred, val);
+		if (cred->principal == NULL) {
+			return false;
+		}
 		cred->principal_obtained = obtained;
+
 		cli_credentials_invalidate_ccache(cred, cred->principal_obtained);
 		return true;
 	}
@@ -390,7 +343,8 @@ _PUBLIC_ const char *cli_credentials_get_password(struct cli_credentials *cred)
 	}
 
 	if (cred->password_obtained == CRED_CALLBACK && 
-	    !cred->callback_running) {
+	    !cred->callback_running &&
+	    !cred->password_will_be_nt_hash) {
 		cred->callback_running = true;
 		cred->password = cred->password_cb(cred);
 		cred->callback_running = false;
@@ -411,18 +365,54 @@ _PUBLIC_ bool cli_credentials_set_password(struct cli_credentials *cred,
 				  enum credentials_obtained obtained)
 {
 	if (obtained >= cred->password_obtained) {
-		cred->password_tries = 0;
-		cred->password = talloc_strdup(cred, val);
-		if (cred->password) {
-			/* Don't print the actual password in talloc memory dumps */
-			talloc_set_name_const(cred->password, "password set via cli_credentials_set_password");
-		}
-		cred->password_obtained = obtained;
-		cli_credentials_invalidate_ccache(cred, cred->password_obtained);
 
+		cred->lm_response = data_blob_null;
+		cred->nt_response = data_blob_null;
 		cred->nt_hash = NULL;
-		cred->lm_response = data_blob(NULL, 0);
-		cred->nt_response = data_blob(NULL, 0);
+		cred->password = NULL;
+
+		cli_credentials_invalidate_ccache(cred, obtained);
+
+		cred->password_tries = 0;
+
+		if (val == NULL) {
+			cred->password_obtained = obtained;
+			return true;
+		}
+
+		if (cred->password_will_be_nt_hash) {
+			struct samr_Password *nt_hash = NULL;
+			size_t val_len = strlen(val);
+			size_t converted;
+
+			nt_hash = talloc(cred, struct samr_Password);
+			if (nt_hash == NULL) {
+				return false;
+			}
+
+			converted = strhex_to_str((char *)nt_hash->hash,
+						  sizeof(nt_hash->hash),
+						  val, val_len);
+			if (converted != sizeof(nt_hash->hash)) {
+				TALLOC_FREE(nt_hash);
+				return false;
+			}
+
+			cred->nt_hash = nt_hash;
+			cred->password_obtained = obtained;
+			return true;
+		}
+
+		cred->password = talloc_strdup(cred, val);
+		if (cred->password == NULL) {
+			return false;
+		}
+
+		/* Don't print the actual password in talloc memory dumps */
+		talloc_set_name_const(cred->password,
+			"password set via cli_credentials_set_password");
+		cred->password_obtained = obtained;
+
 		return true;
 	}
 
@@ -483,32 +473,85 @@ _PUBLIC_ bool cli_credentials_set_old_password(struct cli_credentials *cred,
 _PUBLIC_ struct samr_Password *cli_credentials_get_nt_hash(struct cli_credentials *cred,
 							   TALLOC_CTX *mem_ctx)
 {
+	enum credentials_obtained password_obtained;
+	enum credentials_obtained ccache_threshold;
+	enum credentials_obtained client_gss_creds_threshold;
+	bool password_is_nt_hash;
 	const char *password = NULL;
+	struct samr_Password *nt_hash = NULL;
 
 	if (cred->nt_hash != NULL) {
-		struct samr_Password *nt_hash = talloc(mem_ctx, struct samr_Password);
-		if (!nt_hash) {
-			return NULL;
-		}
-
-		*nt_hash = *cred->nt_hash;
-
-		return nt_hash;
+		/*
+		 * If we already have a hash it's easy.
+		 */
+		goto return_hash;
 	}
 
+	/*
+	 * This is a bit tricky, with password_will_be_nt_hash
+	 * we still need to get the value via the password_callback
+	 * but if we did that we should not remember it's state
+	 * in the long run so we need to undo it.
+	 */
+
+	password_obtained = cred->password_obtained;
+	ccache_threshold = cred->ccache_threshold;
+	client_gss_creds_threshold = cred->client_gss_creds_threshold;
+	password_is_nt_hash = cred->password_will_be_nt_hash;
+
+	cred->password_will_be_nt_hash = false;
 	password = cli_credentials_get_password(cred);
-	if (password) {
-		struct samr_Password *nt_hash = talloc(mem_ctx, struct samr_Password);
-		if (!nt_hash) {
-			return NULL;
-		}
 
-		E_md4hash(password, nt_hash->hash);
-
-		return nt_hash;
+	cred->password_will_be_nt_hash = password_is_nt_hash;
+	if (password_is_nt_hash && password_obtained == CRED_CALLBACK) {
+		/*
+		 * We got the nt_hash as string via the callback,
+		 * so we need to undo the state change.
+		 *
+		 * And also don't remember it as plaintext password.
+		 */
+		cred->client_gss_creds_threshold = client_gss_creds_threshold;
+		cred->ccache_threshold = ccache_threshold;
+		cred->password_obtained = password_obtained;
+		cred->password = NULL;
 	}
 
-	return NULL;
+	if (password == NULL) {
+		return NULL;
+	}
+
+	nt_hash = talloc(cred, struct samr_Password);
+	if (nt_hash == NULL) {
+		return NULL;
+	}
+
+	if (password_is_nt_hash) {
+		size_t password_len = strlen(password);
+		size_t converted;
+
+		converted = strhex_to_str((char *)nt_hash->hash,
+					  sizeof(nt_hash->hash),
+					  password, password_len);
+		if (converted != sizeof(nt_hash->hash)) {
+			TALLOC_FREE(nt_hash);
+			return false;
+		}
+	} else {
+		E_md4hash(password, nt_hash->hash);
+	}
+
+	cred->nt_hash = nt_hash;
+	nt_hash = NULL;
+
+return_hash:
+	nt_hash = talloc(mem_ctx, struct samr_Password);
+	if (nt_hash == NULL) {
+		return NULL;
+	}
+
+	*nt_hash = *cred->nt_hash;
+
+	return nt_hash;
 }
 
 /**
@@ -742,14 +785,56 @@ _PUBLIC_ void cli_credentials_parse_string(struct cli_credentials *credentials, 
 	}
 
 	if ((p = strchr_m(uname,'@'))) {
+		/*
+		 * We also need to set username and domain
+		 * in order to undo the effect of
+		 * cli_credentials_guess().
+		 */
+		cli_credentials_set_username(credentials, uname, obtained);
+		cli_credentials_set_domain(credentials, "", obtained);
+
 		cli_credentials_set_principal(credentials, uname, obtained);
 		*p = 0;
 		cli_credentials_set_realm(credentials, p+1, obtained);
 		return;
-	} else if ((p = strchr_m(uname,'\\')) || (p = strchr_m(uname, '/'))) {
+	} else if ((p = strchr_m(uname,'\\'))
+		   || (p = strchr_m(uname, '/'))
+		   || (p = strchr_m(uname, credentials->winbind_separator)))
+	{
+		const char *domain = NULL;
+
+		domain = uname;
 		*p = 0;
-		cli_credentials_set_domain(credentials, uname, obtained);
 		uname = p+1;
+
+		if (obtained == credentials->realm_obtained &&
+		    !strequal_m(credentials->domain, domain))
+		{
+			/*
+			 * We need to undo a former set with the same level
+			 * in order to get the expected result from
+			 * cli_credentials_get_principal().
+			 *
+			 * But we only need to do that if the domain
+			 * actually changes.
+			 */
+			cli_credentials_set_realm(credentials, domain, obtained);
+		}
+		cli_credentials_set_domain(credentials, domain, obtained);
+	}
+	if (obtained == credentials->principal_obtained &&
+	    !strequal_m(credentials->username, uname))
+	{
+		/*
+		 * We need to undo a former set with the same level
+		 * in order to get the expected result from
+		 * cli_credentials_get_principal().
+		 *
+		 * But we only need to do that if the username
+		 * actually changes.
+		 */
+		credentials->principal_obtained = CRED_UNINITIALISED;
+		credentials->principal = NULL;
 	}
 	cli_credentials_set_username(credentials, uname, obtained);
 }
@@ -794,6 +879,9 @@ _PUBLIC_ const char *cli_credentials_get_unparsed_name(struct cli_credentials *c
 _PUBLIC_ void cli_credentials_set_conf(struct cli_credentials *cred, 
 			      struct loadparm_context *lp_ctx)
 {
+	const char *sep = NULL;
+	const char *realm = lpcfg_realm(lp_ctx);
+
 	cli_credentials_set_username(cred, "", CRED_UNINITIALISED);
 	if (lpcfg_parm_is_cmdline(lp_ctx, "workgroup")) {
 		cli_credentials_set_domain(cred, lpcfg_workgroup(lp_ctx), CRED_SPECIFIED);
@@ -805,10 +893,18 @@ _PUBLIC_ void cli_credentials_set_conf(struct cli_credentials *cred,
 	} else {
 		cli_credentials_set_workstation(cred, lpcfg_netbios_name(lp_ctx), CRED_UNINITIALISED);
 	}
+	if (realm != NULL && strlen(realm) == 0) {
+		realm = NULL;
+	}
 	if (lpcfg_parm_is_cmdline(lp_ctx, "realm")) {
-		cli_credentials_set_realm(cred, lpcfg_realm(lp_ctx), CRED_SPECIFIED);
+		cli_credentials_set_realm(cred, realm, CRED_SPECIFIED);
 	} else {
-		cli_credentials_set_realm(cred, lpcfg_realm(lp_ctx), CRED_UNINITIALISED);
+		cli_credentials_set_realm(cred, realm, CRED_UNINITIALISED);
+	}
+
+	sep = lpcfg_winbind_separator(lp_ctx);
+	if (sep != NULL && sep[0] != '\0') {
+		cred->winbind_separator = *lpcfg_winbind_separator(lp_ctx);
 	}
 }
 
@@ -928,6 +1024,7 @@ _PUBLIC_ void cli_credentials_set_anonymous(struct cli_credentials *cred)
 	cli_credentials_set_username(cred, "", CRED_SPECIFIED);
 	cli_credentials_set_domain(cred, "", CRED_SPECIFIED);
 	cli_credentials_set_password(cred, NULL, CRED_SPECIFIED);
+	cli_credentials_set_principal(cred, NULL, CRED_SPECIFIED);
 	cli_credentials_set_realm(cred, NULL, CRED_SPECIFIED);
 	cli_credentials_set_workstation(cred, "", CRED_UNINITIALISED);
 	cli_credentials_set_kerberos_state(cred, CRED_DONT_USE_KERBEROS);
@@ -1024,6 +1121,10 @@ _PUBLIC_ bool cli_credentials_parse_file(struct cli_credentials *cred, const cha
 	char *ptr, *val, *param;
 	char **lines;
 	int i, numlines;
+	const char *realm = NULL;
+	const char *domain = NULL;
+	const char *password = NULL;
+	const char *username = NULL;
 
 	lines = file_lines_load(file, &numlines, 0, NULL);
 
@@ -1054,17 +1155,57 @@ _PUBLIC_ bool cli_credentials_parse_file(struct cli_credentials *cred, const cha
 			val++;
 
 		if (strwicmp("password", param) == 0) {
-			cli_credentials_set_password(cred, val, obtained);
+			password = val;
 		} else if (strwicmp("username", param) == 0) {
-			cli_credentials_set_username(cred, val, obtained);
+			username = val;
 		} else if (strwicmp("domain", param) == 0) {
-			cli_credentials_set_domain(cred, val, obtained);
+			domain = val;
 		} else if (strwicmp("realm", param) == 0) {
-			cli_credentials_set_realm(cred, val, obtained);
+			realm = val;
 		}
-		memset(lines[i], 0, len);
+
+		/*
+		 * We need to readd '=' in order to let
+		 * the strlen() work in the last loop
+		 * that clears the memory.
+		 */
+		*ptr = '=';
 	}
 
+	if (realm != NULL && strlen(realm) != 0) {
+		/*
+		 * only overwrite with a valid string
+		 */
+		cli_credentials_set_realm(cred, realm, obtained);
+	}
+
+	if (domain != NULL && strlen(domain) != 0) {
+		/*
+		 * only overwrite with a valid string
+		 */
+		cli_credentials_set_domain(cred, domain, obtained);
+	}
+
+	if (password != NULL) {
+		/*
+		 * Here we allow "".
+		 */
+		cli_credentials_set_password(cred, password, obtained);
+	}
+
+	if (username != NULL) {
+		/*
+		 * The last "username" line takes preference
+		 * if the string also contains domain, realm or
+		 * password.
+		 */
+		cli_credentials_parse_string(cred, username, obtained);
+	}
+
+	for (i = 0; i < numlines; i++) {
+		len = strlen(lines[i]);
+		memset(lines[i], 0, len);
+	}
 	talloc_free(lines);
 
 	return true;

@@ -146,6 +146,23 @@ WERROR winreg_get_printer_secdesc(TALLOC_CTX *mem_ctx,
 				  struct spoolss_security_descriptor **psecdesc);
 
 /**
+ * @brief Get the security descriptor for a printserver.
+ *
+ * @param[in]  mem_ctx  The talloc memory context to use.
+ *
+ * @param[in]  b The dcerpc binding handle
+ *
+ * @param[out] psecdesc   A pointer to store the security descriptor.
+ *
+ * @return              On success WERR_OK, a corresponding DOS error is
+ *                      something went wrong.
+ */
+
+WERROR winreg_get_printserver_secdesc(TALLOC_CTX *mem_ctx,
+				      struct dcerpc_binding_handle *winreg_handle,
+				      struct spoolss_security_descriptor **psecdesc);
+
+/**
  * @brief Set the security descriptor for a printer.
  *
  * @param[in]  mem_ctx  The talloc memory context to use.
@@ -163,6 +180,23 @@ WERROR winreg_set_printer_secdesc(TALLOC_CTX *mem_ctx,
 				  struct dcerpc_binding_handle *b,
 				  const char *sharename,
 				  const struct spoolss_security_descriptor *secdesc);
+
+/**
+ * @brief Set the security descriptor for a printserver.
+ *
+ * @param[in]  mem_ctx  The talloc memory context to use.
+ *
+ * @param[in]  b The dcerpc binding handle
+ *
+ * @param[in]  secdesc  The security descriptor to save.
+ *
+ * @return              On success WERR_OK, a corresponding DOS error is
+ *                      something went wrong.
+ */
+WERROR winreg_set_printserver_secdesc(TALLOC_CTX *mem_ctx,
+				      struct dcerpc_binding_handle *b,
+				      const struct spoolss_security_descriptor *secdesc);
+
 
 /**
  * @internal
@@ -421,7 +455,7 @@ WERROR winreg_printer_enumforms1(TALLOC_CTX *mem_ctx,
  * @param[in]  form_name The name of the form to delete.
  *
  * @return              WERR_OK on success.
- *                      WERR_INVALID_PARAM if the form is a builtin form.
+ *                      WERR_INVALID_PARAMETER if the form is a builtin form.
  *                      WERR_INVALID_FORM_NAME if the form or key doesn't exist.
  *                      A corresponding DOS error is something went wrong.
  */
@@ -444,7 +478,7 @@ WERROR winreg_printer_deleteform1(TALLOC_CTX *mem_ctx,
  * @param[in]  form     The FormInfo structure to save.
  *
  * @return              WERR_OK on success.
- *                      WERR_INVALID_PARAM if the form is a builtin form.
+ *                      WERR_INVALID_PARAMETER if the form is a builtin form.
  *                      A corresponding DOS error is something went wrong.
  */
 WERROR winreg_printer_setform1(TALLOC_CTX *mem_ctx,

@@ -236,7 +236,7 @@ static void idmap_rfc2307_map_sid_results(struct idmap_rfc2307_context *ctx,
 		if (i == 0) {
 			entry = ldap_first_entry(ctx->ldap, result);
 		} else {
-			entry = ldap_next_entry(ctx->ldap, result);
+			entry = ldap_next_entry(ctx->ldap, entry);
 		}
 		if (!entry) {
 			DEBUG(2, ("Unable to fetch entry.\n"));
@@ -521,10 +521,7 @@ static struct id_map* idmap_rfc2307_find_map(struct idmap_rfc2307_map *maps,
 
 	DEBUG(10, ("Looking for name %s, type %d\n", name, type));
 
-	for (i = 0; i < IDMAP_LDAP_MAX_IDS; i++) {
-		if (maps[i].map == NULL) { /* end of the run */
-			return NULL;
-		}
+	for (i = 0; maps[i].map != NULL; i++) {
 		DEBUG(10, ("Entry %d: name %s, type %d\n",
 			   i, maps[i].name, maps[i].type));
 		if (type == maps[i].type && strcmp(name, maps[i].name) == 0) {
@@ -556,7 +553,7 @@ static void idmap_rfc2307_map_xid_results(struct idmap_rfc2307_context *ctx,
 		if (i == 0) {
 			entry = ldap_first_entry(ctx->ldap, result);
 		} else {
-			entry = ldap_next_entry(ctx->ldap, result);
+			entry = ldap_next_entry(ctx->ldap, entry);
 		}
 		if (!entry) {
 			DEBUG(2, ("Unable to fetch entry.\n"));

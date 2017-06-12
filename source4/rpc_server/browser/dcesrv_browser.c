@@ -55,7 +55,7 @@ static WERROR dcesrv_BrowserrQueryOtherDomains(struct dcesrv_call_state *dce_cal
 	switch (r->in.info->level) {
 	case 100:
 		if (!r->in.info->info.info100) {
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 
 		ctr100 = talloc(mem_ctx, struct BrowserrSrvInfo100Ctr);
@@ -70,7 +70,7 @@ static WERROR dcesrv_BrowserrQueryOtherDomains(struct dcesrv_call_state *dce_cal
 		*r->out.total_entries = ctr100->entries_read;
 		return WERR_OK;
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 }
 

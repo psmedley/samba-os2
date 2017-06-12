@@ -66,7 +66,7 @@ WERROR gp_init_reg_ctx(TALLOC_CTX *mem_ctx,
 	WERROR werr;
 
 	if (!reg_ctx) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = registry_init_basic();
@@ -84,7 +84,7 @@ WERROR gp_init_reg_ctx(TALLOC_CTX *mem_ctx,
 	}
 	if (!tmp_ctx->token) {
 		TALLOC_FREE(tmp_ctx);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	werr = regdb_open();
@@ -96,7 +96,7 @@ WERROR gp_init_reg_ctx(TALLOC_CTX *mem_ctx,
 		tmp_ctx->path = talloc_strdup(mem_ctx, initial_path);
 		if (!tmp_ctx->path) {
 			TALLOC_FREE(tmp_ctx);
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		werr = reg_open_path(mem_ctx, tmp_ctx->path, desired_access,
@@ -151,7 +151,7 @@ WERROR gp_read_reg_subkey(TALLOC_CTX *mem_ctx,
 	const char *tmp = NULL;
 
 	if (!reg_ctx || !subkeyname || !key) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	tmp = talloc_asprintf(mem_ctx, "%s\\%s", reg_ctx->path, subkeyname);
@@ -173,7 +173,7 @@ WERROR gp_store_reg_val_sz(TALLOC_CTX *mem_ctx,
 
 	reg_val.type = REG_SZ;
 	if (!push_reg_sz(mem_ctx, &reg_val.data, val)) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	return reg_setvalue(key, val_name, &reg_val);
@@ -215,7 +215,7 @@ WERROR gp_read_reg_val_sz(TALLOC_CTX *mem_ctx,
 	}
 
 	if (!pull_reg_sz(mem_ctx, &reg_val->data, val)) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	return WERR_OK;
@@ -257,7 +257,7 @@ static WERROR gp_store_reg_gpovals(TALLOC_CTX *mem_ctx,
 	WERROR werr;
 
 	if (!key || !gpo) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = gp_store_reg_val_dword(mem_ctx, key, "Version",
@@ -462,7 +462,7 @@ WERROR gp_reg_state_store(TALLOC_CTX *mem_ctx,
 			  struct GROUP_POLICY_OBJECT *gpo_list)
 {
 	struct gp_registry_context *reg_ctx = NULL;
-	WERROR werr = WERR_GENERAL_FAILURE;
+	WERROR werr = WERR_GEN_FAILURE;
 	const char *subkeyname = NULL;
 	struct GROUP_POLICY_OBJECT *gpo;
 	int count = 0;
@@ -487,7 +487,7 @@ WERROR gp_reg_state_store(TALLOC_CTX *mem_ctx,
 
 	subkeyname = gp_req_state_path(mem_ctx, &token->sids[0], flags);
 	if (!subkeyname) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -529,7 +529,7 @@ WERROR gp_reg_state_store(TALLOC_CTX *mem_ctx,
 
 		subkeyname = talloc_asprintf(mem_ctx, "%d", count++);
 		if (!subkeyname) {
-			werr = WERR_NOMEM;
+			werr = WERR_NOT_ENOUGH_MEMORY;
 			goto done;
 		}
 
@@ -562,7 +562,7 @@ static WERROR gp_read_reg_gpovals(TALLOC_CTX *mem_ctx,
 	WERROR werr;
 
 	if (!key || !gpo) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = gp_read_reg_val_dword(mem_ctx, key, "Version",
@@ -599,7 +599,7 @@ static WERROR gp_read_reg_gpo(TALLOC_CTX *mem_ctx,
 	WERROR werr;
 
 	if (!gpo_ret || !key) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	gpo = talloc_zero(mem_ctx, struct GROUP_POLICY_OBJECT);
@@ -622,7 +622,7 @@ WERROR gp_reg_state_read(TALLOC_CTX *mem_ctx,
 			 struct GROUP_POLICY_OBJECT **gpo_list)
 {
 	struct gp_registry_context *reg_ctx = NULL;
-	WERROR werr = WERR_GENERAL_FAILURE;
+	WERROR werr = WERR_GEN_FAILURE;
 	const char *subkeyname = NULL;
 	struct GROUP_POLICY_OBJECT *gpo = NULL;
 	int count = 0;
@@ -631,14 +631,14 @@ WERROR gp_reg_state_read(TALLOC_CTX *mem_ctx,
 	const char *gp_state_path = NULL;
 
 	if (!gpo_list) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	ZERO_STRUCTP(gpo_list);
 
 	gp_state_path = gp_req_state_path(mem_ctx, sid, flags);
 	if (!gp_state_path) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -647,7 +647,7 @@ WERROR gp_reg_state_read(TALLOC_CTX *mem_ctx,
 			       gp_state_path,
 			       "GPO-List");
 	if (!path) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -660,12 +660,12 @@ WERROR gp_reg_state_read(TALLOC_CTX *mem_ctx,
 
 		subkeyname = talloc_asprintf(mem_ctx, "%d", count++);
 		if (!subkeyname) {
-			werr = WERR_NOMEM;
+			werr = WERR_NOT_ENOUGH_MEMORY;
 			goto done;
 		}
 
 		werr = gp_read_reg_subkey(mem_ctx, reg_ctx, subkeyname, &key);
-		if (W_ERROR_EQUAL(werr, WERR_BADFILE)) {
+		if (W_ERROR_EQUAL(werr, WERR_FILE_NOT_FOUND)) {
 			werr = WERR_OK;
 			break;
 		}
@@ -1032,7 +1032,7 @@ WERROR reg_apply_registry_entry(TALLOC_CTX *mem_ctx,
 			return WERR_NOT_SUPPORTED;
 		default:
 			DEBUG(0,("invalid action: %d\n", entry->action));
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 	}
 
 	return werr;

@@ -73,7 +73,7 @@ static WERROR libnetapi_open_ipc_connection(struct libnetapi_ctx *ctx,
 	NTSTATUS status;
 
 	if (!ctx || !pp || !server_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	priv_ctx = (struct libnetapi_private_ctx *)ctx->private_data;
@@ -86,9 +86,9 @@ static WERROR libnetapi_open_ipc_connection(struct libnetapi_ctx *ctx,
 
 	auth_info = user_auth_info_init(ctx);
 	if (!auth_info) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
-	auth_info->signing_state = SMB_SIGNING_IPC_DEFAULT;
+	set_cmdline_auth_info_signing_state_raw(auth_info, SMB_SIGNING_IPC_DEFAULT);
 	set_cmdline_auth_info_use_kerberos(auth_info, ctx->use_kerberos);
 	set_cmdline_auth_info_username(auth_info, ctx->username);
 	if (ctx->password) {
@@ -111,7 +111,7 @@ static WERROR libnetapi_open_ipc_connection(struct libnetapi_ctx *ctx,
 			     server_name, "IPC$",
 			     auth_info,
 			     false, false,
-			     lp_client_max_protocol(),
+			     lp_client_ipc_max_protocol(),
 			     0, 0x20, &cli_ipc);
 	if (!NT_STATUS_IS_OK(status)) {
 		cli_ipc = NULL;
@@ -126,7 +126,7 @@ static WERROR libnetapi_open_ipc_connection(struct libnetapi_ctx *ctx,
 
 	p = talloc_zero(ctx, struct client_ipc_connection);
 	if (p == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	p->cli = cli_ipc;
@@ -239,7 +239,7 @@ WERROR libnetapi_open_pipe(struct libnetapi_ctx *ctx,
 	struct client_ipc_connection *ipc = NULL;
 
 	if (!presult) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = libnetapi_open_ipc_connection(ctx, server_name, &ipc);
@@ -252,7 +252,7 @@ WERROR libnetapi_open_pipe(struct libnetapi_ctx *ctx,
 		libnetapi_set_error_string(ctx, "failed to open PIPE %s: %s",
 			table->name,
 			get_friendly_nt_error_msg(status));
-		return WERR_DEST_NOT_FOUND;
+		return WERR_NERR_DESTNOTFOUND;
 	}
 
 	*presult = result;

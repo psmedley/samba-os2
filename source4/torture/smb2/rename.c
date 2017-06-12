@@ -57,6 +57,8 @@ static bool torture_smb2_rename_simple(struct torture_context *torture,
 	union smb_fileinfo fi;
 	struct smb2_handle h1;
 
+	ZERO_STRUCT(h1);
+
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
 
@@ -120,7 +122,7 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (h1.data) {
+	if (h1.data[0] || h1.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = h1;
@@ -144,6 +146,8 @@ static bool torture_smb2_rename_simple2(struct torture_context *torture,
 	union smb_close cl;
 	union smb_setfileinfo sinfo;
 	struct smb2_handle h1;
+
+	ZERO_STRUCT(h1);
 
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
@@ -199,7 +203,7 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (h1.data) {
+	if (h1.data[0] || h1.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = h1;
@@ -225,6 +229,8 @@ static bool torture_smb2_rename_no_sharemode(struct torture_context *torture,
 	union smb_setfileinfo sinfo;
 	union smb_fileinfo fi;
 	struct smb2_handle h1;
+
+	ZERO_STRUCT(h1);
 
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
@@ -288,7 +294,7 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (h1.data) {
+	if (h1.data[0] || h1.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = h1;
@@ -313,6 +319,9 @@ static bool torture_smb2_rename_with_delete_access(struct torture_context *tortu
 	union smb_close cl;
 	union smb_setfileinfo sinfo;
 	struct smb2_handle fh, dh;
+
+	ZERO_STRUCT(fh);
+	ZERO_STRUCT(dh);
 
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
@@ -405,13 +414,13 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (fh.data) {
+	if (fh.data[0] || fh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = fh;
 		status = smb2_close(tree1, &(cl.smb2));
 	}
-	if (dh.data) {
+	if (dh.data[0] || dh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = dh;
@@ -438,6 +447,9 @@ static bool torture_smb2_rename_with_delete_access2(struct torture_context *tort
 	union smb_close cl;
 	union smb_setfileinfo sinfo;
 	struct smb2_handle fh, dh;
+
+	ZERO_STRUCT(fh);
+	ZERO_STRUCT(dh);
 
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
@@ -529,13 +541,13 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (fh.data) {
+	if (fh.data[0] || fh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = fh;
 		status = smb2_close(tree1, &(cl.smb2));
 	}
-	if (dh.data) {
+	if (dh.data[0] || dh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = dh;
@@ -562,6 +574,9 @@ static bool torture_smb2_rename_no_delete_access(struct torture_context *torture
 	union smb_setfileinfo sinfo;
 	union smb_fileinfo fi;
 	struct smb2_handle fh, dh;
+
+	ZERO_STRUCT(fh);
+	ZERO_STRUCT(dh);
 
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
@@ -663,13 +678,13 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (fh.data) {
+	if (fh.data[0] || fh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = fh;
 		status = smb2_close(tree1, &(cl.smb2));
 	}
-	if (dh.data) {
+	if (dh.data[0] || dh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = dh;
@@ -696,6 +711,9 @@ static bool torture_smb2_rename_no_delete_access2(struct torture_context *tortur
 	union smb_close cl;
 	union smb_setfileinfo sinfo;
 	struct smb2_handle fh, dh;
+
+	ZERO_STRUCT(fh);
+	ZERO_STRUCT(dh);
 
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
@@ -787,13 +805,13 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (fh.data) {
+	if (fh.data[0] || fh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = fh;
 		status = smb2_close(tree1, &(cl.smb2));
 	}
-	if (dh.data) {
+	if (dh.data[0] || dh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = dh;
@@ -819,6 +837,9 @@ static bool torture_smb2_rename_msword(struct torture_context *torture,
 	union smb_setfileinfo sinfo;
 	union smb_fileinfo fi;
 	struct smb2_handle fh, dh;
+
+	ZERO_STRUCT(fh);
+	ZERO_STRUCT(dh);
 
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
@@ -911,13 +932,13 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (fh.data) {
+	if (fh.data[0] || fh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = fh;
 		status = smb2_close(tree1, &(cl.smb2));
 	}
-	if (dh.data) {
+	if (dh.data[0] || dh.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = dh;
@@ -937,6 +958,9 @@ static bool torture_smb2_rename_dir_openfile(struct torture_context *torture,
 	union smb_close cl;
 	union smb_setfileinfo sinfo;
 	struct smb2_handle d1, h1;
+
+	ZERO_STRUCT(d1);
+	ZERO_STRUCT(h1);
 
 	smb2_deltree(tree1, BASEDIR);
 	smb2_util_rmdir(tree1, BASEDIR);
@@ -1011,7 +1035,7 @@ done:
 
 	torture_comment(torture, "Cleaning up\n");
 
-	if (h1.data) {
+	if (h1.data[0] || h1.data[1]) {
 		ZERO_STRUCT(cl.smb2);
 		cl.smb2.level = RAW_CLOSE_SMB2;
 		cl.smb2.in.file.handle = h1;

@@ -603,11 +603,12 @@ int tdb_mutex_init(struct tdb_context *tdb)
 fail:
 	pthread_mutexattr_destroy(&ma);
 fail_munmap:
-	tdb_mutex_munmap(tdb);
 
 	if (ret == 0) {
 		return 0;
 	}
+
+	tdb_mutex_munmap(tdb);
 
 	errno = ret;
 	return -1;
@@ -620,6 +621,10 @@ int tdb_mutex_mmap(struct tdb_context *tdb)
 
 	len = tdb_mutex_size(tdb);
 	if (len == 0) {
+		return 0;
+	}
+
+	if (tdb->mutexes != NULL) {
 		return 0;
 	}
 
@@ -636,13 +641,20 @@ int tdb_mutex_mmap(struct tdb_context *tdb)
 int tdb_mutex_munmap(struct tdb_context *tdb)
 {
 	size_t len;
+	int ret;
 
 	len = tdb_mutex_size(tdb);
 	if (len == 0) {
 		return 0;
 	}
 
-	return munmap(tdb->mutexes, len);
+	ret = munmap(tdb->mutexes, len);
+	if (ret == -1) {
+		return -1;
+	}
+	tdb->mutexes = NULL;
+
+	return 0;
 }
 
 static bool tdb_mutex_locking_cached;

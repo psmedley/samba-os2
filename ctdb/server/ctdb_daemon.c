@@ -58,11 +58,11 @@ static struct pidfile_context *ctdbd_pidfile_ctx = NULL;
 
 static void daemon_incoming_packet(void *, struct ctdb_req_header *);
 
+static pid_t __ctdbd_pid;
+
 static void print_exit_message(void)
 {
-	if (debug_extra != NULL && debug_extra[0] != '\0') {
-		DEBUG(DEBUG_NOTICE,("CTDB %s shutting down\n", debug_extra));
-	} else {
+	if (getpid() == __ctdbd_pid) {
 		DEBUG(DEBUG_NOTICE,("CTDB daemon shutting down\n"));
 
 		/* Wait a second to allow pending log messages to be flushed */
@@ -1104,6 +1104,16 @@ static void ctdb_setup_event_callback(struct ctdb_context *ctdb, int status,
 static struct timeval tevent_before_wait_ts;
 static struct timeval tevent_after_wait_ts;
 
+static void ctdb_tevent_trace_init(void)
+{
+	struct timeval now;
+
+	now = timeval_current();
+
+	tevent_before_wait_ts = now;
+	tevent_after_wait_ts = now;
+}
+
 static void ctdb_tevent_trace(enum tevent_trace_point tp,
 			      void *private_data)
 {
@@ -1120,25 +1130,21 @@ static void ctdb_tevent_trace(enum tevent_trace_point tp,
 
 	switch (tp) {
 	case TEVENT_TRACE_BEFORE_WAIT:
-		if (!timeval_is_zero(&tevent_after_wait_ts)) {
-			diff = timeval_until(&tevent_after_wait_ts, &now);
-			if (diff.tv_sec > 3) {
-				DEBUG(DEBUG_ERR,
-				      ("Handling event took %ld seconds!\n",
-				       (long)diff.tv_sec));
-			}
+		diff = timeval_until(&tevent_after_wait_ts, &now);
+		if (diff.tv_sec > 3) {
+			DEBUG(DEBUG_ERR,
+			      ("Handling event took %ld seconds!\n",
+			       (long)diff.tv_sec));
 		}
 		tevent_before_wait_ts = now;
 		break;
 
 	case TEVENT_TRACE_AFTER_WAIT:
-		if (!timeval_is_zero(&tevent_before_wait_ts)) {
-			diff = timeval_until(&tevent_before_wait_ts, &now);
-			if (diff.tv_sec > 3) {
-				DEBUG(DEBUG_CRIT,
-				      ("No event for %ld seconds!\n",
-				       (long)diff.tv_sec));
-			}
+		diff = timeval_until(&tevent_before_wait_ts, &now);
+		if (diff.tv_sec > 3) {
+			DEBUG(DEBUG_ERR,
+			      ("No event for %ld seconds!\n",
+			       (long)diff.tv_sec));
 		}
 		tevent_after_wait_ts = now;
 		break;
@@ -1259,6 +1265,7 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 	 * This must be the first exit handler to run (so the last to
 	 * be registered.
 	 */
+	__ctdbd_pid = getpid();
 	atexit(print_exit_message);
 
 	if (ctdb->do_setsched) {
@@ -1275,12 +1282,8 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 		exit(1);
 	}
 	tevent_loop_allow_nesting(ctdb->ev);
+	ctdb_tevent_trace_init();
 	tevent_set_trace_callback(ctdb->ev, ctdb_tevent_trace, ctdb);
-	ret = ctdb_init_tevent_logging(ctdb);
-	if (ret != 0) {
-		DEBUG(DEBUG_ALERT,("Failed to initialize TEVENT logging\n"));
-		exit(1);
-	}
 
 	/* set up a handler to pick up sigchld */
 	if (ctdb_init_sigchld(ctdb) == NULL) {
@@ -1288,7 +1291,9 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 		exit(1);
 	}
 
-	ctdb_set_child_logging(ctdb);
+	if (do_fork) {
+		ctdb_set_child_logging(ctdb);
+	}
 
 	TALLOC_FREE(ctdb->srv);
 	if (srvid_init(ctdb, &ctdb->srv) != 0) {
@@ -1301,6 +1306,11 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 
 	/* force initial recovery for election */
 	ctdb->recovery_mode = CTDB_RECOVERY_ACTIVE;
+
+	if (ctdb_start_eventd(ctdb) != 0) {
+		DEBUG(DEBUG_ERR, ("Failed to start event daemon\n"));
+		exit(1);
+	}
 
 	ctdb_set_runstate(ctdb, CTDB_RUNSTATE_INIT);
 	ret = ctdb_event_script(ctdb, CTDB_EVENT_INIT);
@@ -1834,6 +1844,7 @@ void ctdb_shutdown_sequence(struct ctdb_context *ctdb, int exit_code)
 	ctdb_stop_monitoring(ctdb);
 	ctdb_release_all_ips(ctdb);
 	ctdb_event_script(ctdb, CTDB_EVENT_SHUTDOWN);
+	ctdb_stop_eventd(ctdb);
 	if (ctdb->methods != NULL && ctdb->methods->shutdown != NULL) {
 		ctdb->methods->shutdown(ctdb);
 	}
@@ -1848,15 +1859,9 @@ void ctdb_shutdown_sequence(struct ctdb_context *ctdb, int exit_code)
  * process must be created using ctdb_fork() and not fork() -
  * ctdb_fork() does some necessary housekeeping.
  */
-int switch_from_server_to_client(struct ctdb_context *ctdb, const char *fmt, ...)
+int switch_from_server_to_client(struct ctdb_context *ctdb)
 {
 	int ret;
-	va_list ap;
-
-	/* Add extra information so we can identify this in the logs */
-	va_start(ap, fmt);
-	debug_extra = talloc_strdup_append(talloc_vasprintf(NULL, fmt, ap), ":");
-	va_end(ap);
 
 	/* get a new event context */
 	ctdb->ev = tevent_context_init(ctdb);

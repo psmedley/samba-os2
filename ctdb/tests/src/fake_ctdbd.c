@@ -40,6 +40,8 @@
 #include "common/logging.h"
 #include "common/tunable.h"
 
+#include "ipalloc_read_known_ips.h"
+
 
 #define CTDB_PORT 4379
 
@@ -98,6 +100,14 @@ struct srvid_register_state {
 	uint64_t srvid;
 };
 
+struct fake_control_failure {
+	struct fake_control_failure  *prev, *next;
+	enum ctdb_controls opcode;
+	uint32_t pnn;
+	const char *error;
+	const char *comment;
+};
+
 struct ctdbd_context {
 	struct node_map *node_map;
 	struct interface_map *iface_map;
@@ -109,11 +119,13 @@ struct ctdbd_context {
 	struct timeval recovery_start_time;
 	struct timeval recovery_end_time;
 	bool takeover_disabled;
-	enum debug_level log_level;
+	int log_level;
 	enum ctdb_runstate runstate;
 	struct ctdb_tunable_list tun_list;
 	int monitoring_mode;
 	char *reclock;
+	struct ctdb_public_ip_list *known_ips;
+	struct fake_control_failure *control_failures;
 };
 
 /*
@@ -704,6 +716,109 @@ static struct database *database_find(struct database_map *map,
 	return NULL;
 }
 
+static bool public_ips_parse(struct ctdbd_context *ctdb,
+			     uint32_t numnodes)
+{
+	if (numnodes == 0) {
+		D_ERR("Must initialise nodemap before public IPs\n");
+		return false;
+	}
+
+	ctdb->known_ips = ipalloc_read_known_ips(ctdb, numnodes, false);
+
+	return (ctdb->known_ips != NULL);
+}
+
+/* Read information about controls to fail.  Format is:
+ *   <opcode> <pnn> {ERROR|TIMEOUT} <comment>
+ */
+static bool control_failures_parse(struct ctdbd_context *ctdb)
+{
+	char line[1024];
+
+	while ((fgets(line, sizeof(line), stdin) != NULL)) {
+		char *tok, *t;
+		enum ctdb_controls opcode;
+		uint32_t pnn;
+		const char *error;
+		const char *comment;
+		struct fake_control_failure *failure = NULL;
+
+		if (line[0] == '\n') {
+			break;
+		}
+
+		/* Get rid of pesky newline */
+		if ((t = strchr(line, '\n')) != NULL) {
+			*t = '\0';
+		}
+
+		/* Get opcode */
+		tok = strtok(line, " \t");
+		if (tok == NULL) {
+			D_ERR("bad line (%s) - missing opcode\n", line);
+			continue;
+		}
+		opcode = (enum ctdb_controls)strtoul(tok, NULL, 0);
+
+		/* Get PNN */
+		tok = strtok(NULL, " \t");
+		if (tok == NULL) {
+			D_ERR("bad line (%s) - missing PNN\n", line);
+			continue;
+		}
+		pnn = (uint32_t)strtoul(tok, NULL, 0);
+
+		/* Get error */
+		tok = strtok(NULL, " \t");
+		if (tok == NULL) {
+			D_ERR("bad line (%s) - missing errno\n", line);
+			continue;
+		}
+		error = talloc_strdup(ctdb, tok);
+		if (error == NULL) {
+			goto fail;
+		}
+		if (strcmp(error, "ERROR") != 0 &&
+		    strcmp(error, "TIMEOUT") != 0) {
+			D_ERR("bad line (%s) "
+			      "- error must be \"ERROR\" or \"TIMEOUT\"\n",
+			      line);
+			goto fail;
+		}
+
+		/* Get comment */
+		tok = strtok(NULL, "\n"); /* rest of line */
+		if (tok == NULL) {
+			D_ERR("bad line (%s) - missing comment\n", line);
+			continue;
+		}
+		comment = talloc_strdup(ctdb, tok);
+		if (comment == NULL) {
+			goto fail;
+		}
+
+		failure = talloc_zero(ctdb, struct fake_control_failure);
+		if (failure == NULL) {
+			goto fail;
+		}
+
+		failure->opcode = opcode;
+		failure->pnn = pnn;
+		failure->error = error;
+		failure->comment = comment;
+
+		DLIST_ADD(ctdb->control_failures, failure);
+	}
+
+	D_INFO("Parsing fake control failures done\n");
+	return true;
+
+fail:
+	D_INFO("Parsing fake control failures failed\n");
+	return false;
+}
+
 /*
  * CTDB context setup
  */
@@ -769,8 +884,13 @@ static struct ctdbd_context *ctdbd_setup(TALLOC_CTX *mem_ctx)
 			status = vnnmap_parse(ctdb->vnn_map);
 		} else if (strcmp(line, "DBMAP") == 0) {
 			status = dbmap_parse(ctdb->db_map);
+		} else if (strcmp(line, "PUBLICIPS") == 0) {
+			status = public_ips_parse(ctdb,
+						  ctdb->node_map->num_nodes);
 		} else if (strcmp(line, "RECLOCK") == 0) {
 			status = reclock_parse(ctdb);
+		} else if (strcmp(line, "CONTROLFAILS") == 0) {
+			status = control_failures_parse(ctdb);
 		} else {
 			fprintf(stderr, "Unknown line %s\n", line);
 			status = false;
@@ -1242,7 +1362,7 @@ static void control_get_debug(TALLOC_CTX *mem_ctx,
 	struct ctdb_reply_control reply;
 
 	reply.rdata.opcode = request->opcode;
-	reply.rdata.data.loglevel = debug_level_to_int(ctdb->log_level);
+	reply.rdata.data.loglevel = (uint32_t)ctdb->log_level;
 	reply.status = 0;
 	reply.errmsg = NULL;
 
@@ -1259,7 +1379,7 @@ static void control_set_debug(TALLOC_CTX *mem_ctx,
 	struct ctdbd_context *ctdb = state->ctdb;
 	struct ctdb_reply_control reply;
 
-	ctdb->log_level = debug_level_from_int(request->rdata.data.loglevel);
+	ctdb->log_level = (int)request->rdata.data.loglevel;
 
 	reply.rdata.opcode = request->opcode;
 	reply.status = 0;
@@ -1917,6 +2037,174 @@ static void control_get_capabilities(TALLOC_CTX *mem_ctx,
 	client_send_control(req, header, &reply);
 }
 
+static void control_release_ip(TALLOC_CTX *mem_ctx,
+			       struct tevent_req *req,
+			       struct ctdb_req_header *header,
+			       struct ctdb_req_control *request)
+{
+	struct client_state *state = tevent_req_data(
+		req, struct client_state);
+	struct ctdbd_context *ctdb = state->ctdb;
+	struct ctdb_public_ip *ip = request->rdata.data.pubip;
+	struct ctdb_reply_control reply;
+	struct ctdb_public_ip_list *ips = NULL;
+	struct ctdb_public_ip *t = NULL;
+	int i;
+
+	reply.rdata.opcode = request->opcode;
+
+	if (ctdb->known_ips == NULL) {
+		D_INFO("RELEASE_IP %s - not a public IP\n",
+		       ctdb_sock_addr_to_string(mem_ctx, &ip->addr));
+		goto done;
+	}
+
+	ips = &ctdb->known_ips[header->destnode];
+
+	t = NULL;
+	for (i = 0; i < ips->num; i++) {
+		if (ctdb_sock_addr_same_ip(&ips->ip[i].addr, &ip->addr)) {
+			t = &ips->ip[i];
+			break;
+		}
+	}
+	if (t == NULL) {
+		D_INFO("RELEASE_IP %s - not a public IP\n",
+		       ctdb_sock_addr_to_string(mem_ctx, &ip->addr));
+		goto done;
+	}
+
+	if (t->pnn != header->destnode) {
+		if (header->destnode == ip->pnn) {
+			D_ERR("error: RELEASE_IP %s - to TAKE_IP node %d\n",
+			      ctdb_sock_addr_to_string(mem_ctx, &ip->addr),
+			      ip->pnn);
+			reply.status = -1;
+			reply.errmsg = "RELEASE_IP to TAKE_IP node";
+			client_send_control(req, header, &reply);
+			return;
+		}
+
+		D_INFO("RELEASE_IP %s - to node %d - redundant\n",
+		       ctdb_sock_addr_to_string(mem_ctx, &ip->addr),
+		       ip->pnn);
+		t->pnn = ip->pnn;
+	} else {
+		D_NOTICE("RELEASE_IP %s - to node %d\n",
+			  ctdb_sock_addr_to_string(mem_ctx, &ip->addr),
+			  ip->pnn);
+		t->pnn = ip->pnn;
+	}
+
+done:
+	reply.status = 0;
+	reply.errmsg = NULL;
+	client_send_control(req, header, &reply);
+}
+
+static void control_takeover_ip(TALLOC_CTX *mem_ctx,
+				struct tevent_req *req,
+				struct ctdb_req_header *header,
+				struct ctdb_req_control *request)
+{
+	struct client_state *state = tevent_req_data(
+		req, struct client_state);
+	struct ctdbd_context *ctdb = state->ctdb;
+	struct ctdb_public_ip *ip = request->rdata.data.pubip;
+	struct ctdb_reply_control reply;
+	struct ctdb_public_ip_list *ips = NULL;
+	struct ctdb_public_ip *t = NULL;
+	int i;
+
+	reply.rdata.opcode = request->opcode;
+
+	if (ctdb->known_ips == NULL) {
+		D_INFO("TAKEOVER_IP %s - not a public IP\n",
+		       ctdb_sock_addr_to_string(mem_ctx, &ip->addr));
+		goto done;
+	}
+
+	ips = &ctdb->known_ips[header->destnode];
+
+	t = NULL;
+	for (i = 0; i < ips->num; i++) {
+		if (ctdb_sock_addr_same_ip(&ips->ip[i].addr, &ip->addr)) {
+			t = &ips->ip[i];
+			break;
+		}
+	}
+	if (t == NULL) {
+		D_INFO("TAKEOVER_IP %s - not a public IP\n",
+		       ctdb_sock_addr_to_string(mem_ctx, &ip->addr));
+		goto done;
+	}
+
+	if (t->pnn == header->destnode) {
+		D_INFO("TAKEOVER_IP %s - redundant\n",
+		       ctdb_sock_addr_to_string(mem_ctx, &ip->addr));
+	} else {
+		D_NOTICE("TAKEOVER_IP %s\n",
+			 ctdb_sock_addr_to_string(mem_ctx, &ip->addr));
+		t->pnn = ip->pnn;
+	}
+
+done:
+	reply.status = 0;
+	reply.errmsg = NULL;
+	client_send_control(req, header, &reply);
+}
+
+static void control_get_public_ips(TALLOC_CTX *mem_ctx,
+				   struct tevent_req *req,
+				   struct ctdb_req_header *header,
+				   struct ctdb_req_control *request)
+{
+	struct client_state *state = tevent_req_data(
+		req, struct client_state);
+	struct ctdbd_context *ctdb = state->ctdb;
+	struct ctdb_reply_control reply;
+	struct ctdb_public_ip_list *ips = NULL;
+
+	reply.rdata.opcode = request->opcode;
+
+	if (ctdb->known_ips == NULL) {
+		/* No IPs defined so create a dummy empty struct and ship it */
+		ips = talloc_zero(mem_ctx, struct ctdb_public_ip_list);;
+		if (ips == NULL) {
+			reply.status = ENOMEM;
+			reply.errmsg = "Memory error";
+			goto done;
+		}
+		goto ok;
+	}
+
+	ips = &ctdb->known_ips[header->destnode];
+
+	if (request->flags & CTDB_PUBLIC_IP_FLAGS_ONLY_AVAILABLE) {
+		/* If runstate is not RUNNING or a node is then return
+		 * no available IPs.  Don't worry about interface
+		 * states here - we're not faking down to that level.
+		 */
+		if (ctdb->runstate != CTDB_RUNSTATE_RUNNING) {
+			/* No available IPs: return dummy empty struct */
+			ips = talloc_zero(mem_ctx, struct ctdb_public_ip_list);;
+			if (ips == NULL) {
+				reply.status = ENOMEM;
+				reply.errmsg = "Memory error";
+				goto done;
+			}
+		}
+	}
+
+ok:
+	reply.rdata.data.pubip_list = ips;
+	reply.status = 0;
+	reply.errmsg = NULL;
+
+done:
+	client_send_control(req, header, &reply);
+}
+
 static void control_get_nodemap(TALLOC_CTX *mem_ctx,
 				struct tevent_req *req,
 				struct ctdb_req_header *header,
@@ -2163,31 +2451,24 @@ static void control_db_get_health(TALLOC_CTX *mem_ctx,
 	client_send_control(req, header, &reply);
 }
 
-static void control_get_ifaces(TALLOC_CTX *mem_ctx,
-			       struct tevent_req *req,
-			       struct ctdb_req_header *header,
-			       struct ctdb_req_control *request)
+static struct ctdb_iface_list *get_ctdb_iface_list(TALLOC_CTX *mem_ctx,
+						   struct ctdbd_context *ctdb)
 {
-	struct client_state *state = tevent_req_data(
-		req, struct client_state);
-	struct ctdbd_context *ctdb = state->ctdb;
-	struct ctdb_reply_control reply;
 	struct ctdb_iface_list *iface_list;
 	struct interface *iface;
 	int i;
 
-	reply.rdata.opcode = request->opcode;
-
 	iface_list = talloc_zero(mem_ctx, struct ctdb_iface_list);
 	if (iface_list == NULL) {
-		goto fail;
+		goto done;
 	}
 
 	iface_list->num = ctdb->iface_map->num;
 	iface_list->iface = talloc_array(iface_list, struct ctdb_iface,
 					 iface_list->num);
 	if (iface_list->iface == NULL) {
-		goto fail;
+		TALLOC_FREE(iface_list);
+		goto done;
 	}
 
 	for (i=0; i<iface_list->num; i++) {
@@ -2198,6 +2479,105 @@ static void control_get_ifaces(TALLOC_CTX *mem_ctx,
 		};
 		strlcpy(iface_list->iface[i].name, iface->name,
 			sizeof(iface_list->iface[i].name));
+	}
+
+done:
+	return iface_list;
+}
+
+static void control_get_public_ip_info(TALLOC_CTX *mem_ctx,
+				       struct tevent_req *req,
+				       struct ctdb_req_header *header,
+				       struct ctdb_req_control *request)
+{
+	struct client_state *state = tevent_req_data(
+		req, struct client_state);
+	struct ctdbd_context *ctdb = state->ctdb;
+	struct ctdb_reply_control reply;
+	ctdb_sock_addr *addr = request->rdata.data.addr;
+	struct ctdb_public_ip_list *known = NULL;
+	struct ctdb_public_ip_info *info = NULL;
+	unsigned i;
+
+	reply.rdata.opcode = request->opcode;
+
+	info = talloc_zero(mem_ctx, struct ctdb_public_ip_info);
+	if (info == NULL) {
+		reply.status = ENOMEM;
+		reply.errmsg = "Memory error";
+		goto done;
+	}
+
+	reply.rdata.data.ipinfo = info;
+
+	if (ctdb->known_ips != NULL) {
+		known = &ctdb->known_ips[header->destnode];
+	} else {
+		/* No IPs defined so create a dummy empty struct and
+		 * fall through.  The given IP won't be matched
+		 * below...
+		 */
+		known = talloc_zero(mem_ctx, struct ctdb_public_ip_list);;
+		if (known == NULL) {
+			reply.status = ENOMEM;
+			reply.errmsg = "Memory error";
+			goto done;
+		}
+	}
+
+	for (i = 0; i < known->num; i++) {
+		if (ctdb_sock_addr_same_ip(&known->ip[i].addr,
+					   addr)) {
+			break;
+		}
+	}
+
+	if (i == known->num) {
+		D_ERR("GET_PUBLIC_IP_INFO: not known public IP %s\n",
+		      ctdb_sock_addr_to_string(mem_ctx, addr));
+		reply.status = -1;
+		reply.errmsg = "Unknown address";
+		goto done;
+	}
+
+	info->ip = known->ip[i];
+
+	/* The fake PUBLICIPS stanza and resulting known_ips data
+	 * don't know anything about interfaces, so completely fake
+	 * this.
+	 */
+	info->active_idx = 0;
+
+	info->ifaces = get_ctdb_iface_list(mem_ctx, ctdb);
+	if (info->ifaces == NULL) {
+		reply.status = ENOMEM;
+		reply.errmsg = "Memory error";
+		goto done;
+	}
+
+	reply.status = 0;
+	reply.errmsg = NULL;
+
+done:
+	client_send_control(req, header, &reply);
+}
+
+static void control_get_ifaces(TALLOC_CTX *mem_ctx,
+			       struct tevent_req *req,
+			       struct ctdb_req_header *header,
+			       struct ctdb_req_control *request)
+{
+	struct client_state *state = tevent_req_data(
+		req, struct client_state);
+	struct ctdbd_context *ctdb = state->ctdb;
+	struct ctdb_reply_control reply;
+	struct ctdb_iface_list *iface_list;
+
+	reply.rdata.opcode = request->opcode;
+
+	iface_list = get_ctdb_iface_list(mem_ctx, ctdb);
+	if (iface_list == NULL) {
+		goto fail;
 	}
 
 	reply.rdata.data.iface_list = iface_list;
@@ -2347,6 +2727,21 @@ done:
 	client_send_control(req, header, &reply);
 }
 
+static void control_ipreallocated(TALLOC_CTX *mem_ctx,
+				  struct tevent_req *req,
+				  struct ctdb_req_header *header,
+				  struct ctdb_req_control *request)
+{
+	struct ctdb_reply_control reply;
+
+	/* Always succeed */
+	reply.rdata.opcode = request->opcode;
+	reply.status = 0;
+	reply.errmsg = NULL;
+
+	client_send_control(req, header, &reply);
+}
+
 static void control_get_runstate(TALLOC_CTX *mem_ctx,
 				 struct tevent_req *req,
 				 struct ctdb_req_header *header,
@@ -2390,6 +2785,44 @@ fail:
 	reply.status = -1;
 	reply.errmsg = "Failed to read nodes file";
 	client_send_control(req, header, &reply);
+}
+
+static bool fake_control_failure(TALLOC_CTX *mem_ctx,
+				 struct tevent_req *req,
+				 struct ctdb_req_header *header,
+				 struct ctdb_req_control *request)
+{
+	struct client_state *state = tevent_req_data(
+		req, struct client_state);
+	struct ctdbd_context *ctdb = state->ctdb;
+	struct ctdb_reply_control reply;
+	struct fake_control_failure *f = NULL;
+
+	D_DEBUG("Checking fake control failure for control %u on node %u\n",
+		request->opcode, header->destnode);
+	for (f = ctdb->control_failures; f != NULL; f = f->next) {
+		if (f->opcode == request->opcode &&
+		    (f->pnn == header->destnode ||
+		     f->pnn == CTDB_UNKNOWN_PNN)) {
+
+			reply.rdata.opcode = request->opcode;
+			if (strcmp(f->error, "TIMEOUT") == 0) {
+				/* Causes no reply */
+				D_ERR("Control %u fake timeout on node %u\n",
+				      request->opcode, header->destnode);
+				return true;
+			} else if (strcmp(f->error, "ERROR") == 0) {
+				D_ERR("Control %u fake error on node %u\n",
+				      request->opcode, header->destnode);
+				reply.status = -1;
+				reply.errmsg = f->comment;
+				client_send_control(req, header, &reply);
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 static void control_error(TALLOC_CTX *mem_ctx,
@@ -2753,6 +3186,10 @@ static void client_process_control(struct tevent_req *req,
 	DEBUG(DEBUG_INFO, ("request opcode = %u, reqid = %u\n",
 			   request.opcode, header.reqid));
 
+	if (fake_control_failure(mem_ctx, req, &header, &request)) {
+		goto done;
+	}
+
 	switch (request.opcode) {
 	case CTDB_CONTROL_PROCESS_EXISTS:
 		control_process_exists(mem_ctx, req, &header, &request);
@@ -2862,6 +3299,18 @@ static void client_process_control(struct tevent_req *req,
 		control_get_capabilities(mem_ctx, req, &header, &request);
 		break;
 
+	case CTDB_CONTROL_RELEASE_IP:
+		control_release_ip(mem_ctx, req, &header, &request);
+		break;
+
+	case CTDB_CONTROL_TAKEOVER_IP:
+		control_takeover_ip(mem_ctx, req, &header, &request);
+		break;
+
+	case CTDB_CONTROL_GET_PUBLIC_IPS:
+		control_get_public_ips(mem_ctx, req, &header, &request);
+		break;
+
 	case CTDB_CONTROL_GET_NODEMAP:
 		control_get_nodemap(mem_ctx, req, &header, &request);
 		break;
@@ -2890,6 +3339,10 @@ static void client_process_control(struct tevent_req *req,
 		control_db_get_health(mem_ctx, req, &header, &request);
 		break;
 
+	case CTDB_CONTROL_GET_PUBLIC_IP_INFO:
+		control_get_public_ip_info(mem_ctx, req, &header, &request);
+		break;
+
 	case CTDB_CONTROL_GET_IFACES:
 		control_get_ifaces(mem_ctx, req, &header, &request);
 		break;
@@ -2904,6 +3357,10 @@ static void client_process_control(struct tevent_req *req,
 
 	case CTDB_CONTROL_SET_DB_STICKY:
 		control_set_db_sticky(mem_ctx, req, &header, &request);
+		break;
+
+	case CTDB_CONTROL_IPREALLOCATED:
+		control_ipreallocated(mem_ctx, req, &header, &request);
 		break;
 
 	case CTDB_CONTROL_GET_RUNSTATE:
@@ -2921,6 +3378,7 @@ static void client_process_control(struct tevent_req *req,
 		break;
 	}
 
+done:
 	talloc_free(mem_ctx);
 }
 
@@ -3165,7 +3623,6 @@ int main(int argc, const char *argv[])
 	TALLOC_CTX *mem_ctx;
 	struct ctdbd_context *ctdb;
 	struct tevent_context *ev;
-	enum debug_level debug_level;
 	poptContext pc;
 	int opt, fd, ret, pfd[2];
 	ssize_t len;
@@ -3191,21 +3648,16 @@ int main(int argc, const char *argv[])
 		exit(1);
 	}
 
-	if (options.debuglevel == NULL) {
-		DEBUGLEVEL = debug_level_to_int(DEBUG_ERR);
-	} else {
-		if (debug_level_parse(options.debuglevel, &debug_level)) {
-			DEBUGLEVEL = debug_level_to_int(debug_level);
-		} else {
-			fprintf(stderr, "Invalid debug level\n");
-			poptPrintHelp(pc, stdout, 0);
-			exit(1);
-		}
-	}
-
 	mem_ctx = talloc_new(NULL);
 	if (mem_ctx == NULL) {
 		fprintf(stderr, "Memory error\n");
+		exit(1);
+	}
+
+	ret = logging_init(mem_ctx, "file:", options.debuglevel, "fake-ctdbd");
+	if (ret != 0) {
+		fprintf(stderr, "Invalid debug level\n");
+		poptPrintHelp(pc, stdout, 0);
 		exit(1);
 	}
 

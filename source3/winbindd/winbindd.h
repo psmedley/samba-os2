@@ -75,9 +75,8 @@ struct winbindd_cli_state {
 
 struct getpwent_state {
 	struct winbindd_domain *domain;
-	int next_user;
-	int num_users;
-	struct wbint_userinfo *users;
+	uint32_t next_user;
+	struct wbint_RidArray rids;
 };
 
 struct getgrent_state {
@@ -168,11 +167,10 @@ struct winbindd_domain {
 
 	bool can_do_ncacn_ip_tcp;
 
-	/* Lookup methods for this domain (LDAP or RPC) */
-	struct winbindd_methods *methods;
-
-	/* the backend methods are used by the cache layer to find the right
-	   backend */
+	/*
+	 * Lookup methods for this domain (LDAP or RPC). The backend
+	 * methods are used by the cache layer.
+	 */
 	struct winbindd_methods *backend;
 
         /* Private data for the backends (used for connection cache) */
@@ -224,8 +222,7 @@ struct winbindd_methods {
 	/* get a list of users, returning a wbint_userinfo for each one */
 	NTSTATUS (*query_user_list)(struct winbindd_domain *domain,
 				   TALLOC_CTX *mem_ctx,
-				   uint32_t *num_entries,
-				   struct wbint_userinfo **info);
+				   uint32_t **rids);
 
 	/* get a list of domain groups */
 	NTSTATUS (*enum_dom_groups)(struct winbindd_domain *domain,
@@ -264,12 +261,6 @@ struct winbindd_methods {
 				  char **domain_name,
 				  char ***names,
 				  enum lsa_SidType **types);
-
-	/* lookup user info for a given SID */
-	NTSTATUS (*query_user)(struct winbindd_domain *domain, 
-			       TALLOC_CTX *mem_ctx, 
-			       const struct dom_sid *user_sid,
-			       struct wbint_userinfo *user_info);
 
 	/* lookup all groups that a user is a member of. The backend
 	   can also choose to lookup by username or rid for this
@@ -342,12 +333,6 @@ struct winbindd_tdc_domain {
 	uint32_t trust_flags;
 	uint32_t trust_attribs;
 	uint32_t trust_type;
-};
-
-/* Switch for listing users or groups */
-enum ent_type {
-	LIST_USERS = 0,
-	LIST_GROUPS,
 };
 
 struct WINBINDD_MEMORY_CREDS {

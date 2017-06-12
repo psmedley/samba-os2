@@ -309,7 +309,6 @@ bool setup_fault_pdu(struct pipes_struct *p, NTSTATUS fault_status)
 	ZERO_STRUCT(u);
 
 	u.fault.status		= NT_STATUS_V(fault_status);
-	u.fault._pad		= data_blob_talloc_zero(p->mem_ctx, 4);
 
 	/*
 	 * Marshall directly into the outgoing PDU space. We
@@ -476,6 +475,11 @@ bool is_known_pipename(const char *pipename, struct ndr_syntax_id *syntax)
 {
 	NTSTATUS status;
 
+	if (strchr(pipename, '/')) {
+		DEBUG(1, ("Refusing open on pipe %s\n", pipename));
+		return false;
+	}
+
 	if (lp_disable_spoolss() && strequal(pipename, "spoolss")) {
 		DEBUG(10, ("refusing spoolss access\n"));
 		return false;
@@ -588,8 +592,8 @@ static bool pipe_auth_generic_verify_final(TALLOC_CTX *mem_ctx,
 	   refuse the bind. */
 
 	status = auth_generic_server_check_flags(gensec_security,
-					    (auth_level ==
-						DCERPC_AUTH_LEVEL_INTEGRITY),
+					    (auth_level >=
+						DCERPC_AUTH_LEVEL_PACKET),
 					    (auth_level ==
 						DCERPC_AUTH_LEVEL_PRIVACY));
 	if (!NT_STATUS_IS_OK(status)) {
@@ -1360,6 +1364,7 @@ static bool api_pipe_request(struct pipes_struct *p,
 
 	switch (p->auth.auth_level) {
 	case DCERPC_AUTH_LEVEL_NONE:
+	case DCERPC_AUTH_LEVEL_PACKET:
 	case DCERPC_AUTH_LEVEL_INTEGRITY:
 	case DCERPC_AUTH_LEVEL_PRIVACY:
 		break;

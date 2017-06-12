@@ -212,7 +212,7 @@ WERROR NetShareAdd_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b;
 
 	if (!r->in.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -222,7 +222,7 @@ WERROR NetShareAdd_r(struct libnetapi_ctx *ctx,
 		case 503:
 			return WERR_NOT_SUPPORTED;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	werr = libnetapi_get_binding_handle(ctx, r->in.server_name,
@@ -280,7 +280,7 @@ WERROR NetShareDel_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b;
 
 	if (!r->in.net_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = libnetapi_get_binding_handle(ctx, r->in.server_name,
@@ -329,7 +329,7 @@ WERROR NetShareEnum_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b;
 
 	if (!r->out.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -341,7 +341,7 @@ WERROR NetShareEnum_r(struct libnetapi_ctx *ctx,
 		case 503:
 			return WERR_NOT_SUPPORTED;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	ZERO_STRUCT(info_ctr);
@@ -436,7 +436,7 @@ WERROR NetShareGetInfo_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b;
 
 	if (!r->in.net_name || !r->out.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -450,7 +450,7 @@ WERROR NetShareGetInfo_r(struct libnetapi_ctx *ctx,
 		case 503:
 			return WERR_NOT_SUPPORTED;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	werr = libnetapi_get_binding_handle(ctx, r->in.server_name,
@@ -509,7 +509,7 @@ WERROR NetShareSetInfo_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b;
 
 	if (!r->in.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -524,7 +524,7 @@ WERROR NetShareSetInfo_r(struct libnetapi_ctx *ctx,
 		case 1501:
 			return WERR_NOT_SUPPORTED;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	werr = libnetapi_get_binding_handle(ctx, r->in.server_name,

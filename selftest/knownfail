@@ -22,14 +22,12 @@
 ^samba3.raw.samba3hide.samba3hide\((nt4_dc|ad_dc)\) # This test fails against an smbd environment with NT ACLs enabled
 ^samba3.raw.samba3closeerr.samba3closeerr\(nt4_dc\) # This test fails against an smbd environment with NT ACLs enabled
 ^samba3.raw.acls nfs4acl_xattr-simple.INHERITFLAGS\(nt4_dc\) # This (and the follow nfs4acl_xattr tests fail because our NFSv4 backend isn't a complete mapping yet.
-^samba3.raw.acls nfs4acl_xattr-simple.sd\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-simple.create_file\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-simple.create_dir\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-simple.nulldacl\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-simple.generic\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-simple.inheritance\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-special.INHERITFLAGS\(nt4_dc\)
-^samba3.raw.acls nfs4acl_xattr-special.sd\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-special.create_file\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-special.create_dir\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-special.nulldacl\(nt4_dc\)
@@ -79,6 +77,9 @@
 ^samba4.rpc.netlogon.*.NetrEnumerateTrustedDomainsEx
 ^samba4.rpc.netlogon.*.GetPassword
 ^samba4.rpc.netlogon.*.DatabaseRedo
+^samba4.rpc.netlogon.*.netlogon.lsa_over_netlogon\(ad_dc\) #Broken by split of \\pipe\lsass from \\pipe\netlogon in the IDL
+^samba4.rpc.netlogon.*.netlogon.SetupCredentialsDowngrade\(ad_dc_ntvfs\) # Broken by allowing NT4 crypto on this environment
+^samba4.rpc.netlogon.*.netlogon.SetupCredentialsDowngrade\(ad_dc_ntvfs:local\) # Broken by allowing NT4 crypto on this environment
 ^samba4.rpc.drsuapi.*ncacn_ip_tcp.*validate # should only work with seal
 ^samba4.rpc.drsuapi.*ncacn_ip_tcp.*bigendian # should only work with seal
 ^samba4.rpc.samr.passwords.validate.*ncacn_ip_tcp.*with.validate # should only work with seal
@@ -142,7 +143,6 @@
 ^samba4.smb2.getinfo.qsec_buffercheck # S4 does not do the BUFFER_TOO_SMALL thingy
 ^samba4.ntvfs.cifs.krb5.base.createx_access.createx_access\(.*\)$
 ^samba4.rpc.lsa.forest.trust #Not fully provided by Samba4
-^samba4.blackbox.kinit\(.*\).kinit with user password for expired password\(.*\) # We need to work out why this fails only during the pw change
 ^samba4.blackbox.upgradeprovision.alpha13.ldapcmp_sd\(none\) # Due to something rewriting the NT ACL on DNS objects
 ^samba4.blackbox.upgradeprovision.alpha13.ldapcmp_full_sd\(none\) # Due to something rewriting the NT ACL on DNS objects
 ^samba4.blackbox.upgradeprovision.release-4-0-0.ldapcmp_sd\(none\) # Due to something rewriting the NT ACL on DNS objects
@@ -182,7 +182,10 @@
 ^samba3.rpc.spoolss.printer.addprinter.driver_info_winreg # knownfail or flapping?
 ^samba3.rpc.spoolss.printer.addprinterex.driver_info_winreg # knownfail or flapping?
 ^samba3.rpc.spoolss.printer.*.publish_toggle\(.*\)$ # needs spoolss AD member env
+^samba3.rpc.spoolss.printer.*.log_jobinfo\(.*\)$ # not implemented yet
 ^samba3.rpc.spoolss.printserver.*.add_processor\(.*\)$
+^samba3.rpc.spoolss.printserver.*.get_core_printer_drivers\(.*\)$
+^samba3.rpc.spoolss.printserver.*.get_printer_driver_package_path\(.*\)$
 ^samba4.rpc.fsrvp	# fsrvp server only provided by smbd
 #
 # The following tests fail against ad_dc (aka s3fs) currently.
@@ -217,10 +220,6 @@
 #
 ^samba4.winbind.struct.domain_info\(s4member:local\)
 ^samba4.winbind.struct.getdcname\(s4member:local\)
-^samba.blackbox.wbinfo\(s4member:local\).wbinfo -r against s4member\(s4member:local\)
-^samba.blackbox.wbinfo\(s4member:local\).wbinfo --user-sids against s4member\(s4member:local\)
-^samba.wbinfo_simple.\(s4member:local\).--user-groups
-^samba.nss.test using winbind\(s4member:local\)
 #
 # These fail since ad_dc_ntvfs assigns the local user's uid to SAMBADOMAIN/Administrator
 # hence we have a duplicate UID in nsswitch.
@@ -292,7 +291,18 @@
 #ntvfs server blocks copychunk with execute access on read handle
 ^samba4.smb2.ioctl.copy_chunk_bad_access
 ^samba4.drs.getnc_exop.python.*getnc_exop.DrsReplicaPrefixMapTestCase.test_regular_prefix_map_ex_attid.*
-^samba4.drs.ridalloc_exop.python.*ridalloc_exop.DrsReplicaSyncTestCase.test_offline_ridalloc
-^samba4.drs.ridalloc_exop.python.*ridalloc_exop.DrsReplicaSyncTestCase.test_join_time_ridalloc
-^samba4.drs.ridalloc_exop.python.*ridalloc_exop.DrsReplicaSyncTestCase.test_rid_set_dbcheck_after_seize
-^samba4.drs.ridalloc_exop.python.*ridalloc_exop.DrsReplicaSyncTestCase.test_rid_set_dbcheck
+# We don't support NDR64 yet, so we generate the wrong FAULT code
+^samba.tests.dcerpc.raw_protocol.*.TestDCERPC_BIND.test_no_auth_presentation_ctx_invalid4
+^samba.tests.dcerpc.raw_protocol.*.TestDCERPC_BIND.test_spnego_change_auth_type2
+^samba.tests.dcerpc.raw_protocol.*.TestDCERPC_BIND.test_spnego_change_transfer
+^samba4.rpc.echo.*on.*with.object.echo.doublepointer.*nt4_dc
+^samba4.rpc.echo.*on.*with.object.echo.surrounding.*nt4_dc
+^samba4.rpc.echo.*on.*with.object.echo.enum.*nt4_dc
+^samba4.rpc.echo.*on.*with.object.echo.testcall.*nt4_dc
+^samba4.rpc.echo.*on.*with.object.echo.testcall2.*nt4_dc
+^samba4.rpc.echo.*on.*with.object.echo.sinkdata.*nt4_dc
+^samba4.rpc.echo.*on.*with.object.echo.addone.*nt4_dc
+^samba4.rpc.echo.*on.*ncacn_ip_tcp.*with.object.*nt4_dc
+^samba.tests.dcerpc.dnsserver.samba.tests.dcerpc.dnsserver.DnsserverTests.test_add_duplicate_different_type.*
+^samba.tests.dcerpc.dnsserver.samba.tests.dcerpc.dnsserver.DnsserverTests.test_rank_none.*
+^samba.tests.dcerpc.dnsserver.samba.tests.dcerpc.dnsserver.DnsserverTests.test_security_descriptor.*

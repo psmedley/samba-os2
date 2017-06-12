@@ -351,7 +351,7 @@ WERROR _wkssvc_NetWkstaGetInfo(struct pipes_struct *p,
 		 * so no access checks are needed for this case */
 		r->out.info->info100 = create_wks_info_100(p->mem_ctx);
 		if (r->out.info->info100 == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		break;
 	case 101:
@@ -370,7 +370,7 @@ WERROR _wkssvc_NetWkstaGetInfo(struct pipes_struct *p,
 		}
 		r->out.info->info101 = create_wks_info_101(p->mem_ctx);
 		if (r->out.info->info101 == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		break;
 	case 102:
@@ -388,11 +388,11 @@ WERROR _wkssvc_NetWkstaGetInfo(struct pipes_struct *p,
 		}
 		r->out.info->info102 = create_wks_info_102(p->mem_ctx);
 		if (r->out.info->info102 == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		break;
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	return WERR_OK;
@@ -575,7 +575,7 @@ WERROR _wkssvc_NetWkstaEnumUsers(struct pipes_struct *p,
 	case 0:
 		r->out.info->ctr.user0 = create_enum_users0(p->mem_ctx);
 		if (r->out.info->ctr.user0 == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		r->out.info->level = r->in.info->level;
 		*r->out.entries_read = r->out.info->ctr.user0->entries_read;
@@ -586,7 +586,7 @@ WERROR _wkssvc_NetWkstaEnumUsers(struct pipes_struct *p,
 	case 1:
 		r->out.info->ctr.user1 = create_enum_users1(p->mem_ctx);
 		if (r->out.info->ctr.user1 == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		r->out.info->level = r->in.info->level;
 		*r->out.entries_read = r->out.info->ctr.user1->entries_read;
@@ -595,7 +595,7 @@ WERROR _wkssvc_NetWkstaEnumUsers(struct pipes_struct *p,
 		}
 		break;
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	return WERR_OK;
@@ -825,13 +825,14 @@ WERROR _wkssvc_NetrJoinDomain2(struct pipes_struct *p,
 	struct security_token *token = p->session_info->security_token;
 	NTSTATUS status;
 	DATA_BLOB session_key;
+	bool ok;
 
 	if (!r->in.domain_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (!r->in.admin_account || !r->in.encrypted_password) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (!security_token_has_privilege(token, SEC_PRIV_MACHINE_ACCOUNT) &&
@@ -863,10 +864,13 @@ WERROR _wkssvc_NetrJoinDomain2(struct pipes_struct *p,
 		return werr;
 	}
 
-	split_domain_user(p->mem_ctx,
-			  r->in.admin_account,
-			  &admin_domain,
-			  &admin_account);
+	ok = split_domain_user(p->mem_ctx,
+			       r->in.admin_account,
+			       &admin_domain,
+			       &admin_account);
+	if (!ok) {
+		return WERR_NOT_ENOUGH_MEMORY;
+	}
 
 	werr = libnet_init_JoinCtx(p->mem_ctx, &j);
 	if (!W_ERROR_IS_OK(werr)) {
@@ -913,9 +917,10 @@ WERROR _wkssvc_NetrUnjoinDomain2(struct pipes_struct *p,
 	struct security_token *token = p->session_info->security_token;
 	NTSTATUS status;
 	DATA_BLOB session_key;
+	bool ok;
 
 	if (!r->in.account || !r->in.encrypted_password) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (!security_token_has_privilege(token, SEC_PRIV_MACHINE_ACCOUNT) &&
@@ -942,10 +947,13 @@ WERROR _wkssvc_NetrUnjoinDomain2(struct pipes_struct *p,
 		return werr;
 	}
 
-	split_domain_user(p->mem_ctx,
-			  r->in.account,
-			  &admin_domain,
-			  &admin_account);
+	ok = split_domain_user(p->mem_ctx,
+			       r->in.account,
+			       &admin_domain,
+			       &admin_account);
+	if (!ok) {
+		return WERR_NOT_ENOUGH_MEMORY;
+	}
 
 	werr = libnet_init_UnjoinCtx(p->mem_ctx, &u);
 	if (!W_ERROR_IS_OK(werr)) {

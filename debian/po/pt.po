@@ -1,19 +1,21 @@
-# translation of pt.po to Portuguese
-# translation of samba Debian debconf template to Portuguese
-# Miguel Figueiredo <elmig@debianpt.org>, 2004-2011
+# Portuguese translation for samba4's debconf messages
+# This file is distributed under the same license as the samba4 package.
 #
+# Miguel Figueiredo <elmig@debianpt.org>, 2004-2011.
+# Rui Branco - DebianPT <ruipb@debianpt.org>, 2017.
 msgid ""
 msgstr ""
-"Project-Id-Version: samba4 4.0.0~alpha4~20080617-1\n"
+"Project-Id-Version: samba 2-4.5.8+dfsg-2\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2013-10-22 20:32+0200\n"
-"PO-Revision-Date: 2011-12-29 10:02+0000\n"
-"Last-Translator: Miguel Figueiredo <elmig@debian.org>\n"
+"PO-Revision-Date: 2017-06-04 14:58+0000\n"
+"Last-Translator: Rui Branco - DebianPT <ruipb@debianpt.org>\n"
 "Language-Team: Portuguese <traduz@debianpt.org>\n"
 "Language: pt\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
 #. Type: boolean
 #. Description
@@ -30,7 +32,7 @@ msgid ""
 "good starting point for most existing installations."
 msgstr ""
 "É possível migrar os ficheiros de configuração existentes do Samba 3 para "
-"Samba 4. É provável que falhe para configuraões complexas, mas deve "
+"Samba 4. É provável que falhe para configurações complexas, mas deve "
 "disponibilizar um bom ponto de partida para a maioria das instalações "
 "existentes."
 
@@ -82,6 +84,8 @@ msgid ""
 "If no server role is specified, the Samba server will not be provisioned, so "
 "this can be done manually by the user."
 msgstr ""
+"Se não for especificado nenhum papel para o servidor, o servidor Samba não "
+"será provisionado e assim poderá ser feito manualmente pelo utilizador."
 
 #. Type: string
 #. Description
@@ -110,37 +114,39 @@ msgstr ""
 #. Description
 #: ../samba-ad-dc.templates:4001
 msgid "New password for the Samba \"administrator\" user:"
-msgstr ""
+msgstr "Nova palavra-chave para o utilizador \"administrator\" Samba:"
 
 #. Type: password
 #. Description
 #: ../samba-ad-dc.templates:4001
 msgid "If this field is left blank, a random password will be generated."
-msgstr ""
+msgstr "Se for deixado em branco, será gerada uma palavra-chave aleatória."
 
 #. Type: password
 #. Description
 #: ../samba-ad-dc.templates:4001
 msgid "A password can be set later by running, as root:"
-msgstr ""
+msgstr "A palavra-chave pode ser definida mais tarde usando como root:"
 
 #. Type: password
 #. Description
 #: ../samba-ad-dc.templates:5001
 msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr ""
+msgstr "Repita a palavra-chave para o utilizador \"administrator\" Samba:"
 
 #. Type: error
 #. Description
 #: ../samba-ad-dc.templates:6001
 msgid "Password input error"
-msgstr ""
+msgstr "Erro na introdução da palavra-chave"
 
 #. Type: error
 #. Description
 #: ../samba-ad-dc.templates:6001
 msgid "The two passwords you entered were not the same. Please try again."
 msgstr ""
+"As duas palavras-chave que introduziu não coincidem. Por favor tente "
+"novamente."
 
 #. Type: title
 #. Description

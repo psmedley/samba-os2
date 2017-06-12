@@ -267,7 +267,7 @@ bool user_in_list(TALLOC_CTX *ctx, const char *user, const char * const *list)
 
 bool map_username(TALLOC_CTX *ctx, const char *user_in, char **p_user_out)
 {
-	XFILE *f;
+	FILE *f;
 	char *mapfile = lp_username_map(talloc_tos());
 	char *s;
 	char buf[512];
@@ -315,7 +315,7 @@ bool map_username(TALLOC_CTX *ctx, const char *user_in, char **p_user_out)
 		}
 
 		DEBUG(10,("Running [%s]\n", command));
-		ret = smbrun(command, &fd);
+		ret = smbrun(command, &fd, NULL);
 		DEBUGADD(10,("returned [%d]\n", ret));
 
 		TALLOC_FREE(command);
@@ -353,7 +353,7 @@ bool map_username(TALLOC_CTX *ctx, const char *user_in, char **p_user_out)
 	if (!*mapfile)
 		return False;
 
-	f = x_fopen(mapfile,O_RDONLY, 0);
+	f = fopen(mapfile, "r");
 	if (!f) {
 		DEBUG(0,("can't open username map %s. Error %s\n",mapfile, strerror(errno) ));
 		return False;
@@ -361,7 +361,7 @@ bool map_username(TALLOC_CTX *ctx, const char *user_in, char **p_user_out)
 
 	DEBUG(4,("Scanning username map %s\n",mapfile));
 
-	while((s=fgets_slash(buf,sizeof(buf),f))!=NULL) {
+	while((s=fgets_slash(NULL,buf,sizeof(buf),f))!=NULL) {
 		char *unixname = s;
 		char *dosname = strchr_m(unixname,'=');
 		char **dosuserlist;
@@ -409,13 +409,13 @@ bool map_username(TALLOC_CTX *ctx, const char *user_in, char **p_user_out)
 			*p_user_out = talloc_strdup(ctx, unixname);
 			if (!*p_user_out) {
 				TALLOC_FREE(dosuserlist);
-				x_fclose(f);
+				fclose(f);
 				return false;
 			}
 
 			if ( return_if_mapped ) {
 				TALLOC_FREE(dosuserlist);
-				x_fclose(f);
+				fclose(f);
 				return True;
 			}
 		}
@@ -423,7 +423,7 @@ bool map_username(TALLOC_CTX *ctx, const char *user_in, char **p_user_out)
 		TALLOC_FREE(dosuserlist);
 	}
 
-	x_fclose(f);
+	fclose(f);
 
 	/*
 	 * If we didn't successfully map a user in the loop above,

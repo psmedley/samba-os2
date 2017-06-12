@@ -37,18 +37,29 @@ samba_dist.DIST_DIRS('''ctdb:. lib/replace:lib/replace lib/talloc:lib/talloc
                         lib/async_req:lib/async_req
                         buildtools:buildtools third_party/waf:third_party/waf''')
 
-manpages = [
+manpages_binary = [
     'ctdb.1',
-    'ctdb.7',
-    'ctdb_diagnostics.1',
     'ctdbd.1',
-    'ctdbd.conf.5',
+    'ltdbtool.1',
+    'ping_pong.1'
+]
+
+manpages_misc = [
+    'ctdb_diagnostics.1',
     'ctdbd_wrapper.1',
+    'onnode.1',
+    'ctdbd.conf.5',
+    'ctdb.7',
     'ctdb-statistics.7',
     'ctdb-tunables.7',
-    'ltdbtool.1',
-    'onnode.1',
-    'ping_pong.1'
+]
+
+manpages_etcd = [
+    'ctdb-etcd.7',
+]
+
+manpages_ceph = [
+    'ctdb_mutex_ceph_rados_helper.7',
 ]
 
 
@@ -69,6 +80,12 @@ def set_options(opt):
     opt.add_option('--enable-pmda',
                    help=("Turn on PCP pmda support (default=no)"),
                    action="store_true", dest='ctdb_pmda', default=False)
+    opt.add_option('--enable-etcd-reclock',
+                   help=("Enable etcd recovery lock helper (default=no)"),
+                   action="store_true", dest='ctdb_etcd_reclock', default=False)
+    opt.add_option('--enable-ceph-reclock',
+                   help=("Enable Ceph CTDB recovery lock helper (default=no)"),
+                   action="store_true", dest='ctdb_ceph_reclock', default=False)
 
     opt.add_option('--with-logdir',
                    help=("Path to log directory"),
@@ -179,6 +196,27 @@ def configure(conf):
         conf.define('HAVE_INFINIBAND', 1)
         conf.define('USE_INFINIBAND', 1)
 
+    have_etcd_reclock = False
+    if Options.options.ctdb_etcd_reclock:
+        try:
+            conf.check_python_module('etcd')
+            have_etcd_reclock = True
+        except:
+            Logs.error('etcd support not available')
+            sys.exit(1)
+    if have_etcd_reclock:
+        Logs.info('Building with etcd support')
+    conf.env.etcd_reclock = have_etcd_reclock
+
+    if Options.options.ctdb_ceph_reclock:
+        if (conf.CHECK_HEADERS('rados/librados.h', False, False, 'rados') and
+					conf.CHECK_LIB('rados', shlib=True)):
+            Logs.info('Building with Ceph librados recovery lock support')
+            conf.define('HAVE_LIBRADOS', 1)
+        else:
+            Logs.error("Missing librados for Ceph recovery lock support")
+            sys.exit(1)
+
     conf.env.CTDB_BINDIR = os.path.join(conf.env.EXEC_PREFIX, 'bin')
     conf.env.CTDB_ETCDIR = os.path.join(conf.env.SYSCONFDIR, 'ctdb')
     conf.env.CTDB_VARDIR = os.path.join(conf.env.LOCALSTATEDIR, 'lib/ctdb')
@@ -237,6 +275,11 @@ def configure(conf):
 
         Logs.info("xsltproc unavailable, checking for pre-built manpages")
         conf.env.ctdb_prebuilt_manpages = []
+        manpages = manpages_binary + manpages_misc
+        if conf.env.etcd_reclock:
+            manpages += manpages_etcd
+        if conf.env.HAVE_LIBRADOS:
+            manpages += manpages_ceph
         for m in manpages:
             if os.path.exists(os.path.join("doc", m)):
                 Logs.info("  %s: yes" % (m))
@@ -338,7 +381,7 @@ def build(bld):
     bld.SAMBA_SUBSYSTEM('ctdb-common',
                         source=bld.SUBDIR('common',
                                           '''ctdb_io.c ctdb_util.c ctdb_ltdb.c
-                                             cmdline.c'''),
+                                             sock_io.c'''),
                         includes='include',
                         deps='replace popt talloc tevent tdb popt ctdb-system')
 
@@ -347,8 +390,8 @@ def build(bld):
                                           '''db_hash.c srvid.c reqid.c
                                              pkt_read.c pkt_write.c comm.c
                                              logging.c rb_tree.c tunable.c
-                                             pidfile.c'''),
-                        deps='''samba-util tevent-util
+                                             pidfile.c run_proc.c'''),
+                        deps='''samba-util sys_rw tevent-util
                                 replace talloc tevent tdb''')
 
     bld.SAMBA_SUBSYSTEM('ctdb-protocol',
@@ -359,7 +402,8 @@ def build(bld):
                                              protocol_control.c
                                              protocol_client.c
                                              protocol_debug.c
-                                             protocol_util.c'''),
+                                             protocol_util.c
+                                             protocol_event.c'''),
                         includes='include',
                         deps='replace talloc tdb')
 
@@ -376,9 +420,16 @@ def build(bld):
                                              client_message_sync.c
                                              client_control_sync.c
                                              client_db.c client_util.c
+                                             client_event.c
                                           '''),
                         includes='include',
                         deps='replace talloc tevent tdb tdb-wrap')
+
+    bld.SAMBA_SUBSYSTEM('ctdb-server-util',
+                        source=bld.SUBDIR('common',
+                                          '''sock_daemon.c'''),
+                        deps='''samba-util ctdb-util tevent-util
+                                replace talloc tevent''')
 
     bld.SAMBA_SUBSYSTEM('ctdb-ipalloc',
                         source=bld.SUBDIR('server',
@@ -391,8 +442,8 @@ def build(bld):
                         includes='include',
                         deps='ctdb-protocol replace talloc tevent')
 
-    bld.SAMBA_SUBSYSTEM('ctdb-server',
-                        source='server/ctdbd.c ' +
+    bld.SAMBA_BINARY('ctdbd',
+                     source='server/ctdbd.c ' +
                                bld.SUBDIR('server',
                                           '''ctdb_daemon.c ctdb_recoverd.c
                                              ctdb_recover.c ctdb_freeze.c
@@ -404,20 +455,15 @@ def build(bld):
                                              ctdb_persistent.c ctdb_keepalive.c
                                              ctdb_cluster_mutex.c
                                              ctdb_logging.c
-                                             ctdb_logging_syslog.c
-                                             ctdb_logging_file.c
                                              ctdb_uptime.c
                                              ctdb_vacuum.c ctdb_banning.c
                                              ctdb_statistics.c
                                              ctdb_update_record.c
                                              ctdb_lock.c ctdb_fork.c'''),
-                        includes='include',
-                        deps='ctdb-ipalloc replace popt talloc tevent tdb talloc_report')
-
-    bld.SAMBA_BINARY('ctdbd',
-                     source='',
-                     deps='''ctdb-server ctdb-client ctdb-common
-                             ctdb-system ctdb-tcp ctdb-util''' +
+                     includes='include',
+                     deps='''ctdb-ipalloc ctdb-client ctdb-common ctdb-system
+                             ctdb-tcp ctdb-util replace sys_rw popt
+                             talloc tevent tdb talloc_report''' +
                           ib_deps,
                      install_path='${SBINDIR}',
                      manpages='ctdbd.1')
@@ -425,13 +471,19 @@ def build(bld):
     bld.SAMBA_BINARY('ctdb',
                      source='tools/ctdb.c',
                      deps='''ctdb-client2 ctdb-protocol ctdb-util ctdb-system
-                             samba-util popt''',
+                             samba-util sys_rw popt''',
                      install_path='${BINDIR}',
                      manpages='ctdb.1')
 
     bld.SAMBA_BINARY('ctdb_killtcp',
                      source='tools/ctdb_killtcp.c',
                      deps='''ctdb-protocol ctdb-util ctdb-system
+                             samba-util replace''',
+                     install_path='${CTDB_HELPER_BINDIR}')
+
+    bld.SAMBA_BINARY('ctdb_event',
+                     source='tools/ctdb_event.c',
+                     deps='''ctdb-client2 ctdb-protocol ctdb-util ctdb-system
                              samba-util replace''',
                      install_path='${CTDB_HELPER_BINDIR}')
 
@@ -442,6 +494,12 @@ def build(bld):
                      install_path='${BINDIR}',
                      manpages='ltdbtool.1')
 
+    bld.SAMBA_BINARY('ctdb_eventd',
+                     source='server/ctdb_eventd.c',
+                     deps='''ctdb-server-util ctdb-protocol ctdb-util
+                             samba-util LIBASYNC_REQ replace popt''',
+                     install_path='${CTDB_HELPER_BINDIR}')
+
     bld.SAMBA_BINARY('ctdb_lock_helper',
                      source='server/ctdb_lock_helper.c',
                      deps='''samba-util sys_rw ctdb-system tevent-util
@@ -449,21 +507,21 @@ def build(bld):
                      includes='include',
                      install_path='${CTDB_HELPER_BINDIR}')
 
-    bld.SAMBA_BINARY('ctdb_event_helper',
-                     source='server/ctdb_event_helper.c',
-                     includes='include',
-                     deps='samba-util ctdb-system replace tdb',
-                     install_path='${CTDB_HELPER_BINDIR}')
-
     bld.SAMBA_BINARY('ctdb_recovery_helper',
                      source='server/ctdb_recovery_helper.c',
                      deps='''ctdb-client2 ctdb-protocol ctdb-util
-                             samba-util replace tdb''',
+                             samba-util sys_rw replace tdb''',
+                     install_path='${CTDB_HELPER_BINDIR}')
+
+    bld.SAMBA_BINARY('ctdb_takeover_helper',
+                     source='server/ctdb_takeover_helper.c',
+                     deps='''ctdb-client2 ctdb-protocol ctdb-util
+                             samba-util sys_rw replace ctdb-ipalloc popt''',
                      install_path='${CTDB_HELPER_BINDIR}')
 
     bld.SAMBA_BINARY('ctdb_mutex_fcntl_helper',
                      source='server/ctdb_mutex_fcntl_helper.c',
-                     deps='ctdb-system',
+                     deps='sys_rw ctdb-system',
                      includes='include',
                      install_path='${CTDB_HELPER_BINDIR}')
 
@@ -517,6 +575,13 @@ def build(bld):
         bld.INSTALL_FILES('${CTDB_PMDADIR}', 'utils/pmda/README',
                           destname='README')
 
+    if bld.env.HAVE_LIBRADOS:
+        bld.SAMBA_BINARY('ctdb_mutex_ceph_rados_helper',
+                         source='utils/ceph/ctdb_mutex_ceph_rados_helper.c',
+			 deps='talloc tevent rados',
+			 includes='include',
+			 install_path='${CTDB_HELPER_BINDIR}')
+
     sed_expr1 = 's|/usr/local/var/lib/ctdb|%s|g'  % (bld.env.CTDB_VARDIR)
     sed_expr2 = 's|/usr/local/etc/ctdb|%s|g'      % (bld.env.CTDB_ETCDIR)
     sed_expr3 = 's|/usr/local/var/log|%s|g'       % (bld.env.CTDB_LOGDIR)
@@ -528,7 +593,12 @@ def build(bld):
                        (sed_expr1, sed_expr2, sed_expr3, sed_expr4, sed_expr5,
                         sed_expr6, sed_expr7)
 
-    for f in manpages:
+    manpages_extra = manpages_misc
+    if bld.env.etcd_reclock:
+        manpages_extra += manpages_etcd
+    if bld.env.HAVE_LIBRADOS:
+        manpages_extra += manpages_ceph
+    for f in manpages_binary + manpages_extra:
         x = '%s.xml' % (f)
         bld.SAMBA_GENERATOR(x,
                             source=os.path.join('doc', x),
@@ -536,10 +606,7 @@ def build(bld):
                             rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
 
     if bld.env.ctdb_generate_manpages:
-        bld.MANPAGES('''onnode.1 ctdbd_wrapper.1 ctdbd.conf.5
-                        ctdb.7 ctdb-statistics.7 ctdb-tunables.7
-                        ctdb_diagnostics.1''',
-                      True)
+        bld.MANPAGES(' '.join(manpages_extra), True)
     else:
         for m in bld.env.ctdb_prebuilt_manpages:
             bld.SAMBA_GENERATOR(m,
@@ -561,6 +628,14 @@ def build(bld):
                         rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
     bld.INSTALL_FILES('${BINDIR}', 'ctdb_diagnostics',
                       destname='ctdb_diagnostics', chmod=0755)
+
+    if bld.env.etcd_reclock:
+        bld.SAMBA_GENERATOR('ctdb-etcd-lock',
+                            source='utils/etcd/ctdb_etcd_lock',
+                            target='ctdb_etcd_lock',
+                            rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
+        bld.INSTALL_FILES('${CTDB_HELPER_BINDIR}', 'ctdb_etcd_lock',
+                          destname='ctdb_etcd_lock', chmod=0744)
 
     bld.SAMBA_GENERATOR('ctdb-natgw',
                         source='tools/ctdb_natgw',
@@ -660,6 +735,9 @@ def build(bld):
         'protocol_types_test',
         'protocol_client_test',
         'pidfile_test',
+        'run_proc_test',
+        'sock_daemon_test',
+        'sock_io_test',
     ]
 
     for target in ctdb_unit_tests:
@@ -668,7 +746,7 @@ def build(bld):
         bld.SAMBA_BINARY(target,
                          source=src,
                          deps='''talloc tevent tdb tevent-util
-                                 LIBASYNC_REQ samba-util''',
+                                 LIBASYNC_REQ samba-util sys_rw''',
                          install_path='${CTDB_TEST_LIBEXECDIR}')
 
     bld.SAMBA_BINARY('reqid_test',
@@ -729,7 +807,8 @@ def build(bld):
                          install_path='${CTDB_TEST_LIBEXECDIR}')
 
     bld.SAMBA_BINARY('ctdb_takeover_tests',
-                     source='tests/src/ctdb_takeover_tests.c',
+                     source='''tests/src/ctdb_takeover_tests.c
+                               tests/src/ipalloc_read_known_ips.c''',
                      deps='''replace popt tdb tevent talloc ctdb-system
                              samba-util tdb-wrap talloc_report
                              ctdb-ipalloc ctdb-protocol ctdb-util''',
@@ -737,7 +816,8 @@ def build(bld):
                      install_path='${CTDB_TEST_LIBEXECDIR}')
 
     bld.SAMBA_BINARY('fake_ctdbd',
-                     source='tests/src/fake_ctdbd.c',
+                     source='''tests/src/fake_ctdbd.c
+                               tests/src/ipalloc_read_known_ips.c''',
                      deps='''ctdb-util ctdb-protocol ctdb-system
                              samba-util tevent-util LIBASYNC_REQ popt''',
                      install_path='${CTDB_TEST_LIBEXECDIR}')
@@ -746,7 +826,7 @@ def build(bld):
         bld.SAMBA_BINARY('ibwrapper_test',
                          source='ib/ibwrapper_test.c',
                          includes='include',
-                         deps='replace talloc ctdb-client ctdb-common' +
+                         deps='replace talloc ctdb-client ctdb-common sys_rw' +
                               ib_deps,
                          install_path='${CTDB_TEST_LIBEXECDIR}')
 
@@ -759,12 +839,14 @@ def build(bld):
     test_subdirs = [
         'complex',
         'cunit',
+        'eventd',
         'events.d',
         'eventscripts',
         'onnode',
         'shellcheck',
         'simple',
         'takeover',
+        'takeover_helper',
         'tool'
     ]
 
@@ -875,7 +957,27 @@ def show_version(ctx):
     print VERSION
 
 
-def dist():
+def manpages(ctx):
+    BASE_URL = 'http://docbook.sourceforge.net/release/xsl/current'
+    MAN_XSL = '%s/manpages/docbook.xsl' % BASE_URL
+    HTML_XSL = '%s/html/docbook.xsl' % BASE_URL
+    CMD_TEMPLATE = 'xsltproc --xinclude -o %s --nonet %s %s'
+    manpages = manpages_binary + manpages_misc + manpages_etcd + manpages_ceph
+    for t in manpages:
+        cmd = CMD_TEMPLATE % ('doc/%s' % t, MAN_XSL, 'doc/%s.xml' % t)
+        ret = samba_utils.RUN_COMMAND(cmd)
+        if ret != 0:
+            print('Command %s failed with exit status %d' % (cmd, ret))
+            sys.exit(ret)
+
+        cmd = CMD_TEMPLATE % ('doc/%s.html' % t, HTML_XSL, 'doc/%s.xml' % t)
+        ret = samba_utils.RUN_COMMAND(cmd)
+        if ret != 0:
+            print('Command %s failed with exit status %d' % (cmd, ret))
+            sys.exit(ret)
+
+
+def distonly(ctx):
     samba_dist.DIST_FILES('VERSION:VERSION', extend=True)
 
     t = 'include/ctdb_version.h'
@@ -897,17 +999,19 @@ def dist():
         sys.exit(ret)
     samba_dist.DIST_FILES('ctdb/%s:%s' % (t, t), extend=True)
 
-    cmd = 'make -C doc'
-    ret = samba_utils.RUN_COMMAND(cmd)
-    if ret != 0:
-        print('Command "%s" failed with exit status %d' % (cmd, ret))
-        sys.exit(ret)
+    manpages = manpages_binary + manpages_misc + manpages_etcd + manpages_ceph
     for t in manpages:
         samba_dist.DIST_FILES('ctdb/doc/%s:doc/%s' % (t, t), extend=True)
         samba_dist.DIST_FILES('ctdb/doc/%s.html:doc/%s.html' % (t, t),
                               extend=True)
 
     samba_dist.dist()
+
+
+def dist():
+    import Scripting
+    Scripting.commands.append('manpages')
+    Scripting.commands.append('distonly')
 
 
 def rpmonly(ctx):
@@ -921,7 +1025,8 @@ def rpmonly(ctx):
 
 def rpm(ctx):
     import Scripting
-    Scripting.commands.append('dist')
+    Scripting.commands.append('manpages')
+    Scripting.commands.append('distonly')
     Scripting.commands.append('rpmonly')
 
 

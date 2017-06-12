@@ -72,7 +72,7 @@ static int sdb_salt_to_Salt(const struct sdb_salt *s, Salt *h)
 	int ret;
 
 	h->type = s->type;
-	ret = krb5_copy_data_contents(&h->salt, s->salt.data, s->salt.length);
+	ret = smb_krb5_copy_data_contents(&h->salt, s->salt.data, s->salt.length);
 	if (ret != 0) {
 		free_Salt(h);
 		return ENOMEM;
@@ -97,9 +97,9 @@ static int sdb_key_to_Key(const struct sdb_key *s, Key *h)
 	}
 
 	h->key.keytype = s->key.keytype;
-	rc = krb5_copy_data_contents(&h->key.keyvalue,
-				      s->key.keyvalue.data,
-				      s->key.keyvalue.length);
+	rc = smb_krb5_copy_data_contents(&h->key.keyvalue,
+					 s->key.keyvalue.data,
+					 s->key.keyvalue.length);
 	if (rc != 0) {
 		goto error_nomem;
 	}
@@ -277,24 +277,29 @@ static int sdb_entry_to_hdb_entry(krb5_context context,
 
 	sdb_flags_to_hdb_flags(&s->flags, &h->flags);
 
-	if (s->etypes) {
+	h->etypes = NULL;
+	if (h->keys.val != NULL) {
 		h->etypes = malloc(sizeof(*h->etypes));
 		if (h->etypes == NULL) {
 			rc = ENOMEM;
 			goto error;
 		}
-		h->etypes->len = s->etypes->len;
+
+		h->etypes->len = s->keys.len;
+
 		h->etypes->val = calloc(h->etypes->len, sizeof(int));
 		if (h->etypes->val == NULL) {
 			rc = ENOMEM;
 			goto error;
 		}
+
 		for (i = 0; i < h->etypes->len; i++) {
-			h->etypes->val[i] = s->etypes->val[i];
+			Key k = h->keys.val[i];
+
+			h->etypes->val[i] = KRB5_KEY_TYPE(&(k.key));
 		}
-	} else {
-		h->etypes = NULL;
 	}
+
 	h->generation = NULL;
 	h->extensions = NULL; /* really sure ? FIXME */
 

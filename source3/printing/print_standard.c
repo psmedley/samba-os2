@@ -62,24 +62,27 @@
 bool std_pcap_cache_reload(const char *pcap_name, struct pcap_cache **_pcache)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
-	XFILE *pcap_file;
+	FILE *pcap_file;
 	char *pcap_line;
 	struct pcap_cache *pcache = NULL;
 	bool print_warning = false;
 
-	if ((pcap_file = x_fopen(pcap_name, O_RDONLY, 0)) == NULL) {
+	if ((pcap_file = fopen(pcap_name, "r")) == NULL) {
 		DEBUG(0, ("Unable to open printcap file %s for read!\n", pcap_name));
 		talloc_free(frame);
 		return false;
 	}
 
-	for (; (pcap_line = fgets_slash(NULL, 1024, pcap_file)) != NULL; free(pcap_line)) {
+	while ((pcap_line = fgets_slash(frame, NULL, 1024,
+					pcap_file)) != NULL) {
 		char *name = NULL;
 		char *comment = NULL;
 		char *p, *q;
 
-		if (*pcap_line == '#' || *pcap_line == 0)
+		if (*pcap_line == '#' || *pcap_line == 0) {
+			TALLOC_FREE(pcap_line);
 			continue;
+		}
 
 		/* now we have a real printer line - cut at the first : */
 		if ((p = strchr_m(pcap_line, ':')) != NULL)
@@ -106,11 +109,13 @@ bool std_pcap_cache_reload(const char *pcap_name, struct pcap_cache **_pcache)
 
 			if (name == NULL && !has_punctuation) {
 				name = talloc_strdup(frame, p);
+				TALLOC_FREE(pcap_line);
 				continue;
 			}
 
 			if (has_punctuation) {
 				comment = talloc_strdup(frame, p);
+				TALLOC_FREE(pcap_line);
 				continue;
 			}
 		}
@@ -127,7 +132,7 @@ bool std_pcap_cache_reload(const char *pcap_name, struct pcap_cache **_pcache)
 						     comment,
 						     NULL);
 			if (!ok) {
-				x_fclose(pcap_file);
+				fclose(pcap_file);
 				pcap_cache_destroy_specific(&pcache);
 				talloc_free(frame);
 				return false;
@@ -135,6 +140,7 @@ bool std_pcap_cache_reload(const char *pcap_name, struct pcap_cache **_pcache)
 		}
 		TALLOC_FREE(name);
 		TALLOC_FREE(comment);
+		TALLOC_FREE(pcap_line);
 	}
 
 	if (print_warning) {
@@ -144,7 +150,7 @@ bool std_pcap_cache_reload(const char *pcap_name, struct pcap_cache **_pcache)
 			    (unsigned int)MAXPRINTERLEN);
 	}
 
-	x_fclose(pcap_file);
+	fclose(pcap_file);
 	*_pcache = pcache;
 	talloc_free(frame);
 	return true;

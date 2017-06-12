@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 03/31/2017
+.\"      Date: 06/06/2017
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.5
+.\"    Source: Samba 4.6
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "03/31/2017" "Samba 4\&.5" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "06/06/2017" "Samba 4\&.6" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -664,6 +664,45 @@ in the key
 subcommand of the
 \fBnet\fR(8)
 utility offers a dedicated interface to read and write the registry based configuration locally, i\&.e\&. directly accessing the database file, circumventing the server\&.
+.SH "IDENTITY MAPPING CONSIDERATIONS"
+.PP
+In the SMB protocol, users, groups, and machines are represented by their security identifiers (SIDs)\&. On POSIX system Samba processes need to run under corresponding POSIX user identities and with supplemental POSIX groups to allow access to the files owned by those users and groups\&. The process of mapping SIDs to POSIX users and groups is called
+\fIIDENTITY MAPPING\fR
+or, in short,
+\fIID MAPPING\fR\&.
+.PP
+Samba supports multiple ways to map SIDs to POSIX users and groups\&. The configuration is driven by the
+\m[blue]\fBidmap config DOMAIN : OPTION\fR\m[]
+option which allows one to specify identity mapping (idmap) options for each domain separately\&.
+.PP
+Identity mapping modules implement different strategies for mapping of SIDs to POSIX user and group identities\&. They are applicable to different use cases and scenarios\&. It is advised to read the documentation of the individual identity mapping modules before choosing a specific scenario to use\&. Each identity management module is documented in a separate manual page\&. The standard idmap backends are tdb (\fBidmap_tdb\fR(8)), tdb2 (\fBidmap_tdb2\fR(8)), ldap (\fBidmap_ldap\fR(8)), rid (\fBidmap_rid\fR(8)), hash (\fBidmap_hash\fR(8)), autorid (\fBidmap_autorid\fR(8)), ad (\fBidmap_ad\fR(8)), nss (\fBidmap_nss\fR(8)), and rfc2307 (\fBidmap_rfc2307\fR(8))\&.
+.PP
+Overall, ID mapping configuration should be decided carefully\&. Changes to the already deployed ID mapping configuration may create the risk of losing access to the data or disclosing the data to the wrong parties\&.
+.PP
+This example shows how to configure two domains with
+\fBidmap_rid\fR(8), the principal domain and a trusted domain, leaving the default id mapping scheme at tdb\&.
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	[global]
+	security = domain
+	workgroup = MAIN
+
+	idmap config * : backend        = tdb
+	idmap config * : range          = 1000000\-1999999
+
+	idmap config MAIN : backend     = rid
+	idmap config MAIN : range       = 5000000\-5999999
+
+	idmap config TRUSTED : backend  = rid
+	idmap config TRUSTED : range    = 6000000\-6999999
+	
+.fi
+.if n \{\
+.RE
+.\}
 .SH "EXPLANATION OF EACH PARAMETER"
 
 
@@ -1350,7 +1389,7 @@ to "true") even when
 \m[blue]\fBunix extensions\fR\m[]
 is turned on\&.
 .sp
-If is not recommended to enable this option unless you fully understand the implications of allowing the server to follow symbolic links created by UNIX clients\&. For most normal Samba configurations this would be considered a security hole and setting this parameter is not recommended\&.
+It is not recommended to enable this option unless you fully understand the implications of allowing the server to follow symbolic links created by UNIX clients\&. For most normal Samba configurations this would be considered a security hole and setting this parameter is not recommended\&.
 .sp
 This option was added at the request of sites who had deliberately set Samba up in this way and needed to continue supporting this functionality without having to patch the Samba code\&.
 .sp
@@ -1625,7 +1664,7 @@ and the
 \fIcache directory\fR
 options\&.
 .sp
-This option specifies the directory where TDB files containing non\-persistent data will be stored\&.
+This option specifies the directory for storing TDB files containing non\-persistent data that will be kept across service restarts\&. The directory should be placed on persistent storage, but the data can be safely deleted by an administrator\&.
 .sp
 Default:
 \fI\fIcache directory\fR\fR\fI = \fR\fI${prefix}/var/cache\fR\fI \fR
@@ -2703,7 +2742,7 @@ dedicated keytab file (G)
 .\" dedicated keytab file
 .PP
 .RS 4
-Specifies the path to the kerberos keytab file when
+Specifies the absolute path to the kerberos keytab file when
 \m[blue]\fBkerberos method\fR\m[]
 is set to "dedicated keytab"\&.
 .sp
@@ -3694,7 +3733,7 @@ fss: prune stale (G)
 .\" fss: prune stale
 .PP
 .RS 4
-When enabled, Samba\*(Aqs File Server Remove VSS Protocol (FSRVP) server checks all FSRVP initiated snapshots on startup, and removes any corresponding state (including share definitions) for nonexistent snapshot paths\&.
+When enabled, Samba\*(Aqs File Server Remote VSS Protocol (FSRVP) server checks all FSRVP initiated snapshots on startup, and removes any corresponding state (including share definitions) for nonexistent snapshot paths\&.
 .sp
 Default:
 \fI\fIfss: prune stale\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -3707,7 +3746,7 @@ fss: sequence timeout (G)
 .\" fss: sequence timeout
 .PP
 .RS 4
-The File Server Remove VSS Protocol (FSRVP) server includes a message sequence timer to ensure cleanup on unexpected client disconnect\&. This parameter overrides the default timeout between FSRVP operations\&. FSRVP timeouts can be completely disabled via a value of 0\&.
+The File Server Remote VSS Protocol (FSRVP) server includes a message sequence timer to ensure cleanup on unexpected client disconnect\&. This parameter overrides the default timeout between FSRVP operations\&. FSRVP timeouts can be completely disabled via a value of 0\&.
 .sp
 Default:
 \fI\fIfss: sequence timeout\fR\fR\fI = \fR\fI180 or 1800, depending on operation\fR\fI \fR
@@ -4482,7 +4521,64 @@ inherit owner (S)
 .RS 4
 The ownership of new files and directories is normally governed by effective uid of the connected user\&. This option allows the Samba administrator to specify that the ownership for new files and directories should be controlled by the ownership of the parent directory\&.
 .sp
+Valid options are:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBno\fR
+\- Both the Windows (SID) owner and the UNIX (uid) owner of the file are governed by the identity of the user that created the file\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBwindows and unix\fR
+\- The Windows (SID) owner and the UNIX (uid) owner of new files and directories are set to the respective owner of the parent directory\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fByes\fR
+\- a synonym for
+\fBwindows and unix\fR\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBunix only\fR
+\- Only the UNIX owner is set to the UNIX owner of the parent directory\&.
+.RE
+.sp
+.RE
 Common scenarios where this behavior is useful is in implementing drop\-boxes, where users can create and edit files but not delete them and ensuring that newly created files in a user\*(Aqs roaming profile directory are actually owned by the user\&.
+.sp
+The
+\fBunix only\fR
+option effectively breaks the tie between the Windows owner of a file and the UNIX owner\&. As a logical consequence, in this mode, setting the the Windows owner of a file does not modify the UNIX owner\&. Using this mode should typically be combined with a backing store that can emulate the full NT ACL model without affecting the POSIX permissions, such as the acl_xattr VFS module, coupled with
+\m[blue]\fBacl_xattr:ignore system acls = yes\fR\m[]\&. This can be used to emulate folder quotas, when files are exposed only via SMB (without UNIX extensions)\&. The UNIX owner of a directory is locally set and inherited by all subdirectories and files, and they all consume the same quota\&.
 .sp
 Default:
 \fI\fIinherit owner\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -4684,6 +4780,35 @@ Default:
 .sp
 Example:
 \fI\fIkeepalive\fR\fR\fI = \fR\fI600\fR\fI \fR
+.RE
+
+kerberos encryption types (G)
+.\" kerberos encryption types
+.PP
+.RS 4
+This parameter determines the encryption types to use when operating as a Kerberos client\&. Possible values are
+\fIall\fR,
+\fIstrong\fR, and
+\fIlegacy\fR\&.
+.sp
+Samba uses a Kerberos library (MIT or Heimdal) to obtain Kerberos tickets\&. This library is normally configured outside of Samba, using the krb5\&.conf file\&. This file may also include directives to configure the encryption types to be used\&. However, Samba implements Active Directory protocols and algorithms to locate a domain controller\&. In order to force the Kerberos library into using the correct domain controller, some Samba processes, such as
+\fBwinbindd\fR(8)
+and
+\fBnet\fR(8), build a private krb5\&.conf file for use by the Kerberos library while being invoked from Samba\&. This private file controls all aspects of the Kerberos library operation, and this parameter controls how the encryption types are configured within this generated file, and therefore also controls the encryption types negotiable by Samba\&.
+.sp
+When set to
+\fBall\fR, all active directory encryption types are allowed\&.
+.sp
+When set to
+\fBstrong\fR, only AES\-based encyption types are offered\&. This can be used in hardened environments to prevent downgrade attacks\&.
+.sp
+When set to
+\fBlegacy\fR, only RC4\-HMAC\-MD5 is allowed\&. Avoiding AES this way has one a very specific use\&. Normally, the encryption type is negotiated between the peers\&. However, there is one scenario in which a Windows read\-only domain controller (RODC) advertises AES encryption, but then proxies the request to a writeable DC which may not support AES encryption, leading to failure of the handshake\&. Setting this parameter to
+\fBlegacy\fR
+would cause samba not to negotiate AES encryption\&. It is assumed of course that the weaker legacy encryption types are acceptable for the setup\&.
+.sp
+Default:
+\fI\fIkerberos encryption types\fR\fR\fI = \fR\fIall\fR\fI \fR
 .RE
 
 kerberos method (G)
@@ -5522,6 +5647,8 @@ option\&.
 .sp
 Note: This option can not be set inside registry configurations\&.
 .sp
+The files placed in this directory are not required across service restarts and can be safely placed on volatile storage (e\&.g\&. tmpfs in Linux)
+.sp
 Default:
 \fI\fIlock directory\fR\fR\fI = \fR\fI${prefix}/var/lock\fR\fI \fR
 .sp
@@ -6084,7 +6211,13 @@ Note that it is particularly important not to allow write access to the [netlogo
 .sp
 This option takes the standard substitutions, allowing you to have separate logon scripts for each user or machine\&.
 .sp
-This option is only useful if Samba is set up as a logon server\&.
+This option is only useful if Samba is set up as a logon server in a classic domain controller role\&. If Samba is set up as an Active Directory domain controller, LDAP attribute
+scriptPath
+is used instead\&. For configurations where
+\m[blue]\fBpassdb backend = ldapsam\fR\m[]
+is in use, this option only defines a default value in case LDAP attribute
+sambaLogonScript
+is missing\&.
 .sp
 Default:
 \fI\fIlogon script\fR\fR\fI = \fR\fI\fR\fI \fR
@@ -6288,6 +6421,22 @@ lprm command = /usr/bin/cancel %p\-%j
 .sp
 Default:
 \fI\fIlprm command\fR\fR\fI = \fR\fI # determined by printing parameter\fR\fI \fR
+.RE
+
+lsa over netlogon (G)
+.\" lsa over netlogon
+.PP
+.RS 4
+Setting this deprecated option will allow the RPC server in the AD DC to answer the LSARPC interface on the
+\epipe\enetlogon
+IPC pipe\&.
+.sp
+When enabled, this matches the behaviour of Microsoft\*(Aqs Windows, due to their internal implementation choices\&.
+.sp
+If it is disabled (the default), the AD DC can offer improved performance, as the netlogon server is decoupled and can run as multiple processes\&.
+.sp
+Default:
+\fI\fIlsa over netlogon\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 machine password timeout (G)
@@ -8823,7 +8972,7 @@ reset on zero vc (G)
 .\" reset on zero vc
 .PP
 .RS 4
-This boolean option controls whether an incoming session setup should kill other connections coming from the same IP\&. This matches the default Windows 2003 behaviour\&. Setting this parameter to yes becomes necessary when you have a flaky network and windows decides to reconnect while the old connection still has files with share modes open\&. These files become inaccessible over the new connection\&. The client sends a zero VC on the new connection, and Windows 2003 kills all other connections coming from the same IP\&. This way the locked files are accessible again\&. Please be aware that enabling this option will kill connections behind a masquerading router\&.
+This boolean option controls whether an incoming SMB1 session setup should kill other connections coming from the same IP\&. This matches the default Windows 2003 behaviour\&. Setting this parameter to yes becomes necessary when you have a flaky network and windows decides to reconnect while the old connection still has files with share modes open\&. These files become inaccessible over the new connection\&. The client sends a zero VC on the new connection, and Windows 2003 kills all other connections coming from the same IP\&. This way the locked files are accessible again\&. Please be aware that enabling this option will kill connections behind a masquerading router, and will not trigger for clients that only use SMB2 or SMB3\&.
 .sp
 Default:
 \fI\fIreset on zero vc\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -9034,7 +9183,7 @@ To set one of these options use the follwing syntax:
 .RS 4
 .\}
 .nf
-	damonname:prefork_min_children = 5
+	daemonname:prefork_min_children = 5
 	
 .fi
 .if n \{\
@@ -9303,6 +9452,22 @@ Default:
 \fI\fIrpc_server:SERVER\fR\fR\fI = \fR\fIembedded\fR\fI \fR
 .RE
 
+rpc server port (G)
+.\" rpc server port
+.PP
+.RS 4
+Specifies which port the server should listen on for DCE/RPC over TCP/IP traffic\&.
+.sp
+This controls default port for all protocols, except for NETLOGON\&. If unset, the first available port after 1024 is used\&.
+.sp
+The NETLOGON server will use the next available port, eg 1025\&. To change this port use (eg) rpc server port:netlogon = 4000\&.
+.sp
+Furthermore, all RPC servers can have the port they use specified independenty, with (for example) rpc server port:drsuapi = 5000\&.
+.sp
+Default:
+\fI\fIrpc server port\fR\fR\fI = \fR\fI0\fR\fI \fR
+.RE
+
 samba kcc command (G)
 .\" samba kcc command
 .PP
@@ -9389,20 +9554,6 @@ that from the client\*(Aqs point of view
 security = domain
 is the same as
 security = user\&. It only affects how the server deals with the authentication, it does not in any way affect what the client sees\&.
-.sp
-\fINote\fR
-that the name of the resource being requested is
-\fInot\fR
-sent to the server until after the server has successfully authenticated the client\&. This is why guest shares don\*(Aqt work in user level security without allowing the server to automatically map unknown users into the
-\m[blue]\fBguest account\fR\m[]\&. See the
-\m[blue]\fBmap to guest\fR\m[]
-parameter for details on doing this\&.
-.sp
-See also the
-\m[blue]\fBpassword server\fR\m[]
-parameter and the
-\m[blue]\fBencrypted passwords\fR\m[]
-parameter\&.
 .sp
 \fINote\fR
 that the name of the resource being requested is
@@ -11044,7 +11195,7 @@ and the
 \fIcache directory\fR
 options\&.
 .sp
-This option specifies the directory where TDB files containing persistent data will be stored\&.
+This option specifies the directory where TDB files containing important persistent data will be stored\&.
 .sp
 Default:
 \fI\fIstate directory\fR\fR\fI = \fR\fI${prefix}/var/locks\fR\fI \fR

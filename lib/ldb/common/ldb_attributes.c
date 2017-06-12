@@ -32,6 +32,41 @@
 #include "ldb_handlers.h"
 
 /*
+  fill in an attribute to the ldb_schema into the supplied buffer
+
+  if flags contains LDB_ATTR_FLAG_ALLOCATED
+  the attribute name string will be copied using
+  talloc_strdup(), otherwise it needs to be a static const
+  string at least with a lifetime longer than the ldb struct!
+
+  the ldb_schema_syntax structure should be a pointer
+  to a static const struct or at least it needs to be
+  a struct with a longer lifetime than the ldb context!
+
+*/
+int ldb_schema_attribute_fill_with_syntax(struct ldb_context *ldb,
+					  TALLOC_CTX *mem_ctx,
+					  const char *attribute,
+					  unsigned flags,
+					  const struct ldb_schema_syntax *syntax,
+					  struct ldb_schema_attribute *a)
+{
+	a->name	= attribute;
+	a->flags	= flags;
+	a->syntax	= syntax;
+
+	if (a->flags & LDB_ATTR_FLAG_ALLOCATED) {
+		a->name = talloc_strdup(mem_ctx, a->name);
+		if (a->name == NULL) {
+			ldb_oom(ldb);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+/*
   add a attribute to the ldb_schema
 
   if flags contains LDB_ATTR_FLAG_ALLOCATED
@@ -213,6 +248,39 @@ void ldb_schema_attribute_remove(struct ldb_context *ldb, const char *name)
 	}
 
 	ldb->schema.num_attributes--;
+}
+
+/*
+  remove attributes with a specified flag (eg LDB_ATTR_FLAG_FROM_DB) for this ldb context
+
+  This is to permit correct reloads
+*/
+void ldb_schema_attribute_remove_flagged(struct ldb_context *ldb, unsigned int flag)
+{
+	ptrdiff_t i;
+
+	for (i = 0; i < ldb->schema.num_attributes;) {
+		const struct ldb_schema_attribute *a
+			= &ldb->schema.attributes[i];
+		/* FIXED attributes are never removed */
+		if (a->flags & LDB_ATTR_FLAG_FIXED) {
+			i++;
+			continue;
+		}
+		if ((a->flags & flag) == 0) {
+			i++;
+			continue;
+		}
+		if (a->flags & LDB_ATTR_FLAG_ALLOCATED) {
+			talloc_free(discard_const_p(char, a->name));
+		}
+		if (i < ldb->schema.num_attributes - 1) {
+			memmove(&ldb->schema.attributes[i],
+				a+1, sizeof(*a) * (ldb->schema.num_attributes-(i+1)));
+		}
+
+		ldb->schema.num_attributes--;
+	}
 }
 
 /*

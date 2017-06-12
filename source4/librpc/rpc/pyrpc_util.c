@@ -234,7 +234,7 @@ PyObject *py_dcerpc_interface_init_helper(PyTypeObject *type, PyObject *args, Py
 	}
 
 	/* reset timeout for the handle */
-	if (timeout != ((unsigned int)-1)) {
+	if ((timeout != ((unsigned int)-1)) && (ret->binding_handle != NULL)) {
 		dcerpc_binding_handle_set_timeout(ret->binding_handle, timeout);
 	}
 
@@ -389,4 +389,61 @@ PyObject *PyString_FromStringOrNULL(const char *str)
 		Py_RETURN_NONE;
 	}
 	return PyString_FromString(str);
+}
+
+PyObject *pyrpc_import_union(PyTypeObject *type, TALLOC_CTX *mem_ctx, int level,
+			     const void *in, const char *typename)
+{
+	PyObject *mem_ctx_obj = NULL;
+	PyObject *in_obj = NULL;
+	PyObject *ret = NULL;
+
+	mem_ctx_obj = pytalloc_GenericObject_reference(mem_ctx);
+	if (mem_ctx_obj == NULL) {
+		return NULL;
+	}
+
+	in_obj = pytalloc_GenericObject_reference_ex(mem_ctx, discard_const(in));
+	if (in_obj == NULL) {
+		Py_XDECREF(mem_ctx_obj);
+		return NULL;
+	}
+
+	ret = PyObject_CallMethod((PyObject *)type,
+				  discard_const_p(char, "__import__"),
+				  discard_const_p(char, "OiO"),
+				  mem_ctx_obj, level, in_obj);
+	Py_XDECREF(mem_ctx_obj);
+	Py_XDECREF(in_obj);
+	if (ret == NULL) {
+		return NULL;
+	}
+
+	return ret;
+}
+
+void *pyrpc_export_union(PyTypeObject *type, TALLOC_CTX *mem_ctx, int level,
+			 PyObject *in, const char *typename)
+{
+	PyObject *mem_ctx_obj = NULL;
+	PyObject *ret_obj = NULL;
+	void *ret = NULL;
+
+	mem_ctx_obj = pytalloc_GenericObject_reference(mem_ctx);
+	if (mem_ctx_obj == NULL) {
+		return NULL;
+	}
+
+	ret_obj = PyObject_CallMethod((PyObject *)type,
+				      discard_const_p(char, "__export__"),
+				      discard_const_p(char, "OiO"),
+				      mem_ctx_obj, level, in);
+	Py_XDECREF(mem_ctx_obj);
+	if (ret_obj == NULL) {
+		return NULL;
+	}
+
+	ret = _pytalloc_get_type(ret_obj, typename);
+	Py_XDECREF(ret_obj);
+	return ret;
 }

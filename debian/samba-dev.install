@@ -77,7 +77,6 @@ usr/include/samba-4.0/util/tevent_ntstatus.h
 usr/include/samba-4.0/util/tevent_unix.h
 usr/include/samba-4.0/util/tevent_werror.h
 usr/include/samba-4.0/util/time.h
-usr/include/samba-4.0/util/xfile.h
 usr/include/samba-4.0/util_ldb.h
 usr/lib/*/libdcerpc-binding.so
 usr/lib/*/libdcerpc-samr.so
@@ -89,11 +88,11 @@ usr/lib/*/libndr-standard.so
 usr/lib/*/libndr.so
 usr/lib/*/libnetapi.so
 usr/lib/*/libsamba-credentials.so
+usr/lib/*/libsamba-errors.so
 usr/lib/*/libsamba-hostconfig.so
 usr/lib/*/libsamba-passdb.so
 usr/lib/*/libsamba-policy.so
 usr/lib/*/libsamba-util.so
-usr/lib/*/libsamba-errors.so
 usr/lib/*/libsamdb.so
 usr/lib/*/libsmbconf.so
 usr/lib/*/libsmbldap.so

@@ -204,7 +204,7 @@ WERROR IWbemClassObject_Put(struct IWbemClassObject *d, TALLOC_CTX *mem_ctx, con
 	wco = (struct IWbemClassObject *)d->object_data;
 	for (i = 0; i < wco->obj_class->__PROPERTY_COUNT; ++i) {
 		if (!strcmp(wco->obj_class->properties[i].property.name, name)) {
-			if (cimtype && cimtype != wco->obj_class->properties[i].property.desc->cimtype) return WERR_INVALID_PARAM;
+			if (cimtype && cimtype != wco->obj_class->properties[i].property.desc->cimtype) return WERR_INVALID_PARAMETER;
 			wco->instance->default_flags[i] = 0;
 			duplicate_CIMVAR(wco->instance, val, &wco->instance->data[i], wco->obj_class->properties[i].property.desc->cimtype);
 			return WERR_OK;
@@ -376,7 +376,7 @@ WERROR IEnumWbemClassObject_SmartNext(struct IEnumWbemClassObject *d, TALLOC_CTX
 	}
 
 	result = IWbemWCOSmartEnum_Next(ecod->pSE, loc_ctx, &ecod->guid, lTimeout, uCount, puReturned, &size, &data);
-	if (!W_ERROR_EQUAL(result, WERR_BADFUNC)) {
+	if (!W_ERROR_EQUAL(result, WERR_INVALID_FUNCTION)) {
 		WERR_CHECK("IWbemWCOSmartEnum_Next.");
 	}
 

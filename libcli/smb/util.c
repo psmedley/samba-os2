@@ -175,3 +175,203 @@ bool smb_buffer_oob(uint32_t bufsize, uint32_t offset, uint32_t length)
 	}
 	return false;
 }
+
+/***********************************************************
+ Common function for pushing stings, used by smb_bytes_push_str()
+ and trans_bytes_push_str(). Only difference is the align_odd
+ parameter setting.
+***********************************************************/
+
+static uint8_t *internal_bytes_push_str(uint8_t *buf, bool ucs2,
+					const char *str, size_t str_len,
+					bool align_odd,
+					size_t *pconverted_size)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	size_t buflen;
+	char *converted;
+	size_t converted_size;
+
+	/*
+	 * This check prevents us from
+	 * (re)alloc buf on a NULL TALLOC_CTX.
+	 */
+	if (buf == NULL) {
+		TALLOC_FREE(frame);
+		return NULL;
+	}
+
+	buflen = talloc_get_size(buf);
+
+	if (ucs2 &&
+	    ((align_odd && (buflen % 2 == 0)) ||
+	     (!align_odd && (buflen % 2 == 1)))) {
+		/*
+		 * We're pushing into an SMB buffer, align odd
+		 */
+		buf = talloc_realloc(NULL, buf, uint8_t, buflen + 1);
+		if (buf == NULL) {
+			TALLOC_FREE(frame);
+			return NULL;
+		}
+		buf[buflen] = '\0';
+		buflen += 1;
+	}
+
+	if (!convert_string_talloc(frame, CH_UNIX,
+				   ucs2 ? CH_UTF16LE : CH_DOS,
+				   str, str_len, &converted,
+				   &converted_size)) {
+		TALLOC_FREE(frame);
+		return NULL;
+	}
+
+	buf = talloc_realloc(NULL, buf, uint8_t,
+			     buflen + converted_size);
+	if (buf == NULL) {
+		TALLOC_FREE(frame);
+		return NULL;
+	}
+
+	memcpy(buf + buflen, converted, converted_size);
+
+	TALLOC_FREE(converted);
+
+	if (pconverted_size) {
+		*pconverted_size = converted_size;
+	}
+
+	TALLOC_FREE(frame);
+	return buf;
+}
+
+/***********************************************************
+ Push a string into an SMB buffer, with odd byte alignment
+ if it's a UCS2 string.
+***********************************************************/
+
+uint8_t *smb_bytes_push_str(uint8_t *buf, bool ucs2,
+			    const char *str, size_t str_len,
+			    size_t *pconverted_size)
+{
+	return internal_bytes_push_str(buf, ucs2, str, str_len,
+				       true, pconverted_size);
+}
+
+uint8_t *smb_bytes_push_bytes(uint8_t *buf, uint8_t prefix,
+			      const uint8_t *bytes, size_t num_bytes)
+{
+	size_t buflen;
+
+	/*
+	 * This check prevents us from
+	 * (re)alloc buf on a NULL TALLOC_CTX.
+	 */
+	if (buf == NULL) {
+		return NULL;
+	}
+	buflen = talloc_get_size(buf);
+
+	buf = talloc_realloc(NULL, buf, uint8_t,
+			     buflen + 1 + num_bytes);
+	if (buf == NULL) {
+		return NULL;
+	}
+	buf[buflen] = prefix;
+	memcpy(&buf[buflen+1], bytes, num_bytes);
+	return buf;
+}
+
+/***********************************************************
+ Same as smb_bytes_push_str(), but without the odd byte
+ align for ucs2 (we're pushing into a param or data block).
+ static for now, although this will probably change when
+ other modules use async trans calls.
+***********************************************************/
+
+uint8_t *trans2_bytes_push_str(uint8_t *buf, bool ucs2,
+			       const char *str, size_t str_len,
+			       size_t *pconverted_size)
+{
+	return internal_bytes_push_str(buf, ucs2, str, str_len,
+				       false, pconverted_size);
+}
+
+uint8_t *trans2_bytes_push_bytes(uint8_t *buf,
+				 const uint8_t *bytes, size_t num_bytes)
+{
+	size_t buflen;
+
+	if (buf == NULL) {
+		return NULL;
+	}
+	buflen = talloc_get_size(buf);
+
+	buf = talloc_realloc(NULL, buf, uint8_t,
+			     buflen + num_bytes);
+	if (buf == NULL) {
+		return NULL;
+	}
+	memcpy(&buf[buflen], bytes, num_bytes);
+	return buf;
+}
+
+static NTSTATUS internal_bytes_pull_str(TALLOC_CTX *mem_ctx, char **_str,
+					bool ucs2, bool align_odd,
+					const uint8_t *buf, size_t buf_len,
+					size_t *pbuf_consumed)
+{
+	size_t pad = 0;
+	char *str = NULL;
+	size_t str_len = 0;
+	bool ok;
+
+	*_str = NULL;
+	if (pbuf_consumed != NULL) {
+		*pbuf_consumed = 0;
+	}
+
+	if (ucs2 &&
+	    ((align_odd && (buf_len % 2 == 0)) ||
+	     (!align_odd && (buf_len % 2 == 1)))) {
+		if (buf_len < 1) {
+			return NT_STATUS_BUFFER_TOO_SMALL;
+		}
+		pad = 1;
+		buf_len -= pad;
+		buf += pad;
+	}
+
+	if (ucs2) {
+		buf_len = utf16_len_n(buf, buf_len);
+	} else {
+		size_t tmp = strnlen((const char *)buf, buf_len);
+		if (tmp < buf_len) {
+			tmp += 1;
+		}
+		buf_len = tmp;
+	}
+
+	ok = convert_string_talloc(mem_ctx,
+				   ucs2 ? CH_UTF16LE : CH_DOS,
+				   CH_UNIX,
+				   buf, buf_len,
+				   &str, &str_len);
+	if (!ok) {
+		return map_nt_error_from_unix_common(errno);
+	}
+
+	if (pbuf_consumed != NULL) {
+		*pbuf_consumed = buf_len + pad;
+	}
+	*_str = str;
+	return NT_STATUS_OK;;
+}
+
+NTSTATUS smb_bytes_pull_str(TALLOC_CTX *mem_ctx, char **_str, bool ucs2,
+			    const uint8_t *buf, size_t buf_len,
+			    size_t *_buf_consumed)
+{
+	return internal_bytes_pull_str(mem_ctx, _str, ucs2, true,
+				       buf, buf_len, _buf_consumed);
+}

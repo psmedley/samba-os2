@@ -40,7 +40,7 @@ WERROR reg_open_path(TALLOC_CTX *mem_ctx, const char *orig_path,
 	WERROR err;
 
 	if (!(path = SMB_STRDUP(orig_path))) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	p = strchr(path, '\\');
@@ -99,7 +99,7 @@ WERROR reg_create_path(TALLOC_CTX *mem_ctx, const char *orig_path,
 	WERROR err;
 
 	if (!(path = SMB_STRDUP(orig_path))) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	p = strchr(path, '\\');
@@ -151,14 +151,14 @@ WERROR reg_delete_path(const struct security_token *token,
 	WERROR err;
 
 	if (!(path = SMB_STRDUP(orig_path))) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	p = strchr(path, '\\');
 
 	if ((p == NULL) || (p[1] == '\0')) {
 		SAFE_FREE(path);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	*p = '\0';

@@ -86,7 +86,7 @@ static WERROR pull_winreg_Data(TALLOC_CTX *mem_ctx,
 	ndr_err = ndr_pull_union_blob(blob, mem_ctx, data, type,
 			(ndr_pull_flags_fn_t)ndr_pull_winreg_Data);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 	return WERR_OK;
 }
@@ -202,19 +202,19 @@ static WERROR cmd_winreg_querymultiplevalues_ex(struct rpc_pipe_client *cli,
 
 	values_in = talloc_zero_array(mem_ctx, struct QueryMultipleValue, num_values);
 	if (values_in == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	values_out = talloc_zero_array(mem_ctx, struct QueryMultipleValue, num_values);
 	if (values_out == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	for (i=0; i < num_values; i++) {
 
 		values_in[i].ve_valuename = talloc_zero(values_in, struct winreg_ValNameBuf);
 		if (values_in[i].ve_valuename == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		values_in[i].ve_valuename->name = talloc_strdup(values_in[i].ve_valuename, argv[i+2]);
@@ -243,7 +243,7 @@ static WERROR cmd_winreg_querymultiplevalues_ex(struct rpc_pipe_client *cli,
 
 			buffer = talloc_zero_array(mem_ctx, uint8_t, needed);
 			if (buffer == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 
 			status = dcerpc_winreg_QueryMultipleValues2(b, mem_ctx,
@@ -269,7 +269,7 @@ static WERROR cmd_winreg_querymultiplevalues_ex(struct rpc_pipe_client *cli,
 
 		buffer = talloc_zero_array(mem_ctx, uint8_t, buffer_size);
 		if (buffer == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		status = dcerpc_winreg_QueryMultipleValues(b, mem_ctx,

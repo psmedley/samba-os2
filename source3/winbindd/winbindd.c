@@ -43,6 +43,7 @@
 #include "source4/lib/messaging/messaging.h"
 #include "lib/param/param.h"
 #include "lib/async_req/async_sock.h"
+#include "libsmb/samlogon_cache.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_WINBIND
@@ -1686,6 +1687,25 @@ int main(int argc, const char **argv)
 	if (!reload_services_file(NULL)) {
 		DEBUG(0, ("error opening config file\n"));
 		exit(1);
+	}
+
+	{
+		size_t i;
+		const char *idmap_backend;
+		const char *invalid_backends[] = {
+			"ad", "rfc2307", "rid",
+		};
+
+		idmap_backend = lp_idmap_default_backend();
+		for (i = 0; i < ARRAY_SIZE(invalid_backends); i++) {
+			ok = strequal(idmap_backend, invalid_backends[i]);
+			if (ok) {
+				DBG_ERR("FATAL: Invalid idmap backend %s "
+					"configured as the default backend!\n",
+					idmap_backend);
+				exit(1);
+			}
+		}
 	}
 
 	ok = directory_create_or_exist(lp_lock_directory(), 0755);

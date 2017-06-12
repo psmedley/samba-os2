@@ -54,7 +54,7 @@ WERROR NetGroupAdd_r(struct libnetapi_ctx *ctx,
 	ZERO_STRUCT(group_handle);
 
 	if (!r->in.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -71,7 +71,7 @@ WERROR NetGroupAdd_r(struct libnetapi_ctx *ctx,
 			info3 = (struct GROUP_INFO_3 *)r->in.buffer;
 			break;
 		default:
-			werr = WERR_UNKNOWN_LEVEL;
+			werr = WERR_INVALID_LEVEL;
 			goto done;
 	}
 
@@ -268,7 +268,7 @@ WERROR NetGroupDel_r(struct libnetapi_ctx *ctx,
 	ZERO_STRUCT(group_handle);
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = libnetapi_open_pipe(ctx, r->in.server_name,
@@ -488,7 +488,7 @@ WERROR NetGroupSetInfo_r(struct libnetapi_ctx *ctx,
 	ZERO_STRUCT(group_handle);
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = libnetapi_open_pipe(ctx, r->in.server_name,
@@ -722,7 +722,7 @@ static WERROR map_group_info_to_buffer(TALLOC_CTX *mem_ctx,
 			break;
 		case 3:
 			if (!sid_compose(&sid, domain_sid, rid)) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 
 			info3.grpi3_name	= info->name.string;
@@ -734,7 +734,7 @@ static WERROR map_group_info_to_buffer(TALLOC_CTX *mem_ctx,
 
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	W_ERROR_HAVE_NO_MEMORY(*buffer);
@@ -766,7 +766,7 @@ WERROR NetGroupGetInfo_r(struct libnetapi_ctx *ctx,
 	ZERO_STRUCT(group_handle);
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = libnetapi_open_pipe(ctx, r->in.server_name,
@@ -914,7 +914,7 @@ WERROR NetGroupAddUser_r(struct libnetapi_ctx *ctx,
 	ZERO_STRUCT(group_handle);
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = libnetapi_open_pipe(ctx, r->in.server_name,
@@ -951,7 +951,7 @@ WERROR NetGroupAddUser_r(struct libnetapi_ctx *ctx,
 		goto done;
 	}
 	if (!NT_STATUS_IS_OK(result)) {
-		werr = WERR_GROUPNOTFOUND;
+		werr = WERR_NERR_GROUPNOTFOUND;
 		goto done;
 	}
 	if (rids.count != 1) {
@@ -964,7 +964,7 @@ WERROR NetGroupAddUser_r(struct libnetapi_ctx *ctx,
 	}
 
 	if (types.ids[0] != SID_NAME_DOM_GRP) {
-		werr = WERR_GROUPNOTFOUND;
+		werr = WERR_NERR_GROUPNOTFOUND;
 		goto done;
 	}
 
@@ -997,7 +997,7 @@ WERROR NetGroupAddUser_r(struct libnetapi_ctx *ctx,
 		goto done;
 	}
 	if (!NT_STATUS_IS_OK(result)) {
-		werr = WERR_USER_NOT_FOUND;
+		werr = WERR_NERR_USERNOTFOUND;
 		goto done;
 	}
 	if (rids.count != 1) {
@@ -1010,7 +1010,7 @@ WERROR NetGroupAddUser_r(struct libnetapi_ctx *ctx,
 	}
 
 	if (types.ids[0] != SID_NAME_USER) {
-		werr = WERR_USER_NOT_FOUND;
+		werr = WERR_NERR_USERNOTFOUND;
 		goto done;
 	}
 
@@ -1074,7 +1074,7 @@ WERROR NetGroupDelUser_r(struct libnetapi_ctx *ctx,
 	ZERO_STRUCT(group_handle);
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = libnetapi_open_pipe(ctx, r->in.server_name,
@@ -1111,7 +1111,7 @@ WERROR NetGroupDelUser_r(struct libnetapi_ctx *ctx,
 		goto done;
 	}
 	if (!NT_STATUS_IS_OK(result)) {
-		werr = WERR_GROUPNOTFOUND;
+		werr = WERR_NERR_GROUPNOTFOUND;
 		goto done;
 	}
 	if (rids.count != 1) {
@@ -1124,7 +1124,7 @@ WERROR NetGroupDelUser_r(struct libnetapi_ctx *ctx,
 	}
 
 	if (types.ids[0] != SID_NAME_DOM_GRP) {
-		werr = WERR_GROUPNOTFOUND;
+		werr = WERR_NERR_GROUPNOTFOUND;
 		goto done;
 	}
 
@@ -1158,7 +1158,7 @@ WERROR NetGroupDelUser_r(struct libnetapi_ctx *ctx,
 	}
 
 	if (!NT_STATUS_IS_OK(result)) {
-		werr = WERR_USER_NOT_FOUND;
+		werr = WERR_NERR_USERNOTFOUND;
 		goto done;
 	}
 	if (rids.count != 1) {
@@ -1171,7 +1171,7 @@ WERROR NetGroupDelUser_r(struct libnetapi_ctx *ctx,
 	}
 
 	if (types.ids[0] != SID_NAME_USER) {
-		werr = WERR_USER_NOT_FOUND;
+		werr = WERR_NERR_USERNOTFOUND;
 		goto done;
 	}
 
@@ -1315,7 +1315,7 @@ static WERROR convert_samr_disp_groups_to_GROUP_INFO_3_buffer(TALLOC_CTX *mem_ct
 		struct dom_sid sid;
 
 		if (!sid_compose(&sid, domain_sid, groups->entries[i].rid)) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		g3[i].grpi3_name = talloc_strdup(mem_ctx,
@@ -1358,7 +1358,7 @@ static WERROR convert_samr_disp_groups_to_GROUP_INFO_buffer(TALLOC_CTX *mem_ctx,
 		case 3:
 			return convert_samr_disp_groups_to_GROUP_INFO_3_buffer(mem_ctx, groups, domain_sid, buffer);
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 }
 
@@ -1393,7 +1393,7 @@ WERROR NetGroupEnum_r(struct libnetapi_ctx *ctx,
 		case 3:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	werr = libnetapi_open_pipe(ctx, r->in.server_name,
@@ -1527,7 +1527,7 @@ WERROR NetGroupGetUsers_r(struct libnetapi_ctx *ctx,
 	ZERO_STRUCT(group_handle);
 
 	if (!r->out.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	*r->out.buffer = NULL;
@@ -1539,7 +1539,7 @@ WERROR NetGroupGetUsers_r(struct libnetapi_ctx *ctx,
 		case 1:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 
@@ -1724,7 +1724,7 @@ WERROR NetGroupSetUsers_r(struct libnetapi_ctx *ctx,
 	ZERO_STRUCT(group_handle);
 
 	if (!r->in.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -1732,7 +1732,7 @@ WERROR NetGroupSetUsers_r(struct libnetapi_ctx *ctx,
 		case 1:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	werr = libnetapi_open_pipe(ctx, r->in.server_name,
@@ -1824,7 +1824,7 @@ WERROR NetGroupSetUsers_r(struct libnetapi_ctx *ctx,
 
 	lsa_names = talloc_array(ctx, struct lsa_String, r->in.num_entries);
 	if (!lsa_names) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -1896,7 +1896,7 @@ WERROR NetGroupSetUsers_r(struct libnetapi_ctx *ctx,
 			if (!add_rid_to_array_unique(ctx,
 						     member_rids[i],
 						     &add_rids, &num_add_rids)) {
-				werr = WERR_GENERAL_FAILURE;
+				werr = WERR_GEN_FAILURE;
 				goto done;
 			}
 		}
@@ -1916,7 +1916,7 @@ WERROR NetGroupSetUsers_r(struct libnetapi_ctx *ctx,
 			if (!add_rid_to_array_unique(ctx,
 						     rid_array->rids[k],
 						     &del_rids, &num_del_rids)) {
-				werr = WERR_GENERAL_FAILURE;
+				werr = WERR_GEN_FAILURE;
 				goto done;
 			}
 		}

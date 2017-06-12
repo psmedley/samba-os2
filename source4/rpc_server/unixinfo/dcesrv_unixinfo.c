@@ -40,7 +40,7 @@ static NTSTATUS dcesrv_unixinfo_SidToUid(struct dcesrv_call_state *dce_call,
 	ids->sid = &r->in.sid;
 	ids->status = ID_UNKNOWN;
 	ZERO_STRUCT(ids->xid);
-	status = wbc_sids_to_xids(dce_call->event_ctx, ids, 1);
+	status = wbc_sids_to_xids(ids, 1);
 	NT_STATUS_NOT_OK_RETURN(status);
 
 	if (ids->xid.type == ID_TYPE_BOTH ||
@@ -77,7 +77,7 @@ static NTSTATUS dcesrv_unixinfo_UidToSid(struct dcesrv_call_state *dce_call,
 	ids->xid.id = uid;
 	ids->xid.type = ID_TYPE_UID;
 
-	status = wbc_xids_to_sids(dce_call->event_ctx, ids, 1);
+	status = wbc_xids_to_sids(ids, 1);
 	NT_STATUS_NOT_OK_RETURN(status);
 
 	r->out.sid = ids->sid;
@@ -99,7 +99,7 @@ static NTSTATUS dcesrv_unixinfo_SidToGid(struct dcesrv_call_state *dce_call,
 	ids->sid = &r->in.sid;
 	ids->status = ID_UNKNOWN;
 	ZERO_STRUCT(ids->xid);
-	status = wbc_sids_to_xids(dce_call->event_ctx, ids, 1);
+	status = wbc_sids_to_xids(ids, 1);
 	NT_STATUS_NOT_OK_RETURN(status);
 
 	if (ids->xid.type == ID_TYPE_BOTH ||
@@ -136,7 +136,7 @@ static NTSTATUS dcesrv_unixinfo_GidToSid(struct dcesrv_call_state *dce_call,
 	ids->xid.id = gid;
 	ids->xid.type = ID_TYPE_GID;
 
-	status = wbc_xids_to_sids(dce_call->event_ctx, ids, 1);
+	status = wbc_xids_to_sids(ids, 1);
 	NT_STATUS_NOT_OK_RETURN(status);
 
 	r->out.sid = ids->sid;

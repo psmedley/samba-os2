@@ -139,12 +139,12 @@ static WERROR dcesrv_winreg_CreateKey(struct dcesrv_call_state *dce_call,
 			sdblob.data = r->in.secdesc->sd.data;
 			sdblob.length = r->in.secdesc->sd.len;
 			if (sdblob.data == NULL) {
-				return WERR_INVALID_PARAM;
+				return WERR_INVALID_PARAMETER;
 			}
 			ndr_err = ndr_pull_struct_blob_all(&sdblob, mem_ctx, &sd,
 							   (ndr_pull_flags_fn_t)ndr_pull_security_descriptor);
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-				return WERR_INVALID_PARAM;
+				return WERR_INVALID_PARAMETER;
 			}
 		}
 		
@@ -154,7 +154,7 @@ static WERROR dcesrv_winreg_CreateKey(struct dcesrv_call_state *dce_call,
 		r->out.action_taken = talloc(mem_ctx, enum winreg_CreateAction);
 		if (r->out.action_taken == NULL) {
 			talloc_free(newh);
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		*r->out.action_taken = REG_ACTION_NONE;
 
@@ -313,7 +313,7 @@ static WERROR dcesrv_winreg_EnumValue(struct dcesrv_call_state *dce_call,
 
 	r->out.type = talloc(mem_ctx, enum winreg_Type);
 	if (!r->out.type) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	*r->out.type = (enum winreg_Type) data_type;
 
@@ -512,7 +512,7 @@ static WERROR dcesrv_winreg_QueryValue(struct dcesrv_call_state *dce_call,
 	case SECURITY_USER:
 		if ((r->in.type == NULL) || (r->in.data_length == NULL) ||
 		    (r->in.data_size == NULL)) {
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 
 		result = reg_key_get_value_by_name(mem_ctx, key, 
@@ -532,17 +532,17 @@ static WERROR dcesrv_winreg_QueryValue(struct dcesrv_call_state *dce_call,
 
 		r->out.type = talloc(mem_ctx, enum winreg_Type);
 		if (!r->out.type) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		*r->out.type = (enum winreg_Type) value_type;
 		r->out.data_length = talloc(mem_ctx, uint32_t);
 		if (!r->out.data_length) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		*r->out.data_length = value_data.length;
 		r->out.data_size = talloc(mem_ctx, uint32_t);
 		if (!r->out.data_size) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		*r->out.data_size = value_data.length;
 		r->out.data = value_data.data;

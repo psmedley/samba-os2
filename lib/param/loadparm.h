@@ -178,6 +178,10 @@ struct file_lists {
 #define KERBEROS_VERIFY_DEDICATED_KEYTAB 2
 #define KERBEROS_VERIFY_SECRETS_AND_KEYTAB 3
 
+#define KERBEROS_ETYPES_ALL 0
+#define KERBEROS_ETYPES_STRONG 1
+#define KERBEROS_ETYPES_LEGACY 2
+
 /* ACL compatibility */
 enum acl_compatibility {ACL_COMPAT_AUTO, ACL_COMPAT_WINNT, ACL_COMPAT_WIN2K};
 
@@ -224,6 +228,13 @@ enum mapreadonly_options {MAP_READONLY_NO, MAP_READONLY_YES, MAP_READONLY_PERMIS
 
 /* case handling */
 enum case_handling {CASE_LOWER,CASE_UPPER};
+
+/* inherit owner options */
+enum inheritowner_options {
+	INHERIT_OWNER_NO,
+	INHERIT_OWNER_WINDOWS_AND_UNIX,
+	INHERIT_OWNER_UNIX_ONLY
+};
 
 /*
  * Default passwd chat script.

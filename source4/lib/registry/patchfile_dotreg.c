@@ -200,7 +200,7 @@ _PUBLIC_ WERROR reg_dotreg_diff_save(TALLOC_CTX *ctx, const char *filename,
 		data->fd = open(filename, O_CREAT|O_WRONLY, 0755);
 		if (data->fd < 0) {
 			DEBUG(0, ("Unable to open %s\n", filename));
-			return WERR_BADFILE;
+			return WERR_FILE_NOT_FOUND;
 		}
 	} else {
 		data->fd = STDOUT_FILENO;
@@ -244,7 +244,7 @@ _PUBLIC_ WERROR reg_dotreg_diff_load(int fd,
 		DEBUG(0, ("Can't read from file.\n"));
 		talloc_free(mem_ctx);
 		close(fd);
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	while ((line = afdgets(fd, mem_ctx, 0))) {
@@ -358,10 +358,10 @@ _PUBLIC_ WERROR reg_dotreg_diff_load(int fd,
 				error = callbacks->del_value(callback_data,
 						     curkey, value);
 
-				/* Ignore if key does not exist (WERR_BADFILE)
+				/* Ignore if key does not exist (WERR_FILE_NOT_FOUND)
 				 * Consistent with Windows behaviour */
 				if (!W_ERROR_IS_OK(error) &&
-				    !W_ERROR_EQUAL(error, WERR_BADFILE)) {
+				    !W_ERROR_EQUAL(error, WERR_FILE_NOT_FOUND)) {
 					DEBUG(0, ("Error deleting value %s in key %s\n",
 						value, curkey));
 					talloc_free(mem_ctx);
@@ -405,7 +405,7 @@ _PUBLIC_ WERROR reg_dotreg_diff_load(int fd,
 		if (!result) {
 			DEBUG(0, ("Error converting string to value for line:\n%s\n",
 					line));
-			return WERR_GENERAL_FAILURE;
+			return WERR_GEN_FAILURE;
 		}
 
 		error = callbacks->set_value(callback_data, curkey, value,

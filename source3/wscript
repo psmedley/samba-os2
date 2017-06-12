@@ -160,11 +160,11 @@ main() {
 #include <sys/types.h>
 #include <fcntl.h>
 #include <signal.h>
-#ifndef F_NOTIFY
-#define F_NOTIFY 1026
+#ifndef F_GETLEASE
+#define F_GETLEASE 1025
 #endif
 main() {
-        exit(fcntl(open("/tmp", O_RDONLY), F_NOTIFY, 0) == -1 ?  1 : 0);
+        exit(fcntl(open("/tmp", O_RDONLY), F_GETLEASE, 0) == -1 ?  1 : 0);
 }''', 'HAVE_KERNEL_OPLOCKS_LINUX', addmain=False, execute=True,
         msg="Checking for Linux kernel oplocks")
 
@@ -1582,6 +1582,8 @@ main() {
     if conf.CHECK_HEADERS('cephfs/libcephfs.h', False, False, 'cephfs') and conf.CHECK_LIB('cephfs', shlib=True) and Options.options.with_cephfs:
         if Options.options.with_acl_support:
             conf.DEFINE('HAVE_CEPH', '1')
+            if conf.CHECK_FUNCS_IN('ceph_statx', 'cephfs', headers='cephfs/libcephfs.h'):
+                conf.DEFINE('HAVE_CEPH_STATX', '1')
         else:
             Logs.warn("ceph support disabled due to --without-acl-support")
             conf.undefine('HAVE_CEPH')
@@ -1629,6 +1631,9 @@ main() {
             conf.fatal("ncurses not available, but --with-regedit was specified")
         else:
             Logs.info("ncurses not available, not building regedit")
+
+    if conf.CHECK_HEADERS('ftw.h') and conf.CHECK_FUNCS('nftw'):
+        conf.env.build_mvxattr = True
 
     conf.CHECK_FUNCS_IN('DES_pcbc_encrypt', 'crypto')
     if Options.options.with_fake_kaserver == True:

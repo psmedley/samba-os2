@@ -23,8 +23,10 @@ the functionality, that's already done in other tests.
 
 from samba import credentials
 import samba.tests
+import os
+import binascii
 
-class CredentialsTests(samba.tests.TestCase):
+class CredentialsTests(samba.tests.TestCaseInTempDir):
 
     def setUp(self):
         super(CredentialsTests, self).setUp()
@@ -32,35 +34,64 @@ class CredentialsTests(samba.tests.TestCase):
 
     def test_set_username(self):
         self.creds.set_username("somebody")
-        self.assertEquals("somebody", self.creds.get_username())
+        self.assertEqual("somebody", self.creds.get_username())
 
     def test_set_password(self):
         self.creds.set_password("S3CreT")
-        self.assertEquals("S3CreT", self.creds.get_password())
+        self.assertEqual("S3CreT", self.creds.get_password())
+
+    def test_set_utf16_password(self):
+        password = 'S3cRet'
+        passbytes = password.encode('utf-16-le')
+        self.assertTrue(self.creds.set_utf16_password(passbytes))
+        self.assertEqual(password, self.creds.get_password())
+
+    def test_set_old_password(self):
+        self.assertEqual(None, self.creds.get_old_password())
+        self.assertTrue(self.creds.set_old_password("S3c0ndS3CreT"))
+        self.assertEqual("S3c0ndS3CreT", self.creds.get_old_password())
+
+    def test_set_old_utf16_password(self):
+        password = '0ldS3cRet'
+        passbytes = password.encode('utf-16-le')
+        self.assertTrue(self.creds.set_old_utf16_password(passbytes))
+        self.assertEqual(password, self.creds.get_old_password())
 
     def test_set_domain(self):
         self.creds.set_domain("ABMAS")
-        self.assertEquals("ABMAS", self.creds.get_domain())
+        self.assertEqual("ABMAS", self.creds.get_domain())
+        self.assertEqual(self.creds.get_principal(), None)
 
     def test_set_realm(self):
         self.creds.set_realm("myrealm")
-        self.assertEquals("MYREALM", self.creds.get_realm())
+        self.assertEqual("MYREALM", self.creds.get_realm())
+        self.assertEqual(self.creds.get_principal(), None)
 
     def test_parse_string_anon(self):
         self.creds.parse_string("%")
-        self.assertEquals("", self.creds.get_username())
-        self.assertEquals(None, self.creds.get_password())
+        self.assertEqual("", self.creds.get_username())
+        self.assertEqual(None, self.creds.get_password())
+
+    def test_parse_string_empty_pw(self):
+        self.creds.parse_string("someone%")
+        self.assertEqual("someone", self.creds.get_username())
+        self.assertEqual("", self.creds.get_password())
+
+    def test_parse_string_none_pw(self):
+        self.creds.parse_string("someone")
+        self.assertEqual("someone", self.creds.get_username())
+        self.assertEqual(None, self.creds.get_password())
 
     def test_parse_string_user_pw_domain(self):
         self.creds.parse_string("dom\\someone%secr")
-        self.assertEquals("someone", self.creds.get_username())
-        self.assertEquals("secr", self.creds.get_password())
-        self.assertEquals("DOM", self.creds.get_domain())
+        self.assertEqual("someone", self.creds.get_username())
+        self.assertEqual("secr", self.creds.get_password())
+        self.assertEqual("DOM", self.creds.get_domain())
 
     def test_bind_dn(self):
-        self.assertEquals(None, self.creds.get_bind_dn())
+        self.assertEqual(None, self.creds.get_bind_dn())
         self.creds.set_bind_dn("dc=foo,cn=bar")
-        self.assertEquals("dc=foo,cn=bar", self.creds.get_bind_dn())
+        self.assertEqual("dc=foo,cn=bar", self.creds.get_bind_dn())
 
     def test_is_anon(self):
         self.creds.set_username("")
@@ -72,18 +103,25 @@ class CredentialsTests(samba.tests.TestCase):
 
     def test_workstation(self):
         # FIXME: This is uninitialised, it should be None
-        #self.assertEquals(None, self.creds.get_workstation())
+        #self.assertEqual(None, self.creds.get_workstation())
         self.creds.set_workstation("myworksta")
-        self.assertEquals("myworksta", self.creds.get_workstation())
+        self.assertEqual("myworksta", self.creds.get_workstation())
 
     def test_get_nt_hash(self):
-        self.creds.set_password("geheim")
-        self.assertEquals('\xc2\xae\x1f\xe6\xe6H\x84cRE>\x81o*\xeb\x93',
-                          self.creds.get_nt_hash())
+        password="geheim"
+        hex_nthash="c2ae1fe6e648846352453e816f2aeb93"
+        self.creds.set_password(password)
+        self.assertEqual(password, self.creds.get_password())
+        self.assertEqual(binascii.a2b_hex(hex_nthash),
+                         self.creds.get_nt_hash())
 
-    def test_guess(self):
-        # Just check the method is there and doesn't raise an exception
-        self.creds.guess()
+    def test_get_nt_hash_string(self):
+        self.creds.set_password_will_be_nt_hash(True)
+        hex_nthash="c2ae1fe6e648846352453e816f2aeb93"
+        self.creds.set_password(hex_nthash)
+        self.assertEqual(None, self.creds.get_password())
+        self.assertEqual(binascii.a2b_hex(hex_nthash),
+                         self.creds.get_nt_hash())
 
     def test_set_cmdline_callbacks(self):
         self.creds.set_cmdline_callbacks()
@@ -96,3 +134,293 @@ class CredentialsTests(samba.tests.TestCase):
 
     def test_wrong_password(self):
         self.assertFalse(self.creds.wrong_password())
+
+    def test_guess(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        self.assertEqual(creds.get_username(), "env_user")
+        self.assertEqual(creds.get_domain(), lp.get("workgroup").upper())
+        self.assertEqual(creds.get_realm(), None)
+        self.assertEqual(creds.get_principal(), "env_user@%s" % creds.get_domain())
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), False)
+
+    def test_set_anonymous(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        creds.set_anonymous()
+        self.assertEqual(creds.get_username(), "")
+        self.assertEqual(creds.get_domain(), "")
+        self.assertEqual(creds.get_realm(), None)
+        self.assertEqual(creds.get_principal(), None)
+        self.assertEqual(creds.is_anonymous(), True)
+        self.assertEqual(creds.authentication_requested(), False)
+
+    def test_parse_file_1(self):
+        realm="realm.example.com"
+        domain="dom"
+        password="pass"
+        username="user"
+
+        passwd_file_name = os.path.join(self.tempdir, "parse_file")
+        passwd_file_fd = open(passwd_file_name, 'wx')
+        passwd_file_fd.write("realm=%s\n" % realm)
+        passwd_file_fd.write("domain=%s\n" % domain)
+        passwd_file_fd.write("username=%s\n" % username)
+        passwd_file_fd.write("password=%s\n" % password)
+        passwd_file_fd.close()
+        self.creds.parse_file(passwd_file_name)
+        self.assertEqual(self.creds.get_username(), username)
+        self.assertEqual(self.creds.get_password(), password)
+        self.assertEqual(self.creds.get_domain(), domain.upper())
+        self.assertEqual(self.creds.get_realm(), realm.upper())
+        self.assertEqual(self.creds.get_principal(), "%s@%s" % (username, realm.upper()))
+        self.assertEqual(self.creds.is_anonymous(), False)
+        self.assertEqual(self.creds.authentication_requested(), True)
+        os.unlink(passwd_file_name)
+
+    def test_parse_file_2(self):
+        realm="realm.example.com"
+        domain="dom"
+        password="pass"
+        username="user"
+
+        passwd_file_name = os.path.join(self.tempdir, "parse_file")
+        passwd_file_fd = open(passwd_file_name, 'wx')
+        passwd_file_fd.write("realm=%s\n" % realm)
+        passwd_file_fd.write("domain=%s\n" % domain)
+        passwd_file_fd.write("username=%s\\%s\n" % (domain, username))
+        passwd_file_fd.write("password=%s\n" % password)
+        passwd_file_fd.close()
+        self.creds.parse_file(passwd_file_name)
+        self.assertEqual(self.creds.get_username(), username)
+        self.assertEqual(self.creds.get_password(), password)
+        self.assertEqual(self.creds.get_domain(), domain.upper())
+        self.assertEqual(self.creds.get_realm(), realm.upper())
+        self.assertEqual(self.creds.get_principal(), "%s@%s" % (username, realm.upper()))
+        self.assertEqual(self.creds.is_anonymous(), False)
+        self.assertEqual(self.creds.authentication_requested(), True)
+        os.unlink(passwd_file_name)
+
+    def test_parse_file_3(self):
+        realm="realm.example.com"
+        domain="domain"
+        password="password"
+        username="username"
+
+        userdom="userdom"
+
+        passwd_file_name = os.path.join(self.tempdir, "parse_file")
+        passwd_file_fd = open(passwd_file_name, 'wx')
+        passwd_file_fd.write("realm=%s\n" % realm)
+        passwd_file_fd.write("domain=%s\n" % domain)
+        passwd_file_fd.write("username=%s/%s\n" % (userdom, username))
+        passwd_file_fd.write("password=%s\n" % password)
+        passwd_file_fd.close()
+        self.creds.parse_file(passwd_file_name)
+        self.assertEqual(self.creds.get_username(), username)
+        self.assertEqual(self.creds.get_password(), password)
+        self.assertEqual(self.creds.get_domain(), userdom.upper())
+        self.assertEqual(self.creds.get_realm(), userdom.upper())
+        self.assertEqual(self.creds.get_principal(), "%s@%s" % (username, userdom.upper()))
+        self.assertEqual(self.creds.is_anonymous(), False)
+        self.assertEqual(self.creds.authentication_requested(), True)
+        os.unlink(passwd_file_name)
+
+    def test_parse_file_4(self):
+        realm="realm.example.com"
+        domain="domain"
+        password="password"
+        username="username"
+
+        userdom="userdom"
+
+        passwd_file_name = os.path.join(self.tempdir, "parse_file")
+        passwd_file_fd = open(passwd_file_name, 'wx')
+        passwd_file_fd.write("username=%s\\%s%%%s\n" % (userdom, username, password))
+        passwd_file_fd.write("realm=ignorerealm\n")
+        passwd_file_fd.write("domain=ignoredomain\n")
+        passwd_file_fd.write("password=ignorepassword\n")
+        passwd_file_fd.close()
+        self.creds.parse_file(passwd_file_name)
+        self.assertEqual(self.creds.get_username(), username)
+        self.assertEqual(self.creds.get_password(), password)
+        self.assertEqual(self.creds.get_domain(), userdom.upper())
+        self.assertEqual(self.creds.get_realm(), userdom.upper())
+        self.assertEqual(self.creds.get_principal(), "%s@%s" % (username, userdom.upper()))
+        self.assertEqual(self.creds.is_anonymous(), False)
+        self.assertEqual(self.creds.authentication_requested(), True)
+        os.unlink(passwd_file_name)
+
+    def test_parse_file_5(self):
+        realm="realm.example.com"
+        domain="domain"
+        password="password"
+        username="username"
+
+        userdom="userdom"
+
+        passwd_file_name = os.path.join(self.tempdir, "parse_file")
+        passwd_file_fd = open(passwd_file_name, 'wx')
+        passwd_file_fd.write("realm=ignorerealm\n")
+        passwd_file_fd.write("username=%s\\%s%%%s\n" % (userdom, username, password))
+        passwd_file_fd.write("domain=ignoredomain\n")
+        passwd_file_fd.write("password=ignorepassword\n")
+        passwd_file_fd.close()
+        self.creds.parse_file(passwd_file_name)
+        self.assertEqual(self.creds.get_username(), username)
+        self.assertEqual(self.creds.get_password(), password)
+        self.assertEqual(self.creds.get_domain(), userdom.upper())
+        self.assertEqual(self.creds.get_realm(), userdom.upper())
+        self.assertEqual(self.creds.get_principal(), "%s@%s" % (username, userdom.upper()))
+        self.assertEqual(self.creds.is_anonymous(), False)
+        self.assertEqual(self.creds.authentication_requested(), True)
+        os.unlink(passwd_file_name)
+
+    def test_parse_username_0(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        creds.parse_string("user")
+        self.assertEqual(creds.get_username(), "user")
+        self.assertEqual(creds.get_domain(), lp.get("workgroup").upper())
+        self.assertEqual(creds.get_realm(), None)
+        self.assertEqual(creds.get_principal(), "user@%s" % lp.get("workgroup").upper())
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)
+
+    def test_parse_username_1(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        realm = "realm.example.com"
+        creds.set_realm(realm, credentials.UNINITIALISED)
+        creds.parse_string("user")
+        self.assertEqual(creds.get_username(), "user")
+        self.assertEqual(creds.get_domain(), lp.get("workgroup").upper())
+        self.assertEqual(creds.get_realm(), realm.upper())
+        self.assertEqual(creds.get_principal(), "user@%s" % realm.upper())
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)
+
+    def test_parse_username_with_domain_0(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        creds.parse_string("domain\user")
+        self.assertEqual(creds.get_username(), "user")
+        self.assertEqual(creds.get_domain(), "DOMAIN")
+        self.assertEqual(creds.get_realm(), None)
+        self.assertEqual(creds.get_principal(), "user@DOMAIN")
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)
+
+    def test_parse_username_with_domain_1(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        realm = "realm.example.com"
+        creds.set_realm(realm, credentials.UNINITIALISED)
+        self.assertEqual(creds.get_username(), "env_user")
+        self.assertEqual(creds.get_domain(), lp.get("workgroup").upper())
+        self.assertEqual(creds.get_realm(), realm.upper())
+        self.assertEqual(creds.get_principal(), "env_user@%s" % realm.upper())
+        creds.set_principal("unknown@realm.example.com")
+        self.assertEqual(creds.get_username(), "env_user")
+        self.assertEqual(creds.get_domain(), lp.get("workgroup").upper())
+        self.assertEqual(creds.get_realm(), realm.upper())
+        self.assertEqual(creds.get_principal(), "unknown@realm.example.com")
+        creds.parse_string("domain\user")
+        self.assertEqual(creds.get_username(), "user")
+        self.assertEqual(creds.get_domain(), "DOMAIN")
+        self.assertEqual(creds.get_realm(), realm.upper())
+        self.assertEqual(creds.get_principal(), "user@DOMAIN")
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)
+
+    def test_parse_username_with_domain_2(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        realm = "realm.example.com"
+        creds.set_realm(realm, credentials.SPECIFIED)
+        self.assertEqual(creds.get_username(), "env_user")
+        self.assertEqual(creds.get_domain(), lp.get("workgroup").upper())
+        self.assertEqual(creds.get_realm(), realm.upper())
+        self.assertEqual(creds.get_principal(), "env_user@%s" % realm.upper())
+        creds.set_principal("unknown@realm.example.com")
+        self.assertEqual(creds.get_username(), "env_user")
+        self.assertEqual(creds.get_domain(), lp.get("workgroup").upper())
+        self.assertEqual(creds.get_realm(), realm.upper())
+        self.assertEqual(creds.get_principal(), "unknown@realm.example.com")
+        creds.parse_string("domain\user")
+        self.assertEqual(creds.get_username(), "user")
+        self.assertEqual(creds.get_domain(), "DOMAIN")
+        self.assertEqual(creds.get_realm(), "DOMAIN")
+        self.assertEqual(creds.get_principal(), "user@DOMAIN")
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)
+
+    def test_parse_username_with_realm(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        creds.parse_string("user@samba.org")
+        self.assertEqual(creds.get_username(), "user@samba.org")
+        self.assertEqual(creds.get_domain(), "")
+        self.assertEqual(creds.get_realm(), "SAMBA.ORG")
+        self.assertEqual(creds.get_principal(), "user@samba.org")
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)
+
+    def test_parse_username_pw(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        creds.parse_string("user%pass")
+        self.assertEqual(creds.get_username(), "user")
+        self.assertEqual(creds.get_password(), "pass")
+        self.assertEqual(creds.get_domain(), lp.get("workgroup"))
+        self.assertEqual(creds.get_realm(), None)
+        self.assertEqual(creds.get_principal(), "user@%s" % lp.get("workgroup"))
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)
+
+    def test_parse_username_with_domain_pw(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        creds.parse_string("domain\user%pass")
+        self.assertEqual(creds.get_username(), "user")
+        self.assertEqual(creds.get_domain(), "DOMAIN")
+        self.assertEqual(creds.get_password(), "pass")
+        self.assertEqual(creds.get_realm(), None)
+        self.assertEqual(creds.get_principal(), "user@DOMAIN")
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)
+
+    def test_parse_username_with_realm_pw(self):
+        creds = credentials.Credentials()
+        lp = samba.tests.env_loadparm()
+        os.environ["USER"] = "env_user"
+        creds.guess(lp)
+        creds.parse_string("user@samba.org%pass")
+        self.assertEqual(creds.get_username(), "user@samba.org")
+        self.assertEqual(creds.get_domain(), "")
+        self.assertEqual(creds.get_password(), "pass")
+        self.assertEqual(creds.get_realm(), "SAMBA.ORG")
+        self.assertEqual(creds.get_principal(), "user@samba.org")
+        self.assertEqual(creds.is_anonymous(), False)
+        self.assertEqual(creds.authentication_requested(), True)

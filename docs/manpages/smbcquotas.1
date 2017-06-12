@@ -2,12 +2,12 @@
 .\"     Title: smbcquotas
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 03/31/2017
+.\"      Date: 06/06/2017
 .\"    Manual: User Commands
-.\"    Source: Samba 4.5
+.\"    Source: Samba 4.6
 .\"  Language: English
 .\"
-.TH "SMBCQUOTAS" "1" "03/31/2017" "Samba 4\&.5" "User Commands"
+.TH "SMBCQUOTAS" "1" "06/06/2017" "Samba 4\&.6" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 smbcquotas \- Set or get QUOTAs of NTFS 5 shares
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-smbcquotas {//server/share} [\-u|\-\-user\ user] [\-L|\-\-list] [\-F|\-\-fs] [\-S|\-\-set\ QUOTA_SET_COMMAND] [\-n|\-\-numeric] [\-t|\-\-test\-args] [\-v|\-\-verbose] [\-d\ debuglevel] [\-s\ configfile] [\-l\ logdir] [\-V] [\-U\ username] [\-N] [\-k] [\-A]
+smbcquotas {//server/share} [\-u|\-\-user\ user] [\-L|\-\-list] [\-F|\-\-fs] [\-S|\-\-set\ QUOTA_SET_COMMAND] [\-n|\-\-numeric] [\-t|\-\-test\-args] [\-v|\-\-verbose] [\-d\ debuglevel] [\-s\ configfile] [\-l\ logdir] [\-V] [\-U\ username] [\-m|\-\-max\-protocol\ LEVEL] [\-N] [\-k] [\-A]
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -70,6 +70,11 @@ This command sets/modifies quotas for a user or on the share, depending on the Q
 \-n|\-\-numeric
 .RS 4
 This option displays all QUOTA information in numeric format\&. The default is to convert SIDs to names and QUOTA limits to a readable string format\&.
+.RE
+.PP
+\-m|\-\-max\-protocol PROTOCOL_NAME
+.RS 4
+This allows the user to select the highest SMB protocol level that smbcquotas will use to connect to the server\&. By default this is set to NT1, which is the highest available SMB1 protocol\&. To connect using SMB2 or SMB3 protocol, use the strings SMB2 or SMB3 respectively\&.
 .RE
 .PP
 \-t|\-\-test\-args

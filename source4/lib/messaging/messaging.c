@@ -56,6 +56,7 @@ struct irpc_request {
 
 struct imessaging_context {
 	struct imessaging_context *prev, *next;
+	struct tevent_context *ev;
 	struct server_id server_id;
 	const char *sock_dir;
 	const char *lock_dir;
@@ -149,7 +150,7 @@ NTSTATUS imessaging_register(struct imessaging_context *msg, void *private_data,
 	/* possibly expand dispatch array */
 	if (msg_type >= msg->num_types) {
 		struct dispatch_fn **dp;
-		int i;
+		uint32_t i;
 		dp = talloc_realloc(msg, msg->dispatch, struct dispatch_fn *, msg_type+1);
 		NT_STATUS_HAVE_NO_MEMORY(dp);
 		msg->dispatch = dp;
@@ -255,9 +256,14 @@ NTSTATUS imessaging_send(struct imessaging_context *msg, struct server_id server
 		pid = getpid();
 	}
 
-	priv = root_privileges();
 	ret = messaging_dgm_send(pid, iov, num_iov, NULL, 0);
-	TALLOC_FREE(priv);
+
+	if (ret == EACCES) {
+		priv = root_privileges();
+		ret = messaging_dgm_send(pid, iov, num_iov, NULL, 0);
+		TALLOC_FREE(priv);
+	}
+
 	if (ret != 0) {
 		return map_nt_error_from_unix_common(ret);
 	}
@@ -289,9 +295,36 @@ int imessaging_cleanup(struct imessaging_context *msg)
 	return 0;
 }
 
-static void imessaging_dgm_recv(const uint8_t *buf, size_t buf_len,
+static void imessaging_dgm_recv(struct tevent_context *ev,
+				const uint8_t *buf, size_t buf_len,
 				int *fds, size_t num_fds,
 				void *private_data);
+
+/* Keep a list of imessaging contexts */
+static struct imessaging_context *msg_ctxs;
+
+static int imessaging_context_destructor(struct imessaging_context *msg)
+{
+	DLIST_REMOVE(msg_ctxs, msg);
+	TALLOC_FREE(msg->msg_dgm_ref);
+	return 0;
+}
+
+/*
+ * Cleanup messaging dgm contexts
+ *
+ * We must make sure to unref all messaging_dgm_ref's *before* the
+ * tevent context goes away. Only when the last ref is freed, the
+ * refcounted messaging dgm context will be freed.
+ */
+void imessaging_dgm_unref_all(void)
+{
+	struct imessaging_context *msg = NULL;
+
+	for (msg = msg_ctxs; msg != NULL; msg = msg->next) {
+		TALLOC_FREE(msg->msg_dgm_ref);
+	}
+}
 
 /*
   create the listening socket and setup the dispatcher
@@ -315,6 +348,9 @@ struct imessaging_context *imessaging_init(TALLOC_CTX *mem_ctx,
 	if (msg == NULL) {
 		return NULL;
 	}
+	msg->ev = ev;
+
+	talloc_set_destructor(msg, imessaging_context_destructor);
 
 	/* create the messaging directory if needed */
 
@@ -374,13 +410,62 @@ struct imessaging_context *imessaging_init(TALLOC_CTX *mem_ctx,
 	imessaging_register(msg, NULL, MSG_IRPC, irpc_handler);
 	IRPC_REGISTER(msg, irpc, IRPC_UPTIME, irpc_uptime, msg);
 
+	DLIST_ADD(msg_ctxs, msg);
+
 	return msg;
 fail:
 	talloc_free(msg);
 	return NULL;
 }
 
-static void imessaging_dgm_recv(const uint8_t *buf, size_t buf_len,
+struct imessaging_post_state {
+	struct imessaging_context *msg_ctx;
+	size_t buf_len;
+	uint8_t buf[];
+};
+
+static void imessaging_post_handler(struct tevent_context *ev,
+				    struct tevent_immediate *ti,
+				    void *private_data)
+{
+	struct imessaging_post_state *state = talloc_get_type_abort(
+		private_data, struct imessaging_post_state);
+	imessaging_dgm_recv(ev, state->buf, state->buf_len, NULL, 0,
+			    state->msg_ctx);
+	TALLOC_FREE(state);
+}
+
+static int imessaging_post_self(struct imessaging_context *msg,
+				const uint8_t *buf, size_t buf_len)
+{
+	struct tevent_immediate *ti;
+	struct imessaging_post_state *state;
+
+	state = talloc_size(
+		msg, offsetof(struct imessaging_post_state, buf) + buf_len);
+	if (state == NULL) {
+		return ENOMEM;
+	}
+	talloc_set_name_const(state, "struct imessaging_post_state");
+
+	ti = tevent_create_immediate(state);
+	if (ti == NULL) {
+		TALLOC_FREE(state);
+		return ENOMEM;
+	}
+
+	state->msg_ctx = msg;
+	state->buf_len = buf_len;
+	memcpy(state->buf, buf, buf_len);
+
+	tevent_schedule_immediate(ti, msg->ev, imessaging_post_handler,
+				  state);
+
+	return 0;
+}
+
+static void imessaging_dgm_recv(struct tevent_context *ev,
+				const uint8_t *buf, size_t buf_len,
 				int *fds, size_t num_fds,
 				void *private_data)
 {
@@ -393,6 +478,23 @@ static void imessaging_dgm_recv(const uint8_t *buf, size_t buf_len,
 
 	if (buf_len < MESSAGE_HDR_LENGTH) {
 		/* Invalid message, ignore */
+		return;
+	}
+
+	if (num_fds != 0) {
+		/*
+		 * Source4 based messaging does not expect fd's yet
+		 */
+		return;
+	}
+
+	if (ev != msg->ev) {
+		int ret;
+		ret = imessaging_post_self(msg, buf, buf_len);
+		if (ret != 0) {
+			DBG_WARNING("imessaging_post_self failed: %s\n",
+				    strerror(ret));
+		}
 		return;
 	}
 
@@ -693,7 +795,7 @@ static int all_servers_func(const char *name, unsigned num_servers,
 	struct irpc_name_records *name_records = talloc_get_type(
 		private_data, struct irpc_name_records);
 	struct irpc_name_record *name_record;
-	int i;
+	uint32_t i;
 
 	name_records->names
 		= talloc_realloc(name_records, name_records->names,

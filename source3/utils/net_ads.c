@@ -1125,7 +1125,7 @@ static WERROR check_ads_config( void )
 	if ( lp_security() == SEC_ADS && !*lp_realm()) {
 		d_fprintf(stderr, _("realm must be set in in %s for ADS "
 			  "join to succeed.\n"), get_dyn_CONFIGFILE());
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	return WERR_OK;
@@ -1459,7 +1459,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	TALLOC_CTX *ctx = NULL;
 	struct libnet_JoinCtx *r = NULL;
 	const char *domain = lp_realm();
-	WERROR werr = WERR_SETUP_NOT_JOINED;
+	WERROR werr = WERR_NERR_SETUPNOTJOINED;
 	bool createupn = false;
 	const char *machineupn = NULL;
 	const char *machine_password = NULL;
@@ -1485,7 +1485,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 
 	if (!(ctx = talloc_init("net_ads_join"))) {
 		d_fprintf(stderr, _("Could not initialise talloc context.\n"));
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto fail;
 	}
 
@@ -1508,35 +1508,35 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 		else if ( !strncasecmp_m(argv[i], "createcomputer", strlen("createcomputer")) ) {
 			if ( (create_in_ou = get_string_param(argv[i])) == NULL ) {
 				d_fprintf(stderr, _("Please supply a valid OU path.\n"));
-				werr = WERR_INVALID_PARAM;
+				werr = WERR_INVALID_PARAMETER;
 				goto fail;
 			}
 		}
 		else if ( !strncasecmp_m(argv[i], "osName", strlen("osName")) ) {
 			if ( (os_name = get_string_param(argv[i])) == NULL ) {
 				d_fprintf(stderr, _("Please supply a operating system name.\n"));
-				werr = WERR_INVALID_PARAM;
+				werr = WERR_INVALID_PARAMETER;
 				goto fail;
 			}
 		}
 		else if ( !strncasecmp_m(argv[i], "osVer", strlen("osVer")) ) {
 			if ( (os_version = get_string_param(argv[i])) == NULL ) {
 				d_fprintf(stderr, _("Please supply a valid operating system version.\n"));
-				werr = WERR_INVALID_PARAM;
+				werr = WERR_INVALID_PARAMETER;
 				goto fail;
 			}
 		}
 		else if ( !strncasecmp_m(argv[i], "osServicePack", strlen("osServicePack")) ) {
 			if ( (os_servicepack = get_string_param(argv[i])) == NULL ) {
 				d_fprintf(stderr, _("Please supply a valid servicepack identifier.\n"));
-				werr = WERR_INVALID_PARAM;
+				werr = WERR_INVALID_PARAMETER;
 				goto fail;
 			}
 		}
 		else if ( !strncasecmp_m(argv[i], "machinepass", strlen("machinepass")) ) {
 			if ( (machine_password = get_string_param(argv[i])) == NULL ) {
 				d_fprintf(stderr, _("Please supply a valid password to set as trust account password.\n"));
-				werr = WERR_INVALID_PARAM;
+				werr = WERR_INVALID_PARAMETER;
 				goto fail;
 			}
 		}
@@ -1552,7 +1552,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 
 	if (!*domain) {
 		d_fprintf(stderr, _("Please supply a valid domain name\n"));
-		werr = WERR_INVALID_PARAM;
+		werr = WERR_INVALID_PARAMETER;
 		goto fail;
 	}
 
@@ -1586,7 +1586,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	r->in.msg_ctx		= c->msg_ctx;
 
 	werr = libnet_Join(ctx, r);
-	if (W_ERROR_EQUAL(werr, WERR_DCNOTFOUND) &&
+	if (W_ERROR_EQUAL(werr, WERR_NERR_DCNOTFOUND) &&
 	    strequal(domain, lp_realm())) {
 		r->in.domain_name = lp_workgroup();
 		r->in.domain_name_type = JoinDomNameTypeNBT;

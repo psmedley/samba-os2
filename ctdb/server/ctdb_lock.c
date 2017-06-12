@@ -28,10 +28,10 @@
 #include "lib/util/dlinklist.h"
 #include "lib/util/debug.h"
 #include "lib/util/samba_util.h"
+#include "lib/util/sys_rw.h"
 
 #include "ctdb_private.h"
 
-#include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
 
@@ -392,20 +392,16 @@ static void ctdb_lock_timeout_handler(struct tevent_context *ev,
 				    void *private_data)
 {
 	static char debug_locks[PATH_MAX+1] = "";
+	static struct timeval last_debug_time;
 	struct lock_context *lock_ctx;
 	struct ctdb_context *ctdb;
+	struct timeval now;
 	pid_t pid;
 	double elapsed_time;
 	int new_timer;
 
 	lock_ctx = talloc_get_type_abort(private_data, struct lock_context);
 	ctdb = lock_ctx->ctdb;
-
-	/* If a node stopped/banned, don't spam the logs */
-	if (ctdb->nodes[ctdb->pnn]->flags & NODE_FLAGS_INACTIVE) {
-		lock_ctx->ttimer = NULL;
-		return;
-	}
 
 	elapsed_time = timeval_elapsed(&lock_ctx->start_time);
 	if (lock_ctx->ctdb_db) {
@@ -418,6 +414,19 @@ static void ctdb_lock_timeout_handler(struct tevent_context *ev,
 		      ("Unable to get ALLDB locks for %.0lf seconds\n",
 		       elapsed_time));
 	}
+
+	/* If a node stopped/banned, don't spam the logs */
+	if (ctdb->nodes[ctdb->pnn]->flags & NODE_FLAGS_INACTIVE) {
+		goto skip_lock_debug;
+	}
+
+	/* Restrict log debugging to once per second */
+	now = timeval_current();
+	if (last_debug_time.tv_sec == now.tv_sec) {
+		goto skip_lock_debug;
+	}
+
+	last_debug_time.tv_sec = now.tv_sec;
 
 	if (ctdb_set_helper("lock debugging helper",
 			    debug_locks, sizeof(debug_locks),
@@ -434,6 +443,8 @@ static void ctdb_lock_timeout_handler(struct tevent_context *ev,
 		      (__location__
 		       " Unable to setup lock debugging\n"));
 	}
+
+skip_lock_debug:
 
 	/* Back-off logging if lock is not obtained for a long time */
 	if (elapsed_time < 100.0) {
@@ -650,9 +661,9 @@ static void ctdb_lock_schedule(struct ctdb_context *ctdb)
 		return;
 	}
 
-	if (!ctdb_vfork_with_logging(lock_ctx, ctdb, "lock_helper",
-				     prog, argc, (const char **)args,
-				     NULL, NULL, &lock_ctx->child)) {
+	lock_ctx->child = ctdb_vfork_exec(lock_ctx, ctdb, prog, argc,
+					  (const char **)args);
+	if (lock_ctx->child == -1) {
 		DEBUG(DEBUG_ERR, ("Failed to create a child in ctdb_lock_schedule\n"));
 		close(lock_ctx->fd[0]);
 		close(lock_ctx->fd[1]);

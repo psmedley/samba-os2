@@ -405,6 +405,8 @@ smb_complete_connection(const char *myname,
 {
 	struct cli_state *cli;	/* New connection */
 	NTSTATUS        nt_status;
+	struct cli_credentials *creds = NULL;
+	bool use_kerberos = false;
 
 	/* Start the SMB connection */
 	*need_auth = false;
@@ -424,10 +426,26 @@ smb_complete_connection(const char *myname,
 		return NULL;
 	}
 
-	nt_status = cli_session_setup(cli, username,
-				      password, strlen(password) + 1,
-				      password, strlen(password) + 1,
-				      workgroup);
+	if (flags & CLI_FULL_CONNECTION_USE_KERBEROS) {
+		use_kerberos = true;
+	}
+
+	creds = cli_session_creds_init(cli,
+				       username,
+				       workgroup,
+				       NULL, /* realm */
+				       password,
+				       use_kerberos,
+				       false, /* fallback_after_kerberos */
+				       false, /* use_ccache */
+				       false); /* password_is_nt_hash */
+	if (creds == NULL) {
+		fprintf(stderr, "ERROR: cli_session_creds_init failed\n");
+		cli_shutdown(cli);
+		return NULL;
+	}
+
+	nt_status = cli_session_setup_creds(cli, creds);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		fprintf(stderr, "ERROR: Session setup failed: %s\n", nt_errstr(nt_status));
 
@@ -440,8 +458,7 @@ smb_complete_connection(const char *myname,
 		return NULL;
 	}
 
-	nt_status = cli_tree_connect(cli, share, "?????", password,
-				     strlen(password) + 1);
+	nt_status = cli_tree_connect_creds(cli, share, "?????", creds);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		fprintf(stderr, "ERROR: Tree connect failed (%s)\n",
 			nt_errstr(nt_status));
@@ -457,11 +474,7 @@ smb_complete_connection(const char *myname,
 #if 0
 	/* Need to work out how to specify this on the URL. */
 	if (smb_encrypt) {
-		if (!cli_cm_force_encryption(cli,
-					     username,
-					     password,
-					     workgroup,
-					     share)) {
+		if (!cli_cm_force_encryption_creds(cli, creds, share)) {
 			fprintf(stderr, "ERROR: encryption setup failed\n");
 			cli_shutdown(cli);
 			return NULL;

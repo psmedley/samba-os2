@@ -39,6 +39,30 @@ static void cli_credentials_invalidate_client_gss_creds(
 					struct cli_credentials *cred,
 					enum credentials_obtained obtained);
 
+/* Free a memory ccache */
+static int free_mccache(struct ccache_container *ccc)
+{
+	if (ccc->ccache != NULL) {
+		krb5_cc_destroy(ccc->smb_krb5_context->krb5_context,
+				ccc->ccache);
+		ccc->ccache = NULL;
+	}
+
+	return 0;
+}
+
+/* Free a disk-based ccache */
+static int free_dccache(struct ccache_container *ccc)
+{
+	if (ccc->ccache != NULL) {
+		krb5_cc_close(ccc->smb_krb5_context->krb5_context,
+			      ccc->ccache);
+		ccc->ccache = NULL;
+	}
+
+	return 0;
+}
+
 _PUBLIC_ int cli_credentials_get_krb5_context(struct cli_credentials *cred, 
 				     struct loadparm_context *lp_ctx,
 				     struct smb_krb5_context **smb_krb5_context) 
@@ -83,7 +107,8 @@ static int cli_credentials_set_from_ccache(struct cli_credentials *cred,
 					   enum credentials_obtained obtained,
 					   const char **error_string)
 {
-	
+	bool ok;
+	char *realm;
 	krb5_principal princ;
 	krb5_error_code ret;
 	char *name;
@@ -110,29 +135,27 @@ static int cli_credentials_set_from_ccache(struct cli_credentials *cred,
 		return ret;
 	}
 
-	cli_credentials_set_principal(cred, name, obtained);
-
+	ok = cli_credentials_set_principal(cred, name, obtained);
+	if (!ok) {
+		krb5_free_principal(ccache->smb_krb5_context->krb5_context, princ);
+		return ENOMEM;
+	}
 	free(name);
 
+	realm = smb_krb5_principal_get_realm(ccache->smb_krb5_context->krb5_context,
+					     princ);
 	krb5_free_principal(ccache->smb_krb5_context->krb5_context, princ);
+	if (realm == NULL) {
+		return ENOMEM;
+	}
+	ok = cli_credentials_set_realm(cred, realm, obtained);
+	SAFE_FREE(realm);
+	if (!ok) {
+		return ENOMEM;
+	}
 
 	/* set the ccache_obtained here, as it just got set to UNINITIALISED by the calls above */
 	cred->ccache_obtained = obtained;
-
-	return 0;
-}
-
-/* Free a memory ccache */
-static int free_mccache(struct ccache_container *ccc)
-{
-	krb5_cc_destroy(ccc->smb_krb5_context->krb5_context, ccc->ccache);
-
-	return 0;
-}
-
-/* Free a disk-based ccache */
-static int free_dccache(struct ccache_container *ccc) {
-	krb5_cc_close(ccc->smb_krb5_context->krb5_context, ccc->ccache);
 
 	return 0;
 }
@@ -520,6 +543,7 @@ _PUBLIC_ int cli_credentials_get_client_gss_creds(struct cli_credentials *cred,
 	struct ccache_container *ccache;
 #ifdef HAVE_GSS_KRB5_CRED_NO_CI_FLAGS_X
 	gss_buffer_desc empty_buffer = GSS_C_EMPTY_BUFFER;
+	gss_OID oid = discard_const(GSS_KRB5_CRED_NO_CI_FLAGS_X);
 #endif
 	krb5_enctype *etypes = NULL;
 
@@ -569,9 +593,14 @@ _PUBLIC_ int cli_credentials_get_client_gss_creds(struct cli_credentials *cred,
 		return ENOMEM;
 	}
 
-	maj_stat = gss_krb5_import_cred(&min_stat, ccache->ccache, NULL, NULL, 
-					&gcc->creds);
-	if ((maj_stat == GSS_S_FAILURE) && (min_stat == (OM_uint32)KRB5_CC_END || min_stat == (OM_uint32) KRB5_CC_NOTFOUND)) {
+	maj_stat = smb_gss_krb5_import_cred(&min_stat, ccache->smb_krb5_context->krb5_context,
+					    ccache->ccache, NULL, NULL,
+					    &gcc->creds);
+	if ((maj_stat == GSS_S_FAILURE) &&
+	    (min_stat == (OM_uint32)KRB5_CC_END ||
+	     min_stat == (OM_uint32)KRB5_CC_NOTFOUND ||
+	     min_stat == (OM_uint32)KRB5_FCC_NOFILE))
+	{
 		/* This CCACHE is no good.  Ensure we don't use it again */
 		cli_credentials_unconditionally_invalidate_ccache(cred);
 
@@ -583,8 +612,9 @@ _PUBLIC_ int cli_credentials_get_client_gss_creds(struct cli_credentials *cred,
 			return ret;
 		}
 
-		maj_stat = gss_krb5_import_cred(&min_stat, ccache->ccache, NULL, NULL,
-						&gcc->creds);
+		maj_stat = smb_gss_krb5_import_cred(&min_stat, ccache->smb_krb5_context->krb5_context,
+						    ccache->ccache, NULL, NULL,
+						    &gcc->creds);
 
 	}
 
@@ -595,7 +625,7 @@ _PUBLIC_ int cli_credentials_get_client_gss_creds(struct cli_credentials *cred,
 		} else {
 			ret = EINVAL;
 		}
-		(*error_string) = talloc_asprintf(cred, "gss_krb5_import_cred failed: %s", error_message(ret));
+		(*error_string) = talloc_asprintf(cred, "smb_gss_krb5_import_cred failed: %s", error_message(ret));
 		return ret;
 	}
 
@@ -611,7 +641,7 @@ _PUBLIC_ int cli_credentials_get_client_gss_creds(struct cli_credentials *cred,
 	 * and used for the AS-REQ, so it wasn't possible to disable the usage
 	 * of AES keys.
 	 */
-	min_stat = get_kerberos_allowed_etypes(ccache->smb_krb5_context->krb5_context,
+	min_stat = smb_krb5_get_allowed_etypes(ccache->smb_krb5_context->krb5_context,
 					       &etypes);
 	if (min_stat == 0) {
 		OM_uint32 num_ktypes;
@@ -645,7 +675,7 @@ _PUBLIC_ int cli_credentials_get_client_gss_creds(struct cli_credentials *cred,
 	 * http://krbdev.mit.edu/rt/Ticket/Display.html?id=6938
 	 */
 	maj_stat = gss_set_cred_option(&min_stat, &gcc->creds,
-				       GSS_KRB5_CRED_NO_CI_FLAGS_X,
+				       oid,
 				       &empty_buffer);
 	if (maj_stat) {
 		talloc_free(gcc);
@@ -1062,12 +1092,14 @@ _PUBLIC_ int cli_credentials_get_server_gss_creds(struct cli_credentials *cred,
 
 	if (ktc->password_based || obtained < CRED_SPECIFIED) {
 		/* This creates a GSSAPI cred_id_t for match-by-key with only the keytab set */
-		maj_stat = gss_krb5_import_cred(&min_stat, NULL, NULL, ktc->keytab,
-						&gcc->creds);
+		maj_stat = smb_gss_krb5_import_cred(&min_stat, smb_krb5_context->krb5_context,
+						    NULL, NULL, ktc->keytab,
+						    &gcc->creds);
 	} else {
 		/* This creates a GSSAPI cred_id_t with the principal and keytab set, matching by name */
-		maj_stat = gss_krb5_import_cred(&min_stat, NULL, princ, ktc->keytab,
-						&gcc->creds);
+		maj_stat = smb_gss_krb5_import_cred(&min_stat, smb_krb5_context->krb5_context,
+						    NULL, princ, ktc->keytab,
+						    &gcc->creds);
 	}
 	if (maj_stat) {
 		if (min_stat) {

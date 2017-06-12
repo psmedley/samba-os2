@@ -280,7 +280,7 @@ static struct debug_backend {
 
 static struct debug_backend *debug_find_backend(const char *name)
 {
-	int i;
+	unsigned i;
 
 	for (i = 0; i < ARRAY_SIZE(debug_backends); i++) {
 		if (strcmp(name, debug_backends[i].name) == 0) {
@@ -348,7 +348,7 @@ static void debug_set_backends(const char *param)
 	size_t str_len = strlen(param);
 	char str[str_len+1];
 	char *tok, *saveptr;
-	int i;
+	unsigned i;
 
 	/*
 	 * initialize new_log_level to detect backends that have been
@@ -389,14 +389,15 @@ static void debug_set_backends(const char *param)
 static void debug_backends_log(const char *msg, int msg_level)
 {
 	char msg_no_nl[FORMAT_BUFR_SIZE];
-	int i, len;
+	unsigned i;
+	int len;
 
 	/*
 	 * Some backends already add an extra newline, so also provide
 	 * a buffer without the newline character.
 	 */
 	len = MIN(strlen(msg), FORMAT_BUFR_SIZE - 1);
-	if (msg[len - 1] == '\n') {
+	if ((len > 0) && (msg[len - 1] == '\n')) {
 		len--;
 	}
 
@@ -652,7 +653,7 @@ static bool debug_parse_param(char *param)
 {
 	char *class_name;
 	char *class_level;
-	char *saveptr;
+	char *saveptr = NULL;
 	int ndx;
 
 	class_name = strtok_r(param, ":", &saveptr);
@@ -1211,23 +1212,21 @@ void dbgflush( void )
 /***************************************************************************
  Print a Debug Header.
 
- Input:  level - Debug level of the message (not the system-wide debug
-                  level. )
-	  cls   - Debuglevel class of the calling module.
-          file  - Pointer to a string containing the name of the file
-                  from which this function was called, or an empty string
-                  if the __FILE__ macro is not implemented.
-          func  - Pointer to a string containing the name of the function
-                  from which this function was called, or an empty string
-                  if the __FUNCTION__ macro is not implemented.
-         line  - line number of the call to dbghdr, assuming __LINE__
-                 works.
+ Input:  level    - Debug level of the message (not the system-wide debug
+                    level. )
+         cls      - Debuglevel class of the calling module.
+         location - Pointer to a string containing the name of the file
+                    from which this function was called, or an empty string
+                    if the __FILE__ macro is not implemented.
+         func     - Pointer to a string containing the name of the function
+                    from which this function was called, or an empty string
+                    if the __FUNCTION__ macro is not implemented.
 
-  Output: Always true.  This makes it easy to fudge a call to dbghdr()
-          in a macro, since the function can be called as part of a test.
-          Eg: ( (level <= DEBUGLEVEL) && (dbghdr(level,"",line)) )
+ Output: Always true.  This makes it easy to fudge a call to dbghdr()
+         in a macro, since the function can be called as part of a test.
+         Eg: ( (level <= DEBUGLEVEL) && (dbghdr(level,"",line)) )
 
-  Notes:  This function takes care of setting current_msg_level.
+ Notes:  This function takes care of setting current_msg_level.
 
 ****************************************************************************/
 

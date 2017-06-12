@@ -170,7 +170,8 @@ int ctdb_ltdb_store(struct ctdb_db_context *ctdb_db, TDB_DATA key,
 		    struct ctdb_ltdb_header *header, TDB_DATA data)
 {
 	struct ctdb_context *ctdb = ctdb_db->ctdb;
-	TDB_DATA rec;
+	TDB_DATA rec[2];
+	uint32_t hsize = sizeof(struct ctdb_ltdb_header);
 	int ret;
 	bool seqnum_suppressed = false;
 
@@ -179,22 +180,27 @@ int ctdb_ltdb_store(struct ctdb_db_context *ctdb_db, TDB_DATA key,
 	}
 
 	if (ctdb->flags & CTDB_FLAG_TORTURE) {
+		TDB_DATA old;
 		struct ctdb_ltdb_header *h2;
-		rec = tdb_fetch(ctdb_db->ltdb->tdb, key);
-		h2 = (struct ctdb_ltdb_header *)rec.dptr;
-		if (rec.dptr && rec.dsize >= sizeof(h2) && h2->rsn > header->rsn) {
-			DEBUG(DEBUG_CRIT,("RSN regression! %llu %llu\n",
-				 (unsigned long long)h2->rsn, (unsigned long long)header->rsn));
+
+		old = tdb_fetch(ctdb_db->ltdb->tdb, key);
+		h2 = (struct ctdb_ltdb_header *)old.dptr;
+		if (old.dptr != NULL && old.dsize >= hsize &&
+		    h2->rsn > header->rsn) {
+			DEBUG(DEBUG_ERR,
+			      ("RSN regression! %"PRIu64" %"PRIu64"\n",
+			       h2->rsn, header->rsn));
 		}
-		if (rec.dptr) free(rec.dptr);
+		if (old.dptr != NULL) {
+			free(old.dptr);
+		}
 	}
 
-	rec.dsize = sizeof(*header) + data.dsize;
-	rec.dptr = talloc_size(ctdb, rec.dsize);
-	CTDB_NO_MEMORY(ctdb, rec.dptr);
+	rec[0].dsize = hsize;
+	rec[0].dptr = (uint8_t *)header;
 
-	memcpy(rec.dptr, header, sizeof(*header));
-	memcpy(rec.dptr + sizeof(*header), data.dptr, data.dsize);
+	rec[1].dsize = data.dsize;
+	rec[1].dptr = data.dptr;
 
 	/* Databases with seqnum updates enabled only get their seqnum
 	   changes when/if we modify the data */
@@ -202,24 +208,22 @@ int ctdb_ltdb_store(struct ctdb_db_context *ctdb_db, TDB_DATA key,
 		TDB_DATA old;
 		old = tdb_fetch(ctdb_db->ltdb->tdb, key);
 
-		if ( (old.dsize == rec.dsize)
-		&& !memcmp(old.dptr+sizeof(struct ctdb_ltdb_header),
-			  rec.dptr+sizeof(struct ctdb_ltdb_header),
-			  rec.dsize-sizeof(struct ctdb_ltdb_header)) ) {
+		if ((old.dsize == hsize + data.dsize) &&
+		    memcmp(old.dptr+hsize, data.dptr, data.dsize) == 0) {
 			tdb_remove_flags(ctdb_db->ltdb->tdb, TDB_SEQNUM);
 			seqnum_suppressed = true;
 		}
-		if (old.dptr) free(old.dptr);
+		if (old.dptr != NULL) {
+			free(old.dptr);
+		}
 	}
-	ret = tdb_store(ctdb_db->ltdb->tdb, key, rec, TDB_REPLACE);
+	ret = tdb_storev(ctdb_db->ltdb->tdb, key, rec, 2, TDB_REPLACE);
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR, (__location__ " Failed to store dynamic data\n"));
 	}
 	if (seqnum_suppressed) {
 		tdb_add_flags(ctdb_db->ltdb->tdb, TDB_SEQNUM);
 	}
-
-	talloc_free(rec.dptr);
 
 	return ret;
 }

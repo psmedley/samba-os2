@@ -295,7 +295,7 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_DISABLE_MONITOR         = 76,
 		    CTDB_CONTROL_ADD_PUBLIC_IP           = 77,
 		    CTDB_CONTROL_DEL_PUBLIC_IP           = 78,
-		    CTDB_CONTROL_RUN_EVENTSCRIPTS        = 79,
+		    CTDB_CONTROL_RUN_EVENTSCRIPTS        = 79, /* obsolete */
 		    CTDB_CONTROL_GET_CAPABILITIES        = 80,
 		    CTDB_CONTROL_START_PERSISTENT_UPDATE = 81, /* obsolete */
 		    CTDB_CONTROL_CANCEL_PERSISTENT_UPDATE= 82, /* obsolete */
@@ -309,7 +309,7 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_GET_PUBLIC_IPS          = 90,
 		    CTDB_CONTROL_GET_NODEMAP             = 91,
 		    /* missing */
-		    CTDB_CONTROL_GET_EVENT_SCRIPT_STATUS = 96,
+		    CTDB_CONTROL_GET_EVENT_SCRIPT_STATUS = 96, /* obsolete */
 		    CTDB_CONTROL_TRAVERSE_KILL           = 97,
 		    CTDB_CONTROL_RECD_RECLOCK_LATENCY    = 98,
 		    CTDB_CONTROL_GET_RECLOCK_FILE        = 99,
@@ -319,8 +319,8 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_SET_NATGWSTATE          = 103, /* obsolete */
 		    CTDB_CONTROL_SET_LMASTERROLE         = 104,
 		    CTDB_CONTROL_SET_RECMASTERROLE       = 105,
-		    CTDB_CONTROL_ENABLE_SCRIPT           = 107,
-		    CTDB_CONTROL_DISABLE_SCRIPT          = 108,
+		    CTDB_CONTROL_ENABLE_SCRIPT           = 107, /* obsolete */
+		    CTDB_CONTROL_DISABLE_SCRIPT          = 108, /* obsolete */
 		    CTDB_CONTROL_SET_BAN_STATE           = 109,
 		    CTDB_CONTROL_GET_BAN_STATE           = 110,
 		    CTDB_CONTROL_SET_DB_PRIORITY         = 111, /* obsolete */
@@ -631,6 +631,7 @@ struct ctdb_tunable_list {
 	uint32_t lock_processes_per_db;
 	uint32_t rec_buffer_size_limit;
 	uint32_t queue_buffer_size;
+	uint32_t ip_alloc_algorithm;
 };
 
 struct ctdb_tickle_list {
@@ -856,12 +857,10 @@ struct ctdb_req_control_data {
 		struct ctdb_client_id *cid;
 		struct ctdb_addr_info *addr_info;
 		struct ctdb_transdb *transdb;
-		const char *event_str;
 		struct ctdb_public_ip *pubip;
 		enum ctdb_event event;
 		double reclock_latency;
 		uint32_t role;
-		const char *script;
 		struct ctdb_ban_state *ban_state;
 		struct ctdb_notify_data *notify;
 		uint64_t srvid;
@@ -894,7 +893,6 @@ struct ctdb_reply_control_data {
 		uint32_t caps;
 		struct ctdb_public_ip_list *pubip_list;
 		struct ctdb_node_map *nodemap;
-		struct ctdb_script_list *script_list;
 		const char *reclock_file;
 		struct ctdb_ban_state *ban_state;
 		uint64_t seqnum;
@@ -916,6 +914,8 @@ struct ctdb_req_control {
 	uint32_t client_id;
 #define CTDB_CTRL_FLAG_NOREPLY   1
 #define CTDB_CTRL_FLAG_OPCODE_SPECIFIC   0xFFFF0000
+/* Ugly overloading of this field... */
+#define CTDB_PUBLIC_IP_FLAGS_ONLY_AVAILABLE 0x00010000
 	uint32_t flags;
 	struct ctdb_req_control_data rdata;
 };
@@ -1000,6 +1000,86 @@ struct ctdb_g_lock {
 struct ctdb_g_lock_list {
 	unsigned int num;
 	struct ctdb_g_lock *lock;
+};
+
+/*
+ * Eventd protocol
+ */
+
+enum ctdb_event_command {
+	CTDB_EVENT_COMMAND_RUN            = 1,
+	CTDB_EVENT_COMMAND_STATUS         = 2,
+	CTDB_EVENT_COMMAND_SCRIPT_LIST    = 3,
+	CTDB_EVENT_COMMAND_SCRIPT_ENABLE  = 4,
+	CTDB_EVENT_COMMAND_SCRIPT_DISABLE = 5,
+};
+
+enum ctdb_event_status_state {
+	CTDB_EVENT_LAST_RUN	= 1,
+	CTDB_EVENT_LAST_PASS	= 2,
+	CTDB_EVENT_LAST_FAIL	= 3,
+};
+
+struct ctdb_event_request_run {
+	enum ctdb_event event;
+	uint32_t timeout;
+	const char *arg_str;
+};
+
+struct ctdb_event_request_status {
+	enum ctdb_event event;
+	enum ctdb_event_status_state state;
+};
+
+struct ctdb_event_request_script_enable {
+	const char *script_name;
+};
+
+struct ctdb_event_request_script_disable {
+	const char *script_name;
+};
+
+struct ctdb_event_request_data {
+	enum ctdb_event_command command;
+	union {
+		struct ctdb_event_request_run *run;
+		struct ctdb_event_request_status *status;
+		struct ctdb_event_request_script_enable *script_enable;
+		struct ctdb_event_request_script_disable *script_disable;
+	} data;
+};
+
+struct ctdb_event_reply_status {
+	int status;
+	struct ctdb_script_list *script_list;
+};
+
+struct ctdb_event_reply_script_list {
+	struct ctdb_script_list *script_list;
+};
+
+struct ctdb_event_reply_data {
+	enum ctdb_event_command command;
+	int32_t result;
+	union {
+		struct ctdb_event_reply_status *status;
+		struct ctdb_event_reply_script_list *script_list;
+	} data;
+};
+
+struct ctdb_event_header {
+	uint32_t length;
+	uint32_t reqid;
+};
+
+struct ctdb_event_request {
+	struct ctdb_event_header header;
+	struct ctdb_event_request_data rdata;
+};
+
+struct ctdb_event_reply {
+	struct ctdb_event_header header;
+	struct ctdb_event_reply_data rdata;
 };
 
 #endif /* __CTDB_PROTOCOL_H__ */

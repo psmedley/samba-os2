@@ -406,10 +406,23 @@ Example2 shows how to delete a user in the domain against the local server.   su
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp, fallback_machine=True)
 
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
+
+        filter = ("(&(sAMAccountName=%s)(sAMAccountType=805306368))" %
+                   username)
+
         try:
-            samdb = SamDB(url=H, session_info=system_session(),
-                          credentials=creds, lp=lp)
-            samdb.deleteuser(username)
+            res = samdb.search(base=samdb.domain_dn(),
+                               scope=ldb.SCOPE_SUBTREE,
+                               expression=filter,
+                               attrs=["dn"])
+            user_dn = res[0].dn
+        except IndexError:
+            raise CommandError('Unable to find user "%s"' % (username))
+
+        try:
+            samdb.delete(user_dn)
         except Exception, e:
             raise CommandError('Failed to remove user "%s"' % username, e)
         self.outf.write("Deleted user %s\n" % username)
@@ -1848,7 +1861,7 @@ samba-tool user syncpasswords --terminate \\
 
         def sync_loop(wait):
             notify_attrs = ["name", "uSNCreated", "uSNChanged", "objectClass"]
-            notify_controls = ["notification:1"]
+            notify_controls = ["notification:1", "show_recycled:1"]
             notify_handle = self.samdb.search_iterator(expression="objectClass=*",
                                                        scope=ldb.SCOPE_SUBTREE,
                                                        attrs=notify_attrs,

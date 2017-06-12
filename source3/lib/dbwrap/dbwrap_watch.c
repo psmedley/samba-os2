@@ -66,13 +66,13 @@ static bool dbwrap_record_watchers_key_parse(
 	size_t db_id_len;
 
 	if (wkey.dsize < sizeof(uint32_t)) {
-		DEBUG(1, ("Invalid watchers key\n"));
+		DBG_WARNING("Invalid watchers key, dsize=%zu\n", wkey.dsize);
 		return false;
 	}
 	db_id_len = IVAL(wkey.dptr, 0);
 	if (db_id_len > (wkey.dsize - sizeof(uint32_t))) {
-		DEBUG(1, ("Invalid watchers key, wkey.dsize=%d, "
-			  "db_id_len=%d\n", (int)wkey.dsize, (int)db_id_len));
+		DBG_WARNING("Invalid watchers key, wkey.dsize=%zu, "
+			    "db_id_len=%zu\n", wkey.dsize, db_id_len);
 		return false;
 	}
 	if (p_db_id != NULL) {
@@ -278,7 +278,7 @@ static struct db_record *dbwrap_watched_fetch_locked(
 	num_watchers = dbwrap_watched_parse(subrec_value, NULL, 0, NULL, NULL);
 	if (num_watchers == -1) {
 		/* Fresh or invalid record */
-		rec->value = (TDB_DATA) {};
+		rec->value = (TDB_DATA) { 0 };
 		return rec;
 	}
 
@@ -737,7 +737,9 @@ static bool dbwrap_watched_remove_waiter(struct db_watched_subrec *subrec,
 	}
 
 	if (i == num_watchers) {
-		DBG_WARNING("Did not find id in state->watchers\n");
+		struct server_id_buf buf;
+		DBG_WARNING("Did not find %s in state->watchers\n",
+			    server_id_str_buf(id, &buf));
 		return false;
 	}
 

@@ -222,14 +222,14 @@ void ctdb_req_control_get_debug(struct ctdb_req_control *request)
 }
 
 int ctdb_reply_control_get_debug(struct ctdb_reply_control *reply,
-				 uint32_t *loglevel)
+				 int *loglevel)
 {
 	if (reply->rdata.opcode != CTDB_CONTROL_GET_DEBUG) {
 		return EPROTO;
 	}
 
 	if (reply->status == 0) {
-		*loglevel = reply->rdata.data.loglevel;
+		*loglevel = (int)reply->rdata.data.loglevel;
 	}
 	return reply->status;
 }
@@ -237,7 +237,7 @@ int ctdb_reply_control_get_debug(struct ctdb_reply_control *reply,
 /* CTDB_CONTROL_SET_DEBUG */
 
 void ctdb_req_control_set_debug(struct ctdb_req_control *request,
-				uint32_t loglevel)
+				int loglevel)
 {
 	request->opcode = CTDB_CONTROL_SET_DEBUG;
 	request->pad = 0;
@@ -246,7 +246,7 @@ void ctdb_req_control_set_debug(struct ctdb_req_control *request,
 	request->flags = 0;
 
 	request->rdata.opcode = CTDB_CONTROL_SET_DEBUG;
-	request->rdata.data.loglevel = loglevel;
+	request->rdata.data.loglevel = (uint32_t)loglevel;
 }
 
 int ctdb_reply_control_set_debug(struct ctdb_reply_control *reply)
@@ -1272,27 +1272,6 @@ int ctdb_reply_control_del_public_ip(struct ctdb_reply_control *reply)
 	return ctdb_reply_control_generic(reply, CTDB_CONTROL_DEL_PUBLIC_IP);
 }
 
-/* CTDB_CONTROL_RUN_EVENTSCRIPTS */
-
-void ctdb_req_control_run_eventscripts(struct ctdb_req_control *request,
-				       const char *event_str)
-{
-	request->opcode = CTDB_CONTROL_RUN_EVENTSCRIPTS;
-	request->pad = 0;
-	request->srvid = 0;
-	request->client_id = 0;
-	request->flags = 0;
-
-	request->rdata.opcode = CTDB_CONTROL_RUN_EVENTSCRIPTS;
-	request->rdata.data.event_str = event_str;
-}
-
-int ctdb_reply_control_run_eventscripts(struct ctdb_reply_control *reply)
-{
-	return ctdb_reply_control_generic(reply,
-					  CTDB_CONTROL_RUN_EVENTSCRIPTS);
-}
-
 /* CTDB_CONTROL_GET_CAPABILITIES */
 
 void ctdb_req_control_get_capabilities(struct ctdb_req_control *request)
@@ -1379,7 +1358,8 @@ int ctdb_reply_control_takeover_ip(struct ctdb_reply_control *reply)
 
 /* CTDB_CONTROL_GET_PUBLIC_IPS */
 
-void ctdb_req_control_get_public_ips(struct ctdb_req_control *request)
+void ctdb_req_control_get_public_ips(struct ctdb_req_control *request,
+				     bool available_only)
 {
 	request->opcode = CTDB_CONTROL_GET_PUBLIC_IPS;
 	request->pad = 0;
@@ -1388,6 +1368,9 @@ void ctdb_req_control_get_public_ips(struct ctdb_req_control *request)
 	request->flags = 0;
 
 	request->rdata.opcode = CTDB_CONTROL_GET_PUBLIC_IPS;
+	if (available_only) {
+		request->flags = CTDB_PUBLIC_IP_FLAGS_ONLY_AVAILABLE;
+	}
 }
 
 int ctdb_reply_control_get_public_ips(struct ctdb_reply_control *reply,
@@ -1428,35 +1411,6 @@ int ctdb_reply_control_get_nodemap(struct ctdb_reply_control *reply,
 
 	if (reply->status == 0) {
 		*nodemap = talloc_steal(mem_ctx, reply->rdata.data.nodemap);
-	}
-	return reply->status;
-}
-
-/* CTDB_CONTROL_GET_EVENT_SCRIPT_STATUS */
-
-void ctdb_req_control_get_event_script_status(struct ctdb_req_control *request,
-					      uint32_t event)
-{
-	request->opcode = CTDB_CONTROL_GET_EVENT_SCRIPT_STATUS;
-	request->pad = 0;
-	request->srvid = 0;
-	request->client_id = 0;
-	request->flags = 0;
-
-	request->rdata.opcode = CTDB_CONTROL_GET_EVENT_SCRIPT_STATUS;
-	request->rdata.data.event = event;
-}
-
-int ctdb_reply_control_get_event_script_status(struct ctdb_reply_control *reply,
-					       TALLOC_CTX *mem_ctx,
-					       struct ctdb_script_list **slist)
-{
-	if (reply->rdata.opcode != CTDB_CONTROL_GET_EVENT_SCRIPT_STATUS) {
-		return EPROTO;
-	}
-
-	if (reply->status == 0) {
-		*slist = talloc_steal(mem_ctx, reply->rdata.data.script_list);
 	}
 	return reply->status;
 }
@@ -1605,46 +1559,6 @@ int ctdb_reply_control_set_recmasterrole(struct ctdb_reply_control *reply)
 {
 	return ctdb_reply_control_generic(reply,
 					  CTDB_CONTROL_SET_RECMASTERROLE);
-}
-
-/* CTDB_CONTROL_ENABLE_SCRIPT */
-
-void ctdb_req_control_enable_script(struct ctdb_req_control *request,
-				    const char *script)
-{
-	request->opcode = CTDB_CONTROL_ENABLE_SCRIPT;
-	request->pad = 0;
-	request->srvid = 0;
-	request->client_id = 0;
-	request->flags = 0;
-
-	request->rdata.opcode = CTDB_CONTROL_ENABLE_SCRIPT;
-	request->rdata.data.script = script;
-}
-
-int ctdb_reply_control_enable_script(struct ctdb_reply_control *reply)
-{
-	return ctdb_reply_control_generic(reply, CTDB_CONTROL_ENABLE_SCRIPT);
-}
-
-/* CTDB_CONTROL_DISABLE_SCRIPT */
-
-void ctdb_req_control_disable_script(struct ctdb_req_control *request,
-				     const char *script)
-{
-	request->opcode = CTDB_CONTROL_DISABLE_SCRIPT;
-	request->pad = 0;
-	request->srvid = 0;
-	request->client_id = 0;
-	request->flags = 0;
-
-	request->rdata.opcode = CTDB_CONTROL_DISABLE_SCRIPT;
-	request->rdata.data.script = script;
-}
-
-int ctdb_reply_control_disable_script(struct ctdb_reply_control *reply)
-{
-	return ctdb_reply_control_generic(reply, CTDB_CONTROL_DISABLE_SCRIPT);
 }
 
 /* CTDB_CONTROL_SET_BAN_STATE */

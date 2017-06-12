@@ -103,7 +103,6 @@ NTSTATUS dcesrv_fault_with_flags(struct dcesrv_call_state *call,
 {
 	struct ncacn_packet pkt;
 	struct data_blob_list_item *rep;
-	static const uint8_t zeros[4] = { 0, };
 	NTSTATUS status;
 
 	/* setup a fault */
@@ -113,23 +112,16 @@ NTSTATUS dcesrv_fault_with_flags(struct dcesrv_call_state *call,
 	pkt.ptype = DCERPC_PKT_FAULT;
 	pkt.pfc_flags = DCERPC_PFC_FLAG_FIRST | DCERPC_PFC_FLAG_LAST | extra_flags;
 	pkt.u.fault.alloc_hint = 24;
-	switch (call->pkt.ptype) {
-	case DCERPC_PKT_REQUEST:
-		pkt.u.fault.context_id = call->pkt.u.request.context_id;
-		break;
-	default:
-		pkt.u.fault.context_id = 0;
-		break;
-	}
-	if (fault_code == DCERPC_NCA_S_PROTO_ERROR) {
-		/*
-		 * context_id = 0 is forced on protocol errors.
-		 */
+	if (call->context != NULL) {
+		pkt.u.fault.context_id = call->context->context_id;
+	} else {
 		pkt.u.fault.context_id = 0;
 	}
 	pkt.u.fault.cancel_count = 0;
+	pkt.u.fault.flags = 0;
 	pkt.u.fault.status = fault_code;
-	pkt.u.fault._pad = data_blob_const(zeros, sizeof(zeros));
+	pkt.u.fault.reserved = 0;
+	pkt.u.fault.error_and_verifier = data_blob_null;
 
 	rep = talloc_zero(call, struct data_blob_list_item);
 	if (!rep) {
@@ -221,6 +213,7 @@ _PUBLIC_ NTSTATUS dcesrv_reply(struct dcesrv_call_state *call)
 		uint32_t length;
 		struct data_blob_list_item *rep;
 		struct ncacn_packet pkt;
+		bool ok;
 
 		rep = talloc_zero(call, struct data_blob_list_item);
 		NT_STATUS_HAVE_NO_MEMORY(rep);
@@ -241,14 +234,22 @@ _PUBLIC_ NTSTATUS dcesrv_reply(struct dcesrv_call_state *call)
 			pkt.pfc_flags |= DCERPC_PFC_FLAG_LAST;
 		}
 		pkt.u.response.alloc_hint = stub.length;
-		pkt.u.response.context_id = call->pkt.u.request.context_id;
+		/*
+		 * bug for bug, feature for feature...
+		 *
+		 * Windows truncates the context_id with & 0xFF,
+		 * so we do.
+		 */
+		pkt.u.response.context_id = context->context_id & 0xFF;
 		pkt.u.response.cancel_count = 0;
-		pkt.u.response._pad.data = call->pkt.u.request._pad.data;
-		pkt.u.response._pad.length = call->pkt.u.request._pad.length;
 		pkt.u.response.stub_and_verifier.data = stub.data;
 		pkt.u.response.stub_and_verifier.length = length;
 
-		if (!dcesrv_auth_response(call, &rep->blob, sig_size, &pkt)) {
+		ok = dcesrv_auth_pkt_push(call, &rep->blob, sig_size,
+					  DCERPC_RESPONSE_LENGTH,
+					  &pkt.u.response.stub_and_verifier,
+					  &pkt);
+		if (!ok) {
 			return dcesrv_fault(call, DCERPC_FAULT_OTHER);
 		}
 

@@ -802,11 +802,9 @@ static void print_canon_ace(canon_ace *pace, int num)
 	dbgtext( "canon_ace index %d. Type = %s ", num, pace->attr == ALLOW_ACE ? "allow" : "deny" );
 	dbgtext( "SID = %s ", sid_string_dbg(&pace->trustee));
 	if (pace->owner_type == UID_ACE) {
-		const char *u_name = uidtoname(pace->unix_ug.id);
-		dbgtext( "uid %u (%s) ", (unsigned int)pace->unix_ug.id, u_name );
+		dbgtext( "uid %u ", (unsigned int)pace->unix_ug.id);
 	} else if (pace->owner_type == GID_ACE) {
-		char *g_name = gidtoname(pace->unix_ug.id);
-		dbgtext( "gid %u (%s) ", (unsigned int)pace->unix_ug.id, g_name );
+		dbgtext( "gid %u ", (unsigned int)pace->unix_ug.id);
 	} else
 		dbgtext( "other ");
 	switch (pace->type) {
@@ -3752,6 +3750,14 @@ NTSTATUS set_nt_acl(files_struct *fsp, uint32_t security_info_sent, const struct
 	}
 	if ((security_info_sent & SECINFO_GROUP) && (psd->group_sid == NULL)) {
 		security_info_sent &= ~SECINFO_GROUP;
+	}
+
+	/* If UNIX owner is inherited and Windows isn't, then
+	 * setting the UNIX owner based on Windows owner conflicts
+	 * with the inheritance rule
+	 */
+	if (lp_inherit_owner(SNUM(conn)) == INHERIT_OWNER_UNIX_ONLY) {
+		security_info_sent &= ~SECINFO_OWNER;
 	}
 
 	status = unpack_nt_owners( conn, &user, &grp, security_info_sent, psd);

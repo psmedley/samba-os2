@@ -23,6 +23,7 @@
 
 #include "includes.h"
 #include "auth.h"
+#include "lib/util_unixsids.h"
 #include "../libcli/auth/libcli_auth.h"
 #include "../lib/crypto/arcfour.h"
 #include "rpc_client/init_lsa.h"
@@ -78,7 +79,7 @@ static int _smb_create_user(const char *domain, const char *unix_username, const
 			return -1;
 		}
 	}
-	ret = smbrun(add_script,NULL);
+	ret = smbrun(add_script, NULL, NULL);
 	flush_pwnam_cache();
 	DEBUG(ret ? 0 : 3,
 		("smb_create_user: Running the command `%s' gave %d\n",
@@ -438,7 +439,7 @@ static NTSTATUS log_nt_token(struct security_token *token)
 	}
 
 	DEBUG(8, ("running command: [%s]\n", command));
-	if (smbrun(command, NULL) != 0) {
+	if (smbrun(command, NULL, NULL) != 0) {
 		DEBUG(0, ("Could not log NT token\n"));
 		TALLOC_FREE(frame);
 		return NT_STATUS_ACCESS_DENIED;
@@ -810,7 +811,6 @@ static NTSTATUS get_guest_info3(TALLOC_CTX *mem_ctx,
 
 static NTSTATUS make_new_session_info_guest(struct auth_session_info **session_info, struct auth_serversupplied_info **server_info)
 {
-	static const char zeros[16] = {0};
 	const char *guest_account = lp_guest_account();
 	const char *domain = lp_netbios_name();
 	struct netr_SamInfo3 info3;
@@ -860,7 +860,7 @@ static NTSTATUS make_new_session_info_guest(struct auth_session_info **session_i
 
 	/* annoying, but the Guest really does have a session key, and it is
 	   all zeros! */
-	(*session_info)->session_key = data_blob(zeros, sizeof(zeros));
+	(*session_info)->session_key = data_blob_talloc_zero(NULL, 16);
 
 	status = NT_STATUS_OK;
 done:
@@ -1357,8 +1357,6 @@ NTSTATUS make_server_info_info3(TALLOC_CTX *mem_ctx,
 				struct auth_serversupplied_info **server_info,
 				const struct netr_SamInfo3 *info3)
 {
-	static const char zeros[16] = {0, };
-
 	NTSTATUS nt_status = NT_STATUS_OK;
 	char *found_username = NULL;
 	const char *nt_domain;
@@ -1459,7 +1457,7 @@ NTSTATUS make_server_info_info3(TALLOC_CTX *mem_ctx,
 
 	/* ensure we are never given NULL session keys */
 
-	if (memcmp(info3->base.key.key, zeros, sizeof(zeros)) == 0) {
+	if (all_zero(info3->base.key.key, sizeof(info3->base.key.key))) {
 		result->session_key = data_blob_null;
 	} else {
 		result->session_key = data_blob_talloc(
@@ -1467,7 +1465,8 @@ NTSTATUS make_server_info_info3(TALLOC_CTX *mem_ctx,
 			sizeof(info3->base.key.key));
 	}
 
-	if (memcmp(info3->base.LMSessKey.key, zeros, 8) == 0) {
+	if (all_zero(info3->base.LMSessKey.key,
+		     sizeof(info3->base.LMSessKey.key))) {
 		result->lm_session_key = data_blob_null;
 	} else {
 		result->lm_session_key = data_blob_talloc(

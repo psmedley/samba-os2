@@ -3,7 +3,7 @@
 
    test suite for SMB2 ioctl operations
 
-   Copyright (C) David Disseldorp 2011-2015
+   Copyright (C) David Disseldorp 2011-2016
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -2608,16 +2608,7 @@ static bool test_ioctl_compress_notsup_set(struct torture_context *torture,
 					 COMPRESSION_FORMAT_DEFAULT);
 	torture_assert_ntstatus_equal(torture, status,
 				      NT_STATUS_NOT_SUPPORTED,
-				      "FSCTL_SET_COMPRESSION default");
-
-	/*
-	 * Despite not supporting compression, we should get a successful
-	 * response for set(COMPRESSION_FORMAT_NONE) - like WS2016 ReFS.
-	 */
-	status = test_ioctl_compress_set(torture, tmp_ctx, tree, fh,
-					 COMPRESSION_FORMAT_NONE);
-	torture_assert_ntstatus_ok(torture, status,
-				   "FSCTL_SET_COMPRESSION none");
+				      "FSCTL_GET_COMPRESSION");
 
 	smb2_util_close(tree, fh);
 	talloc_free(tmp_ctx);
@@ -2667,11 +2658,16 @@ static bool test_ioctl_network_interface_info(struct torture_context *torture,
 	return true;
 }
 
-static NTSTATUS test_ioctl_sparse_fs_supported(struct torture_context *torture,
-					       struct smb2_tree *tree,
-					       TALLOC_CTX *mem_ctx,
-					       struct smb2_handle *fh,
-					       bool *sparse_support)
+/*
+ * Check whether all @fs_support_flags are set in the server's
+ * RAW_QFS_ATTRIBUTE_INFORMATION FileSystemAttributes response.
+ */
+static NTSTATUS test_ioctl_fs_supported(struct torture_context *torture,
+					struct smb2_tree *tree,
+					TALLOC_CTX *mem_ctx,
+					struct smb2_handle *fh,
+					uint64_t fs_support_flags,
+					bool *supported)
 {
 	NTSTATUS status;
 	union smb_fsinfo info;
@@ -2684,10 +2680,11 @@ static NTSTATUS test_ioctl_sparse_fs_supported(struct torture_context *torture,
 		return status;
 	}
 
-	if (info.attribute_info.out.fs_attr & FILE_SUPPORTS_SPARSE_FILES) {
-		*sparse_support = true;
+	if ((info.attribute_info.out.fs_attr & fs_support_flags)
+							== fs_support_flags) {
+		*supported = true;
 	} else {
-		*sparse_support = false;
+		*supported = false;
 	}
 	return NT_STATUS_OK;
 }
@@ -2752,8 +2749,8 @@ static bool test_ioctl_sparse_file_flag(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -2803,8 +2800,8 @@ static bool test_ioctl_sparse_file_attr(struct torture_context *torture,
 			(FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_SPARSE));
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -2834,8 +2831,8 @@ static bool test_ioctl_sparse_dir_flag(struct torture_context *torture,
 				    FILE_ATTRIBUTE_DIRECTORY);
 	torture_assert(torture, ok, "setup sparse directory");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &dirh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &dirh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, dirh);
@@ -2875,8 +2872,8 @@ static bool test_ioctl_sparse_set_nobuf(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -2945,8 +2942,8 @@ static bool test_ioctl_sparse_set_oversize(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -3105,8 +3102,8 @@ static bool test_ioctl_sparse_qar(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -3230,8 +3227,8 @@ static bool test_ioctl_sparse_qar_malformed(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -3363,8 +3360,8 @@ static bool test_ioctl_sparse_punch(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -3504,8 +3501,8 @@ static bool test_ioctl_sparse_hole_dealloc(struct torture_context *torture,
 	torture_assert(torture, ok, "setup file 1");
 
 	/* check for FS sparse file */
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -3761,8 +3758,8 @@ static bool test_ioctl_sparse_compressed(struct torture_context *torture,
 	torture_assert(torture, ok, "setup file 1");
 
 	/* check for FS sparse file and compression support */
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -3869,8 +3866,8 @@ static bool test_ioctl_sparse_copy_chunk(struct torture_context *torture,
 	torture_assert(torture, ok, "setup file");
 
 	/* check for FS sparse file support */
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &src_h,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	smb2_util_close(tree, src_h);
 	if (!ok) {
@@ -4069,8 +4066,8 @@ static bool test_ioctl_sparse_punch_invalid(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -4177,8 +4174,8 @@ static bool test_ioctl_sparse_perms(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	smb2_util_close(tree, fh);
 	if (!ok) {
@@ -4420,8 +4417,8 @@ static bool test_ioctl_sparse_lck(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		torture_skip(torture, "Sparse files not supported\n");
@@ -4527,8 +4524,8 @@ static bool test_ioctl_sparse_qar_ob1(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		torture_skip(torture, "Sparse files not supported\n");
@@ -4683,8 +4680,8 @@ static bool test_ioctl_sparse_qar_multi(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		torture_skip(torture, "Sparse files not supported\n");
@@ -4756,8 +4753,8 @@ static bool test_ioctl_sparse_qar_overflow(struct torture_context *torture,
 				    FILE_ATTRIBUTE_NORMAL);
 	torture_assert(torture, ok, "setup file");
 
-	status = test_ioctl_sparse_fs_supported(torture, tree, tmp_ctx, &fh,
-						&ok);
+	status = test_ioctl_fs_supported(torture, tree, tmp_ctx, &fh,
+					 FILE_SUPPORTS_SPARSE_FILES, &ok);
 	torture_assert_ntstatus_ok(torture, status, "SMB2_GETINFO_FS");
 	if (!ok) {
 		smb2_util_close(tree, fh);
@@ -4927,8 +4924,1260 @@ static bool test_ioctl_trim_simple(struct torture_context *torture,
 	return true;
 }
 
+static bool test_setup_dup_extents(struct torture_context *tctx,
+				   struct smb2_tree *tree,
+				   TALLOC_CTX *mem_ctx,
+				   struct smb2_handle *src_h,
+				   uint64_t src_size,
+				   uint32_t src_desired_access,
+				   struct smb2_handle *dest_h,
+				   uint64_t dest_size,
+				   uint32_t dest_desired_access,
+				   struct fsctl_dup_extents_to_file *dup_ext_buf,
+				   union smb_ioctl *ioctl)
+{
+	bool ok;
+
+	ok = test_setup_create_fill(tctx, tree, mem_ctx, FNAME,
+				    src_h, src_size, src_desired_access,
+				    FILE_ATTRIBUTE_NORMAL);
+	torture_assert(tctx, ok, "src file create fill");
+
+	ok = test_setup_create_fill(tctx, tree, mem_ctx, FNAME2,
+				    dest_h, dest_size, dest_desired_access,
+				    FILE_ATTRIBUTE_NORMAL);
+	torture_assert(tctx, ok, "dest file create fill");
+
+	ZERO_STRUCTPN(ioctl);
+	ioctl->smb2.level = RAW_IOCTL_SMB2;
+	ioctl->smb2.in.file.handle = *dest_h;
+	ioctl->smb2.in.function = FSCTL_DUP_EXTENTS_TO_FILE;
+	ioctl->smb2.in.max_response_size = 0;
+	ioctl->smb2.in.flags = SMB2_IOCTL_FLAG_IS_FSCTL;
+
+	ZERO_STRUCTPN(dup_ext_buf);
+	smb2_push_handle(dup_ext_buf->source_fid, src_h);
+
+	return true;
+}
+
+static bool test_ioctl_dup_extents_simple(struct torture_context *tctx,
+					  struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_fileinfo io;
+	union smb_setfileinfo sinfo;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 4096, /* fill 4096 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,	/* 0 byte dest file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	/* extend dest to match src len */
+	ZERO_STRUCT(sinfo);
+	sinfo.end_of_file_info.level =
+		RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sinfo.end_of_file_info.in.file.handle = dest_h;
+	sinfo.end_of_file_info.in.size = 4096;
+	status = smb2_setinfo_file(tree, &sinfo);
+	torture_assert_ntstatus_ok(tctx, status, "smb2_setinfo_file");
+
+	/* copy all src file data */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 4096;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status,
+				   "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	/* the file size shouldn't have been changed by this operation! */
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = dest_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 4096, "size after IO");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+
+	/* reopen for pattern check */
+	ok = test_setup_open(tctx, tree, tmp_ctx, FNAME, &src_h,
+			     SEC_RIGHTS_FILE_ALL, FILE_ATTRIBUTE_NORMAL);
+	torture_assert_ntstatus_ok(tctx, status, "src open after dup");
+	ok = test_setup_open(tctx, tree, tmp_ctx, FNAME2, &dest_h,
+			     SEC_RIGHTS_FILE_ALL, FILE_ATTRIBUTE_NORMAL);
+	torture_assert_ntstatus_ok(tctx, status, "dest open after dup");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, src_h, 0, 4096, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent src file data");
+	}
+
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 4096, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent dest file data");
+	}
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_len_beyond_dest(struct torture_context *tctx,
+						   struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_fileinfo io;
+	union smb_setfileinfo sinfo;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 32768, /* fill 32768 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,	/* 0 byte dest file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = dest_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 0, "size after IO");
+
+	/* copy all src file data */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 32768;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+#if 0
+	/*
+	 * 2.3.8 FSCTL_DUPLICATE_EXTENTS_TO_FILE Reply - this should fail, but
+	 * passes against WS2016 RTM!
+	 */
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_NOT_SUPPORTED,
+				   "FSCTL_DUP_EXTENTS_TO_FILE");
+#endif
+
+	/* the file sizes shouldn't have been changed */
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = src_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 32768, "size after IO");
+
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = dest_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 0, "size after IO");
+
+	/* extend dest */
+	ZERO_STRUCT(sinfo);
+	sinfo.end_of_file_info.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sinfo.end_of_file_info.in.file.handle = dest_h;
+	sinfo.end_of_file_info.in.size = 32768;
+	status = smb2_setinfo_file(tree, &sinfo);
+	torture_assert_ntstatus_ok(tctx, status, "smb2_setinfo_file");
+
+	ok = check_zero(tctx, tree, tmp_ctx, dest_h, 0, 32768);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	/* reissue ioctl, now with enough space */
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status,
+				   "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_len_beyond_src(struct torture_context *tctx,
+						  struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_fileinfo io;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 32768, /* fill 32768 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,	/* 0 byte dest file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = dest_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 0, "size after IO");
+
+	/* exceed src file len */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 32768 * 2;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_NOT_SUPPORTED,
+				   "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	/* the file sizes shouldn't have been changed */
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = src_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 32768, "size after IO");
+
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = dest_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 0, "size after IO");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_len_zero(struct torture_context *tctx,
+					    struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_fileinfo io;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 32768, /* fill 32768 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,	/* 0 byte dest file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = dest_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 0, "size after IO");
+
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 0;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	/* the file sizes shouldn't have been changed */
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = src_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 32768, "size after IO");
+
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = dest_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 0, "size after IO");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_sparse_src(struct torture_context *tctx,
+					      struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_setfileinfo sinfo;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 0, /* filled after sparse flag */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,	/* 0 byte dest file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING
+					 | FILE_SUPPORTS_SPARSE_FILES, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx,
+			"block refcounting and sparse files not supported\n");
+	}
+
+	/* set sparse flag on src */
+	status = test_ioctl_sparse_req(tctx, tmp_ctx, tree, src_h, true);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_SET_SPARSE");
+
+	ok = write_pattern(tctx, tree, tmp_ctx, src_h, 0, 4096, 0);
+	torture_assert(tctx, ok, "write pattern");
+
+	/* extend dest */
+	ZERO_STRUCT(sinfo);
+	sinfo.end_of_file_info.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sinfo.end_of_file_info.in.file.handle = dest_h;
+	sinfo.end_of_file_info.in.size = 4096;
+	status = smb2_setinfo_file(tree, &sinfo);
+	torture_assert_ntstatus_ok(tctx, status, "smb2_setinfo_file");
+
+	/* copy all src file data */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 4096;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	/*
+	 * src is sparse, but spec says: 2.3.8 FSCTL_DUPLICATE_EXTENTS_TO_FILE
+	 * Reply...  STATUS_NOT_SUPPORTED: Target file is sparse, while source
+	 *				   is a non-sparse file.
+	 */
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_NOT_SUPPORTED,
+				      "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_sparse_dest(struct torture_context *tctx,
+					       struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_setfileinfo sinfo;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 4096, /* fill 4096 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,	/* 0 byte dest file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING
+					 | FILE_SUPPORTS_SPARSE_FILES, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx,
+			"block refcounting and sparse files not supported\n");
+	}
+
+	/* set sparse flag on dest */
+	status = test_ioctl_sparse_req(tctx, tmp_ctx, tree, dest_h, true);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_SET_SPARSE");
+
+	/* extend dest */
+	ZERO_STRUCT(sinfo);
+	sinfo.end_of_file_info.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sinfo.end_of_file_info.in.file.handle = dest_h;
+	sinfo.end_of_file_info.in.size = dup_ext_buf.byte_count;
+	status = smb2_setinfo_file(tree, &sinfo);
+	torture_assert_ntstatus_ok(tctx, status, "smb2_setinfo_file");
+
+	/* copy all src file data */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 4096;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	/*
+	 * dest is sparse, but spec says: 2.3.8 FSCTL_DUPLICATE_EXTENTS_TO_FILE
+	 * Reply...  STATUS_NOT_SUPPORTED: Target file is sparse, while source
+	 *				   is a non-sparse file.
+	 */
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_sparse_both(struct torture_context *tctx,
+					       struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_setfileinfo sinfo;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 0, /* fill 4096 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,	/* 0 byte dest file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING
+					 | FILE_SUPPORTS_SPARSE_FILES, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx,
+			"block refcounting and sparse files not supported\n");
+	}
+
+	/* set sparse flag on src and dest */
+	status = test_ioctl_sparse_req(tctx, tmp_ctx, tree, src_h, true);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_SET_SPARSE");
+	status = test_ioctl_sparse_req(tctx, tmp_ctx, tree, dest_h, true);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_SET_SPARSE");
+
+	ok = write_pattern(tctx, tree, tmp_ctx, src_h, 0, 4096, 0);
+	torture_assert(tctx, ok, "write pattern");
+
+	/* extend dest */
+	ZERO_STRUCT(sinfo);
+	sinfo.end_of_file_info.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sinfo.end_of_file_info.in.file.handle = dest_h;
+	sinfo.end_of_file_info.in.size = 4096;
+	status = smb2_setinfo_file(tree, &sinfo);
+	torture_assert_ntstatus_ok(tctx, status, "smb2_setinfo_file");
+
+	/* copy all src file data */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 4096;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+
+	/* reopen for pattern check */
+	ok = test_setup_open(tctx, tree, tmp_ctx, FNAME2, &dest_h,
+			     SEC_RIGHTS_FILE_ALL, FILE_ATTRIBUTE_NORMAL);
+	torture_assert_ntstatus_ok(tctx, status, "dest open ater dup");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 4096, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_src_is_dest(struct torture_context *tctx,
+					   struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_fileinfo io;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 32768, /* fill 32768 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+	/* dest_h not needed for this test */
+	smb2_util_close(tree, dest_h);
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	/* src and dest are the same file handle */
+	ioctl.smb2.in.file.handle = src_h;
+
+	/* no overlap between src and tgt */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 16384;
+	dup_ext_buf.byte_count = 16384;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	/* the file size shouldn't have been changed */
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = src_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 32768, "size after IO");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, src_h, 0, 16384, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+	ok = check_pattern(tctx, tree, tmp_ctx, src_h, 16384, 16384, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	smb2_util_close(tree, src_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
 /*
- * basic testing of SMB2 ioctls
+ * unlike copy-chunk, dup extents doesn't support overlapping ranges between
+ * source and target. This makes it a *lot* cleaner to implement on the server.
+ */
+static bool
+test_ioctl_dup_extents_src_is_dest_overlap(struct torture_context *tctx,
+					   struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_fileinfo io;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 32768, /* fill 32768 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+	/* dest_h not needed for this test */
+	smb2_util_close(tree, dest_h);
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	/* src and dest are the same file handle */
+	ioctl.smb2.in.file.handle = src_h;
+
+	/* 8K overlap between src and tgt */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 8192;
+	dup_ext_buf.byte_count = 16384;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_NOT_SUPPORTED,
+				      "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	/* the file size and data should match beforehand */
+	ZERO_STRUCT(io);
+	io.generic.level = RAW_FILEINFO_SMB2_ALL_INFORMATION;
+	io.generic.in.file.handle = src_h;
+	status = smb2_getinfo_file(tree, tmp_ctx, &io);
+	torture_assert_ntstatus_ok(tctx, status, "getinfo");
+	torture_assert_int_equal(tctx, (int)io.all_info2.out.size,
+				 32768, "size after IO");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, src_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	smb2_util_close(tree, src_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+/*
+ * The compression tests won't run against Windows servers yet - ReFS doesn't
+ * (yet) offer support for compression.
+ */
+static bool test_ioctl_dup_extents_compressed_src(struct torture_context *tctx,
+						  struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_setfileinfo sinfo;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 0, /* filled after compressed flag */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING
+					 | FILE_FILE_COMPRESSION, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx,
+			"block refcounting and compressed files not supported\n");
+	}
+
+	/* set compressed flag on src */
+	status = test_ioctl_compress_set(tctx, tmp_ctx, tree, src_h,
+					 COMPRESSION_FORMAT_DEFAULT);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_SET_COMPRESSION");
+
+	ok = write_pattern(tctx, tree, tmp_ctx, src_h, 0, 4096, 0);
+	torture_assert(tctx, ok, "write pattern");
+
+	/* extend dest */
+	ZERO_STRUCT(sinfo);
+	sinfo.end_of_file_info.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sinfo.end_of_file_info.in.file.handle = dest_h;
+	sinfo.end_of_file_info.in.size = 4096;
+	status = smb2_setinfo_file(tree, &sinfo);
+	torture_assert_ntstatus_ok(tctx, status, "smb2_setinfo_file");
+
+	/* copy all src file data */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 4096;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status,
+				   "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 4096, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_compressed_dest(struct torture_context *tctx,
+					       struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	union smb_setfileinfo sinfo;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 4096,
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING
+					 | FILE_FILE_COMPRESSION, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx,
+			"block refcounting and compressed files not supported\n");
+	}
+
+	/* set compressed flag on dest */
+	status = test_ioctl_compress_set(tctx, tmp_ctx, tree, dest_h,
+					 COMPRESSION_FORMAT_DEFAULT);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_SET_COMPRESSION");
+
+	/* extend dest */
+	ZERO_STRUCT(sinfo);
+	sinfo.end_of_file_info.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sinfo.end_of_file_info.in.file.handle = dest_h;
+	sinfo.end_of_file_info.in.size = dup_ext_buf.byte_count;
+	status = smb2_setinfo_file(tree, &sinfo);
+	torture_assert_ntstatus_ok(tctx, status, "smb2_setinfo_file");
+
+	/* copy all src file data */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 4096;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_NOT_SUPPORTED,
+				      "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_bad_handle(struct torture_context *tctx,
+					      struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	struct smb2_handle bogus_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	bool ok;
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 32768, /* fill 32768 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 32768,
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	/* open and close a file, keeping the handle as now a "bogus" handle */
+	ok = test_setup_create_fill(tctx, tree, tmp_ctx, "bogus_file",
+				    &bogus_h, 0, SEC_RIGHTS_FILE_ALL,
+				    FILE_ATTRIBUTE_NORMAL);
+	torture_assert(tctx, ok, "bogus file create fill");
+	smb2_util_close(tree, bogus_h);
+
+	/* bogus dest file handle */
+	ioctl.smb2.in.file.handle = bogus_h;
+
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 32768;
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_FILE_CLOSED,
+				      "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, src_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	/* reinstate dest, add bogus src file handle */
+	ioctl.smb2.in.file.handle = dest_h;
+	smb2_push_handle(dup_ext_buf.source_fid, &bogus_h);
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_INVALID_HANDLE,
+				      "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, src_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_src_lck(struct torture_context *tctx,
+					   struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle src_h2;
+	struct smb2_handle dest_h;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	bool ok;
+	struct smb2_lock lck;
+	struct smb2_lock_element el[1];
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 32768, /* fill 32768 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	/* dest pattern is different to src */
+	ok = write_pattern(tctx, tree, tmp_ctx, dest_h, 0, 32768, 32768);
+	torture_assert(tctx, ok, "write pattern");
+
+	/* setup dup ext req, values used for locking */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 32768;
+
+	/* open and lock the dup extents src file */
+	status = torture_smb2_testfile(tree, FNAME, &src_h2);
+	torture_assert_ntstatus_ok(tctx, status, "2nd src open");
+
+	lck.in.lock_count	= 0x0001;
+	lck.in.lock_sequence	= 0x00000000;
+	lck.in.file.handle	= src_h2;
+	lck.in.locks		= el;
+	el[0].offset		= dup_ext_buf.source_off;
+	el[0].length		= dup_ext_buf.byte_count;
+	el[0].reserved		= 0;
+	el[0].flags		= SMB2_LOCK_FLAG_EXCLUSIVE;
+
+	status = smb2_lock(tree, &lck);
+	torture_assert_ntstatus_ok(tctx, status, "lock");
+
+	status = smb2_util_write(tree, src_h,
+				 "conflicted", 0, sizeof("conflicted"));
+	torture_assert_ntstatus_equal(tctx, status,
+				NT_STATUS_FILE_LOCK_CONFLICT, "file write");
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	/*
+	 * In contrast to copy-chunk, dup extents doesn't cause a lock conflict
+	 * here.
+	 */
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	lck.in.lock_count	= 0x0001;
+	lck.in.lock_sequence	= 0x00000001;
+	lck.in.file.handle	= src_h2;
+	lck.in.locks		= el;
+	el[0].offset		= dup_ext_buf.source_off;
+	el[0].length		= dup_ext_buf.byte_count;
+	el[0].reserved		= 0;
+	el[0].flags		= SMB2_LOCK_FLAG_UNLOCK;
+	status = smb2_lock(tree, &lck);
+	torture_assert_ntstatus_ok(tctx, status, "unlock");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status,
+				   "FSCTL_DUP_EXTENTS_TO_FILE unlocked");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	smb2_util_close(tree, src_h2);
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+static bool test_ioctl_dup_extents_dest_lck(struct torture_context *tctx,
+					    struct smb2_tree *tree)
+{
+	struct smb2_handle src_h;
+	struct smb2_handle dest_h;
+	struct smb2_handle dest_h2;
+	NTSTATUS status;
+	union smb_ioctl ioctl;
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+	struct fsctl_dup_extents_to_file dup_ext_buf;
+	enum ndr_err_code ndr_ret;
+	bool ok;
+	struct smb2_lock lck;
+	struct smb2_lock_element el[1];
+
+	ok = test_setup_dup_extents(tctx, tree, tmp_ctx,
+				    &src_h, 32768, /* fill 32768 byte src file */
+				    SEC_RIGHTS_FILE_ALL,
+				    &dest_h, 0,
+				    SEC_RIGHTS_FILE_ALL,
+				    &dup_ext_buf,
+				    &ioctl);
+	if (!ok) {
+		torture_fail(tctx, "setup dup extents error");
+	}
+
+	status = test_ioctl_fs_supported(tctx, tree, tmp_ctx, &src_h,
+					 FILE_SUPPORTS_BLOCK_REFCOUNTING, &ok);
+	torture_assert_ntstatus_ok(tctx, status, "SMB2_GETINFO_FS");
+	if (!ok) {
+		smb2_util_close(tree, src_h);
+		smb2_util_close(tree, dest_h);
+		talloc_free(tmp_ctx);
+		torture_skip(tctx, "block refcounting not supported\n");
+	}
+
+	/* dest pattern is different to src */
+	ok = write_pattern(tctx, tree, tmp_ctx, dest_h, 0, 32768, 32768);
+	torture_assert(tctx, ok, "write pattern");
+
+	/* setup dup ext req, values used for locking */
+	dup_ext_buf.source_off = 0;
+	dup_ext_buf.target_off = 0;
+	dup_ext_buf.byte_count = 32768;
+
+	/* open and lock the dup extents dest file */
+	status = torture_smb2_testfile(tree, FNAME2, &dest_h2);
+	torture_assert_ntstatus_ok(tctx, status, "2nd src open");
+
+	lck.in.lock_count	= 0x0001;
+	lck.in.lock_sequence	= 0x00000000;
+	lck.in.file.handle	= dest_h2;
+	lck.in.locks		= el;
+	el[0].offset		= dup_ext_buf.source_off;
+	el[0].length		= dup_ext_buf.byte_count;
+	el[0].reserved		= 0;
+	el[0].flags		= SMB2_LOCK_FLAG_EXCLUSIVE;
+
+	status = smb2_lock(tree, &lck);
+	torture_assert_ntstatus_ok(tctx, status, "lock");
+
+	status = smb2_util_write(tree, dest_h,
+				 "conflicted", 0, sizeof("conflicted"));
+	torture_assert_ntstatus_equal(tctx, status,
+				NT_STATUS_FILE_LOCK_CONFLICT, "file write");
+
+	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
+				       &dup_ext_buf,
+		       (ndr_push_flags_fn_t)ndr_push_fsctl_dup_extents_to_file);
+	torture_assert_ndr_success(tctx, ndr_ret,
+				   "ndr_push_fsctl_dup_extents_to_file");
+
+	/*
+	 * In contrast to copy-chunk, dup extents doesn't cause a lock conflict
+	 * here.
+	 */
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status, "FSCTL_DUP_EXTENTS_TO_FILE");
+
+	lck.in.lock_count	= 0x0001;
+	lck.in.lock_sequence	= 0x00000001;
+	lck.in.file.handle	= dest_h2;
+	lck.in.locks		= el;
+	el[0].offset		= dup_ext_buf.source_off;
+	el[0].length		= dup_ext_buf.byte_count;
+	el[0].reserved		= 0;
+	el[0].flags		= SMB2_LOCK_FLAG_UNLOCK;
+	status = smb2_lock(tree, &lck);
+	torture_assert_ntstatus_ok(tctx, status, "unlock");
+
+	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
+	torture_assert_ntstatus_ok(tctx, status,
+				   "FSCTL_DUP_EXTENTS_TO_FILE unlocked");
+
+	ok = check_pattern(tctx, tree, tmp_ctx, dest_h, 0, 32768, 0);
+	if (!ok) {
+		torture_fail(tctx, "inconsistent file data");
+	}
+
+	smb2_util_close(tree, src_h);
+	smb2_util_close(tree, dest_h);
+	smb2_util_close(tree, dest_h2);
+	talloc_free(tmp_ctx);
+	return true;
+}
+
+/*
+ * testing of SMB2 ioctls
  */
 struct torture_suite *torture_smb2_ioctl_init(void)
 {
@@ -5034,6 +6283,34 @@ struct torture_suite *torture_smb2_ioctl_init(void)
 				     test_ioctl_sparse_qar_overflow);
 	torture_suite_add_1smb2_test(suite, "trim_simple",
 				     test_ioctl_trim_simple);
+	torture_suite_add_1smb2_test(suite, "dup_extents_simple",
+				     test_ioctl_dup_extents_simple);
+	torture_suite_add_1smb2_test(suite, "dup_extents_len_beyond_dest",
+				     test_ioctl_dup_extents_len_beyond_dest);
+	torture_suite_add_1smb2_test(suite, "dup_extents_len_beyond_src",
+				     test_ioctl_dup_extents_len_beyond_src);
+	torture_suite_add_1smb2_test(suite, "dup_extents_len_zero",
+				     test_ioctl_dup_extents_len_zero);
+	torture_suite_add_1smb2_test(suite, "dup_extents_sparse_src",
+				     test_ioctl_dup_extents_sparse_src);
+	torture_suite_add_1smb2_test(suite, "dup_extents_sparse_dest",
+				     test_ioctl_dup_extents_sparse_dest);
+	torture_suite_add_1smb2_test(suite, "dup_extents_sparse_both",
+				     test_ioctl_dup_extents_sparse_both);
+	torture_suite_add_1smb2_test(suite, "dup_extents_src_is_dest",
+				     test_ioctl_dup_extents_src_is_dest);
+	torture_suite_add_1smb2_test(suite, "dup_extents_src_is_dest_overlap",
+				     test_ioctl_dup_extents_src_is_dest_overlap);
+	torture_suite_add_1smb2_test(suite, "dup_extents_compressed_src",
+				     test_ioctl_dup_extents_compressed_src);
+	torture_suite_add_1smb2_test(suite, "dup_extents_compressed_dest",
+				     test_ioctl_dup_extents_compressed_dest);
+	torture_suite_add_1smb2_test(suite, "dup_extents_bad_handle",
+				     test_ioctl_dup_extents_bad_handle);
+	torture_suite_add_1smb2_test(suite, "dup_extents_src_lock",
+				     test_ioctl_dup_extents_src_lck);
+	torture_suite_add_1smb2_test(suite, "dup_extents_dest_lock",
+				     test_ioctl_dup_extents_dest_lck);
 
 	suite->description = talloc_strdup(suite, "SMB2-IOCTL tests");
 

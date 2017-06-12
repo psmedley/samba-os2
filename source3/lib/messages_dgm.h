@@ -28,7 +28,8 @@ int messaging_dgm_init(struct tevent_context *ev,
 		       uint64_t *unique,
 		       const char *socket_dir,
 		       const char *lockfile_dir,
-		       void (*recv_cb)(const uint8_t *msg,
+		       void (*recv_cb)(struct tevent_context *ev,
+				       const uint8_t *msg,
 				       size_t msg_len,
 				       int *fds,
 				       size_t num_fds,
@@ -41,7 +42,10 @@ int messaging_dgm_send(pid_t pid,
 		       const int *fds, size_t num_fds);
 int messaging_dgm_cleanup(pid_t pid);
 int messaging_dgm_wipe(void);
-void *messaging_dgm_register_tevent_context(TALLOC_CTX *mem_ctx,
-					    struct tevent_context *ev);
+
+struct messaging_dgm_fde;
+struct messaging_dgm_fde *messaging_dgm_register_tevent_context(
+	TALLOC_CTX *mem_ctx, struct tevent_context *ev);
+bool messaging_dgm_fde_active(struct messaging_dgm_fde *fde);
 
 #endif

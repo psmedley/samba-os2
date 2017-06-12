@@ -217,17 +217,17 @@ static int writefile(int f, char *b, int n)
  number read. read approx n bytes.
 ****************************************************************************/
 
-static int readfile(uint8_t *b, int n, XFILE *f)
+static int readfile(uint8_t *b, int n, FILE *f)
 {
 	int i;
 	int c;
 
 	if (!translation)
-		return x_fread(b,1,n,f);
+		return fread(b,1,n,f);
 
 	i = 0;
 	while (i < (n - 1)) {
-		if ((c = x_getc(f)) == EOF) {
+		if ((c = getc(f)) == EOF) {
 			break;
 		}
 
@@ -242,7 +242,7 @@ static int readfile(uint8_t *b, int n, XFILE *f)
 }
 
 struct push_state {
-	XFILE *f;
+	FILE *f;
 	off_t nread;
 };
 
@@ -251,7 +251,7 @@ static size_t push_source(uint8_t *buf, size_t n, void *priv)
 	struct push_state *state = (struct push_state *)priv;
 	int result;
 
-	if (x_feof(state->f)) {
+	if (feof(state->f)) {
 		return 0;
 	}
 
@@ -1872,7 +1872,7 @@ static int do_put(const char *rname, const char *lname, bool reput)
 {
 	TALLOC_CTX *ctx = talloc_tos();
 	uint16_t fnum;
-	XFILE *f;
+	FILE *f;
 	off_t start = 0;
 	int rc = 0;
 	struct timespec tp_start;
@@ -1921,14 +1921,14 @@ static int do_put(const char *rname, const char *lname, bool reput)
 	   Note that in this case this function will exit(0) rather
 	   than returning. */
 	if (!strcmp(lname, "-")) {
-		f = x_stdin;
+		f = stdin;
 		/* size of file is not known */
 	} else {
-		f = x_fopen(lname,O_RDONLY, 0);
+		f = fopen(lname, "r");
 		if (f && reput) {
-			if (x_tseek(f, start, SEEK_SET) == -1) {
+			if (fseek(f, start, SEEK_SET) == -1) {
 				d_printf("Error seeking local file\n");
-				x_fclose(f);
+				fclose(f);
 				return 1;
 			}
 		}
@@ -1942,7 +1942,7 @@ static int do_put(const char *rname, const char *lname, bool reput)
 	DEBUG(1,("putting file %s as %s ",lname,
 		 rname));
 
-	x_setvbuf(f, NULL, X_IOFBF, io_bufsize);
+	setvbuf(f, NULL, _IOFBF, io_bufsize);
 
 	state.f = f;
 	state.nread = 0;
@@ -1958,14 +1958,14 @@ static int do_put(const char *rname, const char *lname, bool reput)
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("%s closing remote file %s\n", nt_errstr(status),
 			 rname);
-		if (f != x_stdin) {
-			x_fclose(f);
+		if (f != stdin) {
+			fclose(f);
 		}
 		return 1;
 	}
 
-	if (f != x_stdin) {
-		x_fclose(f);
+	if (f != stdin) {
+		fclose(f);
 	}
 
 	{
@@ -1982,7 +1982,7 @@ static int do_put(const char *rname, const char *lname, bool reput)
 			 put_total_size / (1.024*put_total_time_ms)));
 	}
 
-	if (f == x_stdin) {
+	if (f == stdin) {
 		cli_shutdown(cli);
 		exit(rc);
 	}
@@ -2535,35 +2535,53 @@ static int cmd_posix_encrypt(void)
 {
 	TALLOC_CTX *ctx = talloc_tos();
 	NTSTATUS status = NT_STATUS_UNSUCCESSFUL;
+	char *domain = NULL;
+	char *user = NULL;
+	char *password = NULL;
+	struct cli_credentials *creds = NULL;
+	struct cli_credentials *lcreds = NULL;
 
-	if (cli->use_kerberos) {
-		status = cli_gss_smb_encryption_start(cli);
+	if (next_token_talloc(ctx, &cmd_ptr, &domain, NULL)) {
+
+		if (!next_token_talloc(ctx, &cmd_ptr, &user, NULL)) {
+			d_printf("posix_encrypt domain user password\n");
+			return 1;
+		}
+
+		if (!next_token_talloc(ctx, &cmd_ptr, &password, NULL)) {
+			d_printf("posix_encrypt domain user password\n");
+			return 1;
+		}
+
+		lcreds = cli_session_creds_init(ctx,
+						user,
+						domain,
+						NULL, /* realm */
+						password,
+						false, /* use_kerberos */
+						false, /* fallback_after_kerberos */
+						false, /* use_ccache */
+						false); /* password_is_nt_hash */
+		if (lcreds == NULL) {
+			d_printf("cli_session_creds_init() failed.\n");
+			return -1;
+		}
+		creds = lcreds;
 	} else {
-		char *domain = NULL;
-		char *user = NULL;
-		char *password = NULL;
+		bool auth_requested = false;
 
-		if (!next_token_talloc(ctx, &cmd_ptr,&domain,NULL)) {
+		creds = get_cmdline_auth_info_creds(auth_info);
+
+		auth_requested = cli_credentials_authentication_requested(creds);
+		if (!auth_requested) {
 			d_printf("posix_encrypt domain user password\n");
 			return 1;
 		}
-
-		if (!next_token_talloc(ctx, &cmd_ptr,&user,NULL)) {
-			d_printf("posix_encrypt domain user password\n");
-			return 1;
-		}
-
-		if (!next_token_talloc(ctx, &cmd_ptr,&password,NULL)) {
-			d_printf("posix_encrypt domain user password\n");
-			return 1;
-		}
-
-		status = cli_raw_ntlm_smb_encryption_start(cli,
-							user,
-							password,
-							domain);
 	}
 
+	status = cli_smb1_setup_encryption(cli, creds);
+	/* gensec currently references the creds so we can't free them here */
+	talloc_unlink(ctx, lcreds);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("posix_encrypt failed with error %s\n", nt_errstr(status));
 	} else {
@@ -4162,7 +4180,7 @@ static int cmd_notify(void)
 		TALLOC_FREE(changes);
 	}
 usage:
-	d_printf("notify <file>\n");
+	d_printf("notify <dir name>\n");
 fail:
 	TALLOC_FREE(frame);
 	return 1;
@@ -4554,6 +4572,7 @@ static int cmd_logon(void)
 {
 	TALLOC_CTX *ctx = talloc_tos();
 	char *l_username, *l_password;
+	struct cli_credentials *creds = NULL;
 	NTSTATUS nt_status;
 
 	if (!next_token_talloc(ctx, &cmd_ptr,&l_username,NULL)) {
@@ -4574,10 +4593,21 @@ static int cmd_logon(void)
 		return 1;
 	}
 
-	nt_status = cli_session_setup(cli, l_username,
-				      l_password, strlen(l_password),
-				      l_password, strlen(l_password),
-				      lp_workgroup());
+	creds = cli_session_creds_init(ctx,
+				       l_username,
+				       lp_workgroup(),
+				       NULL, /* realm */
+				       l_password,
+				       false, /* use_kerberos */
+				       false, /* fallback_after_kerberos */
+				       false, /* use_ccache */
+				       false); /* password_is_nt_hash */
+	if (creds == NULL) {
+		d_printf("cli_session_creds_init() failed.\n");
+		return -1;
+	}
+	nt_status = cli_session_setup_creds(cli, creds);
+	TALLOC_FREE(creds);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		d_printf("session setup failed: %s\n", nt_errstr(nt_status));
 		return -1;
@@ -4625,7 +4655,7 @@ static int cmd_tcon(void)
 		return 1;
 	}
 
-	status = cli_tree_connect(cli, sharename, "?????", "", 0);
+	status = cli_tree_connect(cli, sharename, "?????", NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("tcon failed: %s\n", nt_errstr(status));
 		return -1;
@@ -5598,6 +5628,10 @@ static int do_host_query(const char *query_host)
 		}
 	}
 
+	if (lp_disable_netbios()) {
+		goto out;
+	}
+
 	if (port != NBT_SMB_PORT) {
 
 		/* Workgroups simply don't make sense over anything
@@ -5621,7 +5655,7 @@ static int do_host_query(const char *query_host)
 
 	cli_set_timeout(cli, io_timeout*1000);
 	list_servers(lp_workgroup());
-
+out:
 	cli_shutdown(cli);
 
 	return(0);
@@ -5675,6 +5709,11 @@ static int do_tar_op(const char *base_directory)
 static int do_message_op(struct user_auth_info *a_info)
 {
 	NTSTATUS status;
+
+	if (lp_disable_netbios()) {
+		d_printf("NetBIOS over TCP disabled.\n");
+		return 1;
+	}
 
 	status = cli_connect_nb(desthost, have_ip ? &dest_ss : NULL,
 				port ? port : NBT_SMB_PORT, name_type,
@@ -5744,11 +5783,8 @@ int main(int argc,char *argv[])
 
 	lp_set_cmdline("log level", "1");
 
-	auth_info = user_auth_info_init(frame);
-	if (auth_info == NULL) {
-		exit(1);
-	}
-	popt_common_set_auth_info(auth_info);
+	popt_common_credentials_set_ignore_missing_conf();
+	popt_common_credentials_set_delay_post();
 
 	/* skip argv(0) */
 	pc = poptGetContext("smbclient", argc, const_argv, long_options, 0);
@@ -5776,9 +5812,9 @@ int main(int argc,char *argv[])
 
 		/* if the service has already been retrieved then check if we have also a password */
 		if (service_opt
-		    && (!get_cmdline_auth_info_got_pass(auth_info))
+		    && (!get_cmdline_auth_info_got_pass(cmdline_auth_info))
 		    && poptPeekArg(pc)) {
-			set_cmdline_auth_info_password(auth_info,
+			set_cmdline_auth_info_password(cmdline_auth_info,
 						       poptGetArg(pc));
 		}
 
@@ -5878,26 +5914,11 @@ int main(int argc,char *argv[])
 
 	/* if the service has already been retrieved then check if we have also a password */
 	if (service_opt
-	    && !get_cmdline_auth_info_got_pass(auth_info)
+	    && !get_cmdline_auth_info_got_pass(cmdline_auth_info)
 	    && poptPeekArg(pc)) {
-		set_cmdline_auth_info_password(auth_info,
+		set_cmdline_auth_info_password(cmdline_auth_info,
 					       poptGetArg(pc));
 	}
-
-	if ( override_logfile )
-		setup_logging( lp_logfile(talloc_tos()), DEBUG_FILE );
-
-	if (!lp_load_client(get_dyn_CONFIGFILE())) {
-		fprintf(stderr, "%s: Can't load %s - run testparm to debug it\n",
-			argv[0], get_dyn_CONFIGFILE());
-	}
-
-	if (get_cmdline_auth_info_use_machine_account(auth_info) &&
-	    !set_cmdline_auth_info_machine_account_creds(auth_info)) {
-		exit(-1);
-	}
-
-	load_interfaces();
 
 	if (service_opt && service) {
 		size_t len;
@@ -5917,7 +5938,6 @@ int main(int argc,char *argv[])
 		}
 	}
 
-	smb_encrypt = get_cmdline_auth_info_smb_encrypt(auth_info);
 	if (!init_names()) {
 		fprintf(stderr, "init_names() failed\n");
 		exit(1);
@@ -5937,7 +5957,9 @@ int main(int argc,char *argv[])
 	DEBUG(3,("Client started (version %s).\n", samba_version_string()));
 
 	/* Ensure we have a password (or equivalent). */
-	set_cmdline_auth_info_getpass(auth_info);
+	popt_common_credentials_post();
+	auth_info = cmdline_auth_info;
+	smb_encrypt = get_cmdline_auth_info_smb_encrypt(auth_info);
 
 	max_protocol = lp_client_max_protocol();
 

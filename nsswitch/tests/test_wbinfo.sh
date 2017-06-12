@@ -51,6 +51,12 @@ knownfail() {
         return $status
 }
 
+KRB5CCNAME_PATH="$PREFIX/test_wbinfo_krb5ccache"
+rm -f $KRB5CCNAME_PATH
+
+KRB5CCNAME="FILE:$KRB5CCNAME_PATH"
+export KRB5CCNAME
+
 # List users
 testit "wbinfo -u against $TARGET" $wbinfo -u || failed=`expr $failed + 1`
 # List groups
@@ -81,6 +87,31 @@ if test x$admin_name != x$tested_name; then
 else
 	echo "success: wbinfo -s check for sane mapping"
 fi
+
+while read SID ; do
+    read NAME
+
+    testit "wbinfo -s $SID against $TARGET" $wbinfo -s $SID || failed=`expr $failed + 1`
+
+    RESOLVED_NAME=`$wbinfo -s $SID | tr a-z A-Z`
+    echo "$SID resolved to $RESOLVED_NAME"
+
+    echo "test: wbinfo -s $SID against $TARGET"
+    if test x"$RESOLVED_NAME" != x"$NAME" ; then
+        echo "$RESOLVED_NAME does not match $NAME"
+	echo "failure: wbinfo -s $SID against $TARGET"
+	failed=`expr $failed + 1`
+    else
+        echo "success: wbinfo -s $SID against $TARGET"
+    fi
+done <<EOF
+S-1-1-0
+/EVERYONE 5
+S-1-3-1
+/CREATOR GROUP 5
+S-1-5-1
+NT AUTHORITY/DIALUP 5
+EOF
 
 testit "wbinfo -n on the returned name against $TARGET" $wbinfo -n $admin_name || failed=`expr $failed + 1`
 test_sid=`$wbinfo -n $tested_name | cut -d " " -f1`
@@ -199,13 +230,18 @@ subunit_start_test "$test_name"
 # The full name (GECOS) is based on name (the RDN, in this case CN)
 # and displayName in winbindd_ads, and is based only on displayName in
 # winbindd_msrpc and winbindd_rpc.  Allow both versions.
-expected_line="$DOMAIN/administrator:*:$admin_uid:$gid:Administrator:/home/$DOMAIN/administrator:/bin/false"
-expected2_line="$DOMAIN/administrator:*:$admin_uid:$gid::/home/$DOMAIN/administrator:/bin/false"
+if test "$TARGET" = "ad_member"; then
+	expected1_line="$DOMAIN/administrator:*:$admin_uid:$gid:Administrator:/home/$DOMAIN/Domain Users/administrator:/bin/false"
+	expected2_line="$DOMAIN/administrator:*:$admin_uid:$gid::/home/$DOMAIN/Domain Users/administrator:/bin/false"
+else
+	expected1_line="$DOMAIN/administrator:*:$admin_uid:$gid:Administrator:/home/$DOMAIN/administrator:/bin/false"
+	expected2_line="$DOMAIN/administrator:*:$admin_uid:$gid::/home/$DOMAIN/administrator:/bin/false"
+fi
 
-if test x$passwd_line = x"$expected_line" -o x$passwd_line = x"$expected2_line"; then
+if test "x$passwd_line" = "x$expected1_line" -o "x$passwd_line" = "x$expected2_line"; then
 	subunit_pass_test "$test_name"
 else
-	echo "expected '$expected_line' or '$expected2_line' got '$passwd_line'" | subunit_fail_test "$test_name"
+	echo "expected '$expected1_line' or '$expected2_line' got '$passwd_line'" | subunit_fail_test "$test_name"
 	failed=`expr $failed + 1`
 fi
 
@@ -221,10 +257,10 @@ fi
 
 test_name="confirm output of wbinfo --uid-info against $TARGET"
 subunit_start_test "$test_name"
-if test x$passwd_line = x"$expected_line" -o x$passwd_line = x"$expected2_line"; then
+if test "x$passwd_line" = "x$expected1_line" -o "x$passwd_line" = "x$expected2_line"; then
 	subunit_pass_test "$test_name"
 else
-	echo "expected '$expected_line' or '$expected2_line' got '$passwd_line'" | subunit_fail_test "$test_name"
+	echo "expected '$expected1_line' or '$expected2_line' got '$passwd_line'" | subunit_fail_test "$test_name"
 	failed=`expr $failed + 1`
 fi
 
@@ -244,8 +280,14 @@ testit "wbinfo --getdcname against $TARGET" $wbinfo --getdcname=$DOMAIN
 
 testit "wbinfo -p against $TARGET" $wbinfo -p || failed=`expr $failed + 1`
 
-testit "wbinfo -K against $TARGET with domain creds" $wbinfo -K "$DOMAIN/$USERNAME"%"$PASSWORD" || failed=`expr $failed + 1`
+testit "wbinfo -K against $TARGET with domain creds" $wbinfo --krb5ccname=$KRB5CCNAME --krb5auth="$DOMAIN/$USERNAME"%"$PASSWORD" || failed=`expr $failed + 1`
 
 testit "wbinfo --separator against $TARGET" $wbinfo --separator || failed=`expr $failed + 1`
+
+testit_expect_failure "wbinfo -a against $TARGET with invalid password" $wbinfo -a "$DOMAIN/$USERNAME%InvalidPassword" && failed=`expr $failed + 1`
+
+testit_expect_failure "wbinfo -K against $TARGET with invalid password" $wbinfo -K "$DOMAIN/$USERNAME%InvalidPassword" && failed=`expr $failed + 1`
+
+rm -f $KRB5CCNAME_PATH
 
 exit $failed

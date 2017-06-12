@@ -20,21 +20,12 @@
 #ifndef _AUTH_INFO_H
 #define _AUTH_INFO_H
 
-struct user_auth_info {
-	char *username;
-	char *domain;
-	char *password;
-	bool got_pass;
-	bool use_kerberos;
-	int signing_state;
-	bool smb_encrypt;
-	bool use_machine_account;
-	bool fallback_after_kerberos;
-	bool use_ccache;
-	bool use_pw_nt_hash;
-};
+struct user_auth_info;
 
 struct user_auth_info *user_auth_info_init(TALLOC_CTX *mem_ctx);
+void set_cmdline_auth_info_guess(struct user_auth_info *auth_info);
+void set_cmdline_auth_info_from_file(struct user_auth_info *auth_info,
+				     const char *filename);
 const char *get_cmdline_auth_info_username(const struct user_auth_info *auth_info);
 void set_cmdline_auth_info_username(struct user_auth_info *auth_info,
 				    const char *username);
@@ -46,6 +37,8 @@ void set_cmdline_auth_info_password(struct user_auth_info *auth_info,
 const char *get_cmdline_auth_info_password(const struct user_auth_info *auth_info);
 bool set_cmdline_auth_info_signing_state(struct user_auth_info *auth_info,
 					 const char *arg);
+void set_cmdline_auth_info_signing_state_raw(struct user_auth_info *auth_info,
+					     int signing_state);
 int get_cmdline_auth_info_signing_state(const struct user_auth_info *auth_info);
 void set_cmdline_auth_info_use_ccache(struct user_auth_info *auth_info,
 				      bool b);
@@ -68,5 +61,8 @@ bool get_cmdline_auth_info_smb_encrypt(const struct user_auth_info *auth_info);
 bool get_cmdline_auth_info_use_machine_account(const struct user_auth_info *auth_info);
 bool set_cmdline_auth_info_machine_account_creds(struct user_auth_info *auth_info);
 void set_cmdline_auth_info_getpass(struct user_auth_info *auth_info);
+
+struct cli_credentials *get_cmdline_auth_info_creds(
+	const struct user_auth_info *auth_info);
 
 #endif /* _AUTH_INFO_H */

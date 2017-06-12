@@ -203,7 +203,8 @@ static bool test_fixed(struct torture_context *tctx,
 {
 	TALLOC_CTX *mem_ctx = talloc_new(tctx);
 	struct smb2_create create;
-	struct smb2_handle h, h2;
+	struct smb2_handle h = {{0}};
+	struct smb2_handle h2 = {{0}};
 	struct smb2_find f;
 	union smb_search_data *d;
 	struct file_elem files[NFILES] = {};
@@ -441,7 +442,7 @@ static bool test_one_file(struct torture_context *tctx,
 	status = torture_smb2_testdir(tree, DNAME, &h);
 	torture_assert_ntstatus_ok_goto(tctx, status, ret, done, "");
 
-	status = smb2_create_complex_file(tree, DNAME "\\torture_search.txt",
+	status = smb2_create_complex_file(tctx, tree, DNAME "\\torture_search.txt",
 					  &h2);
 	torture_assert_ntstatus_ok_goto(tctx, status, ret, done, "");
 
@@ -1020,7 +1021,7 @@ static bool test_modify_search(struct torture_context *tctx,
 	smb2_util_close(tree, create.out.file.handle);
 
 	files[num_files + 2].name = talloc_asprintf(mem_ctx, "T013-13.txt.3");
-	status = smb2_create_complex_file(tree, DNAME "\\T013-13.txt.3", &h);
+	status = smb2_create_complex_file(tctx, tree, DNAME "\\T013-13.txt.3", &h);
 	torture_assert_ntstatus_ok_goto(tctx, status, ret, done, "");
 
 	smb2_util_unlink(tree, DNAME "\\T014-14.txt");
@@ -1273,7 +1274,7 @@ static bool test_large_files(struct torture_context *tctx,
 	NTSTATUS status;
 	struct smb2_create create;
 	struct smb2_find f;
-	struct smb2_handle h;
+	struct smb2_handle h = {{0}};
 	union smb_search_data *d;
 	int i, j, file_count = 0;
 	char **strs = NULL;

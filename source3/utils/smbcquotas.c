@@ -339,6 +339,7 @@ static int do_quota(struct cli_state *cli,
 	uint32_t fs_attrs = 0;
 	uint16_t quota_fnum = 0;
 	SMB_NTQUOTA_LIST *qtl = NULL;
+	TALLOC_CTX *qtl_ctx = NULL;
 	SMB_NTQUOTA_STRUCT qt;
 	NTSTATUS status;
 
@@ -386,8 +387,21 @@ static int do_quota(struct cli_state *cli,
 					break;
 				case QUOTA_SETLIM:
 					pqt->sid = qt.sid;
+					if ((qtl_ctx = talloc_init(
+						 "SMB_USER_QUOTA_SET")) ==
+					    NULL) {
+						return -1;
+					}
+
+					if (!add_record_to_ntquota_list(
+						qtl_ctx, pqt, &qtl)) {
+						TALLOC_FREE(qtl_ctx);
+						return -1;
+					}
+
 					status = cli_set_user_quota(
-						cli, quota_fnum, pqt);
+					    cli, quota_fnum, qtl);
+					free_ntquota_list(&qtl);
 					if (!NT_STATUS_IS_OK(status)) {
 						d_printf("%s cli_set_user_quota %s\n",
 							 nt_errstr(status),
@@ -509,18 +523,11 @@ static struct cli_state *connect_one(const char *share)
 	NTSTATUS nt_status;
 	uint32_t flags = 0;
 
-	if (get_cmdline_auth_info_use_machine_account(smbcquotas_auth_info) &&
-	    !set_cmdline_auth_info_machine_account_creds(smbcquotas_auth_info)) {
-		return NULL;
-	}
-
 	if (get_cmdline_auth_info_use_kerberos(smbcquotas_auth_info)) {
 		flags |= CLI_FULL_CONNECTION_USE_KERBEROS |
 			 CLI_FULL_CONNECTION_FALLBACK_AFTER_KERBEROS;
 
 	}
-
-	set_cmdline_auth_info_getpass(smbcquotas_auth_info);
 
 	nt_status = cli_full_connection(&c, lp_netbios_name(), server,
 					    NULL, 0,
@@ -568,7 +575,6 @@ int main(int argc, char *argv[])
 	static bool test_args = False;
 	struct cli_state *cli;
 	bool fix_user = False;
-	bool ok;
 	SMB_NTQUOTA_STRUCT qt;
 	TALLOC_CTX *frame = talloc_stackframe();
 	poptContext pc;
@@ -585,6 +591,8 @@ FSQFLAGS:QUOTA_ENABLED/DENY_DISK/LOG_SOFTLIMIT/LOG_HARD_LIMIT", "SETSTRING" },
 		{ "numeric", 'n', POPT_ARG_NONE, NULL, 'n', "Don't resolve sids or limits to names" },
 		{ "verbose", 'v', POPT_ARG_NONE, NULL, 'v', "be verbose" },
 		{ "test-args", 't', POPT_ARG_NONE, NULL, 't', "Test arguments"},
+		{"max-protocol", 'm', POPT_ARG_STRING, NULL, 'm',
+		 "Set the max protocol level", "LEVEL"},
 		POPT_COMMON_SAMBA
 		POPT_COMMON_CREDENTIALS
 		{ NULL }
@@ -601,12 +609,6 @@ FSQFLAGS:QUOTA_ENABLED/DENY_DISK/LOG_SOFTLIMIT/LOG_HARD_LIMIT", "SETSTRING" },
 	setlinebuf(stdout);
 
 	fault_setup();
-
-	smbcquotas_auth_info = user_auth_info_init(frame);
-	if (smbcquotas_auth_info == NULL) {
-		exit(1);
-	}
-	popt_common_set_auth_info(smbcquotas_auth_info);
 
 	pc = poptGetContext("smbcquotas", argc, argv_const, long_options, 0);
 
@@ -663,12 +665,17 @@ FSQFLAGS:QUOTA_ENABLED/DENY_DISK/LOG_SOFTLIMIT/LOG_HARD_LIMIT", "SETSTRING" },
 			}
 			todo = SET_QUOTA;
 			break;
+		case 'm':
+			lp_set_cmdline("client max protocol",
+				       poptGetOptArg(pc));
+			break;
 		}
 	}
 
 	if (todo == 0)
 		todo = USER_QUOTA;
 
+	smbcquotas_auth_info = cmdline_auth_info;
 	if (!fix_user) {
 		username_str = talloc_strdup(
 			frame, get_cmdline_auth_info_username(smbcquotas_auth_info));
@@ -691,17 +698,6 @@ FSQFLAGS:QUOTA_ENABLED/DENY_DISK/LOG_SOFTLIMIT/LOG_HARD_LIMIT", "SETSTRING" },
 
 	poptFreeContext(pc);
 	popt_burn_cmdline_password(argc, argv);
-
-	ok = lp_load_global(get_dyn_CONFIGFILE());
-	if (!ok) {
-		DBG_ERR("ERROR: Loading config file %s - "
-			"run testparm to debug it\n",
-			get_dyn_CONFIGFILE());
-		exit(EXIT_PARSE_ERROR);
-	}
-
-	/* We must load interfaces after we load the smb.conf */
-	load_interfaces();
 
 	string_replace(path, '/', '\\');
 

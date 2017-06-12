@@ -1,25 +1,22 @@
-
 The packaging is kept in https://anonscm.debian.org/git/pkg-samba/samba.git
 (web interface: https://anonscm.debian.org/cgit/pkg-samba/samba.git).
 
 The version in unstable is on the 'master' branch, with the corresponding
-upstream version in the 'upstream_4.4' branch (with pristine-tar information
+upstream version in the 'upstream_4.6' branch (with pristine-tar information
 in the pristine-tar branch).
 
 It should be possible to build the package by just running 'git-buildpackage'.
 
 
-Merging upstream releases
-=========================
+Merging minor upstream releases
+===============================
 
 Importing a new upstream version can be done like this:
 
 # set target version
-upstream_version=4.5.3
+upstream_version=4.6.6
 # go to git repo
 cd $GIT_DIR
-# Check gbp.conf (especially debian-branch)
-cat debian/gbp.conf
 # Import upstream
 git remote add upstream https://git.samba.org/samba.git
 git fetch upstream
@@ -34,3 +31,22 @@ gbp import-orig --uscan \
 
 Please note that there are some files that are not dfsg-free and they need to
 be filtered. The settings in the gpb.conf should take care of that.
+
+Merging major upstream releases
+===============================
+
+With a new major version, more work is needed.
+
+After "git checkout master":
+# Edit gbp.conf upstream-branch
+editor debian/gbp.conf
+# Edit debian/watch major version
+editor debian/watch
+# Create the new upstream branch
+git branch upstream_4.6 samba-4.6.5
+# Import latest version
+gbp import-orig --uscan \
+  -u "${upstream_version}+dfsg" \
+  --upstream-vcs-tag "samba-${upstream_version}" \
+  --merge-mode=replace
+# all done :)

@@ -27,6 +27,7 @@
 #include "protocol/protocol_header.c"
 #include "protocol/protocol_call.c"
 #include "protocol/protocol_control.c"
+#include "protocol/protocol_event.c"
 #include "protocol/protocol_message.c"
 #include "protocol/protocol_packet.c"
 
@@ -45,6 +46,11 @@ static uint8_t rand8(void)
 {
 	uint8_t val = rand_int(256) & 0xff;
 	return val;
+}
+
+static int32_t rand32i(void)
+{
+	return INT_MIN + random();
 }
 
 static uint32_t rand32(void)
@@ -909,6 +915,107 @@ static void verify_ctdb_db_statistics(struct ctdb_db_statistics *p1,
 	}
 }
 
+static void fill_ctdb_event_request_run(TALLOC_CTX *mem_ctx,
+					struct ctdb_event_request_run *p)
+{
+	p->event = rand_int(CTDB_EVENT_MAX);
+	p->timeout = rand();
+	fill_ctdb_string(mem_ctx, &p->arg_str);
+}
+
+static void verify_ctdb_event_request_run(struct ctdb_event_request_run *p1,
+					  struct ctdb_event_request_run *p2)
+{
+	assert(p1->event == p2->event);
+	assert(p1->timeout == p2->timeout);
+	verify_ctdb_string(p1->arg_str, p2->arg_str);
+}
+
+static void fill_ctdb_event_request_status(TALLOC_CTX *mem_ctx,
+					   struct ctdb_event_request_status *p)
+{
+	p->event = rand_int(CTDB_EVENT_MAX);
+	p->state = rand_int(3) + 1;
+}
+
+static void verify_ctdb_event_request_status(
+					struct ctdb_event_request_status *p1,
+					struct ctdb_event_request_status *p2)
+{
+	assert(p1->event == p2->event);
+	assert(p1->state == p2->state);
+}
+
+static void fill_ctdb_event_request_script_enable(
+				TALLOC_CTX *mem_ctx,
+				struct ctdb_event_request_script_enable *p)
+{
+	fill_ctdb_string(mem_ctx, &p->script_name);
+}
+
+static void verify_ctdb_event_request_script_enable(
+				struct ctdb_event_request_script_enable *p1,
+				struct ctdb_event_request_script_enable *p2)
+{
+	verify_ctdb_string(p1->script_name, p2->script_name);
+}
+
+static void fill_ctdb_event_request_script_disable(
+				TALLOC_CTX *mem_ctx,
+				struct ctdb_event_request_script_disable *p)
+{
+	fill_ctdb_string(mem_ctx, &p->script_name);
+}
+
+static void verify_ctdb_event_request_script_disable(
+				struct ctdb_event_request_script_disable *p1,
+				struct ctdb_event_request_script_disable *p2)
+{
+	verify_ctdb_string(p1->script_name, p2->script_name);
+}
+
+static void fill_ctdb_event_reply_status(TALLOC_CTX *mem_ctx,
+					 struct ctdb_event_reply_status *p)
+{
+	if (rand_int(2) == 0) {
+		p->status = 0;
+		p->script_list = talloc(mem_ctx, struct ctdb_script_list);
+		assert(p->script_list != NULL);
+		fill_ctdb_script_list(mem_ctx, p->script_list);
+	} else {
+		p->status = rand32i();
+		p->script_list = NULL;
+	}
+}
+
+static void verify_ctdb_event_reply_status(struct ctdb_event_reply_status *p1,
+					   struct ctdb_event_reply_status *p2)
+{
+	assert(p1->status == p2->status);
+	if (p1->script_list == NULL) {
+		assert(p1->script_list == p2->script_list);
+	} else {
+		verify_ctdb_script_list(p1->script_list, p2->script_list);
+	}
+}
+
+static void fill_ctdb_event_reply_script_list(
+				TALLOC_CTX *mem_ctx,
+				struct ctdb_event_reply_script_list *p)
+{
+	p->script_list = talloc(mem_ctx, struct ctdb_script_list);
+	assert(p->script_list != NULL);
+
+	fill_ctdb_script_list(mem_ctx, p->script_list);
+}
+
+static void verify_ctdb_event_reply_script_list(
+				struct ctdb_event_reply_script_list *p1,
+				struct ctdb_event_reply_script_list *p2)
+{
+	verify_ctdb_script_list(p1->script_list, p2->script_list);
+}
+
 #ifndef PROTOCOL_TEST
 
 static void fill_ctdb_election_message(TALLOC_CTX *mem_ctx,
@@ -1016,6 +1123,20 @@ static void verify_ctdb_g_lock_list(struct ctdb_g_lock_list *p1,
 /*
  * Functions to test marshalling routines
  */
+
+static void test_ctdb_int32(void)
+{
+	int32_t p1, p2;
+	size_t buflen;
+	int ret;
+
+	p1 = rand32i();
+	buflen = ctdb_int32_len(p1);
+	ctdb_int32_push(p1, BUFFER);
+	ret = ctdb_int32_pull(BUFFER, buflen, NULL, &p2);
+	assert(ret == 0);
+	assert(p1 == p2);
+}
 
 static void test_ctdb_uint32(void)
 {
@@ -1206,6 +1327,15 @@ DEFINE_TEST(struct ctdb_srvid_message, ctdb_srvid_message);
 DEFINE_TEST(struct ctdb_disable_message, ctdb_disable_message);
 DEFINE_TEST(struct ctdb_g_lock_list, ctdb_g_lock_list);
 
+DEFINE_TEST(struct ctdb_event_request_run, ctdb_event_request_run);
+DEFINE_TEST(struct ctdb_event_request_status, ctdb_event_request_status);
+DEFINE_TEST(struct ctdb_event_request_script_enable,
+				ctdb_event_request_script_enable);
+DEFINE_TEST(struct ctdb_event_request_script_disable,
+				ctdb_event_request_script_disable);
+DEFINE_TEST(struct ctdb_event_reply_status, ctdb_event_reply_status);
+DEFINE_TEST(struct ctdb_event_reply_script_list, ctdb_event_reply_script_list);
+
 static void test_ctdb_rec_buffer_read_write(void)
 {
 	TALLOC_CTX *mem_ctx = talloc_new(NULL);
@@ -1259,6 +1389,7 @@ int main(int argc, char *argv[])
 		srandom(seed);
 	}
 
+	test_ctdb_int32();
 	test_ctdb_uint32();
 	test_ctdb_uint64();
 	test_ctdb_double();
@@ -1311,6 +1442,13 @@ int main(int argc, char *argv[])
 	TEST_FUNC(ctdb_srvid_message)();
 	TEST_FUNC(ctdb_disable_message)();
 	TEST_FUNC(ctdb_g_lock_list)();
+
+	TEST_FUNC(ctdb_event_request_run)();
+	TEST_FUNC(ctdb_event_request_status)();
+	TEST_FUNC(ctdb_event_request_script_enable)();
+	TEST_FUNC(ctdb_event_request_script_disable)();
+	TEST_FUNC(ctdb_event_reply_status)();
+	TEST_FUNC(ctdb_event_reply_script_list)();
 
 	test_ctdb_rec_buffer_read_write();
 

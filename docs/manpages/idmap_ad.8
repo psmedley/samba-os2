@@ -2,12 +2,12 @@
 .\"     Title: idmap_ad
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 03/31/2017
+.\"      Date: 06/06/2017
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.5
+.\"    Source: Samba 4.6
 .\"  Language: English
 .\"
-.TH "IDMAP_AD" "8" "03/31/2017" "Samba 4\&.5" "System Administration tools"
+.TH "IDMAP_AD" "8" "06/06/2017" "Samba 4\&.6" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -50,7 +50,35 @@ Defines the available matching UID and GID range for which the backend is author
 .PP
 schema_mode = <rfc2307 | sfu | sfu20>
 .RS 4
-Defines the schema that idmap_ad should use when querying Active Directory regarding user and group information\&. This can be either the RFC2307 schema support included in Windows 2003 R2 or the Service for Unix (SFU) schema\&. For SFU 3\&.0 or 3\&.5 please choose "sfu", for SFU 2\&.0 please choose "sfu20"\&. Please note that primary group membership is currently always calculated via the "primaryGroupID" LDAP attribute\&.
+Defines the schema that idmap_ad should use when querying Active Directory regarding user and group information\&. This can be either the RFC2307 schema support included in Windows 2003 R2 or the Service for Unix (SFU) schema\&. For SFU 3\&.0 or 3\&.5 please choose "sfu", for SFU 2\&.0 please choose "sfu20"\&. Please note that the behavior of primary group membership is controlled by the
+\fIunix_primary_group\fR
+option\&.
+.RE
+.PP
+unix_primary_group = yes/no
+.RS 4
+Defines whether the user\*(Aqs primary group is fetched from the SFU attributes or the AD primary group\&. If set to
+\fIyes\fR
+the primary group membership is fetched from the LDAP attributes (gidNumber)\&. If set to
+\fIno\fR
+the primary group membership is calculated via the "primaryGroupID" LDAP attribute\&.
+.sp
+Default: no
+.RE
+.PP
+unix_nss_info = yes/no
+.RS 4
+If set to
+\fIyes\fR
+winbind will retrieve the login shell and home directory from the LDAP attributes\&. If set to
+\fIno\fR
+the or the AD LDAP entry lacks the SFU attributes the options
+\fItemplate shell\fR
+and
+\fItemplate homedir\fR
+are used\&.
+.sp
+Default: no
 .RE
 .SH "EXAMPLES"
 .PP

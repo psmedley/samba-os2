@@ -65,7 +65,7 @@ typedef struct _SMB_ACE4PROP_T {
 #define	SMB_ACE4_ACCESS_DENIED_ACE_TYPE	0x00000001
 #define	SMB_ACE4_SYSTEM_AUDIT_ACE_TYPE	0x00000002
 #define	SMB_ACE4_SYSTEM_ALARM_ACE_TYPE	0x00000003
-#define SMB_ACE4_MAX_TYPE	ACE4_SYSTEM_ALARM_ACE_TYPE  /* largest valid ACE4_TYPE */
+#define SMB_ACE4_MAX_TYPE	SMB_ACE4_SYSTEM_ALARM_ACE_TYPE  /* largest valid ACE4_TYPE */
 
 	uint32_t aceFlags;	/* Controls Inheritance and such */
 /*The bitmask constants used for the flag field are as follows: */
@@ -110,6 +110,19 @@ typedef struct _SMB_ACE4PROP_T {
 struct SMB4ACL_T;
 struct SMB4ACE_T;
 
+enum smbacl4_mode_enum {e_simple=0, e_special=1};
+enum smbacl4_acedup_enum {e_dontcare=0, e_reject=1, e_ignore=2, e_merge=3};
+
+struct smbacl4_vfs_params {
+	enum smbacl4_mode_enum mode;
+	bool do_chown;
+	enum smbacl4_acedup_enum acedup;
+	bool map_full_control;
+};
+
+int smbacl4_get_vfs_params(struct connection_struct *conn,
+			   struct smbacl4_vfs_params *params);
+
 struct SMB4ACL_T *smb_create_smb4acl(TALLOC_CTX *mem_ctx);
 
 /* prop's contents are copied */
@@ -131,12 +144,14 @@ uint16_t smbacl4_get_controlflags(struct SMB4ACL_T *theacl);
 bool smbacl4_set_controlflags(struct SMB4ACL_T *theacl, uint16_t controlflags);
 
 NTSTATUS smb_fget_nt_acl_nfs4(files_struct *fsp,
+	const struct smbacl4_vfs_params *pparams,
 	uint32_t security_info,
 	TALLOC_CTX *mem_ctx,
 	struct security_descriptor **ppdesc, struct SMB4ACL_T *theacl);
 
 NTSTATUS smb_get_nt_acl_nfs4(connection_struct *conn,
 	const struct smb_filename *smb_fname,
+	const struct smbacl4_vfs_params *pparams,
 	uint32_t security_info,
 	TALLOC_CTX *mem_ctx,
 	struct security_descriptor **ppdesc, struct SMB4ACL_T *theacl);
@@ -148,6 +163,7 @@ typedef bool (*set_nfs4acl_native_fn_t)(vfs_handle_struct *handle,
 					struct SMB4ACL_T *);
 
 NTSTATUS smb_set_nt_acl_nfs4(vfs_handle_struct *handle, files_struct *fsp,
+	const struct smbacl4_vfs_params *pparams,
 	uint32_t security_info_sent,
 	const struct security_descriptor *psd,
 	set_nfs4acl_native_fn_t set_nfs4_native);

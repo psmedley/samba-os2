@@ -118,17 +118,21 @@ bool strict_lock_default(files_struct *fsp, struct lock_struct *plock)
 	}
 
 	if (strict_locking == Auto) {
-		if  (EXCLUSIVE_OPLOCK_TYPE(fsp->oplock_type) &&
-		     (plock->lock_type == READ_LOCK ||
-		      plock->lock_type == WRITE_LOCK)) {
-			DEBUG(10, ("is_locked: optimisation - exclusive oplock "
-				   "on file %s\n", fsp_str_dbg(fsp)));
+		uint32_t lease_type = fsp_lease_type(fsp);
+
+		if ((lease_type & SMB2_LEASE_READ) &&
+		     (plock->lock_type == READ_LOCK))
+		{
+			DBG_DEBUG("optimisation - read lease on file %s\n",
+				  fsp_str_dbg(fsp));
 			return true;
 		}
-		if ((fsp->oplock_type == LEVEL_II_OPLOCK) &&
-		    (plock->lock_type == READ_LOCK)) {
-			DEBUG(10, ("is_locked: optimisation - level II oplock "
-				   "on file %s\n", fsp_str_dbg(fsp)));
+
+		if ((lease_type & SMB2_LEASE_WRITE) &&
+		     (plock->lock_type == WRITE_LOCK))
+		{
+			DBG_DEBUG("optimisation - write lease on file %s\n",
+				  fsp_str_dbg(fsp));
 			return true;
 		}
 	}
@@ -854,7 +858,7 @@ bool set_share_mode(struct share_mode_lock *lck, struct files_struct *fsp,
 	return true;
 }
 
-static struct share_mode_entry *find_share_mode_entry(
+struct share_mode_entry *find_share_mode_entry(
 	struct share_mode_lock *lck, files_struct *fsp)
 {
 	struct share_mode_data *d = lck->data;

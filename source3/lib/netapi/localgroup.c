@@ -162,7 +162,7 @@ WERROR NetLocalGroupAdd_r(struct libnetapi_ctx *ctx,
 	const char *alias_name = NULL;
 
 	if (!r->in.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	ZERO_STRUCT(connect_handle);
@@ -180,7 +180,7 @@ WERROR NetLocalGroupAdd_r(struct libnetapi_ctx *ctx,
 			alias_name = info1->lgrpi1_name;
 			break;
 		default:
-			werr = WERR_UNKNOWN_LEVEL;
+			werr = WERR_INVALID_LEVEL;
 			goto done;
 	}
 
@@ -310,7 +310,7 @@ WERROR NetLocalGroupDel_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b = NULL;
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	ZERO_STRUCT(connect_handle);
@@ -459,7 +459,7 @@ static WERROR map_alias_info_to_buffer(TALLOC_CTX *mem_ctx,
 
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	return WERR_OK;
@@ -481,7 +481,7 @@ WERROR NetLocalGroupGetInfo_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b = NULL;
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -490,7 +490,7 @@ WERROR NetLocalGroupGetInfo_r(struct libnetapi_ctx *ctx,
 		case 1002:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	ZERO_STRUCT(connect_handle);
@@ -660,7 +660,7 @@ WERROR NetLocalGroupSetInfo_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b = NULL;
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -669,7 +669,7 @@ WERROR NetLocalGroupSetInfo_r(struct libnetapi_ctx *ctx,
 		case 1002:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	ZERO_STRUCT(connect_handle);
@@ -804,7 +804,7 @@ WERROR NetLocalGroupEnum_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b = NULL;
 
 	if (!r->out.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -812,7 +812,7 @@ WERROR NetLocalGroupEnum_r(struct libnetapi_ctx *ctx,
 		case 1:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	if (r->out.total_entries) {
@@ -1085,7 +1085,7 @@ static WERROR NetLocalGroupModifyMembers_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b = NULL;
 
 	if ((!add && !del && !set) || (add && del && set)) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (add) {
@@ -1101,7 +1101,7 @@ static WERROR NetLocalGroupModifyMembers_r(struct libnetapi_ctx *ctx,
 	}
 
 	if (!r->in.group_name) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -1109,11 +1109,11 @@ static WERROR NetLocalGroupModifyMembers_r(struct libnetapi_ctx *ctx,
 		case 3:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	if (r->in.total_entries == 0 || !r->in.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	ZERO_STRUCT(connect_handle);

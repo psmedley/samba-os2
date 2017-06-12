@@ -45,12 +45,6 @@ struct ctdb_registered_call {
  */
 #define ctdb_validate_pnn(ctdb, pnn) (((uint32_t)(pnn)) < (ctdb)->num_nodes)
 
-
-/* called from the queue code when a packet comes in. Called with data==NULL
-   on error */
-typedef void (*ctdb_queue_cb_fn_t)(uint8_t *data, size_t length,
-				   void *private_data);
-
 /* used for callbacks in ctdb_control requests */
 typedef void (*ctdb_control_callback_fn_t)(struct ctdb_context *,
 					   int32_t status, TDB_DATA data, 
@@ -248,10 +242,10 @@ struct ctdb_daemon_data {
 
 
 struct ctdb_cluster_mutex_handle;
+struct eventd_context;
 
 enum ctdb_freeze_mode {CTDB_FREEZE_NONE, CTDB_FREEZE_PENDING, CTDB_FREEZE_FROZEN};
 
-#define NUM_DB_PRIORITIES 3
 /* main state of the ctdb daemon */
 struct ctdb_context {
 	struct tevent_context *ev;
@@ -318,11 +312,7 @@ struct ctdb_context {
 	TALLOC_CTX *recd_ctx; /* a context used to track recoverd monitoring events */
 	TALLOC_CTX *release_ips_ctx; /* a context used to automatically drop all IPs if we fail to recover the node */
 
-	TALLOC_CTX *event_script_ctx;
-	int active_events;
-
-	struct ctdb_event_script_state *current_monitor;
-	struct ctdb_script_list_old *last_status[CTDB_EVENT_MAX];
+	struct eventd_context *ectx;
 
 	TALLOC_CTX *banning_ctx;
 
@@ -336,9 +326,6 @@ struct ctdb_context {
 
 	/* if we are a child process, do we have a domain socket to send controls on */
 	bool can_send_controls;
-
-	/* list of event script callback functions that are active */
-	struct event_script_callback *script_callbacks;
 
 	struct ctdb_reloadips_handle *reload_ips;
 
@@ -600,17 +587,16 @@ int ctdb_control_getnodesfile(struct ctdb_context *ctdb, uint32_t opcode,
 
 void ctdb_shutdown_sequence(struct ctdb_context *ctdb, int exit_code);
 
-int switch_from_server_to_client(struct ctdb_context *ctdb,
-				 const char *fmt, ...) PRINTF_ATTRIBUTE(2,3);
+int switch_from_server_to_client(struct ctdb_context *ctdb);
 
 /* From server/ctdb_fork.c */
-
-void ctdb_set_child_info(TALLOC_CTX *mem_ctx, const char *child_name_fmt,
-			 ...) PRINTF_ATTRIBUTE(2,3);
 
 void ctdb_track_child(struct ctdb_context *ctdb, pid_t pid);
 
 pid_t ctdb_fork(struct ctdb_context *ctdb);
+pid_t ctdb_vfork_exec(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
+		      const char *helper, int helper_argc,
+		      const char **helper_argv);
 
 struct tevent_signal *ctdb_init_sigchld(struct ctdb_context *ctdb);
 
@@ -675,15 +661,8 @@ struct lock_request *ctdb_lock_db(TALLOC_CTX *mem_ctx,
 
 /* from ctdb_logging.c */
 
-extern const char *debug_extra;
-
-typedef int (*ctdb_log_setup_fn_t)(TALLOC_CTX *mem_ctx,
-				   const char *logging,
-				   const char *app_name);
-
-void ctdb_log_register_backend(const char *prefix, ctdb_log_setup_fn_t init);
-
-bool ctdb_logging_init(TALLOC_CTX *mem_ctx, const char *logging);
+bool ctdb_logging_init(TALLOC_CTX *mem_ctx, const char *logging,
+		       const char *debug_level);
 
 struct ctdb_log_state *ctdb_vfork_with_logging(TALLOC_CTX *mem_ctx,
 					       struct ctdb_context *ctdb,
@@ -696,7 +675,6 @@ struct ctdb_log_state *ctdb_vfork_with_logging(TALLOC_CTX *mem_ctx,
 					       void *logfn_private, pid_t *pid);
 
 int ctdb_set_child_logging(struct ctdb_context *ctdb);
-int ctdb_init_tevent_logging(struct ctdb_context *ctdb);
 
 /* from ctdb_logging_file.c */
 
@@ -909,9 +887,6 @@ int32_t ctdb_control_ipreallocated(struct ctdb_context *ctdb,
 
 int ctdb_set_public_addresses(struct ctdb_context *ctdb, bool check_addresses);
 
-int ctdb_takeover_run(struct ctdb_context *ctdb, struct ctdb_node_map_old *nodemap,
-		      uint32_t *force_rebalance_nodes);
-
 int32_t ctdb_control_tcp_client(struct ctdb_context *ctdb, uint32_t client_id,
 				TDB_DATA indata);
 int32_t ctdb_control_tcp_add(struct ctdb_context *ctdb, TDB_DATA indata,
@@ -1011,9 +986,8 @@ void ctdb_local_remove_from_delete_queue(struct ctdb_db_context *ctdb_db,
 
 /* from eventscript.c */
 
-int32_t ctdb_control_get_event_script_status(struct ctdb_context *ctdb,
-					     uint32_t call_type,
-					     TDB_DATA *outdata);
+int ctdb_start_eventd(struct ctdb_context *ctdb);
+void ctdb_stop_eventd(struct ctdb_context *ctdb);
 
 int ctdb_event_script_callback(struct ctdb_context *ctdb,
 			       TALLOC_CTX *mem_ctx,
@@ -1029,12 +1003,5 @@ int ctdb_event_script_args(struct ctdb_context *ctdb,
 
 int ctdb_event_script(struct ctdb_context *ctdb,
 		      enum ctdb_event call);
-
-int32_t ctdb_run_eventscripts(struct ctdb_context *ctdb,
-			      struct ctdb_req_control_old *c,
-			      TDB_DATA data, bool *async_reply);
-
-int32_t ctdb_control_enable_script(struct ctdb_context *ctdb, TDB_DATA indata);
-int32_t ctdb_control_disable_script(struct ctdb_context *ctdb, TDB_DATA indata);
 
 #endif

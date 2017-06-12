@@ -6,9 +6,9 @@ usr/bin/smbclient
 usr/bin/smbcquotas
 usr/bin/smbget
 usr/bin/smbspool
-usr/lib/*/samba/smbspool_krb5_wrapper
 usr/bin/smbtar
 usr/bin/smbtree
+usr/lib/*/samba/smbspool_krb5_wrapper
 usr/share/man/man1/findsmb.1
 usr/share/man/man1/rpcclient.1
 usr/share/man/man1/smbcacls.1

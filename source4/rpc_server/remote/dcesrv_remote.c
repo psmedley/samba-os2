@@ -51,6 +51,7 @@ static NTSTATUS remote_op_bind(struct dcesrv_call_state *dce_call, const struct 
 	bool machine_account;
 	struct dcerpc_binding		*b;
 	struct composite_context	*pipe_conn_req;
+	uint32_t flags = 0;
 
 	machine_account = lpcfg_parm_bool(dce_call->conn->dce_ctx->lp_ctx, NULL, "dcerpc_remote", "use_machine_account", false);
 
@@ -73,7 +74,7 @@ static NTSTATUS remote_op_bind(struct dcesrv_call_state *dce_call, const struct 
 
 	table = ndr_table_by_syntax(&iface->syntax_id);
 	if (!table) {
-		dce_call->fault_code = DCERPC_FAULT_UNK_IF;
+		dce_call->fault_code = DCERPC_NCA_S_UNKNOWN_IF;
 		return NT_STATUS_NET_WRITE_FAULT;
 	}
 
@@ -134,6 +135,15 @@ static NTSTATUS remote_op_bind(struct dcesrv_call_state *dce_call, const struct 
 		return status;
 	}
 
+	if (dce_call->pkt.pfc_flags & DCERPC_PFC_FLAG_CONC_MPX) {
+		status = dcerpc_binding_set_flags(b, DCERPC_CONCURRENT_MULTIPLEX, 0);
+		if (!NT_STATUS_IS_OK(status)) {
+			DEBUG(0, ("dcerpc_binding_set_flags(CONC_MPX) - %s'\n",
+				  nt_errstr(status)));
+			return status;
+		}
+	}
+
 	DEBUG(3, ("Using binding %s\n", dcerpc_binding_string(dce_call->context, b)));
 
 	pipe_conn_req = dcerpc_pipe_connect_b_send(dce_call->context, b, table,
@@ -146,6 +156,11 @@ static NTSTATUS remote_op_bind(struct dcesrv_call_state *dce_call, const struct 
 
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
+	}
+
+	flags = dcerpc_binding_get_flags(priv->c_pipe->binding);
+	if (!(flags & DCERPC_CONCURRENT_MULTIPLEX)) {
+		dce_call->state_flags &= ~DCESRV_CALL_STATE_FLAG_MULTIPLEXED;
 	}
 
 	if (dce_call->conn->assoc_group->proxied_id == 0) {
@@ -359,6 +374,7 @@ static bool remote_fill_interface(struct dcesrv_interface *iface, const struct n
 	iface->ndr_push = remote_op_ndr_push;
 
 	iface->private_data = if_tabl;
+	iface->flags = 0;
 
 	return true;
 }
@@ -390,18 +406,16 @@ static bool remote_op_interface_by_name(struct dcesrv_interface *iface, const ch
 NTSTATUS dcerpc_server_remote_init(void)
 {
 	NTSTATUS ret;
-	struct dcesrv_endpoint_server ep_server;
+	static const struct dcesrv_endpoint_server ep_server = {
+		/* fill in our name */
+		.name = "remote",
 
-	ZERO_STRUCT(ep_server);
+		/* fill in all the operations */
+		.init_server = remote_op_init_server,
 
-	/* fill in our name */
-	ep_server.name = "remote";
-
-	/* fill in all the operations */
-	ep_server.init_server = remote_op_init_server;
-
-	ep_server.interface_by_uuid = remote_op_interface_by_uuid;
-	ep_server.interface_by_name = remote_op_interface_by_name;
+		.interface_by_uuid = remote_op_interface_by_uuid,
+		.interface_by_name = remote_op_interface_by_name
+	};
 
 	/* register ourselves with the DCERPC subsystem. */
 	ret = dcerpc_register_ep_server(&ep_server);

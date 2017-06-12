@@ -32,13 +32,13 @@
 #include "lib/util/dlinklist.h"
 #include "lib/util/debug.h"
 #include "lib/util/samba_util.h"
+#include "lib/util/sys_rw.h"
 #include "lib/util/util_process.h"
 
 #include "ctdb_private.h"
 #include "ctdb_client.h"
 
 #include "common/system.h"
-#include "common/cmdline.h"
 #include "common/common.h"
 #include "common/logging.h"
 
@@ -385,21 +385,13 @@ static int update_capabilities(struct ctdb_recoverd *rec,
 	return 0;
 }
 
-static void set_recmode_fail_callback(struct ctdb_context *ctdb, uint32_t node_pnn, int32_t res, TDB_DATA outdata, void *callback_data)
-{
-	struct ctdb_recoverd *rec = talloc_get_type(callback_data, struct ctdb_recoverd);
-
-	DEBUG(DEBUG_ERR,("Failed to freeze node %u during recovery. Set it as ban culprit for %d credits\n", node_pnn, rec->nodemap->num));
-	ctdb_set_culprit_count(rec, node_pnn, rec->nodemap->num);
-}
-
 /*
   change recovery mode on all nodes
  */
 static int set_recovery_mode(struct ctdb_context *ctdb,
 			     struct ctdb_recoverd *rec,
 			     struct ctdb_node_map_old *nodemap,
-			     uint32_t rec_mode, bool freeze)
+			     uint32_t rec_mode)
 {
 	TDB_DATA data;
 	uint32_t *nodes;
@@ -422,25 +414,6 @@ static int set_recovery_mode(struct ctdb_context *ctdb,
 		DEBUG(DEBUG_ERR, (__location__ " Unable to set recovery mode. Recovery failed.\n"));
 		talloc_free(tmp_ctx);
 		return -1;
-	}
-
-	/* freeze all nodes */
-	if (freeze && rec_mode == CTDB_RECOVERY_ACTIVE) {
-		int i;
-
-		for (i=1; i<=NUM_DB_PRIORITIES; i++) {
-			if (ctdb_client_async_control(ctdb, CTDB_CONTROL_FREEZE,
-						nodes, i,
-						CONTROL_TIMEOUT(),
-						false, tdb_null,
-						NULL,
-						set_recmode_fail_callback,
-						rec) != 0) {
-				DEBUG(DEBUG_ERR, (__location__ " Unable to freeze nodes. Recovery failed.\n"));
-				talloc_free(tmp_ctx);
-				return -1;
-			}
-		}
 	}
 
 	talloc_free(tmp_ctx);
@@ -1022,6 +995,153 @@ static void ban_misbehaving_nodes(struct ctdb_recoverd *rec, bool *self_ban)
 	}
 }
 
+struct helper_state {
+	int fd[2];
+	pid_t pid;
+	int result;
+	bool done;
+};
+
+static void helper_handler(struct tevent_context *ev,
+			   struct tevent_fd *fde,
+			   uint16_t flags, void *private_data)
+{
+	struct helper_state *state = talloc_get_type_abort(
+		private_data, struct helper_state);
+	int ret;
+
+	ret = sys_read(state->fd[0], &state->result, sizeof(state->result));
+	if (ret != sizeof(state->result)) {
+		state->result = EPIPE;
+	}
+
+	state->done = true;
+}
+
+static int helper_run(struct ctdb_recoverd *rec, TALLOC_CTX *mem_ctx,
+		      const char *prog, const char *arg, const char *type)
+{
+	struct helper_state *state;
+	struct tevent_fd *fde;
+	const char **args;
+	int nargs, ret;
+
+	state = talloc_zero(mem_ctx, struct helper_state);
+	if (state == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " memory error\n"));
+		return -1;
+	}
+
+	state->pid = -1;
+
+	ret = pipe(state->fd);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("Failed to create pipe for %s helper\n", type));
+		goto fail;
+	}
+
+	set_close_on_exec(state->fd[0]);
+
+	nargs = 4;
+	args = talloc_array(state, const char *, nargs);
+	if (args == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " memory error\n"));
+		goto fail;
+	}
+
+	args[0] = talloc_asprintf(args, "%d", state->fd[1]);
+	if (args[0] == NULL) {
+		DEBUG(DEBUG_ERR, (__location__ " memory error\n"));
+		goto fail;
+	}
+	args[1] = rec->ctdb->daemon.name;
+	args[2] = arg;
+	args[3] = NULL;
+
+	if (args[2] == NULL) {
+		nargs = 3;
+	}
+
+	state->pid = ctdb_vfork_exec(state, rec->ctdb, prog, nargs, args);
+	if (state->pid == -1) {
+		DEBUG(DEBUG_ERR,
+		      ("Failed to create child for %s helper\n", type));
+		goto fail;
+	}
+
+	close(state->fd[1]);
+	state->fd[1] = -1;
+
+	state->done = false;
+
+	fde = tevent_add_fd(rec->ctdb->ev, rec->ctdb, state->fd[0],
+			    TEVENT_FD_READ, helper_handler, state);
+	if (fde == NULL) {
+		goto fail;
+	}
+	tevent_fd_set_auto_close(fde);
+
+	while (!state->done) {
+		tevent_loop_once(rec->ctdb->ev);
+	}
+
+	close(state->fd[0]);
+	state->fd[0] = -1;
+
+	if (state->result != 0) {
+		goto fail;
+	}
+
+	ctdb_kill(rec->ctdb, state->pid, SIGKILL);
+	talloc_free(state);
+	return 0;
+
+fail:
+	if (state->fd[0] != -1) {
+		close(state->fd[0]);
+	}
+	if (state->fd[1] != -1) {
+		close(state->fd[1]);
+	}
+	if (state->pid != -1) {
+		ctdb_kill(rec->ctdb, state->pid, SIGKILL);
+	}
+	talloc_free(state);
+	return -1;
+}
+
+
+static int ctdb_takeover(struct ctdb_recoverd *rec,
+			 uint32_t *force_rebalance_nodes)
+{
+	static char prog[PATH_MAX+1] = "";
+	char *arg;
+	int i;
+
+	if (!ctdb_set_helper("takeover_helper", prog, sizeof(prog),
+			     "CTDB_TAKEOVER_HELPER", CTDB_HELPER_BINDIR,
+			     "ctdb_takeover_helper")) {
+		ctdb_die(rec->ctdb, "Unable to set takeover helper\n");
+	}
+
+	arg = NULL;
+	for (i = 0; i < talloc_array_length(force_rebalance_nodes); i++) {
+		uint32_t pnn = force_rebalance_nodes[i];
+		if (arg == NULL) {
+			arg = talloc_asprintf(rec, "%u", pnn);
+		} else {
+			arg = talloc_asprintf_append(arg, ",%u", pnn);
+		}
+		if (arg == NULL) {
+			DEBUG(DEBUG_ERR, (__location__ " memory error\n"));
+			return -1;
+		}
+	}
+
+	return helper_run(rec, rec, prog, arg, "takeover");
+}
+
 static bool do_takeover_run(struct ctdb_recoverd *rec,
 			    struct ctdb_node_map_old *nodemap)
 {
@@ -1075,8 +1195,7 @@ static bool do_takeover_run(struct ctdb_recoverd *rec,
 		}
 	}
 
-	ret = ctdb_takeover_run(rec->ctdb, nodemap,
-				rec->force_rebalance_nodes);
+	ret = ctdb_takeover(rec, rec->force_rebalance_nodes);
 
 	/* Reenable takeover runs and IP checks on other nodes */
 	dtr.timeout = 0;
@@ -1111,37 +1230,10 @@ done:
 	return ok;
 }
 
-struct recovery_helper_state {
-	int fd[2];
-	pid_t pid;
-	int result;
-	bool done;
-};
-
-static void ctdb_recovery_handler(struct tevent_context *ev,
-				  struct tevent_fd *fde,
-				  uint16_t flags, void *private_data)
-{
-	struct recovery_helper_state *state = talloc_get_type_abort(
-		private_data, struct recovery_helper_state);
-	int ret;
-
-	ret = sys_read(state->fd[0], &state->result, sizeof(state->result));
-	if (ret != sizeof(state->result)) {
-		state->result = EPIPE;
-	}
-
-	state->done = true;
-}
-
-
 static int db_recovery_parallel(struct ctdb_recoverd *rec, TALLOC_CTX *mem_ctx)
 {
 	static char prog[PATH_MAX+1] = "";
-	const char **args;
-	struct recovery_helper_state *state;
-	struct tevent_fd *fde;
-	int nargs, ret;
+	const char *arg;
 
 	if (!ctdb_set_helper("recovery_helper", prog, sizeof(prog),
 			     "CTDB_RECOVERY_HELPER", CTDB_HELPER_BINDIR,
@@ -1149,88 +1241,15 @@ static int db_recovery_parallel(struct ctdb_recoverd *rec, TALLOC_CTX *mem_ctx)
 		ctdb_die(rec->ctdb, "Unable to set recovery helper\n");
 	}
 
-	state = talloc_zero(mem_ctx, struct recovery_helper_state);
-	if (state == NULL) {
+	arg = talloc_asprintf(mem_ctx, "%u", new_generation());
+	if (arg == NULL) {
 		DEBUG(DEBUG_ERR, (__location__ " memory error\n"));
 		return -1;
 	}
 
-	state->pid = -1;
-
-	ret = pipe(state->fd);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Failed to create pipe for recovery helper\n"));
-		goto fail;
-	}
-
-	set_close_on_exec(state->fd[0]);
-
-	nargs = 4;
-	args = talloc_array(state, const char *, nargs);
-	if (args == NULL) {
-		DEBUG(DEBUG_ERR, (__location__ " memory error\n"));
-		goto fail;
-	}
-
-	args[0] = talloc_asprintf(args, "%d", state->fd[1]);
-	args[1] = rec->ctdb->daemon.name;
-	args[2] = talloc_asprintf(args, "%u", new_generation());
-	args[3] = NULL;
-
-	if (args[0] == NULL || args[2] == NULL) {
-		DEBUG(DEBUG_ERR, (__location__ " memory error\n"));
-		goto fail;
-	}
-
 	setenv("CTDB_DBDIR_STATE", rec->ctdb->db_directory_state, 1);
 
-	if (!ctdb_vfork_with_logging(state, rec->ctdb, "recovery", prog, nargs,
-				     args, NULL, NULL, &state->pid)) {
-		DEBUG(DEBUG_ERR,
-		      ("Failed to create child for recovery helper\n"));
-		goto fail;
-	}
-
-	close(state->fd[1]);
-	state->fd[1] = -1;
-
-	state->done = false;
-
-	fde = tevent_add_fd(rec->ctdb->ev, rec->ctdb, state->fd[0],
-			    TEVENT_FD_READ, ctdb_recovery_handler, state);
-	if (fde == NULL) {
-		goto fail;
-	}
-	tevent_fd_set_auto_close(fde);
-
-	while (!state->done) {
-		tevent_loop_once(rec->ctdb->ev);
-	}
-
-	close(state->fd[0]);
-	state->fd[0] = -1;
-
-	if (state->result != 0) {
-		goto fail;
-	}
-
-	ctdb_kill(rec->ctdb, state->pid, SIGKILL);
-	talloc_free(state);
-	return 0;
-
-fail:
-	if (state->fd[0] != -1) {
-		close(state->fd[0]);
-	}
-	if (state->fd[1] != -1) {
-		close(state->fd[1]);
-	}
-	if (state->pid != -1) {
-		ctdb_kill(rec->ctdb, state->pid, SIGKILL);
-	}
-	talloc_free(state);
-	return -1;
+	return helper_run(rec, mem_ctx, prog, arg, "recovery");
 }
 
 /*
@@ -1901,7 +1920,7 @@ static void force_election(struct ctdb_recoverd *rec, uint32_t pnn,
 	DEBUG(DEBUG_INFO,(__location__ " Force an election\n"));
 
 	/* set all nodes to recovery mode to stop all internode traffic */
-	ret = set_recovery_mode(ctdb, rec, nodemap, CTDB_RECOVERY_ACTIVE, false);
+	ret = set_recovery_mode(ctdb, rec, nodemap, CTDB_RECOVERY_ACTIVE);
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR, (__location__ " Unable to set recovery mode to active on cluster\n"));
 		return;
@@ -2360,16 +2379,9 @@ static int verify_local_ip_allocation(struct ctdb_context *ctdb,
 		} else {
 			if (ctdb_sys_have_ip(&ips->ips[j].addr)) {
 				DEBUG(DEBUG_ERR,
-				      ("IP %s incorrectly on an interface - releasing\n",
+				      ("IP %s incorrectly on an interface\n",
 				       ctdb_addr_to_str(&ips->ips[j].addr)));
-				ret = ctdb_ctrl_release_ip(ctdb,
-							   CONTROL_TIMEOUT(),
-							   CTDB_CURRENT_NODE,
-							   &ips->ips[j]);
-				if (ret != 0) {
-					DEBUG(DEBUG_ERR,
-					      ("Failed to release IP address\n"));
-				}
+				need_takeover_run = true;
 			}
 		}
 	}
@@ -2970,6 +2982,7 @@ static void recd_sig_term_handler(struct tevent_context *ev,
 	struct ctdb_recoverd *rec = talloc_get_type_abort(
 		private_data, struct ctdb_recoverd);
 
+	DEBUG(DEBUG_ERR, ("Received SIGTERM, exiting\n"));
 	ctdb_recovery_unlock(rec);
 	exit(0);
 }
@@ -3144,6 +3157,7 @@ int ctdb_start_recoverd(struct ctdb_context *ctdb)
 	int fd[2];
 	struct tevent_signal *se;
 	struct tevent_fd *fde;
+	int ret;
 
 	if (pipe(fd) != 0) {
 		return -1;
@@ -3170,8 +3184,13 @@ int ctdb_start_recoverd(struct ctdb_context *ctdb)
 
 	srandom(getpid() ^ time(NULL));
 
+	ret = logging_init(ctdb, NULL, NULL, "ctdb-recoverd");
+	if (ret != 0) {
+		return -1;
+	}
+
 	prctl_set_comment("ctdb_recovered");
-	if (switch_from_server_to_client(ctdb, "recoverd") != 0) {
+	if (switch_from_server_to_client(ctdb) != 0) {
 		DEBUG(DEBUG_CRIT, (__location__ "ERROR: failed to switch recovery daemon into client mode. shutting down.\n"));
 		exit(1);
 	}

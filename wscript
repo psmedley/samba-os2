@@ -100,6 +100,8 @@ def configure(conf):
     conf.env.replace_add_global_pthread = True
     conf.RECURSE('lib/replace')
 
+    conf.RECURSE('examples/fuse')
+
     conf.SAMBA_CHECK_PERL(mandatory=True)
     conf.find_program('xsltproc', var='XSLTPROC')
 
@@ -186,6 +188,7 @@ def configure(conf):
     if conf.env.with_ctdb:
         conf.RECURSE('ctdb')
     conf.RECURSE('lib/socket')
+    conf.RECURSE('testsuite/unittests')
 
     conf.SAMBA_CHECK_UNDEFINED_SYMBOL_FLAGS()
 
@@ -306,7 +309,7 @@ def dist():
     '''makes a tarball for distribution'''
     sambaversion = samba_version.load_version(env=None)
 
-    os.system("make -C ctdb/doc")
+    os.system("make -C ctdb manpages")
     samba_dist.DIST_FILES('ctdb/doc:ctdb/doc', extend=True)
 
     os.system(srcdir + "/release-scripts/build-manpages-nogit")

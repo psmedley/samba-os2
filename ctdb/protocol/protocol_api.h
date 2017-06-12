@@ -204,10 +204,10 @@ int ctdb_reply_control_setvnnmap(struct ctdb_reply_control *reply);
 
 void ctdb_req_control_get_debug(struct ctdb_req_control *request);
 int ctdb_reply_control_get_debug(struct ctdb_reply_control *reply,
-				 uint32_t *debug_level);
+				 int *debug_level);
 
 void ctdb_req_control_set_debug(struct ctdb_req_control *request,
-				uint32_t debug_level);
+				int debug_level);
 int ctdb_reply_control_set_debug(struct ctdb_reply_control *reply);
 
 void ctdb_req_control_get_dbmap(struct ctdb_req_control *request);
@@ -397,10 +397,6 @@ void ctdb_req_control_del_public_ip(struct ctdb_req_control *request,
 				    struct ctdb_addr_info *addr_info);
 int ctdb_reply_control_del_public_ip(struct ctdb_reply_control *reply);
 
-void ctdb_req_control_run_eventscripts(struct ctdb_req_control *request,
-				       const char *event_str);
-int ctdb_reply_control_run_eventscripts(struct ctdb_reply_control *reply);
-
 void ctdb_req_control_get_capabilities(struct ctdb_req_control *request);
 int ctdb_reply_control_get_capabilities(struct ctdb_reply_control *reply,
 					uint32_t *caps);
@@ -416,7 +412,8 @@ void ctdb_req_control_takeover_ip(struct ctdb_req_control *request,
 				  struct ctdb_public_ip *pubip);
 int ctdb_reply_control_takeover_ip(struct ctdb_reply_control *reply);
 
-void ctdb_req_control_get_public_ips(struct ctdb_req_control *request);
+void ctdb_req_control_get_public_ips(struct ctdb_req_control *request,
+				     bool available_only);
 int ctdb_reply_control_get_public_ips(struct ctdb_reply_control *reply,
 				      TALLOC_CTX *mem_ctx,
 				      struct ctdb_public_ip_list **pubip_list);
@@ -425,12 +422,6 @@ void ctdb_req_control_get_nodemap(struct ctdb_req_control *request);
 int ctdb_reply_control_get_nodemap(struct ctdb_reply_control *reply,
 				   TALLOC_CTX *mem_ctx,
 				   struct ctdb_node_map **nodemap);
-
-void ctdb_req_control_get_event_script_status(struct ctdb_req_control *request,
-					      uint32_t event);
-int ctdb_reply_control_get_event_script_status(struct ctdb_reply_control *reply,
-					       TALLOC_CTX *mem_ctx,
-					       struct ctdb_script_list **script_list);
 
 void ctdb_req_control_traverse_kill(struct ctdb_req_control *request,
 				    struct ctdb_traverse_start *traverse);
@@ -458,14 +449,6 @@ int ctdb_reply_control_set_lmasterrole(struct ctdb_reply_control *reply);
 void ctdb_req_control_set_recmasterrole(struct ctdb_req_control *request,
 					uint32_t recmaster_role);
 int ctdb_reply_control_set_recmasterrole(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_enable_script(struct ctdb_req_control *request,
-				    const char *script);
-int ctdb_reply_control_enable_script(struct ctdb_reply_control *reply);
-
-void ctdb_req_control_disable_script(struct ctdb_req_control *request,
-				     const char *script);
-int ctdb_reply_control_disable_script(struct ctdb_reply_control *reply);
 
 void ctdb_req_control_set_ban_state(struct ctdb_req_control *request,
 				    struct ctdb_ban_state *ban_state);
@@ -643,6 +626,28 @@ int ctdb_req_message_data_pull(uint8_t *buf, size_t buflen,
 			       struct ctdb_req_header *h,
 			       TALLOC_CTX *mem_ctx,
 			       struct ctdb_req_message_data *c);
+
+/* From protocol/protocol_event.c */
+
+void ctdb_event_header_fill(struct ctdb_event_header *h, uint32_t reqid);
+
+size_t ctdb_event_request_len(struct ctdb_event_request *in);
+
+int ctdb_event_request_push(struct ctdb_event_request *in,
+			    uint8_t *buf, size_t *buflen);
+
+int ctdb_event_request_pull(uint8_t *buf, size_t buflen,
+			    TALLOC_CTX *mem_ctx,
+			    struct ctdb_event_request *out);
+
+size_t ctdb_event_reply_len(struct ctdb_event_reply *in);
+
+int ctdb_event_reply_push(struct ctdb_event_reply *in,
+			  uint8_t *buf, size_t *buflen);
+
+int ctdb_event_reply_pull(uint8_t *buf, size_t buflen,
+			  TALLOC_CTX *mem_ctx,
+			  struct ctdb_event_reply *out);
 
 /* From protocol/protocol_packet.c */
 

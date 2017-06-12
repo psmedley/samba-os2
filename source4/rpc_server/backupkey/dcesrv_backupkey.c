@@ -537,7 +537,7 @@ static WERROR bkrp_client_wrap_decrypt_data(struct dcesrv_call_state *dce_call,
 	blob.length = r->in.data_in_len;
 
 	if (r->in.data_in_len < 4 || r->in.data_in == NULL) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	/*
@@ -554,7 +554,7 @@ static WERROR bkrp_client_wrap_decrypt_data(struct dcesrv_call_state *dce_call,
 	ndr_err = ndr_pull_struct_blob(&blob, mem_ctx, &uncrypt_request,
 				       (ndr_pull_flags_fn_t)ndr_pull_bkrp_client_side_wrapped);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if ((uncrypt_request.version != BACKUPKEY_CLIENT_WRAP_VERSION2)
@@ -565,14 +565,14 @@ static WERROR bkrp_client_wrap_decrypt_data(struct dcesrv_call_state *dce_call,
 
 	guid_string = GUID_string(mem_ctx, &uncrypt_request.guid);
 	if (guid_string == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	cert_secret_name = talloc_asprintf(mem_ctx,
 					   "BCKUPKEY_%s",
 					   guid_string);
 	if (cert_secret_name == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	status = get_lsa_secret(mem_ctx,
@@ -612,7 +612,7 @@ static WERROR bkrp_client_wrap_decrypt_data(struct dcesrv_call_state *dce_call,
 						    uncrypt_request.encrypted_secret_len);
 		if (reversed_secret.data == NULL) {
 			gnutls_privkey_deinit(privkey);
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		/* The secret has to be reversed ... */
@@ -840,13 +840,13 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 				       guidblob->data,
 				       guidblob->length);
 	if (unique_id.data == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	reversed = talloc_array(mem_ctx, uint8_t, guidblob->length);
 	if (reversed == NULL) {
 		talloc_free(unique_id.data);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/* Native AD generates certificates with serialnumber in reversed notation */
@@ -862,7 +862,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 	if (rc != GNUTLS_E_SUCCESS) {
 		DBG_ERR("gnutls_x509_crt_init failed - %s\n",
 			gnutls_strerror(rc));
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	rc = gnutls_x509_crt_set_dn(issuer_cert, dn, &error_string);
@@ -871,7 +871,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 			gnutls_strerror(rc),
 			error_string);
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_x509_crt_set_issuer_dn(issuer_cert, dn, &error_string);
@@ -880,7 +880,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 			gnutls_strerror(rc),
 			error_string);
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	/* Get x509 privkey for subjectPublicKeyInfo */
@@ -889,7 +889,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 		DBG_ERR("gnutls_x509_privkey_init failed - %s\n",
 			gnutls_strerror(rc));
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_privkey_export_x509(issuer_privkey,
@@ -899,7 +899,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 			gnutls_strerror(rc));
 		gnutls_x509_privkey_deinit(x509_issuer_privkey);
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	/* Set subjectPublicKeyInfo */
@@ -909,7 +909,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 		DBG_ERR("gnutls_x509_crt_set_pubkey failed - %s\n",
 			gnutls_strerror(rc));
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_x509_crt_set_activation_time(issuer_cert, activation);
@@ -917,7 +917,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 		DBG_ERR("gnutls_x509_crt_set_activation_time failed - %s\n",
 			gnutls_strerror(rc));
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_x509_crt_set_expiration_time(issuer_cert, expiry);
@@ -925,7 +925,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 		DBG_ERR("gnutls_x509_crt_set_expiration_time failed - %s\n",
 			gnutls_strerror(rc));
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_x509_crt_set_version(issuer_cert, 3);
@@ -933,7 +933,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 		DBG_ERR("gnutls_x509_crt_set_version failed - %s\n",
 			gnutls_strerror(rc));
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_x509_crt_set_subject_unique_id(issuer_cert,
@@ -943,7 +943,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 		DBG_ERR("gnutls_x509_crt_set_subject_key_id failed - %s\n",
 			gnutls_strerror(rc));
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_x509_crt_set_issuer_unique_id(issuer_cert,
@@ -953,7 +953,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 		DBG_ERR("gnutls_x509_crt_set_issuer_unique_id failed - %s\n",
 			gnutls_strerror(rc));
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_x509_crt_set_serial(issuer_cert,
@@ -963,7 +963,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 		DBG_ERR("gnutls_x509_crt_set_serial failed - %s\n",
 			gnutls_strerror(rc));
 		gnutls_x509_crt_deinit(issuer_cert);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	rc = gnutls_x509_crt_privkey_sign(issuer_cert,
@@ -974,7 +974,7 @@ static WERROR self_sign_cert(TALLOC_CTX *mem_ctx,
 	if (rc != GNUTLS_E_SUCCESS) {
 		DBG_ERR("gnutls_x509_crt_privkey_sign failed - %s\n",
 			gnutls_strerror(rc));
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	*certificate = issuer_cert;
@@ -1043,7 +1043,7 @@ static WERROR generate_bkrp_cert(TALLOC_CTX *mem_ctx,
 	gnutls_free(cert_blob.data);
 	if (keypair.cert.data == NULL) {
 		gnutls_privkey_deinit(issuer_privkey);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	rc = gnutls_privkey_export_rsa_raw(issuer_privkey,
@@ -1271,7 +1271,7 @@ static WERROR generate_bkrp_server_wrap_key(TALLOC_CTX *ctx, struct ldb_context 
 	secret_name = talloc_asprintf(frame, "BCKUPKEY_%s", GUID_string(ctx, &guid));
 	if (secret_name == NULL) {
 		TALLOC_FREE(frame);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	status = set_lsa_secret(frame, ldb_ctx, secret_name, &blob_wrap_key);
@@ -1324,7 +1324,7 @@ static WERROR bkrp_do_retrieve_server_wrap_key(TALLOC_CTX *mem_ctx, struct ldb_c
 
 	secret_name = talloc_asprintf(mem_ctx, "BCKUPKEY_%s", guid_string);
 	if (secret_name == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	status = get_lsa_secret(mem_ctx, ldb_ctx, secret_name, &lsa_secret);
@@ -1406,17 +1406,17 @@ static WERROR bkrp_server_wrap_decrypt_data(struct dcesrv_call_state *dce_call, 
 	blob.length = r->in.data_in_len;
 
 	if (r->in.data_in_len == 0 || r->in.data_in == NULL) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	ndr_err = ndr_pull_struct_blob_all(&blob, mem_ctx, &decrypt_request,
 					   (ndr_pull_flags_fn_t)ndr_pull_bkrp_server_side_wrapped);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (decrypt_request.magic != BACKUPKEY_SERVER_WRAP_VERSION) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = bkrp_do_retrieve_server_wrap_key(mem_ctx, ldb_ctx, &server_key,
@@ -1459,7 +1459,7 @@ static WERROR bkrp_server_wrap_decrypt_data(struct dcesrv_call_state *dce_call, 
 	if (rc != GNUTLS_E_SUCCESS) {
 		DBG_ERR("gnutls_cipher_init failed - %s\n",
 			gnutls_strerror(rc));
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 	rc = gnutls_cipher_encrypt2(cipher_hnd,
 				    encrypted_blob.data,
@@ -1470,17 +1470,17 @@ static WERROR bkrp_server_wrap_decrypt_data(struct dcesrv_call_state *dce_call, 
 	if (rc != GNUTLS_E_SUCCESS) {
 		DBG_ERR("gnutls_cipher_encrypt2 failed - %s\n",
 			gnutls_strerror(rc));
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	ndr_err = ndr_pull_struct_blob_all(&encrypted_blob, mem_ctx, &rc4payload,
 					   (ndr_pull_flags_fn_t)ndr_pull_bkrp_rc4encryptedpayload);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (decrypt_request.payload_length != rc4payload.secret_data.length) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	dump_data_pw("r3: \n", rc4payload.r3, sizeof(rc4payload.r3));
@@ -1546,7 +1546,7 @@ static WERROR bkrp_generic_decrypt_data(struct dcesrv_call_state *dce_call, TALL
 					struct bkrp_BackupKey *r, struct ldb_context *ldb_ctx)
 {
 	if (r->in.data_in_len < 4 || r->in.data_in == NULL) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (IVAL(r->in.data_in, 0) == BACKUPKEY_SERVER_WRAP_VERSION) {
@@ -1592,7 +1592,7 @@ static WERROR bkrp_server_wrap_encrypt_data(struct dcesrv_call_state *dce_call, 
 	int rc;
 
 	if (r->in.data_in_len == 0 || r->in.data_in == NULL) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = bkrp_do_retrieve_default_server_wrap_key(mem_ctx,
@@ -1716,7 +1716,7 @@ static WERROR bkrp_server_wrap_encrypt_data(struct dcesrv_call_state *dce_call, 
 	if (rc != GNUTLS_E_SUCCESS) {
 		DBG_ERR("gnutls_cipher_init failed - %s\n",
 			gnutls_strerror(rc));
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 	rc = gnutls_cipher_encrypt2(cipher_hnd,
 				    encrypted_blob.data,
@@ -1727,7 +1727,7 @@ static WERROR bkrp_server_wrap_encrypt_data(struct dcesrv_call_state *dce_call, 
 	if (rc != GNUTLS_E_SUCCESS) {
 		DBG_ERR("gnutls_cipher_encrypt2 failed - %s\n",
 			gnutls_strerror(rc));
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	/* create server wrap structure */
@@ -1752,7 +1752,7 @@ static WERROR bkrp_server_wrap_encrypt_data(struct dcesrv_call_state *dce_call, 
 static WERROR dcesrv_bkrp_BackupKey(struct dcesrv_call_state *dce_call,
 				    TALLOC_CTX *mem_ctx, struct bkrp_BackupKey *r)
 {
-	WERROR error = WERR_INVALID_PARAM;
+	WERROR error = WERR_INVALID_PARAMETER;
 	struct ldb_context *ldb_ctx;
 	bool is_rodc;
 	const char *addr = "unknown";
@@ -1780,7 +1780,7 @@ static WERROR dcesrv_bkrp_BackupKey(struct dcesrv_call_state *dce_call,
 
 	if (samdb_rodc(ldb_ctx, &is_rodc) != LDB_SUCCESS) {
 		talloc_unlink(mem_ctx, ldb_ctx);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (!is_rodc) {

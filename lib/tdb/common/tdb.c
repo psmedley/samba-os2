@@ -129,16 +129,32 @@ tdb_off_t tdb_find_lock_hash(struct tdb_context *tdb, TDB_DATA key, uint32_t has
 
 static TDB_DATA _tdb_fetch(struct tdb_context *tdb, TDB_DATA key);
 
+struct tdb_update_hash_state {
+	const TDB_DATA *dbufs;
+	int num_dbufs;
+	tdb_len_t dbufs_len;
+};
+
 static int tdb_update_hash_cmp(TDB_DATA key, TDB_DATA data, void *private_data)
 {
-	TDB_DATA *dbuf = (TDB_DATA *)private_data;
+	struct tdb_update_hash_state *state = private_data;
+	unsigned char *dptr = data.dptr;
+	int i;
 
-	if (dbuf->dsize != data.dsize) {
+	if (state->dbufs_len != data.dsize) {
 		return -1;
 	}
-	if (memcmp(dbuf->dptr, data.dptr, data.dsize) != 0) {
-		return -1;
+
+	for (i=0; i<state->num_dbufs; i++) {
+		TDB_DATA dbuf = state->dbufs[i];
+		int ret;
+		ret = memcmp(dptr, dbuf.dptr, dbuf.dsize);
+		if (ret != 0) {
+			return -1;
+		}
+		dptr += dbuf.dsize;
 	}
+
 	return 0;
 }
 
@@ -146,10 +162,14 @@ static int tdb_update_hash_cmp(TDB_DATA key, TDB_DATA data, void *private_data)
    is <= the old data size and the key exists.
    on failure return -1.
 */
-static int tdb_update_hash(struct tdb_context *tdb, TDB_DATA key, uint32_t hash, TDB_DATA dbuf)
+static int tdb_update_hash(struct tdb_context *tdb, TDB_DATA key,
+			   uint32_t hash,
+			   const TDB_DATA *dbufs, int num_dbufs,
+			   tdb_len_t dbufs_len)
 {
 	struct tdb_record rec;
-	tdb_off_t rec_ptr;
+	tdb_off_t rec_ptr, ofs;
+	int i;
 
 	/* find entry */
 	if (!(rec_ptr = tdb_find(tdb, key, hash, &rec)))
@@ -157,26 +177,41 @@ static int tdb_update_hash(struct tdb_context *tdb, TDB_DATA key, uint32_t hash,
 
 	/* it could be an exact duplicate of what is there - this is
 	 * surprisingly common (eg. with a ldb re-index). */
-	if (rec.key_len == key.dsize &&
-	    rec.data_len == dbuf.dsize &&
-	    rec.full_hash == hash &&
-	    tdb_parse_record(tdb, key, tdb_update_hash_cmp, &dbuf) == 0) {
-		return 0;
+	if (rec.data_len == dbufs_len) {
+		struct tdb_update_hash_state state = {
+			.dbufs = dbufs, .num_dbufs = num_dbufs,
+			.dbufs_len = dbufs_len
+		};
+		int ret;
+
+		ret = tdb_parse_record(tdb, key, tdb_update_hash_cmp, &state);
+		if (ret == 0) {
+			return 0;
+		}
 	}
 
 	/* must be long enough key, data and tailer */
-	if (rec.rec_len < key.dsize + dbuf.dsize + sizeof(tdb_off_t)) {
+	if (rec.rec_len < key.dsize + dbufs_len + sizeof(tdb_off_t)) {
 		tdb->ecode = TDB_SUCCESS; /* Not really an error */
 		return -1;
 	}
 
-	if (tdb->methods->tdb_write(tdb, rec_ptr + sizeof(rec) + rec.key_len,
-		      dbuf.dptr, dbuf.dsize) == -1)
-		return -1;
+	ofs = rec_ptr + sizeof(rec) + rec.key_len;
 
-	if (dbuf.dsize != rec.data_len) {
+	for (i=0; i<num_dbufs; i++) {
+		TDB_DATA dbuf = dbufs[i];
+		int ret;
+
+		ret = tdb->methods->tdb_write(tdb, ofs, dbuf.dptr, dbuf.dsize);
+		if (ret == -1) {
+			return -1;
+		}
+		ofs += dbuf.dsize;
+	}
+
+	if (dbufs_len != rec.data_len) {
 		/* update size */
-		rec.data_len = dbuf.dsize;
+		rec.data_len = dbufs_len;
 		return tdb_rec_write(tdb, rec_ptr, &rec);
 	}
 
@@ -491,12 +526,33 @@ tdb_off_t tdb_find_dead(struct tdb_context *tdb, uint32_t hash,
 	return best_rec_ptr;
 }
 
-static int _tdb_store(struct tdb_context *tdb, TDB_DATA key,
-		       TDB_DATA dbuf, int flag, uint32_t hash)
+static int _tdb_storev(struct tdb_context *tdb, TDB_DATA key,
+		       const TDB_DATA *dbufs, int num_dbufs,
+		       int flag, uint32_t hash)
 {
 	struct tdb_record rec;
-	tdb_off_t rec_ptr;
+	tdb_off_t rec_ptr, ofs;
+	tdb_len_t rec_len, dbufs_len;
+	int i;
 	int ret = -1;
+
+	dbufs_len = 0;
+
+	for (i=0; i<num_dbufs; i++) {
+		size_t dsize = dbufs[i].dsize;
+
+		dbufs_len += dsize;
+		if (dbufs_len < dsize) {
+			tdb->ecode = TDB_ERR_OOM;
+			goto fail;
+		}
+	}
+
+	rec_len = key.dsize + dbufs_len;
+	if ((rec_len < key.dsize) || (rec_len < dbufs_len)) {
+		tdb->ecode = TDB_ERR_OOM;
+		goto fail;
+	}
 
 	/* check for it existing, on insert. */
 	if (flag == TDB_INSERT) {
@@ -506,7 +562,8 @@ static int _tdb_store(struct tdb_context *tdb, TDB_DATA key,
 		}
 	} else {
 		/* first try in-place update, on modify or replace. */
-		if (tdb_update_hash(tdb, key, hash, dbuf) == 0) {
+		if (tdb_update_hash(tdb, key, hash, dbufs, num_dbufs,
+				    dbufs_len) == 0) {
 			goto done;
 		}
 		if (tdb->ecode == TDB_ERR_NOEXIST &&
@@ -526,7 +583,7 @@ static int _tdb_store(struct tdb_context *tdb, TDB_DATA key,
 		tdb_delete_hash(tdb, key, hash);
 
 	/* we have to allocate some space */
-	rec_ptr = tdb_allocate(tdb, hash, key.dsize + dbuf.dsize, &rec);
+	rec_ptr = tdb_allocate(tdb, hash, rec_len, &rec);
 
 	if (rec_ptr == 0) {
 		goto fail;
@@ -537,17 +594,36 @@ static int _tdb_store(struct tdb_context *tdb, TDB_DATA key,
 		goto fail;
 
 	rec.key_len = key.dsize;
-	rec.data_len = dbuf.dsize;
+	rec.data_len = dbufs_len;
 	rec.full_hash = hash;
 	rec.magic = TDB_MAGIC;
 
+	ofs = rec_ptr;
+
 	/* write out and point the top of the hash chain at it */
-	if (tdb_rec_write(tdb, rec_ptr, &rec) == -1
-	    || tdb->methods->tdb_write(tdb, rec_ptr+sizeof(rec),
-				       key.dptr, key.dsize) == -1
-	    || tdb->methods->tdb_write(tdb, rec_ptr+sizeof(rec)+key.dsize,
-				       dbuf.dptr, dbuf.dsize) == -1
-	    || tdb_ofs_write(tdb, TDB_HASH_TOP(hash), &rec_ptr) == -1) {
+	ret = tdb_rec_write(tdb, ofs, &rec);
+	if (ret == -1) {
+		goto fail;
+	}
+	ofs += sizeof(rec);
+
+	ret = tdb->methods->tdb_write(tdb, ofs, key.dptr, key.dsize);
+	if (ret == -1) {
+		goto fail;
+	}
+	ofs += key.dsize;
+
+	for (i=0; i<num_dbufs; i++) {
+		ret = tdb->methods->tdb_write(tdb, ofs, dbufs[i].dptr,
+					      dbufs[i].dsize);
+		if (ret == -1) {
+			goto fail;
+		}
+		ofs += dbufs[i].dsize;
+	}
+
+	ret = tdb_ofs_write(tdb, TDB_HASH_TOP(hash), &rec_ptr);
+	if (ret == -1) {
 		/* Need to tdb_unallocate() here */
 		goto fail;
 	}
@@ -559,6 +635,12 @@ static int _tdb_store(struct tdb_context *tdb, TDB_DATA key,
 		tdb_increment_seqnum(tdb);
 	}
 	return ret;
+}
+
+static int _tdb_store(struct tdb_context *tdb, TDB_DATA key,
+		      TDB_DATA dbuf, int flag, uint32_t hash)
+{
+	return _tdb_storev(tdb, key, &dbuf, 1, flag, hash);
 }
 
 /* store an element in the database, replacing any existing element
@@ -588,11 +670,36 @@ _PUBLIC_ int tdb_store(struct tdb_context *tdb, TDB_DATA key, TDB_DATA dbuf, int
 	return ret;
 }
 
+_PUBLIC_ int tdb_storev(struct tdb_context *tdb, TDB_DATA key,
+			const TDB_DATA *dbufs, int num_dbufs, int flag)
+{
+	uint32_t hash;
+	int ret;
+
+	if (tdb->read_only || tdb->traverse_read) {
+		tdb->ecode = TDB_ERR_RDONLY;
+		tdb_trace_1plusn_rec_flag_ret(tdb, "tdb_storev", key,
+					      dbufs, num_dbufs, flag, -1);
+		return -1;
+	}
+
+	/* find which hash bucket it is in */
+	hash = tdb->hash_fn(&key);
+	if (tdb_lock(tdb, BUCKET(hash), F_WRLCK) == -1)
+		return -1;
+
+	ret = _tdb_storev(tdb, key, dbufs, num_dbufs, flag, hash);
+	tdb_trace_1plusn_rec_flag_ret(tdb, "tdb_storev", key,
+				      dbufs, num_dbufs, flag, -1);
+	tdb_unlock(tdb, BUCKET(hash), F_WRLCK);
+	return ret;
+}
+
 /* Append to an entry. Create if not exist. */
 _PUBLIC_ int tdb_append(struct tdb_context *tdb, TDB_DATA key, TDB_DATA new_dbuf)
 {
 	uint32_t hash;
-	TDB_DATA dbuf;
+	TDB_DATA dbufs[2];
 	int ret = -1;
 
 	/* find which hash bucket it is in */
@@ -600,38 +707,14 @@ _PUBLIC_ int tdb_append(struct tdb_context *tdb, TDB_DATA key, TDB_DATA new_dbuf
 	if (tdb_lock(tdb, BUCKET(hash), F_WRLCK) == -1)
 		return -1;
 
-	dbuf = _tdb_fetch(tdb, key);
+	dbufs[0] = _tdb_fetch(tdb, key);
+	dbufs[1] = new_dbuf;
 
-	if (dbuf.dptr == NULL) {
-		dbuf.dptr = (unsigned char *)malloc(new_dbuf.dsize);
-	} else {
-		unsigned int new_len = dbuf.dsize + new_dbuf.dsize;
-		unsigned char *new_dptr;
+	ret = _tdb_storev(tdb, key, dbufs, 2, 0, hash);
+	tdb_trace_2rec_retrec(tdb, "tdb_append", key, dbufs[0], dbufs[1]);
 
-		/* realloc '0' is special: don't do that. */
-		if (new_len == 0)
-			new_len = 1;
-		new_dptr = (unsigned char *)realloc(dbuf.dptr, new_len);
-		if (new_dptr == NULL) {
-			free(dbuf.dptr);
-		}
-		dbuf.dptr = new_dptr;
-	}
-
-	if (dbuf.dptr == NULL) {
-		tdb->ecode = TDB_ERR_OOM;
-		goto failed;
-	}
-
-	memcpy(dbuf.dptr + dbuf.dsize, new_dbuf.dptr, new_dbuf.dsize);
-	dbuf.dsize += new_dbuf.dsize;
-
-	ret = _tdb_store(tdb, key, dbuf, 0, hash);
-	tdb_trace_2rec_retrec(tdb, "tdb_append", key, new_dbuf, dbuf);
-
-failed:
 	tdb_unlock(tdb, BUCKET(hash), F_WRLCK);
-	SAFE_FREE(dbuf.dptr);
+	SAFE_FREE(dbufs[0].dptr);
 	return ret;
 }
 
@@ -790,7 +873,7 @@ static int tdb_free_region(struct tdb_context *tdb, tdb_off_t offset, ssize_t le
  */
 _PUBLIC_ int tdb_wipe_all(struct tdb_context *tdb)
 {
-	int i;
+	uint32_t i;
 	tdb_off_t offset = 0;
 	ssize_t data_len;
 	tdb_off_t recovery_head;
@@ -1128,6 +1211,25 @@ void tdb_trace_2rec_flag_ret(struct tdb_context *tdb, const char *op,
 	tdb_trace_write(tdb, op);
 	tdb_trace_record(tdb, rec1);
 	tdb_trace_record(tdb, rec2);
+	tdb_trace_write(tdb, msg);
+	tdb_trace_end_ret(tdb, ret);
+}
+
+void tdb_trace_1plusn_rec_flag_ret(struct tdb_context *tdb, const char *op,
+				   TDB_DATA rec,
+				   const TDB_DATA *recs, int num_recs,
+				   unsigned flag, int ret)
+{
+	char msg[1 + sizeof(ret) * 4];
+	int i;
+
+	snprintf(msg, sizeof(msg), " %#x", flag);
+	tdb_trace_start(tdb);
+	tdb_trace_write(tdb, op);
+	tdb_trace_record(tdb, rec);
+	for (i=0; i<num_recs; i++) {
+		tdb_trace_record(tdb, recs[i]);
+	}
 	tdb_trace_write(tdb, msg);
 	tdb_trace_end_ret(tdb, ret);
 }

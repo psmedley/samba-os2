@@ -36,26 +36,34 @@ parser.add_option("--strip-passed-output", action="store_true",
     help="Whether to strip output from tests that passed")
 parser.add_option("--fail-immediately", action="store_true",
     help="Whether to stop on the first error", default=False)
-parser.add_option("--prefix", type="string",
+parser.add_option("--prefix", type="string", default='',
     help="Add prefix to all test names")
-parser.add_option("--suffix", type="string",
+parser.add_option("--suffix", type="string", default='',
     help="Add suffix to all test names")
 parser.add_option("--fail-on-empty", default=False,
     action="store_true", help="Fail if there was no subunit output")
 parser.add_option("--list", default=False,
     action="store_true", help="Operate in list mode")
+parser.add_option("--perf-test-output", default=False,
+    action="store_true", help="orientate output for performance measurement")
 opts, args = parser.parse_args()
 
 if opts.list:
-    prefix = opts.prefix
-    suffix = opts.suffix
-    if not prefix:
-        prefix = ""
-    if not suffix:
-        suffix = ""
     for l in sys.stdin:
-         sys.stdout.write("%s%s%s\n" % (prefix, l.rstrip(), suffix))
+         sys.stdout.write("%s%s%s\n" % (opts.prefix, l.rstrip(), opts.suffix))
     sys.exit(0)
+
+if opts.perf_test_output:
+    bad_options = []
+    for bad_opt in ('fail_immediately', 'strip_passed_output',
+                    'flapping', 'expected_failures'):
+        if getattr(opts, bad_opt):
+            bad_options.append(bad_opt)
+    if bad_options:
+        print >>sys.stderr, ("--perf-test-output is incompatible with --%s" %
+                             (', --'.join(x.replace('_', '-')
+                                          for x in bad_options)))
+        sys.exit(1)
 
 if opts.expected_failures:
     expected_failures = subunithelper.read_test_regexes(opts.expected_failures)
@@ -82,10 +90,15 @@ def handle_sigint(sig, stack):
 signal.signal(signal.SIGINT, handle_sigint)
 
 out = subunithelper.SubunitOps(sys.stdout)
-msg_ops = subunithelper.FilterOps(out, opts.prefix, opts.suffix, expected_failures,
-    opts.strip_passed_output,
-    fail_immediately=opts.fail_immediately,
-    flapping=flapping)
+
+if opts.perf_test_output:
+    msg_ops = subunithelper.PerfFilterOps(out, opts.prefix, opts.suffix)
+else:
+    msg_ops = subunithelper.FilterOps(out, opts.prefix, opts.suffix,
+                                      expected_failures,
+                                      opts.strip_passed_output,
+                                      fail_immediately=opts.fail_immediately,
+                                      flapping=flapping)
 
 try:
     ret = subunithelper.parse_results(msg_ops, statistics, sys.stdin)

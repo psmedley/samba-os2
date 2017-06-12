@@ -18,7 +18,6 @@ struct ltdb_private {
 
 	struct ltdb_cache {
 		struct ldb_message *indexlist;
-		struct ldb_message *attributes;
 		bool one_level_indexes;
 		bool attribute_indexes;
 	} *cache;
@@ -109,7 +108,9 @@ int ltdb_add_attr_results(struct ldb_module *module,
 			  const char * const attrs[], 
 			  unsigned int *count, 
 			  struct ldb_message ***res);
-int ltdb_filter_attrs(struct ldb_message *msg, const char * const *attrs);
+int ltdb_filter_attrs(TALLOC_CTX *mem_ctx,
+		      const struct ldb_message *msg, const char * const *attrs,
+		      struct ldb_message **filtered_msg);
 int ltdb_search(struct ltdb_context *ctx);
 
 /* The following definitions come from lib/ldb/ldb_tdb/ldb_tdb.c  */

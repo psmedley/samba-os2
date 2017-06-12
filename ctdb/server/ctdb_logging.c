@@ -20,7 +20,6 @@
 #include "replace.h"
 #include "system/filesys.h"
 #include "system/network.h"
-#include "system/syslog.h"
 #include "system/time.h"
 
 #include <talloc.h>
@@ -29,21 +28,14 @@
 #include "lib/util/dlinklist.h"
 #include "lib/util/debug.h"
 #include "lib/util/blocking.h"
+#include "lib/util/sys_rw.h"
+#include "lib/util/time.h"
 
 #include "ctdb_private.h"
 #include "ctdb_client.h"
 
-#include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
-
-const char *debug_extra = "";
-
-struct ctdb_log_backend {
-	struct ctdb_log_backend *prev, *next;
-	const char *prefix;
-	ctdb_log_setup_fn_t setup;
-};
 
 struct ctdb_log_state {
 	const char *prefix;
@@ -52,62 +44,28 @@ struct ctdb_log_state {
 	uint16_t buf_used;
 	void (*logfn)(const char *, uint16_t, void *);
 	void *logfn_private;
-	struct ctdb_log_backend *backends;
 };
 
 /* Used by ctdb_set_child_logging() */
 static struct ctdb_log_state *log_state;
 
-void ctdb_log_register_backend(const char *prefix, ctdb_log_setup_fn_t setup)
-{
-	struct ctdb_log_backend *b;
-
-	b = talloc_zero(log_state, struct ctdb_log_backend);
-	if (b == NULL) {
-		printf("Failed to register backend \"%s\" - no memory\n",
-		       prefix);
-		return;
-	}
-
-	b->prefix = prefix;
-	b->setup = setup;
-
-	DLIST_ADD_END(log_state->backends, b);
-}
-
-
 /* Initialise logging */
-bool ctdb_logging_init(TALLOC_CTX *mem_ctx, const char *logging)
+bool ctdb_logging_init(TALLOC_CTX *mem_ctx, const char *logging,
+		       const char *debug_level)
 {
-	struct ctdb_log_backend *b;
 	int ret;
 
 	log_state = talloc_zero(mem_ctx, struct ctdb_log_state);
 	if (log_state == NULL) {
-		printf("talloc_zero failed\n");
-		abort();
+		return false;
 	}
 
-	ctdb_log_init_file();
-	ctdb_log_init_syslog();
-
-	for (b = log_state->backends; b != NULL; b = b->next) {
-		size_t l = strlen(b->prefix);
-		/* Exact match with prefix or prefix followed by ':' */
-		if (strncmp(b->prefix, logging, l) == 0 &&
-		    (logging[l] == '\0' || logging[l] == ':')) {
-			ret = b->setup(mem_ctx, logging, "ctdbd");
-			if (ret == 0) {
-				return true;
-			}
-			printf("Log init for \"%s\" failed with \"%s\"\n",
-			       logging, strerror(ret));
-			return false;
-		}
+	ret = logging_init(mem_ctx, logging, debug_level, "ctdbd");
+	if (ret != 0) {
+		return false;
 	}
 
-	printf("Unable to find log backend for \"%s\"\n", logging);
-	return false;
+	return true;
 }
 
 /* Note that do_debug always uses the global log state. */
@@ -200,6 +158,8 @@ struct ctdb_log_state *ctdb_vfork_with_logging(TALLOC_CTX *mem_ctx,
 	struct tevent_fd *fde;
 	char **argv;
 	int i;
+	struct timeval before;
+	double delta_t;
 
 	log = talloc_zero(mem_ctx, struct ctdb_log_state);
 	CTDB_NO_MEMORY_NULL(ctdb, log);
@@ -230,6 +190,8 @@ struct ctdb_log_state *ctdb_vfork_with_logging(TALLOC_CTX *mem_ctx,
 		argv[i+2] = discard_const(helper_argv[i]);
 	}
 
+	before = timeval_current();
+
 	*pid = vfork();
 	if (*pid == 0) {
 		execv(helper, argv);
@@ -241,6 +203,11 @@ struct ctdb_log_state *ctdb_vfork_with_logging(TALLOC_CTX *mem_ctx,
 		DEBUG(DEBUG_ERR, (__location__ "vfork failed for helper process\n"));
 		close(p[0]);
 		goto free_log;
+	}
+
+	delta_t = timeval_elapsed(&before);
+	if (delta_t > 3.0) {
+		DEBUG(DEBUG_WARNING, ("vfork() took %lf seconds\n", delta_t));
 	}
 
 	ctdb_track_child(ctdb, *pid);
@@ -268,11 +235,6 @@ int ctdb_set_child_logging(struct ctdb_context *ctdb)
 	int p[2];
 	int old_stdout, old_stderr;
 	struct tevent_fd *fde;
-
-	if (log_state->fd == STDOUT_FILENO) {
-		/* not needed for stdout logging */
-		return 0;
-	}
 
 	/* setup a pipe to catch IO from subprocesses */
 	if (pipe(p) != 0) {
@@ -319,49 +281,4 @@ int ctdb_set_child_logging(struct ctdb_context *ctdb)
 	DEBUG(DEBUG_DEBUG, (__location__ " Created PIPE FD:%d for logging\n", p[0]));
 
 	return 0;
-}
-
-
-/*
- * set up a log handler to catch logging from TEVENT
- */
-static void ctdb_tevent_logging(void *private_data,
-				enum tevent_debug_level level,
-				const char *fmt,
-				va_list ap) PRINTF_ATTRIBUTE(3, 0);
-static void ctdb_tevent_logging(void *private_data,
-				enum tevent_debug_level level,
-				const char *fmt,
-				va_list ap)
-{
-	enum debug_level lvl = DEBUG_CRIT;
-
-	switch (level) {
-	case TEVENT_DEBUG_FATAL:
-		lvl = DEBUG_CRIT;
-		break;
-	case TEVENT_DEBUG_ERROR:
-		lvl = DEBUG_ERR;
-		break;
-	case TEVENT_DEBUG_WARNING:
-		lvl = DEBUG_WARNING;
-		break;
-	case TEVENT_DEBUG_TRACE:
-		lvl = DEBUG_DEBUG;
-		break;
-	}
-
-	if (lvl <= DEBUGLEVEL) {
-		dbgtext_va(fmt, ap);
-	}
-}
-
-int ctdb_init_tevent_logging(struct ctdb_context *ctdb)
-{
-	int ret;
-
-	ret = tevent_set_debug(ctdb->ev,
-			ctdb_tevent_logging,
-			ctdb);
-	return ret;
 }

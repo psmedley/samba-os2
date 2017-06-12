@@ -37,13 +37,18 @@
 #include "lib/util/tsort.h"
 #include "auth/session.h"
 #include "dsdb/common/util.h"
+#include "lib/dbwrap/dbwrap.h"
+#include "lib/dbwrap/dbwrap_rbt.h"
+#include "librpc/gen_ndr/ndr_misc.h"
 
 /* state of a partially completed getncchanges call */
 struct drsuapi_getncchanges_state {
+	struct db_context *anc_cache;
 	struct GUID *guids;
 	uint32_t num_records;
 	uint32_t num_processed;
 	struct ldb_dn *ncRoot_dn;
+	struct GUID ncRoot_guid;
 	bool is_schema_nc;
 	uint64_t min_usn;
 	uint64_t max_usn;
@@ -88,7 +93,7 @@ static int drsuapi_DsReplicaHighWaterMark_cmp(const struct drsuapi_DsReplicaHigh
   build a DsReplicaObjectIdentifier from a ldb msg
  */
 static struct drsuapi_DsReplicaObjectIdentifier *get_object_identifier(TALLOC_CTX *mem_ctx,
-								       struct ldb_message *msg)
+								       const struct ldb_message *msg)
 {
 	struct drsuapi_DsReplicaObjectIdentifier *identifier;
 	struct dom_sid *sid;
@@ -189,7 +194,7 @@ fail:
   drsuapi_DsGetNCChanges for one object
 */
 static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItemEx *obj,
-					  struct ldb_message *msg,
+					  const struct ldb_message *msg,
 					  struct ldb_context *sam_ctx,
 					  struct ldb_dn *ncRoot_dn,
 					  bool   is_schema_nc,
@@ -211,6 +216,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 	uint32_t *attids;
 	const char *rdn;
 	const struct dsdb_attribute *rdn_sa;
+	uint64_t uSNChanged;
 	unsigned int instanceType;
 	struct dsdb_syntax_ctx syntax_ctx;
 
@@ -218,6 +224,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 	dsdb_syntax_ctx_init(&syntax_ctx, sam_ctx, schema);
 	syntax_ctx.is_schema_nc = is_schema_nc;
 
+	uSNChanged = ldb_msg_find_attr_as_uint64(msg, "uSNChanged", 0);
 	instanceType = ldb_msg_find_attr_as_uint(msg, "instanceType", 0);
 	if (instanceType & INSTANCE_TYPE_IS_NC_HEAD) {
 		obj->is_nc_prefix = true;
@@ -245,6 +252,11 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 
 	if (instanceType & INSTANCE_TYPE_UNINSTANT) {
 		/* don't send uninstantiated objects */
+		return WERR_OK;
+	}
+
+	if (uSNChanged <= highest_usn) {
+		/* nothing to send */
 		return WERR_OK;
 	}
 
@@ -276,7 +288,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 
 	obj->object.identifier = get_object_identifier(obj, msg);
 	if (obj->object.identifier == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	dom_sid_split_rid(NULL, &obj->object.identifier->sid, NULL, &rid);
 
@@ -370,7 +382,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 	obj->object.attribute_ctr.attributes = talloc_array(obj, struct drsuapi_DsReplicaAttribute,
 							    obj->object.attribute_ctr.num_attributes);
 	if (obj->object.attribute_ctr.attributes == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/*
@@ -446,7 +458,7 @@ static WERROR get_nc_changes_add_la(TALLOC_CTX *mem_ctx,
 				    struct ldb_context *sam_ctx,
 				    const struct dsdb_schema *schema,
 				    const struct dsdb_attribute *sa,
-				    struct ldb_message *msg,
+				    const struct ldb_message *msg,
 				    struct dsdb_dn *dsdb_dn,
 				    struct drsuapi_DsReplicaLinkedAttribute **la_list,
 				    uint32_t *la_count,
@@ -575,14 +587,30 @@ static WERROR get_nc_changes_add_links(struct ldb_context *sam_ctx,
 				       struct dsdb_schema *schema,
 				       uint64_t highest_usn,
 				       uint32_t replica_flags,
-				       struct ldb_message *msg,
+				       const struct ldb_message *msg,
 				       struct drsuapi_DsReplicaLinkedAttribute **la_list,
 				       uint32_t *la_count,
 				       struct drsuapi_DsReplicaCursorCtrEx *uptodateness_vector)
 {
 	unsigned int i;
-	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
-	uint64_t uSNChanged = ldb_msg_find_attr_as_int(msg, "uSNChanged", -1);
+	TALLOC_CTX *tmp_ctx = NULL;
+	uint64_t uSNChanged = ldb_msg_find_attr_as_uint64(msg, "uSNChanged", 0);
+	bool is_critical = ldb_msg_find_attr_as_bool(msg, "isCriticalSystemObject", false);
+
+	if (replica_flags & DRSUAPI_DRS_CRITICAL_ONLY) {
+		if (!is_critical) {
+			return WERR_OK;
+		}
+	}
+
+	if (uSNChanged <= highest_usn) {
+		return WERR_OK;
+	}
+
+	tmp_ctx = talloc_new(mem_ctx);
+	if (tmp_ctx == NULL) {
+		return WERR_NOT_ENOUGH_MEMORY;
+	}
 
 	for (i=0; i<msg->num_elements; i++) {
 		struct ldb_message_element *el = &msg->elements[i];
@@ -605,8 +633,10 @@ static WERROR get_nc_changes_add_links(struct ldb_context *sam_ctx,
 		for (j=0; j<el->num_values; j++) {
 			struct dsdb_dn *dsdb_dn;
 			uint64_t local_usn;
-			NTSTATUS status;
+			uint64_t originating_usn;
+			NTSTATUS status, status2;
 			WERROR werr;
+			struct GUID originating_invocation_id;
 
 			dsdb_dn = dsdb_dn_parse(tmp_ctx, sam_ctx, &el->values[j], sa->syntax->ldap_oid);
 			if (dsdb_dn == NULL) {
@@ -631,8 +661,23 @@ static WERROR get_nc_changes_add_links(struct ldb_context *sam_ctx,
 				return WERR_DS_DRA_INTERNAL_ERROR;
 			}
 
-			if (local_usn < highest_usn) {
+			if (local_usn <= highest_usn) {
 				continue;
+			}
+
+			status = dsdb_get_extended_dn_guid(dsdb_dn->dn,
+							   &originating_invocation_id,
+							   "RMD_INVOCID");
+			status2 = dsdb_get_extended_dn_uint64(dsdb_dn->dn,
+							      &originating_usn,
+							      "RMD_ORIGINATING_USN");
+
+			if (NT_STATUS_IS_OK(status) && NT_STATUS_IS_OK(status2)) {
+				if (udv_filter(uptodateness_vector,
+					       &originating_invocation_id,
+					       originating_usn)) {
+					continue;
+				}
 			}
 
 			werr = get_nc_changes_add_la(mem_ctx, sam_ctx, schema,
@@ -705,16 +750,6 @@ struct drsuapi_changed_objects {
 	struct GUID guid;
 	uint64_t usn;
 };
-
-/*
-  sort the objects we send by tree order
- */
-static int site_res_cmp_anc_order(struct drsuapi_changed_objects *m1,
-				  struct drsuapi_changed_objects *m2,
-				  struct drsuapi_getncchanges_state *getnc_state)
-{
-	return ldb_dn_compare(m2->dn, m1->dn);
-}
 
 /*
   sort the objects we send first by uSNChanged
@@ -1451,17 +1486,18 @@ static WERROR getncchanges_collect_objects(struct drsuapi_bind_state *b_state,
 	int ret;
 	char* search_filter;
 	enum ldb_scope scope = LDB_SCOPE_SUBTREE;
-	//const char *extra_filter;
 	struct drsuapi_getncchanges_state *getnc_state = b_state->getncchanges_state;
+	bool critical_only = false;
+
+	if (req10->replica_flags & DRSUAPI_DRS_CRITICAL_ONLY) {
+		critical_only = true;
+	}
 
 	if (req10->extended_op == DRSUAPI_EXOP_REPL_OBJ ||
 	    req10->extended_op == DRSUAPI_EXOP_REPL_SECRET) {
 		scope = LDB_SCOPE_BASE;
+		critical_only = false;
 	}
-
-	//extra_filter = lpcfg_parm_string(dce_call->conn->dce_ctx->lp_ctx, NULL, "drs", "object filter");
-
-	//getnc_state->min_usn = req10->highwatermark.highest_usn;
 
 	/* Construct response. */
 	search_filter = talloc_asprintf(mem_ctx,
@@ -1472,7 +1508,7 @@ static WERROR getncchanges_collect_objects(struct drsuapi_bind_state *b_state,
 		search_filter = talloc_asprintf(mem_ctx, "(&%s(%s))", search_filter, extra_filter);
 	}
 
-	if (req10->replica_flags & DRSUAPI_DRS_CRITICAL_ONLY) {
+	if (critical_only) {
 		search_filter = talloc_asprintf(mem_ctx,
 						"(&%s(isCriticalSystemObject=TRUE))",
 						search_filter);
@@ -1646,7 +1682,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 						     (*search_res)->count);
 		if ((*search_res)->msgs == NULL) {
 			TALLOC_FREE(frame);
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 
@@ -1665,6 +1701,95 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 		 * for collecting objects */
 		return getncchanges_collect_objects(b_state, mem_ctx, req10, search_dn, extra_filter, search_res);
 	}
+}
+
+static void dcesrv_drsuapi_update_highwatermark(const struct ldb_message *msg,
+						uint64_t max_usn,
+						struct drsuapi_DsReplicaHighWaterMark *hwm)
+{
+	uint64_t uSN = ldb_msg_find_attr_as_uint64(msg, "uSNChanged", 0);
+
+	if (uSN > max_usn) {
+		/*
+		 * Only report the max_usn we had at the start
+		 * of the replication cycle.
+		 *
+		 * If this object has changed lately we better
+		 * let the destination dsa refetch the change.
+		 * This is better than the risk of loosing some
+		 * objects or linked attributes.
+		 */
+		return;
+	}
+
+	if (uSN <= hwm->tmp_highest_usn) {
+		return;
+	}
+
+	hwm->tmp_highest_usn = uSN;
+	hwm->reserved_usn = 0;
+}
+
+static WERROR dcesrv_drsuapi_anc_cache_add(struct db_context *anc_cache,
+					   const struct GUID *guid)
+{
+	enum ndr_err_code ndr_err;
+	uint8_t guid_buf[16] = { 0, };
+	DATA_BLOB b = {
+		.data = guid_buf,
+		.length = sizeof(guid_buf),
+	};
+	TDB_DATA key = {
+		.dptr = b.data,
+		.dsize = b.length,
+	};
+	TDB_DATA val = {
+		.dptr = NULL,
+		.dsize = 0,
+	};
+	NTSTATUS status;
+
+	ndr_err = ndr_push_struct_into_fixed_blob(&b, guid,
+			(ndr_push_flags_fn_t)ndr_push_GUID);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		return WERR_DS_DRA_INTERNAL_ERROR;
+	}
+
+	status = dbwrap_store(anc_cache, key, val, TDB_REPLACE);
+	if (!NT_STATUS_IS_OK(status)) {
+		return WERR_DS_DRA_INTERNAL_ERROR;
+	}
+
+	return WERR_OK;
+}
+
+static WERROR dcesrv_drsuapi_anc_cache_exists(struct db_context *anc_cache,
+					      const struct GUID *guid)
+{
+	enum ndr_err_code ndr_err;
+	uint8_t guid_buf[16] = { 0, };
+	DATA_BLOB b = {
+		.data = guid_buf,
+		.length = sizeof(guid_buf),
+	};
+	TDB_DATA key = {
+		.dptr = b.data,
+		.dsize = b.length,
+	};
+	bool exists;
+
+	ndr_err = ndr_push_struct_into_fixed_blob(&b, guid,
+			(ndr_push_flags_fn_t)ndr_push_GUID);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		return WERR_DS_DRA_INTERNAL_ERROR;
+	}
+
+	exists = dbwrap_exists(anc_cache, key);
+	if (!exists) {
+		return WERR_OBJECT_NOT_FOUND;
+	}
+
+	return WERR_OBJECT_NAME_EXISTS;
 }
 
 /* 
@@ -1745,7 +1870,7 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 	case 8:
 		req10 = getncchanges_map_req8(mem_ctx, &r->in.req->req8);
 		if (req10 == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		break;
 	case 10:
@@ -1911,10 +2036,23 @@ allowed:
 	if (getnc_state == NULL) {
 		getnc_state = talloc_zero(b_state, struct drsuapi_getncchanges_state);
 		if (getnc_state == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		b_state->getncchanges_state = getnc_state;
 		getnc_state->ncRoot_dn = drs_ObjectIdentifier_to_dn(getnc_state, sam_ctx, ncRoot);
+		if (getnc_state->ncRoot_dn == NULL) {
+			return WERR_NOT_ENOUGH_MEMORY;
+		}
+
+		ret = dsdb_find_guid_by_dn(b_state->sam_ctx_system,
+					   getnc_state->ncRoot_dn,
+					   &getnc_state->ncRoot_guid);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(0,(__location__ ": Failed to find GUID of ncRoot_dn %s\n",
+				 ldb_dn_get_linearized(getnc_state->ncRoot_dn)));
+			return WERR_DS_DRA_INTERNAL_ERROR;
+		}
+		ncRoot->guid = getnc_state->ncRoot_guid;
 
 		/* find out if we are to replicate Schema NC */
 		ret = ldb_dn_compare_base(ldb_get_schema_basedn(b_state->sam_ctx),
@@ -1992,6 +2130,8 @@ allowed:
 		return WERR_DS_DRA_INVALID_PARAMETER;
 	}
 
+	ncRoot->guid = getnc_state->ncRoot_guid;
+
 	/* we need the session key for encrypting password attributes */
 	status = dcesrv_inherited_session_key(dce_call->conn, &session_key);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -2006,16 +2146,39 @@ allowed:
 	if (getnc_state->guids == NULL) {
 		const char *extra_filter;
 		struct ldb_result *search_res = NULL;
+		static const struct drsuapi_DsReplicaCursorCtrEx empty_udv;
+		const struct drsuapi_DsReplicaCursorCtrEx *udv = NULL;
 
 		extra_filter = lpcfg_parm_string(dce_call->conn->dce_ctx->lp_ctx, NULL, "drs", "object filter");
 
+		if (req10->uptodateness_vector != NULL) {
+			udv = req10->uptodateness_vector;
+		} else {
+			udv = &empty_udv;
+		}
+
 		getnc_state->min_usn = req10->highwatermark.highest_usn;
+		for (i = 0; i < udv->count; i++) {
+			bool match;
+			const struct drsuapi_DsReplicaCursor *cur =
+				&udv->cursors[i];
+
+			match = GUID_equal(&invocation_id,
+					   &cur->source_dsa_invocation_id);
+			if (!match) {
+				continue;
+			}
+			if (cur->highest_usn > getnc_state->min_usn) {
+				getnc_state->min_usn = cur->highest_usn;
+			}
+			break;
+		}
 		getnc_state->max_usn = getnc_state->min_usn;
 
 		getnc_state->final_udv = talloc_zero(getnc_state,
 					struct drsuapi_DsReplicaCursor2CtrEx);
 		if (getnc_state->final_udv == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		werr = get_nc_changes_udv(sam_ctx, getnc_state->ncRoot_dn,
 					  getnc_state->final_udv);
@@ -2058,11 +2221,6 @@ allowed:
 		/* RID_ALLOC returns 3 objects in a fixed order */
 		if (req10->extended_op == DRSUAPI_EXOP_FSMO_RID_ALLOC) {
 			/* Do nothing */
-		} else if (req10->replica_flags & DRSUAPI_DRS_GET_ANC) {
-			LDB_TYPESAFE_QSORT(changes,
-					   getnc_state->num_records,
-					   getnc_state,
-					   site_res_cmp_anc_order);
 		} else {
 			LDB_TYPESAFE_QSORT(changes,
 					   getnc_state->num_records,
@@ -2085,6 +2243,15 @@ allowed:
 
 		talloc_free(search_res);
 		talloc_free(changes);
+
+		if (req10->extended_op != DRSUAPI_EXOP_NONE) {
+			/* Do nothing */
+		} else if (req10->replica_flags & DRSUAPI_DRS_GET_ANC) {
+			getnc_state->anc_cache = db_open_rbt(getnc_state);
+			if (getnc_state->anc_cache == NULL) {
+				return WERR_NOT_ENOUGH_MEMORY;
+			}
+		}
 	}
 
 	if (req10->uptodateness_vector) {
@@ -2102,14 +2269,10 @@ allowed:
 	}
 
 	r->out.ctr->ctr6.naming_context = talloc(mem_ctx, struct drsuapi_DsReplicaObjectIdentifier);
-	*r->out.ctr->ctr6.naming_context = *ncRoot;
-
-	if (dsdb_find_guid_by_dn(sam_ctx, getnc_state->ncRoot_dn,
-				 &r->out.ctr->ctr6.naming_context->guid) != LDB_SUCCESS) {
-		DEBUG(0,(__location__ ": Failed to find GUID of ncRoot_dn %s\n",
-			 ldb_dn_get_linearized(getnc_state->ncRoot_dn)));
-		return WERR_DS_DRA_INTERNAL_ERROR;
+	if (r->out.ctr->ctr6.naming_context == NULL) {
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
+	*r->out.ctr->ctr6.naming_context = *ncRoot;
 
 	/* find the SID if there is one */
 	dsdb_find_sid_by_dn(sam_ctx, getnc_state->ncRoot_dn, &r->out.ctr->ctr6.naming_context->sid);
@@ -2180,7 +2343,7 @@ allowed:
 		     (r->out.ctr->ctr6.object_count < max_objects)
 		     && !max_wait_reached;
 	    i++) {
-		int uSN;
+		struct drsuapi_DsReplicaObjectListItemEx *new_objs = NULL;
 		struct drsuapi_DsReplicaObjectListItemEx *obj;
 		struct ldb_message *msg;
 		static const char * const msg_attrs[] = {
@@ -2192,6 +2355,7 @@ allowed:
 					    NULL };
 		struct ldb_result *msg_res;
 		struct ldb_dn *msg_dn;
+		const struct GUID *next_anc_guid = NULL;
 
 		obj = talloc_zero(mem_ctx, struct drsuapi_DsReplicaObjectListItemEx);
 		W_ERROR_HAVE_NO_MEMORY(obj);
@@ -2216,6 +2380,24 @@ allowed:
 		}
 
 		msg = msg_res->msgs[0];
+
+		/*
+		 * If it has already been added as an ancestor of
+		 * an object, we don't need to do anything more,
+		 * as we've already added the links.
+		 */
+		if (getnc_state->anc_cache != NULL) {
+			werr = dcesrv_drsuapi_anc_cache_exists(getnc_state->anc_cache,
+							       &getnc_state->guids[i]);
+			if (W_ERROR_EQUAL(werr, WERR_OBJECT_NAME_EXISTS)) {
+				dcesrv_drsuapi_update_highwatermark(msg,
+						getnc_state->max_usn,
+						&r->out.ctr->ctr6.new_highwatermark);
+				/* no attributes to send */
+				talloc_free(obj);
+				continue;
+			}
+		}
 
 		max_wait_reached = (time(NULL) - start > max_wait);
 
@@ -2246,23 +2428,9 @@ allowed:
 			return werr;
 		}
 
-		uSN = ldb_msg_find_attr_as_int(msg, "uSNChanged", -1);
-		if (uSN > getnc_state->max_usn) {
-			/*
-			 * Only report the max_usn we had at the start
-			 * of the replication cycle.
-			 *
-			 * If this object has changed lately we better
-			 * let the destination dsa refetch the change.
-			 * This is better than the risk of loosing some
-			 * objects or linked attributes.
-			 */
-			uSN = 0;
-		}
-		if (uSN > r->out.ctr->ctr6.new_highwatermark.tmp_highest_usn) {
-			r->out.ctr->ctr6.new_highwatermark.tmp_highest_usn = uSN;
-			r->out.ctr->ctr6.new_highwatermark.reserved_usn = 0;
-		}
+		dcesrv_drsuapi_update_highwatermark(msg,
+					getnc_state->max_usn,
+					&r->out.ctr->ctr6.new_highwatermark);
 
 		if (obj->meta_data_ctr == NULL) {
 			DEBUG(8,(__location__ ": getncchanges skipping send of object %s\n",
@@ -2272,10 +2440,147 @@ allowed:
 			continue;
 		}
 
-		r->out.ctr->ctr6.object_count++;
+		new_objs = obj;
 
-		*currentObject = obj;
-		currentObject = &obj->next_object;
+		if (getnc_state->anc_cache != NULL) {
+			werr = dcesrv_drsuapi_anc_cache_add(getnc_state->anc_cache,
+							    &getnc_state->guids[i]);
+			if (!W_ERROR_IS_OK(werr)) {
+				return werr;
+			}
+
+			next_anc_guid = obj->parent_object_guid;
+		}
+
+		while (next_anc_guid != NULL) {
+			struct drsuapi_DsReplicaObjectListItemEx *anc_obj = NULL;
+			struct ldb_message *anc_msg = NULL;
+			struct ldb_result *anc_res = NULL;
+			struct ldb_dn *anc_dn = NULL;
+
+			werr = dcesrv_drsuapi_anc_cache_exists(getnc_state->anc_cache,
+							       next_anc_guid);
+			if (W_ERROR_EQUAL(werr, WERR_OBJECT_NAME_EXISTS)) {
+				/*
+				 * We don't need to send it twice.
+				 */
+				break;
+			}
+			if (W_ERROR_IS_OK(werr)) {
+				return WERR_INTERNAL_ERROR;
+			}
+			if (!W_ERROR_EQUAL(werr, WERR_OBJECT_NOT_FOUND)) {
+				return werr;
+			}
+			werr = WERR_OK;
+
+			anc_obj = talloc_zero(mem_ctx,
+					struct drsuapi_DsReplicaObjectListItemEx);
+			if (anc_obj == NULL) {
+				return WERR_NOT_ENOUGH_MEMORY;
+			}
+
+			anc_dn = ldb_dn_new_fmt(anc_obj, sam_ctx, "<GUID=%s>",
+					GUID_string(anc_obj, next_anc_guid));
+			if (anc_dn == NULL) {
+				return WERR_NOT_ENOUGH_MEMORY;
+			}
+
+			ret = drsuapi_search_with_extended_dn(sam_ctx, anc_obj,
+							      &anc_res, anc_dn,
+							      LDB_SCOPE_BASE,
+							      msg_attrs, NULL);
+			if (ret != LDB_SUCCESS) {
+				const char *anc_str = NULL;
+				const char *obj_str = NULL;
+
+				anc_str = ldb_dn_get_extended_linearized(anc_obj,
+									 anc_dn,
+									 1);
+				obj_str = ldb_dn_get_extended_linearized(anc_obj,
+									 msg->dn,
+									 1),
+
+				DBG_ERR("getncchanges: failed to fetch ANC "
+					"DN %s for DN %s - %s\n",
+					anc_str, obj_str,
+					ldb_errstring(sam_ctx));
+				return WERR_DS_DRA_INCONSISTENT_DIT;
+			}
+
+			anc_msg = anc_res->msgs[0];
+
+			werr = get_nc_changes_build_object(anc_obj, anc_msg,
+							   sam_ctx,
+							   getnc_state->ncRoot_dn,
+							   getnc_state->is_schema_nc,
+							   schema, &session_key,
+							   getnc_state->min_usn,
+							   req10->replica_flags,
+							   req10->partial_attribute_set,
+							   req10->uptodateness_vector,
+							   req10->extended_op,
+							   false, /* force_object_return */
+							   local_pas);
+			if (!W_ERROR_IS_OK(werr)) {
+				return werr;
+			}
+
+			werr = get_nc_changes_add_links(sam_ctx, getnc_state,
+							getnc_state->ncRoot_dn,
+							getnc_state->is_schema_nc,
+							schema, getnc_state->min_usn,
+							req10->replica_flags,
+							anc_msg,
+							&getnc_state->la_list,
+							&getnc_state->la_count,
+							req10->uptodateness_vector);
+			if (!W_ERROR_IS_OK(werr)) {
+				return werr;
+			}
+
+			/*
+			 * Regardless of if we actually use it or not,
+			 * we add it to the cache so we don't look at it again
+			 */
+			werr = dcesrv_drsuapi_anc_cache_add(getnc_state->anc_cache,
+							    next_anc_guid);
+			if (!W_ERROR_IS_OK(werr)) {
+				return werr;
+			}
+
+			/*
+			 * Any ancestors which are below the highwatermark
+			 * or uptodateness_vector shouldn't be added,
+			 * but we still look further up the
+			 * tree for ones which have been changed recently.
+			 */
+			if (anc_obj->meta_data_ctr != NULL) {
+				/*
+				 * prepend it to the list
+				 */
+				anc_obj->next_object = new_objs;
+				new_objs = anc_obj;
+			}
+
+			anc_msg = NULL;
+			TALLOC_FREE(anc_res);
+			TALLOC_FREE(anc_dn);
+
+			/*
+			 * We may need to resolve more...
+			 */
+			next_anc_guid = anc_obj->parent_object_guid;
+		}
+
+		*currentObject = new_objs;
+		while (new_objs != NULL) {
+			r->out.ctr->ctr6.object_count += 1;
+			if (new_objs->next_object == NULL) {
+				currentObject = &new_objs->next_object;
+			}
+			new_objs = new_objs->next_object;
+		}
 
 		DEBUG(8,(__location__ ": replicating object %s\n", ldb_dn_get_linearized(msg->dn)));
 
@@ -2288,8 +2593,6 @@ allowed:
 
 	getnc_state->num_processed = i;
 
-	r->out.ctr->ctr6.nc_object_count = getnc_state->num_records;
-
 	/* the client can us to call UpdateRefs on its behalf to
 	   re-establish monitoring of the NC */
 	if ((req10->replica_flags & (DRSUAPI_DRS_ADD_REF | DRSUAPI_DRS_REF_GCSPN)) &&
@@ -2301,7 +2604,7 @@ allowed:
 		ureq.dest_dsa_dns_name = samdb_ntds_msdcs_dns_name(b_state->sam_ctx, mem_ctx,
 								   &req10->destination_dsa_guid);
 		if (!ureq.dest_dsa_dns_name) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		ureq.dest_dsa_guid = req10->destination_dsa_guid;
 		ureq.options = DRSUAPI_DRS_ADD_REF |
@@ -2344,7 +2647,7 @@ allowed:
 			struct la_for_sorting *guid_array = talloc_array(getnc_state, struct la_for_sorting, getnc_state->la_count);
 			if (guid_array == NULL) {
 				DEBUG(0, ("Out of memory allocating %u linked attributes for sorting", getnc_state->la_count));
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			for (j = 0; j < getnc_state->la_count; j++) {
 				/* we need to get the target GUIDs to compare */
@@ -2402,7 +2705,7 @@ allowed:
 		r->out.ctr->ctr6.linked_attributes = talloc_array(r->out.ctr, struct drsuapi_DsReplicaLinkedAttribute, link_count);
 		if (r->out.ctr->ctr6.linked_attributes == NULL) {
 			DEBUG(0, ("Out of memory allocating %u linked attributes for output", link_count));
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		for (k = 0; k < link_count; k++) {
@@ -2416,6 +2719,22 @@ allowed:
 		if (getnc_state->la_idx < getnc_state->la_count) {
 			r->out.ctr->ctr6.more_data = true;
 		}
+	}
+
+	if (req10->replica_flags & DRSUAPI_DRS_GET_NC_SIZE) {
+		/*
+		 * TODO: This implementation is wrong
+		 * we should find out the total number of
+		 * objects and links in the whole naming context
+		 * at the start of the cycle and return these
+		 * values in each message.
+		 *
+		 * For now we keep our current strategy and return
+		 * the number of objects for this cycle and the number
+		 * of links we found so far during the cycle.
+		 */
+		r->out.ctr->ctr6.nc_object_count = getnc_state->num_records;
+		r->out.ctr->ctr6.nc_linked_attributes_count = getnc_state->la_count;
 	}
 
 	if (!r->out.ctr->ctr6.more_data) {

@@ -59,7 +59,7 @@ static WERROR open_hive(TALLOC_CTX *ctx, const char *path,
 	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 
 	if ((hive == NULL) || (subkeyname == NULL)) {
-		werr = WERR_INVALID_PARAM;
+		werr = WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
@@ -69,7 +69,7 @@ static WERROR open_hive(TALLOC_CTX *ctx, const char *path,
 	}
 	*subkeyname = talloc_strdup(ctx, tmp_subkeyname);
 	if (*subkeyname == NULL) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -100,7 +100,7 @@ static WERROR open_key(TALLOC_CTX *ctx, const char *path,
 	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 
 	if ((path == NULL) || (key == NULL)) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = open_hive(tmp_ctx, path, desired_access, &hive, &subkey_name);
@@ -366,7 +366,7 @@ static int net_registry_deletekey_internal(struct net_context *c, int argc,
 		werr = reg_deletekey(hivekey, subkeyname);
 	}
 	if (!W_ERROR_IS_OK(werr) &&
-	    !(c->opt_force && W_ERROR_EQUAL(werr, WERR_BADFILE)))
+	    !(c->opt_force && W_ERROR_EQUAL(werr, WERR_FILE_NOT_FOUND)))
 	{
 		d_fprintf(stderr, "reg_deletekey %s: %s\n", _("failed"),
 			  win_errstr(werr));
@@ -720,13 +720,13 @@ static WERROR net_registry_getsd_internal(struct net_context *c,
 
 	if (sd == NULL) {
 		d_fprintf(stderr, _("internal error: invalid argument\n"));
-		werr = WERR_INVALID_PARAM;
+		werr = WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
 	if (strlen(keyname) == 0) {
 		d_fprintf(stderr, _("error: zero length key name given\n"));
-		werr = WERR_INVALID_PARAM;
+		werr = WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
@@ -835,7 +835,7 @@ static WERROR net_registry_setsd_internal(struct net_context *c,
 
 	if (strlen(keyname) == 0) {
 		d_fprintf(stderr, _("error: zero length key name given\n"));
-		werr = WERR_INVALID_PARAM;
+		werr = WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
@@ -1004,7 +1004,7 @@ static WERROR import_create_val (struct import_ctx *ctx,
 	WERROR werr;
 
 	if (parent == NULL) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = reg_setvalue(parent, name, value);
@@ -1021,7 +1021,7 @@ static WERROR import_delete_val (struct import_ctx *ctx,
 	WERROR werr;
 
 	if (parent == NULL) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	werr = reg_deletevalue(parent, name);
@@ -1110,7 +1110,7 @@ static WERROR precheck_delete_key(struct precheck_ctx *ctx,
 		d_printf("Precheck: key [%s\\%s] should not exist\n",
 			 parent->key->name, name);
 		werr = WERR_FILE_EXISTS;
-	} else if (W_ERROR_EQUAL(werr, WERR_BADFILE)) {
+	} else if (W_ERROR_EQUAL(werr, WERR_FILE_NOT_FOUND)) {
 		werr = WERR_OK;
 	} else {
 		d_printf("Precheck: openkey [%s\\%s] failed: %s\n",
@@ -1165,7 +1165,7 @@ static WERROR precheck_delete_val(struct precheck_ctx *ctx,
 		d_printf("Precheck: value \"%s\" of key [%s] should not exist\n",
 			 name, parent->key->name);
 		werr = WERR_FILE_EXISTS;
-	} else if (W_ERROR_EQUAL(werr, WERR_BADFILE)) {
+	} else if (W_ERROR_EQUAL(werr, WERR_FILE_NOT_FOUND)) {
 		werr = WERR_OK;
 	} else {
 		printf("Precheck: queryvalue \"%s\" of key [%s] failed: %s\n",

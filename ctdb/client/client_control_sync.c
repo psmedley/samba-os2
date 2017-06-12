@@ -183,7 +183,7 @@ int ctdb_ctrl_getvnnmap(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 int ctdb_ctrl_getdebug(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		       struct ctdb_client_context *client,
 		       int destnode, struct timeval timeout,
-		       uint32_t *loglevel)
+		       int *loglevel)
 {
 	struct ctdb_req_control request;
 	struct ctdb_reply_control *reply;
@@ -212,7 +212,7 @@ int ctdb_ctrl_getdebug(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 int ctdb_ctrl_setdebug(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		       struct ctdb_client_context *client,
 		       int destnode, struct timeval timeout,
-		       uint32_t loglevel)
+		       int loglevel)
 {
 	struct ctdb_req_control request;
 	struct ctdb_reply_control *reply;
@@ -1437,35 +1437,6 @@ int ctdb_ctrl_del_public_ip(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	return 0;
 }
 
-int ctdb_ctrl_run_eventscripts(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			       struct ctdb_client_context *client,
-			       int destnode, struct timeval timeout,
-			       const char *event)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_run_eventscripts(&request, event);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control RUN_EVENTSCRIPTS failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_run_eventscripts(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control RUN_EVENTSCRIPTS failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
 int ctdb_ctrl_get_capabilities(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			       struct ctdb_client_context *client,
 			       int destnode, struct timeval timeout,
@@ -1556,13 +1527,14 @@ int ctdb_ctrl_takeover_ip(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 int ctdb_ctrl_get_public_ips(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			     struct ctdb_client_context *client,
 			     int destnode, struct timeval timeout,
+			     bool available_only,
 			     struct ctdb_public_ip_list **pubip_list)
 {
 	struct ctdb_req_control request;
 	struct ctdb_reply_control *reply;
 	int ret;
 
-	ctdb_req_control_get_public_ips(&request);
+	ctdb_req_control_get_public_ips(&request, available_only);
 	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
 				  &request, &reply);
 	if (ret != 0) {
@@ -1605,37 +1577,6 @@ int ctdb_ctrl_get_nodemap(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
 		      ("Control GET_NODEMAP failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_get_event_script_status(TALLOC_CTX *mem_ctx,
-				      struct tevent_context *ev,
-				      struct ctdb_client_context *client,
-				      int destnode, struct timeval timeout,
-				      enum ctdb_event event,
-				      struct ctdb_script_list **slist)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_get_event_script_status(&request, event);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control GET_EVENT_SCRIPT_STATUS failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_get_event_script_status(reply, mem_ctx, slist);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control GET_EVENT_SCRIPT_STATUS failed, ret=%d\n", ret));
 		return ret;
 	}
 
@@ -1808,64 +1749,6 @@ int ctdb_ctrl_set_recmasterrole(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
 		      ("Control SET_RECMASTERROLE failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_enable_script(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			    struct ctdb_client_context *client,
-			    int destnode, struct timeval timeout,
-			    const char *script)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_enable_script(&request, script);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control ENABLE_SCRIPT failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_enable_script(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control ENABLE_SCRIPT failed, ret=%d\n", ret));
-		return ret;
-	}
-
-	return 0;
-}
-
-int ctdb_ctrl_disable_script(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			     struct ctdb_client_context *client,
-			     int destnode, struct timeval timeout,
-			     const char *script)
-{
-	struct ctdb_req_control request;
-	struct ctdb_reply_control *reply;
-	int ret;
-
-	ctdb_req_control_disable_script(&request, script);
-	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
-				  &request, &reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control DISABLE_SCRIPT failed to node %u, ret=%d\n",
-		       destnode, ret));
-		return ret;
-	}
-
-	ret = ctdb_reply_control_disable_script(reply);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,
-		      ("Control DISABLE_SCRIPT failed, ret=%d\n", ret));
 		return ret;
 	}
 

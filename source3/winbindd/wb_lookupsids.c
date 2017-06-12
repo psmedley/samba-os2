@@ -19,6 +19,7 @@
 
 #include "includes.h"
 #include "winbindd.h"
+#include "lib/util_unixsids.h"
 #include "librpc/gen_ndr/ndr_winbind_c.h"
 #include "../libcli/security/security.h"
 #include "passdb/machine_sid.h"
@@ -72,8 +73,6 @@ struct wb_lookupsids_state {
 	 * wbint_LookupSid. Preallocated with num_sids.
 	 */
 	uint32_t *single_sids;
-	/* Pointer into the "domains" array above*/
-	struct wb_lookupsids_domain **single_domains;
 	uint32_t num_single_sids;
 	uint32_t single_sids_done;
 
@@ -127,12 +126,6 @@ struct tevent_req *wb_lookupsids_send(TALLOC_CTX *mem_ctx,
 
 	state->single_sids = talloc_array(state, uint32_t, num_sids);
 	if (tevent_req_nomem(state->single_sids, req)) {
-		return tevent_req_post(req, ev);
-	}
-	state->single_domains = talloc_zero_array(state,
-						  struct wb_lookupsids_domain *,
-						  num_sids);
-	if (tevent_req_nomem(state->single_domains, req)) {
 		return tevent_req_post(req, ev);
 	}
 
@@ -271,8 +264,7 @@ static bool wb_lookupsids_bulk(const struct dom_sid *sid)
 		return true;
 	}
 
-	if ((lp_server_role() == ROLE_DOMAIN_PDC) ||
-	    (lp_server_role() == ROLE_DOMAIN_BDC)) {
+	if (IS_DC) {
 		/*
 		 * Bulk lookups to trusted DCs
 		 */
@@ -292,7 +284,10 @@ static bool wb_lookupsids_bulk(const struct dom_sid *sid)
 	    sid_check_is_in_unix_users(sid) ||
 	    sid_check_is_unix_users(sid) ||
 	    sid_check_is_in_builtin(sid) ||
-	    sid_check_is_builtin(sid)) {
+	    sid_check_is_builtin(sid) ||
+	    sid_check_is_wellknown_domain(sid, NULL) ||
+	    sid_check_is_in_wellknown_domain(sid))
+	{
 		/*
 		 * These are locally done piece by piece anyway, no
 		 * need for bulk optimizations.
@@ -463,7 +458,6 @@ static void wb_lookupsids_done(struct tevent_req *subreq)
 
 			state->single_sids[state->num_single_sids] =
 				res_sid_index;
-			state->single_domains[state->num_single_sids] = d;
 			state->num_single_sids += 1;
 		}
 		state->domains_done += 1;
@@ -523,12 +517,13 @@ static void wb_lookupsids_single_done(struct tevent_req *subreq)
 				   &domain_name, &name);
 	TALLOC_FREE(subreq);
 	if (!NT_STATUS_IS_OK(status)) {
-		struct wb_lookupsids_domain *wb_domain;
+		struct winbindd_domain *wb_domain = NULL;
 		const char *tmpname;
 
 		type = SID_NAME_UNKNOWN;
 
-		wb_domain = state->single_domains[state->single_sids_done];
+		res_sid_index = state->single_sids[state->single_sids_done];
+		wb_domain = find_domain_from_sid_noinit(&state->sids[res_sid_index]);
 		if (wb_domain != NULL) {
 			/*
 			 * If the lookupsid failed because the rid not
@@ -540,7 +535,7 @@ static void wb_lookupsids_single_done(struct tevent_req *subreq)
 			 * name in the idmap backend to figure out
 			 * which domain to use in processing.
 			 */
-			tmpname = wb_domain->domain->name;
+			tmpname = wb_domain->name;
 		} else {
 			tmpname = "";
 		}

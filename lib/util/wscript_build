@@ -29,6 +29,12 @@ bld.SAMBA_SUBSYSTEM('close-low-fd',
                     deps='replace',
                     local_include=False)
 
+bld.SAMBA_LIBRARY('sys_rw',
+                  source='sys_rw.c sys_rw_data.c',
+                  deps='replace iov_buf',
+                  local_include=False,
+                  private_library=True)
+
 samba_debug_add_deps = ''
 samba_debug_add_inc  = ''
 
@@ -62,7 +68,7 @@ bld.SAMBA_LIBRARY('talloc_report',
                   )
 
 bld.SAMBA_SUBSYSTEM('samba-util-core',
-                    source='''xfile.c data_blob.c util_file.c time.c
+                    source='''data_blob.c util_file.c time.c
                               signal.c util.c idtree.c fault.c
                               substitute.c util_process.c util_strlist.c
                               strv_util.c''',
@@ -77,12 +83,6 @@ bld.SAMBA_LIBRARY('iov_buf',
 
 bld.SAMBA_LIBRARY('msghdr',
                   source='msghdr.c',
-                  deps='replace iov_buf',
-                  local_include=False,
-                  private_library=True)
-
-bld.SAMBA_LIBRARY('sys_rw',
-                  source='sys_rw.c sys_rw_data.c',
                   deps='replace iov_buf',
                   local_include=False,
                   private_library=True)
@@ -120,10 +120,10 @@ else:
                     idtree_random.c base64.c
                     util_str.c util_str_common.c ms_fnmatch.c
                     server_id.c dprintf.c bitmap.c pidfile.c
-                    tevent_debug.c memcache.c''',
+                    tevent_debug.c memcache.c unix_match.c''',
                   deps='samba-util-core DYNCONFIG close-low-fd tini tiniparser genrand',
                   public_deps='talloc tevent execinfo pthread LIBCRYPTO charset util_setid systemd systemd-daemon',
-                  public_headers='debug.h attr.h byteorder.h data_blob.h memory.h safe_string.h time.h talloc_stack.h xfile.h string_wrappers.h idtree.h idtree_random.h blocking.h signal.h substitute.h fault.h genrand.h',
+                  public_headers='debug.h attr.h byteorder.h data_blob.h memory.h safe_string.h time.h talloc_stack.h string_wrappers.h idtree.h idtree_random.h blocking.h signal.h substitute.h fault.h genrand.h',
                   header_path= [ ('dlinklist.h samba_util.h', '.'), ('*', 'util') ],
                   local_include=False,
                   vnum='0.0.1',
@@ -199,3 +199,8 @@ else:
                       deps='talloc tdb strv util_tdb tdb-wrap samba-util',
                       local_include=False,
                       private_library=True)
+
+    bld.SAMBA_SUBSYSTEM('access',
+                        source='access.c',
+                        deps='interfaces samba-util',
+                        local_include=False)

@@ -2,12 +2,12 @@
 .\"     Title: wbinfo
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 03/31/2017
+.\"      Date: 06/06/2017
 .\"    Manual: User Commands
-.\"    Source: Samba 4.5
+.\"    Source: Samba 4.6
 .\"  Language: English
 .\"
-.TH "WBINFO" "1" "03/31/2017" "Samba 4\&.5" "User Commands"
+.TH "WBINFO" "1" "06/06/2017" "Samba 4\&.6" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 wbinfo \- Query information from winbind daemon
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-wbinfo [\-a\ user%password] [\-\-all\-domains] [\-\-allocate\-gid] [\-\-allocate\-uid] [\-c] [\-\-ccache\-save] [\-\-change\-user\-password] [\-D\ domain] [\-\-dc\-info\ domain] [\-\-domain\ domain] [\-\-dsgetdcname\ domain] [\-g] [\-\-getdcname\ domain] [\-\-get\-auth\-user] [\-G\ gid] [\-\-gid\-info\ gid] [\-\-group\-info\ group] [\-\-help|\-?] [\-i\ user] [\-I\ ip] [\-K\ user%password] [\-\-krb5ccname\ cctype] [\-\-lanman] [\-\-logoff] [\-\-logoff\-uid\ uid] [\-\-logoff\-user\ username] [\-\-lookup\-sids] [\-m] [\-n\ name] [\-N\ netbios\-name] [\-\-ntlmv2] [\-\-online\-status] [\-\-own\-domain] [\-p] [\-P|\-\-ping\-dc] [\-\-pam\-logon\ user%password] [\-r\ user] [\-R|\-\-lookup\-rids] [\-\-remove\-gid\-mapping\ gid,sid] [\-\-remove\-uid\-mapping\ uid,sid] [\-s\ sid] [\-\-separator] [\-\-sequence] [\-\-set\-auth\-user\ user%password] [\-\-set\-gid\-mapping\ gid,sid] [\-\-set\-uid\-mapping\ uid,sid] [\-S\ sid] [\-\-sid\-aliases\ sid] [\-\-sid\-to\-fullname\ sid] [\-\-sids\-to\-unix\-ids\ sidlist] [\-t] [\-u] [\-\-uid\-info\ uid] [\-\-usage] [\-\-user\-domgroups\ sid] [\-\-user\-sidinfo\ sid] [\-\-user\-sids\ sid] [\-U\ uid] [\-V] [\-\-verbose] [\-Y\ sid]
+wbinfo [\-a\ user%password] [\-\-all\-domains] [\-\-allocate\-gid] [\-\-allocate\-uid] [\-c] [\-\-ccache\-save] [\-\-change\-user\-password] [\-D\ domain] [\-\-dc\-info\ domain] [\-\-domain\ domain] [\-\-dsgetdcname\ domain] [\-g] [\-\-getdcname\ domain] [\-\-get\-auth\-user] [\-G\ gid] [\-\-gid\-info\ gid] [\-\-group\-info\ group] [\-\-help|\-?] [\-i\ user] [\-I\ ip] [\-K\ user%password] [\-\-krb5ccname\ cctype] [\-\-lanman] [\-\-logoff] [\-\-logoff\-uid\ uid] [\-\-logoff\-user\ username] [\-\-lookup\-sids] [\-m] [\-n\ name] [\-N\ netbios\-name] [\-\-ntlmv1] [\-\-ntlmv2] [\-\-online\-status] [\-\-own\-domain] [\-p] [\-P|\-\-ping\-dc] [\-\-pam\-logon\ user%password] [\-r\ user] [\-R|\-\-lookup\-rids] [\-\-remove\-gid\-mapping\ gid,sid] [\-\-remove\-uid\-mapping\ uid,sid] [\-s\ sid] [\-\-separator] [\-\-sequence] [\-\-set\-auth\-user\ user%password] [\-\-set\-gid\-mapping\ gid,sid] [\-\-set\-uid\-mapping\ uid,sid] [\-S\ sid] [\-\-sid\-aliases\ sid] [\-\-sid\-to\-fullname\ sid] [\-\-sids\-to\-unix\-ids\ sidlist] [\-t] [\-u] [\-\-uid\-info\ uid] [\-\-usage] [\-\-user\-domgroups\ sid] [\-\-user\-sidinfo\ sid] [\-\-user\-sids\ sid] [\-U\ uid] [\-V] [\-\-verbose] [\-Y\ sid]
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -248,9 +248,14 @@ to query the WINS server for the IP address associated with the NetBIOS name spe
 parameter\&.
 .RE
 .PP
+\-\-ntlmv1
+.RS 4
+Use NTLMv1 cryptography for user authentication\&.
+.RE
+.PP
 \-\-ntlmv2
 .RS 4
-Use NTLMv2 cryptography for user authentication\&.
+Use NTLMv2 cryptography for user authentication\&. NTLMv2 is the default method, this option is only maintained for compatibility\&.
 .RE
 .PP
 \-\-online\-status \fIdomain\fR

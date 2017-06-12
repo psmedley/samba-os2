@@ -240,12 +240,12 @@ int ctdb_ctrl_getvnnmap(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 int ctdb_ctrl_getdebug(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		       struct ctdb_client_context *client,
 		       int destnode, struct timeval timeout,
-		       uint32_t *loglevel);
+		       int *loglevel);
 
 int ctdb_ctrl_setdebug(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		       struct ctdb_client_context *client,
 		       int destnode, struct timeval timeout,
-		       uint32_t loglevel);
+		       int loglevel);
 
 int ctdb_ctrl_get_dbmap(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			struct ctdb_client_context *client,
@@ -452,11 +452,6 @@ int ctdb_ctrl_del_public_ip(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			    int destnode, struct timeval timeout,
 			    struct ctdb_addr_info *addr_info);
 
-int ctdb_ctrl_run_eventscripts(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			       struct ctdb_client_context *client,
-			       int destnode, struct timeval timeout,
-			       const char *event);
-
 int ctdb_ctrl_get_capabilities(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			       struct ctdb_client_context *client,
 			       int destnode, struct timeval timeout,
@@ -475,19 +470,13 @@ int ctdb_ctrl_takeover_ip(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 int ctdb_ctrl_get_public_ips(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			     struct ctdb_client_context *client,
 			     int destnode, struct timeval timeout,
+			     bool available_only,
 			     struct ctdb_public_ip_list **pubip_list);
 
 int ctdb_ctrl_get_nodemap(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			  struct ctdb_client_context *client,
 			  int destnode, struct timeval timeout,
 			  struct ctdb_node_map **nodemap);
-
-int ctdb_ctrl_get_event_script_status(TALLOC_CTX *mem_ctx,
-				      struct tevent_context *ev,
-				      struct ctdb_client_context *client,
-				      int destnode, struct timeval timeout,
-				      enum ctdb_event event,
-				      struct ctdb_script_list **slist);
 
 int ctdb_ctrl_traverse_kill(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			    struct ctdb_client_context *client,
@@ -516,16 +505,6 @@ int ctdb_ctrl_set_recmasterrole(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 				struct ctdb_client_context *client,
 				int destnode, struct timeval timeout,
 				uint32_t recmaster_role);
-
-int ctdb_ctrl_enable_script(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			    struct ctdb_client_context *client,
-			    int destnode, struct timeval timeout,
-			    const char *script);
-
-int ctdb_ctrl_disable_script(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
-			     struct ctdb_client_context *client,
-			     int destnode, struct timeval timeout,
-			     const char *script);
 
 int ctdb_ctrl_set_ban_state(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			    struct ctdb_client_context *client,
@@ -845,5 +824,71 @@ bool ctdb_server_id_equal(struct ctdb_server_id *sid1,
 int ctdb_server_id_exists(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			  struct ctdb_client_context *client,
 			  struct ctdb_server_id *sid, bool *exists);
+
+/* from client/client_event.c */
+
+struct ctdb_event_context;
+
+int ctdb_event_init(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+		    const char *sockpath, struct ctdb_event_context **out);
+
+void ctdb_event_set_disconnect_callback(struct ctdb_event_context *eclient,
+					ctdb_client_callback_func_t callback,
+					void *private_data);
+
+struct tevent_req *ctdb_event_msg_send(TALLOC_CTX *mem_ctx,
+				       struct tevent_context *ev,
+				       struct ctdb_event_context *eclient,
+				       struct ctdb_event_request *request);
+
+bool ctdb_event_msg_recv(struct tevent_req *req, int *perr,
+			 TALLOC_CTX *mem_ctx,
+			 struct ctdb_event_reply **reply);
+
+struct tevent_req *ctdb_event_run_send(TALLOC_CTX *mem_ctx,
+				       struct tevent_context *ev,
+				       struct ctdb_event_context *eclient,
+				       enum ctdb_event event,
+				       uint32_t timeout, const char *arg_str);
+
+bool ctdb_event_run_recv(struct tevent_req *req, int *perr, int32_t *result);
+
+struct tevent_req *ctdb_event_status_send(TALLOC_CTX *mem_ctx,
+					  struct tevent_context *ev,
+					  struct ctdb_event_context *eclient,
+					  enum ctdb_event event,
+					  enum ctdb_event_status_state state);
+
+bool ctdb_event_status_recv(struct tevent_req *req, int *perr,
+			    int32_t *result, int *event_result,
+			    TALLOC_CTX *mem_ctx,
+			    struct ctdb_script_list **script_list);
+
+struct tevent_req *ctdb_event_script_list_send(
+					TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct ctdb_event_context *eclient);
+
+bool ctdb_event_script_list_recv(struct tevent_req *req, int *perr,
+				 int32_t *result, TALLOC_CTX *mem_ctx,
+				 struct ctdb_script_list **script_list);
+
+struct tevent_req *ctdb_event_script_enable_send(
+					TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct ctdb_event_context *eclient,
+					const char *script_name);
+
+bool ctdb_event_script_enable_recv(struct tevent_req *req, int *perr,
+				   int32_t *result);
+
+struct tevent_req *ctdb_event_script_disable_send(
+					TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct ctdb_event_context *eclient,
+					const char *script_name);
+
+bool ctdb_event_script_disable_recv(struct tevent_req *req, int *perr,
+				    int32_t *result);
 
 #endif /* __CTDB_CLIENT_H__ */

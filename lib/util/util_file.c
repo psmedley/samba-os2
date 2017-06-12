@@ -27,86 +27,6 @@
 #include "lib/util/debug.h"
 
 /**
- * @file
- * @brief File-related utility functions
- */
-
-/**
-read a line from a file with possible \ continuation chars.
-Blanks at the start or end of a line are stripped.
-The string will be allocated if s2 is NULL
-**/
-_PUBLIC_ char *fgets_slash(char *s2,int maxlen,XFILE *f)
-{
-  char *s=s2;
-  int len = 0;
-  int c;
-  bool start_of_line = true;
-
-  if (x_feof(f))
-    return(NULL);
-
-  if (maxlen <2) return(NULL);
-
-  if (!s2)
-    {
-      maxlen = MIN(maxlen,8);
-      s = (char *)malloc(maxlen);
-    }
-
-  if (!s) return(NULL);
-
-  *s = 0;
-
-  while (len < maxlen-1)
-    {
-      c = x_getc(f);
-      switch (c)
-	{
-	case '\r':
-	  break;
-	case '\n':
-	  while (len > 0 && s[len-1] == ' ')
-	    {
-	      s[--len] = 0;
-	    }
-	  if (len > 0 && s[len-1] == '\\')
-	    {
-	      s[--len] = 0;
-	      start_of_line = true;
-	      break;
-	    }
-	  return(s);
-	case EOF:
-	  if (len <= 0 && !s2)
-	    SAFE_FREE(s);
-	  return(len>0?s:NULL);
-	case ' ':
-	  if (start_of_line)
-	    break;
-	  /* fall through */
-	default:
-	  start_of_line = false;
-	  s[len++] = c;
-	  s[len] = 0;
-	}
-      if (!s2 && len > maxlen-3)
-	{
-	  char *t;
-
-	  maxlen *= 2;
-	  t = realloc_p(s, char, maxlen);
-	  if (!t) {
-	    DEBUG(0,("fgets_slash: failed to expand buffer!\n"));
-	    SAFE_FREE(s);
-	    return(NULL);
-	  } else s = t;
-	}
-    }
-  return(s);
-}
-
-/**
  * Read one line (data until next newline or eof) and allocate it
  */
 _PUBLIC_ char *afdgets(int fd, TALLOC_CTX *mem_ctx, size_t hint)
@@ -159,6 +79,88 @@ _PUBLIC_ char *afdgets(int fd, TALLOC_CTX *mem_ctx, size_t hint)
 	return data;
 }
 
+char *fgets_slash(TALLOC_CTX *mem_ctx, char *s2, int maxlen, FILE *f)
+{
+	char *s = s2;
+	int len = 0;
+	int c;
+	bool start_of_line = true;
+
+	if (feof(f)) {
+		return NULL;
+	}
+
+	if (maxlen < 2) {
+		return NULL;
+	}
+
+	if (s2 == NULL) {
+		maxlen = MIN(maxlen,8);
+		s = talloc_array(mem_ctx, char, maxlen);
+	}
+
+	if (s == NULL) {
+		return NULL;
+	}
+
+	*s = 0;
+
+	while (len < maxlen-1) {
+		c = getc(f);
+		switch (c)
+		{
+		    case '\r':
+			    break;
+		    case '\n':
+			    while (len > 0 && s[len-1] == ' ') {
+				    s[--len] = 0;
+			    }
+			    if (len > 0 && s[len-1] == '\\') {
+				    s[--len] = 0;
+				    start_of_line = true;
+				    break;
+			    }
+			    return s;
+		    case EOF:
+			    if (len <= 0 && (s2 == NULL)) {
+				    TALLOC_FREE(s);
+			    }
+			    return (len>0) ? s : NULL;
+		    case ' ':
+			    if (start_of_line) {
+				    break;
+			    }
+			    /* fall through */
+		    default:
+			    start_of_line = false;
+			    s[len++] = c;
+			    s[len] = 0;
+		}
+		if ((s2 == NULL) && (len > maxlen-3)) {
+			int m;
+			char *t;
+
+			m = maxlen * 2;
+			if (m < maxlen) {
+				DBG_ERR("length overflow");
+				TALLOC_FREE(s);
+				return NULL;
+			}
+			maxlen = m;
+
+			t = talloc_realloc(mem_ctx, s, char, maxlen);
+			if (t == NULL) {
+				DBG_ERR("failed to expand buffer!\n");
+				TALLOC_FREE(s);
+				return NULL;
+			}
+
+			s = t;
+		}
+	}
+
+	return s;
+}
 
 /**
 load a file into memory from a fd.

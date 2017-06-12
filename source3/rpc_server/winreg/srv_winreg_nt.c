@@ -83,7 +83,7 @@ static WERROR open_registry_key(struct pipes_struct *p,
 	}
 
 	if ( !create_policy_hnd( p, hnd, key ) ) {
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	}
 
 	return WERR_OK;
@@ -120,7 +120,7 @@ WERROR _winreg_CloseKey(struct pipes_struct *p,
 	/* close the policy handle */
 
 	if (!close_registry_key(p, r->in.handle))
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	ZERO_STRUCTP(r->out.handle);
 
@@ -227,7 +227,7 @@ WERROR _winreg_OpenKey(struct pipes_struct *p,
 	struct registry_key *parent = find_regkey_by_hnd(p, r->in.parent_handle );
 
 	if ( !parent )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	return open_registry_key(p, r->out.handle, parent, r->in.keyname.name, r->in.access_mask);
 }
@@ -239,7 +239,7 @@ WERROR _winreg_OpenKey(struct pipes_struct *p,
 WERROR _winreg_QueryValue(struct pipes_struct *p,
 			  struct winreg_QueryValue *r)
 {
-	WERROR        status = WERR_BADFILE;
+	WERROR        status = WERR_FILE_NOT_FOUND;
 	struct registry_key *regkey = find_regkey_by_hnd( p, r->in.handle );
 	prs_struct    prs_hkpd;
 
@@ -250,14 +250,14 @@ WERROR _winreg_QueryValue(struct pipes_struct *p,
 	bool free_prs = False;
 
 	if ( !regkey )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if (r->in.value_name->name == NULL) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if ((r->out.data_length == NULL) || (r->out.type == NULL) || (r->out.data_size == NULL)) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	DEBUG(7,("_winreg_QueryValue: policy key name = [%s]\n", regkey->key->name));
@@ -268,7 +268,7 @@ WERROR _winreg_QueryValue(struct pipes_struct *p,
 	{
 		if (strequal(r->in.value_name->name, "Global"))	{
 			if (!prs_init(&prs_hkpd, *r->in.data_size, p->mem_ctx, MARSHALL))
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			status = reg_perfcount_get_hkpd(
 				&prs_hkpd, *r->in.data_size, &outbuf_size, NULL);
 			outbuf = (uint8_t *)prs_hkpd.data_p;
@@ -290,7 +290,7 @@ WERROR _winreg_QueryValue(struct pipes_struct *p,
 			/* we probably have a request for a specific object
 			 * here */
 			if (!prs_init(&prs_hkpd, *r->in.data_size, p->mem_ctx, MARSHALL))
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			status = reg_perfcount_get_hkpd(
 				&prs_hkpd, *r->in.data_size, &outbuf_size,
 				r->in.value_name->name);
@@ -300,7 +300,7 @@ WERROR _winreg_QueryValue(struct pipes_struct *p,
 		else {
 			DEBUG(3,("Unsupported key name [%s] for HKPD.\n",
 				 r->in.value_name->name));
-			return WERR_BADFILE;
+			return WERR_FILE_NOT_FOUND;
 		}
 
 		*r->out.type = REG_BINARY;
@@ -329,7 +329,7 @@ WERROR _winreg_QueryValue(struct pipes_struct *p,
 		*r->out.type = val->type;
 	}
 
-	status = WERR_BADFILE;
+	status = WERR_FILE_NOT_FOUND;
 
 	if (*r->in.data_size < outbuf_size) {
 		*r->out.data_size = outbuf_size;
@@ -360,7 +360,7 @@ WERROR _winreg_QueryInfoKey(struct pipes_struct *p,
 	struct registry_key *regkey = find_regkey_by_hnd( p, r->in.handle );
 
 	if ( !regkey )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	r->out.classname->name = NULL;
 
@@ -396,7 +396,7 @@ WERROR _winreg_GetVersion(struct pipes_struct *p,
 	struct registry_key *regkey = find_regkey_by_hnd( p, r->in.handle );
 
 	if ( !regkey )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	return reg_getversion(r->out.version);
 }
@@ -414,10 +414,10 @@ WERROR _winreg_EnumKey(struct pipes_struct *p,
 	char *name;
 
 	if ( !key )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !r->in.name || !r->in.keyclass )
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 
 	DEBUG(8,("_winreg_EnumKey: enumerating key [%s]\n", key->key->name));
 
@@ -444,10 +444,10 @@ WERROR _winreg_EnumValue(struct pipes_struct *p,
 	struct registry_value *val = NULL;
 
 	if ( !key )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !r->in.name )
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 
 	DEBUG(8,("_winreg_EnumValue: enumerating values for key [%s]\n",
 		 key->key->name));
@@ -467,7 +467,7 @@ WERROR _winreg_EnumValue(struct pipes_struct *p,
 
 	if (r->out.value != NULL) {
 		if ((r->out.size == NULL) || (r->out.length == NULL)) {
-			return WERR_INVALID_PARAM;
+			return WERR_INVALID_PARAMETER;
 		}
 
 		if (val->data.length > *r->out.size) {
@@ -532,7 +532,7 @@ WERROR _winreg_InitiateSystemShutdownEx(struct pipes_struct *p,
 
 	shutdown_script = lp_shutdown_script(p->mem_ctx);
 	if (!shutdown_script) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	if (!*shutdown_script) {
 		return WERR_ACCESS_DENIED;
@@ -542,11 +542,11 @@ WERROR _winreg_InitiateSystemShutdownEx(struct pipes_struct *p,
 
 	if ( r->in.message && r->in.message->string ) {
 		if ( (msg = talloc_strdup(p->mem_ctx, r->in.message->string )) == NULL ) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		chkmsg = talloc_array(p->mem_ctx, char, strlen(msg)+1);
 		if (!chkmsg) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		alpha_strcpy(chkmsg, msg, NULL, strlen(msg)+1);
 	}
@@ -559,27 +559,27 @@ WERROR _winreg_InitiateSystemShutdownEx(struct pipes_struct *p,
 	shutdown_script = talloc_all_string_sub(p->mem_ctx,
 				shutdown_script, "%z", chkmsg ? chkmsg : "");
 	if (!shutdown_script) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	shutdown_script = talloc_all_string_sub(p->mem_ctx,
 					shutdown_script, "%t", str_timeout);
 	if (!shutdown_script) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	shutdown_script = talloc_all_string_sub(p->mem_ctx,
 						shutdown_script, "%r", do_reboot);
 	if (!shutdown_script) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	shutdown_script = talloc_all_string_sub(p->mem_ctx,
 						shutdown_script, "%f", f);
 	if (!shutdown_script) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	shutdown_script = talloc_all_string_sub(p->mem_ctx,
 					shutdown_script, "%x", str_reason);
 	if (!shutdown_script) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	can_shutdown = security_token_has_privilege(p->session_info->security_token, SEC_PRIV_REMOTE_SHUTDOWN);
@@ -592,7 +592,7 @@ WERROR _winreg_InitiateSystemShutdownEx(struct pipes_struct *p,
 	if ( can_shutdown )
 		become_root();
 
-	ret = smbrun( shutdown_script, NULL );
+	ret = smbrun(shutdown_script, NULL, NULL);
 
 	if ( can_shutdown )
 		unbecome_root();
@@ -626,7 +626,7 @@ WERROR _winreg_AbortSystemShutdown(struct pipes_struct *p,
 	if ( can_shutdown )
 		become_root();
 
-	ret = smbrun( abort_shutdown_script, NULL );
+	ret = smbrun(abort_shutdown_script, NULL, NULL);
 
 	if ( can_shutdown )
 		unbecome_root();
@@ -691,21 +691,21 @@ WERROR _winreg_RestoreKey(struct pipes_struct *p,
 	int snum = -1;
 
 	if ( !regkey )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !r->in.filename || !r->in.filename->name )
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 
 	fname = talloc_strdup(p->mem_ctx, r->in.filename->name);
 	if (!fname) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	DEBUG(8,("_winreg_RestoreKey: verifying restore of key [%s] from "
 		 "\"%s\"\n", regkey->key->name, fname));
 
 	if ((snum = validate_reg_filename(p->mem_ctx, &fname)) == -1)
-		return WERR_OBJECT_PATH_INVALID;
+		return WERR_BAD_PATHNAME;
 
 	/* user must posses SeRestorePrivilege for this this proceed */
 
@@ -731,21 +731,21 @@ WERROR _winreg_SaveKey(struct pipes_struct *p,
 	int snum = -1;
 
 	if ( !regkey )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	if ( !r->in.filename || !r->in.filename->name )
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 
 	fname = talloc_strdup(p->mem_ctx, r->in.filename->name);
 	if (!fname) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	DEBUG(8,("_winreg_SaveKey: verifying backup of key [%s] to \"%s\"\n",
 		 regkey->key->name, fname));
 
 	if ((snum = validate_reg_filename(p->mem_ctx, &fname)) == -1 )
-		return WERR_OBJECT_PATH_INVALID;
+		return WERR_BAD_PATHNAME;
 
 	DEBUG(2,("_winreg_SaveKey: Saving [%s] to %s in share %s\n",
 		 regkey->key->name, fname, lp_servicename(talloc_tos(), snum) ));
@@ -779,7 +779,7 @@ WERROR _winreg_CreateKey(struct pipes_struct *p,
 	WERROR result = WERR_OK;
 
 	if ( !parent )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	DEBUG(10, ("_winreg_CreateKey called with parent key '%s' and "
 		   "subkey name '%s'\n", parent->key->name, r->in.name.name));
@@ -792,7 +792,7 @@ WERROR _winreg_CreateKey(struct pipes_struct *p,
 
 	if (!create_policy_hnd(p, r->out.new_handle, new_key)) {
 		TALLOC_FREE(new_key);
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	}
 
 	return WERR_OK;
@@ -809,14 +809,14 @@ WERROR _winreg_SetValue(struct pipes_struct *p,
 	struct registry_value *val = NULL;
 
 	if ( !key )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	DEBUG(8,("_winreg_SetValue: Setting value for [%s:%s]\n",
 			 key->key->name, r->in.name.name));
 
 	val = talloc_zero(p->mem_ctx, struct registry_value);
 	if (val == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	val->type = r->in.type;
@@ -835,7 +835,7 @@ WERROR _winreg_DeleteKey(struct pipes_struct *p,
 	struct registry_key *parent = find_regkey_by_hnd(p, r->in.handle);
 
 	if ( !parent )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	return reg_deletekey(parent, r->in.key.name);
 }
@@ -851,7 +851,7 @@ WERROR _winreg_DeleteValue(struct pipes_struct *p,
 	struct registry_key *key = find_regkey_by_hnd(p, r->in.handle);
 
 	if ( !key )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	return reg_deletevalue(key, r->in.value.name);
 }
@@ -870,7 +870,7 @@ WERROR _winreg_GetKeySecurity(struct pipes_struct *p,
 	size_t len = 0;
 
 	if ( !key )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	/* access checks first */
 
@@ -912,7 +912,7 @@ WERROR _winreg_SetKeySecurity(struct pipes_struct *p,
 	WERROR err = WERR_OK;
 
 	if ( !key )
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 
 	/* access checks first */
 
@@ -1027,12 +1027,12 @@ static WERROR construct_multiple_entry(TALLOC_CTX *mem_ctx,
 {
 	r->ve_valuename = talloc_zero(mem_ctx, struct winreg_ValNameBuf);
 	if (r->ve_valuename == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	r->ve_valuename->name = talloc_strdup(r->ve_valuename, valuename ? valuename : "");
 	if (r->ve_valuename->name == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	r->ve_valuename->size = strlen_m_term(r->ve_valuename->name)*2;
@@ -1059,12 +1059,12 @@ WERROR _winreg_QueryMultipleValues2(struct pipes_struct *p,
 	WERROR err = WERR_OK;
 
 	if (!regkey) {
-		return WERR_BADFID;
+		return WERR_INVALID_HANDLE;
 	}
 
 	names = talloc_zero_array(p->mem_ctx, const char *, r->in.num_values);
 	if (names == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	for (i=0; i < r->in.num_values; i++) {
@@ -1073,7 +1073,7 @@ WERROR _winreg_QueryMultipleValues2(struct pipes_struct *p,
 			names[i] = talloc_strdup(names,
 				r->in.values_in[i].ve_valuename->name);
 			if (names[i] == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 		}
 	}
@@ -1094,7 +1094,7 @@ WERROR _winreg_QueryMultipleValues2(struct pipes_struct *p,
 			if (!data_blob_append(p->mem_ctx, &result,
 					      vals[i].data.data,
 					      vals[i].data.length)) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 		}
 
@@ -1119,7 +1119,7 @@ WERROR _winreg_QueryMultipleValues2(struct pipes_struct *p,
 	*r->out.needed = result.length;
 
 	if (r->in.num_values != num_vals) {
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	}
 
 	if (*r->in.offered >= *r->out.needed) {

@@ -921,14 +921,11 @@ static bool test_lmv2_ntlm_broken(struct samlogon_state *samlogon_state,
 				pass = false;
 			}
 		} else {
-			static const uint8_t zeros[8];
-			if (memcmp(zeros, lm_session_key,
-				   sizeof(lm_session_key)) != 0) {
+			if (!all_zero(lm_session_key,
+				      sizeof(lm_session_key))) {
 				torture_comment(samlogon_state->tctx, "LM Session Key does not match expectations (zeros)!\n");
 				torture_comment(samlogon_state->tctx, "lm_session_key:\n");
 				dump_data(1, lm_session_key, 8);
-				torture_comment(samlogon_state->tctx, "expected:\n");
-				dump_data(1, zeros, 8);
 				pass = false;
 			}
 		}
@@ -1176,14 +1173,10 @@ static bool test_ntlm2(struct samlogon_state *samlogon_state, char **error_strin
 			pass = false;
 		}
 	} else {
-		static const uint8_t zeros[8];
-		if (memcmp(zeros, lm_key,
-			   sizeof(lm_key)) != 0) {
+		if (!all_zero(lm_key, sizeof(lm_key))) {
 			torture_comment(samlogon_state->tctx, "LM Session Key does not match expectations (zeros)!\n");
 			torture_comment(samlogon_state->tctx, "lm_key:\n");
 			dump_data(1, lm_key, 8);
-			torture_comment(samlogon_state->tctx, "expected:\n");
-			dump_data(1, zeros, 8);
 			pass = false;
 		}
 	}
@@ -1210,8 +1203,7 @@ static bool test_plaintext(struct samlogon_state *samlogon_state, enum ntlm_brea
 	uint8_t user_session_key[16];
 	uint8_t lm_key[16];
 	uint8_t lm_hash[16];
-	static const uint8_t zeros[8];
-	DATA_BLOB chall = data_blob_talloc(samlogon_state->mem_ctx, zeros, sizeof(zeros));
+	DATA_BLOB chall = data_blob_talloc_zero(samlogon_state->mem_ctx, 8);
 	bool lm_good = E_deshash(samlogon_state->password, lm_hash);
 
 	ZERO_STRUCT(user_session_key);

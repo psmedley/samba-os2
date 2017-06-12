@@ -827,7 +827,7 @@ static bool api_DosPrintQGetInfo(struct smbd_server_connection *sconn,
 	ZERO_STRUCT(handle);
 
 	if (QueueName == NULL || (strlen(QueueName) < 1)) {
-		desc.errcode = W_ERROR_V(WERR_INVALID_PARAM);
+		desc.errcode = W_ERROR_V(WERR_INVALID_PARAMETER);
 		goto out;
 	}
 
@@ -3031,13 +3031,13 @@ static bool api_SamOEMChangePassword(struct smbd_server_connection *sconn,
 	DEBUG(3,("api_SamOEMChangePassword: Change password for <%s>\n",user));
 
 	if (tdscnt != 532) {
-		errcode = W_ERROR_V(WERR_INVALID_PARAM);
+		errcode = W_ERROR_V(WERR_INVALID_PARAMETER);
 		goto out;
 	}
 
 	bufsize = get_safe_SVAL(param,tpscnt,p,0,-1);
 	if (bufsize != 532) {
-		errcode = W_ERROR_V(WERR_INVALID_PARAM);
+		errcode = W_ERROR_V(WERR_INVALID_PARAMETER);
 		goto out;
 	}
 
@@ -3657,7 +3657,7 @@ static bool api_RNetServerGetInfo(struct smbd_server_connection *sconn,
 	}
 
 	if (info.info101 == NULL) {
-		errcode = W_ERROR_V(WERR_INVALID_PARAM);
+		errcode = W_ERROR_V(WERR_INVALID_PARAMETER);
 		goto out;
 	}
 
@@ -4013,7 +4013,7 @@ static bool api_RNetUserGetInfo(struct smbd_server_connection *sconn,
 	struct lsa_String names;
 	struct samr_Ids rids;
 	struct samr_Ids types;
-	int errcode = W_ERROR_V(WERR_USER_NOT_FOUND);
+	int errcode = W_ERROR_V(WERR_NERR_USERNOTFOUND);
 	uint32_t rid;
 	union samr_UserInfo *info;
 	struct dcerpc_binding_handle *b = NULL;
@@ -4148,11 +4148,11 @@ static bool api_RNetUserGetInfo(struct smbd_server_connection *sconn,
 		goto out;
 	}
 	if (rids.count != types.count) {
-		errcode = W_ERROR_V(WERR_INVALID_PARAM);
+		errcode = W_ERROR_V(WERR_INVALID_PARAMETER);
 		goto out;
 	}
 	if (types.ids[0] != SID_NAME_USER) {
-		errcode = W_ERROR_V(WERR_INVALID_PARAM);
+		errcode = W_ERROR_V(WERR_INVALID_PARAMETER);
 		goto out;
 	}
 
@@ -5394,7 +5394,7 @@ static bool api_RNetSessionEnum(struct smbd_server_connection *sconn,
 	info_ctr.level = 1;
 	info_ctr.ctr.ctr1 = talloc_zero(talloc_tos(), struct srvsvc_NetSessCtr1);
 	if (info_ctr.ctr.ctr1 == NULL) {
-		desc.errcode = W_ERROR_V(WERR_NOMEM);
+		desc.errcode = W_ERROR_V(WERR_NOT_ENOUGH_MEMORY);
 		goto out;
 	}
 

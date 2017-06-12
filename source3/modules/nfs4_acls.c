@@ -51,23 +51,11 @@ struct SMB4ACL_T
 	struct SMB4ACE_T	*last;
 };
 
-enum smbacl4_mode_enum {e_simple=0, e_special=1};
-enum smbacl4_acedup_enum {e_dontcare=0, e_reject=1, e_ignore=2, e_merge=3};
-
-typedef struct _smbacl4_vfs_params {
-	enum smbacl4_mode_enum mode;
-	bool do_chown;
-	enum smbacl4_acedup_enum acedup;
-	bool map_full_control;
-} smbacl4_vfs_params;
-
 /*
  * Gather special parameters for NFS4 ACL handling
  */
-static int smbacl4_get_vfs_params(
-	struct connection_struct *conn,
-	smbacl4_vfs_params *params
-)
+int smbacl4_get_vfs_params(struct connection_struct *conn,
+			   struct smbacl4_vfs_params *params)
 {
 	static const struct enum_list enum_smbacl4_modes[] = {
 		{ e_simple, "simple" },
@@ -303,7 +291,7 @@ static int smbacl4_fGetFileOwner(files_struct *fsp, SMB_STRUCT_STAT *psbuf)
 }
 
 static bool smbacl4_nfs42win(TALLOC_CTX *mem_ctx,
-	smbacl4_vfs_params *params,
+	const struct smbacl4_vfs_params *params,
 	struct SMB4ACL_T *acl, /* in */
 	struct dom_sid *psid_owner, /* in */
 	struct dom_sid *psid_group, /* in */
@@ -472,7 +460,7 @@ static bool smbacl4_nfs42win(TALLOC_CTX *mem_ctx,
 }
 
 static NTSTATUS smb_get_nt_acl_nfs4_common(const SMB_STRUCT_STAT *sbuf,
-					   smbacl4_vfs_params *params,
+					   const struct smbacl4_vfs_params *params,
 					   uint32_t security_info,
 					   TALLOC_CTX *mem_ctx,
 					   struct security_descriptor **ppdesc,
@@ -533,52 +521,76 @@ static NTSTATUS smb_get_nt_acl_nfs4_common(const SMB_STRUCT_STAT *sbuf,
 }
 
 NTSTATUS smb_fget_nt_acl_nfs4(files_struct *fsp,
+			      const struct smbacl4_vfs_params *pparams,
 			      uint32_t security_info,
 			      TALLOC_CTX *mem_ctx,
 			      struct security_descriptor **ppdesc,
 			      struct SMB4ACL_T *theacl)
 {
 	SMB_STRUCT_STAT sbuf;
-	smbacl4_vfs_params params;
+	struct smbacl4_vfs_params params;
+	SMB_STRUCT_STAT *psbuf = NULL;
 
 	DEBUG(10, ("smb_fget_nt_acl_nfs4 invoked for %s\n", fsp_str_dbg(fsp)));
 
-	if (smbacl4_fGetFileOwner(fsp, &sbuf)) {
-		return map_nt_error_from_unix(errno);
+	if (VALID_STAT(fsp->fsp_name->st)) {
+		psbuf = &fsp->fsp_name->st;
 	}
 
-	/* Special behaviours */
-	if (smbacl4_get_vfs_params(fsp->conn, &params)) {
-		return NT_STATUS_NO_MEMORY;
+	if (psbuf == NULL) {
+		if (smbacl4_fGetFileOwner(fsp, &sbuf)) {
+			return map_nt_error_from_unix(errno);
+		}
+		psbuf = &sbuf;
 	}
 
-	return smb_get_nt_acl_nfs4_common(&sbuf, &params, security_info,
+	if (pparams == NULL) {
+		/* Special behaviours */
+		if (smbacl4_get_vfs_params(fsp->conn, &params)) {
+			return NT_STATUS_NO_MEMORY;
+		}
+		pparams = &params;
+	}
+
+	return smb_get_nt_acl_nfs4_common(psbuf, pparams, security_info,
 					  mem_ctx, ppdesc, theacl);
 }
 
 NTSTATUS smb_get_nt_acl_nfs4(struct connection_struct *conn,
 			     const struct smb_filename *smb_fname,
+			     const struct smbacl4_vfs_params *pparams,
 			     uint32_t security_info,
 			     TALLOC_CTX *mem_ctx,
 			     struct security_descriptor **ppdesc,
 			     struct SMB4ACL_T *theacl)
 {
 	SMB_STRUCT_STAT sbuf;
-	smbacl4_vfs_params params;
+	struct smbacl4_vfs_params params;
+	const SMB_STRUCT_STAT *psbuf = NULL;
 
 	DEBUG(10, ("smb_get_nt_acl_nfs4 invoked for %s\n",
 		smb_fname->base_name));
 
-	if (smbacl4_GetFileOwner(conn, smb_fname, &sbuf)) {
-		return map_nt_error_from_unix(errno);
+	if (VALID_STAT(smb_fname->st)) {
+		psbuf = &smb_fname->st;
 	}
 
-	/* Special behaviours */
-	if (smbacl4_get_vfs_params(conn, &params)) {
-		return NT_STATUS_NO_MEMORY;
+	if (psbuf == NULL) {
+		if (smbacl4_GetFileOwner(conn, smb_fname, &sbuf)) {
+			return map_nt_error_from_unix(errno);
+		}
+		psbuf = &sbuf;
 	}
 
-	return smb_get_nt_acl_nfs4_common(&sbuf, &params, security_info,
+	if (pparams == NULL) {
+		/* Special behaviours */
+		if (smbacl4_get_vfs_params(conn, &params)) {
+			return NT_STATUS_NO_MEMORY;
+		}
+		pparams = &params;
+	}
+
+	return smb_get_nt_acl_nfs4_common(psbuf, pparams, security_info,
 					  mem_ctx, ppdesc, theacl);
 }
 
@@ -648,7 +660,7 @@ static SMB_ACE4PROP_T *smbacl4_find_equal_special(
 
 static bool smbacl4_fill_ace4(
 	const struct smb_filename *filename,
-	smbacl4_vfs_params *params,
+	const struct smbacl4_vfs_params *params,
 	uid_t ownerUID,
 	gid_t ownerGID,
 	const struct security_ace *ace_nt, /* input */
@@ -719,7 +731,14 @@ static bool smbacl4_fill_ace4(
 		uid_t uid;
 		gid_t gid;
 
-		if (sid_to_gid(&ace_nt->trustee, &gid)) {
+		/*
+		 * ID_TYPE_BOTH returns both uid and gid. Explicitly
+		 * check for ownerUID to allow the mapping of the
+		 * owner to a special entry in this idmap config.
+		 */
+		if (sid_to_uid(&ace_nt->trustee, &uid) && uid == ownerUID) {
+			ace_v4->who.uid = uid;
+		} else if (sid_to_gid(&ace_nt->trustee, &gid)) {
 			ace_v4->aceFlags |= SMB_ACE4_IDENTIFIER_GROUP;
 			ace_v4->who.gid = gid;
 		} else if (sid_to_uid(&ace_nt->trustee, &uid)) {
@@ -853,7 +872,7 @@ static struct SMB4ACL_T *smbacl4_win2nfs4(
 	TALLOC_CTX *mem_ctx,
 	const files_struct *fsp,
 	const struct security_acl *dacl,
-	smbacl4_vfs_params *pparams,
+	const struct smbacl4_vfs_params *pparams,
 	uid_t ownerUID,
 	gid_t ownerGID
 )
@@ -903,11 +922,12 @@ static struct SMB4ACL_T *smbacl4_win2nfs4(
 }
 
 NTSTATUS smb_set_nt_acl_nfs4(vfs_handle_struct *handle, files_struct *fsp,
+	const struct smbacl4_vfs_params *pparams,
 	uint32_t security_info_sent,
 	const struct security_descriptor *psd,
 	set_nfs4acl_native_fn_t set_nfs4_native)
 {
-	smbacl4_vfs_params params;
+	struct smbacl4_vfs_params params;
 	struct SMB4ACL_T *theacl = NULL;
 	bool	result;
 
@@ -930,10 +950,13 @@ NTSTATUS smb_set_nt_acl_nfs4(vfs_handle_struct *handle, files_struct *fsp,
 				      * refined... */
 	}
 
-	/* Special behaviours */
-	if (smbacl4_get_vfs_params(fsp->conn, &params)) {
-		TALLOC_FREE(frame);
-		return NT_STATUS_NO_MEMORY;
+	if (pparams == NULL) {
+		/* Special behaviours */
+		if (smbacl4_get_vfs_params(fsp->conn, &params)) {
+			TALLOC_FREE(frame);
+			return NT_STATUS_NO_MEMORY;
+		}
+		pparams = &params;
 	}
 
 	if (smbacl4_fGetFileOwner(fsp, &sbuf)) {
@@ -941,7 +964,7 @@ NTSTATUS smb_set_nt_acl_nfs4(vfs_handle_struct *handle, files_struct *fsp,
 		return map_nt_error_from_unix(errno);
 	}
 
-	if (params.do_chown) {
+	if (pparams->do_chown) {
 		/* chown logic is a copy/paste from posix_acl.c:set_nt_acl */
 		NTSTATUS status = unpack_nt_owners(fsp->conn, &newUID, &newGID,
 						   security_info_sent, psd);
@@ -988,7 +1011,7 @@ NTSTATUS smb_set_nt_acl_nfs4(vfs_handle_struct *handle, files_struct *fsp,
 		return NT_STATUS_OK;
 	}
 
-	theacl = smbacl4_win2nfs4(frame, fsp, psd->dacl, &params,
+	theacl = smbacl4_win2nfs4(frame, fsp, psd->dacl, pparams,
 				  sbuf.st_ex_uid, sbuf.st_ex_gid);
 	if (!theacl) {
 		TALLOC_FREE(frame);

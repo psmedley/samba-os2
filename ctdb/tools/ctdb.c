@@ -22,6 +22,7 @@
 #include "system/filesys.h"
 #include "system/time.h"
 #include "system/wait.h"
+#include "system/dir.h"
 
 #include <ctype.h>
 #include <popt.h>
@@ -32,6 +33,7 @@
 #include "ctdb_version.h"
 #include "lib/util/debug.h"
 #include "lib/util/samba_util.h"
+#include "lib/util/sys_rw.h"
 
 #include "common/db_hash.h"
 #include "common/logging.h"
@@ -644,27 +646,44 @@ static int str_to_data(const char *str, size_t len, TALLOC_CTX *mem_ctx,
 	return ret;
 }
 
-static int run_helper(const char *command, const char *path, const char *arg1)
+static int run_helper(TALLOC_CTX *mem_ctx, const char *command,
+		      const char *path, int argc, const char **argv)
 {
 	pid_t pid;
 	int save_errno, status, ret;
+	const char **new_argv;
+	int i;
+
+	new_argv = talloc_array(mem_ctx, const char *, argc + 2);
+	if (new_argv == NULL) {
+		return ENOMEM;
+	}
+
+	new_argv[0] = path;
+	for (i=0; i<argc; i++) {
+		new_argv[i+1] = argv[i];
+	}
+	new_argv[argc+1] = NULL;
 
 	pid = fork();
 	if (pid < 0) {
 		save_errno = errno;
+		talloc_free(new_argv);
 		fprintf(stderr, "Failed to fork %s (%s) - %s\n",
 			command, path, strerror(save_errno));
 		return save_errno;
 	}
 
 	if (pid == 0) {
-		ret = execl(path, path, arg1, NULL);
+		ret = execv(path, discard_const(new_argv));
 		if (ret == -1) {
-			_exit(errno);
+			_exit(64+errno);
 		}
 		/* Should not happen */
-		_exit(ENOEXEC);
+		_exit(64+ENOEXEC);
 	}
+
+	talloc_free(new_argv);
 
 	ret = waitpid(pid, &status, 0);
 	if (ret == -1) {
@@ -675,11 +694,20 @@ static int run_helper(const char *command, const char *path, const char *arg1)
 	}
 
 	if (WIFEXITED(status)) {
-		ret = WEXITSTATUS(status);
+		int pstatus = WEXITSTATUS(status);
+		if (WIFSIGNALED(status)) {
+			fprintf(stderr, "%s terminated with signal %d\n",
+				command, WTERMSIG(status));
+			ret = EINTR;
+		} else if (pstatus >= 64 && pstatus < 255) {
+			fprintf(stderr, "%s failed with error %d\n",
+				command, pstatus-64);
+			ret = pstatus - 64;
+		} else {
+			ret = pstatus;
+		}
 		return ret;
-	}
-
-	if (WIFSIGNALED(status)) {
+	} else if (WIFSIGNALED(status)) {
 		fprintf(stderr, "%s terminated with signal %d\n",
 			command, WTERMSIG(status));
 		return EINTR;
@@ -774,7 +802,8 @@ static void print_nodemap_machine(TALLOC_CTX *mem_ctx,
 }
 
 static void print_nodemap(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
-			  struct ctdb_node_map *nodemap, uint32_t mypnn)
+			  struct ctdb_node_map *nodemap, uint32_t mypnn,
+			  bool print_header)
 {
 	struct ctdb_node_and_flags *node;
 	int num_deleted_nodes = 0;
@@ -786,11 +815,14 @@ static void print_nodemap(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		}
 	}
 
-	if (num_deleted_nodes == 0) {
-		printf("Number of nodes:%d\n", nodemap->num);
-	} else {
-		printf("Number of nodes:%d (including %d deleted nodes)\n",
-		       nodemap->num, num_deleted_nodes);
+	if (print_header) {
+		if (num_deleted_nodes == 0) {
+			printf("Number of nodes:%d\n", nodemap->num);
+		} else {
+			printf("Number of nodes:%d "
+			       "(including %d deleted nodes)\n",
+			       nodemap->num, num_deleted_nodes);
+		}
 	}
 
 	for (i=0; i<nodemap->num; i++) {
@@ -816,7 +848,7 @@ static void print_status(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 {
 	int i;
 
-	print_nodemap(mem_ctx, ctdb, nodemap, mypnn);
+	print_nodemap(mem_ctx, ctdb, nodemap, mypnn, true);
 
 	if (vnnmap->generation == INVALID_GENERATION) {
 		printf("Generation:INVALID\n");
@@ -1524,7 +1556,8 @@ static int get_all_public_ips(struct ctdb_context *ctdb, TALLOC_CTX *mem_ctx,
 
 	for (i=0; i<count; i++) {
 		ret = ctdb_ctrl_get_public_ips(mem_ctx, ctdb->ev, ctdb->client,
-					       pnn_list[i], TIMEOUT(), &ips);
+					       pnn_list[i], TIMEOUT(),
+					       false, &ips);
 		if (ret != 0) {
 			goto failed;
 		}
@@ -1629,7 +1662,8 @@ static int control_ip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		ret = get_all_public_ips(ctdb, mem_ctx, &ips);
 	} else {
 		ret = ctdb_ctrl_get_public_ips(mem_ctx, ctdb->ev, ctdb->client,
-					       ctdb->cmd_pnn, TIMEOUT(), &ips);
+					       ctdb->cmd_pnn, TIMEOUT(),
+					       false, &ips);
 	}
 	if (ret != 0) {
 		return ret;
@@ -2277,7 +2311,7 @@ static int control_lvs(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	return run_helper("LVS helper", lvs_helper, argv[0]);
+	return run_helper(mem_ctx, "LVS helper", lvs_helper, argc, argv);
 }
 
 static int control_disable_monitor(TALLOC_CTX *mem_ctx,
@@ -2321,7 +2355,7 @@ static int control_enable_monitor(TALLOC_CTX *mem_ctx,
 static int control_setdebug(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			    int argc, const char **argv)
 {
-	enum debug_level log_level;
+	int log_level;
 	int ret;
 	bool found;
 
@@ -2350,7 +2384,7 @@ static int control_setdebug(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 static int control_getdebug(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			    int argc, const char **argv)
 {
-	enum debug_level loglevel;
+	int loglevel;
 	const char *log_str;
 	int ret;
 
@@ -2920,7 +2954,7 @@ again:
 		return ret;
 	}
 
-	if (vnnmap->generation == 1) {
+	if (vnnmap->generation == INVALID_GENERATION) {
 		talloc_free(vnnmap);
 		sleep(1);
 		goto again;
@@ -3781,7 +3815,7 @@ static int moveip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	}
 
 	ret = ctdb_ctrl_get_public_ips(mem_ctx, ctdb->ev, ctdb->client,
-				       pnn, TIMEOUT(), &pubip_list);
+				       pnn, TIMEOUT(), false, &pubip_list);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to get Public IPs from node %u\n",
 			pnn);
@@ -3909,7 +3943,8 @@ static int control_addip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	}
 
 	ret = ctdb_ctrl_get_public_ips(mem_ctx, ctdb->ev, ctdb->client,
-				       ctdb->cmd_pnn, TIMEOUT(), &pubip_list);
+				       ctdb->cmd_pnn, TIMEOUT(),
+				       false, &pubip_list);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to get Public IPs from node %u\n",
 			ctdb->cmd_pnn);
@@ -3972,7 +4007,8 @@ static int control_delip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	}
 
 	ret = ctdb_ctrl_get_public_ips(mem_ctx, ctdb->ev, ctdb->client,
-				       ctdb->cmd_pnn, TIMEOUT(), &pubip_list);
+				       ctdb->cmd_pnn, TIMEOUT(),
+				       false, &pubip_list);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to get Public IPs from node %u\n",
 			ctdb->cmd_pnn);
@@ -3999,31 +4035,6 @@ static int control_delip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 				      ctdb->cmd_pnn, TIMEOUT(), &addr_info);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to delete public IP from node %u\n",
-			ctdb->cmd_pnn);
-		return ret;
-	}
-
-	return 0;
-}
-
-static int control_eventscript(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
-			       int argc, const char **argv)
-{
-	int ret;
-
-	if (argc != 1) {
-		usage("eventscript");
-	}
-
-	if (strcmp(argv[0], "monitor") != 0) {
-		fprintf(stderr, "Only monitor event can be run\n");
-		return 1;
-	}
-
-	ret = ctdb_ctrl_run_eventscripts(mem_ctx, ctdb->ev, ctdb->client,
-					 ctdb->cmd_pnn, TIMEOUT(), argv[0]);
-	if (ret != 0) {
-		fprintf(stderr, "Failed to run monitor event on node %u\n",
 			ctdb->cmd_pnn);
 		return ret;
 	}
@@ -4623,239 +4634,70 @@ static int control_recmaster(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	return 0;
 }
 
-static void print_scriptstatus_one(struct ctdb_script_list *slist,
-				   const char *event_str)
+static int control_event(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
+			 int argc, const char **argv)
 {
-	int i;
-	int num_run = 0;
-
-	if (slist == NULL) {
-		if (! options.machinereadable) {
-			printf("%s cycle never run\n", event_str);
-		}
-		return;
-	}
-
-	for (i=0; i<slist->num_scripts; i++) {
-		if (slist->script[i].status != -ENOEXEC) {
-			num_run++;
-		}
-	}
-
-	if (! options.machinereadable) {
-		printf("%d scripts were executed last %s cycle\n",
-		       num_run, event_str);
-	}
-
-	for (i=0; i<slist->num_scripts; i++) {
-		const char *status = NULL;
-
-		switch (slist->script[i].status) {
-		case -ETIME:
-			status = "TIMEDOUT";
-			break;
-		case -ENOEXEC:
-			status = "DISABLED";
-			break;
-		case 0:
-			status = "OK";
-			break;
-		default:
-			if (slist->script[i].status > 0) {
-				status = "ERROR";
-			}
-			break;
-		}
-
-		if (options.machinereadable) {
-			printf("%s%s%s%s%s%i%s%s%s%lu.%06lu%s%lu.%06lu%s%s%s\n",
-			       options.sep,
-			       event_str, options.sep,
-			       slist->script[i].name, options.sep,
-			       slist->script[i].status, options.sep,
-			       status, options.sep,
-			       slist->script[i].start.tv_sec,
-			       slist->script[i].start.tv_usec, options.sep,
-			       slist->script[i].finished.tv_sec,
-			       slist->script[i].finished.tv_usec, options.sep,
-			       slist->script[i].output, options.sep);
-			continue;
-		}
-
-		if (status) {
-			printf("%-20s Status:%s    ",
-			       slist->script[i].name, status);
-		} else {
-			/* Some other error, eg from stat. */
-			printf("%-20s Status:CANNOT RUN (%s)",
-			       slist->script[i].name,
-			       strerror(-slist->script[i].status));
-		}
-
-		if (slist->script[i].status >= 0) {
-			printf("Duration:%.3lf ",
-			       timeval_delta(&slist->script[i].finished,
-					     &slist->script[i].start));
-		}
-		if (slist->script[i].status != -ENOEXEC) {
-			printf("%s", ctime(&slist->script[i].start.tv_sec));
-			if (slist->script[i].status != 0) {
-				printf("   OUTPUT:%s\n",
-				       slist->script[i].output);
-			}
-		} else {
-			printf("\n");
-		}
-	}
-}
-
-static void print_scriptstatus(struct ctdb_script_list **slist,
-			       int count, const char **event_str)
-{
+	char *t, *event_helper = NULL;
+	char *eventd_socket = NULL;
+	const char **new_argv;
 	int i;
 
-	if (options.machinereadable) {
-		printf("%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
-		       options.sep,
-		       "Type", options.sep,
-		       "Name", options.sep,
-		       "Code", options.sep,
-		       "Status", options.sep,
-		       "Start", options.sep,
-		       "End", options.sep,
-		       "Error Output", options.sep);
+	t = getenv("CTDB_EVENT_HELPER");
+	if (t != NULL) {
+		event_helper = talloc_strdup(mem_ctx, t);
+	} else {
+		event_helper = talloc_asprintf(mem_ctx, "%s/ctdb_event",
+					       CTDB_HELPER_BINDIR);
 	}
 
-	for (i=0; i<count; i++) {
-		print_scriptstatus_one(slist[i], event_str[i]);
+	if (event_helper == NULL) {
+		fprintf(stderr, "Unable to set event daemon helper\n");
+		return 1;
 	}
+
+	t = getenv("CTDB_SOCKET");
+	if (t != NULL) {
+		eventd_socket = talloc_asprintf(mem_ctx, "%s/eventd.sock",
+						dirname(t));
+	} else {
+		eventd_socket = talloc_asprintf(mem_ctx, "%s/eventd.sock",
+						CTDB_RUNDIR);
+	}
+
+	if (eventd_socket == NULL) {
+		fprintf(stderr, "Unable to set event daemon socket\n");
+		return 1;
+	}
+
+	new_argv = talloc_array(mem_ctx, const char *, argc + 1);
+	if (new_argv == NULL) {
+		fprintf(stderr, "Memory allocation error\n");
+		return 1;
+	}
+
+	new_argv[0] = eventd_socket;
+	for (i=0; i<argc; i++) {
+		new_argv[i+1] = argv[i];
+	}
+
+	return run_helper(mem_ctx, "event daemon helper", event_helper,
+			  argc+1, new_argv);
 }
 
 static int control_scriptstatus(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 				int argc, const char **argv)
 {
-	struct ctdb_script_list **slist;
-	const char *event_str;
-	enum ctdb_event event;
-	const char *all_events[] = {
-		"init", "setup", "startup", "monitor",
-		"takeip", "releaseip", "updateip", "ipreallocated" };
-	bool valid;
-	int ret, i, j;
-	int count, start, end, num;
+	const char *new_argv[3];
 
 	if (argc > 1) {
 		usage("scriptstatus");
 	}
 
-	if (argc == 0) {
-		event_str = "monitor";
-	} else {
-		event_str = argv[0];
-	}
+	new_argv[0] = "status";
+	new_argv[1] = (argc == 0) ? "monitor" : argv[0];
+	new_argv[2] = NULL;
 
-	valid = false;
-	for (i=0; i<ARRAY_SIZE(all_events); i++) {
-		if (strcmp(event_str, all_events[i]) == 0) {
-			valid = true;
-			count = 1;
-			start = i;
-			end = i+1;
-			break;
-		}
-	}
-
-	if (strcmp(event_str, "all") == 0) {
-		valid = true;
-		count = ARRAY_SIZE(all_events);
-		start = 0;
-		end = count-1;
-	}
-
-	if (! valid) {
-		fprintf(stderr, "Unknown event name %s\n", argv[0]);
-		usage("scriptstatus");
-	}
-
-	slist = talloc_array(mem_ctx, struct ctdb_script_list *, count);
-	if (slist == NULL) {
-		fprintf(stderr, "Memory allocation error\n");
-		return 1;
-	}
-
-	num = 0;
-	for (i=start; i<end; i++) {
-		event = ctdb_event_from_string(all_events[i]);
-
-		ret = ctdb_ctrl_get_event_script_status(mem_ctx, ctdb->ev,
-							ctdb->client,
-							ctdb->cmd_pnn,
-							TIMEOUT(), event,
-							&slist[num]);
-		if (ret != 0) {
-			fprintf(stderr,
-				"failed to get script status for %s event\n",
-				all_events[i]);
-			return 1;
-		}
-
-		if (slist[num] == NULL) {
-			num++;
-			continue;
-		}
-
-		/* The ETIME status is ignored for certain events.
-		 * In that case the status is 0, but endtime is not set.
-		 */
-		for (j=0; j<slist[num]->num_scripts; j++) {
-			if (slist[num]->script[j].status == 0 &&
-			    timeval_is_zero(&slist[num]->script[j].finished)) {
-				slist[num]->script[j].status = -ETIME;
-			}
-		}
-
-		num++;
-	}
-
-	print_scriptstatus(slist, count, &all_events[start]);
-	return 0;
-}
-
-static int control_enablescript(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
-				int argc, const char **argv)
-{
-	int ret;
-
-	if (argc != 1) {
-		usage("enablescript");
-	}
-
-	ret = ctdb_ctrl_enable_script(mem_ctx, ctdb->ev, ctdb->client,
-				      ctdb->cmd_pnn, TIMEOUT(), argv[0]);
-	if (ret != 0) {
-		fprintf(stderr, "Failed to enable script %s\n", argv[0]);
-		return ret;
-	}
-
-	return 0;
-}
-
-static int control_disablescript(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
-				 int argc, const char **argv)
-{
-	int ret;
-
-	if (argc != 1) {
-		usage("disablescript");
-	}
-
-	ret = ctdb_ctrl_disable_script(mem_ctx, ctdb->ev, ctdb->client,
-				       ctdb->cmd_pnn, TIMEOUT(), argv[0]);
-	if (ret != 0) {
-		fprintf(stderr, "Failed to disable script %s\n", argv[0]);
-		return ret;
-	}
-
+	(void) control_event(mem_ctx, ctdb, 2, new_argv);
 	return 0;
 }
 
@@ -4881,13 +4723,15 @@ static int control_natgw(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	return run_helper("NAT gateway helper", natgw_helper, argv[0]);
+	return run_helper(mem_ctx, "NAT gateway helper", natgw_helper,
+			  argc, argv);
 }
 
 static int control_natgwlist(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			     int argc, const char **argv)
 {
 	char *t, *natgw_helper = NULL;
+	const char *cmd_argv[] = { "natgwlist", NULL };
 
 	if (argc != 0) {
 		usage("natgwlist");
@@ -4906,7 +4750,8 @@ static int control_natgwlist(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	return run_helper("NAT gateway helper", natgw_helper, "natgwlist");
+	return run_helper(mem_ctx, "NAT gateway helper", natgw_helper,
+			  1, cmd_argv);
 }
 
 /*
@@ -4969,7 +4814,7 @@ static int control_setlmasterrole(TALLOC_CTX *mem_ctx,
 				  struct ctdb_context *ctdb,
 				  int argc, const char **argv)
 {
-	uint32_t lmasterrole;
+	uint32_t lmasterrole = 0;
 	int ret;
 
 	if (argc != 1) {
@@ -4997,7 +4842,7 @@ static int control_setrecmasterrole(TALLOC_CTX *mem_ctx,
 				    struct ctdb_context *ctdb,
 				    int argc, const char **argv)
 {
-	uint32_t recmasterrole;
+	uint32_t recmasterrole = 0;
 	int ret;
 
 	if (argc != 1) {
@@ -5499,9 +5344,9 @@ static int control_tstore(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			  int argc, const char **argv)
 {
 	struct tdb_context *tdb;
-	TDB_DATA key, data, value;
+	TDB_DATA key, data[2], value;
 	struct ctdb_ltdb_header header;
-	size_t offset;
+	uint8_t header_buf[sizeof(struct ctdb_ltdb_header)];
 	int ret;
 
 	if (argc < 3 || argc > 5) {
@@ -5540,19 +5385,15 @@ static int control_tstore(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		header.flags = (uint32_t)atol(argv[5]);
 	}
 
-	offset = ctdb_ltdb_header_len(&header);
-	data.dsize = offset + value.dsize;
-	data.dptr = talloc_size(mem_ctx, data.dsize);
-	if (data.dptr == NULL) {
-		fprintf(stderr, "Memory allocation error\n");
-		tdb_close(tdb);
-		return 1;
-	}
+	ctdb_ltdb_header_push(&header, header_buf);
 
-	ctdb_ltdb_header_push(&header, data.dptr);
-	memcpy(data.dptr + offset, value.dptr, value.dsize);
+	data[0].dsize = ctdb_ltdb_header_len(&header);
+	data[0].dptr = header_buf;
 
-	ret = tdb_store(tdb, key, data, TDB_REPLACE);
+	data[1].dsize = value.dsize;
+	data[1].dptr = value.dptr;
+
+	ret = tdb_storev(tdb, key, data, 2, TDB_REPLACE);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to write record %s to file %s\n",
 			argv[1], argv[0]);
@@ -5813,6 +5654,7 @@ static int control_nodestatus(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	const char *nodestring = NULL;
 	struct ctdb_node_map *nodemap;
 	int ret, i;
+	bool print_hdr = false;
 
 	if (argc > 1) {
 		usage("nodestatus");
@@ -5820,21 +5662,19 @@ static int control_nodestatus(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 
 	if (argc == 1) {
 		nodestring = argv[0];
+		if (strcmp(nodestring, "all") == 0) {
+			print_hdr = true;
+		}
 	}
 
 	if (! parse_nodestring(mem_ctx, ctdb, nodestring, &nodemap)) {
 		return 1;
 	}
 
-	nodemap = get_nodemap(ctdb, false);
-	if (nodemap == NULL) {
-		return 1;
-	}
-
 	if (options.machinereadable) {
 		print_nodemap_machine(mem_ctx, ctdb, nodemap, ctdb->cmd_pnn);
 	} else {
-		print_nodemap(mem_ctx, ctdb, nodemap, ctdb->cmd_pnn);
+		print_nodemap(mem_ctx, ctdb, nodemap, ctdb->cmd_pnn, print_hdr);
 	}
 
 	ret = 0;
@@ -6267,8 +6107,6 @@ static const struct ctdb_cmd {
 		"add an ip address to a node", "<ip/mask> <iface>" },
 	{ "delip", control_delip, false, true,
 		"delete an ip address from a node", "<ip>" },
-	{ "eventscript", control_eventscript, false, true,
-		"run an event", "monitor" },
 	{ "backupdb", control_backupdb, false, false,
 		"backup a database into a file", "<dbname|dbid> <file>" },
 	{ "restoredb", control_restoredb, false, false,
@@ -6279,13 +6117,11 @@ static const struct ctdb_cmd {
 		"wipe the contents of a database.", "<dbname|dbid>"},
 	{ "recmaster", control_recmaster, false, true,
 		"show the pnn for the recovery master", NULL },
-	{ "scriptstatus", control_scriptstatus, false, true,
+	{ "event", control_event, true, false,
+		"event and event script commands", NULL },
+	{ "scriptstatus", control_scriptstatus, true, false,
 		"show event script status",
 		"[init|setup|startup|monitor|takeip|releaseip|ipreallocated]" },
-	{ "enablescript", control_enablescript, false, true,
-		"enable an eventscript", "<script>"},
-	{ "disablescript", control_disablescript, false, true,
-		"disable an eventscript", "<script>"},
 	{ "natgw", control_natgw, false, false,
 		"show natgw configuration", "master|list|status" },
 	{ "natgwlist", control_natgwlist, false, false,
@@ -6513,7 +6349,7 @@ int main(int argc, const char *argv[])
 	int extra_argc;
 	const struct ctdb_cmd *cmd;
 	const char *ctdb_socket;
-	enum debug_level loglevel;
+	int loglevel;
 	int ret;
 
 	setlinebuf(stdout);

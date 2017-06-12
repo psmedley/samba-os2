@@ -121,6 +121,7 @@ NTSTATUS cli_smb2_dskattr(struct cli_state *cli,
 			uint64_t *bsize,
 			uint64_t *total,
 			uint64_t *avail);
+NTSTATUS cli_smb2_get_fs_attr_info(struct cli_state *cli, uint32_t *fs_attr);
 NTSTATUS cli_smb2_query_security_descriptor(struct cli_state *cli,
 			uint16_t fnum,
 			uint32_t sec_info,
@@ -148,6 +149,23 @@ NTSTATUS cli_smb2_set_ea_path(struct cli_state *cli,
 			const char *ea_name,
 			const char *ea_val,
 			size_t ea_len);
+NTSTATUS cli_smb2_get_user_quota(struct cli_state *cli,
+				 int quota_fnum,
+				 SMB_NTQUOTA_STRUCT *pqt);
+NTSTATUS cli_smb2_list_user_quota_step(struct cli_state *cli,
+				       TALLOC_CTX *mem_ctx,
+				       int quota_fnum,
+				       SMB_NTQUOTA_LIST **pqt_list,
+				       bool first);
+NTSTATUS cli_smb2_get_fs_quota_info(struct cli_state *cli,
+				    int quota_fnum,
+				    SMB_NTQUOTA_STRUCT *pqt);
+NTSTATUS cli_smb2_set_user_quota(struct cli_state *cli,
+				 int quota_fnum,
+				 SMB_NTQUOTA_LIST *qtl);
+NTSTATUS cli_smb2_set_fs_quota_info(struct cli_state *cli,
+				    int quota_fnum,
+				    SMB_NTQUOTA_STRUCT *pqt);
 struct tevent_req *cli_smb2_read_send(TALLOC_CTX *mem_ctx,
 				struct tevent_context *ev,
 				struct cli_state *cli,

@@ -17,14 +17,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "includes.h"
+#include "replace.h"
+#include <tevent.h>
+#include "lib/util/data_blob.h"
 #include "librpc/gen_ndr/notify.h"
 #include "librpc/gen_ndr/messaging.h"
 #include "librpc/gen_ndr/server_id.h"
 #include "lib/dbwrap/dbwrap.h"
 #include "lib/dbwrap/dbwrap_rbt.h"
 #include "messages.h"
-#include "proto.h"
 #include "tdb.h"
 #include "util_tdb.h"
 #include "notifyd.h"
@@ -32,7 +33,6 @@
 #include "lib/util/tevent_unix.h"
 #include "ctdbd_conn.h"
 #include "ctdb_srvids.h"
-#include "source3/smbd/proto.h"
 #include "server_id_db_util.h"
 #include "lib/util/iov_buf.h"
 #include "messages_util.h"
@@ -61,7 +61,7 @@ struct notifyd_state {
 	 *
 	 * struct notifyd_instance
 	 *
-	 * to be maintained by parsed by notifyd_entry_parse()
+	 * to be maintained and parsed by notifyd_entry_parse()
 	 */
 	struct db_context *entries;
 
@@ -130,11 +130,11 @@ static bool notifyd_trigger(struct messaging_context *msg_ctx,
 static bool notifyd_get_db(struct messaging_context *msg_ctx,
 			   struct messaging_rec **prec,
 			   void *private_data);
+
+#ifdef CLUSTER_SUPPORT
 static bool notifyd_got_db(struct messaging_context *msg_ctx,
 			   struct messaging_rec **prec,
 			   void *private_data);
-
-#ifdef CLUSTER_SUPPORT
 static void notifyd_broadcast_reclog(struct ctdbd_connection *ctdbd_conn,
 				     struct server_id src,
 				     struct messaging_reclog *log);
@@ -240,6 +240,7 @@ struct tevent_req *notifyd_send(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	}
 	tevent_req_set_callback(subreq, notifyd_handler_done, req);
 
+#ifdef CLUSTER_SUPPORT
 	subreq = messaging_handler_send(state, ev, msg_ctx,
 					MSG_SMB_NOTIFY_DB,
 					notifyd_got_db, state);
@@ -247,6 +248,7 @@ struct tevent_req *notifyd_send(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		return tevent_req_post(req, ev);
 	}
 	tevent_req_set_callback(subreq, notifyd_handler_done, req);
+#endif
 
 	names_db = messaging_names_db(msg_ctx);
 
@@ -732,7 +734,8 @@ static void notifyd_trigger_parser(TDB_DATA key, TDB_DATA data,
 
 {
 	struct notifyd_trigger_state *tstate = private_data;
-	struct notify_event_msg msg = { .action = tstate->msg->action };
+	struct notify_event_msg msg = { .action = tstate->msg->action,
+					.when = tstate->msg->when };
 	struct iovec iov[2];
 	size_t path_len = key.dsize;
 	struct notifyd_instance *instances = NULL;
@@ -901,6 +904,8 @@ static bool notifyd_get_db(struct messaging_context *msg_ctx,
 	return true;
 }
 
+#ifdef CLUSTER_SUPPORT
+
 static int notifyd_add_proxy_syswatches(struct db_record *rec,
 					void *private_data);
 
@@ -965,8 +970,6 @@ static bool notifyd_got_db(struct messaging_context *msg_ctx,
 
 	return true;
 }
-
-#ifdef CLUSTER_SUPPORT
 
 static void notifyd_broadcast_reclog(struct ctdbd_connection *ctdbd_conn,
 				     struct server_id src,
@@ -1169,8 +1172,6 @@ static int notifyd_clean_peers_recv(struct tevent_req *req)
 	return tevent_req_simple_recv_unix(req);
 }
 
-#endif
-
 static int notifyd_add_proxy_syswatches(struct db_record *rec,
 					void *private_data)
 {
@@ -1202,6 +1203,13 @@ static int notifyd_add_proxy_syswatches(struct db_record *rec,
 		uint32_t subdir_filter = instance->instance.subdir_filter;
 		int ret;
 
+		/*
+		 * This is a remote database. Pointers that we were
+		 * given don't make sense locally. Initialize to NULL
+		 * in case sys_notify_watch fails.
+		 */
+		instances[i].sys_watch = NULL;
+
 		ret = state->sys_notify_watch(
 			db, state->sys_notify_ctx, path,
 			&filter, &subdir_filter,
@@ -1215,8 +1223,6 @@ static int notifyd_add_proxy_syswatches(struct db_record *rec,
 
 	return 0;
 }
-
-#ifdef CLUSTER_SUPPORT
 
 static int notifyd_db_del_syswatches(struct db_record *rec, void *private_data)
 {

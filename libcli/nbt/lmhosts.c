@@ -22,7 +22,6 @@
 */
 
 #include "includes.h"
-#include "lib/util/xfile.h"
 #include "lib/util/util_net.h"
 #include "system/filesys.h"
 #include "system/network.h"
@@ -32,9 +31,9 @@
  Start parsing the lmhosts file.
 *********************************************************/
 
-XFILE *startlmhosts(const char *fname)
+FILE *startlmhosts(const char *fname)
 {
-	XFILE *fp = x_fopen(fname,O_RDONLY, 0);
+	FILE *fp = fopen(fname, "r");
 	if (!fp) {
 		DEBUG(4,("startlmhosts: Can't open lmhosts file %s. "
 			"Error was %s\n",
@@ -48,14 +47,14 @@ XFILE *startlmhosts(const char *fname)
  Parse the next line in the lmhosts file.
 *********************************************************/
 
-bool getlmhostsent(TALLOC_CTX *ctx, XFILE *fp, char **pp_name, int *name_type,
-		struct sockaddr_storage *pss)
+bool getlmhostsent(TALLOC_CTX *ctx, FILE *fp, char **pp_name, int *name_type,
+		   struct sockaddr_storage *pss)
 {
 	char line[1024];
 
 	*pp_name = NULL;
 
-	while(!x_feof(fp) && !x_ferror(fp)) {
+	while(!feof(fp) && !ferror(fp)) {
 		char *ip = NULL;
 		char *flags = NULL;
 		char *extra = NULL;
@@ -66,7 +65,7 @@ bool getlmhostsent(TALLOC_CTX *ctx, XFILE *fp, char **pp_name, int *name_type,
 
 		*name_type = -1;
 
-		if (!fgets_slash(line,sizeof(line),fp)) {
+		if (!fgets_slash(NULL,line,sizeof(line),fp)) {
 			continue;
 		}
 
@@ -151,18 +150,18 @@ bool getlmhostsent(TALLOC_CTX *ctx, XFILE *fp, char **pp_name, int *name_type,
  Finish parsing the lmhosts file.
 *********************************************************/
 
-void endlmhosts(XFILE *fp)
+void endlmhosts(FILE *fp)
 {
-	x_fclose(fp);
+	fclose(fp);
 }
 
 /********************************************************
  Resolve via "lmhosts" method.
 *********************************************************/
 
-NTSTATUS resolve_lmhosts_file_as_sockaddr(const char *lmhosts_file, 
+NTSTATUS resolve_lmhosts_file_as_sockaddr(const char *lmhosts_file,
 					  const char *name, int name_type,
-					  TALLOC_CTX *mem_ctx, 
+					  TALLOC_CTX *mem_ctx,
 					  struct sockaddr_storage **return_iplist,
 					  int *return_count)
 {
@@ -170,7 +169,7 @@ NTSTATUS resolve_lmhosts_file_as_sockaddr(const char *lmhosts_file,
 	 * "lmhosts" means parse the local lmhosts file.
 	 */
 
-	XFILE *fp;
+	FILE *fp;
 	char *lmhost_name = NULL;
 	int name_type2;
 	struct sockaddr_storage return_ss;
@@ -206,8 +205,8 @@ NTSTATUS resolve_lmhosts_file_as_sockaddr(const char *lmhosts_file,
 			TALLOC_FREE(lmhost_name);
 			continue;
 		}
-		
-		*return_iplist = talloc_realloc(ctx, (*return_iplist), 
+
+		*return_iplist = talloc_realloc(ctx, (*return_iplist),
 						struct sockaddr_storage,
 						(*return_count)+1);
 

@@ -96,7 +96,7 @@ static WERROR fill_value_cache(struct registry_key *key)
 
 	if (fetch_reg_values(key->key, key->values) == -1) {
 		TALLOC_FREE(key->values);
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	}
 
 	return WERR_OK;
@@ -118,7 +118,7 @@ static WERROR fill_subkey_cache(struct registry_key *key)
 
 	if (fetch_reg_keys(key->key, key->subkeys) == -1) {
 		TALLOC_FREE(key->subkeys);
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	}
 
 	return WERR_OK;
@@ -148,7 +148,7 @@ static WERROR regkey_open_onelevel(TALLOC_CTX *mem_ctx,
 	    !(regkey->token = dup_nt_token(regkey, token)) ||
 	    !(regkey->key = talloc_zero(regkey, struct registry_key_handle)))
 	{
-		result = WERR_NOMEM;
+		result = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -169,7 +169,7 @@ static WERROR regkey_open_onelevel(TALLOC_CTX *mem_ctx,
 		 * Open a copy of the parent key
 		 */
 		if (!parent) {
-			result = WERR_BADFILE;
+			result = WERR_FILE_NOT_FOUND;
 			goto done;
 		}
 		key->name = talloc_strdup(key, parent->key->name);
@@ -185,7 +185,7 @@ static WERROR regkey_open_onelevel(TALLOC_CTX *mem_ctx,
 	}
 
 	if (key->name == NULL) {
-		result = WERR_NOMEM;
+		result = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -200,7 +200,7 @@ static WERROR regkey_open_onelevel(TALLOC_CTX *mem_ctx,
 	if (key->ops == NULL) {
 		DEBUG(0,("reg_open_onelevel: Failed to assign "
 			 "registry_ops to [%s]\n", key->name ));
-		result = WERR_BADFILE;
+		result = WERR_FILE_NOT_FOUND;
 		goto done;
 	}
 
@@ -239,7 +239,7 @@ WERROR reg_openhive(TALLOC_CTX *mem_ctx, const char *hive,
 
 	hi = hive_info(hive);
 	if (hi == NULL) {
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	}
 
 	return regkey_open_onelevel(mem_ctx, NULL, hi->short_name, token,
@@ -263,7 +263,7 @@ WERROR reg_openkey(TALLOC_CTX *mem_ctx, struct registry_key *parent,
 
 	path = talloc_strdup(frame, name);
 	if (path == NULL) {
-		err = WERR_NOMEM;
+		err = WERR_NOT_ENOUGH_MEMORY;
 		goto error;
 	}
 
@@ -279,7 +279,7 @@ WERROR reg_openkey(TALLOC_CTX *mem_ctx, struct registry_key *parent,
 
 		name_component = talloc_strndup(frame, path, (p - path));
 		if (name_component == NULL) {
-			err = WERR_NOMEM;
+			err = WERR_NOT_ENOUGH_MEMORY;
 			goto error;
 		}
 
@@ -324,7 +324,7 @@ WERROR reg_enumkey(TALLOC_CTX *mem_ctx, struct registry_key *key,
 	if (!(*name = talloc_strdup(mem_ctx,
 			regsubkey_ctr_specific_key(key->subkeys, idx))))
 	{
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (last_write_time) {
@@ -358,7 +358,7 @@ WERROR reg_enumvalue(TALLOC_CTX *mem_ctx, struct registry_key *key,
 
 	val = talloc_zero(mem_ctx, struct registry_value);
 	if (val == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	val->type = regval_type(blob);
@@ -368,7 +368,7 @@ WERROR reg_enumvalue(TALLOC_CTX *mem_ctx, struct registry_key *key,
 	    && !(*pname = talloc_strdup(
 			 mem_ctx, regval_name(blob)))) {
 		TALLOC_FREE(val);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	*pval = val;
@@ -395,7 +395,7 @@ static WERROR reg_enumvalue_nocachefill(TALLOC_CTX *mem_ctx,
 
 	val = talloc_zero(mem_ctx, struct registry_value);
 	if (val == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	val->type = regval_type(blob);
@@ -405,7 +405,7 @@ static WERROR reg_enumvalue_nocachefill(TALLOC_CTX *mem_ctx,
 	    && !(*pname = talloc_strdup(
 			 mem_ctx, regval_name(blob)))) {
 		TALLOC_FREE(val);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	*pval = val;
@@ -441,7 +441,7 @@ WERROR reg_queryvalue(TALLOC_CTX *mem_ctx, struct registry_key *key,
 		}
 	}
 
-	return WERR_BADFILE;
+	return WERR_FILE_NOT_FOUND;
 }
 
 WERROR reg_querymultiplevalues(TALLOC_CTX *mem_ctx,
@@ -469,7 +469,7 @@ WERROR reg_querymultiplevalues(TALLOC_CTX *mem_ctx,
 
 	vals = talloc_zero_array(mem_ctx, struct registry_value, num_names);
 	if (vals == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	for (n=0; n < num_names; n++) {
@@ -512,7 +512,7 @@ WERROR reg_queryinfokey(struct registry_key *key, uint32_t *num_subkeys,
 
 	if (!W_ERROR_IS_OK(fill_subkey_cache(key)) ||
 	    !W_ERROR_IS_OK(fill_value_cache(key))) {
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	}
 
 	max_len = 0;
@@ -539,7 +539,7 @@ WERROR reg_queryinfokey(struct registry_key *key, uint32_t *num_subkeys,
 	*max_valbufsize = max_size;
 
 	if (!(mem_ctx = talloc_new(key))) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	err = regkey_get_secdesc(mem_ctx, key->key, &secdesc);
@@ -569,12 +569,12 @@ WERROR reg_createkey(TALLOC_CTX *ctx, struct registry_key *parent,
 
 	mem_ctx = talloc_new(ctx);
 	if (mem_ctx == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	path = talloc_strdup(mem_ctx, subkeypath);
 	if (path == NULL) {
-		err = WERR_NOMEM;
+		err = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -618,7 +618,7 @@ WERROR reg_createkey(TALLOC_CTX *ctx, struct registry_key *parent,
 		goto trans_done;
 	}
 
-	if (!W_ERROR_EQUAL(err, WERR_BADFILE)) {
+	if (!W_ERROR_EQUAL(err, WERR_FILE_NOT_FOUND)) {
 		/*
 		 * Something but "notfound" has happened, so bail out
 		 */
@@ -682,7 +682,7 @@ static WERROR reg_deletekey_internal(TALLOC_CTX *mem_ctx,
 	struct registry_key *key;
 	name = talloc_strdup(mem_ctx, path);
 	if (name == NULL) {
-		err = WERR_NOMEM;
+		err = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -700,7 +700,7 @@ static WERROR reg_deletekey_internal(TALLOC_CTX *mem_ctx,
 	}
 
 	if (name[0] == '\0') {
-		err = WERR_INVALID_PARAM;
+		err = WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
@@ -797,14 +797,14 @@ WERROR reg_setvalue(struct registry_key *key, const char *name,
 
 	if (res == 0) {
 		TALLOC_FREE(key->values);
-		err = WERR_NOMEM;
+		err = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
 	if (!store_reg_values(key->key, key->values)) {
 		TALLOC_FREE(key->values);
 		DEBUG(0, ("reg_setvalue: store_reg_values failed\n"));
-		err = WERR_REG_IO_FAILURE;
+		err = WERR_REGISTRY_IO_FAILED;
 		goto done;
 	}
 
@@ -833,7 +833,7 @@ static WERROR reg_value_exists(struct registry_key *key, const char *name)
 	blob = regval_ctr_getvalue(key->values, name);
 
 	if (blob == NULL) {
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	} else {
 		return WERR_OK;
 	}
@@ -870,7 +870,7 @@ WERROR reg_deletevalue(struct registry_key *key, const char *name)
 
 	if (!store_reg_values(key->key, key->values)) {
 		TALLOC_FREE(key->values);
-		err = WERR_REG_IO_FAILURE;
+		err = WERR_REGISTRY_IO_FAILED;
 		DEBUG(0, ("reg_deletevalue: store_reg_values failed\n"));
 		goto done;
 	}
@@ -908,7 +908,7 @@ WERROR reg_setkeysecurity(struct registry_key *key,
 WERROR reg_getversion(uint32_t *version)
 {
 	if (version == NULL) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	*version = 0x00000005; /* Windows 2000 registry API version */
@@ -940,7 +940,7 @@ WERROR reg_deleteallvalues(struct registry_key *key)
 
 	if (!store_reg_values(key->key, key->values)) {
 		TALLOC_FREE(key->values);
-		return WERR_REG_IO_FAILURE;
+		return WERR_REGISTRY_IO_FAILED;
 	}
 
 	return WERR_OK;
@@ -1018,7 +1018,7 @@ static WERROR reg_deletekey_recursive_trans(struct registry_key *parent,
 
 	if (!W_ERROR_IS_OK(werr)) {
 		WERROR werr2;
-		DEBUG(W_ERROR_EQUAL(werr, WERR_BADFILE) ? 5 : 1,
+		DEBUG(W_ERROR_EQUAL(werr, WERR_FILE_NOT_FOUND) ? 5 : 1,
 		      (__location__ ": failed to delete key '%s' from key "
 		       "'%s': %s\n", path, parent->key->name,
 		       win_errstr(werr)));

@@ -645,6 +645,10 @@ static int poll_event_loop_once(struct tevent_context *ev,
 		return 0;
 	}
 
+	if (ev->threaded_contexts != NULL) {
+		tevent_common_threaded_activate_immediate(ev);
+	}
+
 	if (ev->immediate_events &&
 	    tevent_common_loop_immediate(ev)) {
 		return 0;
@@ -667,10 +671,7 @@ static int poll_event_loop_wait(struct tevent_context *ev,
 	/*
 	 * loop as long as we have events pending
 	 */
-	while (ev->fd_events ||
-	       ev->timer_events ||
-	       ev->immediate_events ||
-	       ev->signal_events ||
+	while (tevent_common_have_events(ev) ||
 	       poll_ev->fresh ||
 	       poll_ev->disabled) {
 		int ret;

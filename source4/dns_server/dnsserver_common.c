@@ -83,7 +83,7 @@ WERROR dns_common_extract(const struct ldb_message_element *el,
 	recs = talloc_zero_array(mem_ctx, struct dnsp_DnssrvRpcRecord,
 				 el->num_values);
 	if (recs == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	for (ri = 0; ri < el->num_values; ri++) {
 		struct ldb_val *v = &el->values[ri];
@@ -162,7 +162,7 @@ WERROR dns_common_lookup(struct ldb_context *samdb,
 					    struct dnsp_DnssrvRpcRecord,
 					    1);
 			if (recs == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 			recs[0] = (struct dnsp_DnssrvRpcRecord) {
 				.wType = DNS_TYPE_TOMBSTONE,
@@ -214,6 +214,91 @@ static int rec_cmp(const struct dnsp_DnssrvRpcRecord *r1,
 	return r1->dwTimeStamp - r2->dwTimeStamp;
 }
 
+/*
+ * Check for valid DNS names. These are names which are non-empty, do not
+ * start with a dot and do not have any empty segments.
+ */
+WERROR dns_name_check(TALLOC_CTX *mem_ctx, size_t len, const char *name)
+{
+	size_t i;
+
+	if (len == 0) {
+		return WERR_DS_INVALID_DN_SYNTAX;
+	}
+
+	for (i = 0; i < len - 1; i++) {
+		if (name[i] == '.' && name[i+1] == '.') {
+			return WERR_DS_INVALID_DN_SYNTAX;
+		}
+	}
+
+	if (len > 1 && name[0] == '.') {
+		return WERR_DS_INVALID_DN_SYNTAX;
+	}
+
+	return WERR_OK;
+}
+
+static WERROR check_name_list(TALLOC_CTX *mem_ctx, uint16_t rec_count,
+			      struct dnsp_DnssrvRpcRecord *records)
+{
+	WERROR werr;
+	uint16_t i;
+	size_t len;
+	struct dnsp_DnssrvRpcRecord record;
+
+	werr = WERR_OK;
+	for (i = 0; i < rec_count; i++) {
+		record = records[i];
+
+		switch (record.wType) {
+
+		case DNS_TYPE_NS:
+			len = strlen(record.data.ns);
+			werr = dns_name_check(mem_ctx, len, record.data.ns);
+			break;
+		case DNS_TYPE_CNAME:
+			len = strlen(record.data.cname);
+			werr = dns_name_check(mem_ctx, len, record.data.cname);
+			break;
+		case DNS_TYPE_SOA:
+			len = strlen(record.data.soa.mname);
+			werr = dns_name_check(mem_ctx, len, record.data.soa.mname);
+			if (!W_ERROR_IS_OK(werr)) {
+				break;
+			}
+			len = strlen(record.data.soa.rname);
+			werr = dns_name_check(mem_ctx, len, record.data.soa.rname);
+			break;
+		case DNS_TYPE_PTR:
+			len = strlen(record.data.ptr);
+			werr = dns_name_check(mem_ctx, len, record.data.ptr);
+			break;
+		case DNS_TYPE_MX:
+			len = strlen(record.data.mx.nameTarget);
+			werr = dns_name_check(mem_ctx, len, record.data.mx.nameTarget);
+			break;
+		case DNS_TYPE_SRV:
+			len = strlen(record.data.srv.nameTarget);
+			werr = dns_name_check(mem_ctx, len,
+					      record.data.srv.nameTarget);
+			break;
+		/*
+		 * In the default case, the record doesn't have a DN, so it
+		 * must be ok.
+		 */
+		default:
+			break;
+		}
+
+		if (!W_ERROR_IS_OK(werr)) {
+			return werr;
+		}
+	}
+
+	return WERR_OK;
+}
+
 WERROR dns_common_replace(struct ldb_context *samdb,
 			  TALLOC_CTX *mem_ctx,
 			  struct ldb_dn *dn,
@@ -225,6 +310,7 @@ WERROR dns_common_replace(struct ldb_context *samdb,
 	struct ldb_message_element *el;
 	uint16_t i;
 	int ret;
+	WERROR werr;
 	struct ldb_message *msg = NULL;
 	bool was_tombstoned = false;
 	bool become_tombstoned = false;
@@ -233,6 +319,11 @@ WERROR dns_common_replace(struct ldb_context *samdb,
 	W_ERROR_HAVE_NO_MEMORY(msg);
 
 	msg->dn = dn;
+
+	werr = check_name_list(mem_ctx, rec_count, records);
+	if (!W_ERROR_IS_OK(werr)) {
+		return werr;
+	}
 
 	ret = ldb_msg_add_empty(msg, "dnsRecord", LDB_FLAG_MOD_REPLACE, &el);
 	if (ret != LDB_SUCCESS) {
@@ -400,12 +491,11 @@ WERROR dns_common_name2dn(struct ldb_context *samdb,
 	struct ldb_dn *dn;
 	const struct dns_server_zone *z;
 	size_t host_part_len = 0;
+	WERROR werr;
 
 	if (name == NULL) {
 		return DNS_ERR(FORMAT_ERROR);
 	}
-
-	/*TODO: Check if 'name' is a valid DNS name */
 
 	if (strcmp(name, "") == 0) {
 		base = ldb_get_default_basedn(samdb);
@@ -413,6 +503,12 @@ WERROR dns_common_name2dn(struct ldb_context *samdb,
 		ldb_dn_add_child_fmt(dn, "DC=@,DC=RootDNSServers,CN=MicrosoftDNS,CN=System");
 		*_dn = dn;
 		return WERR_OK;
+	}
+
+	/* Check non-empty names */
+	werr = dns_name_check(mem_ctx, strlen(name), name);
+	if (!W_ERROR_IS_OK(werr)) {
+		return werr;
 	}
 
 	for (z = zones; z != NULL; z = z->next) {

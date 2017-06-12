@@ -1470,7 +1470,7 @@ static WERROR enum_driver_by_architecture(struct rpc_pipe_client *cli,
 		break;
 	default:
 		printf("unknown info level %d\n", level);
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	return werror;
@@ -1596,6 +1596,74 @@ static WERROR cmd_spoolss_getdriverdir(struct rpc_pipe_client *cli,
 
 	return result;
 }
+
+/****************************************************************************
+****************************************************************************/
+
+static WERROR cmd_spoolss_getdriverpackagepath(struct rpc_pipe_client *cli,
+					       TALLOC_CTX *mem_ctx,
+					       int argc, const char **argv)
+{
+	HRESULT hresult;
+	NTSTATUS status;
+	const char *env = SPOOLSS_ARCHITECTURE_NT_X86;
+	uint32_t offered;
+	uint32_t needed;
+	struct dcerpc_binding_handle *b = cli->binding_handle;
+	const char *package_id = "";
+	const char *cab = NULL;
+
+	if (argc > 4) {
+		printf("Usage: %s [environment] [package_id]\n", argv[0]);
+		return WERR_OK;
+	}
+
+	/* Get the arguments need to open the printer handle */
+
+	if (argc >= 2) {
+		env = argv[1];
+	}
+
+	if (argc == 3) {
+		package_id = argv[2];
+	}
+
+	offered = 1;
+	cab = talloc_array(mem_ctx, char, offered);
+	status = dcerpc_spoolss_GetPrinterDriverPackagePath(b, mem_ctx,
+							    cli->srv_name_slash,
+							    env,
+							    NULL,
+							    package_id,
+							    cab,
+							    offered,
+							    &needed,
+							    &hresult);
+	if (!NT_STATUS_IS_OK(status)) {
+		return ntstatus_to_werror(status);
+	}
+
+	if (W_ERROR_EQUAL(W_ERROR(WIN32_FROM_HRESULT(hresult)), WERR_INSUFFICIENT_BUFFER)) {
+		offered = needed;
+		cab = talloc_zero_array(mem_ctx, char, offered);
+
+		status = dcerpc_spoolss_GetPrinterDriverPackagePath(b, mem_ctx,
+								    cli->srv_name_slash,
+								    env,
+								    NULL,
+								    package_id,
+								    cab,
+								    offered,
+								    &needed,
+								    &hresult);
+		if (!NT_STATUS_IS_OK(status)) {
+			return ntstatus_to_werror(status);
+		}
+	}
+
+	return W_ERROR(WIN32_FROM_HRESULT(hresult));
+}
+
 
 /****************************************************************************
 ****************************************************************************/
@@ -1757,7 +1825,7 @@ static WERROR cmd_spoolss_addprinterdriver(struct rpc_pipe_client *cli,
 	arch = cmd_spoolss_get_short_archi(argv[1]);
 	if (!arch) {
 		printf ("Error Unknown architecture [%s]\n", argv[1]);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	set_drv_info_3_env(mem_ctx, &info3, arch);
@@ -1766,7 +1834,7 @@ static WERROR cmd_spoolss_addprinterdriver(struct rpc_pipe_client *cli,
 	if (!init_drv_info_3_members(mem_ctx, &info3, driver_args ))
 	{
 		printf ("Error Invalid parameter list - %s.\n", argv[2]);
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	/* if printer driver version specified, override the default version
@@ -2199,7 +2267,7 @@ static WERROR cmd_spoolss_addform(struct rpc_pipe_client *cli, TALLOC_CTX *mem_c
 
 		break;
 	default:
-		werror = WERR_INVALID_PARAM;
+		werror = WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
@@ -2604,7 +2672,7 @@ static WERROR cmd_spoolss_setprinterdata(struct rpc_pipe_client *cli,
 
 	if (type == REG_NONE) {
 		printf("Unknown data type: %s\n", argv[2]);
-		result =  WERR_INVALID_PARAM;
+		result =  WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
@@ -2657,13 +2725,13 @@ static WERROR cmd_spoolss_setprinterdata(struct rpc_pipe_client *cli,
 			if (!add_string_to_array(mem_ctx, argv[i],
 						 &strings,
 						 &num_strings)) {
-				result = WERR_NOMEM;
+				result = WERR_NOT_ENOUGH_MEMORY;
 				goto done;
 			}
 		}
 		data.string_array = talloc_zero_array(mem_ctx, const char *, num_strings + 1);
 		if (!data.string_array) {
-			result = WERR_NOMEM;
+			result = WERR_NOT_ENOUGH_MEMORY;
 			goto done;
 		}
 		for (i=0; i < num_strings; i++) {
@@ -2673,7 +2741,7 @@ static WERROR cmd_spoolss_setprinterdata(struct rpc_pipe_client *cli,
 		}
 	default:
 		printf("Unknown data type: %s\n", argv[2]);
-		result = WERR_INVALID_PARAM;
+		result = WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
@@ -3262,7 +3330,7 @@ static WERROR cmd_spoolss_rffpcnex(struct rpc_pipe_client *cli,
 
 	option.types = talloc_array(mem_ctx, struct spoolss_NotifyOptionType, 2);
 	if (option.types == NULL) {
-		result = WERR_NOMEM;
+		result = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -3270,7 +3338,7 @@ static WERROR cmd_spoolss_rffpcnex(struct rpc_pipe_client *cli,
 	option.types[0].count = 1;
 	option.types[0].fields = talloc_array(mem_ctx, union spoolss_Field, 1);
 	if (option.types[0].fields == NULL) {
-		result = WERR_NOMEM;
+		result = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 	option.types[0].fields[0].field = PRINTER_NOTIFY_FIELD_SERVER_NAME;
@@ -3279,14 +3347,14 @@ static WERROR cmd_spoolss_rffpcnex(struct rpc_pipe_client *cli,
 	option.types[1].count = 1;
 	option.types[1].fields = talloc_array(mem_ctx, union spoolss_Field, 1);
 	if (option.types[1].fields == NULL) {
-		result = WERR_NOMEM;
+		result = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 	option.types[1].fields[0].field = JOB_NOTIFY_FIELD_PRINTER_NAME;
 
 	clientname = talloc_asprintf(mem_ctx, "\\\\%s", lp_netbios_name());
 	if (!clientname) {
-		result = WERR_NOMEM;
+		result = WERR_NOT_ENOUGH_MEMORY;
 		goto done;
 	}
 
@@ -3460,14 +3528,14 @@ static WERROR cmd_spoolss_printercmp(struct rpc_pipe_client *cli,
 					get_cmdline_auth_info_signing_state(rpcclient_auth_info));
 
 	if ( !NT_STATUS_IS_OK(nt_status) )
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 
 	nt_status = cli_rpc_pipe_open_noauth(cli_server2, &ndr_table_spoolss,
 					     &cli2);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		printf("failed to open spoolss pipe on server %s (%s)\n",
 			argv[2], nt_errstr(nt_status));
-		return WERR_GENERAL_FAILURE;
+		return WERR_GEN_FAILURE;
 	}
 
 	/* now open up both printers */
@@ -3866,6 +3934,7 @@ struct cmd_set spoolss_commands[] = {
 	{ "getdataex",		RPC_RTYPE_WERROR, NULL, cmd_spoolss_getprinterdataex,	&ndr_table_spoolss, NULL, "Get printer driver data with keyname", ""},
 	{ "getdriver",		RPC_RTYPE_WERROR, NULL, cmd_spoolss_getdriver,		&ndr_table_spoolss, NULL, "Get print driver information",        "" },
 	{ "getdriverdir",	RPC_RTYPE_WERROR, NULL, cmd_spoolss_getdriverdir,	&ndr_table_spoolss, NULL, "Get print driver upload directory",   "" },
+	{ "getdriverpackagepath", RPC_RTYPE_WERROR, NULL, cmd_spoolss_getdriverpackagepath,	&ndr_table_spoolss, NULL, "Get print driver package download directory",   "" },
 	{ "getprinter", 	RPC_RTYPE_WERROR, NULL, cmd_spoolss_getprinter, 	&ndr_table_spoolss, NULL, "Get printer info",                    "" },
 	{ "openprinter",	RPC_RTYPE_WERROR, NULL, cmd_spoolss_open_printer,	&ndr_table_spoolss, NULL, "Open printer handle",                 "" },
 	{ "openprinter_ex",	RPC_RTYPE_WERROR, NULL, cmd_spoolss_open_printer_ex,	&ndr_table_spoolss, NULL, "Open printer handle",                 "" },

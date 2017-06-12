@@ -110,6 +110,9 @@ struct dcecli_connection {
 
 	/* The maximum total payload of reassembled response pdus */
 	size_t max_total_response_size;
+
+	/* the negotiated bind time features */
+	uint16_t bind_time_features;
 };
 
 /*
@@ -120,6 +123,7 @@ struct dcerpc_pipe {
 
 	uint32_t context_id;
 
+	struct GUID object;
 	struct ndr_syntax_id syntax;
 	struct ndr_syntax_id transfer_syntax;
 

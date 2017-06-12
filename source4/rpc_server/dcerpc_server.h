@@ -67,7 +67,11 @@ struct dcesrv_interface {
 
 	/* for any private use by the interface code */
 	const void *private_data;
+
+	uint64_t flags;
 };
+
+#define DCESRV_INTERFACE_FLAGS_HANDLES_NOT_USED 0x00000001
 
 enum dcesrv_call_list {
 	DCESRV_LIST_NONE,
@@ -189,6 +193,9 @@ struct dcesrv_connection_context {
 	 */
 	enum dcerpc_AuthLevel min_auth_level;
 	bool allow_connect;
+
+	/* the negotiated transfer syntax */
+	struct ndr_syntax_id transfer_syntax;
 };
 
 
@@ -268,6 +275,14 @@ struct dcesrv_connection {
 
 	/* The maximum total payload of reassembled request pdus */
 	size_t max_total_request_size;
+
+	/*
+	 * Our preferred transfer syntax.
+	 */
+	const struct ndr_syntax_id *preferred_transfer;
+
+	/* the negotiated bind time features */
+	uint16_t bind_time_features;
 };
 
 
@@ -332,6 +347,12 @@ struct dcesrv_context {
 			struct dcesrv_if_list *next, *prev;
 			struct dcesrv_interface iface;
 		} *interface_list;
+
+		/*
+		 * Should this service be run in a single process (so far only
+		 * NETLOGON is not run in a single process)
+		 */
+		bool use_single_process;
 	} *endpoint_list;
 
 	/* loadparm context to use for this connection */
@@ -362,7 +383,7 @@ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 				   const char *ep_name,
 				   const struct dcesrv_interface *iface,
 				   const struct security_descriptor *sd);
-NTSTATUS dcerpc_register_ep_server(const void *_ep_server);
+NTSTATUS dcerpc_register_ep_server(const struct dcesrv_endpoint_server *ep_server);
 NTSTATUS dcesrv_init_context(TALLOC_CTX *mem_ctx, 
 				      struct loadparm_context *lp_ctx,
 				      const char **endpoint_servers, struct dcesrv_context **_dce_ctx);
@@ -427,7 +448,7 @@ NTSTATUS dcesrv_fetch_session_key(struct dcesrv_connection *p, DATA_BLOB *sessio
 } while (0)
 
 #define DCESRV_PULL_HANDLE(h, inhandle, t) DCESRV_PULL_HANDLE_RETVAL(h, inhandle, t, NT_STATUS_INVALID_HANDLE)
-#define DCESRV_PULL_HANDLE_WERR(h, inhandle, t) DCESRV_PULL_HANDLE_RETVAL(h, inhandle, t, WERR_BADFID)
+#define DCESRV_PULL_HANDLE_WERR(h, inhandle, t) DCESRV_PULL_HANDLE_RETVAL(h, inhandle, t, WERR_INVALID_HANDLE)
 
 NTSTATUS dcesrv_add_ep(struct dcesrv_context *dce_ctx,
 		       struct loadparm_context *lp_ctx,

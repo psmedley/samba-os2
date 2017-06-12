@@ -118,7 +118,7 @@ WERROR NetFileGetInfo_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b;
 
 	if (!r->out.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -126,7 +126,7 @@ WERROR NetFileGetInfo_r(struct libnetapi_ctx *ctx,
 		case 3:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	werr = libnetapi_get_binding_handle(ctx, r->in.server_name,
@@ -189,7 +189,7 @@ WERROR NetFileEnum_r(struct libnetapi_ctx *ctx,
 	struct dcerpc_binding_handle *b;
 
 	if (!r->out.buffer) {
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	switch (r->in.level) {
@@ -197,7 +197,7 @@ WERROR NetFileEnum_r(struct libnetapi_ctx *ctx,
 		case 3:
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	werr = libnetapi_get_binding_handle(ctx, r->in.server_name,

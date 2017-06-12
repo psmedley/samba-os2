@@ -61,7 +61,6 @@ interface dcerpc
 		 * is defined differently for ndr_dcerpc.c and py_dcerpc.c
 		 */
 		[switch_is(NDR_DCERPC_REQUEST_OBJECT_PRESENT)] dcerpc_object object;
-		[flag(NDR_ALIGN8)]    DATA_BLOB _pad;
 		[flag(NDR_REMAINING)] DATA_BLOB stub_and_verifier;
 	} dcerpc_request;
 
@@ -146,7 +145,7 @@ interface dcerpc
 		uint32 alloc_hint;
 		uint16 context_id;
 		uint8 cancel_count;
-		[flag(NDR_ALIGN8)]    DATA_BLOB _pad;
+		[value(0)] uint8 reserved;
 		[flag(NDR_REMAINING)] DATA_BLOB stub_and_verifier;
 	} dcerpc_response;
 
@@ -199,6 +198,7 @@ interface dcerpc
 		DCERPC_NCA_S_FAULT_OBJECT_NOT_FOUND	= 0x1C000024,
 		DCERPC_NCA_S_FAULT_NO_CLIENT_STUB	= 0x1C000025,
 		DCERPC_FAULT_ACCESS_DENIED		= 0x00000005,
+		DCERPC_FAULT_SERVER_UNAVAILABLE		= 0x000006ba,
 		DCERPC_FAULT_NO_CALL_ACTIVE		= 0x000006bd,
 		DCERPC_FAULT_CANT_PERFORM		= 0x000006d8,
 		DCERPC_FAULT_OUT_OF_RESOURCES		= 0x000006d9,
@@ -207,7 +207,6 @@ interface dcerpc
 	} dcerpc_nca_status;
 
 	const int DCERPC_FAULT_OP_RNG_ERROR       = DCERPC_NCA_S_OP_RNG_ERROR;
-	const int DCERPC_FAULT_UNK_IF             = DCERPC_NCA_S_UNKNOWN_IF;
 	const int DCERPC_FAULT_NDR                = DCERPC_FAULT_BAD_STUB_DATA;
 	const int DCERPC_FAULT_INVALID_TAG        = DCERPC_NCA_S_FAULT_INVALID_TAG;
 	const int DCERPC_FAULT_CONTEXT_MISMATCH   = DCERPC_NCA_S_FAULT_CONTEXT_MISMATCH;
@@ -217,13 +216,21 @@ interface dcerpc
 	   to see what fault w2k3 returns in this case */
 	const int DCERPC_FAULT_TODO         = 0x00000042;
 
+	typedef [bitmap8bit] bitmap {
+		DCERPC_FAULT_FLAG_EXTENDED_ERROR_INFORMATION = 0x01
+	} dcerpc_fault_flags;
+
 	typedef struct {
 		uint32 alloc_hint;
 		uint16 context_id;
 		uint8 cancel_count;
+		dcerpc_fault_flags flags;
 		dcerpc_nca_status status;
-		[flag(NDR_REMAINING)] DATA_BLOB _pad;
+		[value(0)] uint32 reserved;
+		[flag(NDR_REMAINING)] DATA_BLOB error_and_verifier;
 	} dcerpc_fault;
+
+	const uint8 DCERPC_FAULT_LENGTH = 32;
 
 	/* the auth types we know about */
 	typedef [enum8bit] enum {
@@ -249,8 +256,6 @@ interface dcerpc
 		DCERPC_AUTH_LEVEL_INTEGRITY = 5,
 		DCERPC_AUTH_LEVEL_PRIVACY   = 6
 	} dcerpc_AuthLevel;
-
-	const uint8 DCERPC_AUTH_LEVEL_DEFAULT	= DCERPC_AUTH_LEVEL_CONNECT;
 
 	typedef [public] struct {
 		dcerpc_AuthType auth_type;
@@ -463,7 +468,7 @@ interface dcerpc
 		dcerpc_rts_cmd		Commands[NumberOfCommands];
 	} dcerpc_rts;
 
-	typedef [enum8bit] enum {
+	typedef [public,enum8bit] enum {
 		DCERPC_PKT_REQUEST     =  0,	/* Ordinary request. */
 		DCERPC_PKT_PING        =  1,	/* Connectionless is server alive ? */
 		DCERPC_PKT_RESPONSE    =  2,	/* Ordinary reply. */
@@ -487,7 +492,7 @@ interface dcerpc
 		DCERPC_PKT_RTS	       = 20	/* RTS packets used in ncacn_http */
 	} dcerpc_pkt_type;
 
-	typedef [nodiscriminant] union {
+	typedef [public,nodiscriminant] union {
 		[case(DCERPC_PKT_REQUEST)]    dcerpc_request  request;
 		[case(DCERPC_PKT_PING)] 	  dcerpc_ping ping;
 		[case(DCERPC_PKT_RESPONSE)]   dcerpc_response response;
@@ -512,7 +517,7 @@ interface dcerpc
 	} dcerpc_payload;
 
 	/* pfc_flags values */
-	typedef [bitmap8bit] bitmap {
+	typedef [public,bitmap8bit] bitmap {
 		DCERPC_PFC_FLAG_FIRST		= 0x01, /* First fragment */
 		DCERPC_PFC_FLAG_LAST		= 0x02, /* Last fragment */
 		DCERPC_PFC_FLAG_PENDING_CANCEL_OR_HDR_SIGNING = 0x04, /* depends on the pdu type */
@@ -556,7 +561,7 @@ interface dcerpc
 	/* little-endian flag */
 	const uint8 DCERPC_DREP_LE  = 0x10;
 
-	typedef [public] struct {
+	typedef [public,nopush,nopull,noprint] struct {
 		uint8 rpc_vers;	        /* RPC version */
 		uint8 rpc_vers_minor;   /* Minor version */
 		dcerpc_pkt_type ptype;  /* Packet type */

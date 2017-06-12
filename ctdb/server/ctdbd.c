@@ -36,11 +36,12 @@
 
 #include "common/reqid.h"
 #include "common/system.h"
-#include "common/cmdline.h"
 #include "common/common.h"
 #include "common/logging.h"
 
 static struct {
+	const char *socket;
+	const char *debuglevel;
 	const char *nlist;
 	const char *transport;
 	const char *myaddress;
@@ -62,7 +63,10 @@ static struct {
 	int	    script_log_level;
 	int         no_publicipcheck;
 	int         max_persistent_check_errors;
+	int         torture;
 } options = {
+	.socket = CTDB_RUNDIR "/ctdbd.socket",
+	.debuglevel = "NOTICE",
 	.nlist = NULL,
 	.public_address_list = NULL,
 	.transport = "tcp",
@@ -116,7 +120,8 @@ int main(int argc, const char *argv[])
 
 	struct poptOption popt_options[] = {
 		POPT_AUTOHELP
-		POPT_CTDB_CMDLINE
+		{ "socket", 0, POPT_ARG_STRING, &options.socket, 0, "local socket name", "filename" },
+		{ "debug", 'd', POPT_ARG_STRING, &options.debuglevel, 0, "debug level", NULL },
 		{ "interactive", 'i', POPT_ARG_NONE, &interactive, 0, "don't fork", NULL },
 		{ "public-addresses", 0, POPT_ARG_STRING, &options.public_address_list, 0, "public address list file", "filename" },
 		{ "public-interface", 0, POPT_ARG_STRING, &options.public_interface, 0, "public interface", "interface"},
@@ -143,11 +148,11 @@ int main(int argc, const char *argv[])
 		  &options.max_persistent_check_errors, 0,
 		  "max allowed persistent check errors (default 0)", NULL },
 		{ "sloppy-start", 0, POPT_ARG_NONE, &fast_start, 0, "Do not perform full recovery on start", NULL },
+		{ "torture", 0, POPT_ARG_NONE, &options.torture, 0, "enable nastiness in library", NULL },
 		POPT_TABLEEND
 	};
 	int opt, ret;
 	const char **extra_argv;
-	int extra_argc = 0;
 	poptContext pc;
 	struct tevent_context *ev;
 
@@ -162,11 +167,14 @@ int main(int argc, const char *argv[])
 		}
 	}
 
-	/* setup the remaining options for the main program to use */
+	/* If there are extra arguments then exit with usage message */
 	extra_argv = poptGetArgs(pc);
 	if (extra_argv) {
 		extra_argv++;
-		while (extra_argv[extra_argc]) extra_argc++;
+		if (extra_argv[0])  {
+			poptPrintHelp(pc, stdout, 0);
+			exit(1);
+		}
 	}
 
 	talloc_enable_null_tracking();
@@ -175,21 +183,44 @@ int main(int argc, const char *argv[])
 
 	ev = tevent_context_init(NULL);
 	if (ev == NULL) {
-		DEBUG(DEBUG_ALERT,("tevent_context_init() failed\n"));
+		fprintf(stderr, "tevent_context_init() failed\n");
 		exit(1);
 	}
 	tevent_loop_allow_nesting(ev);
 
-	ctdb = ctdb_cmdline_init(ev);
+	ctdb = ctdb_init(ev);
+	if (ctdb == NULL) {
+		fprintf(stderr, "Failed to init ctdb\n");
+		exit(1);
+	}
+
+	if (options.torture == 1) {
+		ctdb_set_flags(ctdb, CTDB_FLAG_TORTURE);
+	}
+
+	/* Log to stderr when running as interactive */
+	if (interactive) {
+		options.logging = "file:";
+	}
+
+	/* Initialize logging and set the debug level */
+	if (!ctdb_logging_init(ctdb, options.logging, options.debuglevel)) {
+		exit(1);
+	}
+	setenv("CTDB_LOGGING", options.logging, 1);
+	setenv("CTDB_DEBUGLEVEL", debug_level_to_string(DEBUGLEVEL), 1);
+
+	setenv("CTDB_SOCKET", options.socket, 1);
+	ret = ctdb_set_socketname(ctdb, options.socket);
+	if (ret == -1) {
+		DEBUG(DEBUG_ERR, ("ctdb_set_socketname() failed\n"));
+		exit(1);
+	}
 
 	ctdb->start_as_disabled = options.start_as_disabled;
 	ctdb->start_as_stopped  = options.start_as_stopped;
 
 	script_log_level = options.script_log_level;
-
-	if (!ctdb_logging_init(ctdb, options.logging)) {
-		exit(1);
-	}
 
 	DEBUG(DEBUG_NOTICE,("CTDB starting on node\n"));
 
@@ -208,7 +239,7 @@ int main(int argc, const char *argv[])
 	TALLOC_FREE(ctdb->idr);
 	ret = reqid_init(ctdb, 0, &ctdb->idr);;
 	if (ret != 0) {
-		DEBUG(DEBUG_ALERT, ("reqid_init failed (%s)\n", strerror(ret)));
+		DEBUG(DEBUG_ERR, ("reqid_init failed (%s)\n", strerror(ret)));
 		exit(1);
 	}
 
@@ -216,7 +247,8 @@ int main(int argc, const char *argv[])
 
 	ret = ctdb_set_transport(ctdb, options.transport);
 	if (ret == -1) {
-		DEBUG(DEBUG_ALERT,("ctdb_set_transport failed - %s\n", ctdb_errstr(ctdb)));
+		DEBUG(DEBUG_ERR,("ctdb_set_transport failed - %s\n",
+				 ctdb_errstr(ctdb)));
 		exit(1);
 	}
 
@@ -224,7 +256,8 @@ int main(int argc, const char *argv[])
 	if (options.myaddress) {
 		ret = ctdb_set_address(ctdb, options.myaddress);
 		if (ret == -1) {
-			DEBUG(DEBUG_ALERT,("ctdb_set_address failed - %s\n", ctdb_errstr(ctdb)));
+			DEBUG(DEBUG_ERR,("ctdb_set_address failed - %s\n",
+					 ctdb_errstr(ctdb)));
 			exit(1);
 		}
 	}
@@ -258,7 +291,7 @@ int main(int argc, const char *argv[])
 		ctdb->nodes_file =
 			talloc_asprintf(ctdb, "%s/nodes", getenv("CTDB_BASE"));
 		if (ctdb->nodes_file == NULL) {
-			DEBUG(DEBUG_ALERT,(__location__ " Out of memory\n"));
+			DEBUG(DEBUG_ERR,(__location__ " Out of memory\n"));
 			exit(1);
 		}
 	}
@@ -284,7 +317,7 @@ int main(int argc, const char *argv[])
 		ctdb->event_script_dir = talloc_asprintf(ctdb, "%s/events.d",
 							 getenv("CTDB_BASE"));
 		if (ctdb->event_script_dir == NULL) {
-			DEBUG(DEBUG_ALERT,(__location__ " Out of memory\n"));
+			DEBUG(DEBUG_ERR,(__location__ " Out of memory\n"));
 			exit(1);
 		}
 	}
@@ -292,7 +325,7 @@ int main(int argc, const char *argv[])
 	if (options.notification_script != NULL) {
 		ret = ctdb_set_notification_script(ctdb, options.notification_script);
 		if (ret == -1) {
-			DEBUG(DEBUG_ALERT,("Unable to setup notification script\n"));
+			DEBUG(DEBUG_ERR,("Unable to setup notification script\n"));
 			exit(1);
 		}
 	}

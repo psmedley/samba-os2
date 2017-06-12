@@ -59,6 +59,43 @@ static PyObject *py_creds_set_username(PyObject *self, PyObject *args)
 	return PyBool_FromLong(cli_credentials_set_username(PyCredentials_AsCliCredentials(self), newval, obt));
 }
 
+static PyObject *py_creds_get_ntlm_username_domain(PyObject *self, PyObject *unused)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	const char *user = NULL;
+	const char *domain = NULL;
+	PyObject *ret = NULL;
+	cli_credentials_get_ntlm_username_domain(PyCredentials_AsCliCredentials(self),
+						 frame, &user, &domain);
+	ret = Py_BuildValue("(OO)",
+			    PyString_FromStringOrNULL(user),
+			    PyString_FromStringOrNULL(domain));
+	TALLOC_FREE(frame);
+	return ret;
+}
+
+static PyObject *py_creds_get_principal(PyObject *self, PyObject *unused)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	PyObject *ret = PyString_FromStringOrNULL(cli_credentials_get_principal(PyCredentials_AsCliCredentials(self), frame));
+	TALLOC_FREE(frame);
+	return ret;
+}
+
+static PyObject *py_creds_set_principal(PyObject *self, PyObject *args)
+{
+	char *newval;
+	enum credentials_obtained obt = CRED_SPECIFIED;
+	int _obt = obt;
+
+	if (!PyArg_ParseTuple(args, "s|i", &newval, &_obt)) {
+		return NULL;
+	}
+	obt = _obt;
+
+	return PyBool_FromLong(cli_credentials_set_principal(PyCredentials_AsCliCredentials(self), newval, obt));
+}
+
 static PyObject *py_creds_get_password(PyObject *self, PyObject *unused)
 {
 	return PyString_FromStringOrNULL(cli_credentials_get_password(PyCredentials_AsCliCredentials(self)));
@@ -262,6 +299,36 @@ static PyObject *py_creds_parse_string(PyObject *self, PyObject *args)
 	Py_RETURN_NONE;
 }
 
+static PyObject *py_creds_parse_file(PyObject *self, PyObject *args)
+{
+	char *newval;
+	enum credentials_obtained obt = CRED_SPECIFIED;
+	int _obt = obt;
+
+	if (!PyArg_ParseTuple(args, "s|i", &newval, &_obt)) {
+		return NULL;
+	}
+	obt = _obt;
+
+	cli_credentials_parse_file(PyCredentials_AsCliCredentials(self), newval, obt);
+	Py_RETURN_NONE;
+}
+
+static PyObject *py_cli_credentials_set_password_will_be_nt_hash(PyObject *self, PyObject *args)
+{
+	struct cli_credentials *creds = PyCredentials_AsCliCredentials(self);
+	PyObject *py_val = NULL;
+	bool val = false;
+
+	if (!PyArg_ParseTuple(args, "O!", &PyBool_Type, &py_val)) {
+		return NULL;
+	}
+	val = PyObject_IsTrue(py_val);
+
+	cli_credentials_set_password_will_be_nt_hash(creds, val);
+	Py_RETURN_NONE;
+}
+
 static PyObject *py_creds_get_nt_hash(PyObject *self, PyObject *unused)
 {
 	PyObject *ret;
@@ -461,37 +528,45 @@ static PyMethodDef py_creds_methods[] = {
 	{ "get_username", py_creds_get_username, METH_NOARGS,
 		"S.get_username() -> username\nObtain username." },
 	{ "set_username", py_creds_set_username, METH_VARARGS,
-		"S.set_username(name, obtained=CRED_SPECIFIED) -> None\n"
+		"S.set_username(name[, credentials.SPECIFIED]) -> None\n"
 		"Change username." },
+	{ "get_principal", py_creds_get_principal, METH_NOARGS,
+		"S.get_principal() -> user@realm\nObtain user principal." },
+	{ "set_principal", py_creds_set_principal, METH_VARARGS,
+		"S.set_principal(name[, credentials.SPECIFIED]) -> None\n"
+		"Change principal." },
 	{ "get_password", py_creds_get_password, METH_NOARGS,
 		"S.get_password() -> password\n"
 		"Obtain password." },
+	{ "get_ntlm_username_domain", py_creds_get_ntlm_username_domain, METH_NOARGS,
+		"S.get_ntlm_username_domain() -> (domain, username)\n"
+		"Obtain NTLM username and domain, split up either as (DOMAIN, user) or (\"\", \"user@realm\")." },
 	{ "set_password", py_creds_set_password, METH_VARARGS,
-		"S.set_password(password, obtained=CRED_SPECIFIED) -> None\n"
+		"S.set_password(password[, credentials.SPECIFIED]) -> None\n"
 		"Change password." },
 	{ "set_utf16_password", py_creds_set_utf16_password, METH_VARARGS,
-		"S.set_utf16_password(password, obtained=CRED_SPECIFIED) -> None\n"
+		"S.set_utf16_password(password[, credentials.SPECIFIED]) -> None\n"
 		"Change password." },
 	{ "get_old_password", py_creds_get_old_password, METH_NOARGS,
 		"S.get_old_password() -> password\n"
 		"Obtain old password." },
 	{ "set_old_password", py_creds_set_old_password, METH_VARARGS,
-		"S.set_old_password(password, obtained=CRED_SPECIFIED) -> None\n"
+		"S.set_old_password(password[, credentials.SPECIFIED]) -> None\n"
 		"Change old password." },
 	{ "set_old_utf16_password", py_creds_set_old_utf16_password, METH_VARARGS,
-		"S.set_old_utf16_password(password, obtained=CRED_SPECIFIED) -> None\n"
+		"S.set_old_utf16_password(password[, credentials.SPECIFIED]) -> None\n"
 		"Change old password." },
 	{ "get_domain", py_creds_get_domain, METH_NOARGS,
 		"S.get_domain() -> domain\n"
 		"Obtain domain name." },
 	{ "set_domain", py_creds_set_domain, METH_VARARGS,
-		"S.set_domain(domain, obtained=CRED_SPECIFIED) -> None\n"
+		"S.set_domain(domain[, credentials.SPECIFIED]) -> None\n"
 		"Change domain name." },
 	{ "get_realm", py_creds_get_realm, METH_NOARGS,
 		"S.get_realm() -> realm\n"
 		"Obtain realm name." },
 	{ "set_realm", py_creds_set_realm, METH_VARARGS,
-		"S.set_realm(realm, obtained=CRED_SPECIFIED) -> None\n"
+		"S.set_realm(realm[, credentials.SPECIFIED]) -> None\n"
 		"Change realm name." },
 	{ "get_bind_dn", py_creds_get_bind_dn, METH_NOARGS,
 		"S.get_bind_dn() -> bind dn\n"
@@ -517,8 +592,16 @@ static PyMethodDef py_creds_methods[] = {
 		"S.set_cmdline_callbacks() -> bool\n"
 		"Use command-line to obtain credentials not explicitly set." },
 	{ "parse_string", py_creds_parse_string, METH_VARARGS,
-		"S.parse_string(text, obtained=CRED_SPECIFIED) -> None\n"
+		"S.parse_string(text[, credentials.SPECIFIED]) -> None\n"
 		"Parse credentials string." },
+	{ "parse_file", py_creds_parse_file, METH_VARARGS,
+		"S.parse_file(filename[, credentials.SPECIFIED]) -> None\n"
+		"Parse credentials file." },
+	{ "set_password_will_be_nt_hash",
+		py_cli_credentials_set_password_will_be_nt_hash, METH_VARARGS,
+		"S.set_password_will_be_nt_hash(bool) -> None\n"
+		"Alters the behaviour of S.set_password() "
+		"to expect the NTHASH as hexstring." },
 	{ "get_nt_hash", py_creds_get_nt_hash, METH_NOARGS,
 		NULL },
 	{ "get_kerberos_state", py_creds_get_kerberos_state, METH_NOARGS,
@@ -565,6 +648,13 @@ void initcredentials(void)
 	m = Py_InitModule3("credentials", NULL, "Credentials management.");
 	if (m == NULL)
 		return;
+
+	PyModule_AddObject(m, "UNINITIALISED", PyInt_FromLong(CRED_UNINITIALISED));
+	PyModule_AddObject(m, "CALLBACK", PyInt_FromLong(CRED_CALLBACK));
+	PyModule_AddObject(m, "GUESS_ENV", PyInt_FromLong(CRED_GUESS_ENV));
+	PyModule_AddObject(m, "GUESS_FILE", PyInt_FromLong(CRED_GUESS_FILE));
+	PyModule_AddObject(m, "CALLBACK_RESULT", PyInt_FromLong(CRED_CALLBACK_RESULT));
+	PyModule_AddObject(m, "SPECIFIED", PyInt_FromLong(CRED_SPECIFIED));
 
 	PyModule_AddObject(m, "AUTO_USE_KERBEROS", PyInt_FromLong(CRED_AUTO_USE_KERBEROS));
 	PyModule_AddObject(m, "DONT_USE_KERBEROS", PyInt_FromLong(CRED_DONT_USE_KERBEROS));

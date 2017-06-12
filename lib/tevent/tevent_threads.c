@@ -108,7 +108,7 @@ static void schedule_immediate_functions(struct tevent_thread_proxy *tp)
 	if (tp->tofree_im_list != NULL) {
 		/*
 		 * Once the current immediate events
-		 * are processed, we need to reshedule
+		 * are processed, we need to reschedule
 		 * ourselves to free them. This works
 		 * as tevent_schedule_immediate()
 		 * always adds events to the *END* of
@@ -371,3 +371,156 @@ void tevent_thread_proxy_schedule(struct tevent_thread_proxy *tp,
 	;
 }
 #endif
+
+static int tevent_threaded_context_destructor(
+	struct tevent_threaded_context *tctx)
+{
+	int ret;
+
+	if (tctx->event_ctx != NULL) {
+		DLIST_REMOVE(tctx->event_ctx->threaded_contexts, tctx);
+	}
+
+	ret = pthread_mutex_destroy(&tctx->event_ctx_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+	return 0;
+}
+
+struct tevent_threaded_context *tevent_threaded_context_create(
+	TALLOC_CTX *mem_ctx, struct tevent_context *ev)
+{
+#ifdef HAVE_PTHREAD
+	struct tevent_threaded_context *tctx;
+	int ret;
+
+	ret = tevent_common_wakeup_init(ev);
+	if (ret != 0) {
+		errno = ret;
+		return NULL;
+	}
+
+	tctx = talloc(mem_ctx, struct tevent_threaded_context);
+	if (tctx == NULL) {
+		return NULL;
+	}
+	tctx->event_ctx = ev;
+	tctx->wakeup_fd = ev->wakeup_fd;
+
+	ret = pthread_mutex_init(&tctx->event_ctx_mutex, NULL);
+	if (ret != 0) {
+		TALLOC_FREE(tctx);
+		return NULL;
+	}
+
+	DLIST_ADD(ev->threaded_contexts, tctx);
+	talloc_set_destructor(tctx, tevent_threaded_context_destructor);
+
+	return tctx;
+#else
+	errno = ENOSYS;
+	return NULL;
+#endif
+}
+
+void _tevent_threaded_schedule_immediate(struct tevent_threaded_context *tctx,
+					 struct tevent_immediate *im,
+					 tevent_immediate_handler_t handler,
+					 void *private_data,
+					 const char *handler_name,
+					 const char *location)
+{
+#ifdef HAVE_PTHREAD
+	struct tevent_context *ev;
+	int ret;
+
+	ret = pthread_mutex_lock(&tctx->event_ctx_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+	ev = tctx->event_ctx;
+
+	ret = pthread_mutex_unlock(&tctx->event_ctx_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+	if (ev == NULL) {
+		/*
+		 * Our event context is already gone.
+		 */
+		return;
+	}
+
+	if ((im->event_ctx != NULL) || (handler == NULL)) {
+		abort();
+	}
+
+	im->event_ctx		= ev;
+	im->handler		= handler;
+	im->private_data	= private_data;
+	im->handler_name	= handler_name;
+	im->schedule_location	= location;
+	im->cancel_fn		= NULL;
+	im->additional_data	= NULL;
+
+	ret = pthread_mutex_lock(&ev->scheduled_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+	DLIST_ADD_END(ev->scheduled_immediates, im);
+
+	ret = pthread_mutex_unlock(&ev->scheduled_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+	/*
+	 * We might want to wake up the main thread under the lock. We
+	 * had a slightly similar situation in pthreadpool, changed
+	 * with 1c4284c7395f23. This is not exactly the same, as the
+	 * wakeup is only a last-resort thing in case the main thread
+	 * is sleeping. Doing the wakeup under the lock can easily
+	 * lead to a contended mutex, which is much more expensive
+	 * than a noncontended one. So I'd opt for the lower footprint
+	 * initially. Maybe we have to change that later.
+	 */
+	tevent_common_wakeup_fd(tctx->wakeup_fd);
+#else
+	/*
+	 * tevent_threaded_context_create() returned NULL with ENOSYS...
+	 */
+	abort();
+#endif
+}
+
+void tevent_common_threaded_activate_immediate(struct tevent_context *ev)
+{
+#ifdef HAVE_PTHREAD
+	int ret;
+	ret = pthread_mutex_lock(&ev->scheduled_mutex);
+	if (ret != 0) {
+		abort();
+	}
+
+	while (ev->scheduled_immediates != NULL) {
+		struct tevent_immediate *im = ev->scheduled_immediates;
+		DLIST_REMOVE(ev->scheduled_immediates, im);
+		DLIST_ADD_END(ev->immediate_events, im);
+	}
+
+	ret = pthread_mutex_unlock(&ev->scheduled_mutex);
+	if (ret != 0) {
+		abort();
+	}
+#else
+	/*
+	 * tevent_threaded_context_create() returned NULL with ENOSYS...
+	 */
+	abort();
+#endif
+}

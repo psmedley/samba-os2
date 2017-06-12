@@ -27,6 +27,7 @@
 static fstring password;
 static fstring username;
 static int got_pass;
+static struct cli_credentials *test_creds;
 static int max_protocol = -1;
 static bool showall = False;
 static bool old_list = False;
@@ -197,20 +198,7 @@ static struct cli_state *connect_one(char *share)
 		return NULL;
 	}
 
-	if (!got_pass) {
-		char pwd[256] = {0};
-		int rc;
-
-		rc = samba_getpass("Password: ", pwd, sizeof(pwd), false, false);
-		if (rc == 0) {
-			fstrcpy(password, pass);
-		}
-	}
-
-	status = cli_session_setup(c, username,
-				   password, strlen(password),
-				   password, strlen(password),
-				   lp_workgroup());
+	status = cli_session_setup_creds(c, test_creds);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(0, ("session setup failed: %s\n", nt_errstr(status)));
 		return NULL;
@@ -230,8 +218,7 @@ static struct cli_state *connect_one(char *share)
 
 	DEBUG(4,(" session setup ok\n"));
 
-	status = cli_tree_connect(c, share, "?????", password,
-				  strlen(password)+1);
+	status = cli_tree_connect_creds(c, share, "?????", test_creds);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(0,("tree connect failed: %s\n", nt_errstr(status)));
 		cli_shutdown(c);
@@ -549,6 +536,31 @@ static void usage(void)
 	argv += optind;
 
 	max_protocol = lp_client_max_protocol();
+	max_protocol = MIN(max_protocol, PROTOCOL_NT1);
+
+	if (!got_pass) {
+		char pwd[256] = {0};
+		int rc;
+
+		rc = samba_getpass("Password: ", pwd, sizeof(pwd), false, false);
+		if (rc == 0) {
+			fstrcpy(password, pass);
+		}
+	}
+
+	test_creds = cli_session_creds_init(frame,
+					    username,
+					    lp_workgroup(),
+					    NULL, /* realm */
+					    password,
+					    false, /* use_kerberos */
+					    false, /* fallback_after_kerberos */
+					    false, /* use_ccache */
+					    false); /* password_is_nt_hash */
+	if (test_creds == NULL) {
+		d_printf("cli_session_creds_init() failed.\n");
+		exit(1);
+	}
 
 	cli = connect_one(share);
 	if (!cli) {

@@ -409,7 +409,6 @@ NTSTATUS file_name_hash(connection_struct *conn,
 NTSTATUS fsp_set_smb_fname(struct files_struct *fsp,
 			   const struct smb_filename *smb_fname_in);
 const struct GUID *fsp_client_guid(const files_struct *fsp);
-uint32_t fsp_lease_type(struct files_struct *fsp);
 size_t fsp_fullbasepath(struct files_struct *fsp, char *buf, size_t buflen);
 
 /* The following definitions come from smbd/ipc.c  */
@@ -474,11 +473,13 @@ bool is_msdfs_link(connection_struct *conn,
 		SMB_STRUCT_STAT *sbufp);
 struct junction_map;
 NTSTATUS get_referred_path(TALLOC_CTX *ctx,
-			const char *dfs_path,
-			bool allow_broken_path,
-			struct junction_map *jucn,
-			int *consumedcntp,
-			bool *self_referralp);
+			   const char *dfs_path,
+			   const struct tsocket_address *remote_address,
+			   const struct tsocket_address *local_address,
+			   bool allow_broken_path,
+			   struct junction_map *jucn,
+			   int *consumedcntp,
+			   bool *self_referralp);
 int setup_dfs_referral(connection_struct *orig_conn,
 			const char *dfs_path,
 			int max_referral_level,
@@ -703,8 +704,8 @@ NTSTATUS get_relative_fid_filename(connection_struct *conn,
 
 /* The following definitions come from smbd/oplock.c  */
 
-uint32_t map_oplock_to_lease_type(uint16_t op_type);
-uint32_t get_lease_type(struct share_mode_data *d, struct share_mode_entry *e);
+uint32_t get_lease_type(const struct share_mode_data *d,
+			const struct share_mode_entry *e);
 bool update_num_read_oplocks(files_struct *fsp, struct share_mode_lock *lck);
 
 void break_kernel_oplock(struct messaging_context *msg_ctx, files_struct *fsp);
@@ -1133,6 +1134,7 @@ NTSTATUS check_access(connection_struct *conn,
 				uint32_t access_mask);
 uint64_t smb_roundup(connection_struct *conn, uint64_t val);
 uint64_t get_FileIndex(connection_struct *conn, const SMB_STRUCT_STAT *psbuf);
+void aapl_force_zero_file_id(struct smbd_server_connection *sconn);
 bool samba_private_attr_name(const char *unix_ea_name);
 NTSTATUS get_ea_value(TALLOC_CTX *mem_ctx, connection_struct *conn,
 		      files_struct *fsp, const char *fname,

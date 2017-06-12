@@ -7,7 +7,7 @@
 	<manvolnum>8</manvolnum>
 	<refmiscinfo class="source">Samba</refmiscinfo>
 	<refmiscinfo class="manual">System Administration tools</refmiscinfo>
-	<refmiscinfo class="version">4.5</refmiscinfo>
+	<refmiscinfo class="version">4.6</refmiscinfo>
 </refmeta>
 
 
@@ -79,7 +79,97 @@
 </refsect1>
 
 <refsect1>
+	<title>GLOBAL OPTIONS</title>
+
+	<para>The following options must be set in the global smb.conf section
+	and won't take effect when set per share.</para>
+
+	<variablelist>
+
+	  <varlistentry>
+	    <term>fruit:aapl = yes | no</term>
+	    <listitem>
+	      <para>A <emphasis>global</emphasis> option whether to enable Apple's SMB2+
+	      extension codenamed AAPL. Default
+	      <emphasis>yes</emphasis>. This extension enhances
+	      several deficiencies when connecting from Macs:</para>
+
+	      <itemizedlist>
+		<listitem><para>directory enumeration is enriched with
+		Mac relevant filesystem metadata (UNIX mode,
+		FinderInfo, resource fork size and effective
+		permission), as a result the Mac client doesn't need
+		to fetch this metadata individuallly per directory
+		entry resulting in an often tremendous performance
+		increase.</para></listitem>
+
+		<listitem><para>The ability to query and modify the
+		UNIX mode of directory entries.</para></listitem>
+	      </itemizedlist>
+
+	      <para>There's a set of per share options that come into play when
+	      <emphasis>fruit:aapl</emphasis> is enabled. These opions, listed
+	      below, can be used to disable the computation of specific Mac
+	      metadata in the directory enumeration context, all are enabled by
+	      default:</para>
+
+	      <itemizedlist>
+		<listitem><para>readdir_attr:aapl_rsize = yes | no</para></listitem>
+		<listitem><para>readdir_attr:aapl_finder_info = yes | no</para></listitem>
+		<listitem><para>readdir_attr:aapl_max_access = yes | no</para></listitem>
+	      </itemizedlist>
+
+	      <para>See below for a description of these options.</para>
+
+	    </listitem>
+	  </varlistentry>
+
+	  <varlistentry>
+	    <term>fruit:nfs_aces = yes | no</term>
+	    <listitem>
+	      <para>A <emphasis>global</emphasis> option whether support for
+	      querying and modifying the UNIX mode of directory entries via NFS
+	      ACEs is enabled, default <emphasis>yes</emphasis>.</para>
+	    </listitem>
+	  </varlistentry>
+
+	  <varlistentry>
+	    <term>fruit:copyfile = yes | no</term>
+	    <listitem>
+	      <para>A <emphasis>global</emphasis> option whether to enable OS X
+	      specific copychunk ioctl that requests a copy of a whole file
+	      along with all attached metadata.</para>
+	      <para>WARNING: the copyfile request is blocking the
+	      client while the server does the copy.</para>.
+	      <para>The default is <emphasis>no</emphasis>.</para>
+	    </listitem>
+	  </varlistentry>
+
+	  <varlistentry>
+	    <term>fruit:zero_file_id = yes | no</term>
+	    <listitem>
+	      <para>A <emphasis>global</emphasis> option whether to return
+	      zero to queries of on-disk file identifier, if the client
+	      has negotiated AAPL.</para>
+	      <para>Mac applications and / or the Mac SMB
+	      client code expect the on-disk file identifier to have the
+	      semantics of HFS+ Catalog Node Identifier (CNID). Samba
+	      doesn't provide those semantics, and that occasionally cause
+	      usability issues or even data loss. Returning a file identifier
+	      of zero causes the Mac client to stop using and trusting the
+	      file id returned from the server.</para>
+	      <para>The default is <emphasis>yes</emphasis>.</para>
+	    </listitem>
+	  </varlistentry>
+
+	</variablelist>
+</refsect1>
+
+<refsect1>
 	<title>OPTIONS</title>
+
+	<para>The following options can be set either in the global smb.conf section
+	or per share.</para>
 
 	<variablelist>
 
@@ -88,23 +178,9 @@
 	    <listitem>
 	      <para>Controls where the OS X resource fork is stored.</para>
 
-	      <para><emphasis>Important: </emphasis>Due to a
-	      misspelling in the option parser in all Samba versions
-	      4.5 and earlier, this options must be given as
-	      <emphasis>fruit:ressource</emphasis>, ie with two
-	      <emphasis>s</emphasis>.</para>
-
-	      <para>Users who set this opion to any non-default
-	      setting were still using the default setting of
-	      <emphasis>file</emphasis> and are advised to adjust
-	      their smb.conf to reflect the effective setting and set
-	      <emphasis>fruit:ressource=file</emphasis> in their
-	      smb.conf. Removing the option line altogether works as
-	      well.</para>
-
-	      <para>Samba 4.6 will accept both the correct and the
-	      wrong spelling, from Samba 4.7 onwards only the correct
-	      spelling will be accepted.</para>
+	      <para>Due to a spelling bug in all Samba versions older then
+	      4.6.0, this option can also be given as
+	      <emphasis>fruit:ressource</emphasis>, ie with two s.</para>
 
 	      <para>Settings:</para>
 
@@ -182,53 +258,12 @@
 
 		<listitem><para><command>native</command> - store
 		characters with their native ASCII
-		value</para></listitem>
+		value. <emphasis>Important</emphasis>: this option
+		requires the use of <emphasis>vfs_catia</emphasis> in
+		the VFS module stack as shown in the examples
+		section.</para></listitem>
 
 	      </itemizedlist>
-	    </listitem>
-	  </varlistentry>
-
-	  <varlistentry>
-	    <term>fruit:aapl = yes | no</term>
-	    <listitem>
-	      <para>A global option whether to enable Apple's SMB2+
-	      extension codenamed AAPL. Default
-	      <emphasis>yes</emphasis>. This extension enhances
-	      several deficiencies when connecting from Macs:</para>
-
-	      <itemizedlist>
-		<listitem><para>directory enumeration is enriched with
-		Mac relevant filesystem metadata (UNIX mode,
-		FinderInfo, resource fork size and effective
-		permission), as a result the Mac client doesn't need
-		to fetch this metadata individuallly per directory
-		entry resulting in an often tremendous performance
-		increase.</para></listitem>
-
-		<listitem><para>The ability to query and modify the
-		UNIX mode of directory entries.</para></listitem>
-	      </itemizedlist>
-
-	      <para>There's a set of per share options that can be
-	      used to disable the computation of specific Mac metadata
-	      in the directory enumeration context, all are enabled by
-	      default:</para>
-
-	      <itemizedlist>
-		<listitem><para>readdir_attr:aapl_rsize = true | false</para></listitem>
-		<listitem><para>readdir_attr:aapl_finder_info = true | false</para></listitem>
-		<listitem><para>readdir_attr:aapl_max_access = true | false</para></listitem>
-	      </itemizedlist>
-
-	    </listitem>
-	  </varlistentry>
-
-	  <varlistentry>
-	    <term>fruit:nfs_aces = yes | no</term>
-	    <listitem>
-	      <para>Whether support for querying and modifying the
-	      UNIX mode of directory entries via NFS ACEs is enabled,
-	      default <emphasis>yes</emphasis>.</para>
 	    </listitem>
 	  </varlistentry>
 
@@ -254,24 +289,38 @@
 	  </varlistentry>
 
 	  <varlistentry>
-	    <term>fruit:copyfile = yes | no</term>
-	    <listitem>
-	      <para>Whether to enable OS X specific copychunk ioctl
-	      that requests a copy of a whole file along with all
-	      attached metadata.</para>
-	      <para>WARNING: the copyfile request is blocking the
-	      client while the server does the copy.</para>.
-	      <para>The default is <emphasis>no</emphasis>.</para>
-	    </listitem>
-	  </varlistentry>
-
-	  <varlistentry>
 	    <term>fruit:posix_rename = yes | no</term>
 	    <listitem>
 	      <para>Whether to enable POSIX directory rename behaviour
 	      for OS X clients. Without this, directories can't be
 	      renamed if any client has any file inside it
 	      (recursive!) open.</para>
+	      <para>The default is <emphasis>yes</emphasis>.</para>
+	    </listitem>
+	  </varlistentry>
+
+	  <varlistentry>
+	    <term>readdir_attr:aapl_rsize = yes | no</term>
+	    <listitem>
+	      <para>Return resource fork size in SMB2 FIND responses.</para>
+	      <para>The default is <emphasis>yes</emphasis>.</para>
+	    </listitem>
+	  </varlistentry>
+
+	  <varlistentry>
+	    <term>readdir_attr:aapl_finder_info = yes | no</term>
+	    <listitem>
+	      <para>Return FinderInfo in SMB2 FIND responses.</para>
+	      <para>The default is <emphasis>yes</emphasis>.</para>
+	    </listitem>
+	  </varlistentry>
+
+	  <varlistentry>
+	    <term>readdir_attr:aapl_max_access = yes | no</term>
+	    <listitem>
+	      <para>Return the user's effective maximum permissions in SMB2 FIND
+	      responses. This is an expensive computation, setting this to off
+	      pretends the use has maximum effective permissions.</para>
 	      <para>The default is <emphasis>yes</emphasis>.</para>
 	    </listitem>
 	  </varlistentry>

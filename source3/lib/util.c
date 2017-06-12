@@ -1785,152 +1785,6 @@ bool mask_match_list(const char *string, char **list, int listLen, bool is_case_
        return False;
 }
 
-/*********************************************************
- Recursive routine that is called by unix_wild_match.
-*********************************************************/
-
-static bool unix_do_match(const char *regexp, const char *str)
-{
-	const char *p;
-
-	for( p = regexp; *p && *str; ) {
-
-		switch(*p) {
-			case '?':
-				str++;
-				p++;
-				break;
-
-			case '*':
-
-				/*
-				 * Look for a character matching 
-				 * the one after the '*'.
-				 */
-				p++;
-				if(!*p)
-					return true; /* Automatic match */
-				while(*str) {
-
-					while(*str && (*p != *str))
-						str++;
-
-					/*
-					 * Patch from weidel@multichart.de. In the case of the regexp
-					 * '*XX*' we want to ensure there are at least 2 'X' characters
-					 * in the string after the '*' for a match to be made.
-					 */
-
-					{
-						int matchcount=0;
-
-						/*
-						 * Eat all the characters that match, but count how many there were.
-						 */
-
-						while(*str && (*p == *str)) {
-							str++;
-							matchcount++;
-						}
-
-						/*
-						 * Now check that if the regexp had n identical characters that
-						 * matchcount had at least that many matches.
-						 */
-
-						while ( *(p+1) && (*(p+1) == *p)) {
-							p++;
-							matchcount--;
-						}
-
-						if ( matchcount <= 0 )
-							return false;
-					}
-
-					str--; /* We've eaten the match char after the '*' */
-
-					if(unix_do_match(p, str))
-						return true;
-
-					if(!*str)
-						return false;
-					else
-						str++;
-				}
-				return false;
-
-			default:
-				if(*str != *p)
-					return false;
-				str++;
-				p++;
-				break;
-		}
-	}
-
-	if(!*p && !*str)
-		return true;
-
-	if (!*p && str[0] == '.' && str[1] == 0)
-		return true;
-
-	if (!*str && *p == '?') {
-		while (*p == '?')
-			p++;
-		return(!*p);
-	}
-
-	if(!*str && (*p == '*' && p[1] == '\0'))
-		return true;
-
-	return false;
-}
-
-/*******************************************************************
- Simple case insensitive interface to a UNIX wildcard matcher.
- Returns True if match, False if not.
-*******************************************************************/
-
-bool unix_wild_match(const char *pattern, const char *string)
-{
-	TALLOC_CTX *ctx = talloc_stackframe();
-	char *p2;
-	char *s2;
-	char *p;
-	bool ret = false;
-
-	p2 = talloc_strdup(ctx,pattern);
-	s2 = talloc_strdup(ctx,string);
-	if (!p2 || !s2) {
-		TALLOC_FREE(ctx);
-		return false;
-	}
-	if (!strlower_m(p2)) {
-		TALLOC_FREE(ctx);
-		return false;
-	}
-	if (!strlower_m(s2)) {
-		TALLOC_FREE(ctx);
-		return false;
-	}
-
-	/* Remove any *? and ** from the pattern as they are meaningless */
-	for(p = p2; *p; p++) {
-		while( *p == '*' && (p[1] == '?' ||p[1] == '*')) {
-			memmove(&p[1], &p[2], strlen(&p[2])+1);
-		}
-	}
-
-	if (strequal(p2,"*")) {
-		TALLOC_FREE(ctx);
-		return true;
-	}
-
-	ret = unix_do_match(p2, s2);
-	TALLOC_FREE(ctx);
-	return ret;
-}
-
 /**********************************************************************
   Converts a name to a fully qualified domain name.
   Returns true if lookup succeeded, false if not (then fqdn is set to name)
@@ -2103,7 +1957,7 @@ int get_safe_IVAL(const char *buf_base, size_t buf_len, char *ptr, size_t off, i
  call (they take care of winbind separator and other winbind specific settings).
 ****************************************************************/
 
-void split_domain_user(TALLOC_CTX *mem_ctx,
+bool split_domain_user(TALLOC_CTX *mem_ctx,
 		       const char *full_name,
 		       char **domain,
 		       char **user)
@@ -2115,11 +1969,23 @@ void split_domain_user(TALLOC_CTX *mem_ctx,
 	if (p != NULL) {
 		*domain = talloc_strndup(mem_ctx, full_name,
 					 PTR_DIFF(p, full_name));
+		if (*domain == NULL) {
+			return false;
+		}
 		*user = talloc_strdup(mem_ctx, p+1);
+		if (*user == NULL) {
+			TALLOC_FREE(*domain);
+			return false;
+		}
 	} else {
-		*domain = talloc_strdup(mem_ctx, "");
+		*domain = NULL;
 		*user = talloc_strdup(mem_ctx, full_name);
+		if (*user == NULL) {
+			return false;
+		}
 	}
+
+	return true;
 }
 
 /****************************************************************

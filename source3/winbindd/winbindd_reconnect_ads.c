@@ -34,17 +34,14 @@ extern struct winbindd_methods ads_methods;
 /* List all users */
 static NTSTATUS query_user_list(struct winbindd_domain *domain,
 				TALLOC_CTX *mem_ctx,
-				uint32_t *num_entries,
-				struct wbint_userinfo **info)
+				uint32_t **rids)
 {
 	NTSTATUS result;
 
-	result = ads_methods.query_user_list(domain, mem_ctx,
-					     num_entries, info);
+	result = ads_methods.query_user_list(domain, mem_ctx, rids);
 
 	if (reconnect_need_retry(result, domain)) {
-		result = ads_methods.query_user_list(domain, mem_ctx,
-						     num_entries, info);
+		result = ads_methods.query_user_list(domain, mem_ctx, rids);
 	}
 
 	return result;
@@ -151,24 +148,6 @@ static NTSTATUS rids_to_names(struct winbindd_domain *domain,
 		result = ads_methods.rids_to_names(domain, mem_ctx, sid,
 						   rids, num_rids, domain_name,
 						   names, types);
-	}
-
-	return result;
-}
-
-/* Lookup user information from a rid or username. */
-static NTSTATUS query_user(struct winbindd_domain *domain,
-			   TALLOC_CTX *mem_ctx,
-			   const struct dom_sid *user_sid,
-			   struct wbint_userinfo *user_info)
-{
-	NTSTATUS result;
-
-	result = ads_methods.query_user(domain, mem_ctx, user_sid, user_info);
-
-	if (reconnect_need_retry(result, domain)) {
-		result = ads_methods.query_user(domain, mem_ctx, user_sid,
-						user_info);
 	}
 
 	return result;
@@ -311,7 +290,6 @@ struct winbindd_methods reconnect_ads_methods = {
 	name_to_sid,
 	sid_to_name,
 	rids_to_names,
-	query_user,
 	lookup_usergroups,
 	lookup_useraliases,
 	lookup_groupmem,

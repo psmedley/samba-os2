@@ -336,7 +336,7 @@ static NTSTATUS nfs4_set_nt_acl(vfs_handle_struct *handle, files_struct *fsp,
 			   uint32_t security_info_sent,
 			   const struct security_descriptor *psd)
 {
-	return smb_set_nt_acl_nfs4(handle, fsp, security_info_sent, psd,
+	return smb_set_nt_acl_nfs4(handle, fsp, NULL, security_info_sent, psd,
 			nfs4acl_xattr_fset_smb4acl);
 }
 
@@ -535,7 +535,8 @@ static NTSTATUS nfs4acl_xattr_fget_nt_acl(struct vfs_handle_struct *handle,
 		return status;
 	}
 
-	status = smb_fget_nt_acl_nfs4(fsp, security_info, mem_ctx, ppdesc, pacl);
+	status = smb_fget_nt_acl_nfs4(fsp, NULL, security_info, mem_ctx,
+				      ppdesc, pacl);
 	TALLOC_FREE(frame);
 	return status;
 }
@@ -560,8 +561,8 @@ static NTSTATUS nfs4acl_xattr_get_nt_acl(struct vfs_handle_struct *handle,
 		return status;
 	}
 
-	status = smb_get_nt_acl_nfs4(handle->conn, smb_fname, security_info,
-				     mem_ctx, ppdesc,
+	status = smb_get_nt_acl_nfs4(handle->conn, smb_fname, NULL,
+				     security_info, mem_ctx, ppdesc,
 				     pacl);
 	TALLOC_FREE(frame);
 	return status;

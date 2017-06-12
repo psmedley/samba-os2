@@ -1417,11 +1417,11 @@ static NTSTATUS libnet_join_joindomain_rpc(TALLOC_CTX *mem_ctx,
 	ZERO_STRUCT(user_info.info16);
 	user_info.info16.acct_flags = acct_flags;
 
-	status = dcerpc_samr_SetUserInfo(b, mem_ctx,
-					 &user_pol,
-					 16,
-					 &user_info,
-					 &result);
+	status = dcerpc_samr_SetUserInfo2(b, mem_ctx,
+					  &user_pol,
+					  UserControlInformation,
+					  &user_info,
+					  &result);
 	if (!NT_STATUS_IS_OK(status)) {
 		dcerpc_samr_DeleteUser(b, mem_ctx,
 				       &user_pol,
@@ -1463,7 +1463,7 @@ static NTSTATUS libnet_join_joindomain_rpc(TALLOC_CTX *mem_ctx,
 
 	status = dcerpc_samr_SetUserInfo2(b, mem_ctx,
 					  &user_pol,
-					  26,
+					  UserInternal5InformationNew,
 					  &user_info,
 					  &result);
 
@@ -1480,7 +1480,7 @@ static NTSTATUS libnet_join_joindomain_rpc(TALLOC_CTX *mem_ctx,
 
 		status = dcerpc_samr_SetUserInfo2(b, mem_ctx,
 						  &user_pol,
-						  24,
+						  UserInternal5Information,
 						  &user_info,
 						  &result);
 	}
@@ -1550,9 +1550,6 @@ NTSTATUS libnet_join_ok(struct messaging_context *msg_ctx,
 	struct netlogon_creds_CredentialState *creds = NULL;
 	uint32_t netlogon_flags = 0;
 	NTSTATUS status;
-	const char *machine_account = NULL;
-	const char *machine_domain = NULL;
-	const char *machine_password = NULL;
 	int flags = 0;
 
 	if (!dc_name) {
@@ -1576,22 +1573,17 @@ NTSTATUS libnet_join_ok(struct messaging_context *msg_ctx,
 	cli_credentials_set_old_password(cli_creds, NULL, CRED_SPECIFIED);
 
 	if (use_kerberos) {
-		flags |= CLI_FULL_CONNECTION_USE_KERBEROS;
+		cli_credentials_set_kerberos_state(cli_creds,
+				CRED_MUST_USE_KERBEROS);
 	}
 
-	machine_account = cli_credentials_get_username(cli_creds);
-	machine_domain = cli_credentials_get_domain(cli_creds);
-	machine_password = cli_credentials_get_password(cli_creds);
-
-	status = cli_full_connection(&cli, NULL,
-				     dc_name,
-				     NULL, 0,
-				     "IPC$", "IPC",
-				     machine_account,
-				     machine_domain,
-				     machine_password,
-				     flags,
-				     SMB_SIGNING_IPC_DEFAULT);
+	status = cli_full_connection_creds(&cli, NULL,
+					   dc_name,
+					   NULL, 0,
+					   "IPC$", "IPC",
+					   cli_creds,
+					   flags,
+					   SMB_SIGNING_IPC_DEFAULT);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		status = cli_full_connection(&cli, NULL,
@@ -1692,7 +1684,7 @@ static WERROR libnet_join_post_verify(TALLOC_CTX *mem_ctx,
 		libnet_join_set_error_string(mem_ctx, r,
 			"failed to verify domain membership after joining: %s",
 			get_friendly_nt_error_msg(status));
-		return WERR_SETUP_NOT_JOINED;
+		return WERR_NERR_SETUPNOTJOINED;
 	}
 
 	return WERR_OK;
@@ -1912,7 +1904,7 @@ static WERROR do_join_modify_vals_config(struct libnet_JoinCtx *r)
 
 	err = smbconf_init_reg(r, &ctx, NULL);
 	if (!SBC_ERROR_IS_OK(err)) {
-		werr = WERR_NO_SUCH_SERVICE;
+		werr = WERR_SERVICE_DOES_NOT_EXIST;
 		goto done;
 	}
 
@@ -1920,14 +1912,14 @@ static WERROR do_join_modify_vals_config(struct libnet_JoinCtx *r)
 
 		err = smbconf_set_global_parameter(ctx, "security", "user");
 		if (!SBC_ERROR_IS_OK(err)) {
-			werr = WERR_NO_SUCH_SERVICE;
+			werr = WERR_SERVICE_DOES_NOT_EXIST;
 			goto done;
 		}
 
 		err = smbconf_set_global_parameter(ctx, "workgroup",
 						   r->in.domain_name);
 		if (!SBC_ERROR_IS_OK(err)) {
-			werr = WERR_NO_SUCH_SERVICE;
+			werr = WERR_SERVICE_DOES_NOT_EXIST;
 			goto done;
 		}
 
@@ -1937,28 +1929,28 @@ static WERROR do_join_modify_vals_config(struct libnet_JoinCtx *r)
 
 	err = smbconf_set_global_parameter(ctx, "security", "domain");
 	if (!SBC_ERROR_IS_OK(err)) {
-		werr = WERR_NO_SUCH_SERVICE;
+		werr = WERR_SERVICE_DOES_NOT_EXIST;
 		goto done;
 	}
 
 	err = smbconf_set_global_parameter(ctx, "workgroup",
 					   r->out.netbios_domain_name);
 	if (!SBC_ERROR_IS_OK(err)) {
-		werr = WERR_NO_SUCH_SERVICE;
+		werr = WERR_SERVICE_DOES_NOT_EXIST;
 		goto done;
 	}
 
 	if (r->out.domain_is_ad) {
 		err = smbconf_set_global_parameter(ctx, "security", "ads");
 		if (!SBC_ERROR_IS_OK(err)) {
-			werr = WERR_NO_SUCH_SERVICE;
+			werr = WERR_SERVICE_DOES_NOT_EXIST;
 			goto done;
 		}
 
 		err = smbconf_set_global_parameter(ctx, "realm",
 						   r->out.dns_domain_name);
 		if (!SBC_ERROR_IS_OK(err)) {
-			werr = WERR_NO_SUCH_SERVICE;
+			werr = WERR_SERVICE_DOES_NOT_EXIST;
 			goto done;
 		}
 	}
@@ -1979,7 +1971,7 @@ static WERROR do_unjoin_modify_vals_config(struct libnet_UnjoinCtx *r)
 
 	err = smbconf_init_reg(r, &ctx, NULL);
 	if (!SBC_ERROR_IS_OK(err)) {
-		werr = WERR_NO_SUCH_SERVICE;
+		werr = WERR_SERVICE_DOES_NOT_EXIST;
 		goto done;
 	}
 
@@ -1987,13 +1979,13 @@ static WERROR do_unjoin_modify_vals_config(struct libnet_UnjoinCtx *r)
 
 		err = smbconf_set_global_parameter(ctx, "security", "user");
 		if (!SBC_ERROR_IS_OK(err)) {
-			werr = WERR_NO_SUCH_SERVICE;
+			werr = WERR_SERVICE_DOES_NOT_EXIST;
 			goto done;
 		}
 
 		err = smbconf_delete_global_parameter(ctx, "workgroup");
 		if (!SBC_ERROR_IS_OK(err)) {
-			werr = WERR_NO_SUCH_SERVICE;
+			werr = WERR_SERVICE_DOES_NOT_EXIST;
 			goto done;
 		}
 
@@ -2112,7 +2104,7 @@ static WERROR libnet_join_pre_processing(TALLOC_CTX *mem_ctx,
 	if (!r->in.domain_name) {
 		libnet_join_set_error_string(mem_ctx, r,
 			"No domain name defined");
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (strlen(r->in.machine_name) > 15) {
@@ -2121,7 +2113,7 @@ static WERROR libnet_join_pre_processing(TALLOC_CTX *mem_ctx,
                          "\"%s\" is %u chars long\n",
                          r->in.machine_name,
 			 (unsigned int)strlen(r->in.machine_name));
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
         }
 
 	if (!libnet_parse_domain_dc(mem_ctx, r->in.domain_name,
@@ -2129,17 +2121,27 @@ static WERROR libnet_join_pre_processing(TALLOC_CTX *mem_ctx,
 				    &r->in.dc_name)) {
 		libnet_join_set_error_string(mem_ctx, r,
 			"Failed to parse domain name");
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (!r->in.admin_domain) {
 		char *admin_domain = NULL;
 		char *admin_account = NULL;
-		split_domain_user(mem_ctx,
-				  r->in.admin_account,
-				  &admin_domain,
-				  &admin_account);
-		r->in.admin_domain = admin_domain;
+		bool ok;
+
+		ok = split_domain_user(mem_ctx,
+				       r->in.admin_account,
+				       &admin_domain,
+				       &admin_account);
+		if (!ok) {
+			return WERR_NOT_ENOUGH_MEMORY;
+		}
+
+		if (admin_domain != NULL) {
+			r->in.admin_domain = admin_domain;
+		} else {
+			r->in.admin_domain = r->in.domain_name;
+		}
 		r->in.admin_account = admin_account;
 	}
 
@@ -2216,7 +2218,7 @@ static WERROR libnet_join_post_processing(TALLOC_CTX *mem_ctx,
 
 		ads_status  = libnet_join_post_processing_ads(mem_ctx, r);
 		if (!ADS_ERR_OK(ads_status)) {
-			return WERR_GENERAL_FAILURE;
+			return WERR_GEN_FAILURE;
 		}
 	}
 #endif /* HAVE_ADS */
@@ -2260,7 +2262,7 @@ WERROR libnet_init_JoinCtx(TALLOC_CTX *mem_ctx,
 
 	ctx = talloc_zero(mem_ctx, struct libnet_JoinCtx);
 	if (!ctx) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	talloc_set_destructor(ctx, libnet_destroy_JoinCtx);
@@ -2295,7 +2297,7 @@ WERROR libnet_init_UnjoinCtx(TALLOC_CTX *mem_ctx,
 
 	ctx = talloc_zero(mem_ctx, struct libnet_UnjoinCtx);
 	if (!ctx) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	talloc_set_destructor(ctx, libnet_destroy_UnjoinCtx);
@@ -2465,7 +2467,7 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 				"failed to find DC for domain %s - %s",
 				r->in.domain_name,
 				get_friendly_nt_error_msg(status));
-			return WERR_DCNOTFOUND;
+			return WERR_NERR_DCNOTFOUND;
 		}
 
 		dc = strip_hostname(info->dc_unc);
@@ -2476,7 +2478,7 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 		    info->dc_address[1] != '\\') {
 			DBG_ERR("ill-formed DC address '%s'\n",
 				info->dc_address);
-			return WERR_DCNOTFOUND;
+			return WERR_NERR_DCNOTFOUND;
 		}
 
 		numeric_dcip = info->dc_address + 2;
@@ -2494,14 +2496,14 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 				DBG_ERR(
 				    "cannot parse IP address '%s' of DC '%s'\n",
 				    numeric_dcip, r->in.dc_name);
-				return WERR_DCNOTFOUND;
+				return WERR_NERR_DCNOTFOUND;
 			}
 		} else {
 			if (!interpret_string_addr(&ss, r->in.dc_name, 0)) {
 				DBG_WARNING(
 				    "cannot resolve IP address of DC '%s'\n",
 				    r->in.dc_name);
-				return WERR_DCNOTFOUND;
+				return WERR_NERR_DCNOTFOUND;
 			}
 		}
 
@@ -2549,7 +2551,7 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 
 		ads_status = libnet_join_connect_ads_user(mem_ctx, r);
 		if (!ADS_ERR_OK(ads_status)) {
-			return WERR_DEFAULT_JOIN_REQUIRED;
+			return WERR_NERR_DEFAULTJOINREQUIRED;
 		}
 
 		ads_status = libnet_join_precreate_machine_acct(mem_ctx, r);
@@ -2569,7 +2571,7 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 				"failed to precreate account in ou %s: %s",
 				r->in.account_ou,
 				ads_errstr(ads_status));
-			return WERR_DEFAULT_JOIN_REQUIRED;
+			return WERR_NERR_DEFAULTJOINREQUIRED;
 		}
 
 		DEBUG(5, ("failed to precreate account in ou %s: %s",
@@ -2589,14 +2591,14 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 			"failed to join domain '%s' over rpc: %s",
 			r->in.domain_name, get_friendly_nt_error_msg(status));
 		if (NT_STATUS_EQUAL(status, NT_STATUS_USER_EXISTS)) {
-			return WERR_SETUP_ALREADY_JOINED;
+			return WERR_NERR_SETUPALREADYJOINED;
 		}
 		werr = ntstatus_to_werror(status);
 		goto done;
 	}
 
 	if (!libnet_join_joindomain_store_secrets(mem_ctx, r)) {
-		werr = WERR_SETUP_NOT_JOINED;
+		werr = WERR_NERR_SETUPNOTJOINED;
 		goto done;
 	}
 
@@ -2700,7 +2702,7 @@ static WERROR libnet_DomainUnjoin(TALLOC_CTX *mem_ctx,
 		if (!secrets_fetch_domain_sid(lp_workgroup(), &sid)) {
 			libnet_unjoin_set_error_string(mem_ctx, r,
 				"Unable to fetch domain sid: are we joined?");
-			return WERR_SETUP_NOT_JOINED;
+			return WERR_NERR_SETUPNOTJOINED;
 		}
 		r->in.domain_sid = dom_sid_dup(mem_ctx, &sid);
 		W_ERROR_HAVE_NO_MEMORY(r->in.domain_sid);
@@ -2729,7 +2731,7 @@ static WERROR libnet_DomainUnjoin(TALLOC_CTX *mem_ctx,
 				"failed to find DC for domain %s - %s",
 				r->in.domain_name,
 				get_friendly_nt_error_msg(status));
-			return WERR_DCNOTFOUND;
+			return WERR_NERR_DCNOTFOUND;
 		}
 
 		dc = strip_hostname(info->dc_unc);
@@ -2775,7 +2777,7 @@ static WERROR libnet_DomainUnjoin(TALLOC_CTX *mem_ctx,
 				"failed to disable machine account via rpc: %s",
 				get_friendly_nt_error_msg(status));
 			if (NT_STATUS_EQUAL(status, NT_STATUS_NO_SUCH_USER)) {
-				return WERR_SETUP_NOT_JOINED;
+				return WERR_NERR_SETUPNOTJOINED;
 			}
 			return ntstatus_to_werror(status);
 		}
@@ -2800,7 +2802,7 @@ static WERROR libnet_unjoin_pre_processing(TALLOC_CTX *mem_ctx,
 	if (!r->in.domain_name) {
 		libnet_unjoin_set_error_string(mem_ctx, r,
 			"No domain name defined");
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (!libnet_parse_domain_dc(mem_ctx, r->in.domain_name,
@@ -2808,21 +2810,31 @@ static WERROR libnet_unjoin_pre_processing(TALLOC_CTX *mem_ctx,
 				    &r->in.dc_name)) {
 		libnet_unjoin_set_error_string(mem_ctx, r,
 			"Failed to parse domain name");
-		return WERR_INVALID_PARAM;
+		return WERR_INVALID_PARAMETER;
 	}
 
 	if (IS_DC) {
-		return WERR_SETUP_DOMAIN_CONTROLLER;
+		return WERR_NERR_SETUPDOMAINCONTROLLER;
 	}
 
 	if (!r->in.admin_domain) {
 		char *admin_domain = NULL;
 		char *admin_account = NULL;
-		split_domain_user(mem_ctx,
-				  r->in.admin_account,
-				  &admin_domain,
-				  &admin_account);
-		r->in.admin_domain = admin_domain;
+		bool ok;
+
+		ok = split_domain_user(mem_ctx,
+				       r->in.admin_account,
+				       &admin_domain,
+				       &admin_account);
+		if (!ok) {
+			return WERR_NOT_ENOUGH_MEMORY;
+		}
+
+		if (admin_domain != NULL) {
+			r->in.admin_domain = admin_domain;
+		} else {
+			r->in.admin_domain = r->in.domain_name;
+		}
 		r->in.admin_account = admin_account;
 	}
 

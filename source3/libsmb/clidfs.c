@@ -42,12 +42,12 @@
  Ensure a connection is encrypted.
 ********************************************************************/
 
-NTSTATUS cli_cm_force_encryption(struct cli_state *c,
-			const char *username,
-			const char *password,
-			const char *domain,
-			const char *sharename)
+NTSTATUS cli_cm_force_encryption_creds(struct cli_state *c,
+				       struct cli_credentials *creds,
+				       const char *sharename)
 {
+	uint16_t major, minor;
+	uint32_t caplow, caphigh;
 	NTSTATUS status;
 
 	if (smbXcli_conn_protocol(c->conn) >= PROTOCOL_SMB2_02) {
@@ -64,29 +64,65 @@ NTSTATUS cli_cm_force_encryption(struct cli_state *c,
 		return status;
 	}
 
-	status = cli_force_encryption(c,
-					username,
-					password,
-					domain);
-
-	if (NT_STATUS_EQUAL(status,NT_STATUS_NOT_SUPPORTED)) {
+	if (!SERVER_HAS_UNIX_CIFS(c)) {
 		d_printf("Encryption required and "
 			"server that doesn't support "
 			"UNIX extensions - failing connect\n");
-	} else if (NT_STATUS_EQUAL(status,NT_STATUS_UNKNOWN_REVISION)) {
+		return NT_STATUS_NOT_SUPPORTED;
+	}
+
+	status = cli_unix_extensions_version(c, &major, &minor, &caplow,
+					     &caphigh);
+	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("Encryption required and "
 			"can't get UNIX CIFS extensions "
 			"version from server.\n");
-	} else if (NT_STATUS_EQUAL(status,NT_STATUS_UNSUPPORTED_COMPRESSION)) {
+		return NT_STATUS_UNKNOWN_REVISION;
+	}
+
+	if (!(caplow & CIFS_UNIX_TRANSPORT_ENCRYPTION_CAP)) {
 		d_printf("Encryption required and "
 			"share %s doesn't support "
 			"encryption.\n", sharename);
-	} else if (!NT_STATUS_IS_OK(status)) {
+		return NT_STATUS_UNSUPPORTED_COMPRESSION;
+	}
+
+	status = cli_smb1_setup_encryption(c, creds);
+	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("Encryption required and "
 			"setup failed with error %s.\n",
 			nt_errstr(status));
+		return status;
 	}
 
+	return NT_STATUS_OK;
+}
+
+NTSTATUS cli_cm_force_encryption(struct cli_state *c,
+			const char *username,
+			const char *password,
+			const char *domain,
+			const char *sharename)
+{
+	struct cli_credentials *creds = NULL;
+	NTSTATUS status;
+
+	creds = cli_session_creds_init(c,
+				       username,
+				       domain,
+				       NULL, /* default realm */
+				       password,
+				       c->use_kerberos,
+				       c->fallback_after_kerberos,
+				       c->use_ccache,
+				       c->pw_nt_hash);
+	if (creds == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = cli_cm_force_encryption_creds(c, creds, sharename);
+	/* gensec currently references the creds so we can't free them here */
+	talloc_unlink(c, creds);
 	return status;
 }
 
@@ -115,6 +151,7 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 	NTSTATUS status;
 	int flags = 0;
 	int signing_state = get_cmdline_auth_info_signing_state(auth_info);
+	struct cli_credentials *creds = NULL;
 
 	if (force_encrypt) {
 		signing_state = SMB_SIGNING_REQUIRED;
@@ -195,19 +232,16 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 		domain = lp_workgroup();
 	}
 
-	status = cli_session_setup(c, username,
-				   password, strlen(password),
-				   password, strlen(password),
-				   domain);
+	creds = get_cmdline_auth_info_creds(auth_info);
+
+	status = cli_session_setup_creds(c, creds);
 	if (!NT_STATUS_IS_OK(status)) {
 		/* If a password was not supplied then
 		 * try again with a null username. */
 		if (password[0] || !username[0] ||
 			get_cmdline_auth_info_use_kerberos(auth_info) ||
-			!NT_STATUS_IS_OK(status = cli_session_setup(c, "",
-				    		"", 0,
-						"", 0,
-					       lp_workgroup()))) {
+			!NT_STATUS_IS_OK(status = cli_session_setup_anon(c)))
+		{
 			d_printf("session setup failed: %s\n",
 				 nt_errstr(status));
 			if (NT_STATUS_EQUAL(status,
@@ -244,10 +278,7 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 	if (smbXcli_conn_dfs_supported(c->conn) &&
 			cli_check_msdfs_proxy(ctx, c, sharename,
 				&newserver, &newshare,
-				force_encrypt,
-				username,
-				password,
-				domain)) {
+				force_encrypt, creds)) {
 		cli_shutdown(c);
 		return do_connect(ctx, newserver,
 				newshare, auth_info, false,
@@ -257,8 +288,7 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 
 	/* must be a normal share */
 
-	status = cli_tree_connect(c, sharename, "?????",
-				  password, strlen(password)+1);
+	status = cli_tree_connect_creds(c, sharename, "?????", creds);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("tree connect failed: %s\n", nt_errstr(status));
 		cli_shutdown(c);
@@ -266,11 +296,9 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 	}
 
 	if (force_encrypt) {
-		status = cli_cm_force_encryption(c,
-					username,
-					password,
-					domain,
-					sharename);
+		status = cli_cm_force_encryption_creds(c,
+						       creds,
+						       sharename);
 		if (!NT_STATUS_IS_OK(status)) {
 			cli_shutdown(c);
 			return status;
@@ -1170,9 +1198,7 @@ bool cli_check_msdfs_proxy(TALLOC_CTX *ctx,
 				char **pp_newserver,
 				char **pp_newshare,
 				bool force_encrypt,
-				const char *username,
-				const char *password,
-				const char *domain)
+				struct cli_credentials *creds)
 {
 	struct client_dfs_referral *refs = NULL;
 	size_t num_refs = 0;
@@ -1206,16 +1232,12 @@ bool cli_check_msdfs_proxy(TALLOC_CTX *ctx,
 
 	/* check for the referral */
 
-	if (!NT_STATUS_IS_OK(cli_tree_connect(cli, "IPC$", "IPC", NULL, 0))) {
+	if (!NT_STATUS_IS_OK(cli_tree_connect(cli, "IPC$", "IPC", NULL))) {
 		return false;
 	}
 
 	if (force_encrypt) {
-		status = cli_cm_force_encryption(cli,
-					username,
-					password,
-					domain,
-					"IPC$");
+		status = cli_cm_force_encryption_creds(cli, creds, "IPC$");
 		if (!NT_STATUS_IS_OK(status)) {
 			return false;
 		}

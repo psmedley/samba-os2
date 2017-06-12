@@ -106,6 +106,7 @@ NTSTATUS connect_to_service(struct net_context *c,
 {
 	NTSTATUS nt_status;
 	int flags = 0;
+	enum smb_signing_setting signing_setting = SMB_SIGNING_DEFAULT;
 
 	c->opt_password = net_prompt_pass(c, c->opt_user_name);
 
@@ -121,12 +122,16 @@ NTSTATUS connect_to_service(struct net_context *c,
 		flags |= CLI_FULL_CONNECTION_USE_CCACHE;
 	}
 
+	if (strequal(service_type, "IPC")) {
+		signing_setting = SMB_SIGNING_IPC_DEFAULT;
+	}
+
 	nt_status = cli_full_connection(cli_ctx, NULL, server_name,
 					server_ss, c->opt_port,
 					service_name, service_type,
 					c->opt_user_name, c->opt_workgroup,
 					c->opt_password, flags,
-					SMB_SIGNING_IPC_DEFAULT);
+					signing_setting);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		d_fprintf(stderr, _("Could not connect to server %s\n"),
 			  server_name);
@@ -150,29 +155,11 @@ NTSTATUS connect_to_service(struct net_context *c,
 	}
 
 	if (c->smb_encrypt) {
-		nt_status = cli_force_encryption(*cli_ctx,
-					c->opt_user_name,
-					c->opt_password,
-					c->opt_workgroup);
-
-		if (NT_STATUS_EQUAL(nt_status,NT_STATUS_NOT_SUPPORTED)) {
-			d_printf(_("Encryption required and "
-				"server that doesn't support "
-				"UNIX extensions - failing connect\n"));
-		} else if (NT_STATUS_EQUAL(nt_status,NT_STATUS_UNKNOWN_REVISION)) {
-			d_printf(_("Encryption required and "
-				"can't get UNIX CIFS extensions "
-				"version from server.\n"));
-		} else if (NT_STATUS_EQUAL(nt_status,NT_STATUS_UNSUPPORTED_COMPRESSION)) {
-			d_printf(_("Encryption required and "
-				"share %s doesn't support "
-				"encryption.\n"), service_name);
-		} else if (!NT_STATUS_IS_OK(nt_status)) {
-			d_printf(_("Encryption required and "
-				"setup failed with error %s.\n"),
-				nt_errstr(nt_status));
-		}
-
+		nt_status = cli_cm_force_encryption(*cli_ctx,
+						    c->opt_user_name,
+						    c->opt_password,
+						    c->opt_workgroup,
+						    service_name);
 		if (!NT_STATUS_IS_OK(nt_status)) {
 			cli_shutdown(*cli_ctx);
 			*cli_ctx = NULL;

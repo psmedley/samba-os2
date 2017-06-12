@@ -768,7 +768,7 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 	default:
 		DEBUG(5,("init_srv_share_info_ctr: unsupported switch value %d\n",
 			info_ctr->level));
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	*total_entries = alloc_entries;
@@ -1094,7 +1094,7 @@ static WERROR init_srv_conn_info_0(struct srvsvc_NetConnCtr0 *ctr0,
 						   struct srvsvc_NetConnInfo0,
 						   num_entries+1);
 		if (!ctr0->array) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		ctr0->array[num_entries].conn_id = *total_entries;
@@ -1152,7 +1152,7 @@ static WERROR init_srv_conn_info_1(const char *name,
 		snum = find_service(talloc_tos(), name, &share_name);
 
 		if (!share_name) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		if (snum < 0) {
@@ -1265,7 +1265,7 @@ WERROR _srvsvc_NetFileEnum(struct pipes_struct *p,
 	case 3:
 		break;
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	if (!nt_token_check_sid(&global_sid_Builtin_Administrators,
@@ -1278,7 +1278,7 @@ WERROR _srvsvc_NetFileEnum(struct pipes_struct *p,
 	ctx = talloc_tos();
 	ctr3 = r->in.info_ctr->ctr.ctr3;
 	if (!ctr3) {
-		werr = WERR_INVALID_PARAM;
+		werr = WERR_INVALID_PARAMETER;
 		goto done;
 	}
 
@@ -1328,7 +1328,7 @@ WERROR _srvsvc_NetSrvGetInfo(struct pipes_struct *p,
 
 		info102 = talloc(p->mem_ctx, struct srvsvc_NetSrvInfo102);
 		if (!info102) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		info102->platform_id	= PLATFORM_ID_NT;
@@ -1354,7 +1354,7 @@ WERROR _srvsvc_NetSrvGetInfo(struct pipes_struct *p,
 
 		info101 = talloc(p->mem_ctx, struct srvsvc_NetSrvInfo101);
 		if (!info101) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		info101->platform_id	= PLATFORM_ID_NT;
@@ -1373,7 +1373,7 @@ WERROR _srvsvc_NetSrvGetInfo(struct pipes_struct *p,
 
 		info100 = talloc(p->mem_ctx, struct srvsvc_NetSrvInfo100);
 		if (!info100) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		info100->platform_id	= PLATFORM_ID_NT;
@@ -1384,7 +1384,7 @@ WERROR _srvsvc_NetSrvGetInfo(struct pipes_struct *p,
 		break;
 	}
 	default:
-		status = WERR_UNKNOWN_LEVEL;
+		status = WERR_INVALID_LEVEL;
 		break;
 	}
 
@@ -1442,7 +1442,7 @@ WERROR _srvsvc_NetConnEnum(struct pipes_struct *p,
 						    r->out.totalentries);
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	DEBUG(5,("_srvsvc_NetConnEnum: %d\n", __LINE__));
@@ -1482,7 +1482,7 @@ WERROR _srvsvc_NetSessEnum(struct pipes_struct *p,
 						    r->out.totalentries);
 			break;
 		default:
-			return WERR_UNKNOWN_LEVEL;
+			return WERR_INVALID_LEVEL;
 	}
 
 	DEBUG(5,("_srvsvc_NetSessEnum: %d\n", __LINE__));
@@ -1631,7 +1631,7 @@ WERROR _srvsvc_NetShareGetInfo(struct pipes_struct *p,
 
 	snum = find_service(talloc_tos(), r->in.share_name, &share_name);
 	if (!share_name) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	if (snum < 0) {
 		return WERR_INVALID_NAME;
@@ -1691,7 +1691,7 @@ WERROR _srvsvc_NetShareGetInfo(struct pipes_struct *p,
 		default:
 			DEBUG(5,("_srvsvc_NetShareGetInfo: unsupported switch value %d\n",
 				r->in.level));
-			status = WERR_UNKNOWN_LEVEL;
+			status = WERR_INVALID_LEVEL;
 			break;
 	}
 
@@ -1748,12 +1748,12 @@ WERROR _srvsvc_NetShareSetInfo(struct pipes_struct *p,
 
 	snum = find_service(talloc_tos(), r->in.share_name, &share_name);
 	if (!share_name) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/* Does this share exist ? */
 	if (snum < 0)
-		return WERR_NET_NAME_NOT_FOUND;
+		return WERR_NERR_NETNAMENOTFOUND;
 
 	/* No change to printer shares. */
 	if (lp_printable(snum))
@@ -1843,7 +1843,7 @@ WERROR _srvsvc_NetShareSetInfo(struct pipes_struct *p,
 	default:
 		DEBUG(5,("_srvsvc_NetShareSetInfo: unsupported switch value %d\n",
 			r->in.level));
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	/* We can only modify disk shares. */
@@ -1855,14 +1855,14 @@ WERROR _srvsvc_NetShareSetInfo(struct pipes_struct *p,
 	}
 
 	if (comment == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/* Check if the pathname is valid. */
 	if (!(path = valid_share_pathname(p->mem_ctx, pathname ))) {
 		DEBUG(5,("_srvsvc_NetShareSetInfo: invalid pathname %s\n",
 			pathname ));
-		return WERR_OBJECT_PATH_INVALID;
+		return WERR_BAD_PATHNAME;
 	}
 
 	/* Ensure share name, pathname and comment don't contain '"' characters. */
@@ -1894,7 +1894,7 @@ WERROR _srvsvc_NetShareSetInfo(struct pipes_struct *p,
 				max_connections,
 				csc_policy);
 		if (!command) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
 		DEBUG(10,("_srvsvc_NetShareSetInfo: Running [%s]\n", command ));
@@ -1904,7 +1904,8 @@ WERROR _srvsvc_NetShareSetInfo(struct pipes_struct *p,
 		if (is_disk_op)
 			become_root();
 
-		if ( (ret = smbrun(command, NULL)) == 0 ) {
+		ret = smbrun(command, NULL, NULL);
+		if (ret == 0) {
 			/* Tell everyone we updated smb.conf. */
 			message_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED,
 					 NULL, 0, NULL);
@@ -2028,7 +2029,7 @@ WERROR _srvsvc_NetShareAdd(struct pipes_struct *p,
 	default:
 		DEBUG(5,("_srvsvc_NetShareAdd: unsupported switch value %d\n",
 			r->in.level));
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	/* check for invalid share names */
@@ -2049,7 +2050,7 @@ WERROR _srvsvc_NetShareAdd(struct pipes_struct *p,
 
 	snum = find_service(ctx, share_name_in, &share_name);
 	if (!share_name) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	/* Share already exists. */
@@ -2064,17 +2065,17 @@ WERROR _srvsvc_NetShareAdd(struct pipes_struct *p,
 
 	/* Check if the pathname is valid. */
 	if (!(path = valid_share_pathname(p->mem_ctx, pathname))) {
-		return WERR_OBJECT_PATH_INVALID;
+		return WERR_BAD_PATHNAME;
 	}
 
 	ret = sys_lstat(path, &st, false);
 	if (ret == -1 && (errno != EACCES)) {
 		/*
 		 * If path has any other than permission
-		 * problem, return WERR_BADFILE (as Windows
+		 * problem, return WERR_FILE_NOT_FOUND (as Windows
 		 * does.
 		 */
-		return WERR_BADFILE;
+		return WERR_FILE_NOT_FOUND;
 	}
 
 	/* Ensure share name, pathname and comment don't contain '"' characters. */
@@ -2094,7 +2095,7 @@ WERROR _srvsvc_NetShareAdd(struct pipes_struct *p,
 			comment ? comment : "",
 			max_connections);
 	if (!command) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	DEBUG(10,("_srvsvc_NetShareAdd: Running [%s]\n", command ));
@@ -2106,7 +2107,8 @@ WERROR _srvsvc_NetShareAdd(struct pipes_struct *p,
 
 	/* FIXME: use libnetconf here - gd */
 
-	if ( (ret = smbrun(command, NULL)) == 0 ) {
+	ret = smbrun(command, NULL, NULL);
+	if (ret == 0) {
 		/* Tell everyone we updated smb.conf. */
 		message_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED, NULL, 0,
 				 NULL);
@@ -2164,7 +2166,7 @@ WERROR _srvsvc_NetShareDel(struct pipes_struct *p,
 	DEBUG(5,("_srvsvc_NetShareDel: %d\n", __LINE__));
 
 	if (!r->in.share_name) {
-		return WERR_NET_NAME_NOT_FOUND;
+		return WERR_NERR_NETNAMENOTFOUND;
 	}
 
 	if ( strequal(r->in.share_name,"IPC$")
@@ -2176,11 +2178,11 @@ WERROR _srvsvc_NetShareDel(struct pipes_struct *p,
 
 	snum = find_service(talloc_tos(), r->in.share_name, &share_name);
 	if (!share_name) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (snum < 0) {
-		return WERR_NO_SUCH_SHARE;
+		return WERR_BAD_NET_NAME;
 	}
 
 	/* No change to printer shares. */
@@ -2203,7 +2205,7 @@ WERROR _srvsvc_NetShareDel(struct pipes_struct *p,
 			get_dyn_CONFIGFILE(),
 			share_name);
 	if (!command) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	DEBUG(10,("_srvsvc_NetShareDel: Running [%s]\n", command ));
@@ -2213,7 +2215,8 @@ WERROR _srvsvc_NetShareDel(struct pipes_struct *p,
 	if ( is_disk_op )
 		become_root();
 
-	if ( (ret = smbrun(command, NULL)) == 0 ) {
+	ret = smbrun(command, NULL, NULL);
+	if (ret == 0) {
 		/* Tell everyone we updated smb.conf. */
 		message_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED, NULL, 0,
 				 NULL);
@@ -2274,7 +2277,7 @@ WERROR _srvsvc_NetRemoteTOD(struct pipes_struct *p,
 	DEBUG(5,("_srvsvc_NetRemoteTOD: %d\n", __LINE__));
 
 	if ( !(tod = talloc_zero(p->mem_ctx, struct srvsvc_NetRemoteTODInfo)) )
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 
 	*r->out.info = tod;
 
@@ -2325,17 +2328,17 @@ WERROR _srvsvc_NetGetFileSecurity(struct pipes_struct *p,
 	ZERO_STRUCT(st);
 
 	if (!r->in.share) {
-		werr = WERR_NET_NAME_NOT_FOUND;
+		werr = WERR_NERR_NETNAMENOTFOUND;
 		goto error_exit;
 	}
 	snum = find_service(talloc_tos(), r->in.share, &servicename);
 	if (!servicename) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto error_exit;
 	}
 	if (snum == -1) {
 		DEBUG(10, ("Could not find service %s\n", servicename));
-		werr = WERR_NET_NAME_NOT_FOUND;
+		werr = WERR_NERR_NETNAMENOTFOUND;
 		goto error_exit;
 	}
 
@@ -2393,7 +2396,7 @@ WERROR _srvsvc_NetGetFileSecurity(struct pipes_struct *p,
 
 	sd_buf = talloc_zero(p->mem_ctx, struct sec_desc_buf);
 	if (!sd_buf) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto error_exit;
 	}
 
@@ -2473,19 +2476,19 @@ WERROR _srvsvc_NetSetFileSecurity(struct pipes_struct *p,
 	ZERO_STRUCT(st);
 
 	if (!r->in.share) {
-		werr = WERR_NET_NAME_NOT_FOUND;
+		werr = WERR_NERR_NETNAMENOTFOUND;
 		goto error_exit;
 	}
 
 	snum = find_service(talloc_tos(), r->in.share, &servicename);
 	if (!servicename) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto error_exit;
 	}
 
 	if (snum == -1) {
 		DEBUG(10, ("Could not find service %s\n", servicename));
-		werr = WERR_NET_NAME_NOT_FOUND;
+		werr = WERR_NERR_NETNAMENOTFOUND;
 		goto error_exit;
 	}
 
@@ -2695,7 +2698,7 @@ WERROR _srvsvc_NetNameValidate(struct pipes_struct *p,
 		break;
 
 	default:
-		return WERR_UNKNOWN_LEVEL;
+		return WERR_INVALID_LEVEL;
 	}
 
 	return WERR_OK;
@@ -2764,7 +2767,7 @@ WERROR _srvsvc_NetFileClose(struct pipes_struct *p,
 	/* enum_file_close_fn sends the close message to
 	 * the relevant smbd process. */
 
-	r->out.result = WERR_BADFILE;
+	r->out.result = WERR_FILE_NOT_FOUND;
 	state.r = r;
 	state.msg_ctx = p->msg_ctx;
 	share_entry_forall(enum_file_close_fn, &state);

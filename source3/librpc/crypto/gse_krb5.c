@@ -123,7 +123,7 @@ static krb5_error_code fill_keytab_from_password(krb5_context krbctx,
 	krb5_keytab_entry kt_entry;
 	unsigned int i;
 
-	ret = get_kerberos_allowed_etypes(krbctx, &enctypes);
+	ret = smb_krb5_get_allowed_etypes(krbctx, &enctypes);
 	if (ret) {
 		DEBUG(1, (__location__
 			  ": Can't determine permitted enctypes!\n"));
@@ -242,7 +242,8 @@ static krb5_error_code fill_mem_keytab_from_secrets(krb5_context krbctx,
 		 * we can verify if the keytab needs to be upgraded */
 		while ((ret = krb5_kt_next_entry(krbctx, *keytab,
 					   &kt_entry, &kt_cursor)) == 0) {
-			if (smb_get_enctype_from_kt_entry(&kt_entry) == CLEARTEXT_PRIV_ENCTYPE) {
+			if (smb_krb5_kt_get_enctype_from_entry(&kt_entry) ==
+			    CLEARTEXT_PRIV_ENCTYPE) {
 				break;
 			}
 			smb_krb5_kt_free_entry(krbctx, &kt_entry);
@@ -282,13 +283,9 @@ static krb5_error_code fill_mem_keytab_from_secrets(krb5_context krbctx,
 		}
 	}
 
-	{
-		krb5_kt_cursor zero_csr;
-		ZERO_STRUCT(zero_csr);
-		if ((memcmp(&kt_cursor, &zero_csr, sizeof(krb5_kt_cursor)) != 0) && *keytab) {
-			krb5_kt_end_seq_get(krbctx, *keytab, &kt_cursor);
-		}
-        }
+	if (!all_zero((uint8_t *)&kt_cursor, sizeof(kt_cursor)) && *keytab) {
+		krb5_kt_end_seq_get(krbctx, *keytab, &kt_cursor);
+	}
 
 	/* keytab is not up to date, fill it up */
 
@@ -346,13 +343,9 @@ out:
 	SAFE_FREE(pwd);
 	SAFE_FREE(pwd_old);
 
-	{
-		krb5_kt_cursor zero_csr;
-		ZERO_STRUCT(zero_csr);
-		if ((memcmp(&kt_cursor, &zero_csr, sizeof(krb5_kt_cursor)) != 0) && *keytab) {
-			krb5_kt_end_seq_get(krbctx, *keytab, &kt_cursor);
-		}
-        }
+	if (!all_zero((uint8_t *)&kt_cursor, sizeof(kt_cursor)) && *keytab) {
+		krb5_kt_end_seq_get(krbctx, *keytab, &kt_cursor);
+	}
 
 	if (princ) {
 		krb5_free_principal(krbctx, princ);
@@ -366,13 +359,13 @@ static krb5_error_code fill_mem_keytab_from_system_keytab(krb5_context krbctx,
 {
 	krb5_error_code ret = 0;
 	krb5_keytab keytab = NULL;
-	krb5_kt_cursor kt_cursor;
-	krb5_keytab_entry kt_entry;
+	krb5_kt_cursor kt_cursor = { 0, };
+	krb5_keytab_entry kt_entry = { 0, };
 	char *valid_princ_formats[7] = { NULL, NULL, NULL,
 					 NULL, NULL, NULL, NULL };
 	char *entry_princ_s = NULL;
 	fstring my_name, my_fqdn;
-	int i;
+	unsigned i;
 	int err;
 
 	/* Generate the list of principal names which we expect
@@ -427,12 +420,9 @@ static krb5_error_code fill_mem_keytab_from_system_keytab(krb5_context krbctx,
 		goto out;
 	}
 
-	ZERO_STRUCT(kt_entry);
-	ZERO_STRUCT(kt_cursor);
-
-	ret = smb_krb5_open_keytab(krbctx, NULL, false, &keytab);
+	ret = smb_krb5_kt_open_relative(krbctx, NULL, false, &keytab);
 	if (ret) {
-		DEBUG(1, (__location__ ": smb_krb5_open_keytab failed (%s)\n",
+		DEBUG(1, ("smb_krb5_kt_open failed (%s)\n",
 			  error_message(ret)));
 		goto out;
 	}
@@ -494,22 +484,12 @@ out:
 
 	TALLOC_FREE(entry_princ_s);
 
-	{
-		krb5_keytab_entry zero_kt_entry;
-		ZERO_STRUCT(zero_kt_entry);
-		if (memcmp(&zero_kt_entry, &kt_entry,
-			   sizeof(krb5_keytab_entry))) {
-			smb_krb5_kt_free_entry(krbctx, &kt_entry);
-		}
+	if (!all_zero((uint8_t *)&kt_entry, sizeof(kt_entry))) {
+		smb_krb5_kt_free_entry(krbctx, &kt_entry);
 	}
 
-	{
-		krb5_kt_cursor zero_csr;
-		ZERO_STRUCT(zero_csr);
-		if ((memcmp(&kt_cursor, &zero_csr,
-			    sizeof(krb5_kt_cursor)) != 0) && keytab) {
-			krb5_kt_end_seq_get(krbctx, keytab, &kt_cursor);
-		}
+	if (!all_zero((uint8_t *)&kt_cursor, sizeof(kt_cursor)) && keytab) {
+		krb5_kt_end_seq_get(krbctx, keytab, &kt_cursor);
 	}
 
 	if (keytab) {
@@ -527,10 +507,10 @@ static krb5_error_code fill_mem_keytab_from_dedicated_keytab(krb5_context krbctx
 	krb5_kt_cursor kt_cursor;
 	krb5_keytab_entry kt_entry;
 
-	ret = smb_krb5_open_keytab(krbctx, lp_dedicated_keytab_file(),
+	ret = smb_krb5_kt_open(krbctx, lp_dedicated_keytab_file(),
 				   false, &keytab);
 	if (ret) {
-		DEBUG(1, (__location__ ": smb_krb5_open_keytab failed (%s)\n",
+		DEBUG(1, ("smb_krb5_kt_open failed (%s)\n",
 			  error_message(ret)));
 		return ret;
 	}

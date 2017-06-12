@@ -1063,6 +1063,7 @@ static bool hash_a_service(const char *name, int number);
 static void free_service_byindex(int iService);
 static void show_parameter(int parmIndex);
 static bool is_synonym_of(int parm1, int parm2, bool *inverse);
+static bool lp_parameter_value_is_valid(const char *parm_name, const char *val);
 
 /*
  * This is a helper function for parametrical options support.  It returns a
@@ -1688,9 +1689,11 @@ bool lp_canonicalize_parameter(const char *parm_name, const char **canon_parm,
  Turn the value given into the inverse boolean expression when
  the synonym is an invers boolean synonym.
 
- Return true if parm_name is a valid parameter name and
- in case it is an invers boolean synonym, if the val string could
- successfully be converted to the reverse bool.
+ Return true if
+ - parm_name is a valid parameter name and
+ - val is a valid value for this parameter and
+ - in case the parameter is an inverse boolean synonym, if the val
+   string could successfully be converted to the reverse bool.
  Return false in all other cases.
 **************************************************************************/
 
@@ -1701,6 +1704,7 @@ bool lp_canonicalize_parameter_with_value(const char *parm_name,
 {
 	int num;
 	bool inverse;
+	bool ret;
 
 	if (!lp_parameter_is_valid(parm_name)) {
 		*canon_parm = NULL;
@@ -1713,19 +1717,22 @@ bool lp_canonicalize_parameter_with_value(const char *parm_name,
 		/* parametric option */
 		*canon_parm = parm_name;
 		*canon_val = val;
-	} else {
-		*canon_parm = parm_table[num].label;
-		if (inverse) {
-			if (!lp_invert_boolean(val, canon_val)) {
-				*canon_val = NULL;
-				return false;
-			}
-		} else {
-			*canon_val = val;
-		}
+		return true;
 	}
 
-	return true;
+	*canon_parm = parm_table[num].label;
+	if (inverse) {
+		if (!lp_invert_boolean(val, canon_val)) {
+			*canon_val = NULL;
+			return false;
+		}
+	} else {
+		*canon_val = val;
+	}
+
+	ret = lp_parameter_value_is_valid(*canon_parm, *canon_val);
+
+	return ret;
 }
 
 /***************************************************************************
@@ -1853,6 +1860,77 @@ static void show_parameter(int parmIndex)
 	printf("\n");
 }
 
+/*
+ * Check the value for a P_ENUM
+ */
+static bool check_enum_parameter(struct parm_struct *parm, const char *value)
+{
+	int i;
+
+	for (i = 0; parm->enum_list[i].name; i++) {
+		if (strwicmp(value, parm->enum_list[i].name) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**************************************************************************
+ Check whether the given value is valid for the given parameter name.
+**************************************************************************/
+
+static bool lp_parameter_value_is_valid(const char *parm_name, const char *val)
+{
+	bool ret = false, tmp_bool;
+	int num = lpcfg_map_parameter(parm_name), tmp_int;
+	uint64_t tmp_int64 = 0;
+	struct parm_struct *parm;
+
+	/* parametric options (parameter names containing a colon) cannot
+	   be checked and are therefore considered valid. */
+	if (strchr(parm_name, ':') != NULL) {
+		return true;
+	}
+
+	if (num >= 0) {
+		parm = &parm_table[num];
+		switch (parm->type) {
+			case P_BOOL:
+			case P_BOOLREV:
+				ret = set_boolean(val, &tmp_bool);
+				break;
+
+			case P_INTEGER:
+				ret = (sscanf(val, "%d", &tmp_int) == 1);
+				break;
+
+			case P_OCTAL:
+				ret = (sscanf(val, "%o", &tmp_int) == 1);
+				break;
+
+			case P_ENUM:
+				ret = check_enum_parameter(parm, val);
+				break;
+
+			case P_BYTES:
+				if (conv_str_size_error(val, &tmp_int64) &&
+				    tmp_int64 <= INT_MAX) {
+					ret = true;
+				}
+				break;
+
+			case P_CHAR:
+			case P_LIST:
+			case P_STRING:
+			case P_USTRING:
+			case P_CMDLIST:
+				ret = true;
+				break;
+		}
+	}
+	return ret;
+}
+
 /***************************************************************************
  Show all parameter's name, type, [values,] and flags.
 ***************************************************************************/
@@ -1944,7 +2022,7 @@ int getservicebyname(const char *pszServiceName, struct loadparm_service *pservi
 	    (data.dptr != NULL) &&
 	    (data.dsize == sizeof(iService)))
 	{
-		iService = *(int *)data.dptr;
+		memcpy(&iService, data.dptr, sizeof(iService));
 	}
 
 	TALLOC_FREE(canon_name);
@@ -3904,6 +3982,9 @@ bool lp_load_initial_only(const char *pszFname)
 
 /**
  * most common lp_load wrapper, loading only the globals
+ *
+ * If this is used in a daemon or client utility it should be called
+ * after processing popt.
  */
 bool lp_load_global(const char *file_name)
 {

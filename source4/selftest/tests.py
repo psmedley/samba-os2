@@ -256,7 +256,7 @@ for env in ["ad_dc_ntvfs", "fl2000dc", "fl2003dc", "fl2008r2dc", "ad_dc"]:
     # Winreg tests test bulk Kerberos encryption of DCE/RPC
     # We test rpc.winreg here too, because the winreg interface if
     # handled by the source3/rpc_server code.
-    for bindoptions in ["connect", "krb5", "krb5,sign", "krb5,seal", "spnego", "spnego,sign", "spnego,seal"]:
+    for bindoptions in ["connect", "packet", "krb5", "krb5,packet", "krb5,sign", "krb5,seal", "spnego", "spnego,packet", "spnego,sign", "spnego,seal"]:
         plansmbtorture4testsuite('rpc.winreg', env, ["%s:$SERVER[%s]" % (transport, bindoptions), '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN'], "samba4.rpc.winreg on %s with %s" % (transport, bindoptions))
 
     for transport in transports:
@@ -290,6 +290,9 @@ for transport in transports:
             plansmbtorture4testsuite('rpc.echo', env, ["%s:$SERVER[%s]" % (transport, bindoptions), ntlmoptions, '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN'], "samba4.rpc.echo on %s with %s and %s" % (transport, bindoptions, ntlmoptions))
 
 plansmbtorture4testsuite('rpc.echo', "ad_dc_ntvfs", ['ncacn_np:$SERVER[smb2]', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN'], "samba4.rpc.echo on ncacn_np over smb2")
+for env in ["ad_dc", "nt4_dc"]:
+    plansmbtorture4testsuite('rpc.echo', env, ['60a15ec5-4de8-11d7-a637-005056a20182@ncacn_np:$SERVER[]', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN', '--option=torture:quick=yes'], "samba4.rpc.echo on ncacn_np with object")
+    plansmbtorture4testsuite('rpc.echo', env, ['60a15ec5-4de8-11d7-a637-005056a20182@ncacn_ip_tcp:$SERVER[]', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN', '--option=torture:quick=yes'], "samba4.rpc.echo on ncacn_ip_tcp with object")
 
 plansmbtorture4testsuite('ntp.signd', "ad_dc_ntvfs:local", ['ncacn_np:$SERVER', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN'], "samba4.ntp.signd")
 
@@ -301,7 +304,7 @@ for t in nbt_tests:
 ntvfsargs = ["--option=torture:sharedelay=100000", "--option=torture:oplocktimeout=3", "--option=torture:writetimeupdatedelay=500000"]
 
 # Filter smb2 tests that should not run against ad_dc_ntvfs
-smb2_s3only = ["smb2.change_notify_disabled", "smb2.dosmode"]
+smb2_s3only = ["smb2.change_notify_disabled", "smb2.dosmode", "smb2.kernel-oplocks"]
 smb2 = [x for x in smbtorture4_testsuites("smb2.") if x not in smb2_s3only]
 
 #The QFILEINFO-IPC test needs to be on ipc$
@@ -393,11 +396,12 @@ if have_heimdal_support:
     plantestsuite("samba4.blackbox.kinit_trust(fl2008r2dc:local)", "fl2008r2dc:local", [os.path.join(bbdir, "test_kinit_trusts_heimdal.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$REALM', '$DOMAIN', '$TRUST_SERVER', '$TRUST_USERNAME', '$TRUST_PASSWORD', '$TRUST_REALM', '$TRUST_DOMAIN', '$PREFIX', "forest", "aes256-cts-hmac-sha1-96"])
     plantestsuite("samba4.blackbox.kinit_trust(fl2003dc:local)", "fl2003dc:local", [os.path.join(bbdir, "test_kinit_trusts_heimdal.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$REALM', '$DOMAIN', '$TRUST_SERVER', '$TRUST_USERNAME', '$TRUST_PASSWORD', '$TRUST_REALM', '$TRUST_DOMAIN', '$PREFIX', "external", "arcfour-hmac-md5"])
     plantestsuite("samba4.blackbox.export.keytab(ad_dc_ntvfs:local)", "ad_dc_ntvfs:local", [os.path.join(bbdir, "test_export_keytab_heimdal.sh"), '$SERVER', '$USERNAME', '$REALM', '$DOMAIN', "$PREFIX", smbclient4])
+    plantestsuite("samba4.blackbox.kpasswd(ad_dc_ntvfs:local)", "ad_dc_ntvfs:local", [os.path.join(bbdir, "test_kpasswd_heimdal.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$REALM', '$DOMAIN', "$PREFIX/ad_dc_ntvfs"])
 
 plantestsuite("samba4.blackbox.trust_utils(fl2008r2dc:local)", "fl2008r2dc:local", [os.path.join(bbdir, "test_trust_utils.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$REALM', '$DOMAIN', '$TRUST_SERVER', '$TRUST_USERNAME', '$TRUST_PASSWORD', '$TRUST_REALM', '$TRUST_DOMAIN', '$PREFIX', "forest"])
 plantestsuite("samba4.blackbox.trust_utils(fl2003dc:local)", "fl2003dc:local", [os.path.join(bbdir, "test_trust_utils.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$REALM', '$DOMAIN', '$TRUST_SERVER', '$TRUST_USERNAME', '$TRUST_PASSWORD', '$TRUST_REALM', '$TRUST_DOMAIN', '$PREFIX', "external"])
 plantestsuite("samba4.blackbox.ktpass(ad_dc_ntvfs)", "ad_dc_ntvfs", [os.path.join(bbdir, "test_ktpass.sh"), '$PREFIX/ad_dc_ntvfs'])
-plantestsuite("samba4.blackbox.passwords(ad_dc_ntvfs:local)", "ad_dc_ntvfs:local", [os.path.join(bbdir, "test_passwords.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$REALM', '$DOMAIN', "$PREFIX/ad_dc_ntvfs", smbclient4])
+plantestsuite("samba4.blackbox.password_settings(ad_dc_ntvfs:local)", "ad_dc_ntvfs:local", [os.path.join(bbdir, "test_password_settings.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$REALM', '$DOMAIN', "$PREFIX/ad_dc_ntvfs"])
 plantestsuite("samba4.blackbox.cifsdd(ad_dc_ntvfs)", "ad_dc_ntvfs", [os.path.join(samba4srcdir, "client/tests/test_cifsdd.sh"), '$SERVER', '$USERNAME', '$PASSWORD', "$DOMAIN"])
 plantestsuite("samba4.blackbox.nmblookup(ad_dc_ntvfs)", "ad_dc_ntvfs", [os.path.join(samba4srcdir, "utils/tests/test_nmblookup.sh"), '$NETBIOSNAME', '$NETBIOSALIAS', '$SERVER', '$SERVER_IP', nmblookup4])
 plantestsuite("samba4.blackbox.locktest(ad_dc_ntvfs)", "ad_dc_ntvfs", [os.path.join(samba4srcdir, "torture/tests/test_locktest.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$DOMAIN', '$PREFIX'])
@@ -407,6 +411,9 @@ plantestsuite("samba4.blackbox.rfc2307_mapping(ad_dc_ntvfs:local)", "ad_dc_ntvfs
 plantestsuite("samba4.blackbox.chgdcpass", "chgdcpass", [os.path.join(bbdir, "test_chgdcpass.sh"), '$SERVER', "CHGDCPASS\$", '$REALM', '$DOMAIN', '$PREFIX', "aes256-cts-hmac-sha1-96", '$SELFTEST_PREFIX/chgdcpass', smbclient4])
 plantestsuite("samba4.blackbox.samba_upgradedns(chgdcpass:local)", "chgdcpass:local", [os.path.join(bbdir, "test_samba_upgradedns.sh"), '$SERVER', '$REALM', '$PREFIX', '$SELFTEST_PREFIX/chgdcpass'])
 plantestsuite("samba4.blackbox.net_ads(ad_dc:client)", "ad_dc:client", [os.path.join(bbdir, "test_net_ads.sh"), '$DC_SERVER', '$DC_USERNAME', '$DC_PASSWORD', '$PREFIX_ABS'])
+plantestsuite("samba4.blackbox.client_etypes_all(ad_dc:client)", "ad_dc:client", [os.path.join(bbdir, "test_client_etypes.sh"), '$DC_SERVER', '$DC_USERNAME', '$DC_PASSWORD', '$PREFIX_ABS', 'all', '17_18_23'])
+plantestsuite("samba4.blackbox.client_etypes_legacy(ad_dc:client)", "ad_dc:client", [os.path.join(bbdir, "test_client_etypes.sh"), '$DC_SERVER', '$DC_USERNAME', '$DC_PASSWORD', '$PREFIX_ABS', 'legacy', '23'])
+plantestsuite("samba4.blackbox.client_etypes_strong(ad_dc:client)", "ad_dc:client", [os.path.join(bbdir, "test_client_etypes.sh"), '$DC_SERVER', '$DC_USERNAME', '$DC_PASSWORD', '$PREFIX_ABS', 'strong', '17_18'])
 plantestsuite("samba4.blackbox.net_ads_dns(ad_member:local)", "ad_member:local", [os.path.join(bbdir, "test_net_ads_dns.sh"), '$DC_SERVER', '$DC_USERNAME', '$DC_PASSWORD', '$REALM', '$USERNAME', '$PASSWORD'])
 plantestsuite_loadlist("samba4.rpc.echo against NetBIOS alias", "ad_dc_ntvfs", [valgrindify(smbtorture4), "$LISTOPT", "$LOADLIST", 'ncacn_np:$NETBIOSALIAS', '-U$DOMAIN/$USERNAME%$PASSWORD', 'rpc.echo'])
 
@@ -571,6 +578,7 @@ planpythontestsuite("ad_dc_ntvfs:local", "samba.tests.samba_tool.group")
 planpythontestsuite("ad_dc:local", "samba.tests.samba_tool.ntacl")
 
 planpythontestsuite("ad_dc:local", "samba.tests.samba_tool.sites")
+planpythontestsuite("ad_dc:local", "samba.tests.samba_tool.dnscmd")
 
 planpythontestsuite("ad_dc_ntvfs:local", "samba.tests.dcerpc.rpcecho")
 planoldpythontestsuite("ad_dc_ntvfs:local", "samba.tests.dcerpc.registry", extra_args=['-U"$USERNAME%$PASSWORD"'])

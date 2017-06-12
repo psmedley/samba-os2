@@ -1061,7 +1061,7 @@ static bool test_SecurityDescriptorsMasks(struct dcerpc_pipe *p,
 		WERROR set_werr;
 	} sd_mask_tests[] = {
 		{ 0,
-			WERR_ACCESS_DENIED, WERR_BADFILE, WERR_FOOBAR },
+			WERR_ACCESS_DENIED, WERR_FILE_NOT_FOUND, WERR_FOOBAR },
 		{ SEC_FLAG_MAXIMUM_ALLOWED,
 			WERR_OK, WERR_OK, WERR_OK },
 		{ SEC_STD_WRITE_DAC,
@@ -1228,7 +1228,7 @@ static bool test_SecurityDescriptorsSecInfo(struct dcerpc_pipe *p,
 			false, (secinfo_verify_fn)_test_owner_present },
 		{ sd_owner, SECINFO_OWNER, WERR_OK,
 			true, (secinfo_verify_fn)_test_owner_present },
-		{ sd_owner, SECINFO_GROUP, WERR_INVALID_PARAM },
+		{ sd_owner, SECINFO_GROUP, WERR_INVALID_PARAMETER },
 		{ sd_owner, SECINFO_DACL, WERR_OK,
 			true, (secinfo_verify_fn)_test_owner_present },
 		{ sd_owner, SECINFO_SACL, WERR_ACCESS_DENIED },
@@ -1242,7 +1242,7 @@ static bool test_SecurityDescriptorsSecInfo(struct dcerpc_pipe *p,
 	struct winreg_secinfo_table sec_info_group_tests[] = {
 		{ sd_group, 0, WERR_OK,
 			false, (secinfo_verify_fn)_test_group_present },
-		{ sd_group, SECINFO_OWNER, WERR_INVALID_PARAM },
+		{ sd_group, SECINFO_OWNER, WERR_INVALID_PARAMETER },
 		{ sd_group, SECINFO_GROUP, WERR_OK,
 			true, (secinfo_verify_fn)_test_group_present },
 		{ sd_group, SECINFO_DACL, WERR_OK,
@@ -1257,8 +1257,8 @@ static bool test_SecurityDescriptorsSecInfo(struct dcerpc_pipe *p,
 	struct winreg_secinfo_table sec_info_dacl_tests[] = {
 		{ sd_dacl, 0, WERR_OK,
 			false, (secinfo_verify_fn)_test_dacl_trustee_present },
-		{ sd_dacl, SECINFO_OWNER, WERR_INVALID_PARAM },
-		{ sd_dacl, SECINFO_GROUP, WERR_INVALID_PARAM },
+		{ sd_dacl, SECINFO_OWNER, WERR_INVALID_PARAMETER },
+		{ sd_dacl, SECINFO_GROUP, WERR_INVALID_PARAMETER },
 		{ sd_dacl, SECINFO_DACL, WERR_OK,
 			true, (secinfo_verify_fn)_test_dacl_trustee_present },
 		{ sd_dacl, SECINFO_SACL, WERR_ACCESS_DENIED },
@@ -1272,8 +1272,8 @@ static bool test_SecurityDescriptorsSecInfo(struct dcerpc_pipe *p,
 	struct winreg_secinfo_table sec_info_sacl_tests[] = {
 		{ sd_sacl, 0, WERR_OK,
 			false, (secinfo_verify_fn)_test_sacl_trustee_present },
-		{ sd_sacl, SECINFO_OWNER, WERR_INVALID_PARAM },
-		{ sd_sacl, SECINFO_GROUP, WERR_INVALID_PARAM },
+		{ sd_sacl, SECINFO_OWNER, WERR_INVALID_PARAMETER },
+		{ sd_sacl, SECINFO_GROUP, WERR_INVALID_PARAMETER },
 		{ sd_sacl, SECINFO_DACL, WERR_OK,
 			false, (secinfo_verify_fn)_test_sacl_trustee_present },
 		{ sd_sacl, SECINFO_SACL, WERR_OK,
@@ -1703,10 +1703,10 @@ static bool test_QueryMultipleValues_full(struct dcerpc_binding_handle *b,
 	torture_assert_ntstatus_ok(tctx,
 		dcerpc_winreg_QueryMultipleValues_r(b, tctx, &r),
 		"QueryMultipleValues failed");
-	torture_assert_werr_equal(tctx, r.out.result, existing_value ? WERR_MORE_DATA : WERR_BADFILE,
+	torture_assert_werr_equal(tctx, r.out.result, existing_value ? WERR_MORE_DATA : WERR_FILE_NOT_FOUND,
 		"QueryMultipleValues failed");
 
-	if (W_ERROR_EQUAL(r.out.result, WERR_BADFILE)) {
+	if (W_ERROR_EQUAL(r.out.result, WERR_FILE_NOT_FOUND)) {
 		return true;
 	}
 
@@ -1774,10 +1774,10 @@ static bool test_QueryMultipleValues2_full(struct dcerpc_binding_handle *b,
 	torture_assert_ntstatus_ok(tctx,
 		dcerpc_winreg_QueryMultipleValues2_r(b, tctx, &r),
 		"QueryMultipleValues2 failed");
-	torture_assert_werr_equal(tctx, r.out.result, existing_value ? WERR_MORE_DATA : WERR_BADFILE,
+	torture_assert_werr_equal(tctx, r.out.result, existing_value ? WERR_MORE_DATA : WERR_FILE_NOT_FOUND,
 		"QueryMultipleValues2 failed");
 
-	if (W_ERROR_EQUAL(r.out.result, WERR_BADFILE)) {
+	if (W_ERROR_EQUAL(r.out.result, WERR_FILE_NOT_FOUND)) {
 		return true;
 	}
 
@@ -1878,12 +1878,12 @@ static bool test_QueryValue_full(struct dcerpc_binding_handle *b,
 	uint32_t real_data_size = 0;
 	uint32_t data_length = 0;
 	uint8_t *data = NULL;
-	WERROR expected_error = WERR_BADFILE;
-	const char *errmsg_nonexisting = "expected WERR_BADFILE for nonexisting value";
+	WERROR expected_error = WERR_FILE_NOT_FOUND;
+	const char *errmsg_nonexisting = "expected WERR_FILE_NOT_FOUND for nonexisting value";
 
 	if (valuename == NULL) {
-		expected_error = WERR_INVALID_PARAM;
-		errmsg_nonexisting = "expected WERR_INVALID_PARAM for NULL valuename";
+		expected_error = WERR_INVALID_PARAMETER;
+		errmsg_nonexisting = "expected WERR_INVALID_PARAMETER for NULL valuename";
 	}
 
 	ZERO_STRUCT(r);
@@ -1896,30 +1896,30 @@ static bool test_QueryValue_full(struct dcerpc_binding_handle *b,
 	r.in.value_name = &value_name;
 
 	torture_assert_ntstatus_ok(tctx, dcerpc_winreg_QueryValue_r(b, tctx, &r), "QueryValue failed");
-	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAM,
-		"expected WERR_INVALID_PARAM for NULL winreg_String.name");
+	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAMETER,
+		"expected WERR_INVALID_PARAMETER for NULL winreg_String.name");
 
 	init_winreg_String(&value_name, valuename);
 	r.in.value_name = &value_name;
 
 	torture_assert_ntstatus_ok(tctx, dcerpc_winreg_QueryValue_r(b, tctx, &r),
 		"QueryValue failed");
-	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAM,
-		"expected WERR_INVALID_PARAM for missing type length and size");
+	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAMETER,
+		"expected WERR_INVALID_PARAMETER for missing type length and size");
 
 	r.in.type = &type;
 	r.out.type = &type;
 	torture_assert_ntstatus_ok(tctx, dcerpc_winreg_QueryValue_r(b, tctx, &r),
 		"QueryValue failed");
-	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAM,
-		"expected WERR_INVALID_PARAM for missing length and size");
+	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAMETER,
+		"expected WERR_INVALID_PARAMETER for missing length and size");
 
 	r.in.data_length = &data_length;
 	r.out.data_length = &data_length;
 	torture_assert_ntstatus_ok(tctx, dcerpc_winreg_QueryValue_r(b, tctx, &r),
 		"QueryValue failed");
-	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAM,
-		"expected WERR_INVALID_PARAM for missing size");
+	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAMETER,
+		"expected WERR_INVALID_PARAMETER for missing size");
 
 	r.in.data_size = &data_size;
 	r.out.data_size = &data_size;
@@ -2378,7 +2378,7 @@ static bool test_create_keynames(struct dcerpc_binding_handle *b,
 			"failed to delete key");
 
 		torture_assert(tctx,
-			test_DeleteKey_opts(b, tctx, handle, keys[i], WERR_BADFILE),
+			test_DeleteKey_opts(b, tctx, handle, keys[i], WERR_FILE_NOT_FOUND),
 			"failed 2nd delete key");
 
 		tmp = talloc_strdup(tctx, keys[i]);
@@ -2393,7 +2393,7 @@ static bool test_create_keynames(struct dcerpc_binding_handle *b,
 				"failed to delete key");
 
 			torture_assert(tctx,
-				test_DeleteKey_opts(b, tctx, handle, tmp, WERR_BADFILE),
+				test_DeleteKey_opts(b, tctx, handle, tmp, WERR_FILE_NOT_FOUND),
 				"failed 2nd delete key");
 		}
 	}
@@ -2661,7 +2661,7 @@ static bool test_volatile_keys(struct torture_context *tctx,
 				  REG_OPTION_VOLATILE,
 				  SEC_FLAG_MAXIMUM_ALLOWED,
 				  &new_handle,
-				  WERR_BADFILE),
+				  WERR_FILE_NOT_FOUND),
 		"failed to open volatile key");
 
 	torture_assert(tctx,
@@ -2669,7 +2669,7 @@ static bool test_volatile_keys(struct torture_context *tctx,
 				  REG_OPTION_NON_VOLATILE,
 				  SEC_FLAG_MAXIMUM_ALLOWED,
 				  &new_handle,
-				  WERR_BADFILE),
+				  WERR_FILE_NOT_FOUND),
 		"failed to open volatile key");
 
 	torture_assert(tctx,
@@ -2934,10 +2934,10 @@ static bool test_key_base(struct torture_context *tctx,
 					       REG_OPTION_NON_VOLATILE,
 					       SEC_FLAG_MAXIMUM_ALLOWED,
 					       &newhandle,
-					       WERR_BADFILE)) {
+					       WERR_FILE_NOT_FOUND)) {
 				torture_comment(tctx,
 						"DeleteKey failed (OpenKey after Delete "
-						"did not return WERR_BADFILE)\n");
+						"did not return WERR_FILE_NOT_FOUND)\n");
 				ret = false;
 			}
 		}

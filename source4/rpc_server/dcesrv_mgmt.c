@@ -21,10 +21,21 @@
 
 #include "includes.h"
 #include "rpc_server/dcerpc_server.h"
+#include "rpc_server/dcerpc_server_proto.h"
 #include "librpc/gen_ndr/ndr_mgmt.h"
 
 #define DCESRV_INTERFACE_MGMT_BIND(call, iface) \
        dcesrv_interface_mgmt_bind(call, iface)
+/*
+ * This #define allows the mgmt interface to accept invalid
+ * association groups, because association groups are to coordinate
+ * handles, and handles are not used in mgmt. This in turn avoids
+ * the need to coordinate these across multiple possible NETLOGON
+ * processes, as an mgmt interface is added to each
+ */
+
+#define DCESRV_INTERFACE_MGMT_FLAGS DCESRV_INTERFACE_FLAGS_HANDLES_NOT_USED
+
 static NTSTATUS dcesrv_interface_mgmt_bind(struct dcesrv_call_state *dce_call,
 					     const struct dcesrv_interface *iface)
 {
@@ -107,3 +118,8 @@ static WERROR dcesrv_mgmt_inq_princ_name(struct dcesrv_call_state *dce_call, TAL
 
 /* include the generated boilerplate */
 #include "librpc/gen_ndr/ndr_mgmt_s.c"
+
+const struct dcesrv_interface dcesrv_get_mgmt_interface(void)
+{
+	return dcesrv_mgmt_interface;
+}

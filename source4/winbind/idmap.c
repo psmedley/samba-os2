@@ -23,6 +23,7 @@
 #include "includes.h"
 #include "auth/auth.h"
 #include "librpc/gen_ndr/ndr_security.h"
+#include "lib/util_unixsids.h"
 #include <ldb.h>
 #include "ldb_wrap.h"
 #include "param/param.h"
@@ -166,31 +167,24 @@ struct idmap_context *idmap_init(TALLOC_CTX *mem_ctx,
 
 	idmap_ctx->lp_ctx = lp_ctx;
 
-	idmap_ctx->ldb_ctx = ldb_wrap_connect(mem_ctx, ev_ctx, lp_ctx,
+	idmap_ctx->ldb_ctx = ldb_wrap_connect(idmap_ctx, ev_ctx, lp_ctx,
 					      "idmap.ldb",
 					      system_session(lp_ctx),
 					      NULL, 0);
 	if (idmap_ctx->ldb_ctx == NULL) {
-		return NULL;
+		goto fail;
 	}
 
-	idmap_ctx->unix_groups_sid = dom_sid_parse_talloc(mem_ctx, "S-1-22-2");
-	if (idmap_ctx->unix_groups_sid == NULL) {
-		return NULL;
-	}
-
-	idmap_ctx->unix_users_sid = dom_sid_parse_talloc(mem_ctx, "S-1-22-1");
-	if (idmap_ctx->unix_users_sid == NULL) {
-		return NULL;
-	}
-	
 	idmap_ctx->samdb = samdb_connect(idmap_ctx, ev_ctx, lp_ctx, system_session(lp_ctx), 0);
 	if (idmap_ctx->samdb == NULL) {
 		DEBUG(0, ("Failed to load sam.ldb in idmap_init\n"));
-		return NULL;
+		goto fail;
 	}
 
 	return idmap_ctx;
+fail:
+	TALLOC_FREE(idmap_ctx);
+	return NULL;
 }
 
 /**
@@ -216,7 +210,8 @@ static NTSTATUS idmap_xid_to_sid(struct idmap_context *idmap_ctx,
 	struct ldb_context *ldb = idmap_ctx->ldb_ctx;
 	struct ldb_result *res = NULL;
 	struct ldb_message *msg;
-	struct dom_sid *unix_sid, *new_sid;
+	const struct dom_sid *unix_sid;
+	struct dom_sid *new_sid;
 	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
 	const char *id_type;
 
@@ -354,13 +349,9 @@ static NTSTATUS idmap_xid_to_sid(struct idmap_context *idmap_ctx,
 
 	/* For local users/groups , we just create a rid = uid/gid */
 	if (unixid->type == ID_TYPE_UID) {
-		unix_sid = dom_sid_parse_talloc(tmp_ctx, "S-1-22-1");
+		unix_sid = &global_sid_Unix_Users;
 	} else {
-		unix_sid = dom_sid_parse_talloc(tmp_ctx, "S-1-22-2");
-	}
-	if (unix_sid == NULL) {
-		status = NT_STATUS_NO_MEMORY;
-		goto failed;
+		unix_sid = &global_sid_Unix_Groups;
 	}
 
 	new_sid = dom_sid_add_rid(mem_ctx, unix_sid, unixid->id);
@@ -410,7 +401,7 @@ static NTSTATUS idmap_sid_to_xid(struct idmap_context *idmap_ctx,
 	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
 	const char *sam_attrs[] = {"uidNumber", "gidNumber", "samAccountType", NULL};
 
-	if (dom_sid_in_domain(idmap_ctx->unix_users_sid, sid)) {
+	if (sid_check_is_in_unix_users(sid)) {
 		uint32_t rid;
 		DEBUG(6, ("This is a local unix uid, just calculate that.\n"));
 		status = dom_sid_split_rid(tmp_ctx, sid, NULL, &rid);
@@ -426,7 +417,7 @@ static NTSTATUS idmap_sid_to_xid(struct idmap_context *idmap_ctx,
 		return NT_STATUS_OK;
 	}
 
-	if (dom_sid_in_domain(idmap_ctx->unix_groups_sid, sid)) {
+	if (sid_check_is_in_unix_groups(sid)) {
 		uint32_t rid;
 		DEBUG(6, ("This is a local unix gid, just calculate that.\n"));
 		status = dom_sid_split_rid(tmp_ctx, sid, NULL, &rid);

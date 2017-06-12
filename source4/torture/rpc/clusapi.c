@@ -1148,6 +1148,129 @@ static bool test_GetResourceNetworkName(struct torture_context *tctx,
 	return ret;
 }
 
+static bool test_ResourceTypeControl_int(struct torture_context *tctx,
+					 struct dcerpc_pipe *p,
+					 struct policy_handle *Cluster,
+					 const char *resource_type,
+					 enum clusapi_ClusterControlCode dwControlCode)
+{
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct clusapi_ResourceTypeControl r;
+	uint32_t lpBytesReturned;
+	uint32_t lpcbRequired;
+	WERROR rpc_status;
+
+	r.in.hCluster = *Cluster;
+	r.in.lpszResourceTypeName = resource_type;
+	r.in.dwControlCode = 0;
+	r.in.lpInBuffer = NULL;
+	r.in.nInBufferSize = 0;
+	r.in.nOutBufferSize = 0;
+	r.out.lpOutBuffer = NULL;
+	r.out.lpBytesReturned = &lpBytesReturned;
+	r.out.lpcbRequired = &lpcbRequired;
+	r.out.rpc_status = &rpc_status;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_ResourceTypeControl_r(b, tctx, &r),
+		"ResourceTypeControl failed");
+
+	if (strequal(r.in.lpszResourceTypeName, "MSMQ") ||
+	    strequal(r.in.lpszResourceTypeName, "MSMQTriggers")) {
+		torture_assert_werr_equal(tctx,
+			r.out.result,
+			WERR_CLUSTER_RESTYPE_NOT_SUPPORTED,
+			"ResourceTypeControl failed");
+		return true;
+	}
+
+	torture_assert_werr_equal(tctx,
+		r.out.result,
+		WERR_INVALID_FUNCTION,
+		"ResourceTypeControl failed");
+
+	r.in.dwControlCode = dwControlCode;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_ResourceTypeControl_r(b, tctx, &r),
+		"ResourceTypeControl failed");
+
+	if (W_ERROR_EQUAL(r.out.result, WERR_MORE_DATA)) {
+		r.out.lpOutBuffer = talloc_zero_array(tctx, uint8_t, *r.out.lpcbRequired);
+		r.in.nOutBufferSize = *r.out.lpcbRequired;
+		torture_assert_ntstatus_ok(tctx,
+			dcerpc_clusapi_ResourceTypeControl_r(b, tctx, &r),
+			"ResourceTypeControl failed");
+	}
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"ResourceTypeControl failed");
+
+	/* now try what happens when we query with a buffer large enough to hold
+	 * the entire packet */
+
+	r.in.nOutBufferSize = 0x400;
+	r.out.lpOutBuffer = talloc_zero_array(tctx, uint8_t, r.in.nOutBufferSize);
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_ResourceTypeControl_r(b, tctx, &r),
+		"ResourceTypeControl failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"ResourceTypeControl failed");
+	torture_assert(tctx, *r.out.lpBytesReturned < r.in.nOutBufferSize,
+		"lpBytesReturned expected to be smaller than input size nOutBufferSize");
+
+	return true;
+}
+
+static bool test_ResourceTypeControl(struct torture_context *tctx,
+				     struct dcerpc_pipe *p,
+				     const char *resourcetype_name)
+{
+	struct policy_handle Cluster;
+	bool ret;
+	uint32_t control_codes[] = {
+		CLUSCTL_RESOURCE_TYPE_GET_CLASS_INFO,
+		CLUSCTL_RESOURCE_TYPE_GET_CHARACTERISTICS,
+		CLUSCTL_RESOURCE_TYPE_GET_COMMON_PROPERTIES,
+		CLUSCTL_RESOURCE_TYPE_GET_RO_COMMON_PROPERTIES,
+		CLUSCTL_RESOURCE_TYPE_GET_PRIVATE_PROPERTIES
+	};
+	int i;
+
+	if (!test_OpenCluster_int(tctx, p, &Cluster)) {
+		return false;
+	}
+
+	for (i=0; i < ARRAY_SIZE(control_codes); i++) {
+		ret = test_ResourceTypeControl_int(tctx, p, &Cluster,
+						   resourcetype_name,
+						   control_codes[i]);
+		if (!ret) {
+			goto done;
+		}
+	}
+
+ done:
+	test_CloseCluster_int(tctx, p, &Cluster);
+
+	return ret;
+}
+
+
+
+static bool test_one_resourcetype(struct torture_context *tctx,
+				  struct dcerpc_pipe *p,
+				  const char *resourcetype_name)
+{
+	torture_assert(tctx,
+		test_ResourceTypeControl(tctx, p, resourcetype_name),
+		"failed to query ResourceTypeControl");
+
+	return true;
+}
+
 static bool test_one_resource(struct torture_context *tctx,
 			      struct dcerpc_pipe *p,
 			      const char *resource_name)
@@ -1223,6 +1346,44 @@ static bool test_all_resources(struct torture_context *tctx,
 
 	return true;
 }
+
+static bool test_all_resourcetypes(struct torture_context *tctx,
+				   void *data)
+{
+	struct torture_clusapi_context *t =
+		talloc_get_type_abort(data, struct torture_clusapi_context);
+	struct dcerpc_binding_handle *b = t->p->binding_handle;
+	struct clusapi_CreateEnum r;
+	uint32_t dwType = CLUSTER_ENUM_RESTYPE;
+	struct ENUM_LIST *ReturnEnum;
+	WERROR rpc_status;
+	int i;
+
+	r.in.dwType = dwType;
+	r.out.ReturnEnum = &ReturnEnum;
+	r.out.rpc_status = &rpc_status;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_CreateEnum_r(b, tctx, &r),
+		"CreateEnum failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"CreateEnum failed");
+
+	for (i=0; i < ReturnEnum->EntryCount; i++) {
+
+		struct ENUM_ENTRY e = ReturnEnum->Entry[i];
+
+		torture_assert_int_equal(tctx, e.Type, CLUSTER_ENUM_RESTYPE, "type mismatch");
+
+		torture_assert(tctx,
+			test_one_resourcetype(tctx, t->p, e.Name),
+			"failed to test one resourcetype");
+	}
+
+	return true;
+}
+
 
 static bool test_OpenNode_int(struct torture_context *tctx,
 			      struct dcerpc_pipe *p,
@@ -1522,12 +1683,12 @@ static bool test_NodeControl(struct torture_context *tctx,
 	}
 
 	ret = test_NodeControl_int(tctx, t->p, &hNode, CLUSCTL_NODE_GET_RO_COMMON_PROPERTIES);
-	if (ret) {
+	if (!ret) {
 		return false;
 	}
 
 	ret = test_NodeControl_int(tctx, t->p, &hNode, CLUSCTL_NODE_GET_ID);
-	if (ret) {
+	if (!ret) {
 		return false;
 	}
 
@@ -1993,6 +2154,60 @@ static bool test_GroupControl_int(struct torture_context *tctx,
 	return true;
 }
 
+static bool test_CreateGroupResourceEnum_int(struct torture_context *tctx,
+					     struct dcerpc_pipe *p,
+					     struct policy_handle *hGroup)
+{
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct clusapi_CreateGroupResourceEnum r;
+	uint32_t dwType[] = {
+		CLUSTER_GROUP_ENUM_CONTAINS,
+		CLUSTER_GROUP_ENUM_NODES
+	};
+	uint32_t dwType_invalid[] = {
+		0x00000040,
+		0x00000080,
+		0x00000100 /* and many more ... */
+	};
+	struct ENUM_LIST *ReturnEnum;
+	WERROR rpc_status;
+	int i;
+
+	r.in.hGroup = *hGroup;
+
+	for (i=0; i < ARRAY_SIZE(dwType); i++) {
+
+		r.in.hGroup = *hGroup;
+		r.in.dwType = dwType[i];
+		r.out.ReturnEnum = &ReturnEnum;
+		r.out.rpc_status = &rpc_status;
+
+		torture_assert_ntstatus_ok(tctx,
+			dcerpc_clusapi_CreateGroupResourceEnum_r(b, tctx, &r),
+			"CreateGroupResourceEnum failed");
+		torture_assert_werr_ok(tctx,
+			r.out.result,
+			"CreateGroupResourceEnum failed");
+	}
+
+	for (i=0; i < ARRAY_SIZE(dwType_invalid); i++) {
+
+		r.in.dwType = dwType_invalid[i];
+		r.out.ReturnEnum = &ReturnEnum;
+		r.out.rpc_status = &rpc_status;
+
+		torture_assert_ntstatus_ok(tctx,
+			dcerpc_clusapi_CreateGroupResourceEnum_r(b, tctx, &r),
+			"CreateGroupResourceEnum failed");
+		torture_assert_werr_ok(tctx,
+			r.out.result,
+			"CreateGroupResourceEnum failed");
+	}
+
+	return true;
+}
+
+
 static bool test_GroupControl(struct torture_context *tctx,
 			      void *data)
 {
@@ -2006,12 +2221,17 @@ static bool test_GroupControl(struct torture_context *tctx,
 	}
 
 	ret = test_GroupControl_int(tctx, t->p, &hGroup, CLUSCTL_GROUP_GET_CHARACTERISTICS);
-	if (ret) {
+	if (!ret) {
 		return false;
 	}
 
 	ret = test_GroupControl_int(tctx, t->p, &hGroup, CLUSCTL_GROUP_GET_RO_COMMON_PROPERTIES);
-	if (ret) {
+	if (!ret) {
+		return false;
+	}
+
+	ret = test_GroupControl_int(tctx, t->p, &hGroup, CLUSCTL_GROUP_GET_FLAGS);
+	if (!ret) {
 		return false;
 	}
 
@@ -2122,6 +2342,14 @@ static bool test_one_group(struct torture_context *tctx,
 		test_GetGroupState_int(tctx, p, &hGroup),
 		"failed to query group id");
 
+	torture_assert(tctx,
+		test_GroupControl_int(tctx, p, &hGroup, CLUSCTL_GROUP_GET_FLAGS),
+		"failed to query group control");
+
+	torture_assert(tctx,
+		test_CreateGroupResourceEnum_int(tctx, p, &hGroup),
+		"failed to query resource enum");
+
 	test_CloseGroup_int(tctx, p, &hGroup);
 
 	return true;
@@ -2217,7 +2445,8 @@ static bool test_SetServiceAccountPassword(struct torture_context *tctx,
 
 static bool test_ClusterControl_int(struct torture_context *tctx,
 				    struct dcerpc_pipe *p,
-				    struct policy_handle *Cluster)
+				    struct policy_handle *Cluster,
+				    enum clusapi_ClusterControlCode dwControlCode)
 {
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	struct clusapi_ClusterControl r;
@@ -2243,7 +2472,7 @@ static bool test_ClusterControl_int(struct torture_context *tctx,
 		WERR_INVALID_FUNCTION,
 		"ClusterControl failed");
 
-	r.in.dwControlCode = CLUSCTL_CLUSTER_GET_RO_COMMON_PROPERTIES;
+	r.in.dwControlCode = dwControlCode;
 
 	torture_assert_ntstatus_ok(tctx,
 		dcerpc_clusapi_ClusterControl_r(b, tctx, &r),
@@ -2263,7 +2492,7 @@ static bool test_ClusterControl_int(struct torture_context *tctx,
 	/* now try what happens when we query with a buffer large enough to hold
 	 * the entire packet */
 
-	r.in.nOutBufferSize = 0x400;
+	r.in.nOutBufferSize = 0xffff;
 	r.out.lpOutBuffer = talloc_zero_array(tctx, uint8_t, r.in.nOutBufferSize);
 
 	torture_assert_ntstatus_ok(tctx,
@@ -2285,13 +2514,239 @@ static bool test_ClusterControl(struct torture_context *tctx,
 		talloc_get_type_abort(data, struct torture_clusapi_context);
 	struct policy_handle Cluster;
 	bool ret;
+	uint32_t control_codes[] = {
+		CLUSCTL_CLUSTER_GET_COMMON_PROPERTIES,
+		CLUSCTL_CLUSTER_GET_RO_COMMON_PROPERTIES,
+		CLUSCTL_CLUSTER_GET_FQDN,
+		CLUSCTL_CLUSTER_GET_PRIVATE_PROPERTIES,
+		CLUSCTL_CLUSTER_CHECK_VOTER_DOWN
+	};
+	int i;
 
 	if (!test_OpenCluster_int(tctx, t->p, &Cluster)) {
 		return false;
 	}
 
-	ret = test_ClusterControl_int(tctx, t->p, &Cluster);
+	for (i=0; i < ARRAY_SIZE(control_codes); i++) {
+		ret = test_ClusterControl_int(tctx, t->p, &Cluster,
+					      control_codes[i]);
+		if (!ret) {
+			goto done;
+		}
+	}
 
+ done:
+	test_CloseCluster_int(tctx, t->p, &Cluster);
+
+	return ret;
+}
+
+static bool test_CreateResTypeEnum(struct torture_context *tctx,
+				   void *data)
+{
+	struct torture_clusapi_context *t =
+		talloc_get_type_abort(data, struct torture_clusapi_context);
+	struct dcerpc_binding_handle *b = t->p->binding_handle;
+	struct clusapi_CreateResTypeEnum r;
+	uint32_t dwType[] = {
+		CLUSTER_RESOURCE_TYPE_ENUM_NODES,
+		CLUSTER_RESOURCE_TYPE_ENUM_RESOURCES
+	};
+	uint32_t dwType_invalid[] = {
+		0x00000040,
+		0x00000080,
+		0x00000100 /* and many more ... */
+	};
+	const char *valid_names[] = {
+		"Physical Disk",
+		"Storage Pool"
+	};
+	const char *invalid_names[] = {
+		"INVALID_TYPE_XXXX"
+	};
+	struct ENUM_LIST *ReturnEnum;
+	WERROR rpc_status;
+	int i, s;
+
+	for (s = 0; s < ARRAY_SIZE(valid_names); s++) {
+
+		r.in.lpszTypeName = valid_names[s];
+
+		for (i=0; i < ARRAY_SIZE(dwType); i++) {
+
+			r.in.dwType = dwType[i];
+			r.out.ReturnEnum = &ReturnEnum;
+			r.out.rpc_status = &rpc_status;
+
+			torture_assert_ntstatus_ok(tctx,
+				dcerpc_clusapi_CreateResTypeEnum_r(b, tctx, &r),
+				"CreateResTypeEnum failed");
+			torture_assert_werr_ok(tctx,
+				r.out.result,
+				"CreateResTypeEnum failed");
+		}
+
+		for (i=0; i < ARRAY_SIZE(dwType_invalid); i++) {
+
+			r.in.dwType = dwType_invalid[i];
+			r.out.ReturnEnum = &ReturnEnum;
+			r.out.rpc_status = &rpc_status;
+
+			torture_assert_ntstatus_ok(tctx,
+				dcerpc_clusapi_CreateResTypeEnum_r(b, tctx, &r),
+				"CreateResTypeEnum failed");
+			torture_assert_werr_ok(tctx,
+				r.out.result,
+				"CreateResTypeEnum failed");
+		}
+	}
+
+	for (s = 0; s < ARRAY_SIZE(invalid_names); s++) {
+
+		r.in.lpszTypeName = invalid_names[s];
+
+		for (i=0; i < ARRAY_SIZE(dwType); i++) {
+
+			r.in.dwType = dwType[i];
+			r.out.ReturnEnum = &ReturnEnum;
+			r.out.rpc_status = &rpc_status;
+
+			torture_assert_ntstatus_ok(tctx,
+				dcerpc_clusapi_CreateResTypeEnum_r(b, tctx, &r),
+				"CreateResTypeEnum failed");
+			torture_assert_werr_equal(tctx,
+				r.out.result,
+				WERR_CLUSTER_RESOURCE_TYPE_NOT_FOUND,
+				"CreateResTypeEnum failed");
+		}
+
+		for (i=0; i < ARRAY_SIZE(dwType_invalid); i++) {
+
+			r.in.dwType = dwType_invalid[i];
+			r.out.ReturnEnum = &ReturnEnum;
+			r.out.rpc_status = &rpc_status;
+
+			torture_assert_ntstatus_ok(tctx,
+				dcerpc_clusapi_CreateResTypeEnum_r(b, tctx, &r),
+				"CreateResTypeEnum failed");
+			torture_assert_werr_equal(tctx,
+				r.out.result,
+				WERR_CLUSTER_RESOURCE_TYPE_NOT_FOUND,
+				"CreateResTypeEnum failed");
+		}
+	}
+
+
+	return true;
+}
+
+static bool test_CreateGroupEnum_int(struct torture_context *tctx,
+				     struct dcerpc_pipe *p,
+				     struct policy_handle *Cluster,
+				     const char **multi_sz,
+				     const char **multi_sz_ro)
+{
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct clusapi_CreateGroupEnum r;
+	struct GROUP_ENUM_LIST *pResultList;
+	WERROR rpc_status;
+	DATA_BLOB blob = data_blob_null;
+	DATA_BLOB blob_ro = data_blob_null;
+
+	r.in.hCluster = *Cluster;
+	r.in.pProperties = blob.data;
+	r.in.cbProperties = blob.length;
+	r.in.pRoProperties = blob_ro.data;
+	r.in.cbRoProperties = blob_ro.length;
+	r.out.ppResultList = &pResultList;
+	r.out.rpc_status = &rpc_status;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_CreateGroupEnum_r(b, tctx, &r),
+		"CreateGroupEnum failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"CreateGroupEnum failed");
+
+	if (!push_reg_multi_sz(tctx, &blob, multi_sz)) {
+		return false;
+	}
+
+	if (!push_reg_multi_sz(tctx, &blob_ro, multi_sz_ro)) {
+		return false;
+	}
+
+	r.in.pProperties = blob.data;
+	r.in.cbProperties = blob.length;
+
+	r.in.pRoProperties = blob_ro.data;
+	r.in.cbRoProperties = blob_ro.length;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_clusapi_CreateGroupEnum_r(b, tctx, &r),
+		"CreateGroupEnum failed");
+	torture_assert_werr_ok(tctx,
+		r.out.result,
+		"CreateGroupEnum failed");
+
+#if 0
+	{
+		int i;
+		enum ndr_err_code ndr_err;
+
+		for (i=0; i < pResultList->EntryCount; i++) {
+			struct clusapi_PROPERTY_LIST list;
+			torture_comment(tctx, "entry #%d\n", i);
+
+			blob = data_blob_const(pResultList->Entry[i].Properties,
+					       pResultList->Entry[i].cbProperties);
+
+			ndr_err = ndr_pull_struct_blob(&blob, tctx, &list,
+				(ndr_pull_flags_fn_t)ndr_pull_clusapi_PROPERTY_LIST);
+			if (NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+				NDR_PRINT_DEBUG(clusapi_PROPERTY_LIST, &list);
+			}
+
+			blob_ro = data_blob_const(pResultList->Entry[i].RoProperties,
+						  pResultList->Entry[i].cbRoProperties);
+
+			ndr_err = ndr_pull_struct_blob(&blob_ro, tctx, &list,
+				(ndr_pull_flags_fn_t)ndr_pull_clusapi_PROPERTY_LIST);
+			if (NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+				NDR_PRINT_DEBUG(clusapi_PROPERTY_LIST, &list);
+			}
+		}
+	}
+#endif
+
+	return true;
+}
+
+static bool test_CreateGroupEnum(struct torture_context *tctx,
+				 void *data)
+{
+	struct torture_clusapi_context *t =
+		talloc_get_type_abort(data, struct torture_clusapi_context);
+	struct policy_handle Cluster;
+	bool ret;
+	const char *multi_sz[] = {
+		"Priority", NULL,
+	};
+	const char *multi_sz_ro[] = {
+		"GroupType", NULL,
+	};
+
+	if (!test_OpenCluster_int(tctx, t->p, &Cluster)) {
+		return false;
+	}
+
+	ret = test_CreateGroupEnum_int(tctx, t->p, &Cluster,
+				       multi_sz, multi_sz_ro);
+	if (!ret) {
+		goto done;
+	}
+
+ done:
 	test_CloseCluster_int(tctx, t->p, &Cluster);
 
 	return ret;
@@ -3313,6 +3768,10 @@ void torture_tcase_cluster(struct torture_tcase *tcase)
 				      test_SetServiceAccountPassword);
 	torture_tcase_add_simple_test(tcase, "ClusterControl",
 				      test_ClusterControl);
+	torture_tcase_add_simple_test(tcase, "CreateResTypeEnum",
+				      test_CreateResTypeEnum);
+	torture_tcase_add_simple_test(tcase, "CreateGroupEnum",
+				      test_CreateGroupEnum);
 
 }
 
@@ -3358,6 +3817,12 @@ void torture_tcase_resource(struct torture_tcase *tcase)
 				      test_GetResourceNetworkName);
 	torture_tcase_add_simple_test(tcase, "all_resources",
 				      test_all_resources);
+}
+
+void torture_tcase_resourcetype(struct torture_tcase *tcase)
+{
+	torture_tcase_add_simple_test(tcase, "all_resourcetypes",
+				      test_all_resourcetypes);
 }
 
 void torture_tcase_node(struct torture_tcase *tcase)
@@ -3479,6 +3944,15 @@ struct torture_suite *torture_rpc_clusapi(TALLOC_CTX *mem_ctx)
 				  torture_rpc_clusapi_teardown);
 
 	torture_tcase_resource(tcase);
+
+	tcase = torture_suite_add_tcase(suite, "resourcetype");
+
+	torture_tcase_set_fixture(tcase,
+				  torture_rpc_clusapi_setup,
+				  torture_rpc_clusapi_teardown);
+
+	torture_tcase_resourcetype(tcase);
+
 
 	tcase = torture_suite_add_tcase(suite, "node");
 

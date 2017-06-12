@@ -46,7 +46,6 @@ extern const char *panic_action;
 
 #include "lib/util/time.h"
 #include "lib/util/data_blob.h"
-#include "lib/util/xfile.h"
 #include "lib/util/byteorder.h"
 #include "lib/util/talloc_stack.h"
 
@@ -66,8 +65,6 @@ extern const char *panic_action;
 /**
  * Write backtrace to debug log
  */
-_PUBLIC_ void call_backtrace(void);
-
 _PUBLIC_ void dump_core_setup(const char *progname, const char *logfile);
 
 /**
@@ -365,16 +362,11 @@ const char **str_list_make_v3_const(TALLOC_CTX *mem_ctx,
 
 
 /**
-read a line from a file with possible \ continuation chars. 
-Blanks at the start or end of a line are stripped.
-The string will be allocated if s2 is NULL
-**/
-_PUBLIC_ char *fgets_slash(char *s2,int maxlen,XFILE *f);
-
-/**
  * Read one line (data until next newline or eof) and allocate it 
  */
 _PUBLIC_ char *afdgets(int fd, TALLOC_CTX *mem_ctx, size_t hint);
+
+char *fgets_slash(TALLOC_CTX *mem_ctx, char *s2, int maxlen, FILE *f);
 
 /**
 load a file into memory from a fd.

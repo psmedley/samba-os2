@@ -62,8 +62,8 @@ NTSTATUS _wbint_LookupSid(struct pipes_struct *p, struct wbint_LookupSid *r)
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = domain->methods->sid_to_name(domain, p->mem_ctx, r->in.sid,
-					      &dom_name, &name, &type);
+	status = wb_cache_sid_to_name(domain, p->mem_ctx, r->in.sid,
+				      &dom_name, &name, &type);
 	reset_cm_connection_on_error(domain, status);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
@@ -111,9 +111,9 @@ NTSTATUS _wbint_LookupName(struct pipes_struct *p, struct wbint_LookupName *r)
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = domain->methods->name_to_sid(
-		domain, p->mem_ctx, r->in.domain, r->in.name, r->in.flags,
-		r->out.sid, r->out.type);
+	status = wb_cache_name_to_sid(domain, p->mem_ctx, r->in.domain,
+				      r->in.name, r->in.flags,
+				      r->out.sid, r->out.type);
 	reset_cm_connection_on_error(domain, status);
 	return status;
 }
@@ -268,18 +268,17 @@ NTSTATUS _wbint_AllocateGid(struct pipes_struct *p, struct wbint_AllocateGid *r)
 	return NT_STATUS_OK;
 }
 
-NTSTATUS _wbint_QueryUser(struct pipes_struct *p, struct wbint_QueryUser *r)
+NTSTATUS _wbint_GetNssInfo(struct pipes_struct *p, struct wbint_GetNssInfo *r)
 {
-	struct winbindd_domain *domain = wb_child_domain();
+	struct idmap_domain *domain;
 	NTSTATUS status;
 
-	if (domain == NULL) {
+	domain = idmap_find_domain(r->in.info->domain_name);
+	if ((domain == NULL) || (domain->query_user == NULL)) {
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = domain->methods->query_user(domain, p->mem_ctx, r->in.sid,
-					     r->out.info);
-	reset_cm_connection_on_error(domain, status);
+	status = domain->query_user(domain, r->in.info);
 	return status;
 }
 
@@ -293,9 +292,11 @@ NTSTATUS _wbint_LookupUserAliases(struct pipes_struct *p,
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = domain->methods->lookup_useraliases(
-		domain, p->mem_ctx, r->in.sids->num_sids, r->in.sids->sids,
-		&r->out.rids->num_rids, &r->out.rids->rids);
+	status = wb_cache_lookup_useraliases(domain, p->mem_ctx,
+					     r->in.sids->num_sids,
+					     r->in.sids->sids,
+					     &r->out.rids->num_rids,
+					     &r->out.rids->rids);
 	reset_cm_connection_on_error(domain, status);
 	return status;
 }
@@ -310,9 +311,9 @@ NTSTATUS _wbint_LookupUserGroups(struct pipes_struct *p,
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = domain->methods->lookup_usergroups(
-		domain, p->mem_ctx, r->in.sid,
-		&r->out.sids->num_sids, &r->out.sids->sids);
+	status = wb_cache_lookup_usergroups(domain, p->mem_ctx, r->in.sid,
+					    &r->out.sids->num_sids,
+					    &r->out.sids->sids);
 	reset_cm_connection_on_error(domain, status);
 	return status;
 }
@@ -327,7 +328,7 @@ NTSTATUS _wbint_QuerySequenceNumber(struct pipes_struct *p,
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = domain->methods->sequence_number(domain, r->out.sequence);
+	status = wb_cache_sequence_number(domain, r->out.sequence);
 	reset_cm_connection_on_error(domain, status);
 	return status;
 }
@@ -346,9 +347,9 @@ NTSTATUS _wbint_LookupGroupMembers(struct pipes_struct *p,
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = domain->methods->lookup_groupmem(
-		domain, p->mem_ctx, r->in.sid, r->in.type,
-		&num_names, &sid_mem, &names, &name_types);
+	status = wb_cache_lookup_groupmem(domain, p->mem_ctx, r->in.sid,
+					  r->in.type, &num_names, &sid_mem,
+					  &names, &name_types);
 	reset_cm_connection_on_error(domain, status);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
@@ -369,23 +370,6 @@ NTSTATUS _wbint_LookupGroupMembers(struct pipes_struct *p,
 	}
 
 	return NT_STATUS_OK;
-}
-
-NTSTATUS _wbint_QueryUserList(struct pipes_struct *p,
-			      struct wbint_QueryUserList *r)
-{
-	struct winbindd_domain *domain = wb_child_domain();
-	NTSTATUS status;
-
-	if (domain == NULL) {
-		return NT_STATUS_REQUEST_NOT_ACCEPTED;
-	}
-
-	status = domain->methods->query_user_list(
-		domain, p->mem_ctx, &r->out.users->num_userinfos,
-		&r->out.users->userinfos);
-	reset_cm_connection_on_error(domain, status);
-	return status;
 }
 
 NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
@@ -427,18 +411,18 @@ NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
 	}
 
 	if (include_local_groups) {
-		status = domain->methods->enum_local_groups(domain, talloc_tos(),
-							    &num_local_groups,
-							    &local_groups);
+		status = wb_cache_enum_local_groups(domain, talloc_tos(),
+						    &num_local_groups,
+						    &local_groups);
 		reset_cm_connection_on_error(domain, status);
 		if (!NT_STATUS_IS_OK(status)) {
 			return status;
 		}
 	}
 
-	status = domain->methods->enum_dom_groups(domain, talloc_tos(),
-						  &num_dom_groups,
-						  &dom_groups);
+	status = wb_cache_enum_dom_groups(domain, talloc_tos(),
+					  &num_dom_groups,
+					  &dom_groups);
 	reset_cm_connection_on_error(domain, status);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
@@ -491,6 +475,34 @@ NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
 
 	r->out.groups->num_principals = ti;
 	r->out.groups->principals = result;
+
+	return NT_STATUS_OK;
+}
+
+NTSTATUS _wbint_QueryUserRidList(struct pipes_struct *p,
+				 struct wbint_QueryUserRidList *r)
+{
+	struct winbindd_domain *domain = wb_child_domain();
+	NTSTATUS status;
+
+	if (domain == NULL) {
+		return NT_STATUS_REQUEST_NOT_ACCEPTED;
+	}
+
+	/*
+	 * Right now this is overkill. We should add a backend call
+	 * just querying the rids.
+	 */
+
+	status = wb_cache_query_user_list(domain, p->mem_ctx,
+					  &r->out.rids->rids);
+	reset_cm_connection_on_error(domain, status);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	r->out.rids->num_rids = talloc_array_length(r->out.rids->rids);
 
 	return NT_STATUS_OK;
 }
@@ -612,9 +624,9 @@ NTSTATUS _wbint_LookupRids(struct pipes_struct *p, struct wbint_LookupRids *r)
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = domain->methods->rids_to_names(
-		domain, talloc_tos(), r->in.domain_sid, r->in.rids->rids,
-		r->in.rids->num_rids, &domain_name, &names, &types);
+	status = wb_cache_rids_to_names(domain, talloc_tos(), r->in.domain_sid,
+					r->in.rids->rids, r->in.rids->num_rids,
+					&domain_name, &names, &types);
 	reset_cm_connection_on_error(domain, status);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
@@ -886,7 +898,7 @@ static WERROR _winbind_LogonControl_REDISCOVER(struct pipes_struct *p,
 
 	info2 = talloc_zero(p->mem_ctx, struct netr_NETLOGON_INFO_2);
 	if (info2 == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (domain->internal) {
@@ -926,12 +938,12 @@ check_return:
 		info2->trusted_dc_name = talloc_asprintf(info2, "\\\\%s",
 							 domain->dcname);
 		if (info2->trusted_dc_name == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 	} else {
 		info2->trusted_dc_name = talloc_strdup(info2, "");
 		if (info2->trusted_dc_name == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 	}
 	info2->tc_connection_status = check_result;
@@ -962,7 +974,7 @@ static WERROR _winbind_LogonControl_TC_QUERY(struct pipes_struct *p,
 
 	info2 = talloc_zero(p->mem_ctx, struct netr_NETLOGON_INFO_2);
 	if (info2 == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (domain->internal) {
@@ -991,12 +1003,12 @@ check_return:
 		info2->trusted_dc_name = talloc_asprintf(info2, "\\\\%s",
 							 domain->dcname);
 		if (info2->trusted_dc_name == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 	} else {
 		info2->trusted_dc_name = talloc_strdup(info2, "");
 		if (info2->trusted_dc_name == NULL) {
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 	}
 	info2->tc_connection_status = check_result;
@@ -1052,7 +1064,7 @@ static WERROR _winbind_LogonControl_TC_VERIFY(struct pipes_struct *p,
 	info2 = talloc_zero(p->mem_ctx, struct netr_NETLOGON_INFO_2);
 	if (info2 == NULL) {
 		TALLOC_FREE(frame);
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (domain->internal) {
@@ -1309,13 +1321,13 @@ verify_return:
 							 domain->dcname);
 		if (info2->trusted_dc_name == NULL) {
 			TALLOC_FREE(frame);
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 	} else {
 		info2->trusted_dc_name = talloc_strdup(info2, "");
 		if (info2->trusted_dc_name == NULL) {
 			TALLOC_FREE(frame);
-			return WERR_NOMEM;
+			return WERR_NOT_ENOUGH_MEMORY;
 		}
 	}
 	info2->tc_connection_status = check_result;
@@ -1352,7 +1364,7 @@ static WERROR _winbind_LogonControl_CHANGE_PASSWORD(struct pipes_struct *p,
 
 	info1 = talloc_zero(p->mem_ctx, struct netr_NETLOGON_INFO_1);
 	if (info1 == NULL) {
-		return WERR_NOMEM;
+		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
 	if (domain->internal) {

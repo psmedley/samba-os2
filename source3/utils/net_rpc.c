@@ -383,7 +383,7 @@ static int net_rpc_oldjoin(struct net_context *c, int argc, const char **argv)
 
 	pw = talloc_strndup(r, lp_netbios_name(), 14);
 	if (pw == NULL) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto fail;
 	}
 
@@ -394,7 +394,7 @@ static int net_rpc_oldjoin(struct net_context *c, int argc, const char **argv)
 	r->in.admin_account		= "";
 	r->in.admin_password		= strlower_talloc(r, pw);
 	if (r->in.admin_password == NULL) {
-		werr = WERR_NOMEM;
+		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto fail;
 	}
 	r->in.debug			= true;
@@ -3763,7 +3763,7 @@ static bool check_share_availability(struct cli_state *cli, const char *netname)
 {
 	NTSTATUS status;
 
-	status = cli_tree_connect(cli, netname, "A:", "", 0);
+	status = cli_tree_connect(cli, netname, "A:", NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf(_("skipping   [%s]: not a file share.\n"), netname);
 		return false;
@@ -5125,7 +5125,7 @@ static void show_userlist(struct rpc_pipe_client *pipe_hnd,
 
 	cnum = cli_state_get_tid(cli);
 
-	if (!NT_STATUS_IS_OK(cli_tree_connect(cli, netname, "A:", "", 0))) {
+	if (!NT_STATUS_IS_OK(cli_tree_connect(cli, netname, "A:", NULL))) {
 		return;
 	}
 

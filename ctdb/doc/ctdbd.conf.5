@@ -2,12 +2,12 @@
 .\"     Title: ctdbd.conf
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 10/24/2016
+.\"      Date: 06/06/2017
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDBD\&.CONF" "5" "10/24/2016" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDBD\&.CONF" "5" "06/06/2017" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -129,7 +129,7 @@ Corresponds to
 .PP
 CTDB_DEBUGLEVEL=\fIDEBUGLEVEL\fR
 .RS 4
-Default is NOTICE (2)\&. Corresponds to
+Default is NOTICE\&. Corresponds to
 \fB\-d\fR
 or
 \fB\-\-debug\fR\&.
@@ -250,7 +250,7 @@ section in
 .PP
 CTDB_SCRIPT_LOG_LEVEL=\fIDEBUGLEVEL\fR
 .RS 4
-Defaults to ERR (0)\&. Corresponds to
+Defaults to ERR\&. Corresponds to
 \fB\-\-script\-log\-level\fR\&.
 .RE
 .PP
@@ -1043,11 +1043,11 @@ eventscript\&.
 Default is no\&.
 .RE
 .PP
-CTDB_SCRIPT_DEBUGLEVEL=\fINUM\fR
+CTDB_SCRIPT_DEBUGLEVEL=\fIDEBUGLEVEL\fR
 .RS 4
-NUM is the level debugging messages printed by CTDB scripts\&. Setting this to a higher number (e\&.g\&. 4) will cause some scripts to log more messages\&.
+DEBUGLEVEL is the level debugging messages printed by CTDB scripts\&. Setting this to a higher level (e\&.g\&. DEBUG) will cause some scripts to log more messages\&.
 .sp
-Default is 2\&.
+Default is NOTICE\&.
 .RE
 .PP
 CTDB_SUPPRESS_COREFILE=yes|no

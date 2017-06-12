@@ -26,15 +26,7 @@
 #include <sys/types.h>
 #include <regex.h>
 
-/* The following definitions come from lib/access.c  */
-
-bool client_match(const char *tok, const void *item);
-bool list_match(const char **list,const void *item,
-		bool (*match_fn)(const char *, const void *));
-bool allow_access(const char **deny_list,
-		const char **allow_list,
-		const char *cname,
-		const char *caddr);
+#include "lib/util/access.h"
 
 /* The following definitions come from lib/adt_tree.c  */
 
@@ -162,8 +154,8 @@ bool parse_usershare_acl(TALLOC_CTX *ctx, const char *acl_str, struct security_d
 
 /* The following definitions come from lib/smbrun.c  */
 
-int smbrun_no_sanitize(const char *cmd, int *outfd);
-int smbrun(const char *cmd, int *outfd);
+int smbrun_no_sanitize(const char *cmd, int *outfd, char * const *env);
+int smbrun(const char *cmd, int *outfd, char * const *env);
 int smbrunsecret(const char *cmd, const char *secret);
 
 /* The following definitions come from lib/sock_exec.c  */
@@ -332,7 +324,6 @@ const char *my_sam_name(void);
 
 enum protocol_types get_Protocol(void);
 void set_Protocol(enum protocol_types  p);
-bool all_zero(const uint8_t *ptr, size_t size);
 void gfree_names(void);
 void gfree_all( void );
 const char *my_netbios_names(int i);
@@ -411,7 +402,7 @@ bool ms_has_wild_w(const smb_ucs2_t *s);
 bool mask_match(const char *string, const char *pattern, bool is_case_sensitive);
 bool mask_match_search(const char *string, const char *pattern, bool is_case_sensitive);
 bool mask_match_list(const char *string, char **list, int listLen, bool is_case_sensitive);
-bool unix_wild_match(const char *pattern, const char *string);
+#include "lib/util/unix_match.h"
 bool name_to_fqdn(fstring fqdn, const char *name);
 uint32_t map_share_mode_to_deny_mode(uint32_t share_access, uint32_t private_options);
 
@@ -424,7 +415,7 @@ char *get_safe_ptr(const char *buf_base, size_t buf_len, char *ptr, size_t off);
 char *get_safe_str_ptr(const char *buf_base, size_t buf_len, char *ptr, size_t off);
 int get_safe_SVAL(const char *buf_base, size_t buf_len, char *ptr, size_t off, int failval);
 int get_safe_IVAL(const char *buf_base, size_t buf_len, char *ptr, size_t off, int failval);
-void split_domain_user(TALLOC_CTX *mem_ctx,
+bool split_domain_user(TALLOC_CTX *mem_ctx,
 		       const char *full_name,
 		       char **domain,
 		       char **user);
@@ -847,15 +838,6 @@ NTSTATUS remote_password_change(const char *remote_machine, const char *user_nam
 				const char *old_passwd, const char *new_passwd,
 				char **err_str);
 
-/* The following definitions come from libsmb/samlogon_cache.c  */
-
-bool netsamlogon_cache_init(void);
-bool netsamlogon_cache_shutdown(void);
-void netsamlogon_clear_cached_user(const struct dom_sid *user_sid);
-bool netsamlogon_cache_store(const char *username, struct netr_SamInfo3 *info3);
-struct netr_SamInfo3 *netsamlogon_cache_get(TALLOC_CTX *mem_ctx, const struct dom_sid *user_sid);
-bool netsamlogon_cache_have(const struct dom_sid *user_sid);
-
 /* The following definitions come from libsmb/smberr.c  */
 
 const char *smb_dos_err_name(uint8_t e_class, uint16_t num);
@@ -1123,19 +1105,6 @@ bool lookup_wellknown_sid(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 			  const char **domain, const char **name);
 bool lookup_wellknown_name(TALLOC_CTX *mem_ctx, const char *name,
 			   struct dom_sid *sid, const char **domain);
-
-/* The following definitions come from lib/util_unixsids.c  */
-
-bool sid_check_is_unix_users(const struct dom_sid *sid);
-bool sid_check_is_in_unix_users(const struct dom_sid *sid);
-void uid_to_unix_users_sid(uid_t uid, struct dom_sid *sid);
-void gid_to_unix_groups_sid(gid_t gid, struct dom_sid *sid);
-const char *unix_users_domain_name(void);
-bool lookup_unix_user_name(const char *name, struct dom_sid *sid);
-bool sid_check_is_unix_groups(const struct dom_sid *sid);
-bool sid_check_is_in_unix_groups(const struct dom_sid *sid);
-const char *unix_groups_domain_name(void);
-bool lookup_unix_group_name(const char *name, struct dom_sid *sid);
 
 /* The following definitions come from lib/util_specialsids.c  */
 bool sid_check_is_asserted_identity(const struct dom_sid *sid);

@@ -2,6 +2,8 @@
    MIT-Samba4 library
 
    Copyright (c) 2010, Simo Sorce <idra@samba.org>
+   Copyright (c) 2014-2015 Guenther Deschner <gd@samba.org>
+   Copyright (c) 2014-2016 Andreas Schneider <asn@samba.org>
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -644,6 +646,7 @@ int mit_samba_kpasswd_change_password(struct mit_samba_context *ctx,
 					   ctx->db_ctx->samdb,
 					   lpcfg_netbios_name(ctx->db_ctx->lp_ctx),
 					   lpcfg_sam_name(ctx->db_ctx->lp_ctx),
+					   lpcfg_sam_dnsname(ctx->db_ctx->lp_ctx),
 					   p->realm_dn,
 					   p->msg,
 					   data_blob(NULL, 0),

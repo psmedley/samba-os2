@@ -120,6 +120,11 @@ bld.SAMBA_SUBSYSTEM('NDR_SPOOLSS_BUF',
     deps='talloc'
     )
 
+bld.SAMBA_SUBSYSTEM('NDR_WINSPOOL',
+    source='gen_ndr/ndr_winspool.c',
+    public_deps='ndr NDR_SPOOLSS'
+    )
+
 bld.SAMBA_SUBSYSTEM('NDR_PRINTCAP',
     source='gen_ndr/ndr_printcap.c',
     public_deps='ndr'
@@ -418,6 +423,13 @@ bld.SAMBA_SUBSYSTEM('NDR_PREG',
     public_deps='ndr'
     )
 
+bld.SAMBA_SUBSYSTEM('NDR_CAB',
+    source='''
+           gen_ndr/ndr_cab.c
+           ndr/ndr_cab.c
+           ''',
+    public_deps='ndr')
+
 bld.SAMBA_SUBSYSTEM('NDR_FILE_ID',
     source='gen_ndr/ndr_file_id.c',
     public_deps='ndr'
@@ -521,6 +533,11 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_BROWSER',
 bld.SAMBA_SUBSYSTEM('RPC_NDR_SPOOLSS',
     source='gen_ndr/ndr_spoolss_c.c',
     public_deps='dcerpc-binding NDR_SPOOLSS'
+    )
+
+bld.SAMBA_SUBSYSTEM('RPC_NDR_WINSPOOL',
+    source='gen_ndr/ndr_winspool_c.c',
+    public_deps='dcerpc-binding NDR_WINSPOOL'
     )
 
 bld.SAMBA_SUBSYSTEM('RPC_NDR_NBT',
@@ -705,7 +722,7 @@ bld.SAMBA_LIBRARY('ndr',
 
 bld.SAMBA_LIBRARY('dcerpc-binding',
     source='rpc/dcerpc_error.c rpc/binding.c rpc/dcerpc_util.c rpc/binding_handle.c',
-    deps='ndr tevent NDR_DCERPC LIBTSOCKET tevent-util',
+    deps='ndr tevent NDR_DCERPC LIBTSOCKET tevent-util gensec',
     pc_files=[],
     public_headers='rpc/rpc_common.h',
     vnum='0.0.1')

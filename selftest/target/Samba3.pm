@@ -370,6 +370,9 @@ sub setup_admember($$$$)
 {
 	my ($self, $prefix, $dcvars) = @_;
 
+	my $prefix_abs = abs_path($prefix);
+	my @dirs = ();
+
 	# If we didn't build with ADS, pretend this env was never available
 	if (not $self->have_ads()) {
 	        return "UNKNOWN";
@@ -377,11 +380,48 @@ sub setup_admember($$$$)
 
 	print "PROVISIONING S3 AD MEMBER...";
 
+	mkdir($prefix_abs, 0777);
+
+	my $share_dir="$prefix_abs/share";
+	push(@dirs, $share_dir);
+
+	my $substitution_path = "$share_dir/D_SAMBADOMAIN";
+	push(@dirs, $substitution_path);
+
+	$substitution_path = "$share_dir/D_SAMBADOMAIN/U_alice";
+	push(@dirs, $substitution_path);
+
+	$substitution_path = "$share_dir/D_SAMBADOMAIN/U_alice/G_domain users";
+	push(@dirs, $substitution_path);
+
+	# Using '/' as the winbind separator is a bad idea ...
+	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN";
+	push(@dirs, $substitution_path);
+
+	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice";
+	push(@dirs, $substitution_path);
+
+	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice/g_SAMBADOMAIN";
+	push(@dirs, $substitution_path);
+
+	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice/g_SAMBADOMAIN/domain users";
+	push(@dirs, $substitution_path);
+
 	my $member_options = "
 	security = ads
         workgroup = $dcvars->{DOMAIN}
         realm = $dcvars->{REALM}
         netbios aliases = foo bar
+	template homedir = /home/%D/%G/%U
+
+[sub_dug]
+	path = $share_dir/D_%D/U_%U/G_%G
+	writeable = yes
+
+[sub_dug2]
+	path = $share_dir/D_%D/u_%u/g_%g
+	writeable = yes
+
 ";
 
 	my $ret = $self->provision($prefix,
@@ -393,12 +433,13 @@ sub setup_admember($$$$)
 
 	$ret or return undef;
 
+	mkdir($_, 0777) foreach(@dirs);
+
 	close(USERMAP);
 	$ret->{DOMAIN} = $dcvars->{DOMAIN};
 	$ret->{REALM} = $dcvars->{REALM};
 
 	my $ctx;
-	my $prefix_abs = abs_path($prefix);
 	$ctx = {};
 	$ctx->{krb5_conf} = "$prefix_abs/lib/krb5.conf";
 	$ctx->{domain} = $dcvars->{DOMAIN};
@@ -406,6 +447,7 @@ sub setup_admember($$$$)
 	$ctx->{dnsname} = lc($dcvars->{REALM});
 	$ctx->{kdc_ipv4} = $dcvars->{SERVER_IP};
 	$ctx->{kdc_ipv6} = $dcvars->{SERVER_IPV6};
+	$ctx->{krb5_ccname} = "$prefix_abs/krb5cc_%{uid}";
 	Samba::mk_krb5_conf($ctx, "");
 
 	$ret->{KRB5_CONFIG} = $ctx->{krb5_conf};
@@ -465,6 +507,8 @@ sub setup_admember_rfc2307($$$$)
 	security = ads
         workgroup = $dcvars->{DOMAIN}
         realm = $dcvars->{REALM}
+        idmap cache time = 0
+        idmap negative cache time = 0
         idmap config * : backend = autorid
         idmap config * : range = 1000000-1999999
         idmap config * : rangesize = 100000
@@ -497,6 +541,95 @@ sub setup_admember_rfc2307($$$$)
 	$ctx->{dnsname} = lc($dcvars->{REALM});
 	$ctx->{kdc_ipv4} = $dcvars->{SERVER_IP};
 	$ctx->{kdc_ipv6} = $dcvars->{SERVER_IPV6};
+	$ctx->{krb5_ccname} = "$prefix_abs/krb5cc_%{uid}";
+	Samba::mk_krb5_conf($ctx, "");
+
+	$ret->{KRB5_CONFIG} = $ctx->{krb5_conf};
+
+	my $net = Samba::bindir_path($self, "net");
+	my $cmd = "";
+	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
+	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
+		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
+	} else {
+		$cmd .= "RESOLV_WRAPPER_HOSTS=\"$ret->{RESOLV_WRAPPER_HOSTS}\" ";
+	}
+	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
+	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
+	$cmd .= "$net join $ret->{CONFIGURATION}";
+	$cmd .= " -U$dcvars->{USERNAME}\%$dcvars->{PASSWORD}";
+
+	if (system($cmd) != 0) {
+	    warn("Join failed\n$cmd");
+	    return undef;
+	}
+
+	# We need world access to this share, as otherwise the domain
+	# administrator from the AD domain provided by Samba4 can't
+	# access the share for tests.
+	chmod 0777, "$prefix/share";
+
+	if (not $self->check_or_start($ret, "yes", "yes", "yes")) {
+		return undef;
+	}
+
+	$ret->{DC_SERVER} = $dcvars->{SERVER};
+	$ret->{DC_SERVER_IP} = $dcvars->{SERVER_IP};
+	$ret->{DC_SERVER_IPV6} = $dcvars->{SERVER_IPV6};
+	$ret->{DC_NETBIOSNAME} = $dcvars->{NETBIOSNAME};
+	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
+	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
+
+	# Special case, this is called from Samba4.pm but needs to use the Samba3 check_env and get_log_env
+	$ret->{target} = $self;
+
+	return $ret;
+}
+
+sub setup_ad_member_idmap_rid($$$$)
+{
+	my ($self, $prefix, $dcvars) = @_;
+
+	# If we didn't build with ADS, pretend this env was never available
+	if (not $self->have_ads()) {
+	        return "UNKNOWN";
+	}
+
+	print "PROVISIONING S3 AD MEMBER WITH idmap_rid config...";
+
+	my $member_options = "
+	security = ads
+	workgroup = $dcvars->{DOMAIN}
+	realm = $dcvars->{REALM}
+	idmap config * : backend = tdb
+	idmap config * : range = 1000000-1999999
+	idmap config $dcvars->{DOMAIN} : backend = rid
+	idmap config $dcvars->{DOMAIN} : range = 2000000-2999999
+";
+
+	my $ret = $self->provision($prefix,
+				   "IDMAPRIDMEMBER",
+				   "loCalMemberPass",
+				   $member_options,
+				   $dcvars->{SERVER_IP},
+				   $dcvars->{SERVER_IPV6});
+
+	$ret or return undef;
+
+	close(USERMAP);
+	$ret->{DOMAIN} = $dcvars->{DOMAIN};
+	$ret->{REALM} = $dcvars->{REALM};
+
+	my $ctx;
+	my $prefix_abs = abs_path($prefix);
+	$ctx = {};
+	$ctx->{krb5_conf} = "$prefix_abs/lib/krb5.conf";
+	$ctx->{domain} = $dcvars->{DOMAIN};
+	$ctx->{realm} = $dcvars->{REALM};
+	$ctx->{dnsname} = lc($dcvars->{REALM});
+	$ctx->{kdc_ipv4} = $dcvars->{SERVER_IP};
+	$ctx->{kdc_ipv6} = $dcvars->{SERVER_IPV6};
+	$ctx->{krb5_ccname} = "$prefix_abs/krb5cc_%{uid}";
 	Samba::mk_krb5_conf($ctx, "");
 
 	$ret->{KRB5_CONFIG} = $ctx->{krb5_conf};
@@ -678,6 +811,15 @@ sub setup_fileserver($$)
 	path = $share_dir
 	comment = ignore system acls
 	acl_xattr:ignore system acls = yes
+[inherit_owner]
+	path = $share_dir
+	comment = inherit owner
+	inherit owner = yes
+[inherit_owner_u]
+	path = $share_dir
+	comment = inherit only unix owner
+	inherit owner = unix only
+	acl_xattr:ignore system acls = yes
 ";
 
 	my $vars = $self->provision($path,
@@ -783,6 +925,7 @@ sub setup_ktest($$$)
 	$ctx->{dnsname} = lc($ctx->{realm});
 	$ctx->{kdc_ipv4} = "0.0.0.0";
 	$ctx->{kdc_ipv6} = "::";
+	$ctx->{krb5_ccname} = "$prefix_abs/krb5cc_%{uid}";
 	Samba::mk_krb5_conf($ctx, "");
 
 	$ret->{KRB5_CONFIG} = $ctx->{krb5_conf};
@@ -919,6 +1062,7 @@ sub check_or_start($$$$$) {
 		SocketWrapper::set_default_iface($env_vars->{SOCKET_WRAPPER_DEFAULT_IFACE});
 
 		$ENV{KRB5_CONFIG} = $env_vars->{KRB5_CONFIG};
+		$ENV{KRB5CCNAME} = "$env_vars->{KRB5_CCACHE}.nmbd";
 		$ENV{SELFTEST_WINBINDD_SOCKET_DIR} = $env_vars->{SELFTEST_WINBINDD_SOCKET_DIR};
 		$ENV{NMBD_SOCKET_DIR} = $env_vars->{NMBD_SOCKET_DIR};
 
@@ -978,6 +1122,7 @@ sub check_or_start($$$$$) {
 		SocketWrapper::set_default_iface($env_vars->{SOCKET_WRAPPER_DEFAULT_IFACE});
 
 		$ENV{KRB5_CONFIG} = $env_vars->{KRB5_CONFIG};
+		$ENV{KRB5CCNAME} = "$env_vars->{KRB5_CCACHE}.winbindd";
 		$ENV{SELFTEST_WINBINDD_SOCKET_DIR} = $env_vars->{SELFTEST_WINBINDD_SOCKET_DIR};
 		$ENV{NMBD_SOCKET_DIR} = $env_vars->{NMBD_SOCKET_DIR};
 
@@ -1042,6 +1187,7 @@ sub check_or_start($$$$$) {
 		SocketWrapper::set_default_iface($env_vars->{SOCKET_WRAPPER_DEFAULT_IFACE});
 
 		$ENV{KRB5_CONFIG} = $env_vars->{KRB5_CONFIG};
+		$ENV{KRB5CCNAME} = "$env_vars->{KRB5_CCACHE}.smbd";
 		$ENV{SELFTEST_WINBINDD_SOCKET_DIR} = $env_vars->{SELFTEST_WINBINDD_SOCKET_DIR};
 		$ENV{NMBD_SOCKET_DIR} = $env_vars->{NMBD_SOCKET_DIR};
 
@@ -1621,7 +1767,7 @@ sub provision($$$$$$$$)
 	path = $shrdir
 	vfs objects = catia fruit streams_xattr acl_xattr
 	ea support = yes
-	fruit:ressource = file
+	fruit:resource = file
 	fruit:metadata = netatalk
 	fruit:locking = netatalk
 	fruit:encoding = native
@@ -1831,6 +1977,14 @@ sub provision($$$$$$$$)
 	copy = tmp
 	acl_xattr:ignore system acls = yes
 	acl_xattr:default acl style = windows
+[nosymlinks]
+	copy = tmp
+	path = $nosymlinks_shrdir
+	follow symlinks = no
+[kernel_oplocks]
+	copy = tmp
+	kernel oplocks = yes
+	vfs objects = streams_xattr xattr_tdb
 	";
 	close(CONF);
 
@@ -1983,6 +2137,10 @@ force_user:x:$gid_force_user:
 	# value.
 	#
 	$ret{KRB5_CONFIG} = abs_path($prefix) . "/no_krb5.conf";
+
+	# Define KRB5CCNAME for each environment we set up
+	$ret{KRB5_CCACHE} = abs_path($prefix) . "/krb5ccache";
+	$ENV{KRB5CCNAME} = $ret{KRB5_CCACHE};
 
 	return \%ret;
 }

@@ -757,7 +757,7 @@ static int setup_kerberos_keys(struct setup_password_fields_io *io)
 	io->g.salt = talloc_strndup(io->ac,
 				    (char *)salt.data,
 				    salt.length);
-	kerberos_free_data_contents(io->smb_krb5_context->krb5_context, &salt);
+	smb_krb5_free_data_contents(io->smb_krb5_context->krb5_context, &salt);
 	if (!io->g.salt) {
 		return ldb_oom(ldb);
 	}
@@ -2031,7 +2031,7 @@ static int setup_last_set_field(struct setup_password_fields_io *io)
 	default:
 		return dsdb_module_werror(io->ac->module,
 					  LDB_ERR_OTHER,
-					  WERR_INVALID_PARAM,
+					  WERR_INVALID_PARAMETER,
 					  "setup_last_set_field: "
 					  "pwdLastSet must be 0 or -1 only!");
 	}

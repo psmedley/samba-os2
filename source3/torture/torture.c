@@ -48,6 +48,7 @@ extern char *optarg;
 extern int optind;
 
 fstring host, workgroup, share, password, username, myname;
+struct cli_credentials *torture_creds;
 static const char *sockops="TCP_NODELAY";
 int torture_nprocs=1;
 static int port_to_use=0;
@@ -107,15 +108,7 @@ static bool force_cli_encryption(struct cli_state *c,
 		return false;
 	}
 
-	if (c->use_kerberos) {
-		status = cli_gss_smb_encryption_start(c);
-	} else {
-		status = cli_raw_ntlm_smb_encryption_start(c,
-						username,
-						password,
-						workgroup);
-	}
-
+	status = cli_smb1_setup_encryption(c, torture_creds);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("Encryption required and "
 			"setup failed with error %s.\n",
@@ -338,18 +331,21 @@ static bool torture_open_connection_share(struct cli_state **c,
 	int flags = 0;
 	NTSTATUS status;
 
-	if (use_kerberos)
-		flags |= CLI_FULL_CONNECTION_USE_KERBEROS;
 	if (use_oplocks)
 		flags |= CLI_FULL_CONNECTION_OPLOCKS;
 	if (use_level_II_oplocks)
 		flags |= CLI_FULL_CONNECTION_LEVEL_II_OPLOCKS;
 
-	status = cli_full_connection(c, myname,
-				     hostname, NULL, port_to_use, 
-				     sharename, "?????", 
-				     username, workgroup, 
-				     password, flags, signing_state);
+	status = cli_full_connection_creds(c,
+					   myname,
+					   hostname,
+					   NULL, /* dest_ss */
+					   port_to_use,
+					   sharename,
+					   "?????",
+					   torture_creds,
+					   flags,
+					   signing_state);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("failed to open share connection: //%s/%s port:%d - %s\n",
 			hostname, sharename, port_to_use, nt_errstr(status));
@@ -413,15 +409,11 @@ bool torture_init_connection(struct cli_state **pcli)
 bool torture_cli_session_setup2(struct cli_state *cli, uint16_t *new_vuid)
 {
 	uint16_t old_vuid = cli_state_get_uid(cli);
-	size_t passlen = strlen(password);
 	NTSTATUS status;
 	bool ret;
 
 	cli_state_set_uid(cli, 0);
-	status = cli_session_setup(cli, username,
-				   password, passlen,
-				   password, passlen,
-				   workgroup);
+	status = cli_session_setup_creds(cli, torture_creds);
 	ret = NT_STATUS_IS_OK(status);
 	*new_vuid = cli_state_get_uid(cli);
 	cli_state_set_uid(cli, old_vuid);
@@ -1341,8 +1333,7 @@ static bool run_tcon_test(int dummy)
 		return False;
 	}
 
-	status = cli_tree_connect(cli, share, "?????",
-				  password, strlen(password)+1);
+	status = cli_tree_connect_creds(cli, share, "?????", torture_creds);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("%s refused 2nd tree connect (%s)\n", host,
 		       nt_errstr(status));
@@ -1467,8 +1458,7 @@ static bool tcon_devtest(struct cli_state *cli,
 	NTSTATUS status;
 	bool ret;
 
-	status = cli_tree_connect(cli, myshare, devtype,
-				  password, strlen(password)+1);
+	status = cli_tree_connect_creds(cli, myshare, devtype, torture_creds);
 
 	if (NT_STATUS_IS_OK(expected_error)) {
 		if (NT_STATUS_IS_OK(status)) {
@@ -1516,11 +1506,16 @@ static bool run_tcon_devtype_test(int dummy)
 	NTSTATUS status;
 	bool ret = True;
 
-	status = cli_full_connection(&cli1, myname,
-				     host, NULL, port_to_use,
-				     NULL, NULL,
-				     username, workgroup,
-				     password, flags, signing_state);
+	status = cli_full_connection_creds(&cli1,
+					   myname,
+					   host,
+					   NULL, /* dest_ss */
+					   port_to_use,
+					   NULL, /* service */
+					   NULL, /* service_type */
+					   torture_creds,
+					   flags,
+					   signing_state);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("could not open connection\n");
@@ -2787,7 +2782,7 @@ static bool run_fdsesstest(int dummy)
 		return False;
 
 	saved_cnum = cli_state_get_tid(cli);
-	if (!NT_STATUS_IS_OK(cli_tree_connect(cli, share, "?????", "", 1)))
+	if (!NT_STATUS_IS_OK(cli_tree_connect(cli, share, "?????", NULL)))
 		return False;
 	new_cnum = cli_state_get_tid(cli);
 	cli_state_set_tid(cli, saved_cnum);
@@ -5071,7 +5066,7 @@ static bool run_rename_access(int dummy)
 	}
 
 	if (cli) {
-		if (fnum != -1) {
+		if (fnum != (uint64_t)-1) {
 			cli_close(cli, fnum);
 		}
 		cli_unlink(cli, src,
@@ -5462,7 +5457,7 @@ static bool run_owner_rights(int dummy)
   fail:
 
 	if (cli) {
-		if (fnum != -1) {
+		if (fnum != (uint16_t)-1) {
 			cli_close(cli, fnum);
 		}
 		cli_unlink(cli, fname,
@@ -7691,7 +7686,7 @@ static bool run_error_map_extract(int dummy) {
 		return False;
 	}
 
-	status = cli_session_setup(c_nt, "", "", 0, "", 0, workgroup);
+	status = cli_session_setup_anon(c_nt);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("%s rejected the NT-error initial session setup (%s)\n",host, nt_errstr(status));
 		return False;
@@ -7718,7 +7713,7 @@ static bool run_error_map_extract(int dummy) {
 		return False;
 	}
 
-	status = cli_session_setup(c_dos, "", "", 0, "", 0, workgroup);
+	status = cli_session_setup_anon(c_dos);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("%s rejected the DOS-error initial session setup (%s)\n",
 			host, nt_errstr(status));
@@ -7729,12 +7724,25 @@ static bool run_error_map_extract(int dummy) {
 	c_dos->map_dos_errors = false;
 
 	for (error=(0xc0000000 | 0x1); error < (0xc0000000| 0xFFF); error++) {
+		struct cli_credentials *user_creds = NULL;
+
 		fstr_sprintf(user, "%X", error);
 
-		status = cli_session_setup(c_nt, user,
-					   password, strlen(password),
-					   password, strlen(password),
-					   workgroup);
+		user_creds = cli_session_creds_init(talloc_tos(),
+						    user,
+						    workgroup,
+						    NULL, /* realm */
+						    password,
+						    false, /* use_kerberos */
+						    false, /* fallback_after_kerberos */
+						    false, /* use_ccache */
+						    false); /* password_is_nt_hash */
+		if (user_creds == NULL) {
+			printf("cli_session_creds_init(%s) failed\n", user);
+			return false;
+		}
+
+		status = cli_session_setup_creds(c_nt, user_creds);
 		if (NT_STATUS_IS_OK(status)) {
 			printf("/** Session setup succeeded.  This shouldn't happen...*/\n");
 		}
@@ -7748,10 +7756,7 @@ static bool run_error_map_extract(int dummy) {
 			nt_status = NT_STATUS(0xc0000000);
 		}
 
-		status = cli_session_setup(c_dos, user,
-					   password, strlen(password),
-					   password, strlen(password),
-					   workgroup);
+		status = cli_session_setup_creds(c_dos, user_creds);
 		if (NT_STATUS_IS_OK(status)) {
 			printf("/** Session setup succeeded.  This shouldn't happen...*/\n");
 		}
@@ -7776,6 +7781,8 @@ static bool run_error_map_extract(int dummy) {
 		       smb_dos_err_class(errclass), 
 		       smb_dos_err_name(errclass, errnum), 
 		       get_nt_error_c_code(talloc_tos(), NT_STATUS(error)));
+
+		TALLOC_FREE(user_creds);
 	}
 	return True;
 }
@@ -7801,13 +7808,9 @@ static bool run_sesssetup_bench(int dummy)
 	}
 
 	for (i=0; i<torture_numops; i++) {
-		status = cli_session_setup(
-			c, username,
-			password, strlen(password),
-			password, strlen(password),
-			workgroup);
+		status = cli_session_setup_creds(c, torture_creds);
 		if (!NT_STATUS_IS_OK(status)) {
-			d_printf("(%s) cli_session_setup failed: %s\n",
+			d_printf("(%s) cli_session_setup_creds failed: %s\n",
 				 __location__, nt_errstr(status));
 			return false;
 		}
@@ -8741,13 +8744,7 @@ static bool run_large_readx(int dummy)
 			goto out;
 		}
 
-		status = cli_session_setup(cli2,
-					username,
-					password,
-					strlen(password)+1,
-					password,
-					strlen(password)+1,
-					workgroup);
+		status = cli_session_setup_creds(cli2, torture_creds);
 		if (!NT_STATUS_IS_OK(status)) {
 			goto out;
 		}
@@ -8755,8 +8752,7 @@ static bool run_large_readx(int dummy)
 		status = cli_tree_connect(cli2,
 					share,
 					"?????",
-					password,
-					strlen(password)+1);
+					password);
 		if (!NT_STATUS_IS_OK(status)) {
 			goto out;
 		}
@@ -11021,6 +11017,81 @@ static bool run_local_canonicalize_path(int dummy)
 	return true;
 }
 
+static bool run_ign_bad_negprot(int dummy)
+{
+	struct tevent_context *ev;
+	struct tevent_req *req;
+	struct smbXcli_conn *conn;
+	struct sockaddr_storage ss;
+	NTSTATUS status;
+	int fd;
+	bool ok;
+
+	printf("starting ignore bad negprot\n");
+
+	ok = resolve_name(host, &ss, 0x20, true);
+	if (!ok) {
+		d_fprintf(stderr, "Could not resolve name %s\n", host);
+		return false;
+	}
+
+	status = open_socket_out(&ss, 445, 10000, &fd);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "open_socket_out failed: %s\n",
+			  nt_errstr(status));
+		return false;
+	}
+
+	conn = smbXcli_conn_create(talloc_tos(), fd, host, SMB_SIGNING_OFF, 0,
+				   NULL, 0);
+	if (conn == NULL) {
+		d_fprintf(stderr, "smbXcli_conn_create failed\n");
+		return false;
+	}
+
+	status = smbXcli_negprot(conn, 0, PROTOCOL_CORE, PROTOCOL_CORE);
+	if (NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "smbXcli_negprot succeeded!\n");
+		return false;
+	}
+
+	ev = samba_tevent_context_init(talloc_tos());
+	if (ev == NULL) {
+		d_fprintf(stderr, "samba_tevent_context_init failed\n");
+		return false;
+	}
+
+	req = smb1cli_session_setup_nt1_send(
+		ev, ev, conn, 0, getpid(), NULL, 65503, 2, 1, 0, "", "",
+		data_blob_null, data_blob_null, 0x40,
+		"Windows 2000 2195", "Windows 2000 5.0");
+	if (req == NULL) {
+		d_fprintf(stderr, "smb1cli_session_setup_nt1_send failed\n");
+		return false;
+	}
+
+	ok = tevent_req_poll_ntstatus(req, ev, &status);
+	if (!ok) {
+		d_fprintf(stderr, "tevent_req_poll failed\n");
+		return false;
+	}
+
+	status = smb1cli_session_setup_nt1_recv(req, NULL, NULL, NULL, NULL,
+						NULL, NULL);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_CONNECTION_RESET)) {
+		d_fprintf(stderr, "smb1cli_session_setup_nt1_recv returned "
+			  "%s, expected NT_STATUS_CONNECTION_RESET\n",
+			  nt_errstr(status));
+		return false;
+	}
+
+	TALLOC_FREE(conn);
+
+	printf("starting ignore bad negprot\n");
+
+	return true;
+}
+
 static double create_procs(bool (*fn)(int), bool *result)
 {
 	int i, status;
@@ -11210,6 +11281,7 @@ static struct {
 	{ "NOTIFY-BENCH2", run_notify_bench2 },
 	{ "NOTIFY-BENCH3", run_notify_bench3 },
 	{ "BAD-NBT-SESSION", run_bad_nbt_session },
+	{ "IGN-BAD-NEGPROT", run_ign_bad_negprot },
 	{ "SMB-ANY-CONNECT", run_smb_any_connect },
 	{ "NOTIFY-ONLINE", run_notify_online },
 	{ "SMB2-BASIC", run_smb2_basic },
@@ -11256,6 +11328,7 @@ static struct {
 	{ "local-tdb-writer", run_local_tdb_writer, 0 },
 	{ "LOCAL-DBWRAP-CTDB", run_local_dbwrap_ctdb, 0 },
 	{ "LOCAL-BENCH-PTHREADPOOL", run_bench_pthreadpool, 0 },
+	{ "LOCAL-PTHREADPOOL-TEVENT", run_pthreadpool_tevent, 0 },
 	{ "LOCAL-CANONICALIZE-PATH", run_local_canonicalize_path, 0 },
 	{ "qpathinfo-bufsize", run_qpathinfo_bufsize, 0 },
 	{NULL, NULL, 0}};
@@ -11523,6 +11596,20 @@ static void usage(void)
 
 	printf("host=%s share=%s user=%s myname=%s\n", 
 	       host, share, username, myname);
+
+	torture_creds = cli_session_creds_init(frame,
+					       username,
+					       workgroup,
+					       NULL, /* realm */
+					       password,
+					       use_kerberos,
+					       false, /* fallback_after_kerberos */
+					       false, /* use_ccache */
+					       false); /* password_is_nt_hash */
+	if (torture_creds == NULL) {
+		d_printf("cli_session_creds_init() failed.\n");
+		exit(1);
+	}
 
 	if (argc == optind) {
 		correct = run_test("ALL");

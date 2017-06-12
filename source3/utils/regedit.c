@@ -258,7 +258,7 @@ static WERROR regedit_search(struct regedit *regedit, struct tree_node *node,
 			save_value_name = talloc_strdup(regedit,
 							it->value_name);
 			if (save_value_name == NULL) {
-				return WERR_NOMEM;
+				return WERR_NOT_ENOUGH_MEMORY;
 			}
 		}
 
@@ -765,7 +765,6 @@ int main(int argc, const char **argv)
 	};
 	int opt;
 	poptContext pc;
-	struct user_auth_info *auth_info;
 	TALLOC_CTX *frame;
 	struct registry_context *ctx;
 	WERROR rv;
@@ -776,20 +775,10 @@ int main(int argc, const char **argv)
 	lp_set_cmdline("log level", "0");
 
 	/* process options */
-	auth_info = user_auth_info_init(frame);
-	if (auth_info == NULL) {
-		exit(1);
-	}
-	popt_common_set_auth_info(auth_info);
 	pc = poptGetContext("regedit", argc, argv, long_options, 0);
 
 	while ((opt = poptGetNextOpt(pc)) != -1) {
 		/* TODO */
-	}
-
-	if (!lp_load_global(get_dyn_CONFIGFILE())) {
-		DEBUG(0, ("ERROR loading config file...\n"));
-		exit(1);
 	}
 
 	rv = reg_open_samba3(frame, &ctx);
