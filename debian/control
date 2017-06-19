@@ -17,6 +17,7 @@ Build-Depends: bison,
                docbook-xsl,
                faketime,
                flex,
+               glusterfs-common,
                libacl1-dev,
                libaio-dev [linux-any],
                libarchive-dev,
@@ -29,6 +30,7 @@ Build-Depends: bison,
                libcephfs-dev,
                libcmocka-dev (>= 1.0),
                libcups2-dev,
+               libdbus-1-dev,
                libgnutls28-dev,
                libgpgme11-dev,
                libldap2-dev,
@@ -279,6 +281,7 @@ Architecture: any
 Breaks: samba (<< 2:4.3.2+dfsg-1), samba-libs (<< 2:4.3.2+dfsg-1)
 Replaces: samba (<< 2:4.3.2+dfsg-1), samba-libs (<< 2:4.3.2+dfsg-1)
 Depends: samba-libs (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
+Recommends: ${vfsmods:Recommends}
 Enhances: samba
 Description: Samba Virtual FileSystem plugins
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
@@ -287,6 +290,9 @@ Description: Samba Virtual FileSystem plugins
  or member server in both NT4-style and Active Directory domains.
  .
  This package contains plugins for the Samba server Virtual FileSystem.
+ .
+ Note: The runtime dependencies of vfs_ceph, vfs_glusterfs and vfs_snapper are
+ moved to Recommends.
 
 Package: libsmbclient
 Section: libs

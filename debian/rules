@@ -162,7 +162,7 @@ override_dh_install:
 	install -m644 debian/samba.ufw.profile $(DESTDIR)/etc/ufw/applications.d/samba
 	# use upstream version of smb.conf.5 if there is no built version
 	# this is a temporary workaround for #750593 in xsltproc
-	[ -e $(DESTIDR)/usr/share/man/man5/smb.conf.5 ] || \
+	[ -e $(DESTDIR)/usr/share/man/man5/smb.conf.5 ] || \
 	   cp docs/manpages/smb.conf.5 $(DESTDIR)/usr/share/man/man5/smb.conf.5
 	# Tests that shouldn't be installed
 	rm -f $(DESTDIR)/usr/bin/async_connect_send_test
@@ -227,7 +227,8 @@ ifneq (,$(filter ctdb, $(shell dh_listpackages)))
 endif
 
 override_dh_shlibdeps:
-	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH dh_shlibdeps -a
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH dh_shlibdeps -a -Xceph.so -Xglusterfs.so -Xsnapper.so
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH dh_shlibdeps -a -- -pvfsmods -dRecommends -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/glusterfs.so -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so
 
 override_dh_gencontrol:
 	dh_gencontrol -- -Vldb:Depends=$(LDB_DEPENDS)
