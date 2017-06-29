@@ -8,9 +8,9 @@ Uploaders: Steve Langasek <vorlon@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
            Andrew Bartlett <abartlet+debian@catalyst.net.nz>
 Homepage: http://www.samba.org
-Standards-Version: 3.9.8
+Standards-Version: 4.0.0
 Build-Depends: bison,
-               debhelper (>> 9),
+               debhelper (>> 10),
                dh-python,
                dh-systemd (>= 1.5),
                docbook-xml,

@@ -29,9 +29,8 @@ WAF = $(PYTHON) ./buildtools/bin/waf -v
 d_b_o:=$(shell echo "$$DEB_BUILD_OPTIONS"|sed 's/[^-[:alnum:]]/ /g'|tr a-z A-Z)
 $(foreach o, $(d_b_o), $(eval DEB_BUILD_OPT_$o := 1))
 
-# for xsltproc wrapper
+# wrapper around cups-config, to work around #726726
 export PATH:=$(CURDIR)/debian/bin:$(PATH)
-export SOURCE_DATE=$(shell debian/get_source_changedate.pl)
 
 ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
 WAF += -j $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
@@ -82,7 +81,7 @@ else
 endif
 
 %:
-	dh $* --with python2 --with systemd
+	dh $* --with python2
 
 override_dh_auto_configure:
 	$(WAF) configure $(conf_args)
@@ -212,7 +211,6 @@ ifneq (,$(filter samba, $(shell dh_listpackages)))
 	dh_installinit -psamba --name nmbd
 	dh_installinit -psamba --name samba-ad-dc
 	dh_installinit -psamba --noscripts
-	dh_installinit -psamba --no-start --name reload-smbd
 endif
 ifneq (,$(filter winbind, $(shell dh_listpackages)))
 	dh_installinit -pwinbind

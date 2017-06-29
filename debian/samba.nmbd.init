@@ -26,9 +26,6 @@ test -x /usr/sbin/nmbd || exit 0
 
 case $1 in
 	start)
-		if init_is_upstart; then
-			exit 1
-		fi
 		SERVER_ROLE=`samba-tool testparm --parameter-name="server role"  2>/dev/null | tail -1`
 		if [ "$SERVER_ROLE" = "active directory domain controller" ]; then
 		    exit 0
@@ -43,7 +40,7 @@ case $1 in
 			# Make sure we have our PIDDIR, even if it's on a tmpfs
 			install -o root -g root -m 755 -d $PIDDIR
 
-	 		if ! start-stop-daemon --start --quiet --oknodo --exec /usr/sbin/nmbd -- -D
+			if ! start-stop-daemon --start --quiet --oknodo --exec /usr/sbin/nmbd --pidfile $NMBDPID -- -D
 			then
 				log_end_msg 1
 				exit 1
@@ -53,9 +50,6 @@ case $1 in
 
 		;;
 	stop)
-		if init_is_upstart; then
-			exit 0
-		fi
 
 		log_daemon_msg "Stopping NetBIOS name server" nmbd
 
@@ -73,9 +67,6 @@ case $1 in
 
 		;;
 	restart|force-reload)
-		if init_is_upstart; then
-			exit 1
-		fi
 		$0 stop
 		sleep 1
 		$0 start

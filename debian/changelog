@@ -1,3 +1,27 @@
+samba (2:4.6.5+dfsg-3) unstable; urgency=medium
+
+  * Remove upstart code
+  * Remove empty prerm for samba and samba-common-bin (Closes: #866258,
+    #866284)
+  * sysv: Use --pidfile in addition to --exec to avoid matching daemons in
+    containers (Closes: #810794)
+  * Standards-Version: 4.0.0
+    - Use https form of the copyright-format URL (Debian Policy 4.0.0)
+  * Remove debian/bzr-builddeb.conf
+  * Remove empty debian/diversions
+  * Remove "ugly workaround to get the manpages on every architecture to be
+    identical", xsltproc now honour SOURCE_DATE_EPOCH
+  * Remove dh-exec shbang in libnss-winbind.install
+  * Remove empty debian/libsmbclient.manpages
+  * Remove pre-jessie maintscript snipsets
+  * Move to debhelper compat 10 (Major change: dh_installinit command now
+    defaults to --restart-after-upgrade)
+  * Remove unused samba-ad-dc package metadata (Closes: #866138)
+  * Fix "Non-kerberos logins fails on winbind 4.X when krb5_auth is configured
+    in PAM" (Closes: #739768)
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 29 Jun 2017 09:45:59 +0200
+
 samba (2:4.6.5+dfsg-2) unstable; urgency=medium
 
   * Upload to unstable
