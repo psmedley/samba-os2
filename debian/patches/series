@@ -16,3 +16,4 @@ Add-documentation-to-systemd-Unit-files.patch
 fix_kill_path_in_units.patch
 nmbd-requires-a-working-network.patch
 s3-gse_krb5-fix-a-possible-crash-in-fill_mem_keytab.patch
+CVE-2017-11103-Orpheus-Lyre-KDC-REP-service-name-val.patch

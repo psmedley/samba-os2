@@ -1,3 +1,14 @@
+samba (2:4.6.5+dfsg-4) unstable; urgency=high
+
+  * This is a security release in order to address the following defects:
+    - CVE-2017-11103: Orpheus' Lyre KDC-REP service name validation
+      (Closes: #868209)
+  * Other fixes:
+    - Remove empty samba-common.maintscript (leading to empty preinst and
+      prerm)
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 13 Jul 2017 14:38:32 +0200
+
 samba (2:4.6.5+dfsg-3) unstable; urgency=medium
 
   * Remove upstart code
