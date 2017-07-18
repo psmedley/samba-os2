@@ -17,8 +17,7 @@ configure_smb_conf() {
 	local CONFIG
 	CONFIG="$1"
 
-	# Is the user configuring with debconf, or he/she prefers
-	# swat/manual config?
+	# Is the user configuring with debconf, or he/she prefers manual config?
 	db_get samba-common/do_debconf || true
 	if [ "${RET}" != "true" ]; then
 		return 0
@@ -63,6 +62,15 @@ configure_smb_conf() {
 	fi
 
 }
+
+if [ "$1" = configure ]; then
+    if ! dpkg-statoverride --list /var/log/samba >/dev/null; then
+        # Set some reasonable default perms for the samba logdir
+        # to hide sensitive information
+        chmod 0750 /var/log/samba
+        chown root:adm /var/log/samba
+    fi
+fi
 
 
 if [ -e "$CONFIG" ]; then

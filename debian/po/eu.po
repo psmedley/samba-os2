@@ -17,8 +17,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: eu\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2013-10-22 20:32+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2013-10-30 16:07+0100\n"
 "Last-Translator: Iñaki Larrañaga Murgoitio <dooteo@zundan.com>\n"
 "Language-Team: Basque <debian-l10n-basque@lists.debian.org>\n"
@@ -28,134 +28,6 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: Lokalize 1.4\n"
 "Plural-Forms: nplurals=2; plural=(n != 1)\n"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "Samba 3-tik bertsio-berritu?"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
-msgstr ""
-"Samba 3 bertsioan dauden konfigurazioko fitxategiak Samba 4 bertsiora "
-"migratu daitezke. Konfigurazio konplexuetan huts egin dezakeen arren, "
-"instalazio gehienentzako abioko puntu ona eskain dezake."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid "Server role"
-msgstr "Zerbitzariaren portaera"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-"Domeinuen kontrolatzaileek NT4 gisakoa edo Direktorio Aktiboen domeinuak "
-"kudeatzen dute, eta identitateen kudeaketa eta domeinuen saio-hasierak "
-"bezalako zerbitzuak eskaintzen dituzte. Domeinu bakoitzak gutxienez "
-"domeinuaren kontrolatzaile bat eduki behar du."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-"NT4 gisako edo Direktorio Aktiboen domeinu baten zati izan daiteke kideen "
-"zerbitzariak, baina ez dute domeinuen zerbitzurik eskaintzen. Lanpostuak eta "
-"fitxategi- edo inprimatze-zerbitzariek domeinuko kide arruntak izan ohi dira."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-"Ezin da bakarkako zerbitzari bat domeinu batean erabili eta  fitxategiak "
-"partekatzea eta Windows Lantaldeentzako bezalako saio-hasierak soilik "
-"onartzen ditu."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"If no server role is specified, the Samba server will not be provisioned, so "
-"this can be done manually by the user."
-msgstr ""
-"Ez bada zerbitzariaren portaerarik zehaztu ezingo da Samba zerbitzaria "
-"eskaini. Ondorioz, hori erabiltzaileak eskuz egin dezake."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Realm name:"
-msgstr "Erreinuaren izena:"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr ""
-"Zehaztu Kerberos erreinua (domeinuaren kontrolatzaile honek kontrolatzen "
-"duen domeinuarentzako)."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr "DNS ostalari-izena maiuskuletan izan ohi da."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "New password for the Samba \"administrator\" user:"
-msgstr "Samba-ren 'administrator' administratzailearen pasahitz berria:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "If this field is left blank, a random password will be generated."
-msgstr "Eremu hau bete gabe uzten bada, ausazko pasahitza sortuko da."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "A password can be set later by running, as root:"
-msgstr "Pasahitza beranduago ezar daiteke 'root' gisa hau exekutatuz:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:5001
-msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr "Errepikati Samba-ren administratzailearen pasahitza:"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "Password input error"
-msgstr "Pasahitzaren sarreraren errorea"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "The two passwords you entered were not the same. Please try again."
-msgstr "Sartu dituzun bi pasahitzak ez dira berdinak. Saiatu berriro."
 
 #. Type: title
 #. Description
@@ -246,6 +118,87 @@ msgstr ""
 "moduan erabiltzean agertuko den lantaldea, zenbait interfaze bidez "
 "bistaratzean erabiliko den lehenetsitako lantaldea eta \"security=domain\" "
 "ezarpenak erabiltzen duen domeinu izena kontrolatzen ditu."
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "Samba 3-tik bertsio-berritu?"
+
+#~ msgid ""
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
+#~ msgstr ""
+#~ "Samba 3 bertsioan dauden konfigurazioko fitxategiak Samba 4 bertsiora "
+#~ "migratu daitezke. Konfigurazio konplexuetan huts egin dezakeen arren, "
+#~ "instalazio gehienentzako abioko puntu ona eskain dezake."
+
+#~ msgid "Server role"
+#~ msgstr "Zerbitzariaren portaera"
+
+#~ msgid ""
+#~ "Domain controllers manage NT4-style or Active Directory domains and "
+#~ "provide services such as identity management and domain logons. Each "
+#~ "domain needs to have a at least one domain controller."
+#~ msgstr ""
+#~ "Domeinuen kontrolatzaileek NT4 gisakoa edo Direktorio Aktiboen domeinuak "
+#~ "kudeatzen dute, eta identitateen kudeaketa eta domeinuen saio-hasierak "
+#~ "bezalako zerbitzuak eskaintzen dituzte. Domeinu bakoitzak gutxienez "
+#~ "domeinuaren kontrolatzaile bat eduki behar du."
+
+#~ msgid ""
+#~ "Member servers can be part of a NT4-style or Active Directory domain but "
+#~ "do not provide any domain services. Workstations and file or print "
+#~ "servers are usually regular domain members."
+#~ msgstr ""
+#~ "NT4 gisako edo Direktorio Aktiboen domeinu baten zati izan daiteke kideen "
+#~ "zerbitzariak, baina ez dute domeinuen zerbitzurik eskaintzen. Lanpostuak "
+#~ "eta fitxategi- edo inprimatze-zerbitzariek domeinuko kide arruntak izan "
+#~ "ohi dira."
+
+#~ msgid ""
+#~ "A standalone server can not be used in a domain and only supports file "
+#~ "sharing and Windows for Workgroups-style logins."
+#~ msgstr ""
+#~ "Ezin da bakarkako zerbitzari bat domeinu batean erabili eta  fitxategiak "
+#~ "partekatzea eta Windows Lantaldeentzako bezalako saio-hasierak soilik "
+#~ "onartzen ditu."
+
+#~ msgid ""
+#~ "If no server role is specified, the Samba server will not be provisioned, "
+#~ "so this can be done manually by the user."
+#~ msgstr ""
+#~ "Ez bada zerbitzariaren portaerarik zehaztu ezingo da Samba zerbitzaria "
+#~ "eskaini. Ondorioz, hori erabiltzaileak eskuz egin dezake."
+
+#~ msgid "Realm name:"
+#~ msgstr "Erreinuaren izena:"
+
+#~ msgid ""
+#~ "Please specify the Kerberos realm for the domain that this domain "
+#~ "controller controls."
+#~ msgstr ""
+#~ "Zehaztu Kerberos erreinua (domeinuaren kontrolatzaile honek kontrolatzen "
+#~ "duen domeinuarentzako)."
+
+#~ msgid "Usually this is the a capitalized version of your DNS hostname."
+#~ msgstr "DNS ostalari-izena maiuskuletan izan ohi da."
+
+#~ msgid "New password for the Samba \"administrator\" user:"
+#~ msgstr "Samba-ren 'administrator' administratzailearen pasahitz berria:"
+
+#~ msgid "If this field is left blank, a random password will be generated."
+#~ msgstr "Eremu hau bete gabe uzten bada, ausazko pasahitza sortuko da."
+
+#~ msgid "A password can be set later by running, as root:"
+#~ msgstr "Pasahitza beranduago ezar daiteke 'root' gisa hau exekutatuz:"
+
+#~ msgid "Repeat password for the Samba \"administrator\" user:"
+#~ msgstr "Errepikati Samba-ren administratzailearen pasahitza:"
+
+#~ msgid "Password input error"
+#~ msgstr "Pasahitzaren sarreraren errorea"
+
+#~ msgid "The two passwords you entered were not the same. Please try again."
+#~ msgstr "Sartu dituzun bi pasahitzak ez dira berdinak. Saiatu berriro."
 
 #~ msgid " $ samba-tool user setpassword administrator"
 #~ msgstr " $ samba-tool user setpassword administrator"

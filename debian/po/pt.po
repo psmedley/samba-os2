@@ -6,8 +6,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: samba 2-4.5.8+dfsg-2\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2013-10-22 20:32+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2017-06-04 14:58+0000\n"
 "Last-Translator: Rui Branco - DebianPT <ruipb@debianpt.org>\n"
 "Language-Team: Portuguese <traduz@debianpt.org>\n"
@@ -16,137 +16,6 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "Actualizar a partir do Samba 3?"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
-msgstr ""
-"É possível migrar os ficheiros de configuração existentes do Samba 3 para "
-"Samba 4. É provável que falhe para configurações complexas, mas deve "
-"disponibilizar um bom ponto de partida para a maioria das instalações "
-"existentes."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid "Server role"
-msgstr "Papel do servidor"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-"Os controladores de domínio gerem domínios estilo-NT4 ou Active Directory e "
-"disponibilizam serviços tais como a gestão de identidades e identificação em "
-"domínio. Cada domínio tem de ter pelo menos um controlador de domínio."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-"Os servidores membros podem fazer parte de um domínio estilo-NT4 ou Active "
-"Directory mas não disponibilizam quaisquer serviços de domínio. Estações de "
-"trabalho, servidores de ficheiros ou de impressão são normalmente membros de "
-"domínio."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-"Um servidor independente não pode ser utilizado num domínio e apenas suporta "
-"partilha de ficheiros e logins do tipo Windows for Workgroups."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"If no server role is specified, the Samba server will not be provisioned, so "
-"this can be done manually by the user."
-msgstr ""
-"Se não for especificado nenhum papel para o servidor, o servidor Samba não "
-"será provisionado e assim poderá ser feito manualmente pelo utilizador."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Realm name:"
-msgstr "Nome do reino:"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr ""
-"Por favor especifique o reino Kerberos para o domínio que este controlador "
-"de domínio controla."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr ""
-"Normalmente isto é a versão em maiúsculas do seu nome de máquina de DNS."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "New password for the Samba \"administrator\" user:"
-msgstr "Nova palavra-chave para o utilizador \"administrator\" Samba:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "If this field is left blank, a random password will be generated."
-msgstr "Se for deixado em branco, será gerada uma palavra-chave aleatória."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "A password can be set later by running, as root:"
-msgstr "A palavra-chave pode ser definida mais tarde usando como root:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:5001
-msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr "Repita a palavra-chave para o utilizador \"administrator\" Samba:"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "Password input error"
-msgstr "Erro na introdução da palavra-chave"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "The two passwords you entered were not the same. Please try again."
-msgstr ""
-"As duas palavras-chave que introduziu não coincidem. Por favor tente "
-"novamente."
 
 #. Type: title
 #. Description
@@ -243,6 +112,91 @@ msgstr ""
 "utilizado como servidor, o grupo de trabalho predefinido a ser utilizado ao "
 "navegar com vários frontends, e o nome de domínio utilizado com a "
 "configuração \"security=domain\"."
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "Actualizar a partir do Samba 3?"
+
+#~ msgid ""
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
+#~ msgstr ""
+#~ "É possível migrar os ficheiros de configuração existentes do Samba 3 para "
+#~ "Samba 4. É provável que falhe para configurações complexas, mas deve "
+#~ "disponibilizar um bom ponto de partida para a maioria das instalações "
+#~ "existentes."
+
+#~ msgid "Server role"
+#~ msgstr "Papel do servidor"
+
+#~ msgid ""
+#~ "Domain controllers manage NT4-style or Active Directory domains and "
+#~ "provide services such as identity management and domain logons. Each "
+#~ "domain needs to have a at least one domain controller."
+#~ msgstr ""
+#~ "Os controladores de domínio gerem domínios estilo-NT4 ou Active Directory "
+#~ "e disponibilizam serviços tais como a gestão de identidades e "
+#~ "identificação em domínio. Cada domínio tem de ter pelo menos um "
+#~ "controlador de domínio."
+
+#~ msgid ""
+#~ "Member servers can be part of a NT4-style or Active Directory domain but "
+#~ "do not provide any domain services. Workstations and file or print "
+#~ "servers are usually regular domain members."
+#~ msgstr ""
+#~ "Os servidores membros podem fazer parte de um domínio estilo-NT4 ou "
+#~ "Active Directory mas não disponibilizam quaisquer serviços de domínio. "
+#~ "Estações de trabalho, servidores de ficheiros ou de impressão são "
+#~ "normalmente membros de domínio."
+
+#~ msgid ""
+#~ "A standalone server can not be used in a domain and only supports file "
+#~ "sharing and Windows for Workgroups-style logins."
+#~ msgstr ""
+#~ "Um servidor independente não pode ser utilizado num domínio e apenas "
+#~ "suporta partilha de ficheiros e logins do tipo Windows for Workgroups."
+
+#~ msgid ""
+#~ "If no server role is specified, the Samba server will not be provisioned, "
+#~ "so this can be done manually by the user."
+#~ msgstr ""
+#~ "Se não for especificado nenhum papel para o servidor, o servidor Samba "
+#~ "não será provisionado e assim poderá ser feito manualmente pelo "
+#~ "utilizador."
+
+#~ msgid "Realm name:"
+#~ msgstr "Nome do reino:"
+
+#~ msgid ""
+#~ "Please specify the Kerberos realm for the domain that this domain "
+#~ "controller controls."
+#~ msgstr ""
+#~ "Por favor especifique o reino Kerberos para o domínio que este "
+#~ "controlador de domínio controla."
+
+#~ msgid "Usually this is the a capitalized version of your DNS hostname."
+#~ msgstr ""
+#~ "Normalmente isto é a versão em maiúsculas do seu nome de máquina de DNS."
+
+#~ msgid "New password for the Samba \"administrator\" user:"
+#~ msgstr "Nova palavra-chave para o utilizador \"administrator\" Samba:"
+
+#~ msgid "If this field is left blank, a random password will be generated."
+#~ msgstr "Se for deixado em branco, será gerada uma palavra-chave aleatória."
+
+#~ msgid "A password can be set later by running, as root:"
+#~ msgstr "A palavra-chave pode ser definida mais tarde usando como root:"
+
+#~ msgid "Repeat password for the Samba \"administrator\" user:"
+#~ msgstr "Repita a palavra-chave para o utilizador \"administrator\" Samba:"
+
+#~ msgid "Password input error"
+#~ msgstr "Erro na introdução da palavra-chave"
+
+#~ msgid "The two passwords you entered were not the same. Please try again."
+#~ msgstr ""
+#~ "As duas palavras-chave que introduziu não coincidem. Por favor tente "
+#~ "novamente."
 
 #~ msgid "Use password encryption?"
 #~ msgstr "Utilizar encriptação de passwords?"

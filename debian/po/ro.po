@@ -16,8 +16,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ro\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2013-10-22 20:32+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2008-06-18 14:30+0300\n"
 "Last-Translator: Igor Stirbu <igor.stirbu@gmail.com>\n"
 "Language-Team: Romanian <debian-l10n-romanian@lists.debian.org>\n"
@@ -28,122 +28,6 @@ msgstr ""
 "X-Generator: KBabel 1.11.4\n"
 "Plural-Forms:  nplurals=3; plural=n==1 ? 0 : (n==0 || (n%100 > 0 && n%100 < "
 "20)) ? 1 : 2;\n"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "Actualizare de la Samba 3?"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
-msgstr ""
-"Este posibil ca fișierele de configurare existente pentru Samba 3 să fie "
-"migrate la Samba 4. Probabil, pentru configurații complexe, conversia va "
-"eșua, dar pentru majoritatea instalărilor rezultatul ar trebui să reprezinte "
-"un bun punct de plecare."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid "Server role"
-msgstr ""
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"If no server role is specified, the Samba server will not be provisioned, so "
-"this can be done manually by the user."
-msgstr ""
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-#, fuzzy
-msgid "Realm name:"
-msgstr "Domeniu:"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr ""
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr ""
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "New password for the Samba \"administrator\" user:"
-msgstr ""
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "If this field is left blank, a random password will be generated."
-msgstr ""
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "A password can be set later by running, as root:"
-msgstr ""
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:5001
-msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr ""
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "Password input error"
-msgstr ""
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "The two passwords you entered were not the same. Please try again."
-msgstr ""
 
 #. Type: title
 #. Description
@@ -235,6 +119,23 @@ msgid ""
 "workgroup to be used when browsing with various frontends, and the domain "
 "name used with the \"security=domain\" setting."
 msgstr ""
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "Actualizare de la Samba 3?"
+
+#~ msgid ""
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
+#~ msgstr ""
+#~ "Este posibil ca fișierele de configurare existente pentru Samba 3 să fie "
+#~ "migrate la Samba 4. Probabil, pentru configurații complexe, conversia va "
+#~ "eșua, dar pentru majoritatea instalărilor rezultatul ar trebui să "
+#~ "reprezinte un bun punct de plecare."
+
+#, fuzzy
+#~ msgid "Realm name:"
+#~ msgstr "Domeniu:"
 
 #~ msgid "Use password encryption?"
 #~ msgstr "Se folosesc parole criptate? "

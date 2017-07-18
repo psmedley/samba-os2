@@ -8,8 +8,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: samba2_4.0.10+dfsg-3-he\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2013-10-22 20:32+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2013-10-23 09:52+0300\n"
 "Last-Translator: Omer Zak <w1@zak.co.il>\n"
 "Language-Team: Hebrew <debian-hebrew-common@lists.alioth.debian.org>\n"
@@ -19,128 +19,6 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: KBabel 1.11.4\n"
 "Plural-Forms:  nplurals=2; plural=(n != 1);\n"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "לשדרג מ-Samba 3?"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
-msgstr ""
-"ניתן להמיר את קבצי ההגדרות הקיימים מ-Samba 3 ל-Samba 4. סביר שההמרה תיכשל "
-"בהתקנות מסובכות, אבל תוצאותיה אמורים לתת נקודת התחלה טובה עבור רוב ההתקנות "
-"הקיימות."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid "Server role"
-msgstr "סוג השרת"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-"בקרי מתחם מנהלים מתחמים מסוג NT4 או מסוג Active Directory ומספקים שרותים כמו "
-"ניהול זהות משתמשים וכניסות למתחמים. בכל מתחם דרוש לפחות בקר מתחם אחד."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-"שרתים חברי מתחם יכולים להיות חלק ממתחם מסוג NT4 או מסוג Active Directory אבל "
-"אינם נותנים שרותי מתחם. עמדות עבודה ושרתי הדפסה הינם בדרך כלל שרתים חברי "
-"מתחם רגילים."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-"שרת שעומד בפני עצמו אינו יכול להיות חלק ממתחם ותומך רק בשיתוף קבצים וכניסות "
-"בסגנון חלונות לקבוצות עבודה."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"If no server role is specified, the Samba server will not be provisioned, so "
-"this can be done manually by the user."
-msgstr ""
-"אם לא הוגדר סוג השרת, לא יסופק שרת Samba, כך שהמשתמש יוכל לדאוג לזה ידנית."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Realm name:"
-msgstr "שם מתחם:"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr "נא לציין את מתחם Kerberos עבור המתחם שנשלט על ידי בקר מתחם זה."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr "בדרך כלל זו גירסא באותיות רישיות של שם מחשבך ב-DNS."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "New password for the Samba \"administrator\" user:"
-msgstr "סיסמה חדשה עבור משתמש Samba‏ \"administrator\":"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "If this field is left blank, a random password will be generated."
-msgstr "אם שדה זה לא ימולא, תיווצר סיסמה אקראית."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "A password can be set later by running, as root:"
-msgstr "ניתן לשנות אחר כך את הסיסמה על ידי הרצה כ-root:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:5001
-msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr "חזור על הסיסמה עבור משתמש Samba‏ \"administrator\":"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "Password input error"
-msgstr "שגיאת קלט בסיסמה"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "The two passwords you entered were not the same. Please try again."
-msgstr "שתי הסיסמאות שהכנסת אינן זהות. נא לנסות שוב."
 
 #. Type: title
 #. Description
@@ -230,6 +108,80 @@ msgstr ""
 "קבוצת עבודה תימצא מערכת זו כשישתמשו בה בתור שרת, מה תהיה ברירת המחדל לקבוצת "
 "העבודה שישתמשו בה בזמן דפדוף באמצעות ממשקים שונים, ושם המתחם (Domain) בעת "
 "שימוש באפשרות security=domain."
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "לשדרג מ-Samba 3?"
+
+#~ msgid ""
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
+#~ msgstr ""
+#~ "ניתן להמיר את קבצי ההגדרות הקיימים מ-Samba 3 ל-Samba 4. סביר שההמרה תיכשל "
+#~ "בהתקנות מסובכות, אבל תוצאותיה אמורים לתת נקודת התחלה טובה עבור רוב "
+#~ "ההתקנות הקיימות."
+
+#~ msgid "Server role"
+#~ msgstr "סוג השרת"
+
+#~ msgid ""
+#~ "Domain controllers manage NT4-style or Active Directory domains and "
+#~ "provide services such as identity management and domain logons. Each "
+#~ "domain needs to have a at least one domain controller."
+#~ msgstr ""
+#~ "בקרי מתחם מנהלים מתחמים מסוג NT4 או מסוג Active Directory ומספקים שרותים "
+#~ "כמו ניהול זהות משתמשים וכניסות למתחמים. בכל מתחם דרוש לפחות בקר מתחם אחד."
+
+#~ msgid ""
+#~ "Member servers can be part of a NT4-style or Active Directory domain but "
+#~ "do not provide any domain services. Workstations and file or print "
+#~ "servers are usually regular domain members."
+#~ msgstr ""
+#~ "שרתים חברי מתחם יכולים להיות חלק ממתחם מסוג NT4 או מסוג Active Directory "
+#~ "אבל אינם נותנים שרותי מתחם. עמדות עבודה ושרתי הדפסה הינם בדרך כלל שרתים "
+#~ "חברי מתחם רגילים."
+
+#~ msgid ""
+#~ "A standalone server can not be used in a domain and only supports file "
+#~ "sharing and Windows for Workgroups-style logins."
+#~ msgstr ""
+#~ "שרת שעומד בפני עצמו אינו יכול להיות חלק ממתחם ותומך רק בשיתוף קבצים "
+#~ "וכניסות בסגנון חלונות לקבוצות עבודה."
+
+#~ msgid ""
+#~ "If no server role is specified, the Samba server will not be provisioned, "
+#~ "so this can be done manually by the user."
+#~ msgstr ""
+#~ "אם לא הוגדר סוג השרת, לא יסופק שרת Samba, כך שהמשתמש יוכל לדאוג לזה ידנית."
+
+#~ msgid "Realm name:"
+#~ msgstr "שם מתחם:"
+
+#~ msgid ""
+#~ "Please specify the Kerberos realm for the domain that this domain "
+#~ "controller controls."
+#~ msgstr "נא לציין את מתחם Kerberos עבור המתחם שנשלט על ידי בקר מתחם זה."
+
+#~ msgid "Usually this is the a capitalized version of your DNS hostname."
+#~ msgstr "בדרך כלל זו גירסא באותיות רישיות של שם מחשבך ב-DNS."
+
+#~ msgid "New password for the Samba \"administrator\" user:"
+#~ msgstr "סיסמה חדשה עבור משתמש Samba‏ \"administrator\":"
+
+#~ msgid "If this field is left blank, a random password will be generated."
+#~ msgstr "אם שדה זה לא ימולא, תיווצר סיסמה אקראית."
+
+#~ msgid "A password can be set later by running, as root:"
+#~ msgstr "ניתן לשנות אחר כך את הסיסמה על ידי הרצה כ-root:"
+
+#~ msgid "Repeat password for the Samba \"administrator\" user:"
+#~ msgstr "חזור על הסיסמה עבור משתמש Samba‏ \"administrator\":"
+
+#~ msgid "Password input error"
+#~ msgstr "שגיאת קלט בסיסמה"
+
+#~ msgid "The two passwords you entered were not the same. Please try again."
+#~ msgstr "שתי הסיסמאות שהכנסת אינן זהות. נא לנסות שוב."
 
 #~ msgid " $ samba-tool user setpassword administrator"
 #~ msgstr " $ samba-tool user setpassword administrator"

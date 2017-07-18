@@ -7,8 +7,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: samba4\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2013-10-22 20:32+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2013-10-23 09:06+0100\n"
 "Last-Translator: Martin Bagge / brother <brother@bsnet.se>\n"
 "Language-Team: Swedish <debian-l10n-swedish@lists.debian.org>\n"
@@ -17,131 +17,6 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: Poedit 1.5.4\n"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "Uppgradera från Samba 3?"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
-msgstr ""
-"Det är möjligt att migrera existerande inställningsfiler från Samba 3 till "
-"Samba 4. Det är troligt att det inte kommer att fungera i komplexa "
-"installationer men bör ge bra startlägen för de allra flesta installationer."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid "Server role"
-msgstr "Serverroll"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-"Domänkontrollanter hanterar NT4- eller Active Directory-domäner och "
-"tillhandahåller tjänster som identitetshantering och domäninlogging. Varje "
-"domän behöver åtminstone en domänkontrollant."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-"Medlemsservrar kan vara del av en NT4- eller Active Directory-domän utan att "
-"tillhandahålla några domäntjänster. Arbetsstationer och fil- eller "
-"skrivarservrar är vanligen domänmedlemmar."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-"En fristående server kan inte användas i en domän och stöder endast "
-"fildelning och Windows för Workgroups-inloggning."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"If no server role is specified, the Samba server will not be provisioned, so "
-"this can be done manually by the user."
-msgstr ""
-"Om ingen serverroll anges kommer sambaservern inte att förberedas, detta kan "
-"göras manuellt av användaren."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Realm name:"
-msgstr "Namn för realm:"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr ""
-"Ange Kerberosrealm för domänen som denna domänkontrollant kontrollerar."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr "Vanligen är detta DNS-värdnamnet i stora bokstäver."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "New password for the Samba \"administrator\" user:"
-msgstr "Nytt lösenord för Samba-användaren \"administrator\":"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "If this field is left blank, a random password will be generated."
-msgstr "Om fältet lämnas tomt slumpas ett lösenord fram."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "A password can be set later by running, as root:"
-msgstr "Lösenordet kan anges senare via rot-exekvering:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:5001
-msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr "Upprepa lösenordet för Samba-användaren \"administrator\":"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "Password input error"
-msgstr "Fel vid avgivande av lösenord"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "The two passwords you entered were not the same. Please try again."
-msgstr "De båda lösenorden som angavs stämde inte överrens. Försök igen."
 
 #. Type: title
 #. Description
@@ -235,6 +110,84 @@ msgstr ""
 "inställningen anger vilken standardgrupp som kommer att sökas igenom med de "
 "klientprogram som finns och detta kommer att vara domännamnet som används "
 "tillsammans med inställningen \"security=domain\"."
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "Uppgradera från Samba 3?"
+
+#~ msgid ""
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
+#~ msgstr ""
+#~ "Det är möjligt att migrera existerande inställningsfiler från Samba 3 "
+#~ "till Samba 4. Det är troligt att det inte kommer att fungera i komplexa "
+#~ "installationer men bör ge bra startlägen för de allra flesta "
+#~ "installationer."
+
+#~ msgid "Server role"
+#~ msgstr "Serverroll"
+
+#~ msgid ""
+#~ "Domain controllers manage NT4-style or Active Directory domains and "
+#~ "provide services such as identity management and domain logons. Each "
+#~ "domain needs to have a at least one domain controller."
+#~ msgstr ""
+#~ "Domänkontrollanter hanterar NT4- eller Active Directory-domäner och "
+#~ "tillhandahåller tjänster som identitetshantering och domäninlogging. "
+#~ "Varje domän behöver åtminstone en domänkontrollant."
+
+#~ msgid ""
+#~ "Member servers can be part of a NT4-style or Active Directory domain but "
+#~ "do not provide any domain services. Workstations and file or print "
+#~ "servers are usually regular domain members."
+#~ msgstr ""
+#~ "Medlemsservrar kan vara del av en NT4- eller Active Directory-domän utan "
+#~ "att tillhandahålla några domäntjänster. Arbetsstationer och fil- eller "
+#~ "skrivarservrar är vanligen domänmedlemmar."
+
+#~ msgid ""
+#~ "A standalone server can not be used in a domain and only supports file "
+#~ "sharing and Windows for Workgroups-style logins."
+#~ msgstr ""
+#~ "En fristående server kan inte användas i en domän och stöder endast "
+#~ "fildelning och Windows för Workgroups-inloggning."
+
+#~ msgid ""
+#~ "If no server role is specified, the Samba server will not be provisioned, "
+#~ "so this can be done manually by the user."
+#~ msgstr ""
+#~ "Om ingen serverroll anges kommer sambaservern inte att förberedas, detta "
+#~ "kan göras manuellt av användaren."
+
+#~ msgid "Realm name:"
+#~ msgstr "Namn för realm:"
+
+#~ msgid ""
+#~ "Please specify the Kerberos realm for the domain that this domain "
+#~ "controller controls."
+#~ msgstr ""
+#~ "Ange Kerberosrealm för domänen som denna domänkontrollant kontrollerar."
+
+#~ msgid "Usually this is the a capitalized version of your DNS hostname."
+#~ msgstr "Vanligen är detta DNS-värdnamnet i stora bokstäver."
+
+#~ msgid "New password for the Samba \"administrator\" user:"
+#~ msgstr "Nytt lösenord för Samba-användaren \"administrator\":"
+
+#~ msgid "If this field is left blank, a random password will be generated."
+#~ msgstr "Om fältet lämnas tomt slumpas ett lösenord fram."
+
+#~ msgid "A password can be set later by running, as root:"
+#~ msgstr "Lösenordet kan anges senare via rot-exekvering:"
+
+#~ msgid "Repeat password for the Samba \"administrator\" user:"
+#~ msgstr "Upprepa lösenordet för Samba-användaren \"administrator\":"
+
+#~ msgid "Password input error"
+#~ msgstr "Fel vid avgivande av lösenord"
+
+#~ msgid "The two passwords you entered were not the same. Please try again."
+#~ msgstr "De båda lösenorden som angavs stämde inte överrens. Försök igen."
 
 #~ msgid " $ samba-tool user setpassword administrator"
 #~ msgstr " $ samba-tool user setpassword administrator"

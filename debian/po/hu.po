@@ -8,8 +8,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: samba\n"
-"Report-Msgid-Bugs-To: samba4@packages.debian.org\n"
-"POT-Creation-Date: 2011-08-01 22:43+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2013-05-14 18:21+0200\n"
 "Last-Translator: Dr. Nagy Elemér Károly <eknagy@omikk.bme.hu>\n"
 "Language-Team: Hungarian <debian-l10n-hungarian@lists.d.o>\n"
@@ -21,103 +21,167 @@ msgstr ""
 "X-Poedit-Country: HUNGARY\n"
 "Plural-Forms: ???\n"
 
+#. Type: title
+#. Description
+#: ../samba-common.templates:1001
+msgid "Samba server and utilities"
+msgstr ""
+
 #. Type: boolean
 #. Description
-#: ../samba4.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "Samba3-ról frissíted?"
+#: ../samba-common.templates:2001
+msgid "Modify smb.conf to use WINS settings from DHCP?"
+msgstr ""
+"Módosítod az smb.conf-ot, hogy a WINS beállításokat a DHCP-n keresztül érje "
+"el?"
 
 #. Type: boolean
 #. Description
-#: ../samba4.templates:1001
+#: ../samba-common.templates:2001
 msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
+"If your computer gets IP address information from a DHCP server on the "
+"network, the DHCP server may also provide information about WINS servers "
+"(\"NetBIOS name servers\") present on the network.  This requires a change "
+"to your smb.conf file so that DHCP-provided WINS settings will automatically "
+"be read from /etc/samba/dhcp.conf."
 msgstr ""
-"A létező Samba3 konfigurációs fájlokat megpróbálhatjuk átvenni a Samba4-be. "
-"Ez valószínűleg nem fog sikerülni bonyolult konfiguráció esetén, de a "
-"legtöbb esetben  jó kiindulási pont lesz."
+"Ha e gép az IP címeket egy DHCP kiszolgálótól kérdezi le a hálózaton, lehet, "
+"hogy a WINS kiszolgálók (\"NetBIOS névkiszolgálók\") listáját is le tudja "
+"kérdezni. Ehhez az smb.conf módosítása szükséges, hogy a DHCP-n keresztüli "
+"WINS beállításokat automatikusan kiolvassa a /etc/samba/dhcp.conf-ból."
 
-#. Type: select
+#. Type: boolean
 #. Description
-#: ../samba4.templates:2001
-msgid "Server role"
-msgstr "Szerver szerep"
-
-#. Type: select
-#. Description
-#: ../samba4.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-"A tartományvezérlők vezérélők az NT4-stílusú vagy Active Directory "
-"tartományokat és olyan szolgáltatásokat biztosítanak mint az azonosítás vagy "
-"a tartomány bejelentkezés. Minden tartománynak legalább egy "
-"tartományvezérlőre van szüksége."
-
-#. Type: select
-#. Description
-#: ../samba4.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-"A tagszerverek egy NT4-stílusú vagy egy Active Directory tartomány részei "
-"lehetnek de nem biztosítanak tartomány szolgáltatásokat. A munkaállomások, "
-"fájl szerverek és nyomtató szerverek általában sima tartomány tagok."
-
-#. Type: select
-#. Description
-#: ../samba4.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-"A különálló szervert nem lehet tartományban használni. Csak fájlmegosztást "
-"és Windows for Workgroups stílusú bejelentkezést támogat."
-
-#. Type: string
-#. Description
-#: ../samba4.templates:3001
-msgid "Realm name:"
-msgstr "Birodalom (realm) név:"
-
-#. Type: string
-#. Description
-#: ../samba4.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr ""
-"Kérlek add meg az ezen tartományvezérlő által vezérelt tartományhoz tartozó "
-"Kerberos birodalmat (realm-ot)."
-
-#. Type: string
-#. Description
-#: ../samba4.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr "Ez általában a DNS gépnév csupa nagybetűvel írva."
-
+#: ../samba-common.templates:2001
 #, fuzzy
-#~| msgid ""
-#~| "If you do not choose this option, you will have to handle any "
-#~| "configuration changes yourself, and will not be able to take advantage "
-#~| "of periodic configuration enhancements."
+#| msgid ""
+#| "The dhcp3-client package must be installed to take advantage of this "
+#| "feature."
+msgid ""
+"The dhcp-client package must be installed to take advantage of this feature."
+msgstr ""
+"A dhcp3-client csomagnak telepítve kell lennie e képesség kihasználásához."
+
+#. Type: boolean
+#. Description
+#: ../samba-common.templates:3001
+msgid "Configure smb.conf automatically?"
+msgstr "Az smb.conf-ot automatikusan állítod be?"
+
+#. Type: boolean
+#. Description
+#: ../samba-common.templates:3001
+#, fuzzy
+#| msgid ""
+#| "The rest of the configuration of Samba deals with questions that affect "
+#| "parameters in /etc/samba/smb.conf, which is the file used to configure "
+#| "the Samba programs (nmbd and smbd). Your current smb.conf contains an "
+#| "'include' line or an option that spans multiple lines, which could "
+#| "confuse the automated configuration process and require you to edit your "
+#| "smb.conf by hand to get it working again."
+msgid ""
+"The rest of the configuration of Samba deals with questions that affect "
+"parameters in /etc/samba/smb.conf, which is the file used to configure the "
+"Samba programs (nmbd and smbd). Your current smb.conf contains an \"include"
+"\" line or an option that spans multiple lines, which could confuse the "
+"automated configuration process and require you to edit your smb.conf by "
+"hand to get it working again."
+msgstr ""
+"A Samba további beállításaihoz a /etc/samba/smb.conf paramétereit "
+"befolyásoló további kérdéseket kell megválaszolni, ami a Samba programok "
+"(nmbd és smbd) beállítófájlja. A jelenlegi smb.conf tartalmaz egy 'include' "
+"sort, vagy egy több sorra tört opciót, ami megzavarhatja az automata "
+"beállító folyamot, és szükségessé teszi az smb.conf saját kezű "
+"szerkesztését, hogy az ismét működjön."
+
+#. Type: boolean
+#. Description
+#: ../samba-common.templates:3001
+#, fuzzy
+#| msgid ""
+#| "If you do not choose this option, you will have to handle any "
+#| "configuration changes yourself, and will not be able to take advantage of "
+#| "periodic configuration enhancements."
+msgid ""
+"If you do not choose this option, you will have to handle any configuration "
+"changes yourself, and will not be able to take advantage of periodic "
+"configuration enhancements."
+msgstr ""
+"Ha nem élsz e lehetőséggel, minden beállítás változását neked kell "
+"felügyelned, és nem élvezheted az időszakos beállításhangolás előnyeit."
+
+#. Type: string
+#. Description
+#: ../samba-common.templates:4001
+#, fuzzy
+#| msgid "Workgroup/Domain Name:"
+msgid "Workgroup/Domain Name:"
+msgstr "Munkacsoport/Tartomány neve:"
+
+#. Type: string
+#. Description
+#: ../samba-common.templates:4001
+msgid ""
+"Please specify the workgroup for this system.  This setting controls which "
+"workgroup the system will appear in when used as a server, the default "
+"workgroup to be used when browsing with various frontends, and the domain "
+"name used with the \"security=domain\" setting."
+msgstr ""
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "Samba3-ról frissíted?"
+
 #~ msgid ""
-#~ "If you do not choose this option, Samba will be left unconfigured, and "
-#~ "you will have to configure it yourself."
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
 #~ msgstr ""
-#~ "Ha nem élsz e lehetőséggel, minden beállítás változását neked kell "
-#~ "felügyelned, és nem élvezheted az időszakos beállításhangolás előnyeit."
+#~ "A létező Samba3 konfigurációs fájlokat megpróbálhatjuk átvenni a Samba4-"
+#~ "be. Ez valószínűleg nem fog sikerülni bonyolult konfiguráció esetén, de a "
+#~ "legtöbb esetben  jó kiindulási pont lesz."
 
-#, fuzzy
-#~| msgid "Workgroup/Domain Name:"
-#~ msgid "Domain Name:"
-#~ msgstr "Munkacsoport/Tartomány neve:"
+#~ msgid "Server role"
+#~ msgstr "Szerver szerep"
+
+#~ msgid ""
+#~ "Domain controllers manage NT4-style or Active Directory domains and "
+#~ "provide services such as identity management and domain logons. Each "
+#~ "domain needs to have a at least one domain controller."
+#~ msgstr ""
+#~ "A tartományvezérlők vezérélők az NT4-stílusú vagy Active Directory "
+#~ "tartományokat és olyan szolgáltatásokat biztosítanak mint az azonosítás "
+#~ "vagy a tartomány bejelentkezés. Minden tartománynak legalább egy "
+#~ "tartományvezérlőre van szüksége."
+
+#~ msgid ""
+#~ "Member servers can be part of a NT4-style or Active Directory domain but "
+#~ "do not provide any domain services. Workstations and file or print "
+#~ "servers are usually regular domain members."
+#~ msgstr ""
+#~ "A tagszerverek egy NT4-stílusú vagy egy Active Directory tartomány részei "
+#~ "lehetnek de nem biztosítanak tartomány szolgáltatásokat. A "
+#~ "munkaállomások, fájl szerverek és nyomtató szerverek általában sima "
+#~ "tartomány tagok."
+
+#~ msgid ""
+#~ "A standalone server can not be used in a domain and only supports file "
+#~ "sharing and Windows for Workgroups-style logins."
+#~ msgstr ""
+#~ "A különálló szervert nem lehet tartományban használni. Csak "
+#~ "fájlmegosztást és Windows for Workgroups stílusú bejelentkezést támogat."
+
+#~ msgid "Realm name:"
+#~ msgstr "Birodalom (realm) név:"
+
+#~ msgid ""
+#~ "Please specify the Kerberos realm for the domain that this domain "
+#~ "controller controls."
+#~ msgstr ""
+#~ "Kérlek add meg az ezen tartományvezérlő által vezérelt tartományhoz "
+#~ "tartozó Kerberos birodalmat (realm-ot)."
+
+#~ msgid "Usually this is the a capitalized version of your DNS hostname."
+#~ msgstr "Ez általában a DNS gépnév csupa nagybetűvel írva."
 
 #, fuzzy
 #~| msgid ""
@@ -131,48 +195,6 @@ msgstr "Ez általában a DNS gépnév csupa nagybetűvel írva."
 #~ "Add meg e kiszolgáló által megjelenítendő munkacsoport, mikor azt "
 #~ "lekérdezik a kliensek. Vedd figyelembe, hogy e paraméter meghatározza a "
 #~ "tartomány nevét is, ha engedélyezve van a security=domain beállítás."
-
-#~ msgid "Modify smb.conf to use WINS settings from DHCP?"
-#~ msgstr ""
-#~ "Módosítod az smb.conf-ot, hogy a WINS beállításokat a DHCP-n keresztül "
-#~ "érje el?"
-
-#~ msgid ""
-#~ "If your computer gets IP address information from a DHCP server on the "
-#~ "network, the DHCP server may also provide information about WINS servers "
-#~ "(\"NetBIOS name servers\") present on the network.  This requires a "
-#~ "change to your smb.conf file so that DHCP-provided WINS settings will "
-#~ "automatically be read from /etc/samba/dhcp.conf."
-#~ msgstr ""
-#~ "Ha e gép az IP címeket egy DHCP kiszolgálótól kérdezi le a hálózaton, "
-#~ "lehet, hogy a WINS kiszolgálók (\"NetBIOS névkiszolgálók\") listáját is "
-#~ "le tudja kérdezni. Ehhez az smb.conf módosítása szükséges, hogy a DHCP-n "
-#~ "keresztüli WINS beállításokat automatikusan kiolvassa a /etc/samba/dhcp."
-#~ "conf-ból."
-
-#~ msgid ""
-#~ "The dhcp3-client package must be installed to take advantage of this "
-#~ "feature."
-#~ msgstr ""
-#~ "A dhcp3-client csomagnak telepítve kell lennie e képesség kihasználásához."
-
-#~ msgid "Configure smb.conf automatically?"
-#~ msgstr "Az smb.conf-ot automatikusan állítod be?"
-
-#~ msgid ""
-#~ "The rest of the configuration of Samba deals with questions that affect "
-#~ "parameters in /etc/samba/smb.conf, which is the file used to configure "
-#~ "the Samba programs (nmbd and smbd). Your current smb.conf contains an "
-#~ "'include' line or an option that spans multiple lines, which could "
-#~ "confuse the automated configuration process and require you to edit your "
-#~ "smb.conf by hand to get it working again."
-#~ msgstr ""
-#~ "A Samba további beállításaihoz a /etc/samba/smb.conf paramétereit "
-#~ "befolyásoló további kérdéseket kell megválaszolni, ami a Samba programok "
-#~ "(nmbd és smbd) beállítófájlja. A jelenlegi smb.conf tartalmaz egy "
-#~ "'include' sort, vagy egy több sorra tört opciót, ami megzavarhatja az "
-#~ "automata beállító folyamot, és szükségessé teszi az smb.conf saját kezű "
-#~ "szerkesztését, hogy az ismét működjön."
 
 #~ msgid "Use password encryption?"
 #~ msgstr "Használsz kódolt jelszavakat?"

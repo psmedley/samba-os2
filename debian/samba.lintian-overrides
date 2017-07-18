@@ -1,5 +1,2 @@
 # Standard path for [printers] section is world-writeable with sticky bit set
 samba: non-standard-dir-perm var/spool/samba/ 1777 != 0755
-# /etc/init.d/samba is not a real init script, just a compatibility wrapper
-samba: script-in-etc-init.d-not-registered-via-update-rc.d etc/init.d/samba
-samba: init.d-script-does-not-source-init-functions etc/init.d/samba

@@ -6,8 +6,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: samba\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2013-10-22 20:32+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2013-11-02 20:15+0700\n"
 "Last-Translator:  Theppitak Karoonboonyanan <thep@linux.thai.net>\n"
 "Language-Team: Thai <thai-l10n@googlegroups.com>\n"
@@ -15,129 +15,6 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "จะปรับรุ่นขึ้นจาก Samba 3 หรือไม่?"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
-msgstr ""
-"คุณสามารถปรับย้ายแฟ้มค่าตั้งจาก Samba 3 มาเป็น Samba 4 ได้ "
-"การปรับนี้อาจใช้การไม่ได้สำหรับค่าตั้งที่ซับซ้อน แต่อาจเป็นจุดเริ่มต้นที่ดีสำหรับการติดตั้งเดิมส่วนใหญ่"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid "Server role"
-msgstr "บทบาทของเซิร์ฟเวอร์"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-"ตัวควบคุมโดเมนจะจัดการโดเมนแบบ NT4 หรือ Active Directory และให้บริการต่างๆ "
-"เช่นการจัดการชื่อเอกลักษณ์และการเข้าระบบในโดเมน "
-"แต่ละโดเมนจะต้องมีตัวควบคุมโดเมนอย่างน้อยหนึ่งตัวเสมอ"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-"เซิร์ฟเวอร์สมาชิกสามารถเข้าเป็นส่วนหนึ่งของโดเมนแบบ NT4 หรือ Active Directory ได้ "
-"แต่จะไม่ให้บริการใดๆ เกี่ยวกับโดเมนเลย "
-"เครื่องสถานีงานและเซิร์ฟเวอร์บริการแฟ้มหรือบริการพิมพ์มักจะเป็นสมาชิกแบบปกติของโดเมน"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-"เซิร์ฟเวอร์แบบ standalone ไม่สามารถใช้งานภายในโดเมนได้ "
-"และจะรองรับการแบ่งปันแฟ้มและการเข้าระบบในแบบ Windows for Workgroups เท่านั้น"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"If no server role is specified, the Samba server will not be provisioned, so "
-"this can be done manually by the user."
-msgstr ""
-"ถ้าไม่มีการระบุบทบาทของเซิร์ฟเวอร์ ก็จะไม่มีการจัดเตรียมเซิร์ฟเวอร์ Samba "
-"เพื่อที่ผู้ใช้จะสามารถจัดเตรียมเองได้"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Realm name:"
-msgstr "ชื่อ realm:"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr "กรุณาระบุ realm ของ Kerberos ของโดเมนที่ตัวควบคุมโดเมนนี้ควบคุมอยู่"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr "โดยปกติแล้วก็จะเป็นชื่อโฮสต์ของคุณใน DNS โดยสะกดด้วยตัวพิมพ์ใหญ่ทั้งหมด"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "New password for the Samba \"administrator\" user:"
-msgstr "ตั้งรหัสผ่านใหม่สำหรับผู้ใช้ \"administrator\" ของ Samba:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "If this field is left blank, a random password will be generated."
-msgstr "ถ้าปล่อยช่องนี้ว่างไว้ ก็จะสร้างรหัสผ่านสุ่มให้แทน"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "A password can be set later by running, as root:"
-msgstr "คุณสามารถเปลี่ยนรหัสผ่านภายหลังได้โดยใช้คำสั่งต่อไปนี้ในฐานะ root:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:5001
-msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr "ป้อนรหัสผ่านสำหรับผู้ใช้ \"administrator\" ของ Samba ซ้ำอีกครั้ง:"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "Password input error"
-msgstr "การป้อนรหัสผ่านผิดพลาด"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "The two passwords you entered were not the same. Please try again."
-msgstr "รหัสผ่านที่คุณป้อนทั้งสองครั้งไม่ตรงกัน กรุณาลองใหม่"
 
 #. Type: title
 #. Description
@@ -224,6 +101,81 @@ msgstr ""
 "กรุณาระบุเวิร์กกรุ๊ปสำหรับระบบนี้ ค่านี้จะกำหนดเวิร์กกรุ๊ปที่ระบบนี้จะเข้าร่วมเมื่อใช้เป็นเซิร์ฟเวอร์, "
 "กำหนดเวิร์กกรุ๊ปปริยายที่จะใช้เมื่อท่องดูด้วยโปรแกรมต่างๆ และกำหนดชื่อโดเมนที่จะใช้ในกรณีที่ตั้งค่า "
 "\"security=domain\" ด้วย"
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "จะปรับรุ่นขึ้นจาก Samba 3 หรือไม่?"
+
+#~ msgid ""
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
+#~ msgstr ""
+#~ "คุณสามารถปรับย้ายแฟ้มค่าตั้งจาก Samba 3 มาเป็น Samba 4 ได้ "
+#~ "การปรับนี้อาจใช้การไม่ได้สำหรับค่าตั้งที่ซับซ้อน แต่อาจเป็นจุดเริ่มต้นที่ดีสำหรับการติดตั้งเดิมส่วนใหญ่"
+
+#~ msgid "Server role"
+#~ msgstr "บทบาทของเซิร์ฟเวอร์"
+
+#~ msgid ""
+#~ "Domain controllers manage NT4-style or Active Directory domains and "
+#~ "provide services such as identity management and domain logons. Each "
+#~ "domain needs to have a at least one domain controller."
+#~ msgstr ""
+#~ "ตัวควบคุมโดเมนจะจัดการโดเมนแบบ NT4 หรือ Active Directory และให้บริการต่างๆ "
+#~ "เช่นการจัดการชื่อเอกลักษณ์และการเข้าระบบในโดเมน "
+#~ "แต่ละโดเมนจะต้องมีตัวควบคุมโดเมนอย่างน้อยหนึ่งตัวเสมอ"
+
+#~ msgid ""
+#~ "Member servers can be part of a NT4-style or Active Directory domain but "
+#~ "do not provide any domain services. Workstations and file or print "
+#~ "servers are usually regular domain members."
+#~ msgstr ""
+#~ "เซิร์ฟเวอร์สมาชิกสามารถเข้าเป็นส่วนหนึ่งของโดเมนแบบ NT4 หรือ Active Directory ได้ "
+#~ "แต่จะไม่ให้บริการใดๆ เกี่ยวกับโดเมนเลย "
+#~ "เครื่องสถานีงานและเซิร์ฟเวอร์บริการแฟ้มหรือบริการพิมพ์มักจะเป็นสมาชิกแบบปกติของโดเมน"
+
+#~ msgid ""
+#~ "A standalone server can not be used in a domain and only supports file "
+#~ "sharing and Windows for Workgroups-style logins."
+#~ msgstr ""
+#~ "เซิร์ฟเวอร์แบบ standalone ไม่สามารถใช้งานภายในโดเมนได้ "
+#~ "และจะรองรับการแบ่งปันแฟ้มและการเข้าระบบในแบบ Windows for Workgroups เท่านั้น"
+
+#~ msgid ""
+#~ "If no server role is specified, the Samba server will not be provisioned, "
+#~ "so this can be done manually by the user."
+#~ msgstr ""
+#~ "ถ้าไม่มีการระบุบทบาทของเซิร์ฟเวอร์ ก็จะไม่มีการจัดเตรียมเซิร์ฟเวอร์ Samba "
+#~ "เพื่อที่ผู้ใช้จะสามารถจัดเตรียมเองได้"
+
+#~ msgid "Realm name:"
+#~ msgstr "ชื่อ realm:"
+
+#~ msgid ""
+#~ "Please specify the Kerberos realm for the domain that this domain "
+#~ "controller controls."
+#~ msgstr "กรุณาระบุ realm ของ Kerberos ของโดเมนที่ตัวควบคุมโดเมนนี้ควบคุมอยู่"
+
+#~ msgid "Usually this is the a capitalized version of your DNS hostname."
+#~ msgstr "โดยปกติแล้วก็จะเป็นชื่อโฮสต์ของคุณใน DNS โดยสะกดด้วยตัวพิมพ์ใหญ่ทั้งหมด"
+
+#~ msgid "New password for the Samba \"administrator\" user:"
+#~ msgstr "ตั้งรหัสผ่านใหม่สำหรับผู้ใช้ \"administrator\" ของ Samba:"
+
+#~ msgid "If this field is left blank, a random password will be generated."
+#~ msgstr "ถ้าปล่อยช่องนี้ว่างไว้ ก็จะสร้างรหัสผ่านสุ่มให้แทน"
+
+#~ msgid "A password can be set later by running, as root:"
+#~ msgstr "คุณสามารถเปลี่ยนรหัสผ่านภายหลังได้โดยใช้คำสั่งต่อไปนี้ในฐานะ root:"
+
+#~ msgid "Repeat password for the Samba \"administrator\" user:"
+#~ msgstr "ป้อนรหัสผ่านสำหรับผู้ใช้ \"administrator\" ของ Samba ซ้ำอีกครั้ง:"
+
+#~ msgid "Password input error"
+#~ msgstr "การป้อนรหัสผ่านผิดพลาด"
+
+#~ msgid "The two passwords you entered were not the same. Please try again."
+#~ msgstr "รหัสผ่านที่คุณป้อนทั้งสองครั้งไม่ตรงกัน กรุณาลองใหม่"
 
 #~ msgid " $ samba-tool user setpassword administrator"
 #~ msgstr " $ samba-tool user setpassword administrator"

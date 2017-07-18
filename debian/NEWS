@@ -1,3 +1,13 @@
+samba (2:4.6.5+dfsg-5) unstable; urgency=medium
+
+    The samba service has been removed. Use the individual services instead:
+
+    * nmbd
+    * smbd
+    * samba-ad-dc
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 18 Jul 2017 22:52:05 +0200
+
 samba (2:4.4.1+dfsg-1) experimental; urgency=medium
 
     This Samba security addresses both Denial of Service and Man in

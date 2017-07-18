@@ -9,8 +9,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: samba_4.0.0~alpha17.dfsg2-2\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2013-10-22 20:32+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2012-02-16 04:48+0700\n"
 "Last-Translator: Al Qalit <qal.smith@gmail.com>\n"
 "Language-Team: Debian Indonesia Translator <debian-l10n-indonesian@lists."
@@ -21,132 +21,6 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: KBabel 1.11.4\n"
 "Plural-Forms: nplural=1, plural>1\n"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "Upgrade dari Samba 3?"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
-msgstr ""
-"Sangat memungkinkan untuk migrasi dari berkas pengaturan lama dari Samba 3 "
-"ke Samba4.  Hal ini mungkin gagal untuk instalasi kompleks, tetapi "
-"memberikan titik awal yang baik untuk kebanyakan instalasi yang ada."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid "Server role"
-msgstr "Aturan server"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-"Pengelola kontroller domain gaya-NT4 atau Active Domain dan penyedia layanan "
-"seperti pengelola identitas dan login domain. Setiap domain harus memiliki "
-"setidaknya satu kontroller domain"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-"Anggota server dapat menjadi bagian dari gaya-NT4 atau domain Active "
-"Directory tapi tidak menyediakan layanan domain apapun. Workstation dan "
-"berkas atau server pencetak biasanya aggota domain biasa."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-"Server standalone tidak dapat digunakan di domain dan hanya mendukung "
-"sharing berkas dan login Windows untuk gaya-Workgroups."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"If no server role is specified, the Samba server will not be provisioned, so "
-"this can be done manually by the user."
-msgstr ""
-"Jika tidak ada aturan server yang ditentukan. Server Samba tidak akan "
-"ditetapkan, jadiini bisa dikerjakan secara manual oleh pengguna."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Realm name:"
-msgstr "Nama Realm:"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr ""
-"Silakan tentukan realm Kerberos untuk domain yang dikendalikan oleh "
-"kontroller domain ini."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr "Biasanya ini adalah versi huruf besar dari nama DNS host anda."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "New password for the Samba \"administrator\" user:"
-msgstr "Kata sandi baru untuk pengguna \"administrator\" Samba:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "If this field is left blank, a random password will be generated."
-msgstr "Jika bagian ini kosong, sebuah kata sandi acak akan dihasilkan"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "A password can be set later by running, as root:"
-msgstr "Kata sandi dapat diatur kemudian, dengan dijalankan oleh root:"
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:5001
-msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr "Ulangi kata sandi untuk pengguna \"administrator\" Samba:"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "Password input error"
-msgstr "Kesalahan masukan kata sandi"
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "The two passwords you entered were not the same. Please try again."
-msgstr "Dua kata sandi yang anda masukkan tidak sama. Mohon ulangi lagi."
 
 #. Type: title
 #. Description
@@ -238,6 +112,84 @@ msgstr ""
 "yang akan tampil jika digunakan sebagai server, workgrup bawaan akan "
 "digunakan ketika menjelajahi dengan berbagai frontends, dan nama doman "
 "digunakan dengan pengaturan \"security=domain\"."
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "Upgrade dari Samba 3?"
+
+#~ msgid ""
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
+#~ msgstr ""
+#~ "Sangat memungkinkan untuk migrasi dari berkas pengaturan lama dari Samba "
+#~ "3 ke Samba4.  Hal ini mungkin gagal untuk instalasi kompleks, tetapi "
+#~ "memberikan titik awal yang baik untuk kebanyakan instalasi yang ada."
+
+#~ msgid "Server role"
+#~ msgstr "Aturan server"
+
+#~ msgid ""
+#~ "Domain controllers manage NT4-style or Active Directory domains and "
+#~ "provide services such as identity management and domain logons. Each "
+#~ "domain needs to have a at least one domain controller."
+#~ msgstr ""
+#~ "Pengelola kontroller domain gaya-NT4 atau Active Domain dan penyedia "
+#~ "layanan seperti pengelola identitas dan login domain. Setiap domain harus "
+#~ "memiliki setidaknya satu kontroller domain"
+
+#~ msgid ""
+#~ "Member servers can be part of a NT4-style or Active Directory domain but "
+#~ "do not provide any domain services. Workstations and file or print "
+#~ "servers are usually regular domain members."
+#~ msgstr ""
+#~ "Anggota server dapat menjadi bagian dari gaya-NT4 atau domain Active "
+#~ "Directory tapi tidak menyediakan layanan domain apapun. Workstation dan "
+#~ "berkas atau server pencetak biasanya aggota domain biasa."
+
+#~ msgid ""
+#~ "A standalone server can not be used in a domain and only supports file "
+#~ "sharing and Windows for Workgroups-style logins."
+#~ msgstr ""
+#~ "Server standalone tidak dapat digunakan di domain dan hanya mendukung "
+#~ "sharing berkas dan login Windows untuk gaya-Workgroups."
+
+#~ msgid ""
+#~ "If no server role is specified, the Samba server will not be provisioned, "
+#~ "so this can be done manually by the user."
+#~ msgstr ""
+#~ "Jika tidak ada aturan server yang ditentukan. Server Samba tidak akan "
+#~ "ditetapkan, jadiini bisa dikerjakan secara manual oleh pengguna."
+
+#~ msgid "Realm name:"
+#~ msgstr "Nama Realm:"
+
+#~ msgid ""
+#~ "Please specify the Kerberos realm for the domain that this domain "
+#~ "controller controls."
+#~ msgstr ""
+#~ "Silakan tentukan realm Kerberos untuk domain yang dikendalikan oleh "
+#~ "kontroller domain ini."
+
+#~ msgid "Usually this is the a capitalized version of your DNS hostname."
+#~ msgstr "Biasanya ini adalah versi huruf besar dari nama DNS host anda."
+
+#~ msgid "New password for the Samba \"administrator\" user:"
+#~ msgstr "Kata sandi baru untuk pengguna \"administrator\" Samba:"
+
+#~ msgid "If this field is left blank, a random password will be generated."
+#~ msgstr "Jika bagian ini kosong, sebuah kata sandi acak akan dihasilkan"
+
+#~ msgid "A password can be set later by running, as root:"
+#~ msgstr "Kata sandi dapat diatur kemudian, dengan dijalankan oleh root:"
+
+#~ msgid "Repeat password for the Samba \"administrator\" user:"
+#~ msgstr "Ulangi kata sandi untuk pengguna \"administrator\" Samba:"
+
+#~ msgid "Password input error"
+#~ msgstr "Kesalahan masukan kata sandi"
+
+#~ msgid "The two passwords you entered were not the same. Please try again."
+#~ msgstr "Dua kata sandi yang anda masukkan tidak sama. Mohon ulangi lagi."
 
 #~ msgid " $ samba-tool user setpassword administrator"
 #~ msgstr " $ samba-tool pengguna setpassword administrator"

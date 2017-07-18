@@ -1,3 +1,15 @@
+samba (2:4.6.5+dfsg-5) unstable; urgency=medium
+
+  * Remove bug_598313_upstream_7499-nss_wins-dont-clobber-daemons-logs.patch,
+    unused
+  * Remove samba-ad-dc.templates
+  * Remove upstart files on upgrade (Closes: #867688)
+  * glusterfs-common is only available on linux
+  * Remove the samba service
+  * Ensure /var/log/samba permissions are set (Closes: #711138)
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 18 Jul 2017 23:29:44 +0200
+
 samba (2:4.6.5+dfsg-4) unstable; urgency=high
 
   * This is a security release in order to address the following defects:

@@ -5,8 +5,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: 4.0.0~alpha17.dfsg2-2\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2013-10-22 20:32+0200\n"
+"Report-Msgid-Bugs-To: samba@packages.debian.org\n"
+"POT-Creation-Date: 2017-07-17 16:42+0200\n"
 "PO-Revision-Date: 2012-02-27 00:36+0100\n"
 "Last-Translator: Jordi Mallach <jordi@debian.org>\n"
 "Language-Team: Catalan <debian-l10n-catalan@lists.debian.org>\n"
@@ -14,131 +14,6 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid "Upgrade from Samba 3?"
-msgstr "Voleu actualitzar des del Samba 3?"
-
-#. Type: boolean
-#. Description
-#: ../samba-ad-dc.templates:1001
-msgid ""
-"It is possible to migrate the existing configuration files from Samba 3 to "
-"Samba 4. This is likely to fail for complex setups, but should provide a "
-"good starting point for most existing installations."
-msgstr ""
-"És possible migrar els fitxers de configuració existents de Samba 3 a Samba "
-"4. Això és molt possible que falli per a configuracions complexes, però "
-"hauria de proveir un bont punt de partida per a la majoria d'instaŀlacions "
-"existents."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid "Server role"
-msgstr "Rol del servidor"
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Domain controllers manage NT4-style or Active Directory domains and provide "
-"services such as identity management and domain logons. Each domain needs to "
-"have a at least one domain controller."
-msgstr ""
-"Els controladors de domini gestionen dominis d'estil NT4 o Active Directory, "
-"i proveeixen serveis com el gestor d'identitats i entrades al domini. Cada "
-"domini necessita tenir almenys un controlador de domini."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"Member servers can be part of a NT4-style or Active Directory domain but do "
-"not provide any domain services. Workstations and file or print servers are "
-"usually regular domain members."
-msgstr ""
-"Els servidors membres poden ser part d'un domini d'estil NT4 o Active "
-"Directory, però no proveeixen cap servei de domini. Les estacions de treball "
-"o servidors d'impressió son, habitualment, membres normals del domini."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"A standalone server can not be used in a domain and only supports file "
-"sharing and Windows for Workgroups-style logins."
-msgstr ""
-"Un servidor individual no es pot emprar en un domini i només implementa la "
-"compartició de fitxers i entrades de l'estil de «Windows for Workgroups»."
-
-#. Type: select
-#. Description
-#: ../samba-ad-dc.templates:2001
-msgid ""
-"If no server role is specified, the Samba server will not be provisioned, so "
-"this can be done manually by the user."
-msgstr ""
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Realm name:"
-msgstr "Nom del reialme:"
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid ""
-"Please specify the Kerberos realm for the domain that this domain controller "
-"controls."
-msgstr ""
-"Especifiqueu el reialme de Kerberos per al domini controlat per aquest "
-"controlador de domini."
-
-#. Type: string
-#. Description
-#: ../samba-ad-dc.templates:3001
-msgid "Usually this is the a capitalized version of your DNS hostname."
-msgstr "Normalment això és el nom en majúscules del vostre nom DNS."
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "New password for the Samba \"administrator\" user:"
-msgstr ""
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "If this field is left blank, a random password will be generated."
-msgstr ""
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:4001
-msgid "A password can be set later by running, as root:"
-msgstr ""
-
-#. Type: password
-#. Description
-#: ../samba-ad-dc.templates:5001
-msgid "Repeat password for the Samba \"administrator\" user:"
-msgstr ""
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "Password input error"
-msgstr ""
-
-#. Type: error
-#. Description
-#: ../samba-ad-dc.templates:6001
-msgid "The two passwords you entered were not the same. Please try again."
-msgstr ""
 
 #. Type: title
 #. Description
@@ -234,6 +109,62 @@ msgstr ""
 "en quin grup de treball apareixerà el sistema quan s'empre com a servidor, "
 "el grup de treball per defecte quan es navega amb diferents interfícies, i "
 "el nom de domini emprat amb el paràmetre «security=domain»."
+
+#~ msgid "Upgrade from Samba 3?"
+#~ msgstr "Voleu actualitzar des del Samba 3?"
+
+#~ msgid ""
+#~ "It is possible to migrate the existing configuration files from Samba 3 "
+#~ "to Samba 4. This is likely to fail for complex setups, but should provide "
+#~ "a good starting point for most existing installations."
+#~ msgstr ""
+#~ "És possible migrar els fitxers de configuració existents de Samba 3 a "
+#~ "Samba 4. Això és molt possible que falli per a configuracions complexes, "
+#~ "però hauria de proveir un bont punt de partida per a la majoria "
+#~ "d'instaŀlacions existents."
+
+#~ msgid "Server role"
+#~ msgstr "Rol del servidor"
+
+#~ msgid ""
+#~ "Domain controllers manage NT4-style or Active Directory domains and "
+#~ "provide services such as identity management and domain logons. Each "
+#~ "domain needs to have a at least one domain controller."
+#~ msgstr ""
+#~ "Els controladors de domini gestionen dominis d'estil NT4 o Active "
+#~ "Directory, i proveeixen serveis com el gestor d'identitats i entrades al "
+#~ "domini. Cada domini necessita tenir almenys un controlador de domini."
+
+#~ msgid ""
+#~ "Member servers can be part of a NT4-style or Active Directory domain but "
+#~ "do not provide any domain services. Workstations and file or print "
+#~ "servers are usually regular domain members."
+#~ msgstr ""
+#~ "Els servidors membres poden ser part d'un domini d'estil NT4 o Active "
+#~ "Directory, però no proveeixen cap servei de domini. Les estacions de "
+#~ "treball o servidors d'impressió son, habitualment, membres normals del "
+#~ "domini."
+
+#~ msgid ""
+#~ "A standalone server can not be used in a domain and only supports file "
+#~ "sharing and Windows for Workgroups-style logins."
+#~ msgstr ""
+#~ "Un servidor individual no es pot emprar en un domini i només implementa "
+#~ "la compartició de fitxers i entrades de l'estil de «Windows for "
+#~ "Workgroups»."
+
+#~ msgid "Realm name:"
+#~ msgstr "Nom del reialme:"
+
+#~ msgid ""
+#~ "Please specify the Kerberos realm for the domain that this domain "
+#~ "controller controls."
+#~ msgstr ""
+#~ "Especifiqueu el reialme de Kerberos per al domini controlat per aquest "
+#~ "controlador de domini."
+
+#~ msgid "Usually this is the a capitalized version of your DNS hostname."
+#~ msgstr "Normalment això és el nom en majúscules del vostre nom DNS."
 
 #~ msgid "Use password encryption?"
 #~ msgstr "Voleu utilitzar el xifrat de contrasenyes?"
