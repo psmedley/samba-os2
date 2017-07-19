@@ -1,3 +1,15 @@
+samba (2:4.6.5+dfsg-6) unstable; urgency=medium
+
+  * libcephfs-dev is only available on linux
+  * Fix libpam-winbind.prerm to be multiarch-safe (Closes: #647430)
+  * Add missing logrotate for /var/log/samba/log.samba (Closes: #803924)
+  * Use smbcontrol in logrotate when available (Closes: #804705)
+  * From upstream: Fix outdated DNS Root servers (Closes: #865406)
+  * Drop xsltproc_dont_build_smb.conf.5.patch, as #750593 is marked fixed
+    (Closes: #776223)
+
+ -- Mathieu Parent <sathieu@debian.org>  Wed, 19 Jul 2017 22:53:50 +0200
+
 samba (2:4.6.5+dfsg-5) unstable; urgency=medium
 
   * Remove bug_598313_upstream_7499-nss_wins-dont-clobber-daemons-logs.patch,

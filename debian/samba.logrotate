@@ -3,7 +3,7 @@
 	missingok
 	rotate 7
 	postrotate
-		[ ! -f /var/run/samba/smbd.pid ] || /etc/init.d/smbd reload > /dev/null
+		[ ! -x /usr/bin/smbcontrol ] || /usr/bin/smbcontrol smbd reload-config
 	endscript
 	compress
 	delaycompress
@@ -15,7 +15,19 @@
 	missingok
 	rotate 7
 	postrotate
-		[ ! -f /var/run/samba/nmbd.pid ] || kill -HUP `cat /var/run/samba/nmbd.pid`
+		[ ! -x /usr/bin/smbcontrol ] || /usr/bin/smbcontrol nmbd reload-config
+	endscript
+	compress
+	delaycompress
+	notifempty
+}
+
+/var/log/samba/log.samba {
+	weekly
+	missingok
+	rotate 7
+	postrotate
+		[ ! -f /var/run/samba/samba.pid ] || kill -HUP `cat /var/run/samba/samba.pid`
 	endscript
 	compress
 	delaycompress
