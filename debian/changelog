@@ -1,3 +1,12 @@
+samba (2:4.6.5+dfsg-7) unstable; urgency=medium
+
+  * xfslibs-dev is only available on linux
+  * Fix logrotate for /var/log/samba/log.samba to send SIGHUP to all processes
+    of the service (systemd only)
+  * Add reportbug script for samba-common, samba and winbind (Closes: #682861)
+
+ -- Mathieu Parent <sathieu@debian.org>  Fri, 21 Jul 2017 06:19:57 +0200
+
 samba (2:4.6.5+dfsg-6) unstable; urgency=medium
 
   * libcephfs-dev is only available on linux

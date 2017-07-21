@@ -56,7 +56,7 @@ Build-Depends: bison,
                python-tdb (>= 1.3.12~),
                python-testtools,
                python3,
-               xfslibs-dev,
+               xfslibs-dev [linux-any],
                xsltproc,
                zlib1g-dev (>= 1:1.2.3)
 Vcs-Browser: https://anonscm.debian.org/cgit/pkg-samba/samba.git
