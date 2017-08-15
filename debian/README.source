@@ -25,7 +25,8 @@ git checkout master
 # Import latest version
 gbp import-orig --uscan \
   -u "${upstream_version}+dfsg" \
-  --upstream-vcs-tag "samba-${upstream_version}"
+  --upstream-vcs-tag "samba-${upstream_version}" \
+  --merge-mode merge
 # all done :)
 
 

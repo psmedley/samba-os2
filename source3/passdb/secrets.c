@@ -146,7 +146,7 @@ bool secrets_store(const char *key, const void *data, size_t size)
 
 /* delete a secets database entry
  */
-bool secrets_delete(const char *key)
+bool secrets_delete_entry(const char *key)
 {
 	NTSTATUS status;
 	if (!secrets_init()) {
@@ -156,6 +156,25 @@ bool secrets_delete(const char *key)
 	status = dbwrap_trans_delete(db_ctx, string_tdb_data(key));
 
 	return NT_STATUS_IS_OK(status);
+}
+
+/*
+ * Deletes the key if it exists.
+ */
+bool secrets_delete(const char *key)
+{
+	bool exists;
+
+	if (!secrets_init()) {
+		return false;
+	}
+
+	exists = dbwrap_exists(db_ctx, string_tdb_data(key));
+	if (!exists) {
+		return true;
+	}
+
+	return secrets_delete_entry(key);
 }
 
 /**
@@ -277,7 +296,7 @@ bool secrets_store_trusted_domain_password(const char* domain, const char* pwd,
 
 bool trusted_domain_password_delete(const char *domain)
 {
-	return secrets_delete(trustdom_keystr(domain));
+	return secrets_delete_entry(trustdom_keystr(domain));
 }
 
 bool secrets_store_ldap_pw(const char* dn, char* pw)
@@ -352,7 +371,7 @@ bool fetch_ldap_pw(char **dn, char** pw)
 			SAFE_FREE(*dn);
 			return False;
 		}
-		if (!secrets_delete(old_style_key)) {
+		if (!secrets_delete_entry(old_style_key)) {
 			DEBUG(0,("fetch_ldap_pw: old ldap secret could not be deleted!\n"));
 		}
 

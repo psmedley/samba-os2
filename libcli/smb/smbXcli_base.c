@@ -5321,6 +5321,21 @@ static void smb2cli_validate_negotiate_info_done(struct tevent_req *subreq)
 		tevent_req_done(req);
 		return;
 	}
+	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
+		/*
+		 * The response was signed, but not supported
+		 *
+		 * This might be returned by older Windows versions or by
+		 * NetApp SMB server implementations.
+		 *
+		 * See
+		 *
+		 * https://blogs.msdn.microsoft.com/openspecification/2012/06/28/smb3-secure-dialect-negotiation/
+		 *
+		 */
+		tevent_req_done(req);
+		return;
+	}
 	if (tevent_req_nterror(req, status)) {
 		return;
 	}
@@ -6103,6 +6118,38 @@ struct smbXcli_tcon *smbXcli_tcon_create(TALLOC_CTX *mem_ctx)
 	return tcon;
 }
 
+/*
+ * Return a deep structure copy of a struct smbXcli_tcon *
+ */
+
+struct smbXcli_tcon *smbXcli_tcon_copy(TALLOC_CTX *mem_ctx,
+				const struct smbXcli_tcon *tcon_in)
+{
+	struct smbXcli_tcon *tcon;
+
+	tcon = talloc_memdup(mem_ctx, tcon_in, sizeof(struct smbXcli_tcon));
+	if (tcon == NULL) {
+		return NULL;
+	}
+
+	/* Deal with the SMB1 strings. */
+	if (tcon_in->smb1.service != NULL) {
+		tcon->smb1.service = talloc_strdup(tcon, tcon_in->smb1.service);
+		if (tcon->smb1.service == NULL) {
+			TALLOC_FREE(tcon);
+			return NULL;
+		}
+	}
+	if (tcon->smb1.fs_type != NULL) {
+		tcon->smb1.fs_type = talloc_strdup(tcon, tcon_in->smb1.fs_type);
+		if (tcon->smb1.fs_type == NULL) {
+			TALLOC_FREE(tcon);
+			return NULL;
+		}
+	}
+	return tcon;
+}
+
 void smbXcli_tcon_set_fs_attributes(struct smbXcli_tcon *tcon,
 				    uint32_t fs_attributes)
 {
@@ -6179,6 +6226,11 @@ bool smb1cli_tcon_set_values(struct smbXcli_tcon *tcon,
 uint32_t smb2cli_tcon_current_id(struct smbXcli_tcon *tcon)
 {
 	return tcon->smb2.tcon_id;
+}
+
+void smb2cli_tcon_set_id(struct smbXcli_tcon *tcon, uint32_t tcon_id)
+{
+	tcon->smb2.tcon_id = tcon_id;
 }
 
 uint32_t smb2cli_tcon_capabilities(struct smbXcli_tcon *tcon)

@@ -2608,6 +2608,13 @@ static void main_loop(struct ctdb_context *ctdb, struct ctdb_recoverd *rec,
 		return;
 	}
 
+	ret = ctdb_ctrl_getrecmode(ctdb, mem_ctx, CONTROL_TIMEOUT(),
+				   CTDB_CURRENT_NODE, &ctdb->recovery_mode);
+	if (ret != 0) {
+		D_ERR("Failed to read recmode from local node\n");
+		return;
+	}
+
 	/* if the local daemon is STOPPED or BANNED, we verify that the databases are
 	   also frozen and that the recmode is set to active.
 	*/
@@ -2620,10 +2627,6 @@ static void main_loop(struct ctdb_context *ctdb, struct ctdb_recoverd *rec,
 		 */
 		rec->priority_time = timeval_current();
 
-		ret = ctdb_ctrl_getrecmode(ctdb, mem_ctx, CONTROL_TIMEOUT(), CTDB_CURRENT_NODE, &ctdb->recovery_mode);
-		if (ret != 0) {
-			DEBUG(DEBUG_ERR,(__location__ " Failed to read recmode from local node\n"));
-		}
 		if (ctdb->recovery_mode == CTDB_RECOVERY_NORMAL) {
 			DEBUG(DEBUG_ERR,("Node is stopped or banned but recovery mode is not active. Activate recovery mode and lock databases\n"));
 
@@ -2667,9 +2670,11 @@ static void main_loop(struct ctdb_context *ctdb, struct ctdb_recoverd *rec,
 		return;
 	}
 
-	/* Check if an IP takeover run is needed and trigger one if
-	 * necessary */
-	verify_local_ip_allocation(ctdb, rec, pnn, nodemap);
+	if (ctdb->recovery_mode == CTDB_RECOVERY_NORMAL) {
+		/* Check if an IP takeover run is needed and trigger one if
+		 * necessary */
+		verify_local_ip_allocation(ctdb, rec, pnn, nodemap);
+	}
 
 	/* if we are not the recmaster then we do not need to check
 	   if recovery is needed

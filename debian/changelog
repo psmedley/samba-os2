@@ -1,3 +1,14 @@
+samba (2:4.6.7+dfsg-1) unstable; urgency=medium
+
+  * New upstream version
+    - Removed CVE-2017-11103-Orpheus-Lyre-KDC-REP-service-name-val.patch,
+      merged
+    - Remove s3-gse_krb5-fix-a-possible-crash-in-fill_mem_keytab.patch, merged
+  * README.source: Default merge-mode of gbp has changed to replace
+  * Fix samba.logrotate (Thanks Thomas A. Reim)
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 15 Aug 2017 23:06:36 +0200
+
 samba (2:4.6.5+dfsg-8) unstable; urgency=medium
 
   * Remove dependency on update-inetd, not used anymore

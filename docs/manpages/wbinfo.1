@@ -1,13 +1,13 @@
 '\" t
 .\"     Title: wbinfo
 .\"    Author: [see the "AUTHOR" section]
-.\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 06/06/2017
+.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
+.\"      Date: 08/08/2017
 .\"    Manual: User Commands
 .\"    Source: Samba 4.6
 .\"  Language: English
 .\"
-.TH "WBINFO" "1" "06/06/2017" "Samba 4\&.6" "User Commands"
+.TH "WBINFO" "1" "08/08/2017" "Samba 4\&.6" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -233,7 +233,8 @@ The
 option queries
 \fBwinbindd\fR(8)
 for the SID associated with the name specified\&. Domain names can be specified before the user name by using the winbind separator character\&. For example CWDOM1/Administrator refers to the Administrator user in the domain CWDOM1\&. If no domain is specified then the domain used is the one specified in the
-\fBsmb.conf\fR(5)\fIworkgroup \fR
+\fBsmb.conf\fR(5)
+\fIworkgroup \fR
 parameter\&.
 .RE
 .PP
@@ -419,6 +420,16 @@ Print additional information about the query results\&.
 Convert a SID to a UNIX group id\&. If the SID does not correspond to a UNIX group mapped by
 \fBwinbindd\fR(8)
 then the operation will fail\&.
+.RE
+.PP
+\-V|\-\-version
+.RS 4
+Prints the program version number\&.
+.RE
+.PP
+\-?|\-\-help
+.RS 4
+Print a summary of command line options\&.
 .RE
 .SH "EXIT STATUS"
 .PP

@@ -91,13 +91,104 @@ static void set_line_buffering(FILE *f)
 	setvbuf(f, NULL, _IOLBF, 0);
 }
 
+static int net_primarytrust_dumpinfo(struct net_context *c, int argc,
+				     const char **argv)
+{
+	int role = lp_server_role();
+	const char *domain = lp_workgroup();
+	struct secrets_domain_info1 *info = NULL;
+	bool include_secrets = c->opt_force;
+	char *str = NULL;
+	NTSTATUS status;
+
+	if (role >= ROLE_ACTIVE_DIRECTORY_DC) {
+		d_printf(_("net primarytrust dumpinfo is only supported "
+			 "on a DOMAIN_MEMBER for now.\n"));
+		return 1;
+	}
+
+	if (c->opt_stdin) {
+		set_line_buffering(stdin);
+		set_line_buffering(stdout);
+		set_line_buffering(stderr);
+	}
+
+	status = secrets_fetch_or_upgrade_domain_info(domain,
+						      talloc_tos(),
+						      &info);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  _("Unable to fetch the information for domain[%s] "
+			  "in the secrets database.\n"),
+			  domain);
+		return 1;
+	}
+
+	str = secrets_domain_info_string(info, info, domain, include_secrets);
+	if (str == NULL) {
+		d_fprintf(stderr, "secrets_domain_info_string() failed.\n");
+		return 1;
+	}
+
+	d_printf("%s", str);
+	if (!c->opt_force) {
+		d_printf(_("The password values are only included using "
+			 "-f flag.\n"));
+	}
+
+	TALLOC_FREE(info);
+	return 0;
+}
+
+/**
+ * Entrypoint for 'net primarytrust' code.
+ *
+ * @param argc Standard argc.
+ * @param argv Standard argv without initial components.
+ *
+ * @return Integer status (0 means success).
+ */
+
+static int net_primarytrust(struct net_context *c, int argc, const char **argv)
+{
+	struct functable func[] = {
+		{
+			"dumpinfo",
+			net_primarytrust_dumpinfo,
+			NET_TRANSPORT_LOCAL,
+			N_("Dump the details of the workstation trust"),
+			N_("  net [options] primarytrust dumpinfo'\n"
+			   "    Dump the details of the workstation trust "
+			   "in secrets.tdb.\n"
+			   "    Requires the -f flag to include the password values.")
+		},
+		{NULL, NULL, 0, NULL, NULL}
+	};
+
+	return net_run_function(c, argc, argv, "net primarytrust", func);
+}
+
 static int net_changesecretpw(struct net_context *c, int argc,
 			      const char **argv)
 {
         char *trust_pw;
-        enum netr_SchannelType sec_channel_type = SEC_CHAN_WKSTA;
+	int role = lp_server_role();
+
+	if (role != ROLE_DOMAIN_MEMBER) {
+		d_printf(_("Machine account password change only supported on a DOMAIN_MEMBER.\n"
+			   "Do NOT use this function unless you know what it does!\n"
+		           "This function will change the ADS Domain member "
+			   "machine account password in the secrets.tdb file!\n"));
+		return 1;
+	}
 
 	if(c->opt_force) {
+		struct secrets_domain_info1 *info = NULL;
+		struct secrets_domain_info1_change *prev = NULL;
+		NTSTATUS status;
+		struct timeval tv = timeval_current();
+		NTTIME now = timeval_to_nttime(&tv);
+
 		if (c->opt_stdin) {
 			set_line_buffering(stdin);
 			set_line_buffering(stdout);
@@ -111,14 +202,37 @@ static int net_changesecretpw(struct net_context *c, int argc,
 			    return 1;
 		}
 
-		if (!secrets_store_machine_password(trust_pw, lp_workgroup(), sec_channel_type)) {
-			    d_fprintf(stderr,
-				      _("Unable to write the machine account password in the secrets database"));
-			    return 1;
+		status = secrets_prepare_password_change(lp_workgroup(),
+							 "localhost",
+							 trust_pw,
+							 talloc_tos(),
+							 &info, &prev);
+		if (!NT_STATUS_IS_OK(status)) {
+			d_fprintf(stderr,
+			        _("Unable to write the machine account password in the secrets database"));
+			return 1;
 		}
-		else {
-		    d_printf(_("Modified trust account password in secrets database\n"));
+		if (prev != NULL) {
+			d_fprintf(stderr,
+			        _("Pending machine account password change found - aborting."));
+			status = secrets_failed_password_change("localhost",
+						NT_STATUS_REQUEST_NOT_ACCEPTED,
+						NT_STATUS_NOT_COMMITTED,
+						info);
+			if (!NT_STATUS_IS_OK(status)) {
+				d_fprintf(stderr,
+				        _("Failed to abort machine account password change"));
+			}
+			return 1;
 		}
+		status = secrets_finish_password_change("localhost", now, info);
+		if (!NT_STATUS_IS_OK(status)) {
+			d_fprintf(stderr,
+			        _("Unable to write the machine account password in the secrets database"));
+			return 1;
+		}
+
+		d_printf(_("Modified trust account password in secrets database\n"));
 	}
 	else {
 		d_printf(_("Machine account password change requires the -f flag.\n"
@@ -156,9 +270,9 @@ static int net_setauthuser(struct net_context *c, int argc, const char **argv)
 				    "        Delete the auth user setting.\n"));
 			return 1;
 		}
-		secrets_delete(SECRETS_AUTH_USER);
-		secrets_delete(SECRETS_AUTH_DOMAIN);
-		secrets_delete(SECRETS_AUTH_PASSWORD);
+		secrets_delete_entry(SECRETS_AUTH_USER);
+		secrets_delete_entry(SECRETS_AUTH_DOMAIN);
+		secrets_delete_entry(SECRETS_AUTH_PASSWORD);
 		return 0;
 	}
 
@@ -569,6 +683,14 @@ static struct functable net_func[] = {
 		N_("Change user password on target server"),
 		N_("  Use 'net help password' to get more information about "
 		   "'net password' commands.")
+	},
+	{
+		"primarytrust",
+		net_primarytrust,
+		NET_TRANSPORT_RPC,
+		N_("Run functions related to the primary workstation trust."),
+		N_("  Use 'net help primarytrust' to get more extensive information "
+		   "about 'net primarytrust' commands.")
 	},
 	{	"changetrustpw",
 		net_changetrustpw,

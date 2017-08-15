@@ -1,13 +1,13 @@
 '\" t
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
-.\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 06/06/2017
+.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
+.\"      Date: 08/08/2017
 .\"    Manual: File Formats and Conventions
 .\"    Source: Samba 4.6
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "06/06/2017" "Samba 4\&.6" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "08/08/2017" "Samba 4\&.6" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -593,7 +593,7 @@ to permit long filenames to retain their case, while short names are lowercased\
 .RE
 .PP
 By default, Samba 3\&.0 has the same semantics as a Windows NT server, in that it is case insensitive but case preserving\&. As a special case for directories with large numbers of files, if the case options are set as follows, "case sensitive = yes", "case preserve = no", "short preserve case = no" then the "default case" option will be applied and will modify all filenames sent from the client when accessing this share\&.
-.SH "REGISTRY-BASED CONFIGURATION"
+.SH "REGISTRY\-BASED CONFIGURATION"
 .PP
 Starting with Samba version 3\&.2\&.0, the capability to store Samba configuration in the registry is available\&. The configuration is stored in the registry key
 \fIHKLM\eSoftware\eSamba\esmbconf\fR\&. There are two levels of registry configuration:
@@ -707,7 +707,6 @@ This example shows how to configure two domains with
 
 
 abort shutdown script (G)
-.\" abort shutdown script
 .PP
 .RS 4
 This a full path name to a script called by
@@ -726,7 +725,6 @@ Example:
 .RE
 
 access based share enum (S)
-.\" access based share enum
 .PP
 .RS 4
 If this parameter is
@@ -740,7 +738,6 @@ Default:
 .RE
 
 acl allow execute always (S)
-.\" acl allow execute always
 .PP
 .RS 4
 This boolean parameter controls the behaviour of
@@ -754,7 +751,6 @@ Default:
 .RE
 
 acl check permissions (S)
-.\" acl check permissions
 .PP
 .RS 4
 Please note this parameter is now deprecated in Samba 3\&.6\&.2 and will be removed in a future version of Samba\&.
@@ -770,7 +766,6 @@ Default:
 .RE
 
 acl group control (S)
-.\" acl group control
 .PP
 .RS 4
 In a POSIX filesystem, only the owner of a file or directory and the superuser can modify the permissions and ACLs on a file\&. If this parameter is set, then Samba overrides this restriction, and also allows the
@@ -796,7 +791,6 @@ Default:
 .RE
 
 acl map full control (S)
-.\" acl map full control
 .PP
 .RS 4
 This boolean parameter controls whether
@@ -808,7 +802,6 @@ Default:
 .RE
 
 add group script (G)
-.\" add group script
 .PP
 .RS 4
 This is the full pathname to a script that will be run
@@ -827,7 +820,6 @@ Example:
 .RE
 
 add machine script (G)
-.\" add machine script
 .PP
 .RS 4
 This is the full pathname to a script that will be run by
@@ -845,7 +837,6 @@ Example:
 .RE
 
 addport command (G)
-.\" addport command
 .PP
 .RS 4
 Samba 3\&.0\&.23 introduced support for adding printer ports remotely using the Windows "Add Standard TCP/IP Port Wizard"\&. This option defines an external program to be executed when smbd receives a request to add a new Port to the system\&. The script is passed two parameters:
@@ -883,7 +874,6 @@ Example:
 .RE
 
 addprinter command (G)
-.\" addprinter command
 .PP
 .RS 4
 With the introduction of MS\-RPC based printing support for Windows NT/2000 clients in Samba 2\&.2, The MS Add Printer Wizard (APW) icon is now also available in the "Printers\&.\&.\&." folder displayed a share listing\&. The APW allows for printers to be add remotely to a Samba or Windows NT/2000 print server\&.
@@ -990,7 +980,6 @@ Example:
 .RE
 
 add share command (G)
-.\" add share command
 .PP
 .RS 4
 Samba 2\&.2\&.0 introduced the ability to dynamically add and delete shares via the Windows NT 4\&.0 Server Manager\&. The
@@ -1086,7 +1075,6 @@ Example:
 .RE
 
 add user script (G)
-.\" add user script
 .PP
 .RS 4
 This is the full pathname to a script that will be run
@@ -1131,11 +1119,11 @@ Example:
 .RE
 
 add user to group script (G)
-.\" add user to group script
 .PP
 .RS 4
 Full path to the script that will be called when a user is added to a group using the Windows NT domain administration tools\&. It will be run by
-\fBsmbd\fR(8)\fIAS ROOT\fR\&. Any
+\fBsmbd\fR(8)
+\fIAS ROOT\fR\&. Any
 \fI%g\fR
 will be replaced with the group name and any
 \fI%u\fR
@@ -1153,7 +1141,6 @@ Example:
 .RE
 
 administrative share (S)
-.\" administrative share
 .PP
 .RS 4
 If this parameter is set to
@@ -1169,7 +1156,6 @@ Default:
 .RE
 
 admin users (S)
-.\" admin users
 .PP
 .RS 4
 This is a list of users who will be granted administrative privileges on the share\&. This means that they will do all file operations as the super\-user (root)\&.
@@ -1184,7 +1170,6 @@ Example:
 .RE
 
 afs share (S)
-.\" afs share
 .PP
 .RS 4
 This parameter controls whether special AFS features are enabled for this share\&. If enabled, it assumes that the directory exported via the
@@ -1196,7 +1181,6 @@ Default:
 .RE
 
 afs token lifetime (G)
-.\" afs token lifetime
 .PP
 .RS 4
 This parameter controls the lifetime of tokens that the AFS fake\-kaserver claims\&. In reality these never expire but this lifetime controls when the afs client will forget the token\&.
@@ -1209,7 +1193,6 @@ Default:
 .RE
 
 afs username map (G)
-.\" afs username map
 .PP
 .RS 4
 If you are using the fake kaserver AFS feature, you might want to hand\-craft the usernames you are creating tokens for\&. For example this is necessary if you have users from several domain in your AFS Protection Database\&. One possible scheme to code users as DOMAIN+User as it is done by winbind with the + as a separator\&.
@@ -1224,7 +1207,6 @@ Example:
 .RE
 
 aio max threads (G)
-.\" aio max threads
 .PP
 .RS 4
 The integer parameter specifies the maximum number of threads each smbd process will create when doing parallel asynchronous IO calls\&. If the number of outstanding calls is greater than this number the requests will not be refused but go onto a queue and will be scheduled in turn as outstanding requests complete\&.
@@ -1240,7 +1222,6 @@ Default:
 .RE
 
 aio read size (S)
-.\" aio read size
 .PP
 .RS 4
 If Samba has been built with asynchronous I/O support and this integer parameter is set to non\-zero value, Samba will read from file asynchronously when size of request is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads and when not using write cache\&.
@@ -1261,7 +1242,6 @@ Example:
 .RE
 
 aio write behind (S)
-.\" aio write behind
 .PP
 .RS 4
 If Samba has been built with asynchronous I/O support, Samba will not wait until write requests are finished before returning the result to the client for files listed in this parameter\&. Instead, Samba will immediately return that the write request has been finished successfully, no matter if the operation will succeed or not\&. This might speed up clients without aio support, but is really dangerous, because data could be lost and files could be damaged\&.
@@ -1278,7 +1258,6 @@ Example:
 .RE
 
 aio write size (S)
-.\" aio write size
 .PP
 .RS 4
 If Samba has been built with asynchronous I/O support and this integer parameter is set to non\-zero value, Samba will write to file asynchronously when size of request is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads and when not using write cache\&.
@@ -1299,7 +1278,6 @@ Example:
 .RE
 
 algorithmic rid base (G)
-.\" algorithmic rid base
 .PP
 .RS 4
 This determines how Samba will use its algorithmic mapping from uids/gid to the RIDs needed to construct NT Security Identifiers\&.
@@ -1316,7 +1294,6 @@ Example:
 .RE
 
 allocation roundup size (S)
-.\" allocation roundup size
 .PP
 .RS 4
 This parameter allows an administrator to tune the allocation size reported to Windows clients\&. The default size of 1Mb generally results in improved Windows client performance\&. However, rounding the allocation size may cause difficulties for some applications, e\&.g\&. MS Visual Studio\&. If the MS Visual Studio compiler starts to crash with an internal error, set this parameter to zero for this share\&.
@@ -1331,7 +1308,6 @@ Example:
 .RE
 
 allow dcerpc auth level connect (G)
-.\" allow dcerpc auth level connect
 .PP
 .RS 4
 This option controls whether DCERPC services are allowed to be used with DCERPC_AUTH_LEVEL_CONNECT, which provides authentication, but no per message integrity nor privacy protection\&.
@@ -1353,7 +1329,6 @@ Example:
 .RE
 
 allow dns updates (G)
-.\" allow dns updates
 .PP
 .RS 4
 This option determines what kind of updates to the DNS are allowed\&.
@@ -1372,7 +1347,6 @@ Example:
 .RE
 
 allow insecure wide links (G)
-.\" allow insecure wide links
 .PP
 .RS 4
 In normal operation the option
@@ -1398,7 +1372,6 @@ Default:
 .RE
 
 allow nt4 crypto (G)
-.\" allow nt4 crypto
 .PP
 .RS 4
 This option controls whether the netlogon server (currently only in \*(Aqactive directory domain controller\*(Aq mode), will reject clients which does not support NETLOGON_NEG_STRONG_KEYS nor NETLOGON_NEG_SUPPORTS_AES\&.
@@ -1416,7 +1389,6 @@ Default:
 .RE
 
 allow trusted domains (G)
-.\" allow trusted domains
 .PP
 .RS 4
 This option only takes effect when the
@@ -1434,7 +1406,6 @@ Default:
 .RE
 
 async smb echo handler (G)
-.\" async smb echo handler
 .PP
 .RS 4
 This parameter specifies whether Samba should fork the async smb echo handler\&. It can be beneficial if your file system can block syscalls for a very long time\&. In some circumstances, it prolongs the timeout that Windows uses to determine whether a connection is dead\&.
@@ -1444,7 +1415,6 @@ Default:
 .RE
 
 auth methods (G)
-.\" auth methods
 .PP
 .RS 4
 This option allows the administrator to chose what authentication methods
@@ -1474,7 +1444,6 @@ Example:
 .RE
 
 preload
-.\" preload
 .PP
 .RS 4
 This parameter is a synonym for
@@ -1482,7 +1451,6 @@ auto services\&.
 .RE
 
 auto services (G)
-.\" auto services
 .PP
 .RS 4
 This is a list of services that you want to be automatically added to the browse lists\&. This is most useful for homes and printers services that would otherwise not be visible\&.
@@ -1499,7 +1467,6 @@ Example:
 .RE
 
 available (S)
-.\" available
 .PP
 .RS 4
 This parameter lets you "turn off" a service\&. If
@@ -1512,7 +1479,6 @@ Default:
 .RE
 
 bind interfaces only (G)
-.\" bind interfaces only
 .PP
 .RS 4
 This global parameter allows the Samba admin to limit what interfaces on a machine will serve SMB requests\&. It affects file service
@@ -1575,7 +1541,8 @@ smbpasswd
 will fail to connect in it\*(Aqs default mode\&.
 smbpasswd
 can be forced to use the primary IP interface of the local host by using its
-\fBsmbpasswd\fR(8)\fI\-r \fR\fI\fIremote machine\fR\fR
+\fBsmbpasswd\fR(8)
+\fI\-r \fR\fI\fIremote machine\fR\fR
 parameter, with
 \fIremote machine\fR
 set to the IP name of the primary interface of the local host\&.
@@ -1585,7 +1552,6 @@ Default:
 .RE
 
 blocking locks (S)
-.\" blocking locks
 .PP
 .RS 4
 This parameter controls the behavior of
@@ -1602,7 +1568,6 @@ Default:
 .RE
 
 block size (S)
-.\" block size
 .PP
 .RS 4
 This parameter controls the behavior of
@@ -1621,7 +1586,6 @@ Example:
 .RE
 
 browsable
-.\" browsable
 .PP
 .RS 4
 This parameter is a synonym for
@@ -1629,7 +1593,6 @@ browseable\&.
 .RE
 
 browseable (S)
-.\" browseable
 .PP
 .RS 4
 This controls whether this share is seen in the list of available shares in a net view and in the browse list\&.
@@ -1639,7 +1602,6 @@ Default:
 .RE
 
 browse list (G)
-.\" browse list
 .PP
 .RS 4
 This controls whether
@@ -1654,7 +1616,6 @@ Default:
 .RE
 
 cache directory (G)
-.\" cache directory
 .PP
 .RS 4
 Usually, most of the TDB files are stored in the
@@ -1674,7 +1635,6 @@ Example:
 .RE
 
 casesignames
-.\" casesignames
 .PP
 .RS 4
 This parameter is a synonym for
@@ -1682,7 +1642,6 @@ case sensitive\&.
 .RE
 
 case sensitive (S)
-.\" case sensitive
 .PP
 .RS 4
 See the discussion in the section
@@ -1693,7 +1652,6 @@ Default:
 .RE
 
 change notify (G)
-.\" change notify
 .PP
 .RS 4
 This parameter specifies whether Samba should reply to a client\*(Aqs file change notify requests\&.
@@ -1705,7 +1663,6 @@ Default:
 .RE
 
 change share command (G)
-.\" change share command
 .PP
 .RS 4
 Samba 2\&.2\&.0 introduced the ability to dynamically add and delete shares via the Windows NT 4\&.0 Server Manager\&. The
@@ -1812,7 +1769,6 @@ Example:
 .RE
 
 check password script (G)
-.\" check password script
 .PP
 .RS 4
 The name of a program that can be used to check password complexity\&. The password is sent to the program\*(Aqs standard input\&.
@@ -1837,7 +1793,6 @@ Example:
 .RE
 
 cldap port (G)
-.\" cldap port
 .PP
 .RS 4
 This option controls the port used by the CLDAP protocol\&.
@@ -1850,7 +1805,6 @@ Example:
 .RE
 
 client ipc max protocol (G)
-.\" client ipc max protocol
 .PP
 .RS 4
 The value of the parameter (a string) is the highest protocol level that will be supported for IPC$ connections as DCERPC transport\&.
@@ -1874,7 +1828,6 @@ Example:
 .RE
 
 client ipc min protocol (G)
-.\" client ipc min protocol
 .PP
 .RS 4
 This setting controls the minimum protocol version that the will be attempted to use for IPC$ connections as DCERPC transport\&.
@@ -1900,7 +1853,6 @@ Example:
 .RE
 
 client ipc signing (G)
-.\" client ipc signing
 .PP
 .RS 4
 This controls whether the client is allowed or required to use SMB signing for IPC$ connections as DCERPC transport\&. Possible values are
@@ -1920,7 +1872,6 @@ Default:
 .RE
 
 client lanman auth (G)
-.\" client lanman auth
 .PP
 .RS 4
 This parameter determines whether or not
@@ -1942,7 +1893,6 @@ Default:
 .RE
 
 client ldap sasl wrapping (G)
-.\" client ldap sasl wrapping
 .PP
 .RS 4
 The
@@ -1959,7 +1909,8 @@ and
 \fIseal\fR
 are only available if Samba has been compiled against a modern OpenLDAP version (2\&.3\&.x or higher)\&.
 .sp
-This option is needed in the case of Domain Controllers enforcing the usage of signed LDAP connections (e\&.g\&. Windows 2000 SP3 or higher)\&. LDAP sign and seal can be controlled with the registry key "HKLM\eSystem\eCurrentControlSet\eServices\eNTDS\eParameters\eLDAPServerIntegrity" on the Windows server side\&.
+This option is needed in the case of Domain Controllers enforcing the usage of signed LDAP connections (e\&.g\&. Windows 2000 SP3 or higher)\&. LDAP sign and seal can be controlled with the registry key "HKLM\eSystem\eCurrentControlSet\eServices\e
+NTDS\eParameters\eLDAPServerIntegrity" on the Windows server side\&.
 .sp
 Depending on the used KRB5 library (MIT and older Heimdal versions) it is possible that the message "integrity only" is not supported\&. In this case,
 \fIsign\fR
@@ -1975,7 +1926,6 @@ Default:
 .RE
 
 client max protocol (G)
-.\" client max protocol
 .PP
 .RS 4
 The value of the parameter (a string) is the highest protocol level that will be supported by the client\&.
@@ -2175,7 +2125,6 @@ Example:
 .RE
 
 client min protocol (G)
-.\" client min protocol
 .PP
 .RS 4
 This setting controls the minimum protocol version that the client will attempt to use\&.
@@ -2198,7 +2147,6 @@ Example:
 .RE
 
 client NTLMv2 auth (G)
-.\" client NTLMv2 auth
 .PP
 .RS 4
 This parameter determines whether or not
@@ -2229,7 +2177,6 @@ Default:
 .RE
 
 client plaintext auth (G)
-.\" client plaintext auth
 .PP
 .RS 4
 Specifies whether a client should send a plaintext password if the server does not support encrypted passwords\&.
@@ -2239,7 +2186,6 @@ Default:
 .RE
 
 client schannel (G)
-.\" client schannel
 .PP
 .RS 4
 This controls whether the client offers or even demands the use of the netlogon schannel\&.
@@ -2265,7 +2211,6 @@ Example:
 .RE
 
 client signing (G)
-.\" client signing
 .PP
 .RS 4
 This controls whether the client is allowed or required to use SMB signing\&. Possible values are
@@ -2287,7 +2232,6 @@ Default:
 .RE
 
 client use spnego principal (G)
-.\" client use spnego principal
 .PP
 .RS 4
 This parameter determines whether or not
@@ -2309,7 +2253,6 @@ Default:
 .RE
 
 client use spnego (G)
-.\" client use spnego
 .PP
 .RS 4
 This variable controls whether Samba clients will try to use Simple and Protected NEGOciation (as specified by rfc2478) with supporting servers (including WindowsXP, Windows2000 and Samba 3\&.0) to agree upon an authentication mechanism\&. This enables Kerberos authentication in particular\&.
@@ -2325,7 +2268,6 @@ Default:
 .RE
 
 cluster addresses (G)
-.\" cluster addresses
 .PP
 .RS 4
 With this parameter you can add additional addresses nmbd will register with a WINS server\&. These addresses are not necessarily present on all nodes simultaneously, but they will be registered with the WINS server so that clients can contact any of the nodes\&.
@@ -2338,7 +2280,6 @@ Example:
 .RE
 
 clustering (G)
-.\" clustering
 .PP
 .RS 4
 This parameter specifies whether Samba should contact ctdb for accessing its tdb files and use ctdb as a backend for its messaging backend\&.
@@ -2352,7 +2293,6 @@ Default:
 .RE
 
 comment (S)
-.\" comment
 .PP
 .RS 4
 This is a text field that is seen next to a share when a client does a queries the server, either via the network neighborhood or via
@@ -2371,7 +2311,6 @@ Example:
 .RE
 
 config backend (G)
-.\" config backend
 .PP
 .RS 4
 This controls the backend for storing the configuration\&. Possible values are
@@ -2395,7 +2334,6 @@ Example:
 .RE
 
 config file (G)
-.\" config file
 .PP
 .RS 4
 This allows you to override the config file to use, instead of the default (usually
@@ -2414,7 +2352,6 @@ Example:
 .RE
 
 copy (S)
-.\" copy
 .PP
 .RS 4
 This parameter allows you to "clone" service entries\&. The specified service is simply duplicated under the current service\*(Aqs name\&. Any parameters specified in the current section will override those in the section being copied\&.
@@ -2429,7 +2366,6 @@ Example:
 .RE
 
 create krb5 conf (G)
-.\" create krb5 conf
 .PP
 .RS 4
 Setting this parameter to
@@ -2443,7 +2379,6 @@ Default:
 .RE
 
 create mode
-.\" create mode
 .PP
 .RS 4
 This parameter is a synonym for
@@ -2451,7 +2386,6 @@ create mask\&.
 .RE
 
 create mask (S)
-.\" create mask
 .PP
 .RS 4
 When a file is created, the necessary permissions are calculated according to the mapping from DOS modes to UNIX permissions, and the resulting UNIX mode is then bit\-wise \*(AqAND\*(Aqed with this parameter\&. This parameter may be thought of as a bit\-wise MASK for the UNIX modes of a file\&. Any bit
@@ -2480,7 +2414,6 @@ Example:
 .RE
 
 csc policy (S)
-.\" csc policy
 .PP
 .RS 4
 This stands for
@@ -2499,7 +2432,6 @@ Example:
 .RE
 
 ctdbd socket (G)
-.\" ctdbd socket
 .PP
 .RS 4
 If you set
@@ -2513,7 +2445,6 @@ Example:
 .RE
 
 ctdb locktime warn threshold (G)
-.\" ctdb locktime warn threshold
 .PP
 .RS 4
 In a cluster environment using Samba and ctdb it is critical that locks on central ctdb\-hosted databases like locking\&.tdb are not held for long\&. With the current Samba architecture it happens that Samba takes a lock and while holding that lock makes file system calls into the shared cluster file system\&. This option makes Samba warn if it detects that it has held locks for the specified number of milliseconds\&. If this happens,
@@ -2527,7 +2458,6 @@ Default:
 .RE
 
 ctdb timeout (G)
-.\" ctdb timeout
 .PP
 .RS 4
 This parameter specifies a timeout in milliseconds for the connection between Samba and ctdb\&. It is only valid if you have compiled Samba with clustering and if you have set
@@ -2546,7 +2476,6 @@ Default:
 .RE
 
 cups connection timeout (G)
-.\" cups connection timeout
 .PP
 .RS 4
 This parameter is only applicable if
@@ -2564,7 +2493,6 @@ Example:
 .RE
 
 cups encrypt (G)
-.\" cups encrypt
 .PP
 .RS 4
 This parameter is only applicable if
@@ -2584,7 +2512,6 @@ Default:
 .RE
 
 cups options (S)
-.\" cups options
 .PP
 .RS 4
 This parameter is only applicable if
@@ -2609,7 +2536,6 @@ Example:
 .RE
 
 cups server (G)
-.\" cups server
 .PP
 .RS 4
 This parameter is only applicable if
@@ -2633,7 +2559,6 @@ Example:
 .RE
 
 dcerpc endpoint servers (G)
-.\" dcerpc endpoint servers
 .PP
 .RS 4
 Specifies which DCE/RPC endpoint servers should be run\&.
@@ -2646,7 +2571,6 @@ Example:
 .RE
 
 deadtime (G)
-.\" deadtime
 .PP
 .RS 4
 The value of the parameter (a decimal integer) represents the number of minutes of inactivity before a connection is considered dead, and it is disconnected\&. The deadtime only takes effect if the number of open files is zero\&.
@@ -2667,7 +2591,6 @@ Example:
 .RE
 
 debug class (G)
-.\" debug class
 .PP
 .RS 4
 With this boolean parameter enabled, the debug class (DBGC_CLASS) will be displayed in the debug header\&.
@@ -2680,7 +2603,6 @@ Default:
 .RE
 
 debug hires timestamp (G)
-.\" debug hires timestamp
 .PP
 .RS 4
 Sometimes the timestamps in the log messages are needed with a resolution of higher that seconds, this boolean parameter adds microsecond resolution to the timestamp message header when turned on\&.
@@ -2694,7 +2616,6 @@ Default:
 .RE
 
 debug pid (G)
-.\" debug pid
 .PP
 .RS 4
 When using only one log file for more then one forked
@@ -2709,7 +2630,6 @@ Default:
 .RE
 
 debug prefix timestamp (G)
-.\" debug prefix timestamp
 .PP
 .RS 4
 With this option enabled, the timestamp message header is prefixed to the debug message without the filename and function information that is included with the
@@ -2725,7 +2645,6 @@ Default:
 .RE
 
 debug uid (G)
-.\" debug uid
 .PP
 .RS 4
 Samba is sometimes run as root and sometime run as the connected user, this boolean parameter inserts the current euid, egid, uid and gid to the timestamp message headers in the log file if turned on\&.
@@ -2739,7 +2658,6 @@ Default:
 .RE
 
 dedicated keytab file (G)
-.\" dedicated keytab file
 .PP
 .RS 4
 Specifies the absolute path to the kerberos keytab file when
@@ -2754,7 +2672,6 @@ Example:
 .RE
 
 default case (S)
-.\" default case
 .PP
 .RS 4
 See the section on
@@ -2767,7 +2684,6 @@ Default:
 .RE
 
 default devmode (S)
-.\" default devmode
 .PP
 .RS 4
 This parameter is only applicable to
@@ -2788,7 +2704,6 @@ Default:
 .RE
 
 default
-.\" default
 .PP
 .RS 4
 This parameter is a synonym for
@@ -2796,7 +2711,6 @@ default service\&.
 .RE
 
 default service (G)
-.\" default service
 .PP
 .RS 4
 This parameter specifies the name of a service which will be connected to if the service actually requested cannot be found\&. Note that the square brackets are
@@ -2824,7 +2738,6 @@ Example:
 .RE
 
 defer sharing violations (G)
-.\" defer sharing violations
 .PP
 .RS 4
 Windows allows specifying how a file will be shared with other processes when it is opened\&. Sharing violations occur when a file is opened by a different process using options that violate the share settings specified by other processes\&. This parameter causes smbd to act as a Windows server does, and defer returning a "sharing violation" error message for up to one second, allowing the client to close the file causing the violation in the meantime\&.
@@ -2838,7 +2751,6 @@ Default:
 .RE
 
 delete group script (G)
-.\" delete group script
 .PP
 .RS 4
 This is the full pathname to a script that will be run
@@ -2854,7 +2766,6 @@ Default:
 .RE
 
 deleteprinter command (G)
-.\" deleteprinter command
 .PP
 .RS 4
 With the introduction of MS\-RPC based printer support for Windows NT/2000 clients in Samba 2\&.2, it is now possible to delete a printer at run time by issuing the DeletePrinter() RPC call\&.
@@ -2887,7 +2798,6 @@ Example:
 .RE
 
 delete readonly (S)
-.\" delete readonly
 .PP
 .RS 4
 This parameter allows readonly files to be deleted\&. This is not normal DOS semantics, but is allowed by UNIX\&.
@@ -2899,7 +2809,6 @@ Default:
 .RE
 
 delete share command (G)
-.\" delete share command
 .PP
 .RS 4
 Samba 2\&.2\&.0 introduced the ability to dynamically add and delete shares via the Windows NT 4\&.0 Server Manager\&. The
@@ -2959,11 +2868,11 @@ Example:
 .RE
 
 delete user from group script (G)
-.\" delete user from group script
 .PP
 .RS 4
 Full path to the script that will be called when a user is removed from a group using the Windows NT domain administration tools\&. It will be run by
-\fBsmbd\fR(8)\fIAS ROOT\fR\&. Any
+\fBsmbd\fR(8)
+\fIAS ROOT\fR\&. Any
 \fI%g\fR
 will be replaced with the group name and any
 \fI%u\fR
@@ -2977,7 +2886,6 @@ Example:
 .RE
 
 delete user script (G)
-.\" delete user script
 .PP
 .RS 4
 This is the full pathname to a script that will be run by
@@ -2997,7 +2905,6 @@ Example:
 .RE
 
 delete veto files (S)
-.\" delete veto files
 .PP
 .RS 4
 This option is used when Samba is attempting to delete a directory that contains one or more vetoed directories (see the
@@ -3019,7 +2926,6 @@ Default:
 .RE
 
 dfree cache time (S)
-.\" dfree cache time
 .PP
 .RS 4
 The
@@ -3039,7 +2945,6 @@ Example:
 .RE
 
 dfree command (S)
-.\" dfree command
 .PP
 .RS 4
 The
@@ -3098,7 +3003,6 @@ Example:
 .RE
 
 dgram port (G)
-.\" dgram port
 .PP
 .RS 4
 Specifies which ports the server should listen on for NetBIOS datagram traffic\&.
@@ -3108,7 +3012,6 @@ Default:
 .RE
 
 directory mode
-.\" directory mode
 .PP
 .RS 4
 This parameter is a synonym for
@@ -3116,7 +3019,6 @@ directory mask\&.
 .RE
 
 directory mask (S)
-.\" directory mask
 .PP
 .RS 4
 This parameter is the octal modes which are used when converting DOS modes to UNIX modes when creating UNIX directories\&.
@@ -3139,7 +3041,6 @@ Example:
 .RE
 
 directory name cache size (S)
-.\" directory name cache size
 .PP
 .RS 4
 This parameter specifies the size of the directory name cache\&. It will be needed to turn this off for *BSD systems\&.
@@ -3149,7 +3050,6 @@ Default:
 .RE
 
 directory security mask (S)
-.\" directory security mask
 .PP
 .RS 4
 This parameter has been removed for Samba 4\&.0\&.0\&.
@@ -3158,7 +3058,6 @@ This parameter has been removed for Samba 4\&.0\&.0\&.
 .RE
 
 disable netbios (G)
-.\" disable netbios
 .PP
 .RS 4
 Enabling this parameter will disable netbios support in Samba\&. Netbios is the only available form of browsing in all windows versions except for 2000 and XP\&.
@@ -3182,7 +3081,6 @@ Default:
 .RE
 
 disable spoolss (G)
-.\" disable spoolss
 .PP
 .RS 4
 Enabling this parameter will disable Samba\*(Aqs support for the SPOOLSS set of MS\-RPC\*(Aqs and will yield identical behavior as Samba 2\&.0\&.x\&. Windows NT/2000 clients will downgrade to using Lanman style printing commands\&. Windows 9x/ME will be unaffected by the parameter\&. However, this will also disable the ability to upload printer drivers to a Samba server via the Windows NT Add Printer Wizard or by using the NT printer properties dialog window\&. It will also disable the capability of Windows NT/2000 clients to download print drivers from the Samba host upon demand\&.
@@ -3193,7 +3091,6 @@ Default:
 .RE
 
 dmapi support (S)
-.\" dmapi support
 .PP
 .RS 4
 This parameter specifies whether Samba should use DMAPI to determine whether a file is offline or not\&. This would typically be used in conjunction with a hierarchical storage system that automatically migrates files to tape\&.
@@ -3207,7 +3104,6 @@ Default:
 .RE
 
 dns forwarder (G)
-.\" dns forwarder
 .PP
 .RS 4
 This option specifies the list of DNS servers that DNS requests will be forwarded to if they can not be handled by Samba itself\&.
@@ -3222,7 +3118,6 @@ Example:
 .RE
 
 dns proxy (G)
-.\" dns proxy
 .PP
 .RS 4
 Specifies that
@@ -3239,7 +3134,6 @@ Default:
 .RE
 
 dns update command (G)
-.\" dns update command
 .PP
 .RS 4
 This option sets the command that is called when there are DNS updates\&. It should update the local machines DNS names using TSIG\-GSS\&.
@@ -3252,7 +3146,6 @@ Example:
 .RE
 
 domain logons (G)
-.\" domain logons
 .PP
 .RS 4
 If set to
@@ -3265,7 +3158,6 @@ Default:
 .RE
 
 domain master (G)
-.\" domain master
 .PP
 .RS 4
 Tell
@@ -3310,7 +3202,6 @@ Default:
 .RE
 
 dont descend (S)
-.\" dont descend
 .PP
 .RS 4
 There are certain directories on some systems (e\&.g\&., the
@@ -3330,7 +3221,6 @@ Example:
 .RE
 
 dos charset (G)
-.\" dos charset
 .PP
 .RS 4
 DOS SMB clients assume the server has the same charset as they do\&. This option specifies which charset Samba should talk to DOS clients\&.
@@ -3343,7 +3233,6 @@ to check the default on your system\&.
 .RE
 
 dos filemode (S)
-.\" dos filemode
 .PP
 .RS 4
 The default behavior in Samba is to provide UNIX\-like behavior where only the owner of a file/directory is able to change the permissions on it\&. However, this behavior is often confusing to DOS/Windows users\&. Enabling this parameter allows a user who has write access to the file (by whatever means, including an ACL permission) to modify the permissions (including ACL) on it\&. Note that a user belonging to the group owning the file will not be allowed to change permissions if the group is only granted read access\&. Ownership of the file/directory may also be changed\&. Note that using the VFS modules acl_xattr or acl_tdb which store native Windows as meta\-data will automatically turn this option on for any share for which they are loaded, as they require this option to emulate Windows ACLs correctly\&.
@@ -3353,7 +3242,6 @@ Default:
 .RE
 
 dos filetime resolution (S)
-.\" dos filetime resolution
 .PP
 .RS 4
 Under the DOS and Windows FAT filesystem, the finest granularity on time resolution is two seconds\&. Setting this parameter for a share causes Samba to round the reported time down to the nearest two second boundary when a query call that requires one second resolution is made to
@@ -3366,7 +3254,6 @@ Default:
 .RE
 
 dos filetimes (S)
-.\" dos filetimes
 .PP
 .RS 4
 Under DOS and Windows, if a user can write to a file they can change the timestamp on it\&. Under POSIX semantics, only the owner of the file or root may change the timestamp\&. By default, Samba emulates the DOS semantics and allows one to change the timestamp on a file if the user
@@ -3378,7 +3265,6 @@ Default:
 .RE
 
 durable handles (S)
-.\" durable handles
 .PP
 .RS 4
 This boolean parameter controls whether Samba can grant SMB2 durable file handles on a share\&.
@@ -3395,7 +3281,6 @@ Default:
 .RE
 
 ea support (S)
-.\" ea support
 .PP
 .RS 4
 This boolean parameter controls whether
@@ -3407,7 +3292,6 @@ Default:
 .RE
 
 enable asu support (G)
-.\" enable asu support
 .PP
 .RS 4
 Hosts running the "Advanced Server for Unix (ASU)" product require some special accomodations such as creating a builtin [ADMIN$] share that only supports IPC connections\&. The has been the default behavior in smbd for many years\&. However, certain Microsoft applications such as the Print Migrator tool require that the remote server support an [ADMIN$] file share\&. Disabling this parameter allows for creating an [ADMIN$] file share in smb\&.conf\&.
@@ -3417,7 +3301,6 @@ Default:
 .RE
 
 enable core files (G)
-.\" enable core files
 .PP
 .RS 4
 This parameter specifies whether core dumps should be written on internal exits\&. Normally set to
@@ -3431,7 +3314,6 @@ Example:
 .RE
 
 enable privileges (G)
-.\" enable privileges
 .PP
 .RS 4
 This deprecated parameter controls whether or not smbd will honor privileges assigned to specific SIDs via either
@@ -3447,7 +3329,6 @@ Default:
 .RE
 
 enable spoolss (G)
-.\" enable spoolss
 .PP
 .RS 4
 Inverted synonym for
@@ -3458,7 +3339,6 @@ Default:
 .RE
 
 encrypt passwords (G)
-.\" encrypt passwords
 .PP
 .RS 4
 This boolean controls whether encrypted passwords will be negotiated with the client\&. Note that Windows NT 4\&.0 SP3 and above and also Windows 98 will by default expect encrypted passwords unless a registry entry is changed\&. To use encrypted passwords in Samba see the chapter "User Database" in the Samba HOWTO Collection\&.
@@ -3484,7 +3364,6 @@ Default:
 .RE
 
 enhanced browsing (G)
-.\" enhanced browsing
 .PP
 .RS 4
 This option enables a couple of enhancements to cross\-subnet browse propagation that have been added in Samba but which are not standard in Microsoft implementations\&.
@@ -3500,7 +3379,6 @@ Default:
 .RE
 
 enumports command (G)
-.\" enumports command
 .PP
 .RS 4
 The concept of a "port" is fairly foreign to UNIX hosts\&. Under Windows NT/2000 print servers, a port is associated with a port monitor and generally takes the form of a local port (i\&.e\&. LPT1:, COM1:, FILE:) or a remote port (i\&.e\&. LPD Port Monitor, etc\&.\&.\&.)\&. By default, Samba has only one port defined\-\-\fB"Samba Printer Port"\fR\&. Under Windows NT/2000, all printers must have a valid port name\&. If you wish to have a list of ports displayed (smbd
@@ -3517,7 +3395,6 @@ Example:
 .RE
 
 eventlog list (G)
-.\" eventlog list
 .PP
 .RS 4
 This option defines a list of log names that Samba will report to the Microsoft EventViewer utility\&. The listed eventlogs will be associated with tdb file on disk in the
@@ -3535,7 +3412,6 @@ Example:
 .RE
 
 fake directory create times (S)
-.\" fake directory create times
 .PP
 .RS 4
 NTFS and Windows VFAT file systems keep a create time for all files and directories\&. This is not the same as the ctime \- status change time \- that Unix keeps, so Samba by default reports the earliest of the various times Unix does keep\&. Setting this parameter for a share causes Samba to always report midnight 1\-1\-1980 as the create time for directories\&.
@@ -3549,7 +3425,6 @@ Default:
 .RE
 
 fake oplocks (S)
-.\" fake oplocks
 .PP
 .RS 4
 Oplocks are the way that SMB clients get permission from a server to locally cache file operations\&. If a server grants an oplock (opportunistic lock) then the client is free to assume that it is the only one accessing the file and it will aggressively cache file data\&. With some oplock types the client may even cache file open/close operations\&. This can give enormous performance benefits\&.
@@ -3570,7 +3445,6 @@ Default:
 .RE
 
 follow symlinks (S)
-.\" follow symlinks
 .PP
 .RS 4
 This parameter allows the Samba administrator to stop
@@ -3590,7 +3464,6 @@ Default:
 .RE
 
 force create mode (S)
-.\" force create mode
 .PP
 .RS 4
 This parameter specifies a set of UNIX mode bit permissions that will
@@ -3609,7 +3482,6 @@ Example:
 .RE
 
 force directory mode (S)
-.\" force directory mode
 .PP
 .RS 4
 This parameter specifies a set of UNIX mode bit permissions that will
@@ -3628,7 +3500,6 @@ Example:
 .RE
 
 force directory security mode (S)
-.\" force directory security mode
 .PP
 .RS 4
 This parameter has been removed for Samba 4\&.0\&.0\&.
@@ -3637,7 +3508,6 @@ This parameter has been removed for Samba 4\&.0\&.0\&.
 .RE
 
 group
-.\" group
 .PP
 .RS 4
 This parameter is a synonym for
@@ -3645,7 +3515,6 @@ force group\&.
 .RE
 
 force group (S)
-.\" force group
 .PP
 .RS 4
 This specifies a UNIX group name that will be assigned as the default primary group for all users connecting to this service\&. This is useful for sharing files by ensuring that all access to files on service will use the named group for their permissions checking\&. Thus, by assigning permissions for this group to the files and directories within this service the Samba administrator can restrict or allow sharing of these files\&.
@@ -3669,7 +3538,6 @@ Example:
 .RE
 
 force printername (S)
-.\" force printername
 .PP
 .RS 4
 When printing from Windows NT (or later), each printer in
@@ -3690,7 +3558,6 @@ Default:
 .RE
 
 force security mode (S)
-.\" force security mode
 .PP
 .RS 4
 This parameter has been removed for Samba 4\&.0\&.0\&.
@@ -3699,7 +3566,6 @@ This parameter has been removed for Samba 4\&.0\&.0\&.
 .RE
 
 force unknown acl user (S)
-.\" force unknown acl user
 .PP
 .RS 4
 If this parameter is set, a Windows NT ACL that contains an unknown SID (security descriptor, or representation of a user or group id) as the owner or group owner of the file will be silently mapped into the current UNIX uid or gid of the currently connected user\&.
@@ -3713,7 +3579,6 @@ Default:
 .RE
 
 force user (S)
-.\" force user
 .PP
 .RS 4
 This specifies a UNIX user name that will be assigned as the default user for all users connecting to this service\&. This is useful for sharing files\&. You should also use it carefully as using it incorrectly can cause security problems\&.
@@ -3730,7 +3595,6 @@ Example:
 .RE
 
 fss: prune stale (G)
-.\" fss: prune stale
 .PP
 .RS 4
 When enabled, Samba\*(Aqs File Server Remote VSS Protocol (FSRVP) server checks all FSRVP initiated snapshots on startup, and removes any corresponding state (including share definitions) for nonexistent snapshot paths\&.
@@ -3743,7 +3607,6 @@ Example:
 .RE
 
 fss: sequence timeout (G)
-.\" fss: sequence timeout
 .PP
 .RS 4
 The File Server Remote VSS Protocol (FSRVP) server includes a message sequence timer to ensure cleanup on unexpected client disconnect\&. This parameter overrides the default timeout between FSRVP operations\&. FSRVP timeouts can be completely disabled via a value of 0\&.
@@ -3756,7 +3619,6 @@ Example:
 .RE
 
 fstype (S)
-.\" fstype
 .PP
 .RS 4
 This parameter allows the administrator to configure the string that specifies the type of filesystem a share is using that is reported by
@@ -3777,7 +3639,6 @@ Example:
 .RE
 
 get quota command (G)
-.\" get quota command
 .PP
 .RS 4
 The
@@ -3972,7 +3833,6 @@ Example:
 .RE
 
 getwd cache (G)
-.\" getwd cache
 .PP
 .RS 4
 This is a tuning option\&. When this is enabled a caching algorithm will be used to reduce the time taken for getwd() calls\&. This can have a significant impact on performance, especially when the
@@ -3985,7 +3845,6 @@ Default:
 .RE
 
 guest account (G)
-.\" guest account
 .PP
 .RS 4
 This is a username which will be used for access to services which are specified as
@@ -4009,7 +3868,6 @@ Example:
 .RE
 
 public
-.\" public
 .PP
 .RS 4
 This parameter is a synonym for
@@ -4017,7 +3875,6 @@ guest ok\&.
 .RE
 
 guest ok (S)
-.\" guest ok
 .PP
 .RS 4
 If this parameter is
@@ -4037,7 +3894,6 @@ Default:
 .RE
 
 only guest
-.\" only guest
 .PP
 .RS 4
 This parameter is a synonym for
@@ -4045,7 +3901,6 @@ guest only\&.
 .RE
 
 guest only (S)
-.\" guest only
 .PP
 .RS 4
 If this parameter is
@@ -4063,7 +3918,6 @@ Default:
 .RE
 
 hide dot files (S)
-.\" hide dot files
 .PP
 .RS 4
 This is a boolean parameter that controls whether files starting with a dot appear as hidden files\&.
@@ -4073,7 +3927,6 @@ Default:
 .RE
 
 hide files (S)
-.\" hide files
 .PP
 .RS 4
 This is a list of files or directories that are not visible but are accessible\&. The DOS \*(Aqhidden\*(Aq attribute is applied to any files or directories that match\&.
@@ -4107,7 +3960,6 @@ Default:
 .RE
 
 hide special files (S)
-.\" hide special files
 .PP
 .RS 4
 This parameter prevents clients from seeing special files such as sockets, devices and fifo\*(Aqs in directory listings\&.
@@ -4117,7 +3969,6 @@ Default:
 .RE
 
 hide unreadable (S)
-.\" hide unreadable
 .PP
 .RS 4
 This parameter prevents clients from seeing the existance of files that cannot be read\&. Defaults to off\&.
@@ -4129,7 +3980,6 @@ Default:
 .RE
 
 hide unwriteable files (S)
-.\" hide unwriteable files
 .PP
 .RS 4
 This parameter prevents clients from seeing the existance of files that cannot be written to\&. Defaults to off\&. Note that unwriteable directories are shown as usual\&.
@@ -4141,7 +3991,6 @@ Default:
 .RE
 
 homedir map (G)
-.\" homedir map
 .PP
 .RS 4
 If
@@ -4187,7 +4036,6 @@ Example:
 .RE
 
 host msdfs (G)
-.\" host msdfs
 .PP
 .RS 4
 If set to
@@ -4202,7 +4050,6 @@ Default:
 .RE
 
 hostname lookups (G)
-.\" hostname lookups
 .PP
 .RS 4
 Specifies whether samba should use (expensive) hostname lookups or use the ip addresses instead\&. An example place where hostname lookups are currently used is when checking the
@@ -4218,7 +4065,6 @@ Example:
 .RE
 
 allow hosts
-.\" allow hosts
 .PP
 .RS 4
 This parameter is a synonym for
@@ -4226,7 +4072,6 @@ hosts allow\&.
 .RE
 
 hosts allow (S)
-.\" hosts allow
 .PP
 .RS 4
 A synonym for this parameter is
@@ -4292,7 +4137,6 @@ Example:
 .RE
 
 deny hosts
-.\" deny hosts
 .PP
 .RS 4
 This parameter is a synonym for
@@ -4300,7 +4144,6 @@ hosts deny\&.
 .RE
 
 hosts deny (S)
-.\" hosts deny
 .PP
 .RS 4
 The opposite of
@@ -4324,7 +4167,6 @@ Example:
 .RE
 
 idmap backend (G)
-.\" idmap backend
 .PP
 .RS 4
 The idmap backend provides a plugin interface for Winbind to use varying backends to store SID/uid/gid mapping tables\&.
@@ -4337,7 +4179,6 @@ Default:
 .RE
 
 idmap cache time (G)
-.\" idmap cache time
 .PP
 .RS 4
 This parameter specifies the number of seconds that Winbind\*(Aqs idmap interface will cache positive SID/uid/gid query results\&. By default, Samba will cache these results for one week\&.
@@ -4347,7 +4188,6 @@ Default:
 .RE
 
 idmap config DOMAIN : OPTION (G)
-.\" idmap config DOMAIN : OPTION
 .PP
 .RS 4
 ID mapping in Samba is the mapping between Windows SIDs and Unix user and group IDs\&. This is performed by Winbindd with a configurable plugin interface\&. Samba\*(Aqs ID mapping is configured by options starting with the
@@ -4404,7 +4244,6 @@ backend for all other domains\&. This configuration assumes that the admin of CO
 .RE
 
 winbind gid
-.\" winbind gid
 .PP
 .RS 4
 This parameter is a synonym for
@@ -4412,7 +4251,6 @@ idmap gid\&.
 .RE
 
 idmap gid (G)
-.\" idmap gid
 .PP
 .RS 4
 The idmap gid parameter specifies the range of group ids for the default idmap configuration\&. It is now deprecated in favour of
@@ -4430,7 +4268,6 @@ Example:
 .RE
 
 idmap negative cache time (G)
-.\" idmap negative cache time
 .PP
 .RS 4
 This parameter specifies the number of seconds that Winbind\*(Aqs idmap interface will cache negative SID/uid/gid query results\&.
@@ -4440,7 +4277,6 @@ Default:
 .RE
 
 winbind uid
-.\" winbind uid
 .PP
 .RS 4
 This parameter is a synonym for
@@ -4448,7 +4284,6 @@ idmap uid\&.
 .RE
 
 idmap uid (G)
-.\" idmap uid
 .PP
 .RS 4
 The idmap uid parameter specifies the range of user ids for the default idmap configuration\&. It is now deprecated in favour of
@@ -4466,7 +4301,6 @@ Example:
 .RE
 
 include (S)
-.\" include
 .PP
 .RS 4
 This allows you to include one config file inside another\&. The file is included literally, as though typed in place\&.
@@ -4493,7 +4327,6 @@ Example:
 .RE
 
 include system krb5 conf (G)
-.\" include system krb5 conf
 .PP
 .RS 4
 Setting this parameter to
@@ -4506,7 +4339,6 @@ Default:
 .RE
 
 inherit acls (S)
-.\" inherit acls
 .PP
 .RS 4
 This parameter can be used to ensure that if default acls exist on parent directories, they are always honored when creating a new file or subdirectory in these parent directories\&. The default behavior is to use the unix mode specified when creating the directory\&. Enabling this option sets the unix mode to 0777, thus guaranteeing that default directory acls are propagated\&. Note that using the VFS modules acl_xattr or acl_tdb which store native Windows as meta\-data will automatically turn this option on for any share for which they are loaded, as they require this option to emulate Windows ACLs correctly\&.
@@ -4516,7 +4348,6 @@ Default:
 .RE
 
 inherit owner (S)
-.\" inherit owner
 .PP
 .RS 4
 The ownership of new files and directories is normally governed by effective uid of the connected user\&. This option allows the Samba administrator to specify that the ownership for new files and directories should be controlled by the ownership of the parent directory\&.
@@ -4585,7 +4416,6 @@ Default:
 .RE
 
 inherit permissions (S)
-.\" inherit permissions
 .PP
 .RS 4
 The permissions on new files and directories are normally governed by
@@ -4616,7 +4446,6 @@ Default:
 .RE
 
 init logon delay (G)
-.\" init logon delay
 .PP
 .RS 4
 This parameter specifies a delay in milliseconds for the hosts configured for delayed initial samlogon with
@@ -4627,7 +4456,6 @@ Default:
 .RE
 
 init logon delayed hosts (G)
-.\" init logon delayed hosts
 .PP
 .RS 4
 This parameter takes a list of host names, addresses or networks for which the initial samlogon reply should be delayed (so other DCs get preferred by XP workstations if there are any)\&.
@@ -4644,7 +4472,6 @@ Example:
 .RE
 
 interfaces (G)
-.\" interfaces
 .PP
 .RS 4
 This option allows you to override the default network interfaces list that Samba will use for browsing, name registration and other NetBIOS over TCP/IP (NBT) traffic\&. By default Samba will query the kernel for the list of all active interfaces and use any interfaces except 127\&.0\&.0\&.1 that are broadcast capable\&.
@@ -4718,7 +4545,6 @@ Example:
 .RE
 
 invalid users (S)
-.\" invalid users
 .PP
 .RS 4
 This is a list of users that should not be allowed to login to this service\&. This is really a
@@ -4744,7 +4570,6 @@ Example:
 .RE
 
 iprint server (G)
-.\" iprint server
 .PP
 .RS 4
 This parameter is only applicable if
@@ -4763,7 +4588,6 @@ Example:
 .RE
 
 keepalive (G)
-.\" keepalive
 .PP
 .RS 4
 The value of the parameter (an integer) represents the number of seconds between
@@ -4783,7 +4607,6 @@ Example:
 .RE
 
 kerberos encryption types (G)
-.\" kerberos encryption types
 .PP
 .RS 4
 This parameter determines the encryption types to use when operating as a Kerberos client\&. Possible values are
@@ -4812,7 +4635,6 @@ Default:
 .RE
 
 kerberos method (G)
-.\" kerberos method
 .PP
 .RS 4
 Controls how kerberos tickets are verified\&.
@@ -4875,7 +4697,6 @@ Default:
 .RE
 
 kernel change notify (G)
-.\" kernel change notify
 .PP
 .RS 4
 This parameter specifies whether Samba should ask the kernel for change notifications in directories so that SMB clients can refresh whenever the data on the server changes\&.
@@ -4887,7 +4708,6 @@ Default:
 .RE
 
 kernel oplocks (S)
-.\" kernel oplocks
 .PP
 .RS 4
 For UNIXes that support kernel based
@@ -4913,7 +4733,6 @@ Default:
 .RE
 
 kernel share modes (S)
-.\" kernel share modes
 .PP
 .RS 4
 This parameter controls whether SMB share modes are translated into UNIX flocks\&.
@@ -4931,7 +4750,6 @@ Default:
 .RE
 
 kpasswd port (G)
-.\" kpasswd port
 .PP
 .RS 4
 Specifies which ports the Kerberos server should listen on for password changes\&.
@@ -4941,7 +4759,6 @@ Default:
 .RE
 
 krb5 port (G)
-.\" krb5 port
 .PP
 .RS 4
 Specifies which port the KDC should listen on for Kerberos traffic\&.
@@ -4951,7 +4768,6 @@ Default:
 .RE
 
 lanman auth (G)
-.\" lanman auth
 .PP
 .RS 4
 This parameter determines whether or not
@@ -4979,7 +4795,6 @@ Default:
 .RE
 
 large readwrite (G)
-.\" large readwrite
 .PP
 .RS 4
 This parameter determines whether or not
@@ -4991,7 +4806,6 @@ Default:
 .RE
 
 ldap admin dn (G)
-.\" ldap admin dn
 .PP
 .RS 4
 The
@@ -5015,7 +4829,6 @@ is not appended to the
 .RE
 
 ldap connection timeout (G)
-.\" ldap connection timeout
 .PP
 .RS 4
 This parameter tells the LDAP library calls which timeout in seconds they should honor during initial connection establishments to LDAP servers\&. It is very useful in failover scenarios in particular\&. If one or more LDAP servers are not reachable at all, we do not have to wait until TCP timeouts are over\&. This feature must be supported by your LDAP library\&.
@@ -5029,7 +4842,6 @@ Default:
 .RE
 
 ldap debug level (G)
-.\" ldap debug level
 .PP
 .RS 4
 This parameter controls the debug level of the LDAP library calls\&. In the case of OpenLDAP, it is the same bit\-field as understood by the server and documented in the
@@ -5049,7 +4861,6 @@ Example:
 .RE
 
 ldap debug threshold (G)
-.\" ldap debug threshold
 .PP
 .RS 4
 This parameter controls the Samba debug level at which the ldap library debug output is printed in the Samba logs\&. See the description of
@@ -5064,7 +4875,6 @@ Example:
 .RE
 
 ldap delete dn (G)
-.\" ldap delete dn
 .PP
 .RS 4
 This parameter specifies whether a delete operation in the ldapsam deletes the complete entry or only the attributes specific to Samba\&.
@@ -5074,7 +4884,6 @@ Default:
 .RE
 
 ldap deref (G)
-.\" ldap deref
 .PP
 .RS 4
 This option controls whether Samba should tell the LDAP library to use a certain alias dereferencing method\&. The default is
@@ -5093,7 +4902,6 @@ Example:
 .RE
 
 ldap follow referral (G)
-.\" ldap follow referral
 .PP
 .RS 4
 This option controls whether to follow LDAP referrals or not when searching for entries in the LDAP database\&. Possible values are
@@ -5111,7 +4919,6 @@ Example:
 .RE
 
 ldap group suffix (G)
-.\" ldap group suffix
 .PP
 .RS 4
 This parameter specifies the suffix that is used for groups when these are added to the LDAP directory\&. If this parameter is unset, the value of
@@ -5128,7 +4935,6 @@ Example:
 .RE
 
 ldap idmap suffix (G)
-.\" ldap idmap suffix
 .PP
 .RS 4
 This parameters specifies the suffix that is used when storing idmap mappings\&. If this parameter is unset, the value of
@@ -5145,7 +4951,6 @@ Example:
 .RE
 
 ldap machine suffix (G)
-.\" ldap machine suffix
 .PP
 .RS 4
 It specifies where machines should be added to the ldap tree\&. If this parameter is unset, the value of
@@ -5162,7 +4967,6 @@ Example:
 .RE
 
 ldap page size (G)
-.\" ldap page size
 .PP
 .RS 4
 This parameter specifies the number of entries per page\&.
@@ -5177,7 +4981,6 @@ Example:
 .RE
 
 ldap password sync
-.\" ldap password sync
 .PP
 .RS 4
 This parameter is a synonym for
@@ -5185,7 +4988,6 @@ ldap passwd sync\&.
 .RE
 
 ldap passwd sync (G)
-.\" ldap passwd sync
 .PP
 .RS 4
 This option is used to define whether or not Samba should sync the LDAP password with the NT and LM hashes for normal accounts (NOT for workstation, server or domain trusts) on a password change via SAMBA\&.
@@ -5236,7 +5038,6 @@ Default:
 .RE
 
 ldap replication sleep (G)
-.\" ldap replication sleep
 .PP
 .RS 4
 When Samba is asked to write to a read\-only LDAP replica, we are redirected to talk to the read\-write master server\&. This server then replicates our changes back to the \*(Aqlocal\*(Aq server, however the replication might take some seconds, especially over slow links\&. Certain client activities, particularly domain joins, can become confused by the \*(Aqsuccess\*(Aq that does not immediately change the LDAP back\-end\*(Aqs data\&.
@@ -5250,7 +5051,6 @@ Default:
 .RE
 
 ldapsam:editposix (G)
-.\" ldapsam:editposix
 .PP
 .RS 4
 Editposix is an option that leverages ldapsam:trusted to make it simpler to manage a domain controller eliminating the need to set up custom scripts to add and manage the posix users and groups\&. This option will instead directly manipulate the ldap tree to create, remove and modify user and group entries\&. This option also requires a running winbindd as it is used to allocate new uids/gids on user/group creation\&. The allocation range must be therefore configured\&.
@@ -5342,7 +5142,6 @@ Default:
 .RE
 
 ldapsam:trusted (G)
-.\" ldapsam:trusted
 .PP
 .RS 4
 By default, Samba as a Domain Controller with an LDAP backend needs to use the Unix\-style NSS subsystem to access user and group information\&. Due to the way Unix stores user information in /etc/passwd and /etc/group this inevitably leads to inefficiencies\&. One important question a user needs to know is the list of groups he is member of\&. The plain UNIX model involves a complete enumeration of the file /etc/group and its NSS counterparts in LDAP\&. UNIX has optimized functions to enumerate group membership\&. Sadly, other functions that are used to deal with user and group attributes lack such optimization\&.
@@ -5358,7 +5157,6 @@ Default:
 .RE
 
 ldap server require strong auth (G)
-.\" ldap server require strong auth
 .PP
 .RS 4
 The
@@ -5386,7 +5184,6 @@ Default:
 .RE
 
 ldap ssl (G)
-.\" ldap ssl
 .PP
 .RS 4
 This option is used to define whether or not Samba should use SSL when connecting to the ldap server This is
@@ -5400,7 +5197,8 @@ script\&.
 LDAP connections should be secured where possible\&. This may be done setting
 \fIeither\fR
 this parameter to
-\fIstart tls\fR\fIor\fR
+\fIstart tls\fR
+\fIor\fR
 by specifying
 \fIldaps://\fR
 in the URL argument of
@@ -5439,7 +5237,9 @@ Please note that this parameter does only affect
 \fIrpc\fR
 methods\&. To enable the LDAPv3 StartTLS extended operation (RFC2830) for
 \fIads\fR, set
-\m[blue]\fBldap ssl = start tls\fR\m[]\fIand\fR\m[blue]\fBldap ssl ads = yes\fR\m[]\&. See
+\m[blue]\fBldap ssl = start tls\fR\m[]
+\fIand\fR
+\m[blue]\fBldap ssl ads = yes\fR\m[]\&. See
 smb\&.conf(5)
 for more information on
 \m[blue]\fBldap ssl ads\fR\m[]\&.
@@ -5449,7 +5249,6 @@ Default:
 .RE
 
 ldap ssl ads (G)
-.\" ldap ssl ads
 .PP
 .RS 4
 This option is used to define whether or not Samba should use SSL when connecting to the ldap server using
@@ -5469,7 +5268,6 @@ Default:
 .RE
 
 ldap suffix (G)
-.\" ldap suffix
 .PP
 .RS 4
 Specifies the base for all ldap suffixes and for storing the sambaDomain object\&.
@@ -5489,7 +5287,6 @@ Example:
 .RE
 
 ldap timeout (G)
-.\" ldap timeout
 .PP
 .RS 4
 This parameter defines the number of seconds that Samba should use as timeout for LDAP operations\&.
@@ -5499,7 +5296,6 @@ Default:
 .RE
 
 ldap user suffix (G)
-.\" ldap user suffix
 .PP
 .RS 4
 This parameter specifies where users are added to the tree\&. If this parameter is unset, the value of
@@ -5516,7 +5312,6 @@ Example:
 .RE
 
 level2 oplocks (S)
-.\" level2 oplocks
 .PP
 .RS 4
 This parameter controls whether Samba supports level2 (read\-only) oplocks on a share\&.
@@ -5543,7 +5338,6 @@ Default:
 .RE
 
 lm announce (G)
-.\" lm announce
 .PP
 .RS 4
 This parameter determines if
@@ -5570,7 +5364,6 @@ Example:
 .RE
 
 lm interval (G)
-.\" lm interval
 .PP
 .RS 4
 If Samba is set to produce Lanman announce broadcasts needed by OS/2 clients (see the
@@ -5587,7 +5380,6 @@ Example:
 .RE
 
 load printers (G)
-.\" load printers
 .PP
 .RS 4
 A boolean variable that controls whether all printers in the printcap will be loaded for browsing by default\&. See the
@@ -5599,7 +5391,6 @@ Default:
 .RE
 
 local master (G)
-.\" local master
 .PP
 .RS 4
 This option allows
@@ -5622,7 +5413,8 @@ in elections for local master browser\&.
 Setting this value to
 \fBno\fR
 will cause
-nmbd\fInever\fR
+nmbd
+\fInever\fR
 to become a local master browser\&.
 .sp
 Default:
@@ -5630,7 +5422,6 @@ Default:
 .RE
 
 lock dir
-.\" lock dir
 .PP
 .RS 4
 This parameter is a synonym for
@@ -5638,7 +5429,6 @@ lock directory\&.
 .RE
 
 lock directory (G)
-.\" lock directory
 .PP
 .RS 4
 This option specifies the directory where lock files will be placed\&. The lock files are used to implement the
@@ -5657,7 +5447,6 @@ Example:
 .RE
 
 locking (S)
-.\" locking
 .PP
 .RS 4
 This controls whether or not locking will be performed by the server in response to lock requests from the client\&.
@@ -5683,7 +5472,6 @@ Default:
 .RE
 
 lock spin time (G)
-.\" lock spin time
 .PP
 .RS 4
 The time in milliseconds that smbd should keep waiting to see if a failed lock request can be granted\&. This parameter has changed in default value from Samba 3\&.0\&.23 from 10 to 200\&. The associated
@@ -5695,7 +5483,6 @@ Default:
 .RE
 
 log file (G)
-.\" log file
 .PP
 .RS 4
 This option allows you to override the name of the Samba log file (also known as the debug file)\&.
@@ -5709,7 +5496,6 @@ Example:
 .RE
 
 logging (G)
-.\" logging
 .PP
 .RS 4
 This parameter configures logging backends\&. Multiple backends can be specified at the same time, with different log levels for each backend\&. The parameter is a list of backends, where each backend is specified as backend[:option][@loglevel]\&.
@@ -5794,7 +5580,6 @@ Example:
 .RE
 
 debuglevel
-.\" debuglevel
 .PP
 .RS 4
 This parameter is a synonym for
@@ -5802,7 +5587,6 @@ log level\&.
 .RE
 
 log level (G)
-.\" log level
 .PP
 .RS 4
 The value of the parameter (a astring) allows the debug level (logging level) to be specified in the
@@ -6040,7 +5824,6 @@ Example:
 .RE
 
 log nt token command (G)
-.\" log nt token command
 .PP
 .RS 4
 This option can be set to a command that will be called when new nt tokens are created\&.
@@ -6052,7 +5835,6 @@ Default:
 .RE
 
 logon drive (G)
-.\" logon drive
 .PP
 .RS 4
 This parameter specifies the local path to which the home directory will be connected (see
@@ -6068,7 +5850,6 @@ Example:
 .RE
 
 logon home (G)
-.\" logon home
 .PP
 .RS 4
 This parameter specifies the home directory location when a Win95/98 or NT Workstation logs into a Samba PDC\&. It allows you to do
@@ -6108,7 +5889,6 @@ Example:
 .RE
 
 logon path (G)
-.\" logon path
 .PP
 .RS 4
 This parameter specifies the directory where roaming profiles (Desktop, NTuser\&.dat, etc) are stored\&. Contrary to previous versions of these manual pages, it has nothing to do with Win 9X roaming profiles\&. To find out how to handle roaming profiles for Win 9X system, see the
@@ -6167,7 +5947,6 @@ Default:
 .RE
 
 logon script (G)
-.\" logon script
 .PP
 .RS 4
 This parameter specifies the batch file (\&.bat) or NT command file (\&.cmd) to be downloaded and run on a machine when a user successfully logs in\&. The file must contain the DOS style CR/LF line endings\&. Using a DOS\-style editor to create the file is recommended\&.
@@ -6227,7 +6006,6 @@ Example:
 .RE
 
 log writeable files on exit (G)
-.\" log writeable files on exit
 .PP
 .RS 4
 When the network connection between a CIFS client and Samba dies, Samba has no option but to simply shut down the server side of the network connection\&. If this happens, there is a risk of data corruption because the Windows client did not complete all write operations that the Windows application requested\&. Setting this option to "yes" makes smbd log with a level 0 message a list of all files that have been opened for writing when the network connection died\&. Those are the files that are potentially corrupted\&. It is meant as an aid for the administrator to give him a list of files to do consistency checks on\&.
@@ -6237,7 +6015,6 @@ Default:
 .RE
 
 lppause command (S)
-.\" lppause command
 .PP
 .RS 4
 This parameter specifies the command to be executed on the server host in order to stop printing or spooling a specific print job\&.
@@ -6274,7 +6051,6 @@ Example:
 .RE
 
 lpq cache time (G)
-.\" lpq cache time
 .PP
 .RS 4
 This controls how long lpq info will be cached for to prevent the
@@ -6307,7 +6083,6 @@ Example:
 .RE
 
 lpq command (S)
-.\" lpq command
 .PP
 .RS 4
 This parameter specifies the command to be executed on the server host in order to obtain
@@ -6341,7 +6116,6 @@ Example:
 .RE
 
 lpresume command (S)
-.\" lpresume command
 .PP
 .RS 4
 This parameter specifies the command to be executed on the server host in order to restart or continue printing or spooling a specific print job\&.
@@ -6386,7 +6160,6 @@ Example:
 .RE
 
 lprm command (S)
-.\" lprm command
 .PP
 .RS 4
 This parameter specifies the command to be executed on the server host in order to delete a print job\&.
@@ -6424,7 +6197,6 @@ Default:
 .RE
 
 lsa over netlogon (G)
-.\" lsa over netlogon
 .PP
 .RS 4
 Setting this deprecated option will allow the RPC server in the AD DC to answer the LSARPC interface on the
@@ -6440,7 +6212,6 @@ Default:
 .RE
 
 machine password timeout (G)
-.\" machine password timeout
 .PP
 .RS 4
 If a Samba server is a member of a Windows NT or Active Directory Domain (see the
@@ -6462,7 +6233,6 @@ Default:
 .RE
 
 magic output (S)
-.\" magic output
 .PP
 .RS 4
 This parameter specifies the name of a file which will contain output created by a magic script (see the
@@ -6493,7 +6263,6 @@ Example:
 .RE
 
 magic script (S)
-.\" magic script
 .PP
 .RS 4
 This parameter specifies the name of a file which, if opened, will be executed by the server when the file is closed\&. This allows a UNIX script to be sent to the Samba host and executed on behalf of the connected user\&.
@@ -6522,7 +6291,6 @@ Example:
 .RE
 
 mangled names (S)
-.\" mangled names
 .PP
 .RS 4
 This controls whether non\-DOS names under UNIX should be mapped to DOS\-compatible names ("mangled") and made visible, or whether non\-DOS names should simply be ignored\&.
@@ -6582,7 +6350,6 @@ Default:
 .RE
 
 mangle prefix (G)
-.\" mangle prefix
 .PP
 .RS 4
 controls the number of prefix characters from the original name used when generating the mangled names\&. A larger value will give a weaker hash and therefore more name collisions\&. The minimum value is 1 and the maximum value is 6\&.
@@ -6597,7 +6364,6 @@ Example:
 .RE
 
 mangling char (S)
-.\" mangling char
 .PP
 .RS 4
 This controls what character is used as the
@@ -6613,7 +6379,6 @@ Example:
 .RE
 
 mangling method (G)
-.\" mangling method
 .PP
 .RS 4
 controls the algorithm used for the generating the mangled names\&. Can take two different values, "hash" and "hash2"\&. "hash" is the algorithm that was used in Samba for many years and was the default in Samba 2\&.2\&.x "hash2" is now the default and is newer and considered a better algorithm (generates less collisions) in the names\&. Many Win32 applications store the mangled names and so changing to algorithms must not be done lightly as these applications may break unless reinstalled\&.
@@ -6626,7 +6391,6 @@ Example:
 .RE
 
 map acl inherit (S)
-.\" map acl inherit
 .PP
 .RS 4
 This boolean parameter controls whether
@@ -6638,7 +6402,6 @@ Default:
 .RE
 
 map archive (S)
-.\" map archive
 .PP
 .RS 4
 This controls whether the DOS archive attribute should be mapped to the UNIX owner execute bit\&. The DOS archive bit is set when a file has been modified since its last backup\&. One motivation for this option is to keep Samba/your PC from making any file it touches from becoming executable under UNIX\&. This can be quite annoying for shared source code, documents, etc\&.\&.\&.
@@ -6658,7 +6421,6 @@ Default:
 .RE
 
 map hidden (S)
-.\" map hidden
 .PP
 .RS 4
 This controls whether DOS style hidden files should be mapped to the UNIX world execute bit\&.
@@ -6678,7 +6440,6 @@ Default:
 .RE
 
 map readonly (S)
-.\" map readonly
 .PP
 .RS 4
 This controls how the DOS read only attribute should be mapped from a UNIX filesystem\&.
@@ -6747,7 +6508,6 @@ Default:
 .RE
 
 map system (S)
-.\" map system
 .PP
 .RS 4
 This controls whether DOS style system files should be mapped to the UNIX group execute bit\&.
@@ -6767,7 +6527,6 @@ Default:
 .RE
 
 map to guest (G)
-.\" map to guest
 .PP
 .RS 4
 This parameter can take four different values, which tell
@@ -6843,7 +6602,6 @@ Example:
 .RE
 
 map untrusted to domain (G)
-.\" map untrusted to domain
 .PP
 .RS 4
 If a client connects to smbd using an untrusted domain name, such as BOGUS\euser, smbd replaces the BOGUS domain with it\*(Aqs SAM name before attempting to authenticate that user\&. In the case where smbd is acting as a PDC this will be DOMAIN\euser\&. In the case where smbd is acting as a domain member server or a standalone server this will be WORKSTATION\euser\&.
@@ -6859,7 +6617,6 @@ Default:
 .RE
 
 max connections (S)
-.\" max connections
 .PP
 .RS 4
 This option allows the number of simultaneous connections to a service to be limited\&. If
@@ -6878,7 +6635,6 @@ Example:
 .RE
 
 max disk size (G)
-.\" max disk size
 .PP
 .RS 4
 This option allows you to put an upper limit on the apparent size of disks\&. If you set this option to 100 then all shares will appear to be not larger than 100 MB in size\&.
@@ -6900,7 +6656,6 @@ Example:
 .RE
 
 max log size (G)
-.\" max log size
 .PP
 .RS 4
 This option (an integer in kilobytes) specifies the max size the log file should grow to\&. Samba periodically checks the size and if it is exceeded it will rename the file, adding a
@@ -6917,7 +6672,6 @@ Example:
 .RE
 
 max mux (G)
-.\" max mux
 .PP
 .RS 4
 This option controls the maximum number of outstanding simultaneous SMB operations that Samba tells the client it will allow\&. You should never need to set this parameter\&.
@@ -6927,7 +6681,6 @@ Default:
 .RE
 
 max open files (G)
-.\" max open files
 .PP
 .RS 4
 This parameter limits the maximum number of open files that one
@@ -6941,7 +6694,6 @@ Default:
 .RE
 
 max print jobs (S)
-.\" max print jobs
 .PP
 .RS 4
 This parameter limits the maximum number of jobs allowable in a Samba printer queue at any given moment\&. If this number is exceeded,
@@ -6956,7 +6708,6 @@ Example:
 .RE
 
 max reported print jobs (S)
-.\" max reported print jobs
 .PP
 .RS 4
 This parameter limits the maximum number of jobs displayed in a port monitor for Samba printer queue at any given moment\&. If this number is exceeded, the excess jobs will not be shown\&. A value of zero means there is no limit on the number of print jobs reported\&.
@@ -6969,7 +6720,6 @@ Example:
 .RE
 
 max smbd processes (G)
-.\" max smbd processes
 .PP
 .RS 4
 This parameter limits the maximum number of
@@ -6986,7 +6736,6 @@ Example:
 .RE
 
 max stat cache size (G)
-.\" max stat cache size
 .PP
 .RS 4
 This parameter limits the size in memory of any
@@ -7001,7 +6750,6 @@ Example:
 .RE
 
 max ttl (G)
-.\" max ttl
 .PP
 .RS 4
 This option tells
@@ -7015,7 +6763,6 @@ Default:
 .RE
 
 max wins ttl (G)
-.\" max wins ttl
 .PP
 .RS 4
 This option tells
@@ -7029,7 +6776,6 @@ Default:
 .RE
 
 max xmit (G)
-.\" max xmit
 .PP
 .RS 4
 This option controls the maximum packet size that will be negotiated by Samba\&. The default is 16644, which matches the behavior of Windows 2000\&. A value below 2048 is likely to cause problems\&. You should never need to change this parameter from its default value\&.
@@ -7042,7 +6788,6 @@ Example:
 .RE
 
 message command (G)
-.\" message command
 .PP
 .RS 4
 This specifies what command to run when the server receives a WinPopup style message\&.
@@ -7145,7 +6890,6 @@ Example:
 .RE
 
 min print space (S)
-.\" min print space
 .PP
 .RS 4
 This sets the minimum amount of free disk space that must be available before a user will be able to spool a print job\&. It is specified in kilobytes\&. The default is 0, which means a user can always spool a print job\&.
@@ -7158,7 +6902,6 @@ Example:
 .RE
 
 min receivefile size (G)
-.\" min receivefile size
 .PP
 .RS 4
 This option changes the behavior of
@@ -7174,7 +6917,6 @@ Default:
 .RE
 
 min wins ttl (G)
-.\" min wins ttl
 .PP
 .RS 4
 This option tells
@@ -7188,7 +6930,6 @@ Default:
 .RE
 
 msdfs proxy (S)
-.\" msdfs proxy
 .PP
 .RS 4
 This parameter indicates that the share is a stand\-in for another CIFS share whose location is specified by the value of the parameter\&. When clients attempt to connect to this share, they are redirected to one or multiple, comma separated proxied shares using the SMB\-Dfs protocol\&.
@@ -7206,7 +6947,6 @@ Example:
 .RE
 
 msdfs root (S)
-.\" msdfs root
 .PP
 .RS 4
 If set to
@@ -7219,7 +6959,6 @@ Default:
 .RE
 
 msdfs shuffle referrals (S)
-.\" msdfs shuffle referrals
 .PP
 .RS 4
 If set to
@@ -7230,7 +6969,6 @@ Default:
 .RE
 
 multicast dns register (G)
-.\" multicast dns register
 .PP
 .RS 4
 If compiled with proper support for it, Samba will announce itself with multicast DNS services like for example provided by the Avahi daemon\&.
@@ -7242,7 +6980,6 @@ Default:
 .RE
 
 name cache timeout (G)
-.\" name cache timeout
 .PP
 .RS 4
 Specifies the number of seconds it takes before entries in samba\*(Aqs hostname resolve cache time out\&. If the timeout is set to 0\&. the caching is disabled\&.
@@ -7255,7 +6992,6 @@ Example:
 .RE
 
 name resolve order (G)
-.\" name resolve order
 .PP
 .RS 4
 This option is used by the programs in the Samba suite to determine what naming services to use and in what order to resolve host names to IP addresses\&. Its main purpose to is to control how netbios name resolution is performed\&. The option takes a space separated string of name resolution options\&.
@@ -7335,7 +7071,6 @@ Example:
 .RE
 
 socket address
-.\" socket address
 .PP
 .RS 4
 This parameter is a synonym for
@@ -7343,7 +7078,6 @@ nbt client socket address\&.
 .RE
 
 nbt client socket address (G)
-.\" nbt client socket address
 .PP
 .RS 4
 This option allows you to control what address Samba will send NBT client packets from, and process replies using, including in nmbd\&.
@@ -7366,7 +7100,6 @@ Example:
 .RE
 
 nbt port (G)
-.\" nbt port
 .PP
 .RS 4
 Specifies which port the server should use for NetBIOS over IP name services traffic\&.
@@ -7376,7 +7109,6 @@ Default:
 .RE
 
 ncalrpc dir (G)
-.\" ncalrpc dir
 .PP
 .RS 4
 This directory will hold a series of named pipes to allow RPC over inter\-process communication\&.
@@ -7391,7 +7123,6 @@ Example:
 .RE
 
 netbios aliases (G)
-.\" netbios aliases
 .PP
 .RS 4
 This is a list of NetBIOS names that nmbd will advertise as additional names by which the Samba server is known\&. This allows one machine to appear in browse lists under multiple names\&. If a machine is acting as a browse server or logon server none of these names will be advertised as either browse server or logon servers, only the primary name of the machine will be advertised with these capabilities\&.
@@ -7404,7 +7135,6 @@ Example:
 .RE
 
 netbios name (G)
-.\" netbios name
 .PP
 .RS 4
 This sets the NetBIOS name by which a Samba server is known\&. By default it is the same as the first component of the host\*(Aqs DNS name\&. If a machine is a browse server or logon server this name (or the first component of the hosts DNS name) will be the name that these services are advertised under\&.
@@ -7423,7 +7153,6 @@ Example:
 .RE
 
 netbios scope (G)
-.\" netbios scope
 .PP
 .RS 4
 This sets the NetBIOS scope that Samba will operate under\&. This should not be set unless every machine on your LAN also sets this value\&.
@@ -7433,7 +7162,6 @@ Default:
 .RE
 
 neutralize nt4 emulation (G)
-.\" neutralize nt4 emulation
 .PP
 .RS 4
 This option controls whether winbindd sends the NETLOGON_NEG_NEUTRALIZE_NT4_EMULATION flag in order to bypass the NT4 emulation of a domain controller\&.
@@ -7447,7 +7175,6 @@ Default:
 .RE
 
 NIS homedir (G)
-.\" NIS homedir
 .PP
 .RS 4
 Get the home share server from a NIS map\&. For UNIX systems that use an automounter, the user\*(Aqs home directory will often be mounted on a workstation on demand from a remote server\&.
@@ -7465,7 +7192,6 @@ Default:
 .RE
 
 nmbd bind explicit broadcast (G)
-.\" nmbd bind explicit broadcast
 .PP
 .RS 4
 This option causes
@@ -7479,7 +7205,6 @@ Default:
 .RE
 
 nsupdate command (G)
-.\" nsupdate command
 .PP
 .RS 4
 This option sets the path to the
@@ -7491,7 +7216,6 @@ Default:
 .RE
 
 nt acl support (S)
-.\" nt acl support
 .PP
 .RS 4
 This boolean parameter controls whether
@@ -7503,7 +7227,6 @@ Default:
 .RE
 
 ntlm auth (G)
-.\" ntlm auth
 .PP
 .RS 4
 This parameter determines whether or not
@@ -7523,7 +7246,6 @@ Default:
 .RE
 
 nt pipe support (G)
-.\" nt pipe support
 .PP
 .RS 4
 This boolean parameter controls whether
@@ -7537,7 +7259,6 @@ Default:
 .RE
 
 ntp signd socket directory (G)
-.\" ntp signd socket directory
 .PP
 .RS 4
 This setting controls the location of the socket that the NTP daemon uses to communicate with Samba for signing packets\&.
@@ -7552,7 +7273,6 @@ Default:
 .RE
 
 nt status support (G)
-.\" nt status support
 .PP
 .RS 4
 This boolean parameter controls whether
@@ -7568,7 +7288,6 @@ Default:
 .RE
 
 ntvfs handler (S)
-.\" ntvfs handler
 .PP
 .RS 4
 This specifies the NTVFS handlers for this share\&.
@@ -7658,7 +7377,6 @@ Default:
 .RE
 
 null passwords (G)
-.\" null passwords
 .PP
 .RS 4
 Allow or disallow client access to accounts that have null passwords\&.
@@ -7671,7 +7389,6 @@ Default:
 .RE
 
 obey pam restrictions (G)
-.\" obey pam restrictions
 .PP
 .RS 4
 When Samba 3\&.0 is configured to enable PAM support (i\&.e\&. \-\-with\-pam), this parameter will control whether or not Samba should obey PAM\*(Aqs account and session management directives\&. The default behavior is to use PAM for clear text authentication only and to ignore any account or session management\&. Note that Samba always ignores PAM for authentication in the case of
@@ -7682,7 +7399,6 @@ Default:
 .RE
 
 old password allowed period (G)
-.\" old password allowed period
 .PP
 .RS 4
 Number of minutes to permit an NTLM login after a password change or reset using the old password\&. This allows the user to re\-cache the new password on multiple clients without disrupting a network reconnection in the meantime\&.
@@ -7696,7 +7412,6 @@ Default:
 .RE
 
 oplock break wait time (G)
-.\" oplock break wait time
 .PP
 .RS 4
 This is a tuning parameter added due to bugs in both Windows 9x and WinNT\&. If Samba responds to a client too quickly when that client issues an SMB that can cause an oplock break request, then the network client can fail and not respond to the break request\&. This tuning parameter (which is set in milliseconds) is the amount of time Samba will wait before sending an oplock break request to such (broken) clients\&.
@@ -7720,7 +7435,6 @@ Default:
 .RE
 
 oplock contention limit (S)
-.\" oplock contention limit
 .PP
 .RS 4
 This is a
@@ -7753,7 +7467,6 @@ Default:
 .RE
 
 oplocks (S)
-.\" oplocks
 .PP
 .RS 4
 This boolean option tells
@@ -7771,7 +7484,6 @@ Default:
 .RE
 
 os2 driver map (G)
-.\" os2 driver map
 .PP
 .RS 4
 The parameter is used to define the absolute path to a file containing a mapping of Windows NT printer driver names to OS/2 printer driver names\&. The format is:
@@ -7788,7 +7500,6 @@ Default:
 .RE
 
 os level (G)
-.\" os level
 .PP
 .RS 4
 This integer value controls what level Samba advertises itself as for browse elections\&. The value of this parameter determines whether
@@ -7810,7 +7521,6 @@ Example:
 .RE
 
 pam password change (G)
-.\" pam password change
 .PP
 .RS 4
 With the addition of better PAM support in Samba 2\&.2, this parameter, it is possible to use PAM\*(Aqs password change control flag for Samba\&. If enabled, then PAM will be used for password changes when requested by an SMB client instead of the program listed in
@@ -7823,7 +7533,6 @@ Default:
 .RE
 
 panic action (G)
-.\" panic action
 .PP
 .RS 4
 This is a Samba developer option that allows a system command to be called when either
@@ -7840,7 +7549,6 @@ Example:
 .RE
 
 passdb backend (G)
-.\" passdb backend
 .PP
 .RS 4
 This option allows the administrator to chose which backend will be used for storing user and possibly group information\&. This allows you to swap between different storage mechanisms without recompile\&.
@@ -7922,7 +7630,6 @@ Default:
 .RE
 
 passdb expand explicit (G)
-.\" passdb expand explicit
 .PP
 .RS 4
 This parameter controls whether Samba substitutes %\-macros in the passdb fields if they are explicitly set\&. We used to expand macros here, but this turned out to be a bug because the Windows client can expand a variable %G_osver% in which %G would have been substituted by the user\*(Aqs primary group\&.
@@ -7932,7 +7639,6 @@ Default:
 .RE
 
 passwd chat (G)
-.\" passwd chat
 .PP
 .RS 4
 This string controls the
@@ -7977,7 +7683,6 @@ Example:
 .RE
 
 passwd chat debug (G)
-.\" passwd chat debug
 .PP
 .RS 4
 This boolean specifies if the passwd chat script parameter is run in
@@ -8001,7 +7706,6 @@ Default:
 .RE
 
 passwd chat timeout (G)
-.\" passwd chat timeout
 .PP
 .RS 4
 This integer specifies the number of seconds smbd will wait for an initial answer from a passwd chat script being run\&. Once the initial answer is received the subsequent answers must be received in one tenth of this time\&. The default it two seconds\&.
@@ -8011,7 +7715,6 @@ Default:
 .RE
 
 passwd program (G)
-.\" passwd program
 .PP
 .RS 4
 The name of a program that can be used to set UNIX user passwords\&. Any occurrences of
@@ -8052,7 +7755,6 @@ Example:
 .RE
 
 password hash gpg key ids (G)
-.\" password hash gpg key ids
 .PP
 .RS 4
 If
@@ -8101,7 +7803,6 @@ Example:
 .RE
 
 password server (G)
-.\" password server
 .PP
 .RS 4
 By specifying the name of a domain controller with this option, and using
@@ -8135,7 +7836,6 @@ Example:
 .RE
 
 directory
-.\" directory
 .PP
 .RS 4
 This parameter is a synonym for
@@ -8143,7 +7843,6 @@ path\&.
 .RE
 
 path (S)
-.\" path
 .PP
 .RS 4
 This parameter specifies a directory to which the user of the service is to be given access\&. In the case of printable services, this is where print data will spool prior to being submitted to the host for printing\&.
@@ -8168,7 +7867,6 @@ Example:
 .RE
 
 perfcount module (G)
-.\" perfcount module
 .PP
 .RS 4
 This parameter specifies the perfcount backend to be used when monitoring SMB operations\&. Only one perfcount module may be used, and it must implement all of the apis contained in the smb_perfcount_handler structure defined in smb\&.h\&.
@@ -8177,7 +7875,6 @@ This parameter specifies the perfcount backend to be used when monitoring SMB op
 .RE
 
 pid directory (G)
-.\" pid directory
 .PP
 .RS 4
 This option specifies the directory where pid files will be placed\&.
@@ -8190,7 +7887,6 @@ Example:
 .RE
 
 posix locking (S)
-.\" posix locking
 .PP
 .RS 4
 The
@@ -8202,7 +7898,6 @@ Default:
 .RE
 
 postexec (S)
-.\" postexec
 .PP
 .RS 4
 This option specifies a command to be run whenever the service is disconnected\&. It takes the usual substitutions\&. The command may be run as the root on some systems\&.
@@ -8219,7 +7914,6 @@ Example:
 .RE
 
 exec
-.\" exec
 .PP
 .RS 4
 This parameter is a synonym for
@@ -8227,7 +7921,6 @@ preexec\&.
 .RE
 
 preexec (S)
-.\" preexec
 .PP
 .RS 4
 This option specifies a command to be run whenever the service is connected to\&. It takes the usual substitutions\&.
@@ -8251,7 +7944,6 @@ Example:
 .RE
 
 preexec close (S)
-.\" preexec close
 .PP
 .RS 4
 This boolean option controls whether a non\-zero return code from
@@ -8263,7 +7955,6 @@ Default:
 .RE
 
 prefered master
-.\" prefered master
 .PP
 .RS 4
 This parameter is a synonym for
@@ -8271,7 +7962,6 @@ preferred master\&.
 .RE
 
 preferred master (G)
-.\" preferred master
 .PP
 .RS 4
 This boolean parameter controls if
@@ -8293,7 +7983,6 @@ Default:
 .RE
 
 preload modules (G)
-.\" preload modules
 .PP
 .RS 4
 This is a list of paths to modules that should be loaded into smbd before a client connects\&. This improves the speed of smbd when reacting to new connections somewhat\&.
@@ -8306,7 +7995,6 @@ Example:
 .RE
 
 preserve case (S)
-.\" preserve case
 .PP
 .RS 4
 This controls if new filenames are created with the case that the client passes, or if they are forced to be the
@@ -8321,7 +8009,6 @@ Default:
 .RE
 
 print ok
-.\" print ok
 .PP
 .RS 4
 This parameter is a synonym for
@@ -8329,7 +8016,6 @@ printable\&.
 .RE
 
 printable (S)
-.\" printable
 .PP
 .RS 4
 If this parameter is
@@ -8344,7 +8030,6 @@ Default:
 .RE
 
 printcap cache time (G)
-.\" printcap cache time
 .PP
 .RS 4
 This option specifies the number of seconds before the printing subsystem is again asked for the known printers\&.
@@ -8359,7 +8044,6 @@ Example:
 .RE
 
 printcap
-.\" printcap
 .PP
 .RS 4
 This parameter is a synonym for
@@ -8367,7 +8051,6 @@ printcap name\&.
 .RE
 
 printcap name (G)
-.\" printcap name
 .PP
 .RS 4
 This parameter may be used to override the compiled\-in default printcap name used by the server (usually
@@ -8439,7 +8122,6 @@ Example:
 .RE
 
 print command (S)
-.\" print command
 .PP
 .RS 4
 After a print job has finished spooling to a service, this command will be used via a
@@ -8516,7 +8198,6 @@ Example:
 .RE
 
 printer
-.\" printer
 .PP
 .RS 4
 This parameter is a synonym for
@@ -8524,7 +8205,6 @@ printer name\&.
 .RE
 
 printer name (S)
-.\" printer name
 .PP
 .RS 4
 This parameter specifies the name of the printer to which print jobs spooled through a printable service will be sent\&.
@@ -8545,7 +8225,6 @@ Example:
 .RE
 
 printing (S)
-.\" printing
 .PP
 .RS 4
 This parameters controls how printer status information is interpreted on your system\&. It also affects the default values for the
@@ -8592,7 +8271,6 @@ Default:
 .RE
 
 printjob username (S)
-.\" printjob username
 .PP
 .RS 4
 This parameter specifies which user information will be passed to the printing system\&. Usually, the username is sent, but in some cases, e\&.g\&. the domain prefix is useful, too\&.
@@ -8605,7 +8283,6 @@ Example:
 .RE
 
 print notify backchannel (S)
-.\" print notify backchannel
 .PP
 .RS 4
 Windows print clients can update print queue status by expecting the server to open a backchannel SMB connection to them\&. Due to client firewall settings this can cause considerable timeouts and will often fail, as there is no guarantee the client is even running an SMB server\&. By default, the Samba print server will not try to connect back to clients, and will treat corresponding requests as if the connection back to the client failed\&.
@@ -8615,7 +8292,6 @@ Default:
 .RE
 
 private directory
-.\" private directory
 .PP
 .RS 4
 This parameter is a synonym for
@@ -8623,7 +8299,6 @@ private dir\&.
 .RE
 
 private dir (G)
-.\" private dir
 .PP
 .RS 4
 This parameters defines the directory smbd will use for storing such files as
@@ -8636,7 +8311,6 @@ Default:
 .RE
 
 profile acls (S)
-.\" profile acls
 .PP
 .RS 4
 This boolean parameter was added to fix the problems that people have been having with storing user profiles on Samba shares from Windows 2000 or Windows XP clients\&. New versions of Windows 2000 or Windows XP service packs do security ACL checking on the owner and ability to write of the profile directory stored on a local workstation when copied from a Samba share\&.
@@ -8652,7 +8326,6 @@ Default:
 .RE
 
 queuepause command (S)
-.\" queuepause command
 .PP
 .RS 4
 This parameter specifies the command to be executed on the server host in order to pause the printer queue\&.
@@ -8675,7 +8348,6 @@ Example:
 .RE
 
 queueresume command (S)
-.\" queueresume command
 .PP
 .RS 4
 This parameter specifies the command to be executed on the server host in order to resume the printer queue\&. It is the command to undo the behavior that is caused by the previous parameter (\m[blue]\fBqueuepause command\fR\m[])\&.
@@ -8698,7 +8370,6 @@ Example:
 .RE
 
 raw NTLMv2 auth (G)
-.\" raw NTLMv2 auth
 .PP
 .RS 4
 This parameter determines whether or not
@@ -8716,7 +8387,6 @@ Default:
 .RE
 
 read list (S)
-.\" read list
 .PP
 .RS 4
 This is a list of users that are given read\-only access to a service\&. If the connecting user is in this list then they will not be given write access, no matter what the
@@ -8733,7 +8403,6 @@ Example:
 .RE
 
 read only (S)
-.\" read only
 .PP
 .RS 4
 An inverted synonym is
@@ -8751,7 +8420,6 @@ Default:
 .RE
 
 read raw (G)
-.\" read raw
 .PP
 .RS 4
 This is ignored if
@@ -8769,7 +8437,6 @@ Default:
 .RE
 
 realm (G)
-.\" realm
 .PP
 .RS 4
 This option specifies the kerberos realm to use\&. The realm is used as the ADS equivalent of the NT4
@@ -8783,7 +8450,6 @@ Example:
 .RE
 
 registry shares (G)
-.\" registry shares
 .PP
 .RS 4
 This turns on or off support for share definitions read from registry\&. Shares defined in
@@ -8806,7 +8472,6 @@ Example:
 .RE
 
 reject md5 clients (G)
-.\" reject md5 clients
 .PP
 .RS 4
 This option controls whether the netlogon server (currently only in \*(Aqactive directory domain controller\*(Aq mode), will reject clients which does not support NETLOGON_NEG_SUPPORTS_AES\&.
@@ -8820,7 +8485,6 @@ Default:
 .RE
 
 reject md5 servers (G)
-.\" reject md5 servers
 .PP
 .RS 4
 This option controls whether winbindd requires support for aes support for the netlogon secure channel\&.
@@ -8840,7 +8504,6 @@ Default:
 .RE
 
 remote announce (G)
-.\" remote announce
 .PP
 .RS 4
 This option allows you to setup
@@ -8876,7 +8539,6 @@ Default:
 .RE
 
 remote browse sync (G)
-.\" remote browse sync
 .PP
 .RS 4
 This option allows you to setup
@@ -8912,7 +8574,6 @@ Default:
 .RE
 
 rename user script (G)
-.\" rename user script
 .PP
 .RS 4
 This is the full pathname to a script that will be run as root by
@@ -8943,7 +8604,6 @@ Default:
 .RE
 
 require strong key (G)
-.\" require strong key
 .PP
 .RS 4
 This option controls whether winbindd requires support for md5 strong key support for the netlogon secure channel\&.
@@ -8969,7 +8629,6 @@ Default:
 .RE
 
 reset on zero vc (G)
-.\" reset on zero vc
 .PP
 .RS 4
 This boolean option controls whether an incoming SMB1 session setup should kill other connections coming from the same IP\&. This matches the default Windows 2003 behaviour\&. Setting this parameter to yes becomes necessary when you have a flaky network and windows decides to reconnect while the old connection still has files with share modes open\&. These files become inaccessible over the new connection\&. The client sends a zero VC on the new connection, and Windows 2003 kills all other connections coming from the same IP\&. This way the locked files are accessible again\&. Please be aware that enabling this option will kill connections behind a masquerading router, and will not trigger for clients that only use SMB2 or SMB3\&.
@@ -8979,7 +8638,6 @@ Default:
 .RE
 
 restrict anonymous (G)
-.\" restrict anonymous
 .PP
 .RS 4
 The setting of this parameter determines whether user and group list information is returned for an anonymous connection\&. and mirrors the effects of the
@@ -9020,7 +8678,6 @@ Default:
 .RE
 
 rndc command (G)
-.\" rndc command
 .PP
 .RS 4
 This option specifies the path to the name server control utility\&.
@@ -9037,7 +8694,6 @@ Example:
 .RE
 
 root
-.\" root
 .PP
 .RS 4
 This parameter is a synonym for
@@ -9045,7 +8701,6 @@ root directory\&.
 .RE
 
 root dir
-.\" root dir
 .PP
 .RS 4
 This parameter is a synonym for
@@ -9053,7 +8708,6 @@ root directory\&.
 .RE
 
 root directory (G)
-.\" root directory
 .PP
 .RS 4
 The server will
@@ -9082,7 +8736,6 @@ Example:
 .RE
 
 root postexec (S)
-.\" root postexec
 .PP
 .RS 4
 This is the same as the
@@ -9094,7 +8747,6 @@ Default:
 .RE
 
 root preexec (S)
-.\" root preexec
 .PP
 .RS 4
 This is the same as the
@@ -9106,7 +8758,6 @@ Default:
 .RE
 
 root preexec close (S)
-.\" root preexec close
 .PP
 .RS 4
 This is the same as the
@@ -9118,7 +8769,6 @@ Default:
 .RE
 
 rpc big endian (G)
-.\" rpc big endian
 .PP
 .RS 4
 Setting this option will force the RPC client and server to transfer data in big endian\&.
@@ -9132,7 +8782,6 @@ Default:
 .RE
 
 rpc_daemon:DAEMON (G)
-.\" rpc_daemon:DAEMON
 .PP
 .RS 4
 Defines whether to use the embedded code or start a separate daemon for the defined rpc services\&. The rpc_daemon prefix must be followed by the server name, and a value\&.
@@ -9225,7 +8874,6 @@ Default:
 .RE
 
 rpc_server:SERVER (G)
-.\" rpc_server:SERVER
 .PP
 .RS 4
 With this option you can define if a rpc service should be running internal/embedded in smbd or should be redirected to an external daemon like Samba4, the endpoint mapper daemon, the spoolss daemon or the new LSA service daemon\&. The rpc_server prefix must be followed by the pipe name, and a value\&.
@@ -9399,7 +9047,9 @@ mdssvc \- Spotlight
 .sp
 .RE
 Three possible values currently supported are:
-embeddedexternaldisabled
+embedded
+external
+disabled
 .sp
 The classic method is to run every pipe as an internal function
 \fIembedded\fR
@@ -9453,7 +9103,6 @@ Default:
 .RE
 
 rpc server port (G)
-.\" rpc server port
 .PP
 .RS 4
 Specifies which port the server should listen on for DCE/RPC over TCP/IP traffic\&.
@@ -9469,7 +9118,6 @@ Default:
 .RE
 
 samba kcc command (G)
-.\" samba kcc command
 .PP
 .RS 4
 This option specifies the path to the Samba KCC command\&. This script is used for replication topology replication\&.
@@ -9486,7 +9134,6 @@ Example:
 .RE
 
 security (G)
-.\" security
 .PP
 .RS 4
 This option affects how clients respond to Samba and is one of the most important settings in the
@@ -9591,7 +9238,6 @@ Example:
 .RE
 
 security mask (S)
-.\" security mask
 .PP
 .RS 4
 This parameter has been removed for Samba 4\&.0\&.0\&.
@@ -9600,7 +9246,6 @@ This parameter has been removed for Samba 4\&.0\&.0\&.
 .RE
 
 max protocol
-.\" max protocol
 .PP
 .RS 4
 This parameter is a synonym for
@@ -9608,7 +9253,6 @@ server max protocol\&.
 .RE
 
 protocol
-.\" protocol
 .PP
 .RS 4
 This parameter is a synonym for
@@ -9616,7 +9260,6 @@ server max protocol\&.
 .RE
 
 server max protocol (G)
-.\" server max protocol
 .PP
 .RS 4
 The value of the parameter (a string) is the highest protocol level that will be supported by the server\&.
@@ -9785,7 +9428,6 @@ Example:
 .RE
 
 min protocol
-.\" min protocol
 .PP
 .RS 4
 This parameter is a synonym for
@@ -9793,7 +9435,6 @@ server min protocol\&.
 .RE
 
 server min protocol (G)
-.\" server min protocol
 .PP
 .RS 4
 This setting controls the minimum protocol version that the server will allow the client to use\&.
@@ -9812,7 +9453,6 @@ Example:
 .RE
 
 server multi channel support (G)
-.\" server multi channel support
 .PP
 .RS 4
 This boolean parameter controls whether
@@ -9828,7 +9468,6 @@ Default:
 .RE
 
 server role (G)
-.\" server role
 .PP
 .RS 4
 This option determines the basic operating mode of a Samba server and is one of the most important settings in the
@@ -9905,7 +9544,6 @@ Example:
 .RE
 
 server schannel (G)
-.\" server schannel
 .PP
 .RS 4
 This controls whether the server offers or even demands the use of the netlogon schannel\&.
@@ -9929,7 +9567,6 @@ Example:
 .RE
 
 server services (G)
-.\" server services
 .PP
 .RS 4
 This option contains the services that the Samba daemon will run\&.
@@ -9949,7 +9586,6 @@ Example:
 .RE
 
 server signing (G)
-.\" server signing
 .PP
 .RS 4
 This controls whether the client is allowed or required to use SMB1 and SMB2 signing\&. Possible values are
@@ -9979,7 +9615,6 @@ Default:
 .RE
 
 server string (G)
-.\" server string
 .PP
 .RS 4
 This controls what string will show up in the printer comment box in print manager and next to the IPC connection in
@@ -10003,7 +9638,6 @@ Example:
 .RE
 
 set primary group script (G)
-.\" set primary group script
 .PP
 .RS 4
 Thanks to the Posix subsystem in NT a Windows User has a primary group in addition to the auxiliary groups\&. This script sets the primary group in the unix user database when an administrator sets the primary group from the windows user manager or when fetching a SAM with
@@ -10021,7 +9655,6 @@ Example:
 .RE
 
 set quota command (G)
-.\" set quota command
 .PP
 .RS 4
 The
@@ -10190,7 +9823,6 @@ Example:
 .RE
 
 share backend (G)
-.\" share backend
 .PP
 .RS 4
 This option specifies the backend that will be used to access the configuration of file shares\&.
@@ -10206,7 +9838,6 @@ Default:
 .RE
 
 share:fake_fscaps (G)
-.\" share:fake_fscaps
 .PP
 .RS 4
 This is needed to support some special application that makes QFSINFO calls to check whether we set the SPARSE_FILES bit (0x40)\&. If this bit is not set that particular application refuses to work against Samba\&. With
@@ -10218,7 +9849,6 @@ Default:
 .RE
 
 short preserve case (S)
-.\" short preserve case
 .PP
 .RS 4
 This boolean parameter controls if new files which conform to 8\&.3 syntax, that is all in upper case and of suitable length, are created upper case, or if they are forced to be the
@@ -10234,7 +9864,6 @@ Default:
 .RE
 
 show add printer wizard (G)
-.\" show add printer wizard
 .PP
 .RS 4
 With the introduction of MS\-RPC based printing support for Windows NT/2000 client in Samba 2\&.2, a "Printers\&.\&.\&." folder will appear on Samba hosts in the share listing\&. Normally this folder will contain an icon for the MS Add Printer Wizard (APW)\&. However, it is possible to disable this feature regardless of the level of privilege of the connected user\&.
@@ -10264,7 +9893,6 @@ Default:
 .RE
 
 shutdown script (G)
-.\" shutdown script
 .PP
 .RS 4
 This a full path name to a script called by
@@ -10356,7 +9984,6 @@ Example:
 .RE
 
 smb2 leases (G)
-.\" smb2 leases
 .PP
 .RS 4
 This boolean option tells
@@ -10375,7 +10002,6 @@ Default:
 .RE
 
 smb2 max credits (G)
-.\" smb2 max credits
 .PP
 .RS 4
 This option controls the maximum number of outstanding simultaneous SMB2 operations that Samba tells the client it will allow\&. This is similar to the
@@ -10389,7 +10015,6 @@ Default:
 .RE
 
 smb2 max read (G)
-.\" smb2 max read
 .PP
 .RS 4
 This option specifies the protocol value that
@@ -10405,7 +10030,6 @@ Default:
 .RE
 
 smb2 max trans (G)
-.\" smb2 max trans
 .PP
 .RS 4
 This option specifies the protocol value that
@@ -10421,7 +10045,6 @@ Default:
 .RE
 
 smb2 max write (G)
-.\" smb2 max write
 .PP
 .RS 4
 This option specifies the protocol value that
@@ -10437,7 +10060,6 @@ Default:
 .RE
 
 smbd profiling level (G)
-.\" smbd profiling level
 .PP
 .RS 4
 This parameter allows the administrator to enable profiling support\&.
@@ -10456,7 +10078,6 @@ Example:
 .RE
 
 smb encrypt (S)
-.\" smb encrypt
 .PP
 .RS 4
 This parameter controls whether a remote client is allowed or required to use SMB encryption\&. It has different effects depending on whether the connection uses SMB1 or SMB2 and newer:
@@ -10689,7 +10310,6 @@ Default:
 .RE
 
 smb passwd file (G)
-.\" smb passwd file
 .PP
 .RS 4
 This option sets the path to the encrypted smbpasswd file\&. By default the path to the smbpasswd file is compiled into Samba\&.
@@ -10711,7 +10331,6 @@ Default:
 .RE
 
 smb ports (G)
-.\" smb ports
 .PP
 .RS 4
 Specifies which ports the server should listen on for SMB traffic\&.
@@ -10721,7 +10340,6 @@ Default:
 .RE
 
 socket options (G)
-.\" socket options
 .PP
 .RS 4
 .if n \{\
@@ -11029,7 +10647,6 @@ Example:
 .RE
 
 spn update command (G)
-.\" spn update command
 .PP
 .RS 4
 This option sets the command that for updating servicePrincipalName names from
@@ -11043,7 +10660,6 @@ Example:
 .RE
 
 spoolss: architecture (G)
-.\" spoolss: architecture
 .PP
 .RS 4
 Windows spoolss print clients only allow association of server\-side drivers with printers when the driver architecture matches the advertised print server architecture\&. Samba\*(Aqs spoolss print server architecture can be changed using this parameter\&.
@@ -11056,7 +10672,6 @@ Example:
 .RE
 
 spoolss: os_major (G)
-.\" spoolss: os_major
 .PP
 .RS 4
 Windows might require a new os version number\&. This option allows to modify the build number\&. The complete default version number is: 5\&.0\&.2195 (Windows 2000)\&. The example is 6\&.1\&.7601 (Windows 2008 R2)\&.
@@ -11069,7 +10684,6 @@ Example:
 .RE
 
 spoolss: os_minor (G)
-.\" spoolss: os_minor
 .PP
 .RS 4
 Windows might require a new os version number\&. This option allows to modify the build number\&. The complete default version number is: 5\&.0\&.2195 (Windows 2000)\&. The example is 6\&.1\&.7601 (Windows 2008 R2)\&.
@@ -11082,7 +10696,6 @@ Example:
 .RE
 
 spoolss: os_build (G)
-.\" spoolss: os_build
 .PP
 .RS 4
 Windows might require a new os version number\&. This option allows to modify the build number\&. The complete default version number is: 5\&.0\&.2195 (Windows 2000)\&. The example is 6\&.1\&.7601 (Windows 2008 R2)\&.
@@ -11095,7 +10708,6 @@ Example:
 .RE
 
 spotlight (S)
-.\" spotlight
 .PP
 .RS 4
 This parameter controls whether Samba allows Spotlight queries on a share\&. For controlling indexing of filesystems you also have to use Tracker\*(Aqs own configuration system\&.
@@ -11173,7 +10785,6 @@ Default:
 .RE
 
 stat cache (G)
-.\" stat cache
 .PP
 .RS 4
 This parameter determines if
@@ -11185,7 +10796,6 @@ Default:
 .RE
 
 state directory (G)
-.\" state directory
 .PP
 .RS 4
 Usually, most of the TDB files are stored in the
@@ -11205,7 +10815,6 @@ Example:
 .RE
 
 store dos attributes (S)
-.\" store dos attributes
 .PP
 .RS 4
 If this parameter is set Samba attempts to first read DOS attributes (SYSTEM, HIDDEN, ARCHIVE or READ\-ONLY) from a filesystem extended attribute, before mapping DOS attributes to UNIX permission bits (such as occurs with
@@ -11224,7 +10833,6 @@ Default:
 .RE
 
 strict allocate (S)
-.\" strict allocate
 .PP
 .RS 4
 This is a boolean that controls the handling of disk space allocation in the server\&. When this is set to
@@ -11242,7 +10850,6 @@ Default:
 .RE
 
 strict locking (S)
-.\" strict locking
 .PP
 .RS 4
 This is an enumerated type that controls the handling of file locking in the server\&. When this is set to
@@ -11263,7 +10870,6 @@ Default:
 .RE
 
 strict rename (S)
-.\" strict rename
 .PP
 .RS 4
 By default a Windows SMB server prevents directory renames when there are open file or directory handles below it in the filesystem hierarchy\&. Historically Samba has always allowed this as POSIX filesystem semantics require it\&.
@@ -11281,7 +10887,6 @@ Default:
 .RE
 
 strict sync (S)
-.\" strict sync
 .PP
 .RS 4
 Many Windows applications (including the Windows 98 explorer shell) seem to confuse flushing buffer contents to disk with doing a sync to disk\&. Under UNIX, a sync call forces the thread to be suspended until the kernel has ensured that all outstanding data in kernel disk buffers has been safely stored onto stable storage\&. This is very slow and should only be done rarely\&. Setting this parameter to
@@ -11299,7 +10904,6 @@ Default:
 .RE
 
 svcctl list (G)
-.\" svcctl list
 .PP
 .RS 4
 This option defines a list of init scripts that smbd will use for starting and stopping Unix services via the Win32 ServiceControl API\&. This allows Windows administrators to utilize the MS Management Console plug\-ins to manage a Unix server running Samba\&.
@@ -11318,7 +10922,6 @@ Example:
 .RE
 
 sync always (S)
-.\" sync always
 .PP
 .RS 4
 This is a boolean parameter that controls whether writes will always be written to stable storage before the write call returns\&. If this is
@@ -11338,7 +10941,6 @@ Default:
 .RE
 
 syslog (G)
-.\" syslog
 .PP
 .RS 4
 This parameter maps how Samba debug messages are logged onto the system syslog logging levels\&. Samba debug level zero maps onto syslog
@@ -11364,7 +10966,6 @@ Default:
 .RE
 
 syslog only (G)
-.\" syslog only
 .PP
 .RS 4
 If this parameter is set then Samba debug messages are logged into the system syslog only, and not to the debug log files\&. There still will be some logging to log\&.[sn]mbd even if
@@ -11384,7 +10985,6 @@ Default:
 .RE
 
 template homedir (G)
-.\" template homedir
 .PP
 .RS 4
 When filling out the user information for a Windows NT user, the
@@ -11400,7 +11000,6 @@ Default:
 .RE
 
 template shell (G)
-.\" template shell
 .PP
 .RS 4
 When filling out the user information for a Windows NT user, the
@@ -11412,7 +11011,6 @@ Default:
 .RE
 
 time server (G)
-.\" time server
 .PP
 .RS 4
 This parameter determines if
@@ -11424,7 +11022,6 @@ Default:
 .RE
 
 debug timestamp
-.\" debug timestamp
 .PP
 .RS 4
 This parameter is a synonym for
@@ -11432,7 +11029,6 @@ timestamp logs\&.
 .RE
 
 timestamp logs (G)
-.\" timestamp logs
 .PP
 .RS 4
 Samba debug log messages are timestamped by default\&. If you are running at a high
@@ -11444,7 +11040,6 @@ Default:
 .RE
 
 tls cafile (G)
-.\" tls cafile
 .PP
 .RS 4
 This option can be set to a file (PEM format) containing CA certificates of root CAs to trust to sign certificates or intermediate CA certificates\&.
@@ -11458,7 +11053,6 @@ Default:
 .RE
 
 tls certfile (G)
-.\" tls certfile
 .PP
 .RS 4
 This option can be set to a file (PEM format) containing the RSA certificate\&.
@@ -11472,7 +11066,6 @@ Default:
 .RE
 
 tls crlfile (G)
-.\" tls crlfile
 .PP
 .RS 4
 This option can be set to a file containing a certificate revocation list (CRL)\&.
@@ -11486,7 +11079,6 @@ Default:
 .RE
 
 tls dh params file (G)
-.\" tls dh params file
 .PP
 .RS 4
 This option can be set to a file with Diffie\-Hellman parameters which will be used with DH ciphers\&.
@@ -11500,7 +11092,6 @@ Default:
 .RE
 
 tls enabled (G)
-.\" tls enabled
 .PP
 .RS 4
 If this option is set to
@@ -11511,7 +11102,6 @@ Default:
 .RE
 
 tls keyfile (G)
-.\" tls keyfile
 .PP
 .RS 4
 This option can be set to a file (PEM format) containing the RSA private key\&. This file must be accessible without a pass\-phrase, i\&.e\&. it must not be encrypted\&.
@@ -11525,7 +11115,6 @@ Default:
 .RE
 
 tls priority (G)
-.\" tls priority
 .PP
 .RS 4
 This option can be set to a string describing the TLS protocols to be supported in the parts of Samba that use GnuTLS, specifically the AD DC\&.
@@ -11540,7 +11129,6 @@ Default:
 .RE
 
 tls verify peer (G)
-.\" tls verify peer
 .PP
 .RS 4
 This controls if and how strict the client will verify the peer\*(Aqs certificate and name\&. Possible values are (in increasing order):
@@ -11590,7 +11178,6 @@ Default:
 .RE
 
 unicode (G)
-.\" unicode
 .PP
 .RS 4
 Specifies whether the server and client should support unicode\&.
@@ -11602,7 +11189,6 @@ Default:
 .RE
 
 unix charset (G)
-.\" unix charset
 .PP
 .RS 4
 Specifies the charset the unix machine Samba runs on uses\&. Samba needs to know this in order to be able to convert text to the charsets other SMB clients use\&.
@@ -11617,7 +11203,6 @@ Example:
 .RE
 
 unix extensions (G)
-.\" unix extensions
 .PP
 .RS 4
 This boolean parameter controls whether Samba implements the CIFS UNIX extensions, as defined by HP\&. These extensions enable Samba to better serve UNIX CIFS clients by supporting features such as symbolic links, hard links, etc\&.\&.\&. These extensions require a similarly enabled client, and are of no current use to Windows clients\&.
@@ -11635,7 +11220,6 @@ Default:
 .RE
 
 unix password sync (G)
-.\" unix password sync
 .PP
 .RS 4
 This boolean parameter controls whether Samba attempts to synchronize the UNIX password with the SMB password when the encrypted SMB password in the smbpasswd file is changed\&. If this is set to
@@ -11659,7 +11243,6 @@ Default:
 .RE
 
 use client driver (S)
-.\" use client driver
 .PP
 .RS 4
 This parameter applies only to Windows NT/2000 clients\&. It has no effect on Windows 95/98/ME clients\&. When serving a printer to Windows NT/2000 clients without first installing a valid printer driver on the Samba host, the client will be required to install a local printer driver\&. From this point on, the client will treat the print as a local printer and not a network printer connection\&. This is much the same behavior that will occur when
@@ -11675,7 +11258,6 @@ Default:
 .RE
 
 use mmap (G)
-.\" use mmap
 .PP
 .RS 4
 This global parameter determines if the tdb internals of Samba can depend on mmap working correctly on the running system\&. Samba requires a coherent mmap/read\-write system memory cache\&. Currently only HPUX does not have such a coherent cache, and so this parameter is set to
@@ -11687,7 +11269,6 @@ Default:
 .RE
 
 username level (G)
-.\" username level
 .PP
 .RS 4
 This option helps Samba to try and \*(Aqguess\*(Aq at the real UNIX username, as many DOS clients send an all\-uppercase username\&. By default Samba tries all lowercase, followed by the username with the first letter capitalized, and fails if the username is not found on the UNIX machine\&.
@@ -11705,7 +11286,6 @@ Example:
 .RE
 
 username map (G)
-.\" username map
 .PP
 .RS 4
 This option allows you to specify a file containing a mapping of usernames from the clients to the server\&. This can be used for several purposes\&. The most common is to map usernames that users use on DOS or Windows machines to those that the UNIX box uses\&. The other is to map multiple users to a single username so that they can more easily share files\&.
@@ -11826,7 +11406,6 @@ Default:
 .RE
 
 username map cache time (G)
-.\" username map cache time
 .PP
 .RS 4
 Mapping usernames with the
@@ -11849,7 +11428,6 @@ Example:
 .RE
 
 username map script (G)
-.\" username map script
 .PP
 .RS 4
 This script is a mutually exclusive alternative to the
@@ -11864,7 +11442,6 @@ Example:
 .RE
 
 usershare allow guests (G)
-.\" usershare allow guests
 .PP
 .RS 4
 This parameter controls whether user defined shares are allowed to be accessed by non\-authenticated users or not\&. It is the equivalent of allowing people who can create a share the option of setting
@@ -11876,7 +11453,6 @@ Default:
 .RE
 
 usershare max shares (G)
-.\" usershare max shares
 .PP
 .RS 4
 This parameter specifies the number of user defined shares that are allowed to be created by users belonging to the group owning the usershare directory\&. If set to zero (the default) user defined shares are ignored\&.
@@ -11886,7 +11462,6 @@ Default:
 .RE
 
 usershare owner only (G)
-.\" usershare owner only
 .PP
 .RS 4
 This parameter controls whether the pathname exported by a user defined shares must be owned by the user creating the user defined share or not\&. If set to True (the default) then smbd checks that the directory path being shared is owned by the user who owns the usershare file defining this share and refuses to create the share if not\&. If set to False then no such check is performed and any directory path may be exported regardless of who owns it\&.
@@ -11896,7 +11471,6 @@ Default:
 .RE
 
 usershare path (G)
-.\" usershare path
 .PP
 .RS 4
 This parameter specifies the absolute path of the directory on the filesystem used to store the user defined share definition files\&. This directory must be owned by root, and have no access for other, and be writable only by the group owner\&. In addition the "sticky" bit must also be set, restricting rename and delete to owners of a file (in the same way the /tmp directory is usually configured)\&. Members of the group owner of this directory are the users allowed to create usershares\&.
@@ -11922,7 +11496,6 @@ Default:
 .RE
 
 usershare prefix allow list (G)
-.\" usershare prefix allow list
 .PP
 .RS 4
 This parameter specifies a list of absolute pathnames the root of which are allowed to be exported by user defined share definitions\&. If the pathname to be exported doesn\*(Aqt start with one of the strings in this list, the user defined share will not be allowed\&. This allows the Samba administrator to restrict the directories on the system that can be exported by user defined shares\&.
@@ -11937,7 +11510,6 @@ Example:
 .RE
 
 usershare prefix deny list (G)
-.\" usershare prefix deny list
 .PP
 .RS 4
 This parameter specifies a list of absolute pathnames the root of which are NOT allowed to be exported by user defined share definitions\&. If the pathname exported starts with one of the strings in this list the user defined share will not be allowed\&. Any pathname not starting with one of these strings will be allowed to be exported as a usershare\&. This allows the Samba administrator to restrict the directories on the system that can be exported by user defined shares\&.
@@ -11952,7 +11524,6 @@ Example:
 .RE
 
 usershare template share (G)
-.\" usershare template share
 .PP
 .RS 4
 User defined shares only have limited possible parameters such as path, guest ok, etc\&. This parameter allows usershares to "cloned" from an existing share\&. If "usershare template share" is set to the name of an existing share, then all usershares created have their defaults set from the parameters set on this share\&.
@@ -11967,7 +11538,6 @@ Example:
 .RE
 
 use sendfile (S)
-.\" use sendfile
 .PP
 .RS 4
 If this parameter is
@@ -11980,7 +11550,6 @@ Default:
 .RE
 
 use spnego (G)
-.\" use spnego
 .PP
 .RS 4
 This deprecated variable controls whether samba will try to use Simple and Protected NEGOciation (as specified by rfc2478) with WindowsXP and Windows2000 clients to agree upon an authentication mechanism\&.
@@ -11992,7 +11561,6 @@ Default:
 .RE
 
 utmp (G)
-.\" utmp
 .PP
 .RS 4
 This boolean parameter is only available if Samba has been configured and compiled with the option
@@ -12007,7 +11575,6 @@ Default:
 .RE
 
 utmp directory (G)
-.\" utmp directory
 .PP
 .RS 4
 This parameter is only available if Samba has been configured and compiled with the option
@@ -12023,7 +11590,6 @@ Example:
 .RE
 
 \-valid (S)
-.\" -valid
 .PP
 .RS 4
 This parameter indicates whether a share is valid and thus can be used\&. When this parameter is set to false, the share will be in no way visible nor accessible\&.
@@ -12035,7 +11601,6 @@ Default:
 .RE
 
 valid users (S)
-.\" valid users
 .PP
 .RS 4
 This is a list of users that should be allowed to login to this service\&. Names starting with \*(Aq@\*(Aq, \*(Aq+\*(Aq and \*(Aq&\*(Aq are interpreted using the same rules as described in the
@@ -12063,7 +11628,6 @@ Example:
 .RE
 
 veto files (S)
-.\" veto files
 .PP
 .RS 4
 This is a list of files and directories that are neither visible nor accessible\&. Each entry in the list must be separated by a \*(Aq/\*(Aq, which allows spaces to be included in the entry\&. \*(Aq*\*(Aq and \*(Aq?\*(Aq can be used to specify multiple files or directories as in DOS wildcards\&.
@@ -12109,7 +11673,6 @@ Default:
 .RE
 
 veto oplock files (S)
-.\" veto oplock files
 .PP
 .RS 4
 This parameter is only valid when the
@@ -12138,7 +11701,6 @@ Default:
 .RE
 
 vfs object
-.\" vfs object
 .PP
 .RS 4
 This parameter is a synonym for
@@ -12146,7 +11708,6 @@ vfs objects\&.
 .RE
 
 vfs objects (S)
-.\" vfs objects
 .PP
 .RS 4
 This parameter specifies the backend names which are used for Samba VFS I/O operations\&. By default, normal disk I/O operations are used but these can be overloaded with one or more VFS objects\&.
@@ -12159,7 +11720,6 @@ Example:
 .RE
 
 volume (S)
-.\" volume
 .PP
 .RS 4
 This allows you to override the volume label returned for a share\&. Useful for CDROMs with installation programs that insist on a particular volume label\&.
@@ -12169,7 +11729,6 @@ Default:
 .RE
 
 web port (G)
-.\" web port
 .PP
 .RS 4
 Specifies which port the Samba web server should listen on\&.
@@ -12182,7 +11741,6 @@ Example:
 .RE
 
 wide links (S)
-.\" wide links
 .PP
 .RS 4
 This parameter controls whether or not links in the UNIX file system may be followed by the server\&. Links that point to areas within the directory tree exported by the server are always allowed; this parameter controls access only to areas that are outside the directory tree being exported\&.
@@ -12200,7 +11758,6 @@ Default:
 .RE
 
 winbind cache time (G)
-.\" winbind cache time
 .PP
 .RS 4
 This parameter specifies the number of seconds the
@@ -12216,7 +11773,6 @@ Default:
 .RE
 
 winbindd privileged socket directory (G)
-.\" winbindd privileged socket directory
 .PP
 .RS 4
 This setting controls the location of the winbind daemon\*(Aqs privileged socket\&.
@@ -12226,7 +11782,6 @@ Default:
 .RE
 
 winbindd socket directory (G)
-.\" winbindd socket directory
 .PP
 .RS 4
 This setting controls the location of the winbind daemon\*(Aqs socket\&.
@@ -12238,7 +11793,6 @@ Default:
 .RE
 
 winbind enum groups (G)
-.\" winbind enum groups
 .PP
 .RS 4
 On large installations using
@@ -12274,7 +11828,6 @@ Default:
 .RE
 
 winbind enum users (G)
-.\" winbind enum users
 .PP
 .RS 4
 On large installations using
@@ -12310,7 +11863,6 @@ Default:
 .RE
 
 winbind expand groups (G)
-.\" winbind expand groups
 .PP
 .RS 4
 This option controls the maximum depth that winbindd will traverse when flattening nested group memberships of Windows domain groups\&. This is different from the
@@ -12326,7 +11878,6 @@ Default:
 .RE
 
 winbind max clients (G)
-.\" winbind max clients
 .PP
 .RS 4
 This parameter specifies the maximum number of clients the
@@ -12340,7 +11891,6 @@ Default:
 .RE
 
 winbind max domain connections (G)
-.\" winbind max domain connections
 .PP
 .RS 4
 This parameter specifies the maximum number of simultaneous connections that the
@@ -12360,7 +11910,6 @@ Example:
 .RE
 
 winbind nested groups (G)
-.\" winbind nested groups
 .PP
 .RS 4
 If set to yes, this parameter activates the support for nested groups\&. Nested groups are also called local groups or aliases\&. They work like their counterparts in Windows: Nested groups are defined locally on any machine (they are shared between DC\*(Aqs through their SAM) and can contain users and global groups from any trusted SAM\&. To be able to use nested groups, you need to run nss_winbind\&.
@@ -12370,7 +11919,6 @@ Default:
 .RE
 
 winbind normalize names (G)
-.\" winbind normalize names
 .PP
 .RS 4
 This parameter controls whether winbindd will replace whitespace in user and group names with an underscore (_) character\&. For example, whether the name "Space Kadet" should be replaced with the string "space_kadet"\&. Frequently Unix shell scripts will have difficulty with usernames contains whitespace due to the default field separator in the shell\&. If your domain possesses names containing the underscore character, this option may cause problems unless the name aliasing feature is supported by your nss_info plugin\&.
@@ -12385,7 +11933,6 @@ Example:
 .RE
 
 winbind nss info (G)
-.\" winbind nss info
 .PP
 .RS 4
 This parameter is designed to control how Winbind retrieves Name Service Information to construct a user\*(Aqs home directory and login shell\&. Currently the following settings are available:
@@ -12429,7 +11976,6 @@ Example:
 .RE
 
 winbind offline logon (G)
-.\" winbind offline logon
 .PP
 .RS 4
 This parameter is designed to control whether Winbind should allow one to login with the
@@ -12444,7 +11990,6 @@ Example:
 .RE
 
 winbind reconnect delay (G)
-.\" winbind reconnect delay
 .PP
 .RS 4
 This parameter specifies the number of seconds the
@@ -12456,7 +12001,6 @@ Default:
 .RE
 
 winbind refresh tickets (G)
-.\" winbind refresh tickets
 .PP
 .RS 4
 This parameter is designed to control whether Winbind should refresh Kerberos Tickets retrieved using the
@@ -12471,7 +12015,6 @@ Example:
 .RE
 
 winbind request timeout (G)
-.\" winbind request timeout
 .PP
 .RS 4
 This parameter specifies the number of seconds the
@@ -12483,7 +12026,6 @@ Default:
 .RE
 
 winbind rpc only (G)
-.\" winbind rpc only
 .PP
 .RS 4
 Setting this parameter to
@@ -12495,7 +12037,6 @@ Default:
 .RE
 
 winbind sealed pipes (G)
-.\" winbind sealed pipes
 .PP
 .RS 4
 This option controls whether any requests from winbindd to domain controllers pipe will be sealed\&. Disabling sealing can be useful for debugging purposes\&.
@@ -12507,7 +12048,6 @@ Default:
 .RE
 
 winbind separator (G)
-.\" winbind separator
 .PP
 .RS 4
 This parameter allows an admin to define the character used when listing a username of the form of
@@ -12527,7 +12067,6 @@ Example:
 .RE
 
 winbind trusted domains only (G)
-.\" winbind trusted domains only
 .PP
 .RS 4
 This parameter is designed to allow Samba servers that are members of a Samba controlled domain to use UNIX accounts distributed via NIS, rsync, or LDAP as the uid\*(Aqs for winbindd users in the hosts primary domain\&. Therefore, the user
@@ -12543,7 +12082,6 @@ Default:
 .RE
 
 winbind use default domain (G)
-.\" winbind use default domain
 .PP
 .RS 4
 This parameter specifies whether the
@@ -12560,7 +12098,6 @@ Example:
 .RE
 
 wins hook (G)
-.\" wins hook
 .PP
 .RS 4
 When Samba is running as a WINS server this allows you to call an external program for all changes to the WINS database\&. The primary use for this option is to allow the dynamic update of external name resolution databases such as dynamic DNS\&.
@@ -12633,7 +12170,6 @@ is provided in the examples directory of the Samba source code\&.
 .RE
 
 wins proxy (G)
-.\" wins proxy
 .PP
 .RS 4
 This is a boolean that controls if
@@ -12647,7 +12183,6 @@ Default:
 .RE
 
 wins server (G)
-.\" wins server
 .PP
 .RS 4
 This specifies the IP address (or DNS name: IP address for preference) of the WINS server that
@@ -12685,7 +12220,6 @@ Example:
 .RE
 
 wins support (G)
-.\" wins support
 .PP
 .RS 4
 This boolean controls if the
@@ -12705,7 +12239,6 @@ Default:
 .RE
 
 workgroup (G)
-.\" workgroup
 .PP
 .RS 4
 This controls what workgroup your server will appear to be in when queried by clients\&. Note that this parameter also controls the Domain name used with the
@@ -12720,7 +12253,6 @@ Example:
 .RE
 
 writable
-.\" writable
 .PP
 .RS 4
 This parameter is a synonym for
@@ -12728,7 +12260,6 @@ writeable\&.
 .RE
 
 write ok
-.\" write ok
 .PP
 .RS 4
 This parameter is a synonym for
@@ -12736,7 +12267,6 @@ writeable\&.
 .RE
 
 writeable (S)
-.\" writeable
 .PP
 .RS 4
 Inverted synonym for
@@ -12747,7 +12277,6 @@ Default:
 .RE
 
 write cache size (S)
-.\" write cache size
 .PP
 .RS 4
 If this integer parameter is set to non\-zero value, Samba will create an in\-memory cache for each oplocked file (it does
@@ -12768,7 +12297,6 @@ Example:
 .RE
 
 write list (S)
-.\" write list
 .PP
 .RS 4
 This is a list of users that are given read\-write access to a service\&. If the connecting user is in this list then they will be given write access, no matter what the
@@ -12785,7 +12313,6 @@ Example:
 .RE
 
 write raw (G)
-.\" write raw
 .PP
 .RS 4
 This is ignored if
@@ -12803,7 +12330,6 @@ Default:
 .RE
 
 wtmp directory (G)
-.\" wtmp directory
 .PP
 .RS 4
 This parameter is only available if Samba has been configured and compiled with the option

@@ -227,11 +227,6 @@ struct cli_state *cli_state_create(TALLOC_CTX *mem_ctx,
 
 	cli->smb1.pid = (uint32_t)getpid();
 	cli->smb1.vc_num = cli->smb1.pid;
-	cli->smb1.tcon = smbXcli_tcon_create(cli);
-	if (cli->smb1.tcon == NULL) {
-		goto error;
-	}
-	smb1cli_tcon_set_id(cli->smb1.tcon, UINT16_MAX);
 	cli->smb1.session = smbXcli_session_create(cli, cli->conn);
 	if (cli->smb1.session == NULL) {
 		goto error;
@@ -341,25 +336,67 @@ uint32_t cli_getpid(struct cli_state *cli)
 
 bool cli_state_has_tcon(struct cli_state *cli)
 {
-	uint16_t tid = cli_state_get_tid(cli);
-
-	if (tid == UINT16_MAX) {
-		return false;
+	uint32_t tid;
+	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+		if (cli->smb2.tcon == NULL) {
+			return false;
+		}
+		tid = cli_state_get_tid(cli);
+		if (tid == UINT32_MAX) {
+			return false;
+		}
+	} else {
+		if (cli->smb1.tcon == NULL) {
+			return false;
+		}
+		tid = cli_state_get_tid(cli);
+		if (tid == UINT16_MAX) {
+			return false;
+		}
 	}
-
 	return true;
 }
 
-uint16_t cli_state_get_tid(struct cli_state *cli)
+uint32_t cli_state_get_tid(struct cli_state *cli)
 {
-	return smb1cli_tcon_current_id(cli->smb1.tcon);
+	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+		return smb2cli_tcon_current_id(cli->smb2.tcon);
+	} else {
+		return (uint32_t)smb1cli_tcon_current_id(cli->smb1.tcon);
+	}
 }
 
-uint16_t cli_state_set_tid(struct cli_state *cli, uint16_t tid)
+uint32_t cli_state_set_tid(struct cli_state *cli, uint32_t tid)
 {
-	uint16_t ret = smb1cli_tcon_current_id(cli->smb1.tcon);
-	smb1cli_tcon_set_id(cli->smb1.tcon, tid);
+	uint32_t ret;
+	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+		ret = smb2cli_tcon_current_id(cli->smb2.tcon);
+		smb2cli_tcon_set_id(cli->smb1.tcon, tid);
+	} else {
+		ret = smb1cli_tcon_current_id(cli->smb1.tcon);
+		smb1cli_tcon_set_id(cli->smb1.tcon, tid);
+	}
 	return ret;
+}
+
+struct smbXcli_tcon *cli_state_save_tcon(struct cli_state *cli)
+{
+	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+		return smbXcli_tcon_copy(cli, cli->smb2.tcon);
+	} else {
+		return smbXcli_tcon_copy(cli, cli->smb1.tcon);
+	}
+}
+
+void cli_state_restore_tcon(struct cli_state *cli, struct smbXcli_tcon *tcon)
+{
+	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+		TALLOC_FREE(cli->smb2.tcon);
+		cli->smb2.tcon = tcon;
+	} else {
+		TALLOC_FREE(cli->smb1.tcon);
+		cli->smb1.tcon = tcon;
+	}
 }
 
 uint16_t cli_state_get_uid(struct cli_state *cli)

@@ -352,6 +352,16 @@ sub setup_nt4_member($$$)
 	    return undef;
 	}
 
+	my $cmd = "";
+	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
+	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
+	$cmd .= "$net $ret->{CONFIGURATION} primarytrust dumpinfo | grep -q 'REDACTED SECRET VALUES'";
+
+	if (system($cmd) != 0) {
+	    warn("check failed\n$cmd");
+	    return undef;
+	}
+
 	if (not $self->check_or_start($ret, "yes", "yes", "yes")) {
 	       return undef;
 	}
@@ -766,6 +776,9 @@ sub setup_fileserver($$)
 
 	my $smbget_sharedir="$share_dir/smbget";
 	push(@dirs,$smbget_sharedir);
+
+	my $tarmode_sharedir="$share_dir/tarmode";
+	push(@dirs,$tarmode_sharedir);
 
 	my $fileserver_options = "
 [lowercase]
@@ -1355,6 +1368,9 @@ sub provision($$$$$$$$)
 
 	my $nosymlinks_shrdir="$shrdir/nosymlinks";
 	push(@dirs,$nosymlinks_shrdir);
+
+	my $local_symlinks_shrdir="$shrdir/local_symlinks";
+	push(@dirs,$local_symlinks_shrdir);
 
 	# this gets autocreated by winbindd
 	my $wbsockdir="$prefix_abs/winbindd";
@@ -1981,6 +1997,10 @@ sub provision($$$$$$$$)
 	copy = tmp
 	path = $nosymlinks_shrdir
 	follow symlinks = no
+[local_symlinks]
+	copy = tmp
+	path = $local_symlinks_shrdir
+	follow symlinks = yes
 [kernel_oplocks]
 	copy = tmp
 	kernel oplocks = yes
@@ -2238,7 +2258,7 @@ sub wait_for_start($$$$$)
 	    }
 	    my $count = 0;
 	    do {
-		system(Samba::bindir_path($self, "net") . " $envvars->{CONFIGURATION} cache flush");
+		system(Samba::bindir_path($self, "net") . " $envvars->{CONFIGURATION} cache del IDMAP/SID2XID/S-1-5-32-545");
 		$ret = system("SELFTEST_WINBINDD_SOCKET_DIR=" . $envvars->{SELFTEST_WINBINDD_SOCKET_DIR} . " " . Samba::bindir_path($self, "wbinfo") . " --sid-to-gid=S-1-5-32-545");
 		if ($ret != 0) {
 		    sleep(2);

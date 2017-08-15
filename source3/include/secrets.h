@@ -29,6 +29,7 @@
 #define SECRETS_MACHINE_LAST_CHANGE_TIME "SECRETS/MACHINE_LAST_CHANGE_TIME"
 #define SECRETS_MACHINE_SEC_CHANNEL_TYPE "SECRETS/MACHINE_SEC_CHANNEL_TYPE"
 #define SECRETS_MACHINE_TRUST_ACCOUNT_NAME "SECRETS/SECRETS_MACHINE_TRUST_ACCOUNT_NAME"
+#define SECRETS_MACHINE_DOMAIN_INFO "SECRETS/MACHINE_DOMAIN_INFO"
 /* this one is for storing trusted domain account password */
 #define SECRETS_DOMTRUST_ACCT_PASS "SECRETS/$DOMTRUST.ACC"
 
@@ -88,6 +89,7 @@ struct db_context *secrets_db_ctx(void);
 void secrets_shutdown(void);
 void *secrets_fetch(const char *key, size_t *size);
 bool secrets_store(const char *key, const void *data, size_t size);
+bool secrets_delete_entry(const char *key);
 bool secrets_delete(const char *key);
 
 /* The following definitions come from passdb/machine_account_secrets.c */
@@ -95,7 +97,7 @@ bool secrets_mark_domain_protected(const char *domain);
 bool secrets_clear_domain_protection(const char *domain);
 bool secrets_store_domain_sid(const char *domain, const struct dom_sid  *sid);
 bool secrets_fetch_domain_sid(const char *domain, struct dom_sid  *sid);
-bool secrets_store_domain_guid(const char *domain, struct GUID *guid);
+bool secrets_store_domain_guid(const char *domain, const struct GUID *guid);
 bool secrets_fetch_domain_guid(const char *domain, struct GUID *guid);
 enum netr_SchannelType get_default_sec_channel(void);
 bool secrets_fetch_trust_account_password_legacy(const char *domain,
@@ -109,9 +111,35 @@ bool secrets_fetch_trusted_domain_password(const char *domain, char** pwd,
                                            struct dom_sid  *sid, time_t *pass_last_set_time);
 bool secrets_store_trusted_domain_password(const char* domain, const char* pwd,
                                            const struct dom_sid  *sid);
-bool secrets_delete_machine_password_ex(const char *domain);
+struct libnet_JoinCtx;
+NTSTATUS secrets_store_JoinCtx(const struct libnet_JoinCtx *r);
+struct secrets_domain_info1;
+struct secrets_domain_info1_change;
+void secrets_debug_domain_info(int lvl, const struct secrets_domain_info1 *info,
+			       const char *name);
+char *secrets_domain_info_string(TALLOC_CTX *mem_ctx, const struct secrets_domain_info1 *info1,
+				 const char *name, bool include_secrets);
+NTSTATUS secrets_fetch_or_upgrade_domain_info(const char *domain,
+					TALLOC_CTX *mem_ctx,
+					struct secrets_domain_info1 **pinfo);
+NTSTATUS secrets_prepare_password_change(const char *domain, const char *dcname,
+					 const char *cleartext_unix,
+					 TALLOC_CTX *mem_ctx,
+					 struct secrets_domain_info1 **pinfo,
+					 struct secrets_domain_info1_change **pprev);
+NTSTATUS secrets_failed_password_change(const char *change_server,
+					NTSTATUS local_status,
+					NTSTATUS remote_status,
+					const struct secrets_domain_info1 *info);
+NTSTATUS secrets_defer_password_change(const char *change_server,
+				       NTSTATUS local_status,
+				       NTSTATUS remote_status,
+				       const struct secrets_domain_info1 *info);
+NTSTATUS secrets_finish_password_change(const char *change_server,
+					NTTIME change_time,
+					const struct secrets_domain_info1 *info);
+bool secrets_delete_machine_password_ex(const char *domain, const char *realm);
 bool secrets_delete_domain_sid(const char *domain);
-bool secrets_store_machine_password(const char *pass, const char *domain, enum netr_SchannelType sec_channel);
 char *secrets_fetch_prev_machine_password(const char *domain);
 time_t secrets_fetch_pass_last_set_time(const char *domain);
 char *secrets_fetch_machine_password(const char *domain,
@@ -132,6 +160,10 @@ bool secrets_store_machine_pw_sync(const char *pass, const char *oldpass, const 
 				   const struct dom_sid *domain_sid, uint32_t last_change_time,
 				   uint32_t secure_channel,
 				   bool delete_join);
+
+char* kerberos_standard_des_salt( void );
+bool kerberos_secrets_store_des_salt( const char* salt );
+char *kerberos_secrets_fetch_salt_princ(void);
 
 /* The following definitions come from passdb/secrets_lsa.c  */
 NTSTATUS lsa_secret_get(TALLOC_CTX *mem_ctx,

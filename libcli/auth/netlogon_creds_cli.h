@@ -84,13 +84,15 @@ struct tevent_req *netlogon_creds_cli_auth_send(TALLOC_CTX *mem_ctx,
 				struct tevent_context *ev,
 				struct netlogon_creds_cli_context *context,
 				struct dcerpc_binding_handle *b,
-				struct samr_Password current_nt_hash,
-				const struct samr_Password *previous_nt_hash);
-NTSTATUS netlogon_creds_cli_auth_recv(struct tevent_req *req);
+				uint8_t num_nt_hashes,
+				const struct samr_Password * const *nt_hashes);
+NTSTATUS netlogon_creds_cli_auth_recv(struct tevent_req *req,
+				      uint8_t *idx_nt_hashes);
 NTSTATUS netlogon_creds_cli_auth(struct netlogon_creds_cli_context *context,
 				 struct dcerpc_binding_handle *b,
-				 struct samr_Password current_nt_hash,
-				 const struct samr_Password *previous_nt_hash);
+				 uint8_t num_nt_hashes,
+				 const struct samr_Password * const *nt_hashes,
+				 uint8_t *idx_nt_hashes);
 
 struct tevent_req *netlogon_creds_cli_check_send(TALLOC_CTX *mem_ctx,
 				struct tevent_context *ev,
@@ -104,13 +106,13 @@ struct tevent_req *netlogon_creds_cli_ServerPasswordSet_send(TALLOC_CTX *mem_ctx
 				struct tevent_context *ev,
 				struct netlogon_creds_cli_context *context,
 				struct dcerpc_binding_handle *b,
-				const char *new_password,
+				const DATA_BLOB *new_password,
 				const uint32_t *new_version);
 NTSTATUS netlogon_creds_cli_ServerPasswordSet_recv(struct tevent_req *req);
 NTSTATUS netlogon_creds_cli_ServerPasswordSet(
 				struct netlogon_creds_cli_context *context,
 				struct dcerpc_binding_handle *b,
-				const char *new_password,
+				const DATA_BLOB *new_password,
 				const uint32_t *new_version);
 
 struct tevent_req *netlogon_creds_cli_LogonSamLogon_send(TALLOC_CTX *mem_ctx,

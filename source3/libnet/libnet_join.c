@@ -195,15 +195,10 @@ static ADS_STATUS libnet_join_connect_ads(TALLOC_CTX *mem_ctx,
 		    r->in.machine_password == NULL) {
 			return ADS_ERROR_NT(NT_STATUS_INVALID_PARAMETER);
 		}
-		username = talloc_strdup(mem_ctx, r->in.machine_name);
+		username = talloc_asprintf(mem_ctx, "%s$",
+					   r->in.machine_name);
 		if (username == NULL) {
 			return ADS_ERROR(LDAP_NO_MEMORY);
-		}
-		if (username[strlen(username)] != '$') {
-			username = talloc_asprintf(username, "%s$", username);
-			if (username == NULL) {
-				return ADS_ERROR(LDAP_NO_MEMORY);
-			}
 		}
 		password = r->in.machine_password;
 		ccname = "MEMORY:libnet_join_machine_creds";
@@ -869,14 +864,15 @@ static bool libnet_join_derive_salting_principal(TALLOC_CTX *mem_ctx,
 		}
 	}
 
-	return kerberos_secrets_store_des_salt(salt);
+	r->out.krb5_salt = salt;
+	return true;
 }
 
 /****************************************************************
 ****************************************************************/
 
-static ADS_STATUS libnet_join_post_processing_ads(TALLOC_CTX *mem_ctx,
-						  struct libnet_JoinCtx *r)
+static ADS_STATUS libnet_join_post_processing_ads_modify(TALLOC_CTX *mem_ctx,
+							 struct libnet_JoinCtx *r)
 {
 	ADS_STATUS status;
 	bool need_etype_update = false;
@@ -968,6 +964,12 @@ static ADS_STATUS libnet_join_post_processing_ads(TALLOC_CTX *mem_ctx,
 		return ADS_ERROR_NT(NT_STATUS_UNSUCCESSFUL);
 	}
 
+	return ADS_SUCCESS;
+}
+
+static ADS_STATUS libnet_join_post_processing_ads_sync(TALLOC_CTX *mem_ctx,
+							struct libnet_JoinCtx *r)
+{
 	if (!libnet_join_create_keytab(mem_ctx, r)) {
 		libnet_join_set_error_string(mem_ctx, r,
 			"failed to create kerberos keytab");
@@ -985,18 +987,12 @@ static ADS_STATUS libnet_join_post_processing_ads(TALLOC_CTX *mem_ctx,
 static bool libnet_join_joindomain_store_secrets(TALLOC_CTX *mem_ctx,
 						 struct libnet_JoinCtx *r)
 {
-	if (!secrets_store_domain_sid(r->out.netbios_domain_name,
-				      r->out.domain_sid))
-	{
-		DEBUG(1,("Failed to save domain sid\n"));
-		return false;
-	}
+	NTSTATUS status;
 
-	if (!secrets_store_machine_password(r->in.machine_password,
-					    r->out.netbios_domain_name,
-					    r->in.secure_channel_type))
-	{
-		DEBUG(1,("Failed to save machine password\n"));
+	status = secrets_store_JoinCtx(r);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("secrets_store_JoinCtx() failed %s\n",
+			nt_errstr(status));
 		return false;
 	}
 
@@ -1085,6 +1081,7 @@ static NTSTATUS libnet_join_lookup_dc_rpc(TALLOC_CTX *mem_ctx,
 		r->out.netbios_domain_name = info->dns.name.string;
 		r->out.dns_domain_name = info->dns.dns_domain.string;
 		r->out.forest_name = info->dns.dns_forest.string;
+		r->out.domain_guid = info->dns.domain_guid;
 		r->out.domain_sid = dom_sid_dup(mem_ctx, info->dns.sid);
 		NT_STATUS_HAVE_NO_MEMORY(r->out.domain_sid);
 	}
@@ -1127,7 +1124,9 @@ static NTSTATUS libnet_join_joindomain_rpc_unsecure(TALLOC_CTX *mem_ctx,
 	struct rpc_pipe_client *netlogon_pipe = NULL;
 	struct netlogon_creds_cli_context *netlogon_creds = NULL;
 	struct samr_Password current_nt_hash;
-	const char *account_name = NULL;
+	size_t len = 0;
+	bool ok;
+	DATA_BLOB new_trust_blob = data_blob_null;
 	NTSTATUS status;
 
 	status = cli_rpc_pipe_open_noauth(cli, &ndr_table_netlogon,
@@ -1152,16 +1151,9 @@ static NTSTATUS libnet_join_joindomain_rpc_unsecure(TALLOC_CTX *mem_ctx,
 	/* according to WKSSVC_JOIN_FLAGS_MACHINE_PWD_PASSED */
 	E_md4hash(r->in.admin_password, current_nt_hash.hash);
 
-	account_name = talloc_asprintf(frame, "%s$",
-				       r->in.machine_name);
-	if (account_name == NULL) {
-		TALLOC_FREE(frame);
-		return NT_STATUS_NO_MEMORY;
-	}
-
 	status = rpccli_create_netlogon_creds(netlogon_pipe->desthost,
 					      r->in.domain_name,
-					      account_name,
+					      r->out.account_name,
 					      r->in.secure_channel_type,
 					      r->in.msg_ctx,
 					      frame,
@@ -1181,9 +1173,23 @@ static NTSTATUS libnet_join_joindomain_rpc_unsecure(TALLOC_CTX *mem_ctx,
 		return status;
 	}
 
+	len = strlen(r->in.machine_password);
+	ok = convert_string_talloc(frame, CH_UNIX, CH_UTF16,
+				   r->in.machine_password, len,
+				   (void **)&new_trust_blob.data,
+				   &new_trust_blob.length);
+	if (!ok) {
+		status = NT_STATUS_UNMAPPABLE_CHARACTER;
+		if (errno == ENOMEM) {
+			status = NT_STATUS_NO_MEMORY;
+		}
+		TALLOC_FREE(frame);
+		return status;
+	}
+
 	status = netlogon_creds_cli_ServerPasswordSet(netlogon_creds,
 						      netlogon_pipe->binding_handle,
-						      r->in.machine_password,
+						      &new_trust_blob,
 						      NULL); /* new_version */
 	if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(frame);
@@ -1696,15 +1702,10 @@ static WERROR libnet_join_post_verify(TALLOC_CTX *mem_ctx,
 static bool libnet_join_unjoindomain_remove_secrets(TALLOC_CTX *mem_ctx,
 						    struct libnet_UnjoinCtx *r)
 {
-	if (!secrets_delete_machine_password_ex(lp_workgroup())) {
-		return false;
-	}
-
-	if (!secrets_delete_domain_sid(lp_workgroup())) {
-		return false;
-	}
-
-	return true;
+	/*
+	 * TODO: use values from 'struct libnet_UnjoinCtx' ?
+	 */
+	return secrets_delete_machine_password_ex(lp_workgroup(), lp_realm());
 }
 
 /****************************************************************
@@ -2116,6 +2117,14 @@ static WERROR libnet_join_pre_processing(TALLOC_CTX *mem_ctx,
 		return WERR_INVALID_PARAMETER;
         }
 
+	r->out.account_name = talloc_asprintf(mem_ctx, "%s$",
+				       r->in.machine_name);
+	if (r->out.account_name == NULL) {
+		libnet_join_set_error_string(mem_ctx, r,
+			"Unable to construct r->out.account_name");
+		return WERR_NOT_ENOUGH_MEMORY;
+	}
+
 	if (!libnet_parse_domain_dc(mem_ctx, r->in.domain_name,
 				    &r->in.domain_name,
 				    &r->in.dc_name)) {
@@ -2197,18 +2206,13 @@ static WERROR libnet_join_post_processing(TALLOC_CTX *mem_ctx,
 		return r->out.result;
 	}
 
-	werr = do_JoinConfig(r);
-	if (!W_ERROR_IS_OK(werr)) {
-		return werr;
-	}
-
 	if (!(r->in.join_flags & WKSSVC_JOIN_FLAGS_JOIN_TYPE)) {
-		return WERR_OK;
-	}
+		werr = do_JoinConfig(r);
+		if (!W_ERROR_IS_OK(werr)) {
+			return werr;
+		}
 
-	saf_join_store(r->out.netbios_domain_name, r->in.dc_name);
-	if (r->out.dns_domain_name) {
-		saf_join_store(r->out.dns_domain_name, r->in.dc_name);
+		return WERR_OK;
 	}
 
 #ifdef HAVE_ADS
@@ -2216,7 +2220,33 @@ static WERROR libnet_join_post_processing(TALLOC_CTX *mem_ctx,
 	    !(r->in.join_flags & WKSSVC_JOIN_FLAGS_JOIN_UNSECURE)) {
 		ADS_STATUS ads_status;
 
-		ads_status  = libnet_join_post_processing_ads(mem_ctx, r);
+		ads_status  = libnet_join_post_processing_ads_modify(mem_ctx, r);
+		if (!ADS_ERR_OK(ads_status)) {
+			return WERR_GEN_FAILURE;
+		}
+	}
+#endif /* HAVE_ADS */
+
+	saf_join_store(r->out.netbios_domain_name, r->in.dc_name);
+	if (r->out.dns_domain_name) {
+		saf_join_store(r->out.dns_domain_name, r->in.dc_name);
+	}
+
+	if (!libnet_join_joindomain_store_secrets(mem_ctx, r)) {
+		return WERR_NERR_SETUPNOTJOINED;
+	}
+
+	werr = do_JoinConfig(r);
+	if (!W_ERROR_IS_OK(werr)) {
+		return werr;
+	}
+
+#ifdef HAVE_ADS
+	if (r->out.domain_is_ad &&
+	    !(r->in.join_flags & WKSSVC_JOIN_FLAGS_JOIN_UNSECURE)) {
+		ADS_STATUS ads_status;
+
+		ads_status  = libnet_join_post_processing_ads_sync(mem_ctx, r);
 		if (!ADS_ERR_OK(ads_status)) {
 			return WERR_GEN_FAILURE;
 		}
@@ -2594,11 +2624,6 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 			return WERR_NERR_SETUPALREADYJOINED;
 		}
 		werr = ntstatus_to_werror(status);
-		goto done;
-	}
-
-	if (!libnet_join_joindomain_store_secrets(mem_ctx, r)) {
-		werr = WERR_NERR_SETUPNOTJOINED;
 		goto done;
 	}
 
