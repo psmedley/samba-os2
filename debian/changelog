@@ -1,3 +1,12 @@
+samba (2:4.6.7+dfsg-2) unstable; urgency=high
+
+  * This is a security release in order to address the following defects:
+    - CVE-2017-12150: Some code path don't enforce smb signing, when they should
+    - CVE-2017-12151: Keep required encryption across SMB3 dfs redirects
+    - CVE-2017-12163: Server memory information leak over SMB1
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 19 Sep 2017 22:00:13 +0200
+
 samba (2:4.6.7+dfsg-1) unstable; urgency=medium
 
   * New upstream version

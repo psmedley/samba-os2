@@ -15,3 +15,6 @@ Add-documentation-to-systemd-Unit-files.patch
 fix_kill_path_in_units.patch
 nmbd-requires-a-working-network.patch
 provision-Update-root-DNS-servers-list.patch
+CVE-2017-12150-v4-6.patches.metze02.txt
+CVE-2017-12151-v4-6.patches.metze02.txt
+CVE-2017-12163-all-metze01.patch.txt
