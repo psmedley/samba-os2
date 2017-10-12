@@ -284,9 +284,9 @@ static NTSTATUS zfsacl_fset_nt_acl(vfs_handle_struct *handle,
 */
 
 static SMB_ACL_T zfsacl_fail__sys_acl_get_file(vfs_handle_struct *handle,
-					       const char *path_p,
-					       SMB_ACL_TYPE_T type,
-					       TALLOC_CTX *mem_ctx)
+					const struct smb_filename *smb_fname,
+					SMB_ACL_TYPE_T type,
+					TALLOC_CTX *mem_ctx)
 {
 	return (SMB_ACL_T)NULL;
 }
@@ -299,7 +299,7 @@ static SMB_ACL_T zfsacl_fail__sys_acl_get_fd(vfs_handle_struct *handle,
 }
 
 static int zfsacl_fail__sys_acl_set_file(vfs_handle_struct *handle,
-					 const char *name,
+					 const struct smb_filename *smb_fname,
 					 SMB_ACL_TYPE_T type,
 					 SMB_ACL_T theacl)
 {
@@ -314,12 +314,16 @@ static int zfsacl_fail__sys_acl_set_fd(vfs_handle_struct *handle,
 }
 
 static int zfsacl_fail__sys_acl_delete_def_file(vfs_handle_struct *handle,
-						const char *path)
+			const struct smb_filename *smb_fname)
 {
 	return -1;
 }
 
-static int zfsacl_fail__sys_acl_blob_get_file(vfs_handle_struct *handle, const char *path_p, TALLOC_CTX *mem_ctx, char **blob_description, DATA_BLOB *blob)
+static int zfsacl_fail__sys_acl_blob_get_file(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			TALLOC_CTX *mem_ctx,
+			char **blob_description,
+			DATA_BLOB *blob)
 {
 	return -1;
 }
@@ -344,8 +348,8 @@ static struct vfs_fn_pointers zfsacl_fns = {
 	.fset_nt_acl_fn = zfsacl_fset_nt_acl,
 };
 
-NTSTATUS vfs_zfsacl_init(void);
-NTSTATUS vfs_zfsacl_init(void)
+NTSTATUS vfs_zfsacl_init(TALLOC_CTX *);
+NTSTATUS vfs_zfsacl_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, "zfsacl",
 				&zfsacl_fns);

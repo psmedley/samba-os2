@@ -40,6 +40,7 @@ struct dsdb_trust_routing_table;
 #include "dsdb/schema/schema.h"
 #include "dsdb/samdb/samdb_proto.h"
 #include "dsdb/common/dsdb_dn.h"
+#include "dsdb/common/util_links.h"
 #include "dsdb/common/proto.h"
 #include "../libds/common/flags.h"
 
@@ -182,6 +183,14 @@ struct dsdb_control_password_user_account_control {
 /* passed when we want to thoroughly delete linked attributes */
 #define DSDB_CONTROL_REPLMD_VANISH_LINKS "1.3.6.1.4.1.7165.4.3.29"
 
+/*
+ * lockoutTime is a replicated attribute, but must be modified before
+ * connectivity occurs to allow password lockouts.
+ */
+#define DSDB_CONTROL_FORCE_RODC_LOCAL_CHANGE "1.3.6.1.4.1.7165.4.3.31"
+
+#define DSDB_CONTROL_INVALID_NOT_IMPLEMENTED "1.3.6.1.4.1.7165.4.3.32"
+
 #define DSDB_EXTENDED_REPLICATED_OBJECTS_OID "1.3.6.1.4.1.7165.4.4.1"
 struct dsdb_extended_replicated_object {
 	struct ldb_message *msg;
@@ -316,4 +325,8 @@ struct dsdb_extended_sec_desc_propagation_op {
 
 #define SAMBA_COMPATIBLE_FEATURES_ATTR "compatibleFeatures"
 #define SAMBA_REQUIRED_FEATURES_ATTR "requiredFeatures"
+#define SAMBA_FEATURES_SUPPORTED_FLAG "@SAMBA_FEATURES_SUPPORTED"
+
+#define SAMBA_SORTED_LINKS_FEATURE "sortedLinks"
+
 #endif /* __SAMDB_H__ */

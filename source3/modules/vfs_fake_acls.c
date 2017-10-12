@@ -36,12 +36,13 @@
 #define FAKE_ACL_DEFAULT_XATTR "system.fake_default_acl"
 
 static int fake_acls_uid(vfs_handle_struct *handle,
-			 const char *path,
+			 struct smb_filename *smb_fname,
 			 uid_t *uid)
 {
 	ssize_t size;
 	uint8_t uid_buf[4];
-	size = SMB_VFS_NEXT_GETXATTR(handle, path, FAKE_UID, uid_buf, sizeof(uid_buf));
+	size = SMB_VFS_NEXT_GETXATTR(handle, smb_fname,
+			FAKE_UID, uid_buf, sizeof(uid_buf));
 	if (size == -1 && errno == ENOATTR) {
 		return 0;
 	}
@@ -53,13 +54,14 @@ static int fake_acls_uid(vfs_handle_struct *handle,
 }
 
 static int fake_acls_gid(vfs_handle_struct *handle,
-			 const char *path,
+			 struct smb_filename *smb_fname,
 			 uid_t *gid)
 {
 	ssize_t size;
 	uint8_t gid_buf[4];
 
-	size = SMB_VFS_NEXT_GETXATTR(handle, path, FAKE_GID, gid_buf, sizeof(gid_buf));
+	size = SMB_VFS_NEXT_GETXATTR(handle, smb_fname,
+			FAKE_GID, gid_buf, sizeof(gid_buf));
 	if (size == -1 && errno == ENOATTR) {
 		return 0;
 	}
@@ -131,12 +133,14 @@ static int fake_acls_stat(vfs_handle_struct *handle,
 			return -1;
 		}
 		
-		ret = fake_acls_uid(handle, path, &smb_fname->st.st_ex_uid);
+		ret = fake_acls_uid(handle, &smb_fname_base,
+					&smb_fname->st.st_ex_uid);
 		if (ret != 0) {
 			TALLOC_FREE(frame);
 			return ret;
 		}
-		ret = fake_acls_gid(handle, path, &smb_fname->st.st_ex_gid);
+		ret = fake_acls_gid(handle, &smb_fname_base,
+					&smb_fname->st.st_ex_gid);
 		if (ret != 0) {
 			TALLOC_FREE(frame);
 			return ret;
@@ -179,8 +183,10 @@ static int fake_acls_lstat(vfs_handle_struct *handle,
 		 * because linux doesn't support using them, but we
 		 * could fake them in xattr_tdb if we really wanted
 		 * to.  We ignore errors because the link might not point anywhere */
-		fake_acls_uid(handle, path, &smb_fname->st.st_ex_uid);
-		fake_acls_gid(handle, path, &smb_fname->st.st_ex_gid);
+		fake_acls_uid(handle, &smb_fname_base,
+			&smb_fname->st.st_ex_uid);
+		fake_acls_gid(handle, &smb_fname_base,
+			&smb_fname->st.st_ex_gid);
 		TALLOC_FREE(frame);
 	}
 
@@ -242,9 +248,9 @@ static DATA_BLOB fake_acls_acl2blob(TALLOC_CTX *mem_ctx, SMB_ACL_T acl)
 }
 
 static SMB_ACL_T fake_acls_sys_acl_get_file(struct vfs_handle_struct *handle,
-					    const char *path,
-					    SMB_ACL_TYPE_T type,
-					    TALLOC_CTX *mem_ctx)
+				const struct smb_filename *smb_fname,
+				SMB_ACL_TYPE_T type,
+				TALLOC_CTX *mem_ctx)
 {
 	DATA_BLOB blob = data_blob_null;
 	ssize_t length;
@@ -268,7 +274,8 @@ static SMB_ACL_T fake_acls_sys_acl_get_file(struct vfs_handle_struct *handle,
 			TALLOC_FREE(frame);
 			return NULL;
 		}
-		length = SMB_VFS_NEXT_GETXATTR(handle, path, name, blob.data, blob.length);
+		length = SMB_VFS_NEXT_GETXATTR(handle, smb_fname,
+				name, blob.data, blob.length);
 		blob.length = length;
 	} while (length == -1 && errno == ERANGE);
 	if (length == -1 && errno == ENOATTR) {
@@ -315,7 +322,10 @@ static SMB_ACL_T fake_acls_sys_acl_get_fd(struct vfs_handle_struct *handle,
 }
 
 
-static int fake_acls_sys_acl_set_file(vfs_handle_struct *handle, const char *path, SMB_ACL_TYPE_T acltype, SMB_ACL_T theacl)
+static int fake_acls_sys_acl_set_file(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			SMB_ACL_TYPE_T acltype,
+			SMB_ACL_T theacl)
 {
 	int ret;
 	const char *name = NULL;
@@ -335,7 +345,8 @@ static int fake_acls_sys_acl_set_file(vfs_handle_struct *handle, const char *pat
 		name = FAKE_ACL_DEFAULT_XATTR;
 		break;
 	}
-	ret = SMB_VFS_NEXT_SETXATTR(handle, path, name, blob.data, blob.length, 0);
+	ret = SMB_VFS_NEXT_SETXATTR(handle, smb_fname,
+			name, blob.data, blob.length, 0);
 	TALLOC_FREE(frame);
 	return ret;
 }
@@ -357,14 +368,15 @@ static int fake_acls_sys_acl_set_fd(vfs_handle_struct *handle, files_struct *fsp
 	return ret;
 }
 
-static int fake_acls_sys_acl_delete_def_file(vfs_handle_struct *handle, const char *path)
+static int fake_acls_sys_acl_delete_def_file(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname_in)
 {
 	int ret;
 	const char *name = FAKE_ACL_DEFAULT_XATTR;
 	TALLOC_CTX *frame = talloc_stackframe();
-	struct smb_filename *smb_fname;
+	struct smb_filename *smb_fname = cp_smb_filename_nostream(talloc_tos(),
+						smb_fname_in);
 
-	smb_fname = synthetic_smb_fname(frame, path, NULL, NULL, 0);
 	if (smb_fname == NULL) {
 		TALLOC_FREE(frame);
 		errno = ENOMEM;
@@ -383,7 +395,7 @@ static int fake_acls_sys_acl_delete_def_file(vfs_handle_struct *handle, const ch
 		return -1;
 	}
 
-	ret = SMB_VFS_NEXT_REMOVEXATTR(handle, path, name);
+	ret = SMB_VFS_NEXT_REMOVEXATTR(handle, smb_fname, name);
 	if (ret == -1 && errno == ENOATTR) {
 		ret = 0;
 		errno = 0;
@@ -403,7 +415,7 @@ static int fake_acls_chown(vfs_handle_struct *handle,
 	if (uid != -1) {
 		SIVAL(id_buf, 0, uid);
 		ret = SMB_VFS_NEXT_SETXATTR(handle,
-				smb_fname->base_name,
+				smb_fname,
 				FAKE_UID,
 				id_buf,
 				sizeof(id_buf),
@@ -415,7 +427,7 @@ static int fake_acls_chown(vfs_handle_struct *handle,
 	if (gid != -1) {
 		SIVAL(id_buf, 0, gid);
 		ret = SMB_VFS_NEXT_SETXATTR(handle,
-				smb_fname->base_name,
+				smb_fname,
 				FAKE_GID,
 				id_buf,
 				sizeof(id_buf),
@@ -445,7 +457,7 @@ static int fake_acls_lchown(vfs_handle_struct *handle,
 		 */
 		SIVAL(id_buf, 0, uid);
 		ret = SMB_VFS_NEXT_SETXATTR(handle,
-				smb_fname->base_name,
+				smb_fname,
 				FAKE_UID,
 				id_buf,
 				sizeof(id_buf),
@@ -457,7 +469,7 @@ static int fake_acls_lchown(vfs_handle_struct *handle,
 	if (gid != -1) {
 		SIVAL(id_buf, 0, gid);
 		ret = SMB_VFS_NEXT_SETXATTR(handle,
-				smb_fname->base_name,
+				smb_fname,
 				FAKE_GID,
 				id_buf,
 				sizeof(id_buf),
@@ -508,8 +520,8 @@ static struct vfs_fn_pointers vfs_fake_acls_fns = {
 	
 };
 
-NTSTATUS vfs_fake_acls_init(void);
-NTSTATUS vfs_fake_acls_init(void)
+NTSTATUS vfs_fake_acls_init(TALLOC_CTX *);
+NTSTATUS vfs_fake_acls_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, "fake_acls",
 				&vfs_fake_acls_fns);

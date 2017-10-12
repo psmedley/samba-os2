@@ -59,11 +59,12 @@ DBRecordSizeWarn           = 10000000
 DBSizeWarn                 = 100000000
 PullDBPreallocation        = 10485760
 NoIPHostOnAllDisabled      = 0
-TDBMutexEnabled            = 0
+TDBMutexEnabled            = 1
 LockProcessesPerDB         = 200
 RecBufferSizeLimit         = 1000000
 QueueBufferSize            = 1024
 IPAllocAlgorithm           = 2
+AllowMixedVersions         = 0
 EOF
 
 simple_test

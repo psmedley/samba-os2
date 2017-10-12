@@ -190,6 +190,10 @@ NTSTATUS _wbint_Sids2UnixIDs(struct pipes_struct *p,
 		struct id_map *m = id_map_ptrs[i];
 
 		if (!idmap_unix_id_is_in_range(m->xid.id, dom)) {
+			DBG_DEBUG("id %"PRIu32" is out of range "
+				  "%"PRIu32"-%"PRIu32" for domain %s\n",
+				  m->xid.id, dom->low_id, dom->high_id,
+				  dom->name);
 			m->status = ID_UNMAPPED;
 		}
 
@@ -618,7 +622,7 @@ NTSTATUS _wbint_LookupRids(struct pipes_struct *p, struct wbint_LookupRids *r)
 	enum lsa_SidType *types;
 	struct wbint_Principal *result;
 	NTSTATUS status;
-	int i;
+	uint32_t i;
 
 	if (domain == NULL) {
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
@@ -861,6 +865,8 @@ NTSTATUS _winbind_SamLogon(struct pipes_struct *p,
 	struct winbindd_domain *domain;
 	NTSTATUS status;
 	DATA_BLOB lm_response, nt_response;
+	uint32_t flags = 0;
+
 	domain = wb_child_domain();
 	if (domain == NULL) {
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
@@ -884,7 +890,11 @@ NTSTATUS _winbind_SamLogon(struct pipes_struct *p,
 				       r->in.logon.network->identity_info.domain_name.string,
 				       r->in.logon.network->identity_info.workstation.string,
 				       r->in.logon.network->challenge,
-				       lm_response, nt_response, &r->out.validation.sam3);
+				       lm_response, nt_response,
+				       &r->out.authoritative,
+				       true,
+				       &flags,
+				       &r->out.validation.sam3);
 	return status;
 }
 
@@ -1692,4 +1702,29 @@ done:
 	DEBUG(5, ("_winbind_GetForestTrustInformation succeeded\n"));
 	TALLOC_FREE(frame);
 	return WERR_OK;
+}
+
+NTSTATUS _winbind_SendToSam(struct pipes_struct *p, struct winbind_SendToSam *r)
+{
+	struct winbindd_domain *domain;
+	NTSTATUS status;
+	struct rpc_pipe_client *netlogon_pipe;
+
+	DEBUG(5, ("_winbind_SendToSam received\n"));
+	domain = wb_child_domain();
+	if (domain == NULL) {
+		return NT_STATUS_REQUEST_NOT_ACCEPTED;
+	}
+
+	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(3, ("could not open handle to NETLOGON pipe\n"));
+		return status;
+	}
+
+	status = netlogon_creds_cli_SendToSam(domain->conn.netlogon_creds,
+					      netlogon_pipe->binding_handle,
+					      &r->in.message);
+
+	return status;
 }

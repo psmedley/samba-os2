@@ -46,12 +46,14 @@
 */
 
 #include "includes.h"
+#include "lib/util/server_id.h"
 #include "dbwrap/dbwrap.h"
 #include "serverid.h"
 #include "messages.h"
 #include "lib/util/tevent_unix.h"
 #include "lib/background.h"
 #include "lib/messages_dgm.h"
+#include "lib/messages_ctdbd.h"
 #include "lib/util/iov_buf.h"
 #include "lib/util/server_id_db.h"
 #include "lib/messages_dgm_ref.h"
@@ -72,10 +74,10 @@ struct messaging_context {
 	struct messaging_callback *callbacks;
 
 	struct tevent_req **new_waiters;
-	unsigned num_new_waiters;
+	size_t num_new_waiters;
 
 	struct tevent_req **waiters;
-	unsigned num_waiters;
+	size_t num_waiters;
 
 	void *msg_dgm_ref;
 	struct messaging_backend *remote;
@@ -211,7 +213,7 @@ close_fail:
 
 static int messaging_context_destructor(struct messaging_context *ctx)
 {
-	unsigned i;
+	size_t i;
 
 	for (i=0; i<ctx->num_new_waiters; i++) {
 		if (ctx->new_waiters[i] != NULL) {
@@ -767,7 +769,7 @@ static void messaging_filtered_read_cleanup(struct tevent_req *req,
 	struct messaging_filtered_read_state *state = tevent_req_data(
 		req, struct messaging_filtered_read_state);
 	struct messaging_context *msg_ctx = state->msg_ctx;
-	unsigned i;
+	size_t i;
 
 	tevent_req_set_cleanup_fn(req, NULL);
 
@@ -1013,7 +1015,7 @@ static bool messaging_append_new_waiters(struct messaging_context *msg_ctx)
 	return true;
 }
 
-static void messaging_dispatch_classic(struct messaging_context *msg_ctx,
+static bool messaging_dispatch_classic(struct messaging_context *msg_ctx,
 				       struct messaging_rec *rec)
 {
 	struct messaging_callback *cb, *next;
@@ -1039,13 +1041,10 @@ static void messaging_dispatch_classic(struct messaging_context *msg_ctx,
 		cb->fn(msg_ctx, cb->private_data, rec->msg_type,
 		       rec->src, &rec->buf);
 
-		/*
-		 * we continue looking for matching messages after finding
-		 * one. This matters for subsystems like the internal notify
-		 * code which register more than one handler for the same
-		 * message type
-		 */
+		return true;
 	}
+
+	return false;
 }
 
 /*
@@ -1055,14 +1054,18 @@ static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
 				   struct tevent_context *ev,
 				   struct messaging_rec *rec)
 {
-	unsigned i;
-	size_t j;
+	size_t i;
+	bool consumed;
 
 	if (ev == msg_ctx->event_ctx) {
-		messaging_dispatch_classic(msg_ctx, rec);
+		consumed = messaging_dispatch_classic(msg_ctx, rec);
+		if (consumed) {
+			return;
+		}
 	}
 
 	if (!messaging_append_new_waiters(msg_ctx)) {
+		size_t j;
 		for (j=0; j < rec->num_fds; j++) {
 			int fd = rec->fds[j];
 			close(fd);
@@ -1100,12 +1103,7 @@ static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
 		if ((ev == state->ev) &&
 		    state->filter(rec, state->private_data)) {
 			messaging_filtered_read_done(req, rec);
-
-			/*
-			 * Only the first one gets the fd-array
-			 */
-			rec->num_fds = 0;
-			rec->fds = NULL;
+			return;
 		}
 
 		i += 1;
@@ -1140,8 +1138,8 @@ static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
 	/*
 	 * If the fd-array isn't used, just close it.
 	 */
-	for (j=0; j < rec->num_fds; j++) {
-		int fd = rec->fds[j];
+	for (i=0; i < rec->num_fds; i++) {
+		int fd = rec->fds[i];
 		close(fd);
 	}
 	rec->num_fds = 0;

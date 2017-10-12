@@ -18,6 +18,8 @@
 */
 
 #include "includes.h"
+#include "lib/messages_ctdbd.h"
+#include "lib/util/server_id.h"
 #include "messages.h"
 #include "util_tdb.h"
 #include "lib/util/iov_buf.h"

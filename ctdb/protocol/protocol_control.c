@@ -426,6 +426,14 @@ static size_t ctdb_req_control_data_len(struct ctdb_req_control_data *cd)
 	case CTDB_CONTROL_DB_PUSH_CONFIRM:
 		len = ctdb_uint32_len(cd->data.db_id);
 		break;
+
+	case CTDB_CONTROL_DB_OPEN_FLAGS:
+		len = ctdb_uint32_len(cd->data.db_id);
+		break;
+
+	case CTDB_CONTROL_DB_ATTACH_REPLICATED:
+		len = ctdb_string_len(cd->data.db_name);
+		break;
 	}
 
 	return len;
@@ -688,6 +696,14 @@ static void ctdb_req_control_data_push(struct ctdb_req_control_data *cd,
 
 	case CTDB_CONTROL_DB_PUSH_CONFIRM:
 		ctdb_uint32_push(cd->data.db_id, buf);
+		break;
+
+	case CTDB_CONTROL_DB_OPEN_FLAGS:
+		ctdb_uint32_push(cd->data.db_id, buf);
+		break;
+
+	case CTDB_CONTROL_DB_ATTACH_REPLICATED:
+		ctdb_string_push(cd->data.db_name, buf);
 		break;
 	}
 }
@@ -1018,6 +1034,16 @@ static int ctdb_req_control_data_pull(uint8_t *buf, size_t buflen,
 	case CTDB_CONTROL_DB_PUSH_CONFIRM:
 		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
 				       &cd->data.db_id);
+		break;
+
+	case CTDB_CONTROL_DB_OPEN_FLAGS:
+		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
+				       &cd->data.db_id);
+		break;
+
+	case CTDB_CONTROL_DB_ATTACH_REPLICATED:
+		ret = ctdb_string_pull(buf, buflen, mem_ctx,
+				       &cd->data.db_name);
 		break;
 	}
 
@@ -1380,6 +1406,14 @@ static size_t ctdb_reply_control_data_len(struct ctdb_reply_control_data *cd)
 	case CTDB_CONTROL_DB_PUSH_CONFIRM:
 		len = ctdb_uint32_len(cd->data.num_records);
 		break;
+
+	case CTDB_CONTROL_DB_OPEN_FLAGS:
+		len = ctdb_int32_len(cd->data.tdb_flags);
+		break;
+
+	case CTDB_CONTROL_DB_ATTACH_REPLICATED:
+		len = ctdb_uint32_len(cd->data.db_id);
+		break;
 	}
 
 	return len;
@@ -1531,6 +1565,14 @@ static void ctdb_reply_control_data_push(struct ctdb_reply_control_data *cd,
 
 	case CTDB_CONTROL_DB_PUSH_CONFIRM:
 		ctdb_uint32_push(cd->data.num_records, buf);
+		break;
+
+	case CTDB_CONTROL_DB_OPEN_FLAGS:
+		ctdb_int32_push(cd->data.tdb_flags, buf);
+		break;
+
+	case CTDB_CONTROL_DB_ATTACH_REPLICATED:
+		ctdb_uint32_push(cd->data.db_id, buf);
 		break;
 	}
 }
@@ -1718,6 +1760,16 @@ static int ctdb_reply_control_data_pull(uint8_t *buf, size_t buflen,
 	case CTDB_CONTROL_DB_PUSH_CONFIRM:
 		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
 				       &cd->data.num_records);
+		break;
+
+	case CTDB_CONTROL_DB_OPEN_FLAGS:
+		ret = ctdb_int32_pull(buf, buflen, mem_ctx,
+				      &cd->data.tdb_flags);
+		break;
+
+	case CTDB_CONTROL_DB_ATTACH_REPLICATED:
+		ret = ctdb_uint32_pull(buf, buflen, mem_ctx,
+				       &cd->data.db_id);
 		break;
 	}
 

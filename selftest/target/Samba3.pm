@@ -10,6 +10,7 @@ use Cwd qw(abs_path);
 use FindBin qw($RealBin);
 use POSIX;
 use target::Samba;
+use File::Path 'remove_tree';
 
 sub have_ads($) {
         my ($self) = @_;
@@ -38,7 +39,7 @@ sub get_fs_specific_conf($$)
 	my $stat_out = `stat --file-system $path` or return "";
 
 	if ($stat_out =~ m/Type:\s+btrfs/) {
-		$mods .= "btrfs ";
+		$mods .= "streams_xattr btrfs";
 	}
 
 	if ($mods) {
@@ -231,7 +232,7 @@ sub setup_nt4_dc($$)
 	fss: sequence timeout = 1
 ";
 
-	my $vars = $self->provision($path,
+	my $vars = $self->provision($path, "SAMBA-TEST",
 				    "LOCALNT4DC2",
 				    "localntdc2pass",
 				    $nt4_dc_options);
@@ -277,9 +278,11 @@ sub setup_nt4_dc_schannel($$)
 	rpc_daemon:lsasd = fork
 
 	server schannel = yes
+	# used to reproduce bug #12772
+	server max protocol = SMB2_02
 ";
 
-	my $vars = $self->provision($path,
+	my $vars = $self->provision($path, "NT4SCHANNEL",
 				    "LOCALNT4DC9",
 				    "localntdc9pass",
 				    $pdc_options);
@@ -318,7 +321,7 @@ sub setup_nt4_member($$$)
 	dbwrap_tdb_mutexes:* = yes
 	${require_mutexes}
 ";
-	my $ret = $self->provision($prefix,
+	my $ret = $self->provision($prefix, $nt4_dc_vars->{DOMAIN},
 				   "LOCALNT4MEMBER3",
 				   "localnt4member3pass",
 				   $member_options);
@@ -395,26 +398,26 @@ sub setup_admember($$$$)
 	my $share_dir="$prefix_abs/share";
 	push(@dirs, $share_dir);
 
-	my $substitution_path = "$share_dir/D_SAMBADOMAIN";
+	my $substitution_path = "$share_dir/D_$dcvars->{DOMAIN}";
 	push(@dirs, $substitution_path);
 
-	$substitution_path = "$share_dir/D_SAMBADOMAIN/U_alice";
+	$substitution_path = "$share_dir/D_$dcvars->{DOMAIN}/U_alice";
 	push(@dirs, $substitution_path);
 
-	$substitution_path = "$share_dir/D_SAMBADOMAIN/U_alice/G_domain users";
+	$substitution_path = "$share_dir/D_$dcvars->{DOMAIN}/U_alice/G_domain users";
 	push(@dirs, $substitution_path);
 
 	# Using '/' as the winbind separator is a bad idea ...
-	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN";
+	$substitution_path = "$share_dir/D_$dcvars->{DOMAIN}/u_$dcvars->{DOMAIN}";
 	push(@dirs, $substitution_path);
 
-	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice";
+	$substitution_path = "$share_dir/D_$dcvars->{DOMAIN}/u_$dcvars->{DOMAIN}/alice";
 	push(@dirs, $substitution_path);
 
-	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice/g_SAMBADOMAIN";
+	$substitution_path = "$share_dir/D_$dcvars->{DOMAIN}/u_$dcvars->{DOMAIN}/alice/g_$dcvars->{DOMAIN}";
 	push(@dirs, $substitution_path);
 
-	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice/g_SAMBADOMAIN/domain users";
+	$substitution_path = "$share_dir/D_$dcvars->{DOMAIN}/u_$dcvars->{DOMAIN}/alice/g_$dcvars->{DOMAIN}/domain users";
 	push(@dirs, $substitution_path);
 
 	my $member_options = "
@@ -434,7 +437,7 @@ sub setup_admember($$$$)
 
 ";
 
-	my $ret = $self->provision($prefix,
+	my $ret = $self->provision($prefix, $dcvars->{DOMAIN},
 				   "LOCALADMEMBER",
 				   "loCalMemberPass",
 				   $member_options,
@@ -527,9 +530,11 @@ sub setup_admember_rfc2307($$$$)
         idmap config $dcvars->{DOMAIN} : ldap_server = ad
         idmap config $dcvars->{DOMAIN} : bind_path_user = ou=idmap,dc=samba,dc=example,dc=com
         idmap config $dcvars->{DOMAIN} : bind_path_group = ou=idmap,dc=samba,dc=example,dc=com
+
+        password server = $dcvars->{SERVER}
 ";
 
-	my $ret = $self->provision($prefix,
+	my $ret = $self->provision($prefix, $dcvars->{DOMAIN},
 				   "RFC2307MEMBER",
 				   "loCalMemberPass",
 				   $member_options,
@@ -617,7 +622,7 @@ sub setup_ad_member_idmap_rid($$$$)
 	idmap config $dcvars->{DOMAIN} : range = 2000000-2999999
 ";
 
-	my $ret = $self->provision($prefix,
+	my $ret = $self->provision($prefix, $dcvars->{DOMAIN},
 				   "IDMAPRIDMEMBER",
 				   "loCalMemberPass",
 				   $member_options,
@@ -722,7 +727,7 @@ sub setup_simpleserver($$)
 	smb encrypt = desired
 ";
 
-	my $vars = $self->provision($path,
+	my $vars = $self->provision($path, "WORKGROUP",
 				    "LOCALSHARE4",
 				    "local4pass",
 				    $simpleserver_options);
@@ -749,6 +754,12 @@ sub setup_fileserver($$)
 	my @dirs = ();
 
 	mkdir($prefix_abs, 0777);
+
+	my $usershare_dir="$prefix_abs/lib/usershare";
+
+	mkdir("$prefix_abs/lib", 0755);
+	remove_tree($usershare_dir);
+	mkdir($usershare_dir, 01770);
 
 	my $share_dir="$prefix_abs/share";
 
@@ -780,7 +791,15 @@ sub setup_fileserver($$)
 	my $tarmode_sharedir="$share_dir/tarmode";
 	push(@dirs,$tarmode_sharedir);
 
+	my $usershare_sharedir="$share_dir/usershares";
+	push(@dirs,$usershare_sharedir);
+
 	my $fileserver_options = "
+	usershare path = $usershare_dir
+	usershare max shares = 10
+	usershare allow guests = yes
+	usershare prefix allow list = $usershare_sharedir
+
 [lowercase]
 	path = $lower_case_share_dir
 	comment = smb username is [%U]
@@ -835,7 +854,7 @@ sub setup_fileserver($$)
 	acl_xattr:ignore system acls = yes
 ";
 
-	my $vars = $self->provision($path,
+	my $vars = $self->provision($path, "WORKGROUP",
 				    "FILESERVER",
 				    "fileserver",
 				    $fileserver_options,
@@ -920,9 +939,13 @@ sub setup_ktest($$$)
         server signing = required
 	server min protocol = SMB3_00
 	client max protocol = SMB3
+
+        # This disables NTLM auth against the local SAM, which
+        # we use can then test this setting by.
+        ntlm auth = disabled
 ";
 
-	my $ret = $self->provision($prefix,
+	my $ret = $self->provision($prefix, "KTEST",
 				   "LOCALKTEST6",
 				   "localktest6pass",
 				   $ktest_options);
@@ -1012,7 +1035,7 @@ map to guest = bad user
 ntlm auth = yes
 ";
 
-	my $vars = $self->provision($path,
+	my $vars = $self->provision($path, "WORKGROUP",
 				    "maptoguest",
 				    "maptoguestpass",
 				    $options);
@@ -1275,9 +1298,9 @@ sub createuser($$$$)
 	}
 }
 
-sub provision($$$$$$$$)
+sub provision($$$$$$$$$)
 {
-	my ($self, $prefix, $server, $password, $extra_options, $dc_server_ip, $dc_server_ipv6, $no_delete_prefix) = @_;
+	my ($self, $prefix, $domain, $server, $password, $extra_options, $dc_server_ip, $dc_server_ipv6, $no_delete_prefix) = @_;
 
 	##
 	## setup the various environment variables we need
@@ -1287,7 +1310,6 @@ sub provision($$$$$$$$)
 	my %ret = ();
 	my $server_ip = "127.0.0.$swiface";
 	my $server_ipv6 = sprintf("fd00:0000:0000:0000:0000:0000:5357:5f%02x", $swiface);
-	my $domain = "SAMBA-TEST";
 
 	my $unix_name = ($ENV{USER} or $ENV{LOGNAME} or `PATH=/usr/ucb:$ENV{PATH} whoami`);
 	chomp $unix_name;
@@ -1374,7 +1396,6 @@ sub provision($$$$$$$$)
 
 	# this gets autocreated by winbindd
 	my $wbsockdir="$prefix_abs/winbindd";
-	my $wbsockprivdir="$lockdir/winbindd_privileged";
 
 	my $nmbdsockdir="$prefix_abs/nmbd";
 	unlink($nmbdsockdir);
@@ -1782,7 +1803,6 @@ sub provision($$$$$$$$)
 [vfs_fruit]
 	path = $shrdir
 	vfs objects = catia fruit streams_xattr acl_xattr
-	ea support = yes
 	fruit:resource = file
 	fruit:metadata = netatalk
 	fruit:locking = netatalk
@@ -1791,26 +1811,22 @@ sub provision($$$$$$$$)
 [vfs_fruit_metadata_stream]
 	path = $shrdir
 	vfs objects = fruit streams_xattr acl_xattr
-	ea support = yes
 	fruit:resource = file
 	fruit:metadata = stream
 
 [vfs_fruit_stream_depot]
 	path = $shrdir
 	vfs objects = fruit streams_depot acl_xattr
-	ea support = yes
 	fruit:resource = stream
 	fruit:metadata = stream
 
 [vfs_wo_fruit]
 	path = $shrdir
 	vfs objects = streams_xattr acl_xattr
-	ea support = yes
 
 [vfs_wo_fruit_stream_depot]
 	path = $shrdir
 	vfs objects = streams_depot acl_xattr
-	ea support = yes
 
 [badname-tmp]
 	path = $badnames_shrdir
@@ -1985,26 +2001,33 @@ sub provision($$$$$$$$)
 	copy = tmp
 	acl_xattr:ignore system acls = yes
 	acl_xattr:default acl style = posix
-[nosymlinks]
-	copy = tmp
-	path = $nosymlinks_shrdir
-	follow symlinks = no
 [acl_xattr_ign_sysacl_windows]
 	copy = tmp
 	acl_xattr:ignore system acls = yes
 	acl_xattr:default acl style = windows
+
+[mangle_illegal]
+	copy = tmp
+        mangled names = illegal
+
 [nosymlinks]
 	copy = tmp
 	path = $nosymlinks_shrdir
 	follow symlinks = no
+
 [local_symlinks]
 	copy = tmp
 	path = $local_symlinks_shrdir
 	follow symlinks = yes
+
 [kernel_oplocks]
 	copy = tmp
 	kernel oplocks = yes
 	vfs objects = streams_xattr xattr_tdb
+
+[compound_find]
+	copy = tmp
+	smbd:find async delay usec = 10000
 	";
 	close(CONF);
 
@@ -2126,6 +2149,7 @@ force_user:x:$gid_force_user:
 	$ret{SMBD_TEST_LOG_POS} = 0;
 	$ret{SERVERCONFFILE} = $conffile;
 	$ret{CONFIGURATION} ="-s $conffile";
+	$ret{LOCK_DIR} = $lockdir;
 	$ret{SERVER} = $server;
 	$ret{USERNAME} = $unix_name;
 	$ret{USERID} = $unix_uid;
@@ -2134,7 +2158,6 @@ force_user:x:$gid_force_user:
 	$ret{PASSWORD} = $password;
 	$ret{PIDDIR} = $piddir;
 	$ret{SELFTEST_WINBINDD_SOCKET_DIR} = $wbsockdir;
-	$ret{WINBINDD_PRIV_PIPE_DIR} = $wbsockprivdir;
 	$ret{NMBD_SOCKET_DIR} = $nmbdsockdir;
 	$ret{SOCKET_WRAPPER_DEFAULT_IFACE} = $swiface;
 	$ret{NSS_WRAPPER_PASSWD} = $nss_wrapper_passwd;

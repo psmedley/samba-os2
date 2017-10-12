@@ -85,8 +85,9 @@ static int cephwrap_connect(struct vfs_handle_struct *handle,  const char *servi
 {
 	int ret;
 	char buf[256];
-
-	const char * conf_file;
+	int snum = SNUM(handle->conn);
+	const char *conf_file;
+	const char *user_id;
 
 	if (cmount) {
 		handle->data = cmount; /* We have been here before */
@@ -94,36 +95,34 @@ static int cephwrap_connect(struct vfs_handle_struct *handle,  const char *servi
 		return 0;
 	}
 
-	conf_file = lp_parm_const_string(SNUM(handle->conn), "ceph", "config_file", NULL);
+	/* if config_file and/or user_id are NULL, ceph will use defaults */
+	conf_file = lp_parm_const_string(snum, "ceph", "config_file", NULL);
+	user_id = lp_parm_const_string(snum, "ceph", "user_id", NULL);
 
-	DBG_DEBUG( "[CEPH] calling: ceph_create\n" );
-	ret = ceph_create(&cmount, NULL);
-	if (ret)
+	DBG_DEBUG("[CEPH] calling: ceph_create\n");
+	ret = ceph_create(&cmount, user_id);
+	if (ret) {
 		goto err_out;
-
-	if (conf_file) {
-		/* Override the config file */
-		DBG_DEBUG( "[CEPH] calling: ceph_conf_read_file\n" );
-		ret = ceph_conf_read_file(cmount, conf_file);
-	} else {
-
-		DBG_DEBUG( "[CEPH] calling: ceph_conf_read_file with %s\n", conf_file);
-		ret = ceph_conf_read_file(cmount, NULL);
 	}
 
-	if (ret)
-		goto err_out;
+	DBG_DEBUG("[CEPH] calling: ceph_conf_read_file with %s\n",
+		  (conf_file == NULL ? "default path" : conf_file));
+	ret = ceph_conf_read_file(cmount, conf_file);
+	if (ret) {
+		goto err_cm_release;
+	}
 
-	DBG_DEBUG( "[CEPH] calling: ceph_conf_get\n" );
+	DBG_DEBUG("[CEPH] calling: ceph_conf_get\n");
 	ret = ceph_conf_get(cmount, "log file", buf, sizeof(buf));
-	if (ret < 0)
-		goto err_out;
+	if (ret < 0) {
+		goto err_cm_release;
+	}
 
 	DBG_DEBUG("[CEPH] calling: ceph_mount\n");
 	ret = ceph_mount(cmount, NULL);
-	if (ret < 0)
-		goto err_out;
-
+	if (ret < 0) {
+		goto err_cm_release;
+	}
 
 	/*
 	 * encode mount context/state into our vfs/connection holding structure
@@ -134,6 +133,9 @@ static int cephwrap_connect(struct vfs_handle_struct *handle,  const char *servi
 
 	return 0;
 
+err_cm_release:
+	ceph_release(cmount);
+	cmount = NULL;
 err_out:
 	/*
 	 * Handle the error correctly. Ceph returns -errno.
@@ -144,6 +146,8 @@ err_out:
 
 static void cephwrap_disconnect(struct vfs_handle_struct *handle)
 {
+	int ret;
+
 	if (!cmount) {
 		DBG_ERR("[CEPH] Error, ceph not mounted\n");
 		return;
@@ -155,7 +159,15 @@ static void cephwrap_disconnect(struct vfs_handle_struct *handle)
 		return;
 	}
 
-	ceph_shutdown(cmount);
+	ret = ceph_unmount(cmount);
+	if (ret < 0) {
+		DBG_ERR("[CEPH] failed to unmount: %s\n", strerror(-ret));
+	}
+
+	ret = ceph_release(cmount);
+	if (ret < 0) {
+		DBG_ERR("[CEPH] failed to release: %s\n", strerror(-ret));
+	}
 
 	cmount = NULL;  /* Make it safe */
 }
@@ -163,13 +175,16 @@ static void cephwrap_disconnect(struct vfs_handle_struct *handle)
 /* Disk operations */
 
 static uint64_t cephwrap_disk_free(struct vfs_handle_struct *handle,
-				   const char *path, uint64_t *bsize,
-				   uint64_t *dfree, uint64_t *dsize)
+				const struct smb_filename *smb_fname,
+				uint64_t *bsize,
+				uint64_t *dfree,
+				uint64_t *dsize)
 {
 	struct statvfs statvfs_buf;
 	int ret;
 
-	if (!(ret = ceph_statfs(handle->data, path, &statvfs_buf))) {
+	if (!(ret = ceph_statfs(handle->data, smb_fname->base_name,
+			&statvfs_buf))) {
 		/*
 		 * Provide all the correct values.
 		 */
@@ -186,8 +201,10 @@ static uint64_t cephwrap_disk_free(struct vfs_handle_struct *handle,
 }
 
 static int cephwrap_get_quota(struct vfs_handle_struct *handle,
-			      const char *path, enum SMB_QUOTA_TYPE qtype,
-			      unid_t id, SMB_DISK_QUOTA *qt)
+				const struct smb_filename *smb_fname,
+				enum SMB_QUOTA_TYPE qtype,
+				unid_t id,
+				SMB_DISK_QUOTA *qt)
 {
 	/* libceph: Ceph does not implement this */
 #if 0
@@ -227,12 +244,14 @@ static int cephwrap_set_quota(struct vfs_handle_struct *handle,  enum SMB_QUOTA_
 #endif
 }
 
-static int cephwrap_statvfs(struct vfs_handle_struct *handle,  const char *path, vfs_statvfs_struct *statbuf)
+static int cephwrap_statvfs(struct vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				vfs_statvfs_struct *statbuf)
 {
 	struct statvfs statvfs_buf;
 	int ret;
 
-	ret = ceph_statfs(handle->data, path, &statvfs_buf);
+	ret = ceph_statfs(handle->data, smb_fname->base_name, &statvfs_buf);
 	if (ret < 0) {
 		WRAP_RETURN(ret);
 	} else {
@@ -912,20 +931,26 @@ static int cephwrap_lchown(struct vfs_handle_struct *handle,
 	WRAP_RETURN(result);
 }
 
-static int cephwrap_chdir(struct vfs_handle_struct *handle,  const char *path)
+static int cephwrap_chdir(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
 	int result = -1;
-	DBG_DEBUG("[CEPH] chdir(%p, %s)\n", handle, path);
-	result = ceph_chdir(handle->data, path);
+	DBG_DEBUG("[CEPH] chdir(%p, %s)\n", handle, smb_fname->base_name);
+	result = ceph_chdir(handle->data, smb_fname->base_name);
 	DBG_DEBUG("[CEPH] chdir(...) = %d\n", result);
 	WRAP_RETURN(result);
 }
 
-static char *cephwrap_getwd(struct vfs_handle_struct *handle)
+static struct smb_filename *cephwrap_getwd(struct vfs_handle_struct *handle,
+			TALLOC_CTX *ctx)
 {
 	const char *cwd = ceph_getcwd(handle->data);
 	DBG_DEBUG("[CEPH] getwd(%p) = %s\n", handle, cwd);
-	return SMB_STRDUP(cwd);
+	return synthetic_smb_fname(ctx,
+				cwd,
+				NULL,
+				NULL,
+				0);
 }
 
 static int strict_allocate_ftruncate(struct vfs_handle_struct *handle, files_struct *fsp, off_t len)
@@ -1099,38 +1124,57 @@ static int cephwrap_linux_setlease(struct vfs_handle_struct *handle, files_struc
 	return result;
 }
 
-static int cephwrap_symlink(struct vfs_handle_struct *handle,  const char *oldpath, const char *newpath)
+static int cephwrap_symlink(struct vfs_handle_struct *handle,
+		const char *link_target,
+		const struct smb_filename *new_smb_fname)
 {
 	int result = -1;
-	DBG_DEBUG("[CEPH] symlink(%p, %s, %s)\n", handle, oldpath, newpath);
-	result = ceph_symlink(handle->data, oldpath, newpath);
+	DBG_DEBUG("[CEPH] symlink(%p, %s, %s)\n", handle,
+			link_target,
+			new_smb_fname->base_name);
+	result = ceph_symlink(handle->data,
+			link_target,
+			new_smb_fname->base_name);
 	DBG_DEBUG("[CEPH] symlink(...) = %d\n", result);
 	WRAP_RETURN(result);
 }
 
-static int cephwrap_readlink(struct vfs_handle_struct *handle,  const char *path, char *buf, size_t bufsiz)
+static int cephwrap_readlink(struct vfs_handle_struct *handle,
+		const struct smb_filename *smb_fname,
+		char *buf,
+		size_t bufsiz)
 {
 	int result = -1;
-	DBG_DEBUG("[CEPH] readlink(%p, %s, %p, %llu)\n", handle, path, buf, llu(bufsiz));
-	result = ceph_readlink(handle->data, path, buf, bufsiz);
+	DBG_DEBUG("[CEPH] readlink(%p, %s, %p, %llu)\n", handle,
+			smb_fname->base_name, buf, llu(bufsiz));
+	result = ceph_readlink(handle->data, smb_fname->base_name, buf, bufsiz);
 	DBG_DEBUG("[CEPH] readlink(...) = %d\n", result);
 	WRAP_RETURN(result);
 }
 
-static int cephwrap_link(struct vfs_handle_struct *handle,  const char *oldpath, const char *newpath)
+static int cephwrap_link(struct vfs_handle_struct *handle,
+		const struct smb_filename *old_smb_fname,
+		const struct smb_filename *new_smb_fname)
 {
 	int result = -1;
-	DBG_DEBUG("[CEPH] link(%p, %s, %s)\n", handle, oldpath, newpath);
-	result = ceph_link(handle->data, oldpath, newpath);
+	DBG_DEBUG("[CEPH] link(%p, %s, %s)\n", handle,
+			old_smb_fname->base_name,
+			new_smb_fname->base_name);
+	result = ceph_link(handle->data,
+				old_smb_fname->base_name,
+				new_smb_fname->base_name);
 	DBG_DEBUG("[CEPH] link(...) = %d\n", result);
 	WRAP_RETURN(result);
 }
 
-static int cephwrap_mknod(struct vfs_handle_struct *handle,  const char *pathname, mode_t mode, SMB_DEV_T dev)
+static int cephwrap_mknod(struct vfs_handle_struct *handle,
+		const struct smb_filename *smb_fname,
+		mode_t mode,
+		SMB_DEV_T dev)
 {
 	int result = -1;
-	DBG_DEBUG("[CEPH] mknod(%p, %s)\n", handle, pathname);
-	result = ceph_mknod(handle->data, pathname, mode, dev);
+	DBG_DEBUG("[CEPH] mknod(%p, %s)\n", handle, smb_fname->base_name);
+	result = ceph_mknod(handle->data, smb_fname->base_name, mode, dev);
 	DBG_DEBUG("[CEPH] mknod(...) = %d\n", result);
 	WRAP_RETURN(result);
 }
@@ -1139,10 +1183,14 @@ static int cephwrap_mknod(struct vfs_handle_struct *handle,  const char *pathnam
  * This is a simple version of real-path ... a better version is needed to
  * ask libceph about symbolic links.
  */
-static char *cephwrap_realpath(struct vfs_handle_struct *handle,  const char *path)
+static struct smb_filename *cephwrap_realpath(struct vfs_handle_struct *handle,
+				TALLOC_CTX *ctx,
+				const struct smb_filename *smb_fname)
 {
 	char *result;
+	const char *path = smb_fname->base_name;
 	size_t len = strlen(path);
+	struct smb_filename *result_fname = NULL;
 
 	result = SMB_MALLOC_ARRAY(char, PATH_MAX+1);
 	if (len && (path[0] == '/')) {
@@ -1164,11 +1212,18 @@ static char *cephwrap_realpath(struct vfs_handle_struct *handle,  const char *pa
 		if (r < 0) return NULL;
 	}
 	DBG_DEBUG("[CEPH] realpath(%p, %s) = %s\n", handle, path, result);
-	return result;
+	result_fname = synthetic_smb_fname(ctx,
+				result,
+				NULL,
+				NULL,
+				0);
+	SAFE_FREE(result);
+	return result_fname;
 }
 
-static int cephwrap_chflags(struct vfs_handle_struct *handle, const char *path,
-			   unsigned int flags)
+static int cephwrap_chflags(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			unsigned int flags)
 {
 	errno = ENOSYS;
 	return -1;
@@ -1189,7 +1244,7 @@ static int cephwrap_get_real_filename(struct vfs_handle_struct *handle,
 }
 
 static const char *cephwrap_connectpath(struct vfs_handle_struct *handle,
-				       const char *fname)
+				       const struct smb_filename *smb_fname)
 {
 	return handle->conn->connectpath;
 }
@@ -1198,11 +1253,17 @@ static const char *cephwrap_connectpath(struct vfs_handle_struct *handle,
  Extended attribute operations.
 *****************************************************************/
 
-static ssize_t cephwrap_getxattr(struct vfs_handle_struct *handle,const char *path, const char *name, void *value, size_t size)
+static ssize_t cephwrap_getxattr(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			const char *name,
+			void *value,
+			size_t size)
 {
 	int ret;
-	DBG_DEBUG("[CEPH] getxattr(%p, %s, %s, %p, %llu)\n", handle, path, name, value, llu(size));
-	ret = ceph_getxattr(handle->data, path, name, value, size);
+	DBG_DEBUG("[CEPH] getxattr(%p, %s, %s, %p, %llu)\n", handle,
+			smb_fname->base_name, name, value, llu(size));
+	ret = ceph_getxattr(handle->data,
+			smb_fname->base_name, name, value, size);
 	DBG_DEBUG("[CEPH] getxattr(...) = %d\n", ret);
 	if (ret < 0) {
 		WRAP_RETURN(ret);
@@ -1228,11 +1289,15 @@ static ssize_t cephwrap_fgetxattr(struct vfs_handle_struct *handle, struct files
 	}
 }
 
-static ssize_t cephwrap_listxattr(struct vfs_handle_struct *handle, const char *path, char *list, size_t size)
+static ssize_t cephwrap_listxattr(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			char *list,
+			size_t size)
 {
 	int ret;
-	DBG_DEBUG("[CEPH] listxattr(%p, %s, %p, %llu)\n", handle, path, list, llu(size));
-	ret = ceph_listxattr(handle->data, path, list, size);
+	DBG_DEBUG("[CEPH] listxattr(%p, %s, %p, %llu)\n", handle,
+			smb_fname->base_name, list, llu(size));
+	ret = ceph_listxattr(handle->data, smb_fname->base_name, list, size);
 	DBG_DEBUG("[CEPH] listxattr(...) = %d\n", ret);
 	if (ret < 0) {
 		WRAP_RETURN(ret);
@@ -1240,21 +1305,6 @@ static ssize_t cephwrap_listxattr(struct vfs_handle_struct *handle, const char *
 		return (ssize_t)ret;
 	}
 }
-
-#if 0
-static ssize_t cephwrap_llistxattr(struct vfs_handle_struct *handle, const char *path, char *list, size_t size)
-{
-	int ret;
-	DBG_DEBUG("[CEPH] llistxattr(%p, %s, %p, %llu)\n", handle, path, list, llu(size));
-	ret = ceph_llistxattr(handle->data, path, list, size);
-	DBG_DEBUG("[CEPH] listxattr(...) = %d\n", ret);
-	if (ret < 0) {
-		WRAP_RETURN(ret);
-	} else {
-		return (ssize_t)ret;
-	}
-}
-#endif
 
 static ssize_t cephwrap_flistxattr(struct vfs_handle_struct *handle, struct files_struct *fsp, char *list, size_t size)
 {
@@ -1273,11 +1323,14 @@ static ssize_t cephwrap_flistxattr(struct vfs_handle_struct *handle, struct file
 	}
 }
 
-static int cephwrap_removexattr(struct vfs_handle_struct *handle, const char *path, const char *name)
+static int cephwrap_removexattr(struct vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				const char *name)
 {
 	int ret;
-	DBG_DEBUG("[CEPH] removexattr(%p, %s, %s)\n", handle, path, name);
-	ret = ceph_removexattr(handle->data, path, name);
+	DBG_DEBUG("[CEPH] removexattr(%p, %s, %s)\n", handle,
+			smb_fname->base_name, name);
+	ret = ceph_removexattr(handle->data, smb_fname->base_name, name);
 	DBG_DEBUG("[CEPH] removexattr(...) = %d\n", ret);
 	WRAP_RETURN(ret);
 }
@@ -1295,11 +1348,18 @@ static int cephwrap_fremovexattr(struct vfs_handle_struct *handle, struct files_
 	WRAP_RETURN(ret);
 }
 
-static int cephwrap_setxattr(struct vfs_handle_struct *handle, const char *path, const char *name, const void *value, size_t size, int flags)
+static int cephwrap_setxattr(struct vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				const char *name,
+				const void *value,
+				size_t size,
+				int flags)
 {
 	int ret;
-	DBG_DEBUG("[CEPH] setxattr(%p, %s, %s, %p, %llu, %d)\n", handle, path, name, value, llu(size), flags);
-	ret = ceph_setxattr(handle->data, path, name, value, size, flags);
+	DBG_DEBUG("[CEPH] setxattr(%p, %s, %s, %p, %llu, %d)\n", handle,
+			smb_fname->base_name, name, value, llu(size), flags);
+	ret = ceph_setxattr(handle->data, smb_fname->base_name,
+			name, value, size, flags);
 	DBG_DEBUG("[CEPH] setxattr(...) = %d\n", ret);
 	WRAP_RETURN(ret);
 }
@@ -1414,8 +1474,8 @@ static struct vfs_fn_pointers ceph_fns = {
 	.aio_force_fn = cephwrap_aio_force,
 };
 
-NTSTATUS vfs_ceph_init(void);
-NTSTATUS vfs_ceph_init(void)
+NTSTATUS vfs_ceph_init(TALLOC_CTX *);
+NTSTATUS vfs_ceph_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION,
 				"ceph", &ceph_fns);

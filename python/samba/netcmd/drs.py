@@ -1,6 +1,7 @@
 # implement samba_tool drs commands
 #
 # Copyright Andrew Tridgell 2010
+# Copyright Andrew Bartlett 2017
 #
 # based on C implementation by Kamen Mazdrashki <kamen.mazdrashki@postpath.com>
 #
@@ -21,6 +22,7 @@
 import samba.getopt as options
 import ldb
 import logging
+import common
 
 from samba.auth import system_session
 from samba.netcmd import (
@@ -32,8 +34,9 @@ from samba.netcmd import (
 from samba.samdb import SamDB
 from samba import drs_utils, nttime2string, dsdb
 from samba.dcerpc import drsuapi, misc
-import common
 from samba.join import join_clone
+from samba.ndr import ndr_unpack
+from samba.dcerpc import drsblobs
 
 def drsuapi_connect(ctx):
     '''make a DRSUAPI connection to the server'''
@@ -238,7 +241,7 @@ class cmd_drs_kcc(Command):
 
 
 
-def drs_local_replicate(self, SOURCE_DC, NC):
+def drs_local_replicate(self, SOURCE_DC, NC, full_sync=False, single_object=False):
     '''replicate from a source DC to the local SAM'''
 
     self.server = SOURCE_DC
@@ -252,16 +255,23 @@ def drs_local_replicate(self, SOURCE_DC, NC):
                        credentials=self.creds, lp=self.lp)
 
     # work out the source and destination GUIDs
-    res = self.local_samdb.search(base="", scope=ldb.SCOPE_BASE, attrs=["dsServiceName"])
+    res = self.local_samdb.search(base="", scope=ldb.SCOPE_BASE,
+                                  attrs=["dsServiceName"])
     self.ntds_dn = res[0]["dsServiceName"][0]
 
-    res = self.local_samdb.search(base=self.ntds_dn, scope=ldb.SCOPE_BASE, attrs=["objectGUID"])
+    res = self.local_samdb.search(base=self.ntds_dn, scope=ldb.SCOPE_BASE,
+                                  attrs=["objectGUID"])
     self.ntds_guid = misc.GUID(self.samdb.schema_format_value("objectGUID", res[0]["objectGUID"][0]))
-
 
     source_dsa_invocation_id = misc.GUID(self.samdb.get_invocation_id())
     dest_dsa_invocation_id = misc.GUID(self.local_samdb.get_invocation_id())
     destination_dsa_guid = self.ntds_guid
+
+    exop = drsuapi.DRSUAPI_EXOP_NONE
+
+    if single_object:
+        exop = drsuapi.DRSUAPI_EXOP_REPL_OBJ
+        full_sync = True
 
     self.samdb.transaction_start()
     repl = drs_utils.drs_Replicate("ncacn_ip_tcp:%s[seal]" % self.server, self.lp,
@@ -271,13 +281,20 @@ def drs_local_replicate(self, SOURCE_DC, NC):
     # with the admin pw does not sync passwords
     rodc = self.local_samdb.am_rodc()
     try:
-        repl.replicate(NC, source_dsa_invocation_id, destination_dsa_guid, rodc=rodc)
+        (num_objects, num_links) = repl.replicate(NC,
+                                                  source_dsa_invocation_id, destination_dsa_guid,
+                                                  rodc=rodc, full_sync=full_sync,
+                                                  exop=exop)
     except Exception, e:
         raise CommandError("Error replicating DN %s" % NC, e)
     self.samdb.transaction_commit()
 
-    self.message("Replicate from %s to %s was successful." % (SOURCE_DC, self.local_samdb.url))
-
+    if full_sync:
+        self.message("Full Replication of all %d objects and %d links from %s to %s was successful."
+                     % (num_objects, num_links, SOURCE_DC, self.local_samdb.url))
+    else:
+        self.message("Incremental replication of %d objects and %d links from %s to %s was successful."
+                     % (num_objects, num_links, SOURCE_DC, self.local_samdb.url))
 
 
 class cmd_drs_replicate(Command):
@@ -301,11 +318,12 @@ class cmd_drs_replicate(Command):
         Option("--local", help="pull changes directly into the local database (destination DC is ignored)", action="store_true"),
         Option("--local-online", help="pull changes into the local database (destination DC is ignored) as a normal online replication", action="store_true"),
         Option("--async-op", help="use ASYNC_OP for the replication", action="store_true"),
+        Option("--single-object", help="Replicate only the object specified, instead of the whole Naming Context (only with --local)", action="store_true"),
         ]
 
     def run(self, DEST_DC, SOURCE_DC, NC,
             add_ref=False, sync_forced=False, sync_all=False, full_sync=False,
-            local=False, local_online=False, async_op=False,
+            local=False, local_online=False, async_op=False, single_object=False,
             sambaopts=None, credopts=None, versionopts=None, server=None):
 
         self.server = DEST_DC
@@ -314,7 +332,7 @@ class cmd_drs_replicate(Command):
         self.creds = credopts.get_credentials(self.lp, fallback_machine=True)
 
         if local:
-            drs_local_replicate(self, SOURCE_DC, NC)
+            drs_local_replicate(self, SOURCE_DC, NC, full_sync=full_sync, single_object=single_object)
             return
 
         if local_online:

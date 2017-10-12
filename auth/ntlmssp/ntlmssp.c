@@ -24,6 +24,8 @@
 struct auth_session_info;
 
 #include "includes.h"
+#include <tevent.h>
+#include "lib/util/tevent_ntstatus.h"
 #include "auth/ntlmssp/ntlmssp.h"
 #include "auth/ntlmssp/ntlmssp_private.h"
 #include "../libcli/auth/libcli_auth.h"
@@ -107,6 +109,10 @@ static NTSTATUS gensec_ntlmssp_update_find(struct gensec_security *gensec_securi
 				return NT_STATUS_INVALID_PARAMETER;
 			}
 			break;
+		default:
+			DEBUG(1, ("NTLMSSP state has invalid role %d\n",
+				  gensec_ntlmssp->ntlmssp_state->role));
+			return NT_STATUS_INVALID_PARAMETER;
 		}
 	} else {
 		if (!msrpc_parse(gensec_ntlmssp->ntlmssp_state,
@@ -139,44 +145,74 @@ static NTSTATUS gensec_ntlmssp_update_find(struct gensec_security *gensec_securi
 	return NT_STATUS_INVALID_PARAMETER;
 }
 
-/**
- * Next state function for the wrapped NTLMSSP state machine
- *
- * @param gensec_security GENSEC state, initialised to NTLMSSP
- * @param out_mem_ctx The TALLOC_CTX for *out to be allocated on
- * @param in The request, as a DATA_BLOB
- * @param out The reply, as an talloc()ed DATA_BLOB, on *out_mem_ctx
- * @return Error, MORE_PROCESSING_REQUIRED if a reply is sent,
- *                or NT_STATUS_OK if the user is authenticated.
- */
+struct gensec_ntlmssp_update_state {
+	NTSTATUS status;
+	DATA_BLOB out;
+};
 
-NTSTATUS gensec_ntlmssp_update(struct gensec_security *gensec_security,
-			       TALLOC_CTX *out_mem_ctx,
-			       struct tevent_context *ev,
-			       const DATA_BLOB input, DATA_BLOB *out)
+static struct tevent_req *gensec_ntlmssp_update_send(TALLOC_CTX *mem_ctx,
+						     struct tevent_context *ev,
+						     struct gensec_security *gensec_security,
+						     const DATA_BLOB in)
 {
 	struct gensec_ntlmssp_context *gensec_ntlmssp =
 		talloc_get_type_abort(gensec_security->private_data,
 				      struct gensec_ntlmssp_context);
-	struct ntlmssp_state *ntlmssp_state = gensec_ntlmssp->ntlmssp_state;
+	struct tevent_req *req = NULL;
+	struct gensec_ntlmssp_update_state *state = NULL;
 	NTSTATUS status;
-	uint32_t i;
+	uint32_t i = 0;
 
-	*out = data_blob(NULL, 0);
-
-	if (!out_mem_ctx) {
-		/* if the caller doesn't want to manage/own the memory,
-		   we can put it on our context */
-		out_mem_ctx = ntlmssp_state;
+	req = tevent_req_create(mem_ctx, &state,
+				struct gensec_ntlmssp_update_state);
+	if (req == NULL) {
+		return NULL;
 	}
 
-	status = gensec_ntlmssp_update_find(gensec_security, gensec_ntlmssp, input, &i);
-	NT_STATUS_NOT_OK_RETURN(status);
+	status = gensec_ntlmssp_update_find(gensec_security,
+					    gensec_ntlmssp,
+					    in, &i);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
 
-	status = ntlmssp_callbacks[i].sync_fn(gensec_security, out_mem_ctx, input, out);
-	NT_STATUS_NOT_OK_RETURN(status);
+	status = ntlmssp_callbacks[i].sync_fn(gensec_security,
+					      state,
+					      in, &state->out);
+	state->status = status;
+	if (NT_STATUS_EQUAL(status, NT_STATUS_MORE_PROCESSING_REQUIRED)) {
+		tevent_req_done(req);
+		return tevent_req_post(req, ev);
+	}
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
 
-	return NT_STATUS_OK;
+	tevent_req_done(req);
+	return tevent_req_post(req, ev);
+}
+
+static NTSTATUS gensec_ntlmssp_update_recv(struct tevent_req *req,
+					   TALLOC_CTX *out_mem_ctx,
+					   DATA_BLOB *out)
+{
+	struct gensec_ntlmssp_update_state *state =
+		tevent_req_data(req,
+		struct gensec_ntlmssp_update_state);
+	NTSTATUS status;
+
+	*out = data_blob_null;
+
+	if (tevent_req_is_nterror(req, &status)) {
+		tevent_req_received(req);
+		return status;
+	}
+
+	*out = state->out;
+	talloc_steal(out_mem_ctx, state->out.data);
+	status = state->status;
+	tevent_req_received(req);
+	return status;
 }
 
 static NTSTATUS gensec_ntlmssp_may_reset_crypto(struct gensec_security *gensec_security,
@@ -203,6 +239,11 @@ static NTSTATUS gensec_ntlmssp_may_reset_crypto(struct gensec_security *gensec_s
 	return NT_STATUS_OK;
 }
 
+static const char *gensec_ntlmssp_final_auth_type(struct gensec_security *gensec_security)
+{
+	return GENSEC_FINAL_AUTH_TYPE_NTLMSSP;
+}
+
 static const char *gensec_ntlmssp_oids[] = {
 	GENSEC_OID_NTLMSSP,
 	NULL
@@ -216,7 +257,8 @@ static const struct gensec_security_ops gensec_ntlmssp_security_ops = {
 	.client_start   = gensec_ntlmssp_client_start,
 	.server_start   = gensec_ntlmssp_server_start,
 	.magic 	        = gensec_ntlmssp_magic,
-	.update 	= gensec_ntlmssp_update,
+	.update_send	= gensec_ntlmssp_update_send,
+	.update_recv	= gensec_ntlmssp_update_recv,
 	.may_reset_crypto= gensec_ntlmssp_may_reset_crypto,
 	.sig_size	= gensec_ntlmssp_sig_size,
 	.sign_packet	= gensec_ntlmssp_sign_packet,
@@ -228,6 +270,7 @@ static const struct gensec_security_ops gensec_ntlmssp_security_ops = {
 	.session_key	= gensec_ntlmssp_session_key,
 	.session_info   = gensec_ntlmssp_session_info,
 	.have_feature   = gensec_ntlmssp_have_feature,
+	.final_auth_type = gensec_ntlmssp_final_auth_type,
 	.enabled        = true,
 	.priority       = GENSEC_NTLMSSP
 };
@@ -235,25 +278,26 @@ static const struct gensec_security_ops gensec_ntlmssp_security_ops = {
 static const struct gensec_security_ops gensec_ntlmssp_resume_ccache_ops = {
 	.name		= "ntlmssp_resume_ccache",
 	.client_start   = gensec_ntlmssp_resume_ccache_start,
-	.update 	= gensec_ntlmssp_update,
+	.update_send	= gensec_ntlmssp_update_send,
+	.update_recv	= gensec_ntlmssp_update_recv,
 	.session_key	= gensec_ntlmssp_session_key,
 	.have_feature   = gensec_ntlmssp_have_feature,
 	.enabled        = true,
 	.priority       = GENSEC_NTLMSSP
 };
 
-_PUBLIC_ NTSTATUS gensec_ntlmssp_init(void)
+_PUBLIC_ NTSTATUS gensec_ntlmssp_init(TALLOC_CTX *ctx)
 {
 	NTSTATUS ret;
 
-	ret = gensec_register(&gensec_ntlmssp_security_ops);
+	ret = gensec_register(ctx, &gensec_ntlmssp_security_ops);
 	if (!NT_STATUS_IS_OK(ret)) {
 		DEBUG(0,("Failed to register '%s' gensec backend!\n",
 			gensec_ntlmssp_security_ops.name));
 		return ret;
 	}
 
-	ret = gensec_register(&gensec_ntlmssp_resume_ccache_ops);
+	ret = gensec_register(ctx, &gensec_ntlmssp_resume_ccache_ops);
 	if (!NT_STATUS_IS_OK(ret)) {
 		DEBUG(0,("Failed to register '%s' gensec backend!\n",
 			gensec_ntlmssp_resume_ccache_ops.name));

@@ -105,6 +105,7 @@ struct file_lists {
 	time_t modtime;
 };
 
+#define DEFAULT_NAME_RESOLVE_ORDER "lmhosts wins host bcast"
 #define FLAG_DEPRECATED 0x1000 /* options that should no longer be used */
 #define FLAG_SYNONYM	0x2000 /* options that is a synonym of another option */
 #define FLAG_CMDLINE	0x10000 /* option has been overridden */
@@ -194,6 +195,11 @@ enum printing_types {PRINT_BSD,PRINT_SYSV,PRINT_AIX,PRINT_HPUX,
 #endif /* DEVELOPER */
 };
 
+#define SERVER_TCP_LOW_PORT  49152
+#define SERVER_TCP_HIGH_PORT 65535
+
+#define SERVER_TCP_PORT_MIN 1024
+#define SERVER_TCP_PORT_MAX 65535
 
 
 
@@ -236,6 +242,9 @@ enum inheritowner_options {
 	INHERIT_OWNER_UNIX_ONLY
 };
 
+/* mangled names options */
+enum mangled_names_options {MANGLED_NAMES_NO, MANGLED_NAMES_YES, MANGLED_NAMES_ILLEGAL};
+
 /*
  * Default passwd chat script.
  */
@@ -272,7 +281,9 @@ enum inheritowner_options {
 #define LOADPARM_EXTRA_GLOBALS \
 	struct parmlist_entry *param_opt;				\
 	char *dnsdomain;						\
-	char *realm_original;
+	char *realm_original;						\
+	int rpc_low_port;						\
+	int rpc_high_port;
 
 const char* server_role_str(uint32_t role);
 int lp_find_server_role(int server_role, int security, int domain_logons, int domain_master);

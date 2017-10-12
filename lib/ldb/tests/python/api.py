@@ -5,19 +5,21 @@
 import os
 from unittest import TestCase
 import sys
-
+import gc
+import time
 import ldb
+import shutil
 
 PY3 = sys.version_info > (3, 0)
 
 
-def filename():
+def tempdir():
     import tempfile
     try:
         dir_prefix = os.path.join(os.environ["SELFTEST_PREFIX"], "tmp")
     except KeyError:
         dir_prefix = None
-    return tempfile.mktemp(dir=dir_prefix)
+    return tempfile.mkdtemp(dir=dir_prefix)
 
 
 class NoContextTests(TestCase):
@@ -44,15 +46,25 @@ class NoContextTests(TestCase):
 
 class SimpleLdb(TestCase):
 
+    def setUp(self):
+        super(SimpleLdb, self).setUp()
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "test.ldb")
+        self.ldb = ldb.Ldb(self.filename)
+
+    def tearDown(self):
+        shutil.rmtree(self.testdir)
+        super(SimpleLdb, self).tearDown()
+
     def test_connect(self):
-        ldb.Ldb(filename())
+        ldb.Ldb(self.filename)
 
     def test_connect_none(self):
         ldb.Ldb()
 
     def test_connect_later(self):
         x = ldb.Ldb()
-        x.connect(filename())
+        x.connect(self.filename)
 
     def test_repr(self):
         x = ldb.Ldb()
@@ -67,7 +79,7 @@ class SimpleLdb(TestCase):
         self.assertEqual([], x.modules())
 
     def test_modules_tdb(self):
-        x = ldb.Ldb(filename())
+        x = ldb.Ldb(self.filename)
         self.assertEqual("[<ldb module 'tdb'>]", repr(x.modules()))
 
     def test_firstmodule_none(self):
@@ -75,48 +87,53 @@ class SimpleLdb(TestCase):
         self.assertEqual(x.firstmodule, None)
 
     def test_firstmodule_tdb(self):
-        x = ldb.Ldb(filename())
+        x = ldb.Ldb(self.filename)
         mod = x.firstmodule
         self.assertEqual(repr(mod), "<ldb module 'tdb'>")
 
     def test_search(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(len(l.search()), 0)
 
     def test_search_controls(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(len(l.search(controls=["paged_results:0:5"])), 0)
 
     def test_search_attrs(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(len(l.search(ldb.Dn(l, ""), ldb.SCOPE_SUBTREE, "(dc=*)", ["dc"])), 0)
 
     def test_search_string_dn(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(len(l.search("", ldb.SCOPE_SUBTREE, "(dc=*)", ["dc"])), 0)
 
     def test_search_attr_string(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertRaises(TypeError, l.search, attrs="dc")
         self.assertRaises(TypeError, l.search, attrs=b"dc")
 
     def test_opaque(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         l.set_opaque("my_opaque", l)
         self.assertTrue(l.get_opaque("my_opaque") is not None)
         self.assertEqual(None, l.get_opaque("unknown"))
 
-    def test_search_scope_base(self):
-        l = ldb.Ldb(filename())
+    def test_search_scope_base_empty_db(self):
+        l = ldb.Ldb(self.filename)
+        self.assertEqual(len(l.search(ldb.Dn(l, "dc=foo1"),
+                          ldb.SCOPE_BASE)), 0)
+
+    def test_search_scope_onelevel_empty_db(self):
+        l = ldb.Ldb(self.filename)
         self.assertEqual(len(l.search(ldb.Dn(l, "dc=foo1"),
                           ldb.SCOPE_ONELEVEL)), 0)
 
     def test_delete(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertRaises(ldb.LdbError, lambda: l.delete(ldb.Dn(l, "dc=foo2")))
 
     def test_delete_w_unhandled_ctrl(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=foo1")
         m["b"] = [b"a"]
@@ -125,7 +142,7 @@ class SimpleLdb(TestCase):
         l.delete(m.dn)
 
     def test_contains(self):
-        name = filename()
+        name = self.filename
         l = ldb.Ldb(name)
         self.assertFalse(ldb.Dn(l, "dc=foo3") in l)
         l = ldb.Ldb(name)
@@ -140,23 +157,23 @@ class SimpleLdb(TestCase):
             l.delete(m.dn)
 
     def test_get_config_basedn(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(None, l.get_config_basedn())
 
     def test_get_root_basedn(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(None, l.get_root_basedn())
 
     def test_get_schema_basedn(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(None, l.get_schema_basedn())
 
     def test_get_default_basedn(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(None, l.get_default_basedn())
 
     def test_add(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=foo4")
         m["bla"] = b"bla"
@@ -168,7 +185,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=foo4"))
 
     def test_search_iterator(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         s = l.search_iterator()
         s.abandon()
         try:
@@ -268,7 +285,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=foo5"))
 
     def test_add_text(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=foo4")
         m["bla"] = "bla"
@@ -280,7 +297,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=foo4"))
 
     def test_add_w_unhandled_ctrl(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=foo4")
         m["bla"] = b"bla"
@@ -288,7 +305,7 @@ class SimpleLdb(TestCase):
         self.assertRaises(ldb.LdbError, lambda: l.add(m,["search_options:1:2"]))
 
     def test_add_dict(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = {"dn": ldb.Dn(l, "dc=foo5"),
              "bla": b"bla"}
         self.assertEqual(len(l.search()), 0)
@@ -299,7 +316,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=foo5"))
 
     def test_add_dict_text(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = {"dn": ldb.Dn(l, "dc=foo5"),
              "bla": "bla"}
         self.assertEqual(len(l.search()), 0)
@@ -310,7 +327,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=foo5"))
 
     def test_add_dict_string_dn(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = {"dn": "dc=foo6", "bla": b"bla"}
         self.assertEqual(len(l.search()), 0)
         l.add(m)
@@ -320,7 +337,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=foo6"))
 
     def test_add_dict_bytes_dn(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = {"dn": b"dc=foo6", "bla": b"bla"}
         self.assertEqual(len(l.search()), 0)
         l.add(m)
@@ -330,7 +347,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=foo6"))
 
     def test_rename(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=foo7")
         m["bla"] = b"bla"
@@ -343,7 +360,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=bar"))
 
     def test_rename_string_dns(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=foo8")
         m["bla"] = b"bla"
@@ -357,7 +374,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=bar"))
 
     def test_empty_dn(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertEqual(0, len(l.search()))
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=empty")
@@ -374,7 +391,7 @@ class SimpleLdb(TestCase):
         self.assertEqual(0, len(rm[0]))
 
     def test_modify_delete(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=modifydelete")
         m["bla"] = [b"1234"]
@@ -397,7 +414,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=modifydelete"))
 
     def test_modify_delete_text(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=modifydelete")
         m.text["bla"] = ["1234"]
@@ -420,7 +437,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=modifydelete"))
 
     def test_modify_add(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=add")
         m["bla"] = [b"1234"]
@@ -438,7 +455,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=add"))
 
     def test_modify_add_text(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=add")
         m.text["bla"] = ["1234"]
@@ -456,7 +473,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=add"))
 
     def test_modify_replace(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=modify2")
         m["bla"] = [b"1234", b"456"]
@@ -476,7 +493,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=modify2"))
 
     def test_modify_replace_text(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=modify2")
         m.text["bla"] = ["1234", "456"]
@@ -496,7 +513,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=modify2"))
 
     def test_modify_flags_change(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=add")
         m["bla"] = [b"1234"]
@@ -522,7 +539,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=add"))
 
     def test_modify_flags_change_text(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         m = ldb.Message()
         m.dn = ldb.Dn(l, "dc=add")
         m.text["bla"] = ["1234"]
@@ -548,7 +565,7 @@ class SimpleLdb(TestCase):
             l.delete(ldb.Dn(l, "dc=add"))
 
     def test_transaction_commit(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         l.transaction_start()
         m = ldb.Message(ldb.Dn(l, "dc=foo9"))
         m["foo"] = [b"bar"]
@@ -557,7 +574,7 @@ class SimpleLdb(TestCase):
         l.delete(m.dn)
 
     def test_transaction_cancel(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         l.transaction_start()
         m = ldb.Message(ldb.Dn(l, "dc=foo10"))
         m["foo"] = [b"bar"]
@@ -568,12 +585,12 @@ class SimpleLdb(TestCase):
     def test_set_debug(self):
         def my_report_fn(level, text):
             pass
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         l.set_debug(my_report_fn)
 
     def test_zero_byte_string(self):
         """Testing we do not get trapped in the \0 byte in a property string."""
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         l.add({
             "dn" : b"dc=somedn",
             "objectclass" : b"user",
@@ -585,15 +602,320 @@ class SimpleLdb(TestCase):
         self.assertEqual(b"foo\0bar", res[0]["displayname"][0])
 
     def test_no_crash_broken_expr(self):
-        l = ldb.Ldb(filename())
+        l = ldb.Ldb(self.filename)
         self.assertRaises(ldb.LdbError,lambda: l.search("", ldb.SCOPE_SUBTREE, "&(dc=*)(dn=*)", ["dc"]))
+
+class SearchTests(TestCase):
+    def tearDown(self):
+        shutil.rmtree(self.testdir)
+        super(SearchTests, self).tearDown()
+
+    def setUp(self):
+        super(SearchTests, self).setUp()
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "search_test.ldb")
+        self.l = ldb.Ldb(self.filename, options=["modules:rdn_name"])
+
+        self.l.add({"dn": "DC=SAMBA,DC=ORG", "name": b"samba.org"})
+        self.l.add({"dn": "OU=ADMIN,DC=SAMBA,DC=ORG",
+                    "name": b"Admins",
+                    "x": "z", "y": "a"})
+        self.l.add({"dn": "OU=USERS,DC=SAMBA,DC=ORG",
+                    "name": b"Users",
+                    "x": "z", "y": "a"})
+        self.l.add({"dn": "OU=OU1,DC=SAMBA,DC=ORG",
+                    "name": b"OU #1",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU2,DC=SAMBA,DC=ORG",
+                    "name": b"OU #2",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU3,DC=SAMBA,DC=ORG",
+                    "name": b"OU #3",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU4,DC=SAMBA,DC=ORG",
+                    "name": b"OU #4",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU5,DC=SAMBA,DC=ORG",
+                    "name": b"OU #5",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU6,DC=SAMBA,DC=ORG",
+                    "name": b"OU #6",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU7,DC=SAMBA,DC=ORG",
+                    "name": b"OU #7",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU8,DC=SAMBA,DC=ORG",
+                    "name": b"OU #8",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU9,DC=SAMBA,DC=ORG",
+                    "name": b"OU #9",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU10,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU11,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "y", "y": "a"})
+        self.l.add({"dn": "OU=OU12,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "y", "y": "b"})
+        self.l.add({"dn": "OU=OU13,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "b"})
+        self.l.add({"dn": "OU=OU14,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "b"})
+        self.l.add({"dn": "OU=OU15,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "b"})
+        self.l.add({"dn": "OU=OU16,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "b"})
+        self.l.add({"dn": "OU=OU17,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "b"})
+        self.l.add({"dn": "OU=OU18,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "b"})
+        self.l.add({"dn": "OU=OU19,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "b"})
+        self.l.add({"dn": "OU=OU20,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "b"})
+        self.l.add({"dn": "OU=OU21,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "c"})
+        self.l.add({"dn": "OU=OU22,DC=SAMBA,DC=ORG",
+                    "name": b"OU #10",
+                    "x": "x", "y": "c"})
+
+    def test_base(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_BASE)
+        self.assertEqual(len(res11), 1)
+
+    def test_base_or(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_BASE,
+                              expression="(|(ou=ou11)(ou=ou12))")
+        self.assertEqual(len(res11), 1)
+
+    def test_base_or2(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_BASE,
+                              expression="(|(x=y)(y=b))")
+        self.assertEqual(len(res11), 1)
+
+    def test_base_and(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_BASE,
+                              expression="(&(ou=ou11)(ou=ou12))")
+        self.assertEqual(len(res11), 0)
+
+    def test_base_and2(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_BASE,
+                              expression="(&(x=y)(y=a))")
+        self.assertEqual(len(res11), 1)
+
+    def test_base_false(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_BASE,
+                              expression="(|(ou=ou13)(ou=ou12))")
+        self.assertEqual(len(res11), 0)
+
+    def test_check_base_false(self):
+        """Testing a search"""
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_BASE,
+                              expression="(|(ou=ou13)(ou=ou12))")
+        self.assertEqual(len(res11), 0)
+
+    def test_check_base_error(self):
+        """Testing a search"""
+        self.l.add({"dn": "@OPTIONS", "checkBaseOnSearch": b"TRUE"})
+
+        try:
+            res11 = self.l.search(base="OU=OU11x,DC=SAMBA,DC=ORG",
+                                  scope=ldb.SCOPE_BASE,
+                                  expression="(|(ou=ou13)(ou=ou12))")
+            self.fail("Should have failed on missing base")
+        except ldb.LdbError as err:
+            enum = err.args[0]
+            self.assertEqual(enum, ldb.ERR_NO_SUCH_OBJECT)
+
+    def test_subtree_and(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(ou=ou11)(ou=ou12))")
+        self.assertEqual(len(res11), 0)
+
+    def test_subtree_and2(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(x=y)(|(y=b)(y=c)))")
+        self.assertEqual(len(res11), 1)
+
+    def test_subtree_or(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(|(ou=ou11)(ou=ou12))")
+        self.assertEqual(len(res11), 2)
+
+    def test_subtree_or2(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(|(x=y)(y=b))")
+        self.assertEqual(len(res11), 20)
+
+    def test_subtree_or3(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(|(x=y)(y=b)(y=c))")
+        self.assertEqual(len(res11), 22)
+
+    def test_one_and(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_ONELEVEL,
+                              expression="(&(ou=ou11)(ou=ou12))")
+        self.assertEqual(len(res11), 0)
+
+    def test_one_and2(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_ONELEVEL,
+                              expression="(&(x=y)(y=b))")
+        self.assertEqual(len(res11), 1)
+
+    def test_one_or(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_ONELEVEL,
+                              expression="(|(ou=ou11)(ou=ou12))")
+        self.assertEqual(len(res11), 2)
+
+    def test_one_or2(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_ONELEVEL,
+                              expression="(|(x=y)(y=b))")
+        self.assertEqual(len(res11), 20)
+
+    def test_subtree_and_or(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(|(x=z)(y=b))(x=x)(y=c))")
+        self.assertEqual(len(res11), 0)
+
+    def test_subtree_and_or2(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(x=x)(y=c)(|(x=z)(y=b)))")
+        self.assertEqual(len(res11), 0)
+
+    def test_subtree_and_or3(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(|(ou=ou11)(ou=ou10))(|(x=y)(y=b)(y=c)))")
+        self.assertEqual(len(res11), 2)
+
+    def test_subtree_and_or4(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(|(x=y)(y=b)(y=c))(|(ou=ou11)(ou=ou10)))")
+        self.assertEqual(len(res11), 2)
+
+    def test_subtree_and_or5(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(|(x=y)(y=b)(y=c))(ou=ou11))")
+        self.assertEqual(len(res11), 1)
+
+    def test_subtree_or_and(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(|(x=x)(y=c)(&(x=z)(y=b)))")
+        self.assertEqual(len(res11), 10)
+
+    def test_subtree_large_and_unique(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(ou=ou10)(y=a))")
+        self.assertEqual(len(res11), 1)
+
+    def test_subtree_and_none(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(&(ou=ouX)(y=a))")
+        self.assertEqual(len(res11), 0)
+
+
+class IndexedSearchTests(SearchTests):
+    """Test searches using the index, to ensure the index doesn't
+       break things"""
+    def setUp(self):
+        super(IndexedSearchTests, self).setUp()
+        self.l.add({"dn": "@INDEXLIST",
+                    "@IDXATTR": [b"x", b"y", b"ou"],
+                    "@IDXONE": [b"1"]})
+
 
 
 class DnTests(TestCase):
 
     def setUp(self):
         super(DnTests, self).setUp()
-        self.ldb = ldb.Ldb(filename())
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "test.ldb")
+        self.ldb = ldb.Ldb(self.filename)
+
+    def tearDown(self):
+        shutil.rmtree(self.testdir)
+        super(DnTests, self).tearDown()
 
     def test_set_dn_invalid(self):
         x = ldb.Message()
@@ -828,6 +1150,12 @@ class LdbMsgTests(TestCase):
     def setUp(self):
         super(LdbMsgTests, self).setUp()
         self.msg = ldb.Message()
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "test.ldb")
+
+    def tearDown(self):
+        shutil.rmtree(self.testdir)
+        super(LdbMsgTests, self).tearDown()
 
     def test_init_dn(self):
         self.msg = ldb.Message(ldb.Dn(ldb.Ldb(), "dc=foo27"))
@@ -835,11 +1163,11 @@ class LdbMsgTests(TestCase):
 
     def test_iter_items(self):
         self.assertEqual(0, len(self.msg.items()))
-        self.msg.dn = ldb.Dn(ldb.Ldb(filename()), "dc=foo28")
+        self.msg.dn = ldb.Dn(ldb.Ldb(self.filename), "dc=foo28")
         self.assertEqual(1, len(self.msg.items()))
 
     def test_repr(self):
-        self.msg.dn = ldb.Dn(ldb.Ldb(filename()), "dc=foo29")
+        self.msg.dn = ldb.Dn(ldb.Ldb(self.filename), "dc=foo29")
         self.msg["dc"] = b"foo"
         if PY3:
             self.assertIn(repr(self.msg), [
@@ -917,37 +1245,37 @@ class LdbMsgTests(TestCase):
         self.assertEqual(["bar"], list(self.msg.text["foo"]))
 
     def test_keys(self):
-        self.msg.dn = ldb.Dn(ldb.Ldb(filename()), "@BASEINFO")
+        self.msg.dn = ldb.Dn(ldb.Ldb(self.filename), "@BASEINFO")
         self.msg["foo"] = [b"bla"]
         self.msg["bar"] = [b"bla"]
         self.assertEqual(["dn", "foo", "bar"], self.msg.keys())
 
     def test_keys_text(self):
-        self.msg.dn = ldb.Dn(ldb.Ldb(filename()), "@BASEINFO")
+        self.msg.dn = ldb.Dn(ldb.Ldb(self.filename), "@BASEINFO")
         self.msg["foo"] = ["bla"]
         self.msg["bar"] = ["bla"]
         self.assertEqual(["dn", "foo", "bar"], self.msg.text.keys())
 
     def test_dn(self):
-        self.msg.dn = ldb.Dn(ldb.Ldb(filename()), "@BASEINFO")
+        self.msg.dn = ldb.Dn(ldb.Ldb(self.filename), "@BASEINFO")
         self.assertEqual("@BASEINFO", self.msg.dn.__str__())
 
     def test_get_dn(self):
-        self.msg.dn = ldb.Dn(ldb.Ldb(filename()), "@BASEINFO")
+        self.msg.dn = ldb.Dn(ldb.Ldb(self.filename), "@BASEINFO")
         self.assertEqual("@BASEINFO", self.msg.get("dn").__str__())
 
     def test_dn_text(self):
-        self.msg.text.dn = ldb.Dn(ldb.Ldb(filename()), "@BASEINFO")
+        self.msg.text.dn = ldb.Dn(ldb.Ldb(self.filename), "@BASEINFO")
         self.assertEqual("@BASEINFO", str(self.msg.dn))
         self.assertEqual("@BASEINFO", str(self.msg.text.dn))
 
     def test_get_dn_text(self):
-        self.msg.dn = ldb.Dn(ldb.Ldb(filename()), "@BASEINFO")
+        self.msg.dn = ldb.Dn(ldb.Ldb(self.filename), "@BASEINFO")
         self.assertEqual("@BASEINFO", str(self.msg.get("dn")))
         self.assertEqual("@BASEINFO", str(self.msg.text.get("dn")))
 
     def test_get_invalid(self):
-        self.msg.dn = ldb.Dn(ldb.Ldb(filename()), "@BASEINFO")
+        self.msg.dn = ldb.Dn(ldb.Ldb(self.filename), "@BASEINFO")
         self.assertRaises(TypeError, self.msg.get, 42)
 
     def test_get_other(self):
@@ -995,7 +1323,7 @@ class LdbMsgTests(TestCase):
         self.assertEqual(msg1, msg2)
 
     def test_equal_simplel(self):
-        db = ldb.Ldb(filename())
+        db = ldb.Ldb(self.filename)
         msg1 = ldb.Message()
         msg1.dn = ldb.Dn(db, "foo=bar")
         msg2 = ldb.Message()
@@ -1154,6 +1482,16 @@ class MessageElementTests(TestCase):
 
 class ModuleTests(TestCase):
 
+    def setUp(self):
+        super(ModuleTests, self).setUp()
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "test.ldb")
+        self.ldb = ldb.Ldb(self.filename)
+
+    def tearDown(self):
+        shutil.rmtree(self.testdir)
+        super(ModuleTests, self).setUp()
+
     def test_register_module(self):
         class ExampleModule:
             name = "example"
@@ -1174,25 +1512,20 @@ class ModuleTests(TestCase):
             def request(self, *args, **kwargs):
                 pass
 
-        name = filename()
         ldb.register_module(ExampleModule)
-        if os.path.exists(name):
-            os.unlink(name)
-        l = ldb.Ldb(name)
+        l = ldb.Ldb(self.filename)
         l.add({"dn": "@MODULES", "@LIST": "bla"})
         self.assertEqual([], ops)
-        l = ldb.Ldb(name)
+        l = ldb.Ldb(self.filename)
         self.assertEqual(["init"], ops)
 
 class LdbResultTests(TestCase):
 
     def setUp(self):
         super(LdbResultTests, self).setUp()
-        name = filename()
-        self.name = name
-        if os.path.exists(name):
-            os.unlink(name)
-        self.l = ldb.Ldb(name)
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "test.ldb")
+        self.l = ldb.Ldb(self.filename)
         self.l.add({"dn": "DC=SAMBA,DC=ORG", "name": b"samba.org"})
         self.l.add({"dn": "OU=ADMIN,DC=SAMBA,DC=ORG", "name": b"Admins"})
         self.l.add({"dn": "OU=USERS,DC=SAMBA,DC=ORG", "name": b"Users"})
@@ -1208,9 +1541,8 @@ class LdbResultTests(TestCase):
         self.l.add({"dn": "OU=OU10,DC=SAMBA,DC=ORG", "name": b"OU #10"})
 
     def tearDown(self):
+        shutil.rmtree(self.testdir)
         super(LdbResultTests, self).tearDown()
-        if os.path.exists(self.name):
-            os.unlink(self.name)
 
     def test_return_type(self):
         res = self.l.search()
@@ -1254,7 +1586,7 @@ class LdbResultTests(TestCase):
         res = self.l.search().referals
         it = iter(res)
 
-    def test_iter_as_sequence_msgs(self):
+    def test_search_sequence_msgs(self):
         found = False
         res = self.l.search().msgs
 
@@ -1264,15 +1596,176 @@ class LdbResultTests(TestCase):
                 found = True
         self.assertTrue(found)
 
-    def test_iter_as_sequence(self):
+    def test_search_as_iter(self):
         found = False
         res = self.l.search()
 
-        for i in range(0, len(res)):
-            l = res[i]
+        for l in res:
             if str(l.dn) == "OU=OU10,DC=SAMBA,DC=ORG":
                 found = True
         self.assertTrue(found)
+
+    def test_search_iter(self):
+        found = False
+        res = self.l.search_iterator()
+
+        for l in res:
+            if str(l.dn) == "OU=OU10,DC=SAMBA,DC=ORG":
+                found = True
+        self.assertTrue(found)
+
+
+    # Show that search results can't see into a transaction
+    def test_search_against_trans(self):
+        found11 = False
+
+        (r1, w1) = os.pipe()
+
+        (r2, w2) = os.pipe()
+
+        # For the first element, fork a child that will
+        # write to the DB
+        pid = os.fork()
+        if pid == 0:
+            # In the child, re-open
+            del(self.l)
+            gc.collect()
+
+            child_ldb = ldb.Ldb(self.filename)
+            # start a transaction
+            child_ldb.transaction_start()
+
+            # write to it
+            child_ldb.add({"dn": "OU=OU11,DC=SAMBA,DC=ORG",
+                           "name": b"samba.org"})
+
+            os.write(w1, b"added")
+
+            # Now wait for the search to be done
+            os.read(r2, 6)
+
+            # and commit
+            try:
+                child_ldb.transaction_commit()
+            except LdbError as err:
+                # We print this here to see what went wrong in the child
+                print(err)
+                os._exit(1)
+
+            os.write(w1, b"transaction")
+            os._exit(0)
+
+        self.assertEqual(os.read(r1, 5), b"added")
+
+        # This should not turn up until the transaction is concluded
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                            scope=ldb.SCOPE_BASE)
+        self.assertEqual(len(res11), 0)
+
+        os.write(w2, b"search")
+
+        # Now wait for the transaction to be done.  This should
+        # deadlock, but the search doesn't hold a read lock for the
+        # iterator lifetime currently.
+        self.assertEqual(os.read(r1, 11), b"transaction")
+
+        # This should now turn up, as the transaction is over
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                            scope=ldb.SCOPE_BASE)
+        self.assertEqual(len(res11), 1)
+
+        self.assertFalse(found11)
+
+        (got_pid, status) = os.waitpid(pid, 0)
+        self.assertEqual(got_pid, pid)
+
+
+    def test_search_iter_against_trans(self):
+        found = False
+        found11 = False
+
+        # We need to hold this iterator open to hold the all-record
+        # lock
+        res = self.l.search_iterator()
+
+        (r1, w1) = os.pipe()
+
+        (r2, w2) = os.pipe()
+
+        # For the first element, with the sequence open (which
+        # means with ldb locks held), fork a child that will
+        # write to the DB
+        pid = os.fork()
+        if pid == 0:
+            # In the child, re-open
+            del(res)
+            del(self.l)
+            gc.collect()
+
+            child_ldb = ldb.Ldb(self.filename)
+            # start a transaction
+            child_ldb.transaction_start()
+
+            # write to it
+            child_ldb.add({"dn": "OU=OU11,DC=SAMBA,DC=ORG",
+                           "name": b"samba.org"})
+
+            os.write(w1, b"added")
+
+            # Now wait for the search to be done
+            os.read(r2, 6)
+
+            # and commit
+            try:
+                child_ldb.transaction_commit()
+            except LdbError as err:
+                # We print this here to see what went wrong in the child
+                print(err)
+                os._exit(1)
+
+            os.write(w1, b"transaction")
+            os._exit(0)
+
+        self.assertEqual(os.read(r1, 5), b"added")
+
+        # This should not turn up until the transaction is concluded
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                            scope=ldb.SCOPE_BASE)
+        self.assertEqual(len(res11), 0)
+
+        os.write(w2, b"search")
+
+        # allow the transaction to start
+        time.sleep(1)
+
+        # This should not turn up until the search finishes and
+        # removed the read lock, but for ldb_tdb that happened as soon
+        # as we called the first res.next()
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                            scope=ldb.SCOPE_BASE)
+        self.assertEqual(len(res11), 0)
+
+        # These results are all collected at the first next(res) call
+        for l in res:
+            if str(l.dn) == "OU=OU10,DC=SAMBA,DC=ORG":
+                found = True
+            if str(l.dn) == "OU=OU11,DC=SAMBA,DC=ORG":
+                found11 = True
+
+        # Now wait for the transaction to be done.
+        self.assertEqual(os.read(r1, 11), b"transaction")
+
+        # This should now turn up, as the transaction is over and all
+        # read locks are gone
+        res11 = self.l.search(base="OU=OU11,DC=SAMBA,DC=ORG",
+                            scope=ldb.SCOPE_BASE)
+        self.assertEqual(len(res11), 1)
+
+        self.assertTrue(found)
+        self.assertFalse(found11)
+
+        (got_pid, status) = os.waitpid(pid, 0)
+        self.assertEqual(got_pid, pid)
 
 
 class BadTypeTests(TestCase):

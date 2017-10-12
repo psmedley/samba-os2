@@ -24,6 +24,7 @@
 #include "includes.h"
 #include "system/passwd.h"
 #include "system/filesys.h"
+#include "lib/util/server_id.h"
 #include "util_tdb.h"
 #include "ctdbd_conn.h"
 #include "../lib/util/util_pw.h"
@@ -34,6 +35,7 @@
 #include "lib/util/sys_rw.h"
 #include "lib/util/sys_rw_data.h"
 #include "lib/util/util_process.h"
+#include "lib/dbwrap/dbwrap_ctdb.h"
 
 #ifdef HAVE_SYS_PRCTL_H
 #include <sys/prctl.h>
@@ -436,6 +438,7 @@ NTSTATUS reinit_after_fork(struct messaging_context *msg_ctx,
 			   const char *comment)
 {
 	NTSTATUS status = NT_STATUS_OK;
+	int ret;
 
 	if (reinit_after_fork_pipe[1] != -1) {
 		close(reinit_after_fork_pipe[1]);
@@ -476,6 +479,16 @@ NTSTATUS reinit_after_fork(struct messaging_context *msg_ctx,
 		if (!NT_STATUS_IS_OK(status)) {
 			DEBUG(0,("messaging_reinit() failed: %s\n",
 				 nt_errstr(status)));
+		}
+
+		if (lp_clustering()) {
+			ret = ctdb_async_ctx_reinit(
+				NULL, messaging_tevent_context(msg_ctx));
+			if (ret != 0) {
+				DBG_ERR("db_ctdb_async_ctx_reinit failed: %s\n",
+					strerror(errno));
+				return map_nt_error_from_unix(ret);
+			}
 		}
 	}
 
@@ -1752,7 +1765,7 @@ bool mask_match(const char *string, const char *pattern, bool is_case_sensitive)
 	if (ISDOT(pattern))
 		return False;
 
-	return ms_fnmatch(pattern, string, Protocol <= PROTOCOL_LANMAN2, is_case_sensitive) == 0;
+	return ms_fnmatch_protocol(pattern, string, Protocol, is_case_sensitive) == 0;
 }
 
 /*******************************************************************

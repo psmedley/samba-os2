@@ -51,7 +51,7 @@ static ssize_t getxattr_do(vfs_handle_struct *handle,
 	if (fsp && fsp->fh->fd != -1) {
 		sizeret = SMB_VFS_FGETXATTR(fsp, xattr_name, val, size);
 	} else {
-		sizeret = SMB_VFS_GETXATTR(handle->conn, smb_fname->base_name,
+		sizeret = SMB_VFS_GETXATTR(handle->conn, smb_fname,
 					   XATTR_NTACL_NAME, val, size);
 	}
 	if (sizeret == -1) {
@@ -144,7 +144,7 @@ static NTSTATUS store_acl_blob_fsp(vfs_handle_struct *handle,
 		ret = SMB_VFS_FSETXATTR(fsp, XATTR_NTACL_NAME,
 			pblob->data, pblob->length, 0);
 	} else {
-		ret = SMB_VFS_SETXATTR(fsp->conn, fsp->fsp_name->base_name,
+		ret = SMB_VFS_SETXATTR(fsp->conn, fsp->fsp_name,
 				XATTR_NTACL_NAME,
 				pblob->data, pblob->length, 0);
 	}
@@ -168,12 +168,12 @@ static NTSTATUS store_acl_blob_fsp(vfs_handle_struct *handle,
 *********************************************************************/
 
 static int sys_acl_set_file_xattr(vfs_handle_struct *handle,
-                              const char *name,
-                              SMB_ACL_TYPE_T type,
-                              SMB_ACL_T theacl)
+				const struct smb_filename *smb_fname,
+				SMB_ACL_TYPE_T type,
+				SMB_ACL_T theacl)
 {
 	int ret = SMB_VFS_NEXT_SYS_ACL_SET_FILE(handle,
-						name,
+						smb_fname,
 						type,
 						theacl);
 	if (ret == -1) {
@@ -181,7 +181,8 @@ static int sys_acl_set_file_xattr(vfs_handle_struct *handle,
 	}
 
 	become_root();
-	SMB_VFS_REMOVEXATTR(handle->conn, name, XATTR_NTACL_NAME);
+	SMB_VFS_REMOVEXATTR(handle->conn, smb_fname,
+			XATTR_NTACL_NAME);
 	unbecome_root();
 
 	return ret;
@@ -295,7 +296,7 @@ static struct vfs_fn_pointers vfs_acl_xattr_fns = {
 };
 
 static_decl_vfs;
-NTSTATUS vfs_acl_xattr_init(void)
+NTSTATUS vfs_acl_xattr_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, "acl_xattr",
 				&vfs_acl_xattr_fns);

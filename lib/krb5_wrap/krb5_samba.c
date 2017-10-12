@@ -144,7 +144,7 @@ const krb5_data *krb5_princ_component(krb5_context context,
  *
  * @param[out] pkaddr   A Kerberos address to store tha address in.
  *
- * @return True on success, false if an error occured.
+ * @return True on success, false if an error occurred.
  */
 bool smb_krb5_sockaddr_to_kaddr(struct sockaddr_storage *paddr,
 				krb5_address *pkaddr)
@@ -177,7 +177,7 @@ bool smb_krb5_sockaddr_to_kaddr(struct sockaddr_storage *paddr,
  *
  * @param[in]  pkaddr A Kerberos address to store tha address in.
  *
- * @return True on success, false if an error occured.
+ * @return True on success, false if an error occurred.
  */
 bool smb_krb5_sockaddr_to_kaddr(struct sockaddr_storage *paddr,
 				krb5_address *pkaddr)
@@ -2168,6 +2168,7 @@ krb5_error_code smb_krb5_kinit_s4u2_ccache(krb5_context ctx,
 	krb5_principal target_princ;
 	krb5_ccache tmp_cc;
 	const char *self_realm;
+	const char *client_realm = NULL;
 	krb5_principal blacklist_principal = NULL;
 	krb5_principal whitelist_principal = NULL;
 
@@ -2499,6 +2500,29 @@ krb5_error_code smb_krb5_kinit_s4u2_ccache(krb5_context ctx,
 		return code;
 	}
 
+	client_realm = krb5_principal_get_realm(ctx, store_creds.client);
+	if (client_realm != NULL) {
+		/*
+		 * Because the CANON flag doesn't have any impact
+		 * on the impersonate_principal => store_creds.client
+		 * realm mapping. We need to store the credentials twice,
+		 * once with the returned realm and once with the
+		 * realm of impersonate_principal.
+		 */
+		code = krb5_principal_set_realm(ctx, store_creds.server,
+						client_realm);
+		if (code != 0) {
+			krb5_free_cred_contents(ctx, &store_creds);
+			return code;
+		}
+
+		code = krb5_cc_store_cred(ctx, store_cc, &store_creds);
+		if (code != 0) {
+			krb5_free_cred_contents(ctx, &store_creds);
+			return code;
+		}
+	}
+
 	if (expire_time) {
 		*expire_time = (time_t) store_creds.times.endtime;
 	}
@@ -2731,7 +2755,7 @@ krb5_error_code smb_krb5_make_pac_checksum(TALLOC_CTX *mem_ctx,
  *
  * @param[in] principal The principal to get the realm from.
  *
- * @return An allocated string with the realm or NULL if an error occured.
+ * @return An allocated string with the realm or NULL if an error occurred.
  *
  * The caller must free the realm string with free() if not needed anymore.
  */
@@ -2832,6 +2856,10 @@ char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
 	}
 
 	kerr = krb5_get_host_realm(ctx, hostname, &realm_list);
+	if (kerr == KRB5_ERR_HOST_REALM_UNKNOWN) {
+		realm_list = NULL;
+		kerr = 0;
+	}
 	if (kerr != 0) {
 		DEBUG(3,("kerberos_get_realm_from_hostname %s: "
 			"failed %s\n",
@@ -2891,7 +2919,7 @@ char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
  *
  * @param[in]  mem_ctx  The talloc context to allocate the error string on.
  *
- * @return A talloc'ed error string or NULL if an error occured.
+ * @return A talloc'ed error string or NULL if an error occurred.
  *
  * The caller must free the returned error string with talloc_free() if not
  * needed anymore

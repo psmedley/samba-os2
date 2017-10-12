@@ -19,6 +19,7 @@
 
 #include "includes.h"
 #include "messages.h"
+#include "lib/messages_ctdbd.h"
 #include "ctdbd_conn.h"
 #include "lib/dbwrap/dbwrap.h"
 #include "lib/dbwrap/dbwrap_ctdb.h"
@@ -93,4 +94,9 @@ int messaging_ctdbd_reinit(struct messaging_context *msg_ctx,
 struct ctdbd_connection *messaging_ctdbd_connection(void)
 {
 	return NULL;
+}
+
+int ctdb_async_ctx_reinit(TALLOC_CTX *mem_ctx, struct tevent_context *ev)
+{
+	return ENOSYS;
 }

@@ -45,6 +45,7 @@
 #include "common/common.h"
 #include "common/logging.h"
 #include "common/pidfile.h"
+#include "common/sock_io.h"
 
 struct ctdb_client_pid_list {
 	struct ctdb_client_pid_list *next, *prev;
@@ -675,12 +676,13 @@ static void daemon_request_call_from_client(struct ctdb_client *client,
 				DEBUG(DEBUG_ERR,(__location__ " ctdb_ltdb_unlock() failed with error %d\n", ret));
 			}
 			CTDB_DECREMENT_STAT(ctdb, pending_calls);
+			talloc_free(data.dptr);
 			return;
 		}
 	}
 
 	/* Dont do READONLY if we don't have a tracking database */
-	if ((c->flags & CTDB_WANT_READONLY) && !ctdb_db->readonly) {
+	if ((c->flags & CTDB_WANT_READONLY) && !ctdb_db_readonly(ctdb_db)) {
 		c->flags &= ~CTDB_WANT_READONLY;
 	}
 
@@ -1007,14 +1009,7 @@ static int ux_socket_bind(struct ctdb_context *ctdb)
 	addr.sun_family = AF_UNIX;
 	strncpy(addr.sun_path, ctdb->daemon.name, sizeof(addr.sun_path)-1);
 
-	/* Remove any old socket */
-	ret = unlink(ctdb->daemon.name);
-	if (ret == 0) {
-		DEBUG(DEBUG_WARNING,
-		      ("Removed stale socket %s\n", ctdb->daemon.name));
-	} else if (errno != ENOENT) {
-		DEBUG(DEBUG_ERR,
-		      ("Failed to remove stale socket %s\n", ctdb->daemon.name));
+	if (! sock_clean(ctdb->daemon.name)) {
 		return -1;
 	}
 
@@ -1066,12 +1061,14 @@ static void initialise_node_flags (struct ctdb_context *ctdb)
 
 	/* do we start out in DISABLED mode? */
 	if (ctdb->start_as_disabled != 0) {
-		DEBUG(DEBUG_NOTICE, ("This node is configured to start in DISABLED state\n"));
+		DEBUG(DEBUG_ERR,
+		      ("This node is configured to start in DISABLED state\n"));
 		ctdb->nodes[ctdb->pnn]->flags |= NODE_FLAGS_DISABLED;
 	}
 	/* do we start out in STOPPED mode? */
 	if (ctdb->start_as_stopped != 0) {
-		DEBUG(DEBUG_NOTICE, ("This node is configured to start in STOPPED state\n"));
+		DEBUG(DEBUG_ERR,
+		      ("This node is configured to start in STOPPED state\n"));
 		ctdb->nodes[ctdb->pnn]->flags |= NODE_FLAGS_STOPPED;
 	}
 }
@@ -1800,12 +1797,16 @@ int32_t ctdb_control_process_exists(struct ctdb_context *ctdb, pid_t pid)
 {
         struct ctdb_client *client;
 
-	if (ctdb->nodes[ctdb->pnn]->flags & (NODE_FLAGS_BANNED|NODE_FLAGS_STOPPED)) {
-		client = ctdb_find_client_by_pid(ctdb, pid);
-		if (client != NULL) {
-			DEBUG(DEBUG_NOTICE,(__location__ " Killing client with pid:%d on banned/stopped node\n", (int)pid));
-			talloc_free(client);
-		}
+	client = ctdb_find_client_by_pid(ctdb, pid);
+	if (client == NULL) {
+		return -1;
+	}
+
+	if (ctdb->nodes[ctdb->pnn]->flags & NODE_FLAGS_INACTIVE) {
+		DEBUG(DEBUG_NOTICE,
+		      ("Killing client with pid:%d on banned/stopped node\n",
+		       (int)pid));
+		talloc_free(client);
 		return -1;
 	}
 
@@ -1837,7 +1838,7 @@ void ctdb_shutdown_sequence(struct ctdb_context *ctdb, int exit_code)
 		return;
 	}
 
-	DEBUG(DEBUG_NOTICE,("Shutdown sequence commencing.\n"));
+	DEBUG(DEBUG_ERR,("Shutdown sequence commencing.\n"));
 	ctdb_set_runstate(ctdb, CTDB_RUNSTATE_SHUTDOWN);
 	ctdb_stop_recoverd(ctdb);
 	ctdb_stop_keepalive(ctdb);
@@ -1849,7 +1850,7 @@ void ctdb_shutdown_sequence(struct ctdb_context *ctdb, int exit_code)
 		ctdb->methods->shutdown(ctdb);
 	}
 
-	DEBUG(DEBUG_NOTICE,("Shutdown sequence complete, exiting.\n"));
+	DEBUG(DEBUG_ERR,("Shutdown sequence complete, exiting.\n"));
 	exit(exit_code);
 }
 

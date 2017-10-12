@@ -1872,7 +1872,6 @@ static bool torture_smb2_con_share(struct torture_context *tctx,
         struct smbcli_options options;
         NTSTATUS status;
         const char *host = torture_setting_string(tctx, "host", NULL);
-        struct cli_credentials *credentials = cmdline_credentials;
 
         lpcfg_smbcli_options(tctx->lp_ctx, &options);
 
@@ -1881,7 +1880,7 @@ static bool torture_smb2_con_share(struct torture_context *tctx,
                                   lpcfg_smb_ports(tctx->lp_ctx),
                                   share,
                                   lpcfg_resolve_context(tctx->lp_ctx),
-                                  credentials,
+                                  popt_get_cmdline_credentials(),
                                   0,
                                   tree,
                                   tctx->ev,
@@ -2090,9 +2089,9 @@ done:
 /*
    basic testing of SMB2 ACLs
 */
-struct torture_suite *torture_smb2_acls_init(void)
+struct torture_suite *torture_smb2_acls_init(TALLOC_CTX *ctx)
 {
-	struct torture_suite *suite = torture_suite_create(talloc_autofree_context(), "acls");
+	struct torture_suite *suite = torture_suite_create(ctx, "acls");
 
 	torture_suite_add_1smb2_test(suite, "CREATOR", test_creator_sid);
 	torture_suite_add_1smb2_test(suite, "GENERIC", test_generic_bits);

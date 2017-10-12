@@ -7,7 +7,7 @@
 	<manvolnum>8</manvolnum>
 	<refmiscinfo class="source">Samba</refmiscinfo>
 	<refmiscinfo class="manual">System Administration tools</refmiscinfo>
-	<refmiscinfo class="version">4.6</refmiscinfo>
+	<refmiscinfo class="version">4.7</refmiscinfo>
 </refmeta>
 
 
@@ -79,6 +79,20 @@
 		<para>
 			Example: ceph:config_file =
 			/etc/ceph/ceph.conf
+		</para>
+		</listitem>
+		</varlistentry>
+
+		<varlistentry>
+		<term>ceph:user_id = name</term>
+		<listitem>
+		<para>
+			Allows one to explicitly set the client ID used for the
+			CephFS mount handle. Empty by default (CephFS uses the
+			process id).
+		</para>
+		<para>
+			Example: ceph:user_id = samba
 		</para>
 		</listitem>
 		</varlistentry>

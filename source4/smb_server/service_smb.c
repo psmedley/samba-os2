@@ -85,9 +85,9 @@ failed:
 }
 
 /* called at smbd startup - register ourselves as a server service */
-NTSTATUS server_service_smb_init(void)
+NTSTATUS server_service_smb_init(TALLOC_CTX *ctx)
 {
 	ntvfs_init(cmdline_lp_ctx);
 	share_init();
-	return register_server_service("smb", smbsrv_task_init);
+	return register_server_service(ctx, "smb", smbsrv_task_init);
 }

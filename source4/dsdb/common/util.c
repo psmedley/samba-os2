@@ -49,6 +49,12 @@
 #include "lib/util/access.h"
 
 /*
+ * This included to allow us to handle DSDB_FLAG_REPLICATED_UPDATE in
+ * dsdb_request_add_controls()
+ */
+#include "dsdb/samdb/ldb_modules/util.h"
+
+/*
   search the sam for the specified attributes in a specific domain, filter on
   objectSid being in domain_sid.
 */
@@ -3479,6 +3485,53 @@ int samdb_rodc(struct ldb_context *sam_ctx, bool *am_rodc)
 	return LDB_SUCCESS;
 }
 
+int samdb_dns_host_name(struct ldb_context *sam_ctx, const char **host_name)
+{
+	const char *_host_name = NULL;
+	const char *attrs[] = { "dnsHostName", NULL };
+	TALLOC_CTX *tmp_ctx = NULL;
+	int ret;
+	struct ldb_result *res = NULL;
+
+	_host_name = (const char *)ldb_get_opaque(sam_ctx, "cache.dns_host_name");
+	if (_host_name != NULL) {
+		*host_name = _host_name;
+		return LDB_SUCCESS;
+	}
+
+	tmp_ctx = talloc_new(sam_ctx);
+
+	ret = dsdb_search_dn(sam_ctx, tmp_ctx, &res, NULL, attrs, 0);
+
+	if (res->count != 1 || ret != LDB_SUCCESS) {
+		DEBUG(0, ("Failed to get rootDSE for dnsHostName: %s",
+			  ldb_errstring(sam_ctx)));
+		TALLOC_FREE(tmp_ctx);
+		return ret;
+	}
+
+
+	_host_name = ldb_msg_find_attr_as_string(res->msgs[0],
+						 "dnsHostName",
+						 NULL);
+	if (_host_name == NULL) {
+		DEBUG(0, ("Failed to get dnsHostName from rootDSE"));
+		TALLOC_FREE(tmp_ctx);
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+	ret = ldb_set_opaque(sam_ctx, "cache.dns_host_name",
+			     discard_const_p(char *, _host_name));
+	if (ret != LDB_SUCCESS) {
+		TALLOC_FREE(tmp_ctx);
+		return ldb_operr(sam_ctx);
+	}
+
+	*host_name = talloc_steal(sam_ctx, _host_name);
+
+	TALLOC_FREE(tmp_ctx);
+	return LDB_SUCCESS;
+}
+
 bool samdb_set_am_rodc(struct ldb_context *ldb, bool am_rodc)
 {
 	TALLOC_CTX *tmp_ctx;
@@ -3919,7 +3972,7 @@ int dsdb_find_nc_root(struct ldb_context *samdb, TALLOC_CTX *mem_ctx, struct ldb
 	if ((el == NULL) || (el->num_values < 3)) {
 		struct ldb_message *tmp_msg;
 
-		DEBUG(5,("dsdb_find_nc_root: Finding a valid 'namingContexts' element in the RootDSE failed. Using a temporary list."));
+		DEBUG(5,("dsdb_find_nc_root: Finding a valid 'namingContexts' element in the RootDSE failed. Using a temporary list.\n"));
 
 		/* This generates a temporary list of NCs in order to let the
 		 * provisioning work. */
@@ -4304,6 +4357,13 @@ int dsdb_request_add_controls(struct ldb_request *req, uint32_t dsdb_flags)
 
 	if (dsdb_flags & DSDB_MODIFY_PARTIAL_REPLICA) {
 		ret = ldb_request_add_control(req, DSDB_CONTROL_PARTIAL_REPLICA, false, NULL);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+	}
+
+	if (dsdb_flags & DSDB_FLAG_REPLICATED_UPDATE) {
+		ret = ldb_request_add_control(req, DSDB_CONTROL_REPLICATED_UPDATE_OID, false, NULL);
 		if (ret != LDB_SUCCESS) {
 			return ret;
 		}

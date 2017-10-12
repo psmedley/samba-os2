@@ -41,6 +41,7 @@
 #include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
+#include "common/hash_count.h"
 
 struct ctdb_sticky_record {
 	struct ctdb_context *ctdb;
@@ -380,7 +381,7 @@ static void ctdb_become_dmaster(struct ctdb_db_context *ctdb_db,
 	   see if the record is flagged as "hot" and set up a pin-down
 	   context to stop migrations for a little while if so
 	*/
-	if (ctdb_db->sticky) {
+	if (ctdb_db_sticky(ctdb_db)) {
 		ctdb_set_sticky_pindown(ctdb, ctdb_db, key);
 	}
 
@@ -415,6 +416,8 @@ static void ctdb_become_dmaster(struct ctdb_db_context *ctdb_db,
 		}
 		return;
 	}
+
+	(void) hash_count_increment(ctdb_db->migratedb, key);
 
 	ctdb_call_local(ctdb_db, state->call, &header, state, &data, true);
 
@@ -818,12 +821,14 @@ ctdb_defer_pinned_down_request(struct ctdb_context *ctdb, struct ctdb_db_context
 }
 
 static void
-ctdb_update_db_stat_hot_keys(struct ctdb_db_context *ctdb_db, TDB_DATA key, int hopcount)
+ctdb_update_db_stat_hot_keys(struct ctdb_db_context *ctdb_db, TDB_DATA key,
+			     int count)
 {
 	int i, id;
+	char *keystr;
 
 	/* smallest value is always at index 0 */
-	if (hopcount <= ctdb_db->statistics.hot_keys[0].count) {
+	if (count <= ctdb_db->statistics.hot_keys[0].count) {
 		return;
 	}
 
@@ -836,10 +841,10 @@ ctdb_update_db_stat_hot_keys(struct ctdb_db_context *ctdb_db, TDB_DATA key, int 
 			continue;
 		}
 		/* found an entry for this key */
-		if (hopcount <= ctdb_db->statistics.hot_keys[i].count) {
+		if (count <= ctdb_db->statistics.hot_keys[i].count) {
 			return;
 		}
-		ctdb_db->statistics.hot_keys[i].count = hopcount;
+		ctdb_db->statistics.hot_keys[i].count = count;
 		goto sort_keys;
 	}
 
@@ -855,9 +860,14 @@ ctdb_update_db_stat_hot_keys(struct ctdb_db_context *ctdb_db, TDB_DATA key, int 
 	}
 	ctdb_db->statistics.hot_keys[id].key.dsize = key.dsize;
 	ctdb_db->statistics.hot_keys[id].key.dptr  = talloc_memdup(ctdb_db, key.dptr, key.dsize);
-	ctdb_db->statistics.hot_keys[id].count = hopcount;
-	DEBUG(DEBUG_NOTICE,("Updated hot key database=%s key=0x%08x id=%d hop_count=%d\n",
-			    ctdb_db->db_name, ctdb_hash(&key), id, hopcount));
+	ctdb_db->statistics.hot_keys[id].count = count;
+
+	keystr = hex_encode_talloc(ctdb_db,
+				   (unsigned char *)key.dptr, key.dsize);
+	DEBUG(DEBUG_NOTICE,("Updated hot key database=%s key=%s id=%d "
+			    "count=%d\n", ctdb_db->db_name,
+			    keystr ? keystr : "" , id, count));
+	talloc_free(keystr);
 
 sort_keys:
 	for (i = 1; i < MAX_HOT_KEYS; i++) {
@@ -865,9 +875,9 @@ sort_keys:
 			continue;
 		}
 		if (ctdb_db->statistics.hot_keys[i].count < ctdb_db->statistics.hot_keys[0].count) {
-			hopcount = ctdb_db->statistics.hot_keys[i].count;
+			count = ctdb_db->statistics.hot_keys[i].count;
 			ctdb_db->statistics.hot_keys[i].count = ctdb_db->statistics.hot_keys[0].count;
-			ctdb_db->statistics.hot_keys[0].count = hopcount;
+			ctdb_db->statistics.hot_keys[0].count = count;
 
 			key = ctdb_db->statistics.hot_keys[i].key;
 			ctdb_db->statistics.hot_keys[i].key = ctdb_db->statistics.hot_keys[0].key;
@@ -919,7 +929,7 @@ void ctdb_request_call(struct ctdb_context *ctdb, struct ctdb_req_header *hdr)
 	/* If this record is pinned down we should defer the
 	   request until the pindown times out
 	*/
-	if (ctdb_db->sticky) {
+	if (ctdb_db_sticky(ctdb_db)) {
 		if (ctdb_defer_pinned_down_request(ctdb, ctdb_db, call->key, hdr) == 0) {
 			DEBUG(DEBUG_WARNING,
 			      ("Defer request for pinned down record in %s\n", ctdb_db->db_name));
@@ -951,7 +961,7 @@ void ctdb_request_call(struct ctdb_context *ctdb, struct ctdb_req_header *hdr)
 	}
 
 	/* Dont do READONLY if we don't have a tracking database */
-	if ((c->flags & CTDB_WANT_READONLY) && !ctdb_db->readonly) {
+	if ((c->flags & CTDB_WANT_READONLY) && !ctdb_db_readonly(ctdb_db)) {
 		c->flags &= ~CTDB_WANT_READONLY;
 	}
 
@@ -1090,13 +1100,13 @@ void ctdb_request_call(struct ctdb_context *ctdb, struct ctdb_req_header *hdr)
 	}
 	CTDB_INCREMENT_STAT(ctdb, hop_count_bucket[bucket]);
 	CTDB_INCREMENT_DB_STAT(ctdb_db, hop_count_bucket[bucket]);
-	ctdb_update_db_stat_hot_keys(ctdb_db, call->key, c->hopcount);
 
 	/* If this database supports sticky records, then check if the
 	   hopcount is big. If it is it means the record is hot and we
 	   should make it sticky.
 	*/
-	if (ctdb_db->sticky && c->hopcount >= ctdb->tunable.hopcount_make_sticky) {
+	if (ctdb_db_sticky(ctdb_db) &&
+	    c->hopcount >= ctdb->tunable.hopcount_make_sticky) {
 		ctdb_make_record_sticky(ctdb, ctdb_db, call->key);
 	}
 
@@ -1533,34 +1543,6 @@ int ctdb_daemon_call_recv(struct ctdb_call_state *state, struct ctdb_call *call)
 }
 
 
-/* 
-   send a keepalive packet to the other node
-*/
-void ctdb_send_keepalive(struct ctdb_context *ctdb, uint32_t destnode)
-{
-	struct ctdb_req_keepalive_old *r;
-	
-	if (ctdb->methods == NULL) {
-		DEBUG(DEBUG_INFO,(__location__ " Failed to send keepalive. Transport is DOWN\n"));
-		return;
-	}
-
-	r = ctdb_transport_allocate(ctdb, ctdb, CTDB_REQ_KEEPALIVE,
-				    sizeof(struct ctdb_req_keepalive_old), 
-				    struct ctdb_req_keepalive_old);
-	CTDB_NO_MEMORY_FATAL(ctdb, r);
-	r->hdr.destnode  = destnode;
-	r->hdr.reqid     = 0;
-	
-	CTDB_INCREMENT_STAT(ctdb, keepalive_packets_sent);
-
-	ctdb_queue_packet(ctdb, &r->hdr);
-
-	talloc_free(r);
-}
-
-
-
 struct revokechild_deferred_call {
 	struct revokechild_deferred_call *prev, *next;
 	struct ctdb_context *ctdb;
@@ -1947,6 +1929,76 @@ int ctdb_add_revoke_deferred_call(struct ctdb_context *ctdb, struct ctdb_db_cont
 	deferred_call->ctx  = call_context;
 
 	DLIST_ADD(rc->deferred_call_list, deferred_call);
+
+	return 0;
+}
+
+static void ctdb_migration_count_handler(TDB_DATA key, uint64_t counter,
+					 void *private_data)
+{
+	struct ctdb_db_context *ctdb_db = talloc_get_type_abort(
+		private_data, struct ctdb_db_context);
+	int value;
+
+	value = (counter < INT_MAX ? counter : INT_MAX);
+	ctdb_update_db_stat_hot_keys(ctdb_db, key, value);
+}
+
+static void ctdb_migration_cleandb_event(struct tevent_context *ev,
+					 struct tevent_timer *te,
+					 struct timeval current_time,
+					 void *private_data)
+{
+	struct ctdb_db_context *ctdb_db = talloc_get_type_abort(
+		private_data, struct ctdb_db_context);
+
+	if (ctdb_db->migratedb == NULL) {
+		return;
+	}
+
+	hash_count_expire(ctdb_db->migratedb, NULL);
+
+	te = tevent_add_timer(ctdb_db->ctdb->ev, ctdb_db->migratedb,
+			      tevent_timeval_current_ofs(10, 0),
+			      ctdb_migration_cleandb_event, ctdb_db);
+	if (te == NULL) {
+		DEBUG(DEBUG_ERR,
+		      ("Memory error in migration cleandb event for %s\n",
+		       ctdb_db->db_name));
+		TALLOC_FREE(ctdb_db->migratedb);
+	}
+}
+
+int ctdb_migration_init(struct ctdb_db_context *ctdb_db)
+{
+	struct timeval one_second = { 1, 0 };
+	struct tevent_timer *te;
+	int ret;
+
+	if (! ctdb_db_volatile(ctdb_db)) {
+		return 0;
+	}
+
+	ret = hash_count_init(ctdb_db, one_second,
+			      ctdb_migration_count_handler, ctdb_db,
+			      &ctdb_db->migratedb);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("Memory error in migration init for %s\n",
+		       ctdb_db->db_name));
+		return -1;
+	}
+
+	te = tevent_add_timer(ctdb_db->ctdb->ev, ctdb_db->migratedb,
+			      tevent_timeval_current_ofs(10, 0),
+			      ctdb_migration_cleandb_event, ctdb_db);
+	if (te == NULL) {
+		DEBUG(DEBUG_ERR,
+		      ("Memory error in migration init for %s\n",
+		       ctdb_db->db_name));
+		TALLOC_FREE(ctdb_db->migratedb);
+		return -1;
+	}
 
 	return 0;
 }

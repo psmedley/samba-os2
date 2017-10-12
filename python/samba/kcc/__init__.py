@@ -524,7 +524,7 @@ class KCC(object):
         :return: None
         """
         # TODO Figure out how best to handle the RODC case
-        # The RODC is ITSG, but shouldn't act on anyone's behalf.
+        # The RODC is ISTG, but shouldn't act on anyone's behalf.
         if self.my_dsa.is_ro():
             return
 
@@ -541,8 +541,9 @@ class KCC(object):
                 if s_dnstr not in local_dsas:
                     from_dsa = self.get_dsa(s_dnstr)
                     # Samba ONLY: ISTG removes connections to dead DCs
-                    if from_dsa is None and '\\0ADEL' in s_dnstr:
-                        logger.info("DSA appears deleted, removing connection %s" % s_dnstr)
+                    if from_dsa is None or '\\0ADEL' in s_dnstr:
+                        logger.info("DSA appears deleted, removing connection %s"
+                                    % s_dnstr)
                         cn.to_be_deleted = True
                         continue
                     connections_and_dsas.append((cn, dsa, from_dsa))
@@ -909,7 +910,6 @@ class KCC(object):
                                      drsuapi.DRSUAPI_DRS_PER_SYNC |
                                      drsuapi.DRSUAPI_DRS_ADD_REF |
                                      drsuapi.DRSUAPI_DRS_SPECIAL_SECRET_PROCESSING |
-                                     drsuapi.DRSUAPI_DRS_GET_ALL_GROUP_MEMBERSHIP |
                                      drsuapi.DRSUAPI_DRS_NONGC_RO_REP)
                     if t_repsFrom.replica_flags != replica_flags:
                         t_repsFrom.replica_flags = replica_flags
@@ -2015,7 +2015,7 @@ class KCC(object):
 
         if not needed:
             debug.DEBUG_RED("%s lacks 'should be present' status, "
-                            "aborting construct_intersite_graph!" %
+                            "aborting construct_intrasite_graph!" %
                             nc_x.nc_dnstr)
             return
 

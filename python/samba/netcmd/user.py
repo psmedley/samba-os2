@@ -21,6 +21,9 @@ import samba.getopt as options
 import ldb
 import pwd
 import os
+import re
+import tempfile
+import difflib
 import sys
 import fcntl
 import signal
@@ -28,7 +31,7 @@ import errno
 import time
 import base64
 import binascii
-from subprocess import Popen, PIPE, STDOUT
+from subprocess import Popen, PIPE, STDOUT, check_call, CalledProcessError
 from getpass import getpass
 from samba.auth import system_session
 from samba.samdb import SamDB
@@ -103,7 +106,7 @@ def get_random_bytes(num):
         raise ImportError(random_reason)
     return get_random_bytes_fn(num)
 
-def get_crypt_value(alg, utf8pw):
+def get_crypt_value(alg, utf8pw, rounds=0):
     algs = {
         "5": {"length": 43},
         "6": {"length": 86},
@@ -116,8 +119,13 @@ def get_crypt_value(alg, utf8pw):
     # we can ignore the possible == at the end
     # of the base64 string
     # we just need to replace '+' by '.'
-    b64salt = base64.b64encode(salt)
-    crypt_salt = "$%s$%s$" % (alg, b64salt[0:16].replace('+', '.'))
+    b64salt = base64.b64encode(salt)[0:16].replace('+', '.')
+    crypt_salt = ""
+    if rounds != 0:
+        crypt_salt = "$%s$rounds=%s$%s$" % (alg, rounds, b64salt)
+    else:
+        crypt_salt = "$%s$%s$" % (alg, b64salt)
+
     crypt_value = crypt.crypt(utf8pw, crypt_salt)
     if crypt_value is None:
         raise NotImplementedError("crypt.crypt(%s) returned None" % (crypt_salt))
@@ -126,6 +134,24 @@ def get_crypt_value(alg, utf8pw):
         raise NotImplementedError("crypt.crypt(%s) returned a value with length %d, expected length is %d" % (
             crypt_salt, len(crypt_value), expected_len))
     return crypt_value
+
+# Extract the rounds value from the options of a virtualCrypt attribute
+# i.e. options = "rounds=20;other=ignored;" will return 20
+# if the rounds option is not found or the value is not a number, 0 is returned
+# which indicates that the default number of rounds should be used.
+def get_rounds(options):
+    if not options:
+        return 0
+
+    opts = options.split(';')
+    for o in opts:
+        if o.lower().startswith("rounds="):
+            (key, _, val) = o.partition('=')
+            try:
+                return int(val)
+            except ValueError:
+                return 0
+    return 0
 
 try:
     random_reason = check_random()
@@ -168,6 +194,10 @@ for (alg, attr) in [("5", "virtualCryptSHA256"), ("6", "virtualCryptSHA512")]:
         disabled_virtual_attributes[attr] = {
             "reason" : reason,
             }
+
+# Add the wDigest virtual attributes, virtualWDigest01 to virtualWDigest29
+for x in range(1, 30):
+    virtual_attributes["virtualWDigest%02d" % x] = {}
 
 virtual_attributes_help  = "The attributes to display (comma separated). "
 virtual_attributes_help += "Possible supported virtual attributes: %s" % ", ".join(sorted(virtual_attributes.keys()))
@@ -285,11 +315,11 @@ Example5 shows how to create an RFC2307/NIS domain enabled user account. If
 
         if smartcard_required:
             if password is not None and password is not '':
-                raise CommandError('It is not allowed to specifiy '
+                raise CommandError('It is not allowed to specify '
                                    '--newpassword '
                                    'together with --smartcard-required.')
             if must_change_at_next_login:
-                raise CommandError('It is not allowed to specifiy '
+                raise CommandError('It is not allowed to specify '
                                    '--must-change-at-next-login '
                                    'together with --smartcard-required.')
 
@@ -757,15 +787,15 @@ Example3 shows how an administrator would reset TestUser3 user's password to pas
 
         if smartcard_required:
             if password is not None and password is not '':
-                raise CommandError('It is not allowed to specifiy '
+                raise CommandError('It is not allowed to specify '
                                    '--newpassword '
                                    'together with --smartcard-required.')
             if must_change_at_next_login:
-                raise CommandError('It is not allowed to specifiy '
+                raise CommandError('It is not allowed to specify '
                                    '--must-change-at-next-login '
                                    'together with --smartcard-required.')
             if clear_smartcard_required:
-                raise CommandError('It is not allowed to specifiy '
+                raise CommandError('It is not allowed to specify '
                                    '--clear-smartcard-required '
                                    'together with --smartcard-required.')
 
@@ -878,9 +908,19 @@ class GetPasswordCommand(Command):
     def get_account_attributes(self, samdb, username, basedn, filter, scope,
                                attrs, decrypt):
 
-        require_supplementalCredentials = False
-        search_attrs = attrs[:]
+        raw_attrs = attrs[:]
+        search_attrs = []
+        attr_opts = {}
+        for a in raw_attrs:
+            (attr, _, opts) = a.partition(';')
+            if opts:
+                attr_opts[attr] = opts
+            else:
+                attr_opts[attr] = None
+            search_attrs.append(attr)
         lower_attrs = [x.lower() for x in search_attrs]
+
+        require_supplementalCredentials = False
         for a in virtual_attributes.keys():
             if a.lower() in lower_attrs:
                 require_supplementalCredentials = True
@@ -900,6 +940,12 @@ class GetPasswordCommand(Command):
         if a.lower() not in lower_attrs:
             search_attrs += [a]
             add_sAMAcountName = True
+
+        add_userPrincipalName = False
+        upn = "usePrincipalName"
+        if upn.lower() not in lower_attrs:
+            search_attrs += [upn]
+            add_userPrincipalName = True
 
         if scope == ldb.SCOPE_BASE:
             search_controls = ["show_deleted:1", "show_recycled:1"]
@@ -932,6 +978,13 @@ class GetPasswordCommand(Command):
         account_name = obj["sAMAccountName"][0]
         if add_sAMAcountName:
             del obj["sAMAccountName"]
+        if "userPrincipalName" in obj:
+            account_upn = obj["userPrincipalName"][0]
+        else:
+            realm = self.lp.get("realm")
+            account_upn = "%s@%s" % (account_name, realm.lower())
+        if add_userPrincipalName:
+            del obj["userPrincipalName"]
 
         calculated = {}
         def get_package(name, min_idx=0):
@@ -1002,6 +1055,168 @@ class GetPasswordCommand(Command):
             u8 = u.encode('utf-8')
             return u8
 
+        # Extract the WDigest hash for the value specified by i.
+        # Builds an htdigest compatible value
+        DIGEST = "Digest"
+        def get_wDigest(i, primary_wdigest, account_name, account_upn,
+                        domain, dns_domain):
+            if i == 1:
+                user  = account_name
+                realm= domain
+            elif i == 2:
+                user  = account_name.lower()
+                realm = domain.lower()
+            elif i == 3:
+                user  = account_name.upper()
+                realm = domain.upper()
+            elif i == 4:
+                user  = account_name
+                realm = domain.upper()
+            elif i == 5:
+                user  = account_name
+                realm = domain.lower()
+            elif i == 6:
+                user  = account_name.upper()
+                realm = domain.lower()
+            elif i == 7:
+                user  = account_name.lower()
+                realm = domain.upper()
+            elif i == 8:
+                user  = account_name
+                realm = dns_domain.lower()
+            elif i == 9:
+                user  = account_name.lower()
+                realm = dns_domain.lower()
+            elif i == 10:
+                user  = account_name.upper()
+                realm = dns_domain.upper()
+            elif i == 11:
+                user  = account_name
+                realm = dns_domain.upper()
+            elif i == 12:
+                user  = account_name
+                realm = dns_domain.lower()
+            elif i == 13:
+                user  = account_name.upper()
+                realm = dns_domain.lower()
+            elif i == 14:
+                user  = account_name.lower()
+                realm = dns_domain.upper()
+            elif i == 15:
+                user  = account_upn
+                realm = ""
+            elif i == 16:
+                user  = account_upn.lower()
+                realm = ""
+            elif i == 17:
+                user  = account_upn.upper()
+                realm = ""
+            elif i == 18:
+                user  = "%s\\%s" % (domain, account_name)
+                realm = ""
+            elif i == 19:
+                user  = "%s\\%s" % (domain.lower(), account_name.lower())
+                realm = ""
+            elif i == 20:
+                user  = "%s\\%s" % (domain.upper(), account_name.upper())
+                realm = ""
+            elif i == 21:
+                user  = account_name
+                realm = DIGEST
+            elif i == 22:
+                user  = account_name.lower()
+                realm = DIGEST
+            elif i == 23:
+                user  = account_name.upper()
+                realm = DIGEST
+            elif i == 24:
+                user  = account_upn
+                realm = DIGEST
+            elif i == 25:
+                user  = account_upn.lower()
+                realm = DIGEST
+            elif i == 26:
+                user  = account_upn.upper()
+                realm = DIGEST
+            elif i == 27:
+                user  = "%s\\%s" % (domain, account_name)
+                realm = DIGEST
+            elif i == 28:
+                # Differs from spec, see tests
+                user  = "%s\\%s" % (domain.lower(), account_name.lower())
+                realm = DIGEST
+            elif i == 29:
+                # Differs from spec, see tests
+                user  = "%s\\%s" % (domain.upper(), account_name.upper())
+                realm = DIGEST
+            else:
+                user  = ""
+
+            digests = ndr_unpack(drsblobs.package_PrimaryWDigestBlob,
+                                 primary_wdigest)
+            try:
+                digest = binascii.hexlify(bytearray(digests.hashes[i-1].hash))
+                return "%s:%s:%s" % (user, realm, digest)
+            except IndexError:
+                return None
+
+
+        # get the value for a virtualCrypt attribute.
+        # look for an exact match on algorithm and rounds in supplemental creds
+        # if not found calculate using Primary:CLEARTEXT
+        # if no Primary:CLEARTEXT return the first supplementalCredential
+        #    that matches the algorithm.
+        def get_virtual_crypt_value(a, algorithm, rounds, username, account_name):
+            sv = None
+            fb = None
+            b = get_package("Primary:userPassword")
+            if b is not None:
+                (sv, fb) = get_userPassword_hash(b, algorithm, rounds)
+            if sv is None:
+                # No exact match on algorithm and number of rounds
+                # try and calculate one from the Primary:CLEARTEXT
+                b = get_package("Primary:CLEARTEXT")
+                if b is not None:
+                    u8 = get_utf8(a, b, username or account_name)
+                    if u8 is not None:
+                        sv = get_crypt_value(str(algorithm), u8, rounds)
+                if sv is None:
+                    # Unable to calculate a hash with the specified
+                    # number of rounds, fall back to the first hash using
+                    # the specified algorithm
+                    sv = fb
+            if sv is None:
+                return None
+            return "{CRYPT}" + sv
+
+        def get_userPassword_hash(blob, algorithm, rounds):
+            up = ndr_unpack(drsblobs.package_PrimaryUserPasswordBlob, blob)
+            SCHEME = "{CRYPT}"
+
+            # Check that the NT hash has not been changed without updating
+            # the user password hashes. This indicates that password has been
+            # changed without updating the supplemental credentials.
+            if unicodePwd != bytearray(up.current_nt_hash.hash):
+                return None
+
+            scheme_prefix = "$%d$" % algorithm
+            prefix = scheme_prefix
+            if rounds > 0:
+                prefix = "$%d$rounds=%d" % (algorithm, rounds)
+            scheme_match = None
+
+            for h in up.hashes:
+                if (scheme_match is None and
+                      h.scheme == SCHEME and
+                      h.value.startswith(scheme_prefix)):
+                    scheme_match = h.value
+                if h.scheme == SCHEME and h.value.startswith(prefix):
+                    return (h.value, scheme_match)
+
+            # No match on the number of rounds, return the value of the
+            # first matching scheme
+            return (None, scheme_match)
+
         # We use sort here in order to have a predictable processing order
         for a in sorted(virtual_attributes.keys()):
             if not a.lower() in lower_attrs:
@@ -1033,23 +1248,17 @@ class GetPasswordCommand(Command):
                 bv = h.digest() + salt
                 v = "{SSHA}" + base64.b64encode(bv)
             elif a == "virtualCryptSHA256":
-                b = get_package("Primary:CLEARTEXT")
-                if b is None:
+                rounds = get_rounds(attr_opts[a])
+                x = get_virtual_crypt_value(a, 5, rounds, username, account_name)
+                if x is None:
                     continue
-                u8 = get_utf8(a, b, username or account_name)
-                if u8 is None:
-                    continue
-                sv = get_crypt_value("5", u8)
-                v = "{CRYPT}" + sv
+                v = x
             elif a == "virtualCryptSHA512":
-                b = get_package("Primary:CLEARTEXT")
-                if b is None:
+                rounds = get_rounds(attr_opts[a])
+                x = get_virtual_crypt_value(a, 6, rounds, username, account_name)
+                if x is None:
                     continue
-                u8 = get_utf8(a, b, username or account_name)
-                if u8 is None:
-                    continue
-                sv = get_crypt_value("6", u8)
-                v = "{CRYPT}" + sv
+                v = x
             elif a == "virtualSambaGPG":
                 # Samba adds 'Primary:SambaGPG' at the end.
                 # When Windows sets the password it keeps
@@ -1057,6 +1266,20 @@ class GetPasswordCommand(Command):
                 # the begining. So we can only use the value,
                 # if it is the last one.
                 v = get_package("Primary:SambaGPG", min_idx=-1)
+                if v is None:
+                    continue
+            elif a.startswith("virtualWDigest"):
+                primary_wdigest = get_package("Primary:WDigest")
+                if primary_wdigest is None:
+                    continue
+                x = a[len("virtualWDigest"):]
+                try:
+                    i = int(x)
+                except ValueError:
+                    continue
+                domain = self.lp.get("workgroup")
+                dns_domain = samdb.domain_dns_name()
+                v = get_wDigest(i, primary_wdigest, account_name, account_upn, domain, dns_domain)
                 if v is None:
                     continue
             else:
@@ -1121,10 +1344,45 @@ for which virtual attributes are supported in your environment):
    virtualCryptSHA256:    As virtualClearTextUTF8, but a salted SHA256
                           checksum, useful for OpenLDAP's '{CRYPT}' algorithm,
                           with a $5$... salt, see crypt(3) on modern systems.
+                          The number of rounds used to calculate the hash can
+                          also be specified. By appending ";rounds=x" to the
+                          attribute name i.e. virtualCryptSHA256;rounds=10000
+                          will calculate a SHA256 hash with 10,000 rounds.
+                          non numeric values for rounds are silently ignored
+                          The value is calculated as follows:
+                          1) If a value exists in 'Primary:userPassword' with
+                             the specified number of rounds it is returned.
+                          2) If 'Primary:CLEARTEXT, or 'Primary:SambaGPG' with
+                             '--decrypt-samba-gpg'. Calculate a hash with
+                             the specified number of rounds
+                          3) Return the first CryptSHA256 value in
+                             'Primary:userPassword'
+
 
    virtualCryptSHA512:    As virtualClearTextUTF8, but a salted SHA512
                           checksum, useful for OpenLDAP's '{CRYPT}' algorithm,
                           with a $6$... salt, see crypt(3) on modern systems.
+                          The number of rounds used to calculate the hash can
+                          also be specified. By appending ";rounds=x" to the
+                          attribute name i.e. virtualCryptSHA512;rounds=10000
+                          will calculate a SHA512 hash with 10,000 rounds.
+                          non numeric values for rounds are silently ignored
+                          The value is calculated as follows:
+                          1) If a value exists in 'Primary:userPassword' with
+                             the specified number of rounds it is returned.
+                          2) If 'Primary:CLEARTEXT, or 'Primary:SambaGPG' with
+                             '--decrypt-samba-gpg'. Calculate a hash with
+                             the specified number of rounds
+                          3) Return the first CryptSHA512 value in
+                             'Primary:userPassword'
+
+   virtualWDigestNN:      The individual hash values stored in
+                          'Primary:WDigest' where NN is the hash number in
+                          the range 01 to 29.
+                          NOTE: As at 22-05-2017 the documentation:
+                          3.1.1.8.11.3.1 WDIGEST_CREDENTIALS Construction
+                        https://msdn.microsoft.com/en-us/library/cc245680.aspx
+                          is incorrect
 
    virtualSambaGPG:       The raw cleartext as stored in the
                           'Primary:SambaGPG' buffer inside of the
@@ -1254,10 +1512,44 @@ for supported virtual attributes in your environment):
    virtualCryptSHA256:    As virtualClearTextUTF8, but a salted SHA256
                           checksum, useful for OpenLDAP's '{CRYPT}' algorithm,
                           with a $5$... salt, see crypt(3) on modern systems.
+                          The number of rounds used to calculate the hash can
+                          also be specified. By appending ";rounds=x" to the
+                          attribute name i.e. virtualCryptSHA256;rounds=10000
+                          will calculate a SHA256 hash with 10,000 rounds.
+                          non numeric values for rounds are silently ignored
+                          The value is calculated as follows:
+                          1) If a value exists in 'Primary:userPassword' with
+                             the specified number of rounds it is returned.
+                          2) If 'Primary:CLEARTEXT, or 'Primary:SambaGPG' with
+                             '--decrypt-samba-gpg'. Calculate a hash with
+                             the specified number of rounds
+                          3) Return the first CryptSHA256 value in
+                             'Primary:userPassword'
 
    virtualCryptSHA512:    As virtualClearTextUTF8, but a salted SHA512
                           checksum, useful for OpenLDAP's '{CRYPT}' algorithm,
                           with a $6$... salt, see crypt(3) on modern systems.
+                          The number of rounds used to calculate the hash can
+                          also be specified. By appending ";rounds=x" to the
+                          attribute name i.e. virtualCryptSHA512;rounds=10000
+                          will calculate a SHA512 hash with 10,000 rounds.
+                          non numeric values for rounds are silently ignored
+                          The value is calculated as follows:
+                          1) If a value exists in 'Primary:userPassword' with
+                             the specified number of rounds it is returned.
+                          2) If 'Primary:CLEARTEXT, or 'Primary:SambaGPG' with
+                             '--decrypt-samba-gpg'. Calculate a hash with
+                             the specified number of rounds
+                          3) Return the first CryptSHA512 value in
+                             'Primary:userPassword'
+
+   virtualWDigestNN:      The individual hash values stored in
+                          'Primary:WDigest' where NN is the hash number in
+                          the range 01 to 29.
+                          NOTE: As at 22-05-2017 the documentation:
+                          3.1.1.8.11.3.1 WDIGEST_CREDENTIALS Construction
+                        https://msdn.microsoft.com/en-us/library/cc245680.aspx
+                          is incorrect.
 
    virtualSambaGPG:       The raw cleartext as stored in the
                           'Primary:SambaGPG' buffer inside of the
@@ -1994,6 +2286,139 @@ samba-tool user syncpasswords --terminate \\
         update_pid(None)
         return
 
+class cmd_user_edit(Command):
+    """Modify User AD object.
+
+This command will allow editing of a user account in the Active Directory
+domain. You will then be able to add or change attributes and their values.
+
+The username specified on the command is the sAMAccountName.
+
+The command may be run from the root userid or another authorized userid.
+
+The -H or --URL= option can be used to execute the command against a remote
+server.
+
+Example1:
+samba-tool user edit User1 -H ldap://samba.samdom.example.com \
+-U administrator --password=passw1rd
+
+Example1 shows how to edit a users attributes in the domain against a remote
+LDAP server.
+
+The -H parameter is used to specify the remote target server.
+
+Example2:
+samba-tool user edit User2
+
+Example2 shows how to edit a users attributes in the domain against a local
+LDAP server.
+
+Example3:
+samba-tool user edit User3 --editor=nano
+
+Example3 shows how to edit a users attributes in the domain against a local
+LDAP server using the 'nano' editor.
+
+"""
+    synopsis = "%prog <username> [options]"
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+        Option("--editor", help="Editor to use instead of the system default,"
+               " or 'vi' if no system default is set.", type=str),
+    ]
+
+    takes_args = ["username"]
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "credopts": options.CredentialsOptions,
+        "versionopts": options.VersionOptions,
+        }
+
+    def run(self, username, credopts=None, sambaopts=None, versionopts=None,
+            H=None, editor=None):
+
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp, fallback_machine=True)
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
+
+        filter = ("(&(sAMAccountType=%d)(sAMAccountName=%s))" %
+                  (dsdb.ATYPE_NORMAL_ACCOUNT, ldb.binary_encode(username)))
+
+        domaindn = samdb.domain_dn()
+
+        try:
+            res = samdb.search(base=domaindn,
+                               expression=filter,
+                               scope=ldb.SCOPE_SUBTREE)
+            user_dn = res[0].dn
+        except IndexError:
+            raise CommandError('Unable to find user "%s"' % (username))
+
+        for msg in res:
+            r_ldif = samdb.write_ldif(msg, 1)
+            # remove 'changetype' line
+            result_ldif = re.sub('changetype: add\n', '', r_ldif)
+
+            if editor is None:
+                editor = os.environ.get('EDITOR')
+                if editor is None:
+                    editor = 'vi'
+
+            with tempfile.NamedTemporaryFile(suffix=".tmp") as t_file:
+                t_file.write(result_ldif)
+                t_file.flush()
+                try:
+                    check_call([editor, t_file.name])
+                except CalledProcessError as e:
+                    raise CalledProcessError("ERROR: ", e)
+                with open(t_file.name) as edited_file:
+                    edited_message = edited_file.read()
+
+        if result_ldif != edited_message:
+            diff = difflib.ndiff(result_ldif.splitlines(),
+                                 edited_message.splitlines())
+            minus_lines = []
+            plus_lines = []
+            for line in diff:
+                if line.startswith('-'):
+                    line = line[2:]
+                    minus_lines.append(line)
+                elif line.startswith('+'):
+                    line = line[2:]
+                    plus_lines.append(line)
+
+            user_ldif="dn: %s\n" % user_dn
+            user_ldif += "changetype: modify\n"
+
+            for line in minus_lines:
+                attr, val = line.split(':', 1)
+                search_attr="%s:" % attr
+                if not re.search(r'^' + search_attr, str(plus_lines)):
+                    user_ldif += "delete: %s\n" % attr
+                    user_ldif += "%s: %s\n" % (attr, val)
+
+            for line in plus_lines:
+                attr, val = line.split(':', 1)
+                search_attr="%s:" % attr
+                if re.search(r'^' + search_attr, str(minus_lines)):
+                    user_ldif += "replace: %s\n" % attr
+                    user_ldif += "%s: %s\n" % (attr, val)
+                if not re.search(r'^' + search_attr, str(minus_lines)):
+                    user_ldif += "add: %s\n" % attr
+                    user_ldif += "%s: %s\n" % (attr, val)
+
+            try:
+                samdb.modify_ldif(user_ldif)
+            except Exception as e:
+                raise CommandError("Failed to modify user '%s': " %
+                                   username, e)
+
+            self.outf.write("Modified User '%s' successfully\n" % username)
+
 class cmd_user(SuperCommand):
     """User management."""
 
@@ -2009,3 +2434,4 @@ class cmd_user(SuperCommand):
     subcommands["setpassword"] = cmd_user_setpassword()
     subcommands["getpassword"] = cmd_user_getpassword()
     subcommands["syncpasswords"] = cmd_user_syncpasswords()
+    subcommands["edit"] = cmd_user_edit()

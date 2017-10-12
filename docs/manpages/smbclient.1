@@ -2,12 +2,12 @@
 .\"     Title: smbclient
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: User Commands
-.\"    Source: Samba 4.6
+.\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "SMBCLIENT" "1" "08/08/2017" "Samba 4\&.6" "User Commands"
+.TH "SMBCLIENT" "1" "09/21/2017" "Samba 4\&.7" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -727,6 +727,13 @@ The client will request that the server attempt to delete all files matching
 from the current working directory on the server\&.
 .RE
 .PP
+deltree <mask>
+.RS 4
+The client will request that the server attempt to delete all files and directories matching
+\fImask\fR
+from the current working directory on the server\&. Note this will recursively delete files and directories within the directories selected even without the recurse command being set\&. If any of the delete requests fail the command will stop processing at that point, leaving files and directories not yet processed untouched\&. This is by design\&.
+.RE
+.PP
 dir <mask>
 .RS 4
 A list of the files matching
@@ -977,12 +984,12 @@ When toggled ON, these commands will process all directories in the source direc
 When recursion is toggled OFF, only files from the current working directory on the source machine that match the mask specified to the mget or mput commands will be copied, and any mask specified using the mask command will be ignored\&.
 .RE
 .PP
-rename <old filename> <new filename>
+rename <old filename> <new filename> [\-f]
 .RS 4
 Rename files in the current working directory on the server from
 \fIold filename\fR
 to
-\fInew filename\fR\&.
+\fInew filename\fR\&. The optional \-f switch allows for superseding the destination file, if it exists\&. This is supported by NT1 protocol dialect and SMB2 protocol family\&.
 .RE
 .PP
 rm <mask>

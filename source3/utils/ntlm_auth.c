@@ -528,6 +528,7 @@ NTSTATUS contact_winbind_auth_crap(const char *username,
 				   uint32_t extra_logon_parameters,
 				   uint8_t lm_key[8],
 				   uint8_t user_session_key[16],
+				   uint8_t *pauthoritative,
 				   char **error_string,
 				   char **unix_name)
 {
@@ -535,6 +536,8 @@ NTSTATUS contact_winbind_auth_crap(const char *username,
         NSS_STATUS result;
 	struct winbindd_request request;
 	struct winbindd_response response;
+
+	*pauthoritative = 1;
 
 	if (!get_require_membership_sid()) {
 		return NT_STATUS_INVALID_PARAMETER;
@@ -605,6 +608,7 @@ NTSTATUS contact_winbind_auth_crap(const char *username,
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		if (error_string) 
 			*error_string = smb_xstrdup(response.data.auth.error_string);
+		*pauthoritative = response.data.auth.authoritative;
 		winbindd_free_response(&response);
 		return nt_status;
 	}
@@ -943,6 +947,7 @@ static NTSTATUS ntlm_auth_set_challenge(struct auth4_context *auth_ctx, const ui
 static NTSTATUS winbind_pw_check(struct auth4_context *auth4_context, 
 				 TALLOC_CTX *mem_ctx,
 				 const struct auth_usersupplied_info *user_info, 
+				 uint8_t *pauthoritative,
 				 void **server_returned_info,
 				 DATA_BLOB *session_key, DATA_BLOB *lm_session_key)
 {
@@ -960,6 +965,7 @@ static NTSTATUS winbind_pw_check(struct auth4_context *auth4_context,
 					      WBFLAG_PAM_LMKEY | WBFLAG_PAM_USER_SESSION_KEY | WBFLAG_PAM_UNIX_NAME,
 					      0,
 					      lm_key, user_sess_key, 
+					      pauthoritative,
 					      &error_string, &unix_name);
 
 	if (NT_STATUS_IS_OK(nt_status)) {
@@ -989,7 +995,8 @@ static NTSTATUS winbind_pw_check(struct auth4_context *auth4_context,
 
 static NTSTATUS local_pw_check(struct auth4_context *auth4_context, 
 				TALLOC_CTX *mem_ctx,
-				const struct auth_usersupplied_info *user_info, 
+				const struct auth_usersupplied_info *user_info,
+				uint8_t *pauthoritative,
 				void **server_returned_info,
 				DATA_BLOB *session_key, DATA_BLOB *lm_session_key)
 {
@@ -997,6 +1004,8 @@ static NTSTATUS local_pw_check(struct auth4_context *auth4_context,
 	struct samr_Password lm_pw, nt_pw;
 
 	nt_lm_owf_gen (opt_password, nt_pw.hash, lm_pw.hash);
+
+	*pauthoritative = 1;
 
 	nt_status = ntlm_password_check(mem_ctx,
 					true, true, 0,
@@ -1214,6 +1223,17 @@ static NTSTATUS ntlm_auth_prepare_gensec_server(TALLOC_CTX *mem_ctx,
 	
 	gensec_set_credentials(gensec_security, server_credentials);
 
+	/*
+	 * TODO: Allow the caller to pass their own description here
+	 * via a command-line option
+	 */
+	nt_status = gensec_set_target_service_description(gensec_security,
+							  "ntlm_auth");
+	if (!NT_STATUS_IS_OK(nt_status)) {
+		TALLOC_FREE(tmp_ctx);
+		return nt_status;
+	}
+
 	talloc_unlink(tmp_ctx, lp_ctx);
 	talloc_unlink(tmp_ctx, server_credentials);
 	talloc_unlink(tmp_ctx, gensec_settings);
@@ -1286,6 +1306,8 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 
 	TALLOC_CTX *mem_ctx;
 
+	mem_ctx = talloc_named(NULL, 0, "manage_gensec_request internal mem_ctx");
+
 	if (*private1) {
 		state = (struct gensec_ntlm_state *)*private1;
 	} else {
@@ -1303,6 +1325,7 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 	if (strlen(buf) < 2) {
 		DEBUG(1, ("query [%s] invalid", buf));
 		printf("BH Query invalid\n");
+		talloc_free(mem_ctx);
 		return;
 	}
 
@@ -1312,9 +1335,10 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 			talloc_free(want_feature_list);
 			want_feature_list = talloc_strndup(state, buf+3, strlen(buf)-3);
 			printf("OK\n");
+			talloc_free(mem_ctx);
 			return;
 		}
-		in = base64_decode_data_blob(buf + 3);
+		in = base64_decode_data_blob_talloc(mem_ctx, buf + 3);
 	} else {
 		in = data_blob(NULL, 0);
 	}
@@ -1327,7 +1351,7 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 	} else if ( (strncmp(buf, "OK", 2) == 0)) {
 		/* Just return BH, like ntlm_auth from Samba 3 does. */
 		printf("BH Command expected\n");
-		data_blob_free(&in);
+		talloc_free(mem_ctx);
 		return;
 	} else if ( (strncmp(buf, "TT ", 3) != 0) &&
 		    (strncmp(buf, "KK ", 3) != 0) &&
@@ -1339,11 +1363,9 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 		    (strncmp(buf, "GF", 2) != 0)) {
 		DEBUG(1, ("SPNEGO request [%s] invalid prefix\n", buf));
 		printf("BH SPNEGO request invalid prefix\n");
-		data_blob_free(&in);
+		talloc_free(mem_ctx);
 		return;
 	}
-
-	mem_ctx = talloc_named(NULL, 0, "manage_gensec_request internal mem_ctx");
 
 	/* setup gensec */
 	if (!(state->gensec_state)) {
@@ -1435,6 +1457,9 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 
 		gensec_want_feature_list(state->gensec_state, want_feature_list);
 
+		/* Session info is not complete, do not pass to auth log */
+		gensec_want_feature(state->gensec_state, GENSEC_FEATURE_NO_AUTHZ_LOG);
+
 		switch (stdio_helper_mode) {
 		case GSS_SPNEGO_CLIENT:
 		case GSS_SPNEGO_SERVER:
@@ -1476,7 +1501,6 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 					     state->set_password,
 					     CRED_SPECIFIED);
 		printf("OK\n");
-		data_blob_free(&in);
 		talloc_free(mem_ctx);
 		return;
 	}
@@ -1508,10 +1532,12 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 		neg_flags = gensec_ntlmssp_neg_flags(state->gensec_state);
 		if (neg_flags == 0) {
 			printf("BH\n");
+			talloc_free(mem_ctx);
 			return;
 		}
 
 		printf("GF 0x%08x\n", neg_flags);
+		talloc_free(mem_ctx);
 		return;
 	}
 
@@ -1719,6 +1745,8 @@ static void manage_ntlm_server_1_request(enum stdio_helper_mode stdio_helper_mod
 				TALLOC_FREE(mem_ctx);
 
 			} else {
+				uint8_t authoritative = 0;
+
 				if (!domain) {
 					domain = smb_xstrdup(get_winbind_domain());
 				}
@@ -1738,6 +1766,7 @@ static void manage_ntlm_server_1_request(enum stdio_helper_mode stdio_helper_mod
 								      flags, 0,
 								      lm_key,
 								      user_session_key,
+								      &authoritative,
 								      &error_string,
 								      NULL);
 			}
@@ -2185,6 +2214,7 @@ static bool check_auth_crap(void)
 	char *hex_lm_key;
 	char *hex_user_session_key;
 	char *error_string;
+	uint8_t authoritative = 0;
 
 	setbuf(stdout, NULL);
 
@@ -2204,6 +2234,7 @@ static bool check_auth_crap(void)
 					      flags, 0,
 					      (unsigned char *)lm_key, 
 					      (unsigned char *)user_session_key, 
+					      &authoritative,
 					      &error_string, NULL);
 
 	if (!NT_STATUS_IS_OK(nt_status)) {

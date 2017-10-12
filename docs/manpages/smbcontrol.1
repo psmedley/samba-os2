@@ -2,12 +2,12 @@
 .\"     Title: smbcontrol
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: User Commands
-.\"    Source: Samba 4.6
+.\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "SMBCONTROL" "1" "08/08/2017" "Samba 4\&.6" "User Commands"
+.TH "SMBCONTROL" "1" "09/21/2017" "Samba 4\&.7" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -250,6 +250,12 @@ Shut down specified daemon\&. Can be sent to both smbd and nmbd\&.
 pool\-usage
 .RS 4
 Print a human\-readable description of all talloc(pool) memory usage by the specified daemon/process\&. Available for both smbd and nmbd\&.
+.RE
+.PP
+ringbuf\-log
+.RS 4
+Fetch and print the ringbuf log\&. Requires
+\fIlogging = ringbuf\fR\&. Available for smbd, winbindd and nmbd\&.
 .RE
 .PP
 drvupgrade

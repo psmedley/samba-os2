@@ -27,7 +27,7 @@
 #include "lib/dbwrap/dbwrap_rbt.h"
 #include "libcli/security/dom_sid.h"
 #include "mdssvc.h"
-#include "sparql_parser.h"
+#include "rpc_server/mdssvc/sparql_parser.tab.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_RPC_SRV
@@ -67,7 +67,7 @@ struct slq_destroy_state {
 /*
  * If these functions return an error, they hit something like a non
  * recoverable talloc error. Most errors are dealt with by returning
- * an errror code in the Spotlight RPC reply.
+ * an error code in the Spotlight RPC reply.
  */
 static bool slrpc_fetch_properties(struct mds_ctx *mds_ctx,
 				   const DALLOC_CTX *query, DALLOC_CTX *reply);

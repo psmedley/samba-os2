@@ -33,6 +33,9 @@ import tempfile
 import logging
 import subprocess
 import time
+from samba import ntstatus
+from samba import NTSTATUSError
+from samba import werror
 from getpass import getpass
 from samba.net import Net, LIBNET_JOIN_AUTOMATIC
 import samba.ntacls
@@ -548,9 +551,6 @@ class cmd_domain_dcpromo(Command):
         creds = credopts.get_credentials(lp)
         net = Net(creds, lp, server=credopts.ipaddress)
 
-        if site is None:
-            site = "Default-First-Site-Name"
-
         logger = self.get_logger()
         if verbose:
             logger.setLevel(logging.DEBUG)
@@ -770,10 +770,10 @@ class cmd_domain_demote(Command):
 
         self.errf.write("Deactivating inbound replication\n")
 
-        if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
-            nmsg = ldb.Message()
-            nmsg.dn = msg[0].dn
+        nmsg = ldb.Message()
+        nmsg.dn = msg[0].dn
 
+        if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
             dsa_options |= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
             nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
             samdb.modify(nmsg)
@@ -795,7 +795,7 @@ class cmd_domain_demote(Command):
                 try:
                     drsuapiBind.DsReplicaSync(drsuapi_handle, 1, req1)
                 except RuntimeError as (werr, string):
-                    if werr == 8452: #WERR_DS_DRA_NO_REPLICA
+                    if werr == werror.WERR_DS_DRA_NO_REPLICA:
                         pass
                     else:
                         self.errf.write(
@@ -819,19 +819,21 @@ class cmd_domain_demote(Command):
             uac = int(str(res[0]["userAccountControl"]))
 
         except Exception, e:
-            self.errf.write(
-                "Error while demoting, re-enabling inbound replication\n")
-            dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
-            nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
-            samdb.modify(nmsg)
+            if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
+                self.errf.write(
+                    "Error while demoting, re-enabling inbound replication\n")
+                dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
+                nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
+                samdb.modify(nmsg)
             raise CommandError("Error while changing account control", e)
 
         if (len(res) != 1):
-            self.errf.write(
-                "Error while demoting, re-enabling inbound replication")
-            dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
-            nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
-            samdb.modify(nmsg)
+            if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
+                self.errf.write(
+                    "Error while demoting, re-enabling inbound replication")
+                dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
+                nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
+                samdb.modify(nmsg)
             raise CommandError("Unable to find object with samaccountName = %s$"
                                " in the remote dc" % netbios_name.upper())
 
@@ -849,11 +851,12 @@ class cmd_domain_demote(Command):
         try:
             remote_samdb.modify(msg)
         except Exception, e:
-            self.errf.write(
-                "Error while demoting, re-enabling inbound replication")
-            dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
-            nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
-            samdb.modify(nmsg)
+            if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
+                self.errf.write(
+                    "Error while demoting, re-enabling inbound replication")
+                dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
+                nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
+                samdb.modify(nmsg)
 
             raise CommandError("Error while changing account control", e)
 
@@ -877,11 +880,12 @@ class cmd_domain_demote(Command):
                                             scope=ldb.SCOPE_ONELEVEL)
 
             if i == 100:
-                self.errf.write(
-                    "Error while demoting, re-enabling inbound replication\n")
-                dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
-                nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
-                samdb.modify(nmsg)
+                if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
+                    self.errf.write(
+                        "Error while demoting, re-enabling inbound replication\n")
+                    dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
+                    nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
+                    samdb.modify(nmsg)
 
                 msg = ldb.Message()
                 msg.dn = dc_dn
@@ -902,11 +906,12 @@ class cmd_domain_demote(Command):
             newdn = ldb.Dn(remote_samdb, "%s,%s" % (newrdn, str(computer_dn)))
             remote_samdb.rename(dc_dn, newdn)
         except Exception, e:
-            self.errf.write(
-                "Error while demoting, re-enabling inbound replication\n")
-            dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
-            nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
-            samdb.modify(nmsg)
+            if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
+                self.errf.write(
+                    "Error while demoting, re-enabling inbound replication\n")
+                dsa_options ^= DS_NTDSDSA_OPT_DISABLE_INBOUND_REPL
+                nmsg["options"] = ldb.MessageElement(str(dsa_options), ldb.FLAG_MOD_REPLACE, "options")
+                samdb.modify(nmsg)
 
             msg = ldb.Message()
             msg.dn = dc_dn
@@ -945,7 +950,7 @@ class cmd_domain_demote(Command):
                                                            "userAccountControl")
             remote_samdb.modify(msg)
             remote_samdb.rename(newdn, dc_dn)
-            if werr == 8452: #WERR_DS_DRA_NO_REPLICA
+            if werr == werror.WERR_DS_DRA_NO_REPLICA:
                 raise CommandError("The DC %s is not present on (already removed from) the remote server: " % server_dsa_dn, e)
             else:
                 raise CommandError("Error while sending a removeDsServer of %s: " % server_dsa_dn, e)
@@ -1611,16 +1616,6 @@ class DomainTrustCommand(Command):
         self.remote_binding_string = None
         self.remote_creds = None
 
-    WERR_OK = 0x00000000
-    WERR_INVALID_FUNCTION = 0x00000001
-    WERR_NERR_ACFNOTLOADED = 0x000008B3
-
-    NT_STATUS_NOT_FOUND = 0xC0000225
-    NT_STATUS_OBJECT_NAME_NOT_FOUND = 0xC0000034
-    NT_STATUS_INVALID_PARAMETER = 0xC000000D
-    NT_STATUS_INVALID_INFO_CLASS = 0xC0000003
-    NT_STATUS_RPC_PROCNUM_OUT_OF_RANGE = 0xC002002E
-
     def _uint32(self, v):
         return ctypes.c_uint32(v).value
 
@@ -2009,7 +2004,7 @@ class cmd_domain_trust_list(DomainTrustCommand):
                                     netlogon.NETR_TRUST_FLAG_OUTBOUND |
                                     netlogon.NETR_TRUST_FLAG_INBOUND)
         except RuntimeError as error:
-            if self.check_runtime_error(error, self.NT_STATUS_RPC_PROCNUM_OUT_OF_RANGE):
+            if self.check_runtime_error(error, werror.WERR_RPC_S_PROCNUM_OUT_OF_RANGE):
                 # TODO: we could implement a fallback to lsa.EnumTrustDom()
                 raise CommandError("LOCAL_DC[%s]: netr_DsrEnumerateDomainTrusts not supported." % (
                                    self.local_server))
@@ -2068,8 +2063,8 @@ class cmd_domain_trust_show(DomainTrustCommand):
                                         lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
             local_tdo_info = local_tdo_full.info_ex
             local_tdo_posix = local_tdo_full.posix_offset
-        except RuntimeError as error:
-            if self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+        except NTSTATUSError as error:
+            if self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                 raise CommandError("trusted domain object does not exist for domain [%s]" % domain)
 
             raise self.LocalRuntimeError(self, error, "QueryTrustedDomainInfoByName(FULL_INFO) failed")
@@ -2077,10 +2072,10 @@ class cmd_domain_trust_show(DomainTrustCommand):
         try:
             local_tdo_enctypes = local_lsa.QueryTrustedDomainInfoByName(local_policy,
                                         lsaString, lsa.LSA_TRUSTED_DOMAIN_SUPPORTED_ENCRYPTION_TYPES)
-        except RuntimeError as error:
-            if self.check_runtime_error(error, self.NT_STATUS_INVALID_PARAMETER):
+        except NTSTATUSError as error:
+            if self.check_runtime_error(error, ntstatus.NT_STATUS_INVALID_PARAMETER):
                 error = None
-            if self.check_runtime_error(error, self.NT_STATUS_INVALID_INFO_CLASS):
+            if self.check_runtime_error(error, ntstatus.NT_STATUS_INVALID_INFO_CLASS):
                 error = None
 
             if error is not None:
@@ -2096,9 +2091,9 @@ class cmd_domain_trust_show(DomainTrustCommand):
                 local_tdo_forest = local_lsa.lsaRQueryForestTrustInformation(local_policy,
                                         lsaString, lsa.LSA_FOREST_TRUST_DOMAIN_INFO)
         except RuntimeError as error:
-            if self.check_runtime_error(error, self.NT_STATUS_RPC_PROCNUM_OUT_OF_RANGE):
+            if self.check_runtime_error(error, ntstatus.NT_STATUS_RPC_PROCNUM_OUT_OF_RANGE):
                 error = None
-            if self.check_runtime_error(error, self.NT_STATUS_NOT_FOUND):
+            if self.check_runtime_error(error, ntstatus.NT_STATUS_NOT_FOUND):
                 error = None
             if error is not None:
                 raise self.LocalRuntimeError(self, error, "lsaRQueryForestTrustInformation failed")
@@ -2356,8 +2351,8 @@ class cmd_domain_trust_create(DomainTrustCommand):
             local_old_netbios = local_lsa.QueryTrustedDomainInfoByName(local_policy,
                                         lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
             raise CommandError("TrustedDomain %s already exist'" % lsaString.string)
-        except RuntimeError as error:
-            if not self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+        except NTSTATUSError as error:
+            if not self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                 raise self.LocalRuntimeError(self, error,
                                 "QueryTrustedDomainInfoByName(%s, FULL_INFO) failed" % (
                                 lsaString.string))
@@ -2367,8 +2362,8 @@ class cmd_domain_trust_create(DomainTrustCommand):
             local_old_dns = local_lsa.QueryTrustedDomainInfoByName(local_policy,
                                         lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
             raise CommandError("TrustedDomain %s already exist'" % lsaString.string)
-        except RuntimeError as error:
-            if not self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+        except NTSTATUSError as error:
+            if not self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                 raise self.LocalRuntimeError(self, error,
                                 "QueryTrustedDomainInfoByName(%s, FULL_INFO) failed" % (
                                 lsaString.string))
@@ -2379,8 +2374,8 @@ class cmd_domain_trust_create(DomainTrustCommand):
                 remote_old_netbios = remote_lsa.QueryTrustedDomainInfoByName(remote_policy,
                                             lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
                 raise CommandError("TrustedDomain %s already exist'" % lsaString.string)
-            except RuntimeError as error:
-                if not self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+            except NTSTATUSError as error:
+                if not self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                     raise self.RemoteRuntimeError(self, error,
                                     "QueryTrustedDomainInfoByName(%s, FULL_INFO) failed" % (
                                     lsaString.string))
@@ -2390,8 +2385,8 @@ class cmd_domain_trust_create(DomainTrustCommand):
                 remote_old_dns = remote_lsa.QueryTrustedDomainInfoByName(remote_policy,
                                             lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_FULL_INFO)
                 raise CommandError("TrustedDomain %s already exist'" % lsaString.string)
-            except RuntimeError as error:
-                if not self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+            except NTSTATUSError as error:
+                if not self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                     raise self.RemoteRuntimeError(self, error,
                                     "QueryTrustedDomainInfoByName(%s, FULL_INFO) failed" % (
                                     lsaString.string))
@@ -2607,7 +2602,7 @@ class cmd_domain_trust_create(DomainTrustCommand):
                                        local_trust_verify.tc_connection_status[1],
                                        local_trust_verify.pdc_connection_status[1])
 
-                if local_trust_status != self.WERR_OK or local_conn_status != self.WERR_OK:
+                if local_trust_status != werror.WERR_SUCCESS or local_conn_status != werror.WERR_SUCCESS:
                     raise CommandError(local_validation)
                 else:
                     self.outf.write("OK: %s\n" % local_validation)
@@ -2637,7 +2632,7 @@ class cmd_domain_trust_create(DomainTrustCommand):
                                            remote_trust_verify.tc_connection_status[1],
                                            remote_trust_verify.pdc_connection_status[1])
 
-                    if remote_trust_status != self.WERR_OK or remote_conn_status != self.WERR_OK:
+                    if remote_trust_status != werror.WERR_SUCCESS or remote_conn_status != werror.WERR_SUCCESS:
                         raise CommandError(remote_validation)
                     else:
                         self.outf.write("OK: %s\n" % remote_validation)
@@ -2720,8 +2715,8 @@ class cmd_domain_trust_delete(DomainTrustCommand):
             lsaString.string = domain
             local_tdo_info = local_lsa.QueryTrustedDomainInfoByName(local_policy,
                                         lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_INFO_EX)
-        except RuntimeError as error:
-            if self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+        except NTSTATUSError as error:
+            if self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                 raise CommandError("Failed to find trust for domain '%s'" % domain)
             raise self.RemoteRuntimeError(self, error, "failed to locate remote server")
 
@@ -2759,8 +2754,8 @@ class cmd_domain_trust_delete(DomainTrustCommand):
                 lsaString.string = local_lsa_info.dns_domain.string
                 remote_tdo_info = remote_lsa.QueryTrustedDomainInfoByName(remote_policy,
                                             lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_INFO_EX)
-            except RuntimeError as error:
-                if not self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+            except NTSTATUSError as error:
+                if not self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                     raise self.RemoteRuntimeError(self, error, "QueryTrustedDomainInfoByName(%s)" % (
                                                   lsaString.string))
                 pass
@@ -2863,8 +2858,8 @@ class cmd_domain_trust_validate(DomainTrustCommand):
             lsaString.string = domain
             local_tdo_info = local_lsa.QueryTrustedDomainInfoByName(local_policy,
                                         lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_INFO_EX)
-        except RuntimeError as error:
-            if self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+        except NTSTATUSError as error:
+            if self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                 raise CommandError("trusted domain object does not exist for domain [%s]" % domain)
 
             raise self.LocalRuntimeError(self, error, "QueryTrustedDomainInfoByName(INFO_EX) failed")
@@ -2901,7 +2896,7 @@ class cmd_domain_trust_validate(DomainTrustCommand):
                                local_trust_verify.tc_connection_status[1],
                                local_trust_verify.pdc_connection_status[1])
 
-        if local_trust_status != self.WERR_OK or local_conn_status != self.WERR_OK:
+        if local_trust_status != werror.WERR_SUCCESS or local_conn_status != werror.WERR_SUCCESS:
             raise CommandError(local_validation)
         else:
             self.outf.write("OK: %s\n" % local_validation)
@@ -2921,7 +2916,7 @@ class cmd_domain_trust_validate(DomainTrustCommand):
                                local_trust_rediscover.trusted_dc_name,
                                local_trust_rediscover.tc_connection_status[1])
 
-        if local_conn_status != self.WERR_OK:
+        if local_conn_status != werror.WERR_SUCCESS:
             raise CommandError(local_rediscover)
         else:
             self.outf.write("OK: %s\n" % local_rediscover)
@@ -2959,7 +2954,7 @@ class cmd_domain_trust_validate(DomainTrustCommand):
                                    remote_trust_verify.tc_connection_status[1],
                                    remote_trust_verify.pdc_connection_status[1])
 
-            if remote_trust_status != self.WERR_OK or remote_conn_status != self.WERR_OK:
+            if remote_trust_status != werror.WERR_SUCCESS or remote_conn_status != werror.WERR_SUCCESS:
                 raise CommandError(remote_validation)
             else:
                 self.outf.write("OK: %s\n" % remote_validation)
@@ -2980,7 +2975,7 @@ class cmd_domain_trust_validate(DomainTrustCommand):
                                    remote_trust_rediscover.trusted_dc_name,
                                    remote_trust_rediscover.tc_connection_status[1])
 
-            if remote_conn_status != self.WERR_OK:
+            if remote_conn_status != werror.WERR_SUCCESS:
                 raise CommandError(remote_rediscover)
             else:
                 self.outf.write("OK: %s\n" % remote_rediscover)
@@ -3176,7 +3171,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
                 if len(enable_nb) > 0:
                     raise CommandError("--enable-nb not allowed together with --enable-all")
 
-                if len(enable_sid) > 0:
+                if len(enable_sid_str) > 0:
                     raise CommandError("--enable-sid not allowed together with --enable-all")
 
             if len(enable_tln) > 0:
@@ -3282,15 +3277,15 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
                 own_forest_info = local_netlogon.netr_DsRGetForestTrustInformation(local_netlogon_info.dc_unc,
                                                                                    None, 0)
             except RuntimeError as error:
-                if self.check_runtime_error(error, self.NT_STATUS_RPC_PROCNUM_OUT_OF_RANGE):
+                if self.check_runtime_error(error, werror.WERR_RPC_S_PROCNUM_OUT_OF_RANGE):
                     raise CommandError("LOCAL_DC[%s]: netr_DsRGetForestTrustInformation() not supported." % (
                                        self.local_server))
 
-                if self.check_runtime_error(error, self.WERR_INVALID_FUNCTION):
+                if self.check_runtime_error(error, werror.WERR_INVALID_FUNCTION):
                     raise CommandError("LOCAL_DC[%s]: netr_DsRGetForestTrustInformation() not supported." % (
                                        self.local_server))
 
-                if self.check_runtime_error(error, self.WERR_NERR_ACFNOTLOADED):
+                if self.check_runtime_error(error, werror.WERR_NERR_ACFNOTLOADED):
                     raise CommandError("LOCAL_DC[%s]: netr_DsRGetForestTrustInformation() not supported." % (
                                        self.local_server))
 
@@ -3435,8 +3430,8 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
             lsaString.string = domain
             local_tdo_info = local_lsa.QueryTrustedDomainInfoByName(local_policy,
                                         lsaString, lsa.LSA_TRUSTED_DOMAIN_INFO_INFO_EX)
-        except RuntimeError as error:
-            if self.check_runtime_error(error, self.NT_STATUS_OBJECT_NAME_NOT_FOUND):
+        except NTSTATUSError as error:
+            if self.check_runtime_error(error, ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND):
                 raise CommandError("trusted domain object does not exist for domain [%s]" % domain)
 
             raise self.LocalRuntimeError(self, error, "QueryTrustedDomainInfoByName(INFO_EX) failed")

@@ -1,3 +1,24 @@
+samba (2:4.7.0+dfsg-1) experimental; urgency=medium
+
+  * New major upstream version
+    - Update d/gbp.conf and d/watch for 4.7
+    - Update patches
+    - Remove no_build_env.patch, no more needed
+    - Remove 4 patches merged upstream
+    - Bump build-depends ldb >= 2:1.2.2~, tdb >= 1.3.14~, tevent >= 0.9.33~
+    - Move replace from builtin to bundled libraries to fix FTBFS
+    - Update d/*.install
+    - Update symbols
+  * Rework all patches for dep5 and "gbp pq"
+  * Add libjansson-dev to Build-Depends to allow logging in JSON format
+  * Lintian fixes:
+    - build-depends: dh-systemd (>= 1.5) => use debhelper (>= 9.20160709)
+    - Move libsmbclient-dev from priority extra to optional
+    - Standards-Version: 4.1.1
+    - Update samba-libs.lintian-overrides (following libsmbldap bump)
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 12 Oct 2017 22:09:19 +0200
+
 samba (2:4.6.7+dfsg-2) unstable; urgency=high
 
   * This is a security release in order to address the following defects:

@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.6
+.\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "08/08/2017" "Samba 4\&.6" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "09/21/2017" "Samba 4\&.7" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1405,6 +1405,17 @@ Default:
 \fI\fIallow trusted domains\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
+allow unsafe cluster upgrade (G)
+.PP
+.RS 4
+If set to no (the default), smbd checks at startup if other smbd versions are running in the cluster and refuses to start if so\&. This is done to protect data corruption in internal data structures due to incompatible Samba versions running concurrently in the same cluster\&. Setting this parameter to
+yes
+disables this safety check\&.
+.sp
+Default:
+\fI\fIallow unsafe cluster upgrade\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
 async smb echo handler (G)
 .PP
 .RS 4
@@ -1412,6 +1423,22 @@ This parameter specifies whether Samba should fork the async smb echo handler\&.
 .sp
 Default:
 \fI\fIasync smb echo handler\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+auth event notification (G)
+.PP
+.RS 4
+When enabled, this option causes Samba (acting as an Active Directory Domain Controller) to stream authentication events across the internal message bus\&. Scripts built using Samba\*(Aqs python bindings can listen to these events by registering as the service
+auth_event\&.
+.sp
+This should be considered a developer option (it assists in the Samba testsuite) rather than a facility for external auditing, as message delivery is not guaranteed (a feature that the testsuite works around)\&. Additionally Samba must be compiled with the jansson support for this option to be effective\&.
+.sp
+The authentication events are also logged via the normal logging methods when the
+\m[blue]\fBlog level\fR\m[]
+is set appropriately\&.
+.sp
+Default:
+\fI\fIauth event notification\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 auth methods (G)
@@ -2111,7 +2138,7 @@ Normally this option should not be set as the automatic negotiation phase in the
 The value
 \fBdefault\fR
 refers to
-\fBNT1\fR\&.
+\fBSMB3_11\fR\&.
 .sp
 IPC$ connections for DCERPC e\&.g\&. in winbindd, are handled by the
 \m[blue]\fBclient ipc max protocol\fR\m[]
@@ -3285,7 +3312,34 @@ ea support (S)
 .RS 4
 This boolean parameter controls whether
 \fBsmbd\fR(8)
-will allow clients to attempt to store OS/2 style Extended attributes on a share\&. In order to enable this parameter the underlying filesystem exported by the share must support extended attributes (such as provided on XFS and EXT3 on Linux, with the correct kernel patches)\&. On Linux the filesystem must have been mounted with the mount option user_xattr in order for extended attributes to work, also extended attributes must be compiled into the Linux kernel\&.
+will allow clients to attempt to access extended attributes on a share\&. In order to enable this parameter on a setup with default VFS modules:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+Samba must have been built with extended attributes support\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+The underlying filesystem exposed by the share must support extended attributes (e\&.g\&. the getfattr(1)
+/ setfattr(1)
+utilities must work)\&.
+.RE
+.sp
+.RE
+Note that the SMB protocol allows setting attributes whose value is 64K bytes long, and that on NTFS, the maximum storage space for extended attributes per file is 64K\&. On most UNIX systems (Solaris and ZFS file system being the exception), the limits are much lower \- typically 4K\&. Worse, the same 4K space is often used to store system metadata such as POSIX ACLs, or Samba\*(Aqs NT ACLs\&. Giving clients access to this tight space via extended attribute support could consume all of it by unsuspecting client applications, which would prevent changing system metadata due to lack of space\&.
 .sp
 Default:
 \fI\fIea support\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -3971,7 +4025,7 @@ Default:
 hide unreadable (S)
 .PP
 .RS 4
-This parameter prevents clients from seeing the existance of files that cannot be read\&. Defaults to off\&.
+This parameter prevents clients from seeing the existence of files that cannot be read\&. Defaults to off\&.
 .sp
 Please note that enabling this can slow down listing large directories significantly\&. Samba has to evaluate the ACLs of all directory members, which can be a lot of effort\&.
 .sp
@@ -3982,7 +4036,7 @@ Default:
 hide unwriteable files (S)
 .PP
 .RS 4
-This parameter prevents clients from seeing the existance of files that cannot be written to\&. Defaults to off\&. Note that unwriteable directories are shown as usual\&.
+This parameter prevents clients from seeing the existence of files that cannot be written to\&. Defaults to off\&. Note that unwriteable directories are shown as usual\&.
 .sp
 Please note that enabling this can slow down listing large directories significantly\&. Samba has to evaluate the ACLs of all directory members, which can be a lot of effort\&.
 .sp
@@ -4623,7 +4677,7 @@ When set to
 \fBall\fR, all active directory encryption types are allowed\&.
 .sp
 When set to
-\fBstrong\fR, only AES\-based encyption types are offered\&. This can be used in hardened environments to prevent downgrade attacks\&.
+\fBstrong\fR, only AES\-based encryption types are offered\&. This can be used in hardened environments to prevent downgrade attacks\&.
 .sp
 When set to
 \fBlegacy\fR, only RC4\-HMAC\-MD5 is allowed\&. Avoiding AES this way has one a very specific use\&. Normally, the encryption type is negotiated between the peers\&. However, there is one scenario in which a Windows read\-only domain controller (RODC) advertises AES encryption, but then proxies the request to a writeable DC which may not support AES encryption, leading to failure of the handshake\&. Setting this parameter to
@@ -5571,7 +5625,23 @@ Some backends are only available when Samba has been compiled with the additiona
 \fIgpfs\fR
 .RE
 .sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIringbuf\fR
 .RE
+.sp
+.RE
+The
+\fIringbuf\fR
+backend supports an optional size argument to change the buffer size used, the default is 1 MB:
+\fIringbuf:size=NBYTES\fR
+.sp
 Default:
 \fI\fIlogging\fR\fR\fI = \fR\fI\fR\fI \fR
 .sp
@@ -5813,6 +5883,134 @@ This parameter has been extended since the 2\&.2\&.x series, now it allows one t
 .IP \(bu 2.3
 .\}
 \fIregistry\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIscavenger\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIdns\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIldb\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fItevent\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIauth_audit\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIauth_json_audit\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIkerberos\fR
+.RE
+.sp
+.RE
+Authentication and authorization audit information is logged under the auth_audit, and if Samba is compiled against the jansson JSON library, a JSON representation is logged under auth_json_audit\&.
+.sp
+Support is comprehensive for all authentication and authorisation of user accounts in the Samba Active Directory Domain Controller, as well as the implicit authentication in password changes\&. In the file server, NTLM authentication, SMB and RPC authorization is covered\&.
+.sp
+Log levels for auth_audit and auth_audit_json are:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+2: Authentication Failure
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+3: Authentication Success
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+4: Authorization Success
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+5: Anonymous Authentication and Authorization Success
 .RE
 .sp
 .RE
@@ -6299,6 +6497,45 @@ See the section on
 \m[blue]\fBname mangling\fR\m[]
 for details on how to control the mangling process\&.
 .sp
+Possible option settings are
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIyes (default)\fR
+\- enables name mangling for all not DOS 8\&.3 conforming names\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIno\fR
+\- disables any name mangling\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIillegal\fR
+\- does mangling for names with illegal NTFS characters\&. This is the most sensible setting for modern clients that don\*(Aqt use the shortname anymore\&.
+.RE
+.sp
+.RE
 If mangling is used then the mangling method is as follows:
 .sp
 .RS 4
@@ -6347,6 +6584,9 @@ The name mangling (if enabled) allows a file to be copied between UNIX directori
 .sp
 Default:
 \fI\fImangled names\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.sp
+Example:
+\fI\fImangled names\fR\fR\fI = \fR\fIillegal\fR\fI \fR
 .RE
 
 mangle prefix (G)
@@ -6604,16 +6844,28 @@ Example:
 map untrusted to domain (G)
 .PP
 .RS 4
-If a client connects to smbd using an untrusted domain name, such as BOGUS\euser, smbd replaces the BOGUS domain with it\*(Aqs SAM name before attempting to authenticate that user\&. In the case where smbd is acting as a PDC this will be DOMAIN\euser\&. In the case where smbd is acting as a domain member server or a standalone server this will be WORKSTATION\euser\&.
+By default, and with
+\m[blue]\fBmap untrusted to domain = auto\fR\m[]
+smbd will defer the decision whether the domain name provided by the client is a valid domain name to the Domain Controller (DC) of the domain it is a member of, if it is not a DC\&. If the DC indicates that the domain portion is unknown, then a local authentication is performed\&. Standalone servers always ignore the domain\&. This is basically the same as the behavior implemented in Windows\&.
 .sp
-In previous versions of Samba (pre 3\&.4), if smbd was acting as a domain member server, the BOGUS domain name would instead be replaced by the primary domain which smbd was a member of\&. In this case authentication would be deferred off to a DC using the credentials DOMAIN\euser\&.
+With
+\m[blue]\fBmap untrusted to domain = no\fR\m[], if a client connects to smbd using an untrusted domain name, such as BOGUS\euser, smbd replaces the BOGUS domain with it\*(Aqs SAM name (forcing local authentication) before attempting to authenticate that user\&. In the case where smbd is acting as a NT4 PDC/BDC this will be DOMAIN\euser\&. In the case where smbd is acting as a domain member server or a standalone server this will be WORKSTATION\euser\&. While this appears similar to the behaviour of
+\m[blue]\fBmap untrusted to domain = auto\fR\m[], the difference is that smbd will use a cached (maybe incomplete) list of trusted domains in order to classify a domain as "untrusted" before contacting any DC first\&.
 .sp
-When this parameter is set to
-\fByes\fR
-smbd provides the legacy behavior of mapping untrusted domain names to the primary domain\&. When smbd is not acting as a domain member server, this parameter has no effect\&.
+With
+\m[blue]\fBmap untrusted to domain = yes\fR\m[], smbd provides the legacy behavior matching that of versions of Samba pre 3\&.4: the BOGUS domain name would always be replaced by the primary domain before attempting to authenticate that user\&. This will be DOMAIN\euser in all server roles except active directory domain controller\&.
+.sp
+\m[blue]\fBmap untrusted to domain = no\fR\m[], was the default up to Samba 4\&.6\&.
+.sp
+\m[blue]\fBmap untrusted to domain = auto\fR\m[]
+was added and become the default with Samba 4\&.7\&.0\&. As the option is marked as
+\fBdeprecated\fR
+it will be removed in a future release, while the behavior of
+\m[blue]\fBmap untrusted to domain = auto\fR\m[]
+will be kept\&.
 .sp
 Default:
-\fI\fImap untrusted to domain\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fImap untrusted to domain\fR\fR\fI = \fR\fIauto\fR\fI \fR
 .RE
 
 max connections (S)
@@ -6929,6 +7181,20 @@ Default:
 \fI\fImin wins ttl\fR\fR\fI = \fR\fI21600\fR\fI \fR
 .RE
 
+mit kdc command (G)
+.PP
+.RS 4
+This option specifies the path to the MIT kdc binary\&.
+.sp
+If the KDC is not installed in the default location and wasn\*(Aqt correctly detected during build then you should modify this variable and point it to the correct binary\&.
+.sp
+Default:
+\fI\fImit kdc command\fR\fR\fI = \fR\fI${prefix}/sbin/krb5kdc\fR\fI \fR
+.sp
+Example:
+\fI\fImit kdc command\fR\fR\fI = \fR\fI/opt/mit/sbin/krb5kdc\fR\fI \fR
+.RE
+
 msdfs proxy (S)
 .PP
 .RS 4
@@ -7139,7 +7405,7 @@ netbios name (G)
 .RS 4
 This sets the NetBIOS name by which a Samba server is known\&. By default it is the same as the first component of the host\*(Aqs DNS name\&. If a machine is a browse server or logon server this name (or the first component of the hosts DNS name) will be the name that these services are advertised under\&.
 .sp
-Note that the maximum length for a NetBIOS name is 15 charactars\&.
+Note that the maximum length for a NetBIOS name is 15 characters\&.
 .sp
 There is a bug in Samba that breaks operation of browsing and access to shares if the netbios name is set to the literal name
 PIPE\&. To avoid this problem, do not name your Samba server
@@ -7231,18 +7497,89 @@ ntlm auth (G)
 .RS 4
 This parameter determines whether or not
 \fBsmbd\fR(8)
-will attempt to authenticate users using the NTLM encrypted password response\&. If disabled, either the lanman password hash or an NTLMv2 response will need to be sent by the client\&.
+will attempt to authenticate users using the NTLM encrypted password response for this local passdb (SAM or account database)\&.
 .sp
-If this option, and
+If disabled, both NTLM and LanMan authencication against the local passdb is disabled\&.
+.sp
+Note that these settings apply only to local users, authentication will still be forwarded to and NTLM authentication accepted against any domain we are joined to, and any trusted domain, even if disabled or if NTLMv2\-only is enforced here\&. To control NTLM authentiation for domain users, this must option must be configured on each DC\&.
+.sp
+By default with
 lanman auth
-are both disabled, then only NTLMv2 logins will be permited\&. Not all clients support NTLMv2, and most will require special configuration to use it\&.
+set to
+\fBno\fR
+and
+ntlm auth
+set to
+\fBntlmv2\-only\fR
+only NTLMv2 logins will be permited\&. Most clients support NTLMv2 by default, but some older clients will require special configuration to use it\&.
 .sp
 The primary user of NTLMv1 is MSCHAPv2 for VPNs and 802\&.1x\&.
 .sp
-The default changed from "yes" to "no" with Samba 4\&.5\&.
+The available settings are:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBntlmv1\-permitted\fR
+(alias
+\fByes\fR) \- Allow NTLMv1 and above for all clients\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBntlmv2\-only\fR
+(alias
+\fBno\fR) \- Do not allow NTLMv1 to be used, but permit NTLMv2\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBmschapv2\-and\-ntlmv2\-only\fR
+\- Only allow NTLMv1 when the client promises that it is providing MSCHAPv2 authentication (such as the
+ntlm_auth
+tool)\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBdisabled\fR
+\- Do not accept NTLM (or LanMan) authentication of any level, nor permit NTLM password changes\&.
+.RE
+.sp
+.RE
+The default changed from
+\fByes\fR
+to
+\fBno\fR
+with Samba 4\&.5\&. The default chagned again to
+\fBntlmv2\-only\fR
+with Samba 4\&.7, however the behaviour is unchanged\&.
 .sp
 Default:
-\fI\fIntlm auth\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fIntlm auth\fR\fR\fI = \fR\fIntlmv2\-only\fR\fI \fR
 .RE
 
 nt pipe support (G)
@@ -7802,6 +8139,74 @@ Example:
 \fI\fIpassword hash gpg key ids\fR\fR\fI = \fR\fIselftest@samba\&.example\&.com, 4952E40301FAB41A\fR\fI \fR
 .RE
 
+password hash userPassword schemes (G)
+.PP
+.RS 4
+This parameter determines whether or not
+\fBsamba\fR(8)
+acting as an Active Directory Domain Controller will attempt to store additional passwords hash types for the user
+.sp
+The values are stored as \*(AqPrimary:userPassword\*(Aq in the
+supplementalCredentials
+attribute\&. The value of this option is a hash type\&.
+.sp
+The currently supported hash types are:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBCryptSHA256\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBCryptSHA512\fR
+.RE
+.sp
+.RE
+Multiple instances of a hash type may be computed and stored\&. The password hashes are calculated using the
+\fBcrypt\fR(3)
+call\&. The number of rounds used to compute the hash can be specified by adding \*(Aq:rounds=xxxx\*(Aq to the hash type, i\&.e\&. CryptSHA512:rounds=4500 would calculate an SHA512 hash using 4500 rounds\&. If not specified the Operating System defaults for
+\fBcrypt\fR(3)
+are used\&.
+.sp
+As password changes can occur on any domain controller, you should configure this on each of them\&. Note that this feature is currently available only on Samba domain controllers\&.
+.sp
+Currently the NT Hash of the password is recorded when these hashes are calculated and stored\&. When retrieving the hashes the current value of the NT Hash is checked against the stored NT Hash\&. This detects password changes that have not updated the password hashes\&. In this case
+samba\-tool user
+will ignore the stored hash values\&.
+.sp
+Being able to obtain the hashed password helps, when they need to be imported into other authentication systems later (see
+samba\-tool user getpassword) or you want to keep the passwords in sync with another system, e\&.g\&. an OpenLDAP server (see
+samba\-tool user syncpasswords)\&.
+.sp
+Related command:
+\m[blue]\fBunix password sync\fR\m[]
+.sp
+Default:
+\fI\fIpassword hash userPassword schemes\fR\fR\fI = \fR\fI\fR\fI \fR
+.sp
+Example:
+\fI\fIpassword hash userPassword schemes\fR\fR\fI = \fR\fICryptSHA256\fR\fI \fR
+.sp
+Example:
+\fI\fIpassword hash userPassword schemes\fR\fR\fI = \fR\fICryptSHA256 CryptSHA512\fR\fI \fR
+.sp
+Example:
+\fI\fIpassword hash userPassword schemes\fR\fR\fI = \fR\fICryptSHA256:rounds=5000 CryptSHA512:rounds=7000\fR\fI \fR
+.RE
+
 password server (G)
 .PP
 .RS 4
@@ -8313,6 +8718,13 @@ Default:
 profile acls (S)
 .PP
 .RS 4
+As most system support support posix acls and extended attributes today\&. The "acl_xattr" vfs module should be used instead of using
+\m[blue]\fBprofile acls = yes\fR\m[]\&. Using an vfs module that provides nfs4 acls may also work\&.
+.sp
+With modern clients (as of 2017) it\*(Aqs not possible to use
+\m[blue]\fBprofile acls = yes\fR\m[]
+anymore\&.
+.sp
 This boolean parameter was added to fix the problems that people have been having with storing user profiles on Samba shares from Windows 2000 or Windows XP clients\&. New versions of Windows 2000 or Windows XP service packs do security ACL checking on the owner and ability to write of the profile directory stored on a local workstation when copied from a Samba share\&.
 .sp
 When not in domain mode with winbindd then the security info copied onto the local workstation has no meaning to the logged in user (SID) on that workstation so the profile storing fails\&. Adding this parameter onto a share used for profile storage changes two things about the returned Windows ACL\&. Firstly it changes the owner and group owner of all reported files and directories to be BUILTIN\e\eAdministrators, BUILTIN\e\eUsers respectively (SIDs S\-1\-5\-32\-544, S\-1\-5\-32\-545)\&. Secondly it adds an ACE entry of "Full Control" to the SID BUILTIN\e\eUsers to every returned ACL\&. This will allow any Windows 2000 or XP workstation user to access the profile\&.
@@ -8320,6 +8732,8 @@ When not in domain mode with winbindd then the security info copied onto the loc
 Note that if you have multiple users logging on to a workstation then in order to prevent them from being able to access each others profiles you must remove the "Bypass traverse checking" advanced user right\&. This will prevent access to other users profile directories as the top level profile directory (named after the user) is created by the workstation profile code and has an ACL restricting entry to the directory tree to the owning user\&.
 .sp
 Note that this parameter should be set to yes on dedicated profile shares only\&. On other shares, it might cause incorrect file ownerships\&.
+.sp
+This parameter is deprecated with Samba 4\&.7 and will be removed in future versions\&.
 .sp
 Default:
 \fI\fIprofile acls\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -8826,7 +9240,7 @@ Forked RPC Daemons support dynamically forking children to handle connections\&.
 .RE
 .\}
 .sp
-To set one of these options use the follwing syntax:
+To set one of these options use the following syntax:
 .sp
 .if n \{\
 .RS 4
@@ -9102,16 +9516,38 @@ Default:
 \fI\fIrpc_server:SERVER\fR\fR\fI = \fR\fIembedded\fR\fI \fR
 .RE
 
+rpc server dynamic port range (G)
+.PP
+.RS 4
+This parameter tells the RPC server which port range it is allowed to use to create a listening socket for LSA, SAM, Netlogon and others without wellknown tcp ports\&. The first value is the lowest number of the port range and the second the hightest\&.
+.sp
+This applies to RPC servers in all server roles\&.
+.sp
+Default:
+\fI\fIrpc server dynamic port range\fR\fR\fI = \fR\fI49152\-65535\fR\fI \fR
+.RE
+
 rpc server port (G)
 .PP
 .RS 4
 Specifies which port the server should listen on for DCE/RPC over TCP/IP traffic\&.
 .sp
-This controls default port for all protocols, except for NETLOGON\&. If unset, the first available port after 1024 is used\&.
+This controls the default port for all protocols, except for NETLOGON\&.
 .sp
-The NETLOGON server will use the next available port, eg 1025\&. To change this port use (eg) rpc server port:netlogon = 4000\&.
+If unset, the first available port from
+\m[blue]\fBrpc server dynamic port range\fR\m[]
+is used, e\&.g\&. 49152\&.
+.sp
+The NETLOGON server will use the next available port, e\&.g\&. 49153\&. To change this port use (eg) rpc server port:netlogon = 4000\&.
 .sp
 Furthermore, all RPC servers can have the port they use specified independenty, with (for example) rpc server port:drsuapi = 5000\&.
+.sp
+This option applies currently only when
+\fBsamba\fR(8)
+runs as an active directory domain controller\&.
+.sp
+The default value 0 causes Samba to select the first available port from
+\m[blue]\fBrpc server dynamic port range\fR\m[]\&.
 .sp
 Default:
 \fI\fIrpc server port\fR\fR\fI = \fR\fI0\fR\fI \fR
@@ -10766,7 +11202,7 @@ The Spotlight RPC service can either be enabled as embedded RPC service:
 .RE
 .\}
 .sp
-Or it can be run in a seperate RPC service daemon:
+Or it can be run in a separate RPC service daemon:
 .sp
 .if n \{\
 .RS 4
@@ -10889,18 +11325,29 @@ Default:
 strict sync (S)
 .PP
 .RS 4
-Many Windows applications (including the Windows 98 explorer shell) seem to confuse flushing buffer contents to disk with doing a sync to disk\&. Under UNIX, a sync call forces the thread to be suspended until the kernel has ensured that all outstanding data in kernel disk buffers has been safely stored onto stable storage\&. This is very slow and should only be done rarely\&. Setting this parameter to
+This parameter controls whether Samba honors a request from an SMB client to ensure any outstanding operating system buffer contents held in memory are safely written onto stable storage on disk\&. If set to
+\fByes\fR, which is the default, then Windows applications can force the smbd server to synchronize unwritten data onto the disk\&. If set to
 \fBno\fR
-(the default) means that
-\fBsmbd\fR(8)
-ignores the Windows applications requests for a sync call\&. There is only a possibility of losing data if the operating system itself that Samba is running on crashes, so there is little danger in this default setting\&. In addition, this fixes many performance problems that people have reported with the new Windows98 explorer shell file copies\&.
+then smbd will ignore client requests to synchronize unwritten data onto stable storage on disk\&.
 .sp
-The flush request from SMB2/3 clients is handled asynchronously, so for these clients setting the parameter to
+In Samba 4\&.7\&.0, the default for this parameter changed from
+\fBno\fR
+to
 \fByes\fR
-does not block the processing of other requests in the smbd process\&.
+to better match the expectations of SMB2/3 clients and improve application safety when running against smbd\&.
+.sp
+The flush request from SMB2/3 clients is handled asynchronously inside smbd, so leaving the parameter as the default value of
+\fByes\fR
+does not block the processing of other requests to the smbd process\&.
+.sp
+Legacy Windows applications (such as the Windows 98 explorer shell) seemed to confuse writing buffer contents to the operating system with synchronously writing outstanding data onto stable storage on disk\&. Changing this parameter to
+\fBno\fR
+means that
+\fBsmbd\fR(8)
+will ignore the Windows applications request to synchronize unwritten data onto disk\&. Only consider changing this if smbd is serving obsolete SMB1 Windows clients prior to Windows XP (Windows 98 and below)\&. There should be no need to change this setting for normal operations\&.
 .sp
 Default:
-\fI\fIstrict sync\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fIstrict sync\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
 svcctl list (G)
@@ -11772,15 +12219,6 @@ Default:
 \fI\fIwinbind cache time\fR\fR\fI = \fR\fI300\fR\fI \fR
 .RE
 
-winbindd privileged socket directory (G)
-.PP
-.RS 4
-This setting controls the location of the winbind daemon\*(Aqs privileged socket\&.
-.sp
-Default:
-\fI\fIwinbindd privileged socket directory\fR\fR\fI = \fR\fI${prefix}/var/lib/winbindd_privileged\fR\fI \fR
-.RE
-
 winbindd socket directory (G)
 .PP
 .RS 4
@@ -11875,6 +12313,18 @@ The default value was changed from 1 to 0 with Samba 4\&.2\&. Some broken applic
 .sp
 Default:
 \fI\fIwinbind expand groups\fR\fR\fI = \fR\fI0\fR\fI \fR
+.RE
+
+winbind:ignore domains (G)
+.PP
+.RS 4
+Allows to enter a list of trusted domains winbind should ignore (untrust)\&. This can avoid the overhead of resources from attempting to login to DCs that should not be communicated with\&.
+.sp
+Default:
+\fI\fIwinbind:ignore domains\fR\fR\fI = \fR\fI\fR\fI \fR
+.sp
+Example:
+\fI\fIwinbind:ignore domains\fR\fR\fI = \fR\fIDOMAIN1, DOMAIN2\fR\fI \fR
 .RE
 
 winbind max clients (G)

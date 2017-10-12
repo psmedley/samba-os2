@@ -254,6 +254,18 @@ failed:
 	return -1;
 }
 
+static int ldapsrv_call_destructor(struct ldapsrv_call *call)
+{
+	if (call->conn == NULL) {
+		return 0;
+	}
+
+	DLIST_REMOVE(call->conn->pending_calls, call);
+
+	call->conn = NULL;
+	return 0;
+}
+
 static struct tevent_req *ldapsrv_process_call_send(TALLOC_CTX *mem_ctx,
 						    struct tevent_context *ev,
 						    struct tevent_queue *call_queue,
@@ -437,7 +449,7 @@ static bool ldapsrv_call_read_next(struct ldapsrv_connection *conn)
 	}
 
 	/*
-	 * The minimun size of a LDAP pdu is 7 bytes
+	 * The minimum size of a LDAP pdu is 7 bytes
 	 *
 	 * dumpasn1 -hh ldap-unbind-min.dat
 	 *
@@ -504,6 +516,7 @@ static void ldapsrv_call_read_done(struct tevent_req *subreq)
 		ldapsrv_terminate_connection(conn, "no memory");
 		return;
 	}
+	talloc_set_destructor(call, ldapsrv_call_destructor);
 
 	call->conn = conn;
 
@@ -565,7 +578,8 @@ static void ldapsrv_call_read_done(struct tevent_req *subreq)
 	conn->active_call = subreq;
 }
 
-
+static void ldapsrv_call_wait_done(struct tevent_req *subreq);
+static void ldapsrv_call_writev_start(struct ldapsrv_call *call);
 static void ldapsrv_call_writev_done(struct tevent_req *subreq);
 
 static void ldapsrv_call_process_done(struct tevent_req *subreq)
@@ -575,7 +589,6 @@ static void ldapsrv_call_process_done(struct tevent_req *subreq)
 		struct ldapsrv_call);
 	struct ldapsrv_connection *conn = call->conn;
 	NTSTATUS status;
-	DATA_BLOB blob = data_blob_null;
 
 	conn->active_call = NULL;
 
@@ -585,6 +598,61 @@ static void ldapsrv_call_process_done(struct tevent_req *subreq)
 		ldapsrv_terminate_connection(conn, nt_errstr(status));
 		return;
 	}
+
+	if (call->wait_send != NULL) {
+		subreq = call->wait_send(call,
+					 conn->connection->event.ctx,
+					 call->wait_private);
+		if (subreq == NULL) {
+			ldapsrv_terminate_connection(conn,
+					"ldapsrv_call_process_done: "
+					"call->wait_send - no memory");
+			return;
+		}
+		tevent_req_set_callback(subreq,
+					ldapsrv_call_wait_done,
+					call);
+		conn->active_call = subreq;
+		return;
+	}
+
+	ldapsrv_call_writev_start(call);
+}
+
+static void ldapsrv_call_wait_done(struct tevent_req *subreq)
+{
+	struct ldapsrv_call *call =
+		tevent_req_callback_data(subreq,
+		struct ldapsrv_call);
+	struct ldapsrv_connection *conn = call->conn;
+	NTSTATUS status;
+
+	conn->active_call = NULL;
+
+	status = call->wait_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (!NT_STATUS_IS_OK(status)) {
+		const char *reason;
+
+		reason = talloc_asprintf(call, "ldapsrv_call_wait_done: "
+					 "call->wait_recv() - %s",
+					 nt_errstr(status));
+		if (reason == NULL) {
+			reason = nt_errstr(status);
+		}
+
+		ldapsrv_terminate_connection(conn, reason);
+		return;
+	}
+
+	ldapsrv_call_writev_start(call);
+}
+
+static void ldapsrv_call_writev_start(struct ldapsrv_call *call)
+{
+	struct ldapsrv_connection *conn = call->conn;
+	DATA_BLOB blob = data_blob_null;
+	struct tevent_req *subreq = NULL;
 
 	/* build all the replies into a single blob */
 	while (call->replies) {
@@ -1053,9 +1121,12 @@ static void ldapsrv_task_init(struct task_server *task)
 
 	task_server_set_title(task, "task[ldapsrv]");
 
-	/* run the ldap server as a single process */
-	model_ops = process_model_startup("single");
-	if (!model_ops) goto failed;
+	/*
+	 * Here we used to run the ldap server as a single process,
+	 * but we don't want transaction locks for one task in a write
+	 * blocking all other reads, so we go multi-process.
+	 */
+	model_ops = task->model_ops;
 
 	ldap_service = talloc_zero(task, struct ldapsrv_service);
 	if (ldap_service == NULL) goto failed;
@@ -1182,7 +1253,7 @@ failed:
 }
 
 
-NTSTATUS server_service_ldap_init(void)
+NTSTATUS server_service_ldap_init(TALLOC_CTX *ctx)
 {
-	return register_server_service("ldap", ldapsrv_task_init);
+	return register_server_service(ctx, "ldap", ldapsrv_task_init);
 }

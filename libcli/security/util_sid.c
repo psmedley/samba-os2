@@ -189,7 +189,8 @@ static const struct {
 	{SID_NAME_DELETED, "Deleted Account"},
 	{SID_NAME_INVALID, "Invalid Account"},
 	{SID_NAME_UNKNOWN, "UNKNOWN"},
-	{SID_NAME_COMPUTER, "Computer"}
+	{SID_NAME_COMPUTER, "Computer"},
+	{SID_NAME_LABEL, "Mandatory Label"}
 };
 
 const char *sid_type_lookup(uint32_t sid_type)
@@ -337,12 +338,18 @@ int sid_compare_domain(const struct dom_sid *sid1, const struct dom_sid *sid2)
 NTSTATUS add_sid_to_array(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 			  struct dom_sid **sids, uint32_t *num)
 {
-	*sids = talloc_realloc(mem_ctx, *sids, struct dom_sid,
-			       (*num)+1);
-	if (*sids == NULL) {
+	struct dom_sid *tmp;
+
+	if ((*num) == UINT32_MAX) {
+		return NT_STATUS_INTEGER_OVERFLOW;
+	}
+
+	tmp = talloc_realloc(mem_ctx, *sids, struct dom_sid, (*num)+1);
+	if (tmp == NULL) {
 		*num = 0;
 		return NT_STATUS_NO_MEMORY;
 	}
+	*sids = tmp;
 
 	sid_copy(&((*sids)[*num]), sid);
 	*num += 1;

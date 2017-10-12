@@ -155,7 +155,8 @@ static NTSTATUS auth_generate_session_info_principal(struct auth4_context *auth_
 _PUBLIC_ NTSTATUS auth_check_password(struct auth4_context *auth_ctx,
 			     TALLOC_CTX *mem_ctx,
 			     const struct auth_usersupplied_info *user_info, 
-			     struct auth_user_info_dc **user_info_dc)
+			     struct auth_user_info_dc **user_info_dc,
+			     uint8_t *pauthoritative)
 {
 	struct tevent_req *subreq;
 	struct tevent_context *ev;
@@ -178,54 +179,24 @@ _PUBLIC_ NTSTATUS auth_check_password(struct auth4_context *auth_ctx,
 		return NT_STATUS_INTERNAL_ERROR;
 	}
 
-	status = auth_check_password_recv(subreq, mem_ctx, user_info_dc);
+	status = auth_check_password_recv(subreq, mem_ctx,
+					  user_info_dc, pauthoritative);
 	TALLOC_FREE(subreq);
 
 	return status;
 }
 
-_PUBLIC_ NTSTATUS auth_check_password_wrapper(struct auth4_context *auth_ctx,
-					      TALLOC_CTX *mem_ctx,
-					      const struct auth_usersupplied_info *user_info, 
-					      void **server_returned_info,
-					      DATA_BLOB *user_session_key, DATA_BLOB *lm_session_key)
-{
-	struct auth_user_info_dc *user_info_dc;
-	NTSTATUS status = auth_check_password(auth_ctx, mem_ctx, user_info, &user_info_dc);
-
-	if (NT_STATUS_IS_OK(status)) {
-		*server_returned_info = user_info_dc;
-
-		if (user_session_key) {
-			DEBUG(10, ("Got NT session key of length %u\n",
-				   (unsigned)user_info_dc->user_session_key.length));
-			*user_session_key = user_info_dc->user_session_key;
-			talloc_steal(mem_ctx, user_session_key->data);
-			user_info_dc->user_session_key = data_blob_null;
-		}
-
-		if (lm_session_key) {
-			DEBUG(10, ("Got LM session key of length %u\n",
-				   (unsigned)user_info_dc->lm_session_key.length));
-			*lm_session_key = user_info_dc->lm_session_key;
-			talloc_steal(mem_ctx, lm_session_key->data);
-			user_info_dc->lm_session_key = data_blob_null;
-		}
-	}
-
-	return status;
-}
-
 struct auth_check_password_state {
+	struct tevent_context *ev;
 	struct auth4_context *auth_ctx;
 	const struct auth_usersupplied_info *user_info;
 	struct auth_user_info_dc *user_info_dc;
 	struct auth_method_context *method;
+	uint8_t authoritative;
 };
 
-static void auth_check_password_async_trigger(struct tevent_context *ev,
-					      struct tevent_immediate *im,
-					      void *private_data);
+static void auth_check_password_next(struct tevent_req *req);
+
 /**
  * Check a user's Plaintext, LM or NTLM password.
  * async send hook
@@ -262,8 +233,6 @@ _PUBLIC_ struct tevent_req *auth_check_password_send(TALLOC_CTX *mem_ctx,
 	/* if all the modules say 'not for me' this is reasonable */
 	NTSTATUS nt_status;
 	uint8_t chal[8];
-	struct auth_usersupplied_info *user_info_tmp;
-	struct tevent_immediate *im;
 
 	DEBUG(3,("auth_check_password_send: "
 		 "Checking password for unmapped user [%s]\\[%s]@[%s]\n",
@@ -276,21 +245,48 @@ _PUBLIC_ struct tevent_req *auth_check_password_send(TALLOC_CTX *mem_ctx,
 		return NULL;
 	}
 
+	/*
+	 * We are authoritative by default.
+	 */
+	state->ev		= ev;
 	state->auth_ctx		= auth_ctx;
 	state->user_info	= user_info;
+	state->authoritative	= 1;
 
 	if (!user_info->mapped_state) {
-		nt_status = map_user_info(auth_ctx->sam_ctx, req, lpcfg_workgroup(auth_ctx->lp_ctx),
-					  user_info, &user_info_tmp);
-		if (tevent_req_nterror(req, nt_status)) {
-			return tevent_req_post(req, ev);
+		struct auth_usersupplied_info *user_info_tmp;
+
+		/*
+		 * We don't really do any mapping here.
+		 *
+		 * So we don't set user_info->mapped_state,
+		 * but we set mapped.domain_name and
+		 * mapped.account_name to the client
+		 * provided values.
+		 *
+		 * It's up to the backends to do mappings
+		 * for their authentication.
+		 */
+		user_info_tmp = talloc_zero(state, struct auth_usersupplied_info);
+		if (tevent_req_nomem(user_info_tmp, req)) {
+			return tevent_req_post(req, ev);;
 		}
+
+		/*
+		 * The lifetime of user_info is longer than
+		 * user_info_tmp, so we don't need to copy the
+		 * strings.
+		 */
+		*user_info_tmp = *user_info;
+		user_info_tmp->mapped.domain_name = user_info->client.domain_name;
+		user_info_tmp->mapped.account_name = user_info->client.account_name;
+
 		user_info = user_info_tmp;
 		state->user_info = user_info_tmp;
 	}
 
 	DEBUGADD(3,("auth_check_password_send: "
-		    "mapped user is: [%s]\\[%s]@[%s]\n",
+		    "user is: [%s]\\[%s]@[%s]\n",
 		    user_info->mapped.domain_name,
 		    user_info->mapped.account_name,
 		    user_info->workstation_name));
@@ -316,74 +312,116 @@ _PUBLIC_ struct tevent_req *auth_check_password_send(TALLOC_CTX *mem_ctx,
 	dump_data(5, auth_ctx->challenge.data.data,
 		  auth_ctx->challenge.data.length);
 
-	im = tevent_create_immediate(state);
-	if (tevent_req_nomem(im, req)) {
+	state->method = state->auth_ctx->methods;
+	auth_check_password_next(req);
+	if (!tevent_req_is_in_progress(req)) {
 		return tevent_req_post(req, ev);
 	}
 
-	tevent_schedule_immediate(im,
-				  auth_ctx->event_ctx,
-				  auth_check_password_async_trigger,
-				  req);
 	return req;
 }
 
-static void auth_check_password_async_trigger(struct tevent_context *ev,
-					      struct tevent_immediate *im,
-					      void *private_data)
+static void auth_check_password_done(struct tevent_req *subreq);
+
+static void auth_check_password_next(struct tevent_req *req)
 {
-	struct tevent_req *req =
-		talloc_get_type_abort(private_data, struct tevent_req);
 	struct auth_check_password_state *state =
 		tevent_req_data(req, struct auth_check_password_state);
+	struct tevent_req *subreq = NULL;
+	bool authoritative = true;
 	NTSTATUS status;
-	struct auth_method_context *method;
 
-	status = NT_STATUS_OK;
+	if (state->method == NULL) {
+		state->authoritative = 0;
+		tevent_req_nterror(req, NT_STATUS_NO_SUCH_USER);
+		return;
+	}
 
-	for (method=state->auth_ctx->methods; method; method = method->next) {
+	/* check if the module wants to check the password */
+	status = state->method->ops->want_check(state->method, state,
+						state->user_info);
+	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
+		DEBUG(11,("auth_check_password_send: "
+			  "%s doesn't want to check\n",
+			  state->method->ops->name));
+		state->method = state->method->next;
+		auth_check_password_next(req);
+		return;
+	}
 
-		if (state->user_info->flags & USER_INFO_LOCAL_SAM_ONLY
-		    && !(method->ops->flags & AUTH_METHOD_LOCAL_SAM)) {
-			continue;
-		}
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
 
-		/* we fill in state->method here so debug messages in
-		   the callers know which method failed */
-		state->method = method;
-
-		/* check if the module wants to check the password */
-		status = method->ops->want_check(method, req, state->user_info);
-		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
-			DEBUG(11,("auth_check_password_send: "
-				  "%s had nothing to say\n",
-				  method->ops->name));
-			continue;
-		}
-
-		if (tevent_req_nterror(req, status)) {
+	if (state->method->ops->check_password_send != NULL) {
+		subreq = state->method->ops->check_password_send(state,
+								 state->ev,
+								 state->method,
+								 state->user_info);
+		if (tevent_req_nomem(subreq, req)) {
 			return;
 		}
-
-		status = method->ops->check_password(method,
-						     state,
-						     state->user_info,
-						     &state->user_info_dc);
-		if (!NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
-			/* the backend has handled the request */
-			break;
-		}
+		tevent_req_set_callback(subreq,
+					auth_check_password_done,
+					req);
+		return;
 	}
 
-	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
-		if (!(state->user_info->flags & USER_INFO_LOCAL_SAM_ONLY)) {
-			/* don't expose the NT_STATUS_NOT_IMPLEMENTED
-			 * internals, except when the caller is only probing
-			 * one method, as they may do the fallback 
-			 */
-			status = NT_STATUS_NO_SUCH_USER;
-		}
+	if (state->method->ops->check_password == NULL) {
+		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
+		return;
 	}
+
+	status = state->method->ops->check_password(state->method,
+						    state,
+						    state->user_info,
+						    &state->user_info_dc,
+						    &authoritative);
+	if (!authoritative ||
+	    NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
+		DEBUG(11,("auth_check_password_send: "
+			  "%s passes to the next method\n",
+			  state->method->ops->name));
+		state->method = state->method->next;
+		auth_check_password_next(req);
+		return;
+	}
+
+	/* the backend has handled the request */
+
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+
+	tevent_req_done(req);
+}
+
+static void auth_check_password_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq,
+		struct tevent_req);
+	struct auth_check_password_state *state =
+		tevent_req_data(req,
+		struct auth_check_password_state);
+	bool authoritative = true;
+	NTSTATUS status;
+
+	status = state->method->ops->check_password_recv(subreq, state,
+							 &state->user_info_dc,
+							 &authoritative);
+	TALLOC_FREE(subreq);
+	if (!authoritative ||
+	    NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
+		DEBUG(11,("auth_check_password_send: "
+			  "%s passes to the next method\n",
+			  state->method->ops->name));
+		state->method = state->method->next;
+		auth_check_password_next(req);
+		return;
+	}
+
+	/* the backend has handled the request */
 
 	if (tevent_req_nterror(req, status)) {
 		return;
@@ -414,20 +452,32 @@ static void auth_check_password_async_trigger(struct tevent_context *ev,
 
 _PUBLIC_ NTSTATUS auth_check_password_recv(struct tevent_req *req,
 				  TALLOC_CTX *mem_ctx,
-				  struct auth_user_info_dc **user_info_dc)
+				  struct auth_user_info_dc **user_info_dc,
+				  uint8_t *pauthoritative)
 {
 	struct auth_check_password_state *state =
 		tevent_req_data(req, struct auth_check_password_state);
-	NTSTATUS status;
+	NTSTATUS status = NT_STATUS_OK;
+
+	*pauthoritative = state->authoritative;
 
 	if (tevent_req_is_nterror(req, &status)) {
+		/*
+		 * Please try not to change this string, it is probably in use
+		 * in audit logging tools
+		 */
 		DEBUG(2,("auth_check_password_recv: "
 			 "%s authentication for user [%s\\%s] "
-			 "FAILED with error %s\n",
+			 "FAILED with error %s, authoritative=%u\n",
 			 (state->method ? state->method->ops->name : "NO_METHOD"),
 			 state->user_info->mapped.domain_name,
 			 state->user_info->mapped.account_name,
-			 nt_errstr(status)));
+			 nt_errstr(status), state->authoritative));
+
+		log_authentication_event(state->auth_ctx->msg_ctx,
+					 state->auth_ctx->lp_ctx,
+					 state->user_info, status,
+					 NULL, NULL, NULL, NULL);
 		tevent_req_received(req);
 		return status;
 	}
@@ -438,9 +488,54 @@ _PUBLIC_ NTSTATUS auth_check_password_recv(struct tevent_req *req,
 		 state->user_info_dc->info->domain_name,
 		 state->user_info_dc->info->account_name));
 
+	log_authentication_event(state->auth_ctx->msg_ctx,
+				 state->auth_ctx->lp_ctx,
+				 state->user_info, status,
+				 state->user_info_dc->info->domain_name,
+				 state->user_info_dc->info->account_name,
+				 NULL,
+				 &state->user_info_dc->sids[0]);
+
 	*user_info_dc = talloc_move(mem_ctx, &state->user_info_dc);
 
 	tevent_req_received(req);
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS auth_check_password_wrapper(struct auth4_context *auth_ctx,
+					    TALLOC_CTX *mem_ctx,
+					    const struct auth_usersupplied_info *user_info,
+					    uint8_t *pauthoritative,
+					    void **server_returned_info,
+					    DATA_BLOB *user_session_key, DATA_BLOB *lm_session_key)
+{
+	struct auth_user_info_dc *user_info_dc;
+	NTSTATUS status;
+
+	status = auth_check_password(auth_ctx, mem_ctx, user_info,
+				     &user_info_dc, pauthoritative);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	*server_returned_info = user_info_dc;
+
+	if (user_session_key) {
+		DEBUG(10, ("Got NT session key of length %u\n",
+			   (unsigned)user_info_dc->user_session_key.length));
+		*user_session_key = user_info_dc->user_session_key;
+		talloc_steal(mem_ctx, user_session_key->data);
+		user_info_dc->user_session_key = data_blob_null;
+	}
+
+	if (lm_session_key) {
+		DEBUG(10, ("Got LM session key of length %u\n",
+			   (unsigned)user_info_dc->lm_session_key.length));
+		*lm_session_key = user_info_dc->lm_session_key;
+		talloc_steal(mem_ctx, lm_session_key->data);
+		user_info_dc->lm_session_key = data_blob_null;
+	}
+
 	return NT_STATUS_OK;
 }
 
@@ -471,9 +566,9 @@ static NTSTATUS auth_generate_session_info_wrapper(struct auth4_context *auth_co
 
 	if ((session_info_flags & AUTH_SESSION_INFO_UNIX_TOKEN)
 	    && NT_STATUS_IS_OK(status)) {
-		status = auth_session_info_fill_unix(auth_context->event_ctx,
-						     auth_context->lp_ctx,
-						     original_user_name, *session_info);
+		status = auth_session_info_fill_unix(auth_context->lp_ctx,
+						     original_user_name,
+						     *session_info);
 		if (!NT_STATUS_IS_OK(status)) {
 			TALLOC_FREE(*session_info);
 		}
@@ -592,18 +687,45 @@ _PUBLIC_ NTSTATUS auth_context_create_methods(TALLOC_CTX *mem_ctx, const char * 
 const char **auth_methods_from_lp(TALLOC_CTX *mem_ctx, struct loadparm_context *lp_ctx)
 {
 	char **auth_methods = NULL;
+	const char **const_auth_methods = NULL;
+
+	/*
+	 * As 'auth methods' is deprecated it will be removed
+	 * in future releases again, but for now give
+	 * admins the flexibility to configure, the behavior
+	 * from Samba 4.6: "auth methods = anonymous sam_ignoredomain",
+	 * for a while.
+	 */
+	const_auth_methods = lpcfg_auth_methods(lp_ctx);
+	if (const_auth_methods != NULL) {
+		DBG_NOTICE("using deprecated 'auth methods' values.\n");
+		return const_auth_methods;
+	}
 
 	switch (lpcfg_server_role(lp_ctx)) {
 	case ROLE_STANDALONE:
 		auth_methods = str_list_make(mem_ctx, "anonymous sam_ignoredomain", NULL);
 		break;
 	case ROLE_DOMAIN_MEMBER:
-		auth_methods = str_list_make(mem_ctx, "anonymous sam winbind", NULL);
+		auth_methods = str_list_make(mem_ctx, "anonymous sam winbind sam_ignoredomain", NULL);
 		break;
 	case ROLE_DOMAIN_BDC:
 	case ROLE_DOMAIN_PDC:
 	case ROLE_ACTIVE_DIRECTORY_DC:
-		auth_methods = str_list_make(mem_ctx, "anonymous sam_ignoredomain winbind", NULL);
+		/*
+		 * TODO: we should replace "winbind_rodc sam_failtrusts" with "winbind"
+		 * if everything (gensec/auth4) is fully async without nested
+		 * event loops!
+		 *
+		 * But for now we'll fail authentications for trusted
+		 * domain consistently with NT_STATUS_NO_TRUST_LSA_SECRET,
+		 * instead of silently mapping to local users.
+		 */
+		auth_methods = str_list_make(mem_ctx,
+					     "anonymous sam "
+					     "winbind_rodc sam_failtrusts "
+					     "sam_ignoredomain",
+					     NULL);
 		break;
 	}
 	return discard_const_p(const char *, auth_methods);
@@ -635,6 +757,48 @@ _PUBLIC_ NTSTATUS auth_context_create(TALLOC_CTX *mem_ctx,
 	return status;
 }
 
+_PUBLIC_ NTSTATUS auth_context_create_for_netlogon(TALLOC_CTX *mem_ctx,
+						   struct tevent_context *ev,
+						   struct imessaging_context *msg,
+						   struct loadparm_context *lp_ctx,
+						   struct auth4_context **auth_ctx)
+{
+	NTSTATUS status;
+	char **_auth_methods = NULL;
+	const char **auth_methods = NULL;
+
+	/*
+	 * As 'auth methods' is deprecated it will be removed
+	 * in future releases again, but for now give
+	 * admins the flexibility to configure, the behavior
+	 * from Samba 4.6: "auth methods = anonymous sam_ignoredomain",
+	 * for a while.
+	 */
+	auth_methods = lpcfg_auth_methods(lp_ctx);
+	if (auth_methods != NULL) {
+		DBG_NOTICE("using deprecated 'auth methods' values.\n");
+	} else {
+		/*
+		 * We can remove "winbind_rodc sam_failtrusts",
+		 * when we made the netlogon retries to
+		 * to contact winbind via irpc.
+		 */
+		_auth_methods = str_list_make(mem_ctx,
+				"sam "
+				"winbind_rodc sam_failtrusts",
+				NULL);
+		if (_auth_methods == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+		auth_methods = discard_const_p(const char *, _auth_methods);
+	}
+
+	status = auth_context_create_methods(mem_ctx, auth_methods, ev, msg,
+					     lp_ctx, NULL, auth_ctx);
+	talloc_free(_auth_methods);
+	return status;
+}
+
 /* the list of currently registered AUTH backends */
 static struct auth_backend {
 	const struct auth_operations *ops;
@@ -647,7 +811,8 @@ static int num_backends;
   The 'name' can be later used by other backends to find the operations
   structure for this backend.
 */
-_PUBLIC_ NTSTATUS auth_register(const struct auth_operations *ops)
+_PUBLIC_ NTSTATUS auth_register(TALLOC_CTX *mem_ctx,
+			const struct auth_operations *ops)
 {
 	struct auth_operations *new_ops;
 	
@@ -658,7 +823,7 @@ _PUBLIC_ NTSTATUS auth_register(const struct auth_operations *ops)
 		return NT_STATUS_OBJECT_NAME_COLLISION;
 	}
 
-	backends = talloc_realloc(talloc_autofree_context(), backends, 
+	backends = talloc_realloc(mem_ctx, backends,
 				  struct auth_backend, num_backends+1);
 	NT_STATUS_HAVE_NO_MEMORY(backends);
 
@@ -715,14 +880,14 @@ const struct auth_critical_sizes *auth_interface_version(void)
 _PUBLIC_ NTSTATUS auth4_init(void)
 {
 	static bool initialized = false;
-#define _MODULE_PROTO(init) extern NTSTATUS init(void);
+#define _MODULE_PROTO(init) extern NTSTATUS init(TALLOC_CTX *);
 	STATIC_auth4_MODULES_PROTO;
 	init_module_fn static_init[] = { STATIC_auth4_MODULES };
 	
 	if (initialized) return NT_STATUS_OK;
 	initialized = true;
 	
-	run_init_functions(static_init);
+	run_init_functions(NULL, static_init);
 	
 	return NT_STATUS_OK;	
 }

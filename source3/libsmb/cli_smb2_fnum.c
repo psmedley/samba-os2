@@ -485,6 +485,133 @@ NTSTATUS cli_smb2_close_fnum(struct cli_state *cli, uint16_t fnum)
 	return status;
 }
 
+struct cli_smb2_delete_on_close_state {
+	struct cli_state *cli;
+	uint16_t fnum;
+	struct smb2_hnd *ph;
+	uint8_t data[1];
+	DATA_BLOB inbuf;
+};
+
+static void cli_smb2_delete_on_close_done(struct tevent_req *subreq);
+
+struct tevent_req *cli_smb2_delete_on_close_send(TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					struct cli_state *cli,
+					uint16_t fnum,
+					bool flag)
+{
+	struct tevent_req *req = NULL;
+	struct cli_smb2_delete_on_close_state *state = NULL;
+	struct tevent_req *subreq = NULL;
+	uint8_t in_info_type;
+	uint8_t in_file_info_class;
+	NTSTATUS status;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct cli_smb2_delete_on_close_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	state->cli = cli;
+	state->fnum = fnum;
+
+	if (smbXcli_conn_protocol(cli->conn) < PROTOCOL_SMB2_02) {
+		tevent_req_nterror(req, NT_STATUS_INVALID_PARAMETER);
+		return tevent_req_post(req, ev);
+	}
+
+	status = map_fnum_to_smb2_handle(cli, fnum, &state->ph);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
+
+	/*
+	 * setinfo on the handle with info_type SMB2_SETINFO_FILE (1),
+	 * level 13 (SMB_FILE_DISPOSITION_INFORMATION - 1000).
+	 */
+	in_info_type = 1;
+	in_file_info_class = SMB_FILE_DISPOSITION_INFORMATION - 1000;
+	/* Setup data array. */
+	SCVAL(&state->data[0], 0, flag ? 1 : 0);
+	state->inbuf.data = &state->data[0];
+	state->inbuf.length = 1;
+
+	subreq = smb2cli_set_info_send(state, ev,
+				       cli->conn,
+				       cli->timeout,
+				       cli->smb2.session,
+				       cli->smb2.tcon,
+				       in_info_type,
+				       in_file_info_class,
+				       &state->inbuf, /* in_input_buffer */
+				       0, /* in_additional_info */
+				       state->ph->fid_persistent,
+				       state->ph->fid_volatile);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq,
+				cli_smb2_delete_on_close_done,
+				req);
+	return req;
+}
+
+static void cli_smb2_delete_on_close_done(struct tevent_req *subreq)
+{
+	NTSTATUS status = smb2cli_set_info_recv(subreq);
+	tevent_req_simple_finish_ntstatus(subreq, status);
+}
+
+NTSTATUS cli_smb2_delete_on_close_recv(struct tevent_req *req)
+{
+	struct cli_smb2_delete_on_close_state *state =
+		tevent_req_data(req,
+		struct cli_smb2_delete_on_close_state);
+	NTSTATUS status;
+
+	if (tevent_req_is_nterror(req, &status)) {
+		state->cli->raw_status = status;
+		tevent_req_received(req);
+		return status;
+	}
+
+	state->cli->raw_status = NT_STATUS_OK;
+	tevent_req_received(req);
+	return NT_STATUS_OK;
+}
+
+NTSTATUS cli_smb2_delete_on_close(struct cli_state *cli, uint16_t fnum, bool flag)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	struct tevent_context *ev;
+	struct tevent_req *req;
+	NTSTATUS status = NT_STATUS_NO_MEMORY;
+
+	if (smbXcli_conn_has_async_calls(cli->conn)) {
+		/*
+		 * Can't use sync call while an async call is in flight
+		 */
+		status = NT_STATUS_INVALID_PARAMETER;
+		goto fail;
+	}
+	ev = samba_tevent_context_init(frame);
+	if (ev == NULL) {
+		goto fail;
+	}
+	req = cli_smb2_delete_on_close_send(frame, ev, cli, fnum, flag);
+	if (req == NULL) {
+		goto fail;
+	}
+	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
+		goto fail;
+	}
+	status = cli_smb2_delete_on_close_recv(req);
+ fail:
+	TALLOC_FREE(frame);
+	return status;
+}
+
 /***************************************************************
  Small wrapper that allows SMB2 to create a directory
  Synchronous only.
@@ -971,6 +1098,47 @@ NTSTATUS cli_smb2_qpathinfo_basic(struct cli_state *cli,
 	*attributes = cr.file_attributes;
 
 	return status;
+}
+
+/***************************************************************
+ Wrapper that allows SMB2 to check if a path is a directory.
+ Synchronous only.
+***************************************************************/
+
+NTSTATUS cli_smb2_chkpath(struct cli_state *cli,
+				const char *name)
+{
+	NTSTATUS status;
+	uint16_t fnum = 0xffff;
+
+	if (smbXcli_conn_has_async_calls(cli->conn)) {
+		/*
+		 * Can't use sync call while an async call is in flight
+		 */
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+
+	if (smbXcli_conn_protocol(cli->conn) < PROTOCOL_SMB2_02) {
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+
+	/* Ensure this is a directory. */
+	status = cli_smb2_create_fnum(cli,
+			name,
+			0,			/* create_flags */
+			FILE_READ_ATTRIBUTES,	/* desired_access */
+			FILE_ATTRIBUTE_DIRECTORY, /* file attributes */
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, /* share_access */
+			FILE_OPEN,		/* create_disposition */
+			FILE_DIRECTORY_FILE,	/* create_options */
+			&fnum,
+			NULL);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	return cli_smb2_close_fnum(cli, fnum);
 }
 
 /***************************************************************
@@ -1519,20 +1687,20 @@ NTSTATUS cli_smb2_qpathinfo_streams(struct cli_state *cli,
 }
 
 /***************************************************************
- Wrapper that allows SMB2 to set pathname attributes.
+ Wrapper that allows SMB2 to set SMB_FILE_BASIC_INFORMATION on
+ a pathname.
  Synchronous only.
 ***************************************************************/
 
-NTSTATUS cli_smb2_setatr(struct cli_state *cli,
+NTSTATUS cli_smb2_setpathinfo(struct cli_state *cli,
 			const char *name,
-			uint16_t attr,
-			time_t mtime)
+			uint8_t in_info_type,
+			uint8_t in_file_info_class,
+			const DATA_BLOB *p_in_data)
 {
 	NTSTATUS status;
 	uint16_t fnum = 0xffff;
 	struct smb2_hnd *ph = NULL;
-	uint8_t inbuf_store[40];
-	DATA_BLOB inbuf = data_blob_null;
 	TALLOC_CTX *frame = talloc_stackframe();
 
 	if (smbXcli_conn_has_async_calls(cli->conn)) {
@@ -1564,29 +1732,13 @@ NTSTATUS cli_smb2_setatr(struct cli_state *cli,
 		goto fail;
 	}
 
-	/* setinfo on the handle with info_type SMB2_SETINFO_FILE (1),
-	   level 4 (SMB_FILE_BASIC_INFORMATION - 1000). */
-
-	inbuf.data = inbuf_store;
-	inbuf.length = sizeof(inbuf_store);
-	data_blob_clear(&inbuf);
-
-	SSVAL(inbuf.data, 32, attr);
-	if (mtime != 0) {
-		put_long_date((char *)inbuf.data + 16,mtime);
-	}
-	/* Set all the other times to -1. */
-	SBVAL(inbuf.data, 0, 0xFFFFFFFFFFFFFFFFLL);
-	SBVAL(inbuf.data, 8, 0xFFFFFFFFFFFFFFFFLL);
-	SBVAL(inbuf.data, 24, 0xFFFFFFFFFFFFFFFFLL);
-
 	status = smb2cli_set_info(cli->conn,
 				cli->timeout,
 				cli->smb2.session,
 				cli->smb2.tcon,
-				1, /* in_info_type */
-				SMB_FILE_BASIC_INFORMATION - 1000, /* in_file_info_class */
-				&inbuf, /* in_input_buffer */
+				in_info_type,
+				in_file_info_class,
+				p_in_data, /* in_input_buffer */
 				0, /* in_additional_info */
 				ph->fid_persistent,
 				ph->fid_volatile);
@@ -1601,6 +1753,68 @@ NTSTATUS cli_smb2_setatr(struct cli_state *cli,
 	TALLOC_FREE(frame);
 	return status;
 }
+
+
+/***************************************************************
+ Wrapper that allows SMB2 to set pathname attributes.
+ Synchronous only.
+***************************************************************/
+
+NTSTATUS cli_smb2_setatr(struct cli_state *cli,
+			const char *name,
+			uint16_t attr,
+			time_t mtime)
+{
+	uint8_t inbuf_store[40];
+	DATA_BLOB inbuf = data_blob_null;
+
+	/* setinfo on the handle with info_type SMB2_SETINFO_FILE (1),
+	   level 4 (SMB_FILE_BASIC_INFORMATION - 1000). */
+
+	inbuf.data = inbuf_store;
+	inbuf.length = sizeof(inbuf_store);
+	data_blob_clear(&inbuf);
+
+	/*
+	 * SMB1 uses attr == 0 to clear all attributes
+	 * on a file (end up with FILE_ATTRIBUTE_NORMAL),
+	 * and attr == FILE_ATTRIBUTE_NORMAL to mean ignore
+	 * request attribute change.
+	 *
+	 * SMB2 uses exactly the reverse. Unfortunately as the
+	 * cli_setatr() ABI is exposed inside libsmbclient,
+	 * we must make the SMB2 cli_smb2_setatr() call
+	 * export the same ABI as the SMB1 cli_setatr()
+	 * which calls it. This means reversing the sense
+	 * of the requested attr argument if it's zero
+	 * or FILE_ATTRIBUTE_NORMAL.
+	 *
+	 * See BUG: https://bugzilla.samba.org/show_bug.cgi?id=12899
+	 */
+
+	if (attr == 0) {
+		attr = FILE_ATTRIBUTE_NORMAL;
+	} else if (attr == FILE_ATTRIBUTE_NORMAL) {
+		attr = 0;
+	}
+
+	SSVAL(inbuf.data, 32, attr);
+	if (mtime != 0) {
+		put_long_date((char *)inbuf.data + 16,mtime);
+	}
+	/* Set all the other times to -1. */
+	SBVAL(inbuf.data, 0, 0xFFFFFFFFFFFFFFFFLL);
+	SBVAL(inbuf.data, 8, 0xFFFFFFFFFFFFFFFFLL);
+	SBVAL(inbuf.data, 24, 0xFFFFFFFFFFFFFFFFLL);
+
+	return cli_smb2_setpathinfo(cli,
+				name,
+				1, /* in_info_type */
+				/* in_file_info_class */
+				SMB_FILE_BASIC_INFORMATION - 1000,
+				&inbuf);
+}
+
 
 /***************************************************************
  Wrapper that allows SMB2 to set file handle times.
@@ -2010,8 +2224,9 @@ NTSTATUS cli_smb2_set_security_descriptor(struct cli_state *cli,
 ***************************************************************/
 
 NTSTATUS cli_smb2_rename(struct cli_state *cli,
-			const char *fname_src,
-			const char *fname_dst)
+			 const char *fname_src,
+			 const char *fname_dst,
+			 bool replace)
 {
 	NTSTATUS status;
 	DATA_BLOB inbuf = data_blob_null;
@@ -2089,6 +2304,10 @@ NTSTATUS cli_smb2_rename(struct cli_state *cli,
 	if (inbuf.data == NULL) {
 		status = NT_STATUS_NO_MEMORY;
 		goto fail;
+	}
+
+	if (replace) {
+		SCVAL(inbuf.data, 0, 1);
 	}
 
 	SIVAL(inbuf.data, 16, converted_size_bytes);

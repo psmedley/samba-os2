@@ -28,6 +28,9 @@
 #include "cluster/cluster.h"
 #include "param/param.h"
 #include "ldb_wrap.h"
+#include "lib/messaging/messaging.h"
+#include "lib/util/debug.h"
+#include "source3/lib/messages_dgm.h"
 
 struct standard_child_state {
 	const char *name;
@@ -37,7 +40,7 @@ struct standard_child_state {
 	struct tevent_fd *from_child_fde;
 };
 
-NTSTATUS process_model_standard_init(void);
+NTSTATUS process_model_standard_init(TALLOC_CTX *);
 
 /* we hold a pipe open in the parent, and the any child
    processes wait for EOF on that pipe. This ensures that
@@ -53,8 +56,36 @@ static void standard_model_init(void)
 
 	rc = pipe(child_pipe);
 	if (rc < 0) {
-		smb_panic("Failed to initialze pipe!");
+		smb_panic("Failed to initialize pipe!");
 	}
+}
+
+static void sighup_signal_handler(struct tevent_context *ev,
+				struct tevent_signal *se,
+				int signum, int count, void *siginfo,
+				void *private_data)
+{
+	debug_schedule_reopen_logs();
+}
+
+static void sigterm_signal_handler(struct tevent_context *ev,
+				struct tevent_signal *se,
+				int signum, int count, void *siginfo,
+				void *private_data)
+{
+#if HAVE_GETPGRP
+	if (getpgrp() == getpid()) {
+		/*
+		 * We're the process group leader, send
+		 * SIGTERM to our process group.
+		 */
+		DEBUG(0,("SIGTERM: killing children\n"));
+		kill(-getpgrp(), SIGTERM);
+	}
+#endif
+	DEBUG(0,("Exiting pid %u on SIGTERM\n", (unsigned int)getpid()));
+	talloc_free(ev);
+	exit(127);
 }
 
 /*
@@ -64,6 +95,7 @@ static void standard_pipe_handler(struct tevent_context *event_ctx, struct teven
 				  uint16_t flags, void *private_data)
 {
 	DEBUG(10,("Child %d exiting\n", (int)getpid()));
+	talloc_free(event_ctx);
 	exit(0);
 }
 
@@ -83,6 +115,8 @@ static void standard_child_pipe_handler(struct tevent_context *ev,
 		= talloc_get_type_abort(private_data, struct standard_child_state);
 	int status = 0;
 	pid_t pid;
+
+	messaging_dgm_cleanup(state->pid);
 
 	/* the child has closed the pipe, assume its dead */
 	errno = 0;
@@ -210,6 +244,8 @@ static void standard_accept_connection(struct tevent_context *ev,
 	pid_t pid;
 	struct socket_address *c, *s;
 	struct standard_child_state *state;
+	struct tevent_fd *fde = NULL;
+	struct tevent_signal *se = NULL;
 
 	state = setup_standard_child_pipe(ev, NULL);
 	if (state == NULL) {
@@ -270,11 +306,41 @@ static void standard_accept_connection(struct tevent_context *ev,
 	/* tdb needs special fork handling */
 	ldb_wrap_fork_hook();
 
-	tevent_add_fd(ev, ev, child_pipe[0], TEVENT_FD_READ,
+	/* Must be done after a fork() to reset messaging contexts. */
+	status = imessaging_reinit_all();
+	if (!NT_STATUS_IS_OK(status)) {
+		smb_panic("Failed to re-initialise imessaging after fork");
+	}
+
+	fde = tevent_add_fd(ev, ev, child_pipe[0], TEVENT_FD_READ,
 		      standard_pipe_handler, NULL);
+	if (fde == NULL) {
+		smb_panic("Failed to add fd handler after fork");
+	}
+
 	if (child_pipe[1] != -1) {
 		close(child_pipe[1]);
 		child_pipe[1] = -1;
+	}
+
+	se = tevent_add_signal(ev,
+				ev,
+				SIGHUP,
+				0,
+				sighup_signal_handler,
+				NULL);
+	if (se == NULL) {
+		smb_panic("Failed to add SIGHUP handler after fork");
+	}
+
+	se = tevent_add_signal(ev,
+				ev,
+				SIGTERM,
+				0,
+				sigterm_signal_handler,
+				NULL);
+	if (se == NULL) {
+		smb_panic("Failed to add SIGTERM handler after fork");
 	}
 
 	/* setup the process title */
@@ -309,7 +375,10 @@ static void standard_new_task(struct tevent_context *ev,
 			      void *private_data)
 {
 	pid_t pid;
+	NTSTATUS status;
 	struct standard_child_state *state;
+	struct tevent_fd *fde = NULL;
+	struct tevent_signal *se = NULL;
 
 	state = setup_standard_child_pipe(ev, service_name);
 	if (state == NULL) {
@@ -346,11 +415,40 @@ static void standard_new_task(struct tevent_context *ev,
 	/* ldb/tdb need special fork handling */
 	ldb_wrap_fork_hook();
 
-	tevent_add_fd(ev, ev, child_pipe[0], TEVENT_FD_READ,
+	/* Must be done after a fork() to reset messaging contexts. */
+	status = imessaging_reinit_all();
+	if (!NT_STATUS_IS_OK(status)) {
+		smb_panic("Failed to re-initialise imessaging after fork");
+	}
+
+	fde = tevent_add_fd(ev, ev, child_pipe[0], TEVENT_FD_READ,
 		      standard_pipe_handler, NULL);
+	if (fde == NULL) {
+		smb_panic("Failed to add fd handler after fork");
+	}
 	if (child_pipe[1] != -1) {
 		close(child_pipe[1]);
 		child_pipe[1] = -1;
+	}
+
+	se = tevent_add_signal(ev,
+				ev,
+				SIGHUP,
+				0,
+				sighup_signal_handler,
+				NULL);
+	if (se == NULL) {
+		smb_panic("Failed to add SIGHUP handler after fork");
+	}
+
+	se = tevent_add_signal(ev,
+				ev,
+				SIGTERM,
+				0,
+				sigterm_signal_handler,
+				NULL);
+	if (se == NULL) {
+		smb_panic("Failed to add SIGTERM handler after fork");
 	}
 
 	setproctitle("task %s server_id[%d]", service_name, (int)pid);
@@ -374,11 +472,12 @@ _NORETURN_ static void standard_terminate(struct tevent_context *ev, struct load
 {
 	DEBUG(2,("standard_terminate: reason[%s]\n",reason));
 
-	talloc_free(ev);
-
 	/* this reload_charcnv() has the effect of freeing the iconv context memory,
 	   which makes leak checking easier */
 	reload_charcnv(lp_ctx);
+
+	/* Always free event context last before exit. */
+	talloc_free(ev);
 
 	/* terminate this process */
 	exit(0);
@@ -406,7 +505,7 @@ static const struct model_ops standard_ops = {
 /*
   initialise the standard process model, registering ourselves with the process model subsystem
  */
-NTSTATUS process_model_standard_init(void)
+NTSTATUS process_model_standard_init(TALLOC_CTX *ctx)
 {
 	return register_process_model(&standard_ops);
 }

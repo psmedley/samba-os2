@@ -26,7 +26,7 @@
 #include "system/shmem.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
-#include "lib/pthreadpool/pthreadpool_pipe.h"
+#include "../lib/pthreadpool/pthreadpool_pipe.h"
 #ifdef HAVE_LINUX_FALLOC_H
 #include <linux/falloc.h>
 #endif
@@ -496,8 +496,8 @@ static struct vfs_fn_pointers vfs_aio_pthread_fns = {
 #endif
 };
 
-NTSTATUS vfs_aio_pthread_init(void);
-NTSTATUS vfs_aio_pthread_init(void)
+NTSTATUS vfs_aio_pthread_init(TALLOC_CTX *);
+NTSTATUS vfs_aio_pthread_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION,
 				"aio_pthread", &vfs_aio_pthread_fns);

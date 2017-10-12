@@ -23,26 +23,19 @@ redhat)
 	;;
 esac
 
-service_start ()
-{
-    service $service_name stop > /dev/null 2>&1
-    service $service_name start
-}
-
 loadconfig
-
-ctdb_start_stop_service
 
 is_ctdb_managed_service || exit 0
 
 case "$1" in
 startup)
-	ctdb_service_start
-        ;;
+	service "$service_name" stop > /dev/null 2>&1
+	service "$service_name" start || exit $?
+	;;
 
 shutdown)
-        ctdb_service_stop
-        ;;
+	service "$service_name"_stop
+	;;
 
 monitor)
         ctdb_check_unix_socket "$CTDB_CLAMD_SOCKET" || exit $?

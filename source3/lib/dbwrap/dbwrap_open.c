@@ -26,6 +26,7 @@
 #include "dbwrap/dbwrap_ctdb.h"
 #include "lib/param/param.h"
 #include "lib/cluster_support.h"
+#include "lib/messages_ctdbd.h"
 #include "util_tdb.h"
 #include "ctdbd_conn.h"
 #include "messages.h"
@@ -97,7 +98,7 @@ struct db_context *db_open(TALLOC_CTX *mem_ctx,
 
 	if (tdb_flags & TDB_CLEAR_IF_FIRST) {
 		const char *base;
-		bool try_mutex = false;
+		bool try_mutex = true;
 		bool require_mutex = false;
 
 		base = strrchr_m(name, '/');

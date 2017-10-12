@@ -39,6 +39,8 @@ finally:
 
 have_man_pages_support = ("XSLTPROC_MANPAGES" in config_hash)
 with_cmocka = ("HAVE_CMOCKA" in config_hash)
+with_pam = ("WITH_PAM" in config_hash)
+pam_wrapper_so_path=config_hash["LIBPAM_WRAPPER_SO_PATH"]
 
 planpythontestsuite("none", "samba.tests.source")
 if have_man_pages_support:
@@ -52,16 +54,16 @@ else:
     planpythontestsuite("none", "subunit.tests.test_suite")
 planpythontestsuite("none", "samba.tests.blackbox.ndrdump")
 planpythontestsuite("none", "api", name="ldb.python", extra_path=['lib/ldb/tests/python'])
-planpythontestsuite("none", "samba.tests.credentials")
+planpythontestsuite("none", "samba.tests.credentials", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.registry")
-planpythontestsuite("none", "samba.tests.auth")
-planpythontestsuite("none", "samba.tests.get_opt")
+planpythontestsuite("none", "samba.tests.auth", py3_compatible=True)
+planpythontestsuite("none", "samba.tests.get_opt", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.security")
-planpythontestsuite("none", "samba.tests.dcerpc.misc")
+planpythontestsuite("none", "samba.tests.dcerpc.misc", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.dcerpc.integer")
-planpythontestsuite("none", "samba.tests.param")
+planpythontestsuite("none", "samba.tests.param", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.upgrade")
-planpythontestsuite("none", "samba.tests.core")
+planpythontestsuite("none", "samba.tests.core", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.provision")
 planpythontestsuite("none", "samba.tests.samba3")
 planpythontestsuite("none", "samba.tests.strings")
@@ -130,7 +132,29 @@ planpythontestsuite("none", "samba.tests.kcc.graph_utils")
 planpythontestsuite("none", "samba.tests.kcc.kcc_utils")
 planpythontestsuite("none", "samba.tests.kcc.ldif_import_export")
 plantestsuite("wafsamba.duplicate_symbols", "none", [os.path.join(srcdir(), "buildtools/wafsamba/test_duplicate_symbol.sh")])
+plantestsuite(
+    "script.traffic_summary", "none",
+    [os.path.join(srcdir(), "script/tests/test_traffic_summary.sh"),
+     configuration])
+planpythontestsuite("none", "samba.tests.glue", py3_compatible=True)
+
+if with_pam:
+    plantestsuite("samba.tests.pam_winbind(local)", "ad_member",
+                  [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                   valgrindify(python), pam_wrapper_so_path,
+                   "$SERVER", "$USERNAME", "$PASSWORD"])
+    plantestsuite("samba.tests.pam_winbind(domain)", "ad_member",
+                  [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                   valgrindify(python), pam_wrapper_so_path,
+                   "$DOMAIN", "$DC_USERNAME", "$DC_PASSWORD"])
 
 if with_cmocka:
     plantestsuite("samba.unittests.krb5samba", "none",
                   [os.path.join(bindir(), "default/testsuite/unittests/test_krb5samba")])
+    plantestsuite("samba.unittests.sambafs_srv_pipe", "none",
+                  [os.path.join(bindir(), "default/testsuite/unittests/test_sambafs_srv_pipe")])
+    plantestsuite("samba.unittests.lib_util_modules", "none",
+                  [os.path.join(bindir(), "default/testsuite/unittests/test_lib_util_modules")])
+
+    plantestsuite("samba.unittests.smb1cli_session", "none",
+                  [os.path.join(bindir(), "default/libcli/smb/test_smb1cli_session")])

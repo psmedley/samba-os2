@@ -265,6 +265,7 @@ void ctdb_input_pkt(struct ctdb_context *ctdb, struct ctdb_req_header *hdr)
 
 	case CTDB_REQ_KEEPALIVE:
 		CTDB_INCREMENT_STAT(ctdb, keepalive_packets_recv);
+		ctdb_request_keepalive(ctdb, hdr);
 		break;
 
 	default:
@@ -294,7 +295,7 @@ void ctdb_node_dead(struct ctdb_node *node)
 	node->rx_cnt = 0;
 	node->dead_count = 0;
 
-	DEBUG(DEBUG_NOTICE,("%s: node %s is dead: %u connected\n", 
+	DEBUG(DEBUG_ERR,("%s: node %s is dead: %u connected\n",
 		 node->ctdb->name, node->name, node->ctdb->num_connected));
 	ctdb_daemon_cancel_controls(node->ctdb, node);
 
@@ -321,7 +322,7 @@ void ctdb_node_connected(struct ctdb_node *node)
 	node->dead_count = 0;
 	node->flags &= ~NODE_FLAGS_DISCONNECTED;
 	node->flags |= NODE_FLAGS_UNHEALTHY;
-	DEBUG(DEBUG_NOTICE,
+	DEBUG(DEBUG_ERR,
 	      ("%s: connected to %s - %u connected\n", 
 	       node->ctdb->name, node->name, node->ctdb->num_connected));
 }

@@ -303,7 +303,6 @@ typedef char fstring[FSTRING_LEN];
 /* Lists, trees, caching, database... */
 #include "../lib/util/samba_util.h"
 #include "../lib/util/util_net.h"
-#include "../lib/util/memory.h"
 #include "../lib/util/attr.h"
 #include "../lib/util/tsort.h"
 #include "../lib/util/dlinklist.h"
@@ -318,6 +317,7 @@ typedef char fstring[FSTRING_LEN];
 
 #include "../libcli/util/ntstatus.h"
 #include "../libcli/util/error.h"
+#include "../libcli/auth/netlogon_creds_cli.h"
 #include "../lib/util/charset/charset.h"
 #include "dynconfig/dynconfig.h"
 #include "locking.h"

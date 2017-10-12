@@ -40,7 +40,7 @@
 #include <kdc.h>
 #include <hdb.h>
 
-NTSTATUS server_service_kdc_init(void);
+NTSTATUS server_service_kdc_init(TALLOC_CTX *);
 
 extern struct krb5plugin_windc_ftable windc_plugin_table;
 
@@ -391,6 +391,7 @@ static void kdc_task_init(struct task_server *task)
 
 	kdc->base_ctx->ev_ctx = task->event_ctx;
 	kdc->base_ctx->lp_ctx = task->lp_ctx;
+	kdc->base_ctx->msg_ctx = task->msg_ctx;
 
 	status = hdb_samba4_create_kdc(kdc->base_ctx,
 				       kdc->smb_krb5_context->krb5_context,
@@ -465,7 +466,7 @@ static void kdc_task_init(struct task_server *task)
 
 
 /* called at smbd startup - register ourselves as a server service */
-NTSTATUS server_service_kdc_init(void)
+NTSTATUS server_service_kdc_init(TALLOC_CTX *ctx)
 {
-	return register_server_service("kdc", kdc_task_init);
+	return register_server_service(ctx, "kdc", kdc_task_init);
 }

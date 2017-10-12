@@ -19,6 +19,7 @@
 
 #include "includes.h"
 #include "net.h"
+#include "lib/util/server_id.h"
 #include "g_lock.h"
 #include "messages.h"
 
@@ -108,13 +109,21 @@ done:
 	return state.result;
 }
 
-static int net_g_lock_dump_fn(struct server_id pid, enum g_lock_type lock_type,
-			      void *private_data)
+static void net_g_lock_dump_fn(const struct g_lock_rec *locks,
+			       size_t num_locks,
+			       const uint8_t *data,
+			       size_t datalen,
+			       void *private_data)
 {
-	struct server_id_buf idbuf;
-	d_printf("%s: %s\n", server_id_str_buf(pid, &idbuf),
-		 (lock_type & 1) ? "WRITE" : "READ");
-	return 0;
+	size_t i;
+
+	for (i=0; i<num_locks; i++) {
+		const struct g_lock_rec *l = &locks[i];
+		struct server_id_buf idbuf;
+		d_printf("%s: %s\n", server_id_str_buf(l->pid, &idbuf),
+			 (l->lock_type & 1) ? "WRITE" : "READ");
+	}
+	dump_data_file(data, datalen, true, stdout);
 }
 
 static int net_g_lock_dump(struct net_context *c, int argc, const char **argv)

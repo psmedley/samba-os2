@@ -69,6 +69,8 @@
 #include "tdb.h"
 #include "librpc/gen_ndr/nbt.h"
 #include "libds/common/roles.h"
+#include "lib/util/samba_util.h"
+#include "libcli/auth/ntlm_check.h"
 
 #ifdef HAVE_HTTPCONNECTENCRYPT
 #include <cups/http.h>
@@ -81,6 +83,16 @@
 struct loadparm_service *lpcfg_default_service(struct loadparm_context *lp_ctx)
 {
 	return lp_ctx->sDefault;
+}
+
+int lpcfg_rpc_low_port(struct loadparm_context *lp_ctx)
+{
+	return lp_ctx->globals->rpc_low_port;
+}
+
+int lpcfg_rpc_high_port(struct loadparm_context *lp_ctx)
+{
+	return lp_ctx->globals->rpc_high_port;
 }
 
 /**
@@ -1254,10 +1266,14 @@ bool handle_charset(struct loadparm_context *lp_ctx, struct loadparm_service *se
 {
 	if (lp_ctx->s3_fns) {
 		if (*ptr == NULL || strcmp(*ptr, pszParmValue) != 0) {
-			global_iconv_handle = smb_iconv_handle_reinit(NULL,
-							lpcfg_dos_charset(lp_ctx),
-							lpcfg_unix_charset(lp_ctx),
-							true, global_iconv_handle);
+			struct smb_iconv_handle *ret = NULL;
+
+			ret = reinit_iconv_handle(NULL,
+						  lpcfg_dos_charset(lp_ctx),
+						  lpcfg_unix_charset(lp_ctx));
+			if (ret == NULL) {
+				smb_panic("reinit_iconv_handle failed");
+			}
 		}
 
 	}
@@ -1292,16 +1308,19 @@ bool handle_dos_charset(struct loadparm_context *lp_ctx, struct loadparm_service
 		}
 
 		if (*ptr == NULL || strcmp(*ptr, pszParmValue) != 0) {
+			struct smb_iconv_handle *ret = NULL;
 			if (is_utf8) {
 				DEBUG(0,("ERROR: invalid DOS charset: 'dos charset' must not "
 					"be UTF8, using (default value) %s instead.\n",
 					DEFAULT_DOS_CHARSET));
 				pszParmValue = DEFAULT_DOS_CHARSET;
 			}
-			global_iconv_handle = smb_iconv_handle_reinit(NULL,
-							lpcfg_dos_charset(lp_ctx),
-							lpcfg_unix_charset(lp_ctx),
-							true, global_iconv_handle);
+			ret = reinit_iconv_handle(NULL,
+						lpcfg_dos_charset(lp_ctx),
+						lpcfg_unix_charset(lp_ctx));
+			if (ret == NULL) {
+				smb_panic("reinit_iconv_handle failed");
+			}
 		}
 	}
 
@@ -1431,6 +1450,37 @@ bool handle_smb_ports(struct loadparm_context *lp_ctx, struct loadparm_service *
 			return false;
 		}
 	}
+
+	return true;
+}
+
+bool handle_rpc_server_dynamic_port_range(struct loadparm_context *lp_ctx,
+					  struct loadparm_service *service,
+					  const char *pszParmValue,
+					  char **ptr)
+{
+	int low_port = -1, high_port = -1;
+	int rc;
+
+	if (pszParmValue == NULL || pszParmValue[0] == '\0') {
+		return false;
+	}
+
+	rc = sscanf(pszParmValue, "%d - %d", &low_port, &high_port);
+	if (rc != 2) {
+		return false;
+	}
+
+	if (low_port > high_port) {
+		return false;
+	}
+
+	if (low_port < SERVER_TCP_PORT_MIN|| high_port > SERVER_TCP_PORT_MAX) {
+		return false;
+	}
+
+	lp_ctx->globals->rpc_low_port = low_port;
+	lp_ctx->globals->rpc_high_port = high_port;
 
 	return true;
 }
@@ -1667,6 +1717,50 @@ static bool set_variable_helper(TALLOC_CTX *mem_ctx, int parmnum, void *parm_ptr
 
 	return true;
 
+}
+
+bool handle_name_resolve_order(struct loadparm_context *lp_ctx,
+			       struct loadparm_service *service,
+			       const char *pszParmValue, char **ptr)
+{
+	const char **valid_values = NULL;
+	const char **values_to_set = NULL;
+	int i;
+	bool value_is_valid = false;
+	valid_values = str_list_make_v3_const(NULL,
+					      DEFAULT_NAME_RESOLVE_ORDER,
+					      NULL);
+	if (valid_values == NULL) {
+		DBG_ERR("OOM: failed to make string list from %s\n",
+			DEFAULT_NAME_RESOLVE_ORDER);
+		goto out;
+	}
+	values_to_set = str_list_make_v3_const(lp_ctx->globals->ctx,
+					       pszParmValue,
+					       NULL);
+	if (values_to_set == NULL) {
+		DBG_ERR("OOM: failed to make string list from %s\n",
+			pszParmValue);
+		goto out;
+	}
+	TALLOC_FREE(lp_ctx->globals->name_resolve_order);
+	for (i = 0; values_to_set[i] != NULL; i++) {
+		value_is_valid = str_list_check(valid_values, values_to_set[i]);
+		if (!value_is_valid) {
+			DBG_ERR("WARNING: Ignoring invalid list value '%s' "
+				"for parameter 'name resolve order'\n",
+				values_to_set[i]);
+			break;
+		}
+	}
+out:
+	if (value_is_valid) {
+		lp_ctx->globals->name_resolve_order = values_to_set;
+	} else {
+		TALLOC_FREE(values_to_set);
+	}
+	TALLOC_FREE(valid_values);
+	return value_is_valid;
 }
 
 static bool set_variable(TALLOC_CTX *mem_ctx, struct loadparm_service *service,
@@ -2458,23 +2552,6 @@ static int lpcfg_destructor(struct loadparm_context *lp_ctx)
 	return 0;
 }
 
-struct defaults_hook_data {
-	const char *name;
-	lpcfg_defaults_hook hook;
-	struct defaults_hook_data *prev, *next;
-} *defaults_hooks = NULL;
-
-
-bool lpcfg_register_defaults_hook(const char *name, lpcfg_defaults_hook hook)
-{
-	struct defaults_hook_data *hook_data = talloc(talloc_autofree_context(),
-												  struct defaults_hook_data);
-	hook_data->name = talloc_strdup(hook_data, name);
-	hook_data->hook = hook;
-	DLIST_ADD(defaults_hooks, hook_data);
-	return false;
-}
-
 /**
  * Initialise the global parameter structure.
  *
@@ -2487,7 +2564,6 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	struct loadparm_context *lp_ctx;
 	struct parmlist_entry *parm;
 	char *logfile;
-	struct defaults_hook_data *defaults_hook;
 
 	lp_ctx = talloc_zero(mem_ctx, struct loadparm_context);
 	if (lp_ctx == NULL)
@@ -2498,6 +2574,8 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lp_ctx->globals = talloc_zero(lp_ctx, struct loadparm_global);
 	/* This appears odd, but globals in s3 isn't a pointer */
 	lp_ctx->globals->ctx = lp_ctx->globals;
+	lp_ctx->globals->rpc_low_port = SERVER_TCP_LOW_PORT;
+	lp_ctx->globals->rpc_high_port = SERVER_TCP_HIGH_PORT;
 	lp_ctx->sDefault = talloc_zero(lp_ctx, struct loadparm_service);
 	lp_ctx->flags = talloc_zero_array(lp_ctx, unsigned int, num_parameters());
 
@@ -2562,7 +2640,9 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	myname = get_myname(lp_ctx);
 	lpcfg_do_global_parameter(lp_ctx, "netbios name", myname);
 	talloc_free(myname);
-	lpcfg_do_global_parameter(lp_ctx, "name resolve order", "lmhosts wins host bcast");
+	lpcfg_do_global_parameter(lp_ctx,
+				  "name resolve order",
+				  DEFAULT_NAME_RESOLVE_ORDER);
 
 	lpcfg_do_global_parameter(lp_ctx, "fstype", "NTFS");
 
@@ -2630,7 +2710,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "ClientLanManAuth", "False");
 	lpcfg_do_global_parameter(lp_ctx, "ClientNTLMv2Auth", "True");
 	lpcfg_do_global_parameter(lp_ctx, "LanmanAuth", "False");
-	lpcfg_do_global_parameter(lp_ctx, "NTLMAuth", "False");
+	lpcfg_do_global_parameter(lp_ctx, "NTLMAuth", "ntlmv2-only");
 	lpcfg_do_global_parameter(lp_ctx, "RawNTLMv2Auth", "False");
 	lpcfg_do_global_parameter(lp_ctx, "client use spnego principal", "False");
 
@@ -2648,12 +2728,16 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "winbind sealed pipes", "True");
 	lpcfg_do_global_parameter(lp_ctx, "require strong key", "True");
 	lpcfg_do_global_parameter(lp_ctx, "winbindd socket directory", dyn_WINBINDD_SOCKET_DIR);
-	lpcfg_do_global_parameter(lp_ctx, "winbindd privileged socket directory", dyn_WINBINDD_PRIVILEGED_SOCKET_DIR);
 	lpcfg_do_global_parameter(lp_ctx, "ntp signd socket directory", dyn_NTP_SIGND_SOCKET_DIR);
 	lpcfg_do_global_parameter_var(lp_ctx, "dns update command", "%s/samba_dnsupdate", dyn_SCRIPTSBINDIR);
 	lpcfg_do_global_parameter_var(lp_ctx, "spn update command", "%s/samba_spnupdate", dyn_SCRIPTSBINDIR);
 	lpcfg_do_global_parameter_var(lp_ctx, "samba kcc command",
 					"%s/samba_kcc", dyn_SCRIPTSBINDIR);
+#ifdef MIT_KDC_PATH
+	lpcfg_do_global_parameter_var(lp_ctx,
+				      "mit kdc command",
+				      MIT_KDC_PATH);
+#endif
 	lpcfg_do_global_parameter(lp_ctx, "template shell", "/bin/false");
 	lpcfg_do_global_parameter(lp_ctx, "template homedir", "/home/%D/%U");
 
@@ -2752,6 +2836,8 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 
 	lpcfg_do_global_parameter(lp_ctx, "guest account", GUEST_ACCOUNT);
 
+	lpcfg_do_global_parameter(lp_ctx, "map untrusted to domain", "auto");
+
 	lpcfg_do_global_parameter(lp_ctx, "client schannel", "auto");
 
 	lpcfg_do_global_parameter(lp_ctx, "smb encrypt", "default");
@@ -2789,6 +2875,8 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "kernel share modes", "yes");
 
 	lpcfg_do_global_parameter(lp_ctx, "strict locking", "Auto");
+
+	lpcfg_do_global_parameter(lp_ctx, "strict sync", "yes");
 
 	lpcfg_do_global_parameter(lp_ctx, "map readonly", "yes");
 
@@ -2902,19 +2990,9 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 
 	lpcfg_do_global_parameter(lp_ctx, "kerberos encryption types", "all");
 
-	/* Allow modules to adjust defaults */
-	for (defaults_hook = defaults_hooks; defaults_hook;
-		 defaults_hook = defaults_hook->next) {
-		bool ret;
-
-		ret = defaults_hook->hook(lp_ctx);
-		if (!ret) {
-			DEBUG(1, ("Defaults hook %s failed to run.",
-					  defaults_hook->name));
-			talloc_free(lp_ctx);
-			return NULL;
-		}
-	}
+	lpcfg_do_global_parameter(lp_ctx,
+				  "rpc server dynamic port range",
+				  "49152-65535");
 
 	for (i = 0; parm_table[i].label; i++) {
 		if (!(lp_ctx->flags[i] & FLAG_CMDLINE)) {
@@ -3254,16 +3332,17 @@ struct smb_iconv_handle *lpcfg_iconv_handle(struct loadparm_context *lp_ctx)
 
 _PUBLIC_ void reload_charcnv(struct loadparm_context *lp_ctx)
 {
-	struct smb_iconv_handle *old_ic = lp_ctx->iconv_handle;
 	if (!lp_ctx->global) {
 		return;
 	}
 
-	if (old_ic == NULL) {
-		old_ic = global_iconv_handle;
+	lp_ctx->iconv_handle =
+		reinit_iconv_handle(lp_ctx,
+				    lpcfg_dos_charset(lp_ctx),
+				    lpcfg_unix_charset(lp_ctx));
+	if (lp_ctx->iconv_handle == NULL) {
+		smb_panic("reinit_iconv_handle failed");
 	}
-	lp_ctx->iconv_handle = smb_iconv_handle_reinit_lp(lp_ctx, lp_ctx, old_ic);
-	global_iconv_handle = lp_ctx->iconv_handle;
 }
 
 _PUBLIC_ char *lpcfg_tls_keyfile(TALLOC_CTX *mem_ctx, struct loadparm_context *lp_ctx)
@@ -3323,7 +3402,7 @@ int lpcfg_client_max_protocol(struct loadparm_context *lp_ctx)
 {
 	int client_max_protocol = lpcfg__client_max_protocol(lp_ctx);
 	if (client_max_protocol == PROTOCOL_DEFAULT) {
-		return PROTOCOL_NT1;
+		return PROTOCOL_LATEST;
 	}
 	return client_max_protocol;
 }
@@ -3431,4 +3510,20 @@ int lpcfg_tdb_flags(struct loadparm_context *lp_ctx, int tdb_flags)
 		tdb_flags |= TDB_NOMMAP;
 	}
 	return tdb_flags;
+}
+
+/*
+ * Do not allow LanMan auth if unless NTLMv1 is also allowed
+ *
+ * This also ensures it is disabled if NTLM is totally disabled
+ */
+bool lpcfg_lanman_auth(struct loadparm_context *lp_ctx)
+{
+	enum ntlm_auth_level ntlm_auth_level = lpcfg_ntlm_auth(lp_ctx);
+
+	if (ntlm_auth_level == NTLM_AUTH_ON) {
+		return lpcfg__lanman_auth(lp_ctx);
+	} else {
+		return false;
+	}
 }

@@ -2,12 +2,12 @@
 .\"     Title: ctdbd.conf
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDBD\&.CONF" "5" "08/08/2017" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDBD\&.CONF" "5" "09/21/2017" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -100,7 +100,7 @@ Defaults to
 .sp
 Apart from a DIRECTORY, this can take a special value of the form
 \fBtmpfs\fR[:\fIOPTIONS\fR]\&. OPTIONS is a comma\-separated list of any permissible options to the tmpfs filesystem\&. The only pre\-specified default is
-\fBmode=700\fR, which can overriden by specifying
+\fBmode=700\fR, which can overridden by specifying
 \fBmode\fR
 in OPTIONS\&. It probably makes sense to specify a maximum
 \fBsize\fR\&.
@@ -692,6 +692,20 @@ Default is the included
 \fBnfs\-linux\-kernel\-callout\fR\&.
 .RE
 .PP
+CTDB_NFS_CHECKS_DIR=\fIDIRECTORY\fR
+.RS 4
+Specifies the path to a DIRECTORY containing files that describe how to monitor the responsiveness of NFS RPC services\&. See the README file for this directory for an explanation of the contents of these "check" files\&.
+.sp
+CTDB_NFS_CHECKS_DIR can be used to point to different sets of checks for different NFS servers\&.
+.sp
+One way of using this is to have it point to, say,
+/usr/local/etc/ctdb/nfs\-checks\-enabled\&.d
+and populate it with symbolic links to the desired check files\&. This avoids duplication and is upgrade\-safe\&.
+.sp
+Default is
+/usr/local/etc/ctdb/nfs\-checks\&.d, which contains NFS RPC checks suitable for Linux kernel NFS\&.
+.RE
+.PP
 CTDB_NFS_SKIP_SHARE_CHECK=yes|no
 .RS 4
 As part of monitoring, should CTDB skip the check for the existence of each directory exported via NFS\&. This may be desirable if there is a large number of exports\&.
@@ -921,13 +935,6 @@ variables\&.
 .sp
 No default\&.
 .RE
-.PP
-CTDB_SERVICE_AUTOSTARTSTOP=yes|no
-.RS 4
-When CTDB should start and stop services if they become managed or unmanaged\&.
-.sp
-Default is no\&.
-.RE
 .SH "TUNABLES CONFIGURATION"
 .PP
 CTDB tunables (see
@@ -1041,13 +1048,6 @@ Whether CTDB should simulate timing out monitor events\&. This uses the
 eventscript\&.
 .sp
 Default is no\&.
-.RE
-.PP
-CTDB_SCRIPT_DEBUGLEVEL=\fIDEBUGLEVEL\fR
-.RS 4
-DEBUGLEVEL is the level debugging messages printed by CTDB scripts\&. Setting this to a higher level (e\&.g\&. DEBUG) will cause some scripts to log more messages\&.
-.sp
-Default is NOTICE\&.
 .RE
 .PP
 CTDB_SUPPRESS_COREFILE=yes|no

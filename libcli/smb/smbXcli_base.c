@@ -468,6 +468,28 @@ bool smbXcli_conn_use_unicode(struct smbXcli_conn *conn)
 	return false;
 }
 
+bool smbXcli_conn_signing_mandatory(struct smbXcli_conn *conn)
+{
+	return conn->mandatory_signing;
+}
+
+/*
+ * [MS-SMB] 2.2.2.3.5 - SMB1 support for passing through
+ * query/set commands to the file system
+ */
+bool smbXcli_conn_support_passthrough(struct smbXcli_conn *conn)
+{
+	if (conn->protocol >= PROTOCOL_SMB2_02) {
+		return true;
+	}
+
+	if (conn->smb1.capabilities & CAP_W2K_SMBS) {
+		return true;
+	}
+
+	return false;
+}
+
 void smbXcli_conn_set_sockopt(struct smbXcli_conn *conn, const char *options)
 {
 	set_socket_options(conn->sock_fd, options);
@@ -1326,28 +1348,6 @@ static size_t smbXcli_iov_len(const struct iovec *iov, int count)
 	return ret;
 }
 
-static uint8_t *smbXcli_iov_concat(TALLOC_CTX *mem_ctx,
-				   const struct iovec *iov,
-				   int count)
-{
-	ssize_t buflen;
-	uint8_t *buf;
-
-	buflen = iov_buflen(iov, count);
-	if (buflen == -1) {
-		return NULL;
-	}
-
-	buf = talloc_array(mem_ctx, uint8_t, buflen);
-	if (buf == NULL) {
-		return NULL;
-	}
-
-	iov_buf(iov, count, buf, buflen);
-
-	return buf;
-}
-
 static void smb1cli_req_flags(enum protocol_types protocol,
 			      uint32_t smb1_capabilities,
 			      uint8_t smb_command,
@@ -1630,7 +1630,7 @@ static NTSTATUS smb1cli_conn_signv(struct smbXcli_conn *conn,
 
 	frame = talloc_stackframe();
 
-	buf = smbXcli_iov_concat(frame, &iov[1], iov_count - 1);
+	buf = iov_concat(frame, &iov[1], iov_count - 1);
 	if (buf == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -1666,6 +1666,9 @@ static NTSTATUS smb1cli_req_writev_submit(struct tevent_req *req,
 	}
 
 	if (state->conn->protocol > PROTOCOL_NT1) {
+		DBG_ERR("called for dialect[%s] server[%s]\n",
+			smb_protocol_types_string(state->conn->protocol),
+			smbXcli_conn_remote_name(state->conn));
 		return NT_STATUS_REVISION_MISMATCH;
 	}
 
@@ -1722,7 +1725,7 @@ static NTSTATUS smb1cli_req_writev_submit(struct tevent_req *req,
 	if (common_encryption_on(state->conn->smb1.trans_enc)) {
 		char *buf, *enc_buf;
 
-		buf = (char *)smbXcli_iov_concat(talloc_tos(), iov, iov_count);
+		buf = (char *)iov_concat(talloc_tos(), iov, iov_count);
 		if (buf == NULL) {
 			return NT_STATUS_NO_MEMORY;
 		}
@@ -2780,6 +2783,11 @@ void smb2cli_conn_set_max_credits(struct smbXcli_conn *conn,
 				  uint16_t max_credits)
 {
 	conn->smb2.max_credits = max_credits;
+}
+
+uint16_t smb2cli_conn_get_cur_credits(struct smbXcli_conn *conn)
+{
+	return conn->smb2.cur_credits;
 }
 
 uint8_t smb2cli_conn_get_io_priority(struct smbXcli_conn *conn)
@@ -4092,7 +4100,8 @@ struct tevent_req *smbXcli_negprot_send(TALLOC_CTX *mem_ctx,
 					struct smbXcli_conn *conn,
 					uint32_t timeout_msec,
 					enum protocol_types min_protocol,
-					enum protocol_types max_protocol)
+					enum protocol_types max_protocol,
+					uint16_t max_credits)
 {
 	struct tevent_req *req, *subreq;
 	struct smbXcli_negprot_state *state;
@@ -4125,6 +4134,10 @@ struct tevent_req *smbXcli_negprot_send(TALLOC_CTX *mem_ctx,
 	conn->max_protocol = max_protocol;
 	conn->protocol = PROTOCOL_NONE;
 
+	if (max_protocol >= PROTOCOL_SMB2_02) {
+		conn->smb2.max_credits = max_credits;
+	}
+
 	if ((min_protocol < PROTOCOL_SMB2_02) &&
 	    (max_protocol < PROTOCOL_SMB2_02)) {
 		/*
@@ -4146,16 +4159,6 @@ struct tevent_req *smbXcli_negprot_send(TALLOC_CTX *mem_ctx,
 		 * SMB2 only...
 		 */
 		conn->dispatch_incoming = smb2cli_conn_dispatch_incoming;
-
-		/*
-		 * As we're starting with an SMB2 negprot, emulate Windows
-		 * and ask for 31 credits in the initial SMB2 negprot.
-		 * If we don't and leave requested credits at
-		 * zero, MacOSX servers return zero credits on
-		 * the negprot reply and we fail to connect.
-		 */
-		smb2cli_conn_set_max_credits(conn,
-			WINDOWS_CLIENT_PURE_SMB2_NEGPROT_INITIAL_CREDIT_ASK);
 
 		subreq = smbXcli_negprot_smb2_subreq(state);
 		if (tevent_req_nomem(subreq, req)) {
@@ -4918,10 +4921,19 @@ static void smbXcli_negprot_smb2_done(struct tevent_req *subreq)
 		return;
 	}
 
+	/*
+	 * Here we are now at SMB3_11, so encryption should be
+	 * negotiated via context, not capabilities.
+	 */
+
 	if (conn->smb2.server.capabilities & SMB2_CAP_ENCRYPTION) {
-		tevent_req_nterror(req,
-				NT_STATUS_INVALID_NETWORK_RESPONSE);
-		return;
+		/*
+		 * Server set SMB2_CAP_ENCRYPTION capability,
+		 * but *SHOULD* not, not *MUST* not. Just mask it off.
+		 * NetApp seems to do this:
+		 * BUG: https://bugzilla.samba.org/show_bug.cgi?id=13009
+		 */
+		conn->smb2.server.capabilities &= ~SMB2_CAP_ENCRYPTION;
 	}
 
 	negotiate_context_offset = IVAL(body, 60);
@@ -5137,7 +5149,8 @@ NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 		goto fail;
 	}
 	req = smbXcli_negprot_send(frame, ev, conn, timeout_msec,
-				   min_protocol, max_protocol);
+				   min_protocol, max_protocol,
+				   WINDOWS_CLIENT_PURE_SMB2_NEGPROT_INITIAL_CREDIT_ASK);
 	if (req == NULL) {
 		goto fail;
 	}
@@ -6298,4 +6311,14 @@ void smb2cli_tcon_should_encrypt(struct smbXcli_tcon *tcon,
 bool smb2cli_tcon_is_encryption_on(struct smbXcli_tcon *tcon)
 {
 	return tcon->smb2.should_encrypt;
+}
+
+void smb2cli_conn_set_mid(struct smbXcli_conn *conn, uint64_t mid)
+{
+	conn->smb2.mid = mid;
+}
+
+uint64_t smb2cli_conn_get_mid(struct smbXcli_conn *conn)
+{
+	return conn->smb2.mid;
 }

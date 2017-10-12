@@ -33,6 +33,8 @@
 #include "lib/util/tevent_ntstatus.h"
 #include "lib/util/sys_rw.h"
 #include "lib/pthreadpool/pthreadpool_tevent.h"
+#include "librpc/gen_ndr/ndr_ioctl.h"
+#include "offload_token.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_VFS
@@ -54,11 +56,13 @@ static void vfswrap_disconnect(vfs_handle_struct *handle)
 
 /* Disk operations */
 
-static uint64_t vfswrap_disk_free(vfs_handle_struct *handle, const char *path,
-				  uint64_t *bsize, uint64_t *dfree,
-				  uint64_t *dsize)
+static uint64_t vfswrap_disk_free(vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				uint64_t *bsize,
+				uint64_t *dfree,
+				uint64_t *dsize)
 {
-	if (sys_fsusage(path, dfree, dsize) != 0) {
+	if (sys_fsusage(smb_fname->base_name, dfree, dsize) != 0) {
 		return (uint64_t)-1;
 	}
 
@@ -66,15 +70,17 @@ static uint64_t vfswrap_disk_free(vfs_handle_struct *handle, const char *path,
 	return *dfree / 2;
 }
 
-static int vfswrap_get_quota(struct vfs_handle_struct *handle, const char *path,
-			     enum SMB_QUOTA_TYPE qtype, unid_t id,
-			     SMB_DISK_QUOTA *qt)
+static int vfswrap_get_quota(struct vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				enum SMB_QUOTA_TYPE qtype,
+				unid_t id,
+				SMB_DISK_QUOTA *qt)
 {
 #ifdef HAVE_SYS_QUOTAS
 	int result;
 
 	START_PROFILE(syscall_get_quota);
-	result = sys_get_quota(path, qtype, id, qt);
+	result = sys_get_quota(smb_fname->base_name, qtype, id, qt);
 	END_PROFILE(syscall_get_quota);
 	return result;
 #else
@@ -107,9 +113,11 @@ static int vfswrap_get_shadow_copy_data(struct vfs_handle_struct *handle,
 	return -1;  /* Not implemented. */
 }
 
-static int vfswrap_statvfs(struct vfs_handle_struct *handle, const char *path, vfs_statvfs_struct *statbuf)
+static int vfswrap_statvfs(struct vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				vfs_statvfs_struct *statbuf)
 {
-	return sys_statvfs(path, statbuf);
+	return sys_statvfs(smb_fname->base_name, statbuf);
 }
 
 static uint32_t vfswrap_fs_capabilities(struct vfs_handle_struct *handle,
@@ -221,10 +229,18 @@ static NTSTATUS vfswrap_get_dfs_referrals(struct vfs_handle_struct *handle,
 				   !handle->conn->sconn->using_smb2,
 				   junction, &consumedcnt, &self_referral);
 	if (!NT_STATUS_IS_OK(status)) {
-		vfs_ChDir(handle->conn, handle->conn->connectpath);
+		struct smb_filename connectpath_fname = {
+			.base_name = handle->conn->connectpath
+		};
+		vfs_ChDir(handle->conn, &connectpath_fname);
 		return status;
 	}
-	vfs_ChDir(handle->conn, handle->conn->connectpath);
+	{
+		struct smb_filename connectpath_fname = {
+			.base_name = handle->conn->connectpath
+		};
+		vfs_ChDir(handle->conn, &connectpath_fname);
+	}
 
 	if (!self_referral) {
 		pathnamep[consumedcnt] = '\0';
@@ -722,7 +738,6 @@ static int vfswrap_init_pool(struct smbd_server_connection *conn)
 
 struct vfswrap_pread_state {
 	ssize_t ret;
-	int err;
 	int fd;
 	void *buf;
 	size_t count;
@@ -796,7 +811,9 @@ static void vfs_pread_do(void *private_data)
 				   state->offset);
 	} while ((state->ret == -1) && (errno == EINTR));
 
-	state->err = errno;
+	if (state->ret == -1) {
+		state->vfs_aio_state.error = errno;
+	}
 
 	PROFILE_TIMESTAMP(&end_time);
 
@@ -845,7 +862,6 @@ static ssize_t vfswrap_pread_recv(struct tevent_req *req,
 
 struct vfswrap_pwrite_state {
 	ssize_t ret;
-	int err;
 	int fd;
 	const void *buf;
 	size_t count;
@@ -919,7 +935,9 @@ static void vfs_pwrite_do(void *private_data)
 				   state->offset);
 	} while ((state->ret == -1) && (errno == EINTR));
 
-	state->err = errno;
+	if (state->ret == -1) {
+		state->vfs_aio_state.error = errno;
+	}
 
 	PROFILE_TIMESTAMP(&end_time);
 
@@ -968,7 +986,6 @@ static ssize_t vfswrap_pwrite_recv(struct tevent_req *req,
 
 struct vfswrap_fsync_state {
 	ssize_t ret;
-	int err;
 	int fd;
 
 	struct vfs_aio_state vfs_aio_state;
@@ -1029,7 +1046,9 @@ static void vfs_fsync_do(void *private_data)
 		state->ret = fsync(state->fd);
 	} while ((state->ret == -1) && (errno == EINTR));
 
-	state->err = errno;
+	if (state->ret == -1) {
+		state->vfs_aio_state.error = errno;
+	}
 
 	PROFILE_TIMESTAMP(&end_time);
 
@@ -1613,35 +1632,175 @@ static NTSTATUS vfswrap_fset_dos_attributes(struct vfs_handle_struct *handle,
 	return set_ea_dos_attribute(handle->conn, fsp->fsp_name, dosmode);
 }
 
-struct vfs_cc_state {
-	off_t copied;
-	uint8_t *buf;
+static struct vfs_offload_ctx *vfswrap_offload_ctx;
+
+struct vfswrap_offload_read_state {
+	DATA_BLOB token;
 };
 
-static struct tevent_req *vfswrap_copy_chunk_send(struct vfs_handle_struct *handle,
-						  TALLOC_CTX *mem_ctx,
-						  struct tevent_context *ev,
-						  struct files_struct *src_fsp,
-						  off_t src_off,
-						  struct files_struct *dest_fsp,
-						  off_t dest_off,
-						  off_t num)
+static struct tevent_req *vfswrap_offload_read_send(
+	TALLOC_CTX *mem_ctx,
+	struct tevent_context *ev,
+	struct vfs_handle_struct *handle,
+	struct files_struct *fsp,
+	uint32_t fsctl,
+	uint32_t ttl,
+	off_t offset,
+	size_t to_copy)
 {
-	struct tevent_req *req;
-	struct vfs_cc_state *vfs_cc_state;
+	struct tevent_req *req = NULL;
+	struct vfswrap_offload_read_state *state = NULL;
 	NTSTATUS status;
 
-	DEBUG(10, ("performing server side copy chunk of length %lu\n",
-		   (unsigned long)num));
-
-	req = tevent_req_create(mem_ctx, &vfs_cc_state, struct vfs_cc_state);
+	req = tevent_req_create(mem_ctx, &state,
+				struct vfswrap_offload_read_state);
 	if (req == NULL) {
 		return NULL;
 	}
 
-	vfs_cc_state->buf = talloc_array(vfs_cc_state, uint8_t,
-					 MIN(num, 8*1024*1024));
-	if (tevent_req_nomem(vfs_cc_state->buf, req)) {
+	status = vfs_offload_token_ctx_init(fsp->conn->sconn->client,
+					    &vfswrap_offload_ctx);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
+
+	if (fsctl != FSCTL_SRV_REQUEST_RESUME_KEY) {
+		tevent_req_nterror(req, NT_STATUS_INVALID_DEVICE_REQUEST);
+		return tevent_req_post(req, ev);
+	}
+
+	status = vfs_offload_token_create_blob(state, fsp, fsctl,
+					       &state->token);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
+
+	status = vfs_offload_token_db_store_fsp(vfswrap_offload_ctx, fsp,
+						&state->token);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
+
+	tevent_req_done(req);
+	return tevent_req_post(req, ev);
+}
+
+static NTSTATUS vfswrap_offload_read_recv(struct tevent_req *req,
+					  struct vfs_handle_struct *handle,
+					  TALLOC_CTX *mem_ctx,
+					  DATA_BLOB *token)
+{
+	struct vfswrap_offload_read_state *state = tevent_req_data(
+		req, struct vfswrap_offload_read_state);
+	NTSTATUS status;
+
+	if (tevent_req_is_nterror(req, &status)) {
+		tevent_req_received(req);
+		return status;
+	}
+
+	token->length = state->token.length;
+	token->data = talloc_move(mem_ctx, &state->token.data);
+
+	tevent_req_received(req);
+	return NT_STATUS_OK;
+}
+
+struct vfswrap_offload_write_state {
+	struct tevent_context *ev;
+	uint8_t *buf;
+	bool read_lck_locked;
+	bool write_lck_locked;
+	DATA_BLOB *token;
+	struct files_struct *src_fsp;
+	off_t src_off;
+	struct files_struct *dst_fsp;
+	off_t dst_off;
+	off_t to_copy;
+	off_t remaining;
+	size_t next_io_size;
+};
+
+static NTSTATUS vfswrap_offload_write_loop(struct tevent_req *req);
+
+static struct tevent_req *vfswrap_offload_write_send(
+	struct vfs_handle_struct *handle,
+	TALLOC_CTX *mem_ctx,
+	struct tevent_context *ev,
+	uint32_t fsctl,
+	DATA_BLOB *token,
+	off_t transfer_offset,
+	struct files_struct *dest_fsp,
+	off_t dest_off,
+	off_t to_copy)
+{
+	struct tevent_req *req;
+	struct vfswrap_offload_write_state *state = NULL;
+	size_t num = MIN(to_copy, COPYCHUNK_MAX_TOTAL_LEN);
+	files_struct *src_fsp = NULL;
+	NTSTATUS status;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct vfswrap_offload_write_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	*state = (struct vfswrap_offload_write_state) {
+		.ev = ev,
+		.token = token,
+		.src_off = transfer_offset,
+		.dst_fsp = dest_fsp,
+		.dst_off = dest_off,
+		.to_copy = to_copy,
+		.remaining = to_copy,
+	};
+
+	switch (fsctl) {
+	case FSCTL_SRV_COPYCHUNK:
+	case FSCTL_SRV_COPYCHUNK_WRITE:
+		break;
+
+	case FSCTL_OFFLOAD_WRITE:
+		tevent_req_nterror(req, NT_STATUS_NOT_IMPLEMENTED);
+		return tevent_req_post(req, ev);
+
+	case FSCTL_DUP_EXTENTS_TO_FILE:
+		DBG_DEBUG("COW clones not supported by vfs_default\n");
+		tevent_req_nterror(req, NT_STATUS_INVALID_PARAMETER);
+		return tevent_req_post(req, ev);
+
+	default:
+		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
+		return tevent_req_post(req, ev);
+	}
+
+	/*
+	 * From here on we assume a copy-chunk fsctl
+	 */
+
+	if (to_copy == 0) {
+		tevent_req_done(req);
+		return tevent_req_post(req, ev);
+	}
+
+	status = vfs_offload_token_db_fetch_fsp(vfswrap_offload_ctx,
+						token, &src_fsp);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
+	state->src_fsp = src_fsp;
+
+	DBG_DEBUG("server side copy chunk of length %" PRIu64 "\n", to_copy);
+
+	status = vfs_offload_token_check_handles(fsctl, src_fsp, dest_fsp);
+	if (!NT_STATUS_IS_OK(status)) {
+		tevent_req_nterror(req, status);
+		return tevent_req_post(req, ev);
+	}
+
+	state->buf = talloc_array(state, uint8_t, num);
+	if (tevent_req_nomem(state->buf, req)) {
 		return tevent_req_post(req, ev);
 	}
 
@@ -1650,7 +1809,7 @@ static struct tevent_req *vfswrap_copy_chunk_send(struct vfs_handle_struct *hand
 		return tevent_req_post(req, ev);
 	}
 
-	if (src_fsp->fsp_name->st.st_ex_size < src_off + num) {
+	if (src_fsp->fsp_name->st.st_ex_size < state->src_off + num) {
 		/*
 		 * [MS-SMB2] 3.3.5.15.6 Handling a Server-Side Data Copy Request
 		 *   If the SourceOffset or SourceOffset + Length extends beyond
@@ -1664,115 +1823,184 @@ static struct tevent_req *vfswrap_copy_chunk_send(struct vfs_handle_struct *hand
 		return tevent_req_post(req, ev);
 	}
 
-	/* could use 2.6.33+ sendfile here to do this in kernel */
-	while (vfs_cc_state->copied < num) {
-		ssize_t ret;
-		struct lock_struct lck;
-		int saved_errno;
-
-		off_t this_num = MIN(talloc_array_length(vfs_cc_state->buf),
-				     num - vfs_cc_state->copied);
-
-		if (src_fsp->op == NULL) {
-			tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
-			return tevent_req_post(req, ev);
-		}
-		init_strict_lock_struct(src_fsp,
-					src_fsp->op->global->open_persistent_id,
-					src_off,
-					this_num,
-					READ_LOCK,
-					&lck);
-
-		if (!SMB_VFS_STRICT_LOCK(src_fsp->conn, src_fsp, &lck)) {
-			tevent_req_nterror(req, NT_STATUS_FILE_LOCK_CONFLICT);
-			return tevent_req_post(req, ev);
-		}
-
-		ret = SMB_VFS_PREAD(src_fsp, vfs_cc_state->buf,
-				    this_num, src_off);
-		if (ret == -1) {
-			saved_errno = errno;
-		}
-
-		SMB_VFS_STRICT_UNLOCK(dest_fsp->conn, dest_fsp, &lck);
-
-		if (ret == -1) {
-			errno = saved_errno;
-			tevent_req_nterror(req, map_nt_error_from_unix(errno));
-			return tevent_req_post(req, ev);
-		}
-		if (ret != this_num) {
-			/* zero tolerance for short reads */
-			tevent_req_nterror(req, NT_STATUS_IO_DEVICE_ERROR);
-			return tevent_req_post(req, ev);
-		}
-
-		src_off += ret;
-
-		if (dest_fsp->op == NULL) {
-			tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
-			return tevent_req_post(req, ev);
-		}
-
-		init_strict_lock_struct(dest_fsp,
-					dest_fsp->op->global->open_persistent_id,
-					dest_off,
-					this_num,
-					WRITE_LOCK,
-					&lck);
-
-		if (!SMB_VFS_STRICT_LOCK(dest_fsp->conn, dest_fsp, &lck)) {
-			tevent_req_nterror(req, NT_STATUS_FILE_LOCK_CONFLICT);
-			return tevent_req_post(req, ev);
-		}
-
-		ret = SMB_VFS_PWRITE(dest_fsp, vfs_cc_state->buf,
-				     this_num, dest_off);
-		if (ret == -1) {
-			saved_errno = errno;
-		}
-
-		SMB_VFS_STRICT_UNLOCK(src_fsp->conn, src_fsp, &lck);
-
-		if (ret == -1) {
-			errno = saved_errno;
-			tevent_req_nterror(req, map_nt_error_from_unix(errno));
-			return tevent_req_post(req, ev);
-		}
-		if (ret != this_num) {
-			/* zero tolerance for short writes */
-			tevent_req_nterror(req, NT_STATUS_IO_DEVICE_ERROR);
-			return tevent_req_post(req, ev);
-		}
-		dest_off += ret;
-
-		vfs_cc_state->copied += this_num;
+	if (src_fsp->op == NULL) {
+		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
+		return tevent_req_post(req, ev);
 	}
 
-	tevent_req_done(req);
-	return tevent_req_post(req, ev);
+	if (dest_fsp->op == NULL) {
+		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
+		return tevent_req_post(req, ev);
+	}
+
+	status = vfswrap_offload_write_loop(req);
+	if (!NT_STATUS_IS_OK(status)) {
+		tevent_req_nterror(req, status);
+		return tevent_req_post(req, ev);
+	}
+
+	return req;
 }
 
-static NTSTATUS vfswrap_copy_chunk_recv(struct vfs_handle_struct *handle,
+static void vfswrap_offload_write_read_done(struct tevent_req *subreq);
+
+static NTSTATUS vfswrap_offload_write_loop(struct tevent_req *req)
+{
+	struct vfswrap_offload_write_state *state = tevent_req_data(
+		req, struct vfswrap_offload_write_state);
+	struct tevent_req *subreq = NULL;
+	struct lock_struct read_lck;
+	bool ok;
+
+	state->next_io_size = MIN(state->remaining, talloc_array_length(state->buf));
+
+	init_strict_lock_struct(state->src_fsp,
+				state->src_fsp->op->global->open_persistent_id,
+				state->src_off,
+				state->next_io_size,
+				READ_LOCK,
+				&read_lck);
+
+	ok = SMB_VFS_STRICT_LOCK_CHECK(state->src_fsp->conn,
+				 state->src_fsp,
+				 &read_lck);
+	if (!ok) {
+		return NT_STATUS_FILE_LOCK_CONFLICT;
+	}
+
+	subreq = SMB_VFS_PREAD_SEND(state,
+				    state->src_fsp->conn->sconn->ev_ctx,
+				    state->src_fsp,
+				    state->buf,
+				    state->next_io_size,
+				    state->src_off);
+	if (subreq == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+	tevent_req_set_callback(subreq, vfswrap_offload_write_read_done, req);
+
+	return NT_STATUS_OK;
+}
+
+static void vfswrap_offload_write_write_done(struct tevent_req *subreq);
+
+static void vfswrap_offload_write_read_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct vfswrap_offload_write_state *state = tevent_req_data(
+		req, struct vfswrap_offload_write_state);
+	struct vfs_aio_state aio_state;
+	struct lock_struct write_lck;
+	ssize_t nread;
+	bool ok;
+
+	nread = SMB_VFS_PREAD_RECV(subreq, &aio_state);
+	TALLOC_FREE(subreq);
+	if (nread == -1) {
+		DBG_ERR("read failed: %s\n", strerror(errno));
+		tevent_req_nterror(req, map_nt_error_from_unix(aio_state.error));
+		return;
+	}
+	if (nread != state->next_io_size) {
+		DBG_ERR("Short read, only %zd of %zu\n",
+			nread, state->next_io_size);
+		tevent_req_nterror(req, NT_STATUS_IO_DEVICE_ERROR);
+		return;
+	}
+
+	state->src_off += nread;
+
+	init_strict_lock_struct(state->dst_fsp,
+				state->dst_fsp->op->global->open_persistent_id,
+				state->dst_off,
+				state->next_io_size,
+				WRITE_LOCK,
+				&write_lck);
+
+	ok = SMB_VFS_STRICT_LOCK_CHECK(state->dst_fsp->conn,
+				 state->dst_fsp,
+				 &write_lck);
+	if (!ok) {
+		tevent_req_nterror(req, NT_STATUS_FILE_LOCK_CONFLICT);
+		return;
+	}
+
+	subreq = SMB_VFS_PWRITE_SEND(state,
+				     state->ev,
+				     state->dst_fsp,
+				     state->buf,
+				     state->next_io_size,
+				     state->dst_off);
+	if (subreq == NULL) {
+		tevent_req_nterror(req, NT_STATUS_NO_MEMORY);
+		return;
+	}
+	tevent_req_set_callback(subreq, vfswrap_offload_write_write_done, req);
+}
+
+static void vfswrap_offload_write_write_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct vfswrap_offload_write_state *state = tevent_req_data(
+		req, struct vfswrap_offload_write_state);
+	struct vfs_aio_state aio_state;
+	ssize_t nwritten;
+	NTSTATUS status;
+
+	nwritten = SMB_VFS_PWRITE_RECV(subreq, &aio_state);
+	TALLOC_FREE(subreq);
+	if (nwritten == -1) {
+		DBG_ERR("write failed: %s\n", strerror(errno));
+		tevent_req_nterror(req, map_nt_error_from_unix(aio_state.error));
+		return;
+	}
+	if (nwritten != state->next_io_size) {
+		DBG_ERR("Short write, only %zd of %zu\n", nwritten, state->next_io_size);
+		tevent_req_nterror(req, NT_STATUS_IO_DEVICE_ERROR);
+		return;
+	}
+
+	state->dst_off += nwritten;
+
+	if (state->remaining < nwritten) {
+		/* Paranoia check */
+		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
+		return;
+	}
+	state->remaining -= nwritten;
+	if (state->remaining == 0) {
+		tevent_req_done(req);
+		return;
+	}
+
+	status = vfswrap_offload_write_loop(req);
+	if (!NT_STATUS_IS_OK(status)) {
+		tevent_req_nterror(req, status);
+		return;
+	}
+
+	return;
+}
+
+static NTSTATUS vfswrap_offload_write_recv(struct vfs_handle_struct *handle,
 					struct tevent_req *req,
 					off_t *copied)
 {
-	struct vfs_cc_state *vfs_cc_state = tevent_req_data(req,
-							struct vfs_cc_state);
+	struct vfswrap_offload_write_state *state = tevent_req_data(
+		req, struct vfswrap_offload_write_state);
 	NTSTATUS status;
 
 	if (tevent_req_is_nterror(req, &status)) {
-		DEBUG(2, ("server side copy chunk failed: %s\n",
-			  nt_errstr(status)));
+		DBG_DEBUG("copy chunk failed: %s\n", nt_errstr(status));
 		*copied = 0;
 		tevent_req_received(req);
 		return status;
 	}
 
-	*copied = vfs_cc_state->copied;
-	DEBUG(10, ("server side copy chunk copied %lu\n",
-		   (unsigned long)*copied));
+	*copied = state->to_copy;
+	DBG_DEBUG("copy chunk copied %lu\n", (unsigned long)*copied);
 	tevent_req_received(req);
 
 	return NT_STATUS_OK;
@@ -1978,24 +2206,35 @@ static int vfswrap_lchown(vfs_handle_struct *handle,
 	return result;
 }
 
-static int vfswrap_chdir(vfs_handle_struct *handle, const char *path)
+static int vfswrap_chdir(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
 	int result;
 
 	START_PROFILE(syscall_chdir);
-	result = chdir(path);
+	result = chdir(smb_fname->base_name);
 	END_PROFILE(syscall_chdir);
 	return result;
 }
 
-static char *vfswrap_getwd(vfs_handle_struct *handle)
+static struct smb_filename *vfswrap_getwd(vfs_handle_struct *handle,
+				TALLOC_CTX *ctx)
 {
 	char *result;
+	struct smb_filename *smb_fname = NULL;
 
 	START_PROFILE(syscall_getwd);
 	result = sys_getwd();
 	END_PROFILE(syscall_getwd);
-	return result;
+	smb_fname = synthetic_smb_fname(ctx,
+				result,
+				NULL,
+				NULL,
+				0);
+	if (smb_fname == NULL) {
+		SAFE_FREE(result);
+	}
+	return smb_fname;
 }
 
 /*********************************************************************
@@ -2316,61 +2555,79 @@ static int vfswrap_linux_setlease(vfs_handle_struct *handle, files_struct *fsp,
 	return result;
 }
 
-static int vfswrap_symlink(vfs_handle_struct *handle, const char *oldpath, const char *newpath)
+static int vfswrap_symlink(vfs_handle_struct *handle,
+			const char *link_target,
+			const struct smb_filename *new_smb_fname)
 {
 	int result;
 
 	START_PROFILE(syscall_symlink);
-	result = symlink(oldpath, newpath);
+	result = symlink(link_target, new_smb_fname->base_name);
 	END_PROFILE(syscall_symlink);
 	return result;
 }
 
-static int vfswrap_readlink(vfs_handle_struct *handle, const char *path, char *buf, size_t bufsiz)
+static int vfswrap_readlink(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			char *buf,
+			size_t bufsiz)
 {
 	int result;
 
 	START_PROFILE(syscall_readlink);
-	result = readlink(path, buf, bufsiz);
+	result = readlink(smb_fname->base_name, buf, bufsiz);
 	END_PROFILE(syscall_readlink);
 	return result;
 }
 
-static int vfswrap_link(vfs_handle_struct *handle, const char *oldpath, const char *newpath)
+static int vfswrap_link(vfs_handle_struct *handle,
+			const struct smb_filename *old_smb_fname,
+			const struct smb_filename *new_smb_fname)
 {
 	int result;
 
 	START_PROFILE(syscall_link);
-	result = link(oldpath, newpath);
+	result = link(old_smb_fname->base_name, new_smb_fname->base_name);
 	END_PROFILE(syscall_link);
 	return result;
 }
 
-static int vfswrap_mknod(vfs_handle_struct *handle, const char *pathname, mode_t mode, SMB_DEV_T dev)
+static int vfswrap_mknod(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			mode_t mode,
+			SMB_DEV_T dev)
 {
 	int result;
 
 	START_PROFILE(syscall_mknod);
-	result = sys_mknod(pathname, mode, dev);
+	result = sys_mknod(smb_fname->base_name, mode, dev);
 	END_PROFILE(syscall_mknod);
 	return result;
 }
 
-static char *vfswrap_realpath(vfs_handle_struct *handle, const char *path)
+static struct smb_filename *vfswrap_realpath(vfs_handle_struct *handle,
+			TALLOC_CTX *ctx,
+			const struct smb_filename *smb_fname)
 {
 	char *result;
+	struct smb_filename *result_fname = NULL;
 
 	START_PROFILE(syscall_realpath);
-	result = sys_realpath(path);
+	result = sys_realpath(smb_fname->base_name);
 	END_PROFILE(syscall_realpath);
-	return result;
+	if (result) {
+		result_fname = synthetic_smb_fname(ctx, result, NULL, NULL, 0);
+		SAFE_FREE(result);
+	}
+	return result_fname;
 }
 
-static int vfswrap_chflags(vfs_handle_struct *handle, const char *path,
-			   unsigned int flags)
+static int vfswrap_chflags(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			unsigned int flags)
 {
 #ifdef HAVE_CHFLAGS
-	return chflags(path, flags);
+	return chflags(smb_fname->base_name, flags);
 #else
 	errno = ENOSYS;
 	return -1;
@@ -2471,7 +2728,7 @@ static int vfswrap_get_real_filename(struct vfs_handle_struct *handle,
 }
 
 static const char *vfswrap_connectpath(struct vfs_handle_struct *handle,
-				       const char *fname)
+				   const struct smb_filename *smb_fname)
 {
 	return handle->conn->connectpath;
 }
@@ -2507,24 +2764,14 @@ static bool vfswrap_brl_cancel_windows(struct vfs_handle_struct *handle,
 	return brl_lock_cancel_default(br_lck, plock);
 }
 
-static bool vfswrap_strict_lock(struct vfs_handle_struct *handle,
-				files_struct *fsp,
-				struct lock_struct *plock)
+static bool vfswrap_strict_lock_check(struct vfs_handle_struct *handle,
+				      files_struct *fsp,
+				      struct lock_struct *plock)
 {
 	SMB_ASSERT(plock->lock_type == READ_LOCK ||
 	    plock->lock_type == WRITE_LOCK);
 
-	return strict_lock_default(fsp, plock);
-}
-
-static void vfswrap_strict_unlock(struct vfs_handle_struct *handle,
-				files_struct *fsp,
-				struct lock_struct *plock)
-{
-	SMB_ASSERT(plock->lock_type == READ_LOCK ||
-	    plock->lock_type == WRITE_LOCK);
-
-	strict_unlock_default(fsp, plock);
+	return strict_lock_check_default(fsp, plock);
 }
 
 /* NT ACL operations. */
@@ -2592,7 +2839,7 @@ static int vfswrap_chmod_acl(vfs_handle_struct *handle,
 	int result;
 
 	START_PROFILE(chmod_acl);
-	result = chmod_acl(handle->conn, smb_fname->base_name, mode);
+	result = chmod_acl(handle->conn, smb_fname, mode);
 	END_PROFILE(chmod_acl);
 	return result;
 #endif
@@ -2614,11 +2861,11 @@ static int vfswrap_fchmod_acl(vfs_handle_struct *handle, files_struct *fsp, mode
 }
 
 static SMB_ACL_T vfswrap_sys_acl_get_file(vfs_handle_struct *handle,
-					  const char *path_p,
+					  const struct smb_filename *smb_fname,
 					  SMB_ACL_TYPE_T type,
 					  TALLOC_CTX *mem_ctx)
 {
-	return sys_acl_get_file(handle, path_p, type, mem_ctx);
+	return sys_acl_get_file(handle, smb_fname, type, mem_ctx);
 }
 
 static SMB_ACL_T vfswrap_sys_acl_get_fd(vfs_handle_struct *handle,
@@ -2628,9 +2875,12 @@ static SMB_ACL_T vfswrap_sys_acl_get_fd(vfs_handle_struct *handle,
 	return sys_acl_get_fd(handle, fsp, mem_ctx);
 }
 
-static int vfswrap_sys_acl_set_file(vfs_handle_struct *handle, const char *name, SMB_ACL_TYPE_T acltype, SMB_ACL_T theacl)
+static int vfswrap_sys_acl_set_file(vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				SMB_ACL_TYPE_T acltype,
+				SMB_ACL_T theacl)
 {
-	return sys_acl_set_file(handle, name, acltype, theacl);
+	return sys_acl_set_file(handle, smb_fname, acltype, theacl);
 }
 
 static int vfswrap_sys_acl_set_fd(vfs_handle_struct *handle, files_struct *fsp, SMB_ACL_T theacl)
@@ -2638,18 +2888,23 @@ static int vfswrap_sys_acl_set_fd(vfs_handle_struct *handle, files_struct *fsp, 
 	return sys_acl_set_fd(handle, fsp, theacl);
 }
 
-static int vfswrap_sys_acl_delete_def_file(vfs_handle_struct *handle, const char *path)
+static int vfswrap_sys_acl_delete_def_file(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname)
 {
-	return sys_acl_delete_def_file(handle, path);
+	return sys_acl_delete_def_file(handle, smb_fname);
 }
 
 /****************************************************************
  Extended attribute operations.
 *****************************************************************/
 
-static ssize_t vfswrap_getxattr(struct vfs_handle_struct *handle,const char *path, const char *name, void *value, size_t size)
+static ssize_t vfswrap_getxattr(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			const char *name,
+			void *value,
+			size_t size)
 {
-	return getxattr(path, name, value, size);
+	return getxattr(smb_fname->base_name, name, value, size);
 }
 
 static ssize_t vfswrap_fgetxattr(struct vfs_handle_struct *handle, struct files_struct *fsp, const char *name, void *value, size_t size)
@@ -2657,9 +2912,12 @@ static ssize_t vfswrap_fgetxattr(struct vfs_handle_struct *handle, struct files_
 	return fgetxattr(fsp->fh->fd, name, value, size);
 }
 
-static ssize_t vfswrap_listxattr(struct vfs_handle_struct *handle, const char *path, char *list, size_t size)
+static ssize_t vfswrap_listxattr(struct vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			char *list,
+			size_t size)
 {
-	return listxattr(path, list, size);
+	return listxattr(smb_fname->base_name, list, size);
 }
 
 static ssize_t vfswrap_flistxattr(struct vfs_handle_struct *handle, struct files_struct *fsp, char *list, size_t size)
@@ -2667,9 +2925,11 @@ static ssize_t vfswrap_flistxattr(struct vfs_handle_struct *handle, struct files
 	return flistxattr(fsp->fh->fd, list, size);
 }
 
-static int vfswrap_removexattr(struct vfs_handle_struct *handle, const char *path, const char *name)
+static int vfswrap_removexattr(struct vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				const char *name)
 {
-	return removexattr(path, name);
+	return removexattr(smb_fname->base_name, name);
 }
 
 static int vfswrap_fremovexattr(struct vfs_handle_struct *handle, struct files_struct *fsp, const char *name)
@@ -2677,9 +2937,14 @@ static int vfswrap_fremovexattr(struct vfs_handle_struct *handle, struct files_s
 	return fremovexattr(fsp->fh->fd, name);
 }
 
-static int vfswrap_setxattr(struct vfs_handle_struct *handle, const char *path, const char *name, const void *value, size_t size, int flags)
+static int vfswrap_setxattr(struct vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				const char *name,
+				const void *value,
+				size_t size,
+				int flags)
 {
-	return setxattr(path, name, value, size, flags);
+	return setxattr(smb_fname->base_name, name, value, size, flags);
 }
 
 static int vfswrap_fsetxattr(struct vfs_handle_struct *handle, struct files_struct *fsp, const char *name, const void *value, size_t size, int flags)
@@ -2837,16 +3102,17 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.brl_lock_windows_fn = vfswrap_brl_lock_windows,
 	.brl_unlock_windows_fn = vfswrap_brl_unlock_windows,
 	.brl_cancel_windows_fn = vfswrap_brl_cancel_windows,
-	.strict_lock_fn = vfswrap_strict_lock,
-	.strict_unlock_fn = vfswrap_strict_unlock,
+	.strict_lock_check_fn = vfswrap_strict_lock_check,
 	.translate_name_fn = vfswrap_translate_name,
 	.fsctl_fn = vfswrap_fsctl,
 	.set_dos_attributes_fn = vfswrap_set_dos_attributes,
 	.fset_dos_attributes_fn = vfswrap_fset_dos_attributes,
 	.get_dos_attributes_fn = vfswrap_get_dos_attributes,
 	.fget_dos_attributes_fn = vfswrap_fget_dos_attributes,
-	.copy_chunk_send_fn = vfswrap_copy_chunk_send,
-	.copy_chunk_recv_fn = vfswrap_copy_chunk_recv,
+	.offload_read_send_fn = vfswrap_offload_read_send,
+	.offload_read_recv_fn = vfswrap_offload_read_recv,
+	.offload_write_send_fn = vfswrap_offload_write_send,
+	.offload_write_recv_fn = vfswrap_offload_write_recv,
 	.get_compression_fn = vfswrap_get_compression,
 	.set_compression_fn = vfswrap_set_compression,
 
@@ -2889,8 +3155,8 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.durable_reconnect_fn = vfswrap_durable_reconnect,
 };
 
-NTSTATUS vfs_default_init(void);
-NTSTATUS vfs_default_init(void)
+NTSTATUS vfs_default_init(TALLOC_CTX *);
+NTSTATUS vfs_default_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION,
 				DEFAULT_VFS_MODULE_NAME, &vfs_default_fns);

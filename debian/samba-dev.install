@@ -3,7 +3,9 @@ usr/include/samba-4.0/core/doserr.h
 usr/include/samba-4.0/core/error.h
 usr/include/samba-4.0/core/hresult.h
 usr/include/samba-4.0/core/ntstatus.h
+usr/include/samba-4.0/core/ntstatus_gen.h
 usr/include/samba-4.0/core/werror.h
+usr/include/samba-4.0/core/werror_gen.h
 usr/include/samba-4.0/credentials.h
 usr/include/samba-4.0/dcerpc.h
 usr/include/samba-4.0/dcerpc_server.h
@@ -76,6 +78,7 @@ usr/include/samba-4.0/util/talloc_stack.h
 usr/include/samba-4.0/util/tevent_ntstatus.h
 usr/include/samba-4.0/util/tevent_unix.h
 usr/include/samba-4.0/util/tevent_werror.h
+usr/include/samba-4.0/util/tfork.h
 usr/include/samba-4.0/util/time.h
 usr/include/samba-4.0/util_ldb.h
 usr/lib/*/libdcerpc-binding.so

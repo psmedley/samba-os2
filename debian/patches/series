@@ -7,14 +7,9 @@ usershare.patch
 VERSION.patch
 add-so-version-to-private-libraries
 heimdal-rfc3454.txt
-no_build_env.patch
 no_build_system.patch
 Skip-raw.write-tests.patch
 systemd-syslog.target-is-obsolete.patch
 Add-documentation-to-systemd-Unit-files.patch
 fix_kill_path_in_units.patch
 nmbd-requires-a-working-network.patch
-provision-Update-root-DNS-servers-list.patch
-CVE-2017-12150-v4-6.patches.metze02.txt
-CVE-2017-12151-v4-6.patches.metze02.txt
-CVE-2017-12163-all-metze01.patch.txt

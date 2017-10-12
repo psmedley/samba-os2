@@ -50,10 +50,18 @@ struct aclread_context {
 	bool added_objectSid;
 	bool added_objectClass;
 	bool indirsync;
+
+	/* cache on the last parent we checked in this search */
+	struct ldb_dn *last_parent_dn;
+	int last_parent_check_ret;
 };
 
 struct aclread_private {
 	bool enabled;
+
+	/* cache of the last SD we read during any search */
+	struct security_descriptor *sd_cached;
+	struct ldb_val sd_cached_blob;
 };
 
 static void aclread_mark_inaccesslible(struct ldb_message_element *el) {
@@ -64,6 +72,162 @@ static bool aclread_is_inaccessible(struct ldb_message_element *el) {
 	return el->flags & LDB_FLAG_INTERNAL_INACCESSIBLE_ATTRIBUTE;
 }
 
+/*
+ * the object has a parent, so we have to check for visibility
+ *
+ * This helper function uses a per-search cache to avoid checking the
+ * parent object for each of many possible children.  This is likely
+ * to help on SCOPE_ONE searches and on typical tree structures for
+ * SCOPE_SUBTREE, where an OU has many users as children.
+ *
+ * We rely for safety on the DB being locked for reads during the full
+ * search.
+ */
+static int aclread_check_parent(struct aclread_context *ac,
+				struct ldb_message *msg,
+				struct ldb_request *req)
+{
+	int ret;
+	struct ldb_dn *parent_dn = NULL;
+
+	/* We may have a cached result from earlier in this search */
+	if (ac->last_parent_dn != NULL) {
+		/*
+		 * We try the no-allocation ldb_dn_compare_base()
+		 * first however it will not tell parents and
+		 * grand-parents apart
+		 */
+		int cmp_base = ldb_dn_compare_base(ac->last_parent_dn,
+						   msg->dn);
+		if (cmp_base == 0) {
+			/* Now check if it is a direct parent */
+			parent_dn = ldb_dn_get_parent(ac, msg->dn);
+			if (parent_dn == NULL) {
+				return ldb_oom(ldb_module_get_ctx(ac->module));
+			}
+			if (ldb_dn_compare(ac->last_parent_dn,
+					   parent_dn) == 0) {
+				TALLOC_FREE(parent_dn);
+
+				/*
+				 * If we checked the same parent last
+				 * time, then return the cached
+				 * result.
+				 *
+				 * The cache is valid as long as the
+				 * search as the DB is read locked and
+				 * the session_info (connected user)
+				 * is constant.
+				 */
+				return ac->last_parent_check_ret;
+			}
+		}
+	}
+
+	{
+		TALLOC_CTX *frame = NULL;
+		frame = talloc_stackframe();
+
+		/*
+		 * This may have been set in the block above, don't
+		 * re-parse
+		 */
+		if (parent_dn == NULL) {
+			parent_dn = ldb_dn_get_parent(ac, msg->dn);
+			if (parent_dn == NULL) {
+				TALLOC_FREE(frame);
+				return ldb_oom(ldb_module_get_ctx(ac->module));
+			}
+		}
+		ret = dsdb_module_check_access_on_dn(ac->module,
+						     frame,
+						     parent_dn,
+						     SEC_ADS_LIST,
+						     NULL, req);
+		talloc_unlink(ac, ac->last_parent_dn);
+		ac->last_parent_dn = parent_dn;
+		ac->last_parent_check_ret = ret;
+
+		TALLOC_FREE(frame);
+	}
+	return ret;
+}
+
+/*
+ * The sd returned from this function is valid until the next call on
+ * this module context
+ *
+ * This helper function uses a cache on the module private data to
+ * speed up repeated use of the same SD.
+ */
+
+static int aclread_get_sd_from_ldb_message(struct aclread_context *ac,
+					   struct ldb_message *acl_res,
+					   struct security_descriptor **sd)
+{
+	struct ldb_message_element *sd_element;
+	struct ldb_context *ldb = ldb_module_get_ctx(ac->module);
+	struct aclread_private *private_data
+		= talloc_get_type(ldb_module_get_private(ac->module),
+				  struct aclread_private);
+	enum ndr_err_code ndr_err;
+
+	sd_element = ldb_msg_find_element(acl_res, "nTSecurityDescriptor");
+	if (sd_element == NULL) {
+		return ldb_error(ldb, LDB_ERR_INSUFFICIENT_ACCESS_RIGHTS,
+				 "nTSecurityDescriptor is missing");
+	}
+
+	if (sd_element->num_values != 1) {
+		return ldb_operr(ldb);
+	}
+
+	/*
+	 * The time spent in ndr_pull_security_descriptor() is quite
+	 * expensive, so we check if this is the same binary blob as last
+	 * time, and if so return the memory tree from that previous parse.
+	 */
+
+	if (private_data->sd_cached != NULL &&
+	    private_data->sd_cached_blob.data != NULL &&
+	    ldb_val_equal_exact(&sd_element->values[0],
+				&private_data->sd_cached_blob)) {
+		*sd = private_data->sd_cached;
+		return LDB_SUCCESS;
+	}
+
+	*sd = talloc(private_data, struct security_descriptor);
+	if(!*sd) {
+		return ldb_oom(ldb);
+	}
+	ndr_err = ndr_pull_struct_blob(&sd_element->values[0], *sd, *sd,
+			     (ndr_pull_flags_fn_t)ndr_pull_security_descriptor);
+
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		TALLOC_FREE(*sd);
+		return ldb_operr(ldb);
+	}
+
+	talloc_unlink(private_data, private_data->sd_cached_blob.data);
+	if (ac->added_nTSecurityDescriptor) {
+		private_data->sd_cached_blob = sd_element->values[0];
+		talloc_steal(private_data, sd_element->values[0].data);
+	} else {
+		private_data->sd_cached_blob = ldb_val_dup(private_data,
+							   &sd_element->values[0]);
+		if (private_data->sd_cached_blob.data == NULL) {
+			TALLOC_FREE(*sd);
+			return ldb_operr(ldb);
+		}
+	}
+
+	talloc_unlink(private_data, private_data->sd_cached);
+	private_data->sd_cached = *sd;
+
+	return LDB_SUCCESS;
+}
+
+
 static int aclread_callback(struct ldb_request *req, struct ldb_reply *ares)
 {
 	struct ldb_context *ldb;
@@ -72,7 +236,7 @@ static int aclread_callback(struct ldb_request *req, struct ldb_reply *ares)
 	struct ldb_message *msg;
 	int ret, num_of_attrs = 0;
 	unsigned int i, k = 0;
-	struct security_descriptor *sd;
+	struct security_descriptor *sd = NULL;
 	struct dom_sid *sid = NULL;
 	TALLOC_CTX *tmp_ctx;
 	uint32_t instanceType;
@@ -91,7 +255,7 @@ static int aclread_callback(struct ldb_request *req, struct ldb_reply *ares)
 	switch (ares->type) {
 	case LDB_REPLY_ENTRY:
 		msg = ares->message;
-		ret = dsdb_get_sd_from_ldb_message(ldb, tmp_ctx, msg, &sd);
+		ret = aclread_get_sd_from_ldb_message(ac, msg, &sd);
 		if (ret != LDB_SUCCESS) {
 			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
 				      "acl_read: cannot get descriptor of %s: %s\n",
@@ -123,13 +287,8 @@ static int aclread_callback(struct ldb_request *req, struct ldb_reply *ares)
 		if (!ldb_dn_is_null(msg->dn) && !(instanceType & INSTANCE_TYPE_IS_NC_HEAD))
 		{
 			/* the object has a parent, so we have to check for visibility */
-			struct ldb_dn *parent_dn = ldb_dn_get_parent(tmp_ctx, msg->dn);
-
-			ret = dsdb_module_check_access_on_dn(ac->module,
-							     tmp_ctx,
-							     parent_dn,
-							     SEC_ADS_LIST,
-							     NULL, req);
+			ret = aclread_check_parent(ac, msg, req);
+			
 			if (ret == LDB_ERR_INSUFFICIENT_ACCESS_RIGHTS) {
 				talloc_free(tmp_ctx);
 				return LDB_SUCCESS;

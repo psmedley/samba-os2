@@ -171,7 +171,16 @@ DATA_BLOB negprot_spnego(TALLOC_CTX *ctx, struct smbXsrv_connection *xconn)
 	/* See if we can get an SPNEGO blob */
 	status = auth_generic_prepare(talloc_tos(),
 				      xconn->remote_address,
+				      xconn->local_address,
+				      "SMB",
 				      &gensec_security);
+
+	/*
+	 * Despite including it above, there is no need to set a
+	 * remote address or similar as we are just interested in the
+	 * SPNEGO blob, we never keep this context.
+	 */
+
 	if (NT_STATUS_IS_OK(status)) {
 		status = gensec_start_mech_by_oid(gensec_security, GENSEC_OID_SPNEGO);
 		if (NT_STATUS_IS_OK(status)) {

@@ -590,6 +590,10 @@ SMBC_opendir_ctx(SMBCCTX *context,
                                 continue;
                         }
 
+			if (smbXcli_conn_protocol(srv->cli->conn) > PROTOCOL_NT1) {
+				continue;
+			}
+
                         dir->srv = srv;
                         dir->dir_type = SMBC_WORKGROUP;
 
@@ -703,6 +707,15 @@ SMBC_opendir_ctx(SMBCCTX *context,
 				}
 
 				dir->srv = srv;
+
+				if (smbXcli_conn_protocol(srv->cli->conn) > PROTOCOL_NT1) {
+					if (dir) {
+						SAFE_FREE(dir->fname);
+						SAFE_FREE(dir);
+					}
+					TALLOC_FREE(frame);
+					return NULL;
+				}
 
 				/* Now, list the servers ... */
 				if (!cli_NetServerEnum(srv->cli, wgroup,
@@ -2032,12 +2045,16 @@ SMBC_rename_ctx(SMBCCTX *ocontext,
 		return -1;
 	}
 
-	if (!NT_STATUS_IS_OK(cli_rename(targetcli1, targetpath1, targetpath2))) {
+	if (!NT_STATUS_IS_OK(
+		cli_rename(targetcli1, targetpath1, targetpath2, false))) {
 		int eno = SMBC_errno(ocontext, targetcli1);
 
 		if (eno != EEXIST ||
-		    !NT_STATUS_IS_OK(cli_unlink(targetcli1, targetpath2, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN)) ||
-		    !NT_STATUS_IS_OK(cli_rename(targetcli1, targetpath1, targetpath2))) {
+		    !NT_STATUS_IS_OK(cli_unlink(targetcli1, targetpath2,
+						FILE_ATTRIBUTE_SYSTEM |
+						    FILE_ATTRIBUTE_HIDDEN)) ||
+		    !NT_STATUS_IS_OK(cli_rename(targetcli1, targetpath1,
+						targetpath2, false))) {
 
 			errno = eno;
 			TALLOC_FREE(frame);

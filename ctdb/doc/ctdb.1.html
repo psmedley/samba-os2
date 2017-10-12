@@ -442,7 +442,7 @@ DBRecordSizeWarn        = 10000000
 DBSizeWarn              = 100000000
 PullDBPreallocation     = 10485760
 NoIPHostOnAllDisabled   = 0
-TDBMutexEnabled         = 0
+TDBMutexEnabled         = 1
 LockProcessesPerDB      = 200
 RecBufferSizeLimit      = 1000000
 QueueBufferSize         = 1024
@@ -724,19 +724,30 @@ DB Statistics: locking.tdb
 	question and re-adding then.  Unfortunately this will disrupt
 	connections to the changed addresses.
       </p></div><div class="refsect2"><a name="idm473"></a><h3>getdbmap</h3><p>
-	This command lists all clustered TDB databases that the CTDB daemon has attached to. Some databases are flagged as PERSISTENT, this means that the database stores data persistently and the data will remain across reboots. One example of such a database is secrets.tdb where information about how the cluster was joined to the domain is stored.
+	This command lists all clustered TDB databases that the CTDB
+	daemon has attached to. Some databases are flagged as PERSISTENT,
+	this means that the database stores data persistently and the
+	data will remain across reboots. One example of such a database
+	is secrets.tdb where information about how the cluster was joined
+	to the domain is stored.  Some database are flagged as REPLICATED,
+	this means that the data in that database is replicated across all
+	the nodes.  But the data will not remain across reboots.  This
+	type of database is used by CTDB to store it's internal state.
       </p><p>
-	If a PERSISTENT database is not in a healthy state the database is
-	flagged as UNHEALTHY. If there's at least one completely healthy node running in
-	the cluster, it's possible that the content is restored by a recovery
-	run automaticly. Otherwise an administrator needs to analyze the
-	problem.
+	If a PERSISTENT database is not in a healthy state the database
+	is flagged as UNHEALTHY. If there's at least one completely
+	healthy node running in the cluster, it's possible that the
+	content is restored by a recovery run automaticly. Otherwise an
+	administrator needs to analyze the problem.
       </p><p>
 	See also "ctdb getdbstatus", "ctdb backupdb", "ctdb restoredb",
 	"ctdb dumpbackup", "ctdb wipedb", "ctdb setvar AllowUnhealthyDBRead 1"
 	and (if samba or tdb-utils are installed) "tdbtool check".
       </p><p>
-	Most databases are not persistent and only store the state information that the currently running samba daemons need. These databases are always wiped when ctdb/samba starts and when a node is rebooted.
+	Most databases are not persistent and only store the state
+	information that the currently running samba daemons need. These
+	databases are always wiped when ctdb/samba starts and when a
+	node is rebooted.
       </p><div class="refsect3"><a name="idm479"></a><h4>Example</h4><pre class="screen">
 # ctdb getdbmap
 Number of databases:10
@@ -860,7 +871,7 @@ RUNNING
 	other end.
       </p><p>
 	TCP tickles are useful to "tickle" clients after a IP failover has
-	occured since this will make the client immediately recognize the
+	occurred since this will make the client immediately recognize the
 	TCP connection has been disrupted and that the client will need
 	to reestablish. This greatly speeds up the time it takes for a client
 	to detect and reestablish after an IP failover in the ctdb cluster.
@@ -923,7 +934,7 @@ HEALTH: NO-HEALTHY-NODES - ERROR - Backup of corrupted TDB in '/usr/local/var/li
 	This command prints the monitoring mode of a node.  This
 	indicates when CTDB is monitoring services on the node. The
 	monitoring mode is either ENABLED or DISABLED.
-      </p></div><div class="refsect2"><a name="idm628"></a><h3>attach <em class="parameter"><code>DBNAME</code></em> [persistent]</h3><p>
+      </p></div><div class="refsect2"><a name="idm628"></a><h3>attach <em class="parameter"><code>DBNAME</code></em> [persistent|replicated]</h3><p>
 	Create a new CTDB database called DBNAME and attach to it on
 	all nodes.
       </p></div><div class="refsect2"><a name="idm632"></a><h3>detach <em class="parameter"><code>DB-LIST</code></em></h3><p>

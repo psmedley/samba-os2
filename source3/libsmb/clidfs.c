@@ -26,6 +26,7 @@
 #include "trans2.h"
 #include "libsmb/nmblib.h"
 #include "../libcli/smb/smbXcli_base.h"
+#include "auth/credentials/credentials.h"
 
 /********************************************************************
  Important point.
@@ -134,7 +135,6 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 					const char *server,
 					const char *share,
 					const struct user_auth_info *auth_info,
-					bool show_sessetup,
 					bool force_encrypt,
 					int max_protocol,
 					int port,
@@ -145,11 +145,9 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 	char *servicename;
 	char *sharename;
 	char *newserver, *newshare;
-	const char *username;
-	const char *password;
-	const char *domain;
 	NTSTATUS status;
 	int flags = 0;
+	enum protocol_types protocol = PROTOCOL_NONE;
 	int signing_state = get_cmdline_auth_info_signing_state(auth_info);
 	struct cli_credentials *creds = NULL;
 
@@ -205,7 +203,7 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 	}
 
 	if (max_protocol == 0) {
-		max_protocol = PROTOCOL_NT1;
+		max_protocol = PROTOCOL_LATEST;
 	}
 	DEBUG(4,(" session request ok\n"));
 
@@ -219,17 +217,14 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 		cli_shutdown(c);
 		return status;
 	}
+	protocol = smbXcli_conn_protocol(c->conn);
+	DEBUG(4,(" negotiated dialect[%s] against server[%s]\n",
+		 smb_protocol_types_string(protocol),
+		 smbXcli_conn_remote_name(c->conn)));
 
-	if (smbXcli_conn_protocol(c->conn) >= PROTOCOL_SMB2_02) {
+	if (protocol >= PROTOCOL_SMB2_02) {
 		/* Ensure we ask for some initial credits. */
 		smb2cli_conn_set_max_credits(c->conn, DEFAULT_SMB2_MAX_CREDITS);
-	}
-
-	username = get_cmdline_auth_info_username(auth_info);
-	password = get_cmdline_auth_info_password(auth_info);
-	domain = get_cmdline_auth_info_domain(auth_info);
-	if ((domain == NULL) || (domain[0] == '\0')) {
-		domain = lp_workgroup();
 	}
 
 	creds = get_cmdline_auth_info_creds(auth_info);
@@ -238,8 +233,9 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 	if (!NT_STATUS_IS_OK(status)) {
 		/* If a password was not supplied then
 		 * try again with a null username. */
-		if (password[0] || !username[0] ||
-			get_cmdline_auth_info_use_kerberos(auth_info) ||
+		if (force_encrypt || smbXcli_conn_signing_mandatory(c->conn) ||
+			cli_credentials_authentication_requested(creds) ||
+			cli_credentials_is_anonymous(creds) ||
 			!NT_STATUS_IS_OK(status = cli_session_setup_anon(c)))
 		{
 			d_printf("session setup failed: %s\n",
@@ -259,15 +255,6 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 		return status;
 	}
 
-	if ( show_sessetup ) {
-		if (*c->server_domain) {
-			DEBUG(0,("Domain=[%s] OS=[%s] Server=[%s]\n",
-				c->server_domain,c->server_os,c->server_type));
-		} else if (*c->server_os || *c->server_type) {
-			DEBUG(0,("OS=[%s] Server=[%s]\n",
-				 c->server_os,c->server_type));
-		}
-	}
 	DEBUG(4,(" session setup ok\n"));
 
 	/* here's the fun part....to support 'msdfs proxy' shares
@@ -281,7 +268,7 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 				force_encrypt, creds)) {
 		cli_shutdown(c);
 		return do_connect(ctx, newserver,
-				newshare, auth_info, false,
+				newshare, auth_info,
 				force_encrypt, max_protocol,
 				port, name_type, pcli);
 	}
@@ -336,7 +323,6 @@ static NTSTATUS cli_cm_connect(TALLOC_CTX *ctx,
 			       const char *server,
 			       const char *share,
 			       const struct user_auth_info *auth_info,
-			       bool show_hdr,
 			       bool force_encrypt,
 			       int max_protocol,
 			       int port,
@@ -348,7 +334,7 @@ static NTSTATUS cli_cm_connect(TALLOC_CTX *ctx,
 
 	status = do_connect(ctx, server, share,
 				auth_info,
-				show_hdr, force_encrypt, max_protocol,
+				force_encrypt, max_protocol,
 				port, name_type, &cli);
 
 	if (!NT_STATUS_IS_OK(status)) {
@@ -424,7 +410,6 @@ NTSTATUS cli_cm_open(TALLOC_CTX *ctx,
 				const char *server,
 				const char *share,
 				const struct user_auth_info *auth_info,
-				bool show_hdr,
 				bool force_encrypt,
 				int max_protocol,
 				int port,
@@ -454,7 +439,6 @@ NTSTATUS cli_cm_open(TALLOC_CTX *ctx,
 				server,
 				share,
 				auth_info,
-				show_hdr,
 				force_encrypt,
 				max_protocol,
 				port,
@@ -919,6 +903,13 @@ NTSTATUS cli_resolve_path(TALLOC_CTX *ctx,
 		root_tcon = rootcli->smb1.tcon;
 	}
 
+	/*
+	 * Avoid more than one leading directory separator
+	 */
+	while (IS_DIRECTORY_SEP(path[0]) && IS_DIRECTORY_SEP(path[1])) {
+		path++;
+	}
+
 	if (!smbXcli_tcon_is_dfs_share(root_tcon)) {
 		*targetcli = rootcli;
 		*pp_targetpath = talloc_strdup(ctx, path);
@@ -979,8 +970,7 @@ NTSTATUS cli_resolve_path(TALLOC_CTX *ctx,
 			     smbXcli_conn_remote_name(rootcli->conn),
 			     "IPC$",
 			     dfs_auth_info,
-			     false,
-			     smb1cli_conn_encryption_on(rootcli->conn),
+			     cli_state_is_encryption_on(rootcli),
 			     smbXcli_conn_protocol(rootcli->conn),
 			     0,
 			     0x20,
@@ -1037,8 +1027,7 @@ NTSTATUS cli_resolve_path(TALLOC_CTX *ctx,
 				dfs_refs[count].server,
 				dfs_refs[count].share,
 				dfs_auth_info,
-				false,
-				smb1cli_conn_encryption_on(rootcli->conn),
+				cli_state_is_encryption_on(rootcli),
 				smbXcli_conn_protocol(rootcli->conn),
 				0,
 				0x20,

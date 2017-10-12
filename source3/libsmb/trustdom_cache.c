@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
 
    Trusted domain names cache on top of gencache.
@@ -31,6 +31,7 @@
 
 #define TDOMKEY_FMT  "TDOM/%s"
 #define TDOMTSKEY    "TDOMCACHE/TIMESTAMP"
+#define TRUSTDOM_UPDATE_INTERVAL	600
 
 
 /**
@@ -44,34 +45,6 @@
  **/
 
 /**
- * Initialise trustdom name caching system. Call gencache
- * initialisation routine to perform necessary activities.
- *
- * @return true upon successful cache initialisation or
- *         false if cache init failed
- **/
-
-bool trustdom_cache_enable(void)
-{
-	return True;
-}
-
-
-/**
- * Shutdown trustdom name caching system. Calls gencache
- * shutdown function.
- *
- * @return true upon successful cache close or
- *         false if it failed
- **/
-
-bool trustdom_cache_shutdown(void)
-{
-	return True;
-}
-
-
-/**
  * Form up trustdom name key. It is based only
  * on domain name now.
  *
@@ -79,12 +52,9 @@ bool trustdom_cache_shutdown(void)
  * @return cache key for use in gencache mechanism
  **/
 
-static char* trustdom_cache_key(const char* name)
+static char *trustdom_cache_key(TALLOC_CTX *mem_ctx, const char *name)
 {
-	char* keystr = NULL;
-	asprintf_strupper_m(&keystr, TDOMKEY_FMT, name);
-
-	return keystr;
+	return talloc_asprintf_strupper_m(mem_ctx, TDOMKEY_FMT, name);
 }
 
 
@@ -99,38 +69,24 @@ static char* trustdom_cache_key(const char* name)
  * @return true upon successful value storing or
  *         false if store attempt failed
  **/
- 
-bool trustdom_cache_store(const char *name, const char *alt_name,
-			  const struct dom_sid *sid, time_t timeout)
+
+bool trustdom_cache_store(const char *name, const struct dom_sid *sid)
 {
-	char *key, *alt_key;
+	char *key;
 	fstring sid_string;
 	bool ret;
 
 	DEBUG(5, ("trustdom_store: storing SID %s of domain %s\n",
 	          sid_string_dbg(sid), name));
 
-	key = trustdom_cache_key(name);
-	alt_key = alt_name ? trustdom_cache_key(alt_name) : NULL;
+	key = trustdom_cache_key(talloc_tos(), name);
 
 	/* Generate string representation domain SID */
 	sid_to_fstring(sid_string, sid);
 
-	/*
-	 * try to put the names in the cache
-	 */
-	if (alt_key) {
-		ret = gencache_set(alt_key, sid_string, timeout);
-		if ( ret ) {
-			ret = gencache_set(key, sid_string, timeout);
-		}
-		SAFE_FREE(alt_key);
-		SAFE_FREE(key);
-		return ret;
-	}
-
-	ret = gencache_set(key, sid_string, timeout);
-	SAFE_FREE(key);
+	ret = gencache_set(key, sid_string,
+			   time(NULL) + TRUSTDOM_UPDATE_INTERVAL);
+	TALLOC_FREE(key);
 	return ret;
 }
 
@@ -150,42 +106,39 @@ bool trustdom_cache_fetch(const char* name, struct dom_sid* sid)
 {
 	char *key = NULL, *value = NULL;
 	time_t timeout;
+	bool ok;
 
 	/* exit now if null pointers were passed as they're required further */
-	if (!sid)
-		return False;
+	if (sid == NULL) {
+		return false;
+	}
 
 	/* prepare a key and get the value */
-	key = trustdom_cache_key(name);
-	if (!key)
-		return False;
-
-	if (!gencache_get(key, talloc_tos(), &value, &timeout)) {
-		DEBUG(5, ("no entry for trusted domain %s found.\n", name));
-		SAFE_FREE(key);
-		return False;
-	} else {
-		SAFE_FREE(key);
-		DEBUG(5, ("trusted domain %s found (%s)\n", name, value));
+	key = trustdom_cache_key(talloc_tos(), name);
+	if (key == NULL) {
+		return false;
 	}
+
+	ok = gencache_get(key, talloc_tos(), &value, &timeout);
+	TALLOC_FREE(key);
+	if (!ok) {
+		DEBUG(5, ("no entry for trusted domain %s found.\n", name));
+		return false;
+	}
+
+	DEBUG(5, ("trusted domain %s found (%s)\n", name, value));
 
 	/* convert sid string representation into struct dom_sid structure */
-	if(! string_to_sid(sid, value)) {
-		sid = NULL;
-		TALLOC_FREE(value);
-		return False;
-	}
-
+	ok = string_to_sid(sid, value);
 	TALLOC_FREE(value);
-	return True;
+	return ok;
 }
 
-
 /*******************************************************************
- fetch the timestamp from the last update 
+ fetch the timestamp from the last update
 *******************************************************************/
 
-uint32_t trustdom_cache_fetch_timestamp( void )
+static uint32_t trustdom_cache_fetch_timestamp(void)
 {
 	char *value = NULL;
 	time_t timeout;
@@ -195,7 +148,7 @@ uint32_t trustdom_cache_fetch_timestamp( void )
 		DEBUG(5, ("no timestamp for trusted domain cache located.\n"));
 		SAFE_FREE(value);
 		return 0;
-	} 
+	}
 
 	timestamp = atoi(value);
 
@@ -204,10 +157,10 @@ uint32_t trustdom_cache_fetch_timestamp( void )
 }
 
 /*******************************************************************
- store the timestamp from the last update 
+ store the timestamp from the last update
 *******************************************************************/
 
-bool trustdom_cache_store_timestamp( uint32_t t, time_t timeout )
+static bool trustdom_cache_store_timestamp(uint32_t t, time_t timeout)
 {
 	fstring value;
 
@@ -216,7 +169,7 @@ bool trustdom_cache_store_timestamp( uint32_t t, time_t timeout )
 	if (!gencache_set(TDOMTSKEY, value, timeout)) {
 		DEBUG(5, ("failed to set timestamp for trustdom_cache\n"));
 		return False;
-	} 
+	}
 
 	return True;
 }
@@ -241,11 +194,13 @@ static void flush_trustdom_name(const char* key, const char *value, time_t timeo
 
 void trustdom_cache_flush(void)
 {
-	/* 
+	char *key = trustdom_cache_key(talloc_tos(), "*");
+	/*
 	 * iterate through each TDOM cache's entry and flush it
 	 * by flush_trustdom_name function
 	 */
-	gencache_iterate(flush_trustdom_name, NULL, trustdom_cache_key("*"));
+	gencache_iterate(flush_trustdom_name, NULL, key);
+	TALLOC_FREE(key);
 	DEBUG(5, ("Trusted domains cache flushed\n"));
 }
 
@@ -349,9 +304,8 @@ done:
 }
 
 /********************************************************************
- update the trustdom_cache if needed 
+ update the trustdom_cache if needed
 ********************************************************************/
-#define TRUSTDOM_UPDATE_INTERVAL	600
 
 void update_trustdom_cache( void )
 {
@@ -364,8 +318,8 @@ void update_trustdom_cache( void )
 	time_t now = time(NULL);
 	int i;
 
-	/* get the timestamp.  We have to initialise it if the last timestamp == 0 */	
-	if ( (last_check = trustdom_cache_fetch_timestamp()) == 0 ) 
+	/* get the timestamp.  We have to initialise it if the last timestamp == 0 */
+	if ( (last_check = trustdom_cache_fetch_timestamp()) == 0 )
 		trustdom_cache_store_timestamp(0, now+TRUSTDOM_UPDATE_INTERVAL);
 
 	time_diff = (int) (now - last_check);
@@ -387,20 +341,19 @@ void update_trustdom_cache( void )
 
 	/* get the domains and store them */
 
-	if ( enumerate_domain_trusts(mem_ctx, lp_workgroup(), &domain_names, 
+	if ( enumerate_domain_trusts(mem_ctx, lp_workgroup(), &domain_names,
 		&num_domains, &dom_sids)) {
 		for ( i=0; i<num_domains; i++ ) {
-			trustdom_cache_store( domain_names[i], NULL, &dom_sids[i], 
-				now+TRUSTDOM_UPDATE_INTERVAL);
-		}		
+			trustdom_cache_store(domain_names[i], &dom_sids[i]);
+		}
 	} else {
 		/* we failed to fetch the list of trusted domains - restore the old
 		   timestamp */
-		trustdom_cache_store_timestamp(last_check, 
+		trustdom_cache_store_timestamp(last_check,
 					       last_check+TRUSTDOM_UPDATE_INTERVAL);
 	}
 
-done:	
+done:
 	talloc_destroy( mem_ctx );
 
 	return;

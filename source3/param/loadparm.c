@@ -71,6 +71,7 @@
 #include "../lib/util/bitmap.h"
 #include "librpc/gen_ndr/nbt.h"
 #include "source4/lib/tls/tls.h"
+#include "libcli/auth/ntlm_check.h"
 
 #ifdef HAVE_SYS_SYSCTL_H
 #include <sys/sysctl.h>
@@ -201,13 +202,13 @@ static struct loadparm_service sDefault =
 	.oplocks = true,
 	.kernel_oplocks = false,
 	.level2_oplocks = true,
-	.mangled_names = true,
+	.mangled_names = MANGLED_NAMES_YES,
 	.wide_links = false,
 	.follow_symlinks = true,
 	.sync_always = false,
 	.strict_allocate = false,
 	.strict_rename = false,
-	.strict_sync = false,
+	.strict_sync = true,
 	.mangling_char = '~',
 	.copymap = NULL,
 	.delete_readonly = false,
@@ -609,7 +610,10 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	lpcfg_string_set(Globals.ctx, &Globals.logon_path,
 			 "\\\\%N\\%U\\profile");
 
-	Globals.name_resolve_order = str_list_make_v3_const(NULL, "lmhosts wins host bcast", NULL);
+	Globals.name_resolve_order =
+			str_list_make_v3_const(Globals.ctx,
+					       DEFAULT_NAME_RESOLVE_ORDER,
+					       NULL);
 	lpcfg_string_set(Globals.ctx, &Globals.password_server, "*");
 
 	Globals.algorithmic_rid_base = BASE_RID;
@@ -689,8 +693,8 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.restrict_anonymous = 0;
 	Globals.client_lanman_auth = false;	/* Do NOT use the LanMan hash if it is available */
 	Globals.client_plaintext_auth = false;	/* Do NOT use a plaintext password even if is requested by the server */
-	Globals.lanman_auth = false;	/* Do NOT use the LanMan hash, even if it is supplied */
-	Globals.ntlm_auth = false;	/* Do NOT use NTLMv1 if it is supplied by the client (otherwise NTLMv2) */
+	Globals._lanman_auth = false;	/* Do NOT use the LanMan hash, even if it is supplied */
+	Globals.ntlm_auth = NTLM_AUTH_NTLMV2_ONLY;	/* Do NOT use NTLMv1 if it is supplied by the client (otherwise NTLMv2) */
 	Globals.raw_ntlmv2_auth = false; /* Reject NTLMv2 without NTLMSSP */
 	Globals.client_ntlmv2_auth = true; /* Client should always use use NTLMv2, as we can't tell that the server supports it, but most modern servers do */
 	/* Note, that we will also use NTLM2 session security (which is different), if it is available */
@@ -856,7 +860,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 
 	Globals.min_receivefile_size = 0;
 
-	Globals.map_untrusted_to_domain = false;
+	Globals.map_untrusted_to_domain = Auto;
 	Globals.multicast_dns_register = true;
 
 	Globals.smb2_max_read = DEFAULT_SMB2_MAX_READ;
@@ -890,16 +894,16 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	lpcfg_string_set(Globals.ctx, &Globals.ntp_signd_socket_directory,
 			 get_dyn_NTP_SIGND_SOCKET_DIR());
 
-	lpcfg_string_set(Globals.ctx,
-			 &Globals.winbindd_privileged_socket_directory,
-			 get_dyn_WINBINDD_PRIVILEGED_SOCKET_DIR());
-
 	s = talloc_asprintf(talloc_tos(), "%s/samba_kcc", get_dyn_SCRIPTSBINDIR());
 	if (s == NULL) {
 		smb_panic("init_globals: ENOMEM");
 	}
 	Globals.samba_kcc_command = str_list_make_v3_const(NULL, s, NULL);
 	TALLOC_FREE(s);
+
+#ifdef MIT_KDC_PATH
+	Globals.mit_kdc_command = str_list_make_v3_const(NULL, MIT_KDC_PATH, NULL);
+#endif
 
 	s = talloc_asprintf(talloc_tos(), "%s/samba_dnsupdate", get_dyn_SCRIPTSBINDIR());
 	if (s == NULL) {
@@ -932,6 +936,12 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.web_port = 901;
 
 	Globals.aio_max_threads = 100;
+
+	lpcfg_string_set(Globals.ctx,
+			 &Globals.rpc_server_dynamic_port_range,
+			 "49152-65535");
+	Globals.rpc_low_port = SERVER_TCP_LOW_PORT;
+	Globals.rpc_high_port = SERVER_TCP_HIGH_PORT;
 
 	/* Now put back the settings that were set with lp_set_cmdline() */
 	apply_lp_set_cmdline();
@@ -2363,9 +2373,14 @@ bool lp_file_list_changed(void)
  **/
 static void init_iconv(void)
 {
-	global_iconv_handle = smb_iconv_handle_reinit(NULL, lp_dos_charset(),
-						      lp_unix_charset(),
-						      true, global_iconv_handle);
+	struct smb_iconv_handle *ret = NULL;
+
+	ret = reinit_iconv_handle(NULL,
+				  lp_dos_charset(),
+				  lp_unix_charset());
+	if (ret == NULL) {
+		smb_panic("reinit_iconv_handle failed");
+	}
 }
 
 /***************************************************************************
@@ -3499,6 +3514,19 @@ static bool usershare_exists(int iService, struct timespec *last_mod)
 	return true;
 }
 
+static bool usershare_directory_is_root(uid_t uid)
+{
+	if (uid == 0) {
+		return true;
+	}
+
+	if (uid_wrapper_enabled()) {
+		return true;
+	}
+
+	return false;
+}
+
 /***************************************************************************
  Load a usershare service by name. Returns a valid servicenumber or -1.
 ***************************************************************************/
@@ -3532,9 +3560,11 @@ int load_usershare_service(const char *servicename)
 	 */
 
 #ifdef S_ISVTX
-	if (sbuf.st_ex_uid != 0 || !(sbuf.st_ex_mode & S_ISVTX) || (sbuf.st_ex_mode & S_IWOTH)) {
+	if (!usershare_directory_is_root(sbuf.st_ex_uid) ||
+	    !(sbuf.st_ex_mode & S_ISVTX) || (sbuf.st_ex_mode & S_IWOTH)) {
 #else
-	if (sbuf.st_ex_uid != 0 || (sbuf.st_ex_mode & S_IWOTH)) {
+	if (!usershare_directory_is_root(sbuf.st_ex_uid) ||
+	    (sbuf.st_ex_mode & S_IWOTH)) {
 #endif
 		DEBUG(0,("load_usershare_service: directory %s is not owned by root "
 			"or does not have the sticky bit 't' set or is writable by anyone.\n",
@@ -4514,7 +4544,7 @@ int lp_client_max_protocol(void)
 {
 	int client_max_protocol = lp__client_max_protocol();
 	if (client_max_protocol == PROTOCOL_DEFAULT) {
-		return PROTOCOL_NT1;
+		return PROTOCOL_LATEST;
 	}
 	return client_max_protocol;
 }
@@ -4550,6 +4580,32 @@ int lp_client_ipc_signing(void)
 		return SMB_SIGNING_REQUIRED;
 	}
 	return client_ipc_signing;
+}
+
+int lp_rpc_low_port(void)
+{
+	return Globals.rpc_low_port;
+}
+
+int lp_rpc_high_port(void)
+{
+	return Globals.rpc_high_port;
+}
+
+/*
+ * Do not allow LanMan auth if unless NTLMv1 is also allowed
+ *
+ * This also ensures it is disabled if NTLM is totally disabled
+ */
+bool lp_lanman_auth(void)
+{
+	enum ntlm_auth_level ntlm_auth_level = lp_ntlm_auth();
+
+	if (ntlm_auth_level == NTLM_AUTH_ON) {
+		return lp__lanman_auth();
+	} else {
+		return false;
+	}
 }
 
 struct loadparm_global * get_globals(void)

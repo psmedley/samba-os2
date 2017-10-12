@@ -29,6 +29,8 @@
 
 import time
 import random
+import ldb
+import drs_base
 
 from ldb import (
     ERR_NO_SUCH_OBJECT,
@@ -36,13 +38,11 @@ from ldb import (
     SCOPE_BASE,
     Message,
     FLAG_MOD_ADD,
-    FLAG_MOD_REPLACE,
+    FLAG_MOD_REPLACE
     )
-import ldb
-
-import drs_base
 from samba.dcerpc import drsuapi, misc
 from samba.drs_utils import drs_DsBind
+from samba import dsdb
 
 class DrsReplSchemaTestCase(drs_base.DrsBaseTestCase):
 
@@ -242,7 +242,7 @@ class DrsReplSchemaTestCase(drs_base.DrsBaseTestCase):
            AttributeID_id in Schema cache"""
         # add new attributeSchema object
         (a_ldn, a_dn) = self._schema_new_attr(self.ldb_dc1, "attr-Link-X", 10,
-                                              attrs={'linkID':"99990",
+                                              attrs={'linkID':"1.2.840.113556.1.2.50",
                                                      "attributeSyntax": "2.5.5.1",
                                                      "omSyntax": "127"})
         # add a base classSchema class so we can use our new
@@ -262,14 +262,19 @@ class DrsReplSchemaTestCase(drs_base.DrsBaseTestCase):
         self._check_object(c_dn)
         self._check_object(a_dn)
 
-        res = self.ldb_dc1.search(base=a_dn,
+        res = self.ldb_dc1.search(base="",
                                   scope=SCOPE_BASE,
-                                  attrs=["msDS-IntId"])
-        self.assertEqual(1, len(res))
-        self.assertTrue("msDS-IntId" in res[0])
-        int_id = int(res[0]["msDS-IntId"][0])
-        if int_id < 0:
-            int_id += (1 << 32)
+                                  attrs=["domainFunctionality"])
+
+        if int(res[0]["domainFunctionality"][0]) > dsdb.DS_DOMAIN_FUNCTION_2000:
+            res = self.ldb_dc1.search(base=a_dn,
+                                      scope=SCOPE_BASE,
+                                      attrs=["msDS-IntId"])
+            self.assertEqual(1, len(res))
+            self.assertTrue("msDS-IntId" in res[0])
+            int_id = int(res[0]["msDS-IntId"][0])
+            if int_id < 0:
+                int_id += (1 << 32)
 
         dc_guid_1 = self.ldb_dc1.get_invocation_id()
 
@@ -350,3 +355,96 @@ class DrsReplSchemaTestCase(drs_base.DrsBaseTestCase):
         # check objects are replicated
         self._check_object(c_dn)
         self._check_object(a_dn)
+
+    def test_classWithCustomBinaryDNLinkAttribute(self):
+        # Add a new attribute to the schema, which has binary DN syntax (2.5.5.7)
+        (bin_ldn, bin_dn) = self._schema_new_attr(self.ldb_dc1, "attr-Link-Bin", 18,
+                                                  attrs={"linkID": "1.2.840.113556.1.2.50",
+                                                         "attributeSyntax": "2.5.5.7",
+                                                         "omSyntax": "127"})
+
+        (bin_ldn_b, bin_dn_b) = self._schema_new_attr(self.ldb_dc1, "attr-Link-Bin-Back", 19,
+                                                      attrs={"linkID": bin_ldn,
+                                                             "attributeSyntax": "2.5.5.1",
+                                                             "omSyntax": "127"})
+
+        # Add a new class to the schema which can have the binary DN attribute
+        (c_ldn, c_dn) = self._schema_new_class(self.ldb_dc1, "cls-Link-Bin", 20,
+                                               3,
+                                               {"mayContain": bin_ldn})
+        (c_ldn_b, c_dn_b) = self._schema_new_class(self.ldb_dc1, "cls-Link-Bin-Back", 21,
+                                                   3,
+                                                   {"mayContain": bin_ldn_b})
+
+        link_end_dn = ldb.Dn(self.ldb_dc1, "ou=X")
+        link_end_dn.add_base(self.ldb_dc1.get_default_basedn())
+        link_end_dn.set_component(0, "OU", bin_dn_b.get_component_value(0))
+
+        ou_dn = ldb.Dn(self.ldb_dc1, "ou=X")
+        ou_dn.add_base(self.ldb_dc1.get_default_basedn())
+        ou_dn.set_component(0, "OU", bin_dn.get_component_value(0))
+
+        # Add an instance of the class to be pointed at
+        rec = {"dn": link_end_dn,
+               "objectClass": ["top", "organizationalUnit", c_ldn_b],
+               "ou": link_end_dn.get_component_value(0)}
+        self.ldb_dc1.add(rec)
+
+        # .. and one that does, and points to the first one
+        rec = {"dn": ou_dn,
+               "objectClass": ["top", "organizationalUnit", c_ldn],
+               "ou": ou_dn.get_component_value(0)}
+        self.ldb_dc1.add(rec)
+
+        m = Message.from_dict(self.ldb_dc1,
+                              {"dn": ou_dn,
+                               bin_ldn: "B:8:1234ABCD:%s" % str(link_end_dn)},
+                              FLAG_MOD_ADD)
+        self.ldb_dc1.modify(m)
+
+        self._net_drs_replicate(DC=self.dnsname_dc2, fromDC=self.dnsname_dc1,
+                                nc_dn=self.schema_dn, forced=True)
+        self._net_drs_replicate(DC=self.dnsname_dc2, fromDC=self.dnsname_dc1,
+                                nc_dn=self.domain_dn, forced=True)
+
+        self._check_object(c_dn)
+        self._check_object(bin_dn)
+
+        # Make sure we can delete the backlink
+        self.ldb_dc1.delete(link_end_dn)
+
+        self._net_drs_replicate(DC=self.dnsname_dc2, fromDC=self.dnsname_dc1,
+                                nc_dn=self.schema_dn, forced=True)
+        self._net_drs_replicate(DC=self.dnsname_dc2, fromDC=self.dnsname_dc1,
+                                nc_dn=self.domain_dn, forced=True)
+
+    def test_rename(self):
+        """Basic plan is to create a classSchema
+           and attributeSchema objects, replicate Schema NC
+           and then check all objects are replicated correctly"""
+
+        # add new classSchema object
+        (c_ldn, c_dn) = self._schema_new_class(self.ldb_dc1, "cls-B", 20)
+
+        self._net_drs_replicate(DC=self.dnsname_dc2, fromDC=self.dnsname_dc1,
+                                nc_dn=self.schema_dn, forced=True)
+
+        # check objects are replicated
+        self._check_object(c_dn)
+
+        # rename the Class CN
+        c_dn_new = ldb.Dn(self.ldb_dc1, str(c_dn))
+        c_dn_new.set_component(0,
+                               "CN",
+                               c_dn.get_component_value(0) + "-NEW")
+        try:
+            self.ldb_dc1.rename(c_dn, c_dn_new)
+        except LdbError, (num, _):
+            self.fail("failed to change CN for %s: %s" % (c_dn, _))
+
+        # force replication from DC1 to DC2
+        self._net_drs_replicate(DC=self.dnsname_dc2, fromDC=self.dnsname_dc1,
+                                nc_dn=self.schema_dn, forced=True)
+
+        # check objects are replicated
+        self._check_object(c_dn_new)

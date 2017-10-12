@@ -1,2 +1,3 @@
 usr/lib/*/libwbclient.so.0*
+usr/lib/*/samba/libreplace.so.0
 usr/lib/*/samba/libwinbind-client.so.*

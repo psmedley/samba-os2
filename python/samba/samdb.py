@@ -266,9 +266,12 @@ changetype: modify
 """ % (str(targetgroup[0].dn))
 
             for member in members:
-                targetmember = self.search(base=self.domain_dn(), scope=ldb.SCOPE_SUBTREE,
-                                    expression="(|(sAMAccountName=%s)(CN=%s))" % (
-                    ldb.binary_encode(member), ldb.binary_encode(member)), attrs=[])
+                filter = ('(&(sAMAccountName=%s)(|(objectclass=user)'
+                          '(objectclass=group)))' % ldb.binary_encode(member))
+                targetmember = self.search(base=self.domain_dn(),
+                                           scope=ldb.SCOPE_SUBTREE,
+                                           expression="%s" % filter,
+                                           attrs=[])
 
                 if len(targetmember) != 1:
                     raise Exception('Unable to find "%s". Operation cancelled.' % member)
@@ -927,13 +930,17 @@ accountExpires: %u
         res = self.search(base="", scope=ldb.SCOPE_BASE, attrs=["serverName"])
         return res[0]["serverName"][0]
 
-    def dns_lookup(self, dns_name):
+    def dns_lookup(self, dns_name, dns_partition=None):
         '''Do a DNS lookup in the database, returns the NDR database structures'''
-        return dsdb_dns.lookup(self, dns_name)
+        if dns_partition is None:
+            return dsdb_dns.lookup(self, dns_name)
+        else:
+            return dsdb_dns.lookup(self, dns_name,
+                                   dns_partition=dns_partition)
 
     def dns_extract(self, el):
         '''Return the NDR database structures from a dnsRecord element'''
-        return dsdb_dns.extract(el)
+        return dsdb_dns.extract(self, el)
 
     def dns_replace(self, dns_name, new_records):
         '''Do a DNS modification on the database, sets the NDR database

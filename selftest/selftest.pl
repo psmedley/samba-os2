@@ -47,8 +47,11 @@ my $opt_random_order = 0;
 my $opt_one = 0;
 my @opt_exclude = ();
 my @opt_include = ();
+my @opt_exclude_env = ();
+my @opt_include_env = ();
 my $opt_testenv = 0;
 my $opt_list = 0;
+my $opt_mitkrb5 = 0;
 my $ldap = undef;
 my $opt_resetup_env = undef;
 my $opt_load_list = undef;
@@ -142,10 +145,13 @@ sub run_testsuite($$$$$)
 	Subunit::progress_pop();
 
 	if ($? == -1) {
-		Subunit::progress_pop();
+		print "command: $cmd\n";
+		printf "expanded command: %s\n", expand_environment_strings($cmd);
 		Subunit::end_testsuite($name, "error", "Unable to run $cmd: $!");
 		exit(1);
 	} elsif ($? & 127) {
+		print "command: $cmd\n";
+		printf "expanded command: %s\n", expand_environment_strings($cmd);
 		Subunit::end_testsuite($name, "error",
 			sprintf("%s died with signal %d, %s coredump\n", $cmd, ($? & 127),  ($? & 128) ? 'with' : 'without'));
 		exit(1);
@@ -186,7 +192,7 @@ sub ShowHelp()
 Copyright (C) Jelmer Vernooij <jelmer\@samba.org>
 Copyright (C) Stefan Metzmacher <metze\@samba.org>
 
-Usage: $Script [OPTIONS] TESTNAME-REGEX
+Usage: $Script [OPTIONS] TESTNAME-REGEX [TESTNAME-REGEX...]
 
 Generic options:
  --help                     this help page
@@ -194,6 +200,8 @@ Generic options:
  --testlist=FILE            file to read available tests from
  --exclude=FILE             Exclude tests listed in the file
  --include=FILE             Include tests listed in the file
+ --exclude-env=ENV          Exclude tests for the specified environment
+ --include-env=ENV          Include tests for the specified environment
 
 Paths:
  --prefix=DIR               prefix to run tests in [st]
@@ -239,10 +247,13 @@ my $result = GetOptions (
 		'one' => \$opt_one,
 		'exclude=s' => \@opt_exclude,
 		'include=s' => \@opt_include,
+		'exclude-env=s' => \@opt_exclude_env,
+		'include-env=s' => \@opt_include_env,
 		'srcdir=s' => \$srcdir,
 		'bindir=s' => \$bindir,
 		'testenv' => \$opt_testenv,
 		'list' => \$opt_list,
+		'mitkrb5' => \$opt_mitkrb5,
 		'ldap:s' => \$ldap,
 		'resetup-environment' => \$opt_resetup_env,
 		'testlist=s' => \@testlists,
@@ -304,8 +315,11 @@ die("using an empty prefix isn't allowed") unless $prefix ne "";
 # permissions on this as some subdirectories in this tree will have
 # wider permissions (ie 0777) and this would allow other users on the
 # host to subvert the test process.
+umask 0077;
 mkdir($prefix, 0700) unless -d $prefix;
 chmod 0700, $prefix;
+# We need to have no umask limitations for the tests.
+umask 0000;
 
 my $prefix_abs = abs_path($prefix);
 my $tmpdir_abs = abs_path("$prefix/tmp");
@@ -315,6 +329,8 @@ my $srcdir_abs = abs_path($srcdir);
 
 die("using an empty absolute prefix isn't allowed") unless $prefix_abs ne "";
 die("using '/' as absolute prefix isn't allowed") unless $prefix_abs ne "/";
+
+$ENV{SAMBA_SELFTEST} = "1";
 
 $ENV{PREFIX} = $prefix;
 $ENV{PREFIX_ABS} = $prefix_abs;
@@ -412,6 +428,10 @@ if ($opt_use_dns_faking) {
 my $target;
 my $testenv_default = "none";
 
+if ($opt_mitkrb5 == 1) {
+	$ENV{MITKRB5} = $opt_mitkrb5;
+}
+
 # After this many seconds, the server will self-terminate.  All tests
 # must terminate in this time, and testenv will only stay alive this
 # long
@@ -431,7 +451,7 @@ if (defined($ENV{SMBD_MAXTIME}) and $ENV{SMBD_MAXTIME} ne "") {
 
 unless ($opt_list) {
 	if ($opt_target eq "samba") {
-		$testenv_default = "ad_dc_ntvfs";
+		$testenv_default = "ad_dc";
 		require target::Samba;
 		$target = new Samba($bindir, $ldap, $srcdir, $server_maxtime);
 	} elsif ($opt_target eq "samba3") {
@@ -808,6 +828,13 @@ my @exported_envvars = (
 	"VAMPIRE_DC_NETBIOSNAME",
 	"VAMPIRE_DC_NETBIOSALIAS",
 
+	# domain controller stuff for FL 2000 Vampired DC
+	"VAMPIRE_2000_DC_SERVER",
+	"VAMPIRE_2000_DC_SERVER_IP",
+	"VAMPIRE_2000_DC_SERVER_IPV6",
+	"VAMPIRE_2000_DC_NETBIOSNAME",
+	"VAMPIRE_2000_DC_NETBIOSALIAS",
+
 	"PROMOTED_DC_SERVER",
 	"PROMOTED_DC_SERVER_IP",
 	"PROMOTED_DC_SERVER_IPV6",
@@ -836,13 +863,13 @@ my @exported_envvars = (
 	"KRB5_CONFIG",
 	"KRB5CCNAME",
 	"SELFTEST_WINBINDD_SOCKET_DIR",
-	"WINBINDD_PRIV_PIPE_DIR",
 	"NMBD_SOCKET_DIR",
 	"LOCAL_PATH",
 	"DNS_FORWARDER1",
 	"DNS_FORWARDER2",
 	"RESOLV_CONF",
 	"UNACCEPTABLE_PASSWORD",
+	"LOCK_DIR",
 
 	# nss_wrapper
 	"NSS_WRAPPER_PASSWD",
@@ -1058,12 +1085,38 @@ $envvarstr
 		my $cmd = $$_[2];
 		my $name = $$_[0];
 		my $envname = $$_[1];
+		my ($env_basename, $env_localpart) = split(/:/, $envname);
+		my $envvars = "SKIP";
 
-		my $envvars = setup_env($envname, $prefix);
+		if (@opt_include_env) {
+		    foreach my $env (@opt_include_env) {
+			if ($env_basename eq $env) {
+			    $envvars = setup_env($envname, $prefix);
+			}
+		    }
+		} elsif (@opt_exclude_env) {
+		    my $excluded = 0;
+		    foreach my $env (@opt_exclude_env) {
+			if ($env_basename eq $env) {
+			    $excluded = 1;
+			}
+		    }
+		    if ($excluded == 0) {
+			$envvars = setup_env($envname, $prefix);
+		    }
+		} else {
+		    $envvars = setup_env($envname, $prefix);
+		}
+		
 		if (not defined($envvars)) {
 			Subunit::start_testsuite($name);
 			Subunit::end_testsuite($name, "error",
 				"unable to set up environment $envname - exiting");
+			next;
+		} elsif ($envvars eq "SKIP") {
+			Subunit::start_testsuite($name);
+			Subunit::end_testsuite($name, "skip",
+				"environment $envname is disabled (via --exclude-env / --include-env command line options) in this test run - skipping");
 			next;
 		} elsif ($envvars eq "UNKNOWN") {
 			Subunit::start_testsuite($name);

@@ -34,23 +34,25 @@ service_stop ()
 
 ###########################
 
-ctdb_start_stop_service
-
 is_ctdb_managed_service || exit 0
 
 ###########################
 
 case "$1" in
 startup)
-	ctdb_service_start
+	service_start
 	;;
 
 shutdown)
-	ctdb_service_stop
+	service_stop
 	;;
 
 monitor)
-	ctdb_check_command wbinfo -p
+	if ! out=$(wbinfo -p 2>&1) ; then
+		echo "ERROR: wbinfo -p returned error"
+		echo "$out"
+		exit 1
+	fi
 	;;
 esac
 

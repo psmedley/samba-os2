@@ -10,6 +10,7 @@ import wafsamba, Options, Logs, Utils, Scripting
 import build.charset
 import samba_utils, samba_version
 import samba3
+import bison, flex
 
 default_prefix = Options.default_prefix = '/usr/local/samba'
 
@@ -45,7 +46,6 @@ def set_options(opt):
     opt.SAMBA3_ADD_OPTION('quotas')
     opt.SAMBA3_ADD_OPTION('sendfile-support')
     opt.SAMBA3_ADD_OPTION('utmp')
-    opt.SAMBA3_ADD_OPTION('pthreadpool', with_name="enable", without_name="disable", default=True)
     opt.SAMBA3_ADD_OPTION('avahi', with_name="enable", without_name="disable")
     opt.SAMBA3_ADD_OPTION('iconv')
     opt.SAMBA3_ADD_OPTION('acl-support')
@@ -141,7 +141,7 @@ long ret = splice(0,0,1,0,400,SPLICE_F_MOVE);
     host_os = sys.platform
     if host_os.rfind('sunos') == -1:
         conf.CHECK_HEADERS('sys/inotify.h')
-        if "HAVE_SYS_INOTIFY_H" in conf.env:
+        if conf.env.HAVE_SYS_INOTIFY_H:
            conf.DEFINE('HAVE_INOTIFY', 1)
 
     # Check for kernel change notify support
@@ -313,7 +313,7 @@ int main(int argc, char **argv)
     conf.CHECK_STRUCTURE_MEMBER('struct stat', 'st_flags', define='HAVE_STAT_ST_FLAGS',
                                 headers='sys/types.h sys/stat.h unistd.h')
 
-    if "HAVE_BLKCNT_T" in conf.env:
+    if conf.env.HAVE_BLKCNT_T:
         conf.CHECK_CODE('''
         static int test_array[1 - 2 * !(((long int)(sizeof(blkcnt_t))) <= 4)];''',
                 'SIZEOF_BLKCNT_T_4',
@@ -321,7 +321,7 @@ int main(int argc, char **argv)
                 msg="Checking whether blkcnt_t is 32 bit")
 
     # If sizeof is 4 it can't be 8
-    if "HAVE_BLKCNT_T" in conf.env:
+    if conf.env.HAVE_BLKCNT_T:
         if not conf.CONFIG_SET('SIZEOF_BLKCNT_T_4'):
             conf.CHECK_CODE('''
             static int test_array[1 - 2 * !(((long int)(sizeof(blkcnt_t))) <= 8)];''',
@@ -332,7 +332,7 @@ int main(int argc, char **argv)
     # Check for POSIX capability support
     conf.CHECK_FUNCS_IN('cap_get_proc', 'cap', headers='sys/capability.h')
 
-    if "HAVE_SYS_CAPABILITY_H" in conf.env:
+    if conf.env.HAVE_SYS_CAPABILITY_H:
         conf.CHECK_CODE('''
         cap_t cap;
         cap_value_t vals[1];
@@ -947,6 +947,10 @@ int i; i = PAM_RADIO_TYPE;
         if use_pam:
             conf.DEFINE('WITH_PAM', 1)
             conf.DEFINE('WITH_PAM_MODULES', 1)
+        else:
+            conf.fatal("PAM support is enabled but prerequisite libraries "
+                       "or headers not found. Use --without-pam to disable "
+                       "PAM support.");
 
     seteuid = False
 
@@ -1563,13 +1567,6 @@ main() {
         conf.DEFINE('WITH_PROFILE', 1);
         conf.CHECK_FUNCS('getrusage', headers="sys/time.h sys/resource.h")
 
-    if Options.options.with_pthreadpool:
-        if conf.CONFIG_SET('HAVE_PTHREAD'):
-            conf.DEFINE('WITH_PTHREADPOOL', '1')
-        else:
-            Logs.warn("pthreadpool support cannot be enabled when pthread support was not found")
-            conf.undefine('WITH_PTHREADPOOL')
-
     if (conf.CHECK_HEADERS('linux/ioctl.h sys/ioctl.h linux/fs.h') and
         conf.CHECK_DECLS('FS_IOC_GETFLAGS FS_COMPR_FL', headers='linux/fs.h')):
             conf.DEFINE('HAVE_LINUX_IOCTL', '1')
@@ -1647,6 +1644,17 @@ main() {
     conf.env['libtracker']=''
     conf.env.with_spotlight = False
     if Options.options.with_spotlight:
+
+        Logs.info("Requested Spotlight support, checking for bison")
+        bison.detect(conf)
+        if not conf.env['BISON']:
+            conf.fatal("Spotlight support requested but bison missing")
+        conf.CHECK_COMMAND('%s --version | head -n1' % conf.env['BISON'], msg='Using bison version', define=None, on_target=False)
+        Logs.info("Requested Spotlight support, checking for flex")
+        flex.detect(conf)
+        if not conf.env['FLEX']:
+            conf.fatal("Spotlight support requested but flex missing")
+        conf.CHECK_COMMAND('%s --version' % conf.env['FLEX'], msg='Using flex version', define=None, on_target=False)
         versions = ['1.0', '0.16', '0.14']
         for version in versions:
             testlib = 'tracker-sparql-' + version
@@ -1665,8 +1673,8 @@ main() {
         default_static_modules.extend(TO_LIST('rpc_mdssvc_module'))
 
     forced_static_modules.extend(TO_LIST('auth_domain auth_builtin auth_sam auth_winbind'))
-    default_static_modules.extend(TO_LIST('''pdb_smbpasswd pdb_tdbsam pdb_wbc_sam
-                                      auth_unix auth_wbc
+    default_static_modules.extend(TO_LIST('''pdb_smbpasswd pdb_tdbsam
+                                      auth_unix
                                       nss_info_template idmap_tdb idmap_passdb
                                       idmap_nss'''))
 
@@ -1674,7 +1682,7 @@ main() {
                                       vfs_recycle vfs_audit vfs_extd_audit vfs_full_audit vfs_netatalk
                                       vfs_fake_perms vfs_default_quota vfs_readonly vfs_cap
                                       vfs_expand_msdfs vfs_shadow_copy vfs_shadow_copy2
-                                      vfs_readahead vfs_xattr_tdb vfs_posix_eadb
+                                      vfs_readahead vfs_xattr_tdb
                                       vfs_streams_xattr vfs_streams_depot vfs_acl_xattr vfs_acl_tdb
                                       vfs_preopen vfs_catia
                                       vfs_media_harmony vfs_unityed_media vfs_fruit vfs_shell_snap
@@ -1691,12 +1699,14 @@ main() {
         default_shared_modules.extend(TO_LIST('vfs_skel_opaque vfs_skel_transparent vfs_shadow_copy_test'))
         default_shared_modules.extend(TO_LIST('auth_skel pdb_test'))
         default_shared_modules.extend(TO_LIST('vfs_fake_dfq'))
+        default_shared_modules.extend(TO_LIST('gpext_security gpext_registry gpext_scripts'))
 
     if Options.options.enable_selftest or Options.options.developer:
         default_shared_modules.extend(TO_LIST('vfs_fake_acls vfs_nfs4acl_xattr'))
 
     if conf.CONFIG_SET('AD_DC_BUILD_IS_ENABLED'):
         default_static_modules.extend(TO_LIST('pdb_samba_dsdb auth_samba4 vfs_dfs_samba4'))
+        default_shared_modules.extend(TO_LIST('vfs_posix_eadb'))
 
     if conf.CONFIG_SET('HAVE_FREEBSD_SUNACL_H'):
         default_shared_modules.extend(TO_LIST('vfs_zfsacl'))
@@ -1848,14 +1858,14 @@ main() {
         if p in static_list:
             decl_list=""
             for entry in static_list[p]:
-                decl_list += "extern NTSTATUS %s_init(void); " % entry
+                decl_list += "extern NTSTATUS %s_init(TALLOC_CTX *mem_ctx); " % entry
                 conf.env[static_env].append('%s' % entry)
             decl_list = decl_list.rstrip()
             conf.DEFINE('static_decl_%s' % p, decl_list)
-            conf.DEFINE('static_init_%s' % p, '{ %s_init(); }' % '_init();  '.join(static_list[p]))
+            conf.DEFINE('static_init_%s(mem_ctx)' % p, '{ %s_init((mem_ctx)); }' % '_init((mem_ctx));  '.join(static_list[p]))
         else:
             conf.DEFINE('static_decl_%s' % p, '')
-            conf.DEFINE('static_init_%s' % p, '{}')
+            conf.DEFINE('static_init_%s(mem_ctx)' % p, '{}')
         if p in shared_list:
             for entry in shared_list[p]:
                 conf.DEFINE('%s_init' % entry, 'samba_init_module')
@@ -1864,12 +1874,3 @@ main() {
         Logs.info("%s: %s" % (shared_env, ','.join(conf.env[shared_env])))
 
     conf.SAMBA_CONFIG_H('include/config.h')
-
-def ctags(ctx):
-    "build 'tags' file using ctags"
-    import Utils
-    source_root = os.path.dirname(Utils.g_module.root_path)
-    cmd = 'ctags $(find %s/.. -name "*.[ch]" | grep -v "*_proto\.h")' % source_root
-    print("Running: %s" % cmd)
-    os.system(cmd)
-

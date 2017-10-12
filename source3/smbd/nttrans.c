@@ -538,7 +538,6 @@ void reply_ntcreate_and_X(struct smb_request *req)
 	ucf_flags = filename_create_ucf_flags(req, create_disposition);
 	status = filename_convert(ctx,
 				conn,
-				req->flags2 & FLAGS2_DFS_PATHNAMES,
 				fname,
 				ucf_flags,
 				NULL,
@@ -688,16 +687,19 @@ void reply_ntcreate_and_X(struct smb_request *req)
 	p += 8;
 	if (flags & EXTENDED_RESPONSE_REQUIRED) {
 		uint16_t file_status = (NO_EAS|NO_SUBSTREAMS|NO_REPARSETAG);
-		size_t num_names = 0;
 		unsigned int num_streams = 0;
 		struct stream_struct *streams = NULL;
 
-		/* Do we have any EA's ? */
-		status = get_ea_names_from_file(ctx, conn, fsp,
-				smb_fname, NULL, &num_names);
-		if (NT_STATUS_IS_OK(status) && num_names) {
-			file_status &= ~NO_EAS;
+		if (lp_ea_support(SNUM(conn))) {
+			size_t num_names = 0;
+			/* Do we have any EA's ? */
+			status = get_ea_names_from_file(
+			    ctx, conn, fsp, smb_fname, NULL, &num_names);
+			if (NT_STATUS_IS_OK(status) && num_names) {
+				file_status &= ~NO_EAS;
+			}
 		}
+
 		status = vfs_streaminfo(conn, NULL, smb_fname, ctx,
 			&num_streams, &streams);
 		/* There is always one stream, ::$DATA. */
@@ -1108,7 +1110,6 @@ static void call_nt_transact_create(connection_struct *conn,
 	ucf_flags = filename_create_ucf_flags(req, create_disposition);
 	status = filename_convert(ctx,
 				conn,
-				req->flags2 & FLAGS2_DFS_PATHNAMES,
 				fname,
 				ucf_flags,
 				NULL,
@@ -1334,16 +1335,19 @@ static void call_nt_transact_create(connection_struct *conn,
 	p += 8;
 	if (flags & EXTENDED_RESPONSE_REQUIRED) {
 		uint16_t file_status = (NO_EAS|NO_SUBSTREAMS|NO_REPARSETAG);
-		size_t num_names = 0;
 		unsigned int num_streams = 0;
 		struct stream_struct *streams = NULL;
 
-		/* Do we have any EA's ? */
-		status = get_ea_names_from_file(ctx, conn, fsp,
-				smb_fname, NULL, &num_names);
-		if (NT_STATUS_IS_OK(status) && num_names) {
-			file_status &= ~NO_EAS;
+		if (lp_ea_support(SNUM(conn))) {
+			size_t num_names = 0;
+			/* Do we have any EA's ? */
+			status = get_ea_names_from_file(
+			    ctx, conn, fsp, smb_fname, NULL, &num_names);
+			if (NT_STATUS_IS_OK(status) && num_names) {
+				file_status &= ~NO_EAS;
+			}
 		}
+
 		status = vfs_streaminfo(conn, NULL, smb_fname, ctx,
 			&num_streams, &streams);
 		/* There is always one stream, ::$DATA. */
@@ -1567,8 +1571,8 @@ void reply_ntrename(struct smb_request *req)
 	bool src_has_wcard = False;
 	bool dest_has_wcard = False;
 	uint32_t attrs;
-	uint32_t ucf_flags_src = (req->posix_pathnames ? UCF_POSIX_PATHNAMES : 0);
-	uint32_t ucf_flags_dst = (req->posix_pathnames ? UCF_POSIX_PATHNAMES : 0);
+	uint32_t ucf_flags_src = ucf_flags_from_smb_request(req);
+	uint32_t ucf_flags_dst = ucf_flags_from_smb_request(req);
 	uint16_t rename_type;
 	TALLOC_CTX *ctx = talloc_tos();
 	bool stream_rename = false;
@@ -1621,13 +1625,12 @@ void reply_ntrename(struct smb_request *req)
 	 * destination's last component.
 	 */
 	if (rename_type == RENAME_FLAG_RENAME) {
-		ucf_flags_src = UCF_COND_ALLOW_WCARD_LCOMP;
-		ucf_flags_dst = UCF_COND_ALLOW_WCARD_LCOMP | UCF_SAVE_LCOMP;
+		ucf_flags_src |= UCF_COND_ALLOW_WCARD_LCOMP;
+		ucf_flags_dst |= UCF_COND_ALLOW_WCARD_LCOMP | UCF_SAVE_LCOMP;
 	}
 
 	/* rename_internals() calls unix_convert(), so don't call it here. */
 	status = filename_convert(ctx, conn,
-				  req->flags2 & FLAGS2_DFS_PATHNAMES,
 				  oldname,
 				  ucf_flags_src,
 				  NULL,
@@ -1645,7 +1648,6 @@ void reply_ntrename(struct smb_request *req)
 	}
 
 	status = filename_convert(ctx, conn,
-				  req->flags2 & FLAGS2_DFS_PATHNAMES,
 				  newname,
 				  ucf_flags_dst,
 				  &dest_has_wcard,

@@ -3047,7 +3047,7 @@ static PyObject *py_ldb_msg_element_new(PyTypeObject *type, PyObject *args, PyOb
 
 	if (py_elements != NULL) {
 		Py_ssize_t i;
-		if (PyBytes_Check(py_elements)) {
+		if (PyBytes_Check(py_elements) || PyStr_Check(py_elements)) {
 			char *_msg = NULL;
 			el->num_values = 1;
 			el->values = talloc_array(el, struct ldb_val, 1);
@@ -3056,12 +3056,17 @@ static PyObject *py_ldb_msg_element_new(PyTypeObject *type, PyObject *args, PyOb
 				PyErr_NoMemory();
 				return NULL;
 			}
-			result = PyBytes_AsStringAndSize(py_elements, &_msg, &size);
+			if (PyBytes_Check(py_elements)) {
+				result = PyBytes_AsStringAndSize(py_elements, &_msg, &size);
+				msg = _msg;
+			} else {
+				msg = PyStr_AsUTF8AndSize(py_elements, &size);
+				result = (msg == NULL) ? -1 : 0;
+			}
 			if (result != 0) {
 				talloc_free(mem_ctx);
 				return NULL;
 			}
-			msg = _msg;
 			el->values[0].data = talloc_memdup(el->values, 
 				(const uint8_t *)msg, size + 1);
 			el->values[0].length = size;
@@ -3944,7 +3949,7 @@ static PyObject *py_register_module(PyObject *module, PyObject *args)
 	if (!PyArg_ParseTuple(args, "O", &input))
 		return NULL;
 
-	ops = talloc_zero(talloc_autofree_context(), struct ldb_module_ops);
+	ops = talloc_zero(NULL, struct ldb_module_ops);
 	if (ops == NULL) {
 		PyErr_NoMemory();
 		return NULL;
@@ -3967,6 +3972,9 @@ static PyObject *py_register_module(PyObject *module, PyObject *args)
 	ops->del_transaction = py_module_del_transaction;
 
 	ret = ldb_register_module(ops);
+	if (ret != LDB_SUCCESS) {
+		TALLOC_FREE(ops);
+	}
 
 	PyErr_LDB_ERROR_IS_ERR_RAISE(PyExc_LdbError, ret, NULL);
 

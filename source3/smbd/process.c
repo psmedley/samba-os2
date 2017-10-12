@@ -32,6 +32,7 @@
 #include "passdb.h"
 #include "auth.h"
 #include "messages.h"
+#include "lib/messages_ctdbd.h"
 #include "smbprofile.h"
 #include "rpc_server/spoolss/srv_spoolss_nt.h"
 #include "libsmb/libsmb.h"
@@ -4018,7 +4019,7 @@ void smbd_process(struct tevent_context *ev_ctx,
 			   locaddr);
 
 	if (lp_preload_modules()) {
-		smb_load_modules(lp_preload_modules());
+		smb_load_all_modules_absoute_path(lp_preload_modules());
 	}
 
 	smb_perfcount_init();

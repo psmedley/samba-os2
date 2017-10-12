@@ -1,4 +1,3 @@
-From a8fe4ce53f23667684883000f9dbec1b4c149f76 Mon Sep 17 00:00:00 2001
 From: Mathieu Parent <math.parent@gmail.com>
 Date: Thu, 12 May 2016 22:04:24 +0200
 Subject: systemd: syslog.target is obsolete
@@ -13,10 +12,10 @@ Ref: https://lintian.debian.org/tags/systemd-service-file-refers-to-obsolete-tar
  packaging/systemd/winbind.service | 2 +-
  4 files changed, 4 insertions(+), 4 deletions(-)
 
-Index: samba/packaging/systemd/nmb.service
-===================================================================
---- samba.orig/packaging/systemd/nmb.service
-+++ samba/packaging/systemd/nmb.service
+diff --git a/packaging/systemd/nmb.service b/packaging/systemd/nmb.service
+index 992c0cd..b8aba50 100644
+--- a/packaging/systemd/nmb.service
++++ b/packaging/systemd/nmb.service
 @@ -1,6 +1,6 @@
  [Unit]
  Description=Samba NMB Daemon
@@ -25,10 +24,10 @@ Index: samba/packaging/systemd/nmb.service
  
  [Service]
  Type=notify
-Index: samba/packaging/systemd/samba.service
-===================================================================
---- samba.orig/packaging/systemd/samba.service
-+++ samba/packaging/systemd/samba.service
+diff --git a/packaging/systemd/samba.service b/packaging/systemd/samba.service
+index 824f89c..83e0daf 100644
+--- a/packaging/systemd/samba.service
++++ b/packaging/systemd/samba.service
 @@ -1,6 +1,6 @@
  [Unit]
  Description=Samba AD Daemon
@@ -37,10 +36,10 @@ Index: samba/packaging/systemd/samba.service
  
  [Service]
  Type=notify
-Index: samba/packaging/systemd/smb.service
-===================================================================
---- samba.orig/packaging/systemd/smb.service
-+++ samba/packaging/systemd/smb.service
+diff --git a/packaging/systemd/smb.service b/packaging/systemd/smb.service
+index 6053a5c..7509407 100644
+--- a/packaging/systemd/smb.service
++++ b/packaging/systemd/smb.service
 @@ -1,6 +1,6 @@
  [Unit]
  Description=Samba SMB Daemon
@@ -49,10 +48,10 @@ Index: samba/packaging/systemd/smb.service
  
  [Service]
  Type=notify
-Index: samba/packaging/systemd/winbind.service
-===================================================================
---- samba.orig/packaging/systemd/winbind.service
-+++ samba/packaging/systemd/winbind.service
+diff --git a/packaging/systemd/winbind.service b/packaging/systemd/winbind.service
+index c511488..b412533 100644
+--- a/packaging/systemd/winbind.service
++++ b/packaging/systemd/winbind.service
 @@ -1,6 +1,6 @@
  [Unit]
  Description=Samba Winbind Daemon

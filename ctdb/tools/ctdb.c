@@ -41,6 +41,7 @@
 #include "protocol/protocol_api.h"
 #include "common/system.h"
 #include "client/client.h"
+#include "client/client_sync.h"
 
 #define TIMEOUT()	timeval_current_ofs(options.timelimit, 0)
 
@@ -1901,7 +1902,7 @@ static int control_getdbmap(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	}
 
 	if (options.machinereadable == 1) {
-		printf("%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
+		printf("%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
 		       options.sep,
 		       "ID", options.sep,
 		       "Name", options.sep,
@@ -1909,7 +1910,8 @@ static int control_getdbmap(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		       "Persistent", options.sep,
 		       "Sticky", options.sep,
 		       "Unhealthy", options.sep,
-		       "Readonly", options.sep);
+		       "Readonly", options.sep,
+		       "Replicated", options.sep);
 	} else {
 		printf("Number of databases:%d\n", dbmap->num);
 	}
@@ -1921,6 +1923,7 @@ static int control_getdbmap(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		bool persistent;
 		bool readonly;
 		bool sticky;
+		bool replicated;
 		uint32_t db_id;
 
 		db_id = dbmap->dbs[i].db_id;
@@ -1949,9 +1952,10 @@ static int control_getdbmap(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		persistent = dbmap->dbs[i].flags & CTDB_DB_FLAGS_PERSISTENT;
 		readonly = dbmap->dbs[i].flags & CTDB_DB_FLAGS_READONLY;
 		sticky = dbmap->dbs[i].flags & CTDB_DB_FLAGS_STICKY;
+		replicated = dbmap->dbs[i].flags & CTDB_DB_FLAGS_REPLICATED;
 
 		if (options.machinereadable == 1) {
-			printf("%s0x%08X%s%s%s%s%s%d%s%d%s%d%s%d%s\n",
+			printf("%s0x%08X%s%s%s%s%s%d%s%d%s%d%s%d%s%d%s\n",
 			       options.sep,
 			       db_id, options.sep,
 			       name, options.sep,
@@ -1959,13 +1963,15 @@ static int control_getdbmap(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			       !! (persistent), options.sep,
 			       !! (sticky), options.sep,
 			       !! (health), options.sep,
-			       !! (readonly), options.sep);
+			       !! (readonly), options.sep,
+			       !! (replicated), options.sep);
 		} else {
-			printf("dbid:0x%08x name:%s path:%s%s%s%s%s\n",
+			printf("dbid:0x%08x name:%s path:%s%s%s%s%s%s\n",
 			       db_id, name, path,
 			       persistent ? " PERSISTENT" : "",
 			       sticky ? " STICKY" : "",
 			       readonly ? " READONLY" : "",
+			       replicated ? " REPLICATED" : "",
 			       health ? " UNHEALTHY" : "");
 		}
 
@@ -2008,11 +2014,12 @@ static int control_getdbstatus(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	}
 
 	printf("dbid: 0x%08x\nname: %s\npath: %s\n", db_id, db_name, db_path);
-	printf("PERSISTENT: %s\nSTICKY: %s\nREADONLY: %s\nHEALTH: %s\n",
+	printf("PERSISTENT: %s\nREPLICATED: %s\nSTICKY: %s\nREADONLY: %s\n",
 	       (db_flags & CTDB_DB_FLAGS_PERSISTENT ? "yes" : "no"),
+	       (db_flags & CTDB_DB_FLAGS_REPLICATED ? "yes" : "no"),
 	       (db_flags & CTDB_DB_FLAGS_STICKY ? "yes" : "no"),
-	       (db_flags & CTDB_DB_FLAGS_READONLY ? "yes" : "no"),
-	       (db_health ? db_health : "OK"));
+	       (db_flags & CTDB_DB_FLAGS_READONLY ? "yes" : "no"));
+	printf("HEALTH: %s\n", (db_health ? db_health : "OK"));
 	return 0;
 }
 
@@ -2083,51 +2090,6 @@ static int dump_record(uint32_t reqid, struct ctdb_ltdb_header *header,
 	return 0;
 }
 
-struct traverse_state {
-	TALLOC_CTX *mem_ctx;
-	bool done;
-	ctdb_rec_parser_func_t func;
-	struct dump_record_state sub_state;
-};
-
-static void traverse_handler(uint64_t srvid, TDB_DATA data, void *private_data)
-{
-	struct traverse_state *state = (struct traverse_state *)private_data;
-	struct ctdb_rec_data *rec;
-	struct ctdb_ltdb_header header;
-	int ret;
-
-	ret = ctdb_rec_data_pull(data.dptr, data.dsize, state->mem_ctx, &rec);
-	if (ret != 0) {
-		return;
-	}
-
-	if (rec->key.dsize == 0 && rec->data.dsize == 0) {
-		talloc_free(rec);
-		/* end of traverse */
-		state->done = true;
-		return;
-	}
-
-	ret = ctdb_ltdb_header_extract(&rec->data, &header);
-	if (ret != 0) {
-		talloc_free(rec);
-		return;
-	}
-
-	if (rec->data.dsize == 0) {
-		talloc_free(rec);
-		return;
-	}
-
-	ret = state->func(rec->reqid, &header, rec->key, rec->data,
-			  &state->sub_state);
-	talloc_free(rec);
-	if (ret != 0) {
-		state->done = true;
-	}
-}
-
 static int control_catdb(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			 int argc, const char **argv)
 {
@@ -2135,8 +2097,7 @@ static int control_catdb(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	const char *db_name;
 	uint32_t db_id;
 	uint8_t db_flags;
-	struct ctdb_traverse_start_ext traverse;
-	struct traverse_state state;
+	struct dump_record_state state;
 	int ret;
 
 	if (argc != 1) {
@@ -2154,44 +2115,15 @@ static int control_catdb(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return ret;
 	}
 
-	/* Valgrind fix */
-	ZERO_STRUCT(traverse);
+	state.count = 0;
 
-	traverse.db_id = db_id;
-	traverse.reqid = 0;
-	traverse.srvid = next_srvid(ctdb);
-	traverse.withemptyrecords = false;
+	ret = ctdb_db_traverse(mem_ctx, ctdb->ev, ctdb->client, db,
+			       ctdb->cmd_pnn, TIMEOUT(),
+			       dump_record, &state);
 
-	state.mem_ctx = mem_ctx;
-	state.done = false;
-	state.func = dump_record;
-	state.sub_state.count = 0;
+	printf("Dumped %u records\n", state.count);
 
-	ret = ctdb_client_set_message_handler(ctdb->ev, ctdb->client,
-					      traverse.srvid,
-					      traverse_handler, &state);
-	if (ret != 0) {
-		return ret;
-	}
-
-	ret = ctdb_ctrl_traverse_start_ext(mem_ctx, ctdb->ev, ctdb->client,
-					   ctdb->cmd_pnn, TIMEOUT(),
-					   &traverse);
-	if (ret != 0) {
-		return ret;
-	}
-
-	ctdb_client_wait(ctdb->ev, &state.done);
-
-	printf("Dumped %u records\n", state.sub_state.count);
-
-	ret = ctdb_client_remove_message_handler(ctdb->ev, ctdb->client,
-						 traverse.srvid, &state);
-	if (ret != 0) {
-		return ret;
-	}
-
-	return 0;
+	return ret;
 }
 
 static int control_cattdb(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
@@ -2220,7 +2152,7 @@ static int control_cattdb(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	}
 
 	state.count = 0;
-	ret = ctdb_db_traverse(db, true, true, dump_record, &state);
+	ret = ctdb_db_traverse_local(db, true, true, dump_record, &state);
 
 	printf("Dumped %u record(s)\n", state.count);
 
@@ -2423,6 +2355,8 @@ static int control_attach(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			db_flags = CTDB_DB_FLAGS_READONLY;
 		} else if (strcmp(argv[1], "sticky") == 0) {
 			db_flags = CTDB_DB_FLAGS_STICKY;
+		} else if (strcmp(argv[1], "replicated") == 0) {
+			db_flags = CTDB_DB_FLAGS_REPLICATED;
 		} else {
 			usage("attach");
 		}
@@ -2510,15 +2444,14 @@ static int control_detach(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			continue;
 		}
 
-		if (db_flags & CTDB_DB_FLAGS_PERSISTENT) {
+		if (db_flags &
+		    (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED)) {
 			fprintf(stderr,
-			        "Persistent database %s cannot be detached\n",
-				argv[0]);
+			        "Only volatile databases can be detached\n");
 			return 1;
 		}
 
-		ret = ctdb_detach(mem_ctx, ctdb->ev, ctdb->client,
-				  TIMEOUT(), db_id);
+		ret = ctdb_detach(ctdb->ev, ctdb->client, TIMEOUT(), db_id);
 		if (ret != 0) {
 			fprintf(stderr, "Database %s detach failed\n", db_name);
 			ret2 = ret;
@@ -2653,6 +2586,40 @@ static void wait_for_flags(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 
 		sleep(1);
 	}
+}
+
+static int ctdb_ctrl_modflags(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+			      struct ctdb_client_context *client,
+			      uint32_t destnode, struct timeval timeout,
+			      uint32_t set, uint32_t clear)
+{
+	struct ctdb_node_map *nodemap;
+	struct ctdb_node_flag_change flag_change;
+	struct ctdb_req_control request;
+	uint32_t *pnn_list;
+	int ret, count;
+
+	ret = ctdb_ctrl_get_nodemap(mem_ctx, ev, client, destnode,
+				    tevent_timeval_zero(), &nodemap);
+	if (ret != 0) {
+		return ret;
+	}
+
+	flag_change.pnn = destnode;
+	flag_change.old_flags = nodemap->node[destnode].flags;
+	flag_change.new_flags = flag_change.old_flags | set;
+	flag_change.new_flags &= ~clear;
+
+	count = list_of_connected_nodes(nodemap, -1, mem_ctx, &pnn_list);
+	if (count == -1) {
+		return ENOMEM;
+	}
+
+	ctdb_req_control_modify_flags(&request, &flag_change);
+	ret = ctdb_client_control_multi(mem_ctx, ev, client, pnn_list, count,
+					tevent_timeval_zero(), &request,
+					NULL, NULL);
+	return ret;
 }
 
 struct ipreallocate_state {
@@ -4152,7 +4119,7 @@ static int control_backupdb(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	state.nbuf = 0;
 	state.nrec = 0;
 
-	ret = ctdb_db_traverse(db, true, false, backup_handler, &state);
+	ret = ctdb_db_traverse_local(db, true, false, backup_handler, &state);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to collect records from DB %s\n",
 			db_name);
@@ -4407,6 +4374,7 @@ static int control_restoredb(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	}
 
 	printf("Database %s restored\n", db_name);
+	close(fd);
 	return 0;
 
 
@@ -4883,8 +4851,8 @@ static int control_setdbreadonly(TALLOC_CTX *mem_ctx,
 		return 1;
 	}
 
-	if (db_flags & CTDB_DB_FLAGS_PERSISTENT) {
-		fprintf(stderr, "Cannot set READONLY on persistent DB\n");
+	if (db_flags & (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED)) {
+		fprintf(stderr, "READONLY can be set only on volatile DB\n");
 		return 1;
 	}
 
@@ -4912,8 +4880,8 @@ static int control_setdbsticky(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	if (db_flags & CTDB_DB_FLAGS_PERSISTENT) {
-		fprintf(stderr, "Cannot set STICKY on persistent DB\n");
+	if (db_flags & (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED)) {
+		fprintf(stderr, "STICKY can be set only on volatile DB\n");
 		return 1;
 	}
 
@@ -4944,8 +4912,9 @@ static int control_pfetch(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	if (! (db_flags & CTDB_DB_FLAGS_PERSISTENT)) {
-		fprintf(stderr, "DB %s is not a persistent database\n",
+	if (! (db_flags &
+	       (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED))) {
+		fprintf(stderr, "Transactions not supported on DB %s\n",
 			db_name);
 		return 1;
 	}
@@ -5003,8 +4972,9 @@ static int control_pstore(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	if (! (db_flags & CTDB_DB_FLAGS_PERSISTENT)) {
-		fprintf(stderr, "DB %s is not a persistent database\n",
+	if (! (db_flags &
+	       (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED))) {
+		fprintf(stderr, "Transactions not supported on DB %s\n",
 			db_name);
 		return 1;
 	}
@@ -5073,8 +5043,9 @@ static int control_pdelete(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	if (! (db_flags & CTDB_DB_FLAGS_PERSISTENT)) {
-		fprintf(stderr, "DB %s is not a persistent database\n",
+	if (! (db_flags &
+	       (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED))) {
+		fprintf(stderr, "Transactions not supported on DB %s\n",
 			db_name);
 		return 1;
 	}
@@ -5208,8 +5179,9 @@ static int control_ptrans(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	if (! (db_flags & CTDB_DB_FLAGS_PERSISTENT)) {
-		fprintf(stderr, "DB %s is not a persistent database\n",
+	if (! (db_flags &
+	       (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED))) {
+		fprintf(stderr, "Transactions not supported on DB %s\n",
 			db_name);
 		return 1;
 	}
@@ -5431,7 +5403,7 @@ static int control_readkey(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	if (db_flags & CTDB_DB_FLAGS_PERSISTENT) {
+	if (db_flags & (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED)) {
 		fprintf(stderr, "DB %s is not a volatile database\n",
 			db_name);
 		return 1;
@@ -5482,7 +5454,7 @@ static int control_writekey(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	if (db_flags & CTDB_DB_FLAGS_PERSISTENT) {
+	if (db_flags & (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED)) {
 		fprintf(stderr, "DB %s is not a volatile database\n",
 			db_name);
 		return 1;
@@ -5542,7 +5514,7 @@ static int control_deletekey(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	if (db_flags & CTDB_DB_FLAGS_PERSISTENT) {
+	if (db_flags & (CTDB_DB_FLAGS_PERSISTENT | CTDB_DB_FLAGS_REPLICATED)) {
 		fprintf(stderr, "DB %s is not a volatile database\n",
 			db_name);
 		return 1;
@@ -6054,7 +6026,7 @@ static const struct ctdb_cmd {
 	{ "getdebug", control_getdebug, false, true,
 		"get debug level", NULL },
 	{ "attach", control_attach, false, false,
-		"attach a database", "<dbname> [persistent]" },
+		"attach a database", "<dbname> [persistent|replicated]" },
 	{ "detach", control_detach, false, false,
 		"detach database(s)", "<dbname|dbid> ..." },
 	{ "dumpmemory", control_dumpmemory, false, true,

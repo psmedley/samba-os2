@@ -1,12 +1,16 @@
-Description: 64 bit fix for libsmbclient
-Author: Christian Perrier <bubulle@debian.org>
+From: Christian Perrier <bubulle@debian.org>
+Subject: 64 bit fix for libsmbclient
+
 Bug-Debian: http://bugs.debian.org/221618
 Forwarded: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=221618#27
+---
+ source3/include/libsmbclient.h | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
 
-Index: samba/source3/include/libsmbclient.h
-===================================================================
---- samba.orig/source3/include/libsmbclient.h
-+++ samba/source3/include/libsmbclient.h
+diff --git a/source3/include/libsmbclient.h b/source3/include/libsmbclient.h
+index cf67b1d..ff9ed53 100644
+--- a/source3/include/libsmbclient.h
++++ b/source3/include/libsmbclient.h
 @@ -80,6 +80,16 @@ extern "C" {
  #include <fcntl.h>
  #include <utime.h>

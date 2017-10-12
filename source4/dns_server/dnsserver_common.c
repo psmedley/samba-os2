@@ -69,7 +69,8 @@ uint8_t werr_to_dns_err(WERROR werr)
 	return DNS_RCODE_SERVFAIL;
 }
 
-WERROR dns_common_extract(const struct ldb_message_element *el,
+WERROR dns_common_extract(struct ldb_context *samdb,
+			  const struct ldb_message_element *el,
 			  TALLOC_CTX *mem_ctx,
 			  struct dnsp_DnssrvRpcRecord **records,
 			  uint16_t *num_records)
@@ -86,9 +87,11 @@ WERROR dns_common_extract(const struct ldb_message_element *el,
 		return WERR_NOT_ENOUGH_MEMORY;
 	}
 	for (ri = 0; ri < el->num_values; ri++) {
+		bool am_rodc;
+		int ret;
+		const char *dnsHostName = NULL;
 		struct ldb_val *v = &el->values[ri];
 		enum ndr_err_code ndr_err;
-
 		ndr_err = ndr_pull_struct_blob(v, recs, &recs[ri],
 				(ndr_pull_flags_fn_t)ndr_pull_dnsp_DnssrvRpcRecord);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
@@ -96,7 +99,35 @@ WERROR dns_common_extract(const struct ldb_message_element *el,
 			DEBUG(0, ("Failed to grab dnsp_DnssrvRpcRecord\n"));
 			return DNS_ERR(SERVER_FAILURE);
 		}
+
+		/*
+		 * In AD, except on an RODC (where we should list a random RWDC,
+		 * we should over-stamp the MNAME with our own hostname
+		 */
+		if (recs[ri].wType != DNS_TYPE_SOA) {
+			continue;
+		}
+
+		ret = samdb_rodc(samdb, &am_rodc);
+		if (ret != LDB_SUCCESS) {
+			DEBUG(0, ("Failed to confirm we are not an RODC: %s\n",
+				  ldb_errstring(samdb)));
+			return DNS_ERR(SERVER_FAILURE);
+		}
+
+		if (am_rodc) {
+			continue;
+		}
+
+		ret = samdb_dns_host_name(samdb, &dnsHostName);
+		if (ret != LDB_SUCCESS || dnsHostName == NULL) {
+			DEBUG(0, ("Failed to get dnsHostName from rootDSE"));
+			return DNS_ERR(SERVER_FAILURE);
+		}
+
+		recs[ri].data.soa.mname = talloc_strdup(recs, dnsHostName);
 	}
+
 	*records = recs;
 	*num_records = el->num_values;
 	return WERR_OK;
@@ -189,7 +220,7 @@ WERROR dns_common_lookup(struct ldb_context *samdb,
 		}
 	}
 
-	werr = dns_common_extract(el, mem_ctx, records, num_records);
+	werr = dns_common_extract(samdb, el, mem_ctx, records, num_records);
 	TALLOC_FREE(msg);
 	if (!W_ERROR_IS_OK(werr)) {
 		return werr;
@@ -560,6 +591,7 @@ static int dns_common_sort_zones(struct ldb_message **m1, struct ldb_message **m
 
 NTSTATUS dns_common_zones(struct ldb_context *samdb,
 			  TALLOC_CTX *mem_ctx,
+			  struct ldb_dn *base_dn,
 			  struct dns_server_zone **zones_ret)
 {
 	int ret;
@@ -569,9 +601,19 @@ NTSTATUS dns_common_zones(struct ldb_context *samdb,
 	struct dns_server_zone *new_list = NULL;
 	TALLOC_CTX *frame = talloc_stackframe();
 
-	/* TODO: this search does not work against windows */
-	ret = dsdb_search(samdb, frame, &res, NULL, LDB_SCOPE_SUBTREE,
-			  attrs, DSDB_SEARCH_SEARCH_ALL_PARTITIONS, "(objectClass=dnsZone)");
+	if (base_dn) {
+		/* This search will work against windows */
+		ret = dsdb_search(samdb, frame, &res,
+				  base_dn, LDB_SCOPE_SUBTREE,
+				  attrs, 0, "(objectClass=dnsZone)");
+	} else {
+		/* TODO: this search does not work against windows */
+		ret = dsdb_search(samdb, frame, &res, NULL,
+				  LDB_SCOPE_SUBTREE,
+				  attrs,
+				  DSDB_SEARCH_SEARCH_ALL_PARTITIONS,
+				  "(objectClass=dnsZone)");
+	}
 	if (ret != LDB_SUCCESS) {
 		TALLOC_FREE(frame);
 		return NT_STATUS_INTERNAL_DB_CORRUPTION;

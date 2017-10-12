@@ -32,6 +32,7 @@ builddirs = {
     "samba-static"  : ".",
     "samba-test-only"  : ".",
     "samba-systemkrb5"  : ".",
+    "samba-nopython"  : ".",
     "ldb"     : "lib/ldb",
     "tdb"     : "lib/tdb",
     "talloc"  : "lib/talloc",
@@ -43,18 +44,19 @@ builddirs = {
     "retry"   : "."
     }
 
-defaulttasks = [ "ctdb", "samba", "samba-xc", "samba-o3", "samba-ctdb", "samba-libs", "samba-static", "samba-systemkrb5", "ldb", "tdb", "talloc", "replace", "tevent", "pidl" ]
+defaulttasks = [ "ctdb", "samba", "samba-xc", "samba-o3", "samba-ctdb", "samba-libs", "samba-static", "samba-systemkrb5", "samba-nopython", "ldb", "tdb", "talloc", "replace", "tevent", "pidl" ]
 
 if os.environ.get("AUTOBUILD_SKIP_SAMBA_O3", "0") == "1":
     defaulttasks.remove("samba-o3")
 
+ctdb_configure_params = " --enable-developer --picky-developer ${PREFIX}"
 samba_configure_params = " --picky-developer ${PREFIX} ${EXTRA_PYTHON} --with-profiling-data"
 
 samba_libs_envvars =  "PYTHONPATH=${PYTHON_PREFIX}/site-packages:$PYTHONPATH"
 samba_libs_envvars += " PKG_CONFIG_PATH=$PKG_CONFIG_PATH:${PREFIX_DIR}/lib/pkgconfig"
 samba_libs_envvars += " ADDITIONAL_CFLAGS='-Wmissing-prototypes'"
 samba_libs_configure_base = samba_libs_envvars + " ./configure --abi-check --enable-debug --picky-developer -C ${PREFIX} ${EXTRA_PYTHON}"
-samba_libs_configure_libs = samba_libs_configure_base + " --bundled-libraries=NONE"
+samba_libs_configure_libs = samba_libs_configure_base + " --bundled-libraries=cmocka,NONE"
 samba_libs_configure_samba = samba_libs_configure_base + " --bundled-libraries=!talloc,!pytalloc-util,!tdb,!pytdb,!ldb,!pyldb,!pyldb-util,!tevent,!pytevent"
 
 if os.environ.get("AUTOBUILD_NO_EXTRA_PYTHON", "0") == "1":
@@ -64,7 +66,7 @@ else:
 
 tasks = {
     "ctdb" : [ ("random-sleep", "../script/random-sleep.sh 60 600", "text/plain"),
-               ("configure", "./configure ${PREFIX}", "text/plain"),
+               ("configure", "./configure " + ctdb_configure_params, "text/plain"),
                ("make", "make all", "text/plain"),
                ("install", "make install", "text/plain"),
                ("test", "make autotest", "text/plain"),
@@ -91,11 +93,11 @@ tasks = {
                     " --cross-answers=./bin-xe/cross-answers.txt --with-selftest-prefix=./bin-xa/ab" + samba_configure_params, "text/plain"),
                    ("compare-results", "script/compare_cc_results.py ./bin/c4che/default.cache.py ./bin-xe/c4che/default.cache.py ./bin-xa/c4che/default.cache.py", "text/plain")],
 
-    # test build with -O3 -- catches extra warnings and bugs
+    # test build with -O3 -- catches extra warnings and bugs, tests the ad_dc environments
     "samba-o3" : [ ("random-sleep", "../script/random-sleep.sh 60 600", "text/plain"),
                    ("configure", "ADDITIONAL_CFLAGS='-O3' ./configure.developer --with-selftest-prefix=./bin/ab --abi-check-disable" + samba_configure_params, "text/plain"),
                    ("make", "make -j", "text/plain"),
-                   ("test", "make quicktest FAIL_IMMEDIATELY=1 TESTS='\(ad_dc\)'", "text/plain"),
+                   ("test", "make quicktest FAIL_IMMEDIATELY=1 TESTS='--include-env=ad_dc'", "text/plain"),
                    ("install", "make install", "text/plain"),
                    ("check-clean-tree", "script/clean-source-tree.sh", "text/plain"),
                    ("clean", "make clean", "text/plain") ],
@@ -171,7 +173,22 @@ tasks = {
                       ("make", "make -j", "text/plain"),
                       # we currently cannot run a full make test, a limited list of tests could be run
                       # via "make test TESTS=sometests"
-                      # ("test", "make test FAIL_IMMEDIATELY=1", "text/plain"),
+                      ("test", "make test FAIL_IMMEDIATELY=1 TESTS='--include-env=ktest'", "text/plain"),
+                      ("install", "make install", "text/plain"),
+                      ("check-clean-tree", "script/clean-source-tree.sh", "text/plain"),
+                      ("clean", "make clean", "text/plain")
+                      ],
+
+    # Test Samba without python still builds.  When this test fails
+    # due to more use of Python, the expectations is that the newly
+    # failing part of the code should be disabled when
+    # --disable-python is set (rather than major work being done to
+    # support this environment).  The target here is for vendors
+    # shipping a minimal smbd.
+    "samba-nopython" : [
+                      ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
+                      ("configure", "./configure.developer --picky-developer ${PREFIX} --with-profiling-data --disable-python --without-ad-dc", "text/plain"),
+                      ("make", "make -j", "text/plain"),
                       ("install", "make install", "text/plain"),
                       ("check-clean-tree", "script/clean-source-tree.sh", "text/plain"),
                       ("clean", "make clean", "text/plain")

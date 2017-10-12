@@ -25,6 +25,7 @@
 
 #include "includes.h"
 #include "system/passwd.h"
+#include "lib/util/server_id.h"
 #include "ntdomain.h"
 #include "../librpc/gen_ndr/srv_srvsvc.h"
 #include "../libcli/security/security.h"
@@ -2322,7 +2323,7 @@ WERROR _srvsvc_NetGetFileSecurity(struct pipes_struct *p,
 	struct sec_desc_buf *sd_buf = NULL;
 	files_struct *fsp = NULL;
 	int snum;
-	char *oldcwd = NULL;
+	struct smb_filename *oldcwd_fname = NULL;
 	uint32_t ucf_flags = 0;
 
 	ZERO_STRUCT(st);
@@ -2347,7 +2348,7 @@ WERROR _srvsvc_NetGetFileSecurity(struct pipes_struct *p,
 					   server_messaging_context(),
 					   &conn,
 					   snum, lp_path(talloc_tos(), snum),
-					   p->session_info, &oldcwd);
+					   p->session_info, &oldcwd_fname);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DEBUG(10, ("create_conn_struct failed: %s\n",
 			   nt_errstr(nt_status)));
@@ -2357,7 +2358,6 @@ WERROR _srvsvc_NetGetFileSecurity(struct pipes_struct *p,
 
 	nt_status = filename_convert(talloc_tos(),
 					conn,
-					false,
 					r->in.file,
 					ucf_flags,
 					NULL,
@@ -2423,12 +2423,7 @@ WERROR _srvsvc_NetGetFileSecurity(struct pipes_struct *p,
 
 	*r->out.sd_buf = sd_buf;
 
-	close_file(NULL, fsp, NORMAL_CLOSE);
-	vfs_ChDir(conn, oldcwd);
-	SMB_VFS_DISCONNECT(conn);
-	conn_free(conn);
 	werr = WERR_OK;
-	goto done;
 
 error_exit:
 
@@ -2436,16 +2431,15 @@ error_exit:
 		close_file(NULL, fsp, NORMAL_CLOSE);
 	}
 
-	if (oldcwd) {
-		vfs_ChDir(conn, oldcwd);
+	if (oldcwd_fname) {
+                vfs_ChDir(conn, oldcwd_fname);
+                TALLOC_FREE(oldcwd_fname);
 	}
 
 	if (conn) {
 		SMB_VFS_DISCONNECT(conn);
 		conn_free(conn);
 	}
-
- done:
 
 	TALLOC_FREE(smb_fname);
 
@@ -2468,7 +2462,7 @@ WERROR _srvsvc_NetSetFileSecurity(struct pipes_struct *p,
 	WERROR werr;
 	connection_struct *conn = NULL;
 	int snum;
-	char *oldcwd = NULL;
+	struct smb_filename *oldcwd_fname = NULL;
 	struct security_descriptor *psd = NULL;
 	uint32_t security_info_sent = 0;
 	uint32_t ucf_flags = 0;
@@ -2497,7 +2491,7 @@ WERROR _srvsvc_NetSetFileSecurity(struct pipes_struct *p,
 					   server_messaging_context(),
 					   &conn,
 					   snum, lp_path(talloc_tos(), snum),
-					   p->session_info, &oldcwd);
+					   p->session_info, &oldcwd_fname);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DEBUG(10, ("create_conn_struct failed: %s\n",
 			   nt_errstr(nt_status)));
@@ -2507,7 +2501,6 @@ WERROR _srvsvc_NetSetFileSecurity(struct pipes_struct *p,
 
 	nt_status = filename_convert(talloc_tos(),
 					conn,
-					false,
 					r->in.file,
 					ucf_flags,
 					NULL,
@@ -2556,12 +2549,7 @@ WERROR _srvsvc_NetSetFileSecurity(struct pipes_struct *p,
 		goto error_exit;
 	}
 
-	close_file(NULL, fsp, NORMAL_CLOSE);
-	vfs_ChDir(conn, oldcwd);
-	SMB_VFS_DISCONNECT(conn);
-	conn_free(conn);
 	werr = WERR_OK;
-	goto done;
 
 error_exit:
 
@@ -2569,8 +2557,9 @@ error_exit:
 		close_file(NULL, fsp, NORMAL_CLOSE);
 	}
 
-	if (oldcwd) {
-		vfs_ChDir(conn, oldcwd);
+	if (oldcwd_fname) {
+		vfs_ChDir(conn, oldcwd_fname);
+		TALLOC_FREE(oldcwd_fname);
 	}
 
 	if (conn) {
@@ -2578,7 +2567,6 @@ error_exit:
 		conn_free(conn);
 	}
 
- done:
 	TALLOC_FREE(smb_fname);
 
 	return werr;

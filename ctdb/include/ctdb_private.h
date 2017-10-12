@@ -23,6 +23,8 @@
 #include "ctdb_client.h"
 #include <sys/socket.h>
 
+#include "common/db_hash.h"
+
 /*
   array of tcp connections
  */
@@ -342,9 +344,7 @@ struct ctdb_db_context {
 	struct ctdb_db_context *next, *prev;
 	struct ctdb_context *ctdb;
 	uint32_t db_id;
-	bool persistent;
-	bool readonly; /* Do we support read-only delegations ? */
-	bool sticky; /* Do we support sticky records ? */
+	uint8_t db_flags;
 	const char *db_name;
 	const char *db_path;
 	struct tdb_wrap *ltdb;
@@ -376,6 +376,7 @@ struct ctdb_db_context {
 	struct lock_context *lock_current;
 	struct lock_context *lock_pending;
 	int lock_num_current;
+	struct db_hash_context *lock_log;
 
 	struct ctdb_call_state *pending_calls;
 
@@ -387,6 +388,8 @@ struct ctdb_db_context {
 
 	bool push_started;
 	void *push_state;
+
+	struct hash_count_context *migratedb;
 };
 
 
@@ -509,8 +512,6 @@ struct ctdb_call_state *ctdb_daemon_call_send_remote(
 int ctdb_daemon_call_recv(struct ctdb_call_state *state,
 			  struct ctdb_call *call);
 
-void ctdb_send_keepalive(struct ctdb_context *ctdb, uint32_t destnode);
-
 int ctdb_start_revoke_ro_record(struct ctdb_context *ctdb,
 				struct ctdb_db_context *ctdb_db,
 				TDB_DATA key, struct ctdb_ltdb_header *header,
@@ -520,6 +521,8 @@ int ctdb_add_revoke_deferred_call(struct ctdb_context *ctdb,
 				  struct ctdb_db_context *ctdb_db,
 				  TDB_DATA key, struct ctdb_req_header *hdr,
 				  deferred_requeue_fn fn, void *call_context);
+
+int ctdb_migration_init(struct ctdb_db_context *ctdb_db);
 
 /* from server/ctdb_control.c */
 
@@ -626,11 +629,15 @@ int32_t ctdb_control_wipe_database(struct ctdb_context *ctdb, TDB_DATA indata);
 
 bool ctdb_db_frozen(struct ctdb_db_context *ctdb_db);
 bool ctdb_db_all_frozen(struct ctdb_context *ctdb);
+bool ctdb_db_allow_access(struct ctdb_db_context *ctdb_db);
 
 /* from server/ctdb_keepalive.c */
 
 void ctdb_start_keepalive(struct ctdb_context *ctdb);
 void ctdb_stop_keepalive(struct ctdb_context *ctdb);
+
+void ctdb_request_keepalive(struct ctdb_context *ctdb,
+			    struct ctdb_req_header *hdr);
 
 /* from server/ctdb_lock.c */
 
@@ -716,8 +723,8 @@ int ctdb_set_db_readonly(struct ctdb_context *ctdb,
 int ctdb_process_deferred_attach(struct ctdb_context *ctdb);
 
 int32_t ctdb_control_db_attach(struct ctdb_context *ctdb, TDB_DATA indata,
-			       TDB_DATA *outdata, uint64_t tdb_flags,
-			       bool persistent, uint32_t client_id,
+			       TDB_DATA *outdata,
+			       uint8_t db_flags, uint32_t client_id,
 			       struct ctdb_req_control_old *c,
 			       bool *async_reply);
 int32_t ctdb_control_db_detach(struct ctdb_context *ctdb, TDB_DATA indata,

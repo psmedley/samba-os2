@@ -24,6 +24,7 @@
 #include "auth/credentials/credentials.h"
 #include "auth/gensec/gensec.h"
 #include "auth/gensec/gensec_internal.h" /* TODO: remove this */
+#include "auth/common_auth.h"
 #include "param/param.h"
 #include "smbd/service_stream.h"
 #include "dsdb/samdb/samdb.h"
@@ -236,11 +237,11 @@ struct ldapsrv_reply *ldapsrv_init_reply(struct ldapsrv_call *call, uint8_t type
 {
 	struct ldapsrv_reply *reply;
 
-	reply = talloc(call, struct ldapsrv_reply);
+	reply = talloc_zero(call, struct ldapsrv_reply);
 	if (!reply) {
 		return NULL;
 	}
-	reply->msg = talloc(reply, struct ldap_message);
+	reply->msg = talloc_zero(reply, struct ldap_message);
 	if (reply->msg == NULL) {
 		talloc_free(reply);
 		return NULL;
@@ -1235,6 +1236,67 @@ NTSTATUS ldapsrv_do_call(struct ldapsrv_call *call)
 			DEBUG(3, ("ldapsrv_do_call: Critical extension %s is not known to this server\n",
 				  msg->controls[i]->oid));
 			return ldapsrv_unwilling(call, LDAP_UNAVAILABLE_CRITICAL_EXTENSION);
+		}
+	}
+
+	if (call->conn->authz_logged == false) {
+		bool log = true;
+
+		/*
+		 * We do not want to log anonymous access if the query
+		 * is just for the rootDSE, or it is a startTLS or a
+		 * Bind.
+		 *
+		 * A rootDSE search could also be done over
+		 * CLDAP anonymously for example, so these don't
+		 * really count.
+		 * Essentially we want to know about
+		 * access beyond that normally done prior to a
+		 * bind.
+		 */
+
+		switch(call->request->type) {
+		case LDAP_TAG_BindRequest:
+		case LDAP_TAG_UnbindRequest:
+		case LDAP_TAG_AbandonRequest:
+			log = false;
+			break;
+		case LDAP_TAG_ExtendedResponse: {
+			struct ldap_ExtendedRequest *req = &call->request->r.ExtendedRequest;
+			if (strcmp(req->oid, LDB_EXTENDED_START_TLS_OID) == 0) {
+				log = false;
+			}
+			break;
+		}
+		case LDAP_TAG_SearchRequest: {
+			struct ldap_SearchRequest *req = &call->request->r.SearchRequest;
+			if (req->scope == LDAP_SEARCH_SCOPE_BASE) {
+				if (req->basedn[0] == '\0') {
+					log = false;
+				}
+			}
+			break;
+		}
+		default:
+			break;
+		}
+
+		if (log) {
+			const char *transport_protection = AUTHZ_TRANSPORT_PROTECTION_NONE;
+			if (call->conn->sockets.active == call->conn->sockets.tls) {
+				transport_protection = AUTHZ_TRANSPORT_PROTECTION_TLS;
+			}
+
+			log_successful_authz_event(call->conn->connection->msg_ctx,
+						   call->conn->connection->lp_ctx,
+						   call->conn->connection->remote_address,
+						   call->conn->connection->local_address,
+						   "LDAP",
+						   "no bind",
+						   transport_protection,
+						   call->conn->session_info);
+
+			call->conn->authz_logged = true;
 		}
 	}
 

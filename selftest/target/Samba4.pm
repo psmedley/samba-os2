@@ -123,6 +123,9 @@ sub check_or_start($$$)
 
 		$ENV{KRB5_CONFIG} = $env_vars->{KRB5_CONFIG};
 		$ENV{KRB5CCNAME} = "$env_vars->{KRB5_CCACHE}.samba";
+		if (defined($ENV{MITKRB5})) {
+			$ENV{KRB5_KDC_PROFILE} = $env_vars->{MITKDC_CONFIG};
+		}
 		$ENV{SELFTEST_WINBINDD_SOCKET_DIR} = $env_vars->{SELFTEST_WINBINDD_SOCKET_DIR};
 		$ENV{NMBD_SOCKET_DIR} = $env_vars->{NMBD_SOCKET_DIR};
 
@@ -204,14 +207,14 @@ sub wait_for_start($$)
 		}
 		$count++;
 	} while ($ret != 0 && $count < 20);
-	if ($count == 10) {
+	if ($count == 20) {
 		warn("nbt not reachable after 20 retries\n");
 		teardown_env($self, $testenv_vars);
 		return 0;
 	}
 
 	# Ensure we have the first RID Set before we start tests.  This makes the tests more reliable.
-	if ($testenv_vars->{SERVER_ROLE} eq "domain controller" and not ($testenv_vars->{NETBIOSNAME} eq "RODC")) {
+	if ($testenv_vars->{SERVER_ROLE} eq "domain controller") {
 		# Add hosts file for name lookups
 		$ENV{NSS_WRAPPER_HOSTS} = $testenv_vars->{NSS_WRAPPER_HOSTS};
 		if (defined($testenv_vars->{RESOLV_WRAPPER_CONF})) {
@@ -220,22 +223,27 @@ sub wait_for_start($$)
 			$ENV{RESOLV_WRAPPER_HOSTS} = $testenv_vars->{RESOLV_WRAPPER_HOSTS};
 		}
 
-	    print "waiting for working LDAP and a RID Set to be allocated\n";
-	    my $ldbsearch = Samba::bindir_path($self, "ldbsearch");
-	    my $count = 0;
-	    my $base_dn = "DC=".join(",DC=", split(/\./, $testenv_vars->{REALM}));
-	    my $rid_set_dn = "cn=RID Set,cn=$testenv_vars->{NETBIOSNAME},ou=domain controllers,$base_dn";
-	    my $max_wait = 60;
-	    my $cmd = "$ldbsearch $testenv_vars->{CONFIGURATION} -H ldap://$testenv_vars->{SERVER} -U$testenv_vars->{USERNAME}%$testenv_vars->{PASSWORD} -s base -b \"$rid_set_dn\" rIDAllocationPool";
-	    while (system("$cmd >/dev/null") != 0) {
-		$count++;
-		if ($count > $max_wait) {
-		    warn("Timed out ($max_wait sec) waiting for working LDAP and a RID Set to be allocated by $testenv_vars->{NETBIOSNAME} PID $testenv_vars->{SAMBA_PID}");
-		    $ret = -1;
-		    last;
+		print "waiting for working LDAP and a RID Set to be allocated\n";
+		my $ldbsearch = Samba::bindir_path($self, "ldbsearch");
+		my $count = 0;
+		my $base_dn = "DC=".join(",DC=", split(/\./, $testenv_vars->{REALM}));
+
+		my $search_dn = $base_dn;
+		if ($testenv_vars->{NETBIOSNAME} ne "RODC") {
+			# TODO currently no check for actual rIDAllocationPool
+			$search_dn = "cn=RID Set,cn=$testenv_vars->{NETBIOSNAME},ou=domain controllers,$base_dn";
 		}
-		sleep(1);
-	    }
+		my $max_wait = 60;
+		my $cmd = "$ldbsearch $testenv_vars->{CONFIGURATION} -H ldap://$testenv_vars->{SERVER} -U$testenv_vars->{USERNAME}%$testenv_vars->{PASSWORD} -s base -b \"$search_dn\"";
+		while (system("$cmd >/dev/null") != 0) {
+			$count++;
+			if ($count > $max_wait) {
+				warn("Timed out ($max_wait sec) waiting for working LDAP and a RID Set to be allocated by $testenv_vars->{NETBIOSNAME} PID $testenv_vars->{SAMBA_PID}");
+				$ret = -1;
+				last;
+			}
+			sleep(1);
+		}
 	}
 
 	my $wbinfo =  Samba::bindir_path($self, "wbinfo");
@@ -457,6 +465,7 @@ sub provision_raw_prepare($$$$$$$$$$$)
 	$ctx->{smb_conf} = "$ctx->{etcdir}/smb.conf";
 	$ctx->{krb5_conf} = "$ctx->{etcdir}/krb5.conf";
 	$ctx->{krb5_ccache} = "$prefix_abs/krb5_ccache";
+	$ctx->{mitkdc_conf} = "$ctx->{etcdir}/mitkdc.conf";
 	$ctx->{privatedir} = "$prefix_abs/private";
 	$ctx->{ncalrpcdir} = "$prefix_abs/ncalrpc";
 	$ctx->{lockdir} = "$prefix_abs/lockdir";
@@ -464,7 +473,6 @@ sub provision_raw_prepare($$$$$$$$$$$)
 	$ctx->{statedir} = "$prefix_abs/statedir";
 	$ctx->{cachedir} = "$prefix_abs/cachedir";
 	$ctx->{winbindd_socket_dir} = "$prefix_abs/winbindd_socket";
-	$ctx->{winbindd_privileged_socket_dir} = "$prefix_abs/winbindd_privileged_socket";
 	$ctx->{ntp_signd_socket_dir} = "$prefix_abs/ntp_signd_socket";
 	$ctx->{nsswrap_passwd} = "$ctx->{etcdir}/passwd";
 	$ctx->{nsswrap_group} = "$ctx->{etcdir}/group";
@@ -582,7 +590,6 @@ sub provision_raw_step1($$)
 	state directory = $ctx->{statedir}
 	cache directory = $ctx->{cachedir}
 	winbindd socket directory = $ctx->{winbindd_socket_dir}
-	winbindd privileged socket directory = $ctx->{winbindd_privileged_socket_dir}
 	ntp signd socket directory = $ctx->{ntp_signd_socket_dir}
 	winbind separator = /
 	interfaces = $ctx->{interfaces}
@@ -636,6 +643,7 @@ sub provision_raw_step1($$)
 	}
 
 	Samba::mk_krb5_conf($ctx);
+	Samba::mk_mitkdc_conf($ctx, abs_path(Samba::bindir_path($self, "shared")));
 
 	open(PWD, ">$ctx->{nsswrap_passwd}");
 	if ($ctx->{unix_uid} != 0) {
@@ -699,6 +707,7 @@ nogroup:x:65534:nobody
 	my $ret = {
 		KRB5_CONFIG => $ctx->{krb5_conf},
 		KRB5_CCACHE => $ctx->{krb5_ccache},
+		MITKDC_CONFIG => $ctx->{mitkdc_conf},
 		PIDDIR => $ctx->{piddir},
 		SERVER => $ctx->{hostname},
 		SERVER_IP => $ctx->{ipv4},
@@ -1205,6 +1214,8 @@ sub provision_promoted_dc($$$)
 	max xmit = 32K
 	server max protocol = SMB2
 
+        ntlm auth = ntlmv2-only
+
 [sysvol]
 	path = $ctx->{statedir}/sysvol
 	read only = yes
@@ -1270,15 +1281,20 @@ sub provision_promoted_dc($$$)
 
 sub provision_vampire_dc($$$)
 {
-	my ($self, $prefix, $dcvars) = @_;
-	print "PROVISIONING VAMPIRE DC...\n";
+	my ($self, $prefix, $dcvars, $fl) = @_;
+	print "PROVISIONING VAMPIRE DC @ FL $fl...\n";
+	my $name = "localvampiredc";
+
+	if ($fl == "2000") {
+	    $name = "vampire2000dc";
+	}
 
 	# We do this so that we don't run the provision.  That's the job of 'net vampire'.
 	my $ctx = $self->provision_raw_prepare($prefix, "domain controller",
-					       "localvampiredc",
-					       "SAMBADOMAIN",
-					       "samba.example.com",
-					       "2008",
+					       $name,
+					       $dcvars->{DOMAIN},
+					       $dcvars->{REALM},
+					       $fl,
 					       $dcvars->{PASSWORD},
 					       $dcvars->{SERVER_IP},
 					       $dcvars->{SERVER_IPV6});
@@ -1288,6 +1304,8 @@ sub provision_vampire_dc($$$)
 	$ctx->{smb_conf_extra_options} = "
 	max xmit = 32K
 	server max protocol = SMB2
+
+        ntlm auth = mschapv2-and-ntlmv2-only
 
 [sysvol]
 	path = $ctx->{statedir}/sysvol
@@ -1323,11 +1341,17 @@ sub provision_vampire_dc($$$)
 		return undef;
 	}
 
-	$ret->{VAMPIRE_DC_SERVER} = $ret->{SERVER};
-	$ret->{VAMPIRE_DC_SERVER_IP} = $ret->{SERVER_IP};
-	$ret->{VAMPIRE_DC_SERVER_IPV6} = $ret->{SERVER_IPV6};
-	$ret->{VAMPIRE_DC_NETBIOSNAME} = $ret->{NETBIOSNAME};
-
+        if ($fl == "2000") {
+		$ret->{VAMPIRE_2000_DC_SERVER} = $ret->{SERVER};
+		$ret->{VAMPIRE_2000_DC_SERVER_IP} = $ret->{SERVER_IP};
+		$ret->{VAMPIRE_2000_DC_SERVER_IPV6} = $ret->{SERVER_IPV6};
+		$ret->{VAMPIRE_2000_DC_NETBIOSNAME} = $ret->{NETBIOSNAME};
+        } else {
+		$ret->{VAMPIRE_DC_SERVER} = $ret->{SERVER};
+		$ret->{VAMPIRE_DC_SERVER_IP} = $ret->{SERVER_IP};
+		$ret->{VAMPIRE_DC_SERVER_IPV6} = $ret->{SERVER_IPV6};
+		$ret->{VAMPIRE_DC_NETBIOSNAME} = $ret->{NETBIOSNAME};
+        }
 	$ret->{DC_SERVER} = $dcvars->{DC_SERVER};
 	$ret->{DC_SERVER_IP} = $dcvars->{DC_SERVER_IP};
 	$ret->{DC_SERVER_IPV6} = $dcvars->{DC_SERVER_IPV6};
@@ -1375,6 +1399,7 @@ sub provision_subdom_dc($$$)
 	}
 
 	Samba::mk_krb5_conf($ctx);
+	Samba::mk_mitkdc_conf($ctx, abs_path(Samba::bindir_path($self, "shared")));
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
 	my $cmd = "";
@@ -1426,6 +1451,7 @@ sub provision_ad_dc_ntvfs($$)
 	allow nt4 crypto = yes
 	lsa over netlogon = yes
         rpc server port = 1027
+        auth event notification = true
 	";
 	my $ret = $self->provision($prefix,
 				   "domain controller",
@@ -1507,6 +1533,7 @@ sub provision_fl2003dc($$$)
 
 	print "PROVISIONING DC WITH FOREST LEVEL 2003...\n";
 	my $extra_conf_options = "allow dns updates = nonsecure and secure
+	dcesrv:header signing = no
 	dns forwarder = 127.0.0.$swiface1 127.0.0.$swiface2";
 	my $ret = $self->provision($prefix,
 				   "domain controller",
@@ -1621,6 +1648,7 @@ sub provision_rodc($$$)
 	$ctx->{smb_conf_extra_options} = "
 	max xmit = 32K
 	server max protocol = SMB2
+	password server = $dcvars->{DC_SERVER}
 
 [sysvol]
 	path = $ctx->{statedir}/sysvol
@@ -1682,6 +1710,7 @@ sub provision_rodc($$$)
 	$ctx->{kdc_ipv4} = $ret->{SERVER_IP};
 	$ctx->{kdc_ipv6} = $ret->{SERVER_IPV6};
 	Samba::mk_krb5_conf($ctx);
+	Samba::mk_mitkdc_conf($ctx, abs_path(Samba::bindir_path($self, "shared")));
 
 	$ret->{RODC_DC_SERVER} = $ret->{SERVER};
 	$ret->{RODC_DC_SERVER_IP} = $ret->{SERVER_IP};
@@ -1783,6 +1812,8 @@ sub provision_ad_dc($$)
 	queue resume command = $bindir_abs/vlp tdbfile=$lockdir/vlp.tdb queueresume %p
 	lpq cache time = 0
 	print notify backchannel = yes
+
+        auth event notification = true
 ";
 
 	my $extra_smbconf_shares = "
@@ -2026,6 +2057,11 @@ sub setup_env($$$)
 		return $self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
 	} elsif ($envname eq "fl2000dc") {
 		return $self->setup_fl2000dc("$path/fl2000dc");
+	} elsif ($envname eq "vampire_2000_dc") {
+		if (not defined($self->{vars}->{fl2000dc})) {
+			$self->setup_fl2000dc("$path/fl2000dc");
+		}
+		return $self->setup_vampire_dc("$path/vampire_2000_dc", $self->{vars}->{fl2000dc}, "2000");
 	} elsif ($envname eq "fl2003dc") {
 		if (not defined($self->{vars}->{ad_dc})) {
 			$self->setup_ad_dc("$path/ad_dc");
@@ -2045,7 +2081,7 @@ sub setup_env($$$)
 		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
 			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
 		}
-		return $self->setup_vampire_dc("$path/vampire_dc", $self->{vars}->{ad_dc_ntvfs});
+		return $self->setup_vampire_dc("$path/vampire_dc", $self->{vars}->{ad_dc_ntvfs}, "2008");
 	} elsif ($envname eq "promoted_dc") {
 		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
 			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
@@ -2241,11 +2277,11 @@ sub setup_fl2008r2dc($$$)
 	return $env;
 }
 
-sub setup_vampire_dc($$$)
+sub setup_vampire_dc($$$$)
 {
-	my ($self, $path, $dc_vars) = @_;
+	my ($self, $path, $dc_vars, $fl) = @_;
 
-	my $env = $self->provision_vampire_dc($path, $dc_vars);
+	my $env = $self->provision_vampire_dc($path, $dc_vars, $fl);
 
 	if (defined $env) {
 	        if (not defined($self->check_or_start($env, "single"))) {
@@ -2414,7 +2450,7 @@ sub setup_rodc($$$)
 		return undef;
 	}
 
-	if (not defined($self->check_or_start($env, "single"))) {
+	if (not defined($self->check_or_start($env, "standard"))) {
 	    return undef;
 	}
 

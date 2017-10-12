@@ -326,15 +326,10 @@ bool smbcli_parse_unc(const char *unc_name, TALLOC_CTX *mem_ctx,
 
 static bool torture_open_connection_share(struct cli_state **c,
 				   const char *hostname, 
-				   const char *sharename)
+				   const char *sharename,
+				   int flags)
 {
-	int flags = 0;
 	NTSTATUS status;
-
-	if (use_oplocks)
-		flags |= CLI_FULL_CONNECTION_OPLOCKS;
-	if (use_level_II_oplocks)
-		flags |= CLI_FULL_CONNECTION_LEVEL_II_OPLOCKS;
 
 	status = cli_full_connection_creds(c,
 					   myname,
@@ -361,7 +356,7 @@ static bool torture_open_connection_share(struct cli_state **c,
 	return True;
 }
 
-bool torture_open_connection(struct cli_state **c, int conn_index)
+bool torture_open_connection_flags(struct cli_state **c, int conn_index, int flags)
 {
 	char **unc_list = NULL;
 	int num_unc_names = 0;
@@ -383,14 +378,28 @@ bool torture_open_connection(struct cli_state **c, int conn_index)
 			exit(1);
 		}
 
-		result = torture_open_connection_share(c, h, s);
+		result = torture_open_connection_share(c, h, s, flags);
 
 		/* h, s were copied earlier */
 		TALLOC_FREE(unc_list);
 		return result;
 	}
 
-	return torture_open_connection_share(c, host, share);
+	return torture_open_connection_share(c, host, share, flags);
+}
+
+bool torture_open_connection(struct cli_state **c, int conn_index)
+{
+	int flags = CLI_FULL_CONNECTION_FORCE_SMB1;
+
+	if (use_oplocks) {
+		flags |= CLI_FULL_CONNECTION_OPLOCKS;
+	}
+	if (use_level_II_oplocks) {
+		flags |= CLI_FULL_CONNECTION_LEVEL_II_OPLOCKS;
+	}
+
+	return torture_open_connection_flags(c, conn_index, flags);
 }
 
 bool torture_init_connection(struct cli_state **pcli)
@@ -1510,7 +1519,7 @@ static bool tcon_devtest(struct cli_state *cli,
 static bool run_tcon_devtype_test(int dummy)
 {
 	static struct cli_state *cli1 = NULL;
-	int flags = 0;
+	int flags = CLI_FULL_CONNECTION_FORCE_SMB1;
 	NTSTATUS status;
 	bool ret = True;
 
@@ -2998,7 +3007,7 @@ static bool run_negprot_nowait(int dummy)
 		struct tevent_req *req;
 
 		req = smbXcli_negprot_send(ev, ev, cli->conn, cli->timeout,
-					   PROTOCOL_CORE, PROTOCOL_NT1);
+					   PROTOCOL_CORE, PROTOCOL_NT1, 0);
 		if (req == NULL) {
 			TALLOC_FREE(ev);
 			return false;
@@ -3153,6 +3162,29 @@ static bool run_browsetest(int dummy)
 
 }
 
+static bool check_attributes(struct cli_state *cli,
+				const char *fname,
+				uint16_t expected_attrs)
+{
+	uint16_t attrs = 0;
+	NTSTATUS status = cli_getatr(cli,
+				fname,
+				&attrs,
+				NULL,
+				NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_getatr failed with %s\n",
+			nt_errstr(status));
+		return false;
+	}
+	if (attrs != expected_attrs) {
+		printf("Attributes incorrect 0x%x, should be 0x%x\n",
+			(unsigned int)attrs,
+			(unsigned int)expected_attrs);
+		return false;
+	}
+	return true;
+}
 
 /*
   This checks how the getatr calls works
@@ -3212,6 +3244,120 @@ static bool run_attrtest(int dummy)
 	}
 
 	cli_unlink(cli, fname, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN);
+
+	/* Check cli_setpathinfo_basic() */
+	/* Re-create the file. */
+	status = cli_openx(cli, fname,
+			O_RDWR | O_CREAT | O_TRUNC, DENY_NONE, &fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("Failed to recreate %s (%s)\n",
+			fname, nt_errstr(status));
+		correct = false;
+	}
+	cli_close(cli, fnum);
+
+	status = cli_setpathinfo_basic(cli,
+					fname,
+					0, /* create */
+					0, /* access */
+					0, /* write */
+					0, /* change */
+					FILE_ATTRIBUTE_SYSTEM |
+					FILE_ATTRIBUTE_HIDDEN |
+					FILE_ATTRIBUTE_READONLY);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_setpathinfo_basic failed with %s\n",
+			nt_errstr(status));
+		correct = false;
+	}
+
+	/* Check attributes are correct. */
+	correct = check_attributes(cli,
+			fname,
+			FILE_ATTRIBUTE_SYSTEM |
+			FILE_ATTRIBUTE_HIDDEN |
+			FILE_ATTRIBUTE_READONLY);
+	if (correct == false) {
+		goto out;
+	}
+
+	/* Setting to FILE_ATTRIBUTE_NORMAL should be ignored. */
+	status = cli_setpathinfo_basic(cli,
+					fname,
+					0, /* create */
+					0, /* access */
+					0, /* write */
+					0, /* change */
+					FILE_ATTRIBUTE_NORMAL);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_setpathinfo_basic failed with %s\n",
+			nt_errstr(status));
+		correct = false;
+	}
+
+	/* Check attributes are correct. */
+	correct = check_attributes(cli,
+			fname,
+			FILE_ATTRIBUTE_SYSTEM |
+			FILE_ATTRIBUTE_HIDDEN |
+			FILE_ATTRIBUTE_READONLY);
+	if (correct == false) {
+		goto out;
+	}
+
+	/* Setting to (uint16_t)-1 should also be ignored. */
+	status = cli_setpathinfo_basic(cli,
+					fname,
+					0, /* create */
+					0, /* access */
+					0, /* write */
+					0, /* change */
+					(uint16_t)-1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_setpathinfo_basic failed with %s\n",
+			nt_errstr(status));
+		correct = false;
+	}
+
+	/* Check attributes are correct. */
+	correct = check_attributes(cli,
+			fname,
+			FILE_ATTRIBUTE_SYSTEM |
+			FILE_ATTRIBUTE_HIDDEN |
+			FILE_ATTRIBUTE_READONLY);
+	if (correct == false) {
+		goto out;
+	}
+
+	/* Setting to 0 should clear them all. */
+	status = cli_setpathinfo_basic(cli,
+					fname,
+					0, /* create */
+					0, /* access */
+					0, /* write */
+					0, /* change */
+					0);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_setpathinfo_basic failed with %s\n",
+			nt_errstr(status));
+		correct = false;
+	}
+
+	/* Check attributes are correct. */
+	correct = check_attributes(cli,
+			fname,
+			FILE_ATTRIBUTE_NORMAL);
+	if (correct == false) {
+		goto out;
+	}
+
+  out:
+
+	cli_unlink(cli,
+		fname,
+		FILE_ATTRIBUTE_SYSTEM |
+		FILE_ATTRIBUTE_HIDDEN|
+		FILE_ATTRIBUTE_READONLY);
 
 	if (!torture_close_connection(cli)) {
 		correct = False;
@@ -4711,7 +4857,7 @@ static bool run_rename(int dummy)
 		return False;
 	}
 
-	status = cli_rename(cli1, fname, fname1);
+	status = cli_rename(cli1, fname, fname1, false);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("First rename failed (SHARE_READ) (this is correct) - %s\n", nt_errstr(status));
 	} else {
@@ -4739,7 +4885,7 @@ static bool run_rename(int dummy)
 		return False;
 	}
 
-	status = cli_rename(cli1, fname, fname1);
+	status = cli_rename(cli1, fname, fname1, false);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("Second rename failed (SHARE_DELETE | SHARE_READ) - this should have succeeded - %s\n", nt_errstr(status));
 		correct = False;
@@ -4786,7 +4932,7 @@ static bool run_rename(int dummy)
   }
 #endif
 
-	status = cli_rename(cli1, fname, fname1);
+	status = cli_rename(cli1, fname, fname1, false);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("Third rename failed (SHARE_NONE) - this should have succeeded - %s\n", nt_errstr(status));
 		correct = False;
@@ -4814,7 +4960,7 @@ static bool run_rename(int dummy)
 		return False;
 	}
 
-	status = cli_rename(cli1, fname, fname1);
+	status = cli_rename(cli1, fname, fname1, false);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("Fourth rename failed (SHARE_READ | SHARE_WRITE) (this is correct) - %s\n", nt_errstr(status));
 	} else {
@@ -4842,7 +4988,7 @@ static bool run_rename(int dummy)
 		return False;
 	}
 
-	status = cli_rename(cli1, fname, fname1);
+	status = cli_rename(cli1, fname, fname1, false);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("Fifth rename failed (SHARE_READ | SHARE_WRITE | SHARE_DELETE) - this should have succeeded - %s ! \n", nt_errstr(status));
 		correct = False;
@@ -5051,13 +5197,13 @@ static bool run_rename_access(int dummy)
 	 * dst directory should fail.
 	 */
 
-	status = cli_rename(cli, src, dst);
+	status = cli_rename(cli, src, dst, false);
 	if (!NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
 		printf("rename of %s -> %s should be ACCESS denied, was %s\n",
 			src, dst, nt_errstr(status));
 		goto fail;
 	}
-	status = cli_rename(cli, dsrc, ddst);
+	status = cli_rename(cli, dsrc, ddst, false);
 	if (!NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
 		printf("rename of %s -> %s should be ACCESS denied, was %s\n",
 			src, dst, nt_errstr(status));
@@ -7960,10 +8106,11 @@ static bool run_chain2(int dummy)
 	struct tevent_req *reqs[2], *smbreqs[2];
 	bool done = false;
 	NTSTATUS status;
+	int flags = CLI_FULL_CONNECTION_FORCE_SMB1;
 
 	printf("starting chain2 test\n");
 	status = cli_start_connection(&cli1, lp_netbios_name(), host, NULL,
-				      port_to_use, SMB_SIGNING_DEFAULT, 0);
+				      port_to_use, SMB_SIGNING_DEFAULT, flags);
 	if (!NT_STATUS_IS_OK(status)) {
 		return False;
 	}
@@ -8442,6 +8589,152 @@ static bool run_mangle1(int dummy)
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("cli_qpathinfo1(%s) failed: %s\n", alt_name,
 			 nt_errstr(status));
+		return false;
+	}
+
+	return true;
+}
+
+static NTSTATUS mangle_illegal_list_shortname_fn(const char *mntpoint,
+						 struct file_info *f,
+						 const char *mask,
+						 void *state)
+{
+	if (f->short_name == NULL) {
+		return NT_STATUS_OK;
+	}
+
+	if (strlen(f->short_name) == 0) {
+		return NT_STATUS_OK;
+	}
+
+	printf("unexpected shortname: %s\n", f->short_name);
+
+	return NT_STATUS_OBJECT_NAME_INVALID;
+}
+
+static NTSTATUS mangle_illegal_list_name_fn(const char *mntpoint,
+					    struct file_info *f,
+					    const char *mask,
+					    void *state)
+{
+	char *name = state;
+
+	printf("name: %s\n", f->name);
+	fstrcpy(name, f->name);
+	return NT_STATUS_OK;
+}
+
+static bool run_mangle_illegal(int dummy)
+{
+	struct cli_state *cli = NULL;
+	struct cli_state *cli_posix = NULL;
+	const char *fname = "\\MANGLE_ILLEGAL\\this_is_a_long_fname_to_be_mangled.txt";
+	const char *illegal_fname = "MANGLE_ILLEGAL/foo:bar";
+	char *mangled_path = NULL;
+	uint16_t fnum;
+	fstring name;
+	fstring alt_name;
+	NTSTATUS status;
+
+	printf("starting mangle-illegal test\n");
+
+	if (!torture_open_connection(&cli, 0)) {
+		return False;
+	}
+
+	smbXcli_conn_set_sockopt(cli->conn, sockops);
+
+	if (!torture_open_connection(&cli_posix, 0)) {
+		return false;
+	}
+
+	smbXcli_conn_set_sockopt(cli_posix->conn, sockops);
+
+	status = torture_setup_unix_extensions(cli_posix);
+	if (!NT_STATUS_IS_OK(status)) {
+		return false;
+	}
+
+	cli_rmdir(cli, "\\MANGLE_ILLEGAL");
+	status = cli_mkdir(cli, "\\MANGLE_ILLEGAL");
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("mkdir1 failed : %s\n", nt_errstr(status));
+		return False;
+	}
+
+	/*
+	 * Create a file with illegal NTFS characters and test that we
+	 * get a usable mangled name
+	 */
+
+	cli_setatr(cli_posix, illegal_fname, 0, 0);
+	cli_posix_unlink(cli_posix, illegal_fname);
+
+	status = cli_posix_open(cli_posix, illegal_fname, O_RDWR|O_CREAT|O_EXCL,
+				0600, &fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("POSIX create of %s failed (%s)\n",
+		       illegal_fname, nt_errstr(status));
+		return false;
+	}
+
+	status = cli_close(cli_posix, fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("close failed (%s)\n", nt_errstr(status));
+		return false;
+	}
+
+	status = cli_list(cli, "\\MANGLE_ILLEGAL\\*", 0, mangle_illegal_list_name_fn, &name);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("cli_list failed: %s\n", nt_errstr(status));
+		return false;
+	}
+
+	mangled_path = talloc_asprintf(talloc_tos(), "\\MANGLE_ILLEGAL\\%s", name);
+	if (mangled_path == NULL) {
+		return false;
+	}
+
+	status = cli_openx(cli, mangled_path, O_RDONLY, DENY_NONE, &fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("cli_openx(%s) failed: %s\n", mangled_path, nt_errstr(status));
+		TALLOC_FREE(mangled_path);
+		return false;
+	}
+	TALLOC_FREE(mangled_path);
+	cli_close(cli, fnum);
+
+	cli_setatr(cli_posix, illegal_fname, 0, 0);
+	cli_posix_unlink(cli_posix, illegal_fname);
+
+	/*
+	 * Create a file with a long name and check that we got *no* short name.
+	 */
+
+	status = cli_ntcreate(cli, fname, 0, GENERIC_ALL_ACCESS|DELETE_ACCESS,
+			      FILE_ATTRIBUTE_NORMAL, 0, FILE_OVERWRITE_IF,
+			      0, 0, &fnum, NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("open %s failed: %s\n", fname, nt_errstr(status));
+		return false;
+	}
+	cli_close(cli, fnum);
+
+	status = cli_list(cli, fname, 0, mangle_illegal_list_shortname_fn, &alt_name);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("cli_list failed\n");
+		return false;
+	}
+
+	cli_unlink(cli, fname, 0);
+	cli_rmdir(cli, "\\MANGLE_ILLEGAL");
+
+	if (!torture_close_connection(cli_posix)) {
+		return false;
+	}
+
+	if (!torture_close_connection(cli)) {
 		return false;
 	}
 
@@ -10424,14 +10717,24 @@ static bool data_blob_equal(DATA_BLOB a, DATA_BLOB b)
 static bool run_local_memcache(int dummy)
 {
 	struct memcache *cache;
-	DATA_BLOB k1, k2;
-	DATA_BLOB d1, d2, d3;
-	DATA_BLOB v1, v2, v3;
+	DATA_BLOB k1, k2, k3;
+	DATA_BLOB d1, d3;
+	DATA_BLOB v1, v3;
 
 	TALLOC_CTX *mem_ctx;
+	char *ptr1 = NULL;
+	char *ptr2 = NULL;
+
 	char *str1, *str2;
 	size_t size1, size2;
 	bool ret = false;
+
+	mem_ctx = talloc_init("foo");
+	if (mem_ctx == NULL) {
+		return false;
+	}
+
+	/* STAT_CACHE TESTS */
 
 	cache = memcache_init(NULL, sizeof(void *) == 8 ? 200 : 100);
 
@@ -10441,28 +10744,19 @@ static bool run_local_memcache(int dummy)
 	}
 
 	d1 = data_blob_const("d1", 2);
-	d2 = data_blob_const("d2", 2);
 	d3 = data_blob_const("d3", 2);
 
 	k1 = data_blob_const("d1", 2);
 	k2 = data_blob_const("d2", 2);
+	k3 = data_blob_const("d3", 2);
 
 	memcache_add(cache, STAT_CACHE, k1, d1);
-	memcache_add(cache, GETWD_CACHE, k2, d2);
 
 	if (!memcache_lookup(cache, STAT_CACHE, k1, &v1)) {
 		printf("could not find k1\n");
 		return false;
 	}
 	if (!data_blob_equal(d1, v1)) {
-		return false;
-	}
-
-	if (!memcache_lookup(cache, GETWD_CACHE, k2, &v2)) {
-		printf("could not find k2\n");
-		return false;
-	}
-	if (!data_blob_equal(d2, v2)) {
 		return false;
 	}
 
@@ -10476,22 +10770,69 @@ static bool run_local_memcache(int dummy)
 		return false;
 	}
 
-	memcache_add(cache, GETWD_CACHE, k1, d1);
+	TALLOC_FREE(cache);
 
-	if (memcache_lookup(cache, GETWD_CACHE, k2, &v2)) {
+	/* GETWD_CACHE TESTS */
+	str1 = talloc_strdup(mem_ctx, "string1");
+	if (str1 == NULL) {
+		return false;
+	}
+	ptr2 = str1; /* Keep an alias for comparison. */
+
+	str2 = talloc_strdup(mem_ctx, "string2");
+	if (str2 == NULL) {
+		return false;
+	}
+
+	cache = memcache_init(NULL, sizeof(void *) == 8 ? 200 : 100);
+	if (cache == NULL) {
+		printf("memcache_init failed\n");
+		return false;
+	}
+
+	memcache_add_talloc(cache, GETWD_CACHE, k2, &str1);
+	/* str1 == NULL now. */
+	ptr1 = memcache_lookup_talloc(cache, GETWD_CACHE, k2);
+	if (ptr1 == NULL) {
+		printf("could not find k2\n");
+		return false;
+	}
+	if (ptr1 != ptr2) {
+		printf("fetch of k2 got wrong string\n");
+		return false;
+	}
+
+	/* Add a blob to ensure k2 gets purged. */
+	d3 = data_blob_talloc_zero(mem_ctx, 180);
+	memcache_add(cache, STAT_CACHE, k3, d3);
+
+	ptr2 = memcache_lookup_talloc(cache, GETWD_CACHE, k2);
+	if (ptr2 != NULL) {
 		printf("Did find k2, should have been purged\n");
 		return false;
 	}
 
 	TALLOC_FREE(cache);
-
-	cache = memcache_init(NULL, 0);
+	TALLOC_FREE(mem_ctx);
 
 	mem_ctx = talloc_init("foo");
+	if (mem_ctx == NULL) {
+		return false;
+	}
+
+	cache = memcache_init(NULL, 0);
+	if (cache == NULL) {
+		return false;
+	}
 
 	str1 = talloc_strdup(mem_ctx, "string1");
+	if (str1 == NULL) {
+		return false;
+	}
 	str2 = talloc_strdup(mem_ctx, "string2");
-
+	if (str2 == NULL) {
+		return false;
+	}
 	memcache_add_talloc(cache, SINGLETON_CACHE_TALLOC,
 			    data_blob_string_const("torture"), &str1);
 	size1 = talloc_total_size(cache);
@@ -11269,6 +11610,7 @@ static struct {
 	{"PROPERTIES", run_properties, 0},
 	{"MANGLE", torture_mangle, 0},
 	{"MANGLE1", run_mangle1, 0},
+	{"MANGLE-ILLEGAL", run_mangle_illegal, 0},
 	{"W2K", run_w2ktest, 0},
 	{"TRANS2SCAN", torture_trans2_scan, 0},
 	{"NTTRANSSCAN", torture_nttrans_scan, 0},
@@ -11317,6 +11659,7 @@ static struct {
 	{ "LOCAL-GENCACHE", run_local_gencache, 0},
 	{ "LOCAL-TALLOC-DICT", run_local_talloc_dict, 0},
 	{ "LOCAL-DBWRAP-WATCH1", run_dbwrap_watch1, 0 },
+	{ "LOCAL-DBWRAP-WATCH2", run_dbwrap_watch2, 0 },
 	{ "LOCAL-MESSAGING-READ1", run_messaging_read1, 0 },
 	{ "LOCAL-MESSAGING-READ2", run_messaging_read2, 0 },
 	{ "LOCAL-MESSAGING-READ3", run_messaging_read3, 0 },
@@ -11345,6 +11688,11 @@ static struct {
 	{ "LOCAL-DBWRAP-CTDB", run_local_dbwrap_ctdb, 0 },
 	{ "LOCAL-BENCH-PTHREADPOOL", run_bench_pthreadpool, 0 },
 	{ "LOCAL-PTHREADPOOL-TEVENT", run_pthreadpool_tevent, 0 },
+	{ "LOCAL-G-LOCK1", run_g_lock1, 0 },
+	{ "LOCAL-G-LOCK2", run_g_lock2, 0 },
+	{ "LOCAL-G-LOCK3", run_g_lock3, 0 },
+	{ "LOCAL-G-LOCK4", run_g_lock4, 0 },
+	{ "LOCAL-G-LOCK5", run_g_lock5, 0 },
 	{ "LOCAL-CANONICALIZE-PATH", run_local_canonicalize_path, 0 },
 	{ "qpathinfo-bufsize", run_qpathinfo_bufsize, 0 },
 	{NULL, NULL, 0}};

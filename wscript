@@ -9,6 +9,7 @@ VERSION=None
 import sys, os, tempfile
 sys.path.insert(0, srcdir+"/buildtools/wafsamba")
 import wafsamba, Options, samba_dist, samba_git, Scripting, Utils, samba_version
+import Logs, samba_utils
 
 
 samba_dist.DIST_DIRS('.')
@@ -43,23 +44,30 @@ def set_options(opt):
     opt.RECURSE('pidl')
     opt.RECURSE('source3')
     opt.RECURSE('lib/util')
+    opt.RECURSE('lib/crypto')
     opt.RECURSE('ctdb')
+    opt.samba_add_onoff_option('pthreadpool', with_name="enable", without_name="disable", default=True)
 
     opt.add_option('--with-system-mitkrb5',
-                   help='enable system MIT krb5 build (includes Samba 4 client and Samba 3 code base).'+
+                   help='build Samba with system MIT Kerberos. ' +
                         'You may specify list of paths where Kerberos is installed (e.g. /usr/local /usr/kerberos) to search krb5-config',
                    action='callback', callback=system_mitkrb5_callback, dest='with_system_mitkrb5', default=False)
+    opt.add_option('--with-system-mitkdc',
+                   help=('Specify the path to the krb5kdc binary from MIT Kerberos'),
+                   type="string",
+                   dest='with_system_mitkdc',
+                   default=None)
 
     opt.add_option('--without-ad-dc',
-                   help='disable AD DC functionality (enables Samba 4 client and Samba 3 code base).',
+                   help='disable AD DC functionality (enables only Samba FS (File Server, Winbind, NMBD) and client utilities.',
                    action='store_true', dest='without_ad_dc', default=False)
 
     opt.add_option('--with-ntvfs-fileserver',
-                   help='enable the depricated NTVFS file server from the original Samba4 branch (default if --enable-selftest specicifed).  Conflicts with --with-system-mitkrb5 and --without-ad-dc',
+                   help='enable the deprecated NTVFS file server from the original Samba4 branch (default if --enable-selftest specified).  Conflicts with --with-system-mitkrb5 and --without-ad-dc',
                    action='store_true', dest='with_ntvfs_fileserver')
 
     opt.add_option('--without-ntvfs-fileserver',
-                   help='disable the depricated NTVFS file server from the original Samba4 branch',
+                   help='disable the deprecated NTVFS file server from the original Samba4 branch',
                    action='store_false', dest='with_ntvfs_fileserver')
 
     opt.add_option('--with-pie',
@@ -105,8 +113,12 @@ def configure(conf):
     conf.SAMBA_CHECK_PERL(mandatory=True)
     conf.find_program('xsltproc', var='XSLTPROC')
 
+    if conf.env.disable_python:
+        if not (Options.options.without_ad_dc):
+            raise Utils.WafError('--disable-python requires --without-ad-dc')
+
     conf.SAMBA_CHECK_PYTHON(mandatory=True, version=(2, 6, 0))
-    conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=True)
+    conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=(not conf.env.disable_python))
 
     if sys.platform == 'darwin' and not conf.env['HAVE_ENVIRON_DECL']:
         # Mac OSX needs to have this and it's also needed that the python is compiled with this
@@ -136,6 +148,12 @@ def configure(conf):
             raise Utils.WafError('popt development packages have not been found.\nIf third_party is installed, check that it is in the proper place.')
         else:
             conf.define('USING_SYSTEM_POPT', 1)
+
+        if not conf.CHECK_CMOCKA():
+            raise Utils.WafError('cmocka development packages has not been found.\nIf third_party is installed, check that it is in the proper place.')
+        else:
+            conf.define('USING_SYSTEM_CMOCKA', 1)
+
 
     conf.RECURSE('lib/ldb')
 
@@ -170,25 +188,35 @@ def configure(conf):
         conf.RECURSE('lib/resolv_wrapper')
         conf.RECURSE('lib/socket_wrapper')
         conf.RECURSE('lib/uid_wrapper')
+        if Options.options.with_pam:
+            conf.RECURSE('lib/pam_wrapper')
         if Options.options.with_ntvfs_fileserver != False:
-            if not (Options.options.without_ad_dc or Options.options.with_system_mitkrb5):
+            if not (Options.options.without_ad_dc):
                 conf.DEFINE('WITH_NTVFS_FILESERVER', 1)
         if Options.options.with_ntvfs_fileserver == False:
-            if not (Options.options.without_ad_dc or Options.options.with_system_mitkrb5):
+            if not (Options.options.without_ad_dc):
                 raise Utils.WafError('--without-ntvfs-fileserver conflicts with --enable-selftest while building the AD DC')
+        conf.RECURSE('testsuite/unittests')
 
     if Options.options.with_ntvfs_fileserver == True:
         if Options.options.without_ad_dc:
             raise Utils.WafError('--with-ntvfs-fileserver conflicts with --without-ad-dc')
-        if Options.options.with_system_mitkrb5:
-            raise Utils.WafError('--with-ntvfs-fileserver conflicts with --with-system-mitkrb5')
         conf.DEFINE('WITH_NTVFS_FILESERVER', 1)
+
+    if Options.options.with_pthreadpool:
+        if conf.CONFIG_SET('HAVE_PTHREAD'):
+            conf.DEFINE('WITH_PTHREADPOOL', '1')
+        else:
+            Logs.warn("pthreadpool support cannot be enabled when pthread support was not found")
+            conf.undefine('WITH_PTHREADPOOL')
+
     conf.RECURSE('source3')
     conf.RECURSE('lib/texpect')
+    conf.RECURSE('python')
     if conf.env.with_ctdb:
         conf.RECURSE('ctdb')
     conf.RECURSE('lib/socket')
-    conf.RECURSE('testsuite/unittests')
+    conf.RECURSE('auth')
 
     conf.SAMBA_CHECK_UNDEFINED_SYMBOL_FLAGS()
 

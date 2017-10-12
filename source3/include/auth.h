@@ -34,7 +34,14 @@ struct auth_serversupplied_info {
 
 	struct security_unix_token utok;
 
-	/* NT group information taken from the info3 structure */
+	/*
+	 * NT group information taken from the info3 structure
+	 *
+	 * This is not normally filled in, during the typical
+	 * authentication process.  If filled in, it has already been
+	 * finalised by a nasty hack to support a cached guest/system
+	 * session_info
+	 */
 
 	struct security_token *security_token;
 
@@ -133,7 +140,8 @@ enum session_key_use_intent {
 /* Changed from 1 -> 2 to add the logon_parameters field. */
 /* Changed from 2 -> 3 when we reworked many auth structures to use IDL or be in common with Samba4 */
 /* Changed from 3 -> 4 when we reworked added the flags */
-#define AUTH_INTERFACE_VERSION 4
+/* Changed from 4 -> 5 as module init functions now take a TALLOC_CTX * */
+#define AUTH_INTERFACE_VERSION 5
 
 #include "auth/proto.h"
 

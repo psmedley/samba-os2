@@ -209,11 +209,17 @@ struct ctdb_call {
  */
 #define CTDB_SRVID_TOOL_RANGE  0xCE00000000000000LL
 
+/* A range of ports reserved by client (top 8 bits)
+ * All ports matching the 8 top bits are reserved for exclusive use by
+ * CTDB client code
+ */
+#define CTDB_SRVID_CLIENT_RANGE  0xBE00000000000000LL
+
 /* Range of ports reserved for test applications (top 8 bits)
  * All ports matching the 8 top bits are reserved for exclusive use by
  * test applications
  */
-#define CTDB_SRVID_TEST_RANGE  0xBE00000000000000LL
+#define CTDB_SRVID_TEST_RANGE  0xAE00000000000000LL
 
 
 enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
@@ -361,6 +367,8 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_DB_PULL                 = 146,
 		    CTDB_CONTROL_DB_PUSH_START           = 147,
 		    CTDB_CONTROL_DB_PUSH_CONFIRM         = 148,
+		    CTDB_CONTROL_DB_OPEN_FLAGS           = 149,
+		    CTDB_CONTROL_DB_ATTACH_REPLICATED    = 150,
 };
 
 #define CTDB_MONITORING_ENABLED		0
@@ -449,6 +457,7 @@ struct ctdb_dbid {
 #define CTDB_DB_FLAGS_PERSISTENT	0x01
 #define CTDB_DB_FLAGS_READONLY		0x02
 #define CTDB_DB_FLAGS_STICKY		0x04
+#define CTDB_DB_FLAGS_REPLICATED	0x08
 	uint8_t flags;
 };
 
@@ -632,6 +641,7 @@ struct ctdb_tunable_list {
 	uint32_t rec_buffer_size_limit;
 	uint32_t queue_buffer_size;
 	uint32_t ip_alloc_algorithm;
+	uint32_t allow_mixed_versions;
 };
 
 struct ctdb_tickle_list {
@@ -904,6 +914,7 @@ struct ctdb_reply_control_data {
 		struct ctdb_db_statistics *dbstats;
 		enum ctdb_runstate runstate;
 		uint32_t num_records;
+		int tdb_flags;
 	} data;
 };
 
@@ -978,6 +989,12 @@ struct ctdb_req_message_data {
 	uint64_t srvid;
 	TDB_DATA data;
 };
+
+struct ctdb_req_keepalive {
+	uint32_t version;
+	uint32_t uptime;
+};
+
 
 /* This is equivalent to server_id */
 struct ctdb_server_id {

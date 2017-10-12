@@ -399,16 +399,16 @@ static struct smb_Dir *open_dir_with_privilege(connection_struct *conn,
 					uint32_t attr)
 {
 	struct smb_Dir *dir_hnd = NULL;
-	struct smb_filename *smb_fname_cwd;
-	char *saved_dir = vfs_GetWd(talloc_tos(), conn);
+	struct smb_filename *smb_fname_cwd = NULL;
+	struct smb_filename *saved_dir_fname = vfs_GetWd(talloc_tos(), conn);
 	struct privilege_paths *priv_paths = req->priv_paths;
 	int ret;
 
-	if (saved_dir == NULL) {
+	if (saved_dir_fname == NULL) {
 		return NULL;
 	}
 
-	if (vfs_ChDir(conn, smb_dname->base_name) == -1) {
+	if (vfs_ChDir(conn, smb_dname) == -1) {
 		return NULL;
 	}
 
@@ -438,7 +438,8 @@ static struct smb_Dir *open_dir_with_privilege(connection_struct *conn,
 
   out:
 
-	vfs_ChDir(conn, saved_dir);
+	vfs_ChDir(conn, saved_dir_fname);
+	TALLOC_FREE(saved_dir_fname);
 	return dir_hnd;
 }
 
@@ -1679,14 +1680,14 @@ static struct smb_Dir *open_dir_safely(TALLOC_CTX *ctx,
 {
 	struct smb_Dir *dir_hnd = NULL;
 	struct smb_filename *smb_fname_cwd = NULL;
-	char *saved_dir = vfs_GetWd(ctx, conn);
+	struct smb_filename *saved_dir_fname = vfs_GetWd(ctx, conn);
 	NTSTATUS status;
 
-	if (saved_dir == NULL) {
+	if (saved_dir_fname == NULL) {
 		return NULL;
 	}
 
-	if (vfs_ChDir(conn, smb_dname->base_name) == -1) {
+	if (vfs_ChDir(conn, smb_dname) == -1) {
 		goto out;
 	}
 
@@ -1703,7 +1704,7 @@ static struct smb_Dir *open_dir_safely(TALLOC_CTX *ctx,
 	 * Now the directory is pinned, use
 	 * REALPATH to ensure we can access it.
 	 */
-	status = check_name(conn, ".");
+	status = check_name(conn, smb_fname_cwd);
 	if (!NT_STATUS_IS_OK(status)) {
 		goto out;
 	}
@@ -1731,8 +1732,8 @@ static struct smb_Dir *open_dir_safely(TALLOC_CTX *ctx,
 
   out:
 
-	vfs_ChDir(conn, saved_dir);
-	TALLOC_FREE(saved_dir);
+	vfs_ChDir(conn, saved_dir_fname);
+	TALLOC_FREE(saved_dir_fname);
 	return dir_hnd;
 }
 

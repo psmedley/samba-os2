@@ -44,6 +44,7 @@
 #include "lib/param/param.h"
 #include "lib/async_req/async_sock.h"
 #include "libsmb/samlogon_cache.h"
+#include "libcli/auth/netlogon_creds_cli.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_WINBIND
@@ -243,9 +244,9 @@ static void terminate(bool is_parent)
 
 	idmap_close();
 
-	trustdom_cache_shutdown();
-
 	gencache_stabilize();
+
+	netlogon_creds_cli_close_global_db();
 
 #if 0
 	if (interactive) {
@@ -1127,24 +1128,25 @@ static void remove_timed_out_clients(void)
 		prev = winbindd_client_list_prev(state);
 		expiry_time = state->last_access + timeout_val;
 
-		if (curr_time > expiry_time) {
-			if (client_is_idle(state)) {
-				DEBUG(5,("Idle client timed out, "
-					"shutting down sock %d, pid %u\n",
-					state->sock,
-					(unsigned int)state->pid));
-			} else {
-				DEBUG(5,("Client request timed out, "
-					"shutting down sock %d, pid %u\n",
-					state->sock,
-					(unsigned int)state->pid));
-			}
-			remove_client(state);
-		} else {
+		if (curr_time <= expiry_time) {
 			/* list is sorted, previous clients in
 			   list are newer */
 			break;
 		}
+
+		if (client_is_idle(state)) {
+			DEBUG(5,("Idle client timed out, "
+				 "shutting down sock %d, pid %u\n",
+				 state->sock,
+				 (unsigned int)state->pid));
+		} else {
+			DEBUG(5,("Client request timed out, "
+				 "shutting down sock %d, pid %u\n",
+				 state->sock,
+				 (unsigned int)state->pid));
+		}
+
+		remove_client(state);
 	}
 }
 

@@ -109,13 +109,15 @@ static bool lp_scan_idmap_found_domain(const char *string,
 			return false;
 		}
 
-		ok = lp_idmap_range(domname, &c->low, &c->high);
-		if (!ok) {
-			fprintf(stderr,
-				"ERROR: Invalid idmap range for domain "
-				"%s!\n\n",
-				c->domain_name);
-			return false;
+		if (lp_server_role() != ROLE_ACTIVE_DIRECTORY_DC) {
+			ok = lp_idmap_range(domname, &c->low, &c->high);
+			if (!ok) {
+				fprintf(stderr,
+					"ERROR: Invalid idmap range for domain "
+					"%s!\n\n",
+					c->domain_name);
+				return false;
+			}
 		}
 
 		d->count++;
@@ -227,6 +229,18 @@ static int do_global_checks(void)
 	if (strequal(lp_workgroup(), lp_netbios_name())) {
 		fprintf(stderr, "WARNING: 'workgroup' and 'netbios name' "
 				"must differ.\n\n");
+	}
+
+	if (lp_client_ipc_signing() == SMB_SIGNING_IF_REQUIRED
+	 || lp_client_ipc_signing() == SMB_SIGNING_OFF) {
+		fprintf(stderr, "WARNING: The 'client ipc signing' value "
+			"%s SMB signing is not used when contacting a "
+			"domain controller or other server. "
+			"This setting is not recommended; please be "
+			"aware of the security implications when using "
+			"this configuration setting.\n\n",
+			lp_client_ipc_signing() == SMB_SIGNING_OFF ?
+			"ensures" : "may mean");
 	}
 
 	if (strlen(lp_netbios_name()) > 15) {
@@ -606,12 +620,6 @@ static void do_per_share_checks(int s)
 	vfs_objects = lp_vfs_objects(s);
 	if (vfs_objects && str_list_check(vfs_objects, "fruit")) {
 		uses_fruit = true;
-		if (!lp_ea_support(s) && !lp_ea_support(-1)) {
-			fprintf(stderr,
-				"ERROR: Service \"%s\" uses vfs_fruit, but "
-				"that requires \"ea support = yes\".\n\n",
-				lp_servicename(talloc_tos(), s));
-		}
 	} else {
 		doesnt_use_fruit = true;
 	}

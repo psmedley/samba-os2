@@ -1,5 +1,5 @@
 # Unix SMB/CIFS implementation.
-# backend code for provisioning a Samba4 server
+# backend code for provisioning a Samba AD server
 
 # Copyright (C) Jelmer Vernooij <jelmer@samba.org> 2007-2012
 # Copyright (C) Andrew Bartlett <abartlet@samba.org> 2008-2009
@@ -56,6 +56,7 @@ from samba import (
     substitute_var,
     valid_netbios_name,
     version,
+    is_heimdal_built,
     )
 from samba.dcerpc import security, misc
 from samba.dcerpc.misc import (
@@ -118,7 +119,7 @@ import samba.registry
 from samba.schema import Schema
 from samba.samdb import SamDB
 from samba.dbchecker import dbcheck
-
+from samba.provision.kerberos import create_kdc_conf
 
 DEFAULT_POLICY_GUID = "31B2F340-016D-11D2-945F-00C04FB984F9"
 DEFAULT_DC_POLICY_GUID = "6AC1786C-016F-11D2-945F-00C04FB984F9"
@@ -474,7 +475,7 @@ class ProvisionResult(object):
     def report_logger(self, logger):
         """Report this provision result to a logger."""
         logger.info(
-            "Once the above files are installed, your Samba4 server will "
+            "Once the above files are installed, your Samba AD server will "
             "be ready to use")
         if self.adminpass_generated:
             logger.info("Admin password:        %s", self.adminpass)
@@ -549,6 +550,7 @@ def provision_paths_from_lp(lp, dnsdomain):
     paths.namedconf_update = os.path.join(paths.private_dir, "named.conf.update")
     paths.namedtxt = os.path.join(paths.private_dir, "named.txt")
     paths.krb5conf = os.path.join(paths.private_dir, "krb5.conf")
+    paths.kdcconf = os.path.join(paths.private_dir, "kdc.conf")
     paths.winsdb = os.path.join(paths.private_dir, "wins.ldb")
     paths.s4_ldapi_path = os.path.join(paths.private_dir, "ldapi")
     paths.hklm = "hklm.ldb"
@@ -668,7 +670,6 @@ def guess_names(lp=None, hostname=None, domain=None, dnsdomain=None,
 
     return names
 
-
 def make_smbconf(smbconf, hostname, domain, realm, targetdir,
                  serverrole=None, eadb=False, use_ntvfs=False, lp=None,
                  global_param=None):
@@ -760,11 +761,7 @@ def make_smbconf(smbconf, hostname, domain, realm, targetdir,
     # and dump it without any values that are the default
     # this ensures that any smb.conf parameters that were set
     # on the provision/join command line are set in the resulting smb.conf
-    f = open(smbconf, mode='w')
-    try:
-        lp.dump(f, False)
-    finally:
-        f.close()
+    lp.dump(False, smbconf)
 
 
 def setup_name_mappings(idmap, sid, root_uid, nobody_uid,
@@ -898,7 +895,10 @@ def secretsdb_self_join(secretsdb, domain,
 
     if len(res) == 1:
         msg["priorSecret"] = [res[0]["secret"][0]]
-        msg["priorWhenChanged"] = [res[0]["whenChanged"][0]]
+        try:
+            msg["priorWhenChanged"] = [res[0]["whenChanged"][0]]
+        except KeyError:
+            pass
 
         try:
             msg["privateKeytab"] = [res[0]["privateKeytab"][0]]
@@ -929,7 +929,7 @@ def secretsdb_self_join(secretsdb, domain,
 def setup_secretsdb(paths, session_info, backend_credentials, lp):
     """Setup the secrets database.
 
-   :note: This function does not handle exceptions and transaction on purpose,
+    :note: This function does not handle exceptions and transaction on purpose,
        it's up to the caller to do this job.
 
     :param path: Path to the secrets database.
@@ -2173,6 +2173,11 @@ def provision(logger, session_info, smbconf=None,
                     dom_for_fun_level=dom_for_fun_level, am_rodc=am_rodc,
                     lp=lp, use_ntvfs=use_ntvfs,
                            skip_sysvolacl=skip_sysvolacl)
+
+        if not is_heimdal_built():
+            create_kdc_conf(paths.kdcconf, realm, domain, os.path.dirname(lp.get("log file")))
+            logger.info("The Kerberos KDC configuration for Samba AD is "
+                        "located at %s", paths.kdcconf)
 
         create_krb5_conf(paths.krb5conf,
                          dnsdomain=names.dnsdomain, hostname=names.hostname,

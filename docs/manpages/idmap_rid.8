@@ -2,12 +2,12 @@
 .\"     Title: idmap_rid
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.6
+.\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "IDMAP_RID" "8" "08/08/2017" "Samba 4\&.6" "System Administration tools"
+.TH "IDMAP_RID" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -33,15 +33,13 @@ idmap_rid \- Samba\*(Aqs idmap_rid Backend for Winbind
 .PP
 The idmap_rid backend provides a way to use an algorithmic mapping scheme to map UIDs/GIDs and SIDs\&. No database is required in this case as the mapping is deterministic\&.
 .PP
-Note that the idmap_rid module has changed considerably since Samba versions 3\&.0\&. and 3\&.2\&. Currently, there should to be an explicit idmap configuration for each domain that should use the idmap_rid backend, using disjoint ranges\&. One usually needs to define a writeable default idmap range, using a backend like
+Currently, there should to be an explicit idmap configuration for each domain that should use the idmap_rid backend, using disjoint ranges\&.
+.PP
+NOTE: The idmap_rid backend can NOT bet used as the default backend\&. One usually needs to define a writeable default idmap range, using a backend like
 \fItdb\fR
 or
 \fIldap\fR
 that can create unix ids, in order to be able to map the BUILTIN sids and other domains, and also in order to be able to create group mappings\&. See the example below\&.
-.PP
-Note that the old syntax
-\fIidmap backend = rid:"DOM1=range DOM2=range2 \&.\&.\&."\fR
-is not supported any more since Samba version 3\&.0\&.25\&.
 .SH "IDMAP OPTIONS"
 .PP
 range = low \- high

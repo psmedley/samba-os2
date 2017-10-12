@@ -8,31 +8,20 @@ setup_ctdb
 
 ctdb_get_1_public_address |
 while read dev ip bits ; do
-    ip addr add "${ip}/${bits}" dev "$dev"
+	ip addr add "${ip}/${bits}" dev "$dev"
 
-    # Setup 10 fake connections...
-    count=10
-    out=""
-    nl="
-"
-    i=0
-    while [ $i -lt $count ] ; do
-	echo "${ip}:445 10.254.254.1:1230${i}"
-	# Expected output for killing this connection
-	out="${out}${out:+${nl}}Killing TCP connection 10.254.254.1:1230${i} ${ip}:445"
-	i=$(($i + 1))
-    done >"$FAKE_NETSTAT_TCP_ESTABLISHED_FILE"
+	count=10
+	setup_tcp_connections $count \
+			      "$ip" 445 10.254.254.0 12300
 
-    # Note that the fake TCP killing done by the "ctdb killtcp" stub
-    # can only kill conections in the file, so killing this connection
-    # will never succeed so it will look like a time out.
-    FAKE_NETSTAT_TCP_ESTABLISHED="${ip}:445|10.254.254.1:43210"
+	setup_tcp_connections_unkillable 1 \
+					 "$ip" 445 10.254.254.0 43210
 
-    ok <<EOF
-Killing TCP connection 10.254.254.1:43210 ${ip}:445
-$out
-Failed to kill TCP connections for IP 10.0.0.3 (1/11 remaining)
+	ok <<EOF
+Killed 10/11 TCP connections to released IP 10.0.0.3
+Remaining connections:
+  10.0.0.3:445 10.254.254.1:43211
 EOF
 
-    simple_test $dev $ip $bits
+	simple_test $dev $ip $bits
 done

@@ -39,6 +39,7 @@
 #include "../libcli/smb/smbXcli_base.h"
 #include "../libcli/smb/smb_seal.h"
 #include "lib/param/param.h"
+#include "../libcli/smb/smb2_negotiate_context.h"
 
 #define STAR_SMBSERVER "*SMBSERVER"
 
@@ -228,6 +229,7 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 	const char *pass = NULL;
 	const char *target_hostname = NULL;
 	const DATA_BLOB *server_blob = NULL;
+	bool got_kerberos_mechanism = false;
 	enum credentials_use_kerberos krb5_state;
 	bool try_kerberos = false;
 	bool need_kinit = false;
@@ -235,9 +237,7 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 	int ret;
 
 	target_hostname = smbXcli_conn_remote_name(cli->conn);
-	if (!cli->got_kerberos_mechanism) {
-		server_blob = smbXcli_conn_server_gss_blob(cli->conn);
-	}
+	server_blob = smbXcli_conn_server_gss_blob(cli->conn);
 
 	/* the server might not even do spnego */
 	if (server_blob != NULL && server_blob->length != 0) {
@@ -275,7 +275,7 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 
 			if (strcmp(OIDs[i], OID_KERBEROS5_OLD) == 0 ||
 			    strcmp(OIDs[i], OID_KERBEROS5) == 0) {
-				cli->got_kerberos_mechanism = true;
+				got_kerberos_mechanism = true;
 				break;
 			}
 		}
@@ -324,7 +324,7 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 		need_kinit = false;
 	} else if (krb5_state == CRED_MUST_USE_KERBEROS) {
 		need_kinit = try_kerberos;
-	} else if (!cli->got_kerberos_mechanism) {
+	} else if (!got_kerberos_mechanism) {
 		/*
 		 * Most likely the server doesn't support
 		 * Kerberos, don't waste time doing a kinit
@@ -349,7 +349,7 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 				0 /* no time correction for now */,
 				NULL);
 	if (ret != 0) {
-		int dbglvl = DBGLVL_WARNING;
+		int dbglvl = DBGLVL_NOTICE;
 
 		if (krb5_state == CRED_MUST_USE_KERBEROS) {
 			dbglvl = DBGLVL_ERR;
@@ -1102,13 +1102,16 @@ static void cli_session_setup_gensec_remote_done(struct tevent_req *subreq)
 			 * We can't finish the gensec handshake, we don't
 			 * have a negotiated session key.
 			 *
-			 * So just pretend we are completely done.
+			 * So just pretend we are completely done,
+			 * we need to continue as anonymous from this point,
+			 * as we can't get a session key.
 			 *
 			 * Note that smbXcli_session_is_guest()
 			 * always returns false if we require signing.
 			 */
 			state->blob_in = data_blob_null;
 			state->local_ready = true;
+			state->is_anonymous = true;
 		}
 
 		state->remote_ready = true;
@@ -2683,7 +2686,7 @@ static void cli_connect_nb_done(struct tevent_req *subreq)
 		return;
 	}
 
-	state->cli = cli_state_create(state, fd, state->desthost, NULL,
+	state->cli = cli_state_create(state, fd, state->desthost,
 				      state->signing_state, state->flags);
 	if (tevent_req_nomem(state->cli, req)) {
 		close(fd);
@@ -2777,6 +2780,15 @@ static struct tevent_req *cli_start_connection_send(
 		state->max_protocol = lp_client_max_protocol();
 	}
 
+	if (flags & CLI_FULL_CONNECTION_FORCE_SMB1) {
+		state->max_protocol = MIN(state->max_protocol, PROTOCOL_NT1);
+	}
+
+	if (flags & CLI_FULL_CONNECTION_DISABLE_SMB1) {
+		state->min_protocol = MAX(state->max_protocol, PROTOCOL_SMB2_02);
+		state->max_protocol = MAX(state->max_protocol, PROTOCOL_LATEST);
+	}
+
 	subreq = cli_connect_nb_send(state, ev, dest_host, dest_ss, port,
 				     0x20, my_name, signing_state, flags);
 	if (tevent_req_nomem(subreq, req)) {
@@ -2803,7 +2815,8 @@ static void cli_start_connection_connected(struct tevent_req *subreq)
 	subreq = smbXcli_negprot_send(state, state->ev, state->cli->conn,
 				      state->cli->timeout,
 				      state->min_protocol,
-				      state->max_protocol);
+				      state->max_protocol,
+				      WINDOWS_CLIENT_PURE_SMB2_NEGPROT_INITIAL_CREDIT_ASK);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
 	}
@@ -3732,6 +3745,8 @@ struct cli_state *get_ipc_connect(char *server,
 	if (get_cmdline_auth_info_use_kerberos(user_info)) {
 		flags |= CLI_FULL_CONNECTION_USE_KERBEROS;
 	}
+
+	flags |= CLI_FULL_CONNECTION_FORCE_SMB1;
 
 	nt_status = cli_full_connection(&cli, NULL, server, server_ss, 0, "IPC$", "IPC", 
 					get_cmdline_auth_info_username(user_info),

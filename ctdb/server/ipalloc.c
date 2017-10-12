@@ -52,10 +52,8 @@ ipalloc_state_init(TALLOC_CTX *mem_ctx,
 
 	ipalloc_state->num = num_nodes;
 
-	ipalloc_state->noiphost =
-		talloc_zero_array(ipalloc_state,
-				  bool,
-				  ipalloc_state->num);
+	ipalloc_state->noiphost = bitmap_talloc(ipalloc_state,
+						ipalloc_state->num);
 	if (ipalloc_state->noiphost == NULL) {
 		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
 		goto fail;
@@ -165,13 +163,19 @@ static bool populate_bitmap(struct ipalloc_state *ipalloc_state)
 
 	for (ip = ipalloc_state->all_ips; ip != NULL; ip = ip->next) {
 
-		ip->available_on = talloc_zero_array(ip, bool,
-						     ipalloc_state->num);
+		ip->known_on = bitmap_talloc(ip, ipalloc_state->num);
+		if (ip->known_on == NULL) {
+			return false;
+		}
+
+		ip->available_on = bitmap_talloc(ip, ipalloc_state->num);
 		if (ip->available_on == NULL) {
 			return false;
 		}
 
 		for (i = 0; i < ipalloc_state->num; i++) {
+			struct ctdb_public_ip_list *known =
+				&ipalloc_state->known_public_ips[i];
 			struct ctdb_public_ip_list *avail =
 				&ipalloc_state->available_public_ips[i];
 
@@ -179,7 +183,22 @@ static bool populate_bitmap(struct ipalloc_state *ipalloc_state)
 			for (j = 0; j < avail->num; j++) {
 				if (ctdb_sock_addr_same_ip(
 					    &ip->addr, &avail->ip[j].addr)) {
-					ip->available_on[i] = true;
+					bitmap_set(ip->available_on, i);
+					break;
+				}
+			}
+
+			/* Optimisation: available => known */
+			if (bitmap_query(ip->available_on, i)) {
+				bitmap_set(ip->known_on, i);
+				continue;
+			}
+
+			/* Check to see if "ip" is known on node "i" */
+			for (j = 0; j < known->num; j++) {
+				if (ctdb_sock_addr_same_ip(
+					    &ip->addr, &known->ip[j].addr)) {
+					bitmap_set(ip->known_on, i);
 					break;
 				}
 			}
@@ -221,7 +240,7 @@ void ipalloc_set_node_flags(struct ipalloc_state *ipalloc_state,
 	for (i=0;i<nodemap->num;i++) {
 		/* Can not host IPs on INACTIVE node */
 		if (nodemap->node[i].flags & NODE_FLAGS_INACTIVE) {
-			ipalloc_state->noiphost[i] = true;
+			bitmap_set(ipalloc_state->noiphost, i);
 		}
 
 		/* If node is disabled then it can only host IPs if
@@ -232,7 +251,7 @@ void ipalloc_set_node_flags(struct ipalloc_state *ipalloc_state,
 			if (!(all_disabled &&
 			      ipalloc_state->no_ip_host_on_all_disabled == 0)) {
 
-				ipalloc_state->noiphost[i] = true;
+				bitmap_set(ipalloc_state->noiphost, i);
 			}
 		}
 	}

@@ -856,6 +856,8 @@ auth:
 	if (state->auth->gensec == NULL) {
 		status = auth_generic_prepare(state->auth,
 					      state->smb2req->xconn->remote_address,
+					      state->smb2req->xconn->local_address,
+					      "SMB2",
 					      &state->auth->gensec);
 		if (tevent_req_nterror(req, status)) {
 			return tevent_req_post(req, ev);
@@ -863,6 +865,7 @@ auth:
 
 		gensec_want_feature(state->auth->gensec, GENSEC_FEATURE_SESSION_KEY);
 		gensec_want_feature(state->auth->gensec, GENSEC_FEATURE_UNIX_TOKEN);
+		gensec_want_feature(state->auth->gensec, GENSEC_FEATURE_SMB_TRANSPORT);
 
 		status = gensec_start_mech_by_oid(state->auth->gensec,
 						  GENSEC_OID_SPNEGO);

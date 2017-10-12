@@ -27,7 +27,6 @@ from samba.credentials import (
     DONT_USE_KERBEROS,
     MUST_USE_KERBEROS,
     )
-from samba.hostconfig import Hostconfig
 import sys
 
 
@@ -41,7 +40,7 @@ class SambaOptions(optparse.OptionGroup):
                         type=str, metavar="FILE", help="Configuration file",
                         callback=self._load_configfile)
         self.add_option("-d", "--debuglevel", action="callback",
-                        type=int, metavar="DEBUGLEVEL", help="debug level",
+                        type=str, metavar="DEBUGLEVEL", help="debug level",
                         callback=self._set_debuglevel)
         self.add_option("--option", action="callback",
                         type=str, metavar="OPTION",
@@ -65,7 +64,8 @@ class SambaOptions(optparse.OptionGroup):
         if arg < 0:
             raise optparse.OptionValueError("invalid %s option value: %s" %
                                             (opt_str, arg))
-        self._lp.set('debug level', str(arg))
+        self._lp.set('debug level', arg)
+        parser.values.debuglevel = arg
 
     def _set_realm(self, option, opt_str, arg, parser):
         self._lp.set('realm', arg)
@@ -78,7 +78,7 @@ class SambaOptions(optparse.OptionGroup):
         a = arg.split('=')
         try:
             self._lp.set(a[0], a[1])
-        except Exception, e:
+        except Exception as e:
             raise optparse.OptionValueError(
                 "invalid --option option value %r: %s" % (arg, e))
 
@@ -92,9 +92,6 @@ class SambaOptions(optparse.OptionGroup):
             self._lp.load_default()
         return self._lp
 
-    def get_hostconfig(self):
-        return Hostconfig(self.get_loadparm())
-
 
 class VersionOptions(optparse.OptionGroup):
     """Command line option for printing Samba version."""
@@ -106,7 +103,7 @@ class VersionOptions(optparse.OptionGroup):
 
     def _display_version(self, option, opt_str, arg, parser):
         import samba
-        print samba.version
+        print(samba.version)
         sys.exit(0)
 
 

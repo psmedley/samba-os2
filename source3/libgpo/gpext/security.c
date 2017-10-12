@@ -42,6 +42,8 @@
 #define GPTTMPL_SECTION_FILE_SECURITY		"File Security"
 #define GPTTMPL_SECTION_SERVICE_GENERAL_SETTING "Service General Setting"
 
+NTSTATUS gpext_security_init(TALLOC_CTX *mem_ctx);
+
 static TALLOC_CTX *ctx = NULL;
 
 struct gpttmpl_table {
@@ -62,7 +64,7 @@ struct gpttmpl_table {
 static NTSTATUS gpttmpl_parse_header(struct gp_inifile_context *ini_ctx,
 				     uint32_t *version_out)
 {
-	char *signature = NULL;
+	const char *signature = NULL;
 	NTSTATUS result;
 	int version;
 	bool is_unicode = false;
@@ -277,7 +279,7 @@ static struct gp_extension_methods security_methods = {
 /****************************************************************
 ****************************************************************/
 
-NTSTATUS gpext_security_init(void)
+NTSTATUS gpext_security_init(TALLOC_CTX *mem_ctx)
 {
 	NTSTATUS status;
 

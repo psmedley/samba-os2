@@ -8,11 +8,10 @@ Uploaders: Steve Langasek <vorlon@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
            Andrew Bartlett <abartlet+debian@catalyst.net.nz>
 Homepage: http://www.samba.org
-Standards-Version: 4.0.0
+Standards-Version: 4.1.1
 Build-Depends: bison,
                debhelper (>> 10),
                dh-python,
-               dh-systemd (>= 1.5),
                docbook-xml,
                docbook-xsl,
                flex,
@@ -32,8 +31,9 @@ Build-Depends: bison,
                libdbus-1-dev,
                libgnutls28-dev,
                libgpgme11-dev,
+               libjansson-dev,
                libldap2-dev,
-               libldb-dev (>= 2:1.1.29~),
+               libldb-dev (>= 2:1.2.2~),
                libncurses5-dev,
                libpam0g-dev,
                libparse-yapp-perl,
@@ -42,17 +42,17 @@ Build-Depends: bison,
                libreadline-dev,
                libsystemd-dev [linux-any],
                libtalloc-dev (>= 2.1.9~),
-               libtdb-dev (>= 1.3.12~),
-               libtevent-dev (>= 0.9.31~),
+               libtdb-dev (>= 1.3.14~),
+               libtevent-dev (>= 0.9.33~),
                perl,
                pkg-config,
                po-debconf,
                python-all-dev (>= 2.6.6-3),
                python-dnspython,
-               python-ldb (>= 2:1.1.29~),
-               python-ldb-dev (>= 2:1.1.29~),
+               python-ldb (>= 2:1.2.2~),
+               python-ldb-dev (>= 2:1.2.2~),
                python-talloc-dev (>= 2.1.9~),
-               python-tdb (>= 1.3.12~),
+               python-tdb (>= 1.3.14~),
                python-testtools,
                python3,
                xfslibs-dev [linux-any],
@@ -305,7 +305,6 @@ Description: shared library for communication with SMB/CIFS servers
 
 Package: libsmbclient-dev
 Section: libdevel
-Priority: extra
 Architecture: any
 Multi-Arch: same
 Depends: libsmbclient (= ${binary:Version}), ${misc:Depends}

@@ -1,12 +1,16 @@
-Description: Use the pager alternative as pager is PAGER is undefined
-Author: Steve Langasek <vorlon@debian.org>
+From: Steve Langasek <vorlon@debian.org>
+Subject: Use the pager alternative as pager is PAGER is undefined
+
 Bug-Debian: http://bugs.debian.org/135603
 Forwarded: not-needed
+---
+ source3/include/local.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
-Index: samba/source3/include/local.h
-===================================================================
---- samba.orig/source3/include/local.h
-+++ samba/source3/include/local.h
+diff --git a/source3/include/local.h b/source3/include/local.h
+index 7f97d4e..60a00d1 100644
+--- a/source3/include/local.h
++++ b/source3/include/local.h
 @@ -88,7 +88,7 @@
  /* the default pager to use for the client "more" command. Users can
     override this with the PAGER environment variable */

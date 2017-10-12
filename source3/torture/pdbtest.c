@@ -261,26 +261,34 @@ static bool test_auth(TALLOC_CTX *mem_ctx, struct samu *pdb_entry)
 	struct auth_context *auth_context;
 	static const uint8_t challenge_8[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 	DATA_BLOB challenge = data_blob_const(challenge_8, sizeof(challenge_8));
-	struct tsocket_address *tsocket_address;
+	struct tsocket_address *remote_address;
+	struct tsocket_address *local_address;
 	unsigned char local_nt_response[24];
 	DATA_BLOB nt_resp = data_blob_const(local_nt_response, sizeof(local_nt_response));
 	unsigned char local_nt_session_key[16];
 	struct netr_SamInfo3 *info3_sam, *info3_auth;
 	struct auth_serversupplied_info *server_info;
 	NTSTATUS status;
-	
+	bool ok;
+	uint8_t authoritative = 0;
+
 	SMBOWFencrypt(pdb_get_nt_passwd(pdb_entry), challenge_8,
 		      local_nt_response);
 	SMBsesskeygen_ntv1(pdb_get_nt_passwd(pdb_entry), local_nt_session_key);
 
-	if (tsocket_address_inet_from_strings(NULL, "ip", NULL, 0, &tsocket_address) != 0) {
+	if (tsocket_address_inet_from_strings(NULL, "ip", NULL, 0, &remote_address) != 0) {
 		return False;
 	}
-	
+
+	if (tsocket_address_inet_from_strings(NULL, "ip", NULL, 0, &local_address) != 0) {
+		return False;
+	}
+
 	status = make_user_info(mem_ctx,
 				&user_info, pdb_get_username(pdb_entry), pdb_get_username(pdb_entry),
-				pdb_get_domain(pdb_entry), pdb_get_domain(pdb_entry), lp_netbios_name(), 
-				tsocket_address, NULL, &nt_resp, NULL, NULL, NULL, 
+				pdb_get_domain(pdb_entry), pdb_get_domain(pdb_entry), lp_netbios_name(),
+				remote_address,local_address, "pdbtest",
+				NULL, &nt_resp, NULL, NULL, NULL,
 				AUTH_PASSWORD_RESPONSE);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(0, ("Failed to test authentication with check_sam_security_info3: %s\n", nt_errstr(status)));
@@ -298,20 +306,30 @@ static bool test_auth(TALLOC_CTX *mem_ctx, struct samu *pdb_entry)
 		return False;
 	}
 
-	status = make_auth_context_fixed(NULL, &auth_context, challenge.data);
+	status = make_auth3_context_for_ntlm(NULL, &auth_context);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(0, ("Failed to test authentication with check_sam_security_info3: %s\n", nt_errstr(status)));
 		return False;
 	}
-	
+
+	ok = auth3_context_set_challenge(
+		auth_context, challenge.data, "fixed");
+	if (!ok) {
+		DBG_ERR("auth3_context_set_challenge failed\n");
+		return false;
+	}
+
 	status = auth_check_ntlm_password(mem_ctx,
 					  auth_context,
 					  user_info,
-					  &server_info);
+					  &server_info,
+					  &authoritative);
 
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0, ("Failed to test authentication with auth module: %s\n", nt_errstr(status)));
+		DEBUG(0, ("Failed to test authentication with auth module: "
+			  "%s authoritative[%u].\n",
+			  nt_errstr(status), authoritative));
 		return False;
 	}
 	

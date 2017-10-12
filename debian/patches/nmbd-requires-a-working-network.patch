@@ -6,7 +6,6 @@ Bug-Debian: https://bugs.debian.org/698056
 Bug-Debian: https://bugs.debian.org/842056
 Bug-Debian: https://bugs.debian.org/840608
 Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/samba/+bug/1635491
-
 ---
  packaging/systemd/nmb.service | 3 ++-
  1 file changed, 2 insertions(+), 1 deletion(-)
@@ -25,6 +24,3 @@ index c02e65d..71cf1c2 100644
  
  [Service]
  Type=notify
--- 
-2.9.3
-

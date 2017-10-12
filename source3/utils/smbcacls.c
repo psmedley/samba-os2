@@ -921,11 +921,12 @@ int main(int argc, char *argv[])
 	share++;
 
 	if (!test_args) {
-		cli = connect_one(cmdline_auth_info, server, share);
+		cli = connect_one(popt_get_cmdline_auth_info(), server, share);
 		if (!cli) {
 			exit(EXIT_FAILED);
 		}
 	} else {
+		popt_free_cmdline_auth_info();
 		exit(0);
 	}
 
@@ -951,6 +952,7 @@ int main(int argc, char *argv[])
 		result = cacl_dump(cli, filename, numeric);
 	}
 
+	popt_free_cmdline_auth_info();
 	TALLOC_FREE(frame);
 
 	return result;

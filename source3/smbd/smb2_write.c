@@ -354,7 +354,7 @@ static struct tevent_req *smbd_smb2_write_send(TALLOC_CTX *mem_ctx,
 				WRITE_LOCK,
 				&lock);
 
-	if (!SMB_VFS_STRICT_LOCK(conn, fsp, &lock)) {
+	if (!SMB_VFS_STRICT_LOCK_CHECK(conn, fsp, &lock)) {
 		tevent_req_nterror(req, NT_STATUS_FILE_LOCK_CONFLICT);
 		return tevent_req_post(req, ev);
 	}
@@ -368,8 +368,6 @@ static struct tevent_req *smbd_smb2_write_send(TALLOC_CTX *mem_ctx,
 			      in_data.length);
 
 	status = smb2_write_complete(req, nwritten, errno);
-
-	SMB_VFS_STRICT_UNLOCK(conn, fsp, &lock);
 
 	DEBUG(10,("smb2: write on "
 		"file %s, offset %.0f, requested %u, written = %u\n",

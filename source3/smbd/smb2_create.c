@@ -405,7 +405,7 @@ static NTSTATUS smbd_smb2_create_durable_lease_check(struct smb_request *smb1req
 	}
 
 	ucf_flags = filename_create_ucf_flags(smb1req, FILE_OPEN);
-	status = filename_convert(talloc_tos(), fsp->conn, false,
+	status = filename_convert(talloc_tos(), fsp->conn,
 				  requested_filename, ucf_flags,
 				  NULL, &smb_fname);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -431,7 +431,6 @@ struct smbd_smb2_create_state {
 	struct smbd_smb2_request *smb2req;
 	struct smb_request *smb1req;
 	bool open_was_deferred;
-	struct tevent_timer *te;
 	struct tevent_immediate *im;
 	struct timeval request_time;
 	struct file_id id;
@@ -928,6 +927,11 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			if (tevent_req_nomem(fname, req)) {
 				return tevent_req_post(req, ev);
 			}
+			/*
+			 * Tell filename_create_ucf_flags() this
+			 * is an @GMT path.
+			 */
+			smb1req->flags2 |= FLAGS2_REPARSE_PATH;
 		}
 
 		if (qfid) {
@@ -1028,7 +1032,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 
 			DEBUG(10, ("smb2_create_send: %s to recreate the "
 				   "smb2srv_open struct for a durable handle.\n",
-				   op->global->durable ? "succeded" : "failed"));
+				   op->global->durable ? "succeeded" : "failed"));
 
 			if (!op->global->durable) {
 				talloc_free(op);
@@ -1109,7 +1113,6 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			ucf_flags = filename_create_ucf_flags(smb1req, in_create_disposition);
 			status = filename_convert(req,
 						  smb1req->conn,
-						  smb1req->flags2 & FLAGS2_DFS_PATHNAMES,
 						  fname,
 						  ucf_flags,
 						  NULL, /* ppath_contains_wcards */
@@ -1562,8 +1565,6 @@ static void remove_deferred_open_message_smb2_internal(struct smbd_smb2_request 
 		(unsigned long long)mid ));
 
 	state->open_was_deferred = false;
-	/* Ensure we don't have any outstanding timer event. */
-	TALLOC_FREE(state->te);
 	/* Ensure we don't have any outstanding immediate event. */
 	TALLOC_FREE(state->im);
 }
@@ -1631,8 +1632,6 @@ bool schedule_deferred_open_message_smb2(
 		return false;
 	}
 
-	/* Ensure we don't have any outstanding timer event. */
-	TALLOC_FREE(state->te);
 	/* Ensure we don't have any outstanding immediate event. */
 	TALLOC_FREE(state->im);
 

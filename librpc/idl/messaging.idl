@@ -45,6 +45,9 @@ interface messaging
 		MSG_PREFORK_CHILD_EVENT		= 0x0031,
 		MSG_PREFORK_PARENT_EVENT	= 0x0032,
 
+		MSG_REQ_RINGBUF_LOG		= 0x0033,
+		MSG_RINGBUF_LOG			= 0x0034,
+
 		/* nmbd messages */
 		MSG_FORCE_ELECTION		= 0x0101,
 		MSG_WINS_NEW_ENTRY		= 0x0102,
@@ -136,6 +139,9 @@ interface messaging
 		MSG_NTVFS_OPLOCK_BREAK          = 0x0703,
 		MSG_DREPL_ALLOCATE_RID          = 0x0704,
 
+		/* Called during authentication and authorization to allow out-of- */
+		MSG_AUTH_LOG                    = 0x0800,
+
 		/* dbwrap messages 4001-4999 (0x0FA0 - 0x1387) */
 		/* MSG_DBWRAP_TDB2_CHANGES		= 4001, */
 		/* MSG_DBWRAP_G_LOCK_RETRY		= 4002, */
@@ -167,4 +173,7 @@ interface messaging
 		uint32 num_recs;
 		messaging_rec *recs[num_recs];
 	} messaging_reclog;
+
+        /* This allows this well known service name to be referenced in python and C */
+        const string AUTH_EVENT_NAME = "auth_event";
 }

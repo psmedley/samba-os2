@@ -107,8 +107,8 @@ def configure(conf):
     if conf.env.standalone_ctdb:
         conf.SAMBA_CHECK_PERL(mandatory=True)
 
-        conf.SAMBA_CHECK_PYTHON(mandatory=True, version=(2,5,0))
-        conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=True)
+        conf.SAMBA_CHECK_PYTHON(mandatory=False, version=(2,5,0))
+        conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=False)
 
     if conf.CHECK_FOR_THIRD_PARTY():
         conf.RECURSE('third_party/popt')
@@ -287,34 +287,28 @@ def configure(conf):
             else:
                 Logs.info("  %s: no" % (m))
 
+def gen_ctdb_version(task):
+    fp = file(task.outputs[0].bldpath(task.env), 'w')
+    fp.write('/* This file is auto-generated from waf */\n')
+    fp.write('#include "version.h"\n')
+    fp.write('\n')
+    fp.write('#define CTDB_VERSION_STRING "%s"\n' % VERSION)
+    fp.close()
+
+
 def build(bld):
     if bld.env.standalone_ctdb:
         # enable building of public headers in the build tree
         bld.env.build_public_headers = 'include/public'
 
-    version_h = samba_utils.os_path_relpath(os.path.join(Options.launch_dir,
-                                                         "version.h"),
-                                            bld.curdir)
-
     if bld.env.standalone_ctdb:
-        ctdb_mkversion = '../packaging/mkversion.sh'
-        t = bld.SAMBA_GENERATOR('ctdb-version-header',
-                                target='include/ctdb_version.h',
-                                rule='%s ${TGT} %s' % (ctdb_mkversion, VERSION),
-                                dep_vars=['VERSION'])
-        t.env.VERSION = VERSION
+        bld.SAMBA_MKVERSION('version.h', '%s/VERSION' % vdir)
 
-        t = bld.SAMBA_GENERATOR('ctdb-samba-version-header',
-                                target=version_h,
-                                rule='printf "#include \\"ctdb_version.h\\" \\n#define SAMBA_VERSION_STRING CTDB_VERSION_STRING\\n" > ${TGT}',
-                                dep_vars=['VERSION'])
-        t.env.VERSION = VERSION
-    else:
-        t = bld.SAMBA_GENERATOR('ctdb-samba-version-header',
-                                target='include/ctdb_version.h',
-                                rule='printf "#include \\"%s\\" \\n#define CTDB_VERSION_STRING SAMBA_VERSION_STRING\\n" > ${TGT}' % version_h,
-                                dep_vars=['VERSION'])
-        t.env.VERSION = VERSION
+    t = bld.SAMBA_GENERATOR('ctdb-version-header',
+                            target='include/ctdb_version.h',
+                            rule=gen_ctdb_version,
+                            dep_vars=['VERSION'])
+    t.env.VERSION = VERSION
 
     bld.env.PKGCONFIGDIR = '${LIBDIR}/pkgconfig'
 
@@ -390,7 +384,8 @@ def build(bld):
                                           '''db_hash.c srvid.c reqid.c
                                              pkt_read.c pkt_write.c comm.c
                                              logging.c rb_tree.c tunable.c
-                                             pidfile.c run_proc.c'''),
+                                             pidfile.c run_proc.c
+                                             hash_count.c run_event.c'''),
                         deps='''samba-util sys_rw tevent-util
                                 replace talloc tevent tdb''')
 
@@ -738,6 +733,8 @@ def build(bld):
         'run_proc_test',
         'sock_daemon_test',
         'sock_io_test',
+        'hash_count_test',
+        'run_event_test',
     ]
 
     for target in ctdb_unit_tests:
@@ -793,7 +790,8 @@ def build(bld):
         'transaction_loop',
         'update_record',
         'update_record_persistent',
-        'lock_tdb'
+        'lock_tdb',
+        'dummy_client'
     ]
 
     for target in ctdb_tests:
@@ -830,7 +828,7 @@ def build(bld):
                               ib_deps,
                          install_path='${CTDB_TEST_LIBEXECDIR}')
 
-    if bld.env.HAVE_ROBUST_MUTEXES:
+    if bld.env.HAVE_ROBUST_MUTEXES and sys.platform.startswith('linux'):
         bld.SAMBA_BINARY('test_mutex_raw',
                          source='tests/src/test_mutex_raw.c',
                          deps='pthread',
@@ -980,13 +978,11 @@ def manpages(ctx):
 def distonly(ctx):
     samba_dist.DIST_FILES('VERSION:VERSION', extend=True)
 
-    t = 'include/ctdb_version.h'
-    cmd = 'packaging/mkversion.sh %s %s' % (t, VERSION)
-    ret = samba_utils.RUN_COMMAND(cmd)
-    if ret != 0:
-        print('Command "%s" failed with exit status %d' % (cmd, ret))
-        sys.exit(ret)
-    samba_dist.DIST_FILES('ctdb/%s:%s' % (t, t), extend=True)
+    distfile = file('.distversion', 'w')
+    for field in version.vcs_fields:
+        distfile.write('%s=%s\n' % (field, str(version.vcs_fields[field])))
+    distfile.close()
+    samba_dist.DIST_FILES('ctdb/.distversion:.distversion', extend=True)
 
     t = 'ctdb.spec'
     sed_expr1 = 's/@VERSION@/%s/g' % VERSION

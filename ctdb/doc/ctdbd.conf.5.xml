@@ -165,7 +165,7 @@
 	    OPTIONS is a comma-separated list of any permissible
 	    options to the tmpfs filesystem.  The only pre-specified
 	    default is <option>mode=700</option>, which can
-	    overriden by specifying <option>mode</option> in
+	    overridden by specifying <option>mode</option> in
 	    OPTIONS.  It probably makes sense to specify a maximum
 	    <option>size</option>.
 	  </para>
@@ -1103,6 +1103,34 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 	</varlistentry>
 
 	<varlistentry>
+	  <term>CTDB_NFS_CHECKS_DIR=<parameter>DIRECTORY</parameter></term>
+	  <listitem>
+	    <para>
+	      Specifies the path to a DIRECTORY containing files that
+	      describe how to monitor the responsiveness of NFS RPC
+	      services.  See the README file for this directory for an
+	      explanation of the contents of these "check" files.
+	    </para>
+	    <para>
+	      CTDB_NFS_CHECKS_DIR can be used to point to different
+	      sets of checks for different NFS servers.
+	    </para>
+	    <para>
+	      One way of using this is to have it point to, say,
+	      <filename>/usr/local/etc/ctdb/nfs-checks-enabled.d</filename>
+	      and populate it with symbolic links to the desired check
+	      files.  This avoids duplication and is upgrade-safe.
+	    </para>
+	    <para>
+	      Default is
+	      <filename>/usr/local/etc/ctdb/nfs-checks.d</filename>,
+	      which contains NFS RPC checks suitable for Linux kernel
+	      NFS.
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+	<varlistentry>
 	  <term>CTDB_NFS_SKIP_SHARE_CHECK=yes|no</term>
 	  <listitem>
 	    <para>
@@ -1485,19 +1513,6 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 	  </listitem>
 	</varlistentry>
 
-	<varlistentry>
-	  <term>CTDB_SERVICE_AUTOSTARTSTOP=yes|no</term>
-	  <listitem>
-	    <para>
-	      When CTDB should start and stop services if they become
-	      managed or unmanaged.
-	    </para>
-	    <para>
-	      Default is no.
-	    </para>
-	  </listitem>
-	</varlistentry>
-
       </variablelist>
 
     </refsect2>
@@ -1692,20 +1707,6 @@ CTDB_SET_MonitorInterval=20
 	  </para>
 	  <para>
 	    Default is no.
-	  </para>
-	</listitem>
-      </varlistentry>
-
-      <varlistentry>
-	<term>CTDB_SCRIPT_DEBUGLEVEL=<parameter>DEBUGLEVEL</parameter></term>
-	<listitem>
-	  <para>
-	    DEBUGLEVEL is the level debugging messages printed by CTDB
-	    scripts.  Setting this to a higher level (e.g. DEBUG) will
-	    cause some scripts to log more messages.
-	  </para>
-	  <para>
-	    Default is NOTICE.
 	  </para>
 	</listitem>
       </varlistentry>

@@ -2,12 +2,12 @@
 .\"     Title: ctdb-tunables
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB\-TUNABLES" "7" "08/08/2017" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB\-TUNABLES" "7" "09/21/2017" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -47,6 +47,15 @@ The tunable variables are listed alphabetically\&.
 Default: 1
 .PP
 When set to 0, clients are not allowed to attach to any databases\&. This can be used to temporarily block any new processes from attaching to and accessing the databases\&. This is mainly used for detaching a volatile database using \*(Aqctdb detach\*(Aq\&.
+.SS "AllowMixedVersions"
+.PP
+Default: 0
+.PP
+CTDB will not allow incompatible versions to co\-exist in a cluster\&. If a version mismatch is found, then losing CTDB will shutdown\&. To disable the incompatible version check, set this tunable to 1\&.
+.PP
+For version checking, CTDB uses major and minor version\&. For example, CTDB 4\&.6\&.1 and CTDB CTDB 4\&.6\&.2 are matching versions; CTDB 4\&.5\&.x and CTDB 4\&.6\&.y do not match\&.
+.PP
+CTDB with version check support will lose to CTDB without version check support\&. Between two different CTDB versions with version check support, one running for less time will lose\&. If the running time for both CTDB versions with version check support is equal (to seconds), then the older version will lose\&. The losing CTDB daemon will shutdown\&.
 .SS "AllowUnhealthyDBRead"
 .PP
 Default: 0
@@ -326,9 +335,9 @@ Default: 9
 This is the duration in seconds in which ctdb tries to complete IP failover\&.
 .SS "TDBMutexEnabled"
 .PP
-Default: 0
+Default: 1
 .PP
-This paramter enables TDB_MUTEX_LOCKING feature on volatile databases if the robust mutexes are supported\&. This optimizes the record locking using robust mutexes and is much more efficient that using posix locks\&.
+This parameter enables TDB_MUTEX_LOCKING feature on volatile databases if the robust mutexes are supported\&. This optimizes the record locking using robust mutexes and is much more efficient that using posix locks\&.
 .SS "TickleUpdateInterval"
 .PP
 Default: 20

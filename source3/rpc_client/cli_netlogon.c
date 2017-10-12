@@ -67,7 +67,7 @@ NTSTATUS rpccli_pre_open_netlogon_creds(void)
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	global_db = db_open(talloc_autofree_context(), fname,
+	global_db = db_open(frame, fname,
 			    0, TDB_CLEAR_IF_FIRST|TDB_INCOMPATIBLE_HASH,
 			    O_RDWR|O_CREAT, 0600, DBWRAP_LOCK_ORDER_2,
 			    DBWRAP_FLAG_OPTIMIZE_READONLY_ACCESS);
@@ -321,6 +321,8 @@ NTSTATUS rpccli_netlogon_password_logon(struct netlogon_creds_cli_context *creds
 					const char *password,
 					const char *workstation,
 					enum netr_LogonInfoClass logon_type,
+					uint8_t *authoritative,
+					uint32_t *flags,
 					struct netr_SamInfo3 **info3)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -328,8 +330,6 @@ NTSTATUS rpccli_netlogon_password_logon(struct netlogon_creds_cli_context *creds
 	union netr_LogonLevel *logon;
 	uint16_t validation_level = 0;
 	union netr_Validation *validation = NULL;
-	uint8_t authoritative = 0;
-	uint32_t flags = 0;
 	char *workstation_slash = NULL;
 
 	logon = talloc_zero(frame, union netr_LogonLevel);
@@ -437,8 +437,8 @@ NTSTATUS rpccli_netlogon_password_logon(struct netlogon_creds_cli_context *creds
 						  frame,
 						  &validation_level,
 						  &validation,
-						  &authoritative,
-						  &flags);
+						  authoritative,
+						  flags);
 	if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(frame);
 		return status;
@@ -483,19 +483,10 @@ NTSTATUS rpccli_netlogon_network_logon(struct netlogon_creds_cli_context *creds,
 	struct netr_NetworkInfo *network_info;
 	uint16_t validation_level = 0;
 	union netr_Validation *validation = NULL;
-	uint8_t _authoritative = 0;
-	uint32_t _flags = 0;
 	struct netr_ChallengeResponse lm;
 	struct netr_ChallengeResponse nt;
 
 	*info3 = NULL;
-
-	if (authoritative == NULL) {
-		authoritative = &_authoritative;
-	}
-	if (flags == NULL) {
-		flags = &_flags;
-	}
 
 	ZERO_STRUCT(lm);
 	ZERO_STRUCT(nt);

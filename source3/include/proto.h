@@ -243,14 +243,6 @@ void sys_srandom(unsigned int seed);
 int groups_max(void);
 int sys_getgroups(int setlen, gid_t *gidset);
 int sys_setgroups(gid_t UNUSED(primary_gid), int setlen, gid_t *gidset);
-ssize_t sys_getxattr (const char *path, const char *name, void *value, size_t size);
-ssize_t sys_fgetxattr (int filedes, const char *name, void *value, size_t size);
-ssize_t sys_listxattr (const char *path, char *list, size_t size);
-ssize_t sys_flistxattr (int filedes, char *list, size_t size);
-int sys_removexattr (const char *path, const char *name);
-int sys_fremovexattr (int filedes, const char *name);
-int sys_setxattr (const char *path, const char *name, const void *value, size_t size, int flags);
-int sys_fsetxattr (int filedes, const char *name, const void *value, size_t size, int flags);
 uint32_t unix_dev_major(SMB_DEV_T dev);
 uint32_t unix_dev_minor(SMB_DEV_T dev);
 char *sys_realpath(const char *path);
@@ -363,8 +355,6 @@ char *get_mydnsdomname(TALLOC_CTX *ctx);
 char *automount_lookup(TALLOC_CTX *ctx, const char *user_name);
 char *automount_lookup(TALLOC_CTX *ctx, const char *user_name);
 bool process_exists(const struct server_id pid);
-bool processes_exist(const struct server_id *pids, int num_pids,
-		     bool *results);
 const char *uidtoname(uid_t uid);
 char *gidtoname(gid_t gid);
 uid_t nametouid(const char *name);
@@ -433,7 +423,6 @@ bool map_open_params_to_ntcreate(const char *smb_base_fname,
 				 uint32_t *pprivate_flags);
 struct security_unix_token *copy_unix_token(TALLOC_CTX *ctx, const struct security_unix_token *tok);
 bool dir_check_ftype(uint32_t mode, uint32_t dirtype);
-void init_modules(void);
 
 /* The following definitions come from lib/util_builtin.c  */
 
@@ -832,12 +821,6 @@ bool get_dc_name(const char *domain,
 		fstring srv_name,
 		struct sockaddr_storage *ss_out);
 
-/* The following definitions come from libsmb/passchange.c  */
-
-NTSTATUS remote_password_change(const char *remote_machine, const char *user_name, 
-				const char *old_passwd, const char *new_passwd,
-				char **err_str);
-
 /* The following definitions come from libsmb/smberr.c  */
 
 const char *smb_dos_err_name(uint8_t e_class, uint16_t num);
@@ -847,13 +830,8 @@ WERROR map_werror_from_unix(int error);
 
 /* The following definitions come from libsmb/trustdom_cache.c  */
 
-bool trustdom_cache_enable(void);
-bool trustdom_cache_shutdown(void);
-bool trustdom_cache_store(const char *name, const char *alt_name,
-			  const struct dom_sid *sid, time_t timeout);
+bool trustdom_cache_store(const char *name, const struct dom_sid *sid);
 bool trustdom_cache_fetch(const char* name, struct dom_sid* sid);
-uint32_t trustdom_cache_fetch_timestamp( void );
-bool trustdom_cache_store_timestamp( uint32_t t, time_t timeout );
 void trustdom_cache_flush(void);
 void update_trustdom_cache( void );
 
@@ -893,6 +871,9 @@ int lp_client_ipc_signing(void);
 int lp_smb2_max_credits(void);
 int lp_cups_encrypt(void);
 bool lp_widelinks(int );
+int lp_rpc_low_port(void);
+int lp_rpc_high_port(void);
+bool lp_lanman_auth(void);
 
 int lp_wi_scan_global_parametrics(
 	const char *regex, size_t max_matches,
@@ -1128,6 +1109,8 @@ const char *smb_fname_str_dbg(const struct smb_filename *smb_fname);
 const char *fsp_str_dbg(const struct files_struct *fsp);
 const char *fsp_fnum_dbg(const struct files_struct *fsp);
 struct smb_filename *cp_smb_filename(TALLOC_CTX *mem_ctx,
+				     const struct smb_filename *in);
+struct smb_filename *cp_smb_filename_nostream(TALLOC_CTX *mem_ctx,
 				     const struct smb_filename *in);
 bool is_ntfs_stream_smb_fname(const struct smb_filename *smb_fname);
 bool is_ntfs_default_stream_smb_fname(const struct smb_filename *smb_fname);

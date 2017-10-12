@@ -1,7 +1,7 @@
 # DRS utility code
 #
 # Copyright Andrew Tridgell 2010
-# Copyright Andrew Bartlett 2010
+# Copyright Andrew Bartlett 2017
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,8 +17,10 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-from samba.dcerpc import drsuapi, misc
+from samba.dcerpc import drsuapi, misc, drsblobs
 from samba.net import Net
+from samba.ndr import ndr_unpack
+from samba import dsdb
 import samba, ldb
 
 
@@ -44,7 +46,7 @@ def drsuapi_connect(server, lp, creds):
     """
 
     binding_options = "seal"
-    if lp.log_level() >= 5:
+    if lp.log_level() >= 9:
         binding_options += ",print"
     binding_string = "ncacn_ip_tcp:%s[%s]" % (server, binding_options)
     try:
@@ -144,6 +146,44 @@ def drs_DsBind(drs):
     return (handle, info.info.supported_extensions)
 
 
+def drs_get_rodc_partial_attribute_set(samdb):
+    '''get a list of attributes for RODC replication'''
+    partial_attribute_set = drsuapi.DsPartialAttributeSet()
+    partial_attribute_set.version = 1
+
+    attids = []
+
+    # the exact list of attids we send is quite critical. Note that
+    # we do ask for the secret attributes, but set SPECIAL_SECRET_PROCESSING
+    # to zero them out
+    schema_dn = samdb.get_schema_basedn()
+    res = samdb.search(base=schema_dn, scope=ldb.SCOPE_SUBTREE,
+                       expression="objectClass=attributeSchema",
+                       attrs=["lDAPDisplayName", "systemFlags",
+                              "searchFlags"])
+
+    for r in res:
+        ldap_display_name = r["lDAPDisplayName"][0]
+        if "systemFlags" in r:
+            system_flags      = r["systemFlags"][0]
+            if (int(system_flags) & (samba.dsdb.DS_FLAG_ATTR_NOT_REPLICATED |
+                                     samba.dsdb.DS_FLAG_ATTR_IS_CONSTRUCTED)):
+                continue
+        if "searchFlags" in r:
+            search_flags = r["searchFlags"][0]
+            if (int(search_flags) & samba.dsdb.SEARCH_FLAG_RODC_ATTRIBUTE):
+                continue
+        attid = samdb.get_attid_from_lDAPDisplayName(ldap_display_name)
+        attids.append(int(attid))
+
+    # the attids do need to be sorted, or windows doesn't return
+    # all the attributes we need
+    attids.sort()
+    partial_attribute_set.attids         = attids
+    partial_attribute_set.num_attids = len(attids)
+    return partial_attribute_set
+
+
 class drs_Replicate(object):
     '''DRS replication calls'''
 
@@ -158,46 +198,9 @@ class drs_Replicate(object):
             raise RuntimeError("Must not set GUID 00000000-0000-0000-0000-000000000000 as invocation_id")
         self.replication_state = self.net.replicate_init(self.samdb, lp, self.drs, invocation_id)
 
-    def drs_get_rodc_partial_attribute_set(self):
-        '''get a list of attributes for RODC replication'''
-        partial_attribute_set = drsuapi.DsPartialAttributeSet()
-        partial_attribute_set.version = 1
-
-        attids = []
-
-        # the exact list of attids we send is quite critical. Note that
-        # we do ask for the secret attributes, but set SPECIAL_SECRET_PROCESSING
-        # to zero them out
-        schema_dn = self.samdb.get_schema_basedn()
-        res = self.samdb.search(base=schema_dn, scope=ldb.SCOPE_SUBTREE,
-                                      expression="objectClass=attributeSchema",
-                                      attrs=["lDAPDisplayName", "systemFlags",
-                                             "searchFlags"])
-
-        for r in res:
-            ldap_display_name = r["lDAPDisplayName"][0]
-            if "systemFlags" in r:
-                system_flags      = r["systemFlags"][0]
-                if (int(system_flags) & (samba.dsdb.DS_FLAG_ATTR_NOT_REPLICATED |
-                                         samba.dsdb.DS_FLAG_ATTR_IS_CONSTRUCTED)):
-                    continue
-            if "searchFlags" in r:
-                search_flags = r["searchFlags"][0]
-                if (int(search_flags) & samba.dsdb.SEARCH_FLAG_RODC_ATTRIBUTE):
-                    continue
-            attid = self.samdb.get_attid_from_lDAPDisplayName(ldap_display_name)
-            attids.append(int(attid))
-
-        # the attids do need to be sorted, or windows doesn't return
-        # all the attributes we need
-        attids.sort()
-        partial_attribute_set.attids         = attids
-        partial_attribute_set.num_attids = len(attids)
-        return partial_attribute_set
-
     def replicate(self, dn, source_dsa_invocation_id, destination_dsa_guid,
                   schema=False, exop=drsuapi.DRSUAPI_EXOP_NONE, rodc=False,
-                  replica_flags=None):
+                  replica_flags=None, full_sync=True):
         '''replicate a single DN'''
 
         # setup for a GetNCChanges call
@@ -207,11 +210,43 @@ class drs_Replicate(object):
         req8.source_dsa_invocation_id = source_dsa_invocation_id
         req8.naming_context = drsuapi.DsReplicaObjectIdentifier()
         req8.naming_context.dn = dn
-        req8.highwatermark = drsuapi.DsReplicaHighWaterMark()
-        req8.highwatermark.tmp_highest_usn = 0
-        req8.highwatermark.reserved_usn = 0
-        req8.highwatermark.highest_usn = 0
-        req8.uptodateness_vector = None
+
+        udv = None
+        if not full_sync:
+            res = self.samdb.search(base=dn, scope=ldb.SCOPE_BASE,
+                                    attrs=["repsFrom"])
+            if "repsFrom" in res[0]:
+                for reps_from_packed in res[0]["repsFrom"]:
+                    reps_from_obj = ndr_unpack(drsblobs.repsFromToBlob, reps_from_packed)
+                    if reps_from_obj.ctr.source_dsa_invocation_id == source_dsa_invocation_id:
+                        hwm = reps_from_obj.ctr.highwatermark
+
+            udv = drsuapi.DsReplicaCursorCtrEx()
+            udv.version = 1
+            udv.reserved1 = 0
+            udv.reserved2 = 0
+
+            cursors_v1 = []
+            cursors_v2 = dsdb._dsdb_load_udv_v2(self.samdb,
+                                                self.samdb.get_default_basedn())
+            for cursor_v2 in cursors_v2:
+                cursor_v1 = drsuapi.DsReplicaCursor()
+                cursor_v1.source_dsa_invocation_id = cursor_v2.source_dsa_invocation_id
+                cursor_v1.highest_usn = cursor_v2.highest_usn
+                cursors_v1.append(cursor_v1)
+
+            udv.cursors = cursors_v1
+            udv.count = len(cursors_v1)
+
+        # If we can't find an upToDateVector, or where told not to, replicate fully
+        hwm = drsuapi.DsReplicaHighWaterMark()
+        hwm.tmp_highest_usn = 0
+        hwm.reserved_usn = 0
+        hwm.highest_usn = 0
+
+        req8.highwatermark = hwm
+        req8.uptodateness_vector = udv
+
         if replica_flags is not None:
             req8.replica_flags = replica_flags
         elif exop == drsuapi.DRSUAPI_EXOP_REPL_SECRET:
@@ -237,7 +272,7 @@ class drs_Replicate(object):
         req8.mapping_ctr.mappings = None
 
         if not schema and rodc:
-            req8.partial_attribute_set = self.drs_get_rodc_partial_attribute_set()
+            req8.partial_attribute_set = drs_get_rodc_partial_attribute_set(self.samdb)
 
         if self.supported_extensions & drsuapi.DRSUAPI_SUPPORTED_EXTENSION_GETCHGREQ_V8:
             req_level = 8
@@ -250,12 +285,25 @@ class drs_Replicate(object):
                     setattr(req5, a, getattr(req8, a))
             req = req5
 
+        num_objects = 0
+        num_links = 0
         while True:
             (level, ctr) = self.drs.DsGetNCChanges(self.drs_handle, req_level, req)
             if ctr.first_object is None and ctr.object_count != 0:
                 raise RuntimeError("DsGetNCChanges: NULL first_object with object_count=%u" % (ctr.object_count))
             self.net.replicate_chunk(self.replication_state, level, ctr,
                 schema=schema, req_level=req_level, req=req)
+
+            num_objects += ctr.object_count
+
+            # Cope with servers that do not return level 6, so do not return any links
+            try:
+                num_links += ctr.linked_attributes_count
+            except AttributeError:
+                pass
+
             if ctr.more_data == 0:
                 break
             req.highwatermark = ctr.new_highwatermark
+
+        return (num_objects, num_links)

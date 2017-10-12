@@ -11,12 +11,12 @@ usr/lib/*/libsamba-credentials.so.0*
 usr/lib/*/libsamba-errors.so.*
 usr/lib/*/libsamba-hostconfig.so.*
 usr/lib/*/libsamba-passdb.so.0
-usr/lib/*/libsamba-passdb.so.0.26.0
+usr/lib/*/libsamba-passdb.so.0.27.0
 usr/lib/*/libsamba-policy.so.*
 usr/lib/*/libsamba-util.so.*
 usr/lib/*/libsamdb.so.*
 usr/lib/*/libsmbconf.so.0
-usr/lib/*/libsmbldap.so.0
+usr/lib/*/libsmbldap.so.2
 usr/lib/*/libtevent-util.so.*
 usr/lib/*/samba/auth/
 usr/lib/*/samba/bind9/dlz_bind9.so
@@ -24,13 +24,13 @@ usr/lib/*/samba/bind9/dlz_bind9_*.so
 usr/lib/*/samba/gensec/*.so
 usr/lib/*/samba/libCHARSET3.so.*
 usr/lib/*/samba/libLIBWBCLIENT-OLD.so.0
+usr/lib/*/samba/libMESSAGING-SEND.so.0
 usr/lib/*/samba/libMESSAGING.so.*
 usr/lib/*/samba/libaddns.so.*
 usr/lib/*/samba/libads.so.*
 usr/lib/*/samba/libasn1-samba4.so.8
 usr/lib/*/samba/libasn1-samba4.so.8.0.0
 usr/lib/*/samba/libasn1util.so.*
-usr/lib/*/samba/libauth-sam-reply.so.0
 usr/lib/*/samba/libauth-unix-token.so.0
 usr/lib/*/samba/libauth.so.*
 usr/lib/*/samba/libauth4.so.*
@@ -46,6 +46,7 @@ usr/lib/*/samba/libcluster.so.*
 usr/lib/*/samba/libcmdline-credentials.so.*
 usr/lib/*/samba/libcom_err-samba4.so.0
 usr/lib/*/samba/libcom_err-samba4.so.0.25
+usr/lib/*/samba/libcommon-auth.so.0
 usr/lib/*/samba/libdbwrap.so.*
 usr/lib/*/samba/libdcerpc-samba.so.*
 usr/lib/*/samba/libdcerpc-samba4.so.*

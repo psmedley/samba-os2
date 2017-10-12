@@ -845,7 +845,7 @@ int32_t ctdb_control_wipe_database(struct ctdb_context *ctdb, TDB_DATA indata)
 		return -1;
 	}
 
-	if (!ctdb_db->persistent) {
+	if (ctdb_db_volatile(ctdb_db)) {
 		talloc_free(ctdb_db->delete_queue);
 		ctdb_db->delete_queue = trbt_create(ctdb_db, 0);
 		if (ctdb_db->delete_queue == NULL) {
@@ -873,4 +873,22 @@ bool ctdb_db_all_frozen(struct ctdb_context *ctdb)
 		return false;
 	}
 	return true;
+}
+
+bool ctdb_db_allow_access(struct ctdb_db_context *ctdb_db)
+{
+	if (ctdb_db->freeze_mode == CTDB_FREEZE_NONE) {
+		/* If database is not frozen, then allow access. */
+		return true;
+	} else if (ctdb_db->freeze_transaction_started) {
+		/* If database is frozen, allow access only if the
+		 * transaction is started.  This is required during
+		 * recovery.
+		 *
+		 * If a node is inactive, then transaction is not started.
+		 */
+		return true;
+	}
+
+	return false;
 }

@@ -252,12 +252,10 @@ add_trusted_domain_from_tdc(const struct winbindd_tdc_domain *tdc)
 	domain->domain_trust_attribs = tdc->trust_attribs;
 
 	/* Is this our primary domain ? */
-	if (strequal(domain_name, get_global_sam_name()) &&
-			(role != ROLE_DOMAIN_MEMBER)) {
-		domain->primary = true;
-	} else if (strequal(domain_name, lp_workgroup()) &&
-			(role == ROLE_DOMAIN_MEMBER)) {
-		domain->primary = true;
+	if (role == ROLE_DOMAIN_MEMBER) {
+		domain->primary = strequal(domain_name, lp_workgroup());
+	} else {
+		domain->primary = strequal(domain_name, get_global_sam_name());
 	}
 
 	if (domain->primary) {
@@ -856,7 +854,7 @@ bool init_domain_list(void)
 			 */
 			ok = migrate_secrets_tdb_to_ldb(domain);
 
-			if (ok == false) {
+			if (!ok) {
 				DEBUG(0, ("Failed to migrate our own, "
 					  "local AD domain join password for "
 					  "winbindd's internal use into "
@@ -867,7 +865,7 @@ bool init_domain_list(void)
 					       current_nt_hash.hash,
 					       &account_name,
 					       &sec_chan_type);
-			if (ok == false) {
+			if (!ok) {
 				DEBUG(0, ("Failed to find our our own, just "
 					  "written local AD domain join "
 					  "password for winbindd's internal "
@@ -1013,17 +1011,6 @@ struct winbindd_domain *find_our_domain(void)
 
 	smb_panic("Could not find our domain");
 	return NULL;
-}
-
-struct winbindd_domain *find_root_domain(void)
-{
-	struct winbindd_domain *ours = find_our_domain();
-
-	if (ours->forest_name == NULL) {
-		return NULL;
-	}
-
-	return find_domain_from_name( ours->forest_name );
 }
 
 /* Find the appropriate domain to lookup a name or SID */

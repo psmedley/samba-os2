@@ -119,12 +119,42 @@ int ltdb_unlock_read(struct ldb_module *module)
 	struct ltdb_private *ltdb = talloc_get_type(data, struct ltdb_private);
 	if (ltdb->in_transaction == 0 && ltdb->read_lock_count == 1) {
 		tdb_unlockall_read(ltdb->tdb);
+		ltdb->read_lock_count--;
 		return 0;
 	}
 	ltdb->read_lock_count--;
 	return 0;
 }
 
+
+/* 
+ * Determine if this key could hold a record.  We allow the new GUID
+ * index, the old DN index and a possible future ID=
+ */
+bool ltdb_key_is_record(TDB_DATA key)
+{
+	if (key.dsize < 4) {
+		return false;
+	}
+
+	if (memcmp(key.dptr, "DN=", 3) == 0) {
+		return true;
+	}
+	
+	if (memcmp(key.dptr, "ID=", 3) == 0) {
+		return true;
+	}
+
+	if (key.dsize < 6) {
+		return false;
+	}
+
+	if (memcmp(key.dptr, "GUID=", 5) == 0) {
+		return true;
+	}
+	
+	return false;
+}
 
 /*
   form a TDB_DATA for a record key
@@ -330,7 +360,7 @@ static int ltdb_add_internal(struct ldb_module *module,
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	int ret = LDB_SUCCESS;
-	unsigned int i, j;
+	unsigned int i;
 
 	for (i=0;i<msg->num_elements;i++) {
 		struct ldb_message_element *el = &msg->elements[i];
@@ -355,12 +385,25 @@ static int ltdb_add_internal(struct ldb_module *module,
 			continue;
 		}
 
-		/* TODO: This is O(n^2) - replace with more efficient check */
-		for (j=0; j<el->num_values; j++) {
-			if (ldb_msg_find_val(el, &el->values[j]) != &el->values[j]) {
-				ldb_asprintf_errstring(ldb,
-						       "attribute '%s': value #%u on '%s' provided more than once",
-						       el->name, j, ldb_dn_get_linearized(msg->dn));
+		if (check_single_value &&
+		    !(el->flags &
+		      LDB_FLAG_INTERNAL_DISABLE_SINGLE_VALUE_CHECK)) {
+			struct ldb_val *duplicate = NULL;
+
+			ret = ldb_msg_find_duplicate_val(ldb, discard_const(msg),
+							 el, &duplicate, 0);
+			if (ret != LDB_SUCCESS) {
+				return ret;
+			}
+			if (duplicate != NULL) {
+				ldb_asprintf_errstring(
+					ldb,
+					"attribute '%s': value '%.*s' on '%s' "
+					"provided more than once in ADD object",
+					el->name,
+					(int)duplicate->length,
+					duplicate->data,
+					ldb_dn_get_linearized(msg->dn));
 				return LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
 			}
 		}
@@ -522,8 +565,7 @@ static int find_element(const struct ldb_message *msg, const char *name)
 
   returns 0 on success, -1 on failure (and sets errno)
 */
-static int ltdb_msg_add_element(struct ldb_context *ldb,
-				struct ldb_message *msg,
+static int ltdb_msg_add_element(struct ldb_message *msg,
 				struct ldb_message_element *el)
 {
 	struct ldb_message_element *e2;
@@ -567,7 +609,6 @@ static int ltdb_msg_add_element(struct ldb_context *ldb,
   delete all elements having a specified attribute name
 */
 static int msg_delete_attribute(struct ldb_module *module,
-				struct ldb_context *ldb,
 				struct ldb_message *msg, const char *name)
 {
 	unsigned int i;
@@ -634,7 +675,7 @@ static int msg_delete_element(struct ldb_module *module,
 		}
 		if (matched) {
 			if (el->num_values == 1) {
-				return msg_delete_attribute(module, ldb, msg, name);
+				return msg_delete_attribute(module, msg, name);
 			}
 
 			ret = ltdb_index_del_value(module, msg->dn, el, i);
@@ -674,50 +715,32 @@ int ltdb_modify_internal(struct ldb_module *module,
 			 struct ldb_request *req)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
-	void *data = ldb_module_get_private(module);
-	struct ltdb_private *ltdb = talloc_get_type(data, struct ltdb_private);
-	TDB_DATA tdb_key, tdb_data;
-	struct ldb_val ldb_data;
 	struct ldb_message *msg2;
-	unsigned int i, j, k;
+	unsigned int i, j;
 	int ret = LDB_SUCCESS, idx;
 	struct ldb_control *control_permissive = NULL;
+	TALLOC_CTX *mem_ctx = talloc_new(req);
 
+	if (mem_ctx == NULL) {
+		return ldb_module_oom(module);
+	}
+	
 	if (req) {
 		control_permissive = ldb_request_get_control(req,
 					LDB_CONTROL_PERMISSIVE_MODIFY_OID);
 	}
 
-	tdb_key = ltdb_key(module, msg->dn);
-	if (!tdb_key.dptr) {
-		return LDB_ERR_OTHER;
-	}
-
-	tdb_data = tdb_fetch(ltdb->tdb, tdb_key);
-	if (!tdb_data.dptr) {
-		talloc_free(tdb_key.dptr);
-		return ltdb_err_map(tdb_error(ltdb->tdb));
-	}
-
-	msg2 = ldb_msg_new(tdb_key.dptr);
+	msg2 = ldb_msg_new(mem_ctx);
 	if (msg2 == NULL) {
-		free(tdb_data.dptr);
 		ret = LDB_ERR_OTHER;
 		goto done;
 	}
 
-	ldb_data.data = tdb_data.dptr;
-	ldb_data.length = tdb_data.dsize;
-
-	ret = ldb_unpack_data(ldb_module_get_ctx(module), &ldb_data, msg2);
-	free(tdb_data.dptr);
-	if (ret == -1) {
-		ret = LDB_ERR_OTHER;
+	ret = ltdb_search_dn1(module, msg->dn,
+			      msg2,
+			      LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC);
+	if (ret != LDB_SUCCESS) {
 		goto done;
-	}
-
-	if (!msg2->dn) {
-		msg2->dn = msg->dn;
 	}
 
 	for (i=0; i<msg->num_elements; i++) {
@@ -725,6 +748,10 @@ int ltdb_modify_internal(struct ldb_module *module,
 		struct ldb_val *vals;
 		const struct ldb_schema_attribute *a = ldb_schema_attribute_by_name(ldb, el->name);
 		const char *dn;
+		uint32_t options = 0;
+		if (control_permissive != NULL) {
+			options |= LDB_MSG_FIND_COMMON_REMOVE_DUPLICATES;
+		}
 
 		switch (msg->elements[i].flags & LDB_FLAG_MOD_MASK) {
 		case LDB_FLAG_MOD_ADD:
@@ -769,7 +796,7 @@ int ltdb_modify_internal(struct ldb_module *module,
 			/* Checks if element already exists */
 			idx = find_element(msg2, el->name);
 			if (idx == -1) {
-				if (ltdb_msg_add_element(ldb, msg2, el) != 0) {
+				if (ltdb_msg_add_element(msg2, el) != 0) {
 					ret = LDB_ERR_OTHER;
 					goto done;
 				}
@@ -793,30 +820,43 @@ int ltdb_modify_internal(struct ldb_module *module,
 
 				/* Check that values don't exist yet on multi-
 				   valued attributes or aren't provided twice */
-				/* TODO: This is O(n^2) - replace with more efficient check */
-				for (j = 0; j < el->num_values; j++) {
-					if (ldb_msg_find_val(el2, &el->values[j]) != NULL) {
-						if (control_permissive) {
-							/* remove this one as if it was never added */
-							el->num_values--;
-							for (k = j; k < el->num_values; k++) {
-								el->values[k] = el->values[k + 1];
-							}
-							j--; /* rewind */
+				if (!(el->flags &
+				      LDB_FLAG_INTERNAL_DISABLE_SINGLE_VALUE_CHECK)) {
+					struct ldb_val *duplicate = NULL;
+					ret = ldb_msg_find_common_values(ldb,
+									 msg2,
+									 el,
+									 el2,
+									 options);
 
-							continue;
-						}
-
+					if (ret ==
+					    LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS) {
 						ldb_asprintf_errstring(ldb,
-								       "attribute '%s': value #%u on '%s' already exists",
-								       el->name, j, ldb_dn_get_linearized(msg2->dn));
-						ret = LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
+							"attribute '%s': value "
+							"#%u on '%s' already "
+							"exists", el->name, j,
+							ldb_dn_get_linearized(msg2->dn));
+						goto done;
+					} else if (ret != LDB_SUCCESS) {
 						goto done;
 					}
-					if (ldb_msg_find_val(el, &el->values[j]) != &el->values[j]) {
-						ldb_asprintf_errstring(ldb,
-								       "attribute '%s': value #%u on '%s' provided more than once",
-								       el->name, j, ldb_dn_get_linearized(msg2->dn));
+
+					ret = ldb_msg_find_duplicate_val(
+						ldb, msg2, el, &duplicate, 0);
+					if (ret != LDB_SUCCESS) {
+						goto done;
+					}
+					if (duplicate != NULL) {
+						ldb_asprintf_errstring(
+							ldb,
+							"attribute '%s': value "
+							"'%.*s' on '%s' "
+							"provided more than "
+							"once in ADD",
+							el->name,
+							(int)duplicate->length,
+							duplicate->data,
+							ldb_dn_get_linearized(msg->dn));
 						ret = LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
 						goto done;
 					}
@@ -864,16 +904,26 @@ int ltdb_modify_internal(struct ldb_module *module,
 			 * in Samba, or someone else who can claim to
 			 * know what they are doing. 
 			 */
-			if (!(el->flags & LDB_FLAG_INTERNAL_DISABLE_SINGLE_VALUE_CHECK)) { 
-				/* TODO: This is O(n^2) - replace with more efficient check */
-				for (j=0; j<el->num_values; j++) {
-					if (ldb_msg_find_val(el, &el->values[j]) != &el->values[j]) {
-						ldb_asprintf_errstring(ldb,
-								       "attribute '%s': value #%u on '%s' provided more than once",
-								       el->name, j, ldb_dn_get_linearized(msg2->dn));
-						ret = LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
-						goto done;
-					}
+			if (!(el->flags & LDB_FLAG_INTERNAL_DISABLE_SINGLE_VALUE_CHECK)) {
+				struct ldb_val *duplicate = NULL;
+
+				ret = ldb_msg_find_duplicate_val(ldb, msg2, el,
+								 &duplicate, 0);
+				if (ret != LDB_SUCCESS) {
+					goto done;
+				}
+				if (duplicate != NULL) {
+					ldb_asprintf_errstring(
+						ldb,
+						"attribute '%s': value '%.*s' "
+						"on '%s' provided more than "
+						"once in REPLACE",
+						el->name,
+						(int)duplicate->length,
+						duplicate->data,
+						ldb_dn_get_linearized(msg2->dn));
+					ret = LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
+					goto done;
 				}
 			}
 
@@ -895,7 +945,7 @@ int ltdb_modify_internal(struct ldb_module *module,
 				}
 
 				/* Delete the attribute if it exists in the DB */
-				if (msg_delete_attribute(module, ldb, msg2,
+				if (msg_delete_attribute(module, msg2,
 							 el->name) != 0) {
 					ret = LDB_ERR_OTHER;
 					goto done;
@@ -903,7 +953,7 @@ int ltdb_modify_internal(struct ldb_module *module,
 			}
 
 			/* Recreate it with the new values */
-			if (ltdb_msg_add_element(ldb, msg2, el) != 0) {
+			if (ltdb_msg_add_element(msg2, el) != 0) {
 				ret = LDB_ERR_OTHER;
 				goto done;
 			}
@@ -924,7 +974,7 @@ int ltdb_modify_internal(struct ldb_module *module,
 
 			if (msg->elements[i].num_values == 0) {
 				/* Delete the whole attribute */
-				ret = msg_delete_attribute(module, ldb, msg2,
+				ret = msg_delete_attribute(module, msg2,
 							   msg->elements[i].name);
 				if (ret == LDB_ERR_NO_SUCH_ATTRIBUTE &&
 				    control_permissive) {
@@ -979,7 +1029,7 @@ int ltdb_modify_internal(struct ldb_module *module,
 	}
 
 done:
-	talloc_free(tdb_key.dptr);
+	TALLOC_FREE(mem_ctx);
 	return ret;
 }
 
@@ -1117,6 +1167,7 @@ static int ltdb_start_trans(struct ldb_module *module)
 
 static int ltdb_prepare_commit(struct ldb_module *module)
 {
+	int ret;
 	void *data = ldb_module_get_private(module);
 	struct ltdb_private *ltdb = talloc_get_type(data, struct ltdb_private);
 
@@ -1124,15 +1175,21 @@ static int ltdb_prepare_commit(struct ldb_module *module)
 		return LDB_SUCCESS;
 	}
 
-	if (ltdb_index_transaction_commit(module) != 0) {
+	ret = ltdb_index_transaction_commit(module);
+	if (ret != LDB_SUCCESS) {
 		tdb_transaction_cancel(ltdb->tdb);
 		ltdb->in_transaction--;
-		return ltdb_err_map(tdb_error(ltdb->tdb));
+		return ret;
 	}
 
 	if (tdb_transaction_prepare_commit(ltdb->tdb) != 0) {
+		ret = ltdb_err_map(tdb_error(ltdb->tdb));
 		ltdb->in_transaction--;
-		return ltdb_err_map(tdb_error(ltdb->tdb));
+		ldb_asprintf_errstring(ldb_module_get_ctx(module),
+				       "Failure during tdb_transaction_prepare_commit(): %s -> %s",
+				       tdb_errorstr(ltdb->tdb),
+				       ldb_strerror(ret));
+		return ret;
 	}
 
 	ltdb->prepared_commit = true;
@@ -1142,11 +1199,12 @@ static int ltdb_prepare_commit(struct ldb_module *module)
 
 static int ltdb_end_trans(struct ldb_module *module)
 {
+	int ret;
 	void *data = ldb_module_get_private(module);
 	struct ltdb_private *ltdb = talloc_get_type(data, struct ltdb_private);
 
 	if (!ltdb->prepared_commit) {
-		int ret = ltdb_prepare_commit(module);
+		ret = ltdb_prepare_commit(module);
 		if (ret != LDB_SUCCESS) {
 			return ret;
 		}
@@ -1156,7 +1214,12 @@ static int ltdb_end_trans(struct ldb_module *module)
 	ltdb->prepared_commit = false;
 
 	if (tdb_transaction_commit(ltdb->tdb) != 0) {
-		return ltdb_err_map(tdb_error(ltdb->tdb));
+		ret = ltdb_err_map(tdb_error(ltdb->tdb));
+		ldb_asprintf_errstring(ldb_module_get_ctx(module),
+				       "Failure during tdb_transaction_commit(): %s -> %s",
+				       tdb_errorstr(ltdb->tdb),
+				       ldb_strerror(ret));
+		return ret;
 	}
 
 	return LDB_SUCCESS;
@@ -1459,7 +1522,7 @@ static int ltdb_handle_request(struct ldb_module *module,
 		return LDB_ERR_TIME_LIMIT_EXCEEDED;
 	}
 
-	ev = ldb_get_event_context(ldb);
+	ev = ldb_handle_get_event_context(req->handle);
 
 	ac = talloc_zero(ldb, struct ltdb_context);
 	if (ac == NULL) {
@@ -1525,6 +1588,8 @@ static const struct ldb_module_ops ltdb_ops = {
 	.end_transaction   = ltdb_end_trans,
 	.prepare_commit    = ltdb_prepare_commit,
 	.del_transaction   = ltdb_del_trans,
+	.read_lock         = ltdb_lock_read,
+	.read_unlock       = ltdb_unlock_read,
 };
 
 /*
@@ -1538,6 +1603,13 @@ static int ltdb_connect(struct ldb_context *ldb, const char *url,
 	const char *path;
 	int tdb_flags, open_flags;
 	struct ltdb_private *ltdb;
+
+	/*
+	 * We hold locks, so we must use a private event context
+	 * on each returned handle
+	 */
+
+	ldb_set_require_private_event_context(ldb);
 
 	/* parse the url */
 	if (strchr(url, ':')) {
@@ -1565,6 +1637,8 @@ static int ltdb_connect(struct ldb_context *ldb, const char *url,
 
 	if (flags & LDB_FLG_RDONLY) {
 		open_flags = O_RDONLY;
+	} else if (flags & LDB_FLG_DONT_CREATE_DB) {
+		open_flags = O_RDWR;
 	} else {
 		open_flags = O_CREAT | O_RDWR;
 	}

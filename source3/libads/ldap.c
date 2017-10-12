@@ -279,7 +279,12 @@ static bool ads_try_connect(ADS_STRUCT *ads, bool gc,
 	SAFE_FREE(ads->config.client_site_name);
 	SAFE_FREE(ads->server.workgroup);
 
-	ads->config.flags	       = cldap_reply.server_type;
+	if (!check_cldap_reply_required_flags(cldap_reply.server_type,
+					      ads->config.flags)) {
+		ret = false;
+		goto out;
+	}
+
 	ads->config.ldap_server_name   = SMB_STRDUP(cldap_reply.pdc_dns_name);
 	ads->config.realm              = SMB_STRDUP(cldap_reply.dns_domain);
 	if (!strupper_m(ads->config.realm)) {
@@ -304,6 +309,9 @@ static bool ads_try_connect(ADS_STRUCT *ads, bool gc,
 	/* Store our site name. */
 	sitename_store( cldap_reply.domain_name, cldap_reply.client_site);
 	sitename_store( cldap_reply.dns_domain, cldap_reply.client_site);
+
+	/* Leave this until last so that the flags are not clobbered */
+	ads->config.flags	       = cldap_reply.server_type;
 
 	ret = true;
 
@@ -334,7 +342,9 @@ static NTSTATUS cldap_ping_list(ADS_STRUCT *ads,const char *domain,
 			check_negative_conn_cache(domain, server)))
 			continue;
 
+		/* Returns ok only if it matches the correct server type */
 		ok = ads_try_connect(ads, false, &ip_list[i].ss);
+
 		if (ok) {
 			return NT_STATUS_OK;
 		}
@@ -566,8 +576,9 @@ ADS_STATUS ads_connect(ADS_STRUCT *ads)
 	char addr[INET6_ADDRSTRLEN];
 
 	ZERO_STRUCT(ads->ldap);
+	ZERO_STRUCT(ads->ldap_wrap_data);
 	ads->ldap.last_attempt	= time_mono(NULL);
-	ads->ldap.wrap_type	= ADS_SASLWRAP_TYPE_PLAIN;
+	ads->ldap_wrap_data.wrap_type	= ADS_SASLWRAP_TYPE_PLAIN;
 
 	/* try with a user specified server */
 
@@ -601,6 +612,11 @@ ADS_STATUS ads_connect(ADS_STRUCT *ads)
 
 		if (ads->server.gc == true) {
 			return ADS_ERROR(LDAP_OPERATIONS_ERROR);
+		}
+
+		if (ads->server.no_fallback) {
+			status = ADS_ERROR_NT(NT_STATUS_NOT_FOUND);
+			goto out;
 		}
 	}
 
@@ -643,8 +659,8 @@ got_connection:
 		goto out;
 	}
 
-	ads->ldap.mem_ctx = talloc_init("ads LDAP connection memory");
-	if (!ads->ldap.mem_ctx) {
+	ads->ldap_wrap_data.mem_ctx = talloc_init("ads LDAP connection memory");
+	if (!ads->ldap_wrap_data.mem_ctx) {
 		status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
 		goto out;
 	}
@@ -730,13 +746,15 @@ void ads_disconnect(ADS_STRUCT *ads)
 		ldap_unbind(ads->ldap.ld);
 		ads->ldap.ld = NULL;
 	}
-	if (ads->ldap.wrap_ops && ads->ldap.wrap_ops->disconnect) {
-		ads->ldap.wrap_ops->disconnect(ads);
+	if (ads->ldap_wrap_data.wrap_ops &&
+		ads->ldap_wrap_data.wrap_ops->disconnect) {
+		ads->ldap_wrap_data.wrap_ops->disconnect(&ads->ldap_wrap_data);
 	}
-	if (ads->ldap.mem_ctx) {
-		talloc_free(ads->ldap.mem_ctx);
+	if (ads->ldap_wrap_data.mem_ctx) {
+		talloc_free(ads->ldap_wrap_data.mem_ctx);
 	}
 	ZERO_STRUCT(ads->ldap);
+	ZERO_STRUCT(ads->ldap_wrap_data);
 }
 
 /*
@@ -1036,6 +1054,11 @@ done:
 		ber_bvfree(ext_bv);
 	}
 
+	if (rc != LDAP_SUCCESS && *res != NULL) {
+		ads_msgfree(ads, *res);
+		*res = NULL;
+	}
+
 	/* if/when we decide to utf8-encode attrs, take out this next line */
 	TALLOC_FREE(search_attrs);
 
@@ -1086,9 +1109,6 @@ static ADS_STATUS ads_do_paged_search(ADS_STRUCT *ads, const char *bind_path,
 		status = ads_do_paged_search_args(ads, bind_path, scope, expr,
 					      attrs, args, &res2, &count, &cookie);
 		if (!ADS_ERR_OK(status)) {
-			/* Ensure we free all collected results */
-			ads_msgfree(ads, *res);
-			*res = NULL;
 			break;
 		}
 
@@ -1925,7 +1945,7 @@ bool ads_element_in_array(const char **el_array, size_t num_el, const char *el)
  *
  * @param[in]  num_spns     The number of principals stored in the array.
  *
- * @return                  0 on success, or a ADS error if a failure occured.
+ * @return                  0 on success, or a ADS error if a failure occurred.
  */
 ADS_STATUS ads_get_service_principal_names(TALLOC_CTX *mem_ctx,
 					   ADS_STRUCT *ads,

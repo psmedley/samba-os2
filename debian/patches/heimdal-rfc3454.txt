@@ -1,11 +1,18 @@
-Description: Patch in symbol table from rfc3454, for Heimdal scripts.
-Author: Brian May <bam@debian.org>
-Status: cherry-picked from heimdal package
+From: Brian May <bam@debian.org>
+Subject: Patch in symbol table from rfc3454, for Heimdal scripts
 
-Index: samba/source4/heimdal/lib/wind/rfc3454.txt-table
-===================================================================
+Status: cherry-picked from heimdal package
+---
+ source4/heimdal/lib/wind/rfc3454.txt-table | 7074 ++++++++++++++++++++++++++++
+ source4/heimdal_build/wscript_build        |    6 +-
+ 2 files changed, 7077 insertions(+), 3 deletions(-)
+ create mode 100644 source4/heimdal/lib/wind/rfc3454.txt-table
+
+diff --git a/source4/heimdal/lib/wind/rfc3454.txt-table b/source4/heimdal/lib/wind/rfc3454.txt-table
+new file mode 100644
+index 0000000..5bef0b5
 --- /dev/null
-+++ samba/source4/heimdal/lib/wind/rfc3454.txt-table
++++ b/source4/heimdal/lib/wind/rfc3454.txt-table
 @@ -0,0 +1,7074 @@
 +   ----- Start Table A.1 -----
 +
@@ -7081,11 +7088,11 @@ Index: samba/source4/heimdal/lib/wind/rfc3454.txt-table
 +
 +   ----- End Table D.2 -----
 +
-Index: samba/source4/heimdal_build/wscript_build
-===================================================================
---- samba.orig/source4/heimdal_build/wscript_build
-+++ samba/source4/heimdal_build/wscript_build
-@@ -843,7 +843,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND
+diff --git a/source4/heimdal_build/wscript_build b/source4/heimdal_build/wscript_build
+index 2072be4..c93bdb8 100644
+--- a/source4/heimdal_build/wscript_build
++++ b/source4/heimdal_build/wscript_build
+@@ -842,7 +842,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND'):
      HEIMDAL_GENERATOR(
          name="HEIMDAL_ERRORLIST",
          rule="${PYTHON} '${SRC[0].abspath()}' '${SRC[1].abspath()}' '${SRC[1].parent.abspath(env)}'",
@@ -7094,7 +7101,7 @@ Index: samba/source4/heimdal_build/wscript_build
          target = '../heimdal/lib/wind/errorlist_table.c ../heimdal/lib/wind/errorlist_table.h'
          )
  
-@@ -865,7 +865,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND
+@@ -864,7 +864,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND'):
      HEIMDAL_GENERATOR(
          name = 'HEIMDAL_BIDI_TABLE',
          rule="${PYTHON} '${SRC[0].abspath()}' '${SRC[1].abspath()}' '${SRC[1].parent.abspath(env)}'",
@@ -7103,7 +7110,7 @@ Index: samba/source4/heimdal_build/wscript_build
          target = '../heimdal/lib/wind/bidi_table.h ../heimdal/lib/wind/bidi_table.c'
      )
  
-@@ -873,7 +873,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND
+@@ -872,7 +872,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_WIND'):
      HEIMDAL_GENERATOR(
          name = 'HEIMDAL_MAP_TABLE',
          rule="${PYTHON} '${SRC[0].abspath()}' '${SRC[2].abspath()}' '${SRC[2].parent.abspath(env)}'",

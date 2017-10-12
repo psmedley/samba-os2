@@ -41,7 +41,7 @@
 #include "librpc/gen_ndr/ndr_irpc.h"
 #include "libds/common/roles.h"
 
-NTSTATUS server_service_dnsupdate_init(void);
+NTSTATUS server_service_dnsupdate_init(TALLOC_CTX *);
 
 struct dnsupdate_service {
 	struct task_server *task;
@@ -515,7 +515,7 @@ static NTSTATUS dnsupdate_dnsupdate_RODC(struct irpc_message *msg,
 
 
 	/* find dnsdomain and dnsforest */
-	dnsdomain = lpcfg_realm(s->task->lp_ctx);
+	dnsdomain = lpcfg_dnsdomain(s->task->lp_ctx);
 	dnsforest = dnsdomain;
 
 	/* find the hostname */
@@ -531,36 +531,35 @@ static NTSTATUS dnsupdate_dnsupdate_RODC(struct irpc_message *msg,
 		return NT_STATUS_OK;
 	}
 
-
 	for (i=0; i<st->r->in.dns_names->count; i++) {
 		struct NL_DNS_NAME_INFO *n = &r->in.dns_names->names[i];
 		switch (n->type) {
 		case NlDnsLdapAtSite:
-			dprintf(st->fd, "SRV _ldap._tcp.%s._sites.%s. %s %u\n",
+			dprintf(st->fd, "SRV _ldap._tcp.%s._sites.%s %s %u\n",
 				site, dnsdomain, hostname, n->port);
 			break;
 		case NlDnsGcAtSite:
-			dprintf(st->fd, "SRV _ldap._tcp.%s._sites.gc._msdcs.%s. %s %u\n",
+			dprintf(st->fd, "SRV _ldap._tcp.%s._sites.gc._msdcs.%s %s %u\n",
 				site, dnsdomain, hostname, n->port);
 			break;
 		case NlDnsDsaCname:
-			dprintf(st->fd, "CNAME %s._msdcs.%s. %s\n",
+			dprintf(st->fd, "CNAME %s._msdcs.%s %s\n",
 				ntdsguid, dnsforest, hostname);
 			break;
 		case NlDnsKdcAtSite:
-			dprintf(st->fd, "SRV _kerberos._tcp.%s._sites.dc._msdcs.%s. %s %u\n",
+			dprintf(st->fd, "SRV _kerberos._tcp.%s._sites.dc._msdcs.%s %s %u\n",
 				site, dnsdomain, hostname, n->port);
 			break;
 		case NlDnsDcAtSite:
-			dprintf(st->fd, "SRV _ldap._tcp.%s._sites.dc._msdcs.%s. %s %u\n",
+			dprintf(st->fd, "SRV _ldap._tcp.%s._sites.dc._msdcs.%s %s %u\n",
 				site, dnsdomain, hostname, n->port);
 			break;
 		case NlDnsRfc1510KdcAtSite:
-			dprintf(st->fd, "SRV _kerberos._tcp.%s._sites.%s. %s %u\n",
+			dprintf(st->fd, "SRV _kerberos._tcp.%s._sites.%s %s %u\n",
 				site, dnsdomain, hostname, n->port);
 			break;
 		case NlDnsGenericGcAtSite:
-			dprintf(st->fd, "SRV _gc._tcp.%s._sites.%s. %s %u\n",
+			dprintf(st->fd, "SRV _gc._tcp.%s._sites.%s %s %u\n",
 				site, dnsforest, hostname, n->port);
 			break;
 		}
@@ -666,7 +665,7 @@ static void dnsupdate_task_init(struct task_server *task)
 /*
   register ourselves as a available server
 */
-NTSTATUS server_service_dnsupdate_init(void)
+NTSTATUS server_service_dnsupdate_init(TALLOC_CTX *ctx)
 {
-	return register_server_service("dnsupdate", dnsupdate_task_init);
+	return register_server_service(ctx, "dnsupdate", dnsupdate_task_init);
 }

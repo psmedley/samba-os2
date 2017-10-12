@@ -384,6 +384,35 @@ struct winbindd_domain *find_auth_domain(uint8_t flags,
 	return find_our_domain();
 }
 
+static void fake_password_policy(struct winbindd_response *r,
+				 const struct netr_SamBaseInfo *bi)
+{
+	NTTIME min_password_age;
+	NTTIME max_password_age;
+
+	if (bi->allow_password_change > bi->last_password_change) {
+		min_password_age = bi->allow_password_change -
+				   bi->last_password_change;
+	} else {
+		min_password_age = 0;
+	}
+
+	if (bi->force_password_change > bi->last_password_change) {
+		max_password_age = bi->force_password_change -
+				   bi->last_password_change;
+	} else {
+		max_password_age = 0;
+	}
+
+	r->data.auth.policy.min_length_password = 0;
+	r->data.auth.policy.password_history = 0;
+	r->data.auth.policy.password_properties = 0;
+	r->data.auth.policy.expire =
+		nt_time_to_unix_abs(&max_password_age);
+	r->data.auth.policy.min_passwordage =
+		nt_time_to_unix_abs(&min_password_age);
+}
+
 static void fill_in_password_policy(struct winbindd_response *r,
 				    const struct samr_DomInfo1 *p)
 {
@@ -1227,6 +1256,7 @@ static NTSTATUS winbindd_dual_auth_passdb(TALLOC_CTX *mem_ctx,
 					  const DATA_BLOB *lm_resp,
 					  const DATA_BLOB *nt_resp,
 					  bool interactive,
+					  uint8_t *pauthoritative,
 					  struct netr_SamInfo3 **pinfo3)
 {
 	struct auth_context *auth_context;
@@ -1235,8 +1265,14 @@ static NTSTATUS winbindd_dual_auth_passdb(TALLOC_CTX *mem_ctx,
 	struct tsocket_address *local;
 	struct netr_SamInfo3 *info3;
 	NTSTATUS status;
+	bool ok;
 	int rc;
 	TALLOC_CTX *frame = talloc_stackframe();
+
+	/*
+	 * We are authoritative by default
+	 */
+	*pauthoritative = 1;
 
 	rc = tsocket_address_inet_from_strings(frame,
 					       "ip",
@@ -1247,8 +1283,16 @@ static NTSTATUS winbindd_dual_auth_passdb(TALLOC_CTX *mem_ctx,
 		TALLOC_FREE(frame);
 		return NT_STATUS_NO_MEMORY;
 	}
+
+	/*
+	 * TODO: We should get the service description passed in from
+	 * the winbind client, so we can have "smb2", "squid" or "samr" logged
+	 * here.
+	 */
 	status = make_user_info(frame, &user_info, user, user, domain, domain,
-				lp_netbios_name(), local, lm_resp, nt_resp, NULL, NULL,
+				lp_netbios_name(), local, local,
+				"winbind",
+				lm_resp, nt_resp, NULL, NULL,
 				NULL, AUTH_PASSWORD_RESPONSE);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(10, ("make_user_info failed: %s\n", nt_errstr(status)));
@@ -1262,25 +1306,32 @@ static NTSTATUS winbindd_dual_auth_passdb(TALLOC_CTX *mem_ctx,
 	user_info->mapped_state = True;
 
 	/* We don't want to come back to winbindd or to do PAM account checks */
-	user_info->flags |= USER_INFO_LOCAL_SAM_ONLY | USER_INFO_INFO3_AND_NO_AUTHZ;
+	user_info->flags |= USER_INFO_INFO3_AND_NO_AUTHZ;
 
 	if (interactive) {
 		user_info->flags |= USER_INFO_INTERACTIVE_LOGON;
 	}
 
-	status = make_auth_context_fixed(frame, &auth_context, challenge->data);
-
+	status = make_auth3_context_for_winbind(frame, &auth_context);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0, ("Failed to test authentication with check_sam_security_info3: %s\n", nt_errstr(status)));
+		DBG_ERR("make_auth3_context_for_winbind failed: %s\n",
+			nt_errstr(status));
 		TALLOC_FREE(frame);
 		return status;
+	}
+
+	ok = auth3_context_set_challenge(auth_context,
+					 challenge->data, "fixed");
+	if (!ok) {
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
 	}
 
 	status = auth_check_ntlm_password(mem_ctx,
 					  auth_context,
 					  user_info,
-					  &server_info);
-
+					  &server_info,
+					  pauthoritative);
 	if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(frame);
 		return status;
@@ -1319,6 +1370,8 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 					    DATA_BLOB lm_response,
 					    DATA_BLOB nt_response,
 					    bool interactive,
+					    uint8_t *authoritative,
+					    uint32_t *flags,
 					    struct netr_SamInfo3 **info3)
 {
 	int attempts = 0;
@@ -1328,13 +1381,21 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 
 	do {
 		struct rpc_pipe_client *netlogon_pipe;
-		uint8_t authoritative = 0;
-		uint32_t flags = 0;
 
 		ZERO_STRUCTP(info3);
 		retry = false;
 
 		result = cm_connect_netlogon(domain, &netlogon_pipe);
+
+		if (NT_STATUS_EQUAL(result,
+				    NT_STATUS_CANT_ACCESS_DOMAIN_INFO)) {
+			/*
+			 * This means we don't have a trust account.
+			 */
+			*authoritative = 0;
+			result = NT_STATUS_NO_SUCH_USER;
+			break;
+		}
 
 		if (!NT_STATUS_IS_OK(result)) {
 			DEBUG(3,("Could not open handle to NETLOGON pipe "
@@ -1359,7 +1420,7 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 				 */
 				DEBUG(3, ("This is the third problem for this "
 					  "particular call, adding DC to the "
-					  "negative cache list\n"));
+					  "negative cache list: %s %s\n", domain->name, domain->dcname));
 				add_failed_connection_entry(domain->name,
 							    domain->dcname,
 							    result);
@@ -1381,7 +1442,7 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 			DBG_NOTICE("No security credentials available for "
 				  "domain [%s]\n", domainname);
 			result = NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
-		} else if (interactive && username != NULL && password != NULL) {
+		} else if (interactive) {
 			result = rpccli_netlogon_password_logon(domain->conn.netlogon_creds,
 								netlogon_pipe->binding_handle,
 								mem_ctx,
@@ -1391,6 +1452,8 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 								password,
 								workstation,
 								NetlogonInteractiveInformation,
+								authoritative,
+								flags,
 								info3);
 		} else {
 			result = rpccli_netlogon_network_logon(domain->conn.netlogon_creds,
@@ -1403,8 +1466,8 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 							chal,
 							lm_response,
 							nt_response,
-							&authoritative,
-							&flags,
+							authoritative,
+							flags,
 							info3);
 		}
 
@@ -1467,7 +1530,7 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 
 	if (NT_STATUS_EQUAL(result, NT_STATUS_IO_TIMEOUT)) {
 		DEBUG(3,("winbind_samlogon_retry_loop: sam_network_logon(ex) "
-				"returned NT_STATUS_IO_TIMEOUT after the retry."
+				"returned NT_STATUS_IO_TIMEOUT after the retry. "
 				"Killing connections to domain %s\n",
 			domainname));
 		invalidate_cm_connection(domain);
@@ -1490,6 +1553,8 @@ static NTSTATUS winbindd_dual_pam_auth_samlogon(TALLOC_CTX *mem_ctx,
 	fstring name_domain, name_user;
 	NTSTATUS result;
 	struct netr_SamInfo3 *my_info3 = NULL;
+	uint8_t authoritative = 0;
+	uint32_t flags = 0;
 
 	*info3 = NULL;
 
@@ -1499,54 +1564,65 @@ static NTSTATUS winbindd_dual_pam_auth_samlogon(TALLOC_CTX *mem_ctx,
 
 	parse_domain_user(user, name_domain, name_user);
 
-	/* do password magic */
-
-	generate_random_buffer(chal, sizeof(chal));
-
-	if (lp_client_ntlmv2_auth()) {
-		DATA_BLOB server_chal;
-		DATA_BLOB names_blob;
-		server_chal = data_blob_const(chal, 8);
-
-		/* note that the 'workgroup' here is for the local
-		   machine.  The 'server name' must match the
-		   'workstation' passed to the actual SamLogon call.
-		*/
-		names_blob = NTLMv2_generate_names_blob(
-			mem_ctx, lp_netbios_name(), lp_workgroup());
-
-		if (!SMBNTLMv2encrypt(mem_ctx, name_user, name_domain,
-				      pass,
-				      &server_chal,
-				      &names_blob,
-				      &lm_resp, &nt_resp, NULL, NULL)) {
-			data_blob_free(&names_blob);
-			DEBUG(0, ("winbindd_pam_auth: SMBNTLMv2encrypt() failed!\n"));
-			result = NT_STATUS_NO_MEMORY;
-			goto done;
-		}
-		data_blob_free(&names_blob);
-	} else {
-		lm_resp = data_blob_null;
-		SMBNTencrypt(pass, chal, local_nt_response);
-
-		nt_resp = data_blob_talloc(mem_ctx, local_nt_response,
-					   sizeof(local_nt_response));
-	}
-
-	if (strequal(name_domain, get_global_sam_name())) {
+	/*
+	 * We check against domain->name instead of
+	 * name_domain, as find_auth_domain() ->
+	 * find_domain_from_name_noinit() already decided
+	 * that we are in a child for the correct domain.
+	 *
+	 * name_domain can also be lp_realm()
+	 * we need to check against domain->name.
+	 */
+	if (strequal(domain->name, get_global_sam_name())) {
 		DATA_BLOB chal_blob = data_blob_const(chal, sizeof(chal));
+
+		/* do password magic */
+
+		generate_random_buffer(chal, sizeof(chal));
+
+		if (lp_client_ntlmv2_auth()) {
+			DATA_BLOB server_chal;
+			DATA_BLOB names_blob;
+			server_chal = data_blob_const(chal, 8);
+
+			/* note that the 'workgroup' here is for the local
+			   machine.  The 'server name' must match the
+			   'workstation' passed to the actual SamLogon call.
+			*/
+			names_blob = NTLMv2_generate_names_blob(
+				mem_ctx, lp_netbios_name(), lp_workgroup());
+
+			if (!SMBNTLMv2encrypt(mem_ctx, name_user, name_domain,
+					      pass,
+					      &server_chal,
+					      &names_blob,
+					      &lm_resp, &nt_resp, NULL, NULL)) {
+				data_blob_free(&names_blob);
+				DEBUG(0, ("winbindd_pam_auth: SMBNTLMv2encrypt() failed!\n"));
+				result = NT_STATUS_NO_MEMORY;
+				goto done;
+			}
+			data_blob_free(&names_blob);
+		} else {
+			lm_resp = data_blob_null;
+			SMBNTencrypt(pass, chal, local_nt_response);
+
+			nt_resp = data_blob_talloc(mem_ctx, local_nt_response,
+						   sizeof(local_nt_response));
+		}
 
 		result = winbindd_dual_auth_passdb(
 			mem_ctx, 0, name_domain, name_user,
 			&chal_blob, &lm_resp, &nt_resp,
 			true, /* interactive */
+			&authoritative,
 			info3);
 
 		/* 
-		 * We need to try the remote NETLOGON server if this is NOT_IMPLEMENTED 
+		 * We need to try the remote NETLOGON server if this is
+		 * not authoritative (for example on the RODC).
 		 */
-		if (!NT_STATUS_EQUAL(result, NT_STATUS_NOT_IMPLEMENTED)) {
+		if (authoritative != 0) {
 			goto done;
 		}
 	}
@@ -1560,10 +1636,11 @@ static NTSTATUS winbindd_dual_pam_auth_samlogon(TALLOC_CTX *mem_ctx,
 					     pass,
 					     name_domain,
 					     lp_netbios_name(),
-					     chal,
-					     lm_resp,
-					     nt_resp,
+					     NULL,
+					     data_blob_null, data_blob_null,
 					     true, /* interactive */
+					     &authoritative,
+					     &flags,
 					     &my_info3);
 	if (!NT_STATUS_IS_OK(result)) {
 		goto done;
@@ -1571,7 +1648,7 @@ static NTSTATUS winbindd_dual_pam_auth_samlogon(TALLOC_CTX *mem_ctx,
 
 	/* handle the case where a NT4 DC does not fill in the acct_flags in
 	 * the samlogon reply info3. When accurate info3 is required by the
-	 * caller, we look up the account flags ourselve - gd */
+	 * caller, we look up the account flags ourselves - gd */
 
 	if ((request_flags & WBFLAG_PAM_INFO3_TEXT) &&
 	    NT_STATUS_IS_OK(result) && (my_info3->base.acct_flags == 0)) {
@@ -1618,15 +1695,10 @@ static NTSTATUS winbindd_dual_pam_auth_samlogon(TALLOC_CTX *mem_ctx,
 						       &info,
 						       &result_tmp);
 
-		if (!NT_STATUS_IS_OK(status_tmp)) {
+		if (any_nt_status_not_ok(status_tmp, result_tmp,
+					 &status_tmp)) {
 			DEBUG(3, ("could not query user info on SAMR pipe: %s\n",
 				nt_errstr(status_tmp)));
-			dcerpc_samr_Close(b, mem_ctx, &user_pol, &result_tmp);
-			goto done;
-		}
-		if (!NT_STATUS_IS_OK(result_tmp)) {
-			DEBUG(3, ("could not query user info on SAMR pipe: %s\n",
-				nt_errstr(result_tmp)));
 			dcerpc_samr_Close(b, mem_ctx, &user_pol, &result_tmp);
 			goto done;
 		}
@@ -1891,28 +1963,14 @@ process_result:
 		}
 
 		if (state->request->flags & WBFLAG_PAM_GET_PWD_POLICY) {
-			struct winbindd_domain *our_domain = find_our_domain();
-
-			/* This is not entirely correct I believe, but it is
-			   consistent.  Only apply the password policy settings
-			   too warn users for our own domain.  Cannot obtain these
-			   from trusted DCs all the  time so don't do it at all.
-			   -- jerry */
-
-			result = NT_STATUS_NOT_SUPPORTED;
-			if (strequal(name_domain, our_domain->name)) {
-				result = fillup_password_policy(
-					our_domain, state->response);
-			}
-
-			if (!NT_STATUS_IS_OK(result)
-			    && !NT_STATUS_EQUAL(result, NT_STATUS_NOT_SUPPORTED) )
-			{
-				DBG_DEBUG("Failed to get password policies for "
-					  "domain %s: %s\n", our_domain->name,
-					  nt_errstr(result));
-				goto done;
-			}
+			/*
+			 * WBFLAG_PAM_GET_PWD_POLICY is not used within
+			 * any Samba caller anymore.
+			 *
+			 * We just fake this based on the effective values
+			 * for the user, for legacy callers.
+			 */
+			fake_password_policy(state->response, &info3->base);
 		}
 
 		result = NT_STATUS_OK;
@@ -1944,11 +2002,23 @@ NTSTATUS winbind_dual_SamLogon(struct winbindd_domain *domain,
 			       const uint8_t chal[8],
 			       DATA_BLOB lm_response,
 			       DATA_BLOB nt_response,
+			       uint8_t *authoritative,
+			       bool skip_sam,
+			       uint32_t *flags,
 			       struct netr_SamInfo3 **info3)
 {
 	NTSTATUS result;
 
-	if (strequal(name_domain, get_global_sam_name())) {
+	/*
+	 * We check against domain->name instead of
+	 * name_domain, as find_auth_domain() ->
+	 * find_domain_from_name_noinit() already decided
+	 * that we are in a child for the correct domain.
+	 *
+	 * name_domain can also be lp_realm()
+	 * we need to check against domain->name.
+	 */
+	if (!skip_sam && strequal(domain->name, get_global_sam_name())) {
 		DATA_BLOB chal_blob = data_blob_const(
 			chal, 8);
 
@@ -1958,12 +2028,15 @@ NTSTATUS winbind_dual_SamLogon(struct winbindd_domain *domain,
 			name_domain, name_user,
 			&chal_blob, &lm_response, &nt_response,
 			false, /* interactive */
+			authoritative,
 			info3);
 
 		/* 
-		 * We need to try the remote NETLOGON server if this is NOT_IMPLEMENTED 
+		 * We need to try the remote NETLOGON server if this is
+		 * not authoritative.
 		 */
-		if (!NT_STATUS_EQUAL(result, NT_STATUS_NOT_IMPLEMENTED)) {
+		if (*authoritative != 0) {
+			*flags = 0;
 			goto process_result;
 		}
 	}
@@ -1980,6 +2053,8 @@ NTSTATUS winbind_dual_SamLogon(struct winbindd_domain *domain,
 					     lm_response,
 					     nt_response,
 					     false, /* interactive */
+					     authoritative,
+					     flags,
 					     info3);
 	if (!NT_STATUS_IS_OK(result)) {
 		goto done;
@@ -2043,6 +2118,8 @@ enum winbindd_result winbindd_dual_pam_auth_crap(struct winbindd_domain *domain,
 	const char *name_user = NULL;
 	const char *name_domain = NULL;
 	const char *workstation;
+	uint8_t authoritative = 0;
+	uint32_t flags = 0;
 
 	DATA_BLOB lm_resp, nt_resp;
 
@@ -2095,8 +2172,12 @@ enum winbindd_result winbindd_dual_pam_auth_crap(struct winbindd_domain *domain,
 				       state->request->data.auth_crap.chal,
 				       lm_resp,
 				       nt_resp,
+				       &authoritative,
+				       false,
+				       &flags,
 				       &info3);
 	if (!NT_STATUS_IS_OK(result)) {
+		state->response->data.auth.authoritative = authoritative;
 		goto done;
 	}
 

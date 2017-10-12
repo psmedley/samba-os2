@@ -2,12 +2,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.6
+.\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "NET" "8" "08/08/2017" "Samba 4\&.6" "System Administration tools"
+.TH "NET" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1913,6 +1913,24 @@ Print a list of all currently existing locknames\&.
 .SS "G_LOCK DUMP lockname"
 .PP
 Dump the locking table of a certain global lock\&.
+.SS "TDB"
+.PP
+Print information from tdb records\&.
+.SS "TDB LOCKING key [DUMP]"
+.PP
+List sharename, filename and number of share modes for a record from locking\&.tdb\&. With the optional DUMP options, dump the complete record\&.
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIKEY\fR
+Key of the tdb record as hex string\&.
+.RE
 .SS "HELP [COMMAND]"
 .PP
 Gives usage information for the specified command\&.

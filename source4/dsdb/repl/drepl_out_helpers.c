@@ -36,6 +36,9 @@
 #include "../lib/util/tevent_ntstatus.h"
 #include "libcli/security/security.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS            DBGC_DRS_REPL
+
 struct dreplsrv_out_drsuapi_state {
 	struct tevent_context *ev;
 
@@ -498,7 +501,7 @@ static void dreplsrv_op_pull_source_get_changes_trigger(struct tevent_req *req)
 			return;
 		}
 		replica_flags &= ~DRSUAPI_DRS_WRIT_REP;
-	} else if (partition->rodc_replica) {
+	} else if (partition->rodc_replica || state->op->extended_op == DRSUAPI_EXOP_REPL_SECRET) {
 		bool for_schema = false;
 		if (ldb_dn_compare_base(schema_dn, partition->dn) == 0) {
 			for_schema = true;
@@ -518,7 +521,21 @@ static void dreplsrv_op_pull_source_get_changes_trigger(struct tevent_req *req)
 		} else {
 			replica_flags |= DRSUAPI_DRS_SPECIAL_SECRET_PROCESSING;
 		}
+
+		/*
+		 * As per MS-DRSR:
+		 *
+		 * 4.1.10.4
+		 * Client Behavior When Sending the IDL_DRSGetNCChanges Request
+		 *
+		 * 4.1.10.4.1
+		 * ReplicateNCRequestMsg
+		 */
+		replica_flags |= DRSUAPI_DRS_GET_ALL_GROUP_MEMBERSHIP;
+	} else {
+		replica_flags |= DRSUAPI_DRS_GET_ALL_GROUP_MEMBERSHIP;
 	}
+
 	if (state->op->extended_op != DRSUAPI_EXOP_NONE) {
 		/*
 		 * If it's an exop never set the ADD_REF even if it's in

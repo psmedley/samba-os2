@@ -38,7 +38,8 @@ bool torture_libsmbclient_init_context(struct torture_context *tctx,
 
 	/* yes, libsmbclient API frees the username when freeing the context, so
 	 * have to pass malloced data here */
-	smbc_setUser(ctx, strdup(cli_credentials_get_username(cmdline_credentials)));
+	smbc_setUser(ctx, strdup(cli_credentials_get_username(
+			popt_get_cmdline_credentials())));
 
 	*ctx_p = ctx;
 
@@ -201,11 +202,11 @@ bool torture_libsmbclient_options(struct torture_context *tctx)
 	return true;
 }
 
-NTSTATUS torture_libsmbclient_init(void)
+NTSTATUS torture_libsmbclient_init(TALLOC_CTX *ctx)
 {
 	struct torture_suite *suite;
 
-	suite = torture_suite_create(talloc_autofree_context(), "libsmbclient");
+	suite = torture_suite_create(ctx, "libsmbclient");
 
 	torture_suite_add_simple_test(suite, "version", torture_libsmbclient_version);
 	torture_suite_add_simple_test(suite, "initialize", torture_libsmbclient_initialize);
@@ -215,7 +216,7 @@ NTSTATUS torture_libsmbclient_init(void)
 
 	suite->description = talloc_strdup(suite, "libsmbclient interface tests");
 
-	torture_register_suite(suite);
+	torture_register_suite(ctx, suite);
 
 	return NT_STATUS_OK;
 }

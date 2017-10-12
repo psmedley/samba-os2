@@ -396,7 +396,7 @@ static int get_file_version(files_struct *fsp, char *fname,uint32_t *major, uint
 		if (CVAL(buf,NE_HEADER_TARGET_OS_OFFSET) != NE_HEADER_TARGOS_WIN ) {
 			DEBUG(3,("get_file_version: NE file [%s] wrong target OS = 0x%x\n",
 					fname, CVAL(buf,NE_HEADER_TARGET_OS_OFFSET)));
-			/* At this point, we assume the file is in error. It still could be somthing
+			/* At this point, we assume the file is in error. It still could be something
 			 * else besides a NE file, but it unlikely at this point. */
 			goto error_exit;
 		}
@@ -666,16 +666,18 @@ Determine the correct cVersion associated with an architecture and driver
 static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 				   const char *architecture,
 				   const char *driverpath_in,
+				   const char *driver_directory,
 				   WERROR *perr)
 {
 	int cversion = -1;
 	NTSTATUS          nt_status;
 	struct smb_filename *smb_fname = NULL;
-	char *driverpath = NULL;
 	files_struct      *fsp = NULL;
 	connection_struct *conn = NULL;
-	char *oldcwd;
+	struct smb_filename *oldcwd_fname = NULL;
 	char *printdollar = NULL;
+	char *printdollar_path = NULL;
+	char *working_dir = NULL;
 	int printdollar_snum;
 
 	*perr = WERR_INVALID_PARAMETER;
@@ -704,13 +706,34 @@ static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 		return -1;
 	}
 
+	printdollar_path = lp_path(talloc_tos(), printdollar_snum);
+	if (printdollar_path == NULL) {
+		*perr = WERR_NOT_ENOUGH_MEMORY;
+		return -1;
+	}
+
+	working_dir = talloc_asprintf(talloc_tos(),
+				      "%s/%s",
+				      printdollar_path,
+				      architecture);
+	/*
+	 * If the driver has been uploaded into a temorpary driver
+	 * directory, switch to the driver directory.
+	 */
+	if (driver_directory != NULL) {
+		working_dir = talloc_asprintf(talloc_tos(), "%s/%s/%s",
+					      printdollar_path,
+					      architecture,
+					      driver_directory);
+	}
+
 	nt_status = create_conn_struct_cwd(talloc_tos(),
 					   server_event_context(),
 					   server_messaging_context(),
 					   &conn,
 					   printdollar_snum,
-					   lp_path(talloc_tos(), printdollar_snum),
-					   session_info, &oldcwd);
+					   working_dir,
+					   session_info, &oldcwd_fname);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DEBUG(0,("get_correct_cversion: create_conn_struct "
 			 "returned %s\n", nt_errstr(nt_status)));
@@ -731,18 +754,11 @@ static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 		goto error_free_conn;
 	}
 
-	/* Open the driver file (Portable Executable format) and determine the
-	 * deriver the cversion. */
-	driverpath = talloc_asprintf(talloc_tos(),
-					"%s/%s",
-					architecture,
-					driverpath_in);
-	if (!driverpath) {
-		*perr = WERR_NOT_ENOUGH_MEMORY;
-		goto error_exit;
-	}
-
-	nt_status = driver_unix_convert(conn, driverpath, &smb_fname);
+	/*
+	 * We switch to the directory where the driver files are located,
+	 * so only work on the file names
+	 */
+	nt_status = driver_unix_convert(conn, driverpath_in, &smb_fname);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		*perr = ntstatus_to_werror(nt_status);
 		goto error_exit;
@@ -835,7 +851,8 @@ static uint32_t get_correct_cversion(struct auth_session_info *session_info,
 		close_file(NULL, fsp, NORMAL_CLOSE);
 	}
 	if (conn != NULL) {
-		vfs_ChDir(conn, oldcwd);
+		vfs_ChDir(conn, oldcwd_fname);
+		TALLOC_FREE(oldcwd_fname);
 		SMB_VFS_DISCONNECT(conn);
 		conn_free(conn);
 	}
@@ -956,8 +973,11 @@ static WERROR clean_up_driver_struct_level(TALLOC_CTX *mem_ctx,
 	 *	NT2K: cversion=3
 	 */
 
-	*version = get_correct_cversion(session_info, short_architecture,
-					*driver_path, &err);
+	*version = get_correct_cversion(session_info,
+					short_architecture,
+					*driver_path,
+					*driver_directory,
+					&err);
 	if (*version == -1) {
 		return err;
 	}
@@ -1149,7 +1169,7 @@ WERROR move_driver_to_download_area(struct auth_session_info *session_info,
 	int i;
 	TALLOC_CTX *ctx = talloc_tos();
 	int ver = 0;
-	char *oldcwd;
+	struct smb_filename *oldcwd_fname = NULL;
 	char *printdollar = NULL;
 	int printdollar_snum;
 	WERROR err = WERR_OK;
@@ -1190,7 +1210,7 @@ WERROR move_driver_to_download_area(struct auth_session_info *session_info,
 					   &conn,
 					   printdollar_snum,
 					   lp_path(talloc_tos(), printdollar_snum),
-					   session_info, &oldcwd);
+					   session_info, &oldcwd_fname);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DEBUG(0,("move_driver_to_download_area: create_conn_struct "
 			 "returned %s\n", nt_errstr(nt_status)));
@@ -1355,7 +1375,8 @@ WERROR move_driver_to_download_area(struct auth_session_info *session_info,
 	TALLOC_FREE(smb_dname);
 
 	if (conn != NULL) {
-		vfs_ChDir(conn, oldcwd);
+		vfs_ChDir(conn, oldcwd_fname);
+		TALLOC_FREE(oldcwd_fname);
 		SMB_VFS_DISCONNECT(conn);
 		conn_free(conn);
 	}
@@ -1374,7 +1395,7 @@ bool printer_driver_in_use(TALLOC_CTX *mem_ctx,
 {
 	int snum;
 	int n_services = lp_numservices();
-	bool in_use = False;
+	bool in_use = false;
 	struct spoolss_PrinterInfo2 *pinfo2 = NULL;
 	WERROR result;
 
@@ -1399,7 +1420,7 @@ bool printer_driver_in_use(TALLOC_CTX *mem_ctx,
 		}
 
 		if (strequal(r->driver_name, pinfo2->drivername)) {
-			in_use = True;
+			in_use = true;
 		}
 
 		TALLOC_FREE(pinfo2);
@@ -1416,26 +1437,31 @@ bool printer_driver_in_use(TALLOC_CTX *mem_ctx,
 		/* we can still remove the driver if there is one of
 		   "Windows NT x86" version 2 or 3 left */
 
-		if (!strequal("Windows NT x86", r->architecture)) {
+		if (strequal(SPOOLSS_ARCHITECTURE_NT_X86, r->architecture)) {
+			if (r->version == 2) {
+				werr = winreg_get_driver(mem_ctx, b,
+							 r->architecture,
+							 r->driver_name,
+							 3, &driver);
+			} else if (r->version == 3) {
+				werr = winreg_get_driver(mem_ctx, b,
+							 r->architecture,
+							 r->driver_name,
+							 2, &driver);
+			} else {
+				DBG_ERR("Unknown driver version (%d)\n",
+					r->version);
+				werr = WERR_UNKNOWN_PRINTER_DRIVER;
+			}
+		} else if (strequal(SPOOLSS_ARCHITECTURE_x64, r->architecture)) {
 			werr = winreg_get_driver(mem_ctx, b,
-						 "Windows NT x86",
+						 SPOOLSS_ARCHITECTURE_NT_X86,
 						 r->driver_name,
 						 DRIVER_ANY_VERSION,
 						 &driver);
-		} else if (r->version == 2) {
-			werr = winreg_get_driver(mem_ctx, b,
-						 "Windows NT x86",
-						 r->driver_name,
-						 3, &driver);
-		} else if (r->version == 3) {
-			werr = winreg_get_driver(mem_ctx, b,
-						 "Windows NT x86",
-						 r->driver_name,
-						 2, &driver);
 		} else {
-			DEBUG(0, ("printer_driver_in_use: ERROR!"
-				  " unknown driver version (%d)\n",
-				  r->version));
+			DBG_ERR("Unknown driver architecture: %s\n",
+				r->architecture);
 			werr = WERR_UNKNOWN_PRINTER_DRIVER;
 		}
 
@@ -1443,7 +1469,7 @@ bool printer_driver_in_use(TALLOC_CTX *mem_ctx,
 
 		if ( W_ERROR_IS_OK(werr) ) {
 			/* it's ok to remove the driver, we have other architctures left */
-			in_use = False;
+			in_use = false;
 			talloc_free(driver);
 		}
 	}
@@ -1704,7 +1730,7 @@ bool delete_driver_files(const struct auth_session_info *session_info,
 	const char *short_arch;
 	connection_struct *conn;
 	NTSTATUS nt_status;
-	char *oldcwd;
+	struct smb_filename *oldcwd_fname = NULL;
 	char *printdollar = NULL;
 	int printdollar_snum;
 	bool ret = false;
@@ -1730,7 +1756,7 @@ bool delete_driver_files(const struct auth_session_info *session_info,
 					   &conn,
 					   printdollar_snum,
 					   lp_path(talloc_tos(), printdollar_snum),
-					   session_info, &oldcwd);
+					   session_info, &oldcwd_fname);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DEBUG(0,("delete_driver_files: create_conn_struct "
 			 "returned %s\n", nt_errstr(nt_status)));
@@ -1799,7 +1825,8 @@ bool delete_driver_files(const struct auth_session_info *session_info,
 	unbecome_user();
  err_free_conn:
 	if (conn != NULL) {
-		vfs_ChDir(conn, oldcwd);
+		vfs_ChDir(conn, oldcwd_fname);
+		TALLOC_FREE(oldcwd_fname);
 		SMB_VFS_DISCONNECT(conn);
 		conn_free(conn);
 	}

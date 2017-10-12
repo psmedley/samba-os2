@@ -702,6 +702,8 @@ static WERROR handle_authoritative_recv(struct tevent_req *req)
 static NTSTATUS create_tkey(struct dns_server *dns,
 			    const char* name,
 			    const char* algorithm,
+			    const struct tsocket_address *remote_address,
+			    const struct tsocket_address *local_address,
 			    struct dns_server_tkey **tkey)
 {
 	NTSTATUS status;
@@ -723,13 +725,19 @@ static NTSTATUS create_tkey(struct dns_server *dns,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	status = samba_server_gensec_start(k,
-					   dns->task->event_ctx,
-					   dns->task->msg_ctx,
-					   dns->task->lp_ctx,
-					   dns->server_credentials,
-					   "dns",
-					   &k->gensec);
+	/*
+	 * We only allow SPNEGO/KRB5 currently
+	 * and rely on the backend to be RPC/IPC free.
+	 *
+	 * It allows gensec_update() not to block.
+	 */
+	status = samba_server_gensec_krb5_start(k,
+						dns->task->event_ctx,
+						dns->task->msg_ctx,
+						dns->task->lp_ctx,
+						dns->server_credentials,
+						"dns",
+						&k->gensec);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1, ("Failed to start GENSEC server code: %s\n", nt_errstr(status)));
 		*tkey = NULL;
@@ -737,6 +745,24 @@ static NTSTATUS create_tkey(struct dns_server *dns,
 	}
 
 	gensec_want_feature(k->gensec, GENSEC_FEATURE_SIGN);
+
+	status = gensec_set_remote_address(k->gensec,
+					   remote_address);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(1, ("Failed to set remote address into GENSEC: %s\n",
+			  nt_errstr(status)));
+		*tkey = NULL;
+		return status;
+	}
+
+	status = gensec_set_local_address(k->gensec,
+					  local_address);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(1, ("Failed to set local address into GENSEC: %s\n",
+			  nt_errstr(status)));
+		*tkey = NULL;
+		return status;
+	}
 
 	status = gensec_start_mech_by_oid(k->gensec, GENSEC_OID_SPNEGO);
 
@@ -768,8 +794,21 @@ static NTSTATUS accept_gss_ticket(TALLOC_CTX *mem_ctx,
 {
 	NTSTATUS status;
 
-	status = gensec_update_ev(tkey->gensec, mem_ctx, dns->task->event_ctx,
-				  *key, reply);
+	/*
+	 * We use samba_server_gensec_krb5_start(),
+	 * which only allows SPNEGO/KRB5 currently
+	 * and makes sure the backend to be RPC/IPC free.
+	 *
+	 * See gensec_gssapi_update_internal() as
+	 * GENSEC_SERVER.
+	 *
+	 * It allows gensec_update() not to block.
+	 *
+	 * If that changes in future we need to use
+	 * gensec_update_send/recv here!
+	 */
+	status = gensec_update(tkey->gensec, mem_ctx,
+			       *key, reply);
 
 	if (NT_STATUS_EQUAL(NT_STATUS_MORE_PROCESSING_REQUIRED, status)) {
 		*dns_auth_error = DNS_RCODE_OK;
@@ -861,6 +900,8 @@ static WERROR handle_tkey(struct dns_server *dns,
 		if (tkey == NULL) {
 			status  = create_tkey(dns, in->questions[0].name,
 					      in_tkey->rdata.tkey_record.algorithm,
+					      state->remote_address,
+					      state->local_address,
 					      &tkey);
 			if (!NT_STATUS_IS_OK(status)) {
 				ret_tkey->rdata.tkey_record.error = DNS_RCODE_BADKEY;

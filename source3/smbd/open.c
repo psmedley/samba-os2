@@ -4,6 +4,7 @@
    Copyright (C) Andrew Tridgell 1992-1998
    Copyright (C) Jeremy Allison 2001-2004
    Copyright (C) Volker Lendecke 2005
+   Copyright (C) Ralph Boehme 2017
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -21,6 +22,7 @@
 
 #include "includes.h"
 #include "system/filesys.h"
+#include "lib/util/server_id.h"
 #include "printing.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
@@ -387,7 +389,7 @@ static int link_errno_convert(int err)
 }
 
 static int non_widelink_open(struct connection_struct *conn,
-			const char *conn_rootdir,
+			const struct smb_filename *conn_rootdir_fname,
 			files_struct *fsp,
 			struct smb_filename *smb_fname,
 			int flags,
@@ -399,7 +401,7 @@ static int non_widelink_open(struct connection_struct *conn,
 ****************************************************************************/
 
 static int process_symlink_open(struct connection_struct *conn,
-			const char *conn_rootdir,
+			const struct smb_filename *conn_rootdir_fname,
 			files_struct *fsp,
 			struct smb_filename *smb_fname,
 			int flags,
@@ -408,9 +410,11 @@ static int process_symlink_open(struct connection_struct *conn,
 {
 	int fd = -1;
 	char *link_target = NULL;
+	struct smb_filename target_fname = {0};
 	int link_len = -1;
-	char *oldwd = NULL;
+	struct smb_filename *oldwd_fname = NULL;
 	size_t rootdir_len = 0;
+	struct smb_filename *resolved_fname = NULL;
 	char *resolved_name = NULL;
 	bool matched = false;
 	int saved_errno = 0;
@@ -433,7 +437,7 @@ static int process_symlink_open(struct connection_struct *conn,
 
 	/* Read the link target. */
 	link_len = SMB_VFS_READLINK(conn,
-				smb_fname->base_name,
+				smb_fname,
 				link_target,
 				PATH_MAX - 1);
 	if (link_len == -1) {
@@ -442,21 +446,25 @@ static int process_symlink_open(struct connection_struct *conn,
 
 	/* Ensure it's at least null terminated. */
 	link_target[link_len] = '\0';
+	target_fname = (struct smb_filename){ .base_name = link_target };
 
 	/* Convert to an absolute path. */
-	resolved_name = SMB_VFS_REALPATH(conn, link_target);
-	if (resolved_name == NULL) {
+	resolved_fname = SMB_VFS_REALPATH(conn, talloc_tos(), &target_fname);
+	if (resolved_fname == NULL) {
 		goto out;
 	}
+	resolved_name = resolved_fname->base_name;
 
 	/*
 	 * We know conn_rootdir starts with '/' and
 	 * does not end in '/'. FIXME ! Should we
 	 * smb_assert this ?
 	 */
-	rootdir_len = strlen(conn_rootdir);
+	rootdir_len = strlen(conn_rootdir_fname->base_name);
 
-	matched = (strncmp(conn_rootdir, resolved_name, rootdir_len) == 0);
+	matched = (strncmp(conn_rootdir_fname->base_name,
+				resolved_name,
+				rootdir_len) == 0);
 	if (!matched) {
 		errno = EACCES;
 		goto out;
@@ -467,31 +475,35 @@ static int process_symlink_open(struct connection_struct *conn,
 	 */
 	if (resolved_name[rootdir_len] == '\0') {
 		/* Link to the root of the share. */
-		smb_fname->base_name = talloc_strdup(talloc_tos(), ".");
-		if (smb_fname->base_name == NULL) {
-			errno = ENOMEM;
-			goto out;
-		}
+		TALLOC_FREE(smb_fname->base_name);
+		smb_fname->base_name = talloc_strdup(smb_fname, ".");
 	} else if (resolved_name[rootdir_len] == '/') {
-		smb_fname->base_name = &resolved_name[rootdir_len+1];
+		TALLOC_FREE(smb_fname->base_name);
+		smb_fname->base_name = talloc_strdup(smb_fname,
+					&resolved_name[rootdir_len+1]);
 	} else {
 		errno = EACCES;
 		goto out;
 	}
 
-	oldwd = vfs_GetWd(talloc_tos(), conn);
-	if (oldwd == NULL) {
+	if (smb_fname->base_name == NULL) {
+		errno = ENOMEM;
+		goto out;
+	}
+
+	oldwd_fname = vfs_GetWd(talloc_tos(), conn);
+	if (oldwd_fname == NULL) {
 		goto out;
 	}
 
 	/* Ensure we operate from the root of the share. */
-	if (vfs_ChDir(conn, conn_rootdir) == -1) {
+	if (vfs_ChDir(conn, conn_rootdir_fname) == -1) {
 		goto out;
 	}
 
 	/* And do it all again.. */
 	fd = non_widelink_open(conn,
-				conn_rootdir,
+				conn_rootdir_fname,
 				fsp,
 				smb_fname,
 				flags,
@@ -503,14 +515,14 @@ static int process_symlink_open(struct connection_struct *conn,
 
   out:
 
-	SAFE_FREE(resolved_name);
+	TALLOC_FREE(resolved_fname);
 	TALLOC_FREE(link_target);
-	if (oldwd != NULL) {
-		int ret = vfs_ChDir(conn, oldwd);
+	if (oldwd_fname != NULL) {
+		int ret = vfs_ChDir(conn, oldwd_fname);
 		if (ret == -1) {
 			smb_panic("unable to get back to old directory\n");
 		}
-		TALLOC_FREE(oldwd);
+		TALLOC_FREE(oldwd_fname);
 	}
 	if (saved_errno != 0) {
 		errno = saved_errno;
@@ -523,7 +535,7 @@ static int process_symlink_open(struct connection_struct *conn,
 ****************************************************************************/
 
 static int non_widelink_open(struct connection_struct *conn,
-			const char *conn_rootdir,
+			const struct smb_filename *conn_rootdir_fname,
 			files_struct *fsp,
 			struct smb_filename *smb_fname,
 			int flags,
@@ -534,8 +546,9 @@ static int non_widelink_open(struct connection_struct *conn,
 	int fd = -1;
 	struct smb_filename *smb_fname_rel = NULL;
 	int saved_errno = 0;
-	char *oldwd = NULL;
+	struct smb_filename *oldwd_fname = NULL;
 	char *parent_dir = NULL;
+	struct smb_filename parent_dir_fname = {0};
 	const char *final_component = NULL;
 	bool is_directory = false;
 	bool ok;
@@ -565,20 +578,15 @@ static int non_widelink_open(struct connection_struct *conn,
 		}
 	}
 
-	oldwd = vfs_GetWd(talloc_tos(), conn);
-	if (oldwd == NULL) {
+	parent_dir_fname = (struct smb_filename) { .base_name = parent_dir };
+
+	oldwd_fname = vfs_GetWd(talloc_tos(), conn);
+	if (oldwd_fname == NULL) {
 		goto out;
 	}
 
 	/* Pin parent directory in place. */
-	if (vfs_ChDir(conn, parent_dir) == -1) {
-		goto out;
-	}
-
-	/* Ensure the relative path is below the share. */
-	status = check_reduced_name(conn, parent_dir, final_component);
-	if (!NT_STATUS_IS_OK(status)) {
-		saved_errno = map_errno_from_nt_status(status);
+	if (vfs_ChDir(conn, &parent_dir_fname) == -1) {
 		goto out;
 	}
 
@@ -587,6 +595,17 @@ static int non_widelink_open(struct connection_struct *conn,
 				smb_fname->stream_name,
 				&smb_fname->st,
 				smb_fname->flags);
+	if (smb_fname_rel == NULL) {
+		saved_errno = ENOMEM;
+		goto out;
+	}
+
+	/* Ensure the relative path is below the share. */
+	status = check_reduced_name(conn, &parent_dir_fname, smb_fname_rel);
+	if (!NT_STATUS_IS_OK(status)) {
+		saved_errno = map_errno_from_nt_status(status);
+		goto out;
+	}
 
 	flags |= O_NOFOLLOW;
 
@@ -624,7 +643,7 @@ static int non_widelink_open(struct connection_struct *conn,
 			 * to ensure it's under the share definition.
 			 */
 			fd = process_symlink_open(conn,
-					conn_rootdir,
+					conn_rootdir_fname,
 					fsp,
 					smb_fname_rel,
 					flags,
@@ -651,12 +670,12 @@ static int non_widelink_open(struct connection_struct *conn,
 	TALLOC_FREE(parent_dir);
 	TALLOC_FREE(smb_fname_rel);
 
-	if (oldwd != NULL) {
-		int ret = vfs_ChDir(conn, oldwd);
+	if (oldwd_fname != NULL) {
+		int ret = vfs_ChDir(conn, oldwd_fname);
 		if (ret == -1) {
 			smb_panic("unable to get back to old directory\n");
 		}
-		TALLOC_FREE(oldwd);
+		TALLOC_FREE(oldwd_fname);
 	}
 	if (saved_errno != 0) {
 		errno = saved_errno;
@@ -687,22 +706,41 @@ NTSTATUS fd_open(struct connection_struct *conn,
 
 	/* Ensure path is below share definition. */
 	if (!lp_widelinks(SNUM(conn))) {
+		struct smb_filename *conn_rootdir_fname = NULL;
 		const char *conn_rootdir = SMB_VFS_CONNECTPATH(conn,
-						smb_fname->base_name);
+						smb_fname);
+		int saved_errno = 0;
+
 		if (conn_rootdir == NULL) {
 			return NT_STATUS_NO_MEMORY;
 		}
+		conn_rootdir_fname = synthetic_smb_fname(talloc_tos(),
+						conn_rootdir,
+						NULL,
+						NULL,
+						0);
+		if (conn_rootdir_fname == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+
 		/*
 		 * Only follow symlinks within a share
 		 * definition.
 		 */
 		fsp->fh->fd = non_widelink_open(conn,
-					conn_rootdir,
+					conn_rootdir_fname,
 					fsp,
 					smb_fname,
 					flags,
 					mode,
 					0);
+		if (fsp->fh->fd == -1) {
+			saved_errno = errno;
+		}
+		TALLOC_FREE(conn_rootdir_fname);
+		if (saved_errno != 0) {
+			errno = saved_errno;
+		}
 	} else {
 		fsp->fh->fd = SMB_VFS_OPEN(conn, smb_fname, fsp, flags, mode);
 	}
@@ -818,14 +856,14 @@ void change_file_owner_to_parent(connection_struct *conn,
 	TALLOC_FREE(smb_fname_parent);
 }
 
-NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
-				       const char *inherit_from_dir,
-				       const char *fname,
-				       SMB_STRUCT_STAT *psbuf)
+static NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
+					const char *inherit_from_dir,
+					struct smb_filename *smb_dname,
+					SMB_STRUCT_STAT *psbuf)
 {
 	struct smb_filename *smb_fname_parent;
 	struct smb_filename *smb_fname_cwd = NULL;
-	char *saved_dir = NULL;
+	struct smb_filename *saved_dir_fname = NULL;
 	TALLOC_CTX *ctx = talloc_tos();
 	NTSTATUS status = NT_STATUS_OK;
 	int ret;
@@ -856,8 +894,8 @@ NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
 	   should work on any UNIX (thanks tridge :-). JRA.
 	*/
 
-	saved_dir = vfs_GetWd(ctx,conn);
-	if (!saved_dir) {
+	saved_dir_fname = vfs_GetWd(ctx,conn);
+	if (!saved_dir_fname) {
 		status = map_nt_error_from_unix(errno);
 		DEBUG(0,("change_dir_owner_to_parent: failed to get "
 			 "current working directory. Error was %s\n",
@@ -866,11 +904,11 @@ NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
 	}
 
 	/* Chdir into the new path. */
-	if (vfs_ChDir(conn, fname) == -1) {
+	if (vfs_ChDir(conn, smb_dname) == -1) {
 		status = map_nt_error_from_unix(errno);
 		DEBUG(0,("change_dir_owner_to_parent: failed to change "
 			 "current working directory to %s. Error "
-			 "was %s\n", fname, strerror(errno) ));
+			 "was %s\n", smb_dname->base_name, strerror(errno) ));
 		goto chdir;
 	}
 
@@ -885,7 +923,7 @@ NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
 		status = map_nt_error_from_unix(errno);
 		DEBUG(0,("change_dir_owner_to_parent: failed to stat "
 			 "directory '.' (%s) Error was %s\n",
-			 fname, strerror(errno)));
+			 smb_dname->base_name, strerror(errno)));
 		goto chdir;
 	}
 
@@ -894,7 +932,8 @@ NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
 	    smb_fname_cwd->st.st_ex_ino != psbuf->st_ex_ino) {
 		DEBUG(0,("change_dir_owner_to_parent: "
 			 "device/inode on directory %s changed. "
-			 "Refusing to chown !\n", fname ));
+			 "Refusing to chown !\n",
+			smb_dname->base_name ));
 		status = NT_STATUS_ACCESS_DENIED;
 		goto chdir;
 	}
@@ -903,7 +942,7 @@ NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
 		/* Already this uid - no need to change. */
 		DEBUG(10,("change_dir_owner_to_parent: directory %s "
 			"is already owned by uid %d\n",
-			fname,
+			smb_dname->base_name,
 			(int)smb_fname_cwd->st.st_ex_uid ));
 		status = NT_STATUS_OK;
 		goto chdir;
@@ -919,20 +958,23 @@ NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
 		status = map_nt_error_from_unix(errno);
 		DEBUG(10,("change_dir_owner_to_parent: failed to chown "
 			  "directory %s to parent directory uid %u. "
-			  "Error was %s\n", fname,
+			  "Error was %s\n",
+			  smb_dname->base_name,
 			  (unsigned int)smb_fname_parent->st.st_ex_uid,
 			  strerror(errno) ));
 	} else {
 		DEBUG(10,("change_dir_owner_to_parent: changed ownership of new "
 			"directory %s to parent directory uid %u.\n",
-			fname, (unsigned int)smb_fname_parent->st.st_ex_uid ));
+			smb_dname->base_name,
+			(unsigned int)smb_fname_parent->st.st_ex_uid ));
 		/* Ensure the uid entry is updated. */
 		psbuf->st_ex_uid = smb_fname_parent->st.st_ex_uid;
 	}
 
  chdir:
-	vfs_ChDir(conn,saved_dir);
+	vfs_ChDir(conn, saved_dir_fname);
  out:
+	TALLOC_FREE(saved_dir_fname);
 	TALLOC_FREE(smb_fname_parent);
 	TALLOC_FREE(smb_fname_cwd);
 	return status;
@@ -1262,7 +1304,7 @@ static NTSTATUS open_file(files_struct *fsp,
 			/* Inherit the ACL if required */
 			if (lp_inherit_permissions(SNUM(conn))) {
 				inherit_access_posix_acl(conn, parent_dir,
-							 smb_fname->base_name,
+							 smb_fname,
 							 unx_mode);
 				need_re_stat = true;
 			}
@@ -1790,7 +1832,7 @@ static bool delay_for_oplock(files_struct *fsp,
 			/*
 			 * we'll decide about SMB2_LEASE_READ later.
 			 *
-			 * Maybe the break will be defered
+			 * Maybe the break will be deferred
 			 */
 			break_to &= ~SMB2_LEASE_HANDLE;
 		}
@@ -3870,7 +3912,7 @@ static NTSTATUS mkdir_internal(connection_struct *conn,
 
 	if (lp_inherit_permissions(SNUM(conn))) {
 		inherit_access_posix_acl(conn, parent_dir,
-					 smb_dname->base_name, mode);
+					 smb_dname, mode);
 		need_re_stat = true;
 	}
 
@@ -3893,7 +3935,7 @@ static NTSTATUS mkdir_internal(connection_struct *conn,
 	/* Change the owner if required. */
 	if (lp_inherit_owner(SNUM(conn)) != INHERIT_OWNER_NO) {
 		change_dir_owner_to_parent(conn, parent_dir,
-					   smb_dname->base_name,
+					   smb_dname,
 					   &smb_dname->st);
 		need_re_stat = true;
 	}
@@ -5404,8 +5446,7 @@ NTSTATUS get_relative_fid_filename(connection_struct *conn,
 	files_struct *dir_fsp;
 	char *parent_fname = NULL;
 	char *new_base_name = NULL;
-	uint32_t ucf_flags = ((req != NULL && req->posix_pathnames) ?
-			UCF_POSIX_PATHNAMES : 0);
+	uint32_t ucf_flags = ucf_flags_from_smb_request(req);
 	NTSTATUS status;
 
 	if (root_dir_fid == 0 || !smb_fname) {
@@ -5498,7 +5539,6 @@ NTSTATUS get_relative_fid_filename(connection_struct *conn,
 
 	status = filename_convert(req,
 				conn,
-				req->flags2 & FLAGS2_DFS_PATHNAMES,
 				new_base_name,
 				ucf_flags,
 				NULL,

@@ -89,6 +89,10 @@ bool dbghdr( int level, const char *location, const char *func);
 #define DBGC_DNS		21
 #define DBGC_LDB		22
 #define DBGC_TEVENT		23
+#define DBGC_AUTH_AUDIT		24
+#define DBGC_AUTH_AUDIT_JSON	25
+#define DBGC_KERBEROS           26
+#define DBGC_DRS_REPL           27
 
 /* So you can define DBGC_CLASS before including debug.h */
 #ifndef DBGC_CLASS
@@ -286,5 +290,8 @@ typedef void (*debug_callback_fn)(void *private_ptr, int level, const char *msg)
    Set a callback for all debug messages.  Use in dlz_bind9 to push output to the bind logs
  */
 void debug_set_callback(void *private_ptr, debug_callback_fn fn);
+
+char *debug_get_ringbuf(void);
+size_t debug_get_ringbuf_size(void);
 
 #endif /* _SAMBA_DEBUG_H */

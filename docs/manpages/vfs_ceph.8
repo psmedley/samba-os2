@@ -2,12 +2,12 @@
 .\"     Title: vfs_ceph
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.6
+.\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "VFS_CEPH" "8" "08/08/2017" "Samba 4\&.6" "System Administration tools"
+.TH "VFS_CEPH" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -70,6 +70,13 @@ ceph:config_file = path
 Allows one to define a ceph configfile to use\&. Empty by default\&.
 .sp
 Example: ceph:config_file = /etc/ceph/ceph\&.conf
+.RE
+.PP
+ceph:user_id = name
+.RS 4
+Allows one to explicitly set the client ID used for the CephFS mount handle\&. Empty by default (CephFS uses the process id)\&.
+.sp
+Example: ceph:user_id = samba
 .RE
 .SH "VERSION"
 .PP

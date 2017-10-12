@@ -23,8 +23,6 @@
 #ifndef _WINBINDD_PROTO_H_
 #define _WINBINDD_PROTO_H_
 
-#include "ads.h"
-
 /* The following definitions come from winbindd/winbindd.c  */
 struct messaging_context *winbind_messaging_context(void);
 struct imessaging_context *winbind_imessaging_context(void);
@@ -192,7 +190,6 @@ bool winbindd_cache_validate_and_initialize(void);
 bool wcache_tdc_fetch_list( struct winbindd_tdc_domain **domains, size_t *num_domains );
 bool wcache_tdc_add_domain( struct winbindd_domain *domain );
 struct winbindd_tdc_domain * wcache_tdc_fetch_domain( TALLOC_CTX *ctx, const char *name );
-struct winbindd_tdc_domain* wcache_tdc_fetch_domainbysid(TALLOC_CTX *ctx, const struct dom_sid *sid);
 void wcache_tdc_clear( void );
 bool wcache_store_seqnum(const char *domain_name, uint32_t seqnum,
 			 time_t last_seq_check);
@@ -379,6 +376,10 @@ void init_idmap_child(void);
 struct winbindd_child *idmap_child(void);
 struct idmap_domain *idmap_find_domain_with_sid(const char *domname,
 						const struct dom_sid *sid);
+const char *idmap_config_const_string(const char *domname, const char *option,
+				      const char *def);
+bool idmap_config_bool(const char *domname, const char *option, bool def);
+int idmap_config_int(const char *domname, const char *option, int def);
 bool domain_has_idmap_config(const char *domname);
 bool lp_scan_idmap_domains(bool (*fn)(const char *domname,
 				      void *private_data),
@@ -452,6 +453,9 @@ NTSTATUS winbind_dual_SamLogon(struct winbindd_domain *domain,
 			       const uint8_t chal[8],
 			       DATA_BLOB lm_response,
 			       DATA_BLOB nt_response,
+			       uint8_t *authoritative,
+			       bool skip_sam,
+			       uint32_t *flags,
 			       struct netr_SamInfo3 **info3);
 
 /* The following definitions come from winbindd/winbindd_util.c  */
@@ -469,7 +473,6 @@ struct winbindd_domain *find_domain_from_name(const char *domain_name);
 struct winbindd_domain *find_domain_from_sid_noinit(const struct dom_sid *sid);
 struct winbindd_domain *find_domain_from_sid(const struct dom_sid *sid);
 struct winbindd_domain *find_our_domain(void);
-struct winbindd_domain *find_root_domain(void);
 struct winbindd_domain *find_lookup_domain_from_sid(const struct dom_sid *sid);
 struct winbindd_domain *find_lookup_domain_from_name(const char *domain_name);
 bool parse_domain_user(const char *domuser, fstring domain, fstring user);
@@ -574,34 +577,6 @@ struct tevent_req *winbindd_lookupname_send(TALLOC_CTX *mem_ctx,
 					    struct winbindd_cli_state *cli,
 					    struct winbindd_request *request);
 NTSTATUS winbindd_lookupname_recv(struct tevent_req *req,
-				  struct winbindd_response *response);
-
-struct tevent_req *winbindd_sid_to_uid_send(TALLOC_CTX *mem_ctx,
-					    struct tevent_context *ev,
-					    struct winbindd_cli_state *cli,
-					    struct winbindd_request *request);
-NTSTATUS winbindd_sid_to_uid_recv(struct tevent_req *req,
-				  struct winbindd_response *response);
-
-struct tevent_req *winbindd_sid_to_gid_send(TALLOC_CTX *mem_ctx,
-					    struct tevent_context *ev,
-					    struct winbindd_cli_state *cli,
-					    struct winbindd_request *request);
-NTSTATUS winbindd_sid_to_gid_recv(struct tevent_req *req,
-				  struct winbindd_response *response);
-
-struct tevent_req *winbindd_uid_to_sid_send(TALLOC_CTX *mem_ctx,
-					    struct tevent_context *ev,
-					    struct winbindd_cli_state *cli,
-					    struct winbindd_request *request);
-NTSTATUS winbindd_uid_to_sid_recv(struct tevent_req *req,
-				  struct winbindd_response *response);
-
-struct tevent_req *winbindd_gid_to_sid_send(TALLOC_CTX *mem_ctx,
-					    struct tevent_context *ev,
-					    struct winbindd_cli_state *cli,
-					    struct winbindd_request *request);
-NTSTATUS winbindd_gid_to_sid_recv(struct tevent_req *req,
 				  struct winbindd_response *response);
 
 struct tevent_req *winbindd_allocate_uid_send(TALLOC_CTX *mem_ctx,
@@ -979,9 +954,6 @@ NTSTATUS open_internal_samr_conn(TALLOC_CTX *mem_ctx,
 NTSTATUS open_internal_lsa_conn(TALLOC_CTX *mem_ctx,
 				struct rpc_pipe_client **lsa_pipe,
 				struct policy_handle *lsa_hnd);
-
-/* The following definitions come from winbindd/winbindd_ads.c  */
-ADS_STATUS ads_idmap_cached_connection(ADS_STRUCT **adsp, const char *dom_name);
 
 /* The following definitions come from winbindd/winbindd_irpc.c  */
 NTSTATUS wb_irpc_register(void);

@@ -81,6 +81,7 @@ static int set_sys_acl_conn(const char *fname,
 				 SMB_ACL_T theacl, connection_struct *conn)
 {
 	int ret;
+	struct smb_filename *smb_fname = NULL;
 	mode_t saved_umask;
 
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -89,7 +90,16 @@ static int set_sys_acl_conn(const char *fname,
 	   so set our umask to 0 */
 	saved_umask = umask(0);
 
-	ret = SMB_VFS_SYS_ACL_SET_FILE( conn, fname, acltype, theacl);
+	smb_fname = synthetic_smb_fname_split(frame,
+					fname,
+					lp_posix_pathnames());
+	if (smb_fname == NULL) {
+		TALLOC_FREE(frame);
+		umask(saved_umask);
+		return -1;
+	}
+
+	ret = SMB_VFS_SYS_ACL_SET_FILE( conn, smb_fname, acltype, theacl);
 
 	umask(saved_umask);
 
@@ -622,6 +632,8 @@ static PyObject *py_smbd_get_sys_acl(PyObject *self, PyObject *args, PyObject *k
 	TALLOC_CTX *tmp_ctx = talloc_new(NULL);
 	connection_struct *conn;
 	char *service = NULL;
+	struct smb_filename *smb_fname = NULL;
+
 	if (!tmp_ctx) {
 		PyErr_NoMemory();
 		return NULL;
@@ -642,7 +654,15 @@ static PyObject *py_smbd_get_sys_acl(PyObject *self, PyObject *args, PyObject *k
 		return NULL;
 	}
 
-	acl = SMB_VFS_SYS_ACL_GET_FILE( conn, fname, acl_type, tmp_ctx);
+	smb_fname = synthetic_smb_fname_split(frame,
+					fname,
+					lp_posix_pathnames());
+	if (smb_fname == NULL) {
+		TALLOC_FREE(frame);
+		TALLOC_FREE(tmp_ctx);
+		return NULL;
+	}
+	acl = SMB_VFS_SYS_ACL_GET_FILE( conn, smb_fname, acl_type, tmp_ctx);
 	if (!acl) {
 		TALLOC_FREE(frame);
 		TALLOC_FREE(tmp_ctx);

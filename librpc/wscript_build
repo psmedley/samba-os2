@@ -515,6 +515,11 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_DRSBLOBS',
     public_deps='dcerpc-binding NDR_DRSBLOBS'
     )
 
+bld.SAMBA_SUBSYSTEM('RPC_NDR_NTLMSSP',
+    source='gen_ndr/ndr_ntlmssp_c.c',
+    public_deps='dcerpc-binding NDR_NTLMSSP'
+    )
+
 bld.SAMBA_SUBSYSTEM('RPC_NDR_POLICYAGENT',
     source='gen_ndr/ndr_policyagent_c.c',
     public_deps='dcerpc-binding NDR_POLICYAGENT'
@@ -715,7 +720,7 @@ bld.SAMBA_LIBRARY('ndr',
     public_deps='samba-errors talloc samba-util',
     public_headers='gen_ndr/misc.h gen_ndr/ndr_misc.h ndr/libndr.h:ndr.h',
     header_path= [('*gen_ndr*', 'gen_ndr')],
-    vnum='0.0.8',
+    vnum='0.1.0',
     abi_directory='ABI',
     abi_match='ndr_* GUID_*',
     )

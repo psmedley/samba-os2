@@ -24,12 +24,12 @@
 
 /**
  * Escape a parameter to an LDAP filter string, so they cannot contain
- * embeded ( ) * or \ chars which may cause it not to parse correctly. 
+ * embeded ( ) * or \ chars which may cause it not to parse correctly.
  *
  * @param s The input string
  *
- * @return A string allocated with malloc(), containing the escaped string, 
- * and to be free()ed by the caller.
+ * @return A string allocated with talloc(), containing the escaped string,
+ * and to be talloc_free()ed by the caller.
  **/
 
 char *escape_ldap_string(TALLOC_CTX *mem_ctx, const char *s)

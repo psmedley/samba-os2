@@ -19,6 +19,7 @@
 import uuid
 import ldb
 from ldb import LdbError
+from samba import werror
 from samba.ndr import ndr_unpack
 from samba.dcerpc import misc, dnsp
 from samba.dcerpc.dnsp import DNS_TYPE_NS, DNS_TYPE_A, DNS_TYPE_AAAA, \
@@ -69,8 +70,8 @@ def remove_sysvol_references(samdb, logger, dc_name):
             raise DemoteException("Failed constructing DN %s by adding base" % \
                                   (dn, samdb.get_default_basedn()))
         if dn.add_child("CN=X") == False:
-            raise DemoteException("Failed constructing DN %s by adding child %s"\
-                                  % (dn, rdn))
+            raise DemoteException("Failed constructing DN %s by adding child "
+                                  "CN=X (soon to be CN=%s)" % (dn, dc_name))
         dn.set_component(0, "CN", dc_name)
 
         try:
@@ -96,9 +97,9 @@ def remove_dns_references(samdb, logger, dnsHostName):
     dnsHostNameUpper = dnsHostName.upper()
 
     try:
-        primary_recs = samdb.dns_lookup(dnsHostName)
+        (dn, primary_recs) = samdb.dns_lookup(dnsHostName)
     except RuntimeError as (enum, estr):
-        if enum == 0x000025F2: #WERR_DNS_ERROR_NAME_DOES_NOT_EXIST
+        if enum == werror.WERR_DNS_ERROR_NAME_DOES_NOT_EXIST:
               return
         raise DemoteException("lookup of %s failed: %s" % (dnsHostName, estr))
     samdb.dns_replace(dnsHostName, [])
@@ -139,9 +140,9 @@ def remove_dns_references(samdb, logger, dnsHostName):
     for a_name in a_names_to_remove_from:
         try:
             logger.debug("checking for DNS records to remove on %s" % a_name)
-            a_recs = samdb.dns_lookup(a_name)
+            (a_rec_dn, a_recs) = samdb.dns_lookup(a_name)
         except RuntimeError as (enum, estr):
-            if enum == 0x000025F2: #WERR_DNS_ERROR_NAME_DOES_NOT_EXIST
+            if enum == werror.WERR_DNS_ERROR_NAME_DOES_NOT_EXIST:
                 return
             raise DemoteException("lookup of %s failed: %s" % (a_name, estr))
 

@@ -56,6 +56,7 @@
 #include "../lib/tsocket/tsocket.h"
 #include "rpc_client/cli_winreg_spoolss.h"
 #include "../libcli/smb/smbXcli_base.h"
+#include "rpc_server/spoolss/srv_spoolss_handle.h"
 
 /* macros stolen from s4 spoolss server */
 #define SPOOLSS_BUFFER_UNION(fn,info,level) \
@@ -79,48 +80,7 @@
 #define GLOBAL_SPOOLSS_OS_MAJOR_DEFAULT 5
 #define GLOBAL_SPOOLSS_OS_MINOR_DEFAULT 2
 #define GLOBAL_SPOOLSS_OS_BUILD_DEFAULT 3790
-
-struct notify_back_channel;
-
-/* structure to store the printer handles */
-/* and a reference to what it's pointing to */
-/* and the notify info asked about */
-/* that's the central struct */
-struct printer_handle {
-	struct printer_handle *prev, *next;
-	bool document_started;
-	bool page_started;
-	uint32_t jobid; /* jobid in printing backend */
-	int printer_type;
-	const char *servername;
-	fstring sharename;
-	uint32_t type;
-	uint32_t access_granted;
-	struct {
-		uint32_t flags;
-		uint32_t options;
-		fstring localmachine;
-		uint32_t printerlocal;
-		struct spoolss_NotifyOption *option;
-		struct policy_handle cli_hnd;
-		struct notify_back_channel *cli_chan;
-		uint32_t change;
-		/* are we in a FindNextPrinterChangeNotify() call? */
-		bool fnpcn;
-		struct messaging_context *msg_ctx;
-	} notify;
-	struct {
-		fstring machine;
-		fstring user;
-	} client;
-
-	/* devmode sent in the OpenPrinter() call */
-	struct spoolss_DeviceMode *devmode;
-
-	/* TODO cache the printer info2 structure */
-	struct spoolss_PrinterInfo2 *info2;
-
-};
+#define GLOBAL_SPOOLSS_ARCHITECTURE SPOOLSS_ARCHITECTURE_x64
 
 static struct printer_handle *printers_list;
 
@@ -2386,7 +2346,7 @@ static WERROR getprinterdata_printer_server(TALLOC_CTX *mem_ctx,
 	if (!strcasecmp_m(value, "DefaultSpoolDirectory")) {
 		*type = REG_SZ;
 
-		data->string = talloc_strdup(mem_ctx, "C:\\PRINTERS");
+		data->string = talloc_strdup(mem_ctx, SPOOLSS_DEFAULT_SERVER_PATH);
 		W_ERROR_HAVE_NO_MEMORY(data->string);
 
 		return WERR_OK;
@@ -2395,7 +2355,7 @@ static WERROR getprinterdata_printer_server(TALLOC_CTX *mem_ctx,
 	if (!strcasecmp_m(value, "Architecture")) {
 		*type = REG_SZ;
 		data->string = talloc_strdup(mem_ctx,
-			lp_parm_const_string(GLOBAL_SECTION_SNUM, "spoolss", "architecture", SPOOLSS_ARCHITECTURE_NT_X86));
+			lp_parm_const_string(GLOBAL_SECTION_SNUM, "spoolss", "architecture", GLOBAL_SPOOLSS_ARCHITECTURE));
 		W_ERROR_HAVE_NO_MEMORY(data->string);
 
 		return WERR_OK;
@@ -2500,7 +2460,7 @@ static bool spoolss_connect_to_client(struct rpc_pipe_client **pp_pipe, struct c
 		return false;
 	}
 
-	if ( smbXcli_conn_protocol((*pp_cli)->conn) != PROTOCOL_NT1 ) {
+	if ( smbXcli_conn_protocol((*pp_cli)->conn) < PROTOCOL_NT1 ) {
 		DEBUG(0,("spoolss_connect_to_client: machine %s didn't negotiate NT protocol.\n", remote_machine));
 		cli_shutdown(*pp_cli);
 		return false;
@@ -3878,6 +3838,8 @@ static WERROR construct_printer_info0(TALLOC_CTX *mem_ctx,
 	print_status_struct status;
 	WERROR result;
 	int os_major, os_minor, os_build;
+	const char *architecture;
+	uint32_t processor_architecture, processor_type;
 
 	result = create_printername(mem_ctx, servername, info2->printername, &r->printername);
 	if (!W_ERROR_IS_OK(result)) {
@@ -3940,6 +3902,19 @@ static WERROR construct_printer_info0(TALLOC_CTX *mem_ctx,
 	SCVAL(&r->version, 1, os_minor);
 	SSVAL(&r->version, 2, os_build);
 
+	architecture = lp_parm_const_string(GLOBAL_SECTION_SNUM,
+					    "spoolss",
+					    "architecture",
+					    GLOBAL_SPOOLSS_ARCHITECTURE);
+
+	if (strequal(architecture, SPOOLSS_ARCHITECTURE_x64)) {
+		processor_architecture	= PROCESSOR_ARCHITECTURE_AMD64;
+		processor_type 		= PROCESSOR_AMD_X8664;
+	} else {
+		processor_architecture	= PROCESSOR_ARCHITECTURE_INTEL;
+		processor_type 		= PROCESSOR_INTEL_PENTIUM;
+	}
+
 	r->free_build			= SPOOLSS_RELEASE_BUILD;
 	r->spooling			= 0;
 	r->max_spooling			= 0;
@@ -3948,7 +3923,7 @@ static WERROR construct_printer_info0(TALLOC_CTX *mem_ctx,
 	r->num_error_not_ready		= 0x0;		/* number of print failure */
 	r->job_error			= 0x0;
 	r->number_of_processors		= 0x1;
-	r->processor_type		= PROCESSOR_INTEL_PENTIUM; /* 586 Pentium ? */
+	r->processor_type		= processor_type;
 	r->high_part_total_bytes	= 0x0;
 
 	/* ChangeID in milliseconds*/
@@ -3959,7 +3934,7 @@ static WERROR construct_printer_info0(TALLOC_CTX *mem_ctx,
 	r->status			= nt_printq_status(status.status);
 	r->enumerate_network_printers	= 0x0;
 	r->c_setprinter			= 0x0;
-	r->processor_architecture	= PROCESSOR_ARCHITECTURE_INTEL;
+	r->processor_architecture	= processor_architecture;
 	r->processor_level		= 0x6; 		/* 6  ???*/
 	r->ref_ic			= 0;
 	r->reserved2			= 0;
@@ -5974,7 +5949,7 @@ WERROR _spoolss_StartDocPrinter(struct pipes_struct *p,
 			       Printer->devmode,
 			       &Printer->jobid);
 
-	/* An error occured in print_job_start() so return an appropriate
+	/* An error occurred in print_job_start() so return an appropriate
 	   NT error code. */
 
 	if (!W_ERROR_IS_OK(werr)) {
@@ -8703,7 +8678,7 @@ static WERROR compose_spoolss_server_path(TALLOC_CTX *mem_ctx,
 	} else {
 		long_archi = lp_parm_const_string(GLOBAL_SECTION_SNUM,
 						  "spoolss", "architecture",
-						  SPOOLSS_ARCHITECTURE_NT_X86);
+						  GLOBAL_SPOOLSS_ARCHITECTURE);
 	}
 
 	/* servername may be empty */
@@ -9543,7 +9518,7 @@ static WERROR enumprintmonitors_level_2(TALLOC_CTX *mem_ctx,
 	architecture = lp_parm_const_string(GLOBAL_SECTION_SNUM,
 					    "spoolss",
 					    "architecture",
-					    SPOOLSS_ARCHITECTURE_NT_X86);
+					    GLOBAL_SPOOLSS_ARCHITECTURE);
 
 	result = fill_monitor_2(info, &info[0].info2,
 				SPL_LOCAL_PORT,

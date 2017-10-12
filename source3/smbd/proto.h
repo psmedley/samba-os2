@@ -262,7 +262,6 @@ mode_t unix_mode(connection_struct *conn, int dosmode,
 		 const char *inherit_from_dir);
 uint32_t dos_mode_msdfs(connection_struct *conn,
 		      const struct smb_filename *smb_fname);
-int dos_attributes_to_stat_dos_flags(uint32_t dosmode);
 uint32_t dos_mode(connection_struct *conn, struct smb_filename *smb_fname);
 int file_set_dosmode(connection_struct *conn, struct smb_filename *smb_fname,
 		     uint32_t dosmode, const char *parent_dir, bool newfile);
@@ -339,19 +338,20 @@ int fsp_stat(files_struct *fsp);
 
 /* The following definitions come from smbd/filename.c  */
 
+uint32_t ucf_flags_from_smb_request(struct smb_request *req);
 uint32_t filename_create_ucf_flags(struct smb_request *req, uint32_t create_disposition);
 NTSTATUS unix_convert(TALLOC_CTX *ctx,
 		      connection_struct *conn,
 		      const char *orig_path,
 		      struct smb_filename **smb_fname,
 		      uint32_t ucf_flags);
-NTSTATUS check_name(connection_struct *conn, const char *name);
+NTSTATUS check_name(connection_struct *conn,
+			const struct smb_filename *smb_fname);
 int get_real_filename(connection_struct *conn, const char *path,
 		      const char *name, TALLOC_CTX *mem_ctx,
 		      char **found_name);
 NTSTATUS filename_convert(TALLOC_CTX *mem_ctx,
 			connection_struct *conn,
-			bool dfs_path,
 			const char *name_in,
 			uint32_t ucf_flags,
 			bool *ppath_contains_wcard,
@@ -469,8 +469,7 @@ void reply_sendend(struct smb_request *req);
 /* The following definitions come from smbd/msdfs.c  */
 
 bool is_msdfs_link(connection_struct *conn,
-		const char *path,
-		SMB_STRUCT_STAT *sbufp);
+		struct smb_filename *smb_fname);
 struct junction_map;
 NTSTATUS get_referred_path(TALLOC_CTX *ctx,
 			   const char *dfs_path,
@@ -493,7 +492,6 @@ bool remove_msdfs_link(const struct junction_map *jucn);
 struct junction_map *enum_msdfs_links(TALLOC_CTX *ctx, size_t *p_num_jn);
 NTSTATUS resolve_dfspath_wcard(TALLOC_CTX *ctx,
 				connection_struct *conn,
-				bool dfs_pathnames,
 				const char *name_in,
 				uint32_t ucf_flags,
 				bool allow_broken_path,
@@ -513,7 +511,7 @@ NTSTATUS create_conn_struct_cwd(TALLOC_CTX *ctx,
 				int snum,
 				const char *path,
 				const struct auth_session_info *session_info,
-				char **poldcwd);
+				struct smb_filename **poldcwd_fname);
 
 /* The following definitions come from smbd/negprot.c  */
 
@@ -652,10 +650,6 @@ NTSTATUS fd_close(files_struct *fsp);
 void change_file_owner_to_parent(connection_struct *conn,
 				 const char *inherit_from_dir,
 				 files_struct *fsp);
-NTSTATUS change_dir_owner_to_parent(connection_struct *conn,
-				    const char *inherit_from_dir,
-				    const char *fname,
-				    SMB_STRUCT_STAT *psbuf);
 bool is_stat_open(uint32_t access_mask);
 NTSTATUS send_break_message(struct messaging_context *msg_ctx,
 				const struct share_mode_entry *exclusive,
@@ -763,7 +757,6 @@ void reply_pipe_read_and_X(struct smb_request *req);
 
 /* The following definitions come from smbd/posix_acls.c  */
 
-void create_file_sids(const SMB_STRUCT_STAT *psbuf, struct dom_sid *powner_sid, struct dom_sid *pgroup_sid);
 uint32_t map_canon_ace_perms(int snum,
                                 enum security_ace_type *pacl_type,
                                 mode_t perms,
@@ -781,20 +774,29 @@ NTSTATUS posix_get_nt_acl(struct connection_struct *conn,
 			struct security_descriptor **ppdesc);
 NTSTATUS try_chown(files_struct *fsp, uid_t uid, gid_t gid);
 NTSTATUS set_nt_acl(files_struct *fsp, uint32_t security_info_sent, const struct security_descriptor *psd);
-int get_acl_group_bits( connection_struct *conn, const char *fname, mode_t *mode );
-int chmod_acl(connection_struct *conn, const char *name, mode_t mode);
-int inherit_access_posix_acl(connection_struct *conn, const char *inherit_from_dir,
-		       const char *name, mode_t mode);
+int get_acl_group_bits( connection_struct *conn,
+			const struct smb_filename *smb_fname,
+			mode_t *mode);
+int chmod_acl(connection_struct *conn,
+			const struct smb_filename *smb_fname,
+			mode_t mode);
+int inherit_access_posix_acl(connection_struct *conn,
+			const char *inherit_from_dir,
+			const struct smb_filename *smb_fname,
+			mode_t mode);
 int fchmod_acl(files_struct *fsp, mode_t mode);
-bool set_unix_posix_default_acl(connection_struct *conn, const char *fname,
-				const SMB_STRUCT_STAT *psbuf,
+bool set_unix_posix_default_acl(connection_struct *conn,
+				const struct smb_filename *smb_fname,
 				uint16_t num_def_acls, const char *pdata);
-bool set_unix_posix_acl(connection_struct *conn, files_struct *fsp, const char *fname, uint16_t num_acls, const char *pdata);
+bool set_unix_posix_acl(connection_struct *conn, files_struct *fsp,
+				const struct smb_filename *smb_fname,
+				uint16_t num_acls,
+				const char *pdata);
 NTSTATUS get_nt_acl_no_snum( TALLOC_CTX *ctx, const char *fname,
 			     uint32_t security_info_wanted,
 			     struct security_descriptor **sd);
 int posix_sys_acl_blob_get_file(vfs_handle_struct *handle,
-				const char *path_p,
+				const struct smb_filename *smb_fname,
 				TALLOC_CTX *mem_ctx,
 				char **blob_description,
 				DATA_BLOB *blob);
@@ -1137,8 +1139,10 @@ uint64_t get_FileIndex(connection_struct *conn, const SMB_STRUCT_STAT *psbuf);
 void aapl_force_zero_file_id(struct smbd_server_connection *sconn);
 bool samba_private_attr_name(const char *unix_ea_name);
 NTSTATUS get_ea_value(TALLOC_CTX *mem_ctx, connection_struct *conn,
-		      files_struct *fsp, const char *fname,
-		      const char *ea_name, struct ea_struct *pea);
+			files_struct *fsp,
+			const struct smb_filename *smb_fname,
+			const char *ea_name,
+			struct ea_struct *pea);
 NTSTATUS get_ea_names_from_file(TALLOC_CTX *mem_ctx,
 			connection_struct *conn,
 			files_struct *fsp,
@@ -1227,13 +1231,14 @@ int vfs_fill_sparse(files_struct *fsp, off_t len);
 off_t vfs_transfer_file(files_struct *in, files_struct *out, off_t n);
 const char *vfs_readdirname(connection_struct *conn, void *p,
 			    SMB_STRUCT_STAT *sbuf, char **talloced);
-int vfs_ChDir(connection_struct *conn, const char *path);
-char *vfs_GetWd(TALLOC_CTX *ctx, connection_struct *conn);
+int vfs_ChDir(connection_struct *conn,
+			const struct smb_filename *smb_fname);
+struct smb_filename *vfs_GetWd(TALLOC_CTX *ctx, connection_struct *conn);
 NTSTATUS check_reduced_name(connection_struct *conn,
-			const char *cwd_name,
-			const char *fname);
+			const struct smb_filename *cwd_fname,
+			const struct smb_filename *smb_fname);
 NTSTATUS check_reduced_name_with_privilege(connection_struct *conn,
-			const char *fname,
+			const struct smb_filename *smb_fname,
 			struct smb_request *smbreq);
 int vfs_stat_smb_basename(struct connection_struct *conn,
 			const struct smb_filename *smb_fname_in,

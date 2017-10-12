@@ -19,6 +19,7 @@
 
 #include "includes.h"
 #include "system/filesys.h"
+#include "lib/util/server_id.h"
 #include "serverid.h"
 #include "util_tdb.h"
 #include "dbwrap/dbwrap.h"
@@ -27,6 +28,7 @@
 #include "lib/param/param.h"
 #include "ctdbd_conn.h"
 #include "messages.h"
+#include "lib/messages_ctdbd.h"
 #include "lib/messages_dgm.h"
 
 struct serverid_key {

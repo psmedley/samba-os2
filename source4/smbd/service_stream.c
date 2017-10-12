@@ -23,15 +23,12 @@
 #include "includes.h"
 #include <tevent.h>
 #include "process_model.h"
+#include "lib/util/server_id.h"
 #include "lib/messaging/irpc.h"
 #include "cluster/cluster.h"
 #include "param/param.h"
 #include "../lib/tsocket/tsocket.h"
 #include "lib/util/util_net.h"
-
-/* the range of ports to try for dcerpc over tcp endpoints */
-#define SERVER_TCP_LOW_PORT  1024
-#define SERVER_TCP_HIGH_PORT 1300
 
 /* size of listen() backlog in smbd */
 #define SERVER_LISTEN_BACKLOG 10
@@ -57,6 +54,8 @@ void stream_terminate_connection(struct stream_connection *srv_conn, const char 
 {
 	struct tevent_context *event_ctx = srv_conn->event.ctx;
 	const struct model_ops *model_ops = srv_conn->model_ops;
+	struct loadparm_context *lp_ctx = srv_conn->lp_ctx;
+	TALLOC_CTX *frame = NULL;
 
 	if (!reason) reason = "unknown reason";
 
@@ -79,11 +78,20 @@ void stream_terminate_connection(struct stream_connection *srv_conn, const char 
 		return;
 	}
 
+	frame = talloc_stackframe();
+
+	reason = talloc_strdup(frame, reason);
+	if (reason == NULL) {
+		reason = "OOM - unknown reason";
+	}
+
 	talloc_free(srv_conn->event.fde);
 	srv_conn->event.fde = NULL;
 	imessaging_cleanup(srv_conn->msg_ctx);
-	model_ops->terminate(event_ctx, srv_conn->lp_ctx, reason);
-	talloc_free(srv_conn);
+	TALLOC_FREE(srv_conn);
+	model_ops->terminate(event_ctx, lp_ctx, reason);
+
+	TALLOC_FREE(frame);
 }
 
 /**
@@ -331,7 +339,9 @@ NTSTATUS stream_setup_socket(TALLOC_CTX *mem_ctx,
 	if (!port) {
 		status = socket_listen(stream_socket->sock, socket_address, SERVER_LISTEN_BACKLOG, 0);
 	} else if (*port == 0) {
-		for (i=SERVER_TCP_LOW_PORT;i<= SERVER_TCP_HIGH_PORT;i++) {
+		for (i = lpcfg_rpc_low_port(lp_ctx);
+		     i <= lpcfg_rpc_high_port(lp_ctx);
+		     i++) {
 			socket_address->port = i;
 			status = socket_listen(stream_socket->sock, socket_address, 
 					       SERVER_LISTEN_BACKLOG, 0);

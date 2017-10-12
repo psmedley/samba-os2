@@ -278,9 +278,45 @@ NTSTATUS get_ea_dos_attribute(connection_struct *conn,
 	/* Don't reset pattr to zero as we may already have filename-based attributes we
 	   need to preserve. */
 
-	sizeret = SMB_VFS_GETXATTR(conn, smb_fname->base_name,
+	sizeret = SMB_VFS_GETXATTR(conn, smb_fname,
 				   SAMBA_XATTR_DOS_ATTRIB, attrstr,
 				   sizeof(attrstr));
+	if (sizeret == -1 && errno == EACCES) {
+		int saved_errno = 0;
+
+		/*
+		 * According to MS-FSA 2.1.5.1.2.1 "Algorithm to Check Access to
+		 * an Existing File" FILE_LIST_DIRECTORY on a directory implies
+		 * FILE_READ_ATTRIBUTES for directory entries. Being able to
+		 * stat() a file implies FILE_LIST_DIRECTORY for the directory
+		 * containing the file.
+		 */
+
+		if (!VALID_STAT(smb_fname->st)) {
+			/*
+			 * Safety net: dos_mode() already checks this, but as we
+			 * become root based on this, add an additional layer of
+			 * defense.
+			 */
+			DBG_ERR("Rejecting root override, invalid stat [%s]\n",
+				smb_fname_str_dbg(smb_fname));
+			return NT_STATUS_ACCESS_DENIED;
+		}
+
+		become_root();
+		sizeret = SMB_VFS_GETXATTR(conn, smb_fname,
+					   SAMBA_XATTR_DOS_ATTRIB,
+					   attrstr,
+					   sizeof(attrstr));
+		if (sizeret == -1) {
+			saved_errno = errno;
+		}
+		unbecome_root();
+
+		if (saved_errno != 0) {
+			errno = saved_errno;
+		}
+	}
 	if (sizeret == -1) {
 		DBG_INFO("Cannot get attribute "
 			 "from EA on file %s: Error = %s\n",
@@ -420,7 +456,7 @@ NTSTATUS set_ea_dos_attribute(connection_struct *conn,
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
-	if (SMB_VFS_SETXATTR(conn, smb_fname->base_name,
+	if (SMB_VFS_SETXATTR(conn, smb_fname,
 			     SAMBA_XATTR_DOS_ATTRIB, blob.data, blob.length,
 			     0) == -1) {
 		NTSTATUS status = NT_STATUS_OK;
@@ -622,7 +658,12 @@ uint32_t dos_mode(connection_struct *conn, struct smb_filename *smb_fname)
 	/* Get the DOS attributes via the VFS if we can */
 	status = SMB_VFS_GET_DOS_ATTRIBUTES(conn, smb_fname, &result);
 	if (!NT_STATUS_IS_OK(status)) {
-		result |= dos_mode_from_sbuf(conn, smb_fname);
+		/*
+		 * Only fall back to using UNIX modes if we get NOT_IMPLEMENTED.
+		 */
+		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
+			result |= dos_mode_from_sbuf(conn, smb_fname);
+		}
 	}
 
 	if (conn->fs_capabilities & FILE_FILE_COMPRESSION) {
@@ -679,8 +720,8 @@ int file_set_dosmode(connection_struct *conn, struct smb_filename *smb_fname,
 
 	unixmode = smb_fname->st.st_ex_mode;
 
-	get_acl_group_bits(conn, smb_fname->base_name,
-			   &smb_fname->st.st_ex_mode);
+	get_acl_group_bits(conn, smb_fname,
+			&smb_fname->st.st_ex_mode);
 
 	if (S_ISDIR(smb_fname->st.st_ex_mode))
 		dosmode |= FILE_ATTRIBUTE_DIRECTORY;

@@ -1,9 +1,10 @@
 libwbclient.so.0 libwbclient0 #MINVER#
+ WBCLIENT_0.9@WBCLIENT_0.9 2:4.0.3+dfsg1
  WBCLIENT_0.10@WBCLIENT_0.10 2:4.0.3+dfsg1
  WBCLIENT_0.11@WBCLIENT_0.11 2:4.0.3+dfsg1
  WBCLIENT_0.12@WBCLIENT_0.12 2:4.2.1+dfsg
  WBCLIENT_0.13@WBCLIENT_0.13 2:4.5.0+dfsg
- WBCLIENT_0.9@WBCLIENT_0.9 2:4.0.3+dfsg1
+ WBCLIENT_0.14@WBCLIENT_0.14 2:4.7.0+dfsg
  wbcAddNamedBlob@WBCLIENT_0.9 2:4.0.3+dfsg1
  wbcAllocateGid@WBCLIENT_0.9 2:4.0.3+dfsg1
  wbcAllocateMemory@WBCLIENT_0.9 2:4.0.3+dfsg1

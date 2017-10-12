@@ -108,8 +108,6 @@ struct cache_entry {
 
 void (*smb_panic_fn)(const char *const why) = smb_panic;
 
-#define WINBINDD_MAX_CACHE_SIZE (50*1024*1024)
-
 static struct winbind_cache *wcache;
 
 static char *wcache_path(void)
@@ -137,26 +135,27 @@ static struct winbind_cache *get_cache(struct winbindd_domain *domain)
 	}
 
 	if (strequal(domain->name, get_global_sam_name()) &&
-	    sid_check_is_our_sam(&domain->sid)) {
+	    sid_check_is_our_sam(&domain->sid))
+	{
 		domain->backend = &sam_passdb_methods;
 	}
 
-	if ( !domain->initialized ) {
+	if (!domain->initialized) {
 		/* We do not need a connection to an RW DC for cache operation */
 		init_dc_connection(domain, false);
 	}
 
-	/* 
+	/*
 	   OK.  Listen up because I'm only going to say this once.
 	   We have the following scenarios to consider
 	   (a) trusted AD domains on a Samba DC,
 	   (b) trusted AD domains and we are joined to a non-kerberos domain
 	   (c) trusted AD domains and we are joined to a kerberos (AD) domain
 
-	   For (a) we can always contact the trusted domain using krb5 
+	   For (a) we can always contact the trusted domain using krb5
 	   since we have the domain trust account password
 
-	   For (b) we can only use RPC since we have no way of 
+	   For (b) we can only use RPC since we have no way of
 	   getting a krb5 ticket in our own domain
 
 	   For (c) we can always use krb5 since we have a kerberos trust
@@ -164,32 +163,36 @@ static struct winbind_cache *get_cache(struct winbindd_domain *domain)
 	   --jerry
 	 */
 
-	if (!domain->backend) {
 #ifdef HAVE_ADS
+	if (domain->backend == NULL) {
 		struct winbindd_domain *our_domain = domain;
 
-		/* find our domain first so we can figure out if we 
+		/* find our domain first so we can figure out if we
 		   are joined to a kerberized domain */
 
-		if ( !domain->primary )
+		if (!domain->primary) {
 			our_domain = find_our_domain();
+		}
 
 		if ((our_domain->active_directory || IS_DC)
 		    && domain->active_directory
-		    && !lp_winbind_rpc_only()) {
-			DEBUG(5,("get_cache: Setting ADS methods for domain %s\n", domain->name));
+		    && !lp_winbind_rpc_only())
+		{
+			DBG_INFO("Setting ADS methods for domain %s\n",
+				 domain->name);
 			domain->backend = &reconnect_ads_methods;
-		} else {
-#endif	/* HAVE_ADS */
-			DEBUG(5,("get_cache: Setting MS-RPC methods for domain %s\n", domain->name));
-			domain->backend = &reconnect_methods;
-#ifdef HAVE_ADS
 		}
+	}
 #endif	/* HAVE_ADS */
+
+	if (domain->backend == NULL) {
+		DBG_INFO("Setting MS-RPC methods for domain %s\n", domain->name);
+		domain->backend = &reconnect_methods;
 	}
 
-	if (ret)
+	if (ret != NULL) {
 		return ret;
+	}
 
 	ret = SMB_XMALLOC_P(struct winbind_cache);
 	ZERO_STRUCTP(ret);
@@ -1115,13 +1118,9 @@ NTSTATUS resolve_username_to_alias( TALLOC_CTX *mem_ctx,
 	if (!cache->tdb)
 		goto do_query;
 
-	upper_name = talloc_strdup(mem_ctx, name);
+	upper_name = talloc_strdup_upper(mem_ctx, name);
 	if (upper_name == NULL) {
 		return NT_STATUS_NO_MEMORY;
-	}
-	if (!strupper_m(upper_name)) {
-		talloc_free(upper_name);
-		return NT_STATUS_INVALID_PARAMETER;
 	}
 
 	centry = wcache_fetch(cache, domain, "NSS/NA/%s", upper_name);
@@ -4723,47 +4722,6 @@ struct winbindd_tdc_domain * wcache_tdc_fetch_domain( TALLOC_CTX *ctx, const cha
 
 	return d;	
 }
-
-/*********************************************************************
- ********************************************************************/
-
-struct winbindd_tdc_domain*
-	wcache_tdc_fetch_domainbysid(TALLOC_CTX *ctx,
-				     const struct dom_sid *sid)
-{
-	struct winbindd_tdc_domain *dom_list = NULL;
-	size_t num_domains = 0;
-	int i;
-	struct winbindd_tdc_domain *d = NULL;
-
-	DEBUG(10,("wcache_tdc_fetch_domainbysid: Searching for domain %s\n",
-		  sid_string_dbg(sid)));
-
-	if (!init_wcache()) {
-		return NULL;
-	}
-
-	/* fetch the list */
-
-	wcache_tdc_fetch_list(&dom_list, &num_domains);
-
-	for (i = 0; i<num_domains; i++) {
-		if (dom_sid_equal(sid, &(dom_list[i].sid))) {
-			DEBUG(10, ("wcache_tdc_fetch_domainbysid: "
-				   "Found domain %s for SID %s\n",
-				   dom_list[i].domain_name,
-				   sid_string_dbg(sid)));
-
-			d = wcache_tdc_dup_domain(ctx, &dom_list[i]);
-			break;
-		}
-	}
-
-        TALLOC_FREE(dom_list);
-
-	return d;
-}
-
 
 /*********************************************************************
  ********************************************************************/

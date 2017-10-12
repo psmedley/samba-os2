@@ -18,11 +18,13 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
-#include "../lib/util/dlinklist.h"
+#include "replace.h"
 #include "system/iconv.h"
 #include "system/filesys.h"
-#include "charset_proto.h"
+#include "lib/util/byteorder.h"
+#include "lib/util/dlinklist.h"
+#include "lib/util/charset/charset.h"
+#include "lib/util/charset/charset_proto.h"
 
 #ifdef strcasecmp
 #undef strcasecmp
@@ -740,12 +742,12 @@ static size_t utf8_push(void *cd, const char **inbuf, size_t *inbytesleft,
 		}
 
 		if ((uc[1] & 0xfc) == 0xdc) {
-			/* its the second part of a 4 byte sequence. Illegal */
+			errno = EILSEQ;
+#ifndef HAVE_ICONV_ERRNO_ILLEGAL_MULTIBYTE
 			if (in_left < 4) {
 				errno = EINVAL;
-			} else {
-				errno = EILSEQ;
 			}
+#endif
 			goto error;
 		}
 

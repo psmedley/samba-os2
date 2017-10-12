@@ -148,8 +148,10 @@ static NTSTATUS nfs4_fget_nfs4_acl(vfs_handle_struct *handle, TALLOC_CTX *mem_ct
 }
 
 /* Fetch the NFSv4 ACL from the xattr, and convert into Samba's internal NFSv4 format */
-static NTSTATUS nfs4_get_nfs4_acl(vfs_handle_struct *handle, TALLOC_CTX *mem_ctx,
-				  const char *path, struct SMB4ACL_T **ppacl)
+static NTSTATUS nfs4_get_nfs4_acl(vfs_handle_struct *handle,
+				TALLOC_CTX *mem_ctx,
+				const struct smb_filename *smb_fname,
+				struct SMB4ACL_T **ppacl)
 {
 	NTSTATUS status;
 	DATA_BLOB blob = data_blob_null;
@@ -164,7 +166,8 @@ static NTSTATUS nfs4_get_nfs4_acl(vfs_handle_struct *handle, TALLOC_CTX *mem_ctx
 			errno = ENOMEM;
 			return NT_STATUS_NO_MEMORY;
 		}
-		length = SMB_VFS_NEXT_GETXATTR(handle, path, NFS4ACL_XATTR_NAME, blob.data, blob.length);
+		length = SMB_VFS_NEXT_GETXATTR(handle, smb_fname,
+				NFS4ACL_XATTR_NAME, blob.data, blob.length);
 		blob.length = length;
 	} while (length == -1 && errno == ERANGE);
 	if (length == -1) {
@@ -251,7 +254,7 @@ static bool nfs4acl_smb4acl2nfs4acl(TALLOC_CTX *mem_ctx,
 }
 
 static bool nfs4acl_xattr_set_smb4acl(vfs_handle_struct *handle,
-				      const char *path,
+				      const struct smb_filename *smb_fname,
 				      struct SMB4ACL_T *smbacl)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -278,7 +281,7 @@ static bool nfs4acl_xattr_set_smb4acl(vfs_handle_struct *handle,
 		errno = EINVAL;
 		return false;
 	}
-	ret = SMB_VFS_NEXT_SETXATTR(handle, path, NFS4ACL_XATTR_NAME,
+	ret = SMB_VFS_NEXT_SETXATTR(handle, smb_fname, NFS4ACL_XATTR_NAME,
 				    blob.data, blob.length, 0);
 	if (ret != 0) {
 		DEBUG(0, ("can't store acl in xattr: %s\n", strerror(errno)));
@@ -402,7 +405,7 @@ static struct SMB4ACL_T *nfs4acls_defaultacl(TALLOC_CTX *mem_ctx)
  * Todo: Really use mem_ctx after fixing interface of nfs4_acls
  */
 static struct SMB4ACL_T *nfs4acls_inheritacl(vfs_handle_struct *handle,
-	const char *path,
+	const struct smb_filename *smb_fname_in,
 	TALLOC_CTX *mem_ctx)
 {
 	char *parent_dir = NULL;
@@ -412,12 +415,14 @@ static struct SMB4ACL_T *nfs4acls_inheritacl(vfs_handle_struct *handle,
 	SMB_ACE4PROP_T ace;
 	bool isdir;
 	struct smb_filename *smb_fname = NULL;
+	struct smb_filename *smb_fname_parent = NULL;
 	NTSTATUS status;
 	int ret;
 	TALLOC_CTX *frame = talloc_stackframe();
 
-	DEBUG(10, ("nfs4acls_inheritacl invoked for %s\n", path));
-	smb_fname = synthetic_smb_fname(frame, path, NULL, NULL, 0);
+	DEBUG(10, ("nfs4acls_inheritacl invoked for %s\n",
+			smb_fname_in->base_name));
+	smb_fname = cp_smb_filename_nostream(frame, smb_fname_in);
 	if (smb_fname == NULL) {
 		TALLOC_FREE(frame);
 		errno = ENOMEM;
@@ -436,7 +441,7 @@ static struct SMB4ACL_T *nfs4acls_inheritacl(vfs_handle_struct *handle,
 	isdir = S_ISDIR(smb_fname->st.st_ex_mode);
 
 	if (!parent_dirname(talloc_tos(),
-			    path,
+			    smb_fname->base_name,
 			    &parent_dir,
 			    NULL)) {
 		TALLOC_FREE(frame);
@@ -444,11 +449,24 @@ static struct SMB4ACL_T *nfs4acls_inheritacl(vfs_handle_struct *handle,
 		return NULL;
 	}
 
-	status = nfs4_get_nfs4_acl(handle, frame, parent_dir, &pparentacl);
+	smb_fname_parent = synthetic_smb_fname(talloc_tos(),
+				parent_dir,
+				NULL,
+				NULL,
+				0);
+	if (smb_fname_parent == NULL) {
+		TALLOC_FREE(frame);
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	status = nfs4_get_nfs4_acl(handle, frame, smb_fname_parent,
+					&pparentacl);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_FOUND)
 	    && strncmp(parent_dir, ".", 2) != 0) {
-		pparentacl = nfs4acls_inheritacl(handle, parent_dir,
-						 frame);
+		pparentacl = nfs4acls_inheritacl(handle,
+						smb_fname_parent,
+						frame);
 	}
 	else if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_FOUND)) {
 		pparentacl = nfs4acls_defaultacl(frame);
@@ -509,7 +527,7 @@ static struct SMB4ACL_T *nfs4acls_inheritacl(vfs_handle_struct *handle,
 
 	/* store the returned ACL to get it directly in the
 	   future and avoid dynamic inheritance behavior. */
-	nfs4acl_xattr_set_smb4acl(handle, path, pchildacl);
+	nfs4acl_xattr_set_smb4acl(handle, smb_fname, pchildacl);
 
 	TALLOC_FREE(frame);
 	return pchildacl;
@@ -527,7 +545,7 @@ static NTSTATUS nfs4acl_xattr_fget_nt_acl(struct vfs_handle_struct *handle,
 
 	status = nfs4_fget_nfs4_acl(handle, frame, fsp, &pacl);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_FOUND)) {
-		pacl = nfs4acls_inheritacl(handle, fsp->fsp_name->base_name,
+		pacl = nfs4acls_inheritacl(handle, fsp->fsp_name,
 					   frame);
 	}
 	else if (!NT_STATUS_IS_OK(status)) {
@@ -549,12 +567,11 @@ static NTSTATUS nfs4acl_xattr_get_nt_acl(struct vfs_handle_struct *handle,
 {
 	struct SMB4ACL_T *pacl;
 	NTSTATUS status;
-	const char *name = smb_fname->base_name;
 	TALLOC_CTX *frame = talloc_stackframe();
 
-	status = nfs4_get_nfs4_acl(handle, frame, name, &pacl);
+	status = nfs4_get_nfs4_acl(handle, frame, smb_fname, &pacl);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_FOUND)) {
-		pacl = nfs4acls_inheritacl(handle, name, frame);
+		pacl = nfs4acls_inheritacl(handle, smb_fname, frame);
 	}
 	else if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(frame);
@@ -585,9 +602,9 @@ static NTSTATUS nfs4acl_xattr_fset_nt_acl(vfs_handle_struct *handle,
 */
 
 static SMB_ACL_T nfs4acl_xattr_fail__sys_acl_get_file(vfs_handle_struct *handle,
-						      const char *path_p,
-						      SMB_ACL_TYPE_T type,
-						      TALLOC_CTX *mem_ctx)
+					const struct smb_filename *smb_fname,
+					SMB_ACL_TYPE_T type,
+					TALLOC_CTX *mem_ctx)
 {
 	return (SMB_ACL_T)NULL;
 }
@@ -600,7 +617,7 @@ static SMB_ACL_T nfs4acl_xattr_fail__sys_acl_get_fd(vfs_handle_struct *handle,
 }
 
 static int nfs4acl_xattr_fail__sys_acl_set_file(vfs_handle_struct *handle,
-					 const char *name,
+					 const struct smb_filename *smb_fname,
 					 SMB_ACL_TYPE_T type,
 					 SMB_ACL_T theacl)
 {
@@ -615,12 +632,16 @@ static int nfs4acl_xattr_fail__sys_acl_set_fd(vfs_handle_struct *handle,
 }
 
 static int nfs4acl_xattr_fail__sys_acl_delete_def_file(vfs_handle_struct *handle,
-						const char *path)
+			const struct smb_filename *smb_fname)
 {
 	return -1;
 }
 
-static int nfs4acl_xattr_fail__sys_acl_blob_get_file(vfs_handle_struct *handle, const char *path_p, TALLOC_CTX *mem_ctx, char **blob_description, DATA_BLOB *blob)
+static int nfs4acl_xattr_fail__sys_acl_blob_get_file(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			TALLOC_CTX *mem_ctx,
+			char **blob_description,
+			DATA_BLOB *blob)
 {
 	return -1;
 }
@@ -645,8 +666,8 @@ static struct vfs_fn_pointers nfs4acl_xattr_fns = {
 	.fset_nt_acl_fn = nfs4acl_xattr_fset_nt_acl,
 };
 
-NTSTATUS vfs_nfs4acl_xattr_init(void);
-NTSTATUS vfs_nfs4acl_xattr_init(void)
+NTSTATUS vfs_nfs4acl_xattr_init(TALLOC_CTX *);
+NTSTATUS vfs_nfs4acl_xattr_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, "nfs4acl_xattr",
 				&nfs4acl_xattr_fns);

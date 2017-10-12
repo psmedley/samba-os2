@@ -27,7 +27,7 @@
 #include "lib/util/debug.h"
 
 #include "protocol/protocol_api.h"
-#include "client/client.h"
+#include "client/client_event.h"
 #include "common/logging.h"
 
 struct tool_context {
@@ -251,7 +251,8 @@ static int command_status(TALLOC_CTX *mem_ctx, struct tool_context *tctx,
 		talloc_free(script_list);
 	}
 
-	return event_status;
+	ret = (event_status < 0) ? -event_status : event_status;
+	return ret;
 }
 
 static int command_script_list(TALLOC_CTX *mem_ctx, struct tool_context *tctx,

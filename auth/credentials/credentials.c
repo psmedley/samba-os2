@@ -25,6 +25,7 @@
 #include "librpc/gen_ndr/samr.h" /* for struct samrPassword */
 #include "auth/credentials/credentials.h"
 #include "auth/credentials/credentials_internal.h"
+#include "auth/gensec/gensec.h"
 #include "libcli/auth/libcli_auth.h"
 #include "tevent.h"
 #include "param/param.h"
@@ -193,7 +194,7 @@ _PUBLIC_ const char *cli_credentials_get_bind_dn(struct cli_credentials *cred)
  * @retval The username set on this context.
  * @note Return value will never be NULL except by programmer error.
  */
-_PUBLIC_ const char *cli_credentials_get_principal_and_obtained(struct cli_credentials *cred, TALLOC_CTX *mem_ctx, enum credentials_obtained *obtained)
+_PUBLIC_ char *cli_credentials_get_principal_and_obtained(struct cli_credentials *cred, TALLOC_CTX *mem_ctx, enum credentials_obtained *obtained)
 {
 	if (cred->machine_account_pending) {
 		cli_credentials_set_machine_account(cred,
@@ -256,7 +257,7 @@ _PUBLIC_ const char *cli_credentials_get_principal_and_obtained(struct cli_crede
  * @retval The username set on this context.
  * @note Return value will never be NULL except by programmer error.
  */
-_PUBLIC_ const char *cli_credentials_get_principal(struct cli_credentials *cred, TALLOC_CTX *mem_ctx)
+_PUBLIC_ char *cli_credentials_get_principal(struct cli_credentials *cred, TALLOC_CTX *mem_ctx)
 {
 	enum credentials_obtained obtained;
 	return cli_credentials_get_principal_and_obtained(cred, mem_ctx, &obtained);
@@ -300,6 +301,8 @@ _PUBLIC_ bool cli_credentials_set_principal_callback(struct cli_credentials *cre
 
 _PUBLIC_ bool cli_credentials_authentication_requested(struct cli_credentials *cred) 
 {
+	uint32_t gensec_features = 0;
+
 	if (cred->bind_dn) {
 		return true;
 	}
@@ -324,6 +327,19 @@ _PUBLIC_ bool cli_credentials_authentication_requested(struct cli_credentials *c
 	}
 
 	if (cli_credentials_get_kerberos_state(cred) == CRED_MUST_USE_KERBEROS) {
+		return true;
+	}
+
+	gensec_features = cli_credentials_get_gensec_features(cred);
+	if (gensec_features & GENSEC_FEATURE_NTLM_CCACHE) {
+		return true;
+	}
+
+	if (gensec_features & GENSEC_FEATURE_SIGN) {
+		return true;
+	}
+
+	if (gensec_features & GENSEC_FEATURE_SEAL) {
 		return true;
 	}
 
@@ -848,12 +864,12 @@ _PUBLIC_ void cli_credentials_parse_string(struct cli_credentials *credentials, 
  * @param mem_ctx The memory context to place the result on
  */
 
-_PUBLIC_ const char *cli_credentials_get_unparsed_name(struct cli_credentials *credentials, TALLOC_CTX *mem_ctx)
+_PUBLIC_ char *cli_credentials_get_unparsed_name(struct cli_credentials *credentials, TALLOC_CTX *mem_ctx)
 {
 	const char *bind_dn = cli_credentials_get_bind_dn(credentials);
-	const char *domain;
-	const char *username;
-	const char *name;
+	const char *domain = NULL;
+	const char *username = NULL;
+	char *name = NULL;
 
 	if (bind_dn) {
 		name = talloc_strdup(mem_ctx, bind_dn);
@@ -1282,4 +1298,44 @@ _PUBLIC_ bool cli_credentials_parse_password_fd(struct cli_credentials *credenti
 	return true;
 }
 
+
+/**
+ * Encrypt a data blob using the session key and the negotiated encryption
+ * algorithm
+ *
+ * @param state Credential state, contains the session key and algorithm
+ * @param data Data blob containing the data to be encrypted.
+ *
+ */
+_PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
+	struct netlogon_creds_CredentialState *state,
+	DATA_BLOB data)
+{
+	if (data.data == NULL || data.length == 0) {
+		DBG_ERR("Nothing to encrypt "
+			"data.data == NULL or data.length == 0");
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+	/*
+	 * Don't crypt an all-zero password it will give away the
+	 * NETLOGON pipe session key .
+	 */
+	if (all_zero(data.data, data.length)) {
+		DBG_ERR("Supplied data all zeros, could leak session key");
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+	if (state->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
+		netlogon_creds_aes_encrypt(state,
+					   data.data,
+					   data.length);
+	} else if (state->negotiate_flags & NETLOGON_NEG_ARCFOUR) {
+		netlogon_creds_arcfour_crypt(state,
+					     data.data,
+					     data.length);
+	} else {
+		DBG_ERR("Unsupported encryption option negotiated");
+		return NT_STATUS_NOT_SUPPORTED;
+	}
+	return NT_STATUS_OK;
+}
 

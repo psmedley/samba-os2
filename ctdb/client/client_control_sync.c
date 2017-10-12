@@ -33,6 +33,7 @@
 #include "protocol/protocol_api.h"
 #include "client/client_private.h"
 #include "client/client.h"
+#include "client/client_sync.h"
 
 int ctdb_ctrl_process_exists(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			     struct ctdb_client_context *client,
@@ -414,14 +415,13 @@ int ctdb_ctrl_statistics_reset(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 int ctdb_ctrl_db_attach(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 			struct ctdb_client_context *client,
 			int destnode, struct timeval timeout,
-			const char *db_name, uint32_t tdb_flags,
-			uint32_t *db_id)
+			const char *db_name, uint32_t *db_id)
 {
 	struct ctdb_req_control request;
 	struct ctdb_reply_control *reply;
 	int ret;
 
-	ctdb_req_control_db_attach(&request, db_name, tdb_flags);
+	ctdb_req_control_db_attach(&request, db_name);
 	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
 				  &request, &reply);
 	if (ret != 0) {
@@ -1120,14 +1120,13 @@ int ctdb_ctrl_db_attach_persistent(TALLOC_CTX *mem_ctx,
 				   struct tevent_context *ev,
 				   struct ctdb_client_context *client,
 				   int destnode, struct timeval timeout,
-				   const char *db_name, int tdb_flags,
-				   uint32_t *db_id)
+				   const char *db_name, uint32_t *db_id)
 {
 	struct ctdb_req_control request;
 	struct ctdb_reply_control *reply;
 	int ret;
 
-	ctdb_req_control_db_attach_persistent(&request, db_name, tdb_flags);
+	ctdb_req_control_db_attach_persistent(&request, db_name);
 	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
 				  &request, &reply);
 	if (ret != 0) {
@@ -2657,7 +2656,7 @@ int ctdb_ctrl_db_push_start(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 				  &request, &reply);
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
-		      ("Control DB_PUSH failed to node %u, ret=%d\n",
+		      ("Control DB_PUSH_START failed to node %u, ret=%d\n",
 		       destnode, ret));
 		return ret;
 	}
@@ -2665,7 +2664,7 @@ int ctdb_ctrl_db_push_start(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	ret = ctdb_reply_control_db_push_start(reply);
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
-		      ("Control DB_PUSH failed, ret=%d\n", ret));
+		      ("Control DB_PUSH_START failed, ret=%d\n", ret));
 		return ret;
 	}
 
@@ -2686,7 +2685,7 @@ int ctdb_ctrl_db_push_confirm(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 				  &request, &reply);
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
-		      ("Control DB_PUSH failed to node %u, ret=%d\n",
+		      ("Control DB_PUSH_CONFIRM failed to node %u, ret=%d\n",
 		       destnode, ret));
 		return ret;
 	}
@@ -2694,7 +2693,66 @@ int ctdb_ctrl_db_push_confirm(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	ret = ctdb_reply_control_db_push_confirm(reply, num_records);
 	if (ret != 0) {
 		DEBUG(DEBUG_ERR,
-		      ("Control DB_PUSH failed, ret=%d\n", ret));
+		      ("Control DB_PUSH_CONFIRM failed, ret=%d\n", ret));
+		return ret;
+	}
+
+	return 0;
+}
+
+int ctdb_ctrl_db_open_flags(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+			    struct ctdb_client_context *client,
+			    int destnode, struct timeval timeout,
+			    uint32_t db_id, int *tdb_flags)
+{
+	struct ctdb_req_control request;
+	struct ctdb_reply_control *reply;
+	int ret;
+
+	ctdb_req_control_db_open_flags(&request, db_id);
+	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
+				  &request, &reply);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("Control DB_OPEN_FLAGS failed to node %u, ret=%d\n",
+		       destnode, ret));
+		return ret;
+	}
+
+	ret = ctdb_reply_control_db_open_flags(reply, tdb_flags);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("Control DB_OPEN_FLAGS failed, ret=%d\n", ret));
+		return ret;
+	}
+
+	return 0;
+}
+
+int ctdb_ctrl_db_attach_replicated(TALLOC_CTX *mem_ctx,
+				   struct tevent_context *ev,
+				   struct ctdb_client_context *client,
+				   int destnode, struct timeval timeout,
+				   const char *db_name, uint32_t *db_id)
+{
+	struct ctdb_req_control request;
+	struct ctdb_reply_control *reply;
+	int ret;
+
+	ctdb_req_control_db_attach_replicated(&request, db_name);
+	ret = ctdb_client_control(mem_ctx, ev, client, destnode, timeout,
+				  &request, &reply);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("Control DB_ATTACH_REPLICATED failed to node %u,"
+		       " ret=%d\n", destnode, ret));
+		return ret;
+	}
+
+	ret = ctdb_reply_control_db_attach_replicated(reply, db_id);
+	if (ret != 0) {
+		DEBUG(DEBUG_ERR,
+		      ("Control DB_ATTACH_REPLICATED failed, ret=%d\n", ret));
 		return ret;
 	}
 

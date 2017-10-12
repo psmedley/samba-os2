@@ -30,8 +30,10 @@
 #include "nsswitch/libwbclient/wbclient.h"
 #include "auth/auth_sam_reply.h"
 #include "libcli/security/security.h"
+#include "dsdb/samdb/samdb.h"
+#include "auth/auth_sam.h"
 
-_PUBLIC_ NTSTATUS auth4_winbind_init(void);
+_PUBLIC_ NTSTATUS auth4_winbind_init(TALLOC_CTX *);
 
 static NTSTATUS winbind_want_check(struct auth_method_context *ctx,
 				   TALLOC_CTX *mem_ctx,
@@ -42,6 +44,48 @@ static NTSTATUS winbind_want_check(struct auth_method_context *ctx,
 	}
 
 	/* TODO: maybe limit the user scope to remote users only */
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS winbind_rodc_want_check(struct auth_method_context *ctx,
+					TALLOC_CTX *mem_ctx,
+					const struct auth_usersupplied_info *user_info)
+{
+	int ret;
+	bool am_rodc;
+
+	if (!user_info->mapped.account_name || !*user_info->mapped.account_name) {
+		return NT_STATUS_NOT_IMPLEMENTED;
+	}
+
+	if (ctx->auth_ctx->sam_ctx == NULL) {
+		DBG_ERR("ctx->auth_ctx->sam_ctx == NULL, don't check.\n");
+		return NT_STATUS_NOT_IMPLEMENTED;
+	}
+
+	ret = samdb_rodc(ctx->auth_ctx->sam_ctx, &am_rodc);
+	if (ret != LDB_SUCCESS) {
+		DBG_ERR("samdb_rodc() failed %d %s, don't check.\n",
+			ret, ldb_errstring(ctx->auth_ctx->sam_ctx));
+		return NT_STATUS_NOT_IMPLEMENTED;
+	}
+
+	if (!am_rodc) {
+		/*
+		 * We don't support trusts yet and we
+		 * don't want to add them using the
+		 * semi-async irpc call that uses
+		 * a nested event loop.
+		 */
+		return NT_STATUS_NOT_IMPLEMENTED;
+	}
+
+	/*
+	 * We're a RODC, so we forward the request to our winbind.
+	 * As the RODC is not yet production ready anyway, we keep
+	 * the semi-async behavior with nested event loops in order
+	 * to keep autobuild happy.
+	 */
 	return NT_STATUS_OK;
 }
 
@@ -56,23 +100,28 @@ struct winbind_check_password_state {
 static NTSTATUS winbind_check_password(struct auth_method_context *ctx,
 				       TALLOC_CTX *mem_ctx,
 				       const struct auth_usersupplied_info *user_info, 
-				       struct auth_user_info_dc **user_info_dc)
+				       struct auth_user_info_dc **user_info_dc,
+				       bool *authoritative)
 {
+	struct winbind_check_password_state *state = NULL;
 	NTSTATUS status;
 	struct dcerpc_binding_handle *irpc_handle;
-	struct winbind_check_password_state *s;
 	const struct auth_usersupplied_info *user_info_new;
 	struct netr_IdentityInfo *identity_info;
+	struct ldb_dn *domain_dn;
+	struct ldb_message *msg;
+	const char *account_name = user_info->mapped.account_name;
+	const char *p = NULL;
 
 	if (!ctx->auth_ctx->msg_ctx) {
 		DEBUG(0,("winbind_check_password: auth_context_create was called with out messaging context\n"));
 		return NT_STATUS_INTERNAL_ERROR;
 	}
 
-	s = talloc(mem_ctx, struct winbind_check_password_state);
-	NT_STATUS_HAVE_NO_MEMORY(s);
+	state = talloc(mem_ctx, struct winbind_check_password_state);
+	NT_STATUS_HAVE_NO_MEMORY(state);
 
-	irpc_handle = irpc_binding_handle_by_name(s, ctx->auth_ctx->msg_ctx,
+	irpc_handle = irpc_binding_handle_by_name(state, ctx->auth_ctx->msg_ctx,
 						  "winbind_server",
 						  &ndr_table_winbind);
 	if (irpc_handle == NULL) {
@@ -85,30 +134,30 @@ static NTSTATUS winbind_check_password(struct auth_method_context *ctx,
 	if (user_info->flags & USER_INFO_INTERACTIVE_LOGON) {
 		struct netr_PasswordInfo *password_info;
 
-		status = encrypt_user_info(s, ctx->auth_ctx, AUTH_PASSWORD_HASH,
+		status = encrypt_user_info(state, ctx->auth_ctx, AUTH_PASSWORD_HASH,
 					   user_info, &user_info_new);
 		NT_STATUS_NOT_OK_RETURN(status);
 		user_info = user_info_new;
 
-		password_info = talloc(s, struct netr_PasswordInfo);
+		password_info = talloc_zero(state, struct netr_PasswordInfo);
 		NT_STATUS_HAVE_NO_MEMORY(password_info);
 
 		password_info->lmpassword = *user_info->password.hash.lanman;
 		password_info->ntpassword = *user_info->password.hash.nt;
 
 		identity_info = &password_info->identity_info;
-		s->req.in.logon_level	= 1;
-		s->req.in.logon.password= password_info;
+		state->req.in.logon_level	= 1;
+		state->req.in.logon.password= password_info;
 	} else {
 		struct netr_NetworkInfo *network_info;
 		uint8_t chal[8];
 
-		status = encrypt_user_info(s, ctx->auth_ctx, AUTH_PASSWORD_RESPONSE,
+		status = encrypt_user_info(state, ctx->auth_ctx, AUTH_PASSWORD_RESPONSE,
 					   user_info, &user_info_new);
 		NT_STATUS_NOT_OK_RETURN(status);
 		user_info = user_info_new;
 
-		network_info = talloc(s, struct netr_NetworkInfo);
+		network_info = talloc_zero(state, struct netr_NetworkInfo);
 		NT_STATUS_HAVE_NO_MEMORY(network_info);
 
 		status = auth_get_challenge(ctx->auth_ctx, chal);
@@ -123,8 +172,8 @@ static NTSTATUS winbind_check_password(struct auth_method_context *ctx,
 		network_info->lm.data	= user_info->password.response.lanman.data;
 
 		identity_info = &network_info->identity_info;
-		s->req.in.logon_level	= 2;
-		s->req.in.logon.network = network_info;
+		state->req.in.logon_level	= 2;
+		state->req.in.logon.network = network_info;
 	}
 
 	identity_info->domain_name.string	= user_info->client.domain_name;
@@ -134,17 +183,59 @@ static NTSTATUS winbind_check_password(struct auth_method_context *ctx,
 	identity_info->account_name.string	= user_info->client.account_name;
 	identity_info->workstation.string	= user_info->workstation_name;
 
-	s->req.in.validation_level	= 3;
+	state->req.in.validation_level = 3;
 
 	/* Note: this makes use of nested event loops... */
 	dcerpc_binding_handle_set_sync_ev(irpc_handle, ctx->auth_ctx->event_ctx);
-	status = dcerpc_winbind_SamLogon_r(irpc_handle, s, &s->req);
+	status = dcerpc_winbind_SamLogon_r(irpc_handle, state, &state->req);
 	NT_STATUS_NOT_OK_RETURN(status);
+
+	if (!NT_STATUS_IS_OK(state->req.out.result)) {
+		if (!state->req.out.authoritative) {
+			*authoritative = false;
+		}
+		return state->req.out.result;
+	}
+
+	/*
+	 * At best, reset the badPwdCount to 0 if the account exists.
+	 * This means that lockouts happen at a badPwdCount earlier than
+	 * normal, but makes it more fault tolerant.
+	 */
+	p = strchr_m(account_name, '@');
+	if (p != NULL) {
+		const char *nt4_domain = NULL;
+		const char *nt4_account = NULL;
+
+		status = crack_name_to_nt4_name(mem_ctx,
+						ctx->auth_ctx->sam_ctx,
+						DRSUAPI_DS_NAME_FORMAT_USER_PRINCIPAL,
+						account_name,
+						&nt4_domain, &nt4_account);
+		if (NT_STATUS_IS_OK(status) &&
+		    lpcfg_is_mydomain(ctx->auth_ctx->lp_ctx, nt4_domain))
+		{
+			account_name = nt4_account;
+		}
+	}
+
+	domain_dn = ldb_get_default_basedn(ctx->auth_ctx->sam_ctx);
+	if (domain_dn != NULL) {
+		status = authsam_search_account(mem_ctx, ctx->auth_ctx->sam_ctx,
+						account_name, domain_dn, &msg);
+		if (NT_STATUS_IS_OK(status)) {
+			authsam_logon_success_accounting(
+				ctx->auth_ctx->sam_ctx, msg,
+				domain_dn,
+				user_info->flags & USER_INFO_INTERACTIVE_LOGON,
+				NULL);
+		}
+	}
 
 	status = make_user_info_dc_netlogon_validation(mem_ctx,
 						      user_info->client.account_name,
-						      s->req.in.validation_level,
-						      &s->req.out.validation,
+						      state->req.in.validation_level,
+						      &state->req.out.validation,
 						       true, /* This user was authenticated */
 						      user_info_dc);
 	NT_STATUS_NOT_OK_RETURN(status);
@@ -159,7 +250,8 @@ static NTSTATUS winbind_check_password(struct auth_method_context *ctx,
 static NTSTATUS winbind_check_password_wbclient(struct auth_method_context *ctx,
 						TALLOC_CTX *mem_ctx,
 						const struct auth_usersupplied_info *user_info,
-						struct auth_user_info_dc **user_info_dc)
+						struct auth_user_info_dc **user_info_dc,
+						bool *authoritative)
 {
 	struct wbcAuthUserParams params;
 	struct wbcAuthUserInfo *info = NULL;
@@ -253,23 +345,35 @@ static const struct auth_operations winbind_ops = {
 	.check_password	= winbind_check_password
 };
 
+static const struct auth_operations winbind_rodc_ops = {
+	.name		= "winbind_rodc",
+	.want_check	= winbind_rodc_want_check,
+	.check_password	= winbind_check_password
+};
+
 static const struct auth_operations winbind_wbclient_ops = {
 	.name		= "winbind_wbclient",
 	.want_check	= winbind_want_check,
 	.check_password	= winbind_check_password_wbclient
 };
 
-_PUBLIC_ NTSTATUS auth4_winbind_init(void)
+_PUBLIC_ NTSTATUS auth4_winbind_init(TALLOC_CTX *ctx)
 {
 	NTSTATUS ret;
 
-	ret = auth_register(&winbind_ops);
+	ret = auth_register(ctx, &winbind_ops);
 	if (!NT_STATUS_IS_OK(ret)) {
 		DEBUG(0,("Failed to register 'winbind' auth backend!\n"));
 		return ret;
 	}
 
-	ret = auth_register(&winbind_wbclient_ops);
+	ret = auth_register(ctx, &winbind_rodc_ops);
+	if (!NT_STATUS_IS_OK(ret)) {
+		DEBUG(0,("Failed to register 'winbind_rodc' auth backend!\n"));
+		return ret;
+	}
+
+	ret = auth_register(ctx, &winbind_wbclient_ops);
 	if (!NT_STATUS_IS_OK(ret)) {
 		DEBUG(0,("Failed to register 'winbind_wbclient' auth backend!\n"));
 		return ret;

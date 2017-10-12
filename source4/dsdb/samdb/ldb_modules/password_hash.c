@@ -45,6 +45,8 @@
 #include "../lib/crypto/crypto.h"
 #include "param/param.h"
 #include "lib/krb5_wrap/krb5_samba.h"
+#include "auth/common_auth.h"
+#include "lib/messaging/messaging.h"
 
 #ifdef ENABLE_GPGME
 #undef class
@@ -111,6 +113,7 @@ struct ph_context {
 	bool pwd_last_set_bypass;
 	bool pwd_last_set_default;
 	bool smartcard_reset;
+	const char **userPassword_schemes;
 };
 
 
@@ -119,7 +122,7 @@ struct setup_password_fields_io {
 
 	struct smb_krb5_context *smb_krb5_context;
 
-	/* infos about the user account */
+	/* info about the user account */
 	struct {
 		uint32_t userAccountControl;
 		NTTIME pwdLastSet;
@@ -128,6 +131,7 @@ struct setup_password_fields_io {
 		bool is_computer;
 		bool is_krbtgt;
 		uint32_t restrictions;
+		struct dom_sid *account_sid;
 	} u;
 
 	/* new credentials and old given credentials */
@@ -667,7 +671,8 @@ static int setup_kerberos_keys(struct setup_password_fields_io *io)
 {
 	struct ldb_context *ldb;
 	krb5_error_code krb5_ret;
-	krb5_principal salt_principal;
+	char *salt_principal = NULL;
+	char *salt_data = NULL;
 	krb5_data salt;
 	krb5_keyblock key;
 	krb5_data cleartext_data;
@@ -676,60 +681,12 @@ static int setup_kerberos_keys(struct setup_password_fields_io *io)
 	cleartext_data.data = (char *)io->n.cleartext_utf8->data;
 	cleartext_data.length = io->n.cleartext_utf8->length;
 
-	/* Many, many thanks to lukeh@padl.com for this
-	 * algorithm, described in his Nov 10 2004 mail to
-	 * samba-technical@lists.samba.org */
-
-	/*
-	 * Determine a salting principal
-	 */
-	if (io->u.is_computer) {
-		char *name;
-		char *saltbody;
-
-		name = strlower_talloc(io->ac, io->u.sAMAccountName);
-		if (!name) {
-			return ldb_oom(ldb);
-		}
-
-		if (name[strlen(name)-1] == '$') {
-			name[strlen(name)-1] = '\0';
-		}
-
-		saltbody = talloc_asprintf(io->ac, "%s.%s", name,
-					   io->ac->status->domain_data.dns_domain);
-		if (!saltbody) {
-			return ldb_oom(ldb);
-		}
-		
-		krb5_ret = smb_krb5_make_principal(io->smb_krb5_context->krb5_context,
-					       &salt_principal,
-					       io->ac->status->domain_data.realm,
-					       "host", saltbody, NULL);
-	} else if (io->u.user_principal_name) {
-		char *user_principal_name;
-		char *p;
-
-		user_principal_name = talloc_strdup(io->ac, io->u.user_principal_name);
-		if (!user_principal_name) {
-			return ldb_oom(ldb);
-		}
-
-		p = strchr(user_principal_name, '@');
-		if (p) {
-			p[0] = '\0';
-		}
-
-		krb5_ret = smb_krb5_make_principal(io->smb_krb5_context->krb5_context,
-					       &salt_principal,
-					       io->ac->status->domain_data.realm,
-					       user_principal_name, NULL);
-	} else {
-		krb5_ret = smb_krb5_make_principal(io->smb_krb5_context->krb5_context,
-					       &salt_principal,
-					       io->ac->status->domain_data.realm,
-					       io->u.sAMAccountName, NULL);
-	}
+	krb5_ret = smb_krb5_salt_principal(io->ac->status->domain_data.realm,
+					   io->u.sAMAccountName,
+					   io->u.user_principal_name,
+					   io->u.is_computer,
+					   io->ac,
+					   &salt_principal);
 	if (krb5_ret) {
 		ldb_asprintf_errstring(ldb,
 				       "setup_kerberos_keys: "
@@ -742,9 +699,8 @@ static int setup_kerberos_keys(struct setup_password_fields_io *io)
 	/*
 	 * create salt from salt_principal
 	 */
-	krb5_ret = smb_krb5_get_pw_salt(io->smb_krb5_context->krb5_context,
-				    salt_principal, &salt);
-	krb5_free_principal(io->smb_krb5_context->krb5_context, salt_principal);
+	krb5_ret = smb_krb5_salt_principal2data(io->smb_krb5_context->krb5_context,
+						salt_principal, io->ac, &salt_data);
 	if (krb5_ret) {
 		ldb_asprintf_errstring(ldb,
 				       "setup_kerberos_keys: "
@@ -753,14 +709,8 @@ static int setup_kerberos_keys(struct setup_password_fields_io *io)
 								  krb5_ret, io->ac));
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
-	/* create a talloc copy */
-	io->g.salt = talloc_strndup(io->ac,
-				    (char *)salt.data,
-				    salt.length);
-	smb_krb5_free_data_contents(io->smb_krb5_context->krb5_context, &salt);
-	if (!io->g.salt) {
-		return ldb_oom(ldb);
-	}
+	io->g.salt = salt_data;
+
 	/* now use the talloced copy of the salt */
 	salt.data	= discard_const(io->g.salt);
 	salt.length	= strlen(io->g.salt);
@@ -1117,8 +1067,8 @@ static int setup_primary_wdigest(struct setup_password_fields_io *io,
 		DATA_BLOB *nt4dom;
 	} wdigest[] = {
 	/*
-	 * See
-	 * http://technet2.microsoft.com/WindowsServer/en/library/717b450c-f4a0-4cc9-86f4-cc0633aae5f91033.mspx?mfr=true
+	 * See 3.1.1.8.11.3.1 WDIGEST_CREDENTIALS Construction
+	 *     https://msdn.microsoft.com/en-us/library/cc245680.aspx
 	 * for what precalculated hashes are supposed to be stored...
 	 *
 	 * I can't reproduce all values which should contain "Digest" as realm,
@@ -1225,8 +1175,17 @@ static int setup_primary_wdigest(struct setup_password_fields_io *io,
 		.user	= &sAMAccountName_l,
 		.realm	= &netbios_domain_u,
 		},
-	/* 
+	/*
 	 * sAMAccountName, dns_domain
+	 *
+	 * TODO:
+	 * Windows preserves the case of the DNS domain,
+	 * Samba lower cases the domain at provision time
+	 * This means that for mixed case Domains, the WDigest08 hash
+	 * calculated by Samba differs from that calculated by Windows.
+	 * Until we get a real world use case this will remain a known
+	 * bug, as changing the case could have unforeseen impacts.
+	 *
 	 */
 		{
 		.user	= &sAMAccountName,
@@ -1414,6 +1373,217 @@ static int setup_primary_wdigest(struct setup_password_fields_io *io,
 	return LDB_SUCCESS;
 }
 
+#define SHA_SALT_PERMITTED_CHARS "abcdefghijklmnopqrstuvwxyz" \
+				 "ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
+				 "0123456789./"
+#define SHA_SALT_SIZE 16
+#define SHA_256_SCHEME "CryptSHA256"
+#define SHA_512_SCHEME "CryptSHA512"
+#define CRYPT "{CRYPT}"
+#define SHA_ID_LEN 3
+#define SHA_256_ALGORITHM_ID 5
+#define SHA_512_ALGORITHM_ID 6
+#define ROUNDS_PARAMETER "rounds="
+
+/*
+ * Extract the crypt (3) algorithm number and number of hash rounds from the
+ * supplied scheme string
+ */
+static bool parse_scheme(const char *scheme, int *algorithm, int *rounds) {
+
+	const char *rp = NULL; /* Pointer to the 'rounds=' option */
+	char digits[21];       /* digits extracted from the rounds option */
+	int i = 0;             /* loop index variable */
+
+	if (strncasecmp(SHA_256_SCHEME, scheme, strlen(SHA_256_SCHEME)) == 0) {
+		*algorithm = SHA_256_ALGORITHM_ID;
+	} else if (strncasecmp(SHA_512_SCHEME, scheme, strlen(SHA_256_SCHEME))
+		   == 0) {
+		*algorithm = SHA_512_ALGORITHM_ID;
+	} else {
+		return false;
+	}
+
+	rp = strcasestr(scheme, ROUNDS_PARAMETER);
+	if (rp == NULL) {
+		/* No options specified, use crypt default number of rounds */
+		*rounds = 0;
+		return true;
+	}
+	rp += strlen(ROUNDS_PARAMETER);
+	for (i = 0; isdigit(rp[i]) && i < (sizeof(digits) - 1); i++) {
+		digits[i] = rp[i];
+	}
+	digits[i] = '\0';
+	*rounds = atoi(digits);
+	return true;
+}
+
+/*
+ * Calculate the password hash specified by scheme, and return it in
+ * hash_value
+ */
+static int setup_primary_userPassword_hash(
+	TALLOC_CTX *ctx,
+	struct setup_password_fields_io *io,
+	const char* scheme,
+	struct package_PrimaryUserPasswordValue *hash_value)
+{
+	struct ldb_context *ldb = ldb_module_get_ctx(io->ac->module);
+	const char *salt = NULL;        /* Randomly generated salt */
+	const char *cmd = NULL;         /* command passed to crypt */
+	const char *hash = NULL;        /* password hash generated by crypt */
+	int algorithm = 0;              /* crypt hash algorithm number */
+	int rounds = 0;                 /* The number of hash rounds */
+	DATA_BLOB *hash_blob = NULL;
+	TALLOC_CTX *frame = talloc_stackframe();
+#ifdef HAVE_CRYPT_R
+	struct crypt_data crypt_data;   /* working storage used by crypt */
+#endif
+
+	/* Genrate a random password salt */
+	salt = generate_random_str_list(frame,
+					SHA_SALT_SIZE,
+					SHA_SALT_PERMITTED_CHARS);
+	if (salt == NULL) {
+		TALLOC_FREE(frame);
+		return ldb_oom(ldb);
+	}
+
+	/* determine the hashing algoritm and number of rounds*/
+	if (!parse_scheme(scheme, &algorithm, &rounds)) {
+		ldb_asprintf_errstring(
+			ldb,
+		        "setup_primary_userPassword: Invalid scheme of [%s] "
+			"specified for 'password hash userPassword schemes' in "
+			"samba.conf",
+			scheme);
+		TALLOC_FREE(frame);
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+	hash_value->scheme = talloc_strdup(ctx, CRYPT);
+	hash_value->scheme_len = strlen(CRYPT) + 1;
+
+	/* generate the id/salt parameter used by crypt */
+	if (rounds) {
+		cmd = talloc_asprintf(frame,
+			              "$%d$rounds=%d$%s",
+				      algorithm,
+				      rounds,
+				      salt);
+	} else {
+		cmd = talloc_asprintf(frame, "$%d$%s", algorithm, salt);
+	}
+
+	/*
+	 * Relies on the assertion that cleartext_utf8->data is a zero
+	 * terminated UTF-8 string
+	 */
+#ifdef HAVE_CRYPT_R
+	hash = crypt_r((char *)io->n.cleartext_utf8->data, cmd, &crypt_data);
+#else
+	/*
+	 * No crypt_r falling back to crypt, which is NOT thread safe
+	 * Thread safety MT-Unsafe race:crypt
+	 */
+	hash = crypt((char *)io->n.cleartext_utf8->data, cmd);
+#endif
+	if (hash == NULL) {
+		char buf[1024];
+		int err = strerror_r(errno, buf, sizeof(buf));
+		if (err != 0) {
+			strlcpy(buf, "Unknown error", sizeof(buf)-1);
+		}
+		ldb_asprintf_errstring(
+			ldb,
+			"setup_primary_userPassword: generation of a %s "
+			"password hash failed: (%s)",
+			scheme,
+			buf);
+		TALLOC_FREE(frame);
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+
+	hash_blob = talloc_zero(ctx, DATA_BLOB);
+
+	if (hash_blob == NULL) {
+		TALLOC_FREE(frame);
+		return ldb_oom(ldb);
+	}
+
+	*hash_blob =  data_blob_talloc(hash_blob,
+				       (const uint8_t *)hash,
+				       strlen(hash));
+	if (hash_blob->data == NULL) {
+		TALLOC_FREE(frame);
+		return ldb_oom(ldb);
+	}
+	hash_value->value = hash_blob;
+	TALLOC_FREE(frame);
+	return LDB_SUCCESS;
+}
+
+/*
+ * Calculate the desired extra password hashes
+ */
+static int setup_primary_userPassword(
+	struct setup_password_fields_io *io,
+	const struct supplementalCredentialsBlob *old_scb,
+	struct package_PrimaryUserPasswordBlob *p_userPassword_b)
+{
+	struct ldb_context *ldb = ldb_module_get_ctx(io->ac->module);
+	TALLOC_CTX *frame = talloc_stackframe();
+	int i;
+	int ret;
+
+	/*
+	 * Save the current nt_hash, use this to determine if the password
+	 * has been changed by windows. Which will invalidate the userPassword
+	 * hash. Note once NTLM-Strong-NOWTF becomes available it should be
+	 * used in preference to the NT password hash
+	 */
+	if (io->g.nt_hash == NULL) {
+		ldb_asprintf_errstring(ldb,
+			"No NT Hash, unable to calculate userPassword hashes");
+			return LDB_ERR_UNWILLING_TO_PERFORM;
+	}
+	p_userPassword_b->current_nt_hash = *io->g.nt_hash;
+
+	/*
+	 * Determine the number of hashes
+	 * Note: that currently there is no limit on the number of hashes
+	 *       no checking is done on the number of schemes specified
+	 *       or for uniqueness.
+	 */
+	p_userPassword_b->num_hashes = 0;
+	for (i = 0; io->ac->userPassword_schemes[i]; i++) {
+		p_userPassword_b->num_hashes++;
+	}
+
+	p_userPassword_b->hashes
+		= talloc_array(io->ac,
+			       struct package_PrimaryUserPasswordValue,
+			       p_userPassword_b->num_hashes);
+	if (p_userPassword_b->hashes == NULL) {
+		TALLOC_FREE(frame);
+		return ldb_oom(ldb);
+	}
+
+	for (i = 0; io->ac->userPassword_schemes[i]; i++) {
+		ret = setup_primary_userPassword_hash(
+			p_userPassword_b->hashes,
+			io,
+			io->ac->userPassword_schemes[i],
+			&p_userPassword_b->hashes[i]);
+		if (ret != LDB_SUCCESS) {
+			TALLOC_FREE(frame);
+			return ret;
+		}
+	}
+	return LDB_SUCCESS;
+}
+
+
 static int setup_primary_samba_gpg(struct setup_password_fields_io *io,
 				   struct package_PrimarySambaGPGBlob *pgb)
 {
@@ -1473,7 +1643,7 @@ static int setup_primary_samba_gpg(struct setup_password_fields_io *io,
 		if (len < 16) {
 			ldb_debug(ldb, LDB_DEBUG_FATAL,
 				  "%s:%s: ki[%zu] key_id[%s] strlen < 16, "
-				  "please specifiy at least the 64bit key id\n",
+				  "please specify at least the 64bit key id\n",
 				  __location__, __func__,
 				  ki, key_id);
 			for (kr = 0; keys[kr] != NULL; kr++) {
@@ -1550,66 +1720,35 @@ static int setup_primary_samba_gpg(struct setup_password_fields_io *io,
 #endif /* else ENABLE_GPGME */
 }
 
+#define NUM_PACKAGES 6
 static int setup_supplemental_field(struct setup_password_fields_io *io)
 {
 	struct ldb_context *ldb;
 	struct supplementalCredentialsBlob scb;
 	struct supplementalCredentialsBlob *old_scb = NULL;
-	/* Packages + (Kerberos-Newer-Keys, Kerberos, WDigest, CLEARTEXT, SambaGPG) */
+	/*
+	 * Packages +
+	 * ( Kerberos-Newer-Keys, Kerberos,
+	 *   WDigest, CLEARTEXT, userPassword, SambaGPG)
+	 */
 	uint32_t num_names = 0;
-	const char *names[1+5];
+	const char *names[1+NUM_PACKAGES];
 	uint32_t num_packages = 0;
-	struct supplementalCredentialsPackage packages[1+5];
-	/* Packages */
-	struct supplementalCredentialsPackage *pp = NULL;
-	struct package_PackagesBlob pb;
-	DATA_BLOB pb_blob;
-	char *pb_hexstr;
-	/* Primary:Kerberos-Newer-Keys */
-	const char **nkn = NULL;
-	struct supplementalCredentialsPackage *pkn = NULL;
-	struct package_PrimaryKerberosBlob pknb;
-	DATA_BLOB pknb_blob;
-	char *pknb_hexstr;
-	/* Primary:Kerberos */
-	const char **nk = NULL;
-	struct supplementalCredentialsPackage *pk = NULL;
-	struct package_PrimaryKerberosBlob pkb;
-	DATA_BLOB pkb_blob;
-	char *pkb_hexstr;
-	/* Primary:WDigest */
-	const char **nd = NULL;
-	struct supplementalCredentialsPackage *pd = NULL;
-	struct package_PrimaryWDigestBlob pdb;
-	DATA_BLOB pdb_blob;
-	char *pdb_hexstr;
-	/* Primary:CLEARTEXT */
-	const char **nc = NULL;
-	struct supplementalCredentialsPackage *pc = NULL;
-	struct package_PrimaryCLEARTEXTBlob pcb;
-	DATA_BLOB pcb_blob;
-	char *pcb_hexstr;
-	/* Primary:SambaGPG */
-	const char **ng = NULL;
-	struct supplementalCredentialsPackage *pg = NULL;
-	struct package_PrimarySambaGPGBlob pgb;
-	DATA_BLOB pgb_blob;
-	char *pgb_hexstr;
+	struct supplementalCredentialsPackage packages[1+NUM_PACKAGES];
+	struct supplementalCredentialsPackage *pp = packages;
 	int ret;
 	enum ndr_err_code ndr_err;
-	uint8_t zero16[16];
 	bool do_newer_keys = false;
 	bool do_cleartext = false;
 	bool do_samba_gpg = false;
 
-	ZERO_STRUCT(zero16);
 	ZERO_STRUCT(names);
 	ZERO_STRUCT(packages);
 
 	ldb = ldb_module_get_ctx(io->ac->module);
 
 	if (!io->n.cleartext_utf8) {
-		/* 
+		/*
 		 * when we don't have a cleartext password
 		 * we can't setup a supplementalCredential value
 		 */
@@ -1630,16 +1769,8 @@ static int setup_supplemental_field(struct setup_password_fields_io *io)
 		}
 	}
 	/* Per MS-SAMR 3.1.1.8.11.6 we create AES keys if our domain functionality level is 2008 or higher */
-	do_newer_keys = (dsdb_functional_level(ldb) >= DS_DOMAIN_FUNCTION_2008);
 
-	if (io->ac->status->domain_data.store_cleartext &&
-	    (io->u.userAccountControl & UF_ENCRYPTED_TEXT_PASSWORD_ALLOWED)) {
-		do_cleartext = true;
-	}
 
-	if (io->ac->gpg_key_ids != NULL) {
-		do_samba_gpg = true;
-	}
 
 	/*
 	 * The ordering is this
@@ -1648,6 +1779,7 @@ static int setup_supplemental_field(struct setup_password_fields_io *io)
 	 * Primary:Kerberos
 	 * Primary:WDigest
 	 * Primary:CLEARTEXT (optional)
+	 * Primary:userPassword
 	 * Primary:SambaGPG (optional)
 	 *
 	 * And the 'Packages' package is insert before the last
@@ -1659,167 +1791,224 @@ static int setup_supplemental_field(struct setup_password_fields_io *io)
 	 * a Windows DC, it will keep the old Primary:SambaGPG value,
 	 * but as the first element.
 	 */
+	do_newer_keys = (dsdb_functional_level(ldb) >= DS_DOMAIN_FUNCTION_2008);
 	if (do_newer_keys) {
-		/* Primary:Kerberos-Newer-Keys */
-		nkn = &names[num_names++];
-		pkn = &packages[num_packages++];
-	}
-
-	/* Primary:Kerberos */
-	nk = &names[num_names++];
-	pk = &packages[num_packages++];
-
-	if (!do_cleartext && !do_samba_gpg) {
-		/* Packages */
-		pp = &packages[num_packages++];
-	}
-
-	/* Primary:WDigest */
-	nd = &names[num_names++];
-	pd = &packages[num_packages++];
-
-	if (do_cleartext) {
-		if (!do_samba_gpg) {
-			/* Packages */
-			pp = &packages[num_packages++];
-		}
-
-		/* Primary:CLEARTEXT */
-		nc = &names[num_names++];
-		pc = &packages[num_packages++];
-	}
-
-	if (do_samba_gpg) {
-		/* Packages */
-		pp = &packages[num_packages++];
-
-		/* Primary:SambaGPG */
-		ng = &names[num_names++];
-		pg = &packages[num_packages++];
-	}
-
-	if (pkn) {
+		struct package_PrimaryKerberosBlob pknb;
+		DATA_BLOB pknb_blob;
+		char *pknb_hexstr;
 		/*
 		 * setup 'Primary:Kerberos-Newer-Keys' element
 		 */
-		*nkn = "Kerberos-Newer-Keys";
+		names[num_names++] = "Kerberos-Newer-Keys";
 
 		ret = setup_primary_kerberos_newer(io, old_scb, &pknb);
 		if (ret != LDB_SUCCESS) {
 			return ret;
 		}
 
-		ndr_err = ndr_push_struct_blob(&pknb_blob, io->ac,
-					       &pknb,
-					       (ndr_push_flags_fn_t)ndr_push_package_PrimaryKerberosBlob);
+		ndr_err = ndr_push_struct_blob(
+			&pknb_blob, io->ac,
+			&pknb,
+			(ndr_push_flags_fn_t)ndr_push_package_PrimaryKerberosBlob);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 			NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-			ldb_asprintf_errstring(ldb,
-					       "setup_supplemental_field: "
-					       "failed to push package_PrimaryKerberosNeverBlob: %s",
-					       nt_errstr(status));
+			ldb_asprintf_errstring(
+				ldb,
+				"setup_supplemental_field: "
+				"failed to push "
+				"package_PrimaryKerberosNeverBlob: %s",
+				nt_errstr(status));
 			return LDB_ERR_OPERATIONS_ERROR;
 		}
 		pknb_hexstr = data_blob_hex_string_upper(io->ac, &pknb_blob);
 		if (!pknb_hexstr) {
 			return ldb_oom(ldb);
 		}
-		pkn->name	= "Primary:Kerberos-Newer-Keys";
-		pkn->reserved	= 1;
-		pkn->data	= pknb_hexstr;
+		pp->name	= "Primary:Kerberos-Newer-Keys";
+		pp->reserved	= 1;
+		pp->data	= pknb_hexstr;
+		pp++;
+		num_packages++;
 	}
 
-	/*
-	 * setup 'Primary:Kerberos' element
-	 */
-	*nk = "Kerberos";
+	{
+		/*
+		 * setup 'Primary:Kerberos' element
+		 */
+		/* Primary:Kerberos */
+		struct package_PrimaryKerberosBlob pkb;
+		DATA_BLOB pkb_blob;
+		char *pkb_hexstr;
 
-	ret = setup_primary_kerberos(io, old_scb, &pkb);
-	if (ret != LDB_SUCCESS) {
-		return ret;
+		names[num_names++] = "Kerberos";
+
+		ret = setup_primary_kerberos(io, old_scb, &pkb);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+
+		ndr_err = ndr_push_struct_blob(
+			&pkb_blob, io->ac,
+			&pkb,
+			(ndr_push_flags_fn_t)ndr_push_package_PrimaryKerberosBlob);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
+			ldb_asprintf_errstring(
+				ldb,
+				"setup_supplemental_field: "
+				"failed to push package_PrimaryKerberosBlob: %s",
+				nt_errstr(status));
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+		pkb_hexstr = data_blob_hex_string_upper(io->ac, &pkb_blob);
+		if (!pkb_hexstr) {
+			return ldb_oom(ldb);
+		}
+		pp->name	= "Primary:Kerberos";
+		pp->reserved	= 1;
+		pp->data	= pkb_hexstr;
+		pp++;
+		num_packages++;
 	}
 
-	ndr_err = ndr_push_struct_blob(&pkb_blob, io->ac, 
-				       &pkb,
-				       (ndr_push_flags_fn_t)ndr_push_package_PrimaryKerberosBlob);
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-		ldb_asprintf_errstring(ldb,
-				       "setup_supplemental_field: "
-				       "failed to push package_PrimaryKerberosBlob: %s",
-				       nt_errstr(status));
-		return LDB_ERR_OPERATIONS_ERROR;
-	}
-	pkb_hexstr = data_blob_hex_string_upper(io->ac, &pkb_blob);
-	if (!pkb_hexstr) {
-		return ldb_oom(ldb);
-	}
-	pk->name	= "Primary:Kerberos";
-	pk->reserved	= 1;
-	pk->data	= pkb_hexstr;
+	{
+		/*
+		 * setup 'Primary:WDigest' element
+		 */
+		struct package_PrimaryWDigestBlob pdb;
+		DATA_BLOB pdb_blob;
+		char *pdb_hexstr;
 
-	/*
-	 * setup 'Primary:WDigest' element
-	 */
-	*nd = "WDigest";
+		names[num_names++] = "WDigest";
 
-	ret = setup_primary_wdigest(io, old_scb, &pdb);
-	if (ret != LDB_SUCCESS) {
-		return ret;
-	}
+		ret = setup_primary_wdigest(io, old_scb, &pdb);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
 
-	ndr_err = ndr_push_struct_blob(&pdb_blob, io->ac, 
-				       &pdb,
-				       (ndr_push_flags_fn_t)ndr_push_package_PrimaryWDigestBlob);
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-		ldb_asprintf_errstring(ldb,
-				       "setup_supplemental_field: "
-				       "failed to push package_PrimaryWDigestBlob: %s",
-				       nt_errstr(status));
-		return LDB_ERR_OPERATIONS_ERROR;
+		ndr_err = ndr_push_struct_blob(
+			&pdb_blob, io->ac,
+			&pdb,
+			(ndr_push_flags_fn_t)ndr_push_package_PrimaryWDigestBlob);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
+			ldb_asprintf_errstring(
+				ldb,
+				"setup_supplemental_field: "
+				"failed to push package_PrimaryWDigestBlob: %s",
+				nt_errstr(status));
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+		pdb_hexstr = data_blob_hex_string_upper(io->ac, &pdb_blob);
+		if (!pdb_hexstr) {
+			return ldb_oom(ldb);
+		}
+		pp->name	= "Primary:WDigest";
+		pp->reserved	= 1;
+		pp->data	= pdb_hexstr;
+		pp++;
+		num_packages++;
 	}
-	pdb_hexstr = data_blob_hex_string_upper(io->ac, &pdb_blob);
-	if (!pdb_hexstr) {
-		return ldb_oom(ldb);
-	}
-	pd->name	= "Primary:WDigest";
-	pd->reserved	= 1;
-	pd->data	= pdb_hexstr;
 
 	/*
 	 * setup 'Primary:CLEARTEXT' element
 	 */
-	if (pc) {
-		*nc		= "CLEARTEXT";
+	if (io->ac->status->domain_data.store_cleartext &&
+	    (io->u.userAccountControl & UF_ENCRYPTED_TEXT_PASSWORD_ALLOWED)) {
+		do_cleartext = true;
+	}
+	if (do_cleartext) {
+		struct package_PrimaryCLEARTEXTBlob pcb;
+		DATA_BLOB pcb_blob;
+		char *pcb_hexstr;
+
+		names[num_names++] = "CLEARTEXT";
 
 		pcb.cleartext	= *io->n.cleartext_utf16;
 
-		ndr_err = ndr_push_struct_blob(&pcb_blob, io->ac, 
-					       &pcb,
-					       (ndr_push_flags_fn_t)ndr_push_package_PrimaryCLEARTEXTBlob);
+		ndr_err = ndr_push_struct_blob(
+			&pcb_blob, io->ac,
+			&pcb,
+			(ndr_push_flags_fn_t)ndr_push_package_PrimaryCLEARTEXTBlob);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 			NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-			ldb_asprintf_errstring(ldb,
-					       "setup_supplemental_field: "
-					       "failed to push package_PrimaryCLEARTEXTBlob: %s",
-					       nt_errstr(status));
+			ldb_asprintf_errstring(
+				ldb,
+				"setup_supplemental_field: "
+				"failed to push package_PrimaryCLEARTEXTBlob: %s",
+				nt_errstr(status));
 			return LDB_ERR_OPERATIONS_ERROR;
 		}
 		pcb_hexstr = data_blob_hex_string_upper(io->ac, &pcb_blob);
 		if (!pcb_hexstr) {
 			return ldb_oom(ldb);
 		}
-		pc->name	= "Primary:CLEARTEXT";
-		pc->reserved	= 1;
-		pc->data	= pcb_hexstr;
+		pp->name	= "Primary:CLEARTEXT";
+		pp->reserved	= 1;
+		pp->data	= pcb_hexstr;
+		pp++;
+		num_packages++;
+	}
+
+	if (io->ac->userPassword_schemes) {
+		/*
+		 * setup 'Primary:userPassword' element
+		 */
+		struct package_PrimaryUserPasswordBlob
+			p_userPassword_b;
+		DATA_BLOB p_userPassword_b_blob;
+		char *p_userPassword_b_hexstr;
+
+		names[num_names++] = "userPassword";
+
+		ret = setup_primary_userPassword(io,
+						 old_scb,
+						 &p_userPassword_b);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+
+		ndr_err = ndr_push_struct_blob(
+			&p_userPassword_b_blob,
+			io->ac,
+			&p_userPassword_b,
+			(ndr_push_flags_fn_t)
+			ndr_push_package_PrimaryUserPasswordBlob);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
+			ldb_asprintf_errstring(
+				ldb,
+				"setup_supplemental_field: failed to push "
+				"package_PrimaryUserPasswordBlob: %s",
+				nt_errstr(status));
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+		p_userPassword_b_hexstr
+			= data_blob_hex_string_upper(
+				io->ac,
+				&p_userPassword_b_blob);
+		if (!p_userPassword_b_hexstr) {
+			return ldb_oom(ldb);
+		}
+		pp->name     = "Primary:userPassword";
+		pp->reserved = 1;
+		pp->data     = p_userPassword_b_hexstr;
+		pp++;
+		num_packages++;
 	}
 
 	/*
 	 * setup 'Primary:SambaGPG' element
 	 */
-	if (pg) {
-		*ng		= "SambaGPG";
+	if (io->ac->gpg_key_ids != NULL) {
+		do_samba_gpg = true;
+	}
+	if (do_samba_gpg) {
+		struct package_PrimarySambaGPGBlob pgb;
+		DATA_BLOB pgb_blob;
+		char *pgb_hexstr;
+
+		names[num_names++] = "SambaGPG";
 
 		ret = setup_primary_samba_gpg(io, &pgb);
 		if (ret != LDB_SUCCESS) {
@@ -1840,52 +2029,82 @@ static int setup_supplemental_field(struct setup_password_fields_io *io)
 		if (!pgb_hexstr) {
 			return ldb_oom(ldb);
 		}
-		pg->name	= "Primary:SambaGPG";
-		pg->reserved	= 1;
-		pg->data	= pgb_hexstr;
+		pp->name	= "Primary:SambaGPG";
+		pp->reserved	= 1;
+		pp->data	= pgb_hexstr;
+		pp++;
+		num_packages++;
 	}
 
 	/*
 	 * setup 'Packages' element
 	 */
-	pb.names = names;
-	ndr_err = ndr_push_struct_blob(&pb_blob, io->ac, 
-				       &pb,
-				       (ndr_push_flags_fn_t)ndr_push_package_PackagesBlob);
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-		ldb_asprintf_errstring(ldb,
-				       "setup_supplemental_field: "
-				       "failed to push package_PackagesBlob: %s",
-				       nt_errstr(status));
-		return LDB_ERR_OPERATIONS_ERROR;
+	{
+		struct package_PackagesBlob pb;
+		DATA_BLOB pb_blob;
+		char *pb_hexstr;
+
+		pb.names = names;
+		ndr_err = ndr_push_struct_blob(
+			&pb_blob, io->ac,
+			&pb,
+			(ndr_push_flags_fn_t)ndr_push_package_PackagesBlob);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
+			ldb_asprintf_errstring(
+				ldb,
+				"setup_supplemental_field: "
+				"failed to push package_PackagesBlob: %s",
+				nt_errstr(status));
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+		pb_hexstr = data_blob_hex_string_upper(io->ac, &pb_blob);
+		if (!pb_hexstr) {
+			return ldb_oom(ldb);
+		}
+		pp->name	= "Packages";
+		pp->reserved	= 2;
+		pp->data	= pb_hexstr;
+		num_packages++;
+		/*
+		 * We don't increment pp so it's pointing to the last package
+		 */
 	}
-	pb_hexstr = data_blob_hex_string_upper(io->ac, &pb_blob);
-	if (!pb_hexstr) {
-		return ldb_oom(ldb);
-	}
-	pp->name	= "Packages";
-	pp->reserved	= 2;
-	pp->data	= pb_hexstr;
 
 	/*
 	 * setup 'supplementalCredentials' value
 	 */
-	ZERO_STRUCT(scb);
-	scb.sub.signature	= SUPPLEMENTAL_CREDENTIALS_SIGNATURE;
-	scb.sub.num_packages	= num_packages;
-	scb.sub.packages	= packages;
+	{
+		/*
+		 * The 'Packages' element needs to be the second last element
+		 * in supplementalCredentials
+		 */
+		struct supplementalCredentialsPackage temp;
+		struct supplementalCredentialsPackage *prev;
 
-	ndr_err = ndr_push_struct_blob(&io->g.supplemental, io->ac, 
-				       &scb,
-				       (ndr_push_flags_fn_t)ndr_push_supplementalCredentialsBlob);
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-		ldb_asprintf_errstring(ldb,
-				       "setup_supplemental_field: "
-				       "failed to push supplementalCredentialsBlob: %s",
-				       nt_errstr(status));
-		return LDB_ERR_OPERATIONS_ERROR;
+		prev = pp-1;
+		temp = *prev;
+		*prev = *pp;
+		*pp = temp;
+
+		ZERO_STRUCT(scb);
+		scb.sub.signature	= SUPPLEMENTAL_CREDENTIALS_SIGNATURE;
+		scb.sub.num_packages	= num_packages;
+		scb.sub.packages	= packages;
+
+		ndr_err = ndr_push_struct_blob(
+			&io->g.supplemental, io->ac,
+			&scb,
+			(ndr_push_flags_fn_t)ndr_push_supplementalCredentialsBlob);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
+			ldb_asprintf_errstring(
+				ldb,
+				"setup_supplemental_field: "
+				"failed to push supplementalCredentialsBlob: %s",
+				nt_errstr(status));
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
 	}
 
 	return LDB_SUCCESS;
@@ -2292,7 +2511,7 @@ static int setup_smartcard_reset(struct setup_password_fields_io *io)
 	return LDB_SUCCESS;
 }
 
-static int make_error_and_update_badPwdCount(struct setup_password_fields_io *io)
+static int make_error_and_update_badPwdCount(struct setup_password_fields_io *io, WERROR *werror)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(io->ac->module);
 	struct ldb_message *mod_msg = NULL;
@@ -2390,21 +2609,24 @@ static int make_error_and_update_badPwdCount(struct setup_password_fields_io *io
 
 done:
 	ret = LDB_ERR_CONSTRAINT_VIOLATION;
+	*werror = WERR_INVALID_PASSWORD;
 	ldb_asprintf_errstring(ldb,
 			       "%08X: %s - check_password_restrictions: "
 			       "The old password specified doesn't match!",
-			       W_ERROR_V(WERR_INVALID_PASSWORD),
+			       W_ERROR_V(*werror),
 			       ldb_strerror(ret));
 	return ret;
 }
 
-static int check_password_restrictions(struct setup_password_fields_io *io)
+static int check_password_restrictions(struct setup_password_fields_io *io, WERROR *werror)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(io->ac->module);
 	int ret;
 	struct loadparm_context *lp_ctx =
 		lp_ctx = talloc_get_type(ldb_get_opaque(ldb, "loadparm"),
 					 struct loadparm_context);
+
+	*werror = WERR_INVALID_PARAMETER;
 
 	if (!io->ac->update_password) {
 		return LDB_SUCCESS;
@@ -2427,7 +2649,7 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 		   has no problems at all */
 		if (io->og.nt_hash) {
 			if (!io->o.nt_hash || memcmp(io->og.nt_hash->hash, io->o.nt_hash->hash, 16) != 0) {
-				return make_error_and_update_badPwdCount(io);
+				return make_error_and_update_badPwdCount(io, werror);
 			}
 
 			nt_hash_checked = true;
@@ -2440,7 +2662,7 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 		if (io->og.lm_hash) {
 			if ((!io->o.lm_hash && !nt_hash_checked)
 			    || (io->o.lm_hash && memcmp(io->og.lm_hash->hash, io->o.lm_hash->hash, 16) != 0)) {
-				return make_error_and_update_badPwdCount(io);
+				return make_error_and_update_badPwdCount(io, werror);
 			}
 		}
 	}
@@ -2455,10 +2677,11 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 	    !io->ac->pwd_reset)
 	{
 		ret = LDB_ERR_CONSTRAINT_VIOLATION;
+		*werror = WERR_PASSWORD_RESTRICTION;
 		ldb_asprintf_errstring(ldb,
 			"%08X: %s - check_password_restrictions: "
 			"password is too young to change!",
-			W_ERROR_V(WERR_PASSWORD_RESTRICTION),
+			W_ERROR_V(*werror),
 			ldb_strerror(ret));
 		return ret;
 	}
@@ -2481,10 +2704,11 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 
 		case SAMR_VALIDATION_STATUS_PWD_TOO_SHORT:
 			ret = LDB_ERR_CONSTRAINT_VIOLATION;
+			*werror = WERR_PASSWORD_RESTRICTION;
 			ldb_asprintf_errstring(ldb,
 				"%08X: %s - check_password_restrictions: "
 				"the password is too short. It should be equal or longer than %u characters!",
-				W_ERROR_V(WERR_PASSWORD_RESTRICTION),
+				W_ERROR_V(*werror),
 				ldb_strerror(ret),
 				io->ac->status->domain_data.minPwdLength);
 			io->ac->status->reject_reason = SAM_PWD_CHANGE_PASSWORD_TOO_SHORT;
@@ -2492,26 +2716,29 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 
 		case SAMR_VALIDATION_STATUS_NOT_COMPLEX_ENOUGH:
 			ret = LDB_ERR_CONSTRAINT_VIOLATION;
+			*werror = WERR_PASSWORD_RESTRICTION;
 			ldb_asprintf_errstring(ldb,
 				"%08X: %s - check_password_restrictions: "
 				"the password does not meet the complexity criteria!",
-				W_ERROR_V(WERR_PASSWORD_RESTRICTION),
+				W_ERROR_V(*werror),
 				ldb_strerror(ret));
 			io->ac->status->reject_reason = SAM_PWD_CHANGE_NOT_COMPLEX;
 			return ret;
 
 		default:
 			ret = LDB_ERR_CONSTRAINT_VIOLATION;
+			*werror = WERR_PASSWORD_RESTRICTION;
 			ldb_asprintf_errstring(ldb,
 				"%08X: %s - check_password_restrictions: "
 				"the password doesn't fit due to a miscellaneous restriction!",
-				W_ERROR_V(WERR_PASSWORD_RESTRICTION),
+				W_ERROR_V(*werror),
 				ldb_strerror(ret));
 			return ret;
 		}
 	}
 
 	if (io->ac->pwd_reset) {
+		*werror = WERR_OK;
 		return LDB_SUCCESS;
 	}
 
@@ -2523,10 +2750,11 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 			ret = memcmp(io->n.nt_hash, io->o.nt_history[i].hash, 16);
 			if (ret == 0) {
 				ret = LDB_ERR_CONSTRAINT_VIOLATION;
+				*werror = WERR_PASSWORD_RESTRICTION;
 				ldb_asprintf_errstring(ldb,
 					"%08X: %s - check_password_restrictions: "
 					"the password was already used (in history)!",
-					W_ERROR_V(WERR_PASSWORD_RESTRICTION),
+					W_ERROR_V(*werror),
 					ldb_strerror(ret));
 				io->ac->status->reject_reason = SAM_PWD_CHANGE_PWD_IN_HISTORY;
 				return ret;
@@ -2542,10 +2770,11 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 			ret = memcmp(io->n.lm_hash, io->o.lm_history[i].hash, 16);
 			if (ret == 0) {
 				ret = LDB_ERR_CONSTRAINT_VIOLATION;
+				*werror = WERR_PASSWORD_RESTRICTION;
 				ldb_asprintf_errstring(ldb,
 					"%08X: %s - check_password_restrictions: "
 					"the password was already used (in history)!",
-					W_ERROR_V(WERR_PASSWORD_RESTRICTION),
+					W_ERROR_V(*werror),
 					ldb_strerror(ret));
 				io->ac->status->reject_reason = SAM_PWD_CHANGE_PWD_IN_HISTORY;
 				return ret;
@@ -2556,10 +2785,11 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 	/* are all password changes disallowed? */
 	if (io->ac->status->domain_data.pwdProperties & DOMAIN_REFUSE_PASSWORD_CHANGE) {
 		ret = LDB_ERR_CONSTRAINT_VIOLATION;
+		*werror = WERR_PASSWORD_RESTRICTION;
 		ldb_asprintf_errstring(ldb,
 			"%08X: %s - check_password_restrictions: "
 			"password changes disabled!",
-			W_ERROR_V(WERR_PASSWORD_RESTRICTION),
+			W_ERROR_V(*werror),
 			ldb_strerror(ret));
 		return ret;
 	}
@@ -2567,15 +2797,97 @@ static int check_password_restrictions(struct setup_password_fields_io *io)
 	/* can this user change the password? */
 	if (io->u.userAccountControl & UF_PASSWD_CANT_CHANGE) {
 		ret = LDB_ERR_CONSTRAINT_VIOLATION;
+		*werror = WERR_PASSWORD_RESTRICTION;
 		ldb_asprintf_errstring(ldb,
 			"%08X: %s - check_password_restrictions: "
 			"password can't be changed on this account!",
-			W_ERROR_V(WERR_PASSWORD_RESTRICTION),
+			W_ERROR_V(*werror),
 			ldb_strerror(ret));
 		return ret;
 	}
 
 	return LDB_SUCCESS;
+}
+
+static int check_password_restrictions_and_log(struct setup_password_fields_io *io)
+{
+	WERROR werror;
+	int ret = check_password_restrictions(io, &werror);
+	struct ph_context *ac = io->ac;
+	/*
+	 * Password resets are not authentication events, and if the
+	 * upper layer checked the password and supplied the hash
+	 * values as proof, then this is also not an authentication
+	 * even at this layer (already logged).  This is to log LDAP
+	 * password changes.
+	 */
+
+	/* Do not record a failure in the auth log below in the success case */
+	if (ret == LDB_SUCCESS) {
+		werror = WERR_OK;
+	}
+
+	if (ac->pwd_reset == false && ac->change == NULL) {
+		struct ldb_context *ldb = ldb_module_get_ctx(ac->module);
+		struct imessaging_context *msg_ctx;
+		struct loadparm_context *lp_ctx
+			= talloc_get_type_abort(ldb_get_opaque(ldb, "loadparm"),
+						struct loadparm_context);
+		NTSTATUS status = werror_to_ntstatus(werror);
+		const char *domain_name = lpcfg_sam_name(lp_ctx);
+		void *opaque_remote_address = NULL;
+		/*
+		 * Forcing this via the NTLM auth structure is not ideal, but
+		 * it is the most practical option right now, and ensures the
+		 * logs are consistent, even if some elements are always NULL.
+		 */
+		struct auth_usersupplied_info ui = {
+			.mapped_state = true,
+			.was_mapped = true,
+			.client = {
+				.account_name = io->u.sAMAccountName,
+				.domain_name = domain_name,
+			},
+			.mapped = {
+				.account_name = io->u.sAMAccountName,
+				.domain_name = domain_name,
+			},
+			.service_description = "LDAP Password Change",
+			.auth_description = "LDAP Modify",
+			.password_type = "plaintext"
+		};
+
+		opaque_remote_address = ldb_get_opaque(ldb,
+						       "remoteAddress");
+		if (opaque_remote_address == NULL) {
+			ldb_asprintf_errstring(ldb,
+					       "Failed to obtain remote address for "
+					       "the LDAP client while changing the "
+					       "password");
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+		ui.remote_host = talloc_get_type(opaque_remote_address,
+						 struct tsocket_address);
+
+		msg_ctx = imessaging_client_init(ac, lp_ctx,
+						 ldb_get_event_context(ldb));
+		if (!msg_ctx) {
+			ldb_asprintf_errstring(ldb,
+					       "Failed to generate client messaging context in %s",
+					       lpcfg_imessaging_path(ac, lp_ctx));
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+		log_authentication_event(msg_ctx,
+					 lp_ctx,
+					 &ui,
+					 status,
+					 domain_name,
+					 io->u.sAMAccountName,
+					 NULL,
+					 io->u.account_sid);
+
+	}
+	return ret;
 }
 
 static int update_final_msg(struct setup_password_fields_io *io)
@@ -2842,12 +3154,12 @@ static int setup_io(struct ph_context *ac,
 	io->u.is_computer		= ldb_msg_check_string_attribute(info_msg, "objectClass", "computer");
 
 	/* Ensure it has an objectSID too */
-	account_sid = samdb_result_dom_sid(ac, info_msg, "objectSid");
-	if (account_sid != NULL) {
+	io->u.account_sid = samdb_result_dom_sid(ac, info_msg, "objectSid");
+	if (io->u.account_sid != NULL) {
 		NTSTATUS status;
 		uint32_t rid = 0;
 
-		status = dom_sid_split_rid(account_sid, account_sid, NULL, &rid);
+		status = dom_sid_split_rid(account_sid, io->u.account_sid, NULL, &rid);
 		if (NT_STATUS_IS_OK(status)) {
 			if (rid == DOMAIN_RID_KRBTGT) {
 				io->u.is_krbtgt = true;
@@ -3345,7 +3657,8 @@ static struct ph_context *ph_init_context(struct ldb_module *module,
 	lp_ctx = talloc_get_type_abort(ldb_get_opaque(ldb, "loadparm"),
 				       struct loadparm_context);
 	ac->gpg_key_ids = lpcfg_password_hash_gpg_key_ids(lp_ctx);
-
+	ac->userPassword_schemes
+		= lpcfg_password_hash_userpassword_schemes(lp_ctx);
 	return ac;
 }
 
@@ -3842,7 +4155,7 @@ static int password_hash_add_do_add(struct ph_context *ac)
 		return ret;
 	}
 
-	ret = check_password_restrictions(&io);
+	ret = check_password_restrictions_and_log(&io);
 	if (ret != LDB_SUCCESS) {
 		return ret;
 	}
@@ -4180,7 +4493,7 @@ static int password_hash_mod_do_mod(struct ph_context *ac)
 		return ret;
 	}
 
-	ret = check_password_restrictions(&io);
+	ret = check_password_restrictions_and_log(&io);
 	if (ret != LDB_SUCCESS) {
 		return ret;
 	}

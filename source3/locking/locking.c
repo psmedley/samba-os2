@@ -37,6 +37,7 @@
 
 #include "includes.h"
 #include "system/filesys.h"
+#include "lib/util/server_id.h"
 #include "locking/proto.h"
 #include "smbd/globals.h"
 #include "dbwrap/dbwrap.h"
@@ -103,7 +104,7 @@ void init_strict_lock_struct(files_struct *fsp,
         plock->lock_flav = lp_posix_cifsu_locktype(fsp);
 }
 
-bool strict_lock_default(files_struct *fsp, struct lock_struct *plock)
+bool strict_lock_check_default(files_struct *fsp, struct lock_struct *plock)
 {
 	struct byte_range_lock *br_lck;
 	int strict_locking = lp_strict_locking(fsp->conn->params);
@@ -161,10 +162,6 @@ bool strict_lock_default(files_struct *fsp, struct lock_struct *plock)
 		   (uintmax_t)plock->fnum, fsp_str_dbg(fsp)));
 
 	return ret;
-}
-
-void strict_unlock_default(files_struct *fsp, struct lock_struct *plock)
-{
 }
 
 /****************************************************************************

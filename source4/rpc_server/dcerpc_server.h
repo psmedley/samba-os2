@@ -93,6 +93,11 @@ struct dcesrv_call_state {
 	struct ncacn_packet pkt;
 
 	/*
+	 * Used during async bind/alter_context.
+	 */
+	struct ncacn_packet ack_pkt;
+
+	/*
 	  which list this request is in, if any
 	 */
 	enum dcesrv_call_list list;
@@ -283,6 +288,16 @@ struct dcesrv_connection {
 
 	/* the negotiated bind time features */
 	uint16_t bind_time_features;
+
+	/*
+	 * This is used to block the connection during
+	 * pending authentication.
+	 */
+	struct tevent_req *(*wait_send)(TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					void *private_data);
+	NTSTATUS (*wait_recv)(struct tevent_req *req);
+	void *wait_private;
 };
 
 
@@ -405,9 +420,7 @@ struct dcesrv_handle *dcesrv_handle_fetch(
 					  struct dcesrv_connection_context *context, 
 					  struct policy_handle *p,
 					  uint8_t handle_type);
-struct socket_address *dcesrv_connection_get_my_addr(struct dcesrv_connection *conn, TALLOC_CTX *mem_ctx);
 
-struct socket_address *dcesrv_connection_get_peer_addr(struct dcesrv_connection *conn, TALLOC_CTX *mem_ctx);
 const struct tsocket_address *dcesrv_connection_get_local_address(struct dcesrv_connection *conn);
 const struct tsocket_address *dcesrv_connection_get_remote_address(struct dcesrv_connection *conn);
 

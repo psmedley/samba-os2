@@ -2,12 +2,12 @@
 .\"     Title: ctdb
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/08/2017
+.\"      Date: 09/21/2017
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB" "1" "08/08/2017" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB" "1" "09/21/2017" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -754,7 +754,7 @@ DBRecordSizeWarn        = 10000000
 DBSizeWarn              = 100000000
 PullDBPreallocation     = 10485760
 NoIPHostOnAllDisabled   = 0
-TDBMutexEnabled         = 0
+TDBMutexEnabled         = 1
 LockProcessesPerDB      = 200
 RecBufferSizeLimit      = 1000000
 QueueBufferSize         = 1024
@@ -1256,7 +1256,7 @@ This command reloads the public addresses configuration file on the specified no
 This command is currently unable to make changes to the netmask or interfaces associated with existing addresses\&. Such changes must be made in 2 steps by deleting addresses in question and re\-adding then\&. Unfortunately this will disrupt connections to the changed addresses\&.
 .SS "getdbmap"
 .PP
-This command lists all clustered TDB databases that the CTDB daemon has attached to\&. Some databases are flagged as PERSISTENT, this means that the database stores data persistently and the data will remain across reboots\&. One example of such a database is secrets\&.tdb where information about how the cluster was joined to the domain is stored\&.
+This command lists all clustered TDB databases that the CTDB daemon has attached to\&. Some databases are flagged as PERSISTENT, this means that the database stores data persistently and the data will remain across reboots\&. One example of such a database is secrets\&.tdb where information about how the cluster was joined to the domain is stored\&. Some database are flagged as REPLICATED, this means that the data in that database is replicated across all the nodes\&. But the data will not remain across reboots\&. This type of database is used by CTDB to store it\*(Aqs internal state\&.
 .PP
 If a PERSISTENT database is not in a healthy state the database is flagged as UNHEALTHY\&. If there\*(Aqs at least one completely healthy node running in the cluster, it\*(Aqs possible that the content is restored by a recovery run automaticly\&. Otherwise an administrator needs to analyze the problem\&.
 .PP
@@ -1392,7 +1392,7 @@ A single connection can be specified on the command\-line rather than on standar
 .PP
 A TCP tickle is a TCP ACK packet with an invalid sequence and acknowledge number and will when received by the source host result in it sending an immediate correct ACK back to the other end\&.
 .PP
-TCP tickles are useful to "tickle" clients after a IP failover has occured since this will make the client immediately recognize the TCP connection has been disrupted and that the client will need to reestablish\&. This greatly speeds up the time it takes for a client to detect and reestablish after an IP failover in the ctdb cluster\&.
+TCP tickles are useful to "tickle" clients after a IP failover has occurred since this will make the client immediately recognize the TCP connection has been disrupted and that the client will need to reestablish\&. This greatly speeds up the time it takes for a client to detect and reestablish after an IP failover in the ctdb cluster\&.
 .SS "version"
 .PP
 Display the CTDB version\&.
@@ -1485,7 +1485,7 @@ This command will force the recovery master to perform a full ip reallocation pr
 .SS "getmonmode"
 .PP
 This command prints the monitoring mode of a node\&. This indicates when CTDB is monitoring services on the node\&. The monitoring mode is either ENABLED or DISABLED\&.
-.SS "attach \fIDBNAME\fR [persistent]"
+.SS "attach \fIDBNAME\fR [persistent|replicated]"
 .PP
 Create a new CTDB database called DBNAME and attach to it on all nodes\&.
 .SS "detach \fIDB\-LIST\fR"

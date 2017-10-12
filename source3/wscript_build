@@ -9,14 +9,6 @@ config_h = "../include/config.h"
 
 bld.SAMBA_BLDOPTIONS('smbd/build_options.c')
 
-t = bld.SAMBA_GENERATOR('build_env.h',
-                        source='script/build_env.sh',
-                        target='include/build_env.h',
-                        rule='${SRC} ${SRCDIR} ${BUILDDIR} ${CC} > ${TGT}')
-# todo: work out what is really wanted here
-t.env.SRCDIR = bld.path.abspath()
-t.env.BUILDDIR = bld.path.abspath()
-
 bld.SETUP_BUILD_GROUPS()
 
 ######################## SUBSYSTEMS #################################
@@ -168,7 +160,7 @@ bld.SAMBA3_LIBRARY('samba-passdb',
                                   ''',
                    abi_match=private_pdb_match,
                    abi_directory='passdb/ABI',
-                   vnum='0.26.0')
+                   vnum='0.27.0')
 
 bld.SAMBA3_SUBSYSTEM('pdb',
                    source='''
@@ -523,7 +515,7 @@ bld.SAMBA3_LIBRARY('smbldap',
                     abi_directory='lib/ABI',
                     abi_match='smbldap_*',
                     pc_files=[],
-                    vnum='0',
+                    vnum='2',
                     public_headers='include/smbldap.h include/smb_ldap.h')
 
 bld.SAMBA3_LIBRARY('ads',
@@ -1212,6 +1204,7 @@ bld.SAMBA3_BINARY('smbtorture' + bld.env.suffix3,
                         torture/test_pthreadpool_tevent.c
                         torture/bench_pthreadpool.c
                         torture/wbc_async.c
+                        torture/test_g_lock.c
                         ''',
                  deps='''
                       talloc
@@ -1336,8 +1329,8 @@ bld.SAMBA3_PYTHON('pylibsmb',
 bld.SAMBA3_BINARY('spotlight2sparql',
                  source='''
                  rpc_server/mdssvc/sparql_parser_test.c
-                 rpc_server/mdssvc/sparql_parser.c
-                 rpc_server/mdssvc/sparql_lexer.c
+                 rpc_server/mdssvc/sparql_parser.y
+                 rpc_server/mdssvc/sparql_lexer.l
                  rpc_server/mdssvc/sparql_mapping.c''',
                  deps='samba3-util talloc ' + bld.env['libtracker'],
                  enabled=bld.env.with_spotlight,
@@ -1347,7 +1340,6 @@ bld.SAMBA3_BINARY('spotlight2sparql',
 
 bld.RECURSE('auth')
 bld.RECURSE('libgpo/gpext')
-bld.RECURSE('lib/pthreadpool')
 bld.RECURSE('librpc')
 bld.RECURSE('librpc/idl')
 bld.RECURSE('libsmb')
