@@ -136,8 +136,6 @@ override_dh_install:
 	mv $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/libnss_* $(DESTDIR)/lib/$(DEB_HOST_MULTIARCH)/
 	# we don't ship the symlinks
 	rm $(DESTDIR)/lib/$(DEB_HOST_MULTIARCH)/libnss_*.so
-	#Remove unused ldb share configuration plugin
-	rm $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba/share/ldb.so
 	#Remove unused vfstest manpage vfstest is no longer installed
 	rm $(DESTDIR)/usr/share/man/man1/vfstest.1
 	mkdir -p $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/plugin/krb5

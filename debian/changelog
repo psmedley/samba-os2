@@ -1,3 +1,13 @@
+samba (2:4.7.0+dfsg-2) unstable; urgency=medium
+
+  * Upload to sid
+  * Bump libcmocka-dev builddep to 1.1.1 (Closes: #878357)
+  * Remove Skip-raw.write-tests.patch as we don't run tests
+  * Remove 05_share_ldb_module, not understood
+   - d/rules: /usr/lib/*/samba/share/ldb.so is not present anymore
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 26 Oct 2017 17:30:02 +0200
+
 samba (2:4.7.0+dfsg-1) experimental; urgency=medium
 
   * New major upstream version
