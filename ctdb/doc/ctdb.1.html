@@ -898,11 +898,15 @@ RUNNING
 	    This lets catdb and dumpdbbackup print the
 	    record flags for each record. Note that cattdb always
 	    prints the flags.
-	  </p></dd></dl></div></div><div class="refsect2"><a name="idm591"></a><h3>process-exists <em class="parameter"><code>PID</code></em></h3><p>
-	This command checks if a specific process exists on the CTDB host. This is mainly used by Samba to check if remote instances of samba are still running or not.
-      </p></div><div class="refsect2"><a name="idm595"></a><h3>getdbstatus <em class="parameter"><code>DB</code></em></h3><p>
+	  </p></dd></dl></div></div><div class="refsect2"><a name="idm591"></a><h3>process-exists <em class="parameter"><code>PID</code></em> <em class="parameter"><code>[SRVID]</code></em></h3><p>
+	This command checks if a specific process exists on the CTDB
+	host. This is mainly used by Samba to check if remote instances
+	of samba are still running or not.  When the optional SRVID
+	argument is specified, the command check if a specific process
+	exists on the CTDB host and has registered for specified SRVID.
+      </p></div><div class="refsect2"><a name="idm596"></a><h3>getdbstatus <em class="parameter"><code>DB</code></em></h3><p>
 	This command displays more details about a database.
-      </p><div class="refsect3"><a name="idm599"></a><h4>Example</h4><pre class="screen">
+      </p><div class="refsect3"><a name="idm600"></a><h4>Example</h4><pre class="screen">
 # ctdb getdbstatus test.tdb.0
 dbid: 0x122224da
 name: test.tdb
@@ -916,28 +920,28 @@ name: registry.tdb
 path: /usr/local/var/lib/ctdb/persistent/registry.tdb.0
 PERSISTENT: yes
 HEALTH: NO-HEALTHY-NODES - ERROR - Backup of corrupted TDB in '/usr/local/var/lib/ctdb/persistent/registry.tdb.0.corrupted.20091208091949.0Z'
-	</pre></div></div><div class="refsect2"><a name="idm602"></a><h3>catdb <em class="parameter"><code>DB</code></em></h3><p>
+	</pre></div></div><div class="refsect2"><a name="idm603"></a><h3>catdb <em class="parameter"><code>DB</code></em></h3><p>
 	Print a dump of the clustered TDB database DB.
-      </p></div><div class="refsect2"><a name="idm606"></a><h3>cattdb <em class="parameter"><code>DB</code></em></h3><p>
+      </p></div><div class="refsect2"><a name="idm607"></a><h3>cattdb <em class="parameter"><code>DB</code></em></h3><p>
 	Print a dump of the contents of the local TDB database DB.
-      </p></div><div class="refsect2"><a name="idm610"></a><h3>dumpdbbackup <em class="parameter"><code>FILE</code></em></h3><p>
+      </p></div><div class="refsect2"><a name="idm611"></a><h3>dumpdbbackup <em class="parameter"><code>FILE</code></em></h3><p>
 	Print a dump of the contents from database backup FILE,
 	similar to <span class="command"><strong>catdb</strong></span>.
-      </p></div><div class="refsect2"><a name="idm615"></a><h3>wipedb <em class="parameter"><code>DB</code></em></h3><p>
+      </p></div><div class="refsect2"><a name="idm616"></a><h3>wipedb <em class="parameter"><code>DB</code></em></h3><p>
 	Remove all contents of database DB.
-      </p></div><div class="refsect2"><a name="idm619"></a><h3>recover</h3><p>
+      </p></div><div class="refsect2"><a name="idm620"></a><h3>recover</h3><p>
 	This command will trigger the recovery daemon to do a cluster
 	recovery.
-      </p></div><div class="refsect2"><a name="idm622"></a><h3>ipreallocate, sync</h3><p>
+      </p></div><div class="refsect2"><a name="idm623"></a><h3>ipreallocate, sync</h3><p>
 	This command will force the recovery master to perform a full ip reallocation process and redistribute all ip addresses. This is useful to "reset" the allocations back to its default state if they have been changed using the "moveip" command. While a "recover" will also perform this reallocation, a recovery is much more hevyweight since it will also rebuild all the databases.
-      </p></div><div class="refsect2"><a name="idm625"></a><h3>getmonmode</h3><p>
+      </p></div><div class="refsect2"><a name="idm626"></a><h3>getmonmode</h3><p>
 	This command prints the monitoring mode of a node.  This
 	indicates when CTDB is monitoring services on the node. The
 	monitoring mode is either ENABLED or DISABLED.
-      </p></div><div class="refsect2"><a name="idm628"></a><h3>attach <em class="parameter"><code>DBNAME</code></em> [persistent|replicated]</h3><p>
+      </p></div><div class="refsect2"><a name="idm629"></a><h3>attach <em class="parameter"><code>DBNAME</code></em> [persistent|replicated]</h3><p>
 	Create a new CTDB database called DBNAME and attach to it on
 	all nodes.
-      </p></div><div class="refsect2"><a name="idm632"></a><h3>detach <em class="parameter"><code>DB-LIST</code></em></h3><p>
+      </p></div><div class="refsect2"><a name="idm633"></a><h3>detach <em class="parameter"><code>DB-LIST</code></em></h3><p>
 	Detach specified non-persistent database(s) from the cluster. This
 	command will disconnect specified database(s) on all nodes in
 	the cluster.  This command should only be used when none of the
@@ -945,13 +949,13 @@ HEALTH: NO-HEALTHY-NODES - ERROR - Backup of corrupted TDB in '/usr/local/var/li
       </p><p>
 	All nodes should be active and tunable AllowClientDBAccess should
 	be disabled on all nodes before detaching databases.
-      </p></div><div class="refsect2"><a name="idm637"></a><h3>dumpmemory</h3><p>
+      </p></div><div class="refsect2"><a name="idm638"></a><h3>dumpmemory</h3><p>
 	This is a debugging command. This command will make the ctdb
 	daemon to write a fill memory allocation map to standard output.
-      </p></div><div class="refsect2"><a name="idm640"></a><h3>rddumpmemory</h3><p>
+      </p></div><div class="refsect2"><a name="idm641"></a><h3>rddumpmemory</h3><p>
 	This is a debugging command. This command will dump the talloc memory
 	allocation tree for the recovery daemon to standard output.
-      </p></div><div class="refsect2"><a name="idm643"></a><h3>ban <em class="parameter"><code>BANTIME</code></em></h3><p>
+      </p></div><div class="refsect2"><a name="idm644"></a><h3>ban <em class="parameter"><code>BANTIME</code></em></h3><p>
 	Administratively ban a node for BANTIME seconds.  The node
 	will be unbanned after BANTIME seconds have elapsed.
       </p><p>
@@ -965,21 +969,21 @@ HEALTH: NO-HEALTHY-NODES - ERROR - Backup of corrupted TDB in '/usr/local/var/li
       </p><p>
 	To administratively exclude a node from a cluster use the
 	<span class="command"><strong>stop</strong></span> command.
-      </p></div><div class="refsect2"><a name="idm651"></a><h3>unban</h3><p>
+      </p></div><div class="refsect2"><a name="idm652"></a><h3>unban</h3><p>
 	This command is used to unban a node that has either been
 	administratively banned using the ban command or has been
 	automatically banned.
-      </p></div><div class="refsect2"><a name="idm654"></a><h3>check_srvids <em class="parameter"><code>SRVID</code></em> ...</h3><p>
+      </p></div><div class="refsect2"><a name="idm655"></a><h3>check_srvids <em class="parameter"><code>SRVID</code></em> ...</h3><p>
 	This command checks whether a set of srvid message ports are
 	registered on the node or not. The command takes a list of
 	values to check.
-      </p><div class="refsect3"><a name="idm658"></a><h4>Example</h4><pre class="screen">
+      </p><div class="refsect3"><a name="idm659"></a><h4>Example</h4><pre class="screen">
 # ctdb check_srvids 1 2 3 14765
 Server id 0:1 does not exist
 Server id 0:2 does not exist
 Server id 0:3 does not exist
 Server id 0:14765 exists
-	</pre></div></div></div><div class="refsect1"><a name="idm661"></a><h2>SEE ALSO</h2><p>
+	</pre></div></div></div><div class="refsect1"><a name="idm662"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdbd</span>(1)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">onnode</span>(1)</span>,

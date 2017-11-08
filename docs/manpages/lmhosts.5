@@ -2,12 +2,12 @@
 .\"     Title: lmhosts
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: File Formats and Conventions
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "LMHOSTS" "5" "09/21/2017" "Samba 4\&.7" "File Formats and Conventions"
+.TH "LMHOSTS" "5" "11/02/2017" "Samba 4\&.7" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -50,6 +50,7 @@ file format, except that the hostname component must correspond to the NetBIOS n
 .SH "FILE FORMAT"
 .PP
 It is an ASCII file containing one line for NetBIOS name\&. The two fields on each line are separated from each other by white space\&. Any entry beginning with \*(Aq#\*(Aq is ignored\&. Each line in the lmhosts file contains the following information:
+.RS
 .sp
 .RS 4
 .ie n \{\

@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: File Formats and Conventions
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "09/21/2017" "Samba 4\&.7" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "11/02/2017" "Samba 4\&.7" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -132,6 +132,7 @@ If a section called [homes] is included in the configuration file, services conn
 When the connection request is made, the existing sections are scanned\&. If a match is found, it is used\&. If no match is found, the requested section name is treated as a username and looked up in the local password file\&. If the name exists and the correct password has been given, a share is created by cloning the [homes] section\&.
 .PP
 Some modifications are then made to the newly created share:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -209,6 +210,7 @@ If a [printers] section occurs in the configuration file, users are able to conn
 When a connection request is made, the existing sections are scanned\&. If a match is found, it is used\&. If no match is found, but a [homes] section exists, it is used as described above\&. Otherwise, the requested section name is treated as a printer name and the appropriate printcap file is scanned to see if the requested section name is a valid printer share name\&. If a match is found, a new printer share is created by cloning the [printers] section\&.
 .PP
 A few modifications are then made to the newly created share:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -597,6 +599,7 @@ By default, Samba 3\&.0 has the same semantics as a Windows NT server, in that i
 .PP
 Starting with Samba version 3\&.2\&.0, the capability to store Samba configuration in the registry is available\&. The configuration is stored in the registry key
 \fIHKLM\eSoftware\eSamba\esmbconf\fR\&. There are two levels of registry configuration:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -840,6 +843,7 @@ addport command (G)
 .PP
 .RS 4
 Samba 3\&.0\&.23 introduced support for adding printer ports remotely using the Windows "Add Standard TCP/IP Port Wizard"\&. This option defines an external program to be executed when smbd receives a request to add a new Port to the system\&. The script is passed two parameters:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -888,6 +892,7 @@ file in order that it can be shared by
 The
 \fIaddprinter command\fR
 is automatically invoked with the following parameter (in order):
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1000,6 +1005,7 @@ smbd
 will automatically invoke the
 \fIadd share command\fR
 with five parameters\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1710,6 +1716,7 @@ smbd
 will automatically invoke the
 \fIchange share command\fR
 with six parameters\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1958,6 +1965,7 @@ client max protocol (G)
 The value of the parameter (a string) is the highest protocol level that will be supported by the client\&.
 .sp
 Possible values are :
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -2025,6 +2033,7 @@ version of the protocol\&. Long filename support\&.
 .IP \(bu 2.3
 .\}
 \fBSMB2\fR: Re\-implementation of the SMB protocol\&. Used by Windows Vista and later versions of Windows\&. SMB2 has sub protocols available\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -2083,6 +2092,7 @@ By default SMB2 selects the SMB2_10 variant\&.
 .IP \(bu 2.3
 .\}
 \fBSMB3\fR: The same as SMB2\&. Used by Windows 8\&. SMB3 has sub protocols available\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -2856,6 +2866,7 @@ smbd
 will automatically invoke the
 \fIdelete share command\fR
 with two parameters\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -3313,6 +3324,7 @@ ea support (S)
 This boolean parameter controls whether
 \fBsmbd\fR(8)
 will allow clients to attempt to access extended attributes on a share\&. In order to enable this parameter on a setup with default VFS modules:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -3704,6 +3716,7 @@ This option is only available Samba was compiled with quotas support\&.
 This parameter should specify the path to a script that queries the quota information for the specified user/group for the partition that the specified directory is on\&.
 .sp
 Such a script is being given 3 arguments:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -3742,6 +3755,7 @@ uid of user or gid of group
 The directory is actually mostly just "\&." \- It needs to be treated relatively to the current working directory that the script can also query\&.
 .sp
 The type of query can be one of:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -3789,6 +3803,7 @@ The type of query can be one of:
 .sp
 .RE
 This script should print one line as output with spaces between the columns\&. The printed columns should be:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -4407,6 +4422,7 @@ inherit owner (S)
 The ownership of new files and directories is normally governed by effective uid of the connected user\&. This option allows the Samba administrator to specify that the ownership for new files and directories should be controlled by the ownership of the parent directory\&.
 .sp
 Valid options are:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -4531,6 +4547,7 @@ interfaces (G)
 This option allows you to override the default network interfaces list that Samba will use for browsing, name registration and other NetBIOS over TCP/IP (NBT) traffic\&. By default Samba will query the kernel for the list of all active interfaces and use any interfaces except 127\&.0\&.0\&.1 that are broadcast capable\&.
 .sp
 The option takes a list of interface strings\&. Each string can be in any of the following forms:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -4694,6 +4711,7 @@ kerberos method (G)
 Controls how kerberos tickets are verified\&.
 .sp
 Valid options are:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -5049,6 +5067,7 @@ This option is used to define whether or not Samba should sync the LDAP password
 The
 \m[blue]\fBldap passwd sync\fR\m[]
 can be set to one of three values:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -5261,6 +5280,7 @@ in the URL argument of
 The
 \m[blue]\fBldap ssl\fR\m[]
 can be set to one of two values:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -5569,6 +5589,7 @@ and
 parameters\&.
 .sp
 Some backends are only available when Samba has been compiled with the additional libraries\&. The overall list of logging backends:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -5664,6 +5685,7 @@ smb\&.conf
 file\&.
 .sp
 This parameter has been extended since the 2\&.2\&.x series, now it allows one to specify the debug level for multiple debug classes\&. This is to give greater flexibility in the configuration of the system\&. The following debug classes are currently implemented:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -5968,6 +5990,7 @@ Authentication and authorization audit information is logged under the auth_audi
 Support is comprehensive for all authentication and authorisation of user accounts in the Samba Active Directory Domain Controller, as well as the implicit authentication in password changes\&. In the file server, NTLM authentication, SMB and RPC authorization is covered\&.
 .sp
 Log levels for auth_audit and auth_audit_json are:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -6498,6 +6521,7 @@ See the section on
 for details on how to control the mangling process\&.
 .sp
 Possible option settings are
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -6537,6 +6561,7 @@ Possible option settings are
 .sp
 .RE
 If mangling is used then the mangling method is as follows:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -6697,6 +6722,7 @@ then this parameter is
 \fIignored\fR\&. This is a new parameter introduced in Samba version 3\&.0\&.21\&.
 .sp
 The three settings are :
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -6774,6 +6800,7 @@ This parameter can take four different values, which tell
 what to do with user login requests that don\*(Aqt match a valid UNIX user in some way\&.
 .sp
 The four settings are :
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -7068,6 +7095,7 @@ won\*(Aqt work (\fI%U\fR
 may be better in this case)\&.
 .sp
 Apart from the standard substitutions, some additional ones apply\&. In particular:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -7263,6 +7291,7 @@ name resolve order (G)
 This option is used by the programs in the Samba suite to determine what naming services to use and in what order to resolve host names to IP addresses\&. Its main purpose to is to control how netbios name resolution is performed\&. The option takes a space separated string of name resolution options\&.
 .sp
 The options are: "lmhosts", "host", "wins" and "bcast"\&. They cause names to be resolved as follows:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -7516,6 +7545,7 @@ only NTLMv2 logins will be permited\&. Most clients support NTLMv2 by default, b
 The primary user of NTLMv1 is MSCHAPv2 for VPNs and 802\&.1x\&.
 .sp
 The available settings are:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -7628,6 +7658,7 @@ ntvfs handler (S)
 .PP
 .RS 4
 This specifies the NTVFS handlers for this share\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -7893,6 +7924,7 @@ This option allows the administrator to chose which backend will be used for sto
 The parameter value is divided into two parts, the backend\*(Aqs name, and a \*(Aqlocation\*(Aq string that has meaning only to that particular backed\&. These are separated by a : character\&.
 .sp
 Available backends can include:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -8151,6 +8183,7 @@ supplementalCredentials
 attribute\&. The value of this option is a hash type\&.
 .sp
 The currently supported hash types are:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -9293,6 +9326,7 @@ rpc_server:SERVER (G)
 With this option you can define if a rpc service should be running internal/embedded in smbd or should be redirected to an external daemon like Samba4, the endpoint mapper daemon, the spoolss daemon or the new LSA service daemon\&. The rpc_server prefix must be followed by the pipe name, and a value\&.
 .sp
 This option can be set for each available rpc service in Samba\&. The following list shows all available pipe names services you can modify with this option\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -9701,6 +9735,7 @@ server max protocol (G)
 The value of the parameter (a string) is the highest protocol level that will be supported by the server\&.
 .sp
 Possible values are :
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -9746,6 +9781,7 @@ version of the protocol\&. Long filename support\&.
 .IP \(bu 2.3
 .\}
 \fBSMB2\fR: Re\-implementation of the SMB protocol\&. Used by Windows Vista and later versions of Windows\&. SMB2 has sub protocols available\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -9804,6 +9840,7 @@ By default SMB2 selects the SMB2_10 variant\&.
 .IP \(bu 2.3
 .\}
 \fBSMB3\fR: The same as SMB2\&. Used by Windows 8\&. SMB3 has sub protocols available\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -10102,6 +10139,7 @@ This option is only available if Samba was compiled with quota support\&.
 This parameter should specify the path to a script that can set quota for the specified arguments\&.
 .sp
 The specified script should take the following arguments:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -10123,6 +10161,7 @@ The specified script should take the following arguments:
 .IP \(bu 2.3
 .\}
 2 \- quota type
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -10339,6 +10378,7 @@ If the connected user possesses the
 \fBSeRemoteShutdownPrivilege\fR, right, this command will be run as root\&.
 .sp
 The %z %t %r %f variables are expanded as follows:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -10517,6 +10557,7 @@ smb encrypt (S)
 .PP
 .RS 4
 This parameter controls whether a remote client is allowed or required to use SMB encryption\&. It has different effects depending on whether the connection uses SMB1 or SMB2 and newer:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -10581,6 +10622,7 @@ is set to
 or newer\&. Clients supporting this type of encryption include Windows 8 and newer, Windows server 2012 and newer, and smbclient of Samba 4\&.1 and newer\&.
 .sp
 The protocol implementation offers various options:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -10630,6 +10672,7 @@ Encryption can be enforced\&. This means that session setups will be denied on n
 These features can be controlled with settings of
 \fIsmb encrypt\fR
 as follows:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -10812,6 +10855,7 @@ samba\-technical@lists\&.samba\&.org\&.
 Any of the supported socket options may be combined in any way you like, as long as your OS allows it\&.
 .sp
 This is the list of socket options currently settable using this option:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -11149,6 +11193,7 @@ spotlight (S)
 This parameter controls whether Samba allows Spotlight queries on a share\&. For controlling indexing of filesystems you also have to use Tracker\*(Aqs own configuration system\&.
 .sp
 Spotlight has several prerequisites:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -12386,6 +12431,7 @@ winbind nss info (G)
 .PP
 .RS 4
 This parameter is designed to control how Winbind retrieves Name Service Information to construct a user\*(Aqs home directory and login shell\&. Currently the following settings are available:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -12555,6 +12601,7 @@ When Samba is running as a WINS server this allows you to call an external progr
 The wins hook parameter specifies the name of a script or executable that will be called as follows:
 .sp
 wins_hook operation name nametype ttl IP_list
+.RS
 .sp
 .RS 4
 .ie n \{\

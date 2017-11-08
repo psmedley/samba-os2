@@ -2,12 +2,12 @@
 .\"     Title: smbspool
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "SMBSPOOL" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
+.TH "SMBSPOOL" "8" "11/02/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -43,6 +43,7 @@ smbspool is a very small print spooling program that sends a print file to an SM
 \fIDEVICE URI\fR
 .PP
 smbspool specifies the destination using a Uniform Resource Identifier ("URI") with a method of "smb"\&. This string can take a number of forms:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -103,6 +104,7 @@ functions can pass the URI in argv[0], while shell scripts must set the
 \fBDEVICE_URI\fR
 environment variable prior to running smbspool\&.
 .SH "OPTIONS"
+.RS
 .sp
 .RS 4
 .ie n \{\

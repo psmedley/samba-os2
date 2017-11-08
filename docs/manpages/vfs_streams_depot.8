@@ -2,12 +2,12 @@
 .\"     Title: vfs_streams_depot
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "VFS_STREAMS_DEPOT" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
+.TH "VFS_STREAMS_DEPOT" "8" "11/02/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -53,6 +53,7 @@ Path of the directory where the alternate data streams should be stored\&. Defau
 streams_depot:delete_lost = [ yes | no ]
 .RS 4
 In the case of an already existing data streams directory for a newly created file the streams directory will be renamed to "lost\-%lu", random()\&. With this option lost stream directories will be removed instead of renamed\&.
+.RS
 .sp
 .RS 4
 .ie n \{\

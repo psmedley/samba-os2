@@ -2,12 +2,12 @@
 .\"     Title: ctdb
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB" "1" "09/21/2017" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB" "1" "11/02/2017" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1425,9 +1425,9 @@ This lets database dumps (catdb, cattdb, dumpdbbackup) print the hash for each r
 .RS 4
 This lets catdb and dumpdbbackup print the record flags for each record\&. Note that cattdb always prints the flags\&.
 .RE
-.SS "process\-exists \fIPID\fR"
+.SS "process\-exists \fIPID\fR \fI[SRVID]\fR"
 .PP
-This command checks if a specific process exists on the CTDB host\&. This is mainly used by Samba to check if remote instances of samba are still running or not\&.
+This command checks if a specific process exists on the CTDB host\&. This is mainly used by Samba to check if remote instances of samba are still running or not\&. When the optional SRVID argument is specified, the command check if a specific process exists on the CTDB host and has registered for specified SRVID\&.
 .SS "getdbstatus \fIDB\fR"
 .PP
 This command displays more details about a database\&.

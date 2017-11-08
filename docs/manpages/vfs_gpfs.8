@@ -2,12 +2,12 @@
 .\"     Title: vfs_gpfs
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "VFS_GPFS" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
+.TH "VFS_GPFS" "8" "11/02/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -43,6 +43,7 @@ gpfs
 VFS module is the home for all gpfs extensions that Samba requires for proper integration with GPFS\&. It uses the GPL library interfaces provided by GPFS\&.
 .PP
 Currently the gpfs vfs module provides extensions in following areas :
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -93,6 +94,7 @@ Since Samba 4\&.0 all options are per share options\&.
 gpfs:sharemodes = [ yes | no ]
 .RS 4
 Enable/Disable cross node sharemode handling for GPFS\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -128,6 +130,7 @@ oplocks
 and
 kernel oplocks
 options to the same value\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -159,6 +162,7 @@ no
 gpfs:hsm = [ yes | no ]
 .RS 4
 Enable/Disable announcing if this FS has HSM enabled\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -190,6 +194,7 @@ yes
 gpfs:recalls = [ yes | no ]
 .RS 4
 When this option is set to no, an attempt to open an offline file will be rejected with access denied\&. This helps preventing recall storms triggered by careless applications like Finder and Explorer\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -223,6 +228,7 @@ gpfs:getrealfilename = [ yes | no ]
 Enable/Disable usage of the
 gpfs_get_realfilename_path()
 function\&. This improves the casesensitive wildcard file name access\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -258,6 +264,7 @@ doesn\*(Aqt work on AIX\&.
 gpfs:winattr = [ yes | no ]
 .RS 4
 Enable/Disable usage of the windows attributes in GPFS\&. GPFS is able to store windows file attributes e\&.g\&. HIDDEN, READONLY, SYSTEM and others natively\&. That means Samba doesn\*(Aqt need to map them to permission bits or extended attributes\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -289,6 +296,7 @@ yes
 gpfs:merge_writeappend = [ yes | no ]
 .RS 4
 GPFS ACLs doesn\*(Aqt know about the \*(AqAPPEND\*(Aq right\&. This option lets Samba map the \*(AqAPPEND\*(Aq right to \*(AqWRITE\*(Aq\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -320,6 +328,7 @@ no
 gpfs:acl = [ yes | no ]
 .RS 4
 This option lets Samba use or ignore GPFS ACLs\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -355,6 +364,7 @@ As GPFS does not support the ACE4_FLAG_NO_PROPAGATE NFSv4 flag (which would be t
 To make sure that automatic migration with e\&.g\&. robocopy does not lead to ACLs silently (and unintentionally) changed, you can set
 gpfs:refuse_dacl_protected = yes
 to enable an explicit check for this flag and if set, it will return NT_STATUS_NOT_SUPPORTED so errors are shown up on the Windows side and the Administrator is aware of the ACLs not being settable like intended
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -388,6 +398,7 @@ gpfs:dfreequota = [ yes | no ]
 Adjust reporting of the size and free space of a share according to quotas\&. If this setting is "yes", a request for size and free space will also evaluate the user quota of the user requesting the data and the group quota of the primary group of the user\&. Fileset quotas are not queried, since GPFS already provides the option \-\-dfreequota to reflect the fileset quota in the free space query\&. Please use that option to include fileset quotas in the reported disk space\&.
 .sp
 If any of the soft or hard quota limits has been reached, the free space will be reported as 0\&. If a quota is in place, but the limits have not been reached, the free space will be reported according to the space left in the quota\&. If more than one quota applies the free space will be reported as the smallest space left in those quotas\&. The size of the share will be reported according to the quota usage\&. If more than one quota applies, the smallest size will be reported for the share size according to these quotas\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -419,6 +430,7 @@ no(default)
 gpfs:prealloc = [ yes | no ]
 .RS 4
 If set to yes the gpfs_prealloc function will be used in the fallocate callback when appropriate\&. If set to no gpfs_prealloc will not be used\&. In both cases the system and libc calls are avoided\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -450,6 +462,7 @@ no
 gpfs:settimes = [ yes | no ]
 .RS 4
 Use the gpfs_set_times API when changing the timestamps of a file or directory\&. If the GPFS API is not available the old method of using utime and the GPFS winattr call will be used instead\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -483,6 +496,7 @@ nfs4:mode = [ simple | special ]
 Controls substitution of special IDs (OWNER@ and GROUP@) on GPFS\&. The use of mode simple is recommended\&. In this mode only non inheriting ACL entries for the file owner and group are mapped to special IDs\&.
 .sp
 The following MODEs are understood by the module:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -516,6 +530,7 @@ nfs4:acedup = [dontcare|reject|ignore|merge]
 This parameter configures how Samba handles duplicate ACEs encountered in GPFS ACLs\&. GPFS allows/creates duplicate ACE for different bits for same ID\&.
 .sp
 Following is the behaviour of Samba for different values :
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -575,6 +590,7 @@ This parameter allows enabling or disabling the chown supported by the underlyin
 Some filesystems allow chown as a) giving b) stealing\&. It is the latter that is considered a risk\&.
 .sp
 Following is the behaviour of Samba for different values :
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -608,6 +624,7 @@ gpfs:syncio = [yes|no]
 This parameter makes Samba open all files with O_SYNC\&. This triggers optimizations in GPFS for workloads that heavily share files\&.
 .sp
 Following is the behaviour of Samba for different values:
+.RS
 .sp
 .RS 4
 .ie n \{\

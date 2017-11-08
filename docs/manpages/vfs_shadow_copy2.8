@@ -2,12 +2,12 @@
 .\"     Title: vfs_shadow_copy2
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "VFS_SHADOW_COPY2" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
+.TH "VFS_SHADOW_COPY2" "8" "11/02/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -45,6 +45,7 @@ VFS module offers a functionality similar to Microsoft Shadow Copy services\&. W
 This is a second implementation of a shadow copy module which has the following additional features (compared to the original
 \fBshadow_copy\fR(8)
 module):
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -126,6 +127,7 @@ vfs_shadow_copy2\&. These snapshot directory is typically a direct subdirectory 
 The snapshot at a given point in time is expected in a subdirectory of the snapshot directory where the snapshot\*(Aqs directory is expected to be a formatted version of the snapshot time\&. The default format which can be changed with the
 shadow:format
 option is @GMT\-YYYY\&.MM\&.DD\-hh\&.mm\&.ss, where:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -253,6 +255,7 @@ shadow:basedir = BASEDIR
 The basedir option allows one to specify a directory between the share\*(Aqs mount point and the share root, relative to which the file system\*(Aqs snapshots are taken\&.
 .sp
 For example, if
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -323,6 +326,7 @@ can be set to
 path/to/share\&.
 .sp
 With this parameter, it is no longer assumed that a snapshot represents an image of the original file system or a portion of it\&. For example, a system could perform backups of only files contained in shares, and then expose the backup files in a logical structure:
+.RS
 .sp
 .RS 4
 .ie n \{\

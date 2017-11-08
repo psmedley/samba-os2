@@ -352,6 +352,16 @@ static int vfs_gluster_connect(struct vfs_handle_struct *handle,
 			  volume, strerror(errno)));
 		goto done;
 	}
+
+	/*
+	 * The shadow_copy2 module will fail to export subdirectories
+	 * of a gluster volume unless we specify the mount point,
+	 * because the detection fails if the file system is not
+	 * locally mounted:
+	 * https://bugzilla.samba.org/show_bug.cgi?id=13091
+	 */
+	lp_do_parameter(SNUM(handle->conn), "shadow:mountpoint", "/");
+
 done:
 	if (ret < 0) {
 		if (fs)
@@ -1089,8 +1099,9 @@ static struct smb_filename *vfs_gluster_getwd(struct vfs_handle_struct *handle,
 	}
 
 	ret = glfs_getcwd(handle->data, cwd, PATH_MAX - 1);
-	if (ret == 0) {
+	if (ret == NULL) {
 		free(cwd);
+		return NULL;
 	}
 	smb_fname = synthetic_smb_fname(ctx,
 					ret,

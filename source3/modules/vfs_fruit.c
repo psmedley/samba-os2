@@ -33,6 +33,7 @@
 #include "lib/util/tevent_ntstatus.h"
 #include "lib/util/tevent_unix.h"
 #include "offload_token.h"
+#include "string_replace.h"
 
 /*
  * Enhanced OS X and Netatalk compatibility
@@ -176,6 +177,19 @@ static const struct enum_list fruit_encoding[] = {
 	{FRUIT_ENC_PRIVATE, "private"}, /* keep unicode private chars */
 	{ -1, NULL}
 };
+
+static const char *fruit_catia_maps =
+	"0x01:0xf001,0x02:0xf002,0x03:0xf003,0x04:0xf004,"
+	"0x05:0xf005,0x06:0xf006,0x07:0xf007,0x08:0xf008,"
+	"0x09:0xf009,0x0a:0xf00a,0x0b:0xf00b,0x0c:0xf00c,"
+	"0x0d:0xf00d,0x0e:0xf00e,0x0f:0xf00f,0x10:0xf010,"
+	"0x11:0xf011,0x12:0xf012,0x13:0xf013,0x14:0xf014,"
+	"0x15:0xf015,0x16:0xf016,0x17:0xf017,0x18:0xf018,"
+	"0x19:0xf019,0x1a:0xf01a,0x1b:0xf01b,0x1c:0xf01c,"
+	"0x1d:0xf01d,0x1e:0xf01e,0x1f:0xf01f,"
+	"0x22:0xf020,0x2a:0xf021,0x3a:0xf022,0x3c:0xf023,"
+	"0x3e:0xf024,0x3f:0xf025,0x5c:0xf026,0x7c:0xf027,"
+	"0x0d:0xf00d";
 
 /*****************************************************************************
  * Defines, functions and data structures that deal with AppleDouble
@@ -344,11 +358,47 @@ typedef enum {ADOUBLE_META, ADOUBLE_RSRC} adouble_type_t;
 #define AD_DATE_FROM_UNIX(x)  (htonl((x) - AD_DATE_DELTA))
 #define AD_DATE_TO_UNIX(x)    (ntohl(x) + AD_DATE_DELTA)
 
+#define AD_XATTR_HDR_MAGIC    0x41545452 /* 'ATTR' */
+#define AD_XATTR_MAX_ENTRIES  1024 /* Some arbitrarily enforced limit */
+#define AD_XATTR_HDR_SIZE     36
+#define AD_XATTR_MAX_HDR_SIZE 65536
+
 /* Accessor macros */
 #define ad_getentrylen(ad,eid)     ((ad)->ad_eid[(eid)].ade_len)
 #define ad_getentryoff(ad,eid)     ((ad)->ad_eid[(eid)].ade_off)
 #define ad_setentrylen(ad,eid,len) ((ad)->ad_eid[(eid)].ade_len = (len))
 #define ad_setentryoff(ad,eid,off) ((ad)->ad_eid[(eid)].ade_off = (off))
+
+/*
+ * Both struct ad_xattr_header and struct ad_xattr_entry describe the in memory
+ * representation as well as the on-disk format.
+ *
+ * The ad_xattr_header follows the FinderInfo data in the FinderInfo entry if
+ * the length of the FinderInfo entry is larger then 32 bytes. It is then
+ * preceeded with 2 bytes padding.
+ *
+ * Cf: https://opensource.apple.com/source/xnu/xnu-4570.1.46/bsd/vfs/vfs_xattr.c
+ */
+
+struct ad_xattr_header {
+	uint32_t adx_magic;        /* ATTR_HDR_MAGIC */
+	uint32_t adx_debug_tag;    /* for debugging == file id of owning file */
+	uint32_t adx_total_size;   /* file offset of end of attribute header + entries + data */
+	uint32_t adx_data_start;   /* file offset to attribute data area */
+	uint32_t adx_data_length;  /* length of attribute data area */
+	uint32_t adx_reserved[3];
+	uint16_t adx_flags;
+	uint16_t adx_num_attrs;
+};
+
+/* On-disk entries are aligned on 4 byte boundaries */
+struct ad_xattr_entry {
+	uint32_t adx_offset;    /* file offset to data */
+	uint32_t adx_length;    /* size of attribute data */
+	uint16_t adx_flags;
+	uint8_t  adx_namelen;	/* included the NULL terminator */
+	char    *adx_name;      /* NULL-terminated UTF-8 name */
+};
 
 struct ad_entry {
 	size_t ade_off;
@@ -364,6 +414,8 @@ struct adouble {
 	uint32_t                  ad_version;
 	struct ad_entry           ad_eid[ADEID_MAX];
 	char                     *ad_data;
+	struct ad_xattr_header    adx_header;
+	struct ad_xattr_entry    *adx_entries;
 };
 
 struct ad_entry_order {
@@ -539,6 +591,10 @@ static bool ad_pack(struct adouble *ad)
 	uint32_t       offset = 0;
 
 	bufsize = talloc_get_size(ad->ad_data);
+	if (bufsize < AD_DATASZ_DOT_UND) {
+		DBG_ERR("bad buffer size [0x%" PRIx32 "]\n", bufsize);
+		return false;
+	}
 
 	if (offset + ADEDLEN_MAGIC < offset ||
 			offset + ADEDLEN_MAGIC >= bufsize) {
@@ -610,6 +666,141 @@ static bool ad_pack(struct adouble *ad)
 	return true;
 }
 
+static bool ad_unpack_xattrs(struct adouble *ad)
+{
+	struct ad_xattr_header *h = &ad->adx_header;
+	const char *p = ad->ad_data;
+	uint32_t hoff;
+	uint32_t i;
+
+	if (ad_getentrylen(ad, ADEID_FINDERI) <= ADEDLEN_FINDERI) {
+		return true;
+	}
+
+	/* 2 bytes padding */
+	hoff = ad_getentryoff(ad, ADEID_FINDERI) + ADEDLEN_FINDERI + 2;
+
+	h->adx_magic       = RIVAL(p, hoff + 0);
+	h->adx_debug_tag   = RIVAL(p, hoff + 4); /* Not used -> not checked */
+	h->adx_total_size  = RIVAL(p, hoff + 8);
+	h->adx_data_start  = RIVAL(p, hoff + 12);
+	h->adx_data_length = RIVAL(p, hoff + 16);
+	h->adx_flags       = RSVAL(p, hoff + 32); /* Not used -> not checked */
+	h->adx_num_attrs   = RSVAL(p, hoff + 34);
+
+	if (h->adx_magic != AD_XATTR_HDR_MAGIC) {
+		DBG_ERR("Bad magic: 0x%" PRIx32 "\n", h->adx_magic);
+		return false;
+	}
+
+	if (h->adx_total_size > ad_getentryoff(ad, ADEID_RFORK)) {
+		DBG_ERR("Bad total size: 0x%" PRIx32 "\n", h->adx_total_size);
+		return false;
+	}
+	if (h->adx_total_size > AD_XATTR_MAX_HDR_SIZE) {
+		DBG_ERR("Bad total size: 0x%" PRIx32 "\n", h->adx_total_size);
+		return false;
+	}
+
+	if (h->adx_data_start < (hoff + AD_XATTR_HDR_SIZE)) {
+		DBG_ERR("Bad start: 0x%" PRIx32 "\n", h->adx_data_start);
+		return false;
+	}
+
+	if ((h->adx_data_start + h->adx_data_length) < h->adx_data_start) {
+		DBG_ERR("Bad length: %" PRIu32 "\n", h->adx_data_length);
+		return false;
+	}
+	if ((h->adx_data_start + h->adx_data_length) >
+	    ad->adx_header.adx_total_size)
+	{
+		DBG_ERR("Bad length: %" PRIu32 "\n", h->adx_data_length);
+		return false;
+	}
+
+	if (h->adx_num_attrs > AD_XATTR_MAX_ENTRIES) {
+		DBG_ERR("Bad num xattrs: %" PRIu16 "\n", h->adx_num_attrs);
+		return false;
+	}
+
+	if (h->adx_num_attrs == 0) {
+		return true;
+	}
+
+	ad->adx_entries = talloc_zero_array(
+		ad, struct ad_xattr_entry, h->adx_num_attrs);
+	if (ad->adx_entries == NULL) {
+		return false;
+	}
+
+	hoff += AD_XATTR_HDR_SIZE;
+
+	for (i = 0; i < h->adx_num_attrs; i++) {
+		struct ad_xattr_entry *e = &ad->adx_entries[i];
+
+		hoff = (hoff + 3) & ~3;
+
+		e->adx_offset  = RIVAL(p, hoff + 0);
+		e->adx_length  = RIVAL(p, hoff + 4);
+		e->adx_flags   = RSVAL(p, hoff + 8);
+		e->adx_namelen = *(p + hoff + 10);
+
+		if (e->adx_offset >= ad->adx_header.adx_total_size) {
+			DBG_ERR("Bad adx_offset: %" PRIx32 "\n",
+				e->adx_offset);
+			return false;
+		}
+
+		if ((e->adx_offset + e->adx_length) < e->adx_offset) {
+			DBG_ERR("Bad adx_length: %" PRIx32 "\n",
+				e->adx_length);
+			return false;
+		}
+
+		if ((e->adx_offset + e->adx_length) >
+		    ad->adx_header.adx_total_size)
+		{
+			DBG_ERR("Bad adx_length: %" PRIx32 "\n",
+				e->adx_length);
+			return false;
+		}
+
+		if (e->adx_namelen == 0) {
+			DBG_ERR("Bad adx_namelen: %" PRIx32 "\n",
+				e->adx_namelen);
+			return false;
+		}
+		if ((hoff + 11 + e->adx_namelen) < hoff + 11) {
+			DBG_ERR("Bad adx_namelen: %" PRIx32 "\n",
+				e->adx_namelen);
+			return false;
+		}
+		if ((hoff + 11 + e->adx_namelen) >
+		    ad->adx_header.adx_data_start)
+		{
+			DBG_ERR("Bad adx_namelen: %" PRIx32 "\n",
+				e->adx_namelen);
+			return false;
+		}
+
+		e->adx_name = talloc_strndup(ad->adx_entries,
+					     p + hoff + 11,
+					     e->adx_namelen);
+		if (e->adx_name == NULL) {
+			return false;
+		}
+
+		DBG_DEBUG("xattr [%s] offset [0x%x] size [0x%x]\n",
+			  e->adx_name, e->adx_offset, e->adx_length);
+		dump_data(10, (uint8_t *)(ad->ad_data + e->adx_offset),
+			  e->adx_length);
+
+		hoff += 11 + e->adx_namelen;
+	}
+
+	return true;
+}
+
 /**
  * Unpack an AppleDouble blob into a struct adoble
  **/
@@ -619,6 +810,7 @@ static bool ad_unpack(struct adouble *ad, const size_t nentries,
 	size_t bufsize = talloc_get_size(ad->ad_data);
 	size_t adentries, i;
 	uint32_t eid, len, off;
+	bool ok;
 
 	/*
 	 * The size of the buffer ad->ad_data is checked when read, so
@@ -732,6 +924,124 @@ static bool ad_unpack(struct adouble *ad, const size_t nentries,
 		ad->ad_eid[eid].ade_len = len;
 	}
 
+	ok = ad_unpack_xattrs(ad);
+	if (!ok) {
+		return false;
+	}
+
+	return true;
+}
+
+static bool ad_convert_xattr(struct adouble *ad,
+			     const struct smb_filename *smb_fname,
+			     char *map)
+{
+	static struct char_mappings **string_replace_cmaps = NULL;
+	uint16_t i;
+	int saved_errno = 0;
+	NTSTATUS status;
+
+	if (ad->adx_header.adx_num_attrs == 0) {
+		return true;
+	}
+
+	if (string_replace_cmaps == NULL) {
+		const char **mappings = NULL;
+
+		mappings = str_list_make_v3_const(
+			talloc_tos(), fruit_catia_maps, NULL);
+		if (mappings == NULL) {
+			return false;
+		}
+		string_replace_cmaps = string_replace_init_map(mappings);
+		TALLOC_FREE(mappings);
+	}
+
+	for (i = 0; i < ad->adx_header.adx_num_attrs; i++) {
+		struct ad_xattr_entry *e = &ad->adx_entries[i];
+		char *mapped_name = NULL;
+		char *tmp = NULL;
+		struct smb_filename *stream_name = NULL;
+		files_struct *fsp = NULL;
+		ssize_t nwritten;
+
+		status = string_replace_allocate(ad->ad_handle->conn,
+						 e->adx_name,
+						 string_replace_cmaps,
+						 talloc_tos(),
+						 &mapped_name,
+						 vfs_translate_to_windows);
+		if (!NT_STATUS_IS_OK(status) &&
+		    !NT_STATUS_EQUAL(status, NT_STATUS_NONE_MAPPED))
+		{
+			DBG_ERR("string_replace_allocate failed\n");
+			return -1;
+		}
+
+		tmp = mapped_name;
+		mapped_name = talloc_asprintf(talloc_tos(), ":%s", tmp);
+		TALLOC_FREE(tmp);
+		if (mapped_name == NULL) {
+			return -1;
+		}
+
+		stream_name = synthetic_smb_fname(talloc_tos(),
+						  smb_fname->base_name,
+						  mapped_name,
+						  NULL,
+						  smb_fname->flags);
+		TALLOC_FREE(mapped_name);
+		if (stream_name == NULL) {
+			DBG_ERR("synthetic_smb_fname failed\n");
+			return -1;
+		}
+
+		DBG_DEBUG("stream_name: %s\n", smb_fname_str_dbg(stream_name));
+
+		status = SMB_VFS_CREATE_FILE(
+			ad->ad_handle->conn,		/* conn */
+			NULL,				/* req */
+			0,				/* root_dir_fid */
+			stream_name,			/* fname */
+			FILE_GENERIC_WRITE,		/* access_mask */
+			FILE_SHARE_READ | FILE_SHARE_WRITE, /* share_access */
+			FILE_OPEN_IF,			/* create_disposition */
+			0,				/* create_options */
+			0,				/* file_attributes */
+			INTERNAL_OPEN_ONLY,		/* oplock_request */
+			NULL,				/* lease */
+			0,				/* allocation_size */
+			0,				/* private_flags */
+			NULL,				/* sd */
+			NULL,				/* ea_list */
+			&fsp,				/* result */
+			NULL,				/* psbuf */
+			NULL, NULL);			/* create context */
+		TALLOC_FREE(stream_name);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_ERR("SMB_VFS_CREATE_FILE failed\n");
+			return -1;
+		}
+
+		nwritten = SMB_VFS_PWRITE(fsp,
+					  map + e->adx_offset,
+					  e->adx_length,
+					  0);
+		if (nwritten == -1) {
+			DBG_ERR("SMB_VFS_PWRITE failed\n");
+			saved_errno = errno;
+			close_file(NULL, fsp, ERROR_CLOSE);
+			errno = saved_errno;
+			return -1;
+		}
+
+		status = close_file(NULL, fsp, NORMAL_CLOSE);
+		if (!NT_STATUS_IS_OK(status)) {
+			return -1;
+		}
+		fsp = NULL;
+	}
+
 	return true;
 }
 
@@ -745,11 +1055,14 @@ static bool ad_unpack(struct adouble *ad, const size_t nentries,
  * @return -1 in case an error occurred, 0 if no conversion was done, 1
  * otherwise
  **/
-static int ad_convert(struct adouble *ad, int fd)
+static int ad_convert(struct adouble *ad,
+		      const struct smb_filename *smb_fname,
+		      int fd)
 {
 	int rc = 0;
 	char *map = MAP_FAILED;
 	size_t origlen;
+	bool ok;
 
 	origlen = ad_getentryoff(ad, ADEID_RFORK) +
 		ad_getentrylen(ad, ADEID_RFORK);
@@ -760,6 +1073,11 @@ static int ad_convert(struct adouble *ad, int fd)
 		DEBUG(2, ("mmap AppleDouble: %s\n", strerror(errno)));
 		rc = -1;
 		goto exit;
+	}
+
+	ok = ad_convert_xattr(ad, smb_fname, map);
+	if (!ok) {
+		return -1;
 	}
 
 	if (ad_getentrylen(ad, ADEID_RFORK) > 0) {
@@ -982,19 +1300,41 @@ static ssize_t ad_read_rsrc_adouble(struct adouble *ad,
 	char *p_ad = NULL;
 	char *p_meta_ad = NULL;
 	ssize_t len;
+	size_t size;
 	int ret;
 	bool ok;
-
-	len = sys_pread(ad->ad_fd, ad->ad_data, AD_DATASZ_DOT_UND, 0);
-	if (len != AD_DATASZ_DOT_UND) {
-		DBG_NOTICE("%s %s: bad size: %zd\n",
-			   smb_fname->base_name, strerror(errno), len);
-		return -1;
-	}
 
 	ret = sys_fstat(ad->ad_fd, &sbuf, lp_fake_directory_create_times(
 				SNUM(ad->ad_handle->conn)));
 	if (ret != 0) {
+		return -1;
+	}
+
+	/*
+	 * AppleDouble file header content and size, two cases:
+	 *
+	 * - without xattrs it is exactly AD_DATASZ_DOT_UND (82) bytes large
+	 * - with embedded xattrs it can be larger, up to AD_XATTR_MAX_HDR_SIZE
+	 *
+	 * Read as much as we can up to AD_XATTR_MAX_HDR_SIZE.
+	 */
+	size = sbuf.st_ex_size;
+	if (size > talloc_array_length(ad->ad_data)) {
+		if (size > AD_XATTR_MAX_HDR_SIZE) {
+			size = AD_XATTR_MAX_HDR_SIZE;
+		}
+		p_ad = talloc_realloc(ad, ad->ad_data, char, size);
+		if (p_ad == NULL) {
+			return -1;
+		}
+		ad->ad_data = p_ad;
+	}
+
+	len = sys_pread(ad->ad_fd, ad->ad_data,
+			talloc_array_length(ad->ad_data), 0);
+	if (len != talloc_array_length(ad->ad_data)) {
+		DBG_NOTICE("%s %s: bad size: %zd\n",
+			   smb_fname->base_name, strerror(errno), len);
 		return -1;
 	}
 
@@ -1027,7 +1367,7 @@ static ssize_t ad_read_rsrc_adouble(struct adouble *ad,
 	 * there is lost.
 	 */
 
-	ret = ad_convert(ad, ad->ad_fd);
+	ret = ad_convert(ad, smb_fname, ad->ad_fd);
 	if (ret != 0) {
 		DBG_WARNING("Failed to convert [%s]\n", smb_fname->base_name);
 		return len;
@@ -1413,9 +1753,9 @@ static int ad_fset(struct adouble *ad, files_struct *fsp)
 		len = SMB_VFS_NEXT_PWRITE(ad->ad_handle,
 					  fsp,
 					  ad->ad_data,
-					  talloc_get_size(ad->ad_data),
+					  AD_DATASZ_DOT_UND,
 					  0);
-		if (len != (ssize_t)talloc_get_size(ad->ad_data)) {
+		if (len != AD_DATASZ_DOT_UND) {
 			DBG_ERR("short write on %s: %zd", fsp_str_dbg(fsp), len);
 			return -1;
 		}
@@ -2621,20 +2961,9 @@ static int fruit_connect(vfs_handle_struct *handle,
 	}
 
 	if (config->encoding == FRUIT_ENC_NATIVE) {
-		lp_do_parameter(
-			SNUM(handle->conn),
-			"catia:mappings",
-			"0x01:0xf001,0x02:0xf002,0x03:0xf003,0x04:0xf004,"
-			"0x05:0xf005,0x06:0xf006,0x07:0xf007,0x08:0xf008,"
-			"0x09:0xf009,0x0a:0xf00a,0x0b:0xf00b,0x0c:0xf00c,"
-			"0x0d:0xf00d,0x0e:0xf00e,0x0f:0xf00f,0x10:0xf010,"
-			"0x11:0xf011,0x12:0xf012,0x13:0xf013,0x14:0xf014,"
-			"0x15:0xf015,0x16:0xf016,0x17:0xf017,0x18:0xf018,"
-			"0x19:0xf019,0x1a:0xf01a,0x1b:0xf01b,0x1c:0xf01c,"
-			"0x1d:0xf01d,0x1e:0xf01e,0x1f:0xf01f,"
-			"0x22:0xf020,0x2a:0xf021,0x3a:0xf022,0x3c:0xf023,"
-			"0x3e:0xf024,0x3f:0xf025,0x5c:0xf026,0x7c:0xf027,"
-			"0x0d:0xf00d");
+		lp_do_parameter(SNUM(handle->conn),
+				"catia:mappings",
+				fruit_catia_maps);
 	}
 
 	return rc;
@@ -3435,7 +3764,7 @@ static int fruit_rmdir(struct vfs_handle_struct *handle,
 
 exit_rmdir:
 	if (dh) {
-		closedir(dh);
+		SMB_VFS_CLOSEDIR(handle->conn, dh);
 	}
 	return SMB_VFS_NEXT_RMDIR(handle, smb_fname);
 }
@@ -4881,7 +5210,7 @@ static int fruit_ftruncate_rsrc_adouble(struct vfs_handle_struct *handle,
 
 	ad_off = ad_getentryoff(ad, ADEID_RFORK);
 
-	rc = SMB_VFS_NEXT_FTRUNCATE(handle, fsp, offset + ad_off);
+	rc = ftruncate(fsp->fh->fd, offset + ad_off);
 	if (rc != 0) {
 		TALLOC_FREE(ad);
 		return -1;

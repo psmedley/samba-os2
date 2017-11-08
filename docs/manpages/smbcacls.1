@@ -2,12 +2,12 @@
 .\"     Title: smbcacls
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: User Commands
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "SMBCACLS" "1" "09/21/2017" "Samba 4\&.7" "User Commands"
+.TH "SMBCACLS" "1" "11/02/2017" "Samba 4\&.7" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -315,6 +315,7 @@ The owner and group specify the owner and group sids for the object\&. If a SID 
 ACEs are specified with an "ACL:" prefix, and define permissions granted to an SID\&. The SID again can be specified in S\-1\-x\-y\-z format or as a name in which case it is resolved against the server on which the file or directory resides\&. The type, flags and mask values determine the type of access granted to the SID\&.
 .PP
 The type can be either ALLOWED or DENIED to allow/deny access to the SID\&. The flags values are generally zero for file ACEs and either 9 or 2 for directory ACEs\&. Some common flags are:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -365,6 +366,7 @@ The type can be either ALLOWED or DENIED to allow/deny access to the SID\&. The 
 At present, flags can only be specified as decimal or hexadecimal values\&.
 .PP
 The mask is a value which expresses the access right granted to the SID\&. It can be given as a decimal or hexadecimal value, or by using one of the following text strings which map to the NT file permissions of the same name\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -441,6 +443,7 @@ The mask is a value which expresses the access right granted to the SID\&. It ca
 .RE
 .PP
 The following combined permissions can be specified:
+.RS
 .sp
 .RS 4
 .ie n \{\

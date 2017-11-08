@@ -2,12 +2,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "NET" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
+.TH "NET" "8" "11/02/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -614,6 +614,7 @@ Sets the SID of the current domain\&.
 .SS "GROUPMAP"
 .PP
 Manage the mappings between Windows group SIDs and UNIX groups\&. Common options include:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1505,6 +1506,7 @@ The following options are available:
 This is a mechanism to check the existence or non\-existence of certain keys or values specified in a precheck file before applying the import file\&. The import file will only be applied if the precheck succeeds\&.
 .sp
 The check\-file follows the normal registry file syntax with the following semantics:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1683,6 +1685,7 @@ net dom renamecomputer \- Renames a remote computer joined to a domain\&.
 .SS "DOM JOIN	domain=DOMAIN ou=OU account=ACCOUNT password=PASSWORD reboot"
 .PP
 Joins a computer into a domain\&. This command supports the following additional parameters:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1759,6 +1762,7 @@ This example would connect to a computer named XP as the local administrator usi
 .SS "DOM UNJOIN account=ACCOUNT password=PASSWORD reboot"
 .PP
 Unjoins a computer from a domain\&. This command supports the following additional parameters:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1807,6 +1811,7 @@ This example would connect to a computer named XP as the local administrator usi
 .SS "DOM RENAMECOMPUTER newname=NEWNAME account=ACCOUNT password=PASSWORD reboot"
 .PP
 Renames a computer that is joined to a domain\&. This command supports the following additional parameters:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1871,6 +1876,7 @@ Manage global locks\&.
 .PP
 Execute a shell command under a global lock\&. This might be useful to define the order in which several shell commands will be executed\&. The locking information is stored in a file called
 g_lock\&.tdb\&. In setups with CTDB running, the locking information will be available on all cluster nodes\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -1919,6 +1925,7 @@ Print information from tdb records\&.
 .SS "TDB LOCKING key [DUMP]"
 .PP
 List sharename, filename and number of share modes for a record from locking\&.tdb\&. With the optional DUMP options, dump the complete record\&.
+.RS
 .sp
 .RS 4
 .ie n \{\

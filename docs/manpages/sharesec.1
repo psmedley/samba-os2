@@ -2,12 +2,12 @@
 .\"     Title: sharesec
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: User Commands
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "SHARESEC" "1" "09/21/2017" "Samba 4\&.7" "User Commands"
+.TH "SHARESEC" "1" "11/02/2017" "Samba 4\&.7" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -175,6 +175,7 @@ ACLs specify permissions granted to the SID\&. This SID can be specified in S\-1
 The type can be either ALLOWED or DENIED to allow/deny access to the SID\&. The flags values are generally zero for share ACLs\&.
 .PP
 The mask is a value which expresses the access right granted to the SID\&. It can be given as a decimal or hexadecimal value, or by using one of the following text strings which map to the NT file permissions of the same name\&.
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -251,6 +252,7 @@ The mask is a value which expresses the access right granted to the SID\&. It ca
 .RE
 .PP
 The following combined permissions can be specified:
+.RS
 .sp
 .RS 4
 .ie n \{\

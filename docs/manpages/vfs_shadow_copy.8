@@ -2,12 +2,12 @@
 .\"     Title: vfs_shadow_copy
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: System Administration tools
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "VFS_SHADOW_COPY" "8" "09/21/2017" "Samba 4\&.7" "System Administration tools"
+.TH "VFS_SHADOW_COPY" "8" "11/02/2017" "Samba 4\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -52,6 +52,7 @@ Filesystem snapshots must be mounted on specially named directories in order to 
 vfs_shadow_copy\&. The snapshot mount points must be immediate children of a the directory being shared\&.
 .PP
 The snapshot naming convention is @GMT\-YYYY\&.MM\&.DD\-hh\&.mm\&.ss, where:
+.RS
 .sp
 .RS 4
 .ie n \{\

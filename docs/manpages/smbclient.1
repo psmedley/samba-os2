@@ -2,12 +2,12 @@
 .\"     Title: smbclient
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/21/2017
+.\"      Date: 11/02/2017
 .\"    Manual: User Commands
 .\"    Source: Samba 4.7
 .\"  Language: English
 .\"
-.TH "SMBCLIENT" "1" "09/21/2017" "Samba 4\&.7" "User Commands"
+.TH "SMBCLIENT" "1" "11/02/2017" "Samba 4\&.7" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -89,6 +89,7 @@ Be cautious about including passwords in scripts\&.
 This option is used by the programs in the Samba suite to determine what naming services and in what order to resolve host names to IP addresses\&. The option takes a space\-separated string of different name resolution options\&.
 .sp
 The options are :"lmhosts", "host", "wins" and "bcast"\&. They cause names to be resolved as follows:
+.RS
 .sp
 .RS 4
 .ie n \{\
@@ -421,6 +422,7 @@ command inside smbclient\&.
 smbclient may be used to create
 tar(1)
 compatible backups of all the files on an SMB/CIFS share\&. The secondary tar flags that can be given to this option are:
+.RS
 .sp
 .RS 4
 .ie n \{\
