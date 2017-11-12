@@ -1,3 +1,12 @@
+samba (2:4.7.1+dfsg-2) unstable; urgency=high
+
+  * This is a security release in order to address the following defects:
+    - CVE-2017-15275: s3: smbd: Chain code can return uninitialized memory when
+      talloc buffer is grown.
+    - CVE-2017-14746: s3: smbd: Fix SMB1 use-after-free crash bug.
+
+ -- Mathieu Parent <sathieu@debian.org>  Sun, 12 Nov 2017 10:02:19 +0100
+
 samba (2:4.7.1+dfsg-1) unstable; urgency=medium
 
   * New upstream version

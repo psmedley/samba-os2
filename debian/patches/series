@@ -11,3 +11,5 @@ systemd-syslog.target-is-obsolete.patch
 Add-documentation-to-systemd-Unit-files.patch
 fix_kill_path_in_units.patch
 nmbd-requires-a-working-network.patch
+s3-smbd-Chain-code-can-return-uninitialized-memory-w.patch
+s3-smbd-Fix-SMB1-use-after-free-crash-bug.-CVE-2017-.patch
