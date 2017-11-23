@@ -1,3 +1,17 @@
+samba (2:4.7.3+dfsg-1) unstable; urgency=high
+
+  * New upstream version
+    - Remove patches for CVE-2017-15275 and CVE-2017-14746, merged
+    - Bump libtevent-dev to 0.9.34, to fix upstream "BUG 13130: smbd on disk
+      file corruption bug under heavy threaded load"
+    - Set urgency to high for this fix
+  * Stop building vfs_aio_linux (Closes: #881239)
+  * Print "ignore the following error about deb-systemd-helper not finding
+    samba-ad-dc.service" on upgrade too (Closes: #882482).
+    Thanks Julian Gilbey for the patch
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 23 Nov 2017 16:39:19 +0100
+
 samba (2:4.7.1+dfsg-2) unstable; urgency=high
 
   * This is a security release in order to address the following defects:
