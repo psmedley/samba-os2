@@ -100,8 +100,16 @@ static void cleanup_tmp_files(struct loadparm_context *lp_ctx)
 {
 	char *path;
 	TALLOC_CTX *mem_ctx = talloc_new(NULL);
+	if (mem_ctx == NULL) {
+		exit_daemon("Failed to create memory context",
+			    ENOMEM);
+	}
 
 	path = smbd_tmp_path(mem_ctx, lp_ctx, NULL);
+	if (path == NULL) {
+		exit_daemon("Failed to cleanup temporary files",
+			    EINVAL);
+	}
 
 	recursive_delete(path);
 	talloc_free(mem_ctx);
@@ -340,7 +348,9 @@ static int binary_smbd_main(const char *binary_name,
 				const char *argv[])
 {
 	bool opt_daemon = false;
+	bool opt_fork = true;
 	bool opt_interactive = false;
+	bool opt_no_process_group = false;
 	int opt;
 	poptContext pc;
 #define _MODULE_PROTO(init) extern NTSTATUS init(TALLOC_CTX *);
@@ -354,14 +364,18 @@ static int binary_smbd_main(const char *binary_name,
 	struct stat st;
 	enum {
 		OPT_DAEMON = 1000,
+		OPT_FOREGROUND,
 		OPT_INTERACTIVE,
 		OPT_PROCESS_MODEL,
-		OPT_SHOW_BUILD
+		OPT_SHOW_BUILD,
+		OPT_NO_PROCESS_GROUP,
 	};
 	struct poptOption long_options[] = {
 		POPT_AUTOHELP
 		{"daemon", 'D', POPT_ARG_NONE, NULL, OPT_DAEMON,
 		 "Become a daemon (default)", NULL },
+		{"foreground", 'F', POPT_ARG_NONE, NULL, OPT_FOREGROUND,
+		 "Run the daemon in foreground", NULL },
 		{"interactive",	'i', POPT_ARG_NONE, NULL, OPT_INTERACTIVE,
 		 "Run interactive (not a daemon)", NULL},
 		{"model", 'M', POPT_ARG_STRING,	NULL, OPT_PROCESS_MODEL,
@@ -371,6 +385,8 @@ static int binary_smbd_main(const char *binary_name,
 			"till autotermination", "seconds"},
 		{"show-build", 'b', POPT_ARG_NONE, NULL, OPT_SHOW_BUILD,
 			"show build info", NULL },
+		{"no-process-group", '\0', POPT_ARG_NONE, NULL,
+		  OPT_NO_PROCESS_GROUP, "Don't create a new process group" },
 		POPT_COMMON_SAMBA
 		POPT_COMMON_VERSION
 		{ NULL }
@@ -384,6 +400,9 @@ static int binary_smbd_main(const char *binary_name,
 		case OPT_DAEMON:
 			opt_daemon = true;
 			break;
+		case OPT_FOREGROUND:
+			opt_fork = false;
+			break;
 		case OPT_INTERACTIVE:
 			opt_interactive = true;
 			break;
@@ -392,6 +411,9 @@ static int binary_smbd_main(const char *binary_name,
 			break;
 		case OPT_SHOW_BUILD:
 			show_build();
+			break;
+		case OPT_NO_PROCESS_GROUP:
+			opt_no_process_group = true;
 			break;
 		default:
 			fprintf(stderr, "\nInvalid option %s: %s\n\n",
@@ -407,7 +429,7 @@ static int binary_smbd_main(const char *binary_name,
 			"not allowed together with -D|--daemon\n\n");
 		poptPrintUsage(pc, stderr, 0);
 		return 1;
-	} else if (!opt_interactive) {
+	} else if (!opt_interactive && opt_fork) {
 		/* default is --daemon */
 		opt_daemon = true;
 	}
@@ -443,8 +465,8 @@ static int binary_smbd_main(const char *binary_name,
 	}
 
 	if (opt_daemon) {
-		DEBUG(3,("Becoming a daemon.\n"));
-		become_daemon(true, false, false);
+		DBG_NOTICE("Becoming a daemon.\n");
+		become_daemon(opt_fork, opt_no_process_group, false);
 	}
 
 	/* Create the memory context to hang everything off. */
@@ -507,6 +529,15 @@ static int binary_smbd_main(const char *binary_name,
 		/* stay alive forever */
 		stdin_event_flags = 0;
 	}
+
+#if HAVE_SETPGID
+	/*
+	 * If we're interactive we want to set our own process group for
+	 * signal management, unless --no-process-group specified.
+	 */
+	if (opt_interactive && !opt_no_process_group)
+		setpgid((pid_t)0, (pid_t)0);
+#endif
 
 	/* catch EOF on stdin */
 #ifdef SIGTTIN

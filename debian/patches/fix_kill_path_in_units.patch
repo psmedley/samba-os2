@@ -17,7 +17,7 @@ index 2c152ba..c02e65d 100644
 @@ -9,7 +9,7 @@ NotifyAccess=all
  PIDFile=/run/nmbd.pid
  EnvironmentFile=-/etc/sysconfig/samba
- ExecStart=/usr/sbin/nmbd $NMBDOPTIONS
+ ExecStart=/usr/sbin/nmbd --foreground --no-process-group $NMBDOPTIONS
 -ExecReload=/usr/bin/kill -HUP $MAINPID
 +ExecReload=/bin/kill -HUP $MAINPID
  LimitCORE=infinity
@@ -30,7 +30,7 @@ index 6512bef..11d2e47 100644
 @@ -10,7 +10,7 @@ PIDFile=/run/samba.pid
  LimitNOFILE=16384
  EnvironmentFile=-/etc/sysconfig/samba
- ExecStart=/usr/sbin/samba $SAMBAOPTIONS
+ ExecStart=/usr/sbin/samba --foreground --no-process-group $SAMBAOPTIONS
 -ExecReload=/usr/bin/kill -HUP $MAINPID
 +ExecReload=/bin/kill -HUP $MAINPID
  
@@ -43,7 +43,7 @@ index 491f45e..cc7831c 100644
 @@ -10,7 +10,7 @@ PIDFile=/run/smbd.pid
  LimitNOFILE=16384
  EnvironmentFile=-/etc/sysconfig/samba
- ExecStart=/usr/sbin/smbd $SMBDOPTIONS
+ ExecStart=/usr/sbin/smbd --foreground --no-process-group $SMBDOPTIONS
 -ExecReload=/usr/bin/kill -HUP $MAINPID
 +ExecReload=/bin/kill -HUP $MAINPID
  LimitCORE=infinity
@@ -56,7 +56,7 @@ index cd28767..e7f1651 100644
 @@ -9,7 +9,7 @@ NotifyAccess=all
  PIDFile=/run/winbindd.pid
  EnvironmentFile=-/etc/sysconfig/samba
- ExecStart=/usr/sbin/winbindd "$WINBINDOPTIONS"
+ ExecStart=/usr/sbin/winbindd --foreground --no-process-group "$WINBINDOPTIONS"
 -ExecReload=/usr/bin/kill -HUP $MAINPID
 +ExecReload=/bin/kill -HUP $MAINPID
  LimitCORE=infinity

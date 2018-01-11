@@ -305,6 +305,10 @@ static unsigned int number_of_labels(const struct ldb_val *name) {
  *
  * x.y.z -> (|(name=x.y.z)(name=\2a.y.z)(name=\2a.z)(name=\2a))
  *
+ * The attribute 'name' is used as this is what the LDB index is on
+ * (the RDN, being 'dc' in this use case, does not have an index in
+ * the AD schema).
+ *
  * Returns NULL if unable to build the query.
  *
  * The first component of the DN is assumed to be the name being looked up
@@ -318,19 +322,13 @@ static struct ldb_parse_tree *build_wildcard_query(
 {
 	const struct ldb_val *name = NULL;            /* The DNS name being
 							 queried */
-	const char *attr = NULL;                      /* The attribute name */
+	const char *attr = "name";                    /* The attribute name */
 	struct ldb_parse_tree *query = NULL;          /* The constructed query
 							 parse tree*/
 	struct ldb_parse_tree *wildcard_query = NULL; /* The parse tree for the
 							 name and wild card
 							 entries */
 	int labels = 0;         /* The number of labels in the name */
-
-	attr = ldb_dn_get_rdn_name(dn);
-	if (attr == NULL) {
-		DBG_ERR("Unable to get rdn_name\n");
-		return NULL;
-	}
 
 	name = ldb_dn_get_rdn_val(dn);
 	if (name == NULL) {
@@ -547,11 +545,35 @@ WERROR dns_common_wildcard_lookup(struct ldb_context *samdb,
 		return DNS_ERR(NAME_ERROR);
 	}
 
+	/* Don't look for a wildcard for @ */
+	if (name->length == 1 && name->data[0] == '@') {
+		return dns_common_lookup(samdb,
+					 mem_ctx,
+					 dn,
+					 records,
+					 num_records,
+					 NULL);
+	}
+
 	werr =  dns_name_check(
 			mem_ctx,
 			strlen((const char*)name->data),
 			(const char*) name->data);
 	if (!W_ERROR_IS_OK(werr)) {
+		return werr;
+	}
+
+	/*
+	 * Do a point search first, then fall back to a wildcard
+	 * lookup if it does not exist
+	 */
+	werr = dns_common_lookup(samdb,
+				 mem_ctx,
+				 dn,
+				 records,
+				 num_records,
+				 NULL);
+	if (!W_ERROR_EQUAL(werr, WERR_DNS_ERROR_NAME_DOES_NOT_EXIST)) {
 		return werr;
 	}
 

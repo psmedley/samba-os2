@@ -1140,7 +1140,7 @@ static bool write_stream(struct smb2_tree *tree,
 	NTSTATUS status;
 	const char *full_name;
 
-	full_name = talloc_asprintf(mem_ctx, "%s%s", fname, sname);
+	full_name = talloc_asprintf(mem_ctx, "%s%s", fname, sname ? sname : "");
 	if (full_name == NULL) {
 	    torture_comment(tctx, "talloc_asprintf error\n");
 	    return false;
@@ -1208,49 +1208,6 @@ static bool torture_setup_local_xattr(struct torture_context *tctx,
 	TALLOC_FREE(path);
 
 	return ret;
-}
-
-static bool torture_setup_local_file(struct torture_context *tctx,
-				     const char *path_option,
-				     const char *name,
-				     const char *buf,
-				     size_t size)
-{
-	int fd;
-	const char *spath;
-	char *path;
-	ssize_t rsize;
-
-	spath = torture_setting_string(tctx, path_option, NULL);
-	if (spath == NULL) {
-		printf("No sharepath for option %s\n", path_option);
-		return false;
-	}
-
-	path = talloc_asprintf(tctx, "%s/%s", spath, name);
-	if (path == NULL) {
-		return false;
-	}
-
-	fd = creat(path, S_IRWXU);
-	TALLOC_FREE(path);
-	if (fd == -1) {
-		return false;
-	}
-
-	if ((buf == NULL) || (size == 0)) {
-		close(fd);
-		return true;
-	}
-
-	rsize = write(fd, buf, size);
-	if (rsize != size) {
-		return false;
-	}
-
-	close(fd);
-
-	return true;
 }
 
 /**
@@ -1996,50 +1953,63 @@ static bool test_adouble_conversion(struct torture_context *tctx,
 {
 	TALLOC_CTX *mem_ctx = talloc_new(tctx);
 	const char *fname = BASEDIR "\\test_adouble_conversion";
-	const char *fname_local = BASEDIR "/test_adouble_conversion";
-	const char *adname_local = BASEDIR "/._test_adouble_conversion";
+	const char *adname = BASEDIR "/._test_adouble_conversion";
 	NTSTATUS status;
 	struct smb2_handle testdirh;
 	bool ret = true;
 	const char *data = "This resource fork intentionally left blank";
 	size_t datalen = strlen(data);
-	const char *localdir = NULL;
+	const char *streams[] = {
+		"::$DATA",
+		AFPINFO_STREAM,
+		AFPRESOURCE_STREAM,
+		":com.apple.metadata" "\xef\x80\xa2" "_kMDItemUserTags:$DATA",
+		":foo" "\xef\x80\xa2" "bar:$DATA", /* "foo:bar:$DATA" */
+	};
 
-	localdir = torture_setting_string(tctx, "localdir", NULL);
-	if (localdir == NULL) {
-		torture_skip(tctx, "Need localdir for test");
-	}
-
-	smb2_util_unlink(tree, fname);
+	smb2_deltree(tree, BASEDIR);
 
 	status = torture_smb2_testdir(tree, BASEDIR, &testdirh);
 	CHECK_STATUS(status, NT_STATUS_OK);
 	smb2_util_close(tree, testdirh);
 
-	ret = torture_setup_local_file(tctx, "localdir", fname_local,
-				       NULL, 0);
-	if (ret == false) {
-		goto done;
-	}
+	ret = torture_setup_file(tctx, tree, fname, false);
+	torture_assert_goto(tctx, ret == true, ret, done,
+			    "torture_setup_file failed\n");
 
-	ret = torture_setup_local_file(tctx, "localdir", adname_local,
-				       osx_adouble_w_xattr,
-				       sizeof(osx_adouble_w_xattr));
-	if (ret == false) {
-		goto done;
-	}
+	ret = torture_setup_file(tctx, tree, adname, false);
+	torture_assert_goto(tctx, ret == true, ret, done,
+			    "torture_setup_file failed\n");
+
+	ret = write_stream(tree, __location__, tctx, mem_ctx,
+			   adname, NULL,
+			   0, sizeof(osx_adouble_w_xattr), osx_adouble_w_xattr);
+	torture_assert_goto(tctx, ret == true, ret, done,
+			    "write_stream failed\n");
 
 	torture_comment(tctx, "(%s) test OS X AppleDouble conversion\n",
 	    __location__);
 
-	ret &= check_stream(tree, __location__, tctx, mem_ctx,
-			    fname, AFPRESOURCE_STREAM,
-			    16, datalen, 0, datalen, data);
+	ret = check_stream(tree, __location__, tctx, mem_ctx,
+			   fname, AFPRESOURCE_STREAM,
+			   16, datalen, 0, datalen, data);
+	torture_assert_goto(tctx, ret == true, ret, done,
+			    "check AFPRESOURCE_STREAM failed\n");
 
-	ret &= check_stream(tree, __location__, tctx, mem_ctx,
-			    fname,
-			    ":foo" "\xef\x80\xa2" "bar:$DATA", /* "foo:bar:$DATA" */
-			    0, 3, 0, 3, "baz");
+	ret = check_stream(tree, __location__, tctx, mem_ctx,
+			   fname, AFPINFO_STREAM,
+			   0, 60, 16, 8, "TESTSLOW");
+	torture_assert_goto(tctx, ret == true, ret, done,
+			    "check AFPINFO_STREAM failed\n");
+
+	ret = check_stream(tree, __location__, tctx, mem_ctx, fname,
+			   ":foo" "\xef\x80\xa2" "bar:$DATA", /* "foo:bar:$DATA" */
+			   0, 3, 0, 3, "baz");
+	torture_assert_goto(tctx, ret == true, ret, done,
+			    "check foo:bar stream failed\n");
+
+	ret = check_stream_list(tree, tctx, fname, 5, streams, false);
+	torture_assert_goto(tctx, ret == true, ret, done, "check_stream_list");
 
 done:
 	smb2_deltree(tree, BASEDIR);
@@ -2867,15 +2837,8 @@ static bool test_stream_names(struct torture_context *tctx,
 	/* UTF8 private use are starts at 0xef 0x80 0x80 (0xf000) */
 	const char *streams[] = {
 		":foo" "\xef\x80\xa2" "bar:$DATA", /* "foo:bar:$DATA" */
-		":bar" "\xef\x80\xa2" "baz:$DATA", /* "bar:baz:$DATA" */
 		"::$DATA"
 	};
-	const char *localdir = NULL;
-
-	localdir = torture_setting_string(tctx, "localdir", NULL);
-	if (localdir == NULL) {
-		torture_skip(tctx, "Need localdir for test");
-	}
 
 	sname1 = talloc_asprintf(mem_ctx, "%s%s", fname, streams[0]);
 
@@ -2904,12 +2867,7 @@ static bool test_stream_names(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	smb2_util_close(tree, create.out.file.handle);
 
-	ret = torture_setup_local_xattr(tctx, "localdir", BASEDIR "/stream_names.txt",
-					"user.DosStream.bar:baz:$DATA",
-					"data", strlen("data"));
-	CHECK_VALUE(ret, true);
-
-	ret = check_stream_list(tree, tctx, fname, 3, streams, false);
+	ret = check_stream_list(tree, tctx, fname, 2, streams, false);
 	CHECK_VALUE(ret, true);
 
 done:
@@ -4024,6 +3982,9 @@ static bool test_readdir_attr_illegal_ntfs(struct torture_context *tctx,
 
 		if (!strcmp(found, ".") || !strcmp(found, ".."))
 			continue;
+		if (strncmp(found, "._", 2) == 0) {
+			continue;
+		}
 		break;
 	}
 
@@ -4422,8 +4383,75 @@ struct torture_suite *torture_vfs_fruit(TALLOC_CTX *ctx)
 	torture_suite_add_2ns_smb2_test(suite, "invalid AFP_AfpInfo", test_invalid_afpinfo);
 	torture_suite_add_1smb2_test(suite, "creating rsrc with read-only access", test_rfork_create_ro);
 	torture_suite_add_1smb2_test(suite, "copy-chunk streams", test_copy_chunk_streams);
+	torture_suite_add_1smb2_test(suite, "OS X AppleDouble file conversion", test_adouble_conversion);
 
 	return suite;
+}
+
+static bool test_stream_names_local(struct torture_context *tctx,
+				    struct smb2_tree *tree)
+{
+	TALLOC_CTX *mem_ctx = talloc_new(tctx);
+	NTSTATUS status;
+	struct smb2_create create;
+	struct smb2_handle h;
+	const char *fname = BASEDIR "\\stream_names.txt";
+	const char *sname1;
+	bool ret;
+	/* UTF8 private use are starts at 0xef 0x80 0x80 (0xf000) */
+	const char *streams[] = {
+		":foo" "\xef\x80\xa2" "bar:$DATA", /* "foo:bar:$DATA" */
+		":bar" "\xef\x80\xa2" "baz:$DATA", /* "bar:baz:$DATA" */
+		"::$DATA"
+	};
+	const char *localdir = NULL;
+
+	localdir = torture_setting_string(tctx, "localdir", NULL);
+	if (localdir == NULL) {
+		torture_skip(tctx, "Need localdir for test");
+	}
+
+	sname1 = talloc_asprintf(mem_ctx, "%s%s", fname, streams[0]);
+
+	/* clean slate ...*/
+	smb2_util_unlink(tree, fname);
+	smb2_deltree(tree, fname);
+	smb2_deltree(tree, BASEDIR);
+
+	status = torture_smb2_testdir(tree, BASEDIR, &h);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	smb2_util_close(tree, h);
+
+	torture_comment(tctx, "(%s) testing stream names\n", __location__);
+	ZERO_STRUCT(create);
+	create.in.desired_access = SEC_FILE_WRITE_DATA;
+	create.in.file_attributes = FILE_ATTRIBUTE_NORMAL;
+	create.in.share_access =
+		NTCREATEX_SHARE_ACCESS_DELETE|
+		NTCREATEX_SHARE_ACCESS_READ|
+		NTCREATEX_SHARE_ACCESS_WRITE;
+	create.in.create_disposition = NTCREATEX_DISP_CREATE;
+	create.in.impersonation_level = SMB2_IMPERSONATION_ANONYMOUS;
+	create.in.fname = sname1;
+
+	status = smb2_create(tree, mem_ctx, &create);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	smb2_util_close(tree, create.out.file.handle);
+
+	ret = torture_setup_local_xattr(tctx, "localdir", BASEDIR "/stream_names.txt",
+					"user.DosStream.bar:baz:$DATA",
+					"data", strlen("data"));
+	CHECK_VALUE(ret, true);
+
+	ret = check_stream_list(tree, tctx, fname, 3, streams, false);
+	CHECK_VALUE(ret, true);
+
+done:
+	status = smb2_util_unlink(tree, fname);
+	smb2_deltree(tree, BASEDIR);
+	talloc_free(mem_ctx);
+
+	return ret;
 }
 
 struct torture_suite *torture_vfs_fruit_netatalk(TALLOC_CTX *ctx)
@@ -4434,7 +4462,7 @@ struct torture_suite *torture_vfs_fruit_netatalk(TALLOC_CTX *ctx)
 	suite->description = talloc_strdup(suite, "vfs_fruit tests for Netatalk interop that require fruit:metadata=netatalk");
 
 	torture_suite_add_1smb2_test(suite, "read netatalk metadata", test_read_netatalk_metadata);
-	torture_suite_add_1smb2_test(suite, "OS X AppleDouble file conversion", test_adouble_conversion);
+	torture_suite_add_1smb2_test(suite, "stream names with locally created xattr", test_stream_names_local);
 
 	return suite;
 }

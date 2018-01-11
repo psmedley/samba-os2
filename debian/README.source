@@ -15,13 +15,19 @@ Importing a new upstream version can be done like this:
 
 # set target version
 upstream_version=4.7.0
+major_version="$(echo $upstream_version | sed 's/.[[:digit:]]\+$//')"
 # go to git repo
 cd $GIT_DIR
 # Import upstream
 git remote add upstream https://git.samba.org/samba.git
 git fetch upstream
+# ensure required branches exists
+git checkout "upstream_${major_version}"
+git checkout pristine-tar
 # go to the Debian branch
 git checkout master
+# sync all required branches
+gbp pull
 # Import latest version
 gbp import-orig --uscan \
   -u "${upstream_version}+dfsg" \
@@ -38,8 +44,7 @@ Merging major upstream releases
 
 With a new major version, more work is needed.
 
-After "git checkout master":
-major_version="$(echo $upstream_version | sed 's/.[[:digit:]]\+$//')"
+After "gbp pull":
 # Edit gbp.conf upstream-branch
 editor debian/gbp.conf
 # Edit debian/watch major version

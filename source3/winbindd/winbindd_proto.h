@@ -24,7 +24,6 @@
 #define _WINBINDD_PROTO_H_
 
 /* The following definitions come from winbindd/winbindd.c  */
-struct messaging_context *winbind_messaging_context(void);
 struct imessaging_context *winbind_imessaging_context(void);
 void request_error(struct winbindd_cli_state *state);
 void request_ok(struct winbindd_cli_state *state);
@@ -34,7 +33,6 @@ bool winbindd_setup_sig_hup_handler(const char *lfile);
 bool winbindd_use_idmap_cache(void);
 bool winbindd_use_cache(void);
 char *get_winbind_priv_pipe_dir(void);
-struct tevent_context *winbind_event_context(void);
 
 /* The following definitions come from winbindd/winbindd_ads.c  */
 
@@ -497,7 +495,7 @@ NTSTATUS lookup_usergroups_cached(TALLOC_CTX *mem_ctx,
 				  uint32_t *p_num_groups, struct dom_sid **user_sids);
 
 NTSTATUS normalize_name_map(TALLOC_CTX *mem_ctx,
-			     struct winbindd_domain *domain,
+			     const char *domain_name,
 			     const char *name,
 			     char **normalized);
 NTSTATUS normalize_name_unmap(TALLOC_CTX *mem_ctx,

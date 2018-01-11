@@ -321,7 +321,7 @@ static void add_trusted_domains( struct winbindd_domain *domain )
 	state->request.length = sizeof(state->request);
 	state->request.cmd = WINBINDD_LIST_TRUSTDOM;
 
-	req = wb_domain_request_send(state, winbind_event_context(),
+	req = wb_domain_request_send(state, server_event_context(),
 				     domain, &state->request);
 	if (req == NULL) {
 		DEBUG(1, ("wb_domain_request_send failed\n"));
@@ -1339,10 +1339,11 @@ NTSTATUS lookup_usergroups_cached(TALLOC_CTX *mem_ctx,
 ********************************************************************/
 
 NTSTATUS normalize_name_map(TALLOC_CTX *mem_ctx,
-			     struct winbindd_domain *domain,
+			     const char *domain_name,
 			     const char *name,
 			     char **normalized)
 {
+	struct winbindd_domain *domain = NULL;
 	NTSTATUS nt_status;
 
 	if (!name || !normalized) {
@@ -1351,6 +1352,12 @@ NTSTATUS normalize_name_map(TALLOC_CTX *mem_ctx,
 
 	if (!lp_winbind_normalize_names()) {
 		return NT_STATUS_PROCEDURE_NOT_FOUND;
+	}
+
+	domain = find_domain_from_name_noinit(domain_name);
+	if (domain == NULL) {
+		DBG_ERR("Failed to find domain '%s'\n",	domain_name);
+		return NT_STATUS_NO_SUCH_DOMAIN;
 	}
 
 	/* Alias support and whitespace replacement are mutually
