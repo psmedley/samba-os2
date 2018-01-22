@@ -1,5 +1,5 @@
 From: Eloy A. Paris <peloy@debian.org>
-Subject: Add "Debian" as vendor suffix
+Subject: Add "Ubuntu" as vendor suffix
 
 Forwarded: not-needed
 ---
@@ -15,5 +15,5 @@ index d91963a..2650887 100644
  #                                                      #
  ########################################################
 -SAMBA_VERSION_VENDOR_SUFFIX=
-+SAMBA_VERSION_VENDOR_SUFFIX=Debian
++SAMBA_VERSION_VENDOR_SUFFIX=Ubuntu
  SAMBA_VERSION_VENDOR_PATCH=
