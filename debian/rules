@@ -105,8 +105,16 @@ override_dh_auto_test:
 	# Running make test requires configuration with --enable-selftest, which
 	# we don't want to do for production systems.
 
-override_dh_systemd_start:
-	dh_systemd_start -pctdb --no-start --no-restart-on-upgrade
+override_dh_installsystemd:
+ifneq (,$(filter samba, $(shell dh_listpackages)))
+	dh_installsystemd -psamba
+endif
+ifneq (,$(filter winbind, $(shell dh_listpackages)))
+	dh_installsystemd -pwinbind
+endif
+ifneq (,$(filter ctdb, $(shell dh_listpackages)))
+	dh_installsystemd -pctdb --no-start --no-stop-on-upgrade
+endif
 
 override_dh_installdocs-arch:
 	cp ctdb/config/events.d/README ctdb/README.eventscripts
@@ -218,7 +226,7 @@ ifneq (,$(filter ctdb, $(shell dh_listpackages)))
 	mkdir -p $(CURDIR)/debian/ctdb/etc/init.d
 	install -m755 ctdb/config/ctdb.init $(CURDIR)/debian/ctdb/etc/init.d/ctdb
 	# Install dh scripts
-	dh_installinit -pctdb --no-start --no-restart-on-upgrade --onlyscripts
+	dh_installinit -pctdb --no-start --no-stop-on-upgrade --onlyscripts
 endif
 
 override_dh_shlibdeps:

@@ -1,3 +1,33 @@
+samba (2:4.7.4+dfsg-2) unstable; urgency=high
+
+  [ Mathieu Parent ]
+  * This is a security release in order to address the following defects:
+    - CVE-2018-1050: Codenomicon crashes in spoolss server code
+    - CVE-2018-1057: Unprivileged user can change any user (and admin) password
+  * Fix "/etc/dhcp/dhclient-enter-hooks.d/samba returned non-zero exit status 1"
+    when samba.service is disabled
+    - Pick patch from Ubuntu for Launchpad #1579597
+    - Fix systemd check
+  * Replace override_dh_systemd_start by override_dh_installsystemd (Fixes
+    ctdb starting on install and restarting on upgrade since update to debhelper
+    compat 11)
+  * Replace --no-restart-on-upgrade by --no-stop-on-upgrade in dh_installinit
+    and dh_installsystemd
+  * Add missing dh_installsystemd calls to ensure that services are properly
+    unmasked and enabled in postinst
+
+  [ Andreas Hasenack ]
+  * Add extra DEP8 tests to samba (Closes: #890439):
+    - d/t/control, d/t/cifs-share-access: access a file in a share using cifs
+    - d/t/control, d/t/smbclient-anonymous-share-list: list available shares
+      anonymously
+    - d/t/control, d/t/smbclient-authenticated-share-list: list available
+      shares using an authenticated connection
+    - d/t/control, d/t/smbclient-share-access: create a share and download a
+      file from it
+
+ -- Mathieu Parent <sathieu@debian.org>  Fri, 02 Mar 2018 20:55:06 +0100
+
 samba (2:4.7.4+dfsg-1) unstable; urgency=medium
 
   * New upstream version
