@@ -37,7 +37,6 @@
 #include "common/logging.h"
 
 struct ctdb_monitor_state {
-	uint32_t monitoring_mode;
 	TALLOC_CTX *monitor_context;
 	uint32_t next_interval;
 	uint32_t event_script_timeouts;
@@ -241,8 +240,6 @@ static void ctdb_startup_callback(struct ctdb_context *ctdb, int status, void *p
 	ctdb->monitor->next_interval = 2;
 	ctdb_run_notification_script(ctdb, "startup");
 
-	ctdb->monitor->monitoring_mode = CTDB_MONITORING_ENABLED;
-
 	/* tell all other nodes we've just started up */
 	ctdb_daemon_send_control(ctdb, CTDB_BROADCAST_CONNECTED,
 				 0, CTDB_CONTROL_STARTUP, 0,
@@ -275,9 +272,6 @@ static void ctdb_run_startup(struct tevent_context *ev,
 				 ctdb_run_startup, ctdb);
 		return;
 	}
-
-	/* release any IPs we hold from previous runs of the daemon */
-	ctdb_release_all_ips(ctdb);
 
 	DEBUG(DEBUG_NOTICE,("Running the \"startup\" event.\n"));
 	ret = ctdb_event_script_callback(ctdb,
@@ -396,7 +390,8 @@ static void ctdb_check_health(struct tevent_context *ev,
 	int ret = 0;
 
 	if (ctdb->recovery_mode != CTDB_RECOVERY_NORMAL ||
-	    ctdb->monitor->monitoring_mode == CTDB_MONITORING_DISABLED) {
+	    ctdb->nodes[ctdb->pnn]->flags & NODE_FLAGS_INACTIVE ||
+	    ctdb->runstate != CTDB_RUNSTATE_RUNNING) {
 		skip_monitoring = true;
 	} else {
 		if (ctdb_db_all_frozen(ctdb)) {
@@ -426,26 +421,6 @@ static void ctdb_check_health(struct tevent_context *ev,
 	}
 }
 
-/* 
-  (Temporaily) Disabling monitoring will stop the monitor event scripts
-  from running   but node health checks will still occur
-*/
-void ctdb_disable_monitoring(struct ctdb_context *ctdb)
-{
-	ctdb->monitor->monitoring_mode = CTDB_MONITORING_DISABLED;
-	DEBUG(DEBUG_INFO,("Monitoring has been disabled\n"));
-}
-
-/* 
-   Re-enable running monitor events after they have been disabled
- */
-void ctdb_enable_monitoring(struct ctdb_context *ctdb)
-{
-	ctdb->monitor->monitoring_mode  = CTDB_MONITORING_ENABLED;
-	ctdb->monitor->next_interval = 5;
-	DEBUG(DEBUG_INFO,("Monitoring has been enabled\n"));
-}
-
 /* stop any monitoring 
    this should only be done when shutting down the daemon
 */
@@ -454,7 +429,6 @@ void ctdb_stop_monitoring(struct ctdb_context *ctdb)
 	talloc_free(ctdb->monitor->monitor_context);
 	ctdb->monitor->monitor_context = NULL;
 
-	ctdb->monitor->monitoring_mode  = CTDB_MONITORING_DISABLED;
 	ctdb->monitor->next_interval = 5;
 	DEBUG(DEBUG_NOTICE,("Monitoring has been stopped\n"));
 }
@@ -535,23 +509,4 @@ int32_t ctdb_control_modflags(struct ctdb_context *ctdb, TDB_DATA indata)
 				 CTDB_SRVID_SET_NODE_FLAGS, indata);
 
 	return 0;
-}
-
-/*
-  return the monitoring mode
- */
-int32_t ctdb_monitoring_mode(struct ctdb_context *ctdb)
-{
-	if (ctdb->monitor == NULL) {
-		return CTDB_MONITORING_DISABLED;
-	}
-	return ctdb->monitor->monitoring_mode;
-}
-
-/*
- * Check if monitoring has been stopped
- */
-bool ctdb_stopped_monitoring(struct ctdb_context *ctdb)
-{
-	return (ctdb->monitor->monitor_context == NULL ? true : false);
 }

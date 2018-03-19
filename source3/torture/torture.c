@@ -31,7 +31,6 @@
 #include "dbwrap/dbwrap.h"
 #include "dbwrap/dbwrap_open.h"
 #include "dbwrap/dbwrap_rbt.h"
-#include "talloc_dict.h"
 #include "async_smb.h"
 #include "libsmb/libsmb.h"
 #include "libsmb/clirap.h"
@@ -43,6 +42,7 @@
 #include "../libcli/smb/smbXcli_base.h"
 #include "lib/util/sys_rw_data.h"
 #include "lib/util/base64.h"
+#include "lib/util/time.h"
 
 extern char *optarg;
 extern int optind;
@@ -1479,7 +1479,8 @@ static bool tcon_devtest(struct cli_state *cli,
 
 	if (NT_STATUS_IS_OK(expected_error)) {
 		if (NT_STATUS_IS_OK(status)) {
-			if (strcmp(cli->dev, return_devtype) == 0) {
+			if (return_devtype != NULL &&
+			    strequal(cli->dev, return_devtype)) {
 				ret = True;
 			} else { 
 				printf("tconX to share %s with type %s "
@@ -3215,7 +3216,7 @@ static bool run_attrtest(int dummy)
 		correct = False;
 	}
 
-	if (abs(t - time(NULL)) > 60*60*24*10) {
+	if (labs(t - time(NULL)) > 60*60*24*10) {
 		printf("ERROR: SMBgetatr bug. time is %s",
 		       ctime(&t));
 		t = time(NULL);
@@ -3446,13 +3447,13 @@ static bool run_trans2test(int dummy)
 			printf("modify time=%s", ctime(&m_time));
 			printf("This system appears to have sticky create times\n");
 		}
-		if ((abs(a_time - t) > 60) && (a_time % (60*60) == 0)) {
+		if ((labs(a_time - t) > 60) && (a_time % (60*60) == 0)) {
 			printf("access time=%s", ctime(&a_time));
 			printf("This system appears to set a midnight access time\n");
 			correct = False;
 		}
 
-		if (abs(m_time - t) > 60*60*24*7) {
+		if (labs(m_time - t) > 60*60*24*7) {
 			printf("ERROR: totally incorrect times - maybe word reversed? mtime=%s", ctime(&m_time));
 			correct = False;
 		}
@@ -5220,7 +5221,7 @@ static bool run_rename_access(int dummy)
 	}
 
 	if (cli) {
-		if (fnum != (uint64_t)-1) {
+		if (fnum != (uint16_t)-1) {
 			cli_close(cli, fnum);
 		}
 		cli_unlink(cli, src,
@@ -8066,7 +8067,7 @@ static bool run_chain1(int dummy)
 	if (reqs[1] == NULL) return false;
 	tevent_req_set_callback(reqs[1], chain1_write_completion, NULL);
 
-	reqs[2] = cli_close_create(talloc_tos(), evt, cli1, 0, &smbreqs[2]);
+	reqs[2] = cli_smb1_close_create(talloc_tos(), evt, cli1, 0, &smbreqs[2]);
 	if (reqs[2] == NULL) return false;
 	tevent_req_set_callback(reqs[2], chain1_close_completion, &done);
 
@@ -9906,6 +9907,54 @@ static bool run_symlink_open_test(int dummy)
 	return correct;
 }
 
+/*
+ * Only testing minimal time strings, as the others
+ * need (locale-dependent) guessing at what strftime does and
+ * even may differ in builds.
+ */
+static bool timesubst_test(void)
+{
+	TALLOC_CTX *ctx = NULL;
+	/* Sa 23. Dez 04:33:20 CET 2017 */
+	const struct timeval tv = { 1514000000, 123 };
+	const char* expect_minimal = "20171223_033320";
+	const char* expect_minus   = "20171223_033320_000123";
+	char *s;
+	char *env_tz, *orig_tz = NULL;
+	bool result = true;
+
+	ctx = talloc_new(NULL);
+
+	env_tz = getenv("TZ");
+	if(env_tz) {
+		orig_tz = talloc_strdup(ctx, env_tz);
+	}
+	setenv("TZ", "UTC", 1);
+
+	s = minimal_timeval_string(ctx, &tv, false);
+
+	if(!s || strcmp(s, expect_minimal)) {
+		printf("minimal_timeval_string(ctx, tv, false) returned [%s], expected "
+		       "[%s]\n", s ? s : "<nil>", expect_minimal);
+		result = false;
+	}
+	TALLOC_FREE(s);
+	s = minimal_timeval_string(ctx, &tv, true);
+	if(!s || strcmp(s, expect_minus)) {
+		printf("minimal_timeval_string(ctx, tv, true) returned [%s], expected "
+		       "[%s]\n", s ? s : "<nil>", expect_minus);
+		result = false;
+	}
+	TALLOC_FREE(s);
+
+	if(orig_tz) {
+		setenv("TZ", orig_tz, 1);
+	}
+
+	TALLOC_FREE(ctx);
+	return result;
+}
+
 static bool run_local_substitute(int dummy)
 {
 	bool ok = true;
@@ -9918,6 +9967,10 @@ static bool run_local_substitute(int dummy)
 	ok &= subst_test("%G", "", "", -1, 0, gidtoname(0));
 	ok &= subst_test("%D%u", "u", "dom", -1, 0, "domu");
 	ok &= subst_test("%i %I", "", "", -1, -1, "0.0.0.0 0.0.0.0");
+	ok &= subst_test("%j %J", "", "", -1, -1, "0_0_0_0 0_0_0_0");
+	/* Substitution depends on current time, so better test the underlying
+	   formatting function. At least covers %t. */
+	ok &= timesubst_test();
 
 	/* Different captialization rules in sub_basic... */
 
@@ -10034,7 +10087,7 @@ static bool run_local_gencache(int dummy)
 	blob = data_blob_string_const_null("bar");
 	tm = time(NULL) + 60;
 
-	if (!gencache_set_data_blob("foo", &blob, tm)) {
+	if (!gencache_set_data_blob("foo", blob, tm)) {
 		d_printf("%s: gencache_set_data_blob() failed\n", __location__);
 		return False;
 	}
@@ -10073,7 +10126,7 @@ static bool run_local_gencache(int dummy)
 	blob.data = (uint8_t *)&v;
 	blob.length = sizeof(v);
 
-	if (!gencache_set_data_blob("blob", &blob, tm)) {
+	if (!gencache_set_data_blob("blob", blob, tm)) {
 		d_printf("%s: gencache_set_data_blob() failed\n",
 			 __location__);
 		return false;
@@ -10312,61 +10365,6 @@ static bool run_local_convert_string(int dummy)
 failed:
 	TALLOC_FREE(tmp_ctx);
 	return false;
-}
-
-
-struct talloc_dict_test {
-	int content;
-};
-
-static int talloc_dict_traverse_fn(DATA_BLOB key, void *data, void *priv)
-{
-	int *count = (int *)priv;
-	*count += 1;
-	return 0;
-}
-
-static bool run_local_talloc_dict(int dummy)
-{
-	struct talloc_dict *dict;
-	struct talloc_dict_test *t;
-	int key, count, res;
-	bool ok;
-
-	dict = talloc_dict_init(talloc_tos());
-	if (dict == NULL) {
-		return false;
-	}
-
-	t = talloc(talloc_tos(), struct talloc_dict_test);
-	if (t == NULL) {
-		return false;
-	}
-
-	key = 1;
-	t->content = 1;
-	ok = talloc_dict_set(dict, data_blob_const(&key, sizeof(key)), &t);
-	if (!ok) {
-		return false;
-	}
-
-	count = 0;
-	res = talloc_dict_traverse(dict, talloc_dict_traverse_fn, &count);
-	if (res == -1) {
-		return false;
-	}
-
-	if (count != 1) {
-		return false;
-	}
-
-	if (count != res) {
-		return false;
-	}
-
-	TALLOC_FREE(dict);
-
-	return true;
 }
 
 static bool run_local_string_to_sid(int dummy) {
@@ -10916,59 +10914,6 @@ static bool run_wbclient_multi_ping(int dummy)
 	result = true;
  fail:
 	TALLOC_FREE(ev);
-	return result;
-}
-
-static void getaddrinfo_finished(struct tevent_req *req)
-{
-	char *name = (char *)tevent_req_callback_data_void(req);
-	struct addrinfo *ainfo;
-	int res;
-
-	res = getaddrinfo_recv(req, &ainfo);
-	if (res != 0) {
-		d_printf("gai(%s) returned %s\n", name, gai_strerror(res));
-		return;
-	}
-	d_printf("gai(%s) succeeded\n", name);
-	freeaddrinfo(ainfo);
-}
-
-static bool run_getaddrinfo_send(int dummy)
-{
-	TALLOC_CTX *frame = talloc_stackframe();
-	struct fncall_context *ctx;
-	struct tevent_context *ev;
-	bool result = false;
-	const char *names[4] = { "www.samba.org", "notfound.samba.org",
-				 "www.slashdot.org", "heise.de" };
-	struct tevent_req *reqs[4];
-	int i;
-
-	ev = samba_tevent_context_init(frame);
-	if (ev == NULL) {
-		goto fail;
-	}
-
-	ctx = fncall_context_init(frame, 4);
-
-	for (i=0; i<ARRAY_SIZE(names); i++) {
-		reqs[i] = getaddrinfo_send(frame, ev, ctx, names[i], NULL,
-					   NULL);
-		if (reqs[i] == NULL) {
-			goto fail;
-		}
-		tevent_req_set_callback(reqs[i], getaddrinfo_finished,
-					discard_const_p(void, names[i]));
-	}
-
-	for (i=0; i<ARRAY_SIZE(reqs); i++) {
-		tevent_loop_once(ev);
-	}
-
-	result = true;
-fail:
-	TALLOC_FREE(frame);
 	return result;
 }
 
@@ -11632,7 +11577,6 @@ static struct {
 	{ "NTTRANS-CREATE", run_nttrans_create, 0},
 	{ "NTTRANS-FSCTL", run_nttrans_fsctl, 0},
 	{ "CLI_ECHO", run_cli_echo, 0},
-	{ "GETADDRINFO", run_getaddrinfo_send, 0},
 	{ "TLDAP", run_tldap },
 	{ "STREAMERROR", run_streamerror },
 	{ "NOTIFY-BENCH", run_notify_bench },
@@ -11657,9 +11601,9 @@ static struct {
 	{ "PIDHIGH", run_pidhigh },
 	{ "LOCAL-SUBSTITUTE", run_local_substitute, 0},
 	{ "LOCAL-GENCACHE", run_local_gencache, 0},
-	{ "LOCAL-TALLOC-DICT", run_local_talloc_dict, 0},
 	{ "LOCAL-DBWRAP-WATCH1", run_dbwrap_watch1, 0 },
 	{ "LOCAL-DBWRAP-WATCH2", run_dbwrap_watch2, 0 },
+	{ "LOCAL-DBWRAP-DO-LOCKED1", run_dbwrap_do_locked1, 0 },
 	{ "LOCAL-MESSAGING-READ1", run_messaging_read1, 0 },
 	{ "LOCAL-MESSAGING-READ2", run_messaging_read2, 0 },
 	{ "LOCAL-MESSAGING-READ3", run_messaging_read3, 0 },
@@ -11668,6 +11612,7 @@ static struct {
 	{ "LOCAL-MESSAGING-FDPASS2", run_messaging_fdpass2, 0 },
 	{ "LOCAL-MESSAGING-FDPASS2a", run_messaging_fdpass2a, 0 },
 	{ "LOCAL-MESSAGING-FDPASS2b", run_messaging_fdpass2b, 0 },
+	{ "LOCAL-MESSAGING-SEND-ALL", run_messaging_send_all, 0 },
 	{ "LOCAL-BASE64", run_local_base64, 0},
 	{ "LOCAL-RBTREE", run_local_rbtree, 0},
 	{ "LOCAL-MEMCACHE", run_local_memcache, 0},
@@ -11693,7 +11638,10 @@ static struct {
 	{ "LOCAL-G-LOCK3", run_g_lock3, 0 },
 	{ "LOCAL-G-LOCK4", run_g_lock4, 0 },
 	{ "LOCAL-G-LOCK5", run_g_lock5, 0 },
+	{ "LOCAL-G-LOCK6", run_g_lock6, 0 },
+	{ "LOCAL-G-LOCK-PING-PONG", run_g_lock_ping_pong, 0 },
 	{ "LOCAL-CANONICALIZE-PATH", run_local_canonicalize_path, 0 },
+	{ "LOCAL-NAMEMAP-CACHE1", run_local_namemap_cache1, 0 },
 	{ "qpathinfo-bufsize", run_qpathinfo_bufsize, 0 },
 	{NULL, NULL, 0}};
 

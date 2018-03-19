@@ -98,15 +98,26 @@ int ltdb_lock_read(struct ldb_module *module)
 {
 	void *data = ldb_module_get_private(module);
 	struct ltdb_private *ltdb = talloc_get_type(data, struct ltdb_private);
-	int ret = 0;
+	int tdb_ret = 0;
+	int ret;
 
 	if (ltdb->in_transaction == 0 &&
 	    ltdb->read_lock_count == 0) {
-		ret = tdb_lockall_read(ltdb->tdb);
+		tdb_ret = tdb_lockall_read(ltdb->tdb);
 	}
-	if (ret == 0) {
+	if (tdb_ret == 0) {
 		ltdb->read_lock_count++;
+		return LDB_SUCCESS;
 	}
+	ret = ltdb_err_map(tdb_error(ltdb->tdb));
+	if (ret == LDB_SUCCESS) {
+		ret = LDB_ERR_OPERATIONS_ERROR;
+	}
+	ldb_debug_set(ldb_module_get_ctx(module),
+		      LDB_DEBUG_FATAL,
+		      "Failure during ltdb_lock_read(): %s -> %s",
+		      tdb_errorstr(ltdb->tdb),
+		      ldb_strerror(ret));
 	return ret;
 }
 
@@ -145,11 +156,12 @@ bool ltdb_key_is_record(TDB_DATA key)
 		return true;
 	}
 
-	if (key.dsize < 6) {
+	if (key.dsize < sizeof(LTDB_GUID_KEY_PREFIX)) {
 		return false;
 	}
 
-	if (memcmp(key.dptr, "GUID=", 5) == 0) {
+	if (memcmp(key.dptr, LTDB_GUID_KEY_PREFIX,
+		   sizeof(LTDB_GUID_KEY_PREFIX) - 1) == 0) {
 		return true;
 	}
 	
@@ -163,9 +175,9 @@ bool ltdb_key_is_record(TDB_DATA key)
   note that the key for a record can depend on whether the
   dn refers to a case sensitive index record or not
 */
-TDB_DATA ltdb_key(struct ldb_module *module, struct ldb_dn *dn)
+TDB_DATA ltdb_key_dn(struct ldb_module *module, TALLOC_CTX *mem_ctx,
+		     struct ldb_dn *dn)
 {
-	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	TDB_DATA key;
 	char *key_str = NULL;
 	const char *dn_folded = NULL;
@@ -187,7 +199,7 @@ TDB_DATA ltdb_key(struct ldb_module *module, struct ldb_dn *dn)
 		goto failed;
 	}
 
-	key_str = talloc_strdup(ldb, "DN=");
+	key_str = talloc_strdup(mem_ctx, "DN=");
 	if (!key_str) {
 		goto failed;
 	}
@@ -206,6 +218,121 @@ failed:
 	errno = ENOMEM;
 	key.dptr = NULL;
 	key.dsize = 0;
+	return key;
+}
+
+/* The caller is to provide a correctly sized key */
+int ltdb_guid_to_key(struct ldb_module *module,
+		     struct ltdb_private *ltdb,
+		     const struct ldb_val *GUID_val,
+		     TDB_DATA *key)
+{
+	const char *GUID_prefix = LTDB_GUID_KEY_PREFIX;
+	const int GUID_prefix_len = sizeof(LTDB_GUID_KEY_PREFIX) - 1;
+
+	if (key->dsize != (GUID_val->length+GUID_prefix_len)) {
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+
+	memcpy(key->dptr, GUID_prefix, GUID_prefix_len);
+	memcpy(&key->dptr[GUID_prefix_len],
+	       GUID_val->data, GUID_val->length);
+	return LDB_SUCCESS;
+}
+
+/*
+ * The caller is to provide a correctly sized key, used only in
+ * the GUID index mode
+ */
+int ltdb_idx_to_key(struct ldb_module *module,
+		    struct ltdb_private *ltdb,
+		    TALLOC_CTX *mem_ctx,
+		    const struct ldb_val *idx_val,
+		    TDB_DATA *key)
+{
+	struct ldb_context *ldb = ldb_module_get_ctx(module);
+	struct ldb_dn *dn;
+
+	if (ltdb->cache->GUID_index_attribute != NULL) {
+		return ltdb_guid_to_key(module, ltdb,
+					idx_val, key);
+	}
+
+	dn = ldb_dn_from_ldb_val(mem_ctx, ldb, idx_val);
+	if (dn == NULL) {
+		/*
+		 * LDB_ERR_INVALID_DN_SYNTAX would just be confusing
+		 * to the caller, as this in an invalid index value
+		 */
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+	/* form the key */
+	*key = ltdb_key_dn(module, mem_ctx, dn);
+	TALLOC_FREE(dn);
+	if (!key->dptr) {
+		return ldb_module_oom(module);
+	}
+	return LDB_SUCCESS;
+}
+
+/*
+  form a TDB_DATA for a record key
+  caller frees mem_ctx, which may or may not have the key
+  as a child.
+
+  note that the key for a record can depend on whether a
+  GUID index is in use, or the DN is used as the key
+*/
+TDB_DATA ltdb_key_msg(struct ldb_module *module, TALLOC_CTX *mem_ctx,
+		      const struct ldb_message *msg)
+{
+	void *data = ldb_module_get_private(module);
+	struct ltdb_private *ltdb = talloc_get_type(data, struct ltdb_private);
+	TDB_DATA key;
+	const struct ldb_val *guid_val;
+	int ret;
+
+	if (ltdb->cache->GUID_index_attribute == NULL) {
+		return ltdb_key_dn(module, mem_ctx, msg->dn);
+	}
+
+	if (ldb_dn_is_special(msg->dn)) {
+		return ltdb_key_dn(module, mem_ctx, msg->dn);
+	}
+
+	guid_val = ldb_msg_find_ldb_val(msg,
+				       ltdb->cache->GUID_index_attribute);
+	if (guid_val == NULL) {
+		ldb_asprintf_errstring(ldb_module_get_ctx(module),
+				       "Did not find GUID attribute %s "
+				       "in %s, required for TDB record "
+				       "key in " LTDB_IDXGUID " mode.",
+				       ltdb->cache->GUID_index_attribute,
+				       ldb_dn_get_linearized(msg->dn));
+		errno = EINVAL;
+		key.dptr = NULL;
+		key.dsize = 0;
+		return key;
+	}
+
+	/* In this case, allocate with talloc */
+	key.dptr = talloc_size(mem_ctx, LTDB_GUID_KEY_SIZE);
+	if (key.dptr == NULL) {
+		errno = ENOMEM;
+		key.dptr = NULL;
+		key.dsize = 0;
+		return key;
+	}
+	key.dsize = talloc_get_size(key.dptr);
+
+	ret = ltdb_guid_to_key(module, ltdb, guid_val, &key);
+
+	if (ret != LDB_SUCCESS) {
+		errno = EINVAL;
+		key.dptr = NULL;
+		key.dsize = 0;
+		return key;
+	}
 	return key;
 }
 
@@ -296,16 +423,26 @@ int ltdb_store(struct ldb_module *module, const struct ldb_message *msg, int flg
 	TDB_DATA tdb_key, tdb_data;
 	struct ldb_val ldb_data;
 	int ret = LDB_SUCCESS;
+	TALLOC_CTX *tdb_key_ctx = talloc_new(module);
 
-	tdb_key = ltdb_key(module, msg->dn);
+	if (tdb_key_ctx == NULL) {
+		return ldb_module_oom(module);
+	}
+
+	if (ltdb->read_only) {
+		return LDB_ERR_UNWILLING_TO_PERFORM;
+	}
+
+	tdb_key = ltdb_key_msg(module, tdb_key_ctx, msg);
 	if (tdb_key.dptr == NULL) {
+		TALLOC_FREE(tdb_key_ctx);
 		return LDB_ERR_OTHER;
 	}
 
 	ret = ldb_pack_data(ldb_module_get_ctx(module),
 			    msg, &ldb_data);
 	if (ret == -1) {
-		talloc_free(tdb_key.dptr);
+		TALLOC_FREE(tdb_key_ctx);
 		return LDB_ERR_OTHER;
 	}
 
@@ -314,12 +451,23 @@ int ltdb_store(struct ldb_module *module, const struct ldb_message *msg, int flg
 
 	ret = tdb_store(ltdb->tdb, tdb_key, tdb_data, flgs);
 	if (ret != 0) {
+		bool is_special = ldb_dn_is_special(msg->dn);
 		ret = ltdb_err_map(tdb_error(ltdb->tdb));
+
+		/*
+		 * LDB_ERR_ENTRY_ALREADY_EXISTS means the DN, not
+		 * the GUID, so re-map
+		 */
+		if (ret == LDB_ERR_ENTRY_ALREADY_EXISTS
+		    && !is_special
+		    && ltdb->cache->GUID_index_attribute != NULL) {
+			ret = LDB_ERR_CONSTRAINT_VIOLATION;
+		}
 		goto done;
 	}
 
 done:
-	talloc_free(tdb_key.dptr);
+	TALLOC_FREE(tdb_key_ctx);
 	talloc_free(ldb_data.data);
 
 	return ret;
@@ -412,6 +560,24 @@ static int ltdb_add_internal(struct ldb_module *module,
 
 	ret = ltdb_store(module, msg, TDB_INSERT);
 	if (ret != LDB_SUCCESS) {
+		/*
+		 * Try really hard to get the right error code for
+		 * a re-add situation, as this can matter!
+		 */
+		if (ret == LDB_ERR_CONSTRAINT_VIOLATION) {
+			int ret2;
+			struct ldb_dn *dn2 = NULL;
+			TALLOC_CTX *mem_ctx = talloc_new(module);
+			if (mem_ctx == NULL) {
+				return ldb_module_operr(module);
+			}
+			ret2 = ltdb_search_base(module, module,
+						msg->dn, &dn2);
+			TALLOC_FREE(mem_ctx);
+			if (ret2 == LDB_SUCCESS) {
+				ret = LDB_ERR_ENTRY_ALREADY_EXISTS;
+			}
+		}
 		if (ret == LDB_ERR_ENTRY_ALREADY_EXISTS) {
 			ldb_asprintf_errstring(ldb,
 					       "Entry %s already exists",
@@ -422,6 +588,17 @@ static int ltdb_add_internal(struct ldb_module *module,
 
 	ret = ltdb_index_add_new(module, ltdb, msg);
 	if (ret != LDB_SUCCESS) {
+		/*
+		 * If we failed to index, delete the message again.
+		 *
+		 * This is particularly important for the GUID index
+		 * case, which will only fail for a duplicate DN
+		 * in the index add.
+		 *
+		 * Note that the caller may not cancel the transation
+		 * and this means the above add might really show up!
+		 */
+		ltdb_delete_noindex(module, msg);
 		return ret;
 	}
 
@@ -462,20 +639,31 @@ static int ltdb_add(struct ltdb_context *ctx)
   delete a record from the database, not updating indexes (used for deleting
   index records)
 */
-int ltdb_delete_noindex(struct ldb_module *module, struct ldb_dn *dn)
+int ltdb_delete_noindex(struct ldb_module *module,
+			const struct ldb_message *msg)
 {
 	void *data = ldb_module_get_private(module);
 	struct ltdb_private *ltdb = talloc_get_type(data, struct ltdb_private);
 	TDB_DATA tdb_key;
 	int ret;
+	TALLOC_CTX *tdb_key_ctx = talloc_new(module);
 
-	tdb_key = ltdb_key(module, dn);
+	if (tdb_key_ctx == NULL) {
+		return ldb_module_oom(module);
+	}
+
+	if (ltdb->read_only) {
+		return LDB_ERR_UNWILLING_TO_PERFORM;
+	}
+
+	tdb_key = ltdb_key_msg(module, tdb_key_ctx, msg);
 	if (!tdb_key.dptr) {
+		TALLOC_FREE(tdb_key_ctx);
 		return LDB_ERR_OTHER;
 	}
 
 	ret = tdb_delete(ltdb->tdb, tdb_key);
-	talloc_free(tdb_key.dptr);
+	TALLOC_FREE(tdb_key_ctx);
 
 	if (ret != 0) {
 		ret = ltdb_err_map(tdb_error(ltdb->tdb));
@@ -502,7 +690,7 @@ static int ltdb_delete_internal(struct ldb_module *module, struct ldb_dn *dn)
 		goto done;
 	}
 
-	ret = ltdb_delete_noindex(module, dn);
+	ret = ltdb_delete_noindex(module, msg);
 	if (ret != LDB_SUCCESS) {
 		goto done;
 	}
@@ -619,6 +807,17 @@ static int msg_delete_attribute(struct ldb_module *module,
 	unsigned int i;
 	int ret;
 	struct ldb_message_element *el;
+	bool is_special = ldb_dn_is_special(msg->dn);
+
+	if (!is_special
+	    && ltdb->cache->GUID_index_attribute != NULL
+	    && ldb_attr_cmp(name, ltdb->cache->GUID_index_attribute) == 0) {
+		struct ldb_context *ldb = ldb_module_get_ctx(module);
+		ldb_asprintf_errstring(ldb, "Must not modify GUID "
+				       "attribute %s (used as DB index)",
+				       ltdb->cache->GUID_index_attribute);
+		return LDB_ERR_CONSTRAINT_VIOLATION;
+	}
 
 	el = ldb_msg_find_element(msg, name);
 	if (el == NULL) {
@@ -626,7 +825,7 @@ static int msg_delete_attribute(struct ldb_module *module,
 	}
 	i = el - msg->elements;
 
-	ret = ltdb_index_del_element(module, ltdb, msg->dn, el);
+	ret = ltdb_index_del_element(module, ltdb, msg, el);
 	if (ret != LDB_SUCCESS) {
 		return ret;
 	}
@@ -685,7 +884,7 @@ static int msg_delete_element(struct ldb_module *module,
 							    ltdb, msg, name);
 			}
 
-			ret = ltdb_index_del_value(module, ltdb, msg->dn, el, i);
+			ret = ltdb_index_del_value(module, ltdb, msg, el, i);
 			if (ret != LDB_SUCCESS) {
 				return ret;
 			}
@@ -810,7 +1009,7 @@ int ltdb_modify_internal(struct ldb_module *module,
 					goto done;
 				}
 				ret = ltdb_index_add_element(module, ltdb,
-							     msg2->dn,
+							     msg2,
 							     el);
 				if (ret != LDB_SUCCESS) {
 					goto done;
@@ -892,7 +1091,7 @@ int ltdb_modify_internal(struct ldb_module *module,
 				el2->num_values += el->num_values;
 
 				ret = ltdb_index_add_element(module, ltdb,
-							     msg2->dn, el);
+							     msg2, el);
 				if (ret != LDB_SUCCESS) {
 					goto done;
 				}
@@ -971,7 +1170,7 @@ int ltdb_modify_internal(struct ldb_module *module,
 			}
 
 			ret = ltdb_index_add_element(module, ltdb,
-						     msg2->dn, el);
+						     msg2, el);
 			if (ret != LDB_SUCCESS) {
 				goto done;
 			}
@@ -1086,6 +1285,7 @@ static int ltdb_rename(struct ltdb_context *ctx)
 	struct ldb_message *msg;
 	int ret = LDB_SUCCESS;
 	TDB_DATA tdb_key, tdb_key_old;
+	struct ldb_dn *db_dn;
 
 	ldb_request_set_state(req, LDB_ASYNC_PENDING);
 
@@ -1108,33 +1308,54 @@ static int ltdb_rename(struct ltdb_context *ctx)
 
 	/* We need to, before changing the DB, check if the new DN
 	 * exists, so we can return this error to the caller with an
-	 * unmodified DB */
-	tdb_key = ltdb_key(module, req->op.rename.newdn);
+	 * unmodified DB
+	 *
+	 * Even in GUID index mode we use ltdb_key_dn() as we are
+	 * trying to figure out if this is just a case rename
+	 */
+	tdb_key = ltdb_key_dn(module, msg, req->op.rename.newdn);
 	if (!tdb_key.dptr) {
 		talloc_free(msg);
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	tdb_key_old = ltdb_key(module, req->op.rename.olddn);
+	tdb_key_old = ltdb_key_dn(module, msg, req->op.rename.olddn);
 	if (!tdb_key_old.dptr) {
 		talloc_free(msg);
 		talloc_free(tdb_key.dptr);
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	/* Only declare a conflict if the new DN already exists, and it isn't a case change on the old DN */
-	if (tdb_key_old.dsize != tdb_key.dsize || memcmp(tdb_key.dptr, tdb_key_old.dptr, tdb_key.dsize) != 0) {
-		if (tdb_exists(ltdb->tdb, tdb_key)) {
-			talloc_free(tdb_key_old.dptr);
-			talloc_free(tdb_key.dptr);
-			ldb_asprintf_errstring(ldb_module_get_ctx(module),
-					       "Entry %s already exists",
-					       ldb_dn_get_linearized(req->op.rename.newdn));
-			/* finding the new record already in the DB is an error */
-			talloc_free(msg);
-			return LDB_ERR_ENTRY_ALREADY_EXISTS;
+	/*
+	 * Only declare a conflict if the new DN already exists,
+	 * and it isn't a case change on the old DN
+	 */
+	if (tdb_key_old.dsize != tdb_key.dsize
+	    || memcmp(tdb_key.dptr, tdb_key_old.dptr, tdb_key.dsize) != 0) {
+		ret = ltdb_search_base(module, msg,
+				       req->op.rename.newdn,
+				       &db_dn);
+		if (ret == LDB_SUCCESS) {
+			ret = LDB_ERR_ENTRY_ALREADY_EXISTS;
+		} else if (ret == LDB_ERR_NO_SUCH_OBJECT) {
+			ret = LDB_SUCCESS;
 		}
 	}
+
+	/* finding the new record already in the DB is an error */
+
+	if (ret == LDB_ERR_ENTRY_ALREADY_EXISTS) {
+		ldb_asprintf_errstring(ldb_module_get_ctx(module),
+				       "Entry %s already exists",
+				       ldb_dn_get_linearized(req->op.rename.newdn));
+	}
+	if (ret != LDB_SUCCESS) {
+		talloc_free(tdb_key_old.dptr);
+		talloc_free(tdb_key.dptr);
+		talloc_free(msg);
+		return ret;
+	}
+
 	talloc_free(tdb_key_old.dptr);
 	talloc_free(tdb_key.dptr);
 
@@ -1170,6 +1391,11 @@ static int ltdb_start_trans(struct ldb_module *module)
 	void *data = ldb_module_get_private(module);
 	struct ltdb_private *ltdb = talloc_get_type(data, struct ltdb_private);
 
+	/* Do not take out the transaction lock on a read-only DB */
+	if (ltdb->read_only) {
+		return LDB_ERR_UNWILLING_TO_PERFORM;
+	}
+
 	if (tdb_transaction_start(ltdb->tdb) != 0) {
 		return ltdb_err_map(tdb_error(ltdb->tdb));
 	}
@@ -1201,10 +1427,12 @@ static int ltdb_prepare_commit(struct ldb_module *module)
 	if (tdb_transaction_prepare_commit(ltdb->tdb) != 0) {
 		ret = ltdb_err_map(tdb_error(ltdb->tdb));
 		ltdb->in_transaction--;
-		ldb_asprintf_errstring(ldb_module_get_ctx(module),
-				       "Failure during tdb_transaction_prepare_commit(): %s -> %s",
-				       tdb_errorstr(ltdb->tdb),
-				       ldb_strerror(ret));
+		ldb_debug_set(ldb_module_get_ctx(module),
+			      LDB_DEBUG_FATAL,
+			      "Failure during "
+			      "tdb_transaction_prepare_commit(): %s -> %s",
+			      tdb_errorstr(ltdb->tdb),
+			      ldb_strerror(ret));
 		return ret;
 	}
 
@@ -1651,18 +1879,34 @@ static int ltdb_connect(struct ldb_context *ldb, const char *url,
 		tdb_flags |= TDB_NOMMAP;
 	}
 
-	if (flags & LDB_FLG_RDONLY) {
-		open_flags = O_RDONLY;
-	} else if (flags & LDB_FLG_DONT_CREATE_DB) {
-		open_flags = O_RDWR;
-	} else {
-		open_flags = O_CREAT | O_RDWR;
-	}
-
 	ltdb = talloc_zero(ldb, struct ltdb_private);
 	if (!ltdb) {
 		ldb_oom(ldb);
 		return LDB_ERR_OPERATIONS_ERROR;
+	}
+
+	if (flags & LDB_FLG_RDONLY) {
+		/*
+		 * This is weird, but because we can only have one tdb
+		 * in this process, and the other one could be
+		 * read-write, we can't use the tdb readonly.  Plus a
+		 * read only tdb prohibits the all-record lock.
+		 */
+		open_flags = O_RDWR;
+
+		ltdb->read_only = true;
+
+	} else if (flags & LDB_FLG_DONT_CREATE_DB) {
+		/*
+		 * This is used by ldbsearch to prevent creation of the database
+		 * if the name is wrong
+		 */
+		open_flags = O_RDWR;
+	} else {
+		/*
+		 * This is the normal case
+		 */
+		open_flags = O_CREAT | O_RDWR;
 	}
 
 	/* note that we use quite a large default hash size */

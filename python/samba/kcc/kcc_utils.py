@@ -95,21 +95,6 @@ class NamingContext(object):
 
         assert self.nc_guid is not None
 
-    def is_schema(self):
-        '''Return True if NC is schema'''
-        assert self.nc_type != NCType.unknown
-        return self.nc_type == NCType.schema
-
-    def is_domain(self):
-        '''Return True if NC is domain'''
-        assert self.nc_type != NCType.unknown
-        return self.nc_type == NCType.domain
-
-    def is_application(self):
-        '''Return True if NC is application'''
-        assert self.nc_type != NCType.unknown
-        return self.nc_type == NCType.application
-
     def is_config(self):
         '''Return True if NC is config'''
         assert self.nc_type != NCType.unknown
@@ -178,14 +163,14 @@ class NCReplica(NamingContext):
     class) and it identifies unique attributes of the DSA's replica for a NC.
     """
 
-    def __init__(self, dsa_dnstr, dsa_guid, nc_dnstr):
+    def __init__(self, dsa, nc_dnstr):
         """Instantiate a Naming Context Replica
 
         :param dsa_guid: GUID of DSA where replica appears
         :param nc_dnstr: NC dn string
         """
-        self.rep_dsa_dnstr = dsa_dnstr
-        self.rep_dsa_guid = dsa_guid
+        self.rep_dsa_dnstr = dsa.dsa_dnstr
+        self.rep_dsa_guid = dsa.dsa_guid
         self.rep_default = False  # replica for DSA's default domain
         self.rep_partial = False
         self.rep_ro = False
@@ -228,12 +213,9 @@ class NCReplica(NamingContext):
 
         return "%s\n%s" % (NamingContext.__str__(self), text)
 
-    def set_instantiated_flags(self, flags=None):
+    def set_instantiated_flags(self, flags=0):
         '''Set or clear NC replica instantiated flags'''
-        if flags is None:
-            self.rep_instantiated_flags = 0
-        else:
-            self.rep_instantiated_flags = flags
+        self.rep_instantiated_flags = flags
 
     def identify_by_dsa_attr(self, samdb, attr):
         """Given an NC which has been discovered thru the
@@ -432,9 +414,6 @@ class NCReplica(NamingContext):
 
     def dumpstr_to_be_modified(self):
         return '\n'.join(str(x) for x in self.rep_repsFrom if x.is_modified())
-
-    def dumpstr_reps_to(self):
-        return '\n'.join(str(x) for x in self.rep_repsTo if x.to_be_deleted)
 
     def load_fsmo_roles(self, samdb):
         """Given an NC replica which has been discovered thru the nTDSDSA
@@ -757,7 +736,7 @@ class DirectoryServiceAgent(object):
                     dnstr = str(dsdn.dn)
 
                     if not dnstr in tmp_table:
-                        rep = NCReplica(self.dsa_dnstr, self.dsa_guid, dnstr)
+                        rep = NCReplica(self, dnstr)
                         tmp_table[dnstr] = rep
                     else:
                         rep = tmp_table[dnstr]
@@ -1537,12 +1516,6 @@ class Site(object):
             self.dsa_table[dnstr] = dsa
             if not dsa.is_ro():
                 self.rw_dsa_table[dnstr] = dsa
-
-    def get_dsa_by_guidstr(self, guidstr):  # XXX unused
-        for dsa in self.dsa_table.values():
-            if str(dsa.dsa_guid) == guidstr:
-                return dsa
-        return None
 
     def get_dsa(self, dnstr):
         """Return a previously loaded DSA object by consulting

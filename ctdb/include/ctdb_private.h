@@ -289,6 +289,7 @@ struct ctdb_context {
 	void *private_data; /* private to transport */
 	struct ctdb_db_context *db_list;
 	struct srvid_context *srv;
+	struct srvid_context *tunnels;
 	struct ctdb_daemon_data daemon;
 	struct ctdb_statistics statistics;
 	struct ctdb_statistics statistics_current;
@@ -551,8 +552,9 @@ int daemon_register_message_handler(struct ctdb_context *ctdb,
 				    uint32_t client_id, uint64_t srvid);
 int daemon_deregister_message_handler(struct ctdb_context *ctdb,
 				      uint32_t client_id, uint64_t srvid);
-int daemon_check_srvids(struct ctdb_context *ctdb, TDB_DATA indata,
-			TDB_DATA *outdata);
+
+void daemon_tunnel_handler(uint64_t tunnel_id, TDB_DATA data,
+			   void *private_data);
 
 int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork);
 
@@ -751,16 +753,11 @@ int32_t ctdb_control_get_db_statistics(struct ctdb_context *ctdb,
 int ctdb_set_notification_script(struct ctdb_context *ctdb, const char *script);
 void ctdb_run_notification_script(struct ctdb_context *ctdb, const char *event);
 
-void ctdb_disable_monitoring(struct ctdb_context *ctdb);
-void ctdb_enable_monitoring(struct ctdb_context *ctdb);
 void ctdb_stop_monitoring(struct ctdb_context *ctdb);
 
 void ctdb_wait_for_first_recovery(struct ctdb_context *ctdb);
 
 int32_t ctdb_control_modflags(struct ctdb_context *ctdb, TDB_DATA indata);
-
-int32_t ctdb_monitoring_mode(struct ctdb_context *ctdb);
-bool ctdb_stopped_monitoring(struct ctdb_context *ctdb);
 
 /* from ctdb_persistent.c */
 
@@ -967,6 +964,20 @@ int32_t ctdb_control_get_tunable(struct ctdb_context *ctdb, TDB_DATA indata,
 int32_t ctdb_control_set_tunable(struct ctdb_context *ctdb, TDB_DATA indata);
 int32_t ctdb_control_list_tunables(struct ctdb_context *ctdb,
 				   TDB_DATA *outdata);
+
+/* from ctdb_tunnel.c */
+
+int32_t ctdb_control_tunnel_register(struct ctdb_context *ctdb,
+				     uint32_t client_id, uint64_t tunnel_id);
+int32_t ctdb_control_tunnel_deregister(struct ctdb_context *ctdb,
+				       uint32_t client_id, uint64_t tunnel_id);
+
+int ctdb_daemon_send_tunnel(struct ctdb_context *ctdb, uint32_t destnode,
+			    uint64_t tunnel_id, uint32_t client_id,
+			    TDB_DATA data);
+
+void ctdb_request_tunnel(struct ctdb_context *ctdb,
+			 struct ctdb_req_header *hdr);
 
 /* from ctdb_update_record.c */
 

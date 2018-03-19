@@ -53,7 +53,7 @@ struct catia_cache {
 	char *base_fname;
 };
 
-struct share_mapping_entry *srt_head = NULL;
+static struct share_mapping_entry *srt_head = NULL;
 
 static struct share_mapping_entry *get_srt(connection_struct *conn,
 					   struct share_mapping_entry **global)
@@ -397,7 +397,7 @@ static int catia_fetch_fsp_pre_next(TALLOC_CTX *mem_ctx,
 	}
 
 	if (!make_tmp_cache) {
-		cc = (struct catia_cache *)VFS_ADD_FSP_EXTENSION(
+		cc = VFS_ADD_FSP_EXTENSION(
 			handle, fsp, struct catia_cache, NULL);
 		if (cc == NULL) {
 			return -1;

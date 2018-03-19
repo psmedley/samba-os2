@@ -33,6 +33,9 @@
 #include "lib/util/samba_modules.h"
 #include "lib/util/base64.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_AUTH
+
 /* the list of currently registered GENSEC backends */
 static const struct gensec_security_ops **generic_security_ops;
 static int gensec_num_backends;
@@ -98,15 +101,12 @@ _PUBLIC_ const struct gensec_security_ops **gensec_use_kerberos_mechs(TALLOC_CTX
 
 	j = 0;
 	for (i=0; old_gensec_list && old_gensec_list[i]; i++) {
-		int oid_idx;
 		bool keep = false;
 
-		for (oid_idx = 0; old_gensec_list[i]->oid && old_gensec_list[i]->oid[oid_idx]; oid_idx++) {
-			if (strcmp(old_gensec_list[i]->oid[oid_idx], GENSEC_OID_SPNEGO) == 0) {
-				keep = true;
-				break;
-			}
-		}
+		/*
+		 * We want to keep SPNGEO and other backends
+		 */
+		keep = old_gensec_list[i]->glue;
 
 		if (old_gensec_list[i]->auth_type == DCERPC_AUTH_TYPE_SCHANNEL) {
 			keep = keep_schannel;

@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 12/22/2017
+.\"      Date: 03/13/2018
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.7
+.\"    Source: Samba 4.8.0
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "12/22/2017" "Samba 4\&.7" "System Administration tools"
+.TH "VFS_FRUIT" "8" "03/13/2018" "Samba 4\&.8\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -67,7 +67,7 @@ fruit:encoding = native, all mapped characters are converted to native ASCII cha
 Finally, share access modes are optionally checked against Netatalk AFP sharing modes by setting
 fruit:locking = netatalk\&.
 .PP
-This module is not stackable other then described in this manpage\&.
+This module is not stackable other than described in this manpage\&.
 .SH "GLOBAL OPTIONS"
 .PP
 The following options must be set in the global smb\&.conf section and won\*(Aqt take effect when set per share\&.
@@ -88,7 +88,7 @@ option whether to enable Apple\*(Aqs SMB2+ extension codenamed AAPL\&. Default
 .sp -1
 .IP \(bu 2.3
 .\}
-directory enumeration is enriched with Mac relevant filesystem metadata (UNIX mode, FinderInfo, resource fork size and effective permission), as a result the Mac client doesn\*(Aqt need to fetch this metadata individuallly per directory entry resulting in an often tremendous performance increase\&.
+directory enumeration is enriched with Mac relevant filesystem metadata (UNIX mode, FinderInfo, resource fork size and effective permission), as a result the Mac client doesn\*(Aqt need to fetch this metadata individually per directory entry resulting in an often tremendous performance increase\&.
 .RE
 .sp
 .RS 4
@@ -161,8 +161,7 @@ option whether to enable OS X specific copychunk ioctl that requests a copy of a
 .sp
 WARNING: the copyfile request is blocking the client while the server does the copy\&.
 .sp
-\&.
-	      The default is
+The default is
 \fIno\fR\&.
 .RE
 .PP
@@ -240,6 +239,97 @@ module due to the extended attributes size limitations of most filesytems\&.
 .RE
 .sp
 .RE
+.RE
+.PP
+fruit:time machine = [ yes | no ]
+.RS 4
+Controls if Time Machine support via the FULLSYNC volume capability is advertised to clients\&.
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+yes
+\- Enables Time Machine support for this share\&. Also registers the share with mDNS in case Samba is built with mDNS support\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+no (default)
+Disables advertising Time Machine support\&.
+.RE
+.sp
+.RE
+This option enforces the following settings per share (or for all shares if enabled globally):
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+durable handles = yes
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+kernel oplocks = no
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+kernel share modes = no
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+posix locking = no
+.RE
+.sp
+.RE
+.RE
+.PP
+fruit:time machine max size = SIZE [K|M|G|T|P]
+.RS 4
+Useful for Time Machine: limits the reported disksize, thus preventing Time Machine from using the whole real disk space for backup\&. The option takes a number plus an optional unit\&.
+.sp
+\fIIMPORTANT\fR: This is an approximated calculation that only takes into account the contents of Time Machine sparsebundle images\&. Therefor you
+\fIMUST NOT\fR
+use this volume to store other content when using this option, because it would NOT be accounted\&.
+.sp
+The calculation works by reading the band size from the Info\&.plist XML file of the sparsebundle, reading the bands/ directory counting the number of band files, and then multiplying one with the other\&.
 .RE
 .PP
 fruit:metadata = [ stream | netatalk ]

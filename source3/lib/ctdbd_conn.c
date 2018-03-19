@@ -41,7 +41,8 @@
 
 struct ctdbd_srvid_cb {
 	uint64_t srvid;
-	int (*cb)(uint32_t src_vnn, uint32_t dst_vnn,
+	int (*cb)(struct tevent_context *ev,
+		  uint32_t src_vnn, uint32_t dst_vnn,
 		  uint64_t dst_srvid,
 		  const uint8_t *msg, size_t msglen,
 		  void *private_data);
@@ -143,7 +144,8 @@ static void ctdb_packet_dump(struct ctdb_req_header *hdr)
  * Register a srvid with ctdbd
  */
 int register_with_ctdbd(struct ctdbd_connection *conn, uint64_t srvid,
-			int (*cb)(uint32_t src_vnn, uint32_t dst_vnn,
+			int (*cb)(struct tevent_context *ev,
+				  uint32_t src_vnn, uint32_t dst_vnn,
 				  uint64_t dst_srvid,
 				  const uint8_t *msg, size_t msglen,
 				  void *private_data),
@@ -177,7 +179,8 @@ int register_with_ctdbd(struct ctdbd_connection *conn, uint64_t srvid,
 	return 0;
 }
 
-static int ctdbd_msg_call_back(struct ctdbd_connection *conn,
+static int ctdbd_msg_call_back(struct tevent_context *ev,
+			       struct ctdbd_connection *conn,
 			       struct ctdb_req_message_old *msg)
 {
 	uint32_t msg_len;
@@ -204,7 +207,8 @@ static int ctdbd_msg_call_back(struct ctdbd_connection *conn,
 		if ((cb->srvid == msg->srvid) && (cb->cb != NULL)) {
 			int ret;
 
-			ret = cb->cb(msg->hdr.srcnode, msg->hdr.destnode,
+			ret = cb->cb(ev,
+				     msg->hdr.srcnode, msg->hdr.destnode,
 				     msg->srvid, msg->data, msg->datalen,
 				     cb->private_data);
 			if (ret != 0) {
@@ -411,7 +415,7 @@ static int ctdb_read_req(struct ctdbd_connection *conn, uint32_t reqid,
 	if (hdr->operation == CTDB_REQ_MESSAGE) {
 		struct ctdb_req_message_old *msg = (struct ctdb_req_message_old *)hdr;
 
-		ret = ctdbd_msg_call_back(conn, msg);
+		ret = ctdbd_msg_call_back(NULL, conn, msg);
 		if (ret != 0) {
 			TALLOC_FREE(hdr);
 			return ret;
@@ -570,7 +574,8 @@ int ctdbd_conn_get_fd(struct ctdbd_connection *conn)
 /*
  * Packet handler to receive and handle a ctdb message
  */
-static int ctdb_handle_message(struct ctdbd_connection *conn,
+static int ctdb_handle_message(struct tevent_context *ev,
+			       struct ctdbd_connection *conn,
 			       struct ctdb_req_header *hdr)
 {
 	struct ctdb_req_message_old *msg;
@@ -583,12 +588,13 @@ static int ctdb_handle_message(struct ctdbd_connection *conn,
 
 	msg = (struct ctdb_req_message_old *)hdr;
 
-	ctdbd_msg_call_back(conn, msg);
+	ctdbd_msg_call_back(ev, conn, msg);
 
 	return 0;
 }
 
-void ctdbd_socket_readable(struct ctdbd_connection *conn)
+void ctdbd_socket_readable(struct tevent_context *ev,
+			   struct ctdbd_connection *conn)
 {
 	struct ctdb_req_header *hdr = NULL;
 	int ret;
@@ -599,7 +605,7 @@ void ctdbd_socket_readable(struct ctdbd_connection *conn)
 		cluster_fatal("ctdbd died\n");
 	}
 
-	ret = ctdb_handle_message(conn, hdr);
+	ret = ctdb_handle_message(ev, conn, hdr);
 
 	TALLOC_FREE(hdr);
 
@@ -1154,7 +1160,8 @@ static void smbd_ctdb_canonicalize_ip(const struct sockaddr_storage *in,
 int ctdbd_register_ips(struct ctdbd_connection *conn,
 		       const struct sockaddr_storage *_server,
 		       const struct sockaddr_storage *_client,
-		       int (*cb)(uint32_t src_vnn, uint32_t dst_vnn,
+		       int (*cb)(struct tevent_context *ev,
+				 uint32_t src_vnn, uint32_t dst_vnn,
 				 uint64_t dst_srvid,
 				 const uint8_t *msg, size_t msglen,
 				 void *private_data),
@@ -1364,7 +1371,7 @@ static struct tevent_req *ctdb_pkt_send_send(TALLOC_CTX *mem_ctx,
 	}
 
 	/*
-	 * Attempt a direct write. If this returns short, shedule the
+	 * Attempt a direct write. If this returns short, schedule the
 	 * remaining data as an async write, otherwise we're already done.
 	 */
 

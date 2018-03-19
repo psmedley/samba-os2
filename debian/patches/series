@@ -6,10 +6,3 @@ usershare.patch
 VERSION.patch
 add-so-version-to-private-libraries
 heimdal-rfc3454.txt
-no_build_system.patch
-systemd-syslog.target-is-obsolete.patch
-Add-documentation-to-systemd-Unit-files.patch
-fix_kill_path_in_units.patch
-nmbd-requires-a-working-network.patch
-CVE-2018-1050-11343-4.7.patch
-CVE-2018-1057-v4-7.metze01.patches.txt

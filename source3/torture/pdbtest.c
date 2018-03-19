@@ -32,6 +32,8 @@
 #include "../auth/common_auth.h"
 #include "lib/tsocket/tsocket.h"
 #include "include/auth.h"
+#include "nsswitch/libwbclient/wbclient.h"
+#include "auth/auth_sam_reply.h"
 
 #define TRUST_DOM "trustdom"
 #define TRUST_PWD "trustpwd1232"
@@ -268,6 +270,11 @@ static bool test_auth(TALLOC_CTX *mem_ctx, struct samu *pdb_entry)
 	unsigned char local_nt_session_key[16];
 	struct netr_SamInfo3 *info3_sam, *info3_auth;
 	struct auth_serversupplied_info *server_info;
+	struct wbcAuthUserParams params = { .flags = 0 };
+	struct wbcAuthUserInfo *info = NULL;
+	struct wbcAuthErrorInfo *err = NULL;
+	wbcErr wbc_status;
+	struct netr_SamInfo6 *info6_wbc = NULL;
 	NTSTATUS status;
 	bool ok;
 	uint8_t authoritative = 0;
@@ -363,6 +370,72 @@ static bool test_auth(TALLOC_CTX *mem_ctx, struct samu *pdb_entry)
 	 * returns the correct errors
 	 */
 
+	params.parameter_control = user_info->logon_parameters;
+	params.parameter_control |= WBC_MSV1_0_ALLOW_WORKSTATION_TRUST_ACCOUNT |
+				    WBC_MSV1_0_ALLOW_SERVER_TRUST_ACCOUNT;
+	params.level = WBC_AUTH_USER_LEVEL_RESPONSE;
+
+	params.account_name     = user_info->client.account_name;
+	params.domain_name      = user_info->client.domain_name;
+	params.workstation_name = user_info->workstation_name;
+
+	memcpy(params.password.response.challenge,
+	       challenge.data,
+	       sizeof(params.password.response.challenge));
+
+	params.password.response.lm_length =
+		user_info->password.response.lanman.length;
+	params.password.response.nt_length =
+		user_info->password.response.nt.length;
+
+	params.password.response.lm_data =
+		user_info->password.response.lanman.data;
+	params.password.response.nt_data =
+		user_info->password.response.nt.data;
+
+	wbc_status = wbcAuthenticateUserEx(&params, &info, &err);
+	if (wbc_status != WBC_ERR_WINBIND_NOT_AVAILABLE) {
+		if (wbc_status == WBC_ERR_AUTH_ERROR) {
+			if (err) {
+				DEBUG(1, ("error was %s (0x%08x)\nerror message was '%s'\n",
+				      err->nt_string, err->nt_status, err->display_string));
+				status = NT_STATUS(err->nt_status);
+				wbcFreeMemory(err);
+			} else {
+				status = NT_STATUS_LOGON_FAILURE;
+			}
+			if (!NT_STATUS_IS_OK(status)) {
+				return false;
+			}
+		} else if (!WBC_ERROR_IS_OK(wbc_status)) {
+			DEBUG(1, ("wbcAuthenticateUserEx: failed with %u - %s\n",
+				wbc_status, wbcErrorString(wbc_status)));
+			if (err) {
+				DEBUG(1, ("error was %s (0x%08x)\nerror message was '%s'\n",
+				      err->nt_string, err->nt_status, err->display_string));
+			}
+			return false;
+		}
+		info6_wbc = wbcAuthUserInfo_to_netr_SamInfo6(mem_ctx, info);
+		wbcFreeMemory(info);
+		if (!info6_wbc) {
+			DEBUG(1, ("wbcAuthUserInfo_to_netr_SamInfo6 failed\n"));
+			return false;
+		}
+
+		if (memcmp(info6_wbc->base.key.key, local_nt_session_key, 16) != 0) {
+			DEBUG(0, ("Returned NT session key is incorrect\n"));
+			return false;
+		}
+
+		if (!dom_sid_equal(info3_sam->base.domain_sid, info6_wbc->base.domain_sid)) {
+			DEBUG(0, ("domain_sid in SAM info3 %s does not match domain_sid in AUTH info3 %s\n",
+				  dom_sid_string(NULL, info3_sam->base.domain_sid),
+				  dom_sid_string(NULL, info6_wbc->base.domain_sid)));
+			return false;
+		}
+	}
+
 	return True;
 }
 
@@ -377,6 +450,7 @@ static bool test_trusted_domains(TALLOC_CTX *ctx,
 	struct trustAuthInOutBlob taiob;
 	struct AuthenticationInformation aia;
 	enum ndr_err_code ndr_err;
+	bool ok;
 
 	td = talloc_zero(ctx ,struct pdb_trusted_domain);
 	if (!td) {
@@ -388,6 +462,11 @@ static bool test_trusted_domains(TALLOC_CTX *ctx,
 	td->netbios_name = talloc_strdup(td, TRUST_DOM);
 	if (!td->domain_name || !td->netbios_name) {
 		fprintf(stderr, "talloc failed\n");
+		return false;
+	}
+	ok = dom_sid_parse("S-1-5-21-123-456-789", &td->security_identifier);
+	if (!ok) {
+		fprintf(stderr, "dom_sid_parse S-1-5-21-123-456-789 failed\n");
 		return false;
 	}
 
@@ -428,7 +507,7 @@ static bool test_trusted_domains(TALLOC_CTX *ctx,
 
 	rv = pdb->get_trusted_domain(pdb, ctx, TRUST_DOM, &new_td);
 	if (!NT_STATUS_IS_OK(rv)) {
-		fprintf(stderr, "Error in set_trusted_domain %s\n",
+		fprintf(stderr, "Error in get_trusted_domain %s\n",
 				get_friendly_nt_error_msg(rv));
 		*error = true;
 	}
@@ -444,6 +523,13 @@ static bool test_trusted_domains(TALLOC_CTX *ctx,
 	    td->trust_forest_trust_info.length != new_td->trust_forest_trust_info.length ||
 	    data_blob_cmp(&td->trust_auth_outgoing, &new_td->trust_auth_outgoing) != 0) {
 		fprintf(stderr, "Old and new trusdet domain data do not match\n");
+		*error = true;
+	}
+
+	rv = pdb->del_trusted_domain(pdb, TRUST_DOM);
+	if (!NT_STATUS_IS_OK(rv)) {
+		fprintf(stderr, "Error in del_trusted_domain %s\n",
+				get_friendly_nt_error_msg(rv));
 		*error = true;
 	}
 

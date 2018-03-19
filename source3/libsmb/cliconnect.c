@@ -283,8 +283,9 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 
 	auth_requested = cli_credentials_authentication_requested(creds);
 	if (auth_requested) {
+		errno = 0;
 		user_principal = cli_credentials_get_principal(creds, frame);
-		if (user_principal == NULL) {
+		if (errno != 0) {
 			TALLOC_FREE(frame);
 			return NT_STATUS_NO_MEMORY;
 		}
@@ -297,6 +298,10 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 
 	if (krb5_state != CRED_DONT_USE_KERBEROS) {
 		try_kerberos = true;
+	}
+
+	if (user_principal == NULL) {
+		try_kerberos = false;
 	}
 
 	if (target_hostname == NULL) {
@@ -1284,7 +1289,7 @@ static struct tevent_req *cli_session_setup_spnego_send(
 
 	status = cli_session_creds_prepare_krb5(cli, creds);
 	if (tevent_req_nterror(req, status)) {
-		return tevent_req_post(req, ev);;
+		return tevent_req_post(req, ev);
 	}
 
 	subreq = cli_session_setup_gensec_send(state, ev, cli, creds,
@@ -2505,7 +2510,6 @@ static struct tevent_req *cli_connect_sock_send(
 {
 	struct tevent_req *req, *subreq;
 	struct cli_connect_sock_state *state;
-	const char *prog;
 	struct sockaddr_storage *addrs;
 	unsigned i, num_addrs;
 	NTSTATUS status;
@@ -2514,19 +2518,6 @@ static struct tevent_req *cli_connect_sock_send(
 				struct cli_connect_sock_state);
 	if (req == NULL) {
 		return NULL;
-	}
-
-	prog = getenv("LIBSMB_PROG");
-	if (prog != NULL) {
-		state->fd = sock_exec(prog);
-		if (state->fd == -1) {
-			status = map_nt_error_from_unix(errno);
-			tevent_req_nterror(req, status);
-		} else {
-			state->port = 0;
-			tevent_req_done(req);
-		}
-		return tevent_req_post(req, ev);
 	}
 
 	if ((pss == NULL) || is_zero_addr(pss)) {

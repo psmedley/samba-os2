@@ -7,7 +7,7 @@
 	<manvolnum>8</manvolnum>
 	<refmiscinfo class="source">Samba</refmiscinfo>
 	<refmiscinfo class="manual">System Administration tools</refmiscinfo>
-	<refmiscinfo class="version">4.7</refmiscinfo>
+	<refmiscinfo class="version">&doc.version;</refmiscinfo>
 </refmeta>
 
 
@@ -71,7 +71,7 @@
 	against Netatalk AFP sharing modes by setting
 	<command>fruit:locking = netatalk</command>.</para>
 
-	<para>This module is not stackable other then described in
+	<para>This module is not stackable other than described in
 	this manpage.</para>
 
 </refsect1>
@@ -97,7 +97,7 @@
 		Mac relevant filesystem metadata (UNIX mode,
 		FinderInfo, resource fork size and effective
 		permission), as a result the Mac client doesn't need
-		to fetch this metadata individuallly per directory
+		to fetch this metadata individually per directory
 		entry resulting in an often tremendous performance
 		increase.</para></listitem>
 
@@ -138,7 +138,7 @@
 	      specific copychunk ioctl that requests a copy of a whole file
 	      along with all attached metadata.</para>
 	      <para>WARNING: the copyfile request is blocking the
-	      client while the server does the copy.</para>.
+	      client while the server does the copy.</para>
 	      <para>The default is <emphasis>no</emphasis>.</para>
 	    </listitem>
 	  </varlistentry>
@@ -210,6 +210,52 @@
 		filesytems.</para></listitem>
 	      </itemizedlist>
 
+	    </listitem>
+	  </varlistentry>
+
+	  <varlistentry>
+	    <term>fruit:time machine = [ yes | no ]</term>
+	    <listitem>
+	      <para>Controls if Time Machine support via the FULLSYNC volume
+	      capability is advertised to clients.</para>
+
+	      <itemizedlist>
+		<listitem><para><command>yes</command> - Enables Time Machine
+		support for this share. Also registers the share with mDNS in
+		case Samba is built with mDNS support.</para></listitem>
+
+		<listitem><para><command>no (default)</command> Disables
+		advertising Time Machine support.</para></listitem>
+
+	      </itemizedlist>
+
+	      <para>This option enforces the following settings per share (or
+	      for all shares if enabled globally):</para>
+	      <itemizedlist>
+		<listitem><para><command>durable handles = yes</command></para></listitem>
+		<listitem><para><command>kernel oplocks = no</command></para></listitem>
+		<listitem><para><command>kernel share modes = no</command></para></listitem>
+		<listitem><para><command>posix locking = no</command></para></listitem>
+	      </itemizedlist>
+
+	    </listitem>
+	  </varlistentry>
+
+	  <varlistentry>
+	    <term>fruit:time machine max size = SIZE [K|M|G|T|P]</term>
+	    <listitem>
+	      <para>Useful for Time Machine: limits the reported disksize, thus
+	      preventing Time Machine from using the whole real disk space for
+	      backup. The option takes a number plus an optional unit.</para>
+	      <para><emphasis>IMPORTANT</emphasis>: This is an approximated
+	      calculation that only takes into account the contents of Time
+	      Machine sparsebundle images. Therefor you <emphasis>MUST
+	      NOT</emphasis> use this volume to store other content when using
+	      this option, because it would NOT be accounted.</para>
+	      <para>The calculation works by reading the band size from the
+	      Info.plist XML file of the sparsebundle, reading the bands/
+	      directory counting the number of band files, and then multiplying
+	      one with the other.</para>
 	    </listitem>
 	  </varlistentry>
 

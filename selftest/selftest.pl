@@ -441,8 +441,8 @@ if ($opt_testenv) {
     # 1 year should be enough :-)
     $server_maxtime = 365 * 24 * 60 * 60;
 } else {
-    # make test should run under 4 hours
-    $server_maxtime = 4 * 60 * 60;
+    # make test should run under 5 hours
+    $server_maxtime = 5 * 60 * 60;
 }
 
 if (defined($ENV{SMBD_MAXTIME}) and $ENV{SMBD_MAXTIME} ne "") {
@@ -510,6 +510,12 @@ sub write_clientconf($$$)
 	        unlink <$clientdir/private/*>;
 	} else {
 	        mkdir("$clientdir/private", 0777);
+	}
+
+	if ( -d "$clientdir/bind-dns" ) {
+	        unlink <$clientdir/bind-dns/*>;
+	} else {
+	        mkdir("$clientdir/bind-dns", 0777);
 	}
 
 	if ( -d "$clientdir/lockdir" ) {
@@ -595,6 +601,7 @@ sub write_clientconf($$$)
 	}
 	print CF "
 	private dir = $clientdir/private
+	binddns dir = $clientdir/bind-dns
 	lock dir = $clientdir/lockdir
 	state directory = $clientdir/statedir
 	cache directory = $clientdir/cachedir
@@ -828,6 +835,12 @@ my @exported_envvars = (
 	"VAMPIRE_DC_NETBIOSNAME",
 	"VAMPIRE_DC_NETBIOSALIAS",
 
+	# domain controller stuff for RODC
+	"RODC_DC_SERVER",
+	"RODC_DC_SERVER_IP",
+	"RODC_DC_SERVER_IPV6",
+	"RODC_DC_NETBIOSNAME",
+
 	# domain controller stuff for FL 2000 Vampired DC
 	"VAMPIRE_2000_DC_SERVER",
 	"VAMPIRE_2000_DC_SERVER_IP",
@@ -870,11 +883,13 @@ my @exported_envvars = (
 	"RESOLV_CONF",
 	"UNACCEPTABLE_PASSWORD",
 	"LOCK_DIR",
+	"SMBD_TEST_LOG",
 
 	# nss_wrapper
 	"NSS_WRAPPER_PASSWD",
 	"NSS_WRAPPER_GROUP",
 	"NSS_WRAPPER_HOSTS",
+	"NSS_WRAPPER_HOSTNAME",
 	"NSS_WRAPPER_MODULE_SO_PATH",
 	"NSS_WRAPPER_MODULE_FN_PREFIX",
 

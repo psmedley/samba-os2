@@ -29,7 +29,8 @@ struct tevent_req;
 struct db_record {
 	struct db_context *db;
 	TDB_DATA key, value;
-	NTSTATUS (*store)(struct db_record *rec, TDB_DATA data, int flag);
+	NTSTATUS (*storev)(struct db_record *rec, const TDB_DATA *dbufs,
+			   int num_dbufs, int flag);
 	NTSTATUS (*delete_rec)(struct db_record *rec);
 	void *private_data;
 };
@@ -67,6 +68,10 @@ struct db_context {
 		void *private_data,
 		enum dbwrap_req_state *req_state);
 	NTSTATUS (*parse_record_recv)(struct tevent_req *req);
+	NTSTATUS (*do_locked)(struct db_context *db, TDB_DATA key,
+			      void (*fn)(struct db_record *rec,
+					 void *private_data),
+			      void *private_data);
 	int (*exists)(struct db_context *db,TDB_DATA key);
 	int (*wipe)(struct db_context *db);
 	int (*check)(struct db_context *db);

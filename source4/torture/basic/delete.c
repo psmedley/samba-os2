@@ -640,7 +640,7 @@ static bool deltest13(struct torture_context *tctx, struct smbcli_state *cli1, s
 
 	torture_assert_ntstatus_ok(tctx, smbcli_nt_delete_on_close(cli2->tree, fnum2,
 						       false), 
-		 "setting delete_on_close on file failed !");
+		 "unsetting delete_on_close on file failed !");
 
 	correct &= check_delete_on_close(tctx, cli1, fnum1, fname, false, __location__);
 	correct &= check_delete_on_close(tctx, cli2, fnum2, fname, false, __location__);
@@ -1807,7 +1807,7 @@ static bool deltest20(struct torture_context *tctx, struct smbcli_state *cli1, s
 
 	status = smbcli_nt_delete_on_close(cli1->tree, dnum1, false);
 	torture_assert_ntstatus_ok(tctx, status, 
-					"setting delete_on_close on file failed !");
+					"unsetting delete_on_close on file failed !");
 		
 	{
 		char *fullname;
@@ -2201,6 +2201,61 @@ static bool deltest23(struct torture_context *tctx,
 	return true;
 }
 
+/* Test 24 ... */
+
+/*
+ * Test whether unsetting delete-on-close before the close has any effect.
+ * It should be ignored.
+ */
+static bool deltest24(struct torture_context *tctx)
+{
+	int fnum1 = -1;
+	struct smbcli_state *cli1;
+	bool correct = true;
+
+	if (!torture_open_connection(&cli1, tctx, 0))
+		return false;
+
+	smbcli_deltree(cli1->tree, fname);
+
+	fnum1 = smbcli_nt_create_full(cli1->tree, fname, 0,
+				      SEC_FILE_READ_DATA|
+				      SEC_FILE_WRITE_DATA|
+				      SEC_STD_DELETE,
+				      FILE_ATTRIBUTE_NORMAL,
+				      NTCREATEX_SHARE_ACCESS_READ|
+				      NTCREATEX_SHARE_ACCESS_WRITE|
+				      NTCREATEX_SHARE_ACCESS_DELETE,
+				      NTCREATEX_DISP_CREATE,
+				      NTCREATEX_OPTIONS_DELETE_ON_CLOSE, 0);
+
+	torture_assert(tctx, fnum1 != -1,
+		       talloc_asprintf(tctx, "open of %s failed: %s!",
+				       fname, smbcli_errstr(cli1->tree)));
+
+	/* Now, unset Delete-On-Close, but it should have no effect */
+	torture_assert_ntstatus_ok(
+		tctx, smbcli_nt_delete_on_close(cli1->tree, fnum1, false),
+		talloc_asprintf(tctx, "unsetting delete_on_close failed (%s)",
+				smbcli_errstr(cli1->tree)));
+
+	smbcli_close(cli1->tree, fnum1);
+
+	/* File should not be there. */
+	fnum1 = smbcli_nt_create_full(cli1->tree, fname, 0,
+				      SEC_RIGHTS_FILE_READ,
+				      FILE_ATTRIBUTE_NORMAL,
+				      NTCREATEX_SHARE_ACCESS_READ|
+				      NTCREATEX_SHARE_ACCESS_WRITE|
+				      NTCREATEX_SHARE_ACCESS_DELETE,
+				      NTCREATEX_DISP_OPEN,
+				      0, 0);
+
+	CHECK_STATUS(cli1, NT_STATUS_OBJECT_NAME_NOT_FOUND);
+
+	return correct;
+}
+
 /*
   Test delete on close semantics.
  */
@@ -2241,6 +2296,7 @@ struct torture_suite *torture_test_delete(TALLOC_CTX *ctx)
 	torture_suite_add_simple_test(suite, "deltest21", deltest21);
 	torture_suite_add_simple_test(suite, "deltest22", deltest22);
 	torture_suite_add_2smb_test(suite, "deltest23", deltest23);
+	torture_suite_add_simple_test(suite, "deltest24", deltest24);
 
 	return suite;
 }

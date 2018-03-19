@@ -342,7 +342,7 @@ static NTSTATUS drepl_replica_sync(struct irpc_message *msg,
 	 * schedule replication event to force
 	 * replication as soon as possible
 	 */
-	dreplsrv_pendingops_schedule(service, 0);
+	dreplsrv_pendingops_schedule_pull_now(service);
 
 done:
 	return NT_STATUS_OK;
@@ -489,6 +489,15 @@ static void dreplsrv_task_init(struct task_server *task)
 		return;
 	}
 
+	service->pending.im = tevent_create_immediate(service);
+	if (service->pending.im == NULL) {
+		task_server_terminate(task,
+				      "dreplsrv: Failed to create immediate "
+				      "task for future DsReplicaSync\n",
+				      true);
+		return;
+	}
+
 	/* if we are a RODC then we do not send DSReplicaSync*/
 	if (!service->am_rodc) {
 		service->notify.interval = lpcfg_parm_int(task->lp_ctx, NULL, "dreplsrv",
@@ -519,5 +528,10 @@ static void dreplsrv_task_init(struct task_server *task)
 */
 NTSTATUS server_service_drepl_init(TALLOC_CTX *ctx)
 {
-	return register_server_service(ctx, "drepl", dreplsrv_task_init);
+	struct service_details details = {
+		.inhibit_fork_on_accept = true,
+		.inhibit_pre_fork = true,
+	};
+	return register_server_service(ctx, "drepl",  dreplsrv_task_init,
+				       &details);
 }

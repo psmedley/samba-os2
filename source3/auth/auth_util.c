@@ -36,6 +36,7 @@
 #include "../librpc/gen_ndr/idmap.h"
 #include "lib/param/loadparm.h"
 #include "../lib/tsocket/tsocket.h"
+#include "rpc_client/util_netlogon.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_AUTH
@@ -110,12 +111,6 @@ NTSTATUS make_user_info_map(TALLOC_CTX *mem_ctx,
 	NTSTATUS result;
 	bool was_mapped;
 	char *internal_username = NULL;
-	bool upn_form = false;
-	int map_untrusted = lp_map_untrusted_to_domain();
-
-	if (client_domain[0] == '\0' && strchr(smb_name, '@')) {
-		upn_form = true;
-	}
 
 	was_mapped = map_username(talloc_tos(), smb_name, &internal_username);
 	if (!internal_username) {
@@ -125,34 +120,11 @@ NTSTATUS make_user_info_map(TALLOC_CTX *mem_ctx,
 	DEBUG(5, ("Mapping user [%s]\\[%s] from workstation [%s]\n",
 		 client_domain, smb_name, workstation_name));
 
+	/*
+	 * We let the auth stack canonicalize, username
+	 * and domain.
+	 */
 	domain = client_domain;
-
-	/* If you connect to a Windows domain member using a bogus domain name,
-	 * the Windows box will map the BOGUS\user to SAMNAME\user.  Thus, if
-	 * the Windows box is a DC the name will become DOMAIN\user and be
-	 * authenticated against AD, if the Windows box is a member server but
-	 * not a DC the name will become WORKSTATION\user.  A standalone
-	 * non-domain member box will also map to WORKSTATION\user.
-	 * This also deals with the client passing in a "" domain */
-
-	if (map_untrusted != Auto && !upn_form &&
-	    !strequal(domain, my_sam_name()) &&
-	    !strequal(domain, get_global_sam_name()) &&
-	    !is_trusted_domain(domain))
-	{
-		if (map_untrusted) {
-			domain = my_sam_name();
-		} else {
-			domain = get_global_sam_name();
-		}
-		DEBUG(5, ("Mapped domain from [%s] to [%s] for user [%s] from "
-			  "workstation [%s]\n",
-			  client_domain, domain, smb_name, workstation_name));
-	}
-
-	/* We know that the given domain is trusted (and we are allowing them),
-	 * it is our global SAM name, or for legacy behavior it is our
-	 * primary domain name */
 
 	result = make_user_info(mem_ctx, user_info, smb_name, internal_username,
 				client_domain, domain, workstation_name,
@@ -639,7 +611,8 @@ NTSTATUS create_local_token(TALLOC_CTX *mem_ctx,
 				   sid_string_dbg(&t->sids[i])));
 			continue;
 		}
-		if (!add_gid_to_array_unique(session_info, ids[i].id,
+		if (!add_gid_to_array_unique(session_info->unix_token,
+					     ids[i].id,
 					     &session_info->unix_token->groups,
 					     &session_info->unix_token->ngroups)) {
 			return NT_STATUS_NO_MEMORY;
@@ -1035,6 +1008,7 @@ static struct auth_serversupplied_info *copy_session_info_serverinfo_guest(TALLO
 									   struct auth_serversupplied_info *server_info)
 {
 	struct auth_serversupplied_info *dst;
+	NTSTATUS status;
 
 	dst = make_server_info(mem_ctx);
 	if (dst == NULL) {
@@ -1082,8 +1056,10 @@ static struct auth_serversupplied_info *copy_session_info_serverinfo_guest(TALLO
 	dst->lm_session_key = data_blob_talloc(dst, src->session_key.data,
 						src->session_key.length);
 
-	dst->info3 = copy_netr_SamInfo3(dst, server_info->info3);
-	if (!dst->info3) {
+	status = copy_netr_SamInfo3(dst,
+				    server_info->info3,
+				    &dst->info3);
+	if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(dst);
 		return NULL;
 	}
@@ -1460,9 +1436,10 @@ NTSTATUS make_server_info_info3(TALLOC_CTX *mem_ctx,
 	result->unix_name = talloc_strdup(result, found_username);
 
 	/* copy in the info3 */
-	result->info3 = copy_netr_SamInfo3(result, info3);
-	if (result->info3 == NULL) {
-		nt_status = NT_STATUS_NO_MEMORY;
+	nt_status = copy_netr_SamInfo3(result,
+				       info3,
+				       &result->info3);
+	if (!NT_STATUS_IS_OK(nt_status)) {
 		goto out;
 	}
 
@@ -1533,6 +1510,8 @@ NTSTATUS make_server_info_wbcAuthUserInfo(TALLOC_CTX *mem_ctx,
 /**
  * Verify whether or not given domain is trusted.
  *
+ * This should only be used on a DC.
+ *
  * @param domain_name name of the domain to be verified
  * @return true if domain is one of the trusted ones or
  *         false if otherwise
@@ -1540,13 +1519,11 @@ NTSTATUS make_server_info_wbcAuthUserInfo(TALLOC_CTX *mem_ctx,
 
 bool is_trusted_domain(const char* dom_name)
 {
-	struct dom_sid trustdom_sid;
 	bool ret;
 
-	/* no trusted domains for a standalone server */
-
-	if ( lp_server_role() == ROLE_STANDALONE )
+	if (!IS_DC) {
 		return false;
+	}
 
 	if (dom_name == NULL || dom_name[0] == '\0') {
 		return false;
@@ -1556,52 +1533,13 @@ bool is_trusted_domain(const char* dom_name)
 		return false;
 	}
 
-	/* if we are a DC, then check for a direct trust relationships */
+	become_root();
+	DEBUG (5,("is_trusted_domain: Checking for domain trust with "
+		  "[%s]\n", dom_name ));
+	ret = pdb_get_trusteddom_pw(dom_name, NULL, NULL, NULL);
+	unbecome_root();
 
-	if ( IS_DC ) {
-		become_root();
-		DEBUG (5,("is_trusted_domain: Checking for domain trust with "
-			  "[%s]\n", dom_name ));
-		ret = pdb_get_trusteddom_pw(dom_name, NULL, NULL, NULL);
-		unbecome_root();
-		if (ret)
-			return true;
-	}
-	else {
-		wbcErr result;
-
-		/* If winbind is around, ask it */
-
-		result = wb_is_trusted_domain(dom_name);
-
-		if (result == WBC_ERR_SUCCESS) {
-			return true;
-		}
-
-		if (result == WBC_ERR_DOMAIN_NOT_FOUND) {
-			/* winbind could not find the domain */
-			return false;
-		}
-
-		DEBUG(10, ("wb_is_trusted_domain returned error: %s\n",
-			  wbcErrorString(result)));
-
-		/* The only other possible result is that winbind is not up
-		   and running. We need to update the trustdom_cache
-		   ourselves */
-
-		update_trustdom_cache();
-	}
-
-	/* now the trustdom cache should be available a DC could still
-	 * have a transitive trust so fall back to the cache of trusted
-	 * domains (like a domain member would use  */
-
-	if ( trustdom_cache_fetch(dom_name, &trustdom_sid) ) {
-		return true;
-	}
-
-	return false;
+	return ret;
 }
 
 

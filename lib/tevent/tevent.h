@@ -936,8 +936,8 @@ void tevent_req_set_cancel_fn(struct tevent_req *req, tevent_req_cancel_fn fn);
  *
  * @param[in]  req      The request to use.
  *
- * @return              This function returns true is the request is cancelable,
- *                      othererwise false is returned.
+ * @return              This function returns true if the request is
+ *                      cancelable, otherwise false is returned.
  *
  * @note Even if the function returns true, the caller need to wait
  *       for the function to complete normally.
@@ -1611,6 +1611,9 @@ struct tevent_queue_entry *tevent_queue_add_entry(
  * already called tevent_req_notify_callback(), tevent_req_error(),
  * tevent_req_done() or a similar function.
  *
+ * The trigger function has no chance to see the returned
+ * queue_entry in the optimized case.
+ *
  * The request can be removed from the queue by calling talloc_free()
  * (or a similar function) on the returned queue entry.
  *
@@ -1639,6 +1642,28 @@ struct tevent_queue_entry *tevent_queue_add_optimize_empty(
 					struct tevent_req *req,
 					tevent_queue_trigger_fn_t trigger,
 					void *private_data);
+
+/**
+ * @brief Untrigger an already triggered queue entry.
+ *
+ * If a trigger function detects that it needs to remain
+ * in the queue, it needs to call tevent_queue_stop()
+ * followed by tevent_queue_entry_untrigger().
+ *
+ * @note In order to call tevent_queue_entry_untrigger()
+ * the queue must be already stopped and the given queue_entry
+ * must be the first one in the queue! Otherwise it calls abort().
+ *
+ * @note You can't use this together with tevent_queue_add_optimize_empty()
+ * because the trigger function don't have access to the quene entry
+ * in the case of an empty queue.
+ *
+ * @param[in]  queue_entry The queue entry to rearm.
+ *
+ * @see tevent_queue_add_entry()
+ * @see tevent_queue_stop()
+ */
+void tevent_queue_entry_untrigger(struct tevent_queue_entry *entry);
 
 /**
  * @brief Start a tevent queue.

@@ -1129,18 +1129,6 @@ static int mh_closedir(vfs_handle_struct *handle,
 }
 
 /*
- * Success: no success result defined.
- * Failure: no failure result defined.
- */
-static void mh_init_search_op(vfs_handle_struct *handle,
-		DIR *dirp)
-{
-	DEBUG(MH_INFO_DEBUG, ("Entering and leaving mh_init_search_op\n"));
-	SMB_VFS_NEXT_INIT_SEARCH_OP(handle,
-			((mh_dirinfo_struct*)dirp)->dirstream);
-}
-
-/*
  * Success: return non-negative file descriptor
  * Failure: set errno, return -1
  */
@@ -2321,7 +2309,6 @@ static struct vfs_fn_pointers vfs_mh_fns = {
 	.mkdir_fn = mh_mkdir,
 	.rmdir_fn = mh_rmdir,
 	.closedir_fn = mh_closedir,
-	.init_search_op_fn = mh_init_search_op,
 
 	/* File operations */
 
@@ -2366,7 +2353,7 @@ static struct vfs_fn_pointers vfs_mh_fns = {
 	/* aio operations */
 };
 
-NTSTATUS vfs_media_harmony_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_media_harmony_init(TALLOC_CTX *ctx)
 {
 	NTSTATUS ret = smb_register_vfs(SMB_VFS_INTERFACE_VERSION,

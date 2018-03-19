@@ -42,7 +42,8 @@ int ctdbd_setup_fde(struct ctdbd_connection *conn, struct tevent_context *ev);
 uint32_t ctdbd_vnn(const struct ctdbd_connection *conn);
 
 int ctdbd_conn_get_fd(struct ctdbd_connection *conn);
-void ctdbd_socket_readable(struct ctdbd_connection *conn);
+void ctdbd_socket_readable(struct tevent_context *ev,
+			   struct ctdbd_connection *conn);
 
 int ctdbd_messaging_send_iov(struct ctdbd_connection *conn,
 			     uint32_t dst_vnn, uint64_t dst_srvid,
@@ -73,7 +74,8 @@ int ctdbd_traverse(struct ctdbd_connection *master, uint32_t db_id,
 int ctdbd_register_ips(struct ctdbd_connection *conn,
 		       const struct sockaddr_storage *server,
 		       const struct sockaddr_storage *client,
-		       int (*cb)(uint32_t src_vnn, uint32_t dst_vnn,
+		       int (*cb)(struct tevent_context *ev,
+				 uint32_t src_vnn, uint32_t dst_vnn,
 				 uint64_t dst_srvid,
 				 const uint8_t *msg, size_t msglen,
 				 void *private_data),
@@ -89,7 +91,8 @@ int ctdb_unwatch(struct ctdbd_connection *conn);
 struct ctdb_req_message_old;
 
 int register_with_ctdbd(struct ctdbd_connection *conn, uint64_t srvid,
-			int (*cb)(uint32_t src_vnn, uint32_t dst_vnn,
+			int (*cb)(struct tevent_context *ev,
+				  uint32_t src_vnn, uint32_t dst_vnn,
 				  uint64_t dst_srvid,
 				  const uint8_t *msg, size_t msglen,
 				  void *private_data),

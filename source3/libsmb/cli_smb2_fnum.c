@@ -686,6 +686,27 @@ NTSTATUS cli_smb2_rmdir(struct cli_state *cli, const char *dname)
 			&fnum,
 			NULL);
 
+	if (NT_STATUS_EQUAL(status, NT_STATUS_STOPPED_ON_SYMLINK)) {
+		/*
+		 * Naive option to match our SMB1 code. Assume the
+		 * symlink path that tripped us up was the last
+		 * component and try again. Eventually we will have to
+		 * deal with the returned path unprocessed component. JRA.
+		 */
+		status = cli_smb2_create_fnum(cli,
+			dname,
+			0,			/* create_flags */
+			DELETE_ACCESS,		/* desired_access */
+			FILE_ATTRIBUTE_DIRECTORY, /* file attributes */
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, /* share_access */
+			FILE_OPEN,		/* create_disposition */
+			FILE_DIRECTORY_FILE|
+				FILE_DELETE_ON_CLOSE|
+				FILE_OPEN_REPARSE_POINT, /* create_options */
+			&fnum,
+			NULL);
+	}
+
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -723,6 +744,26 @@ NTSTATUS cli_smb2_unlink(struct cli_state *cli, const char *fname)
 			FILE_DELETE_ON_CLOSE,	/* create_options */
 			&fnum,
 			NULL);
+
+	if (NT_STATUS_EQUAL(status, NT_STATUS_STOPPED_ON_SYMLINK)) {
+		/*
+		 * Naive option to match our SMB1 code. Assume the
+		 * symlink path that tripped us up was the last
+		 * component and try again. Eventually we will have to
+		 * deal with the returned path unprocessed component. JRA.
+		 */
+		status = cli_smb2_create_fnum(cli,
+			fname,
+			0,			/* create_flags */
+			DELETE_ACCESS,		/* desired_access */
+			FILE_ATTRIBUTE_NORMAL, /* file attributes */
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, /* share_access */
+			FILE_OPEN,		/* create_disposition */
+			FILE_DELETE_ON_CLOSE|
+				FILE_OPEN_REPARSE_POINT, /* create_options */
+			&fnum,
+			NULL);
+	}
 
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
@@ -1157,6 +1198,7 @@ static NTSTATUS get_fnum_from_path(struct cli_state *cli,
 	NTSTATUS status;
 	size_t namelen = strlen(name);
 	TALLOC_CTX *frame = talloc_stackframe();
+	uint32_t create_options = 0;
 
 	/* SMB2 is pickier about pathnames. Ensure it doesn't
 	   end in a '\' */
@@ -1178,11 +1220,32 @@ static NTSTATUS get_fnum_from_path(struct cli_state *cli,
 			0, /* file attributes */
 			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, /* share_access */
 			FILE_OPEN,		/* create_disposition */
-			0,	/* create_options */
+			create_options,
 			pfnum,
 			NULL);
 
+	if (NT_STATUS_EQUAL(status, NT_STATUS_STOPPED_ON_SYMLINK)) {
+		/*
+		 * Naive option to match our SMB1 code. Assume the
+		 * symlink path that tripped us up was the last
+		 * component and try again. Eventually we will have to
+		 * deal with the returned path unprocessed component. JRA.
+		 */
+		create_options |= FILE_OPEN_REPARSE_POINT;
+		status = cli_smb2_create_fnum(cli,
+			name,
+			0,			/* create_flags */
+			desired_access,
+			0, /* file attributes */
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, /* share_access */
+			FILE_OPEN,		/* create_disposition */
+			create_options,
+			pfnum,
+			NULL);
+	}
+
 	if (NT_STATUS_EQUAL(status, NT_STATUS_FILE_IS_A_DIRECTORY)) {
+		create_options |= FILE_DIRECTORY_FILE;
 		status = cli_smb2_create_fnum(cli,
 			name,
 			0,			/* create_flags */
@@ -4088,4 +4151,289 @@ NTSTATUS cli_smb2_ftruncate(struct cli_state *cli,
 
 	TALLOC_FREE(frame);
 	return status;
+}
+
+NTSTATUS cli_smb2_notify(struct cli_state *cli, uint16_t fnum,
+			 uint32_t buffer_size, uint32_t completion_filter,
+			 bool recursive, TALLOC_CTX *mem_ctx,
+			 struct notify_change **pchanges,
+			 uint32_t *pnum_changes)
+{
+	NTSTATUS status;
+	struct smb2_hnd *ph = NULL;
+	TALLOC_CTX *frame = talloc_stackframe();
+	uint8_t *base;
+	uint32_t len, ofs;
+	struct notify_change *changes = NULL;
+	size_t num_changes = 0;
+
+	if (smbXcli_conn_has_async_calls(cli->conn)) {
+		/*
+		 * Can't use sync call while an async call is in flight
+		 */
+		status = NT_STATUS_INVALID_PARAMETER;
+		goto fail;
+	}
+
+	if (smbXcli_conn_protocol(cli->conn) < PROTOCOL_SMB2_02) {
+		status = NT_STATUS_INVALID_PARAMETER;
+		goto fail;
+	}
+
+	status = map_fnum_to_smb2_handle(cli, fnum, &ph);
+	if (!NT_STATUS_IS_OK(status)) {
+		goto fail;
+	}
+
+	status = smb2cli_notify(cli->conn, cli->timeout,
+				cli->smb2.session, cli->smb2.tcon,
+				buffer_size,
+				ph->fid_persistent, ph->fid_volatile,
+				completion_filter, recursive,
+				frame, &base, &len);
+
+	ofs = 0;
+
+	while (len - ofs >= 12) {
+		struct notify_change *tmp;
+		struct notify_change *c;
+		uint32_t next_ofs = IVAL(base, ofs);
+		uint32_t file_name_length = IVAL(base, ofs+8);
+		size_t namelen;
+		bool ok;
+
+		tmp = talloc_realloc(frame, changes, struct notify_change,
+				     num_changes + 1);
+		if (tmp == NULL) {
+			status = NT_STATUS_NO_MEMORY;
+			goto fail;
+		}
+		changes = tmp;
+		c = &changes[num_changes];
+		num_changes += 1;
+
+		if (smb_buffer_oob(len, ofs, next_ofs) ||
+		    smb_buffer_oob(len, ofs+12, file_name_length)) {
+			status = NT_STATUS_INVALID_NETWORK_RESPONSE;
+			goto fail;
+		}
+
+		c->action = IVAL(base, ofs+4);
+
+		ok = convert_string_talloc(changes, CH_UTF16LE, CH_UNIX,
+					   base + ofs + 12, file_name_length,
+					   &c->name, &namelen);
+		if (!ok) {
+			status = NT_STATUS_INVALID_NETWORK_RESPONSE;
+			goto fail;
+		}
+
+		if (next_ofs == 0) {
+			break;
+		}
+		ofs += next_ofs;
+	}
+
+	*pchanges = talloc_move(mem_ctx, &changes);
+	*pnum_changes = num_changes;
+	status = NT_STATUS_OK;
+
+fail:
+	cli->raw_status = status;
+
+	TALLOC_FREE(frame);
+	return status;
+}
+
+struct cli_smb2_set_reparse_point_fnum_state {
+	struct cli_state *cli;
+	uint16_t fnum;
+	struct smb2_hnd *ph;
+	DATA_BLOB input_buffer;
+};
+
+static void cli_smb2_set_reparse_point_fnum_done(struct tevent_req *subreq);
+
+struct tevent_req *cli_smb2_set_reparse_point_fnum_send(
+				TALLOC_CTX *mem_ctx,
+				struct tevent_context *ev,
+				struct cli_state *cli,
+				uint16_t fnum,
+				DATA_BLOB in_buf)
+{
+	struct tevent_req *req, *subreq;
+	struct cli_smb2_set_reparse_point_fnum_state *state = NULL;
+	NTSTATUS status;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct cli_smb2_set_reparse_point_fnum_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	if (smbXcli_conn_protocol(cli->conn) < PROTOCOL_SMB2_02) {
+		tevent_req_nterror(req, NT_STATUS_INVALID_PARAMETER);
+		return tevent_req_post(req, ev);
+	}
+
+	state->cli = cli;
+	state->fnum = fnum;
+
+	status = map_fnum_to_smb2_handle(cli, fnum, &state->ph);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
+
+	state->input_buffer = data_blob_talloc(state,
+						in_buf.data,
+						in_buf.length);
+	if (state->input_buffer.data == NULL) {
+		tevent_req_nterror(req, NT_STATUS_NO_MEMORY);
+		return tevent_req_post(req, ev);
+	}
+
+	subreq = smb2cli_ioctl_send(state, ev, state->cli->conn,
+			state->cli->timeout,
+			state->cli->smb2.session,
+			state->cli->smb2.tcon,
+			state->ph->fid_persistent, /* in_fid_persistent */
+			state->ph->fid_volatile, /* in_fid_volatile */
+			FSCTL_SET_REPARSE_POINT,
+			0, /* in_max_input_length */
+			&state->input_buffer ,
+			0,
+			NULL,
+			SMB2_IOCTL_FLAG_IS_FSCTL);
+
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq,
+				cli_smb2_set_reparse_point_fnum_done,
+				req);
+
+	return req;
+}
+
+static void cli_smb2_set_reparse_point_fnum_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct cli_smb2_set_reparse_point_fnum_state *state = tevent_req_data(
+		req, struct cli_smb2_set_reparse_point_fnum_state);
+	NTSTATUS status;
+
+	status = smb2cli_ioctl_recv(subreq, state,
+				NULL,
+				NULL);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+	tevent_req_done(req);
+}
+
+NTSTATUS cli_smb2_set_reparse_point_fnum_recv(struct tevent_req *req)
+{
+        return tevent_req_simple_recv_ntstatus(req);
+}
+
+struct cli_smb2_get_reparse_point_fnum_state {
+	struct cli_state *cli;
+	uint16_t fnum;
+	struct smb2_hnd *ph;
+	DATA_BLOB output_buffer;
+};
+
+static void cli_smb2_get_reparse_point_fnum_done(struct tevent_req *subreq);
+
+struct tevent_req *cli_smb2_get_reparse_point_fnum_send(
+				TALLOC_CTX *mem_ctx,
+				struct tevent_context *ev,
+				struct cli_state *cli,
+				uint16_t fnum)
+{
+	struct tevent_req *req, *subreq;
+	struct cli_smb2_set_reparse_point_fnum_state *state = NULL;
+	NTSTATUS status;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct cli_smb2_get_reparse_point_fnum_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	if (smbXcli_conn_protocol(cli->conn) < PROTOCOL_SMB2_02) {
+		tevent_req_nterror(req, NT_STATUS_INVALID_PARAMETER);
+		return tevent_req_post(req, ev);
+	}
+
+	state->cli = cli;
+	state->fnum = fnum;
+
+	status = map_fnum_to_smb2_handle(cli, fnum, &state->ph);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
+
+	subreq = smb2cli_ioctl_send(state, ev, state->cli->conn,
+			state->cli->timeout,
+			state->cli->smb2.session,
+			state->cli->smb2.tcon,
+			state->ph->fid_persistent, /* in_fid_persistent */
+			state->ph->fid_volatile, /* in_fid_volatile */
+			FSCTL_GET_REPARSE_POINT,
+			0, /* in_max_input_length */
+			NULL,
+			64*1024,
+			NULL,
+			SMB2_IOCTL_FLAG_IS_FSCTL);
+
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq,
+				cli_smb2_get_reparse_point_fnum_done,
+				req);
+
+	return req;
+}
+
+static void cli_smb2_get_reparse_point_fnum_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct cli_smb2_get_reparse_point_fnum_state *state = tevent_req_data(
+		req, struct cli_smb2_get_reparse_point_fnum_state);
+	NTSTATUS status;
+
+	status = smb2cli_ioctl_recv(subreq, state,
+				NULL,
+				&state->output_buffer);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		state->cli->raw_status = status;
+		return;
+	}
+	tevent_req_done(req);
+}
+
+NTSTATUS cli_smb2_get_reparse_point_fnum_recv(struct tevent_req *req,
+				TALLOC_CTX *mem_ctx,
+				DATA_BLOB *output)
+{
+	struct cli_smb2_get_reparse_point_fnum_state *state = tevent_req_data(
+		req, struct cli_smb2_get_reparse_point_fnum_state);
+
+	if (tevent_req_is_nterror(req, &state->cli->raw_status)) {
+		tevent_req_received(req);
+		return state->cli->raw_status;
+	}
+	*output = data_blob_dup_talloc(mem_ctx, state->output_buffer);
+	if (output->data == NULL) {
+		tevent_req_received(req);
+		return NT_STATUS_NO_MEMORY;
+	}
+	tevent_req_received(req);
+	return NT_STATUS_OK;
 }

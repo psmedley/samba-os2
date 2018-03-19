@@ -56,7 +56,7 @@ static bool prime_cache(
         off_t * last;
         ssize_t nread;
 
-        last = (off_t *)VFS_ADD_FSP_EXTENSION(handle, fsp, off_t, NULL);
+        last = VFS_ADD_FSP_EXTENSION(handle, fsp, off_t, NULL);
         if (!last) {
                 return False;
         }
@@ -189,7 +189,7 @@ static struct vfs_fn_pointers vfs_cacheprime_fns = {
  * -------------------------------------------------------------------------
  */
 
-NTSTATUS vfs_cacheprime_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_cacheprime_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, MODULE,

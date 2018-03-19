@@ -58,7 +58,7 @@ usr/lib/*/samba/libevents.so.*
 usr/lib/*/samba/libflag-mapping.so.0
 usr/lib/*/samba/libgenrand.so.0
 usr/lib/*/samba/libgensec.so.0*
-usr/lib/*/samba/libgpo.so.*
+usr/lib/*/samba/libgpext.so.0
 usr/lib/*/samba/libgse.so.*
 usr/lib/*/samba/libgssapi-samba4.so.2
 usr/lib/*/samba/libgssapi-samba4.so.2.0.0

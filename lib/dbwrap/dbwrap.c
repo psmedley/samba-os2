@@ -82,15 +82,21 @@ TDB_DATA dbwrap_record_get_value(const struct db_record *rec)
 	return rec->value;
 }
 
-NTSTATUS dbwrap_record_store(struct db_record *rec, TDB_DATA data, int flags)
+NTSTATUS dbwrap_record_storev(struct db_record *rec,
+			      const TDB_DATA *dbufs, int num_dbufs, int flags)
 {
 	NTSTATUS status;
 
-	status = rec->store(rec, data, flags);
+	status = rec->storev(rec, dbufs, num_dbufs, flags);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
 	return NT_STATUS_OK;
+}
+
+NTSTATUS dbwrap_record_store(struct db_record *rec, TDB_DATA data, int flags)
+{
+	return dbwrap_record_storev(rec, &data, 1, flags);
 }
 
 NTSTATUS dbwrap_record_delete(struct db_record *rec)
@@ -104,11 +110,6 @@ NTSTATUS dbwrap_record_delete(struct db_record *rec)
 	return NT_STATUS_OK;
 }
 
-struct dbwrap_lock_order_state {
-	struct db_context **locked_dbs;
-	struct db_context *db;
-};
-
 static void debug_lock_order(int level, struct db_context *dbs[])
 {
 	int i;
@@ -119,69 +120,86 @@ static void debug_lock_order(int level, struct db_context *dbs[])
 	DEBUGADD(level, ("\n"));
 }
 
+static void dbwrap_lock_order_lock(struct db_context *db,
+				   struct db_context ***lockptr)
+{
+	static struct db_context *locked_dbs[DBWRAP_LOCK_ORDER_MAX];
+	int idx;
+
+	DBG_INFO("check lock order %d for %s\n", (int)db->lock_order,
+		 db->name);
+
+	if (!DBWRAP_LOCK_ORDER_VALID(db->lock_order)) {
+		DBG_ERR("Invalid lock order %d of %s\n",
+			(int)db->lock_order, db->name);
+		smb_panic("lock order violation");
+	}
+
+	for (idx=db->lock_order-1; idx<DBWRAP_LOCK_ORDER_MAX; idx++) {
+		if (locked_dbs[idx] != NULL) {
+			DBG_ERR("Lock order violation: Trying %s at %d while "
+				"%s at %d is locked\n",
+				db->name, (int)db->lock_order,
+				locked_dbs[idx]->name, idx + 1);
+			debug_lock_order(0, locked_dbs);
+			smb_panic("lock order violation");
+		}
+	}
+
+	locked_dbs[db->lock_order-1] = db;
+	*lockptr = &locked_dbs[db->lock_order-1];
+
+	debug_lock_order(10, locked_dbs);
+}
+
+static void dbwrap_lock_order_unlock(struct db_context *db,
+				     struct db_context **lockptr)
+{
+	DBG_INFO("release lock order %d for %s\n",
+		 (int)db->lock_order, db->name);
+
+	if (*lockptr == NULL) {
+		DBG_ERR("db %s at order %d unlocked\n", db->name,
+			(int)db->lock_order);
+		smb_panic("lock order violation");
+	}
+
+	if (*lockptr != db) {
+		DBG_ERR("locked db at lock order %d is %s, expected %s\n",
+			(int)(*lockptr)->lock_order, (*lockptr)->name,
+			db->name);
+		smb_panic("lock order violation");
+	}
+
+	*lockptr = NULL;
+}
+
+struct dbwrap_lock_order_state {
+	struct db_context *db;
+	struct db_context **lockptr;
+};
+
 static int dbwrap_lock_order_state_destructor(
 	struct dbwrap_lock_order_state *s)
 {
-	int idx = s->db->lock_order - 1;
-
-	DEBUG(5, ("release lock order %d for %s\n",
-		  (int)s->db->lock_order, s->db->name));
-
-	if (s->locked_dbs[idx] != s->db) {
-		DEBUG(0, ("locked db at lock order %d is %s, expected %s\n",
-			  idx + 1, s->locked_dbs[idx]->name, s->db->name));
-		debug_lock_order(0, s->locked_dbs);
-		smb_panic("inconsistent lock_order\n");
-	}
-
-	s->locked_dbs[idx] = NULL;
-
-	debug_lock_order(10, s->locked_dbs);
-
+	dbwrap_lock_order_unlock(s->db, s->lockptr);
 	return 0;
 }
-
 
 static struct dbwrap_lock_order_state *dbwrap_check_lock_order(
 	struct db_context *db, TALLOC_CTX *mem_ctx)
 {
-	int idx;
-	static struct db_context *locked_dbs[DBWRAP_LOCK_ORDER_MAX];
-	struct dbwrap_lock_order_state *state = NULL;
-
-	if (!DBWRAP_LOCK_ORDER_VALID(db->lock_order)) {
-		DEBUG(0,("Invalid lock order %d of %s\n",
-			 (int)db->lock_order, db->name));
-		smb_panic("invalid lock_order\n");
-		return NULL;
-	}
-
-	DEBUG(5, ("check lock order %d for %s\n",
-		  (int)db->lock_order, db->name));
-
-
-	for (idx=db->lock_order - 1; idx < DBWRAP_LOCK_ORDER_MAX; idx++) {
-		if (locked_dbs[idx] != NULL) {
-			DEBUG(0, ("Lock order violation: Trying %s at %d while %s at %d is locked\n",
-				  db->name, (int)db->lock_order, locked_dbs[idx]->name, idx + 1));
-			debug_lock_order(0, locked_dbs);
-			smb_panic("invalid lock_order");
-			return NULL;
-		}
-	}
+	struct dbwrap_lock_order_state *state;
 
 	state = talloc(mem_ctx, struct dbwrap_lock_order_state);
 	if (state == NULL) {
-		DEBUG(1, ("talloc failed\n"));
+		DBG_WARNING("talloc failed\n");
 		return NULL;
 	}
 	state->db = db;
-	state->locked_dbs = locked_dbs;
+
+	dbwrap_lock_order_lock(db, &state->lockptr);
 	talloc_set_destructor(state, dbwrap_lock_order_state_destructor);
-
-	locked_dbs[db->lock_order - 1] = db;
-
-	debug_lock_order(10, locked_dbs);
 
 	return state;
 }
@@ -283,38 +301,53 @@ bool dbwrap_exists(struct db_context *db, TDB_DATA key)
 	return (result == 1);
 }
 
+struct dbwrap_store_state {
+	TDB_DATA data;
+	int flags;
+	NTSTATUS status;
+};
+
+static void dbwrap_store_fn(struct db_record *rec, void *private_data)
+{
+	struct dbwrap_store_state *state = private_data;
+	state->status = dbwrap_record_store(rec, state->data, state->flags);
+}
+
 NTSTATUS dbwrap_store(struct db_context *db, TDB_DATA key,
 		      TDB_DATA data, int flags)
 {
-	struct db_record *rec;
+	struct dbwrap_store_state state = { .data = data, .flags = flags };
 	NTSTATUS status;
-	TALLOC_CTX *frame = talloc_stackframe();
 
-	rec = dbwrap_fetch_locked(db, frame, key);
-	if (rec == NULL) {
-		TALLOC_FREE(frame);
-		return NT_STATUS_NO_MEMORY;
+	status = dbwrap_do_locked(db, key, dbwrap_store_fn, &state);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
 	}
 
-	status = dbwrap_record_store(rec, data, flags);
-	TALLOC_FREE(frame);
-	return status;
+	return state.status;
+}
+
+struct dbwrap_delete_state {
+	NTSTATUS status;
+};
+
+static void dbwrap_delete_fn(struct db_record *rec, void *private_data)
+{
+	struct dbwrap_delete_state *state = private_data;
+	state->status = dbwrap_record_delete(rec);
 }
 
 NTSTATUS dbwrap_delete(struct db_context *db, TDB_DATA key)
 {
-	struct db_record *rec;
+	struct dbwrap_delete_state state;
 	NTSTATUS status;
-	TALLOC_CTX *frame = talloc_stackframe();
 
-	rec = dbwrap_fetch_locked(db, frame, key);
-	if (rec == NULL) {
-		TALLOC_FREE(frame);
-		return NT_STATUS_NO_MEMORY;
+	status = dbwrap_do_locked(db, key, dbwrap_delete_fn, &state);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
 	}
-	status = dbwrap_record_delete(rec);
-	TALLOC_FREE(frame);
-	return status;
+
+	return state.status;
 }
 
 NTSTATUS dbwrap_traverse(struct db_context *db,
@@ -480,6 +513,42 @@ NTSTATUS dbwrap_parse_record_recv(struct tevent_req *req)
 	return tevent_req_simple_recv_ntstatus(req);
 }
 
+NTSTATUS dbwrap_do_locked(struct db_context *db, TDB_DATA key,
+			  void (*fn)(struct db_record *rec,
+				     void *private_data),
+			  void *private_data)
+{
+	struct db_record *rec;
+
+	if (db->do_locked != NULL) {
+		struct db_context **lockptr;
+		NTSTATUS status;
+
+		if (db->lock_order != DBWRAP_LOCK_ORDER_NONE) {
+			dbwrap_lock_order_lock(db, &lockptr);
+		}
+
+		status = db->do_locked(db, key, fn, private_data);
+
+		if (db->lock_order != DBWRAP_LOCK_ORDER_NONE) {
+			dbwrap_lock_order_unlock(db, lockptr);
+		}
+
+		return status;
+	}
+
+	rec = dbwrap_fetch_locked(db, db, key);
+	if (rec == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	fn(rec, private_data);
+
+	TALLOC_FREE(rec);
+
+	return NT_STATUS_OK;
+}
+
 int dbwrap_wipe(struct db_context *db)
 {
 	if (db->wipe == NULL) {
@@ -555,4 +624,52 @@ bool dbwrap_is_persistent(struct db_context *db)
 const char *dbwrap_name(struct db_context *db)
 {
 	return db->name;
+}
+
+static ssize_t tdb_data_buf(const TDB_DATA *dbufs, int num_dbufs,
+			    uint8_t *buf, size_t buflen)
+{
+	size_t needed = 0;
+	uint8_t *p = buf;
+	int i;
+
+	for (i=0; i<num_dbufs; i++) {
+		size_t thislen = dbufs[i].dsize;
+		size_t tmp;
+
+		tmp = needed + thislen;
+		if (tmp < needed) {
+			/* wrap */
+			return -1;
+		}
+		needed = tmp;
+
+		if (needed <= buflen) {
+			memcpy(p, dbufs[i].dptr, thislen);
+			p += thislen;
+		}
+	}
+
+	return needed;
+}
+
+
+TDB_DATA dbwrap_merge_dbufs(TALLOC_CTX *mem_ctx,
+			    const TDB_DATA *dbufs, int num_dbufs)
+{
+	ssize_t len = tdb_data_buf(dbufs, num_dbufs, NULL, 0);
+	uint8_t *buf;
+
+	if (len == -1) {
+		return (TDB_DATA) {0};
+	}
+
+	buf = talloc_array(mem_ctx, uint8_t, len);
+	if (buf == NULL) {
+		return (TDB_DATA) {0};
+	}
+
+	tdb_data_buf(dbufs, num_dbufs, buf, len);
+
+	return (TDB_DATA) { .dptr = buf, .dsize = len };
 }

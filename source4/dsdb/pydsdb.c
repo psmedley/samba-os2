@@ -919,7 +919,7 @@ static PyObject *py_dsdb_set_schema_from_ldb(PyObject *self, PyObject *args)
 	struct ldb_context *from_ldb;
 	struct dsdb_schema *schema;
 	int ret;
-	char write_indices_and_attributes = true;
+	char write_indices_and_attributes = SCHEMA_WRITE;
 	if (!PyArg_ParseTuple(args, "OO|b",
 			      &py_ldb, &py_from_ldb, &write_indices_and_attributes))
 		return NULL;
@@ -1466,6 +1466,7 @@ void initdsdb(void)
 	ADD_DSDB_FLAG(DS_DOMAIN_FUNCTION_2008_R2);
 	ADD_DSDB_FLAG(DS_DOMAIN_FUNCTION_2012);
 	ADD_DSDB_FLAG(DS_DOMAIN_FUNCTION_2012_R2);
+	ADD_DSDB_FLAG(DS_DOMAIN_FUNCTION_2016);
 
         /* nc replica flags */
 	ADD_DSDB_FLAG(INSTANCE_TYPE_IS_NC_HEAD);

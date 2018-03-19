@@ -934,14 +934,10 @@ HEALTH: NO-HEALTHY-NODES - ERROR - Backup of corrupted TDB in '/usr/local/var/li
 	recovery.
       </p></div><div class="refsect2"><a name="idm623"></a><h3>ipreallocate, sync</h3><p>
 	This command will force the recovery master to perform a full ip reallocation process and redistribute all ip addresses. This is useful to "reset" the allocations back to its default state if they have been changed using the "moveip" command. While a "recover" will also perform this reallocation, a recovery is much more hevyweight since it will also rebuild all the databases.
-      </p></div><div class="refsect2"><a name="idm626"></a><h3>getmonmode</h3><p>
-	This command prints the monitoring mode of a node.  This
-	indicates when CTDB is monitoring services on the node. The
-	monitoring mode is either ENABLED or DISABLED.
-      </p></div><div class="refsect2"><a name="idm629"></a><h3>attach <em class="parameter"><code>DBNAME</code></em> [persistent|replicated]</h3><p>
+      </p></div><div class="refsect2"><a name="idm626"></a><h3>attach <em class="parameter"><code>DBNAME</code></em> [persistent|replicated]</h3><p>
 	Create a new CTDB database called DBNAME and attach to it on
 	all nodes.
-      </p></div><div class="refsect2"><a name="idm633"></a><h3>detach <em class="parameter"><code>DB-LIST</code></em></h3><p>
+      </p></div><div class="refsect2"><a name="idm630"></a><h3>detach <em class="parameter"><code>DB-LIST</code></em></h3><p>
 	Detach specified non-persistent database(s) from the cluster. This
 	command will disconnect specified database(s) on all nodes in
 	the cluster.  This command should only be used when none of the
@@ -949,13 +945,13 @@ HEALTH: NO-HEALTHY-NODES - ERROR - Backup of corrupted TDB in '/usr/local/var/li
       </p><p>
 	All nodes should be active and tunable AllowClientDBAccess should
 	be disabled on all nodes before detaching databases.
-      </p></div><div class="refsect2"><a name="idm638"></a><h3>dumpmemory</h3><p>
+      </p></div><div class="refsect2"><a name="idm635"></a><h3>dumpmemory</h3><p>
 	This is a debugging command. This command will make the ctdb
 	daemon to write a fill memory allocation map to standard output.
-      </p></div><div class="refsect2"><a name="idm641"></a><h3>rddumpmemory</h3><p>
+      </p></div><div class="refsect2"><a name="idm638"></a><h3>rddumpmemory</h3><p>
 	This is a debugging command. This command will dump the talloc memory
 	allocation tree for the recovery daemon to standard output.
-      </p></div><div class="refsect2"><a name="idm644"></a><h3>ban <em class="parameter"><code>BANTIME</code></em></h3><p>
+      </p></div><div class="refsect2"><a name="idm641"></a><h3>ban <em class="parameter"><code>BANTIME</code></em></h3><p>
 	Administratively ban a node for BANTIME seconds.  The node
 	will be unbanned after BANTIME seconds have elapsed.
       </p><p>
@@ -969,21 +965,11 @@ HEALTH: NO-HEALTHY-NODES - ERROR - Backup of corrupted TDB in '/usr/local/var/li
       </p><p>
 	To administratively exclude a node from a cluster use the
 	<span class="command"><strong>stop</strong></span> command.
-      </p></div><div class="refsect2"><a name="idm652"></a><h3>unban</h3><p>
+      </p></div><div class="refsect2"><a name="idm649"></a><h3>unban</h3><p>
 	This command is used to unban a node that has either been
 	administratively banned using the ban command or has been
 	automatically banned.
-      </p></div><div class="refsect2"><a name="idm655"></a><h3>check_srvids <em class="parameter"><code>SRVID</code></em> ...</h3><p>
-	This command checks whether a set of srvid message ports are
-	registered on the node or not. The command takes a list of
-	values to check.
-      </p><div class="refsect3"><a name="idm659"></a><h4>Example</h4><pre class="screen">
-# ctdb check_srvids 1 2 3 14765
-Server id 0:1 does not exist
-Server id 0:2 does not exist
-Server id 0:3 does not exist
-Server id 0:14765 exists
-	</pre></div></div></div><div class="refsect1"><a name="idm662"></a><h2>SEE ALSO</h2><p>
+      </p></div></div><div class="refsect1"><a name="idm652"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdbd</span>(1)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">onnode</span>(1)</span>,

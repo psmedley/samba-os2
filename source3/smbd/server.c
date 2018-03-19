@@ -36,11 +36,10 @@
 #include "printing/queue_process.h"
 #include "rpc_server/rpc_service_setup.h"
 #include "rpc_server/rpc_config.h"
-#include "serverid.h"
 #include "passdb.h"
 #include "auth.h"
 #include "messages.h"
-#include "messages_ctdbd.h"
+#include "messages_ctdb.h"
 #include "smbprofile.h"
 #include "lib/id_cache.h"
 #include "lib/param/param.h"
@@ -276,6 +275,7 @@ static void smbd_parent_id_cache_delete(struct messaging_context *ctx,
 
 #ifdef CLUSTER_SUPPORT
 static int smbd_parent_ctdb_reconfigured(
+	struct tevent_context *ev,
 	uint32_t src_vnn, uint32_t dst_vnn, uint64_t dst_srvid,
 	const uint8_t *msg, size_t msglen, void *private_data)
 {
@@ -360,7 +360,7 @@ static struct tevent_req *notifyd_req(struct messaging_context *msg_ctx,
 	}
 
 	if (lp_clustering()) {
-		ctdbd_conn = messaging_ctdbd_connection();
+		ctdbd_conn = messaging_ctdb_connection();
 	}
 
 	req = notifyd_send(msg_ctx, ev, msg_ctx, ctdbd_conn,
@@ -975,6 +975,7 @@ static void smbd_accept_connection(struct tevent_context *ev,
 			 strerror(errno)));
 		return;
 	}
+	smb_set_close_on_exec(fd);
 
 	if (s->parent->interactive) {
 		reinit_after_fork(msg_ctx, ev, true, NULL);
@@ -1262,21 +1263,6 @@ static bool open_sockets_smbd(struct smbd_parent_context *parent,
 		return false;
 	}
 
-	/* Setup the main smbd so that we can get messages. Note that
-	   do this after starting listening. This is needed as when in
-	   clustered mode, ctdb won't allow us to start doing database
-	   operations until it has gone thru a full startup, which
-	   includes checking to see that smbd is listening. */
-
-	if (!serverid_register(messaging_server_id(msg_ctx),
-			       FLAG_MSG_GENERAL|FLAG_MSG_SMBD
-			       |FLAG_MSG_PRINT_GENERAL
-			       |FLAG_MSG_DBWRAP)) {
-		DEBUG(0, ("open_sockets_smbd: Failed to register "
-			  "myself in serverid.tdb\n"));
-		return false;
-	}
-
         /* Listen to messages */
 
 	messaging_register(msg_ctx, NULL, MSG_SHUTDOWN, msg_exit_server);
@@ -1301,7 +1287,7 @@ static bool open_sockets_smbd(struct smbd_parent_context *parent,
 
 #ifdef CLUSTER_SUPPORT
 	if (lp_clustering()) {
-		struct ctdbd_connection *conn = messaging_ctdbd_connection();
+		struct ctdbd_connection *conn = messaging_ctdb_connection();
 
 		register_with_ctdbd(conn, CTDB_SRVID_RECONFIGURE,
 				    smbd_parent_ctdb_reconfigured, msg_ctx);
@@ -1983,10 +1969,6 @@ extern void build_options(bool screen);
 
 	if (!smbd_scavenger_init(NULL, msg_ctx, ev_ctx)) {
 		exit_daemon("Samba cannot init scavenging", EACCES);
-	}
-
-	if (!serverid_parent_init(ev_ctx)) {
-		exit_daemon("Samba cannot init server id", EACCES);
 	}
 
 	if (!W_ERROR_IS_OK(registry_init_full()))

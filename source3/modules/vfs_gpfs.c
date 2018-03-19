@@ -86,8 +86,8 @@ static bool set_gpfs_sharemode(files_struct *fsp, uint32_t access_mask,
 		return True;
 	}
 
-	allow |= (access_mask & (FILE_WRITE_DATA|FILE_APPEND_DATA|
-				 DELETE_ACCESS)) ? GPFS_SHARE_WRITE : 0;
+	allow |= (access_mask & (FILE_WRITE_DATA|FILE_APPEND_DATA)) ?
+		GPFS_SHARE_WRITE : 0;
 	allow |= (access_mask & (FILE_READ_DATA|FILE_EXECUTE)) ?
 		GPFS_SHARE_READ : 0;
 
@@ -99,6 +99,15 @@ static bool set_gpfs_sharemode(files_struct *fsp, uint32_t access_mask,
 			0 : GPFS_DENY_WRITE;
 		deny |= (share_access & (FILE_SHARE_READ)) ?
 			0 : GPFS_DENY_READ;
+
+		/*
+		 * GPFS_DENY_DELETE can only be set together with either
+		 * GPFS_DENY_WRITE or GPFS_DENY_READ.
+		 */
+		if (deny & (GPFS_DENY_WRITE|GPFS_DENY_READ)) {
+			deny |= (share_access & (FILE_SHARE_DELETE)) ?
+				0 : GPFS_DENY_DELETE;
+		}
 	}
 	DEBUG(10, ("am=%x, allow=%d, sa=%x, deny=%d\n",
 		   access_mask, allow, share_access, deny));
@@ -2589,7 +2598,7 @@ static struct vfs_fn_pointers vfs_gpfs_fns = {
 	.ftruncate_fn = vfs_gpfs_ftruncate
 };
 
-NTSTATUS vfs_gpfs_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_gpfs_init(TALLOC_CTX *ctx)
 {
 	int ret;

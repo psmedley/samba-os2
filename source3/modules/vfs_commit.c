@@ -202,7 +202,7 @@ static int commit_open(
                                         MODULE, "eof mode", "none");
 
         if (dthresh > 0 || !strequal(eof_mode, "none")) {
-                c = (struct commit_info *)VFS_ADD_FSP_EXTENSION(
+                c = VFS_ADD_FSP_EXTENSION(
 			handle, fsp, struct commit_info, NULL);
                 /* Process main tunables */
                 if (c) {
@@ -403,7 +403,7 @@ static struct vfs_fn_pointers vfs_commit_fns = {
         .ftruncate_fn = commit_ftruncate
 };
 
-NTSTATUS vfs_commit_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_commit_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, MODULE,

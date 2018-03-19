@@ -2,12 +2,12 @@
 .\"     Title: smbclient
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 12/22/2017
+.\"      Date: 03/13/2018
 .\"    Manual: User Commands
-.\"    Source: Samba 4.7
+.\"    Source: Samba 4.8.0
 .\"  Language: English
 .\"
-.TH "SMBCLIENT" "1" "12/22/2017" "Samba 4\&.7" "User Commands"
+.TH "SMBCLIENT" "1" "03/13/2018" "Samba 4\&.8\&.0" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1106,6 +1106,11 @@ tid <number>
 .RS 4
 Changes the current tree id (tid) in the protocol to a new arbitrary number\&. Without an argument, it prints out the tid currently used\&. Used for internal Samba testing purposes\&.
 .RE
+.PP
+utimes <filename> <create time> <access time> <write time> < change time>
+.RS 4
+Changes the timestamps on a file by name\&. Times should be specified in the format YY:MM:DD\-HH:MM:SS or \-1 for no change\&.
+.RE
 .SH "NOTES"
 .PP
 Some servers are fussy about the case of supplied usernames, passwords, share names (AKA service names) and machine names\&. If you fail to connect try giving all parameters in uppercase\&.
@@ -1122,10 +1127,6 @@ may contain the username of the person using the client\&. This information is u
 The variable
 \fBPASSWD\fR
 may contain the password of the person using the client\&. This information is used only if the protocol level is high enough to support session\-level passwords\&.
-.PP
-The variable
-\fBLIBSMB_PROG\fR
-may contain the path, executed with system(), which the client should connect to instead of connecting to a server\&. This functionality is primarily intended as a development aid, and works best when using a LMHOSTS file
 .SH "INSTALLATION"
 .PP
 The location of the client program is a matter for individual system administrators\&. The following are thus suggestions only\&.
@@ -1150,10 +1151,7 @@ Most diagnostics issued by the client are logged in a specified log file\&. The 
 The number and nature of diagnostics available depends on the debug level used by the client\&. If you have problems, set the debug level to 3 and peruse the log files\&.
 .SH "VERSION"
 .PP
-This man page is correct for version 3\&.2 of the Samba suite\&.
+This man page is part of version 4\&.8\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.
-.PP
-The original Samba man pages were written by Karl Auer\&. The man page sources were converted to YODL format (another excellent piece of Open Source software, available at
-ftp://ftp\&.icce\&.rug\&.nl/pub/unix/) and updated for the Samba 2\&.0 release by Jeremy Allison\&. The conversion to DocBook for Samba 2\&.2 was done by Gerald Carter\&. The conversion to DocBook XML 4\&.2 for Samba 3\&.0 was done by Alexander Bokovoy\&.

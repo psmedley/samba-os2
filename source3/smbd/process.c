@@ -32,7 +32,7 @@
 #include "passdb.h"
 #include "auth.h"
 #include "messages.h"
-#include "lib/messages_ctdbd.h"
+#include "lib/messages_ctdb.h"
 #include "smbprofile.h"
 #include "rpc_server/spoolss/srv_spoolss_nt.h"
 #include "libsmb/libsmb.h"
@@ -41,7 +41,6 @@
 #include "../libcli/security/security_token.h"
 #include "lib/id_cache.h"
 #include "lib/util/sys_rw_data.h"
-#include "serverid.h"
 #include "system/threads.h"
 
 /* Internal message queue for deferred opens. */
@@ -1974,7 +1973,8 @@ static void process_smb(struct smbXsrv_connection *xconn,
 			size_t pdulen = nread - NBT_HDR_SIZE;
 			smbd_smb2_process_negprot(xconn, 0, inpdu, pdulen);
 			return;
-		} else if (nread >= smb_size && valid_smb_header(inbuf)
+		}
+		if (nread >= smb_size && valid_smb_header(inbuf)
 				&& CVAL(inbuf, smb_com) != 0x72) {
 			/* This is a non-negprot SMB1 packet.
 			   Disable SMB2 from now on. */
@@ -2696,7 +2696,8 @@ static void smbd_release_ip_immediate(struct tevent_context *ctx,
 /****************************************************************************
 received when we should release a specific IP
 ****************************************************************************/
-static int release_ip(uint32_t src_vnn, uint32_t dst_vnn,
+static int release_ip(struct tevent_context *ev,
+		      uint32_t src_vnn, uint32_t dst_vnn,
 		      uint64_t dst_srvid,
 		      const uint8_t *msg, size_t msglen,
 		      void *private_data)
@@ -2775,7 +2776,7 @@ static NTSTATUS smbd_register_ips(struct smbXsrv_connection *xconn,
 	struct ctdbd_connection *cconn;
 	int ret;
 
-	cconn = messaging_ctdbd_connection();
+	cconn = messaging_ctdb_connection();
 	if (cconn == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -3945,14 +3946,6 @@ void smbd_process(struct tevent_context *ev_ctx,
 	if (!interactive) {
 		smbd_setup_sig_term_handler(sconn);
 		smbd_setup_sig_hup_handler(sconn);
-
-		if (!serverid_register(messaging_server_id(msg_ctx),
-				       FLAG_MSG_GENERAL|FLAG_MSG_SMBD
-				       |FLAG_MSG_DBWRAP
-				       |FLAG_MSG_PRINT_GENERAL)) {
-			exit_server_cleanly("Could not register myself in "
-					    "serverid.tdb");
-		}
 	}
 
 	status = smbd_add_connection(client, sock_fd, &xconn);

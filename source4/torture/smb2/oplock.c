@@ -4817,6 +4817,17 @@ static void got_rt_break(int sig)
 	got_break = 1;
 }
 
+static int got_alarm;
+
+/*
+ * Signal handler.
+ */
+
+static void got_alarm_fn(int sig)
+{
+	got_alarm = 1;
+}
+
 /*
  * Child process function.
  */
@@ -4827,11 +4838,30 @@ static int do_child_process(int pipefd, const char *name)
 	int fd = -1;
 	char c = 0;
 	struct sigaction act;
+	sigset_t set;
+	sigset_t empty_set;
+
+	/* Block RT_SIGNAL_LEASE and SIGALRM. */
+	sigemptyset(&set);
+	sigemptyset(&empty_set);
+	sigaddset(&set, RT_SIGNAL_LEASE);
+	sigaddset(&set, SIGALRM);
+	ret = sigprocmask(SIG_SETMASK, &set, NULL);
+	if (ret == -1) {
+		return 11;
+	}
 
 	/* Set up a signal handler for RT_SIGNAL_LEASE. */
 	ZERO_STRUCT(act);
 	act.sa_handler = got_rt_break;
 	ret = sigaction(RT_SIGNAL_LEASE, &act, NULL);
+	if (ret == -1) {
+		return 1;
+	}
+	/* Set up a signal handler for SIGALRM. */
+	ZERO_STRUCT(act);
+	act.sa_handler = got_alarm_fn;
+	ret = sigaction(SIGALRM, &act, NULL);
 	if (ret == -1) {
 		return 1;
 	}
@@ -4857,15 +4887,25 @@ static int do_child_process(int pipefd, const char *name)
 		return 5;
 	}
 
-	/* Wait for RT_SIGNAL_LEASE. */
-	ret = pause();
+	/* Ensure the pause doesn't hang forever. */
+	alarm(5);
+
+	/* Wait for RT_SIGNAL_LEASE or SIGALRM. */
+	ret = sigsuspend(&empty_set);
 	if (ret != -1 || errno != EINTR) {
 		return 6;
+	}
+
+	if (got_alarm == 1) {
+		return 10;
 	}
 
 	if (got_break != 1) {
 		return 7;
 	}
+
+	/* Cancel any pending alarm. */
+	alarm(0);
 
 	/* Force the server to wait for 3 seconds. */
 	sleep(3);
@@ -4928,6 +4968,23 @@ static bool wait_for_child_oplock(struct torture_context *tctx,
 }
 #endif
 
+static void child_sig_term_handler(struct tevent_context *ev,
+				struct tevent_signal *se,
+				int signum,
+				int count,
+				void *siginfo,
+				void *private_data)
+{
+	int *pstatus = (int *)private_data;
+	int status;
+	wait(&status);
+	if (WIFEXITED(status)) {
+		*pstatus = WEXITSTATUS(status);
+	} else {
+		*pstatus = status;
+	}
+}
+
 /*
  * Deal with a non-smbd process holding a kernel oplock.
  */
@@ -4944,6 +5001,8 @@ static bool test_smb2_kernel_oplocks8(struct torture_context *tctx,
 	struct smb2_handle h1 = {{0}};
 	struct smb2_handle h2 = {{0}};
 	const char *localdir = torture_setting_string(tctx, "localdir", NULL);
+	struct tevent_signal *se = NULL;
+	int child_exit_code = -1;
 	time_t start;
 	time_t end;
 
@@ -4962,6 +5021,14 @@ static bool test_smb2_kernel_oplocks8(struct torture_context *tctx,
 					"Error creating testfile\n");
 	smb2_util_close(tree, h1);
 	ZERO_STRUCT(h1);
+
+	se = tevent_add_signal(tctx->ev,
+				tctx,
+				SIGCHLD,
+				0,
+				child_sig_term_handler,
+				&child_exit_code);
+	torture_assert(tctx, se != NULL, "tevent_add_signal failed\n");
 
 	/* Take the oplock locally in a sub-process. */
 	ret = wait_for_child_oplock(tctx, localdir, fname);
@@ -4985,7 +5052,8 @@ static bool test_smb2_kernel_oplocks8(struct torture_context *tctx,
 	io.in.fname = fname;
 
 	req = smb2_create_send(tree, &io);
-	torture_assert(tctx, req != NULL, "smb2_create_send");
+	torture_assert_goto(tctx, req != NULL,
+			    ret, done, "smb2_create_send");
 
 	/* Ensure while the open is blocked the smbd is
 	   still serving other requests. */
@@ -5003,7 +5071,8 @@ static bool test_smb2_kernel_oplocks8(struct torture_context *tctx,
 	h1 = io.out.file.handle;
 
 	/* in less than 2 seconds. Otherwise the server blocks. */
-	torture_assert(tctx, end - start < 2, "server was blocked !");
+	torture_assert_goto(tctx, end - start < 2,
+			    ret, done, "server was blocked !");
 
 	/* Pick up the return for the initial blocking open. */
 	status = smb2_create_recv(req, tctx, &io);
@@ -5012,6 +5081,16 @@ static bool test_smb2_kernel_oplocks8(struct torture_context *tctx,
 	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
 			"Error opening the file\n");
 	h2 = io.out.file.handle;
+
+	/* Wait for the exit code from the child. */
+	while (child_exit_code == -1) {
+		int rval = tevent_loop_once(tctx->ev);
+		torture_assert_goto(tctx, rval == 0, ret,
+				    done, "tevent_loop_once error\n");
+	}
+
+	torture_assert_int_equal_goto(tctx, child_exit_code, 0,
+				      ret, done, "Bad child exit code");
 
 done:
 	if (!smb2_util_handle_empty(h1)) {

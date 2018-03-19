@@ -454,12 +454,17 @@ class LDAPObject(object):
 
         if self.two_domains:
             self.ignore_attributes +=  [
-                "objectCategory", "objectGUID", "objectSid", "whenCreated", "whenChanged", "pwdLastSet", "uSNCreated", "creationTime",
-                "modifiedCount", "priorSetTime", "rIDManagerReference", "gPLink", "ipsecNFAReference",
-                "fRSPrimaryMember", "fSMORoleOwner", "masteredBy", "ipsecOwnersReference", "wellKnownObjects",
-                "badPwdCount", "ipsecISAKMPReference", "ipsecFilterReference", "msDs-masteredBy", "lastSetTime",
-                "ipsecNegotiationPolicyReference", "subRefs", "gPCFileSysPath", "accountExpires", "invocationId",
-                "operatingSystemVersion", "oEMInformation",
+                "objectCategory", "objectGUID", "objectSid", "whenCreated",
+                "whenChanged", "pwdLastSet", "uSNCreated", "creationTime",
+                "modifiedCount", "priorSetTime", "rIDManagerReference",
+                "gPLink", "ipsecNFAReference", "fRSPrimaryMember",
+                "fSMORoleOwner", "masteredBy", "ipsecOwnersReference",
+                "wellKnownObjects", "otherWellKnownObjects", "badPwdCount",
+                "ipsecISAKMPReference", "ipsecFilterReference",
+                "msDs-masteredBy", "lastSetTime",
+                "ipsecNegotiationPolicyReference", "subRefs", "gPCFileSysPath",
+                "accountExpires", "invocationId", "operatingSystemVersion",
+                "oEMInformation",
                 # After Exchange preps
                 "targetAddress", "msExchMailboxGuid", "siteFolderGUID"]
             #
@@ -473,7 +478,14 @@ class LDAPObject(object):
                 "msExchHomeRoutingGroup", "msExchResponsibleMTAServer", "siteFolderServer", "msExchRoutingMasterDN",
                 "msExchRoutingGroupMembersBL", "homeMDBBL", "msExchHomePublicMDB", "msExchOwningServer", "templateRoots",
                 "addressBookRoots", "msExchPolicyRoots", "globalAddressList", "msExchOwningPFTree",
-                "msExchResponsibleMTAServerBL", "msExchOwningPFTreeBL",]
+                "msExchResponsibleMTAServerBL", "msExchOwningPFTreeBL",
+                # After 2012 R2 functional preparation
+                "msDS-MembersOfResourcePropertyListBL",
+                "msDS-ValueTypeReference",
+                "msDS-MembersOfResourcePropertyList",
+                "msDS-ValueTypeReferenceBL",
+                "msDS-ClaimTypeAppliesToClass",
+            ]
             self.dn_attributes = [x.upper() for x in self.dn_attributes]
             #
             # Attributes that contain the Domain name e.g. 'samba.org'

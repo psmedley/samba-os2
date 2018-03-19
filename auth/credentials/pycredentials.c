@@ -31,6 +31,8 @@
 #include <tevent.h>
 #include "libcli/auth/libcli_auth.h"
 #include "auth/credentials/credentials_internal.h"
+#include "system/kerberos.h"
+#include "auth/kerberos/kerberos.h"
 
 void initcredentials(void);
 
@@ -526,7 +528,7 @@ static PyObject *PyCredentialCacheContainer_from_ccache_container(struct ccache_
 static PyObject *py_creds_get_named_ccache(PyObject *self, PyObject *args)
 {
 	PyObject *py_lp_ctx = Py_None;
-	char *ccache_name;
+	char *ccache_name = NULL;
 	struct loadparm_context *lp_ctx;
 	struct ccache_container *ccc;
 	struct tevent_context *event_ctx;
@@ -567,6 +569,48 @@ static PyObject *py_creds_get_named_ccache(PyObject *self, PyObject *args)
 
 	talloc_free(mem_ctx);
 	return NULL;
+}
+
+static PyObject *py_creds_set_named_ccache(PyObject *self, PyObject *args)
+{
+	struct loadparm_context *lp_ctx = NULL;
+	enum credentials_obtained obt = CRED_SPECIFIED;
+	const char *error_string = NULL;
+	TALLOC_CTX *mem_ctx = NULL;
+	char *newval = NULL;
+	PyObject *py_lp_ctx = Py_None;
+	int _obt = obt;
+	int ret;
+
+	if (!PyArg_ParseTuple(args, "s|iO", &newval, &_obt, &py_lp_ctx))
+		return NULL;
+
+	mem_ctx = talloc_new(NULL);
+	if (mem_ctx == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
+
+	lp_ctx = lpcfg_from_py_object(mem_ctx, py_lp_ctx);
+	if (lp_ctx == NULL) {
+		talloc_free(mem_ctx);
+		return NULL;
+	}
+
+	ret = cli_credentials_set_ccache(PyCredentials_AsCliCredentials(self),
+					 lp_ctx,
+					 newval, CRED_SPECIFIED,
+					 &error_string);
+
+	if (ret != 0) {
+		PyErr_SetString(PyExc_RuntimeError,
+				error_string != NULL ? error_string : "NULL");
+		talloc_free(mem_ctx);
+		return NULL;
+	}
+
+	talloc_free(mem_ctx);
+	Py_RETURN_NONE;
 }
 
 static PyObject *py_creds_set_gensec_features(PyObject *self, PyObject *args)
@@ -754,6 +798,9 @@ static PyMethodDef py_creds_methods[] = {
 	{ "guess", py_creds_guess, METH_VARARGS, NULL },
 	{ "set_machine_account", py_creds_set_machine_account, METH_VARARGS, NULL },
 	{ "get_named_ccache", py_creds_get_named_ccache, METH_VARARGS, NULL },
+	{ "set_named_ccache", py_creds_set_named_ccache, METH_VARARGS,
+		"S.set_named_ccache(krb5_ccache_name, obtained, lp) -> None\n"
+		"Set credentials to KRB5 Credentials Cache (by name)." },
 	{ "set_gensec_features", py_creds_set_gensec_features, METH_VARARGS, NULL },
 	{ "get_gensec_features", py_creds_get_gensec_features, METH_NOARGS, NULL },
 	{ "get_forced_sasl_mech", py_creds_get_forced_sasl_mech, METH_NOARGS,
@@ -793,10 +840,38 @@ PyTypeObject PyCredentials = {
 	.tp_methods = py_creds_methods,
 };
 
+static PyObject *py_ccache_name(PyObject *self, PyObject *unused)
+{
+	struct ccache_container *ccc = NULL;
+	char *name = NULL;
+	PyObject *py_name = NULL;
+	int ret;
+
+	ccc = pytalloc_get_type(self, struct ccache_container);
+
+	ret = krb5_cc_get_full_name(ccc->smb_krb5_context->krb5_context,
+				    ccc->ccache, &name);
+	if (ret == 0) {
+		py_name = PyString_FromStringOrNULL(name);
+		SAFE_FREE(name);
+	} else {
+		PyErr_SetString(PyExc_RuntimeError,
+				"Failed to get ccache name");
+		return NULL;
+	}
+	return py_name;
+}
+
+static PyMethodDef py_ccache_container_methods[] = {
+	{ "get_name", py_ccache_name, METH_NOARGS,
+	  "S.get_name() -> name\nObtain KRB5 credentials cache name." },
+	{ NULL }
+};
 
 PyTypeObject PyCredentialCacheContainer = {
 	.tp_name = "credentials.CredentialCacheContainer",
 	.tp_flags = Py_TPFLAGS_DEFAULT,
+	.tp_methods = py_ccache_container_methods,
 };
 
 MODULE_INIT_FUNC(credentials)

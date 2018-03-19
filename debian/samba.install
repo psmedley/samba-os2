@@ -22,6 +22,7 @@ usr/sbin/mksmbpasswd
 usr/sbin/nmbd
 usr/sbin/samba
 usr/sbin/samba_dnsupdate
+usr/sbin/samba_gpoupdate
 usr/sbin/samba_spnupdate
 usr/sbin/samba_upgradedns
 usr/sbin/smbd
@@ -37,5 +38,6 @@ usr/share/man/man8/idmap_script.8
 usr/share/man/man8/nmbd.8
 usr/share/man/man8/pdbedit.8
 usr/share/man/man8/samba.8
+usr/share/man/man8/samba_gpoupdate.8
 usr/share/man/man8/smbd.8
 usr/share/samba/setup

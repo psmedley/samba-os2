@@ -25,7 +25,9 @@
 #include "includes.h"
 #include "system/filesys.h"
 #include "system/passwd.h"
+#include "system/kerberos.h"
 #include "libsmb/libsmb.h"
+#include "lib/param/param.h"
 
 /*
  * Starting with CUPS 1.3, Kerberos support is provided by cupsd including
@@ -96,19 +98,10 @@ main(int argc,			/* I - Number of command-line arguments */
 	int             tries = 0;
 	bool		need_auth = true;
 	const char     *dev_uri;
+	const char     *config_file = NULL;
 	TALLOC_CTX     *frame = talloc_stackframe();
 
 	null_str[0] = '\0';
-
-	/*
-	 * we expect the URI in argv[0]. Detect the case where it is in
-	 * argv[1] and cope
-	 */
-	if (argc > 2 && strncmp(argv[0], "smb://", 6) &&
-	    strncmp(argv[1], "smb://", 6) == 0) {
-		argv++;
-		argc--;
-	}
 
 	if (argc == 1) {
 		/*
@@ -124,7 +117,7 @@ main(int argc,			/* I - Number of command-line arguments */
 		goto done;
 	}
 
-	if (argc < 6 || argc > 7) {
+	if (argc < 7 || argc > 8) {
 		fprintf(stderr,
 "Usage: %s [DEVICE_URI] job-id user title copies options [file]\n"
 "       The DEVICE_URI environment variable can also contain the\n"
@@ -140,18 +133,18 @@ main(int argc,			/* I - Number of command-line arguments */
          * Otherwise, print data from stdin...
          */
 
-	if (argc == 6) {
+	if (argc == 7) {
 		/*
 	         * Print from Copy stdin to a temporary file...
 	         */
 
 		fp = stdin;
 		copies = 1;
-	} else if ((fp = fopen(argv[6], "rb")) == NULL) {
+	} else if ((fp = fopen(argv[7], "rb")) == NULL) {
 		perror("ERROR: Unable to open print file");
 		goto done;
 	} else {
-		char *p = argv[4];
+		char *p = argv[5];
 		char *endp;
 
 		copies = strtol(p, &endp, 10);
@@ -168,10 +161,10 @@ main(int argc,			/* I - Number of command-line arguments */
 	dev_uri = getenv("DEVICE_URI");
 	if (dev_uri) {
 		strncpy(uri, dev_uri, sizeof(uri) - 1);
-	} else if (strncmp(argv[0], "smb://", 6) == 0) {
-		strncpy(uri, argv[0], sizeof(uri) - 1);
+	} else if (strncmp(argv[1], "smb://", 6) == 0) {
+		strncpy(uri, argv[1], sizeof(uri) - 1);
 	} else {
-		fputs("ERROR: No device URI found in DEVICE_URI environment variable or argv[0] !\n", stderr);
+		fputs("ERROR: No device URI found in DEVICE_URI environment variable or arg1 !\n", stderr);
 		goto done;
 	}
 
@@ -254,8 +247,11 @@ main(int argc,			/* I - Number of command-line arguments */
 
 	smb_init_locale();
 
-	if (!lp_load_client(get_dyn_CONFIGFILE())) {
-		fprintf(stderr, "ERROR: Can't load %s - run testparm to debug it\n", get_dyn_CONFIGFILE());
+	config_file = lp_default_path();
+	if (!lp_load_client(config_file)) {
+		fprintf(stderr,
+			"ERROR: Can't load %s - run testparm to debug it\n",
+			config_file);
 		goto done;
 	}
 
@@ -267,7 +263,7 @@ main(int argc,			/* I - Number of command-line arguments */
 
 	do {
 		cli = smb_connect(workgroup, server, port, printer,
-			username, password, argv[2], &need_auth);
+			username, password, argv[3], &need_auth);
 		if (cli == NULL) {
 			if (need_auth) {
 				exit(2);
@@ -303,7 +299,7 @@ main(int argc,			/* I - Number of command-line arguments */
          */
 
 	for (i = 0; i < copies; i++) {
-		status = smb_print(cli, argv[3] /* title */ , fp);
+		status = smb_print(cli, argv[4] /* title */ , fp);
 		if (status != 0) {
 			break;
 		}
@@ -486,6 +482,45 @@ smb_complete_connection(const char *myname,
 	return cli;
 }
 
+static bool kerberos_ccache_is_valid(void) {
+	krb5_context ctx;
+	const char *ccache_name = NULL;
+	krb5_ccache ccache = NULL;
+	krb5_error_code code;
+
+	code = krb5_init_context(&ctx);
+	if (code != 0) {
+		return false;
+	}
+
+	ccache_name = krb5_cc_default_name(ctx);
+	if (ccache_name == NULL) {
+		return false;
+	}
+
+	code = krb5_cc_resolve(ctx, ccache_name, &ccache);
+	if (code != 0) {
+		krb5_free_context(ctx);
+		return false;
+	} else {
+		krb5_principal default_princ = NULL;
+
+		code = krb5_cc_get_principal(ctx,
+					     ccache,
+					     &default_princ);
+		if (code != 0) {
+			krb5_cc_close(ctx, ccache);
+			krb5_free_context(ctx);
+			return false;
+		}
+		krb5_free_principal(ctx, default_princ);
+	}
+	krb5_cc_close(ctx, ccache);
+	krb5_free_context(ctx);
+
+	return true;
+}
+
 /*
  * 'smb_connect()' - Return a connection to a server.
  */
@@ -517,15 +552,27 @@ smb_connect(const char *workgroup,	/* I - Workgroup */
 	 * behavior with 3.0.14a
 	 */
 
-	if (username && *username && !getenv("KRB5CCNAME")) {
-		cli = smb_complete_connection(myname, server, port, username,
-				    password, workgroup, share, 0, need_auth);
-		if (cli) {
-			fputs("DEBUG: Connected with username/password...\n", stderr);
-			return (cli);
+	if (username != NULL && username[0] != '\0') {
+		if (kerberos_ccache_is_valid()) {
+			goto kerberos_auth;
 		}
 	}
 
+	cli = smb_complete_connection(myname,
+				      server,
+				      port,
+				      username,
+				      password,
+				      workgroup,
+				      share,
+				      0,
+				      need_auth);
+	if (cli != NULL) {
+		fputs("DEBUG: Connected with username/password...\n", stderr);
+		return (cli);
+	}
+
+kerberos_auth:
 	/*
 	 * Try to use the user kerberos credentials (if any) to authenticate
 	 */

@@ -61,19 +61,14 @@ static bool send_message(struct messaging_context *msg_ctx,
 			 struct server_id pid, int msg_type,
 			 const void *buf, int len)
 {
-	bool ret;
-	int n_sent = 0;
-
 	if (procid_to_pid(&pid) != 0)
 		return NT_STATUS_IS_OK(
 			messaging_send_buf(msg_ctx, pid, msg_type,
 					   (const uint8_t *)buf, len));
 
-	ret = message_send_all(msg_ctx, msg_type, buf, len, &n_sent);
-	DEBUG(10,("smbcontrol/send_message: broadcast message to "
-		  "%d processes\n", n_sent));
+	messaging_send_all(msg_ctx, msg_type, buf, len);
 
-	return ret;
+	return true;
 }
 
 static void smbcontrol_timeout(struct tevent_context *event_ctx,
@@ -322,13 +317,9 @@ cleanup:
 	ptrace(PTRACE_DETACH, pid, NULL, NULL);
 }
 
-static int stack_trace_server(const struct server_id *id,
-			      uint32_t msg_flags,
-			      void *priv)
+static int stack_trace_server(pid_t pid, void *priv)
 {
-	if (procid_is_local(id)) {
-		print_stack_trace(procid_to_pid(id), (int *)priv);
-	}
+	print_stack_trace(pid, (int *)priv);
 	return 0;
 }
 
@@ -355,7 +346,7 @@ static bool do_daemon_stack_trace(struct tevent_context *ev_ctx,
 		 */
 		print_stack_trace(dest, &count);
 	} else {
-		serverid_traverse_read(stack_trace_server, &count);
+		messaging_dgm_forall(stack_trace_server, &count);
 	}
 
 	return True;

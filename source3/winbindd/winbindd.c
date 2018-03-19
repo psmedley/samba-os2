@@ -34,7 +34,6 @@
 #include "rpc_client/cli_netlogon.h"
 #include "idmap.h"
 #include "lib/addrchange.h"
-#include "serverid.h"
 #include "auth.h"
 #include "messages.h"
 #include "../lib/util/pidfile.h"
@@ -221,9 +220,6 @@ static void terminate(bool is_parent)
 #endif
 
 	if (is_parent) {
-		struct messaging_context *msg = server_messaging_context();
-		struct server_id self = messaging_server_id(msg);
-		serverid_deregister(self);
 		pidfile_unlink(lp_pid_directory(), "winbindd");
 	}
 
@@ -511,6 +507,8 @@ static void winbind_msg_validate_cache(struct messaging_context *msg_ctx,
 
 	/* install default SIGCHLD handler: validation code uses fork/waitpid */
 	CatchSignal(SIGCHLD, SIG_DFL);
+
+	setproctitle("validate cache child");
 
 	ret = (uint8_t)winbindd_validate_cache_nobackup();
 	DEBUG(10, ("winbindd_msg_validata_cache: got return value %d\n", ret));
@@ -878,6 +876,7 @@ static void new_connection(int listen_sock, bool privileged)
 		}
 		return;
 	}
+	smb_set_close_on_exec(sock);
 
 	DEBUG(6,("accepted socket %d\n", sock));
 
@@ -1281,6 +1280,7 @@ bool winbindd_use_cache(void)
 static void winbindd_register_handlers(struct messaging_context *msg_ctx,
 				       bool foreground)
 {
+	bool scan_trusts = true;
 	NTSTATUS status;
 	/* Setup signal handlers */
 
@@ -1302,16 +1302,6 @@ static void winbindd_register_handlers(struct messaging_context *msg_ctx,
 	 * and initialized before we startup.
 	 */
 	if (!winbindd_cache_validate_and_initialize()) {
-		exit(1);
-	}
-
-	/* get broadcast messages */
-
-	if (!serverid_register(messaging_server_id(msg_ctx),
-			       FLAG_MSG_GENERAL |
-			       FLAG_MSG_WINBIND |
-			       FLAG_MSG_DBWRAP)) {
-		DEBUG(1, ("Could not register myself in serverid.tdb\n"));
 		exit(1);
 	}
 
@@ -1373,7 +1363,19 @@ static void winbindd_register_handlers(struct messaging_context *msg_ctx,
 	smb_nscd_flush_user_cache();
 	smb_nscd_flush_group_cache();
 
-	if (lp_allow_trusted_domains()) {
+	if (!lp_winbind_scan_trusted_domains()) {
+		scan_trusts = false;
+	}
+
+	if (!lp_allow_trusted_domains()) {
+		scan_trusts = false;
+	}
+
+	if (IS_DC) {
+		scan_trusts = false;
+	}
+
+	if (scan_trusts) {
 		if (tevent_add_timer(server_event_context(), NULL, timeval_zero(),
 			      rescan_trusted_domains, NULL) == NULL) {
 			DEBUG(0, ("Could not trigger rescan_trusted_domains()\n"));
@@ -1503,6 +1505,8 @@ int main(int argc, const char **argv)
 	TALLOC_CTX *frame;
 	NTSTATUS status;
 	bool ok;
+
+	setproctitle_init(argc, discard_const(argv), environ);
 
 	/*
 	 * Do this before any other talloc operation
@@ -1785,6 +1789,8 @@ int main(int argc, const char **argv)
 	if (!interactive) {
 		daemon_ready("winbindd");
 	}
+
+	gpupdate_init();
 
 	/* Loop waiting for requests */
 	while (1) {

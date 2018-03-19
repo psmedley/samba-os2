@@ -65,6 +65,8 @@ static void reply_lanman1(struct smb_request *req, uint16_t choice)
 	time_t t = time(NULL);
 	struct smbXsrv_connection *xconn = req->xconn;
 	uint16_t raw;
+	NTSTATUS status;
+
 	if (lp_async_smb_echo_handler()) {
 		raw = 0;
 	} else {
@@ -88,7 +90,11 @@ static void reply_lanman1(struct smb_request *req, uint16_t choice)
 		SSVAL(req->outbuf,smb_vwv11, 8);
 	}
 
-	smbXsrv_connection_init_tables(xconn, PROTOCOL_LANMAN1);
+	status = smbXsrv_connection_init_tables(xconn, PROTOCOL_LANMAN1);
+	if (!NT_STATUS_IS_OK(status)) {
+		reply_nterror(req, status);
+		return;
+	}
 
 	/* Reply, SMBlockread, SMBwritelock supported. */
 	SCVAL(req->outbuf,smb_flg, FLAG_REPLY|FLAG_SUPPORT_LOCKREAD);
@@ -115,6 +121,8 @@ static void reply_lanman2(struct smb_request *req, uint16_t choice)
 	time_t t = time(NULL);
 	struct smbXsrv_connection *xconn = req->xconn;
 	uint16_t raw;
+	NTSTATUS status;
+
 	if (lp_async_smb_echo_handler()) {
 		raw = 0;
 	} else {
@@ -140,7 +148,11 @@ static void reply_lanman2(struct smb_request *req, uint16_t choice)
 		SSVAL(req->outbuf,smb_vwv11, 8);
 	}
 
-	smbXsrv_connection_init_tables(xconn, PROTOCOL_LANMAN2);
+	status = smbXsrv_connection_init_tables(xconn, PROTOCOL_LANMAN2);
+	if (!NT_STATUS_IS_OK(status)) {
+		reply_nterror(req, status);
+		return;
+	}
 
 	/* Reply, SMBlockread, SMBwritelock supported. */
 	SCVAL(req->outbuf,smb_flg,FLAG_REPLY|FLAG_SUPPORT_LOCKREAD);
@@ -260,6 +272,7 @@ static void reply_nt1(struct smb_request *req, uint16_t choice)
 	struct smbXsrv_connection *xconn = req->xconn;
 	bool signing_desired = false;
 	bool signing_required = false;
+	NTSTATUS status;
 
 	xconn->smb1.negprot.encrypted_passwords = lp_encrypt_passwords();
 
@@ -282,7 +295,6 @@ static void reply_nt1(struct smb_request *req, uint16_t choice)
 	   supports it and we can do encrypted passwords */
 
 	if (xconn->smb1.negprot.encrypted_passwords &&
-	    lp_use_spnego() &&
 	    (req->flags2 & FLAGS2_EXTENDED_SECURITY)) {
 		negotiate_spnego = True;
 		capabilities |= CAP_EXTENDED_SECURITY;
@@ -337,7 +349,11 @@ static void reply_nt1(struct smb_request *req, uint16_t choice)
 	SSVAL(req->outbuf,smb_vwv0,choice);
 	SCVAL(req->outbuf,smb_vwv1,secword);
 
-	smbXsrv_connection_init_tables(xconn, PROTOCOL_NT1);
+	status = smbXsrv_connection_init_tables(xconn, PROTOCOL_NT1);
+	if (!NT_STATUS_IS_OK(status)) {
+		reply_nterror(req, status);
+		return;
+	}
 
 	SSVAL(req->outbuf,smb_vwv1+1, lp_max_mux()); /* maxmpx */
 	SSVAL(req->outbuf,smb_vwv2+1, 1); /* num vcs */
@@ -690,14 +706,6 @@ void reply_negprot(struct smb_request *req)
 
 	/* possibly reload - change of architecture */
 	reload_services(sconn, conn_snum_used, true);
-
-	/* moved from the netbios session setup code since we don't have that 
-	   when the client connects to port 445.  Of course there is a small
-	   window where we are listening to messages   -- jerry */
-
-	serverid_register(messaging_server_id(sconn->msg_ctx),
-			  FLAG_MSG_GENERAL|FLAG_MSG_SMBD
-			  |FLAG_MSG_PRINT_GENERAL);
 
 	/*
 	 * Anything higher than PROTOCOL_SMB2_10 still

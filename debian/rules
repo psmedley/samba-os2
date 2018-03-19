@@ -25,10 +25,6 @@ export PYTHON=$(shell which $(PYSHORT))
 export PYTHON_CONFIG="$(PYTHON)-config"
 WAF = $(PYTHON) ./buildtools/bin/waf -v
 
-# turn DEB_BUILD_OPTIONS='foo,bar' into DEB_BUILD_OPT_FOO and DEB_BUILD_OPT_BAR
-d_b_o:=$(shell echo "$$DEB_BUILD_OPTIONS"|sed 's/[^-[:alnum:]]/ /g'|tr a-z A-Z)
-$(foreach o, $(d_b_o), $(eval DEB_BUILD_OPT_$o := 1))
-
 # wrapper around cups-config, to work around #726726
 export PATH:=$(CURDIR)/debian/bin:$(PATH)
 
@@ -74,7 +70,9 @@ conf_args = \
 
 ifeq ($(DEB_HOST_ARCH_OS), linux)
 	conf_args += \
-		--with-systemd
+		--with-systemd \
+		--systemd-install-services \
+		--with-systemddir=/lib/systemd/system
 else
 	conf_args += \
 		--without-systemd
@@ -86,18 +84,6 @@ endif
 override_dh_auto_configure:
 	$(WAF) configure $(conf_args)
 
-override_dh_auto_clean:
-	-$(WAF) clean
-	find . -name "*.pyc" | xargs rm -f
-	rm -rf buildtools/bin/.waf-*
-	rm -rf bin
-	rm -f .lock-wscript
-	rm -f ctdb/README.eventscripts
-	rm -f ctdb/README.notify.d
-
-override_dh_auto_install:
-	DESTDIR="$(DESTDIR)" $(WAF) install
-
 override_dh_auto_build:
 	DESTDIR="$(DESTDIR)" $(WAF)
 
@@ -105,29 +91,8 @@ override_dh_auto_test:
 	# Running make test requires configuration with --enable-selftest, which
 	# we don't want to do for production systems.
 
-override_dh_installsystemd:
-ifneq (,$(filter samba, $(shell dh_listpackages)))
-	dh_installsystemd -psamba
-endif
-ifneq (,$(filter winbind, $(shell dh_listpackages)))
-	dh_installsystemd -pwinbind
-endif
-ifneq (,$(filter ctdb, $(shell dh_listpackages)))
-	dh_installsystemd -pctdb --no-start --no-stop-on-upgrade
-endif
-
-override_dh_installdocs-arch:
-	cp ctdb/config/events.d/README ctdb/README.eventscripts
-	cp ctdb/config/notify.d.README ctdb/README.notify.d
-	dh_installdocs
-ifeq ($(DEB_HOST_ARCH_OS), hurd)
-	dh_installdocs -pctdb debian/ctdb.README.hurd
-endif
-ifeq ($(DEB_HOST_ARCH_OS), kfreebsd)
-	dh_installdocs -pctdb debian/ctdb.README.kfreebsd
-endif
-
-override_dh_install:
+override_dh_auto_install:
+	DESTDIR="$(DESTDIR)" $(WAF) install
 	# get list of files in build log
 	find ${DESTDIR}
 	# Included in python-tevent
@@ -146,25 +111,26 @@ override_dh_install:
 	rm $(DESTDIR)/lib/$(DEB_HOST_MULTIARCH)/libnss_*.so
 	#Remove unused vfstest manpage vfstest is no longer installed
 	rm $(DESTDIR)/usr/share/man/man1/vfstest.1
+	# Install winbind_krb5_locator
 	mkdir -p $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/plugin/krb5
 	mv $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/winbind_krb5_locator.so \
 	   $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/plugin/krb5
+	# Debian goodies to set global option in smb.conf and add a share
 	install -m 0755 debian/setoption.py $(DESTDIR)/usr/share/samba
 	install -m 0755 debian/addshare.py $(DESTDIR)/usr/share/samba
-	# Install samba-common's conffiles - they'll get moved later to their
-	# correct place by dh_install
+	# Debian goodies
 	cp debian/smb.conf* $(DESTDIR)/usr/share/samba/
 	install -m755 debian/panic-action $(DESTDIR)/usr/share/samba/panic-action
 	cp debian/gdbcommands $(DESTDIR)/etc/samba/
 	mkdir -p $(DESTDIR)/etc/dhcp/dhclient-enter-hooks.d
 	install -m755 debian/samba-common.dhcp $(DESTDIR)/etc/dhcp/dhclient-enter-hooks.d/samba
-	# Install other stuff not installed by "make install"
 	install -m 0755 debian/mksmbpasswd.awk $(DESTDIR)/usr/sbin/mksmbpasswd
+	mkdir -p $(DESTDIR)/etc/ufw/applications.d
+	install -m644 debian/samba.ufw.profile $(DESTDIR)/etc/ufw/applications.d/samba
+	# Install other stuff not installed by "make install"
 	mkdir -p debian/samba/usr/lib/$(PYSHORT)/dist-packages/samba
 	mv $(DESTDIR)/usr/lib/$(PYSHORT)/dist-packages/samba/dckeytab.so \
 	   debian/samba/usr/lib/$(PYSHORT)/dist-packages/samba/dckeytab.so
-	mkdir -p $(DESTDIR)/etc/ufw/applications.d
-	install -m644 debian/samba.ufw.profile $(DESTDIR)/etc/ufw/applications.d/samba
 	# use upstream version of smb.conf.5 if there is no built version
 	# this is a temporary workaround for #750593 in xsltproc
 	[ -e $(DESTDIR)/usr/share/man/man5/smb.conf.5 ] || \
@@ -179,7 +145,7 @@ override_dh_install:
 	# Install systemd configs
 	mkdir -p $(DESTDIR)/lib/systemd/system/
 	install -m 0644 ctdb/config/ctdb.service $(DESTDIR)/lib/systemd/system/
-	install -m 0644 packaging/systemd/*.service $(DESTDIR)/lib/systemd/system/
+	# Services fixups
 	mv $(DESTDIR)/lib/systemd/system/nmb.service $(DESTDIR)/lib/systemd/system/nmbd.service
 	mv $(DESTDIR)/lib/systemd/system/smb.service $(DESTDIR)/lib/systemd/system/smbd.service
 	mv $(DESTDIR)/lib/systemd/system/samba.service $(DESTDIR)/lib/systemd/system/samba-ad-dc.service
@@ -188,25 +154,26 @@ override_dh_install:
 	  -e 's|nmb\.service|nmbd.service|' \
 	  -e 's|smb\.service|smbd.service|' \
 	  -e 's|samba\.service|samba-ad-dc.service|' \
-	  -e 's|^PIDFile=/run/|PIDFile=/var/run/samba/|' \
 	  $(DESTDIR)/lib/systemd/system/nmbd.service \
 	  $(DESTDIR)/lib/systemd/system/samba-ad-dc.service \
 	  $(DESTDIR)/lib/systemd/system/smbd.service \
 	  $(DESTDIR)/lib/systemd/system/winbind.service
 	mkdir -p $(DESTDIR)/usr/lib/tmpfiles.d
 	echo "d /run/samba 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/samba.conf
-	#install -m 0644 packaging/systemd/samba.sysconfig $(DESTDIR)/etc/default/samba
-	#
-	dh_install --sourcedir=$(DESTDIR) --list-missing --fail-missing
+
+override_dh_installdocs-arch:
+	cp ctdb/config/events.d/README ctdb/README.eventscripts
+	cp ctdb/config/notify.d.README ctdb/README.notify.d
+	dh_installdocs
+ifeq ($(DEB_HOST_ARCH_OS), hurd)
+	dh_installdocs -pctdb debian/ctdb.README.hurd
+endif
+ifeq ($(DEB_HOST_ARCH_OS), kfreebsd)
+	dh_installdocs -pctdb debian/ctdb.README.kfreebsd
+endif
 
 override_dh_python2:
 	dh_python2 --no-guessing-versions
-
-override_dh_installpam:
-	dh_installpam --name=samba
-
-get-packaged-orig-source:
-	./debian/build-orig.sh
 
 override_dh_installchangelogs:
 	dh_installchangelogs
@@ -229,6 +196,40 @@ ifneq (,$(filter ctdb, $(shell dh_listpackages)))
 	dh_installinit -pctdb --no-start --no-stop-on-upgrade --onlyscripts
 endif
 
+override_dh_installsystemd:
+ifneq (,$(filter samba, $(shell dh_listpackages)))
+	dh_installsystemd -psamba
+endif
+ifneq (,$(filter winbind, $(shell dh_listpackages)))
+	dh_installsystemd -pwinbind
+endif
+ifneq (,$(filter ctdb, $(shell dh_listpackages)))
+	dh_installsystemd -pctdb --no-start --no-stop-on-upgrade
+endif
+
+override_dh_installpam:
+	dh_installpam --name=samba
+
+override_dh_fixperms:
+	dh_fixperms
+ifneq (,$(filter samba-common, $(shell dh_listpackages)))
+	chmod a+x debian/samba-common/usr/share/samba/panic-action
+endif
+ifneq (,$(filter samba, $(shell dh_listpackages)))
+	chmod 1777 debian/samba/var/spool/samba/
+endif
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+override_dh_strip:
+	dh_strip --dbgsym-migration='samba-dbg (<< 2:4.4.5+dfsg-3~)'
+
+override_dh_makeshlibs:
+	# create symbols and shlibs files in separate wrapper script to deal with
+	# private libraries
+	debian/make_shlibs
+
 override_dh_shlibdeps:
 	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH dh_shlibdeps -a -Xceph.so -Xglusterfs.so -Xsnapper.so
 ifeq ($(DEB_HOST_ARCH_OS), linux)
@@ -240,19 +241,11 @@ endif
 override_dh_gencontrol:
 	dh_gencontrol -- -Vldb:Depends=$(LDB_DEPENDS)
 
-override_dh_makeshlibs:
-	# create symbols and shlibs files in separate wrapper script to deal with
-	# private libraries
-	debian/make_shlibs
-
-override_dh_strip:
-	dh_strip --dbgsym-migration='samba-dbg (<< 2:4.4.5+dfsg-3~)'
-
-override_dh_fixperms:
-	dh_fixperms
-ifneq (,$(filter samba-common, $(shell dh_listpackages)))
-	chmod a+x debian/samba-common/usr/share/samba/panic-action
-endif
-ifneq (,$(filter samba, $(shell dh_listpackages)))
-	chmod 1777 debian/samba/var/spool/samba/
-endif
+override_dh_auto_clean:
+	-$(WAF) clean
+	find . -name "*.pyc" | xargs rm -f
+	rm -rf buildtools/bin/.waf-*
+	rm -rf bin
+	rm -f .lock-wscript
+	rm -f ctdb/README.eventscripts
+	rm -f ctdb/README.notify.d

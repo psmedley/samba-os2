@@ -172,6 +172,7 @@ static NTSTATUS dcerpc_lsa_lookup_sids_noalloc(struct dcerpc_binding_handle *h,
 					       struct policy_handle *pol,
 					       int num_sids,
 					       const struct dom_sid *sids,
+					       enum lsa_LookupNamesLevel level,
 					       char **domains,
 					       char **names,
 					       enum lsa_SidType *types,
@@ -183,7 +184,6 @@ static NTSTATUS dcerpc_lsa_lookup_sids_noalloc(struct dcerpc_binding_handle *h,
 	struct lsa_SidArray sid_array;
 	struct lsa_RefDomainList *ref_domains = NULL;
 	struct lsa_TransNameArray lsa_names;
-	enum lsa_LookupNamesLevel level = LSA_LOOKUP_NAMES_ALL;
 	uint32_t count = 0;
 	int i;
 
@@ -348,6 +348,7 @@ NTSTATUS dcerpc_lsa_lookup_sids_generic(struct dcerpc_binding_handle *h,
 					struct policy_handle *pol,
 					int num_sids,
 					const struct dom_sid *sids,
+					enum lsa_LookupNamesLevel level,
 					char ***pdomains,
 					char ***pnames,
 					enum lsa_SidType **ptypes,
@@ -369,19 +370,22 @@ NTSTATUS dcerpc_lsa_lookup_sids_generic(struct dcerpc_binding_handle *h,
 	bool have_unmapped = false;
 
 	if (num_sids) {
-		if (!(domains = talloc_array(mem_ctx, char *, num_sids))) {
+		domains = talloc_zero_array(mem_ctx, char *, num_sids);
+		if (domains == NULL) {
 			DEBUG(0, ("rpccli_lsa_lookup_sids(): out of memory\n"));
 			status = NT_STATUS_NO_MEMORY;
 			goto fail;
 		}
 
-		if (!(names = talloc_array(mem_ctx, char *, num_sids))) {
+		names = talloc_zero_array(mem_ctx, char *, num_sids);
+		if (names == NULL) {
 			DEBUG(0, ("rpccli_lsa_lookup_sids(): out of memory\n"));
 			status = NT_STATUS_NO_MEMORY;
 			goto fail;
 		}
 
-		if (!(types = talloc_array(mem_ctx, enum lsa_SidType, num_sids))) {
+		types = talloc_zero_array(mem_ctx, enum lsa_SidType, num_sids);
+		if (types == NULL) {
 			DEBUG(0, ("rpccli_lsa_lookup_sids(): out of memory\n"));
 			status = NT_STATUS_NO_MEMORY;
 			goto fail;
@@ -414,6 +418,7 @@ NTSTATUS dcerpc_lsa_lookup_sids_generic(struct dcerpc_binding_handle *h,
 							pol,
 							hunk_num_sids,
 							hunk_sids,
+							level,
 							hunk_domains,
 							hunk_names,
 							hunk_types,
@@ -489,11 +494,13 @@ NTSTATUS dcerpc_lsa_lookup_sids(struct dcerpc_binding_handle *h,
 				enum lsa_SidType **ptypes,
 				NTSTATUS *result)
 {
+	enum lsa_LookupNamesLevel level = LSA_LOOKUP_NAMES_ALL;
 	return dcerpc_lsa_lookup_sids_generic(h,
 					      mem_ctx,
 					      pol,
 					      num_sids,
 					      sids,
+					      level,
 					      pdomains,
 					      pnames,
 					      ptypes,
@@ -512,12 +519,14 @@ NTSTATUS rpccli_lsa_lookup_sids(struct rpc_pipe_client *cli,
 {
 	NTSTATUS status;
 	NTSTATUS result = NT_STATUS_UNSUCCESSFUL;
+	enum lsa_LookupNamesLevel level = LSA_LOOKUP_NAMES_ALL;
 
 	status = dcerpc_lsa_lookup_sids_generic(cli->binding_handle,
 						mem_ctx,
 						pol,
 						num_sids,
 						sids,
+						level,
 						pdomains,
 						pnames,
 						ptypes,
@@ -540,11 +549,13 @@ NTSTATUS dcerpc_lsa_lookup_sids3(struct dcerpc_binding_handle *h,
 				 enum lsa_SidType **ptypes,
 				 NTSTATUS *result)
 {
+	enum lsa_LookupNamesLevel level = LSA_LOOKUP_NAMES_ALL;
 	return dcerpc_lsa_lookup_sids_generic(h,
 					      mem_ctx,
 					      pol,
 					      num_sids,
 					      sids,
+					      level,
 					      pdomains,
 					      pnames,
 					      ptypes,
@@ -627,20 +638,22 @@ NTSTATUS dcerpc_lsa_lookup_names_generic(struct dcerpc_binding_handle *h,
 	}
 
 	if (num_names) {
-		if (!((*sids = talloc_array(mem_ctx, struct dom_sid, num_names)))) {
+		*sids = talloc_zero_array(mem_ctx, struct dom_sid, num_names);
+		if (*sids == NULL) {
 			DEBUG(0, ("cli_lsa_lookup_sids(): out of memory\n"));
 			*presult = NT_STATUS_NO_MEMORY;
 			goto done;
 		}
 
-		if (!((*types = talloc_array(mem_ctx, enum lsa_SidType, num_names)))) {
+		*types = talloc_zero_array(mem_ctx, enum lsa_SidType, num_names);
+		if (*types == NULL) {
 			DEBUG(0, ("cli_lsa_lookup_sids(): out of memory\n"));
 			*presult = NT_STATUS_NO_MEMORY;
 			goto done;
 		}
 
 		if (dom_names != NULL) {
-			*dom_names = talloc_array(mem_ctx, const char *, num_names);
+			*dom_names = talloc_zero_array(mem_ctx, const char *, num_names);
 			if (*dom_names == NULL) {
 				DEBUG(0, ("cli_lsa_lookup_sids(): out of memory\n"));
 				*presult = NT_STATUS_NO_MEMORY;

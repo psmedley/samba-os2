@@ -37,6 +37,7 @@ def set_options(opt):
     opt.PRIVATE_EXTENSION_DEFAULT('samba4')
     opt.RECURSE('lib/replace')
     opt.RECURSE('dynconfig')
+    opt.RECURSE('packaging')
     opt.RECURSE('lib/ldb')
     opt.RECURSE('selftest')
     opt.RECURSE('source4/lib/tls')
@@ -46,6 +47,8 @@ def set_options(opt):
     opt.RECURSE('lib/util')
     opt.RECURSE('lib/crypto')
     opt.RECURSE('ctdb')
+
+
     opt.samba_add_onoff_option('pthreadpool', with_name="enable", without_name="disable", default=True)
 
     opt.add_option('--with-system-mitkrb5',
@@ -135,6 +138,7 @@ def configure(conf):
         raise Utils.WafError('Python version 3.x is not supported by Samba yet')
 
     conf.RECURSE('dynconfig')
+    conf.RECURSE('selftest')
 
     if conf.CHECK_FOR_THIRD_PARTY():
         conf.RECURSE('third_party')
@@ -154,6 +158,31 @@ def configure(conf):
         else:
             conf.define('USING_SYSTEM_CMOCKA', 1)
 
+        if conf.CONFIG_GET('ENABLE_SELFTEST'):
+            if not conf.CHECK_SOCKET_WRAPPER():
+                raise Utils.WafError('socket_wrapper package has not been found.\nIf third_party is installed, check that it is in the proper place.')
+            else:
+                conf.define('USING_SYSTEM_SOCKET_WRAPPER', 1)
+
+            if not conf.CHECK_NSS_WRAPPER():
+                raise Utils.WafError('nss_wrapper package has not been found.\nIf third_party is installed, check that it is in the proper place.')
+            else:
+                conf.define('USING_SYSTEM_NSS_WRAPPER', 1)
+
+            if not conf.CHECK_RESOLV_WRAPPER():
+                raise Utils.WafError('resolv_wrapper package has not been found.\nIf third_party is installed, check that it is in the proper place.')
+            else:
+                conf.define('USING_SYSTEM_RESOLV_WRAPPER', 1)
+
+            if not conf.CHECK_UID_WRAPPER():
+                raise Utils.WafError('uid_wrapper package has not been found.\nIf third_party is installed, check that it is in the proper place.')
+            else:
+                conf.define('USING_SYSTEM_UID_WRAPPER', 1)
+
+            if not conf.CHECK_PAM_WRAPPER():
+                raise Utils.WafError('pam_wrapper package has not been found.\nIf third_party is installed, check that it is in the proper place.')
+            else:
+                conf.define('USING_SYSTEM_PAM_WRAPPER', 1)
 
     conf.RECURSE('lib/ldb')
 
@@ -186,14 +215,7 @@ def configure(conf):
     conf.RECURSE('libcli/smbreadline')
     conf.RECURSE('lib/crypto')
     conf.RECURSE('pidl')
-    conf.RECURSE('selftest')
     if conf.CONFIG_GET('ENABLE_SELFTEST'):
-        conf.RECURSE('lib/nss_wrapper')
-        conf.RECURSE('lib/resolv_wrapper')
-        conf.RECURSE('lib/socket_wrapper')
-        conf.RECURSE('lib/uid_wrapper')
-        if Options.options.with_pam:
-            conf.RECURSE('lib/pam_wrapper')
         if Options.options.with_ntvfs_fileserver != False:
             if not (Options.options.without_ad_dc):
                 conf.DEFINE('WITH_NTVFS_FILESERVER', 1)
@@ -221,6 +243,7 @@ def configure(conf):
         conf.RECURSE('ctdb')
     conf.RECURSE('lib/socket')
     conf.RECURSE('auth')
+    conf.RECURSE('packaging')
 
     conf.SAMBA_CHECK_UNDEFINED_SYMBOL_FLAGS()
 
@@ -344,7 +367,7 @@ def dist():
     os.system("make -C ctdb manpages")
     samba_dist.DIST_FILES('ctdb/doc:ctdb/doc', extend=True)
 
-    os.system(srcdir + "/release-scripts/build-manpages-nogit")
+    os.system("DOC_VERSION='" + sambaversion.STRING + "' " + srcdir + "/release-scripts/build-manpages-nogit")
     samba_dist.DIST_FILES('bin/docs:docs', extend=True)
 
     if sambaversion.IS_SNAPSHOT:

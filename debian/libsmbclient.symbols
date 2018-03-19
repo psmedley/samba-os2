@@ -4,6 +4,8 @@ libsmbclient.so.0 libsmbclient #MINVER#
  SMBCLIENT_0.2.1@SMBCLIENT_0.2.1 2:4.1.1
  SMBCLIENT_0.2.2@SMBCLIENT_0.2.2 2:4.3.0+dfsg
  SMBCLIENT_0.2.3@SMBCLIENT_0.2.3 2:4.3.0+dfsg
+ SMBCLIENT_0.3.0@SMBCLIENT_0.3.0 2:4.8.0+dfsg
+ SMBCLIENT_0.3.1@SMBCLIENT_0.3.1 2:4.8.0+dfsg
  smbc_chmod@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_close@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_closedir@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
@@ -148,6 +150,7 @@ libsmbclient.so.0 libsmbclient #MINVER#
  smbc_setFunctionUnlinkPrintJob@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_setFunctionUtimes@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_setFunctionWrite@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
+ smbc_setLogCallback@SMBCLIENT_0.3.1 2:4.8.0+dfsg
  smbc_setNetbiosName@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_setOptionBrowseMaxLmbCount@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_setOptionCaseSensitive@SMBCLIENT_0.1.0 2:4.0.3+dfsg1

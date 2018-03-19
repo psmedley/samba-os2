@@ -72,6 +72,8 @@ enum dbwrap_req_state {
 TDB_DATA dbwrap_record_get_key(const struct db_record *rec);
 TDB_DATA dbwrap_record_get_value(const struct db_record *rec);
 NTSTATUS dbwrap_record_store(struct db_record *rec, TDB_DATA data, int flags);
+NTSTATUS dbwrap_record_storev(struct db_record *rec,
+			      const TDB_DATA *dbufs, int num_dbufs, int flags);
 NTSTATUS dbwrap_record_delete(struct db_record *rec);
 struct db_record *dbwrap_fetch_locked(struct db_context *db,
 				      TALLOC_CTX *mem_ctx,
@@ -80,6 +82,11 @@ struct db_record *dbwrap_try_fetch_locked(struct db_context *db,
 					  TALLOC_CTX *mem_ctx,
 					  TDB_DATA key);
 struct db_context *dbwrap_record_get_db(struct db_record *rec);
+
+NTSTATUS dbwrap_do_locked(struct db_context *db, TDB_DATA key,
+			  void (*fn)(struct db_record *rec,
+				     void *private_data),
+			  void *private_data);
 
 NTSTATUS dbwrap_delete(struct db_context *db, TDB_DATA key);
 NTSTATUS dbwrap_store(struct db_context *db, TDB_DATA key,
@@ -215,6 +222,9 @@ NTSTATUS dbwrap_parse_marshall_buf(const uint8_t *buf, size_t buflen,
 				   void *private_data);
 NTSTATUS dbwrap_unmarshall(struct db_context *db, const uint8_t *buf,
 			   size_t buflen);
+
+TDB_DATA dbwrap_merge_dbufs(TALLOC_CTX *mem_ctx,
+			    const TDB_DATA *dbufs, int num_dbufs);
 
 
 /**

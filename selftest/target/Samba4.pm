@@ -467,6 +467,7 @@ sub provision_raw_prepare($$$$$$$$$$$)
 	$ctx->{krb5_ccache} = "$prefix_abs/krb5_ccache";
 	$ctx->{mitkdc_conf} = "$ctx->{etcdir}/mitkdc.conf";
 	$ctx->{privatedir} = "$prefix_abs/private";
+	$ctx->{binddnsdir} = "$prefix_abs/bind-dns";
 	$ctx->{ncalrpcdir} = "$prefix_abs/ncalrpc";
 	$ctx->{lockdir} = "$prefix_abs/lockdir";
 	$ctx->{logdir} = "$prefix_abs/logs";
@@ -494,6 +495,7 @@ sub provision_raw_prepare($$$$$$$$$$$)
 	$ctx->{interfaces} = "$ctx->{ipv4}/8 $ctx->{ipv6}/64";
 
 	push(@{$ctx->{directories}}, $ctx->{privatedir});
+	push(@{$ctx->{directories}}, $ctx->{binddnsdir});
 	push(@{$ctx->{directories}}, $ctx->{etcdir});
 	push(@{$ctx->{directories}}, $ctx->{piddir});
 	push(@{$ctx->{directories}}, $ctx->{lockdir});
@@ -584,6 +586,7 @@ sub provision_raw_step1($$)
 	workgroup = $ctx->{domain}
 	realm = $ctx->{realm}
 	private dir = $ctx->{privatedir}
+	binddns dir = $ctx->{binddnsdir}
 	pid directory = $ctx->{piddir}
 	ncalrpc dir = $ctx->{ncalrpcdir}
 	lock dir = $ctx->{lockdir}
@@ -613,8 +616,11 @@ sub provision_raw_step1($$)
 	rndc command = true
 	dns update command = $ctx->{samba_dnsupdate}
 	spn update command = $ENV{SRCDIR_ABS}/source4/scripting/bin/samba_spnupdate -s $ctx->{smb_conf}
+	gpo update command = $ENV{SRCDIR_ABS}/source4/scripting/bin/samba_gpoupdate -s $ctx->{smb_conf} -H $ctx->{privatedir}/sam.ldb --machine
 	dreplsrv:periodic_startup_interval = 0
 	dsdb:schema update allowed = yes
+
+        prefork children = 4
 
         vfs objects = dfs_samba4 acl_xattr fake_acls xattr_tdb streams_depot
 
@@ -725,6 +731,7 @@ nogroup:x:65534:nobody
 		STATEDIR => $ctx->{statedir},
 		CACHEDIR => $ctx->{cachedir},
 		PRIVATEDIR => $ctx->{privatedir},
+		BINDDNSDIR => $ctx->{binddnsdir},
 		SERVERCONFFILE => $ctx->{smb_conf},
 		CONFIGURATION => $configuration,
 		SOCKET_WRAPPER_DEFAULT_IFACE => $ctx->{swiface},
@@ -1024,6 +1031,7 @@ winbindd:use external pipes = true
 
 # the source4 smb server doesn't allow signing by default
 server signing = enabled
+raw NTLMv2 auth = yes
 
 rpc_server:default = external
 rpc_server:svcctl = embedded
@@ -1284,9 +1292,13 @@ sub provision_vampire_dc($$$)
 	my ($self, $prefix, $dcvars, $fl) = @_;
 	print "PROVISIONING VAMPIRE DC @ FL $fl...\n";
 	my $name = "localvampiredc";
+	my $extra_conf = "";
 
 	if ($fl == "2000") {
-	    $name = "vampire2000dc";
+		$name = "vampire2000dc";
+	} else {
+		$extra_conf = "drs: immediate link sync = yes
+                       drs: max link sync = 250";
 	}
 
 	# We do this so that we don't run the provision.  That's the job of 'net vampire'.
@@ -1306,6 +1318,7 @@ sub provision_vampire_dc($$$)
 	server max protocol = SMB2
 
         ntlm auth = mschapv2-and-ntlmv2-only
+	$extra_conf
 
 [sysvol]
 	path = $ctx->{statedir}/sysvol
@@ -1449,9 +1462,11 @@ sub provision_ad_dc_ntvfs($$)
         server services = +winbind -winbindd
 	ldap server require strong auth = allow_sasl_over_tls
 	allow nt4 crypto = yes
+	raw NTLMv2 auth = yes
 	lsa over netlogon = yes
         rpc server port = 1027
         auth event notification = true
+	server schannel = auto
 	";
 	my $ret = $self->provision($prefix,
 				   "domain controller",
@@ -1494,6 +1509,12 @@ sub provision_fl2000dc($$)
 	spnego:simulate_w2k=yes
 	ntlmssp_server:force_old_spnego=yes
 ";
+	my $extra_provision_options = undef;
+	# This environment uses plain text secrets
+	# i.e. secret attributes are not encrypted on disk.
+	# This allows testing of the --plaintext-secrets option for
+	# provision
+	push (@{$extra_provision_options}, "--plaintext-secrets");
 	my $ret = $self->provision($prefix,
 				   "domain controller",
 				   "dc5",
@@ -1505,7 +1526,7 @@ sub provision_fl2000dc($$)
 				   undef,
 				   $extra_conf_options,
 				   "",
-				   undef);
+				   $extra_provision_options);
 	unless ($ret) {
 		return undef;
 	}
@@ -1748,9 +1769,9 @@ sub read_config_h($)
 	return \%ret;
 }
 
-sub provision_ad_dc($$)
+sub provision_ad_dc($$$$$$)
 {
-	my ($self, $prefix) = @_;
+	my ($self, $prefix, $hostname, $domain, $realm, $smbconf_args) = @_;
 
 	my $prefix_abs = abs_path($prefix);
 
@@ -1813,7 +1834,9 @@ sub provision_ad_dc($$)
 	lpq cache time = 0
 	print notify backchannel = yes
 
+	server schannel = auto
         auth event notification = true
+        $smbconf_args
 ";
 
 	my $extra_smbconf_shares = "
@@ -1858,9 +1881,9 @@ sub provision_ad_dc($$)
 	print "PROVISIONING AD DC...\n";
 	my $ret = $self->provision($prefix,
 				   "domain controller",
-				   "addc",
-				   "ADDOMAIN",
-				   "addom.samba.example.com",
+				   $hostname,
+				   $domain,
+				   $realm,
 				   "2008",
 				   "locDCpass1",
 				   undef,
@@ -2110,14 +2133,16 @@ sub setup_env($$$)
 	} elsif ($envname eq "chgdcpass") {
 		return $self->setup_chgdcpass("$path/chgdcpass", $self->{vars}->{chgdcpass});
 	} elsif ($envname eq "ad_member") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
+		if (not defined($self->{vars}->{ad_dc})) {
+			$self->setup_ad_dc("$path/ad_dc");
 		}
-		return $target3->setup_admember("$path/ad_member", $self->{vars}->{ad_dc_ntvfs}, 29);
+		return $target3->setup_admember("$path/ad_member", $self->{vars}->{ad_dc}, 29);
 	} elsif ($envname eq "ad_dc") {
 		return $self->setup_ad_dc("$path/ad_dc");
 	} elsif ($envname eq "ad_dc_no_nss") {
-		return $self->setup_ad_dc("$path/ad_dc_no_nss", "no_nss");
+		return $self->setup_ad_dc_no_nss("$path/ad_dc_no_nss");
+	} elsif ($envname eq "ad_dc_no_ntlm") {
+		return $self->setup_ad_dc_no_ntlm("$path/ad_dc_no_ntlm");
 	} elsif ($envname eq "ad_member_rfc2307") {
 		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
 			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
@@ -2130,6 +2155,12 @@ sub setup_env($$$)
 		}
 		return $target3->setup_ad_member_idmap_rid("$path/ad_member_idmap_rid",
 							   $self->{vars}->{ad_dc});
+	} elsif ($envname eq "ad_member_idmap_ad") {
+		if (not defined($self->{vars}->{ad_dc})) {
+			$self->setup_ad_dc("$path/ad_dc");
+		}
+		return $target3->setup_ad_member_idmap_ad("$path/ad_member_idmap_ad",
+							  $self->{vars}->{ad_dc});
 	} elsif ($envname eq "none") {
 		return $self->setup_none("$path/none");
 	} else {
@@ -2484,21 +2515,17 @@ sub setup_rodc($$$)
 
 sub setup_ad_dc($$)
 {
-	my ($self, $path, $no_nss) = @_;
+	my ($self, $path) = @_;
 
 	# If we didn't build with ADS, pretend this env was never available
 	if (not $self->{target3}->have_ads()) {
 	       return "UNKNOWN";
 	}
 
-	my $env = $self->provision_ad_dc($path);
+	my $env = $self->provision_ad_dc($path, "addc", "ADDOMAIN",
+					 "addom.samba.example.com", "");
 	unless ($env) {
 		return undef;
-	}
-
-	if (defined($no_nss) and $no_nss) {
-		$env->{NSS_WRAPPER_MODULE_SO_PATH} = undef;
-		$env->{NSS_WRAPPER_MODULE_FN_PREFIX} = undef;
 	}
 
 	if (not defined($self->check_or_start($env, "single"))) {
@@ -2511,6 +2538,66 @@ sub setup_ad_dc($$)
 	$self->setup_namespaces($env, $upn_array, $spn_array);
 
 	$self->{vars}->{ad_dc} = $env;
+	return $env;
+}
+
+sub setup_ad_dc_no_nss($$)
+{
+	my ($self, $path) = @_;
+
+	# If we didn't build with ADS, pretend this env was never available
+	if (not $self->{target3}->have_ads()) {
+	       return "UNKNOWN";
+	}
+
+	my $env = $self->provision_ad_dc($path, "addc_no_nss", "ADNONSSDOMAIN",
+					 "adnonssdom.samba.example.com", "");
+	unless ($env) {
+		return undef;
+	}
+
+	$env->{NSS_WRAPPER_MODULE_SO_PATH} = undef;
+	$env->{NSS_WRAPPER_MODULE_FN_PREFIX} = undef;
+
+	if (not defined($self->check_or_start($env, "single"))) {
+	    return undef;
+	}
+
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	$self->{vars}->{ad_dc_no_nss} = $env;
+	return $env;
+}
+
+sub setup_ad_dc_no_ntlm($$)
+{
+	my ($self, $path) = @_;
+
+	# If we didn't build with ADS, pretend this env was never available
+	if (not $self->{target3}->have_ads()) {
+	       return "UNKNOWN";
+	}
+
+	my $env = $self->provision_ad_dc($path, "addc_no_ntlm", "ADNONTLMDOMAIN",
+					 "adnontlmdom.samba.example.com",
+					 "ntlm auth = disabled");
+	unless ($env) {
+		return undef;
+	}
+
+	if (not defined($self->check_or_start($env, "prefork"))) {
+	    return undef;
+	}
+
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	$self->{vars}->{ad_dc_no_ntlm} = $env;
 	return $env;
 }
 

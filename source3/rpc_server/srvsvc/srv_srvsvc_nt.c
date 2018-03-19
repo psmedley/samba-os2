@@ -1908,8 +1908,8 @@ WERROR _srvsvc_NetShareSetInfo(struct pipes_struct *p,
 		ret = smbrun(command, NULL, NULL);
 		if (ret == 0) {
 			/* Tell everyone we updated smb.conf. */
-			message_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED,
-					 NULL, 0, NULL);
+			messaging_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED,
+					   NULL, 0);
 		}
 
 		if ( is_disk_op )
@@ -1984,7 +1984,7 @@ WERROR _srvsvc_NetShareAdd(struct pipes_struct *p,
 		return WERR_ACCESS_DENIED;
 
 	if (!lp_add_share_command(talloc_tos()) || !*lp_add_share_command(talloc_tos())) {
-		DEBUG(10,("_srvsvc_NetShareAdd: No add share command\n"));
+		DBG_WARNING("_srvsvc_NetShareAdd: No \"add share command\" parameter set in smb.conf.\n");
 		return WERR_ACCESS_DENIED;
 	}
 
@@ -2111,8 +2111,7 @@ WERROR _srvsvc_NetShareAdd(struct pipes_struct *p,
 	ret = smbrun(command, NULL, NULL);
 	if (ret == 0) {
 		/* Tell everyone we updated smb.conf. */
-		message_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED, NULL, 0,
-				 NULL);
+		messaging_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED, NULL, 0);
 	}
 
 	if ( is_disk_op )
@@ -2196,7 +2195,7 @@ WERROR _srvsvc_NetShareDel(struct pipes_struct *p,
 		return WERR_ACCESS_DENIED;
 
 	if (!lp_delete_share_command(talloc_tos()) || !*lp_delete_share_command(talloc_tos())) {
-		DEBUG(10,("_srvsvc_NetShareDel: No delete share command\n"));
+		DBG_WARNING("_srvsvc_NetShareDel: No \"delete share command\" parameter set in smb.conf.\n");
 		return WERR_ACCESS_DENIED;
 	}
 
@@ -2219,8 +2218,7 @@ WERROR _srvsvc_NetShareDel(struct pipes_struct *p,
 	ret = smbrun(command, NULL, NULL);
 	if (ret == 0) {
 		/* Tell everyone we updated smb.conf. */
-		message_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED, NULL, 0,
-				 NULL);
+		messaging_send_all(p->msg_ctx, MSG_SMB_CONF_UPDATED, NULL, 0);
 	}
 
 	if ( is_disk_op )

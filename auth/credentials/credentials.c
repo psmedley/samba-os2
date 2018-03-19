@@ -550,7 +550,7 @@ _PUBLIC_ struct samr_Password *cli_credentials_get_nt_hash(struct cli_credential
 					  password, password_len);
 		if (converted != sizeof(nt_hash->hash)) {
 			TALLOC_FREE(nt_hash);
-			return false;
+			return NULL;
 		}
 	} else {
 		E_md4hash(password, nt_hash->hash);
@@ -700,7 +700,7 @@ _PUBLIC_ const char *cli_credentials_get_realm(struct cli_credentials *cred)
 
 /**
  * Set the realm for this credentials context, and force it to
- * uppercase for the sainity of our local kerberos libraries 
+ * uppercase for the sanity of our local kerberos libraries
  */
 _PUBLIC_ bool cli_credentials_set_realm(struct cli_credentials *cred, 
 			       const char *val, 
@@ -975,8 +975,9 @@ _PUBLIC_ void cli_credentials_guess(struct cli_credentials *cred,
  * Attach NETLOGON credentials for use with SCHANNEL
  */
 
-_PUBLIC_ void cli_credentials_set_netlogon_creds(struct cli_credentials *cred, 
-						 struct netlogon_creds_CredentialState *netlogon_creds)
+_PUBLIC_ void cli_credentials_set_netlogon_creds(
+	struct cli_credentials *cred,
+	const struct netlogon_creds_CredentialState *netlogon_creds)
 {
 	TALLOC_FREE(cred->netlogon_creds);
 	if (netlogon_creds == NULL) {

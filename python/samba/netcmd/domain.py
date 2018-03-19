@@ -33,6 +33,7 @@ import tempfile
 import logging
 import subprocess
 import time
+import shutil
 from samba import ntstatus
 from samba import NTSTATUSError
 from samba import werror
@@ -57,6 +58,7 @@ from samba.netcmd import (
     SuperCommand,
     Option
     )
+from samba.netcmd.fsmo import get_fsmo_roleowner
 from samba.netcmd.common import netcmd_get_domain_infos_via_cldap
 from samba.samba3 import Samba3
 from samba.samba3 import param as s3param
@@ -84,7 +86,9 @@ from samba.dsdb import (
 
 from samba.provision import (
     provision,
-    ProvisioningError
+    ProvisioningError,
+    DEFAULT_MIN_PWD_LENGTH,
+    setup_path
     )
 
 from samba.provision.common import (
@@ -92,6 +96,12 @@ from samba.provision.common import (
     FILL_NT4SYNC,
     FILL_DRS
 )
+
+string_version_to_constant = {
+    "2008_R2" : DS_DOMAIN_FUNCTION_2008_R2,
+    "2012": DS_DOMAIN_FUNCTION_2012,
+    "2012_R2": DS_DOMAIN_FUNCTION_2012_R2,
+}
 
 def get_testparm_var(testparm, smbconf, varname):
     errfile = open(os.devnull, 'w')
@@ -231,6 +241,10 @@ class cmd_domain_provision(Command):
                 choices=["2000", "2003", "2008", "2008_R2"],
                 help="The domain and forest function level (2000 | 2003 | 2008 | 2008_R2 - always native). Default is (Windows) 2008_R2 Native.",
                 default="2008_R2"),
+         Option("--base-schema", type="choice", metavar="BASE-SCHEMA",
+                choices=["2008_R2", "2008_R2_old", "2012", "2012_R2"],
+                help="The base schema files to use. Default is (Windows) 2008_R2.",
+                default="2008_R2"),
          Option("--next-rid", type="int", metavar="NEXTRID", default=1000,
                 help="The initial nextRid value (only needed for upgrades).  Default is 1000."),
          Option("--partitions-only",
@@ -240,6 +254,9 @@ class cmd_domain_provision(Command):
          Option("--ol-mmr-urls", type="string", metavar="LDAPSERVER",
                 help="List of LDAP-URLS [ ldap://<FQHN>:<PORT>/  (where <PORT> has to be different than 389!) ] separated with comma (\",\") for use with OpenLDAP-MMR (Multi-Master-Replication), e.g.: \"ldap://s4dc1:9000,ldap://s4dc2:9000\""),
          Option("--use-rfc2307", action="store_true", help="Use AD to store posix attributes (default = no)"),
+         Option("--plaintext-secrets", action="store_true",
+                help="Store secret/sensitive values as plain text on disk" +
+                     "(default is to encrypt secret/ensitive values)"),
         ]
 
     openldap_options = [
@@ -308,7 +325,9 @@ class cmd_domain_provision(Command):
             ldap_backend_nosync=None,
             ldap_backend_extra_port=None,
             ldap_backend_forced_uri=None,
-            ldap_dryrun_mode=None):
+            ldap_dryrun_mode=None,
+            base_schema=None,
+            plaintext_secrets=False):
 
         self.logger = self.get_logger("provision")
         if quiet:
@@ -370,8 +389,9 @@ class cmd_domain_provision(Command):
 
             while True:
                 adminpassplain = getpass("Administrator password: ")
-                if not adminpassplain:
-                    self.errf.write("Invalid administrator password.\n")
+                issue = self._adminpass_issue(adminpassplain)
+                if issue:
+                    self.errf.write("%s.\n" % issue)
                 else:
                     adminpassverify = getpass("Retype password: ")
                     if not adminpassplain == adminpassverify:
@@ -387,7 +407,11 @@ class cmd_domain_provision(Command):
             if domain is None:
                 raise CommandError("No domain set!")
 
-        if not adminpass:
+        if adminpass:
+            issue = self._adminpass_issue(adminpass)
+            if issue:
+                raise CommandError(issue)
+        else:
             self.logger.info("Administrator password will be set randomly!")
 
         if function_level == "2000":
@@ -471,7 +495,9 @@ class cmd_domain_provision(Command):
                   use_rfc2307=use_rfc2307, skip_sysvolacl=False,
                   ldap_backend_extra_port=ldap_backend_extra_port,
                   ldap_backend_forced_uri=ldap_backend_forced_uri,
-                  nosync=ldap_backend_nosync, ldap_dryrun_mode=ldap_dryrun_mode)
+                  nosync=ldap_backend_nosync, ldap_dryrun_mode=ldap_dryrun_mode,
+                  base_schema=base_schema,
+                  plaintext_secrets=plaintext_secrets)
 
         except ProvisioningError, e:
             raise CommandError("Provision failed", e)
@@ -500,6 +526,20 @@ class cmd_domain_provision(Command):
                 handle.close()
 
         self.logger.warning("No nameserver found in %s" % RESOLV_CONF)
+
+    def _adminpass_issue(self, adminpass):
+        """Returns error string for a bad administrator password,
+        or None if acceptable"""
+
+        if len(adminpass.decode('utf-8')) < DEFAULT_MIN_PWD_LENGTH:
+            return "Administrator password does not meet the default minimum" \
+                " password length requirement (%d characters)" \
+                % DEFAULT_MIN_PWD_LENGTH
+        elif not samba.check_password_quality(adminpass):
+            return "Administrator password does not meet the default" \
+                " quality standards"
+        else:
+            return None
 
 
 class cmd_domain_dcpromo(Command):
@@ -610,6 +650,9 @@ class cmd_domain_join(Command):
                    "BIND9_DLZ uses samba4 AD to store zone information, "
                    "NONE skips the DNS setup entirely (this DC will not be a DNS server)",
                default="SAMBA_INTERNAL"),
+        Option("--plaintext-secrets", action="store_true",
+               help="Store secret/sensitive values as plain text on disk" +
+                    "(default is to encrypt secret/ensitive values)"),
         Option("--quiet", help="Be quiet", action="store_true"),
         Option("--verbose", help="Be verbose", action="store_true")
        ]
@@ -627,7 +670,7 @@ class cmd_domain_join(Command):
             versionopts=None, server=None, site=None, targetdir=None,
             domain_critical_only=False, parent_domain=None, machinepass=None,
             use_ntvfs=False, dns_backend=None, adminpass=None,
-            quiet=False, verbose=False):
+            quiet=False, verbose=False, plaintext_secrets=False):
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp)
         net = Net(creds, lp, server=credopts.ipaddress)
@@ -658,13 +701,16 @@ class cmd_domain_join(Command):
             join_DC(logger=logger, server=server, creds=creds, lp=lp, domain=domain,
                     site=site, netbios_name=netbios_name, targetdir=targetdir,
                     domain_critical_only=domain_critical_only,
-                    machinepass=machinepass, use_ntvfs=use_ntvfs, dns_backend=dns_backend)
+                    machinepass=machinepass, use_ntvfs=use_ntvfs,
+                    dns_backend=dns_backend,
+                    plaintext_secrets=plaintext_secrets)
         elif role == "RODC":
             join_RODC(logger=logger, server=server, creds=creds, lp=lp, domain=domain,
                       site=site, netbios_name=netbios_name, targetdir=targetdir,
                       domain_critical_only=domain_critical_only,
                       machinepass=machinepass, use_ntvfs=use_ntvfs,
-                      dns_backend=dns_backend)
+                      dns_backend=dns_backend,
+                      plaintext_secrets=plaintext_secrets)
         elif role == "SUBDOMAIN":
             if not adminpass:
                 logger.info("Administrator password will be set randomly!")
@@ -677,7 +723,8 @@ class cmd_domain_join(Command):
                            netbios_name=netbios_name, netbios_domain=netbios_domain,
                            targetdir=targetdir, machinepass=machinepass,
                            use_ntvfs=use_ntvfs, dns_backend=dns_backend,
-                           adminpass=adminpass)
+                           adminpass=adminpass,
+                           plaintext_secrets=plaintext_secrets)
         else:
             raise CommandError("Invalid role '%s' (possible values: MEMBER, DC, RODC, SUBDOMAIN)" % role)
 
@@ -1724,6 +1771,9 @@ class DomainTrustCommand(Command):
             if require_pdc:
                 remote_flags |= nbt.NBT_SERVER_PDC
             remote_info = remote_net.finddc(flags=remote_flags, domain=domain, address=remote_server)
+        except NTSTATUSError as error:
+            raise CommandError("Failed to find a writeable DC for domain '%s': %s" %
+                               (domain, error[1]))
         except Exception:
             raise CommandError("Failed to find a writeable DC for domain '%s'" % domain)
         flag_map = {
@@ -3832,6 +3882,421 @@ class cmd_domain_tombstones(SuperCommand):
     subcommands = {}
     subcommands["expunge"] = cmd_domain_tombstones_expunge()
 
+class ldif_schema_update:
+    """Helper class for applying LDIF schema updates"""
+
+    def __init__(self):
+        self.is_defunct = False
+        self.unknown_oid = None
+        self.dn = None
+        self.ldif = ""
+
+    def _ldap_schemaUpdateNow(self, samdb):
+        ldif = """
+dn:
+changetype: modify
+add: schemaUpdateNow
+schemaUpdateNow: 1
+"""
+        samdb.modify_ldif(ldif)
+
+    def can_ignore_failure(self, error):
+        """Checks if we can safely ignore failure to apply an LDIF update"""
+        (num, errstr) = error.args
+
+        # Microsoft has marked objects as defunct that Samba doesn't know about
+        if num == ldb.ERR_NO_SUCH_OBJECT and self.is_defunct:
+            print("Defunct object %s doesn't exist, skipping" % self.dn)
+            return True
+        elif self.unknown_oid is not None:
+            print("Skipping unknown OID %s for object %s" %(self.unknown_oid, self.dn))
+            return True
+
+        return False
+
+    def apply(self, samdb):
+        """Applies a single LDIF update to the schema"""
+
+        try:
+            try:
+                samdb.modify_ldif(self.ldif, controls=['relax:0'])
+            except ldb.LdbError as e:
+                if e.args[0] == ldb.ERR_INVALID_ATTRIBUTE_SYNTAX:
+
+                    # REFRESH after a failed change
+
+                    # Otherwise the OID-to-attribute mapping in
+                    # _apply_updates_in_file() won't work, because it
+                    # can't lookup the new OID in the schema
+                    self._ldap_schemaUpdateNow(samdb)
+
+                    samdb.modify_ldif(self.ldif, controls=['relax:0'])
+                else:
+                    raise
+        except ldb.LdbError as e:
+            if self.can_ignore_failure(e):
+                return 0
+            else:
+                print("Exception: %s" % e)
+                print("Encountered while trying to apply the following LDIF")
+                print("----------------------------------------------------")
+                print("%s" % self.ldif)
+
+                raise
+
+        return 1
+
+class cmd_domain_schema_upgrade(Command):
+    """Domain schema upgrading"""
+
+    synopsis = "%prog [options]"
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "versionopts": options.VersionOptions,
+        "credopts": options.CredentialsOptions,
+    }
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server", type=str,
+               metavar="URL", dest="H"),
+        Option("--quiet", help="Be quiet", action="store_true"),
+        Option("--verbose", help="Be verbose", action="store_true"),
+        Option("--schema", type="choice", metavar="SCHEMA",
+               choices=["2012", "2012_R2"],
+               help="The schema file to upgrade to. Default is (Windows) 2012_R2.",
+               default="2012_R2"),
+        Option("--ldf-file", type=str, default=None,
+                help="Just apply the schema updates in the adprep/.LDF file(s) specified"),
+        Option("--base-dir", type=str, default=None,
+               help="Location of ldf files Default is ${SETUPDIR}/adprep.")
+    ]
+
+    def _apply_updates_in_file(self, samdb, ldif_file):
+        """
+        Applies a series of updates specified in an .LDIF file. The .LDIF file
+        is based on the adprep Schema updates provided by Microsoft.
+        """
+        count = 0
+        ldif_op = ldif_schema_update()
+
+        # parse the file line by line and work out each update operation to apply
+        for line in ldif_file:
+
+            line = line.rstrip()
+
+            # the operations in the .LDIF file are separated by blank lines. If
+            # we hit a blank line, try to apply the update we've parsed so far
+            if line == '':
+
+                # keep going if we haven't parsed anything yet
+                if ldif_op.ldif == '':
+                    continue
+
+                # Apply the individual change
+                count += ldif_op.apply(samdb)
+
+                # start storing the next operation from scratch again
+                ldif_op = ldif_schema_update()
+                continue
+
+            # replace the placeholder domain name in the .ldif file with the real domain
+            if line.upper().endswith('DC=X'):
+                line = line[:-len('DC=X')] + str(samdb.get_default_basedn())
+            elif line.upper().endswith('CN=X'):
+                line = line[:-len('CN=X')] + str(samdb.get_default_basedn())
+
+            values = line.split(':')
+
+            if values[0].lower() == 'dn':
+                ldif_op.dn = values[1].strip()
+
+            # replace the Windows-specific operation with the Samba one
+            if values[0].lower() == 'changetype':
+                line = line.lower().replace(': ntdsschemaadd',
+                                            ': add')
+                line = line.lower().replace(': ntdsschemamodify',
+                                            ': modify')
+
+            if values[0].lower() in ['rdnattid', 'subclassof',
+                                     'systemposssuperiors',
+                                     'systemmaycontain',
+                                     'systemauxiliaryclass']:
+                _, value = values
+
+                # The Microsoft updates contain some OIDs we don't recognize.
+                # Query the DB to see if we can work out the OID this update is
+                # referring to. If we find a match, then replace the OID with
+                # the ldapDisplayname
+                if '.' in value:
+                    res = samdb.search(base=samdb.get_schema_basedn(),
+                                       expression="(|(attributeId=%s)(governsId=%s))" %
+                                       (value, value),
+                                       attrs=['ldapDisplayName'])
+
+                    if len(res) != 1:
+                        ldif_op.unknown_oid = value
+                    else:
+                        display_name = res[0]['ldapDisplayName'][0]
+                        line = line.replace(value, ' ' + display_name)
+
+            # Microsoft has marked objects as defunct that Samba doesn't know about
+            if values[0].lower() == 'isdefunct' and values[1].strip().lower() == 'true':
+                ldif_op.is_defunct = True
+
+            # Samba has added the showInAdvancedViewOnly attribute to all objects,
+            # so rather than doing an add, we need to do a replace
+            if values[0].lower() == 'add' and values[1].strip().lower() == 'showinadvancedviewonly':
+                line = 'replace: showInAdvancedViewOnly'
+
+            # Add the line to the current LDIF operation (including the newline
+            # we stripped off at the start of the loop)
+            ldif_op.ldif += line + '\n'
+
+        return count
+
+
+    def _apply_update(self, samdb, update_file, base_dir):
+        """Wrapper function for parsing an LDIF file and applying the updates"""
+
+        print("Applying %s updates..." % update_file)
+
+        ldif_file = None
+        try:
+            ldif_file = open(os.path.join(base_dir, update_file))
+
+            count = self._apply_updates_in_file(samdb, ldif_file)
+
+        finally:
+            if ldif_file:
+                ldif_file.close()
+
+        print("%u changes applied" % count)
+
+        return count
+
+    def run(self, **kwargs):
+        from samba.ms_schema_markdown import read_ms_markdown
+        from samba.schema import Schema
+
+        updates_allowed_overriden = False
+        sambaopts = kwargs.get("sambaopts")
+        credopts = kwargs.get("credopts")
+        versionpts = kwargs.get("versionopts")
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp)
+        H = kwargs.get("H")
+        target_schema = kwargs.get("schema")
+        ldf_files = kwargs.get("ldf_file")
+        base_dir = kwargs.get("base_dir")
+
+        temp_folder = None
+
+        samdb = SamDB(url=H, session_info=system_session(), credentials=creds, lp=lp)
+
+        # we're not going to get far if the config doesn't allow schema updates
+        if lp.get("dsdb:schema update allowed") is None:
+            lp.set("dsdb:schema update allowed", "yes")
+            print("Temporarily overriding 'dsdb:schema update allowed' setting")
+            updates_allowed_overriden = True
+
+        own_dn = ldb.Dn(samdb, samdb.get_dsServiceName())
+        master = get_fsmo_roleowner(samdb, str(samdb.get_schema_basedn()),
+                                    'schema')
+        if own_dn != master:
+            raise CommandError("This server is not the schema master.")
+
+        # if specific LDIF files were specified, just apply them
+        if ldf_files:
+            schema_updates = ldf_files.split(",")
+        else:
+            schema_updates = []
+
+            # work out the version of the target schema we're upgrading to
+            end = Schema.get_version(target_schema)
+
+            # work out the version of the schema we're currently using
+            res = samdb.search(base=samdb.get_schema_basedn(),
+                               scope=ldb.SCOPE_BASE, attrs=['objectVersion'])
+
+            if len(res) != 1:
+                raise CommandError('Could not determine current schema version')
+            start = int(res[0]['objectVersion'][0]) + 1
+
+            diff_dir = setup_path("adprep/WindowsServerDocs")
+            if base_dir is None:
+                # Read from the Schema-Updates.md file
+                temp_folder = tempfile.mkdtemp()
+
+                update_file = setup_path("adprep/WindowsServerDocs/Schema-Updates.md")
+
+                try:
+                    read_ms_markdown(update_file, temp_folder)
+                except Exception as e:
+                    print("Exception in markdown parsing: %s" % e)
+                    shutil.rmtree(temp_folder)
+                    raise CommandError('Failed to upgrade schema')
+
+                base_dir = temp_folder
+
+            for version in range(start, end + 1):
+                update = 'Sch%d.ldf' % version
+                schema_updates.append(update)
+
+                # Apply patches if we parsed the Schema-Updates.md file
+                diff = os.path.abspath(os.path.join(diff_dir, update + '.diff'))
+                if temp_folder and os.path.exists(diff):
+                    p = subprocess.Popen(['patch', update, '-i', diff],
+                                         stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, cwd=temp_folder)
+                    stdout, stderr = p.communicate()
+
+                    if p.returncode:
+                        print("Exception in patch: %s\n%s" % (stdout, stderr))
+                        shutil.rmtree(temp_folder)
+                        raise CommandError('Failed to upgrade schema')
+
+                    print("Patched %s using %s" % (update, diff))
+
+        if base_dir is None:
+            base_dir = setup_path("adprep")
+
+        samdb.transaction_start()
+        count = 0
+        error_encountered = False
+
+        try:
+            # Apply the schema updates needed to move to the new schema version
+            for ldif_file in schema_updates:
+                count += self._apply_update(samdb, ldif_file, base_dir)
+
+            if count > 0:
+                samdb.transaction_commit()
+                print("Schema successfully updated")
+            else:
+                print("No changes applied to schema")
+                samdb.transaction_cancel()
+        except Exception as e:
+            print("Exception: %s" % e)
+            print("Error encountered, aborting schema upgrade")
+            samdb.transaction_cancel()
+            error_encountered = True
+
+        if updates_allowed_overriden:
+            lp.set("dsdb:schema update allowed", "no")
+
+        if temp_folder:
+            shutil.rmtree(temp_folder)
+
+        if error_encountered:
+            raise CommandError('Failed to upgrade schema')
+
+class cmd_domain_functional_prep(Command):
+    """Domain functional level preparation"""
+
+    synopsis = "%prog [options]"
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "versionopts": options.VersionOptions,
+        "credopts": options.CredentialsOptions,
+    }
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server", type=str,
+               metavar="URL", dest="H"),
+        Option("--quiet", help="Be quiet", action="store_true"),
+        Option("--verbose", help="Be verbose", action="store_true"),
+        Option("--function-level", type="choice", metavar="FUNCTION_LEVEL",
+               choices=["2008_R2", "2012", "2012_R2"],
+               help="The schema file to upgrade to. Default is (Windows) 2012_R2.",
+               default="2012_R2"),
+        Option("--forest-prep", action="store_true",
+               help="Run the forest prep (by default, both the domain and forest prep are run)."),
+        Option("--domain-prep", action="store_true",
+               help="Run the domain prep (by default, both the domain and forest prep are run).")
+    ]
+
+    def run(self, **kwargs):
+        updates_allowed_overriden = False
+        sambaopts = kwargs.get("sambaopts")
+        credopts = kwargs.get("credopts")
+        versionpts = kwargs.get("versionopts")
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp)
+        H = kwargs.get("H")
+        target_level = string_version_to_constant[kwargs.get("function_level")]
+        forest_prep = kwargs.get("forest_prep")
+        domain_prep = kwargs.get("domain_prep")
+
+        samdb = SamDB(url=H, session_info=system_session(), credentials=creds, lp=lp)
+
+        # we're not going to get far if the config doesn't allow schema updates
+        if lp.get("dsdb:schema update allowed") is None:
+            lp.set("dsdb:schema update allowed", "yes")
+            print("Temporarily overriding 'dsdb:schema update allowed' setting")
+            updates_allowed_overriden = True
+
+        if forest_prep is None and domain_prep is None:
+            forest_prep = True
+            domain_prep = True
+
+        own_dn = ldb.Dn(samdb, samdb.get_dsServiceName())
+        if forest_prep:
+            master = get_fsmo_roleowner(samdb, str(samdb.get_schema_basedn()),
+                                        'schema')
+            if own_dn != master:
+                raise CommandError("This server is not the schema master.")
+
+        if domain_prep:
+            domain_dn = samdb.domain_dn()
+            infrastructure_dn = "CN=Infrastructure," + domain_dn
+            master = get_fsmo_roleowner(samdb, infrastructure_dn,
+                                       'infrastructure')
+            if own_dn != master:
+                raise CommandError("This server is not the infrastructure master.")
+
+        if forest_prep:
+            samdb.transaction_start()
+            error_encountered = False
+            try:
+                from samba.forest_update import ForestUpdate
+                forest = ForestUpdate(samdb, fix=True)
+
+                forest.check_updates_iterator([53, 79, 80, 81, 82, 83])
+                forest.check_updates_functional_level(target_level,
+                                                      DS_DOMAIN_FUNCTION_2008_R2,
+                                                      update_revision=True)
+
+                samdb.transaction_commit()
+            except Exception as e:
+                print("Exception: %s" % e)
+                samdb.transaction_cancel()
+                error_encountered = True
+
+        if domain_prep:
+            samdb.transaction_start()
+            error_encountered = False
+            try:
+                from samba.domain_update import DomainUpdate
+
+                domain = DomainUpdate(samdb, fix=True)
+                domain.check_updates_functional_level(target_level,
+                                                      DS_DOMAIN_FUNCTION_2008,
+                                                      update_revision=True)
+
+                samdb.transaction_commit()
+            except Exception as e:
+                print("Exception: %s" % e)
+                samdb.transaction_cancel()
+                error_encountered = True
+
+        if updates_allowed_overriden:
+            lp.set("dsdb:schema update allowed", "no")
+
+        if error_encountered:
+            raise CommandError('Failed to perform functional prep')
+
 class cmd_domain(SuperCommand):
     """Domain management."""
 
@@ -3849,3 +4314,5 @@ class cmd_domain(SuperCommand):
     subcommands["samba3upgrade"] = cmd_domain_samba3upgrade()
     subcommands["trust"] = cmd_domain_trust()
     subcommands["tombstones"] = cmd_domain_tombstones()
+    subcommands["schemaupgrade"] = cmd_domain_schema_upgrade()
+    subcommands["functionalprep"] = cmd_domain_functional_prep()

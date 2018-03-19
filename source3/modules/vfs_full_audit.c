@@ -110,7 +110,6 @@ typedef enum _vfs_op_type {
 	SMB_VFS_OP_MKDIR,
 	SMB_VFS_OP_RMDIR,
 	SMB_VFS_OP_CLOSEDIR,
-	SMB_VFS_OP_INIT_SEARCH_OP,
 
 	/* File operations */
 
@@ -256,7 +255,6 @@ static struct {
 	{ SMB_VFS_OP_MKDIR,	"mkdir" },
 	{ SMB_VFS_OP_RMDIR,	"rmdir" },
 	{ SMB_VFS_OP_CLOSEDIR,	"closedir" },
-	{ SMB_VFS_OP_INIT_SEARCH_OP, "init_search_op" },
 	{ SMB_VFS_OP_OPEN,	"open" },
 	{ SMB_VFS_OP_CREATE_FILE, "create_file" },
 	{ SMB_VFS_OP_CLOSE,	"close" },
@@ -521,6 +519,9 @@ static TALLOC_CTX *do_log_ctx(void)
         }
         return tmp_do_log_ctx;
 }
+
+static void do_log(vfs_op_type op, bool success, vfs_handle_struct *handle,
+		   const char *format, ...) PRINTF_ATTRIBUTE(4, 5);
 
 static void do_log(vfs_op_type op, bool success, vfs_handle_struct *handle,
 		   const char *format, ...)
@@ -928,14 +929,6 @@ static int smb_full_audit_closedir(vfs_handle_struct *handle,
 	do_log(SMB_VFS_OP_CLOSEDIR, (result >= 0), handle, "");
 
 	return result;
-}
-
-static void smb_full_audit_init_search_op(vfs_handle_struct *handle,
-			DIR *dirp)
-{
-	SMB_VFS_NEXT_INIT_SEARCH_OP(handle, dirp);
-
-	do_log(SMB_VFS_OP_INIT_SEARCH_OP, True, handle, "");
 }
 
 static int smb_full_audit_open(vfs_handle_struct *handle,
@@ -1421,7 +1414,7 @@ static uint64_t smb_full_audit_get_alloc_size(vfs_handle_struct *handle,
 	result = SMB_VFS_NEXT_GET_ALLOC_SIZE(handle, fsp, sbuf);
 
 	do_log(SMB_VFS_OP_GET_ALLOC_SIZE, (result != (uint64_t)-1), handle,
-			"%llu", result);
+			"%llu", (unsigned long long)result);
 
 	return result;
 }
@@ -1793,7 +1786,10 @@ static NTSTATUS smb_full_audit_brl_lock_windows(struct vfs_handle_struct *handle
 	do_log(SMB_VFS_OP_BRL_LOCK_WINDOWS, NT_STATUS_IS_OK(result), handle,
 	    "%s:%llu-%llu. type=%d. blocking=%d",
 	       fsp_str_do_log(brl_fsp(br_lck)),
-	    plock->start, plock->size, plock->lock_type, blocking_lock);
+	       (unsigned long long)plock->start,
+	       (unsigned long long)plock->size,
+	       plock->lock_type,
+	       blocking_lock);
 
 	return result;
 }
@@ -1810,8 +1806,9 @@ static bool smb_full_audit_brl_unlock_windows(struct vfs_handle_struct *handle,
 
 	do_log(SMB_VFS_OP_BRL_UNLOCK_WINDOWS, (result == 0), handle,
 	       "%s:%llu-%llu:%d", fsp_str_do_log(brl_fsp(br_lck)),
-	       plock->start,
-	    plock->size, plock->lock_type);
+	       (unsigned long long)plock->start,
+	       (unsigned long long)plock->size,
+	       plock->lock_type);
 
 	return result;
 }
@@ -1826,8 +1823,9 @@ static bool smb_full_audit_brl_cancel_windows(struct vfs_handle_struct *handle,
 
 	do_log(SMB_VFS_OP_BRL_CANCEL_WINDOWS, (result == 0), handle,
 	       "%s:%llu-%llu:%d", fsp_str_do_log(brl_fsp(br_lck)),
-	       plock->start,
-	    plock->size, plock->lock_type);
+	       (unsigned long long)plock->start,
+	       (unsigned long long)plock->size,
+	       plock->lock_type);
 
 	return result;
 }
@@ -1841,8 +1839,10 @@ static bool smb_full_audit_strict_lock_check(struct vfs_handle_struct *handle,
 	result = SMB_VFS_NEXT_STRICT_LOCK_CHECK(handle, fsp, plock);
 
 	do_log(SMB_VFS_OP_STRICT_LOCK_CHECK, result, handle,
-	    "%s:%llu-%llu:%d", fsp_str_do_log(fsp), plock->start,
-	    plock->size, plock->lock_type);
+	       "%s:%llu-%llu:%d", fsp_str_do_log(fsp),
+	       (unsigned long long)plock->start,
+	       (unsigned long long)plock->size,
+	       plock->lock_type);
 
 	return result;
 }
@@ -2516,7 +2516,6 @@ static struct vfs_fn_pointers vfs_full_audit_fns = {
 	.mkdir_fn = smb_full_audit_mkdir,
 	.rmdir_fn = smb_full_audit_rmdir,
 	.closedir_fn = smb_full_audit_closedir,
-	.init_search_op_fn = smb_full_audit_init_search_op,
 	.open_fn = smb_full_audit_open,
 	.create_file_fn = smb_full_audit_create_file,
 	.close_fn = smb_full_audit_close,

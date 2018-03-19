@@ -536,7 +536,26 @@ static bool wbinfo_list_domains(bool list_all_domains, bool verbose)
 
 		switch(domain_list[i].trust_type) {
 		case WBC_DOMINFO_TRUSTTYPE_NONE:
-			d_printf("None        ");
+			if (domain_list[i].trust_routing != NULL) {
+				d_printf("%s\n", domain_list[i].trust_routing);
+			} else {
+				d_printf("None\n");
+			}
+			continue;
+		case WBC_DOMINFO_TRUSTTYPE_LOCAL:
+			d_printf("Local\n");
+			continue;
+		case WBC_DOMINFO_TRUSTTYPE_RWDC:
+			d_printf("RWDC\n");
+			continue;
+		case WBC_DOMINFO_TRUSTTYPE_RODC:
+			d_printf("RODC\n");
+			continue;
+		case WBC_DOMINFO_TRUSTTYPE_PDC:
+			d_printf("PDC\n");
+			continue;
+		case WBC_DOMINFO_TRUSTTYPE_WKSTA:
+			d_printf("Workstation ");
 			break;
 		case WBC_DOMINFO_TRUSTTYPE_FOREST:
 			d_printf("Forest      ");
@@ -1105,6 +1124,12 @@ static bool wbinfo_xids_to_sids(const char *arg)
 
 	for (i=0; i<num_xids; i++) {
 		char str[WBC_SID_STRING_BUFLEN];
+		struct wbcDomainSid null_sid = { 0 };
+
+		if (memcmp(&null_sid, &sids[i], sizeof(struct wbcDomainSid)) == 0) {
+			d_printf("NOT MAPPED\n");
+			continue;
+		}
 		wbcSidToStringBuf(&sids[i], str, sizeof(str));
 		d_printf("%s\n", str);
 	}
@@ -1773,13 +1798,22 @@ static bool wbinfo_auth_crap(char *username, bool use_ntlmv2, bool use_lanman)
 	if (use_ntlmv2) {
 		DATA_BLOB server_chal;
 		DATA_BLOB names_blob;
+		const char *netbios_name = NULL;
+		const char *domain = NULL;
+
+		netbios_name = get_winbind_netbios_name(),
+		domain = get_winbind_domain();
+		if (domain == NULL) {
+			d_fprintf(stderr, "Failed to get domain from winbindd\n");
+			return false;
+		}
 
 		server_chal = data_blob(params.password.response.challenge, 8);
 
 		/* Pretend this is a login to 'us', for blob purposes */
 		names_blob = NTLMv2_generate_names_blob(NULL,
-						get_winbind_netbios_name(),
-						get_winbind_domain());
+							netbios_name,
+							domain);
 
 		if (pass != NULL &&
 		    !SMBNTLMv2encrypt(NULL, name_user, name_domain, pass,

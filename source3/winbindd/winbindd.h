@@ -28,8 +28,6 @@
 #include "librpc/gen_ndr/dcerpc.h"
 #include "librpc/gen_ndr/winbind.h"
 
-#include "talloc_dict.h"
-
 #include "../lib/util/tevent_ntstatus.h"
 
 #ifdef HAVE_LIBNSCD
@@ -101,8 +99,7 @@ struct winbindd_cm_conn {
 	struct policy_handle lsa_policy;
 
 	struct rpc_pipe_client *netlogon_pipe;
-	struct netlogon_creds_cli_context *netlogon_creds;
-	uint32_t netlogon_flags;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx;
 	bool netlogon_force_reauth;
 };
 
@@ -141,9 +138,11 @@ struct winbindd_domain {
 	char *alt_name;                        /* alt Domain name, if any (FQDN for ADS) */
 	char *forest_name;                     /* Name of the AD forest we're in */
 	struct dom_sid sid;                           /* SID for this domain */
+	enum netr_SchannelType secure_channel_type;
 	uint32_t domain_flags;                   /* Domain flags from netlogon.h */
 	uint32_t domain_type;                    /* Domain type from netlogon.h */
 	uint32_t domain_trust_attribs;           /* Trust attribs from netlogon.h */
+	struct winbindd_domain *routing_domain;
 	bool initialized;		       /* Did we already ask for the domain mode? */
 	bool native_mode;                      /* is this a win2k domain in native mode ? */
 	bool active_directory;                 /* is this a win2k active directory ? */
@@ -184,6 +183,9 @@ struct winbindd_domain {
 	/* The child pid we're talking to */
 
 	struct winbindd_child *children;
+
+	struct tevent_queue *queue;
+	struct dcerpc_binding_handle *binding_handle;
 
 	/* Callback we use to try put us back online. */
 

@@ -71,7 +71,7 @@ smbc_getUser(SMBCCTX *c)
 
 /** Set the username used for making connections */
 void
-smbc_setUser(SMBCCTX *c, char * user)
+smbc_setUser(SMBCCTX *c, const char *user)
 {
 	SAFE_FREE(c->user);
 	if (user) {
@@ -96,6 +96,14 @@ smbc_setDebug(SMBCCTX *c, int debug)
         c->debug = debug;
 	lp_set_cmdline("log level", buf);
 	TALLOC_FREE(frame);
+}
+
+/** set callback function which will be called for logging */
+void
+smbc_setLogCallback(SMBCCTX *c, void *private_ptr,
+		    smbc_debug_callback_fn fn)
+{
+	debug_set_callback(private_ptr, fn);
 }
 
 /**

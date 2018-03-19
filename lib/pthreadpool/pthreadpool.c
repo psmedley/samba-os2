@@ -652,11 +652,13 @@ int pthreadpool_add_job(struct pthreadpool *pool, int job_id,
 	 * Add job to the end of the queue
 	 */
 	if (!pthreadpool_put_job(pool, job_id, fn, private_data)) {
-		pthread_mutex_unlock(&pool->mutex);
+		res = pthread_mutex_unlock(&pool->mutex);
+		assert(res == 0);
 		return ENOMEM;
 	}
 
 	if (pool->num_idle > 0) {
+		int unlock_res;
 		/*
 		 * We have idle threads, wake one.
 		 */
@@ -664,7 +666,8 @@ int pthreadpool_add_job(struct pthreadpool *pool, int job_id,
 		if (res != 0) {
 			pthreadpool_undo_put_job(pool);
 		}
-		pthread_mutex_unlock(&pool->mutex);
+		unlock_res = pthread_mutex_unlock(&pool->mutex);
+		assert(unlock_res == 0);
 		return res;
 	}
 
@@ -673,32 +676,39 @@ int pthreadpool_add_job(struct pthreadpool *pool, int job_id,
 		/*
 		 * No more new threads, we just queue the request
 		 */
-		pthread_mutex_unlock(&pool->mutex);
+		res = pthread_mutex_unlock(&pool->mutex);
+		assert(res == 0);
 		return 0;
 	}
 
 	res = pthreadpool_create_thread(pool);
-	if (res != 0) {
-		if (pool->num_threads == 0) {
-			/*
-			 * No thread could be created to run job,
-			 * fallback to sync call.
-			 */
-			pthreadpool_undo_put_job(pool);
-			pthread_mutex_unlock(&pool->mutex);
+	if (res == 0) {
+		res = pthread_mutex_unlock(&pool->mutex);
+		assert(res == 0);
+		return 0;
+	}
 
-			fn(private_data);
-			return pool->signal_fn(job_id, fn, private_data,
-					       pool->signal_fn_private_data);
-		}
-
+	if (pool->num_threads != 0) {
 		/*
 		 * At least one thread is still available, let
 		 * that one run the queued job.
 		 */
-		res = 0;
+		res = pthread_mutex_unlock(&pool->mutex);
+		assert(res == 0);
+		return 0;
 	}
 
-	pthread_mutex_unlock(&pool->mutex);
+	/*
+	 * No thread could be created to run job, fallback to sync
+	 * call.
+	 */
+	pthreadpool_undo_put_job(pool);
+
+	res = pthread_mutex_unlock(&pool->mutex);
+	assert(res == 0);
+
+	fn(private_data);
+	res = pool->signal_fn(job_id, fn, private_data,
+			      pool->signal_fn_private_data);
 	return res;
 }

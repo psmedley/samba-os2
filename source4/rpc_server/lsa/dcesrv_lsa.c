@@ -1360,15 +1360,8 @@ static NTSTATUS dcesrv_lsa_CreateTrustedDomain_base(struct dcesrv_call_state *dc
 				     "winbind_server",
 				     &num_server_ids, &server_ids);
 	if (NT_STATUS_IS_OK(status) && num_server_ids >= 1) {
-		enum ndr_err_code ndr_err;
-		DATA_BLOB b = {};
-
-		ndr_err = ndr_push_struct_blob(&b, mem_ctx, r->in.info,
-			(ndr_push_flags_fn_t)ndr_push_lsa_TrustDomainInfoInfoEx);
-		if (NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-			imessaging_send(dce_call->msg_ctx, server_ids[0],
-				MSG_WINBIND_NEW_TRUSTED_DOMAIN, &b);
-		}
+		imessaging_send(dce_call->msg_ctx, server_ids[0],
+				MSG_WINBIND_RELOAD_TRUSTED_DOMAINS, NULL);
 	}
 	TALLOC_FREE(server_ids);
 
@@ -4041,7 +4034,8 @@ static NTSTATUS dcesrv_lsa_SetInfoPolicy2(struct dcesrv_call_state *dce_call,
 	DCESRV_FAULT(DCERPC_FAULT_OP_RNG_ERROR);
 }
 
-static void kdc_get_policy(struct loadparm_context *lp_ctx,
+static void kdc_get_policy(TALLOC_CTX *mem_ctx,
+			   struct loadparm_context *lp_ctx,
 			   struct smb_krb5_context *smb_krb5_context,
 			   struct lsa_DomainInfoKerberos *k)
 {
@@ -4049,12 +4043,10 @@ static void kdc_get_policy(struct loadparm_context *lp_ctx,
 	time_t usr_tkt_lifetime;
 	time_t renewal_lifetime;
 
-	/* These should be set and stored via Group Policy, but until then, some defaults are in order */
-
 	/* Our KDC always re-validates the client */
 	k->authentication_options = LSA_POLICY_KERBEROS_VALIDATE_CLIENT;
 
-	lpcfg_default_kdc_policy(lp_ctx, &svc_tkt_lifetime,
+	lpcfg_default_kdc_policy(mem_ctx, lp_ctx, &svc_tkt_lifetime,
 				 &usr_tkt_lifetime, &renewal_lifetime);
 
 	unix_to_nt_time(&k->service_tkt_lifetime, svc_tkt_lifetime);
@@ -4103,7 +4095,7 @@ static NTSTATUS dcesrv_lsa_QueryDomainInformationPolicy(struct dcesrv_call_state
 			*r->out.info = NULL;
 			return NT_STATUS_INTERNAL_ERROR;
 		}
-		kdc_get_policy(dce_call->conn->dce_ctx->lp_ctx,
+		kdc_get_policy(mem_ctx, dce_call->conn->dce_ctx->lp_ctx,
 			       smb_krb5_context,
 			       k);
 		talloc_free(smb_krb5_context);
@@ -4371,6 +4363,8 @@ static NTSTATUS dcesrv_lsa_lsaRSetForestTrustInformation(struct dcesrv_call_stat
 	struct lsa_ForestTrustCollisionInfo *c_info = NULL;
 	DATA_BLOB ft_blob = {};
 	struct ldb_message *msg = NULL;
+	struct server_id *server_ids = NULL;
+	uint32_t num_server_ids = 0;
 	NTSTATUS status;
 	enum ndr_err_code ndr_err;
 	int ret;
@@ -4609,6 +4603,21 @@ static NTSTATUS dcesrv_lsa_lsaRSetForestTrustInformation(struct dcesrv_call_stat
 		status = NT_STATUS_INTERNAL_DB_CORRUPTION;
 		goto done;
 	}
+
+	/*
+	 * Notify winbindd that we have a acquired forest trust info
+	 */
+	status = irpc_servers_byname(dce_call->msg_ctx,
+				     mem_ctx,
+				     "winbind_server",
+				     &num_server_ids, &server_ids);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("irpc_servers_byname failed\n");
+		goto done;
+	}
+
+	imessaging_send(dce_call->msg_ctx, server_ids[0],
+			MSG_WINBIND_RELOAD_TRUSTED_DOMAINS, NULL);
 
 	status = NT_STATUS_OK;
 

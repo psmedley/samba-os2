@@ -216,6 +216,7 @@ sub setup_nt4_dc($$)
 	lanman auth = yes
 	ntlm auth = yes
 	raw NTLMv2 auth = yes
+	server schannel = auto
 
 	rpc_server:epmapper = external
 	rpc_server:spoolss = external
@@ -347,7 +348,7 @@ sub setup_nt4_member($$$)
 	my $cmd = "";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
-	$cmd .= "$net join $ret->{CONFIGURATION} $nt4_dc_vars->{DOMAIN} member";
+	$cmd .= "$net rpc join $ret->{CONFIGURATION} $nt4_dc_vars->{DOMAIN} member";
 	$cmd .= " -U$nt4_dc_vars->{USERNAME}\%$nt4_dc_vars->{PASSWORD}";
 
 	if (system($cmd) != 0) {
@@ -624,6 +625,95 @@ sub setup_ad_member_idmap_rid($$$$)
 
 	my $ret = $self->provision($prefix, $dcvars->{DOMAIN},
 				   "IDMAPRIDMEMBER",
+				   "loCalMemberPass",
+				   $member_options,
+				   $dcvars->{SERVER_IP},
+				   $dcvars->{SERVER_IPV6});
+
+	$ret or return undef;
+
+	close(USERMAP);
+	$ret->{DOMAIN} = $dcvars->{DOMAIN};
+	$ret->{REALM} = $dcvars->{REALM};
+
+	my $ctx;
+	my $prefix_abs = abs_path($prefix);
+	$ctx = {};
+	$ctx->{krb5_conf} = "$prefix_abs/lib/krb5.conf";
+	$ctx->{domain} = $dcvars->{DOMAIN};
+	$ctx->{realm} = $dcvars->{REALM};
+	$ctx->{dnsname} = lc($dcvars->{REALM});
+	$ctx->{kdc_ipv4} = $dcvars->{SERVER_IP};
+	$ctx->{kdc_ipv6} = $dcvars->{SERVER_IPV6};
+	$ctx->{krb5_ccname} = "$prefix_abs/krb5cc_%{uid}";
+	Samba::mk_krb5_conf($ctx, "");
+
+	$ret->{KRB5_CONFIG} = $ctx->{krb5_conf};
+
+	my $net = Samba::bindir_path($self, "net");
+	my $cmd = "";
+	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
+	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
+		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
+	} else {
+		$cmd .= "RESOLV_WRAPPER_HOSTS=\"$ret->{RESOLV_WRAPPER_HOSTS}\" ";
+	}
+	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
+	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
+	$cmd .= "$net join $ret->{CONFIGURATION}";
+	$cmd .= " -U$dcvars->{USERNAME}\%$dcvars->{PASSWORD}";
+
+	if (system($cmd) != 0) {
+	    warn("Join failed\n$cmd");
+	    return undef;
+	}
+
+	# We need world access to this share, as otherwise the domain
+	# administrator from the AD domain provided by Samba4 can't
+	# access the share for tests.
+	chmod 0777, "$prefix/share";
+
+	if (not $self->check_or_start($ret, "yes", "yes", "yes")) {
+		return undef;
+	}
+
+	$ret->{DC_SERVER} = $dcvars->{SERVER};
+	$ret->{DC_SERVER_IP} = $dcvars->{SERVER_IP};
+	$ret->{DC_SERVER_IPV6} = $dcvars->{SERVER_IPV6};
+	$ret->{DC_NETBIOSNAME} = $dcvars->{NETBIOSNAME};
+	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
+	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
+
+	# Special case, this is called from Samba4.pm but needs to use the Samba3 check_env and get_log_env
+	$ret->{target} = $self;
+
+	return $ret;
+}
+
+sub setup_ad_member_idmap_ad($$$$)
+{
+	my ($self, $prefix, $dcvars) = @_;
+
+	# If we didn't build with ADS, pretend this env was never available
+	if (not $self->have_ads()) {
+	        return "UNKNOWN";
+	}
+
+	print "PROVISIONING S3 AD MEMBER WITH idmap_ad config...";
+
+	my $member_options = "
+	security = ads
+	workgroup = $dcvars->{DOMAIN}
+	realm = $dcvars->{REALM}
+	password server = $dcvars->{SERVER}
+	idmap config * : backend = tdb
+	idmap config * : range = 1000000-1999999
+	idmap config $dcvars->{DOMAIN} : backend = ad
+	idmap config $dcvars->{DOMAIN} : range = 2000000-2999999
+";
+
+	my $ret = $self->provision($prefix, $dcvars->{DOMAIN},
+				   "IDMAPADMEMBER",
 				   "loCalMemberPass",
 				   $member_options,
 				   $dcvars->{SERVER_IP},
@@ -1285,10 +1375,16 @@ sub check_or_start($$$$$) {
 	return $self->wait_for_start($env_vars, $nmbd, $winbindd, $smbd);
 }
 
-sub createuser($$$$)
+sub createuser($$$$$)
 {
-	my ($self, $username, $password, $conffile) = @_;
+	my ($self, $username, $password, $conffile, $env) = @_;
 	my $cmd = "UID_WRAPPER_ROOT=1 " . Samba::bindir_path($self, "smbpasswd")." -c $conffile -L -s -a $username > /dev/null";
+
+	keys %$env;
+	while(my($var, $val) = each %$env) {
+		$cmd = "$var=\"$val\" $cmd";
+	}
+
 	unless (open(PWD, "|$cmd")) {
 	    warn("Unable to set password for $username account\n$cmd");
 	    return undef;
@@ -1310,6 +1406,7 @@ sub provision($$$$$$$$$)
 
 	my $swiface = Samba::get_interface($server);
 	my %ret = ();
+	my %createuser_env = ();
 	my $server_ip = "127.0.0.$swiface";
 	my $server_ipv6 = sprintf("fd00:0000:0000:0000:0000:0000:5357:5f%02x", $swiface);
 
@@ -1335,6 +1432,9 @@ sub provision($$$$$$$$$)
 
 	my $privatedir="$prefix_abs/private";
 	push(@dirs,$privatedir);
+
+	my $binddnsdir = "$prefix_abs/bind-dns";
+	push(@dirs, $binddnsdir);
 
 	my $lockdir="$prefix_abs/lockdir";
 	push(@dirs,$lockdir);
@@ -1506,7 +1606,7 @@ sub provision($$$$$$$$$)
 	my $conffile="$libdir/server.conf";
 	my $dfqconffile="$libdir/dfq.conf";
 
-	my $nss_wrapper_pl = "$ENV{PERL} $self->{srcdir}/lib/nss_wrapper/nss_wrapper.pl";
+	my $nss_wrapper_pl = "$ENV{PERL} $self->{srcdir}/third_party/nss_wrapper/nss_wrapper.pl";
 	my $nss_wrapper_passwd = "$privatedir/passwd";
 	my $nss_wrapper_group = "$privatedir/group";
 	my $nss_wrapper_hosts = "$ENV{SELFTEST_PREFIX}/hosts";
@@ -1585,6 +1685,7 @@ sub provision($$$$$$$$$)
 	workgroup = $domain
 
 	private dir = $privatedir
+	binddns dir = $binddnsdir
 	pid directory = $piddir
 	lock directory = $lockdir
 	log file = $logdir/log.\%m
@@ -1769,17 +1870,41 @@ sub provision($$$$$$$$$)
 [lp]
 	copy = print1
 
-[nfs4acl_simple]
+[nfs4acl_simple_40]
+	path = $shrdir
+	comment = smb username is [%U]
+	nfs4:mode = simple
+	nfs4acl_xattr:version = 40
+	vfs objects = nfs4acl_xattr xattr_tdb
+
+[nfs4acl_special_40]
+	path = $shrdir
+	comment = smb username is [%U]
+	nfs4:mode = special
+	nfs4acl_xattr:version = 40
+	vfs objects = nfs4acl_xattr xattr_tdb
+
+[nfs4acl_simple_41]
 	path = $shrdir
 	comment = smb username is [%U]
 	nfs4:mode = simple
 	vfs objects = nfs4acl_xattr xattr_tdb
 
-[nfs4acl_special]
+[nfs4acl_xdr_40]
 	path = $shrdir
 	comment = smb username is [%U]
-	nfs4:mode = special
 	vfs objects = nfs4acl_xattr xattr_tdb
+	nfs4:mode = simple
+	nfs4acl_xattr:encoding = xdr
+	nfs4acl_xattr:version = 40
+
+[nfs4acl_xdr_41]
+	path = $shrdir
+	comment = smb username is [%U]
+	vfs objects = nfs4acl_xattr xattr_tdb
+	nfs4:mode = simple
+	nfs4acl_xattr:encoding = xdr
+	nfs4acl_xattr:version = 41
 
 [xcopy_share]
 	path = $shrdir
@@ -1832,6 +1957,14 @@ sub provision($$$$$$$$$)
 [vfs_wo_fruit_stream_depot]
 	path = $shrdir
 	vfs objects = streams_depot acl_xattr
+
+[vfs_fruit_timemachine]
+	path = $shrdir
+	vfs objects = fruit streams_xattr acl_xattr
+	fruit:resource = file
+	fruit:metadata = stream
+	fruit:time machine = yes
+	fruit:time machine max size = 32K
 
 [badname-tmp]
 	path = $badnames_shrdir
@@ -2033,6 +2166,10 @@ sub provision($$$$$$$$$)
 [compound_find]
 	copy = tmp
 	smbd:find async delay usec = 10000
+[error_inject]
+	copy = tmp
+	vfs objects = error_inject
+	include = $libdir/error_inject.conf
 	";
 	close(CONF);
 
@@ -2121,21 +2258,21 @@ force_user:x:$gid_force_user:
 		close(EVENTLOG);
 	}
 
-	$ENV{NSS_WRAPPER_PASSWD} = $nss_wrapper_passwd;
-	$ENV{NSS_WRAPPER_GROUP} = $nss_wrapper_group;
-	$ENV{NSS_WRAPPER_HOSTS} = $nss_wrapper_hosts;
-	$ENV{NSS_WRAPPER_HOSTNAME} = "${hostname}.samba.example.com";
+	$createuser_env{NSS_WRAPPER_PASSWD} = $nss_wrapper_passwd;
+	$createuser_env{NSS_WRAPPER_GROUP} = $nss_wrapper_group;
+	$createuser_env{NSS_WRAPPER_HOSTS} = $nss_wrapper_hosts;
+	$createuser_env{NSS_WRAPPER_HOSTNAME} = "${hostname}.samba.example.com";
 	if ($ENV{SAMBA_DNS_FAKING}) {
-		$ENV{RESOLV_WRAPPER_CONF} = $resolv_conf;
+		$createuser_env{RESOLV_WRAPPER_CONF} = $resolv_conf;
 	} else {
-		$ENV{RESOLV_WRAPPER_HOSTS} = $dns_host_file;
+		$createuser_env{RESOLV_WRAPPER_HOSTS} = $dns_host_file;
 	}
 
-	createuser($self, $unix_name, $password, $conffile) || die("Unable to create user");
-	createuser($self, "force_user", $password, $conffile) || die("Unable to create force_user");
-	createuser($self, "smbget_user", $password, $conffile) || die("Unable to create smbget_user");
-	createuser($self, "user1", $password, $conffile) || die("Unable to create user1");
-	createuser($self, "user2", $password, $conffile) || die("Unable to create user2");
+	createuser($self, $unix_name, $password, $conffile, \%createuser_env) || die("Unable to create user");
+	createuser($self, "force_user", $password, $conffile, \%createuser_env) || die("Unable to create force_user");
+	createuser($self, "smbget_user", $password, $conffile, \%createuser_env) || die("Unable to create smbget_user");
+	createuser($self, "user1", $password, $conffile, \%createuser_env) || die("Unable to create user1");
+	createuser($self, "user2", $password, $conffile, \%createuser_env) || die("Unable to create user2");
 
 	open(DNS_UPDATE_LIST, ">$prefix/dns_update_list") or die("Unable to open $$prefix/dns_update_list");
 	print DNS_UPDATE_LIST "A $server. $server_ip\n";
@@ -2196,6 +2333,8 @@ force_user:x:$gid_force_user:
 sub wait_for_start($$$$$)
 {
 	my ($self, $envvars, $nmbd, $winbindd, $smbd) = @_;
+	my $cmd;
+	my $netcmd;
 	my $ret;
 
 	if ($nmbd eq "yes") {
@@ -2229,9 +2368,14 @@ sub wait_for_start($$$$$)
 	if ($winbindd eq "yes") {
 	    print "checking for winbindd\n";
 	    my $count = 0;
+	    $cmd = "SELFTEST_WINBINDD_SOCKET_DIR='$envvars->{SELFTEST_WINBINDD_SOCKET_DIR}' ";
+	    $cmd .= "NSS_WRAPPER_PASSWD='$envvars->{NSS_WRAPPER_PASSWD}' ";
+	    $cmd .= "NSS_WRAPPER_GROUP='$envvars->{NSS_WRAPPER_GROUP}' ";
+	    $cmd .= Samba::bindir_path($self, "wbinfo") . " --ping-dc";
+
 	    do {
-		$ret = system("SELFTEST_WINBINDD_SOCKET_DIR=" . $envvars->{SELFTEST_WINBINDD_SOCKET_DIR} . " " . Samba::bindir_path($self, "wbinfo") . " --ping-dc");
 		if ($ret != 0) {
+		    $ret = system($cmd);
 		    sleep(1);
 		}
 		$count++;
@@ -2263,38 +2407,76 @@ sub wait_for_start($$$$$)
 	}
 
 	# Ensure we have domain users mapped.
-	$ret = system(Samba::bindir_path($self, "net") ." $envvars->{CONFIGURATION} groupmap add rid=513 unixgroup=domusers type=domain");
+	$netcmd = "NSS_WRAPPER_PASSWD='$envvars->{NSS_WRAPPER_PASSWD}' ";
+	$netcmd .= "NSS_WRAPPER_GROUP='$envvars->{NSS_WRAPPER_GROUP}' ";
+	$netcmd .= Samba::bindir_path($self, "net") ." $envvars->{CONFIGURATION} ";
+
+	$cmd = $netcmd . "groupmap add rid=513 unixgroup=domusers type=domain";
+	$ret = system($cmd);
 	if ($ret != 0) {
-	    return 1;
-	}
-	$ret = system(Samba::bindir_path($self, "net") ." $envvars->{CONFIGURATION} groupmap add rid=512 unixgroup=domadmins type=domain");
-	if ($ret != 0) {
-	    return 1;
-	}
-	$ret = system(Samba::bindir_path($self, "net") ." $envvars->{CONFIGURATION} groupmap add sid=S-1-1-0 unixgroup=everyone type=builtin");
-	if ($ret != 0) {
-	    return 1;
+		print("\"$cmd\" failed\n");
+		return 1;
 	}
 
+	$cmd = $netcmd . "groupmap add rid=512 unixgroup=domadmins type=domain";
+	$ret = system($cmd);
+	if ($ret != 0) {
+		print("\"$cmd\" failed\n");
+		return 1;
+	}
+
+	$cmd = $netcmd . "groupmap add sid=S-1-1-0 unixgroup=everyone type=builtin";
+	$ret = system($cmd);
+	if ($ret != 0) {
+		print("\"$cmd\" failed\n");
+		return 1;
+	}
+
+	# note: creating builtin groups requires winbindd for the
+	# unix id allocator
+	my $create_builtin_users = "no";
 	if ($winbindd eq "yes") {
-	    # note: creating builtin groups requires winbindd for the
-	    # unix id allocator
-	    $ret = system("SELFTEST_WINBINDD_SOCKET_DIR=" . $envvars->{SELFTEST_WINBINDD_SOCKET_DIR} . " " . Samba::bindir_path($self, "net") ." $envvars->{CONFIGURATION} sam createbuiltingroup Users");
+		$cmd = "SELFTEST_WINBINDD_SOCKET_DIR='$envvars->{SELFTEST_WINBINDD_SOCKET_DIR}' ";
+		$cmd .= "NSS_WRAPPER_PASSWD='$envvars->{NSS_WRAPPER_PASSWD}' ";
+		$cmd .= "NSS_WRAPPER_GROUP='$envvars->{NSS_WRAPPER_GROUP}' ";
+		$cmd .= Samba::bindir_path($self, "wbinfo") . " --sid-to-gid=S-1-5-32-545";
+		my $wbinfo_out = qx($cmd 2>&1);
+		if ($? != 0) {
+			# wbinfo doesn't give us a better error code then
+			# WBC_ERR_DOMAIN_NOT_FOUND, but at least that's
+			# different then WBC_ERR_WINBIND_NOT_AVAILABLE
+			if ($wbinfo_out !~ /WBC_ERR_DOMAIN_NOT_FOUND/) {
+				print("Failed to run \"wbinfo --sid-to-gid=S-1-5-32-545\": $wbinfo_out");
+				teardown_env($self, $envvars);
+				return 0;
+			}
+			$create_builtin_users = "yes";
+		}
+	}
+	if ($create_builtin_users eq "yes") {
+	    $cmd = "SELFTEST_WINBINDD_SOCKET_DIR='$envvars->{SELFTEST_WINBINDD_SOCKET_DIR}' ";
+	    $cmd .= "NSS_WRAPPER_PASSWD='$envvars->{NSS_WRAPPER_PASSWD}' ";
+	    $cmd .= "NSS_WRAPPER_GROUP='$envvars->{NSS_WRAPPER_GROUP}' ";
+	    $cmd .= Samba::bindir_path($self, "net") . " $envvars->{CONFIGURATION} ";
+	    $cmd .= "sam createbuiltingroup Users";
+	    $ret = system($cmd);
 	    if ($ret != 0) {
 	        print "Failed to create BUILTIN\\Users group\n";
+		teardown_env($self, $envvars);
 	        return 0;
 	    }
-	    my $count = 0;
-	    do {
-		system(Samba::bindir_path($self, "net") . " $envvars->{CONFIGURATION} cache del IDMAP/SID2XID/S-1-5-32-545");
-		$ret = system("SELFTEST_WINBINDD_SOCKET_DIR=" . $envvars->{SELFTEST_WINBINDD_SOCKET_DIR} . " " . Samba::bindir_path($self, "wbinfo") . " --sid-to-gid=S-1-5-32-545");
-		if ($ret != 0) {
-		    sleep(2);
-		}
-		$count++;
-	    } while ($ret != 0 && $count < 10);
-	    if ($count == 10) {
-		print "WINBINDD not reachable after 20 seconds\n";
+
+	    $cmd = Samba::bindir_path($self, "net") . " $envvars->{CONFIGURATION} ";
+	    $cmd .= "cache del IDMAP/SID2XID/S-1-5-32-545";
+	    system($cmd);
+
+	    $cmd = "SELFTEST_WINBINDD_SOCKET_DIR='$envvars->{SELFTEST_WINBINDD_SOCKET_DIR}' ";
+	    $cmd .= "NSS_WRAPPER_PASSWD='$envvars->{NSS_WRAPPER_PASSWD}' ";
+	    $cmd .= "NSS_WRAPPER_GROUP='$envvars->{NSS_WRAPPER_GROUP}' ";
+	    $cmd .= Samba::bindir_path($self, "wbinfo") . " --sid-to-gid=S-1-5-32-545";
+	    $ret = system($cmd);
+	    if ($ret != 0) {
+		print "Missing \"BUILTIN\\Users\", did net sam createbuiltingroup Users fail?\n";
 		teardown_env($self, $envvars);
 		return 0;
 	    }

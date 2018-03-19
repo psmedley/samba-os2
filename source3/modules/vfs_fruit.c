@@ -140,6 +140,8 @@ struct fruit_config_data {
 	bool posix_rename;
 	bool aapl_zero_file_id;
 	const char *model;
+	bool time_machine;
+	off_t time_machine_max_size;
 
 	/*
 	 * Additional options, all enabled by default,
@@ -849,7 +851,7 @@ static bool ad_unpack(struct adouble *ad, const size_t nentries,
 		off = RIVAL(ad->ad_data, AD_HEADER_LEN + (i * AD_ENTRY_LEN) + 4);
 		len = RIVAL(ad->ad_data, AD_HEADER_LEN + (i * AD_ENTRY_LEN) + 8);
 
-		if (!eid || eid > ADEID_MAX) {
+		if (!eid || eid >= ADEID_MAX) {
 			DEBUG(1, ("bogus eid %d\n", eid));
 			return false;
 		}
@@ -1081,6 +1083,7 @@ static int ad_convert(struct adouble *ad,
 
 	ok = ad_convert_xattr(ad, smb_fname, map);
 	if (!ok) {
+		munmap(map, origlen);
 		return -1;
 	}
 
@@ -1883,6 +1886,7 @@ static int init_fruit_config(vfs_handle_struct *handle)
 {
 	struct fruit_config_data *config;
 	int enumval;
+	const char *tm_size_str = NULL;
 
 	config = talloc_zero(handle->conn, struct fruit_config_data);
 	if (!config) {
@@ -1954,6 +1958,9 @@ static int init_fruit_config(vfs_handle_struct *handle)
 	config->use_aapl = lp_parm_bool(
 		-1, FRUIT_PARAM_TYPE_NAME, "aapl", true);
 
+	config->time_machine = lp_parm_bool(
+		SNUM(handle->conn), FRUIT_PARAM_TYPE_NAME, "time machine", false);
+
 	config->unix_info_enabled = lp_parm_bool(
 		-1, FRUIT_PARAM_TYPE_NAME, "nfs_aces", true);
 
@@ -1977,6 +1984,13 @@ static int init_fruit_config(vfs_handle_struct *handle)
 
 	config->model = lp_parm_const_string(
 		-1, FRUIT_PARAM_TYPE_NAME, "model", "MacSamba");
+
+	tm_size_str = lp_parm_const_string(
+		SNUM(handle->conn), FRUIT_PARAM_TYPE_NAME,
+		"time machine max size", NULL);
+	if (tm_size_str != NULL) {
+		config->time_machine_max_size = conv_str_size(tm_size_str);
+	}
 
 	SMB_VFS_HANDLE_SET_DATA(handle, config,
 				NULL, struct fruit_config_data,
@@ -2611,6 +2625,10 @@ static NTSTATUS check_aapl(vfs_handle_struct *handle,
 			break;
 		}
 
+		if (config->time_machine) {
+			caps |= SMB2_CRTCTX_AAPL_FULL_SYNC;
+		}
+
 		SBVAL(p, 0, caps);
 
 		ok = data_blob_append(req, &blob, p, 8);
@@ -3031,6 +3049,19 @@ static int fruit_connect(vfs_handle_struct *handle,
 				fruit_catia_maps);
 	}
 
+	if (config->time_machine) {
+		DBG_NOTICE("Enabling durable handles for Time Machine "
+			   "support on [%s]\n", service);
+		lp_do_parameter(SNUM(handle->conn), "durable handles", "yes");
+		lp_do_parameter(SNUM(handle->conn), "kernel oplocks", "no");
+		lp_do_parameter(SNUM(handle->conn), "kernel share modes", "no");
+		if (!lp_strict_sync(SNUM(handle->conn))) {
+			DBG_WARNING("Time Machine without strict sync is not "
+				    "recommended!\n");
+		}
+		lp_do_parameter(SNUM(handle->conn), "posix locking", "no");
+	}
+
 	return rc;
 }
 
@@ -3189,7 +3220,7 @@ static int fruit_open_meta(vfs_handle_struct *handle,
 		return -1;
 	}
 
-	fio = (struct fio *)VFS_ADD_FSP_EXTENSION(handle, fsp, struct fio, NULL);
+	fio = VFS_ADD_FSP_EXTENSION(handle, fsp, struct fio, NULL);
 	fio->type = ADOUBLE_META;
 	fio->config = config;
 
@@ -3356,7 +3387,7 @@ static int fruit_open_rsrc(vfs_handle_struct *handle,
 		return -1;
 	}
 
-	fio = (struct fio *)VFS_ADD_FSP_EXTENSION(handle, fsp, struct fio, NULL);
+	fio = VFS_ADD_FSP_EXTENSION(handle, fsp, struct fio, NULL);
 	fio->type = ADOUBLE_RSRC;
 	fio->config = config;
 
@@ -3820,11 +3851,11 @@ static int fruit_rmdir(struct vfs_handle_struct *handle,
 		TALLOC_FREE(ad);
 
 		ret = SMB_VFS_NEXT_UNLINK(handle, ad_smb_fname);
-		TALLOC_FREE(ad_smb_fname);
 		if (ret != 0) {
 			DBG_ERR("Deleting [%s] failed\n",
 				smb_fname_str_dbg(ad_smb_fname));
 		}
+		TALLOC_FREE(ad_smb_fname);
 	}
 
 exit_rmdir:
@@ -4134,26 +4165,35 @@ static ssize_t fruit_pwrite_meta_stream(vfs_handle_struct *handle,
 					size_t n, off_t offset)
 {
 	AfpInfo *ai = NULL;
-	int ret;
+	size_t nwritten;
+	bool ok;
 
 	ai = afpinfo_unpack(talloc_tos(), data);
 	if (ai == NULL) {
 		return -1;
 	}
 
-	if (ai_empty_finderinfo(ai)) {
-		ret = SMB_VFS_NEXT_UNLINK(handle, fsp->fsp_name);
-		if (ret != 0 && errno != ENOENT && errno != ENOATTR) {
-			DBG_ERR("Can't delete metadata for %s: %s\n",
-				fsp_str_dbg(fsp), strerror(errno));
-			TALLOC_FREE(ai);
-			return -1;
-		}
+	nwritten = SMB_VFS_NEXT_PWRITE(handle, fsp, data, n, offset);
+	if (nwritten != n) {
+		return -1;
+	}
 
+	if (!ai_empty_finderinfo(ai)) {
 		return n;
 	}
 
-	return SMB_VFS_NEXT_PWRITE(handle, fsp, data, n, offset);
+	ok = set_delete_on_close(
+			fsp,
+			true,
+			handle->conn->session_info->security_token,
+			handle->conn->session_info->unix_token);
+	if (!ok) {
+		DBG_ERR("set_delete_on_close on [%s] failed\n",
+			fsp_str_dbg(fsp));
+		return -1;
+	}
+
+	return n;
 }
 
 static ssize_t fruit_pwrite_meta_netatalk(vfs_handle_struct *handle,
@@ -4164,24 +4204,11 @@ static ssize_t fruit_pwrite_meta_netatalk(vfs_handle_struct *handle,
 	AfpInfo *ai = NULL;
 	char *p = NULL;
 	int ret;
+	bool ok;
 
 	ai = afpinfo_unpack(talloc_tos(), data);
 	if (ai == NULL) {
 		return -1;
-	}
-
-	if (ai_empty_finderinfo(ai)) {
-		ret = SMB_VFS_REMOVEXATTR(handle->conn,
-					  fsp->fsp_name,
-					  AFPINFO_EA_NETATALK);
-
-		if (ret != 0 && errno != ENOENT && errno != ENOATTR) {
-			DBG_ERR("Can't delete metadata for %s: %s\n",
-				fsp_str_dbg(fsp), strerror(errno));
-			return -1;
-		}
-
-		return n;
 	}
 
 	ad = ad_fget(talloc_tos(), handle, fsp, ADOUBLE_META);
@@ -4208,6 +4235,22 @@ static ssize_t fruit_pwrite_meta_netatalk(vfs_handle_struct *handle,
 	}
 
 	TALLOC_FREE(ad);
+
+	if (!ai_empty_finderinfo(ai)) {
+		return n;
+	}
+
+	ok = set_delete_on_close(
+		fsp,
+		true,
+		handle->conn->session_info->security_token,
+		handle->conn->session_info->unix_token);
+	if (!ok) {
+		DBG_ERR("set_delete_on_close on [%s] failed\n",
+			fsp_str_dbg(fsp));
+		return -1;
+	}
+
 	return n;
 }
 
@@ -4864,38 +4907,16 @@ static int fruit_fstat(vfs_handle_struct *handle, files_struct *fsp,
 	return rc;
 }
 
-static NTSTATUS fruit_streaminfo_meta_stream(
+static NTSTATUS delete_invalid_meta_stream(
 	vfs_handle_struct *handle,
-	struct files_struct *fsp,
 	const struct smb_filename *smb_fname,
 	TALLOC_CTX *mem_ctx,
 	unsigned int *pnum_streams,
 	struct stream_struct **pstreams)
 {
-	struct stream_struct *stream = *pstreams;
-	unsigned int num_streams = *pnum_streams;
 	struct smb_filename *sname = NULL;
-	int i;
 	int ret;
 	bool ok;
-
-	for (i = 0; i < num_streams; i++) {
-		if (strequal_m(stream[i].name, AFPINFO_STREAM)) {
-			break;
-		}
-	}
-
-	if (i == num_streams) {
-		return NT_STATUS_OK;
-	}
-
-	if (stream[i].size == AFP_INFO_SIZE) {
-		return NT_STATUS_OK;
-	}
-
-	DBG_ERR("Removing invalid AFPINFO_STREAM size [%"PRIdMAX"] "
-		"from [%s]\n", (intmax_t)stream[i].size,
-		smb_fname_str_dbg(smb_fname));
 
 	ok = del_fruit_stream(mem_ctx, pnum_streams, pstreams, AFPINFO_STREAM);
 	if (!ok) {
@@ -4918,6 +4939,109 @@ static NTSTATUS fruit_streaminfo_meta_stream(
 	}
 
 	return NT_STATUS_OK;
+}
+
+static NTSTATUS fruit_streaminfo_meta_stream(
+	vfs_handle_struct *handle,
+	struct files_struct *fsp,
+	const struct smb_filename *smb_fname,
+	TALLOC_CTX *mem_ctx,
+	unsigned int *pnum_streams,
+	struct stream_struct **pstreams)
+{
+	struct stream_struct *stream = *pstreams;
+	unsigned int num_streams = *pnum_streams;
+	struct smb_filename *sname = NULL;
+	char *full_name = NULL;
+	uint32_t name_hash;
+	struct share_mode_lock *lck = NULL;
+	struct file_id id = {0};
+	bool delete_on_close_set;
+	int i;
+	int ret;
+	NTSTATUS status;
+	bool ok;
+
+	for (i = 0; i < num_streams; i++) {
+		if (strequal_m(stream[i].name, AFPINFO_STREAM)) {
+			break;
+		}
+	}
+
+	if (i == num_streams) {
+		return NT_STATUS_OK;
+	}
+
+	if (stream[i].size != AFP_INFO_SIZE) {
+		DBG_ERR("Removing invalid AFPINFO_STREAM size [%jd] from [%s]\n",
+			(intmax_t)stream[i].size, smb_fname_str_dbg(smb_fname));
+
+		return delete_invalid_meta_stream(handle, smb_fname, mem_ctx,
+						  pnum_streams, pstreams);
+	}
+
+	/*
+	 * Now check if there's a delete-on-close pending on the stream. If so,
+	 * hide the stream. This behaviour was verified against a macOS 10.12
+	 * SMB server.
+	 */
+
+	sname = synthetic_smb_fname(talloc_tos(),
+				    smb_fname->base_name,
+				    AFPINFO_STREAM_NAME,
+				    NULL, 0);
+	if (sname == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto out;
+	}
+
+	ret = SMB_VFS_NEXT_STAT(handle, sname);
+	if (ret != 0) {
+		status = map_nt_error_from_unix(errno);
+		goto out;
+	}
+
+	id = SMB_VFS_NEXT_FILE_ID_CREATE(handle, &sname->st);
+
+	lck = get_existing_share_mode_lock(talloc_tos(), id);
+	if (lck == NULL) {
+		status = NT_STATUS_OK;
+		goto out;
+	}
+
+	full_name = talloc_asprintf(talloc_tos(),
+				    "%s%s",
+				    sname->base_name,
+				    AFPINFO_STREAM);
+	if (full_name == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto out;
+	}
+
+	status = file_name_hash(handle->conn, full_name, &name_hash);
+	if (!NT_STATUS_IS_OK(status)) {
+		goto out;
+	}
+
+	delete_on_close_set = is_delete_on_close_set(lck, name_hash);
+	if (delete_on_close_set) {
+		ok = del_fruit_stream(mem_ctx,
+				      pnum_streams,
+				      pstreams,
+				      AFPINFO_STREAM);
+		if (!ok) {
+			status = NT_STATUS_INTERNAL_ERROR;
+			goto out;
+		}
+	}
+
+	status  = NT_STATUS_OK;
+
+out:
+	TALLOC_FREE(sname);
+	TALLOC_FREE(lck);
+	TALLOC_FREE(full_name);
+	return status;
 }
 
 static NTSTATUS fruit_streaminfo_meta_netatalk(
@@ -5981,8 +6105,426 @@ static NTSTATUS fruit_offload_write_recv(struct vfs_handle_struct *handle,
 	return NT_STATUS_OK;
 }
 
+static char *fruit_get_bandsize_line(char **lines, int numlines)
+{
+	static regex_t re;
+	static bool re_initialized = false;
+	int i;
+	int ret;
+
+	if (!re_initialized) {
+		ret = regcomp(&re, "^[[:blank:]]*<key>band-size</key>$", 0);
+		if (ret != 0) {
+			return NULL;
+		}
+		re_initialized = true;
+	}
+
+	for (i = 0; i < numlines; i++) {
+		regmatch_t matches[1];
+
+		ret = regexec(&re, lines[i], 1, matches, 0);
+		if (ret == 0) {
+			/*
+			 * Check if the match was on the last line, sa we want
+			 * the subsequent line.
+			 */
+			if (i + 1 == numlines) {
+				return NULL;
+			}
+			return lines[i + 1];
+		}
+		if (ret != REG_NOMATCH) {
+			return NULL;
+		}
+	}
+
+	return NULL;
+}
+
+static bool fruit_get_bandsize_from_line(char *line, size_t *_band_size)
+{
+	static regex_t re;
+	static bool re_initialized = false;
+	regmatch_t matches[2];
+	uint64_t band_size;
+	int ret;
+	bool ok;
+
+	if (!re_initialized) {
+		ret = regcomp(&re,
+			      "^[[:blank:]]*"
+			      "<integer>\\([[:digit:]]*\\)</integer>$",
+			      0);
+		if (ret != 0) {
+			return false;
+		}
+		re_initialized = true;
+	}
+
+	ret = regexec(&re, line, 2, matches, 0);
+	if (ret != 0) {
+		DBG_ERR("regex failed [%s]\n", line);
+		return false;
+	}
+
+	line[matches[1].rm_eo] = '\0';
+
+	ok = conv_str_u64(&line[matches[1].rm_so], &band_size);
+	if (!ok) {
+		return false;
+	}
+	*_band_size = (size_t)band_size;
+	return true;
+}
+
+/*
+ * This reads and parses an Info.plist from a TM sparsebundle looking for the
+ * "band-size" key and value.
+ */
+static bool fruit_get_bandsize(vfs_handle_struct *handle,
+			       const char *dir,
+			       size_t *band_size)
+{
+#define INFO_PLIST_MAX_SIZE 64*1024
+	char *plist = NULL;
+	struct smb_filename *smb_fname = NULL;
+	files_struct *fsp = NULL;
+	uint8_t *file_data = NULL;
+	char **lines = NULL;
+	char *band_size_line = NULL;
+	size_t plist_file_size;
+	ssize_t nread;
+	int numlines;
+	int ret;
+	bool ok = false;
+	NTSTATUS status;
+
+	plist = talloc_asprintf(talloc_tos(),
+				"%s/%s/Info.plist",
+				handle->conn->connectpath,
+				dir);
+	if (plist == NULL) {
+		ok = false;
+		goto out;
+	}
+
+	smb_fname = synthetic_smb_fname(talloc_tos(), plist, NULL, NULL, 0);
+	if (smb_fname == NULL) {
+		ok = false;
+		goto out;
+	}
+
+	ret = SMB_VFS_NEXT_LSTAT(handle, smb_fname);
+	if (ret != 0) {
+		DBG_INFO("Ignoring Sparsebundle without Info.plist [%s]\n", dir);
+		ok = true;
+		goto out;
+	}
+
+	plist_file_size = smb_fname->st.st_ex_size;
+
+	if (plist_file_size > INFO_PLIST_MAX_SIZE) {
+		DBG_INFO("%s is too large, ignoring\n", plist);
+		ok = true;
+		goto out;
+	}
+
+	status = SMB_VFS_NEXT_CREATE_FILE(
+		handle,				/* conn */
+		NULL,				/* req */
+		0,				/* root_dir_fid */
+		smb_fname,			/* fname */
+		FILE_GENERIC_READ,		/* access_mask */
+		FILE_SHARE_READ | FILE_SHARE_WRITE, /* share_access */
+		FILE_OPEN,			/* create_disposition */
+		0,				/* create_options */
+		0,				/* file_attributes */
+		INTERNAL_OPEN_ONLY,		/* oplock_request */
+		NULL,				/* lease */
+		0,				/* allocation_size */
+		0,				/* private_flags */
+		NULL,				/* sd */
+		NULL,				/* ea_list */
+		&fsp,				/* result */
+		NULL,				/* psbuf */
+		NULL, NULL);			/* create context */
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_INFO("Opening [%s] failed [%s]\n",
+			 smb_fname_str_dbg(smb_fname), nt_errstr(status));
+		ok = false;
+		goto out;
+	}
+
+	file_data = talloc_array(talloc_tos(), uint8_t, plist_file_size);
+	if (file_data == NULL) {
+		ok = false;
+		goto out;
+	}
+
+	nread = SMB_VFS_NEXT_PREAD(handle, fsp, file_data, plist_file_size, 0);
+	if (nread != plist_file_size) {
+		DBG_ERR("Short read on [%s]: %zu/%zd\n",
+			fsp_str_dbg(fsp), nread, plist_file_size);
+		ok = false;
+		goto out;
+
+	}
+
+	status = close_file(NULL, fsp, NORMAL_CLOSE);
+	fsp = NULL;
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("close_file failed: %s\n", nt_errstr(status));
+		ok = false;
+		goto out;
+	}
+
+	lines = file_lines_parse((char *)file_data,
+				 plist_file_size,
+				 &numlines,
+				 talloc_tos());
+	if (lines == NULL) {
+		ok = false;
+		goto out;
+	}
+
+	band_size_line = fruit_get_bandsize_line(lines, numlines);
+	if (band_size_line == NULL) {
+		DBG_ERR("Didn't find band-size key in [%s]\n",
+			smb_fname_str_dbg(smb_fname));
+		ok = false;
+		goto out;
+	}
+
+	ok = fruit_get_bandsize_from_line(band_size_line, band_size);
+	if (!ok) {
+		DBG_ERR("fruit_get_bandsize_from_line failed\n");
+		goto out;
+	}
+
+	DBG_DEBUG("Parsed band-size [%zu] for [%s]\n", *band_size, plist);
+
+out:
+	if (fsp != NULL) {
+		status = close_file(NULL, fsp, NORMAL_CLOSE);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_ERR("close_file failed: %s\n", nt_errstr(status));
+		}
+		fsp = NULL;
+	}
+	TALLOC_FREE(plist);
+	TALLOC_FREE(smb_fname);
+	TALLOC_FREE(file_data);
+	TALLOC_FREE(lines);
+	return ok;
+}
+
+struct fruit_disk_free_state {
+	off_t total_size;
+};
+
+static bool fruit_get_num_bands(vfs_handle_struct *handle,
+				char *bundle,
+				size_t *_nbands)
+{
+	char *path = NULL;
+	struct smb_filename *bands_dir = NULL;
+	DIR *d = NULL;
+	struct dirent *e = NULL;
+	size_t nbands;
+	int ret;
+
+	path = talloc_asprintf(talloc_tos(),
+			       "%s/%s/bands",
+			       handle->conn->connectpath,
+			       bundle);
+	if (path == NULL) {
+		return false;
+	}
+
+	bands_dir = synthetic_smb_fname(talloc_tos(),
+					path,
+					NULL,
+					NULL,
+					0);
+	TALLOC_FREE(path);
+	if (bands_dir == NULL) {
+		return false;
+	}
+
+	d = SMB_VFS_NEXT_OPENDIR(handle, bands_dir, NULL, 0);
+	if (d == NULL) {
+		TALLOC_FREE(bands_dir);
+		return false;
+	}
+
+	nbands = 0;
+
+	for (e = SMB_VFS_NEXT_READDIR(handle, d, NULL);
+	     e != NULL;
+	     e = SMB_VFS_NEXT_READDIR(handle, d, NULL))
+	{
+		if (ISDOT(e->d_name) || ISDOTDOT(e->d_name)) {
+			continue;
+		}
+		nbands++;
+	}
+
+	ret = SMB_VFS_NEXT_CLOSEDIR(handle, d);
+	if (ret != 0) {
+		TALLOC_FREE(bands_dir);
+		return false;
+	}
+
+	DBG_DEBUG("%zu bands in [%s]\n", nbands, smb_fname_str_dbg(bands_dir));
+
+	TALLOC_FREE(bands_dir);
+
+	*_nbands = nbands;
+	return true;
+}
+
+static bool fruit_tmsize_do_dirent(vfs_handle_struct *handle,
+				   struct fruit_disk_free_state *state,
+				   struct dirent *e)
+{
+	bool ok;
+	char *p = NULL;
+	size_t sparsebundle_strlen = strlen("sparsebundle");
+	size_t bandsize = 0;
+	size_t nbands;
+	off_t tm_size;
+
+	p = strstr(e->d_name, "sparsebundle");
+	if (p == NULL) {
+		return true;
+	}
+
+	if (p[sparsebundle_strlen] != '\0') {
+		return true;
+	}
+
+	DBG_DEBUG("Processing sparsebundle [%s]\n", e->d_name);
+
+	ok = fruit_get_bandsize(handle, e->d_name, &bandsize);
+	if (!ok) {
+		/*
+		 * Beware of race conditions: this may be an uninitialized
+		 * Info.plist that a client is just creating. We don't want let
+		 * this to trigger complete failure.
+		 */
+		DBG_ERR("Processing sparsebundle [%s] failed\n", e->d_name);
+		return true;
+	}
+
+	ok = fruit_get_num_bands(handle, e->d_name, &nbands);
+	if (!ok) {
+		/*
+		 * Beware of race conditions: this may be a backup sparsebundle
+		 * in an early stage lacking a bands subdirectory. We don't want
+		 * let this to trigger complete failure.
+		 */
+		DBG_ERR("Processing sparsebundle [%s] failed\n", e->d_name);
+		return true;
+	}
+
+	tm_size = bandsize * nbands;
+	if (tm_size > UINT64_MAX) {
+		DBG_ERR("tmsize overflow: bandsize [%zu] nbands [%zu]\n",
+			bandsize, nbands);
+		return false;
+	}
+
+	if (state->total_size + tm_size < state->total_size) {
+		DBG_ERR("tmsize overflow: bandsize [%zu] nbands [%zu]\n",
+			bandsize, nbands);
+		return false;
+	}
+
+	state->total_size += tm_size;
+
+	DBG_DEBUG("[%s] tm_size [%jd] total_size [%jd]\n",
+		  e->d_name, (intmax_t)tm_size, (intmax_t)state->total_size);
+
+	return true;
+}
+
+/**
+ * Calculate used size of a TimeMachine volume
+ *
+ * This assumes that the volume is used only for TimeMachine.
+ *
+ * - readdir(basedir of share), then
+ * - for every element that matches regex "^\(.*\)\.sparsebundle$" :
+ * - parse "\1.sparsebundle/Info.plist" and read the band-size XML key
+ * - count band files in "\1.sparsebundle/bands/"
+ * - calculate used size of all bands: band_count * band_size
+ **/
+static uint64_t fruit_disk_free(vfs_handle_struct *handle,
+				const struct smb_filename *smb_fname,
+				uint64_t *_bsize,
+				uint64_t *_dfree,
+				uint64_t *_dsize)
+{
+	struct fruit_config_data *config = NULL;
+	struct fruit_disk_free_state state = {0};
+	DIR *d = NULL;
+	struct dirent *e = NULL;
+	uint64_t dfree;
+	uint64_t dsize;
+	int ret;
+	bool ok;
+
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
+				struct fruit_config_data,
+				return UINT64_MAX);
+
+	if (!config->time_machine ||
+	    config->time_machine_max_size == 0)
+	{
+		return SMB_VFS_NEXT_DISK_FREE(handle,
+					      smb_fname,
+					      _bsize,
+					      _dfree,
+					      _dsize);
+	}
+
+	d = SMB_VFS_NEXT_OPENDIR(handle, smb_fname, NULL, 0);
+	if (d == NULL) {
+		return UINT64_MAX;
+	}
+
+	for (e = SMB_VFS_NEXT_READDIR(handle, d, NULL);
+	     e != NULL;
+	     e = SMB_VFS_NEXT_READDIR(handle, d, NULL))
+	{
+		ok = fruit_tmsize_do_dirent(handle, &state, e);
+		if (!ok) {
+			SMB_VFS_NEXT_CLOSEDIR(handle, d);
+			return UINT64_MAX;
+		}
+	}
+
+	ret = SMB_VFS_NEXT_CLOSEDIR(handle, d);
+	if (ret != 0) {
+		return UINT64_MAX;
+	}
+
+	dsize = config->time_machine_max_size / 512;
+	dfree = dsize - (state.total_size / 512);
+	if (dfree > dsize) {
+		dfree = 0;
+	}
+
+	*_bsize = 512;
+	*_dsize = dsize;
+	*_dfree = dfree;
+	return dfree / 2;
+}
+
 static struct vfs_fn_pointers vfs_fruit_fns = {
 	.connect_fn = fruit_connect,
+	.disk_free_fn = fruit_disk_free,
 
 	/* File operations */
 	.chmod_fn = fruit_chmod,
@@ -6016,7 +6558,7 @@ static struct vfs_fn_pointers vfs_fruit_fns = {
 	.fset_nt_acl_fn = fruit_fset_nt_acl,
 };
 
-NTSTATUS vfs_fruit_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_fruit_init(TALLOC_CTX *ctx)
 {
 	NTSTATUS ret = smb_register_vfs(SMB_VFS_INTERFACE_VERSION, "fruit",

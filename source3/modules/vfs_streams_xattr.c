@@ -493,9 +493,7 @@ static int streams_xattr_open(vfs_handle_struct *handle,
 		}
 	}
 
-        sio = (struct stream_io *)VFS_ADD_FSP_EXTENSION(handle, fsp,
-							struct stream_io,
-							NULL);
+        sio = VFS_ADD_FSP_EXTENSION(handle, fsp, struct stream_io, NULL);
         if (sio == NULL) {
                 errno = ENOMEM;
                 goto fail;
@@ -1700,7 +1698,7 @@ static struct vfs_fn_pointers vfs_streams_xattr_fns = {
 	.fset_nt_acl_fn = streams_xattr_fset_nt_acl,
 };
 
-NTSTATUS vfs_streams_xattr_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_streams_xattr_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION, "streams_xattr",

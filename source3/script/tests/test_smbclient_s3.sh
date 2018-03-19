@@ -1414,12 +1414,89 @@ EOF
     fi
 }
 
+# Test smbclient utimes command
+test_utimes()
+{
+    tmpfile=$PREFIX/smbclient_interactive_prompt_commands
+
+    saved_TZ="$TZ"
+    TZ=UTC
+    export TZ
+
+    cat > $tmpfile <<EOF
+del utimes_test
+put ${SMBCLIENT} utimes_test
+allinfo utimes_test
+utimes utimes_test -1 17:01:01-05:10:20 -1 -1
+allinfo utimes_test
+del utimes_test
+quit
+EOF
+    cmd='CLI_FORCE_INTERACTIVE=yes $SMBCLIENT "$@" -U$USERNAME%$PASSWORD //$SERVER/tmp -I $SERVER_IP $ADDARGS < $tmpfile 2>&1'
+    eval echo "$cmd"
+    out=`eval $cmd`
+    ret=$?
+
+    if [ -n "$saved_TZ" ] ; then
+	export TZ="$saved_TZ"
+    else
+	unset TZ
+    fi
+
+    if [ $ret != 0 ] ; then
+	echo "$out"
+	echo "failed utimes test with output $ret"
+	false
+	return
+    fi
+
+    # Now, we should have 2 identical create_time, write_time, change_time
+    # values, but one access_time of Jan  1 05:10:20 AM.
+    out_sorted=`echo "$out" | sort | uniq`
+    num_create=`echo "$out_sorted" | grep -c 'create_time:'`
+    num_access=`echo "$out_sorted" | grep -c 'access_time:'`
+    num_write=`echo "$out_sorted" | grep -c 'write_time:'`
+    num_change=`echo "$out_sorted" | grep -c 'change_time:'`
+    if [ "$num_create" != "1" ]; then
+        echo "failed - should only get one create_time $out"
+        false
+        return
+    fi
+    if [ "$num_access" != "2" ]; then
+        echo "failed - should get two access_time $out"
+        false
+        return
+    fi
+    if [ "$num_write" != "1" ]; then
+        echo "failed - should only get one write_time $out"
+        false
+        return
+    fi
+    if [ "$num_change" != "1" ]; then
+        echo "failed - should only get one change_time $out"
+        false
+        return
+    fi
+
+    # This could be: Sun Jan  1 05:10:20 AM 2017
+    # or           : Sun Jan  1 05:10:20 2017 CET
+    echo "$out" | grep 'access_time:.*Sun Jan.*1 05:10:20 .*2017.*'
+    ret=$?
+    if [ $ret -ne 0 ] ; then
+       echo "$out"
+       echo
+       echo "failed - should get access_time:    Sun Jan  1 05:10:20 [AM] 2017"
+       false
+       return
+    fi
+}
+
 # Test smbclient renames with pathnames containing '..'
 test_rename_dotdot()
 {
     tmpfile=$PREFIX/smbclient_interactive_prompt_commands
 
-cat > $tmpfile <<EOF
+    cat > $tmpfile <<EOF
 deltree dotdot_test
 mkdir dotdot_test
 cd dotdot_test
@@ -1634,6 +1711,10 @@ testit "server os message" \
 
 testit "setmode test" \
     test_setmode || \
+    failed=`expr $failed + 1`
+
+testit "utimes" \
+    test_utimes || \
     failed=`expr $failed + 1`
 
 testit "rename_dotdot" \

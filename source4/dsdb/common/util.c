@@ -2111,6 +2111,11 @@ enum samr_ValidationStatus samdb_check_password(TALLOC_CTX *mem_ctx,
 
 	TALLOC_FREE(password_script);
 
+	/*
+	 * Here are the standard AD password quality rules, which we
+	 * run after the script.
+	 */
+
 	if (!check_password_quality(utf8_pw)) {
 		return SAMR_VALIDATION_STATUS_NOT_COMPLEX_ENOUGH;
 	}
@@ -5348,10 +5353,10 @@ NTSTATUS dsdb_update_bad_pwd_count(TALLOC_CTX *mem_ctx,
 			TALLOC_FREE(mod_msg);
 			return NT_STATUS_NO_MEMORY;
 		}
-		DEBUG(5, ("Locked out user %s after %d wrong passwords\n",
+		DEBUGC( DBGC_AUTH, 1, ("Locked out user %s after %d wrong passwords\n",
 			  ldb_dn_get_linearized(user_msg->dn), badPwdCount));
 	} else {
-		DEBUG(5, ("Updated badPwdCount on %s after %d wrong passwords\n",
+		DEBUGC( DBGC_AUTH, 5, ("Updated badPwdCount on %s after %d wrong passwords\n",
 			  ldb_dn_get_linearized(user_msg->dn), badPwdCount));
 	}
 
@@ -5549,4 +5554,44 @@ int dsdb_user_obj_set_primary_group_id(struct ldb_context *ldb, struct ldb_messa
 	}
 
 	return LDB_SUCCESS;
+}
+
+/**
+ * Returns True if the source and target DNs both have the same naming context,
+ * i.e. they're both in the same partition.
+ */
+bool dsdb_objects_have_same_nc(struct ldb_context *ldb,
+			       TALLOC_CTX *mem_ctx,
+			       struct ldb_dn *source_dn,
+			       struct ldb_dn *target_dn)
+{
+	TALLOC_CTX *tmp_ctx;
+	struct ldb_dn *source_nc;
+	struct ldb_dn *target_nc;
+	int ret;
+	bool same_nc = true;
+
+	tmp_ctx = talloc_new(mem_ctx);
+
+	ret = dsdb_find_nc_root(ldb, tmp_ctx, source_dn, &source_nc);
+	if (ret != LDB_SUCCESS) {
+		DBG_ERR("Failed to find base DN for source %s\n",
+			ldb_dn_get_linearized(source_dn));
+		talloc_free(tmp_ctx);
+		return true;
+	}
+
+	ret = dsdb_find_nc_root(ldb, tmp_ctx, target_dn, &target_nc);
+	if (ret != LDB_SUCCESS) {
+		DBG_ERR("Failed to find base DN for target %s\n",
+			ldb_dn_get_linearized(target_dn));
+		talloc_free(tmp_ctx);
+		return true;
+	}
+
+	same_nc = (ldb_dn_compare(source_nc, target_nc) == 0);
+
+	talloc_free(tmp_ctx);
+
+	return same_nc;
 }

@@ -559,43 +559,6 @@ int ctdb_client_remove_message_handler(struct ctdb_context *ctdb,
 }
 
 /*
- * check server ids
- */
-int ctdb_client_check_message_handlers(struct ctdb_context *ctdb, uint64_t *ids, uint32_t num,
-				       uint8_t *result)
-{
-	TDB_DATA indata, outdata;
-	int res;
-	int32_t status;
-	int i;
-
-	indata.dptr = (uint8_t *)ids;
-	indata.dsize = num * sizeof(*ids);
-
-	res = ctdb_control(ctdb, CTDB_CURRENT_NODE, 0, CTDB_CONTROL_CHECK_SRVIDS, 0,
-			   indata, ctdb, &outdata, &status, NULL, NULL);
-	if (res != 0 || status != 0) {
-		DEBUG(DEBUG_ERR, (__location__ " failed to check srvids\n"));
-		return -1;
-	}
-
-	if (outdata.dsize != num*sizeof(uint8_t)) {
-		DEBUG(DEBUG_ERR, (__location__ " expected %lu bytes, received %zi bytes\n",
-				  (long unsigned int)num*sizeof(uint8_t),
-				  outdata.dsize));
-		talloc_free(outdata.dptr);
-		return -1;
-	}
-
-	for (i=0; i<num; i++) {
-		result[i] = outdata.dptr[i];
-	}
-
-	talloc_free(outdata.dptr);
-	return 0;
-}
-
-/*
   send a message - from client context
  */
 int ctdb_client_send_message(struct ctdb_context *ctdb, uint32_t pnn,
@@ -1919,9 +1882,11 @@ int ctdb_ctrl_getdbseqnum(struct ctdb_context *ctdb, struct timeval timeout,
 	int ret;
 	int32_t res;
 	TDB_DATA data, outdata;
+	uint8_t buf[sizeof(uint64_t)] = { 0 };
 
-	data.dptr = (uint8_t *)&dbid;
-	data.dsize = sizeof(uint64_t);	/* This is just wrong */
+	*(uint32_t *)buf = dbid;
+	data.dptr = buf;
+	data.dsize = sizeof(uint64_t);
 
 	ret = ctdb_control(ctdb, destnode, 0, CTDB_CONTROL_GET_DB_SEQNUM,
 			   0, data, ctdb, &outdata, &res, &timeout, NULL);
@@ -2472,71 +2437,6 @@ int ctdb_ctrl_getpnn(struct ctdb_context *ctdb, struct timeval timeout, uint32_t
 
 	return res;
 }
-
-/*
-  get the monitoring mode of a remote node
- */
-int ctdb_ctrl_getmonmode(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode, uint32_t *monmode)
-{
-	int ret;
-	int32_t res;
-
-	ret = ctdb_control(ctdb, destnode, 0, 
-			   CTDB_CONTROL_GET_MONMODE, 0, tdb_null, 
-			   NULL, NULL, &res, &timeout, NULL);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for getmonmode failed\n"));
-		return -1;
-	}
-
-	*monmode = res;
-
-	return 0;
-}
-
-
-/*
- set the monitoring mode of a remote node to active
- */
-int ctdb_ctrl_enable_monmode(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode)
-{
-	int ret;
-	
-
-	ret = ctdb_control(ctdb, destnode, 0, 
-			   CTDB_CONTROL_ENABLE_MONITOR, 0, tdb_null, 
-			   NULL, NULL,NULL, &timeout, NULL);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for enable_monitor failed\n"));
-		return -1;
-	}
-
-	
-
-	return 0;
-}
-
-/*
-  set the monitoring mode of a remote node to disable
- */
-int ctdb_ctrl_disable_monmode(struct ctdb_context *ctdb, struct timeval timeout, uint32_t destnode)
-{
-	int ret;
-	
-
-	ret = ctdb_control(ctdb, destnode, 0, 
-			   CTDB_CONTROL_DISABLE_MONITOR, 0, tdb_null, 
-			   NULL, NULL, NULL, &timeout, NULL);
-	if (ret != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " ctdb_control for disable_monitor failed\n"));
-		return -1;
-	}
-
-	
-
-	return 0;
-}
-
 
 
 /*

@@ -464,6 +464,10 @@ static uint32_t vfs_gluster_fs_capabilities(struct vfs_handle_struct *handle,
 {
 	uint32_t caps = FILE_CASE_SENSITIVE_SEARCH | FILE_CASE_PRESERVED_NAMES;
 
+#ifdef HAVE_GFAPI_VER_6
+	caps |= FILE_SUPPORTS_SPARSE_FILES;
+#endif
+
 #ifdef STAT_HAVE_NSEC
 	*p_ts_res = TIMESTAMP_SET_NT_OR_BETTER;
 #endif
@@ -541,12 +545,6 @@ static void vfs_gluster_rewinddir(struct vfs_handle_struct *handle, DIR *dirp)
 	glfs_seekdir((void *)dirp, 0);
 }
 
-static void vfs_gluster_init_search_op(struct vfs_handle_struct *handle,
-				       DIR *dirp)
-{
-	return;
-}
-
 static int vfs_gluster_mkdir(struct vfs_handle_struct *handle,
 			     const struct smb_filename *smb_fname,
 			     mode_t mode)
@@ -579,8 +577,7 @@ static int vfs_gluster_open(struct vfs_handle_struct *handle,
 	if (glfd == NULL) {
 		return -1;
 	}
-	p_tmp = (glfs_fd_t **)VFS_ADD_FSP_EXTENSION(handle, fsp,
-							  glfs_fd_t *, NULL);
+	p_tmp = VFS_ADD_FSP_EXTENSION(handle, fsp, glfs_fd_t *, NULL);
 	*p_tmp = glfd;
 	/* An arbitrary value for error reporting, so you know its us. */
 	return 13371337;
@@ -964,7 +961,7 @@ static struct tevent_req *vfs_gluster_fsync_send(struct vfs_handle_struct
 
 	PROFILE_TIMESTAMP(&state->start);
 	ret = glfs_fsync_async(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle,
-				fsp), aio_glusterfs_done, req);
+				fsp), aio_glusterfs_done, state);
 	if (ret < 0) {
 		tevent_req_error(req, -ret);
 		return tevent_req_post(req, ev);
@@ -1100,7 +1097,7 @@ static struct smb_filename *vfs_gluster_getwd(struct vfs_handle_struct *handle,
 
 	ret = glfs_getcwd(handle->data, cwd, PATH_MAX - 1);
 	if (ret == NULL) {
-		free(cwd);
+		SAFE_FREE(cwd);
 		return NULL;
 	}
 	smb_fname = synthetic_smb_fname(ctx,
@@ -1108,7 +1105,7 @@ static struct smb_filename *vfs_gluster_getwd(struct vfs_handle_struct *handle,
 					NULL,
 					NULL,
 					0);
-	free(cwd);
+	SAFE_FREE(cwd);
 	return smb_fname;
 }
 
@@ -1155,9 +1152,31 @@ static int vfs_gluster_fallocate(struct vfs_handle_struct *handle,
 				 uint32_t mode,
 				 off_t offset, off_t len)
 {
-	/* TODO: add support using glfs_fallocate() and glfs_zerofill() */
+#ifdef HAVE_GFAPI_VER_6
+	int keep_size, punch_hole;
+
+	keep_size = mode & VFS_FALLOCATE_FL_KEEP_SIZE;
+	punch_hole = mode & VFS_FALLOCATE_FL_PUNCH_HOLE;
+
+	mode &= ~(VFS_FALLOCATE_FL_KEEP_SIZE|VFS_FALLOCATE_FL_PUNCH_HOLE);
+	if (mode != 0) {
+		errno = ENOTSUP;
+		return -1;
+	}
+
+	if (punch_hole) {
+		return glfs_discard(*(glfs_fd_t **)
+				    VFS_FETCH_FSP_EXTENSION(handle, fsp),
+				    offset, len);
+	}
+
+	return glfs_fallocate(*(glfs_fd_t **)
+			      VFS_FETCH_FSP_EXTENSION(handle, fsp),
+			      keep_size, offset, len);
+#else
 	errno = ENOTSUP;
 	return -1;
+#endif
 }
 
 static struct smb_filename *vfs_gluster_realpath(struct vfs_handle_struct *handle,
@@ -1434,7 +1453,6 @@ static struct vfs_fn_pointers glusterfs_fns = {
 	.mkdir_fn = vfs_gluster_mkdir,
 	.rmdir_fn = vfs_gluster_rmdir,
 	.closedir_fn = vfs_gluster_closedir,
-	.init_search_op_fn = vfs_gluster_init_search_op,
 
 	/* File Operations */
 
@@ -1531,7 +1549,7 @@ static struct vfs_fn_pointers glusterfs_fns = {
 	.durable_reconnect_fn = NULL,
 };
 
-NTSTATUS vfs_glusterfs_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_glusterfs_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION,

@@ -1,3 +1,47 @@
+samba (2:4.8.0+dfsg-1) experimental; urgency=medium
+
+  [ Mathieu Parent ]
+  * New major upstream version
+    - Update d/gbp.conf and d/watch for 4.8
+    - Update upstream source from tag 'upstream/4.8.0+dfsg'
+    - Re-apply patches
+    - Remove patches merged upstream:
+      + no_build_system.patch
+      + systemd-syslog.target-is-obsolete.patch
+      + Add-documentation-to-systemd-Unit-files.patch
+      + fix_kill_path_in_units.patch
+      + nmbd-requires-a-working-network.patch
+      + CVE-2018-1050-11343-4.7.patch
+      + CVE-2018-1057-v4-7.metze01.patches.txt
+    - Bump build-depends talloc >= 2.1.11~, tdb >= 1.3.15~, tevent >= 0.9.36~
+      and ldb >= 2:1.3.2~
+    - Drop Build-Conflicts-Arch: libaio-dev, vfs_aio_linux was dropped
+    - Update debian/*.install and use debian/not-installed
+    - Update debian/libsmbclient.symbols
+    - Upload to experimental
+  * debian/README.source
+    - Update instructions
+    - Convert to Markdown
+    - Add a symlink from README.source to README.source.md
+  * debian/rules:
+    - Use the new --systemd-install-services
+    - Use dh_missing --fail-missing
+    - Re-order debian/rules overrides in the order they are called
+    - Remove broken get-packaged-orig-source target
+    - Remove unused DEB_BUILD_OPT_FOO variables
+    - Add some comments
+    - Move all the custom installs from override_dh_install to
+      override_dh_auto_install
+    - Remove --sourcedir override to dh_install "since dh_install automatically
+      looks for files in debian/tmp in debhelper compatibility level 7 and
+      above"
+    - PIDFile= is now correctly set in *.service
+
+  [ Louis van Belle ]
+  * Update d/control, Relax Build-Depends to allow backport
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 19 Mar 2018 13:02:51 +0100
+
 samba (2:4.7.4+dfsg-2) unstable; urgency=high
 
   [ Mathieu Parent ]

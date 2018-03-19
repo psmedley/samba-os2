@@ -95,9 +95,6 @@ int ctdb_client_set_message_handler(struct ctdb_context *ctdb, uint64_t srvid,
 				    void *private_data);
 int ctdb_client_remove_message_handler(struct ctdb_context *ctdb,
 				       uint64_t srvid, void *private_data);
-int ctdb_client_check_message_handlers(struct ctdb_context *ctdb,
-				       uint64_t *ids, uint32_t num,
-				       uint8_t *result);
 
 /* send a ctdb message */
 int ctdb_client_send_message(struct ctdb_context *ctdb, uint32_t pnn,
@@ -319,24 +316,6 @@ int ctdb_ctrl_freeze(struct ctdb_context *ctdb, struct timeval timeout,
 
 int ctdb_ctrl_getpnn(struct ctdb_context *ctdb, struct timeval timeout,
 		     uint32_t destnode);
-
-/*
-  get the monitoring mode of a remote node
- */
-int ctdb_ctrl_getmonmode(struct ctdb_context *ctdb, struct timeval timeout,
-			 uint32_t destnode, uint32_t *monmode);
-
-/*
-  set the monitoring mode of a remote node to active
- */
-int ctdb_ctrl_enable_monmode(struct ctdb_context *ctdb,
-			     struct timeval timeout, uint32_t destnode);
-
-/*
-  set the monitoring mode of a remote node to disabled
- */
-int ctdb_ctrl_disable_monmode(struct ctdb_context *ctdb,
-			      struct timeval timeout, uint32_t destnode);
 
 int ctdb_ctrl_takeover_ip(struct ctdb_context *ctdb, struct timeval timeout,
 			  uint32_t destnode, struct ctdb_public_ip *ip);

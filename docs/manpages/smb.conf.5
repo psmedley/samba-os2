@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 12/22/2017
+.\"      Date: 03/13/2018
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.7
+.\"    Source: Samba 4.8.0
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "12/22/2017" "Samba 4\&.7" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "03/13/2018" "Samba 4\&.8\&.0" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -475,6 +475,11 @@ the IP address of the client machine\&.
 Before 4\&.0\&.0 it could contain IPv4 mapped IPv6 addresses, now it only contains IPv4 or IPv6 addresses\&.
 .RE
 .PP
+%J
+.RS 4
+the IP address of the client machine, colons/dots replaced by underscores\&.
+.RE
+.PP
 %i
 .RS 4
 the local IP address to which a client connected\&.
@@ -482,9 +487,19 @@ the local IP address to which a client connected\&.
 Before 4\&.0\&.0 it could contain IPv4 mapped IPv6 addresses, now it only contains IPv4 or IPv6 addresses\&.
 .RE
 .PP
+%j
+.RS 4
+the local IP address to which a client connected, colons/dots replaced by underscores\&.
+.RE
+.PP
 %T
 .RS 4
 the current date and time\&.
+.RE
+.PP
+%t
+.RS 4
+the current date and time in a minimal format without colons (YYYYYmmdd_HHMMSS)\&.
 .RE
 .PP
 %D
@@ -1230,9 +1245,9 @@ Default:
 aio read size (S)
 .PP
 .RS 4
-If Samba has been built with asynchronous I/O support and this integer parameter is set to non\-zero value, Samba will read from file asynchronously when size of request is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads and when not using write cache\&.
+If this integer parameter is set to a non\-zero value, Samba will read from files asynchronously when the request size is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads and when not using write cache\&.
 .sp
-Current implementation of asynchronous I/O in Samba 3\&.0 does support only up to 10 outstanding asynchronous requests, read and write combined\&.
+The only reasonable values for this parameter are 0 (no async I/O) and 1 (always do async I/O)\&.
 .sp
 Related command:
 \m[blue]\fBwrite cache size\fR\m[]
@@ -1241,10 +1256,10 @@ Related command:
 \m[blue]\fBaio write size\fR\m[]
 .sp
 Default:
-\fI\fIaio read size\fR\fR\fI = \fR\fI0\fR\fI \fR
+\fI\fIaio read size\fR\fR\fI = \fR\fI1\fR\fI \fR
 .sp
 Example:
-\fI\fIaio read size\fR\fR\fI = \fR\fI16384 # Use asynchronous I/O for reads bigger than 16KB request size\fR\fI \fR
+\fI\fIaio read size\fR\fR\fI = \fR\fI0 # Always do reads synchronously \fR\fI \fR
 .RE
 
 aio write behind (S)
@@ -1266,9 +1281,13 @@ Example:
 aio write size (S)
 .PP
 .RS 4
-If Samba has been built with asynchronous I/O support and this integer parameter is set to non\-zero value, Samba will write to file asynchronously when size of request is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads and when not using write cache\&.
+If this integer parameter is set to a non\-zero value, Samba will write to files asynchronously when the request size is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads and when not using write cache\&.
 .sp
-Current implementation of asynchronous I/O in Samba 3\&.0 does support only up to 10 outstanding asynchronous requests, read and write combined\&.
+The only reasonable values for this parameter are 0 (no async I/O) and 1 (always do async I/O)\&.
+.sp
+Compared to
+\m[blue]\fBaio read size\fR\m[]
+this parameter has a smaller effect, most writes should end up in the file system cache\&. Writes that require space allocation might benefit most from going asynchronous\&.
 .sp
 Related command:
 \m[blue]\fBwrite cache size\fR\m[]
@@ -1277,10 +1296,10 @@ Related command:
 \m[blue]\fBaio read size\fR\m[]
 .sp
 Default:
-\fI\fIaio write size\fR\fR\fI = \fR\fI0\fR\fI \fR
+\fI\fIaio write size\fR\fR\fI = \fR\fI1\fR\fI \fR
 .sp
 Example:
-\fI\fIaio write size\fR\fR\fI = \fR\fI16384 # Use asynchronous I/O for writes bigger than 16KB request size\fR\fI \fR
+\fI\fIaio write size\fR\fR\fI = \fR\fI0 # Always do writes synchronously \fR\fI \fR
 .RE
 
 algorithmic rid base (G)
@@ -1422,6 +1441,20 @@ Default:
 \fI\fIallow unsafe cluster upgrade\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
+apply group policies (G)
+.PP
+.RS 4
+This option controls whether winbind will execute the gpupdate command defined in
+\m[blue]\fBgpo update command\fR\m[]
+on the Group Policy update interval\&. The Group Policy update interval is defined as every 90 minutes, plus a random offset between 0 and 30 minutes\&. This applies Group Policy Machine polices to the client or KDC and machine policies to a server\&.
+.sp
+Default:
+\fI\fIapply group policies\fR\fR\fI = \fR\fIno\fR\fI \fR
+.sp
+Example:
+\fI\fIapply group policies\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
 async smb echo handler (G)
 .PP
 .RS 4
@@ -1445,35 +1478,6 @@ is set appropriately\&.
 .sp
 Default:
 \fI\fIauth event notification\fR\fR\fI = \fR\fIno\fR\fI \fR
-.RE
-
-auth methods (G)
-.PP
-.RS 4
-This option allows the administrator to chose what authentication methods
-smbd
-will use when authenticating a user\&. This option defaults to sensible values based on
-\m[blue]\fBsecurity\fR\m[]\&. This should be considered a developer option and used only in rare circumstances\&. In the majority (if not all) of production servers, the default setting should be adequate\&.
-.sp
-Each entry in the list attempts to authenticate the user in turn, until the user authenticates\&. In practice only one method will ever actually be able to complete the authentication\&.
-.sp
-Possible options include
-\fBguest\fR
-(anonymous access),
-\fBsam\fR
-(lookups in local list of accounts based on netbios name or domain name),
-\fBwinbind\fR
-(relay authentication requests for remote users through winbindd),
-\fBntdomain\fR
-(pre\-winbindd method of authentication for remote domain users; deprecated in favour of winbind method),
-\fBtrustdomain\fR
-(authenticate trusted users by contacting the remote DC directly from smbd; deprecated in favour of winbind method)\&.
-.sp
-Default:
-\fI\fIauth methods\fR\fR\fI = \fR\fI\fR\fI \fR
-.sp
-Example:
-\fI\fIauth methods\fR\fR\fI = \fR\fIguest sam winbind\fR\fI \fR
 .RE
 
 preload
@@ -1509,6 +1513,22 @@ attempts to connect to the service will fail\&. Such failures are logged\&.
 .sp
 Default:
 \fI\fIavailable\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
+bind dns directory
+.PP
+.RS 4
+This parameter is a synonym for
+binddns dir\&.
+.RE
+
+binddns dir (G)
+.PP
+.RS 4
+This parameters defines the directory samba will use to store the configuration files for bind, such as named\&.conf\&. NOTE: The bind dns directory needs to be on the same mount point as the private directory!
+.sp
+Default:
+\fI\fIbinddns dir\fR\fR\fI = \fR\fI${prefix}/bind\-dns\fR\fI \fR
 .RE
 
 bind interfaces only (G)
@@ -2225,6 +2245,8 @@ Default:
 client schannel (G)
 .PP
 .RS 4
+This option is deprecated with Samba 4\&.8 and will be removed in future\&. At the same time the default changed to yes, which will be the hardcoded behavior in future\&.
+.sp
 This controls whether the client offers or even demands the use of the netlogon schannel\&.
 \m[blue]\fBclient schannel = no\fR\m[]
 does not offer the schannel,
@@ -2241,10 +2263,10 @@ This option yields precedence to the
 option\&.
 .sp
 Default:
-\fI\fIclient schannel\fR\fR\fI = \fR\fIauto\fR\fI \fR
+\fI\fIclient schannel\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .sp
 Example:
-\fI\fIclient schannel\fR\fR\fI = \fR\fIyes\fR\fI \fR
+\fI\fIclient schannel\fR\fR\fI = \fR\fIauto\fR\fI \fR
 .RE
 
 client signing (G)
@@ -3911,6 +3933,18 @@ parameter is set to
 .sp
 Default:
 \fI\fIgetwd cache\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
+gpo update command (G)
+.PP
+.RS 4
+This option sets the command that is called to apply GPO policies\&. The samba_gpoupdate script applies System Access and Kerberos Policies to the KDC\&. System Access policies set minPwdAge, maxPwdAge, minPwdLength, and pwdProperties in the samdb\&. Kerberos Policies set kdc:service ticket lifetime, kdc:user ticket lifetime, and kdc:renewal lifetime in smb\&.conf\&.
+.sp
+Default:
+\fI\fIgpo update command\fR\fR\fI = \fR\fI${prefix}/sbin/samba_gpoupdate\fR\fI \fR
+.sp
+Example:
+\fI\fIgpo update command\fR\fR\fI = \fR\fI/usr/local/sbin/gpoupdate\fR\fI \fR
 .RE
 
 guest account (G)
@@ -6868,33 +6902,6 @@ Example:
 \fI\fImap to guest\fR\fR\fI = \fR\fIBad User\fR\fI \fR
 .RE
 
-map untrusted to domain (G)
-.PP
-.RS 4
-By default, and with
-\m[blue]\fBmap untrusted to domain = auto\fR\m[]
-smbd will defer the decision whether the domain name provided by the client is a valid domain name to the Domain Controller (DC) of the domain it is a member of, if it is not a DC\&. If the DC indicates that the domain portion is unknown, then a local authentication is performed\&. Standalone servers always ignore the domain\&. This is basically the same as the behavior implemented in Windows\&.
-.sp
-With
-\m[blue]\fBmap untrusted to domain = no\fR\m[], if a client connects to smbd using an untrusted domain name, such as BOGUS\euser, smbd replaces the BOGUS domain with it\*(Aqs SAM name (forcing local authentication) before attempting to authenticate that user\&. In the case where smbd is acting as a NT4 PDC/BDC this will be DOMAIN\euser\&. In the case where smbd is acting as a domain member server or a standalone server this will be WORKSTATION\euser\&. While this appears similar to the behaviour of
-\m[blue]\fBmap untrusted to domain = auto\fR\m[], the difference is that smbd will use a cached (maybe incomplete) list of trusted domains in order to classify a domain as "untrusted" before contacting any DC first\&.
-.sp
-With
-\m[blue]\fBmap untrusted to domain = yes\fR\m[], smbd provides the legacy behavior matching that of versions of Samba pre 3\&.4: the BOGUS domain name would always be replaced by the primary domain before attempting to authenticate that user\&. This will be DOMAIN\euser in all server roles except active directory domain controller\&.
-.sp
-\m[blue]\fBmap untrusted to domain = no\fR\m[], was the default up to Samba 4\&.6\&.
-.sp
-\m[blue]\fBmap untrusted to domain = auto\fR\m[]
-was added and become the default with Samba 4\&.7\&.0\&. As the option is marked as
-\fBdeprecated\fR
-it will be removed in a future release, while the behavior of
-\m[blue]\fBmap untrusted to domain = auto\fR\m[]
-will be kept\&.
-.sp
-Default:
-\fI\fImap untrusted to domain\fR\fR\fI = \fR\fIauto\fR\fI \fR
-.RE
-
 max connections (S)
 .PP
 .RS 4
@@ -7064,6 +7071,19 @@ Default:
 .sp
 Example:
 \fI\fImax xmit\fR\fR\fI = \fR\fI8192\fR\fI \fR
+.RE
+
+mdns name (G)
+.PP
+.RS 4
+This parameter controls the name that multicast DNS support advertises as its\*(Aq hostname\&.
+.sp
+The default is to use the NETBIOS name which is typically the hostname in all capital letters\&.
+.sp
+A setting of mdns will defer the hostname configuration to the MDNS library that is used\&.
+.sp
+Default:
+\fI\fImdns name\fR\fR\fI = \fR\fInetbios\fR\fI \fR
 .RE
 
 message command (G)
@@ -7394,6 +7414,33 @@ Example:
 \fI\fInbt client socket address\fR\fR\fI = \fR\fI192\&.168\&.2\&.20\fR\fI \fR
 .RE
 
+nbtd:wins_prepend1Bto1Cqueries (G)
+.PP
+.RS 4
+Normally queries for 0x1C names (all logon servers for a domain) will return the first address of the 0x1B names (domain master browser and PDC) as first address in the result list\&. As many client only use the first address in the list by default, all clients will use the same server (the PDC)\&. Windows servers have an option to disable this behavior (since Windows 2000 Service Pack 2)\&.
+.sp
+Default:
+\fI\fInbtd:wins_prepend1Bto1Cqueries\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
+nbtd:wins_wins_randomize1Clist (G)
+.PP
+.RS 4
+Normally queries for 0x1C names will return the addresses in the same order as they\*(Aqre stored in the database, that means first all addresses which have been directly registered at the local wins server and then all addresses registered at other servers\&. Windows servers have an option to change this behavior and randomize the returned addresses\&. Set this parameter to "yes" and Samba will sort the address list depending on the client address and the matching bits of the addresses, the first address is randomized based on depending on the "nbtd:wins_randomize1Clist_mask" parameter\&.
+.sp
+Default:
+\fI\fInbtd:wins_wins_randomize1Clist\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+nbtd:wins_randomize1Clist_mask (G)
+.PP
+.RS 4
+If the "nbtd:wins_randomize1Clist" parameter is set to "yes", then randomizing of the first returned address is based on the specified netmask\&. If there are addresses which are in the same subnet as the client address, the first returned address is randomly chosen out them\&. Otherwise the first returned address is randomly chosen out of all addresses\&.
+.sp
+Default:
+\fI\fInbtd:wins_randomize1Clist_mask\fR\fR\fI = \fR\fI255\&.255\&.255\&.0\fR\fI \fR
+.RE
+
 nbt port (G)
 .PP
 .RS 4
@@ -7668,17 +7715,6 @@ This specifies the NTVFS handlers for this share\&.
 .sp -1
 .IP \(bu 2.3
 .\}
-posix: Maps POSIX FS semantics to NT semantics
-.RE
-.sp
-.RS 4
-.ie n \{\
-\h'-04'\(bu\h'+03'\c
-.\}
-.el \{\
-.sp -1
-.IP \(bu 2.3
-.\}
 unixuid: Sets up user credentials based on POSIX gid/uid\&.
 .RE
 .sp
@@ -7800,38 +7836,6 @@ DO NOT CHANGE THIS PARAMETER UNLESS YOU HAVE READ AND UNDERSTOOD THE SAMBA OPLOC
 .RE
 Default:
 \fI\fIoplock break wait time\fR\fR\fI = \fR\fI0\fR\fI \fR
-.RE
-
-oplock contention limit (S)
-.PP
-.RS 4
-This is a
-\fIvery\fR
-advanced
-\fBsmbd\fR(8)
-tuning option to improve the efficiency of the granting of oplocks under multiple client contention for the same file\&.
-.sp
-In brief it specifies a number, which causes
-\fBsmbd\fR(8)not to grant an oplock even when requested if the approximate number of clients contending for an oplock on the same file goes over this limit\&. This causes
-smbd
-to behave in a similar way to Windows NT\&.
-.if n \{\
-.sp
-.\}
-.RS 4
-.it 1 an-trap
-.nr an-no-space-flag 1
-.nr an-break-flag 1
-.br
-.ps +1
-\fBWarning\fR
-.ps -1
-.br
-DO NOT CHANGE THIS PARAMETER UNLESS YOU HAVE READ AND UNDERSTOOD THE SAMBA OPLOCK CODE\&.
-.sp .5v
-.RE
-Default:
-\fI\fIoplock contention limit\fR\fR\fI = \fR\fI2\fR\fI \fR
 .RE
 
 oplocks (S)
@@ -8420,6 +8424,19 @@ Default:
 \fI\fIpreferred master\fR\fR\fI = \fR\fIauto\fR\fI \fR
 .RE
 
+prefork children (G)
+.PP
+.RS 4
+This option controls the number of worker processes that are started for each service when prefork process model is enabled\&. The prefork children are only started for those services that support prefork (currently only ldap)\&. For processes that don\*(Aqt support preforking all requests are handled by a single process for that service\&.
+.sp
+This should be set to a small multiple of the number of CPU\*(Aqs available on the server
+.sp
+Additionally the number of prefork children can be specified for an individual service by using "prefork children: service name" i\&.e\&. "prefork children:ldap = 8" to set the number of ldap worker processes\&.
+.sp
+Default:
+\fI\fIprefork children\fR\fR\fI = \fR\fI1\fR\fI \fR
+.RE
+
 preload modules (G)
 .PP
 .RS 4
@@ -8746,30 +8763,6 @@ secrets\&.tdb\&.
 .sp
 Default:
 \fI\fIprivate dir\fR\fR\fI = \fR\fI${prefix}/private\fR\fI \fR
-.RE
-
-profile acls (S)
-.PP
-.RS 4
-As most system support support posix acls and extended attributes today\&. The "acl_xattr" vfs module should be used instead of using
-\m[blue]\fBprofile acls = yes\fR\m[]\&. Using an vfs module that provides nfs4 acls may also work\&.
-.sp
-With modern clients (as of 2017) it\*(Aqs not possible to use
-\m[blue]\fBprofile acls = yes\fR\m[]
-anymore\&.
-.sp
-This boolean parameter was added to fix the problems that people have been having with storing user profiles on Samba shares from Windows 2000 or Windows XP clients\&. New versions of Windows 2000 or Windows XP service packs do security ACL checking on the owner and ability to write of the profile directory stored on a local workstation when copied from a Samba share\&.
-.sp
-When not in domain mode with winbindd then the security info copied onto the local workstation has no meaning to the logged in user (SID) on that workstation so the profile storing fails\&. Adding this parameter onto a share used for profile storage changes two things about the returned Windows ACL\&. Firstly it changes the owner and group owner of all reported files and directories to be BUILTIN\e\eAdministrators, BUILTIN\e\eUsers respectively (SIDs S\-1\-5\-32\-544, S\-1\-5\-32\-545)\&. Secondly it adds an ACE entry of "Full Control" to the SID BUILTIN\e\eUsers to every returned ACL\&. This will allow any Windows 2000 or XP workstation user to access the profile\&.
-.sp
-Note that if you have multiple users logging on to a workstation then in order to prevent them from being able to access each others profiles you must remove the "Bypass traverse checking" advanced user right\&. This will prevent access to other users profile directories as the top level profile directory (named after the user) is created by the workstation profile code and has an ACL restricting entry to the directory tree to the owning user\&.
-.sp
-Note that this parameter should be set to yes on dedicated profile shares only\&. On other shares, it might cause incorrect file ownerships\&.
-.sp
-This parameter is deprecated with Samba 4\&.7 and will be removed in future versions\&.
-.sp
-Default:
-\fI\fIprofile acls\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 queuepause command (S)
@@ -9932,9 +9925,9 @@ This boolean parameter controls whether
 \fBsmbd\fR(8)
 will support SMB3 multi\-channel\&.
 .sp
-This parameter has been added with version 4\&.4\&.
+This parameter was added with version 4\&.4\&.
 .sp
-Warning: Note that this feature is considered experimental in Samba 4\&.4\&. Use it at your own risk: Even though it may seem to work well in testing, it may result in data corruption under some race conditions\&. Future 4\&.4\&.x release may improve this situation\&.
+Warning: Note that this feature is still considered experimental\&. Use it at your own risk: Even though it may seem to work well in testing, it may result in data corruption under some race conditions\&. Future releases may improve this situation\&.
 .sp
 Default:
 \fI\fIserver multi channel support\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -10019,6 +10012,8 @@ Example:
 server schannel (G)
 .PP
 .RS 4
+This option is deprecated with Samba 4\&.8 and will be removed in future\&. At the same time the default changed to yes, which will be the hardcoded behavior in future\&. If you have the need for the behavior of "auto" to be kept, please file a bug at https://bugzilla\&.samba\&.org\&.
+.sp
 This controls whether the server offers or even demands the use of the netlogon schannel\&.
 \m[blue]\fBserver schannel = no\fR\m[]
 does not offer the schannel,
@@ -10033,10 +10028,10 @@ WinXP_SignOrSeal\&.reg
 registry patch found in the docs/registry subdirectory of the Samba distribution tarball\&.
 .sp
 Default:
-\fI\fIserver schannel\fR\fR\fI = \fR\fIauto\fR\fI \fR
+\fI\fIserver schannel\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .sp
 Example:
-\fI\fIserver schannel\fR\fR\fI = \fR\fIyes\fR\fI \fR
+\fI\fIserver schannel\fR\fR\fI = \fR\fIauto\fR\fI \fR
 .RE
 
 server services (G)
@@ -12041,17 +12036,6 @@ Default:
 \fI\fIuse sendfile\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
-use spnego (G)
-.PP
-.RS 4
-This deprecated variable controls whether samba will try to use Simple and Protected NEGOciation (as specified by rfc2478) with WindowsXP and Windows2000 clients to agree upon an authentication mechanism\&.
-.sp
-Unless further issues are discovered with our SPNEGO implementation, there is no reason this should ever be disabled\&.
-.sp
-Default:
-\fI\fIuse spnego\fR\fR\fI = \fR\fIyes\fR\fI \fR
-.RE
-
 utmp (G)
 .PP
 .RS 4
@@ -12352,9 +12336,11 @@ This option controls the maximum depth that winbindd will traverse when flatteni
 \m[blue]\fBwinbind nested groups\fR\m[]
 option which implements the Windows NT4 model of local group nesting\&. The "winbind expand groups" parameter specifically applies to the membership of domain groups\&.
 .sp
+This option also affects the return of non nested group memberships of Windows domain users\&. With the new default "winbind expand groups = 0" winbind does not query group memberships at all\&.
+.sp
 Be aware that a high value for this parameter can result in system slowdown as the main parent winbindd daemon must perform the group unrolling and will be unable to answer incoming NSS or authentication requests during this time\&.
 .sp
-The default value was changed from 1 to 0 with Samba 4\&.2\&. Some broken applications calculate the group memberships of users by traversing groups, such applications will require "winbind expand groups = 1"\&. But the new default makes winbindd more reliable as it doesn\*(Aqt require SAMR access to domain controllers of trusted domains\&.
+The default value was changed from 1 to 0 with Samba 4\&.2\&. Some broken applications (including some implementations of newgrp and sg) calculate the group memberships of users by traversing groups, such applications will require "winbind expand groups = 1"\&. But the new default makes winbindd more reliable as it doesn\*(Aqt require SAMR access to domain controllers of trusted domains\&.
 .sp
 Default:
 \fI\fIwinbind expand groups\fR\fR\fI = \fR\fI0\fR\fI \fR
@@ -12532,6 +12518,30 @@ Default:
 \fI\fIwinbind rpc only\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
+winbind scan trusted domains (G)
+.PP
+.RS 4
+This option only takes effect when the
+\m[blue]\fBsecurity\fR\m[]
+option is set to
+\fBdomain\fR
+or
+\fBads\fR\&. If it is set to yes (the default), winbindd periodically tries to scan for new trusted domains and adds them to a global list inside of winbindd\&. The list can be extracted with
+wbinfo \-\-trusted\-domains \-\-verbose\&. This matches the behaviour of Samba 4\&.7 and older\&.
+.sp
+The construction of that global list is not reliable and often incomplete in complex trust setups\&. In most situations the list is not needed any more for winbindd to operate correctly\&. E\&.g\&. for plain file serving via SMB using a simple idmap setup with
+\fBautorid\fR,
+\fBtdb\fR
+or
+\fBad\fR\&. However some more complex setups require the list, e\&.g\&. if you specify idmap backends for specific domains\&. Some pam_winbind setups may also require the global list\&.
+.sp
+If you have a setup that doesn\*(Aqt require the global list, you should set
+\m[blue]\fBwinbind scan trusted domains = no\fR\m[]\&.
+.sp
+Default:
+\fI\fIwinbind scan trusted domains\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
 winbind sealed pipes (G)
 .PP
 .RS 4
@@ -12562,21 +12572,6 @@ Example:
 \fI\fIwinbind separator\fR\fR\fI = \fR\fI+\fR\fI \fR
 .RE
 
-winbind trusted domains only (G)
-.PP
-.RS 4
-This parameter is designed to allow Samba servers that are members of a Samba controlled domain to use UNIX accounts distributed via NIS, rsync, or LDAP as the uid\*(Aqs for winbindd users in the hosts primary domain\&. Therefore, the user
-DOMAIN\euser1
-would be mapped to the account user1 in /etc/passwd instead of allocating a new uid for him or her\&.
-.sp
-This parameter is now deprecated in favor of the newer idmap_nss backend\&. Refer to the
-\fBidmap_nss\fR(8)
-man page for more information\&.
-.sp
-Default:
-\fI\fIwinbind trusted domains only\fR\fR\fI = \fR\fIno\fR\fI \fR
-.RE
-
 winbind use default domain (G)
 .PP
 .RS 4
@@ -12591,6 +12586,23 @@ Default:
 .sp
 Example:
 \fI\fIwinbind use default domain\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
+winsdb:local_owner (G)
+.PP
+.RS 4
+This specifies the address that is stored in the winsOwner attribute, of locally registered winsRecord\-objects\&. The default is to use the ip\-address of the first network interface\&.
+.sp
+\fINo default\fR
+.RE
+
+winsdb:dbnosync (G)
+.PP
+.RS 4
+This parameter disables fsync() after changes of the WINS database\&.
+.sp
+Default:
+\fI\fIwinsdb:dbnosync\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 wins hook (G)
@@ -12749,6 +12761,68 @@ Example:
 \fI\fIworkgroup\fR\fR\fI = \fR\fIMYGROUP\fR\fI \fR
 .RE
 
+wreplsrv:periodic_interval (G)
+.PP
+.RS 4
+This maximum interval in s between 2 periodically scheduled runs where we check for wins\&.ldb changes and do push notifications to our push partners\&. Also wins_config\&.ldb changes are checked in that interval and partner configuration reloads are done\&.
+.sp
+Default:
+\fI\fIwreplsrv:periodic_interval\fR\fR\fI = \fR\fI15\fR\fI \fR
+.RE
+
+wreplsrv:propagate name releases (G)
+.PP
+.RS 4
+If this parameter is enabled, then explicit (from the client) and implicit (via the scavenging) name releases are propagated to the other servers directly, even if there are still other addresses active, this applies to SPECIAL GROUP (2) and MULTIHOMED (3) entries\&. Also the replication conflict merge algorithm for SPECIAL GROUP (2) entries discards replica addresses where the address owner is the local server, if the address was not stored locally before\&. The merge result is propagated directly in case an address was discarded\&. A Windows servers doesn\*(Aqt propagate name releases of SPECIAL GROUP (2) and MULTIHOMED (3) entries directly, which means that Windows servers may return different results to name queries for SPECIAL GROUP (2) and MULTIHOMED (3) names\&. The option doesn\*(Aqt have much negative impact if Windows servers are around, but be aware that they might return unexpected results\&.
+.sp
+Default:
+\fI\fIwreplsrv:propagate name releases\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+wreplsrv:scavenging_interval (G)
+.PP
+.RS 4
+This is the interval in s between 2 scavenging runs which clean up the WINS database and changes the states of expired name records\&. Defaults to half of the value of wreplsrv:renew_interval\&.
+.sp
+\fINo default\fR
+.RE
+
+wreplsrv:tombstone_extra_timeout (G)
+.PP
+.RS 4
+This is the time in s the server needs to be up till we\*(Aqll remove tombstone records from our database\&. Defaults to 3 days\&.
+.sp
+Default:
+\fI\fIwreplsrv:tombstone_extra_timeout\fR\fR\fI = \fR\fI259200\fR\fI \fR
+.RE
+
+wreplsrv:tombstone_interval (G)
+.PP
+.RS 4
+This is the interval in s till released records of the WINS server become tombstone\&. Defaults to 6 days\&.
+.sp
+Default:
+\fI\fIwreplsrv:tombstone_interval\fR\fR\fI = \fR\fI518400\fR\fI \fR
+.RE
+
+wreplsrv:tombstone_timeout (G)
+.PP
+.RS 4
+This is the interval in s till tombstone records are deleted from the WINS database\&. Defaults to 1 day\&.
+.sp
+Default:
+\fI\fIwreplsrv:tombstone_timeout\fR\fR\fI = \fR\fI86400\fR\fI \fR
+.RE
+
+wreplsrv:verify_interval (G)
+.PP
+.RS 4
+This is the interval in s till we verify active replica records with the owning WINS server\&. Unfortunately not implemented yet\&. Defaults to 24 days\&.
+.sp
+Default:
+\fI\fIwreplsrv:verify_interval\fR\fR\fI = \fR\fI2073600\fR\fI \fR
+.RE
+
 writable
 .PP
 .RS 4
@@ -12857,7 +12931,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is correct for version 4 of the Samba suite\&.
+This man page is part of version 4\&.8\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),
@@ -12873,6 +12947,3 @@ This man page is correct for version 4 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.
-.PP
-The original Samba man pages were written by Karl Auer\&. The man page sources were converted to YODL format (another excellent piece of Open Source software, available at
-ftp://ftp\&.icce\&.rug\&.nl/pub/unix/) and updated for the Samba 2\&.0 release by Jeremy Allison\&. The conversion to DocBook for Samba 2\&.2 was done by Gerald Carter\&. The conversion to DocBook XML 4\&.2 for Samba 3\&.0 was done by Alexander Bokovoy\&.

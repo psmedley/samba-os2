@@ -193,9 +193,17 @@ static struct dsdb_schema *dsdb_schema_refresh(struct ldb_module *module, struct
 		return schema;
 	}
 
-	/* We don't allow a schema reload during a transaction - nobody else can modify our schema behind our backs */
 	if (private_data->in_transaction) {
-		return schema;
+
+		/*
+		 * If the refresh is not an expected part of a larger
+		 * transaction, then we don't allow a schema reload during a
+		 * transaction. This stops others from modifying our schema
+		 * behind our backs
+		 */
+		if (ldb_get_opaque(ldb, "dsdb_schema_refresh_expected") != (void *)1) {
+			return schema;
+		}
 	}
 
 	SMB_ASSERT(ev == ldb_get_event_context(ldb));
@@ -246,7 +254,7 @@ static struct dsdb_schema *dsdb_schema_refresh(struct ldb_module *module, struct
 		return schema;
 	}
 
-	ret = dsdb_set_schema(ldb, new_schema, false);
+	ret = dsdb_set_schema(ldb, new_schema, SCHEMA_MEMORY_ONLY);
 	if (ret != LDB_SUCCESS) {
 		ldb_debug_set(ldb, LDB_DEBUG_FATAL,
 			      "dsdb_set_schema() failed: %d:%s: %s",
@@ -359,7 +367,8 @@ failed:
 }	
 
 static int schema_load(struct ldb_context *ldb,
-		       struct ldb_module *module)
+		       struct ldb_module *module,
+		       bool *need_write)
 {
 	struct dsdb_schema *schema;
 	void *readOnlySchema;
@@ -406,7 +415,7 @@ static int schema_load(struct ldb_context *ldb,
 		}
 
 		/* "dsdb_set_schema()" steals schema into the ldb_context */
-		ret = dsdb_set_schema(ldb, new_schema, false);
+		ret = dsdb_set_schema(ldb, new_schema, SCHEMA_MEMORY_ONLY);
 		if (ret != LDB_SUCCESS) {
 			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
 				      "schema_load_init: dsdb_set_schema() failed: %d:%s: %s",
@@ -444,7 +453,14 @@ static int schema_load(struct ldb_context *ldb,
 
 	/* Now check the @INDEXLIST is correct, or fix it up */
 	ret = dsdb_schema_set_indices_and_attributes(ldb, schema,
-						     true);
+						     SCHEMA_COMPARE);
+	if (ret == LDB_ERR_BUSY) {
+		*need_write = true;
+		ret = LDB_SUCCESS;
+	} else {
+		*need_write = false;
+	}
+
 	if (ret != LDB_SUCCESS) {
 		ldb_asprintf_errstring(ldb, "Failed to update "
 				       "@INDEXLIST and @ATTRIBUTES "
@@ -463,6 +479,7 @@ static int schema_load_init(struct ldb_module *module)
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	struct schema_load_private_data *private_data;
 	int ret;
+	bool need_write = false;
 
 	private_data = talloc_zero(module, struct schema_load_private_data);
 	if (private_data == NULL) {
@@ -477,10 +494,48 @@ static int schema_load_init(struct ldb_module *module)
 		return ret;
 	}
 
-	ret = schema_load(ldb, module);
-	if (ret != LDB_SUCCESS) {
-		return ret;
+	ret = schema_load(ldb, module, &need_write);
+
+	if (ret == LDB_SUCCESS && need_write) {
+		TALLOC_CTX *frame = talloc_stackframe();
+		struct dsdb_schema *schema = NULL;
+
+		ret = ldb_transaction_start(ldb);
+		if (ret != LDB_SUCCESS) {
+			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
+				      "schema_load_init: transaction start failed");
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+
+		schema = dsdb_get_schema(ldb, frame);
+		if (schema == NULL) {
+			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
+				      "schema_load_init: dsdb_get_schema failed");
+			ldb_transaction_cancel(ldb);
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+		ret = dsdb_schema_set_indices_and_attributes(ldb, schema,
+							     SCHEMA_WRITE);
+
+		TALLOC_FREE(frame);
+
+		if (ret != LDB_SUCCESS) {
+			ldb_asprintf_errstring(ldb, "Failed to write new "
+					       "@INDEXLIST and @ATTRIBUTES "
+					       "records for updated schema: %s",
+					       ldb_errstring(ldb));
+			ldb_transaction_cancel(ldb);
+			return ret;
+		}
+
+		ret = ldb_transaction_commit(ldb);
+		if (ret != LDB_SUCCESS) {
+			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
+				      "schema_load_init: transaction commit failed");
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
 	}
+
 
 	return ret;
 }
@@ -549,7 +604,7 @@ static int schema_load_extended(struct ldb_module *module, struct ldb_request *r
 
 	ret = dsdb_schema_set_indices_and_attributes(ldb,
 						     schema,
-						     true);
+						     SCHEMA_WRITE);
 
 	if (ret != LDB_SUCCESS) {
 		ldb_asprintf_errstring(ldb, "Failed to write new "

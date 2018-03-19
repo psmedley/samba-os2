@@ -7,7 +7,7 @@
 	<manvolnum>1</manvolnum>
 	<refmiscinfo class="source">Samba</refmiscinfo>
 	<refmiscinfo class="manual">User Commands</refmiscinfo>
-	<refmiscinfo class="version">4.7</refmiscinfo>
+	<refmiscinfo class="version">&doc.version;</refmiscinfo>
 </refmeta>
 
 
@@ -1175,6 +1175,14 @@
 		</para></listitem>
 		</varlistentry>
 
+		<varlistentry>
+		<term>utimes &lt;filename&gt; &lt;create time&gt; &lt;access time&gt; &lt;write time&gt; &lt;
+		change time&gt;</term>
+		<listitem><para>Changes the timestamps on a file by name.
+		Times should be specified in the format YY:MM:DD-HH:MM:SS or -1 for no change.
+		</para></listitem>
+		</varlistentry>
+
 	</variablelist>
 </refsect1>
 
@@ -1208,12 +1216,6 @@
 	the password of the person using the client.  This information is
 	used only if the protocol level is high enough to support
 	session-level passwords. </para>
-
-	<para>The variable <envar>LIBSMB_PROG</envar> may contain
-	the path, executed with system(), which the client should connect
-		to instead of connecting to a server.  This functionality is primarily
-		intended as a development aid, and works best when using a LMHOSTS
-		file</para>
 </refsect1>
 
 
@@ -1258,7 +1260,7 @@
 <refsect1>
 	<title>VERSION</title>
 
-	<para>This man page is correct for version 3.2 of the Samba suite.</para>
+	<para>This man page is part of version &doc.version; of the Samba suite.</para>
 </refsect1>
 
 
@@ -1269,14 +1271,6 @@
 	were created by Andrew Tridgell. Samba is now developed
 	by the Samba Team as an Open Source project similar
 	to the way the Linux kernel is developed.</para>
-
-	<para>The original Samba man pages were written by Karl Auer.
-	The man page sources were converted to YODL format (another
-	excellent piece of Open Source software, available at <ulink url="ftp://ftp.icce.rug.nl/pub/unix/">
-	ftp://ftp.icce.rug.nl/pub/unix/</ulink>) and updated for the Samba 2.0
-	release by Jeremy Allison.	The conversion to DocBook for
-	Samba 2.2 was done by Gerald Carter. The conversion to DocBook XML 4.2 for Samba 3.0
-	was done by Alexander Bokovoy.</para>
 </refsect1>
 
 </refentry>

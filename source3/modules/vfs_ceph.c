@@ -270,6 +270,20 @@ static int cephwrap_statvfs(struct vfs_handle_struct *handle,
 	return ret;
 }
 
+static uint32_t cephwrap_fs_capabilities(struct vfs_handle_struct *handle,
+					 enum timestamp_set_resolution *p_ts_res)
+{
+	uint32_t caps = FILE_CASE_SENSITIVE_SEARCH | FILE_CASE_PRESERVED_NAMES;
+
+#ifdef HAVE_CEPH_STATX
+	*p_ts_res = TIMESTAMP_SET_NT_OR_BETTER;
+#else
+	*p_ts_res = TIMESTAMP_SET_MSEC;
+#endif
+
+	return caps;
+}
+
 /* Directory operations */
 
 static DIR *cephwrap_opendir(struct vfs_handle_struct *handle,
@@ -1399,6 +1413,7 @@ static struct vfs_fn_pointers ceph_fns = {
 	.get_quota_fn = cephwrap_get_quota,
 	.set_quota_fn = cephwrap_set_quota,
 	.statvfs_fn = cephwrap_statvfs,
+	.fs_capabilities_fn = cephwrap_fs_capabilities,
 
 	/* Directory operations */
 
@@ -1474,7 +1489,7 @@ static struct vfs_fn_pointers ceph_fns = {
 	.aio_force_fn = cephwrap_aio_force,
 };
 
-NTSTATUS vfs_ceph_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_ceph_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION,

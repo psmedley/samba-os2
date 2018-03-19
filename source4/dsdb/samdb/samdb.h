@@ -64,7 +64,8 @@ struct dsdb_control_current_partition {
 #define DSDB_REPL_FLAG_PARTIAL_REPLICA     2
 #define DSDB_REPL_FLAG_ADD_NCNAME	   4
 #define DSDB_REPL_FLAG_EXPECT_NO_SECRETS   8
-
+#define DSDB_REPL_FLAG_OBJECT_SUBSET       16
+#define DSDB_REPL_FLAG_TARGETS_UPTODATE    32
 
 #define DSDB_CONTROL_REPLICATED_UPDATE_OID "1.3.6.1.4.1.7165.4.3.3"
 
@@ -193,6 +194,15 @@ struct dsdb_control_password_user_account_control {
 #define DSDB_CONTROL_FORCE_RODC_LOCAL_CHANGE "1.3.6.1.4.1.7165.4.3.31"
 
 #define DSDB_CONTROL_INVALID_NOT_IMPLEMENTED "1.3.6.1.4.1.7165.4.3.32"
+
+/*
+ * Used to pass "user password change" vs "password reset" from the ACL to the
+ * password_hash module, ensuring both modules treat the request identical.
+ */
+#define DSDB_CONTROL_PASSWORD_ACL_VALIDATION_OID "1.3.6.1.4.1.7165.4.3.33"
+struct dsdb_control_password_acl_validation {
+	bool pwd_reset;
+};
 
 #define DSDB_EXTENDED_REPLICATED_OBJECTS_OID "1.3.6.1.4.1.7165.4.4.1"
 struct dsdb_extended_replicated_object {
@@ -331,5 +341,6 @@ struct dsdb_extended_sec_desc_propagation_op {
 #define SAMBA_FEATURES_SUPPORTED_FLAG "@SAMBA_FEATURES_SUPPORTED"
 
 #define SAMBA_SORTED_LINKS_FEATURE "sortedLinks"
+#define SAMBA_ENCRYPTED_SECRETS_FEATURE "encryptedSecrets"
 
 #endif /* __SAMDB_H__ */

@@ -33,6 +33,8 @@
 #include "../libcli/auth/netlogon_creds_cli.h"
 #include "passdb.h"
 #include "../source4/dsdb/samdb/samdb.h"
+#include "rpc_client/cli_netlogon.h"
+#include "rpc_client/util_netlogon.h"
 
 void _wbint_Ping(struct pipes_struct *p, struct wbint_Ping *r)
 {
@@ -380,6 +382,7 @@ NTSTATUS _wbint_LookupGroupMembers(struct pipes_struct *p,
 NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
 			       struct wbint_QueryGroupList *r)
 {
+	TALLOC_CTX *frame = NULL;
 	struct winbindd_domain *domain = wb_child_domain();
 	uint32_t i;
 	uint32_t num_local_groups = 0;
@@ -389,12 +392,14 @@ NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
 	uint32_t ti = 0;
 	uint64_t num_total = 0;
 	struct wbint_Principal *result;
-	NTSTATUS status;
+	NTSTATUS status = NT_STATUS_UNSUCCESSFUL;
 	bool include_local_groups = false;
 
 	if (domain == NULL) {
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
+
+	frame = talloc_stackframe();
 
 	switch (lp_server_role()) {
 	case ROLE_ACTIVE_DIRECTORY_DC:
@@ -416,32 +421,33 @@ NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
 	}
 
 	if (include_local_groups) {
-		status = wb_cache_enum_local_groups(domain, talloc_tos(),
+		status = wb_cache_enum_local_groups(domain, frame,
 						    &num_local_groups,
 						    &local_groups);
 		reset_cm_connection_on_error(domain, status);
 		if (!NT_STATUS_IS_OK(status)) {
-			return status;
+			goto out;
 		}
 	}
 
-	status = wb_cache_enum_dom_groups(domain, talloc_tos(),
+	status = wb_cache_enum_dom_groups(domain, frame,
 					  &num_dom_groups,
 					  &dom_groups);
 	reset_cm_connection_on_error(domain, status);
 	if (!NT_STATUS_IS_OK(status)) {
-		return status;
+		goto out;
 	}
 
 	num_total = num_local_groups + num_dom_groups;
 	if (num_total > UINT32_MAX) {
-		return NT_STATUS_INTERNAL_ERROR;
+		status = NT_STATUS_INTERNAL_ERROR;
+		goto out;
 	}
 
-	result = talloc_array(r->out.groups, struct wbint_Principal,
-			      num_total);
+	result = talloc_array(frame, struct wbint_Principal, num_total);
 	if (result == NULL) {
-		return NT_STATUS_NO_MEMORY;
+		status = NT_STATUS_NO_MEMORY;
+		goto out;
 	}
 
 	for (i = 0; i < num_local_groups; i++) {
@@ -452,14 +458,11 @@ NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
 		rg->type = SID_NAME_ALIAS;
 		rg->name = talloc_strdup(result, lg->acct_name);
 		if (rg->name == NULL) {
-			TALLOC_FREE(result);
-			TALLOC_FREE(dom_groups);
-			TALLOC_FREE(local_groups);
-			return NT_STATUS_NO_MEMORY;
+			status = NT_STATUS_NO_MEMORY;
+			goto out;
 		}
 	}
 	num_local_groups = 0;
-	TALLOC_FREE(local_groups);
 
 	for (i = 0; i < num_dom_groups; i++) {
 		struct wb_acct_info *dg = &dom_groups[i];
@@ -469,19 +472,19 @@ NTSTATUS _wbint_QueryGroupList(struct pipes_struct *p,
 		rg->type = SID_NAME_DOM_GRP;
 		rg->name = talloc_strdup(result, dg->acct_name);
 		if (rg->name == NULL) {
-			TALLOC_FREE(result);
-			TALLOC_FREE(dom_groups);
-			TALLOC_FREE(local_groups);
-			return NT_STATUS_NO_MEMORY;
+			status = NT_STATUS_NO_MEMORY;
+			goto out;
 		}
 	}
 	num_dom_groups = 0;
-	TALLOC_FREE(dom_groups);
 
 	r->out.groups->num_principals = ti;
-	r->out.groups->principals = result;
+	r->out.groups->principals = talloc_move(r->out.groups, &result);
 
-	return NT_STATUS_OK;
+	status = NT_STATUS_OK;
+out:
+	TALLOC_FREE(frame);
+	return status;
 }
 
 NTSTATUS _wbint_QueryUserRidList(struct pipes_struct *p,
@@ -676,8 +679,11 @@ again:
 	domain->conn.netlogon_force_reauth = true;
 
 	{
-		struct rpc_pipe_client *netlogon_pipe;
-		status = cm_connect_netlogon(domain, &netlogon_pipe);
+		struct rpc_pipe_client *netlogon_pipe = NULL;
+		struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
+		status = cm_connect_netlogon_secure(domain,
+						    &netlogon_pipe,
+						    &netlogon_creds_ctx);
 	}
 
         /* There is a race condition between fetching the trust account
@@ -718,20 +724,23 @@ NTSTATUS _wbint_ChangeMachineAccount(struct pipes_struct *p,
 	struct messaging_context *msg_ctx = server_messaging_context();
 	struct winbindd_domain *domain;
 	NTSTATUS status;
-	struct rpc_pipe_client *netlogon_pipe;
+	struct rpc_pipe_client *netlogon_pipe = NULL;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
 
 	domain = wb_child_domain();
 	if (domain == NULL) {
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	status = cm_connect_netlogon_secure(domain,
+					    &netlogon_pipe,
+					    &netlogon_creds_ctx);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(3, ("could not open handle to NETLOGON pipe\n"));
 		goto done;
 	}
 
-	status = trust_pw_change(domain->conn.netlogon_creds,
+	status = trust_pw_change(netlogon_creds_ctx,
 				 msg_ctx,
 				 netlogon_pipe->binding_handle,
 				 domain->name,
@@ -827,20 +836,23 @@ NTSTATUS _winbind_DsrUpdateReadOnlyServerDnsRecords(struct pipes_struct *p,
 {
 	struct winbindd_domain *domain;
 	NTSTATUS status;
-	struct rpc_pipe_client *netlogon_pipe;
+	struct rpc_pipe_client *netlogon_pipe = NULL;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
 
 	domain = wb_child_domain();
 	if (domain == NULL) {
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	status = cm_connect_netlogon_secure(domain,
+					    &netlogon_pipe,
+					    &netlogon_creds_ctx);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(3, ("could not open handle to NETLOGON pipe\n"));
 		goto done;
 	}
 
-	status = netlogon_creds_cli_DsrUpdateReadOnlyServerDnsRecords(domain->conn.netlogon_creds,
+	status = netlogon_creds_cli_DsrUpdateReadOnlyServerDnsRecords(netlogon_creds_ctx,
 								      netlogon_pipe->binding_handle,
 								      r->in.site_name,
 								      r->in.dns_ttl,
@@ -865,38 +877,123 @@ NTSTATUS _winbind_SamLogon(struct pipes_struct *p,
 {
 	struct winbindd_domain *domain;
 	NTSTATUS status;
+	struct netr_IdentityInfo *identity_info = NULL;
+	const uint8_t chal_zero[8] = {0, };
+	const uint8_t *challenge = chal_zero;
 	DATA_BLOB lm_response, nt_response;
 	uint32_t flags = 0;
+	uint16_t validation_level;
+	union netr_Validation *validation = NULL;
+	bool interactive = false;
 
 	domain = wb_child_domain();
 	if (domain == NULL) {
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	/* TODO: Handle interactive logons here */
-	if (r->in.validation_level != 3 ||
-	    r->in.logon.network == NULL ||
-	    (r->in.logon_level != NetlogonNetworkInformation
-	     && r->in.logon_level != NetlogonNetworkTransitiveInformation)) {
+	switch (r->in.validation_level) {
+	case 3:
+	case 6:
+		break;
+	default:
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
+	switch (r->in.logon_level) {
+	case NetlogonInteractiveInformation:
+	case NetlogonServiceInformation:
+	case NetlogonInteractiveTransitiveInformation:
+	case NetlogonServiceTransitiveInformation:
+		if (r->in.logon.password == NULL) {
+			return NT_STATUS_REQUEST_NOT_ACCEPTED;
+		}
 
-	lm_response = data_blob_talloc(p->mem_ctx, r->in.logon.network->lm.data, r->in.logon.network->lm.length);
-	nt_response = data_blob_talloc(p->mem_ctx, r->in.logon.network->nt.data, r->in.logon.network->nt.length);
+		interactive = true;
+		identity_info = &r->in.logon.password->identity_info;
+
+		challenge = chal_zero;
+		lm_response = data_blob_talloc(p->mem_ctx,
+					r->in.logon.password->lmpassword.hash,
+					sizeof(r->in.logon.password->lmpassword.hash));
+		nt_response = data_blob_talloc(p->mem_ctx,
+					r->in.logon.password->ntpassword.hash,
+					sizeof(r->in.logon.password->ntpassword.hash));
+		break;
+
+	case NetlogonNetworkInformation:
+	case NetlogonNetworkTransitiveInformation:
+		if (r->in.logon.network == NULL) {
+			return NT_STATUS_REQUEST_NOT_ACCEPTED;
+		}
+
+		interactive = false;
+		identity_info = &r->in.logon.network->identity_info;
+
+		challenge = r->in.logon.network->challenge;
+		lm_response = data_blob_talloc(p->mem_ctx,
+					r->in.logon.network->lm.data,
+					r->in.logon.network->lm.length);
+		nt_response = data_blob_talloc(p->mem_ctx,
+					r->in.logon.network->nt.data,
+					r->in.logon.network->nt.length);
+		break;
+
+	case NetlogonGenericInformation:
+		if (r->in.logon.generic == NULL) {
+			return NT_STATUS_REQUEST_NOT_ACCEPTED;
+		}
+
+		identity_info = &r->in.logon.generic->identity_info;
+		/*
+		 * Not implemented here...
+		 */
+		return NT_STATUS_REQUEST_NOT_ACCEPTED;
+
+	default:
+		return NT_STATUS_REQUEST_NOT_ACCEPTED;
+	}
 
 	status = winbind_dual_SamLogon(domain, p->mem_ctx,
-				       r->in.logon.network->identity_info.parameter_control,
-				       r->in.logon.network->identity_info.account_name.string,
-				       r->in.logon.network->identity_info.domain_name.string,
-				       r->in.logon.network->identity_info.workstation.string,
-				       r->in.logon.network->challenge,
+				       interactive,
+				       identity_info->parameter_control,
+				       identity_info->account_name.string,
+				       identity_info->domain_name.string,
+				       identity_info->workstation.string,
+				       challenge,
 				       lm_response, nt_response,
 				       &r->out.authoritative,
-				       true,
+				       true, /* skip_sam */
 				       &flags,
-				       &r->out.validation.sam3);
-	return status;
+				       &validation_level,
+				       &validation);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+	switch (r->in.validation_level) {
+	case 3:
+		status = map_validation_to_info3(p->mem_ctx,
+						 validation_level,
+						 validation,
+						 &r->out.validation.sam3);
+		TALLOC_FREE(validation);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+		return NT_STATUS_OK;
+	case 6:
+		status = map_validation_to_info6(p->mem_ctx,
+						 validation_level,
+						 validation,
+						 &r->out.validation.sam6);
+		TALLOC_FREE(validation);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+		return NT_STATUS_OK;
+	}
+
+	smb_panic(__location__);
+	return NT_STATUS_INTERNAL_ERROR;
 }
 
 static WERROR _winbind_LogonControl_REDISCOVER(struct pipes_struct *p,
@@ -905,6 +1002,7 @@ static WERROR _winbind_LogonControl_REDISCOVER(struct pipes_struct *p,
 {
 	NTSTATUS status;
 	struct rpc_pipe_client *netlogon_pipe = NULL;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
 	struct netr_NETLOGON_INFO_2 *info2 = NULL;
 	WERROR check_result = WERR_INTERNAL_ERROR;
 
@@ -925,7 +1023,9 @@ static WERROR _winbind_LogonControl_REDISCOVER(struct pipes_struct *p,
 	 */
 	invalidate_cm_connection(domain);
 	domain->conn.netlogon_force_reauth = true;
-	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	status = cm_connect_netlogon_secure(domain,
+					    &netlogon_pipe,
+					    &netlogon_creds_ctx);
 	reset_cm_connection_on_error(domain, status);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_DOMAIN_CONTROLLER_NOT_FOUND)) {
 		status = NT_STATUS_NO_LOGON_SERVERS;
@@ -981,6 +1081,7 @@ static WERROR _winbind_LogonControl_TC_QUERY(struct pipes_struct *p,
 {
 	NTSTATUS status;
 	struct rpc_pipe_client *netlogon_pipe = NULL;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
 	struct netr_NETLOGON_INFO_2 *info2 = NULL;
 	WERROR check_result = WERR_INTERNAL_ERROR;
 
@@ -994,7 +1095,9 @@ static WERROR _winbind_LogonControl_TC_QUERY(struct pipes_struct *p,
 		goto check_return;
 	}
 
-	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	status = cm_connect_netlogon_secure(domain,
+					    &netlogon_pipe,
+					    &netlogon_creds_ctx);
 	reset_cm_connection_on_error(domain, status);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_DOMAIN_CONTROLLER_NOT_FOUND)) {
 		status = NT_STATUS_NO_LOGON_SERVERS;
@@ -1053,6 +1156,7 @@ static WERROR _winbind_LogonControl_TC_VERIFY(struct pipes_struct *p,
 	struct policy_handle local_lsa_policy = {};
 	struct dcerpc_binding_handle *local_lsa = NULL;
 	struct rpc_pipe_client *netlogon_pipe = NULL;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
 	struct cli_credentials *creds = NULL;
 	struct samr_Password *cur_nt_hash = NULL;
 	uint32_t trust_attributes = 0;
@@ -1173,7 +1277,9 @@ static WERROR _winbind_LogonControl_TC_VERIFY(struct pipes_struct *p,
 	}
 
 reconnect:
-	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	status = cm_connect_netlogon_secure(domain,
+					    &netlogon_pipe,
+					    &netlogon_creds_ctx);
 	reset_cm_connection_on_error(domain, status);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_DOMAIN_CONTROLLER_NOT_FOUND)) {
 		status = NT_STATUS_NO_LOGON_SERVERS;
@@ -1193,7 +1299,7 @@ reconnect:
 	}
 
 	if (fetch_fti) {
-		status = netlogon_creds_cli_GetForestTrustInformation(domain->conn.netlogon_creds,
+		status = netlogon_creds_cli_GetForestTrustInformation(netlogon_creds_ctx,
 								      b, frame,
 								      &new_fti);
 		if (NT_STATUS_EQUAL(status, NT_STATUS_RPC_PROCNUM_OUT_OF_RANGE)) {
@@ -1255,7 +1361,7 @@ reconnect:
 		}
 	}
 
-	status = netlogon_creds_cli_ServerGetTrustInfo(domain->conn.netlogon_creds,
+	status = netlogon_creds_cli_ServerGetTrustInfo(netlogon_creds_ctx,
 						       b, frame,
 						       &new_owf_password,
 						       &old_owf_password,
@@ -1366,7 +1472,8 @@ static WERROR _winbind_LogonControl_CHANGE_PASSWORD(struct pipes_struct *p,
 {
 	struct messaging_context *msg_ctx = server_messaging_context();
 	NTSTATUS status;
-	struct rpc_pipe_client *netlogon_pipe;
+	struct rpc_pipe_client *netlogon_pipe = NULL;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
 	struct cli_credentials *creds = NULL;
 	struct samr_Password *cur_nt_hash = NULL;
 	struct netr_NETLOGON_INFO_1 *info1 = NULL;
@@ -1393,7 +1500,9 @@ static WERROR _winbind_LogonControl_CHANGE_PASSWORD(struct pipes_struct *p,
 	}
 
 reconnect:
-	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	status = cm_connect_netlogon_secure(domain,
+					    &netlogon_pipe,
+					    &netlogon_creds_ctx);
 	reset_cm_connection_on_error(domain, status);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_DOMAIN_CONTROLLER_NOT_FOUND)) {
 		status = NT_STATUS_NO_LOGON_SERVERS;
@@ -1416,7 +1525,7 @@ reconnect:
 	}
 	TALLOC_FREE(cur_nt_hash);
 
-	status = trust_pw_change(domain->conn.netlogon_creds,
+	status = trust_pw_change(netlogon_creds_ctx,
 				 msg_ctx, b, domain->name,
 				 domain->dcname,
 				 true); /* force */
@@ -1499,7 +1608,8 @@ WERROR _winbind_GetForestTrustInformation(struct pipes_struct *p,
 	TALLOC_CTX *frame = talloc_stackframe();
 	NTSTATUS status, result;
 	struct winbindd_domain *domain;
-	struct rpc_pipe_client *netlogon_pipe;
+	struct rpc_pipe_client *netlogon_pipe = NULL;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
 	struct dcerpc_binding_handle *b;
 	bool retry = false;
 	struct lsa_String trusted_domain_name = {};
@@ -1598,7 +1708,9 @@ WERROR _winbind_GetForestTrustInformation(struct pipes_struct *p,
 	}
 
 reconnect:
-	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	status = cm_connect_netlogon_secure(domain,
+					    &netlogon_pipe,
+					    &netlogon_creds_ctx);
 	reset_cm_connection_on_error(domain, status);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_DOMAIN_CONTROLLER_NOT_FOUND)) {
 		status = NT_STATUS_NO_LOGON_SERVERS;
@@ -1611,7 +1723,7 @@ reconnect:
 	}
 	b = netlogon_pipe->binding_handle;
 
-	status = netlogon_creds_cli_GetForestTrustInformation(domain->conn.netlogon_creds,
+	status = netlogon_creds_cli_GetForestTrustInformation(netlogon_creds_ctx,
 							      b, p->mem_ctx,
 							      &new_fti);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -1710,6 +1822,7 @@ NTSTATUS _winbind_SendToSam(struct pipes_struct *p, struct winbind_SendToSam *r)
 	struct winbindd_domain *domain;
 	NTSTATUS status;
 	struct rpc_pipe_client *netlogon_pipe;
+	struct netlogon_creds_cli_context *netlogon_creds_ctx = NULL;
 
 	DEBUG(5, ("_winbind_SendToSam received\n"));
 	domain = wb_child_domain();
@@ -1717,13 +1830,15 @@ NTSTATUS _winbind_SendToSam(struct pipes_struct *p, struct winbind_SendToSam *r)
 		return NT_STATUS_REQUEST_NOT_ACCEPTED;
 	}
 
-	status = cm_connect_netlogon(domain, &netlogon_pipe);
+	status = cm_connect_netlogon_secure(domain,
+					    &netlogon_pipe,
+					    &netlogon_creds_ctx);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(3, ("could not open handle to NETLOGON pipe\n"));
 		return status;
 	}
 
-	status = netlogon_creds_cli_SendToSam(domain->conn.netlogon_creds,
+	status = netlogon_creds_cli_SendToSam(netlogon_creds_ctx,
 					      netlogon_pipe->binding_handle,
 					      &r->in.message);
 

@@ -2,12 +2,12 @@
 .\"     Title: ctdb
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 12/22/2017
+.\"      Date: 03/13/2018
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB" "7" "12/22/2017" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB" "7" "03/13/2018" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -311,7 +311,7 @@ Client access to the cluster is load\-balanced across the HEALTHY nodes in an LV
 command is used to show which nodes are currently load\-balanced across\&.
 .PP
 In each LVS group, one of the nodes is selected by CTDB to be the LVS master\&. This node receives all traffic from clients coming in to the LVS public address and multiplexes it across the internal network to one of the nodes that LVS is using\&. When responding to the client, that node will send the data back directly to the client, bypassing the LVS master node\&. The command
-\fBctdb lvsmaster\fR
+\fBctdb lvs master\fR
 will show which node is the current LVS master\&.
 .PP
 The path used for a client I/O is:
@@ -360,7 +360,7 @@ Selected node processes the request\&.
 Node responds back to client\&.
 .RE
 .PP
-This means that all incoming traffic to the cluster will pass through one physical node, which limits scalability\&. You can send more data to the LVS address that one physical node can multiplex\&. This means that you should not use LVS if your I/O pattern is write\-intensive since you will be limited in the available network bandwidth that node can handle\&. LVS does work wery well for read\-intensive workloads where only smallish READ requests are going through the LVSMASTER bottleneck and the majority of the traffic volume (the data in the read replies) goes straight from the processing node back to the clients\&. For read\-intensive i/o patterns you can achieve very high throughput rates in this mode\&.
+This means that all incoming traffic to the cluster will pass through one physical node, which limits scalability\&. You can send more data to the LVS address that one physical node can multiplex\&. This means that you should not use LVS if your I/O pattern is write\-intensive since you will be limited in the available network bandwidth that node can handle\&. LVS does work very well for read\-intensive workloads where only smallish READ requests are going through the LVSMASTER bottleneck and the majority of the traffic volume (the data in the read replies) goes straight from the processing node back to the clients\&. For read\-intensive i/o patterns you can achieve very high throughput rates in this mode\&.
 .PP
 Note: you can use LVS and public addresses at the same time\&.
 .PP

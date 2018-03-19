@@ -155,6 +155,13 @@ NTSTATUS cli_cm_open(TALLOC_CTX *ctx,
 				struct cli_state **pcli);
 void cli_cm_display(struct cli_state *c);
 struct client_dfs_referral;
+NTSTATUS cli_dfs_get_referral_ex(TALLOC_CTX *ctx,
+			struct cli_state *cli,
+			const char *path,
+			uint16_t max_referral_level,
+			struct client_dfs_referral **refs,
+			size_t *num_refs,
+			size_t *consumed);
 NTSTATUS cli_dfs_get_referral(TALLOC_CTX *ctx,
 			struct cli_state *cli,
 			const char *path,
@@ -416,7 +423,7 @@ struct tevent_req *cli_openx_send(TALLOC_CTX *mem_ctx, struct tevent_context *ev
 NTSTATUS cli_openx_recv(struct tevent_req *req, uint16_t *fnum);
 NTSTATUS cli_openx(struct cli_state *cli, const char *fname, int flags, int share_mode, uint16_t *pfnum);
 NTSTATUS cli_open(struct cli_state *cli, const char *fname, int flags, int share_mode, uint16_t *pfnum);
-struct tevent_req *cli_close_create(TALLOC_CTX *mem_ctx,
+struct tevent_req *cli_smb1_close_create(TALLOC_CTX *mem_ctx,
 				    struct tevent_context *ev,
 				    struct cli_state *cli, uint16_t fnum,
 				    struct tevent_req **psubreq);

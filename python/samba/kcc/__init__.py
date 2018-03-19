@@ -94,10 +94,10 @@ class KCC(object):
     Service can then utilize to replicate naming contexts
 
     :param unix_now: The putative current time in seconds since 1970.
-    :param read_only: Don't write to the database.
+    :param readonly: Don't write to the database.
     :param verify: Check topological invariants for the generated graphs
     :param debug: Write verbosely to stderr.
-    "param dot_file_dir: write diagnostic Graphviz files in this directory
+    :param dot_file_dir: write diagnostic Graphviz files in this directory
     """
     def __init__(self, unix_now, readonly=False, verify=False, debug=False,
                  dot_file_dir=None):
@@ -913,7 +913,7 @@ class KCC(object):
                                      drsuapi.DRSUAPI_DRS_NONGC_RO_REP)
                     if t_repsFrom.replica_flags != replica_flags:
                         t_repsFrom.replica_flags = replica_flags
-                c_rep.commit_repsFrom(self.samdb)
+                c_rep.commit_repsFrom(self.samdb, ro=self.readonly)
             else:
                 if dnstr not in needed_rep_table:
                     delete_reps.add(dnstr)
@@ -1095,9 +1095,9 @@ class KCC(object):
 
             if self.readonly:
                 # Display any to be deleted or modified repsTo
-                text = n_rep.dumpstr_reps_to()
-                if text:
-                    logger.info("REMOVING REPS-TO:\n%s" % text)
+                for rt in n_rep.rep_repsTo:
+                    if rt.to_be_deleted:
+                        logger.info("REMOVING REPS-TO: %s" % rt)
 
                 # Peform deletion from our tables but perform
                 # no database modification
@@ -1501,7 +1501,7 @@ class KCC(object):
                             cn.set_modified(True)
 
                     # Display any modified connection
-                    if self.readonly:
+                    if self.readonly or ldsa.is_ro():
                         if cn.to_be_modified:
                             logger.info("TO BE MODIFIED:\n%s" % cn)
 
@@ -1585,11 +1585,11 @@ class KCC(object):
                                     rbh.dsa_dnstr, link_sched)
 
             # Display any added connection
-            if self.readonly:
+            if self.readonly or lbh.is_ro():
                 if cn.to_be_added:
                     logger.info("TO BE ADDED:\n%s" % cn)
 
-                    lbh.commit_connections(self.samdb, ro=True)
+                lbh.commit_connections(self.samdb, ro=True)
             else:
                 lbh.commit_connections(self.samdb)
 
@@ -2021,8 +2021,7 @@ class KCC(object):
 
         # Create a NCReplica that matches what the local replica
         # should say.  We'll use this below in our r_list
-        l_of_x = NCReplica(dc_local.dsa_dnstr, dc_local.dsa_guid,
-                           nc_x.nc_dnstr)
+        l_of_x = NCReplica(dc_local, nc_x.nc_dnstr)
 
         l_of_x.identify_by_basedn(self.samdb)
 

@@ -150,8 +150,6 @@ static void exit_server_common(enum server_exit_reason how,
 			DEBUG(0, ("exit_server_common: "
 				  "smb1srv_tcon_disconnect_all() failed (%s) - "
 				  "triggering cleanup\n", nt_errstr(status)));
-			how = SERVER_EXIT_ABNORMAL;
-			reason = "smb1srv_tcon_disconnect_all failed";
 		}
 
 		status = smbXsrv_session_logoff_all(xconn);
@@ -161,8 +159,6 @@ static void exit_server_common(enum server_exit_reason how,
 			DEBUG(0, ("exit_server_common: "
 				  "smbXsrv_session_logoff_all() failed (%s) - "
 				  "triggering cleanup\n", nt_errstr(status)));
-			how = SERVER_EXIT_ABNORMAL;
-			reason = "smbXsrv_session_logoff_all failed";
 		}
 	}
 
@@ -170,14 +166,6 @@ static void exit_server_common(enum server_exit_reason how,
 
 	/* 3 second timeout. */
 	print_notify_send_messages(msg_ctx, 3);
-
-	/* delete our entry in the serverid database. */
-	if (am_parent) {
-		/*
-		 * For children the parent takes care of cleaning up
-		 */
-		serverid_deregister(messaging_server_id(msg_ctx));
-	}
 
 #ifdef USE_DMAPI
 	/* Destroy Samba DMAPI session only if we are master smbd process */

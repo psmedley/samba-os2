@@ -2867,9 +2867,6 @@ total_data=%u (should be %u)\n", (unsigned int)total_data, (unsigned int)IVAL(pd
 	dptr_num = dptr_dnum(dirptr);
 	DEBUG(4,("dptr_num is %d, wcard = %s, attr = %d\n", dptr_num, mask, dirtype));
 
-	/* Initialize per TRANS2_FIND_FIRST operation data */
-	dptr_init_search_op(dirptr);
-
 	/* We don't need to check for VOL here as this is returned by
 		a different TRANS2 call. */
 
@@ -3236,9 +3233,6 @@ total_data=%u (should be %u)\n", (unsigned int)total_data, (unsigned int)IVAL(pd
 		(long)dirptr,
 		dptr_TellDir(dirptr),
 		(int)backup_priv));
-
-	/* Initialize per TRANS2_FIND_NEXT operation data */
-	dptr_init_search_op(dirptr);
 
 	/* We don't need to check for VOL here as this is returned by
 		a different TRANS2 call. */
@@ -8546,6 +8540,11 @@ NTSTATUS smbd_do_setfilepathinfo(connection_struct *conn,
 						total_data);
 			break;
 		}
+
+		/* [MS-SMB2] 3.3.5.21.1 states we MUST fail with STATUS_NOT_SUPPORTED. */
+		case SMB_FILE_VALID_DATA_LENGTH_INFORMATION:
+		case SMB_FILE_SHORT_NAME_INFORMATION:
+			return NT_STATUS_NOT_SUPPORTED;
 
 		/*
 		 * CIFS UNIX extensions.

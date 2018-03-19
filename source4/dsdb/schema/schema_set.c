@@ -58,7 +58,7 @@ const struct ldb_schema_attribute *dsdb_attribute_handler_override(struct ldb_co
  */
 int dsdb_schema_set_indices_and_attributes(struct ldb_context *ldb,
 					   struct dsdb_schema *schema,
-					   bool write_indices_and_attributes)
+					   enum schema_set_enum mode)
 {
 	int ret = LDB_SUCCESS;
 	struct ldb_result *res;
@@ -69,11 +69,18 @@ int dsdb_schema_set_indices_and_attributes(struct ldb_context *ldb,
 	struct ldb_message *msg;
 	struct ldb_message *msg_idx;
 
+	struct loadparm_context *lp_ctx =
+		talloc_get_type(ldb_get_opaque(ldb, "loadparm"),
+				struct loadparm_context);
 	/* setup our own attribute name to schema handler */
 	ldb_schema_attribute_set_override_handler(ldb, dsdb_attribute_handler_override, schema);
 	ldb_schema_set_override_indexlist(ldb, true);
+	if (lp_ctx == NULL ||
+	    lpcfg_parm_bool(lp_ctx, NULL, "dsdb", "guid index", true)) {
+		ldb_schema_set_override_GUID_index(ldb, "objectGUID", "GUID");
+	}
 
-	if (!write_indices_and_attributes) {
+	if (mode == SCHEMA_MEMORY_ONLY) {
 		return ret;
 	}
 
@@ -108,8 +115,20 @@ int dsdb_schema_set_indices_and_attributes(struct ldb_context *ldb,
 		goto op_error;
 	}
 
+	if (lp_ctx == NULL ||
+	    lpcfg_parm_bool(lp_ctx, NULL, "dsdb", "guid index", true)) {
+		ret = ldb_msg_add_string(msg_idx, "@IDXGUID", "objectGUID");
+		if (ret != LDB_SUCCESS) {
+			goto op_error;
+		}
 
-	ret = ldb_msg_add_string(msg_idx, "@IDXVERSION", SAMDB_INDEXING_VERSION);
+		ret = ldb_msg_add_string(msg_idx, "@IDX_DN_GUID", "GUID");
+		if (ret != LDB_SUCCESS) {
+			goto op_error;
+		}
+	}
+
+	ret = ldb_msg_add_string(msg_idx, "@SAMDB_INDEXING_VERSION", SAMDB_INDEXING_VERSION);
 	if (ret != LDB_SUCCESS) {
 		goto op_error;
 	}
@@ -159,9 +178,17 @@ int dsdb_schema_set_indices_and_attributes(struct ldb_context *ldb,
 	ret = ldb_search(ldb, mem_ctx, &res, msg->dn, LDB_SCOPE_BASE, NULL,
 			 NULL);
 	if (ret == LDB_ERR_NO_SUCH_OBJECT) {
+		if (mode == SCHEMA_COMPARE) {
+			/* We are probably not in a transaction */
+			goto wrong_mode;
+		}
 		ret = ldb_add(ldb, msg);
 	} else if (ret != LDB_SUCCESS) {
 	} else if (res->count != 1) {
+		if (mode == SCHEMA_COMPARE) {
+			/* We are probably not in a transaction */
+			goto wrong_mode;
+		}
 		ret = ldb_add(ldb, msg);
 	} else {
 		ret = LDB_SUCCESS;
@@ -179,6 +206,10 @@ int dsdb_schema_set_indices_and_attributes(struct ldb_context *ldb,
 			 * are under the read lock and we wish to do a
 			 * delete of any removed/renamed attributes
 			 */
+			if (mode == SCHEMA_COMPARE) {
+				/* We are probably not in a transaction */
+				goto wrong_mode;
+			}
 			ret = dsdb_modify(ldb, mod_msg, 0);
 		}
 		talloc_free(mod_msg);
@@ -200,9 +231,17 @@ int dsdb_schema_set_indices_and_attributes(struct ldb_context *ldb,
 	ret = ldb_search(ldb, mem_ctx, &res_idx, msg_idx->dn, LDB_SCOPE_BASE,
 			 NULL, NULL);
 	if (ret == LDB_ERR_NO_SUCH_OBJECT) {
+		if (mode == SCHEMA_COMPARE) {
+			/* We are probably not in a transaction */
+			goto wrong_mode;
+		}
 		ret = ldb_add(ldb, msg_idx);
 	} else if (ret != LDB_SUCCESS) {
 	} else if (res_idx->count != 1) {
+		if (mode == SCHEMA_COMPARE) {
+			/* We are probably not in a transaction */
+			goto wrong_mode;
+		}
 		ret = ldb_add(ldb, msg_idx);
 	} else {
 		ret = LDB_SUCCESS;
@@ -241,6 +280,10 @@ int dsdb_schema_set_indices_and_attributes(struct ldb_context *ldb,
 			 * are under the read lock and we wish to do a
 			 * delete of any removed/renamed attributes
 			 */
+			if (mode == SCHEMA_COMPARE) {
+				/* We are probably not in a transaction */
+				goto wrong_mode;
+			}
 			ret = dsdb_modify(ldb, mod_msg, 0);
 		}
 		talloc_free(mod_msg);
@@ -261,6 +304,10 @@ int dsdb_schema_set_indices_and_attributes(struct ldb_context *ldb,
 op_error:
 	talloc_free(mem_ctx);
 	return ldb_operr(ldb);
+
+wrong_mode:
+	talloc_free(mem_ctx);
+	return LDB_ERR_BUSY;
 }
 
 
@@ -512,7 +559,7 @@ int dsdb_set_schema_refresh_function(struct ldb_context *ldb,
  */
 int dsdb_set_schema(struct ldb_context *ldb,
 		    struct dsdb_schema *schema,
-		    bool write_indices_and_attributes)
+		    enum schema_set_enum write_indices_and_attributes)
 {
 	struct dsdb_schema *old_schema;
 	int ret;
@@ -567,7 +614,7 @@ static struct dsdb_schema *global_schema;
  * disk.
  */
 int dsdb_reference_schema(struct ldb_context *ldb, struct dsdb_schema *schema,
-			  bool write_indices_and_attributes)
+			  enum schema_set_enum write_indices_and_attributes)
 {
 	int ret;
 	struct dsdb_schema *old_schema;
@@ -638,7 +685,8 @@ int dsdb_set_global_schema(struct ldb_context *ldb)
 	talloc_unlink(ldb, old_schema);
 
 	/* Set the new attributes based on the new schema */
-	ret = dsdb_schema_set_indices_and_attributes(ldb, global_schema, false /* Don't write indices and attributes, it's expensive */);
+	/* Don't write indices and attributes, it's expensive */
+	ret = dsdb_schema_set_indices_and_attributes(ldb, global_schema, SCHEMA_MEMORY_ONLY);
 	if (ret == LDB_SUCCESS) {
 		/* Keep a reference to this schema, just in case the original copy is replaced */
 		if (talloc_reference(ldb, global_schema) == NULL) {
@@ -844,6 +892,9 @@ WERROR dsdb_schema_set_el_from_ldb_msg(struct ldb_context *ldb,
  * Rather than read a schema from the LDB itself, read it from an ldif
  * file.  This allows schema to be loaded and used while adding the
  * schema itself to the directory.
+ *
+ * Should be called with a transaction (or failing that, have no concurrent
+ * access while called).
  */
 
 WERROR dsdb_set_schema_from_ldif(struct ldb_context *ldb,
@@ -929,7 +980,14 @@ WERROR dsdb_set_schema_from_ldif(struct ldb_context *ldb,
 		}
 	}
 
-	ret = dsdb_set_schema(ldb, schema, true);
+	/*
+	 * TODO We may need a transaction here, otherwise this causes races.
+	 *
+	 * To do so may require an ldb_in_transaction function. In the
+	 * meantime, assume that this is always called with a transaction or in
+	 * isolation.
+	 */
+	ret = dsdb_set_schema(ldb, schema, SCHEMA_WRITE);
 	if (ret != LDB_SUCCESS) {
 		status = WERR_FOOBAR;
 		DEBUG(0,("ERROR: dsdb_set_schema() failed with %s / %s\n",

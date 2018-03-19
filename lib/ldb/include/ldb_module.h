@@ -87,6 +87,15 @@ struct ldb_module;
 /* force single value checking on this attribute */
 #define LDB_FLAG_INTERNAL_FORCE_SINGLE_VALUE_CHECK 0x80
 
+/*
+ * ensure that this value is unique on an index
+ * (despite the index not otherwise being configured as UNIQUE).
+ * For example, all words starting with 'a' must be unique, but duplicates of
+ * words starting with b are allowed.  This is specifically for Samba's
+ * objectSid index which is unique in the primary domain only.
+ */
+#define LDB_FLAG_INTERNAL_FORCE_UNIQUE_INDEX 0x100
+
 /* an extended match rule that always fails to match */
 #define SAMBA_LDAP_MATCH_ALWAYS_FALSE "1.3.6.1.4.1.7165.4.5.1"
 
@@ -182,6 +191,22 @@ void ldb_schema_attribute_set_override_handler(struct ldb_context *ldb,
 */
 void ldb_schema_set_override_indexlist(struct ldb_context *ldb,
 				       bool one_level_indexes);
+
+/**
+
+  \param ldb The ldb context
+  \param GUID_index_attribute The globally attribute (eg objectGUID)
+         on each entry
+  \param GUID_index_attribute The DN component matching the
+         globally attribute on each entry (eg GUID)
+
+ The caller must ensure the supplied strings do not go out of
+ scope (they are typically constant memory).
+
+*/
+void ldb_schema_set_override_GUID_index(struct ldb_context *ldb,
+					const char *GUID_index_attribute,
+					const char *GUID_index_dn_component);
 
 /* A useful function to build comparison functions with */
 int ldb_any_comparison(struct ldb_context *ldb, void *mem_ctx, 

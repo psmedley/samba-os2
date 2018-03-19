@@ -31,6 +31,9 @@
 #include "librpc/gen_ndr/dcerpc.h"
 #include "auth/common_auth.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_AUTH
+
 _PRIVATE_ NTSTATUS gensec_may_reset_crypto(struct gensec_security *gensec_security,
 					   bool full_reset)
 {
@@ -319,65 +322,6 @@ static NTSTATUS gensec_verify_features(struct gensec_security *gensec_security)
 	return NT_STATUS_OK;
 }
 
-_PUBLIC_ NTSTATUS gensec_update_ev(struct gensec_security *gensec_security,
-				   TALLOC_CTX *out_mem_ctx,
-				   struct tevent_context *ev,
-				   const DATA_BLOB in, DATA_BLOB *out)
-{
-	NTSTATUS status;
-	const struct gensec_security_ops *ops = gensec_security->ops;
-	TALLOC_CTX *frame = NULL;
-	struct tevent_req *subreq = NULL;
-	bool ok;
-
-	if (gensec_security->child_security != NULL) {
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	frame = talloc_stackframe();
-
-	if (ev == NULL) {
-		ev = samba_tevent_context_init(frame);
-		if (ev == NULL) {
-			status = NT_STATUS_NO_MEMORY;
-			goto fail;
-		}
-
-		/*
-		 * TODO: remove this hack once the backends
-		 * are fixed.
-		 */
-		tevent_loop_allow_nesting(ev);
-	}
-
-	subreq = ops->update_send(frame, ev, gensec_security, in);
-	if (subreq == NULL) {
-		status = NT_STATUS_NO_MEMORY;
-		goto fail;
-	}
-	ok = tevent_req_poll_ntstatus(subreq, ev, &status);
-	if (!ok) {
-		goto fail;
-	}
-	status = ops->update_recv(subreq, out_mem_ctx, out);
-	if (!NT_STATUS_IS_OK(status)) {
-		goto fail;
-	}
-
-	/*
-	 * Because callers using the
-	 * gensec_start_mech_by_auth_type() never call
-	 * gensec_want_feature(), it isn't sensible for them
-	 * to have to call gensec_have_feature() manually, and
-	 * these are not points of negotiation, but are
-	 * asserted by the client
-	 */
-	status = gensec_verify_features(gensec_security);
- fail:
-	TALLOC_FREE(frame);
-	return status;
-}
-
 /**
  * Next state function for the GENSEC state machine
  *
@@ -388,12 +332,50 @@ _PUBLIC_ NTSTATUS gensec_update_ev(struct gensec_security *gensec_security,
  * @return Error, MORE_PROCESSING_REQUIRED if a reply is sent,
  *                or NT_STATUS_OK if the user is authenticated.
  */
-
 _PUBLIC_ NTSTATUS gensec_update(struct gensec_security *gensec_security,
 				TALLOC_CTX *out_mem_ctx,
 				const DATA_BLOB in, DATA_BLOB *out)
 {
-	return gensec_update_ev(gensec_security, out_mem_ctx, NULL, in, out);
+	NTSTATUS status;
+	TALLOC_CTX *frame = NULL;
+	struct tevent_context *ev = NULL;
+	struct tevent_req *subreq = NULL;
+	bool ok;
+
+	if (gensec_security->subcontext) {
+		/*
+		 * gensec modules are not allowed to call the sync version.
+		 */
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	frame = talloc_stackframe();
+
+	ev = samba_tevent_context_init(frame);
+	if (ev == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto fail;
+	}
+
+	/*
+	 * TODO: remove this hack once the backends
+	 * are fixed.
+	 */
+	tevent_loop_allow_nesting(ev);
+
+	subreq = gensec_update_send(frame, ev, gensec_security, in);
+	if (subreq == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto fail;
+	}
+	ok = tevent_req_poll_ntstatus(subreq, ev, &status);
+	if (!ok) {
+		goto fail;
+	}
+	status = gensec_update_recv(subreq, out_mem_ctx, out);
+ fail:
+	TALLOC_FREE(frame);
+	return status;
 }
 
 struct gensec_update_state {
@@ -454,6 +436,9 @@ _PUBLIC_ struct tevent_req *gensec_update_send(TALLOC_CTX *mem_ctx,
 	}
 	tevent_req_set_callback(subreq, gensec_update_done, req);
 
+	DBG_DEBUG("%s[%p]: subreq: %p\n", state->ops->name,
+		  state->gensec_security, subreq);
+
 	return req;
 }
 
@@ -484,15 +469,35 @@ static void gensec_update_done(struct tevent_req *subreq)
 		tevent_req_data(req,
 		struct gensec_update_state);
 	NTSTATUS status;
+	const char *debug_subreq = NULL;
+
+	if (CHECK_DEBUGLVL(DBGLVL_DEBUG)) {
+		/*
+		 * We need to call tevent_req_print()
+		 * before calling the _recv function,
+		 * before tevent_req_received() was called.
+		 * in order to print the pointer value of
+		 * the subreq state.
+		 */
+		debug_subreq = tevent_req_print(state, subreq);
+	}
 
 	status = state->ops->update_recv(subreq, state, &state->out);
 	TALLOC_FREE(subreq);
 	state->status = status;
-	if (NT_STATUS_EQUAL(status, NT_STATUS_MORE_PROCESSING_REQUIRED)) {
-		tevent_req_done(req);
+	if (GENSEC_UPDATE_IS_NTERROR(status)) {
+		DBG_INFO("%s[%p]: %s%s%s\n", state->ops->name,
+			 state->gensec_security, nt_errstr(status),
+			 debug_subreq ? " " : "",
+			 debug_subreq ? debug_subreq : "");
+		tevent_req_nterror(req, status);
 		return;
 	}
-	if (tevent_req_nterror(req, status)) {
+	DBG_DEBUG("%s[%p]: %s %s\n", state->ops->name,
+		  state->gensec_security, nt_errstr(status),
+		  debug_subreq);
+	if (NT_STATUS_EQUAL(status, NT_STATUS_MORE_PROCESSING_REQUIRED)) {
+		tevent_req_done(req);
 		return;
 	}
 

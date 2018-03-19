@@ -2,12 +2,12 @@
 .\"     Title: samba-tool
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 12/22/2017
+.\"      Date: 03/13/2018
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.7
+.\"    Source: Samba 4.8.0
 .\"  Language: English
 .\"
-.TH "SAMBA\-TOOL" "8" "12/22/2017" "Samba 4\&.7" "System Administration tools"
+.TH "SAMBA\-TOOL" "8" "03/13/2018" "Samba 4\&.8\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -427,14 +427,50 @@ samba\-tool vampire
 is deprecated, please use
 samba\-tool domain join
 instead\&.
+.SS "visualize [options] \fIsubcommand\fR"
+.PP
+Produce graphical representations of Samba network state\&. To work out what is happening in a replication graph, it is sometimes helpful to use visualisations\&.
+.PP
+There are two subcommands, two graphical modes, and (roughly) two modes of operation with respect to the location of authority\&.
+.SS "MODES OF OPERATION"
+.PP
+samba\-tool visualize ntdsconn
+.RS 4
+Looks at NTDS connections\&.
+.RE
+.PP
+samba\-tool visualize reps
+.RS 4
+Looks at repsTo and repsFrom objects\&.
+.RE
+.SS "GRAPHICAL MODES"
+.PP
+\-\-distance
+.RS 4
+Distances between DCs are shown in a matrix in the terminal\&.
+.RE
+.PP
+\-\-dot
+.RS 4
+Generate Graphviz dot output\&. When viewed using dot or xdot, this shows the network as a graph with DCs as vertices and connections edges\&. Certain types of degenerate edges are shown in different colours or line\-styles\&.
+.RE
+.PP
+\-r
+.RS 4
+Normally,
+samba\-tool
+talks to one database; with the
+[\-r]
+option attempts are made to contact all the DCs known to the first database\&. This is necessary to get sensible results from
+samba\-tool visualize reps
+because the repsFrom/To objects are not replicated, and it can reveal replication issues in other modes\&.
+.RE
 .SS "help"
 .PP
 Gives usage information\&.
 .SH "VERSION"
 .PP
-This man page is complete for version 4 of the Samba suite\&.
+This man page is complete for version 4\&.8\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.
-.PP
-The samba\-tool manpage was written by Karolin Seeger\&.

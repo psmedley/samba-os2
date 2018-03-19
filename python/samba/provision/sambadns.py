@@ -36,7 +36,8 @@ from samba.dsdb import (
     DS_DOMAIN_FUNCTION_2000,
     DS_DOMAIN_FUNCTION_2003,
     DS_DOMAIN_FUNCTION_2008_R2,
-    DS_DOMAIN_FUNCTION_2012_R2
+    DS_DOMAIN_FUNCTION_2012_R2,
+    DS_DOMAIN_FUNCTION_2016
     )
 from samba.descriptor import (
     get_domain_descriptor,
@@ -649,7 +650,7 @@ def add_dc_msdcs_records(samdb, forestdn, prefix, site, dnsforest, hostname,
             fqdn_hostname)
 
 
-def secretsdb_setup_dns(secretsdb, names, private_dir, realm,
+def secretsdb_setup_dns(secretsdb, names, private_dir, binddns_dir, realm,
                         dnsdomain, dns_keytab_path, dnspass, key_version_number):
     """Add DNS specific bits to a secrets database.
 
@@ -659,12 +660,15 @@ def secretsdb_setup_dns(secretsdb, names, private_dir, realm,
     """
     try:
         os.unlink(os.path.join(private_dir, dns_keytab_path))
+        os.unlink(os.path.join(binddns_dir, dns_keytab_path))
     except OSError:
         pass
 
     if key_version_number is None:
         key_version_number = 1
 
+    # This will create the dns.keytab file in the private_dir when it is
+    # commited!
     setup_ldb(secretsdb, setup_path("secrets_dns.ldif"), {
             "REALM": realm,
             "DNSDOMAIN": dnsdomain,
@@ -806,6 +810,10 @@ def create_samdb_copy(samdb, logger, paths, names, domainsid, domainguid):
             "DESCRIPTOR" : descr})
         setup_add_ldif(dom_ldb,
             setup_path("provision_basedn_options.ldif"), None)
+
+        # We need the dummy main-domain DB to have the correct @INDEXLIST
+        index_res = samdb.search(base="@INDEXLIST", scope=ldb.SCOPE_BASE)
+        dom_ldb.add(index_res[0])
     except:
         logger.error(
             "Failed to setup database for BIND, AD based DNS cannot be used")
@@ -861,9 +869,6 @@ def create_samdb_copy(samdb, logger, paths, names, domainsid, domainguid):
     # Give bind read/write permissions dns partitions
     if paths.bind_gid is not None:
         try:
-            os.chown(samldb_dir, -1, paths.bind_gid)
-            os.chmod(samldb_dir, 0750)
-
             for dirname, dirs, files in os.walk(dns_dir):
                 for d in dirs:
                     dpath = os.path.join(dirname, d)
@@ -954,7 +959,7 @@ def create_named_conf(paths, realm, dnsdomain, dns_backend, logger):
                     })
 
 
-def create_named_txt(path, realm, dnsdomain, dnsname, private_dir,
+def create_named_txt(path, realm, dnsdomain, dnsname, binddns_dir,
     keytab_name):
     """Write out a file containing zone statements suitable for inclusion in a
     named.conf file (including GSS-TSIG configuration).
@@ -962,7 +967,7 @@ def create_named_txt(path, realm, dnsdomain, dnsname, private_dir,
     :param path: Path of the new named.conf file.
     :param realm: Realm name
     :param dnsdomain: DNS Domain name
-    :param private_dir: Path to private directory
+    :param binddns_dir: Path to bind dns directory
     :param keytab_name: File name of DNS keytab file
     """
     setup_file(setup_path("named.txt"), path, {
@@ -970,8 +975,8 @@ def create_named_txt(path, realm, dnsdomain, dnsname, private_dir,
             "DNSNAME" : dnsname,
             "REALM": realm,
             "DNS_KEYTAB": keytab_name,
-            "DNS_KEYTAB_ABS": os.path.join(private_dir, keytab_name),
-            "PRIVATE_DIR": private_dir
+            "DNS_KEYTAB_ABS": os.path.join(binddns_dir, keytab_name),
+            "PRIVATE_DIR": binddns_dir
         })
 
 
@@ -980,7 +985,7 @@ def is_valid_dns_backend(dns_backend):
 
 
 def is_valid_os_level(os_level):
-    return DS_DOMAIN_FUNCTION_2000 <= os_level <= DS_DOMAIN_FUNCTION_2012_R2
+    return DS_DOMAIN_FUNCTION_2000 <= os_level <= DS_DOMAIN_FUNCTION_2016
 
 
 def create_dns_legacy(samdb, domainsid, forestdn, dnsadmins_sid):
@@ -1194,20 +1199,12 @@ def setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
     domainguid = get_domainguid(samdb, domaindn)
 
     secretsdb_setup_dns(secretsdb, names,
-                        paths.private_dir, realm=names.realm,
+                        paths.private_dir,
+                        paths.binddns_dir,
+                        realm=names.realm,
                         dnsdomain=names.dnsdomain,
                         dns_keytab_path=paths.dns_keytab, dnspass=dnspass,
                         key_version_number=key_version_number)
-
-    dns_keytab_path = os.path.join(paths.private_dir, paths.dns_keytab)
-    if os.path.isfile(dns_keytab_path) and paths.bind_gid is not None:
-        try:
-            os.chmod(dns_keytab_path, 0640)
-            os.chown(dns_keytab_path, -1, paths.bind_gid)
-        except OSError:
-            if not os.environ.has_key('SAMBA_SELFTEST'):
-                logger.info("Failed to chown %s to bind gid %u",
-                            dns_keytab_path, paths.bind_gid)
 
     create_dns_dir(logger, paths)
 
@@ -1228,7 +1225,7 @@ def setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
     create_named_txt(paths.namedtxt,
                      realm=names.realm, dnsdomain=names.dnsdomain,
                      dnsname = "%s.%s" % (names.hostname, names.dnsdomain),
-                     private_dir=paths.private_dir,
+                     binddns_dir=paths.binddns_dir,
                      keytab_name=paths.dns_keytab)
     logger.info("See %s for an example configuration include file for BIND",
                 paths.namedconf)

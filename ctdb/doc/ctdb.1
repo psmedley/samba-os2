@@ -2,12 +2,12 @@
 .\"     Title: ctdb
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 12/22/2017
+.\"      Date: 03/13/2018
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB" "1" "12/22/2017" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB" "1" "03/13/2018" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1482,9 +1482,6 @@ This command will trigger the recovery daemon to do a cluster recovery\&.
 .SS "ipreallocate, sync"
 .PP
 This command will force the recovery master to perform a full ip reallocation process and redistribute all ip addresses\&. This is useful to "reset" the allocations back to its default state if they have been changed using the "moveip" command\&. While a "recover" will also perform this reallocation, a recovery is much more hevyweight since it will also rebuild all the databases\&.
-.SS "getmonmode"
-.PP
-This command prints the monitoring mode of a node\&. This indicates when CTDB is monitoring services on the node\&. The monitoring mode is either ENABLED or DISABLED\&.
 .SS "attach \fIDBNAME\fR [persistent|replicated]"
 .PP
 Create a new CTDB database called DBNAME and attach to it on all nodes\&.
@@ -1513,33 +1510,6 @@ command\&.
 .SS "unban"
 .PP
 This command is used to unban a node that has either been administratively banned using the ban command or has been automatically banned\&.
-.SS "check_srvids \fISRVID\fR \&.\&.\&."
-.PP
-This command checks whether a set of srvid message ports are registered on the node or not\&. The command takes a list of values to check\&.
-.sp
-.it 1 an-trap
-.nr an-no-space-flag 1
-.nr an-break-flag 1
-.br
-.ps +1
-\fBExample\fR
-.RS 4
-.sp
-.if n \{\
-.RS 4
-.\}
-.nf
-# ctdb check_srvids 1 2 3 14765
-Server id 0:1 does not exist
-Server id 0:2 does not exist
-Server id 0:3 does not exist
-Server id 0:14765 exists
-	
-.fi
-.if n \{\
-.RE
-.\}
-.RE
 .SH "SEE ALSO"
 .PP
 \fBctdbd\fR(1),

@@ -129,8 +129,14 @@ static uint32_t vfswrap_fs_capabilities(struct vfs_handle_struct *handle,
 	struct vfs_statvfs_struct statbuf;
 	int ret;
 
+	smb_fname_cpath = synthetic_smb_fname(talloc_tos(), conn->connectpath,
+					      NULL, NULL, 0);
+	if (smb_fname_cpath == NULL) {
+		return caps;
+	}
+
 	ZERO_STRUCT(statbuf);
-	ret = sys_statvfs(conn->connectpath, &statbuf);
+	ret = SMB_VFS_STATVFS(conn, smb_fname_cpath, &statbuf);
 	if (ret == 0) {
 		caps = statbuf.FsCapabilities;
 	}
@@ -139,12 +145,6 @@ static uint32_t vfswrap_fs_capabilities(struct vfs_handle_struct *handle,
 
 	/* Work out what timestamp resolution we can
 	 * use when setting a timestamp. */
-
-	smb_fname_cpath = synthetic_smb_fname(talloc_tos(), conn->connectpath,
-					      NULL, NULL, 0);
-	if (smb_fname_cpath == NULL) {
-		return caps;
-	}
 
 	ret = SMB_VFS_STAT(conn, smb_fname_cpath);
 	if (ret == -1) {
@@ -552,12 +552,6 @@ static int vfswrap_closedir(vfs_handle_struct *handle, DIR *dirp)
 	result = closedir(dirp);
 	END_PROFILE(syscall_closedir);
 	return result;
-}
-
-static void vfswrap_init_search_op(vfs_handle_struct *handle,
-				   DIR *dirp)
-{
-	/* Default behavior is a NOOP */
 }
 
 /* File operations */
@@ -3052,7 +3046,6 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.mkdir_fn = vfswrap_mkdir,
 	.rmdir_fn = vfswrap_rmdir,
 	.closedir_fn = vfswrap_closedir,
-	.init_search_op_fn = vfswrap_init_search_op,
 
 	/* File operations */
 
@@ -3159,7 +3152,7 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.durable_reconnect_fn = vfswrap_durable_reconnect,
 };
 
-NTSTATUS vfs_default_init(TALLOC_CTX *);
+static_decl_vfs;
 NTSTATUS vfs_default_init(TALLOC_CTX *ctx)
 {
 	return smb_register_vfs(SMB_VFS_INTERFACE_VERSION,

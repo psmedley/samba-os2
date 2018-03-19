@@ -168,7 +168,6 @@ static const struct loadparm_service _sDefault =
 	.max_connections = 0,
 	.default_case = CASE_LOWER,
 	.printing = DEFAULT_PRINTING,
-	.oplock_contention_limit = 2,
 	.csc_policy = 0,
 	.block_size = 1024,
 	.dfree_cache_time = 0,
@@ -230,7 +229,6 @@ static const struct loadparm_service _sDefault =
 	.nt_acl_support = true,
 	.force_unknown_acl_user = false,
 	._use_sendfile = false,
-	.profile_acls = false,
 	.map_acl_inherit = false,
 	.afs_share = false,
 	.ea_support = false,
@@ -239,8 +237,8 @@ static const struct loadparm_service _sDefault =
 	.acl_group_control = false,
 	.acl_allow_execute_always = false,
 	.allocation_roundup_size = SMB_ROUNDUP_ALLOCATION_SIZE,
-	.aio_read_size = 0,
-	.aio_write_size = 0,
+	.aio_read_size = 1,
+	.aio_write_size = 1,
 	.map_readonly = MAP_READONLY_YES,
 	.directory_name_cache_size = 100,
 	.smb_encrypt = SMB_SIGNING_DEFAULT,
@@ -556,6 +554,8 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 			 get_dyn_SMB_PASSWD_FILE());
 	lpcfg_string_set(Globals.ctx, &Globals.private_dir,
 			 get_dyn_PRIVATE_DIR());
+	lpcfg_string_set(Globals.ctx, &Globals.binddns_dir,
+			 get_dyn_BINDDNS_DIR());
 
 	/* use the new 'hash2' method by default, with a prefix of 1 */
 	lpcfg_string_set(Globals.ctx, &Globals.mangling_method, "hash2");
@@ -651,10 +651,10 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals._client_ipc_min_protocol = PROTOCOL_DEFAULT;
 	Globals._security = SEC_AUTO;
 	Globals.encrypt_passwords = true;
-	Globals.client_schannel = Auto;
+	Globals.client_schannel = true;
 	Globals.winbind_sealed_pipes = true;
 	Globals.require_strong_key = true;
-	Globals.server_schannel = Auto;
+	Globals.server_schannel = true;
 	Globals.read_raw = true;
 	Globals.write_raw = true;
 	Globals.null_passwords = false;
@@ -817,12 +817,12 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.winbind_enum_users = false;
 	Globals.winbind_enum_groups = false;
 	Globals.winbind_use_default_domain = false;
-	Globals.winbind_trusted_domains_only = false;
 	Globals.winbind_nested_groups = true;
 	Globals.winbind_expand_groups = 0;
 	Globals.winbind_nss_info = str_list_make_v3_const(NULL, "template", NULL);
 	Globals.winbind_refresh_tickets = false;
 	Globals.winbind_offline_logon = false;
+	Globals.winbind_scan_trusted_domains = true;
 
 	Globals.idmap_cache_time = 86400 * 7; /* a week by default */
 	Globals.idmap_negative_cache_time = 120; /* 2 minutes by default */
@@ -831,7 +831,6 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 
 	Globals.name_cache_timeout = 660; /* In seconds */
 
-	Globals.use_spnego = true;
 	Globals.client_use_spnego = true;
 
 	Globals.client_signing = SMB_SIGNING_DEFAULT;
@@ -866,7 +865,6 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 
 	Globals.min_receivefile_size = 0;
 
-	Globals.map_untrusted_to_domain = Auto;
 	Globals.multicast_dns_register = true;
 
 	Globals.smb2_max_read = DEFAULT_SMB2_MAX_READ;
@@ -918,6 +916,15 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.dns_update_command = str_list_make_v3_const(NULL, s, NULL);
 	TALLOC_FREE(s);
 
+	s = talloc_asprintf(talloc_tos(), "%s/samba_gpoupdate", get_dyn_SCRIPTSBINDIR());
+	if (s == NULL) {
+		smb_panic("init_globals: ENOMEM");
+	}
+	Globals.gpo_update_command = str_list_make_v3_const(NULL, s, NULL);
+	TALLOC_FREE(s);
+
+	Globals.apply_group_policies = false;
+
 	s = talloc_asprintf(talloc_tos(), "%s/samba_spnupdate", get_dyn_SCRIPTSBINDIR());
 	if (s == NULL) {
 		smb_panic("init_globals: ENOMEM");
@@ -948,6 +955,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 			 "49152-65535");
 	Globals.rpc_low_port = SERVER_TCP_LOW_PORT;
 	Globals.rpc_high_port = SERVER_TCP_HIGH_PORT;
+	Globals.prefork_children = 1;
 
 	/* Now put back the settings that were set with lp_set_cmdline() */
 	apply_lp_set_cmdline();

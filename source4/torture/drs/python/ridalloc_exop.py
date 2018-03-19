@@ -40,7 +40,6 @@ from samba.drs_utils import drs_DsBind
 from samba.samdb import SamDB
 
 import shutil, tempfile, os
-from samba.netcmd.main import cmd_sambatool
 from samba.auth import system_session, admin_session
 from samba.dbchecker import dbcheck
 from samba.ndr import ndr_pack
@@ -305,24 +304,24 @@ class DrsReplicaSyncTestCase(drs_base.DrsBaseTestCase):
     def _test_join(self, server, netbios_name):
         tmpdir = os.path.join(self.tempdir, "targetdir")
         creds = self.get_credentials()
-        cmd = cmd_sambatool.subcommands['domain'].subcommands['join']
-        result = cmd._run("samba-tool domain join",
-                          creds.get_realm(),
-                          "dc", "-U%s%%%s" % (creds.get_username(),
-                                              creds.get_password()),
-                          '--targetdir=%s' % tmpdir,
-                          '--server=%s' % server,
-                          "--option=netbios name = %s" % netbios_name)
+        (result, out, err) = self.runsubcmd("domain", "join",
+                                            creds.get_realm(),
+                                            "dc", "-U%s%%%s" % (creds.get_username(),
+                                                                creds.get_password()),
+                                            '--targetdir=%s' % tmpdir,
+                                            '--server=%s' % server,
+                                            "--option=netbios name = %s" % netbios_name)
+        self.assertCmdSuccess(result, out, err)
         return tmpdir
 
     def _test_force_demote(self, server, netbios_name):
         creds = self.get_credentials()
-        cmd = cmd_sambatool.subcommands['domain'].subcommands['demote']
-        result = cmd._run("samba-tool domain demote",
-                          "-U%s%%%s" % (creds.get_username(),
-                                              creds.get_password()),
-                          '--server=%s' % server,
-                          "--remove-other-dead-server=%s" % netbios_name)
+        (result, out, err) = self.runsubcmd("domain", "demote",
+                                            "-U%s%%%s" % (creds.get_username(),
+                                                          creds.get_password()),
+                                            '--server=%s' % server,
+                                            "--remove-other-dead-server=%s" % netbios_name)
+        self.assertCmdSuccess(result, out, err)
 
     def test_offline_manual_seized_ridalloc_with_dbcheck(self):
         """Peform the same actions as test_offline_samba_tool_seized_ridalloc,

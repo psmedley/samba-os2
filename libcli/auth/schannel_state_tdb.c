@@ -263,11 +263,13 @@ NTSTATUS schannel_save_creds_state(TALLOC_CTX *mem_ctx,
 
 	db_sc = open_schannel_session_store(tmpctx, lp_ctx);
 	if (!db_sc) {
-		return NT_STATUS_ACCESS_DENIED;
+		status = NT_STATUS_ACCESS_DENIED;
+		goto fail;
 	}
 
 	status = schannel_store_session_key_tdb(db_sc, tmpctx, creds);
 
+fail:
 	talloc_free(tmpctx);
 	return status;
 }
@@ -439,7 +441,7 @@ NTSTATUS schannel_fetch_challenge_tdb(struct db_context *db_sc,
 }
 
 /******************************************************************************
- Wrapper around schannel_fetch_session_key_tdb()
+ Wrapper around schannel_fetch_challenge_tdb()
  Note we must be root here.
 
 *******************************************************************************/

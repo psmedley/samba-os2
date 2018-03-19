@@ -27,62 +27,180 @@
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_WINBIND
 
-/* Constants and helper functions for determining domain trust types */
-
-enum trust_type {
-	EXTERNAL = 0,
-	FOREST,
-	IN_FOREST,
-	NONE,
-};
-
-const char *trust_type_strings[] = {"External", 
-				    "Forest", 
-				    "In Forest",
-				    "None"};
-
-static enum trust_type get_trust_type(struct winbindd_tdc_domain *domain)
+static char *get_trust_type_string(TALLOC_CTX *mem_ctx,
+				   struct winbindd_tdc_domain *tdc,
+				   struct winbindd_domain *domain)
 {
-	if (domain->trust_attribs == LSA_TRUST_ATTRIBUTE_QUARANTINED_DOMAIN)
-		return EXTERNAL;
-	else if (domain->trust_attribs == LSA_TRUST_ATTRIBUTE_FOREST_TRANSITIVE)
-		return FOREST;
-	else if (((domain->trust_flags & NETR_TRUST_FLAG_IN_FOREST) == NETR_TRUST_FLAG_IN_FOREST) &&
-	    ((domain->trust_flags & NETR_TRUST_FLAG_PRIMARY) == 0x0))
-		return IN_FOREST;
-	return NONE;	
-}
+	enum netr_SchannelType secure_channel_type = SEC_CHAN_NULL;
+	char *s = NULL;
 
-static const char *get_trust_type_string(struct winbindd_tdc_domain *domain)
-{
-	return trust_type_strings[get_trust_type(domain)];
+	if (domain != NULL) {
+		secure_channel_type = domain->secure_channel_type;
+	}
+
+	switch (secure_channel_type) {
+	case SEC_CHAN_NULL: {
+		if (domain == NULL) {
+			DBG_ERR("Missing domain [%s]\n",
+				tdc->domain_name);
+			return NULL;
+		}
+		if (domain->routing_domain == NULL) {
+			DBG_ERR("Missing routing for domain [%s]\n",
+				tdc->domain_name);
+			return NULL;
+		}
+		s = talloc_asprintf(mem_ctx, "Routed (via %s)",
+				    domain->routing_domain->name);
+		if (s == NULL) {
+			return NULL;
+		}
+		break;
+	}
+
+	case SEC_CHAN_LOCAL:
+		s = talloc_strdup(mem_ctx, "Local");
+		if (s == NULL) {
+			return NULL;
+		}
+		break;
+
+	case SEC_CHAN_WKSTA:
+		s = talloc_strdup(mem_ctx, "Workstation");
+		if (s == NULL) {
+			return NULL;
+		}
+		break;
+
+	case SEC_CHAN_BDC: {
+		int role = lp_server_role();
+
+		if (role == ROLE_DOMAIN_PDC) {
+			s = talloc_strdup(mem_ctx, "PDC");
+			if (s == NULL) {
+				return NULL;
+			}
+			break;
+		}
+
+		if (role == ROLE_DOMAIN_BDC) {
+			s = talloc_strdup(mem_ctx, "BDC");
+			if (s == NULL) {
+				return NULL;
+			}
+			break;
+		}
+
+		s = talloc_strdup(mem_ctx, "RWDC");
+		if (s == NULL) {
+			return NULL;
+		}
+		break;
+	}
+
+	case SEC_CHAN_RODC:
+		s = talloc_strdup(mem_ctx, "RODC");
+		if (s == NULL) {
+			return NULL;
+		}
+		break;
+
+	case SEC_CHAN_DNS_DOMAIN:
+		if (tdc->trust_attribs & LSA_TRUST_ATTRIBUTE_QUARANTINED_DOMAIN) {
+			s = talloc_strdup(mem_ctx, "External");
+			if (s == NULL) {
+				return NULL;
+			}
+			break;
+		}
+		if (tdc->trust_attribs & LSA_TRUST_ATTRIBUTE_WITHIN_FOREST) {
+			s = talloc_strdup(mem_ctx, "In Forest");
+			if (s == NULL) {
+				return NULL;
+			}
+			break;
+		}
+		if (tdc->trust_attribs & LSA_TRUST_ATTRIBUTE_TREAT_AS_EXTERNAL) {
+			s = talloc_strdup(mem_ctx, "External");
+			if (s == NULL) {
+				return NULL;
+			}
+			break;
+		}
+		if (tdc->trust_attribs & LSA_TRUST_ATTRIBUTE_FOREST_TRANSITIVE) {
+			s = talloc_strdup(mem_ctx, "Forest");
+			if (s == NULL) {
+				return NULL;
+			}
+			break;
+		}
+		s = talloc_strdup(mem_ctx, "External");
+		if (s == NULL) {
+			return NULL;
+		}
+		break;
+
+	case SEC_CHAN_DOMAIN:
+		s = talloc_strdup(mem_ctx, "External");
+		if (s == NULL) {
+			return NULL;
+		}
+		break;
+
+	default:
+		DBG_ERR("Unhandled secure_channel_type %d for domain[%s]\n",
+			secure_channel_type, tdc->domain_name);
+		return NULL;
+	}
+
+	return s;
 }
 
 static bool trust_is_inbound(struct winbindd_tdc_domain *domain)
 {
-	return (domain->trust_flags == 0x0) ||
-	    ((domain->trust_flags & NETR_TRUST_FLAG_IN_FOREST) ==
-            NETR_TRUST_FLAG_IN_FOREST) ||           		
-	    ((domain->trust_flags & NETR_TRUST_FLAG_INBOUND) ==
-	    NETR_TRUST_FLAG_INBOUND);      	
+	if (domain->trust_flags & NETR_TRUST_FLAG_INBOUND) {
+		return true;
+	}
+	return false;
 }
 
 static bool trust_is_outbound(struct winbindd_tdc_domain *domain)
 {
-	return (domain->trust_flags == 0x0) ||
-	    ((domain->trust_flags & NETR_TRUST_FLAG_IN_FOREST) ==
-            NETR_TRUST_FLAG_IN_FOREST) ||           		
-	    ((domain->trust_flags & NETR_TRUST_FLAG_OUTBOUND) ==
-	    NETR_TRUST_FLAG_OUTBOUND);      	
+	if (domain->trust_flags & NETR_TRUST_FLAG_OUTBOUND) {
+		return true;
+	}
+	return false;
 }
 
 static bool trust_is_transitive(struct winbindd_tdc_domain *domain)
 {
-	if ((domain->trust_attribs == LSA_TRUST_ATTRIBUTE_NON_TRANSITIVE) ||
-	    (domain->trust_attribs == LSA_TRUST_ATTRIBUTE_QUARANTINED_DOMAIN) ||
-	    (domain->trust_attribs == LSA_TRUST_ATTRIBUTE_TREAT_AS_EXTERNAL))
-		return False;
-	return True;
+	bool transitive = false;
+
+	/*
+	 * Beware: order matters
+	 */
+
+	if (domain->trust_attribs & LSA_TRUST_ATTRIBUTE_WITHIN_FOREST) {
+		transitive = true;
+	}
+
+	if (domain->trust_attribs & LSA_TRUST_ATTRIBUTE_FOREST_TRANSITIVE) {
+		transitive = true;
+	}
+
+	if (domain->trust_attribs & LSA_TRUST_ATTRIBUTE_NON_TRANSITIVE) {
+		transitive = false;
+	}
+
+	if (domain->trust_attribs & LSA_TRUST_ATTRIBUTE_QUARANTINED_DOMAIN) {
+		transitive = false;
+	}
+
+	if (domain->trust_flags & NETR_TRUST_FLAG_PRIMARY) {
+		transitive = true;
+	}
+
+	return transitive;
 }
 
 void winbindd_list_trusted_domains(struct winbindd_cli_state *state)
@@ -111,23 +229,32 @@ void winbindd_list_trusted_domains(struct winbindd_cli_state *state)
 		struct winbindd_domain *domain;
 		bool is_online = true;		
 		struct winbindd_tdc_domain *d = NULL;
+		char *trust_type = NULL;
 
 		d = &dom_list[i];
 		domain = find_domain_from_name_noinit(d->domain_name);
 		if (domain) {
 			is_online = domain->online;
 		}
+
+		trust_type = get_trust_type_string(talloc_tos(), d, domain);
+		if (trust_type == NULL) {
+			continue;
+		}
+
 		extra_data = talloc_asprintf_append_buffer(
 			extra_data,
 			"%s\\%s\\%s\\%s\\%s\\%s\\%s\\%s\n",
 			d->domain_name,
 			d->dns_name ? d->dns_name : "",
 			sid_string_talloc(state->mem_ctx, &d->sid),
-			get_trust_type_string(d),
+			trust_type,
 			trust_is_transitive(d) ? "Yes" : "No",
 			trust_is_inbound(d) ? "Yes" : "No",
 			trust_is_outbound(d) ? "Yes" : "No",
 			is_online ? "Online" : "Offline" );
+
+		TALLOC_FREE(trust_type);
 	}
 
 	state->response->data.num_entries = num_domains;
@@ -336,7 +463,7 @@ void winbindd_dc_info(struct winbindd_cli_state *cli)
 		  cli->request->domain_name));
 
 	if (cli->request->domain_name[0] != '\0') {
-		domain = find_domain_from_name_noinit(
+		domain = find_trust_from_name_noinit(
 			cli->request->domain_name);
 		if (domain == NULL) {
 			DEBUG(10, ("Could not find domain %s\n",

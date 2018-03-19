@@ -909,7 +909,7 @@ static char *torture_afpinfo_pack(TALLOC_CTX *mem_ctx,
 {
 	char *buf;
 
-	buf = talloc_array(mem_ctx, char, AFP_INFO_SIZE);
+	buf = talloc_zero_array(mem_ctx, char, AFP_INFO_SIZE);
 	if (buf == NULL) {
 		return NULL;
 	}
@@ -3346,11 +3346,17 @@ static bool test_afpinfo_all0(struct torture_context *tctx,
 {
 	bool ret = true;
 	NTSTATUS status;
-	struct smb2_handle h1;
+	struct smb2_create create;
+	struct smb2_handle h1 = {{0}};
+	struct smb2_handle baseh = {{0}};
+	union smb_setfileinfo setfinfo;
+	union smb_fileinfo getfinfo;
 	TALLOC_CTX *mem_ctx = talloc_new(tctx);
 	const char *fname = BASEDIR "\\file";
+	const char *sname = BASEDIR "\\file" AFPINFO_STREAM;
 	const char *type_creator = "SMB,OLE!";
 	AfpInfo *info = NULL;
+	char *infobuf = NULL;
 	const char *streams_basic[] = {
 		"::$DATA"
 	};
@@ -3381,13 +3387,88 @@ static bool test_afpinfo_all0(struct torture_context *tctx,
 
 	/* Write all 0 to AFP_AfpInfo */
 	memset(info->afpi_FinderInfo, 0, AFP_FinderSize);
-	ret = torture_write_afpinfo(tree, tctx, mem_ctx, fname, info);
-	torture_assert_goto(tctx, ret == true, ret, done, "torture_write_afpinfo failed");
+	infobuf = torture_afpinfo_pack(mem_ctx, info);
+	torture_assert_not_null_goto(tctx, infobuf, ret, done,
+				     "torture_afpinfo_pack failed\n");
+
+	ZERO_STRUCT(create);
+	create.in.desired_access = SEC_FILE_ALL;
+	create.in.file_attributes = FILE_ATTRIBUTE_NORMAL;
+	create.in.create_disposition = NTCREATEX_DISP_OPEN;
+	create.in.share_access = NTCREATEX_SHARE_ACCESS_MASK;
+	create.in.fname = fname;
+
+	status = smb2_create(tree, mem_ctx, &create);
+	torture_assert_goto(tctx, ret == true, ret, done,
+			    "smb2_create failed\n");
+	baseh = create.out.file.handle;
+
+	ZERO_STRUCT(create);
+	create.in.desired_access = SEC_FILE_ALL;
+	create.in.file_attributes = FILE_ATTRIBUTE_NORMAL;
+	create.in.create_disposition = NTCREATEX_DISP_OVERWRITE_IF;
+	create.in.fname = sname;
+
+	status = smb2_create(tree, mem_ctx, &create);
+	torture_assert_goto(tctx, ret == true, ret, done,
+			    "smb2_create failed\n");
+	h1 = create.out.file.handle;
+
+	status = smb2_util_write(tree, h1, infobuf, 0, AFP_INFO_SIZE);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"smb2_util_write failed\n");
+
+	/*
+	 * Get stream information on open handle, must return only default
+	 * stream, the AFP_AfpInfo stream must not be returned.
+	 */
+
+	ZERO_STRUCT(getfinfo);
+	getfinfo.generic.level = RAW_FILEINFO_STREAM_INFORMATION;
+	getfinfo.generic.in.file.handle = baseh;
+
+	status = smb2_getinfo_file(tree, tctx, &getfinfo);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"get stream info\n");
+
+	torture_assert_int_equal_goto(tctx, getfinfo.stream_info.out.num_streams,
+				      1, ret, done, "stream count");
+
+	smb2_util_close(tree, baseh);
+	ZERO_STRUCT(baseh);
+
+	/*
+	 * Try to set some file-basic-info (time) on the stream. This catches
+	 * naive implementation mistakes that simply deleted the backing store
+	 * from the filesystem in the zero-out step.
+	 */
+
+	ZERO_STRUCT(setfinfo);
+	unix_to_nt_time(&setfinfo.basic_info.in.write_time, time(NULL));
+	setfinfo.basic_info.in.attrib = 0x20;
+	setfinfo.generic.level = RAW_SFILEINFO_BASIC_INFORMATION;
+	setfinfo.generic.in.file.handle = h1;
+
+	status = smb2_setinfo_file(tree, &setfinfo);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"smb2_getinfo_file failed\n");
+
+	ret = check_stream_list(tree, tctx, fname, 1, streams_basic, false);
+	torture_assert_goto(tctx, ret == true, ret, done, "check_stream_list");
+
+	smb2_util_close(tree, h1);
+	ZERO_STRUCT(h1);
 
 	ret = check_stream_list(tree, tctx, fname, 1, streams_basic, false);
 	torture_assert_goto(tctx, ret == true, ret, done, "Bad streams");
 
 done:
+	if (!smb2_util_handle_empty(h1)) {
+		smb2_util_close(tree, h1);
+	}
+	if (!smb2_util_handle_empty(baseh)) {
+		smb2_util_close(tree, baseh);
+	}
 	smb2_util_unlink(tree, fname);
 	smb2_util_rmdir(tree, BASEDIR);
 	return ret;
@@ -4478,6 +4559,108 @@ struct torture_suite *torture_vfs_fruit_file_id(TALLOC_CTX *ctx)
 
 	torture_suite_add_1smb2_test(suite, "zero file id if AAPL negotiated",
 				     test_zero_file_id);
+
+	return suite;
+}
+
+static bool test_timemachine_volsize(struct torture_context *tctx,
+				     struct smb2_tree *tree)
+{
+	TALLOC_CTX *mem_ctx = talloc_new(tctx);
+	struct smb2_handle h = {{0}};
+	union smb_fsinfo fsinfo;
+	NTSTATUS status;
+	bool ok = true;
+	const char *info_plist =
+		"<dict>\n"
+		"        <key>band-size</key>\n"
+		"        <integer>8192</integer>\n"
+		"</dict>\n";
+
+	smb2_deltree(tree, "test.sparsebundle");
+
+	ok = enable_aapl(tctx, tree);
+	torture_assert_goto(tctx, ok, ok, done, "enable_aapl failed");
+
+	status = smb2_util_mkdir(tree, "test.sparsebundle");
+	torture_assert_ntstatus_ok_goto(tctx, status, ok, done,
+					"smb2_util_mkdir\n");
+
+	ok = write_stream(tree, __location__, tctx, mem_ctx,
+			  "test.sparsebundle/Info.plist", NULL,
+			   0, strlen(info_plist), info_plist);
+	torture_assert_goto(tctx, ok, ok, done, "write_stream failed\n");
+
+	status = smb2_util_mkdir(tree, "test.sparsebundle/bands");
+	torture_assert_ntstatus_ok_goto(tctx, status, ok, done,
+					"smb2_util_mkdir\n");
+
+	ok = torture_setup_file(tctx, tree, "test.sparsebundle/bands/1", false);
+	torture_assert_goto(tctx, ok, ok, done, "torture_setup_file failed\n");
+
+	ok = torture_setup_file(tctx, tree, "test.sparsebundle/bands/2", false);
+	torture_assert_goto(tctx, ok, ok, done, "torture_setup_file failed\n");
+
+	status = smb2_util_roothandle(tree, &h);
+	torture_assert_ntstatus_ok(tctx, status, "Unable to create root handle");
+
+	ZERO_STRUCT(fsinfo);
+	fsinfo.generic.level = RAW_QFS_SIZE_INFORMATION;
+	fsinfo.generic.handle = h;
+
+	status = smb2_getinfo_fs(tree, tree, &fsinfo);
+	torture_assert_ntstatus_ok(tctx, status, "smb2_getinfo_fs failed");
+
+	torture_comment(tctx, "sectors_per_unit: %" PRIu32"\n"
+			"bytes_per_sector: %" PRIu32"\n"
+			"total_alloc_units: %" PRIu64"\n"
+			"avail_alloc_units: %" PRIu64"\n",
+			fsinfo.size_info.out.sectors_per_unit,
+			fsinfo.size_info.out.bytes_per_sector,
+			fsinfo.size_info.out.total_alloc_units,
+			fsinfo.size_info.out.avail_alloc_units);
+
+	/*
+	 * Let me explain the numbers:
+	 *
+	 * - the share is set to "fruit:time machine max size = 32K"
+	 * - we've faked a bandsize of 8 K in the Info.plist file
+	 * - we've created two bands files
+	 * - one allocation unit is made of two sectors with 512 B each
+	 * => we've consumed 16 allocation units, there should be 16 free
+	 */
+
+	torture_assert_goto(tctx, fsinfo.size_info.out.sectors_per_unit == 2,
+			    ok, done, "Bad sectors_per_unit");
+
+	torture_assert_goto(tctx, fsinfo.size_info.out.bytes_per_sector == 512,
+			    ok, done, "Bad bytes_per_sector");
+
+	torture_assert_goto(tctx, fsinfo.size_info.out.total_alloc_units == 32,
+			    ok, done, "Bad total_alloc_units");
+
+	torture_assert_goto(tctx, fsinfo.size_info.out.avail_alloc_units == 16,
+			    ok, done, "Bad avail_alloc_units");
+
+done:
+	if (!smb2_util_handle_empty(h)) {
+		smb2_util_close(tree, h);
+	}
+	smb2_deltree(tree, "test.sparsebundle");
+	talloc_free(mem_ctx);
+	return ok;
+}
+
+struct torture_suite *torture_vfs_fruit_timemachine(TALLOC_CTX *ctx)
+{
+	struct torture_suite *suite = torture_suite_create(
+		ctx, "fruit_timemachine");
+
+	suite->description = talloc_strdup(
+		suite, "vfs_fruit tests for TimeMachine");
+
+	torture_suite_add_1smb2_test(suite, "Timemachine-volsize",
+				     test_timemachine_volsize);
 
 	return suite;
 }
