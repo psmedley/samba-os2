@@ -1,3 +1,21 @@
+samba (2:4.8.0+dfsg-2) experimental; urgency=medium
+
+  * Remove unused and outdated debian/README.debian (debian/README.Debian is
+    used instead)
+  * Mask services as appropriate in samba and winbind postinst (Closes: #863285)
+    - mask samba-ad-dc unless server role = active directory domain controller
+      (as before)
+    - mask smbd and nmbd when server role = active directory domain controller
+    - mask nmbd when disable netbios = yes (Closes: #866125)
+  * Set smbspool_krb5_wrapper permissions to 0700 (Closes: #894720, #372270)
+  * Remove Depends: samba-libs of lib{nss,pam}-winbind
+  * Mark winbind "Multi-Arch: allowed" and make lib{pam,nss}-winbind depends on
+    winbind:any to allow co-installation (Closes: #881100)
+  * Ignore nmbd start errors when there is no non-loopback interface
+    (Closes: #893762)
+
+ -- Mathieu Parent <sathieu@debian.org>  Sun, 08 Apr 2018 22:09:53 +0200
+
 samba (2:4.8.0+dfsg-1) experimental; urgency=medium
 
   [ Mathieu Parent ]

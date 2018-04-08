@@ -181,7 +181,7 @@ override_dh_installchangelogs:
 override_dh_installinit:
 ifneq (,$(filter samba, $(shell dh_listpackages)))
 	dh_installinit -psamba --name smbd
-	dh_installinit -psamba --name nmbd
+	dh_installinit -psamba --name nmbd --error-handler nmbd_error_handler
 	dh_installinit -psamba --name samba-ad-dc
 endif
 ifneq (,$(filter winbind, $(shell dh_listpackages)))
@@ -217,6 +217,9 @@ ifneq (,$(filter samba-common, $(shell dh_listpackages)))
 endif
 ifneq (,$(filter samba, $(shell dh_listpackages)))
 	chmod 1777 debian/samba/var/spool/samba/
+endif
+ifneq (,$(filter smbclient, $(shell dh_listpackages)))
+	chmod 0700 debian/smbclient/usr/lib/*/samba/smbspool_krb5_wrapper
 endif
 
 override_dh_missing:
