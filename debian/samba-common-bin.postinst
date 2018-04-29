@@ -1,0 +1,9 @@
+#!/bin/sh
+
+set -e
+
+echo "Checking smb.conf"
+samba-tool testparm -d1 --suppress-prompt > /dev/null
+echo "Done"
+
+#DEBHELPER#

@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/13/2018
+.\"      Date: 04/26/2018
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.8.0
+.\"    Source: Samba 4.8.1
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "03/13/2018" "Samba 4\&.8\&.0" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "04/26/2018" "Samba 4\&.8\&.1" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -3103,7 +3103,7 @@ Example:
 directory name cache size (S)
 .PP
 .RS 4
-This parameter specifies the size of the directory name cache\&. It will be needed to turn this off for *BSD systems\&.
+This parameter specifies the size of the directory name cache for SMB1 connections\&. It is not used for SMB2\&. It will be needed to turn this off for *BSD systems\&.
 .sp
 Default:
 \fI\fIdirectory name cache size\fR\fR\fI = \fR\fI100\fR\fI \fR
@@ -5774,6 +5774,28 @@ This parameter has been extended since the 2\&.2\&.x series, now it allows one t
 .IP \(bu 2.3
 .\}
 \fIsmb\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIsmb2\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIsmb2_credits\fR
 .RE
 .sp
 .RS 4
@@ -12931,7 +12953,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.8\&.0 of the Samba suite\&.
+This man page is part of version 4\&.8\&.1 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

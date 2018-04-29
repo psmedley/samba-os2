@@ -1,3 +1,5 @@
+#!/usr/bin/dh-exec --with-scripts=filter-arch
+[any-amd64] usr/lib/*/samba/libaesni-intel.so.0
 usr/lib/*/libdcerpc-binding.so.*
 usr/lib/*/libdcerpc-samr.so.*
 usr/lib/*/libdcerpc-server.so.*

@@ -39,13 +39,13 @@ msgid ""
 "network, the DHCP server may also provide information about WINS servers "
 "(\"NetBIOS name servers\") present on the network.  This requires a change "
 "to your smb.conf file so that DHCP-provided WINS settings will automatically "
-"be read from /etc/samba/dhcp.conf."
+"be read from /var/lib/samba/dhcp.conf."
 msgstr ""
 "Eger kompîtera te ji ser pêşkêşkarê ji DHCPê navnîşaneke IPê bistîne, dibe "
 "ku pêşkêşkara DHCP jî derbarê pêşkêşkara WINSê de agahiyan peyda bike "
 "(\"NetBIOS navê pêşkêşkaran) ji ser torê pêşkêş bike. Ji bo vê divê pelê te "
-"yê smb.conf bê guherandin lewre mîhengên WINSê yên DHCP-pêşkêş dike ji /etc/"
-"samba/dhcp/confê xweber bên xwendin."
+"yê smb.conf bê guherandin lewre mîhengên WINSê yên DHCP-pêşkêş dike ji /var/"
+"lib/samba/dhcp/confê xweber bên xwendin."
 
 #. Type: boolean
 #. Description

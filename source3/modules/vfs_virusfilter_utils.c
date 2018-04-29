@@ -147,11 +147,18 @@ bool virusfilter_io_connect_path(
 {
 	struct sockaddr_un addr;
 	NTSTATUS status;
-	int socket, bes_result, flags, ret;
+	int socket, ret;
+	size_t len;
+	bool ok;
 
 	ZERO_STRUCT(addr);
 	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, path, sizeof(addr.sun_path));
+
+	len = strlcpy(addr.sun_path, path, sizeof(addr.sun_path));
+	if (len >= sizeof(addr.sun_path)) {
+		io_h->stream = NULL;
+		return false;
+	}
 
 	status = open_socket_out((struct sockaddr_storage *)&addr, 0,
 				 io_h->connect_timeout,
@@ -162,23 +169,23 @@ bool virusfilter_io_connect_path(
 	}
 
 	/* We must not block */
-	flags = fcntl(socket, F_GETFL);
-	if (flags <= 0) {
-		/* Handle error by ignoring */;
-		flags = 0;
-		DBG_WARNING("Could not get flags on socket (%s).\n",
-			    strerror(errno));
-	}
-	flags |= SOCK_NONBLOCK;
-	ret = fcntl(socket, F_SETFL, flags);
+	ret = set_blocking(socket, false);
 	if (ret == -1) {
-		/* Handle error by ignoring for now */
-		DBG_WARNING("Could not set flags on socket: %s.\n",
-			    strerror(errno));
+		close(socket);
+		io_h->stream = NULL;
+		return false;
 	}
 
-	bes_result = tstream_bsd_existing_socket(io_h, socket, &io_h->stream);
-	if (bes_result < 0) {
+	ok = smb_set_close_on_exec(socket);
+	if (!ok) {
+		close(socket);
+		io_h->stream = NULL;
+		return false;
+	}
+
+	ret = tstream_bsd_existing_socket(io_h, socket, &io_h->stream);
+	if (ret == -1) {
+		close(socket);
 		DBG_ERR("Could not convert socket to tstream: %s.\n",
 			strerror(errno));
 		io_h->stream = NULL;
@@ -389,7 +396,7 @@ bool virusfilter_io_writefl(
 {
 	va_list ap;
 	char data[VIRUSFILTER_IO_BUFFER_SIZE + VIRUSFILTER_IO_EOL_SIZE];
-	size_t data_size;
+	int data_size;
 
 	va_start(ap, data_fmt);
 	data_size = vsnprintf(data, VIRUSFILTER_IO_BUFFER_SIZE, data_fmt, ap);
@@ -411,7 +418,7 @@ bool virusfilter_io_vwritefl(
 	const char *data_fmt, va_list ap)
 {
 	char data[VIRUSFILTER_IO_BUFFER_SIZE + VIRUSFILTER_IO_EOL_SIZE];
-	size_t data_size;
+	int data_size;
 
 	data_size = vsnprintf(data, VIRUSFILTER_IO_BUFFER_SIZE, data_fmt, ap);
 

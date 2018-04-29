@@ -43,13 +43,13 @@ msgid ""
 "network, the DHCP server may also provide information about WINS servers "
 "(\"NetBIOS name servers\") present on the network.  This requires a change "
 "to your smb.conf file so that DHCP-provided WINS settings will automatically "
-"be read from /etc/samba/dhcp.conf."
+"be read from /var/lib/samba/dhcp.conf."
 msgstr ""
 "Nëse kompjuteri yt pajiset me adrese IP nga një shërbyes DHCP në rrjet, "
 "shërbyesi DHCP mundet gjithashtu të japë të dhëna rreth shërbyesve WINS "
 "(\"shërbyesa emri NetBIOS\") që ndodhen në rrjet.  Kjo ka nevojë për një "
 "ndryshim në skedën tënde smb.conf në mënyrë të tillë që rregullimet WINS që "
-"vijnë me DHCP të lexohen automatikisht nga /etc/samba/dhcp.conf."
+"vijnë me DHCP të lexohen automatikisht nga /var/lib/samba/dhcp.conf."
 
 #. Type: boolean
 #. Description

@@ -1,3 +1,26 @@
+samba (2:4.8.1+dfsg-1) experimental; urgency=medium
+
+  * New upstream release
+  * Add lintian override for "smbclient: executable-is-not-world-readable
+    usr/lib/x86_64-linux-gnu/samba/smbspool_krb5_wrapper 0700" (See #894720)
+  * Improve samba-vfs-modules description (Closes: #776505)
+  * Check smb.conf in samba-common-bin.postinst (Closes: #816301)
+  * Mark libparse-pidl-perl, samba-dev, samba-dsdb-modules and samba-vfs-modules
+    as"Multi-Arch: same"
+  * Standards-Version: 4.1.4, no change
+  * debian/smb.conf: Fix typo in comment line: sever -> server (Closes: #763648)
+  * Read smb.conf until [print$] section instead of [cdrom] to preserve
+    locally-defined shares (Closes: #776259)
+  * Fix and improve dhcp integration:
+    - dhclient3 was renamed to dhclient long time ago...
+    - Remove /etc/samba/dhcp.conf on purge (Closes: #784713)
+    - Move dhcp.conf out of /etc to allow ro root (Closes: #695362)
+    - Update template for "Move dhcp.conf out of /etc to allow ro root"
+  * Enable --accel-aes=intelaesni on DEB_HOST_GNU_CPU=x86_64 (Closes: #896196)
+    - Use dh-exec to install libaesni-intel.so.0 only on amd64
+
+ -- Mathieu Parent <sathieu@debian.org>  Sun, 29 Apr 2018 12:54:06 +0200
+
 samba (2:4.8.0+dfsg-2) experimental; urgency=medium
 
   * Remove unused and outdated debian/README.debian (debian/README.Debian is

@@ -45,13 +45,13 @@ msgid ""
 "network, the DHCP server may also provide information about WINS servers "
 "(\"NetBIOS name servers\") present on the network.  This requires a change "
 "to your smb.conf file so that DHCP-provided WINS settings will automatically "
-"be read from /etc/samba/dhcp.conf."
+"be read from /var/lib/samba/dhcp.conf."
 msgstr ""
 "உங்கள் கணினி IP முகவரியை வலைப் பின்னலிலிருந்து டிஹெச்சிபி சேவையகத்தின் மூலம் "
 "பெறுமானால் அந்த டிஹெச்சிபி சேவையகம் வலைப் பின்னலில் உள்ள WINS servers (விண்ஸ் "
 "சேவையகங்கள்) (\"NetBIOS name servers\") நெட்பயாஸ் பெயர் சேவையகங்கள் குறித்த தகவல்களை "
-"தர இயலும். இதற்கு smb.conf கோப்பை டிஹெச்சிபி  தரும் WINS வடிவமைப்பை /etc/samba/"
-"dhcp.conf கோப்பிலிருந்து தானியங்கியாக படிக்கும் படி அமைக்க வேண்டும்."
+"தர இயலும். இதற்கு smb.conf கோப்பை டிஹெச்சிபி  தரும் WINS வடிவமைப்பை /var/lib/"
+"samba/dhcp.conf கோப்பிலிருந்து தானியங்கியாக படிக்கும் படி அமைக்க வேண்டும்."
 
 #. Type: boolean
 #. Description

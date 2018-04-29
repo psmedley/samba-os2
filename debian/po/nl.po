@@ -40,14 +40,14 @@ msgid ""
 "network, the DHCP server may also provide information about WINS servers "
 "(\"NetBIOS name servers\") present on the network.  This requires a change "
 "to your smb.conf file so that DHCP-provided WINS settings will automatically "
-"be read from /etc/samba/dhcp.conf."
+"be read from /var/lib/samba/dhcp.conf."
 msgstr ""
 "Indien uw computer zijn IP-adresinformatie van een DHCP-server op het "
 "netwerk haalt, voorziet deze mogelijk ook in informatie betreffende de op "
 "het netwerk aanwezige WINS-servers (\"NetBIOS naamservers\"). In dat geval "
 "is een wijziging aan het smb.conf bestand nodig, opdat de door DHCP "
-"doorgegeven WINS instellingen automatisch gelezen zouden worden van /etc/"
-"samba/dhcp.conf."
+"doorgegeven WINS instellingen automatisch gelezen zouden worden van /var/"
+"lib/samba/dhcp.conf."
 
 #. Type: boolean
 #. Description

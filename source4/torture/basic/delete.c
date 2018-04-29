@@ -476,21 +476,124 @@ static bool deltest8(struct torture_context *tctx, struct smbcli_state *cli1, st
 static bool deltest9(struct torture_context *tctx, struct smbcli_state *cli1, struct smbcli_state *cli2)
 {
 	int fnum1 = -1;
+	NTSTATUS status;
+	uint32_t disps[4] = {
+			NTCREATEX_DISP_SUPERSEDE,
+			NTCREATEX_DISP_OVERWRITE_IF,
+			NTCREATEX_DISP_CREATE,
+			NTCREATEX_DISP_OPEN_IF};
+	unsigned int i;
 
 	del_clean_area(cli1, cli2);
 
-	/* This should fail - we need to set DELETE_ACCESS. */
-	fnum1 = smbcli_nt_create_full(cli1->tree, fname, 0,
-				      SEC_FILE_READ_DATA|SEC_FILE_WRITE_DATA,
-				      FILE_ATTRIBUTE_NORMAL, 
-				      NTCREATEX_SHARE_ACCESS_NONE, 
-				      NTCREATEX_DISP_OVERWRITE_IF, 
-				      NTCREATEX_OPTIONS_DELETE_ON_CLOSE, 0);
-	
-	torture_assert(tctx, fnum1 == -1, 
-				   talloc_asprintf(tctx, "open of %s succeeded should have failed!", 
-		       fname));
+	for (i = 0; i < sizeof(disps)/sizeof(disps[0]); i++) {
+		/* This should fail - we need to set DELETE_ACCESS. */
 
+		/*
+		 * A file or directory create with DELETE_ON_CLOSE but
+		 * without DELETE_ACCESS should fail with
+		 * NT_STATUS_INVALID_PARAMETER.
+		 */
+
+		fnum1 = smbcli_nt_create_full(cli1->tree, fname, 0,
+				SEC_FILE_READ_DATA|SEC_FILE_WRITE_DATA,
+				FILE_ATTRIBUTE_NORMAL,
+				NTCREATEX_SHARE_ACCESS_NONE,
+				disps[i],
+				NTCREATEX_OPTIONS_DELETE_ON_CLOSE, 0);
+
+		torture_assert(tctx, fnum1 == -1,
+			talloc_asprintf(tctx, "open of %s succeeded "
+				"should have failed!",
+			fname));
+
+		/* Must fail with NT_STATUS_INVALID_PARAMETER. */
+		status = smbcli_nt_error(cli1->tree);
+		torture_assert_ntstatus_equal(tctx,
+			status,
+			NT_STATUS_INVALID_PARAMETER,
+			talloc_asprintf(tctx, "create of %s should return "
+				"NT_STATUS_INVALID_PARAMETER, got %s",
+			fname,
+			smbcli_errstr(cli1->tree)));
+
+		/* This should fail - the file should not have been created. */
+		status = smbcli_getatr(cli1->tree, fname, NULL, NULL, NULL);
+		torture_assert_ntstatus_equal(tctx,
+			status,
+			NT_STATUS_OBJECT_NAME_NOT_FOUND,
+			talloc_asprintf(tctx, "getattr of %s succeeded should "
+				"not have been created !",
+			fname));
+	}
+
+	return true;
+}
+
+/* Test 9a ... */
+static bool deltest9a(struct torture_context *tctx,
+			struct smbcli_state *cli1,
+			struct smbcli_state *cli2)
+{
+	int fnum1 = -1;
+	NTSTATUS status;
+	uint32_t disps[4] = {
+			NTCREATEX_DISP_OVERWRITE_IF,
+			NTCREATEX_DISP_OPEN,
+			NTCREATEX_DISP_OVERWRITE,
+			NTCREATEX_DISP_OPEN_IF};
+
+	unsigned int i;
+
+	del_clean_area(cli1, cli2);
+
+	/* Create the file, and try with open calls. */
+	fnum1 = smbcli_open(cli1->tree, fname, O_CREAT|O_RDWR, DENY_NONE);
+	torture_assert(tctx,
+			fnum1 != -1,
+			talloc_asprintf(tctx, "open of %s failed (%s)",
+			fname,
+			smbcli_errstr(cli1->tree)));
+	status = smbcli_close(cli1->tree, fnum1);
+	torture_assert_ntstatus_ok(tctx,
+				status,
+				talloc_asprintf(tctx, "close failed"));
+
+	for (i = 0; i < sizeof(disps)/sizeof(disps[0]); i++) {
+		fnum1 = smbcli_nt_create_full(cli1->tree, fname, 0,
+				SEC_FILE_READ_DATA|SEC_FILE_WRITE_DATA,
+				FILE_ATTRIBUTE_NORMAL,
+				NTCREATEX_SHARE_ACCESS_NONE,
+				disps[i],
+				NTCREATEX_OPTIONS_DELETE_ON_CLOSE, 0);
+
+		torture_assert(tctx, fnum1 == -1,
+			talloc_asprintf(tctx, "open of %s succeeded "
+				"should have failed!",
+			fname));
+
+		/* Must fail with NT_STATUS_INVALID_PARAMETER. */
+		status = smbcli_nt_error(cli1->tree);
+		torture_assert_ntstatus_equal(tctx,
+			status,
+			NT_STATUS_INVALID_PARAMETER,
+			talloc_asprintf(tctx, "create of %s should return "
+				"NT_STATUS_INVALID_PARAMETER, got %s",
+			fname,
+			smbcli_errstr(cli1->tree)));
+
+		/*
+		 * This should succeed - the file should not have been deleted.
+		 */
+		status = smbcli_getatr(cli1->tree, fname, NULL, NULL, NULL);
+		torture_assert_ntstatus_ok(tctx,
+			status,
+			talloc_asprintf(tctx, "getattr of %s failed %s",
+			fname,
+			smbcli_errstr(cli1->tree)));
+	}
+
+	del_clean_area(cli1, cli2);
 	return true;
 }
 
@@ -2256,6 +2359,135 @@ static bool deltest24(struct torture_context *tctx)
 	return correct;
 }
 
+/* Test 25 ... */
+static bool deltest25(struct torture_context *tctx,
+			struct smbcli_state *cli1,
+			struct smbcli_state *cli2)
+{
+	int fnum1 = -1;
+	NTSTATUS status;
+	uint32_t disps[4] = {
+			NTCREATEX_DISP_SUPERSEDE,
+			NTCREATEX_DISP_OVERWRITE_IF,
+			NTCREATEX_DISP_CREATE,
+			NTCREATEX_DISP_OPEN_IF};
+	unsigned int i;
+
+	del_clean_area(cli1, cli2);
+
+	for (i = 0; i < sizeof(disps)/sizeof(disps[0]); i++) {
+		/* This should fail - we need to set DELETE_ACCESS. */
+
+		/*
+		 * A file or directory create with DELETE_ON_CLOSE but
+		 * without DELETE_ACCESS should fail with
+		 * NT_STATUS_INVALID_PARAMETER.
+		 */
+
+		fnum1 = smbcli_nt_create_full(cli1->tree, dname, 0,
+				SEC_FILE_READ_DATA,
+				FILE_ATTRIBUTE_DIRECTORY,
+				NTCREATEX_SHARE_ACCESS_NONE,
+				disps[i],
+				NTCREATEX_OPTIONS_DIRECTORY|
+				NTCREATEX_OPTIONS_DELETE_ON_CLOSE, 0);
+
+		torture_assert(tctx, fnum1 == -1,
+			talloc_asprintf(tctx, "open of %s succeeded "
+				"should have failed!",
+			dname));
+
+		/* Must fail with NT_STATUS_INVALID_PARAMETER. */
+		status = smbcli_nt_error(cli1->tree);
+		torture_assert_ntstatus_equal(tctx,
+			status,
+			NT_STATUS_INVALID_PARAMETER,
+			talloc_asprintf(tctx, "create of %s should return "
+				"NT_STATUS_INVALID_PARAMETER, got %s",
+			dname,
+			smbcli_errstr(cli1->tree)));
+
+		/*
+		 * This should fail - the directory
+		 * should not have been created.
+		 */
+		status = smbcli_getatr(cli1->tree, dname, NULL, NULL, NULL);
+		torture_assert_ntstatus_equal(tctx,
+			status,
+			NT_STATUS_OBJECT_NAME_NOT_FOUND,
+			talloc_asprintf(tctx, "getattr of %s succeeded should "
+				"not have been created !",
+			dname));
+	}
+
+	return true;
+}
+
+/* Test 25a... */
+static bool deltest25a(struct torture_context *tctx,
+		struct smbcli_state *cli1,
+		struct smbcli_state *cli2)
+{
+	int fnum1 = -1;
+	NTSTATUS status;
+	uint32_t disps[4] = {
+			NTCREATEX_DISP_OVERWRITE_IF,
+			NTCREATEX_DISP_OPEN,
+			NTCREATEX_DISP_OVERWRITE,
+			NTCREATEX_DISP_OPEN_IF};
+
+	unsigned int i;
+
+	del_clean_area(cli1, cli2);
+
+	/* Create the directory, and try with open calls. */
+	status = smbcli_mkdir(cli1->tree, dname);
+	torture_assert_ntstatus_ok(tctx,
+		status,
+		talloc_asprintf(tctx, "mkdir of %s failed %s",
+		dname,
+		smbcli_errstr(cli1->tree)));
+
+	for (i = 0; i < sizeof(disps)/sizeof(disps[0]); i++) {
+		fnum1 = smbcli_nt_create_full(cli1->tree, dname, 0,
+				SEC_FILE_READ_DATA,
+				FILE_ATTRIBUTE_DIRECTORY,
+				NTCREATEX_SHARE_ACCESS_NONE,
+				disps[i],
+				NTCREATEX_OPTIONS_DIRECTORY|
+				NTCREATEX_OPTIONS_DELETE_ON_CLOSE, 0);
+
+		torture_assert(tctx, fnum1 == -1,
+			talloc_asprintf(tctx, "open of %s succeeded "
+				"should have failed!",
+			dname));
+
+		/* Must fail with NT_STATUS_INVALID_PARAMETER. */
+		status = smbcli_nt_error(cli1->tree);
+		torture_assert_ntstatus_equal(tctx,
+			status,
+			NT_STATUS_INVALID_PARAMETER,
+			talloc_asprintf(tctx, "create of %s should return "
+				"NT_STATUS_INVALID_PARAMETER, got %s",
+			dname,
+			smbcli_errstr(cli1->tree)));
+
+		/*
+		 * This should succeed - the directory
+		 * should not have been deleted.
+		 */
+		status = smbcli_getatr(cli1->tree, dname, NULL, NULL, NULL);
+		torture_assert_ntstatus_ok(tctx,
+			status,
+			talloc_asprintf(tctx, "getattr of %s failed %s",
+			fname,
+			smbcli_errstr(cli1->tree)));
+	}
+
+	del_clean_area(cli1, cli2);
+	return true;
+}
+
 /*
   Test delete on close semantics.
  */
@@ -2273,6 +2505,7 @@ struct torture_suite *torture_test_delete(TALLOC_CTX *ctx)
 	torture_suite_add_2smb_test(suite, "deltest7", deltest7);
 	torture_suite_add_2smb_test(suite, "deltest8", deltest8);
 	torture_suite_add_2smb_test(suite, "deltest9", deltest9);
+	torture_suite_add_2smb_test(suite, "deltest9a", deltest9a);
 	torture_suite_add_2smb_test(suite, "deltest10", deltest10);
 	torture_suite_add_2smb_test(suite, "deltest11", deltest11);
 	torture_suite_add_2smb_test(suite, "deltest12", deltest12);
@@ -2297,6 +2530,8 @@ struct torture_suite *torture_test_delete(TALLOC_CTX *ctx)
 	torture_suite_add_simple_test(suite, "deltest22", deltest22);
 	torture_suite_add_2smb_test(suite, "deltest23", deltest23);
 	torture_suite_add_simple_test(suite, "deltest24", deltest24);
+	torture_suite_add_2smb_test(suite, "deltest25", deltest25);
+	torture_suite_add_2smb_test(suite, "deltest25a", deltest25a);
 
 	return suite;
 }

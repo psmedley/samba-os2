@@ -1,6 +1,6 @@
 #!/bin/sh
 
-SAMBA_DHCP_CONF=/etc/samba/dhcp.conf
+SAMBA_DHCP_CONF=/var/lib/samba/dhcp.conf
 
 netbios_setup() {
 	# No need to continue if we're called with an unsupported option

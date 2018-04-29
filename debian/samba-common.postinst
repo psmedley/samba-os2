@@ -50,13 +50,13 @@ configure_smb_conf() {
 				/wins server[[:space:]]*=/a \\
 \\
 # If we receive WINS server info from DHCP, override the options above. \\
-   include = /etc/samba/dhcp.conf
+   include = /var/lib/samba/dhcp.conf
 }" "$CONFIG"
 	elif [ "$RET" != true ]; then
 		sed -i -e '
 		/^#[[:space:]]*If we receive WINS server info from DHCP, override the options above/d
-		/^#*[[:space:]]*include[[:space:]]*=[[:space:]]*\/etc\/samba\/dhcp.conf/,/[^[:space:]]/ {
-			/^#*[[:space:]]*include[[:space:]]*=[[:space:]]*\/etc\/samba\/dhcp.conf/d
+		/^#*[[:space:]]*include[[:space:]]*=[[:space:]]*\/var\/lib\/samba\/dhcp.conf/,/[^[:space:]]/ {
+			/^#*[[:space:]]*include[[:space:]]*=[[:space:]]*\/var\/lib\/samba\/dhcp.conf/d
 			/^[[:space:]]*$/d
 		}' "$CONFIG"
 	fi
@@ -64,6 +64,15 @@ configure_smb_conf() {
 }
 
 if [ "$1" = configure ]; then
+    if dpkg --compare-versions "$2" lt-nl 2:4.8.0+dfsg-3~; then
+        # Move dhcp.conf out of /etc (https://bugs.debian.org/695362)
+        if [ -f /etc/samba/dhcp.conf ]; then
+            mv /etc/samba/dhcp.conf /var/lib/samba/dhcp.conf
+        fi
+        sed -i -e 's/^\([#[:space:]]*include[[:space:]]*=[[:space:]]*\)\/etc\/samba\/dhcp.conf\([[:space:]]*\)$/\1\/var\/lib\/samba\/dhcp.conf\2/
+        ' "$CONFIG"
+    fi
+
     if ! dpkg-statoverride --list /var/log/samba >/dev/null; then
         # Set some reasonable default perms for the samba logdir
         # to hide sensitive information
@@ -83,7 +92,7 @@ cp /usr/share/samba/smb.conf "$NEWFILE"
 configure_smb_conf "$NEWFILE"
 
 if [ -e "$CONFIG" ]; then
-	sed -e '1,/^[;#[:space:]]*\[cdrom\]/ { d }
+	sed -e '1,/^[;#[:space:]]*\[print\$\]/ { d }
 		1,/^[[:space:]]*\[/ { /^[^[]/d; /^$/d }
 	' "$CONFIG" >> "$NEWFILE"
 fi

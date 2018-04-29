@@ -297,6 +297,11 @@ void winbind_msg_debug(struct messaging_context *msg_ctx,
 			 uint32_t msg_type,
 			 struct server_id server_id,
 			 DATA_BLOB *data);
+void winbind_disconnect_dc_parent(struct messaging_context *msg_ctx,
+				  void *private_data,
+				  uint32_t msg_type,
+				  struct server_id server_id,
+				  DATA_BLOB *data);
 void winbind_msg_offline(struct messaging_context *msg_ctx,
 			 void *private_data,
 			 uint32_t msg_type,
@@ -327,6 +332,11 @@ void winbind_msg_ip_dropped(struct messaging_context *msg_ctx,
 			    uint32_t msg_type,
 			    struct server_id server_id,
 			    DATA_BLOB *data);
+void winbind_msg_disconnect_dc(struct messaging_context *msg_ctx,
+			       void *private_data,
+			       uint32_t msg_type,
+			       struct server_id server_id,
+			       DATA_BLOB *data);
 void winbind_msg_ip_dropped_parent(struct messaging_context *msg_ctx,
 				   void *private_data,
 				   uint32_t msg_type,
@@ -951,5 +961,10 @@ bool reconnect_need_retry(NTSTATUS status, struct winbindd_domain *domain);
 
 /* The following definitions come from winbindd/winbindd_gpupdate.c  */
 void gpupdate_init(void);
+
+/* The following comes from winbindd/winbindd_dual_srv.c */
+bool reset_cm_connection_on_error(struct winbindd_domain *domain,
+				  struct dcerpc_binding_handle *b,
+				  NTSTATUS status);
 
 #endif /*  _WINBINDD_PROTO_H_  */

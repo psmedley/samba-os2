@@ -45,13 +45,13 @@ msgid ""
 "network, the DHCP server may also provide information about WINS servers "
 "(\"NetBIOS name servers\") present on the network.  This requires a change "
 "to your smb.conf file so that DHCP-provided WINS settings will automatically "
-"be read from /etc/samba/dhcp.conf."
+"be read from /var/lib/samba/dhcp.conf."
 msgstr ""
 "Bu fekkee sa kompiyutar mi ngi ame adrees IP ci ab serwóor DHCP bu ne ci "
 "resóo bi, kon serwóor DHCP bi man na yitam di joxe ay xamle yu aju ci "
 "serwóor WINS yi (\"NetBIOS name servers\") yi nekk ci resóo bi. Loolu nak "
 "dana laaj ak coppat ci sa fiise smb.conf, ngir ba komfiguraasioŋ yi DHCP bi "
-"di joxe ñukoy jaŋgale sune boppu ci fiise /etc/samba/dhcp.conf"
+"di joxe ñukoy jaŋgale sune boppu ci fiise /var/lib/samba/dhcp.conf"
 
 #. Type: boolean
 #. Description

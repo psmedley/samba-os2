@@ -43,12 +43,12 @@ msgid ""
 "network, the DHCP server may also provide information about WINS servers "
 "(\"NetBIOS name servers\") present on the network.  This requires a change "
 "to your smb.conf file so that DHCP-provided WINS settings will automatically "
-"be read from /etc/samba/dhcp.conf."
+"be read from /var/lib/samba/dhcp.conf."
 msgstr ""
 "Ha e gép az IP címeket egy DHCP kiszolgálótól kérdezi le a hálózaton, lehet, "
 "hogy a WINS kiszolgálók (\"NetBIOS névkiszolgálók\") listáját is le tudja "
 "kérdezni. Ehhez az smb.conf módosítása szükséges, hogy a DHCP-n keresztüli "
-"WINS beállításokat automatikusan kiolvassa a /etc/samba/dhcp.conf-ból."
+"WINS beállításokat automatikusan kiolvassa a /var/lib/samba/dhcp.conf-ból."
 
 #. Type: boolean
 #. Description

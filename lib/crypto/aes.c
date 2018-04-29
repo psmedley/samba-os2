@@ -66,22 +66,6 @@ static bool has_intel_aes_instructions(void)
 		return (bool)has_aes_instructions;
 	}
 
-	__cpuid(cpuid_results, 0);
-	/*
-	 *        MSB         LSB
-	 *  EBX = 'u' 'n' 'e' 'G'
-	 *  EDX = 'I' 'e' 'n' 'i'
-	 *  ECX = 'l' 'e' 't' 'n'
-	 */
-	if (memcmp((unsigned char *)&cpuid_results[1], "Genu", 4) != 0 ||
-			memcmp((unsigned char *)&cpuid_results[3],
-				"ineI", 4) != 0 ||
-			memcmp((unsigned char *)&cpuid_results[2],
-				"ntel", 4) != 0) {
-		has_aes_instructions = 0;
-		return (bool)has_aes_instructions;
-	}
-
 	__cpuid(cpuid_results, 1);
 	has_aes_instructions = !!(cpuid_results[2] & (1 << 25));
 	return (bool)has_aes_instructions;
@@ -252,18 +236,20 @@ void
 AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key)
 {
 	if (has_intel_aes_instructions()) {
-		return AES_encrypt_aesni(in, out, key);
+		AES_encrypt_aesni(in, out, key);
+		return;
 	}
-	return AES_encrypt_rj(in, out, key);
+	AES_encrypt_rj(in, out, key);
 }
 
 void
 AES_decrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key)
 {
 	if (has_intel_aes_instructions()) {
-		return AES_decrypt_aesni(in, out, key);
+		AES_decrypt_aesni(in, out, key);
+		return;
 	}
-	return AES_decrypt_rj(in, out, key);
+	AES_decrypt_rj(in, out, key);
 }
 
 #endif /* SAMBA_RIJNDAEL */

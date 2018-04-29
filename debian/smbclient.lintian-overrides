@@ -1,0 +1,3 @@
+# As per CUPS's backend(7): "Backends without world read and execute permissions are run as the root usert"
+# See also smbspool_krb5_wrapper(8) manpage
+smbclient: executable-is-not-world-readable usr/lib/x86_64-linux-gnu/samba/smbspool_krb5_wrapper 0700

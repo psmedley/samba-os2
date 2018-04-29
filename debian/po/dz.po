@@ -50,13 +50,13 @@ msgid ""
 "network, the DHCP server may also provide information about WINS servers "
 "(\"NetBIOS name servers\") present on the network.  This requires a change "
 "to your smb.conf file so that DHCP-provided WINS settings will automatically "
-"be read from /etc/samba/dhcp.conf."
+"be read from /var/lib/samba/dhcp.conf."
 msgstr ""
 "ག་དེམ་ཅིག་འབད་ ཁྱོད་ཀྱི་གློག་རིག་གིས་ཡོངས་འབྲེལ་གུའི་ཌི་ཨེཅ་སི་པི་སར་བར་ནང་ལས་ ཨའི་པི་ཁ་བྱང་བརྡ་དོན་"
 "འཐོབ་པ་ཅིན་ ཌི་ཨེཅ་སི་པི་སར་བར་གིས་ཡང་ ཡོངས་འབྲེལ་གུ་ཡོད་པའི་ ཌབ་ལུ་ཨའི་ཨེན་ཨེསི་སར་བརསི་ "
 "(\"NetBIOS name servers\")གི་སྐོར་ལས་བརྡ་དོན་བྱིན་འོང་། འདི་གི་དོན་ལུ་ ཁྱོད་རའི་ smb.conf "
 "ཡིག་སྣོད་བསྒྱུར་བཅོས་འབད་དགོཔ་ཨིན་ དེ་འབད་བ་ཅིན་ བྱིན་ཡོད་པའི་ཌི་ཨེཅ་སི་པི་ ཌབ་ལུ་ཨའི་ཨེན་ཨེསི་སྒྲིག་"
-"སྟངས་འདི་ རང་བཞིན་གྱིས་ /etc/samba/dhcp.conf ནང་ལས་ལྷག་འོང་།"
+"སྟངས་འདི་ རང་བཞིན་གྱིས་ /var/lib/samba/dhcp.conf ནང་ལས་ལྷག་འོང་།"
 
 #. Type: boolean
 #. Description

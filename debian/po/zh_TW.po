@@ -45,11 +45,11 @@ msgid ""
 "network, the DHCP server may also provide information about WINS servers "
 "(\"NetBIOS name servers\") present on the network.  This requires a change "
 "to your smb.conf file so that DHCP-provided WINS settings will automatically "
-"be read from /etc/samba/dhcp.conf."
+"be read from /var/lib/samba/dhcp.conf."
 msgstr ""
 "如果您的電腦是從網絡上的 DHCP 伺服器取得 IP 地址資訊，該 DHCP 服務也可能會提"
 "供網路上的 WINS 伺服器 (“NetBIOS 名稱服務”) 資訊。這需要對您的 smb.conf 進行"
-"修改，以自動從 /etc/samba/dhcp.conf 讀取 DHCP 所提供的 WINS 設定。"
+"修改，以自動從 /var/lib/samba/dhcp.conf 讀取 DHCP 所提供的 WINS 設定。"
 
 #. Type: boolean
 #. Description

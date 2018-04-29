@@ -8,9 +8,10 @@ Uploaders: Steve Langasek <vorlon@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
            Andrew Bartlett <abartlet+debian@catalyst.net.nz>
 Homepage: http://www.samba.org
-Standards-Version: 4.1.3
+Standards-Version: 4.1.4
 Build-Depends: bison,
                debhelper (>= 11),
+               dh-exec,
                dh-python,
                docbook-xml,
                docbook-xsl,
@@ -199,6 +200,7 @@ Description: tools for viewing and manipulating the Windows registry
 
 Package: libparse-pidl-perl
 Architecture: any
+Multi-Arch: same
 Depends: libparse-yapp-perl, ${misc:Depends}, ${perl:Depends}
 Recommends: samba-dev
 Suggests: libwireshark-dev
@@ -215,6 +217,7 @@ Description: IDL compiler written in Perl
 
 Package: samba-dev
 Architecture: any
+Multi-Arch: same
 Depends: libc6-dev,
          libldb-dev,
          libparse-pidl-perl,
@@ -257,6 +260,7 @@ Description: Python bindings for Samba
 
 Package: samba-dsdb-modules
 Architecture: any
+Multi-Arch: same
 Section: libs
 Depends: libgpgme11,
          samba-libs (= ${binary:Version}),
@@ -275,6 +279,7 @@ Description: Samba Directory Services Database
 
 Package: samba-vfs-modules
 Architecture: any
+Multi-Arch: same
 Breaks: samba (<< 2:4.3.2+dfsg-1), samba-libs (<< 2:4.3.2+dfsg-1)
 Replaces: samba (<< 2:4.3.2+dfsg-1), samba-libs (<< 2:4.3.2+dfsg-1)
 Depends: samba-libs (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
@@ -286,7 +291,14 @@ Description: Samba Virtual FileSystem plugins
  and other Unix systems.  Samba can also function as a domain controller
  or member server in both NT4-style and Active Directory domains.
  .
- This package contains plugins for the Samba server Virtual FileSystem.
+ Virtual FileSystem modules are stacked shared libraries extending the
+ functionality of Samba. Some examples are:
+ * vfs_acl_xattr: Save NTFS-ACLs in Extended Attributes
+ * vfs_audit: record selected Samba VFS operations in the system log
+ * vfs_readonly: Make a Samba share read only for a specified time period
+ * vfs_recycle: Give the same effect as the Recycle Bin on Windows computers
+ * vfs_shadow_copy2: Expose snapshots to Windows clients as shadow copies
+ * vfs_worm: Disallow writes for older file
  .
  Note: The runtime dependencies of vfs_ceph, vfs_glusterfs and vfs_snapper are
  moved to Recommends.

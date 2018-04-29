@@ -16,6 +16,9 @@ if [ "$1" = purge ]; then
 	if [ -x "`which ucfr 2>/dev/null`" ]; then
 		ucfr --purge samba-common /etc/samba/smb.conf
 	fi
+	if [ -f /var/lib/samba/dhcp.conf ]; then
+		rm /var/lib/samba/dhcp.conf
+	fi
 fi
 
 #DEBHELPER#

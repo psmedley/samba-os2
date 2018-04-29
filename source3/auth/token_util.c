@@ -190,6 +190,9 @@ static NTSTATUS add_builtin_administrators(struct security_token *token,
 	if ( IS_DC ) {
 		sid_copy( &domadm, get_global_sam_sid() );
 	} else {
+		if (dom_sid == NULL) {
+			return NT_STATUS_INVALID_PARAMETER_MIX;
+		}
 		sid_copy(&domadm, dom_sid);
 	}
 	sid_append_rid( &domadm, DOMAIN_RID_ADMINS );
@@ -208,8 +211,76 @@ static NTSTATUS add_builtin_administrators(struct security_token *token,
 	return NT_STATUS_OK;
 }
 
-static NTSTATUS finalize_local_nt_token(struct security_token *result,
-					bool is_guest);
+static NTSTATUS add_builtin_guests(struct security_token *token,
+				   const struct dom_sid *dom_sid)
+{
+	struct dom_sid tmp_sid;
+	NTSTATUS status;
+
+	/*
+	 * First check the local GUEST account.
+	 */
+	sid_copy(&tmp_sid, get_global_sam_sid());
+	sid_append_rid(&tmp_sid, DOMAIN_RID_GUEST);
+
+	if (nt_token_check_sid(&tmp_sid, token)) {
+		status = add_sid_to_array_unique(token,
+					&global_sid_Builtin_Guests,
+					&token->sids, &token->num_sids);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+
+		return NT_STATUS_OK;
+	}
+
+	/*
+	 * First check the local GUESTS group.
+	 */
+	sid_copy(&tmp_sid, get_global_sam_sid());
+	sid_append_rid(&tmp_sid, DOMAIN_RID_GUESTS);
+
+	if (nt_token_check_sid(&tmp_sid, token)) {
+		status = add_sid_to_array_unique(token,
+					&global_sid_Builtin_Guests,
+					&token->sids, &token->num_sids);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+
+		return NT_STATUS_OK;
+	}
+
+	if (lp_server_role() != ROLE_DOMAIN_MEMBER) {
+		return NT_STATUS_OK;
+	}
+
+	if (dom_sid == NULL) {
+		return NT_STATUS_INVALID_PARAMETER_MIX;
+	}
+
+	/*
+	 * First check the domain GUESTS group.
+	 */
+	sid_copy(&tmp_sid, dom_sid);
+	sid_append_rid(&tmp_sid, DOMAIN_RID_GUESTS);
+
+	if (nt_token_check_sid(&tmp_sid, token)) {
+		status = add_sid_to_array_unique(token,
+					&global_sid_Builtin_Guests,
+					&token->sids, &token->num_sids);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+
+		return NT_STATUS_OK;
+	}
+
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS add_local_groups(struct security_token *result,
+				 bool is_guest);
 
 NTSTATUS get_user_sid_info3_and_extra(const struct netr_SamInfo3 *info3,
 				      const struct extra_auth_info *extra,
@@ -240,6 +311,7 @@ NTSTATUS create_local_nt_token_from_info3(TALLOC_CTX *mem_ctx,
 					  struct security_token **ntok)
 {
 	struct security_token *usrtok = NULL;
+	uint32_t session_info_flags = 0;
 	NTSTATUS status;
 	int i;
 
@@ -323,7 +395,19 @@ NTSTATUS create_local_nt_token_from_info3(TALLOC_CTX *mem_ctx,
 		}
 	}
 
-	status = finalize_local_nt_token(usrtok, is_guest);
+	status = add_local_groups(usrtok, is_guest);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(3, ("Failed to add local groups\n"));
+		TALLOC_FREE(usrtok);
+		return status;
+	}
+
+	session_info_flags |= AUTH_SESSION_INFO_DEFAULT_GROUPS;
+	if (!is_guest) {
+		session_info_flags |= AUTH_SESSION_INFO_AUTHENTICATED;
+	}
+
+	status = finalize_local_nt_token(usrtok, session_info_flags);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(3, ("Failed to finalize nt token\n"));
 		TALLOC_FREE(usrtok);
@@ -347,6 +431,7 @@ struct security_token *create_local_nt_token(TALLOC_CTX *mem_ctx,
 	struct security_token *result = NULL;
 	int i;
 	NTSTATUS status;
+	uint32_t session_info_flags = 0;
 
 	DEBUG(10, ("Create local NT token for %s\n",
 		   sid_string_dbg(user_sid)));
@@ -392,10 +477,44 @@ struct security_token *create_local_nt_token(TALLOC_CTX *mem_ctx,
 		}
 	}
 
-	status = finalize_local_nt_token(result, is_guest);
+	status = add_local_groups(result, is_guest);
 	if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(result);
 		return NULL;
+	}
+
+	session_info_flags |= AUTH_SESSION_INFO_DEFAULT_GROUPS;
+	if (!is_guest) {
+		session_info_flags |= AUTH_SESSION_INFO_AUTHENTICATED;
+	}
+
+	status = finalize_local_nt_token(result, session_info_flags);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(result);
+		return NULL;
+	}
+
+	if (is_guest) {
+		/*
+		 * It's ugly, but for now it's
+		 * needed to add Builtin_Guests
+		 * here, the "local" token only
+		 * consist of S-1-22-* SIDs
+		 * and finalize_local_nt_token()
+		 * doesn't have the chance to
+		 * to detect it need to
+		 * add Builtin_Guests via
+		 * add_builtin_guests().
+		 */
+		status = add_sid_to_array_unique(result,
+						 &global_sid_Builtin_Guests,
+						 &result->sids,
+						 &result->num_sids);
+		if (!NT_STATUS_IS_OK(status)) {
+			DEBUG(3, ("Failed to add SID to nt token\n"));
+			TALLOC_FREE(result);
+			return NULL;
+		}
 	}
 
 	return result;
@@ -495,41 +614,53 @@ static NTSTATUS add_local_groups(struct security_token *result,
 	return NT_STATUS_OK;
 }
 
-static NTSTATUS finalize_local_nt_token(struct security_token *result,
-					bool is_guest)
+NTSTATUS finalize_local_nt_token(struct security_token *result,
+				 uint32_t session_info_flags)
 {
-	struct dom_sid dom_sid;
+	struct dom_sid _dom_sid = { 0, };
+	struct dom_sid *domain_sid = NULL;
 	NTSTATUS status;
 	struct acct_info *info;
+	bool ok;
 
-	/* Add any local groups. */
+	result->privilege_mask = 0;
+	result->rights_mask = 0;
 
-	status = add_local_groups(result, is_guest);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
+	if (result->num_sids == 0) {
+		return NT_STATUS_INVALID_TOKEN;
 	}
 
-	/* Add in BUILTIN sids */
-
-	status = add_sid_to_array(result, &global_sid_World,
-				  &result->sids, &result->num_sids);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
-	status = add_sid_to_array(result, &global_sid_Network,
-				  &result->sids, &result->num_sids);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
-
-	if (is_guest) {
-		status = add_sid_to_array(result, &global_sid_Builtin_Guests,
-					  &result->sids,
-					  &result->num_sids);
+	if (session_info_flags & AUTH_SESSION_INFO_DEFAULT_GROUPS) {
+		status = add_sid_to_array(result, &global_sid_World,
+					  &result->sids, &result->num_sids);
 		if (!NT_STATUS_IS_OK(status)) {
 			return status;
 		}
-	} else {
+		status = add_sid_to_array(result, &global_sid_Network,
+					  &result->sids, &result->num_sids);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+	}
+
+	/*
+	 * Don't expand nested groups of system, anonymous etc
+	 *
+	 * Note that they still get SID_WORLD and SID_NETWORK
+	 * for now in order let existing tests pass.
+	 *
+	 * But SYSTEM doesn't get AUTHENTICATED_USERS
+	 * and ANONYMOUS doesn't get BUILTIN GUESTS anymore.
+	 */
+	if (security_token_is_anonymous(result)) {
+		return NT_STATUS_OK;
+	}
+	if (security_token_is_system(result)) {
+		result->privilege_mask = ~0;
+		return NT_STATUS_OK;
+	}
+
+	if (session_info_flags & AUTH_SESSION_INFO_AUTHENTICATED) {
 		status = add_sid_to_array(result,
 					  &global_sid_Authenticated_Users,
 					  &result->sids,
@@ -538,6 +669,18 @@ static NTSTATUS finalize_local_nt_token(struct security_token *result,
 			return status;
 		}
 	}
+
+	/* Add in BUILTIN sids */
+
+	become_root();
+	ok = secrets_fetch_domain_sid(lp_workgroup(), &_dom_sid);
+	if (ok) {
+		domain_sid = &_dom_sid;
+	} else {
+		DEBUG(3, ("Failed to fetch domain sid for %s\n",
+			  lp_workgroup()));
+	}
+	unbecome_root();
 
 	info = talloc_zero(talloc_tos(), struct acct_info);
 	if (info == NULL) {
@@ -553,18 +696,12 @@ static NTSTATUS finalize_local_nt_token(struct security_token *result,
 	if (!NT_STATUS_IS_OK(status)) {
 
 		become_root();
-		if (!secrets_fetch_domain_sid(lp_workgroup(), &dom_sid)) {
-			status = NT_STATUS_OK;
-			DEBUG(3, ("Failed to fetch domain sid for %s\n",
-				  lp_workgroup()));
-		} else {
-			status = create_builtin_administrators(&dom_sid);
-		}
+		status = create_builtin_administrators(domain_sid);
 		unbecome_root();
 
 		if (NT_STATUS_EQUAL(status, NT_STATUS_PROTOCOL_UNREACHABLE)) {
 			/* Add BUILTIN\Administrators directly to token. */
-			status = add_builtin_administrators(result, &dom_sid);
+			status = add_builtin_administrators(result, domain_sid);
 			if ( !NT_STATUS_IS_OK(status) ) {
 				DEBUG(3, ("Failed to check for local "
 					  "Administrators membership (%s)\n",
@@ -585,13 +722,7 @@ static NTSTATUS finalize_local_nt_token(struct security_token *result,
 	if (!NT_STATUS_IS_OK(status)) {
 
 		become_root();
-		if (!secrets_fetch_domain_sid(lp_workgroup(), &dom_sid)) {
-			status = NT_STATUS_OK;
-			DEBUG(3, ("Failed to fetch domain sid for %s\n",
-				  lp_workgroup()));
-		} else {
-			status = create_builtin_users(&dom_sid);
-		}
+		status = create_builtin_users(domain_sid);
 		unbecome_root();
 
 		if (!NT_STATUS_EQUAL(status, NT_STATUS_PROTOCOL_UNREACHABLE) &&
@@ -600,6 +731,28 @@ static NTSTATUS finalize_local_nt_token(struct security_token *result,
 			DEBUG(2, ("WARNING: Failed to create BUILTIN\\Users group! "
 				  "Can Winbind allocate gids?\n"));
 		}
+	}
+
+	/*
+	 * Add BUILTIN\Guests directly to token.
+	 * But only if the token already indicates
+	 * real guest access by:
+	 * - local GUEST account
+	 * - local GUESTS group
+	 * - domain GUESTS group
+	 *
+	 * Even if a user was authenticated, it
+	 * can be member of a guest related group.
+	 */
+	status = add_builtin_guests(result, domain_sid);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(3, ("Failed to check for local "
+			  "Guests membership (%s)\n",
+			  nt_errstr(status)));
+		/*
+		 * This is a hard error.
+		 */
+		return status;
 	}
 
 	TALLOC_FREE(info);
@@ -631,10 +784,16 @@ static NTSTATUS finalize_local_nt_token(struct security_token *result,
 		unbecome_root();
 	}
 
-	/* Add privileges based on current user sids */
 
-	get_privileges_for_sids(&result->privilege_mask, result->sids,
-				result->num_sids);
+	if (session_info_flags & AUTH_SESSION_INFO_SIMPLE_PRIVILEGES) {
+		if (security_token_has_builtin_administrators(result)) {
+			result->privilege_mask = ~0;
+		}
+	} else {
+		/* Add privileges based on current user sids */
+		get_privileges_for_sids(&result->privilege_mask, result->sids,
+					result->num_sids);
+	}
 
 	return NT_STATUS_OK;
 }
