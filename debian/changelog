@@ -1,3 +1,14 @@
+samba (2:4.8.1+dfsg-2) unstable; urgency=low
+
+  * Upload to unstable
+  * Really ignore nmbd start errors when there is no non-loopback interface
+    (Closes: #893762)
+  * Ignore nmbd start errors when there is no local IPv4 non-loopback interface
+    (Closes: #859526)
+  * Fix possible-unindented-list-in-extended-description in samba-vfs-modules
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 15 May 2018 21:23:32 +0200
+
 samba (2:4.8.1+dfsg-1) experimental; urgency=medium
 
   * New upstream release

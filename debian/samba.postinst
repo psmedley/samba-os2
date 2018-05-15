@@ -3,12 +3,18 @@
 set -e
 
 nmbd_error_handler() {
-    if [ -d /sys/class/net/lo ] && ls /sys/class/net/lo | grep -qv ^lo$; then
+    if [ -d /sys/class/net/lo ] && ls /sys/class/net | grep -qv ^lo$; then
         # https://bugs.debian.org/893762
-        echo 'WARNING: nmbd failed to start as there is no non-loopback interface.'
+        echo 'WARNING: nmbd failed to start as there is no non-loopback interfaces available.'
         echo 'Either add an interface or set "disable netbios = yes" in smb.conf and run "systemctl mask nmbd"'
         return 0
+    elif command -v ip > /dev/null && ip a show | grep '^[[:space:]]*inet ' | grep -vq ' lo$'; then
+        # https://bugs.debian.org/859526
+        echo 'WARNING: nmbd failed to start as there is no local IPv4 non-loopback interfaces available.'
+        echo 'Either add an IPv4 address or set "disable netbios = yes" in smb.conf and run "systemctl mask nmbd"'
+        return 0
     else
+        echo 'ERROR: nmbd failed to start.'
         return 1 # caught by set -e
     fi
 }

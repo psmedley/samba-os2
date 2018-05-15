@@ -293,12 +293,12 @@ Description: Samba Virtual FileSystem plugins
  .
  Virtual FileSystem modules are stacked shared libraries extending the
  functionality of Samba. Some examples are:
- * vfs_acl_xattr: Save NTFS-ACLs in Extended Attributes
- * vfs_audit: record selected Samba VFS operations in the system log
- * vfs_readonly: Make a Samba share read only for a specified time period
- * vfs_recycle: Give the same effect as the Recycle Bin on Windows computers
- * vfs_shadow_copy2: Expose snapshots to Windows clients as shadow copies
- * vfs_worm: Disallow writes for older file
+  * vfs_acl_xattr: Save NTFS-ACLs in Extended Attributes
+  * vfs_audit: record selected Samba VFS operations in the system log
+  * vfs_readonly: Make a Samba share read only for a specified time period
+  * vfs_recycle: Give the same effect as the Recycle Bin on Windows computers
+  * vfs_shadow_copy2: Expose snapshots to Windows clients as shadow copies
+  * vfs_worm: Disallow writes for older file
  .
  Note: The runtime dependencies of vfs_ceph, vfs_glusterfs and vfs_snapper are
  moved to Recommends.
