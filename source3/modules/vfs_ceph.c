@@ -37,6 +37,7 @@
 #include "cephfs/libcephfs.h"
 #include "smbprofile.h"
 #include "modules/posixacl_xattr.h"
+#include "lib/util/tevent_unix.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_VFS
@@ -481,6 +482,57 @@ static ssize_t cephwrap_pread(struct vfs_handle_struct *handle, files_struct *fs
 	WRAP_RETURN(result);
 }
 
+struct cephwrap_pread_state {
+	ssize_t bytes_read;
+	struct vfs_aio_state vfs_aio_state;
+};
+
+/*
+ * Fake up an async ceph read by calling the synchronous API.
+ */
+static struct tevent_req *cephwrap_pread_send(struct vfs_handle_struct *handle,
+					      TALLOC_CTX *mem_ctx,
+					      struct tevent_context *ev,
+					      struct files_struct *fsp,
+					      void *data,
+					      size_t n, off_t offset)
+{
+	struct tevent_req *req = NULL;
+	struct cephwrap_pread_state *state = NULL;
+	int ret = -1;
+
+	DBG_DEBUG("[CEPH] %s\n", __func__);
+	req = tevent_req_create(mem_ctx, &state, struct cephwrap_pread_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	ret = ceph_read(handle->data, fsp->fh->fd, data, n, offset);
+	if (ret < 0) {
+		/* ceph returns -errno on error. */
+		tevent_req_error(req, -ret);
+		return tevent_req_post(req, ev);
+	}
+
+	state->bytes_read = ret;
+	tevent_req_done(req);
+	/* Return and schedule the completion of the call. */
+	return tevent_req_post(req, ev);
+}
+
+static ssize_t cephwrap_pread_recv(struct tevent_req *req,
+				   struct vfs_aio_state *vfs_aio_state)
+{
+	struct cephwrap_pread_state *state =
+		tevent_req_data(req, struct cephwrap_pread_state);
+
+	DBG_DEBUG("[CEPH] %s\n", __func__);
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
+		return -1;
+	}
+	*vfs_aio_state = state->vfs_aio_state;
+	return state->bytes_read;
+}
 
 static ssize_t cephwrap_write(struct vfs_handle_struct *handle, files_struct *fsp, const void *data, size_t n)
 {
@@ -507,6 +559,58 @@ static ssize_t cephwrap_pwrite(struct vfs_handle_struct *handle, files_struct *f
 	result = ceph_write(handle->data, fsp->fh->fd, data, n, offset);
 	DBG_DEBUG("[CEPH] pwrite(...) = %llu\n", llu(result));
 	WRAP_RETURN(result);
+}
+
+struct cephwrap_pwrite_state {
+	ssize_t bytes_written;
+	struct vfs_aio_state vfs_aio_state;
+};
+
+/*
+ * Fake up an async ceph write by calling the synchronous API.
+ */
+static struct tevent_req *cephwrap_pwrite_send(struct vfs_handle_struct *handle,
+					       TALLOC_CTX *mem_ctx,
+					       struct tevent_context *ev,
+					       struct files_struct *fsp,
+					       const void *data,
+					       size_t n, off_t offset)
+{
+	struct tevent_req *req = NULL;
+	struct cephwrap_pwrite_state *state = NULL;
+	int ret = -1;
+
+	DBG_DEBUG("[CEPH] %s\n", __func__);
+	req = tevent_req_create(mem_ctx, &state, struct cephwrap_pwrite_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	ret = ceph_write(handle->data, fsp->fh->fd, data, n, offset);
+	if (ret < 0) {
+		/* ceph returns -errno on error. */
+		tevent_req_error(req, -ret);
+		return tevent_req_post(req, ev);
+	}
+
+	state->bytes_written = ret;
+	tevent_req_done(req);
+	/* Return and schedule the completion of the call. */
+	return tevent_req_post(req, ev);
+}
+
+static ssize_t cephwrap_pwrite_recv(struct tevent_req *req,
+				    struct vfs_aio_state *vfs_aio_state)
+{
+	struct cephwrap_pwrite_state *state =
+		tevent_req_data(req, struct cephwrap_pwrite_state);
+
+	DBG_DEBUG("[CEPH] %s\n", __func__);
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
+		return -1;
+	}
+	*vfs_aio_state = state->vfs_aio_state;
+	return state->bytes_written;
 }
 
 static off_t cephwrap_lseek(struct vfs_handle_struct *handle, files_struct *fsp, off_t offset, int whence)
@@ -567,6 +671,56 @@ static int cephwrap_fsync(struct vfs_handle_struct *handle, files_struct *fsp)
 	DBG_DEBUG("[CEPH] cephwrap_fsync\n");
 	result = ceph_fsync(handle->data, fsp->fh->fd, false);
 	WRAP_RETURN(result);
+}
+
+/*
+ * Fake up an async ceph fsync by calling the synchronous API.
+ */
+
+static struct tevent_req *cephwrap_fsync_send(struct vfs_handle_struct *handle,
+					TALLOC_CTX *mem_ctx,
+					struct tevent_context *ev,
+					files_struct *fsp)
+{
+	struct tevent_req *req = NULL;
+	struct vfs_aio_state *state = NULL;
+	int ret = -1;
+
+	DBG_DEBUG("[CEPH] cephwrap_fsync_send\n");
+
+	req = tevent_req_create(mem_ctx, &state, struct vfs_aio_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	/* Make sync call. */
+	ret = ceph_fsync(handle->data, fsp->fh->fd, false);
+
+	if (ret != 0) {
+		/* ceph_fsync returns -errno on error. */
+		tevent_req_error(req, -ret);
+		return tevent_req_post(req, ev);
+	}
+
+	/* Mark it as done. */
+	tevent_req_done(req);
+	/* Return and schedule the completion of the call. */
+	return tevent_req_post(req, ev);
+}
+
+static int cephwrap_fsync_recv(struct tevent_req *req,
+				struct vfs_aio_state *vfs_aio_state)
+{
+	struct vfs_aio_state *state =
+		tevent_req_data(req, struct vfs_aio_state);
+
+	DBG_DEBUG("[CEPH] cephwrap_fsync_recv\n");
+
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
+		return -1;
+	}
+	*vfs_aio_state = *state;
+	return 0;
 }
 
 #ifdef HAVE_CEPH_STATX
@@ -1201,30 +1355,31 @@ static struct smb_filename *cephwrap_realpath(struct vfs_handle_struct *handle,
 				TALLOC_CTX *ctx,
 				const struct smb_filename *smb_fname)
 {
-	char *result;
+	char *result = NULL;
 	const char *path = smb_fname->base_name;
 	size_t len = strlen(path);
 	struct smb_filename *result_fname = NULL;
+	int r = -1;
 
-	result = SMB_MALLOC_ARRAY(char, PATH_MAX+1);
 	if (len && (path[0] == '/')) {
-		int r = asprintf(&result, "%s", path);
-		if (r < 0) return NULL;
+		r = asprintf(&result, "%s", path);
 	} else if ((len >= 2) && (path[0] == '.') && (path[1] == '/')) {
 		if (len == 2) {
-			int r = asprintf(&result, "%s",
+			r = asprintf(&result, "%s",
 					handle->conn->connectpath);
-			if (r < 0) return NULL;
 		} else {
-			int r = asprintf(&result, "%s/%s",
+			r = asprintf(&result, "%s/%s",
 					handle->conn->connectpath, &path[2]);
-			if (r < 0) return NULL;
 		}
 	} else {
-		int r = asprintf(&result, "%s/%s",
+		r = asprintf(&result, "%s/%s",
 				handle->conn->connectpath, path);
-		if (r < 0) return NULL;
 	}
+
+	if (r < 0) {
+		return NULL;
+	}
+
 	DBG_DEBUG("[CEPH] realpath(%p, %s) = %s\n", handle, path, result);
 	result_fname = synthetic_smb_fname(ctx,
 				result,
@@ -1433,13 +1588,19 @@ static struct vfs_fn_pointers ceph_fns = {
 	.close_fn = cephwrap_close,
 	.read_fn = cephwrap_read,
 	.pread_fn = cephwrap_pread,
+	.pread_send_fn = cephwrap_pread_send,
+	.pread_recv_fn = cephwrap_pread_recv,
 	.write_fn = cephwrap_write,
 	.pwrite_fn = cephwrap_pwrite,
+	.pwrite_send_fn = cephwrap_pwrite_send,
+	.pwrite_recv_fn = cephwrap_pwrite_recv,
 	.lseek_fn = cephwrap_lseek,
 	.sendfile_fn = cephwrap_sendfile,
 	.recvfile_fn = cephwrap_recvfile,
 	.rename_fn = cephwrap_rename,
 	.fsync_fn = cephwrap_fsync,
+	.fsync_send_fn = cephwrap_fsync_send,
+	.fsync_recv_fn = cephwrap_fsync_recv,
 	.stat_fn = cephwrap_stat,
 	.fstat_fn = cephwrap_fstat,
 	.lstat_fn = cephwrap_lstat,

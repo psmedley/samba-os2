@@ -240,11 +240,18 @@ override_dh_makeshlibs:
 	debian/make_shlibs
 
 override_dh_shlibdeps:
-	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH dh_shlibdeps -a -Xceph.so -Xglusterfs.so -Xsnapper.so
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
+	  dh_shlibdeps -a -Xceph.so -Xglusterfs.so -Xsnapper.so
 ifeq ($(DEB_HOST_ARCH_OS), linux)
-	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH dh_shlibdeps -a -- -pvfsmods -dRecommends -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/glusterfs.so -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
+	  dh_shlibdeps -a -- -pvfsmods -dRecommends \
+	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so \
+	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/glusterfs.so \
+	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so
 else
-	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH dh_shlibdeps -a -- -pvfsmods -dRecommends -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
+	  dh_shlibdeps -a -- -pvfsmods -dRecommends \
+	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so
 endif
 
 override_dh_gencontrol:

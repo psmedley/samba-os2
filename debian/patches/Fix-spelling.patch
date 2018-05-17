@@ -1,0 +1,1409 @@
+From fe53f0b3d699606f9f72791df40ead997e60af1c Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:12:14 +0200
+Subject: [PATCH 01/25] Fix spelling s/allows to/allows one to/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ ctdb/client/client.h                                 | 4 ++--
+ ctdb/common/run_event.h                              | 2 +-
+ ctdb/common/run_proc.h                               | 2 +-
+ ctdb/common/sock_client.h                            | 2 +-
+ ctdb/common/sock_daemon.h                            | 2 +-
+ docs-xml/smbdotconf/winbind/winbindignoredomains.xml | 2 +-
+ lib/krb5_wrap/krb5_samba.c                           | 4 ++--
+ third_party/cmocka/cmocka.c                          | 2 +-
+ 8 files changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/ctdb/client/client.h b/ctdb/client/client.h
+index e792047e914..2eec3eaed63 100644
+--- a/ctdb/client/client.h
++++ b/ctdb/client/client.h
+@@ -31,7 +31,7 @@
+  *
+  * @brief Client api to talk to ctdb daemon
+  *
+- * This API allows to connect to ctdb daemon, perform various database
++ * This API allows one to connect to ctdb daemon, perform various database
+  * operations, send controls to ctdb daemon and send messages to other ctdb
+  * clients.
+  */
+@@ -193,7 +193,7 @@ int ctdb_client_wait_timeout(struct tevent_context *ev, bool *done,
+  * @brief Async computation start to wait till recovery is completed
+  *
+  * CTDB daemon does not perform many operations while in recovery (especially
+- * database operations).  This computation allows to wait till ctdb daemon has
++ * database operations).  This computation allows one to wait till ctdb daemon has
+  * finished recovery.
+  *
+  * @param[in] mem_ctx Talloc memory context
+diff --git a/ctdb/common/run_event.h b/ctdb/common/run_event.h
+index b7266875e9c..bd0f3e675a9 100644
+--- a/ctdb/common/run_event.h
++++ b/ctdb/common/run_event.h
+@@ -30,7 +30,7 @@
+  *
+  * @brief Run scripts in a directory with specific event arguments.
+  *
+- * This abstraction allows to execute multiple scripts in a directory
++ * This abstraction allows one to execute multiple scripts in a directory
+  * (specified by script_dir) with given event and arguments.
+  *
+  * At one time, only one event can be run.  Multiple run_event calls
+diff --git a/ctdb/common/run_proc.h b/ctdb/common/run_proc.h
+index 7de0c84f857..7b06dad90b1 100644
+--- a/ctdb/common/run_proc.h
++++ b/ctdb/common/run_proc.h
+@@ -28,7 +28,7 @@
+  *
+  * @brief Run a process and capture the output
+  *
+- * This abstraction allows to execute scripts with argumunts.
++ * This abstraction allows one to execute scripts with argumunts.
+  */
+ 
+ /**
+diff --git a/ctdb/common/sock_client.h b/ctdb/common/sock_client.h
+index c5822a0ac01..d661c85f3e1 100644
+--- a/ctdb/common/sock_client.h
++++ b/ctdb/common/sock_client.h
+@@ -28,7 +28,7 @@
+  *
+  * @brief A framework for a client based on unix-domain sockets.
+  *
+- * This abstraction allows to build clients that communicate using
++ * This abstraction allows one to build clients that communicate using
+  * unix-domain sockets.  It takes care of the common boilerplate.
+  */
+ 
+diff --git a/ctdb/common/sock_daemon.h b/ctdb/common/sock_daemon.h
+index a071833c2f3..a2c4d3de778 100644
+--- a/ctdb/common/sock_daemon.h
++++ b/ctdb/common/sock_daemon.h
+@@ -30,7 +30,7 @@
+  *
+  * @brief A framework for a server based on unix-domain sockets.
+  *
+- * This abstraction allows to build simple servers that communicate using
++ * This abstraction allows one to build simple servers that communicate using
+  * unix-domain sockets.  It takes care of the common boilerplate.
+  */
+ 
+diff --git a/docs-xml/smbdotconf/winbind/winbindignoredomains.xml b/docs-xml/smbdotconf/winbind/winbindignoredomains.xml
+index 62a8f8634e5..af992228a42 100644
+--- a/docs-xml/smbdotconf/winbind/winbindignoredomains.xml
++++ b/docs-xml/smbdotconf/winbind/winbindignoredomains.xml
+@@ -3,7 +3,7 @@
+                  type="cmdlist"
+                  xmlns:samba="http://www.samba.org/samba/DTD/samba-doc">
+ <description>
+-       <para>Allows to enter a list of trusted domains winbind should
++       <para>Allows one to enter a list of trusted domains winbind should
+        ignore (untrust). This can avoid the overhead of resources from
+        attempting to login to DCs that should not be communicated with.
+        </para>
+diff --git a/lib/krb5_wrap/krb5_samba.c b/lib/krb5_wrap/krb5_samba.c
+index 1493d812266..f49838cc61c 100644
+--- a/lib/krb5_wrap/krb5_samba.c
++++ b/lib/krb5_wrap/krb5_samba.c
+@@ -1196,7 +1196,7 @@ krb5_error_code smb_krb5_enctype_to_string(krb5_context context,
+ /**
+  * @brief Open a key table readonly or with readwrite access.
+  *
+- * Allows to use a different keytab than the default one using a relative
++ * Allows one to use a different keytab than the default one using a relative
+  * path to the keytab.
+  *
+  * @param[in]  context  The library context
+@@ -1334,7 +1334,7 @@ out:
+ /**
+  * @brief Open a key table readonly or with readwrite access.
+  *
+- * Allows to use a different keytab than the default one. The path needs to be
++ * Allows one to use a different keytab than the default one. The path needs to be
+  * an absolute path or an error will be returned.
+  *
+  * @param[in]  context  The library context
+diff --git a/third_party/cmocka/cmocka.c b/third_party/cmocka/cmocka.c
+index a5115c7cb5e..0861c2cbcd6 100644
+--- a/third_party/cmocka/cmocka.c
++++ b/third_party/cmocka/cmocka.c
+@@ -45,7 +45,7 @@
+ #include <time.h>
+ 
+ /*
+- * This allows to add a platform specific header file. Some embedded platforms
++ * This allows one to add a platform specific header file. Some embedded platforms
+  * sometimes miss certain types and definitions.
+  *
+  * Example:
+-- 
+2.17.0
+
+
+From b2a1dea09954b4ec12ceb76e25f789dfcf107667 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:13:58 +0200
+Subject: [PATCH 02/25] Fix spelling s/anwser/answer/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source4/torture/nbt/winsreplication.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/source4/torture/nbt/winsreplication.c b/source4/torture/nbt/winsreplication.c
+index e1d4b93618e..15db3ab9169 100644
+--- a/source4/torture/nbt/winsreplication.c
++++ b/source4/torture/nbt/winsreplication.c
+@@ -125,7 +125,7 @@ static bool test_assoc_ctx1(struct torture_context *tctx)
+ 
+ 	torture_comment(tctx, "association context (conn2): 0x%x\n", associate2.out.assoc_ctx);
+ 
+-	torture_comment(tctx, "Send a replication table query, with assoc 1 (conn2), the anwser should be on conn1\n");
++	torture_comment(tctx, "Send a replication table query, with assoc 1 (conn2), the answer should be on conn1\n");
+ 	ZERO_STRUCT(packet);
+ 	packet.opcode                      = WREPL_OPCODE_BITS;
+ 	packet.assoc_ctx                   = associate1.out.assoc_ctx;
+-- 
+2.17.0
+
+
+From 8fc64d4569bf349757e1b09df92ec1d3fce2213a Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:14:34 +0200
+Subject: [PATCH 03/25] Fix spelling s/authenticaiton/authentication/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ docs-xml/manpages/ntlm_auth.1.xml | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/docs-xml/manpages/ntlm_auth.1.xml b/docs-xml/manpages/ntlm_auth.1.xml
+index 4f900d5b422..4f77eae7201 100644
+--- a/docs-xml/manpages/ntlm_auth.1.xml
++++ b/docs-xml/manpages/ntlm_auth.1.xml
+@@ -253,7 +253,7 @@
+ 
+ 		  <varlistentry>
+ 		    <term>Request-User-Session-Key</term>
+-		    <listitem><para>Upon successful authenticaiton, return
++		    <listitem><para>Upon successful authentication, return
+ 		    the user session key associated with the login.</para>
+ 		    <varlistentry>
+ 		      <term>Examples:</term>
+@@ -264,7 +264,7 @@
+ 
+ 		  <varlistentry>
+ 		    <term>Request-LanMan-Session-Key</term>
+-		    <listitem><para>Upon successful authenticaiton, return
++		    <listitem><para>Upon successful authentication, return
+ 		    the LANMAN session key associated with the login.
+ 		    </para>
+ 		    <varlistentry>
+-- 
+2.17.0
+
+
+From f74090c817085317ec299f94a8dba61d8d47bf7d Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:18:16 +0200
+Subject: [PATCH 04/25] Fix spelling s/conection/connection/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ libcli/named_pipe_auth/npa_tstream.c  | 4 ++--
+ source4/torture/nbt/winsreplication.c | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/libcli/named_pipe_auth/npa_tstream.c b/libcli/named_pipe_auth/npa_tstream.c
+index d333ce6ee22..8ec52ed9b85 100644
+--- a/libcli/named_pipe_auth/npa_tstream.c
++++ b/libcli/named_pipe_auth/npa_tstream.c
+@@ -1402,7 +1402,7 @@ int _tstream_npa_accept_existing_recv(struct tevent_req *req,
+ 
+ 	ret = tsocket_simple_int_recv(req, perrno);
+ 	if (ret != 0) {
+-		DEBUG(2, ("Failed to accept named pipe conection: %s\n",
++		DEBUG(2, ("Failed to accept named pipe connection: %s\n",
+ 			  strerror(*perrno)));
+ 		tevent_req_received(req);
+ 		return -1;
+@@ -1416,7 +1416,7 @@ int _tstream_npa_accept_existing_recv(struct tevent_req *req,
+ #else
+ 		*perrno = EINVAL;
+ #endif
+-		DEBUG(2, ("Failed to accept named pipe conection: %s => %s\n",
++		DEBUG(2, ("Failed to accept named pipe connection: %s => %s\n",
+ 			  nt_errstr(state->accept_status),
+ 			  strerror(*perrno)));
+ 		tevent_req_received(req);
+diff --git a/source4/torture/nbt/winsreplication.c b/source4/torture/nbt/winsreplication.c
+index 15db3ab9169..5d89f711219 100644
+--- a/source4/torture/nbt/winsreplication.c
++++ b/source4/torture/nbt/winsreplication.c
+@@ -101,7 +101,7 @@ static bool test_assoc_ctx1(struct torture_context *tctx)
+ 	if (!torture_nbt_get_name(tctx, &name, &address))
+ 		return false;
+ 
+-	torture_comment(tctx, "Test if assoc_ctx is only valid on the conection it was created on\n");
++	torture_comment(tctx, "Test if assoc_ctx is only valid on the connection it was created on\n");
+ 
+ 	wrepl_socket1 = wrepl_socket_init(tctx, tctx->ev);
+ 	wrepl_socket2 = wrepl_socket_init(tctx, tctx->ev);
+-- 
+2.17.0
+
+
+From 685f45280af8695c21800ad41230d05fd56c33ad Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:18:47 +0200
+Subject: [PATCH 05/25] Fix spelling s/coult/could/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source3/passdb/pdb_samba_dsdb.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/source3/passdb/pdb_samba_dsdb.c b/source3/passdb/pdb_samba_dsdb.c
+index 957524ddabc..f405c51aaeb 100644
+--- a/source3/passdb/pdb_samba_dsdb.c
++++ b/source3/passdb/pdb_samba_dsdb.c
+@@ -2236,7 +2236,7 @@ static bool pdb_samba_dsdb_get_trusteddom_pw(struct pdb_methods *m,
+ 				(ndr_pull_flags_fn_t)ndr_pull_trustAuthInOutBlob);
+ 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+ 		DEBUG(0, ("Failed to get trusted domain password for %s, "
+-			  "attribute trustAuthOutgoing coult not be parsed %s.\n",
++			  "attribute trustAuthOutgoing could not be parsed %s.\n",
+ 			  domain,
+ 			  ndr_map_error2string(ndr_err)));
+ 		TALLOC_FREE(tmp_ctx);
+@@ -2391,7 +2391,7 @@ static NTSTATUS pdb_samba_dsdb_get_trusteddom_creds(struct pdb_methods *m,
+ 				(ndr_pull_flags_fn_t)ndr_pull_trustAuthInOutBlob);
+ 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+ 		DEBUG(0, ("Failed to get trusted domain password for %s, "
+-			  "attribute trustAuthOutgoing coult not be parsed %s.\n",
++			  "attribute trustAuthOutgoing could not be parsed %s.\n",
+ 			  domain,
+ 			  ndr_map_error2string(ndr_err)));
+ 		TALLOC_FREE(tmp_ctx);
+@@ -2678,7 +2678,7 @@ static bool pdb_samba_dsdb_set_trusteddom_pw(struct pdb_methods *m,
+ 				(ndr_pull_flags_fn_t)ndr_pull_trustAuthInOutBlob);
+ 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+ 			DEBUG(0, ("Failed to get trusted domain password for %s, "
+-				  "attribute trustAuthOutgoing coult not be parsed %s.\n",
++				  "attribute trustAuthOutgoing could not be parsed %s.\n",
+ 				  domain,
+ 				  ndr_map_error2string(ndr_err)));
+ 			TALLOC_FREE(tmp_ctx);
+-- 
+2.17.0
+
+
+From 3a7b12950ffa066d942a50142bb2cd69da28ecf6 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:18:54 +0200
+Subject: [PATCH 06/25] Fix spelling s/desriptor/descriptor/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source3/smbd/open.c                         | 2 +-
+ source4/dsdb/samdb/ldb_modules/descriptor.c | 2 +-
+ third_party/dnspython/examples/zonediff.py  | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/source3/smbd/open.c b/source3/smbd/open.c
+index 3c24d76a089..cb0330d6073 100644
+--- a/source3/smbd/open.c
++++ b/source3/smbd/open.c
+@@ -4734,7 +4734,7 @@ static NTSTATUS inherit_new_acl(files_struct *fsp)
+ 
+ 	/* If inheritable_components == false,
+ 	   se_create_child_secdesc()
+-	   creates a security desriptor with a NULL dacl
++	   creates a security descriptor with a NULL dacl
+ 	   entry, but with SEC_DESC_DACL_PRESENT. We need
+ 	   to remove that flag. */
+ 
+diff --git a/source4/dsdb/samdb/ldb_modules/descriptor.c b/source4/dsdb/samdb/ldb_modules/descriptor.c
+index e75d79d30e2..4c45e9b8f82 100644
+--- a/source4/dsdb/samdb/ldb_modules/descriptor.c
++++ b/source4/dsdb/samdb/ldb_modules/descriptor.c
+@@ -416,7 +416,7 @@ static DATA_BLOB *get_new_descriptor(struct ldb_module *module,
+ 	}
+ 
+ 	sddl_sd = sddl_encode(mem_ctx, final_sd, domain_sid);
+-	DEBUG(10, ("Object %s created with desriptor %s\n\n", ldb_dn_get_linearized(dn), sddl_sd));
++	DEBUG(10, ("Object %s created with descriptor %s\n\n", ldb_dn_get_linearized(dn), sddl_sd));
+ 
+ 	linear_sd = talloc(mem_ctx, DATA_BLOB);
+ 	if (!linear_sd) {
+diff --git a/third_party/dnspython/examples/zonediff.py b/third_party/dnspython/examples/zonediff.py
+index ad81fb1d2d4..0c101781a3e 100755
+--- a/third_party/dnspython/examples/zonediff.py
++++ b/third_party/dnspython/examples/zonediff.py
+@@ -199,7 +199,7 @@ The differences shown will be logical differences, not textual differences.
+         p.print_help()
+         sys.exit(64)
+ 
+-    # Open file desriptors
++    # Open file descriptors
+     if not opts.use_vc:
+         oldn, newn = args
+     else:
+-- 
+2.17.0
+
+
+From 2bde81db39181ae190141ec26abdca29f4863fc6 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:19:08 +0200
+Subject: [PATCH 07/25] Fix spelling s/doens't/doesn't/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source4/auth/kerberos/kerberos-notes.txt                | 2 +-
+ source4/auth/kerberos/kerberos-porting-to-mit-notes.txt | 2 +-
+ source4/torture/basic/delaywrite.c                      | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/source4/auth/kerberos/kerberos-notes.txt b/source4/auth/kerberos/kerberos-notes.txt
+index 1981328bcf6..69541290ef7 100644
+--- a/source4/auth/kerberos/kerberos-notes.txt
++++ b/source4/auth/kerberos/kerberos-notes.txt
+@@ -460,7 +460,7 @@ in libkrb5 would be difficult, but valuable.
+ 
+ In the short-term, we deal with blocking by taking over the network
+ send() and recv() functions, therefore making them 'semi-async'.  This
+-doens't apply to DNS yet.These thread-safety context-variables will
++doesn't apply to DNS yet.These thread-safety context-variables will
+ probably present porting problems, during the MIT port.  This will
+ probably be most of the work in the port to MIT.
+ 
+diff --git a/source4/auth/kerberos/kerberos-porting-to-mit-notes.txt b/source4/auth/kerberos/kerberos-porting-to-mit-notes.txt
+index 329558e9f7a..9b478bbd1c1 100644
+--- a/source4/auth/kerberos/kerberos-porting-to-mit-notes.txt
++++ b/source4/auth/kerberos/kerberos-porting-to-mit-notes.txt
+@@ -383,7 +383,7 @@ when using Kerberos and GSSAPI libraries
+       in libkrb5 would be difficult, but valuable.
+     * In the short-term, we deal with blocking by taking over the network
+       send() and recv() functions, therefore making them 'semi-async'.  This
+-      doens't apply to DNS yet.These thread-safety context-variables will
++      doesn't apply to DNS yet.These thread-safety context-variables will
+       probably present porting problems, during the MIT port.  This will
+       probably be most of the work in the port to MIT.
+       This may require more thorough thread-safe-ing work on the MIT libraries.
+diff --git a/source4/torture/basic/delaywrite.c b/source4/torture/basic/delaywrite.c
+index 160674f19a1..34787168872 100644
+--- a/source4/torture/basic/delaywrite.c
++++ b/source4/torture/basic/delaywrite.c
+@@ -2924,7 +2924,7 @@ static bool test_delayed_write_update7(struct torture_context *tctx, struct smbc
+ 
+ 	if (finfo2.basic_info.out.write_time != finfo3.basic_info.out.write_time) {
+ 		torture_result(tctx, TORTURE_FAIL, 
+-			"qpathinfo time doens't match fileinfo time");
++			"qpathinfo time doesn't match fileinfo time");
+ 		ret = false;
+ 	}
+ 
+-- 
+2.17.0
+
+
+From 4e4764240bff063e1e9680117de66fd0519d916e Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:20:21 +0200
+Subject: [PATCH 08/25] Fix spelling s/Everytime/Every time/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ ctdb/doc/ctdb-tunables.7.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ctdb/doc/ctdb-tunables.7.xml b/ctdb/doc/ctdb-tunables.7.xml
+index bc4e1b27edf..da01d212fc4 100644
+--- a/ctdb/doc/ctdb-tunables.7.xml
++++ b/ctdb/doc/ctdb-tunables.7.xml
+@@ -626,7 +626,7 @@ MonitorInterval=20
+       <para>
+ 	Some databases have seqnum tracking enabled, so that samba will
+ 	be able to detect asynchronously when there has been updates
+-	to the database.  Everytime a database is updated its sequence
++	to the database.  Every time a database is updated its sequence
+ 	number is increased.
+       </para>
+       <para>
+-- 
+2.17.0
+
+
+From f5b908d8186b18bb3ec86b4b0db488bf7c6af643 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:20:57 +0200
+Subject: [PATCH 09/25] Fix spelling s/formated/formatted/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ nsswitch/pam_winbind.c       | 2 +-
+ source3/lib/cbuf.h           | 2 +-
+ source3/utils/log2pcaphex.c  | 2 +-
+ source3/utils/net_printing.c | 2 +-
+ 4 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/nsswitch/pam_winbind.c b/nsswitch/pam_winbind.c
+index 63fede87c78..7ac5bb08181 100644
+--- a/nsswitch/pam_winbind.c
++++ b/nsswitch/pam_winbind.c
+@@ -1220,7 +1220,7 @@ static bool winbind_name_list_to_sid_string_list(struct pwb_context *ctx,
+ 		/*
+ 		 * The lookup of the last name failed..
+ 		 * It results in require_member_of_sid ends with ','
+-		 * It is malformated parameter here, overwrite the last ','.
++		 * It is malformatted parameter here, overwrite the last ','.
+ 		 */
+ 		len = strlen(sid_list_buffer);
+ 		if ((len != 0) && (sid_list_buffer[len - 1] == ',')) {
+diff --git a/source3/lib/cbuf.h b/source3/lib/cbuf.h
+index 2fec822fec9..8a4098a42e5 100644
+--- a/source3/lib/cbuf.h
++++ b/source3/lib/cbuf.h
+@@ -174,7 +174,7 @@ int cbuf_puts(cbuf* b, const char* str, size_t len);
+ int cbuf_putdw(cbuf* b, uint32_t u);
+ 
+ /**
+- * Print formated to a character buffer.
++ * Print formatted to a character buffer.
+  *
+  * @param b a charcter buffer
+  * @param fmt a printf format string
+diff --git a/source3/utils/log2pcaphex.c b/source3/utils/log2pcaphex.c
+index b5c234f1b3c..99733ed3c87 100644
+--- a/source3/utils/log2pcaphex.c
++++ b/source3/utils/log2pcaphex.c
+@@ -281,7 +281,7 @@ static long read_log_data(FILE *in, unsigned char *buffer, long data_length)
+ 		}
+ 		if(!fscanf(in, "%02X", &tmp)) {
+ 			if(!quiet)
+-				fprintf(stderr, "%ld: Log message formated incorrectly. "
++				fprintf(stderr, "%ld: Log message formatted incorrectly. "
+ 				    "Only first %ld bytes are logged, packet trace will "
+ 				    "be incomplete\n", line_num, i-1);
+ 			while ((tmp = getc(in)) != '\n');
+diff --git a/source3/utils/net_printing.c b/source3/utils/net_printing.c
+index 8287e0ea04a..a7f31ae1ac3 100644
+--- a/source3/utils/net_printing.c
++++ b/source3/utils/net_printing.c
+@@ -231,7 +231,7 @@ static int net_printing_dump(struct net_context *c, int argc,
+ 			   "net printing dump [options] <file.tdb>\n"
+ 			   "    %s\n",
+ 			 _("Usage:"),
+-			 _("Dump formated printer information of the tdb."));
++			 _("Dump formatted printer information of the tdb."));
+ 		d_printf(_("Valid options:\n"));
+ 		d_printf(_("    encoding=<CP>   Set the Code Page of the tdb file.\n"
+ 			   "                    See iconv -l for the list of CP values\n"
+-- 
+2.17.0
+
+
+From fd46fd0941d8ad7a41c7e6823fcce08a331c6e6a Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:21:09 +0200
+Subject: [PATCH 10/25] Fix spelling s/fowarding/forwarding/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source4/kdc/hdb-samba4.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/source4/kdc/hdb-samba4.c b/source4/kdc/hdb-samba4.c
+index a2fbf5a0099..50eed445cd5 100644
+--- a/source4/kdc/hdb-samba4.c
++++ b/source4/kdc/hdb-samba4.c
+@@ -343,7 +343,7 @@ static void send_bad_password_netlogon(TALLOC_CTX *mem_ctx,
+ 						  "winbind_server",
+ 						  &ndr_table_winbind);
+ 	if (irpc_handle == NULL) {
+-		DEBUG(0, ("Winbind fowarding for [%s]\\[%s] failed, "
++		DEBUG(0, ("Winbind forwarding for [%s]\\[%s] failed, "
+ 			  "no winbind_server running!\n",
+ 			  user_info->mapped.domain_name, user_info->mapped.account_name));
+ 		return;
+-- 
+2.17.0
+
+
+From 2bacc1ca42e23be60fd48c4a0ecabf6957dc106e Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:21:30 +0200
+Subject: [PATCH 11/25] Fix spelling s/malicous/malicious/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ docs-xml/manpages/ntlm_auth.1.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/docs-xml/manpages/ntlm_auth.1.xml b/docs-xml/manpages/ntlm_auth.1.xml
+index 4f77eae7201..554522438ab 100644
+--- a/docs-xml/manpages/ntlm_auth.1.xml
++++ b/docs-xml/manpages/ntlm_auth.1.xml
+@@ -279,7 +279,7 @@
+ 		</varlistentry>
+ 		</variablelist>
+ 		  <warning><para>Implementers should take care to base64 encode
+-		  any data (such as usernames/passwords) that may contain malicous user data, such as
++		  any data (such as usernames/passwords) that may contain malicious user data, such as
+ 		  a newline. They may also need to decode strings from
+ 		  the helper, which likewise may have been base64 encoded.</para></warning>
+ 		</listitem>
+-- 
+2.17.0
+
+
+From fab4fe9cb4409ba8d5d41bf93ddc3ffe167f09c9 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:21:41 +0200
+Subject: [PATCH 12/25] Fix spelling s/missmatch/mismatch/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source3/smbd/open.c         | 2 +-
+ source3/torture/torture.c   | 2 +-
+ source4/torture/rpc/fsrvp.c | 4 ++--
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/source3/smbd/open.c b/source3/smbd/open.c
+index cb0330d6073..d385b54147f 100644
+--- a/source3/smbd/open.c
++++ b/source3/smbd/open.c
+@@ -3176,7 +3176,7 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
+ 					   new_dos_attributes,
+ 					   smb_fname->st.st_ex_mode,
+ 					   unx_mode, &new_unx_mode)) {
+-			DEBUG(5,("open_file_ntcreate: attributes missmatch "
++			DEBUG(5,("open_file_ntcreate: attributes mismatch "
+ 				 "for file %s (%x %x) (0%o, 0%o)\n",
+ 				 smb_fname_str_dbg(smb_fname),
+ 				 existing_dos_attributes,
+diff --git a/source3/torture/torture.c b/source3/torture/torture.c
+index 56cc6ff3628..47da8178e8b 100644
+--- a/source3/torture/torture.c
++++ b/source3/torture/torture.c
+@@ -11311,7 +11311,7 @@ static bool run_local_canonicalize_path(int dummy)
+ 		}
+ 		if (strcmp(d, dst[i]) != 0) {
+ 			d_fprintf(stderr,
+-				"canonicalize missmatch %s -> %s != %s",
++				"canonicalize mismatch %s -> %s != %s",
+ 				src[i], d, dst[i]);
+ 			return false;
+ 		}
+diff --git a/source4/torture/rpc/fsrvp.c b/source4/torture/rpc/fsrvp.c
+index 14559c9b453..1491e577fe9 100644
+--- a/source4/torture/rpc/fsrvp.c
++++ b/source4/torture/rpc/fsrvp.c
+@@ -345,10 +345,10 @@ static bool test_fsrvp_sc_create(struct torture_context *tctx,
+ 
+ 	torture_assert(tctx, !GUID_compare(&r_sharemap_get.in.ShadowCopySetId,
+ 					   &map->ShadowCopySetId),
+-		       "sc_set GUID missmatch in GetShareMapping");
++		       "sc_set GUID mismatch in GetShareMapping");
+ 	torture_assert(tctx, !GUID_compare(&r_sharemap_get.in.ShadowCopyId,
+ 					   &map->ShadowCopyId),
+-		       "sc GUID missmatch in GetShareMapping");
++		       "sc GUID mismatch in GetShareMapping");
+ 
+ done:
+ 	talloc_free(tmp_ctx);
+-- 
+2.17.0
+
+
+From 1af896869007deb65d8228d492706185bd99ef65 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:21:53 +0200
+Subject: [PATCH 13/25] Fix spelling s/openened/opened/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source3/rpc_server/rpc_server.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/source3/rpc_server/rpc_server.c b/source3/rpc_server/rpc_server.c
+index a2bcf8545c0..2864495c24e 100644
+--- a/source3/rpc_server/rpc_server.c
++++ b/source3/rpc_server/rpc_server.c
+@@ -674,7 +674,7 @@ uint16_t setup_dcerpc_ncacn_tcpip_socket(struct tevent_context *ev_ctx,
+ 		goto out;
+ 	}
+ 
+-	DEBUG(10, ("setup_tcpip_socket: openened socket fd %d for port %u\n",
++	DEBUG(10, ("setup_tcpip_socket: opened socket fd %d for port %u\n",
+ 		   state->fd, state->ep.port));
+ 
+ 	fde = tevent_add_fd(state->ev_ctx,
+-- 
+2.17.0
+
+
+From 7ad87bb43c72520bcf1dcf603b55f6fd0d95697c Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:22:00 +0200
+Subject: [PATCH 14/25] Fix spelling s/opions/options/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ docs-xml/manpages/vfs_fruit.8.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/docs-xml/manpages/vfs_fruit.8.xml b/docs-xml/manpages/vfs_fruit.8.xml
+index 7f6a0e7c022..25833038d96 100644
+--- a/docs-xml/manpages/vfs_fruit.8.xml
++++ b/docs-xml/manpages/vfs_fruit.8.xml
+@@ -106,7 +106,7 @@
+ 	      </itemizedlist>
+ 
+ 	      <para>There's a set of per share options that come into play when
+-	      <emphasis>fruit:aapl</emphasis> is enabled. These opions, listed
++	      <emphasis>fruit:aapl</emphasis> is enabled. These options, listed
+ 	      below, can be used to disable the computation of specific Mac
+ 	      metadata in the directory enumeration context, all are enabled by
+ 	      default:</para>
+-- 
+2.17.0
+
+
+From e8a3a43649ea7235aa54be29018ec92f8de628ea Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:22:20 +0200
+Subject: [PATCH 15/25] Fix spelling s/ouput/output/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ librpc/ndr/ndr_compression.c | 2 +-
+ third_party/cmocka/cmocka.h  | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/librpc/ndr/ndr_compression.c b/librpc/ndr/ndr_compression.c
+index bdce4317a92..f06a076a71f 100644
+--- a/librpc/ndr/ndr_compression.c
++++ b/librpc/ndr/ndr_compression.c
+@@ -143,7 +143,7 @@ static enum ndr_err_code ndr_pull_compression_mszip_cab_chunk(struct ndr_pull *n
+ 		 * happen
+ 		 */
+ 		return ndr_pull_error(ndrpull, NDR_ERR_COMPRESSION,
+-				      "zlib inflate error not enough space for ouput (PULL)");
++				      "zlib inflate error not enough space for output (PULL)");
+ 	}
+ 	if (z_ret != Z_STREAM_END) {
+ 		return ndr_pull_error(ndrpull, NDR_ERR_COMPRESSION,
+diff --git a/third_party/cmocka/cmocka.h b/third_party/cmocka/cmocka.h
+index 72d6ae21c90..4fd82a98b30 100644
+--- a/third_party/cmocka/cmocka.h
++++ b/third_party/cmocka/cmocka.h
+@@ -2269,7 +2269,7 @@ enum cm_message_output {
+ /**
+  * @brief Function to set the output format for a test.
+  *
+- * The ouput format for the test can either be set globally using this
++ * The output format for the test can either be set globally using this
+  * function or overriden with environment variable CMOCKA_MESSAGE_OUTPUT.
+  *
+  * The environment variable can be set to either STDOUT, SUBUNIT, TAP or XML.
+-- 
+2.17.0
+
+
+From 6fa770fd546c87e588d75cc143be2b20f59f5602 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:22:38 +0200
+Subject: [PATCH 16/25] Fix spelling s/processs/process/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source3/torture/torture.c       | 6 +++---
+ source4/torture/basic/locking.c | 6 +++---
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/source3/torture/torture.c b/source3/torture/torture.c
+index 47da8178e8b..2bc6ff712ce 100644
+--- a/source3/torture/torture.c
++++ b/source3/torture/torture.c
+@@ -2159,7 +2159,7 @@ static bool run_locktest5(int dummy)
+ 	ret = NT_STATUS_IS_OK(status);
+ 	EXPECTED(ret, False);
+ 
+-	printf("a different processs %s get a read lock on the first process lock stack\n", ret?"can":"cannot");
++	printf("a different process %s get a read lock on the first process lock stack\n", ret?"can":"cannot");
+ 
+ 	/* Unlock the process 2 lock. */
+ 	cli_unlock(cli2, fnum2, 0, 4);
+@@ -2168,7 +2168,7 @@ static bool run_locktest5(int dummy)
+ 	ret = NT_STATUS_IS_OK(status);
+ 	EXPECTED(ret, False);
+ 
+-	printf("the same processs on a different fnum %s get a read lock\n", ret?"can":"cannot");
++	printf("the same process on a different fnum %s get a read lock\n", ret?"can":"cannot");
+ 
+ 	/* Unlock the process 1 fnum3 lock. */
+ 	cli_unlock(cli1, fnum3, 0, 4);
+@@ -2211,7 +2211,7 @@ static bool run_locktest5(int dummy)
+ 	ret = NT_STATUS_IS_OK(status);
+ 	EXPECTED(ret, True);
+ 
+-	printf("a different processs %s get a write lock on the unlocked stack\n", ret?"can":"cannot");
++	printf("a different process %s get a write lock on the unlocked stack\n", ret?"can":"cannot");
+ 
+ 
+  fail:
+diff --git a/source4/torture/basic/locking.c b/source4/torture/basic/locking.c
+index 98def5c09c1..e0e2971c9ad 100644
+--- a/source4/torture/basic/locking.c
++++ b/source4/torture/basic/locking.c
+@@ -567,7 +567,7 @@ static bool torture_locktest5(struct torture_context *tctx, struct smbcli_state
+ 	ret = NT_STATUS_IS_OK(smbcli_lock(cli2->tree, fnum2, 0, 4, 0, READ_LOCK));
+ 	EXPECTED(ret, false);
+ 
+-	torture_comment(tctx, "a different processs %s get a read lock on the first process lock stack\n", ret?"can":"cannot");
++	torture_comment(tctx, "a different process %s get a read lock on the first process lock stack\n", ret?"can":"cannot");
+ 
+ 	/* Unlock the process 2 lock. */
+ 	smbcli_unlock(cli2->tree, fnum2, 0, 4);
+@@ -575,7 +575,7 @@ static bool torture_locktest5(struct torture_context *tctx, struct smbcli_state
+ 	ret = NT_STATUS_IS_OK(smbcli_lock(cli1->tree, fnum3, 0, 4, 0, READ_LOCK));
+ 	EXPECTED(ret, false);
+ 
+-	torture_comment(tctx, "the same processs on a different fnum %s get a read lock\n", ret?"can":"cannot");
++	torture_comment(tctx, "the same process on a different fnum %s get a read lock\n", ret?"can":"cannot");
+ 
+ 	/* Unlock the process 1 fnum3 lock. */
+ 	smbcli_unlock(cli1->tree, fnum3, 0, 4);
+@@ -617,7 +617,7 @@ ret = NT_STATUS_IS_OK(smbcli_unlock(cli1->tree, fnum1, 0, 4)) &&
+ 	ret = NT_STATUS_IS_OK(smbcli_lock(cli2->tree, fnum2, 0, 4, 0, WRITE_LOCK));
+ 	EXPECTED(ret, true);
+ 
+-	torture_comment(tctx, "a different processs %s get a write lock on the unlocked stack\n", ret?"can":"cannot");
++	torture_comment(tctx, "a different process %s get a write lock on the unlocked stack\n", ret?"can":"cannot");
+ 
+ 
+ 	torture_assert_ntstatus_ok(tctx, smbcli_close(cli1->tree, fnum1),
+-- 
+2.17.0
+
+
+From 8ed2873400ffa10ed1abd745faa54a0fa8029a40 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:22:46 +0200
+Subject: [PATCH 17/25] Fix spelling s/propogate/propagate/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ ctdb/server/ctdb_ltdb_server.c                  |  4 ++--
+ source4/dsdb/samdb/ldb_modules/repl_meta_data.c |  2 +-
+ source4/dsdb/samdb/ldb_modules/util.c           |  2 +-
+ source4/ntvfs/common/opendb_tdb.c               |  2 +-
+ source4/torture/raw/notify.c                    |  4 ++--
+ source4/torture/smb2/notify.c                   |  4 ++--
+ wintest/test-s4-howto.py                        | 12 ++++++------
+ 7 files changed, 15 insertions(+), 15 deletions(-)
+
+diff --git a/ctdb/server/ctdb_ltdb_server.c b/ctdb/server/ctdb_ltdb_server.c
+index c199aac2d1d..d94d942a9fa 100644
+--- a/ctdb/server/ctdb_ltdb_server.c
++++ b/ctdb/server/ctdb_ltdb_server.c
+@@ -1521,7 +1521,7 @@ int32_t ctdb_ltdb_update_seqnum(struct ctdb_context *ctdb, uint32_t db_id, uint3
+ }
+ 
+ /*
+-  timer to check for seqnum changes in a ltdb and propogate them
++  timer to check for seqnum changes in a ltdb and propagate them
+  */
+ static void ctdb_ltdb_seqnum_check(struct tevent_context *ev,
+ 				   struct tevent_timer *te,
+@@ -1531,7 +1531,7 @@ static void ctdb_ltdb_seqnum_check(struct tevent_context *ev,
+ 	struct ctdb_context *ctdb = ctdb_db->ctdb;
+ 	uint32_t new_seqnum = tdb_get_seqnum(ctdb_db->ltdb->tdb);
+ 	if (new_seqnum != ctdb_db->seqnum) {
+-		/* something has changed - propogate it */
++		/* something has changed - propagate it */
+ 		TDB_DATA data;
+ 		data.dptr = (uint8_t *)&ctdb_db->db_id;
+ 		data.dsize = sizeof(uint32_t);
+diff --git a/source4/dsdb/samdb/ldb_modules/repl_meta_data.c b/source4/dsdb/samdb/ldb_modules/repl_meta_data.c
+index a89a816c869..e739400634c 100644
+--- a/source4/dsdb/samdb/ldb_modules/repl_meta_data.c
++++ b/source4/dsdb/samdb/ldb_modules/repl_meta_data.c
+@@ -4731,7 +4731,7 @@ static int replmd_make_deleted_child_dn(TALLOC_CTX *tmp_ctx,
+   their current values. This has the effect of changing these
+   attributes to have been last updated by the current DC. This is
+   needed to ensure that renames performed as part of conflict
+-  resolution are propogated to other DCs
++  resolution are propagated to other DCs
+  */
+ static int replmd_name_modify(struct replmd_replicated_request *ar,
+ 			      struct ldb_request *req, struct ldb_dn *dn)
+diff --git a/source4/dsdb/samdb/ldb_modules/util.c b/source4/dsdb/samdb/ldb_modules/util.c
+index 9e37c085bba..738b773611d 100644
+--- a/source4/dsdb/samdb/ldb_modules/util.c
++++ b/source4/dsdb/samdb/ldb_modules/util.c
+@@ -688,7 +688,7 @@ int dsdb_check_single_valued_link(const struct dsdb_attribute *attr,
+   place. For example, the recyclebin feature is marked as enabled both
+   on the CN=Partitions,CN=Configurration object and on the NTDS DN of
+   each DC in the forest. It seems likely that it is the job of the KCC
+-  to propogate between the two
++  to propagate between the two
+  */
+ int dsdb_check_optional_feature(struct ldb_module *module, struct GUID op_feature_guid, bool *feature_enabled)
+ {
+diff --git a/source4/ntvfs/common/opendb_tdb.c b/source4/ntvfs/common/opendb_tdb.c
+index 2047a0b3145..9fe0b2627ee 100644
+--- a/source4/ntvfs/common/opendb_tdb.c
++++ b/source4/ntvfs/common/opendb_tdb.c
+@@ -352,7 +352,7 @@ static NTSTATUS odb_tdb_open_can_internal(struct odb_context *odb,
+ 			/* a batch oplock caches close calls, which
+ 			   means the client application might have
+ 			   already closed the file. We have to allow
+-			   this close to propogate by sending a oplock
++			   this close to propagate by sending a oplock
+ 			   break request and suspending this call
+ 			   until the break is acknowledged or the file
+ 			   is closed */
+diff --git a/source4/torture/raw/notify.c b/source4/torture/raw/notify.c
+index fdb5771bf3d..afb4a8eb5f2 100644
+--- a/source4/torture/raw/notify.c
++++ b/source4/torture/raw/notify.c
+@@ -1462,7 +1462,7 @@ static bool test_notify_tree(struct torture_context *tctx,
+ 		talloc_free(path);
+ 	}
+ 
+-	/* give a bit of time for the events to propogate */
++	/* give a bit of time for the events to propagate */
+ 	tv = timeval_current();
+ 
+ 	do {
+@@ -1485,7 +1485,7 @@ static bool test_notify_tree(struct torture_context *tctx,
+ 		}
+ 	} while (!all_done && timeval_elapsed(&tv) < 20);
+ 
+-	torture_comment(tctx, "took %.4f seconds to propogate all events\n", timeval_elapsed(&tv));
++	torture_comment(tctx, "took %.4f seconds to propagate all events\n", timeval_elapsed(&tv));
+ 
+ 	for (i=0;i<ARRAY_SIZE(dirs);i++) {
+ 		torture_assert_int_equal_goto(tctx,
+diff --git a/source4/torture/smb2/notify.c b/source4/torture/smb2/notify.c
+index 6ef24fe889e..d13f1c0506c 100644
+--- a/source4/torture/smb2/notify.c
++++ b/source4/torture/smb2/notify.c
+@@ -1878,7 +1878,7 @@ static bool torture_smb2_notify_tree(struct torture_context *torture,
+ 		talloc_free(path);
+ 	}
+ 
+-	/* give a bit of time for the events to propogate */
++	/* give a bit of time for the events to propagate */
+ 	tv = timeval_current();
+ 
+ 	do {
+@@ -1904,7 +1904,7 @@ static bool torture_smb2_notify_tree(struct torture_context *torture,
+ 		}
+ 	} while (!all_done && timeval_elapsed(&tv) < 20);
+ 
+-	torture_comment(torture, "took %.4f seconds to propogate all events\n",
++	torture_comment(torture, "took %.4f seconds to propagate all events\n",
+ 			timeval_elapsed(&tv));
+ 
+ 	for (i=0;i<ARRAY_SIZE(dirs);i++) {
+diff --git a/wintest/test-s4-howto.py b/wintest/test-s4-howto.py
+index e290b07732d..e8f2111fafa 100755
+--- a/wintest/test-s4-howto.py
++++ b/wintest/test-s4-howto.py
+@@ -269,12 +269,12 @@ def test_dcpromo(t, vm):
+     child.expect("CN=Schema,CN=Configuration,${BASEDN}")
+     child.expect("was successful")
+ 
+-    t.info("Checking if new users propogate to windows")
++    t.info("Checking if new users propagate to windows")
+     t.retry_cmd('bin/samba-tool user add test2 ${PASSWORD2}', ["created successfully"])
+     t.retry_cmd("%s -L ${WIN_HOSTNAME}.${LCREALM} -Utest2%%${PASSWORD2} -k no" % (smbclient), ['Sharename', 'Remote IPC'])
+     t.retry_cmd("%s -L ${WIN_HOSTNAME}.${LCREALM} -Utest2%%${PASSWORD2} -k yes" % (smbclient), ['Sharename', 'Remote IPC'])
+ 
+-    t.info("Checking if new users on windows propogate to samba")
++    t.info("Checking if new users on windows propagate to samba")
+     child.sendline("net user test3 ${PASSWORD3} /add")
+     while True:
+         i = child.expect(["The command completed successfully",
+@@ -458,12 +458,12 @@ def test_join_as_dc(t, vm):
+     child.expect("CN=Configuration,${WIN_BASEDN}")
+     child.expect("was successful")
+ 
+-    t.info("Checking if new users propogate to windows")
++    t.info("Checking if new users propagate to windows")
+     t.retry_cmd('bin/samba-tool user add test2 ${PASSWORD2}', ["created successfully"])
+     t.retry_cmd("%s -L ${WIN_HOSTNAME}.${WIN_REALM} -Utest2%%${PASSWORD2} -k no" % (smbclient), ['Sharename', 'Remote IPC'])
+     t.retry_cmd("%s -L ${WIN_HOSTNAME}.${WIN_REALM} -Utest2%%${PASSWORD2} -k yes" % (smbclient), ['Sharename', 'Remote IPC'])
+ 
+-    t.info("Checking if new users on windows propogate to samba")
++    t.info("Checking if new users on windows propagate to samba")
+     child.sendline("net user test3 ${PASSWORD3} /add")
+     child.expect("The command completed successfully")
+     t.retry_cmd("%s -L ${HOSTNAME}.${WIN_REALM} -Utest3%%${PASSWORD3} -k no" % (smbclient), ['Sharename', 'IPC'])
+@@ -538,14 +538,14 @@ def test_join_as_rodc(t, vm):
+                    ordered=True,
+                    regex=True)
+ 
+-    t.info("Checking if new users on windows propogate to samba")
++    t.info("Checking if new users on windows propagate to samba")
+     child.sendline("net user test3 ${PASSWORD3} /add")
+     child.expect("The command completed successfully")
+     t.retry_cmd("%s -L ${HOSTNAME}.${WIN_REALM} -Utest3%%${PASSWORD3} -k no" % (smbclient), ['Sharename', 'IPC'])
+     t.retry_cmd("%s -L ${HOSTNAME}.${WIN_REALM} -Utest3%%${PASSWORD3} -k yes" % (smbclient), ['Sharename', 'IPC'])
+ 
+     # should this work?
+-    t.info("Checking if new users propogate to windows")
++    t.info("Checking if new users propagate to windows")
+     t.cmd_contains('bin/samba-tool user add test2 ${PASSWORD2}', ['No RID Set DN'])
+ 
+     t.info("Checking propogation of user deletion")
+-- 
+2.17.0
+
+
+From 43ec8c6bbdf95251908e6ba8e00092b04cb56ea3 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:22:53 +0200
+Subject: [PATCH 18/25] Fix spelling s/protcol/protocol/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ docs-xml/manpages/samba.7.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/docs-xml/manpages/samba.7.xml b/docs-xml/manpages/samba.7.xml
+index 761c8d3c65a..5b72d659871 100644
+--- a/docs-xml/manpages/samba.7.xml
++++ b/docs-xml/manpages/samba.7.xml
+@@ -26,7 +26,7 @@
+ 	<para>The Samba software suite is a collection of programs
+ 	that implements the Server Message Block (commonly abbreviated
+ 	as SMB) protocol for UNIX systems and provides Active Directory
+-	services. The first version of the SMB protcol is sometimes also
++	services. The first version of the SMB protocol is sometimes also
+ 	referred to as the Common Internet File System (CIFS). For a more
+ 	thorough description, see <ulink url="http://www.ubiqx.org/cifs/">
+ 	http://www.ubiqx.org/cifs/</ulink>. Samba also implements the NetBIOS
+-- 
+2.17.0
+
+
+From 25ac1f192cd7361c7a7b068a8e86a5365c2a5256 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:23:01 +0200
+Subject: [PATCH 19/25] Fix spelling s/receving/receiving/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source3/rpc_server/rpc_ncacn_np.c |  2 +-
+ source3/rpc_server/rpc_server.c   | 10 +++++-----
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/source3/rpc_server/rpc_ncacn_np.c b/source3/rpc_server/rpc_ncacn_np.c
+index d7e7785248d..511d54e895a 100644
+--- a/source3/rpc_server/rpc_ncacn_np.c
++++ b/source3/rpc_server/rpc_ncacn_np.c
+@@ -179,7 +179,7 @@ NTSTATUS make_internal_rpc_pipe_socketpair(
+ 
+ 	subreq = dcerpc_read_ncacn_packet_send(npc, npc->ev, npc->tstream);
+ 	if (subreq == NULL) {
+-		DEBUG(2, ("Failed to start receving packets\n"));
++		DEBUG(2, ("Failed to start receiving packets\n"));
+ 		status = NT_STATUS_PIPE_BROKEN;
+ 		goto out;
+ 	}
+diff --git a/source3/rpc_server/rpc_server.c b/source3/rpc_server/rpc_server.c
+index 2864495c24e..36dff114f90 100644
+--- a/source3/rpc_server/rpc_server.c
++++ b/source3/rpc_server/rpc_server.c
+@@ -395,7 +395,7 @@ static void named_pipe_accept_done(struct tevent_req *subreq)
+ 	/* And now start receiving and processing packets */
+ 	subreq = dcerpc_read_ncacn_packet_send(npc, npc->ev, npc->tstream);
+ 	if (!subreq) {
+-		DEBUG(2, ("Failed to start receving packets\n"));
++		DEBUG(2, ("Failed to start receiving packets\n"));
+ 		goto fail;
+ 	}
+ 	tevent_req_set_callback(subreq, named_pipe_packet_process, npc);
+@@ -494,7 +494,7 @@ void named_pipe_packet_process(struct tevent_req *subreq)
+ 		/* Wait for the next packet */
+ 		subreq = dcerpc_read_ncacn_packet_send(npc, npc->ev, npc->tstream);
+ 		if (!subreq) {
+-			DEBUG(2, ("Failed to start receving packets\n"));
++			DEBUG(2, ("Failed to start receiving packets\n"));
+ 			status = NT_STATUS_NO_MEMORY;
+ 			goto fail;
+ 		}
+@@ -574,7 +574,7 @@ static void named_pipe_packet_done(struct tevent_req *subreq)
+ 	/* Wait for the next packet */
+ 	subreq = dcerpc_read_ncacn_packet_send(npc, npc->ev, npc->tstream);
+ 	if (!subreq) {
+-		DEBUG(2, ("Failed to start receving packets\n"));
++		DEBUG(2, ("Failed to start receiving packets\n"));
+ 		sys_errno = ENOMEM;
+ 		goto fail;
+ 	}
+@@ -1272,7 +1272,7 @@ static void dcerpc_ncacn_packet_process(struct tevent_req *subreq)
+ 						       ncacn_conn->ev_ctx,
+ 						       ncacn_conn->tstream);
+ 		if (subreq == NULL) {
+-			DEBUG(2, ("Failed to start receving packets\n"));
++			DEBUG(2, ("Failed to start receiving packets\n"));
+ 			status = NT_STATUS_NO_MEMORY;
+ 			goto fail;
+ 		}
+@@ -1343,7 +1343,7 @@ static void dcerpc_ncacn_packet_done(struct tevent_req *subreq)
+ 					       ncacn_conn->ev_ctx,
+ 					       ncacn_conn->tstream);
+ 	if (subreq == NULL) {
+-		DEBUG(2, ("Failed to start receving packets\n"));
++		DEBUG(2, ("Failed to start receiving packets\n"));
+ 		status = NT_STATUS_NO_MEMORY;
+ 		goto fail;
+ 	}
+-- 
+2.17.0
+
+
+From 44ae08858e6e859f968456576a2b066f05382fcb Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:23:39 +0200
+Subject: [PATCH 20/25] Fix spelling s/retrive/retrieve/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ python/samba/samba3/__init__.py | 2 +-
+ source3/passdb/pdb_smbpasswd.c  | 2 +-
+ source3/utils/ntlm_auth.c       | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/python/samba/samba3/__init__.py b/python/samba/samba3/__init__.py
+index b145e432c97..053c113715d 100644
+--- a/python/samba/samba3/__init__.py
++++ b/python/samba/samba3/__init__.py
+@@ -163,7 +163,7 @@ class IdmapDatabase(DbDatabase):
+     def get_sid(self, xid, id_type):
+         """Retrive SID associated with a particular id and type.
+ 
+-        :param xid: UID or GID to retrive SID for.
++        :param xid: UID or GID to retrieve SID for.
+         :param id_type: Type of id specified - 'UID' or 'GID'
+         """
+         data = self.db.get("%s %s\0" % (id_type, str(xid)))
+diff --git a/source3/passdb/pdb_smbpasswd.c b/source3/passdb/pdb_smbpasswd.c
+index 9c381471dda..4d210fd78c9 100644
+--- a/source3/passdb/pdb_smbpasswd.c
++++ b/source3/passdb/pdb_smbpasswd.c
+@@ -63,7 +63,7 @@ struct smbpasswd_privates
+ 	unsigned char smbpwd[16];
+ 	unsigned char smbntpwd[16];
+ 
+-	/* retrive-once info */
++	/* retrieve-once info */
+ 	const char *smbpasswd_file;
+ };
+ 
+diff --git a/source3/utils/ntlm_auth.c b/source3/utils/ntlm_auth.c
+index d3146ccb989..2409ef8d130 100644
+--- a/source3/utils/ntlm_auth.c
++++ b/source3/utils/ntlm_auth.c
+@@ -1601,7 +1601,7 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
+ 
+ 		nt_status = gensec_session_info(state->gensec_state, mem_ctx, &session_info);
+ 		if (!NT_STATUS_IS_OK(nt_status)) {
+-			reply_code = "BH Failed to retrive session info";
++			reply_code = "BH Failed to retrieve session info";
+ 			reply_arg = nt_errstr(nt_status);
+ 			DEBUG(1, ("GENSEC failed to retrieve the session info: %s\n", nt_errstr(nt_status)));
+ 		} else {
+-- 
+2.17.0
+
+
+From 8f7749cda72fd3d4a532fdd8f2c9ba99f48ca738 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:23:45 +0200
+Subject: [PATCH 21/25] Fix spelling s/retun/return/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ ctdb/common/sock_daemon.h         | 2 +-
+ source3/client/client.c           | 2 +-
+ source4/torture/raw/setfileinfo.c | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/ctdb/common/sock_daemon.h b/ctdb/common/sock_daemon.h
+index a2c4d3de778..aa40995b3e4 100644
+--- a/ctdb/common/sock_daemon.h
++++ b/ctdb/common/sock_daemon.h
+@@ -110,7 +110,7 @@ struct sock_daemon_funcs {
+  *
+  * @param[in] client The new socket client context
+  * @param[in] private_data Private data set with the socket
+- * @retun true if connection should be accepted, false otherwise
++ * @return true if connection should be accepted, false otherwise
+  *
+  *
+  * disconnect() is called  when client closes connection
+diff --git a/source3/client/client.c b/source3/client/client.c
+index 1429b44e9cf..8dbf7474d25 100644
+--- a/source3/client/client.c
++++ b/source3/client/client.c
+@@ -5564,7 +5564,7 @@ static struct {
+   {"posix_mkdir",cmd_posix_mkdir,"<name> 0<mode> creates a directory using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
+   {"posix_rmdir",cmd_posix_rmdir,"<name> removes a directory using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
+   {"posix_unlink",cmd_posix_unlink,"<name> removes a file using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
+-  {"posix_whoami",cmd_posix_whoami,"retun logged on user information "
++  {"posix_whoami",cmd_posix_whoami,"return logged on user information "
+ 			"using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
+   {"print",cmd_print,"<file name> print a file",{COMPL_NONE,COMPL_NONE}},
+   {"prompt",cmd_prompt,"toggle prompting for filenames for mget and mput",{COMPL_NONE,COMPL_NONE}},
+diff --git a/source4/torture/raw/setfileinfo.c b/source4/torture/raw/setfileinfo.c
+index a08191d0bf2..45ff8195c19 100644
+--- a/source4/torture/raw/setfileinfo.c
++++ b/source4/torture/raw/setfileinfo.c
+@@ -825,7 +825,7 @@ torture_raw_sfileinfo_eof(struct torture_context *tctx,
+ 	sfi.end_of_file_info.in.size = 200;
+ 	status = smb_raw_setpathinfo(cli2->tree, &sfi);
+ 
+-	/* This should cause the client to retun invalid level. */
++	/* This should cause the client to return invalid level. */
+ 	if (TARGET_IS_W2K8(tctx) || TARGET_IS_WIN7(tctx)) {
+ 		/*
+ 		 * Windows sends back an invalid packet that smbclient sees
+-- 
+2.17.0
+
+
+From c55248bbbcd0c1f9fbdeccf508900fc0d1dc9ce9 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:23:54 +0200
+Subject: [PATCH 22/25] Fix spelling s/specfied/specified/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source3/passdb/pdb_smbpasswd.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/source3/passdb/pdb_smbpasswd.c b/source3/passdb/pdb_smbpasswd.c
+index 4d210fd78c9..8a3d48b9980 100644
+--- a/source3/passdb/pdb_smbpasswd.c
++++ b/source3/passdb/pdb_smbpasswd.c
+@@ -1345,7 +1345,7 @@ static NTSTATUS smbpasswd_getsampwsid(struct pdb_methods *my_methods, struct sam
+ 	if (rid == DOMAIN_RID_GUEST) {
+ 		const char *guest_account = lp_guest_account();
+ 		if (!(guest_account && *guest_account)) {
+-			DEBUG(1, ("Guest account not specfied!\n"));
++			DEBUG(1, ("Guest account not specified!\n"));
+ 			return nt_status;
+ 		}
+ 		return smbpasswd_getsampwnam(my_methods, sam_acct, guest_account);
+-- 
+2.17.0
+
+
+From 66a9b5345799846641069286b3db75feec1542b0 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:24:00 +0200
+Subject: [PATCH 23/25] Fix spelling s/succesfully/successfully/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ ctdb/common/sock_daemon.c   | 2 +-
+ python/samba/netcmd/user.py | 2 +-
+ source3/smbd/filename.c     | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/ctdb/common/sock_daemon.c b/ctdb/common/sock_daemon.c
+index 7554cd6da07..a56057b3e0b 100644
+--- a/ctdb/common/sock_daemon.c
++++ b/ctdb/common/sock_daemon.c
+@@ -689,7 +689,7 @@ static void sock_daemon_run_startup_done(struct tevent_req *subreq)
+ 		return;
+ 	}
+ 
+-	D_NOTICE("startup completed succesfully\n");
++	D_NOTICE("startup completed successfully\n");
+ 
+ 	status = sock_daemon_run_socket_listen(req);
+ 	if (! status) {
+diff --git a/python/samba/netcmd/user.py b/python/samba/netcmd/user.py
+index dfe167d8c7d..1e2e040e934 100644
+--- a/python/samba/netcmd/user.py
++++ b/python/samba/netcmd/user.py
+@@ -1605,7 +1605,7 @@ following dirsyncAttributes:
+   userPrincipalName and userAccountControl.
+ 
+ It recovers from LDAP disconnects and updates the cache in conservative way
+-(in single steps after each succesfully processed change).  An error from
++(in single steps after each successfully processed change).  An error from
+ the script (specified by '--script') will result in fatal error and this
+ command will exit.  But the cache state should be still valid and can be
+ resumed in the next "Sync Loop Run".
+diff --git a/source3/smbd/filename.c b/source3/smbd/filename.c
+index 1186918a7f2..9e15af1916d 100644
+--- a/source3/smbd/filename.c
++++ b/source3/smbd/filename.c
+@@ -1555,7 +1555,7 @@ static NTSTATUS build_stream_path(TALLOC_CTX *mem_ctx,
+  * @param pp_smb_fname	The final converted name will be allocated if the
+  *			return is NT_STATUS_OK.
+  *
+- * @return NT_STATUS_OK if all operations completed succesfully, appropriate
++ * @return NT_STATUS_OK if all operations completed successfully, appropriate
+  * 	   error otherwise.
+  */
+ static NTSTATUS filename_convert_internal(TALLOC_CTX *ctx,
+-- 
+2.17.0
+
+
+From 5a0fd87b6bc04e4726d5cfea22c11d38386097b8 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:24:16 +0200
+Subject: [PATCH 24/25] Fix spelling s/unitialized/uninitialized/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ lib/util/util_net.c       | 2 +-
+ source3/libsmb/clierror.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lib/util/util_net.c b/lib/util/util_net.c
+index f0a30168342..6cfb35c87a4 100644
+--- a/lib/util/util_net.c
++++ b/lib/util/util_net.c
+@@ -869,7 +869,7 @@ char *print_canonical_sockaddr(TALLOC_CTX *ctx,
+ 	char *dest = NULL;
+ 	int ret;
+ 
+-	/* Linux getnameinfo() man pages says port is unitialized if
++	/* Linux getnameinfo() man pages says port is uninitialized if
+ 	   service name is NULL. */
+ 
+ 	ret = sys_getnameinfo((const struct sockaddr *)pss,
+diff --git a/source3/libsmb/clierror.c b/source3/libsmb/clierror.c
+index f20980251f4..66dfea0654f 100644
+--- a/source3/libsmb/clierror.c
++++ b/source3/libsmb/clierror.c
+@@ -35,7 +35,7 @@ const char *cli_errstr(struct cli_state *cli)
+ 	char *result;
+ 
+ 	if (!cli->initialised) {
+-		fstrcpy(cli_error_message, "[Programmer's error] cli_errstr called on unitialized cli_stat struct!\n");
++		fstrcpy(cli_error_message, "[Programmer's error] cli_errstr called on uninitialized cli_stat struct!\n");
+ 		goto done;
+ 	}
+ 
+-- 
+2.17.0
+
+
+From 15d2f4f8178e9cd10deaace19268b0659806340a Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Fri, 4 May 2018 22:24:25 +0200
+Subject: [PATCH 25/25] Fix spelling s/unsuported/unsupported/
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Garming Sam <garming@catalyst.net.nz>
+---
+ source3/smbd/smbXsrv_open.c    | 2 +-
+ source3/smbd/smbXsrv_session.c | 2 +-
+ source3/smbd/smbXsrv_tcon.c    | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/source3/smbd/smbXsrv_open.c b/source3/smbd/smbXsrv_open.c
+index 17a73077572..4ad0021cdf4 100644
+--- a/source3/smbd/smbXsrv_open.c
++++ b/source3/smbd/smbXsrv_open.c
+@@ -1479,7 +1479,7 @@ static NTSTATUS smbXsrv_open_global_parse_record(TALLOC_CTX *mem_ctx,
+ 	if (global_blob.version != SMBXSRV_VERSION_0) {
+ 		status = NT_STATUS_INTERNAL_DB_CORRUPTION;
+ 		DEBUG(1,("Invalid record in smbXsrv_open_global.tdb:"
+-			 "key '%s' unsuported version - %d - %s\n",
++			 "key '%s' unsupported version - %d - %s\n",
+ 			 hex_encode_talloc(frame, key.dptr, key.dsize),
+ 			 (int)global_blob.version,
+ 			 nt_errstr(status)));
+diff --git a/source3/smbd/smbXsrv_session.c b/source3/smbd/smbXsrv_session.c
+index 9e1fb6977b4..121ff264a9c 100644
+--- a/source3/smbd/smbXsrv_session.c
++++ b/source3/smbd/smbXsrv_session.c
+@@ -1918,7 +1918,7 @@ static int smbXsrv_session_global_traverse_fn(struct db_record *rec, void *data)
+ 
+ 	if (global_blob.version != SMBXSRV_VERSION_0) {
+ 		DEBUG(1,("Invalid record in smbXsrv_session_global.tdb:"
+-			 "key '%s' unsuported version - %d\n",
++			 "key '%s' unsupported version - %d\n",
+ 			 hex_encode_talloc(frame, key.dptr, key.dsize),
+ 			 (int)global_blob.version));
+ 		goto done;
+diff --git a/source3/smbd/smbXsrv_tcon.c b/source3/smbd/smbXsrv_tcon.c
+index 82c880adc0b..2804311d93c 100644
+--- a/source3/smbd/smbXsrv_tcon.c
++++ b/source3/smbd/smbXsrv_tcon.c
+@@ -1211,7 +1211,7 @@ static int smbXsrv_tcon_global_traverse_fn(struct db_record *rec, void *data)
+ 
+ 	if (global_blob.version != SMBXSRV_VERSION_0) {
+ 		DEBUG(1,("Invalid record in smbXsrv_tcon_global.tdb:"
+-			 "key '%s' unsuported version - %d\n",
++			 "key '%s' unsupported version - %d\n",
+ 			 hex_encode_talloc(frame, key.dptr, key.dsize),
+ 			 (int)global_blob.version));
+ 		goto done;
+-- 
+2.17.0
+
