@@ -2,8 +2,15 @@
 
 set -e
 
-echo "Checking smb.conf"
-samba-tool testparm -d1 --suppress-prompt > /dev/null
+echo "Checking smb.conf with testparm"
+testparm -d1 --suppress-prompt > /dev/null
 echo "Done"
+
+SERVER_ROLE=`samba-tool testparm --parameter-name="server role"  2>/dev/null | tail -1`
+if [ "$SERVER_ROLE" = "active directory domain controller" ]; then
+    echo "Checking smb.conf with samba-tool"
+    samba-tool testparm -d1 --suppress-prompt > /dev/null
+    echo "Done"
+fi
 
 #DEBHELPER#

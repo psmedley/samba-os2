@@ -1,3 +1,13 @@
+samba (2:4.8.2+dfsg-2) unstable; urgency=medium
+
+  * Update panic-action script message, samba-dbg renamed to samba-dbgsym
+    (Closes: #900242)
+  * Ensure /var/lib/samba/dhcp.conf exists (Closes: #901585)
+  * Check smb.conf with testparm, and also with samba-tool when
+    server role = active directory domain controller (Closes: #900908)
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 18 Jun 2018 23:39:41 +0200
+
 samba (2:4.8.2+dfsg-1) unstable; urgency=medium
 
   * New upstream release

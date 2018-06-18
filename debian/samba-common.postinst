@@ -52,6 +52,8 @@ configure_smb_conf() {
 # If we receive WINS server info from DHCP, override the options above. \\
    include = /var/lib/samba/dhcp.conf
 }" "$CONFIG"
+		# Ensure the file exists
+		touch /var/lib/samba/dhcp.conf
 	elif [ "$RET" != true ]; then
 		sed -i -e '
 		/^#[[:space:]]*If we receive WINS server info from DHCP, override the options above/d

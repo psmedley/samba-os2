@@ -46,7 +46,7 @@ type mail >/dev/null 2>&1 || exit 0
 	echo "files may contain additional information about the problem."
 	echo 
 	echo "If the problem persists, you are encouraged to first install the"
-	echo "samba-dbg package, which contains the debugging symbols for the Samba"
+	echo "samba-dbgsym package, which contains the debugging symbols for the Samba"
 	echo "binaries.  Then submit the provided information as a bug report to"
 	if [ -x "`which lsb_release 2>/dev/null`" ] \
 	   && [ "`lsb_release -s -i`" = "Ubuntu" ]
