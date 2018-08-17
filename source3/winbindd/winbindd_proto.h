@@ -134,7 +134,8 @@ void close_winbindd_cache(void);
 bool lookup_cached_sid(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 		       char **domain_name, char **name,
 		       enum lsa_SidType *type);
-bool lookup_cached_name(const char *domain_name,
+bool lookup_cached_name(const char *namespace,
+			const char *domain_name,
 			const char *name,
 			struct dom_sid *sid,
 			enum lsa_SidType *type);
@@ -476,11 +477,14 @@ struct winbindd_domain *find_our_domain(void);
 struct winbindd_domain *find_default_route_domain(void);
 struct winbindd_domain *find_lookup_domain_from_sid(const struct dom_sid *sid);
 struct winbindd_domain *find_lookup_domain_from_name(const char *domain_name);
-bool parse_domain_user(const char *domuser, fstring domain, fstring user);
-bool parse_domain_user_talloc(TALLOC_CTX *mem_ctx, const char *domuser,
-			      char **domain, char **user);
-bool canonicalize_username(fstring username_inout, fstring domain, fstring user);
-void fill_domain_username(fstring name, const char *domain, const char *user, bool can_assume);
+bool parse_domain_user(const char *domuser,
+		       fstring namespace,
+		       fstring domain,
+		       fstring user);
+bool canonicalize_username(fstring username_inout,
+			   fstring namespace,
+			   fstring domain,
+			   fstring user);
 char *fill_domain_username_talloc(TALLOC_CTX *ctx,
 				  const char *domain,
 				  const char *user,
@@ -568,7 +572,9 @@ NTSTATUS winbindd_lookupsids_recv(struct tevent_req *req,
 
 struct tevent_req *wb_lookupname_send(TALLOC_CTX *mem_ctx,
 				      struct tevent_context *ev,
-				      const char *dom_name, const char *name,
+				      const char *namespace,
+				      const char *dom_name,
+				      const char *name,
 				      uint32_t flags);
 NTSTATUS wb_lookupname_recv(struct tevent_req *req, struct dom_sid *sid,
 			    enum lsa_SidType *type);

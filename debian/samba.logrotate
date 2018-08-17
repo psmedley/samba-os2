@@ -3,7 +3,7 @@
 	missingok
 	rotate 7
 	postrotate
-		[ ! -x /usr/bin/smbcontrol ] || /usr/bin/smbcontrol smbd reload-config
+		[ ! -x /usr/bin/smbcontrol ] || [ ! -f /var/run/samba/smbd.pid ] || /usr/bin/smbcontrol smbd reload-config
 	endscript
 	compress
 	delaycompress
@@ -15,7 +15,7 @@
 	missingok
 	rotate 7
 	postrotate
-		[ ! -x /usr/bin/smbcontrol ] || /usr/bin/smbcontrol nmbd reload-config
+		[ ! -x /usr/bin/smbcontrol ] || [ ! -f /var/run/samba/nmbd.pid ] || /usr/bin/smbcontrol nmbd reload-config
 	endscript
 	compress
 	delaycompress

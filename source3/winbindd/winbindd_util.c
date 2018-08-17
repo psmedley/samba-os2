@@ -1575,43 +1575,40 @@ static bool assume_domain(const char *domain)
 	return False;
 }
 
-/* Parse a string of the form DOMAIN\user into a domain and a user */
-
-bool parse_domain_user(const char *domuser, fstring domain, fstring user)
+/* Parse a DOMAIN\user or UPN string into a domain, namespace and a user */
+bool parse_domain_user(const char *domuser,
+		       fstring namespace,
+		       fstring domain,
+		       fstring user)
 {
-	char *p = strchr(domuser,*lp_winbind_separator());
+	char *p = NULL;
 
-	if ( !p ) {
-		fstrcpy(user, domuser);
-		p = strchr(domuser, '@');
+	if (strlen(domuser) == 0) {
+		return false;
+	}
 
-		if ( assume_domain(lp_workgroup()) && p == NULL) {
-			fstrcpy(domain, lp_workgroup());
-		} else if (p != NULL) {
-			fstrcpy(domain, p + 1);
-			user[PTR_DIFF(p, domuser)] = 0;
-		} else {
-			return False;
-		}
-	} else {
-		fstrcpy(user, p+1);
+	p = strchr(domuser, *lp_winbind_separator());
+	if (p != NULL) {
+		fstrcpy(user, p + 1);
 		fstrcpy(domain, domuser);
-		domain[PTR_DIFF(p, domuser)] = 0;
+		domain[PTR_DIFF(p, domuser)] = '\0';
+		fstrcpy(namespace, domain);
+	} else {
+		fstrcpy(user, domuser);
+
+		domain[0] = '\0';
+		namespace[0] = '\0';
+		p = strchr(domuser, '@');
+		if (p != NULL) {
+			/* upn */
+			fstrcpy(namespace, p + 1);
+		} else if (assume_domain(lp_workgroup())) {
+			fstrcpy(domain, lp_workgroup());
+			fstrcpy(namespace, domain);
+		}
 	}
 
 	return strupper_m(domain);
-}
-
-bool parse_domain_user_talloc(TALLOC_CTX *mem_ctx, const char *domuser,
-			      char **domain, char **user)
-{
-	fstring fstr_domain, fstr_user;
-	if (!parse_domain_user(domuser, fstr_domain, fstr_user)) {
-		return False;
-	}
-	*domain = talloc_strdup(mem_ctx, fstr_domain);
-	*user = talloc_strdup(mem_ctx, fstr_user);
-	return ((*domain != NULL) && (*user != NULL));
 }
 
 /* Ensure an incoming username from NSS is fully qualified. Replace the
@@ -1623,9 +1620,15 @@ bool parse_domain_user_talloc(TALLOC_CTX *mem_ctx, const char *domuser,
    really should be changed to use this instead of doing things
    by hand. JRA. */
 
-bool canonicalize_username(fstring username_inout, fstring domain, fstring user)
+bool canonicalize_username(fstring username_inout,
+			   fstring namespace,
+			   fstring domain,
+			   fstring user)
 {
-	if (!parse_domain_user(username_inout, domain, user)) {
+	bool ok;
+
+	ok = parse_domain_user(username_inout, namespace, domain, user);
+	if (!ok) {
 		return False;
 	}
 	slprintf(username_inout, sizeof(fstring) - 1, "%s%c%s",
@@ -1647,26 +1650,6 @@ bool canonicalize_username(fstring username_inout, fstring domain, fstring user)
 
     We always canonicalize as UPPERCASE DOMAIN, lowercase username.
 */
-void fill_domain_username(fstring name, const char *domain, const char *user, bool can_assume)
-{
-	fstring tmp_user;
-
-	if (lp_server_role() == ROLE_ACTIVE_DIRECTORY_DC) {
-		can_assume = false;
-	}
-
-	fstrcpy(tmp_user, user);
-	(void)strlower_m(tmp_user);
-
-	if (can_assume && assume_domain(domain)) {
-		strlcpy(name, tmp_user, sizeof(fstring));
-	} else {
-		slprintf(name, sizeof(fstring) - 1, "%s%c%s",
-			 domain, *lp_winbind_separator(),
-			 tmp_user);
-	}
-}
-
 /**
  * talloc version of fill_domain_username()
  * return NULL on talloc failure.

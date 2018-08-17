@@ -2140,6 +2140,12 @@ sub provision($$$$$$$$$)
 	vfs objects = acl_xattr fake_acls xattr_tdb fake_dfq
 	admin users = $unix_name
 	include = $dfqconffile
+[dfq_cache]
+	path = $shrdir/dfree
+	vfs objects = acl_xattr fake_acls xattr_tdb fake_dfq
+	admin users = $unix_name
+	include = $dfqconffile
+	dfree cache time = 60
 [dfq_owner]
 	path = $shrdir/dfree
 	vfs objects = acl_xattr fake_acls xattr_tdb fake_dfq
@@ -2425,6 +2431,9 @@ sub wait_for_start($$$$$)
 	$netcmd .= "NSS_WRAPPER_GROUP='$envvars->{NSS_WRAPPER_GROUP}' ";
 	$netcmd .= Samba::bindir_path($self, "net") ." $envvars->{CONFIGURATION} ";
 
+	$cmd = $netcmd . "groupmap delete ntgroup=domusers";
+	$ret = system($cmd);
+
 	$cmd = $netcmd . "groupmap add rid=513 unixgroup=domusers type=domain";
 	$ret = system($cmd);
 	if ($ret != 0) {
@@ -2432,12 +2441,18 @@ sub wait_for_start($$$$$)
 		return 1;
 	}
 
+	$cmd = $netcmd . "groupmap delete ntgroup=domadmins";
+	$ret = system($cmd);
+
 	$cmd = $netcmd . "groupmap add rid=512 unixgroup=domadmins type=domain";
 	$ret = system($cmd);
 	if ($ret != 0) {
 		print("\"$cmd\" failed\n");
 		return 1;
 	}
+
+	$cmd = $netcmd . "groupmap delete ntgroup=everyone";
+	$ret = system($cmd);
 
 	$cmd = $netcmd . "groupmap add sid=S-1-1-0 unixgroup=everyone type=builtin";
 	$ret = system($cmd);

@@ -1,3 +1,33 @@
+samba (2:4.8.4+dfsg-1) unstable; urgency=high
+
+  [ Andreas Hasenack ]
+  * d/samba.logrotate: only try to reload the services if they are running
+    (Closes: #902149)
+  * Remove the deprecated "syslog" and "syslog only" options (Closes: #901138)
+
+  [ Mathieu Parent ]
+  * New upstream security release
+    - CVE-2018-1139 Weak authentication protocol allowed
+    - CVE-2018-1140 Denial of Service Attack on DNS and LDAP server
+    - CVE-2018-10858 Insufficient input validation on client directory listing
+      in libsmbclient
+    - CVE-2018-10918 Denial of Service Attack on AD DC DRSUAPI server
+    - CVE-2018-10919 Confidential attribute disclosure from the AD LDAP server
+    - Urgency set to high
+    - Bump build-depends ldb >= 1.3.5 (actually 2:1.4.0+really1.3.5) for
+      CVE-2018-1140
+  * smb.conf: Remove "wins support" and "wins server" comments
+  * smb.conf: Improve "logging" comments
+  * smb.conf: Remove "dns proxy = no", only usefull as a WINS server
+  * smb.conf: Propose better idmap config
+  * smb.conf: Remove "passdb backend = tdbsam" as this is the default
+  * smb.conf: Fix "usershare max shares" default (patched to 100 instead of 0)
+  * Standards-Version: 4.2.0
+  * Set Rules-Requires-Root: binary-targets as chmod is used
+  * Remove override_dh_strip target as dbgsym migration is complete
+
+ -- Mathieu Parent <sathieu@debian.org>  Fri, 17 Aug 2018 16:30:18 +0200
+
 samba (2:4.8.2+dfsg-2) unstable; urgency=medium
 
   * Update panic-action script message, samba-dbg renamed to samba-dbgsym
