@@ -20,7 +20,7 @@ LDB_NEXT_VERSION = $(shell python -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = s
 # samba ships ldb modules, which are specific to the ldb version, so we need a
 # strict dependency on the upstream ldb version
 # this also mean samba needs a rebuild when the upstream ldb version changes
-LDB_DEPENDS = "libldb1 (<< $(LDB_EPOCH):$(LDB_NEXT_VERSION)~), libldb1 (>> $(LDB_EPOCH):$(LDB_VERSION)~)"
+LDB_DEPENDS = "libldb1 (<< $(LDB_EPOCH):1.4.0+really$(LDB_NEXT_VERSION)~), libldb1 (>> $(LDB_EPOCH):1.4.0+really$(LDB_VERSION)~)"
 export PYSHORT=$(shell pyversions -d)
 export PYTHON=$(shell which $(PYSHORT))
 export PYTHON_CONFIG="$(PYTHON)-config"

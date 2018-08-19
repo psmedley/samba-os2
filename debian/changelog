@@ -1,3 +1,12 @@
+samba (2:4.8.4+dfsg-2) unstable; urgency=high
+
+  * Fix typo in previous release: s/usefull/useful/
+  * Prepend 1.4.0+really to ldb version to allow samba-dsdb-modules install
+    (Closes: #906562, #906568)
+  * Urgency still set to high
+
+ -- Mathieu Parent <sathieu@debian.org>  Sun, 19 Aug 2018 10:08:22 +0200
+
 samba (2:4.8.4+dfsg-1) unstable; urgency=high
 
   [ Andreas Hasenack ]
@@ -18,7 +27,7 @@ samba (2:4.8.4+dfsg-1) unstable; urgency=high
       CVE-2018-1140
   * smb.conf: Remove "wins support" and "wins server" comments
   * smb.conf: Improve "logging" comments
-  * smb.conf: Remove "dns proxy = no", only usefull as a WINS server
+  * smb.conf: Remove "dns proxy = no", only useful as a WINS server
   * smb.conf: Propose better idmap config
   * smb.conf: Remove "passdb backend = tdbsam" as this is the default
   * smb.conf: Fix "usershare max shares" default (patched to 100 instead of 0)
