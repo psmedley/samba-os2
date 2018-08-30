@@ -790,13 +790,9 @@ sub setup_simpleserver($$)
 	my $simpleserver_options = "
 	lanman auth = yes
 	ntlm auth = yes
-	vfs objects = xattr_tdb streams_depot time_audit full_audit
+	vfs objects = xattr_tdb streams_depot
 	change notify = no
 	smb encrypt = off
-
-	full_audit:syslog = no
-	full_audit:success = none
-	full_audit:failure = none
 
 [vfs_aio_fork]
 	path = $prefix_abs/share
@@ -866,6 +862,9 @@ sub setup_fileserver($$)
 	push(@dirs, "$dfree_share_dir/subdir2");
 	push(@dirs, "$dfree_share_dir/subdir3");
 
+	my $quotadir_dir="$share_dir/quota";
+	push(@dirs, $quotadir_dir);
+
 	my $valid_users_sharedir="$share_dir/valid_users";
 	push(@dirs,$valid_users_sharedir);
 
@@ -892,6 +891,8 @@ sub setup_fileserver($$)
 	usershare allow guests = yes
 	usershare prefix allow list = $usershare_sharedir
 
+	get quota command = $prefix_abs/getset_quota.py
+	set quota command = $prefix_abs/getset_quota.py
 [lowercase]
 	path = $lower_case_share_dir
 	comment = smb username is [%U]
@@ -1742,7 +1743,11 @@ sub provision($$$$$$$$$)
 	dos filemode = yes
 	strict rename = yes
 	strict sync = yes
-	vfs objects = acl_xattr fake_acls xattr_tdb streams_depot
+	vfs objects = acl_xattr fake_acls xattr_tdb streams_depot time_audit full_audit
+
+	full_audit:syslog = no
+	full_audit:success = none
+	full_audit:failure = none
 
 	printing = vlp
 	print command = $bindir_abs/vlp tdbfile=$lockdir/vlp.tdb print %p %s
@@ -2151,6 +2156,10 @@ sub provision($$$$$$$$$)
 	vfs objects = acl_xattr fake_acls xattr_tdb fake_dfq
 	inherit owner = yes
 	include = $dfqconffile
+[quotadir]
+	path = $shrdir/quota
+	admin users = $unix_name
+
 [acl_xattr_ign_sysacl_posix]
 	copy = tmp
 	acl_xattr:ignore system acls = yes

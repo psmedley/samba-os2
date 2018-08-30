@@ -1598,6 +1598,36 @@ EOF
     return 0
 }
 
+test_server_quiet_message()
+{
+    tmpfile=$PREFIX/smbclient_interactive_prompt_commands
+    cat > $tmpfile <<EOF
+ls
+quit
+EOF
+    cmd='CLI_FORCE_INTERACTIVE=yes $SMBCLIENT "$@" -U$USERNAME%$PASSWORD //$SERVER/tmp -I $SERVER_IP $ADDARGS --quiet < $tmpfile 2>&1'
+    eval echo "$cmd"
+    out=`eval $cmd`
+    ret=$?
+    rm -f $tmpfile
+
+    if [ $ret -ne 0 ] ; then
+       echo "$out"
+       echo "failed to connect error $ret"
+       return 1
+    fi
+
+    echo "$out" | grep 'Try "help" to get a list of possible commands.'
+    ret=$?
+    if [ $ret -eq 0 ] ; then
+       echo "$out"
+       echo 'failed - quiet should skip this message.'
+       return 1
+    fi
+
+    return 0
+}
+
 # Test xattr_stream correctly reports mode.
 # BUG: https://bugzilla.samba.org/show_bug.cgi?id=13380
 
@@ -1669,6 +1699,44 @@ EOF
     fi
 }
 
+# Test smbclient non-empty rmdir command
+test_del_nedir()
+{
+    tmpfile=$PREFIX/smbclient_interactive_prompt_commands
+    del_nedir="$LOCAL_PATH/del_nedir"
+
+    rm -rf $del_nedir
+    mkdir $del_nedir
+    touch $del_nedir/afile
+    cat > $tmpfile <<EOF
+rmdir del_nedir
+quit
+EOF
+    cmd='CLI_FORCE_INTERACTIVE=yes $SMBCLIENT "$@" -U$USERNAME%$PASSWORD //$SERVER/tmp -I $SERVER_IP $ADDARGS < $tmpfile 2>&1'
+    eval echo "$cmd"
+    out=`eval $cmd`
+    ret=$?
+    rm -rf $del_nedir
+
+    if [ $ret != 0 ] ; then
+	echo "$out"
+	echo "failed test_del_nedir test with output $ret"
+	false
+	return
+    fi
+
+# Should get NT_STATUS_DIRECTORY_NOT_EMPTY error from rmdir
+    echo "$out" | grep 'NT_STATUS_DIRECTORY_NOT_EMPTY'
+    ret=$?
+    if [ $ret -ne 0 ] ; then
+       echo "$out"
+       echo "test_del_nedir failed - should get an NT_STATUS_DIRECTORY_NOT_EMPTY error"
+       false
+       return
+    fi
+}
+
+#
 #
 LOGDIR_PREFIX=test_smbclient_s3
 
@@ -1789,6 +1857,10 @@ testit "server os message" \
     test_server_os_message || \
     failed=`expr $failed + 1`
 
+testit "test server quiet message" \
+    test_server_quiet_message || \
+    failed=`expr $failed + 1`
+
 testit "setmode test" \
     test_setmode || \
     failed=`expr $failed + 1`
@@ -1807,6 +1879,10 @@ testit "volume" \
 
 testit "rm -rf $LOGDIR" \
     rm -rf $LOGDIR || \
+    failed=`expr $failed + 1`
+
+testit "delete a non empty directory" \
+    test_del_nedir || \
     failed=`expr $failed + 1`
 
 testok $0 $failed

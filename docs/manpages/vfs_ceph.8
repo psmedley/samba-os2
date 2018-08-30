@@ -2,12 +2,12 @@
 .\"     Title: vfs_ceph
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/11/2018
+.\"      Date: 08/24/2018
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.8.4
+.\"    Source: Samba 4.8.5
 .\"  Language: English
 .\"
-.TH "VFS_CEPH" "8" "08/11/2018" "Samba 4\&.8\&.4" "System Administration tools"
+.TH "VFS_CEPH" "8" "08/24/2018" "Samba 4\&.8\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -58,11 +58,25 @@ requires that the underlying share path is a Ceph filesystem\&.
 .nf
 		\fI[share]\fR
 		\m[blue]\fBvfs objects = ceph\fR\m[]
+		\m[blue]\fBpath = /non\-mounted/cephfs/path\fR\m[]
+		\m[blue]\fBkernel share modes = no\fR\m[]
 	
 .fi
 .if n \{\
 .RE
 .\}
+.PP
+Since
+vfs_ceph
+does not require a filesystem mount, the share
+path
+is treated differently: it is interpreted as an absolute path within the Ceph filesystem on the attached Ceph cluster\&. In a ctdb cluster environment where ctdb manages Samba,
+CTDB_SAMBA_SKIP_SHARE_CHECK=yes
+must be configured to disable local share path checks, otherwise ctdb will not reach a healthy state\&.
+.PP
+Note that currently
+kernel share modes
+have to be disabled in a share running with the CephFS vfs module for file serving to work properly\&.
 .SH "OPTIONS"
 .PP
 ceph:config_file = path
@@ -80,7 +94,7 @@ Example: ceph:user_id = samba
 .RE
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.8\&.4 of the Samba suite\&.
+This man page is part of version 4\&.8\&.5 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

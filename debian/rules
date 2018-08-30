@@ -117,10 +117,6 @@ override_dh_auto_install:
 	rm $(DESTDIR)/lib/$(DEB_HOST_MULTIARCH)/libnss_*.so
 	#Remove unused vfstest manpage vfstest is no longer installed
 	rm $(DESTDIR)/usr/share/man/man1/vfstest.1
-	# Install winbind_krb5_locator
-	mkdir -p $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/plugin/krb5
-	mv $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/winbind_krb5_locator.so \
-	   $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/plugin/krb5
 	# Debian goodies to set global option in smb.conf and add a share
 	install -m 0755 debian/setoption.py $(DESTDIR)/usr/share/samba
 	install -m 0755 debian/addshare.py $(DESTDIR)/usr/share/samba

@@ -1594,11 +1594,11 @@ static bool test_write_atalk_rfork_io(struct torture_context *tctx,
 
 	ret &= write_stream(tree, __location__, tctx, mem_ctx,
 			    fname, AFPRESOURCE_STREAM_NAME,
-			    (off_t)1<<32, 10, rfork_content);
+			    (off_t)64*1024*1024, 10, rfork_content);
 
 	ret &= check_stream(tree, __location__, tctx, mem_ctx,
 			    fname, AFPRESOURCE_STREAM_NAME,
-			    (off_t)1<<32, 10, 0, 10, rfork_content);
+			    (off_t)64*1024*1024, 10, 0, 10, rfork_content);
 
 	/* Truncate back to size of 1 byte */
 
@@ -3897,7 +3897,6 @@ static bool test_rename_and_read_rsrc(struct torture_context *tctx,
 	const char *fname_renamed = "test_rename_openfile_renamed";
 	const char *data = "1234567890";
 	union smb_setfileinfo sinfo;
-	struct smb2_read r;
 
 	ret = enable_aapl(tctx, tree);
 	torture_assert_goto(tctx, ret == true, ret, done, "enable_aapl failed");
@@ -3949,28 +3948,12 @@ static bool test_rename_and_read_rsrc(struct torture_context *tctx,
 	sinfo.rename_information.in.new_name = fname_renamed;
 
 	status = smb2_setinfo_file(tree, &sinfo);
-	torture_assert_ntstatus_ok_goto(tctx, status, ret, done, "smb2_setinfo_file failed");
-
-	smb2_util_close(tree, h2);
-
-	ZERO_STRUCT(r);
-	r.in.file.handle = h1;
-	r.in.length      = 10;
-	r.in.offset      = 0;
-
-	torture_comment(tctx, "Read resource fork of renamed file\n");
-
-	status = smb2_read(tree, tree, &r);
-	torture_assert_ntstatus_ok_goto(tctx, status, ret, done, "smb2_read failed");
+	torture_assert_ntstatus_equal_goto(
+		tctx, status, NT_STATUS_ACCESS_DENIED, ret, done,
+		"smb2_setinfo_file failed");
 
 	smb2_util_close(tree, h1);
-
-	torture_assert_goto(tctx, r.out.data.length == 10, ret, done,
-			    talloc_asprintf(tctx, "smb2_read returned %jd bytes, expected 10\n",
-					    (intmax_t)r.out.data.length));
-
-	torture_assert_goto(tctx, memcmp(r.out.data.data, data, 10) == 0, ret, done,
-			    talloc_asprintf(tctx, "Bad data in stream\n"));
+	smb2_util_close(tree, h2);
 
 done:
 	smb2_util_unlink(tree, fname);
@@ -4595,6 +4578,202 @@ done:
 	return ret;
 }
 
+static bool test_setinfo_stream_eof(struct torture_context *tctx,
+				    struct smb2_tree *tree)
+{
+	bool ret = true;
+	NTSTATUS status;
+	struct smb2_create create;
+	union smb_setfileinfo sfinfo;
+	union smb_fileinfo finfo;
+	struct smb2_handle h1;
+	TALLOC_CTX *mem_ctx = talloc_new(tctx);
+	const char *fname = BASEDIR "\\file";
+	const char *sname = BASEDIR "\\file:foo";
+
+	torture_assert_goto(tctx, mem_ctx != NULL, ret, done,
+			    "talloc_new failed\n");
+
+	torture_comment(tctx, "Test setting EOF on a stream\n");
+
+	smb2_deltree(tree, BASEDIR);
+	status = torture_smb2_testdir(tree, BASEDIR, &h1);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testdir\n");
+	smb2_util_close(tree, h1);
+
+	status = torture_smb2_testfile(tree, fname, &h1);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+	smb2_util_close(tree, h1);
+
+	status = torture_smb2_testfile_access(tree, sname, &h1,
+					      SEC_FILE_WRITE_DATA);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+
+	status = smb2_util_write(tree, h1, "1234567890", 0, 10);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"smb2_util_write failed\n");
+	smb2_util_close(tree, h1);
+
+	/*
+	 * Test setting EOF to 21
+	 */
+
+	torture_comment(tctx, "Setting stream EOF to 21\n");
+
+	status = torture_smb2_testfile_access(tree, sname, &h1,
+					      SEC_FILE_WRITE_DATA);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+
+	ZERO_STRUCT(sfinfo);
+	sfinfo.generic.in.file.handle = h1;
+	sfinfo.generic.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sfinfo.position_information.in.position = 21;
+	status = smb2_setinfo_file(tree, &sfinfo);
+	torture_assert_ntstatus_ok_goto(tctx, status,
+					ret, done, "set EOF 21 failed\n");
+
+	smb2_util_close(tree, h1);
+
+	status = torture_smb2_testfile_access(tree, sname, &h1,
+					      SEC_FILE_WRITE_DATA);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+
+	ZERO_STRUCT(finfo);
+	finfo.generic.level = RAW_FILEINFO_STANDARD_INFORMATION;
+	finfo.generic.in.file.handle = h1;
+	status = smb2_getinfo_file(tree, mem_ctx, &finfo);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"smb2_getinfo_file failed");
+
+	smb2_util_close(tree, h1);
+
+	torture_assert_goto(tctx, finfo.standard_info.out.size == 21,
+			    ret, done, "size != 21\n");
+
+	/*
+	 * Test setting EOF to 0
+	 */
+
+	torture_comment(tctx, "Setting stream EOF to 0\n");
+
+	status = torture_smb2_testfile_access(tree, sname, &h1,
+					      SEC_FILE_WRITE_DATA);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+
+	ZERO_STRUCT(sfinfo);
+	sfinfo.generic.in.file.handle = h1;
+	sfinfo.generic.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sfinfo.position_information.in.position = 0;
+	status = smb2_setinfo_file(tree, &sfinfo);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"set eof 0 failed\n");
+
+	smb2_util_close(tree, h1);
+
+	status = torture_smb2_testfile_access(tree, sname, &h1,
+					      SEC_FILE_WRITE_DATA);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+
+	ZERO_STRUCT(finfo);
+	finfo.generic.level = RAW_FILEINFO_STANDARD_INFORMATION;
+	finfo.generic.in.file.handle = h1;
+	status = smb2_getinfo_file(tree, mem_ctx, &finfo);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"smb2_getinfo_file failed\n");
+
+	smb2_util_close(tree, h1);
+
+	torture_assert_goto(tctx, finfo.standard_info.out.size == 0,
+			    ret, done, "size != 0\n");
+
+	/*
+	 * Test setinfo end-of-file info to 1
+	 */
+
+	torture_comment(tctx, "Setting stream EOF to 1\n");
+
+	status = torture_smb2_testfile_access(tree, sname, &h1,
+					      SEC_FILE_WRITE_DATA);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+
+	ZERO_STRUCT(sfinfo);
+	sfinfo.generic.in.file.handle = h1;
+	sfinfo.generic.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sfinfo.position_information.in.position = 1;
+	status = smb2_setinfo_file(tree, &sfinfo);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"set EOF 1 failed\n");
+
+	smb2_util_close(tree, h1);
+
+	status = torture_smb2_testfile_access(tree, sname, &h1,
+					      SEC_FILE_WRITE_DATA);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+
+	ZERO_STRUCT(finfo);
+	finfo.generic.level = RAW_FILEINFO_STANDARD_INFORMATION;
+	finfo.generic.in.file.handle = h1;
+	status = smb2_getinfo_file(tree, mem_ctx, &finfo);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"smb2_getinfo_file failed\n");
+
+	smb2_util_close(tree, h1);
+
+	torture_assert_goto(tctx, finfo.standard_info.out.size == 1,
+			    ret, done, "size != 1\n");
+
+	/*
+	 * Test setting EOF to 0 with AAPL enabled, should delete stream
+	 */
+
+	torture_comment(tctx, "Enabling AAPL extensions\n");
+
+	ret = enable_aapl(tctx, tree);
+	torture_assert(tctx, ret == true, "enable_aapl failed\n");
+
+	torture_comment(tctx, "Setting stream EOF to 0\n");
+	status = torture_smb2_testfile_access(tree, sname, &h1,
+					      SEC_FILE_WRITE_DATA);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"torture_smb2_testfile failed\n");
+
+	ZERO_STRUCT(sfinfo);
+	sfinfo.generic.in.file.handle = h1;
+	sfinfo.generic.level = RAW_SFILEINFO_END_OF_FILE_INFORMATION;
+	sfinfo.position_information.in.position = 0;
+	status = smb2_setinfo_file(tree, &sfinfo);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+					"set eof 0 failed\n");
+
+	smb2_util_close(tree, h1);
+
+	ZERO_STRUCT(create);
+	create.in.desired_access = SEC_FILE_READ_ATTRIBUTE;
+	create.in.share_access = NTCREATEX_SHARE_ACCESS_MASK;
+	create.in.file_attributes = FILE_ATTRIBUTE_NORMAL;
+	create.in.create_disposition = NTCREATEX_DISP_OPEN;
+	create.in.fname = sname;
+
+	status = smb2_create(tree, tctx, &create);
+	torture_assert_ntstatus_equal_goto(
+		tctx, status, NT_STATUS_OBJECT_NAME_NOT_FOUND, ret, done,
+		"Unexpected status\n");
+
+done:
+	smb2_util_unlink(tree, fname);
+	smb2_util_rmdir(tree, BASEDIR);
+	return ret;
+}
+
 /*
  * Note: This test depends on "vfs objects = catia fruit streams_xattr".  For
  * some tests torture must be run on the host it tests and takes an additional
@@ -4627,6 +4806,7 @@ struct torture_suite *torture_vfs_fruit(TALLOC_CTX *ctx)
 	torture_suite_add_1smb2_test(suite, "create delete-on-close AFP_AfpResource", test_create_delete_on_close_resource);
 	torture_suite_add_1smb2_test(suite, "setinfo delete-on-close AFP_AfpResource", test_setinfo_delete_on_close_resource);
 	torture_suite_add_1smb2_test(suite, "setinfo eof AFP_AfpResource", test_setinfo_eof_resource);
+	torture_suite_add_1smb2_test(suite, "setinfo eof stream", test_setinfo_stream_eof);
 	torture_suite_add_1smb2_test(suite, "null afpinfo", test_null_afpinfo);
 	torture_suite_add_1smb2_test(suite, "delete", test_delete_file_with_rfork);
 	torture_suite_add_1smb2_test(suite, "read open rsrc after rename", test_rename_and_read_rsrc);
@@ -4706,6 +4886,93 @@ done:
 	return ret;
 }
 
+static bool test_fruit_locking_conflict(struct torture_context *tctx,
+					struct smb2_tree *tree)
+{
+	TALLOC_CTX *mem_ctx;
+	struct smb2_create create;
+	struct smb2_handle h;
+	struct smb2_lock lck;
+	struct smb2_lock_element el;
+	const char *fname = BASEDIR "\\locking_conflict.txt";
+	NTSTATUS status;
+	bool ret = false;
+
+	mem_ctx = talloc_new(tctx);
+	torture_assert_not_null(tctx, mem_ctx, "talloc_new failed");
+
+	/* clean slate ...*/
+	smb2_util_unlink(tree, fname);
+	smb2_deltree(tree, fname);
+	smb2_deltree(tree, BASEDIR);
+
+	status = torture_smb2_testdir(tree, BASEDIR, &h);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	smb2_util_close(tree, h);
+
+	create = (struct smb2_create) {
+		.in.desired_access = SEC_RIGHTS_FILE_READ,
+		.in.file_attributes = FILE_ATTRIBUTE_NORMAL,
+		.in.share_access =
+		NTCREATEX_SHARE_ACCESS_READ|
+		NTCREATEX_SHARE_ACCESS_WRITE,
+		.in.create_disposition = NTCREATEX_DISP_CREATE,
+		.in.impersonation_level = SMB2_IMPERSONATION_ANONYMOUS,
+		.in.fname = fname,
+	};
+
+	status = smb2_create(tree, mem_ctx, &create);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	h = create.out.file.handle;
+
+	el = (struct smb2_lock_element) {
+		.offset = 0xfffffffffffffffc,
+		.length = 1,
+		.flags = SMB2_LOCK_FLAG_EXCLUSIVE,
+	};
+	lck = (struct smb2_lock) {
+		.in.lock_count = 1,
+		.in.file.handle = h,
+		.in.locks = &el,
+	};
+
+	status = smb2_lock(tree, &lck);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	el = (struct smb2_lock_element) {
+		.offset = 0,
+		.length = 0x7fffffffffffffff,
+		.flags = SMB2_LOCK_FLAG_EXCLUSIVE,
+	};
+	status = smb2_lock(tree, &lck);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	create = (struct smb2_create) {
+		.in.desired_access =
+		SEC_RIGHTS_FILE_READ|SEC_RIGHTS_FILE_WRITE,
+		.in.file_attributes = FILE_ATTRIBUTE_NORMAL,
+		.in.share_access = NTCREATEX_SHARE_ACCESS_READ,
+		.in.create_disposition = NTCREATEX_DISP_OPEN,
+		.in.impersonation_level = SMB2_IMPERSONATION_ANONYMOUS,
+		.in.fname = fname,
+	};
+
+	status = smb2_create(tree, mem_ctx, &create);
+	CHECK_STATUS(status, NT_STATUS_FILE_LOCK_CONFLICT);
+
+	{
+		struct smb2_close cl = {
+			.level = RAW_CLOSE_SMB2,
+			.in.file.handle = h,
+		};
+		smb2_close(tree, &cl);
+	}
+
+	ret = true;
+done:
+	return ret;
+}
+
 struct torture_suite *torture_vfs_fruit_netatalk(TALLOC_CTX *ctx)
 {
 	struct torture_suite *suite = torture_suite_create(
@@ -4715,6 +4982,8 @@ struct torture_suite *torture_vfs_fruit_netatalk(TALLOC_CTX *ctx)
 
 	torture_suite_add_1smb2_test(suite, "read netatalk metadata", test_read_netatalk_metadata);
 	torture_suite_add_1smb2_test(suite, "stream names with locally created xattr", test_stream_names_local);
+	torture_suite_add_1smb2_test(
+		suite, "locking conflict", test_fruit_locking_conflict);
 
 	return suite;
 }

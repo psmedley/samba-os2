@@ -17,11 +17,11 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <assert.h>
-#include <talloc.h>
-
 #include "replace.h"
 #include "system/network.h"
+
+#include <assert.h>
+#include <talloc.h>
 
 #include "lib/util/debug.h"
 
@@ -253,6 +253,8 @@ int main(int argc, const char *argv[])
 {
 	int loglevel;
 	const char *debuglevelstr = getenv("CTDB_TEST_LOGLEVEL");
+
+	setup_logging("ctdb_takeover_tests", DEBUG_STDERR);
 
 	if (! debug_level_parse(debuglevelstr, &loglevel)) {
                 loglevel = DEBUG_DEBUG;

@@ -1,3 +1,14 @@
+samba (2:4.8.5+dfsg-1) unstable; urgency=medium
+
+  * New upstream release
+    - Bump ldb Build-depends to 2:1.4.0+really1.3.6
+    - Fixes FTBFS on kFreeBSD (Closes: #883972)
+    - d/rules: winbind_krb5_locator is now in the correct path
+    - winbind_krb5_locator manpage has moved from section 7 to 8
+  * Standards-Version: 4.2.1
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 30 Aug 2018 19:32:24 +0200
+
 samba (2:4.8.4+dfsg-2) unstable; urgency=high
 
   * Fix typo in previous release: s/usefull/useful/
