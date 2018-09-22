@@ -2,12 +2,12 @@
 .\"     Title: ctdb
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CTDB" "1" "08/24/2018" "ctdb" "CTDB \- clustered TDB database"
+.TH "CTDB" "1" "09/13/2018" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -109,12 +109,6 @@ Print useage information to the screen\&.
 \-d \-\-debug=\fIDEBUGLEVEL\fR
 .RS 4
 Change the debug level for the command\&. Default is NOTICE\&.
-.RE
-.PP
-\-\-socket=\fIFILENAME\fR
-.RS 4
-Specify that FILENAME is the name of the Unix domain socket to use when connecting to the local CTDB daemon\&. The default is
-/usr/local/var/run/ctdb/ctdbd\&.socket\&.
 .RE
 .SH "ADMINISTRATIVE COMMANDS"
 .PP
@@ -553,18 +547,19 @@ Interface[2]: Name:eth5 Link:up References:2 (active)
 .PP
 This command is used to control event daemon and to inspect status of various events\&.
 .PP
-run \fIEVENT\fR \fITIMEOUT\fR [\fIARGUMENTS\fR]
+The commands below require a component to be specified\&. In the current version the only valid component is
+legacy\&.
+.PP
+run \fITIMEOUT\fR \fICOMPONENT\fR \fIEVENT\fR [\fIARGUMENTS\fR]
 .RS 4
-This command can be used to manually run specified EVENT with optional ARGUMENTS\&. The event will be allowed to run a maximum of TIMEOUT seconds\&. If TIMEOUT is 0, then there is no time limit for running the event\&.
+This command can be used to manually run specified EVENT in COMPONENT with optional ARGUMENTS\&. The event will be allowed to run a maximum of TIMEOUT seconds\&. If TIMEOUT is 0, then there is no time limit for running the event\&.
 .RE
 .PP
-status [\fIEVENT\fR] [lastrun|lastpass|lastfail]
+status \fICOMPONENT\fR \fIEVENT\fR
 .RS 4
-This command displays the last execution status of the specified EVENT\&. If no event is specified, then the status of last executed monitor event will be displayed\&.
+This command displays the last execution status of the specified EVENT in COMPONENT\&.
 .sp
-To see the last successful execution of the event, lastpass can be specified\&. Similarly lastfail can be specified to see the last unsuccessful execution of the event\&. The optional lastrun can be specified to query the last execution of the event\&.
-.sp
-The command will terminate with the exit status corresponding to the overall status of event that is displayed\&. If lastpass is specified, then the command will always terminate with 0\&. If lastfail is specified then the command will always terminate with non\-zero exit status\&. If lastrun is specified, then the command will terminate with 0 or not depending on if the last execution of the event was successful or not\&.
+The command will terminate with the exit status corresponding to the overall status of event that is displayed\&.
 .sp
 The output is the list of event scripts executed\&. Each line shows the name, status, duration and start time for each script\&.
 .sp
@@ -578,7 +573,6 @@ Example output:
 01\&.reclock           OK         0\&.013 Sat Dec 17 19:39:11 2016
 05\&.system            OK         0\&.029 Sat Dec 17 19:39:11 2016
 06\&.nfs               OK         0\&.014 Sat Dec 17 19:39:11 2016
-10\&.external          DISABLED  
 10\&.interface         OK         0\&.037 Sat Dec 17 19:39:11 2016
 11\&.natgw             OK         0\&.011 Sat Dec 17 19:39:11 2016
 11\&.routing           OK         0\&.007 Sat Dec 17 19:39:11 2016
@@ -592,7 +586,6 @@ Example output:
 60\&.nfs               OK         0\&.376 Sat Dec 17 19:39:12 2016
 70\&.iscsi             OK         0\&.009 Sat Dec 17 19:39:12 2016
 91\&.lvs               OK         0\&.007 Sat Dec 17 19:39:12 2016
-99\&.timeout           OK         0\&.007 Sat Dec 17 19:39:12 2016
 	    
 .fi
 .if n \{\
@@ -600,9 +593,11 @@ Example output:
 .\}
 .RE
 .PP
-script list
+script list \fICOMPONENT\fR
 .RS 4
-List the available event scripts\&.
+List the available event scripts in COMPONENT\&. Enabled scripts are flagged with a \*(Aq*\*(Aq\&.
+.sp
+Generally, event scripts are provided by CTDB\&. However, local or 3rd party event scripts may also be available\&. These are shown in a separate section after those provided by CTDB\&.
 .sp
 Example output:
 .sp
@@ -610,25 +605,25 @@ Example output:
 .RS 4
 .\}
 .nf
-00\&.ctdb             
-01\&.reclock          
-05\&.system           
-06\&.nfs              
-10\&.external          DISABLED
-10\&.interface        
-11\&.natgw            
-11\&.routing          
-13\&.per_ip_routing   
-20\&.multipathd       
-31\&.clamd            
-40\&.vsftpd           
-41\&.httpd            
-49\&.winbind          
-50\&.samba            
-60\&.nfs              
-70\&.iscsi            
-91\&.lvs              
-99\&.timeout          
+* 00\&.ctdb             
+* 01\&.reclock          
+* 05\&.system           
+* 06\&.nfs              
+* 10\&.interface        
+  11\&.natgw            
+  11\&.routing          
+  13\&.per_ip_routing   
+  20\&.multipathd       
+  31\&.clamd            
+  40\&.vsftpd           
+  41\&.httpd            
+* 49\&.winbind          
+* 50\&.samba            
+* 60\&.nfs              
+  70\&.iscsi            
+  91\&.lvs              
+
+* 02\&.local            
 	    
 .fi
 .if n \{\
@@ -636,14 +631,14 @@ Example output:
 .\}
 .RE
 .PP
-script enable \fISCRIPT\fR
+script enable \fICOMPONENT\fR \fISCRIPT\fR
 .RS 4
-Enable the specified event SCRIPT\&. Only enabled scripts will be executed when running any event\&.
+Enable the specified event SCRIPT in COMPONENT\&. Only enabled scripts will be executed when running any event\&.
 .RE
 .PP
-script disable \fISCRIPT\fR
+script disable \fICOMPONENT\fR \fISCRIPT\fR
 .RS 4
-Disable the specified event SCRIPT\&. This will prevent the script from executing when running any event\&.
+Disable the specified event SCRIPT in COMPONENT\&. This will prevent the script from executing when running any event\&.
 .RE
 .SS "scriptstatus"
 .PP
@@ -670,7 +665,6 @@ This command is deprecated\&. It\*(Aqs provided for backward compatibility\&. In
 01\&.reclock           OK         0\&.010 Sat Dec 17 19:40:46 2016
 05\&.system            OK         0\&.030 Sat Dec 17 19:40:46 2016
 06\&.nfs               OK         0\&.014 Sat Dec 17 19:40:46 2016
-10\&.external          DISABLED  
 10\&.interface         OK         0\&.041 Sat Dec 17 19:40:46 2016
 11\&.natgw             OK         0\&.008 Sat Dec 17 19:40:46 2016
 11\&.routing           OK         0\&.007 Sat Dec 17 19:40:46 2016
@@ -725,7 +719,6 @@ DatabaseMaxDead         = 5
 RerecoveryTimeout       = 10
 EnableBans              = 1
 NoIPFailback            = 0
-DisableIPFailover       = 0
 VerboseMemoryNames      = 0
 RecdPingTimeout         = 60
 RecdFailCount           = 10
@@ -753,8 +746,6 @@ DBRecordCountWarn       = 100000
 DBRecordSizeWarn        = 10000000
 DBSizeWarn              = 100000000
 PullDBPreallocation     = 10485760
-NoIPHostOnAllDisabled   = 0
-TDBMutexEnabled         = 1
 LockProcessesPerDB      = 200
 RecBufferSizeLimit      = 1000000
 QueueBufferSize         = 1024

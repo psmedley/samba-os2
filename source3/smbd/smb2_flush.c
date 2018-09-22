@@ -58,7 +58,7 @@ NTSTATUS smbd_smb2_request_process_flush(struct smbd_smb2_request *req)
 		return smbd_smb2_request_error(req, NT_STATUS_FILE_CLOSED);
 	}
 
-	subreq = smbd_smb2_flush_send(req, req->sconn->ev_ctx,
+	subreq = smbd_smb2_flush_send(req, req->ev_ctx,
 				      req, in_fsp);
 	if (subreq == NULL) {
 		return smbd_smb2_request_error(req, NT_STATUS_NO_MEMORY);
@@ -206,7 +206,6 @@ static struct tevent_req *smbd_smb2_flush_send(TALLOC_CTX *mem_ctx,
 		return tevent_req_post(req, ev);
 	}
 
-	increment_outstanding_aio_calls();
 	return req;
 
 }
@@ -217,8 +216,6 @@ static void smbd_smb2_flush_done(struct tevent_req *subreq)
 		subreq, struct tevent_req);
 	int ret;
 	struct vfs_aio_state vfs_aio_state;
-
-	decrement_outstanding_aio_calls();
 
 	ret = SMB_VFS_FSYNC_RECV(subreq, &vfs_aio_state);
 	TALLOC_FREE(subreq);

@@ -33,7 +33,7 @@ import ldb
 from ldb import SCOPE_BASE
 
 from samba import WERRORError
-from samba.join import dc_join
+from samba.join import DCJoinContext
 from samba.dcerpc import drsuapi, misc, drsblobs, security
 from samba.drs_utils import drs_DsBind, drs_Replicate
 from samba.ndr import ndr_unpack, ndr_pack
@@ -92,24 +92,21 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
         super(DrsRodcTestCase, self).setUp()
         self.base_dn = self.ldb_dc1.get_default_basedn()
 
-        rand = random.randint(1, 10000000)
-
-        self.ou = "OU=test_drs_rodc%s,%s" % (rand, self.base_dn)
-        self.ldb_dc1.add({
-            "dn": self.ou,
-            "objectclass": "organizationalUnit"
-        })
+        self.ou = samba.tests.create_test_ou(self.ldb_dc1, "test_drs_rodc")
         self.allowed_group = "CN=Allowed RODC Password Replication Group,CN=Users,%s" % self.base_dn
 
         self.site = self.ldb_dc1.server_site_name()
-        self.rodc_name = "TESTRODCDRS%s" % rand
+        self.rodc_name = "TESTRODCDRS%s" % random.randint(1, 10000000)
         self.rodc_pass = "password12#"
         self.computer_dn = "CN=%s,OU=Domain Controllers,%s" % (self.rodc_name, self.base_dn)
 
 
-        self.rodc_ctx = dc_join(server=self.ldb_dc1.host_dns_name(), creds=self.get_credentials(), lp=self.get_loadparm(),
-                                site=self.site, netbios_name=self.rodc_name,
-                                targetdir=None, domain=None, machinepass=self.rodc_pass)
+        self.rodc_ctx = DCJoinContext(server=self.ldb_dc1.host_dns_name(),
+                                      creds=self.get_credentials(),
+                                      lp=self.get_loadparm(), site=self.site,
+                                      netbios_name=self.rodc_name,
+                                      targetdir=None, domain=None,
+                                      machinepass=self.rodc_pass)
         self._create_rodc(self.rodc_ctx)
         self.rodc_ctx.create_tmp_samdb()
         self.tmp_samdb = self.rodc_ctx.tmp_samdb
@@ -199,14 +196,16 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
         try:
             (level, ctr) = self.rodc_drs.DsGetNCChanges(self.rodc_drs_handle, 10, req10)
             self.fail("Successfully replicated secrets to an RODC that shouldn't have been replicated.")
-        except WERRORError as (enum, estr):
+        except WERRORError as e:
+            (enum, estr) = e.args
             self.assertEquals(enum, 8630) # ERROR_DS_DRA_SECRETS_DENIED
 
         # send the same request again and we should get the same response
         try:
             (level, ctr) = self.rodc_drs.DsGetNCChanges(self.rodc_drs_handle, 10, req10)
             self.fail("Successfully replicated secrets to an RODC that shouldn't have been replicated.")
-        except WERRORError as (enum, estr):
+        except WERRORError as e1:
+            (enum, estr) = e1.args
             self.assertEquals(enum, 8630) # ERROR_DS_DRA_SECRETS_DENIED
 
         # Retry with Administrator credentials, ignores password replication groups
@@ -245,7 +244,8 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
             (level, ctr) = self.rodc_drs.DsGetNCChanges(self.rodc_drs_handle, 8, req8)
 
             self.fail("Successfully replicated secrets to an RODC that shouldn't have been replicated.")
-        except RuntimeError as (enum, estr):
+        except RuntimeError as e2:
+            (enum, estr) = e2.args
             pass
 
     def test_msDSRevealedUsers_admin(self):
@@ -462,9 +462,12 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
         """
         # Create a new identical RODC with just the first letter missing
         other_rodc_name = self.rodc_name[1:]
-        other_rodc_ctx = dc_join(server=self.ldb_dc1.host_dns_name(), creds=self.get_credentials(), lp=self.get_loadparm(),
-                                 site=self.site, netbios_name=other_rodc_name,
-                                 targetdir=None, domain=None, machinepass=self.rodc_pass)
+        other_rodc_ctx = DCJoinContext(server=self.ldb_dc1.host_dns_name(),
+                                       creds=self.get_credentials(),
+                                       lp=self.get_loadparm(), site=self.site,
+                                       netbios_name=other_rodc_name,
+                                       targetdir=None, domain=None,
+                                       machinepass=self.rodc_pass)
         self._create_rodc(other_rodc_ctx)
 
         other_rodc_creds = Credentials()
@@ -506,7 +509,8 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
         try:
             (level, ctr) = self.rodc_drs.DsGetNCChanges(self.rodc_drs_handle, 10, req10)
             self.fail("Successfully replicated secrets to an RODC that shouldn't have been replicated.")
-        except WERRORError as (enum, estr):
+        except WERRORError as e3:
+            (enum, estr) = e3.args
             self.assertEquals(enum, 8630) # ERROR_DS_DRA_SECRETS_DENIED
 
         req10 = self._getnc_req10(dest_dsa=str(self.rodc_ctx.ntds_guid),
@@ -520,7 +524,8 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
         try:
             (level, ctr) = other_rodc_drs.DsGetNCChanges(other_rodc_drs_handle, 10, req10)
             self.fail("Successfully replicated secrets to an RODC that shouldn't have been replicated.")
-        except WERRORError as (enum, estr):
+        except WERRORError as e4:
+            (enum, estr) = e4.args
             self.assertEquals(enum, 8630) # ERROR_DS_DRA_SECRETS_DENIED
 
     def test_msDSRevealedUsers_local_deny_allow(self):
@@ -589,7 +594,8 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
         try:
             (level, ctr) = self.rodc_drs.DsGetNCChanges(self.rodc_drs_handle, 10, req10)
             self.fail("Successfully replicated secrets to an RODC that shouldn't have been replicated.")
-        except WERRORError as (enum, estr):
+        except WERRORError as e5:
+            (enum, estr) = e5.args
             self.assertEquals(enum, 8630) # ERROR_DS_DRA_SECRETS_DENIED
 
         m = ldb.Message()
@@ -605,7 +611,8 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
         try:
             (level, ctr) = self.rodc_drs.DsGetNCChanges(self.rodc_drs_handle, 10, req10)
             self.fail("Successfully replicated secrets to an RODC that shouldn't have been replicated.")
-        except WERRORError as (enum, estr):
+        except WERRORError as e6:
+            (enum, estr) = e6.args
             self.assertEquals(enum, 8630) # ERROR_DS_DRA_SECRETS_DENIED
 
     def _assert_in_revealed_users(self, user_dn, attrlist):
@@ -616,7 +623,7 @@ class DrsRodcTestCase(drs_base.DrsBaseTestCase):
         packed_attrs = []
         unpacked_attrs = []
         for attribute in revealed_users:
-            dsdb_dn = dsdb_Dn(self.ldb_dc1, attribute)
+            dsdb_dn = dsdb_Dn(self.ldb_dc1, attribute.decode('utf8'))
             metadata = ndr_unpack(drsblobs.replPropertyMetaData1, dsdb_dn.get_bytes())
             if user_dn in attribute:
                 unpacked_attrs.append(metadata)

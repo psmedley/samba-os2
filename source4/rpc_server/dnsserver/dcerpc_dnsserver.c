@@ -119,8 +119,12 @@ static struct dnsserver_state *dnsserver_connect(struct dcesrv_call_state *dce_c
 	dsstate->lp_ctx = dce_call->conn->dce_ctx->lp_ctx;
 
 	/* FIXME: create correct auth_session_info for connecting user */
-	dsstate->samdb = samdb_connect(dsstate, dce_call->event_ctx, dsstate->lp_ctx,
-				dce_call->conn->auth_state.session_info, 0);
+	dsstate->samdb = samdb_connect(dsstate,
+				       dce_call->event_ctx,
+				       dsstate->lp_ctx,
+				       dce_call->conn->auth_state.session_info,
+				       dce_call->conn->remote_address,
+				       0);
 	if (dsstate->samdb == NULL) {
 		DEBUG(0,("dnsserver: Failed to open samdb"));
 		goto failed;
@@ -1223,9 +1227,9 @@ static WERROR dnsserver_complex_operate_server(struct dnsserver_state *dsstate,
 {
 	int valid_operation = 0;
 	struct dnsserver_zone *z, **zlist;
-	int zcount;
+	size_t zcount;
 	bool found1, found2, found3, found4;
-	int i;
+	size_t i;
 
 	if (strcasecmp(operation, "QueryDwordProperty") == 0) {
 		if (typeid_in == DNSSRV_TYPEID_LPSTR) {
@@ -1508,15 +1512,14 @@ static WERROR dnsserver_operate_zone(struct dnsserver_state *dsstate,
 	bool valid_operation = false;
 
 	if (strcasecmp(operation, "ResetDwordProperty") == 0) {
+
 		if (typeid != DNSSRV_TYPEID_NAME_AND_PARAM) {
 			return WERR_DNS_ERROR_INVALID_PROPERTY;
 		}
 
-		/* Ignore property resets */
-		if (strcasecmp(r->NameAndParam->pszNodeName, "AllowUpdate") == 0) {
-			return WERR_OK;
-		}
-		valid_operation = true;
+		return dnsserver_db_do_reset_dword(dsstate->samdb, z,
+					           r->NameAndParam);
+
 	} else if (strcasecmp(operation, "ZoneTypeReset") == 0) {
 		valid_operation = true;
 	} else if (strcasecmp(operation, "PauseZone") == 0) {

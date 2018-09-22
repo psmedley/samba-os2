@@ -4,10 +4,41 @@
 #include "tdb.h"
 #include "ldb_module.h"
 
+struct ltdb_private;
+typedef int (*ldb_kv_traverse_fn)(struct ltdb_private *ltdb,
+				  struct ldb_val key, struct ldb_val data,
+				  void *ctx);
+
+struct kv_db_ops {
+	int (*store)(struct ltdb_private *ltdb, struct ldb_val key, struct ldb_val data, int flags);
+	int (*delete)(struct ltdb_private *ltdb, struct ldb_val key);
+	int (*iterate)(struct ltdb_private *ltdb, ldb_kv_traverse_fn fn, void *ctx);
+	int (*update_in_iterate)(struct ltdb_private *ltdb, struct ldb_val key,
+				 struct ldb_val key2, struct ldb_val data, void *ctx);
+	int (*fetch_and_parse)(struct ltdb_private *ltdb, struct ldb_val key,
+                               int (*parser)(struct ldb_val key, struct ldb_val data,
+                                             void *private_data),
+                               void *ctx);
+	int (*lock_read)(struct ldb_module *);
+	int (*unlock_read)(struct ldb_module *);
+	int (*begin_write)(struct ltdb_private *);
+	int (*prepare_write)(struct ltdb_private *);
+	int (*abort_write)(struct ltdb_private *);
+	int (*finish_write)(struct ltdb_private *);
+	int (*error)(struct ltdb_private *ltdb);
+	const char * (*errorstr)(struct ltdb_private *ltdb);
+	const char * (*name)(struct ltdb_private *ltdb);
+	bool (*has_changed)(struct ltdb_private *ltdb);
+	bool (*transaction_active)(struct ltdb_private *ltdb);
+};
+
 /* this private structure is used by the ltdb backend in the
    ldb_context */
 struct ltdb_private {
+	const struct kv_db_ops *kv_ops;
+	struct ldb_module *module;
 	TDB_CONTEXT *tdb;
+	struct lmdb_private *lmdb_private;
 	unsigned int connect_flags;
 	
 	unsigned long long sequence_number;
@@ -24,7 +55,6 @@ struct ltdb_private {
 		const char *GUID_index_dn_component;
 	} *cache;
 
-	int in_transaction;
 
 	bool check_base;
 	bool disallow_dn_filter;
@@ -42,10 +72,23 @@ struct ltdb_private {
 	const struct ldb_schema_syntax *GUID_index_syntax;
 
 	/*
+	 * Maximum index key length.  If non zero keys longer than this length
+	 * will be truncated for non unique indexes. Keys for unique indexes
+	 * greater than this length will be rejected.
+	 */
+	unsigned max_key_length;
+
+	/*
 	 * To allow testing that ensures the DB does not fall back
 	 * to a full scan
 	 */
 	bool disable_full_db_scan;
+
+	/*
+	 * The PID that opened this database so we don't work in a
+	 * fork()ed child.
+	 */
+	pid_t pid;
 };
 
 struct ltdb_context {
@@ -66,6 +109,13 @@ struct ltdb_context {
 	int error;
 };
 
+struct ltdb_reindex_context {
+	struct ldb_module *module;
+	int error;
+	uint32_t count;
+};
+
+
 /* special record types */
 #define LTDB_INDEX      "@INDEX"
 #define LTDB_INDEXLIST  "@INDEXLIST"
@@ -76,6 +126,15 @@ struct ltdb_context {
 #define LTDB_IDXDN     "@IDXDN"
 #define LTDB_IDXGUID    "@IDXGUID"
 #define LTDB_IDX_DN_GUID "@IDX_DN_GUID"
+
+/*
+ * This will be used to indicate when a new, yet to be developed
+ * sub-database version of the indicies are in use, to ensure we do
+ * not load future databases unintentionally.
+ */
+
+#define LTDB_IDX_LMDB_SUBDB "@IDX_LMDB_SUBDB"
+
 #define LTDB_BASEINFO   "@BASEINFO"
 #define LTDB_OPTIONS    "@OPTIONS"
 #define LTDB_ATTRIBUTES "@ATTRIBUTES"
@@ -151,8 +210,6 @@ int ltdb_filter_attrs(TALLOC_CTX *mem_ctx,
 int ltdb_search(struct ltdb_context *ctx);
 
 /* The following definitions come from lib/ldb/ldb_tdb/ldb_tdb.c  */
-int ltdb_lock_read(struct ldb_module *module);
-int ltdb_unlock_read(struct ldb_module *module);
 /* 
  * Determine if this key could hold a record.  We allow the new GUID
  * index, the old DN index and a possible future ID=
@@ -171,6 +228,7 @@ int ltdb_idx_to_key(struct ldb_module *module,
 		    TALLOC_CTX *mem_ctx,
 		    const struct ldb_val *idx_val,
 		    TDB_DATA *key);
+TDB_DATA ltdb_key(struct ldb_module *module, struct ldb_dn *dn);
 int ltdb_store(struct ldb_module *module, const struct ldb_message *msg, int flgs);
 int ltdb_modify_internal(struct ldb_module *module, const struct ldb_message *msg, struct ldb_request *req);
 int ltdb_delete_noindex(struct ldb_module *module,
@@ -181,3 +239,10 @@ struct tdb_context *ltdb_wrap_open(TALLOC_CTX *mem_ctx,
 				   const char *path, int hash_size, int tdb_flags,
 				   int open_flags, mode_t mode,
 				   struct ldb_context *ldb);
+int init_store(struct ltdb_private *ltdb, const char *name,
+	       struct ldb_context *ldb, const char *options[],
+	       struct ldb_module **_module);
+
+int ltdb_connect(struct ldb_context *ldb, const char *url,
+		 unsigned int flags, const char *options[],
+		 struct ldb_module **_module);

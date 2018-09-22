@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 APPNAME = 'tevent'
-VERSION = '0.9.36'
+VERSION = '0.9.37'
 
 blddir = 'bin'
 
@@ -77,7 +77,7 @@ def build(bld):
     bld.RECURSE('lib/talloc')
 
     SRC = '''tevent.c tevent_debug.c tevent_fd.c tevent_immediate.c
-             tevent_queue.c tevent_req.c
+             tevent_queue.c tevent_req.c tevent_wrapper.c
              tevent_poll.c tevent_threads.c
              tevent_signal.c tevent_standard.c tevent_timed.c tevent_util.c tevent_wakeup.c'''
 

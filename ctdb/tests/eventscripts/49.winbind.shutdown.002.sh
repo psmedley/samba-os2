@@ -4,8 +4,7 @@
 
 define_test "managed"
 
-setup_winbind "up"
-export CTDB_MANAGES_WINBIND="yes"
+setup "up"
 
 ok <<EOF
 Stopping winbind: OK

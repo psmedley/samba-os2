@@ -41,6 +41,8 @@
 #include "common/common.h"
 #include "common/logging.h"
 
+#include "server/ctdb_config.h"
+
 #define PERSISTENT_HEALTH_TDB "persistent_health.tdb"
 
 /**
@@ -846,8 +848,9 @@ static int ctdb_local_attach(struct ctdb_context *ctdb, const char *db_name,
 						ctdb->db_directory,
 					   db_name, ctdb->pnn);
 
-	tdb_flags = ctdb_db_tdb_flags(db_flags, ctdb->valgrinding,
-				      ctdb->tunable.mutex_enabled);
+	tdb_flags = ctdb_db_tdb_flags(db_flags,
+				      ctdb->valgrinding,
+				      ctdb_config.tdb_mutexes);
 
 again:
 	ctdb_db->ltdb = tdb_wrap_open(ctdb_db, ctdb_db->db_path,
@@ -1524,7 +1527,7 @@ int32_t ctdb_ltdb_update_seqnum(struct ctdb_context *ctdb, uint32_t db_id, uint3
 }
 
 /*
-  timer to check for seqnum changes in a ltdb and propogate them
+  timer to check for seqnum changes in a ltdb and propagate them
  */
 static void ctdb_ltdb_seqnum_check(struct tevent_context *ev,
 				   struct tevent_timer *te,
@@ -1534,7 +1537,7 @@ static void ctdb_ltdb_seqnum_check(struct tevent_context *ev,
 	struct ctdb_context *ctdb = ctdb_db->ctdb;
 	uint32_t new_seqnum = tdb_get_seqnum(ctdb_db->ltdb->tdb);
 	if (new_seqnum != ctdb_db->seqnum) {
-		/* something has changed - propogate it */
+		/* something has changed - propagate it */
 		TDB_DATA data;
 		data.dptr = (uint8_t *)&ctdb_db->db_id;
 		data.dsize = sizeof(uint32_t);

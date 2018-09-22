@@ -1464,6 +1464,7 @@ struct ctdb_call_state *ctdb_daemon_call_send_remote(struct ctdb_db_context *ctd
 	uint32_t len;
 	struct ctdb_call_state *state;
 	struct ctdb_context *ctdb = ctdb_db->ctdb;
+	struct ctdb_req_call_old *c;
 
 	if (ctdb->methods == NULL) {
 		DEBUG(DEBUG_INFO,(__location__ " Failed send packet. Transport is down\n"));
@@ -1477,35 +1478,43 @@ struct ctdb_call_state *ctdb_daemon_call_send_remote(struct ctdb_db_context *ctd
 
 	state->reqid = reqid_new(ctdb->idr, state);
 	state->ctdb_db = ctdb_db;
-	talloc_set_destructor(state, ctdb_call_destructor);
-
-	len = offsetof(struct ctdb_req_call_old, data) + call->key.dsize + call->call_data.dsize;
-	state->c = ctdb_transport_allocate(ctdb, state, CTDB_REQ_CALL, len, 
-					   struct ctdb_req_call_old);
-	CTDB_NO_MEMORY_NULL(ctdb, state->c);
-	state->c->hdr.destnode  = header->dmaster;
-
-	/* this limits us to 16k outstanding messages - not unreasonable */
-	state->c->hdr.reqid     = state->reqid;
-	state->c->hdr.generation = ctdb_db->generation;
-	state->c->flags         = call->flags;
-	state->c->db_id         = ctdb_db->db_id;
-	state->c->callid        = call->call_id;
-	state->c->hopcount      = 0;
-	state->c->keylen        = call->key.dsize;
-	state->c->calldatalen   = call->call_data.dsize;
-	memcpy(&state->c->data[0], call->key.dptr, call->key.dsize);
-	memcpy(&state->c->data[call->key.dsize], 
-	       call->call_data.dptr, call->call_data.dsize);
-	*(state->call)              = *call;
-	state->call->call_data.dptr = &state->c->data[call->key.dsize];
-	state->call->key.dptr       = &state->c->data[0];
-
 	state->state  = CTDB_CALL_WAIT;
 	state->generation = ctdb_db->generation;
 
+	len = offsetof(struct ctdb_req_call_old, data) + call->key.dsize +
+		       call->call_data.dsize;
+
+	c = ctdb_transport_allocate(ctdb,
+				    state,
+				    CTDB_REQ_CALL,
+				    len,
+				    struct ctdb_req_call_old);
+
+	CTDB_NO_MEMORY_NULL(ctdb, c);
+	state->c = c;
+
+	c->hdr.destnode  = header->dmaster;
+	c->hdr.reqid     = state->reqid;
+	c->hdr.generation = ctdb_db->generation;
+	c->flags         = call->flags;
+	c->db_id         = ctdb_db->db_id;
+	c->callid        = call->call_id;
+	c->hopcount      = 0;
+	c->keylen        = call->key.dsize;
+	c->calldatalen   = call->call_data.dsize;
+
+	memcpy(&c->data[0], call->key.dptr, call->key.dsize);
+	memcpy(&c->data[call->key.dsize],
+	       call->call_data.dptr,
+	       call->call_data.dsize);
+
+	*(state->call) = *call;
+	state->call->call_data.dptr = &c->data[call->key.dsize];
+	state->call->key.dptr       = &c->data[0];
+
 	DLIST_ADD(ctdb_db->pending_calls, state);
 
+	talloc_set_destructor(state, ctdb_call_destructor);
 	ctdb_queue_packet(ctdb, &state->c->hdr);
 
 	return state;
@@ -1549,7 +1558,7 @@ struct revokechild_deferred_call {
 	struct ctdb_req_header *hdr;
 	deferred_requeue_fn fn;
 	void *ctx;
-	struct revokechild_handle *rc;
+	struct revokechild_handle *rev_hdl;
 };
 
 struct revokechild_handle {
@@ -1583,36 +1592,36 @@ static void deferred_call_requeue(struct tevent_context *ev,
 
 static int deferred_call_destructor(struct revokechild_deferred_call *dcall)
 {
-	struct revokechild_handle *rc = dcall->rc;
+	struct revokechild_handle *rev_hdl = dcall->rev_hdl;
 
-	DLIST_REMOVE(rc->deferred_call_list, dcall);
+	DLIST_REMOVE(rev_hdl->deferred_call_list, dcall);
 	return 0;
 }
 
-static int revokechild_destructor(struct revokechild_handle *rc)
+static int revokechild_destructor(struct revokechild_handle *rev_hdl)
 {
 	struct revokechild_deferred_call *now_list = NULL;
 	struct revokechild_deferred_call *delay_list = NULL;
 
-	if (rc->fde != NULL) {
-		talloc_free(rc->fde);
+	if (rev_hdl->fde != NULL) {
+		talloc_free(rev_hdl->fde);
 	}
 
-	if (rc->fd[0] != -1) {
-		close(rc->fd[0]);
+	if (rev_hdl->fd[0] != -1) {
+		close(rev_hdl->fd[0]);
 	}
-	if (rc->fd[1] != -1) {
-		close(rc->fd[1]);
+	if (rev_hdl->fd[1] != -1) {
+		close(rev_hdl->fd[1]);
 	}
-	ctdb_kill(rc->ctdb, rc->child, SIGKILL);
+	ctdb_kill(rev_hdl->ctdb, rev_hdl->child, SIGKILL);
 
-	DLIST_REMOVE(rc->ctdb_db->revokechild_active, rc);
+	DLIST_REMOVE(rev_hdl->ctdb_db->revokechild_active, rev_hdl);
 
-	while (rc->deferred_call_list != NULL) {
+	while (rev_hdl->deferred_call_list != NULL) {
 		struct revokechild_deferred_call *dcall;
 
-		dcall = rc->deferred_call_list;
-		DLIST_REMOVE(rc->deferred_call_list, dcall);
+		dcall = rev_hdl->deferred_call_list;
+		DLIST_REMOVE(rev_hdl->deferred_call_list, dcall);
 
 		/* If revoke is successful, then first process all the calls
 		 * that need write access, and delay readonly requests by 1
@@ -1623,7 +1632,7 @@ static int revokechild_destructor(struct revokechild_handle *rc)
 		 * be recovered.
 		 */
 
-		if (rc->status == 0) {
+		if (rev_hdl->status == 0) {
 			struct ctdb_req_call_old *c;
 
 			c = (struct ctdb_req_call_old *)dcall->hdr;
@@ -1638,15 +1647,19 @@ static int revokechild_destructor(struct revokechild_handle *rc)
 	}
 
 	if (now_list != NULL) {
-		tevent_add_timer(rc->ctdb->ev, rc->ctdb_db,
+		tevent_add_timer(rev_hdl->ctdb->ev,
+				 rev_hdl->ctdb_db,
 				 tevent_timeval_current_ofs(0, 0),
-				 deferred_call_requeue, now_list);
+				 deferred_call_requeue,
+				 now_list);
 	}
 
 	if (delay_list != NULL) {
-		tevent_add_timer(rc->ctdb->ev, rc->ctdb_db,
+		tevent_add_timer(rev_hdl->ctdb->ev,
+				 rev_hdl->ctdb_db,
 				 tevent_timeval_current_ofs(1, 0),
-				 deferred_call_requeue, delay_list);
+				 deferred_call_requeue,
+				 delay_list);
 	}
 
 	return 0;
@@ -1656,26 +1669,26 @@ static void revokechild_handler(struct tevent_context *ev,
 				struct tevent_fd *fde,
 				uint16_t flags, void *private_data)
 {
-	struct revokechild_handle *rc = talloc_get_type(private_data, 
-						     struct revokechild_handle);
+	struct revokechild_handle *rev_hdl =
+		talloc_get_type(private_data, struct revokechild_handle);
 	int ret;
 	char c;
 
-	ret = sys_read(rc->fd[0], &c, 1);
+	ret = sys_read(rev_hdl->fd[0], &c, 1);
 	if (ret != 1) {
 		DEBUG(DEBUG_ERR,("Failed to read status from revokechild. errno:%d\n", errno));
-		rc->status = -1;
-		talloc_free(rc);
+		rev_hdl->status = -1;
+		talloc_free(rev_hdl);
 		return;
 	}
 	if (c != 0) {
 		DEBUG(DEBUG_ERR,("revokechild returned failure. status:%d\n", c));
-		rc->status = -1;
-		talloc_free(rc);
+		rev_hdl->status = -1;
+		talloc_free(rev_hdl);
 		return;
 	}
 
-	talloc_free(rc);
+	talloc_free(rev_hdl);
 }
 
 struct ctdb_revoke_state {
@@ -1811,19 +1824,27 @@ static int ctdb_revoke_all_delegations(struct ctdb_context *ctdb, struct ctdb_db
 }
 
 
-int ctdb_start_revoke_ro_record(struct ctdb_context *ctdb, struct ctdb_db_context *ctdb_db, TDB_DATA key, struct ctdb_ltdb_header *header, TDB_DATA data)
+int ctdb_start_revoke_ro_record(struct ctdb_context *ctdb,
+				struct ctdb_db_context *ctdb_db,
+				TDB_DATA key,
+				struct ctdb_ltdb_header *header,
+				TDB_DATA data)
 {
 	TDB_DATA tdata;
-	struct revokechild_handle *rc;
+	struct revokechild_handle *rev_hdl;
 	pid_t parent = getpid();
 	int ret;
 
-	header->flags &= ~(CTDB_REC_RO_REVOKING_READONLY|CTDB_REC_RO_HAVE_DELEGATIONS|CTDB_REC_RO_HAVE_READONLY);
+	header->flags &= ~(CTDB_REC_RO_REVOKING_READONLY |
+			   CTDB_REC_RO_HAVE_DELEGATIONS |
+			   CTDB_REC_RO_HAVE_READONLY);
+
 	header->flags |= CTDB_REC_FLAG_MIGRATED_WITH_DATA;
 	header->rsn   -= 1;
 
-	if ((rc = talloc_zero(ctdb_db, struct revokechild_handle)) == NULL) {
-		DEBUG(DEBUG_ERR,("Failed to allocate revokechild_handle\n"));
+	rev_hdl = talloc_zero(ctdb_db, struct revokechild_handle);
+	if (rev_hdl == NULL) {
+		D_ERR("Failed to allocate revokechild_handle\n");
 		return -1;
 	}
 
@@ -1832,96 +1853,108 @@ int ctdb_start_revoke_ro_record(struct ctdb_context *ctdb, struct ctdb_db_contex
 		uint8_t *tmp;
 
 		tmp = tdata.dptr;
-		tdata.dptr = talloc_memdup(rc, tdata.dptr, tdata.dsize);
+		tdata.dptr = talloc_memdup(rev_hdl, tdata.dptr, tdata.dsize);
 		free(tmp);
 	}
 
-	rc->status    = 0;
-	rc->ctdb      = ctdb;
-	rc->ctdb_db   = ctdb_db;
-	rc->fd[0]     = -1;
-	rc->fd[1]     = -1;
+	rev_hdl->status    = 0;
+	rev_hdl->ctdb      = ctdb;
+	rev_hdl->ctdb_db   = ctdb_db;
+	rev_hdl->fd[0]     = -1;
+	rev_hdl->fd[1]     = -1;
 
-	talloc_set_destructor(rc, revokechild_destructor);
-
-	rc->key.dsize = key.dsize;
-	rc->key.dptr  = talloc_memdup(rc, key.dptr, key.dsize);
-	if (rc->key.dptr == NULL) {
-		DEBUG(DEBUG_ERR,("Failed to allocate key for revokechild_handle\n"));
-		talloc_free(rc);
-		return -1;
+	rev_hdl->key.dsize = key.dsize;
+	rev_hdl->key.dptr  = talloc_memdup(rev_hdl, key.dptr, key.dsize);
+	if (rev_hdl->key.dptr == NULL) {
+		D_ERR("Failed to allocate key for revokechild_handle\n");
+		goto err_out;
 	}
 
-	ret = pipe(rc->fd);
+	ret = pipe(rev_hdl->fd);
 	if (ret != 0) {
-		DEBUG(DEBUG_ERR,("Failed to allocate key for revokechild_handle\n"));
-		talloc_free(rc);
-		return -1;
+		D_ERR("Failed to allocate key for revokechild_handle\n");
+		goto err_out;
 	}
 
 
-	rc->child = ctdb_fork(ctdb);
-	if (rc->child == (pid_t)-1) {
-		DEBUG(DEBUG_ERR,("Failed to fork child for revokechild\n"));
-		talloc_free(rc);
-		return -1;
+	rev_hdl->child = ctdb_fork(ctdb);
+	if (rev_hdl->child == (pid_t)-1) {
+		D_ERR("Failed to fork child for revokechild\n");
+		goto err_out;
 	}
 
-	if (rc->child == 0) {
+	if (rev_hdl->child == 0) {
 		char c = 0;
-		close(rc->fd[0]);
+		close(rev_hdl->fd[0]);
 
 		prctl_set_comment("ctdb_revokechild");
 		if (switch_from_server_to_client(ctdb) != 0) {
-			DEBUG(DEBUG_ERR,("Failed to switch from server to client for revokechild process\n"));
+			D_ERR("Failed to switch from server to client "
+			      "for revokechild process\n");
 			c = 1;
 			goto child_finished;
 		}
 
-		c = ctdb_revoke_all_delegations(ctdb, ctdb_db, tdata, key, header, data);
+		c = ctdb_revoke_all_delegations(ctdb,
+						ctdb_db,
+						tdata,
+						key,
+						header,
+						data);
 
 child_finished:
-		sys_write(rc->fd[1], &c, 1);
+		sys_write(rev_hdl->fd[1], &c, 1);
 		ctdb_wait_for_process_to_exit(parent);
 		_exit(0);
 	}
 
-	close(rc->fd[1]);
-	rc->fd[1] = -1;
-	set_close_on_exec(rc->fd[0]);
+	close(rev_hdl->fd[1]);
+	rev_hdl->fd[1] = -1;
+	set_close_on_exec(rev_hdl->fd[0]);
+
+	rev_hdl->fde = tevent_add_fd(ctdb->ev,
+				     rev_hdl,
+				     rev_hdl->fd[0],
+				     TEVENT_FD_READ,
+				     revokechild_handler,
+				     (void *)rev_hdl);
+
+	if (rev_hdl->fde == NULL) {
+		D_ERR("Failed to set up fd event for revokechild process\n");
+		talloc_free(rev_hdl);
+	}
+	tevent_fd_set_auto_close(rev_hdl->fde);
 
 	/* This is an active revokechild child process */
-	DLIST_ADD_END(ctdb_db->revokechild_active, rc);
-
-	rc->fde = tevent_add_fd(ctdb->ev, rc, rc->fd[0], TEVENT_FD_READ,
-				revokechild_handler, (void *)rc);
-	if (rc->fde == NULL) {
-		DEBUG(DEBUG_ERR,("Failed to set up fd event for revokechild process\n"));
-		talloc_free(rc);
-	}
-	tevent_fd_set_auto_close(rc->fde);
+	DLIST_ADD_END(ctdb_db->revokechild_active, rev_hdl);
+	talloc_set_destructor(rev_hdl, revokechild_destructor);
 
 	return 0;
+err_out:
+	talloc_free(rev_hdl);
+	return -1;
 }
 
 int ctdb_add_revoke_deferred_call(struct ctdb_context *ctdb, struct ctdb_db_context *ctdb_db, TDB_DATA key, struct ctdb_req_header *hdr, deferred_requeue_fn fn, void *call_context)
 {
-	struct revokechild_handle *rc;
+	struct revokechild_handle *rev_hdl;
 	struct revokechild_deferred_call *deferred_call;
 
-	for (rc = ctdb_db->revokechild_active; rc; rc = rc->next) {
-		if (rc->key.dsize == 0) {
+	for (rev_hdl = ctdb_db->revokechild_active;
+	     rev_hdl;
+	     rev_hdl = rev_hdl->next) {
+		if (rev_hdl->key.dsize == 0) {
 			continue;
 		}
-		if (rc->key.dsize != key.dsize) {
+		if (rev_hdl->key.dsize != key.dsize) {
 			continue;
 		}
-		if (!memcmp(rc->key.dptr, key.dptr, key.dsize)) {
+		if (!memcmp(rev_hdl->key.dptr, key.dptr, key.dsize)) {
 			break;
 		}
 	}
 
-	if (rc == NULL) {
+	if (rev_hdl == NULL) {
 		DEBUG(DEBUG_ERR,("Failed to add deferred call to revoke list. revoke structure not found\n"));
 		return -1;
 	}
@@ -1936,11 +1969,11 @@ int ctdb_add_revoke_deferred_call(struct ctdb_context *ctdb, struct ctdb_db_cont
 	deferred_call->hdr  = talloc_steal(deferred_call, hdr);
 	deferred_call->fn   = fn;
 	deferred_call->ctx  = call_context;
-	deferred_call->rc   = rc;
+	deferred_call->rev_hdl   = rev_hdl;
 
 	talloc_set_destructor(deferred_call, deferred_call_destructor);
 
-	DLIST_ADD(rc->deferred_call_list, deferred_call);
+	DLIST_ADD(rev_hdl->deferred_call_list, deferred_call);
 
 	return 0;
 }

@@ -1323,18 +1323,6 @@ static int streams_xattr_fchmod(vfs_handle_struct *handle,
 	return 0;
 }
 
-static int streams_xattr_fsync(vfs_handle_struct *handle, files_struct *fsp)
-{
-	struct stream_io *sio =
-		(struct stream_io *)VFS_FETCH_FSP_EXTENSION(handle, fsp);
-
-	if (sio == NULL) {
-		return SMB_VFS_NEXT_FSYNC(handle, fsp);
-	}
-
-	return 0;
-}
-
 static ssize_t streams_xattr_fgetxattr(struct vfs_handle_struct *handle,
 				       struct files_struct *fsp,
 				       const char *name,
@@ -1400,20 +1388,6 @@ static int streams_xattr_fsetxattr(struct vfs_handle_struct *handle,
 
 	errno = ENOTSUP;
 	return -1;
-}
-
-static int streams_xattr_fchmod_acl(vfs_handle_struct *handle,
-				    files_struct *fsp,
-				    mode_t mode)
-{
-	struct stream_io *sio =
-		(struct stream_io *)VFS_FETCH_FSP_EXTENSION(handle, fsp);
-
-	if (sio == NULL) {
-		return SMB_VFS_NEXT_FCHMOD_ACL(handle, fsp, mode);
-	}
-
-	return 0;
 }
 
 static SMB_ACL_T streams_xattr_sys_acl_get_fd(vfs_handle_struct *handle,
@@ -1683,14 +1657,11 @@ static struct vfs_fn_pointers vfs_streams_xattr_fns = {
 
 	.fchown_fn = streams_xattr_fchown,
 	.fchmod_fn = streams_xattr_fchmod,
-	.fsync_fn = streams_xattr_fsync,
 
 	.fgetxattr_fn = streams_xattr_fgetxattr,
 	.flistxattr_fn = streams_xattr_flistxattr,
 	.fremovexattr_fn = streams_xattr_fremovexattr,
 	.fsetxattr_fn = streams_xattr_fsetxattr,
-
-	.fchmod_acl_fn = streams_xattr_fchmod_acl,
 
 	.sys_acl_get_fd_fn = streams_xattr_sys_acl_get_fd,
 	.sys_acl_blob_get_fd_fn = streams_xattr_sys_acl_blob_get_fd,

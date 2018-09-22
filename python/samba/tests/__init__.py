@@ -19,6 +19,7 @@
 """Samba Python tests."""
 
 import os
+import tempfile
 import ldb
 import samba
 from samba import param
@@ -31,12 +32,17 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import re
 import samba.auth
 import samba.dcerpc.base
-from samba.compat import PY3
+from samba.compat import PY3, text_type
+from random import randint
 if not PY3:
     # Py2 only
-    from samba.samdb import SamDB
+    try:
+        from samba.samdb import SamDB
+    except ImportError:
+        SamDB = lambda *x: None
     import samba.ndr
     import samba.dcerpc.dcerpc
     import samba.dcerpc.epmapper
@@ -161,6 +167,14 @@ class TestCase(unittest.TestCase):
             self._cleanups = getattr(self, "_cleanups", []) + [
                 (fn, args, kwargs)]
 
+        def assertRegexpMatches(self, text, regex, msg=None):
+            # PY3 note: Python 3 will never see this, but we use
+            # text_type for the benefit of linters.
+            if isinstance(regex, (str, text_type)):
+                regex = re.compile(regex)
+            if not regex.search(text):
+                self.fail(msg)
+
         def _addSkip(self, result, reason):
             addSkip = getattr(result, 'addSkip', None)
             if addSkip is not None:
@@ -245,7 +259,8 @@ class LdbTestCase(TestCase):
 
     def setUp(self):
         super(LdbTestCase, self).setUp()
-        self.filename = os.tempnam()
+        self.tempfile = tempfile.NamedTemporaryFile(delete=False)
+        self.filename = self.tempfile.name
         self.ldb = samba.Ldb(self.filename)
 
     def set_modules(self, modules=[]):
@@ -319,15 +334,20 @@ class BlackboxProcessError(Exception):
     (S.stderr)
     """
 
-    def __init__(self, returncode, cmd, stdout, stderr):
+    def __init__(self, returncode, cmd, stdout, stderr, msg=None):
         self.returncode = returncode
         self.cmd = cmd
         self.stdout = stdout
         self.stderr = stderr
+        self.msg = msg
 
     def __str__(self):
-        return "Command '%s'; exit status %d; stdout: '%s'; stderr: '%s'" % (self.cmd, self.returncode,
-                                                                             self.stdout, self.stderr)
+        s = ("Command '%s'; exit status %d; stdout: '%s'; stderr: '%s'" %
+             (self.cmd, self.returncode, self.stdout, self.stderr))
+        if self.msg is not None:
+            s = "%s; message: %s" % (s, self.msg)
+
+        return s
 
 class BlackboxTestCase(TestCaseInTempDir):
     """Base test case for blackbox tests."""
@@ -340,10 +360,10 @@ class BlackboxTestCase(TestCaseInTempDir):
         line = " ".join(parts)
         return line
 
-    def check_run(self, line):
-        self.check_exit_code(line, 0)
+    def check_run(self, line, msg=None):
+        self.check_exit_code(line, 0, msg=msg)
 
-    def check_exit_code(self, line, expected):
+    def check_exit_code(self, line, expected, msg=None):
         line = self._make_cmdline(line)
         p = subprocess.Popen(line,
                              stdout=subprocess.PIPE,
@@ -355,7 +375,8 @@ class BlackboxTestCase(TestCaseInTempDir):
             raise BlackboxProcessError(retcode,
                                        line,
                                        stdoutdata,
-                                       stderrdata)
+                                       stderrdata,
+                                       msg)
 
     def check_output(self, line):
         line = self._make_cmdline(line)
@@ -458,3 +479,15 @@ def delete_force(samdb, dn, **kwargs):
     except ldb.LdbError as error:
         (num, errstr) = error.args
         assert num == ldb.ERR_NO_SUCH_OBJECT, "ldb.delete() failed: %s" % errstr
+
+def create_test_ou(samdb, name):
+    """Creates a unique OU for the test"""
+
+    # Add some randomness to the test OU. Replication between the testenvs is
+    # constantly happening in the background. Deletion of the last test's
+    # objects can be slow to replicate out. So the OU created by a previous
+    # testenv may still exist at the point that tests start on another testenv.
+    rand = randint(1, 10000000)
+    dn = ldb.Dn(samdb, "OU=%s%d,%s" %(name, rand, samdb.get_default_basedn()))
+    samdb.add({ "dn": dn, "objectclass": "organizationalUnit"})
+    return dn

@@ -24,6 +24,7 @@
 
 #include "common/db_hash.c"
 #include "common/run_proc.c"
+#include "common/event_script.c"
 #include "common/run_event.c"
 
 static void usage(const char *prog)
@@ -76,7 +77,13 @@ static void do_run(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 
 	arg_str = compact_args(argv, argc, 5);
 
-	req = run_event_send(mem_ctx, ev, run_ctx, argv[4], arg_str, timeout);
+	req = run_event_send(mem_ctx,
+			     ev,
+			     run_ctx,
+			     argv[4],
+			     arg_str,
+			     timeout,
+			     false);
 	if (req == NULL) {
 		fprintf(stderr, "run_proc_send() failed\n");
 		return;
@@ -110,7 +117,7 @@ static void do_list(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	struct run_event_script_list *script_list = NULL;
 	int ret, i;
 
-	ret = run_event_script_list(run_ctx, mem_ctx, &script_list);
+	ret = run_event_list(run_ctx, mem_ctx, &script_list);
 	if (ret != 0) {
 		printf("Script list failed with result=%d\n", ret);
 		return;
@@ -160,6 +167,7 @@ int main(int argc, const char **argv)
 {
 	TALLOC_CTX *mem_ctx;
 	struct tevent_context *ev;
+	struct run_proc_context *run_proc_ctx;
 	struct run_event_context *run_ctx;
 	int ret;
 
@@ -180,7 +188,13 @@ int main(int argc, const char **argv)
 		exit(1);
 	}
 
-	ret = run_event_init(mem_ctx, ev, argv[1], NULL, &run_ctx);
+	ret = run_proc_init(mem_ctx, ev, &run_proc_ctx);
+	if (ret != 0) {
+		fprintf(stderr, "run_proc_init() failed, ret=%d\n", ret);
+		exit(1);
+	}
+
+	ret = run_event_init(mem_ctx, run_proc_ctx, argv[1], NULL, &run_ctx);
 	if (ret != 0) {
 		fprintf(stderr, "run_event_init() failed, ret=%d\n", ret);
 		exit(1);

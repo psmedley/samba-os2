@@ -94,8 +94,18 @@ struct sock_queue {
 	size_t buflen, begin, end;
 };
 
+/*
+ * The reserved talloc headers, SOCK_QUEUE_OBJ_COUNT,
+ * and the pre-allocated pool-memory SOCK_QUEUE_POOL_SIZE,
+ * are used for the sub-objects queue->im, queue->queue, queue->fde
+ * and queue->buf.
+ * If the memory allocating sub-objects of struct sock_queue change,
+ * those values need to be adjusted.
+ */
+#define SOCK_QUEUE_OBJ_COUNT 4
+#define SOCK_QUEUE_POOL_SIZE 2048
+
 static bool sock_queue_set_fd(struct sock_queue *queue, int fd);
-static int sock_queue_destructor(struct sock_queue *queue);
 static void sock_queue_handler(struct tevent_context *ev,
 			       struct tevent_fd *fde, uint16_t flags,
 			       void *private_data);
@@ -112,10 +122,12 @@ struct sock_queue *sock_queue_setup(TALLOC_CTX *mem_ctx,
 {
 	struct sock_queue *queue;
 
-	queue = talloc_zero(mem_ctx, struct sock_queue);
+	queue = talloc_pooled_object(mem_ctx, struct sock_queue,
+				     SOCK_QUEUE_OBJ_COUNT, SOCK_QUEUE_POOL_SIZE);
 	if (queue == NULL) {
 		return NULL;
 	}
+	memset(queue, 0, sizeof(struct sock_queue));
 
 	queue->ev = ev;
 	queue->callback = callback;
@@ -137,8 +149,6 @@ struct sock_queue *sock_queue_setup(TALLOC_CTX *mem_ctx,
 		talloc_free(queue);
 		return NULL;
 	}
-
-	talloc_set_destructor(queue, sock_queue_destructor);
 
 	return queue;
 }
@@ -166,14 +176,6 @@ static bool sock_queue_set_fd(struct sock_queue *queue, int fd)
 	}
 
 	return true;
-}
-
-static int sock_queue_destructor(struct sock_queue *queue)
-{
-	TALLOC_FREE(queue->fde);
-	queue->fd = -1;
-
-	return 0;
 }
 
 static void sock_queue_handler(struct tevent_context *ev,
@@ -231,6 +233,7 @@ static void sock_queue_process(struct sock_queue *queue)
 	if (pkt_size == 0) {
 		D_ERR("Invalid packet of length 0\n");
 		queue->callback(NULL, 0, queue->private_data);
+		return;
 	}
 
 	if ((queue->end - queue->begin) < pkt_size) {

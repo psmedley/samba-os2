@@ -89,6 +89,9 @@ extern uint16_t fnf_handle;
 struct conn_ctx {
 	connection_struct *conn;
 	uint64_t vuid;
+	bool need_chdir;
+	bool done_chdir;
+	userdom_struct user_info;
 };
 /* A stack of current_user connection contexts. */
 extern struct conn_ctx conn_ctx_stack[MAX_SEC_CTX_DEPTH];
@@ -361,13 +364,9 @@ struct smbXsrv_connection {
 
 	struct smbXsrv_client *client;
 
-
 	const struct tsocket_address *local_address;
 	const struct tsocket_address *remote_address;
 	const char *remote_hostname;
-
-	struct tevent_context *ev_ctx;
-	struct messaging_context *msg_ctx;
 
 	enum protocol_types protocol;
 
@@ -702,6 +701,9 @@ struct smbd_smb2_request {
 	struct smbXsrv_tcon *tcon;
 	uint32_t last_tid;
 
+	/* the tevent_context (wrapper) the request operates on */
+	struct tevent_context *ev_ctx;
+
 	int current_idx;
 	bool do_signing;
 	/* Was the request encrypted? */
@@ -873,7 +875,9 @@ struct smbd_server_connection {
 	const struct tsocket_address *local_address;
 	const struct tsocket_address *remote_address;
 	const char *remote_hostname;
-	struct tevent_context *ev_ctx;
+	struct tevent_context *raw_ev_ctx;
+	struct tevent_context *root_ev_ctx;
+	struct tevent_context *guest_ev_ctx;
 	struct messaging_context *msg_ctx;
 	struct notify_context *notify_ctx;
 	bool using_smb2;

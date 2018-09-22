@@ -20,7 +20,7 @@
 #include "replace.h"
 #include "system/filesys.h"
 #include "system/dir.h"
-#include "system/locale.h"
+#include "system/glob.h"
 #include "system/wait.h"
 
 #include <talloc.h>
@@ -31,184 +31,70 @@
 
 #include "common/logging.h"
 #include "common/run_proc.h"
+#include "common/event_script.h"
+
 #include "common/run_event.h"
 
 /*
  * Utility functions
  */
 
-static int script_filter(const struct dirent *de)
-{
-	size_t namelen = strlen(de->d_name);
-	char *ptr;
-
-	/* Ignore . and .. */
-	if (namelen < 3) {
-		return 0;
-	}
-
-	/* Skip filenames with ~ */
-	ptr = strchr(de->d_name, '~');
-	if (ptr != NULL) {
-		return 0;
-	}
-
-	/* Filename should start with [0-9][0-9]. */
-	if ((! isdigit(de->d_name[0])) ||
-	    (! isdigit(de->d_name[1])) ||
-	    (de->d_name[2] != '.')) {
-		return 0;
-	}
-
-	/* Ignore filenames with multiple '.'s */
-	ptr = index(&de->d_name[3], '.');
-	if (ptr != NULL) {
-		return 0;
-	}
-
-	return 1;
-}
-
 static int get_script_list(TALLOC_CTX *mem_ctx,
 			   const char *script_dir,
 			   struct run_event_script_list **out)
 {
-	struct dirent **namelist = NULL;
+	struct event_script_list *s_list;
 	struct run_event_script_list *script_list;
-	int count, ret;
-	int i;
+	unsigned int i;
+	int ret;
 
-	count = scandir(script_dir, &namelist, script_filter, alphasort);
-	if (count == -1) {
-		ret = errno;
+	ret = event_script_get_list(mem_ctx, script_dir, &s_list);
+	if (ret != 0) {
 		if (ret == ENOENT) {
 			D_WARNING("event script dir %s removed\n", script_dir);
 		} else {
-			D_WARNING("scandir() failed on %s, ret=%d\n",
+			D_WARNING("failed to get script list for %s, ret=%d\n",
 				  script_dir, ret);
 		}
-		*out = NULL;
-		ret = 0;
-		goto done;
+		return ret;
 	}
 
-	if (count == 0) {
+	if (s_list->num_scripts == 0) {
 		*out = NULL;
-		ret = 0;
-		goto done;
+		talloc_free(s_list);
+		return 0;
 	}
 
 	script_list = talloc_zero(mem_ctx, struct run_event_script_list);
 	if (script_list == NULL) {
+		talloc_free(s_list);
 		return ENOMEM;
 	}
 
-	script_list->num_scripts = count;
+	script_list->num_scripts = s_list->num_scripts;
 	script_list->script = talloc_zero_array(script_list,
 						struct run_event_script,
-						count);
+						script_list->num_scripts);
 	if (script_list->script == NULL) {
-		ret = ENOMEM;
+		talloc_free(s_list);
 		talloc_free(script_list);
-		goto done;
-	}
-
-	for (i=0; i<count; i++) {
-		struct run_event_script *s = &script_list->script[i];
-
-		s->name = talloc_strdup(script_list, namelist[i]->d_name);
-		if (s->name == NULL) {
-			ret = ENOMEM;
-			talloc_free(script_list);
-			goto done;
-		}
-	}
-
-	*out = script_list;
-	ret = 0;
-
-done:
-	if (namelist != NULL && count != -1) {
-		for (i=0; i<count; i++) {
-			free(namelist[i]);
-		}
-		free(namelist);
-	}
-	return ret;
-}
-
-static int script_chmod(TALLOC_CTX *mem_ctx, const char *script_dir,
-			const char *script_name, bool enable)
-{
-	DIR *dirp;
-	struct dirent *de;
-	int ret, new_mode;
-	char *filename;
-	struct stat st;
-	bool found;
-	int fd = -1;
-
-	dirp = opendir(script_dir);
-	if (dirp == NULL) {
-		return errno;
-	}
-
-	found = false;
-	while ((de = readdir(dirp)) != NULL) {
-		if (strcmp(de->d_name, script_name) == 0) {
-
-			/* check for valid script names */
-			ret = script_filter(de);
-			if (ret == 0) {
-				closedir(dirp);
-				return EINVAL;
-			}
-
-			found = true;
-			break;
-		}
-	}
-	closedir(dirp);
-
-	if (! found) {
-		return ENOENT;
-	}
-
-	filename = talloc_asprintf(mem_ctx, "%s/%s", script_dir, script_name);
-	if (filename == NULL) {
 		return ENOMEM;
 	}
 
-	fd = open(filename, O_RDWR);
-	if (fd == -1) {
-		ret = errno;
-		goto done;
+	for (i = 0; i < s_list->num_scripts; i++) {
+		struct event_script *s = s_list->script[i];
+		struct run_event_script *script = &script_list->script[i];
+
+		script->name = talloc_steal(script_list->script, s->name);
+
+		if (! s->enabled) {
+			script->summary = -ENOEXEC;
+		}
 	}
 
-	ret = fstat(fd, &st);
-	if (ret != 0) {
-		ret = errno;
-		goto done;
-	}
-
-	if (enable) {
-		new_mode = st.st_mode | (S_IXUSR | S_IXGRP | S_IXOTH);
-	} else {
-		new_mode = st.st_mode & ~(S_IXUSR | S_IXGRP | S_IXOTH);
-	}
-
-	ret = fchmod(fd, new_mode);
-	if (ret != 0) {
-		ret = errno;
-		goto done;
-	}
-
-done:
-	if (fd != -1) {
-		close(fd);
-	}
-	talloc_free(filename);
-	return ret;
+	talloc_free(s_list);
+	*out = script_list;
+	return 0;
 }
 
 static int script_args(TALLOC_CTX *mem_ctx, const char *event_str,
@@ -278,7 +164,7 @@ struct run_event_context {
 };
 
 
-int run_event_init(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+int run_event_init(TALLOC_CTX *mem_ctx, struct run_proc_context *run_proc_ctx,
 		   const char *script_dir, const char *debug_prog,
 		   struct run_event_context **out)
 {
@@ -291,11 +177,7 @@ int run_event_init(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 		return ENOMEM;
 	}
 
-	ret = run_proc_init(run_ctx, ev, &run_ctx->run_proc_ctx);
-	if (ret != 0) {
-		talloc_free(run_ctx);
-		return ret;
-	}
+	run_ctx->run_proc_ctx = run_proc_ctx;
 
 	ret = stat(script_dir, &st);
 	if (ret != 0) {
@@ -306,7 +188,7 @@ int run_event_init(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 
 	if (! S_ISDIR(st.st_mode)) {
 		talloc_free(run_ctx);
-		return EINVAL;
+		return ENOTDIR;
 	}
 
 	run_ctx->script_dir = talloc_strdup(run_ctx, script_dir);
@@ -399,49 +281,55 @@ static int run_event_script_status(struct run_event_script *script)
 	return ret;
 }
 
-int run_event_script_list(struct run_event_context *run_ctx,
-			  TALLOC_CTX *mem_ctx,
-			  struct run_event_script_list **output)
+int run_event_list(struct run_event_context *run_ctx,
+		   TALLOC_CTX *mem_ctx,
+		   struct run_event_script_list **output)
 {
+	struct event_script_list *s_list;
 	struct run_event_script_list *script_list;
 	int ret, i;
 
-	ret = get_script_list(mem_ctx, run_event_script_dir(run_ctx),
-			      &script_list);
+	ret = event_script_get_list(mem_ctx,
+				    run_event_script_dir(run_ctx),
+				    &s_list);
 	if (ret != 0) {
 		return ret;
 	}
 
-	if (script_list == NULL) {
+	if (s_list->num_scripts == 0) {
 		*output = NULL;
+		talloc_free(s_list);
 		return 0;
 	}
 
-	for (i=0; i<script_list->num_scripts; i++) {
-		struct run_event_script *script = &script_list->script[i];
-		struct stat st;
-		char *path = NULL;
-
-		path = talloc_asprintf(mem_ctx, "%s/%s",
-				       run_event_script_dir(run_ctx),
-				       script->name);
-		if (path == NULL) {
-			continue;
-		}
-
-		ret = stat(path, &st);
-		if (ret != 0) {
-			TALLOC_FREE(path);
-			continue;
-		}
-
-		if (! (st.st_mode & S_IXUSR)) {
-			script->summary = -ENOEXEC;
-		}
-
-		TALLOC_FREE(path);
+	script_list = talloc_zero(mem_ctx, struct run_event_script_list);
+	if (script_list == NULL) {
+		return ENOMEM;
 	}
 
+	script_list->num_scripts = s_list->num_scripts;
+	script_list->script = talloc_zero_array(script_list,
+						struct run_event_script,
+						script_list->num_scripts);
+	if (script_list->script == NULL) {
+		talloc_free(s_list);
+		talloc_free(script_list);
+		return ENOMEM;
+	}
+
+	for (i=0; i < s_list->num_scripts; i++) {
+		struct event_script *s = s_list->script[i];
+		struct run_event_script *script = &script_list->script[i];
+
+		script->name = talloc_steal(script_list->script, s->name);
+
+		if (! s->enabled) {
+			script->summary = -ENOEXEC;
+		}
+	}
+
+
+	talloc_free(s_list);
 	*output = script_list;
 	return 0;
 }
@@ -449,15 +337,17 @@ int run_event_script_list(struct run_event_context *run_ctx,
 int run_event_script_enable(struct run_event_context *run_ctx,
 			    const char *script_name)
 {
-	return script_chmod(run_ctx, run_event_script_dir(run_ctx),
-			    script_name, true);
+	return event_script_chmod(run_event_script_dir(run_ctx),
+				  script_name,
+				  true);
 }
 
 int run_event_script_disable(struct run_event_context *run_ctx,
 			     const char *script_name)
 {
-	return script_chmod(run_ctx, run_event_script_dir(run_ctx),
-			    script_name, false);
+	return event_script_chmod(run_event_script_dir(run_ctx),
+				  script_name,
+				  false);
 }
 
 /*
@@ -623,6 +513,7 @@ struct run_event_state {
 	const char *event_str;
 	const char *arg_str;
 	struct timeval timeout;
+	bool continue_on_failure;
 
 	struct run_event_script_list *script_list;
 	const char **argv;
@@ -643,7 +534,8 @@ struct tevent_req *run_event_send(TALLOC_CTX *mem_ctx,
 				  struct run_event_context *run_ctx,
 				  const char *event_str,
 				  const char *arg_str,
-				  struct timeval timeout)
+				  struct timeval timeout,
+				  bool continue_on_failure)
 {
 	struct tevent_req *req, *current_req;
 	struct run_event_state *state;
@@ -667,7 +559,13 @@ struct tevent_req *run_event_send(TALLOC_CTX *mem_ctx,
 		}
 	}
 	state->timeout = timeout;
+	state->continue_on_failure = continue_on_failure;
 	state->cancelled = false;
+
+	state->script_list = talloc_zero(state, struct run_event_script_list);
+	if (tevent_req_nomem(state->script_list, req)) {
+		return tevent_req_post(req, ev);
+	}
 
 	/*
 	 * If monitor event is running,
@@ -683,11 +581,6 @@ struct tevent_req *run_event_send(TALLOC_CTX *mem_ctx,
 		if (monitor_running) {
 			run_event_cancel(current_req);
 		} else if (strcmp(event_str, "monitor") == 0) {
-			state->script_list = talloc_zero(
-				state, struct run_event_script_list);
-			if (tevent_req_nomem(state->script_list, req)) {
-				return tevent_req_post(req, ev);
-			}
 			state->script_list->summary = -ECANCELED;
 			tevent_req_done(req);
 			return tevent_req_post(req, ev);
@@ -724,14 +617,16 @@ static void run_event_trigger(struct tevent_req *req, void *private_data)
 	struct tevent_req *subreq;
 	struct run_event_state *state = tevent_req_data(
 		req, struct run_event_state);
+	struct run_event_script_list *script_list;
 	int ret;
 	bool is_monitor = false;
 
 	D_DEBUG("Running event %s with args \"%s\"\n", state->event_str,
 		state->arg_str == NULL ? "(null)" : state->arg_str);
 
-	ret = get_script_list(state, run_event_script_dir(state->run_ctx),
-			      &state->script_list);
+	ret = get_script_list(state,
+			      run_event_script_dir(state->run_ctx),
+			      &script_list);
 	if (ret != 0) {
 		D_ERR("get_script_list() failed, ret=%d\n", ret);
 		tevent_req_error(req, ret);
@@ -739,11 +634,13 @@ static void run_event_trigger(struct tevent_req *req, void *private_data)
 	}
 
 	/* No scripts */
-	if (state->script_list == NULL ||
-	    state->script_list->num_scripts == 0) {
+	if (script_list == NULL || script_list->num_scripts == 0) {
 		tevent_req_done(req);
 		return;
 	}
+
+	talloc_free(state->script_list);
+	state->script_list = script_list;
 
 	ret = script_args(state, state->event_str, state->arg_str,
 			  &state->argv);
@@ -779,7 +676,7 @@ static struct tevent_req *run_event_run_script(struct tevent_req *req)
 
 	script = &state->script_list->script[state->index];
 
-	path = talloc_asprintf(state, "%s/%s",
+	path = talloc_asprintf(state, "%s/%s.script",
 			       run_event_script_dir(state->run_ctx),
 			       script->name);
 	if (path == NULL) {
@@ -821,6 +718,7 @@ static void run_event_next_script(struct tevent_req *subreq)
 	state->script_subreq = NULL;
 	if (! status) {
 		D_ERR("run_proc failed for %s, ret=%d\n", script->name, ret);
+		run_event_stop_running(state->run_ctx);
 		tevent_req_error(req, ret);
 		return;
 	}
@@ -842,19 +740,22 @@ static void run_event_next_script(struct tevent_req *subreq)
 	/* If a script fails, stop running */
 	script->summary = run_event_script_status(script);
 	if (script->summary != 0 && script->summary != -ENOEXEC) {
-		state->script_list->num_scripts = state->index + 1;
-
-		if (script->summary == -ETIME && pid != -1) {
-			run_event_debug(req, pid);
-		}
-
 		state->script_list->summary = script->summary;
-		D_NOTICE("%s event %s\n", state->event_str,
-			 (script->summary == -ETIME) ? "timed out" : "failed");
 
-		run_event_stop_running(state->run_ctx);
-		tevent_req_done(req);
-		return;
+		if (! state->continue_on_failure) {
+			state->script_list->num_scripts = state->index + 1;
+
+			if (script->summary == -ETIMEDOUT && pid != -1) {
+				run_event_debug(req, pid);
+			}
+			D_NOTICE("%s event %s\n", state->event_str,
+				 (script->summary == -ETIMEDOUT) ?
+				  "timed out" :
+				  "failed");
+			run_event_stop_running(state->run_ctx);
+			tevent_req_done(req);
+			return;
+		}
 	}
 
 	state->index += 1;

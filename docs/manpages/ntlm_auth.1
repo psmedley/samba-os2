@@ -2,12 +2,12 @@
 .\"     Title: ntlm_auth
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: User Commands
-.\"    Source: Samba 4.8.5
+.\"    Source: Samba 4.9.0
 .\"  Language: English
 .\"
-.TH "NTLM_AUTH" "1" "08/24/2018" "Samba 4\&.8\&.5" "User Commands"
+.TH "NTLM_AUTH" "1" "09/13/2018" "Samba 4\&.9\&.0" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -215,7 +215,7 @@ Password:: c2FtYmEy
 .PP
 Request\-User\-Session\-Key
 .RS 4
-Upon successful authenticaiton, return the user session key associated with the login\&.
+Upon successful authentication, return the user session key associated with the login\&.
 .PP
 Examples:
 .RS 4
@@ -225,7 +225,7 @@ Request\-User\-Session\-Key: Yes
 .PP
 Request\-LanMan\-Session\-Key
 .RS 4
-Upon successful authenticaiton, return the LANMAN session key associated with the login\&.
+Upon successful authentication, return the LANMAN session key associated with the login\&.
 .PP
 Examples:
 .RS 4
@@ -246,7 +246,7 @@ Request\-LanMan\-Session\-Key: Yes
 \fBWarning\fR
 .ps -1
 .br
-Implementers should take care to base64 encode any data (such as usernames/passwords) that may contain malicous user data, such as a newline\&. They may also need to decode strings from the helper, which likewise may have been base64 encoded\&.
+Implementers should take care to base64 encode any data (such as usernames/passwords) that may contain malicious user data, such as a newline\&. They may also need to decode strings from the helper, which likewise may have been base64 encoded\&.
 .sp .5v
 .RE
 .RE
@@ -421,7 +421,7 @@ If you\*(Aqre experiencing problems with authenticating Internet Explorer runnin
 the Microsoft Knowledge Base article #239869 and follow instructions described there\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.8\&.5 of the Samba suite\&.
+This man page is part of version 4\&.9\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

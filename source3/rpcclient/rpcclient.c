@@ -73,7 +73,7 @@ static char **completion_fn(const char *text, int start, int end)
 {
 #define MAX_COMPLETIONS 1000
 	char **matches;
-	int i, count=0;
+	size_t i, count=0;
 	struct cmd_list *commands = cmd_list;
 
 #if 0	/* JERRY */
@@ -744,7 +744,7 @@ static NTSTATUS do_cmd(struct cli_state *cli,
 				use_kerberos = CRED_AUTO_USE_KERBEROS;
 				break;
 			}
-			/* Fall through */
+			FALL_THROUGH;
 		case DCERPC_AUTH_TYPE_NTLMSSP:
 		case DCERPC_AUTH_TYPE_KRB5:
 			ntresult = cli_rpc_pipe_open_generic_auth(

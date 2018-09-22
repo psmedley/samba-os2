@@ -1,53 +1,34 @@
-# see https://docs.gitlab.com/ce/ci/yaml/README.html for all available options
+include:
+ - '/.gitlab-ci.yml'
 
-image: registry.gitlab.com/samba-team/samba:latest
 
-before_script:
-  - echo "Build starting ..."
+.private_template: &private_template
+  stage: build
+  tags:
+    - docker
+    - private
 
 build_samba:
-  stage: build
-  tags:
-    - docker
-    - private
+  <<: *private_template
   script:
     # this one takes about 4 hours to finish
-    - python script/autobuild.py samba            --verbose --tail --testbase /tmp/samba-testbase
+    - python script/autobuild.py samba            --verbose --nocleanup --keeplogs --tail --testbase /tmp/samba-testbase
 
-build_samba_others:
-  stage: build
-  tags:
-    - docker
-    - private
+build_samba_nt4:
+  <<: *private_template
   script:
-    - python script/autobuild.py samba-nopython   --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py samba-systemkrb5 --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py samba-xc         --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py samba-o3         --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py samba-libs       --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py samba-static     --verbose --tail --testbase /tmp/samba-testbase
+    # this one takes about 1 hours to finish
+    - python script/autobuild.py samba-nt4        --verbose --nocleanup --keeplogs --tail --testbase /tmp/samba-testbase
 
-build_ctdb:
-  stage: build
-  tags:
-    - docker
-    - private
+build_samba_fileserver:
+  <<: *private_template
   script:
-    - python script/autobuild.py samba-ctdb       --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py ctdb             --verbose --tail --testbase /tmp/samba-testbase
+    # this one takes about 1 hours to finish
+    - python script/autobuild.py samba-fileserver --verbose --nocleanup --keeplogs --tail --testbase /tmp/samba-testbase
 
-build_others:
-  stage: build
-  tags:
-    - docker
-    - private
+build_samba_ad_dc:
+  <<: *private_template
   script:
-    - python script/autobuild.py ldb              --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py pidl             --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py replace          --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py talloc           --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py tdb              --verbose --tail --testbase /tmp/samba-testbase
-    - python script/autobuild.py tevent           --verbose --tail --testbase /tmp/samba-testbase
+    # this one takes about 1 hours to finish
+    - python script/autobuild.py samba-ad-dc     --verbose --nocleanup --keeplogs --tail --testbase /tmp/samba-testbase
 
-after_script:
-  - echo "Build finished!"

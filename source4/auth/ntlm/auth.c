@@ -34,6 +34,9 @@
 #include "auth/kerberos/kerberos_util.h"
 #include "libds/common/roles.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_AUTH
+
 static NTSTATUS auth_generate_session_info_wrapper(struct auth4_context *auth_context,
 						   TALLOC_CTX *mem_ctx,
                                                   void *server_returned_info,
@@ -476,6 +479,7 @@ _PUBLIC_ NTSTATUS auth_check_password_recv(struct tevent_req *req,
 
 		log_authentication_event(state->auth_ctx->msg_ctx,
 					 state->auth_ctx->lp_ctx,
+					 &state->auth_ctx->start_time,
 					 state->user_info, status,
 					 NULL, NULL, NULL, NULL);
 		tevent_req_received(req);
@@ -490,6 +494,7 @@ _PUBLIC_ NTSTATUS auth_check_password_recv(struct tevent_req *req,
 
 	log_authentication_event(state->auth_ctx->msg_ctx,
 				 state->auth_ctx->lp_ctx,
+				 &state->auth_ctx->start_time,
 				 state->user_info, status,
 				 state->user_info_dc->info->domain_name,
 				 state->user_info_dc->info->account_name,
@@ -709,11 +714,17 @@ _PUBLIC_ NTSTATUS auth_context_create_methods(TALLOC_CTX *mem_ctx, const char * 
 	ctx->event_ctx			= ev;
 	ctx->msg_ctx			= msg;
 	ctx->lp_ctx			= lp_ctx;
+	ctx->start_time                 = timeval_current();
 
 	if (sam_ctx) {
 		ctx->sam_ctx = sam_ctx;
 	} else {
-		ctx->sam_ctx = samdb_connect(ctx, ctx->event_ctx, ctx->lp_ctx, system_session(ctx->lp_ctx), 0);
+		ctx->sam_ctx = samdb_connect(ctx,
+					     ctx->event_ctx,
+					     ctx->lp_ctx,
+					     system_session(ctx->lp_ctx),
+					     NULL,
+					     0);
 	}
 
 	for (i=0; methods && methods[i] ; i++) {

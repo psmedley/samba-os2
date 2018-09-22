@@ -32,14 +32,22 @@
 #include <tdb.h>
 #include "lib/tdb_wrap/tdb_wrap.h"
 #include "dsdb/samdb/ldb_modules/util.h"
+#include "lib/ldb-samba/ldb_wrap.h"
 
 #include "system/filesys.h"
 struct schema_load_private_data {
 	struct ldb_module *module;
-	bool in_transaction;
+	uint64_t in_transaction;
+	uint64_t in_read_transaction;
 	struct tdb_wrap *metadata;
 	uint64_t schema_seq_num_cache;
 	int tdb_seqnum;
+
+	/*
+	 * Please write out the updated schema on the next transaction
+	 * start
+	 */
+	bool need_write;
 };
 
 static int dsdb_schema_from_db(struct ldb_module *module,
@@ -56,7 +64,6 @@ static int schema_metadata_open(struct ldb_module *module)
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	TALLOC_CTX *tmp_ctx;
 	struct loadparm_context *lp_ctx;
-	const char *sam_name;
 	char *filename;
 	int open_flags;
 	struct stat statbuf;
@@ -72,18 +79,12 @@ static int schema_metadata_open(struct ldb_module *module)
 		return ldb_module_oom(module);
 	}
 
-	sam_name = (const char *)ldb_get_opaque(ldb, "ldb_url");
-	if (!sam_name) {
+	filename = ldb_relative_path(ldb,
+				     tmp_ctx,
+				     "sam.ldb.d/metadata.tdb");
+	if (filename == NULL) {
 		talloc_free(tmp_ctx);
-		return ldb_operr(ldb);
-	}
-	if (strncmp("tdb://", sam_name, 6) == 0) {
-		sam_name += 6;
-	}
-	filename = talloc_asprintf(tmp_ctx, "%s.d/metadata.tdb", sam_name);
-	if (!filename) {
-		talloc_free(tmp_ctx);
-		return ldb_oom(ldb);
+		return ldb_module_oom(module);
 	}
 
 	open_flags = O_RDWR;
@@ -193,16 +194,26 @@ static struct dsdb_schema *dsdb_schema_refresh(struct ldb_module *module, struct
 		return schema;
 	}
 
-	if (private_data->in_transaction) {
-
+	if (schema != NULL) {
 		/*
-		 * If the refresh is not an expected part of a larger
-		 * transaction, then we don't allow a schema reload during a
-		 * transaction. This stops others from modifying our schema
-		 * behind our backs
+		 * If we have a schema already (not in the startup)
+		 * and we are in a read or write transaction, then
+		 * avoid a schema reload, it can't have changed
 		 */
-		if (ldb_get_opaque(ldb, "dsdb_schema_refresh_expected") != (void *)1) {
-			return schema;
+		if (private_data->in_transaction > 0
+		    || private_data->in_read_transaction > 0 ) {
+			/*
+			 * If the refresh is not an expected part of a
+			 * larger transaction, then we don't allow a
+			 * schema reload during a transaction. This
+			 * stops others from modifying our schema
+			 * behind our backs
+			 */
+			if (ldb_get_opaque(ldb,
+					   "dsdb_schema_refresh_expected")
+			    != (void *)1) {
+				return schema;
+			}
 		}
 	}
 
@@ -221,7 +232,9 @@ static struct dsdb_schema *dsdb_schema_refresh(struct ldb_module *module, struct
 	 * continue to hit the database to get the highest USN.
 	 */
 
-	ret = schema_metadata_get_uint64(private_data, DSDB_METADATA_SCHEMA_SEQ_NUM, &schema_seq_num, 0);
+	ret = schema_metadata_get_uint64(private_data,
+					 DSDB_METADATA_SCHEMA_SEQ_NUM,
+					 &schema_seq_num, 0);
 
 	if (schema != NULL) {
 		if (ret == LDB_SUCCESS) {
@@ -282,20 +295,17 @@ static int dsdb_schema_from_db(struct ldb_module *module,
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	TALLOC_CTX *tmp_ctx;
 	char *error_string;
-	int ret;
+	int ret, i;
 	struct ldb_dn *schema_dn = ldb_get_schema_basedn(ldb);
-	struct ldb_result *schema_res;
 	struct ldb_result *res;
-	static const char *schema_head_attrs[] = {
-		"prefixMap",
-		"schemaInfo",
-		"fSMORoleOwner",
-		NULL
-	};
+	struct ldb_message *schema_msg = NULL;
 	static const char *schema_attrs[] = {
 		DSDB_SCHEMA_COMMON_ATTRS,
 		DSDB_SCHEMA_ATTR_ATTRS,
 		DSDB_SCHEMA_CLASS_ATTRS,
+		"prefixMap",
+		"schemaInfo",
+		"fSMORoleOwner",
 		NULL
 	};
 	unsigned flags;
@@ -310,33 +320,20 @@ static int dsdb_schema_from_db(struct ldb_module *module,
 	ldb_set_flags(ldb, flags & ~LDB_FLG_ENABLE_TRACING);
 
 	/*
-	 * setup the prefix mappings and schema info
-	 */
-	ret = dsdb_module_search_dn(module, tmp_ctx, &schema_res,
-				    schema_dn, schema_head_attrs,
-				    DSDB_FLAG_NEXT_MODULE, NULL);
-	if (ret == LDB_ERR_NO_SUCH_OBJECT) {
-		ldb_reset_err_string(ldb);
-		ldb_debug(ldb, LDB_DEBUG_WARNING,
-			  "schema_load_init: no schema head present: (skip schema loading)\n");
-		goto failed;
-	} else if (ret != LDB_SUCCESS) {
-		ldb_asprintf_errstring(ldb, 
-				       "dsdb_schema: failed to search the schema head: %s",
-				       ldb_errstring(ldb));
-		goto failed;
-	}
-
-	/*
-	 * load the attribute definitions.
+	 * Load the attribute and class definitions, as well as
+	 * the schema object. We do this in one search and then
+	 * split it so that there isn't a race condition when
+	 * the schema is changed between two searches.
 	 */
 	ret = dsdb_module_search(module, tmp_ctx, &res,
-				 schema_dn, LDB_SCOPE_ONELEVEL,
+				 schema_dn, LDB_SCOPE_SUBTREE,
 				 schema_attrs,
 				 DSDB_FLAG_NEXT_MODULE |
 				 DSDB_SEARCH_SHOW_DN_IN_STORAGE_FORMAT,
 				 NULL,
-				 "(|(objectClass=attributeSchema)(objectClass=classSchema))");
+				 "(|(objectClass=attributeSchema)"
+				 "(objectClass=classSchema)"
+				 "(objectClass=dMD))");
 	if (ret != LDB_SUCCESS) {
 		ldb_asprintf_errstring(ldb, 
 				       "dsdb_schema: failed to search attributeSchema and classSchema objects: %s",
@@ -344,8 +341,26 @@ static int dsdb_schema_from_db(struct ldb_module *module,
 		goto failed;
 	}
 
+	/*
+	 * Separate the schema object from the attribute and
+	 * class objects.
+	 */
+	for (i = 0; i < res->count; i++) {
+		if (ldb_msg_find_element(res->msgs[i], "prefixMap")) {
+			schema_msg = res->msgs[i];
+			break;
+		}
+	}
+
+	if (schema_msg == NULL) {
+		ldb_asprintf_errstring(ldb,
+				       "dsdb_schema load failed: failed to find prefixMap");
+		ret = LDB_ERR_NO_SUCH_ATTRIBUTE;
+		goto failed;
+	}
+
 	ret = dsdb_schema_from_ldb_results(tmp_ctx, ldb,
-					   schema_res, res, schema, &error_string);
+					   schema_msg, res, schema, &error_string);
 	if (ret != LDB_SUCCESS) {
 		ldb_asprintf_errstring(ldb, 
 				       "dsdb_schema load failed: %s",
@@ -477,85 +492,32 @@ static int schema_load(struct ldb_context *ldb,
 static int schema_load_init(struct ldb_module *module)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
-	struct schema_load_private_data *private_data;
+	struct schema_load_private_data *private_data =
+		talloc_get_type_abort(ldb_module_get_private(module),
+				      struct schema_load_private_data);
 	int ret;
-	bool need_write = false;
-
-	private_data = talloc_zero(module, struct schema_load_private_data);
-	if (private_data == NULL) {
-		return ldb_oom(ldb);
-	}
-	private_data->module = module;
-
-	ldb_module_set_private(module, private_data);
 
 	ret = ldb_next_init(module);
 	if (ret != LDB_SUCCESS) {
 		return ret;
 	}
 
-	ret = schema_load(ldb, module, &need_write);
-
-	if (ret == LDB_SUCCESS && need_write) {
-		TALLOC_CTX *frame = talloc_stackframe();
-		struct dsdb_schema *schema = NULL;
-
-		ret = ldb_transaction_start(ldb);
-		if (ret != LDB_SUCCESS) {
-			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
-				      "schema_load_init: transaction start failed");
-			return LDB_ERR_OPERATIONS_ERROR;
-		}
-
-		schema = dsdb_get_schema(ldb, frame);
-		if (schema == NULL) {
-			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
-				      "schema_load_init: dsdb_get_schema failed");
-			ldb_transaction_cancel(ldb);
-			return LDB_ERR_OPERATIONS_ERROR;
-		}
-		ret = dsdb_schema_set_indices_and_attributes(ldb, schema,
-							     SCHEMA_WRITE);
-
-		TALLOC_FREE(frame);
-
-		if (ret != LDB_SUCCESS) {
-			ldb_asprintf_errstring(ldb, "Failed to write new "
-					       "@INDEXLIST and @ATTRIBUTES "
-					       "records for updated schema: %s",
-					       ldb_errstring(ldb));
-			ldb_transaction_cancel(ldb);
-			return ret;
-		}
-
-		ret = ldb_transaction_commit(ldb);
-		if (ret != LDB_SUCCESS) {
-			ldb_debug_set(ldb, LDB_DEBUG_FATAL,
-				      "schema_load_init: transaction commit failed");
-			return LDB_ERR_OPERATIONS_ERROR;
-		}
-	}
-
-
-	return ret;
-}
-
-static int schema_search(struct ldb_module *module, struct ldb_request *req)
-{
-	struct ldb_context *ldb = ldb_module_get_ctx(module);
-
-	/* Try the schema refresh now */
-	dsdb_get_schema(ldb, NULL);
-
-	return ldb_next_request(module, req);
+	return schema_load(ldb, module, &private_data->need_write);
 }
 
 static int schema_load_start_transaction(struct ldb_module *module)
 {
 	struct schema_load_private_data *private_data =
-		talloc_get_type(ldb_module_get_private(module), struct schema_load_private_data);
+		talloc_get_type_abort(ldb_module_get_private(module),
+				      struct schema_load_private_data);
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	struct dsdb_schema *schema;
+	int ret;
+
+	ret = ldb_next_start_trans(module);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
 
 	/* Try the schema refresh now */
 	schema = dsdb_get_schema(ldb, NULL);
@@ -564,17 +526,32 @@ static int schema_load_start_transaction(struct ldb_module *module)
 			      "schema_load_init: dsdb_get_schema failed");
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
-	private_data->in_transaction = true;
 
-	return ldb_next_start_trans(module);
+	if (private_data->need_write) {
+		ret = dsdb_schema_set_indices_and_attributes(ldb,
+							     schema,
+							     SCHEMA_WRITE);
+		private_data->need_write = false;
+	}
+
+	private_data->in_transaction++;
+
+	return ret;
 }
 
 static int schema_load_end_transaction(struct ldb_module *module)
 {
 	struct schema_load_private_data *private_data =
-		talloc_get_type(ldb_module_get_private(module), struct schema_load_private_data);
+		talloc_get_type_abort(ldb_module_get_private(module),
+				      struct schema_load_private_data);
+	struct ldb_context *ldb = ldb_module_get_ctx(module);
 
-	private_data->in_transaction = false;
+	if (private_data->in_transaction == 0) {
+		ldb_debug_set(ldb, LDB_DEBUG_FATAL,
+			      "schema_load_end_transaction: transaction mismatch");
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+	private_data->in_transaction--;
 
 	return ldb_next_end_trans(module);
 }
@@ -583,8 +560,14 @@ static int schema_load_del_transaction(struct ldb_module *module)
 {
 	struct schema_load_private_data *private_data =
 		talloc_get_type(ldb_module_get_private(module), struct schema_load_private_data);
+	struct ldb_context *ldb = ldb_module_get_ctx(module);
 
-	private_data->in_transaction = false;
+	if (private_data->in_transaction == 0) {
+		ldb_debug_set(ldb, LDB_DEBUG_FATAL,
+			      "schema_load_del_transaction: transaction mismatch");
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+	private_data->in_transaction--;
 
 	return ldb_next_del_trans(module);
 }
@@ -618,15 +601,60 @@ static int schema_load_extended(struct ldb_module *module, struct ldb_request *r
 	return ldb_next_request(module, req);
 }
 
+static int schema_read_lock(struct ldb_module *module)
+{
+	struct schema_load_private_data *private_data =
+		talloc_get_type(ldb_module_get_private(module), struct schema_load_private_data);
+	int ret;
+
+	if (private_data == NULL) {
+		private_data = talloc_zero(module, struct schema_load_private_data);
+		if (private_data == NULL) {
+			return ldb_module_oom(module);
+		}
+
+		private_data->module = module;
+
+		ldb_module_set_private(module, private_data);
+	}
+
+	ret = ldb_next_read_lock(module);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+
+	if (private_data->in_transaction == 0 &&
+	    private_data->in_read_transaction == 0) {
+		/* Try the schema refresh now */
+		dsdb_get_schema(ldb_module_get_ctx(module), NULL);
+	}
+
+	private_data->in_read_transaction++;
+
+	return LDB_SUCCESS;
+}
+
+static int schema_read_unlock(struct ldb_module *module)
+{
+	struct schema_load_private_data *private_data =
+		talloc_get_type_abort(ldb_module_get_private(module),
+				      struct schema_load_private_data);
+
+	private_data->in_read_transaction--;
+
+	return ldb_next_read_unlock(module);
+}
+
 
 static const struct ldb_module_ops ldb_schema_load_module_ops = {
 	.name		= "schema_load",
 	.init_context	= schema_load_init,
 	.extended	= schema_load_extended,
-	.search		= schema_search,
 	.start_transaction = schema_load_start_transaction,
 	.end_transaction   = schema_load_end_transaction,
 	.del_transaction   = schema_load_del_transaction,
+	.read_lock	= schema_read_lock,
+	.read_unlock	= schema_read_unlock,
 };
 
 int ldb_schema_load_module_init(const char *version)

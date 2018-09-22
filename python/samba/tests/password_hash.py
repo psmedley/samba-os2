@@ -29,11 +29,13 @@ from samba.dcerpc import drsblobs
 from samba.dcerpc.samr import DOMAIN_PASSWORD_STORE_CLEARTEXT
 from samba.dsdb import UF_ENCRYPTED_TEXT_PASSWORD_ALLOWED
 from samba.tests import delete_force
+from samba.tests.password_test import PasswordCommon
 import ldb
 import samba
 import binascii
-import md5
+from hashlib import md5
 import crypt
+from samba.compat import text_type
 
 
 USER_NAME = "PasswordHashTestUser"
@@ -60,7 +62,10 @@ def get_package(sc, name):
 def calc_digest(user, realm, password):
 
     data = "%s:%s:%s" % (user, realm, password)
-    return binascii.hexlify(md5.new(data).digest())
+    if isinstance(data, text_type):
+        data = data.encode('utf8')
+
+    return md5(data).hexdigest()
 
 
 class PassWordHashTests(TestCase):
@@ -68,6 +73,17 @@ class PassWordHashTests(TestCase):
     def setUp(self):
         self.lp = samba.tests.env_loadparm()
         super(PassWordHashTests, self).setUp()
+
+    def set_store_cleartext(self, cleartext):
+        # get the current pwdProperties
+        pwdProperties = self.ldb.get_pwdProperties()
+        # update the clear-text properties flag
+        props = int(pwdProperties)
+        if cleartext:
+            props |= DOMAIN_PASSWORD_STORE_CLEARTEXT
+        else:
+            props &= ~DOMAIN_PASSWORD_STORE_CLEARTEXT
+        self.ldb.set_pwdProperties(str(props))
 
     # Add a user to ldb, this will exercise the password_hash code
     # and calculate the appropriate supplemental credentials
@@ -101,36 +117,18 @@ class PassWordHashTests(TestCase):
         # Gets back the configuration basedn
         configuration_dn = self.ldb.get_config_basedn().get_linearized()
 
-        # Get the old "dSHeuristics" if it was set
-        dsheuristics = self.ldb.get_dsheuristics()
+        # permit password changes during this test
+        PasswordCommon.allow_password_changes(self, self.ldb)
 
-        # Set the "dSHeuristics" to activate the correct "userPassword"
-        # behaviour
-        self.ldb.set_dsheuristics("000000001")
-
-        # Reset the "dSHeuristics" as they were before
-        self.addCleanup(self.ldb.set_dsheuristics, dsheuristics)
-
-        # Get the old "minPwdAge"
-        minPwdAge = self.ldb.get_minPwdAge()
-
-        # Set it temporarily to "0"
-        self.ldb.set_minPwdAge("0")
         self.base_dn = self.ldb.domain_dn()
-
-        # Reset the "minPwdAge" as it was before
-        self.addCleanup(self.ldb.set_minPwdAge, minPwdAge)
 
         account_control = 0
         if clear_text:
-            # get the current pwdProperties
+            # Restore the current domain setting on exit.
             pwdProperties = self.ldb.get_pwdProperties()
-            # enable clear text properties
-            props = int(pwdProperties)
-            props |= DOMAIN_PASSWORD_STORE_CLEARTEXT
-            self.ldb.set_pwdProperties(str(props))
-            # Restore the value on exit.
             self.addCleanup(self.ldb.set_pwdProperties, pwdProperties)
+            # Update the domain setting
+            self.set_store_cleartext(clear_text)
             account_control |= UF_ENCRYPTED_TEXT_PASSWORD_ALLOWED
 
         # (Re)adds the test user USER_NAME with password USER_PASS

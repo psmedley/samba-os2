@@ -22,39 +22,18 @@
 
 #include <talloc.h>
 
-/* From system_common.c */
-
-uint32_t uint16_checksum(uint16_t *data, size_t n);
-bool ctdb_sys_have_ip(ctdb_sock_addr *_addr);
-char *ctdb_sys_find_ifname(ctdb_sock_addr *addr);
-
-/* From system_<os>.c */
-
-int ctdb_sys_send_arp(const ctdb_sock_addr *addr, const char *iface);
-int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
-		      const ctdb_sock_addr *src,
-		      uint32_t seq, uint32_t ack, int rst);
-int ctdb_sys_open_capture_socket(const char *iface, void **private_data);
-int ctdb_sys_close_capture_socket(void *private_data);
-int ctdb_sys_read_tcp_packet(int s, void *private_data,
-			     ctdb_sock_addr *src, ctdb_sock_addr *dst,
-			     uint32_t *ack_seq, uint32_t *seq,
-			     int *rst, uint16_t *window);
-bool ctdb_sys_check_iface_exists(const char *iface);
-int ctdb_get_peer_pid(const int fd, pid_t *peer_pid);
-
 /* From system_util.c */
 
 bool set_scheduler(void);
 void reset_scheduler(void);
-
-bool parse_ip_mask(const char *str, const char *ifaces, ctdb_sock_addr *addr,
-		   unsigned *mask);
 
 void lockdown_memory(bool valgrinding);
 
 void mkdir_p_or_die(const char *dir, int mode);
 
 void ctdb_wait_for_process_to_exit(pid_t pid);
+
+bool ctdb_sys_check_iface_exists(const char *iface);
+int ctdb_get_peer_pid(const int fd, pid_t *peer_pid);
 
 #endif /* __CTDB_SYSTEM_H__ */

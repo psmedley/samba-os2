@@ -24,9 +24,10 @@ We don't test samba-tool visualize reps here because repsTo and
 repsFrom are not replicated, and there are actual remote servers to
 query.
 """
-
+from __future__ import print_function
 import samba
 import os
+import tempfile
 import re
 from samba.tests.samba_tool.base import SambaToolCmdTest
 from samba.kcc import ldif_import_export
@@ -71,11 +72,12 @@ def samdb_from_ldif(ldif, tempdir, lp, dsa=None, tag=''):
     return (samdb, dburl)
 
 
-def collapse_space(s):
+def collapse_space(s, keep_empty_lines=False):
     lines = []
     for line in s.splitlines():
         line = ' '.join(line.strip().split())
-        lines.append(line)
+        if line or keep_empty_lines:
+            lines.append(line)
     return '\n'.join(lines)
 
 
@@ -121,6 +123,66 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
             uncoloured = colour_re.sub('', out)
 
             self.assertStringsEqual(monochrome, uncoloured, strip=True)
+
+    def test_import_ldif_xdot(self):
+        """We can't test actual xdot, but using the environment we can
+        persuade samba-tool that a script we write is xdot and ensure
+        it gets the right text.
+        """
+        result, expected, err = self.runsubcmd("visualize", "ntdsconn",
+                                               '-H', self.dburl,
+                                               '--color=no', '-S',
+                                               '--dot')
+        self.assertCmdSuccess(result, expected, err)
+
+        # not that we're expecting anything here
+        old_xdot_path = os.environ.get('SAMBA_TOOL_XDOT_PATH')
+
+        tmpdir = tempfile.mkdtemp()
+        fake_xdot = os.path.join(tmpdir, 'fake_xdot')
+        content = os.path.join(tmpdir, 'content')
+        f = open(fake_xdot, 'w')
+        print('#!/bin/sh', file=f)
+        print('cp $1 %s' % content, file=f)
+        f.close()
+        os.chmod(fake_xdot, 0o700)
+
+        os.environ['SAMBA_TOOL_XDOT_PATH'] = fake_xdot
+        result, empty, err = self.runsubcmd("visualize", "ntdsconn",
+                                            '--importldif', MULTISITE_LDIF,
+                                            '--color=no', '-S',
+                                            '--xdot')
+
+        f = open(content)
+        xdot = f.read()
+        f.close()
+        os.remove(fake_xdot)
+        os.remove(content)
+        os.rmdir(tmpdir)
+
+        if old_xdot_path is not None:
+            os.environ['SAMBA_TOOL_XDOT_PATH'] = old_xdot_path
+        else:
+            del os.environ['SAMBA_TOOL_XDOT_PATH']
+
+        self.assertCmdSuccess(result, xdot, err)
+        self.assertStringsEqual(expected, xdot, strip=True)
+
+    def test_import_ldif(self):
+        """Make sure the samba-tool visualize --importldif option gives the
+        same output as using the externally generated db from the same
+        LDIF."""
+        result, s1, err = self.runsubcmd("visualize", "ntdsconn",
+                                         '-H', self.dburl,
+                                         '--color=no', '-S')
+        self.assertCmdSuccess(result, s1, err)
+
+        result, s2, err = self.runsubcmd("visualize", "ntdsconn",
+                                         '--importldif', MULTISITE_LDIF,
+                                         '--color=no', '-S')
+        self.assertCmdSuccess(result, s2, err)
+
+        self.assertStringsEqual(s1, s2)
 
     def test_output_file(self):
         """Check that writing to a file works, with and without
@@ -205,12 +267,14 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
             self.assertTrue(c not in ascii, 'ASCII should not contain %s' % c)
 
     def test_forced_local_dsa(self):
-        # the forced_local_dsa shouldn't make any difference
+        # the forced_local_dsa shouldn't make any difference, except
+        # for the title line.
         result, target, err = self.runsubcmd("visualize", "ntdsconn",
                                              '-H', self.dburl,
                                              '--color=no', '-S')
         self.assertCmdSuccess(result, target, err)
         files = []
+        target = target.strip().split('\n', 1)[1]
         for cn, site in MULTISITE_LDIF_DSAS:
             dsa = DN_TEMPLATE % (cn, site)
             samdb, dbfile = samdb_from_ldif(MULTISITE_LDIF,
@@ -222,7 +286,10 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
                                               '-H', 'tdb://' + dbfile,
                                               '--color=no', '-S')
             self.assertCmdSuccess(result, out, err)
-            self.assertStringsEqual(target, out)
+            # Separate out the title line, which will differ in the DN.
+            title, body = out.strip().split('\n', 1)
+            self.assertStringsEqual(target, body)
+            self.assertIn(cn, title)
             files.append(dbfile)
         self.remove_files(*files)
 
@@ -284,7 +351,6 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
                                         self.tempdir,
                                         self.lp, tag='disconnected')
         dburl = 'tdb://' + dbfile
-        print(dbfile)
         result, output, err = self.runsubcmd("visualize", "ntdsconn",
                                              '-H', dburl,
                                              '--color=no', '-S')
@@ -314,8 +380,6 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
                                           '-o', '-')
         self.assertCmdSuccess(result, dot, err)
         self.remove_files(dbfile)
-        print(dot)
-
         self.assertStringsEqual(EXPECTED_DOT_NTDSCONN_DISCONNECTED, dot,
                                 strip=True)
 
@@ -338,11 +402,10 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
         self.assertStringsEqual(EXPECTED_DOT_NTDSCONN_DISCONNECTED, dot)
 
         self.remove_files(dbfile, dot_file)
-        print(dot)
 
 EXPECTED_DOT_MULTISITE_NO_KEY = r"""/* generated by samba */
 digraph A_samba_tool_production {
-label="NTDS Connections known to CN=WIN07,CN=Servers,CN=Site-4,CN=Sites,CN=Configuration,DC=ad,DC=samba,DC=example,DC=com";
+label="NTDS Connections known to CN=WIN01,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=Configuration,DC=ad,DC=samba,DC=example,DC=com";
 fontsize=10;
 
 node[fontname=Helvetica; fontsize=10];
@@ -382,7 +445,7 @@ node[fontname=Helvetica; fontsize=10];
 
 EXPECTED_DOT_NTDSCONN_DISCONNECTED = r"""/* generated by samba */
 digraph A_samba_tool_production {
-label="NTDS Connections known to CN=SERVER2,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=Configuration,DC=samba,DC=example,DC=com";
+label="NTDS Connections known to CN=LOCALDC,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=Configuration,DC=samba,DC=example,DC=com";
 fontsize=10;
 
 node[fontname=Helvetica; fontsize=10];
@@ -435,7 +498,8 @@ key_0__label -> elision0 [style=invis; weight=9]
 """
 
 EXPECTED_DISTANCE_GRAPH_WITH_KEY = """
-NTDS Connections known to CN=SERVER2,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=Configuration,DC=samba,DC=example,DC=com
+NTDS Connections known to CN=LOCALDC,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=Configuration,DC=samba,DC=example,DC=com
+
                             destination
                   ,-------- *,CN=CLIENT+
                   |,------- *,CN=LOCALDC+

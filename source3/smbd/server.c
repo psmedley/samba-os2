@@ -1480,7 +1480,7 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return NT_STATUS_UNSUCCESSFUL;
 	}
 
-	status = g_lock_lock(ctx, name, G_LOCK_READ,
+	status = g_lock_lock(ctx, string_term_tdb_data(name), G_LOCK_READ,
 			     (struct timeval) { .tv_sec = 60 });
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_READ) failed: %s\n",
@@ -1491,11 +1491,12 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 
 	state = (struct smbd_claim_version_state) { .mem_ctx = ctx };
 
-	status = g_lock_dump(ctx, name, smbd_claim_version_parser, &state);
+	status = g_lock_dump(ctx, string_term_tdb_data(name),
+			     smbd_claim_version_parser, &state);
 	if (!NT_STATUS_IS_OK(status) &&
 	    !NT_STATUS_EQUAL(status, NT_STATUS_NOT_FOUND)) {
 		DBG_ERR("Could not read samba_version_string\n");
-		g_lock_unlock(ctx, name);
+		g_lock_unlock(ctx, string_term_tdb_data(name));
 		TALLOC_FREE(ctx);
 		return status;
 	}
@@ -1509,7 +1510,7 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return NT_STATUS_OK;
 	}
 
-	status = g_lock_lock(ctx, name, G_LOCK_WRITE,
+	status = g_lock_lock(ctx, string_term_tdb_data(name), G_LOCK_WRITE,
 			     (struct timeval) { .tv_sec = 60 });
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_WRITE) failed: %s\n",
@@ -1520,7 +1521,8 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return NT_STATUS_SXS_VERSION_CONFLICT;
 	}
 
-	status = g_lock_write_data(ctx, name, (const uint8_t *)version,
+	status = g_lock_write_data(ctx, string_term_tdb_data(name),
+				   (const uint8_t *)version,
 				   strlen(version)+1);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_write_data failed: %s\n",
@@ -1529,7 +1531,7 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return status;
 	}
 
-	status = g_lock_lock(ctx, name, G_LOCK_READ,
+	status = g_lock_lock(ctx, string_term_tdb_data(name), G_LOCK_READ,
 			     (struct timeval) { .tv_sec = 60 });
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_READ) failed: %s\n",
@@ -1938,6 +1940,11 @@ extern void build_options(bool screen);
 		exit_daemon("Samba cannot init server context", EACCES);
 	}
 
+	status = smbXsrv_client_global_init();
+	if (!NT_STATUS_IS_OK(status)) {
+		exit_daemon("Samba cannot init clients context", EACCES);
+	}
+
 	status = smbXsrv_session_global_init(msg_ctx);
 	if (!NT_STATUS_IS_OK(status)) {
 		exit_daemon("Samba cannot init session context", EACCES);
@@ -1982,14 +1989,14 @@ extern void build_options(bool screen);
 		exit_daemon("ERROR: failed to load share info db.", EACCES);
 	}
 
-	status = init_system_session_info();
+	status = init_system_session_info(NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1, ("ERROR: failed to setup system user info: %s.\n",
 			  nt_errstr(status)));
 		return -1;
 	}
 
-	if (!init_guest_info()) {
+	if (!init_guest_session_info(NULL)) {
 		DEBUG(0,("ERROR: failed to setup guest info.\n"));
 		return -1;
 	}

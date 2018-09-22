@@ -38,9 +38,11 @@
 #include "ctdb_private.h"
 #include "ctdb_client.h"
 
-#include "common/system.h"
+#include "common/system_socket.h"
 #include "common/common.h"
 #include "common/logging.h"
+
+#include "server/ctdb_config.h"
 
 #include "ctdb_cluster_mutex.h"
 
@@ -1127,7 +1129,7 @@ static int ctdb_takeover(struct ctdb_recoverd *rec,
 {
 	static char prog[PATH_MAX+1] = "";
 	char *arg;
-	int i;
+	int i, ret;
 
 	if (!ctdb_set_helper("takeover_helper", prog, sizeof(prog),
 			     "CTDB_TAKEOVER_HELPER", CTDB_HELPER_BINDIR,
@@ -1145,6 +1147,14 @@ static int ctdb_takeover(struct ctdb_recoverd *rec,
 		}
 		if (arg == NULL) {
 			DEBUG(DEBUG_ERR, (__location__ " memory error\n"));
+			return -1;
+		}
+	}
+
+	if (ctdb_config.failover_disabled) {
+		ret = setenv("CTDB_DISABLE_IP_FAILOVER", "1", 1);
+		if (ret != 0) {
+			D_ERR("Failed to set CTDB_DISABLE_IP_FAILOVER variable\n");
 			return -1;
 		}
 	}
@@ -2325,7 +2335,7 @@ static int verify_local_ip_allocation(struct ctdb_context *ctdb,
 	}
 
 	/* Return early if disabled... */
-	if (ctdb->tunable.disable_ip_failover != 0 ||
+	if (ctdb_config.failover_disabled ||
 	    ctdb_op_is_disabled(rec->takeover_run)) {
 		return  0;
 	}
@@ -3204,7 +3214,7 @@ int ctdb_start_recoverd(struct ctdb_context *ctdb)
 		return -1;
 	}
 
-	prctl_set_comment("ctdb_recovered");
+	prctl_set_comment("ctdb_recoverd");
 	if (switch_from_server_to_client(ctdb) != 0) {
 		DEBUG(DEBUG_CRIT, (__location__ "ERROR: failed to switch recovery daemon into client mode. shutting down.\n"));
 		exit(1);

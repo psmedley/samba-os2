@@ -16,6 +16,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+from __future__ import print_function
 from samba.tests import TestCaseInTempDir
 from samba.dcerpc import dns, dnsp
 from samba import gensec, tests
@@ -26,6 +27,7 @@ import random
 import socket
 import uuid
 import time
+
 
 class DNSTest(TestCaseInTempDir):
 
@@ -119,14 +121,14 @@ class DNSTest(TestCaseInTempDir):
         try:
             send_packet = ndr.ndr_pack(packet)
             if dump:
-                print self.hexdump(send_packet)
+                print(self.hexdump(send_packet))
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
             s.settimeout(timeout)
             s.connect((host, 53))
             s.sendall(send_packet, 0)
             recv_packet = s.recv(2048, 0)
             if dump:
-                print self.hexdump(recv_packet)
+                print(self.hexdump(recv_packet))
             response = ndr.ndr_unpack(dns.name_packet, recv_packet)
             return (response, recv_packet)
         finally:
@@ -142,7 +144,7 @@ class DNSTest(TestCaseInTempDir):
         try:
             send_packet = ndr.ndr_pack(packet)
             if dump:
-                print self.hexdump(send_packet)
+                print(self.hexdump(send_packet))
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
             s.settimeout(timeout)
             s.connect((host, 53))
@@ -152,7 +154,7 @@ class DNSTest(TestCaseInTempDir):
 
             recv_packet = s.recv(0xffff + 2, 0)
             if dump:
-                print self.hexdump(recv_packet)
+                print(self.hexdump(recv_packet))
             response = ndr.ndr_unpack(dns.name_packet, recv_packet[2:])
 
         finally:
@@ -165,18 +167,18 @@ class DNSTest(TestCaseInTempDir):
 
         return (response, recv_packet[2:])
 
-    def make_txt_update(self, prefix, txt_array):
+    def make_txt_update(self, prefix, txt_array, domain=None):
         p = self.make_name_packet(dns.DNS_OPCODE_UPDATE)
         updates = []
 
-        name = self.get_dns_domain()
+        name = domain or self.get_dns_domain()
         u = self.make_name_question(name, dns.DNS_QTYPE_SOA, dns.DNS_QCLASS_IN)
         updates.append(u)
         self.finish_name_packet(p, updates)
 
         updates = []
         r = dns.res_rec()
-        r.name = "%s.%s" % (prefix, self.get_dns_domain())
+        r.name = "%s.%s" % (prefix, name)
         r.rr_type = dns.DNS_QTYPE_TXT
         r.rr_class = dns.DNS_QCLASS_IN
         r.ttl = 900
@@ -189,8 +191,8 @@ class DNSTest(TestCaseInTempDir):
 
         return p
 
-    def check_query_txt(self, prefix, txt_array):
-        name = "%s.%s" % (prefix, self.get_dns_domain())
+    def check_query_txt(self, prefix, txt_array, zone=None):
+        name = "%s.%s" % (prefix, zone or self.get_dns_domain())
         p = self.make_name_packet(dns.DNS_OPCODE_QUERY)
         questions = []
 
@@ -198,7 +200,8 @@ class DNSTest(TestCaseInTempDir):
         questions.append(q)
 
         self.finish_name_packet(p, questions)
-        (response, response_packet) = self.dns_transaction_udp(p, host=self.server_ip)
+        (response, response_packet) =\
+            self.dns_transaction_udp(p, host=self.server_ip)
         self.assert_dns_rcode_equals(response, dns.DNS_RCODE_OK)
         self.assertEquals(response.ancount, 1)
         self.assertEquals(response.answers[0].rdata.txt.str, txt_array)
@@ -243,7 +246,7 @@ class DNSTKeyTest(DNSTest):
         rdata = dns.tkey_record()
         rdata.algorithm = "gss-tsig"
         rdata.inception = int(time.time())
-        rdata.expiration = int(time.time()) + 60*60
+        rdata.expiration = int(time.time()) + 60 * 60
         rdata.mode = dns.DNS_TKEY_MODE_GSSAPI
         rdata.error = 0
         rdata.other_size = 0
@@ -270,7 +273,8 @@ class DNSTKeyTest(DNSTest):
         p.arcount = 1
         p.additional = additional
 
-        (response, response_packet) = self.dns_transaction_tcp(p, self.server_ip)
+        (response, response_packet) =\
+            self.dns_transaction_tcp(p, self.server_ip)
         self.assert_dns_rcode_equals(response, dns.DNS_RCODE_OK)
 
         tkey_record = response.answers[0].rdata
@@ -394,7 +398,8 @@ class DNSTKeyTest(DNSTest):
         questions.append(q)
 
         self.finish_name_packet(p, questions)
-        (response, response_packet) = self.dns_transaction_udp(p, self.server_ip)
+        (response, response_packet) =\
+            self.dns_transaction_udp(p, self.server_ip)
         return response.operation & 0x000F
 
     def make_update_request(self, delete=False):

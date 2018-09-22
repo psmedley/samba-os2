@@ -31,11 +31,13 @@
 #include "lib/util/dlinklist.h"
 #include "lib/util/tevent_unix.h"
 #include "lib/util/become_daemon.h"
+#include "lib/util/sys_rw.h"
 
 #include "common/logging.h"
 #include "common/reqid.h"
 #include "common/comm.h"
 #include "common/pidfile.h"
+#include "common/system.h"
 #include "common/sock_daemon.h"
 
 struct sock_socket {
@@ -71,6 +73,7 @@ struct sock_daemon_context {
 
 	struct pidfile_context *pid_ctx;
 	struct sock_socket *socket_list;
+	int startup_fd;
 };
 
 /*
@@ -114,9 +117,14 @@ static int sock_client_context_init(TALLOC_CTX *mem_ctx,
 	}
 
 	if (sock->funcs->connect != NULL) {
+		pid_t pid;
 		bool status;
 
-		status = sock->funcs->connect(client_ctx, sock->private_data);
+		(void) ctdb_get_peer_pid(client_fd, &pid);
+
+		status = sock->funcs->connect(client_ctx,
+					      pid,
+					      sock->private_data);
 		if (! status) {
 			talloc_free(client_ctx);
 			close(client_fd);
@@ -483,6 +491,7 @@ int sock_daemon_setup(TALLOC_CTX *mem_ctx, const char *daemon_name,
 
 	sockd->funcs = funcs;
 	sockd->private_data = private_data;
+	sockd->startup_fd = -1;
 
 	ret = logging_init(sockd, logging, debug_level, daemon_name);
 	if (ret != 0) {
@@ -514,6 +523,11 @@ int sock_daemon_add_unix(struct sock_daemon_context *sockd,
 	return 0;
 }
 
+void sock_daemon_set_startup_fd(struct sock_daemon_context *sockd, int fd)
+{
+	sockd->startup_fd = fd;
+}
+
 /*
  * Run socket daemon
  */
@@ -543,6 +557,7 @@ static void sock_daemon_run_socket_fail(struct tevent_req *subreq);
 static void sock_daemon_run_watch_pid(struct tevent_req *subreq);
 static void sock_daemon_run_wait(struct tevent_req *req);
 static void sock_daemon_run_wait_done(struct tevent_req *subreq);
+static void sock_daemon_startup_notify(struct sock_daemon_context *sockd);
 
 struct tevent_req *sock_daemon_run_send(TALLOC_CTX *mem_ctx,
 					struct tevent_context *ev,
@@ -669,6 +684,8 @@ static void sock_daemon_run_started(struct tevent_req *subreq)
 		return;
 	}
 	sock_daemon_run_wait(req);
+
+	sock_daemon_startup_notify(sockd);
 }
 
 static void sock_daemon_run_startup_done(struct tevent_req *subreq)
@@ -689,13 +706,15 @@ static void sock_daemon_run_startup_done(struct tevent_req *subreq)
 		return;
 	}
 
-	D_NOTICE("startup completed succesfully\n");
+	D_NOTICE("startup completed successfully\n");
 
 	status = sock_daemon_run_socket_listen(req);
 	if (! status) {
 		return;
 	}
 	sock_daemon_run_wait(req);
+
+	sock_daemon_startup_notify(sockd);
 }
 
 static void sock_daemon_run_signal_handler(struct tevent_context *ev,
@@ -959,6 +978,19 @@ static void sock_daemon_run_wait_done(struct tevent_req *subreq)
 	}
 
 	sock_daemon_run_shutdown(req);
+}
+
+static void sock_daemon_startup_notify(struct sock_daemon_context *sockd)
+{
+	if (sockd->startup_fd != -1) {
+		unsigned int zero = 0;
+		ssize_t num;
+
+		num = sys_write(sockd->startup_fd, &zero, sizeof(zero));
+		if (num != sizeof(zero)) {
+			D_WARNING("Failed to write zero to pipe FD\n");
+		}
+	}
 }
 
 bool sock_daemon_run_recv(struct tevent_req *req, int *perr)

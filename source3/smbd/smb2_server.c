@@ -227,7 +227,8 @@ static NTSTATUS smbd_initialize_smb2(struct smbXsrv_connection *xconn,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	xconn->transport.fde = tevent_add_fd(xconn->ev_ctx,
+	xconn->transport.fde = tevent_add_fd(
+					xconn->client->raw_ev_ctx,
 					xconn,
 					xconn->transport.sock,
 					TEVENT_FD_READ,
@@ -1481,8 +1482,14 @@ NTSTATUS smbd_smb2_request_pending_queue(struct smbd_smb2_request *req,
 		data_blob_clear_free(&req->last_key);
 	}
 
+	/*
+	 * smbd_smb2_request_pending_timer() just send a packet
+	 * to the client and doesn't need any impersonation.
+	 * So we use req->xconn->client->raw_ev_ctx instead
+	 * of req->ev_ctx here.
+	 */
 	defer_endtime = timeval_current_ofs_usec(defer_time);
-	req->async_te = tevent_add_timer(req->sconn->ev_ctx,
+	req->async_te = tevent_add_timer(req->xconn->client->raw_ev_ctx,
 					 req, defer_endtime,
 					 smbd_smb2_request_pending_timer,
 					 req);
@@ -1846,10 +1853,6 @@ static NTSTATUS smbd_smb2_request_check_tcon(struct smbd_smb2_request *req)
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
-	if (!set_current_service(tcon->compat, 0, true)) {
-		return NT_STATUS_ACCESS_DENIED;
-	}
-
 	req->tcon = tcon;
 	req->last_tid = in_tid;
 
@@ -1962,13 +1965,6 @@ static NTSTATUS smbd_smb2_request_check_session(struct smbd_smb2_request *req)
 	session_info = session->global->auth_session_info;
 	if (session_info == NULL) {
 		return NT_STATUS_INVALID_HANDLE;
-	}
-
-	if (in_session_id != req->xconn->client->last_session_id) {
-		req->xconn->client->last_session_id = in_session_id;
-		set_current_user_info(session_info->unix_info->sanitized_username,
-				      session_info->unix_info->unix_name,
-				      session_info->info->domain_name);
 	}
 
 	return NT_STATUS_OK;
@@ -2347,9 +2343,7 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 	}
 
 	/*
-	 * Check if the client provided a valid session id,
-	 * if so smbd_smb2_request_check_session() calls
-	 * set_current_user_info().
+	 * Check if the client provided a valid session id.
 	 *
 	 * As some command don't require a valid session id
 	 * we defer the check of the session_status
@@ -2514,6 +2508,8 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 		 *
 		 * smbd_smb2_request_check_tcon()
 		 * calls change_to_user() on success.
+		 * Which implies set_current_user_info()
+		 * and chdir_current_service().
 		 */
 		status = smbd_smb2_request_check_tcon(req);
 		if (!NT_STATUS_IS_OK(status)) {
@@ -2529,6 +2525,22 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 			return smbd_smb2_request_error(req,
 				NT_STATUS_ACCESS_DENIED);
 		}
+	} else if (call->need_session) {
+		struct auth_session_info *session_info = NULL;
+
+		/*
+		 * Unless we also have need_tcon (see above),
+		 * we still need to call set_current_user_info().
+		 */
+
+		session_info = req->session->global->auth_session_info;
+		if (session_info == NULL) {
+			return NT_STATUS_INVALID_HANDLE;
+		}
+
+		set_current_user_info(session_info->unix_info->sanitized_username,
+				      session_info->unix_info->unix_name,
+				      session_info->info->domain_name);
 	}
 
 	if (req->was_encrypted || encryption_desired) {
@@ -2602,8 +2614,10 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 		SMB_ASSERT(call->fileid_ofs == 0);
 		/* This call needs to be run as root */
 		change_to_root_user();
+		req->ev_ctx = req->sconn->root_ev_ctx;
 	} else {
 		SMB_ASSERT(call->need_tcon);
+		req->ev_ctx = req->tcon->compat->user_ev_ctx;
 	}
 
 #define _INBYTES(_r) \
@@ -2910,8 +2924,13 @@ static NTSTATUS smbd_smb2_request_reply(struct smbd_smb2_request *req)
 			}
 		}
 
+		/*
+		 * smbd_smb2_request_dispatch() will redo the impersonation.
+		 * So we use req->xconn->client->raw_ev_ctx instead
+		 * of req->ev_ctx here.
+		 */
 		tevent_schedule_immediate(im,
-					req->sconn->ev_ctx,
+					req->xconn->client->raw_ev_ctx,
 					smbd_smb2_request_dispatch_immediate,
 					req);
 		return NT_STATUS_OK;

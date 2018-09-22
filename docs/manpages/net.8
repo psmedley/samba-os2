@@ -2,12 +2,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.8.5
+.\"    Source: Samba 4.9.0
 .\"  Language: English
 .\"
-.TH "NET" "8" "08/24/2018" "Samba 4\&.8\&.5" "System Administration tools"
+.TH "NET" "8" "09/13/2018" "Samba 4\&.9\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -389,6 +389,9 @@ Delete specified group\&.
 .SS "[RPC|ADS] GROUP ADD name [-C comment]"
 .PP
 Create specified group\&.
+.SS "[ADS] LOOKUP"
+.PP
+Lookup the closest Domain Controller in our domain and retrieve server information about it\&.
 .SS "[RAP|RPC] SHARE"
 .SS "[RAP|RPC] SHARE [misc. options] [targets]"
 .PP
@@ -971,6 +974,56 @@ Perform a raw LDAP search on a ADS server and dump the results\&. The DN standar
 .PP
 Example:
 \fBnet ads dn \*(AqCN=administrator,CN=Users,DC=my,DC=domain\*(Aq SAMAccountName\fR
+.SS "ADS KEYTAB \fICREATE\fR"
+.PP
+Creates a new keytab file if one doesn\*(Aqt exist with default entries\&. Default entries are kerberos principals created from the machinename of the client, the UPN (if it exists) and any Windows SPN(s) associated with the computer AD account for the client\&. If a keytab file already exists then only missing kerberos principals from the default entries are added\&. No changes are made to the computer AD account\&.
+.SS "ADS KEYTAB \fIADD\fR \fI(principal | machine | serviceclass | windows SPN\fR"
+.PP
+Adds a new keytab entry, the entry can be either;
+.PP
+kerberos principal
+.RS 4
+A kerberos principal (identified by the presence of \*(Aq@\*(Aq) is just added to the keytab file\&.
+.RE
+.PP
+machinename
+.RS 4
+A machinename (identified by the trailing \*(Aq$\*(Aq) is used to create a a kerberos principal \*(Aqmachinename@realm\*(Aq which is added to the keytab file\&.
+.RE
+.PP
+serviceclass
+.RS 4
+A serviceclass (such as \*(Aqcifs\*(Aq, \*(Aqhtml\*(Aq etc\&.) is used to create a pair of kerberos principals \*(Aqserviceclass/fully_qualified_dns_name@realm\*(Aq & \*(Aqserviceclass/netbios_name@realm\*(Aq which are added to the keytab file\&.
+.RE
+.PP
+Windows SPN
+.RS 4
+A Windows SPN is of the format \*(Aqserviceclass/host:port\*(Aq, it is used to create a kerberos principal \*(Aqserviceclass/host@realm\*(Aq which will be written to the keytab file\&.
+.RE
+.PP
+Unlike old versions no computer AD objects are modified by this command\&. To preserve the bevhaviour of older clients \*(Aqnet ads keytab ad_update_ads\*(Aq is available\&.
+.SS "ADS KEYTAB \fIADD_UPDATE_ADS\fR \fI(principal | machine | serviceclass | windows SPN\fR"
+.PP
+Adds a new keytab entry (see section for net ads keytab add)\&. In addition to adding entries to the keytab file corrosponding Windows SPNs are created from the entry passed to this command\&. These SPN(s) added to the AD computer account object associated with the client machine running this command for the following entry types;
+.PP
+serviceclass
+.RS 4
+A serviceclass (such as \*(Aqcifs\*(Aq, \*(Aqhtml\*(Aq etc\&.) is used to create a pair of Windows SPN(s) \*(Aqparam/full_qualified_dns\*(Aq & \*(Aqparam/netbios_name\*(Aq which are added to the AD computer account object for this client\&.
+.RE
+.PP
+Windows SPN
+.RS 4
+A Windows SPN is of the format \*(Aqserviceclass/host:port\*(Aq, it is added as passed to the AD computer account object for this client\&.
+.RE
+.SS "ADS setspn \fISETSPN LIST [machine]\fR"
+.PP
+Lists the Windows SPNs stored in the \*(Aqmachine\*(Aq Windows AD Computer object\&. If \*(Aqmachine\*(Aq is not specified then computer account for this client is used instead\&.
+.SS "ADS setspn \fISETSPN ADD SPN [machine]\fR"
+.PP
+Adds the specified Windows SPN to the \*(Aqmachine\*(Aq Windows AD Computer object\&. If \*(Aqmachine\*(Aq is not specified then computer account for this client is used instead\&.
+.SS "ADS setspn \fISETSPN DELETE SPN [machine]\fR"
+.PP
+DELETE the specified Window SPN from the \*(Aqmachine\*(Aq Windows AD Computer object\&. If \*(Aqmachine\*(Aq is not specified then computer account for this client is used instead\&.
 .SS "ADS WORKGROUP"
 .PP
 Print out workgroup name for specified kerberos realm\&.

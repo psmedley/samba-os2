@@ -229,12 +229,6 @@ static int skel_close_fn(vfs_handle_struct *handle, files_struct *fsp)
 	return SMB_VFS_NEXT_CLOSE(handle, fsp);
 }
 
-static ssize_t skel_vfs_read(vfs_handle_struct *handle, files_struct *fsp,
-			     void *data, size_t n)
-{
-	return SMB_VFS_NEXT_READ(handle, fsp, data, n);
-}
-
 static ssize_t skel_pread(vfs_handle_struct *handle, files_struct *fsp,
 			  void *data, size_t n, off_t offset)
 {
@@ -293,12 +287,6 @@ static ssize_t skel_pread_recv(struct tevent_req *req,
 	}
 	*vfs_aio_state = state->vfs_aio_state;
 	return state->ret;
-}
-
-static ssize_t skel_write(vfs_handle_struct *handle, files_struct *fsp,
-			  const void *data, size_t n)
-{
-	return SMB_VFS_NEXT_WRITE(handle, fsp, data, n);
 }
 
 static ssize_t skel_pwrite(vfs_handle_struct *handle, files_struct *fsp,
@@ -386,11 +374,6 @@ static int skel_rename(vfs_handle_struct *handle,
 		       const struct smb_filename *smb_fname_dst)
 {
 	return SMB_VFS_NEXT_RENAME(handle, smb_fname_src, smb_fname_dst);
-}
-
-static int skel_fsync(vfs_handle_struct *handle, files_struct *fsp)
-{
-	return SMB_VFS_NEXT_FSYNC(handle, fsp);
 }
 
 struct skel_fsync_state {
@@ -959,19 +942,6 @@ static NTSTATUS skel_fset_nt_acl(vfs_handle_struct *handle, files_struct *fsp,
 	return SMB_VFS_NEXT_FSET_NT_ACL(handle, fsp, security_info_sent, psd);
 }
 
-static int skel_chmod_acl(vfs_handle_struct *handle,
-			const struct smb_filename *smb_fname,
-			mode_t mode)
-{
-	return SMB_VFS_NEXT_CHMOD_ACL(handle, smb_fname, mode);
-}
-
-static int skel_fchmod_acl(vfs_handle_struct *handle, files_struct *fsp,
-			   mode_t mode)
-{
-	return SMB_VFS_NEXT_FCHMOD_ACL(handle, fsp, mode);
-}
-
 static SMB_ACL_T skel_sys_acl_get_file(vfs_handle_struct *handle,
 				       const struct smb_filename *smb_fname,
 				       SMB_ACL_TYPE_T type,
@@ -1128,11 +1098,9 @@ struct vfs_fn_pointers skel_transparent_fns = {
 	.open_fn = skel_open,
 	.create_file_fn = skel_create_file,
 	.close_fn = skel_close_fn,
-	.read_fn = skel_vfs_read,
 	.pread_fn = skel_pread,
 	.pread_send_fn = skel_pread_send,
 	.pread_recv_fn = skel_pread_recv,
-	.write_fn = skel_write,
 	.pwrite_fn = skel_pwrite,
 	.pwrite_send_fn = skel_pwrite_send,
 	.pwrite_recv_fn = skel_pwrite_recv,
@@ -1140,7 +1108,6 @@ struct vfs_fn_pointers skel_transparent_fns = {
 	.sendfile_fn = skel_sendfile,
 	.recvfile_fn = skel_recvfile,
 	.rename_fn = skel_rename,
-	.fsync_fn = skel_fsync,
 	.fsync_send_fn = skel_fsync_send,
 	.fsync_recv_fn = skel_fsync_recv,
 	.stat_fn = skel_stat,
@@ -1200,9 +1167,6 @@ struct vfs_fn_pointers skel_transparent_fns = {
 	.fset_nt_acl_fn = skel_fset_nt_acl,
 
 	/* POSIX ACL operations. */
-
-	.chmod_acl_fn = skel_chmod_acl,
-	.fchmod_acl_fn = skel_fchmod_acl,
 
 	.sys_acl_get_file_fn = skel_sys_acl_get_file,
 	.sys_acl_get_fd_fn = skel_sys_acl_get_fd,

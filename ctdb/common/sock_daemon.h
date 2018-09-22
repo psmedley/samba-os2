@@ -30,7 +30,7 @@
  *
  * @brief A framework for a server based on unix-domain sockets.
  *
- * This abstraction allows to build simple servers that communicate using
+ * This abstraction allows one to build simple servers that communicate using
  * unix-domain sockets.  It takes care of the common boilerplate.
  */
 
@@ -109,8 +109,9 @@ struct sock_daemon_funcs {
  * connect() is called when there is a new connection
  *
  * @param[in] client The new socket client context
+ * @param[in] pid The pid of the new client process, or -1 if unknown
  * @param[in] private_data Private data set with the socket
- * @retun true if connection should be accepted, false otherwise
+ * @return true if connection should be accepted, false otherwise
  *
  *
  * disconnect() is called  when client closes connection
@@ -139,6 +140,7 @@ struct sock_daemon_funcs {
  */
 struct sock_socket_funcs {
 	bool (*connect)(struct sock_client_context *client,
+			pid_t pid,
 			void *private_data);
 	void (*disconnect)(struct sock_client_context *client,
 			   void *private_data);
@@ -206,6 +208,16 @@ int sock_daemon_add_unix(struct sock_daemon_context *sockd,
 			 const char *sockpath,
 			 struct sock_socket_funcs *funcs,
 			 void *private_data);
+
+/**
+ * @brief Set file descriptor for indicating startup success
+ *
+ * On successful completion, 0 (unsigned int) will be written to the fd.
+ *
+ * @param[in] sockd Socket daemon context
+ * @param[in] fd File descriptor
+ */
+void sock_daemon_set_startup_fd(struct sock_daemon_context *sockd, int fd);
 
 /**
  * @brief Async computation start to run a socket daemon

@@ -482,12 +482,6 @@ static NTSTATUS dsdb_trust_crossref_tdo_info(TALLOC_CTX *mem_ctx,
 		*_trust_parent_tdo = NULL;
 	}
 
-	domain_dn = ldb_get_default_basedn(sam_ctx);
-	if (domain_dn == NULL) {
-		TALLOC_FREE(frame);
-		return NT_STATUS_INTERNAL_ERROR;
-	}
-
 	partitions_dn = samdb_partitions_dn(sam_ctx, frame);
 	if (partitions_dn == NULL) {
 		TALLOC_FREE(frame);
@@ -832,6 +826,22 @@ static bool dsdb_trust_find_tln_ex_match(const struct lsa_ForestTrustInformation
 	}
 
 	return false;
+}
+
+NTSTATUS dsdb_trust_local_tdo_info(TALLOC_CTX *mem_ctx,
+				   struct ldb_context *sam_ctx,
+				   struct lsa_TrustDomainInfoInfoEx **_tdo)
+{
+	struct ldb_dn *domain_dn = NULL;
+
+	domain_dn = ldb_get_default_basedn(sam_ctx);
+	if (domain_dn == NULL) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	return dsdb_trust_crossref_tdo_info(mem_ctx, sam_ctx,
+					    domain_dn, NULL,
+					    _tdo, NULL, NULL);
 }
 
 NTSTATUS dsdb_trust_xref_tdo_info(TALLOC_CTX *mem_ctx,

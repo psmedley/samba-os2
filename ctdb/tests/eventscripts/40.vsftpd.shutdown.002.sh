@@ -4,8 +4,7 @@
 
 define_test "managed"
 
-setup_vsftpd "up"
-export CTDB_MANAGES_VSFTPD="yes"
+setup "up"
 
 ok <<EOF
 Stopping vsftpd: OK

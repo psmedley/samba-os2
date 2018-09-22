@@ -2,12 +2,12 @@
 .\"     Title: samba-tool
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.8.5
+.\"    Source: Samba 4.9.0
 .\"  Language: English
 .\"
-.TH "SAMBA\-TOOL" "8" "08/24/2018" "Samba 4\&.8\&.5" "System Administration tools"
+.TH "SAMBA\-TOOL" "8" "09/13/2018" "Samba 4\&.9\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -126,6 +126,61 @@ Set the
 option "<name>" to value "<value>" from the command line\&. This overrides compiled\-in defaults and options read from the configuration file\&.
 .RE
 .SH "COMMANDS"
+.SS "computer create computername [options]"
+.PP
+Create a new computer in the Active Directory Domain\&.
+.PP
+The new computer name specified on the command is the sAMAccountName, with or without the trailing dollar sign\&.
+.PP
+\-\-computerou=COMPUTEROU
+.RS 4
+DN of alternative location (with or without domainDN counterpart) to default CN=Computers in which new computer object will be created\&. E\&.g\&. \*(AqOU=OUname\*(Aq\&.
+.RE
+.PP
+\-\-description=DESCRIPTION
+.RS 4
+The new computers\*(Aqs description\&.
+.RE
+.PP
+\-\-ip\-address=IP_ADDRESS_LIST
+.RS 4
+IPv4 address for the computer\*(Aqs A record, or IPv6 address for AAAA record, can be provided multiple times\&.
+.RE
+.PP
+\-\-service\-principal\-name=SERVICE_PRINCIPAL_NAME_LIST
+.RS 4
+Computer\*(Aqs Service Principal Name, can be provided multiple times\&.
+.RE
+.PP
+\-\-prepare\-oldjoin
+.RS 4
+Prepare enabled machine account for oldjoin mechanism\&.
+.RE
+.SS "computer delete computername [options]"
+.PP
+Delete an existing computer account\&.
+.PP
+The computer name specified on the command is the sAMAccountName, with or without the trailing dollar sign\&.
+.SS "computer list"
+.PP
+List all computers\&.
+.SS "computer move computername new_parent_dn [options]"
+.PP
+This command moves a computer account into the specified organizational unit or container\&.
+.PP
+The computername specified on the command is the sAMAccountName, with or without the trailing dollar sign\&.
+.PP
+The name of the organizational unit or container can be specified as a full DN or without the domainDN component\&.
+.SS "computer show computername [options]"
+.PP
+Display a computer AD object\&.
+.PP
+The computer name specified on the command is the sAMAccountName, with or without the trailing dollar sign\&.
+.PP
+\-\-attributes=USER_ATTRS
+.RS 4
+Comma separated list of attributes, which will be printed\&.
+.RE
 .SS "dbcheck"
 .PP
 Check the local AD database for errors\&.
@@ -183,6 +238,18 @@ List zones\&.
 .SS "domain"
 .PP
 Manage Domain\&.
+.SS "domain backup"
+.PP
+Create or restore a backup of the domain\&.
+.SS "domain backup online"
+.PP
+Copy a running DC\*(Aqs current DB into a backup tar file\&.
+.SS "domain backup rename"
+.PP
+Copy a running DC\*(Aqs DB to backup file, renaming the domain in the process\&.
+.SS "domain backup restore"
+.PP
+Restore the domain\*(Aqs DB from a backup\-file\&.
 .SS "domain classicupgrade [options] classic_smb_conf"
 .PP
 Upgrade from Samba classic (NT4\-like) database to Samba AD DC database\&.
@@ -207,6 +274,33 @@ Show/raise domain and forest function levels\&.
 .SS "domain passwordsettings show|set options [options]"
 .PP
 Show/set password settings\&.
+.SS "domain passwordsettings pso"
+.PP
+Manage fine\-grained Password Settings Objects (PSOs)\&.
+.SS "domain passwordsettings pso apply pso-name user-or-group-name [options]"
+.PP
+Applies a PSO\*(Aqs password policy to a user or group\&.
+.SS "domain passwordsettings pso create pso-name precedence [options]"
+.PP
+Creates a new Password Settings Object (PSO)\&.
+.SS "domain passwordsettings pso delete pso-name [options]"
+.PP
+Deletes a Password Settings Object (PSO)\&.
+.SS "domain passwordsettings pso list [options]"
+.PP
+Lists all Password Settings Objects (PSOs)\&.
+.SS "domain passwordsettings pso set pso-name [options]"
+.PP
+Modifies a Password Settings Object (PSO)\&.
+.SS "domain passwordsettings pso show user-name [options]"
+.PP
+Displays a Password Settings Object (PSO)\&.
+.SS "domain passwordsettings pso show-user pso-name [options]"
+.PP
+Displays the Password Settings that apply to a user\&.
+.SS "domain passwordsettings pso unapply pso-name user-or-group-name [options]"
+.PP
+Updates a PSO to no longer apply to a user or group\&.
 .SS "domain provision"
 .PP
 Promote an existing domain member or NT4 PDC to an AD DC\&.
@@ -250,13 +344,29 @@ for NTDS Settings object of a domain controller\&.
 Replicate a naming context between two DCs\&.
 .SS "drs showrepl"
 .PP
-Show replication status\&.
+Show replication status\&. The
+[\-\-json]
+option results in JSON output, and with the
+[\-\-summary]
+option produces very little output when the replication status seems healthy\&.
 .SS "dsacl"
 .PP
 Administer DS ACLs
 .SS "dsacl set"
 .PP
 Modify access list on a directory object\&.
+.SS "forest"
+.PP
+Manage Forest configuration\&.
+.SS "forest directory_service"
+.PP
+Manage directory_service behaviour for the forest\&.
+.SS "forest directory_service dsheuristics VALUE"
+.PP
+Modify dsheuristics directory_service configuration for the forest\&.
+.SS "forest directory_service show"
+.PP
+Show current directory_service configuration for the forest\&.
 .SS "fsmo"
 .PP
 Manage Flexible Single Master Operations (FSMO)\&.
@@ -326,9 +436,21 @@ List all groups\&.
 .SS "group listmembers groupname [options]"
 .PP
 List all members of the specified AD group\&.
+.SS "group move groupname new_parent_dn [options]"
+.PP
+This command moves a group into the specified organizational unit or container\&.
+.PP
+The groupname specified on the command is the sAMAccountName\&.
+.PP
+The name of the organizational unit or container can be specified as a full DN or without the domainDN component\&.
+.PP
+
 .SS "group removemembers groupname members [options]"
 .PP
 Remove members from the specified AD group\&.
+.SS "group show groupname [options]"
+.PP
+Show group object and it\*(Aqs attributes\&.
 .SS "ldapcmp \fIURL1\fR \fIURL2\fR \fIdomain|configuration|schema|dnsdomain|dnsforest\fR [options]"
 .PP
 Compare two LDAP databases\&.
@@ -347,12 +469,80 @@ Check sysvol ACLs match defaults (including correct ACLs on GPOs)\&.
 .SS "ntacl sysvolreset"
 .PP
 Reset sysvol ACLs to defaults (including correct ACLs on GPOs)\&.
+.SS "ou create ou_dn [options]"
+.PP
+Create an organizational unit\&.
+.PP
+The name of the organizational unit can be specified as a full DN or without the domainDN component\&.
+.PP
+\-\-description=DESCRIPTION
+.RS 4
+Specify OU\*(Aqs description\&.
+.RE
+.SS "ou delete ou_dn [options]"
+.PP
+Delete an organizational unit\&.
+.PP
+The name of the organizational unit can be specified as a full DN or without the domainDN component\&.
+.PP
+\-\-force\-subtree\-delete
+.RS 4
+Delete organizational unit and all children reclusively\&.
+.RE
+.SS "ou list [options]"
+.PP
+List all organizational units\&.
+.PP
+\-\-full\-dn
+.RS 4
+Display DNs including the base DN\&.
+.RE
+.SS "ou listobjects ou_dn [options]"
+.PP
+List all objects in an organizational unit\&.
+.PP
+The name of the organizational unit can be specified as a full DN or without the domainDN component\&.
+.PP
+\-\-full\-dn
+.RS 4
+Display DNs including the base DN\&.
+.RE
+.PP
+\-r|\-\-recursive
+.RS 4
+List objects recursively\&.
+.RE
+.SS "ou move old_ou_dn new_parent_dn [options]"
+.PP
+Move an organizational unit\&.
+.PP
+The name of the organizational units can be specified as a full DN or without the domainDN component\&.
+.SS "ou rename old_ou_dn new_ou_dn [options]"
+.PP
+Rename an organizational unit\&.
+.PP
+The name of the organizational units can be specified as a full DN or without the domainDN component\&.
 .SS "rodc"
 .PP
 Manage Read\-Only Domain Controller (RODC)\&.
 .SS "rodc preload SID|DN|accountname [options]"
 .PP
 Preload one account for an RODC\&.
+.SS "schema"
+.PP
+Manage and query schema\&.
+.SS "schema attribute modify attribute [options]"
+.PP
+Modify the behaviour of an attribute in schema\&.
+.SS "schema attribute show attribute [options]"
+.PP
+Display an attribute schema definition\&.
+.SS "schema attribute show_oc attribute [options]"
+.PP
+Show objectclasses that MAY or MUST contain this attribute\&.
+.SS "schema objectclass show objectclass [options]"
+.PP
+Display an objectclass schema definition\&.
 .SS "sites"
 .PP
 Manage sites\&.
@@ -403,6 +593,21 @@ Enable an user account\&.
 .SS "user list"
 .PP
 List all users\&.
+.SS "user show username [options]"
+.PP
+Display a user AD object\&.
+.PP
+\-\-attributes=USER_ATTRS
+.RS 4
+Comma separated list of attributes, which will be printed\&.
+.RE
+.SS "user move username new_parent_dn [options]"
+.PP
+This command moves a user account into the specified organizational unit or container\&.
+.PP
+The username specified on the command is the sAMAccountName\&.
+.PP
+The name of the organizational unit or container can be specified as a full DN or without the domainDN component\&.
 .SS "user password [options]"
 .PP
 Change password for an user account (the one provided in authentication)\&.
@@ -443,6 +648,11 @@ samba\-tool visualize reps
 .RS 4
 Looks at repsTo and repsFrom objects\&.
 .RE
+.PP
+samba\-tool visualize uptodateness
+.RS 4
+Looks at replication lag as shown by the uptodateness vectors\&.
+.RE
 .SS "GRAPHICAL MODES"
 .PP
 \-\-distance
@@ -452,7 +662,15 @@ Distances between DCs are shown in a matrix in the terminal\&.
 .PP
 \-\-dot
 .RS 4
-Generate Graphviz dot output\&. When viewed using dot or xdot, this shows the network as a graph with DCs as vertices and connections edges\&. Certain types of degenerate edges are shown in different colours or line\-styles\&.
+Generate Graphviz dot output (for ntdsconn and reps modes)\&. When viewed using dot or xdot, this shows the network as a graph with DCs as vertices and connections edges\&. Certain types of degenerate edges are shown in different colours or line\-styles\&.
+.RE
+.PP
+\-\-xdot
+.RS 4
+Generate Graphviz dot output as with
+[\-\-dot]
+and attempt to view it immediately using
+/usr/bin/xdot\&.
 .RE
 .PP
 \-r
@@ -461,7 +679,9 @@ Normally,
 samba\-tool
 talks to one database; with the
 [\-r]
-option attempts are made to contact all the DCs known to the first database\&. This is necessary to get sensible results from
+option attempts are made to contact all the DCs known to the first database\&. This is necessary for
+samba\-tool visualize uptodateness
+and for
 samba\-tool visualize reps
 because the repsFrom/To objects are not replicated, and it can reveal replication issues in other modes\&.
 .RE
@@ -470,7 +690,7 @@ because the repsFrom/To objects are not replicated, and it can reveal replicatio
 Gives usage information\&.
 .SH "VERSION"
 .PP
-This man page is complete for version 4\&.8\&.5 of the Samba suite\&.
+This man page is complete for version 4\&.9\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

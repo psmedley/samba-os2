@@ -1220,7 +1220,7 @@ static bool winbind_name_list_to_sid_string_list(struct pwb_context *ctx,
 		/*
 		 * The lookup of the last name failed..
 		 * It results in require_member_of_sid ends with ','
-		 * It is malformated parameter here, overwrite the last ','.
+		 * It is malformatted parameter here, overwrite the last ','.
 		 */
 		len = strlen(sid_list_buffer);
 		if ((len != 0) && (sid_list_buffer[len - 1] == ',')) {
@@ -2886,7 +2886,8 @@ int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
 			ret = atoi(tmp);
 			switch (ret) {
 			case PAM_AUTHTOK_EXPIRED:
-				/* fall through, since new token is required in this case */
+				/* Since new token is required in this case */
+				FALL_THROUGH;
 			case PAM_NEW_AUTHTOK_REQD:
 				_pam_log(ctx, LOG_WARNING,
 					 "pam_sm_acct_mgmt success but %s is set",

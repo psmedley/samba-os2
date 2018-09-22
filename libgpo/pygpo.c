@@ -27,6 +27,7 @@
 #include "librpc/rpc/pyrpc_util.h"
 #include "auth/credentials/pycredentials.h"
 #include "libcli/util/pyerrors.h"
+#include "python/py3compat.h"
 
 /* A Python C API module to use LIBGPO */
 
@@ -37,7 +38,7 @@ static PyObject* GPO_get_##ATTR(PyObject *self, void *closure) \
 		= pytalloc_get_ptr(self); \
 	\
 	if (gpo_ptr->ATTR) \
-		return PyString_FromString(gpo_ptr->ATTR); \
+		return PyStr_FromString(gpo_ptr->ATTR); \
 	else \
 		return Py_None; \
 }
@@ -110,7 +111,7 @@ static PyObject *py_gpo_get_unix_path(PyObject *self, PyObject *args,
 		goto out;
 	}
 
-	ret = PyString_FromString(unix_path);
+	ret = PyStr_FromString(unix_path);
 
 out:
 	return ret;
@@ -182,7 +183,14 @@ static int py_ads_init(ADS *self, PyObject *args, PyObject *kwds)
 	}
 
 	if (lp_obj) {
-		bool ok;
+		bool ok = py_check_dcerpc_type(lp_obj, "samba.param",
+					       "LoadParm");
+		if (!ok) {
+			PyErr_Format(PyExc_TypeError,
+				     "Expected samba.param.LoadParm "
+				     "for lp argument");
+			return -1;
+		}
 		lp_ctx = pytalloc_get_type(lp_obj, struct loadparm_context);
 		if (lp_ctx == NULL) {
 			return -1;
@@ -263,12 +271,12 @@ static PyObject* py_ads_connect(ADS *self)
 			Py_RETURN_FALSE;
 		}
 		self->ads_ptr->auth.password = smb_xstrdup(passwd);
+		SAFE_FREE(passwd);
 		self->ads_ptr->auth.realm =
 			smb_xstrdup(self->ads_ptr->server.realm);
 		if (!strupper_m(self->ads_ptr->auth.realm)) {
 			PyErr_SetString(PyExc_SystemError, "Failed to strdup");
 			TALLOC_FREE(frame);
-			SAFE_FREE(passwd);
 			Py_RETURN_FALSE;
 		}
 
@@ -277,7 +285,6 @@ static PyObject* py_ads_connect(ADS *self)
 			PyErr_SetString(PyExc_SystemError,
 					"ads_connect() failed");
 			TALLOC_FREE(frame);
-			SAFE_FREE(passwd);
 			Py_RETURN_FALSE;
 		}
 	}
@@ -475,7 +482,7 @@ static PyMethodDef ADS_methods[] = {
 	{ "connect", (PyCFunction)py_ads_connect, METH_NOARGS,
 		"Connect to the LDAP server" },
 #ifdef HAVE_ADS
-	{ "get_gpo_list", (PyCFunction)py_ads_get_gpo_list, METH_KEYWORDS,
+	{ "get_gpo_list", (PyCFunction)py_ads_get_gpo_list, METH_VARARGS | METH_KEYWORDS,
 		NULL },
 #endif
 	{ NULL }
@@ -499,34 +506,45 @@ static PyMethodDef py_gpo_methods[] = {
 	{NULL}
 };
 
+static struct PyModuleDef moduledef = {
+	PyModuleDef_HEAD_INIT,
+	.m_name = "gpo",
+	.m_doc = "libgpo python bindings",
+	.m_size = -1,
+	.m_methods = py_gpo_methods,
+};
+
 /* Will be called by python when loading this module */
-void initgpo(void)
+void initgpo(void);
+
+MODULE_INIT_FUNC(gpo)
 {
 	PyObject *m;
 
 	debug_setup_talloc_log();
 
 	/* Instantiate the types */
-	m = Py_InitModule3("gpo", py_gpo_methods, "libgpo python bindings");
+	m = PyModule_Create(&moduledef);
 	if (m == NULL) {
-		return;
+		return m;
 	}
 
 	PyModule_AddObject(m, "version",
-			   PyString_FromString(SAMBA_VERSION_STRING));
+			   PyStr_FromString(SAMBA_VERSION_STRING));
 
 	if (PyType_Ready(&ads_ADSType) < 0) {
-		return;
+		return m;
 	}
 
 	PyModule_AddObject(m, "ADS_STRUCT", (PyObject *)&ads_ADSType);
 
 	if (pytalloc_BaseObject_PyType_Ready(&GPOType) < 0) {
-		return;
+		return m;
 	}
 
 	Py_INCREF((PyObject *)(void *)&GPOType);
 	PyModule_AddObject(m, "GROUP_POLICY_OBJECT",
 			   (PyObject *)&GPOType);
+	return m;
 
 }

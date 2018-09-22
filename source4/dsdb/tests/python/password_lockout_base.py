@@ -1,3 +1,4 @@
+from __future__ import print_function
 import samba
 
 from samba.auth import system_session
@@ -13,10 +14,11 @@ import samba.tests
 from samba.tests import delete_force
 from samba.dcerpc import security, samr
 from samba.ndr import ndr_unpack
+from samba.tests.password_test import PasswordTestCase
 
 import time
 
-class BasePasswordTestCase(samba.tests.TestCase):
+class BasePasswordTestCase(PasswordTestCase):
     def _open_samr_user(self, res):
         self.assertTrue("objectSid" in res[0])
 
@@ -54,7 +56,7 @@ class BasePasswordTestCase(samba.tests.TestCase):
                         (name, res[0][name], res[0].dn))
 
 
-        print  "%s = '%s'" % (name, res[0][name][0])
+        print("%s = '%s'" % (name, res[0][name][0]))
 
         if mode == "present":
             return
@@ -107,9 +109,9 @@ class BasePasswordTestCase(samba.tests.TestCase):
                        effective_bad_password_count=None,
                        msg=None,
                        badPwdCountOnly=False):
-        print '-=' * 36
+        print('-=' * 36)
         if msg is not None:
-            print  "\033[01;32m %s \033[00m\n" % msg
+            print("\033[01;32m %s \033[00m\n" % msg)
         attrs = [
            "objectSid",
            "badPwdCount",
@@ -198,6 +200,20 @@ class BasePasswordTestCase(samba.tests.TestCase):
         time.sleep(0.01)
         return res
 
+    def update_lockout_settings(self, threshold, duration, observation_window):
+        """Updates the global user lockout settings"""
+        m = Message()
+        m.dn = Dn(self.ldb, self.base_dn)
+        account_lockout_duration_ticks = -int(duration * (1e7))
+        m["lockoutDuration"] = MessageElement(str(account_lockout_duration_ticks),
+                                              FLAG_MOD_REPLACE, "lockoutDuration")
+        m["lockoutThreshold"] = MessageElement(str(threshold),
+                                               FLAG_MOD_REPLACE, "lockoutThreshold")
+        lockout_observation_window_ticks = -int(observation_window * (1e7))
+        m["lockOutObservationWindow"] = MessageElement(str(lockout_observation_window_ticks),
+                                                       FLAG_MOD_REPLACE, "lockOutObservationWindow")
+        self.ldb.modify(m)
+
     def _readd_user(self, creds, lockOutObservationWindow=0):
         username = creds.get_username()
         userpass = creds.get_password()
@@ -236,7 +252,8 @@ userPassword: """ + userpass + """
         try:
             ldb = SamDB(url=self.host_url, credentials=fail_creds, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e:
+            (num, msg) = e.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         # Succeed to reset everything to 0
@@ -248,7 +265,8 @@ userPassword: """ + userpass + """
         try:
             ldb = SamDB(url=url, credentials=creds, lp=lp)
             self.fail("Login unexpectedly succeeded")
-        except LdbError, (num, msg):
+        except LdbError as e1:
+            (num, msg) = e1.args
             if errno is not None:
                 self.assertEquals(num, errno, ("Login failed in the wrong way"
                                                "(got err %d, expected %d)" %
@@ -269,18 +287,11 @@ userPassword: """ + userpass + """
         self.template_creds.set_gensec_features(self.global_creds.get_gensec_features())
         self.template_creds.set_kerberos_state(self.global_creds.get_kerberos_state())
 
-
         # Gets back the basedn
         base_dn = self.ldb.domain_dn()
 
         # Gets back the configuration basedn
         configuration_dn = self.ldb.get_config_basedn().get_linearized()
-
-        # Get the old "dSHeuristics" if it was set
-        dsheuristics = self.ldb.get_dsheuristics()
-
-        # Reset the "dSHeuristics" as they were before
-        self.addCleanup(self.ldb.set_dsheuristics, dsheuristics)
 
         res = self.ldb.search(base_dn,
                          scope=SCOPE_BASE, attrs=["lockoutDuration", "lockOutObservationWindow", "lockoutThreshold"])
@@ -311,40 +322,15 @@ replace: lockoutThreshold
 lockoutThreshold: """ + str(lockoutThreshold) + """
 """)
 
-        m = Message()
-        m.dn = Dn(self.ldb, base_dn)
-
-        self.account_lockout_duration = 2
-        account_lockout_duration_ticks = -int(self.account_lockout_duration * (1e7))
-
-        m["lockoutDuration"] = MessageElement(str(account_lockout_duration_ticks),
-                                              FLAG_MOD_REPLACE, "lockoutDuration")
-
-        account_lockout_threshold = 3
-        m["lockoutThreshold"] = MessageElement(str(account_lockout_threshold),
-                                               FLAG_MOD_REPLACE, "lockoutThreshold")
-
-        self.lockout_observation_window = 2
-        lockout_observation_window_ticks = -int(self.lockout_observation_window * (1e7))
-
-        m["lockOutObservationWindow"] = MessageElement(str(lockout_observation_window_ticks),
-                                                       FLAG_MOD_REPLACE, "lockOutObservationWindow")
-
-        self.ldb.modify(m)
-
-        # Set the "dSHeuristics" to activate the correct "userPassword" behaviour
-        self.ldb.set_dsheuristics("000000001")
-
-        # Get the old "minPwdAge"
-        minPwdAge = self.ldb.get_minPwdAge()
-
-        # Reset the "minPwdAge" as it was before
-        self.addCleanup(self.ldb.set_minPwdAge, minPwdAge)
-
-        # Set it temporarely to "0"
-        self.ldb.set_minPwdAge("0")
-
         self.base_dn = self.ldb.domain_dn()
+        self.account_lockout_duration = 3
+        self.lockout_observation_window = 3
+        self.update_lockout_settings(threshold=3,
+                                     duration=self.account_lockout_duration,
+                                     observation_window=self.lockout_observation_window)
+
+        # update DC to allow password changes for the duration of this test
+        self.allow_password_changes()
 
         self.domain_sid = security.dom_sid(self.ldb.get_domain_sid())
         self.samr = samr.samr("ncacn_ip_tcp:%s[seal]" % self.host, self.lp, self.global_creds)
@@ -383,11 +369,11 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         if use_kerberos == MUST_USE_KERBEROS:
             logoncount_relation = 'greater'
             lastlogon_relation = 'greater'
-            print "Performs a lockout attempt against LDAP using Kerberos"
+            print("Performs a lockout attempt against LDAP using Kerberos")
         else:
             logoncount_relation = 'equal'
             lastlogon_relation = 'equal'
-            print "Performs a lockout attempt against LDAP using NTLM"
+            print("Performs a lockout attempt against LDAP using NTLM")
 
         # Change password on a connection as another user
         res = self._check_account(userdn,
@@ -404,8 +390,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         lastLogon = int(res[0]["lastLogon"][0])
         firstLogon = lastLogon
         lastLogonTimestamp = int(res[0]["lastLogonTimestamp"][0])
-        print firstLogon
-        print lastLogonTimestamp
+        print(firstLogon)
+        print(lastLogonTimestamp)
 
 
         self.assertGreater(lastLogon, badPasswordTime)
@@ -479,7 +465,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
 
-        except LdbError, (num, msg):
+        except LdbError as e2:
+            (num, msg) = e2.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -493,7 +480,7 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
                                   msDSUserAccountControlComputed=0)
         badPasswordTime = int(res[0]["badPasswordTime"][0])
 
-        print "two failed password change"
+        print("two failed password change")
 
         # The wrong password
         creds_lockout.set_password("thatsAcomplPASS1x")
@@ -502,7 +489,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
 
-        except LdbError, (num, msg):
+        except LdbError as e3:
+            (num, msg) = e3.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -523,7 +511,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e4:
+            (num, msg) = e4.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -542,7 +531,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e5:
+            (num, msg) = e5.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -561,7 +551,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e6:
+            (num, msg) = e6.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -577,7 +568,7 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
 
         # wait for the lockout to end
         time.sleep(self.account_lockout_duration + 1)
-        print self.account_lockout_duration + 1
+        print(self.account_lockout_duration + 1)
 
         res = self._check_account(userdn,
                                   badPwdCount=3, effective_bad_password_count=0,
@@ -619,7 +610,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e7:
+            (num, msg) = e7.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -639,7 +631,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e8:
+            (num, msg) = e8.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -672,7 +665,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e9:
+            (num, msg) = e9.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -716,11 +710,11 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
 
         use_kerberos = creds.get_kerberos_state()
         if use_kerberos == MUST_USE_KERBEROS:
-            print "Testing multiple logon with Kerberos"
+            print("Testing multiple logon with Kerberos")
             logoncount_relation = 'greater'
             lastlogon_relation = 'greater'
         else:
-            print "Testing multiple logon with NTLM"
+            print("Testing multiple logon with NTLM")
             logoncount_relation = 'equal'
             lastlogon_relation = 'equal'
 
@@ -740,7 +734,7 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         lastLogon = int(res[0]["lastLogon"][0])
         lastLogonTimestamp = int(res[0]["lastLogonTimestamp"][0])
         firstLogon = lastLogon
-        print "last logon is %d" % lastLogon
+        print("last logon is %d" % lastLogon)
         self.assertGreater(lastLogon, badPasswordTime)
         self.assertGreaterEqual(lastLogon, lastLogonTimestamp)
 

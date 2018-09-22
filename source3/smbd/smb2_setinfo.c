@@ -108,7 +108,7 @@ NTSTATUS smbd_smb2_request_process_setinfo(struct smbd_smb2_request *req)
 		return smbd_smb2_request_error(req, NT_STATUS_FILE_CLOSED);
 	}
 
-	subreq = smbd_smb2_setinfo_send(req, req->sconn->ev_ctx,
+	subreq = smbd_smb2_setinfo_send(req, req->ev_ctx,
 					req, in_fsp,
 					in_info_type,
 					in_file_info_class,
@@ -230,7 +230,8 @@ static struct tevent_req *delay_rename_for_lease_break(struct tevent_req *req,
 		delay = true;
 		break_to = (e_lease_type & ~SMB2_LEASE_HANDLE);
 
-		send_break_message(fsp->conn->sconn->msg_ctx, e, break_to);
+		send_break_message(fsp->conn->sconn->msg_ctx, &fsp->file_id,
+				   e, break_to);
 	}
 
 	if (!delay) {
@@ -297,12 +298,6 @@ static void defer_rename_done(struct tevent_req *subreq)
 	 */
 	ok = change_to_user(state->smb2req->tcon->compat,
 			    state->smb2req->session->compat->vuid);
-	if (!ok) {
-		tevent_req_nterror(state->req, NT_STATUS_ACCESS_DENIED);
-		return;
-	}
-
-	ok = set_current_service(state->smb2req->tcon->compat, 0, true);
 	if (!ok) {
 		tevent_req_nterror(state->req, NT_STATUS_ACCESS_DENIED);
 		return;

@@ -28,6 +28,7 @@
    up, all the errors returned are DOS errors, not NT status codes. */
 
 #include "includes.h"
+#include "libsmb/namequery.h"
 #include "ntdomain.h"
 #include "nt_printing.h"
 #include "srv_spoolss_util.h"
@@ -1090,13 +1091,13 @@ static int build_notify2_messages(TALLOC_CTX *mem_ctx,
 				  SPOOLSS_NOTIFY_MSG *messages,
 				  uint32_t num_msgs,
 				  struct spoolss_Notify **_notifies,
-				  int *_count)
+				  size_t *_count)
 {
 	struct spoolss_Notify *notifies;
 	SPOOLSS_NOTIFY_MSG *msg;
-	int count = 0;
+	size_t count = 0;
 	uint32_t id;
-	int i;
+	uint32_t i;
 
 	notifies = talloc_zero_array(mem_ctx,
 				     struct spoolss_Notify, num_msgs);
@@ -1189,7 +1190,7 @@ static int send_notify2_printer(TALLOC_CTX *mem_ctx,
 				SPOOLSS_NOTIFY_MSG_GROUP *msg_group)
 {
 	struct spoolss_Notify *notifies;
-	int count = 0;
+	size_t count = 0;
 	union spoolss_ReplyPrinterInfo info;
 	struct spoolss_NotifyInfo info0;
 	uint32_t reply_result;
@@ -1693,7 +1694,7 @@ WERROR _spoolss_OpenPrinterEx(struct pipes_struct *p,
 	 * inventory on open as well.
 	 */
 	become_root();
-	delete_and_reload_printers(server_event_context(), p->msg_ctx);
+	delete_and_reload_printers();
 	unbecome_root();
 
 	/* some sanity check because you can open a printer or a print server */
@@ -1809,7 +1810,6 @@ WERROR _spoolss_OpenPrinterEx(struct pipes_struct *p,
 		DEBUG(4,("Setting print server access = %s\n", (r->in.access_mask == SERVER_ACCESS_ADMINISTER)
 			? "SERVER_ACCESS_ADMINISTER" : "SERVER_ACCESS_ENUMERATE" ));
 
-		/* We fall through to return WERR_OK */
 		break;
 
 	case SPLHND_PRINTER:
@@ -4403,7 +4403,7 @@ static WERROR enum_all_printers_info_level(TALLOC_CTX *mem_ctx,
 	 * printer process updates printer_list.tdb at regular intervals.
 	 */
 	become_root();
-	delete_and_reload_printers(server_event_context(), msg_ctx);
+	delete_and_reload_printers();
 	unbecome_root();
 
 	n_services = lp_numservices();
@@ -5007,7 +5007,7 @@ static WERROR string_array_from_driver_info(TALLOC_CTX *mem_ctx,
 						  const char *arch,
 						  int version)
 {
-	int i;
+	size_t i;
 	size_t num_strings = 0;
 	const char **array = NULL;
 

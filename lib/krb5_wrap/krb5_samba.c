@@ -24,6 +24,7 @@
 #include "system/filesys.h"
 #include "krb5_samba.h"
 #include "lib/crypto/crypto.h"
+#include "../libds/common/flags.h"
 
 #ifdef HAVE_COM_ERR_H
 #include <com_err.h>
@@ -445,8 +446,7 @@ int smb_krb5_get_pw_salt(krb5_context context,
  * @param[in]  userPrincipalName  The userPrincipalName attribute of the object
  *                                or NULL is not available.
  *
- * @param[in]  is_computer        The indication of the object includes
- *                                objectClass=computer.
+ * @param[in]  uac_flags          UF_ACCOUNT_TYPE_MASKed userAccountControl field
  *
  * @param[in]  mem_ctx            The TALLOC_CTX to allocate _salt_principal.
  *
@@ -459,7 +459,7 @@ int smb_krb5_get_pw_salt(krb5_context context,
 int smb_krb5_salt_principal(const char *realm,
 			    const char *sAMAccountName,
 			    const char *userPrincipalName,
-			    bool is_computer,
+			    uint32_t uac_flags,
 			    TALLOC_CTX *mem_ctx,
 			    char **_salt_principal)
 {
@@ -480,6 +480,23 @@ int smb_krb5_salt_principal(const char *realm,
 		return EINVAL;
 	}
 
+	if (uac_flags & ~UF_ACCOUNT_TYPE_MASK) {
+		/*
+		 * catch callers which still
+		 * pass 'true'.
+		 */
+		TALLOC_FREE(frame);
+		return EINVAL;
+	}
+	if (uac_flags == 0) {
+		/*
+		 * catch callers which still
+		 * pass 'false'.
+		 */
+		TALLOC_FREE(frame);
+		return EINVAL;
+	}
+
 	upper_realm = strupper_talloc(frame, realm);
 	if (upper_realm == NULL) {
 		TALLOC_FREE(frame);
@@ -493,7 +510,7 @@ int smb_krb5_salt_principal(const char *realm,
 	/*
 	 * Determine a salting principal
 	 */
-	if (is_computer) {
+	if (uac_flags & UF_TRUST_ACCOUNT_MASK) {
 		int computer_len = 0;
 		char *tmp = NULL;
 
@@ -502,20 +519,32 @@ int smb_krb5_salt_principal(const char *realm,
 			computer_len -= 1;
 		}
 
-		tmp = talloc_asprintf(frame, "host/%*.*s.%s",
-				      computer_len, computer_len,
-				      sAMAccountName, realm);
-		if (tmp == NULL) {
-			TALLOC_FREE(frame);
-			return ENOMEM;
+		if (uac_flags & UF_INTERDOMAIN_TRUST_ACCOUNT) {
+			principal = talloc_asprintf(frame, "krbtgt/%*.*s",
+						    computer_len, computer_len,
+						    sAMAccountName);
+			if (principal == NULL) {
+				TALLOC_FREE(frame);
+				return ENOMEM;
+			}
+		} else {
+
+			tmp = talloc_asprintf(frame, "host/%*.*s.%s",
+					      computer_len, computer_len,
+					      sAMAccountName, realm);
+			if (tmp == NULL) {
+				TALLOC_FREE(frame);
+				return ENOMEM;
+			}
+
+			principal = strlower_talloc(frame, tmp);
+			TALLOC_FREE(tmp);
+			if (principal == NULL) {
+				TALLOC_FREE(frame);
+				return ENOMEM;
+			}
 		}
 
-		principal = strlower_talloc(frame, tmp);
-		TALLOC_FREE(tmp);
-		if (principal == NULL) {
-			TALLOC_FREE(frame);
-			return ENOMEM;
-		}
 		principal_len = strlen(principal);
 
 	} else if (userPrincipalName != NULL) {
@@ -1087,7 +1116,7 @@ krb5_error_code smb_krb5_gen_netbios_krb5_address(smb_krb5_addresses **kerb_addr
 		addrs->val = (krb5_address *)SMB_MALLOC(sizeof(krb5_address));
 		if (addrs->val == NULL) {
 			SAFE_FREE(addrs);
-			SAFE_FREE(kerb_addr);
+			SAFE_FREE(*kerb_addr);
 			return ENOMEM;
 		}
 
@@ -1196,7 +1225,7 @@ krb5_error_code smb_krb5_enctype_to_string(krb5_context context,
 /**
  * @brief Open a key table readonly or with readwrite access.
  *
- * Allows to use a different keytab than the default one using a relative
+ * Allows one to use a different keytab than the default one using a relative
  * path to the keytab.
  *
  * @param[in]  context  The library context
@@ -1334,7 +1363,7 @@ out:
 /**
  * @brief Open a key table readonly or with readwrite access.
  *
- * Allows to use a different keytab than the default one. The path needs to be
+ * Allows one to use a different keytab than the default one. The path needs to be
  * an absolute path or an error will be returned.
  *
  * @param[in]  context  The library context

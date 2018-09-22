@@ -672,7 +672,7 @@ static bool ipreallocated_recv(struct tevent_req *req, int *perr)
  * - Get nodemap
  * - Initialise IP allocation state.  Pass:
  *   + algorithm to be used;
- *   + various tunables (NoIPTakeover, NoIPFailback, NoIPHostOnAllDisabled)
+ *   + various tunables (NoIPTakeover, NoIPFailback)
  *   + list of nodes to force rebalance (internal structure, currently
  *     no way to fetch, only used by LCP2 for nodes that have had new
  *     IP addresses added).
@@ -799,6 +799,7 @@ static void takeover_nodemap_done(struct tevent_req *subreq)
 	bool status;
 	int ret;
 	struct ctdb_node_map *nodemap;
+	const char *ptr;
 
 	status = ctdb_client_control_recv(subreq, &ret, state, &reply);
 	TALLOC_FREE(subreq);
@@ -845,7 +846,8 @@ static void takeover_nodemap_done(struct tevent_req *subreq)
 		return;
 	}
 
-	if (state->tun_list->disable_ip_failover != 0) {
+	ptr = getenv("CTDB_DISABLE_IP_FAILOVER");
+	if (ptr != NULL) {
 		/* IP failover is completely disabled so just send out
 		 * ipreallocated event.
 		 */
@@ -859,13 +861,10 @@ static void takeover_nodemap_done(struct tevent_req *subreq)
 			determine_algorithm(state->tun_list),
 			(state->tun_list->no_ip_takeover != 0),
 			(state->tun_list->no_ip_failback != 0),
-			(state->tun_list->no_ip_host_on_all_disabled != 0),
 			state->force_rebalance_nodes);
 	if (tevent_req_nomem(state->ipalloc_state, req)) {
 		return;
 	}
-
-	ipalloc_set_node_flags(state->ipalloc_state, nodemap);
 
 	subreq = get_public_ips_send(state, state->ev, state->client,
 				     state->pnns_connected, state->num_connected,

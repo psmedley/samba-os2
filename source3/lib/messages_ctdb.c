@@ -215,14 +215,52 @@ struct messaging_ctdb_fde *messaging_ctdb_register_tevent_context(
 	}
 
 	for (fde_ev = ctx->fde_evs; fde_ev != NULL; fde_ev = fde_ev->next) {
-		if ((fde_ev->ev == ev) &&
-		    (tevent_fd_get_flags(fde_ev->fde) != 0)) {
+		if (tevent_fd_get_flags(fde_ev->fde) == 0) {
+			/*
+			 * If the event context got deleted,
+			 * tevent_fd_get_flags() will return 0
+			 * for the stale fde.
+			 *
+			 * In that case we should not
+			 * use fde_ev->ev anymore.
+			 */
+			continue;
+		}
+
+		/*
+		 * We can only have one tevent_fd
+		 * per low level tevent_context.
+		 *
+		 * This means any wrapper tevent_context
+		 * needs to share the structure with
+		 * the main tevent_context and/or
+		 * any sibling wrapper tevent_context.
+		 *
+		 * This means we need to use tevent_context_same_loop()
+		 * instead of just (fde_ev->ev == ev).
+		 *
+		 * Note: the tevent_context_is_wrapper() check below
+		 * makes sure that fde_ev->ev is always a raw
+		 * tevent context.
+		 */
+		if (tevent_context_same_loop(fde_ev->ev, ev)) {
 			break;
 		}
 	}
 
 	if (fde_ev == NULL) {
 		int sock = ctdbd_conn_get_fd(ctx->conn);
+
+		if (tevent_context_is_wrapper(ev)) {
+			/*
+			 * This is really a programmer error!
+			 *
+			 * The main/raw tevent context should
+			 * have been registered first!
+			 */
+			DBG_ERR("Should not be used with a wrapper tevent context\n");
+			return NULL;
+		}
 
 		fde_ev = talloc(fde, struct messaging_ctdb_fde_ev);
 		if (fde_ev == NULL) {

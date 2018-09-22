@@ -95,6 +95,8 @@ struct ph_context {
 	struct ldb_request *dom_req;
 	struct ldb_reply *dom_res;
 
+	struct ldb_reply *pso_res;
+
 	struct ldb_reply *search_res;
 
 	struct ldb_message *update_msg;
@@ -128,7 +130,6 @@ struct setup_password_fields_io {
 		NTTIME pwdLastSet;
 		const char *sAMAccountName;
 		const char *user_principal_name;
-		bool is_computer;
 		bool is_krbtgt;
 		uint32_t restrictions;
 		struct dom_sid *account_sid;
@@ -676,15 +677,17 @@ static int setup_kerberos_keys(struct setup_password_fields_io *io)
 	krb5_data salt;
 	krb5_keyblock key;
 	krb5_data cleartext_data;
+	uint32_t uac_flags = 0;
 
 	ldb = ldb_module_get_ctx(io->ac->module);
 	cleartext_data.data = (char *)io->n.cleartext_utf8->data;
 	cleartext_data.length = io->n.cleartext_utf8->length;
 
+	uac_flags = io->u.userAccountControl & UF_ACCOUNT_TYPE_MASK;
 	krb5_ret = smb_krb5_salt_principal(io->ac->status->domain_data.realm,
 					   io->u.sAMAccountName,
 					   io->u.user_principal_name,
-					   io->u.is_computer,
+					   uac_flags,
 					   io->ac,
 					   &salt_principal);
 	if (krb5_ret) {
@@ -2241,7 +2244,7 @@ static int setup_last_set_field(struct setup_password_fields_io *io)
 		if (!io->ac->update_password) {
 			break;
 		}
-		/* fall through */
+		FALL_THROUGH;
 	case UINT64_MAX:
 		if (!io->ac->update_password &&
 		    io->u.pwdLastSet != 0 &&
@@ -2527,12 +2530,19 @@ static int make_error_and_update_badPwdCount(struct setup_password_fields_io *io
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(io->ac->module);
 	struct ldb_message *mod_msg = NULL;
+	struct ldb_message *pso_msg = NULL;
 	NTSTATUS status;
 	int ret;
+
+	/* PSO search result is optional (NULL if no PSO applies) */
+	if (io->ac->pso_res != NULL) {
+		pso_msg = io->ac->pso_res->message;
+	}
 
 	status = dsdb_update_bad_pwd_count(io->ac, ldb,
 					   io->ac->search_res->message,
 					   io->ac->dom_res->message,
+					   pso_msg,
 					   &mod_msg);
 	if (!NT_STATUS_IS_OK(status)) {
 		goto done;
@@ -2891,6 +2901,7 @@ static int check_password_restrictions_and_log(struct setup_password_fields_io *
 		}
 		log_authentication_event(msg_ctx,
 					 lp_ctx,
+					 NULL,
 					 &ui,
 					 status,
 					 domain_name,
@@ -3138,10 +3149,27 @@ static int setup_io(struct ph_context *ac,
 		info_msg = client_msg;
 	}
 
-	if (smb_krb5_init_context(ac,
+	ret = smb_krb5_init_context(ac,
 				  (struct loadparm_context *)ldb_get_opaque(ldb, "loadparm"),
-				  &io->smb_krb5_context) != 0) {
-		return ldb_operr(ldb);
+				  &io->smb_krb5_context);
+
+	if (ret != 0) {
+		/*
+		 * In the special case of mit krb5.conf vs heimdal, the includedir
+		 * statement causes ret == 22 (KRB5_CONFIG_BADFORMAT) to be returned.
+		 * We look for this case so that we can give a more instructional
+		 * message to the administrator.
+		 */
+		if (ret == KRB5_CONFIG_BADFORMAT || ret == EINVAL) {
+			ldb_asprintf_errstring(ldb, "Failed to setup krb5_context: %s - "
+				"This could be due to an invalid krb5 configuration. "
+				"Please check your system's krb5 configuration is correct.",
+				error_message(ret));
+		} else {
+			ldb_asprintf_errstring(ldb, "Failed to setup krb5_context: %s",
+				error_message(ret));
+		}
+		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
 	io->ac				= ac;
@@ -3163,7 +3191,6 @@ static int setup_io(struct ph_context *ac,
 								      "sAMAccountName", NULL);
 	io->u.user_principal_name	= ldb_msg_find_attr_as_string(info_msg,
 								      "userPrincipalName", NULL);
-	io->u.is_computer		= ldb_msg_check_string_attribute(info_msg, "objectClass", "computer");
 
 	/* Ensure it has an objectSID too */
 	io->u.account_sid = samdb_result_dom_sid(ac, info_msg, "objectSid");
@@ -3211,9 +3238,7 @@ static int setup_io(struct ph_context *ac,
 
 	/* Only non-trust accounts have restrictions (possibly this test is the
 	 * wrong way around, but we like to be restrictive if possible */
-	io->u.restrictions = !(io->u.userAccountControl
-		& (UF_INTERDOMAIN_TRUST_ACCOUNT | UF_WORKSTATION_TRUST_ACCOUNT
-			| UF_SERVER_TRUST_ACCOUNT));
+	io->u.restrictions = !(io->u.userAccountControl & UF_TRUST_ACCOUNT_MASK);
 
 	if (io->u.is_krbtgt) {
 		io->u.restrictions = 0;
@@ -3821,12 +3846,200 @@ static int password_hash_mod_search_self(struct ph_context *ac);
 static int ph_mod_search_callback(struct ldb_request *req, struct ldb_reply *ares);
 static int password_hash_mod_do_mod(struct ph_context *ac);
 
+/*
+ * LDB callback handler for searching for a user's PSO. Once we have all the
+ * Password Settings that apply to the user, we can continue with the modify
+ * operation
+ */
+static int get_pso_data_callback(struct ldb_request *req,
+				 struct ldb_reply *ares)
+{
+	struct ldb_context *ldb = NULL;
+	struct ph_context *ac = NULL;
+	bool domain_complexity = true;
+	bool pso_complexity = true;
+	struct dsdb_user_pwd_settings *settings = NULL;
+	int ret = LDB_SUCCESS;
+
+	ac = talloc_get_type(req->context, struct ph_context);
+	ldb = ldb_module_get_ctx(ac->module);
+
+	if (!ares) {
+		ret = LDB_ERR_OPERATIONS_ERROR;
+		goto done;
+	}
+	if (ares->error != LDB_SUCCESS) {
+		return ldb_module_done(ac->req, ares->controls,
+				       ares->response, ares->error);
+	}
+
+	switch (ares->type) {
+	case LDB_REPLY_ENTRY:
+
+		/* check status was initialized by the domain query */
+		if (ac->status == NULL) {
+			talloc_free(ares);
+			ldb_set_errstring(ldb, "Uninitialized status");
+			ret = LDB_ERR_OPERATIONS_ERROR;
+			goto done;
+		}
+
+		/*
+		 * use the PSO's values instead of the domain defaults (the PSO
+		 * attributes should always exist, but use the domain default
+		 * values as a fallback).
+		 */
+		settings = &ac->status->domain_data;
+		settings->store_cleartext =
+			ldb_msg_find_attr_as_bool(ares->message,
+						  "msDS-PasswordReversibleEncryptionEnabled",
+						  settings->store_cleartext);
+
+		settings->pwdHistoryLength =
+			ldb_msg_find_attr_as_uint(ares->message,
+						  "msDS-PasswordHistoryLength",
+						  settings->pwdHistoryLength);
+		settings->maxPwdAge =
+			ldb_msg_find_attr_as_int64(ares->message,
+						   "msDS-MaximumPasswordAge",
+						   settings->maxPwdAge);
+		settings->minPwdAge =
+			ldb_msg_find_attr_as_int64(ares->message,
+						   "msDS-MinimumPasswordAge",
+						   settings->minPwdAge);
+		settings->minPwdLength =
+			ldb_msg_find_attr_as_uint(ares->message,
+						  "msDS-MinimumPasswordLength",
+						  settings->minPwdLength);
+		domain_complexity =
+			(settings->pwdProperties & DOMAIN_PASSWORD_COMPLEX);
+		pso_complexity =
+			ldb_msg_find_attr_as_bool(ares->message,
+						  "msDS-PasswordComplexityEnabled",
+						   domain_complexity);
+
+		/* set or clear the complexity bit if required */
+		if (pso_complexity && !domain_complexity) {
+			settings->pwdProperties |= DOMAIN_PASSWORD_COMPLEX;
+		} else if (domain_complexity && !pso_complexity) {
+			settings->pwdProperties &= ~DOMAIN_PASSWORD_COMPLEX;
+		}
+
+		if (ac->pso_res != NULL) {
+			DBG_ERR("Too many PSO results for %s",
+				ldb_dn_get_linearized(ac->search_res->message->dn));
+			talloc_free(ac->pso_res);
+		}
+
+		/* store the PSO result (we may need its lockout settings) */
+		ac->pso_res = talloc_steal(ac, ares);
+		ret = LDB_SUCCESS;
+		break;
+
+	case LDB_REPLY_REFERRAL:
+		/* ignore */
+		talloc_free(ares);
+		ret = LDB_SUCCESS;
+		break;
+
+	case LDB_REPLY_DONE:
+		talloc_free(ares);
+
+		/*
+		 * perform the next step of the modify operation (this code
+		 * shouldn't get called in the 'user add' case)
+		 */
+		if (ac->req->operation == LDB_MODIFY) {
+			ret = password_hash_mod_do_mod(ac);
+		} else {
+			ret = LDB_ERR_OPERATIONS_ERROR;
+		}
+		break;
+	}
+
+done:
+	if (ret != LDB_SUCCESS) {
+		struct ldb_reply *new_ares;
+
+		new_ares = talloc_zero(ac->req, struct ldb_reply);
+		if (new_ares == NULL) {
+			ldb_oom(ldb);
+			return ldb_module_done(ac->req, NULL, NULL,
+					       LDB_ERR_OPERATIONS_ERROR);
+		}
+
+		new_ares->error = ret;
+		if ((ret != LDB_ERR_OPERATIONS_ERROR) && (ac->change_status)) {
+			/* On success and trivial errors a status control is being
+			 * added (used for example by the "samdb_set_password" call) */
+			ldb_reply_add_control(new_ares,
+					      DSDB_CONTROL_PASSWORD_CHANGE_STATUS_OID,
+					      false,
+					      ac->status);
+		}
+
+		return ldb_module_done(ac->req, new_ares->controls,
+				       new_ares->response, new_ares->error);
+	}
+
+	return LDB_SUCCESS;
+}
+
+/*
+ * Builds and returns a search request to lookup up the PSO that applies to
+ * the user in question. Returns NULL if no PSO applies, or could not be found
+ */
+static struct ldb_request * build_pso_data_request(struct ph_context *ac)
+{
+	/* attrs[] is returned from this function in
+	   pso_req->op.search.attrs, so it must be static, as
+	   otherwise the compiler can put it on the stack */
+	static const char * const attrs[] = { "msDS-PasswordComplexityEnabled",
+					      "msDS-PasswordReversibleEncryptionEnabled",
+					      "msDS-PasswordHistoryLength",
+					      "msDS-MaximumPasswordAge",
+					      "msDS-MinimumPasswordAge",
+					      "msDS-MinimumPasswordLength",
+					      "msDS-LockoutThreshold",
+					      "msDS-LockoutObservationWindow",
+					      NULL };
+	struct ldb_context *ldb = NULL;
+	struct ldb_request *pso_req = NULL;
+	struct ldb_dn *pso_dn = NULL;
+	TALLOC_CTX *mem_ctx = ac;
+	int ret;
+
+	ldb = ldb_module_get_ctx(ac->module);
+
+	/* if a PSO applies to the user, we need to lookup the PSO as well */
+	pso_dn = ldb_msg_find_attr_as_dn(ldb, mem_ctx, ac->search_res->message,
+					 "msDS-ResultantPSO");
+	if (pso_dn == NULL) {
+		return NULL;
+	}
+
+	ret = ldb_build_search_req(&pso_req, ldb, mem_ctx, pso_dn,
+				   LDB_SCOPE_BASE, NULL, attrs, NULL,
+				   ac, get_pso_data_callback,
+				   ac->dom_req);
+
+	/* log errors, but continue with the default domain settings */
+	if (ret != LDB_SUCCESS) {
+		DBG_ERR("Error %d constructing PSO query for user %s", ret,
+			ldb_dn_get_linearized(ac->search_res->message->dn));
+	}
+	LDB_REQ_SET_LOCATION(pso_req);
+	return pso_req;
+}
+
+
 static int get_domain_data_callback(struct ldb_request *req,
 				    struct ldb_reply *ares)
 {
 	struct ldb_context *ldb;
 	struct ph_context *ac;
 	struct loadparm_context *lp_ctx;
+	struct ldb_request *pso_req = NULL;
 	int ret = LDB_SUCCESS;
 
 	ac = talloc_get_type(req->context, struct ph_context);
@@ -3917,7 +4130,20 @@ static int get_domain_data_callback(struct ldb_request *req,
 			break;
 
 		case LDB_MODIFY:
-			ret = password_hash_mod_do_mod(ac);
+
+			/*
+			 * The user may have an optional PSO applied. If so,
+			 * query the PSO to get the Fine-Grained Password Policy
+			 * for the user, before we perform the modify
+			 */
+			pso_req = build_pso_data_request(ac);
+			if (pso_req != NULL) {
+				ret = ldb_next_request(ac->module, pso_req);
+			} else {
+
+				/* no PSO, so we can perform the modify now */
+				ret = password_hash_mod_do_mod(ac);
+			}
 			break;
 
 		default:
@@ -3993,10 +4219,7 @@ static int password_hash_needed(struct ldb_module *module,
 	const struct ldb_message *msg = NULL;
 	struct ph_context *ac = NULL;
 	const char *passwordAttrs[] = {
-		"userPassword",
-		"clearTextPassword",
-		"unicodePwd",
-		"dBCSPwd",
+		DSDB_PASSWORD_ATTRIBUTES,
 		NULL
 	};
 	const char **a = NULL;
@@ -4227,8 +4450,7 @@ static int password_hash_modify(struct ldb_module *module, struct ldb_request *r
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	struct ph_context *ac = NULL;
-	const char *passwordAttrs[] = { "userPassword", "clearTextPassword",
-		"unicodePwd", "dBCSPwd", NULL }, **l;
+	const char *passwordAttrs[] = {DSDB_PASSWORD_ATTRIBUTES, NULL}, **l;
 	unsigned int del_attr_cnt, add_attr_cnt, rep_attr_cnt;
 	struct ldb_message_element *passwordAttr;
 	struct ldb_message *msg;
@@ -4479,6 +4701,7 @@ static int password_hash_mod_search_self(struct ph_context *ac)
 	struct ldb_context *ldb;
 	static const char * const attrs[] = { "objectClass",
 					      "userAccountControl",
+					      "msDS-ResultantPSO",
 					      "msDS-User-Account-Control-Computed",
 					      "pwdLastSet",
 					      "sAMAccountName",

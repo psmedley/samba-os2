@@ -395,7 +395,7 @@ static void named_pipe_accept_done(struct tevent_req *subreq)
 	/* And now start receiving and processing packets */
 	subreq = dcerpc_read_ncacn_packet_send(npc, npc->ev, npc->tstream);
 	if (!subreq) {
-		DEBUG(2, ("Failed to start receving packets\n"));
+		DEBUG(2, ("Failed to start receiving packets\n"));
 		goto fail;
 	}
 	tevent_req_set_callback(subreq, named_pipe_packet_process, npc);
@@ -494,7 +494,7 @@ void named_pipe_packet_process(struct tevent_req *subreq)
 		/* Wait for the next packet */
 		subreq = dcerpc_read_ncacn_packet_send(npc, npc->ev, npc->tstream);
 		if (!subreq) {
-			DEBUG(2, ("Failed to start receving packets\n"));
+			DEBUG(2, ("Failed to start receiving packets\n"));
 			status = NT_STATUS_NO_MEMORY;
 			goto fail;
 		}
@@ -574,7 +574,7 @@ static void named_pipe_packet_done(struct tevent_req *subreq)
 	/* Wait for the next packet */
 	subreq = dcerpc_read_ncacn_packet_send(npc, npc->ev, npc->tstream);
 	if (!subreq) {
-		DEBUG(2, ("Failed to start receving packets\n"));
+		DEBUG(2, ("Failed to start receiving packets\n"));
 		sys_errno = ENOMEM;
 		goto fail;
 	}
@@ -674,7 +674,7 @@ uint16_t setup_dcerpc_ncacn_tcpip_socket(struct tevent_context *ev_ctx,
 		goto out;
 	}
 
-	DEBUG(10, ("setup_tcpip_socket: openened socket fd %d for port %u\n",
+	DEBUG(10, ("setup_tcpip_socket: opened socket fd %d for port %u\n",
 		   state->fd, state->ep.port));
 
 	fde = tevent_add_fd(state->ev_ctx,
@@ -1068,7 +1068,8 @@ void dcerpc_ncacn_accept(struct tevent_context *ev_ctx,
 					}
 				}
 			}
-			/* FALL TROUGH */
+
+			FALL_THROUGH;
 		case NCACN_NP:
 			pipe_name = talloc_strdup(ncacn_conn,
 						  name);
@@ -1271,7 +1272,7 @@ static void dcerpc_ncacn_packet_process(struct tevent_req *subreq)
 						       ncacn_conn->ev_ctx,
 						       ncacn_conn->tstream);
 		if (subreq == NULL) {
-			DEBUG(2, ("Failed to start receving packets\n"));
+			DEBUG(2, ("Failed to start receiving packets\n"));
 			status = NT_STATUS_NO_MEMORY;
 			goto fail;
 		}
@@ -1342,7 +1343,7 @@ static void dcerpc_ncacn_packet_done(struct tevent_req *subreq)
 					       ncacn_conn->ev_ctx,
 					       ncacn_conn->tstream);
 	if (subreq == NULL) {
-		DEBUG(2, ("Failed to start receving packets\n"));
+		DEBUG(2, ("Failed to start receiving packets\n"));
 		status = NT_STATUS_NO_MEMORY;
 		goto fail;
 	}

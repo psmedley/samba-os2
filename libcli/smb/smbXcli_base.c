@@ -1914,7 +1914,7 @@ static NTSTATUS smb1cli_inbuf_parse_chain(uint8_t *buf, TALLOC_CTX *mem_ctx,
 					  struct iovec **piov, int *pnum_iov)
 {
 	struct iovec *iov;
-	int num_iov;
+	size_t num_iov;
 	size_t buflen;
 	size_t taken;
 	size_t remaining;
@@ -2105,10 +2105,10 @@ static NTSTATUS smb1cli_inbuf_parse_chain(uint8_t *buf, TALLOC_CTX *mem_ctx,
 		wct_ofs = SVAL(cur[0].iov_base, 2);
 
 		if (wct_ofs < taken) {
-			return NT_STATUS_INVALID_NETWORK_RESPONSE;
+			goto inval;
 		}
 		if (wct_ofs > buflen) {
-			return NT_STATUS_INVALID_NETWORK_RESPONSE;
+			goto inval;
 		}
 
 		/*
@@ -3470,7 +3470,8 @@ static NTSTATUS smb2cli_inbuf_parse_compound(struct smbXcli_conn *conn,
 					     uint8_t *buf,
 					     size_t buflen,
 					     TALLOC_CTX *mem_ctx,
-					     struct iovec **piov, int *pnum_iov)
+					     struct iovec **piov,
+					     size_t *pnum_iov)
 {
 	struct iovec *iov;
 	int num_iov = 0;
@@ -3656,7 +3657,7 @@ static NTSTATUS smb2cli_conn_dispatch_incoming(struct smbXcli_conn *conn,
 	struct tevent_req *req;
 	struct smbXcli_req_state *state = NULL;
 	struct iovec *iov = NULL;
-	int i, num_iov = 0;
+	size_t i, num_iov = 0;
 	NTSTATUS status;
 	bool defer = true;
 	struct smbXcli_session *last_session = NULL;

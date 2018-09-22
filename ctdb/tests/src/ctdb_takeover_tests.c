@@ -158,9 +158,9 @@ static void ctdb_test_init(TALLOC_CTX *mem_ctx,
 	const char *t;
 	struct ctdb_node_map *nodemap;
 	uint32_t noiptakeover;
-	uint32_t noiphostonalldisabled;
 	ctdb_sock_addr sa_zero = { .ip = { 0 } };
 	enum ipalloc_algorithm algorithm;
+	uint32_t n;
 
 	/* Avoid that const */
 	ns = talloc_strdup(mem_ctx, nodestates);
@@ -170,7 +170,7 @@ static void ctdb_test_init(TALLOC_CTX *mem_ctx,
 	nodemap->num = 0;
 	tok = strtok(ns, ",");
 	while (tok != NULL) {
-		uint32_t n = nodemap->num;
+		n = nodemap->num;
 		nodemap->node = talloc_realloc(nodemap, nodemap->node,
 					       struct ctdb_node_and_flags, n+1);
 		nodemap->node[n].pnn = n;
@@ -202,18 +202,10 @@ static void ctdb_test_init(TALLOC_CTX *mem_ctx,
 		noiptakeover = 0;
 	}
 
-	t = getenv("CTDB_SET_NoIPHostOnAllDisabled");
-	if (t != NULL) {
-		noiphostonalldisabled = (uint32_t) strtol(t, NULL, 0);
-	} else {
-		noiphostonalldisabled = 0;
-	}
-
 	*ipalloc_state = ipalloc_state_init(mem_ctx, nodemap->num,
 					    algorithm,
 					    (noiptakeover != 0),
 					    false,
-					    (noiphostonalldisabled != 0),
 					    NULL);
 	assert(*ipalloc_state != NULL);
 
@@ -221,9 +213,15 @@ static void ctdb_test_init(TALLOC_CTX *mem_ctx,
 				 read_ips_for_multiple_nodes,
 				 &known, &avail);
 
-	ipalloc_set_public_ips(*ipalloc_state, known, avail);
+	/* Drop available IPs for INACTIVE/DISABLED nodes */
+	for (n = 0; n < nodemap->num; n++) {
+		uint32_t flags = nodemap->node[n].flags;
+		if ((flags & (NODE_FLAGS_INACTIVE|NODE_FLAGS_DISABLED)) != 0) {
+			avail[n].num = 0;
+		}
+	}
 
-	ipalloc_set_node_flags(*ipalloc_state, nodemap);
+	ipalloc_set_public_ips(*ipalloc_state, known, avail);
 }
 
 /* IP layout is read from stdin.  See comment for ctdb_test_init() for

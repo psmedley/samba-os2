@@ -19,8 +19,10 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import print_function
+from __future__ import division
 from samba import colour
 import sys
+from itertools import cycle, groupby
 
 FONT_SIZE = 10
 
@@ -39,8 +41,8 @@ def reformat_graph_label(s):
             if '-' in p[2:20]:
                 q, p = p.split('-', 1)
             else:
-                n = len(p) / 12
-                b = len(p) / n
+                n = len(p) // 12
+                b = len(p) // n
                 q, p = p[:b], p[b:]
             pieces.append(q + '-')
         if p:
@@ -59,91 +61,82 @@ def quote_graph_label(s, reformat=False):
     return "%s" % s
 
 
-def shorten_vertex_names(edges, vertices, suffix=',...', aggressive=False):
+def shorten_vertex_names(vertices, suffix=',...', aggressive=False):
     """Replace the common suffix (in practice, the base DN) of a number of
     vertices with a short string (default ",..."). If this seems
     pointless because the replaced string is very short or the results
     seem strange, the original vertices are retained.
 
-    :param edges: a sequence of vertex pairs to shorten
     :param vertices: a sequence of vertices to shorten
     :param suffix: the replacement string [",..."]
+    :param aggressive: replace certain common non-suffix strings
 
-    :return: tuple of (edges, vertices, replacement)
+    :return: tuple of (rename map, replacements)
 
-    If no change is made, the returned edges and vertices will be the
-    original lists  and replacement will be None.
-
-    If a change is made, replacement will be a tuple (new, original)
-    indicating the new suffix that replaces the old.
+    The rename map is a dictionary mapping the old vertex names to
+    their shortened versions. If no changes are made, replacements
+    will be empty.
     """
-    vlist = list(set(x[0] for x in edges) |
-                 set(x[1] for x in edges) |
-                 set(vertices))
+    vmap = dict((v, v) for v in vertices)
+    replacements = []
 
-    if len(vlist) < 2:
-        return edges, vertices, None
+    if len(vmap) > 1:
+        # walk backwards along all the strings until we meet a character
+        # that is not shared by all.
+        i = -1
+        vlist = list(vmap.values())
+        try:
+            while True:
+                c = set(x[i] for x in vlist)
+                if len(c) > 1 or c == {'*'}:
+                    break
+                i -= 1
+        except IndexError:
+            # We have indexed beyond the start of a string, which should
+            # only happen if one node is a strict suffix of all others.
+            return vmap, replacements
 
-    # walk backwards along all the strings until we meet a character
-    # that is not shared by all.
-    i = -1
-    try:
-        while True:
-            c = set(x[i] for x in vlist)
-            if len(c) > 1:
-                break
-            i -= 1
-    except IndexError:
-        # We have indexed beyond the start of a string, which should
-        # only happen if one node is a strict suffix of all others.
-        return edges, vertices, None
-
-    # add one to get to the last unanimous character.
-    i += 1
-
-    # now, we actually really want to split on a comma. So we walk
-    # back to a comma.
-    x = vlist[0]
-    while i < len(x) and x[i] != ',':
+        # add one to get to the last unanimous character.
         i += 1
 
-    if i >= -len(suffix):
-        # there is nothing to gain here
-        return edges, vertices, None
+        # now, we actually really want to split on a comma. So we walk
+        # back to a comma.
+        x = vlist[0]
+        while i < len(x) and x[i] != ',':
+            i += 1
 
-    edges2 = []
-    vertices2 = []
+        if i >= -len(suffix):
+            # there is nothing to gain here
+            return vmap, replacements
 
-    for a, b in edges:
-        edges2.append((a[:i] + suffix, b[:i] + suffix))
-    for a in vertices:
-        vertices2.append(a[:i] + suffix)
+        replacements.append((suffix, x[i:]))
 
-    replacements = [(suffix, a[i:])]
+        for k, v in vmap.items():
+            vmap[k] = v[:i] + suffix
 
     if aggressive:
         # Remove known common annoying strings
-        map = dict((v, v) for v in vertices2)
-        for v in vertices2:
+        for v in vmap.values():
             if ',CN=Servers,' not in v:
                 break
         else:
-            map = dict((k, v.replace(',CN=Servers,', ',**,'))
-                       for k, v in map.iteritems())
+            vmap = dict((k, v.replace(',CN=Servers,', ',**,', 1))
+                       for k, v in vmap.items())
             replacements.append(('**', 'CN=Servers'))
 
-        for v in vertices2:
+        for v in vmap.values():
             if not v.startswith('CN=NTDS Settings,'):
                 break
         else:
-            map = dict((k, v.replace('CN=NTDS Settings,', '*,'))
-                       for k, v in map.iteritems())
+            vmap = dict((k, v.replace('CN=NTDS Settings,', '*,', 1))
+                       for k, v in vmap.items())
             replacements.append(('*', 'CN=NTDS Settings'))
 
-        edges2 = [(map.get(a, a), map.get(b, b)) for a, b in edges2]
-        vertices2 = [map.get(a, a) for a in vertices2]
+    return vmap, replacements
 
-    return edges2, vertices2, replacements
+
+
+
 
 
 def compile_graph_key(key_items, nodes_above=[], elisions=None,
@@ -290,7 +283,13 @@ def dot_graph(vertices, edges,
         vertices = set(x[0] for x in edges) | set(x[1] for x in edges)
 
     if shorten_names:
-        edges, vertices, elisions = shorten_vertex_names(edges, vertices)
+        vlist = list(set(x[0] for x in edges) |
+                     set(x[1] for x in edges) |
+                     set(vertices))
+        vmap, elisions = shorten_vertex_names(vlist)
+        vertices = [vmap[x] for x in vertices]
+        edges = [(vmap[a], vmap[b]) for a, b in edges]
+
     else:
         elisions = None
 
@@ -402,7 +401,7 @@ COLOUR_SETS = {
         'connected': colour.xterm_256_colour(112),
         'transitive': colour.xterm_256_colour(214),
         'transitive scale': (colour.xterm_256_colour(190),
-                             colour.xterm_256_colour(226),
+                             colour.xterm_256_colour(184),
                              colour.xterm_256_colour(220),
                              colour.xterm_256_colour(214),
                              colour.xterm_256_colour(208),
@@ -419,7 +418,7 @@ COLOUR_SETS = {
         'connected': colour.xterm_256_colour(112, bg=True),
         'transitive': colour.xterm_256_colour(214, bg=True),
         'transitive scale': (colour.xterm_256_colour(190, bg=True),
-                             colour.xterm_256_colour(226, bg=True),
+                             colour.xterm_256_colour(184, bg=True),
                              colour.xterm_256_colour(220, bg=True),
                              colour.xterm_256_colour(214, bg=True),
                              colour.xterm_256_colour(208, bg=True),
@@ -434,6 +433,27 @@ COLOUR_SETS = {
         'transitive': '',
         'header': '',
         'reset': '',
+    }
+}
+
+CHARSETS = {
+    'utf8': {
+        'vertical': '│',
+        'horizontal': '─',
+        'corner': '╭',
+        #'diagonal': '╲',
+        'diagonal': '·',
+        #'missing': '🕱',
+        'missing': '-',
+        'right_arrow': '←',
+    },
+    'ascii': {
+        'vertical': '|',
+        'horizontal': '-',
+        'corner': ',',
+        'diagonal': '0',
+        'missing': '-',
+        'right_arrow': '<-',
     }
 }
 
@@ -463,11 +483,11 @@ def find_transitive_distance(vertices, edges):
     for i in range(inf):
         changed = False
         new_distances = {}
-        for v, d in distances.iteritems():
+        for v, d in distances.items():
             new_d = d.copy()
             new_distances[v] = new_d
-            for dest, cost in d.iteritems():
-                for leaf, cost2 in distances[dest].iteritems():
+            for dest, cost in d.items():
+                for leaf, cost2 in distances[dest].items():
                     new_cost = cost + cost2
                     old_cost = d.get(leaf, inf)
                     if new_cost < old_cost:
@@ -497,7 +517,9 @@ def get_transitive_colourer(colours, n_vertices):
         n = 1 + int(n_vertices ** 0.5)
 
         def f(link):
-            return scale[min(link * m / n, m - 1)]
+            if not isinstance(link, int):
+                return ''
+            return scale[min(link * m // n, m - 1)]
 
     else:
         def f(link):
@@ -510,36 +532,51 @@ def distance_matrix(vertices, edges,
                     utf8=False,
                     colour=None,
                     shorten_names=False,
-                    generate_key=False):
+                    generate_key=False,
+                    grouping_function=None,
+                    row_comments=None):
     lines = []
     write = lines.append
 
-    if utf8:
-        vertical = '│'
-        horizontal = '─'
-        corner = '╭'
-        #diagonal = '╲'
-        diagonal = '·'
-        #missing = '🕱'
-        missing = '-'
-    else:
-        vertical, horizontal, corner, diagonal, missing = '|-,0-'
+    charset = CHARSETS['utf8' if utf8 else 'ascii']
+    vertical = charset['vertical']
+    horizontal = charset['horizontal']
+    corner = charset['corner']
+    diagonal = charset['diagonal']
+    missing = charset['missing']
+    right_arrow = charset['right_arrow']
 
     colours = COLOUR_SETS[colour]
+
+    colour_cycle = cycle(colours.get('alternate rows', ('',)))
 
     if vertices is None:
         vertices = sorted(set(x[0] for x in edges) | set(x[1] for x in edges))
 
+    if grouping_function is not None:
+        # we sort and colour according to the grouping function
+        # which can be used to e.g. alternate colours by site.
+        vertices = sorted(vertices, key=grouping_function)
+        colour_list = []
+        for k, v in groupby(vertices, key=grouping_function):
+            c = next(colour_cycle)
+            colour_list.extend(c for x in v)
+    else:
+        colour_list = [next(colour_cycle) for v in vertices]
+
     if shorten_names:
-        edges, vertices, replacements = shorten_vertex_names(edges,
-                                                             vertices,
-                                                             '+',
-                                                             aggressive=True)
+        vlist = list(set(x[0] for x in edges) |
+                     set(x[1] for x in edges) |
+                     set(vertices))
+        vmap, replacements = shorten_vertex_names(vlist, '+',
+                                                  aggressive=True)
+        vertices = [vmap[x] for x in vertices]
+        edges = [(vmap[a], vmap[b]) for a, b in edges]
+
 
     vlen = max(6, max(len(v) for v in vertices))
 
     # first, the key for the columns
-    colour_cycle = colours.get('alternate rows', ('',))
     c_header = colours.get('header', '')
     c_disconn = colours.get('disconnected', '')
     c_conn = colours.get('connected', '')
@@ -555,7 +592,7 @@ def distance_matrix(vertices, edges,
                                        c_reset))
     for i, v in enumerate(vertices):
         j = len(vertices) - i
-        c = colour_cycle[i % len(colour_cycle)]
+        c = colour_list[i]
         if j == 1:
             start = '%s%ssource%s' % (vspace[:-6], c_header, c_reset)
         else:
@@ -574,7 +611,7 @@ def distance_matrix(vertices, edges,
     connections = find_transitive_distance(vertices, edges)
 
     for i, v in enumerate(vertices):
-        c = colour_cycle[i % len(colour_cycle)]
+        c = colour_list[i]
         links = connections[v]
         row = []
         for v2 in vertices:
@@ -589,19 +626,23 @@ def distance_matrix(vertices, edges,
             else:
                 ct = colour_transitive(link)
                 if link > 9:
-                    link = '+'
+                    link = '>'
                 row.append('%s%s%s' % (ct, link, c_reset))
+
+        if row_comments is not None and row_comments[i]:
+            row.append('%s %s %s' % (c_reset, right_arrow, row_comments[i]))
 
         write('%s%*s%s %s%s' % (c, vlen, v, c_reset,
                                 ''.join(row), c_reset))
 
+    example_c = next(colour_cycle)
     if shorten_names:
         write('')
         for substitute, original in reversed(replacements):
-            write("'%s%s%s' stands for '%s%s%s'" % (colour_cycle[0],
+            write("'%s%s%s' stands for '%s%s%s'" % (example_c,
                                                     substitute,
                                                     c_reset,
-                                                    colour_cycle[0],
+                                                    example_c,
                                                     original,
                                                     c_reset))
     if generate_key:
@@ -610,12 +651,174 @@ def distance_matrix(vertices, edges,
               "indicated number of steps." % (c_header, c_reset,
                                               c_header, c_reset))
         write("%s%s%s means zero steps (it is the same DC)" %
-              (colour_cycle[0], diagonal, c_reset))
+              (example_c, diagonal, c_reset))
         write("%s1%s means a direct link" % (c_conn, c_reset))
         write("%s2%s means a transitive link involving two steps "
               "(i.e. one intermediate DC)" %
               (colour_transitive(2), c_reset))
         write("%s%s%s means there is no connection, even through other DCs" %
               (c_disconn, missing, c_reset))
+
+    return '\n'.join(lines)
+
+
+def pad_char(char, digits, padding=' '):
+    if digits == 1:
+        padding = ''
+    return ' ' * (digits - 1) + char + padding
+
+
+def transpose_dict_matrix(m):
+    m2 = {}
+    for k1, row in m.items():
+        for k2, dist in row.items():
+            m2.setdefault(k2, {})[k1] = dist
+    return m2
+
+def full_matrix(rows,
+                utf8=False,
+                colour=None,
+                shorten_names=False,
+                generate_key=False,
+                grouping_function=None,
+                row_comments=None,
+                colour_scale=None,
+                digits=1,
+                ylabel='source',
+                xlabel='destination',
+                transpose=True):
+    lines = []
+    write = lines.append
+
+    if transpose:
+        rows = transpose_dict_matrix(rows)
+
+    use_padding = digits > 1
+
+    charset = CHARSETS['utf8' if utf8 else 'ascii']
+    vertical = pad_char(charset['vertical'], digits)
+    horizontal = charset['horizontal'] * (digits + use_padding)
+    corner = pad_char(charset['corner'], digits,
+                      charset['horizontal'])
+    diagonal = pad_char(charset['diagonal'], digits)
+    missing = pad_char(charset['missing'], digits)
+    toobig = pad_char('>', digits)
+    right_arrow = charset['right_arrow']
+    empty = pad_char(' ', digits)
+
+    colours = COLOUR_SETS[colour]
+
+    colour_cycle = cycle(colours.get('alternate rows', ('',)))
+    vertices = list(rows.keys())
+    if grouping_function is not None:
+        # we sort and colour according to the grouping function
+        # which can be used to e.g. alternate colours by site.
+        vertices.sort(key=grouping_function)
+        colour_list = []
+        for k, v in groupby(vertices, key=grouping_function):
+            c = next(colour_cycle)
+            colour_list.extend(c for x in v)
+    else:
+        colour_list = [next(colour_cycle) for v in vertices]
+
+    if shorten_names:
+        vmap, replacements = shorten_vertex_names(vertices, '+',
+                                                  aggressive=True)
+        rows2 = {}
+        for vert, r in rows.items():
+            rows2[vmap[vert]] = dict((vmap[k], v) for k, v in r.items())
+
+        rows = rows2
+        vertices = list(rows.keys())
+
+    vlen = max(6, len(xlabel), max(len(v) for v in vertices))
+
+    # first, the key for the columns
+    c_header = colours.get('header', '')
+    c_disconn = colours.get('disconnected', '')
+    c_conn = colours.get('connected', '')
+    c_reset = colours.get('reset', '')
+
+    if colour_scale is None:
+        colour_scale = len(rows)
+    colour_transitive = get_transitive_colourer(colours, colour_scale)
+
+    vspace = ' ' * vlen
+    verticals = ''
+    write("%s %s %s%s%s" % (vspace,
+                            empty * (len(rows) + 1),
+                            c_header,
+                            xlabel,
+                            c_reset))
+    for i, v in enumerate(vertices):
+        j = len(rows) - i
+        c = colour_list[i]
+        if j == 1:
+            start = '%s%s%s%s' % (vspace[:-len(ylabel)],
+                                  c_header,
+                                  ylabel,
+                                  c_reset)
+        else:
+            start = vspace
+        write('%s %s%s%s%s%s %s%s' % (start,
+                                      verticals,
+                                      c_reset,
+                                      c,
+                                      corner,
+                                      horizontal * j,
+                                      v,
+                                      c_reset
+        ))
+        verticals += '%s%s' % (c, vertical)
+
+    end_cell = '%s%s' % (' ' * use_padding, c_reset)
+    overflow = False
+    for i, v in enumerate(vertices):
+        links = rows[v]
+        c = colour_list[i]
+        row = []
+        for v2 in vertices:
+            if v2 not in links:
+                row.append('%s%s%s' % (c_disconn, missing, c_reset))
+            elif v == v2:
+                row.append('%s%s%s%s' % (c_reset, c, diagonal, c_reset))
+            else:
+                link = links[v2]
+                if link >= 10 ** digits:
+                    ct = colour_transitive(link)
+                    row.append('%s%s%s' % (ct, toobig, c_reset))
+                    overflow = True
+                    continue
+                if link == 0:
+                    ct = c_conn
+                else:
+                    ct = colour_transitive(link)
+                row.append('%s%*s%s' % (ct, digits, link, end_cell))
+
+        if row_comments is not None and row_comments[i]:
+            row.append('%s %s %s' % (c_reset, right_arrow, row_comments[i]))
+
+        write('%s%*s%s %s%s' % (c, vlen, v, c_reset,
+                                ''.join(row), c_reset))
+
+    if overflow or shorten_names:
+        write('')
+
+    if overflow:
+            write("'%s%s%s' means greater than %d " %
+                  (colour_transitive(10 ** digits),
+                   toobig,
+                   c_reset,
+                   10 ** digits - 1))
+
+    if shorten_names:
+        example_c = next(colour_cycle)
+        for substitute, original in reversed(replacements):
+            write("'%s%s%s' stands for '%s%s%s'" % (example_c,
+                                                    substitute,
+                                                    c_reset,
+                                                    example_c,
+                                                    original,
+                                                    c_reset))
 
     return '\n'.join(lines)

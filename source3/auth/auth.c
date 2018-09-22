@@ -300,7 +300,9 @@ NTSTATUS auth_check_ntlm_password(TALLOC_CTX *mem_ctx,
 	}
 
 	log_authentication_event(NULL, NULL,
-				 user_info, nt_status,
+				 &auth_context->start_time,
+				 user_info,
+				 nt_status,
 				 server_info->info3->base.logon_domain.string,
 				 server_info->info3->base.account_name.string,
 				 unix_username, &sid);
@@ -331,7 +333,15 @@ fail:
 		  user_info->client.account_name, user_info->mapped.account_name,
 		  nt_errstr(nt_status), *pauthoritative));
 
-	log_authentication_event(NULL, NULL, user_info, nt_status, NULL, NULL, NULL, NULL);
+	log_authentication_event(NULL,
+				 NULL,
+				 &auth_context->start_time,
+				 user_info,
+				 nt_status,
+				 NULL,
+				 NULL,
+				 NULL,
+				 NULL);
 
 	ZERO_STRUCTP(pserver_info);
 
@@ -372,6 +382,8 @@ static NTSTATUS make_auth_context(TALLOC_CTX *mem_ctx,
 		DEBUG(0,("make_auth_context: talloc failed!\n"));
 		return NT_STATUS_NO_MEMORY;
 	}
+
+	ctx->start_time = timeval_current();
 
 	talloc_set_destructor((TALLOC_CTX *)ctx, auth_context_destructor);
 
@@ -513,20 +525,20 @@ NTSTATUS make_auth3_context_for_ntlm(TALLOC_CTX *mem_ctx,
 		break;
 	case ROLE_DOMAIN_MEMBER:
 		DEBUG(5,("Making default auth method list for server role = 'domain member'\n"));
-		methods = "guest sam winbind sam_ignoredomain";
+		methods = "anonymous sam winbind sam_ignoredomain";
 		break;
 	case ROLE_DOMAIN_BDC:
 	case ROLE_DOMAIN_PDC:
 		DEBUG(5,("Making default auth method list for DC\n"));
-		methods = "guest sam winbind sam_ignoredomain";
+		methods = "anonymous sam winbind sam_ignoredomain";
 		break;
 	case ROLE_STANDALONE:
 		DEBUG(5,("Making default auth method list for server role = 'standalone server', encrypt passwords = yes\n"));
 		if (lp_encrypt_passwords()) {
-			methods = "guest sam_ignoredomain";
+			methods = "anonymous sam_ignoredomain";
 		} else {
 			DEBUG(5,("Making default auth method list for server role = 'standalone server', encrypt passwords = no\n"));
-			methods = "guest unix";
+			methods = "anonymous unix";
 		}
 		break;
 	default:

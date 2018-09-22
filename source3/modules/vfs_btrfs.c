@@ -196,11 +196,29 @@ static NTSTATUS btrfs_offload_read_recv(struct tevent_req *req,
 	return NT_STATUS_OK;
 }
 
-struct btrfs_cc_state {
+struct btrfs_offload_write_state {
 	struct vfs_handle_struct *handle;
 	off_t copied;
-	struct tevent_req *subreq;	/* non-null if passed to next VFS fn */
+	bool need_unbecome_user;
 };
+
+static void btrfs_offload_write_cleanup(struct tevent_req *req,
+					enum tevent_req_state req_state)
+{
+	struct btrfs_offload_write_state *state =
+		tevent_req_data(req,
+		struct btrfs_offload_write_state);
+	bool ok;
+
+	if (!state->need_unbecome_user) {
+		return;
+	}
+
+	ok = unbecome_user();
+	SMB_ASSERT(ok);
+	state->need_unbecome_user = false;
+}
+
 static void btrfs_offload_write_done(struct tevent_req *subreq);
 
 static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *handle,
@@ -213,8 +231,9 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 						off_t dest_off,
 						off_t num)
 {
-	struct tevent_req *req;
-	struct btrfs_cc_state *cc_state;
+	struct tevent_req *req = NULL;
+	struct btrfs_offload_write_state *state = NULL;
+	struct tevent_req *subreq = NULL;
 	struct btrfs_ioctl_clone_range_args cr_args;
 	struct lock_struct src_lck;
 	struct lock_struct dest_lck;
@@ -224,13 +243,17 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 	bool handle_offload_write = true;
 	bool do_locking = false;
 	NTSTATUS status;
+	bool ok;
 
-	req = tevent_req_create(mem_ctx, &cc_state, struct btrfs_cc_state);
+	req = tevent_req_create(mem_ctx, &state,
+				struct btrfs_offload_write_state);
 	if (req == NULL) {
 		return NULL;
 	}
 
-	cc_state->handle = handle;
+	state->handle = handle;
+
+	tevent_req_set_cleanup_fn(req, btrfs_offload_write_cleanup);
 
 	status = vfs_offload_token_db_fetch_fsp(btrfs_offload_ctx,
 						token, &src_fsp);
@@ -263,18 +286,19 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 	}
 
 	if (!handle_offload_write) {
-		cc_state->subreq = SMB_VFS_NEXT_OFFLOAD_WRITE_SEND(handle,
-								cc_state, ev,
-								fsctl,
-								token,
-								transfer_offset,
-								dest_fsp,
-								dest_off,
-								num);
-		if (tevent_req_nomem(cc_state->subreq, req)) {
+		subreq = SMB_VFS_NEXT_OFFLOAD_WRITE_SEND(handle,
+							 state,
+							 ev,
+							 fsctl,
+							 token,
+							 transfer_offset,
+							 dest_fsp,
+							 dest_off,
+							 num);
+		if (tevent_req_nomem(subreq, req)) {
 			return tevent_req_post(req, ev);
 		}
-		tevent_req_set_callback(cc_state->subreq,
+		tevent_req_set_callback(subreq,
 					btrfs_offload_write_done,
 					req);
 		return req;
@@ -287,6 +311,13 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 		return tevent_req_post(req, ev);
 	}
 
+	ok = become_user_by_fsp(src_fsp);
+	if (!ok) {
+		tevent_req_nterror(req, NT_STATUS_ACCESS_DENIED);
+		return tevent_req_post(req, ev);
+	}
+	state->need_unbecome_user = true;
+
 	status = vfs_stat_fsp(src_fsp);
 	if (tevent_req_nterror(req, status)) {
 		return tevent_req_post(req, ev);
@@ -298,11 +329,6 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 		return tevent_req_post(req, ev);
 	}
 
-	if (src_fsp->op == NULL || dest_fsp->op == NULL) {
-		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
-		return tevent_req_post(req, ev);
-	}
-
 	if (do_locking) {
 		init_strict_lock_struct(src_fsp,
 					src_fsp->op->global->open_persistent_id,
@@ -310,17 +336,24 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 					num,
 					READ_LOCK,
 					&src_lck);
+		if (!SMB_VFS_STRICT_LOCK_CHECK(src_fsp->conn, src_fsp, &src_lck)) {
+			tevent_req_nterror(req, NT_STATUS_FILE_LOCK_CONFLICT);
+			return tevent_req_post(req, ev);
+		}
+	}
+
+	ok = unbecome_user();
+	SMB_ASSERT(ok);
+	state->need_unbecome_user = false;
+
+	if (do_locking) {
 		init_strict_lock_struct(dest_fsp,
-				       dest_fsp->op->global->open_persistent_id,
+					dest_fsp->op->global->open_persistent_id,
 					dest_off,
 					num,
 					WRITE_LOCK,
 					&dest_lck);
 
-		if (!SMB_VFS_STRICT_LOCK_CHECK(src_fsp->conn, src_fsp, &src_lck)) {
-			tevent_req_nterror(req, NT_STATUS_FILE_LOCK_CONFLICT);
-			return tevent_req_post(req, ev);
-		}
 		if (!SMB_VFS_STRICT_LOCK_CHECK(dest_fsp->conn, dest_fsp, &dest_lck)) {
 			tevent_req_nterror(req, NT_STATUS_FILE_LOCK_CONFLICT);
 			return tevent_req_post(req, ev);
@@ -348,19 +381,20 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 			  (unsigned long long)cr_args.src_offset,
 			  dest_fsp->fh->fd,
 			  (unsigned long long)cr_args.dest_offset));
-		cc_state->subreq = SMB_VFS_NEXT_OFFLOAD_WRITE_SEND(handle,
-								cc_state, ev,
-								fsctl,
-								token,
-								transfer_offset,
-								dest_fsp,
-								dest_off,
-								num);
-		if (tevent_req_nomem(cc_state->subreq, req)) {
+		subreq = SMB_VFS_NEXT_OFFLOAD_WRITE_SEND(handle,
+							 state,
+							 ev,
+							 fsctl,
+							 token,
+							 transfer_offset,
+							 dest_fsp,
+							 dest_off,
+							 num);
+		if (tevent_req_nomem(subreq, req)) {
 			return tevent_req_post(req, ev);
 		}
 		/* wait for subreq completion */
-		tevent_req_set_callback(cc_state->subreq,
+		tevent_req_set_callback(subreq,
 					btrfs_offload_write_done,
 					req);
 		return req;
@@ -368,7 +402,7 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 
 	DEBUG(5, ("BTRFS_IOC_CLONE_RANGE returned %d\n", ret));
 	/* BTRFS_IOC_CLONE_RANGE is all or nothing */
-	cc_state->copied = num;
+	state->copied = num;
 	tevent_req_done(req);
 	return tevent_req_post(req, ev);
 }
@@ -376,15 +410,18 @@ static struct tevent_req *btrfs_offload_write_send(struct vfs_handle_struct *han
 /* only used if the request is passed through to next VFS module */
 static void btrfs_offload_write_done(struct tevent_req *subreq)
 {
-	struct tevent_req *req = tevent_req_callback_data(
-		subreq, struct tevent_req);
-	struct btrfs_cc_state *cc_state = tevent_req_data(req,
-							struct btrfs_cc_state);
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq,
+		struct tevent_req);
+	struct btrfs_offload_write_state *state =
+		tevent_req_data(req,
+		struct btrfs_offload_write_state);
 	NTSTATUS status;
 
-	status = SMB_VFS_NEXT_OFFLOAD_WRITE_RECV(cc_state->handle,
-					      cc_state->subreq,
-					      &cc_state->copied);
+	status = SMB_VFS_NEXT_OFFLOAD_WRITE_RECV(state->handle,
+						 subreq,
+						 &state->copied);
+	TALLOC_FREE(subreq);
 	if (tevent_req_nterror(req, status)) {
 		return;
 	}
@@ -392,12 +429,13 @@ static void btrfs_offload_write_done(struct tevent_req *subreq)
 }
 
 static NTSTATUS btrfs_offload_write_recv(struct vfs_handle_struct *handle,
-				      struct tevent_req *req,
-				      off_t *copied)
+					 struct tevent_req *req,
+					 off_t *copied)
 {
+	struct btrfs_offload_write_state *state =
+		tevent_req_data(req,
+		struct btrfs_offload_write_state);
 	NTSTATUS status;
-	struct btrfs_cc_state *cc_state = tevent_req_data(req,
-							struct btrfs_cc_state);
 
 	if (tevent_req_is_nterror(req, &status)) {
 		DEBUG(4, ("server side copy chunk failed: %s\n",
@@ -407,8 +445,8 @@ static NTSTATUS btrfs_offload_write_recv(struct vfs_handle_struct *handle,
 	}
 
 	DEBUG(10, ("server side copy chunk copied %llu\n",
-		   (unsigned long long)cc_state->copied));
-	*copied = cc_state->copied;
+		   (unsigned long long)state->copied));
+	*copied = state->copied;
 	tevent_req_received(req);
 	return NT_STATUS_OK;
 }

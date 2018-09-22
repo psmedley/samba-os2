@@ -727,6 +727,12 @@ WERROR dsdb_replicated_objects_convert(struct ldb_context *ldb,
 		 * based on the cross-ref object.
 		 */
 		if (W_ERROR_EQUAL(status, WERR_DS_ADD_REPLICA_INHIBITED)) {
+			struct GUID_txt_buf guid_str;
+			DBG_ERR("Ignoring object outside partition %s %s: %s\n",
+				GUID_buf_string(&cur->object.identifier->guid,
+						&guid_str),
+				cur->object.identifier->dn,
+				win_errstr(status));
 			continue;
 		}
 
@@ -921,6 +927,7 @@ WERROR dsdb_replicated_objects_commit(struct ldb_context *ldb,
 			}
 			DEBUG(0,("Failed to save updated prefixMap: %s\n",
 				 win_errstr(werr)));
+			ldb_transaction_cancel(ldb);
 			TALLOC_FREE(tmp_ctx);
 			return werr;
 		}
@@ -934,8 +941,9 @@ WERROR dsdb_replicated_objects_commit(struct ldb_context *ldb,
 		} else if (cur_schema ) {
 			dsdb_reference_schema(ldb, cur_schema, SCHEMA_MEMORY_ONLY);
 		}
-		DEBUG(0,(__location__ " Failed to prepare commit of transaction: %s\n",
-			 ldb_errstring(ldb)));
+		DBG_ERR(" Failed to prepare commit of transaction: %s (%s)\n",
+			ldb_errstring(ldb),
+			ldb_strerror(ret));
 		TALLOC_FREE(tmp_ctx);
 		return WERR_FOOBAR;
 	}

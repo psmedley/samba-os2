@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Originally based on ./sam.py
+from __future__ import print_function
 import optparse
 import sys
 import os
@@ -64,8 +65,8 @@ class LATests(samba.tests.TestCase):
         if opts.delete_in_setup:
             try:
                 self.samdb.delete(self.ou, ['tree_delete:1'])
-            except ldb.LdbError, e:
-                print "tried deleting %s, got error %s" % (self.ou, e)
+            except ldb.LdbError as e:
+                print("tried deleting %s, got error %s" % (self.ou, e))
         self.samdb.add({'objectclass': 'organizationalUnit',
                         'dn': self.ou})
 
@@ -145,9 +146,9 @@ class LATests(samba.tests.TestCase):
         results = sorted(results)
 
         if expected != results:
-            print msg
-            print "expected %s" % expected
-            print "received %s" % results
+            print(msg)
+            print("expected %s" % expected)
+            print("received %s" % results)
 
         self.assertEqual(results, expected)
 
@@ -169,9 +170,10 @@ class LATests(samba.tests.TestCase):
         """Assert a function raises a particular LdbError."""
         try:
             f(*args, **kwargs)
-        except ldb.LdbError as (num, msg):
+        except ldb.LdbError as e:
+            (num, msg) = e.args
             if num != errcode:
-                lut = {v: k for k, v in vars(ldb).iteritems()
+                lut = {v: k for k, v in vars(ldb).items()
                        if k.startswith('ERR_') and isinstance(v, int)}
                 self.fail("%s, expected "
                           "LdbError %s, (%d) "
@@ -179,7 +181,7 @@ class LATests(samba.tests.TestCase):
                                            lut.get(errcode), errcode,
                                            lut.get(num), num))
         else:
-            lut = {v: k for k, v in vars(ldb).iteritems()
+            lut = {v: k for k, v in vars(ldb).items()
                    if k.startswith('ERR_') and isinstance(v, int)}
             self.fail("%s, expected "
                       "LdbError %s, (%d) "
@@ -207,7 +209,7 @@ class LATests(samba.tests.TestCase):
 
     def test_la_backlinks_reveal(self):
         if opts.no_reveal_internals:
-            print 'skipping because --no-reveal-internals'
+            print('skipping because --no-reveal-internals')
             return
         self._test_la_backlinks(True)
 
@@ -235,7 +237,7 @@ class LATests(samba.tests.TestCase):
 
     def test_la_backlinks_delete_group_reveal(self):
         if opts.no_reveal_internals:
-            print 'skipping because --no-reveal-internals'
+            print('skipping because --no-reveal-internals')
             return
         self._test_la_backlinks_delete_group(True)
 
@@ -349,7 +351,7 @@ class LATests(samba.tests.TestCase):
 
     def test_la_links_delete_link_reveal(self):
         if opts.no_reveal_internals:
-            print 'skipping because --no-reveal-internals'
+            print('skipping because --no-reveal-internals')
             return
         self._test_la_links_delete_link_reveal()
 

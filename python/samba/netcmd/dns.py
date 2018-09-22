@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
+import logging
 
 import samba.getopt as options
 from samba import WERRORError
@@ -25,6 +26,10 @@ from socket import inet_ntop
 from socket import AF_INET
 from socket import AF_INET6
 import shlex
+
+from samba import remove_dc
+from samba.samdb import SamDB
+from samba.auth import system_session
 
 from samba.netcmd import (
     Command,
@@ -42,7 +47,7 @@ def dns_connect(server, lp, creds):
     binding_str = "ncacn_ip_tcp:%s[sign]" % server
     try:
         dns_conn = dnsserver.dnsserver(binding_str, lp, creds)
-    except RuntimeError, e:
+    except RuntimeError as e:
         raise CommandError('Connecting to DNS RPC server %s failed with %s' % (server, e))
 
     return dns_conn
@@ -135,7 +140,7 @@ def ip4_array_string(array):
     ret = []
     if not array:
         return ret
-    for i in xrange(array.AddrCount):
+    for i in range(array.AddrCount):
         addr = inet_ntop(AF_INET, pack('I', array.AddrArray[i]))
         ret.append(addr)
     return ret
@@ -145,7 +150,7 @@ def dns_addr_array_string(array):
     ret = []
     if not array:
         return ret
-    for i in xrange(array.AddrCount):
+    for i in range(array.AddrCount):
         if array.AddrArray[i].MaxSa[0] == 0x02:
             x = "".join([chr(b) for b in array.AddrArray[i].MaxSa])[4:8]
             addr = inet_ntop(AF_INET, x)
@@ -518,7 +523,7 @@ def dns_record_match(dns_conn, server, zone, name, record_type, data):
         elif record_type == dnsp.DNS_TYPE_TXT:
             if rec.data.count == urec.data.count:
                 found = True
-                for i in xrange(rec.data.count):
+                for i in range(rec.data.count):
                     found = found and \
                             (rec.data.str[i].str == urec.data.str[i].str)
 
@@ -1068,6 +1073,54 @@ class cmd_delete_record(Command):
         self.outf.write('Record deleted successfully\n')
 
 
+class cmd_cleanup_record(Command):
+    """Cleanup DNS records for a DNS host.
+
+    example:
+
+        samba-tool dns cleanup dc1 dc1.samdom.test.site -U USER%PASSWORD
+
+    NOTE: This command in many cases will only mark the `dNSTombstoned` attr
+    as `TRUE` on the DNS records. Querying will no longer return results but
+    there may still be some placeholder entries in the database.
+    """
+
+    synopsis = '%prog <server> <dnshostname>'
+
+    takes_args = ['server', 'dnshostname']
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "versionopts": options.VersionOptions,
+        "credopts": options.CredentialsOptions,
+    }
+
+    takes_options = [
+        Option("-v", "--verbose", help="Be verbose", action="store_true"),
+        Option("-q", "--quiet", help="Be quiet", action="store_true"),
+    ]
+
+    def run(self, server, dnshostname, sambaopts=None, credopts=None,
+            versionopts=None, verbose=False, quiet=False):
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp)
+
+        logger = self.get_logger()
+        if verbose:
+            logger.setLevel(logging.DEBUG)
+        elif quiet:
+            logger.setLevel(logging.WARNING)
+        else:
+            logger.setLevel(logging.INFO)
+
+        samdb = SamDB(url="ldap://%s" % server,
+                      session_info=system_session(),
+                      credentials=creds, lp=lp)
+
+        remove_dc.remove_dns_references(samdb, logger, dnshostname,
+                                        ignore_no_name=True)
+
+
 class cmd_dns(SuperCommand):
     """Domain Name Service (DNS) management."""
 
@@ -1082,3 +1135,4 @@ class cmd_dns(SuperCommand):
     subcommands['add'] = cmd_add_record()
     subcommands['update'] = cmd_update_record()
     subcommands['delete'] = cmd_delete_record()
+    subcommands['cleanup'] = cmd_cleanup_record()

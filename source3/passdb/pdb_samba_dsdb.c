@@ -2236,7 +2236,7 @@ static bool pdb_samba_dsdb_get_trusteddom_pw(struct pdb_methods *m,
 				(ndr_pull_flags_fn_t)ndr_pull_trustAuthInOutBlob);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		DEBUG(0, ("Failed to get trusted domain password for %s, "
-			  "attribute trustAuthOutgoing coult not be parsed %s.\n",
+			  "attribute trustAuthOutgoing could not be parsed %s.\n",
 			  domain,
 			  ndr_map_error2string(ndr_err)));
 		TALLOC_FREE(tmp_ctx);
@@ -2391,7 +2391,7 @@ static NTSTATUS pdb_samba_dsdb_get_trusteddom_creds(struct pdb_methods *m,
 				(ndr_pull_flags_fn_t)ndr_pull_trustAuthInOutBlob);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		DEBUG(0, ("Failed to get trusted domain password for %s, "
-			  "attribute trustAuthOutgoing coult not be parsed %s.\n",
+			  "attribute trustAuthOutgoing could not be parsed %s.\n",
 			  domain,
 			  ndr_map_error2string(ndr_err)));
 		TALLOC_FREE(tmp_ctx);
@@ -2678,7 +2678,7 @@ static bool pdb_samba_dsdb_set_trusteddom_pw(struct pdb_methods *m,
 				(ndr_pull_flags_fn_t)ndr_pull_trustAuthInOutBlob);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 			DEBUG(0, ("Failed to get trusted domain password for %s, "
-				  "attribute trustAuthOutgoing coult not be parsed %s.\n",
+				  "attribute trustAuthOutgoing could not be parsed %s.\n",
 				  domain,
 				  ndr_map_error2string(ndr_err)));
 			TALLOC_FREE(tmp_ctx);
@@ -3280,9 +3280,6 @@ static NTSTATUS pdb_samba_dsdb_set_trusted_domain(struct pdb_methods *methods,
 	};
 	char *netbios_encoded = NULL;
 	char *dns_encoded = NULL;
-	struct dom_sid *tmp_sid1;
-	struct dom_sid *tmp_sid2;
-	uint32_t tmp_rid;
 	char *sid_encoded = NULL;
 	int ret;
 	struct trustAuthInOutBlob taiob;
@@ -3300,39 +3297,8 @@ static NTSTATUS pdb_samba_dsdb_set_trusted_domain(struct pdb_methods *methods,
 	 * We expect S-1-5-21-A-B-C, but we don't
 	 * allow S-1-5-21-0-0-0 as this is used
 	 * for claims and compound identities.
-	 *
-	 * So we call dom_sid_split_rid() 3 times
-	 * and compare the result to S-1-5-21
 	 */
-	status = dom_sid_split_rid(tmp_ctx,
-				   &td->security_identifier,
-				   &tmp_sid1, &tmp_rid);
-	if (!NT_STATUS_IS_OK(status)) {
-		goto out;
-	}
-	status = dom_sid_split_rid(tmp_ctx, tmp_sid1, &tmp_sid2, &tmp_rid);
-	if (!NT_STATUS_IS_OK(status)) {
-		goto out;
-	}
-	status = dom_sid_split_rid(tmp_ctx, tmp_sid2, &tmp_sid1, &tmp_rid);
-	if (!NT_STATUS_IS_OK(status)) {
-		goto out;
-	}
-	ok = dom_sid_parse("S-1-5-21", tmp_sid2);
-	if (!ok) {
-		status = NT_STATUS_INTERNAL_ERROR;
-		goto out;
-	}
-	ok = dom_sid_equal(tmp_sid1, tmp_sid2);
-	if (!ok) {
-		status = NT_STATUS_INVALID_PARAMETER;
-		goto out;
-	}
-	ok = dom_sid_parse("S-1-5-21-0-0-0", tmp_sid2);
-	if (!ok) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
-	ok = !dom_sid_equal(&td->security_identifier, tmp_sid2);
+	ok = dom_sid_is_valid_account_domain(&td->security_identifier);
 	if (!ok) {
 		status = NT_STATUS_INVALID_PARAMETER;
 		goto out;
@@ -3926,8 +3892,11 @@ static NTSTATUS pdb_init_samba_dsdb(struct pdb_methods **pdb_method,
 				state->ev,
 				state->lp_ctx,
 				system_session(state->lp_ctx),
-				0, location,
-				&state->ldb, &errstring);
+				0,
+				location,
+				NULL,
+				&state->ldb,
+				&errstring);
 
 	if (!state->ldb) {
 		DEBUG(0, ("samdb_connect failed: %s: %s\n",

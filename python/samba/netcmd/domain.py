@@ -22,6 +22,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+from __future__ import print_function
+from __future__ import division
 import samba.getopt as options
 import ldb
 import string
@@ -42,7 +44,7 @@ from samba.net import Net, LIBNET_JOIN_AUTOMATIC
 import samba.ntacls
 from samba.join import join_RODC, join_DC, join_subdomain
 from samba.auth import system_session
-from samba.samdb import SamDB
+from samba.samdb import SamDB, get_default_backend_store
 from samba.ndr import ndr_unpack, ndr_pack, ndr_print
 from samba.dcerpc import drsuapi
 from samba.dcerpc import drsblobs
@@ -97,11 +99,49 @@ from samba.provision.common import (
     FILL_DRS
 )
 
+from samba.netcmd.pso import cmd_domain_passwordsettings_pso
+from samba.netcmd.domain_backup import cmd_domain_backup
+
 string_version_to_constant = {
     "2008_R2" : DS_DOMAIN_FUNCTION_2008_R2,
     "2012": DS_DOMAIN_FUNCTION_2012,
     "2012_R2": DS_DOMAIN_FUNCTION_2012_R2,
 }
+
+common_provision_join_options = [
+    Option("--machinepass", type="string", metavar="PASSWORD",
+           help="choose machine password (otherwise random)"),
+    Option("--plaintext-secrets", action="store_true",
+           help="Store secret/sensitive values as plain text on disk" +
+           "(default is to encrypt secret/ensitive values)"),
+    Option("--backend-store", type="choice", metavar="BACKENDSTORE",
+           choices=["tdb", "mdb"],
+           help="Specify the database backend to be used "
+           "(default is %s)" % get_default_backend_store()),
+    Option("--targetdir", metavar="DIR",
+           help="Set target directory (where to store provision)", type=str),
+    Option("-q", "--quiet", help="Be quiet", action="store_true"),
+]
+
+common_join_options = [
+    Option("--server", help="DC to join", type=str),
+    Option("--site", help="site to join", type=str),
+    Option("--domain-critical-only",
+           help="only replicate critical domain objects",
+           action="store_true"),
+    Option("--dns-backend", type="choice", metavar="NAMESERVER-BACKEND",
+           choices=["SAMBA_INTERNAL", "BIND9_DLZ", "NONE"],
+           help="The DNS server backend. SAMBA_INTERNAL is the builtin name server (default), "
+           "BIND9_DLZ uses samba4 AD to store zone information, "
+           "NONE skips the DNS setup entirely (this DC will not be a DNS server)",
+           default="SAMBA_INTERNAL"),
+    Option("-v", "--verbose", help="Be verbose", action="store_true")
+]
+
+common_ntvfs_options = [
+        Option("--use-ntvfs", help="Use NTVFS for the fileserver (default = no)",
+               action="store_true")
+]
 
 def get_testparm_var(testparm, smbconf, varname):
     errfile = open(os.devnull, 'w')
@@ -208,8 +248,6 @@ class cmd_domain_provision(Command):
                 help="choose admin password (otherwise random)"),
          Option("--krbtgtpass", type="string", metavar="PASSWORD",
                 help="choose krbtgt password (otherwise random)"),
-         Option("--machinepass", type="string", metavar="PASSWORD",
-                help="choose machine password (otherwise random)"),
          Option("--dns-backend", type="choice", metavar="NAMESERVER-BACKEND",
                 choices=["SAMBA_INTERNAL", "BIND9_FLATFILE", "BIND9_DLZ", "NONE"],
                 help="The DNS server backend. SAMBA_INTERNAL is the builtin name server (default), "
@@ -219,20 +257,14 @@ class cmd_domain_provision(Command):
                 default="SAMBA_INTERNAL"),
          Option("--dnspass", type="string", metavar="PASSWORD",
                 help="choose dns password (otherwise random)"),
-         Option("--ldapadminpass", type="string", metavar="PASSWORD",
-                help="choose password to set between Samba and its LDAP backend (otherwise random)"),
          Option("--root", type="string", metavar="USERNAME",
                 help="choose 'root' unix username"),
          Option("--nobody", type="string", metavar="USERNAME",
                 help="choose 'nobody' user"),
          Option("--users", type="string", metavar="GROUPNAME",
                 help="choose 'users' group"),
-         Option("--quiet", help="Be quiet", action="store_true"),
          Option("--blank", action="store_true",
                 help="do not add users or groups, just the structure"),
-         Option("--ldap-backend-type", type="choice", metavar="LDAP-BACKEND-TYPE",
-                help="Test initialisation support for unsupported LDAP backend type (fedora-ds or openldap) DO NOT USE",
-                choices=["fedora-ds", "openldap"]),
          Option("--server-role", type="choice", metavar="ROLE",
                 choices=["domain controller", "dc", "member server", "member", "standalone"],
                 help="The server role (domain controller | dc | member server | member | standalone). Default is dc.",
@@ -249,17 +281,17 @@ class cmd_domain_provision(Command):
                 help="The initial nextRid value (only needed for upgrades).  Default is 1000."),
          Option("--partitions-only",
                 help="Configure Samba's partitions, but do not modify them (ie, join a BDC)", action="store_true"),
-         Option("--targetdir", type="string", metavar="DIR",
-                help="Set target directory"),
-         Option("--ol-mmr-urls", type="string", metavar="LDAPSERVER",
-                help="List of LDAP-URLS [ ldap://<FQHN>:<PORT>/  (where <PORT> has to be different than 389!) ] separated with comma (\",\") for use with OpenLDAP-MMR (Multi-Master-Replication), e.g.: \"ldap://s4dc1:9000,ldap://s4dc2:9000\""),
          Option("--use-rfc2307", action="store_true", help="Use AD to store posix attributes (default = no)"),
-         Option("--plaintext-secrets", action="store_true",
-                help="Store secret/sensitive values as plain text on disk" +
-                     "(default is to encrypt secret/ensitive values)"),
         ]
 
     openldap_options = [
+        Option("--ldapadminpass", type="string", metavar="PASSWORD",
+               help="choose password to set between Samba and its LDAP backend (otherwise random)"),
+        Option("--ldap-backend-type", type="choice", metavar="LDAP-BACKEND-TYPE",
+               help="Test initialisation support for unsupported LDAP backend type (fedora-ds or openldap) DO NOT USE",
+               choices=["fedora-ds", "openldap"]),
+        Option("--ol-mmr-urls", type="string", metavar="LDAPSERVER",
+                help="List of LDAP-URLS [ ldap://<FQHN>:<PORT>/  (where <PORT> has to be different than 389!) ] separated with comma (\",\") for use with OpenLDAP-MMR (Multi-Master-Replication), e.g.: \"ldap://s4dc1:9000,ldap://s4dc2:9000\""),
         Option("--ldap-dryrun-mode", help="Configure LDAP backend, but do not run any binaries and exit early.  Used only for the test environment.  DO NOT USE",
                action="store_true"),
         Option("--slapd-path", type="string", metavar="SLAPD-PATH",
@@ -271,7 +303,6 @@ class cmd_domain_provision(Command):
         ]
 
     ntvfs_options = [
-        Option("--use-ntvfs", action="store_true", help="Use NTVFS for the fileserver (default = no)"),
         Option("--use-xattrs", type="choice", choices=["yes","no","auto"],
                metavar="[yes|no|auto]",
                help="Define if we should use the native fs capabilities or a tdb file for "
@@ -280,11 +311,14 @@ class cmd_domain_provision(Command):
                default="auto")
     ]
 
+    takes_options.extend(common_provision_join_options)
+
     if os.getenv('TEST_LDAP', "no") == "yes":
         takes_options.extend(openldap_options)
 
     if samba.is_ntvfs_fileserver_built():
-         takes_options.extend(ntvfs_options)
+        takes_options.extend(common_ntvfs_options)
+        takes_options.extend(ntvfs_options)
 
     takes_args = []
 
@@ -327,7 +361,8 @@ class cmd_domain_provision(Command):
             ldap_backend_forced_uri=None,
             ldap_dryrun_mode=None,
             base_schema=None,
-            plaintext_secrets=False):
+            plaintext_secrets=False,
+            backend_store=None):
 
         self.logger = self.get_logger("provision")
         if quiet:
@@ -354,9 +389,9 @@ class cmd_domain_provision(Command):
 
             def ask(prompt, default=None):
                 if default is not None:
-                    print "%s [%s]: " % (prompt, default),
+                    print("%s [%s]: " % (prompt, default), end=' ')
                 else:
-                    print "%s: " % (prompt,),
+                    print("%s: " % (prompt,), end=' ')
                 return sys.stdin.readline().rstrip("\n") or default
 
             try:
@@ -475,6 +510,8 @@ class cmd_domain_provision(Command):
             domain_sid = security.dom_sid(domain_sid)
 
         session = system_session()
+        if backend_store is None:
+            backend_store = get_default_backend_store()
         try:
             result = provision(self.logger,
                   session, smbconf=smbconf, targetdir=targetdir,
@@ -497,9 +534,10 @@ class cmd_domain_provision(Command):
                   ldap_backend_forced_uri=ldap_backend_forced_uri,
                   nosync=ldap_backend_nosync, ldap_dryrun_mode=ldap_dryrun_mode,
                   base_schema=base_schema,
-                  plaintext_secrets=plaintext_secrets)
+                  plaintext_secrets=plaintext_secrets,
+                  backend_store=backend_store)
 
-        except ProvisioningError, e:
+        except ProvisioningError as e:
             raise CommandError("Provision failed", e)
 
         result.report_logger(self.logger)
@@ -553,31 +591,13 @@ class cmd_domain_dcpromo(Command):
         "credopts": options.CredentialsOptions,
     }
 
-    takes_options = [
-        Option("--server", help="DC to join", type=str),
-        Option("--site", help="site to join", type=str),
-        Option("--targetdir", help="where to store provision", type=str),
-        Option("--domain-critical-only",
-               help="only replicate critical domain objects",
-               action="store_true"),
-        Option("--machinepass", type=str, metavar="PASSWORD",
-               help="choose machine password (otherwise random)"),
-        Option("--dns-backend", type="choice", metavar="NAMESERVER-BACKEND",
-               choices=["SAMBA_INTERNAL", "BIND9_DLZ", "NONE"],
-               help="The DNS server backend. SAMBA_INTERNAL is the builtin name server (default), "
-                   "BIND9_DLZ uses samba4 AD to store zone information, "
-                   "NONE skips the DNS setup entirely (this DC will not be a DNS server)",
-               default="SAMBA_INTERNAL"),
-        Option("--quiet", help="Be quiet", action="store_true"),
-        Option("--verbose", help="Be verbose", action="store_true")
-        ]
+    takes_options = []
+    takes_options.extend(common_join_options)
 
-    ntvfs_options = [
-         Option("--use-ntvfs", action="store_true", help="Use NTVFS for the fileserver (default = no)"),
-    ]
+    takes_options.extend(common_provision_join_options)
 
     if samba.is_ntvfs_fileserver_built():
-         takes_options.extend(ntvfs_options)
+         takes_options.extend(common_ntvfs_options)
 
 
     takes_args = ["domain", "role?"]
@@ -586,7 +606,8 @@ class cmd_domain_dcpromo(Command):
             versionopts=None, server=None, site=None, targetdir=None,
             domain_critical_only=False, parent_domain=None, machinepass=None,
             use_ntvfs=False, dns_backend=None,
-            quiet=False, verbose=False):
+            quiet=False, verbose=False, plaintext_secrets=False,
+            backend_store=None):
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp)
         net = Net(creds, lp, server=credopts.ipaddress)
@@ -610,13 +631,15 @@ class cmd_domain_dcpromo(Command):
                     domain_critical_only=domain_critical_only,
                     machinepass=machinepass, use_ntvfs=use_ntvfs,
                     dns_backend=dns_backend,
-                    promote_existing=True)
+                    promote_existing=True, plaintext_secrets=plaintext_secrets,
+                    backend_store=backend_store)
         elif role == "RODC":
             join_RODC(logger=logger, server=server, creds=creds, lp=lp, domain=domain,
                       site=site, netbios_name=netbios_name, targetdir=targetdir,
                       domain_critical_only=domain_critical_only,
                       machinepass=machinepass, use_ntvfs=use_ntvfs, dns_backend=dns_backend,
-                      promote_existing=True)
+                      promote_existing=True, plaintext_secrets=plaintext_secrets,
+                      backend_store=backend_store)
         else:
             raise CommandError("Invalid role '%s' (possible values: DC, RODC)" % role)
 
@@ -633,34 +656,18 @@ class cmd_domain_join(Command):
     }
 
     takes_options = [
-        Option("--server", help="DC to join", type=str),
-        Option("--site", help="site to join", type=str),
-        Option("--targetdir", help="where to store provision", type=str),
         Option("--parent-domain", help="parent domain to create subdomain under", type=str),
-        Option("--domain-critical-only",
-               help="only replicate critical domain objects",
-               action="store_true"),
-        Option("--machinepass", type=str, metavar="PASSWORD",
-               help="choose machine password (otherwise random)"),
         Option("--adminpass", type="string", metavar="PASSWORD",
                help="choose adminstrator password when joining as a subdomain (otherwise random)"),
-        Option("--dns-backend", type="choice", metavar="NAMESERVER-BACKEND",
-               choices=["SAMBA_INTERNAL", "BIND9_DLZ", "NONE"],
-               help="The DNS server backend. SAMBA_INTERNAL is the builtin name server (default), "
-                   "BIND9_DLZ uses samba4 AD to store zone information, "
-                   "NONE skips the DNS setup entirely (this DC will not be a DNS server)",
-               default="SAMBA_INTERNAL"),
-        Option("--plaintext-secrets", action="store_true",
-               help="Store secret/sensitive values as plain text on disk" +
-                    "(default is to encrypt secret/ensitive values)"),
-        Option("--quiet", help="Be quiet", action="store_true"),
-        Option("--verbose", help="Be verbose", action="store_true")
        ]
 
     ntvfs_options = [
         Option("--use-ntvfs", help="Use NTVFS for the fileserver (default = no)",
                action="store_true")
     ]
+    takes_options.extend(common_join_options)
+    takes_options.extend(common_provision_join_options)
+
     if samba.is_ntvfs_fileserver_built():
         takes_options.extend(ntvfs_options)
 
@@ -670,7 +677,9 @@ class cmd_domain_join(Command):
             versionopts=None, server=None, site=None, targetdir=None,
             domain_critical_only=False, parent_domain=None, machinepass=None,
             use_ntvfs=False, dns_backend=None, adminpass=None,
-            quiet=False, verbose=False, plaintext_secrets=False):
+            quiet=False, verbose=False,
+            plaintext_secrets=False,
+            backend_store=None):
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp)
         net = Net(creds, lp, server=credopts.ipaddress)
@@ -703,14 +712,16 @@ class cmd_domain_join(Command):
                     domain_critical_only=domain_critical_only,
                     machinepass=machinepass, use_ntvfs=use_ntvfs,
                     dns_backend=dns_backend,
-                    plaintext_secrets=plaintext_secrets)
+                    plaintext_secrets=plaintext_secrets,
+                    backend_store=backend_store)
         elif role == "RODC":
             join_RODC(logger=logger, server=server, creds=creds, lp=lp, domain=domain,
                       site=site, netbios_name=netbios_name, targetdir=targetdir,
                       domain_critical_only=domain_critical_only,
                       machinepass=machinepass, use_ntvfs=use_ntvfs,
                       dns_backend=dns_backend,
-                      plaintext_secrets=plaintext_secrets)
+                      plaintext_secrets=plaintext_secrets,
+                      backend_store=backend_store)
         elif role == "SUBDOMAIN":
             if not adminpass:
                 logger.info("Administrator password will be set randomly!")
@@ -724,7 +735,8 @@ class cmd_domain_join(Command):
                            targetdir=targetdir, machinepass=machinepass,
                            use_ntvfs=use_ntvfs, dns_backend=dns_backend,
                            adminpass=adminpass,
-                           plaintext_secrets=plaintext_secrets)
+                           plaintext_secrets=plaintext_secrets,
+                           backend_store=backend_store)
         else:
             raise CommandError("Invalid role '%s' (possible values: MEMBER, DC, RODC, SUBDOMAIN)" % role)
 
@@ -740,8 +752,8 @@ class cmd_domain_demote(Command):
                metavar="URL", dest="H"),
         Option("--remove-other-dead-server", help="Dead DC (name or NTDS GUID) "
                "to remove ALL references to (rather than this DC)", type=str),
-        Option("--quiet", help="Be quiet", action="store_true"),
-        Option("--verbose", help="Be verbose", action="store_true"),
+        Option("-q", "--quiet", help="Be quiet", action="store_true"),
+        Option("-v", "--verbose", help="Be verbose", action="store_true"),
         ]
 
     takes_optiongroups = {
@@ -787,7 +799,7 @@ class cmd_domain_demote(Command):
                 raise CommandError("Unable to search for servers")
 
             if (len(res) == 1):
-                raise CommandError("You are the latest server in the domain")
+                raise CommandError("You are the last server in the domain")
 
             server = None
             for e in res:
@@ -841,7 +853,8 @@ class cmd_domain_demote(Command):
 
                 try:
                     drsuapiBind.DsReplicaSync(drsuapi_handle, 1, req1)
-                except RuntimeError as (werr, string):
+                except RuntimeError as e1:
+                    (werr, string) = e1.args
                     if werr == werror.WERR_DS_DRA_NO_REPLICA:
                         pass
                     else:
@@ -865,7 +878,7 @@ class cmd_domain_demote(Command):
             dc_dn = res[0].dn
             uac = int(str(res[0]["userAccountControl"]))
 
-        except Exception, e:
+        except Exception as e:
             if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
                 self.errf.write(
                     "Error while demoting, re-enabling inbound replication\n")
@@ -897,7 +910,7 @@ class cmd_domain_demote(Command):
                                                         "userAccountControl")
         try:
             remote_samdb.modify(msg)
-        except Exception, e:
+        except Exception as e:
             if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
                 self.errf.write(
                     "Error while demoting, re-enabling inbound replication")
@@ -952,7 +965,7 @@ class cmd_domain_demote(Command):
         try:
             newdn = ldb.Dn(remote_samdb, "%s,%s" % (newrdn, str(computer_dn)))
             remote_samdb.rename(dc_dn, newdn)
-        except Exception, e:
+        except Exception as e:
             if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
                 self.errf.write(
                     "Error while demoting, re-enabling inbound replication\n")
@@ -981,7 +994,8 @@ class cmd_domain_demote(Command):
             req1.commit = 1
 
             drsuapiBind.DsRemoveDSServer(drsuapi_handle, 1, req1)
-        except RuntimeError as (werr, string):
+        except RuntimeError as e3:
+            (werr, string) = e3.args
             if not (dsa_options & DS_NTDSDSA_OPT_DISABLE_OUTBOUND_REPL) and not samdb.am_rodc():
                 self.errf.write(
                     "Error while demoting, re-enabling inbound replication\n")
@@ -1012,8 +1026,12 @@ class cmd_domain_demote(Command):
             try:
                 remote_samdb.delete(ldb.Dn(remote_samdb,
                                     "%s,%s" % (s, str(newdn))))
-            except ldb.LdbError, l:
+            except ldb.LdbError as l:
                 pass
+
+        # get dns host name for target server to demote, remove dns references
+        remove_dc.remove_dns_references(remote_samdb, logger, samdb.host_dns_name(),
+                                        ignore_no_name=True)
 
         self.errf.write("Demote successful\n")
 
@@ -1032,7 +1050,7 @@ class cmd_domain_level(Command):
     takes_options = [
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
-        Option("--quiet", help="Be quiet", action="store_true"),
+        Option("-q", "--quiet", help="Be quiet", action="store_true"), # unused
         Option("--forest-level", type="choice", choices=["2003", "2008", "2008_R2", "2012", "2012_R2"],
             help="The forest function level (2003 | 2008 | 2008_R2 | 2012 | 2012_R2)"),
         Option("--domain-level", type="choice", choices=["2003", "2008", "2008_R2", "2012", "2012_R2"],
@@ -1193,7 +1211,8 @@ class cmd_domain_level(Command):
                       ldb.FLAG_MOD_REPLACE, "nTMixedDomain")
                     try:
                         samdb.modify(m)
-                    except ldb.LdbError, (enum, emsg):
+                    except ldb.LdbError as e:
+                        (enum, emsg) = e.args
                         if enum != ldb.ERR_UNWILLING_TO_PERFORM:
                             raise
 
@@ -1213,7 +1232,8 @@ class cmd_domain_level(Command):
                           "msDS-Behavior-Version")
                 try:
                     samdb.modify(m)
-                except ldb.LdbError, (enum, emsg):
+                except ldb.LdbError as e2:
+                    (enum, emsg) = e2.args
                     if enum != ldb.ERR_UNWILLING_TO_PERFORM:
                         raise
 
@@ -1249,18 +1269,10 @@ class cmd_domain_level(Command):
         else:
             raise CommandError("invalid argument: '%s' (choose from 'show', 'raise')" % subcommand)
 
+class cmd_domain_passwordsettings_show(Command):
+    """Display current password settings for the domain."""
 
-class cmd_domain_passwordsettings(Command):
-    """Set password settings.
-
-    Password complexity, password lockout policy, history length,
-    minimum password length, the minimum and maximum password age) on
-    a Samba AD DC server.
-
-    Use against a Windows DC is possible, but group policy will override it.
-    """
-
-    synopsis = "%prog (show|set <options>) [options]"
+    synopsis = "%prog [options]"
 
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
@@ -1271,34 +1283,9 @@ class cmd_domain_passwordsettings(Command):
     takes_options = [
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
-        Option("--quiet", help="Be quiet", action="store_true"),
-        Option("--complexity", type="choice", choices=["on","off","default"],
-          help="The password complexity (on | off | default). Default is 'on'"),
-        Option("--store-plaintext", type="choice", choices=["on","off","default"],
-          help="Store plaintext passwords where account have 'store passwords with reversible encryption' set (on | off | default). Default is 'off'"),
-        Option("--history-length",
-          help="The password history length (<integer> | default).  Default is 24.", type=str),
-        Option("--min-pwd-length",
-          help="The minimum password length (<integer> | default).  Default is 7.", type=str),
-        Option("--min-pwd-age",
-          help="The minimum password age (<integer in days> | default).  Default is 1.", type=str),
-        Option("--max-pwd-age",
-          help="The maximum password age (<integer in days> | default).  Default is 43.", type=str),
-        Option("--account-lockout-duration",
-          help="The the length of time an account is locked out after exeeding the limit on bad password attempts (<integer in mins> | default).  Default is 30 mins.", type=str),
-        Option("--account-lockout-threshold",
-          help="The number of bad password attempts allowed before locking out the account (<integer> | default).  Default is 0 (never lock out).", type=str),
-        Option("--reset-account-lockout-after",
-          help="After this time is elapsed, the recorded number of attempts restarts from zero (<integer> | default).  Default is 30.", type=str),
           ]
 
-    takes_args = ["subcommand"]
-
-    def run(self, subcommand, H=None, min_pwd_age=None, max_pwd_age=None,
-            quiet=False, complexity=None, store_plaintext=None, history_length=None,
-            min_pwd_length=None, account_lockout_duration=None, account_lockout_threshold=None,
-            reset_account_lockout_after=None, credopts=None, sambaopts=None,
-            versionopts=None):
+    def run(self, H=None, credopts=None, sambaopts=None, versionopts=None):
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp)
 
@@ -1328,172 +1315,231 @@ class cmd_domain_passwordsettings(Command):
             else:
                 cur_account_lockout_duration = abs(int(res[0]["lockoutDuration"][0])) / (1e7 * 60)
             cur_reset_account_lockout_after = abs(int(res[0]["lockOutObservationWindow"][0])) / (1e7 * 60)
-        except Exception, e:
+        except Exception as e:
             raise CommandError("Could not retrieve password properties!", e)
 
-        if subcommand == "show":
-            self.message("Password informations for domain '%s'" % domain_dn)
-            self.message("")
-            if pwd_props & DOMAIN_PASSWORD_COMPLEX != 0:
-                self.message("Password complexity: on")
-            else:
-                self.message("Password complexity: off")
-            if pwd_props & DOMAIN_PASSWORD_STORE_CLEARTEXT != 0:
-                self.message("Store plaintext passwords: on")
-            else:
-                self.message("Store plaintext passwords: off")
-            self.message("Password history length: %d" % pwd_hist_len)
-            self.message("Minimum password length: %d" % cur_min_pwd_len)
-            self.message("Minimum password age (days): %d" % cur_min_pwd_age)
-            self.message("Maximum password age (days): %d" % cur_max_pwd_age)
-            self.message("Account lockout duration (mins): %d" % cur_account_lockout_duration)
-            self.message("Account lockout threshold (attempts): %d" % cur_account_lockout_threshold)
-            self.message("Reset account lockout after (mins): %d" % cur_reset_account_lockout_after)
-        elif subcommand == "set":
-            msgs = []
-            m = ldb.Message()
-            m.dn = ldb.Dn(samdb, domain_dn)
-
-            if complexity is not None:
-                if complexity == "on" or complexity == "default":
-                    pwd_props = pwd_props | DOMAIN_PASSWORD_COMPLEX
-                    msgs.append("Password complexity activated!")
-                elif complexity == "off":
-                    pwd_props = pwd_props & (~DOMAIN_PASSWORD_COMPLEX)
-                    msgs.append("Password complexity deactivated!")
-
-            if store_plaintext is not None:
-                if store_plaintext == "on" or store_plaintext == "default":
-                    pwd_props = pwd_props | DOMAIN_PASSWORD_STORE_CLEARTEXT
-                    msgs.append("Plaintext password storage for changed passwords activated!")
-                elif store_plaintext == "off":
-                    pwd_props = pwd_props & (~DOMAIN_PASSWORD_STORE_CLEARTEXT)
-                    msgs.append("Plaintext password storage for changed passwords deactivated!")
-
-            if complexity is not None or store_plaintext is not None:
-                m["pwdProperties"] = ldb.MessageElement(str(pwd_props),
-                  ldb.FLAG_MOD_REPLACE, "pwdProperties")
-
-            if history_length is not None:
-                if history_length == "default":
-                    pwd_hist_len = 24
-                else:
-                    pwd_hist_len = int(history_length)
-
-                if pwd_hist_len < 0 or pwd_hist_len > 24:
-                    raise CommandError("Password history length must be in the range of 0 to 24!")
-
-                m["pwdHistoryLength"] = ldb.MessageElement(str(pwd_hist_len),
-                  ldb.FLAG_MOD_REPLACE, "pwdHistoryLength")
-                msgs.append("Password history length changed!")
-
-            if min_pwd_length is not None:
-                if min_pwd_length == "default":
-                    min_pwd_len = 7
-                else:
-                    min_pwd_len = int(min_pwd_length)
-
-                if min_pwd_len < 0 or min_pwd_len > 14:
-                    raise CommandError("Minimum password length must be in the range of 0 to 14!")
-
-                m["minPwdLength"] = ldb.MessageElement(str(min_pwd_len),
-                  ldb.FLAG_MOD_REPLACE, "minPwdLength")
-                msgs.append("Minimum password length changed!")
-
-            if min_pwd_age is not None:
-                if min_pwd_age == "default":
-                    min_pwd_age = 1
-                else:
-                    min_pwd_age = int(min_pwd_age)
-
-                if min_pwd_age < 0 or min_pwd_age > 998:
-                    raise CommandError("Minimum password age must be in the range of 0 to 998!")
-
-                # days -> ticks
-                min_pwd_age_ticks = -int(min_pwd_age * (24 * 60 * 60 * 1e7))
-
-                m["minPwdAge"] = ldb.MessageElement(str(min_pwd_age_ticks),
-                  ldb.FLAG_MOD_REPLACE, "minPwdAge")
-                msgs.append("Minimum password age changed!")
-
-            if max_pwd_age is not None:
-                if max_pwd_age == "default":
-                    max_pwd_age = 43
-                else:
-                    max_pwd_age = int(max_pwd_age)
-
-                if max_pwd_age < 0 or max_pwd_age > 999:
-                    raise CommandError("Maximum password age must be in the range of 0 to 999!")
-
-                # days -> ticks
-                if max_pwd_age == 0:
-                    max_pwd_age_ticks = -0x8000000000000000
-                else:
-                    max_pwd_age_ticks = -int(max_pwd_age * (24 * 60 * 60 * 1e7))
-
-                m["maxPwdAge"] = ldb.MessageElement(str(max_pwd_age_ticks),
-                  ldb.FLAG_MOD_REPLACE, "maxPwdAge")
-                msgs.append("Maximum password age changed!")
-
-            if account_lockout_duration is not None:
-                if account_lockout_duration == "default":
-                    account_lockout_duration = 30
-                else:
-                    account_lockout_duration = int(account_lockout_duration)
-
-                if account_lockout_duration < 0 or account_lockout_duration > 99999:
-                    raise CommandError("Maximum password age must be in the range of 0 to 99999!")
-
-                # days -> ticks
-                if account_lockout_duration == 0:
-                    account_lockout_duration_ticks = -0x8000000000000000
-                else:
-                    account_lockout_duration_ticks = -int(account_lockout_duration * (60 * 1e7))
-
-                m["lockoutDuration"] = ldb.MessageElement(str(account_lockout_duration_ticks),
-                  ldb.FLAG_MOD_REPLACE, "lockoutDuration")
-                msgs.append("Account lockout duration changed!")
-
-            if account_lockout_threshold is not None:
-                if account_lockout_threshold == "default":
-                    account_lockout_threshold = 0
-                else:
-                    account_lockout_threshold = int(account_lockout_threshold)
-
-                m["lockoutThreshold"] = ldb.MessageElement(str(account_lockout_threshold),
-                  ldb.FLAG_MOD_REPLACE, "lockoutThreshold")
-                msgs.append("Account lockout threshold changed!")
-
-            if reset_account_lockout_after is not None:
-                if reset_account_lockout_after == "default":
-                    reset_account_lockout_after = 30
-                else:
-                    reset_account_lockout_after = int(reset_account_lockout_after)
-
-                if reset_account_lockout_after < 0 or reset_account_lockout_after > 99999:
-                    raise CommandError("Maximum password age must be in the range of 0 to 99999!")
-
-                # days -> ticks
-                if reset_account_lockout_after == 0:
-                    reset_account_lockout_after_ticks = -0x8000000000000000
-                else:
-                    reset_account_lockout_after_ticks = -int(reset_account_lockout_after * (60 * 1e7))
-
-                m["lockOutObservationWindow"] = ldb.MessageElement(str(reset_account_lockout_after_ticks),
-                  ldb.FLAG_MOD_REPLACE, "lockOutObservationWindow")
-                msgs.append("Duration to reset account lockout after changed!")
-
-            if max_pwd_age > 0 and min_pwd_age >= max_pwd_age:
-                raise CommandError("Maximum password age (%d) must be greater than minimum password age (%d)!" % (max_pwd_age, min_pwd_age))
-
-            if len(m) == 0:
-                raise CommandError("You must specify at least one option to set. Try --help")
-            samdb.modify(m)
-            msgs.append("All changes applied successfully!")
-            self.message("\n".join(msgs))
+        self.message("Password informations for domain '%s'" % domain_dn)
+        self.message("")
+        if pwd_props & DOMAIN_PASSWORD_COMPLEX != 0:
+            self.message("Password complexity: on")
         else:
-            raise CommandError("Wrong argument '%s'!" % subcommand)
+            self.message("Password complexity: off")
+        if pwd_props & DOMAIN_PASSWORD_STORE_CLEARTEXT != 0:
+            self.message("Store plaintext passwords: on")
+        else:
+            self.message("Store plaintext passwords: off")
+        self.message("Password history length: %d" % pwd_hist_len)
+        self.message("Minimum password length: %d" % cur_min_pwd_len)
+        self.message("Minimum password age (days): %d" % cur_min_pwd_age)
+        self.message("Maximum password age (days): %d" % cur_max_pwd_age)
+        self.message("Account lockout duration (mins): %d" % cur_account_lockout_duration)
+        self.message("Account lockout threshold (attempts): %d" % cur_account_lockout_threshold)
+        self.message("Reset account lockout after (mins): %d" % cur_reset_account_lockout_after)
 
+class cmd_domain_passwordsettings_set(Command):
+    """Set password settings.
+
+    Password complexity, password lockout policy, history length,
+    minimum password length, the minimum and maximum password age) on
+    a Samba AD DC server.
+
+    Use against a Windows DC is possible, but group policy will override it.
+    """
+
+    synopsis = "%prog <options> [options]"
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "versionopts": options.VersionOptions,
+        "credopts": options.CredentialsOptions,
+        }
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server", type=str,
+               metavar="URL", dest="H"),
+        Option("-q", "--quiet", help="Be quiet", action="store_true"), # unused
+        Option("--complexity", type="choice", choices=["on","off","default"],
+          help="The password complexity (on | off | default). Default is 'on'"),
+        Option("--store-plaintext", type="choice", choices=["on","off","default"],
+          help="Store plaintext passwords where account have 'store passwords with reversible encryption' set (on | off | default). Default is 'off'"),
+        Option("--history-length",
+          help="The password history length (<integer> | default).  Default is 24.", type=str),
+        Option("--min-pwd-length",
+          help="The minimum password length (<integer> | default).  Default is 7.", type=str),
+        Option("--min-pwd-age",
+          help="The minimum password age (<integer in days> | default).  Default is 1.", type=str),
+        Option("--max-pwd-age",
+          help="The maximum password age (<integer in days> | default).  Default is 43.", type=str),
+        Option("--account-lockout-duration",
+          help="The the length of time an account is locked out after exeeding the limit on bad password attempts (<integer in mins> | default).  Default is 30 mins.", type=str),
+        Option("--account-lockout-threshold",
+          help="The number of bad password attempts allowed before locking out the account (<integer> | default).  Default is 0 (never lock out).", type=str),
+        Option("--reset-account-lockout-after",
+          help="After this time is elapsed, the recorded number of attempts restarts from zero (<integer> | default).  Default is 30.", type=str),
+          ]
+
+    def run(self, H=None, min_pwd_age=None, max_pwd_age=None,
+            quiet=False, complexity=None, store_plaintext=None, history_length=None,
+            min_pwd_length=None, account_lockout_duration=None, account_lockout_threshold=None,
+            reset_account_lockout_after=None, credopts=None, sambaopts=None,
+            versionopts=None):
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp)
+
+        samdb = SamDB(url=H, session_info=system_session(),
+            credentials=creds, lp=lp)
+
+        domain_dn = samdb.domain_dn()
+        msgs = []
+        m = ldb.Message()
+        m.dn = ldb.Dn(samdb, domain_dn)
+        pwd_props = int(samdb.get_pwdProperties())
+
+        if complexity is not None:
+            if complexity == "on" or complexity == "default":
+                pwd_props = pwd_props | DOMAIN_PASSWORD_COMPLEX
+                msgs.append("Password complexity activated!")
+            elif complexity == "off":
+                pwd_props = pwd_props & (~DOMAIN_PASSWORD_COMPLEX)
+                msgs.append("Password complexity deactivated!")
+
+        if store_plaintext is not None:
+            if store_plaintext == "on" or store_plaintext == "default":
+                pwd_props = pwd_props | DOMAIN_PASSWORD_STORE_CLEARTEXT
+                msgs.append("Plaintext password storage for changed passwords activated!")
+            elif store_plaintext == "off":
+                pwd_props = pwd_props & (~DOMAIN_PASSWORD_STORE_CLEARTEXT)
+                msgs.append("Plaintext password storage for changed passwords deactivated!")
+
+        if complexity is not None or store_plaintext is not None:
+            m["pwdProperties"] = ldb.MessageElement(str(pwd_props),
+              ldb.FLAG_MOD_REPLACE, "pwdProperties")
+
+        if history_length is not None:
+            if history_length == "default":
+                pwd_hist_len = 24
+            else:
+                pwd_hist_len = int(history_length)
+
+            if pwd_hist_len < 0 or pwd_hist_len > 24:
+                raise CommandError("Password history length must be in the range of 0 to 24!")
+
+            m["pwdHistoryLength"] = ldb.MessageElement(str(pwd_hist_len),
+              ldb.FLAG_MOD_REPLACE, "pwdHistoryLength")
+            msgs.append("Password history length changed!")
+
+        if min_pwd_length is not None:
+            if min_pwd_length == "default":
+                min_pwd_len = 7
+            else:
+                min_pwd_len = int(min_pwd_length)
+
+            if min_pwd_len < 0 or min_pwd_len > 14:
+                raise CommandError("Minimum password length must be in the range of 0 to 14!")
+
+            m["minPwdLength"] = ldb.MessageElement(str(min_pwd_len),
+              ldb.FLAG_MOD_REPLACE, "minPwdLength")
+            msgs.append("Minimum password length changed!")
+
+        if min_pwd_age is not None:
+            if min_pwd_age == "default":
+                min_pwd_age = 1
+            else:
+                min_pwd_age = int(min_pwd_age)
+
+            if min_pwd_age < 0 or min_pwd_age > 998:
+                raise CommandError("Minimum password age must be in the range of 0 to 998!")
+
+            # days -> ticks
+            min_pwd_age_ticks = -int(min_pwd_age * (24 * 60 * 60 * 1e7))
+
+            m["minPwdAge"] = ldb.MessageElement(str(min_pwd_age_ticks),
+              ldb.FLAG_MOD_REPLACE, "minPwdAge")
+            msgs.append("Minimum password age changed!")
+
+        if max_pwd_age is not None:
+            if max_pwd_age == "default":
+                max_pwd_age = 43
+            else:
+                max_pwd_age = int(max_pwd_age)
+
+            if max_pwd_age < 0 or max_pwd_age > 999:
+                raise CommandError("Maximum password age must be in the range of 0 to 999!")
+
+            # days -> ticks
+            if max_pwd_age == 0:
+                max_pwd_age_ticks = -0x8000000000000000
+            else:
+                max_pwd_age_ticks = -int(max_pwd_age * (24 * 60 * 60 * 1e7))
+
+            m["maxPwdAge"] = ldb.MessageElement(str(max_pwd_age_ticks),
+              ldb.FLAG_MOD_REPLACE, "maxPwdAge")
+            msgs.append("Maximum password age changed!")
+
+        if account_lockout_duration is not None:
+            if account_lockout_duration == "default":
+                account_lockout_duration = 30
+            else:
+                account_lockout_duration = int(account_lockout_duration)
+
+            if account_lockout_duration < 0 or account_lockout_duration > 99999:
+                raise CommandError("Maximum password age must be in the range of 0 to 99999!")
+
+            # minutes -> ticks
+            if account_lockout_duration == 0:
+                account_lockout_duration_ticks = -0x8000000000000000
+            else:
+                account_lockout_duration_ticks = -int(account_lockout_duration * (60 * 1e7))
+
+            m["lockoutDuration"] = ldb.MessageElement(str(account_lockout_duration_ticks),
+              ldb.FLAG_MOD_REPLACE, "lockoutDuration")
+            msgs.append("Account lockout duration changed!")
+
+        if account_lockout_threshold is not None:
+            if account_lockout_threshold == "default":
+                account_lockout_threshold = 0
+            else:
+                account_lockout_threshold = int(account_lockout_threshold)
+
+            m["lockoutThreshold"] = ldb.MessageElement(str(account_lockout_threshold),
+              ldb.FLAG_MOD_REPLACE, "lockoutThreshold")
+            msgs.append("Account lockout threshold changed!")
+
+        if reset_account_lockout_after is not None:
+            if reset_account_lockout_after == "default":
+                reset_account_lockout_after = 30
+            else:
+                reset_account_lockout_after = int(reset_account_lockout_after)
+
+            if reset_account_lockout_after < 0 or reset_account_lockout_after > 99999:
+                raise CommandError("Maximum password age must be in the range of 0 to 99999!")
+
+            # minutes -> ticks
+            if reset_account_lockout_after == 0:
+                reset_account_lockout_after_ticks = -0x8000000000000000
+            else:
+                reset_account_lockout_after_ticks = -int(reset_account_lockout_after * (60 * 1e7))
+
+            m["lockOutObservationWindow"] = ldb.MessageElement(str(reset_account_lockout_after_ticks),
+              ldb.FLAG_MOD_REPLACE, "lockOutObservationWindow")
+            msgs.append("Duration to reset account lockout after changed!")
+
+        if max_pwd_age > 0 and min_pwd_age >= max_pwd_age:
+            raise CommandError("Maximum password age (%d) must be greater than minimum password age (%d)!" % (max_pwd_age, min_pwd_age))
+
+        if len(m) == 0:
+            raise CommandError("You must specify at least one option to set. Try --help")
+        samdb.modify(m)
+        msgs.append("All changes applied successfully!")
+        self.message("\n".join(msgs))
+
+class cmd_domain_passwordsettings(SuperCommand):
+    """Manage password policy settings."""
+
+    subcommands = {}
+    subcommands["pso"] = cmd_domain_passwordsettings_pso()
+    subcommands["show"] = cmd_domain_passwordsettings_show()
+    subcommands["set"] = cmd_domain_passwordsettings_set()
 
 class cmd_domain_classicupgrade(Command):
     """Upgrade from Samba classic (NT4-like) database to Samba AD DC database.
@@ -1516,8 +1562,8 @@ class cmd_domain_classicupgrade(Command):
                   help="Path to samba classic DC testparm utility from the previous installation.  This allows the default paths of the previous installation to be followed"),
         Option("--targetdir", type="string", metavar="DIR",
                   help="Path prefix where the new Samba 4.0 AD domain should be initialised"),
-        Option("--quiet", help="Be quiet", action="store_true"),
-        Option("--verbose", help="Be verbose", action="store_true"),
+        Option("-q", "--quiet", help="Be quiet", action="store_true"),
+        Option("-v", "--verbose", help="Be verbose", action="store_true"),
         Option("--dns-backend", type="choice", metavar="NAMESERVER-BACKEND",
                choices=["SAMBA_INTERNAL", "BIND9_FLATFILE", "BIND9_DLZ", "NONE"],
                help="The DNS server backend. SAMBA_INTERNAL is the builtin name server (default), "
@@ -1528,8 +1574,6 @@ class cmd_domain_classicupgrade(Command):
     ]
 
     ntvfs_options = [
-        Option("--use-ntvfs", help="Use NTVFS for the fileserver (default = no)",
-               action="store_true"),
         Option("--use-xattrs", type="choice", choices=["yes","no","auto"],
                metavar="[yes|no|auto]",
                help="Define if we should use the native fs capabilities or a tdb file for "
@@ -1538,6 +1582,7 @@ class cmd_domain_classicupgrade(Command):
                default="auto")
     ]
     if samba.is_ntvfs_fileserver_built():
+        takes_options.extend(common_ntvfs_options)
         takes_options.extend(ntvfs_options)
 
     takes_args = ["smbconf"]
@@ -2006,8 +2051,7 @@ class DomainTrustCommand(Command):
         self.outf.write("Namespaces[%d]%s:\n" % (
                         len(fti.entries), tln_string))
 
-        for i in xrange(0, len(fti.entries)):
-            e = fti.entries[i]
+        for i, e in enumerate(fti.entries):
 
             flags = e.flags
             collision_string = ""
@@ -2161,7 +2205,7 @@ class cmd_domain_trust_show(DomainTrustCommand):
             local_tdo_forest.count = 0
             local_tdo_forest.entries = []
 
-        self.outf.write("TrusteDomain:\n\n");
+        self.outf.write("TrustedDomain:\n\n");
         self.outf.write("NetbiosName:    %s\n" % local_tdo_info.netbios_name.string)
         if local_tdo_info.netbios_name.string != local_tdo_info.domain_name.string:
             self.outf.write("DnsName:        %s\n" % local_tdo_info.domain_name.string)
@@ -2327,7 +2371,7 @@ class cmd_domain_trust_create(DomainTrustCommand):
             # 512 bytes and a 2 bytes confounder is required.
             #
             def random_trust_secret(length):
-                pw = samba.generate_random_machine_password(length/2, length/2)
+                pw = samba.generate_random_machine_password(length//2, length//2)
                 return string_to_byte_array(pw.encode('utf-16-le'))
 
             if local_trust_info.trust_direction & lsa.LSA_TRUST_DIRECTION_INBOUND:
@@ -3398,22 +3442,17 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
             update_spn_vals.extend(stored_spn_vals)
 
             for upn in add_upn:
-                idx = None
-                for i in xrange(0, len(update_upn_vals)):
-                    v = update_upn_vals[i]
-                    if v.lower() != upn.lower():
-                        continue
-                    idx = i
-                    break
-                if idx is not None:
-                    raise CommandError("Entry already present for value[%s] specified for --add-upn-suffix" % upn)
+                for i, v in enumerate(update_upn_vals):
+                    if v.lower() == upn.lower():
+                        raise CommandError("Entry already present for "
+                                           "value[%s] specified for "
+                                           "--add-upn-suffix" % upn)
                 update_upn_vals.append(upn)
                 replace_upn = True
 
             for upn in delete_upn:
                 idx = None
-                for i in xrange(0, len(update_upn_vals)):
-                    v = update_upn_vals[i]
+                for i, v in enumerate(update_upn_vals):
                     if v.lower() != upn.lower():
                         continue
                     idx = i
@@ -3425,22 +3464,17 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
                 replace_upn = True
 
             for spn in add_spn:
-                idx = None
-                for i in xrange(0, len(update_spn_vals)):
-                    v = update_spn_vals[i]
-                    if v.lower() != spn.lower():
-                        continue
-                    idx = i
-                    break
-                if idx is not None:
-                    raise CommandError("Entry already present for value[%s] specified for --add-spn-suffix" % spn)
+                for i, v in enumerate(update_spn_vals):
+                    if v.lower() == spn.lower():
+                        raise CommandError("Entry already present for "
+                                           "value[%s] specified for "
+                                           "--add-spn-suffix" % spn)
                 update_spn_vals.append(spn)
                 replace_spn = True
 
             for spn in delete_spn:
                 idx = None
-                for i in xrange(0, len(update_spn_vals)):
-                    v = update_spn_vals[i]
+                for i, v in enumerate(update_spn_vals):
                     if v.lower() != spn.lower():
                         continue
                     idx = i
@@ -3591,16 +3625,14 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
         update_forest_info.entries = entries
 
         if enable_all:
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_TOP_LEVEL_NAME:
                     continue
                 if update_forest_info.entries[i].flags == 0:
                     continue
                 update_forest_info.entries[i].time = 0
                 update_forest_info.entries[i].flags &= ~lsa.LSA_TLN_DISABLED_MASK
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_DOMAIN_INFO:
                     continue
                 if update_forest_info.entries[i].flags == 0:
@@ -3611,8 +3643,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
         for tln in enable_tln:
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_TOP_LEVEL_NAME:
                     continue
                 if r.forest_trust_data.string.lower() != tln.lower():
@@ -3628,8 +3659,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
         for tln in disable_tln:
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_TOP_LEVEL_NAME:
                     continue
                 if r.forest_trust_data.string.lower() != tln.lower():
@@ -3646,8 +3676,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
         for tln_ex in add_tln_ex:
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_TOP_LEVEL_NAME_EX:
                     continue
                 if r.forest_trust_data.string.lower() != tln_ex.lower():
@@ -3659,8 +3688,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
             tln_dot = ".%s" % tln_ex.lower()
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_TOP_LEVEL_NAME:
                     continue
                 r_dot = ".%s" % r.forest_trust_data.string.lower()
@@ -3688,8 +3716,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
         for tln_ex in delete_tln_ex:
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_TOP_LEVEL_NAME_EX:
                     continue
                 if r.forest_trust_data.string.lower() != tln_ex.lower():
@@ -3707,8 +3734,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
         for nb in enable_nb:
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_DOMAIN_INFO:
                     continue
                 if r.forest_trust_data.netbios_domain_name.string.upper() != nb.upper():
@@ -3724,8 +3750,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
         for nb in disable_nb:
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_DOMAIN_INFO:
                     continue
                 if r.forest_trust_data.netbios_domain_name.string.upper() != nb.upper():
@@ -3742,8 +3767,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
         for sid in enable_sid:
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_DOMAIN_INFO:
                     continue
                 if r.forest_trust_data.domain_sid != sid:
@@ -3759,8 +3783,7 @@ class cmd_domain_trust_namespaces(DomainTrustCommand):
 
         for sid in disable_sid:
             idx = None
-            for i in xrange(0, len(update_forest_info.entries)):
-                r = update_forest_info.entries[i]
+            for i, r in enumerate(update_forest_info.entries):
                 if r.type != lsa.LSA_FOREST_TRUST_DOMAIN_INFO:
                     continue
                 if r.forest_trust_data.domain_sid != sid:
@@ -3863,7 +3886,7 @@ This command expunges tombstones from the database."""
                                                                current_time=current_time,
                                                                tombstone_lifetime=tombstone_lifetime)
 
-        except Exception, err:
+        except Exception as err:
             if started_transaction:
                 samdb.transaction_cancel()
             raise CommandError("Failed to expunge / garbage collect tombstones", err)
@@ -3901,15 +3924,6 @@ class ldif_schema_update:
         self.dn = None
         self.ldif = ""
 
-    def _ldap_schemaUpdateNow(self, samdb):
-        ldif = """
-dn:
-changetype: modify
-add: schemaUpdateNow
-schemaUpdateNow: 1
-"""
-        samdb.modify_ldif(ldif)
-
     def can_ignore_failure(self, error):
         """Checks if we can safely ignore failure to apply an LDIF update"""
         (num, errstr) = error.args
@@ -3938,7 +3952,7 @@ schemaUpdateNow: 1
                     # Otherwise the OID-to-attribute mapping in
                     # _apply_updates_in_file() won't work, because it
                     # can't lookup the new OID in the schema
-                    self._ldap_schemaUpdateNow(samdb)
+                    samdb.set_schema_update_now()
 
                     samdb.modify_ldif(self.ldif, controls=['relax:0'])
                 else:
@@ -3970,8 +3984,8 @@ class cmd_domain_schema_upgrade(Command):
     takes_options = [
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
-        Option("--quiet", help="Be quiet", action="store_true"),
-        Option("--verbose", help="Be verbose", action="store_true"),
+        Option("-q", "--quiet", help="Be quiet", action="store_true"), #unused
+        Option("-v", "--verbose", help="Be verbose", action="store_true"),
         Option("--schema", type="choice", metavar="SCHEMA",
                choices=["2012", "2012_R2"],
                help="The schema file to upgrade to. Default is (Windows) 2012_R2.",
@@ -4156,9 +4170,14 @@ class cmd_domain_schema_upgrade(Command):
                 # Apply patches if we parsed the Schema-Updates.md file
                 diff = os.path.abspath(os.path.join(diff_dir, update + '.diff'))
                 if temp_folder and os.path.exists(diff):
-                    p = subprocess.Popen(['patch', update, '-i', diff],
-                                         stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE, cwd=temp_folder)
+                    try:
+                        p = subprocess.Popen(['patch', update, '-i', diff],
+                                             stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE, cwd=temp_folder)
+                    except (OSError, IOError):
+                        shutil.rmtree(temp_folder)
+                        raise CommandError("Failed to upgrade schema. Check if 'patch' is installed.")
+
                     stdout, stderr = p.communicate()
 
                     if p.returncode:
@@ -4215,8 +4234,8 @@ class cmd_domain_functional_prep(Command):
     takes_options = [
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
-        Option("--quiet", help="Be quiet", action="store_true"),
-        Option("--verbose", help="Be verbose", action="store_true"),
+        Option("-q", "--quiet", help="Be quiet", action="store_true"),
+        Option("-v", "--verbose", help="Be verbose", action="store_true"),
         Option("--function-level", type="choice", metavar="FUNCTION_LEVEL",
                choices=["2008_R2", "2012", "2012_R2"],
                help="The schema file to upgrade to. Default is (Windows) 2012_R2.",
@@ -4326,3 +4345,4 @@ class cmd_domain(SuperCommand):
     subcommands["tombstones"] = cmd_domain_tombstones()
     subcommands["schemaupgrade"] = cmd_domain_schema_upgrade()
     subcommands["functionalprep"] = cmd_domain_functional_prep()
+    subcommands["backup"] = cmd_domain_backup()

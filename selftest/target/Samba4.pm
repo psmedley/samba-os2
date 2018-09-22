@@ -215,14 +215,6 @@ sub wait_for_start($$)
 
 	# Ensure we have the first RID Set before we start tests.  This makes the tests more reliable.
 	if ($testenv_vars->{SERVER_ROLE} eq "domain controller") {
-		# Add hosts file for name lookups
-		$ENV{NSS_WRAPPER_HOSTS} = $testenv_vars->{NSS_WRAPPER_HOSTS};
-		if (defined($testenv_vars->{RESOLV_WRAPPER_CONF})) {
-			$ENV{RESOLV_WRAPPER_CONF} = $testenv_vars->{RESOLV_WRAPPER_CONF};
-		} else {
-			$ENV{RESOLV_WRAPPER_HOSTS} = $testenv_vars->{RESOLV_WRAPPER_HOSTS};
-		}
-
 		print "waiting for working LDAP and a RID Set to be allocated\n";
 		my $ldbsearch = Samba::bindir_path($self, "ldbsearch");
 		my $count = 0;
@@ -234,7 +226,21 @@ sub wait_for_start($$)
 			$search_dn = "cn=RID Set,cn=$testenv_vars->{NETBIOSNAME},ou=domain controllers,$base_dn";
 		}
 		my $max_wait = 60;
-		my $cmd = "$ldbsearch $testenv_vars->{CONFIGURATION} -H ldap://$testenv_vars->{SERVER} -U$testenv_vars->{USERNAME}%$testenv_vars->{PASSWORD} -s base -b \"$search_dn\"";
+
+		# Add hosts file for name lookups
+		my $cmd = "NSS_WRAPPER_HOSTS='$testenv_vars->{NSS_WRAPPER_HOSTS}' ";
+		if (defined($testenv_vars->{RESOLV_WRAPPER_CONF})) {
+			$cmd .= "RESOLV_WRAPPER_CONF='$testenv_vars->{RESOLV_WRAPPER_CONF}' ";
+		} else {
+			$cmd .= "RESOLV_WRAPPER_HOSTS='$testenv_vars->{RESOLV_WRAPPER_HOSTS}' ";
+		}
+
+		$cmd .= "$ldbsearch ";
+		$cmd .= "$testenv_vars->{CONFIGURATION} ";
+		$cmd .= "-H ldap://$testenv_vars->{SERVER} ";
+		$cmd .= "-U$testenv_vars->{USERNAME}%$testenv_vars->{PASSWORD} ";
+		$cmd .= "-s base ";
+		$cmd .= "-b '$search_dn' ";
 		while (system("$cmd >/dev/null") != 0) {
 			$count++;
 			if ($count > $max_wait) {
@@ -372,6 +378,7 @@ sub setup_trust($$$$$)
 	$localenv->{TRUST_PASSWORD} = $remoteenv->{PASSWORD};
 	$localenv->{TRUST_DOMAIN} = $remoteenv->{DOMAIN};
 	$localenv->{TRUST_REALM} = $remoteenv->{REALM};
+	$localenv->{TRUST_DOMSID} = $remoteenv->{DOMSID};
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
 	# setup the trust
@@ -398,13 +405,27 @@ sub setup_trust($$$$$)
 		return undef;
 	}
 
+	my $groupname = "g_$localenv->{TRUST_DOMAIN}";
+	my $groupadd = $cmd_env;
+	$groupadd .= " $samba_tool group add '$groupname' --group-scope=Domain $cmd_config";
+	unless (system($groupadd) == 0) {
+		warn("Failed to create group \n$groupadd");
+		return undef;
+	}
+	my $groupmem = $cmd_env;
+	$groupmem .= " $samba_tool group addmembers '$groupname' '$localenv->{TRUST_DOMSID}-513' $cmd_config";
+	unless (system($groupmem) == 0) {
+		warn("Failed to add group member \n$groupmem");
+		return undef;
+	}
+
 	return $localenv
 }
 
-sub provision_raw_prepare($$$$$$$$$$$)
+sub provision_raw_prepare($$$$$$$$$$$$)
 {
 	my ($self, $prefix, $server_role, $hostname,
-	    $domain, $realm, $functional_level,
+	    $domain, $realm, $samsid, $functional_level,
 	    $password, $kdc_ipv4, $kdc_ipv6) = @_;
 	my $ctx;
 	my $netbiosname = uc($hostname);
@@ -448,6 +469,7 @@ sub provision_raw_prepare($$$$$$$$$$$)
 	$ctx->{domain} = $domain;
 	$ctx->{realm} = uc($realm);
 	$ctx->{dnsname} = lc($realm);
+	$ctx->{samsid} = $samsid;
 
 	$ctx->{functional_level} = $functional_level;
 
@@ -543,6 +565,9 @@ sub provision_raw_prepare($$$$$$$$$$$)
 	push (@provision_options, "--quiet");
 	push (@provision_options, "--domain=$ctx->{domain}");
 	push (@provision_options, "--realm=$ctx->{realm}");
+	if (defined($ctx->{samsid})) {
+		push (@provision_options, "--domain-sid=$ctx->{samsid}");
+	}
 	push (@provision_options, "--adminpass=$ctx->{password}");
 	push (@provision_options, "--krbtgtpass=krbtgt$ctx->{password}");
 	push (@provision_options, "--machinepass=machine$ctx->{password}");
@@ -616,7 +641,7 @@ sub provision_raw_step1($$)
 	rndc command = true
 	dns update command = $ctx->{samba_dnsupdate}
 	spn update command = $ENV{SRCDIR_ABS}/source4/scripting/bin/samba_spnupdate -s $ctx->{smb_conf}
-	gpo update command = $ENV{SRCDIR_ABS}/source4/scripting/bin/samba_gpoupdate -s $ctx->{smb_conf} -H $ctx->{privatedir}/sam.ldb --machine
+	gpo update command = $ENV{SRCDIR_ABS}/source4/scripting/bin/samba-gpupdate -s $ctx->{smb_conf} -H $ctx->{privatedir}/sam.ldb --target=Computer
 	dreplsrv:periodic_startup_interval = 0
 	dsdb:schema update allowed = yes
 
@@ -722,6 +747,7 @@ nogroup:x:65534:nobody
 		DOMAIN => $ctx->{domain},
 		USERNAME => $ctx->{username},
 		REALM => $ctx->{realm},
+		SAMSID => $ctx->{samsid},
 		PASSWORD => $ctx->{password},
 		LDAPDIR => $ctx->{ldapdir},
 		LDAP_INSTANCE => $ctx->{ldap_instance},
@@ -755,6 +781,10 @@ nogroup:x:65534:nobody
 	        $ret->{RESOLV_WRAPPER_CONF} = $ctx->{resolv_conf};
 	} else {
 		$ret->{RESOLV_WRAPPER_HOSTS} = $ctx->{dns_host_file};
+	}
+
+	if ($ctx->{server_role} eq "domain controller") {
+		$ret->{DOMSID} = $ret->{SAMSID};
 	}
 
 	return $ret;
@@ -889,9 +919,13 @@ sub provision($$$$$$$$$$)
 	    $password, $kdc_ipv4, $kdc_ipv6, $extra_smbconf_options, $extra_smbconf_shares,
 	    $extra_provision_options) = @_;
 
+	my $samsid = Samba::random_domain_sid();
+
 	my $ctx = $self->provision_raw_prepare($prefix, $server_role,
 					       $hostname,
-					       $domain, $realm, $functional_level,
+					       $domain, $realm,
+					       $samsid,
+					       $functional_level,
 					       $password, $kdc_ipv4, $kdc_ipv6);
 
 	if (defined($extra_provision_options)) {
@@ -1066,8 +1100,8 @@ rpc_server:tcpip = no
 	my $ret = $self->provision($prefix,
 				   "member server",
 				   $hostname,
-				   "SAMBADOMAIN",
-				   "samba.example.com",
+				   $dcvars->{DOMAIN},
+				   $dcvars->{REALM},
 				   "2008",
 				   "locMEMpass3",
 				   $dcvars->{SERVER_IP},
@@ -1103,6 +1137,7 @@ rpc_server:tcpip = no
 	$ret->{MEMBER_USERNAME} = $ret->{USERNAME};
 	$ret->{MEMBER_PASSWORD} = $ret->{PASSWORD};
 
+	$ret->{DOMSID} = $dcvars->{DOMSID};
 	$ret->{DC_SERVER} = $dcvars->{DC_SERVER};
 	$ret->{DC_SERVER_IP} = $dcvars->{DC_SERVER_IP};
 	$ret->{DC_SERVER_IPV6} = $dcvars->{DC_SERVER_IPV6};
@@ -1142,8 +1177,8 @@ sub provision_rpc_proxy($$$)
 	my $ret = $self->provision($prefix,
 				   "member server",
 				   "localrpcproxy",
-				   "SAMBADOMAIN",
-				   "samba.example.com",
+				   $dcvars->{DOMAIN},
+				   $dcvars->{REALM},
 				   "2008",
 				   "locRPCproxypass4",
 				   $dcvars->{SERVER_IP},
@@ -1208,6 +1243,7 @@ sub provision_rpc_proxy($$$)
 	$ret->{RPC_PROXY_USERNAME} = $ret->{USERNAME};
 	$ret->{RPC_PROXY_PASSWORD} = $ret->{PASSWORD};
 
+	$ret->{DOMSID} = $dcvars->{DOMSID};
 	$ret->{DC_SERVER} = $dcvars->{DC_SERVER};
 	$ret->{DC_SERVER_IP} = $dcvars->{DC_SERVER_IP};
 	$ret->{DC_SERVER_IPV6} = $dcvars->{DC_SERVER_IPV6};
@@ -1226,8 +1262,9 @@ sub provision_promoted_dc($$$)
 	# We do this so that we don't run the provision.  That's the job of 'samba-tool domain dcpromo'.
 	my $ctx = $self->provision_raw_prepare($prefix, "domain controller",
 					       "promotedvdc",
-					       "SAMBADOMAIN",
-					       "samba.example.com",
+					       $dcvars->{DOMAIN},
+					       $dcvars->{REALM},
+					       $dcvars->{SAMSID},
 					       "2008",
 					       $dcvars->{PASSWORD},
 					       $dcvars->{SERVER_IP},
@@ -1323,6 +1360,7 @@ sub provision_vampire_dc($$$)
 					       $name,
 					       $dcvars->{DOMAIN},
 					       $dcvars->{REALM},
+					       $dcvars->{DOMSID},
 					       $fl,
 					       $dcvars->{PASSWORD},
 					       $dcvars->{SERVER_IP},
@@ -1365,6 +1403,7 @@ sub provision_vampire_dc($$$)
 	$cmd .= "$samba_tool domain join $ret->{CONFIGURATION} $dcvars->{REALM} DC --realm=$dcvars->{REALM}";
 	$cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD} --domain-critical-only";
 	$cmd .= " --machinepass=machine$ret->{PASSWORD} --use-ntvfs";
+	$cmd .= " --backend-store=mdb";
 
 	unless (system($cmd) == 0) {
 		warn("Join failed\n$cmd");
@@ -1399,10 +1438,12 @@ sub provision_subdom_dc($$$)
 	print "PROVISIONING SUBDOMAIN DC...\n";
 
 	# We do this so that we don't run the provision.  That's the job of 'net vampire'.
+	my $samsid = undef; # TODO pass the domain sid all the way down
 	my $ctx = $self->provision_raw_prepare($prefix, "domain controller",
 					       "localsubdc",
 					       "SAMBASUBDOM",
 					       "sub.samba.example.com",
+					       $samsid,
 					       "2008",
 					       $dcvars->{PASSWORD},
 					       undef);
@@ -1483,6 +1524,9 @@ sub provision_ad_dc_ntvfs($$)
 	lsa over netlogon = yes
         rpc server port = 1027
         auth event notification = true
+	dsdb event notification = true
+	dsdb password event notification = true
+	dsdb group change notification = true
 	server schannel = auto
 	";
 	my $ret = $self->provision($prefix,
@@ -1668,8 +1712,9 @@ sub provision_rodc($$$)
 	# We do this so that we don't run the provision.  That's the job of 'net join RODC'.
 	my $ctx = $self->provision_raw_prepare($prefix, "domain controller",
 					       "rodc",
-					       "SAMBADOMAIN",
-					       "samba.example.com",
+					       $dcvars->{DOMAIN},
+					       $dcvars->{REALM},
+					       $dcvars->{DOMSID},
 					       "2008",
 					       $dcvars->{PASSWORD},
 					       $dcvars->{SERVER_IP},
@@ -1832,6 +1877,7 @@ sub provision_ad_dc($$$$$$)
 	smbd:writetimeupdatedelay = 500000
 	create mask = 755
 	dos filemode = yes
+	check parent directory delete on close = yes
 
         dcerpc endpoint servers = -winreg -srvsvc
 
@@ -1853,6 +1899,9 @@ sub provision_ad_dc($$$$$$)
 
 	server schannel = auto
         auth event notification = true
+	dsdb event notification = true
+	dsdb password event notification = true
+	dsdb group change notification = true
         $smbconf_args
 ";
 
@@ -1895,6 +1944,8 @@ sub provision_ad_dc($$$$$$)
 	copy = print1
 ";
 
+	my $extra_provision_options = undef;
+	push (@{$extra_provision_options}, "--backend-store=mdb");
 	print "PROVISIONING AD DC...\n";
 	my $ret = $self->provision($prefix,
 				   "domain controller",
@@ -1907,7 +1958,7 @@ sub provision_ad_dc($$$$$$)
 				   undef,
 				   $extra_smbconf_options,
 				   $extra_smbconf_shares,
-				   undef);
+				   $extra_provision_options);
 	unless (defined $ret) {
 		return undef;
 	}
@@ -2079,113 +2130,44 @@ sub check_env($$)
 	} else {
 	    return 1;
 	}
-
 }
 
-sub setup_env($$$)
-{
-	my ($self, $envname, $path) = @_;
-	my $target3 = $self->{target3};
+# Declare the environments Samba4 makes available.
+# To be set up, they will be called as
+#   samba4->setup_$envname($self, $path, $dep_1_vars, $dep_2_vars, ...)
+%Samba4::ENV_DEPS = (
+	# name               => [dep_1, dep_2, ...],
+	ad_dc_ntvfs          => [],
+	ad_dc                => [],
+	ad_dc_no_nss         => [],
+	ad_dc_no_ntlm        => [],
+	ad_dc_ntvfs          => [],
+	backupfromdc         => [],
 
-	$ENV{ENVNAME} = $envname;
+	fl2008r2dc           => ["ad_dc"],
+	fl2003dc             => ["ad_dc"],
+	fl2000dc             => [],
 
-	if (defined($self->{vars}->{$envname})) {
-	        return $self->{vars}->{$envname};
-	}
+	vampire_2000_dc      => ["fl2000dc"],
+	vampire_dc           => ["ad_dc_ntvfs"],
+	promoted_dc          => ["ad_dc_ntvfs"],
+	subdom_dc            => ["ad_dc_ntvfs"],
 
-	if ($envname eq "ad_dc_ntvfs") {
-		return $self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-	} elsif ($envname eq "fl2000dc") {
-		return $self->setup_fl2000dc("$path/fl2000dc");
-	} elsif ($envname eq "vampire_2000_dc") {
-		if (not defined($self->{vars}->{fl2000dc})) {
-			$self->setup_fl2000dc("$path/fl2000dc");
-		}
-		return $self->setup_vampire_dc("$path/vampire_2000_dc", $self->{vars}->{fl2000dc}, "2000");
-	} elsif ($envname eq "fl2003dc") {
-		if (not defined($self->{vars}->{ad_dc})) {
-			$self->setup_ad_dc("$path/ad_dc");
-		}
-		return $self->setup_fl2003dc("$path/fl2003dc", $self->{vars}->{ad_dc});
-	} elsif ($envname eq "fl2008r2dc") {
-		if (not defined($self->{vars}->{ad_dc})) {
-			$self->setup_ad_dc("$path/ad_dc");
-		}
-		return $self->setup_fl2008r2dc("$path/fl2008r2dc", $self->{vars}->{ad_dc});
-	} elsif ($envname eq "rpc_proxy") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-		}
-		return $self->setup_rpc_proxy("$path/rpc_proxy", $self->{vars}->{ad_dc_ntvfs});
-	} elsif ($envname eq "vampire_dc") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-		}
-		return $self->setup_vampire_dc("$path/vampire_dc", $self->{vars}->{ad_dc_ntvfs}, "2008");
-	} elsif ($envname eq "promoted_dc") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-		}
-		return $self->setup_promoted_dc("$path/promoted_dc", $self->{vars}->{ad_dc_ntvfs});
-	} elsif ($envname eq "subdom_dc") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-		}
-		return $self->setup_subdom_dc("$path/subdom_dc", $self->{vars}->{ad_dc_ntvfs});
-	} elsif ($envname eq "s4member_dflt_domain") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-		}
-		return $self->setup_s4member_dflt_domain("$path/s4member_dflt_domain", $self->{vars}->{ad_dc_ntvfs});
-	} elsif ($envname eq "s4member") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-		}
-		return $self->setup_s4member("$path/s4member", $self->{vars}->{ad_dc_ntvfs});
-	} elsif ($envname eq "rodc") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-		}
-		return $self->setup_rodc("$path/rodc", $self->{vars}->{ad_dc_ntvfs});
-	} elsif ($envname eq "chgdcpass") {
-		return $self->setup_chgdcpass("$path/chgdcpass", $self->{vars}->{chgdcpass});
-	} elsif ($envname eq "ad_member") {
-		if (not defined($self->{vars}->{ad_dc})) {
-			$self->setup_ad_dc("$path/ad_dc");
-		}
-		return $target3->setup_admember("$path/ad_member", $self->{vars}->{ad_dc}, 29);
-	} elsif ($envname eq "ad_dc") {
-		return $self->setup_ad_dc("$path/ad_dc");
-	} elsif ($envname eq "ad_dc_no_nss") {
-		return $self->setup_ad_dc_no_nss("$path/ad_dc_no_nss");
-	} elsif ($envname eq "ad_dc_no_ntlm") {
-		return $self->setup_ad_dc_no_ntlm("$path/ad_dc_no_ntlm");
-	} elsif ($envname eq "ad_member_rfc2307") {
-		if (not defined($self->{vars}->{ad_dc_ntvfs})) {
-			$self->setup_ad_dc_ntvfs("$path/ad_dc_ntvfs");
-		}
-		return $target3->setup_admember_rfc2307("$path/ad_member_rfc2307",
-							$self->{vars}->{ad_dc_ntvfs}, 34);
-	} elsif ($envname eq "ad_member_idmap_rid") {
-		if (not defined($self->{vars}->{ad_dc})) {
-			$self->setup_ad_dc("$path/ad_dc");
-		}
-		return $target3->setup_ad_member_idmap_rid("$path/ad_member_idmap_rid",
-							   $self->{vars}->{ad_dc});
-	} elsif ($envname eq "ad_member_idmap_ad") {
-		if (not defined($self->{vars}->{ad_dc})) {
-			$self->setup_ad_dc("$path/ad_dc");
-		}
-		return $target3->setup_ad_member_idmap_ad("$path/ad_member_idmap_ad",
-							  $self->{vars}->{ad_dc});
-	} elsif ($envname eq "none") {
-		return $self->setup_none("$path/none");
-	} else {
-		return "UNKNOWN";
-	}
-}
+	rodc                 => ["ad_dc_ntvfs"],
+	rpc_proxy            => ["ad_dc_ntvfs"],
+	chgdcpass            => [],
 
-sub setup_s4member($$$)
+	s4member_dflt_domain => ["ad_dc_ntvfs"],
+	s4member             => ["ad_dc_ntvfs"],
+
+	restoredc            => ["backupfromdc"],
+	renamedc             => ["backupfromdc"],
+	labdc                => ["backupfromdc"],
+
+	none                 => [],
+);
+
+sub setup_s4member
 {
 	my ($self, $path, $dc_vars) = @_;
 
@@ -2195,14 +2177,12 @@ sub setup_s4member($$$)
 	        if (not defined($self->check_or_start($env, "standard"))) {
 		        return undef;
 		}
-
-		$self->{vars}->{s4member} = $env;
 	}
 
 	return $env;
 }
 
-sub setup_s4member_dflt_domain($$$)
+sub setup_s4member_dflt_domain
 {
 	my ($self, $path, $dc_vars) = @_;
 
@@ -2213,14 +2193,12 @@ sub setup_s4member_dflt_domain($$$)
 	        if (not defined($self->check_or_start($env, "standard"))) {
 		        return undef;
 		}
-
-		$self->{vars}->{s4member_dflt_domain} = $env;
 	}
 
 	return $env;
 }
 
-sub setup_rpc_proxy($$$)
+sub setup_rpc_proxy
 {
 	my ($self, $path, $dc_vars) = @_;
 
@@ -2230,13 +2208,11 @@ sub setup_rpc_proxy($$$)
 	        if (not defined($self->check_or_start($env, "standard"))) {
 		        return undef;
 		}
-
-		$self->{vars}->{rpc_proxy} = $env;
 	}
 	return $env;
 }
 
-sub setup_ad_dc_ntvfs($$)
+sub setup_ad_dc_ntvfs
 {
 	my ($self, $path) = @_;
 
@@ -2246,13 +2222,11 @@ sub setup_ad_dc_ntvfs($$)
 		    warn("Failed to start ad_dc_ntvfs");
 		        return undef;
 		}
-
-		$self->{vars}->{ad_dc_ntvfs} = $env;
 	}
 	return $env;
 }
 
-sub setup_chgdcpass($$)
+sub setup_chgdcpass
 {
 	my ($self, $path) = @_;
 
@@ -2261,13 +2235,11 @@ sub setup_chgdcpass($$)
 	        if (not defined($self->check_or_start($env, "standard"))) {
 		        return undef;
 		}
-
-		$self->{vars}->{chgdcpass} = $env;
 	}
 	return $env;
 }
 
-sub setup_fl2000dc($$)
+sub setup_fl2000dc
 {
 	my ($self, $path) = @_;
 
@@ -2276,14 +2248,12 @@ sub setup_fl2000dc($$)
 	        if (not defined($self->check_or_start($env, "standard"))) {
 		        return undef;
 		}
-
-		$self->{vars}->{fl2000dc} = $env;
 	}
 
 	return $env;
 }
 
-sub setup_fl2003dc($$$)
+sub setup_fl2003dc
 {
 	my ($self, $path, $dc_vars) = @_;
 
@@ -2295,13 +2265,11 @@ sub setup_fl2003dc($$$)
 		}
 
 		$env = $self->setup_trust($env, $dc_vars, "external", "--no-aes-keys");
-
-		$self->{vars}->{fl2003dc} = $env;
 	}
 	return $env;
 }
 
-sub setup_fl2008r2dc($$$)
+sub setup_fl2008r2dc
 {
 	my ($self, $path, $dc_vars) = @_;
 
@@ -2318,14 +2286,22 @@ sub setup_fl2008r2dc($$$)
 		$self->setup_namespaces($env, $upn_array, $spn_array);
 
 		$env = $self->setup_trust($env, $dc_vars, "forest", "");
-
-		$self->{vars}->{fl2008r2dc} = $env;
 	}
 
 	return $env;
 }
 
-sub setup_vampire_dc($$$$)
+sub setup_vampire_dc
+{
+	return setup_generic_vampire_dc(@_, "2008");
+}
+
+sub setup_vampire_2000_dc
+{
+	return setup_generic_vampire_dc(@_, "2000");
+}
+
+sub setup_generic_vampire_dc
 {
 	my ($self, $path, $dc_vars, $fl) = @_;
 
@@ -2335,8 +2311,6 @@ sub setup_vampire_dc($$$$)
 	        if (not defined($self->check_or_start($env, "single"))) {
 		        return undef;
 		}
-
-		$self->{vars}->{vampire_dc} = $env;
 
 		# force replicated DC to update repsTo/repsFrom
 		# for vampired partitions
@@ -2401,7 +2375,7 @@ sub setup_vampire_dc($$$$)
 	return $env;
 }
 
-sub setup_promoted_dc($$$)
+sub setup_promoted_dc
 {
 	my ($self, $path, $dc_vars) = @_;
 
@@ -2411,8 +2385,6 @@ sub setup_promoted_dc($$$)
 	        if (not defined($self->check_or_start($env, "single"))) {
 		        return undef;
 		}
-
-		$self->{vars}->{promoted_dc} = $env;
 
 		# force source and replicated DC to update repsTo/repsFrom
 		# for vampired partitions
@@ -2444,7 +2416,7 @@ sub setup_promoted_dc($$$)
 	return $env;
 }
 
-sub setup_subdom_dc($$$)
+sub setup_subdom_dc
 {
 	my ($self, $path, $dc_vars) = @_;
 
@@ -2454,8 +2426,6 @@ sub setup_subdom_dc($$$)
 	        if (not defined($self->check_or_start($env, "single"))) {
 		        return undef;
 		}
-
-		$self->{vars}->{subdom_dc} = $env;
 
 		# force replicated DC to update repsTo/repsFrom
 		# for primary domain partitions
@@ -2488,7 +2458,7 @@ sub setup_subdom_dc($$$)
 	return $env;
 }
 
-sub setup_rodc($$$)
+sub setup_rodc
 {
 	my ($self, $path, $dc_vars) = @_;
 
@@ -2525,12 +2495,10 @@ sub setup_rodc($$$)
 	    return undef;
 	}
 
-	$self->{vars}->{rodc} = $env;
-
 	return $env;
 }
 
-sub setup_ad_dc($$)
+sub setup_ad_dc
 {
 	my ($self, $path) = @_;
 
@@ -2554,11 +2522,10 @@ sub setup_ad_dc($$)
 
 	$self->setup_namespaces($env, $upn_array, $spn_array);
 
-	$self->{vars}->{ad_dc} = $env;
 	return $env;
 }
 
-sub setup_ad_dc_no_nss($$)
+sub setup_ad_dc_no_nss
 {
 	my ($self, $path) = @_;
 
@@ -2585,11 +2552,10 @@ sub setup_ad_dc_no_nss($$)
 
 	$self->setup_namespaces($env, $upn_array, $spn_array);
 
-	$self->{vars}->{ad_dc_no_nss} = $env;
 	return $env;
 }
 
-sub setup_ad_dc_no_ntlm($$)
+sub setup_ad_dc_no_ntlm
 {
 	my ($self, $path) = @_;
 
@@ -2614,11 +2580,318 @@ sub setup_ad_dc_no_ntlm($$)
 
 	$self->setup_namespaces($env, $upn_array, $spn_array);
 
-	$self->{vars}->{ad_dc_no_ntlm} = $env;
 	return $env;
 }
 
-sub setup_none($$)
+# Sets up a DC that's solely used to do a domain backup from. We then use the
+# backupfrom-DC to create the restore-DC - this proves that the backup/restore
+# process will create a Samba DC that will actually start up.
+# We don't use the backup-DC for anything else because its domain will conflict
+# with the restore DC.
+sub setup_backupfromdc
+{
+	my ($self, $path) = @_;
+
+	# If we didn't build with ADS, pretend this env was never available
+	if (not $self->{target3}->have_ads()) {
+	       return "UNKNOWN";
+	}
+
+	my $env = $self->provision_ad_dc($path, "backupfromdc", "BACKUPDOMAIN",
+					 "backupdom.samba.example.com", "");
+	unless ($env) {
+		return undef;
+	}
+
+	if (not defined($self->check_or_start($env, "standard"))) {
+	    return undef;
+	}
+
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	return $env;
+}
+
+# Creates a backup of a running testenv DC
+sub create_backup
+{
+	# note: dcvars contains the env info for the backup DC testenv
+	my ($self, $env, $dcvars, $backupdir, $backup_cmd) = @_;
+
+	# get all the env variables we pass in with the samba-tool command
+	my $cmd_env = "";
+	$cmd_env .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
+	if (defined($env->{RESOLV_WRAPPER_CONF})) {
+		$cmd_env .= "RESOLV_WRAPPER_CONF=\"$env->{RESOLV_WRAPPER_CONF}\" ";
+	} else {
+		$cmd_env .= "RESOLV_WRAPPER_HOSTS=\"$env->{RESOLV_WRAPPER_HOSTS}\" ";
+	}
+	# Note: use the backupfrom-DC's krb5.conf to do the backup
+	$cmd_env .= " KRB5_CONFIG=\"$dcvars->{KRB5_CONFIG}\" ";
+	$cmd_env .= "KRB5CCNAME=\"$env->{KRB5_CCACHE}\" ";
+
+	# use samba-tool to create a backup from the 'backupfromdc' DC
+	my $cmd = "";
+	my $samba_tool = Samba::bindir_path($self, "samba-tool");
+	my $server = $dcvars->{DC_SERVER_IP};
+
+	$cmd .= "$cmd_env $samba_tool domain backup $backup_cmd --server=$server";
+	$cmd .= " --targetdir=$backupdir -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD}";
+
+	print "Executing: $cmd\n";
+	unless(system($cmd) == 0) {
+		warn("Failed to create backup using: \n$cmd");
+		return undef;
+	}
+
+	# get the name of the backup file created
+	opendir(DIR, $backupdir);
+	my @files = grep(/\.tar/, readdir(DIR));
+	closedir(DIR);
+
+	if(scalar @files != 1) {
+		warn("Backup file not found in directory $backupdir\n");
+		return undef;
+	}
+	my $backup_file = "$backupdir/$files[0]";
+	print "Using backup file $backup_file...\n";
+
+	return $backup_file;
+}
+
+# Restores a backup-file to populate a testenv for a new DC
+sub restore_backup_file
+{
+	my ($self, $backup_file, $restore_opts, $restoredir, $smbconf) = @_;
+
+	# pass the restore command the testenv's smb.conf that we've already
+	# generated. But move it to a temp-dir first, so that the restore doesn't
+	# overwrite it
+	my $tmpdir = File::Temp->newdir();
+	my $tmpconf = "$tmpdir/smb.conf";
+	my $cmd = "cp $smbconf $tmpconf";
+	unless(system($cmd) == 0) {
+		warn("Failed to backup smb.conf using: \n$cmd");
+		return -1;
+	}
+
+	my $samba_tool = Samba::bindir_path($self, "samba-tool");
+	$cmd = "$samba_tool domain backup restore --backup-file=$backup_file";
+	$cmd .= " --targetdir=$restoredir $restore_opts --configfile=$tmpconf";
+
+	print "Executing: $cmd\n";
+	unless(system($cmd) == 0) {
+		warn("Failed to restore backup using: \n$cmd");
+		return -1;
+	}
+
+	print "Restore complete\n";
+	return 0
+}
+
+# sets up the initial directory and returns the new testenv's env info
+# (without actually doing a 'domain join')
+sub prepare_dc_testenv
+{
+	my ($self, $prefix, $dcname, $domain, $realm, $password) = @_;
+
+	my $ctx = $self->provision_raw_prepare($prefix, "domain controller",
+					       $dcname,
+					       $domain,
+					       $realm,
+					       undef,
+					       "2008",
+					       $password,
+					       undef,
+					       undef);
+
+	# the restore uses a slightly different state-dir location to other testenvs
+	$ctx->{statedir} = "$ctx->{prefix_abs}/state";
+	push(@{$ctx->{directories}}, "$ctx->{statedir}");
+
+	# add support for sysvol/netlogon/tmp shares
+	$ctx->{share} = "$ctx->{prefix_abs}/share";
+	push(@{$ctx->{directories}}, "$ctx->{share}");
+
+	$ctx->{smb_conf_extra_options} = "
+	max xmit = 32K
+	server max protocol = SMB2
+
+[sysvol]
+	path = $ctx->{statedir}/sysvol
+	read only = no
+
+[netlogon]
+	path = $ctx->{statedir}/sysvol/$ctx->{dnsname}/scripts
+	read only = no
+
+[tmp]
+	path = $ctx->{share}
+	read only = no
+	posix:sharedelay = 10000
+	posix:oplocktimeout = 3
+	posix:writetimeupdatedelay = 50000
+
+";
+
+	my $env = $self->provision_raw_step1($ctx);
+
+	$env->{DC_SERVER} = $env->{SERVER};
+	$env->{DC_SERVER_IP} = $env->{SERVER_IP};
+	$env->{DC_SERVER_IPV6} = $env->{SERVER_IPV6};
+	$env->{DC_NETBIOSNAME} = $env->{NETBIOSNAME};
+	$env->{DC_USERNAME} = $env->{USERNAME};
+	$env->{DC_PASSWORD} = $env->{PASSWORD};
+
+    return $env;
+}
+
+
+# Set up a DC testenv solely by using the samba-tool domain backup/restore
+# commands. This proves that we can backup an online DC ('backupfromdc') and
+# use the backup file to create a valid, working samba DC.
+sub setup_restoredc
+{
+	# note: dcvars contains the env info for the dependent testenv ('backupfromdc')
+	my ($self, $prefix, $dcvars) = @_;
+	print "Preparing RESTORE DC...\n";
+
+	my $env = $self->prepare_dc_testenv($prefix, "restoredc",
+					    $dcvars->{DOMAIN}, $dcvars->{REALM},
+					    $dcvars->{PASSWORD});
+
+	# create a backup of the 'backupfromdc'
+	my $backupdir = File::Temp->newdir();
+	my $backup_file = $self->create_backup($env, $dcvars, $backupdir, "online");
+	unless($backup_file) {
+		return undef;
+	}
+
+	# restore the backup file to populate the restore-DC testenv
+	my $restore_dir = abs_path($prefix);
+	my $ret = $self->restore_backup_file($backup_file,
+					     "--newservername=$env->{SERVER}",
+					     $restore_dir, $env->{SERVERCONFFILE});
+	unless ($ret == 0) {
+		return undef;
+	}
+
+	# start samba for the restored DC
+	if (not defined($self->check_or_start($env, "standard"))) {
+	    return undef;
+	}
+
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	return $env;
+}
+
+# Set up a DC testenv solely by using the 'samba-tool domain backup rename' and
+# restore commands. This proves that we can backup and rename an online DC
+# ('backupfromdc') and use the backup file to create a valid, working samba DC.
+sub setup_renamedc
+{
+	# note: dcvars contains the env info for the dependent testenv ('backupfromdc')
+	my ($self, $prefix, $dcvars) = @_;
+	print "Preparing RENAME DC...\n";
+
+	my $env = $self->prepare_dc_testenv($prefix, "renamedc",
+					    "RENAMEDOMAIN", "renamedom.samba.example.com",
+					    $dcvars->{PASSWORD});
+
+	# create a backup of the 'backupfromdc' which renames the domain
+	my $backupdir = File::Temp->newdir();
+	my $backup_args = "rename $env->{DOMAIN} $env->{REALM}";
+	my $backup_file = $self->create_backup($env, $dcvars, $backupdir,
+					       $backup_args);
+	unless($backup_file) {
+		return undef;
+	}
+
+	# restore the backup file to populate the rename-DC testenv
+	my $restore_dir = abs_path($prefix);
+	my $restore_opts =  "--newservername=$env->{SERVER} --host-ip=$env->{SERVER_IP}";
+	my $ret = $self->restore_backup_file($backup_file, $restore_opts,
+					     $restore_dir, $env->{SERVERCONFFILE});
+	unless ($ret == 0) {
+		return undef;
+	}
+
+	# start samba for the restored DC
+	if (not defined($self->check_or_start($env, "standard"))) {
+	    return undef;
+	}
+
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	return $env;
+}
+
+# Set up a DC testenv solely by using the samba-tool 'domain backup rename' and
+# restore commands, using the --no-secrets option. This proves that we can
+# create a realistic lab environment from an online DC ('backupfromdc').
+sub setup_labdc
+{
+	# note: dcvars contains the env info for the dependent testenv ('backupfromdc')
+	my ($self, $prefix, $dcvars) = @_;
+	print "Preparing LAB-DOMAIN DC...\n";
+
+	my $env = $self->prepare_dc_testenv($prefix, "labdc", "LABDOMAIN",
+					    "labdom.samba.example.com", $dcvars->{PASSWORD});
+
+	# create a backup of the 'backupfromdc' which renames the domain and uses
+	# the --no-secrets option to scrub any sensitive info
+	my $backupdir = File::Temp->newdir();
+	my $backup_args = "rename $env->{DOMAIN} $env->{REALM} --no-secrets";
+	my $backup_file = $self->create_backup($env, $dcvars, $backupdir,
+					       $backup_args);
+	unless($backup_file) {
+		return undef;
+	}
+
+	# restore the backup file to populate the lab-DC testenv
+	my $restore_dir = abs_path($prefix);
+	my $restore_opts =  "--newservername=$env->{SERVER} --host-ip=$env->{SERVER_IP}";
+	my $ret = $self->restore_backup_file($backup_file, $restore_opts,
+					     $restore_dir, $env->{SERVERCONFFILE});
+	unless ($ret == 0) {
+		return undef;
+	}
+
+	# because we don't include any secrets in the backup, we need to reset the
+	# admin user's password back to what the testenv expects
+	my $samba_tool = Samba::bindir_path($self, "samba-tool");
+	my $cmd = "$samba_tool user setpassword $env->{USERNAME} ";
+	$cmd .= "--newpassword=$env->{PASSWORD} -H $restore_dir/private/sam.ldb";
+
+	unless(system($cmd) == 0) {
+		warn("Failed to reset admin's password: \n$cmd");
+		return -1;
+	}
+
+	# start samba for the restored DC
+	if (not defined($self->check_or_start($env, "standard"))) {
+	    return undef;
+	}
+
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	return $env;
+}
+
+sub setup_none
 {
 	my ($self, $path) = @_;
 

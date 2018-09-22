@@ -359,7 +359,7 @@ _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 		 * Because one endpoint can only have one process
 		 * model, we add a new IP_TCP endpoint for each model.
 		 *
-		 * This woks in conjunction with the forced overwrite
+		 * This works in conjunction with the forced overwrite
 		 * of ep->use_single_process below.
 		 */
 		if (ep->use_single_process != use_single_process
@@ -3088,8 +3088,8 @@ static NTSTATUS dcesrv_add_ep_tcp(struct dcesrv_context *dce_ctx,
 		}
 	} else {
 		char **wcard;
-		int i;
-		int num_binds = 0;
+		size_t i;
+		size_t num_binds = 0;
 		wcard = iface_list_wildcard(dce_ctx);
 		NT_STATUS_HAVE_NO_MEMORY(wcard);
 		for (i=0; wcard[i]; i++) {

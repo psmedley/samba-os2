@@ -543,6 +543,14 @@ static const char *default_classname_table[] = {
 	[DBGC_DRS_REPL] =       "drs_repl",
 	[DBGC_SMB2] =           "smb2",
 	[DBGC_SMB2_CREDITS] =   "smb2_credits",
+	[DBGC_DSDB_AUDIT]  =	"dsdb_audit",
+	[DBGC_DSDB_AUDIT_JSON] = "dsdb_json_audit",
+	[DBGC_DSDB_PWD_AUDIT]  =	"dsdb_password_audit",
+	[DBGC_DSDB_PWD_AUDIT_JSON] = "dsdb_password_json_audit",
+	[DBGC_DSDB_TXN_AUDIT]  =	"dsdb_transaction_audit",
+	[DBGC_DSDB_TXN_AUDIT_JSON] = "dsdb_transaction_json_audit",
+	[DBGC_DSDB_GROUP_AUDIT] =	"dsdb_group_audit",
+	[DBGC_DSDB_GROUP_AUDIT_JSON] = "dsdb_group_json_audit",
 };
 
 /*
@@ -1069,8 +1077,11 @@ bool reopen_logs_internal(void)
 	force_check_log_size();
 	(void)umask(oldumask);
 
-	/* Take over stderr to catch output into logs */
-	if (state.fd > 0) {
+	/*
+	 * If log file was opened or created successfully, take over stderr to
+	 * catch output into logs.
+	 */
+	if (new_fd != -1) {
 		if (dup2(state.fd, 2) == -1) {
 			/* Close stderr too, if dup2 can't point it -
 			   at the logfile.  There really isn't much

@@ -456,14 +456,18 @@ static int net_cache_samlogon_show(struct net_context *c,
 				      &num_user_sids,
 				      true);
 	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(user_sids);
 		d_printf("sid_array_from_info3 failed for %s\n", sid_str);
 		return -1;
 	}
 
 	for (i = 0; i < num_user_sids; i++) {
-		d_printf("SID %2" PRIu32 ": %s\n",
-			 i, sid_string_dbg(&user_sids[i]));
+		char buf[DOM_SID_STR_BUFLEN];
+		dom_sid_string_buf(&user_sids[i], buf, sizeof(buf));
+		d_printf("SID %2" PRIu32 ": %s\n", i, buf);
 	}
+
+	TALLOC_FREE(user_sids);
 
 	return 0;
 }

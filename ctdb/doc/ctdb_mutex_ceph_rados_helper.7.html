@@ -3,10 +3,11 @@
       for CTDB.  When configured, split brain avoidance during CTDB recovery
       will be handled using locks against an object located in a Ceph RADOS
       pool.
-      To enable this functionality, include the following line in your CTDB
-      config file:
+      To enable this functionality, include the following line in the
+      <code class="literal">[cluster]</code> section of
+      <span class="citerefentry"><span class="refentrytitle">ctdb.conf</span>(5)</span>:
     </p><pre class="screen">
-CTDB_RECOVERY_LOCK="!ctdb_mutex_ceph_rados_helper [Cluster] [User] [Pool] [Object]"
+recovery lock = !ctdb_mutex_ceph_rados_helper [Cluster] [User] [Pool] [Object]
 
 Cluster: Ceph cluster name (e.g. ceph)
 User: Ceph cluster user name (e.g. client.admin)
@@ -17,7 +18,7 @@ Object: Ceph RADOS object name
       with a configuration, and keyring file for <em class="parameter"><code>User</code></em>
       located in a librados default search path (e.g. /etc/ceph/).
       <em class="parameter"><code>Pool</code></em> must already exist.
-    </p></div><div class="refsect1"><a name="idm18"></a><h2>SEE ALSO</h2><p>
+    </p></div><div class="refsect1"><a name="idm22"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">ctdbd</span>(1)</span>,

@@ -687,7 +687,7 @@ static NTSTATUS dns_startup_interfaces(struct dns_server *dns,
 				       struct interface *ifaces,
 				       const struct model_ops *model_ops)
 {
-	int num_interfaces;
+	size_t num_interfaces;
 	TALLOC_CTX *tmp_ctx = talloc_new(dns);
 	NTSTATUS status;
 	int i;
@@ -704,7 +704,7 @@ static NTSTATUS dns_startup_interfaces(struct dns_server *dns,
 			NT_STATUS_NOT_OK_RETURN(status);
 		}
 	} else {
-		int num_binds = 0;
+		size_t num_binds = 0;
 		char **wcard;
 		wcard = iface_list_wildcard(tmp_ctx);
 		if (wcard == NULL) {
@@ -838,8 +838,12 @@ static void dns_task_init(struct task_server *task)
 		return;
 	}
 
-	dns->samdb = samdb_connect(dns, dns->task->event_ctx, dns->task->lp_ctx,
-			      system_session(dns->task->lp_ctx), 0);
+	dns->samdb = samdb_connect(dns,
+				   dns->task->event_ctx,
+				   dns->task->lp_ctx,
+				   system_session(dns->task->lp_ctx),
+				   NULL,
+				   0);
 	if (!dns->samdb) {
 		task_server_terminate(task, "dns: samdb_connect failed", true);
 		return;

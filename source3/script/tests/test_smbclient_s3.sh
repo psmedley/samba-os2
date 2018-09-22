@@ -839,7 +839,7 @@ EOF
 
     echo "$out" | grep 'NT_STATUS'
     ret=$?
-    if [ $ret == 0 ] ; then
+    if [ $ret = 0 ] ; then
 	echo "$out"
 	echo "failed - NT_STATUS_XXXX listing \\manglenames_share\\FF4GBY~Q"
 	return 1
@@ -975,7 +975,7 @@ EOF
 
     echo "$out" | grep 'NT_STATUS'
     ret=$?
-    if [ $ret == 0 ] ; then
+    if [ $ret = 0 ] ; then
 	echo "$out"
 	echo "failed - NT_STATUS_XXXX listing \\widelinks_share\\dot"
 	return 1
@@ -1426,6 +1426,9 @@ test_utimes()
     saved_TZ="$TZ"
     TZ=UTC
     export TZ
+    saved_LANG="$LANG"
+    LANG=C
+    export LANG
 
     cat > $tmpfile <<EOF
 del utimes_test
@@ -1445,6 +1448,11 @@ EOF
 	export TZ="$saved_TZ"
     else
 	unset TZ
+    fi
+    if [ -n "$saved_LANG" ] ; then
+	export LANG="$saved_LANG"
+    else
+	unset LANG
     fi
 
     if [ $ret != 0 ] ; then

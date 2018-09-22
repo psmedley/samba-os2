@@ -311,7 +311,7 @@ done:
 struct g_lock_lock_state {
 	struct tevent_context *ev;
 	struct g_lock_ctx *ctx;
-	const char *name;
+	TDB_DATA key;
 	enum g_lock_type type;
 };
 
@@ -343,7 +343,7 @@ static void g_lock_lock_fn(struct db_record *rec, void *private_data)
 struct tevent_req *g_lock_lock_send(TALLOC_CTX *mem_ctx,
 				    struct tevent_context *ev,
 				    struct g_lock_ctx *ctx,
-				    const char *name,
+				    TDB_DATA key,
 				    enum g_lock_type type)
 {
 	struct tevent_req *req;
@@ -357,15 +357,14 @@ struct tevent_req *g_lock_lock_send(TALLOC_CTX *mem_ctx,
 	}
 	state->ev = ev;
 	state->ctx = ctx;
-	state->name = name;
+	state->key = key;
 	state->type = type;
 
 	fn_state = (struct g_lock_lock_fn_state) {
 		.state = state, .self = messaging_server_id(ctx->msg)
 	};
 
-	status = dbwrap_do_locked(ctx->db, string_term_tdb_data(name),
-				  g_lock_lock_fn, &fn_state);
+	status = dbwrap_do_locked(ctx->db, key, g_lock_lock_fn, &fn_state);
 	if (tevent_req_nterror(req, status)) {
 		DBG_DEBUG("dbwrap_do_locked failed: %s\n",
 			  nt_errstr(status));
@@ -388,7 +387,6 @@ struct tevent_req *g_lock_lock_send(TALLOC_CTX *mem_ctx,
 	if (!tevent_req_set_endtime(
 		    fn_state.watch_req, state->ev,
 		    timeval_current_ofs(5 + sys_random() % 5, 0))) {
-		tevent_req_oom(req);
 		return tevent_req_post(req, ev);
 	}
 	tevent_req_set_callback(fn_state.watch_req, g_lock_lock_retry, req);
@@ -418,8 +416,7 @@ static void g_lock_lock_retry(struct tevent_req *subreq)
 		.state = state, .self = messaging_server_id(state->ctx->msg)
 	};
 
-	status = dbwrap_do_locked(state->ctx->db,
-				  string_term_tdb_data(state->name),
+	status = dbwrap_do_locked(state->ctx->db, state->key,
 				  g_lock_lock_fn, &fn_state);
 	if (tevent_req_nterror(req, status)) {
 		DBG_DEBUG("dbwrap_do_locked failed: %s\n",
@@ -443,7 +440,6 @@ static void g_lock_lock_retry(struct tevent_req *subreq)
 	if (!tevent_req_set_endtime(
 		    fn_state.watch_req, state->ev,
 		    timeval_current_ofs(5 + sys_random() % 5, 0))) {
-		tevent_req_oom(req);
 		return;
 	}
 	tevent_req_set_callback(fn_state.watch_req, g_lock_lock_retry, req);
@@ -454,7 +450,7 @@ NTSTATUS g_lock_lock_recv(struct tevent_req *req)
 	return tevent_req_simple_recv_ntstatus(req);
 }
 
-NTSTATUS g_lock_lock(struct g_lock_ctx *ctx, const char *name,
+NTSTATUS g_lock_lock(struct g_lock_ctx *ctx, TDB_DATA key,
 		     enum g_lock_type type, struct timeval timeout)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -467,7 +463,7 @@ NTSTATUS g_lock_lock(struct g_lock_ctx *ctx, const char *name,
 	if (ev == NULL) {
 		goto fail;
 	}
-	req = g_lock_lock_send(frame, ev, ctx, name, type);
+	req = g_lock_lock_send(frame, ev, ctx, key, type);
 	if (req == NULL) {
 		goto fail;
 	}
@@ -485,7 +481,7 @@ NTSTATUS g_lock_lock(struct g_lock_ctx *ctx, const char *name,
 }
 
 struct g_lock_unlock_state {
-	const char *name;
+	TDB_DATA key;
 	struct server_id self;
 	NTSTATUS status;
 };
@@ -503,7 +499,10 @@ static void g_lock_unlock_fn(struct db_record *rec,
 
 	ok = g_lock_parse(value.dptr, value.dsize, &lck);
 	if (!ok) {
-		DBG_DEBUG("g_lock_get for %s failed\n", state->name);
+		DBG_DEBUG("g_lock_get for %s failed\n",
+			  hex_encode_talloc(talloc_tos(),
+					    state->key.dptr,
+					    state->key.dsize));
 		state->status = NT_STATUS_FILE_INVALID;
 		return;
 	}
@@ -529,15 +528,14 @@ static void g_lock_unlock_fn(struct db_record *rec,
 	state->status = g_lock_store(rec, &lck, NULL);
 }
 
-NTSTATUS g_lock_unlock(struct g_lock_ctx *ctx, const char *name)
+NTSTATUS g_lock_unlock(struct g_lock_ctx *ctx, TDB_DATA key)
 {
 	struct g_lock_unlock_state state = {
-		.self = messaging_server_id(ctx->msg), .name = name
+		.self = messaging_server_id(ctx->msg), .key = key
 	};
 	NTSTATUS status;
 
-	status = dbwrap_do_locked(ctx->db, string_term_tdb_data(name),
-				  g_lock_unlock_fn, &state);
+	status = dbwrap_do_locked(ctx->db, key, g_lock_unlock_fn, &state);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("dbwrap_do_locked failed: %s\n",
 			    nt_errstr(status));
@@ -553,7 +551,7 @@ NTSTATUS g_lock_unlock(struct g_lock_ctx *ctx, const char *name)
 }
 
 struct g_lock_write_data_state {
-	const char *name;
+	TDB_DATA key;
 	struct server_id self;
 	const uint8_t *data;
 	size_t datalen;
@@ -573,7 +571,10 @@ static void g_lock_write_data_fn(struct db_record *rec,
 
 	ok = g_lock_parse(value.dptr, value.dsize, &lck);
 	if (!ok) {
-		DBG_DEBUG("g_lock_parse for %s failed\n", state->name);
+		DBG_DEBUG("g_lock_parse for %s failed\n",
+			  hex_encode_talloc(talloc_tos(),
+					    state->key.dptr,
+					    state->key.dsize));
 		state->status = NT_STATUS_INTERNAL_DB_CORRUPTION;
 		return;
 	}
@@ -596,16 +597,16 @@ static void g_lock_write_data_fn(struct db_record *rec,
 	state->status = g_lock_store(rec, &lck, NULL);
 }
 
-NTSTATUS g_lock_write_data(struct g_lock_ctx *ctx, const char *name,
+NTSTATUS g_lock_write_data(struct g_lock_ctx *ctx, TDB_DATA key,
 			   const uint8_t *buf, size_t buflen)
 {
 	struct g_lock_write_data_state state = {
-		.name = name, .self = messaging_server_id(ctx->msg),
+		.key = key, .self = messaging_server_id(ctx->msg),
 		.data = buf, .datalen = buflen
 	};
 	NTSTATUS status;
 
-	status = dbwrap_do_locked(ctx->db, string_term_tdb_data(name),
+	status = dbwrap_do_locked(ctx->db, key,
 				  g_lock_write_data_fn, &state);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("dbwrap_do_locked failed: %s\n",
@@ -622,7 +623,7 @@ NTSTATUS g_lock_write_data(struct g_lock_ctx *ctx, const char *name,
 }
 
 struct g_lock_locks_state {
-	int (*fn)(const char *name, void *private_data);
+	int (*fn)(TDB_DATA key, void *private_data);
 	void *private_data;
 };
 
@@ -632,15 +633,11 @@ static int g_lock_locks_fn(struct db_record *rec, void *priv)
 	struct g_lock_locks_state *state = (struct g_lock_locks_state *)priv;
 
 	key = dbwrap_record_get_key(rec);
-	if ((key.dsize == 0) || (key.dptr[key.dsize-1] != 0)) {
-		DEBUG(1, ("invalid key in g_lock.tdb, ignoring\n"));
-		return 0;
-	}
-	return state->fn((char *)key.dptr, state->private_data);
+	return state->fn(key, state->private_data);
 }
 
 int g_lock_locks(struct g_lock_ctx *ctx,
-		 int (*fn)(const char *name, void *private_data),
+		 int (*fn)(TDB_DATA key, void *private_data),
 		 void *private_data)
 {
 	struct g_lock_locks_state state;
@@ -659,7 +656,7 @@ int g_lock_locks(struct g_lock_ctx *ctx,
 
 struct g_lock_dump_state {
 	TALLOC_CTX *mem_ctx;
-	const char *name;
+	TDB_DATA key;
 	void (*fn)(const struct g_lock_rec *locks,
 		   size_t num_locks,
 		   const uint8_t *data,
@@ -681,7 +678,9 @@ static void g_lock_dump_fn(TDB_DATA key, TDB_DATA data,
 	ok = g_lock_parse(data.dptr, data.dsize, &lck);
 	if (!ok) {
 		DBG_DEBUG("g_lock_parse failed for %s\n",
-			  state->name);
+			  hex_encode_talloc(talloc_tos(),
+					    state->key.dptr,
+					    state->key.dsize));
 		state->status = NT_STATUS_INTERNAL_DB_CORRUPTION;
 		return;
 	}
@@ -705,7 +704,7 @@ static void g_lock_dump_fn(TDB_DATA key, TDB_DATA data,
 	state->status = NT_STATUS_OK;
 }
 
-NTSTATUS g_lock_dump(struct g_lock_ctx *ctx, const char *name,
+NTSTATUS g_lock_dump(struct g_lock_ctx *ctx, TDB_DATA key,
 		     void (*fn)(const struct g_lock_rec *locks,
 				size_t num_locks,
 				const uint8_t *data,
@@ -714,13 +713,12 @@ NTSTATUS g_lock_dump(struct g_lock_ctx *ctx, const char *name,
 		     void *private_data)
 {
 	struct g_lock_dump_state state = {
-		.mem_ctx = ctx, .name = name,
+		.mem_ctx = ctx, .key = key,
 		.fn = fn, .private_data = private_data
 	};
 	NTSTATUS status;
 
-	status = dbwrap_parse_record(ctx->db, string_term_tdb_data(name),
-				     g_lock_dump_fn, &state);
+	status = dbwrap_parse_record(ctx->db, key, g_lock_dump_fn, &state);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_DEBUG("dbwrap_parse_record returned %s\n",
 			  nt_errstr(status));
@@ -770,7 +768,7 @@ fail:
 	return false;
 }
 
-NTSTATUS g_lock_do(const char *name, enum g_lock_type lock_type,
+NTSTATUS g_lock_do(TDB_DATA key, enum g_lock_type lock_type,
 		   struct timeval timeout,
 		   void (*fn)(void *private_data), void *private_data)
 {
@@ -784,12 +782,12 @@ NTSTATUS g_lock_do(const char *name, enum g_lock_type lock_type,
 		goto done;
 	}
 
-	status = g_lock_lock(g_ctx, name, lock_type, timeout);
+	status = g_lock_lock(g_ctx, key, lock_type, timeout);
 	if (!NT_STATUS_IS_OK(status)) {
 		goto done;
 	}
 	fn(private_data);
-	g_lock_unlock(g_ctx, name);
+	g_lock_unlock(g_ctx, key);
 
 done:
 	TALLOC_FREE(g_ctx);

@@ -8,7 +8,7 @@ run_event_init() failed, ret=2
 EOF
 unit_test run_event_test /a/b/c list
 
-scriptdir=$(mktemp -d --tmpdir="$TEST_VAR_DIR")
+scriptdir=$(TMPDIR="$TEST_VAR_DIR" mktemp -d)
 
 # Empty directory
 ok <<EOF
@@ -22,14 +22,15 @@ cat > "$scriptdir/prog" <<EOF
 echo hello
 EOF
 
-# Invalid script
+# Invalid script, doesn't end in ".script"
 ok <<EOF
 No event scripts found
 EOF
 unit_test run_event_test "$scriptdir" list
 
+# Is not found because enabling "prog" actually looks for "prog.script"
 ok <<EOF
-Script enable prog completed with result=22
+Script enable prog completed with result=2
 EOF
 unit_test run_event_test "$scriptdir" enable prog
 
@@ -37,28 +38,7 @@ required_result 1 <<EOF
 EOF
 unit_test test -x "${scriptdir}/prog"
 
-cat > "$scriptdir/10.test.rpmnew" <<EOF
-#!/bin/sh
-
-echo hello
-EOF
-chmod +x "$scriptdir/10.test.rpmnew"
-
-# Invalid script with multiple '.'s
-ok <<EOF
-No event scripts found
-EOF
-unit_test run_event_test "$scriptdir" list
-
-ok <<EOF
-Script disable 10.test.rpmnew completed with result=22
-EOF
-unit_test run_event_test "$scriptdir" disable 10.test.rpmnew
-
-ok_null
-unit_test test -x "${scriptdir}/10.test.rpmnew"
-
-cat > "$scriptdir/11.foo" <<EOF
+cat > "$scriptdir/11.foo.script" <<EOF
 #!/bin/sh
 
 echo hello
@@ -77,7 +57,7 @@ unit_test run_event_test "$scriptdir" enable 11.foo
 
 ok <<EOF
 EOF
-unit_test test -x "${scriptdir}/11.foo"
+unit_test test -x "${scriptdir}/11.foo.script"
 
 ok <<EOF
 11.foo: hello
@@ -86,7 +66,7 @@ Event monitor completed with result=0
 EOF
 unit_test run_event_test "$scriptdir" run 10 monitor
 
-cat > "$scriptdir/22.bar" <<EOF
+cat > "$scriptdir/22.bar.script" <<EOF
 #!/bin/sh
 
 exit 1
@@ -120,17 +100,17 @@ unit_test run_event_test "$scriptdir" disable 22.bar
 
 required_result 1 <<EOF
 EOF
-unit_test test -x "${scriptdir}/22.bar"
+unit_test test -x "${scriptdir}/22.bar.script"
 
 ok <<EOF
 11.foo: hello
 Event monitor completed with result=0
 11.foo result=0
-22.bar result=-8
+22.bar result=-$(errcode ENOEXEC)
 EOF
 unit_test run_event_test "$scriptdir" run 10 monitor
 
-cat > "$scriptdir/22.bar" <<EOF
+cat > "$scriptdir/22.bar.script" <<EOF
 #!/bin/sh
 
 sleep 10
@@ -144,12 +124,11 @@ unit_test run_event_test "$scriptdir" enable 22.bar
 
 ok <<EOF
 11.foo: hello
-Event monitor completed with result=-62
+Event monitor completed with result=-$(errcode ETIMEDOUT)
 11.foo result=0
-22.bar result=-62
+22.bar result=-$(errcode ETIMEDOUT)
 EOF
 unit_test run_event_test "$scriptdir" run 5 monitor
 
 rm -rf "$scriptdir"
 exit 0
-

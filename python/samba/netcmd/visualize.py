@@ -22,26 +22,29 @@ from __future__ import print_function
 import os
 import sys
 from collections import defaultdict
+import subprocess
 
 import tempfile
-import samba
 import samba.getopt as options
+from samba import dsdb
+from samba import nttime2unix
 from samba.netcmd import Command, SuperCommand, CommandError, Option
 from samba.samdb import SamDB
 from samba.graph import dot_graph
 from samba.graph import distance_matrix, COLOUR_SETS
+from samba.graph import full_matrix
 from ldb import SCOPE_BASE, SCOPE_SUBTREE, LdbError
 import time
-from samba.kcc import KCC
+import re
+from samba.kcc import KCC, ldif_import_export
 from samba.kcc.kcc_utils import KCCError
+from samba.compat import text_type
 
 COMMON_OPTIONS = [
     Option("-H", "--URL", help="LDB URL for database or target server",
            type=str, metavar="URL", dest="H"),
     Option("-o", "--output", help="write here (default stdout)",
            type=str, metavar="FILE", default=None),
-    Option("--dot", help="Graphviz dot output", dest='format',
-           const='dot', action='store_const'),
     Option("--distance", help="Distance matrix graph output (default)",
            dest='format', const='distance', action='store_const'),
     Option("--utf8", help="Use utf-8 Unicode characters",
@@ -50,7 +53,7 @@ COMMON_OPTIONS = [
            choices=['yes', 'no', 'auto']),
     Option("--color-scheme", help=("use this colour scheme "
                                    "(implies --color=yes)"),
-           choices=COLOUR_SETS.keys()),
+           choices=list(COLOUR_SETS.keys())),
     Option("-S", "--shorten-names",
            help="don't print long common suffixes",
            action='store_true', default=False),
@@ -58,6 +61,13 @@ COMMON_OPTIONS = [
            action='store_true', default=False),
     Option("--no-key", help="omit the explanatory key",
            action='store_false', default=True, dest='key'),
+]
+
+DOT_OPTIONS = [
+    Option("--dot", help="Graphviz dot output", dest='format',
+           const='dot', action='store_const'),
+    Option("--xdot", help="attempt to call Graphviz xdot", dest='format',
+           const='xdot', action='store_const'),
 ]
 
 TEMP_FILE = '__temp__'
@@ -72,7 +82,7 @@ class GraphCommand(Command):
         "versionopts": options.VersionOptions,
         "credopts": options.CredentialsOptions,
     }
-    takes_options = COMMON_OPTIONS
+    takes_options = COMMON_OPTIONS + DOT_OPTIONS
     takes_args = ()
 
     def get_db(self, H, sambaopts, credopts):
@@ -131,7 +141,20 @@ class GraphCommand(Command):
                 return 'dot'
             else:
                 return 'distance'
+
+        if format == 'xdot':
+            return 'dot'
+
         return format
+
+    def call_xdot(self, s, output):
+        if output is None:
+            fn = self.write(s, TEMP_FILE)
+        else:
+            fn = self.write(s, output)
+        xdot = os.environ.get('SAMBA_TOOL_XDOT_PATH', '/usr/bin/xdot')
+        subprocess.call([xdot, fn])
+        os.remove(fn)
 
     def calc_distance_color_scheme(self, color, color_scheme, output):
         """Heuristics to work out the colour scheme for distance matrices.
@@ -157,11 +180,30 @@ class GraphCommand(Command):
         return color_scheme
 
 
+def get_dnstr_site(dn):
+    """Helper function for sorting and grouping DNs by site, if
+    possible."""
+    m = re.search(r'CN=Servers,CN=\s*([^,]+)\s*,CN=Sites', dn)
+    if m:
+        return m.group(1)
+    # Oh well, let it sort by DN
+    return dn
+
+
+def get_dnstrlist_site(t):
+    """Helper function for sorting and grouping lists of (DN, ...) tuples
+    by site, if possible."""
+    return get_dnstr_site(t[0])
+
+
 def colour_hash(x):
     """Generate a randomish but consistent darkish colour based on the
     given object."""
     from hashlib import md5
-    c = int(md5(str(x)).hexdigest()[:6], base=16) & 0x7f7f7f
+    tmp_str = str(x)
+    if isinstance(tmp_str, text_type):
+        tmp_str = tmp_str.encode('utf8')
+    c = int(md5(tmp_str).hexdigest()[:6], base=16) & 0x7f7f7f
     return '#%06x' % c
 
 
@@ -178,16 +220,27 @@ def get_partition_maps(samdb):
     }
 
     long_to_short = {}
-    for s, l in short_to_long.iteritems():
+    for s, l in short_to_long.items():
         long_to_short[l] = s
 
     return short_to_long, long_to_short
 
 
+def get_partition(samdb, part):
+    # Allow people to say "--partition=DOMAIN" rather than
+    # "--partition=DC=blah,DC=..."
+    if part is not None:
+        short_partitions, long_partitions = get_partition_maps(samdb)
+        part = short_partitions.get(part.upper(), part)
+        if part not in long_partitions:
+            raise CommandError("unknown partition %s" % part)
+    return part
+
+
 class cmd_reps(GraphCommand):
     "repsFrom/repsTo from every DSA"
 
-    takes_options = COMMON_OPTIONS + [
+    takes_options = COMMON_OPTIONS + DOT_OPTIONS + [
         Option("-p", "--partition", help="restrict to this partition",
                default=None),
     ]
@@ -196,7 +249,7 @@ class cmd_reps(GraphCommand):
             key=True, talk_to_remote=False,
             sambaopts=None, credopts=None, versionopts=None,
             mode='self', partition=None, color=None, color_scheme=None,
-            utf8=None, format=None):
+            utf8=None, format=None, xdot=False):
         # We use the KCC libraries in readonly mode to get the
         # replication graph.
         lp = sambaopts.get_loadparm()
@@ -204,13 +257,7 @@ class cmd_reps(GraphCommand):
         local_kcc, dsas = self.get_kcc_and_dsas(H, lp, creds)
         unix_now = local_kcc.unix_now
 
-        # Allow people to say "--partition=DOMAIN" rather than
-        # "--partition=DC=blah,DC=..."
-        short_partitions, long_partitions = get_partition_maps(local_kcc.samdb)
-        if partition is not None:
-            partition = short_partitions.get(partition.upper(), partition)
-            if partition not in long_partitions:
-                raise CommandError("unknown partition %s" % partition)
+        partition = get_partition(local_kcc.samdb, partition)
 
         # nc_reps is an autovivifying dictionary of dictionaries of lists.
         # nc_reps[partition]['current' | 'needed'] is a list of
@@ -266,18 +313,20 @@ class cmd_reps(GraphCommand):
                 # get_reps_tables() returns two dictionaries mapping
                 # dns to NCReplica objects
                 c, n = remote_dsa.get_rep_tables()
-                for part, rep in c.iteritems():
+                for part, rep in c.items():
                     if partition is None or part == partition:
                         nc_reps[part]['current'].append((dsa_dn, rep))
-                for part, rep in n.iteritems():
+                for part, rep in n.items():
                     if partition is None or part == partition:
                         nc_reps[part]['needed'].append((dsa_dn, rep))
 
         all_edges = {'needed':  {'to': [], 'from': []},
                      'current': {'to': [], 'from': []}}
 
-        for partname, part in nc_reps.iteritems():
-            for state, edgelists in all_edges.iteritems():
+        short_partitions, long_partitions = get_partition_maps(local_kcc.samdb)
+
+        for partname, part in nc_reps.items():
+            for state, edgelists in all_edges.items():
                 for dsa_dn, rep in part[state]:
                     short_name = long_partitions.get(partname, partname)
                     for r in rep.rep_repsFrom:
@@ -302,17 +351,18 @@ class cmd_reps(GraphCommand):
                 'from': "RepsFrom objects for %s",
                 'to': "RepsTo objects for %s",
             }
-            for state, edgelists in all_edges.iteritems():
-                for direction, items in edgelists.iteritems():
+            for state, edgelists in all_edges.items():
+                for direction, items in edgelists.items():
                     part_edges = defaultdict(list)
                     for src, dest, part in items:
                         part_edges[part].append((src, dest))
-                    for part, edges in part_edges.iteritems():
+                    for part, edges in part_edges.items():
                         s = distance_matrix(None, edges,
                                             utf8=utf8,
                                             colour=color_scheme,
                                             shorten_names=shorten_names,
-                                            generate_key=key)
+                                            generate_key=key,
+                                            grouping_function=get_dnstr_site)
 
                         s = "\n%s\n%s" % (header_strings[direction] % part, s)
                         self.write(s, output)
@@ -324,8 +374,8 @@ class cmd_reps(GraphCommand):
         dot_vertices = set()
         used_colours = {}
         key_set = set()
-        for state, edgelist in all_edges.iteritems():
-            for direction, items in edgelist.iteritems():
+        for state, edgelist in all_edges.items():
+            for direction, items in edgelist.items():
                 for src, dest, part in items:
                     colour = used_colours.setdefault((part),
                                                      colour_hash((part,
@@ -361,7 +411,10 @@ class cmd_reps(GraphCommand):
                       shorten_names=shorten_names,
                       key_items=key_items)
 
-        self.write(s, output)
+        if format == 'xdot':
+            self.call_xdot(s, output)
+        else:
+            self.write(s, output)
 
 
 class NTDSConn(object):
@@ -384,15 +437,34 @@ class NTDSConn(object):
 
 class cmd_ntdsconn(GraphCommand):
     "Draw the NTDSConnection graph"
+    takes_options = COMMON_OPTIONS + DOT_OPTIONS + [
+        Option("--importldif", help="graph from samba_kcc generated ldif",
+               default=None),
+    ]
+
+    def import_ldif_db(self, ldif, lp):
+        d = tempfile.mkdtemp(prefix='samba-tool-visualise')
+        fn = os.path.join(d, 'imported.ldb')
+        self._tmp_fn_to_delete = fn
+        samdb = ldif_import_export.ldif_to_samdb(fn, lp, ldif)
+        return fn
+
     def run(self, H=None, output=None, shorten_names=False,
             key=True, talk_to_remote=False,
             sambaopts=None, credopts=None, versionopts=None,
             color=None, color_scheme=None,
-            utf8=None, format=None):
-        lp = sambaopts.get_loadparm()
-        creds = credopts.get_credentials(lp, fallback_machine=True)
-        local_kcc, dsas = self.get_kcc_and_dsas(H, lp, creds)
+            utf8=None, format=None, importldif=None,
+            xdot=False):
 
+        lp = sambaopts.get_loadparm()
+        if importldif is None:
+            creds = credopts.get_credentials(lp, fallback_machine=True)
+        else:
+            creds = None
+            H = self.import_ldif_db(importldif, lp)
+
+        local_kcc, dsas = self.get_kcc_and_dsas(H, lp, creds)
+        local_dsa_dn = local_kcc.my_dsa_dnstr.split(',', 1)[1]
         vertices = set()
         attested_edges = []
         for dsa_dn in dsas:
@@ -416,7 +488,13 @@ class cmd_ntdsconn(GraphCommand):
                 ntds_dn = 'CN=NTDS Settings,' + dsa_dn
                 dn = dsa_dn
 
-            vertices.add(ntds_dn)
+            res = samdb.search(ntds_dn,
+                               scope=SCOPE_BASE,
+                               attrs=["msDS-isRODC"])
+
+            is_rodc = res[0]["msDS-isRODC"][0] == 'TRUE'
+
+            vertices.add((ntds_dn, 'RODC' if is_rodc else ''))
             # XXX we could also look at schedule
             res = samdb.search(dn,
                                scope=SCOPE_SUBTREE,
@@ -433,6 +511,10 @@ class cmd_ntdsconn(GraphCommand):
                 attested_edges.append((msg['fromServer'][0],
                                        dest_dn, ntds_dn))
 
+        if importldif and H == self._tmp_fn_to_delete:
+            os.remove(H)
+            os.rmdir(os.path.dirname(H))
+
         # now we overlay all the graphs and generate styles accordingly
         edges = {}
         for src, dest, attester in attested_edges:
@@ -444,16 +526,25 @@ class cmd_ntdsconn(GraphCommand):
                 edges[k] = e
             e.attest(attester)
 
+        vertices, rodc_status = zip(*sorted(vertices))
+
         if self.calc_output_format(format, output) == 'distance':
             color_scheme = self.calc_distance_color_scheme(color,
                                                            color_scheme,
                                                            output)
+            colours = COLOUR_SETS[color_scheme]
+            c_header = colours.get('header', '')
+            c_reset = colours.get('reset', '')
+
+            epilog = []
+            if 'RODC' in rodc_status:
+                epilog.append('No outbound connections are expected from RODCs')
+
             if not talk_to_remote:
                 # If we are not talking to remote servers, we list all
                 # the connections.
                 graph_edges = edges.keys()
-                title = 'NTDS Connections known to %s' % dsa_dn
-                epilog = ''
+                title = 'NTDS Connections known to %s' % local_dsa_dn
 
             else:
                 # If we are talking to the remotes, there are
@@ -472,7 +563,7 @@ class cmd_ntdsconn(GraphCommand):
                 source_denies = []
                 dest_denies = []
                 both_deny = []
-                for e, conn in edges.iteritems():
+                for e, conn in edges.items():
                     if conn.dest_attests:
                         graph_edges.append(e)
                         if not conn.src_attests:
@@ -483,7 +574,7 @@ class cmd_ntdsconn(GraphCommand):
                         both_deny.append(e)
 
                 title = 'NTDS Connections known to each destination DC'
-                epilog = []
+
                 if both_deny:
                     epilog.append('The following connections are alleged by '
                                   'DCs other than the source and '
@@ -502,14 +593,24 @@ class cmd_ntdsconn(GraphCommand):
                                   'are not known to the source DC:\n')
                     for e in source_denies:
                         epilog.append('  %s -> %s\n' % e)
-                epilog = ''.join(epilog)
 
-            s = distance_matrix(sorted(vertices), graph_edges,
+            s = distance_matrix(vertices, graph_edges,
                                 utf8=utf8,
                                 colour=color_scheme,
                                 shorten_names=shorten_names,
-                                generate_key=key)
-            self.write('\n%s\n%s\n%s' % (title, s, epilog), output)
+                                generate_key=key,
+                                grouping_function=get_dnstrlist_site,
+                                row_comments=rodc_status)
+
+            epilog = ''.join(epilog)
+            if epilog:
+                epilog = '\n%sNOTES%s\n%s' % (c_header,
+                                              c_reset,
+                                              epilog)
+
+            self.write('\n%s\n\n%s\n%s' % (title,
+                                           s,
+                                           epilog), output)
             return
 
         dot_edges = []
@@ -517,7 +618,7 @@ class cmd_ntdsconn(GraphCommand):
         edge_styles = []
         edge_labels = []
         n_servers = len(dsas)
-        for k, e in sorted(edges.iteritems()):
+        for k, e in sorted(edges.items()):
             dot_edges.append(k)
             if e.observations == n_servers or not talk_to_remote:
                 edge_colours.append('#000000')
@@ -556,7 +657,7 @@ class cmd_ntdsconn(GraphCommand):
         if talk_to_remote:
             title = 'NTDS Connections'
         else:
-            title = 'NTDS Connections known to %s' % dsa_dn
+            title = 'NTDS Connections known to %s' % local_dsa_dn
 
         s = dot_graph(sorted(vertices), dot_edges,
                       directed=True,
@@ -566,13 +667,151 @@ class cmd_ntdsconn(GraphCommand):
                       edge_styles=edge_styles,
                       shorten_names=shorten_names,
                       key_items=key_items)
-        self.write(s, output)
+
+        if format == 'xdot':
+            self.call_xdot(s, output)
+        else:
+            self.write(s, output)
+
+
+class cmd_uptodateness(GraphCommand):
+    """visualize uptodateness vectors"""
+
+    takes_options = COMMON_OPTIONS + [
+        Option("-p", "--partition", help="restrict to this partition",
+               default=None),
+        Option("--max-digits", default=3, type=int,
+               help="display this many digits of out-of-date-ness"),
+    ]
+
+    def get_utdv(self, samdb, dn):
+        """This finds the uptodateness vector in the database."""
+        cursors = []
+        config_dn = samdb.get_config_basedn()
+        for c in dsdb._dsdb_load_udv_v2(samdb, dn):
+            inv_id = str(c.source_dsa_invocation_id)
+            res = samdb.search(base=config_dn,
+                               expression=("(&(invocationId=%s)"
+                                           "(objectClass=nTDSDSA))" % inv_id),
+                               attrs=["distinguishedName", "invocationId"])
+            settings_dn = res[0]["distinguishedName"][0]
+            prefix, dsa_dn = settings_dn.split(',', 1)
+            if prefix != 'CN=NTDS Settings':
+                raise CommandError("Expected NTDS Settings DN, got %s" %
+                                   settings_dn)
+
+            cursors.append((dsa_dn,
+                            inv_id,
+                            int(c.highest_usn),
+                            nttime2unix(c.last_sync_success)))
+        return cursors
+
+    def get_own_cursor(self, samdb):
+            res = samdb.search(base="",
+                               scope=SCOPE_BASE,
+                               attrs=["highestCommittedUSN"])
+            usn = int(res[0]["highestCommittedUSN"][0])
+            now = int(time.time())
+            return (usn, now)
+
+    def run(self, H=None, output=None, shorten_names=False,
+            key=True, talk_to_remote=False,
+            sambaopts=None, credopts=None, versionopts=None,
+            color=None, color_scheme=None,
+            utf8=False, format=None, importldif=None,
+            xdot=False, partition=None, max_digits=3):
+        if not talk_to_remote:
+            print("this won't work without talking to the remote servers "
+                  "(use -r)", file=self.outf)
+            return
+
+        # We use the KCC libraries in readonly mode to get the
+        # replication graph.
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp, fallback_machine=True)
+        local_kcc, dsas = self.get_kcc_and_dsas(H, lp, creds)
+        self.samdb = local_kcc.samdb
+        partition = get_partition(self.samdb, partition)
+
+        short_partitions, long_partitions = get_partition_maps(self.samdb)
+        color_scheme = self.calc_distance_color_scheme(color,
+                                                       color_scheme,
+                                                       output)
+
+        for part_name, part_dn in short_partitions.items():
+            if partition not in (part_dn, None):
+                continue  # we aren't doing this partition
+
+            cursors = self.get_utdv(self.samdb, part_dn)
+
+            # we talk to each remote and make a matrix of the vectors
+            # -- for each partition
+            # normalise by oldest
+            utdv_edges = {}
+            for dsa_dn in dsas:
+                res = local_kcc.samdb.search(dsa_dn,
+                                             scope=SCOPE_BASE,
+                                             attrs=["dNSHostName"])
+                ldap_url = "ldap://%s" % res[0]["dNSHostName"][0]
+                try:
+                    samdb = self.get_db(ldap_url, sambaopts, credopts)
+                    cursors = self.get_utdv(samdb, part_dn)
+                    own_usn, own_time = self.get_own_cursor(samdb)
+                    remotes = {dsa_dn: own_usn}
+                    for dn, guid, usn, t in cursors:
+                        remotes[dn] = usn
+                except LdbError as e:
+                    print("Could not contact %s (%s)" % (ldap_url, e),
+                          file=sys.stderr)
+                    continue
+                utdv_edges[dsa_dn] = remotes
+
+            distances = {}
+            max_distance = 0
+            for dn1 in dsas:
+                try:
+                    peak = utdv_edges[dn1][dn1]
+                except KeyError as e:
+                    peak = 0
+                d = {}
+                distances[dn1] = d
+                for dn2 in dsas:
+                    if dn2 in utdv_edges:
+                        if dn1 in utdv_edges[dn2]:
+                            dist = peak - utdv_edges[dn2][dn1]
+                            d[dn2] = dist
+                            if dist > max_distance:
+                                max_distance = dist
+                        else:
+                            print("Missing dn %s from UTD vector" % dn1,
+                                  file=sys.stderr)
+                    else:
+                        print("missing dn %s from UTD vector list" % dn2,
+                              file=sys.stderr)
+
+            digits = min(max_digits, len(str(max_distance)))
+            if digits < 1:
+                digits = 1
+            c_scale = 10 ** digits
+
+            s = full_matrix(distances,
+                            utf8=utf8,
+                            colour=color_scheme,
+                            shorten_names=shorten_names,
+                            generate_key=key,
+                            grouping_function=get_dnstr_site,
+                            colour_scale=c_scale,
+                            digits=digits,
+                            ylabel='DC',
+                            xlabel='out-of-date-ness')
+
+            self.write('\n%s\n\n%s' % (part_name, s), output)
 
 
 class cmd_visualize(SuperCommand):
     """Produces graphical representations of Samba network state"""
     subcommands = {}
 
-    for k, v in globals().iteritems():
+    for k, v in globals().items():
         if k.startswith('cmd_'):
             subcommands[k[4:]] = v()

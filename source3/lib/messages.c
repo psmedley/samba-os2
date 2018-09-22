@@ -192,19 +192,34 @@ static bool messaging_register_event_context(struct messaging_context *ctx,
 	for (i=0; i<num_event_contexts; i++) {
 		struct messaging_registered_ev *reg = &ctx->event_contexts[i];
 
-		if (reg->ev == ev) {
-			reg->refcount += 1;
-			return true;
-		}
 		if (reg->refcount == 0) {
 			if (reg->ev != NULL) {
 				abort();
 			}
 			free_reg = reg;
+			/*
+			 * We continue here and may find another
+			 * free_req, but the important thing is
+			 * that we continue to search for an
+			 * existing registration in the loop.
+			 */
+			continue;
+		}
+
+		if (tevent_context_same_loop(reg->ev, ev)) {
+			reg->refcount += 1;
+			return true;
 		}
 	}
 
 	if (free_reg == NULL) {
+		struct tevent_immediate *im = NULL;
+
+		im = tevent_create_immediate(ctx);
+		if (im == NULL) {
+			return false;
+		}
+
 		tmp = talloc_realloc(ctx, ctx->event_contexts,
 				     struct messaging_registered_ev,
 				     num_event_contexts+1);
@@ -214,9 +229,14 @@ static bool messaging_register_event_context(struct messaging_context *ctx,
 		ctx->event_contexts = tmp;
 
 		free_reg = &ctx->event_contexts[num_event_contexts];
+		free_reg->im = talloc_move(ctx->event_contexts, &im);
 	}
 
-	*free_reg = (struct messaging_registered_ev) { .ev = ev, .refcount = 1 };
+	/*
+	 * free_reg->im might be cached
+	 */
+	free_reg->ev = ev;
+	free_reg->refcount = 1;
 
 	return true;
 }
@@ -231,13 +251,24 @@ static bool messaging_deregister_event_context(struct messaging_context *ctx,
 	for (i=0; i<num_event_contexts; i++) {
 		struct messaging_registered_ev *reg = &ctx->event_contexts[i];
 
-		if (reg->ev == ev) {
-			if (reg->refcount == 0) {
-				return false;
-			}
+		if (reg->refcount == 0) {
+			continue;
+		}
+
+		if (tevent_context_same_loop(reg->ev, ev)) {
 			reg->refcount -= 1;
 
 			if (reg->refcount == 0) {
+				/*
+				 * The primary event context
+				 * is never unregistered using
+				 * messaging_deregister_event_context()
+				 * it's only registered using
+				 * messaging_register_event_context().
+				 */
+				SMB_ASSERT(ev != ctx->event_ctx);
+				SMB_ASSERT(reg->ev != ctx->event_ctx);
+
 				/*
 				 * Not strictly necessary, just
 				 * paranoia
@@ -247,7 +278,14 @@ static bool messaging_deregister_event_context(struct messaging_context *ctx,
 				/*
 				 * Do not talloc_free(reg->im),
 				 * recycle immediates events.
+				 *
+				 * We just invalidate it using
+				 * the primary event context,
+				 * which is never unregistered.
 				 */
+				tevent_schedule_immediate(reg->im,
+							  ctx->event_ctx,
+							  NULL, NULL);
 			}
 			return true;
 		}
@@ -320,15 +358,6 @@ static bool messaging_alert_event_contexts(struct messaging_context *ctx)
 			continue;
 		}
 
-		if (reg->im == NULL) {
-			reg->im = tevent_create_immediate(
-				ctx->event_contexts);
-		}
-		if (reg->im == NULL) {
-			DBG_WARNING("Could not create immediate\n");
-			continue;
-		}
-
 		/*
 		 * We depend on schedule_immediate to work
 		 * multiple times. Might be a bit inefficient,
@@ -336,6 +365,11 @@ static bool messaging_alert_event_contexts(struct messaging_context *ctx)
 		 * alternatively would be to track whether the
 		 * immediate has already been scheduled. For
 		 * now, avoid that complexity here.
+		 *
+		 * reg->ev and ctx->event_ctx can't
+		 * be wrapper tevent_context pointers
+		 * so we don't need to use
+		 * tevent_context_same_loop().
 		 */
 
 		if (reg->ev == ctx->event_ctx) {
@@ -463,6 +497,12 @@ static NTSTATUS messaging_init_internal(TALLOC_CTX *mem_ctx,
 	 */
 
 	sec_init();
+
+	if (tevent_context_is_wrapper(ev)) {
+		/* This is really a programmer error! */
+		DBG_ERR("Should not be used with a wrapper tevent context\n");
+		return NT_STATUS_INVALID_PARAMETER;
+	}
 
 	lck_path = lock_path("msg.lock");
 	if (lck_path == NULL) {
@@ -994,9 +1034,22 @@ struct tevent_req *messaging_filtered_read_send(
 	state->filter = filter;
 	state->private_data = private_data;
 
+	if (tevent_context_is_wrapper(ev) &&
+	    !tevent_context_same_loop(ev, msg_ctx->event_ctx))
+	{
+		/* This is really a programmer error! */
+		DBG_ERR("Wrapper tevent context doesn't use main context.\n");
+		tevent_req_error(req, EINVAL);
+		return tevent_req_post(req, ev);
+	}
+
 	/*
 	 * We have to defer the callback here, as we might be called from
-	 * within a different tevent_context than state->ev
+	 * within a different tevent_context than state->ev.
+	 *
+	 * This is important for two cases:
+	 * 1. nested event contexts, used by blocking ctdb calls
+	 * 2. possible impersonation using wrapper tevent contexts.
 	 */
 	tevent_req_defer_callback(req, state->ev);
 
@@ -1292,7 +1345,7 @@ static bool messaging_dispatch_waiters(struct messaging_context *msg_ctx,
 
 		state = tevent_req_data(
 			req, struct messaging_filtered_read_state);
-		if ((ev == state->ev) &&
+		if (tevent_context_same_loop(ev, state->ev) &&
 		    state->filter(rec, state->private_data)) {
 			messaging_filtered_read_done(req, rec);
 			return true;
@@ -1313,6 +1366,11 @@ static void messaging_dispatch_rec(struct messaging_context *msg_ctx,
 {
 	bool consumed;
 	size_t i;
+
+	/*
+	 * ev and msg_ctx->event_ctx can't be wrapper tevent_context pointers
+	 * so we don't need to use tevent_context_same_loop().
+	 */
 
 	if (ev == msg_ctx->event_ctx) {
 		consumed = messaging_dispatch_classic(msg_ctx, rec);

@@ -1,7 +1,7 @@
 The packaging is kept in https://salsa.debian.org/samba-team/samba.
 
 The version in unstable is on the `master` branch, with the corresponding
-upstream version in the `upstream_4.8` branch (with `pristine-tar` information
+upstream version in the `upstream_4.9` branch (with `pristine-tar` information
 in the `pristine-tar` branch).
 
 It should be possible to build the package by just running `gbp buildpackage`.
@@ -16,7 +16,7 @@ The first time:
     git clone https://salsa.debian.org/samba-team/samba.git
     cd samba
     git checkout pristine-tar
-    git checkout upstream_4.8
+    git checkout upstream_4.9
 
 Each time:
 
@@ -31,7 +31,7 @@ Merging minor upstream releases
 Importing a new upstream version can be done like this:
 
     # set target version
-    upstream_version=4.8.0
+    upstream_version=4.9.1
     major_version="$(echo $upstream_version | sed 's/.[^.]\+$//')"
     # go to git repo
     cd $GIT_DIR
@@ -64,12 +64,14 @@ With a new major version, more work is needed.
 
 After `gbp pull`:
 
-    # Edit gbp.conf upstream-branch
+    # Edit gbp.conf's upstream-branch
     editor debian/gbp.conf
-    # Edit debian/watch major version
+    # Edit debian/watch's major version
     editor debian/watch
+    # Edit this file's major version
+    editor debian/README.source
     # Commit
-    git commit -m"Update d/gbp.conf and d/watch for ${major_version}" debian/gbp.conf debian/watch
+    git commit -m"Update d/gbp.conf, d/watch and d/README.source for ${major_version}" debian/gbp.conf debian/watch debian/README.source.md
     # Create the new upstream branch
     git branch "upstream_${major_version}" samba-${upstream_version}
     # Import latest version

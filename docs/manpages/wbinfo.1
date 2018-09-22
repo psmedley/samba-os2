@@ -2,12 +2,12 @@
 .\"     Title: wbinfo
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: User Commands
-.\"    Source: Samba 4.8.5
+.\"    Source: Samba 4.9.0
 .\"  Language: English
 .\"
-.TH "WBINFO" "1" "08/24/2018" "Samba 4\&.8\&.5" "User Commands"
+.TH "WBINFO" "1" "09/13/2018" "Samba 4\&.9\&.0" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -261,7 +261,7 @@ Use NTLMv2 cryptography for user authentication\&. NTLMv2 is the default method,
 .PP
 \-\-online\-status \fIdomain\fR
 .RS 4
-Show whether domains are marked as online or offline\&. An optional domain argument limits the output to the online status of a given domain\&.
+Display whether winbind currently maintains an active connection or not\&. An optional domain argument limits the output to the online status of a given domain\&.
 .RE
 .PP
 \-\-own\-domain
@@ -289,6 +289,33 @@ Issue a no\-effect command to our DC\&. This checks if our secure channel connec
 \-r|\-\-user\-groups \fIusername\fR
 .RS 4
 Try to obtain the list of UNIX group ids to which the user belongs\&. This only works for users defined on a Domain Controller\&.
+.sp
+There are two scenaries:
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 1.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  1." 4.2
+.\}
+User authenticated: When the user has been authenticated, the access token for the user is cached\&. The correct group memberships are then returned from the cached user token (which can be outdated)\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 2.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  2." 4.2
+.\}
+User *NOT* authenticated: The information is queries from the domain controller using the machine account credentials which have limited permissions\&. The result is normally incomplete and can be also incorrect\&.
+.RE
+.sp
+.RE
 .RE
 .PP
 \-R|\-\-lookup\-rids \fIrid1, rid2, rid3\&.\&.\&.\fR
@@ -440,7 +467,7 @@ wbinfo
 will always return failure\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.8\&.5 of the Samba suite\&.
+This man page is part of version 4\&.9\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBwinbindd\fR(8)

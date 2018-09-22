@@ -180,7 +180,7 @@ static bool check_client_uid(struct winbindd_cli_state *state, uid_t uid)
 	return True;
 }
 
-void winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
+bool winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
 {
 	struct winbindd_domain *domain;
 	fstring name_namespace, name_domain, name_user;
@@ -206,8 +206,7 @@ void winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
 	if (!ok) {
 		DEBUG(5,("winbindd_ccache_ntlm_auth: cannot parse domain and user from name [%s]\n",
 			state->request->data.ccache_ntlm_auth.user));
-		request_error(state);
-		return;
+		return false;
 	}
 
 	domain = find_auth_domain(state->request->flags, name_domain);
@@ -215,13 +214,11 @@ void winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
 	if (domain == NULL) {
 		DEBUG(5,("winbindd_ccache_ntlm_auth: can't get domain [%s]\n",
 			name_domain));
-		request_error(state);
-		return;
+		return false;
 	}
 
 	if (!check_client_uid(state, state->request->data.ccache_ntlm_auth.uid)) {
-		request_error(state);
-		return;
+		return false;
 	}
 
 	/* validate blob lengths */
@@ -309,14 +306,10 @@ void winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
 	data_blob_free(&auth);
 
   process_result:
-	if (!NT_STATUS_IS_OK(result)) {
-		request_error(state);
-		return;
-	}
-	request_ok(state);
+	return NT_STATUS_IS_OK(result);
 }
 
-void winbindd_ccache_save(struct winbindd_cli_state *state)
+bool winbindd_ccache_save(struct winbindd_cli_state *state)
 {
 	struct winbindd_domain *domain;
 	fstring name_namespace, name_domain, name_user;
@@ -343,8 +336,7 @@ void winbindd_ccache_save(struct winbindd_cli_state *state)
 		DEBUG(5,("winbindd_ccache_save: cannot parse domain and user "
 			 "from name [%s]\n",
 			 state->request->data.ccache_save.user));
-		request_error(state);
-		return;
+		return false;
 	}
 
 	/*
@@ -360,13 +352,11 @@ void winbindd_ccache_save(struct winbindd_cli_state *state)
 	if (domain == NULL) {
 		DEBUG(5, ("winbindd_ccache_save: can't get domain [%s]\n",
 			  name_domain));
-		request_error(state);
-		return;
+		return false;
 	}
 
 	if (!check_client_uid(state, state->request->data.ccache_save.uid)) {
-		request_error(state);
-		return;
+		return false;
 	}
 
 	status = winbindd_add_memory_creds(
@@ -377,8 +367,7 @@ void winbindd_ccache_save(struct winbindd_cli_state *state)
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1, ("winbindd_add_memory_creds failed %s\n",
 			  nt_errstr(status)));
-		request_error(state);
-		return;
+		return false;
 	}
-	request_ok(state);
+	return true;
 }

@@ -17,6 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+from __future__ import print_function
 import ldb
 import samba
 import time
@@ -108,7 +109,8 @@ class dbcheck(object):
                            attrs=["objectSid"])
             dnsadmins_sid = ndr_unpack(security.dom_sid, res[0]["objectSid"][0])
             self.name_map['DnsAdmins'] = str(dnsadmins_sid)
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e5:
+            (enum, estr) = e5.args
             if enum != ldb.ERR_NO_SUCH_OBJECT:
                 raise
             pass
@@ -142,11 +144,11 @@ class dbcheck(object):
 
         for nc in self.ncs:
             try:
-                dn = self.samdb.get_wellknown_dn(ldb.Dn(self.samdb, nc),
+                dn = self.samdb.get_wellknown_dn(ldb.Dn(self.samdb, nc.decode('utf8')),
                                                  dsdb.DS_GUID_DELETED_OBJECTS_CONTAINER)
                 self.deleted_objects_containers.append(dn)
             except KeyError:
-                self.ncs_lacking_deleted_containers.append(ldb.Dn(self.samdb, nc))
+                self.ncs_lacking_deleted_containers.append(ldb.Dn(self.samdb, nc.decode('utf8')))
 
         domaindns_zone = 'DC=DomainDnsZones,%s' % self.samdb.get_default_basedn()
         forestdns_zone = 'DC=ForestDnsZones,%s' % self.samdb.get_root_basedn()
@@ -176,13 +178,13 @@ class dbcheck(object):
         res = self.samdb.search(base=ldb.Dn(self.samdb, self.samdb.get_serverName()),
                                 scope=ldb.SCOPE_BASE, attrs=["serverReference"])
         # 2. Get server reference
-        self.server_ref_dn = ldb.Dn(self.samdb, res[0]['serverReference'][0])
+        self.server_ref_dn = ldb.Dn(self.samdb, res[0]['serverReference'][0].decode('utf8'))
 
         # 3. Get RID Set
         res = self.samdb.search(base=self.server_ref_dn,
                                 scope=ldb.SCOPE_BASE, attrs=['rIDSetReferences'])
         if "rIDSetReferences" in res[0]:
-            self.rid_set_dn = ldb.Dn(self.samdb, res[0]['rIDSetReferences'][0])
+            self.rid_set_dn = ldb.Dn(self.samdb, res[0]['rIDSetReferences'][0].decode('utf8'))
         else:
             self.rid_set_dn = None
 
@@ -198,7 +200,8 @@ class dbcheck(object):
                 self.compatibleFeatures = res[0]["compatibleFeatures"]
             if "requiredFeatures" in res[0]:
                 self.requiredFeatures = res[0]["requiredFeatures"]
-        except ldb.LdbError as (enum, estr):
+        except ldb.LdbError as e6:
+            (enum, estr) = e6.args
             if enum != ldb.ERR_NO_SUCH_OBJECT:
                 raise
             pass
@@ -253,7 +256,8 @@ class dbcheck(object):
                                          "CN=Deleted Objects\\0ACNF:%s" % str(misc.GUID(guid)))
                     conflict_dn.add_base(nc)
 
-            except ldb.LdbError, (enum, estr):
+            except ldb.LdbError as e2:
+                (enum, estr) = e2.args
                 if enum == ldb.ERR_NO_SUCH_OBJECT:
                     pass
                 else:
@@ -263,7 +267,8 @@ class dbcheck(object):
             if conflict_dn is not None:
                 try:
                     self.samdb.rename(dn, conflict_dn, ["show_deleted:1", "relax:0", "show_recycled:1"])
-                except ldb.LdbError, (enum, estr):
+                except ldb.LdbError as e1:
+                    (enum, estr) = e1.args
                     self.report("Couldn't move old Deleted Objects placeholder: %s to %s: %s" % (dn, conflict_dn, estr))
                     return 1
 
@@ -281,7 +286,7 @@ class dbcheck(object):
             listwko = []
             proposed_objectguid = None
             for o in wko:
-                dsdb_dn = dsdb_Dn(self.samdb, o, dsdb.DSDB_SYNTAX_BINARY_DN)
+                dsdb_dn = dsdb_Dn(self.samdb, o.decode('utf8'), dsdb.DSDB_SYNTAX_BINARY_DN)
                 if self.is_deleted_objects_dn(dsdb_dn):
                     self.report("wellKnownObjects had duplicate Deleted Objects value %s" % o)
                     # We really want to put this back in the same spot
@@ -369,7 +374,7 @@ systemFlags: -1946157056%s""" % (dn, guid_suffix),
         try:
             controls = controls + ["local_oid:%s:0" % dsdb.DSDB_CONTROL_DBCHECK]
             self.samdb.delete(dn, controls=controls)
-        except Exception, err:
+        except Exception as err:
             if self.in_transaction:
                 raise CommandError("%s : %s" % (msg, err))
             self.report("%s : %s" % (msg, err))
@@ -383,7 +388,7 @@ systemFlags: -1946157056%s""" % (dn, guid_suffix),
         try:
             controls = controls + ["local_oid:%s:0" % dsdb.DSDB_CONTROL_DBCHECK]
             self.samdb.modify(m, controls=controls, validate=validate)
-        except Exception, err:
+        except Exception as err:
             if self.in_transaction:
                 raise CommandError("%s : %s" % (msg, err))
             self.report("%s : %s" % (msg, err))
@@ -402,7 +407,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             to_dn = to_rdn + to_base
             controls = controls + ["local_oid:%s:0" % dsdb.DSDB_CONTROL_DBCHECK]
             self.samdb.rename(from_dn, to_dn, controls=controls)
-        except Exception, err:
+        except Exception as err:
             if self.in_transaction:
                 raise CommandError("%s : %s" % (msg, err))
             self.report("%s : %s" % (msg, err))
@@ -596,7 +601,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         try:
             res = self.samdb.search(base=str(dsdb_dn.dn), scope=ldb.SCOPE_BASE,
                                     attrs=[], controls=controls)
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e7:
+            (enum, estr) = e7.args
             self.report("unable to find object for DN %s - (%s)" % (dsdb_dn.dn, estr))
             if enum != ldb.ERR_NO_SUCH_OBJECT:
                 raise
@@ -650,7 +656,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         m.dn = dn
         m['old_value'] = ldb.MessageElement(val, ldb.FLAG_MOD_DELETE, attrname)
         m['new_value'] = ldb.MessageElement(str(dsdb_dn), ldb.FLAG_MOD_ADD, attrname)
-        if self.do_modify(m, ["show_recycled:1"],
+        if self.do_modify(m, ["show_recycled:1",
+                              "local_oid:%s:1" % dsdb.DSDB_CONTROL_DBCHECK_FIX_LINK_DN_NAME],
                           "Failed to fix old DN string on attribute %s" % (attrname)):
             self.report("Fixed old DN string on attribute %s" % (attrname))
 
@@ -759,7 +766,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         m = ldb.Message()
         m.dn = obj.dn
         m['value'] = ldb.MessageElement(forward_vals, ldb.FLAG_MOD_REPLACE, forward_attr)
-        if self.do_modify(m, ["local_oid:1.3.6.1.4.1.7165.4.3.19.2:1"],
+        if self.do_modify(m, ["local_oid:%s:1" % dsdb.DSDB_CONTROL_DBCHECK_FIX_DUPLICATE_LINKS],
                 "Failed to fix duplicate links in attribute '%s'" % forward_attr):
             self.report("Fixed duplicate links in attribute '%s'" % (forward_attr))
             duplicate_cache_key = "%s:%s" % (str(obj.dn), forward_attr)
@@ -911,7 +918,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                 controls=["show_deleted:0", "extended_dn:0", "reveal_internals:0"])
         syntax_oid = self.samdb_schema.get_syntax_oid_from_lDAPDisplayName(attrname)
         for val in res[0][attrname]:
-            dsdb_dn = dsdb_Dn(self.samdb, val, syntax_oid)
+            dsdb_dn = dsdb_Dn(self.samdb, val.decode('utf8'), syntax_oid)
             guid2 = dsdb_dn.dn.get_extended_component("GUID")
             if guid == guid2:
                 return dsdb_dn
@@ -937,7 +944,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             self.duplicate_link_cache[duplicate_cache_key] = False
 
         for val in obj[forward_attr]:
-            dsdb_dn = dsdb_Dn(self.samdb, val, forward_syntax)
+            dsdb_dn = dsdb_Dn(self.samdb, val.decode('utf8'), forward_syntax)
 
             # all DNs should have a GUID component
             guid = dsdb_dn.dn.get_extended_component("GUID")
@@ -999,7 +1006,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         try:
             res = self.samdb.search(base=str(dn), scope=ldb.SCOPE_BASE,
                                     attrs=attrs, controls=controls)
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e8:
+            (enum, estr) = e8.args
             if enum != ldb.ERR_NO_SUCH_OBJECT:
                 raise
 
@@ -1046,7 +1054,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                     controls=["extended_dn:1:1",
                                               "search_options:1:2",
                                               "paged_results:1:1000"])
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e9:
+            (enum, estr) = e9.args
             raise
 
         for r in res:
@@ -1170,7 +1179,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             obj[attrname] = ldb.MessageElement(vals, 0, attrname)
 
         for val in obj[attrname]:
-            dsdb_dn = dsdb_Dn(self.samdb, val, syntax_oid)
+            dsdb_dn = dsdb_Dn(self.samdb, val.decode('utf8'), syntax_oid)
 
             # all DNs should have a GUID component
             guid = dsdb_dn.dn.get_extended_component("GUID")
@@ -1198,7 +1207,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                         attrs=attrs, controls=["extended_dn:1:1", "show_recycled:1",
                                                                "reveal_internals:0"
                                         ])
-            except ldb.LdbError, (enum, estr):
+            except ldb.LdbError as e3:
+                (enum, estr) = e3.args
                 if enum != ldb.ERR_NO_SUCH_OBJECT:
                     raise
 
@@ -1289,21 +1299,29 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                                       res[0].dn, "SID")
                 continue
 
+            # Only for non-links, not even forward-only links
+            # (otherwise this breaks repl_meta_data):
+            #
             # Now we have checked the GUID and SID, offer to fix old
-            # DN strings as a non-error (for forward links with no
+            # DN strings as a non-error (DNs, not links so no
             # backlink).  Samba does not maintain this string
             # otherwise, so we don't increment error_count.
             if reverse_link_name is None:
-                if str(res[0].dn) != str(dsdb_dn.dn):
-                    self.err_dn_string_component_old(obj.dn, attrname, val, dsdb_dn,
-                                                     res[0].dn)
+                if linkID == 0 and str(res[0].dn) != str(dsdb_dn.dn):
+                    # Pass in the old/bad DN without the <GUID=...> part,
+                    # otherwise the LDB code will correct it on the way through
+                    # (Note: we still want to preserve the DSDB DN prefix in the
+                    # case of binary DNs)
+                    bad_dn = dsdb_dn.prefix + dsdb_dn.dn.get_linearized()
+                    self.err_dn_string_component_old(obj.dn, attrname, bad_dn,
+                                                     dsdb_dn, res[0].dn)
                 continue
 
             # check the reverse_link is correct if there should be one
             match_count = 0
             if reverse_link_name in res[0]:
                 for v in res[0][reverse_link_name]:
-                    v_dn = dsdb_Dn(self.samdb, v)
+                    v_dn = dsdb_Dn(self.samdb, v.decode('utf8'))
                     v_guid = v_dn.dn.get_extended_component("GUID")
                     v_blob = v_dn.dn.get_extended_component("RMD_FLAGS")
                     v_rmd_flags = 0
@@ -1320,7 +1338,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                         # Forward binary multi-valued linked attribute
                         forward_count = 0
                         for w in obj[attrname]:
-                            w_guid = dsdb_Dn(self.samdb, w).dn.get_extended_component("GUID")
+                            w_guid = dsdb_Dn(self.samdb, w.decode('utf8')).dn.get_extended_component("GUID")
                             if w_guid == guid:
                                 forward_count += 1
 
@@ -1328,7 +1346,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                             continue
             expected_count = 0
             for v in obj[attrname]:
-                v_dn = dsdb_Dn(self.samdb, v)
+                v_dn = dsdb_Dn(self.samdb, v.decode('utf8'))
                 v_guid = v_dn.dn.get_extended_component("GUID")
                 v_blob = v_dn.dn.get_extended_component("RMD_FLAGS")
                 v_rmd_flags = 0
@@ -1565,7 +1583,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         cls = None
         try:
             cls = obj["objectClass"][-1]
-        except KeyError, e:
+        except KeyError as e:
             pass
 
         if cls is None:
@@ -1751,7 +1769,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
         # the correct values are above 0x80000000) values first and
         # remove the 'second' value we see.
         for o in reversed(ctr.array):
-            print "%s: 0x%08x" % (dn, o.attid)
+            print("%s: 0x%08x" % (dn, o.attid))
             att = self.samdb_schema.get_lDAPDisplayName_by_attid(o.attid)
             if att.lower() in set_att:
                 self.report('ERROR: duplicate attributeID values for %s in %s on %s\n' % (att, attr, dn))
@@ -1924,7 +1942,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             instancetype |= dsdb.INSTANCE_TYPE_IS_NC_HEAD
             try:
                 self.samdb.search(base=dn.parent(), scope=ldb.SCOPE_BASE, attrs=[], controls=["show_recycled:1"])
-            except ldb.LdbError, (enum, estr):
+            except ldb.LdbError as e4:
+                (enum, estr) = e4.args
                 if enum != ldb.ERR_NO_SUCH_OBJECT:
                     raise
             else:
@@ -1995,7 +2014,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                                         "reveal_internals:0",
                                     ],
                                     attrs=attrs)
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e10:
+            (enum, estr) = e10.args
             if enum == ldb.ERR_NO_SUCH_OBJECT:
                 if self.in_transaction:
                     self.report("ERROR: Object %s disappeared during check" % dn)
@@ -2191,7 +2211,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             # special handling for some specific attribute types
             try:
                 syntax_oid = self.samdb_schema.get_syntax_oid_from_lDAPDisplayName(attrname)
-            except Exception, msg:
+            except Exception as msg:
                 self.err_unknown_attribute(obj, attrname)
                 error_count += 1
                 continue
@@ -2303,7 +2323,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             if dn != self.samdb.get_root_basedn() and str(dn.parent()) not in self.dn_set:
                 res = self.samdb.search(base=dn.parent(), scope=ldb.SCOPE_BASE,
                                         controls=["show_recycled:1", "show_deleted:1"])
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e11:
+            (enum, estr) = e11.args
             if enum == ldb.ERR_NO_SUCH_OBJECT:
                 self.err_missing_parent(obj)
                 error_count += 1
@@ -2407,7 +2428,8 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                     try:
                         res = self.samdb.search(base="<SID=%s>" % sid, scope=ldb.SCOPE_BASE,
                                                 attrs=[])
-                    except ldb.LdbError, (enum, estr):
+                    except ldb.LdbError as e:
+                        (enum, estr) = e.args
                         if enum != ldb.ERR_NO_SUCH_OBJECT:
                             raise
                         res = None
@@ -2470,7 +2492,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             error_count += 1
             if not self.confirm('Change dsServiceName to GUID form?'):
                 return error_count
-            res = self.samdb.search(base=ldb.Dn(self.samdb, obj['dsServiceName'][0]),
+            res = self.samdb.search(base=ldb.Dn(self.samdb, obj['dsServiceName'][0].decode('utf8')),
                                     scope=ldb.SCOPE_BASE, attrs=['objectGUID'])
             guid_str = str(ndr_unpack(misc.GUID, res[0]['objectGUID'][0]))
             m = ldb.Message()

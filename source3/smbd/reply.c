@@ -25,6 +25,7 @@
 */
 
 #include "includes.h"
+#include "libsmb/namequery.h"
 #include "system/filesys.h"
 #include "printing.h"
 #include "smbd/smbd.h"
@@ -190,16 +191,16 @@ static NTSTATUS check_path_syntax_internal(char *path,
 			switch(siz) {
 				case 5:
 					*d++ = *s++;
-					/*fall through*/
+					FALL_THROUGH;
 				case 4:
 					*d++ = *s++;
-					/*fall through*/
+					FALL_THROUGH;
 				case 3:
 					*d++ = *s++;
-					/*fall through*/
+					FALL_THROUGH;
 				case 2:
 					*d++ = *s++;
-					/*fall through*/
+					FALL_THROUGH;
 				case 1:
 					*d++ = *s++;
 					break;
@@ -3925,9 +3926,9 @@ out:
  Setup readX header.
 ****************************************************************************/
 
-int setup_readX_header(char *outbuf, size_t smb_maxcnt)
+size_t setup_readX_header(char *outbuf, size_t smb_maxcnt)
 {
-	int outsize;
+	size_t outsize;
 
 	outsize = srv_set_message(outbuf,12,smb_maxcnt + 1 /* padding byte */,
 				  False);
@@ -5391,7 +5392,7 @@ void reply_close(struct smb_request *req)
 		 */
 
 		fsp->deferred_close = tevent_wait_send(
-			fsp, fsp->conn->sconn->ev_ctx);
+			fsp, req->ev_ctx);
 		if (fsp->deferred_close == NULL) {
 			status = NT_STATUS_NO_MEMORY;
 			goto done;

@@ -193,7 +193,7 @@ static const struct loadparm_service _sDefault =
 	.map_system = false,
 	.map_hidden = false,
 	.map_archive = true,
-	.store_dos_attributes = false,
+	.store_dos_attributes = true,
 	.dmapi_support = false,
 	.locking = true,
 	.strict_locking = Auto,
@@ -231,7 +231,7 @@ static const struct loadparm_service _sDefault =
 	._use_sendfile = false,
 	.map_acl_inherit = false,
 	.afs_share = false,
-	.ea_support = false,
+	.ea_support = true,
 	.acl_check_permissions = true,
 	.acl_map_full_control = true,
 	.acl_group_control = false,
@@ -239,11 +239,12 @@ static const struct loadparm_service _sDefault =
 	.allocation_roundup_size = SMB_ROUNDUP_ALLOCATION_SIZE,
 	.aio_read_size = 1,
 	.aio_write_size = 1,
-	.map_readonly = MAP_READONLY_YES,
+	.map_readonly = MAP_READONLY_NO,
 	.directory_name_cache_size = 100,
 	.smb_encrypt = SMB_SIGNING_DEFAULT,
 	.kernel_share_modes = true,
 	.durable_handles = true,
+	.check_parent_directory_delete_on_close = false,
 	.param_opt = NULL,
 	.dummy = ""
 };
@@ -894,6 +895,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals._preferred_master = Auto;
 
 	Globals.allow_dns_updates = DNS_UPDATE_SIGNED;
+	Globals.dns_zone_scavenging = false;
 
 	lpcfg_string_set(Globals.ctx, &Globals.ntp_signd_socket_directory,
 			 get_dyn_NTP_SIGND_SOCKET_DIR());
@@ -916,7 +918,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.dns_update_command = str_list_make_v3_const(NULL, s, NULL);
 	TALLOC_FREE(s);
 
-	s = talloc_asprintf(talloc_tos(), "%s/samba_gpoupdate", get_dyn_SCRIPTSBINDIR());
+	s = talloc_asprintf(talloc_tos(), "%s/samba-gpupdate", get_dyn_SCRIPTSBINDIR());
 	if (s == NULL) {
 		smb_panic("init_globals: ENOMEM");
 	}
@@ -1529,6 +1531,7 @@ bool lp_add_home(const char *pszHomename, int iDefaultService,
 		 const char *user, const char *pszHomedir)
 {
 	int i;
+	char *global_path;
 
 	if (pszHomename == NULL || user == NULL || pszHomedir == NULL ||
 			pszHomedir[0] == '\0') {
@@ -1540,12 +1543,13 @@ bool lp_add_home(const char *pszHomename, int iDefaultService,
 	if (i < 0)
 		return false;
 
+	global_path = lp_path(talloc_tos(), GLOBAL_SECTION_SNUM);
 	if (!(*(ServicePtrs[iDefaultService]->path))
-	    || strequal(ServicePtrs[iDefaultService]->path,
-			lp_path(talloc_tos(), GLOBAL_SECTION_SNUM))) {
+	    || strequal(ServicePtrs[iDefaultService]->path, global_path)) {
 		lpcfg_string_set(ServicePtrs[i], &ServicePtrs[i]->path,
 				 pszHomedir);
 	}
+	TALLOC_FREE(global_path);
 
 	if (!(*(ServicePtrs[i]->comment))) {
 		char *comment = talloc_asprintf(talloc_tos(), "Home directory of %s", user);
@@ -1832,8 +1836,8 @@ static bool is_synonym_of(int parm1, int parm2, bool *inverse)
 
 static void show_parameter(int parmIndex)
 {
-	int enumIndex, flagIndex;
-	int parmIndex2;
+	size_t enumIndex, flagIndex;
+	size_t parmIndex2;
 	bool hadFlag;
 	bool hadSyn;
 	bool inverse;
@@ -4155,6 +4159,7 @@ void lp_dump(FILE *f, bool show_defaults, int maxtoprint)
 		fprintf(f,"\n");
 		lp_dump_one(f, show_defaults, iService);
 	}
+	TALLOC_FREE(lp_ctx);
 }
 
 /***************************************************************************
@@ -4208,7 +4213,7 @@ int lp_servicenumber(const char *pszServiceName)
 
 		if (!usershare_exists(iService, &last_mod)) {
 			/* Remove the share security tdb entry for it. */
-			delete_share_security(lp_servicename(talloc_tos(), iService));
+			delete_share_security(lp_const_servicename(iService));
 			/* Remove it from the array. */
 			free_service_byindex(iService);
 			/* Doesn't exist anymore. */
@@ -4525,10 +4530,10 @@ void widelinks_warning(int snum)
 	}
 
 	if (lp_unix_extensions() && lp_wide_links(snum)) {
-		DEBUG(0,("Share '%s' has wide links and unix extensions enabled. "
+		DBG_ERR("Share '%s' has wide links and unix extensions enabled. "
 			"These parameters are incompatible. "
 			"Wide links will be disabled for this share.\n",
-			 lp_servicename(talloc_tos(), snum) ));
+			 lp_const_servicename(snum));
 	}
 }
 

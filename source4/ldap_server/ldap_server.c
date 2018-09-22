@@ -104,6 +104,7 @@ static void ldapsrv_terminate_connection_done(struct tevent_req *subreq)
 		tevent_req_callback_data(subreq,
 		struct ldapsrv_connection);
 	int sys_errno;
+	bool ok;
 
 	tstream_disconnect_recv(subreq, &sys_errno);
 	TALLOC_FREE(subreq);
@@ -130,9 +131,15 @@ static void ldapsrv_terminate_connection_done(struct tevent_req *subreq)
 					    conn->limits.reason);
 		return;
 	}
-	tevent_req_set_endtime(subreq,
-			       conn->connection->event.ctx,
-			       conn->limits.endtime);
+	ok = tevent_req_set_endtime(subreq,
+				    conn->connection->event.ctx,
+				    conn->limits.endtime);
+	if (!ok) {
+		TALLOC_FREE(conn->sockets.raw);
+		stream_terminate_connection(conn->connection,
+					    conn->limits.reason);
+		return;
+	}
 	tevent_req_set_callback(subreq, ldapsrv_terminate_connection_done, conn);
 }
 
@@ -494,9 +501,17 @@ static bool ldapsrv_call_read_next(struct ldapsrv_connection *conn)
 		return false;
 	}
 	if (!timeval_is_zero(&conn->limits.endtime)) {
-		tevent_req_set_endtime(subreq,
-				       conn->connection->event.ctx,
-				       conn->limits.endtime);
+		bool ok;
+		ok = tevent_req_set_endtime(subreq,
+					    conn->connection->event.ctx,
+					    conn->limits.endtime);
+		if (!ok) {
+			ldapsrv_terminate_connection(
+				conn,
+				"ldapsrv_call_read_next: "
+				"no memory for tevent_req_set_endtime");
+			return false;
+		}
 	}
 	tevent_req_set_callback(subreq, ldapsrv_call_read_done, conn);
 	conn->sockets.read_req = subreq;
@@ -1055,8 +1070,12 @@ static NTSTATUS add_socket(struct task_server *task,
 	}
 
 	/* Load LDAP database, but only to read our settings */
-	ldb = samdb_connect(ldap_service, ldap_service->task->event_ctx, 
-			    lp_ctx, system_session(lp_ctx), 0);
+	ldb = samdb_connect(ldap_service,
+			    ldap_service->task->event_ctx,
+			    lp_ctx,
+			    system_session(lp_ctx),
+			    NULL,
+			    0);
 	if (!ldb) {
 		return NT_STATUS_INTERNAL_DB_CORRUPTION;
 	}
@@ -1178,8 +1197,8 @@ static void ldapsrv_task_init(struct task_server *task)
 		}
 	} else {
 		char **wcard;
-		int i;
-		int num_binds = 0;
+		size_t i;
+		size_t num_binds = 0;
 		wcard = iface_list_wildcard(task);
 		if (wcard == NULL) {
 			DEBUG(0,("No wildcard addresses available\n"));

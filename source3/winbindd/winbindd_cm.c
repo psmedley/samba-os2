@@ -60,6 +60,7 @@
 
 #include "includes.h"
 #include "winbindd.h"
+#include "libsmb/namequery.h"
 #include "../libcli/auth/libcli_auth.h"
 #include "../librpc/gen_ndr/ndr_netlogon_c.h"
 #include "rpc_client/cli_pipe.h"
@@ -199,6 +200,7 @@ static bool fork_child_dc_connect(struct winbindd_domain *domain)
 	pid_t parent_pid = getpid();
 	char *lfile = NULL;
 	NTSTATUS status;
+	bool ok;
 
 	if (domain->dc_probe_pid != (pid_t)-1) {
 		/*
@@ -269,7 +271,9 @@ static bool fork_child_dc_connect(struct winbindd_domain *domain)
 		_exit(1);
 	}
 
-	if ((!get_dcs(mem_ctx, domain, &dcs, &num_dcs, 0)) || (num_dcs == 0)) {
+	ok = get_dcs(mem_ctx, domain, &dcs, &num_dcs, 0);
+	TALLOC_FREE(mem_ctx);
+	if (!ok || (num_dcs == 0)) {
 		/* Still offline ? Can't find DC's. */
 		messaging_send_buf(server_messaging_context(),
 				   pid_to_procid(parent_pid),
@@ -1462,9 +1466,21 @@ static bool dcip_check_name(TALLOC_CTX *mem_ctx,
 	}
 #endif
 
-	status = nbt_getdc(server_messaging_context(), 10, pss, domain->name,
-			   &domain->sid, nt_version, mem_ctx, &nt_version,
-			   &dc_name, NULL);
+	{
+		size_t len = strlen(lp_netbios_name());
+		char my_acct_name[len+2];
+
+		snprintf(my_acct_name,
+			 sizeof(my_acct_name),
+			 "%s$",
+			 lp_netbios_name());
+
+		status = nbt_getdc(server_messaging_context(), 10, pss,
+				   domain->name, &domain->sid,
+				   my_acct_name, ACB_WSTRUST,
+				   nt_version, mem_ctx, &nt_version,
+				   &dc_name, NULL);
+	}
 	if (NT_STATUS_IS_OK(status)) {
 		*name = talloc_strdup(mem_ctx, dc_name);
 		if (*name == NULL) {
@@ -1722,8 +1738,10 @@ static bool find_new_dc(TALLOC_CTX *mem_ctx,
 	TALLOC_FREE(addrs);
 	num_addrs = 0;
 
-	close(*fd);
-	*fd = -1;
+	if (*fd != -1) {
+		close(*fd);
+		*fd = -1;
+	}
 
 	goto again;
 }
@@ -1965,7 +1983,10 @@ static NTSTATUS cm_open_connection(struct winbindd_domain *domain,
 			&new_conn->cli, &retry);
 		if (!NT_STATUS_IS_OK(result)) {
 			/* Don't leak the smb connection socket */
-			close(fd);
+			if (fd != -1) {
+				close(fd);
+				fd = -1;
+			}
 		}
 
 		if (!retry)

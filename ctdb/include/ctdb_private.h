@@ -303,7 +303,6 @@ struct ctdb_context {
 	bool do_setsched;
 	const char *event_script_dir;
 	const char *notification_script;
-	const char *default_public_interface;
 	pid_t ctdbd_pid;
 	pid_t recoverd_pid;
 	enum ctdb_runstate runstate;
@@ -753,7 +752,6 @@ int32_t ctdb_control_get_db_statistics(struct ctdb_context *ctdb,
 
 /* from ctdb_monitor.c */
 
-int ctdb_set_notification_script(struct ctdb_context *ctdb, const char *script);
 void ctdb_run_notification_script(struct ctdb_context *ctdb, const char *event);
 
 void ctdb_stop_monitoring(struct ctdb_context *ctdb);

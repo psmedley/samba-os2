@@ -592,7 +592,8 @@ static int transaction_sync(struct tdb_context *tdb, tdb_off_t offset, tdb_len_t
 
 static int _tdb_transaction_cancel(struct tdb_context *tdb)
 {
-	int i, ret = 0;
+	uint32_t i;
+	int ret = 0;
 
 	if (tdb->transaction == NULL) {
 		TDB_LOG((tdb, TDB_DEBUG_ERROR, "tdb_transaction_cancel: no transaction\n"));
@@ -654,7 +655,7 @@ _PUBLIC_ int tdb_transaction_cancel(struct tdb_context *tdb)
 static bool tdb_recovery_size(struct tdb_context *tdb, tdb_len_t *result)
 {
 	tdb_len_t recovery_size = 0;
-	int i;
+	uint32_t i;
 
 	recovery_size = sizeof(uint32_t);
 	for (i=0;i<tdb->transaction->num_blocks;i++) {
@@ -689,6 +690,8 @@ int tdb_recovery_area(struct tdb_context *tdb,
 		      tdb_off_t *recovery_offset,
 		      struct tdb_record *rec)
 {
+	int ret;
+
 	if (tdb_ofs_read(tdb, TDB_RECOVERY_HEAD, recovery_offset) == -1) {
 		return -1;
 	}
@@ -709,6 +712,13 @@ int tdb_recovery_area(struct tdb_context *tdb,
 		*recovery_offset = 0;
 		rec->rec_len = 0;
 	}
+
+	ret = methods->tdb_oob(tdb, *recovery_offset, rec->rec_len, 1);
+	if (ret == -1) {
+		*recovery_offset = 0;
+		rec->rec_len = 0;
+	}
+
 	return 0;
 }
 
@@ -834,7 +844,7 @@ static int transaction_setup_recovery(struct tdb_context *tdb,
 	tdb_off_t recovery_offset, recovery_max_size;
 	tdb_off_t old_map_size = tdb->transaction->old_map_size;
 	uint32_t magic, tailer;
-	int i;
+	uint32_t i;
 
 	/*
 	  check that the recovery area has enough space
@@ -844,13 +854,12 @@ static int transaction_setup_recovery(struct tdb_context *tdb,
 		return -1;
 	}
 
-	data = (unsigned char *)malloc(recovery_size + sizeof(*rec));
-	if (data == NULL) {
+	rec = malloc(recovery_size + sizeof(*rec));
+	if (rec == NULL) {
 		tdb->ecode = TDB_ERR_OOM;
 		return -1;
 	}
 
-	rec = (struct tdb_record *)data;
 	memset(rec, 0, sizeof(*rec));
 
 	rec->magic    = TDB_RECOVERY_INVALID_MAGIC;
@@ -858,6 +867,8 @@ static int transaction_setup_recovery(struct tdb_context *tdb,
 	rec->rec_len  = recovery_max_size;
 	rec->key_len  = old_map_size;
 	CONVERT(*rec);
+
+	data = (unsigned char *)rec;
 
 	/* build the recovery data into a single blob to allow us to do a single
 	   large write, which should be more efficient */
@@ -1096,7 +1107,7 @@ static bool repack_worthwhile(struct tdb_context *tdb)
 _PUBLIC_ int tdb_transaction_commit(struct tdb_context *tdb)
 {
 	const struct tdb_methods *methods;
-	int i;
+	uint32_t i;
 	bool need_repack = false;
 
 	if (tdb->transaction == NULL) {

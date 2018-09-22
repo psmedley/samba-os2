@@ -43,14 +43,6 @@
 
 #define WB_REPLACE_CHAR		'_'
 
-struct sid_ctr {
-	struct dom_sid *sid;
-	bool finished;
-	const char *domain;
-	const char *name;
-	enum lsa_SidType type;
-};
-
 struct winbindd_cli_state {
 	struct winbindd_cli_state *prev, *next;   /* Linked list pointers */
 	int sock;                                 /* Open socket from client */
@@ -115,13 +107,12 @@ struct winbindd_child_dispatch_table {
 };
 
 struct winbindd_child {
-	struct winbindd_child *next, *prev;
-
 	pid_t pid;
 	struct winbindd_domain *domain;
 	char *logfilename;
 
 	int sock;
+	struct tevent_fd *monitor_fde; /* Watch for dead children/sockets */
 	struct tevent_queue *queue;
 	struct dcerpc_binding_handle *binding_handle;
 

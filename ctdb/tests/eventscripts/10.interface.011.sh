@@ -4,7 +4,7 @@
 
 define_test "Release 1 IP, 10 connections killed, 1 fails"
 
-setup_ctdb
+setup
 
 ctdb_get_1_public_address |
 while read dev ip bits ; do
@@ -19,9 +19,9 @@ while read dev ip bits ; do
 					 "$ip" 445 10.254.254.0 43210
 
 	ok <<EOF
-Killed 10/11 TCP connections to released IP 10.0.0.3
+Killed 10/11 TCP connections to released IP ${ip}
 Remaining connections:
-  10.0.0.3:445 10.254.254.1:43211
+  ${ip}:445 10.254.254.1:43211
 EOF
 
 	simple_test_event "releaseip" $dev $ip $bits

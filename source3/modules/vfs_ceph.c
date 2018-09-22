@@ -368,7 +368,6 @@ static int cephwrap_mkdir(struct vfs_handle_struct *handle,
 			  mode_t mode)
 {
 	int result;
-	bool has_dacl = False;
 	char *parent = NULL;
 	const char *path = smb_fname->base_name;
 
@@ -376,34 +375,14 @@ static int cephwrap_mkdir(struct vfs_handle_struct *handle,
 
 	if (lp_inherit_acls(SNUM(handle->conn))
 	    && parent_dirname(talloc_tos(), path, &parent, NULL)
-	    && (has_dacl = directory_has_default_acl(handle->conn, parent)))
+	    && directory_has_default_acl(handle->conn, parent)) {
 		mode = 0777;
+	}
 
 	TALLOC_FREE(parent);
 
 	result = ceph_mkdir(handle->data, path, mode);
-
-	/*
-	 * Note. This order is important
-	 */
-	if (result) {
-		WRAP_RETURN(result);
-	} else if (result == 0 && !has_dacl) {
-		/*
-		 * We need to do this as the default behavior of POSIX ACLs
-		 * is to set the mask to be the requested group permission
-		 * bits, not the group permission bits to be the requested
-		 * group permission bits. This is not what we want, as it will
-		 * mess up any inherited ACL bits that were set. JRA.
-		 */
-		int saved_errno = errno; /* We may get ENOSYS */
-		if ((SMB_VFS_CHMOD_ACL(handle->conn, smb_fname, mode) == -1) &&
-				(errno == ENOSYS)) {
-			errno = saved_errno;
-		}
-	}
-
-	return result;
+	return WRAP_RETURN(result);
 }
 
 static int cephwrap_rmdir(struct vfs_handle_struct *handle,
@@ -455,18 +434,6 @@ static int cephwrap_close(struct vfs_handle_struct *handle, files_struct *fsp)
 	result = ceph_close(handle->data, fsp->fh->fd);
 	DBG_DEBUG("[CEPH] close(...) = %d\n", result);
 
-	WRAP_RETURN(result);
-}
-
-static ssize_t cephwrap_read(struct vfs_handle_struct *handle, files_struct *fsp, void *data, size_t n)
-{
-	ssize_t result;
-
-	DBG_DEBUG("[CEPH] read(%p, %p, %p, %llu)\n", handle, fsp, data, llu(n));
-
-	/* Using -1 for the offset means read/write rather than pread/pwrite */
-	result = ceph_read(handle->data, fsp->fh->fd, data, n, -1);
-	DBG_DEBUG("[CEPH] read(...) = %llu\n", llu(result));
 	WRAP_RETURN(result);
 }
 
@@ -532,22 +499,6 @@ static ssize_t cephwrap_pread_recv(struct tevent_req *req,
 	}
 	*vfs_aio_state = state->vfs_aio_state;
 	return state->bytes_read;
-}
-
-static ssize_t cephwrap_write(struct vfs_handle_struct *handle, files_struct *fsp, const void *data, size_t n)
-{
-	ssize_t result;
-
-	DBG_DEBUG("[CEPH] write(%p, %p, %p, %llu)\n", handle, fsp, data, llu(n));
-
-	result = ceph_write(handle->data, fsp->fh->fd, data, n, -1);
-
-	DBG_DEBUG("[CEPH] write(...) = %llu\n", llu(result));
-	if (result < 0) {
-		WRAP_RETURN(result);
-	}
-	fsp->fh->pos += result;
-	return result;
 }
 
 static ssize_t cephwrap_pwrite(struct vfs_handle_struct *handle, files_struct *fsp, const void *data,
@@ -662,14 +613,6 @@ static int cephwrap_rename(struct vfs_handle_struct *handle,
 	}
 
 	result = ceph_rename(handle->data, smb_fname_src->base_name, smb_fname_dst->base_name);
-	WRAP_RETURN(result);
-}
-
-static int cephwrap_fsync(struct vfs_handle_struct *handle, files_struct *fsp)
-{
-	int result;
-	DBG_DEBUG("[CEPH] cephwrap_fsync\n");
-	result = ceph_fsync(handle->data, fsp->fh->fd, false);
 	WRAP_RETURN(result);
 }
 
@@ -1003,26 +946,6 @@ static int cephwrap_chmod(struct vfs_handle_struct *handle,
 	int result;
 
 	DBG_DEBUG("[CEPH] chmod(%p, %s, %d)\n", handle, smb_fname->base_name, mode);
-
-	/*
-	 * We need to do this due to the fact that the default POSIX ACL
-	 * chmod modifies the ACL *mask* for the group owner, not the
-	 * group owner bits directly. JRA.
-	 */
-
-
-	{
-		int saved_errno = errno; /* We might get ENOSYS */
-		result = SMB_VFS_CHMOD_ACL(handle->conn,
-					smb_fname,
-					mode);
-		if (result == 0) {
-			return result;
-		}
-		/* Error - return the old errno. */
-		errno = saved_errno;
-	}
-
 	result = ceph_chmod(handle->data, smb_fname->base_name, mode);
 	DBG_DEBUG("[CEPH] chmod(...) = %d\n", result);
 	WRAP_RETURN(result);
@@ -1033,21 +956,6 @@ static int cephwrap_fchmod(struct vfs_handle_struct *handle, files_struct *fsp, 
 	int result;
 
 	DBG_DEBUG("[CEPH] fchmod(%p, %p, %d)\n", handle, fsp, mode);
-
-	/*
-	 * We need to do this due to the fact that the default POSIX ACL
-	 * chmod modifies the ACL *mask* for the group owner, not the
-	 * group owner bits directly. JRA.
-	 */
-
-	{
-		int saved_errno = errno; /* We might get ENOSYS */
-		if ((result = SMB_VFS_FCHMOD_ACL(fsp, mode)) == 0) {
-			return result;
-		}
-		/* Error - return the old errno. */
-		errno = saved_errno;
-	}
 
 #if defined(HAVE_FCHMOD)
 	result = ceph_fchmod(handle->data, fsp->fh->fd, mode);
@@ -1236,15 +1144,10 @@ static int cephwrap_ftruncate(struct vfs_handle_struct *handle, files_struct *fs
 		goto done;
 	}
 
-	if (SMB_VFS_LSEEK(fsp, len-1, SEEK_SET) != len -1)
+	if (SMB_VFS_PWRITE(fsp, &c, 1, len-1)!=1) {
 		goto done;
+	}
 
-	if (SMB_VFS_WRITE(fsp, &c, 1)!=1)
-		goto done;
-
-	/* Seek to where we were */
-	if (SMB_VFS_LSEEK(fsp, currpos, SEEK_SET) != currpos)
-		goto done;
 	result = 0;
 
   done:
@@ -1585,11 +1488,9 @@ static struct vfs_fn_pointers ceph_fns = {
 
 	.open_fn = cephwrap_open,
 	.close_fn = cephwrap_close,
-	.read_fn = cephwrap_read,
 	.pread_fn = cephwrap_pread,
 	.pread_send_fn = cephwrap_pread_send,
 	.pread_recv_fn = cephwrap_pread_recv,
-	.write_fn = cephwrap_write,
 	.pwrite_fn = cephwrap_pwrite,
 	.pwrite_send_fn = cephwrap_pwrite_send,
 	.pwrite_recv_fn = cephwrap_pwrite_recv,
@@ -1597,7 +1498,6 @@ static struct vfs_fn_pointers ceph_fns = {
 	.sendfile_fn = cephwrap_sendfile,
 	.recvfile_fn = cephwrap_recvfile,
 	.rename_fn = cephwrap_rename,
-	.fsync_fn = cephwrap_fsync,
 	.fsync_send_fn = cephwrap_fsync_send,
 	.fsync_recv_fn = cephwrap_fsync_recv,
 	.stat_fn = cephwrap_stat,

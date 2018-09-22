@@ -48,6 +48,8 @@ from samba.samdb import SamDB
 from samba.dcerpc import netlogon, winbind
 from samba.netcmd.dns import cmd_dns
 from samba import gensec
+from samba.kcc import kcc_utils
+import ldb
 
 samba.ensure_third_party_module("dns", "dnspython")
 import dns.resolver
@@ -99,6 +101,8 @@ else:
     IPs = samba.interface_ips(lp, all_interfaces)
 
 nsupdate_cmd = lp.get('nsupdate command')
+
+dns_zone_scavenging = lp.get("dns zone scavenging")
 
 if len(IPs) == 0:
     print "No IP interfaces - skipping DNS updates"
@@ -493,7 +497,7 @@ def call_nsupdate(d, op="add"):
         # Now find the SOA, or if we can't get a ticket to the SOA,
         # any server with an NS record we can get a ticket for.
         #
-        # Thanks to the Kerberos Crednetials cache this is not
+        # Thanks to the Kerberos Credentials cache this is not
         # expensive inside the loop
         server = get_krb5_rw_dns_server(creds, zone)
         f.write('server %s\n' % server)
@@ -539,7 +543,7 @@ def call_nsupdate(d, op="add"):
             error_count = error_count + 1
             if opts.verbose:
                 print("Failed nsupdate: %d" % ret)
-    except Exception, estr:
+    except Exception as estr:
         if opts.fail_immediately:
             sys.exit(1)
         error_count = error_count + 1
@@ -627,7 +631,7 @@ def call_samba_tool(d, op="add", zone=None):
             error_count = error_count + 1
             if opts.verbose:
                 print("Failed 'samba-tool dns' based update of %s" % (str(d)))
-    except Exception, estr:
+    except Exception as estr:
         if opts.fail_immediately:
             sys.exit(1)
         error_count = error_count + 1
@@ -678,7 +682,7 @@ def rodc_dns_update(d, t, op):
         if ret_names.names[0].status != 0:
             print("Failed to set DNS entry: %s (status %u)" % (d, ret_names.names[0].status))
             error_count = error_count + 1
-    except RuntimeError, reason:
+    except RuntimeError as reason:
         print("Error setting DNS entry of type %u: %s: %s" % (t, d, reason))
         error_count = error_count + 1
 
@@ -775,9 +779,15 @@ for line in cfile:
         cache_list.append(c)
         cache_set.add(str(c))
 
+site_specific_rec = []
+
 # read each line, and check that the DNS name exists
 for line in file:
     line = line.strip()
+
+    if '${SITE}' in line:
+        site_specific_rec.append(line)
+
     if line == '' or line[0] == "#":
         continue
     d = parse_dns_line(line, sub_vars)
@@ -790,6 +800,25 @@ for line in file:
     if str(d) not in dup_set:
         dns_list.append(d)
         dup_set.add(str(d))
+
+# Perform automatic site coverage by default
+auto_coverage = True
+
+if not am_rodc and auto_coverage:
+    site_names = kcc_utils.uncovered_sites_to_cover(samdb,
+                                                    samdb.server_site_name())
+
+    # Duplicate all site specific records for the uncovered site
+    for site in site_names:
+        to_add = [samba.substitute_var(line, {'SITE': site})
+                  for line in site_specific_rec]
+
+        for site_line in to_add:
+            d = parse_dns_line(site_line,
+                               sub_vars=sub_vars)
+            if d is not None and str(d) not in dup_set:
+                dns_list.append(d)
+                dup_set.add(str(d))
 
 # now expand the entries, if any are A record with ip set to $IP
 # then replace with multiple entries, one for each interface IP
@@ -820,7 +849,11 @@ for d in dns_list:
         rebuild_cache = True
         if opts.verbose:
             print "need cache add: %s" % d
-    if opts.all_names:
+    if dns_zone_scavenging:
+        update_list.append(d)
+        if opts.verbose:
+            print "scavenging requires update: %s" % d
+    elif opts.all_names:
         update_list.append(d)
         if opts.verbose:
             print "force update: %s" % d
@@ -828,7 +861,6 @@ for d in dns_list:
         update_list.append(d)
         if opts.verbose:
             print "need update: %s" % d
-
 
 for c in cache_list:
     found = False

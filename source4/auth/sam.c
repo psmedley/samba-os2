@@ -32,7 +32,10 @@
 #include "param/param.h"
 #include "librpc/gen_ndr/ndr_winbind_c.h"
 
-#define KRBTGT_ATTRS \
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_AUTH
+
+#define KRBTGT_ATTRS				\
 	/* required for the krb5 kdc */		\
 	"objectClass",				\
 	"sAMAccountName",			\
@@ -65,6 +68,14 @@ const char *server_attrs[] = {
 };
 
 const char *user_attrs[] = {
+	/*
+	 * This ordering (having msDS-ResultantPSO first) is
+	 * important.  By processing this attribute first it is
+	 * available in the operational module for the other PSO
+	 * attribute calcuations to use.
+	 */
+	"msDS-ResultantPSO",
+
 	KRBTGT_ATTRS,
 
 	"logonHours",
@@ -286,6 +297,41 @@ _PUBLIC_ NTSTATUS authsam_account_ok(TALLOC_CTX *mem_ctx,
 	return NT_STATUS_OK;
 }
 
+static NTSTATUS authsam_domain_group_filter(TALLOC_CTX *mem_ctx,
+					    char **_filter)
+{
+	char *filter = NULL;
+
+	*_filter = NULL;
+
+	filter = talloc_strdup(mem_ctx, "(&(objectClass=group)");
+	if (filter == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	/*
+	 * Skip all builtin groups, they're added later.
+	 */
+	filter = talloc_asprintf_append_buffer(filter,
+				"(!(groupType:1.2.840.113556.1.4.803:=%u))",
+				GROUP_TYPE_BUILTIN_LOCAL_GROUP);
+	if (filter == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+	/*
+	 * Only include security groups.
+	 */
+	filter = talloc_asprintf_append_buffer(filter,
+				"(groupType:1.2.840.113556.1.4.803:=%u))",
+				GROUP_TYPE_SECURITY_ENABLED);
+	if (filter == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	*_filter = filter;
+	return NT_STATUS_OK;
+}
+
 _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 					   struct ldb_context *sam_ctx,
 					   const char *netbios_name,
@@ -300,7 +346,8 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 	NTSTATUS status;
 	struct auth_user_info_dc *user_info_dc;
 	struct auth_user_info *info;
-	const char *str, *filter;
+	const char *str = NULL;
+	char *filter = NULL;
 	/* SIDs for the account and his primary group */
 	struct dom_sid *account_sid;
 	const char *primary_group_string;
@@ -346,13 +393,15 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 	sids[PRIMARY_GROUP_SID_INDEX] = *domain_sid;
 	sid_append_rid(&sids[PRIMARY_GROUP_SID_INDEX], ldb_msg_find_attr_as_uint(msg, "primaryGroupID", ~0));
 
-	/* Filter out builtin groups from this token.  We will search
+	/*
+	 * Filter out builtin groups from this token. We will search
 	 * for builtin groups later, and not include them in the PAC
-	 * on SamLogon validation info */
-	filter = talloc_asprintf(tmp_ctx, "(&(objectClass=group)(!(groupType:1.2.840.113556.1.4.803:=%u))(groupType:1.2.840.113556.1.4.803:=%u))", GROUP_TYPE_BUILTIN_LOCAL_GROUP, GROUP_TYPE_SECURITY_ENABLED);
-	if (filter == NULL) {
+	 * or SamLogon validation info.
+	 */
+	status = authsam_domain_group_filter(tmp_ctx, &filter);
+	if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(user_info_dc);
-		return NT_STATUS_NO_MEMORY;
+		return status;
 	}
 
 	primary_group_string = dom_sid_string(tmp_ctx, &sids[PRIMARY_GROUP_SID_INDEX]);
@@ -551,6 +600,68 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 	return NT_STATUS_OK;
 }
 
+_PUBLIC_ NTSTATUS authsam_update_user_info_dc(TALLOC_CTX *mem_ctx,
+			struct ldb_context *sam_ctx,
+			struct auth_user_info_dc *user_info_dc)
+{
+	char *filter = NULL;
+	NTSTATUS status;
+	uint32_t i;
+	uint32_t n = 0;
+
+	/*
+	 * This function exists to expand group memberships
+	 * in the local domain (forest), as the token
+	 * may come from a different domain.
+	 */
+
+	/*
+	 * Filter out builtin groups from this token. We will search
+	 * for builtin groups later.
+	 */
+	status = authsam_domain_group_filter(mem_ctx, &filter);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(user_info_dc);
+		return status;
+	}
+
+	/*
+	 * We loop only over the existing number of
+	 * sids.
+	 */
+	n = user_info_dc->num_sids;
+	for (i = 0; i < n; i++) {
+		struct dom_sid *sid = &user_info_dc->sids[i];
+		char sid_buf[DOM_SID_STR_BUFLEN] = {0,};
+		char dn_str[DOM_SID_STR_BUFLEN*2] = {0,};
+		DATA_BLOB dn_blob = data_blob_null;
+		int len;
+
+		len = dom_sid_string_buf(sid, sid_buf, sizeof(sid_buf));
+		if (len+1 > sizeof(sid_buf)) {
+			return NT_STATUS_INVALID_SID;
+		}
+		snprintf(dn_str, sizeof(dn_str), "<SID=%s>", sid_buf);
+		dn_blob = data_blob_string_const(dn_str);
+
+		/*
+		 * We already have the SID in the token, so set
+		 * 'only childs' flag to true and add all
+		 * groups which match the filter.
+		 */
+		status = dsdb_expand_nested_groups(sam_ctx, &dn_blob,
+						   true, filter,
+						   user_info_dc,
+						   &user_info_dc->sids,
+						   &user_info_dc->num_sids);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+	}
+
+	return NT_STATUS_OK;
+}
+
 NTSTATUS sam_get_results_principal(struct ldb_context *sam_ctx,
 				   TALLOC_CTX *mem_ctx, const char *principal,
 				   const char **attrs,
@@ -674,6 +785,38 @@ NTSTATUS authsam_get_user_info_dc_principal(TALLOC_CTX *mem_ctx,
 	return NT_STATUS_OK;
 }
 
+/*
+ * Returns the details for the Password Settings Object (PSO), if one applies
+ * the user.
+ */
+static int authsam_get_user_pso(struct ldb_context *sam_ctx,
+				TALLOC_CTX *mem_ctx,
+				struct ldb_message *user_msg,
+				struct ldb_message **pso_msg)
+{
+	const char *attrs[] = { "msDS-LockoutThreshold",
+				"msDS-LockoutObservationWindow",
+				NULL };
+	struct ldb_dn *pso_dn = NULL;
+	struct ldb_result *res = NULL;
+	int ret;
+
+	/* check if the user has a PSO that applies to it */
+	pso_dn = ldb_msg_find_attr_as_dn(sam_ctx, mem_ctx, user_msg,
+					 "msDS-ResultantPSO");
+
+	if (pso_dn != NULL) {
+		ret = dsdb_search_dn(sam_ctx, mem_ctx, &res, pso_dn, attrs, 0);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+
+		*pso_msg = res->msgs[0];
+	}
+
+	return LDB_SUCCESS;
+}
+
 NTSTATUS authsam_update_bad_pwd_count(struct ldb_context *sam_ctx,
 				      struct ldb_message *msg,
 				      struct ldb_dn *domain_dn)
@@ -687,6 +830,7 @@ NTSTATUS authsam_update_bad_pwd_count(struct ldb_context *sam_ctx,
 	NTSTATUS status;
 	struct ldb_result *domain_res;
 	struct ldb_message *msg_mod = NULL;
+	struct ldb_message *pso_msg = NULL;
 	TALLOC_CTX *mem_ctx;
 
 	mem_ctx = talloc_new(msg);
@@ -700,8 +844,20 @@ NTSTATUS authsam_update_bad_pwd_count(struct ldb_context *sam_ctx,
 		return NT_STATUS_INTERNAL_DB_CORRUPTION;
 	}
 
+	ret = authsam_get_user_pso(sam_ctx, mem_ctx, msg, &pso_msg);
+	if (ret != LDB_SUCCESS) {
+
+		/*
+		 * fallback to using the domain defaults so that we still
+		 * record the bad password attempt
+		 */
+		DBG_ERR("Error (%d) checking PSO for %s",
+			ret, ldb_dn_get_linearized(msg->dn));
+	}
+
 	status = dsdb_update_bad_pwd_count(mem_ctx, sam_ctx,
-					   msg, domain_res->msgs[0], &msg_mod);
+					   msg, domain_res->msgs[0], pso_msg,
+					   &msg_mod);
 	if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(mem_ctx);
 		return status;

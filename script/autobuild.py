@@ -3,6 +3,7 @@
 # Copyright Andrew Tridgell 2010
 # released under GNU GPL v3 or later
 
+from __future__ import print_function
 from subprocess import call, check_call,Popen, PIPE
 import os, tarfile, sys, time
 from optparse import OptionParser
@@ -25,12 +26,17 @@ cleanup_list = []
 builddirs = {
     "ctdb"    : "ctdb",
     "samba"  : ".",
+    "samba-nt4"  : ".",
+    "samba-fileserver"  : ".",
     "samba-xc" : ".",
     "samba-o3" : ".",
     "samba-ctdb" : ".",
     "samba-libs"  : ".",
     "samba-static"  : ".",
     "samba-test-only"  : ".",
+    "samba-none-env"  : ".",
+    "samba-ad-dc"  : ".",
+    "samba-ad-dc-2"  : ".",
     "samba-systemkrb5"  : ".",
     "samba-nopython"  : ".",
     "ldb"     : "lib/ldb",
@@ -44,7 +50,26 @@ builddirs = {
     "retry"   : "."
     }
 
-defaulttasks = [ "ctdb", "samba", "samba-xc", "samba-o3", "samba-ctdb", "samba-libs", "samba-static", "samba-systemkrb5", "samba-nopython", "ldb", "tdb", "talloc", "replace", "tevent", "pidl" ]
+defaulttasks = [ "ctdb",
+                 "samba",
+                 "samba-nt4",
+                 "samba-fileserver",
+                 "samba-xc",
+                 "samba-o3",
+                 "samba-ctdb",
+                 "samba-libs",
+                 "samba-static",
+                 "samba-none-env",
+                 "samba-ad-dc",
+                 "samba-ad-dc-2",
+                 "samba-systemkrb5",
+                 "samba-nopython",
+                 "ldb",
+                 "tdb",
+                 "talloc",
+                 "replace",
+                 "tevent",
+                 "pidl" ]
 
 if os.environ.get("AUTOBUILD_SKIP_SAMBA_O3", "0") == "1":
     defaulttasks.remove("samba-o3")
@@ -55,9 +80,10 @@ samba_configure_params = " --picky-developer ${PREFIX} ${EXTRA_PYTHON} --with-pr
 samba_libs_envvars =  "PYTHONPATH=${PYTHON_PREFIX}/site-packages:$PYTHONPATH"
 samba_libs_envvars += " PKG_CONFIG_PATH=$PKG_CONFIG_PATH:${PREFIX_DIR}/lib/pkgconfig"
 samba_libs_envvars += " ADDITIONAL_CFLAGS='-Wmissing-prototypes'"
-samba_libs_configure_base = samba_libs_envvars + " ./configure --abi-check --enable-debug --picky-developer -C ${PREFIX} ${EXTRA_PYTHON}"
-samba_libs_configure_libs = samba_libs_configure_base + " --bundled-libraries=cmocka,NONE"
-samba_libs_configure_samba = samba_libs_configure_base + " --bundled-libraries=!talloc,!pytalloc-util,!tdb,!pytdb,!ldb,!pyldb,!pyldb-util,!tevent,!pytevent"
+samba_libs_configure_base = samba_libs_envvars + " ./configure --abi-check --enable-debug --picky-developer -C ${PREFIX}"
+samba_libs_configure_libs = samba_libs_configure_base + " --bundled-libraries=cmocka,NONE ${EXTRA_PYTHON}"
+samba_libs_configure_bundled_libs = " --bundled-libraries=!talloc,!pytalloc-util,!tdb,!pytdb,!ldb,!pyldb,!pyldb-util,!tevent,!pytevent"
+samba_libs_configure_samba = samba_libs_configure_base + samba_libs_configure_bundled_libs + " ${EXTRA_PYTHON}"
 
 if os.environ.get("AUTOBUILD_NO_EXTRA_PYTHON", "0") == "1":
     extra_python = ""
@@ -73,20 +99,71 @@ tasks = {
                ("check-clean-tree", "../script/clean-source-tree.sh", "text/plain"),
                ("clean", "make clean", "text/plain") ],
 
-    # We have 'test' before 'install' because, 'test' should work without 'install'
+    # We have 'test' before 'install' because, 'test' should work without 'install (runs ad_dc_ntvfs and all the other envs)'
     "samba" : [ ("configure", "./configure.developer --with-selftest-prefix=./bin/ab" + samba_configure_params, "text/plain"),
                 ("make", "make -j", "text/plain"),
-                ("test", "make test FAIL_IMMEDIATELY=1", "text/plain"),
+                ("test", "make test FAIL_IMMEDIATELY=1 "
+                 "TESTS='--exclude-env=none "
+                 "--exclude-env=nt4_dc "
+                 "--exclude-env=nt4_member "
+                 "--exclude-env=ad_dc "
+                 "--exclude-env=fl2003dc "
+                 "--exclude-env=fl2008r2dc "
+                 "--exclude-env=ad_member "
+                 "--exclude-env=ad_member_idmap_rid "
+                 "--exclude-env=ad_member_idmap_ad "
+                 "--exclude-env=chgdcpass "
+                 "--exclude-env=vampire_2000_dc "
+                 "--exclude-env=fl2000dc "
+                 "--exclude-env=fileserver'",
+                 "text/plain"),
                 ("install", "make install", "text/plain"),
                 ("check-clean-tree", "script/clean-source-tree.sh", "text/plain"),
                 ("clean", "make clean", "text/plain") ],
+
+    # We split out this so the isolated nt4_dc tests do not wait for ad_dc or ad_dc_ntvfs tests (which are long)
+    "samba-nt4" : [ ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
+                    ("configure", "./configure.developer --without-ads --with-selftest-prefix=./bin/ab" + samba_configure_params, "text/plain"),
+                    ("make", "make -j", "text/plain"),
+                    ("test", "make test FAIL_IMMEDIATELY=1 TESTS='--include-env=nt4_dc --include-env=nt4_member'", "text/plain"),
+                    ("install", "make install", "text/plain"),
+                    ("check-clean-tree", "script/clean-source-tree.sh", "text/plain"),
+                    ("clean", "make clean", "text/plain") ],
+
+    # We split out this so the isolated ad_dc tests do not wait for ad_dc_ntvfs tests (which are long)
+    "samba-fileserver" : [ ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
+                      ("configure", "./configure.developer --without-ad-dc --without-ldap --without-ads --without-json-audit --with-selftest-prefix=./bin/ab" + samba_configure_params, "text/plain"),
+                      ("make", "make -j", "text/plain"),
+                      ("test", "make test FAIL_IMMEDIATELY=1 TESTS='--include-env=fileserver'", "text/plain"),
+                      ("check-clean-tree", "script/clean-source-tree.sh", "text/plain")],
+
+    # We split out this so the isolated ad_dc tests do not wait for ad_dc_ntvfs tests (which are long)
+    "samba-ad-dc" : [ ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
+                      ("configure", "./configure.developer --with-selftest-prefix=./bin/ab" + samba_configure_params, "text/plain"),
+                      ("make", "make -j", "text/plain"),
+                      ("test", "make test FAIL_IMMEDIATELY=1 TESTS='"
+                       "--include-env=ad_dc "
+                       "--include-env=fl2003dc "
+                       "--include-env=fl2008r2dc "
+                       "--include-env=ad_member "
+                       "--include-env=ad_member_idmap_rid "
+                       "--include-env=ad_member_idmap_ad'", "text/plain"),
+                      ("check-clean-tree", "script/clean-source-tree.sh", "text/plain")],
+
+    # We split out this so the isolated ad_dc tests do not wait for ad_dc_ntvfs tests (which are long)
+    "samba-ad-dc-2" : [ ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
+                      ("configure", "./configure.developer --with-selftest-prefix=./bin/ab" + samba_configure_params, "text/plain"),
+                      ("make", "make -j", "text/plain"),
+                      ("test", "make test FAIL_IMMEDIATELY=1 TESTS='--include-env=chgdcpass --include-env=vampire_2000_dc --include-env=fl2000dc'", "text/plain"),
+                      ("check-clean-tree", "script/clean-source-tree.sh", "text/plain")],
 
     "samba-test-only" : [ ("configure", "./configure.developer --with-selftest-prefix=./bin/ab  --abi-check-disable" + samba_configure_params, "text/plain"),
                           ("make", "make -j", "text/plain"),
                           ("test", 'make test FAIL_IMMEDIATELY=1 TESTS="${TESTS}"',"text/plain") ],
 
     # Test cross-compile infrastructure
-    "samba-xc" : [ ("configure-native", "./configure.developer --with-selftest-prefix=./bin/ab" + samba_configure_params, "text/plain"),
+    "samba-xc" : [ ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
+                   ("configure-native", "./configure.developer --with-selftest-prefix=./bin/ab" + samba_configure_params, "text/plain"),
                    ("configure-cross-execute", "./configure.developer -b ./bin-xe --cross-compile --cross-execute=script/identity_cc.sh" \
                     " --cross-answers=./bin-xe/cross-answers.txt --with-selftest-prefix=./bin-xe/ab" + samba_configure_params, "text/plain"),
                    ("configure-cross-answers", "./configure.developer -b ./bin-xa --cross-compile" \
@@ -94,7 +171,7 @@ tasks = {
                    ("compare-results", "script/compare_cc_results.py ./bin/c4che/default.cache.py ./bin-xe/c4che/default.cache.py ./bin-xa/c4che/default.cache.py", "text/plain")],
 
     # test build with -O3 -- catches extra warnings and bugs, tests the ad_dc environments
-    "samba-o3" : [ ("random-sleep", "../script/random-sleep.sh 60 600", "text/plain"),
+    "samba-o3" : [ ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
                    ("configure", "ADDITIONAL_CFLAGS='-O3' ./configure.developer --with-selftest-prefix=./bin/ab --abi-check-disable" + samba_configure_params, "text/plain"),
                    ("make", "make -j", "text/plain"),
                    ("test", "make quicktest FAIL_IMMEDIATELY=1 TESTS='--include-env=ad_dc'", "text/plain"),
@@ -151,6 +228,15 @@ tasks = {
                       ("allshared-configure", samba_libs_configure_samba + " --with-shared-modules=ALL", "text/plain"),
                       ("allshared-make", "make -j", "text/plain")],
 
+    "samba-none-env" : [
+                      ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
+                      ("configure", "./configure.developer --with-selftest-prefix=./bin/ab" + samba_configure_params, "text/plain"),
+                      ("make", "make -j", "text/plain"),
+                      ("test", "make test "
+                       "FAIL_IMMEDIATELY=1 "
+                       "TESTS='--include-env=none'",
+                       "text/plain")],
+
     "samba-static" : [
                       ("random-sleep", "script/random-sleep.sh 60 600", "text/plain"),
                       # build with all modules static
@@ -191,7 +277,30 @@ tasks = {
                       ("make", "make -j", "text/plain"),
                       ("install", "make install", "text/plain"),
                       ("check-clean-tree", "script/clean-source-tree.sh", "text/plain"),
-                      ("clean", "make clean", "text/plain")
+                      ("clean", "make clean", "text/plain"),
+
+                      ("talloc-configure", "cd lib/talloc && " + samba_libs_configure_base + " --bundled-libraries=cmocka,NONE --disable-python", "text/plain"),
+                      ("talloc-make", "cd lib/talloc && make", "text/plain"),
+                      ("talloc-install", "cd lib/talloc && make install", "text/plain"),
+
+                      ("tdb-configure", "cd lib/tdb && " + samba_libs_configure_base + " --bundled-libraries=cmocka,NONE --disable-python", "text/plain"),
+                      ("tdb-make", "cd lib/tdb && make", "text/plain"),
+                      ("tdb-install", "cd lib/tdb && make install", "text/plain"),
+
+                      ("tevent-configure", "cd lib/tevent && " + samba_libs_configure_base + " --bundled-libraries=cmocka,NONE --disable-python", "text/plain"),
+                      ("tevent-make", "cd lib/tevent && make", "text/plain"),
+                      ("tevent-install", "cd lib/tevent && make install", "text/plain"),
+
+                      ("ldb-configure", "cd lib/ldb && " + samba_libs_configure_base + " --bundled-libraries=cmocka,NONE --disable-python", "text/plain"),
+                      ("ldb-make", "cd lib/ldb && make", "text/plain"),
+                      ("ldb-install", "cd lib/ldb && make install", "text/plain"),
+
+                      # retry against installed library packages
+                      ("libs-configure", samba_libs_configure_base + samba_libs_configure_bundled_libs + " --disable-python --without-ad-dc", "text/plain"),
+                      ("libs-make", "make -j", "text/plain"),
+                      ("libs-install", "make install", "text/plain"),
+                      ("libs-check-clean-tree", "script/clean-source-tree.sh", "text/plain"),
+                      ("libs-clean", "make clean", "text/plain")
                       ],
 
 
@@ -202,6 +311,9 @@ tasks = {
               ("make", "make", "text/plain"),
               ("install", "make install", "text/plain"),
               ("test", "make test", "text/plain"),
+              ("configure-no-lmdb", "./configure --enable-developer --without-ldb-lmdb -C ${PREFIX} ${EXTRA_PYTHON}", "text/plain"),
+              ("make-no-lmdb", "make", "text/plain"),
+              ("install-no-lmdb", "make install", "text/plain"),
               ("check-clean-tree", "../../script/clean-source-tree.sh", "text/plain"),
               ("distcheck", "make distcheck", "text/plain"),
               ("clean", "make clean", "text/plain") ],
@@ -263,7 +375,7 @@ tasks = {
 }
 
 def do_print(msg):
-    print "%s" % msg
+    print("%s" % msg)
     sys.stdout.flush()
     sys.stderr.flush()
 
@@ -437,10 +549,11 @@ class buildlist(object):
     def write_system_info(self):
         filename = 'system-info.txt'
         f = open(filename, 'w')
-        for cmd in ['uname -a', 'free', 'cat /proc/cpuinfo']:
-            print >>f, '### %s' % cmd
-            print >>f, run_cmd(cmd, output=True, checkfail=False)
-            print >>f
+        for cmd in ['uname -a', 'free', 'cat /proc/cpuinfo',
+                    'cc --version', 'df -m .', 'df -m %s' % testbase]:
+            print('### %s' % cmd, file=f)
+            print(run_cmd(cmd, output=True, checkfail=False), file=f)
+            print(file=f)
         f.close()
         return filename
 
@@ -609,6 +722,11 @@ parser.add_option("", "--restrict-tests", help="run as make test with this TESTS
                   default='')
 
 def send_email(subject, text, log_tar):
+    if options.email is None:
+        do_print("not sending email because the recipient is not set")
+        do_print("the text content would have been:\n\nSubject: %s\n\nTs" %
+                 (subject, text))
+        return
     outer = MIMEMultipart()
     outer['Subject'] = subject
     outer['To'] = options.email
@@ -747,7 +865,7 @@ top_commit_msg = run_cmd("git log -1", dir=gitroot, output=True)
 
 try:
     os.makedirs(testbase)
-except Exception, reason:
+except Exception as reason:
     raise Exception("Unable to create %s : %s" % (testbase, reason))
 cleanup_list.append(testbase)
 
@@ -833,7 +951,7 @@ if options.email is not None:
                   elapsed_time, log_base=options.log_base)
 else:
     elapsed_minutes = elapsed_time / 60.0
-    print '''
+    print('''
 
 ####################################################################
 
@@ -848,7 +966,7 @@ the autobuild has been abandoned. Please fix the error and resubmit.
 
 ####################################################################
 
-''' % (options.branch, platform.node(), elapsed_minutes, failed_task, errstr)
+''' % (options.branch, platform.node(), elapsed_minutes, failed_task, errstr))
 
 cleanup()
 do_print(errstr)

@@ -468,7 +468,9 @@ static int rootdse_add_dynamic(struct rootdse_context *ac, struct ldb_message *m
 	if (do_attribute_explicit(attrs, "tokenGroups")) {
 		/* Obtain the user's session_info */
 		struct auth_session_info *session_info
-			= (struct auth_session_info *)ldb_get_opaque(ldb, "sessionInfo");
+			= (struct auth_session_info *)ldb_get_opaque(
+				ldb,
+				DSDB_SESSION_INFO);
 		if (session_info && session_info->security_token) {
 			/* The list of groups this user is in */
 			for (i = 0; i < session_info->security_token->num_sids; i++) {
@@ -734,7 +736,9 @@ static int rootdse_filter_operations(struct ldb_module *module, struct ldb_reque
 		return LDB_SUCCESS;
 	}
 
-	session_info = (struct auth_session_info *)ldb_get_opaque(ldb_module_get_ctx(module), "sessionInfo");
+	session_info = (struct auth_session_info *)ldb_get_opaque(
+		ldb_module_get_ctx(module),
+		DSDB_SESSION_INFO);
 	if (session_info) {
 		is_anonymous = security_token_is_anonymous(session_info->security_token);
 	}
@@ -863,10 +867,50 @@ static int rootdse_search(struct ldb_module *module, struct ldb_request *req)
 	return ldb_next_request(module, down_req);
 }
 
+static struct rootdse_private_data *rootdse_get_private_data(struct ldb_module *module)
+{
+	void *priv = ldb_module_get_private(module);
+	struct rootdse_private_data *data = NULL;
+	struct ldb_context *ldb
+		= ldb_module_get_ctx(module);
+
+	if (priv != NULL) {
+		data = talloc_get_type_abort(priv,
+					     struct rootdse_private_data);
+	}
+
+	if (data != NULL) {
+		return data;
+	}
+
+	data = talloc_zero(module, struct rootdse_private_data);
+	if (data == NULL) {
+		return NULL;
+	}
+
+	data->num_controls = 0;
+	data->controls = NULL;
+	data->num_partitions = 0;
+	data->partitions = NULL;
+	data->block_anonymous = true;
+
+	ldb_module_set_private(module, data);
+
+	ldb_set_default_dns(ldb);
+
+	return data;
+}
+
+
 static int rootdse_register_control(struct ldb_module *module, struct ldb_request *req)
 {
-	struct rootdse_private_data *priv = talloc_get_type(ldb_module_get_private(module), struct rootdse_private_data);
+	struct rootdse_private_data *priv =
+		rootdse_get_private_data(module);
 	char **list;
+
+	if (priv == NULL) {
+		return ldb_module_oom(module);
+	}
 
 	list = talloc_realloc(priv, priv->controls, char *, priv->num_controls + 1);
 	if (!list) {
@@ -886,8 +930,13 @@ static int rootdse_register_control(struct ldb_module *module, struct ldb_reques
 
 static int rootdse_register_partition(struct ldb_module *module, struct ldb_request *req)
 {
-	struct rootdse_private_data *priv = talloc_get_type(ldb_module_get_private(module), struct rootdse_private_data);
+	struct rootdse_private_data *priv =
+		rootdse_get_private_data(module);
 	struct ldb_dn **list;
+
+	if (priv == NULL) {
+		return ldb_module_oom(module);
+	}
 
 	list = talloc_realloc(priv, priv->partitions, struct ldb_dn *, priv->num_partitions + 1);
 	if (!list) {
@@ -924,29 +973,20 @@ static int rootdse_request(struct ldb_module *module, struct ldb_request *req)
 static int rootdse_init(struct ldb_module *module)
 {
 	int ret;
-	struct ldb_context *ldb;
 	struct ldb_result *res;
-	struct rootdse_private_data *data;
 	const char *attrs[] = { "msDS-Behavior-Version", NULL };
 	const char *ds_attrs[] = { "dsServiceName", NULL };
 	TALLOC_CTX *mem_ctx;
 
-	ldb = ldb_module_get_ctx(module);
+	struct ldb_context *ldb
+		= ldb_module_get_ctx(module);
 
-	data = talloc_zero(module, struct rootdse_private_data);
+	struct rootdse_private_data *data
+		= rootdse_get_private_data(module);
+
 	if (data == NULL) {
-		return ldb_oom(ldb);
+		return ldb_module_oom(module);
 	}
-
-	data->num_controls = 0;
-	data->controls = NULL;
-	data->num_partitions = 0;
-	data->partitions = NULL;
-	data->block_anonymous = true;
-
-	ldb_module_set_private(module, data);
-
-	ldb_set_default_dns(ldb);
 
 	ret = ldb_next_init(module);
 
@@ -1237,7 +1277,9 @@ static int rootdse_enableoptionalfeature(struct ldb_module *module, struct ldb_r
 	struct ldb_dn *op_feature_scope_dn;
 	struct ldb_message *op_feature_msg;
 	struct auth_session_info *session_info =
-				(struct auth_session_info *)ldb_get_opaque(ldb, "sessionInfo");
+		(struct auth_session_info *)ldb_get_opaque(
+			ldb,
+			DSDB_SESSION_INFO);
 	TALLOC_CTX *tmp_ctx = talloc_new(ldb);
 	int ret;
 	const char *guid_string;
@@ -1513,7 +1555,9 @@ static int rootdse_become_master(struct ldb_module *module,
 	struct fsmo_transfer_state *fsmo;
 	struct tevent_req *treq;
 
-	session_info = (struct auth_session_info *)ldb_get_opaque(ldb_module_get_ctx(module), "sessionInfo");
+	session_info = (struct auth_session_info *)ldb_get_opaque(
+		ldb_module_get_ctx(module),
+		DSDB_SESSION_INFO);
 	level = security_session_user_level(session_info, NULL);
 	if (level < SECURITY_ADMINISTRATOR) {
 		return ldb_error(ldb, LDB_ERR_INSUFFICIENT_ACCESS_RIGHTS, "Denied rootDSE modify for non-administrator");

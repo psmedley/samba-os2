@@ -54,7 +54,7 @@ from samba.netcmd import (
     SuperCommand,
     Option,
     )
-
+from samba.compat import text_type
 
 try:
     import io
@@ -119,7 +119,7 @@ def get_crypt_value(alg, utf8pw, rounds=0):
     # we can ignore the possible == at the end
     # of the base64 string
     # we just need to replace '+' by '.'
-    b64salt = base64.b64encode(salt)[0:16].replace('+', '.')
+    b64salt = base64.b64encode(salt)[0:16].replace('+', '.').decode('utf8')
     crypt_salt = ""
     if rounds != 0:
         crypt_salt = "$%s$rounds=%s$%s$" % (alg, rounds, b64salt)
@@ -198,6 +198,9 @@ for (alg, attr) in [("5", "virtualCryptSHA256"), ("6", "virtualCryptSHA512")]:
 # Add the wDigest virtual attributes, virtualWDigest01 to virtualWDigest29
 for x in range(1, 30):
     virtual_attributes["virtualWDigest%02d" % x] = {}
+
+# Add Kerberos virtual attributes
+virtual_attributes["virtualKerberosSalt"] = {}
 
 virtual_attributes_help  = "The attributes to display (comma separated). "
 virtual_attributes_help += "Possible supported virtual attributes: %s" % ", ".join(sorted(virtual_attributes.keys()))
@@ -378,7 +381,7 @@ Example5 shows how to create an RFC2307/NIS domain enabled user account. If
                           uidnumber=uid_number, gidnumber=gid_number,
                           gecos=gecos, loginshell=login_shell,
                           smartcard_required=smartcard_required)
-        except Exception, e:
+        except Exception as e:
             raise CommandError("Failed to add user '%s': " % username, e)
 
         self.outf.write("User '%s' created successfully\n" % username)
@@ -440,7 +443,7 @@ Example2 shows how to delete a user in the domain against the local server.   su
                       credentials=creds, lp=lp)
 
         filter = ("(&(sAMAccountName=%s)(sAMAccountType=805306368))" %
-                   username)
+                   ldb.binary_encode(username))
 
         try:
             res = samdb.search(base=samdb.domain_dn(),
@@ -453,7 +456,7 @@ Example2 shows how to delete a user in the domain against the local server.   su
 
         try:
             samdb.delete(user_dn)
-        except Exception, e:
+        except Exception as e:
             raise CommandError('Failed to remove user "%s"' % username, e)
         self.outf.write("Deleted user %s\n" % username)
 
@@ -494,7 +497,7 @@ class cmd_user_list(Command):
 
 
 class cmd_user_enable(Command):
-    """Enable an user.
+    """Enable a user.
 
 This command enables a user account for logon to an Active Directory domain.  The username specified on the command is the sAMAccountName.  The username may also be specified using the --filter option.
 
@@ -557,13 +560,13 @@ Example3 shows how to enable a user in the domain against a local LDAP server.  
             credentials=creds, lp=lp)
         try:
             samdb.enable_account(filter)
-        except Exception, msg:
+        except Exception as msg:
             raise CommandError("Failed to enable user '%s': %s" % (username or filter, msg))
         self.outf.write("Enabled user '%s'\n" % (username or filter))
 
 
 class cmd_user_disable(Command):
-    """Disable an user."""
+    """Disable a user."""
 
     synopsis = "%prog (<username>|--filter <filter>) [options]"
 
@@ -596,7 +599,7 @@ class cmd_user_disable(Command):
             credentials=creds, lp=lp)
         try:
             samdb.disable_account(filter)
-        except Exception, msg:
+        except Exception as msg:
             raise CommandError("Failed to disable user '%s': %s" % (username or filter, msg))
 
 
@@ -615,7 +618,7 @@ samba-tool user setexpiry User1 --days=20 --URL=ldap://samba.samdom.example.com 
 Example1 shows how to set the expiration of an account in a remote LDAP server.  The --URL parameter is used to specify the remote target server.  The --username= and --password= options are used to pass the username and password of a user that exists on the remote server and is authorized to update that server.
 
 Example2:
-su samba-tool user setexpiry User2
+sudo samba-tool user setexpiry User2 --noexpiry
 
 Example2 shows how to set the account expiration of user User2 so it will never expire.  The user in this example resides on the  local server.   sudo is used so a user may run the command as root.
 
@@ -663,7 +666,7 @@ Example4 shows how to set the account expiration so that it will never expire.  
 
         try:
             samdb.setexpiry(filter, days*24*3600, no_expiry_req=noexpiry)
-        except Exception, msg:
+        except Exception as msg:
             # FIXME: Catch more specific exception
             raise CommandError("Failed to set expiry for user '%s': %s" % (
                 username or filter, msg))
@@ -713,8 +716,10 @@ class cmd_user_password(Command):
                 self.outf.write("Sorry, passwords do not match.\n")
 
         try:
-            net.change_password(password.encode('utf-8'))
-        except Exception, msg:
+            if not isinstance(password, text_type):
+                password = password.decode('utf8')
+            net.change_password(password)
+        except Exception as msg:
             # FIXME: catch more specific exception
             raise CommandError("Failed to change password : %s" % msg)
         self.outf.write("Changed password OK\n")
@@ -832,7 +837,7 @@ Example3 shows how an administrator would reset TestUser3 user's password to pas
                 samdb.toggle_userAccountFlags(filter, flags, on=True)
                 command = "Failed to enable account for user '%s'" % (username or filter)
                 samdb.enable_account(filter)
-            except Exception, msg:
+            except Exception as msg:
                 # FIXME: catch more specific exception
                 raise CommandError("%s: %s" % (command, msg))
             self.outf.write("Added UF_SMARTCARD_REQUIRED OK\n")
@@ -847,7 +852,7 @@ Example3 shows how an administrator would reset TestUser3 user's password to pas
                 samdb.setpassword(filter, password,
                                   force_change_at_next_login=must_change_at_next_login,
                                   username=username)
-            except Exception, msg:
+            except Exception as msg:
                 # FIXME: catch more specific exception
                 raise CommandError("%s: %s" % (command, msg))
             self.outf.write("Changed password OK\n")
@@ -1037,7 +1042,8 @@ class GetPasswordCommand(Command):
                     nthash = tmp.get_nt_hash()
                     if nthash == unicodePwd:
                         calculated["Primary:CLEARTEXT"] = cv
-                except gpgme.GpgmeError as (major, minor, msg):
+                except gpgme.GpgmeError as e1:
+                    (major, minor, msg) = e1.args
                     if major == gpgme.ERR_BAD_SECKEY:
                         msg = "ERR_BAD_SECKEY: " + msg
                     else:
@@ -1217,6 +1223,16 @@ class GetPasswordCommand(Command):
             # first matching scheme
             return (None, scheme_match)
 
+        def get_kerberos_ctr():
+            primary_krb5 = get_package("Primary:Kerberos-Newer-Keys")
+            if primary_krb5 is None:
+                primary_krb5 = get_package("Primary:Kerberos")
+            if primary_krb5 is None:
+                return (0, None)
+            krb5_blob = ndr_unpack(drsblobs.package_PrimaryKerberosBlob,
+                                   primary_krb5)
+            return (krb5_blob.version, krb5_blob.ctr)
+
         # We use sort here in order to have a predictable processing order
         for a in sorted(virtual_attributes.keys()):
             if not a.lower() in lower_attrs:
@@ -1246,7 +1262,7 @@ class GetPasswordCommand(Command):
                 h.update(u8)
                 h.update(salt)
                 bv = h.digest() + salt
-                v = "{SSHA}" + base64.b64encode(bv)
+                v = "{SSHA}" + base64.b64encode(bv).decode('utf8')
             elif a == "virtualCryptSHA256":
                 rounds = get_rounds(attr_opts[a])
                 x = get_virtual_crypt_value(a, 5, rounds, username, account_name)
@@ -1268,6 +1284,11 @@ class GetPasswordCommand(Command):
                 v = get_package("Primary:SambaGPG", min_idx=-1)
                 if v is None:
                     continue
+            elif a == "virtualKerberosSalt":
+                (krb5_v, krb5_ctr) = get_kerberos_ctr()
+                if krb5_v not in [3, 4]:
+                    continue
+                v = krb5_ctr.salt.string
             elif a.startswith("virtualWDigest"):
                 primary_wdigest = get_package("Primary:WDigest")
                 if primary_wdigest is None:
@@ -1383,6 +1404,9 @@ for which virtual attributes are supported in your environment):
                           3.1.1.8.11.3.1 WDIGEST_CREDENTIALS Construction
                         https://msdn.microsoft.com/en-us/library/cc245680.aspx
                           is incorrect
+
+   virtualKerberosSalt:   This results the salt string that is used to compute
+                          Kerberos keys from a UTF-8 cleartext password.
 
    virtualSambaGPG:       The raw cleartext as stored in the
                           'Primary:SambaGPG' buffer inside of the
@@ -1551,6 +1575,9 @@ for supported virtual attributes in your environment):
                         https://msdn.microsoft.com/en-us/library/cc245680.aspx
                           is incorrect.
 
+   virtualKerberosSalt:   This results the salt string that is used to compute
+                          Kerberos keys from a UTF-8 cleartext password.
+
    virtualSambaGPG:       The raw cleartext as stored in the
                           'Primary:SambaGPG' buffer inside of the
                           supplementalCredentials attribute.
@@ -1572,7 +1599,7 @@ If the script processed the object successfully it has to respond with a
 single line starting with 'DONE-EXIT: ' followed by an optional message.
 
 Note that the script might be called without any password change, e.g. if
-the account was disabled (an userAccountControl change) or the
+the account was disabled (a userAccountControl change) or the
 sAMAccountName was changed. The objectGUID,isDeleted,isRecycled attributes
 are always returned as unique identifier of the account. It might be useful
 to also ask for non-password attributes like: objectSid, sAMAccountName,
@@ -1604,7 +1631,7 @@ following dirsyncAttributes:
   userPrincipalName and userAccountControl.
 
 It recovers from LDAP disconnects and updates the cache in conservative way
-(in single steps after each succesfully processed change).  An error from
+(in single steps after each successfully processed change).  An error from
 the script (specified by '--script') will result in fatal error and this
 command will exit.  But the cache state should be still valid and can be
 resumed in the next "Sync Loop Run".
@@ -1807,7 +1834,7 @@ samba-tool user syncpasswords --terminate \\
                     logfile = self.logfile
                     self.logfile = None
                     log_msg("Closing logfile[%s] (st_nlink == 0)\n" % (logfile))
-                    logfd = os.open(logfile, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0600)
+                    logfd = os.open(logfile, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
                     os.dup2(logfd, 0)
                     os.dup2(logfd, 1)
                     os.dup2(logfd, 2)
@@ -1860,13 +1887,13 @@ samba-tool user syncpasswords --terminate \\
                 self.sync_command = sync_command
                 add_ldif  = "dn: %s\n" % self.cache_dn
                 add_ldif += "objectClass: userSyncPasswords\n"
-                add_ldif += "samdbUrl:: %s\n" % base64.b64encode(self.samdb_url)
-                add_ldif += "dirsyncFilter:: %s\n" % base64.b64encode(self.dirsync_filter)
+                add_ldif += "samdbUrl:: %s\n" % base64.b64encode(self.samdb_url).decode('utf8')
+                add_ldif += "dirsyncFilter:: %s\n" % base64.b64encode(self.dirsync_filter).decode('utf8')
                 for a in self.dirsync_attrs:
-                    add_ldif += "dirsyncAttribute:: %s\n" % base64.b64encode(a)
+                    add_ldif += "dirsyncAttribute:: %s\n" % base64.b64encode(a).decode('utf8')
                 add_ldif += "dirsyncControl: %s\n" % self.dirsync_controls[0]
                 for a in self.password_attrs:
-                    add_ldif += "passwordAttribute:: %s\n" % base64.b64encode(a)
+                    add_ldif += "passwordAttribute:: %s\n" % base64.b64encode(a).decode('utf8')
                 if self.decrypt_samba_gpg == True:
                     add_ldif += "decryptSambaGPG: TRUE\n"
                 else:
@@ -1878,7 +1905,7 @@ samba-tool user syncpasswords --terminate \\
                 self.current_pid = None
                 self.outf.write("Initialized cache_ldb[%s]\n" % (cache_ldb))
                 msgs = self.cache.parse_ldif(add_ldif)
-                changetype,msg = msgs.next()
+                changetype,msg = next(msgs)
                 ldif = self.cache.write_ldif(msg, ldb.CHANGETYPE_NONE)
                 self.outf.write("%s" % ldif)
             else:
@@ -1969,8 +1996,9 @@ samba-tool user syncpasswords --terminate \\
                 flags |= os.O_CREAT
 
             try:
-                self.lockfd = os.open(self.lockfile, flags, 0600)
-            except IOError as (err, msg):
+                self.lockfd = os.open(self.lockfile, flags, 0o600)
+            except IOError as e4:
+                (err, msg) = e4.args
                 if err == errno.ENOENT:
                     if terminate:
                         return False
@@ -1982,7 +2010,8 @@ samba-tool user syncpasswords --terminate \\
             try:
                 fcntl.lockf(self.lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 got_exclusive = True
-            except IOError as (err, msg):
+            except IOError as e5:
+                (err, msg) = e5.args
                 if err != errno.EACCES and err != errno.EAGAIN:
                     log_msg("check_current_pid_conflict: failed to get exclusive lock[%s] - %s (%d)" %
                             (self.lockfile, msg, err))
@@ -2001,7 +2030,8 @@ samba-tool user syncpasswords --terminate \\
             if got_exclusive and terminate:
                 try:
                     os.ftruncate(self.lockfd, 0)
-                except IOError as (err, msg):
+                except IOError as e2:
+                    (err, msg) = e2.args
                     log_msg("check_current_pid_conflict: failed to truncate [%s] - %s (%d)" %
                             (self.lockfile, msg, err))
                     raise
@@ -2011,7 +2041,8 @@ samba-tool user syncpasswords --terminate \\
 
             try:
                 fcntl.lockf(self.lockfd, fcntl.LOCK_SH)
-            except IOError as (err, msg):
+            except IOError as e6:
+                (err, msg) = e6.args
                 log_msg("check_current_pid_conflict: failed to get shared lock[%s] - %s (%d)" %
                         (self.lockfile, msg, err))
 
@@ -2022,11 +2053,12 @@ samba-tool user syncpasswords --terminate \\
             if self.lockfd != -1:
                 got_exclusive = False
                 # Try 5 times to get the exclusiv lock.
-                for i in xrange(0, 5):
+                for i in range(0, 5):
                     try:
                         fcntl.lockf(self.lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         got_exclusive = True
-                    except IOError as (err, msg):
+                    except IOError as e:
+                        (err, msg) = e.args
                         if err != errno.EACCES and err != errno.EAGAIN:
                             log_msg("update_pid(%r): failed to get exclusive lock[%s] - %s (%d)" %
                                     (pid, self.lockfile, msg, err))
@@ -2048,7 +2080,8 @@ samba-tool user syncpasswords --terminate \\
                     os.ftruncate(self.lockfd, 0)
                     if buf is not None:
                         os.write(self.lockfd, buf)
-                except IOError as (err, msg):
+                except IOError as e3:
+                    (err, msg) = e3.args
                     log_msg("check_current_pid_conflict: failed to write pid to [%s] - %s (%d)" %
                             (self.lockfile, msg, err))
                     raise
@@ -2212,7 +2245,7 @@ samba-tool user syncpasswords --terminate \\
             maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
             if maxfd == resource.RLIM_INFINITY:
                 maxfd = 1024 # Rough guess at maximum number of open file descriptors.
-            logfd = os.open(logfile, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0600)
+            logfd = os.open(logfile, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
             self.outf.write("Using logfile[%s]\n" % logfile)
             for fd in range(0, maxfd):
                 if fd == logfd:
@@ -2279,7 +2312,8 @@ samba-tool user syncpasswords --terminate \\
 
             try:
                 sync_loop(wait)
-            except ldb.LdbError as (enum, estr):
+            except ldb.LdbError as e7:
+                (enum, estr) = e7.args
                 self.samdb = None
                 log_msg("ldb.LdbError(%d) => (%s)\n" % (enum, estr))
 
@@ -2419,6 +2453,163 @@ LDAP server using the 'nano' editor.
 
             self.outf.write("Modified User '%s' successfully\n" % username)
 
+class cmd_user_show(Command):
+    """Display a user AD object.
+
+This command displays a user account and it's attributes in the Active
+Directory domain.
+The username specified on the command is the sAMAccountName.
+
+The command may be run from the root userid or another authorized userid.
+
+The -H or --URL= option can be used to execute the command against a remote
+server.
+
+Example1:
+samba-tool user show User1 -H ldap://samba.samdom.example.com \
+-U administrator --password=passw1rd
+
+Example1 shows how to display a users attributes in the domain against a remote
+LDAP server.
+
+The -H parameter is used to specify the remote target server.
+
+Example2:
+samba-tool user show User2
+
+Example2 shows how to display a users attributes in the domain against a local
+LDAP server.
+
+Example3:
+samba-tool user show User2 --attributes=objectSid,memberOf
+
+Example3 shows how to display a users objectSid and memberOf attributes.
+"""
+    synopsis = "%prog <username> [options]"
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+        Option("--attributes",
+               help=("Comma separated list of attributes, "
+                     "which will be printed."),
+               type=str, dest="user_attrs"),
+    ]
+
+    takes_args = ["username"]
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "credopts": options.CredentialsOptions,
+        "versionopts": options.VersionOptions,
+        }
+
+    def run(self, username, credopts=None, sambaopts=None, versionopts=None,
+            H=None, user_attrs=None):
+
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp, fallback_machine=True)
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
+
+        attrs = None
+        if user_attrs:
+            attrs = user_attrs.split(",")
+
+        filter = ("(&(sAMAccountType=%d)(sAMAccountName=%s))" %
+                  (dsdb.ATYPE_NORMAL_ACCOUNT, ldb.binary_encode(username)))
+
+        domaindn = samdb.domain_dn()
+
+        try:
+            res = samdb.search(base=domaindn, expression=filter,
+                               scope=ldb.SCOPE_SUBTREE, attrs=attrs)
+            user_dn = res[0].dn
+        except IndexError:
+            raise CommandError('Unable to find user "%s"' % (username))
+
+        for msg in res:
+            user_ldif = samdb.write_ldif(msg, ldb.CHANGETYPE_NONE)
+            self.outf.write(user_ldif)
+
+class cmd_user_move(Command):
+    """Move a user to an organizational unit/container.
+
+    This command moves a user account into the specified organizational unit
+    or container.
+    The username specified on the command is the sAMAccountName.
+    The name of the organizational unit or container can be specified as a
+    full DN or without the domainDN component.
+
+    The command may be run from the root userid or another authorized userid.
+
+    The -H or --URL= option can be used to execute the command against a remote
+    server.
+
+    Example1:
+    samba-tool user move User1 'OU=OrgUnit,DC=samdom.DC=example,DC=com' \
+        -H ldap://samba.samdom.example.com -U administrator
+
+    Example1 shows how to move a user User1 into the 'OrgUnit' organizational
+    unit on a remote LDAP server.
+
+    The -H parameter is used to specify the remote target server.
+
+    Example2:
+    samba-tool user move User1 CN=Users
+
+    Example2 shows how to move a user User1 back into the CN=Users container
+    on the local server.
+    """
+
+    synopsis = "%prog <username> <new_parent_dn> [options]"
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+    ]
+
+    takes_args = [ "username", "new_parent_dn" ]
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "credopts": options.CredentialsOptions,
+        "versionopts": options.VersionOptions,
+        }
+
+    def run(self, username, new_parent_dn, credopts=None, sambaopts=None,
+            versionopts=None, H=None):
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp, fallback_machine=True)
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
+        domain_dn = ldb.Dn(samdb, samdb.domain_dn())
+
+        filter = ("(&(sAMAccountType=%d)(sAMAccountName=%s))" %
+                  (dsdb.ATYPE_NORMAL_ACCOUNT, ldb.binary_encode(username)))
+        try:
+            res = samdb.search(base=domain_dn,
+                               expression=filter,
+                               scope=ldb.SCOPE_SUBTREE)
+            user_dn = res[0].dn
+        except IndexError:
+            raise CommandError('Unable to find user "%s"' % (username))
+
+        try:
+            full_new_parent_dn = samdb.normalize_dn_in_domain(new_parent_dn)
+        except Exception as e:
+            raise CommandError('Invalid new_parent_dn "%s": %s' %
+                               (new_parent_dn, e.message))
+
+        full_new_user_dn = ldb.Dn(samdb, str(user_dn))
+        full_new_user_dn.remove_base_components(len(user_dn)-1)
+        full_new_user_dn.add_base(full_new_parent_dn)
+
+        try:
+            samdb.rename(user_dn, full_new_user_dn)
+        except Exception as e:
+            raise CommandError('Failed to move user "%s"' % username, e)
+        self.outf.write('Moved user "%s" into "%s"\n' %
+                        (username, full_new_parent_dn))
+
 class cmd_user(SuperCommand):
     """User management."""
 
@@ -2435,3 +2626,5 @@ class cmd_user(SuperCommand):
     subcommands["getpassword"] = cmd_user_getpassword()
     subcommands["syncpasswords"] = cmd_user_syncpasswords()
     subcommands["edit"] = cmd_user_edit()
+    subcommands["show"] = cmd_user_show()
+    subcommands["move"] = cmd_user_move()

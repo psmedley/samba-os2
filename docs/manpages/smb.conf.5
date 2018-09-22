@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.8.5
+.\"    Source: Samba 4.9.0
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "08/24/2018" "Samba 4\&.8\&.5" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "09/13/2018" "Samba 4\&.9\&.0" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1822,6 +1822,15 @@ Example:
 \fI\fIchange share command\fR\fR\fI = \fR\fI/usr/local/bin/changeshare\fR\fI \fR
 .RE
 
+check parent directory delete on close (S)
+.PP
+.RS 4
+A Windows SMB server prevents the client from creating files in a directory that has the delete\-on\-close flag set\&. By default Samba doesn\*(Aqt perform this check as this check is a quite expensive operation in Samba\&.
+.sp
+Default:
+\fI\fIcheck parent directory delete on close\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
 check password script (G)
 .PP
 .RS 4
@@ -3205,6 +3214,44 @@ Example:
 \fI\fIdns update command\fR\fR\fI = \fR\fI/usr/local/sbin/dnsupdate\fR\fI \fR
 .RE
 
+dns zone scavenging (G)
+.PP
+.RS 4
+When enabled (the default is disabled) unused dynamic dns records are periodically removed\&.
+.if n \{\
+.sp
+.\}
+.RS 4
+.it 1 an-trap
+.nr an-no-space-flag 1
+.nr an-break-flag 1
+.br
+.ps +1
+\fBWarning\fR
+.ps -1
+.br
+This option should not be enabled for installations created with versions of samba before 4\&.9\&. Doing this will result in the loss of static DNS entries\&. This is due to a bug in previous versions of samba (BUG 12451) which marked dynamic DNS records as static and static records as dynamic\&.
+.sp .5v
+.RE
+.if n \{\
+.sp
+.\}
+.RS 4
+.it 1 an-trap
+.nr an-no-space-flag 1
+.nr an-break-flag 1
+.br
+.ps +1
+\fBNote\fR
+.ps -1
+.br
+If one record for a DNS name is static (non\-aging) then no other record for that DNS name will be scavenged\&.
+.sp .5v
+.RE
+Default:
+\fI\fIdns zone scavenging\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
 domain logons (G)
 .PP
 .RS 4
@@ -3324,6 +3371,54 @@ Default:
 \fI\fIdos filetimes\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
+dsdb event notification (G)
+.PP
+.RS 4
+When enabled, this option causes Samba (acting as an Active Directory Domain Controller) to stream Samba database events across the internal message bus\&. Scripts built using Samba\*(Aqs python bindings can listen to these events by registering as the service
+dsdb_event\&.
+.sp
+This should be considered a developer option (it assists in the Samba testsuite) rather than a facility for external auditing, as message delivery is not guaranteed (a feature that the testsuite works around)\&.
+.sp
+The Samba database events are also logged via the normal logging methods when the
+\m[blue]\fBlog level\fR\m[]
+is set appropriately\&.
+.sp
+Default:
+\fI\fIdsdb event notification\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+dsdb group change notification (G)
+.PP
+.RS 4
+When enabled, this option causes Samba (acting as an Active Directory Domain Controller) to stream group membership change events across the internal message bus\&. Scripts built using Samba\*(Aqs python bindings can listen to these events by registering as the service
+dsdb_group_event\&.
+.sp
+This should be considered a developer option (it assists in the Samba testsuite) rather than a facility for external auditing, as message delivery is not guaranteed (a feature that the testsuite works around)\&.
+.sp
+The group events are also logged via the normal logging methods when the
+\m[blue]\fBlog level\fR\m[]
+is set appropriately\&.
+.sp
+Default:
+\fI\fIdsdb group change notification\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+dsdb password event notification (G)
+.PP
+.RS 4
+When enabled, this option causes Samba (acting as an Active Directory Domain Controller) to stream password change and reset events across the internal message bus\&. Scripts built using Samba\*(Aqs python bindings can listen to these events by registering as the service
+password_event\&.
+.sp
+This should be considered a developer option (it assists in the Samba testsuite) rather than a facility for external auditing, as message delivery is not guaranteed (a feature that the testsuite works around)\&.
+.sp
+The password events are also logged via the normal logging methods when the
+\m[blue]\fBlog level\fR\m[]
+is set appropriately\&.
+.sp
+Default:
+\fI\fIdsdb password event notification\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
 durable handles (S)
 .PP
 .RS 4
@@ -3373,10 +3468,10 @@ utilities must work)\&.
 .RE
 .sp
 .RE
-Note that the SMB protocol allows setting attributes whose value is 64K bytes long, and that on NTFS, the maximum storage space for extended attributes per file is 64K\&. On most UNIX systems (Solaris and ZFS file system being the exception), the limits are much lower \- typically 4K\&. Worse, the same 4K space is often used to store system metadata such as POSIX ACLs, or Samba\*(Aqs NT ACLs\&. Giving clients access to this tight space via extended attribute support could consume all of it by unsuspecting client applications, which would prevent changing system metadata due to lack of space\&.
+Note that the SMB protocol allows setting attributes whose value is 64K bytes long, and that on NTFS, the maximum storage space for extended attributes per file is 64K\&. On most UNIX systems (Solaris and ZFS file system being the exception), the limits are much lower \- typically 4K\&. Worse, the same 4K space is often used to store system metadata such as POSIX ACLs, or Samba\*(Aqs NT ACLs\&. Giving clients access to this tight space via extended attribute support could consume all of it by unsuspecting client applications, which would prevent changing system metadata due to lack of space\&. The default has changed to yes in Samba release 4\&.9\&.0 and above to allow better Windows fileserver compatibility in a default install\&.
 .sp
 Default:
-\fI\fIea support\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fIea support\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
 enable asu support (G)
@@ -3938,10 +4033,10 @@ Default:
 gpo update command (G)
 .PP
 .RS 4
-This option sets the command that is called to apply GPO policies\&. The samba_gpoupdate script applies System Access and Kerberos Policies to the KDC\&. System Access policies set minPwdAge, maxPwdAge, minPwdLength, and pwdProperties in the samdb\&. Kerberos Policies set kdc:service ticket lifetime, kdc:user ticket lifetime, and kdc:renewal lifetime in smb\&.conf\&.
+This option sets the command that is called to apply GPO policies\&. The samba\-gpupdate script applies System Access and Kerberos Policies to the KDC\&. System Access policies set minPwdAge, maxPwdAge, minPwdLength, and pwdProperties in the samdb\&. Kerberos Policies set kdc:service ticket lifetime, kdc:user ticket lifetime, and kdc:renewal lifetime in smb\&.conf\&.
 .sp
 Default:
-\fI\fIgpo update command\fR\fR\fI = \fR\fI${prefix}/sbin/samba_gpoupdate\fR\fI \fR
+\fI\fIgpo update command\fR\fR\fI = \fR\fI${prefix}/sbin/samba\-gpupdate\fR\fI \fR
 .sp
 Example:
 \fI\fIgpo update command\fR\fR\fI = \fR\fI/usr/local/sbin/gpoupdate\fR\fI \fR
@@ -6040,8 +6135,74 @@ This parameter has been extended since the 2\&.2\&.x series, now it allows one t
 \fIkerberos\fR
 .RE
 .sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIdsdb_audit\fR
 .RE
-Authentication and authorization audit information is logged under the auth_audit, and if Samba is compiled against the jansson JSON library, a JSON representation is logged under auth_json_audit\&.
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIdsdb_json_audit\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIdsdb_password_audit\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIdsdb_password_json_audit\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIdsdb_transaction_audit\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIdsdb_transaction_json_audit\fR
+.RE
+.sp
+.RE
+Authentication and authorization audit information is logged under the auth_audit, and if Samba was not compiled with \-\-without\-json\-audit, a JSON representation is logged under auth_json_audit\&.
 .sp
 Support is comprehensive for all authentication and authorisation of user accounts in the Samba Active Directory Domain Controller, as well as the implicit authentication in password changes\&. In the file server, NTLM authentication, SMB and RPC authorization is covered\&.
 .sp
@@ -6093,6 +6254,12 @@ Log levels for auth_audit and auth_audit_json are:
 .RE
 .sp
 .RE
+Changes to the sam\&.ldb database are logged under the dsdb_audit and a JSON representation is logged under dsdb_json_audit\&.
+.sp
+Password changes and Password resets are logged under dsdb_password_audit and a JSON representation is logged under the dsdb_password_json_audit\&.
+.sp
+Transaction rollbacks and prepare commit failures are logged under the dsdb_transaction_audit and a JSON representation is logged under the password_json_audit\&. Logging the transaction details allows the identification of password and sam\&.ldb operations that have been rolled back\&.
+.sp
 Default:
 \fI\fIlog level\fR\fR\fI = \fR\fI0\fR\fI \fR
 .sp
@@ -6825,8 +6992,14 @@ Note that this parameter will be ignored if the
 \m[blue]\fBstore dos attributes\fR\m[]
 parameter is set, as the DOS \*(Aqread\-only\*(Aq attribute will then be stored inside a UNIX extended attribute\&.
 .sp
+The default has changed to no in Samba release 4\&.9\&.0 and above to allow better Windows fileserver compatibility in a default install\&. In addition the default setting of
+\m[blue]\fBstore dos attributes\fR\m[]
+has been changed to
+\fBYes\fR
+in Samba release 4\&.9\&.0 and above\&.
+.sp
 Default:
-\fI\fImap readonly\fR\fR\fI = \fR\fIyes\fR\fI \fR
+\fI\fImap readonly\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 map system (S)
@@ -7086,7 +7259,9 @@ Default:
 max xmit (G)
 .PP
 .RS 4
-This option controls the maximum packet size that will be negotiated by Samba\&. The default is 16644, which matches the behavior of Windows 2000\&. A value below 2048 is likely to cause problems\&. You should never need to change this parameter from its default value\&.
+This option controls the maximum packet size that will be negotiated by Samba\*(Aqs
+\fBsmbd\fR(8)
+for the SMB1 protocol\&. The default is 16644, which matches the behavior of Windows 2000\&. A value below 2048 is likely to cause problems\&. You should never need to change this parameter from its default value\&.
 .sp
 Default:
 \fI\fImax xmit\fR\fR\fI = \fR\fI16644\fR\fI \fR
@@ -11324,10 +11499,10 @@ and
 \m[blue]\fBmap archive\fR\m[]
 and
 \m[blue]\fBmap readonly\fR\m[]
-and they will behave as if they were set to off\&. This parameter writes the DOS attributes as a string into the extended attribute named "user\&.DOSATTRIB"\&. This extended attribute is explicitly hidden from smbd clients requesting an EA list\&. On Linux the filesystem must have been mounted with the mount option user_xattr in order for extended attributes to work, also extended attributes must be compiled into the Linux kernel\&. In Samba 3\&.5\&.0 and above the "user\&.DOSATTRIB" extended attribute has been extended to store the create time for a file as well as the DOS attributes\&. This is done in a backwards compatible way so files created by Samba 3\&.5\&.0 and above can still have the DOS attribute read from this extended attribute by earlier versions of Samba, but they will not be able to read the create time stored there\&. Storing the create time separately from the normal filesystem meta\-data allows Samba to faithfully reproduce NTFS semantics on top of a POSIX filesystem\&.
+and they will behave as if they were set to off\&. This parameter writes the DOS attributes as a string into the extended attribute named "user\&.DOSATTRIB"\&. This extended attribute is explicitly hidden from smbd clients requesting an EA list\&. On Linux the filesystem must have been mounted with the mount option user_xattr in order for extended attributes to work, also extended attributes must be compiled into the Linux kernel\&. In Samba 3\&.5\&.0 and above the "user\&.DOSATTRIB" extended attribute has been extended to store the create time for a file as well as the DOS attributes\&. This is done in a backwards compatible way so files created by Samba 3\&.5\&.0 and above can still have the DOS attribute read from this extended attribute by earlier versions of Samba, but they will not be able to read the create time stored there\&. Storing the create time separately from the normal filesystem meta\-data allows Samba to faithfully reproduce NTFS semantics on top of a POSIX filesystem\&. The default has changed to yes in Samba release 4\&.9\&.0 and above to allow better Windows fileserver compatibility in a default install\&.
 .sp
 Default:
-\fI\fIstore dos attributes\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fIstore dos attributes\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
 strict allocate (S)
@@ -12371,7 +12546,7 @@ Default:
 winbind:ignore domains (G)
 .PP
 .RS 4
-Allows to enter a list of trusted domains winbind should ignore (untrust)\&. This can avoid the overhead of resources from attempting to login to DCs that should not be communicated with\&.
+Allows one to enter a list of trusted domains winbind should ignore (untrust)\&. This can avoid the overhead of resources from attempting to login to DCs that should not be communicated with\&.
 .sp
 Default:
 \fI\fIwinbind:ignore domains\fR\fR\fI = \fR\fI\fR\fI \fR
@@ -12953,7 +13128,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.8\&.5 of the Samba suite\&.
+This man page is part of version 4\&.9\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

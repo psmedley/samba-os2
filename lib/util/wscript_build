@@ -74,7 +74,8 @@ bld.SAMBA_SUBSYSTEM('samba-util-core',
                               strv_util.c bitmap.c select.c pidfile.c
                               become_daemon.c mkdir_p.c''',
                     deps='''time-basic samba-debug socket-blocking talloc
-                            tevent execinfo pthread strv''',
+                            tevent execinfo pthread strv tini''',
+                    public_deps='systemd systemd-daemon',
                     local_include=False)
 
 bld.SAMBA_LIBRARY('iov_buf',
@@ -123,8 +124,8 @@ else:
                     util_str.c util_str_common.c ms_fnmatch.c
                     server_id.c dprintf.c
                     tevent_debug.c memcache.c unix_match.c tfork.c''',
-                  deps='samba-util-core DYNCONFIG close-low-fd tini tiniparser genrand',
-                  public_deps='talloc tevent execinfo pthread LIBCRYPTO charset util_setid systemd systemd-daemon',
+                  deps='samba-util-core DYNCONFIG close-low-fd tiniparser genrand util_str_hex',
+                  public_deps='talloc tevent execinfo pthread LIBCRYPTO charset util_setid',
                   public_headers='debug.h attr.h byteorder.h data_blob.h memory.h safe_string.h time.h talloc_stack.h string_wrappers.h idtree.h idtree_random.h blocking.h signal.h substitute.h fault.h genrand.h tfork.h',
                   header_path= [ ('dlinklist.h samba_util.h', '.'), ('*', 'util') ],
                   local_include=False,
@@ -161,7 +162,12 @@ else:
                       )
 
     bld.SAMBA_LIBRARY('tevent-util',
-                      source='tevent_unix.c tevent_ntstatus.c tevent_werror.c',
+                      source='''
+                          tevent_unix.c
+                          tevent_ntstatus.c
+                          tevent_werror.c
+                          tevent_req_profile.c
+                      ''',
                       local_include=False,
                       public_deps='tevent samba-errors',
                       public_headers='tevent_ntstatus.h tevent_unix.h tevent_werror.h',
@@ -211,3 +217,20 @@ else:
                         source='util_str_escape.c',
                         deps='talloc',
                         local_include=False)
+
+    bld.SAMBA_SUBSYSTEM('util_str_hex',
+                        source='util_str_hex.c',
+                        deps='talloc',
+                        local_include=False)
+
+    bld.SAMBA_BINARY('test_rfc1738',
+                     source='tests/rfc1738.c',
+                     deps='cmocka replace samba-util',
+                     local_include=False,
+                     install=False)
+
+    bld.SAMBA_BINARY('test_ms_fnmatch',
+                     source='tests/test_ms_fnmatch.c',
+                     deps='cmocka replace samba-util',
+                     local_include=False,
+                     install=False)

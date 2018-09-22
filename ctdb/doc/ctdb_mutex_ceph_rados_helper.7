@@ -2,12 +2,12 @@
 .\"     Title: Ceph RADOS Mutex
 .\"    Author: 
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: CTDB - clustered TDB database
 .\"    Source: ctdb
 .\"  Language: English
 .\"
-.TH "CEPH RADOS MUTEX" "7" "08/24/2018" "ctdb" "CTDB \- clustered TDB database"
+.TH "CEPH RADOS MUTEX" "7" "09/13/2018" "ctdb" "CTDB \- clustered TDB database"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,13 +31,16 @@
 ctdb_mutex_ceph_rados_helper \- Ceph RADOS cluster mutex helper
 .SH "DESCRIPTION"
 .PP
-ctdb_mutex_ceph_rados_helper can be used as a recovery lock provider for CTDB\&. When configured, split brain avoidance during CTDB recovery will be handled using locks against an object located in a Ceph RADOS pool\&. To enable this functionality, include the following line in your CTDB config file:
+ctdb_mutex_ceph_rados_helper can be used as a recovery lock provider for CTDB\&. When configured, split brain avoidance during CTDB recovery will be handled using locks against an object located in a Ceph RADOS pool\&. To enable this functionality, include the following line in the
+[cluster]
+section of
+\fBctdb.conf\fR(5):
 .sp
 .if n \{\
 .RS 4
 .\}
 .nf
-CTDB_RECOVERY_LOCK="!ctdb_mutex_ceph_rados_helper [Cluster] [User] [Pool] [Object]"
+recovery lock = !ctdb_mutex_ceph_rados_helper [Cluster] [User] [Pool] [Object]
 
 Cluster: Ceph cluster name (e\&.g\&. ceph)
 User: Ceph cluster user name (e\&.g\&. client\&.admin)

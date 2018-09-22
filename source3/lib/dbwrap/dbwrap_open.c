@@ -111,6 +111,15 @@ struct db_context *db_open(TALLOC_CTX *mem_ctx,
 		try_mutex = lp_parm_bool(-1, "dbwrap_tdb_mutexes", "*", try_mutex);
 		try_mutex = lp_parm_bool(-1, "dbwrap_tdb_mutexes", base, try_mutex);
 
+		if (!lp_use_mmap()) {
+			/*
+			 * Mutexes require mmap. "use mmap = no" can
+			 * be a debugging tool, so let it override the
+			 * mutex parameters
+			 */
+			try_mutex = false;
+		}
+
 		if (try_mutex && tdb_runtime_check_for_robust_mutexes()) {
 			tdb_flags |= TDB_MUTEX_LOCKING;
 		}
@@ -173,9 +182,21 @@ struct db_context *db_open(TALLOC_CTX *mem_ctx,
 
 	if (result == NULL) {
 		struct loadparm_context *lp_ctx = loadparm_init_s3(mem_ctx, loadparm_s3_helpers());
-		result = dbwrap_local_open(mem_ctx, lp_ctx, name, hash_size,
-					   tdb_flags, open_flags, mode,
-					   lock_order, dbwrap_flags);
+
+		if (hash_size == 0) {
+			hash_size = lpcfg_tdb_hash_size(lp_ctx, name);
+		}
+		tdb_flags = lpcfg_tdb_flags(lp_ctx, tdb_flags);
+
+		result = dbwrap_local_open(
+			mem_ctx,
+			name,
+			hash_size,
+			tdb_flags,
+			open_flags,
+			mode,
+			lock_order,
+			dbwrap_flags);
 		talloc_unlink(mem_ctx, lp_ctx);
 	}
 	return result;

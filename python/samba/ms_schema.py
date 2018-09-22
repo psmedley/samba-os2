@@ -15,11 +15,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+from __future__ import print_function
 """Generate LDIF from WSPP documentation."""
 
 import re
 import base64
 import uuid
+from samba.compat import string_types
 
 bitFields = {}
 
@@ -34,14 +36,17 @@ bitFields["searchflags"] = {
     'fTUPLEINDEX': 26,       # TP
     'fSUBTREEATTINDEX': 25,  # ST
     'fCONFIDENTIAL': 24,     # CF
+    'fCONFIDENTAIL': 24, # typo
     'fNEVERVALUEAUDIT': 23,  # NV
     'fRODCAttribute': 22,    # RO
 
 
     # missing in ADTS but required by LDIF
-    'fRODCFilteredAttribute': 22,    # RO ?
-    'fCONFIDENTAIL': 24, # typo
-    'fRODCFILTEREDATTRIBUTE': 22 # case
+    'fRODCFilteredAttribute': 22,    # RO
+    'fRODCFILTEREDATTRIBUTE': 22, # case
+    'fEXTENDEDLINKTRACKING': 21,  # XL
+    'fBASEONLY': 20,  # BO
+    'fPARTITIONSECRET': 19,  # SE
     }
 
 # ADTS: 2.2.10
@@ -68,13 +73,13 @@ bitFields["schemaflagsex"] = {
 
 # ADTS: 3.1.1.2.2.2
 oMObjectClassBER = {
-    '1.3.12.2.1011.28.0.702' : base64.b64encode('\x2B\x0C\x02\x87\x73\x1C\x00\x85\x3E'),
-    '1.2.840.113556.1.1.1.12': base64.b64encode('\x2A\x86\x48\x86\xF7\x14\x01\x01\x01\x0C'),
-    '2.6.6.1.2.5.11.29'      : base64.b64encode('\x56\x06\x01\x02\x05\x0B\x1D'),
-    '1.2.840.113556.1.1.1.11': base64.b64encode('\x2A\x86\x48\x86\xF7\x14\x01\x01\x01\x0B'),
-    '1.3.12.2.1011.28.0.714' : base64.b64encode('\x2B\x0C\x02\x87\x73\x1C\x00\x85\x4A'),
-    '1.3.12.2.1011.28.0.732' : base64.b64encode('\x2B\x0C\x02\x87\x73\x1C\x00\x85\x5C'),
-    '1.2.840.113556.1.1.1.6' : base64.b64encode('\x2A\x86\x48\x86\xF7\x14\x01\x01\x01\x06')
+    '1.3.12.2.1011.28.0.702' : base64.b64encode(b'\x2B\x0C\x02\x87\x73\x1C\x00\x85\x3E').decode('utf8'),
+    '1.2.840.113556.1.1.1.12': base64.b64encode(b'\x2A\x86\x48\x86\xF7\x14\x01\x01\x01\x0C').decode('utf8'),
+    '2.6.6.1.2.5.11.29'      : base64.b64encode(b'\x56\x06\x01\x02\x05\x0B\x1D').decode('utf8'),
+    '1.2.840.113556.1.1.1.11': base64.b64encode(b'\x2A\x86\x48\x86\xF7\x14\x01\x01\x01\x0B').decode('utf8'),
+    '1.3.12.2.1011.28.0.714' : base64.b64encode(b'\x2B\x0C\x02\x87\x73\x1C\x00\x85\x4A').decode('utf8'),
+    '1.3.12.2.1011.28.0.732' : base64.b64encode(b'\x2B\x0C\x02\x87\x73\x1C\x00\x85\x5C').decode('utf8'),
+    '1.2.840.113556.1.1.1.6' : base64.b64encode(b'\x2A\x86\x48\x86\xF7\x14\x01\x01\x01\x06').decode('utf8')
 }
 
 # separated by commas in docs, and must be broken up
@@ -144,7 +149,7 @@ def __read_raw_entries(f):
 
                 entry.append(l)
             else:
-                print >>sys.stderr, "Invalid line: %s" % l,
+                print("Invalid line: %s" % l, end=' ', file=sys.stderr)
                 sys.exit(1)
 
         if len(entry):
@@ -171,7 +176,7 @@ def fix_dn(dn):
 
 def __convert_bitfield(key, value):
     """Evaluate the OR expression in 'value'"""
-    assert(isinstance(value, str))
+    assert(isinstance(value, string_types))
 
     value = value.replace("\n ", "")
     value = value.replace(" ", "")
@@ -193,7 +198,7 @@ def __write_ldif_one(entry):
     out = []
 
     for l in entry:
-        if isinstance(l[1], str):
+        if isinstance(l[1], string_types):
             vl = [l[1]]
         else:
             vl = l[1]
@@ -246,7 +251,7 @@ def __transform_entry(entry, objectClass):
                 l[1] = oMObjectClassBER[l[1].strip()]
                 l[2] = True
 
-        if isinstance(l[1], str):
+        if isinstance(l[1], string_types):
             l[1] = fix_dn(l[1])
 
         if key == 'dn':
@@ -313,7 +318,7 @@ if __name__ == '__main__':
         attr_file = sys.argv[1]
         classes_file = sys.argv[2]
     except IndexError:
-        print >>sys.stderr, "Usage: %s attr-file.txt classes-file.txt" % (sys.argv[0])
+        print("Usage: %s attr-file.txt classes-file.txt" % (sys.argv[0]), file=sys.stderr)
         sys.exit(1)
 
-    print read_ms_schema(attr_file, classes_file)
+    print(read_ms_schema(attr_file, classes_file))

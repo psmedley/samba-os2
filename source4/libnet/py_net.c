@@ -155,20 +155,25 @@ static PyObject *py_net_change_password(py_net_Object *self, PyObject *args, PyO
 {
 	union libnet_ChangePassword r;
 	NTSTATUS status;
-	TALLOC_CTX *mem_ctx;
-	struct tevent_context *ev;
+	TALLOC_CTX *mem_ctx = NULL;
+	struct tevent_context *ev = NULL;
 	const char *kwnames[] = { "newpassword", "oldpassword", "domain", "username", NULL };
-
+	const char *newpass = NULL;
+	const char *oldpass = NULL;
 	ZERO_STRUCT(r);
-
-	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|sss:change_password",
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "es|esss:change_password",
 					 discard_const_p(char *, kwnames),
-					 &r.generic.in.newpassword,
-					 &r.generic.in.oldpassword,
+					 "utf8",
+					 &newpass,
+					 "utf8",
+					 &oldpass,
 					 &r.generic.in.domain_name,
 					 &r.generic.in.account_name)) {
 		return NULL;
 	}
+
+	r.generic.in.newpassword = newpass;
+	r.generic.in.oldpassword = oldpass;
 
 	r.generic.level = LIBNET_CHANGE_PASSWORD_GENERIC;
 	if (r.generic.in.account_name == NULL) {
@@ -190,11 +195,17 @@ static PyObject *py_net_change_password(py_net_Object *self, PyObject *args, PyO
 
 	mem_ctx = talloc_new(ev);
 	if (mem_ctx == NULL) {
+		PyMem_Free(discard_const_p(char, newpass));
+		PyMem_Free(discard_const_p(char, oldpass));
 		PyErr_NoMemory();
 		return NULL;
 	}
 
 	status = libnet_ChangePassword(self->libnet_ctx, mem_ctx, &r);
+
+	PyMem_Free(discard_const_p(char, newpass));
+	PyMem_Free(discard_const_p(char, oldpass));
+
 	if (NT_STATUS_IS_ERR(status)) {
 		PyErr_SetNTSTATUS_and_string(status,
 					     r.generic.out.error_string
@@ -205,7 +216,6 @@ static PyObject *py_net_change_password(py_net_Object *self, PyObject *args, PyO
 	}
 
 	talloc_free(mem_ctx);
-
 	Py_RETURN_NONE;
 }
 

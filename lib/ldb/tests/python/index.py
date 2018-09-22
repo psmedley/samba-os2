@@ -17,15 +17,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-"""Tests for index keys
+"""Tests for truncated index keys
 
-This is a modified version of the test from master for databases such
-as lmdb have a maximum key length, instead just checking that the
-GUID index code still operates correctly.
-
-Many of the test names are therefore incorrect, but are retained
-to keep the code easy to backport into if more tested are added in
-master.
+Databases such as lmdb have a maximum key length, these tests ensure that
+ldb behaves correctly in those circumstances.
 
 """
 
@@ -118,18 +113,41 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         super(MaxIndexKeyLengthTests, self).setUp()
         self.testdir = tempdir()
         self.filename = os.path.join(self.testdir, "key_len_test.ldb")
-        # Note that the maximum key length is set to 50
+        # Note that the maximum key length is set to 54
+        # This accounts for the 4 bytes added by the dn formatting
+        # a leading dn=, and a trailing zero terminator
+        #
         self.l = ldb.Ldb(self.url(),
                          options=[
                              "modules:rdn_name",
-                             "max_key_len_for_self_test:50"])
+                             "max_key_len_for_self_test:54"])
         self.l.add({"dn": "@ATTRIBUTES",
                     "uniqueThing": "UNIQUE_INDEX"})
         self.l.add({"dn": "@INDEXLIST",
-                    "@IDXATTR": [b"uniqueThing", b"notUnique"],
+                    "@IDXATTR": [
+                        b"uniqueThing",
+                        b"notUnique",
+                        b"base64____lt",
+                        b"base64_____eq",
+                        b"base64______gt"],
                     "@IDXONE": [b"1"],
                     "@IDXGUID": [b"objectUUID"],
                     "@IDX_DN_GUID": [b"GUID"]})
+
+    # Add a value to a unique index that exceeds the maximum key length
+    # This should be rejected.
+    def test_add_long_unique_add(self):
+        try:
+            self.l.add({"dn": "OU=UNIQUE_MAX_LEN,DC=SAMBA,DC=ORG",
+                        "objectUUID": b"0123456789abcdef",
+                        "uniqueThing": "01234567890123456789012345678901"})
+            # index key will be
+            # "@INDEX:UNIQUETHING:01234567890123456789012345678901"
+            self.fail("Should have failed on long index key")
+
+        except ldb.LdbError as err:
+            enum = err.args[0]
+            self.assertEqual(enum, ldb.ERR_CONSTRAINT_VIOLATION)
 
     # Test that DN's longer the maximum key length can be added
     # and that duplicate DN's are rejected correctly
@@ -140,12 +158,21 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         #
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=ORG",
                     "objectUUID": b"0123456789abcdef"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=COM",
                     "objectUUID": b"0123456789abcde0"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde0" + b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=GOV",
                     "objectUUID": b"0123456789abcde1"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde0" + b"0123456789abcde1" + b"0123456789abcdef")
 
         # Key is equal to max length does not get inserted into the truncated
         # key namespace
@@ -205,13 +232,23 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         #    @INDEX:@IDXDN:OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=ORG",
                     "objectUUID": b"0123456789abcdef"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=COM",
                     "objectUUID": b"0123456789abcde0"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde0" + b"0123456789abcdef")
 
         # Non conflicting rename, should succeed
         self.l.rename("OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=ORG",
                       "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=GOV")
+        # Index should be unchanged.
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde0" + b"0123456789abcdef")
 
         # Conflicting rename should fail
         try:
@@ -230,9 +267,15 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         #
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=ORG",
                     "objectUUID": b"0123456789abcdef"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=GOV",
                     "objectUUID": b"0123456789abcde1"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde1" + b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
                     "objectUUID": b"0123456789abcde5"})
@@ -262,6 +305,9 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
 
             # Check the indexes are correct
             self.checkGuids(
+                "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+                b"0123456789abcde1" + b"0123456789abcdef")
+            self.checkGuids(
                 "@INDEX:@IDXDN:OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
                 b"0123456789abcde5")
 
@@ -282,6 +328,9 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
 
         # Check the indexes are correct
         self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde1")
+        self.checkGuids(
             "@INDEX:@IDXDN:OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
             b"0123456789abcde5")
 
@@ -296,6 +345,9 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         res = self.l.search(base="OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA")
         self.assertEqual(len(res), 1)
         # Check the indexes are correct
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            None)
         self.checkGuids(
             "@INDEX:@IDXDN:OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
             b"0123456789abcde5")
@@ -319,9 +371,15 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         #
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=ORG",
                     "objectUUID": b"0123456789abcdef"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=GOV",
                     "objectUUID": b"0123456789abcde1"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde1" + b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
                     "objectUUID": b"0123456789abcde5"})
@@ -357,9 +415,15 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         #
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=ORG",
                     "objectUUID": b"0123456789abcdef"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=GOV",
                     "objectUUID": b"0123456789abcde1"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde1" + b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
                     "objectUUID": b"0123456789abcde5"})
@@ -406,21 +470,33 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
                     "objectUUID": b"0123456789abcdef"})
         self.l.add({"dn": "OU=A_LONG_DN_ONE_LVLX,DC=SAMBA,DC=OR2",
                     "objectUUID": b"0123456789abcd1f"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DN_ONE_LVLX,DC=SAMBA,DC=OR",
+            b"0123456789abcd1f" + b"0123456789abcdef")
 
         self.l.add({"dn": "OU=01,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA,DC=OR1",
                     "objectUUID": b"0123456789abcde1"})
         self.l.add({"dn": "OU=01,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA,DC=OR2",
                     "objectUUID": b"0123456789abcd11"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=01,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA",
+            b"0123456789abcd11" + b"0123456789abcde1")
 
         self.l.add({"dn": "OU=02,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA,DC=OR1",
                     "objectUUID": b"0123456789abcde2"})
         self.l.add({"dn": "OU=02,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA,DC=OR2",
                     "objectUUID": b"0123456789abcdf2"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=02,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA",
+            b"0123456789abcde2" + b"0123456789abcdf2")
 
         self.l.add({"dn": "OU=03,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA,DC=OR1",
                     "objectUUID": b"0123456789abcde3"})
         self.l.add({"dn": "OU=03,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA,DC=OR2",
                     "objectUUID": b"0123456789abcd13"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=03,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA",
+            b"0123456789abcd13" + b"0123456789abcde3")
 
         # This key is not truncated as it's the max_key_len
         self.l.add({"dn": "OU=01,OU=A_LONG_DN_ONE_LVLX,DC=SAMBA",
@@ -471,25 +547,40 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
                     "objectUUID": b"0123456789abcde4"})
         self.l.add({"dn": "OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR3",
                     "objectUUID": b"0123456789abcde8"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR",
+            b"0123456789abcde4" + b"0123456789abcde8" + b"0123456789abcdef")
 
         self.l.add({"dn": "OU=01,OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR1",
                     "objectUUID": b"0123456789abcde1"})
         self.l.add({"dn": "OU=01,OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR2",
                     "objectUUID": b"0123456789abcde5"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=01,OU=A_LONG_DN_SUB_TREE,DC=SAMBA",
+            b"0123456789abcde1" + b"0123456789abcde5")
 
         self.l.add({"dn": "OU=02,OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR1",
                     "objectUUID": b"0123456789abcde2"})
         self.l.add({"dn": "OU=02,OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR2",
                     "objectUUID": b"0123456789abcde6"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=02,OU=A_LONG_DN_SUB_TREE,DC=SAMBA",
+            b"0123456789abcde2" + b"0123456789abcde6")
 
         self.l.add({"dn": "OU=03,OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR1",
                     "objectUUID": b"0123456789abcde3"})
 
         self.l.add({"dn": "OU=03,OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR2",
                     "objectUUID": b"0123456789abcde7"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=03,OU=A_LONG_DN_SUB_TREE,DC=SAMBA",
+            b"0123456789abcde3" + b"0123456789abcde7")
 
         self.l.add({"dn": "OU=04,OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR4",
                     "objectUUID": b"0123456789abcde9"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=04,OU=A_LONG_DN_SUB_TREE,DC=SAMBA",
+            b"0123456789abcde9")
 
         res = self.l.search(base="OU=A_LONG_DN_SUB_TREE,DC=SAMBA,DC=OR1",
                             scope=ldb.SCOPE_SUBTREE)
@@ -536,9 +627,15 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         #
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=ORG",
                     "objectUUID": b"0123456789abcdef"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA,DC=GOV",
                     "objectUUID": b"0123456789abcde1"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
+            b"0123456789abcde1" + b"0123456789abcdef")
 
         self.l.add({"dn": "OU=A_LONG_DNXXXXXXXXXXXXXXX,DC=SAMBA",
                     "objectUUID": b"0123456789abcde5"})
@@ -622,18 +719,29 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         self.l.add({"dn": "OU=03,OU=SEARCH_NON_UNIQUE,DC=SAMBA,DC=ORG",
                     "notUnique": gt_max,
                     "objectUUID": b"0123456789abcde2"})
+        # But in the truncated key space
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde2")
 
         # Key longer than max so should get truncated to same key as
         # the previous entries but differs in the chars after max length
         self.l.add({"dn": "OU=23,OU=SEARCH_NON_UNIQUE,DC=SAMBA,DC=ORG",
                     "notUnique": gt_max_b,
                     "objectUUID": b"0123456789abcd22"})
+        # But in the truncated key space
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcd22" + b"0123456789abcde2")
         #
         # An entry outside the tree
         #
         self.l.add({"dn": "OU=11,OU=SEARCH_NON_UNIQUE01,DC=SAMBA,DC=ORG",
                     "notUnique": gt_max,
                     "objectUUID": b"0123456789abcd12"})
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcd12" + b"0123456789abcd22" + b"0123456789abcde2")
 
         # Key shorter than max
         #
@@ -767,6 +875,36 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
             contains(res, "OU=12,OU=SEARCH_NON_UNIQUE01,DC=SAMBA,DC=ORG"))
 
     #
+    # Test index key truncation for base64 encoded values
+    #
+    def test_index_truncated_base64_encoded_keys(self):
+        value = b"aaaaaaaaaaaaaaaaaaaa\x02"
+        # base64 encodes to "YWFhYWFhYWFhYWFhYWFhYWFhYWEC"
+
+        # One less than max key length
+        self.l.add({"dn": "OU=01,OU=BASE64,DC=SAMBA,DC=ORG",
+                    "base64____lt": value,
+                    "objectUUID": b"0123456789abcde0"})
+        self.checkGuids(
+            "@INDEX:BASE64____LT::YWFhYWFhYWFhYWFhYWFhYWFhYWEC",
+            b"0123456789abcde0")
+
+        # Equal max key length
+        self.l.add({"dn": "OU=02,OU=BASE64,DC=SAMBA,DC=ORG",
+                    "base64_____eq": value,
+                    "objectUUID": b"0123456789abcde1"})
+        self.checkGuids(
+            "@INDEX:BASE64_____EQ::YWFhYWFhYWFhYWFhYWFhYWFhYWEC",
+            b"0123456789abcde1")
+
+        # One greater than max key length
+        self.l.add({"dn": "OU=03,OU=BASE64,DC=SAMBA,DC=ORG",
+                    "base64______gt": value,
+                    "objectUUID": b"0123456789abcde2"})
+        self.checkGuids(
+            "@INDEX#BASE64______GT##YWFhYWFhYWFhYWFhYWFhYWFhYWE",
+            b"0123456789abcde2")
+    #
     # Test adding to non unique index with identical multivalued index
     # attributes
     #
@@ -802,6 +940,12 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         self.l.add({"dn": "OU=01,OU=SEARCH_NON_UNIQUE,DC=SAMBA,DC=ORG",
                     "notUnique": [aa_gt_max, ab_gt_max, bb_gt_max],
                     "objectUUID": b"0123456789abcde0"})
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0" + b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
 
         expression = "(notUnique=" + aa_gt_max.decode('ascii') + ")"
         res = self.l.search(base="OU=SEARCH_NON_UNIQUE,DC=SAMBA,DC=ORG",
@@ -848,6 +992,16 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         self.l.add({"dn": "OU=02,OU=DELETE_NON_UNIQUE,DC=SAMBA,DC=ORG",
                     "notUnique": [aa_gt_max, ab_gt_max, cc_gt_max],
                     "objectUUID": b"0123456789abcde1"})
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0" + b"0123456789abcde0" +
+            b"0123456789abcde1" + b"0123456789abcde1")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            b"0123456789abcde1")
 
         res = self.l.search(
             base="DC=SAMBA,DC=ORG",
@@ -859,8 +1013,26 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
             contains(res, "OU=02,OU=DELETE_NON_UNIQUE,DC=SAMBA,DC=ORG"))
 
         self.l.delete("OU=02,OU=DELETE_NON_UNIQUE,DC=SAMBA,DC=ORG")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0" + b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            None)
 
         self.l.delete("OU=01,OU=DELETE_NON_UNIQUE,DC=SAMBA,DC=ORG")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            None)
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            None)
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            None)
 
     #
     # Test modification of records with non unique index with multivalued index
@@ -882,11 +1054,21 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         self.l.add({"dn": "OU=02,OU=MODIFY_NON_UNIQUE,DC=SAMBA,DC=ORG",
                     "notUnique": [aa_gt_max, ab_gt_max, cc_gt_max],
                     "objectUUID": b"0123456789abcde1"})
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0" + b"0123456789abcde0" +
+            b"0123456789abcde1" + b"0123456789abcde1")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            b"0123456789abcde1")
 
         res = self.l.search(
             base="DC=SAMBA,DC=ORG",
             expression="(notUnique=" + aa_gt_max.decode("ascii") + ")")
-        self.assertEquals(2, len(res))
+        self.assertEqual(2, len(res))
         self.assertTrue(
             contains(res, "OU=01,OU=MODIFY_NON_UNIQUE,DC=SAMBA,DC=ORG"))
         self.assertTrue(
@@ -906,6 +1088,16 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         # As the modify is replacing the attribute with the same contents
         # there should be no changes to the indexes.
         #
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0" + b"0123456789abcde0" +
+            b"0123456789abcde1" + b"0123456789abcde1")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            b"0123456789abcde1")
 
         #
         # Modify that removes a value from the indexed attribute
@@ -918,6 +1110,17 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
             "notUnique")
         self.l.modify(msg)
 
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0" +
+            b"0123456789abcde1" + b"0123456789abcde1")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            b"0123456789abcde1")
+
         #
         # Modify that does a constrained delete the indexed attribute
         #
@@ -928,6 +1131,16 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
             ldb.FLAG_MOD_DELETE,
             "notUnique")
         self.l.modify(msg)
+
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0" + b"0123456789abcde1")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            b"0123456789abcde1")
 
         #
         # Modify that does an unconstrained delete the indexed attribute
@@ -940,6 +1153,16 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
             "notUnique")
         self.l.modify(msg)
 
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            None)
+
         #
         # Modify that adds a value to the indexed attribute
         #
@@ -951,6 +1174,16 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
             "notUnique")
         self.l.modify(msg)
 
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            b"0123456789abcde1")
+
         #
         # Modify that adds a values to the indexed attribute
         #
@@ -961,6 +1194,17 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
             ldb.FLAG_MOD_ADD,
             "notUnique")
         self.l.modify(msg)
+
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"0123456789abcde0" +
+            b"0123456789abcde1" + b"0123456789abcde1")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"0123456789abcde0")
+        self.checkGuids(
+            "@INDEX#NOTUNIQUE#ccccccccccccccccccccccccccccccccc",
+            b"0123456789abcde1")
 
     #
     # Test Sub tree searches when checkBaseOnSearch is enabled and the
@@ -984,6 +1228,9 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
                     "objectUUID": b"0123456789abcdef"})
         self.l.add({"dn": "OU=CHECK_BASE_DN_XXXX,DC=SAMBA,DC=OR2",
                     "objectUUID": b"0123456789abcdee"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=CHECK_BASE_DN_XXXX,DC=SAMBA,DC=OR",
+            b"0123456789abcdee" + b"0123456789abcdef")
 
         self.l.add({"dn": "OU=01,OU=CHECK_BASE_DN_XXXX,DC=SAMBA,DC=OR1",
                     "objectUUID": b"0123456789abcdec"})
@@ -991,6 +1238,9 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
                     "objectUUID": b"0123456789abcdeb"})
         self.l.add({"dn": "OU=01,OU=CHECK_BASE_DN_XXXX,DC=SAMBA,DC=OR3",
                     "objectUUID": b"0123456789abcded"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=01,OU=CHECK_BASE_DN_XXXX,DC=SAMBA",
+            b"0123456789abcdeb" + b"0123456789abcdec" + b"0123456789abcded")
 
         self.l.add({"dn": "OU=02,OU=CHECK_BASE_DN_XXXX,DC=SAMBA,DC=OR1",
                     "objectUUID": b"0123456789abcde0"})
@@ -998,6 +1248,9 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
                     "objectUUID": b"0123456789abcde1"})
         self.l.add({"dn": "OU=02,OU=CHECK_BASE_DN_XXXX,DC=SAMBA,DC=OR3",
                     "objectUUID": b"0123456789abcde2"})
+        self.checkGuids(
+            "@INDEX#@IDXDN#OU=02,OU=CHECK_BASE_DN_XXXX,DC=SAMBA",
+            b"0123456789abcde0" + b"0123456789abcde1" + b"0123456789abcde2")
 
         res = self.l.search(base="OU=CHECK_BASE_DN_XXXX,DC=SAMBA,DC=OR1",
                             scope=ldb.SCOPE_SUBTREE)
@@ -1026,6 +1279,49 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
         except ldb.LdbError as e:
             code = e.args[0]
             self.assertEqual(ldb.ERR_NO_SUCH_OBJECT, code)
+
+
+# Run the index truncation tests against an lmdb backend
+class MaxIndexKeyLengthTestsLmdb(MaxIndexKeyLengthTests):
+
+    def setUp(self):
+        self.prefix = MDB_PREFIX
+        super(MaxIndexKeyLengthTestsLmdb, self).setUp()
+
+    def tearDown(self):
+        super(MaxIndexKeyLengthTestsLmdb, self).tearDown()
+
+
+# Run the index truncation tests against an lmdb backend
+class RejectSubDBIndex(LdbBaseTest):
+
+    def setUp(self):
+        self.prefix = MDB_PREFIX
+        super(RejectSubDBIndex, self).setUp()
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir,
+                                     "reject_subidx_test.ldb")
+        self.l = ldb.Ldb(self.url(),
+                         options=[
+                             "modules:rdn_name"])
+
+    def tearDown(self):
+        super(RejectSubDBIndex, self).tearDown()
+
+    def test_try_subdb_index(self):
+        try:
+            self.l.add({"dn": "@INDEXLIST",
+                    "@IDX_LMDB_SUBDB": [b"1"],
+                    "@IDXONE": [b"1"],
+                    "@IDXONE": [b"1"],
+                    "@IDXGUID": [b"objectUUID"],
+                    "@IDX_DN_GUID": [b"GUID"],
+            })
+        except ldb.LdbError as e:
+            code = e.args[0]
+            string = e.args[1]
+            self.assertEqual(ldb.ERR_OPERATIONS_ERROR, code)
+            self.assertIn("sub-database index", string)
 
 if __name__ == '__main__':
     import unittest

@@ -42,12 +42,10 @@ class cache_loader(dict):
         except KeyError:
             return default
 
-    def iteritems(self):
+    def items(self):
         for key in self:
             yield (key, self[key])
 
-    def items(self):
-        return list(self.iteritems())
 
 class cmd_sambatool(SuperCommand):
     """Main samba administration tool."""
@@ -58,22 +56,26 @@ class cmd_sambatool(SuperCommand):
 
     subcommands = cache_loader()
 
+    subcommands["computer"] = None
     subcommands["dbcheck"] = None
     subcommands["delegation"] = None
     subcommands["dns"] = None
     subcommands["domain"] = None
     subcommands["drs"] = None
     subcommands["dsacl"] = None
+    subcommands["forest"] = None
     subcommands["fsmo"] = None
     subcommands["gpo"] = None
     subcommands["group"] = None
     subcommands["ldapcmp"] = None
     subcommands["ntacl"] = None
     subcommands["rodc"] = None
+    subcommands["schema"] = None
     subcommands["sites"] = None
     subcommands["spn"] = None
     subcommands["testparm"] = None
     subcommands["time"] = None
     subcommands["user"] = None
+    subcommands["ou"] = None
     subcommands["processes"] = None
     subcommands["visualize"] = None

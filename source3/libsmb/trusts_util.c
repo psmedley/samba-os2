@@ -30,6 +30,7 @@
 #include "libsmb/libsmb.h"
 #include "source3/include/messages.h"
 #include "source3/include/g_lock.h"
+#include "lib/util/util_tdb.h"
 
 /*********************************************************
  Change the domain password on the PDC.
@@ -44,7 +45,8 @@ struct trust_pw_change_state {
 
 static int trust_pw_change_state_destructor(struct trust_pw_change_state *state)
 {
-	g_lock_unlock(state->g_ctx, state->g_lock_key);
+	g_lock_unlock(state->g_ctx,
+		      string_term_tdb_data(state->g_lock_key));
 	return 0;
 }
 
@@ -82,7 +84,6 @@ char *trust_pw_new_value(TALLOC_CTX *mem_ctx,
 		min = 120;
 		max = 120;
 		break;
-		/* fall through */
 	case SEC_CHAN_DOMAIN:
 		/*
 		 * The maximum length of a trust account password.
@@ -191,7 +192,7 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 
 	g_timeout = timeval_current_ofs(10, 0);
 	status = g_lock_lock(state->g_ctx,
-			     state->g_lock_key,
+			     string_term_tdb_data(state->g_lock_key),
 			     G_LOCK_WRITE, g_timeout);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1, ("could not get g_lock on [%s]!\n",

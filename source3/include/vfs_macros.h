@@ -146,11 +146,6 @@
 #define SMB_VFS_NEXT_CLOSE(handle, fsp) \
 	smb_vfs_call_close((handle)->next, (fsp))
 
-#define SMB_VFS_READ(fsp, data, n) \
-	smb_vfs_call_read((fsp)->conn->vfs_handles, (fsp), (data), (n))
-#define SMB_VFS_NEXT_READ(handle, fsp, data, n) \
-	smb_vfs_call_read((handle)->next, (fsp), (data), (n))
-
 #define SMB_VFS_PREAD(fsp, data, n, off) \
 	smb_vfs_call_pread((fsp)->conn->vfs_handles, (fsp), (data), (n), (off))
 #define SMB_VFS_NEXT_PREAD(handle, fsp, data, n, off) \
@@ -162,11 +157,6 @@
 #define SMB_VFS_NEXT_PREAD_SEND(mem_ctx, ev, handle, fsp, data, n, off)	\
 	smb_vfs_call_pread_send((handle)->next, (mem_ctx), (ev), (fsp), \
 				(data), (n), (off))
-
-#define SMB_VFS_WRITE(fsp, data, n) \
-	smb_vfs_call_write((fsp)->conn->vfs_handles, (fsp), (data), (n))
-#define SMB_VFS_NEXT_WRITE(handle, fsp, data, n) \
-	smb_vfs_call_write((handle)->next, (fsp), (data), (n))
 
 #define SMB_VFS_PWRITE(fsp, data, n, off) \
 	smb_vfs_call_pwrite((fsp)->conn->vfs_handles, (fsp), (data), (n), (off))
@@ -469,16 +459,6 @@
 	smb_vfs_call_fset_nt_acl((fsp)->conn->vfs_handles, (fsp), (security_info_sent), (psd))
 #define SMB_VFS_NEXT_FSET_NT_ACL(handle, fsp, security_info_sent, psd) \
 	smb_vfs_call_fset_nt_acl((handle)->next, (fsp), (security_info_sent), (psd))
-
-#define SMB_VFS_CHMOD_ACL(conn, smb_fname, mode) \
-	smb_vfs_call_chmod_acl((conn)->vfs_handles, (smb_fname), (mode))
-#define SMB_VFS_NEXT_CHMOD_ACL(handle, smb_fname, mode) \
-	smb_vfs_call_chmod_acl((handle)->next, (smb_fname), (mode))
-
-#define SMB_VFS_FCHMOD_ACL(fsp, mode) \
-	smb_vfs_call_fchmod_acl((fsp)->conn->vfs_handles, (fsp), (mode))
-#define SMB_VFS_NEXT_FCHMOD_ACL(handle, fsp, mode) \
-	smb_vfs_call_fchmod_acl((handle)->next, (fsp), (mode))
 
 #define SMB_VFS_SYS_ACL_GET_FILE(conn, smb_fname, type, mem_ctx)		\
 	smb_vfs_call_sys_acl_get_file((conn)->vfs_handles, (smb_fname), (type), (mem_ctx))

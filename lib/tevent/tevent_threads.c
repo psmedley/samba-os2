@@ -28,8 +28,8 @@
 #include "tevent_internal.h"
 #include "tevent_util.h"
 
-#if defined(HAVE_PTHREAD)
-#include <pthread.h>
+#ifdef HAVE_PTHREAD
+#include "system/threads.h"
 
 struct tevent_immediate_list {
 	struct tevent_immediate_list *next, *prev;
@@ -217,6 +217,18 @@ struct tevent_thread_proxy *tevent_thread_proxy_create(
 	int pipefds[2];
 	struct tevent_thread_proxy *tp;
 
+	if (dest_ev_ctx->wrapper.glue != NULL) {
+		/*
+		 * stacking of wrappers is not supported
+		 */
+		tevent_debug(dest_ev_ctx->wrapper.glue->main_ev,
+			     TEVENT_DEBUG_FATAL,
+			     "%s() not allowed on a wrapper context\n",
+			     __func__);
+		errno = EINVAL;
+		return NULL;
+	}
+
 	tp = talloc_zero(dest_ev_ctx, struct tevent_thread_proxy);
 	if (tp == NULL) {
 		return NULL;
@@ -375,10 +387,11 @@ void tevent_thread_proxy_schedule(struct tevent_thread_proxy *tp,
 static int tevent_threaded_context_destructor(
 	struct tevent_threaded_context *tctx)
 {
+	struct tevent_context *main_ev = tevent_wrapper_main_ev(tctx->event_ctx);
 	int ret;
 
-	if (tctx->event_ctx != NULL) {
-		DLIST_REMOVE(tctx->event_ctx->threaded_contexts, tctx);
+	if (main_ev != NULL) {
+		DLIST_REMOVE(main_ev->threaded_contexts, tctx);
 	}
 
 	/*
@@ -410,10 +423,11 @@ struct tevent_threaded_context *tevent_threaded_context_create(
 	TALLOC_CTX *mem_ctx, struct tevent_context *ev)
 {
 #ifdef HAVE_PTHREAD
+	struct tevent_context *main_ev = tevent_wrapper_main_ev(ev);
 	struct tevent_threaded_context *tctx;
 	int ret;
 
-	ret = tevent_common_wakeup_init(ev);
+	ret = tevent_common_wakeup_init(main_ev);
 	if (ret != 0) {
 		errno = ret;
 		return NULL;
@@ -431,7 +445,7 @@ struct tevent_threaded_context *tevent_threaded_context_create(
 		return NULL;
 	}
 
-	DLIST_ADD(ev->threaded_contexts, tctx);
+	DLIST_ADD(main_ev->threaded_contexts, tctx);
 	talloc_set_destructor(tctx, tevent_threaded_context_destructor);
 
 	return tctx;
@@ -439,6 +453,14 @@ struct tevent_threaded_context *tevent_threaded_context_create(
 	errno = ENOSYS;
 	return NULL;
 #endif
+}
+
+static int tevent_threaded_schedule_immediate_destructor(struct tevent_immediate *im)
+{
+	if (im->event_ctx != NULL) {
+		abort();
+	}
+	return 0;
 }
 
 void _tevent_threaded_schedule_immediate(struct tevent_threaded_context *tctx,
@@ -449,7 +471,9 @@ void _tevent_threaded_schedule_immediate(struct tevent_threaded_context *tctx,
 					 const char *location)
 {
 #ifdef HAVE_PTHREAD
-	struct tevent_context *ev;
+	const char *create_location = im->create_location;
+	struct tevent_context *main_ev = NULL;
+	struct tevent_wrapper_glue *glue = tctx->event_ctx->wrapper.glue;
 	int ret, wakeup_fd;
 
 	ret = pthread_mutex_lock(&tctx->event_ctx_mutex);
@@ -457,9 +481,7 @@ void _tevent_threaded_schedule_immediate(struct tevent_threaded_context *tctx,
 		abort();
 	}
 
-	ev = tctx->event_ctx;
-
-	if (ev == NULL) {
+	if (tctx->event_ctx == NULL) {
 		/*
 		 * Our event context is already gone.
 		 */
@@ -473,24 +495,42 @@ void _tevent_threaded_schedule_immediate(struct tevent_threaded_context *tctx,
 	if ((im->event_ctx != NULL) || (handler == NULL)) {
 		abort();
 	}
+	if (im->destroyed) {
+		abort();
+	}
+	if (im->busy) {
+		abort();
+	}
 
-	im->event_ctx		= ev;
-	im->handler		= handler;
-	im->private_data	= private_data;
-	im->handler_name	= handler_name;
-	im->schedule_location	= location;
-	im->cancel_fn		= NULL;
-	im->additional_data	= NULL;
+	main_ev = tevent_wrapper_main_ev(tctx->event_ctx);
 
-	ret = pthread_mutex_lock(&ev->scheduled_mutex);
+	*im = (struct tevent_immediate) {
+		.event_ctx		= tctx->event_ctx,
+		.wrapper		= glue,
+		.handler		= handler,
+		.private_data		= private_data,
+		.handler_name		= handler_name,
+		.create_location	= create_location,
+		.schedule_location	= location,
+	};
+
+	/*
+	 * Make sure the event won't be destroyed while
+	 * it's part of the ev->scheduled_immediates list.
+	 * _tevent_schedule_immediate() will reset the destructor
+	 * in tevent_common_threaded_activate_immediate().
+	 */
+	talloc_set_destructor(im, tevent_threaded_schedule_immediate_destructor);
+
+	ret = pthread_mutex_lock(&main_ev->scheduled_mutex);
 	if (ret != 0) {
 		abort();
 	}
 
-	DLIST_ADD_END(ev->scheduled_immediates, im);
-	wakeup_fd = ev->wakeup_fd;
+	DLIST_ADD_END(main_ev->scheduled_immediates, im);
+	wakeup_fd = main_ev->wakeup_fd;
 
-	ret = pthread_mutex_unlock(&ev->scheduled_mutex);
+	ret = pthread_mutex_unlock(&main_ev->scheduled_mutex);
 	if (ret != 0) {
 		abort();
 	}
@@ -530,8 +570,20 @@ void tevent_common_threaded_activate_immediate(struct tevent_context *ev)
 
 	while (ev->scheduled_immediates != NULL) {
 		struct tevent_immediate *im = ev->scheduled_immediates;
+		struct tevent_immediate copy = *im;
+
 		DLIST_REMOVE(ev->scheduled_immediates, im);
-		DLIST_ADD_END(ev->immediate_events, im);
+
+		tevent_debug(ev, TEVENT_DEBUG_TRACE,
+			     "Schedule immediate event \"%s\": %p from thread into main\n",
+			     im->handler_name, im);
+		im->handler_name = NULL;
+		_tevent_schedule_immediate(im,
+					   ev,
+					   copy.handler,
+					   copy.private_data,
+					   copy.handler_name,
+					   copy.schedule_location);
 	}
 
 	ret = pthread_mutex_unlock(&ev->scheduled_mutex);

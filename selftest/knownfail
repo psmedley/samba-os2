@@ -20,7 +20,7 @@
 ^samba3.smb2.rename.*.simple_nodelete
 ^samba3.smb2.rename.*.no_share_delete_no_delete_access
 ^samba3.blackbox.smbclient_machine_auth.plain \(nt4_dc:local\)# the NT4 DC does not currently set up a self-join
-^samba3.raw.samba3hide.samba3hide\((nt4_dc|ad_dc)\) # This test fails against an smbd environment with NT ACLs enabled
+^samba3.raw.samba3hide.samba3hide\(ad_dc\) # This test fails against the ad_dc environment.
 ^samba3.raw.samba3closeerr.samba3closeerr\(nt4_dc\) # This test fails against an smbd environment with NT ACLs enabled
 ^samba3.raw.acls nfs4acl_xattr-simple-40.INHERITFLAGS\(nt4_dc\) # This (and the follow nfs4acl_xattr tests fail because our NFSv4 backend isn't a complete mapping yet.
 ^samba3.raw.acls nfs4acl_xattr-simple-40.create_owner_file\(nt4_dc\)
@@ -191,6 +191,7 @@
 ^samba3.smb2.replay.replay4
 ^samba3.smb2.lock.*replay
 ^samba3.smb2.lease.statopen3
+^samba3.smb2.lease.unlink # we currently do not downgrade RH lease to R after unlink
 ^samba4.smb2.ioctl.compress_notsup.*\(ad_dc_ntvfs\)
 ^samba3.raw.session.*reauth2 # maybe fix this?
 ^samba3.rpc.lsa.secrets.seal # This gives NT_STATUS_LOCAL_USER_SESSION_KEY
@@ -224,16 +225,16 @@
 ^samba.blackbox.wbinfo\(ad_member:local\).wbinfo -G against ad_member
 ^samba.blackbox.wbinfo\(ad_member:local\).wbinfo -U check for sane mapping
 ^samba.blackbox.wbinfo\(ad_member:local\).wbinfo -G check for sane mapping
-^samba.wbinfo_simple.\(ad_dc_ntvfs:local\).--allocate-uid
-^samba.wbinfo_simple.\(ad_dc_ntvfs:local\).--allocate-gid
-^samba.wbinfo_simple.\(s4member:local\).--allocate-uid
-^samba.wbinfo_simple.\(s4member:local\).--allocate-gid
-^samba.wbinfo_simple.\(ad_dc:local\).--allocate-uid
-^samba.wbinfo_simple.\(ad_dc:local\).--allocate-gid
-^samba.wbinfo_simple.\(chgdcpass:local\).--allocate-uid
-^samba.wbinfo_simple.\(chgdcpass:local\).--allocate-gid
-^samba.wbinfo_simple.\(rodc:local\).--allocate-uid
-^samba.wbinfo_simple.\(rodc:local\).--allocate-gid
+^samba.wbinfo_simple.allocate-uid.wbinfo\(ad_dc_ntvfs:local\)
+^samba.wbinfo_simple.allocate-gid.wbinfo\(ad_dc_ntvfs:local\)
+^samba.wbinfo_simple.allocate-uid.wbinfo\(s4member:local\)
+^samba.wbinfo_simple.allocate-gid.wbinfo\(s4member:local\)
+^samba.wbinfo_simple.allocate-uid.wbinfo\(ad_dc:local\)
+^samba.wbinfo_simple.allocate-gid.wbinfo\(ad_dc:local\)
+^samba.wbinfo_simple.allocate-uid.wbinfo\(chgdcpass:local\)
+^samba.wbinfo_simple.allocate-gid.wbinfo\(chgdcpass:local\)
+^samba.wbinfo_simple.allocate-uid.wbinfo\(rodc:local\)
+^samba.wbinfo_simple.allocate-gid.wbinfo\(rodc:local\)
 #
 # These do not work against winbindd in member mode for unknown reasons
 #

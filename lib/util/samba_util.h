@@ -225,23 +225,7 @@ _PUBLIC_ char *hex_encode_talloc(TALLOC_CTX *mem_ctx, const unsigned char *buff_
 /**
  Unescape a URL encoded string, in place.
 **/
-_PUBLIC_ void rfc1738_unescape(char *buf);
-
-
-/**
- * rfc1738_escape
- * Returns a static buffer that contains the RFC
- * 1738 compliant, escaped version of the given url. (escapes unsafe and % characters)
- **/
-_PUBLIC_ char *rfc1738_escape(TALLOC_CTX *mem_ctx, const char *url);
-
-/**
- * rfc1738_escape_unescaped
- *
- * Returns a static buffer that contains
- * the RFC 1738 compliant, escaped version of the given url (escapes unsafe chars only)
- **/
-_PUBLIC_ char *rfc1738_escape_unescaped(TALLOC_CTX *mem_ctx, const char *url);
+_PUBLIC_ char *rfc1738_unescape(char *buf);
 
 /**
  * rfc1738_escape_part 
@@ -368,7 +352,7 @@ const char **str_list_make_v3_const(TALLOC_CTX *mem_ctx,
  */
 _PUBLIC_ char *afdgets(int fd, TALLOC_CTX *mem_ctx, size_t hint);
 
-char *fgets_slash(TALLOC_CTX *mem_ctx, char *s2, int maxlen, FILE *f);
+char *fgets_slash(TALLOC_CTX *mem_ctx, char *s2, size_t maxlen, FILE *f);
 
 /**
 load a file into memory from a fd.

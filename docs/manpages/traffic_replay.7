@@ -2,12 +2,12 @@
 .\"     Title: traffic_replay
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: User Commands
-.\"    Source: Samba 4.8.5
+.\"    Source: Samba 4.9.0
 .\"  Language: English
 .\"
-.TH "TRAFFIC_REPLAY" "7" "08/24/2018" "Samba 4\&.8\&.5" "User Commands"
+.TH "TRAFFIC_REPLAY" "7" "09/13/2018" "Samba 4\&.9\&.0" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 traffic_replay \- Samba traffic generation tool\&.
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-traffic_replay [\-F,\ \-\-fixed\-password\ <test\-password>] [\-S,\ \-\-scale\-traffic\ <scale\ by\ factor>] [\-r,\ \-\-replay\-rate\ <scale\ by\ factor>] [\-D,\ \-\-duration\ <seconds>] [\-\-traffic\-summary\ <output\ file>] [\-I,\ \-\-instance\-id\ <id>] [\-K,\ \-\-prefer\-kerberos] [\-B,\ \-\-badpassword\-frequency\ <frequency>] [\-\-dns\-rate\ <rate>] [\-t,\ \-\-timing\-data\ <file>] [\-U,\ \-\-username\ user] [\-\-password\ <password>] [\-W\ \-\-workgroup\ <workgroup>] [\-\-realm\ <realm>] [\-s,\ \-\-config\-file\ <file>] [\-k,\ \-\-kerberos\ <kerberos>] [\-\-ipaddress\ <address>] [\-P,\ \-\-machine\-pass] [\-\-option\ <option>] [\-d,\ \-\-debuglevel\ <debug\ level>] {summary\-file} {dns\-hostname}
+traffic_replay [\-F,\ \-\-fixed\-password\ <test\-password>] [\-S,\ \-\-scale\-traffic\ <scale\ by\ factor>] [\-r,\ \-\-replay\-rate\ <scale\ by\ factor>] [\-D,\ \-\-duration\ <seconds>] [\-\-traffic\-summary\ <output\ file>] [\-I,\ \-\-instance\-id\ <id>] [\-K,\ \-\-prefer\-kerberos] [\-B,\ \-\-badpassword\-frequency\ <frequency>] [\-\-dns\-rate\ <rate>] [\-t,\ \-\-timing\-data\ <file>] [\-\-random\-seed\ <seed>] [\-U,\ \-\-username\ user] [\-\-password\ <password>] [\-W\ \-\-workgroup\ <workgroup>] [\-\-realm\ <realm>] [\-s,\ \-\-config\-file\ <file>] [\-k,\ \-\-kerberos\ <kerberos>] [\-\-ipaddress\ <address>] [\-P,\ \-\-machine\-pass] [\-\-option\ <option>] [\-d,\ \-\-debuglevel\ <debug\ level>] {summary\-file} {dns\-hostname}
 .HP \w'\ 'u
 traffic_replay [\-G,\ \-\-generate\-users\-only] [\-F,\ \-\-fixed\-password\ <test\-password>] [\-n,\ \-\-number\-of\-users\ <total\ users>] [\-\-number\-of\-groups\ <total\ groups>] [\-\-average\-groups\-per\-user\ <average\ number>] [\-\-group\-memberships\ <total\ memberships>] {dns\-hostname}
 .HP \w'\ 'u
@@ -75,6 +75,11 @@ Test users are created when this tool is run, so that actual Samba activity, suc
 Note that any users created by this tool will remain on the DC until you run the \-\-clean\-up option\&. Therefore, the fixed\-password option needs to be the same each time the tool is run, otherwise the test users won\*(Aqt authenticate correctly\&.
 .RE
 .PP
+random\-seed
+.RS 4
+A number to seed the random number generator with\&. When traffic is generated from a model\-file, use this option to keep the traffic consistent across multiple test runs\&. This allows you to compare the performance of Samba between different releases\&.
+.RE
+.PP
 Traffic Model Options
 .RS 4
 When the summary\-file is a traffic\-model (produced by
@@ -99,7 +104,7 @@ Increases the number of conversations by this factor\&. This option won\*(Aqt af
 .RS 4
 Instead of replaying a traffic\-model, this option generates a traffic\-summary file based on what traffic would be sent\&. Using a traffic\-model allows you to scale the packet rate and number of packets sent\&. However, using a traffic\-model introduces some randomness into the traffic generation\&. So running the same traffic_replay command multiple times using a model file may result in some differences in the actual traffic sent\&. However, running the same traffic_replay command multiple times with a traffic\-summary file will always result in the same traffic being sent\&.
 .sp
-For taking performance measurements over several test runs, it\*(Aqs recommended to use this option and replay the traffic from a traffic\-summary file\&.
+For taking performance measurements over several test runs, it\*(Aqs recommended to use this option and replay the traffic from a traffic\-summary file, or to use the \-\-random\-seed option\&.
 .RE
 .RS
 .sp
@@ -301,7 +306,7 @@ traffic_replay traffic\-model\&.txt my\-dc\&.samdom\&.example\&.com \-UAdmin%pas
 .PP
 By default, this will generate 60 seconds worth of traffic based on the model\&. You can specify longer using the \-\-duration parameter\&.
 .PP
-The traffic generated is an approximation of what was seen in the network capture\&. The traffic generation involves some randomness, so running the same command multiple times may result in slightly different traffic being generated\&.
+The traffic generated is an approximation of what was seen in the network capture\&. The traffic generation involves some randomness, so running the same command multiple times may result in slightly different traffic being generated (although you can avoid this, by specifying the \-\-random\-seed option)\&.
 .PP
 As well as changing how long the model runs for, you can also change how many conversations get generated and how fast the traffic gets replayed\&. To roughly double the number of conversations that get replayed, use \-\-scale\-traffic=2 or to approximately halve the number use \-\-scale\-traffic=0\&.5\&. To approximately double how quickly the conversations get replayed, use \-\-replay\-rate=2, or to halve this use \-\-replay\-rate=0\&.5
 .PP
@@ -327,7 +332,7 @@ traffic_replay traffic\-model\&.txt my\-dc\&.samdom\&.example\&.com \-UAdmin%pas
 The users created by the test will have names like STGU\-0\-xyz\&. The groups generated have names like STGG\-0\-xyz\&.
 .SH "VERSION"
 .PP
-This man page is complete for version 4\&.8\&.5 of the Samba suite\&.
+This man page is complete for version 4\&.9\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBtraffic_learner\fR(7)\&.

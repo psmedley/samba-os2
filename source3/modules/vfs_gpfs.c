@@ -243,8 +243,10 @@ static int vfs_gpfs_get_real_filename(struct vfs_handle_struct *handle,
 				      char **found_name)
 {
 	int result;
-	char *full_path;
-	char real_pathname[PATH_MAX+1];
+	char *full_path = NULL;
+	char *to_free = NULL;
+	char real_pathname[PATH_MAX+1], tmpbuf[PATH_MAX];
+	size_t full_path_len;
 	int buflen;
 	bool mangled;
 	struct gpfs_config_data *config;
@@ -264,8 +266,9 @@ static int vfs_gpfs_get_real_filename(struct vfs_handle_struct *handle,
 						      mem_ctx, found_name);
 	}
 
-	full_path = talloc_asprintf(talloc_tos(), "%s/%s", path, name);
-	if (full_path == NULL) {
+	full_path_len = full_path_tos(path, name, tmpbuf, sizeof(tmpbuf),
+				      &full_path, &to_free);
+	if (full_path_len == -1) {
 		errno = ENOMEM;
 		return -1;
 	}
@@ -275,7 +278,7 @@ static int vfs_gpfs_get_real_filename(struct vfs_handle_struct *handle,
 	result = gpfswrap_get_realfilename_path(full_path, real_pathname,
 						&buflen);
 
-	TALLOC_FREE(full_path);
+	TALLOC_FREE(to_free);
 
 	if ((result == -1) && (errno == ENOSYS)) {
 		return SMB_VFS_NEXT_GET_REAL_FILENAME(
@@ -1612,7 +1615,16 @@ static NTSTATUS vfs_gpfs_get_dos_attributes(struct vfs_handle_struct *handle,
 	if (ret == -1 && errno == EACCES) {
 		ret = get_dos_attr_with_capability(smb_fname, &attrs);
 	}
-	if (ret == -1) {
+
+	if (ret == -1 && errno == EBADF) {
+		/*
+		 * Returned for directory listings in gpfs root for
+		 * .. entry which steps out of gpfs.
+		 */
+		DBG_DEBUG("Getting winattrs for %s returned EBADF.\n",
+			  smb_fname->base_name);
+		return map_nt_error_from_unix(errno);
+	} else if (ret == -1) {
 		DBG_WARNING("Getting winattrs failed for %s: %s\n",
 			    smb_fname->base_name, strerror(errno));
 		return map_nt_error_from_unix(errno);
@@ -1879,23 +1891,15 @@ static int vfs_gpfs_ntimes(struct vfs_handle_struct *handle,
 
         struct gpfs_winattr attrs;
         int ret;
-        char *path = NULL;
-        NTSTATUS status;
 	struct gpfs_config_data *config;
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct gpfs_config_data,
 				return -1);
 
-	status = get_full_smb_filename(talloc_tos(), smb_fname, &path);
-	if (!NT_STATUS_IS_OK(status)) {
-		errno = map_errno_from_nt_status(status);
-		return -1;
-	}
-
 	/* Try to use gpfs_set_times if it is enabled and available */
 	if (config->settimes) {
-		ret = smbd_gpfs_set_times_path(path, ft);
+		ret = smbd_gpfs_set_times_path(smb_fname->base_name, ft);
 
 		if (ret == 0 || (ret == -1 && errno != ENOSYS)) {
 			return ret;
@@ -1928,7 +1932,7 @@ static int vfs_gpfs_ntimes(struct vfs_handle_struct *handle,
         attrs.creationTime.tv_sec = ft->create_time.tv_sec;
         attrs.creationTime.tv_nsec = ft->create_time.tv_nsec;
 
-	ret = gpfswrap_set_winattrs_path(discard_const_p(char, path),
+	ret = gpfswrap_set_winattrs_path(smb_fname->base_name,
 					 GPFS_WINATTR_SET_CREATION_TIME,
 					 &attrs);
         if(ret == -1 && errno != ENOSYS){
@@ -2002,8 +2006,6 @@ static bool vfs_gpfs_is_offline(struct vfs_handle_struct *handle,
 				SMB_STRUCT_STAT *sbuf)
 {
 	struct gpfs_winattr attrs;
-	char *path = NULL;
-	NTSTATUS status;
 	struct gpfs_config_data *config;
 	int ret;
 
@@ -2015,24 +2017,17 @@ static bool vfs_gpfs_is_offline(struct vfs_handle_struct *handle,
 		return false;
 	}
 
-	status = get_full_smb_filename(talloc_tos(), fname, &path);
-	if (!NT_STATUS_IS_OK(status)) {
-		return false;
-	}
-
-	ret = gpfswrap_get_winattrs_path(path, &attrs);
+	ret = gpfswrap_get_winattrs_path(fname->base_name, &attrs);
 	if (ret == -1) {
-		TALLOC_FREE(path);
 		return false;
 	}
 
 	if ((attrs.winAttrs & GPFS_WINATTR_OFFLINE) != 0) {
-		DEBUG(10, ("%s is offline\n", path));
-		TALLOC_FREE(path);
+		DBG_DEBUG("%s is offline\n", fname->base_name);
 		return true;
 	}
-	DEBUG(10, ("%s is online\n", path));
-	TALLOC_FREE(path);
+
+	DBG_DEBUG("%s is online\n", fname->base_name);
 	return false;
 }
 

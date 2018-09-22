@@ -187,16 +187,20 @@ static bool yesno(const char *p)
  number taken from the buffer. This may not equal the number written.
 ****************************************************************************/
 
-static int writefile(int f, char *b, int n)
+static ssize_t writefile(int f, char *b, size_t n)
 {
-	int i;
+	size_t i = 0;
+
+	if (n == 0) {
+		errno = EINVAL;
+		return -1;
+	}
 
 	if (!translation) {
 		return write(f,b,n);
 	}
 
-	i = 0;
-	while (i < n) {
+	do {
 		if (*b == '\r' && (i<(n-1)) && *(b+1) == '\n') {
 			b++;i++;
 		}
@@ -205,9 +209,9 @@ static int writefile(int f, char *b, int n)
 		}
 		b++;
 		i++;
-	}
+	} while (i < n);
 
-	return(i);
+	return (ssize_t)i;
 }
 
 /****************************************************************************
@@ -1093,7 +1097,10 @@ static int cmd_echo(void)
 static NTSTATUS writefile_sink(char *buf, size_t n, void *priv)
 {
 	int *pfd = (int *)priv;
-	if (writefile(*pfd, buf, n) == -1) {
+	ssize_t rc;
+
+	rc = writefile(*pfd, buf, n);
+	if (rc == -1) {
 		return map_nt_error_from_unix(errno);
 	}
 	return NT_STATUS_OK;
@@ -1153,6 +1160,7 @@ static int do_get(const char *rname, const char *lname_in, bool reget)
 				start = lseek(handle, 0, SEEK_END);
 				if (start == -1) {
 					d_printf("Error seeking local file\n");
+					close(handle);
 					return 1;
 				}
 			}
@@ -1174,6 +1182,9 @@ static int do_get(const char *rname, const char *lname_in, bool reget)
 				      NULL);
 		if(!NT_STATUS_IS_OK(status)) {
 			d_printf("getattrib: %s\n", nt_errstr(status));
+			if (newhandle) {
+				close(handle);
+			}
 			return 1;
 		}
 	}
@@ -1186,6 +1197,9 @@ static int do_get(const char *rname, const char *lname_in, bool reget)
 	if (!NT_STATUS_IS_OK(status)) {
 		d_fprintf(stderr, "parallel_read returned %s\n",
 			  nt_errstr(status));
+		if (newhandle) {
+			close(handle);
+		}
 		cli_close(targetcli, fnum);
 		return 1;
 	}
@@ -5558,7 +5572,7 @@ static struct {
   {"posix_mkdir",cmd_posix_mkdir,"<name> 0<mode> creates a directory using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
   {"posix_rmdir",cmd_posix_rmdir,"<name> removes a directory using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
   {"posix_unlink",cmd_posix_unlink,"<name> removes a file using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
-  {"posix_whoami",cmd_posix_whoami,"retun logged on user information "
+  {"posix_whoami",cmd_posix_whoami,"return logged on user information "
 			"using POSIX interface",{COMPL_REMOTE,COMPL_NONE}},
   {"print",cmd_print,"<file name> print a file",{COMPL_NONE,COMPL_NONE}},
   {"prompt",cmd_prompt,"toggle prompting for filenames for mget and mput",{COMPL_NONE,COMPL_NONE}},
@@ -5613,9 +5627,9 @@ static struct {
 
 static int process_tok(char *tok)
 {
-	int i = 0, matches = 0;
-	int cmd=0;
-	int tok_len = strlen(tok);
+	size_t i = 0, matches = 0;
+	size_t cmd=0;
+	size_t tok_len = strlen(tok);
 
 	while (commands[i].fn != NULL) {
 		if (strequal(commands[i].name,tok)) {
@@ -5960,7 +5974,7 @@ static char **completion_fn(const char *text, int start, int end)
 			return NULL;
 	} else {
 		char **matches;
-		int i, len, samelen = 0, count=1;
+		size_t i, len, samelen = 0, count=1;
 
 		matches = SMB_MALLOC_ARRAY(char *, MAX_COMPLETIONS);
 		if (!matches) {

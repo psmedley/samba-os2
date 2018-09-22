@@ -1062,9 +1062,6 @@ static NTSTATUS dcesrv_lsa_CreateTrustedDomain_base(struct dcesrv_call_state *dc
 	struct server_id *server_ids = NULL;
 	uint32_t num_server_ids = 0;
 	NTSTATUS status;
-	struct dom_sid *tmp_sid1;
-	struct dom_sid *tmp_sid2;
-	uint32_t tmp_rid;
 	bool ok;
 	char *dns_encoded = NULL;
 	char *netbios_encoded = NULL;
@@ -1094,35 +1091,8 @@ static NTSTATUS dcesrv_lsa_CreateTrustedDomain_base(struct dcesrv_call_state *dc
 	 * We expect S-1-5-21-A-B-C, but we don't
 	 * allow S-1-5-21-0-0-0 as this is used
 	 * for claims and compound identities.
-	 *
-	 * So we call dom_sid_split_rid() 3 times
-	 * and compare the result to S-1-5-21
 	 */
-	status = dom_sid_split_rid(mem_ctx, r->in.info->sid, &tmp_sid1, &tmp_rid);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
-	status = dom_sid_split_rid(mem_ctx, tmp_sid1, &tmp_sid2, &tmp_rid);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
-	status = dom_sid_split_rid(mem_ctx, tmp_sid2, &tmp_sid1, &tmp_rid);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
-	ok = dom_sid_parse("S-1-5-21", tmp_sid2);
-	if (!ok) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
-	ok = dom_sid_equal(tmp_sid1, tmp_sid2);
-	if (!ok) {
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-	ok = dom_sid_parse("S-1-5-21-0-0-0", tmp_sid2);
-	if (!ok) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
-	ok = !dom_sid_equal(r->in.info->sid, tmp_sid2);
+	ok = dom_sid_is_valid_account_domain(r->in.info->sid);
 	if (!ok) {
 		return NT_STATUS_INVALID_PARAMETER;
 	}
@@ -2593,7 +2563,6 @@ static NTSTATUS dcesrv_lsa_EnumTrustDom(struct dcesrv_call_state *dce_call, TALL
 				 1+(r->in.max_size/LSA_ENUM_TRUST_DOMAIN_MULTIPLIER));
 
 	r->out.domains->domains = entries + *r->in.resume_handle;
-	r->out.domains->count = r->out.domains->count;
 
 	if (r->out.domains->count < count - *r->in.resume_handle) {
 		*r->out.resume_handle = *r->in.resume_handle + r->out.domains->count;
@@ -2688,7 +2657,6 @@ static NTSTATUS dcesrv_lsa_EnumTrustedDomainsEx(struct dcesrv_call_state *dce_ca
 				 1+(r->in.max_size/LSA_ENUM_TRUST_DOMAIN_EX_MULTIPLIER));
 
 	r->out.domains->domains = entries + *r->in.resume_handle;
-	r->out.domains->count = r->out.domains->count;
 
 	if (r->out.domains->count < count - *r->in.resume_handle) {
 		*r->out.resume_handle = *r->in.resume_handle + r->out.domains->count;
@@ -3199,8 +3167,6 @@ static NTSTATUS dcesrv_lsa_SetSystemAccessAccount(struct dcesrv_call_state *dce_
 {
 	DCESRV_FAULT(DCERPC_FAULT_OP_RNG_ERROR);
 }
-
-
 /*
   lsa_CreateSecret
 */
@@ -3212,6 +3178,7 @@ static NTSTATUS dcesrv_lsa_CreateSecret(struct dcesrv_call_state *dce_call, TALL
 	struct lsa_secret_state *secret_state;
 	struct dcesrv_handle *handle;
 	struct ldb_message **msgs, *msg;
+	struct ldb_context *samdb = NULL;
 	const char *attrs[] = {
 		NULL
 	};
@@ -3262,11 +3229,18 @@ static NTSTATUS dcesrv_lsa_CreateSecret(struct dcesrv_call_state *dce_call, TALL
 					ldb_binary_encode_string(mem_ctx, name));
 		NT_STATUS_HAVE_NO_MEMORY(name2);
 
-		/* We need to connect to the database as system, as this is one
-		 * of the rare RPC calls that must read the secrets (and this
-		 * is denied otherwise) */
-		secret_state->sam_ldb = talloc_reference(secret_state,
-							 samdb_connect(mem_ctx, dce_call->event_ctx, dce_call->conn->dce_ctx->lp_ctx, system_session(dce_call->conn->dce_ctx->lp_ctx), 0));
+		/*
+		 * We need to connect to the database as system, as this is
+		 * one of the rare RPC calls that must read the secrets
+		 * (and this is denied otherwise)
+		 *
+		 * We also save the current remote session details so they can
+		 * used by the audit logging module. This allows the audit
+		 * logging to report the remote users details, rather than the
+		 * system users details.
+		 */
+		samdb = dcesrv_samdb_connect_as_system(mem_ctx, dce_call);
+		secret_state->sam_ldb = talloc_reference(secret_state, samdb);
 		NT_STATUS_HAVE_NO_MEMORY(secret_state->sam_ldb);
 
 		/* search for the secret record */
@@ -3369,6 +3343,7 @@ static NTSTATUS dcesrv_lsa_OpenSecret(struct dcesrv_call_state *dce_call, TALLOC
 	struct lsa_secret_state *secret_state;
 	struct dcesrv_handle *handle;
 	struct ldb_message **msgs;
+	struct ldb_context *samdb = NULL;
 	const char *attrs[] = {
 		NULL
 	};
@@ -3403,9 +3378,18 @@ static NTSTATUS dcesrv_lsa_OpenSecret(struct dcesrv_call_state *dce_call, TALLOC
 
 	if (strncmp("G$", r->in.name.string, 2) == 0) {
 		name = &r->in.name.string[2];
-		/* We need to connect to the database as system, as this is one of the rare RPC calls that must read the secrets (and this is denied otherwise) */
-		secret_state->sam_ldb = talloc_reference(secret_state,
-							 samdb_connect(mem_ctx, dce_call->event_ctx, dce_call->conn->dce_ctx->lp_ctx, system_session(dce_call->conn->dce_ctx->lp_ctx), 0));
+		/*
+		 * We need to connect to the database as system, as this is
+		 * one of the rare RPC calls that must read the secrets
+		 * (and this is denied otherwise)
+		 *
+		 * We also save the current remote session details so they can
+		 * used by the audit logging module. This allows the audit
+		 * logging to report the remote users details, rather than the
+		 * system users details.
+		 */
+		samdb = dcesrv_samdb_connect_as_system(mem_ctx, dce_call);
+		secret_state->sam_ldb = talloc_reference(secret_state, samdb);
 		secret_state->global = true;
 
 		if (strlen(name) < 1) {

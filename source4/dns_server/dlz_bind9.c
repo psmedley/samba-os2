@@ -38,7 +38,7 @@
 #include <popt.h>
 #include "lib/util/dlinklist.h"
 #include "dlz_minimal.h"
-#include "dns_server/dnsserver_common.h"
+#include "dnsserver_common.h"
 
 struct b9_options {
 	const char *url;
@@ -703,10 +703,15 @@ _PUBLIC_ isc_result_t dlz_create(const char *dlzname,
 		}
 	}
 
-	ret = samdb_connect_url(state, state->ev_ctx, state->lp,
-				system_session(state->lp), 0,
+	ret = samdb_connect_url(state,
+				state->ev_ctx,
+				state->lp,
+				system_session(state->lp),
+				0,
 				state->options.url,
-				&state->samdb, &errstring);
+				NULL,
+				&state->samdb,
+				&errstring);
 	if (ret != LDB_SUCCESS) {
 		state->log(ISC_LOG_ERROR,
 			   "samba_dlz: Failed to connect to %s: %s",
@@ -1477,22 +1482,6 @@ _PUBLIC_ isc_boolean_t dlz_ssumatch(const char *signer, const char *name, const 
 }
 
 /*
-  see if two DNS names are the same
- */
-static bool dns_name_equal(const char *name1, const char *name2)
-{
-	size_t len1 = strlen(name1);
-	size_t len2 = strlen(name2);
-	if (name1[len1-1] == '.') len1--;
-	if (name2[len2-1] == '.') len2--;
-	if (len1 != len2) {
-		return false;
-	}
-	return strncasecmp_m(name1, name2, len1) == 0;
-}
-
-
-/*
   see if two dns records match
  */
 static bool b9_record_match(struct dlz_bind9_data *state,
@@ -1591,7 +1580,10 @@ static bool b9_set_session_info(struct dlz_bind9_data *state, const char *name)
 		return true;
 	}
 
-	ret = ldb_set_opaque(state->samdb, "sessionInfo", state->session_info);
+	ret = ldb_set_opaque(
+		state->samdb,
+		DSDB_SESSION_INFO,
+		state->session_info);
 	if (ret != LDB_SUCCESS) {
 		state->log(ISC_LOG_ERROR, "samba_dlz: unable to set session info");
 		return false;
@@ -1605,7 +1597,10 @@ static bool b9_set_session_info(struct dlz_bind9_data *state, const char *name)
  */
 static void b9_reset_session_info(struct dlz_bind9_data *state)
 {
-	ldb_set_opaque(state->samdb, "sessionInfo", system_session(state->lp));
+	ldb_set_opaque(
+		state->samdb,
+		DSDB_SESSION_INFO,
+		system_session(state->lp));
 }
 
 /*
@@ -1636,12 +1631,7 @@ _PUBLIC_ isc_result_t dlz_addrdataset(const char *name, const char *rdatastr, vo
 		return ISC_R_NOMEMORY;
 	}
 
-	unix_to_nt_time(&t, time(NULL));
-	t /= 10*1000*1000; /* convert to seconds (NT time is in 100ns units) */
-	t /= 3600;         /* convert to hours */
-
 	rec->rank        = DNS_RANK_ZONE;
-	rec->dwTimeStamp = (uint32_t)t;
 
 	if (!b9_parse(state, rdatastr, rec)) {
 		state->log(ISC_LOG_INFO, "samba_dlz: failed to parse rdataset '%s'", rdatastr);
@@ -1703,6 +1693,15 @@ _PUBLIC_ isc_result_t dlz_addrdataset(const char *name, const char *rdatastr, vo
 			return ISC_R_NOMEMORY;
 		}
 		num_recs++;
+
+		if (dns_name_is_static(recs, num_recs)) {
+			rec->dwTimeStamp = 0;
+		} else {
+			unix_to_nt_time(&t, time(NULL));
+			t /= 10 * 1000 * 1000; /* convert to seconds */
+			t /= 3600;	     /* convert to hours */
+			rec->dwTimeStamp = (uint32_t)t;
+		}
 	}
 
 	recs[i] = *rec;

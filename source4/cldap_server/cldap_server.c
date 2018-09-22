@@ -154,7 +154,7 @@ static NTSTATUS cldapd_startup_interfaces(struct cldapd_server *cldapd, struct l
 	/* if we are allowing incoming packets from any address, then
 	   we need to bind to the wildcard address */
 	if (!lpcfg_bind_interfaces_only(lp_ctx)) {
-		int num_binds = 0;
+		size_t num_binds = 0;
 		char **wcard = iface_list_wildcard(cldapd);
 		NT_STATUS_HAVE_NO_MEMORY(wcard);
 		for (i=0; wcard[i]; i++) {
@@ -221,7 +221,12 @@ static void cldapd_task_init(struct task_server *task)
 	}
 
 	cldapd->task = task;
-	cldapd->samctx = samdb_connect(cldapd, task->event_ctx, task->lp_ctx, system_session(task->lp_ctx), 0);
+	cldapd->samctx = samdb_connect(cldapd,
+				       task->event_ctx,
+				       task->lp_ctx,
+				       system_session(task->lp_ctx),
+				       NULL,
+				       0);
 	if (cldapd->samctx == NULL) {
 		task_server_terminate(task, "cldapd failed to open samdb", true);
 		return;

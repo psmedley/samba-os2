@@ -602,7 +602,7 @@ static void rescan_forest_root_trusts( void )
 {
 	struct winbindd_tdc_domain *dom_list = NULL;
         size_t num_trusts = 0;
-	int i;
+	size_t i;
 	NTSTATUS status;
 
 	/* The only transitive trusts supported by Windows 2003 AD are
@@ -679,7 +679,7 @@ static void rescan_forest_trusts( void )
 	struct winbindd_domain *d = NULL;
 	struct winbindd_tdc_domain *dom_list = NULL;
         size_t num_trusts = 0;
-	int i;
+	size_t i;
 	NTSTATUS status;
 
 	/* The only transitive trusts supported by Windows 2003 AD are
@@ -1962,18 +1962,6 @@ done:
 	talloc_destroy(frame);
 
 	return ret;
-}
-
-/*********************************************************************
- ********************************************************************/
-
-bool winbindd_internal_child(struct winbindd_child *child)
-{
-	if ((child == idmap_child()) || (child == locator_child())) {
-		return True;
-	}
-
-	return False;
 }
 
 #ifdef HAVE_KRB5_LOCATE_PLUGIN_H

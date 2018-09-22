@@ -132,7 +132,8 @@ class DrsReplSchemaTestCase(drs_base.DrsBaseTestCase):
         # add it to the Schema
         try:
             ldb_ctx.add(rec)
-        except LdbError, (enum, estr):
+        except LdbError as e:
+            (enum, estr) = e.args
             self.fail("Adding record failed with %d/%s" % (enum, estr))
 
         self._ldap_schemaUpdateNow(ldb_ctx)
@@ -170,7 +171,8 @@ class DrsReplSchemaTestCase(drs_base.DrsBaseTestCase):
             res_dc2 = self.ldb_dc2.search(base=obj_dn,
                                           scope=SCOPE_BASE,
                                           attrs=["*"])
-        except LdbError, (enum, estr):
+        except LdbError as e1:
+            (enum, estr) = e1.args
             if enum == ERR_NO_SUCH_OBJECT:
                 self.fail("%s doesn't exists on %s" % (obj_dn, self.dnsname_dc2))
             raise
@@ -306,9 +308,6 @@ class DrsReplSchemaTestCase(drs_base.DrsBaseTestCase):
 
         This ensures that the server
         """
-        # disable automatic replication temporary
-        self._disable_all_repl(self.dnsname_dc1)
-        self._disable_all_repl(self.dnsname_dc2)
 
        # add new attributeSchema object
         (a_ldn, a_dn) = self._schema_new_attr(self.ldb_dc1, "attr-OU-S", 14)
@@ -439,7 +438,8 @@ class DrsReplSchemaTestCase(drs_base.DrsBaseTestCase):
                                c_dn.get_component_value(0) + "-NEW")
         try:
             self.ldb_dc1.rename(c_dn, c_dn_new)
-        except LdbError, (num, _):
+        except LdbError as e2:
+            (num, _) = e2.args
             self.fail("failed to change CN for %s: %s" % (c_dn, _))
 
         # force replication from DC1 to DC2

@@ -183,17 +183,15 @@ struct ltdb_parse_data_unpack_ctx {
 	unsigned int unpack_flags;
 };
 
-static int ltdb_parse_data_unpack(TDB_DATA key, TDB_DATA data,
+static int ltdb_parse_data_unpack(struct ldb_val key,
+				  struct ldb_val data,
 				  void *private_data)
 {
 	struct ltdb_parse_data_unpack_ctx *ctx = private_data;
 	unsigned int nb_elements_in_db;
 	int ret;
 	struct ldb_context *ldb = ldb_module_get_ctx(ctx->module);
-	struct ldb_val data_parse = {
-		.data = data.dptr,
-		.length = data.dsize
-	};
+	struct ldb_val data_parse = data;
 
 	if (ctx->unpack_flags & LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC) {
 		/*
@@ -203,13 +201,13 @@ static int ltdb_parse_data_unpack(TDB_DATA key, TDB_DATA data,
 		 * and the caller needs a stable result.
 		 */
 		data_parse.data = talloc_memdup(ctx->msg,
-						data.dptr,
-						data.dsize);
+						data.data,
+						data.length);
 		if (data_parse.data == NULL) {
 			ldb_debug(ldb, LDB_DEBUG_ERROR,
 				  "Unable to allocate data(%d) for %*.*s\n",
-				  (int)data.dsize,
-				  (int)key.dsize, (int)key.dsize, key.dptr);
+				  (int)data.length,
+				  (int)key.length, (int)key.length, key.data);
 			return LDB_ERR_OPERATIONS_ERROR;
 		}
 	}
@@ -220,13 +218,13 @@ static int ltdb_parse_data_unpack(TDB_DATA key, TDB_DATA data,
 						   ctx->unpack_flags,
 						   &nb_elements_in_db);
 	if (ret == -1) {
-		if (data_parse.data != data.dptr) {
+		if (data_parse.data != data.data) {
 			talloc_free(data_parse.data);
 		}
 
 		ldb_debug(ldb, LDB_DEBUG_ERROR, "Invalid data for index %*.*s\n",
-			  (int)key.dsize, (int)key.dsize, key.dptr);
-		return LDB_ERR_OPERATIONS_ERROR;		
+			  (int)key.length, (int)key.length, key.data);
+		return LDB_ERR_OPERATIONS_ERROR;
 	}
 	return ret;
 }
@@ -249,17 +247,21 @@ int ltdb_search_key(struct ldb_module *module, struct ltdb_private *ltdb,
 		.module = module,
 		.unpack_flags = unpack_flags
 	};
+	struct ldb_val ldb_key = {
+		.data = tdb_key.dptr,
+		.length = tdb_key.dsize
+	};
 
 	memset(msg, 0, sizeof(*msg));
 
 	msg->num_elements = 0;
 	msg->elements = NULL;
 
-	ret = tdb_parse_record(ltdb->tdb, tdb_key, 
-			       ltdb_parse_data_unpack, &ctx); 
-	
+	ret = ltdb->kv_ops->fetch_and_parse(ltdb, ldb_key,
+					    ltdb_parse_data_unpack, &ctx);
+
 	if (ret == -1) {
-		ret = ltdb_err_map(tdb_error(ltdb->tdb));
+		ret = ltdb->kv_ops->error(ltdb);
 		if (ret == LDB_SUCCESS) {
 			/*
 			 * Just to be sure we don't turn errors
@@ -303,19 +305,9 @@ int ltdb_search_dn1(struct ldb_module *module, struct ldb_dn *dn, struct ldb_mes
 		return LDB_ERR_INVALID_DN_SYNTAX;
 	}
 
-	if (ltdb->cache->GUID_index_attribute == NULL) {
-		tdb_key_ctx = talloc_new(msg);
-		if (!tdb_key_ctx) {
-			return ldb_module_oom(module);
-		}
+	if (ltdb->cache->GUID_index_attribute == NULL ||
+		ldb_dn_is_special(dn)) {
 
-		/* form the key */
-		tdb_key = ltdb_key_dn(module, tdb_key_ctx, dn);
-		if (!tdb_key.dptr) {
-			TALLOC_FREE(tdb_key_ctx);
-			return LDB_ERR_OPERATIONS_ERROR;
-		}
-	} else if (ldb_dn_is_special(dn)) {
 		tdb_key_ctx = talloc_new(msg);
 		if (!tdb_key_ctx) {
 			return ldb_module_oom(module);
@@ -509,23 +501,23 @@ failed:
 /*
   search function for a non-indexed search
  */
-static int search_func(struct tdb_context *tdb, TDB_DATA key, TDB_DATA data, void *state)
+static int search_func(struct ltdb_private *ltdb, struct ldb_val key, struct ldb_val val, void *state)
 {
 	struct ldb_context *ldb;
 	struct ltdb_context *ac;
 	struct ldb_message *msg, *filtered_msg;
-	const struct ldb_val val = {
-		.data = data.dptr,
-		.length = data.dsize,
-	};
 	int ret;
 	bool matched;
 	unsigned int nb_elements_in_db;
+	TDB_DATA tdb_key = {
+		.dptr = key.data,
+		.dsize = key.length
+	};
 
 	ac = talloc_get_type(state, struct ltdb_context);
 	ldb = ldb_module_get_ctx(ac->module);
 
-	if (ltdb_key_is_record(key) == false) {
+	if (ltdb_key_is_record(tdb_key) == false) {
 		return 0;
 	}
 
@@ -550,7 +542,7 @@ static int search_func(struct tdb_context *tdb, TDB_DATA key, TDB_DATA data, voi
 
 	if (!msg->dn) {
 		msg->dn = ldb_dn_new(msg, ldb,
-				     (char *)key.dptr + 3);
+				     (char *)key.data + 3);
 		if (msg->dn == NULL) {
 			talloc_free(msg);
 			ac->error = LDB_ERR_OPERATIONS_ERROR;
@@ -603,11 +595,7 @@ static int ltdb_search_full(struct ltdb_context *ctx)
 	int ret;
 
 	ctx->error = LDB_SUCCESS;
-	if (ltdb->in_transaction != 0) {
-		ret = tdb_traverse(ltdb->tdb, search_func, ctx);
-	} else {
-		ret = tdb_traverse_read(ltdb->tdb, search_func, ctx);
-	}
+	ret = ltdb->kv_ops->iterate(ltdb, search_func, ctx);
 
 	if (ret < 0) {
 		return LDB_ERR_OPERATIONS_ERROR;
@@ -733,17 +721,17 @@ int ltdb_search(struct ltdb_context *ctx)
 
 	ldb_request_set_state(req, LDB_ASYNC_PENDING);
 
-	if (ltdb_lock_read(module) != 0) {
+	if (ltdb->kv_ops->lock_read(module) != 0) {
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
 	if (ltdb_cache_load(module) != 0) {
-		ltdb_unlock_read(module);
+		ltdb->kv_ops->unlock_read(module);
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
 	if (req->op.search.tree == NULL) {
-		ltdb_unlock_read(module);
+		ltdb->kv_ops->unlock_read(module);
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
@@ -790,7 +778,7 @@ int ltdb_search(struct ltdb_context *ctx)
 		 */
 		ret = ltdb_search_and_return_base(ltdb, ctx);
 
-		ltdb_unlock_read(module);
+		ltdb->kv_ops->unlock_read(module);
 
 		return ret;
 
@@ -861,14 +849,14 @@ int ltdb_search(struct ltdb_context *ctx)
 				 * full search or we may return
 				 * duplicate entries
 				 */
-				ltdb_unlock_read(module);
+				ltdb->kv_ops->unlock_read(module);
 				return LDB_ERR_OPERATIONS_ERROR;
 			}
 
 			if (ltdb->disable_full_db_scan) {
 				ldb_set_errstring(ldb,
 						  "ldb FULL SEARCH disabled");
-				ltdb_unlock_read(module);
+				ltdb->kv_ops->unlock_read(module);
 				return LDB_ERR_INAPPROPRIATE_MATCHING;
 			}
 
@@ -879,7 +867,7 @@ int ltdb_search(struct ltdb_context *ctx)
 		}
 	}
 
-	ltdb_unlock_read(module);
+	ltdb->kv_ops->unlock_read(module);
 
 	return ret;
 }

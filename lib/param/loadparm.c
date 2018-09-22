@@ -1144,7 +1144,6 @@ bool handle_realm(struct loadparm_context *lp_ctx, struct loadparm_service *serv
 		return false;
 	}
 
-	lpcfg_string_set(lp_ctx->globals->ctx, &lp_ctx->globals->realm_original, pszParmValue);
 	lpcfg_string_set(lp_ctx->globals->ctx, &lp_ctx->globals->realm, upper);
 	lpcfg_string_set(lp_ctx->globals->ctx, &lp_ctx->globals->dnsdomain, lower);
 
@@ -1598,7 +1597,7 @@ static bool lp_do_parameter_parametric(struct loadparm_context *lp_ctx,
 static bool set_variable_helper(TALLOC_CTX *mem_ctx, int parmnum, void *parm_ptr,
 			 const char *pszParmName, const char *pszParmValue)
 {
-	int i;
+	size_t i;
 
 	/* switch on the type of variable it is */
 	switch (parm_table[parmnum].type)
@@ -2058,7 +2057,8 @@ void lpcfg_print_parameter(struct parm_struct *p, void *ptr, FILE * f)
 
 		case P_CMDLIST:
 			list_sep = " ";
-			/* fall through */
+
+			FALL_THROUGH;
 		case P_LIST:
 			if ((char ***)ptr && *(char ***)ptr) {
 				char **list = *(char ***)ptr;
@@ -2733,7 +2733,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "require strong key", "True");
 	lpcfg_do_global_parameter(lp_ctx, "winbindd socket directory", dyn_WINBINDD_SOCKET_DIR);
 	lpcfg_do_global_parameter(lp_ctx, "ntp signd socket directory", dyn_NTP_SIGND_SOCKET_DIR);
-	lpcfg_do_global_parameter_var(lp_ctx, "gpo update command", "%s/samba_gpoupdate", dyn_SCRIPTSBINDIR);
+	lpcfg_do_global_parameter_var(lp_ctx, "gpo update command", "%s/samba-gpupdate", dyn_SCRIPTSBINDIR);
 	lpcfg_do_global_parameter_var(lp_ctx, "apply group policies", "False");
 	lpcfg_do_global_parameter_var(lp_ctx, "dns update command", "%s/samba_dnsupdate", dyn_SCRIPTSBINDIR);
 	lpcfg_do_global_parameter_var(lp_ctx, "spn update command", "%s/samba_spnupdate", dyn_SCRIPTSBINDIR);
@@ -2778,6 +2778,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "nsupdate command", "/usr/bin/nsupdate -g");
 
         lpcfg_do_global_parameter(lp_ctx, "allow dns updates", "secure only");
+	lpcfg_do_global_parameter(lp_ctx, "dns zone scavenging", "False");
         lpcfg_do_global_parameter(lp_ctx, "dns forwarder", "");
 
 	lpcfg_do_global_parameter(lp_ctx, "algorithmic rid base", "1000");
@@ -2880,7 +2881,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 
 	lpcfg_do_global_parameter(lp_ctx, "strict sync", "yes");
 
-	lpcfg_do_global_parameter(lp_ctx, "map readonly", "yes");
+	lpcfg_do_global_parameter(lp_ctx, "map readonly", "no");
 
 	lpcfg_do_global_parameter(lp_ctx, "allow trusted domains", "yes");
 
@@ -2997,6 +2998,12 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 				  "49152-65535");
 
 	lpcfg_do_global_parameter(lp_ctx, "prefork children", "1");
+
+	lpcfg_do_global_parameter(lp_ctx, "check parent directory delete on close", "no");
+
+	lpcfg_do_global_parameter(lp_ctx, "ea support", "yes");
+
+	lpcfg_do_global_parameter(lp_ctx, "store dos attributes", "yes");
 
 	for (i = 0; parm_table[i].label; i++) {
 		if (!(lp_ctx->flags[i] & FLAG_CMDLINE)) {
@@ -3142,7 +3149,8 @@ bool lpcfg_load_default(struct loadparm_context *lp_ctx)
  *
  * Return True on success, False on failure.
  */
-bool lpcfg_load(struct loadparm_context *lp_ctx, const char *filename)
+static bool lpcfg_load_internal(struct loadparm_context *lp_ctx,
+				const char *filename, bool set_global)
 {
 	char *n2;
 	bool bRetval;
@@ -3177,7 +3185,7 @@ bool lpcfg_load(struct loadparm_context *lp_ctx, const char *filename)
 	   for a missing smb.conf */
 	reload_charcnv(lp_ctx);
 
-	if (bRetval == true) {
+	if (bRetval == true && set_global) {
 		/* set this up so that any child python tasks will
 		   find the right smb.conf */
 		setenv("SMB_CONF_PATH", filename, 1);
@@ -3189,6 +3197,16 @@ bool lpcfg_load(struct loadparm_context *lp_ctx, const char *filename)
 	}
 
 	return bRetval;
+}
+
+bool lpcfg_load_no_global(struct loadparm_context *lp_ctx, const char *filename)
+{
+    return lpcfg_load_internal(lp_ctx, filename, false);
+}
+
+bool lpcfg_load(struct loadparm_context *lp_ctx, const char *filename)
+{
+    return lpcfg_load_internal(lp_ctx, filename, true);
 }
 
 /**

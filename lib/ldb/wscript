@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
 APPNAME = 'ldb'
-VERSION = '1.3.6'
+VERSION = '1.4.2'
 
 blddir = 'bin'
 
 import sys, os
+import Logs
 
 # find the buildtools directory
 srcdir = '.'
@@ -13,7 +14,7 @@ while not os.path.exists(srcdir+'/buildtools') and len(srcdir.split('/')) < 5:
     srcdir = srcdir + '/..'
 sys.path.insert(0, srcdir + '/buildtools/wafsamba')
 
-import wafsamba, samba_dist, Utils
+import wafsamba, samba_dist, Utils, Options
 
 samba_dist.DIST_DIRS('''lib/ldb:. lib/replace:lib/replace lib/talloc:lib/talloc
                         lib/tdb:lib/tdb lib/tdb:lib/tdb lib/tevent:lib/tevent
@@ -30,6 +31,11 @@ def set_options(opt):
     opt.RECURSE('lib/tevent')
     opt.RECURSE('lib/replace')
     opt.tool_options('python') # options for disabling pyc or pyo compilation
+
+    opt.add_option('--without-ldb-lmdb',
+                   help='disable new LMDB backend for LDB',
+                   action='store_true', dest='without_ldb_lmdb', default=False)
+
 
 def configure(conf):
     conf.RECURSE('lib/tdb')
@@ -104,6 +110,41 @@ def configure(conf):
                                              implied_deps='replace talloc tdb tevent'):
                 conf.define('USING_SYSTEM_LDB', 1)
 
+    if not conf.CHECK_CODE('return !(sizeof(size_t) >= 8)',
+                           "HAVE_64_BIT_SIZE_T_FOR_LMDB",
+                           execute=True,
+                           msg='Checking for a 64-bit host to '
+                           'support lmdb'):
+        Logs.warn("--without-ldb-lmdb implied as this "
+                  "host is not 64-bit")
+
+        if not conf.env.standalone_ldb and \
+           not Options.options.without_ad_dc and \
+           conf.CONFIG_GET('ENABLE_SELFTEST'):
+            Logs.warn("NOTE: Some AD DC parts of selftest will fail")
+
+        conf.env.REQUIRE_LMDB = False
+    else:
+        if conf.env.standalone_ldb:
+            if Options.options.without_ldb_lmdb:
+                conf.env.REQUIRE_LMDB = False
+            else:
+                conf.env.REQUIRE_LMDB = True
+        elif Options.options.without_ad_dc:
+            conf.env.REQUIRE_LMDB = False
+        else:
+            if Options.options.without_ldb_lmdb:
+                if not Options.options.without_ad_dc and \
+                   conf.CONFIG_GET('ENABLE_SELFTEST'):
+                    raise Utils.WafError('--without-ldb-lmdb conflicts '
+                                         'with --enable-selftest while '
+                                         'building the AD DC')
+
+                conf.env.REQUIRE_LMDB = False
+            else:
+                conf.env.REQUIRE_LMDB = True
+
+
     if conf.CONFIG_SET('USING_SYSTEM_LDB'):
         v = VERSION.split('.')
         conf.DEFINE('EXPECTED_SYSTEM_LDB_VERSION_MAJOR', int(v[0]))
@@ -122,6 +163,39 @@ def configure(conf):
         if not sys.platform.startswith("openbsd"):
             conf.ADD_LDFLAGS('-Wl,-no-undefined', testflags=True)
 
+    # if lmdb support is enabled then we require lmdb
+    # is present, build the mdb back end and enable lmdb support in
+    # the tools.
+    if conf.env.REQUIRE_LMDB and \
+       not conf.CONFIG_SET('USING_SYSTEM_LDB'):
+        if not conf.CHECK_CFG(package='lmdb',
+                              args='"lmdb >= 0.9.16" --cflags --libs',
+                              msg='Checking for lmdb >= 0.9.16',
+                              mandatory=False):
+            if not conf.CHECK_CODE('''
+                    #if MDB_VERSION_MAJOR == 0 \
+                      && MDB_VERSION_MINOR <= 9 \
+                      && MDB_VERSION_PATCH < 16
+                    #error LMDB too old
+                    #endif
+                    ''',
+                    'HAVE_GOOD_LMDB_VERSION',
+                    headers='lmdb.h',
+                    msg='Checking for lmdb >= 0.9.16 via header check'):
+
+                if conf.env.standalone_ldb:
+                    raise Utils.WafError('ldb build (unless --without-ldb-lmdb) '
+                                         'requires '
+                                         'lmdb 0.9.16 or later')
+                elif not Options.options.without_ad_dc:
+                    raise Utils.WafError('Samba AD DC and --enable-selftest '
+                                         'requires '
+                                         'lmdb 0.9.16 or later')
+
+        if conf.CHECK_FUNCS_IN('mdb_env_create', 'lmdb', headers='lmdb.h'):
+            conf.DEFINE('HAVE_LMDB', '1')
+
+
     conf.DEFINE('HAVE_CONFIG_H', 1, add_to_cflags=True)
 
     conf.SAMBA_CONFIG_H()
@@ -139,9 +213,15 @@ def build(bld):
     bld.RECURSE('lib/tdb')
 
     if bld.env.standalone_ldb:
+        if not 'PACKAGE_VERSION' in bld.env:
+            bld.env.PACKAGE_VERSION = VERSION
+        bld.env.PKGCONFIGDIR = '${LIBDIR}/pkgconfig'
         private_library = False
     else:
         private_library = True
+    # we're not currently linking against the ldap libs, but ldb.pc.in
+    # has @LDAP_LIBS@
+    bld.env.LDAP_LIBS = ''
 
     LDB_MAP_SRC = bld.SUBDIR('ldb_map',
                              'ldb_map.c ldb_map_inbound.c ldb_map_outbound.c')
@@ -162,13 +242,6 @@ def build(bld):
     if bld.PYTHON_BUILD_IS_ENABLED():
         if not bld.CONFIG_SET('USING_SYSTEM_PYLDB_UTIL'):
             for env in bld.gen_python_environments(['PKGCONFIGDIR']):
-                # we're not currently linking against the ldap libs, but ldb.pc.in
-                # has @LDAP_LIBS@
-                bld.env.LDAP_LIBS = ''
-
-                if not 'PACKAGE_VERSION' in bld.env:
-                    bld.env.PACKAGE_VERSION = VERSION
-                    bld.env.PKGCONFIGDIR = '${LIBDIR}/pkgconfig'
 
                 name = bld.pyembed_libname('pyldb-util')
                 bld.SAMBA_LIBRARY(name,
@@ -319,12 +392,47 @@ def build(bld):
 
         bld.SAMBA_MODULE('ldb_tdb',
                          bld.SUBDIR('ldb_tdb',
-                                    '''ldb_tdb.c ldb_search.c ldb_index.c
-                                    ldb_cache.c ldb_tdb_wrap.c'''),
+                                    '''ldb_tdb_init.c'''),
                          init_function='ldb_tdb_init',
                          module_init_name='ldb_init_module',
                          internal_module=False,
-                         deps='tdb ldb',
+                         deps='tdb ldb ldb_key_value',
+                         subsystem='ldb')
+
+        bld.SAMBA_LIBRARY('ldb_key_value',
+                          bld.SUBDIR('ldb_tdb',
+                                    '''ldb_tdb.c ldb_search.c ldb_index.c
+                                    ldb_cache.c ldb_tdb_wrap.c'''),
+                          private_library=True,
+                          deps='tdb ldb')
+
+        if bld.CONFIG_SET('HAVE_LMDB'):
+            bld.SAMBA_MODULE('ldb_mdb',
+                             bld.SUBDIR('ldb_mdb',
+                                        '''ldb_mdb_init.c'''),
+                             init_function='ldb_mdb_init',
+                             module_init_name='ldb_init_module',
+                             internal_module=False,
+                             deps='ldb ldb_key_value ldb_mdb_int',
+                             subsystem='ldb')
+
+            bld.SAMBA_LIBRARY('ldb_mdb_int',
+                              bld.SUBDIR('ldb_mdb',
+                                         '''ldb_mdb.c '''),
+                              private_library=True,
+                              deps='ldb lmdb ldb_key_value')
+            lmdb_deps = ' ldb_mdb_int'
+        else:
+            lmdb_deps = ''
+
+
+        bld.SAMBA_MODULE('ldb_ldb',
+                         bld.SUBDIR('ldb_ldb',
+                                    '''ldb_ldb.c'''),
+                         init_function='ldb_ldb_init',
+                         module_init_name='ldb_init_module',
+                         internal_module=False,
+                         deps='ldb ldb_key_value' + lmdb_deps,
                          subsystem='ldb')
 
         # have a separate subsystem for common/ldb.c, so it can rebuild
@@ -344,8 +452,14 @@ def build(bld):
         bld.SAMBA_BINARY('ldbtest', 'tools/ldbtest.c', deps='ldb-cmdline ldb',
                          install=False)
 
+        if bld.CONFIG_SET('HAVE_LMDB'):
+            lmdb_deps = ' lmdb'
+        else:
+            lmdb_deps = ''
         # ldbdump doesn't get installed
-        bld.SAMBA_BINARY('ldbdump', 'tools/ldbdump.c', deps='ldb-cmdline ldb',
+        bld.SAMBA_BINARY('ldbdump',
+                         'tools/ldbdump.c',
+                         deps='ldb-cmdline ldb' + lmdb_deps,
                          install=False)
 
         bld.SAMBA_LIBRARY('ldb-cmdline',
@@ -359,16 +473,66 @@ def build(bld):
                          deps='cmocka ldb',
                          install=False)
 
+        bld.SAMBA_BINARY('ldb_tdb_guid_mod_op_test',
+                         source='tests/ldb_mod_op_test.c',
+                         cflags='-DTEST_BE=\"tdb\" -DGUID_IDX=1',
+                         deps='cmocka ldb',
+                         install=False)
+
+        bld.SAMBA_BINARY('ldb_tdb_kv_ops_test',
+                         source='tests/ldb_kv_ops_test.c',
+                         cflags='-DTEST_BE=\"tdb\"',
+                         deps='cmocka ldb',
+                         install=False)
+
+        bld.SAMBA_BINARY('ldb_tdb_test',
+                         source='tests/ldb_tdb_test.c',
+                         deps='cmocka ldb',
+                         install=False)
+
         bld.SAMBA_BINARY('ldb_msg_test',
                          source='tests/ldb_msg.c',
                          deps='cmocka ldb',
                          install=False)
+
+        bld.SAMBA_BINARY('test_ldb_qsort',
+                         source='tests/test_ldb_qsort.c',
+                         deps='cmocka ldb',
+                         install=False)
+
+        if bld.CONFIG_SET('HAVE_LMDB'):
+            bld.SAMBA_BINARY('ldb_mdb_mod_op_test',
+                             source='tests/ldb_mod_op_test.c',
+                             cflags='-DTEST_BE=\"mdb\" -DGUID_IDX=1 '
+                                  + '-DTEST_LMDB=1',
+                             deps='cmocka ldb lmdb',
+                             install=False)
+
+            bld.SAMBA_BINARY('ldb_lmdb_test',
+                             source='tests/ldb_lmdb_test.c',
+                             deps='cmocka ldb',
+                             install=False)
+
+            bld.SAMBA_BINARY('ldb_lmdb_size_test',
+                             source='tests/ldb_lmdb_size_test.c',
+                             deps='cmocka ldb',
+                             install=False)
+
+            bld.SAMBA_BINARY('ldb_mdb_kv_ops_test',
+                             source='tests/ldb_kv_ops_test.c',
+                             cflags='-DTEST_BE=\"mdb\"',
+                             deps='cmocka ldb',
+                             install=False)
 
 def test(ctx):
     '''run ldb testsuite'''
     import Utils, samba_utils, shutil
     env = samba_utils.LOAD_ENVIRONMENT()
     ctx.env = env
+
+    if not env.HAVE_LMDB:
+        raise Utils.WafError('make test called, but ldb was built '
+                             '--without-ldb-lmdb')
 
     test_prefix = "%s/st" % (Utils.g_module.blddir)
     shutil.rmtree(test_prefix, ignore_errors=True)
@@ -391,8 +555,21 @@ def test(ctx):
     print("Python testsuite returned %d" % pyret)
 
     cmocka_ret = 0
-    for test_exe in ['ldb_tdb_mod_op_test',
-                     'ldb_msg_test']:
+    test_exes = ['test_ldb_qsort',
+                 'ldb_msg_test',
+                 'ldb_tdb_mod_op_test',
+                 'ldb_tdb_guid_mod_op_test',
+                 'ldb_msg_test',
+                 'ldb_tdb_kv_ops_test',
+                 'ldb_tdb_test',
+                 'ldb_mdb_mod_op_test',
+                 'ldb_lmdb_test',
+                 # we don't want to run ldb_lmdb_size_test (which proves we can
+                 # fit > 4G of data into the DB), it would fill up the disk on
+                 # many of our test instances
+                 'ldb_mdb_kv_ops_test']
+
+    for test_exe in test_exes:
             cmd = os.path.join(Utils.g_module.blddir, test_exe)
             cmocka_ret = cmocka_ret or samba_utils.RUN_COMMAND(cmd)
 

@@ -38,6 +38,12 @@
 #define TEST_BE DEFAULT_BE
 #endif /* TEST_BE */
 
+#ifdef TEST_LMDB
+#include "lmdb.h"
+#include "../ldb_tdb/ldb_tdb.h"
+#include "../ldb_mdb/ldb_mdb.h"
+#endif
+
 struct ldbtest_ctx {
 	struct tevent_context *ev;
 	struct ldb_context *ldb;
@@ -202,6 +208,16 @@ static void test_ldif_message_redacted(void **state)
 static int ldbtest_setup(void **state)
 {
 	struct ldbtest_ctx *test_ctx;
+	struct ldb_ldif *ldif;
+#ifdef GUID_IDX
+	const char *index_ldif =		\
+		"dn: @INDEXLIST\n"
+		"@IDXGUID: objectUUID\n"
+		"@IDX_DN_GUID: GUID\n"
+		"\n";
+#else
+	const char *index_ldif = "\n";
+#endif
 	int ret;
 
 	ldbtest_noconn_setup((void **) &test_ctx);
@@ -209,6 +225,10 @@ static int ldbtest_setup(void **state)
 	ret = ldb_connect(test_ctx->ldb, test_ctx->dbpath, 0, NULL);
 	assert_int_equal(ret, 0);
 
+	while ((ldif = ldb_ldif_read_string(test_ctx->ldb, &index_ldif))) {
+		ret = ldb_add(test_ctx->ldb, ldif->msg);
+		assert_int_equal(ret, LDB_SUCCESS);
+	}
 	*state = test_ctx;
 	return 0;
 }
@@ -239,6 +259,9 @@ static void test_ldb_add(void **state)
 	assert_non_null(msg->dn);
 
 	ret = ldb_msg_add_string(msg, "cn", "test_cn_val");
+	assert_int_equal(ret, 0);
+
+	ret = ldb_msg_add_string(msg, "objectUUID", "0123456789abcdef");
 	assert_int_equal(ret, 0);
 
 	ret = ldb_add(test_ctx->ldb, msg);
@@ -279,6 +302,9 @@ static void test_ldb_search(void **state)
 	ret = ldb_msg_add_string(msg, "cn", "test_cn_val1");
 	assert_int_equal(ret, 0);
 
+	ret = ldb_msg_add_string(msg, "objectUUID", "0123456789abcde1");
+	assert_int_equal(ret, 0);
+
 	ret = ldb_add(test_ctx->ldb, msg);
 	assert_int_equal(ret, 0);
 
@@ -292,6 +318,9 @@ static void test_ldb_search(void **state)
 	assert_non_null(msg->dn);
 
 	ret = ldb_msg_add_string(msg, "cn", "test_cn_val2");
+	assert_int_equal(ret, 0);
+
+	ret = ldb_msg_add_string(msg, "objectUUID", "0123456789abcde2");
 	assert_int_equal(ret, 0);
 
 	ret = ldb_add(test_ctx->ldb, msg);
@@ -390,7 +419,8 @@ static void assert_dn_doesnt_exist(struct ldbtest_ctx *test_ctx,
 
 static void add_dn_with_cn(struct ldbtest_ctx *test_ctx,
 			   struct ldb_dn *dn,
-			   const char *cn_value)
+			   const char *cn_value,
+			   const char *uuid_value)
 {
 	int ret;
 	TALLOC_CTX *tmp_ctx;
@@ -408,6 +438,9 @@ static void add_dn_with_cn(struct ldbtest_ctx *test_ctx,
 
 	ret = ldb_msg_add_string(msg, "cn", cn_value);
 	assert_int_equal(ret, LDB_SUCCESS);
+
+	ret = ldb_msg_add_string(msg, "objectUUID", uuid_value);
+	assert_int_equal(ret, 0);
 
 	ret = ldb_add(test_ctx->ldb, msg);
 	assert_int_equal(ret, LDB_SUCCESS);
@@ -428,7 +461,9 @@ static void test_ldb_del(void **state)
 	dn = ldb_dn_new_fmt(test_ctx, test_ctx->ldb, "%s", basedn);
 	assert_non_null(dn);
 
-	add_dn_with_cn(test_ctx, dn, "test_del_cn_val");
+	add_dn_with_cn(test_ctx, dn,
+		       "test_del_cn_val",
+		       "0123456789abcdef");
 
 	ret = ldb_delete(test_ctx->ldb, dn);
 	assert_int_equal(ret, LDB_SUCCESS);
@@ -552,7 +587,8 @@ static void test_ldb_build_search_req(void **state)
 
 static void add_keyval(struct ldbtest_ctx *test_ctx,
 		       const char *key,
-		       const char *val)
+		       const char *val,
+		       const char *uuid)
 {
 	int ret;
 	struct ldb_message *msg;
@@ -564,6 +600,9 @@ static void add_keyval(struct ldbtest_ctx *test_ctx,
 	assert_non_null(msg->dn);
 
 	ret = ldb_msg_add_string(msg, key, val);
+	assert_int_equal(ret, 0);
+
+	ret = ldb_msg_add_string(msg, "objectUUID", uuid);
 	assert_int_equal(ret, 0);
 
 	ret = ldb_add(test_ctx->ldb, msg);
@@ -601,7 +640,8 @@ static void test_transactions(void **state)
 	ret = ldb_transaction_start(test_ctx->ldb);
 	assert_int_equal(ret, 0);
 
-	add_keyval(test_ctx, "vegetable", "carrot");
+	add_keyval(test_ctx, "vegetable", "carrot",
+		   "0123456789abcde0");
 
 	/* commit lev-0 transaction */
 	ret = ldb_transaction_commit(test_ctx->ldb);
@@ -611,7 +651,8 @@ static void test_transactions(void **state)
 	ret = ldb_transaction_start(test_ctx->ldb);
 	assert_int_equal(ret, 0);
 
-	add_keyval(test_ctx, "fruit", "apple");
+	add_keyval(test_ctx, "fruit", "apple",
+		   "0123456789abcde1");
 
 	/* abort lev-1 nested transaction */
 	ret = ldb_transaction_cancel(test_ctx->ldb);
@@ -626,6 +667,48 @@ static void test_transactions(void **state)
 	assert_int_equal(res->count, 0);
 }
 
+static void test_nested_transactions(void **state)
+{
+	int ret;
+	struct ldbtest_ctx *test_ctx = talloc_get_type_abort(*state,
+			struct ldbtest_ctx);
+	struct ldb_result *res;
+
+	/* start lev-0 transaction */
+	ret = ldb_transaction_start(test_ctx->ldb);
+	assert_int_equal(ret, 0);
+
+	add_keyval(test_ctx, "vegetable", "carrot",
+		   "0123456789abcde0");
+
+
+	/* start another lev-1 nested transaction */
+	ret = ldb_transaction_start(test_ctx->ldb);
+	assert_int_equal(ret, 0);
+
+	add_keyval(test_ctx, "fruit", "apple",
+		   "0123456789abcde1");
+
+	/* abort lev-1 nested transaction */
+	ret = ldb_transaction_cancel(test_ctx->ldb);
+	assert_int_equal(ret, 0);
+
+	/* commit lev-0 transaction */
+	ret = ldb_transaction_commit(test_ctx->ldb);
+	assert_int_equal(ret, 0);
+
+	res = get_keyval(test_ctx, "vegetable", "carrot");
+	assert_non_null(res);
+	assert_int_equal(res->count, 1);
+
+	/* This documents the current ldb behaviour,  i.e. nested
+	 * transactions are not supported.  And the cancellation of the nested
+	 * transaction has no effect.
+	 */
+	res = get_keyval(test_ctx, "fruit", "apple");
+	assert_non_null(res);
+	assert_int_equal(res->count, 1);
+}
 struct ldb_mod_test_ctx {
 	struct ldbtest_ctx *ldb_test_ctx;
 	const char *entry_dn;
@@ -785,6 +868,7 @@ static int ldb_modify_test_setup(void **state)
 	struct ldb_mod_test_ctx *mod_test_ctx;
 	struct keyval kvs[] = {
 		{ "cn", "test_mod_cn" },
+		{ "objectUUID", "0123456789abcdef"},
 		{ NULL, NULL },
 	};
 
@@ -1089,6 +1173,7 @@ static int ldb_search_test_setup(void **state)
 		{ "cn", "test_search_cn2" },
 		{ "uid", "test_search_uid" },
 		{ "uid", "test_search_uid2" },
+		{ "objectUUID", "0123456789abcde0"},
 		{ NULL, NULL },
 	};
 	struct keyval kvs2[] = {
@@ -1096,6 +1181,7 @@ static int ldb_search_test_setup(void **state)
 		{ "cn", "test_search_2_cn2" },
 		{ "uid", "test_search_2_uid" },
 		{ "uid", "test_search_2_uid2" },
+		{ "objectUUID", "0123456789abcde1"},
 		{ NULL, NULL },
 	};
 
@@ -1444,6 +1530,7 @@ static int test_ldb_search_against_transaction_callback1(struct ldb_request *req
 		struct ldb_message *msg;
 		TALLOC_FREE(ctx->test_ctx->ldb);
 		TALLOC_FREE(ctx->test_ctx->ev);
+		close(pipes[0]);
 		ctx->test_ctx->ev = tevent_context_init(ctx->test_ctx);
 		if (ctx->test_ctx->ev == NULL) {
 			exit(LDB_ERR_OPERATIONS_ERROR);
@@ -1492,6 +1579,12 @@ static int test_ldb_search_against_transaction_callback1(struct ldb_request *req
 			exit(LDB_ERR_OPERATIONS_ERROR);
 		}
 
+		ret = ldb_msg_add_string(msg, "objectUUID",
+					 "0123456789abcdef");
+		if (ret != 0) {
+			exit(ret);
+		}
+
 		ret = ldb_add(ctx->test_ctx->ldb, msg);
 		if (ret != 0) {
 			exit(ret);
@@ -1500,7 +1593,7 @@ static int test_ldb_search_against_transaction_callback1(struct ldb_request *req
 		ret = ldb_transaction_commit(ctx->test_ctx->ldb);
 		exit(ret);
 	}
-
+	close(pipes[1]);
 	ret = read(pipes[0], buf, 2);
 	assert_int_equal(ret, 2);
 
@@ -1674,6 +1767,7 @@ static int test_ldb_modify_during_search_callback1(struct ldb_request *req,
 		struct ldb_dn *dn, *new_dn;
 		TALLOC_FREE(ctx->test_ctx->ldb);
 		TALLOC_FREE(ctx->test_ctx->ev);
+		close(pipes[0]);
 		ctx->test_ctx->ev = tevent_context_init(ctx->test_ctx);
 		if (ctx->test_ctx->ev == NULL) {
 			exit(LDB_ERR_OPERATIONS_ERROR);
@@ -1740,6 +1834,7 @@ static int test_ldb_modify_during_search_callback1(struct ldb_request *req,
 		struct ldb_message_element *el;
 		TALLOC_FREE(ctx->test_ctx->ldb);
 		TALLOC_FREE(ctx->test_ctx->ev);
+		close(pipes[0]);
 		ctx->test_ctx->ev = tevent_context_init(ctx->test_ctx);
 		if (ctx->test_ctx->ev == NULL) {
 			exit(LDB_ERR_OPERATIONS_ERROR);
@@ -1815,6 +1910,7 @@ static int test_ldb_modify_during_search_callback1(struct ldb_request *req,
 	 * sending the "GO" as it is blocked at ldb_transaction_start().
 	 */
 
+	close(pipes[1]);
 	ret = read(pipes[0], buf, 2);
 	assert_int_equal(ret, 2);
 
@@ -1854,10 +1950,13 @@ static void test_ldb_modify_during_search(void **state, bool add_index,
 
 		ret = ldb_msg_add_string(msg, "@IDXATTR", "cn");
 		assert_int_equal(ret, LDB_SUCCESS);
-
 		ret = ldb_add(search_test_ctx->ldb_test_ctx->ldb,
 			      msg);
-
+		if (ret == LDB_ERR_ENTRY_ALREADY_EXISTS) {
+			msg->elements[0].flags = LDB_FLAG_MOD_ADD;
+			ret = ldb_modify(search_test_ctx->ldb_test_ctx->ldb,
+					 msg);
+		}
 		assert_int_equal(ret, LDB_SUCCESS);
 	}
 
@@ -1986,6 +2085,7 @@ static int test_ldb_modify_during_whole_search_callback1(struct ldb_request *req
 		struct ldb_message_element *el;
 		TALLOC_FREE(ctx->test_ctx->ldb);
 		TALLOC_FREE(ctx->test_ctx->ev);
+		close(pipes[0]);
 		ctx->test_ctx->ev = tevent_context_init(ctx->test_ctx);
 		if (ctx->test_ctx->ev == NULL) {
 			exit(LDB_ERR_OPERATIONS_ERROR);
@@ -2048,6 +2148,7 @@ static int test_ldb_modify_during_whole_search_callback1(struct ldb_request *req
 		exit(ret);
 	}
 
+	close(pipes[1]);
 	ret = read(pipes[0], buf, 2);
 	assert_int_equal(ret, 2);
 
@@ -2260,6 +2361,7 @@ static void test_ldb_modify_before_ldb_wait(void **state)
 		struct ldb_message_element *el;
 		TALLOC_FREE(search_test_ctx->ldb_test_ctx->ldb);
 		TALLOC_FREE(search_test_ctx->ldb_test_ctx->ev);
+		close(pipes[0]);
 		search_test_ctx->ldb_test_ctx->ev = tevent_context_init(search_test_ctx->ldb_test_ctx);
 		if (search_test_ctx->ldb_test_ctx->ev == NULL) {
 			exit(LDB_ERR_OPERATIONS_ERROR);
@@ -2328,6 +2430,7 @@ static void test_ldb_modify_before_ldb_wait(void **state)
 		ret = ldb_transaction_commit(search_test_ctx->ldb_test_ctx->ldb);
 		exit(ret);
 	}
+	close(pipes[1]);
 
 	ret = read(pipes[0], buf, 2);
 	assert_int_equal(ret, 2);
@@ -2659,6 +2762,7 @@ static int ldb_case_test_setup(void **state)
 	struct keyval kvs[] = {
 		{ "cn", "CaseInsensitiveValue" },
 		{ "uid", "CaseSensitiveValue" },
+		{ "objectUUID", "0123456789abcdef" },
 		{ NULL, NULL },
 	};
 
@@ -2850,6 +2954,14 @@ static void test_ldb_attrs_index_handler(void **state)
 						    syntax, &cn_attr_2);
 	assert_int_equal(ret, LDB_SUCCESS);
 
+	syntax = ldb_standard_syntax_by_name(ldb, LDB_SYNTAX_OCTET_STRING);
+	assert_non_null(syntax);
+
+	ret = ldb_schema_attribute_fill_with_syntax(ldb, ldb,
+						    "", 0,
+						    syntax, &default_attr);
+	assert_int_equal(ret, LDB_SUCCESS);
+
 	/*
 	 * Set an attribute handler
 	 */
@@ -2864,6 +2976,11 @@ static void test_ldb_attrs_index_handler(void **state)
 	/* Add the index (actually any modify will do) */
 	while ((ldif = ldb_ldif_read_string(ldb_test_ctx->ldb, &index_ldif))) {
 		ret = ldb_add(ldb_test_ctx->ldb, ldif->msg);
+		if (ret == LDB_ERR_ENTRY_ALREADY_EXISTS) {
+			ldif->msg->elements[0].flags = LDB_FLAG_MOD_ADD;
+			ret = ldb_modify(ldb_test_ctx->ldb,
+					 ldif->msg);
+		}
 		assert_int_equal(ret, LDB_SUCCESS);
 	}
 
@@ -2949,7 +3066,8 @@ static int ldb_rename_test_setup(void **state)
 
 	add_dn_with_cn(ldb_test_ctx,
 		       rename_test_ctx->basedn,
-		       "test_rename_cn_val");
+		       "test_rename_cn_val",
+		       "0123456789abcde0");
 
 	*state = rename_test_ctx;
 	return 0;
@@ -3054,7 +3172,8 @@ static void test_ldb_rename_to_exists(void **state)
 
 	add_dn_with_cn(rename_test_ctx->ldb_test_ctx,
 		       new_dn,
-		       "test_rename_cn_val");
+		       "test_rename_cn_val",
+		       "0123456789abcde1");
 
 	ret = ldb_rename(rename_test_ctx->ldb_test_ctx->ldb,
 			 rename_test_ctx->basedn,
@@ -3221,6 +3340,10 @@ static void test_read_only(void **state)
 		ret = ldb_msg_add_string(msg, "cn", "test_cn_val");
 		assert_int_equal(ret, 0);
 
+		ret = ldb_msg_add_string(msg, "objectUUID",
+					 "0123456789abcde1");
+		assert_int_equal(ret, LDB_SUCCESS);
+
 		ret = ldb_add(ro_ldb, msg);
 		assert_int_equal(ret, LDB_ERR_UNWILLING_TO_PERFORM);
 		TALLOC_FREE(msg);
@@ -3234,11 +3357,15 @@ static void test_read_only(void **state)
 		msg = ldb_msg_new(tmp_ctx);
 		assert_non_null(msg);
 
-		msg->dn = ldb_dn_new_fmt(msg, ro_ldb, "dc=test");
+		msg->dn = ldb_dn_new_fmt(msg, rw_ldb, "dc=test");
 		assert_non_null(msg->dn);
 
 		ret = ldb_msg_add_string(msg, "cn", "test_cn_val");
 		assert_int_equal(ret, 0);
+
+		ret = ldb_msg_add_string(msg, "objectUUID",
+					 "0123456789abcde2");
+		assert_int_equal(ret, LDB_SUCCESS);
 
 		ret = ldb_add(rw_ldb, msg);
 		assert_int_equal(ret, LDB_SUCCESS);
@@ -3313,6 +3440,10 @@ static int ldb_unique_index_test_setup(void **state)
 	const char *index_ldif =  \
 		"dn: @INDEXLIST\n"
 		"@IDXATTR: cn\n"
+#ifdef GUID_IDX
+		"@IDXGUID: objectUUID\n"
+		"@IDX_DN_GUID: GUID\n"
+#endif
 		"\n";
 	const char *options[] = {"modules:unique_index_test", NULL};
 
@@ -3401,6 +3532,10 @@ static void test_ldb_add_unique_value_to_unique_index(void **state)
 	ret = ldb_msg_add_string(msg, "cn", "test_unique_index");
 	assert_int_equal(ret, LDB_SUCCESS);
 
+	ret = ldb_msg_add_string(msg, "objectUUID",
+				 "0123456789abcde1");
+	assert_int_equal(ret, LDB_SUCCESS);
+
 	ret = ldb_add(test_ctx->ldb, msg);
 	assert_int_equal(ret, LDB_SUCCESS);
 
@@ -3415,6 +3550,10 @@ static int ldb_non_unique_index_test_setup(void **state)
 	const char *index_ldif =  \
 		"dn: @INDEXLIST\n"
 		"@IDXATTR: cn\n"
+#ifdef GUID_IDX
+		"@IDXGUID: objectUUID\n"
+		"@IDX_DN_GUID: GUID\n"
+#endif
 		"\n";
 	const char *options[] = {"modules:unique_index_test", NULL};
 
@@ -3485,6 +3624,10 @@ static void test_ldb_add_duplicate_value_to_unique_index(void **state)
 	ret = ldb_msg_add_string(msg01, "cn", "test_unique_index");
 	assert_int_equal(ret, LDB_SUCCESS);
 
+	ret = ldb_msg_add_string(msg01, "objectUUID",
+				 "0123456789abcde1");
+	assert_int_equal(ret, LDB_SUCCESS);
+
 	ret = ldb_add(test_ctx->ldb, msg01);
 	assert_int_equal(ret, LDB_SUCCESS);
 
@@ -3495,6 +3638,10 @@ static void test_ldb_add_duplicate_value_to_unique_index(void **state)
 	assert_non_null(msg02->dn);
 
 	ret = ldb_msg_add_string(msg02, "cn", "test_unique_index");
+	assert_int_equal(ret, LDB_SUCCESS);
+
+	ret = ldb_msg_add_string(msg02, "objectUUID",
+				 "0123456789abcde2");
 	assert_int_equal(ret, LDB_SUCCESS);
 
 	ret = ldb_add(test_ctx->ldb, msg02);
@@ -3526,6 +3673,9 @@ static void test_ldb_add_to_index_duplicates_allowed(void **state)
 	ret = ldb_msg_add_string(msg01, "cn", "test_unique_index");
 	assert_int_equal(ret, LDB_SUCCESS);
 
+	ret = ldb_msg_add_string(msg01, "objectUUID",
+				 "0123456789abcde1");
+
 	ret = ldb_add(test_ctx->ldb, msg01);
 	assert_int_equal(ret, LDB_SUCCESS);
 
@@ -3537,6 +3687,9 @@ static void test_ldb_add_to_index_duplicates_allowed(void **state)
 
 	ret = ldb_msg_add_string(msg02, "cn", "test_unique_index");
 	assert_int_equal(ret, LDB_SUCCESS);
+
+	ret = ldb_msg_add_string(msg02, "objectUUID",
+				 "0123456789abcde2");
 
 	ret = ldb_add(test_ctx->ldb, msg02);
 	assert_int_equal(ret, LDB_SUCCESS);
@@ -3567,6 +3720,9 @@ static void test_ldb_add_to_index_unique_values_required(void **state)
 	ret = ldb_msg_add_string(msg01, "cn", "test_unique_index");
 	assert_int_equal(ret, LDB_SUCCESS);
 
+	ret = ldb_msg_add_string(msg01, "objectUUID",
+				 "0123456789abcde1");
+
 	ret = ldb_add(test_ctx->ldb, msg01);
 	assert_int_equal(ret, LDB_SUCCESS);
 
@@ -3578,6 +3734,9 @@ static void test_ldb_add_to_index_unique_values_required(void **state)
 
 	ret = ldb_msg_add_string(msg02, "cn", "test_unique_index");
 	assert_int_equal(ret, LDB_SUCCESS);
+
+	ret = ldb_msg_add_string(msg02, "objectUUID",
+				 "0123456789abcde2");
 
 	ret = ldb_add(test_ctx->ldb, msg02);
 	assert_int_equal(ret, LDB_ERR_CONSTRAINT_VIOLATION);
@@ -3604,6 +3763,11 @@ static void test_ldb_unique_index_duplicate_logging(void **state)
 	char *debug_string = NULL;
 	char *p = NULL;
 
+	/* The GUID mode is not compatible with this test */
+#ifdef GUID_IDX
+	return;
+#endif
+
 	ldb_set_debug(test_ctx->ldb, ldb_debug_string, &debug_string);
 	tmp_ctx = talloc_new(test_ctx);
 	assert_non_null(tmp_ctx);
@@ -3617,6 +3781,9 @@ static void test_ldb_unique_index_duplicate_logging(void **state)
 	ret = ldb_msg_add_string(msg01, "cn", "test_unique_index");
 	assert_int_equal(ret, LDB_SUCCESS);
 
+	ret = ldb_msg_add_string(msg01, "objectUUID",
+				 "0123456789abcde1");
+
 	ret = ldb_add(test_ctx->ldb, msg01);
 	assert_int_equal(ret, LDB_SUCCESS);
 
@@ -3628,6 +3795,9 @@ static void test_ldb_unique_index_duplicate_logging(void **state)
 
 	ret = ldb_msg_add_string(msg02, "cn", "test_unique_index");
 	assert_int_equal(ret, LDB_SUCCESS);
+
+	ret = ldb_msg_add_string(msg02, "objectUUID",
+				 "0123456789abcde2");
 
 	ret = ldb_add(test_ctx->ldb, msg02);
 	assert_int_equal(ret, LDB_ERR_CONSTRAINT_VIOLATION);
@@ -3653,6 +3823,11 @@ static void test_ldb_duplicate_dn_logging(void **state)
 	TALLOC_CTX *tmp_ctx;
 	char *debug_string = NULL;
 
+	/* The GUID mode is not compatible with this test */
+#ifdef GUID_IDX
+	return;
+#endif
+
 	ldb_set_debug(test_ctx->ldb, ldb_debug_string, &debug_string);
 	tmp_ctx = talloc_new(test_ctx);
 	assert_non_null(tmp_ctx);
@@ -3666,6 +3841,9 @@ static void test_ldb_duplicate_dn_logging(void **state)
 	ret = ldb_msg_add_string(msg01, "cn", "test_unique_index01");
 	assert_int_equal(ret, LDB_SUCCESS);
 
+	ret = ldb_msg_add_string(msg01, "objectUUID",
+				 "0123456789abcde1");
+
 	ret = ldb_add(test_ctx->ldb, msg01);
 	assert_int_equal(ret, LDB_SUCCESS);
 
@@ -3677,6 +3855,9 @@ static void test_ldb_duplicate_dn_logging(void **state)
 
 	ret = ldb_msg_add_string(msg02, "cn", "test_unique_index02");
 	assert_int_equal(ret, LDB_SUCCESS);
+
+	ret = ldb_msg_add_string(msg02, "objectUUID",
+				 "0123456789abcde2");
 
 	ret = ldb_add(test_ctx->ldb, msg02);
 	assert_int_equal(ret, LDB_ERR_ENTRY_ALREADY_EXISTS);
@@ -3864,6 +4045,475 @@ static void test_ldb_guid_index_duplicate_dn_logging(void **state)
 	talloc_free(tmp_ctx);
 }
 
+static void test_ldb_talloc_destructor_transaction_cleanup(void **state)
+{
+	struct ldbtest_ctx *test_ctx = NULL;
+
+	test_ctx = talloc_get_type_abort(*state, struct ldbtest_ctx);
+	assert_non_null(test_ctx);
+
+	ldb_transaction_start(test_ctx->ldb);
+
+	/*
+	 * Trigger the destructor
+	 */
+	TALLOC_FREE(test_ctx->ldb);
+
+	/*
+	 * Now ensure that a new connection can be opened
+	 */
+	{
+		TALLOC_CTX *tctx = talloc_new(test_ctx);
+		struct ldbtest_ctx *ctx = talloc_zero(tctx, struct ldbtest_ctx);
+		struct ldb_dn *basedn;
+		struct ldb_result *result = NULL;
+		int ret;
+
+		ldbtest_setup((void *)&ctx);
+
+		basedn = ldb_dn_new_fmt(tctx, ctx->ldb, "dc=test");
+		assert_non_null(basedn);
+
+		ret = ldb_search(ctx->ldb,
+				 tctx,
+				 &result,
+				 basedn,
+				 LDB_SCOPE_BASE,
+				 NULL,
+				 NULL);
+		assert_int_equal(ret, 0);
+		assert_non_null(result);
+		assert_int_equal(result->count, 0);
+
+		ldbtest_teardown((void *)&ctx);
+	}
+}
+
+#ifdef TEST_LMDB
+static int test_ldb_multiple_connections_callback(struct ldb_request *req,
+						  struct ldb_reply *ares)
+{
+	int ret;
+	int pipes[2];
+	char buf[2];
+	int pid, child_pid;
+	int wstatus;
+
+	switch (ares->type) {
+	case LDB_REPLY_ENTRY:
+		break;
+
+	case LDB_REPLY_REFERRAL:
+		return LDB_SUCCESS;
+
+	case LDB_REPLY_DONE:
+		return ldb_request_done(req, LDB_SUCCESS);
+	}
+
+	{
+		/*
+		 * We open a new ldb on an ldb that is already open and
+		 * then close it.
+		 *
+		 * If the multiple connection wrapping is correct the
+		 * underlying MDB_env will be left open and we should see
+		 * an active reader in the child we fork next
+		 */
+		struct ldb_context *ldb = NULL;
+		struct tevent_context *ev = NULL;
+		TALLOC_CTX *mem_ctx = talloc_new(NULL);
+
+		ev = tevent_context_init(mem_ctx);
+		assert_non_null(ev);
+
+		ldb = ldb_init(mem_ctx, ev);
+		assert_non_null(ldb);
+
+		ret = ldb_connect(ldb, TEST_BE"://apitest.ldb" , 0, NULL);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+		TALLOC_FREE(ldb);
+		TALLOC_FREE(mem_ctx);
+	}
+
+	ret = pipe(pipes);
+	assert_int_equal(ret, 0);
+
+	child_pid = fork();
+	if (child_pid == 0) {
+		struct MDB_env *env = NULL;
+		struct MDB_envinfo stat;
+		close(pipes[0]);
+
+		/*
+		 * Check that there are exactly two readers on the MDB file
+		 * backing the ldb.
+		 *
+		 */
+		ret = mdb_env_create(&env);
+		if (ret != 0) {
+			print_error(__location__
+				      " mdb_env_create returned (%d)",
+				      ret);
+			exit(ret);
+		}
+
+		ret = mdb_env_open(env,
+				   "apitest.ldb",
+				   MDB_NOSUBDIR | MDB_NOTLS,
+				   0644);
+		if (ret != 0) {
+			print_error(__location__
+				      " mdb_env_open returned (%d)",
+				      ret);
+			exit(ret);
+		}
+
+		ret = mdb_env_info(env, &stat);
+		if (ret != 0) {
+			print_error(__location__
+				      " mdb_env_info returned (%d)",
+				      ret);
+			exit(ret);
+		}
+		if (stat.me_numreaders != 2) {
+			print_error(__location__
+				      " Incorrect number of readers (%d)",
+				      stat.me_numreaders);
+			exit(LDB_ERR_CONSTRAINT_VIOLATION);
+		}
+
+		ret = write(pipes[1], "GO", 2);
+		if (ret != 2) {
+			print_error(__location__
+				      " write returned (%d)",
+				      ret);
+			exit(LDB_ERR_OPERATIONS_ERROR);
+		}
+		exit(LDB_SUCCESS);
+	}
+	close(pipes[1]);
+	ret = read(pipes[0], buf, 2);
+	assert_int_equal(ret, 2);
+
+	pid = waitpid(child_pid, &wstatus, 0);
+	assert_int_equal(pid, child_pid);
+
+	assert_true(WIFEXITED(wstatus));
+
+	assert_int_equal(WEXITSTATUS(wstatus), 0);
+	return LDB_SUCCESS;
+
+}
+
+static void test_ldb_close_with_multiple_connections(void **state)
+{
+	struct search_test_ctx *search_test_ctx = NULL;
+	struct ldb_dn *search_dn = NULL;
+	struct ldb_request *req = NULL;
+	int ret = 0;
+
+	search_test_ctx = talloc_get_type_abort(*state, struct search_test_ctx);
+	assert_non_null(search_test_ctx);
+
+	search_dn = ldb_dn_new_fmt(search_test_ctx,
+				   search_test_ctx->ldb_test_ctx->ldb,
+				   "cn=test_search_cn,"
+				   "dc=search_test_entry");
+	assert_non_null(search_dn);
+
+	/*
+	 * The search just needs to call DONE, we don't care about the
+	 * contents of the search for this test
+	 */
+	ret = ldb_build_search_req(&req,
+				   search_test_ctx->ldb_test_ctx->ldb,
+				   search_test_ctx,
+				   search_dn,
+				   LDB_SCOPE_SUBTREE,
+				   "(&(!(filterAttr=*))"
+				   "(cn=test_search_cn))",
+				   NULL,
+				   NULL,
+				   NULL,
+				   test_ldb_multiple_connections_callback,
+				   NULL);
+	assert_int_equal(ret, 0);
+
+	ret = ldb_request(search_test_ctx->ldb_test_ctx->ldb, req);
+	assert_int_equal(ret, 0);
+
+	ret = ldb_wait(req->handle, LDB_WAIT_ALL);
+	assert_int_equal(ret, 0);
+}
+
+#endif
+
+static void test_transaction_start_across_fork(void **state)
+{
+	struct ldb_context *ldb1 = NULL;
+	int ret;
+	struct ldbtest_ctx *test_ctx = NULL;
+	int pipes[2];
+	char buf[2];
+	int wstatus;
+	pid_t pid, child_pid;
+
+	test_ctx = talloc_get_type_abort(*state, struct ldbtest_ctx);
+
+	/*
+	 * Open the database
+	 */
+	ldb1 = ldb_init(test_ctx, test_ctx->ev);
+	ret = ldb_connect(ldb1, test_ctx->dbpath, 0, NULL);
+	assert_int_equal(ret, 0);
+
+	ret = pipe(pipes);
+	assert_int_equal(ret, 0);
+
+	child_pid = fork();
+	if (child_pid == 0) {
+		close(pipes[0]);
+		ret = ldb_transaction_start(ldb1);
+		if (ret != LDB_ERR_PROTOCOL_ERROR) {
+			print_error(__location__": ldb_transaction_start "
+				    "returned (%d) %s\n",
+				    ret,
+				    ldb1->err_string);
+			exit(LDB_ERR_OTHER);
+		}
+
+		ret = write(pipes[1], "GO", 2);
+		if (ret != 2) {
+			print_error(__location__
+				      " write returned (%d)",
+				      ret);
+			exit(LDB_ERR_OPERATIONS_ERROR);
+		}
+		exit(LDB_SUCCESS);
+	}
+	close(pipes[1]);
+	ret = read(pipes[0], buf, 2);
+	assert_int_equal(ret, 2);
+
+	pid = waitpid(child_pid, &wstatus, 0);
+	assert_int_equal(pid, child_pid);
+
+	assert_true(WIFEXITED(wstatus));
+
+	assert_int_equal(WEXITSTATUS(wstatus), 0);
+}
+
+static void test_transaction_commit_across_fork(void **state)
+{
+	struct ldb_context *ldb1 = NULL;
+	int ret;
+	struct ldbtest_ctx *test_ctx = NULL;
+	int pipes[2];
+	char buf[2];
+	int wstatus;
+	pid_t pid, child_pid;
+
+	test_ctx = talloc_get_type_abort(*state, struct ldbtest_ctx);
+
+	/*
+	 * Open the database
+	 */
+	ldb1 = ldb_init(test_ctx, test_ctx->ev);
+	ret = ldb_connect(ldb1, test_ctx->dbpath, 0, NULL);
+	assert_int_equal(ret, 0);
+
+	ret = ldb_transaction_start(ldb1);
+	assert_int_equal(ret, 0);
+
+	ret = pipe(pipes);
+	assert_int_equal(ret, 0);
+
+	child_pid = fork();
+	if (child_pid == 0) {
+		close(pipes[0]);
+		ret = ldb_transaction_commit(ldb1);
+
+		if (ret != LDB_ERR_PROTOCOL_ERROR) {
+			print_error(__location__": ldb_transaction_commit "
+				    "returned (%d) %s\n",
+				    ret,
+				    ldb1->err_string);
+			exit(LDB_ERR_OTHER);
+		}
+
+		ret = write(pipes[1], "GO", 2);
+		if (ret != 2) {
+			print_error(__location__
+				      " write returned (%d)",
+				      ret);
+			exit(LDB_ERR_OPERATIONS_ERROR);
+		}
+		exit(LDB_SUCCESS);
+	}
+	close(pipes[1]);
+	ret = read(pipes[0], buf, 2);
+	assert_int_equal(ret, 2);
+
+	pid = waitpid(child_pid, &wstatus, 0);
+	assert_int_equal(pid, child_pid);
+
+	assert_true(WIFEXITED(wstatus));
+
+	assert_int_equal(WEXITSTATUS(wstatus), 0);
+}
+
+static void test_lock_read_across_fork(void **state)
+{
+	struct ldb_context *ldb1 = NULL;
+	int ret;
+	struct ldbtest_ctx *test_ctx = NULL;
+	int pipes[2];
+	char buf[2];
+	int wstatus;
+	pid_t pid, child_pid;
+
+	test_ctx = talloc_get_type_abort(*state, struct ldbtest_ctx);
+
+	/*
+	 * Open the database
+	 */
+	ldb1 = ldb_init(test_ctx, test_ctx->ev);
+	ret = ldb_connect(ldb1, test_ctx->dbpath, 0, NULL);
+	assert_int_equal(ret, 0);
+
+	ret = pipe(pipes);
+	assert_int_equal(ret, 0);
+
+	child_pid = fork();
+	if (child_pid == 0) {
+		struct ldb_dn *basedn;
+		struct ldb_result *result = NULL;
+
+		close(pipes[0]);
+
+		basedn = ldb_dn_new_fmt(test_ctx, test_ctx->ldb, "dc=test");
+		assert_non_null(basedn);
+
+		ret = ldb_search(test_ctx->ldb,
+				 test_ctx,
+				 &result,
+				 basedn,
+				 LDB_SCOPE_BASE,
+				 NULL,
+				 NULL);
+		if (ret != LDB_ERR_PROTOCOL_ERROR) {
+			print_error(__location__": ldb_search "
+				    "returned (%d) %s\n",
+				    ret,
+				    ldb1->err_string);
+			exit(LDB_ERR_OTHER);
+		}
+
+		ret = write(pipes[1], "GO", 2);
+		if (ret != 2) {
+			print_error(__location__
+				      " write returned (%d)",
+				      ret);
+			exit(LDB_ERR_OPERATIONS_ERROR);
+		}
+		exit(LDB_SUCCESS);
+	}
+	close(pipes[1]);
+	ret = read(pipes[0], buf, 2);
+	assert_int_equal(ret, 2);
+
+	pid = waitpid(child_pid, &wstatus, 0);
+	assert_int_equal(pid, child_pid);
+
+	assert_true(WIFEXITED(wstatus));
+
+	assert_int_equal(WEXITSTATUS(wstatus), 0);
+
+	{
+		/*
+		 * Ensure that the search actually succeeds on the opening
+		 * pid
+		 */
+		struct ldb_dn *basedn;
+		struct ldb_result *result = NULL;
+
+		close(pipes[0]);
+
+		basedn = ldb_dn_new_fmt(test_ctx, test_ctx->ldb, "dc=test");
+		assert_non_null(basedn);
+
+		ret = ldb_search(test_ctx->ldb,
+				 test_ctx,
+				 &result,
+				 basedn,
+				 LDB_SCOPE_BASE,
+				 NULL,
+				 NULL);
+		assert_int_equal(0, ret);
+	}
+}
+
+static void test_multiple_opens_across_fork(void **state)
+{
+	struct ldb_context *ldb1 = NULL;
+	struct ldb_context *ldb2 = NULL;
+	int ret;
+	struct ldbtest_ctx *test_ctx = NULL;
+	int pipes[2];
+	char buf[2];
+	int wstatus;
+	pid_t pid, child_pid;
+
+	test_ctx = talloc_get_type_abort(*state, struct ldbtest_ctx);
+
+	/*
+	 * Open the database again
+	 */
+	ldb1 = ldb_init(test_ctx, test_ctx->ev);
+	ret = ldb_connect(ldb1, test_ctx->dbpath, LDB_FLG_RDONLY, NULL);
+	assert_int_equal(ret, 0);
+
+	ldb2 = ldb_init(test_ctx, test_ctx->ev);
+	ret = ldb_connect(ldb2, test_ctx->dbpath, 0, NULL);
+	assert_int_equal(ret, 0);
+
+	ret = pipe(pipes);
+	assert_int_equal(ret, 0);
+
+	child_pid = fork();
+	if (child_pid == 0) {
+		struct ldb_context *ldb3 = NULL;
+
+		close(pipes[0]);
+		ldb3 = ldb_init(test_ctx, test_ctx->ev);
+		ret = ldb_connect(ldb3, test_ctx->dbpath, 0, NULL);
+		if (ret != 0) {
+			print_error(__location__": ldb_connect returned (%d)\n",
+				    ret);
+			exit(ret);
+		}
+		ret = write(pipes[1], "GO", 2);
+		if (ret != 2) {
+			print_error(__location__
+				      " write returned (%d)",
+				      ret);
+			exit(LDB_ERR_OPERATIONS_ERROR);
+		}
+		exit(LDB_SUCCESS);
+	}
+	close(pipes[1]);
+	ret = read(pipes[0], buf, 2);
+	assert_int_equal(ret, 2);
+
+	pid = waitpid(child_pid, &wstatus, 0);
+	assert_int_equal(pid, child_pid);
+
+	assert_true(WIFEXITED(wstatus));
+
+	assert_int_equal(WEXITSTATUS(wstatus), 0);
+}
 
 int main(int argc, const char **argv)
 {
@@ -3896,6 +4546,9 @@ int main(int argc, const char **argv)
 						ldbtest_setup,
 						ldbtest_teardown),
 		cmocka_unit_test_setup_teardown(test_transactions,
+						ldbtest_setup,
+						ldbtest_teardown),
+		cmocka_unit_test_setup_teardown(test_nested_transactions,
 						ldbtest_setup,
 						ldbtest_teardown),
 		cmocka_unit_test_setup_teardown(test_ldb_modify_add_key,
@@ -4016,6 +4669,7 @@ int main(int argc, const char **argv)
 			test_ldb_add_to_index_unique_values_required,
 			ldb_non_unique_index_test_setup,
 			ldb_non_unique_index_test_teardown),
+		/* These tests are not compatible with mdb */
 		cmocka_unit_test_setup_teardown(
 			test_ldb_unique_index_duplicate_logging,
 			ldb_unique_index_test_setup,
@@ -4032,6 +4686,32 @@ int main(int argc, const char **argv)
 			test_ldb_unique_index_duplicate_with_guid,
 			ldb_guid_index_test_setup,
 			ldb_guid_index_test_teardown),
+		cmocka_unit_test_setup_teardown(
+			test_ldb_talloc_destructor_transaction_cleanup,
+			ldbtest_setup,
+			ldbtest_teardown),
+#ifdef TEST_LMDB
+		cmocka_unit_test_setup_teardown(
+			test_ldb_close_with_multiple_connections,
+			ldb_search_test_setup,
+			ldb_search_test_teardown),
+#endif
+		cmocka_unit_test_setup_teardown(
+			test_transaction_start_across_fork,
+			ldbtest_setup,
+			ldbtest_teardown),
+		cmocka_unit_test_setup_teardown(
+			test_transaction_commit_across_fork,
+			ldbtest_setup,
+			ldbtest_teardown),
+		cmocka_unit_test_setup_teardown(
+			test_lock_read_across_fork,
+			ldbtest_setup,
+			ldbtest_teardown),
+		cmocka_unit_test_setup_teardown(
+			test_multiple_opens_across_fork,
+			ldbtest_setup,
+			ldbtest_teardown),
 	};
 
 	return cmocka_run_group_tests(tests, NULL, NULL);

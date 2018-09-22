@@ -161,15 +161,6 @@ class ConfidentialAttrCommon(samba.tests.TestCase):
         m[attr] = MessageElement(value, FLAG_MOD_ADD, attr)
         self.ldb_admin.modify(m)
 
-    def set_schema_update_now(self):
-        ldif = """
-dn:
-changetype: modify
-add: schemaUpdateNow
-schemaUpdateNow: 1
-"""
-        self.ldb_admin.modify_ldif(ldif)
-
     def set_attr_search_flags(self, attr_dn, flags):
         """Modifies the searchFlags for an object in the schema"""
         m = Message()
@@ -180,7 +171,7 @@ schemaUpdateNow: 1
 
         # note we have to update the schema for this change to take effect (on
         # Windows, at least)
-        self.set_schema_update_now()
+        self.ldb_admin.set_schema_update_now()
 
     def get_attr_search_flags(self, attr_dn):
         """Marks the attribute under test as being confidential"""

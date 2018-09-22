@@ -22,6 +22,7 @@
 #include "lib/util/server_id.h"
 #include "g_lock.h"
 #include "messages.h"
+#include "lib/util/util_tdb.h"
 
 static bool net_g_lock_init(TALLOC_CTX *mem_ctx,
 			    struct tevent_context **pev,
@@ -90,7 +91,7 @@ static int net_g_lock_do(struct net_context *c, int argc, const char **argv)
 	state.cmd = cmd;
 	state.result = -1;
 
-	status = g_lock_do(name, G_LOCK_WRITE,
+	status = g_lock_do(string_term_tdb_data(name), G_LOCK_WRITE,
 			   timeval_set(timeout / 1000, timeout % 1000),
 			   net_g_lock_do_fn, &state);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -142,7 +143,8 @@ static int net_g_lock_dump(struct net_context *c, int argc, const char **argv)
 		goto done;
 	}
 
-	(void)g_lock_dump(g_ctx, argv[0], net_g_lock_dump_fn, NULL);
+	(void)g_lock_dump(g_ctx, string_term_tdb_data(argv[0]),
+			  net_g_lock_dump_fn, NULL);
 
 	ret = 0;
 done:
@@ -152,9 +154,13 @@ done:
 	return ret;
 }
 
-static int net_g_lock_locks_fn(const char *name, void *private_data)
+static int net_g_lock_locks_fn(TDB_DATA key, void *private_data)
 {
-	d_printf("%s\n", name);
+	if ((key.dsize == 0) || (key.dptr[key.dsize-1] != 0)) {
+		DEBUG(1, ("invalid key in g_lock.tdb, ignoring\n"));
+		return 0;
+	}
+	d_printf("%s\n", (const char *)key.dptr);
 	return 0;
 }
 

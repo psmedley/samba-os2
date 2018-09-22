@@ -29,6 +29,7 @@ import ldb
 import samba.param
 from samba import _glue
 from samba._ldb import Ldb as _Ldb
+from samba.compat import string_types
 
 
 def source_tree_topdir():
@@ -104,7 +105,7 @@ class Ldb(_Ldb):
 
         # Allow admins to force non-sync ldb for all databases
         if lp is not None:
-            nosync_p = lp.get("nosync", "ldb")
+            nosync_p = lp.get("ldb:nosync")
             if nosync_p is not None and nosync_p:
                 flags |= ldb.FLG_NOSYNC
 
@@ -249,8 +250,8 @@ def substitute_var(text, values):
     """
 
     for (name, value) in values.items():
-        assert isinstance(name, str), "%r is not a string" % name
-        assert isinstance(value, str), "Value %r for %s is not a string" % (value, name)
+        assert isinstance(name, string_types), "%r is not a string" % name
+        assert isinstance(value, string_types), "Value %r for %s is not a string" % (value, name)
         text = text.replace("${%s}" % name, value)
 
     return text
@@ -380,6 +381,7 @@ def arcfour_encrypt(key, data):
 
 version = _glue.version
 interface_ips = _glue.interface_ips
+fault_setup = _glue.fault_setup
 set_debug_level = _glue.set_debug_level
 get_debug_level = _glue.get_debug_level
 unix2nttime = _glue.unix2nttime

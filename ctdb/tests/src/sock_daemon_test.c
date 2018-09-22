@@ -759,7 +759,7 @@ static int test5_client(const char *sockpath, int id, pid_t pid_server,
 			tevent_loop_once(ev);
 		}
 
-		close(fd[0]);
+		close(fd[1]);
 		state.fd = -1;
 
 		while (kill(pid_server, 0) == 0 || errno != ESRCH) {
@@ -788,6 +788,7 @@ struct test5_server_state {
 };
 
 static bool test5_connect(struct sock_client_context *client,
+			  pid_t pid,
 			  void *private_data)
 {
 	struct test5_server_state *state =

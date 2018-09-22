@@ -22,6 +22,7 @@
 
 #include "includes.h"
 #include "utils/net.h"
+#include "libsmb/namequery.h"
 #include "rpc_client/cli_pipe.h"
 #include "../libcli/auth/libcli_auth.h"
 #include "../librpc/gen_ndr/ndr_samr_c.h"
@@ -46,6 +47,7 @@
 #include "nsswitch/libwbclient/wbclient.h"
 #include "passdb.h"
 #include "../libcli/smb/smbXcli_base.h"
+#include "libsmb/dsgetdcname.h"
 
 static int net_mode_share;
 static NTSTATUS sync_files(struct copy_clistate *cp_clistate, const char *mask);

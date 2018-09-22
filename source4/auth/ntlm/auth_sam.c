@@ -37,6 +37,9 @@
 #include "libcli/auth/libcli_auth.h"
 #include "libds/common/roles.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_AUTH
+
 NTSTATUS auth_sam_init(void);
 
 extern const char *user_attrs[];
@@ -70,7 +73,7 @@ static NTSTATUS authsam_password_ok(struct auth4_context *auth_context,
 		}
 		user_info = user_info_temp;
 
-		/*fall through*/
+		FALL_THROUGH;
 	}
 	case AUTH_PASSWORD_HASH:
 		*lm_sess_key = data_blob(NULL, 0);

@@ -498,7 +498,6 @@ static int vfswrap_mkdir(vfs_handle_struct *handle,
 			mode_t mode)
 {
 	int result;
-	bool has_dacl = False;
 	const char *path = smb_fname->base_name;
 	char *parent = NULL;
 
@@ -506,28 +505,13 @@ static int vfswrap_mkdir(vfs_handle_struct *handle,
 
 	if (lp_inherit_acls(SNUM(handle->conn))
 	    && parent_dirname(talloc_tos(), path, &parent, NULL)
-	    && (has_dacl = directory_has_default_acl(handle->conn, parent))) {
+	    && directory_has_default_acl(handle->conn, parent)) {
 		mode = (0777 & lp_directory_mask(SNUM(handle->conn)));
 	}
 
 	TALLOC_FREE(parent);
 
 	result = mkdir(path, mode);
-
-	if (result == 0 && !has_dacl) {
-		/*
-		 * We need to do this as the default behavior of POSIX ACLs
-		 * is to set the mask to be the requested group permission
-		 * bits, not the group permission bits to be the requested
-		 * group permission bits. This is not what we want, as it will
-		 * mess up any inherited ACL bits that were set. JRA.
-		 */
-		int saved_errno = errno; /* We may get ENOSYS */
-		if ((SMB_VFS_CHMOD_ACL(handle->conn, smb_fname, mode) == -1) &&
-				(errno == ENOSYS)) {
-			errno = saved_errno;
-		}
-	}
 
 	END_PROFILE(syscall_mkdir);
 	return result;
@@ -614,16 +598,6 @@ static int vfswrap_close(vfs_handle_struct *handle, files_struct *fsp)
 	return result;
 }
 
-static ssize_t vfswrap_read(vfs_handle_struct *handle, files_struct *fsp, void *data, size_t n)
-{
-	ssize_t result;
-
-	START_PROFILE_BYTES(syscall_read, n);
-	result = sys_read(fsp->fh->fd, data, n);
-	END_PROFILE_BYTES(syscall_read);
-	return result;
-}
-
 static ssize_t vfswrap_pread(vfs_handle_struct *handle, files_struct *fsp, void *data,
 			size_t n, off_t offset)
 {
@@ -636,45 +610,15 @@ static ssize_t vfswrap_pread(vfs_handle_struct *handle, files_struct *fsp, void 
 
 	if (result == -1 && errno == ESPIPE) {
 		/* Maintain the fiction that pipes can be seeked (sought?) on. */
-		result = SMB_VFS_READ(fsp, data, n);
+		result = sys_read(fsp->fh->fd, data, n);
 		fsp->fh->pos = 0;
 	}
 
 #else /* HAVE_PREAD */
-	off_t   curr;
-	int lerrno;
-
-	curr = SMB_VFS_LSEEK(fsp, 0, SEEK_CUR);
-	if (curr == -1 && errno == ESPIPE) {
-		/* Maintain the fiction that pipes can be seeked (sought?) on. */
-		result = SMB_VFS_READ(fsp, data, n);
-		fsp->fh->pos = 0;
-		return result;
-	}
-
-	if (SMB_VFS_LSEEK(fsp, offset, SEEK_SET) == -1) {
-		return -1;
-	}
-
-	errno = 0;
-	result = SMB_VFS_READ(fsp, data, n);
-	lerrno = errno;
-
-	SMB_VFS_LSEEK(fsp, curr, SEEK_SET);
-	errno = lerrno;
-
+	errno = ENOSYS;
+	result = -1;
 #endif /* HAVE_PREAD */
 
-	return result;
-}
-
-static ssize_t vfswrap_write(vfs_handle_struct *handle, files_struct *fsp, const void *data, size_t n)
-{
-	ssize_t result;
-
-	START_PROFILE_BYTES(syscall_write, n);
-	result = sys_write(fsp->fh->fd, data, n);
-	END_PROFILE_BYTES(syscall_write);
 	return result;
 }
 
@@ -690,44 +634,15 @@ static ssize_t vfswrap_pwrite(vfs_handle_struct *handle, files_struct *fsp, cons
 
 	if (result == -1 && errno == ESPIPE) {
 		/* Maintain the fiction that pipes can be sought on. */
-		result = SMB_VFS_WRITE(fsp, data, n);
+		result = sys_write(fsp->fh->fd, data, n);
 	}
 
 #else /* HAVE_PWRITE */
-	off_t   curr;
-	int         lerrno;
-
-	curr = SMB_VFS_LSEEK(fsp, 0, SEEK_CUR);
-	if (curr == -1) {
-		return -1;
-	}
-
-	if (SMB_VFS_LSEEK(fsp, offset, SEEK_SET) == -1) {
-		return -1;
-	}
-
-	result = SMB_VFS_WRITE(fsp, data, n);
-	lerrno = errno;
-
-	SMB_VFS_LSEEK(fsp, curr, SEEK_SET);
-	errno = lerrno;
-
+	errno = ENOSYS;
+	result = -1;
 #endif /* HAVE_PWRITE */
 
 	return result;
-}
-
-static int vfswrap_init_pool(struct smbd_server_connection *conn)
-{
-	int ret;
-
-	if (conn->pool != NULL) {
-		return 0;
-	}
-
-	ret = pthreadpool_tevent_init(conn, lp_aio_max_threads(),
-				      &conn->pool);
-	return ret;
 }
 
 struct vfswrap_pread_state {
@@ -754,16 +669,10 @@ static struct tevent_req *vfswrap_pread_send(struct vfs_handle_struct *handle,
 {
 	struct tevent_req *req, *subreq;
 	struct vfswrap_pread_state *state;
-	int ret;
 
 	req = tevent_req_create(mem_ctx, &state, struct vfswrap_pread_state);
 	if (req == NULL) {
 		return NULL;
-	}
-
-	ret = vfswrap_init_pool(handle->conn->sconn);
-	if (tevent_req_error(req, ret)) {
-		return tevent_req_post(req, ev);
 	}
 
 	state->ret = -1;
@@ -878,16 +787,10 @@ static struct tevent_req *vfswrap_pwrite_send(struct vfs_handle_struct *handle,
 {
 	struct tevent_req *req, *subreq;
 	struct vfswrap_pwrite_state *state;
-	int ret;
 
 	req = tevent_req_create(mem_ctx, &state, struct vfswrap_pwrite_state);
 	if (req == NULL) {
 		return NULL;
-	}
-
-	ret = vfswrap_init_pool(handle->conn->sconn);
-	if (tevent_req_error(req, ret)) {
-		return tevent_req_post(req, ev);
 	}
 
 	state->ret = -1;
@@ -997,16 +900,10 @@ static struct tevent_req *vfswrap_fsync_send(struct vfs_handle_struct *handle,
 {
 	struct tevent_req *req, *subreq;
 	struct vfswrap_fsync_state *state;
-	int ret;
 
 	req = tevent_req_create(mem_ctx, &state, struct vfswrap_fsync_state);
 	if (req == NULL) {
 		return NULL;
-	}
-
-	ret = vfswrap_init_pool(handle->conn->sconn);
-	if (tevent_req_error(req, ret)) {
-		return tevent_req_post(req, ev);
 	}
 
 	state->ret = -1;
@@ -1156,20 +1053,6 @@ static int vfswrap_rename(vfs_handle_struct *handle,
  out:
 	END_PROFILE(syscall_rename);
 	return result;
-}
-
-static int vfswrap_fsync(vfs_handle_struct *handle, files_struct *fsp)
-{
-#ifdef HAVE_FSYNC
-	int result;
-
-	START_PROFILE(syscall_fsync);
-	result = fsync(fsp->fh->fd);
-	END_PROFILE(syscall_fsync);
-	return result;
-#else
-	return 0;
-#endif
 }
 
 static int vfswrap_stat(vfs_handle_struct *handle,
@@ -1701,19 +1584,36 @@ static NTSTATUS vfswrap_offload_read_recv(struct tevent_req *req,
 }
 
 struct vfswrap_offload_write_state {
-	struct tevent_context *ev;
 	uint8_t *buf;
 	bool read_lck_locked;
 	bool write_lck_locked;
 	DATA_BLOB *token;
+	struct tevent_context *src_ev;
 	struct files_struct *src_fsp;
 	off_t src_off;
+	struct tevent_context *dst_ev;
 	struct files_struct *dst_fsp;
 	off_t dst_off;
 	off_t to_copy;
 	off_t remaining;
 	size_t next_io_size;
 };
+
+static void vfswrap_offload_write_cleanup(struct tevent_req *req,
+					  enum tevent_req_state req_state)
+{
+	struct vfswrap_offload_write_state *state = tevent_req_data(
+		req, struct vfswrap_offload_write_state);
+	bool ok;
+
+	if (state->dst_fsp == NULL) {
+		return;
+	}
+
+	ok = change_to_user_by_fsp(state->dst_fsp);
+	SMB_ASSERT(ok);
+	state->dst_fsp = NULL;
+}
 
 static NTSTATUS vfswrap_offload_write_loop(struct tevent_req *req);
 
@@ -1733,6 +1633,7 @@ static struct tevent_req *vfswrap_offload_write_send(
 	size_t num = MIN(to_copy, COPYCHUNK_MAX_TOTAL_LEN);
 	files_struct *src_fsp = NULL;
 	NTSTATUS status;
+	bool ok;
 
 	req = tevent_req_create(mem_ctx, &state,
 				struct vfswrap_offload_write_state);
@@ -1741,14 +1642,16 @@ static struct tevent_req *vfswrap_offload_write_send(
 	}
 
 	*state = (struct vfswrap_offload_write_state) {
-		.ev = ev,
 		.token = token,
 		.src_off = transfer_offset,
+		.dst_ev = ev,
 		.dst_fsp = dest_fsp,
 		.dst_off = dest_off,
 		.to_copy = to_copy,
 		.remaining = to_copy,
 	};
+
+	tevent_req_set_cleanup_fn(req, vfswrap_offload_write_cleanup);
 
 	switch (fsctl) {
 	case FSCTL_SRV_COPYCHUNK:
@@ -1783,7 +1686,6 @@ static struct tevent_req *vfswrap_offload_write_send(
 	if (tevent_req_nterror(req, status)) {
 		return tevent_req_post(req, ev);
 	}
-	state->src_fsp = src_fsp;
 
 	DBG_DEBUG("server side copy chunk of length %" PRIu64 "\n", to_copy);
 
@@ -1792,6 +1694,15 @@ static struct tevent_req *vfswrap_offload_write_send(
 		tevent_req_nterror(req, status);
 		return tevent_req_post(req, ev);
 	}
+
+	ok = change_to_user_by_fsp(src_fsp);
+	if (!ok) {
+		tevent_req_nterror(req, NT_STATUS_ACCESS_DENIED);
+		return tevent_req_post(req, ev);
+	}
+
+	state->src_ev = src_fsp->conn->user_ev_ctx;
+	state->src_fsp = src_fsp;
 
 	state->buf = talloc_array(state, uint8_t, num);
 	if (tevent_req_nomem(state->buf, req)) {
@@ -1817,16 +1728,6 @@ static struct tevent_req *vfswrap_offload_write_send(
 		return tevent_req_post(req, ev);
 	}
 
-	if (src_fsp->op == NULL) {
-		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
-		return tevent_req_post(req, ev);
-	}
-
-	if (dest_fsp->op == NULL) {
-		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
-		return tevent_req_post(req, ev);
-	}
-
 	status = vfswrap_offload_write_loop(req);
 	if (!NT_STATUS_IS_OK(status)) {
 		tevent_req_nterror(req, status);
@@ -1846,6 +1747,10 @@ static NTSTATUS vfswrap_offload_write_loop(struct tevent_req *req)
 	struct lock_struct read_lck;
 	bool ok;
 
+	/*
+	 * This is called under the context of state->src_fsp.
+	 */
+
 	state->next_io_size = MIN(state->remaining, talloc_array_length(state->buf));
 
 	init_strict_lock_struct(state->src_fsp,
@@ -1863,7 +1768,7 @@ static NTSTATUS vfswrap_offload_write_loop(struct tevent_req *req)
 	}
 
 	subreq = SMB_VFS_PREAD_SEND(state,
-				    state->src_fsp->conn->sconn->ev_ctx,
+				    state->src_ev,
 				    state->src_fsp,
 				    state->buf,
 				    state->next_io_size,
@@ -1905,6 +1810,12 @@ static void vfswrap_offload_write_read_done(struct tevent_req *subreq)
 
 	state->src_off += nread;
 
+	ok = change_to_user_by_fsp(state->dst_fsp);
+	if (!ok) {
+		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
+		return;
+	}
+
 	init_strict_lock_struct(state->dst_fsp,
 				state->dst_fsp->op->global->open_persistent_id,
 				state->dst_off,
@@ -1921,7 +1832,7 @@ static void vfswrap_offload_write_read_done(struct tevent_req *subreq)
 	}
 
 	subreq = SMB_VFS_PWRITE_SEND(state,
-				     state->ev,
+				     state->dst_ev,
 				     state->dst_fsp,
 				     state->buf,
 				     state->next_io_size,
@@ -1942,6 +1853,7 @@ static void vfswrap_offload_write_write_done(struct tevent_req *subreq)
 	struct vfs_aio_state aio_state;
 	ssize_t nwritten;
 	NTSTATUS status;
+	bool ok;
 
 	nwritten = SMB_VFS_PWRITE_RECV(subreq, &aio_state);
 	TALLOC_FREE(subreq);
@@ -1966,6 +1878,12 @@ static void vfswrap_offload_write_write_done(struct tevent_req *subreq)
 	state->remaining -= nwritten;
 	if (state->remaining == 0) {
 		tevent_req_done(req);
+		return;
+	}
+
+	ok = change_to_user_by_fsp(state->src_fsp);
+	if (!ok) {
+		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
 		return;
 	}
 
@@ -2100,27 +2018,6 @@ static int vfswrap_chmod(vfs_handle_struct *handle,
 	int result;
 
 	START_PROFILE(syscall_chmod);
-
-	/*
-	 * We need to do this due to the fact that the default POSIX ACL
-	 * chmod modifies the ACL *mask* for the group owner, not the
-	 * group owner bits directly. JRA.
-	 */
-
-
-	{
-		int saved_errno = errno; /* We might get ENOSYS */
-		result = SMB_VFS_CHMOD_ACL(handle->conn,
-				smb_fname,
-				mode);
-		if (result == 0) {
-			END_PROFILE(syscall_chmod);
-			return result;
-		}
-		/* Error - return the old errno. */
-		errno = saved_errno;
-	}
-
 	result = chmod(smb_fname->base_name, mode);
 	END_PROFILE(syscall_chmod);
 	return result;
@@ -2131,23 +2028,6 @@ static int vfswrap_fchmod(vfs_handle_struct *handle, files_struct *fsp, mode_t m
 	int result;
 
 	START_PROFILE(syscall_fchmod);
-
-	/*
-	 * We need to do this due to the fact that the default POSIX ACL
-	 * chmod modifies the ACL *mask* for the group owner, not the
-	 * group owner bits directly. JRA.
-	 */
-
-	{
-		int saved_errno = errno; /* We might get ENOSYS */
-		if ((result = SMB_VFS_FCHMOD_ACL(fsp, mode)) == 0) {
-			END_PROFILE(syscall_fchmod);
-			return result;
-		}
-		/* Error - return the old errno. */
-		errno = saved_errno;
-	}
-
 #if defined(HAVE_FCHMOD)
 	result = fchmod(fsp->fh->fd, mode);
 #else
@@ -2829,38 +2709,6 @@ static NTSTATUS vfswrap_audit_file(struct vfs_handle_struct *handle,
 	return NT_STATUS_OK; /* Nothing to do here ... */
 }
 
-static int vfswrap_chmod_acl(vfs_handle_struct *handle,
-				const struct smb_filename *smb_fname,
-				mode_t mode)
-{
-#ifdef HAVE_NO_ACL
-	errno = ENOSYS;
-	return -1;
-#else
-	int result;
-
-	START_PROFILE(chmod_acl);
-	result = chmod_acl(handle->conn, smb_fname, mode);
-	END_PROFILE(chmod_acl);
-	return result;
-#endif
-}
-
-static int vfswrap_fchmod_acl(vfs_handle_struct *handle, files_struct *fsp, mode_t mode)
-{
-#ifdef HAVE_NO_ACL
-	errno = ENOSYS;
-	return -1;
-#else
-	int result;
-
-	START_PROFILE(fchmod_acl);
-	result = fchmod_acl(fsp, mode);
-	END_PROFILE(fchmod_acl);
-	return result;
-#endif
-}
-
 static SMB_ACL_T vfswrap_sys_acl_get_file(vfs_handle_struct *handle,
 					  const struct smb_filename *smb_fname,
 					  SMB_ACL_TYPE_T type,
@@ -3055,11 +2903,9 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.open_fn = vfswrap_open,
 	.create_file_fn = vfswrap_create_file,
 	.close_fn = vfswrap_close,
-	.read_fn = vfswrap_read,
 	.pread_fn = vfswrap_pread,
 	.pread_send_fn = vfswrap_pread_send,
 	.pread_recv_fn = vfswrap_pread_recv,
-	.write_fn = vfswrap_write,
 	.pwrite_fn = vfswrap_pwrite,
 	.pwrite_send_fn = vfswrap_pwrite_send,
 	.pwrite_recv_fn = vfswrap_pwrite_recv,
@@ -3067,7 +2913,6 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.sendfile_fn = vfswrap_sendfile,
 	.recvfile_fn = vfswrap_recvfile,
 	.rename_fn = vfswrap_rename,
-	.fsync_fn = vfswrap_fsync,
 	.fsync_send_fn = vfswrap_fsync_send,
 	.fsync_recv_fn = vfswrap_fsync_recv,
 	.stat_fn = vfswrap_stat,
@@ -3124,9 +2969,6 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.audit_file_fn = vfswrap_audit_file,
 
 	/* POSIX ACL operations. */
-
-	.chmod_acl_fn = vfswrap_chmod_acl,
-	.fchmod_acl_fn = vfswrap_fchmod_acl,
 
 	.sys_acl_get_file_fn = vfswrap_sys_acl_get_file,
 	.sys_acl_get_fd_fn = vfswrap_sys_acl_get_fd,

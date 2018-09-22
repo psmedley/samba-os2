@@ -193,6 +193,14 @@ systemOnly: FALSE
 
         samdb2 = samba.tests.connect_samdb(self.lp.samdb_url())
 
+        # We now only update the @ATTRIBUTES when a transaction happens
+        # rather than making a read of the DB do writes.
+        #
+        # This avoids locking issues and is more expected
+
+        samdb2.transaction_start()
+        samdb2.transaction_commit()
+
         res = self.samdb.search(base="@ATTRIBUTES", scope=ldb.SCOPE_BASE,
                                 attrs=["@TEST_EXTRA"])
         self.assertEquals(len(res), 1)
@@ -220,9 +228,30 @@ systemOnly: FALSE
 
         samdb2 = samba.tests.connect_samdb(self.lp.samdb_url())
 
+        # We now only update the @INDEXLIST when a transaction happens
+        # rather than making a read of the DB do writes.
+        #
+        # This avoids locking issues and is more expected
+
+        samdb2.transaction_start()
+        samdb2.transaction_commit()
+
         res = self.samdb.search(base="@INDEXLIST", scope=ldb.SCOPE_BASE,
                                 attrs=["@TEST_EXTRA"])
         self.assertEquals(len(res), 1)
         self.assertEquals(str(res[0].dn), "@INDEXLIST")
         self.assertEquals(len(res[0]), 0)
         self.assertFalse("@TEST_EXTRA" in res[0])
+
+    def test_modify_fail_of_at_indexlist(self):
+        m = {"dn": "@INDEXLIST",
+             "@TEST_NOT_EXTRA": ["1"]
+             }
+
+        msg = ldb.Message.from_dict(self.samdb, m, ldb.FLAG_MOD_DELETE)
+        try:
+            self.samdb.modify(msg)
+            self.fail("modify of @INDEXLIST with a failed constraint should fail")
+        except LdbError as err:
+            enum = err.args[0]
+            self.assertEquals(enum, ldb.ERR_NO_SUCH_ATTRIBUTE)

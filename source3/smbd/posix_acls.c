@@ -870,7 +870,7 @@ static mode_t convert_permset_to_mode_t(SMB_ACL_PERMSET_T permset)
  Map generic UNIX permissions to canon_ace permissions (a mode_t containing only S_(R|W|X)USR bits).
 ****************************************************************************/
 
-static mode_t unix_perms_to_acl_perms(mode_t mode, int r_mask, int w_mask, int x_mask)
+mode_t unix_perms_to_acl_perms(mode_t mode, int r_mask, int w_mask, int x_mask)
 {
 	mode_t ret = 0;
 
@@ -889,7 +889,7 @@ static mode_t unix_perms_to_acl_perms(mode_t mode, int r_mask, int w_mask, int x
  an SMB_ACL_PERMSET_T.
 ****************************************************************************/
 
-static int map_acl_perms_to_permset(connection_struct *conn, mode_t mode, SMB_ACL_PERMSET_T *p_permset)
+int map_acl_perms_to_permset(mode_t mode, SMB_ACL_PERMSET_T *p_permset)
 {
 	if (sys_acl_clear_perms(*p_permset) ==  -1)
 		return -1;
@@ -1251,10 +1251,36 @@ static void ensure_minimal_owner_ace_perms(const bool is_directory,
 
 static bool uid_entry_in_group(connection_struct *conn, canon_ace *uid_ace, canon_ace *group_ace )
 {
+	bool is_sid = false;
+	bool has_sid = false;
+	struct security_token *security_token = NULL;
+
 	/* "Everyone" always matches every uid. */
 
 	if (dom_sid_equal(&group_ace->trustee, &global_sid_World))
 		return True;
+
+	/*
+	 * if we have session info in conn, we already have the (SID
+	 * based) NT token and don't need to do the complex
+	 * user_in_group_sid() call
+	 */
+	if (conn->session_info) {
+		security_token = conn->session_info->security_token;
+		/* security_token should not be NULL */
+		SMB_ASSERT(security_token);
+		is_sid = security_token_is_sid(security_token,
+					       &uid_ace->trustee);
+		if (is_sid) {
+			has_sid = security_token_has_sid(security_token,
+							 &group_ace->trustee);
+
+			if (has_sid) {
+				return true;
+			}
+		}
+
+	}
 
 	/*
 	 * if it's the current user, we already have the unix token
@@ -2918,7 +2944,7 @@ static bool set_canon_ace_list(files_struct *fsp,
 			goto fail;
 		}
 
-		if (map_acl_perms_to_permset(conn, p_ace->perms, &the_permset) == -1) {
+		if (map_acl_perms_to_permset(p_ace->perms, &the_permset) == -1) {
 			DEBUG(0,("set_canon_ace_list: Failed to create permset for mode (%u) on entry %d. (%s)\n",
 				(unsigned int)p_ace->perms, i, strerror(errno) ));
 			goto fail;
@@ -2955,7 +2981,7 @@ static bool set_canon_ace_list(files_struct *fsp,
 			goto fail;
 		}
 
-		if (map_acl_perms_to_permset(conn, S_IRUSR|S_IWUSR|S_IXUSR, &mask_permset) == -1) {
+		if (map_acl_perms_to_permset(S_IRUSR|S_IWUSR|S_IXUSR, &mask_permset) == -1) {
 			DEBUG(0,("set_canon_ace_list: Failed to create mask permset. (%s)\n", strerror(errno) ));
 			goto fail;
 		}
@@ -4053,7 +4079,7 @@ static int chmod_acl_internals( connection_struct *conn, SMB_ACL_T posix_acl, mo
 				continue;
 		}
 
-		if (map_acl_perms_to_permset(conn, perms, &permset) == -1)
+		if (map_acl_perms_to_permset(perms, &permset) == -1)
 			return -1;
 
 		if (sys_acl_set_permset(entry, permset) == -1)
@@ -4103,19 +4129,6 @@ static int copy_access_posix_acl(connection_struct *conn,
 }
 
 /****************************************************************************
- Do a chmod by setting the ACL USER_OBJ, GROUP_OBJ and OTHER bits in an ACL
- and set the mask to rwx. Needed to preserve complex ACLs set by NT.
- Note that name is in UNIX character set.
-****************************************************************************/
-
-int chmod_acl(connection_struct *conn,
-			const struct smb_filename *smb_fname,
-			mode_t mode)
-{
-	return copy_access_posix_acl(conn, smb_fname, smb_fname, mode);
-}
-
-/****************************************************************************
  Check for an existing default POSIX ACL on a directory.
 ****************************************************************************/
 
@@ -4162,31 +4175,6 @@ int inherit_access_posix_acl(connection_struct *conn,
 		return 0;
 
 	return copy_access_posix_acl(conn, inherit_from_fname, smb_fname, mode);
-}
-
-/****************************************************************************
- Do an fchmod by setting the ACL USER_OBJ, GROUP_OBJ and OTHER bits in an ACL
- and set the mask to rwx. Needed to preserve complex ACLs set by NT.
-****************************************************************************/
-
-int fchmod_acl(files_struct *fsp, mode_t mode)
-{
-	connection_struct *conn = fsp->conn;
-	SMB_ACL_T posix_acl = NULL;
-	int ret = -1;
-
-	if ((posix_acl = SMB_VFS_SYS_ACL_GET_FD(fsp, talloc_tos())) == NULL)
-		return -1;
-
-	if ((ret = chmod_acl_internals(conn, posix_acl, mode)) == -1)
-		goto done;
-
-	ret = SMB_VFS_SYS_ACL_SET_FD(fsp, posix_acl);
-
-  done:
-
-	TALLOC_FREE(posix_acl);
-	return ret;
 }
 
 /****************************************************************************
@@ -4608,7 +4596,7 @@ NTSTATUS get_nt_acl_no_snum(TALLOC_CTX *ctx, const char *fname,
 				struct security_descriptor **sd)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
-	connection_struct *conn;
+	struct conn_struct_tos *c = NULL;
 	NTSTATUS status = NT_STATUS_OK;
 	struct smb_filename *smb_fname = synthetic_smb_fname(talloc_tos(),
 						fname,
@@ -4626,14 +4614,11 @@ NTSTATUS get_nt_acl_no_snum(TALLOC_CTX *ctx, const char *fname,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	status = create_conn_struct(ctx,
-				server_event_context(),
-				server_messaging_context(),
-				&conn,
-				-1,
-				"/",
-				NULL);
-
+	status = create_conn_struct_tos(server_messaging_context(),
+					-1,
+					"/",
+					NULL,
+					&c);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(0,("create_conn_struct returned %s.\n",
 			nt_errstr(status)));
@@ -4641,7 +4626,7 @@ NTSTATUS get_nt_acl_no_snum(TALLOC_CTX *ctx, const char *fname,
 		return status;
 	}
 
-	status = SMB_VFS_GET_NT_ACL(conn,
+	status = SMB_VFS_GET_NT_ACL(c->conn,
 				smb_fname,
 				security_info_wanted,
 				ctx,
@@ -4651,7 +4636,6 @@ NTSTATUS get_nt_acl_no_snum(TALLOC_CTX *ctx, const char *fname,
 			  nt_errstr(status)));
 	}
 
-	conn_free(conn);
 	TALLOC_FREE(frame);
 
 	return status;
@@ -4779,7 +4763,7 @@ int posix_sys_acl_blob_get_fd(vfs_handle_struct *handle,
 
 static NTSTATUS make_default_acl_posix(TALLOC_CTX *ctx,
 				       const char *name,
-				       SMB_STRUCT_STAT *psbuf,
+				       const SMB_STRUCT_STAT *psbuf,
 				       struct security_descriptor **ppdesc)
 {
 	struct dom_sid owner_sid, group_sid;
@@ -4886,7 +4870,7 @@ static NTSTATUS make_default_acl_posix(TALLOC_CTX *ctx,
 
 static NTSTATUS make_default_acl_windows(TALLOC_CTX *ctx,
 					 const char *name,
-					 SMB_STRUCT_STAT *psbuf,
+					 const SMB_STRUCT_STAT *psbuf,
 					 struct security_descriptor **ppdesc)
 {
 	struct dom_sid owner_sid, group_sid;
@@ -4958,7 +4942,7 @@ static NTSTATUS make_default_acl_windows(TALLOC_CTX *ctx,
 
 static NTSTATUS make_default_acl_everyone(TALLOC_CTX *ctx,
 					  const char *name,
-					  SMB_STRUCT_STAT *psbuf,
+					  const SMB_STRUCT_STAT *psbuf,
 					  struct security_descriptor **ppdesc)
 {
 	struct dom_sid owner_sid, group_sid;
@@ -5022,7 +5006,7 @@ NTSTATUS make_default_filesystem_acl(
 	TALLOC_CTX *ctx,
 	enum default_acl_style acl_style,
 	const char *name,
-	SMB_STRUCT_STAT *psbuf,
+	const SMB_STRUCT_STAT *psbuf,
 	struct security_descriptor **ppdesc)
 {
 	NTSTATUS status;

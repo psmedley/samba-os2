@@ -2,7 +2,6 @@ etc/ufw/applications.d/samba
 lib/systemd/system/nmbd.service
 lib/systemd/system/samba-ad-dc.service
 lib/systemd/system/smbd.service
-usr/bin/eventlogadm
 usr/bin/mvxattr
 usr/bin/oLschema2ldif
 usr/bin/pdbedit
@@ -18,11 +17,12 @@ usr/lib/*/samba/libkdc-samba4.so.2
 usr/lib/*/samba/libkdc-samba4.so.2.0.0
 usr/lib/*/samba/libpac.so.*
 usr/lib/*/samba/service/*.so
+usr/sbin/eventlogadm
 usr/sbin/mksmbpasswd
 usr/sbin/nmbd
 usr/sbin/samba
+usr/sbin/samba-gpupdate
 usr/sbin/samba_dnsupdate
-usr/sbin/samba_gpoupdate
 usr/sbin/samba_spnupdate
 usr/sbin/samba_upgradedns
 usr/sbin/smbd
@@ -37,7 +37,7 @@ usr/share/man/man8/eventlogadm.8
 usr/share/man/man8/idmap_script.8
 usr/share/man/man8/nmbd.8
 usr/share/man/man8/pdbedit.8
+usr/share/man/man8/samba-gpupdate.8
 usr/share/man/man8/samba.8
-usr/share/man/man8/samba_gpoupdate.8
 usr/share/man/man8/smbd.8
 usr/share/samba/setup

@@ -11,7 +11,6 @@ usr/lib/*/samba/nss_info/sfu20.so
 usr/sbin/winbindd
 usr/share/man/man1/ntlm_auth.1
 usr/share/man/man1/wbinfo.1
-usr/share/man/man8/winbind_krb5_locator.8
 usr/share/man/man8/idmap_ad.8
 usr/share/man/man8/idmap_autorid.8
 usr/share/man/man8/idmap_hash.8
@@ -20,4 +19,5 @@ usr/share/man/man8/idmap_nss.8
 usr/share/man/man8/idmap_rid.8
 usr/share/man/man8/idmap_tdb.8
 usr/share/man/man8/idmap_tdb2.8
+usr/share/man/man8/winbind_krb5_locator.8
 usr/share/man/man8/winbindd.8

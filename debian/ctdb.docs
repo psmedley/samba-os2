@@ -1,4 +1,4 @@
 ctdb/README
 ctdb/README.eventscripts
-ctdb/README.notify.d
+ctdb/README.notification
 ctdb/doc/*.txt

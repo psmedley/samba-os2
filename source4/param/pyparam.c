@@ -358,6 +358,28 @@ static PyObject *py_samdb_url(PyObject *self, PyObject *unused)
 	return PyStr_FromFormat("tdb://%s/sam.ldb", lpcfg_private_dir(lp_ctx));
 }
 
+static PyObject *py_cache_path(PyObject *self, PyObject *args)
+{
+	struct loadparm_context *lp_ctx = PyLoadparmContext_AsLoadparmContext(self);
+	char *name = NULL;
+	char *path = NULL;
+	PyObject *ret = NULL;
+
+	if (!PyArg_ParseTuple(args, "s", &name)) {
+		return NULL;
+	}
+
+	path = lpcfg_cache_path(NULL, lp_ctx, name);
+	if (!path) {
+		PyErr_Format(PyExc_RuntimeError,
+			     "Unable to access cache %s", name);
+		return NULL;
+	}
+	ret = PyStr_FromString(path);
+	talloc_free(path);
+
+	return ret;
+}
 
 static PyMethodDef py_lp_ctx_methods[] = {
 	{ "load", py_lp_ctx_load, METH_VARARGS,
@@ -394,6 +416,9 @@ static PyMethodDef py_lp_ctx_methods[] = {
 	{ "samdb_url", py_samdb_url, METH_NOARGS,
 	        "S.samdb_url() -> string\n"
 	        "Returns the current URL for sam.ldb." },
+	{ "cache_path", py_cache_path, METH_VARARGS,
+		"S.cache_path(name) -> string\n"
+		"Returns a path in the Samba cache directory." },
 	{ NULL }
 };
 
@@ -420,7 +445,52 @@ static PyGetSetDef py_lp_ctx_getset[] = {
 
 static PyObject *py_lp_ctx_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
-	return pytalloc_reference(type, loadparm_init_global(false));
+	const char *kwnames[] = {"filename_for_non_global_lp", NULL};
+	PyObject *lp_ctx;
+	const char *non_global_conf = NULL;
+	struct loadparm_context *ctx;
+
+	if (!PyArg_ParseTupleAndKeywords(args,
+					 kwargs,
+					 "|s",
+					 discard_const_p(char *,
+							 kwnames),
+					 &non_global_conf)) {
+		return NULL;
+	}
+
+	/*
+	 * by default, any LoadParm python objects map to a single global
+	 * underlying object. The filename_for_non_global_lp arg overrides this
+	 * default behaviour and creates a separate underlying LoadParm object.
+	 */
+	if (non_global_conf != NULL) {
+		bool ok;
+		ctx = loadparm_init(NULL);
+		if (ctx == NULL) {
+			PyErr_NoMemory();
+			return NULL;
+		}
+
+		lp_ctx = pytalloc_reference(type, ctx);
+		if (lp_ctx == NULL) {
+			PyErr_NoMemory();
+			return NULL;
+		}
+
+		ok = lpcfg_load_no_global(
+			PyLoadparmContext_AsLoadparmContext(lp_ctx),
+			non_global_conf);
+		if (!ok) {
+			PyErr_Format(PyExc_ValueError,
+				     "Could not load non-global conf %s",
+				     non_global_conf);
+			return NULL;
+		}
+		return lp_ctx;
+	} else{
+		return pytalloc_reference(type, loadparm_init_global(false));
+	}
 }
 
 static Py_ssize_t py_lp_ctx_len(PyObject *self)
@@ -431,7 +501,7 @@ static Py_ssize_t py_lp_ctx_len(PyObject *self)
 static PyObject *py_lp_ctx_getitem(PyObject *self, PyObject *name)
 {
 	struct loadparm_service *service;
-	if (!PyStr_Check(name)) {
+	if (!(PyStr_Check(name) || PyUnicode_Check(name))) {
 		PyErr_SetString(PyExc_TypeError, "Only string subscripts are supported");
 		return NULL;
 	}

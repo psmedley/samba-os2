@@ -22,6 +22,8 @@
 
 #include <talloc.h>
 
+#include "common/line.h"
+
 #include "protocol.h"
 #include "protocol_util.h"
 
@@ -274,12 +276,10 @@ int ctdb_sock_addr_from_string(const char *str,
 
 	/* Parse out port number and then IP address */
 
-	len = strlen(str);
+	len = strlcpy(s, str, sizeof(s));
 	if (len >= sizeof(s)) {
 		return EINVAL;
 	}
-
-	strncpy(s, str, len+1);
 
 	p = rindex(s, ':');
 	if (p == NULL) {
@@ -603,56 +603,68 @@ const char *ctdb_connection_list_to_string(
 	return out;
 }
 
-int ctdb_connection_list_read(TALLOC_CTX *mem_ctx, bool client_first,
+struct ctdb_connection_list_read_state {
+	struct ctdb_connection_list *list;
+	bool client_first;
+};
+
+static int ctdb_connection_list_read_line(char *line, void *private_data)
+{
+	struct ctdb_connection_list_read_state *state =
+		(struct ctdb_connection_list_read_state *)private_data;
+	struct ctdb_connection conn;
+	int ret;
+
+	/* Skip empty lines */
+	if (line[0] == '\0') {
+		return 0;
+	}
+
+	/* Comment */
+	if (line[0] == '#') {
+		return 0;
+	}
+
+	ret = ctdb_connection_from_string(line, state->client_first, &conn);
+	if (ret != 0) {
+		return ret;
+	}
+
+	ret = ctdb_connection_list_add(state->list, &conn);
+	if (ret != 0) {
+		return ret;
+	}
+
+	return 0;
+}
+
+int ctdb_connection_list_read(TALLOC_CTX *mem_ctx,
+			      int fd,
+			      bool client_first,
 			      struct ctdb_connection_list **conn_list)
 {
-	struct ctdb_connection_list *list;
-	char line[128]; /* long enough for IPv6 */
+	struct ctdb_connection_list_read_state state;
 	int ret;
 
 	if (conn_list == NULL) {
 		return EINVAL;
 	}
 
-	list = talloc_zero(mem_ctx, struct ctdb_connection_list);
-	if (list == NULL) {
+	state.list = talloc_zero(mem_ctx, struct ctdb_connection_list);
+	if (state.list == NULL) {
 		return ENOMEM;
 	}
 
-	while (fgets(line, sizeof(line), stdin) != NULL) {
-		char *t;
-		struct ctdb_connection conn;
+	state.client_first = client_first;
 
-		/* Skip empty lines */
-		if (line[0] == '\n') {
-			continue;
-		}
+	ret = line_read(fd,
+			128,
+			mem_ctx,
+			ctdb_connection_list_read_line,
+			&state,
+			NULL);
 
-		/* Comment */
-		if (line[0] == '#') {
-			continue;
-		}
+	*conn_list = state.list;
 
-		t = strtok(line, "\n");
-		if (t == NULL) {
-			goto fail;
-		}
-
-		ret = ctdb_connection_from_string(t, client_first, &conn);
-		if (ret != 0) {
-			goto fail;
-		}
-
-		ret = ctdb_connection_list_add(list, &conn);
-		if (ret != 0) {
-			goto fail;
-		}
-	}
-
-	*conn_list = list;
-	return 0;
-
-fail:
-	talloc_free(list);
-	return EINVAL;
+	return ret;
 }

@@ -93,7 +93,7 @@ static int netlogon_creds_cli_locked_state_destructor(
 
 	if (state->is_glocked) {
 		g_lock_unlock(context->db.g_ctx,
-			      context->db.key_name);
+			      string_term_tdb_data(context->db.key_name));
 	}
 
 	return 0;
@@ -215,6 +215,7 @@ NTSTATUS netlogon_creds_cli_open_global_db(struct loadparm_context *lp_ctx)
 {
 	char *fname;
 	struct db_context *global_db;
+	int hash_size, tdb_flags;
 
 	if (netlogon_creds_cli_global_db != NULL) {
 		return NT_STATUS_OK;
@@ -225,12 +226,20 @@ NTSTATUS netlogon_creds_cli_open_global_db(struct loadparm_context *lp_ctx)
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	global_db = dbwrap_local_open(NULL, lp_ctx,
-				      fname, 0,
-				      TDB_CLEAR_IF_FIRST|TDB_INCOMPATIBLE_HASH,
-				      O_RDWR|O_CREAT,
-				      0600, DBWRAP_LOCK_ORDER_2,
-				      DBWRAP_FLAG_NONE);
+	hash_size = lpcfg_tdb_hash_size(lp_ctx, fname);
+	tdb_flags = lpcfg_tdb_flags(
+		lp_ctx,
+		TDB_CLEAR_IF_FIRST|TDB_INCOMPATIBLE_HASH);
+
+	global_db = dbwrap_local_open(
+		NULL,
+		fname,
+		hash_size,
+		tdb_flags,
+		O_RDWR|O_CREAT,
+		0600,
+		DBWRAP_LOCK_ORDER_2,
+		DBWRAP_FLAG_NONE);
 	if (global_db == NULL) {
 		DEBUG(0,("netlogon_creds_cli_open_global_db: Failed to open %s - %s\n",
 			 fname, strerror(errno)));
@@ -765,7 +774,7 @@ struct tevent_req *netlogon_creds_cli_lock_send(TALLOC_CTX *mem_ctx,
 
 	subreq = g_lock_lock_send(state, ev,
 				  context->db.g_ctx,
-				  context->db.key_name,
+				  string_term_tdb_data(context->db.key_name),
 				  G_LOCK_WRITE);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
@@ -978,7 +987,7 @@ struct tevent_req *netlogon_creds_cli_lck_send(
 
 	subreq = g_lock_lock_send(state, ev,
 				  context->db.g_ctx,
-				  context->db.key_name,
+				  string_term_tdb_data(context->db.key_name),
 				  gtype);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
@@ -1014,7 +1023,8 @@ static int netlogon_creds_cli_lck_destructor(
 	struct netlogon_creds_cli_context *ctx = lck->context;
 	NTSTATUS status;
 
-	status = g_lock_unlock(ctx->db.g_ctx, ctx->db.key_name);
+	status = g_lock_unlock(ctx->db.g_ctx,
+			       string_term_tdb_data(ctx->db.key_name));
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_unlock failed: %s\n", nt_errstr(status));
 		smb_panic("g_lock_unlock failed");

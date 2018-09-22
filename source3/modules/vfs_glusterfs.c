@@ -592,12 +592,6 @@ static int vfs_gluster_close(struct vfs_handle_struct *handle,
 	return glfs_close(glfd);
 }
 
-static ssize_t vfs_gluster_read(struct vfs_handle_struct *handle,
-				files_struct *fsp, void *data, size_t n)
-{
-	return glfs_read(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle, fsp), data, n, 0);
-}
-
 static ssize_t vfs_gluster_pread(struct vfs_handle_struct *handle,
 				 files_struct *fsp, void *data, size_t n,
 				 off_t offset)
@@ -735,7 +729,16 @@ static bool init_gluster_aio(struct vfs_handle_struct *handle)
 	read_fd = fds[0];
 	write_fd = fds[1];
 
-	aio_read_event = tevent_add_fd(handle->conn->sconn->ev_ctx,
+	/*
+	 * We use the raw tevent context here,
+	 * as this is a global event handler.
+	 *
+	 * The tevent_req_defer_callback()
+	 * calls will make sure the results
+	 * of async calls are propagated
+	 * to the correct tevent_context.
+	 */
+	aio_read_event = tevent_add_fd(handle->conn->sconn->raw_ev_ctx,
 					NULL,
 					read_fd,
 					TEVENT_FD_READ,
@@ -809,6 +812,14 @@ static struct tevent_req *vfs_gluster_pread_send(struct vfs_handle_struct
 		return tevent_req_post(req, ev);
 	}
 
+	/*
+	 * aio_glusterfs_done and aio_tevent_fd_done()
+	 * use the raw tevent context. We need to use
+	 * tevent_req_defer_callback() in order to
+	 * use the event context we're started with.
+	 */
+	tevent_req_defer_callback(req, ev);
+
 	PROFILE_TIMESTAMP(&state->start);
 	ret = glfs_pread_async(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle,
 				fsp), data, n, offset, 0, aio_glusterfs_done,
@@ -844,6 +855,14 @@ static struct tevent_req *vfs_gluster_pwrite_send(struct vfs_handle_struct
 		tevent_req_error(req, EIO);
 		return tevent_req_post(req, ev);
 	}
+
+	/*
+	 * aio_glusterfs_done and aio_tevent_fd_done()
+	 * use the raw tevent context. We need to use
+	 * tevent_req_defer_callback() in order to
+	 * use the event context we're started with.
+	 */
+	tevent_req_defer_callback(req, ev);
 
 	PROFILE_TIMESTAMP(&state->start);
 	ret = glfs_pwrite_async(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle,
@@ -887,12 +906,6 @@ static ssize_t vfs_gluster_recv(struct tevent_req *req,
 	return ret;
 }
 
-static ssize_t vfs_gluster_write(struct vfs_handle_struct *handle,
-				 files_struct *fsp, const void *data, size_t n)
-{
-	return glfs_write(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle, fsp), data, n, 0);
-}
-
 static ssize_t vfs_gluster_pwrite(struct vfs_handle_struct *handle,
 				  files_struct *fsp, const void *data,
 				  size_t n, off_t offset)
@@ -931,12 +944,6 @@ static int vfs_gluster_rename(struct vfs_handle_struct *handle,
 			   smb_fname_dst->base_name);
 }
 
-static int vfs_gluster_fsync(struct vfs_handle_struct *handle,
-			     files_struct *fsp)
-{
-	return glfs_fsync(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle, fsp));
-}
-
 static struct tevent_req *vfs_gluster_fsync_send(struct vfs_handle_struct
 						 *handle, TALLOC_CTX *mem_ctx,
 						 struct tevent_context *ev,
@@ -958,6 +965,14 @@ static struct tevent_req *vfs_gluster_fsync_send(struct vfs_handle_struct
 		tevent_req_error(req, EIO);
 		return tevent_req_post(req, ev);
 	}
+
+	/*
+	 * aio_glusterfs_done and aio_tevent_fd_done()
+	 * use the raw tevent context. We need to use
+	 * tevent_req_defer_callback() in order to
+	 * use the event context we're started with.
+	 */
+	tevent_req_defer_callback(req, ev);
 
 	PROFILE_TIMESTAMP(&state->start);
 	ret = glfs_fsync_async(*(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle,
@@ -1459,11 +1474,9 @@ static struct vfs_fn_pointers glusterfs_fns = {
 	.open_fn = vfs_gluster_open,
 	.create_file_fn = NULL,
 	.close_fn = vfs_gluster_close,
-	.read_fn = vfs_gluster_read,
 	.pread_fn = vfs_gluster_pread,
 	.pread_send_fn = vfs_gluster_pread_send,
 	.pread_recv_fn = vfs_gluster_recv,
-	.write_fn = vfs_gluster_write,
 	.pwrite_fn = vfs_gluster_pwrite,
 	.pwrite_send_fn = vfs_gluster_pwrite_send,
 	.pwrite_recv_fn = vfs_gluster_recv,
@@ -1471,7 +1484,6 @@ static struct vfs_fn_pointers glusterfs_fns = {
 	.sendfile_fn = vfs_gluster_sendfile,
 	.recvfile_fn = vfs_gluster_recvfile,
 	.rename_fn = vfs_gluster_rename,
-	.fsync_fn = vfs_gluster_fsync,
 	.fsync_send_fn = vfs_gluster_fsync_send,
 	.fsync_recv_fn = vfs_gluster_fsync_recv,
 
@@ -1520,8 +1532,6 @@ static struct vfs_fn_pointers glusterfs_fns = {
 	.audit_file_fn = NULL,
 
 	/* Posix ACL Operations */
-	.chmod_acl_fn = NULL,	/* passthrough to default */
-	.fchmod_acl_fn = NULL,	/* passthrough to default */
 	.sys_acl_get_file_fn = posixacl_xattr_acl_get_file,
 	.sys_acl_get_fd_fn = posixacl_xattr_acl_get_fd,
 	.sys_acl_blob_get_file_fn = posix_sys_acl_blob_get_file,

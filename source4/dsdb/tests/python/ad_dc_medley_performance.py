@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+from __future__ import print_function
+
 import optparse
 import sys
 sys.path.insert(0, 'bin/python')
@@ -36,6 +38,7 @@ from samba.auth import system_session
 from ldb import Message, MessageElement, Dn, LdbError
 from ldb import FLAG_MOD_ADD, FLAG_MOD_REPLACE, FLAG_MOD_DELETE
 from ldb import SCOPE_BASE, SCOPE_SUBTREE, SCOPE_ONELEVEL
+from ldb import ERR_NO_SUCH_OBJECT
 
 parser = optparse.OptionParser("ad_dc_performance.py [options] <host>")
 sambaopts = options.SambaOptions(parser)
@@ -191,8 +194,9 @@ class UserTests(samba.tests.TestCase):
                                 expression=expression,
                                 scope=SCOPE_SUBTREE,
                                 attrs=['cn'])
-            print >> sys.stderr, '%d %s took %s' % (i, expression,
-                                                    time.time() - t)
+            print('%d %s took %s' % (i, expression,
+                                     time.time() - t),
+                  file=sys.stderr)
 
     def _test_indexed_search(self):
         expressions = ['(objectclass=group)',
@@ -205,8 +209,9 @@ class UserTests(samba.tests.TestCase):
                                 expression=expression,
                                 scope=SCOPE_SUBTREE,
                                 attrs=['cn'])
-            print >> sys.stderr, '%d runs %s took %s' % (i, expression,
-                                                         time.time() - t)
+            print('%d runs %s took %s' % (i, expression,
+                                          time.time() - t),
+                  file=sys.stderr)
 
     def _test_base_search(self):
         for dn in [self.base_dn, self.ou, self.ou_users,
@@ -216,16 +221,21 @@ class UserTests(samba.tests.TestCase):
                     self.ldb.search(dn,
                                     scope=SCOPE_BASE,
                                     attrs=['cn'])
-                except LdbError as (num, msg):
-                    if num != 32:
+                except LdbError as e:
+                    (num, msg) = e.args
+                    if num != ERR_NO_SUCH_OBJECT:
                         raise
 
     def _test_base_search_failing(self):
         pattern = 'missing%d' + self.ou
         for i in range(4000):
-            self.ldb.search(pattern % i,
-                            scope=SCOPE_BASE,
-                            attrs=['cn'])
+            try:
+                self.ldb.search(pattern % i,
+                                scope=SCOPE_BASE,
+                                attrs=['cn'])
+            except LdbError as (num, msg):
+                if num != ERR_NO_SUCH_OBJECT:
+                    raise
 
     def search_expression_list(self, expressions, rounds,
                                attrs=['cn'],
@@ -237,8 +247,9 @@ class UserTests(samba.tests.TestCase):
                                 expression=expression,
                                 scope=SCOPE_SUBTREE,
                                 attrs=['cn'])
-            print >> sys.stderr, '%d runs %s took %s' % (i, expression,
-                                                         time.time() - t)
+            print('%d runs %s took %s' % (i, expression,
+                                          time.time() - t),
+                  file=sys.stderr)
 
     def _test_complex_search(self, n=100):
         classes = ['samaccountname', 'objectCategory', 'dn', 'member']
@@ -364,8 +375,8 @@ class UserTests(samba.tests.TestCase):
             try:
                 self.ldb.modify(m)
             except LdbError as e:
-                print e
-                print m
+                print(e)
+                print(m)
 
     def _test_remove_some_links(self, n=(LINK_BATCH_SIZE // 2)):
         victims = random.sample(list(self.state.active_links), n)

@@ -30,11 +30,10 @@ from samba import (
         )
 from samba.ndr import ndr_unpack
 from samba.dcerpc import drsblobs
-import binascii
-import md5
-import re
+from hashlib import md5
 import random
 import string
+from samba.compat import text_type
 
 USER_NAME = "WdigestTestUser"
 # Create a random 32 character password, containing only letters and
@@ -47,8 +46,10 @@ USER_PASS = ''.join(random.choice(string.ascii_uppercase +
 #
 def calc_digest(user, realm, password):
     data = "%s:%s:%s" % (user, realm, password)
-    return "%s:%s:%s" % (user, realm, binascii.hexlify(md5.new(data).digest()))
+    if isinstance(data, text_type):
+        data = data.encode('utf8')
 
+    return "%s:%s:%s" % (user, realm, md5(data).hexdigest())
 
 
 class UserCmdWdigestTestCase(SambaToolCmdTest):
@@ -107,8 +108,8 @@ class UserCmdWdigestTestCase(SambaToolCmdTest):
         if missing:
             self.assertTrue(attribute not in out)
         else:
-            result = re.sub(r"\n\s*", '', out)
-            self.assertMatch(result, "%s: %s" % (attribute, expected))
+            self.assertMatch(out.replace('\n ', ''),
+                             "%s: %s" % (attribute, expected))
 
     def test_Wdigest_no_suffix(self):
         attribute = "virtualWDigest"

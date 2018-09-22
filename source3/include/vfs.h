@@ -245,8 +245,19 @@
 /* Version 37 - Rename SMB_VFS_STRICT_LOCK to
                 SMB_VFS_STRICT_LOCK_CHECK */
 /* Version 38 - Remove SMB_VFS_INIT_SEARCH_OP */
+/* Bump to version 39, Samba 4.9 will ship with that */
+/* Version 39 - Remove SMB_VFS_FSYNC
+		Only implement async versions. */
+/* Version 39 - Remove SMB_VFS_READ
+		All users are now pread or async versions. */
+/* Version 39 - Remove SMB_VFS_WRITE
+		All users are now pwrite or async versions. */
+/* Version 39 - Remove SMB_VFS_CHMOD_ACL - no longer used. */
+/* Version 39 - Remove SMB_VFS_FCHMOD_ACL - no longer used. */
+/* Version 39 - Remove struct dfree_cached_info pointer from
+		connection struct */
 
-#define SMB_VFS_INTERFACE_VERSION 38
+#define SMB_VFS_INTERFACE_VERSION 39
 
 /*
     All intercepted VFS operations must be declared as static functions inside module source
@@ -388,6 +399,7 @@ typedef struct files_struct {
 
 struct vuid_cache_entry {
 	struct auth_session_info *session_info;
+	struct tevent_context *user_ev_ctx;
 	uint64_t vuid; /* SMB2 compat */
 	bool read_only;
 	uint32_t share_access;
@@ -402,14 +414,6 @@ typedef struct {
 	char *name;
 	bool is_wild;
 } name_compare_entry;
-
-struct dfree_cached_info {
-	time_t last_dfree_time;
-	uint64_t dfree_ret;
-	uint64_t bsize;
-	uint64_t dfree;
-	uint64_t dsize;
-};
 
 struct share_params {
 	int service;
@@ -434,6 +438,7 @@ typedef struct connection_struct {
 	char *connectpath;
 	char *origpath;
 	struct smb_filename *cwd_fname; /* Working directory. */
+	bool tcon_done;
 
 	struct vfs_handle_struct *vfs_handles;		/* for the new plugins */
 
@@ -442,6 +447,7 @@ typedef struct connection_struct {
 	 * on the vuid using this tid, this might change per SMB request.
 	 */
 	struct auth_session_info *session_info;
+	struct tevent_context *user_ev_ctx;
 
 	/*
 	 * If the "force group" parameter is set, this is the primary gid that
@@ -473,7 +479,6 @@ typedef struct connection_struct {
 	name_compare_entry *veto_list; /* Per-share list of files to veto (never show). */
 	name_compare_entry *veto_oplock_list; /* Per-share list of files to refuse oplocks on. */       
 	name_compare_entry *aio_write_behind_list; /* Per-share list of files to use aio write behind on. */       
-	struct dfree_cached_info *dfree_info;
 	struct trans_state *pending_trans;
 
 	struct rpc_pipe_client *spoolss_pipe;
@@ -510,6 +515,8 @@ struct smb_request {
 
 	size_t unread_bytes;
 	bool encrypted;
+	/* the tevent_context (wrapper) the request operates on */
+	struct tevent_context *ev_ctx;
 	connection_struct *conn;
 	struct smbd_server_connection *sconn;
 	struct smbXsrv_connection *xconn;
@@ -683,7 +690,6 @@ struct vfs_fn_pointers {
 				   const struct smb2_create_blobs *in_context_blobs,
 				   struct smb2_create_blobs *out_context_blobs);
 	int (*close_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp);
-	ssize_t (*read_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp, void *data, size_t n);
 	ssize_t (*pread_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp, void *data, size_t n, off_t offset);
 	struct tevent_req *(*pread_send_fn)(struct vfs_handle_struct *handle,
 					    TALLOC_CTX *mem_ctx,
@@ -692,7 +698,6 @@ struct vfs_fn_pointers {
 					    void *data,
 					    size_t n, off_t offset);
 	ssize_t (*pread_recv_fn)(struct tevent_req *req, struct vfs_aio_state *state);
-	ssize_t (*write_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp, const void *data, size_t n);
 	ssize_t (*pwrite_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp, const void *data, size_t n, off_t offset);
 	struct tevent_req *(*pwrite_send_fn)(struct vfs_handle_struct *handle,
 					     TALLOC_CTX *mem_ctx,
@@ -707,7 +712,6 @@ struct vfs_fn_pointers {
 	int (*rename_fn)(struct vfs_handle_struct *handle,
 			 const struct smb_filename *smb_fname_src,
 			 const struct smb_filename *smb_fname_dst);
-	int (*fsync_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp);
 	struct tevent_req *(*fsync_send_fn)(struct vfs_handle_struct *handle,
 					    TALLOC_CTX *mem_ctx,
 					    struct tevent_context *ev,
@@ -912,11 +916,6 @@ struct vfs_fn_pointers {
 				  uint32_t access_denied);
 
 	/* POSIX ACL operations. */
-
-	int (*chmod_acl_fn)(struct vfs_handle_struct *handle,
-					const struct smb_filename *smb_fname,
-					mode_t mode);
-	int (*fchmod_acl_fn)(struct vfs_handle_struct *handle, struct files_struct *fsp, mode_t mode);
 
 	SMB_ACL_T (*sys_acl_get_file_fn)(struct vfs_handle_struct *handle,
 					 const struct smb_filename *smb_fname,
@@ -1169,8 +1168,6 @@ NTSTATUS smb_vfs_call_create_file(struct vfs_handle_struct *handle,
 				  struct smb2_create_blobs *out_context_blobs);
 int smb_vfs_call_close(struct vfs_handle_struct *handle,
 		       struct files_struct *fsp);
-ssize_t smb_vfs_call_read(struct vfs_handle_struct *handle,
-			  struct files_struct *fsp, void *data, size_t n);
 ssize_t smb_vfs_call_pread(struct vfs_handle_struct *handle,
 			   struct files_struct *fsp, void *data, size_t n,
 			   off_t offset);
@@ -1182,9 +1179,6 @@ struct tevent_req *smb_vfs_call_pread_send(struct vfs_handle_struct *handle,
 					   size_t n, off_t offset);
 ssize_t SMB_VFS_PREAD_RECV(struct tevent_req *req, struct vfs_aio_state *state);
 
-ssize_t smb_vfs_call_write(struct vfs_handle_struct *handle,
-			   struct files_struct *fsp, const void *data,
-			   size_t n);
 ssize_t smb_vfs_call_pwrite(struct vfs_handle_struct *handle,
 			    struct files_struct *fsp, const void *data,
 			    size_t n, off_t offset);
@@ -1208,8 +1202,6 @@ ssize_t smb_vfs_call_recvfile(struct vfs_handle_struct *handle, int fromfd,
 int smb_vfs_call_rename(struct vfs_handle_struct *handle,
 			const struct smb_filename *smb_fname_src,
 			const struct smb_filename *smb_fname_dst);
-int smb_vfs_call_fsync(struct vfs_handle_struct *handle,
-		       struct files_struct *fsp);
 
 struct tevent_req *smb_vfs_call_fsync_send(struct vfs_handle_struct *handle,
 					   TALLOC_CTX *mem_ctx,
@@ -1217,6 +1209,7 @@ struct tevent_req *smb_vfs_call_fsync_send(struct vfs_handle_struct *handle,
 					   struct files_struct *fsp);
 int SMB_VFS_FSYNC_RECV(struct tevent_req *req, struct vfs_aio_state *state);
 
+int smb_vfs_fsync_sync(files_struct *fsp);
 int smb_vfs_call_stat(struct vfs_handle_struct *handle,
 		      struct smb_filename *smb_fname);
 int smb_vfs_call_fstat(struct vfs_handle_struct *handle,
@@ -1413,8 +1406,6 @@ NTSTATUS smb_vfs_call_audit_file(struct vfs_handle_struct *handle,
 int smb_vfs_call_chmod_acl(struct vfs_handle_struct *handle,
 				const struct smb_filename *file,
 				mode_t mode);
-int smb_vfs_call_fchmod_acl(struct vfs_handle_struct *handle,
-			    struct files_struct *fsp, mode_t mode);
 SMB_ACL_T smb_vfs_call_sys_acl_get_file(struct vfs_handle_struct *handle,
 					const struct smb_filename *smb_fname,
 					SMB_ACL_TYPE_T type,

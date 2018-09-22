@@ -40,7 +40,7 @@
 #include "protocol/protocol.h"
 #include "protocol/protocol_api.h"
 #include "protocol/protocol_util.h"
-#include "common/system.h"
+#include "common/system_socket.h"
 #include "client/client.h"
 #include "client/client_sync.h"
 
@@ -50,7 +50,6 @@
 #define SRVID_CTDB_PUSHDB  (CTDB_SRVID_TOOL_RANGE | 0x0002000000000000LL)
 
 static struct {
-	const char *socket;
 	const char *debuglevelstr;
 	int timelimit;
 	int pnn;
@@ -478,28 +477,16 @@ static struct ctdb_node_map *ctdb_read_nodes_file(TALLOC_CTX *mem_ctx,
 static struct ctdb_node_map *read_nodes_file(TALLOC_CTX *mem_ctx, uint32_t pnn)
 {
 	struct ctdb_node_map *nodemap;
-	char *nodepath;
 	const char *nodes_list = NULL;
 
-	if (pnn != CTDB_UNKNOWN_PNN) {
-		nodepath = talloc_asprintf(mem_ctx, "CTDB_NODES_%u", pnn);
-		if (nodepath != NULL) {
-			nodes_list = getenv(nodepath);
-		}
+	const char *basedir = getenv("CTDB_BASE");
+	if (basedir == NULL) {
+		basedir = CTDB_ETCDIR;
 	}
+	nodes_list = talloc_asprintf(mem_ctx, "%s/nodes", basedir);
 	if (nodes_list == NULL) {
-		nodes_list = getenv("CTDB_NODES");
-	}
-	if (nodes_list == NULL) {
-		const char *basedir = getenv("CTDB_BASE");
-		if (basedir == NULL) {
-			basedir = CTDB_ETCDIR;
-		}
-		nodes_list = talloc_asprintf(mem_ctx, "%s/nodes", basedir);
-		if (nodes_list == NULL) {
-			fprintf(stderr, "Memory allocation error\n");
-			return NULL;
-		}
+		fprintf(stderr, "Memory allocation error\n");
+		return NULL;
 	}
 
 	nodemap = ctdb_read_nodes_file(mem_ctx, nodes_list);
@@ -2833,13 +2820,27 @@ static int control_unban(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 
 }
 
+static void wait_for_shutdown(void *private_data)
+{
+	bool *done = (bool *)private_data;
+
+	*done = true;
+}
+
 static int control_shutdown(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			    int argc, const char **argv)
 {
 	int ret;
+	bool done = false;
 
 	if (argc != 0) {
 		usage("shutdown");
+	}
+
+	if (ctdb->pnn == ctdb->cmd_pnn) {
+		ctdb_client_set_disconnect_callback(ctdb->client,
+						    wait_for_shutdown,
+						    &done);
 	}
 
 	ret = ctdb_ctrl_shutdown(mem_ctx, ctdb->ev, ctdb->client,
@@ -2847,6 +2848,10 @@ static int control_shutdown(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	if (ret != 0) {
 		fprintf(stderr, "Unable to shutdown node %u\n", ctdb->cmd_pnn);
 		return ret;
+	}
+
+	if (ctdb->pnn == ctdb->cmd_pnn) {
+		ctdb_client_wait(ctdb->ev, &done);
 	}
 
 	return 0;
@@ -3020,10 +3025,11 @@ static int control_tickle(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 
 	if (argc == 0) {
 		struct ctdb_connection_list *clist;
-		int i, num_failed;
+		int i;
+		unsigned int num_failed;
 
 		/* Client first but the src/dst logic is confused */
-		ret = ctdb_connection_list_read(mem_ctx, false, &clist);
+		ret = ctdb_connection_list_read(mem_ctx, 0, false, &clist);
 		if (ret != 0) {
 			return ret;
 		}
@@ -3241,7 +3247,7 @@ static int control_addtickle(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		struct tevent_req *req;
 
 		/* Client first but the src/dst logic is confused */
-		ret = ctdb_connection_list_read(mem_ctx, false, &clist);
+		ret = ctdb_connection_list_read(mem_ctx, 0, false, &clist);
 		if (ret != 0) {
 			return ret;
 		}
@@ -3306,7 +3312,7 @@ static int control_deltickle(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		struct tevent_req *req;
 
 		/* Client first but the src/dst logic is confused */
-		ret = ctdb_connection_list_read(mem_ctx, false, &clist);
+		ret = ctdb_connection_list_read(mem_ctx, 0, false, &clist);
 		if (ret != 0) {
 			return ret;
 		}
@@ -4552,15 +4558,12 @@ static int control_event(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			 int argc, const char **argv)
 {
 	char *t, *event_helper = NULL;
-	char *eventd_socket = NULL;
-	const char **new_argv;
-	int i;
 
 	t = getenv("CTDB_EVENT_HELPER");
 	if (t != NULL) {
 		event_helper = talloc_strdup(mem_ctx, t);
 	} else {
-		event_helper = talloc_asprintf(mem_ctx, "%s/ctdb_event",
+		event_helper = talloc_asprintf(mem_ctx, "%s/ctdb-event",
 					       CTDB_HELPER_BINDIR);
 	}
 
@@ -4569,49 +4572,25 @@ static int control_event(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
-	t = getenv("CTDB_SOCKET");
-	if (t != NULL) {
-		eventd_socket = talloc_asprintf(mem_ctx, "%s/eventd.sock",
-						dirname(t));
-	} else {
-		eventd_socket = talloc_asprintf(mem_ctx, "%s/eventd.sock",
-						CTDB_RUNDIR);
-	}
-
-	if (eventd_socket == NULL) {
-		fprintf(stderr, "Unable to set event daemon socket\n");
-		return 1;
-	}
-
-	new_argv = talloc_array(mem_ctx, const char *, argc + 1);
-	if (new_argv == NULL) {
-		fprintf(stderr, "Memory allocation error\n");
-		return 1;
-	}
-
-	new_argv[0] = eventd_socket;
-	for (i=0; i<argc; i++) {
-		new_argv[i+1] = argv[i];
-	}
-
 	return run_helper(mem_ctx, "event daemon helper", event_helper,
-			  argc+1, new_argv);
+			  argc, argv);
 }
 
 static int control_scriptstatus(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 				int argc, const char **argv)
 {
-	const char *new_argv[3];
+	const char *new_argv[4];
 
 	if (argc > 1) {
 		usage("scriptstatus");
 	}
 
 	new_argv[0] = "status";
-	new_argv[1] = (argc == 0) ? "monitor" : argv[0];
-	new_argv[2] = NULL;
+	new_argv[1] = "legacy";
+	new_argv[2] = (argc == 0) ? "monitor" : argv[0];
+	new_argv[3] = NULL;
 
-	(void) control_event(mem_ctx, ctdb, 2, new_argv);
+	(void) control_event(mem_ctx, ctdb, 3, new_argv);
 	return 0;
 }
 
@@ -5852,34 +5831,6 @@ static int control_reloadips(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	return ipreallocate(mem_ctx, ctdb);
 }
 
-static int control_ipiface(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
-			   int argc, const char **argv)
-{
-	ctdb_sock_addr addr;
-	char *iface;
-	int ret;
-
-	if (argc != 1) {
-		usage("ipiface");
-	}
-
-	ret = ctdb_sock_addr_from_string(argv[0], &addr, false);
-	if (ret != 0) {
-		fprintf(stderr, "Failed to Parse IP %s\n", argv[0]);
-		return 1;
-	}
-
-	iface = ctdb_sys_find_ifname(&addr);
-	if (iface == NULL) {
-		fprintf(stderr, "Failed to find interface for IP %s\n",
-			argv[0]);
-		return 1;
-	}
-	free(iface);
-
-	return 0;
-}
-
 
 static const struct ctdb_cmd {
 	const char *name;
@@ -5896,7 +5847,7 @@ static const struct ctdb_cmd {
 	{ "uptime", control_uptime, false, true,
 		"show node uptime", NULL },
 	{ "ping", control_ping, false, true,
-		"ping all nodes", NULL },
+		"ping a node", NULL },
 	{ "runstate", control_runstate, false, true,
 		"get/check runstate of a node",
 		"[setup|first_recovery|startup|running]" },
@@ -6047,8 +5998,6 @@ static const struct ctdb_cmd {
 		"show database statistics", "<dbname|dbid>" },
 	{ "reloadips", control_reloadips, false, false,
 		"reload the public addresses file", "[all|<pnn-list>]" },
-	{ "ipiface", control_ipiface, true, false,
-		"Find the interface an ip address is hosted on", "<ip>" },
 };
 
 static const struct ctdb_cmd *match_command(const char *command)
@@ -6109,8 +6058,6 @@ static void usage(const char *command)
 
 struct poptOption cmdline_options[] = {
 	POPT_AUTOHELP
-	{ "socket", 's', POPT_ARG_STRING, &options.socket, 0,
-		"CTDB socket path", "filename" },
 	{ "debug", 'd', POPT_ARG_STRING, &options.debuglevelstr, 0,
 		"debug level"},
 	{ "timelimit", 't', POPT_ARG_INT, &options.timelimit, 0,
@@ -6135,6 +6082,7 @@ static int process_command(const struct ctdb_cmd *cmd, int argc,
 {
 	TALLOC_CTX *tmp_ctx;
 	struct ctdb_context *ctdb;
+	const char *ctdb_socket;
 	int ret;
 	bool status;
 	uint64_t srvid_offset;
@@ -6170,10 +6118,15 @@ static int process_command(const struct ctdb_cmd *cmd, int argc,
 		goto fail;
 	}
 
-	ret = ctdb_client_init(ctdb, ctdb->ev, options.socket, &ctdb->client);
+	ctdb_socket = getenv("CTDB_SOCKET");
+	if (ctdb_socket == NULL) {
+		ctdb_socket = CTDB_SOCKET;
+	}
+
+	ret = ctdb_client_init(ctdb, ctdb->ev, ctdb_socket, &ctdb->client);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to connect to CTDB daemon (%s)\n",
-			options.socket);
+			ctdb_socket);
 
 		if (!find_node_xpnn(ctdb, NULL)) {
 			fprintf(stderr, "Is this node part of CTDB cluster?\n");
@@ -6231,24 +6184,17 @@ int main(int argc, const char *argv[])
 	const char **extra_argv;
 	int extra_argc;
 	const struct ctdb_cmd *cmd;
-	const char *ctdb_socket;
 	int loglevel;
 	int ret;
 
 	setlinebuf(stdout);
 
 	/* Set default options */
-	options.socket = CTDB_SOCKET;
 	options.debuglevelstr = NULL;
 	options.timelimit = 10;
 	options.sep = "|";
 	options.maxruntime = 0;
 	options.pnn = -1;
-
-	ctdb_socket = getenv("CTDB_SOCKET");
-	if (ctdb_socket != NULL) {
-		options.socket = ctdb_socket;
-	}
 
 	pc = poptGetContext(argv[0], argc, argv, cmdline_options,
 			    POPT_CONTEXT_KEEP_FIRST);

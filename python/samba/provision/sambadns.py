@@ -29,6 +29,7 @@ from base64 import b64encode
 import subprocess
 import samba
 from samba.tdb_util import tdb_copy
+from samba.mdb_util import mdb_copy
 from samba.ndr import ndr_pack, ndr_unpack
 from samba import setup_file
 from samba.dcerpc import dnsp, misc, security
@@ -58,6 +59,7 @@ from samba.provision.common import (
     FILL_DRS,
     )
 
+from samba.samdb import get_default_backend_store
 
 def get_domainguid(samdb, domaindn):
     res = samdb.search(base=domaindn, scope=ldb.SCOPE_BASE, attrs=["objectGUID"])
@@ -245,12 +247,12 @@ def setup_dns_partitions(samdb, domainsid, domaindn, forestdn, configdn,
 
     setup_add_ldif(samdb, setup_path("provision_dnszones_partitions.ldif"), {
         "ZONE_DN": domainzone_dn,
-        "SECDESC"      : b64encode(descriptor)
+        "SECDESC"      : b64encode(descriptor).decode('utf8')
         })
     if fill_level != FILL_SUBDOMAIN:
         setup_add_ldif(samdb, setup_path("provision_dnszones_partitions.ldif"), {
             "ZONE_DN": forestzone_dn,
-            "SECDESC"      : b64encode(descriptor)
+            "SECDESC"      : b64encode(descriptor).decode('utf8')
         })
 
     domainzone_guid = get_domainguid(samdb, domainzone_dn)
@@ -265,8 +267,8 @@ def setup_dns_partitions(samdb, domainsid, domaindn, forestdn, configdn,
         "ZONE_DNS": domainzone_dns,
         "CONFIGDN": configdn,
         "SERVERDN": serverdn,
-        "LOSTANDFOUND_DESCRIPTOR": b64encode(protected2_desc),
-        "INFRASTRUCTURE_DESCRIPTOR": b64encode(protected1_desc),
+        "LOSTANDFOUND_DESCRIPTOR": b64encode(protected2_desc).decode('utf8'),
+        "INFRASTRUCTURE_DESCRIPTOR": b64encode(protected1_desc).decode('utf8'),
         })
     setup_modify_ldif(samdb, setup_path("provision_dnszones_modify.ldif"), {
         "CONFIGDN": configdn,
@@ -285,8 +287,8 @@ def setup_dns_partitions(samdb, domainsid, domaindn, forestdn, configdn,
             "ZONE_DNS": forestzone_dns,
             "CONFIGDN": configdn,
             "SERVERDN": serverdn,
-            "LOSTANDFOUND_DESCRIPTOR": b64encode(protected2_desc),
-            "INFRASTRUCTURE_DESCRIPTOR": b64encode(protected1_desc),
+            "LOSTANDFOUND_DESCRIPTOR": b64encode(protected2_desc).decode('utf8'),
+            "INFRASTRUCTURE_DESCRIPTOR": b64encode(protected1_desc).decode('utf8'),
         })
         setup_modify_ldif(samdb, setup_path("provision_dnszones_modify.ldif"), {
             "CONFIGDN": configdn,
@@ -673,7 +675,7 @@ def secretsdb_setup_dns(secretsdb, names, private_dir, binddns_dir, realm,
             "REALM": realm,
             "DNSDOMAIN": dnsdomain,
             "DNS_KEYTAB": dns_keytab_path,
-            "DNSPASS_B64": b64encode(dnspass.encode('utf-8')),
+            "DNSPASS_B64": b64encode(dnspass.encode('utf-8')).decode('utf8'),
             "KEY_VERSION_NUMBER": str(key_version_number),
             "HOSTNAME": names.hostname,
             "DNSNAME" : '%s.%s' % (
@@ -694,13 +696,13 @@ def create_dns_dir(logger, paths):
     except OSError:
         pass
 
-    os.mkdir(dns_dir, 0770)
+    os.mkdir(dns_dir, 0o770)
 
     if paths.bind_gid is not None:
         try:
             os.chown(dns_dir, -1, paths.bind_gid)
             # chmod needed to cope with umask
-            os.chmod(dns_dir, 0770)
+            os.chmod(dns_dir, 0o770)
         except OSError:
             if not os.environ.has_key('SAMBA_SELFTEST'):
                 logger.error("Failed to chown %s to bind gid %u" % (
@@ -767,7 +769,7 @@ def create_zone_file(lp, logger, paths, targetdir, dnsdomain,
         try:
             os.chown(paths.dns, -1, paths.bind_gid)
             # chmod needed to cope with umask
-            os.chmod(paths.dns, 0664)
+            os.chmod(paths.dns, 0o664)
         except OSError:
             if not os.environ.has_key('SAMBA_SELFTEST'):
                 logger.error("Failed to chown %s to bind gid %u" % (
@@ -787,22 +789,35 @@ def create_samdb_copy(samdb, logger, paths, names, domainsid, domainguid):
 
     # Find the partitions and corresponding filenames
     partfile = {}
-    res = samdb.search(base="@PARTITION", scope=ldb.SCOPE_BASE, attrs=["partition"])
+    res = samdb.search(base="@PARTITION",
+                       scope=ldb.SCOPE_BASE,
+                       attrs=["partition", "backendStore"])
     for tmp in res[0]["partition"]:
         (nc, fname) = tmp.split(':')
         partfile[nc.upper()] = fname
 
+    backend_store = get_default_backend_store()
+    if "backendStore" in res[0]:
+        backend_store = res[0]["backendStore"][0]
+
     # Create empty domain partition
+
     domaindn = names.domaindn.upper()
     domainpart_file = os.path.join(dns_dir, partfile[domaindn])
     try:
         os.mkdir(dns_samldb_dir)
-        file(domainpart_file, 'w').close()
+        open(domainpart_file, 'w').close()
 
         # Fill the basedn and @OPTION records in domain partition
-        dom_ldb = samba.Ldb(domainpart_file)
+        dom_url = "%s://%s" % (backend_store, domainpart_file)
+        dom_ldb = samba.Ldb(dom_url)
+
+        # We need the dummy main-domain DB to have the correct @INDEXLIST
+        index_res = samdb.search(base="@INDEXLIST", scope=ldb.SCOPE_BASE)
+        dom_ldb.add(index_res[0])
+
         domainguid_line = "objectGUID: %s\n-" % domainguid
-        descr = b64encode(get_domain_descriptor(domainsid))
+        descr = b64encode(get_domain_descriptor(domainsid)).decode('utf8')
         setup_add_ldif(dom_ldb, setup_path("provision_basedn.ldif"), {
             "DOMAINDN" : names.domaindn,
             "DOMAINGUID" : domainguid_line,
@@ -811,9 +826,6 @@ def create_samdb_copy(samdb, logger, paths, names, domainsid, domainguid):
         setup_add_ldif(dom_ldb,
             setup_path("provision_basedn_options.ldif"), None)
 
-        # We need the dummy main-domain DB to have the correct @INDEXLIST
-        index_res = samdb.search(base="@INDEXLIST", scope=ldb.SCOPE_BASE)
-        dom_ldb.add(index_res[0])
     except:
         logger.error(
             "Failed to setup database for BIND, AD based DNS cannot be used")
@@ -859,8 +871,12 @@ def create_samdb_copy(samdb, logger, paths, names, domainsid, domainguid):
                  os.path.join(dns_dir, "sam.ldb"))
         for nc in partfile:
             pfile = partfile[nc]
-            tdb_copy(os.path.join(private_dir, pfile),
-                     os.path.join(dns_dir, pfile))
+            if backend_store == "mdb":
+                mdb_copy(os.path.join(private_dir, pfile),
+                        os.path.join(dns_dir, pfile))
+            else:
+                tdb_copy(os.path.join(private_dir, pfile),
+                        os.path.join(dns_dir, pfile))
     except:
         logger.error(
             "Failed to setup database for BIND, AD based DNS cannot be used")
@@ -873,12 +889,12 @@ def create_samdb_copy(samdb, logger, paths, names, domainsid, domainguid):
                 for d in dirs:
                     dpath = os.path.join(dirname, d)
                     os.chown(dpath, -1, paths.bind_gid)
-                    os.chmod(dpath, 0770)
+                    os.chmod(dpath, 0o770)
                 for f in files:
-                    if f.endswith('.ldb') or f.endswith('.tdb'):
+                    if f.endswith(('.ldb', '.tdb', 'ldb-lock')):
                         fpath = os.path.join(dirname, f)
                         os.chown(fpath, -1, paths.bind_gid)
-                        os.chmod(fpath, 0660)
+                        os.chmod(fpath, 0o660)
         except OSError:
             if not os.environ.has_key('SAMBA_SELFTEST'):
                 logger.error(
@@ -1023,7 +1039,7 @@ def create_dns_partitions(samdb, domainsid, names, domaindn, forestdn,
 def fill_dns_data_partitions(samdb, domainsid, site, domaindn, forestdn,
                              dnsdomain, dnsforest, hostname, hostip, hostip6,
                              domainguid, ntdsguid, dnsadmins_sid, autofill=True,
-                             fill_level=FILL_FULL):
+                             fill_level=FILL_FULL, add_root=True):
     """Fill data in various AD partitions
 
     :param samdb: LDB object connected to sam.ldb file
@@ -1044,7 +1060,8 @@ def fill_dns_data_partitions(samdb, domainsid, site, domaindn, forestdn,
 
     ##### Set up DC=DomainDnsZones,<DOMAINDN>
     # Add rootserver records
-    add_rootservers(samdb, domaindn, "DC=DomainDnsZones")
+    if add_root:
+        add_rootservers(samdb, domaindn, "DC=DomainDnsZones")
 
     # Add domain record
     add_domain_record(samdb, domaindn, "DC=DomainDnsZones", dnsdomain,
@@ -1069,7 +1086,7 @@ def fill_dns_data_partitions(samdb, domainsid, site, domaindn, forestdn,
 
 def setup_ad_dns(samdb, secretsdb, names, paths, lp, logger,
         dns_backend, os_level, dnspass=None, hostip=None, hostip6=None,
-        targetdir=None, fill_level=FILL_FULL):
+        targetdir=None, fill_level=FILL_FULL, backend_store=None):
     """Provision DNS information (assuming GC role)
 
     :param samdb: LDB object connected to sam.ldb file
@@ -1164,12 +1181,14 @@ def setup_ad_dns(samdb, secretsdb, names, paths, lp, logger,
     if dns_backend.startswith("BIND9_"):
         setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
                         dns_backend, os_level, site=site, dnspass=dnspass, hostip=hostip,
-                        hostip6=hostip6, targetdir=targetdir)
+                        hostip6=hostip6, targetdir=targetdir,
+                        backend_store=backend_store)
 
 
 def setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
         dns_backend, os_level, site=None, dnspass=None, hostip=None,
-        hostip6=None, targetdir=None, key_version_number=None):
+        hostip6=None, targetdir=None, key_version_number=None,
+        backend_store=None):
     """Provision DNS information (assuming BIND9 backend in DC role)
 
     :param samdb: LDB object connected to sam.ldb file
@@ -1216,7 +1235,8 @@ def setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
                          ntdsguid=names.ntdsguid)
 
     if dns_backend == "BIND9_DLZ" and os_level >= DS_DOMAIN_FUNCTION_2003:
-        create_samdb_copy(samdb, logger, paths, names, names.domainsid, domainguid)
+        create_samdb_copy(samdb, logger, paths,
+                          names, names.domainsid, domainguid)
 
     create_named_conf(paths, realm=names.realm,
                       dnsdomain=names.dnsdomain, dns_backend=dns_backend,

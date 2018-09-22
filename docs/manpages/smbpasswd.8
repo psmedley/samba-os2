@@ -2,12 +2,12 @@
 .\"     Title: smbpasswd
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/24/2018
+.\"      Date: 09/13/2018
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.8.5
+.\"    Source: Samba 4.9.0
 .\"  Language: English
 .\"
-.TH "SMBPASSWD" "8" "08/24/2018" "Samba 4\&.8\&.5" "System Administration tools"
+.TH "SMBPASSWD" "8" "09/13/2018" "Samba 4\&.9\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -49,9 +49,7 @@ smbpasswd
 differs from how the passwd program works however in that it is not
 \fIsetuid root\fR
 but works in a client\-server mode and communicates with a locally running
-\fBsmbd\fR(8)\&. As a consequence in order for this to succeed the smbd daemon must be running on the local machine\&. On a UNIX machine the encrypted SMB passwords are usually stored in the
-\fBsmbpasswd\fR(5)
-file\&.
+\fBsmbd\fR(8)\&. As a consequence in order for this to succeed the smbd daemon must be running on the local machine\&. On a UNIX machine the encrypted SMB passwords are usually stored in the default passdb backend\&.
 .PP
 When run by an ordinary user with no options, smbpasswd will prompt them for their old SMB password and then ask them for their new password twice, to ensure that the new password was typed correctly\&. No passwords will be echoed on the screen whilst being typed\&. If you have a blank SMB password (specified by the string "NO PASSWORD" in the smbpasswd file) then just press the <Enter> key when asked for your old password\&.
 .PP
@@ -316,7 +314,7 @@ file and neglecting to allow "localhost" access to the smbd\&.
 In addition, the smbpasswd command is only useful if Samba has been set up to use encrypted passwords\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.8\&.5 of the Samba suite\&.
+This man page is part of version 4\&.9\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsmbpasswd\fR(5),

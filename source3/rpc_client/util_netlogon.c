@@ -353,6 +353,7 @@ NTSTATUS map_info3_to_validation(TALLOC_CTX *mem_ctx,
 				    info3,
 				    &validation->sam3);
 	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(validation);
 		return status;
 	}
 
@@ -378,6 +379,7 @@ NTSTATUS map_info6_to_validation(TALLOC_CTX *mem_ctx,
 				    info6,
 				    &validation->sam6);
 	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(validation);
 		return status;
 	}
 

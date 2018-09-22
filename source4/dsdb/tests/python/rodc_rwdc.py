@@ -1,5 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+from __future__ import print_function
 """Test communication of credentials etc, between an RODC and a RWDC.
 
 How does it work when the password is changed on the RWDC?
@@ -30,7 +31,7 @@ from samba.dcerpc import security, samr
 import password_lockout_base
 
 def passwd_encode(pw):
-    return base64.b64encode(('"%s"' % pw).encode('utf-16-le'))
+    return base64.b64encode(('"%s"' % pw).encode('utf-16-le')).decode('utf8')
 
 
 class RodcRwdcTestException(Exception):
@@ -50,13 +51,13 @@ def make_creds(username, password, kerberos_state=None):
         kerberos_state = CREDS.get_kerberos_state()
     c.set_kerberos_state(kerberos_state)
 
-    print '-' * 73
+    print('-' * 73)
     if kerberos_state == MUST_USE_KERBEROS:
-        print "we seem to be using kerberos for %s %s" % (username, password)
+        print("we seem to be using kerberos for %s %s" % (username, password))
     elif kerberos_state == DONT_USE_KERBEROS:
-        print "NOT using kerberos for %s %s" % (username, password)
+        print("NOT using kerberos for %s %s" % (username, password))
     else:
-        print "kerberos state is %s" % kerberos_state
+        print("kerberos state is %s" % kerberos_state)
 
     c.set_gensec_features(c.get_gensec_features() |
                           gensec.FEATURE_SEAL)
@@ -98,7 +99,7 @@ def preload_rodc_user(user_dn):
            credstring,
            '--server', RWDC,]
 
-    print ' '.join(cmd)
+    print(' '.join(cmd))
     subprocess.check_call(cmd)
     set_auto_replication(RWDC, False)
 
@@ -164,12 +165,12 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
                              stdout=subprocess.PIPE)
         stdout, stderr = p.communicate()
         if p.returncode:
-            print "failed with code %s" % p.returncode
-            print ' '.join(cmd)
-            print "stdout"
-            print stdout
-            print "stderr"
-            print stderr
+            print("failed with code %s" % p.returncode)
+            print(' '.join(cmd))
+            print("stdout")
+            print(stdout)
+            print("stderr")
+            print(stderr)
             raise RodcRwdcTestException()
 
     def _change_password(self, user_dn, old_password, new_password):
@@ -269,7 +270,7 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
                                   scope=ldb.SCOPE_BASE,
                                   attrs=['msDS-RevealOnDemandGroup'])
 
-        group = res[0]['msDS-RevealOnDemandGroup'][0]
+        group = res[0]['msDS-RevealOnDemandGroup'][0].decode('utf8')
 
         m = ldb.Message()
         m.dn = ldb.Dn(self.rwdc_db, group)
@@ -313,7 +314,7 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
                                   scope=ldb.SCOPE_BASE,
                                   attrs=['msDS-RevealOnDemandGroup'])
 
-        group = res[0]['msDS-RevealOnDemandGroup'][0]
+        group = res[0]['msDS-RevealOnDemandGroup'][0].decode('utf8')
 
         m = ldb.Message()
         m.dn = ldb.Dn(self.rwdc_db, group)
@@ -471,7 +472,8 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
 
-        except LdbError, (num, msg):
+        except LdbError as e1:
+            (num, msg) = e1.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -485,7 +487,7 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
                                   msDSUserAccountControlComputed=0)
         badPasswordTime = int(res[0]["badPasswordTime"][0])
 
-        print "two failed password change"
+        print("two failed password change")
 
         # The wrong password
         creds_lockout.set_password("thatsAcomplPASS1x")
@@ -494,7 +496,8 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
 
-        except LdbError, (num, msg):
+        except LdbError as e2:
+            (num, msg) = e2.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -515,7 +518,8 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e3:
+            (num, msg) = e3.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -534,7 +538,8 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e4:
+            (num, msg) = e4.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -553,7 +558,8 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e5:
+            (num, msg) = e5.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -569,7 +575,7 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
 
         # wait for the lockout to end
         time.sleep(self.account_lockout_duration + 1)
-        print self.account_lockout_duration + 1
+        print(self.account_lockout_duration + 1)
 
         res = self._check_account(userdn,
                                   badPwdCount=3, effective_bad_password_count=0,
@@ -608,7 +614,8 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e6:
+            (num, msg) = e6.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -628,7 +635,8 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e7:
+            (num, msg) = e7.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -661,7 +669,8 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb_lockout = SamDB(url=self.host_url, credentials=creds_lockout, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e8:
+            (num, msg) = e8.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         res = self._check_account(userdn,
@@ -712,12 +721,12 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
                              stdout=subprocess.PIPE)
         stdout, stderr = p.communicate()
         if p.returncode:
-            print "failed with code %s" % p.returncode
-            print ' '.join(cmd)
-            print "stdout"
-            print stdout
-            print "stderr"
-            print stderr
+            print("failed with code %s" % p.returncode)
+            print(' '.join(cmd))
+            print("stdout")
+            print(stdout)
+            print("stderr")
+            print(stderr)
             raise RodcRwdcTestException()
 
     def _check_account_initial(self, dn):
@@ -781,7 +790,8 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
         try:
             fn(*args, **kwargs)
             self.fail("failed to raise ldap referral")
-        except ldb.LdbError as (code, msg):
+        except ldb.LdbError as e9:
+            (code, msg) = e9.args
             self.assertEqual(code, ldb.ERR_REFERRAL,
                              "expected referral, got %s %s" % (code, msg))
 
@@ -818,13 +828,14 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
                                           attrs=['dn'],
                                           controls=controls)
                 self.assertEqual(len(res), 0)
-            except ldb.LdbError, e:
+            except ldb.LdbError as e:
                 if e.args[0] != ldb.ERR_NO_SUCH_OBJECT:
                     raise
 
             try:
                 self.rwdc_db.add(o)
-            except ldb.LdbError as (ecode, emsg):
+            except ldb.LdbError as e:
+                (ecode, emsg) = e.args
                 self.fail("Failed to add %s to rwdc: ldb error: %s %s" %
                           (ecode, emsg))
 
@@ -840,7 +851,7 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
                                           attrs=['dn'],
                                           controls=controls)
                 self.assertEqual(len(res), 1)
-            except ldb.LdbError, e:
+            except ldb.LdbError as e:
                 self.assertNotEqual(e.args[0], ldb.ERR_NO_SUCH_OBJECT,
                                     "replication seems to have failed")
 
@@ -916,7 +927,7 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
                                           attrs=[attr])
                 results = [x[attr][0] for x in res]
                 self.assertEqual(results, [value])
-            except ldb.LdbError, e:
+            except ldb.LdbError as e:
                 self.assertNotEqual(e.args[0], ldb.ERR_NO_SUCH_OBJECT,
                                     "replication seems to have failed")
 
@@ -961,7 +972,7 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
                                           attrs=[attr])
                 results = [x[attr][0] for x in res]
                 self.assertEqual(results, [value])
-            except ldb.LdbError, e:
+            except ldb.LdbError as e:
                 self.assertNotEqual(e.args[0], ldb.ERR_NO_SUCH_OBJECT,
                                     "replication seems to have failed")
 
@@ -973,7 +984,7 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
                                       attrs=[attr])
             if len(res) > 0:
                 self.fail("Failed to delete %s" % (dn))
-        except ldb.LdbError, e:
+        except ldb.LdbError as e:
             self.assertEqual(e.args[0], ldb.ERR_NO_SUCH_OBJECT,
                              "Failed to delete %s" % (dn))
 
@@ -1022,7 +1033,8 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
                           session_info=system_session(LP), lp=LP)
             if errno is not None:
                 self.fail("logon failed to fail with ldb error %s" % errno)
-        except ldb.LdbError as (code, msg):
+        except ldb.LdbError as e10:
+            (code, msg) = e10.args
             if code != errno:
                 if errno is None:
                     self.fail("logon incorrectly raised ldb error (code=%s)" %
@@ -1109,7 +1121,7 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
                                   scope=ldb.SCOPE_BASE,
                                   attrs=['msDS-RevealOnDemandGroup'])
 
-        group = res[0]['msDS-RevealOnDemandGroup'][0]
+        group = res[0]['msDS-RevealOnDemandGroup'][0].decode('utf8')
 
         user_dn, username, password = self._new_user()
         creds1 = make_creds(username, password)
@@ -1172,7 +1184,8 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb = SamDB(url=self.host_url, credentials=fail_creds, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e11:
+            (num, msg) = e11.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         # Succeed to reset everything to 0
@@ -1201,7 +1214,8 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb = SamDB(url=self.host_url, credentials=fail_creds, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e12:
+            (num, msg) = e12.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         # Succeed to reset everything to 0
@@ -1225,7 +1239,8 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb = SamDB(url=self.host_url, credentials=fail_creds, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e13:
+            (num, msg) = e13.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         # Succeed to reset everything to 0
@@ -1254,7 +1269,8 @@ class RodcRwdcTests(password_lockout_base.BasePasswordTestCase):
         try:
             ldb = SamDB(url=self.host_url, credentials=fail_creds, lp=self.lp)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e14:
+            (num, msg) = e14.args
             self.assertEquals(num, ERR_INVALID_CREDENTIALS)
 
         # Succeed to reset everything to 0

@@ -10,7 +10,7 @@ import sys, os, tempfile
 sys.path.insert(0, srcdir+"/buildtools/wafsamba")
 import wafsamba, Options, samba_dist, samba_git, Scripting, Utils, samba_version
 import Logs, samba_utils
-
+import shutil
 
 samba_dist.DIST_DIRS('.')
 samba_dist.DIST_BLACKLIST('.gitignore .bzrignore source4/selftest/provisions')
@@ -35,6 +35,7 @@ def system_mitkrb5_callback(option, opt, value, parser):
 def set_options(opt):
     opt.BUILTIN_DEFAULT('NONE')
     opt.PRIVATE_EXTENSION_DEFAULT('samba4')
+    opt.RECURSE('lib/audit_logging')
     opt.RECURSE('lib/replace')
     opt.RECURSE('dynconfig')
     opt.RECURSE('packaging')
@@ -60,6 +61,14 @@ def set_options(opt):
                    type="string",
                    dest='with_system_mitkdc',
                    default=None)
+
+    opt.add_option('--with-system-heimdalkrb5',
+                   help=('build Samba with system Heimdal Kerberos. ' +
+                         'Requires --without-ad-dc' and
+                         'conflicts with --with-system-mitkrb5'),
+                   action='store_true',
+                   dest='with_system_heimdalkrb5',
+                   default=False)
 
     opt.add_option('--without-ad-dc',
                    help='disable AD DC functionality (enables only Samba FS (File Server, Winbind, NMBD) and client utilities.',
@@ -105,6 +114,13 @@ def configure(conf):
     if Options.options.developer:
         conf.ADD_CFLAGS('-DDEVELOPER -DDEBUG_PASSWORD')
         conf.env.DEVELOPER = True
+        # if we are in a git tree without a pre-commit hook, install a
+        # simple default.
+        pre_commit_hook = os.path.join(srcdir, '.git/hooks/pre-commit')
+        if (os.path.isdir(os.path.dirname(pre_commit_hook)) and
+            not os.path.exists(pre_commit_hook)):
+            shutil.copy(os.path.join(srcdir, 'script/git-hooks/pre-commit-hook'),
+                        pre_commit_hook)
 
     conf.ADD_EXTRA_INCLUDES('#include/public #source4 #lib #source4/lib #source4/include #include #lib/replace')
 
@@ -198,6 +214,18 @@ def configure(conf):
     if not (Options.options.without_ad_dc or Options.options.with_system_mitkrb5):
         conf.DEFINE('AD_DC_BUILD_IS_ENABLED', 1)
 
+    if Options.options.with_system_heimdalkrb5:
+        if Options.options.with_system_mitkrb5:
+            raise Utils.WafError('--with-system-heimdalkrb5 conflicts with ' +
+                                 '--with-system-mitkrb5')
+        if not Options.options.without_ad_dc:
+            raise Utils.WafError('--with-system-heimdalkrb5 requires ' +
+                                 '--without-ad-dc')
+        conf.env.SYSTEM_LIBS += ('heimdal', 'asn1', 'com_err', 'roken',
+                                 'hx509', 'wind', 'gssapi', 'hcrypto',
+                                 'krb5', 'heimbase', 'asn1_compile',
+                                 'compile_et', 'kdc', 'hdb', 'heimntlm')
+
     # Only process heimdal_build for non-MIT KRB5 builds
     # When MIT KRB5 checks are done as above, conf.env.KRB5_VENDOR will be set
     # to the lowcased output of 'krb5-config --vendor'.
@@ -205,6 +233,7 @@ def configure(conf):
     # system-provided or embedded Heimdal build
     if conf.CONFIG_GET('KRB5_VENDOR') in (None, 'heimdal'):
         conf.RECURSE('source4/heimdal_build')
+    conf.RECURSE('lib/audit_logging')
     conf.RECURSE('source4/lib/tls')
     conf.RECURSE('source4/dsdb/samdb/ldb_modules')
     conf.RECURSE('source4/ntvfs/sysdep')
@@ -242,7 +271,6 @@ def configure(conf):
     if conf.env.with_ctdb:
         conf.RECURSE('ctdb')
     conf.RECURSE('lib/socket')
-    conf.RECURSE('auth')
     conf.RECURSE('packaging')
 
     conf.SAMBA_CHECK_UNDEFINED_SYMBOL_FLAGS()

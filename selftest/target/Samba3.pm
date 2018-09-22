@@ -163,48 +163,28 @@ sub check_env($$)
 	return 1;
 }
 
-sub setup_env($$$)
-{
-	my ($self, $envname, $path) = @_;
+# Declare the environments Samba3 makes available.
+# To be set up, they will be called as
+#   samba3->setup_$envname($self, $path, $dep_1_vars, $dep_2_vars, ...)
+%Samba3::ENV_DEPS = (
+	# name              => [dep_1, dep_2, ...],
+	nt4_dc              => [],
+	nt4_dc_schannel     => [],
 
-	$ENV{ENVNAME} = $envname;
+	simpleserver        => [],
+	fileserver          => [],
+	maptoguest          => [],
+	ktest               => [],
 
-	if (defined($self->{vars}->{$envname})) {
-	        return $self->{vars}->{$envname};
-	}
+	nt4_member          => ["nt4_dc"],
 
-	#
-	# Avoid hitting system krb5.conf -
-	# An env that needs Kerberos will reset this to the real
-	# value.
-	#
-	$ENV{KRB5_CONFIG} = "$path/no_krb5.conf";
+	ad_member           => ["ad_dc"],
+	ad_member_rfc2307   => ["ad_dc_ntvfs"],
+	ad_member_idmap_rid => ["ad_dc"],
+	ad_member_idmap_ad  => ["ad_dc"],
+);
 
-	if ($envname eq "nt4_dc") {
-		return $self->setup_nt4_dc("$path/nt4_dc");
-	} elsif ($envname eq "nt4_dc_schannel") {
-		return $self->setup_nt4_dc_schannel("$path/nt4_dc_schannel");
-	} elsif ($envname eq "simpleserver") {
-		return $self->setup_simpleserver("$path/simpleserver");
-	} elsif ($envname eq "fileserver") {
-		return $self->setup_fileserver("$path/fileserver");
-	} elsif ($envname eq "maptoguest") {
-		return $self->setup_maptoguest("$path/maptoguest");
-	} elsif ($envname eq "ktest") {
-		return $self->setup_ktest("$path/ktest");
-	} elsif ($envname eq "nt4_member") {
-		if (not defined($self->{vars}->{nt4_dc})) {
-			if (not defined($self->setup_nt4_dc("$path/nt4_dc"))) {
-			        return undef;
-			}
-		}
-		return $self->setup_nt4_member("$path/nt4_member", $self->{vars}->{nt4_dc});
-	} else {
-		return "UNKNOWN";
-	}
-}
-
-sub setup_nt4_dc($$)
+sub setup_nt4_dc
 {
 	my ($self, $path) = @_;
 
@@ -231,6 +211,7 @@ sub setup_nt4_dc($$)
 	rpc_daemon:lsasd = fork
 	rpc_daemon:fssd = fork
 	fss: sequence timeout = 1
+	check parent directory delete on close = yes
 ";
 
 	my $vars = $self->provision($path, "SAMBA-TEST",
@@ -244,6 +225,7 @@ sub setup_nt4_dc($$)
 	       return undef;
 	}
 
+	$vars->{DOMSID} = $vars->{SAMSID};
 	$vars->{DC_SERVER} = $vars->{SERVER};
 	$vars->{DC_SERVER_IP} = $vars->{SERVER_IP};
 	$vars->{DC_SERVER_IPV6} = $vars->{SERVER_IPV6};
@@ -251,12 +233,10 @@ sub setup_nt4_dc($$)
 	$vars->{DC_USERNAME} = $vars->{USERNAME};
 	$vars->{DC_PASSWORD} = $vars->{PASSWORD};
 
-	$self->{vars}->{nt4_dc} = $vars;
-
 	return $vars;
 }
 
-sub setup_nt4_dc_schannel($$)
+sub setup_nt4_dc_schannel
 {
 	my ($self, $path) = @_;
 
@@ -294,6 +274,7 @@ sub setup_nt4_dc_schannel($$)
 	       return undef;
 	}
 
+	$vars->{DOMSID} = $vars->{SAMSID};
 	$vars->{DC_SERVER} = $vars->{SERVER};
 	$vars->{DC_SERVER_IP} = $vars->{SERVER_IP};
 	$vars->{DC_SERVER_IPV6} = $vars->{SERVER_IPV6};
@@ -301,12 +282,10 @@ sub setup_nt4_dc_schannel($$)
 	$vars->{DC_USERNAME} = $vars->{USERNAME};
 	$vars->{DC_PASSWORD} = $vars->{PASSWORD};
 
-	$self->{vars}->{nt4_dc_schannel} = $vars;
-
 	return $vars;
 }
 
-sub setup_nt4_member($$$)
+sub setup_nt4_member
 {
 	my ($self, $prefix, $nt4_dc_vars) = @_;
 	my $count = 0;
@@ -370,6 +349,7 @@ sub setup_nt4_member($$$)
 	       return undef;
 	}
 
+	$ret->{DOMSID} = $nt4_dc_vars->{DOMSID};
 	$ret->{DC_SERVER} = $nt4_dc_vars->{SERVER};
 	$ret->{DC_SERVER_IP} = $nt4_dc_vars->{SERVER_IP};
 	$ret->{DC_SERVER_IPV6} = $nt4_dc_vars->{SERVER_IPV6};
@@ -380,7 +360,7 @@ sub setup_nt4_member($$$)
 	return $ret;
 }
 
-sub setup_admember($$$$)
+sub setup_ad_member
 {
 	my ($self, $prefix, $dcvars) = @_;
 
@@ -452,6 +432,7 @@ sub setup_admember($$$$)
 	close(USERMAP);
 	$ret->{DOMAIN} = $dcvars->{DOMAIN};
 	$ret->{REALM} = $dcvars->{REALM};
+	$ret->{DOMSID} = $dcvars->{DOMSID};
 
 	my $ctx;
 	$ctx = {};
@@ -500,13 +481,10 @@ sub setup_admember($$$$)
 	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
 	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
 
-	# Special case, this is called from Samba4.pm but needs to use the Samba3 check_env and get_log_env
-	$ret->{target} = $self;
-
 	return $ret;
 }
 
-sub setup_admember_rfc2307($$$$)
+sub setup_ad_member_rfc2307
 {
 	my ($self, $prefix, $dcvars) = @_;
 
@@ -547,6 +525,7 @@ sub setup_admember_rfc2307($$$$)
 	close(USERMAP);
 	$ret->{DOMAIN} = $dcvars->{DOMAIN};
 	$ret->{REALM} = $dcvars->{REALM};
+	$ret->{DOMSID} = $dcvars->{DOMSID};
 
 	my $ctx;
 	my $prefix_abs = abs_path($prefix);
@@ -596,13 +575,10 @@ sub setup_admember_rfc2307($$$$)
 	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
 	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
 
-	# Special case, this is called from Samba4.pm but needs to use the Samba3 check_env and get_log_env
-	$ret->{target} = $self;
-
 	return $ret;
 }
 
-sub setup_ad_member_idmap_rid($$$$)
+sub setup_ad_member_idmap_rid
 {
 	my ($self, $prefix, $dcvars) = @_;
 
@@ -635,6 +611,7 @@ sub setup_ad_member_idmap_rid($$$$)
 	close(USERMAP);
 	$ret->{DOMAIN} = $dcvars->{DOMAIN};
 	$ret->{REALM} = $dcvars->{REALM};
+	$ret->{DOMSID} = $dcvars->{DOMSID};
 
 	my $ctx;
 	my $prefix_abs = abs_path($prefix);
@@ -684,13 +661,10 @@ sub setup_ad_member_idmap_rid($$$$)
 	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
 	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
 
-	# Special case, this is called from Samba4.pm but needs to use the Samba3 check_env and get_log_env
-	$ret->{target} = $self;
-
 	return $ret;
 }
 
-sub setup_ad_member_idmap_ad($$$$)
+sub setup_ad_member_idmap_ad
 {
 	my ($self, $prefix, $dcvars) = @_;
 
@@ -724,6 +698,7 @@ sub setup_ad_member_idmap_ad($$$$)
 	close(USERMAP);
 	$ret->{DOMAIN} = $dcvars->{DOMAIN};
 	$ret->{REALM} = $dcvars->{REALM};
+	$ret->{DOMSID} = $dcvars->{DOMSID};
 
 	my $ctx;
 	my $prefix_abs = abs_path($prefix);
@@ -773,13 +748,10 @@ sub setup_ad_member_idmap_ad($$$$)
 	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
 	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
 
-	# Special case, this is called from Samba4.pm but needs to use the Samba3 check_env and get_log_env
-	$ret->{target} = $self;
-
 	return $ret;
 }
 
-sub setup_simpleserver($$)
+sub setup_simpleserver
 {
 	my ($self, $path) = @_;
 
@@ -793,6 +765,12 @@ sub setup_simpleserver($$)
 	vfs objects = xattr_tdb streams_depot
 	change notify = no
 	smb encrypt = off
+
+[vfs_aio_pthread]
+	path = $prefix_abs/share
+	read only = no
+	vfs objects = aio_pthread
+	aio_pthread:aio open = yes
 
 [vfs_aio_fork]
 	path = $prefix_abs/share
@@ -824,12 +802,10 @@ sub setup_simpleserver($$)
 	       return undef;
 	}
 
-	$self->{vars}->{simpleserver} = $vars;
-
 	return $vars;
 }
 
-sub setup_fileserver($$)
+sub setup_fileserver
 {
 	my ($self, $path) = @_;
 	my $prefix_abs = abs_path($path);
@@ -961,7 +937,6 @@ sub setup_fileserver($$)
 	       return undef;
 	}
 
-	$self->{vars}->{fileserver} = $vars;
 
 	mkdir($_, 0777) foreach(@dirs);
 
@@ -1013,7 +988,7 @@ sub setup_fileserver($$)
 	return $vars;
 }
 
-sub setup_ktest($$$)
+sub setup_ktest
 {
 	my ($self, $prefix) = @_;
 
@@ -1068,6 +1043,8 @@ $ret->{USERNAME} = KTEST\\Administrator
 #This is the secrets.tdb created by 'net ads join' from Samba3 to a
 #Samba4 DC with the same parameters as are being used here.  The
 #domain SID is S-1-5-21-1071277805-689288055-3486227160
+	$ret->{SAMSID} = "S-1-5-21-1911091480-1468226576-2729736297";
+	$ret->{DOMSID} = "S-1-5-21-1071277805-689288055-3486227160";
 
 	system("cp $self->{srcdir}/source3/selftest/ktest-secrets.tdb $prefix/private/secrets.tdb");
 	chmod 0600, "$prefix/private/secrets.tdb";
@@ -1117,7 +1094,7 @@ $ret->{USERNAME} = KTEST\\Administrator
 	return $ret;
 }
 
-sub setup_maptoguest($$)
+sub setup_maptoguest
 {
 	my ($self, $path) = @_;
 
@@ -1138,8 +1115,6 @@ ntlm auth = yes
 	if (not $self->check_or_start($vars, "yes", "no", "yes")) {
 	       return undef;
 	}
-
-	$self->{vars}->{s3maptoguest} = $vars;
 
 	return $vars;
 }
@@ -1405,6 +1380,7 @@ sub provision($$$$$$$$$)
 	## setup the various environment variables we need
 	##
 
+	my $samsid = Samba::random_domain_sid();
 	my $swiface = Samba::get_interface($server);
 	my %ret = ();
 	my %createuser_env = ();
@@ -2199,8 +2175,26 @@ sub provision($$$$$$$$$)
 	copy = tmp
 	vfs objects = error_inject
 	include = $libdir/error_inject.conf
+
+[delay_inject]
+	copy = tmp
+	vfs objects = delay_inject
+	kernel share modes = no
+	kernel oplocks = no
+	posix locking = no
+	include = $libdir/delay_inject.conf
 	";
 	close(CONF);
+
+	my $net = Samba::bindir_path($self, "net");
+	my $cmd = "";
+	$cmd .= "SMB_CONF_PATH=\"$conffile\" ";
+	$cmd .= "$net setlocalsid $samsid";
+
+	if (system($cmd) != 0) {
+	    warn("Join failed\n$cmd");
+	    return undef;
+	}
 
 	unless (open(DFQCONF, ">$dfqconffile")) {
 	        warn("Unable to open $dfqconffile");
@@ -2292,9 +2286,9 @@ force_user:x:$gid_force_user:
 	$createuser_env{NSS_WRAPPER_HOSTS} = $nss_wrapper_hosts;
 	$createuser_env{NSS_WRAPPER_HOSTNAME} = "${hostname}.samba.example.com";
 	if ($ENV{SAMBA_DNS_FAKING}) {
-		$createuser_env{RESOLV_WRAPPER_CONF} = $resolv_conf;
-	} else {
 		$createuser_env{RESOLV_WRAPPER_HOSTS} = $dns_host_file;
+	} else {
+		$createuser_env{RESOLV_WRAPPER_CONF} = $resolv_conf;
 	}
 
 	createuser($self, $unix_name, $password, $conffile, \%createuser_env) || die("Unable to create user");
@@ -2325,6 +2319,7 @@ force_user:x:$gid_force_user:
 	$ret{USERNAME} = $unix_name;
 	$ret{USERID} = $unix_uid;
 	$ret{DOMAIN} = $domain;
+	$ret{SAMSID} = $samsid;
 	$ret{NETBIOSNAME} = $server;
 	$ret{PASSWORD} = $password;
 	$ret{PIDDIR} = $piddir;

@@ -895,20 +895,15 @@ static void ctdb_daemon_read_cb(uint8_t *data, size_t cnt, void *args)
 		return;
 	}
 	hdr = (struct ctdb_req_header *)data;
-	if (cnt != hdr->length) {
-		ctdb_set_error(client->ctdb, "Bad header length %u expected %u\n in daemon", 
-			       (unsigned)hdr->length, (unsigned)cnt);
-		return;
-	}
 
 	if (hdr->ctdb_magic != CTDB_MAGIC) {
 		ctdb_set_error(client->ctdb, "Non CTDB packet rejected\n");
-		return;
+		goto err_out;
 	}
 
 	if (hdr->ctdb_version != CTDB_PROTOCOL) {
 		ctdb_set_error(client->ctdb, "Bad CTDB version 0x%x rejected in daemon\n", hdr->ctdb_version);
-		return;
+		goto err_out;
 	}
 
 	DEBUG(DEBUG_DEBUG,(__location__ " client request %u of type %u length %u from "
@@ -917,6 +912,10 @@ static void ctdb_daemon_read_cb(uint8_t *data, size_t cnt, void *args)
 
 	/* it is the responsibility of the incoming packet function to free 'data' */
 	daemon_incoming_packet(client, hdr);
+	return;
+
+err_out:
+	TALLOC_FREE(data);
 }
 
 
@@ -1231,7 +1230,7 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 	int res, ret = -1;
 	struct tevent_fd *fde;
 
-	become_daemon(do_fork, false, false);
+	become_daemon(do_fork, !do_fork, !do_fork);
 
 	ignore_signal(SIGPIPE);
 	ignore_signal(SIGUSR1);
@@ -1340,12 +1339,10 @@ int ctdb_start_daemon(struct ctdb_context *ctdb, bool do_fork)
 
 	initialise_node_flags(ctdb);
 
-	if (ctdb->public_addresses_file) {
-		ret = ctdb_set_public_addresses(ctdb, true);
-		if (ret == -1) {
-			DEBUG(DEBUG_ALERT,("Unable to setup public address list\n"));
-			exit(1);
-		}
+	ret = ctdb_set_public_addresses(ctdb, true);
+	if (ret == -1) {
+		D_ERR("Unable to setup public IP addresses\n");
+		exit(1);
 	}
 
 	ctdb_initialise_vnn_map(ctdb);

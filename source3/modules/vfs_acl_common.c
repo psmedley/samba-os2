@@ -519,6 +519,7 @@ static NTSTATUS validate_nt_acl_blob(TALLOC_CTX *mem_ctx,
 		}
 
 		/* Otherwise, fall though and see if the NT ACL hash matches */
+		FALL_THROUGH;
 	}
 	case 3:
 		/* Get the full underlying sd for the hash
@@ -1240,27 +1241,6 @@ int fchmod_acl_module_common(struct vfs_handle_struct *handle,
 	if (fsp->posix_flags & FSP_POSIX_FLAGS_OPEN) {
 		/* Only allow this on POSIX opens. */
 		return SMB_VFS_NEXT_FCHMOD(handle, fsp, mode);
-	}
-	return 0;
-}
-
-int chmod_acl_acl_module_common(struct vfs_handle_struct *handle,
-				const struct smb_filename *smb_fname,
-				mode_t mode)
-{
-	if (smb_fname->flags & SMB_FILENAME_POSIX_PATH) {
-		/* Only allow this on POSIX pathnames. */
-		return SMB_VFS_NEXT_CHMOD_ACL(handle, smb_fname, mode);
-	}
-	return 0;
-}
-
-int fchmod_acl_acl_module_common(struct vfs_handle_struct *handle,
-				 struct files_struct *fsp, mode_t mode)
-{
-	if (fsp->posix_flags & FSP_POSIX_FLAGS_OPEN) {
-		/* Only allow this on POSIX opens. */
-		return SMB_VFS_NEXT_FCHMOD_ACL(handle, fsp, mode);
 	}
 	return 0;
 }

@@ -1160,10 +1160,6 @@ static bool do_winbind_onlinestatus(struct tevent_context *ev_ctx,
 				    const struct server_id pid,
 				    const int argc, const char **argv)
 {
-	struct server_id myid;
-
-	myid = messaging_server_id(msg_ctx);
-
 	if (argc != 1) {
 		fprintf(stderr, "Usage: smbcontrol winbindd onlinestatus\n");
 		return False;
@@ -1172,9 +1168,9 @@ static bool do_winbind_onlinestatus(struct tevent_context *ev_ctx,
 	messaging_register(msg_ctx, NULL, MSG_WINBIND_ONLINESTATUS,
 			   print_pid_string_cb);
 
-	if (!send_message(msg_ctx, pid, MSG_WINBIND_ONLINESTATUS, &myid,
-			  sizeof(myid)))
+	if (!send_message(msg_ctx, pid, MSG_WINBIND_ONLINESTATUS, NULL, 0)) {
 		return False;
+	}
 
 	wait_replies(ev_ctx, msg_ctx, procid_to_pid(&pid) == 0);
 
@@ -1188,19 +1184,6 @@ static bool do_winbind_onlinestatus(struct tevent_context *ev_ctx,
 	return num_replies;
 }
 
-static bool do_dump_event_list(struct tevent_context *ev_ctx,
-			       struct messaging_context *msg_ctx,
-			       const struct server_id pid,
-			       const int argc, const char **argv)
-{
-	if (argc != 1) {
-		fprintf(stderr, "Usage: smbcontrol <dest> dump-event-list\n");
-		return False;
-	}
-
-	return send_message(msg_ctx, pid, MSG_DUMP_EVENT_LIST, NULL, 0);
-}
-
 static bool do_winbind_dump_domain_list(struct tevent_context *ev_ctx,
 					struct messaging_context *msg_ctx,
 					const struct server_id pid,
@@ -1208,11 +1191,6 @@ static bool do_winbind_dump_domain_list(struct tevent_context *ev_ctx,
 {
 	const char *domain = NULL;
 	int domain_len = 0;
-	struct server_id myid;
-	uint8_t *buf = NULL;
-	int buf_len = 0;
-
-	myid = messaging_server_id(msg_ctx);
 
 	if (argc < 1 || argc > 2) {
 		fprintf(stderr, "Usage: smbcontrol <dest> dump-domain-list "
@@ -1228,19 +1206,9 @@ static bool do_winbind_dump_domain_list(struct tevent_context *ev_ctx,
 	messaging_register(msg_ctx, NULL, MSG_WINBIND_DUMP_DOMAIN_LIST,
 			   print_pid_string_cb);
 
-	buf_len = sizeof(myid)+domain_len;
-	buf = SMB_MALLOC_ARRAY(uint8_t, buf_len);
-	if (!buf) {
-		return false;
-	}
-
-	memcpy(buf, &myid, sizeof(myid));
-	memcpy(&buf[sizeof(myid)], domain, domain_len);
-
 	if (!send_message(msg_ctx, pid, MSG_WINBIND_DUMP_DOMAIN_LIST,
-			  buf, buf_len))
+			  domain, domain_len))
 	{
-		SAFE_FREE(buf);
 		return false;
 	}
 
@@ -1248,7 +1216,6 @@ static bool do_winbind_dump_domain_list(struct tevent_context *ev_ctx,
 
 	/* No replies were received within the timeout period */
 
-	SAFE_FREE(buf);
 	if (num_replies == 0) {
 		printf("No replies received\n");
 	}
@@ -1445,7 +1412,6 @@ static const struct {
 	{ "online", do_winbind_online, "Ask winbind to go into online state"},
 	{ "offline", do_winbind_offline, "Ask winbind to go into offline state"},
 	{ "onlinestatus", do_winbind_onlinestatus, "Request winbind online status"},
-	{ "dump-event-list", do_dump_event_list, "Dump event list"},
 	{ "validate-cache" , do_winbind_validate_cache,
 	  "Validate winbind's credential cache" },
 	{ "dump-domain-list", do_winbind_dump_domain_list, "Dump winbind domain list"},

@@ -34,7 +34,7 @@
 #define GPUPDATE_RAND_OFFSET    (30*60)
 static uint32_t gpupdate_interval(void)
 {
-	int rand_int_offset = rand() % GPUPDATE_RAND_OFFSET;
+	int rand_int_offset = generate_random() % GPUPDATE_RAND_OFFSET;
 	return GPUPDATE_INTERVAL+rand_int_offset;
 }
 
@@ -62,7 +62,7 @@ static void gpupdate_callback(struct tevent_context *ev,
 				gpupdate_cmd,
 				"-s",
 				smbconf,
-				"--machine",
+				"--target=Computer",
 				"--machine-pass",
 				NULL);
 	if (req == NULL) {

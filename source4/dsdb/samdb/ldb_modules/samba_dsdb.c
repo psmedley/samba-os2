@@ -234,8 +234,11 @@ static bool check_required_features(struct ldb_message_element *el)
 		int k;
 		DATA_BLOB esf = data_blob_string_const(
 			SAMBA_ENCRYPTED_SECRETS_FEATURE);
+		DATA_BLOB lmdbl1 = data_blob_string_const(
+			SAMBA_LMDB_LEVEL_ONE_FEATURE);
 		for (k = 0; k < el->num_values; k++) {
-			if (data_blob_cmp(&esf, &el->values[k]) != 0) {
+			if ((data_blob_cmp(&esf, &el->values[k]) != 0) &&
+			    (data_blob_cmp(&lmdbl1, &el->values[k]) != 0)) {
 				return false;
 			}
 		}
@@ -246,7 +249,7 @@ static bool check_required_features(struct ldb_message_element *el)
 static int samba_dsdb_init(struct ldb_module *module)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
-	int ret, len, i, j;
+	int ret, lock_ret, len, i, j;
 	TALLOC_CTX *tmp_ctx = talloc_new(module);
 	struct ldb_result *res;
 	struct ldb_message *rootdse_msg = NULL, *partition_msg;
@@ -289,7 +292,8 @@ static int samba_dsdb_init(struct ldb_module *module)
 					     "extended_dn_store",
 					     NULL };
 	/* extended_dn_in or extended_dn_in_openldap goes here */
-	static const char *modules_list1a[] = {"objectclass",
+	static const char *modules_list1a[] = {"audit_log",
+					     "objectclass",
 					     "tombstone_reanimate",
 					     "descriptor",
 					     "acl",
@@ -309,6 +313,7 @@ static int samba_dsdb_init(struct ldb_module *module)
 		"rdn_name",
 		"subtree_delete",
 		"repl_meta_data",
+		"group_audit_log",
 		"encrypted_secrets",
 		"operational",
 		"unique_object_sids",
@@ -624,7 +629,20 @@ static int samba_dsdb_init(struct ldb_module *module)
 	/* Set this as the 'next' module, so that we effectivly append it to module chain */
 	ldb_module_set_next(module, module_chain);
 
-	return ldb_next_init(module);
+	ret = ldb_next_read_lock(module);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+
+	ret = ldb_next_init(module);
+
+	lock_ret = ldb_next_read_unlock(module);
+
+	if (lock_ret != LDB_SUCCESS) {
+		return lock_ret;
+	}
+
+	return ret;
 }
 
 static const struct ldb_module_ops ldb_samba_dsdb_module_ops = {

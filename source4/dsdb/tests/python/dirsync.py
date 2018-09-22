@@ -18,6 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
+from __future__ import print_function
 import optparse
 import sys
 sys.path.insert(0, "bin/python")
@@ -83,7 +84,7 @@ class DirsyncBaseTests(samba.tests.TestCase):
         self.configuration_dn = self.ldb_admin.get_config_basedn().get_linearized()
         self.sd_utils = sd_utils.SDUtils(self.ldb_admin)
         #used for anonymous login
-        print "baseDN: %s" % self.base_dn
+        print("baseDN: %s" % self.base_dn)
 
     def get_user_dn(self, name):
         return "CN=%s,CN=Users,%s" % (name, self.base_dn)
@@ -152,7 +153,7 @@ class SimpleDirsyncTests(DirsyncBaseTests):
             self.ldb_simple.search(self.base_dn,
                 expression="samaccountname=*",
                 controls=["dirsync:1:0:1"])
-        except LdbError,l:
+        except LdbError as l:
            self.assertTrue(str(l).find("LDAP_INSUFFICIENT_ACCESS_RIGHTS") != -1)
 
     def test_parentGUID_referrals(self):
@@ -177,48 +178,48 @@ class SimpleDirsyncTests(DirsyncBaseTests):
             self.ldb_simple.search(self.base_dn,
                 expression="samaccountname=*",
                 controls=["dirsync:1:0:1"])
-        except LdbError,l:
-            print l
+        except LdbError as l:
+            print(l)
             self.assertTrue(str(l).find("LDAP_INSUFFICIENT_ACCESS_RIGHTS") != -1)
 
         try:
             self.ldb_simple.search("CN=Users,%s" % self.base_dn,
                 expression="samaccountname=*",
                 controls=["dirsync:1:0:1"])
-        except LdbError,l:
-            print l
+        except LdbError as l:
+            print(l)
             self.assertTrue(str(l).find("LDAP_INSUFFICIENT_ACCESS_RIGHTS") != -1)
 
         try:
             self.ldb_simple.search("CN=Users,%s" % self.base_dn,
                 expression="samaccountname=*",
                 controls=["dirsync:1:1:1"])
-        except LdbError,l:
-            print l
+        except LdbError as l:
+            print(l)
             self.assertTrue(str(l).find("LDAP_UNWILLING_TO_PERFORM") != -1)
 
         try:
             self.ldb_dirsync.search("CN=Users,%s" % self.base_dn,
                 expression="samaccountname=*",
                 controls=["dirsync:1:0:1"])
-        except LdbError,l:
-            print l
+        except LdbError as l:
+            print(l)
             self.assertTrue(str(l).find("LDAP_INSUFFICIENT_ACCESS_RIGHTS") != -1)
 
         try:
             self.ldb_admin.search("CN=Users,%s" % self.base_dn,
                 expression="samaccountname=*",
                 controls=["dirsync:1:0:1"])
-        except LdbError,l:
-            print l
+        except LdbError as l:
+            print(l)
             self.assertTrue(str(l).find("LDAP_INSUFFICIENT_ACCESS_RIGHTS") != -1)
 
         try:
             self.ldb_admin.search("CN=Users,%s" % self.base_dn,
                 expression="samaccountname=*",
                 controls=["dirsync:1:1:1"])
-        except LdbError,l:
-            print l
+        except LdbError as l:
+            print(l)
             self.assertTrue(str(l).find("LDAP_UNWILLING_TO_PERFORM") != -1)
 
     def test_dirsync_attributes(self):
@@ -516,7 +517,7 @@ class SimpleDirsyncTests(DirsyncBaseTests):
 
         # Check that reasking the same question but with an updated cookie
         # didn't return any results.
-        print control1
+        print(control1)
         res = self.ldb_admin.search(self.base_dn,
                                     expression="(name=testgroup)",
                                     controls=[control1])
@@ -581,7 +582,7 @@ class SimpleDirsyncTests(DirsyncBaseTests):
         ctl = str(res.controls[0]).split(":")
         cookie = ndr_unpack(drsblobs.ldapControlDirSyncCookie, base64.b64decode(str(ctl[4])))
         cookie.blob.guid1 = misc.GUID("128a99bf-abcd-1234-abcd-1fb625e530db")
-        controls=["dirsync:1:0:0:%s" % base64.b64encode(ndr_pack(cookie))]
+        controls=["dirsync:1:0:0:%s" % base64.b64encode(ndr_pack(cookie)).decode('utf8')]
         res = self.ldb_admin.search(self.base_dn,
                                     expression="(&(objectClass=organizationalUnit)(!(isDeleted=*)))",
                                     controls=controls)

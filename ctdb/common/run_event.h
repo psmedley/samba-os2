@@ -30,7 +30,7 @@
  *
  * @brief Run scripts in a directory with specific event arguments.
  *
- * This abstraction allows to execute multiple scripts in a directory
+ * This abstraction allows one to execute multiple scripts in a directory
  * (specified by script_dir) with given event and arguments.
  *
  * At one time, only one event can be run.  Multiple run_event calls
@@ -75,7 +75,7 @@ struct run_event_script_list {
  * @param[out] result New run_event context
  * @return 0 on success, errno on error
  */
-int run_event_init(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
+int run_event_init(TALLOC_CTX *mem_ctx, struct run_proc_context *run_proc_ctx,
 		   const char *script_dir, const char *debug_prog,
 		   struct run_event_context **result);
 
@@ -87,9 +87,9 @@ int run_event_init(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
  * @param[out] output List of valid scripts
  * @return 0 on success, errno on failure
  */
-int run_event_script_list(struct run_event_context *run_ctx,
-			  TALLOC_CTX *mem_ctx,
-			  struct run_event_script_list **output);
+int run_event_list(struct run_event_context *run_ctx,
+		   TALLOC_CTX *mem_ctx,
+		   struct run_event_script_list **output);
 
 /**
  * @brief Enable a script
@@ -120,6 +120,7 @@ int run_event_script_disable(struct run_event_context *run_ctx,
  * @param[in] event_str The event argument to the script
  * @param[in] arg_str Event arguments to the script
  * @param[in] timeout How long to wait for execution
+ * @param[in] continue_on_failure Whether to continue to run events on failure
  * @return new tevent request, or NULL on failure
  *
  * arg_str contains optional arguments for an event.
@@ -129,7 +130,8 @@ struct tevent_req *run_event_send(TALLOC_CTX *mem_ctx,
 				  struct run_event_context *run_ctx,
 				  const char *event_str,
 				  const char *arg_str,
-				  struct timeval timeout);
+				  struct timeval timeout,
+				  bool continue_on_failure);
 
 /**
  * @brief Async computation end to run an event

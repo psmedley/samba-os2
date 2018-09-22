@@ -31,7 +31,7 @@
  *
  * @brief Client api to talk to ctdb daemon
  *
- * This API allows to connect to ctdb daemon, perform various database
+ * This API allows one to connect to ctdb daemon, perform various database
  * operations, send controls to ctdb daemon and send messages to other ctdb
  * clients.
  */
@@ -184,7 +184,7 @@ void ctdb_client_wait(struct tevent_context *ev, bool *done);
  * @param[in] ev Tevent context
  * @param[in] done Boolean flag to indicate when to stop waiting
  * @param[in] timeout How long to wait
- * @return 0 on succes, ETIME on timeout, and errno on failure
+ * @return 0 on succes, ETIMEDOUT on timeout, and errno on failure
  */
 int ctdb_client_wait_timeout(struct tevent_context *ev, bool *done,
 			     struct timeval timeout);
@@ -193,7 +193,7 @@ int ctdb_client_wait_timeout(struct tevent_context *ev, bool *done,
  * @brief Async computation start to wait till recovery is completed
  *
  * CTDB daemon does not perform many operations while in recovery (especially
- * database operations).  This computation allows to wait till ctdb daemon has
+ * database operations).  This computation allows one to wait till ctdb daemon has
  * finished recovery.
  *
  * @param[in] mem_ctx Talloc memory context

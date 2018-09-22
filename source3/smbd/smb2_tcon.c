@@ -94,7 +94,7 @@ NTSTATUS smbd_smb2_request_process_tcon(struct smbd_smb2_request *req)
 	}
 
 	subreq = smbd_smb2_tree_connect_send(req,
-					     req->sconn->ev_ctx,
+					     req->ev_ctx,
 					     req,
 					     in_path_string);
 	if (subreq == NULL) {
@@ -268,6 +268,21 @@ static NTSTATUS smbd_smb2_tree_connect(struct smbd_smb2_request *req,
 		DEBUG(3,("smbd_smb2_tree_connect: couldn't find service %s\n",
 			 service));
 		return NT_STATUS_BAD_NETWORK_NAME;
+	}
+
+	/* Handle non-DFS clients attempting connections to msdfs proxy */
+	if (lp_host_msdfs()) {
+		char *proxy = lp_msdfs_proxy(talloc_tos(), snum);
+
+		if ((proxy != NULL) && (*proxy != '\0')) {
+			DBG_NOTICE("refusing connection to dfs proxy share "
+				   "'%s' (pointing to %s)\n",
+				   service,
+				   proxy);
+			TALLOC_FREE(proxy);
+			return NT_STATUS_BAD_NETWORK_NAME;
+		}
+		TALLOC_FREE(proxy);
 	}
 
 	if ((lp_smb_encrypt(snum) >= SMB_SIGNING_DESIRED) &&
@@ -476,7 +491,7 @@ NTSTATUS smbd_smb2_request_process_tdis(struct smbd_smb2_request *req)
 		return smbd_smb2_request_error(req, status);
 	}
 
-	subreq = smbd_smb2_tdis_send(req, req->sconn->ev_ctx, req);
+	subreq = smbd_smb2_tdis_send(req, req->ev_ctx, req);
 	if (subreq == NULL) {
 		return smbd_smb2_request_error(req, NT_STATUS_NO_MEMORY);
 	}

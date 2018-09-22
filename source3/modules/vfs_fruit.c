@@ -4010,6 +4010,11 @@ static ssize_t fruit_pread_meta(vfs_handle_struct *handle,
 		return 0;
 	}
 
+	if (fio == NULL) {
+		DBG_ERR("Failed to fetch fsp extension");
+		return -1;
+	}
+
 	/* Yes, macOS always reads from offset 0 */
 	offset = 0;
 	to_return = MIN(n, AFP_INFO_SIZE);
@@ -4072,6 +4077,11 @@ static ssize_t fruit_pread_rsrc(vfs_handle_struct *handle,
 {
 	struct fio *fio = (struct fio *)VFS_FETCH_FSP_EXTENSION(handle, fsp);
 	ssize_t nread;
+
+	if (fio == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
 
 	switch (fio->config->rsrc) {
 	case FRUIT_RSRC_STREAM:
@@ -4331,6 +4341,11 @@ static ssize_t fruit_pwrite_meta(vfs_handle_struct *handle,
 		return -1;
 	}
 
+	if (fio == NULL) {
+		DBG_ERR("Failed to fetch fsp extension");
+		return -1;
+	}
+
 	switch (fio->config->meta) {
 	case FRUIT_META_STREAM:
 		nwritten = fruit_pwrite_meta_stream(handle, fsp, data,
@@ -4407,6 +4422,11 @@ static ssize_t fruit_pwrite_rsrc(vfs_handle_struct *handle,
 {
 	struct fio *fio = (struct fio *)VFS_FETCH_FSP_EXTENSION(handle, fsp);
 	ssize_t nwritten;
+
+	if (fio == NULL) {
+		DBG_ERR("Failed to fetch fsp extension");
+		return -1;
+	}
 
 	switch (fio->config->rsrc) {
 	case FRUIT_RSRC_STREAM:
@@ -5494,6 +5514,11 @@ static int fruit_ftruncate_rsrc(struct vfs_handle_struct *handle,
 	struct fio *fio = (struct fio *)VFS_FETCH_FSP_EXTENSION(handle, fsp);
 	int ret;
 
+	if (fio == NULL) {
+		DBG_ERR("Failed to fetch fsp extension");
+		return -1;
+	}
+
 	switch (fio->config->rsrc) {
 	case FRUIT_RSRC_XATTR:
 		ret = fruit_ftruncate_rsrc_xattr(handle, fsp, offset);
@@ -5545,7 +5570,11 @@ static int fruit_ftruncate(struct vfs_handle_struct *handle,
 		  (intmax_t)offset);
 
 	if (fio == NULL) {
-		if (offset == 0 && global_fruit_config.nego_aapl) {
+		if (offset == 0 &&
+		    global_fruit_config.nego_aapl &&
+		    is_ntfs_stream_smb_fname(fsp->fsp_name) &&
+		    !is_ntfs_default_stream_smb_fname(fsp->fsp_name))
+		{
 			return SMB_VFS_NEXT_UNLINK(handle, fsp->fsp_name);
 		}
 		return SMB_VFS_NEXT_FTRUNCATE(handle, fsp, offset);
@@ -6526,12 +6555,12 @@ static bool fruit_tmsize_do_dirent(vfs_handle_struct *handle,
 		return true;
 	}
 
-	tm_size = bandsize * nbands;
-	if (tm_size > UINT64_MAX) {
+	if (bandsize > SIZE_MAX/nbands) {
 		DBG_ERR("tmsize overflow: bandsize [%zu] nbands [%zu]\n",
 			bandsize, nbands);
 		return false;
 	}
+	tm_size = bandsize * nbands;
 
 	if (state->total_size + tm_size < state->total_size) {
 		DBG_ERR("tmsize overflow: bandsize [%zu] nbands [%zu]\n",

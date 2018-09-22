@@ -319,7 +319,7 @@ NTSTATUS imessaging_reinit_all(void)
 /*
   create the listening socket and setup the dispatcher
 */
-struct imessaging_context *imessaging_init(TALLOC_CTX *mem_ctx,
+static struct imessaging_context *imessaging_init_internal(TALLOC_CTX *mem_ctx,
 					   struct loadparm_context *lp_ctx,
 					   struct server_id server_id,
 					   struct tevent_context *ev)
@@ -433,9 +433,19 @@ fail:
 
 struct imessaging_post_state {
 	struct imessaging_context *msg_ctx;
+	struct imessaging_post_state **busy_ref;
 	size_t buf_len;
 	uint8_t buf[];
 };
+
+static int imessaging_post_state_destructor(struct imessaging_post_state *state)
+{
+	if (state->busy_ref != NULL) {
+		*state->busy_ref = NULL;
+		state->busy_ref = NULL;
+	}
+	return 0;
+}
 
 static void imessaging_post_handler(struct tevent_context *ev,
 				    struct tevent_immediate *ti,
@@ -443,8 +453,28 @@ static void imessaging_post_handler(struct tevent_context *ev,
 {
 	struct imessaging_post_state *state = talloc_get_type_abort(
 		private_data, struct imessaging_post_state);
+
+	/*
+	 * In usecases like using messaging_client_init() with irpc processing
+	 * we may free the imessaging_context during the messaging handler.
+	 * imessaging_post_state is a child of imessaging_context and
+	 * might be implicitly free'ed before the explicit TALLOC_FREE(state).
+	 *
+	 * The busy_ref pointer makes sure the destructor clears
+	 * the local 'state' variable.
+	 */
+
+	SMB_ASSERT(state->busy_ref == NULL);
+	state->busy_ref = &state;
+
 	imessaging_dgm_recv(ev, state->buf, state->buf_len, NULL, 0,
 			    state->msg_ctx);
+
+	if (state == NULL) {
+		return;
+	}
+
+	state->busy_ref = NULL;
 	TALLOC_FREE(state);
 }
 
@@ -461,6 +491,8 @@ static int imessaging_post_self(struct imessaging_context *msg,
 	}
 	talloc_set_name_const(state, "struct imessaging_post_state");
 
+	talloc_set_destructor(state, imessaging_post_state_destructor);
+
 	ti = tevent_create_immediate(state);
 	if (ti == NULL) {
 		TALLOC_FREE(state);
@@ -468,6 +500,7 @@ static int imessaging_post_self(struct imessaging_context *msg,
 	}
 
 	state->msg_ctx = msg;
+	state->busy_ref = NULL;
 	state->buf_len = buf_len;
 	memcpy(state->buf, buf, buf_len);
 
@@ -540,6 +573,30 @@ static void imessaging_dgm_recv(struct tevent_context *ev,
 	}
 }
 
+struct imessaging_context *imessaging_init(TALLOC_CTX *mem_ctx,
+					   struct loadparm_context *lp_ctx,
+					   struct server_id server_id,
+					   struct tevent_context *ev)
+{
+	if (ev == NULL) {
+		return NULL;
+	}
+
+	if (tevent_context_is_wrapper(ev)) {
+		/*
+		 * This is really a programmer error!
+		 *
+		 * The main/raw tevent context should
+		 * have been registered first!
+		 */
+		DBG_ERR("Should not be used with a wrapper tevent context\n");
+		errno = EINVAL;
+		return NULL;
+	}
+
+	return imessaging_init_internal(mem_ctx, lp_ctx, server_id, ev);
+}
+
 /*
    A hack, for the short term until we get 'client only' messaging in place
 */
@@ -556,7 +613,7 @@ struct imessaging_context *imessaging_client_init(TALLOC_CTX *mem_ctx,
 	/* This is because we are not in the s3 serverid database */
 	id.unique_id = SERVERID_UNIQUE_ID_NOT_TO_VERIFY;
 
-	return imessaging_init(mem_ctx, lp_ctx, id, ev);
+	return imessaging_init_internal(mem_ctx, lp_ctx, id, ev);
 }
 /*
   a list of registered irpc server functions

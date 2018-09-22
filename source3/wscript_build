@@ -106,6 +106,17 @@ bld.SAMBA3_SUBSYSTEM('TLDAP',
                          samba3util
                          ''')
 
+bld.SAMBA3_BINARY('test_tldap',
+                  source='lib/test_tldap.c',
+                  deps='''
+                       asn1util
+                       LIBTSOCKET
+                       samba3util
+                       smbconf
+                       cmocka
+                       ''',
+                  install=False)
+
 # libpdb.so should not expose internal symbols that are only usable
 # to the statically linked modules that are merged into libpdb.
 # Note that we always filter these symbols out in libpdb, even
@@ -141,7 +152,7 @@ bld.SAMBA3_LIBRARY('samba-passdb',
                                   ''',
                    abi_match=private_pdb_match,
                    abi_directory='passdb/ABI',
-                   vnum='0.27.0')
+                   vnum='0.27.1')
 
 bld.SAMBA3_SUBSYSTEM('pdb',
                    source='''
@@ -513,6 +524,7 @@ bld.SAMBA3_LIBRARY('ads',
                           libads/ldap_schema.c
                           libads/util.c
                           libads/ndr.c
+                          libads/net_ads_setspn.c
                           ''',
                    deps='''
                         cli-ldap-common
@@ -920,7 +932,6 @@ bld.SAMBA3_SUBSYSTEM('SLCACHE',
 bld.SAMBA3_SUBSYSTEM('DCUTIL',
                     source='''
                            libsmb/namequery_dc.c
-                           libsmb/trustdom_cache.c
                            libsmb/dsgetdcname.c
                            ''',
                     deps='''
@@ -1287,15 +1298,23 @@ bld.SAMBA3_BINARY('vlp',
                       ''',
                  install=False)
 
-bld.SAMBA3_PYTHON('pysmbd',
+
+for env in bld.gen_python_environments():
+    pyrpc_util = bld.pyembed_libname('pyrpc_util')
+    pytalloc_util = bld.pyembed_libname('pytalloc-util')
+    bld.SAMBA3_PYTHON('pysmbd',
                   source='smbd/pysmbd.c',
-                  deps='smbd_base pyrpc_util pytalloc-util',
+                  deps=' '.join(['smbd_base', pyrpc_util, pytalloc_util]),
                   realname='samba/samba3/smbd.so'
                   )
 
-bld.SAMBA3_PYTHON('pylibsmb',
+for env in bld.gen_python_environments():
+    pycredentials = 'pycredentials'
+    if bld.env['IS_EXTRA_PYTHON']:
+        pycredentials = 'extra-' + pycredentials
+    bld.SAMBA3_PYTHON('pylibsmb',
                   source='libsmb/pylibsmb.c',
-                  deps='smbclient samba-credentials pycredentials',
+                  deps='smbclient samba-credentials %s' % pycredentials,
                   realname='samba/samba3/libsmb_samba_internal.so'
                   )
 

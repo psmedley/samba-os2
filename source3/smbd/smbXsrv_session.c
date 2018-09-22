@@ -258,7 +258,9 @@ static NTSTATUS smbXsrv_session_table_init(struct smbXsrv_connection *conn,
 
 	table->global.db_ctx = smbXsrv_session_global_db_ctx;
 
-	subreq = messaging_read_send(table, client->ev_ctx, client->msg_ctx,
+	subreq = messaging_read_send(table,
+				     client->raw_ev_ctx,
+				     client->msg_ctx,
 				     MSG_SMBXSRV_SESSION_CLOSE);
 	if (subreq == NULL) {
 		TALLOC_FREE(table);
@@ -376,7 +378,7 @@ static void smbXsrv_session_close_loop(struct tevent_req *subreq)
 		goto next;
 	}
 
-	subreq = smb2srv_session_shutdown_send(session, client->ev_ctx,
+	subreq = smb2srv_session_shutdown_send(session, client->raw_ev_ctx,
 					       session, NULL);
 	if (subreq == NULL) {
 		status = NT_STATUS_NO_MEMORY;
@@ -396,7 +398,9 @@ static void smbXsrv_session_close_loop(struct tevent_req *subreq)
 next:
 	TALLOC_FREE(rec);
 
-	subreq = messaging_read_send(table, client->ev_ctx, client->msg_ctx,
+	subreq = messaging_read_send(table,
+				     client->raw_ev_ctx,
+				     client->msg_ctx,
 				     MSG_SMBXSRV_SESSION_CLOSE);
 	if (subreq == NULL) {
 		const char *r;
@@ -1106,7 +1110,7 @@ static void smb2srv_session_close_previous_check(struct tevent_req *req)
 		return;
 	}
 
-	status = messaging_send(conn->msg_ctx,
+	status = messaging_send(conn->client->msg_ctx,
 				global->channels[0].server_id,
 				MSG_SMBXSRV_SESSION_CLOSE, &blob);
 	TALLOC_FREE(state->db_rec);
@@ -1358,7 +1362,7 @@ NTSTATUS smbXsrv_session_add_channel(struct smbXsrv_session *session,
 	c = &global->channels[global->num_channels];
 	ZERO_STRUCTP(c);
 
-	c->server_id = messaging_server_id(conn->msg_ctx);
+	c->server_id = messaging_server_id(conn->client->msg_ctx);
 	c->local_address = tsocket_address_string(conn->local_address,
 						  global->channels);
 	if (c->local_address == NULL) {
@@ -1659,6 +1663,35 @@ NTSTATUS smbXsrv_session_logoff(struct smbXsrv_session *session)
 	session->client = NULL;
 	session->status = NT_STATUS_USER_SESSION_DELETED;
 
+	if (session->compat) {
+		/*
+		 * For SMB2 this is a bit redundant as files are also close
+		 * below via smb2srv_tcon_disconnect_all() -> ... ->
+		 * smbXsrv_tcon_disconnect() -> close_cnum() ->
+		 * file_close_conn().
+		 */
+		file_close_user(sconn, session->compat->vuid);
+	}
+
+	if (session->tcon_table != NULL) {
+		/*
+		 * Note: We only have a tcon_table for SMB2.
+		 */
+		status = smb2srv_tcon_disconnect_all(session);
+		if (!NT_STATUS_IS_OK(status)) {
+			DEBUG(0, ("smbXsrv_session_logoff(0x%08x): "
+				  "smb2srv_tcon_disconnect_all() failed: %s\n",
+				  session->global->session_global_id,
+				  nt_errstr(status)));
+			error = status;
+		}
+	}
+
+	if (session->compat) {
+		invalidate_vuid(sconn, session->compat->vuid);
+		session->compat = NULL;
+	}
+
 	global_rec = session->global->db_rec;
 	session->global->db_rec = NULL;
 	if (global_rec == NULL) {
@@ -1717,29 +1750,6 @@ NTSTATUS smbXsrv_session_logoff(struct smbXsrv_session *session)
 		TALLOC_FREE(local_rec);
 	}
 	session->db_rec = NULL;
-
-	if (session->compat) {
-		file_close_user(sconn, session->compat->vuid);
-	}
-
-	if (session->tcon_table != NULL) {
-		/*
-		 * Note: We only have a tcon_table for SMB2.
-		 */
-		status = smb2srv_tcon_disconnect_all(session);
-		if (!NT_STATUS_IS_OK(status)) {
-			DEBUG(0, ("smbXsrv_session_logoff(0x%08x): "
-				  "smb2srv_tcon_disconnect_all() failed: %s\n",
-				  session->global->session_global_id,
-				  nt_errstr(status)));
-			error = status;
-		}
-	}
-
-	if (session->compat) {
-		invalidate_vuid(sconn, session->compat->vuid);
-		session->compat = NULL;
-	}
 
 	return error;
 }
@@ -1918,7 +1928,7 @@ static int smbXsrv_session_global_traverse_fn(struct db_record *rec, void *data)
 
 	if (global_blob.version != SMBXSRV_VERSION_0) {
 		DEBUG(1,("Invalid record in smbXsrv_session_global.tdb:"
-			 "key '%s' unsuported version - %d\n",
+			 "key '%s' unsupported version - %d\n",
 			 hex_encode_talloc(frame, key.dptr, key.dsize),
 			 (int)global_blob.version));
 		goto done;

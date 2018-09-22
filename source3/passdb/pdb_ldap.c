@@ -1,7 +1,7 @@
 /* 
    Unix SMB/CIFS implementation.
    LDAP protocol helper functions for SAMBA
-   Copyright (C) Jean François Micouleau	1998
+   Copyright (C) Jean FranÃ§ois Micouleau	1998
    Copyright (C) Gerald Carter			2001-2003
    Copyright (C) Shahms King			2001
    Copyright (C) Andrew Bartlett		2002-2003
@@ -4103,7 +4103,8 @@ static NTSTATUS ldapsam_lookup_rids(struct pdb_methods *methods,
 	LDAPMessage *msg = NULL;
 	LDAPMessage *entry;
 	char *allsids = NULL;
-	int i, rc, num_mapped;
+	size_t i, num_mapped;
+	int rc;
 	NTSTATUS result = NT_STATUS_NO_MEMORY;
 	TALLOC_CTX *mem_ctx;
 	LDAP *ld;
@@ -6053,7 +6054,7 @@ static NTSTATUS ldapsam_set_primary_group(struct pdb_methods *my_methods,
 	char *filter;
 	char *escape_username;
 	char *gidstr;
-	const char *dn = NULL;
+	char *dn = NULL;
 	gid_t gid;
 	int rc;
 
@@ -6124,11 +6125,12 @@ static NTSTATUS ldapsam_set_primary_group(struct pdb_methods *my_methods,
 	smbldap_make_mod(priv2ld(ldap_state), entry, &mods, "gidNumber", gidstr);
 
 	if (mods == NULL) {
+		TALLOC_FREE(dn);
 		return NT_STATUS_OK;
 	}
 
 	rc = smbldap_modify(ldap_state->smbldap_state, dn, mods);
-
+	TALLOC_FREE(dn);
 	if (rc != LDAP_SUCCESS) {
 		DEBUG(0,("ldapsam_set_primary_group: failed to modify [%s] primary group to [%s]\n",
 			 pdb_get_username(sampass), gidstr));

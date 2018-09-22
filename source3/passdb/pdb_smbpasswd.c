@@ -63,7 +63,7 @@ struct smbpasswd_privates
 	unsigned char smbpwd[16];
 	unsigned char smbntpwd[16];
 
-	/* retrive-once info */
+	/* retrieve-once info */
 	const char *smbpasswd_file;
 };
 
@@ -1345,7 +1345,7 @@ static NTSTATUS smbpasswd_getsampwsid(struct pdb_methods *my_methods, struct sam
 	if (rid == DOMAIN_RID_GUEST) {
 		const char *guest_account = lp_guest_account();
 		if (!(guest_account && *guest_account)) {
-			DEBUG(1, ("Guest account not specfied!\n"));
+			DEBUG(1, ("Guest account not specified!\n"));
 			return nt_status;
 		}
 		return smbpasswd_getsampwnam(my_methods, sam_acct, guest_account);

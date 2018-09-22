@@ -23,6 +23,7 @@ from samba.compat import PY3
 
 text1 = "76f53846-a7c2-476a-ae2c-20e2b80d7b34"
 text2 = "344edffa-330a-4b39-b96e-2c34da52e8b1"
+text3 = "00112233-4455-6677-8899-aabbccddeeff"
 
 
 if PY3:
@@ -54,6 +55,40 @@ class GUIDTests(samba.tests.TestCase):
         self.assertTrue(guid1 == guid2)
         self.assertEquals(guid1, guid2)
         self.assertEquals(0, cmp(guid1, guid2))
+
+    def test_valid_formats(self):
+        fmts = [
+            "00112233-4455-6677-8899-aabbccddeeff",  # 36
+            b"00112233-4455-6677-8899-aabbccddeeff",  # 36 as bytes
+            "{00112233-4455-6677-8899-aabbccddeeff}",  # 38
+
+            "33221100554477668899aabbccddeeff",  # 32
+            b"33221100554477668899aabbccddeeff",  # 32 as bytes
+
+            # 16 as hex bytes
+            b"\x33\x22\x11\x00\x55\x44\x77\x66\x88\x99\xaa\xbb\xcc\xdd\xee\xff"
+        ]
+        for fmt in fmts:
+            guid = misc.GUID(fmt)
+            self.assertEquals(text3, str(guid))
+
+    def test_invalid_formats(self):
+        fmts = [
+            "00112233-4455-6677-8899-aabbccddee",  # 34
+            "{33221100554477668899aabbccddeeff}",
+            "33221100554477668899aabbccddee",  # 30
+            "\\x33\\x22\\x11\\x00\\x55\\x44\\x77\\x66\\x88\\x99\\xaa\\xbb\\xcc\\xdd\\xee\\xff",
+            r"\x33\x22\x11\x00\x55\x44\x77\x66\x88\x99\xaa\xbb\xcc\xdd\xee\xff",
+        ]
+        for fmt in fmts:
+            try:
+                misc.GUID(fmt)
+            except samba.NTSTATUSError:
+                # invalid formats should get this error
+                continue
+            else:
+                # otherwise, test fail
+                self.fail()
 
 
 class PolicyHandleTests(samba.tests.TestCase):

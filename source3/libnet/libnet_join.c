@@ -20,6 +20,7 @@
 
 #include "includes.h"
 #include "ads.h"
+#include "libsmb/namequery.h"
 #include "librpc/gen_ndr/ndr_libnet_join.h"
 #include "libnet/libnet_join.h"
 #include "libcli/auth/libcli_auth.h"
@@ -43,6 +44,7 @@
 #include "libcli/auth/netlogon_creds_cli.h"
 #include "auth/credentials/credentials.h"
 #include "krb5_env.h"
+#include "libsmb/dsgetdcname.h"
 
 /****************************************************************
 ****************************************************************/
@@ -2237,6 +2239,18 @@ static void libnet_join_add_dom_rids_to_builtins(struct dom_sid *domain_sid)
 			  "BUILTIN\\Administrators during join: %s\n",
 			  nt_errstr(status)));
 	}
+
+	/* Try adding dom guests to builtin\guests. Only log failures. */
+	status = create_builtin_guests(domain_sid);
+	if (NT_STATUS_EQUAL(status, NT_STATUS_PROTOCOL_UNREACHABLE)) {
+		DEBUG(10,("Unable to auto-add domain guests to "
+			  "BUILTIN\\Guests during join because "
+			  "winbindd must be running.\n"));
+	} else if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(5, ("Failed to auto-add domain guests to "
+			  "BUILTIN\\Guests during join: %s\n",
+			  nt_errstr(status)));
+	}
 }
 
 /****************************************************************
@@ -2418,7 +2432,8 @@ static WERROR libnet_join_check_config(TALLOC_CTX *mem_ctx,
 					valid_realm = true;
 					ignored_realm = true;
 				}
-				/* FALL THROUGH */
+
+				FALL_THROUGH;
 			case SEC_ADS:
 				valid_security = true;
 			}
@@ -2652,9 +2667,10 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 		DEBUG(5, ("failed to precreate account in ou %s: %s",
 			r->in.account_ou, ads_errstr(ads_status)));
 	}
+ rpc_join:
+
 #endif /* HAVE_ADS */
 
- rpc_join:
 	if ((r->in.join_flags & WKSSVC_JOIN_FLAGS_JOIN_UNSECURE) &&
 	    (r->in.join_flags & WKSSVC_JOIN_FLAGS_MACHINE_PWD_PASSED)) {
 		status = libnet_join_joindomain_rpc_unsecure(mem_ctx, r, cli);

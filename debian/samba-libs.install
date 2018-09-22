@@ -13,7 +13,7 @@ usr/lib/*/libsamba-credentials.so.0*
 usr/lib/*/libsamba-errors.so.*
 usr/lib/*/libsamba-hostconfig.so.*
 usr/lib/*/libsamba-passdb.so.0
-usr/lib/*/libsamba-passdb.so.0.27.0
+usr/lib/*/libsamba-passdb.so.0.27.1
 usr/lib/*/libsamba-policy.so.*
 usr/lib/*/libsamba-util.so.*
 usr/lib/*/libsamdb.so.*
@@ -107,6 +107,7 @@ usr/lib/*/samba/libsamba-security.so.*
 usr/lib/*/samba/libsamba-sockets.so.*
 usr/lib/*/samba/libsamba3-util.so.*
 usr/lib/*/samba/libsamdb-common.so.*
+usr/lib/*/samba/libscavenge-dns-records.so.0
 usr/lib/*/samba/libsecrets3.so.*
 usr/lib/*/samba/libserver-id-db.so.0
 usr/lib/*/samba/libserver-role.so.*

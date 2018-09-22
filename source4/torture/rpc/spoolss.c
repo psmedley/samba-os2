@@ -1402,6 +1402,8 @@ static bool test_SetPrinter_errors(struct torture_context *tctx,
 				/* ignored then */
 				break;
 			}
+
+			FALL_THROUGH;
 		case SPOOLSS_PRINTER_CONTROL_PAUSE: /* 1 */
 		case SPOOLSS_PRINTER_CONTROL_RESUME: /* 2 */
 		case SPOOLSS_PRINTER_CONTROL_PURGE: /* 3 */
@@ -5628,7 +5630,7 @@ static bool test_SetPrinterDataEx_matrix(struct torture_context *tctx,
 		REG_BINARY
 	};
 	const char *str = "abcdefghi";
-	int t, s;
+	size_t t, s;
 
 	for (t=0; t < ARRAY_SIZE(types); t++) {
 	for (s=0; s < strlen(str); s++) {

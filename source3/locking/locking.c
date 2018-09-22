@@ -425,7 +425,9 @@ void locking_close_file(struct messaging_context *msg_ctx,
  Print out a share mode.
 ********************************************************************/
 
-char *share_mode_str(TALLOC_CTX *ctx, int num, const struct share_mode_entry *e)
+char *share_mode_str(TALLOC_CTX *ctx, int num,
+		     const struct file_id *id,
+		     const struct share_mode_entry *e)
 {
 	struct server_id_buf tmp;
 
@@ -439,7 +441,7 @@ char *share_mode_str(TALLOC_CTX *ctx, int num, const struct share_mode_entry *e)
 		 e->access_mask, (unsigned long long)e->op_mid,
 		 e->op_type, (unsigned long long)e->share_file_id,
 		 (unsigned int)e->uid, (unsigned int)e->flags,
-		 file_id_string_tos(&e->id),
+		 file_id_string_tos(id),
 		 (unsigned int)e->name_hash);
 }
 
@@ -720,7 +722,7 @@ static void remove_share_mode_lease(struct share_mode_data *d,
 
 		status = leases_db_del(&client_guid,
 					&lease_key,
-					&e->id);
+					&d->id);
 
 		DEBUG(10, ("%s: leases_db_del returned %s\n", __func__,
 			   nt_errstr(status)));
@@ -845,7 +847,6 @@ bool set_share_mode(struct share_mode_lock *lck, struct files_struct *fsp,
 	e->lease = lease;
 	e->time.tv_sec = fsp->open_time.tv_sec;
 	e->time.tv_usec = fsp->open_time.tv_usec;
-	e->id = fsp->file_id;
 	e->share_file_id = fsp->fh->gen_id;
 	e->uid = (uint32_t)uid;
 	e->flags = (fsp->posix_flags & FSP_POSIX_FLAGS_OPEN) ?
@@ -860,7 +861,7 @@ struct share_mode_entry *find_share_mode_entry(
 {
 	struct share_mode_data *d = lck->data;
 	struct server_id pid;
-	int i;
+	uint32_t i;
 
 	pid = messaging_server_id(fsp->conn->sconn->msg_ctx);
 
@@ -871,9 +872,6 @@ struct share_mode_entry *find_share_mode_entry(
 			continue;
 		}
 		if (!serverid_equal(&pid, &e->pid)) {
-			continue;
-		}
-		if (!file_id_equal(&fsp->file_id, &e->id)) {
 			continue;
 		}
 		if (fsp->fh->gen_id != e->share_file_id) {

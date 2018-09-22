@@ -27,6 +27,9 @@
 #include "auth/auth.h"
 #include "dsdb/samdb/samdb.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_AUTH
+
 struct authenticate_ldap_simple_bind_state {
 	bool using_tls;
 	struct auth4_context *auth_context;
@@ -109,6 +112,7 @@ _PUBLIC_ struct tevent_req *authenticate_ldap_simple_bind_send(TALLOC_CTX *mem_c
 					     dn, &nt4_domain, &nt4_username);
 	if (!NT_STATUS_IS_OK(status)) {
 		log_authentication_event(msg, lp_ctx,
+					 &state->auth_context->start_time,
 					 user_info, status,
 					 NULL, NULL, NULL, NULL);
 	}

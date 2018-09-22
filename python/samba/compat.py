@@ -22,6 +22,30 @@ import sys
 PY3 = sys.version_info[0] == 3
 
 if PY3:
+    # compat functions
+    from  urllib.parse import quote as urllib_quote
+    from urllib.request import urlopen as urllib_urlopen
+
+    # compat types
     integer_types = int,
+    string_types = str
+    text_type = str
+    binary_type = bytes
+
+    # alias
+    import io
+    StringIO = io.StringIO
 else:
+    # compat functions
+    from urllib import quote as urllib_quote
+    from urllib import urlopen as urllib_urlopen
+
+    # compat types
     integer_types = (int, long)
+    string_types = basestring
+    text_type = unicode
+    binary_type = str
+
+    # alias
+    import StringIO
+    StringIO = StringIO.StringIO

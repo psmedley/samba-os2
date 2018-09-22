@@ -688,7 +688,7 @@ int dsdb_check_single_valued_link(const struct dsdb_attribute *attr,
   place. For example, the recyclebin feature is marked as enabled both
   on the CN=Partitions,CN=Configurration object and on the NTDS DN of
   each DC in the forest. It seems likely that it is the job of the KCC
-  to propogate between the two
+  to propagate between the two
  */
 int dsdb_check_optional_feature(struct ldb_module *module, struct GUID op_feature_guid, bool *feature_enabled)
 {
@@ -1050,7 +1050,9 @@ bool dsdb_module_am_system(struct ldb_module *module)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	struct auth_session_info *session_info
-		= talloc_get_type(ldb_get_opaque(ldb, "sessionInfo"), struct auth_session_info);
+		= talloc_get_type(
+			ldb_get_opaque(ldb, DSDB_SESSION_INFO),
+			struct auth_session_info);
 	return security_session_user_level(session_info, NULL) == SECURITY_SYSTEM;
 }
 
@@ -1058,7 +1060,9 @@ bool dsdb_module_am_administrator(struct ldb_module *module)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	struct auth_session_info *session_info
-		= talloc_get_type(ldb_get_opaque(ldb, "sessionInfo"), struct auth_session_info);
+		= talloc_get_type(
+			ldb_get_opaque(ldb, DSDB_SESSION_INFO),
+			struct auth_session_info);
 	return security_session_user_level(session_info, NULL) == SECURITY_ADMINISTRATOR;
 }
 

@@ -46,18 +46,6 @@ from samba.kcc.debug import DEBUG, DEBUG_FN, logger
 from samba.kcc import debug
 
 
-def sort_replica_by_dsa_guid(rep1, rep2):
-    """Helper to sort NCReplicas by their DSA guids
-
-    The guids need to be sorted in their NDR form.
-
-    :param rep1: An NC replica
-    :param rep2: Another replica
-    :return: -1, 0, or 1, indicating sort order.
-    """
-    return cmp(ndr_pack(rep1.rep_dsa_guid), ndr_pack(rep2.rep_dsa_guid))
-
-
 def sort_dsa_by_gc_and_guid(dsa1, dsa2):
     """Helper to sort DSAs by guid global catalog status
 
@@ -152,7 +140,8 @@ class KCC(object):
                                     self.samdb.get_config_basedn(),
                                     scope=ldb.SCOPE_SUBTREE,
                                     expression="(objectClass=interSiteTransport)")
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e2:
+            (enum, estr) = e2.args
             raise KCCError("Unable to find inter-site transports - (%s)" %
                            estr)
 
@@ -186,7 +175,8 @@ class KCC(object):
                                     self.samdb.get_config_basedn(),
                                     scope=ldb.SCOPE_SUBTREE,
                                     expression="(objectClass=siteLink)")
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e3:
+            (enum, estr) = e3.args
             raise KCCError("Unable to find inter-site siteLinks - (%s)" % estr)
 
         for msg in res:
@@ -249,7 +239,8 @@ class KCC(object):
                                     self.samdb.get_config_basedn(),
                                     scope=ldb.SCOPE_SUBTREE,
                                     expression="(objectClass=site)")
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e4:
+            (enum, estr) = e4.args
             raise KCCError("Unable to find sites - (%s)" % estr)
 
         for msg in res:
@@ -267,7 +258,8 @@ class KCC(object):
         try:
             res = self.samdb.search(base=dn, scope=ldb.SCOPE_BASE,
                                     attrs=["objectGUID"])
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e5:
+            (enum, estr) = e5.args
             DEBUG_FN("Search for dn '%s' [from %s] failed: %s. "
                      "This typically happens in --importldif mode due "
                      "to lack of module support." % (dn, dn_query, estr))
@@ -282,11 +274,12 @@ class KCC(object):
                                                      scope=ldb.SCOPE_BASE,
                                                      attrs=["dsServiceName"])
                 dn = ldb.Dn(self.samdb,
-                            service_name_res[0]["dsServiceName"][0])
+                            service_name_res[0]["dsServiceName"][0].decode('utf8'))
 
                 res = self.samdb.search(base=dn, scope=ldb.SCOPE_BASE,
                                         attrs=["objectGUID"])
-            except ldb.LdbError, (enum, estr):
+            except ldb.LdbError as e:
+                (enum, estr) = e.args
                 raise KCCError("Unable to find my nTDSDSA - (%s)" % estr)
 
         if len(res) != 1:
@@ -326,7 +319,8 @@ class KCC(object):
                                     self.samdb.get_config_basedn(),
                                     scope=ldb.SCOPE_SUBTREE,
                                     expression="(objectClass=crossRef)")
-        except ldb.LdbError, (enum, estr):
+        except ldb.LdbError as e6:
+            (enum, estr) = e6.args
             raise KCCError("Unable to find partitions - (%s)" % estr)
 
         for msg in res:
@@ -864,8 +858,6 @@ class KCC(object):
         :param current_dsa: optional DSA on whose behalf we are acting.
         :return: None
         """
-        count = 0
-
         ro = False
         if current_dsa is None:
             current_dsa = self.my_dsa
@@ -2188,7 +2180,7 @@ class KCC(object):
         # on the local DC
         r_list.append(l_of_x)
 
-        r_list.sort(sort_replica_by_dsa_guid)
+        r_list.sort(key=lambda rep: ndr_pack(rep.rep_dsa_guid))
         r_len = len(r_list)
 
         max_node_edges = self.intrasite_max_node_edges(r_len)
@@ -2479,7 +2471,8 @@ class KCC(object):
                 self.samdb = SamDB(url=dburl,
                                    session_info=system_session(),
                                    credentials=creds, lp=lp)
-            except ldb.LdbError, (num, msg):
+            except ldb.LdbError as e1:
+                (num, msg) = e1.args
                 raise KCCError("Unable to open sam database %s : %s" %
                                (dburl, msg))
 
@@ -2590,15 +2583,20 @@ class KCC(object):
                                dot_file_dir=self.dot_file_dir)
 
                 dot_edges = []
+                dot_colours = []
                 for link in self.sitelink_table.values():
+                    from hashlib import md5
+                    colour = '#' + md5(link.dnstr).hexdigest()[:6]
                     for a, b in itertools.combinations(link.site_list, 2):
-                        dot_edges.append((str(a), str(b)))
+                        dot_edges.append((a[1], b[1]))
+                        dot_colours.append(colour)
                 properties = ('connected',)
                 verify_and_dot('dsa_sitelink_initial', dot_edges,
                                directed=False,
                                label=self.my_dsa_dnstr, properties=properties,
                                debug=DEBUG, verify=self.verify,
-                               dot_file_dir=self.dot_file_dir)
+                               dot_file_dir=self.dot_file_dir,
+                               edge_colors=dot_colours)
 
             if forget_local_links:
                 for dsa in self.my_site.dsa_table.values():
@@ -2718,7 +2716,7 @@ class KCC(object):
         try:
             self.samdb = ldif_import_export.ldif_to_samdb(dburl, lp, ldif_file,
                                                           forced_local_dsa)
-        except ldif_import_export.LdifError, e:
+        except ldif_import_export.LdifError as e:
             logger.critical(e)
             return 1
         return 0
@@ -2743,7 +2741,7 @@ class KCC(object):
         try:
             ldif_import_export.samdb_to_ldif_file(self.samdb, dburl, lp, creds,
                                                   ldif_file)
-        except ldif_import_export.LdifError, e:
+        except ldif_import_export.LdifError as e:
             logger.critical(e)
             return 1
         return 0

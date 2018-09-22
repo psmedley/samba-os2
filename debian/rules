@@ -20,7 +20,7 @@ LDB_NEXT_VERSION = $(shell python -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = s
 # samba ships ldb modules, which are specific to the ldb version, so we need a
 # strict dependency on the upstream ldb version
 # this also mean samba needs a rebuild when the upstream ldb version changes
-LDB_DEPENDS = "libldb1 (<< $(LDB_EPOCH):1.4.0+really$(LDB_NEXT_VERSION)~), libldb1 (>> $(LDB_EPOCH):1.4.0+really$(LDB_VERSION)~)"
+LDB_DEPENDS = "libldb1 (<< $(LDB_EPOCH):$(LDB_NEXT_VERSION)~), libldb1 (>> $(LDB_EPOCH):$(LDB_VERSION)~)"
 export PYSHORT=$(shell pyversions -d)
 export PYTHON=$(shell which $(PYSHORT))
 export PYTHON_CONFIG="$(PYTHON)-config"
@@ -164,8 +164,8 @@ override_dh_auto_install:
 	echo "d /run/samba 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/samba.conf
 
 override_dh_installdocs-arch:
-	cp ctdb/config/events.d/README ctdb/README.eventscripts
-	cp ctdb/config/notify.d.README ctdb/README.notify.d
+	cp ctdb/config/events/README ctdb/README.eventscripts
+	cp ctdb/config/notification.README ctdb/README.notification
 	dh_installdocs
 ifeq ($(DEB_HOST_ARCH_OS), hurd)
 	dh_installdocs -pctdb debian/ctdb.README.hurd
@@ -190,7 +190,6 @@ ifneq (,$(filter winbind, $(shell dh_listpackages)))
 	dh_installinit -pwinbind
 endif
 ifneq (,$(filter ctdb, $(shell dh_listpackages)))
-	install -m644 ctdb/config/ctdbd.conf $(CURDIR)/debian/ctdb/etc/ctdb/ctdbd.conf
 	# Install /etc/init.d/ctdb
 	mkdir -p $(CURDIR)/debian/ctdb/etc/init.d
 	install -m755 ctdb/config/ctdb.init $(CURDIR)/debian/ctdb/etc/init.d/ctdb
@@ -257,4 +256,4 @@ override_dh_auto_clean:
 	rm -rf bin
 	rm -f .lock-wscript
 	rm -f ctdb/README.eventscripts
-	rm -f ctdb/README.notify.d
+	rm -f ctdb/README.notification

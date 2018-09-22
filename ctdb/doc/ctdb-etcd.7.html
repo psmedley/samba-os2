@@ -3,10 +3,11 @@
       will try to connect to an existing etcd cluster and grab a lock in that
       cluster to function as CTDB's recovery lock. Please see
       <span class="emphasis"><em>ctdb/doc/cluster_mutex_helper.txt</em></span> for details on
-      the mutex helper API. To use this, include the following line in your
-      CTDB config file:
+      the mutex helper API. To use this, include the following line in
+      the <code class="literal">[cluster]</code> section of
+      <span class="citerefentry"><span class="refentrytitle">ctdb.conf</span>(5)</span>:
     </p><pre class="screen">
-CTDB_RECOVERY_LOCK="!/usr/local/usr/libexec/ctdb/ctdb_etcd_lock"
+recovery lock = !/usr/local/usr/libexec/ctdb/ctdb_etcd_lock
     </pre><p>
       You can also pass "-v", "-vv", or "-vvv" to include verbose output in
       the CTDB log. Additional "v"s indicate increases in verbosity.
@@ -31,7 +32,7 @@ locks_dir = _ctdb  # where to store CTDB locks in etcd
       In addition, any keyword parameter that can be used to configure an
       etcd client may be specified and modified here. For more documentation
       on these parameters, see here: https://github.com/jplana/python-etcd/
-    </p></div><div class="refsect1"><a name="idm35"></a><h2>SEE ALSO</h2><p>
+    </p></div><div class="refsect1"><a name="idm39"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">ctdbd</span>(1)</span>,

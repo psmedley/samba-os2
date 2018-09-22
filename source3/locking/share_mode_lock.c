@@ -673,7 +673,7 @@ static void fetch_share_mode_done(struct tevent_req *subreq);
 struct fetch_share_mode_state {
 	struct file_id id;
 	TDB_DATA key;
-	struct share_mode_lock *lck;
+	struct fetch_share_mode_unlocked_state parser_state;
 	enum dbwrap_req_state req_state;
 };
 
@@ -721,17 +721,14 @@ struct tevent_req *fetch_share_mode_send(TALLOC_CTX *mem_ctx,
 
 	state->id = id;
 	state->key = locking_key(&state->id);
-	state->lck = talloc_zero(state, struct share_mode_lock);
-	if (tevent_req_nomem(state->lck, req)) {
-		return tevent_req_post(req, ev);
-	}
+	state->parser_state.mem_ctx = state;
 
 	subreq = dbwrap_parse_record_send(state,
 					  ev,
 					  lock_db,
 					  state->key,
 					  fetch_share_mode_unlocked_parser,
-					  state->lck,
+					  &state->parser_state,
 					  &state->req_state);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
@@ -775,12 +772,12 @@ NTSTATUS fetch_share_mode_recv(struct tevent_req *req,
 		return status;
 	}
 
-	if (state->lck->data == NULL) {
+	if (state->parser_state.lck->data == NULL) {
 		tevent_req_received(req);
 		return NT_STATUS_NOT_FOUND;
 	}
 
-	lck = talloc_move(mem_ctx, &state->lck);
+	lck = talloc_move(mem_ctx, &state->parser_state.lck);
 
 	if (DEBUGLEVEL >= 10) {
 		DBG_DEBUG("share_mode_data:\n");
@@ -879,6 +876,7 @@ int share_mode_forall(int (*fn)(struct file_id fid,
 
 struct share_entry_forall_state {
 	int (*fn)(const struct share_mode_entry *e,
+		  const struct file_id *id,
 		  const char *service_path,
 		  const char *base_name,
 		  const char *stream_name,
@@ -897,6 +895,7 @@ static int share_entry_traverse_fn(struct file_id fid,
 		int ret;
 
 		ret = state->fn(&data->share_modes[i],
+				&data->id,
 				data->servicepath,
 				data->base_name,
 				data->stream_name,
@@ -915,6 +914,7 @@ static int share_entry_traverse_fn(struct file_id fid,
 ********************************************************************/
 
 int share_entry_forall(int (*fn)(const struct share_mode_entry *,
+				 const struct file_id *id,
 				 const char *, const char *,
 				 const char *, void *),
 		       void *private_data)

@@ -55,7 +55,7 @@ def set_options(opt):
     opt.SAMBA3_ADD_OPTION('dmapi', default=None) # None means autodetection
     opt.SAMBA3_ADD_OPTION('fam', default=None) # None means autodetection
     opt.SAMBA3_ADD_OPTION('profiling-data', default=False)
-    opt.SAMBA3_ADD_OPTION('libarchive', default=None)
+    opt.SAMBA3_ADD_OPTION('libarchive', default=True)
 
     opt.SAMBA3_ADD_OPTION('cluster-support', default=False)
 
@@ -218,12 +218,20 @@ main() {
     # None means autodetect, True/False means enable/disable
     conf.SET_TARGET_TYPE('archive', 'EMPTY')
     if Options.options.with_libarchive is not False:
-        libarchive_mandatory = Options.options.with_libarchive == True
         Logs.info("Checking for libarchive existence")
         if conf.CHECK_HEADERS('archive.h') and conf.CHECK_LIB('archive', shlib=True):
             conf.CHECK_FUNCS_IN('archive_read_support_filter_all archive_read_free', 'archive')
-        elif libarchive_mandatory:
-            conf.fatal('libarchive support requested, but not found')
+        else:
+            conf.fatal("libarchive support not found. "
+                       "Try installing libarchive-dev or libarchive-devel. "
+                       "Otherwise, use --without-libarchive to "
+                       "build without libarchive support. "
+                       "libarchive support is required for the smbclient "
+                       "tar-file mode")
+    elif conf.CONFIG_GET('ENABLE_SELFTEST'):
+        raise Utils.WafError('libarchive library required for '
+                             '--enable-selftest')
+
 
     # check for DMAPI libs
     if Options.options.with_dmapi == False:
@@ -386,7 +394,7 @@ DNSServiceRegister _dup __dup _dup2 __dup2 endmntent execl
 _facl __facl _fchdir
 __fchdir fchmod fchown _fcntl __fcntl fcvt fcvtl fdatasync
 _fork __fork fseeko
-fsetxattr _fstat __fstat fsync
+_fstat __fstat fsync
 futimens futimes __fxstat getauthuid
 getcwd _getcwd __getcwd getdents __getdents getdirentries
 getgrent getgrnam getgrouplist getgrset getmntent getpagesize
@@ -592,28 +600,7 @@ msg.msg_accrightslen = sizeof(fd);
                                 headers='unistd.h sys/types.h dirent.h',
                                 define='HAVE_DIRENT_D_OFF')
 
-    conf.CHECK_FUNCS('setnetgrent getnetgrent endnetgrent')
-    if conf.CHECK_CFLAGS('-Werror-implicit-function-declaration'):
-        netgrent_cflags = '-Werror-implicit-function-declaration'
-    else:
-        netgrent_cflags = ''
-    conf.CHECK_CODE('setnetgrent("foo")', 'HAVE_SETNETGRENT_PROTOTYPE',
-                    msg="Checking for setnetgrent prototype",
-                    headers='netdb.h netgroup.h',
-                    cflags=netgrent_cflags)
-    conf.CHECK_CODE('getnetgrent', 'HAVE_GETNETGRENT_PROTOTYPE',
-                    msg="Checking for getnetgrent prototype",
-                    headers='netdb.h netgroup.h',
-                    cflags=netgrent_cflags)
-    conf.CHECK_CODE('endnetgrent', 'HAVE_ENDNETGRENT_PROTOTYPE',
-                    msg="Checking for endnetgrent prototype",
-                    headers='netdb.h netgroup.h',
-                    cflags=netgrent_cflags)
-
-    if (conf.CONFIG_SET('HAVE_YP_GET_DEFAULT_DOMAIN') and
-        conf.CONFIG_SET('HAVE_SETNETGRENT') and
-        conf.CONFIG_SET('HAVE_ENDNETGRENT') and
-        conf.CONFIG_SET('HAVE_GETNETGRENT')):
+    if (conf.CONFIG_SET('HAVE_YP_GET_DEFAULT_DOMAIN')):
            conf.DEFINE('HAVE_NETGROUP', '1')
 
     # Look for CUPS
@@ -1637,7 +1624,7 @@ main() {
         if not conf.env['FLEX']:
             conf.fatal("Spotlight support requested but flex missing")
         conf.CHECK_COMMAND('%s --version' % conf.env['FLEX'], msg='Using flex version', define=None, on_target=False)
-        versions = ['1.0', '0.16', '0.14']
+        versions = ['2.0', '1.0', '0.16', '0.14']
         for version in versions:
             testlib = 'tracker-sparql-' + version
             if conf.CHECK_CFG(package=testlib,
@@ -1688,6 +1675,7 @@ main() {
     if Options.options.enable_selftest or Options.options.developer:
         default_shared_modules.extend(TO_LIST('vfs_fake_acls vfs_nfs4acl_xattr'))
         default_shared_modules.extend(TO_LIST('vfs_error_inject'))
+        default_shared_modules.extend(TO_LIST('vfs_delay_inject'))
 
     if conf.CONFIG_SET('AD_DC_BUILD_IS_ENABLED'):
         default_static_modules.extend(TO_LIST('pdb_samba_dsdb auth_samba4 vfs_dfs_samba4'))

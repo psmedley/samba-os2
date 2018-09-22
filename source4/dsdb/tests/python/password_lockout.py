@@ -7,6 +7,7 @@
 # Copyright Stefan Metzmacher 2014
 #
 
+from __future__ import print_function
 import optparse
 import sys
 import base64
@@ -32,6 +33,10 @@ import samba.tests
 from samba.tests import delete_force
 from samba.dcerpc import security, samr
 from samba.ndr import ndr_unpack
+from samba.tests.pso import PasswordSettings
+from samba.net import Net
+from samba import NTSTATUSError, ntstatus
+import ctypes
 
 parser = optparse.OptionParser("password_lockout.py [options] <host>")
 sambaopts = options.SambaOptions(parser)
@@ -120,6 +125,11 @@ userAccountControl: %d
 
     def _test_userPassword_lockout_with_clear_change(self, creds, other_ldb, method,
                                                      initial_lastlogon_relation=None):
+        """
+        Tests user lockout behaviour when we try to change the user's password
+        but specify an incorrect old-password. The method parameter specifies
+        how to reset the locked out account (e.g. by resetting lockoutTime)
+        """
         # Notice: This works only against Windows if "dSHeuristics" has been set
         # properly
         username = creds.get_username()
@@ -130,11 +140,11 @@ userAccountControl: %d
         if use_kerberos == MUST_USE_KERBEROS:
             logoncount_relation = 'greater'
             lastlogon_relation = 'greater'
-            print "Performs a password cleartext change operation on 'userPassword' using Kerberos"
+            print("Performs a password cleartext change operation on 'userPassword' using Kerberos")
         else:
             logoncount_relation = 'equal'
             lastlogon_relation = 'equal'
-            print "Performs a password cleartext change operation on 'userPassword' using NTLMSSP"
+            print("Performs a password cleartext change operation on 'userPassword' using NTLMSSP")
 
         if initial_lastlogon_relation is not None:
             lastlogon_relation = initial_lastlogon_relation
@@ -169,7 +179,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e:
+            (num, msg) = e.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -215,7 +226,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e1:
+            (num, msg) = e1.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -230,7 +242,7 @@ userPassword: thatsAcomplPASS2
                                   msDSUserAccountControlComputed=0)
         badPasswordTime = int(res[0]["badPasswordTime"][0])
 
-        print "two failed password change"
+        print("two failed password change")
 
         # Wrong old password
         try:
@@ -243,7 +255,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e2:
+            (num, msg) = e2.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -271,7 +284,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e3:
+            (num, msg) = e3.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000775' in msg, msg)
 
@@ -297,7 +311,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e4:
+            (num, msg) = e4.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000775' in msg, msg)
 
@@ -323,7 +338,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2x
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e5:
+            (num, msg) = e5.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000775' in msg, msg)
 
@@ -368,7 +384,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2x
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e6:
+            (num, msg) = e6.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000775' in msg, msg)
 
@@ -410,12 +427,13 @@ userPassword: thatsAcomplPASS2x
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')) + """
+unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2x\"".encode('utf-16-le')) + """
+unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2x\"".encode('utf-16-le')).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e7:
+            (num, msg) = e7.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000775' in msg, msg)
 
@@ -450,9 +468,9 @@ unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2x\"".encode('utf-16-le'))
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')) + """
+unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2x\"".encode('utf-16-le')) + """
+unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2x\"".encode('utf-16-le')).decode('utf8') + """
 """)
         userpass = "thatsAcomplPASS2x"
         creds.set_password(userpass)
@@ -479,7 +497,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2XYZ
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e8:
+            (num, msg) = e8.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -506,7 +525,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2XYZ
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e9:
+            (num, msg) = e9.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -535,6 +555,12 @@ userPassword: thatsAcomplPASS2XYZ
                                     dsdb.UF_NORMAL_ACCOUNT,
                                   msDSUserAccountControlComputed=0)
 
+    # The following test lockout behaviour when modifying a user's password
+    # and specifying an invalid old password. There are variants for both
+    # NTLM and kerberos user authentication. As well as that, there are 3 ways
+    # to reset the locked out account: by clearing the lockout bit for
+    # userAccountControl (via LDAP), resetting it via SAMR, and by resetting
+    # the lockoutTime.
     def test_userPassword_lockout_with_clear_change_krb5_ldap_userAccountControl(self):
         self._test_userPassword_lockout_with_clear_change(self.lockout1krb5_creds,
                                                           self.lockout2krb5_ldb,
@@ -568,9 +594,48 @@ userPassword: thatsAcomplPASS2XYZ
                                                           "samr",
                                                           initial_lastlogon_relation='greater')
 
+    # For PSOs, just test a selection of the above combinations
+    def test_pso_userPassword_lockout_with_clear_change_krb5_ldap_userAccountControl(self):
+        self.use_pso_lockout_settings(self.lockout1krb5_creds)
+        self._test_userPassword_lockout_with_clear_change(self.lockout1krb5_creds,
+                                                          self.lockout2krb5_ldb,
+                                                          "ldap_userAccountControl")
+
+    def test_pso_userPassword_lockout_with_clear_change_ntlm_ldap_lockoutTime(self):
+        self.use_pso_lockout_settings(self.lockout1ntlm_creds)
+        self._test_userPassword_lockout_with_clear_change(self.lockout1ntlm_creds,
+                                                          self.lockout2ntlm_ldb,
+                                                          "ldap_lockoutTime",
+                                                          initial_lastlogon_relation='greater')
+
+    def test_pso_userPassword_lockout_with_clear_change_ntlm_samr(self):
+        self.use_pso_lockout_settings(self.lockout1ntlm_creds)
+        self._test_userPassword_lockout_with_clear_change(self.lockout1ntlm_creds,
+                                                          self.lockout2ntlm_ldb,
+                                                          "samr",
+                                                          initial_lastlogon_relation='greater')
+
+    def use_pso_lockout_settings(self, creds):
+        # create a PSO with the lockout settings the test cases normally expect
+        pso = PasswordSettings("lockout-PSO", self.ldb, lockout_attempts=3,
+                               lockout_duration=3)
+        self.addCleanup(self.ldb.delete, pso.dn)
+
+        # the test cases should sleep() for the PSO's lockoutDuration/obsvWindow
+        self.account_lockout_duration = 3
+        self.lockout_observation_window = 3
+
+        userdn = "cn=%s,cn=users,%s" % (creds.get_username(), self.base_dn)
+        pso.apply_to(userdn)
+
+        # update the global lockout settings to be wildly different to what
+        # the test cases normally expect
+        self.update_lockout_settings(threshold=10, duration=600,
+                                     observation_window=600)
+
     def _test_unicodePwd_lockout_with_clear_change(self, creds, other_ldb,
                                                    initial_logoncount_relation=None):
-        print "Performs a password cleartext change operation on 'unicodePwd'"
+        print("Performs a password cleartext change operation on 'unicodePwd'")
         username = creds.get_username()
         userpass = creds.get_password()
         userdn = "cn=%s,cn=users,%s" % (username, self.base_dn)
@@ -603,12 +668,13 @@ userPassword: thatsAcomplPASS2XYZ
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS1x\"".encode('utf-16-le')) + """
+unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS1x\"".encode('utf-16-le')).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')) + """
+unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e10:
+            (num, msg) = e10.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -634,9 +700,9 @@ unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')) 
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(old_utf16) + """
+unicodePwd:: """ + base64.b64encode(old_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
 
         res = self._check_account(userdn,
@@ -655,12 +721,13 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(old_utf16) + """
+unicodePwd:: """ + base64.b64encode(old_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e11:
+            (num, msg) = e11.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -690,7 +757,7 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
                                     dsdb.UF_NORMAL_ACCOUNT,
                                   msDSUserAccountControlComputed=0)
 
-        print "two failed password change"
+        print("two failed password change")
 
         # Wrong old password
         try:
@@ -698,12 +765,13 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(invalid_utf16) + """
+unicodePwd:: """ + base64.b64encode(invalid_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e12:
+            (num, msg) = e12.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -727,12 +795,13 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(invalid_utf16) + """
+unicodePwd:: """ + base64.b64encode(invalid_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e13:
+            (num, msg) = e13.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000775' in msg, msg)
 
@@ -753,12 +822,13 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(invalid_utf16) + """
+unicodePwd:: """ + base64.b64encode(invalid_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e14:
+            (num, msg) = e14.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000775' in msg, msg)
 
@@ -779,12 +849,13 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(invalid_utf16) + """
+unicodePwd:: """ + base64.b64encode(invalid_utf16).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e15:
+            (num, msg) = e15.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000775' in msg, msg)
 
@@ -824,9 +895,9 @@ unicodePwd:: """ + base64.b64encode(invalid_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(old_utf16) + """
+unicodePwd:: """ + base64.b64encode(old_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
 
         res = self._check_account(userdn,
@@ -846,12 +917,13 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(invalid_utf16) + """
+unicodePwd:: """ + base64.b64encode(invalid_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e16:
+            (num, msg) = e16.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -873,12 +945,13 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(invalid_utf16) + """
+unicodePwd:: """ + base64.b64encode(invalid_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e17:
+            (num, msg) = e17.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -915,12 +988,13 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
 dn: """ + userdn + """
 changetype: modify
 delete: unicodePwd
-unicodePwd:: """ + base64.b64encode(invalid_utf16) + """
+unicodePwd:: """ + base64.b64encode(invalid_utf16).decode('utf8') + """
 add: unicodePwd
-unicodePwd:: """ + base64.b64encode(new_utf16) + """
+unicodePwd:: """ + base64.b64encode(new_utf16).decode('utf8') + """
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e18:
+            (num, msg) = e18.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             self.assertTrue('00000056' in msg, msg)
 
@@ -979,6 +1053,17 @@ unicodePwd:: """ + base64.b64encode(new_utf16) + """
         self._test_login_lockout(self.lockout1krb5_creds)
 
     def test_login_lockout_ntlm(self):
+        self._test_login_lockout(self.lockout1ntlm_creds)
+
+    # Repeat the login lockout tests using PSOs
+    def test_pso_login_lockout_krb5(self):
+        """Check the PSO lockout settings get applied to the user correctly"""
+        self.use_pso_lockout_settings(self.lockout1krb5_creds)
+        self._test_login_lockout(self.lockout1krb5_creds)
+
+    def test_pso_login_lockout_ntlm(self):
+        """Check the PSO lockout settings get applied to the user correctly"""
+        self.use_pso_lockout_settings(self.lockout1ntlm_creds)
         self._test_login_lockout(self.lockout1ntlm_creds)
 
     def test_multiple_logon_krb5(self):
@@ -1053,7 +1138,8 @@ add: userPassword
 userPassword: thatsAcomplPASS2
 """)
             self.fail()
-        except LdbError, (num, msg):
+        except LdbError as e19:
+            (num, msg) = e19.args
             self.assertEquals(num, ERR_CONSTRAINT_VIOLATION)
             # Windows (2008 at least) seems to have some small bug here: it
             # returns "0000056A" on longer (always wrong) previous passwords.
@@ -1200,6 +1286,120 @@ userPassword: """ + userpass + """
                                               kerberos_state=DONT_USE_KERBEROS)
         self._testing_add_user(lockout4ntlm_creds,
                                lockOutObservationWindow=self.lockout_observation_window)
+
+    def _test_samr_password_change(self, creds, other_creds, lockout_threshold=3):
+        """Tests user lockout by using bad password in SAMR password_change"""
+
+        # create a connection for SAMR using another user's credentials
+        lp = self.get_loadparm()
+        net = Net(other_creds, lp, server=self.host)
+
+        # work out the initial account values for this user
+        username = creds.get_username()
+        userdn = "cn=%s,cn=users,%s" % (username, self.base_dn)
+        res = self._check_account(userdn,
+                                  badPwdCount=0,
+                                  badPasswordTime=("greater", 0),
+                                  badPwdCountOnly=True)
+        badPasswordTime = int(res[0]["badPasswordTime"][0])
+        logonCount = int(res[0]["logonCount"][0])
+        lastLogon = int(res[0]["lastLogon"][0])
+        lastLogonTimestamp = int(res[0]["lastLogonTimestamp"][0])
+
+        # prove we can change the user password (using the correct password)
+        new_password = "thatsAcomplPASS2"
+        net.change_password(newpassword=new_password.encode('utf-8'),
+                            username=username,
+                            oldpassword=creds.get_password())
+        creds.set_password(new_password)
+
+        # try entering 'x' many bad passwords in a row to lock the user out
+        new_password = "thatsAcomplPASS3"
+        for i in range(lockout_threshold):
+            badPwdCount = i + 1
+            try:
+                print("Trying bad password, attempt #%u" % badPwdCount)
+                net.change_password(newpassword=new_password.encode('utf-8'),
+                                    username=creds.get_username(),
+                                    oldpassword="bad-password")
+                self.fail("Invalid SAMR change_password accepted")
+            except NTSTATUSError as e:
+                enum = ctypes.c_uint32(e[0]).value
+                self.assertEquals(enum, ntstatus.NT_STATUS_WRONG_PASSWORD)
+
+            # check the status of the account is updated after each bad attempt
+            account_flags = 0
+            lockoutTime = None
+            if badPwdCount >= lockout_threshold:
+                account_flags = dsdb.UF_LOCKOUT
+                lockoutTime = ("greater", badPasswordTime)
+
+            res = self._check_account(userdn,
+                                      badPwdCount=badPwdCount,
+                                      badPasswordTime=("greater", badPasswordTime),
+                                      logonCount=logonCount,
+                                      lastLogon=lastLogon,
+                                      lastLogonTimestamp=lastLogonTimestamp,
+                                      lockoutTime=lockoutTime,
+                                      userAccountControl=dsdb.UF_NORMAL_ACCOUNT,
+                                      msDSUserAccountControlComputed=account_flags)
+            badPasswordTime = int(res[0]["badPasswordTime"][0])
+
+        # the user is now locked out
+        lockoutTime = int(res[0]["lockoutTime"][0])
+
+        # check the user remains locked out regardless of whether they use a
+        # good or a bad password now
+        for password in (creds.get_password(), "bad-password"):
+            try:
+                print("Trying password %s" % password)
+                net.change_password(newpassword=new_password.encode('utf-8'),
+                                    username=creds.get_username(),
+                                    oldpassword=password)
+                self.fail("Invalid SAMR change_password accepted")
+            except NTSTATUSError as e:
+                enum = ctypes.c_uint32(e[0]).value
+                self.assertEquals(enum, ntstatus.NT_STATUS_ACCOUNT_LOCKED_OUT)
+
+            res = self._check_account(userdn,
+                                      badPwdCount=lockout_threshold,
+                                      badPasswordTime=badPasswordTime,
+                                      logonCount=logonCount,
+                                      lastLogon=lastLogon,
+                                      lastLogonTimestamp=lastLogonTimestamp,
+                                      lockoutTime=lockoutTime,
+                                      userAccountControl=dsdb.UF_NORMAL_ACCOUNT,
+                                      msDSUserAccountControlComputed=dsdb.UF_LOCKOUT)
+
+        # reset the user account lockout
+        self._reset_samr(res)
+
+        # check bad password counts are reset
+        res = self._check_account(userdn,
+                                  badPwdCount=0,
+                                  badPasswordTime=badPasswordTime,
+                                  logonCount=logonCount,
+                                  lockoutTime=0,
+                                  lastLogon=lastLogon,
+                                  lastLogonTimestamp=lastLogonTimestamp,
+                                  userAccountControl=dsdb.UF_NORMAL_ACCOUNT,
+                                  msDSUserAccountControlComputed=0)
+
+        # check we can change the user password successfully now
+        net.change_password(newpassword=new_password.encode('utf-8'),
+                            username=username,
+                            oldpassword=creds.get_password())
+        creds.set_password(new_password)
+
+    def test_samr_change_password(self):
+        self._test_samr_password_change(self.lockout1ntlm_creds,
+                                        other_creds=self.lockout2ntlm_creds)
+
+    # same as above, but use a PSO to enforce the lockout
+    def test_pso_samr_change_password(self):
+        self.use_pso_lockout_settings(self.lockout1ntlm_creds)
+        self._test_samr_password_change(self.lockout1ntlm_creds,
+                                        other_creds=self.lockout2ntlm_creds)
 
 host_url = "ldap://%s" % host
 

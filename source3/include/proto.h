@@ -675,18 +675,6 @@ NTSTATUS check_negative_conn_cache( const char *domain, const char *server);
 void add_failed_connection_entry(const char *domain, const char *server, NTSTATUS result) ;
 void flush_negative_conn_cache_for_domain(const char *domain);
 
-/* The following definitions come from libsmb/dsgetdcname.c  */
-
-struct netr_DsRGetDCNameInfo;
-
-NTSTATUS dsgetdcname(TALLOC_CTX *mem_ctx,
-		     struct messaging_context *msg_ctx,
-		     const char *domain_name,
-		     const struct GUID *domain_guid,
-		     const char *site_name,
-		     uint32_t flags,
-		     struct netr_DsRGetDCNameInfo **info);
-
 /* The following definitions come from libsmb/errormap.c  */
 
 NTSTATUS dos_to_ntstatus(uint8_t eclass, uint32_t ecode);
@@ -712,96 +700,6 @@ bool namecache_status_fetch(const char *keyname,
 				const struct sockaddr_storage *keyip,
 				char *srvname_out);
 
-/* The following definitions come from libsmb/namequery.c  */
-
-bool saf_store( const char *domain, const char *servername );
-bool saf_join_store( const char *domain, const char *servername );
-bool saf_delete( const char *domain );
-char *saf_fetch(TALLOC_CTX *mem_ctx, const char *domain );
-struct tevent_req *node_status_query_send(TALLOC_CTX *mem_ctx,
-					  struct tevent_context *ev,
-					  struct nmb_name *name,
-					  const struct sockaddr_storage *addr);
-NTSTATUS node_status_query_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
-				struct node_status **pnode_status,
-				int *pnum_names,
-				struct node_status_extra *extra);
-NTSTATUS node_status_query(TALLOC_CTX *mem_ctx, struct nmb_name *name,
-			   const struct sockaddr_storage *addr,
-			   struct node_status **pnode_status,
-			   int *pnum_names,
-			   struct node_status_extra *extra);
-bool name_status_find(const char *q_name,
-			int q_type,
-			int type,
-			const struct sockaddr_storage *to_ss,
-			fstring name);
-int remove_duplicate_addrs2(struct ip_service *iplist, int count );
-struct tevent_req *name_query_send(TALLOC_CTX *mem_ctx,
-				   struct tevent_context *ev,
-				   const char *name, int name_type,
-				   bool bcast, bool recurse,
-				   const struct sockaddr_storage *addr);
-NTSTATUS name_query_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
-			 struct sockaddr_storage **addrs, int *num_addrs,
-			 uint8_t *flags);
-NTSTATUS name_query(const char *name, int name_type,
-		    bool bcast, bool recurse,
-		    const struct sockaddr_storage *to_ss,
-		    TALLOC_CTX *mem_ctx,
-		    struct sockaddr_storage **addrs,
-		    int *num_addrs, uint8_t *flags);
-struct tevent_req *name_resolve_bcast_send(TALLOC_CTX *mem_ctx,
-					   struct tevent_context *ev,
-					   const char *name,
-					   int name_type);
-NTSTATUS name_resolve_bcast_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
-				 struct sockaddr_storage **addrs,
-				 int *num_addrs);
-NTSTATUS name_resolve_bcast(const char *name,
-			int name_type,
-			TALLOC_CTX *mem_ctx,
-			struct sockaddr_storage **return_iplist,
-			int *return_count);
-struct tevent_req *resolve_wins_send(TALLOC_CTX *mem_ctx,
-				     struct tevent_context *ev,
-				     const char *name,
-				     int name_type);
-NTSTATUS resolve_wins_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
-			   struct sockaddr_storage **addrs,
-			   int *num_addrs, uint8_t *flags);
-NTSTATUS resolve_wins(const char *name,
-		int name_type,
-		TALLOC_CTX *mem_ctx,
-		struct sockaddr_storage **return_iplist,
-		int *return_count);
-NTSTATUS internal_resolve_name(const char *name,
-			        int name_type,
-				const char *sitename,
-				struct ip_service **return_iplist,
-				int *return_count,
-				const char **resolve_order);
-bool resolve_name(const char *name,
-		struct sockaddr_storage *return_ss,
-		int name_type,
-		bool prefer_ipv4);
-NTSTATUS resolve_name_list(TALLOC_CTX *ctx,
-		const char *name,
-		int name_type,
-		struct sockaddr_storage **return_ss_arr,
-		unsigned int *p_num_entries);
-bool find_master_ip(const char *group, struct sockaddr_storage *master_ss);
-bool get_pdc_ip(const char *domain, struct sockaddr_storage *pss);
-NTSTATUS get_sorted_dc_list( const char *domain,
-			const char *sitename,
-			struct ip_service **ip_list,
-			int *count,
-			bool ads_only );
-NTSTATUS get_kdc_list( const char *realm,
-			const char *sitename,
-			struct ip_service **ip_list,
-			int *count);
-
 /* The following definitions come from libsmb/namequery_dc.c  */
 
 bool get_dc_name(const char *domain,
@@ -815,13 +713,6 @@ const char *smb_dos_err_name(uint8_t e_class, uint16_t num);
 const char *get_dos_error_msg(WERROR result);
 const char *smb_dos_err_class(uint8_t e_class);
 WERROR map_werror_from_unix(int error);
-
-/* The following definitions come from libsmb/trustdom_cache.c  */
-
-bool trustdom_cache_store(const char *name, const struct dom_sid *sid);
-bool trustdom_cache_fetch(const char* name, struct dom_sid* sid);
-void trustdom_cache_flush(void);
-void update_trustdom_cache( void );
 
 /* The following definitions come from libsmb/trusts_util.c  */
 
