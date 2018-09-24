@@ -1,3 +1,9 @@
+samba (2:4.9.1+dfsg-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 24 Sep 2018 13:33:21 +0200
+
 samba (2:4.9.0+dfsg-1) experimental; urgency=medium
 
   * Upload to experimental

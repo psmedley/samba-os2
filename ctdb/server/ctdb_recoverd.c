@@ -239,6 +239,8 @@ struct ctdb_banning_state {
 	struct timeval last_reported_time;
 };
 
+struct ctdb_recovery_lock_handle;
+
 /*
   private state of recovery daemon
  */
@@ -260,7 +262,7 @@ struct ctdb_recoverd {
 	uint32_t *force_rebalance_nodes;
 	struct ctdb_node_capabilities *caps;
 	bool frozen_on_inactive;
-	struct ctdb_cluster_mutex_handle *recovery_lock_handle;
+	struct ctdb_recovery_lock_handle *recovery_lock_handle;
 };
 
 #define CONTROL_TIMEOUT() timeval_current_ofs(ctdb->tunable.recover_timeout, 0)
@@ -881,18 +883,19 @@ static bool ctdb_recovery_have_lock(struct ctdb_recoverd *rec)
 	return (rec->recovery_lock_handle != NULL);
 }
 
-struct hold_reclock_state {
+struct ctdb_recovery_lock_handle {
 	bool done;
 	bool locked;
 	double latency;
+	struct ctdb_cluster_mutex_handle *h;
 };
 
 static void take_reclock_handler(char status,
 				 double latency,
 				 void *private_data)
 {
-	struct hold_reclock_state *s =
-		(struct hold_reclock_state *) private_data;
+	struct ctdb_recovery_lock_handle *s =
+		(struct ctdb_recovery_lock_handle *) private_data;
 
 	switch (status) {
 	case '0':
@@ -932,41 +935,68 @@ static bool ctdb_recovery_lock(struct ctdb_recoverd *rec)
 {
 	struct ctdb_context *ctdb = rec->ctdb;
 	struct ctdb_cluster_mutex_handle *h;
-	struct hold_reclock_state s = {
-		.done = false,
-		.locked = false,
-		.latency = 0,
+	struct ctdb_recovery_lock_handle *s;
+
+	s = talloc_zero(rec, struct ctdb_recovery_lock_handle);
+	if (s == NULL) {
+		DBG_ERR("Memory allocation error\n");
+		return false;
 	};
 
-	h = ctdb_cluster_mutex(rec, ctdb, ctdb->recovery_lock, 0,
-			       take_reclock_handler, &s,
-			       lost_reclock_handler, rec);
+	h = ctdb_cluster_mutex(s,
+			       ctdb,
+			       ctdb->recovery_lock,
+			       0,
+			       take_reclock_handler,
+			       s,
+			       lost_reclock_handler,
+			       rec);
 	if (h == NULL) {
+		talloc_free(s);
 		return false;
 	}
 
-	while (!s.done) {
+	rec->recovery_lock_handle = s;
+	s->h = h;
+
+	while (! s->done) {
 		tevent_loop_once(ctdb->ev);
 	}
 
-	if (! s.locked) {
-		talloc_free(h);
+	if (! s->locked) {
+		TALLOC_FREE(rec->recovery_lock_handle);
 		return false;
 	}
 
-	rec->recovery_lock_handle = h;
-	ctdb_ctrl_report_recd_lock_latency(ctdb, CONTROL_TIMEOUT(),
-					   s.latency);
+	ctdb_ctrl_report_recd_lock_latency(ctdb,
+					   CONTROL_TIMEOUT(),
+					   s->latency);
 
 	return true;
 }
 
 static void ctdb_recovery_unlock(struct ctdb_recoverd *rec)
 {
-	if (rec->recovery_lock_handle != NULL) {
-		DEBUG(DEBUG_NOTICE, ("Releasing recovery lock\n"));
-		TALLOC_FREE(rec->recovery_lock_handle);
+	if (rec->recovery_lock_handle == NULL) {
+		return;
 	}
+
+	if (! rec->recovery_lock_handle->done) {
+		/*
+		 * Taking of recovery lock still in progress.  Free
+		 * the cluster mutex handle to release it but leave
+		 * the recovery lock handle in place to allow taking
+		 * of the lock to fail.
+		 */
+		D_NOTICE("Cancelling recovery lock\n");
+		TALLOC_FREE(rec->recovery_lock_handle->h);
+		rec->recovery_lock_handle->done = true;
+		rec->recovery_lock_handle->locked = false;
+		return;
+	}
+
+	D_NOTICE("Releasing recovery lock\n");
+	TALLOC_FREE(rec->recovery_lock_handle);
 }
 
 static void ban_misbehaving_nodes(struct ctdb_recoverd *rec, bool *self_ban)
@@ -1315,31 +1345,47 @@ static int do_recovery(struct ctdb_recoverd *rec,
 		goto fail;
 	}
 
-        if (ctdb->recovery_lock != NULL) {
+	if (ctdb->recovery_lock != NULL) {
 		if (ctdb_recovery_have_lock(rec)) {
-			DEBUG(DEBUG_NOTICE, ("Already holding recovery lock\n"));
+			D_NOTICE("Already holding recovery lock\n");
 		} else {
-			DEBUG(DEBUG_NOTICE, ("Attempting to take recovery lock (%s)\n",
-					     ctdb->recovery_lock));
-			if (!ctdb_recovery_lock(rec)) {
-				if (ctdb->runstate == CTDB_RUNSTATE_FIRST_RECOVERY) {
-					/* If ctdb is trying first recovery, it's
-					 * possible that current node does not know
-					 * yet who the recmaster is.
-					 */
-					DEBUG(DEBUG_ERR, ("Unable to get recovery lock"
-							  " - retrying recovery\n"));
+			bool ok;
+
+			D_NOTICE("Attempting to take recovery lock (%s)\n",
+				 ctdb->recovery_lock);
+
+			ok = ctdb_recovery_lock(rec);
+			if (! ok) {
+				D_ERR("Unable to take recovery lock\n");
+
+				if (pnn != rec->recmaster) {
+					D_NOTICE("Recovery master changed to %u,"
+						 " aborting recovery\n",
+						 rec->recmaster);
+					rec->need_recovery = false;
 					goto fail;
 				}
 
-				DEBUG(DEBUG_ERR,("Unable to get recovery lock - aborting recovery "
-						 "and ban ourself for %u seconds\n",
-						 ctdb->tunable.recovery_ban_period));
-				ctdb_ban_node(rec, pnn, ctdb->tunable.recovery_ban_period);
+				if (ctdb->runstate ==
+				    CTDB_RUNSTATE_FIRST_RECOVERY) {
+					/*
+					 * First recovery?  Perhaps
+					 * current node does not yet
+					 * know who the recmaster is.
+					 */
+					D_ERR("Retrying recovery\n");
+					goto fail;
+				}
+
+				D_ERR("Abort recovery, "
+				      "ban this node for %u seconds\n",
+				      ctdb->tunable.recovery_ban_period);
+				ctdb_ban_node(rec,
+					      pnn,
+					      ctdb->tunable.recovery_ban_period);
 				goto fail;
 			}
-			DEBUG(DEBUG_NOTICE,
-			      ("Recovery lock taken successfully by recovery daemon\n"));
+			D_NOTICE("Recovery lock taken successfully\n");
 		}
 	}
 
