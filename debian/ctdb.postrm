@@ -31,7 +31,7 @@ disable_legacy() { # From ctdb/packaging/RPM/ctdb.spec.in
 
 case "$1" in
     purge)
-        disable_legacy
+        disable_legacy 0
     ;;
 
     remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)

@@ -14,15 +14,12 @@ The first time:
     sudo apt install git-buildpackage pristine-tar cowbuilder
     DIST=sid ARCH=amd64 git-pbuilder create
     git clone https://salsa.debian.org/samba-team/samba.git
-    cd samba
-    git checkout pristine-tar
-    git checkout upstream_4.9
 
 Each time:
 
     cd samba
     git checkout master
-    gbp pull
+    gbp pull --track-missing
     gbp buildpackage --git-pbuilder --git-dist=sid --git-arch=amd64
 
 Merging minor upstream releases
@@ -32,19 +29,15 @@ Importing a new upstream version can be done like this:
 
     # set target version
     upstream_version=4.9.1
-    major_version="$(echo $upstream_version | sed 's/.[^.]\+$//')"
     # go to git repo
     cd $GIT_DIR
     # Import upstream
     git remote add upstream https://git.samba.org/samba.git
     git fetch upstream
-    # ensure required branches exists
-    git checkout "upstream_${major_version}"
-    git checkout pristine-tar
     # go to the Debian branch
     git checkout master
     # sync all required branches
-    gbp pull
+    gbp pull --track-missing
     # Import latest version
     gbp import-orig --uscan \
       -u "${upstream_version}+dfsg" \
@@ -64,6 +57,7 @@ With a new major version, more work is needed.
 
 After `gbp pull`:
 
+    major_version="$(echo $upstream_version | sed 's/.[^.]\+$//')"
     # Edit gbp.conf's upstream-branch
     editor debian/gbp.conf
     # Edit debian/watch's major version

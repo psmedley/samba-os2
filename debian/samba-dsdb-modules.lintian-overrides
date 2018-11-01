@@ -1,0 +1,2 @@
+# False positives, see #896012
+samba-dsdb-modules: library-not-linked-against-libc usr/lib/*/samba/ldb/ildap.so

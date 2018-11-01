@@ -1,0 +1,779 @@
+From 8985806523e7cd94de96939ea3b6d165038f984e Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Thu, 20 Sep 2018 09:13:09 +0200
+Subject: [PATCH 1/4] third_party: Update pam_wrapper to version 1.0.7
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Guenther Deschner <gd@samba.org>
+(cherry picked from commit 1fd2a79a92fc30d7667eb97d0846043a9d29b5cf)
+---
+ buildtools/wafsamba/samba_third_party.py |  2 +-
+ third_party/pam_wrapper/libpamtest.c     | 31 ++++++++++++++++--------
+ third_party/pam_wrapper/pam_wrapper.c    | 14 ++++++++---
+ third_party/pam_wrapper/wscript          |  2 +-
+ 4 files changed, 33 insertions(+), 16 deletions(-)
+
+diff --git a/buildtools/wafsamba/samba_third_party.py b/buildtools/wafsamba/samba_third_party.py
+index 1144f813ab6..1677655d0f5 100644
+--- a/buildtools/wafsamba/samba_third_party.py
++++ b/buildtools/wafsamba/samba_third_party.py
+@@ -62,5 +62,5 @@ Build.BuildContext.CHECK_UID_WRAPPER = CHECK_UID_WRAPPER
+ 
+ @conf
+ def CHECK_PAM_WRAPPER(conf):
+-    return conf.CHECK_BUNDLED_SYSTEM_PKG('pam_wrapper', minversion='1.0.4')
++    return conf.CHECK_BUNDLED_SYSTEM_PKG('pam_wrapper', minversion='1.0.7')
+ Build.BuildContext.CHECK_PAM_WRAPPER = CHECK_PAM_WRAPPER
+diff --git a/third_party/pam_wrapper/libpamtest.c b/third_party/pam_wrapper/libpamtest.c
+index 0a26c19c9ba..4474736d688 100644
+--- a/third_party/pam_wrapper/libpamtest.c
++++ b/third_party/pam_wrapper/libpamtest.c
+@@ -214,12 +214,11 @@ static int pamtest_simple_conv(int num_msg,
+ 			       struct pam_response **response,
+ 			       void *appdata_ptr)
+ {
+-	int i, ri = 0;
++	int i = 0;
+ 	int ret;
+ 	struct pam_response *reply = NULL;
+ 	const char *prompt;
+-	struct pamtest_conv_ctx *cctx = \
+-				    (struct pamtest_conv_ctx *) appdata_ptr;
++	struct pamtest_conv_ctx *cctx = (struct pamtest_conv_ctx *)appdata_ptr;
+ 
+ 	if (cctx == NULL) {
+ 		return PAM_CONV_ERR;
+@@ -241,15 +240,12 @@ static int pamtest_simple_conv(int num_msg,
+ 
+ 			if (reply != NULL) {
+ 				if (prompt != NULL) {
+-					ret = add_to_reply(&reply[ri], prompt);
++					ret = add_to_reply(&reply[i], prompt);
+ 					if (ret != PAM_SUCCESS) {
+ 						free_reply(reply, num_msg);
+ 						return ret;
+ 					}
+-				} else {
+-					reply[ri].resp = NULL;
+ 				}
+-				ri++;
+ 			}
+ 
+ 			cctx->echo_off_idx++;
+@@ -264,18 +260,25 @@ static int pamtest_simple_conv(int num_msg,
+ 
+ 			if (reply != NULL) {
+ 				if (prompt != NULL) {
+-					ret = add_to_reply(&reply[ri], prompt);
++					ret = add_to_reply(&reply[i], prompt);
+ 					if (ret != PAM_SUCCESS) {
+ 						free_reply(reply, num_msg);
+ 						return ret;
+ 					}
+ 				}
+-				ri++;
+ 			}
+ 
+ 			cctx->echo_on_idx++;
+ 			break;
+ 		case PAM_ERROR_MSG:
++			if (reply != NULL) {
++				ret = add_to_reply(&reply[i], msgm[i]->msg);
++				if (ret != PAM_SUCCESS) {
++					free_reply(reply, num_msg);
++					return ret;
++				}
++			}
++
+ 			if (cctx->data->out_err != NULL) {
+ 				memcpy(cctx->data->out_err[cctx->err_idx],
+ 				       msgm[i]->msg,
+@@ -285,6 +288,14 @@ static int pamtest_simple_conv(int num_msg,
+ 			}
+ 			break;
+ 		case PAM_TEXT_INFO:
++			if (reply != NULL) {
++				ret = add_to_reply(&reply[i], msgm[i]->msg);
++				if (ret != PAM_SUCCESS) {
++					free_reply(reply, num_msg);
++					return ret;
++				}
++			}
++
+ 			if (cctx->data->out_info != NULL) {
+ 				memcpy(cctx->data->out_info[cctx->info_idx],
+ 				       msgm[i]->msg,
+@@ -298,7 +309,7 @@ static int pamtest_simple_conv(int num_msg,
+ 		}
+ 	}
+ 
+-	if (response && ri > 0) {
++	if (response != NULL) {
+ 		*response = reply;
+ 	} else {
+ 		free(reply);
+diff --git a/third_party/pam_wrapper/pam_wrapper.c b/third_party/pam_wrapper/pam_wrapper.c
+index 8064954ff47..48d2c2ae566 100644
+--- a/third_party/pam_wrapper/pam_wrapper.c
++++ b/third_party/pam_wrapper/pam_wrapper.c
+@@ -300,7 +300,15 @@ static void *pwrap_load_lib_handle(enum pwrap_lib lib)
+ 	void *handle = NULL;
+ 
+ #ifdef RTLD_DEEPBIND
+-	flags |= RTLD_DEEPBIND;
++	const char *env = getenv("LD_PRELOAD");
++
++	/* Don't do a deepbind if we run with libasan */
++	if (env != NULL && strlen(env) < PATH_MAX) {
++		const char *p = strstr(env, "libasan.so");
++		if (p == NULL) {
++			flags |= RTLD_DEEPBIND;
++		}
++	}
+ #endif
+ 
+ 	switch (lib) {
+@@ -896,8 +904,6 @@ static void pwrap_init(void)
+ 
+ 	PWRAP_LOG(PWRAP_LOG_DEBUG, "Initialize pam_wrapper");
+ 
+-	pwrap_clean_stale_dirs(tmp_config_dir);
+-
+ 	pwrap.config_dir = strdup(tmp_config_dir);
+ 	if (pwrap.config_dir == NULL) {
+ 		PWRAP_LOG(PWRAP_LOG_ERROR,
+@@ -945,7 +951,7 @@ static void pwrap_init(void)
+ 	rc = mkdir(libpam_path, 0755);
+ 	if (rc != 0) {
+ 		PWRAP_LOG(PWRAP_LOG_ERROR,
+-			  "Failed to create pam_wrapper config dir: %s - %s",
++			  "Failed to create path for libpam: %s - %s",
+ 			  tmp_config_dir, strerror(errno));
+ 		p_rmdirs(pwrap.config_dir);
+ 		exit(1);
+diff --git a/third_party/pam_wrapper/wscript b/third_party/pam_wrapper/wscript
+index 7d4a790caaa..5d8c6f8bfd3 100644
+--- a/third_party/pam_wrapper/wscript
++++ b/third_party/pam_wrapper/wscript
+@@ -2,7 +2,7 @@
+ 
+ import os
+ 
+-VERSION="1.0.6"
++VERSION="1.0.7"
+ 
+ def find_library(library_names, lookup_paths):
+     for directory in lookup_paths:
+-- 
+2.19.0
+
+
+From 7c170cd2f52c2b3261a81bd3c7e831afdafa2c63 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Sat, 19 May 2018 14:57:01 +0200
+Subject: [PATCH 2/4] third_party: Add pam_set_items.so from pam_wrapper
+
+Pair-Programmed-With: Andreas Schneider <asn@samba.org>
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Guenther Deschner <gd@samba.org>
+(cherry picked from commit 7dd388a1f9fa30beb2f814bd16463d1643638587)
+---
+ script/compare_cc_results.py                  |   1 +
+ .../pam_wrapper/modules/pam_set_items.c       | 262 ++++++++++++++++++
+ third_party/pam_wrapper/wscript               |  17 +-
+ 3 files changed, 277 insertions(+), 3 deletions(-)
+ create mode 100644 third_party/pam_wrapper/modules/pam_set_items.c
+
+diff --git a/script/compare_cc_results.py b/script/compare_cc_results.py
+index 17b43f08d43..59c6b04bd84 100755
+--- a/script/compare_cc_results.py
++++ b/script/compare_cc_results.py
+@@ -14,6 +14,7 @@ exceptions = [
+     'LIBSOCKET_WRAPPER_SO_PATH',
+     'LIBNSS_WRAPPER_SO_PATH',
+     'LIBPAM_WRAPPER_SO_PATH',
++    'PAM_SET_ITEMS_SO_PATH',
+     'LIBUID_WRAPPER_SO_PATH',
+     'LIBRESOLV_WRAPPER_SO_PATH',
+ ]
+diff --git a/third_party/pam_wrapper/modules/pam_set_items.c b/third_party/pam_wrapper/modules/pam_set_items.c
+new file mode 100644
+index 00000000000..dd090209cdc
+--- /dev/null
++++ b/third_party/pam_wrapper/modules/pam_set_items.c
+@@ -0,0 +1,262 @@
++/*
++ * Copyright (c) 2015 Andreas Schneider <asn@samba.org>
++ * Copyright (c) 2015 Jakub Hrozek <jakub.hrozek@posteo.se>
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include "config.h"
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <stdarg.h>
++#include <string.h>
++#include <unistd.h>
++
++#ifdef HAVE_SECURITY_PAM_APPL_H
++#include <security/pam_appl.h>
++#endif
++#ifdef HAVE_SECURITY_PAM_MODULES_H
++#include <security/pam_modules.h>
++#endif
++
++#include "config.h"
++
++/* GCC have printf type attribute check. */
++#ifdef HAVE_FUNCTION_ATTRIBUTE_FORMAT
++#define PRINTF_ATTRIBUTE(a,b) __attribute__ ((__format__ (__printf__, a, b)))
++#else
++#define PRINTF_ATTRIBUTE(a,b)
++#endif /* HAVE_FUNCTION_ATTRIBUTE_FORMAT */
++
++/*****************
++ * LOGGING
++ *****************/
++
++enum pwrap_dbglvl_e {
++	PWRAP_LOG_ERROR = 0,
++	PWRAP_LOG_WARN,
++	PWRAP_LOG_DEBUG,
++	PWRAP_LOG_TRACE
++};
++
++static void pwrap_log(enum pwrap_dbglvl_e dbglvl,
++		      const char *function,
++		      const char *format, ...) PRINTF_ATTRIBUTE(3, 4);
++# define PWRAP_LOG(dbglvl, ...) pwrap_log((dbglvl), __func__, __VA_ARGS__)
++
++static void pwrap_vlog(enum pwrap_dbglvl_e dbglvl,
++		       const char *function,
++		       const char *format,
++		       va_list args) PRINTF_ATTRIBUTE(3, 0);
++
++static void pwrap_vlog(enum pwrap_dbglvl_e dbglvl,
++		       const char *function,
++		       const char *format,
++		       va_list args)
++{
++	char buffer[1024];
++	const char *d;
++	unsigned int lvl = 0;
++	const char *prefix = "PWRAP";
++
++	d = getenv("PAM_WRAPPER_DEBUGLEVEL");
++	if (d != NULL) {
++		lvl = atoi(d);
++	}
++
++	if (lvl < dbglvl) {
++		return;
++	}
++
++	vsnprintf(buffer, sizeof(buffer), format, args);
++
++	switch (dbglvl) {
++	case PWRAP_LOG_ERROR:
++		prefix = "PWRAP_ERROR";
++		break;
++	case PWRAP_LOG_WARN:
++		prefix = "PWRAP_WARN";
++		break;
++	case PWRAP_LOG_DEBUG:
++		prefix = "PWRAP_DEBUG";
++		break;
++	case PWRAP_LOG_TRACE:
++		prefix = "PWRAP_TRACE";
++		break;
++	}
++
++	fprintf(stderr,
++		"%s(%d) - PAM_SET_ITEM %s: %s\n",
++		prefix,
++		(int)getpid(),
++		function,
++		buffer);
++}
++
++static void pwrap_log(enum pwrap_dbglvl_e dbglvl,
++		      const char *function,
++		      const char *format, ...)
++{
++	va_list va;
++
++	va_start(va, format);
++	pwrap_vlog(dbglvl, function, format, va);
++	va_end(va);
++}
++
++#define ITEM_FILE_KEY	"item_file="
++
++static const char *envs[] = {
++#ifndef HAVE_OPENPAM
++	"PAM_SERVICE",
++#endif
++	"PAM_USER",
++	"PAM_USER_PROMPT",
++	"PAM_TTY",
++	"PAM_RUSER",
++	"PAM_RHOST",
++	"PAM_AUTHTOK",
++	"PAM_OLDAUTHTOK",
++#ifdef PAM_XDISPLAY
++	"PAM_XDISPLAY",
++#endif
++#ifdef PAM_AUTHTOK_TYPE
++	"PAM_AUTHTOK_TYPE",
++#endif
++	NULL
++};
++
++static const int items[] = {
++#ifndef HAVE_OPENPAM
++	PAM_SERVICE,
++#endif
++	PAM_USER,
++	PAM_USER_PROMPT,
++	PAM_TTY,
++	PAM_RUSER,
++	PAM_RHOST,
++	PAM_AUTHTOK,
++	PAM_OLDAUTHTOK,
++#ifdef PAM_XDISPLAY
++	PAM_XDISPLAY,
++#endif
++#ifdef PAM_AUTHTOK_TYPE
++	PAM_AUTHTOK_TYPE,
++#endif
++};
++
++static void pam_setitem_env(pam_handle_t *pamh)
++{
++	int i;
++	int rv;
++	const char *v;
++
++	for (i = 0; envs[i] != NULL; i++) {
++		v = getenv(envs[i]);
++		if (v == NULL) {
++			continue;
++		}
++
++		PWRAP_LOG(PWRAP_LOG_TRACE, "%s=%s", envs[i], v);
++
++		rv = pam_set_item(pamh, items[i], v);
++		if (rv != PAM_SUCCESS) {
++			continue;
++		}
++	}
++}
++
++PAM_EXTERN int
++pam_sm_authenticate(pam_handle_t *pamh, int flags,
++		    int argc, const char *argv[])
++{
++	(void) flags;	/* unused */
++	(void) argc;	/* unused */
++	(void) argv;	/* unused */
++
++	PWRAP_LOG(PWRAP_LOG_TRACE, "AUTHENTICATE");
++
++	pam_setitem_env(pamh);
++	return PAM_SUCCESS;
++}
++
++PAM_EXTERN int
++pam_sm_setcred(pam_handle_t *pamh, int flags,
++	       int argc, const char *argv[])
++{
++	(void) flags;	/* unused */
++	(void) argc;	/* unused */
++	(void) argv;	/* unused */
++
++	PWRAP_LOG(PWRAP_LOG_TRACE, "SETCRED");
++
++	pam_setitem_env(pamh);
++	return PAM_SUCCESS;
++}
++
++PAM_EXTERN int
++pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
++		 int argc, const char *argv[])
++{
++	(void) flags;	/* unused */
++	(void) argc;	/* unused */
++	(void) argv;	/* unused */
++
++	PWRAP_LOG(PWRAP_LOG_TRACE, "ACCT_MGMT");
++
++	pam_setitem_env(pamh);
++	return PAM_SUCCESS;
++}
++
++PAM_EXTERN int
++pam_sm_open_session(pam_handle_t *pamh, int flags,
++		    int argc, const char *argv[])
++{
++	(void) flags;	/* unused */
++	(void) argc;	/* unused */
++	(void) argv;	/* unused */
++
++	PWRAP_LOG(PWRAP_LOG_TRACE, "OPEN_SESSION");
++
++	pam_setitem_env(pamh);
++	return PAM_SUCCESS;
++}
++
++PAM_EXTERN int
++pam_sm_close_session(pam_handle_t *pamh, int flags,
++		     int argc, const char *argv[])
++{
++	(void) flags;	/* unused */
++	(void) argc;	/* unused */
++	(void) argv;	/* unused */
++
++	PWRAP_LOG(PWRAP_LOG_TRACE, "CLOSE_SESSION");
++
++	pam_setitem_env(pamh);
++	return PAM_SUCCESS;
++}
++
++PAM_EXTERN int
++pam_sm_chauthtok(pam_handle_t *pamh, int flags,
++		 int argc, const char *argv[])
++{
++	(void) flags;	/* unused */
++	(void) argc;	/* unused */
++	(void) argv;	/* unused */
++
++	PWRAP_LOG(PWRAP_LOG_TRACE, "CHAUTHTOK");
++
++	pam_setitem_env(pamh);
++	return PAM_SUCCESS;
++}
+diff --git a/third_party/pam_wrapper/wscript b/third_party/pam_wrapper/wscript
+index 5d8c6f8bfd3..1bf5f8cae3f 100644
+--- a/third_party/pam_wrapper/wscript
++++ b/third_party/pam_wrapper/wscript
+@@ -7,15 +7,18 @@ VERSION="1.0.7"
+ def find_library(library_names, lookup_paths):
+     for directory in lookup_paths:
+         for filename in library_names:
+-            libpam_path = os.path.join(directory, filename)
+-            if os.path.exists(libpam_path):
+-                return libpam_path
++            so_path = os.path.join(directory, filename)
++            if os.path.exists(so_path):
++                return so_path
+     return ''
+ 
+ def configure(conf):
+     if conf.CHECK_PAM_WRAPPER():
+         conf.DEFINE('USING_SYSTEM_PAM_WRAPPER', 1)
+         libpam_wrapper_so_path = 'libpam_wrapper.so'
++
++        pam_set_items_so_path = find_library(['pam_set_items.so'],
++                                             ['/usr/lib64/pam_wrapper', '/usr/lib/pam_wrapper'])
+     else:
+         # check HAVE_GCC_THREAD_LOCAL_STORAGE
+         conf.CHECK_CODE('''
+@@ -96,8 +99,10 @@ def configure(conf):
+         # Create full path to pam_wrapper
+         blddir = os.path.realpath(conf.blddir)
+         libpam_wrapper_so_path = blddir + '/default/third_party/pam_wrapper/libpam-wrapper.so'
++        pam_set_items_so_path = blddir + '/default/third_party/pam_wrapper/libpam-set-items.so'
+ 
+     conf.DEFINE('LIBPAM_WRAPPER_SO_PATH', libpam_wrapper_so_path)
++    conf.DEFINE('PAM_SET_ITEMS_SO_PATH', pam_set_items_so_path)
+     conf.DEFINE('PAM_WRAPPER', 1)
+ 
+ def build(bld):
+@@ -115,6 +120,12 @@ def build(bld):
+                             source='libpamtest.c',
+                             deps='dl pam')
+ 
++        bld.SAMBA_LIBRARY('pam_set_items',
++                          source='modules/pam_set_items.c',
++                          deps='pam',
++                          install=False,
++                          realname='pam_set_items.so')
++
+         # Can be used to write pam tests in python
+         for env in bld.gen_python_environments():
+             bld.SAMBA_PYTHON('pypamtest',
+-- 
+2.19.0
+
+
+From 0702d237d4dcdee2cc7cab2216adcd4ea672f29d Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Thu, 12 Apr 2018 11:57:15 +0200
+Subject: [PATCH 3/4] nsswitch: Add try_authtok option to pam_winbind
+
+Same as the use_authtok option, except that if the new password is not
+valid, PAM will prompt for a password.
+
+Bug-Debian: https://bugs.debian.org/858923
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/samba/+bug/570944
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Guenther Deschner <gd@samba.org>
+(cherry picked from commit ad5debcbe5215e9a45f92ea45f20cc93781e93fa)
+---
+ docs-xml/manpages/pam_winbind.8.xml | 8 ++++++++
+ nsswitch/pam_winbind.c              | 5 +++++
+ nsswitch/pam_winbind.h              | 1 +
+ 3 files changed, 14 insertions(+)
+
+diff --git a/docs-xml/manpages/pam_winbind.8.xml b/docs-xml/manpages/pam_winbind.8.xml
+index f57a9286a6c..b8af5b54c58 100644
+--- a/docs-xml/manpages/pam_winbind.8.xml
++++ b/docs-xml/manpages/pam_winbind.8.xml
+@@ -122,6 +122,14 @@
+ 		</para></listitem>
+ 		</varlistentry>
+ 
++		<varlistentry>
++		<term>try_authtok</term>
++		<listitem><para>
++		Same as the use_authtok option (previous item), except that if the new password is not
++		valid, PAM will prompt for a password.
++		</para></listitem>
++		</varlistentry>
++
+ 		<varlistentry>
+ 		<term>krb5_auth</term>
+ 		<listitem><para>
+diff --git a/nsswitch/pam_winbind.c b/nsswitch/pam_winbind.c
+index 7ac5bb08181..1a58ba49c48 100644
+--- a/nsswitch/pam_winbind.c
++++ b/nsswitch/pam_winbind.c
+@@ -492,6 +492,8 @@ config_from_pam:
+ 			ctrl |= WINBIND_SILENT;
+ 		else if (!strcasecmp(*v, "use_authtok"))
+ 			ctrl |= WINBIND_USE_AUTHTOK_ARG;
++		else if (!strcasecmp(*v, "try_authtok"))
++			ctrl |= WINBIND_TRY_AUTHTOK_ARG;
+ 		else if (!strcasecmp(*v, "use_first_pass"))
+ 			ctrl |= WINBIND_USE_FIRST_PASS_ARG;
+ 		else if (!strcasecmp(*v, "try_first_pass"))
+@@ -3181,6 +3183,9 @@ int pam_sm_chauthtok(pam_handle_t * pamh, int flags,
+ 		if (on(WINBIND_USE_AUTHTOK_ARG, lctrl)) {
+ 			lctrl |= WINBIND_USE_FIRST_PASS_ARG;
+ 		}
++		if (on(WINBIND_TRY_AUTHTOK_ARG, lctrl)) {
++			lctrl |= WINBIND_TRY_FIRST_PASS_ARG;
++		}
+ 		retry = 0;
+ 		ret = PAM_AUTHTOK_ERR;
+ 		while ((ret != PAM_SUCCESS) && (retry++ < MAX_PASSWD_TRIES)) {
+diff --git a/nsswitch/pam_winbind.h b/nsswitch/pam_winbind.h
+index d468efbb56a..c6786d65a4d 100644
+--- a/nsswitch/pam_winbind.h
++++ b/nsswitch/pam_winbind.h
+@@ -156,6 +156,7 @@ do {                             \
+ #define WINBIND_DEBUG_STATE		0x00001000
+ #define WINBIND_WARN_PWD_EXPIRE		0x00002000
+ #define WINBIND_MKHOMEDIR		0x00004000
++#define WINBIND_TRY_AUTHTOK_ARG		0x00008000
+ 
+ #if defined(HAVE_GETTEXT) && !defined(__LCLINT__)
+ #define _(string) dgettext(MODULE_NAME, string)
+-- 
+2.19.0
+
+
+From 5403c81c2df714dce0668e9f5f2b9d6f6955eecd Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Thu, 31 May 2018 21:16:31 +0200
+Subject: [PATCH 4/4] tests: Check pam_winbind pw change with different options
+
+Pair-Programmed-With: Andreas Schneider <asn@samba.org>
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Guenther Deschner <gd@samba.org>
+
+Autobuild-User(master): Andreas Schneider <asn@cryptomilk.org>
+Autobuild-Date(master): Tue Oct  2 17:30:29 CEST 2018 on sn-devel-144
+
+(cherry picked from commit 6240022488464deee8ac5924059a593e377bc538)
+---
+ python/samba/tests/pam_winbind_chauthtok.py   | 36 +++++++++
+ .../samba/tests/test_pam_winbind_chauthtok.sh | 77 +++++++++++++++++++
+ selftest/tests.py                             | 10 +++
+ 3 files changed, 123 insertions(+)
+ create mode 100644 python/samba/tests/pam_winbind_chauthtok.py
+ create mode 100755 python/samba/tests/test_pam_winbind_chauthtok.sh
+
+diff --git a/python/samba/tests/pam_winbind_chauthtok.py b/python/samba/tests/pam_winbind_chauthtok.py
+new file mode 100644
+index 00000000000..e5be3a83ce7
+--- /dev/null
++++ b/python/samba/tests/pam_winbind_chauthtok.py
+@@ -0,0 +1,36 @@
++# Unix SMB/CIFS implementation.
++#
++# Copyright (C) 2017      Andreas Schneider <asn@samba.org>
++# Copyright (C) 2018      Mathieu Parent <math.parent@gmail.com>
++#
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program.  If not, see <http://www.gnu.org/licenses/>.
++#
++
++import samba.tests
++import pypamtest
++import os
++
++class PamChauthtokTests(samba.tests.TestCase):
++    def test_chauthtok(self):
++        domain = os.environ["DOMAIN"]
++        username = os.environ["USERNAME"]
++        password = os.environ["PASSWORD"]
++        newpassword = os.environ["NEWPASSWORD"]
++        unix_username = "%s/%s" % (domain, username)
++        expected_rc = 0 # PAM_SUCCESS
++
++        tc = pypamtest.TestCase(pypamtest.PAMTEST_CHAUTHTOK, expected_rc)
++        res = pypamtest.run_pamtest(unix_username, "samba", [tc], [password, newpassword, newpassword])
++
++        self.assertTrue(res is not None)
+diff --git a/python/samba/tests/test_pam_winbind_chauthtok.sh b/python/samba/tests/test_pam_winbind_chauthtok.sh
+new file mode 100755
+index 00000000000..ca4c2364afe
+--- /dev/null
++++ b/python/samba/tests/test_pam_winbind_chauthtok.sh
+@@ -0,0 +1,77 @@
++#!/bin/sh
++
++PYTHON="$1"
++PAM_WRAPPER_SO_PATH="$2"
++PAM_SET_ITEMS_SO_PATH="$3"
++shift 3
++
++DOMAIN="$1"
++export DOMAIN
++USERNAME="$2"
++export USERNAME
++PASSWORD="$3"
++export PASSWORD
++NEWPASSWORD="$4"
++export NEWPASSWORD
++PAM_OPTIONS="$5"
++export PAM_OPTIONS
++CREATE_USER="$6"
++shift 6
++
++samba_bindir="$BINDIR"
++samba_tool="$samba_bindir/samba-tool"
++
++if [ "$CREATE_USER" = yes ]; then
++    CREATE_SERVER="$1"
++    CREATE_USERNAME="$2"
++    CREATE_PASSWORD="$3"
++    shift 3
++    $samba_tool user create "$USERNAME" "$PASSWORD" -H "ldap://$CREATE_SERVER" -U "$CREATE_USERNAME%$CREATE_PASSWORD"
++    # reset password policies beside of minimum password age of 0 days
++    $samba_tool domain passwordsettings set --complexity=default --history-length=default --min-pwd-length=default --min-pwd-age=0 --max-pwd-age=default -H "ldap://$CREATE_SERVER" -U "$CREATE_USERNAME%$CREATE_PASSWORD"
++fi
++
++PAM_WRAPPER_PATH="$BINDIR/default/third_party/pam_wrapper"
++
++pam_winbind="$BINDIR/shared/pam_winbind.so"
++service_dir="$SELFTEST_TMPDIR/pam_services"
++service_file="$service_dir/samba"
++
++mkdir $service_dir
++echo "auth        required    $pam_winbind debug debug_state $PAM_OPTIONS" > $service_file
++echo "account     required    $pam_winbind debug debug_state $PAM_OPTIONS" >> $service_file
++echo "password    required    $PAM_SET_ITEMS_SO_PATH" >> $service_file
++echo "password    required    $pam_winbind debug debug_state $PAM_OPTIONS" >> $service_file
++echo "session     required    $pam_winbind debug debug_state $PAM_OPTIONS" >> $service_file
++
++PAM_WRAPPER_SERVICE_DIR="$service_dir"
++export PAM_WRAPPER_SERVICE_DIR
++LD_PRELOAD="$LD_PRELOAD:$PAM_WRAPPER_SO_PATH"
++export LD_PRELOAD
++
++PAM_WRAPPER_DEBUGLEVEL=${PAM_WRAPPER_DEBUGLEVEL:="2"}
++export PAM_WRAPPER_DEBUGLEVEL
++
++case $PAM_OPTIONS in
++    use_authtok)
++        PAM_AUTHTOK="$NEWPASSWORD"
++        export PAM_AUTHTOK
++    ;;
++    try_authtok)
++        PAM_AUTHTOK="$NEWPASSWORD"
++        export PAM_AUTHTOK
++    ;;
++esac
++
++PAM_WRAPPER="1" PYTHONPATH="$PYTHONPATH:$PAM_WRAPPER_PATH:$(dirname $0)" $PYTHON -m samba.subunit.run samba.tests.pam_winbind_chauthtok
++exit_code=$?
++
++rm -rf $service_dir
++
++if [ "$CREATE_USER" = yes ]; then
++    $samba_tool user delete "$USERNAME" -H "ldap://$CREATE_SERVER" -U "$CREATE_USERNAME%$CREATE_PASSWORD"
++    # reset password policies
++    $samba_tool domain passwordsettings set --complexity=default --history-length=default --min-pwd-length=default --min-pwd-age=default --max-pwd-age=default -H "ldap://$CREATE_SERVER" -U "$CREATE_USERNAME%$CREATE_PASSWORD"
++fi
++
++exit $exit_code
+diff --git a/selftest/tests.py b/selftest/tests.py
+index 8c9102968e3..12f0f56ce80 100644
+--- a/selftest/tests.py
++++ b/selftest/tests.py
+@@ -40,6 +40,7 @@ finally:
+ have_man_pages_support = ("XSLTPROC_MANPAGES" in config_hash)
+ with_pam = ("WITH_PAM" in config_hash)
+ pam_wrapper_so_path=config_hash["LIBPAM_WRAPPER_SO_PATH"]
++pam_set_items_so_path=config_hash["PAM_SET_ITEMS_SO_PATH"]
+ 
+ planpythontestsuite("none", "samba.tests.source", py3_compatible=True)
+ if have_man_pages_support:
+@@ -167,6 +168,15 @@ if with_pam:
+                   [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                    valgrindify(python), pam_wrapper_so_path,
+                    "$DOMAIN", "$DC_USERNAME", "$DC_PASSWORD"])
++
++    for pam_options in ["''", "use_authtok", "try_authtok"]:
++        plantestsuite("samba.tests.pam_winbind_chauthtok with options %s" % pam_options, "ad_member",
++                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind_chauthtok.sh"),
++                       valgrindify(python), pam_wrapper_so_path, pam_set_items_so_path,
++                       "$DOMAIN", "TestPamOptionsUser", "oldp@ssword0", "newp@ssword0",
++                       pam_options, 'yes',
++                       "$DC_SERVER", "$DC_USERNAME", "$DC_PASSWORD"])
++
+     plantestsuite("samba.tests.pam_winbind_warn_pwd_expire(domain)", "ad_member",
+                   [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind_warn_pwd_expire.sh"),
+                    valgrindify(python), pam_wrapper_so_path,
+-- 
+2.19.0
+

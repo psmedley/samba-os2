@@ -11,7 +11,7 @@ Account:
 	[success=end new_authtok_reqd=done default=ignore]	pam_winbind.so
 Password-Type: Primary
 Password:
-	[success=end default=ignore]	pam_winbind.so use_authtok try_first_pass
+	[success=end default=ignore]	pam_winbind.so try_authtok try_first_pass
 Password-Initial:
 	[success=end default=ignore]	pam_winbind.so
 Session-Type: Additional

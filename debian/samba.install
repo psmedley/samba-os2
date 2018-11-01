@@ -1,7 +1,8 @@
+#!/usr/bin/dh-exec --with-scripts=filter-arch
 etc/ufw/applications.d/samba
-lib/systemd/system/nmbd.service
-lib/systemd/system/samba-ad-dc.service
-lib/systemd/system/smbd.service
+[linux-any] lib/systemd/system/nmbd.service
+[linux-any] lib/systemd/system/samba-ad-dc.service
+[linux-any] lib/systemd/system/smbd.service
 usr/bin/mvxattr
 usr/bin/oLschema2ldif
 usr/bin/pdbedit

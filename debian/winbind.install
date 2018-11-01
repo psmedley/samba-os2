@@ -1,4 +1,5 @@
-lib/systemd/system/winbind.service
+#!/usr/bin/dh-exec --with-scripts=filter-arch
+[linux-any] lib/systemd/system/winbind.service
 usr/bin/ntlm_auth
 usr/bin/wbinfo
 usr/lib/*/samba/idmap

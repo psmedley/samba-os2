@@ -1,3 +1,47 @@
+samba (2:4.9.1+dfsg-2) unstable; urgency=medium
+
+  [ Mathieu Parent ]
+  * Enable --accel-aes=intelaesni on DEB_HOST_ARCH_CPU=amd64 instead of
+    DEB_HOST_ARCH=amd64. This matches samba-libs.install and adds x32
+  * Allow one to change password via passwd in default config
+    - third_party: Update pam_wrapper to version 1.0.7
+    - third_party: Add pam_set_items.so from pam_wrapper
+    - nsswitch: Add try_authtok option to pam_winbind
+    - tests: Check pam_winbind pw change with different options
+    - Patch for previous 4 commits
+    - debian/winbind.pam-config: Use the new try_authtok option allowing
+      password change while preserving current behavior with password strength
+      modules (Closes: #858923, LP: #570944)
+  * README.source: use gbp pull --track-missing
+  * Override library-not-linked-against-libc false positives (See #896012)
+  * Fix wrong-path-for-interpreter for pidl and findsmb
+  * ctdb.postrm: Fix to disable_legacy (found by piuparts) (Closes: #911530)
+
+  [ James Clarke ]
+  * Fix systemd-related build failures on non-Linux
+
+  [ Mathieu Parent ]
+  * Add Gitlab CI:
+    - Subscribe to salsa-ci-team/pipeline (See salsa-ci-team/pipeline!27 and
+      samba-team/samba!10)
+    - Copy /etc/apt/{sources.list.d,preferences.d} in the dockerbuilder
+      container (salsa-ci-team/images!9)
+    - Allow daemons to start during autopkgtest (salsa-ci-team/images!10)
+    - debian/gitlab-ci.yml: all jobs: Use ldb from experimental
+    - debian/gitlab-ci.yml: piuparts job: Add --scriptsdir, --allow-database
+      and --warn-on-leftovers-after-purge options
+    - debian/gitlab-ci.yml: piuparts job: Copy apt config to allow enabling
+      extra repositories
+    - debian/gitlab-ci.yml: piuparts job: Use image with the following changes:
+      + Add pre_install_copy_configs and post_install_remove_configs to copy,
+        resp. remove config files from /etc-target to /etc
+      + patch pre_remove_50_find_bad_permissions to workaround findutils bug
+        #912180. Also proposed another workaround in piuparts as bug #911334
+        which is merged but not yet released
+  * Upload to unstable
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 01 Nov 2018 21:13:37 +0100
+
 samba (2:4.9.1+dfsg-1) experimental; urgency=medium
 
   * New upstream release
