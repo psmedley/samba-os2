@@ -215,8 +215,8 @@ endif
 override_dh_installpam:
 	dh_installpam --name=samba
 
-override_dh_perl:
-	dh_perl
+override_dh_perl-arch:
+	dh_perl -a
 	# Fix Perl shbangs
 	sed -i '1s@^#!/usr/bin/env perl@#!/usr/bin/perl@' \
 	  debian/libparse-pidl-perl/usr/bin/pidl \

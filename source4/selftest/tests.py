@@ -144,6 +144,11 @@ if os.path.exists(os.path.join(samba4bindir, "ldbtest")):
 else:
     skiptestsuite("ldb.base", "Using system LDB, ldbtest not available")
 
+plantestsuite_loadlist("samba4.tests.attr_from_server.python(ad_dc_ntvfs)",
+                       "ad_dc_ntvfs:local",
+                       [python, os.path.join(samba4srcdir, "dsdb/tests/python/attr_from_server.py"),
+                        '$PREFIX_ABS/ad_dc_ntvfs/private/sam.ldb', '$LOADLIST', '$LISTOPT'])
+
 # Tests for RPC
 
 # add tests to this list as they start passing, so we test
@@ -316,6 +321,7 @@ smb2_s3only = [
     "smb2.credits",
     "smb2.kernel-oplocks",
     "smb2.durable-v2-delay",
+    "smb2.aio_delay",
 ]
 smb2 = [x for x in smbtorture4_testsuites("smb2.") if x not in smb2_s3only]
 
@@ -405,6 +411,8 @@ for env in ["ad_member", "s4member", "ad_dc_ntvfs", "chgdcpass"]:
 
 plantestsuite("samba4.blackbox.samba_tool(ad_dc_ntvfs:local)", "ad_dc_ntvfs:local", [os.path.join(samba4srcdir, "utils/tests/test_samba_tool.sh"), '$SERVER', '$SERVER_IP', '$USERNAME', '$PASSWORD', '$DOMAIN', smbclient4])
 plantestsuite("samba4.blackbox.net_rpc_user(ad_dc)", "ad_dc", [os.path.join(bbdir, "test_net_rpc_user.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$DOMAIN'])
+
+plantestsuite("samba4.blackbox.test_primary_group", "ad_dc:local", [os.path.join(bbdir, "test_primary_group.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$DOMAIN', '$PREFIX_ABS'])
 
 if have_heimdal_support:
     for env in ["ad_dc_ntvfs", "ad_dc"]:
@@ -1129,10 +1137,27 @@ for env in ["ad_dc_ntvfs", "ad_dc", "fl2000dc", "fl2003dc", "fl2008r2dc",
 
 # cmocka tests not requiring a specific encironment
 #
+# Tests to verify bug 13653 https://bugzilla.samba.org/show_bug.cgi?id=13653
+# ad_dc has an lmdb backend, ad_dc_ntvfs has a tdb backend.
+#
+planoldpythontestsuite("ad_dc_ntvfs:local",
+                       "samba.tests.blackbox.bug13653",
+                       extra_args=['-U"$USERNAME%$PASSWORD"'],
+                       environ={'TEST_ENV': 'ad_dc_ntvfs'},
+                       py3_compatible=True)
+planoldpythontestsuite("ad_dc:local",
+                       "samba.tests.blackbox.bug13653",
+                       extra_args=['-U"$USERNAME%$PASSWORD"'],
+                       environ={'TEST_ENV': 'ad_dc'},
+                       py3_compatible=True)
+# cmocka tests not requiring a specific environment
+#
 plantestsuite("samba4.dsdb.samdb.ldb_modules.unique_object_sids" , "none",
               [os.path.join(bindir(), "test_unique_object_sids")])
-plantestsuite("samba4.dsdb.samdb.ldb_modules.encrypted_secrets", "none",
-                  [os.path.join(bindir(), "test_encrypted_secrets")])
+plantestsuite("samba4.dsdb.samdb.ldb_modules.encrypted_secrets.tdb", "none",
+              [os.path.join(bindir(), "test_encrypted_secrets_tdb")])
+plantestsuite("samba4.dsdb.samdb.ldb_modules.encrypted_secrets.mdb", "none",
+              [os.path.join(bindir(), "test_encrypted_secrets_mdb")])
 plantestsuite("lib.audit_logging.audit_logging", "none",
                   [os.path.join(bindir(), "audit_logging_test")])
 plantestsuite("samba4.dsdb.samdb.ldb_modules.audit_util", "none",

@@ -268,12 +268,22 @@ bld.SAMBA3_SUBSYSTEM('REG_FULL',
 
 bld.SAMBA3_LIBRARY('popt_samba3',
                    source='lib/popt_common.c',
-                   deps='popt samba-util util_cmdline',
+                   deps='popt samba-util smbconf',
+                   private_library=True)
+
+bld.SAMBA3_LIBRARY('popt_samba3_cmdline',
+                   source='lib/popt_common_cmdline.c',
+                   deps='popt_samba3 util_cmdline cmdline_contexts',
                    private_library=True)
 
 bld.SAMBA3_LIBRARY('util_cmdline',
                    source='lib/util_cmdline.c',
                    deps='secrets3',
+                   private_library=True)
+
+bld.SAMBA3_LIBRARY('cmdline_contexts',
+                   source='lib/cmdline_contexts.c',
+                   deps='samba3core',
                    private_library=True)
 
 bld.SAMBA3_SUBSYSTEM('KRBCLIENT',
@@ -1094,7 +1104,7 @@ bld.SAMBA3_BINARY('client/smbclient',
                         ''',
                  deps='''
                       talloc
-                      popt_samba3
+                      popt_samba3_cmdline
                       smbconf
                       ndr-standard
                       SMBREADLINE
@@ -1147,6 +1157,7 @@ bld.SAMBA3_BINARY('smbstatus',
                       talloc
                       smbconf
                       popt_samba3
+                      cmdline_contexts
                       smbd_base
                       LOCKING
                       PROFILE

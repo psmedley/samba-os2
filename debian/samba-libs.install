@@ -45,6 +45,7 @@ usr/lib/*/samba/libcli-smb-common.so.0
 usr/lib/*/samba/libcli-spoolss.so.0
 usr/lib/*/samba/libcliauth.so.*
 usr/lib/*/samba/libcluster.so.*
+usr/lib/*/samba/libcmdline-contexts.so.0
 usr/lib/*/samba/libcmdline-credentials.so.*
 usr/lib/*/samba/libcom_err-samba4.so.0
 usr/lib/*/samba/libcom_err-samba4.so.0.25
@@ -93,6 +94,7 @@ usr/lib/*/samba/libnetif.so.*
 usr/lib/*/samba/libnpa-tstream.so.0
 usr/lib/*/samba/libnss-info.so.0
 usr/lib/*/samba/libpopt-samba3.so.0
+usr/lib/*/samba/libpopt-samba3-cmdline.so.0
 usr/lib/*/samba/libposix-eadb.so.0
 usr/lib/*/samba/libprinting-migrate.so.0
 usr/lib/*/samba/libprocess-model.so.0

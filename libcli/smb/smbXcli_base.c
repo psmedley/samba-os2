@@ -227,6 +227,8 @@ struct smbXcli_req_state {
 
 	struct tevent_req *write_req;
 
+	struct timeval endtime;
+
 	struct {
 		/* Space for the header including the wct */
 		uint8_t hdr[HDR_VWV];
@@ -1583,10 +1585,8 @@ struct tevent_req *smb1cli_req_create(TALLOC_CTX *mem_ctx,
 	state->smb1.iov_count = iov_count + 4;
 
 	if (timeout_msec > 0) {
-		struct timeval endtime;
-
-		endtime = timeval_current_ofs_msec(timeout_msec);
-		if (!tevent_req_set_endtime(req, ev, endtime)) {
+		state->endtime = timeval_current_ofs_msec(timeout_msec);
+		if (!tevent_req_set_endtime(req, ev, state->endtime)) {
 			return req;
 		}
 	}
@@ -2892,6 +2892,14 @@ static void smb2cli_req_cancel_done(struct tevent_req *subreq)
 	TALLOC_FREE(subreq);
 }
 
+struct timeval smbXcli_req_endtime(struct tevent_req *req)
+{
+	struct smbXcli_req_state *state = tevent_req_data(
+		req, struct smbXcli_req_state);
+
+	return state->endtime;
+}
+
 struct tevent_req *smb2cli_req_create(TALLOC_CTX *mem_ctx,
 				      struct tevent_context *ev,
 				      struct smbXcli_conn *conn,
@@ -3041,10 +3049,8 @@ struct tevent_req *smb2cli_req_create(TALLOC_CTX *mem_ctx,
 	}
 
 	if (timeout_msec > 0) {
-		struct timeval endtime;
-
-		endtime = timeval_current_ofs_msec(timeout_msec);
-		if (!tevent_req_set_endtime(req, ev, endtime)) {
+		state->endtime = timeval_current_ofs_msec(timeout_msec);
+		if (!tevent_req_set_endtime(req, ev, state->endtime)) {
 			return req;
 		}
 	}
@@ -4369,6 +4375,7 @@ static void smbXcli_negprot_smb1_done(struct tevent_req *subreq)
 	}
 
 	if (conn->protocol == PROTOCOL_NONE) {
+		DBG_ERR("No compatible protocol selected by server.\n");
 		tevent_req_nterror(req, NT_STATUS_INVALID_NETWORK_RESPONSE);
 		return;
 	}

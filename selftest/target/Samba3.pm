@@ -1957,6 +1957,24 @@ sub provision($$$$$$$$$)
 	fruit:time machine = yes
 	fruit:time machine max size = 32K
 
+[vfs_fruit_wipe_intentionally_left_blank_rfork]
+	path = $shrdir
+	vfs objects = fruit streams_xattr acl_xattr xattr_tdb
+	fruit:resource = file
+	fruit:metadata = stream
+	fruit:wipe_intentionally_left_blank_rfork = true
+	fruit:delete_empty_adfiles = false
+	fruit:veto_appledouble = no
+
+[vfs_fruit_delete_empty_adfiles]
+	path = $shrdir
+	vfs objects = fruit streams_xattr acl_xattr xattr_tdb
+	fruit:resource = file
+	fruit:metadata = stream
+	fruit:wipe_intentionally_left_blank_rfork = true
+	fruit:delete_empty_adfiles = true
+	fruit:veto_appledouble = no
+
 [badname-tmp]
 	path = $badnames_shrdir
 	guest ok = yes
@@ -2183,6 +2201,16 @@ sub provision($$$$$$$$$)
 	kernel oplocks = no
 	posix locking = no
 	include = $libdir/delay_inject.conf
+
+[aio_delay_inject]
+	copy = tmp
+	vfs objects = delay_inject
+	delay_inject:pread_send = 2000
+	delay_inject:pwrite_send = 2000
+
+[delete_readonly]
+	path = $prefix_abs/share
+	delete readonly = yes
 	";
 	close(CONF);
 

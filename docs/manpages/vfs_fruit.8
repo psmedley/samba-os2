@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/24/2018
+.\"      Date: 11/08/2018
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.9.1
+.\"    Source: Samba 4.9.2
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "09/24/2018" "Samba 4\&.9\&.1" "System Administration tools"
+.TH "VFS_FRUIT" "8" "11/08/2018" "Samba 4\&.9\&.2" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -487,6 +487,23 @@ Return the user\*(Aqs effective maximum permissions in SMB2 FIND responses\&. Th
 .sp
 The default is
 \fIyes\fR\&.
+.RE
+.PP
+fruit:wipe_intentionally_left_blank_rfork = yes | no
+.RS 4
+Whether to wipe Resource Fork data that matches the special 286 bytes sized placeholder blob that macOS client create on occasion\&. The blob contains a string
+\(lqThis resource fork intentionally left blank\(rq, the remaining bytes being mostly zero\&. There being no one use of this data, it is probably safe to discard it\&. When this option is enabled, this module truncates the Resource Fork stream to 0 bytes\&.
+.sp
+The default is
+\fIno\fR\&.
+.RE
+.PP
+fruit:delete_empty_adfiles = yes | no
+.RS 4
+Whether to delete empty AppleDouble files\&. Empty means that the resource fork entry in the AppleDouble files is of size 0, or the size is exactly 286 bytes and the content matches a special boilerplate resource fork created my macOS\&.
+.sp
+The default is
+\fIno\fR\&.
 .RE
 .SH "EXAMPLES"
 .sp
