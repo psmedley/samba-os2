@@ -7,3 +7,9 @@ VERSION.patch
 add-so-version-to-private-libraries
 heimdal-rfc3454.txt
 nsswitch-Add-try_authtok-option-to-pam_winbind.patch
+CVE-2018-14629-v4-9.patch
+CVE-2018-16841-master.patch
+CVE-2018-16851-master.patch
+CVE-2018-16852-v4-9-v2.patch
+mit-kdc-experimental-v4-7.patch
+CVE-2018-16857-v4-9.patch

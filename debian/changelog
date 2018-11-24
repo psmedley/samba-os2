@@ -1,3 +1,19 @@
+samba (2:4.9.2+dfsg-2) unstable; urgency=high
+
+  * New upstream security release
+    - CVE-2018-14629 Unprivileged adding of CNAME record causing loop in AD
+      Internal DNS server
+    - CVE-2018-16841 Double-free in Samba AD DC KDC with PKINIT
+    - CVE-2018-16851 NULL pointer de-reference in Samba AD DC LDAP server
+    - CVE-2018-16852 NULL pointer de-reference in Samba AD DC DNS servers
+    - because of CVE-2018-16853 (Samba AD DC S4U2Self Crash in experimental
+      MIT Kerberos configuration (unsupported)), mark the MIT Kerberos build of
+      the Samba AD DC as experimental (not used in Debian package)
+    - CVE-2018-16857 Bad password count in AD DC not always effective
+  * Prepend 1.5.1+really to ldb version
+
+ -- Mathieu Parent <sathieu@debian.org>  Sat, 24 Nov 2018 23:21:27 +0100
+
 samba (2:4.9.2+dfsg-1) unstable; urgency=medium
 
   * New upstream release
