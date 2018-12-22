@@ -275,6 +275,7 @@ for env in ["fileserver"]:
     plantestsuite("samba3.blackbox.offline (%s)" % env, env, [os.path.join(samba3srcdir, "script/tests/test_offline.sh"), '$SERVER', '$SERVER_IP', '$DOMAIN', '$USERNAME', '$PASSWORD', '$LOCAL_PATH/offline', smbclient3])
     plantestsuite("samba3.blackbox.shadow_copy2 NT1 (%s)" % env, env, [os.path.join(samba3srcdir, "script/tests/test_shadow_copy.sh"), '$SERVER', '$SERVER_IP', '$DOMAIN', '$USERNAME', '$PASSWORD', '$LOCAL_PATH/shadow', smbclient3, '-m', 'NT1'])
     plantestsuite("samba3.blackbox.shadow_copy2 SMB3 (%s)" % env, env, [os.path.join(samba3srcdir, "script/tests/test_shadow_copy.sh"), '$SERVER', '$SERVER_IP', '$DOMAIN', '$USERNAME', '$PASSWORD', '$LOCAL_PATH/shadow', smbclient3, '-m', 'SMB3'])
+    plantestsuite("samba3.blackbox.shadow_copy_torture", env, [os.path.join(samba3srcdir, "script/tests/test_shadow_copy_torture.sh"), '$SERVER', '$SERVER_IP', '$DOMAIN', '$USERNAME', '$PASSWORD', '$LOCAL_PATH/shadow', smbtorture4])
     plantestsuite("samba3.blackbox.smbclient.forceuser_validusers (%s)" % env, env, [os.path.join(samba3srcdir, "script/tests/test_forceuser_validusers.sh"), '$SERVER', '$DOMAIN', '$USERNAME', '$PASSWORD', '$LOCAL_PATH', smbclient3])
     plantestsuite("samba3.blackbox.smbget (%s)" % env, env, [os.path.join(samba3srcdir, "script/tests/test_smbget.sh"), '$SERVER', '$SERVER_IP', '$DOMAIN', 'smbget_user', '$PASSWORD', '$LOCAL_PATH/smbget', smbget])
     plantestsuite("samba3.blackbox.netshareenum (%s)" % env, env, [os.path.join(samba3srcdir, "script/tests/test_shareenum.sh"), '$SERVER', '$USERNAME', '$PASSWORD', rpcclient])
@@ -458,11 +459,17 @@ for t in tests:
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
         plansmbtorture4testsuite(t, "simpleserver", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
         plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -U$USERNAME%$PASSWORD')
-    elif t == "raw.session" or t == "smb2.session":
+    elif t == "raw.session":
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD', 'plain')
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmpenc -U$USERNAME%$PASSWORD', 'enc')
         plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -k no -U$USERNAME%$PASSWORD', 'ntlm')
         plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -k yes -U$USERNAME%$PASSWORD', 'krb5')
+    elif t == "smb2.session":
+        plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD', 'plain')
+        plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmpenc -U$USERNAME%$PASSWORD', 'enc')
+        plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -k no -U$USERNAME%$PASSWORD', 'ntlm')
+        plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -k yes -U$USERNAME%$PASSWORD', 'krb5')
+        plansmbtorture4testsuite(t, "ad_member", '//$SERVER/tmp -k yes -U$DC_USERNAME@$REALM%$DC_PASSWORD', 'krb5')
     elif t == "rpc.lsa":
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD', 'over ncacn_np ')
         plansmbtorture4testsuite(t, "nt4_dc", 'ncacn_ip_tcp:$SERVER_IP -U$USERNAME%$PASSWORD', 'over ncacn_ip_tcp ')

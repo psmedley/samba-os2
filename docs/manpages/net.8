@@ -2,12 +2,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 11/08/2018
+.\"      Date: 12/20/2018
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.9.2
+.\"    Source: Samba 4.9.4
 .\"  Language: English
 .\"
-.TH "NET" "8" "11/08/2018" "Samba 4\&.9\&.2" "System Administration tools"
+.TH "NET" "8" "12/20/2018" "Samba 4\&.9\&.4" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -274,6 +274,11 @@ Defines filename for database prechecking (used in "net registry import")\&.
 \-\-no\-dns\-updates
 .RS 4
 Do not perform DNS updates as part of "net ads join"\&.
+.RE
+.PP
+\-\-keep\-account
+.RS 4
+Prevent the machine account removal as part of "net ads leave"\&.
 .RE
 .PP
 \-e|\-\-encrypt
@@ -942,7 +947,7 @@ Dump remote SAM database to local LDIF file or standard output\&.
 .PP
 Fetch domain SID and store it in the local
 secrets\&.tdb\&.
-.SS "ADS LEAVE"
+.SS "ADS LEAVE [\-\-keep\-account]"
 .PP
 Make the remote host leave the domain it is part of\&.
 .SS "ADS STATUS"

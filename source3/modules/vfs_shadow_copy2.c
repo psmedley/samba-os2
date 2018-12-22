@@ -36,6 +36,8 @@
 #include "include/ntioctl.h"
 #include "util_tdb.h"
 #include "lib/util_path.h"
+#include "libcli/security/security.h"
+#include "lib/util/tevent_unix.h"
 
 struct shadow_copy2_config {
 	char *gmt_format;
@@ -587,7 +589,8 @@ static bool shadow_copy2_strip_snapshot_internal(TALLOC_CTX *mem_ctx,
 					const char *orig_name,
 					time_t *ptimestamp,
 					char **pstripped,
-					char **psnappath)
+					char **psnappath,
+					bool *_already_converted)
 {
 	struct tm tm;
 	time_t timestamp = 0;
@@ -607,6 +610,10 @@ static bool shadow_copy2_strip_snapshot_internal(TALLOC_CTX *mem_ctx,
 				return false);
 
 	DEBUG(10, (__location__ ": enter path '%s'\n", name));
+
+	if (_already_converted != NULL) {
+		*_already_converted = false;
+	}
 
 	abs_path = make_path_absolute(mem_ctx, priv, name);
 	if (abs_path == NULL) {
@@ -630,6 +637,9 @@ static bool shadow_copy2_strip_snapshot_internal(TALLOC_CTX *mem_ctx,
 	}
 
 	if (already_converted) {
+		if (_already_converted != NULL) {
+			*_already_converted = true;
+		}
 		goto out;
 	}
 
@@ -759,7 +769,24 @@ static bool shadow_copy2_strip_snapshot(TALLOC_CTX *mem_ctx,
 					orig_name,
 					ptimestamp,
 					pstripped,
+					NULL,
 					NULL);
+}
+
+static bool shadow_copy2_strip_snapshot_converted(TALLOC_CTX *mem_ctx,
+					struct vfs_handle_struct *handle,
+					const char *orig_name,
+					time_t *ptimestamp,
+					char **pstripped,
+					bool *is_converted)
+{
+	return shadow_copy2_strip_snapshot_internal(mem_ctx,
+					handle,
+					orig_name,
+					ptimestamp,
+					pstripped,
+					NULL,
+					is_converted);
 }
 
 static char *shadow_copy2_find_mount_point(TALLOC_CTX *mem_ctx,
@@ -1119,12 +1146,14 @@ static int shadow_copy2_rename(vfs_handle_struct *handle,
 
 	if (!shadow_copy2_strip_snapshot_internal(talloc_tos(), handle,
 					 smb_fname_src->base_name,
-					 &timestamp_src, NULL, &snappath_src)) {
+					 &timestamp_src, NULL, &snappath_src,
+					 NULL)) {
 		return -1;
 	}
 	if (!shadow_copy2_strip_snapshot_internal(talloc_tos(), handle,
 					 smb_fname_dst->base_name,
-					 &timestamp_dst, NULL, &snappath_dst)) {
+					 &timestamp_dst, NULL, &snappath_dst,
+					 NULL)) {
 		return -1;
 	}
 	if (timestamp_src != 0) {
@@ -1163,7 +1192,8 @@ static int shadow_copy2_symlink(vfs_handle_struct *handle,
 				link_contents,
 				&timestamp_old,
 				NULL,
-				&snappath_old)) {
+				&snappath_old,
+				NULL)) {
 		return -1;
 	}
 	if (!shadow_copy2_strip_snapshot_internal(talloc_tos(),
@@ -1171,7 +1201,8 @@ static int shadow_copy2_symlink(vfs_handle_struct *handle,
 				new_smb_fname->base_name,
 				&timestamp_new,
 				NULL,
-				&snappath_new)) {
+				&snappath_new,
+				NULL)) {
 		return -1;
 	}
 	if ((timestamp_old != 0) || (timestamp_new != 0)) {
@@ -1202,7 +1233,8 @@ static int shadow_copy2_link(vfs_handle_struct *handle,
 				old_smb_fname->base_name,
 				&timestamp_old,
 				NULL,
-				&snappath_old)) {
+				&snappath_old,
+				NULL)) {
 		return -1;
 	}
 	if (!shadow_copy2_strip_snapshot_internal(talloc_tos(),
@@ -1210,7 +1242,8 @@ static int shadow_copy2_link(vfs_handle_struct *handle,
 				new_smb_fname->base_name,
 				&timestamp_new,
 				NULL,
-				&snappath_new)) {
+				&snappath_new,
+				NULL)) {
 		return -1;
 	}
 	if ((timestamp_old != 0) || (timestamp_new != 0)) {
@@ -1321,21 +1354,63 @@ static int shadow_copy2_fstat(vfs_handle_struct *handle, files_struct *fsp,
 			      SMB_STRUCT_STAT *sbuf)
 {
 	time_t timestamp = 0;
+	struct smb_filename *orig_smb_fname = NULL;
+	struct smb_filename vss_smb_fname;
+	struct smb_filename *orig_base_smb_fname = NULL;
+	struct smb_filename vss_base_smb_fname;
+	char *stripped = NULL;
+	int saved_errno = 0;
+	bool ok;
 	int ret;
 
-	ret = SMB_VFS_NEXT_FSTAT(handle, fsp, sbuf);
-	if (ret == -1) {
-		return ret;
-	}
-	if (!shadow_copy2_strip_snapshot(talloc_tos(), handle,
+	ok = shadow_copy2_strip_snapshot(talloc_tos(), handle,
 					 fsp->fsp_name->base_name,
-					 &timestamp, NULL)) {
-		return 0;
+					 &timestamp, &stripped);
+	if (!ok) {
+		return -1;
 	}
-	if (timestamp != 0) {
+
+	if (timestamp == 0) {
+		TALLOC_FREE(stripped);
+		return SMB_VFS_NEXT_FSTAT(handle, fsp, sbuf);
+	}
+
+	vss_smb_fname = *fsp->fsp_name;
+	vss_smb_fname.base_name = shadow_copy2_convert(talloc_tos(),
+						       handle,
+						       stripped,
+						       timestamp);
+	TALLOC_FREE(stripped);
+	if (vss_smb_fname.base_name == NULL) {
+		return -1;
+	}
+
+	orig_smb_fname = fsp->fsp_name;
+	fsp->fsp_name = &vss_smb_fname;
+
+	if (fsp->base_fsp != NULL) {
+		vss_base_smb_fname = *fsp->base_fsp->fsp_name;
+		vss_base_smb_fname.base_name = vss_smb_fname.base_name;
+		orig_base_smb_fname = fsp->base_fsp->fsp_name;
+		fsp->base_fsp->fsp_name = &vss_base_smb_fname;
+	}
+
+	ret = SMB_VFS_NEXT_FSTAT(handle, fsp, sbuf);
+	fsp->fsp_name = orig_smb_fname;
+	if (fsp->base_fsp != NULL) {
+		fsp->base_fsp->fsp_name = orig_base_smb_fname;
+	}
+	if (ret == -1) {
+		saved_errno = errno;
+	}
+
+	if (ret == 0) {
 		convert_sbuf(handle, fsp->fsp_name->base_name, sbuf);
 	}
-	return 0;
+	if (saved_errno != 0) {
+		errno = saved_errno;
+	}
+	return ret;
 }
 
 static int shadow_copy2_open(vfs_handle_struct *handle,
@@ -1345,15 +1420,27 @@ static int shadow_copy2_open(vfs_handle_struct *handle,
 	time_t timestamp = 0;
 	char *stripped = NULL;
 	char *tmp;
+	bool is_converted = false;
 	int saved_errno = 0;
 	int ret;
 
-	if (!shadow_copy2_strip_snapshot(talloc_tos(), handle,
+	if (!shadow_copy2_strip_snapshot_converted(talloc_tos(), handle,
 					 smb_fname->base_name,
-					 &timestamp, &stripped)) {
+					 &timestamp, &stripped,
+					 &is_converted)) {
 		return -1;
 	}
 	if (timestamp == 0) {
+		if (is_converted) {
+			/*
+			 * Just pave over the user requested mode and use
+			 * O_RDONLY. Later attempts by the client to write on
+			 * the handle will fail in the pwrite() syscall with
+			 * EINVAL which we carefully map to EROFS. In sum, this
+			 * matches Windows behaviour.
+			 */
+			flags = O_RDONLY;
+		}
 		return SMB_VFS_NEXT_OPEN(handle, smb_fname, fsp, flags, mode);
 	}
 
@@ -1366,6 +1453,14 @@ static int shadow_copy2_open(vfs_handle_struct *handle,
 		smb_fname->base_name = tmp;
 		return -1;
 	}
+
+	/*
+	 * Just pave over the user requested mode and use O_RDONLY. Later
+	 * attempts by the client to write on the handle will fail in the
+	 * pwrite() syscall with EINVAL which we carefully map to EROFS. In sum,
+	 * this matches Windows behaviour.
+	 */
+	flags = O_RDONLY;
 
 	ret = SMB_VFS_NEXT_OPEN(handle, smb_fname, fsp, flags, mode);
 	if (ret == -1) {
@@ -1566,7 +1661,8 @@ static int shadow_copy2_chdir(vfs_handle_struct *handle,
 					smb_fname->base_name,
 					&timestamp,
 					&stripped,
-					&snappath)) {
+					&snappath,
+					NULL)) {
 		return -1;
 	}
 	if (stripped != NULL) {
@@ -2855,6 +2951,101 @@ static int shadow_copy2_get_quota(vfs_handle_struct *handle,
 	return ret;
 }
 
+static ssize_t shadow_copy2_pwrite(vfs_handle_struct *handle,
+				   files_struct *fsp,
+				   const void *data,
+				   size_t n,
+				   off_t offset)
+{
+	ssize_t nwritten;
+
+	nwritten = SMB_VFS_NEXT_PWRITE(handle, fsp, data, n, offset);
+	if (nwritten == -1) {
+		if (errno == EBADF && fsp->can_write) {
+			errno = EROFS;
+		}
+	}
+
+	return nwritten;
+}
+
+struct shadow_copy2_pwrite_state {
+	vfs_handle_struct *handle;
+	files_struct *fsp;
+	ssize_t ret;
+	struct vfs_aio_state vfs_aio_state;
+};
+
+static void shadow_copy2_pwrite_done(struct tevent_req *subreq);
+
+static struct tevent_req *shadow_copy2_pwrite_send(
+	struct vfs_handle_struct *handle, TALLOC_CTX *mem_ctx,
+	struct tevent_context *ev, struct files_struct *fsp,
+	const void *data, size_t n, off_t offset)
+{
+	struct tevent_req *req = NULL, *subreq = NULL;
+	struct shadow_copy2_pwrite_state *state = NULL;
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct shadow_copy2_pwrite_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	state->handle = handle;
+	state->fsp = fsp;
+
+	subreq = SMB_VFS_NEXT_PWRITE_SEND(state,
+					  ev,
+					  handle,
+					  fsp,
+					  data,
+					  n,
+					  offset);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, shadow_copy2_pwrite_done, req);
+
+	return req;
+}
+
+static void shadow_copy2_pwrite_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct shadow_copy2_pwrite_state *state = tevent_req_data(
+		req, struct shadow_copy2_pwrite_state);
+
+	state->ret = SMB_VFS_PWRITE_RECV(subreq, &state->vfs_aio_state);
+	TALLOC_FREE(subreq);
+	if (state->ret == -1) {
+		tevent_req_error(req, state->vfs_aio_state.error);
+		return;
+	}
+
+	tevent_req_done(req);
+}
+
+static ssize_t shadow_copy2_pwrite_recv(struct tevent_req *req,
+					  struct vfs_aio_state *vfs_aio_state)
+{
+	struct shadow_copy2_pwrite_state *state = tevent_req_data(
+		req, struct shadow_copy2_pwrite_state);
+
+	if (tevent_req_is_unix_error(req, &vfs_aio_state->error)) {
+		if ((vfs_aio_state->error == EBADF) &&
+		    state->fsp->can_write)
+		{
+			vfs_aio_state->error = EROFS;
+			errno = EROFS;
+		}
+		return -1;
+	}
+
+	*vfs_aio_state = state->vfs_aio_state;
+	return state->ret;
+}
+
 static int shadow_copy2_connect(struct vfs_handle_struct *handle,
 				const char *service, const char *user)
 {
@@ -3217,6 +3408,9 @@ static struct vfs_fn_pointers vfs_shadow_copy2_fns = {
 	.setxattr_fn = shadow_copy2_setxattr,
 	.chflags_fn = shadow_copy2_chflags,
 	.get_real_filename_fn = shadow_copy2_get_real_filename,
+	.pwrite_fn = shadow_copy2_pwrite,
+	.pwrite_send_fn = shadow_copy2_pwrite_send,
+	.pwrite_recv_fn = shadow_copy2_pwrite_recv,
 	.connectpath_fn = shadow_copy2_connectpath,
 };
 

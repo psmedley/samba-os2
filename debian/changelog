@@ -1,3 +1,13 @@
+samba (2:4.9.4+dfsg-1) unstable; urgency=medium
+
+  * New upstream release
+    - Remove patches for previous security fixes, merged
+    - Remove unused lintian overrides (library-not-linked-against-libc)
+  * ignore create_builtin_guests() failing without a valid idmap configuration
+    (Closes: #909465, #899269)
+
+ -- Mathieu Parent <sathieu@debian.org>  Sat, 22 Dec 2018 18:32:00 +0100
+
 samba (2:4.9.2+dfsg-2) unstable; urgency=high
 
   * New upstream security release
