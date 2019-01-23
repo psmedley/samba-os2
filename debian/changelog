@@ -1,3 +1,11 @@
+samba (2:4.9.4+dfsg-2) unstable; urgency=medium
+
+  * Append +really0.02 to libparse-pidl-perl version (Closes: #918564)
+  * Add apport hook (From Ubuntu)
+  * Change build dependency to libglusterfs-dev (Closes: #919667)
+
+ -- Mathieu Parent <sathieu@debian.org>  Wed, 23 Jan 2019 20:59:08 +0100
+
 samba (2:4.9.4+dfsg-1) unstable; urgency=medium
 
   * New upstream release

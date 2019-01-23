@@ -7,6 +7,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
 DPKG_EXPORT_BUILDFLAGS = 1
 include /usr/share/dpkg/buildflags.mk
+include /usr/share/dpkg/pkg-info.mk
 
 DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
 DEB_HOST_ARCH_OS ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
@@ -129,6 +130,8 @@ override_dh_auto_install:
 	install -m 0755 debian/mksmbpasswd.awk $(DESTDIR)/usr/sbin/mksmbpasswd
 	mkdir -p $(DESTDIR)/etc/ufw/applications.d
 	install -m644 debian/samba.ufw.profile $(DESTDIR)/etc/ufw/applications.d/samba
+	mkdir -p $(DESTDIR)/usr/share/apport/package-hooks
+	install -D -m 644 debian/source_samba.py $(DESTDIR)/usr/share/apport/package-hooks/source_samba.py
 	# Install other stuff not installed by "make install"
 	mkdir -p debian/samba/usr/lib/$(PYSHORT)/dist-packages/samba
 	mv $(DESTDIR)/usr/lib/$(PYSHORT)/dist-packages/samba/dckeytab.so \
@@ -258,7 +261,10 @@ else
 endif
 
 override_dh_gencontrol:
-	dh_gencontrol -- -Vldb:Depends=$(LDB_DEPENDS)
+ifneq (,$(filter libparse-pidl-perl, $(shell dh_listpackages)))
+	dh_gencontrol --package=libparse-pidl-perl -- -v$(DEB_VERSION)+really0.02
+endif
+	dh_gencontrol --remaining-packages -- -Vldb:Depends=$(LDB_DEPENDS)
 
 override_dh_auto_clean:
 	-$(WAF) clean
