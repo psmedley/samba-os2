@@ -4,11 +4,10 @@ Priority: optional
 Maintainer: Debian Samba Maintainers <pkg-samba-maint@lists.alioth.debian.org>
 Uploaders: Steve Langasek <vorlon@debian.org>,
            Jelmer Vernooĳ <jelmer@debian.org>,
-           Ivo De Decker <ivodd@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
            Andrew Bartlett <abartlet+debian@catalyst.net.nz>
 Homepage: http://www.samba.org
-Standards-Version: 4.2.1
+Standards-Version: 4.3.0
 Build-Depends: bison,
                debhelper (>= 11),
                dh-exec,
@@ -243,7 +242,6 @@ Pre-Depends: ${misc:Pre-Depends}
 Architecture: any
 Section: python
 Provides: ${python:Provides}
-Suggests: python-gpgme
 Depends: python-crypto,
          python-ldb,
          python-tdb,
@@ -251,6 +249,7 @@ Depends: python-crypto,
          ${misc:Depends},
          ${python:Depends},
          ${shlibs:Depends}
+Recommends: python-gpg
 Description: Python bindings for Samba
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,
