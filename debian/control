@@ -109,7 +109,8 @@ Multi-Arch: same
 Architecture: any
 Section: libs
 Depends: ${misc:Depends}, ${shlibs:Depends}
-Replaces: samba (<< 2:4.3.3+dfsg-1)
+Breaks: libndr-standard0 (<< 4)
+Replaces: samba (<< 2:4.3.3+dfsg-1), libndr-standard0 (<< 4)
 Description: Samba core libraries
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,

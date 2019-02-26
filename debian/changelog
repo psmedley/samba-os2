@@ -1,3 +1,16 @@
+samba (2:4.9.4+dfsg-4) unstable; urgency=medium
+
+  * samba-libs: Add Breaks+Replaces: libndr-standard0 (<< 4) (Closes: #910242)
+  * Improve AppArmor integration (Closes: #896080)
+    - Install update-apparmor-samba-profile 1.2 from Christian Boltz (openSUSE)
+    - Adapt update-apparmor-samba-profile: Rename apparmor profile snippet, and
+      test for it's directory
+    - smbd.init: Run update-apparmor-samba-profile before start
+    - smbd.service: Run update-apparmor-samba-profile before start
+    - Remove /etc/apparmor.d/samba/smbd-shares on purge
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 26 Feb 2019 22:18:19 +0100
+
 samba (2:4.9.4+dfsg-3) unstable; urgency=medium
 
   [ Ivo De Decker ]

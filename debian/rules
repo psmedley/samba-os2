@@ -124,6 +124,7 @@ override_dh_auto_install:
 	# Debian goodies
 	cp debian/smb.conf* $(DESTDIR)/usr/share/samba/
 	install -m755 debian/panic-action $(DESTDIR)/usr/share/samba/panic-action
+	install -m755 debian/update-apparmor-samba-profile $(DESTDIR)/usr/share/samba/update-apparmor-samba-profile
 	cp debian/gdbcommands $(DESTDIR)/etc/samba/
 	mkdir -p $(DESTDIR)/etc/dhcp/dhclient-enter-hooks.d
 	install -m755 debian/samba-common.dhcp $(DESTDIR)/etc/dhcp/dhclient-enter-hooks.d/samba

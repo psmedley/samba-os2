@@ -9,3 +9,4 @@ heimdal-rfc3454.txt
 nsswitch-Add-try_authtok-option-to-pam_winbind.patch
 s3-auth-ignore-create_builtin_guests-failing-without.patch
 python-gpg.patch
+smbd.service-Run-update-apparmor-samba-profile-befor.patch

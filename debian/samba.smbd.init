@@ -31,6 +31,11 @@ case $1 in
 		    exit 0
 		fi
 
+		# Update /etc/apparmor.d/local/usr.sbin.smbd-shares
+		if [ -x /usr/share/samba/update-apparmor-samba-profile ]; then
+			/usr/share/samba/update-apparmor-samba-profile || exit $?
+		fi
+
 		log_daemon_msg "Starting SMB/CIFS daemon" smbd
 		# Make sure we have our PIDDIR, even if it's on a tmpfs
 		install -o root -g root -m 755 -d $PIDDIR
