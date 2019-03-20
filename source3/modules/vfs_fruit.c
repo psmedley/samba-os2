@@ -2647,7 +2647,7 @@ static bool test_netatalk_lock(files_struct *fsp, off_t in_offset)
 	off_t offset = in_offset;
 	off_t len = 1;
 	int type = F_WRLCK;
-	pid_t pid;
+	pid_t pid = 0;
 
 	result = SMB_VFS_GETLOCK(fsp, &offset, &len, &type, &pid);
 	if (result == false) {
@@ -2664,156 +2664,146 @@ static bool test_netatalk_lock(files_struct *fsp, off_t in_offset)
 static NTSTATUS fruit_check_access(vfs_handle_struct *handle,
 				   files_struct *fsp,
 				   uint32_t access_mask,
-				   uint32_t deny_mode)
+				   uint32_t share_mode)
 {
 	NTSTATUS status = NT_STATUS_OK;
-	bool open_for_reading, open_for_writing, deny_read, deny_write;
 	off_t off;
-	bool have_read = false;
-	int flags;
+	bool share_for_read = (share_mode & FILE_SHARE_READ);
+	bool share_for_write = (share_mode & FILE_SHARE_WRITE);
+	bool netatalk_already_open_for_reading = false;
+	bool netatalk_already_open_for_writing = false;
+	bool netatalk_already_open_with_deny_read = false;
+	bool netatalk_already_open_with_deny_write = false;
 
 	/* FIXME: hardcoded data fork, add resource fork */
 	enum apple_fork fork_type = APPLE_FORK_DATA;
 
-	DEBUG(10, ("fruit_check_access: %s, am: %s/%s, dm: %s/%s\n",
+	DBG_DEBUG("fruit_check_access: %s, am: %s/%s, sm: 0x%x\n",
 		  fsp_str_dbg(fsp),
 		  access_mask & FILE_READ_DATA ? "READ" :"-",
 		  access_mask & FILE_WRITE_DATA ? "WRITE" : "-",
-		  deny_mode & DENY_READ ? "DENY_READ" : "-",
-		  deny_mode & DENY_WRITE ? "DENY_WRITE" : "-"));
+		  share_mode);
 
 	if (fsp->fh->fd == -1) {
 		return NT_STATUS_OK;
 	}
 
-	flags = fcntl(fsp->fh->fd, F_GETFL);
-	if (flags == -1) {
-		DBG_ERR("fcntl get flags [%s] fd [%d] failed [%s]\n",
-			fsp_str_dbg(fsp), fsp->fh->fd, strerror(errno));
-		return map_nt_error_from_unix(errno);
+	/* Read NetATalk opens and deny modes on the file. */
+	netatalk_already_open_for_reading = test_netatalk_lock(fsp,
+				access_to_netatalk_brl(fork_type,
+					FILE_READ_DATA));
+
+	netatalk_already_open_with_deny_read = test_netatalk_lock(fsp,
+				denymode_to_netatalk_brl(fork_type,
+					DENY_READ));
+
+	netatalk_already_open_for_writing = test_netatalk_lock(fsp,
+				access_to_netatalk_brl(fork_type,
+					FILE_WRITE_DATA));
+
+	netatalk_already_open_with_deny_write = test_netatalk_lock(fsp,
+				denymode_to_netatalk_brl(fork_type,
+					DENY_WRITE));
+
+	/* If there are any conflicts - sharing violation. */
+	if ((access_mask & FILE_READ_DATA) &&
+			netatalk_already_open_with_deny_read) {
+		return NT_STATUS_SHARING_VIOLATION;
 	}
 
-	if (flags & (O_RDONLY|O_RDWR)) {
+	if (!share_for_read &&
+			netatalk_already_open_for_reading) {
+		return NT_STATUS_SHARING_VIOLATION;
+	}
+
+	if ((access_mask & FILE_WRITE_DATA) &&
+			netatalk_already_open_with_deny_write) {
+		return NT_STATUS_SHARING_VIOLATION;
+	}
+
+	if (!share_for_write &&
+			netatalk_already_open_for_writing) {
+		return NT_STATUS_SHARING_VIOLATION;
+	}
+
+	if (!(access_mask & FILE_READ_DATA)) {
 		/*
-		 * Applying fcntl read locks requires an fd opened for
-		 * reading. This means we won't be applying locks for
-		 * files openend write-only, but what can we do...
+		 * Nothing we can do here, we need read access
+		 * to set locks.
 		 */
-		have_read = true;
+		return NT_STATUS_OK;
 	}
 
-	/*
-	 * Check read access and deny read mode
-	 */
-	if ((access_mask & FILE_READ_DATA) || (deny_mode & DENY_READ)) {
-		/* Check access */
-		open_for_reading = test_netatalk_lock(
-			fsp, access_to_netatalk_brl(fork_type, FILE_READ_DATA));
+	/* Set NetAtalk locks matching our access */
+	if (access_mask & FILE_READ_DATA) {
+		struct byte_range_lock *br_lck = NULL;
 
-		deny_read = test_netatalk_lock(
-			fsp, denymode_to_netatalk_brl(fork_type, DENY_READ));
+		off = access_to_netatalk_brl(fork_type, FILE_READ_DATA);
+		br_lck = do_lock(
+			handle->conn->sconn->msg_ctx, fsp,
+			fsp->op->global->open_persistent_id, 1, off,
+			READ_LOCK, POSIX_LOCK, false,
+			&status, NULL);
 
-		DEBUG(10, ("read: %s, deny_write: %s\n",
-			  open_for_reading == true ? "yes" : "no",
-			  deny_read == true ? "yes" : "no"));
+		TALLOC_FREE(br_lck);
 
-		if (((access_mask & FILE_READ_DATA) && deny_read)
-		    || ((deny_mode & DENY_READ) && open_for_reading)) {
-			return NT_STATUS_SHARING_VIOLATION;
-		}
-
-		/* Set locks */
-		if ((access_mask & FILE_READ_DATA) && have_read) {
-			struct byte_range_lock *br_lck = NULL;
-
-			off = access_to_netatalk_brl(fork_type, FILE_READ_DATA);
-			br_lck = do_lock(
-				handle->conn->sconn->msg_ctx, fsp,
-				fsp->op->global->open_persistent_id, 1, off,
-				READ_LOCK, POSIX_LOCK, false,
-				&status, NULL);
-
-			TALLOC_FREE(br_lck);
-
-			if (!NT_STATUS_IS_OK(status))  {
-				return status;
-			}
-		}
-
-		if ((deny_mode & DENY_READ) && have_read) {
-			struct byte_range_lock *br_lck = NULL;
-
-			off = denymode_to_netatalk_brl(fork_type, DENY_READ);
-			br_lck = do_lock(
-				handle->conn->sconn->msg_ctx, fsp,
-				fsp->op->global->open_persistent_id, 1, off,
-				READ_LOCK, POSIX_LOCK, false,
-				&status, NULL);
-
-			TALLOC_FREE(br_lck);
-
-			if (!NT_STATUS_IS_OK(status)) {
-				return status;
-			}
+		if (!NT_STATUS_IS_OK(status))  {
+			return status;
 		}
 	}
 
-	/*
-	 * Check write access and deny write mode
-	 */
-	if ((access_mask & FILE_WRITE_DATA) || (deny_mode & DENY_WRITE)) {
-		/* Check access */
-		open_for_writing = test_netatalk_lock(
-			fsp, access_to_netatalk_brl(fork_type, FILE_WRITE_DATA));
+	if (!share_for_read) {
+		struct byte_range_lock *br_lck = NULL;
 
-		deny_write = test_netatalk_lock(
-			fsp, denymode_to_netatalk_brl(fork_type, DENY_WRITE));
+		off = denymode_to_netatalk_brl(fork_type, DENY_READ);
+		br_lck = do_lock(
+			handle->conn->sconn->msg_ctx, fsp,
+			fsp->op->global->open_persistent_id, 1, off,
+			READ_LOCK, POSIX_LOCK, false,
+			&status, NULL);
 
-		DEBUG(10, ("write: %s, deny_write: %s\n",
-			  open_for_writing == true ? "yes" : "no",
-			  deny_write == true ? "yes" : "no"));
+		TALLOC_FREE(br_lck);
 
-		if (((access_mask & FILE_WRITE_DATA) && deny_write)
-		    || ((deny_mode & DENY_WRITE) && open_for_writing)) {
-			return NT_STATUS_SHARING_VIOLATION;
-		}
-
-		/* Set locks */
-		if ((access_mask & FILE_WRITE_DATA) && have_read) {
-			struct byte_range_lock *br_lck = NULL;
-
-			off = access_to_netatalk_brl(fork_type, FILE_WRITE_DATA);
-			br_lck = do_lock(
-				handle->conn->sconn->msg_ctx, fsp,
-				fsp->op->global->open_persistent_id, 1, off,
-				READ_LOCK, POSIX_LOCK, false,
-				&status, NULL);
-
-			TALLOC_FREE(br_lck);
-
-			if (!NT_STATUS_IS_OK(status)) {
-				return status;
-			}
-		}
-		if ((deny_mode & DENY_WRITE) && have_read) {
-			struct byte_range_lock *br_lck = NULL;
-
-			off = denymode_to_netatalk_brl(fork_type, DENY_WRITE);
-			br_lck = do_lock(
-				handle->conn->sconn->msg_ctx, fsp,
-				fsp->op->global->open_persistent_id, 1, off,
-				READ_LOCK, POSIX_LOCK, false,
-				&status, NULL);
-
-			TALLOC_FREE(br_lck);
-
-			if (!NT_STATUS_IS_OK(status)) {
-				return status;
-			}
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
 		}
 	}
 
-	return status;
+	if (access_mask & FILE_WRITE_DATA) {
+		struct byte_range_lock *br_lck = NULL;
+
+		off = access_to_netatalk_brl(fork_type, FILE_WRITE_DATA);
+		br_lck = do_lock(
+			handle->conn->sconn->msg_ctx, fsp,
+			fsp->op->global->open_persistent_id, 1, off,
+			READ_LOCK, POSIX_LOCK, false,
+			&status, NULL);
+
+		TALLOC_FREE(br_lck);
+
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+	}
+
+	if (!share_for_write) {
+		struct byte_range_lock *br_lck = NULL;
+
+		off = denymode_to_netatalk_brl(fork_type, DENY_WRITE);
+		br_lck = do_lock(
+			handle->conn->sconn->msg_ctx, fsp,
+			fsp->op->global->open_persistent_id, 1, off,
+			READ_LOCK, POSIX_LOCK, false,
+			&status, NULL);
+
+		TALLOC_FREE(br_lck);
+
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+	}
+
+	return NT_STATUS_OK;
 }
 
 static NTSTATUS check_aapl(vfs_handle_struct *handle,
@@ -3717,6 +3707,87 @@ static int fruit_open(vfs_handle_struct *handle,
 	DBG_DEBUG("Path [%s] fd [%d]\n", smb_fname_str_dbg(smb_fname), fd);
 
 	return fd;
+}
+
+static int fruit_close_meta(vfs_handle_struct *handle,
+			    files_struct *fsp)
+{
+	int ret;
+	struct fruit_config_data *config = NULL;
+
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
+				struct fruit_config_data, return -1);
+
+	switch (config->meta) {
+	case FRUIT_META_STREAM:
+		ret = SMB_VFS_NEXT_CLOSE(handle, fsp);
+		break;
+
+	case FRUIT_META_NETATALK:
+		ret = close(fsp->fh->fd);
+		fsp->fh->fd = -1;
+		break;
+
+	default:
+		DBG_ERR("Unexpected meta config [%d]\n", config->meta);
+		return -1;
+	}
+
+	return ret;
+}
+
+
+static int fruit_close_rsrc(vfs_handle_struct *handle,
+			    files_struct *fsp)
+{
+	int ret;
+	struct fruit_config_data *config = NULL;
+
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
+				struct fruit_config_data, return -1);
+
+	switch (config->rsrc) {
+	case FRUIT_RSRC_STREAM:
+	case FRUIT_RSRC_ADFILE:
+		ret = SMB_VFS_NEXT_CLOSE(handle, fsp);
+		break;
+
+	case FRUIT_RSRC_XATTR:
+		ret = close(fsp->fh->fd);
+		fsp->fh->fd = -1;
+		break;
+
+	default:
+		DBG_ERR("Unexpected rsrc config [%d]\n", config->rsrc);
+		return -1;
+	}
+
+	return ret;
+}
+
+static int fruit_close(vfs_handle_struct *handle,
+                       files_struct *fsp)
+{
+	int ret;
+	int fd;
+
+	fd = fsp->fh->fd;
+
+	DBG_DEBUG("Path [%s] fd [%d]\n", smb_fname_str_dbg(fsp->fsp_name), fd);
+
+	if (!is_ntfs_stream_smb_fname(fsp->fsp_name)) {
+		return SMB_VFS_NEXT_CLOSE(handle, fsp);
+	}
+
+	if (is_afpinfo_stream(fsp->fsp_name)) {
+		ret = fruit_close_meta(handle, fsp);
+	} else if (is_afpresource_stream(fsp->fsp_name)) {
+		ret = fruit_close_rsrc(handle, fsp);
+	} else {
+		ret = SMB_VFS_NEXT_CLOSE(handle, fsp);
+	}
+
+	return ret;
 }
 
 static int fruit_rename(struct vfs_handle_struct *handle,
@@ -6035,7 +6106,7 @@ static NTSTATUS fruit_create_file(vfs_handle_struct *handle,
 		status = fruit_check_access(
 			handle, *result,
 			access_mask,
-			map_share_mode_to_deny_mode(share_access, 0));
+			share_access);
 		if (!NT_STATUS_IS_OK(status)) {
 			goto fail;
 		}
@@ -7024,6 +7095,7 @@ static struct vfs_fn_pointers vfs_fruit_fns = {
 	.rename_fn = fruit_rename,
 	.rmdir_fn = fruit_rmdir,
 	.open_fn = fruit_open,
+	.close_fn = fruit_close,
 	.pread_fn = fruit_pread,
 	.pwrite_fn = fruit_pwrite,
 	.pread_send_fn = fruit_pread_send,

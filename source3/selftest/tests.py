@@ -117,7 +117,7 @@ for t in tests:
     plantestsuite("samba3.smbtorture_s3.vfs_aio_fork(simpleserver).%s" % t, "simpleserver", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER_IP/vfs_aio_fork', '$USERNAME', '$PASSWORD', smbtorture3, "", "-l $LOCAL_PATH"])
 
 posix_tests = ["POSIX", "POSIX-APPEND", "POSIX-SYMLINK-ACL", "POSIX-SYMLINK-EA", "POSIX-OFD-LOCK",
-              "POSIX-STREAM-DELETE", "WINDOWS-BAD-SYMLINK" ]
+              "POSIX-STREAM-DELETE", "WINDOWS-BAD-SYMLINK", "POSIX-MKDIR" ]
 
 for t in posix_tests:
     plantestsuite("samba3.smbtorture_s3.plain(nt4_dc).%s" % t, "nt4_dc", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER_IP/posix_share', '$USERNAME', '$PASSWORD', smbtorture3, "", "-l $LOCAL_PATH"])
@@ -291,6 +291,9 @@ for env in ["fileserver"]:
     plantestsuite("samba3.blackbox.large_acl.NT1", env, [os.path.join(samba3srcdir, "script/tests/test_large_acl.sh"), '$SERVER', '$USERNAME', '$PASSWORD', smbclient3, smbcacls, '-m', 'NT1'])
     plantestsuite("samba3.blackbox.large_acl.SMB3", env, [os.path.join(samba3srcdir, "script/tests/test_large_acl.sh"), '$SERVER', '$USERNAME', '$PASSWORD', smbclient3, smbcacls, '-m', 'SMB3'])
     plantestsuite("samba3.blackbox.give_owner", env, [os.path.join(samba3srcdir, "script/tests/test_give_owner.sh"), '$SERVER', '$SERVER_IP', '$USERNAME', '$PASSWORD', '$PREFIX', smbclient3, smbcacls, net, 'tmp'])
+    plantestsuite("samba3.blackbox.force_group_change", env,
+               [os.path.join(samba3srcdir, "script/tests/test_force_group_change.sh"),
+               '$SERVER', '$USERNAME', '$PASSWORD', '$LOCAL_PATH', smbclient3, smbcontrol])
 
     #
     # tar command tests

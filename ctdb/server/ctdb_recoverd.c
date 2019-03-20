@@ -888,6 +888,7 @@ struct ctdb_recovery_lock_handle {
 	bool locked;
 	double latency;
 	struct ctdb_cluster_mutex_handle *h;
+	struct ctdb_recoverd *rec;
 };
 
 static void take_reclock_handler(char status,
@@ -897,22 +898,45 @@ static void take_reclock_handler(char status,
 	struct ctdb_recovery_lock_handle *s =
 		(struct ctdb_recovery_lock_handle *) private_data;
 
+	s->locked = (status == '0') ;
+
+	/*
+	 * If unsuccessful then ensure the process has exited and that
+	 * the file descriptor event handler has been cancelled
+	 */
+	if (! s->locked) {
+		TALLOC_FREE(s->h);
+	}
+
 	switch (status) {
 	case '0':
 		s->latency = latency;
 		break;
 
 	case '1':
-		DEBUG(DEBUG_ERR,
-		      ("Unable to take recovery lock - contention\n"));
+		D_ERR("Unable to take recovery lock - contention\n");
+		break;
+
+	case '2':
+		D_ERR("Unable to take recovery lock - timeout\n");
 		break;
 
 	default:
-		DEBUG(DEBUG_ERR, ("ERROR: when taking recovery lock\n"));
+		D_ERR("Unable to take recover lock - unknown error\n");
+
+		{
+			struct ctdb_recoverd *rec = s->rec;
+			struct ctdb_context *ctdb = rec->ctdb;
+			uint32_t pnn = ctdb_get_pnn(ctdb);
+
+			D_ERR("Banning this node\n");
+			ctdb_ban_node(rec,
+				      pnn,
+				      ctdb->tunable.recovery_ban_period);
+		}
 	}
 
 	s->done = true;
-	s->locked = (status == '0') ;
 }
 
 static bool ctdb_recovery_lock(struct ctdb_recoverd *rec);
@@ -943,10 +967,12 @@ static bool ctdb_recovery_lock(struct ctdb_recoverd *rec)
 		return false;
 	};
 
+	s->rec = rec;
+
 	h = ctdb_cluster_mutex(s,
 			       ctdb,
 			       ctdb->recovery_lock,
-			       0,
+			       120,
 			       take_reclock_handler,
 			       s,
 			       lost_reclock_handler,

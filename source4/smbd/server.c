@@ -45,6 +45,7 @@
 #include "libds/common/roles.h"
 #include "lib/util/tfork.h"
 #include "dsdb/samdb/ldb_modules/util.h"
+#include "lib/util/server_id.h"
 
 #ifdef HAVE_PTHREAD
 #include <pthread.h>
@@ -230,6 +231,41 @@ _NORETURN_ static void max_runtime_handler(struct tevent_context *ev,
 }
 
 /*
+ * When doing an in-place upgrade of Samba, the database format may have
+ * changed between versions. E.g. between 4.7 and 4.8 the DB changed from
+ * DN-based indexes to GUID-based indexes, so we have to re-index the DB after
+ * upgrading.
+ * This function handles migrating an older samba DB to a new Samba release.
+ * Note that we have to maintain DB compatibility between *all* older versions
+ * of Samba, not just the ones still under maintenance support.
+ */
+static int handle_inplace_db_upgrade(struct ldb_context *ldb_ctx)
+{
+	int ret;
+
+	/*
+	 * The DSDB stack will handle reindexing the DB (if needed) upon the first
+	 * DB write. Open and close a transaction on the DB now to trigger a
+	 * reindex if required, rather than waiting for the first write.
+	 * We do this here to guarantee that the DB will have been re-indexed by
+	 * the time the main samba code runs.
+	 * Refer to dsdb_schema_set_indices_and_attributes() for the actual reindexing
+	 * code, called from
+	 * source4/dsdb/samdb/ldb_modules/schema_load.c:schema_load_start_transaction()
+	 */
+	ret = ldb_transaction_start(ldb_ctx);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+
+	ret = ldb_transaction_commit(ldb_ctx);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+	return LDB_SUCCESS;
+}
+
+/*
   pre-open the key databases. This saves a lot of time in child
   processes
  */
@@ -261,6 +297,13 @@ static int prime_ldb_databases(struct tevent_context *event_ctx, bool *am_backup
 		talloc_free(db_context);
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
+
+	ret = handle_inplace_db_upgrade(ldb_ctx);
+	if (ret != LDB_SUCCESS) {
+		talloc_free(db_context);
+		return ret;
+	}
+
 	pdb = privilege_connect(db_context, cmdline_lp_ctx);
 	if (pdb == NULL) {
 		talloc_free(db_context);
@@ -292,6 +335,31 @@ static int prime_ldb_databases(struct tevent_context *event_ctx, bool *am_backup
 }
 
 /*
+  called from 'smbcontrol samba shutdown'
+ */
+static void samba_parent_shutdown(struct imessaging_context *msg,
+				  void *private_data,
+				  uint32_t msg_type,
+				  struct server_id src,
+				  DATA_BLOB *data)
+{
+	struct server_state *state =
+		talloc_get_type_abort(private_data,
+		struct server_state);
+	struct server_id_buf src_buf;
+	struct server_id dst = imessaging_get_server_id(msg);
+	struct server_id_buf dst_buf;
+
+	DBG_ERR("samba_shutdown of %s %s: from %s\n",
+		state->binary_name,
+		server_id_str_buf(dst, &dst_buf),
+		server_id_str_buf(src, &src_buf));
+
+	TALLOC_FREE(state);
+	exit(0);
+}
+
+/*
   called when a fatal condition occurs in a child task
  */
 static NTSTATUS samba_terminate(struct irpc_message *msg,
@@ -316,7 +384,7 @@ static NTSTATUS setup_parent_messaging(struct server_state *state,
 
 	msg = imessaging_init(state->event_ctx,
 			      lp_ctx,
-			      cluster_id(0, SAMBA_PARENT_TASKID),
+			      cluster_id(getpid(), SAMBA_PARENT_TASKID),
 			      state->event_ctx);
 	NT_STATUS_HAVE_NO_MEMORY(msg);
 
@@ -325,10 +393,19 @@ static NTSTATUS setup_parent_messaging(struct server_state *state,
 		return status;
 	}
 
+	status = imessaging_register(msg, state, MSG_SHUTDOWN,
+				     samba_parent_shutdown);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
 	status = IRPC_REGISTER(msg, irpc, SAMBA_TERMINATE,
 			       samba_terminate, state);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
 
-	return status;
+	return NT_STATUS_OK;
 }
 
 

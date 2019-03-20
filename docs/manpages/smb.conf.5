@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 12/20/2018
+.\"      Date: 03/12/2019
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.9.4
+.\"    Source: Samba 4.9.5
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "12/20/2018" "Samba 4\&.9\&.4" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "03/12/2019" "Samba 4\&.9\&.5" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -8624,7 +8624,9 @@ Default:
 prefork children (G)
 .PP
 .RS 4
-This option controls the number of worker processes that are started for each service when prefork process model is enabled\&. The prefork children are only started for those services that support prefork (currently only ldap)\&. For processes that don\*(Aqt support preforking all requests are handled by a single process for that service\&.
+This option controls the number of worker processes that are started for each service when prefork process model is enabled (see
+\fBsamba\fR(8)
+\-M)\&. The prefork children are only started for those services that support prefork (currently only ldap)\&. For processes that don\*(Aqt support preforking all requests are handled by a single process for that service\&.
 .sp
 This should be set to a small multiple of the number of CPU\*(Aqs available on the server
 .sp
@@ -13155,7 +13157,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.9\&.4 of the Samba suite\&.
+This man page is part of version 4\&.9\&.5 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

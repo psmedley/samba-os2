@@ -354,9 +354,9 @@ static void wb_xids2sids_dom_done(struct tevent_req *subreq)
 	dom_sid_idx = 0;
 
 	for (i=0; i<state->num_all_xids; i++) {
-		struct unixid id = state->all_xids[i];
+		struct unixid *id = &state->all_xids[i];
 
-		if ((id.id < dom_map->low_id) || (id.id > dom_map->high_id)) {
+		if ((id->id < dom_map->low_id) || (id->id > dom_map->high_id)) {
 			/* out of range */
 			continue;
 		}
@@ -366,17 +366,7 @@ static void wb_xids2sids_dom_done(struct tevent_req *subreq)
 		}
 
 		sid_copy(&state->all_sids[i], &state->dom_sids[dom_sid_idx]);
-
-		/*
-		 * Prime the cache after an xid2sid call. It's
-		 * important that we use state->dom_xids for the xid
-		 * value, not state->all_xids: state->all_xids carries
-		 * what we asked for, e.g. a
-		 * ID_TYPE_UID. state->dom_xids holds something the
-		 * idmap child possibly changed to ID_TYPE_BOTH.
-		 */
-		idmap_cache_set_sid2unixid(
-			&state->all_sids[i], &state->dom_xids[dom_sid_idx]);
+		*id = state->dom_xids[dom_sid_idx];
 
 		dom_sid_idx += 1;
 	}
@@ -428,6 +418,7 @@ struct wb_xids2sids_state {
 	struct unixid *xids;
 	size_t num_xids;
 	struct dom_sid *sids;
+	bool *cached;
 
 	size_t dom_idx;
 };
@@ -437,7 +428,7 @@ static void wb_xids2sids_init_dom_maps_done(struct tevent_req *subreq);
 
 struct tevent_req *wb_xids2sids_send(TALLOC_CTX *mem_ctx,
 				     struct tevent_context *ev,
-				     struct unixid *xids,
+				     const struct unixid *xids,
 				     uint32_t num_xids)
 {
 	struct tevent_req *req, *subreq;
@@ -449,11 +440,21 @@ struct tevent_req *wb_xids2sids_send(TALLOC_CTX *mem_ctx,
 		return NULL;
 	}
 	state->ev = ev;
-	state->xids = xids;
 	state->num_xids = num_xids;
+
+	state->xids = talloc_array(state, struct unixid, num_xids);
+	if (tevent_req_nomem(state->xids, req)) {
+		return tevent_req_post(req, ev);
+	}
+	memcpy(state->xids, xids, num_xids * sizeof(struct unixid));
 
 	state->sids = talloc_zero_array(state, struct dom_sid, num_xids);
 	if (tevent_req_nomem(state->sids, req)) {
+		return tevent_req_post(req, ev);
+	}
+
+	state->cached = talloc_zero_array(state, bool, num_xids);
+	if (tevent_req_nomem(state->cached, req)) {
 		return tevent_req_post(req, ev);
 	}
 
@@ -479,6 +480,7 @@ struct tevent_req *wb_xids2sids_send(TALLOC_CTX *mem_ctx,
 
 			if (ok && !expired) {
 				sid_copy(&state->sids[i], &sid);
+				state->cached[i] = true;
 			}
 		}
 	}
@@ -530,6 +532,7 @@ static void wb_xids2sids_done(struct tevent_req *subreq)
 	struct wb_xids2sids_state *state = tevent_req_data(
 		req, struct wb_xids2sids_state);
 	size_t num_domains = talloc_array_length(dom_maps);
+	size_t i;
 	NTSTATUS status;
 
 	status = wb_xids2sids_dom_recv(subreq);
@@ -540,18 +543,43 @@ static void wb_xids2sids_done(struct tevent_req *subreq)
 
 	state->dom_idx += 1;
 
-	if (state->dom_idx >= num_domains) {
-		tevent_req_done(req);
+	if (state->dom_idx < num_domains) {
+		subreq = wb_xids2sids_dom_send(state,
+					       state->ev,
+					       &dom_maps[state->dom_idx],
+					       state->xids,
+					       state->num_xids,
+					       state->sids);
+		if (tevent_req_nomem(subreq, req)) {
+			return;
+		}
+		tevent_req_set_callback(subreq, wb_xids2sids_done, req);
 		return;
 	}
 
-	subreq = wb_xids2sids_dom_send(
-		state, state->ev, &dom_maps[state->dom_idx],
-		state->xids, state->num_xids, state->sids);
-	if (tevent_req_nomem(subreq, req)) {
-		return;
+
+	for (i = 0; i < state->num_xids; i++) {
+		/*
+		 * Prime the cache after an xid2sid call. It's important that we
+		 * use the xid value returned from the backend for the xid value
+		 * passed to idmap_cache_set_sid2unixid(), not the input to
+		 * wb_xids2sids_send: the input carries what was asked for,
+		 * e.g. a ID_TYPE_UID. The result from the backend something the
+		 * idmap child possibly changed to ID_TYPE_BOTH.
+		 *
+		 * And of course If the value was from the cache don't update
+		 * the cache.
+		 */
+
+		if (state->cached[i]) {
+			continue;
+		}
+
+		idmap_cache_set_sid2unixid(&state->sids[i], &state->xids[i]);
 	}
-	tevent_req_set_callback(subreq, wb_xids2sids_done, req);
+
+	tevent_req_done(req);
+	return;
 }
 
 NTSTATUS wb_xids2sids_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,

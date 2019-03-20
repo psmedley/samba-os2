@@ -316,6 +316,12 @@ static NTSTATUS rpc_changetrustpw_internals(struct net_context *c,
 
 int net_rpc_changetrustpw(struct net_context *c, int argc, const char **argv)
 {
+	int conn_flags = NET_FLAGS_PDC;
+
+	if (!c->opt_user_specified && !c->opt_kerberos) {
+		conn_flags |= NET_FLAGS_ANONYMOUS;
+	}
+
 	if (c->display_usage) {
 		d_printf(  "%s\n"
 			   "net rpc changetrustpw\n"
@@ -326,7 +332,7 @@ int net_rpc_changetrustpw(struct net_context *c, int argc, const char **argv)
 	}
 
 	return run_rpc_command(c, NULL, &ndr_table_netlogon,
-			       NET_FLAGS_ANONYMOUS | NET_FLAGS_PDC,
+			       conn_flags,
 			       rpc_changetrustpw_internals,
 			       argc, argv);
 }
@@ -863,7 +869,7 @@ int net_rpc_getsid(struct net_context *c, int argc, const char **argv)
 {
 	int conn_flags = NET_FLAGS_PDC;
 
-	if (!c->opt_user_specified) {
+	if (!c->opt_user_specified && !c->opt_kerberos) {
 		conn_flags |= NET_FLAGS_ANONYMOUS;
 	}
 
@@ -7425,6 +7431,9 @@ bool net_rpc_check(struct net_context *c, unsigned flags)
 				lp_netbios_name(), SMB_SIGNING_IPC_DEFAULT,
 				0, &cli);
 	if (!NT_STATUS_IS_OK(status)) {
+		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
+			DBG_ERR("NetBIOS support disabled, unable to connect\n");
+		}
 		return false;
 	}
 	status = smbXcli_negprot(cli->conn, cli->timeout, PROTOCOL_CORE,

@@ -1032,9 +1032,7 @@ static struct smb_filename *cephwrap_getwd(struct vfs_handle_struct *handle,
 static int strict_allocate_ftruncate(struct vfs_handle_struct *handle, files_struct *fsp, off_t len)
 {
 	off_t space_to_write;
-	uint64_t space_avail;
-	uint64_t bsize,dfree,dsize;
-	int ret;
+	int result;
 	NTSTATUS status;
 	SMB_STRUCT_STAT *pst;
 
@@ -1053,106 +1051,45 @@ static int strict_allocate_ftruncate(struct vfs_handle_struct *handle, files_str
 		return 0;
 
 	/* Shrink - just ftruncate. */
-	if (pst->st_ex_size > len)
-		return ftruncate(fsp->fh->fd, len);
+	if (pst->st_ex_size > len) {
+		result = ceph_ftruncate(handle->data, fsp->fh->fd, len);
+		WRAP_RETURN(result);
+	}
 
 	space_to_write = len - pst->st_ex_size;
-
-	/* for allocation try fallocate first. This can fail on some
-	   platforms e.g. when the filesystem doesn't support it and no
-	   emulation is being done by the libc (like on AIX with JFS1). In that
-	   case we do our own emulation. fallocate implementations can
-	   return ENOTSUP or EINVAL in cases like that. */
-	ret = SMB_VFS_FALLOCATE(fsp, 0, pst->st_ex_size, space_to_write);
-	if (ret == -1 && errno == ENOSPC) {
-		return -1;
-	}
-	if (ret == 0) {
-		return 0;
-	}
-	DEBUG(10,("[CEPH] strict_allocate_ftruncate: SMB_VFS_FALLOCATE failed with "
-		"error %d. Falling back to slow manual allocation\n", errno));
-
-	/* available disk space is enough or not? */
-	space_avail =
-	    get_dfree_info(fsp->conn, fsp->fsp_name, &bsize, &dfree, &dsize);
-	/* space_avail is 1k blocks */
-	if (space_avail == (uint64_t)-1 ||
-			((uint64_t)space_to_write/1024 > space_avail) ) {
-		errno = ENOSPC;
-		return -1;
-	}
-
-	/* Write out the real space on disk. */
-	return vfs_slow_fallocate(fsp, pst->st_ex_size, space_to_write);
+	result = ceph_fallocate(handle->data, fsp->fh->fd, 0, pst->st_ex_size,
+				space_to_write);
+	WRAP_RETURN(result);
 }
 
 static int cephwrap_ftruncate(struct vfs_handle_struct *handle, files_struct *fsp, off_t len)
 {
 	int result = -1;
-	SMB_STRUCT_STAT st;
-	char c = 0;
-	off_t currpos;
 
 	DBG_DEBUG("[CEPH] ftruncate(%p, %p, %llu\n", handle, fsp, llu(len));
 
 	if (lp_strict_allocate(SNUM(fsp->conn))) {
-		result = strict_allocate_ftruncate(handle, fsp, len);
-		return result;
+		return strict_allocate_ftruncate(handle, fsp, len);
 	}
-
-	/* we used to just check HAVE_FTRUNCATE_EXTEND and only use
-	   sys_ftruncate if the system supports it. Then I discovered that
-	   you can have some filesystems that support ftruncate
-	   expansion and some that don't! On Linux fat can't do
-	   ftruncate extend but ext2 can. */
 
 	result = ceph_ftruncate(handle->data, fsp->fh->fd, len);
-	if (result == 0)
-		goto done;
+	WRAP_RETURN(result);
+}
 
-	/* According to W. R. Stevens advanced UNIX prog. Pure 4.3 BSD cannot
-	   extend a file with ftruncate. Provide alternate implementation
-	   for this */
-	currpos = SMB_VFS_LSEEK(fsp, 0, SEEK_CUR);
-	if (currpos == -1) {
-		goto done;
-	}
+static int cephwrap_fallocate(struct vfs_handle_struct *handle,
+			      struct files_struct *fsp,
+			      uint32_t mode,
+			      off_t offset,
+			      off_t len)
+{
+	int result;
 
-	/* Do an fstat to see if the file is longer than the requested
-	   size in which case the ftruncate above should have
-	   succeeded or shorter, in which case seek to len - 1 and
-	   write 1 byte of zero */
-	if (SMB_VFS_FSTAT(fsp, &st) == -1) {
-		goto done;
-	}
-
-#ifdef S_ISFIFO
-	if (S_ISFIFO(st.st_ex_mode)) {
-		result = 0;
-		goto done;
-	}
-#endif
-
-	if (st.st_ex_size == len) {
-		result = 0;
-		goto done;
-	}
-
-	if (st.st_ex_size > len) {
-		/* the sys_ftruncate should have worked */
-		goto done;
-	}
-
-	if (SMB_VFS_PWRITE(fsp, &c, 1, len-1)!=1) {
-		goto done;
-	}
-
-	result = 0;
-
-  done:
-
-	return result;
+	DBG_DEBUG("[CEPH] fallocate(%p, %p, %u, %llu, %llu\n",
+		  handle, fsp, mode, llu(offset), llu(len));
+	/* unsupported mode flags are rejected by libcephfs */
+	result = ceph_fallocate(handle->data, fsp->fh->fd, mode, offset, len);
+	DBG_DEBUG("[CEPH] fallocate(...) = %d\n", result);
+	WRAP_RETURN(result);
 }
 
 static bool cephwrap_lock(struct vfs_handle_struct *handle, files_struct *fsp, int op, off_t offset, off_t count, int type)
@@ -1513,6 +1450,7 @@ static struct vfs_fn_pointers ceph_fns = {
 	.getwd_fn = cephwrap_getwd,
 	.ntimes_fn = cephwrap_ntimes,
 	.ftruncate_fn = cephwrap_ftruncate,
+	.fallocate_fn = cephwrap_fallocate,
 	.lock_fn = cephwrap_lock,
 	.kernel_flock_fn = cephwrap_kernel_flock,
 	.linux_setlease_fn = cephwrap_linux_setlease,

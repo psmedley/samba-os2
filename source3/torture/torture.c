@@ -7254,6 +7254,207 @@ static bool run_posix_ofd_lock_test(int dummy)
 	return correct;
 }
 
+/*
+  Test POSIX mkdir is case-sensitive.
+ */
+static bool run_posix_mkdir_test(int dummy)
+{
+	static struct cli_state *cli;
+	const char *fname_foo = "POSIX_foo";
+	const char *fname_foo_Foo = "POSIX_foo/Foo";
+	const char *fname_foo_foo = "POSIX_foo/foo";
+	const char *fname_Foo = "POSIX_Foo";
+	const char *fname_Foo_Foo = "POSIX_Foo/Foo";
+	const char *fname_Foo_foo = "POSIX_Foo/foo";
+	bool correct = false;
+	NTSTATUS status;
+	TALLOC_CTX *frame = NULL;
+	uint16_t fnum = (uint16_t)-1;
+
+	frame = talloc_stackframe();
+
+	printf("Starting POSIX mkdir test\n");
+
+	if (!torture_open_connection(&cli, 0)) {
+		TALLOC_FREE(frame);
+		return false;
+	}
+
+	smbXcli_conn_set_sockopt(cli->conn, sockops);
+
+	status = torture_setup_unix_extensions(cli);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(frame);
+		return false;
+	}
+
+	cli_posix_rmdir(cli, fname_foo_foo);
+	cli_posix_rmdir(cli, fname_foo_Foo);
+	cli_posix_rmdir(cli, fname_foo);
+
+	cli_posix_rmdir(cli, fname_Foo_foo);
+	cli_posix_rmdir(cli, fname_Foo_Foo);
+	cli_posix_rmdir(cli, fname_Foo);
+
+	/*
+	 * Create a file POSIX_foo then try
+	 * and use it in a directory path by
+	 * doing mkdir POSIX_foo/bar.
+	 * The mkdir should fail with
+	 * NT_STATUS_OBJECT_PATH_NOT_FOUND
+	 */
+
+	status = cli_posix_open(cli,
+			fname_foo,
+			O_RDWR|O_CREAT,
+			0666,
+			&fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_open of %s failed error %s\n",
+			fname_foo,
+			nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_posix_mkdir(cli, fname_foo_foo, 0777);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_PATH_NOT_FOUND)) {
+		printf("cli_posix_mkdir of %s should fail with "
+			"NT_STATUS_OBJECT_PATH_NOT_FOUND got "
+			"%s instead\n",
+			fname_foo_foo,
+			nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_close(cli, fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_close failed %s\n", nt_errstr(status));
+		goto out;
+	}
+	fnum = (uint16_t)-1;
+
+	status = cli_posix_unlink(cli, fname_foo);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_unlink of %s failed error %s\n",
+			fname_foo,
+			nt_errstr(status));
+		goto out;
+	}
+
+	/*
+	 * Now we've deleted everything, posix_mkdir, posix_rmdir,
+	 * posix_open, posix_unlink, on
+	 * POSIX_foo/foo should return NT_STATUS_OBJECT_PATH_NOT_FOUND
+	 * not silently create POSIX_foo/foo.
+	 */
+
+	status = cli_posix_mkdir(cli, fname_foo_foo, 0777);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_PATH_NOT_FOUND)) {
+		printf("cli_posix_mkdir of %s should fail with "
+			"NT_STATUS_OBJECT_PATH_NOT_FOUND got "
+			"%s instead\n",
+			fname_foo_foo,
+			nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_posix_rmdir(cli, fname_foo_foo);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_PATH_NOT_FOUND)) {
+		printf("cli_posix_rmdir of %s should fail with "
+			"NT_STATUS_OBJECT_PATH_NOT_FOUND got "
+			"%s instead\n",
+			fname_foo_foo,
+			nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_posix_open(cli,
+			fname_foo_foo,
+			O_RDWR|O_CREAT,
+			0666,
+			&fnum);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_PATH_NOT_FOUND)) {
+		printf("cli_posix_open of %s should fail with "
+			"NT_STATUS_OBJECT_PATH_NOT_FOUND got "
+			"%s instead\n",
+			fname_foo_foo,
+			nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_posix_unlink(cli, fname_foo_foo);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_PATH_NOT_FOUND)) {
+		printf("cli_posix_unlink of %s should fail with "
+			"NT_STATUS_OBJECT_PATH_NOT_FOUND got "
+			"%s instead\n",
+			fname_foo_foo,
+			nt_errstr(status));
+		goto out;
+	}
+
+	status = cli_posix_mkdir(cli, fname_foo, 0777);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_mkdir of %s failed\n", fname_foo);
+		goto out;
+	}
+
+	status = cli_posix_mkdir(cli, fname_Foo, 0777);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_mkdir of %s failed\n", fname_Foo);
+		goto out;
+	}
+
+	status = cli_posix_mkdir(cli, fname_foo_foo, 0777);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_mkdir of %s failed\n", fname_foo_foo);
+		goto out;
+	}
+
+	status = cli_posix_mkdir(cli, fname_foo_Foo, 0777);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_mkdir of %s failed\n", fname_foo_Foo);
+		goto out;
+	}
+
+	status = cli_posix_mkdir(cli, fname_Foo_foo, 0777);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_mkdir of %s failed\n", fname_Foo_foo);
+		goto out;
+	}
+
+	status = cli_posix_mkdir(cli, fname_Foo_Foo, 0777);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_mkdir of %s failed\n", fname_Foo_Foo);
+		goto out;
+	}
+
+	printf("POSIX mkdir test passed\n");
+	correct = true;
+
+  out:
+
+	if (fnum != (uint16_t)-1) {
+		cli_close(cli, fnum);
+		fnum = (uint16_t)-1;
+	}
+
+	cli_posix_rmdir(cli, fname_foo_foo);
+	cli_posix_rmdir(cli, fname_foo_Foo);
+	cli_posix_rmdir(cli, fname_foo);
+
+	cli_posix_rmdir(cli, fname_Foo_foo);
+	cli_posix_rmdir(cli, fname_Foo_Foo);
+	cli_posix_rmdir(cli, fname_Foo);
+
+	if (!torture_close_connection(cli)) {
+		correct = false;
+	}
+
+	TALLOC_FREE(frame);
+	return correct;
+}
+
+
 static uint32_t open_attrs_table[] = {
 		FILE_ATTRIBUTE_NORMAL,
 		FILE_ATTRIBUTE_ARCHIVE,
@@ -11609,6 +11810,7 @@ static struct {
 	{"POSIX-SYMLINK-EA", run_ea_symlink_test, 0},
 	{"POSIX-STREAM-DELETE", run_posix_stream_delete, 0},
 	{"POSIX-OFD-LOCK", run_posix_ofd_lock_test, 0},
+	{"POSIX-MKDIR", run_posix_mkdir_test, 0},
 	{"WINDOWS-BAD-SYMLINK", run_symlink_open_test, 0},
 	{"CASE-INSENSITIVE-CREATE", run_case_insensitive_create, 0},
 	{"ASYNC-ECHO", run_async_echo, 0},
