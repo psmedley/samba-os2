@@ -244,6 +244,24 @@ for env in bld.gen_python_environments():
                 cflags_end=gen_cflags
 		)
 
+	bld.SAMBA_PYTHON('python_spoolss',
+		source='../../librpc/gen_ndr/py_spoolss.c',
+		deps='RPC_NDR_SPOOLSS %s %s' % (pytalloc_util, pyrpc_util),
+		realname='samba/dcerpc/spoolss.so'
+		)
+
+	bld.SAMBA_PYTHON('python_winspool',
+		source='../../librpc/gen_ndr/py_winspool.c',
+		deps='RPC_NDR_WINSPOOL %s %s' % (pytalloc_util, pyrpc_util),
+		realname='samba/dcerpc/winspool.so'
+		)
+
+	bld.SAMBA_PYTHON('python_witness',
+		source='../../librpc/gen_ndr/py_witness.c',
+		deps='RPC_NDR_WITNESS %s %s' % (pytalloc_util, pyrpc_util),
+		realname='samba/dcerpc/witness.so'
+		)
+
 	bld.SAMBA_PYTHON('python_dcerpc_nbt',
 		source='../../librpc/gen_ndr/py_nbt.c',
 		deps='ndr_nbt RPC_NDR_NBT %s %s' % (pytalloc_util, pyrpc_util),
@@ -293,6 +311,12 @@ for env in bld.gen_python_environments():
                 cflags_end=gen_cflags
 		)
 
+	bld.SAMBA_PYTHON('python_preg',
+		source='../../librpc/gen_ndr/py_preg.c',
+		deps='NDR_PREG %s %s' % (pytalloc_util, pyrpc_util),
+		realname='samba/dcerpc/preg.so',
+                cflags_end=gen_cflags
+		)
 
 	bld.SAMBA_PYTHON('python_initshutdown',
 		source='../../librpc/gen_ndr/py_initshutdown.c',
@@ -388,14 +412,6 @@ for env in bld.gen_python_environments():
                 cflags_end=gen_cflags
 		)
 
-	bld.SAMBA_PYTHON('python_idmap',
-		source='../../librpc/gen_ndr/py_idmap.c',
-		deps='NDR_IDMAP %s %s' % (pytalloc_util, pyrpc_util),
-		realname='samba/dcerpc/idmap.so',
-                cflags_end=gen_cflags
-		)
-
-
 	bld.SAMBA_PYTHON('python_drsuapi',
 		source='../../librpc/gen_ndr/py_drsuapi.c',
 		deps='RPC_NDR_DRSUAPI %s %s' % (pytalloc_util, pyrpc_util),
@@ -446,6 +462,12 @@ for env in bld.gen_python_environments():
                 cflags_end=gen_cflags
 		)
 
+	bld.SAMBA_PYTHON('dcerpc_windows_event_ids',
+		source='../../librpc/gen_ndr/py_windows_event_ids.c',
+		deps='%s %s' % (pytalloc_util, pyrpc_util),
+		realname='samba/dcerpc/windows_event_ids.so',
+                cflags_end=gen_cflags
+		)
 if bld.PYTHON_BUILD_IS_ENABLED():
 	for env in bld.gen_python_environments():
 		bld.SAMBA_SCRIPT('python_dcerpc_init',

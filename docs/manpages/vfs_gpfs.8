@@ -2,12 +2,12 @@
 .\"     Title: vfs_gpfs
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/12/2019
+.\"      Date: 08/22/2019
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.9.5
+.\"    Source: Samba 4.10.7
 .\"  Language: English
 .\"
-.TH "VFS_GPFS" "8" "03/12/2019" "Samba 4\&.9\&.5" "System Administration tools"
+.TH "VFS_GPFS" "8" "08/22/2019" "Samba 4\&.10\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -357,6 +357,38 @@ no
 .RE
 .RE
 .PP
+gpfs:check_fstype = [ yes | no ]
+.RS 4
+Check for a mounted GPFS file system on access to a SMB share\&.
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+yes(default)
+\- Check that the SMB share path is on a GPFS file system\&. Share access will be denied when a different file system is found\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+no
+\- skip check for GPFS file system on SMB share path\&.
+.RE
+.sp
+.RE
+.RE
+.PP
 gpfs:refuse_dacl_protected = [ yes | no ]
 .RS 4
 As GPFS does not support the ACE4_FLAG_NO_PROPAGATE NFSv4 flag (which would be the mapping for the DESC_DACL_PROTECTED flag), the status of this flag is currently silently ignored by Samba\&. That means that if you deselect the "Allow inheritable permissions\&.\&.\&." checkbox in Windows\*(Aq ACL dialog and then apply the ACL, the flag will be back immediately\&.
@@ -692,7 +724,7 @@ gpfs\&.h
 in gpfs versions newer than 3\&.2\&.1 PTF8\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.9\&.5 of the Samba suite\&.
+This man page is part of version 4\&.10\&.7 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

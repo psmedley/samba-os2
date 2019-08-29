@@ -1875,12 +1875,7 @@ static bool delay_for_oplock(files_struct *fsp,
 		break_to = e_lease_type & ~delay_mask;
 
 		if (will_overwrite) {
-			/*
-			 * we'll decide about SMB2_LEASE_READ later.
-			 *
-			 * Maybe the break will be deferred
-			 */
-			break_to &= ~SMB2_LEASE_HANDLE;
+			break_to &= ~(SMB2_LEASE_HANDLE|SMB2_LEASE_READ);
 		}
 
 		DEBUG(10, ("entry %u: e_lease_type %u, will_overwrite: %u\n",
@@ -2408,7 +2403,7 @@ static void defer_open(struct share_mode_lock *lck,
 	DBG_DEBUG("defering mid %" PRIu64 "\n", req->mid);
 
 	watch_req = dbwrap_watched_watch_send(watch_state,
-					      req->ev_ctx,
+					      req->sconn->ev_ctx,
 					      lck->data->record,
 					      (struct server_id){0});
 	if (watch_req == NULL) {
@@ -2416,7 +2411,7 @@ static void defer_open(struct share_mode_lock *lck,
 	}
 	tevent_req_set_callback(watch_req, defer_open_done, watch_state);
 
-	ok = tevent_req_set_endtime(watch_req, req->ev_ctx, abs_timeout);
+	ok = tevent_req_set_endtime(watch_req, req->sconn->ev_ctx, abs_timeout);
 	if (!ok) {
 		exit_server("tevent_req_set_endtime failed");
 	}
@@ -2508,7 +2503,7 @@ static void setup_kernel_oplock_poll_open(struct timeval request_time,
 	 * As this timer event is owned by req, it will
 	 * disappear if req it talloc_freed.
 	 */
-	open_rec->te = tevent_add_timer(req->ev_ctx,
+	open_rec->te = tevent_add_timer(req->sconn->ev_ctx,
 					req,
 					timeval_current_ofs(1, 0),
 					kernel_oplock_poll_open_timer,
@@ -2695,7 +2690,7 @@ static void schedule_async_open(struct timeval request_time,
 		exit_server("push_deferred_open_message_smb failed");
 	}
 
-	open_rec->te = tevent_add_timer(req->ev_ctx,
+	open_rec->te = tevent_add_timer(req->sconn->ev_ctx,
 					req,
 					timeval_current_ofs(20, 0),
 					schedule_async_open_timer,
@@ -3409,15 +3404,15 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 		 * in the open file db having the wrong dev/ino key.
 		 */
 		fd_close(fsp);
-		DEBUG(1,("open_file_ntcreate: file %s - dev/ino mismatch. "
-			"Old (dev=0x%llu, ino =0x%llu). "
-			"New (dev=0x%llu, ino=0x%llu). Failing open "
-			" with NT_STATUS_ACCESS_DENIED.\n",
-			 smb_fname_str_dbg(smb_fname),
-			 (unsigned long long)saved_stat.st_ex_dev,
-			 (unsigned long long)saved_stat.st_ex_ino,
-			 (unsigned long long)smb_fname->st.st_ex_dev,
-			 (unsigned long long)smb_fname->st.st_ex_ino));
+		DBG_WARNING("file %s - dev/ino mismatch. "
+			    "Old (dev=%ju, ino=%ju). "
+			    "New (dev=%ju, ino=%ju). Failing open "
+			    "with NT_STATUS_ACCESS_DENIED.\n",
+			    smb_fname_str_dbg(smb_fname),
+			    (uintmax_t)saved_stat.st_ex_dev,
+			    (uintmax_t)saved_stat.st_ex_ino,
+			    (uintmax_t)smb_fname->st.st_ex_dev,
+			    (uintmax_t)smb_fname->st.st_ex_ino);
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
@@ -3622,13 +3617,17 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 	    (!S_ISFIFO(fsp->fsp_name->st.st_ex_mode))) {
 		int ret;
 
-		ret = vfs_set_filelen(fsp, 0);
+		ret = SMB_VFS_FTRUNCATE(fsp, 0);
 		if (ret != 0) {
 			status = map_nt_error_from_unix(errno);
 			TALLOC_FREE(lck);
 			fd_close(fsp);
 			return status;
 		}
+		notify_fname(fsp->conn, NOTIFY_ACTION_MODIFIED,
+			     FILE_NOTIFY_CHANGE_SIZE
+			     | FILE_NOTIFY_CHANGE_ATTRIBUTES,
+			     fsp->fsp_name->base_name);
 	}
 
 	/*
@@ -3756,7 +3755,7 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 				return status;
 			}
 		}
-		/* Note that here we set the *inital* delete on close flag,
+		/* Note that here we set the *initial* delete on close flag,
 		   not the regular one. The magic gets handled in close. */
 		fsp->initial_delete_on_close = True;
 	}
@@ -4292,7 +4291,7 @@ static NTSTATUS open_directory(connection_struct *conn,
 		}
 
 		if (NT_STATUS_IS_OK(status)) {
-			/* Note that here we set the *inital* delete on close flag,
+			/* Note that here we set the *initial* delete on close flag,
 			   not the regular one. The magic gets handled in close. */
 			fsp->initial_delete_on_close = True;
 		}
@@ -4938,8 +4937,6 @@ static NTSTATUS lease_match(connection_struct *conn,
 	state.file_existed = VALID_STAT(fname->st);
 	if (state.file_existed) {
 		state.id = vfs_file_id_from_sbuf(conn, &fname->st);
-	} else {
-		memset(&state.id, '\0', sizeof(state.id));
 	}
 
 	status = leases_db_parse(&sconn->client->connections->smb2.client.guid,
@@ -4978,13 +4975,13 @@ static NTSTATUS lease_match(connection_struct *conn,
 		for (j=0; j<d->num_share_modes; j++) {
 			struct share_mode_entry *e = &d->share_modes[j];
 			uint32_t e_lease_type = get_lease_type(d, e);
-			struct share_mode_lease *l = NULL;
 
 			if (share_mode_stale_pid(d, j)) {
 				continue;
 			}
 
 			if (e->op_type == LEASE_OPLOCK) {
+				struct share_mode_lease *l = NULL;
 				l = &lck->data->leases[e->lease_idx];
 				if (!smb2_lease_key_equal(&l->lease_key,
 							  lease_key)) {
@@ -5019,7 +5016,7 @@ static NTSTATUS lease_match(connection_struct *conn,
 			 * Send the breaks and then return
 			 * SMB2_LEASE_NONE in the lease handle
 			 * to cause them to acknowledge the
-			 * lease break. Consulatation with
+			 * lease break. Consultation with
 			 * Microsoft engineering confirmed
 			 * this approach is safe.
 			 */

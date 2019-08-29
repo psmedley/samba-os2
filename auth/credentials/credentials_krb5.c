@@ -270,14 +270,14 @@ static int cli_credentials_set_from_ccache(struct cli_credentials *cred,
 		return ENOMEM;
 	}
 
-	realm = smb_krb5_principal_get_realm(ccache->smb_krb5_context->krb5_context,
-					     princ);
+	realm = smb_krb5_principal_get_realm(
+		cred, ccache->smb_krb5_context->krb5_context, princ);
 	krb5_free_principal(ccache->smb_krb5_context->krb5_context, princ);
 	if (realm == NULL) {
 		return ENOMEM;
 	}
 	ok = cli_credentials_set_realm(cred, realm, obtained);
-	SAFE_FREE(realm);
+	TALLOC_FREE(realm);
 	if (!ok) {
 		return ENOMEM;
 	}
@@ -351,16 +351,17 @@ _PUBLIC_ int cli_credentials_set_ccache(struct cli_credentials *cred,
 
 		if (ret) {
 			(*error_string) = error_message(ret);
+			TALLOC_FREE(ccc);
 			return ret;
 		}
-
-		cred->ccache = ccc;
-		cred->ccache_obtained = obtained;
-		talloc_steal(cred, ccc);
-
-		cli_credentials_invalidate_client_gss_creds(cred, cred->ccache_obtained);
-		return 0;
 	}
+
+	cred->ccache = ccc;
+	cred->ccache_obtained = obtained;
+
+	cli_credentials_invalidate_client_gss_creds(
+		cred, cred->ccache_obtained);
+
 	return 0;
 }
 
@@ -896,11 +897,25 @@ static int cli_credentials_shallow_ccache(struct cli_credentials *cred)
 	const struct ccache_container *old_ccc = NULL;
 	struct ccache_container *ccc = NULL;
 	char *ccache_name = NULL;
+	krb5_principal princ;
 
 	old_ccc = cred->ccache;
 	if (old_ccc == NULL) {
 		return 0;
 	}
+
+	ret = krb5_cc_get_principal(
+		old_ccc->smb_krb5_context->krb5_context,
+		old_ccc->ccache,
+		&princ);
+	if (ret != 0) {
+		/*
+		 * This is an empty ccache. No point in copying anything.
+		 */
+		cred->ccache = NULL;
+		return 0;
+	}
+	krb5_free_principal(old_ccc->smb_krb5_context->krb5_context, princ);
 
 	ccc = talloc(cred, struct ccache_container);
 	if (ccc == NULL) {

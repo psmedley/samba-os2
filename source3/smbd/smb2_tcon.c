@@ -94,7 +94,7 @@ NTSTATUS smbd_smb2_request_process_tcon(struct smbd_smb2_request *req)
 	}
 
 	subreq = smbd_smb2_tree_connect_send(req,
-					     req->ev_ctx,
+					     req->sconn->ev_ctx,
 					     req,
 					     in_path_string);
 	if (subreq == NULL) {
@@ -102,7 +102,11 @@ NTSTATUS smbd_smb2_request_process_tcon(struct smbd_smb2_request *req)
 	}
 	tevent_req_set_callback(subreq, smbd_smb2_request_tcon_done, req);
 
-	return smbd_smb2_request_pending_queue(req, subreq, 500);
+	/*
+	 * Avoid sending a STATUS_PENDING message, it's very likely
+	 * the client won't expect that.
+	 */
+	return smbd_smb2_request_pending_queue(req, subreq, 0);
 }
 
 static void smbd_smb2_request_tcon_done(struct tevent_req *subreq)
@@ -491,17 +495,17 @@ NTSTATUS smbd_smb2_request_process_tdis(struct smbd_smb2_request *req)
 		return smbd_smb2_request_error(req, status);
 	}
 
-	subreq = smbd_smb2_tdis_send(req, req->ev_ctx, req);
+	subreq = smbd_smb2_tdis_send(req, req->sconn->ev_ctx, req);
 	if (subreq == NULL) {
 		return smbd_smb2_request_error(req, NT_STATUS_NO_MEMORY);
 	}
 	tevent_req_set_callback(subreq, smbd_smb2_request_tdis_done, req);
 
 	/*
-	 * Wait a long time before going async on this to allow
-	 * requests we're waiting on to finish. Set timeout to 10 secs.
+	 * Avoid sending a STATUS_PENDING message, it's very likely
+	 * the client won't expect that.
 	 */
-	return smbd_smb2_request_pending_queue(req, subreq, 10000000);
+	return smbd_smb2_request_pending_queue(req, subreq, 0);
 }
 
 static void smbd_smb2_request_tdis_done(struct tevent_req *subreq)

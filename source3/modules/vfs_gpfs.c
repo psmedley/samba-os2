@@ -2078,6 +2078,7 @@ static int vfs_gpfs_connect(struct vfs_handle_struct *handle,
 {
 	struct gpfs_config_data *config;
 	int ret;
+	bool check_fstype;
 
 	gpfswrap_lib_init(0);
 
@@ -2092,6 +2093,31 @@ static int vfs_gpfs_connect(struct vfs_handle_struct *handle,
 	if (ret < 0) {
 		TALLOC_FREE(config);
 		return ret;
+	}
+
+	check_fstype = lp_parm_bool(SNUM(handle->conn), "gpfs",
+				    "check_fstype", true);
+
+	if (check_fstype && !IS_IPC(handle->conn)) {
+		const char *connectpath = handle->conn->connectpath;
+		struct statfs buf = { 0 };
+
+		ret = statfs(connectpath, &buf);
+		if (ret != 0) {
+			DBG_ERR("statfs failed for share %s at path %s: %s\n",
+				service, connectpath, strerror(errno));
+			TALLOC_FREE(config);
+			return ret;
+		}
+
+		if (buf.f_type != GPFS_SUPER_MAGIC) {
+			DBG_ERR("SMB share %s, path %s not in GPFS file system."
+				" statfs magic: 0x%lx\n",
+				service, connectpath, buf.f_type);
+			errno = EINVAL;
+			TALLOC_FREE(config);
+			return -1;
+		}
 	}
 
 	ret = smbacl4_get_vfs_params(handle->conn, &config->nfs4_params);
@@ -2162,6 +2188,12 @@ static int vfs_gpfs_connect(struct vfs_handle_struct *handle,
 					"false");
 		}
 	}
+
+	/*
+	 * Unless we have an async implementation of get_dos_attributes turn
+	 * this off.
+	 */
+	lp_do_parameter(SNUM(handle->conn), "smbd:async dosmode", "false");
 
 	return 0;
 }
@@ -2561,6 +2593,8 @@ static struct vfs_fn_pointers vfs_gpfs_fns = {
 	.linux_setlease_fn = vfs_gpfs_setlease,
 	.get_real_filename_fn = vfs_gpfs_get_real_filename,
 	.get_dos_attributes_fn = vfs_gpfs_get_dos_attributes,
+	.get_dos_attributes_send_fn = vfs_not_implemented_get_dos_attributes_send,
+	.get_dos_attributes_recv_fn = vfs_not_implemented_get_dos_attributes_recv,
 	.fget_dos_attributes_fn = vfs_gpfs_fget_dos_attributes,
 	.set_dos_attributes_fn = vfs_gpfs_set_dos_attributes,
 	.fset_dos_attributes_fn = vfs_gpfs_fset_dos_attributes,

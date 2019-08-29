@@ -190,15 +190,20 @@ static bool streams_xattr_recheck(struct stream_io *sio)
 	TALLOC_FREE(sio->base);
 	sio->xattr_name = talloc_strdup(VFS_MEMCTX_FSP_EXTENSION(sio->handle, sio->fsp),
 					xattr_name);
-        sio->base = talloc_strdup(VFS_MEMCTX_FSP_EXTENSION(sio->handle, sio->fsp),
-                                  sio->fsp->fsp_name->base_name);
-	sio->fsp_name_ptr = sio->fsp->fsp_name;
-
-	TALLOC_FREE(xattr_name);
-
-	if ((sio->xattr_name == NULL) || (sio->base == NULL)) {
+	if (sio->xattr_name == NULL) {
+		DBG_DEBUG("sio->xattr_name==NULL\n");
 		return false;
 	}
+	TALLOC_FREE(xattr_name);
+
+	sio->base = talloc_strdup(VFS_MEMCTX_FSP_EXTENSION(sio->handle, sio->fsp),
+				  sio->fsp->fsp_name->base_name);
+	if (sio->base == NULL) {
+		DBG_DEBUG("sio->base==NULL\n");
+		return false;
+	}
+
+	sio->fsp_name_ptr = sio->fsp->fsp_name;
 
 	return true;
 }
@@ -515,6 +520,11 @@ static int streams_xattr_open(vfs_handle_struct *handle,
 
         sio->xattr_name = talloc_strdup(VFS_MEMCTX_FSP_EXTENSION(handle, fsp),
 					xattr_name);
+	if (sio->xattr_name == NULL) {
+		errno = ENOMEM;
+		goto fail;
+	}
+
 	/*
 	 * so->base needs to be a copy of fsp->fsp_name->base_name,
 	 * making it identical to streams_xattr_recheck(). If the
@@ -524,14 +534,14 @@ static int streams_xattr_open(vfs_handle_struct *handle,
 	 */
         sio->base = talloc_strdup(VFS_MEMCTX_FSP_EXTENSION(handle, fsp),
 				  fsp->fsp_name->base_name);
-	sio->fsp_name_ptr = fsp->fsp_name;
-	sio->handle = handle;
-	sio->fsp = fsp;
-
-	if ((sio->xattr_name == NULL) || (sio->base == NULL)) {
+	if (sio->base == NULL) {
 		errno = ENOMEM;
 		goto fail;
 	}
+
+	sio->fsp_name_ptr = fsp->fsp_name;
+	sio->handle = handle;
+	sio->fsp = fsp;
 
 	return fakefd;
 

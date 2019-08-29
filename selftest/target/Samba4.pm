@@ -3,6 +3,9 @@
 # Copyright (C) 2005-2007 Jelmer Vernooij <jelmer@samba.org>
 # Published under the GNU GPL, v3 or later.
 
+# NOTE: Refer to the README for more details about the various testenvs,
+# and tips about adding new testenvs.
+
 package Samba4;
 
 use strict;
@@ -12,6 +15,8 @@ use POSIX;
 use SocketWrapper;
 use target::Samba;
 use target::Samba3;
+use Archive::Tar;
+use File::Path 'make_path';
 
 sub new($$$$$) {
 	my ($classname, $bindir, $ldap, $srcdir, $server_maxtime) = @_;
@@ -141,6 +146,7 @@ sub check_or_start($$$)
 		} else {
 			$ENV{RESOLV_WRAPPER_HOSTS} = $env_vars->{RESOLV_WRAPPER_HOSTS};
 		}
+		$ENV{RESOLV_CONF} = $env_vars->{RESOLV_CONF};
 
 		$ENV{UID_WRAPPER} = "1";
 		$ENV{UID_WRAPPER_ROOT} = "1";
@@ -234,6 +240,7 @@ sub wait_for_start($$)
 		} else {
 			$cmd .= "RESOLV_WRAPPER_HOSTS='$testenv_vars->{RESOLV_WRAPPER_HOSTS}' ";
 		}
+		$cmd .= "RESOLV_CONF='$testenv_vars->{RESOLV_CONF}' ";
 
 		$cmd .= "$ldbsearch ";
 		$cmd .= "$testenv_vars->{CONFIGURATION} ";
@@ -259,7 +266,7 @@ sub wait_for_start($$)
 		my $cmd = "NSS_WRAPPER_PASSWD=$testenv_vars->{NSS_WRAPPER_PASSWD} ";
 		$cmd .= "NSS_WRAPPER_GROUP=$testenv_vars->{NSS_WRAPPER_GROUP} ";
 		$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=$testenv_vars->{SELFTEST_WINBINDD_SOCKET_DIR} ";
-		$cmd .= "$wbinfo -p";
+		$cmd .= "$wbinfo -P";
 		$ret = system($cmd);
 
 		if ($ret != 0) {
@@ -325,6 +332,114 @@ sub mk_openldap($$)
 	return ($slapd_conf_d, $pidfile);
 }
 
+sub setup_dns_hub_internal($$$)
+{
+	my ($self, $hostname, $prefix) = @_;
+	my $STDIN_READER;
+
+	unless(-d $prefix or make_path($prefix, 0777)) {
+		warn("Unable to create $prefix");
+		return undef;
+	}
+	my $prefix_abs = abs_path($prefix);
+
+	die ("prefix=''") if $prefix_abs eq "";
+	die ("prefix='/'") if $prefix_abs eq "/";
+
+	unless (system("rm -rf $prefix_abs/*") == 0) {
+		warn("Unable to clean up");
+	}
+
+	my $swiface = Samba::get_interface($hostname);
+
+	my $env = undef;
+	$env->{prefix} = $prefix;
+	$env->{prefix_abs} = $prefix_abs;
+
+	$env->{hostname} = $hostname;
+	$env->{swiface} = $swiface;
+
+	$env->{ipv4} = "127.0.0.$swiface";
+	$env->{ipv6} = sprintf("fd00:0000:0000:0000:0000:0000:5357:5f%02x", $swiface);
+
+	$env->{DNS_HUB_LOG} = "$prefix_abs/dns_hub.log";
+
+	$env->{RESOLV_CONF} = "$prefix_abs/resolv.conf";
+
+	open(RESOLV_CONF, ">$env->{RESOLV_CONF}");
+	print RESOLV_CONF "nameserver $env->{ipv4}\n";
+	print RESOLV_CONF "nameserver $env->{ipv6}\n";
+	close(RESOLV_CONF);
+
+	# use a pipe for stdin in the child processes. This allows
+	# those processes to monitor the pipe for EOF to ensure they
+	# exit when the test script exits
+	pipe($STDIN_READER, $env->{STDIN_PIPE});
+
+	print "STARTING rootdnsforwarder...\n";
+	my $pid = fork();
+	if ($pid == 0) {
+		# we want out from samba to go to the log file, but also
+		# to the users terminal when running 'make test' on the command
+		# line. This puts it on stderr on the terminal
+		open STDOUT, "| tee $env->{DNS_HUB_LOG} 1>&2";
+		open STDERR, '>&STDOUT';
+
+		SocketWrapper::set_default_iface($swiface);
+		my $pcap_file = "$ENV{SOCKET_WRAPPER_PCAP_DIR}/env-$hostname$.pcap";
+		SocketWrapper::setup_pcap($pcap_file);
+
+		my @preargs = ();
+		my @args = ();
+		my @optargs = ();
+		if (!defined($ENV{PYTHON})) {
+		    push (@preargs, "env");
+		    push (@preargs, "python");
+		} else {
+		    push (@preargs, $ENV{PYTHON});
+		}
+		$ENV{MAKE_TEST_BINARY} = Samba::bindir_path($self, "python/samba/tests/dns_forwarder_helpers/dns_hub.py");
+		push (@args, "$self->{server_maxtime}");
+		push (@args, "$env->{ipv4}");
+		close($env->{STDIN_PIPE});
+		open STDIN, ">&", $STDIN_READER or die "can't dup STDIN_READER to STDIN: $!";
+
+		exec(@preargs, $ENV{MAKE_TEST_BINARY}, @args, @optargs)
+			or die("Unable to start $ENV{MAKE_TEST_BINARY}: $!");
+	}
+	$env->{SAMBA_PID} = $pid;
+	$env->{KRB5_CONFIG} = "${prefix_abs}/no_krb5.conf";
+	close($STDIN_READER);
+
+	print "DONE\n";
+	return $env;
+}
+
+sub setup_dns_hub
+{
+	my ($self, $prefix) = @_;
+
+	my $hostname = "rootdnsforwarder";
+
+	my $env = $self->setup_dns_hub_internal("$hostname", "$prefix/$hostname");
+
+	$self->{dns_hub_env} = $env;
+
+	return $env;
+}
+
+sub get_dns_hub_env($)
+{
+	my ($self, $prefix) = @_;
+
+	if (defined($self->{dns_hub_env})) {
+	        return $self->{dns_hub_env};
+	}
+
+	die("get_dns_hub_env() not setup 'dns_hub_env'");
+	return undef;
+}
+
 sub setup_namespaces($$:$$)
 {
 	my ($self, $localenv, $upn_array, $spn_array) = @_;
@@ -343,7 +458,7 @@ sub setup_namespaces($$:$$)
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
 
-	my $cmd_env = "";
+	my $cmd_env = "NSS_WRAPPER_HOSTS='$localenv->{NSS_WRAPPER_HOSTS}' ";
 	$cmd_env .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$localenv->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($localenv->{RESOLV_WRAPPER_CONF})) {
 		$cmd_env .= "RESOLV_WRAPPER_CONF=\"$localenv->{RESOLV_WRAPPER_CONF}\" ";
@@ -352,6 +467,7 @@ sub setup_namespaces($$:$$)
 	}
 	$cmd_env .= " KRB5_CONFIG=\"$localenv->{KRB5_CONFIG}\" ";
 	$cmd_env .= "KRB5CCNAME=\"$localenv->{KRB5_CCACHE}\" ";
+	$cmd_env .= "RESOLV_CONF=\"$localenv->{RESOLV_CONF}\" ";
 
 	my $cmd_config = " $localenv->{CONFIGURATION}";
 
@@ -381,8 +497,9 @@ sub setup_trust($$$$$)
 	$localenv->{TRUST_DOMSID} = $remoteenv->{DOMSID};
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
+
 	# setup the trust
-	my $cmd_env = "";
+	my $cmd_env = "NSS_WRAPPER_HOSTS='$localenv->{NSS_WRAPPER_HOSTS}' ";
 	$cmd_env .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$localenv->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($localenv->{RESOLV_WRAPPER_CONF})) {
 		$cmd_env .= "RESOLV_WRAPPER_CONF=\"$localenv->{RESOLV_WRAPPER_CONF}\" ";
@@ -391,6 +508,7 @@ sub setup_trust($$$$$)
 	}
 	$cmd_env .= " KRB5_CONFIG=\"$localenv->{KRB5_CONFIG}\" ";
 	$cmd_env .= "KRB5CCNAME=\"$localenv->{KRB5_CCACHE}\" ";
+	$cmd_env .= "RESOLV_CONF=\"$localenv->{RESOLV_CONF}\" ";
 
 	my $cmd_config = " $localenv->{CONFIGURATION}";
 	my $cmd_creds = $cmd_config;
@@ -428,6 +546,11 @@ sub provision_raw_prepare($$$$$$$$$$$$)
 	    $domain, $realm, $samsid, $functional_level,
 	    $password, $kdc_ipv4, $kdc_ipv6) = @_;
 	my $ctx;
+	my $python_cmd = "";
+	if (defined $ENV{PYTHON}) {
+		$python_cmd = $ENV{PYTHON} . " ";
+	}
+	$ctx->{python} = $python_cmd;
 	my $netbiosname = uc($hostname);
 
 	unless(-d $prefix or mkdir($prefix, 0777)) {
@@ -504,11 +627,15 @@ sub provision_raw_prepare($$$$$$$$$$$$)
 	if ($ENV{SAMBA_DNS_FAKING}) {
 		$ctx->{dns_host_file} = "$ENV{SELFTEST_PREFIX}/dns_host_file";
 		$ctx->{samba_dnsupdate} = "$ENV{SRCDIR_ABS}/source4/scripting/bin/samba_dnsupdate -s $ctx->{smb_conf} --all-interfaces --use-file=$ctx->{dns_host_file}";
+		$ctx->{samba_dnsupdate} = $python_cmd .  $ctx->{samba_dnsupdate};
 	} else {
 	        $ctx->{samba_dnsupdate} = "$ENV{SRCDIR_ABS}/source4/scripting/bin/samba_dnsupdate -s $ctx->{smb_conf} --all-interfaces";
+		$ctx->{samba_dnsupdate} = $python_cmd .  $ctx->{samba_dnsupdate};
 		$ctx->{use_resolv_wrapper} = 1;
 	}
-	$ctx->{resolv_conf} = "$ctx->{etcdir}/resolv.conf";
+
+	my $dns_hub = $self->get_dns_hub_env();
+	$ctx->{resolv_conf} = $dns_hub->{RESOLV_CONF};
 
 	$ctx->{tlsdir} = "$ctx->{privatedir}/tls";
 
@@ -536,6 +663,7 @@ sub provision_raw_prepare($$$$$$$$$$$$)
 	push (@provision_options, "NSS_WRAPPER_HOSTNAME=\"$ctx->{nsswrap_hostname}\"");
 	if (defined($ctx->{use_resolv_wrapper})) {
 		push (@provision_options, "RESOLV_WRAPPER_CONF=\"$ctx->{resolv_conf}\"");
+		push (@provision_options, "RESOLV_CONF=\"$ctx->{resolv_conf}\"");
 	} else {
 		push (@provision_options, "RESOLV_WRAPPER_HOSTS=\"$ctx->{dns_host_file}\"");
 	}
@@ -553,10 +681,10 @@ sub provision_raw_prepare($$$$$$$$$$$$)
 		    push (@provision_options, "python");
 		}
 	}
-	if (defined($ENV{PYTHON})) {
-		push (@provision_options, $ENV{PYTHON});
-	}
-	push (@provision_options, Samba::bindir_path($self, "samba-tool"));
+
+	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
+
+	push (@provision_options, $samba_tool);
 	push (@provision_options, "domain");
 	push (@provision_options, "provision");
 	push (@provision_options, "--configfile=$ctx->{smb_conf}");
@@ -578,6 +706,16 @@ sub provision_raw_prepare($$$$$$$$$$$$)
 	@{$ctx->{provision_options}} = @provision_options;
 
 	return $ctx;
+}
+
+sub has_option
+{
+	my ($self, $keyword, @options_list) = @_;
+
+	# convert the options-list to a hash-map for easy keyword lookup
+	my %options_dict = map { $_ => 1 } @options_list;
+
+	return exists $options_dict{$keyword};
 }
 
 #
@@ -604,6 +742,13 @@ sub provision_raw_step1($$)
 	my $crlfile = "$ctx->{tlsdir}/crl.pem";
 	$crlfile = "" unless -e ${crlfile};
 
+	# work out which file server to use. Default to source3 smbd (s3fs),
+	# unless the source4 NTVFS (smb) file server has been specified
+	my $services = "-smb +s3fs";
+	if ($self->has_option("--use-ntvfs", @{$ctx->{provision_options}})) {
+		$services = "+smb -s3fs";
+	}
+
 	print CONFFILE "
 [global]
 	netbios name = $ctx->{netbiosname}
@@ -627,7 +772,7 @@ sub provision_raw_step1($$)
 	panic action = $RealBin/gdb_backtrace \%d
 	wins support = yes
 	server role = $ctx->{server_role}
-	server services = +echo +smb -s3fs
+	server services = +echo $services
         dcerpc endpoint servers = +winreg +srvsvc
 	notify:inotify = false
 	ldb:nosync = true
@@ -640,8 +785,9 @@ sub provision_raw_step1($$)
 	ntlm auth = Yes
 	rndc command = true
 	dns update command = $ctx->{samba_dnsupdate}
-	spn update command = $ENV{SRCDIR_ABS}/source4/scripting/bin/samba_spnupdate -s $ctx->{smb_conf}
-	gpo update command = $ENV{SRCDIR_ABS}/source4/scripting/bin/samba-gpupdate -s $ctx->{smb_conf} -H $ctx->{privatedir}/sam.ldb --target=Computer
+	spn update command = $ctx->{python} $ENV{SRCDIR_ABS}/source4/scripting/bin/samba_spnupdate -s $ctx->{smb_conf}
+	gpo update command = $ctx->{python} $ENV{SRCDIR_ABS}/source4/scripting/bin/samba-gpupdate -s $ctx->{smb_conf} --target=Computer
+	samba kcc command = $ctx->{python} $ENV{SRCDIR_ABS}/source4/scripting/bin/samba_kcc
 	dreplsrv:periodic_startup_interval = 0
 	dsdb:schema update allowed = yes
 
@@ -714,13 +860,6 @@ nogroup:x:65534:nobody
 	}
 	close(HOSTS);
 
-	if (defined($ctx->{resolv_conf})) {
-		open(RESOLV_CONF, ">$ctx->{resolv_conf}");
-		print RESOLV_CONF "nameserver $ctx->{kdc_ipv4}\n";
-		print RESOLV_CONF "nameserver $ctx->{kdc_ipv6}\n";
-		close(RESOLV_CONF);
-	}
-
 	my $configuration = "--configfile=$ctx->{smb_conf}";
 
 #Ensure the config file is valid before we start
@@ -747,6 +886,7 @@ nogroup:x:65534:nobody
 		DOMAIN => $ctx->{domain},
 		USERNAME => $ctx->{username},
 		REALM => $ctx->{realm},
+		DNSNAME => $ctx->{dnsname},
 		SAMSID => $ctx->{samsid},
 		PASSWORD => $ctx->{password},
 		LDAPDIR => $ctx->{ldapdir},
@@ -870,6 +1010,28 @@ userPrincipalName: testdenied_upn\@$ctx->{realm}.upn
 	$samba_tool_cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$samba_tool_cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
 	$samba_tool_cmd .= Samba::bindir_path($self, "samba-tool")
+	    . " user create --configfile=$ctx->{smb_conf} testupnspn $ctx->{password}";
+	unless (system($samba_tool_cmd) == 0) {
+		warn("Unable to add testupnspn user: \n$samba_tool_cmd\n");
+		return undef;
+	}
+
+	my $user_dn = "cn=testupnspn,cn=users,$base_dn";
+	open(LDIF, "|$ldbmodify -H $ctx->{privatedir}/sam.ldb");
+	print LDIF "dn: $user_dn
+changetype: modify
+replace: userPrincipalName
+userPrincipalName: http/testupnspn.$ctx->{dnsname}\@$ctx->{realm}
+replace: servicePrincipalName
+servicePrincipalName: http/testupnspn.$ctx->{dnsname}
+-
+";
+	close(LDIF);
+
+	$samba_tool_cmd = "";
+	$samba_tool_cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
+	$samba_tool_cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$samba_tool_cmd .= Samba::bindir_path($self, "samba-tool")
 	    . " group addmembers --configfile=$ctx->{smb_conf} 'Allowed RODC Password Replication Group' '$testallowed_account'";
 	unless (system($samba_tool_cmd) == 0) {
 		warn("Unable to add '$testallowed_account' user to 'Allowed RODC Password Replication Group': \n$samba_tool_cmd\n");
@@ -930,8 +1092,6 @@ sub provision($$$$$$$$$$)
 
 	if (defined($extra_provision_options)) {
 		push (@{$ctx->{provision_options}}, @{$extra_provision_options});
-	} else {
-		push (@{$ctx->{provision_options}}, "--use-ntvfs");
 	}
 
 	$ctx->{share} = "$ctx->{prefix_abs}/share";
@@ -1097,6 +1257,7 @@ rpc_server:tcpip = no
 	if ($more_conf) {
 		$extra_smb_conf = $extra_smb_conf . $more_conf . "\n";
 	}
+	my $extra_provision_options = ["--use-ntvfs"];
 	my $ret = $self->provision($prefix,
 				   "member server",
 				   $hostname,
@@ -1106,13 +1267,14 @@ rpc_server:tcpip = no
 				   "locMEMpass3",
 				   $dcvars->{SERVER_IP},
 				   $dcvars->{SERVER_IPV6},
-				   $extra_smb_conf, "", undef);
+				   $extra_smb_conf, "",
+				   $extra_provision_options);
 	unless ($ret) {
 		return undef;
 	}
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
-	my $cmd = "";
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
 		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
@@ -1121,6 +1283,7 @@ rpc_server:tcpip = no
 	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool domain join $ret->{CONFIGURATION} $dcvars->{REALM} member";
 	$cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD}";
 	$cmd .= " --machinepass=machine$ret->{PASSWORD}";
@@ -1160,6 +1323,7 @@ sub provision_rpc_proxy($$$)
 	dcerpc_remote:binding = ncacn_ip_tcp:$dcvars->{SERVER}
 	dcerpc endpoint servers = epmapper, remote
 	dcerpc_remote:interfaces = rpcecho
+	dcerpc_remote:allow_anonymous_fallback = yes
 
 [cifs_to_dc]
 	path = /tmp/_ignore_cifs_to_dc_/_none_
@@ -1174,6 +1338,7 @@ sub provision_rpc_proxy($$$)
 
 ";
 
+	my $extra_provision_options = ["--use-ntvfs"];
 	my $ret = $self->provision($prefix,
 				   "member server",
 				   "localrpcproxy",
@@ -1183,7 +1348,8 @@ sub provision_rpc_proxy($$$)
 				   "locRPCproxypass4",
 				   $dcvars->{SERVER_IP},
 				   $dcvars->{SERVER_IPV6},
-				   $extra_smbconf_options, "", undef);
+				   $extra_smbconf_options, "",
+				   $extra_provision_options);
 	unless ($ret) {
 		return undef;
 	}
@@ -1191,7 +1357,7 @@ sub provision_rpc_proxy($$$)
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
 
 	# The joind runs in the context of the rpc_proxy/member for now
-	my $cmd = "";
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
 		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
@@ -1200,6 +1366,7 @@ sub provision_rpc_proxy($$$)
 	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool domain join $ret->{CONFIGURATION} $dcvars->{REALM} member";
 	$cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD}";
 	$cmd .= " --machinepass=machine$ret->{PASSWORD}";
@@ -1214,6 +1381,7 @@ sub provision_rpc_proxy($$$)
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$dcvars->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	$cmd .= "KRB5_CONFIG=\"$dcvars->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$dcvars->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool delegation for-any-protocol '$ret->{NETBIOSNAME}\$' on";
         $cmd .= " $dcvars->{CONFIGURATION}";
         print $cmd;
@@ -1228,6 +1396,7 @@ sub provision_rpc_proxy($$$)
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$dcvars->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	$cmd .= "KRB5_CONFIG=\"$dcvars->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$dcvars->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool delegation add-service '$ret->{NETBIOSNAME}\$' cifs/$dcvars->{SERVER}";
         $cmd .= " $dcvars->{CONFIGURATION}";
 
@@ -1294,7 +1463,7 @@ sub provision_promoted_dc($$$)
 	}
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
-	my $cmd = "";
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
 		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
@@ -1303,6 +1472,7 @@ sub provision_promoted_dc($$$)
 	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool domain join $ret->{CONFIGURATION} $dcvars->{REALM} MEMBER --realm=$dcvars->{REALM}";
 	$cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD}";
 	$cmd .= " --machinepass=machine$ret->{PASSWORD}";
@@ -1313,10 +1483,16 @@ sub provision_promoted_dc($$$)
 	}
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
-	my $cmd = "";
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
+	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
+		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
+	} else {
+		$cmd .= "RESOLV_WRAPPER_HOSTS=\"$ret->{RESOLV_WRAPPER_HOSTS}\" ";
+	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool domain dcpromo $ret->{CONFIGURATION} $dcvars->{REALM} DC --realm=$dcvars->{REALM}";
 	$cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD}";
 	$cmd .= " --machinepass=machine$ret->{PASSWORD} --use-ntvfs --dns-backend=BIND9_DLZ";
@@ -1391,7 +1567,7 @@ sub provision_vampire_dc($$$)
 	}
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
-	my $cmd = "";
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
 		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
@@ -1400,6 +1576,7 @@ sub provision_vampire_dc($$$)
 	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool domain join $ret->{CONFIGURATION} $dcvars->{REALM} DC --realm=$dcvars->{REALM}";
 	$cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD} --domain-critical-only";
 	$cmd .= " --machinepass=machine$ret->{PASSWORD} --use-ntvfs";
@@ -1473,7 +1650,7 @@ sub provision_subdom_dc($$$)
 	Samba::mk_mitkdc_conf($ctx, abs_path(Samba::bindir_path($self, "shared")));
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
-	my $cmd = "";
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
 		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
@@ -1482,6 +1659,7 @@ sub provision_subdom_dc($$$)
 	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool domain join $ret->{CONFIGURATION} $ctx->{dnsname} subdomain ";
 	$cmd .= "--parent-domain=$dcvars->{REALM} -U$dcvars->{DC_USERNAME}\@$dcvars->{REALM}\%$dcvars->{DC_PASSWORD}";
 	$cmd .= " --machinepass=machine$ret->{PASSWORD} --use-ntvfs";
@@ -1529,6 +1707,7 @@ sub provision_ad_dc_ntvfs($$)
 	dsdb group change notification = true
 	server schannel = auto
 	";
+	my $extra_provision_options = ["--use-ntvfs"];
 	my $ret = $self->provision($prefix,
 				   "domain controller",
 				   "localdc",
@@ -1540,7 +1719,7 @@ sub provision_ad_dc_ntvfs($$)
 				   undef,
 				   $extra_conf_options,
 				   "",
-				   undef);
+				   $extra_provision_options);
 	unless ($ret) {
 		return undef;
 	}
@@ -1570,7 +1749,7 @@ sub provision_fl2000dc($$)
 	spnego:simulate_w2k=yes
 	ntlmssp_server:force_old_spnego=yes
 ";
-	my $extra_provision_options = undef;
+	my $extra_provision_options = ["--use-ntvfs"];
 	# This environment uses plain text secrets
 	# i.e. secret attributes are not encrypted on disk.
 	# This allows testing of the --plaintext-secrets option for
@@ -1616,7 +1795,9 @@ sub provision_fl2003dc($$$)
 	print "PROVISIONING DC WITH FOREST LEVEL 2003...\n";
 	my $extra_conf_options = "allow dns updates = nonsecure and secure
 	dcesrv:header signing = no
+	dcesrv:max auth states = 0
 	dns forwarder = 127.0.0.$swiface1 127.0.0.$swiface2";
+	my $extra_provision_options = ["--use-ntvfs"];
 	my $ret = $self->provision($prefix,
 				   "domain controller",
 				   "dc6",
@@ -1628,7 +1809,7 @@ sub provision_fl2003dc($$$)
 				   undef,
 				   $extra_conf_options,
 				   "",
-				   undef);
+				   $extra_provision_options);
 	unless (defined $ret) {
 		return undef;
 	}
@@ -1672,6 +1853,7 @@ sub provision_fl2008r2dc($$$)
 
 	print "PROVISIONING DC WITH FOREST LEVEL 2008r2...\n";
         my $extra_conf_options = "ldap server require strong auth = no";
+	my $extra_provision_options = ["--use-ntvfs"];
 	my $ret = $self->provision($prefix,
 				   "domain controller",
 				   "dc7",
@@ -1683,7 +1865,7 @@ sub provision_fl2008r2dc($$$)
 				   undef,
 				   $extra_conf_options,
 				   "",
-				   undef);
+				   $extra_provision_options);
 	unless (defined $ret) {
 		return undef;
 	}
@@ -1756,7 +1938,7 @@ sub provision_rodc($$$)
 	}
 
 	my $samba_tool =  Samba::bindir_path($self, "samba-tool");
-	my $cmd = "";
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
 		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
@@ -1765,6 +1947,7 @@ sub provision_rodc($$$)
 	}
 	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool domain join $ret->{CONFIGURATION} $dcvars->{REALM} RODC";
 	$cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD}";
 	$cmd .= " --server=$dcvars->{DC_SERVER} --use-ntvfs";
@@ -1779,6 +1962,7 @@ sub provision_rodc($$$)
 	my $testallowed_account = "testallowed account";
 	$cmd = "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "KRB5CCNAME=\"$ret->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
 	$cmd .= "$samba_tool rodc preload '$testallowed_account' $ret->{CONFIGURATION}";
 	$cmd .= " --server=$dcvars->{DC_SERVER}";
 
@@ -1855,7 +2039,6 @@ sub provision_ad_dc($$$$$$)
 	$password_hash_gpg_key_ids = "" unless defined($config_h->{HAVE_GPGME});
 
 	my $extra_smbconf_options = "
-        server services = -smb +s3fs
         xattr_tdb:file = $prefix_abs/statedir/xattr.tdb
 
 	dbwrap_tdb_mutexes:* = yes
@@ -1983,10 +2166,15 @@ sub provision_chgdcpass($$)
 	my ($self, $prefix) = @_;
 
 	print "PROVISIONING CHGDCPASS...\n";
-	my $extra_provision_options = undef;
 	# This environment disallows the use of this password
 	# (and also removes the default AD complexity checks)
 	my $unacceptable_password = "widk3Dsle32jxdBdskldsk55klASKQ";
+	my $extra_smb_conf = "
+	check password script = sed -e '/$unacceptable_password/{;q1}; /$unacceptable_password/!{q0}'
+	allow dcerpc auth level connect:lsarpc = yes
+	dcesrv:max auth states = 8
+";
+	my $extra_provision_options = ["--use-ntvfs"];
 	push (@{$extra_provision_options}, "--dns-backend=BIND9_DLZ");
 	my $ret = $self->provision($prefix,
 				   "domain controller",
@@ -1997,7 +2185,7 @@ sub provision_chgdcpass($$)
 				   "chgDCpass1",
 				   undef,
 				   undef,
-				   "check password script = sed -e '/$unacceptable_password/{;q1}; /$unacceptable_password/!{q0}'\n",
+				   $extra_smb_conf,
 				   "",
 				   $extra_provision_options);
 	unless (defined $ret) {
@@ -2146,16 +2334,18 @@ sub check_env($$)
 #   samba4->setup_$envname($self, $path, $dep_1_vars, $dep_2_vars, ...)
 %Samba4::ENV_DEPS = (
 	# name               => [dep_1, dep_2, ...],
-	ad_dc_ntvfs          => [],
-	ad_dc                => [],
-	ad_dc_no_nss         => [],
-	ad_dc_no_ntlm        => [],
-	ad_dc_ntvfs          => [],
-	backupfromdc         => [],
+	dns_hub              => [],
+	ad_dc_ntvfs          => ["dns_hub"],
+	ad_dc                => ["dns_hub"],
+	ad_dc_no_nss         => ["dns_hub"],
+	ad_dc_no_ntlm        => ["dns_hub"],
+	backupfromdc         => ["dns_hub"],
+	customdc             => ["dns_hub"],
+	preforkrestartdc     => ["dns_hub"],
 
 	fl2008r2dc           => ["ad_dc"],
 	fl2003dc             => ["ad_dc"],
-	fl2000dc             => [],
+	fl2000dc             => ["dns_hub"],
 
 	vampire_2000_dc      => ["fl2000dc"],
 	vampire_dc           => ["ad_dc_ntvfs"],
@@ -2164,14 +2354,16 @@ sub check_env($$)
 
 	rodc                 => ["ad_dc_ntvfs"],
 	rpc_proxy            => ["ad_dc_ntvfs"],
-	chgdcpass            => [],
+	chgdcpass            => ["dns_hub"],
 
 	s4member_dflt_domain => ["ad_dc_ntvfs"],
 	s4member             => ["ad_dc_ntvfs"],
 
 	restoredc            => ["backupfromdc"],
 	renamedc             => ["backupfromdc"],
+	offlinebackupdc      => ["backupfromdc"],
 	labdc                => ["backupfromdc"],
+	proclimitdc          => [],
 
 	none                 => [],
 );
@@ -2328,7 +2520,7 @@ sub setup_generic_vampire_dc
 		# as 'vampired' dc may add data in its local replica
 		# we need to synchronize data between DCs
 		my $base_dn = "DC=".join(",DC=", split(/\./, $dc_vars->{REALM}));
-		my $cmd = "";
+		my $cmd = "NSS_WRAPPER_HOSTS='$env->{NSS_WRAPPER_HOSTS}' ";
 		$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 		if (defined($env->{RESOLV_WRAPPER_CONF})) {
 			$cmd .= "RESOLV_WRAPPER_CONF=\"$env->{RESOLV_WRAPPER_CONF}\" ";
@@ -2337,6 +2529,7 @@ sub setup_generic_vampire_dc
 		}
 		$cmd .= " KRB5_CONFIG=\"$env->{KRB5_CONFIG}\"";
 		$cmd .= "KRB5CCNAME=\"$env->{KRB5_CCACHE}\" ";
+		$cmd .= "RESOLV_CONF=\"$env->{RESOLV_CONF}\" ";
 		$cmd .= " $samba_tool drs replicate $env->{DC_SERVER} $env->{SERVER}";
 		$cmd .= " $dc_vars->{CONFIGURATION}";
 		$cmd .= " -U$dc_vars->{DC_USERNAME}\%$dc_vars->{DC_PASSWORD}";
@@ -2355,7 +2548,7 @@ sub setup_generic_vampire_dc
 
 		# Pull in a full set of changes from the main DC
 		my $base_dn = "DC=".join(",DC=", split(/\./, $dc_vars->{REALM}));
-		$cmd = "";
+		$cmd = "NSS_WRAPPER_HOSTS='$env->{NSS_WRAPPER_HOSTS}' ";
 		$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 		if (defined($env->{RESOLV_WRAPPER_CONF})) {
 			$cmd .= "RESOLV_WRAPPER_CONF=\"$env->{RESOLV_WRAPPER_CONF}\" ";
@@ -2364,6 +2557,7 @@ sub setup_generic_vampire_dc
 		}
 		$cmd .= " KRB5_CONFIG=\"$env->{KRB5_CONFIG}\"";
 		$cmd .= "KRB5CCNAME=\"$env->{KRB5_CCACHE}\" ";
+		$cmd .= "RESOLV_CONF=\"$env->{RESOLV_CONF}\" ";
 		$cmd .= " $samba_tool drs replicate $env->{SERVER} $env->{DC_SERVER}";
 		$cmd .= " $dc_vars->{CONFIGURATION}";
 		$cmd .= " -U$dc_vars->{DC_USERNAME}\%$dc_vars->{DC_PASSWORD}";
@@ -2398,13 +2592,14 @@ sub setup_promoted_dc
 		# force source and replicated DC to update repsTo/repsFrom
 		# for vampired partitions
 		my $samba_tool =  Samba::bindir_path($self, "samba-tool");
-		my $cmd = "";
+		my $cmd = "NSS_WRAPPER_HOSTS='$env->{NSS_WRAPPER_HOSTS}' ";
 		# as 'vampired' dc may add data in its local replica
 		# we need to synchronize data between DCs
 		my $base_dn = "DC=".join(",DC=", split(/\./, $dc_vars->{REALM}));
 		$cmd = "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\"";
 		$cmd .= " KRB5_CONFIG=\"$env->{KRB5_CONFIG}\"";
 		$cmd .= "KRB5CCNAME=\"$env->{KRB5_CCACHE}\" ";
+		$cmd .= "RESOLV_CONF=\"$env->{RESOLV_CONF}\" ";
 		$cmd .= " $samba_tool drs replicate $env->{DC_SERVER} $env->{SERVER}";
 		$cmd .= " $dc_vars->{CONFIGURATION}";
 		$cmd .= " -U$dc_vars->{DC_USERNAME}\%$dc_vars->{DC_PASSWORD}";
@@ -2439,7 +2634,7 @@ sub setup_subdom_dc
 		# force replicated DC to update repsTo/repsFrom
 		# for primary domain partitions
 		my $samba_tool =  Samba::bindir_path($self, "samba-tool");
-		my $cmd = "";
+		my $cmd = "NSS_WRAPPER_HOSTS='$env->{NSS_WRAPPER_HOSTS}' ";
 		# as 'subdomain' dc may add data in its local replica
 		# we need to synchronize data between DCs
 		my $base_dn = "DC=".join(",DC=", split(/\./, $env->{REALM}));
@@ -2447,6 +2642,7 @@ sub setup_subdom_dc
 		$cmd = "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\"";
 		$cmd .= " KRB5_CONFIG=\"$env->{KRB5_CONFIG}\"";
 		$cmd .= "KRB5CCNAME=\"$env->{KRB5_CCACHE}\" ";
+		$cmd .= "RESOLV_CONF=\"$env->{RESOLV_CONF}\" ";
 		$cmd .= " $samba_tool drs replicate $env->{DC_SERVER} $env->{SUBDOM_DC_SERVER}";
 		$cmd .= " $dc_vars->{CONFIGURATION}";
 		$cmd .= " -U$dc_vars->{DC_USERNAME}\%$dc_vars->{DC_PASSWORD} --realm=$dc_vars->{DC_REALM}";
@@ -2485,9 +2681,11 @@ sub setup_rodc
 	my $cmd = "";
 
 	my $base_dn = "DC=".join(",DC=", split(/\./, $dc_vars->{REALM}));
-	$cmd = "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\"";
+	$cmd .= "NSS_WRAPPER_HOSTS='$env->{NSS_WRAPPER_HOSTS}' ";
+	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\"";
 	$cmd .= " KRB5_CONFIG=\"$env->{KRB5_CONFIG}\"";
 	$cmd .= "KRB5CCNAME=\"$env->{KRB5_CCACHE}\" ";
+	$cmd .= "RESOLV_CONF=\"$env->{RESOLV_CONF}\" ";
 	$cmd .= " $samba_tool drs replicate $env->{SERVER} $env->{DC_SERVER}";
 	$cmd .= " $dc_vars->{CONFIGURATION}";
 	$cmd .= " -U$dc_vars->{DC_USERNAME}\%$dc_vars->{DC_PASSWORD}";
@@ -2522,7 +2720,7 @@ sub setup_ad_dc
 		return undef;
 	}
 
-	if (not defined($self->check_or_start($env, "single"))) {
+	if (not defined($self->check_or_start($env, "prefork"))) {
 	    return undef;
 	}
 
@@ -2592,6 +2790,83 @@ sub setup_ad_dc_no_ntlm
 	return $env;
 }
 
+#
+# AD DC test environment used solely to test pre-fork process restarts.
+# As processes get killed off and restarted it should not be used for other
+sub setup_preforkrestartdc
+{
+	my ($self, $path) = @_;
+
+	# If we didn't build with ADS, pretend this env was never available
+	if (not $self->{target3}->have_ads()) {
+	       return "UNKNOWN";
+	}
+
+	# note DC name must be <= 15 chars so we use 'prockill' instead of
+	# 'preforkrestart'
+	my $env = $self->provision_ad_dc(
+		$path,
+		"prockilldc",
+		"PROCKILLDOMAIN",
+		"prockilldom.samba.example.com",
+		"prefork backoff increment = 5\nprefork maximum backoff=10");
+	unless ($env) {
+		return undef;
+	}
+
+	$env->{NSS_WRAPPER_MODULE_SO_PATH} = undef;
+	$env->{NSS_WRAPPER_MODULE_FN_PREFIX} = undef;
+
+	if (not defined($self->check_or_start($env, "prefork"))) {
+	    return undef;
+	}
+
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	return $env;
+}
+
+#
+# ad_dc test environment used solely to test standard process model connection
+# process limits. As the limit is set artificially low it should not be used
+# for other tests.
+sub setup_proclimitdc
+{
+	my ($self, $path) = @_;
+
+	# If we didn't build with ADS, pretend this env was never available
+	if (not $self->{target3}->have_ads()) {
+	       return "UNKNOWN";
+	}
+
+	my $env = $self->provision_ad_dc(
+		$path,
+		"proclimitdc",
+		"PROCLIMITDOM",
+		"proclimit.samba.example.com",
+		"max smbd processes = 20");
+	unless ($env) {
+		return undef;
+	}
+
+	$env->{NSS_WRAPPER_MODULE_SO_PATH} = undef;
+	$env->{NSS_WRAPPER_MODULE_FN_PREFIX} = undef;
+
+	if (not defined($self->check_or_start($env, "standard"))) {
+	    return undef;
+	}
+
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	return $env;
+}
+
 # Sets up a DC that's solely used to do a domain backup from. We then use the
 # backupfrom-DC to create the restore-DC - this proves that the backup/restore
 # process will create a Samba DC that will actually start up.
@@ -2609,7 +2884,8 @@ sub setup_backupfromdc
 	my $provision_args = ["--site=Backup-Site"];
 
 	my $env = $self->provision_ad_dc($path, "backupfromdc", "BACKUPDOMAIN",
-					 "backupdom.samba.example.com", "",
+					 "backupdom.samba.example.com",
+					 "samba kcc command = /bin/true",
 					 $provision_args);
 	unless ($env) {
 		return undef;
@@ -2627,6 +2903,19 @@ sub setup_backupfromdc
 	return $env;
 }
 
+# returns the server/user-auth params needed to run an online backup cmd
+sub get_backup_server_args
+{
+	# dcvars contains the env info for the backup DC testenv
+	my ($self, $dcvars) = @_;
+	my $server = $dcvars->{DC_SERVER_IP};
+	my $server_args = "--server=$server ";
+	$server_args .= "-U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD}";
+	$server_args .= " $dcvars->{CONFIGURATION}";
+
+	return $server_args;
+}
+
 # Creates a backup of a running testenv DC
 sub create_backup
 {
@@ -2634,7 +2923,7 @@ sub create_backup
 	my ($self, $env, $dcvars, $backupdir, $backup_cmd) = @_;
 
 	# get all the env variables we pass in with the samba-tool command
-	my $cmd_env = "";
+	my $cmd_env = "NSS_WRAPPER_HOSTS='$env->{NSS_WRAPPER_HOSTS}' ";
 	$cmd_env .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
 	if (defined($env->{RESOLV_WRAPPER_CONF})) {
 		$cmd_env .= "RESOLV_WRAPPER_CONF=\"$env->{RESOLV_WRAPPER_CONF}\" ";
@@ -2648,10 +2937,9 @@ sub create_backup
 	# use samba-tool to create a backup from the 'backupfromdc' DC
 	my $cmd = "";
 	my $samba_tool = Samba::bindir_path($self, "samba-tool");
-	my $server = $dcvars->{DC_SERVER_IP};
 
-	$cmd .= "$cmd_env $samba_tool domain backup $backup_cmd --server=$server";
-	$cmd .= " --targetdir=$backupdir -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD}";
+	$cmd .= "$cmd_env $samba_tool domain backup $backup_cmd";
+	$cmd .= " --targetdir=$backupdir";
 
 	print "Executing: $cmd\n";
 	unless(system($cmd) == 0) {
@@ -2708,7 +2996,8 @@ sub restore_backup_file
 # (without actually doing a 'domain join')
 sub prepare_dc_testenv
 {
-	my ($self, $prefix, $dcname, $domain, $realm, $password) = @_;
+	my ($self, $prefix, $dcname, $domain, $realm,
+		$password, $conf_options) = @_;
 
 	my $ctx = $self->provision_raw_prepare($prefix, "domain controller",
 					       $dcname,
@@ -2727,10 +3016,14 @@ sub prepare_dc_testenv
 	# add support for sysvol/netlogon/tmp shares
 	$ctx->{share} = "$ctx->{prefix_abs}/share";
 	push(@{$ctx->{directories}}, "$ctx->{share}");
+	push(@{$ctx->{directories}}, "$ctx->{share}/test1");
 
 	$ctx->{smb_conf_extra_options} = "
+	$conf_options
 	max xmit = 32K
 	server max protocol = SMB2
+	samba kcc command = /bin/true
+	xattr_tdb:file = $ctx->{statedir}/xattr.tdb
 
 [sysvol]
 	path = $ctx->{statedir}/sysvol
@@ -2747,6 +3040,12 @@ sub prepare_dc_testenv
 	posix:oplocktimeout = 3
 	posix:writetimeupdatedelay = 50000
 
+[test1]
+	path = $ctx->{share}/test1
+	read only = no
+	posix:sharedelay = 100000
+	posix:oplocktimeout = 3
+	posix:writetimeupdatedelay = 500000
 ";
 
 	my $env = $self->provision_raw_step1($ctx);
@@ -2758,7 +3057,7 @@ sub prepare_dc_testenv
 	$env->{DC_USERNAME} = $env->{USERNAME};
 	$env->{DC_PASSWORD} = $env->{PASSWORD};
 
-    return $env;
+    return ($env, $ctx);
 }
 
 
@@ -2771,13 +3070,23 @@ sub setup_restoredc
 	my ($self, $prefix, $dcvars) = @_;
 	print "Preparing RESTORE DC...\n";
 
-	my $env = $self->prepare_dc_testenv($prefix, "restoredc",
-					    $dcvars->{DOMAIN}, $dcvars->{REALM},
-					    $dcvars->{PASSWORD});
+	# we arbitrarily designate the restored DC as having SMBv1 disabled
+	my $extra_conf = "
+	server min protocol = SMB2
+	client min protocol = SMB2";
+
+	my ($env, $ctx) = $self->prepare_dc_testenv($prefix, "restoredc",
+						    $dcvars->{DOMAIN},
+						    $dcvars->{REALM},
+						    $dcvars->{PASSWORD},
+						    $extra_conf);
 
 	# create a backup of the 'backupfromdc'
 	my $backupdir = File::Temp->newdir();
-	my $backup_file = $self->create_backup($env, $dcvars, $backupdir, "online");
+	my $server_args = $self->get_backup_server_args($dcvars);
+	my $backup_args = "online $server_args";
+	my $backup_file = $self->create_backup($env, $dcvars, $backupdir,
+					       $backup_args);
 	unless($backup_file) {
 		return undef;
 	}
@@ -2796,11 +3105,6 @@ sub setup_restoredc
 	    return undef;
 	}
 
-	my $upn_array = ["$env->{REALM}.upn"];
-	my $spn_array = ["$env->{REALM}.spn"];
-
-	$self->setup_namespaces($env, $upn_array, $spn_array);
-
 	return $env;
 }
 
@@ -2813,13 +3117,16 @@ sub setup_renamedc
 	my ($self, $prefix, $dcvars) = @_;
 	print "Preparing RENAME DC...\n";
 
-	my $env = $self->prepare_dc_testenv($prefix, "renamedc",
-					    "RENAMEDOMAIN", "renamedom.samba.example.com",
-					    $dcvars->{PASSWORD});
+	my $realm = "renamedom.samba.example.com";
+	my ($env, $ctx) = $self->prepare_dc_testenv($prefix, "renamedc",
+						    "RENAMEDOMAIN", $realm,
+						    $dcvars->{PASSWORD}, "");
 
 	# create a backup of the 'backupfromdc' which renames the domain
 	my $backupdir = File::Temp->newdir();
-	my $backup_args = "rename $env->{DOMAIN} $env->{REALM}";
+	my $server_args = $self->get_backup_server_args($dcvars);
+	my $backup_args = "rename $env->{DOMAIN} $env->{REALM} $server_args";
+	$backup_args .= " --backend-store=tdb";
 	my $backup_file = $self->create_backup($env, $dcvars, $backupdir,
 					       $backup_args);
 	unless($backup_file) {
@@ -2848,6 +3155,50 @@ sub setup_renamedc
 	return $env;
 }
 
+# Set up a DC testenv solely by using the 'samba-tool domain backup offline' and
+# restore commands. This proves that we do an offline backup of a local DC
+# ('backupfromdc') and use the backup file to create a valid, working samba DC.
+sub setup_offlinebackupdc
+{
+	# note: dcvars contains the env info for the dependent testenv ('backupfromdc')
+	my ($self, $prefix, $dcvars) = @_;
+	print "Preparing OFFLINE BACKUP DC...\n";
+
+	my ($env, $ctx) = $self->prepare_dc_testenv($prefix, "offlinebackupdc",
+						    $dcvars->{DOMAIN},
+						    $dcvars->{REALM},
+						    $dcvars->{PASSWORD}, "");
+
+	# create an offline backup of the 'backupfromdc' target
+	my $backupdir = File::Temp->newdir();
+	my $cmd = "offline -s $dcvars->{SERVERCONFFILE}";
+	my $backup_file = $self->create_backup($env, $dcvars,
+					       $backupdir, $cmd);
+
+	unless($backup_file) {
+		return undef;
+	}
+
+	# restore the backup file to populate the rename-DC testenv
+	my $restore_dir = abs_path($prefix);
+	my $restore_opts =  "--newservername=$env->{SERVER} --host-ip=$env->{SERVER_IP}";
+	my $ret = $self->restore_backup_file($backup_file, $restore_opts,
+					     $restore_dir, $env->{SERVERCONFFILE});
+	unless ($ret == 0) {
+		return undef;
+	}
+
+	# re-create the testenv's krb5.conf (the restore may have overwritten it)
+	Samba::mk_krb5_conf($ctx);
+
+	# start samba for the restored DC
+	if (not defined($self->check_or_start($env, "standard"))) {
+	    return undef;
+	}
+
+	return $env;
+}
+
 # Set up a DC testenv solely by using the samba-tool 'domain backup rename' and
 # restore commands, using the --no-secrets option. This proves that we can
 # create a realistic lab environment from an online DC ('backupfromdc').
@@ -2857,13 +3208,17 @@ sub setup_labdc
 	my ($self, $prefix, $dcvars) = @_;
 	print "Preparing LAB-DOMAIN DC...\n";
 
-	my $env = $self->prepare_dc_testenv($prefix, "labdc", "LABDOMAIN",
-					    "labdom.samba.example.com", $dcvars->{PASSWORD});
+	my ($env, $ctx) = $self->prepare_dc_testenv($prefix, "labdc",
+						    "LABDOMAIN",
+						    "labdom.samba.example.com",
+						    $dcvars->{PASSWORD}, "");
 
 	# create a backup of the 'backupfromdc' which renames the domain and uses
 	# the --no-secrets option to scrub any sensitive info
 	my $backupdir = File::Temp->newdir();
-	my $backup_args = "rename $env->{DOMAIN} $env->{REALM} --no-secrets";
+	my $server_args = $self->get_backup_server_args($dcvars);
+	my $backup_args = "rename $env->{DOMAIN} $env->{REALM} $server_args";
+	$backup_args .= " --no-secrets --backend-store=mdb";
 	my $backup_file = $self->create_backup($env, $dcvars, $backupdir,
 					       $backup_args);
 	unless($backup_file) {
@@ -2884,10 +3239,11 @@ sub setup_labdc
 	my $samba_tool = Samba::bindir_path($self, "samba-tool");
 	my $cmd = "$samba_tool user setpassword $env->{USERNAME} ";
 	$cmd .= "--newpassword=$env->{PASSWORD} -H $restore_dir/private/sam.ldb";
+	$cmd .= " $env->{CONFIGURATION}";
 
 	unless(system($cmd) == 0) {
 		warn("Failed to reset admin's password: \n$cmd");
-		return -1;
+		return undef;
 	}
 
 	# start samba for the restored DC
@@ -2895,6 +3251,105 @@ sub setup_labdc
 	    return undef;
 	}
 
+	my $upn_array = ["$env->{REALM}.upn"];
+	my $spn_array = ["$env->{REALM}.spn"];
+
+	$self->setup_namespaces($env, $upn_array, $spn_array);
+
+	return $env;
+}
+
+# Inspects a backup *.tar.bz2 file and determines the realm/domain it contains
+sub get_backup_domain_realm
+{
+	my ($self, $backup_file) = @_;
+
+	print "Determining REALM/DOMAIN values in backup...\n";
+
+	# The backup will have the correct domain/realm values in the smb.conf.
+	# So we can work out the env variables the testenv should use based on
+	# that. Let's start by extracting the smb.conf
+	my $tar = Archive::Tar->new($backup_file);
+	my $tmpdir = File::Temp->newdir();
+	my $smbconf = "$tmpdir/smb.conf";
+
+	# note that the filepaths within the tar-file differ slightly for online
+	# and offline backups
+	if ($tar->contains_file("etc/smb.conf")) {
+		$tar->extract_file("etc/smb.conf", $smbconf);
+	} elsif ($tar->contains_file("./etc/smb.conf")) {
+		$tar->extract_file("./etc/smb.conf", $smbconf);
+	} else {
+		warn("Could not find smb.conf in $backup_file");
+		return undef, undef;
+	}
+
+	# now use testparm to read the values we're interested in
+	my $testparm = Samba::bindir_path($self, "testparm");
+	my $domain = `$testparm $smbconf -sl --parameter-name=WORKGROUP`;
+	my $realm = `$testparm $smbconf -sl --parameter-name=REALM`;
+	chomp $realm;
+	chomp $domain;
+	print "Backup-file REALM is $realm, DOMAIN is $domain\n";
+
+	return ($domain, $realm);
+}
+
+# This spins up a custom testenv that can be based on any backup-file you want.
+# This is just intended for manual testing (rather than automated test-cases)
+sub setup_customdc
+{
+	my ($self, $prefix) = @_;
+	print "Preparing CUSTOM RESTORE DC...\n";
+	my $dc_name = "customdc";
+	my $password = "locDCpass1";
+	my $backup_file = $ENV{'BACKUP_FILE'};
+
+	# user must specify a backup file to restore via an ENV variable, i.e.
+	# BACKUP_FILE=backup-blah.tar.bz2 SELFTEST_TESTENV=customdc make testenv
+	if (not defined($backup_file)) {
+		warn("Please specify BACKUP_FILE");
+		return undef;
+	}
+
+	# work out the correct domain/realm env values from the backup-file
+	my ($domain, $realm) = $self->get_backup_domain_realm($backup_file);
+
+	# create a placeholder directory and smb.conf, as well as the env vars.
+	my ($env, $ctx) = $self->prepare_dc_testenv($prefix, $dc_name,
+						    $domain, $realm, $password, "");
+
+	# restore the specified backup file to populate the testenv
+	my $restore_dir = abs_path($prefix);
+	my $ret = $self->restore_backup_file($backup_file,
+					     "--newservername=$env->{SERVER}",
+					     $restore_dir, $env->{SERVERCONFFILE});
+	unless ($ret == 0) {
+		return undef;
+	}
+
+	# Change the admin password to the testenv default, just in case it's
+	# different, or in case this was a --no-secrets backup
+	my $samba_tool = Samba::bindir_path($self, "samba-tool");
+	my $cmd = "$samba_tool user setpassword $env->{USERNAME} ";
+	$cmd .= "--newpassword=$password -H $restore_dir/private/sam.ldb";
+	$cmd .= " $env->{CONFIGURATION}";
+
+	unless(system($cmd) == 0) {
+		warn("Failed to reset admin's password: \n$cmd");
+		return undef;
+	}
+
+	# re-create the testenv's krb5.conf (the restore may have overwritten it,
+	# if the backup-file was an offline backup)
+	Samba::mk_krb5_conf($ctx);
+
+	# start samba for the restored DC
+	if (not defined($self->check_or_start($env, "standard"))) {
+	    return undef;
+	}
+
+	# if this was a backup-rename, then we may need to setup namespaces
 	my $upn_array = ["$env->{REALM}.upn"];
 	my $spn_array = ["$env->{REALM}.spn"];
 

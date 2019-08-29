@@ -18,6 +18,7 @@ from samba.tests.password_test import PasswordTestCase
 
 import time
 
+
 class BasePasswordTestCase(PasswordTestCase):
     def _open_samr_user(self, res):
         self.assertTrue("objectSid" in res[0])
@@ -44,8 +45,8 @@ class BasePasswordTestCase(PasswordTestCase):
 
         if mode == "absent":
             self.assertFalse(name in res[0],
-                            msg="attr[%s] not missing on dn[%s]" %
-                            (name, res[0].dn))
+                             msg="attr[%s] not missing on dn[%s]" %
+                             (name, res[0].dn))
             return
 
         self.assertTrue(name in res[0],
@@ -54,7 +55,6 @@ class BasePasswordTestCase(PasswordTestCase):
         self.assertTrue(len(res[0][name]) == 1,
                         msg="attr[%s]=%r on dn[%s]" %
                         (name, res[0][name], res[0].dn))
-
 
         print("%s = '%s'" % (name, res[0][name][0]))
 
@@ -112,7 +112,7 @@ class BasePasswordTestCase(PasswordTestCase):
         if msg is not None:
             print("\033[01;32m %s \033[00m\n" % msg)
         attrs = [
-           "objectSid",
+            "objectSid",
            "badPwdCount",
            "badPasswordTime",
            "lastLogon",
@@ -188,7 +188,6 @@ class BasePasswordTestCase(PasswordTestCase):
             self.assertEquals(uinfo21.last_logon, lastLogon)
             self.assertEquals(uinfo21.logon_count, logonCount)
 
-
         # check LDAP again and make sure the samr.QueryUserInfo
         # doesn't have any impact.
         res2 = self.ldb.search(dn, scope=SCOPE_BASE, attrs=attrs)
@@ -243,7 +242,7 @@ userPassword: """ + userpass + """
         use_kerberos = creds.get_kerberos_state()
         fail_creds = self.insta_creds(self.template_creds,
                                       username=username,
-                                      userpass=userpass+"X",
+                                      userpass=userpass + "X",
                                       kerberos_state=use_kerberos)
         self._check_account_initial(userdn)
 
@@ -293,7 +292,7 @@ userPassword: """ + userpass + """
         configuration_dn = self.ldb.get_config_basedn().get_linearized()
 
         res = self.ldb.search(base_dn,
-                         scope=SCOPE_BASE, attrs=["lockoutDuration", "lockOutObservationWindow", "lockoutThreshold"])
+                              scope=SCOPE_BASE, attrs=["lockoutDuration", "lockOutObservationWindow", "lockoutThreshold"])
 
         if "lockoutDuration" in res[0]:
             lockoutDuration = res[0]["lockoutDuration"][0]
@@ -397,7 +396,6 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         lastLogonTimestamp = int(res[0]["lastLogonTimestamp"][0])
         print(firstLogon)
         print(lastLogonTimestamp)
-
 
         self.assertGreater(lastLogon, badPasswordTime)
         self.assertGreaterEqual(lastLogon, lastLogonTimestamp)
@@ -744,7 +742,6 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
                                   msDSUserAccountControlComputed=0,
                                   msg=("second logon, firstlogon was %s" %
                                        firstLogon))
-
 
         lastLogon = int(res[0]["lastLogon"][0])
 

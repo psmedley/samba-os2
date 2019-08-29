@@ -927,7 +927,7 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 		srv_flgs |= NETLOGON_NEG_SUPPORTS_AES;
 	}
 
-	if (lp_server_schannel() != false) {
+	if (in_neg_flags & NETLOGON_NEG_SCHANNEL) {
 		srv_flgs |= NETLOGON_NEG_SCHANNEL;
 	}
 
@@ -964,17 +964,6 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 	if (!pipe_state) {
 		DEBUG(0,("%s: no challenge sent to client %s\n", fn,
 			r->in.computer_name));
-		status = NT_STATUS_ACCESS_DENIED;
-		goto out;
-	}
-
-	if ( (lp_server_schannel() == true) &&
-	     ((in_neg_flags & NETLOGON_NEG_SCHANNEL) == 0) ) {
-
-		/* schannel must be used, but client did not offer it. */
-		DEBUG(0,("%s: schannel required but client failed "
-			"to offer it. Client was %s\n",
-			fn, r->in.account_name));
 		status = NT_STATUS_ACCESS_DENIED;
 		goto out;
 	}
@@ -1073,36 +1062,6 @@ NTSTATUS _netr_ServerAuthenticate2(struct pipes_struct *p,
 }
 
 /*************************************************************************
- * If schannel is required for this call test that it actually is available.
- *************************************************************************/
-static NTSTATUS schannel_check_required(struct pipe_auth_data *auth_info,
-					const char *computer_name,
-					bool integrity, bool privacy)
-{
-	if (auth_info && auth_info->auth_type == DCERPC_AUTH_TYPE_SCHANNEL) {
-		if (!privacy && !integrity) {
-			return NT_STATUS_OK;
-		}
-
-		if ((!privacy && integrity) &&
-		    auth_info->auth_level == DCERPC_AUTH_LEVEL_INTEGRITY) {
-			return NT_STATUS_OK;
-		}
-
-		if ((privacy || integrity) &&
-		    auth_info->auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
-			return NT_STATUS_OK;
-		}
-	}
-
-	/* test didn't pass */
-	DEBUG(0, ("schannel_check_required: [%s] is not using schannel\n",
-		  computer_name));
-
-	return NT_STATUS_ACCESS_DENIED;
-}
-
-/*************************************************************************
  *************************************************************************/
 
 static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
@@ -1121,11 +1080,10 @@ static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
 	}
 
 	if (schannel_global_required) {
-		status = schannel_check_required(&p->auth,
-						 computer_name,
-						 false, false);
-		if (!NT_STATUS_IS_OK(status)) {
-			return status;
+		if (p->auth.auth_type != DCERPC_AUTH_TYPE_SCHANNEL) {
+			DBG_ERR("[%s] is not using schannel\n",
+				computer_name);
+			return NT_STATUS_ACCESS_DENIED;
 		}
 	}
 

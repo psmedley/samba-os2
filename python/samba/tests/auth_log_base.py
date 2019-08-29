@@ -27,6 +27,8 @@ import json
 import os
 import re
 
+msg_ctxs = []
+
 
 class AuthLogTestBase(samba.tests.TestCase):
 
@@ -34,6 +36,8 @@ class AuthLogTestBase(samba.tests.TestCase):
         super(AuthLogTestBase, self).setUp()
         lp_ctx = self.get_loadparm()
         self.msg_ctx = Messaging((1,), lp_ctx=lp_ctx)
+        global msg_ctxs
+        msg_ctxs.append(self.msg_ctx)
         self.msg_ctx.irpc_add_name(AUTH_EVENT_NAME)
 
         def messageHandler(context, msgType, src, message):
@@ -97,7 +101,7 @@ class AuthLogTestBase(samba.tests.TestCase):
                 return []
 
         self.connection = None
-        return filter(isRemote, self.context["messages"])
+        return list(filter(isRemote, self.context["messages"]))
 
     # Discard any previously queued messages.
     def discardMessages(self):

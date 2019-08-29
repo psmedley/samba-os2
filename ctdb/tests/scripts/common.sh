@@ -14,41 +14,15 @@ if [ $(dirname "$TEST_SUBDIR") = "." ] ; then
 	TEST_SUBDIR=$(cd "$TEST_SUBDIR" ; pwd)
 fi
 
-# If we are running from within the source tree then, depending on the
-# tests that we're running, we may need to add the top level bin/ and
-# tools/ subdirectories to $PATH.  In this case, sanity check that
-# run_tests.sh is in the expected place.  If the tests are installed
-# then sanity check that TEST_BIN_DIR is set.
-if $CTDB_TESTS_ARE_INSTALLED ; then
-	if [ -z "$TEST_BIN_DIR" ] ; then
-		die "CTDB_TESTS_ARE_INSTALLED but TEST_BIN_DIR not set"
-	fi
-
-	_test_bin_dir="$TEST_BIN_DIR"
-else
-	if [ ! -f "${CTDB_TEST_DIR}/run_tests.sh" ] ; then
-		die "Tests not installed but can't find run_tests.sh"
-	fi
-
-	ctdb_dir=$(dirname "$CTDB_TEST_DIR")
-
-	_tools_dir="${ctdb_dir}/tools"
-	if [ -d "$_tools_dir" ] ; then
-		PATH="${_tools_dir}:$PATH"
-	fi
-
-	_test_bin_dir="${ctdb_dir}/bin"
-fi
-
-case "$_test_bin_dir" in
-/*) : ;;
-*) _test_bin_dir="${PWD}/${_test_bin_dir}" ;;
-esac
-if [ -d "$_test_bin_dir" ] ; then
-	PATH="${_test_bin_dir}:$PATH"
-fi
-
 . "${TEST_SCRIPTS_DIR}/script_install_paths.sh"
+
+if [ -d "$CTDB_SCRIPTS_TOOLS_BIN_DIR" ] ; then
+	PATH="${CTDB_SCRIPTS_TOOLS_BIN_DIR}:${PATH}"
+fi
+
+if [ -d "$CTDB_SCRIPTS_TESTS_BINDIR" ] ; then
+	PATH="${CTDB_SCRIPTS_TESTS_BINDIR}:${PATH}"
+fi
 
 # Wait until either timeout expires or command succeeds.  The command
 # will be tried once per second, unless timeout has format T/I, where
@@ -120,6 +94,12 @@ setup_ctdb_base ()
 	for _i ; do
 		cp -pr "${CTDB_SCRIPTS_BASE}/${_i}" "${CTDB_BASE}/"
 	done
+
+	mkdir -p "${CTDB_BASE}/events/legacy"
+
+	if [ -z "$TEST_SUBDIR" ] ; then
+		return
+	fi
 
 	for _i in "${TEST_SUBDIR}/etc-ctdb/"* ; do
 		# No/empty etc-ctdb directory

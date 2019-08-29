@@ -2340,9 +2340,9 @@ static enum ndr_err_code fill_qtlist_from_sids(TALLOC_CTX *mem_ctx,
 
 		ok = sid_to_uid(&sids[i], &list_item->uid);
 		if (!ok) {
-			char buf[DOM_SID_STR_BUFLEN];
-			dom_sid_string_buf(&sids[i], buf, sizeof(buf));
-			DBG_WARNING("Could not convert SID %s to uid\n", buf);
+			struct dom_sid_buf buf;
+			DBG_WARNING("Could not convert SID %s to uid\n",
+				    dom_sid_str_buf(&sids[i], &buf));
 			/* No idea what to return here... */
 			return NDR_ERR_INVALID_POINTER;
 		}
@@ -2472,10 +2472,11 @@ static enum ndr_err_code extract_sids_from_buf(TALLOC_CTX *mem_ctx,
 		*num = i;
 
 		for (iter = sid_list, i = 0; iter; iter = iter->next, i++) {
+			struct dom_sid_buf buf;
 			(*sids)[i] = iter->sid;
 			DBG_DEBUG("quota SID[%u] %s\n",
 				(unsigned int)i,
-				sid_string_dbg(&iter->sid));
+				dom_sid_str_buf(&iter->sid, &buf));
 		}
 	}
 	err = NDR_ERR_SUCCESS;

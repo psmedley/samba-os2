@@ -7,7 +7,7 @@ Usage: $0 [OPTIONS] [TESTS]
 Options:
   -A		Use "cat -A" to print test output (only some tests)
   -c		Run integration tests on a cluster
-  -C		Clean up - kill daemons and remove TEST_VAR_DIR when done
+  -C		Remove TEST_VAR_DIR when done
   -d		Print descriptions of tests instead of filenames (dodgy!)
   -D		Show diff between failed/expected test output (some tests only)
   -e		Exit on the first test failure
@@ -248,10 +248,6 @@ if [ -z "$TEST_VAR_DIR" ] ; then
 fi
 mkdir -p "$TEST_VAR_DIR"
 
-# Must be absolute
-TEST_VAR_DIR=$(cd "$TEST_VAR_DIR"; echo "$PWD")
-echo "TEST_VAR_DIR=$TEST_VAR_DIR"
-
 export TEST_SCRIPTS_DIR="${CTDB_TEST_DIR}/scripts"
 
 unit_tests="
@@ -284,18 +280,8 @@ do_cleanup ()
     fi
 }
 
-cleanup_handler ()
-{
-    if $TEST_CLEANUP ; then
-	if [ -n "$TEST_LOCAL_DAEMONS" -a "$f" = "simple" ] ; then
-	    echo "***** shutting down daemons *****"
-	    find_and_run_one_test simple/99_daemons_shutdown.sh "$tests_dir"
-	fi
-    fi
-    do_cleanup
-}
-
-trap cleanup_handler SIGINT SIGTERM
+trap "do_cleanup ; exit 130" SIGINT
+trap "do_cleanup ; exit 143" SIGTERM
 
 declare -a tests
 i=0

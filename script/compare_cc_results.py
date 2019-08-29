@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 #
 # Compare the results of native and cross-compiled configure tests
@@ -14,6 +14,7 @@ exceptions = [
     'LIBSOCKET_WRAPPER_SO_PATH',
     'LIBNSS_WRAPPER_SO_PATH',
     'LIBPAM_WRAPPER_SO_PATH',
+    'PAM_SET_ITEMS_SO_PATH',
     'LIBUID_WRAPPER_SO_PATH',
     'LIBRESOLV_WRAPPER_SO_PATH',
 ]
@@ -27,14 +28,31 @@ for fname in sys.argv[1:]:
     lines = list()
     f = open(fname, 'r')
     for line in f:
+        if line.startswith("cfg_files ="):
+            # waf writes configuration files as absolute paths
+            continue
         if len(line.split('=', 1)) == 2:
             key = line.split('=', 1)[0].strip()
+            value = line.split('=', 1)[1].strip()
             if key in exceptions:
                 continue
+            # using waf with python 3.4 seems to randomly sort dict keys
+            # we can't modify the waf code but we can fake a dict value
+            # string representation as if it were sorted. python 3.6.5
+            # doesn't seem to suffer from this behaviour
+            if value.startswith('{'):
+                import ast
+                amap = ast.literal_eval(value)
+                fakeline = ""
+                for k in sorted(amap.keys()):
+                    if not len(fakeline) == 0:
+                        fakeline = fakeline + ", "
+                    fakeline = fakeline + '\'' + k + '\': \'' + amap[k] + '\''
+                line = key + ' = {' + fakeline + '}'
         lines.append(line)
     f.close()
     if base_fname:
-        diff = list(difflib.unified_diff(base_lines,lines,base_fname,fname))
+        diff = list(difflib.unified_diff(base_lines, lines, base_fname, fname))
         if diff:
             print('configuration files %s and %s do not match' % (base_fname, fname))
             for l in diff:

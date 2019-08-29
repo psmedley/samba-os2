@@ -618,6 +618,9 @@ _PUBLIC_ isc_result_t dlz_create(const char *dlzname,
 	char *errstring = NULL;
 
 	if (dlz_bind9_state != NULL) {
+		dlz_bind9_state->log(ISC_LOG_ERROR,
+				     "samba_dlz: dlz_create ignored, #refs=%d",
+				     dlz_bind9_state_ref_count);
 		*dbdata = dlz_bind9_state;
 		dlz_bind9_state_ref_count++;
 		return ISC_R_SUCCESS;
@@ -743,6 +746,10 @@ _PUBLIC_ isc_result_t dlz_create(const char *dlzname,
 	return ISC_R_SUCCESS;
 
 failed:
+	state->log(ISC_LOG_INFO,
+		   "samba_dlz: FAILED dlz_create call result=%d #refs=%d",
+		   result,
+		   dlz_bind9_state_ref_count);
 	talloc_free(state);
 	return result;
 }
@@ -753,13 +760,17 @@ failed:
 _PUBLIC_ void dlz_destroy(void *dbdata)
 {
 	struct dlz_bind9_data *state = talloc_get_type_abort(dbdata, struct dlz_bind9_data);
-	state->log(ISC_LOG_INFO, "samba_dlz: shutting down");
 
 	dlz_bind9_state_ref_count--;
 	if (dlz_bind9_state_ref_count == 0) {
+		state->log(ISC_LOG_INFO, "samba_dlz: shutting down");
 		talloc_unlink(state, state->samdb);
 		talloc_free(state);
 		dlz_bind9_state = NULL;
+	} else {
+		state->log(ISC_LOG_INFO,
+			   "samba_dlz: dlz_destroy called. %d refs remaining.",
+			   dlz_bind9_state_ref_count);
 	}
 }
 
@@ -776,8 +787,11 @@ static isc_result_t b9_find_zone_dn(struct dlz_bind9_data *state, const char *zo
 	int i;
 
 	for (i=0; zone_prefixes[i]; i++) {
+		const char *casefold;
 		struct ldb_dn *dn;
 		struct ldb_result *res;
+		struct ldb_val zone_name_val
+			= data_blob_string_const(zone_name);
 
 		dn = ldb_dn_copy(tmp_ctx, ldb_get_default_basedn(state->samdb));
 		if (dn == NULL) {
@@ -785,9 +799,38 @@ static isc_result_t b9_find_zone_dn(struct dlz_bind9_data *state, const char *zo
 			return ISC_R_NOMEMORY;
 		}
 
-		if (!ldb_dn_add_child_fmt(dn, "DC=%s,%s", zone_name, zone_prefixes[i])) {
+		/*
+		 * This dance ensures that it is not possible to put
+		 * (eg) an extra DC=x, into the DNS name being
+		 * queried
+		 */
+
+		if (!ldb_dn_add_child_fmt(dn,
+					  "DC=X,%s",
+					  zone_prefixes[i])) {
 			talloc_free(tmp_ctx);
 			return ISC_R_NOMEMORY;
+		}
+
+		ret = ldb_dn_set_component(dn,
+					   0,
+					   "DC",
+					   zone_name_val);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(tmp_ctx);
+			return ISC_R_NOMEMORY;
+		}
+
+		/*
+		 * Check if this is a plausibly valid DN early
+		 * (time spent here will be saved during the
+		 * search due to an internal cache)
+		 */
+		casefold = ldb_dn_get_casefold(dn);
+
+		if (casefold == NULL) {
+			talloc_free(tmp_ctx);
+			return ISC_R_NOTFOUND;
 		}
 
 		ret = ldb_search(state->samdb, tmp_ctx, &res, dn, LDB_SCOPE_BASE, attrs, "objectClass=dnsZone");
@@ -820,19 +863,42 @@ static isc_result_t b9_find_name_dn(struct dlz_bind9_data *state, const char *na
 		isc_result_t result;
 		result = b9_find_zone_dn(state, p, mem_ctx, dn);
 		if (result == ISC_R_SUCCESS) {
+			const char *casefold;
+
 			/* we found a zone, now extend the DN to get
 			 * the full DN
 			 */
 			bool ret;
 			if (p == name) {
 				ret = ldb_dn_add_child_fmt(*dn, "DC=@");
+				if (ret == false) {
+					talloc_free(*dn);
+					return ISC_R_NOMEMORY;
+				}
 			} else {
-				ret = ldb_dn_add_child_fmt(*dn, "DC=%.*s", (int)(p-name)-1, name);
+				struct ldb_val name_val
+					= data_blob_const(name,
+							  (int)(p-name)-1);
+
+				if (!ldb_dn_add_child_val(*dn,
+							  "DC",
+							  name_val)) {
+					talloc_free(*dn);
+					return ISC_R_NOMEMORY;
+				}
 			}
-			if (!ret) {
-				talloc_free(*dn);
-				return ISC_R_NOMEMORY;
+
+			/*
+			 * Check if this is a plausibly valid DN early
+			 * (time spent here will be saved during the
+			 * search due to an internal cache)
+			 */
+			casefold = ldb_dn_get_casefold(*dn);
+
+			if (casefold == NULL) {
+				return ISC_R_NOTFOUND;
 			}
+
 			return ISC_R_SUCCESS;
 		}
 		p = strchr(p, '.');
@@ -874,17 +940,61 @@ static isc_result_t dlz_lookup_types(struct dlz_bind9_data *state,
 	WERROR werr = WERR_DNS_ERROR_NAME_DOES_NOT_EXIST;
 	struct dnsp_DnssrvRpcRecord *records = NULL;
 	uint16_t num_records = 0, i;
+	struct ldb_val zone_name_val
+		= data_blob_string_const(zone);
+	struct ldb_val name_val
+		= data_blob_string_const(name);
 
 	for (i=0; zone_prefixes[i]; i++) {
+		int ret;
+		const char *casefold;
 		dn = ldb_dn_copy(tmp_ctx, ldb_get_default_basedn(state->samdb));
 		if (dn == NULL) {
 			talloc_free(tmp_ctx);
 			return ISC_R_NOMEMORY;
 		}
 
-		if (!ldb_dn_add_child_fmt(dn, "DC=%s,DC=%s,%s", name, zone, zone_prefixes[i])) {
+		/*
+		 * This dance ensures that it is not possible to put
+		 * (eg) an extra DC=x, into the DNS name being
+		 * queried
+		 */
+
+		if (!ldb_dn_add_child_fmt(dn,
+					  "DC=X,DC=X,%s",
+					  zone_prefixes[i])) {
 			talloc_free(tmp_ctx);
 			return ISC_R_NOMEMORY;
+		}
+
+		ret = ldb_dn_set_component(dn,
+					   1,
+					   "DC",
+					   zone_name_val);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(tmp_ctx);
+			return ISC_R_NOMEMORY;
+		}
+
+		ret = ldb_dn_set_component(dn,
+					   0,
+					   "DC",
+					   name_val);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(tmp_ctx);
+			return ISC_R_NOMEMORY;
+		}
+
+		/*
+		 * Check if this is a plausibly valid DN early
+		 * (time spent here will be saved during the
+		 * search due to an internal cache)
+		 */
+		casefold = ldb_dn_get_casefold(dn);
+
+		if (casefold == NULL) {
+			talloc_free(tmp_ctx);
+			return ISC_R_NOTFOUND;
 		}
 
 		werr = dns_common_wildcard_lookup(state->samdb, tmp_ctx, dn,
@@ -949,21 +1059,53 @@ _PUBLIC_ isc_result_t dlz_allnodes(const char *zone, void *dbdata,
 {
 	struct dlz_bind9_data *state = talloc_get_type_abort(dbdata, struct dlz_bind9_data);
 	const char *attrs[] = { "dnsRecord", NULL };
-	int ret = LDB_SUCCESS, i, j;
-	struct ldb_dn *dn;
+	int ret = LDB_ERR_NO_SUCH_OBJECT;
+	size_t i, j;
+	struct ldb_dn *dn = NULL;
 	struct ldb_result *res;
 	TALLOC_CTX *tmp_ctx = talloc_new(state);
+	struct ldb_val zone_name_val = data_blob_string_const(zone);
 
 	for (i=0; zone_prefixes[i]; i++) {
+		const char *casefold;
+
 		dn = ldb_dn_copy(tmp_ctx, ldb_get_default_basedn(state->samdb));
 		if (dn == NULL) {
 			talloc_free(tmp_ctx);
 			return ISC_R_NOMEMORY;
 		}
 
-		if (!ldb_dn_add_child_fmt(dn, "DC=%s,%s", zone, zone_prefixes[i])) {
+		/*
+		 * This dance ensures that it is not possible to put
+		 * (eg) an extra DC=x, into the DNS name being
+		 * queried
+		 */
+
+		if (!ldb_dn_add_child_fmt(dn,
+					  "DC=X,%s",
+					  zone_prefixes[i])) {
 			talloc_free(tmp_ctx);
 			return ISC_R_NOMEMORY;
+		}
+
+		ret = ldb_dn_set_component(dn,
+					   0,
+					   "DC",
+					   zone_name_val);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(tmp_ctx);
+			return ISC_R_NOMEMORY;
+		}
+
+		/*
+		 * Check if this is a plausibly valid DN early
+		 * (time spent here will be saved during the
+		 * search due to an internal cache)
+		 */
+		casefold = ldb_dn_get_casefold(dn);
+
+		if (casefold == NULL) {
+			return ISC_R_NOTFOUND;
 		}
 
 		ret = ldb_search(state->samdb, tmp_ctx, &res, dn, LDB_SCOPE_SUBTREE,
@@ -972,7 +1114,7 @@ _PUBLIC_ isc_result_t dlz_allnodes(const char *zone, void *dbdata,
 			break;
 		}
 	}
-	if (ret != LDB_SUCCESS) {
+	if (ret != LDB_SUCCESS || dn == NULL) {
 		talloc_free(tmp_ctx);
 		return ISC_R_NOTFOUND;
 	}
@@ -1118,8 +1260,29 @@ static bool b9_has_soa(struct dlz_bind9_data *state, struct ldb_dn *dn, const ch
 	WERROR werr;
 	struct dnsp_DnssrvRpcRecord *records = NULL;
 	uint16_t num_records = 0, i;
+	struct ldb_val zone_name_val
+		= data_blob_string_const(zone);
 
-	if (!ldb_dn_add_child_fmt(dn, "DC=@,DC=%s", zone)) {
+	/*
+	 * This dance ensures that it is not possible to put
+	 * (eg) an extra DC=x, into the DNS name being
+	 * queried
+	 */
+
+	if (!ldb_dn_add_child_val(dn,
+				  "DC",
+				  zone_name_val)) {
+		talloc_free(tmp_ctx);
+		return false;
+	}
+
+	/*
+	 * The SOA record is alwas stored under DC=@,DC=zonename
+	 * This can probably be removed when dns_common_lookup makes a fallback
+	 * lookup on @ pseudo record
+	 */
+
+	if (!ldb_dn_add_child_fmt(dn,"DC=@")) {
 		talloc_free(tmp_ctx);
 		return false;
 	}

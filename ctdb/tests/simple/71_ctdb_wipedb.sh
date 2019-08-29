@@ -26,14 +26,14 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
 
-try_command_on_node 0 "$CTDB listnodes"
-num_nodes=$(echo "$out" | wc -l)
+try_command_on_node 0 "$CTDB listnodes | wc -l"
+num_nodes="$out"
 
 # 2.
 test_db="persistent_test.tdb"

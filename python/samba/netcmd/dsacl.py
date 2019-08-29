@@ -40,8 +40,7 @@ from samba.netcmd import (
     CommandError,
     SuperCommand,
     Option,
-    )
-
+)
 
 
 class cmd_dsacl_set(Command):
@@ -54,7 +53,7 @@ class cmd_dsacl_set(Command):
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     takes_options = [
         Option("-H", "--URL", help="LDB URL for database or target server",
@@ -74,33 +73,33 @@ class cmd_dsacl_set(Command):
                                                 "ro-repl-secret-sync"],
                help=car_help),
         Option("--action", type="choice", choices=["allow", "deny"],
-                help="""Deny or allow access"""),
+               help="""Deny or allow access"""),
         Option("--objectdn", help="DN of the object whose SD to modify",
-            type="string"),
+               type="string"),
         Option("--trusteedn", help="DN of the entity that gets access",
-            type="string"),
+               type="string"),
         Option("--sddl", help="An ACE or group of ACEs to be added on the object",
-            type="string"),
-        ]
+               type="string"),
+    ]
 
     def find_trustee_sid(self, samdb, trusteedn):
         res = samdb.search(base=trusteedn, expression="(objectClass=*)",
-            scope=SCOPE_BASE)
+                           scope=SCOPE_BASE)
         assert(len(res) == 1)
-        return ndr_unpack( security.dom_sid,res[0]["objectSid"][0])
+        return ndr_unpack(security.dom_sid, res[0]["objectSid"][0])
 
     def modify_descriptor(self, samdb, object_dn, desc, controls=None):
         assert(isinstance(desc, security.descriptor))
         m = ldb.Message()
         m.dn = ldb.Dn(samdb, object_dn)
-        m["nTSecurityDescriptor"]= ldb.MessageElement(
+        m["nTSecurityDescriptor"] = ldb.MessageElement(
                 (ndr_pack(desc)), ldb.FLAG_MOD_REPLACE,
                 "nTSecurityDescriptor")
         samdb.modify(m)
 
     def read_descriptor(self, samdb, object_dn):
         res = samdb.search(base=object_dn, scope=SCOPE_BASE,
-                attrs=["nTSecurityDescriptor"])
+                           attrs=["nTSecurityDescriptor"])
         # we should theoretically always have an SD
         assert(len(res) == 1)
         desc = res[0]["nTSecurityDescriptor"][0]
@@ -108,14 +107,14 @@ class cmd_dsacl_set(Command):
 
     def get_domain_sid(self, samdb):
         res = samdb.search(base=samdb.domain_dn(),
-                expression="(objectClass=*)", scope=SCOPE_BASE)
-        return ndr_unpack( security.dom_sid,res[0]["objectSid"][0])
+                           expression="(objectClass=*)", scope=SCOPE_BASE)
+        return ndr_unpack(security.dom_sid, res[0]["objectSid"][0])
 
     def add_ace(self, samdb, object_dn, new_ace):
         """Add new ace explicitly."""
         desc = self.read_descriptor(samdb, object_dn)
         desc_sddl = desc.as_sddl(self.get_domain_sid(samdb))
-        #TODO add bindings for descriptor manipulation and get rid of this
+        # TODO add bindings for descriptor manipulation and get rid of this
         desc_aces = re.findall("\(.*?\)", desc_sddl)
         for ace in desc_aces:
             if ("ID" in ace):
@@ -145,20 +144,20 @@ class cmd_dsacl_set(Command):
             return self.usage()
 
         samdb = SamDB(url=H, session_info=system_session(),
-            credentials=creds, lp=lp)
-        cars = {'change-rid' : GUID_DRS_CHANGE_RID_MASTER,
-                'change-pdc' : GUID_DRS_CHANGE_PDC,
-                'change-infrastructure' : GUID_DRS_CHANGE_INFR_MASTER,
-                'change-schema' : GUID_DRS_CHANGE_SCHEMA_MASTER,
-                'change-naming' : GUID_DRS_CHANGE_DOMAIN_MASTER,
-                'allocate_rids' : GUID_DRS_ALLOCATE_RIDS,
-                'get-changes' : GUID_DRS_GET_CHANGES,
-                'get-changes-all' : GUID_DRS_GET_ALL_CHANGES,
-                'get-changes-filtered' : GUID_DRS_GET_FILTERED_ATTRIBUTES,
-                'topology-manage' : GUID_DRS_MANAGE_TOPOLOGY,
-                'topology-monitor' : GUID_DRS_MONITOR_TOPOLOGY,
-                'repl-sync' : GUID_DRS_REPL_SYNCRONIZE,
-                'ro-repl-secret-sync' : GUID_DRS_RO_REPL_SECRET_SYNC,
+                      credentials=creds, lp=lp)
+        cars = {'change-rid': GUID_DRS_CHANGE_RID_MASTER,
+                'change-pdc': GUID_DRS_CHANGE_PDC,
+                'change-infrastructure': GUID_DRS_CHANGE_INFR_MASTER,
+                'change-schema': GUID_DRS_CHANGE_SCHEMA_MASTER,
+                'change-naming': GUID_DRS_CHANGE_DOMAIN_MASTER,
+                'allocate_rids': GUID_DRS_ALLOCATE_RIDS,
+                'get-changes': GUID_DRS_GET_CHANGES,
+                'get-changes-all': GUID_DRS_GET_ALL_CHANGES,
+                'get-changes-filtered': GUID_DRS_GET_FILTERED_ATTRIBUTES,
+                'topology-manage': GUID_DRS_MANAGE_TOPOLOGY,
+                'topology-monitor': GUID_DRS_MONITOR_TOPOLOGY,
+                'repl-sync': GUID_DRS_REPL_SYNCRONIZE,
+                'ro-repl-secret-sync': GUID_DRS_RO_REPL_SECRET_SYNC,
                 }
         sid = self.find_trustee_sid(samdb, trusteedn)
         if sddl:

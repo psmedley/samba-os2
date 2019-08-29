@@ -3,14 +3,19 @@
 
 # selftest main code.
 
-import Scripting, os, Options, Utils, Environment, optparse, sys
+import sys
+import os
+import optparse
+from waflib import Scripting, Options, Utils
+from waflib.ConfigSet import ConfigSet as Environment
+
 from samba_utils import *
 from samba_autoconf import *
 import types
 
 DEFAULT_SELFTEST_PREFIX="./st"
 
-def set_options(opt):
+def options(opt):
 
     opt.add_option('--enable-selftest',
                    help=("enable options necessary for selftest (default=no)"),
@@ -116,6 +121,21 @@ def cmd_testonly(opt):
     env.TESTS  = Options.options.TESTS
 
     env.SUBUNIT_FORMATTER = os.getenv('SUBUNIT_FORMATTER')
+
+    # Lots of test scripts need to run with the correct version
+    # of python. With the correct shebang the script should run with the
+    # correct version, the problem is that not all scripts are part
+    # of the installation, some scripts are part of the source code,
+    # and the shebang is not dynamically generated as yet.
+    # It is safer if we are somewhat version neutral at the moment and
+    # ignore the shebang and always run scripts from the test environment
+    # with the python version (determined by PYTHON env variable) If this
+    # env variable isn't set then set it according to the python version
+    # that is running the tests
+    if not os.getenv('PYTHON', None):
+        from sys import executable as exe
+        os.environ['PYTHON'] = os.path.basename(exe)
+
     if not env.SUBUNIT_FORMATTER:
         if Options.options.PERF_TEST:
             env.SUBUNIT_FORMATTER = '${PYTHON} -u ${srcdir}/selftest/format-subunit-json --prefix=${SELFTEST_PREFIX}'
@@ -197,13 +217,18 @@ def cmd_testonly(opt):
     # if we are using a system version of ldb then we need to tell it to
     # load modules from our modules path
     if env.USING_SYSTEM_LDB:
-        os.environ['LDB_MODULES_PATH'] = os.path.abspath(os.path.join(env.cwd, 'bin/modules/ldb'))
+        os.environ['LDB_MODULES_PATH'] = os.path.abspath(
+                os.path.join(*(env.cwd + ['bin/modules/ldb'])))
 
     # tell build system where to find config.h
     os.environ['CONFIG_H'] = 'bin/default/include/config.h'
 
     # tell the test system where perl is
-    os.environ['PERL'] = env.PERL
+    if isinstance(env.PERL, list):
+        perl = ' '.join(env.PERL)
+    else:
+        perl = env.PERL
+    os.environ['PERL'] = perl
 
     st_done = os.path.join(env.SELFTEST_PREFIX, 'st_done')
     if os.path.exists(st_done):
@@ -323,5 +348,5 @@ def cmd_test(opt):
     # if running all tests, then force a symbol check
     env = LOAD_ENVIRONMENT()
     CHECK_MAKEFLAGS(env)
-    Scripting.commands.append('build')
-    Scripting.commands.append('testonly')
+    Options.commands.append('build')
+    Options.commands.append('testonly')

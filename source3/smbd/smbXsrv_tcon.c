@@ -55,7 +55,7 @@ NTSTATUS smbXsrv_tcon_global_init(void)
 		return NT_STATUS_OK;
 	}
 
-	global_path = lock_path("smbXsrv_tcon_global.tdb");
+	global_path = lock_path(talloc_tos(), "smbXsrv_tcon_global.tdb");
 	if (global_path == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -1112,9 +1112,8 @@ NTSTATUS smb1srv_tcon_lookup(struct smbXsrv_connection *conn,
 					 local_id, now, tcon);
 }
 
-NTSTATUS smb1srv_tcon_disconnect_all(struct smbXsrv_connection *conn)
+NTSTATUS smb1srv_tcon_disconnect_all(struct smbXsrv_client *client)
 {
-	struct smbXsrv_client *client = conn->client;
 
 	/*
 	 * We do not pass a vuid here,

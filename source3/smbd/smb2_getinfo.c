@@ -122,7 +122,7 @@ NTSTATUS smbd_smb2_request_process_getinfo(struct smbd_smb2_request *req)
 		return smbd_smb2_request_error(req, NT_STATUS_FILE_CLOSED);
 	}
 
-	subreq = smbd_smb2_getinfo_send(req, req->ev_ctx,
+	subreq = smbd_smb2_getinfo_send(req, req->sconn->ev_ctx,
 					req, in_fsp,
 					in_info_type,
 					in_file_info_class,
@@ -318,6 +318,15 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 			break;
 		}
 
+		switch (file_info_level) {
+		case SMB_FILE_NORMALIZED_NAME_INFORMATION:
+			if (smb2req->xconn->protocol < PROTOCOL_SMB3_11) {
+				tevent_req_nterror(req, NT_STATUS_NOT_SUPPORTED);
+				return tevent_req_post(req, ev);
+			}
+			break;
+		}
+
 		if (fsp->fake_file_handle) {
 			/*
 			 * This is actually for the QUOTA_FAKE_FILE --metze
@@ -353,10 +362,13 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 				return tevent_req_post(req, ev);
 			}
 
-			fileid = vfs_file_id_from_sbuf(conn,
-						       &fsp->fsp_name->st);
-			get_file_infos(fileid, fsp->name_hash,
-				&delete_pending, &write_time_ts);
+			if (lp_smbd_getinfo_ask_sharemode(SNUM(conn))) {
+				fileid = vfs_file_id_from_sbuf(
+					conn, &fsp->fsp_name->st);
+				get_file_infos(fileid, fsp->name_hash,
+					       &delete_pending,
+					       &write_time_ts);
+			}
 		} else {
 			/*
 			 * Original code - this is an open file.
@@ -370,10 +382,13 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 				tevent_req_nterror(req, status);
 				return tevent_req_post(req, ev);
 			}
-			fileid = vfs_file_id_from_sbuf(conn,
-						       &fsp->fsp_name->st);
-			get_file_infos(fileid, fsp->name_hash,
-				&delete_pending, &write_time_ts);
+			if (lp_smbd_getinfo_ask_sharemode(SNUM(conn))) {
+				fileid = vfs_file_id_from_sbuf(
+					conn, &fsp->fsp_name->st);
+				get_file_infos(fileid, fsp->name_hash,
+					       &delete_pending,
+					       &write_time_ts);
+			}
 		}
 
 		status = smbd_do_qfilepathinfo(conn, state,

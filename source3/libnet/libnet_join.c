@@ -145,6 +145,8 @@ static ADS_STATUS libnet_connect_ads(const char *dns_domain_name,
 		return ADS_ERROR_LDAP(LDAP_NO_MEMORY);
 	}
 
+	my_ads->auth.flags |= ADS_AUTH_ALLOW_NTLMSSP;
+
 	if (user_name) {
 		SAFE_FREE(my_ads->auth.user_name);
 		my_ads->auth.user_name = SMB_STRDUP(user_name);
@@ -205,7 +207,19 @@ static ADS_STATUS libnet_join_connect_ads(TALLOC_CTX *mem_ctx,
 		password = r->in.machine_password;
 		ccname = "MEMORY:libnet_join_machine_creds";
 	} else {
+		char *p = NULL;
+
 		username = r->in.admin_account;
+
+		p = strchr(r->in.admin_account, '@');
+		if (p == NULL) {
+			username = talloc_asprintf(mem_ctx, "%s@%s",
+						   r->in.admin_account,
+						   r->in.admin_domain);
+		}
+		if (username == NULL) {
+			return ADS_ERROR(LDAP_NO_MEMORY);
+		}
 		password = r->in.admin_password;
 
 		/*
@@ -2598,12 +2612,14 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 		}
 
 		/* The domain parameter is only used as modifier
-		 * to krb5.conf file name. .JOIN is is not a valid
+		 * to krb5.conf file name. _JOIN_ is is not a valid
 		 * NetBIOS name so it cannot clash with another domain
 		 * -- Uri.
 		 */
-		create_local_private_krb5_conf_for_domain(
-		    pre_connect_realm, ".JOIN", sitename, &ss);
+		create_local_private_krb5_conf_for_domain(pre_connect_realm,
+							  "_JOIN_",
+							  sitename,
+							  &ss);
 	}
 
 	status = libnet_join_lookup_dc_rpc(mem_ctx, r, &cli);
@@ -2641,6 +2657,9 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 
 		ads_status = libnet_join_connect_ads_user(mem_ctx, r);
 		if (!ADS_ERR_OK(ads_status)) {
+			libnet_join_set_error_string(mem_ctx, r,
+				"failed to connect to AD: %s",
+				ads_errstr(ads_status));
 			return WERR_NERR_DEFAULTJOINREQUIRED;
 		}
 
@@ -2664,8 +2683,8 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 			return WERR_NERR_DEFAULTJOINREQUIRED;
 		}
 
-		DEBUG(5, ("failed to precreate account in ou %s: %s",
-			r->in.account_ou, ads_errstr(ads_status)));
+		DBG_INFO("Failed to pre-create account in OU %s: %s\n",
+			 r->in.account_ou, ads_errstr(ads_status));
 	}
  rpc_join:
 

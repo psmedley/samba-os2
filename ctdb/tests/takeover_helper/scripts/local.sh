@@ -1,7 +1,5 @@
 # Hey Emacs, this is a -*- shell-script -*- !!!  :-)
 
-# Augment PATH with stubs/ directory.
-
 if "$TEST_VERBOSE" ; then
 	debug () { echo "$@" ; }
 else
@@ -10,11 +8,14 @@ fi
 
 . "${TEST_SCRIPTS_DIR}/script_install_paths.sh"
 
-PATH="$PATH:$CTDB_SCRIPTS_TOOLS_HELPER_DIR"
+PATH="${PATH}:${CTDB_SCRIPTS_TOOLS_HELPER_DIR}"
+PATH="${PATH}:${CTDB_SCRIPTS_HELPER_BINDIR}"
 
-ctdbd_socket="${TEST_VAR_DIR}/ctdbd.socket.$$"
-ctdbd_pidfile="${TEST_VAR_DIR}/ctdbd.pid.$$"
-ctdbd_dbdir="${TEST_VAR_DIR}/ctdbd.db.$$"
+setup_ctdb_base "$TEST_VAR_DIR" "takeover_helper"
+
+ctdbd_socket=$(ctdb-path socket "ctdbd")
+ctdbd_pidfile=$(ctdb-path pidfile "ctdbd")
+ctdbd_dbdir=$(ctdb-path vardir append "db")
 
 define_test ()
 {
@@ -54,16 +55,10 @@ setup_ctdbd ()
 	$VALGRIND fake_ctdbd -d "$FAKE_CTDBD_DEBUGLEVEL" \
 		  -s "$ctdbd_socket" -p "$ctdbd_pidfile" \
 		  -D "$ctdbd_dbdir"
-	export CTDB_SOCKET="$ctdbd_socket"
 	# This current translates to a 6 second timeout for the
 	# important controls
 	ctdb setvar TakeoverTimeout 2
 	test_cleanup cleanup_ctdbd
-}
-
-ctdbd_getpid ()
-{
-	cat "$ctdbd_pidfile"
 }
 
 # Render non-printable characters.  The helper prints the status as

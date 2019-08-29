@@ -22,6 +22,7 @@
 #include "includes.h"
 #include "dnsserver.h"
 #include "rpc_server/common/common.h"
+#include "dns_server/dnsserver_common.h"
 #include "dsdb/samdb/samdb.h"
 #include "lib/socket/netif.h"
 #include "lib/util/util_net.h"
@@ -316,7 +317,7 @@ struct dnsserver_zone *dnsserver_find_zone(struct dnsserver_zone *zones, const c
 	struct dnsserver_zone *z = NULL;
 
 	for (z = zones; z; z = z->next) {
-		if (strcasecmp(zone_name, z->name) == 0) {
+		if (dns_name_equal(zone_name, z->name)) {
 			break;
 		}
 	}
@@ -328,6 +329,8 @@ struct ldb_dn *dnsserver_name_to_dn(TALLOC_CTX *mem_ctx, struct dnsserver_zone *
 {
 	struct ldb_dn *dn;
 	bool ret;
+	struct ldb_val name_val =
+		data_blob_string_const(name);
 
 	dn = ldb_dn_copy(mem_ctx, z->zone_dn);
 	if (dn == NULL) {
@@ -335,9 +338,17 @@ struct ldb_dn *dnsserver_name_to_dn(TALLOC_CTX *mem_ctx, struct dnsserver_zone *
 	}
 	if (strcasecmp(name, z->name) == 0) {
 		ret = ldb_dn_add_child_fmt(dn, "DC=@");
-	} else {
-		ret = ldb_dn_add_child_fmt(dn, "DC=%s", name);
+		if (!ret) {
+			talloc_free(dn);
+			return NULL;
+		}
+		return dn;
 	}
+
+	ret = ldb_dn_add_child_val(dn,
+				   "DC",
+				   name_val);
+
 	if (!ret) {
 		talloc_free(dn);
 		return NULL;

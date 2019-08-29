@@ -28,6 +28,7 @@
 #include "printing/pcap.h"
 #include "passdb/lookup_sid.h"
 #include "auth.h"
+#include "../auth/auth_util.h"
 #include "lib/param/loadparm.h"
 #include "messages.h"
 #include "lib/afs/afs_funcs.h"
@@ -283,8 +284,9 @@ static NTSTATUS find_forced_group(bool force_user,
 	}
 
 	if (!sid_to_gid(&group_sid, &gid)) {
+		struct dom_sid_buf buf;
 		DEBUG(10, ("sid_to_gid(%s) for %s failed\n",
-			   sid_string_dbg(&group_sid), groupname));
+			   dom_sid_str_buf(&group_sid, &buf), groupname));
 		goto done;
 	}
 

@@ -11,14 +11,11 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 select_test_node_and_ips
 
@@ -34,7 +31,7 @@ for i in $all_pnns ; do
 		continue
 	fi
 	try_command_on_node $i "$CTDB ip"
-	n=$(awk -v ip="$test_ip" '$1 == ip { print }' <<<"$out")
+	n=$(awk -v ip="$test_ip" '$1 == ip { print }' "$outfile")
 	if [ -n "$n" ] ; then
 		other_node="$i"
 		break

@@ -1,2 +1,2 @@
 #!/bin/sh
-python -c 'import samba.samba3'
+python3 -c 'import samba.samba3'

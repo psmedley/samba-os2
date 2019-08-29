@@ -191,8 +191,8 @@ static PyObject *py_samdb_get_domain_sid(PyLdbObject *self, PyObject *args)
 	PyObject *py_ldb;
 	struct ldb_context *ldb;
 	const struct dom_sid *sid;
+	struct dom_sid_buf buf;
 	PyObject *ret;
-	char *retstr;
 
 	if (!PyArg_ParseTuple(args, "O", &py_ldb))
 		return NULL;
@@ -205,13 +205,7 @@ static PyObject *py_samdb_get_domain_sid(PyLdbObject *self, PyObject *args)
 		return NULL;
 	}
 
-	retstr = dom_sid_string(NULL, sid);
-	if (retstr == NULL) {
-		PyErr_NoMemory();
-		return NULL;
-	}
-	ret = PyStr_FromString(retstr);
-	talloc_free(retstr);
+	ret = PyStr_FromString(dom_sid_str_buf(sid, &buf));
 	return ret;
 }
 
@@ -519,7 +513,6 @@ static PyObject *py_dsdb_DsReplicaAttribute(PyObject *self, PyObject *args)
 	TALLOC_CTX *tmp_ctx;
 	WERROR werr;
 	Py_ssize_t i;
-	Py_ssize_t _size;
 
 	if (!PyArg_ParseTuple(args, "OsO", &py_ldb, &ldap_display_name, &el_list)) {
 		return NULL;
@@ -581,13 +574,17 @@ static PyObject *py_dsdb_DsReplicaAttribute(PyObject *self, PyObject *args)
 
 		for (i = 0; i < el->num_values; i++) {
 			PyObject *item = PyList_GetItem(el_list, i);
-			if (!(PyStr_Check(item) || PyUnicode_Check(item))) {
-				PyErr_Format(PyExc_TypeError, "ldif_elements should be strings");
+			if (!(PyBytes_Check(item))) {
+				PyErr_Format(PyExc_TypeError,
+					     "ldif_element type should be "
+					     PY_DESC_PY3_BYTES
+					     );
 				talloc_free(tmp_ctx);
 				return NULL;
 			}
-			el->values[i].data = (uint8_t *)PyStr_AsUTF8AndSize(item, &_size);
-			el->values[i].length = _size;
+			el->values[i].data =
+				(uint8_t *)PyBytes_AsString(item);
+			el->values[i].length = PyBytes_Size(item);
 		}
 	}
 
@@ -1273,7 +1270,7 @@ static PyObject *py_dsdb_garbage_collect_tombstones(PyObject *self, PyObject *ar
 	length = PyList_GET_SIZE(py_list_dn);
 
 	for (i = 0; i < length; i++) {
-		char *part_str = PyStr_AsString(PyList_GetItem(py_list_dn, i));
+		const char *part_str = PyStr_AsString(PyList_GetItem(py_list_dn, i));
 		struct ldb_dn *p;
 		struct dsdb_ldb_dn_list_node *node;
 

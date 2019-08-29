@@ -24,51 +24,65 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
 
-# Reset configuration
-ctdb_restart_when_done
-
 ######################################################################
 
-try_command_on_node 0 "$CTDB listnodes -X"
-listnodes_output="$out"
-numnodes=$(wc -l <<<"$listnodes_output")
+try_command_on_node 0 "$CTDB listnodes -X | wc -l"
+numnodes="$out"
 
 ######################################################################
 
 # Confirm that the database is attached
+check_db_once ()
+{
+	local db="$1"
+
+	local num_db
+
+	try_command_on_node all "$CTDB getdbmap"
+	num_db=$(grep -cF "name:${db}" "$outfile") || true
+	if [ "$num_db" -eq "$numnodes" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
 check_db ()
 {
-    db="$1"
-    try_command_on_node all $CTDB getdbmap
-    local num_db=$(grep -cF "$db" <<<"$out") || true
-    if [ $num_db -eq $numnodes ]; then
-	echo "GOOD: database $db is attached on all nodes"
-    else
-	echo "BAD: database $db is not attached on all nodes"
-	echo "$out"
-	exit 1
-    fi
+	local db="$1"
+
+	echo "Waiting until database ${db} is attached on all nodes"
+	wait_until 10 check_db_once "$db"
 }
 
 # Confirm that no nodes have databases attached
+check_no_db_once ()
+{
+	local db="$1"
+
+	local num_db
+
+	try_command_on_node all "$CTDB getdbmap"
+	num_db=$(grep -cF "name:${db}" "$outfile") || true
+	if [ "$num_db" -eq 0 ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
 check_no_db ()
 {
-    db="$1"
-    try_command_on_node all $CTDB getdbmap
-    local num_db=$(grep -cF "$db" <<<"$out") || true
-    if [ $num_db -eq 0 ]; then
-	echo "GOOD: database $db is not attached any more"
-    else
-	echo "BAD: database $db is still attached"
-	echo "$out"
-	exit 1
-    fi
+	local db="$1"
+
+	echo "Waiting until database ${db} is detached on all nodes"
+	wait_until 10 check_no_db_once "$db"
 }
 
 ######################################################################
@@ -137,12 +151,12 @@ echo
 echo "Write a key to database"
 try_command_on_node 0 $CTDB writekey $testdb1 foo bar
 try_command_on_node 0 $CTDB catdb $testdb1
-num_keys=$(echo "$out" | sed -n -e 's/Dumped \([0-9]*\) records/\1/p') || true
+num_keys=$(sed -n -e 's/Dumped \([0-9]*\) records/\1/p' "$outfile") || true
 if [ -n "$num_keys" -a $num_keys -eq 1 ]; then
     echo "GOOD: Key added to database"
 else
     echo "BAD: Key did not get added to database"
-    echo "$out"
+    cat "$outfile"
     exit 1
 fi
 
@@ -161,11 +175,11 @@ check_db "$testdb1"
 echo
 echo "Check if the database is empty"
 try_command_on_node 0 $CTDB catdb $testdb1
-num_keys=$(echo "$out" | sed -n -e 's/Dumped \([0-9]*\) records/\1/p') || true
+num_keys=$(sed -n -e 's/Dumped \([0-9]*\) records/\1/p' "$outfile") || true
 if [ -n "$num_keys" -a $num_keys -eq 0 ]; then
     echo "GOOD: Database $testdb1 is empty"
 else
     echo "BAD: Database $testdb1 is not empty"
-    echo "$out"
+    cat "$outfile"
     exit 1
 fi

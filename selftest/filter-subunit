@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Filter a subunit stream
 # Copyright (C) 2009-2011 Jelmer Vernooij <jelmer@samba.org>
 
@@ -102,7 +102,13 @@ else:
                                       flapping=flapping)
 
 try:
-    ret = subunithelper.parse_results(msg_ops, statistics, sys.stdin)
+    from samba.compat import PY3
+    from io import TextIOWrapper as TextIOWrapper
+    if PY3:
+        forgiving_stdin = TextIOWrapper(sys.stdin.buffer, errors='ignore',  encoding='utf-8')
+    else:
+        forgiving_stdin = sys.stdin
+    ret = subunithelper.parse_results(msg_ops, statistics, forgiving_stdin)
 except subunithelper.ImmediateFail:
     sys.stdout.flush()
     sys.exit(1)

@@ -171,16 +171,18 @@ static PyObject *py_creds_get_password(PyObject *self, PyObject *unused)
 
 static PyObject *py_creds_set_password(PyObject *self, PyObject *args)
 {
-	char *newval;
+	const char *newval = NULL;
 	enum credentials_obtained obt = CRED_SPECIFIED;
 	int _obt = obt;
-
-	if (!PyArg_ParseTuple(args, "s|i", &newval, &_obt)) {
+	PyObject *result = NULL;
+	if (!PyArg_ParseTuple(args, PYARG_STR_UNI"|i", "utf8", &newval, &_obt)) {
 		return NULL;
 	}
 	obt = _obt;
 
-	return PyBool_FromLong(cli_credentials_set_password(PyCredentials_AsCliCredentials(self), newval, obt));
+	result = PyBool_FromLong(cli_credentials_set_password(PyCredentials_AsCliCredentials(self), newval, obt));
+	PyMem_Free(discard_const_p(void*, newval));
+	return result;
 }
 
 static PyObject *py_creds_set_utf16_password(PyObject *self, PyObject *args)
@@ -659,7 +661,7 @@ static PyObject *py_creds_new_client_authenticator(PyObject *self,
 	netlogon_creds_client_authenticator(
 		nc,
 		&auth);
-	ret = Py_BuildValue("{ss#si}",
+	ret = Py_BuildValue("{s"PYARG_BYTES_LEN"si}",
 			    "credential",
 			    (const char *) &auth.cred, sizeof(auth.cred),
 			    "timestamp", auth.timestamp);

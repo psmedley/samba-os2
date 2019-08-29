@@ -347,7 +347,7 @@ static PyObject *py_lp_dump_a_parameter(PyObject *self, PyObject *args)
 
 static PyObject *py_lp_log_level(PyObject *self, PyObject *unused)
 {
-	int ret = DEBUGLEVEL_CLASS[DBGC_CLASS];
+	int ret = debuglevel_get();
 	return PyInt_FromLong(ret);
 }
 
@@ -370,6 +370,30 @@ static PyObject *py_cache_path(PyObject *self, PyObject *args)
 	}
 
 	path = lpcfg_cache_path(NULL, lp_ctx, name);
+	if (!path) {
+		PyErr_Format(PyExc_RuntimeError,
+			     "Unable to access cache %s", name);
+		return NULL;
+	}
+	ret = PyStr_FromString(path);
+	talloc_free(path);
+
+	return ret;
+}
+
+static PyObject *py_state_path(PyObject *self, PyObject *args)
+{
+	struct loadparm_context *lp_ctx =
+		PyLoadparmContext_AsLoadparmContext(self);
+	char *name = NULL;
+	char *path = NULL;
+	PyObject *ret = NULL;
+
+	if (!PyArg_ParseTuple(args, "s", &name)) {
+		return NULL;
+	}
+
+	path = lpcfg_state_path(NULL, lp_ctx, name);
 	if (!path) {
 		PyErr_Format(PyExc_RuntimeError,
 			     "Unable to access cache %s", name);
@@ -419,6 +443,9 @@ static PyMethodDef py_lp_ctx_methods[] = {
 	{ "cache_path", py_cache_path, METH_VARARGS,
 		"S.cache_path(name) -> string\n"
 		"Returns a path in the Samba cache directory." },
+	{ "state_path", py_state_path, METH_VARARGS,
+		"S.state_path(name) -> string\n"
+		"Returns a path in the Samba state directory." },
 	{ NULL }
 };
 

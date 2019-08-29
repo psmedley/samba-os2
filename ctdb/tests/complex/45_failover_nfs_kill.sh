@@ -40,14 +40,11 @@ EOF
 
 set -e
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 ctdb_test_check_real_cluster
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 nfs_test_setup
 
@@ -77,6 +74,5 @@ new_sum=$(sum $nfs_local_file)
 if [ "$original_md5" = "$new_md5" ] ; then
     echo "GOOD: file contents unchanged after failover"
 else
-    echo "BAD: file contents are different after failover"
-    testfailures=1
+    die "BAD: file contents are different after failover"
 fi

@@ -394,7 +394,7 @@ NTSTATUS srv_fssa_start(struct messaging_context *msg_ctx)
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	fss_global.db_path = lock_path(FSS_DB_NAME);
+	fss_global.db_path = lock_path(talloc_tos(), FSS_DB_NAME);
 	if (fss_global.db_path == NULL) {
 		talloc_free(fss_global.mem_ctx);
 		return NT_STATUS_NO_MEMORY;
@@ -527,7 +527,7 @@ static void fss_seq_tout_set(TALLOC_CTX *mem_ctx,
 		memcpy(sc_set_id, &sc_set->id, sizeof(*sc_set_id));
 	}
 
-	tmr = tevent_add_timer(server_event_context(),
+	tmr = tevent_add_timer(global_event_context(),
 			      mem_ctx,
 			      timeval_current_ofs(tout, 0),
 			      fss_seq_tout_handler, sc_set_id);
@@ -948,7 +948,7 @@ uint32_t _fss_CommitShadowCopySet(struct pipes_struct *p,
 	for (sc = sc_set->scs; sc; sc = sc->next) {
 		char *base_path;
 		char *snap_path;
-		status = commit_sc_with_conn(frame, server_event_context(),
+		status = commit_sc_with_conn(frame, global_event_context(),
 					     p->msg_ctx, p->session_info, sc,
 					     &base_path, &snap_path);
 		if (!NT_STATUS_IS_OK(status)) {

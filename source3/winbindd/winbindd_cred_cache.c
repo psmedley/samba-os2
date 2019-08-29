@@ -26,6 +26,7 @@
 #include "../libcli/auth/libcli_auth.h"
 #include "smb_krb5.h"
 #include "libads/kerberos_proto.h"
+#include "libads/krb5_errs.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_WINBIND
@@ -284,7 +285,7 @@ done:
 	if (entry->refresh_time == 0) {
 		entry->refresh_time = new_start;
 	}
-	entry->event = tevent_add_timer(server_event_context(), entry,
+	entry->event = tevent_add_timer(global_event_context(), entry,
 				       timeval_set(new_start, 0),
 				       krb5_ticket_refresh_handler,
 				       entry);
@@ -383,7 +384,7 @@ static void krb5_ticket_gain_handler(struct tevent_context *event_ctx,
 	if (entry->refresh_time == 0) {
 		entry->refresh_time = t.tv_sec;
 	}
-	entry->event = tevent_add_timer(server_event_context(),
+	entry->event = tevent_add_timer(global_event_context(),
 				       entry,
 				       t,
 				       krb5_ticket_refresh_handler,
@@ -402,7 +403,7 @@ static void add_krb5_ticket_gain_handler_event(struct WINBINDD_CCACHE_ENTRY *ent
 				     struct timeval t)
 {
 	entry->refresh_time = 0;
-	entry->event = tevent_add_timer(server_event_context(),
+	entry->event = tevent_add_timer(global_event_context(),
 				       entry,
 				       t,
 				       krb5_ticket_gain_handler,
@@ -422,13 +423,13 @@ void ccache_regain_all_now(void)
 		 * the event has the krb5_ticket_gain_handler
 		 */
 		if (cur->refresh_time == 0) {
-			new_event = tevent_add_timer(server_event_context(),
+			new_event = tevent_add_timer(global_event_context(),
 						    cur,
 						    t,
 						    krb5_ticket_gain_handler,
 						    cur);
 		} else {
-			new_event = tevent_add_timer(server_event_context(),
+			new_event = tevent_add_timer(global_event_context(),
 						    cur,
 						    t,
 						    krb5_ticket_refresh_handler,
@@ -545,7 +546,7 @@ NTSTATUS add_ccache_to_list(const char *princ_name,
 				if (!entry->refresh_time) {
 					entry->refresh_time = t.tv_sec;
 				}
-				entry->event = tevent_add_timer(server_event_context(),
+				entry->event = tevent_add_timer(global_event_context(),
 							       entry,
 							       t,
 							       krb5_ticket_refresh_handler,
@@ -643,7 +644,7 @@ NTSTATUS add_ccache_to_list(const char *princ_name,
 		if (entry->refresh_time == 0) {
 			entry->refresh_time = t.tv_sec;
 		}
-		entry->event = tevent_add_timer(server_event_context(),
+		entry->event = tevent_add_timer(global_event_context(),
 					       entry,
 					       t,
 					       krb5_ticket_refresh_handler,

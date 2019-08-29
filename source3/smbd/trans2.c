@@ -32,7 +32,6 @@
 #include "../libcli/auth/libcli_auth.h"
 #include "../librpc/gen_ndr/xattr.h"
 #include "../librpc/gen_ndr/ndr_security.h"
-#include "../librpc/gen_ndr/open_files.h"
 #include "libcli/security/security.h"
 #include "trans2.h"
 #include "auth.h"
@@ -41,6 +40,7 @@
 #include "printing.h"
 #include "lib/util_ea.h"
 #include "lib/readdir_attr.h"
+#include "messages.h"
 
 #define DIR_ENTRY_SAFETY_MARGIN 4096
 
@@ -1531,24 +1531,7 @@ static NTSTATUS unix_perms_from_wire( connection_struct *conn,
 		}
 	}
 
-	ret |= ((perms & UNIX_X_OTH ) ? S_IXOTH : 0);
-	ret |= ((perms & UNIX_W_OTH ) ? S_IWOTH : 0);
-	ret |= ((perms & UNIX_R_OTH ) ? S_IROTH : 0);
-	ret |= ((perms & UNIX_X_GRP ) ? S_IXGRP : 0);
-	ret |= ((perms & UNIX_W_GRP ) ? S_IWGRP : 0);
-	ret |= ((perms & UNIX_R_GRP ) ? S_IRGRP : 0);
-	ret |= ((perms & UNIX_X_USR ) ? S_IXUSR : 0);
-	ret |= ((perms & UNIX_W_USR ) ? S_IWUSR : 0);
-	ret |= ((perms & UNIX_R_USR ) ? S_IRUSR : 0);
-#ifdef S_ISVTX
-	ret |= ((perms & UNIX_STICKY ) ? S_ISVTX : 0);
-#endif
-#ifdef S_ISGID
-	ret |= ((perms & UNIX_SET_GID ) ? S_ISGID : 0);
-#endif
-#ifdef S_ISUID
-	ret |= ((perms & UNIX_SET_UID ) ? S_ISUID : 0);
-#endif
+	ret = wire_perms_to_unix(perms);
 
 	if (ptype == PERM_NEW_FILE) {
 		/*
@@ -1709,6 +1692,7 @@ static bool smbd_dirptr_lanman2_match_fn(TALLOC_CTX *ctx,
 static bool smbd_dirptr_lanman2_mode_fn(TALLOC_CTX *ctx,
 					void *private_data,
 					struct smb_filename *smb_fname,
+					bool get_dosmode,
 					uint32_t *_mode)
 {
 	struct smbd_dirptr_lanman2_state *state =
@@ -1742,7 +1726,7 @@ static bool smbd_dirptr_lanman2_mode_fn(TALLOC_CTX *ctx,
 
 	if (ms_dfs_link) {
 		mode = dos_mode_msdfs(state->conn, smb_fname);
-	} else {
+	} else if (get_dosmode) {
 		mode = dos_mode(state->conn, smb_fname);
 	}
 
@@ -2125,12 +2109,14 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		SOFF_T(p,0,allocation_size); p += 8;
 		SIVAL(p,0,mode); p += 4;
 		q = p; p += 4; /* q is placeholder for name length. */
-		{
+		if (mode & FILE_ATTRIBUTE_REPARSE_POINT) {
+			SIVAL(p, 0, IO_REPARSE_TAG_DFS);
+		} else {
 			unsigned int ea_size = estimate_ea_size(conn, NULL,
 								smb_fname);
 			SIVAL(p,0,ea_size); /* Extended attributes */
-			p +=4;
 		}
+		p +=4;
 		status = srvstr_push(base_data, flags2, p,
 				  fname, PTR_DIFF(end_data, p),
 				  STR_TERMINATE_ASCII, &len);
@@ -2451,12 +2437,14 @@ NTSTATUS smbd_dirptr_lanman2_entry(TALLOC_CTX *ctx,
 			       int requires_resume_key,
 			       bool dont_descend,
 			       bool ask_sharemode,
+			       bool get_dosmode,
 			       uint8_t align,
 			       bool do_pad,
 			       char **ppdata,
 			       char *base_data,
 			       char *end_data,
 			       int space_remaining,
+			       struct smb_filename **_smb_fname,
 			       bool *got_exact_match,
 			       int *_last_entry_off,
 			       struct ea_list *name_list,
@@ -2505,6 +2493,7 @@ NTSTATUS smbd_dirptr_lanman2_entry(TALLOC_CTX *ctx,
 				   dirtype,
 				   dont_descend,
 				   ask_sharemode,
+				   get_dosmode,
 				   smbd_dirptr_lanman2_match_fn,
 				   smbd_dirptr_lanman2_mode_fn,
 				   &state,
@@ -2546,13 +2535,31 @@ NTSTATUS smbd_dirptr_lanman2_entry(TALLOC_CTX *ctx,
 		*file_id = vfs_file_id_from_sbuf(conn, &smb_fname->st);
 	}
 
-	TALLOC_FREE(fname);
-	TALLOC_FREE(smb_fname);
-	if (NT_STATUS_EQUAL(status, STATUS_MORE_ENTRIES)) {
-		dptr_SeekDir(dirptr, prev_dirpos);
+	if (!NT_STATUS_IS_OK(status) &&
+	    !NT_STATUS_EQUAL(status, STATUS_MORE_ENTRIES))
+	{
+		TALLOC_FREE(smb_fname);
+		TALLOC_FREE(fname);
 		return status;
 	}
-	if (!NT_STATUS_IS_OK(status)) {
+
+	if (_smb_fname != NULL) {
+		struct smb_filename *name = NULL;
+
+		name = synthetic_smb_fname(ctx, fname, NULL, &smb_fname->st, 0);
+		if (name == NULL) {
+			TALLOC_FREE(smb_fname);
+			TALLOC_FREE(fname);
+			return NT_STATUS_NO_MEMORY;
+		}
+		*_smb_fname = name;
+	}
+
+	TALLOC_FREE(smb_fname);
+	TALLOC_FREE(fname);
+
+	if (NT_STATUS_EQUAL(status, STATUS_MORE_ENTRIES)) {
+		dptr_SeekDir(dirptr, prev_dirpos);
 		return status;
 	}
 
@@ -2589,9 +2596,10 @@ static NTSTATUS get_lanman2_dir_entry(TALLOC_CTX *ctx,
 	return smbd_dirptr_lanman2_entry(ctx, conn, dirptr, flags2,
 					 path_mask, dirtype, info_level,
 					 requires_resume_key, dont_descend, ask_sharemode,
-					 align, do_pad,
+					 true, align, do_pad,
 					 ppdata, base_data, end_data,
 					 space_remaining,
+					 NULL,
 					 got_exact_match,
 					 last_entry_off, name_list, NULL);
 }
@@ -5206,6 +5214,63 @@ NTSTATUS smbd_do_qfilepathinfo(connection_struct *conn,
 			break;
 		}
 
+		case SMB_FILE_NORMALIZED_NAME_INFORMATION:
+		{
+			char *nfname = NULL;
+
+			if (!fsp->conn->sconn->using_smb2) {
+				return NT_STATUS_INVALID_LEVEL;
+			}
+
+			nfname = talloc_strdup(mem_ctx, smb_fname->base_name);
+			if (nfname == NULL) {
+				return NT_STATUS_NO_MEMORY;
+			}
+
+			if (ISDOT(nfname)) {
+				nfname[0] = '\0';
+			}
+			string_replace(nfname, '/', '\\');
+
+			if (smb_fname->stream_name != NULL) {
+				const char *s = smb_fname->stream_name;
+				const char *e = NULL;
+				size_t n;
+
+				SMB_ASSERT(s[0] != '\0');
+
+				/*
+				 * smb_fname->stream_name is in form
+				 * of ':StrEam:$DATA', but we should only
+				 * append ':StrEam' here.
+				 */
+
+				e = strchr(&s[1], ':');
+				if (e == NULL) {
+					n = strlen(s);
+				} else {
+					n = PTR_DIFF(e, s);
+				}
+				nfname = talloc_strndup_append(nfname, s, n);
+				if (nfname == NULL) {
+					return NT_STATUS_NO_MEMORY;
+				}
+			}
+
+			status = srvstr_push(dstart, flags2,
+					  pdata+4, nfname,
+					  PTR_DIFF(dend, pdata+4),
+					  STR_UNICODE, &len);
+			if (!NT_STATUS_IS_OK(status)) {
+				return status;
+			}
+			DEBUG(10,("smbd_do_qfilepathinfo: SMB_FILE_NORMALIZED_NAME_INFORMATION\n"));
+			data_size = 4 + len;
+			SIVAL(pdata,0,len);
+			*fixed_portion = 8;
+			break;
+		}
+
 		case SMB_FILE_ALLOCATION_INFORMATION:
 		case SMB_QUERY_FILE_ALLOCATION_INFO:
 			DEBUG(10,("smbd_do_qfilepathinfo: SMB_FILE_ALLOCATION_INFORMATION\n"));
@@ -5779,8 +5844,13 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 				return;
 			}
 
-			fileid = vfs_file_id_from_sbuf(conn, &smb_fname->st);
-			get_file_infos(fileid, fsp->name_hash, &delete_pending, &write_time_ts);
+			if (lp_smbd_getinfo_ask_sharemode(SNUM(conn))) {
+				fileid = vfs_file_id_from_sbuf(
+					conn, &smb_fname->st);
+				get_file_infos(fileid, fsp->name_hash,
+					       &delete_pending,
+					       &write_time_ts);
+			}
 		} else {
 			/*
 			 * Original code - this is an open file.
@@ -5792,8 +5862,13 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 					map_nt_error_from_unix(errno));
 				return;
 			}
-			fileid = vfs_file_id_from_sbuf(conn, &smb_fname->st);
-			get_file_infos(fileid, fsp->name_hash, &delete_pending, &write_time_ts);
+			if (lp_smbd_getinfo_ask_sharemode(SNUM(conn))) {
+				fileid = vfs_file_id_from_sbuf(
+					conn, &smb_fname->st);
+				get_file_infos(fileid, fsp->name_hash,
+					       &delete_pending,
+					       &write_time_ts);
+			}
 		}
 
 	} else {
@@ -5961,8 +6036,12 @@ static void call_trans2qfilepathinfo(connection_struct *conn,
 			return;
 		}
 
-		fileid = vfs_file_id_from_sbuf(conn, &smb_fname->st);
-		get_file_infos(fileid, name_hash, &delete_pending, &write_time_ts);
+		if (lp_smbd_getinfo_ask_sharemode(SNUM(conn))) {
+			fileid = vfs_file_id_from_sbuf(conn, &smb_fname->st);
+			get_file_infos(fileid, name_hash, &delete_pending,
+				       &write_time_ts);
+		}
+
 		if (delete_pending) {
 			reply_nterror(req, NT_STATUS_DELETE_PENDING);
 			return;
@@ -6335,7 +6414,9 @@ static NTSTATUS smb_set_file_size(connection_struct *conn,
 		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
 
-	DEBUG(6,("smb_set_file_size: size: %.0f ", (double)size));
+	DBG_INFO("size: %"PRIu64", file_size_stat=%"PRIu64"\n",
+		 (uint64_t)size,
+		 get_file_size_stat(psbuf));
 
 	if (size == get_file_size_stat(psbuf)) {
 		return NT_STATUS_OK;
@@ -8290,14 +8371,15 @@ static NTSTATUS smb_posix_unlink(connection_struct *conn,
 				int total_data,
 				struct smb_filename *smb_fname)
 {
+	struct server_id self = messaging_server_id(conn->sconn->msg_ctx);
 	NTSTATUS status = NT_STATUS_OK;
 	files_struct *fsp = NULL;
 	uint16_t flags = 0;
 	char del = 1;
 	int info = 0;
 	int create_options = 0;
-	int i;
 	struct share_mode_lock *lck = NULL;
+	bool other_nonposix_opens;
 
 	if (total_data < 2) {
 		return NT_STATUS_INVALID_PARAMETER;
@@ -8360,25 +8442,12 @@ static NTSTATUS smb_posix_unlink(connection_struct *conn,
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
-	/*
-	 * See if others still have the file open. If this is the case, then
-	 * don't delete. If all opens are POSIX delete we can set the delete
-	 * on close disposition.
-	 */
-	for (i=0; i<lck->data->num_share_modes; i++) {
-		struct share_mode_entry *e = &lck->data->share_modes[i];
-		if (is_valid_share_mode_entry(e)) {
-			if (e->flags & SHARE_MODE_FLAG_POSIX_OPEN) {
-				continue;
-			}
-			if (share_mode_stale_pid(lck->data, i)) {
-				continue;
-			}
-			/* Fail with sharing violation. */
-			TALLOC_FREE(lck);
-			close_file(req, fsp, NORMAL_CLOSE);
-			return NT_STATUS_SHARING_VIOLATION;
-		}
+	other_nonposix_opens = has_other_nonposix_opens(lck, fsp, self);
+	if (other_nonposix_opens) {
+		/* Fail with sharing violation. */
+		TALLOC_FREE(lck);
+		close_file(req, fsp, NORMAL_CLOSE);
+		return NT_STATUS_SHARING_VIOLATION;
 	}
 
 	/*

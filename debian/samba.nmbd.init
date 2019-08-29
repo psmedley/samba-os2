@@ -13,7 +13,7 @@
 ### END INIT INFO
 
 
-PIDDIR=/var/run/samba
+PIDDIR=/run/samba
 NMBDPID=$PIDDIR/nmbd.pid
 
 # clear conflicting settings from the environment

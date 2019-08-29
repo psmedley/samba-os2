@@ -23,6 +23,7 @@ import os
 import ldb
 from samba.tests.samba_tool.base import SambaToolCmdTest
 
+
 class OUCmdTestCase(SambaToolCmdTest):
     """Tests for samba-tool ou subcommands"""
     ous = []
@@ -31,7 +32,7 @@ class OUCmdTestCase(SambaToolCmdTest):
     def setUp(self):
         super(OUCmdTestCase, self).setUp()
         self.samdb = self.getSamDB("-H", "ldap://%s" % os.environ["DC_SERVER"],
-            "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
+                                   "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
         self.ous = []
         self.ous.append(self._randomOU({"name": "testou1"}))
         self.ous.append(self._randomOU({"name": "testou2"}))
@@ -65,7 +66,6 @@ class OUCmdTestCase(SambaToolCmdTest):
                 self.assertCmdSuccess(result, out, err,
                                       "Failed to delete ou '%s'" % ou["name"])
 
-
     def test_newou(self):
         """This tests the "ou create" and "ou delete" commands"""
         # try to create all the ous again, this should fail
@@ -88,7 +88,7 @@ class OUCmdTestCase(SambaToolCmdTest):
         for ou in self.ous:
             (result, out, err) = self.runsubcmd(
                 "ou", "create", "OU=%s" % ou["name"],
-                 "--description=%s" % ou["description"])
+                "--description=%s" % ou["description"])
 
             self.assertCmdSuccess(result, out, err)
             self.assertEquals(err, "", "There shouldn't be any error message")
@@ -115,7 +115,7 @@ class OUCmdTestCase(SambaToolCmdTest):
             full_ou_dn = self.samdb.normalize_dn_in_domain("OU=%s" % ou["name"])
             (result, out, err) = self.runsubcmd(
                 "ou", "create", str(full_ou_dn),
-                 "--description=%s" % ou["description"])
+                "--description=%s" % ou["description"])
 
             self.assertCmdSuccess(result, out, err)
             self.assertEquals(err, "", "There shouldn't be any error message")
@@ -134,15 +134,15 @@ class OUCmdTestCase(SambaToolCmdTest):
         search_filter = "(objectClass=organizationalUnit)"
 
         oulist = self.samdb.search(base=self.samdb.domain_dn(),
-                                      scope=ldb.SCOPE_SUBTREE,
-                                      expression=search_filter,
-                                      attrs=["name"])
+                                   scope=ldb.SCOPE_SUBTREE,
+                                   expression=search_filter,
+                                   attrs=["name"])
 
         self.assertTrue(len(oulist) > 0, "no ous found in samdb")
 
         for ouobj in oulist:
             name = ouobj.get("name", idx=0)
-            found = self.assertMatch(out, name,
+            found = self.assertMatch(out, str(name),
                                      "ou '%s' not found" % name)
 
     def test_rename(self):
@@ -159,7 +159,7 @@ class OUCmdTestCase(SambaToolCmdTest):
                               "Renamed ou '%s' still exists" % ou["name"])
             found = self._find_ou(newouname)
             self.assertIsNotNone(found,
-                              "Renamed ou '%s' does not exist" % newouname)
+                                 "Renamed ou '%s' does not exist" % newouname)
 
             (result, out, err) = self.runsubcmd("ou", "rename",
                                                 "OU=%s" % newouname,
@@ -224,8 +224,7 @@ class OUCmdTestCase(SambaToolCmdTest):
             found = self.assertMatch(out, str(obj.dn),
                                      "object '%s' not found" % obj.dn)
 
-
-    def test_list(self):
+    def test_list_full_dn(self):
         (result, out, err) = self.runsubcmd("ou", "list",
                                             "--full-dn")
         self.assertCmdSuccess(result, out, err,
@@ -243,7 +242,6 @@ class OUCmdTestCase(SambaToolCmdTest):
             found = self.assertMatch(out, str(obj.dn),
                                      "object '%s' not found" % obj.dn)
 
-
     def _randomOU(self, base={}):
         """create an ou with random attribute values, you can specify base
         attributes"""
@@ -251,7 +249,7 @@ class OUCmdTestCase(SambaToolCmdTest):
         ou = {
             "name": self.randomName(),
             "description": self.randomName(count=100),
-            }
+        }
         ou.update(base)
         return ou
 
@@ -262,8 +260,8 @@ class OUCmdTestCase(SambaToolCmdTest):
     def _find_ou(self, name):
         search_filter = ("(&(name=%s)(objectCategory=%s,%s))" %
                          (ldb.binary_encode(name),
-                         "CN=Organizational-Unit,CN=Schema,CN=Configuration",
-                         self.samdb.domain_dn()))
+                          "CN=Organizational-Unit,CN=Schema,CN=Configuration",
+                          self.samdb.domain_dn()))
         oulist = self.samdb.search(base=self.samdb.domain_dn(),
                                    scope=ldb.SCOPE_SUBTREE,
                                    expression=search_filter,

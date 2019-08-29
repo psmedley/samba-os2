@@ -124,7 +124,8 @@ static void dnsupdate_rebuild(struct dnsupdate_service *service)
 			  0,
 			  "(&(objectclass=NTDSDSA)(!(msDS-isRODC=TRUE)))");
 	if (ret != LDB_SUCCESS) {
-		DEBUG(0,(__location__ ": Unable to find DCs list - %s", ldb_errstring(service->samdb)));
+		DBG_ERR("Unable to find DCs list - %s\n",
+			ldb_errstring(service->samdb));
 		talloc_free(tmp_ctx);
 		return;
 	}
@@ -326,8 +327,8 @@ static void dnsupdate_nameupdate_done(struct tevent_req *subreq)
 	TALLOC_FREE(subreq);
 
 	if (ret != 0) {
-		DEBUG(0,(__location__ ": Failed DNS update - with error code %d\n",
-			 sys_errno));
+		DBG_ERR("Failed DNS update with exit code %d\n",
+			sys_errno);
 	} else {
 		DEBUG(3,("Completed DNS update check OK\n"));
 	}
@@ -632,14 +633,14 @@ static NTSTATUS dnsupdate_dnsupdate_RODC(struct irpc_message *msg,
 /*
   startup the dns update task
 */
-static void dnsupdate_task_init(struct task_server *task)
+static NTSTATUS dnsupdate_task_init(struct task_server *task)
 {
 	NTSTATUS status;
 	struct dnsupdate_service *service;
 
 	if (lpcfg_server_role(task->lp_ctx) != ROLE_ACTIVE_DIRECTORY_DC) {
 		/* not useful for non-DC */
-		return;
+		return NT_STATUS_INVALID_DOMAIN_ROLE;
 	}
 
 	task_server_set_title(task, "task[dnsupdate]");
@@ -647,7 +648,7 @@ static void dnsupdate_task_init(struct task_server *task)
 	service = talloc_zero(task, struct dnsupdate_service);
 	if (!service) {
 		task_server_terminate(task, "dnsupdate_task_init: out of memory", true);
-		return;
+		return NT_STATUS_NO_MEMORY;
 	}
 	service->task		= task;
 	task->private_data	= service;
@@ -657,7 +658,7 @@ static void dnsupdate_task_init(struct task_server *task)
 		task_server_terminate(task,
 				      "dnsupdate: Failed to obtain server credentials\n",
 				      true);
-		return;
+		return NT_STATUS_UNSUCCESSFUL;
 	}
 
 	service->samdb = samdb_connect(service,
@@ -669,7 +670,7 @@ static void dnsupdate_task_init(struct task_server *task)
 	if (!service->samdb) {
 		task_server_terminate(task, "dnsupdate: Failed to connect to local samdb\n",
 				      true);
-		return;
+		return NT_STATUS_UNSUCCESSFUL;
 	}
 
 	service->confupdate.interval	= lpcfg_parm_int(task->lp_ctx, NULL,
@@ -684,7 +685,7 @@ static void dnsupdate_task_init(struct task_server *task)
 		task_server_terminate(task, talloc_asprintf(task,
 				      "dnsupdate: Failed to confupdate schedule: %s\n",
 							    nt_errstr(status)), true);
-		return;
+		return status;
 	}
 
 	dnsupdate_check_names(service);
@@ -693,7 +694,7 @@ static void dnsupdate_task_init(struct task_server *task)
 		task_server_terminate(task, talloc_asprintf(task,
 				      "dnsupdate: Failed to nameupdate schedule: %s\n",
 							    nt_errstr(status)), true);
-		return;
+		return status;
 	}
 
 	irpc_add_name(task->msg_ctx, "dnsupdate");
@@ -703,6 +704,7 @@ static void dnsupdate_task_init(struct task_server *task)
 
 	/* create the intial file */
 	dnsupdate_rebuild(service);
+	return NT_STATUS_OK;
 
 }
 
@@ -711,10 +713,11 @@ static void dnsupdate_task_init(struct task_server *task)
 */
 NTSTATUS server_service_dnsupdate_init(TALLOC_CTX *ctx)
 {
-	struct service_details details = {
+	static const struct service_details details = {
 		.inhibit_fork_on_accept = true,
 		.inhibit_pre_fork = true,
+		.task_init = dnsupdate_task_init,
+		.post_fork = NULL
 	};
-	return register_server_service(ctx, "dnsupdate", dnsupdate_task_init,
-				       &details);
+	return register_server_service(ctx, "dnsupdate", &details);
 }

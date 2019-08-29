@@ -31,6 +31,9 @@
 #include "librpc/rpc/pyrpc_util.h"
 #include <pytalloc.h>
 #include "system/filesys.h"
+#include "passdb.h"
+#include "secrets.h"
+#include "auth.h"
 
 extern const struct generic_mapping file_generic_mapping;
 
@@ -85,26 +88,18 @@ static int set_sys_acl_conn(const char *fname,
 {
 	int ret;
 	struct smb_filename *smb_fname = NULL;
-	mode_t saved_umask;
 
 	TALLOC_CTX *frame = talloc_stackframe();
-
-	/* we want total control over the permissions on created files,
-	   so set our umask to 0 */
-	saved_umask = umask(0);
 
 	smb_fname = synthetic_smb_fname_split(frame,
 					fname,
 					lp_posix_pathnames());
 	if (smb_fname == NULL) {
 		TALLOC_FREE(frame);
-		umask(saved_umask);
 		return -1;
 	}
 
 	ret = SMB_VFS_SYS_ACL_SET_FILE( conn, smb_fname, acltype, theacl);
-
-	umask(saved_umask);
 
 	TALLOC_FREE(frame);
 	return ret;
@@ -132,22 +127,30 @@ static NTSTATUS init_files_struct(TALLOC_CTX *mem_ctx,
 	}
 	fsp->conn = conn;
 
-	/* we want total control over the permissions on created files,
-	   so set our umask to 0 */
-	saved_umask = umask(0);
-
 	smb_fname = synthetic_smb_fname_split(fsp,
 					      fname,
 					      lp_posix_pathnames());
 	if (smb_fname == NULL) {
-		umask(saved_umask);
 		return NT_STATUS_NO_MEMORY;
 	}
 
 	fsp->fsp_name = smb_fname;
+
+	/*
+	 * we want total control over the permissions on created files,
+	 * so set our umask to 0 (this matters if flags contains O_CREAT)
+	 */
+	saved_umask = umask(0);
+
 	fsp->fh->fd = SMB_VFS_OPEN(conn, smb_fname, fsp, flags, 00644);
+
+	umask(saved_umask);
+
 	if (fsp->fh->fd == -1) {
-		umask(saved_umask);
+		int err = errno;
+		if (err == ENOENT) {
+			return NT_STATUS_OBJECT_NAME_NOT_FOUND;
+		}
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
@@ -157,7 +160,6 @@ static NTSTATUS init_files_struct(TALLOC_CTX *mem_ctx,
 		DEBUG(0,("Error doing fstat on open file %s (%s)\n",
 			 smb_fname_str_dbg(smb_fname),
 			 strerror(errno) ));
-		umask(saved_umask);
 		return map_nt_error_from_unix(errno);
 	}
 
@@ -201,8 +203,11 @@ static NTSTATUS set_nt_acl_conn(const char *fname,
 	}
 
 	if (!NT_STATUS_IS_OK(status)) {
-		printf("open: error=%d (%s)\n", errno, strerror(errno));
-		SMB_VFS_CLOSE(fsp);
+		DBG_ERR("init_files_struct failed: %s\n",
+			nt_errstr(status));
+		if (fsp != NULL) {
+			SMB_VFS_CLOSE(fsp);
+		}
 		TALLOC_FREE(frame);
 		return status;
 	}
@@ -444,7 +449,6 @@ static PyObject *py_smbd_chown(PyObject *self, PyObject *args, PyObject *kwargs)
 	char *fname, *service = NULL;
 	int uid, gid;
 	TALLOC_CTX *frame;
-	mode_t saved_umask;
 	struct smb_filename *smb_fname = NULL;
 
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "sii|z",
@@ -460,10 +464,6 @@ static PyObject *py_smbd_chown(PyObject *self, PyObject *args, PyObject *kwargs)
 		return NULL;
 	}
 
-	/* we want total control over the permissions on created files,
-	   so set our umask to 0 */
-	saved_umask = umask(0);
-
 	smb_fname = synthetic_smb_fname(talloc_tos(),
 					fname,
 					NULL,
@@ -471,7 +471,6 @@ static PyObject *py_smbd_chown(PyObject *self, PyObject *args, PyObject *kwargs)
 					lp_posix_pathnames() ?
 						SMB_FILENAME_POSIX_PATH : 0);
 	if (smb_fname == NULL) {
-		umask(saved_umask);
 		TALLOC_FREE(frame);
 		errno = ENOMEM;
 		return PyErr_SetFromErrno(PyExc_OSError);
@@ -479,13 +478,10 @@ static PyObject *py_smbd_chown(PyObject *self, PyObject *args, PyObject *kwargs)
 
 	ret = SMB_VFS_CHOWN(conn, smb_fname, uid, gid);
 	if (ret != 0) {
-		umask(saved_umask);
 		TALLOC_FREE(frame);
 		errno = ret;
 		return PyErr_SetFromErrno(PyExc_OSError);
 	}
-
-	umask(saved_umask);
 
 	TALLOC_FREE(frame);
 
@@ -622,22 +618,55 @@ static PyObject *py_smbd_set_nt_acl(PyObject *self, PyObject *args, PyObject *kw
  */
 static PyObject *py_smbd_get_nt_acl(PyObject *self, PyObject *args, PyObject *kwargs)
 {
-	const char * const kwnames[] = { "fname", "security_info_wanted", "service", NULL };
+	const char * const kwnames[] = { "fname",
+					 "security_info_wanted",
+					 "service",
+					 "session_info",
+					 NULL };
 	char *fname, *service = NULL;
 	int security_info_wanted;
 	PyObject *py_sd;
 	struct security_descriptor *sd;
 	TALLOC_CTX *frame = talloc_stackframe();
+	PyObject *py_session = Py_None;
+	struct auth_session_info *session_info = NULL;
 	connection_struct *conn;
 	NTSTATUS status;
+	int ret = 1;
 
-	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "si|z", discard_const_p(char *, kwnames),
-					 &fname, &security_info_wanted, &service)) {
+	ret = PyArg_ParseTupleAndKeywords(args,
+					  kwargs,
+					  "si|zO",
+					  discard_const_p(char *, kwnames),
+					  &fname,
+					  &security_info_wanted,
+					  &service,
+					  &py_session);
+	if (!ret) {
 		TALLOC_FREE(frame);
 		return NULL;
 	}
 
-	conn = get_conn_tos(service, NULL);
+	if (py_session != Py_None) {
+		if (!py_check_dcerpc_type(py_session,
+					  "samba.dcerpc.auth",
+					  "session_info")) {
+			TALLOC_FREE(frame);
+			return NULL;
+		}
+		session_info = pytalloc_get_type(py_session,
+						 struct auth_session_info);
+		if (!session_info) {
+			PyErr_Format(
+				PyExc_TypeError,
+				"Expected auth_session_info for "
+				"session_info argument got %s",
+				talloc_get_name(pytalloc_get_ptr(py_session)));
+			return NULL;
+		}
+	}
+
+	conn = get_conn_tos(service, session_info);
 	if (!conn) {
 		TALLOC_FREE(frame);
 		return NULL;
@@ -753,6 +782,8 @@ static PyObject *py_smbd_mkdir(PyObject *self, PyObject *args, PyObject *kwargs)
 	TALLOC_CTX *frame = talloc_stackframe();
 	struct connection_struct *conn = NULL;
 	struct smb_filename *smb_fname = NULL;
+	int ret;
+	mode_t saved_umask;
 
 	if (!PyArg_ParseTupleAndKeywords(args,
 					 kwargs,
@@ -783,8 +814,15 @@ static PyObject *py_smbd_mkdir(PyObject *self, PyObject *args, PyObject *kwargs)
 		return NULL;
 	}
 
+	/* we want total control over the permissions on created files,
+	   so set our umask to 0 */
+	saved_umask = umask(0);
 
-	if (SMB_VFS_MKDIR(conn, smb_fname, 00755) == -1) {
+	ret = SMB_VFS_MKDIR(conn, smb_fname, 00755);
+
+	umask(saved_umask);
+
+	if (ret == -1) {
 		DBG_ERR("mkdir error=%d (%s)\n", errno, strerror(errno));
 		TALLOC_FREE(frame);
 		return NULL;

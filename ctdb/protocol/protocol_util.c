@@ -251,6 +251,9 @@ static int ip_from_string(const char *str, ctdb_sock_addr *addr)
 		if (memcmp(&addr->ip6.sin6_addr.s6_addr[0],
 			   ipv4_mapped_prefix,
 			   sizeof(ipv4_mapped_prefix)) == 0) {
+                        /* Initialize addr struct to zero before reparsing as IPV4 */
+                        ZERO_STRUCTP(addr);
+
 			/* Reparse as IPv4 */
 			ret = ipv4_from_string(p+1, &addr->ip);
 		}
@@ -296,6 +299,47 @@ int ctdb_sock_addr_from_string(const char *str,
 	ret = ip_from_string(s, addr);
 
 	ctdb_sock_addr_set_port(addr, port);
+
+	return ret;
+}
+
+int ctdb_sock_addr_mask_from_string(const char *str,
+				    ctdb_sock_addr *addr,
+				    unsigned int *mask)
+{
+	char *p;
+	char s[64]; /* Much longer than INET6_ADDRSTRLEN */
+	unsigned int m;
+	char *endp = NULL;
+	ssize_t len;
+	bool ret;
+
+	if (addr == NULL || mask == NULL) {
+		return EINVAL;
+	}
+
+	len = strlcpy(s, str, sizeof(s));
+	if (len >= sizeof(s)) {
+		return EINVAL;
+	}
+
+	p = rindex(s, '/');
+	if (p == NULL) {
+		return EINVAL;
+	}
+
+	m = strtoul(p+1, &endp, 10);
+	if (endp == p+1 || *endp != '\0') {
+		/* Empty string or trailing garbage */
+		return EINVAL;
+	}
+
+	*p = '\0';
+	ret = ip_from_string(s, addr);
+
+	if (ret == 0) {
+		*mask = m;
+	}
 
 	return ret;
 }

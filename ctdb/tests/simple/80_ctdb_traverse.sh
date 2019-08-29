@@ -24,14 +24,11 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 try_command_on_node 0 "$CTDB listnodes"
 num_nodes=$(echo "$out" | wc -l)
@@ -61,7 +58,7 @@ done
 echo "Start a traverse and collect records"
 try_command_on_node 0 $CTDB catdb $TESTDB
 
-num_read=$(echo "$out" | tail -n 1 | cut -d\  -f2)
+num_read=$(tail -n 1 "$outfile" | cut -d\  -f2)
 if [ $num_read -eq $num_records ]; then
 	echo "GOOD: All $num_records records retrieved"
 	status=0

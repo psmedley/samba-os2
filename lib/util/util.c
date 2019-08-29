@@ -194,37 +194,31 @@ _PUBLIC_ bool directory_create_or_exist(const char *dname,
 					mode_t dir_perms)
 {
 	int ret;
-	struct stat st;
 	mode_t old_umask;
-
-	ret = lstat(dname, &st);
-	if (ret == 0) {
-		return true;
-	}
-
-	if (errno != ENOENT) {
-		DBG_WARNING("lstat failed on directory %s: %s\n",
-			    dname, strerror(errno));
-		return false;
-	}
 
 	/* Create directory */
 	old_umask = umask(0);
 	ret = mkdir(dname, dir_perms);
 	if (ret == -1 && errno != EEXIST) {
-		DEBUG(0, ("mkdir failed on directory "
-			  "%s: %s\n", dname,
-			  strerror(errno)));
+		DBG_WARNING("mkdir failed on directory %s: %s\n",
+			    dname,
+			    strerror(errno));
 		umask(old_umask);
 		return false;
 	}
 	umask(old_umask);
 
-	ret = lstat(dname, &st);
-	if (ret == -1) {
-		DEBUG(0, ("lstat failed on created directory %s: %s\n",
-			  dname, strerror(errno)));
-		return false;
+	if (ret != 0 && errno == EEXIST) {
+		struct stat sbuf;
+
+		ret = lstat(dname, &sbuf);
+		if (ret != 0) {
+			return false;
+		}
+
+		if (!S_ISDIR(sbuf.st_mode)) {
+			return false;
+		}
 	}
 
 	return true;

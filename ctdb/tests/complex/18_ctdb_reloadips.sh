@@ -27,14 +27,11 @@ EOF
 
 set -e
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 ctdb_test_check_real_cluster
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 select_test_node_and_ips
 
@@ -51,12 +48,12 @@ select_test_node_and_ips
 
 echo "Getting public IP information from CTDB..."
 try_command_on_node any "$CTDB ip -X -v all"
-ctdb_ip_info=$(echo "$out" | awk -F'|' 'NR > 1 { print $2, $3, $5 }')
+ctdb_ip_info=$(awk -F'|' 'NR > 1 { print $2, $3, $5 }' "$outfile")
 
 echo "Getting IP information from interfaces..."
 try_command_on_node all "ip addr show"
-ip_addr_info=$(echo "$out" | \
-    awk '$1 == "inet" { ip = $2; sub(/\/.*/, "", ip); print ip }')
+ip_addr_info=$(awk '$1 == "inet" { ip = $2; sub(/\/.*/, "", ip); print ip }' \
+		   "$outfile")
 
 prefix=""
 for b in $(seq 0 255) ; do
@@ -171,7 +168,7 @@ check_ips ()
 
     try_command_on_node $test_node "ip addr show dev ${iface}"
     local ip_addrs_file=$(mktemp)
-    echo "$out" | \
+    cat "$outfile" | \
 	sed -n -e "s@.*inet * \(${prefix//./\.}\.[0-9]*\)/.*@\1@p" | \
 	sort >"$ip_addrs_file"
 
@@ -187,6 +184,33 @@ check_ips ()
     fi
 }
 
+# ctdb reloadips will fail if it can't disable takover runs.  The most
+# likely reason for this is that there is already a takeover run in
+# progress.  We can't predict when this will happen, so retry if this
+# occurs.
+do_ctdb_reloadips ()
+{
+	local retry_max=10
+	local retry_count=0
+	while : ; do
+		if try_command_on_node "$test_node" "$CTDB reloadips" ; then
+			return 0
+		fi
+
+		if [ "$out" != "Failed to disable takeover runs" ] ; then
+			return 1
+		fi
+
+		if [ $retry_count -ge $retry_max ] ; then
+			return 1
+		fi
+
+		retry_count=$((retry_count + 1))
+		echo "Retrying..."
+		sleep_for 1
+	done
+}
+
 ####################
 
 new_ip_max=100
@@ -196,7 +220,7 @@ new_ip_max=100
 add_ips_to_original_config \
     $test_node "$addresses" "$iface" "$prefix" 1 $new_ip_max
 
-try_command_on_node $test_node "$CTDB reloadips"
+do_ctdb_reloadips
 
 check_ips $test_node "$iface" "$prefix" 1 $new_ip_max
 
@@ -210,7 +234,7 @@ echo "Using 'ctdb reloadips' to remove the 1st address just added..."
 add_ips_to_original_config \
     $test_node "$addresses" "$iface" "$prefix" 2 $new_ip_max
 
-try_command_on_node $test_node "$CTDB reloadips"
+do_ctdb_reloadips
 
 check_ips $test_node "$iface" "$prefix" 2 $new_ip_max
 
@@ -225,7 +249,7 @@ echo "Updating to include only about 1/2 of the new IPs..."
 add_ips_to_original_config \
     $test_node "$addresses" "$iface" "$prefix" $start $new_ip_max
 
-try_command_on_node $test_node "$CTDB reloadips"
+do_ctdb_reloadips
 
 check_ips $test_node "$iface" "$prefix" $start $new_ip_max
 
@@ -237,6 +261,6 @@ try_command_on_node any $CTDB sync
 echo "Restoring original IP configuration..."
 restore_public_addresses
 
-try_command_on_node $test_node "$CTDB reloadips"
+do_ctdb_reloadips
 
 check_ips $test_node "$iface" "$prefix" 0

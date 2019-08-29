@@ -113,7 +113,7 @@ void audit_log_json(struct json_object* message,
 		    int debug_class,
 		    int debug_level)
 {
-	TALLOC_CTX *ctx = NULL;
+	TALLOC_CTX *frame = NULL;
 	char *s = NULL;
 
 	if (json_is_invalid(message)) {
@@ -121,12 +121,12 @@ void audit_log_json(struct json_object* message,
 		return;
 	}
 
-	ctx = talloc_new(NULL);
-	s = json_to_string(ctx, message);
+	frame = talloc_stackframe();
+	s = json_to_string(frame, message);
 	if (s == NULL) {
 		DBG_ERR("json_to_string returned NULL, "
 			"JSON audit message could not written\n");
-		TALLOC_FREE(ctx);
+		TALLOC_FREE(frame);
 		return;
 	}
 	/*
@@ -138,7 +138,7 @@ void audit_log_json(struct json_object* message,
 	 * can find such lines by the leading {
 	 */
 	DEBUGADDC(debug_class, debug_level, ("%s\n", s));
-	TALLOC_FREE(ctx);
+	TALLOC_FREE(frame);
 }
 
 /*
@@ -366,7 +366,7 @@ void json_free(struct json_object *object)
  * @return is the object valid?
  *
  */
-bool json_is_invalid(struct json_object *object)
+bool json_is_invalid(const struct json_object *object)
 {
 	return !object->valid;
 }
@@ -837,14 +837,14 @@ int json_add_sid(struct json_object *object,
 			return ret;
 		}
 	} else {
-		char sid_buf[DOM_SID_STR_BUFLEN];
+		struct dom_sid_buf sid_buf;
 
-		dom_sid_string_buf(sid, sid_buf, sizeof(sid_buf));
-		ret = json_add_string(object, name, sid_buf);
+		ret = json_add_string(
+			object, name, dom_sid_str_buf(sid, &sid_buf));
 		if (ret != 0) {
 			DBG_ERR("Unable to add SID [%s] value [%s]\n",
 				name,
-				sid_buf);
+				sid_buf.buf);
 			return ret;
 		}
 	}
@@ -918,7 +918,7 @@ int json_add_guid(struct json_object *object,
  * @return A string representation of the object or NULL if the object
  *         is invalid.
  */
-char *json_to_string(TALLOC_CTX *mem_ctx, struct json_object *object)
+char *json_to_string(TALLOC_CTX *mem_ctx, const struct json_object *object)
 {
 	char *json = NULL;
 	char *json_string = NULL;

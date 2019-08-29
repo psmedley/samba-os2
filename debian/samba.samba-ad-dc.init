@@ -15,7 +15,7 @@
 # Adapted from the Samba 3 packages.
 #
 
-PIDDIR=/var/run/samba
+PIDDIR=/run/samba
 SAMBAPID=$PIDDIR/samba.pid
 
 # clear conflicting settings from the environment

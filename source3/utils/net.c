@@ -49,6 +49,8 @@
 #include "passdb.h"
 #include "messages.h"
 #include "cmdline_contexts.h"
+#include "lib/gencache.h"
+#include "auth/credentials/credentials.h"
 
 #ifdef WITH_FAKE_KASERVER
 #include "utils/net_afs.h"
@@ -357,7 +359,7 @@ static int net_getlocalsid(struct net_context *c, int argc, const char **argv)
 {
         struct dom_sid sid;
 	const char *name;
-	fstring sid_str;
+	struct dom_sid_buf sid_str;
 
 	if (argc >= 1) {
 		name = argv[0];
@@ -388,8 +390,9 @@ static int net_getlocalsid(struct net_context *c, int argc, const char **argv)
 		DEBUG(0, ("Can't fetch domain SID for name: %s\n", name));
 		return 1;
 	}
-	sid_to_fstring(sid_str, &sid);
-	d_printf(_("SID for domain %s is: %s\n"), name, sid_str);
+	d_printf(_("SID for domain %s is: %s\n"),
+		 name,
+		 dom_sid_str_buf(&sid, &sid_str));
 	return 0;
 }
 
@@ -438,7 +441,7 @@ static int net_setdomainsid(struct net_context *c, int argc, const char **argv)
 static int net_getdomainsid(struct net_context *c, int argc, const char **argv)
 {
 	struct dom_sid domain_sid;
-	fstring sid_str;
+	struct dom_sid_buf sid_str;
 
 	if (argc > 0) {
 		d_printf(_("Usage:"));
@@ -469,17 +472,18 @@ static int net_getdomainsid(struct net_context *c, int argc, const char **argv)
 			d_fprintf(stderr, _("Could not fetch local SID\n"));
 			return 1;
 		}
-		sid_to_fstring(sid_str, &domain_sid);
 		d_printf(_("SID for local machine %s is: %s\n"),
-			 lp_netbios_name(), sid_str);
+			 lp_netbios_name(),
+			 dom_sid_str_buf(&domain_sid, &sid_str));
 	}
 	if (!secrets_fetch_domain_sid(c->opt_workgroup, &domain_sid)) {
 		d_fprintf(stderr, _("Could not fetch domain SID\n"));
 		return 1;
 	}
 
-	sid_to_fstring(sid_str, &domain_sid);
-	d_printf(_("SID for domain %s is: %s\n"), c->opt_workgroup, sid_str);
+	d_printf(_("SID for domain %s is: %s\n"),
+		 c->opt_workgroup,
+		 dom_sid_str_buf(&domain_sid, &sid_str));
 
 	return 0;
 }
@@ -903,6 +907,26 @@ static struct functable net_func[] = {
 };
 
 
+static void get_credentials_file(struct net_context *c,
+				 const char *file)
+{
+	struct cli_credentials *cred = cli_credentials_init(c);
+
+	if (cred == NULL) {
+		d_printf("ERROR: Unable to allocate memory!\n");
+		exit(-1);
+	}
+
+	if (!cli_credentials_parse_file(cred, file, CRED_GUESS_FILE)) {
+		exit(-1);
+	}
+
+	c->opt_user_name = cli_credentials_get_username(cred);
+	c->opt_user_specified = (c->opt_user_name != NULL);
+	c->opt_password = cli_credentials_get_password(cred);
+	c->opt_target_workgroup = cli_credentials_get_domain(cred);
+}
+
 /****************************************************************************
   main program
 ****************************************************************************/
@@ -922,6 +946,7 @@ static struct functable net_func[] = {
 		{"help",	'h', POPT_ARG_NONE,   0, 'h'},
 		{"workgroup",	'w', POPT_ARG_STRING, &c->opt_target_workgroup},
 		{"user",	'U', POPT_ARG_STRING, &c->opt_user_name, 'U'},
+		{"authentication-file", 'A', POPT_ARG_STRING, &c->opt_user_name, 'A', "Get the credentials from a file", "FILE"},
 		{"ipaddress",	'I', POPT_ARG_STRING, 0,'I'},
 		{"port",	'p', POPT_ARG_INT,    &c->opt_port},
 		{"myname",	'n', POPT_ARG_STRING, &c->opt_requester_name},
@@ -973,6 +998,7 @@ static struct functable net_func[] = {
 		/* Options for 'net ads join or leave' */
 		{"no-dns-updates", 0, POPT_ARG_NONE, &c->opt_no_dns_updates},
 		{"keep-account", 0, POPT_ARG_NONE, &c->opt_keep_account},
+		{"json", 0, POPT_ARG_NONE, &c->opt_json},
 		POPT_COMMON_SAMBA
 		{ 0, 0, 0, 0}
 	};
@@ -1022,6 +1048,9 @@ static struct functable net_func[] = {
 				*p = 0;
 				c->opt_password = p+1;
 			}
+			break;
+		case 'A':
+			get_credentials_file(c, c->opt_user_name);
 			break;
 		default:
 			d_fprintf(stderr, _("\nInvalid option %s: %s\n"),
@@ -1104,8 +1133,6 @@ static struct functable net_func[] = {
 	rc = net_run_function(c, argc_new-1, argv_new+1, "net", net_func);
 
 	DEBUG(2,("return code = %d\n", rc));
-
-	gencache_stabilize();
 
 	libnetapi_free(c->netapi_ctx);
 

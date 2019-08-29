@@ -53,7 +53,7 @@ static bool popt_common_credentials_delay_post;
 
 void popt_common_credentials_set_ignore_missing_conf(void)
 {
-	popt_common_credentials_delay_post = true;
+	popt_common_credentials_ignore_missing_conf = true;
 }
 
 void popt_common_credentials_set_delay_post(void)
@@ -217,7 +217,7 @@ void popt_burn_cmdline_password(int argc, char *argv[])
 
 			p = strchr_m(p, '%');
 			if (p != NULL) {
-				memset(p, '\0', strlen(p));
+				memset_s(p, strlen(p), '\0', strlen(p));
 			}
 			found = false;
 		}

@@ -2,29 +2,27 @@
 
 APPNAME = 'ctdb'
 
-blddir = 'bin'
-
 import sys, os
 
 # find the buildtools directory
-srcdir = '.'
-while not os.path.exists(srcdir+'/buildtools') and len(srcdir.split('/')) < 5:
-    srcdir = srcdir + '/..'
-sys.path.insert(0, srcdir + '/buildtools/wafsamba')
+top = '.'
+while not os.path.exists(top+'/buildtools') and len(top.split('/')) < 5:
+    top = top + '/..'
+sys.path.insert(0, top + '/buildtools/wafsamba')
 
-import wafsamba, samba_dist, Options, Logs, Utils
-import samba_utils, samba_version
+out = 'bin'
 
-env = samba_utils.LOAD_ENVIRONMENT()
+from waflib import Options, Logs, Errors, Context
+import wafsamba
+from wafsamba import samba_dist, samba_utils
+from samba_utils import MODE_644, MODE_744, MODE_755, MODE_777
+
 if os.path.isfile('./VERSION'):
     vdir = '.'
 elif os.path.isfile('../VERSION'):
     vdir = '..'
 else:
     Logs.error("VERSION file not found")
-
-version = samba_version.samba_version_file('%s/VERSION' % vdir, vdir, env)
-VERSION = version.STRING.replace('-', '.')
 
 default_prefix = Options.default_prefix = '/usr/local'
 
@@ -64,8 +62,22 @@ manpages_ceph = [
     'ctdb_mutex_ceph_rados_helper.7',
 ]
 
+VERSION = ''
 
-def set_options(opt):
+def get_version():
+    import samba_version
+    env = samba_utils.LOAD_ENVIRONMENT()
+
+    return samba_version.samba_version_file('%s/VERSION' % vdir, vdir, env)
+
+def get_version_string():
+    if Context.g_module.VERSION:
+        return Context.g_module.VERSION
+    version = get_version()
+    Context.g_module.VERSION = version.STRING.replace('-', '.')
+    return Context.g_module.VERSION
+
+def options(opt):
     opt.PRIVATE_EXTENSION_DEFAULT('ctdb')
 
     opt.RECURSE('lib/replace')
@@ -102,7 +114,6 @@ def set_options(opt):
 
 
 def configure(conf):
-
     # No need to build python bindings for talloc/tevent/tdb
     if conf.IN_LAUNCH_DIR():
         conf.env.standalone_ctdb = True
@@ -139,7 +150,7 @@ def configure(conf):
             conf.env.SOCKET_WRAPPER_SO_PATH = conf.CONFIG_GET('LIBSOCKET_WRAPPER_SO_PATH')
     else:
         if not conf.CHECK_POPT():
-            raise Utils.WafError('popt development packages have not been found\nIf third_party is installed, check that it is in the proper place.')
+            raise Errors.WafError('popt development packages have not been found\nIf third_party is installed, check that it is in the proper place.')
         else:
             conf.define('USING_SYSTEM_POPT', 1)
         conf.env.SOCKET_WRAPPER_SO_PATH = ''
@@ -147,7 +158,7 @@ def configure(conf):
 
         if conf.env.standalone_ctdb or conf.CONFIG_GET('ENABLE_SELFTEST'):
             if not conf.CHECK_SOCKET_WRAPPER():
-                raise Utils.WafError('socket_wrapper package has not been found.\nIf third_party is installed, check that it is in the proper place.')
+                raise Errors.WafError('socket_wrapper package has not been found.\nIf third_party is installed, check that it is in the proper place.')
             else:
                 conf.define('USING_SYSTEM_SOCKET_WRAPPER', 1)
                 conf.env.SOCKET_WRAPPER_SO_PATH = conf.CONFIG_GET('LIBSOCKET_WRAPPER_SO_PATH')
@@ -297,7 +308,7 @@ def configure(conf):
     if not conf.env.standalone_ctdb:
         conf.ADD_EXTRA_INCLUDES('#include/public #ctdb/include #ctdb')
     else:
-        if srcdir == '.':
+        if Context.g_module.top == '.':
             # Building from tarball
             conf.ADD_EXTRA_INCLUDES('#include')
         else:
@@ -329,15 +340,6 @@ def configure(conf):
             else:
                 Logs.info("  %s: no" % (m))
 
-def gen_ctdb_version(task):
-    fp = file(task.outputs[0].bldpath(task.env), 'w')
-    fp.write('/* This file is auto-generated from waf */\n')
-    fp.write('#include "version.h"\n')
-    fp.write('\n')
-    fp.write('#define CTDB_VERSION_STRING "%s"\n' % VERSION)
-    fp.close()
-
-
 def build(bld):
     if bld.env.standalone_ctdb:
         # enable building of public headers in the build tree
@@ -345,12 +347,6 @@ def build(bld):
 
     if bld.env.standalone_ctdb:
         bld.SAMBA_MKVERSION('version.h', '%s/VERSION' % vdir)
-
-    t = bld.SAMBA_GENERATOR('ctdb-version-header',
-                            target='include/ctdb_version.h',
-                            rule=gen_ctdb_version,
-                            dep_vars=['VERSION'])
-    t.env.VERSION = VERSION
 
     bld.env.PKGCONFIGDIR = '${LIBDIR}/pkgconfig'
 
@@ -416,7 +412,7 @@ def build(bld):
                                              pidfile.c run_proc.c
                                              hash_count.c
                                              run_event.c event_script.c
-                                             sock_client.c version.c
+                                             sock_client.c
                                              cmdline.c path.c conf.c line.c
                                           '''),
                         deps='''samba-util sys_rw tevent-util
@@ -726,14 +722,14 @@ def build(bld):
                         target='onnode',
                         rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
     bld.INSTALL_FILES('${BINDIR}', 'onnode',
-                      destname='onnode', chmod=0755)
+                      destname='onnode', chmod=MODE_755)
 
     bld.SAMBA_GENERATOR('ctdb-diagnostics',
                         source='tools/ctdb_diagnostics',
                         target='ctdb_diagnostics',
                         rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
     bld.INSTALL_FILES('${BINDIR}', 'ctdb_diagnostics',
-                      destname='ctdb_diagnostics', chmod=0755)
+                      destname='ctdb_diagnostics', chmod=MODE_755)
 
     if bld.env.etcd_reclock:
         bld.SAMBA_GENERATOR('ctdb-etcd-lock',
@@ -741,42 +737,43 @@ def build(bld):
                             target='ctdb_etcd_lock',
                             rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
         bld.INSTALL_FILES('${CTDB_HELPER_BINDIR}', 'ctdb_etcd_lock',
-                          destname='ctdb_etcd_lock', chmod=0744)
+                          destname='ctdb_etcd_lock', chmod=MODE_744)
 
     bld.SAMBA_GENERATOR('ctdb-natgw',
                         source='tools/ctdb_natgw',
                         target='ctdb_natgw',
                         rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
     bld.INSTALL_FILES('${CTDB_HELPER_BINDIR}', 'ctdb_natgw',
-                      destname='ctdb_natgw', chmod=0755)
+                      destname='ctdb_natgw', chmod=MODE_755)
 
     bld.SAMBA_GENERATOR('ctdb-lvs',
                         source='tools/ctdb_lvs',
                         target='ctdb_lvs',
                         rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
     bld.INSTALL_FILES('${CTDB_HELPER_BINDIR}', 'ctdb_lvs',
-                      destname='ctdb_lvs', chmod=0755)
+                      destname='ctdb_lvs', chmod=MODE_755)
 
     bld.SAMBA_GENERATOR('ctdbd-wrapper',
                         source='config/ctdbd_wrapper',
                         target='ctdbd_wrapper',
                         rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
     bld.INSTALL_FILES('${SBINDIR}', 'ctdbd_wrapper',
-                      destname='ctdbd_wrapper', chmod=0755)
+                      destname='ctdbd_wrapper', chmod=MODE_755)
 
     def SUBDIR_MODE_callback(arg, dirname, fnames):
         for f in fnames:
             fl = os.path.join(dirname, f)
             if os.path.isdir(fl) or os.path.islink(fl):
                 continue
-            mode = os.lstat(fl).st_mode & 0777
+            mode = os.lstat(fl).st_mode & MODE_777
             if arg['trim_path']:
                 fl = samba_utils.os_path_relpath(fl, arg['trim_path'])
             arg['file_list'].append([fl, mode])
 
     def SUBDIR_MODE(path, trim_path=None):
         pd = {'trim_path': trim_path, 'file_list': []}
-        os.path.walk(path, SUBDIR_MODE_callback, pd)
+        for dirname, _subdirs, fnames in os.walk(path):
+            SUBDIR_MODE_callback(pd, dirname, fnames)
         return pd['file_list']
 
     event_script_subdirs = [
@@ -841,7 +838,7 @@ def build(bld):
 
     for t in etc_scripts:
         bld.INSTALL_FILES(bld.env.CTDB_ETCDIR, 'config/%s' % t,
-                          destname=t, chmod=0755)
+                          destname=t, chmod=MODE_755)
 
     bld.SAMBA_GENERATOR('ctdb-sudoers',
                         source='config/ctdb.sudoers',
@@ -854,12 +851,12 @@ def build(bld):
                       'config/notification.README',
                       destname='README')
 
-    bld.install_dir(bld.env.CTDB_LOGDIR)
-    bld.install_dir(bld.env.CTDB_RUNDIR)
-    bld.install_dir(bld.env.CTDB_VARDIR)
+    bld.INSTALL_DIR(bld.env.CTDB_LOGDIR)
+    bld.INSTALL_DIR(bld.env.CTDB_RUNDIR)
+    bld.INSTALL_DIR(bld.env.CTDB_VARDIR)
 
     for d in ['volatile', 'persistent', 'state']:
-        bld.install_dir(os.path.join(bld.env.CTDB_VARDIR, d))
+        bld.INSTALL_DIR(os.path.join(bld.env.CTDB_VARDIR, d))
 
     bld.SAMBA_BINARY('errcode',
                      source='tests/src/errcode.c',
@@ -915,6 +912,11 @@ def build(bld):
                      deps='talloc tevent tdb ctdb-protocol',
                      install_path='${CTDB_TEST_LIBEXECDIR}')
 
+    bld.SAMBA_BINARY('system_socket_test',
+                     source='tests/src/system_socket_test.c',
+                     deps='talloc ctdb-protocol-util pcap',
+                     install_path='${CTDB_TEST_LIBEXECDIR}')
+
     bld.SAMBA_BINARY('porting_tests',
                      source='tests/src/porting_tests.c',
                      deps='samba-util ctdb-system popt',
@@ -925,6 +927,12 @@ def build(bld):
                      deps='''ctdb-system talloc tevent tevent-util
                              LIBASYNC_REQ samba-util sys_rw''',
                      install_path='${CTDB_TEST_LIBEXECDIR}')
+
+    bld.SAMBA_BINARY('ctdb_io_test',
+                     source='tests/src/ctdb_io_test.c',
+                     deps='''talloc tevent tdb samba-util sys_rw''',
+                     install_path='${CTDB_TEST_LIBEXECDIR}')
+
 
     bld.SAMBA_SUBSYSTEM('ctdb-protocol-tests-basic',
                         source=bld.SUBDIR('tests/src',
@@ -1036,6 +1044,7 @@ def build(bld):
         'complex',
         'ctdb_eventd',
         'cunit',
+        'etc-ctdb',
         'eventd',
         'eventscripts',
         'onnode',
@@ -1076,7 +1085,7 @@ def build(bld):
                         target='test_wrap',
                         rule='sed -e "%s" ${SRC} > ${TGT}' % sed_expr)
     bld.INSTALL_FILES(bld.env.CTDB_TEST_DATADIR+"/scripts", 'test_wrap',
-                      destname='test_wrap', chmod=0755)
+                      destname='test_wrap', chmod=MODE_755)
 
     bld.SAMBA_GENERATOR('ctdb-test-script-install-paths',
                         source='tests/scripts/script_install_paths.sh',
@@ -1084,11 +1093,10 @@ def build(bld):
                         rule='sed %s ${SRC} > ${TGT}' % (sed_cmdline))
     bld.INSTALL_FILES(bld.env.CTDB_TEST_DATADIR+"/scripts",
                       'script_install_paths.sh',
-                      destname='script_install_paths.sh', chmod=0644)
+                      destname='script_install_paths.sh', chmod=MODE_644)
 
-    sed_expr1 = 's@^\(export %s\)=.*@\\1=%s\\nexport %s=\"%s\"@''' % (
-                    'CTDB_TEST_DIR', bld.env.CTDB_TEST_DATADIR,
-                    'TEST_BIN_DIR', bld.env.CTDB_TEST_LIBEXECDIR)
+    sed_expr1 = 's@^\(export %s\)=.*@\\1=%s@' % (
+                    'CTDB_TEST_DIR', bld.env.CTDB_TEST_DATADIR)
     sed_expr2 = 's@^\(export CTDB_TESTS_ARE_INSTALLED\)=false@\\1=true@'
     bld.SAMBA_GENERATOR('ctdb-test-runner',
                         source='tests/run_tests.sh',
@@ -1096,9 +1104,17 @@ def build(bld):
                         rule='sed -e "%s" -e "%s" ${SRC} > ${TGT}' % (
                              sed_expr1, sed_expr2))
     bld.INSTALL_FILES('${BINDIR}', 'ctdb_run_tests.sh',
-                      destname='ctdb_run_tests', chmod=0755)
+                      destname='ctdb_run_tests', chmod=MODE_755)
     bld.symlink_as(os.path.join(bld.env.BINDIR, 'ctdb_run_cluster_tests'),
                    'ctdb_run_tests')
+
+    bld.SAMBA_GENERATOR('ctdb-local-daemons',
+                        source='tests/local_daemons.sh',
+                        target='ctdb_local_daemons.sh',
+                        rule='sed -e "%s" -e "%s" ${SRC} > ${TGT}' % (
+                             sed_expr1, sed_expr2))
+    bld.INSTALL_FILES('${BINDIR}', 'ctdb_local_daemons.sh',
+                      destname='ctdb_local_daemons', chmod=MODE_755)
 
 
 def testonly(ctx):
@@ -1110,14 +1126,13 @@ def testonly(ctx):
 
 
 def test(ctx):
-    import Scripting
-    Scripting.commands.append('build')
-    Scripting.commands.append('testonly')
+    Options.commands.append('build')
+    Options.commands.append('testonly')
 
 
 def autotest(ctx):
     env = samba_utils.LOAD_ENVIRONMENT()
-    cmd = 'tests/run_tests.sh -e -S %s -C' % env.SOCKET_WRAPPER_SO_PATH
+    cmd = 'tests/run_tests.sh -e -S %s' % env.SOCKET_WRAPPER_SO_PATH
     ret = samba_utils.RUN_COMMAND(cmd)
     if ret != 0:
         print('autotest exited with exit status %d' % ret)
@@ -1125,7 +1140,7 @@ def autotest(ctx):
 
 
 def show_version(ctx):
-    print VERSION
+    print(get_version_string())
 
 
 def manpages(ctx):
@@ -1151,14 +1166,8 @@ def manpages(ctx):
 def distonly(ctx):
     samba_dist.DIST_FILES('VERSION:VERSION', extend=True)
 
-    distfile = file('.distversion', 'w')
-    for field in version.vcs_fields:
-        distfile.write('%s=%s\n' % (field, str(version.vcs_fields[field])))
-    distfile.close()
-    samba_dist.DIST_FILES('ctdb/.distversion:.distversion', extend=True)
-
     t = 'ctdb.spec'
-    sed_expr1 = 's/@VERSION@/%s/g' % VERSION
+    sed_expr1 = 's/@VERSION@/%s/g' % get_version_string()
     sed_expr2 = 's/@RELEASE@/%s/g' % '1'
     cmd = 'sed -e "%s" -e "%s" packaging/RPM/ctdb.spec.in > %s' % (
         sed_expr1, sed_expr2, t)
@@ -1178,14 +1187,14 @@ def distonly(ctx):
 
 
 def dist():
-    import Scripting
-    Scripting.commands.append('manpages')
-    Scripting.commands.append('distonly')
+    Options.commands.append('manpages')
+    Options.commands.append('distonly')
 
 
 def rpmonly(ctx):
     opts = os.getenv('RPM_OPTIONS') or ''
-    cmd = 'rpmbuild -ta --clean --rmsource %s ctdb-%s.tar.gz' % (opts, VERSION)
+    cmd = 'rpmbuild -ta --clean --rmsource %s ctdb-%s.tar.gz' % \
+          (opts, get_version_string())
     ret = samba_utils.RUN_COMMAND(cmd)
     if ret != 0:
         print('rpmbuild exited with exit status %d' % ret)
@@ -1193,16 +1202,14 @@ def rpmonly(ctx):
 
 
 def rpm(ctx):
-    import Scripting
-    Scripting.commands.append('manpages')
-    Scripting.commands.append('distonly')
-    Scripting.commands.append('rpmonly')
+    Options.commands.append('manpages')
+    Options.commands.append('distonly')
+    Options.commands.append('rpmonly')
 
 
 def ctags(ctx):
     "build 'tags' file using ctags"
-    import Utils
-    source_root = os.path.dirname(Utils.g_module.root_path)
+    source_root = os.path.dirname(Context.g_module.root_path)
     cmd = 'ctags $(find %s -name "*.[ch]")' % source_root
     print("Running: %s" % cmd)
     ret = samba_utils.RUN_COMMAND(cmd)

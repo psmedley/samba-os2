@@ -32,64 +32,74 @@
 #include "param/param.h"
 #include "librpc/rpc/rpc_common.h"
 
-/*
-  parse any auth information from a dcerpc bind request
-  return false if we can't handle the auth request for some 
-  reason (in which case we send a bind_nak)
-*/
-bool dcesrv_auth_bind(struct dcesrv_call_state *call)
+static NTSTATUS dcesrv_auth_negotiate_hdr_signing(struct dcesrv_call_state *call,
+						  struct ncacn_packet *pkt)
 {
-	struct cli_credentials *server_credentials = NULL;
-	struct ncacn_packet *pkt = &call->pkt;
 	struct dcesrv_connection *dce_conn = call->conn;
-	struct dcesrv_auth *auth = &dce_conn->auth_state;
-	bool want_header_signing = false;
-	NTSTATUS status;
+	struct dcesrv_auth *a = NULL;
 
-	if (pkt->auth_length == 0) {
-		enum dcerpc_transport_t transport =
-			dcerpc_binding_get_transport(call->conn->endpoint->ep_description);
-		const char *auth_type = derpc_transport_string_by_transport(transport);
-		const char *transport_protection = AUTHZ_TRANSPORT_PROTECTION_NONE;
-		if (transport == NCACN_NP) {
-			transport_protection = AUTHZ_TRANSPORT_PROTECTION_SMB;
-		}
-		auth->auth_type = DCERPC_AUTH_TYPE_NONE;
-		auth->auth_level = DCERPC_AUTH_LEVEL_NONE;
-		auth->auth_context_id = 0;
-
-		/*
-		 * Log the authorization to this RPC interface.  This
-		 * covered ncacn_np pass-through auth, and anonymous
-		 * DCE/RPC (eg epmapper, netlogon etc)
-		 */
-		log_successful_authz_event(call->conn->msg_ctx,
-					   call->conn->dce_ctx->lp_ctx,
-					   call->conn->remote_address,
-					   call->conn->local_address,
-					   "DCE/RPC",
-					   auth_type,
-					   transport_protection,
-					   call->conn->auth_state.session_info);
-
-		return true;
+	if (!(call->pkt.pfc_flags & DCERPC_PFC_FLAG_SUPPORT_HEADER_SIGN)) {
+		return NT_STATUS_OK;
 	}
 
-	status = dcerpc_pull_auth_trailer(pkt, call, &pkt->u.bind.auth_info,
-					  &call->in_auth_info,
-					  NULL, true);
-	if (!NT_STATUS_IS_OK(status)) {
-		/*
-		 * Setting DCERPC_AUTH_LEVEL_NONE,
-		 * gives the caller the reject_reason
-		 * as auth_context_id.
-		 *
-		 * Note: DCERPC_AUTH_LEVEL_NONE == 1
-		 */
-		auth->auth_type = DCERPC_AUTH_TYPE_NONE;
-		auth->auth_level = DCERPC_AUTH_LEVEL_NONE;
-		auth->auth_context_id =
-			DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED;
+	if (dce_conn->client_hdr_signing) {
+		if (dce_conn->negotiated_hdr_signing && pkt != NULL) {
+			pkt->pfc_flags |= DCERPC_PFC_FLAG_SUPPORT_HEADER_SIGN;
+		}
+		return NT_STATUS_OK;
+	}
+
+	dce_conn->client_hdr_signing = true;
+	dce_conn->negotiated_hdr_signing = dce_conn->support_hdr_signing;
+
+	if (!dce_conn->negotiated_hdr_signing) {
+		return NT_STATUS_OK;
+	}
+
+	if (pkt != NULL) {
+		pkt->pfc_flags |= DCERPC_PFC_FLAG_SUPPORT_HEADER_SIGN;
+	}
+
+	a = call->conn->default_auth_state;
+	if (a->gensec_security != NULL) {
+		gensec_want_feature(a->gensec_security,
+				    GENSEC_FEATURE_SIGN_PKT_HEADER);
+	}
+
+	for (a = call->conn->auth_states; a != NULL; a = a->next) {
+		if (a->gensec_security == NULL) {
+			continue;
+		}
+
+		gensec_want_feature(a->gensec_security,
+				    GENSEC_FEATURE_SIGN_PKT_HEADER);
+	}
+
+	return NT_STATUS_OK;
+}
+
+static bool dcesrv_auth_prepare_gensec(struct dcesrv_call_state *call)
+{
+	struct cli_credentials *server_credentials = NULL;
+	struct dcesrv_connection *dce_conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
+	NTSTATUS status;
+
+	if (auth->auth_started) {
+		return false;
+	}
+
+	auth->auth_started = true;
+
+	if (auth->auth_invalid) {
+		return false;
+	}
+
+	if (auth->auth_finished) {
+		return false;
+	}
+
+	if (auth->gensec_security != NULL) {
 		return false;
 	}
 
@@ -122,7 +132,7 @@ bool dcesrv_auth_bind(struct dcesrv_call_state *call)
 	auth->auth_context_id = call->in_auth_info.auth_context_id;
 
 	server_credentials 
-		= cli_credentials_init(call);
+		= cli_credentials_init(auth);
 	if (!server_credentials) {
 		DEBUG(1, ("Failed to init server credentials\n"));
 		return false;
@@ -136,7 +146,8 @@ bool dcesrv_auth_bind(struct dcesrv_call_state *call)
 		return false;
 	}
 
-	status = samba_server_gensec_start(dce_conn, call->event_ctx, 
+	status = samba_server_gensec_start(auth,
+					   call->event_ctx,
 					   call->msg_ctx,
 					   call->conn->dce_ctx->lp_ctx,
 					   server_credentials,
@@ -214,36 +225,149 @@ bool dcesrv_auth_bind(struct dcesrv_call_state *call)
 		return false;
 	}
 
-	if (call->pkt.pfc_flags & DCERPC_PFC_FLAG_SUPPORT_HEADER_SIGN) {
-		auth->client_hdr_signing = true;
-		want_header_signing = true;
-	}
-
-	if (want_header_signing) {
-		want_header_signing = gensec_have_feature(auth->gensec_security,
-						GENSEC_FEATURE_SIGN_PKT_HEADER);
-	}
-
-	if (want_header_signing) {
-		want_header_signing = lpcfg_parm_bool(dce_conn->dce_ctx->lp_ctx,
-						      NULL,
-						      "dcesrv",
-						      "header signing",
-						      true);
-	}
-
-	if (want_header_signing) {
+	if (dce_conn->negotiated_hdr_signing) {
 		gensec_want_feature(auth->gensec_security,
 				    GENSEC_FEATURE_SIGN_PKT_HEADER);
-		auth->hdr_signing = true;
 	}
 
 	return true;
 }
 
-NTSTATUS dcesrv_auth_complete(struct dcesrv_call_state *call, NTSTATUS status)
+static void log_successful_dcesrv_authz_event(struct dcesrv_call_state *call)
+{
+	struct dcesrv_auth *auth = call->auth_state;
+	enum dcerpc_transport_t transport =
+		dcerpc_binding_get_transport(call->conn->endpoint->ep_description);
+	const char *auth_type = derpc_transport_string_by_transport(transport);
+	const char *transport_protection = AUTHZ_TRANSPORT_PROTECTION_NONE;
+
+	if (transport == NCACN_NP) {
+		transport_protection = AUTHZ_TRANSPORT_PROTECTION_SMB;
+	}
+
+	/*
+	 * Log the authorization to this RPC interface.  This
+	 * covered ncacn_np pass-through auth, and anonymous
+	 * DCE/RPC (eg epmapper, netlogon etc)
+	 */
+	log_successful_authz_event(call->conn->msg_ctx,
+				   call->conn->dce_ctx->lp_ctx,
+				   call->conn->remote_address,
+				   call->conn->local_address,
+				   "DCE/RPC",
+				   auth_type,
+				   transport_protection,
+				   auth->session_info);
+
+	auth->auth_audited = true;
+}
+
+static void dcesrv_default_auth_state_finish_bind(struct dcesrv_call_state *call)
+{
+	SMB_ASSERT(call->pkt.ptype == DCERPC_PKT_BIND);
+
+	if (call->auth_state == call->conn->default_auth_state) {
+		return;
+	}
+
+	if (call->conn->default_auth_state->auth_started) {
+		return;
+	}
+
+	if (call->conn->default_auth_state->auth_invalid) {
+		return;
+	}
+
+	call->conn->default_auth_state->auth_type = DCERPC_AUTH_TYPE_NONE;
+	call->conn->default_auth_state->auth_level = DCERPC_AUTH_LEVEL_NONE;
+	call->conn->default_auth_state->auth_context_id = 0;
+	call->conn->default_auth_state->auth_started = true;
+	call->conn->default_auth_state->auth_finished = true;
+
+	/*
+	 *
+	 * We defer log_successful_dcesrv_authz_event()
+	 * to dcesrv_default_auth_state_prepare_request()
+	 *
+	 * As we don't want to trigger authz_events
+	 * just for alter_context requests without authentication
+	 */
+}
+
+void dcesrv_default_auth_state_prepare_request(struct dcesrv_call_state *call)
 {
 	struct dcesrv_connection *dce_conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
+
+	if (auth->auth_audited) {
+		return;
+	}
+
+	if (call->pkt.ptype != DCERPC_PKT_REQUEST) {
+		return;
+	}
+
+	if (auth != dce_conn->default_auth_state) {
+		return;
+	}
+
+	if (auth->auth_invalid) {
+		return;
+	}
+
+	if (!auth->auth_finished) {
+		return;
+	}
+
+	log_successful_dcesrv_authz_event(call);
+}
+
+/*
+  parse any auth information from a dcerpc bind request
+  return false if we can't handle the auth request for some
+  reason (in which case we send a bind_nak)
+*/
+bool dcesrv_auth_bind(struct dcesrv_call_state *call)
+{
+	struct ncacn_packet *pkt = &call->pkt;
+	struct dcesrv_auth *auth = call->auth_state;
+	NTSTATUS status;
+
+	if (pkt->auth_length == 0) {
+		auth->auth_type = DCERPC_AUTH_TYPE_NONE;
+		auth->auth_level = DCERPC_AUTH_LEVEL_NONE;
+		auth->auth_context_id = 0;
+		auth->auth_started = true;
+
+		log_successful_dcesrv_authz_event(call);
+
+		return true;
+	}
+
+	status = dcerpc_pull_auth_trailer(pkt, call, &pkt->u.bind.auth_info,
+					  &call->in_auth_info,
+					  NULL, true);
+	if (!NT_STATUS_IS_OK(status)) {
+		/*
+		 * Setting DCERPC_AUTH_LEVEL_NONE,
+		 * gives the caller the reject_reason
+		 * as auth_context_id.
+		 *
+		 * Note: DCERPC_AUTH_LEVEL_NONE == 1
+		 */
+		auth->auth_type = DCERPC_AUTH_TYPE_NONE;
+		auth->auth_level = DCERPC_AUTH_LEVEL_NONE;
+		auth->auth_context_id =
+			DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED;
+		return false;
+	}
+
+	return dcesrv_auth_prepare_gensec(call);
+}
+
+NTSTATUS dcesrv_auth_complete(struct dcesrv_call_state *call, NTSTATUS status)
+{
+	struct dcesrv_auth *auth = call->auth_state;
 	const char *pdu = "<unknown>";
 
 	switch (call->pkt.ptype) {
@@ -274,19 +398,21 @@ NTSTATUS dcesrv_auth_complete(struct dcesrv_call_state *call, NTSTATUS status)
 		return status;
 	}
 
-	status = gensec_session_info(dce_conn->auth_state.gensec_security,
-				     dce_conn,
-				     &dce_conn->auth_state.session_info);
+	status = gensec_session_info(auth->gensec_security,
+				     auth,
+				     &auth->session_info);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1, ("Failed to establish session_info: %s\n",
 			  nt_errstr(status)));
 		return status;
 	}
-	dce_conn->auth_state.auth_finished = true;
-	dce_conn->allow_request = true;
+	auth->auth_finished = true;
 
-	/* Now that we are authenticated, go back to the generic session key... */
-	dce_conn->auth_state.session_key = dcesrv_generic_session_key;
+	if (auth->auth_level == DCERPC_AUTH_LEVEL_CONNECT &&
+	    !call->conn->got_explicit_auth_level_connect)
+	{
+		call->conn->default_auth_level_connect = auth;
+	}
 
 	if (call->pkt.ptype != DCERPC_PKT_AUTH3) {
 		return NT_STATUS_OK;
@@ -308,29 +434,31 @@ NTSTATUS dcesrv_auth_complete(struct dcesrv_call_state *call, NTSTATUS status)
 NTSTATUS dcesrv_auth_prepare_bind_ack(struct dcesrv_call_state *call, struct ncacn_packet *pkt)
 {
 	struct dcesrv_connection *dce_conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
+	NTSTATUS status;
+
+	status = dcesrv_auth_negotiate_hdr_signing(call, pkt);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
 
 	dce_conn->allow_alter = true;
-	dce_conn->allow_auth3 = true;
+	dcesrv_default_auth_state_finish_bind(call);
 
 	if (call->pkt.auth_length == 0) {
-		dce_conn->auth_state.auth_finished = true;
-		dce_conn->allow_request = true;
+		auth->auth_finished = true;
 		return NT_STATUS_OK;
 	}
 
 	/* We can't work without an existing gensec state */
-	if (!call->conn->auth_state.gensec_security) {
+	if (auth->gensec_security == NULL) {
 		return NT_STATUS_INTERNAL_ERROR;
 	}
 
-	if (dce_conn->auth_state.hdr_signing) {
-		pkt->pfc_flags |= DCERPC_PFC_FLAG_SUPPORT_HEADER_SIGN;
-	}
-
 	call->_out_auth_info = (struct dcerpc_auth) {
-		.auth_type = dce_conn->auth_state.auth_type,
-		.auth_level = dce_conn->auth_state.auth_level,
-		.auth_context_id = dce_conn->auth_state.auth_context_id,
+		.auth_type = auth->auth_type,
+		.auth_level = auth->auth_level,
+		.auth_context_id = auth->auth_context_id,
 	};
 	call->out_auth_info = &call->_out_auth_info;
 
@@ -343,19 +471,19 @@ NTSTATUS dcesrv_auth_prepare_bind_ack(struct dcesrv_call_state *call, struct nca
 bool dcesrv_auth_prepare_auth3(struct dcesrv_call_state *call)
 {
 	struct ncacn_packet *pkt = &call->pkt;
-	struct dcesrv_connection *dce_conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
 	NTSTATUS status;
 
 	if (pkt->auth_length == 0) {
 		return false;
 	}
 
-	if (dce_conn->auth_state.auth_finished) {
+	if (auth->auth_finished) {
 		return false;
 	}
 
 	/* We can't work without an existing gensec state */
-	if (!dce_conn->auth_state.gensec_security) {
+	if (auth->gensec_security == NULL) {
 		return false;
 	}
 
@@ -370,22 +498,22 @@ bool dcesrv_auth_prepare_auth3(struct dcesrv_call_state *call)
 		return false;
 	}
 
-	if (call->in_auth_info.auth_type != dce_conn->auth_state.auth_type) {
+	if (call->in_auth_info.auth_type != auth->auth_type) {
 		return false;
 	}
 
-	if (call->in_auth_info.auth_level != dce_conn->auth_state.auth_level) {
+	if (call->in_auth_info.auth_level != auth->auth_level) {
 		return false;
 	}
 
-	if (call->in_auth_info.auth_context_id != dce_conn->auth_state.auth_context_id) {
+	if (call->in_auth_info.auth_context_id != auth->auth_context_id) {
 		return false;
 	}
 
 	call->_out_auth_info = (struct dcerpc_auth) {
-		.auth_type = dce_conn->auth_state.auth_type,
-		.auth_level = dce_conn->auth_state.auth_level,
-		.auth_context_id = dce_conn->auth_state.auth_context_id,
+		.auth_type = auth->auth_type,
+		.auth_level = auth->auth_level,
+		.auth_context_id = auth->auth_context_id,
 	};
 	call->out_auth_info = &call->_out_auth_info;
 
@@ -400,24 +528,19 @@ bool dcesrv_auth_prepare_auth3(struct dcesrv_call_state *call)
 bool dcesrv_auth_alter(struct dcesrv_call_state *call)
 {
 	struct ncacn_packet *pkt = &call->pkt;
-	struct dcesrv_connection *dce_conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
 	NTSTATUS status;
 
 	/* on a pure interface change there is no auth blob */
 	if (pkt->auth_length == 0) {
-		if (!dce_conn->auth_state.auth_finished) {
+		if (!auth->auth_finished) {
 			return false;
 		}
 		return true;
 	}
 
-	if (dce_conn->auth_state.auth_finished) {
+	if (auth->auth_finished) {
 		call->fault_code = DCERPC_FAULT_ACCESS_DENIED;
-		return false;
-	}
-
-	/* We can't work without an existing gensec state */
-	if (!dce_conn->auth_state.gensec_security) {
 		return false;
 	}
 
@@ -428,20 +551,32 @@ bool dcesrv_auth_alter(struct dcesrv_call_state *call)
 		return false;
 	}
 
+	if (!auth->auth_started) {
+		bool ok;
+
+		ok = dcesrv_auth_prepare_gensec(call);
+		if (!ok) {
+			call->fault_code = DCERPC_FAULT_ACCESS_DENIED;
+			return false;
+		}
+
+		return true;
+	}
+
 	if (call->in_auth_info.auth_type == DCERPC_AUTH_TYPE_NONE) {
 		call->fault_code = DCERPC_FAULT_ACCESS_DENIED;
 		return false;
 	}
 
-	if (call->in_auth_info.auth_type != dce_conn->auth_state.auth_type) {
+	if (call->in_auth_info.auth_type != auth->auth_type) {
 		return false;
 	}
 
-	if (call->in_auth_info.auth_level != dce_conn->auth_state.auth_level) {
+	if (call->in_auth_info.auth_level != auth->auth_level) {
 		return false;
 	}
 
-	if (call->in_auth_info.auth_context_id != dce_conn->auth_state.auth_context_id) {
+	if (call->in_auth_info.auth_context_id != auth->auth_context_id) {
 		return false;
 	}
 
@@ -454,7 +589,13 @@ bool dcesrv_auth_alter(struct dcesrv_call_state *call)
 */
 NTSTATUS dcesrv_auth_prepare_alter_ack(struct dcesrv_call_state *call, struct ncacn_packet *pkt)
 {
-	struct dcesrv_connection *dce_conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
+	NTSTATUS status;
+
+	status = dcesrv_auth_negotiate_hdr_signing(call, pkt);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
 
 	/* on a pure interface change there is no auth_info structure
 	   setup */
@@ -462,14 +603,14 @@ NTSTATUS dcesrv_auth_prepare_alter_ack(struct dcesrv_call_state *call, struct nc
 		return NT_STATUS_OK;
 	}
 
-	if (!call->conn->auth_state.gensec_security) {
+	if (auth->gensec_security == NULL) {
 		return NT_STATUS_INTERNAL_ERROR;
 	}
 
 	call->_out_auth_info = (struct dcerpc_auth) {
-		.auth_type = dce_conn->auth_state.auth_type,
-		.auth_level = dce_conn->auth_state.auth_level,
-		.auth_context_id = dce_conn->auth_state.auth_context_id,
+		.auth_type = auth->auth_type,
+		.auth_level = auth->auth_level,
+		.auth_context_id = auth->auth_context_id,
 	};
 	call->out_auth_info = &call->_out_auth_info;
 
@@ -487,25 +628,29 @@ bool dcesrv_auth_pkt_pull(struct dcesrv_call_state *call,
 			  DATA_BLOB *payload_and_verifier)
 {
 	struct ncacn_packet *pkt = &call->pkt;
-	struct dcesrv_connection *dce_conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
 	const struct dcerpc_auth tmp_auth = {
-		.auth_type = dce_conn->auth_state.auth_type,
-		.auth_level = dce_conn->auth_state.auth_level,
-		.auth_context_id = dce_conn->auth_state.auth_context_id,
+		.auth_type = auth->auth_type,
+		.auth_level = auth->auth_level,
+		.auth_context_id = auth->auth_context_id,
 	};
 	NTSTATUS status;
 
-	if (!dce_conn->allow_request) {
+	if (!auth->auth_started) {
+		return false;
+	}
+
+	if (!auth->auth_finished) {
 		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
 		return false;
 	}
 
-	if (dce_conn->auth_state.auth_invalid) {
+	if (auth->auth_invalid) {
 		return false;
 	}
 
 	status = dcerpc_ncacn_pull_pkt_auth(&tmp_auth,
-					    dce_conn->auth_state.gensec_security,
+					    auth->gensec_security,
 					    call,
 					    pkt->ptype,
 					    required_flags,
@@ -546,16 +691,16 @@ bool dcesrv_auth_pkt_push(struct dcesrv_call_state *call,
 			  const DATA_BLOB *payload,
 			  const struct ncacn_packet *pkt)
 {
-	struct dcesrv_connection *dce_conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
 	const struct dcerpc_auth tmp_auth = {
-		.auth_type = dce_conn->auth_state.auth_type,
-		.auth_level = dce_conn->auth_state.auth_level,
-		.auth_context_id = dce_conn->auth_state.auth_context_id,
+		.auth_type = auth->auth_type,
+		.auth_level = auth->auth_level,
+		.auth_context_id = auth->auth_context_id,
 	};
 	NTSTATUS status;
 
 	status = dcerpc_ncacn_push_pkt_auth(&tmp_auth,
-					    dce_conn->auth_state.gensec_security,
+					    auth->gensec_security,
 					    call, blob, sig_size,
 					    payload_offset,
 					    payload,

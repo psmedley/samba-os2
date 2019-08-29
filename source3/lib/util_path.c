@@ -38,11 +38,13 @@ struct share_params;
  * @retval Pointer to a string containing the full path.
  **/
 
-static char *xx_path(const char *name, const char *rootpath)
+static char *xx_path(TALLOC_CTX *mem_ctx,
+		     const char *name,
+		     const char *rootpath)
 {
 	char *fname = NULL;
 
-	fname = talloc_strdup(talloc_tos(), rootpath);
+	fname = talloc_strdup(mem_ctx, rootpath);
 	if (!fname) {
 		return NULL;
 	}
@@ -63,9 +65,9 @@ static char *xx_path(const char *name, const char *rootpath)
  * @retval Pointer to a talloc'ed string containing the full path.
  **/
 
-char *lock_path(const char *name)
+char *lock_path(TALLOC_CTX *mem_ctx, const char *name)
 {
-	return xx_path(name, lp_lock_directory());
+	return xx_path(mem_ctx, name, lp_lock_directory());
 }
 
 /**
@@ -76,9 +78,9 @@ char *lock_path(const char *name)
  * @retval Pointer to a talloc'ed string containing the full path.
  **/
 
-char *state_path(const char *name)
+char *state_path(TALLOC_CTX *mem_ctx, const char *name)
 {
-	return xx_path(name, lp_state_directory());
+	return xx_path(mem_ctx, name, lp_state_directory());
 }
 
 /**
@@ -89,9 +91,9 @@ char *state_path(const char *name)
  * @retval Pointer to a talloc'ed string containing the full path.
  **/
 
-char *cache_path(const char *name)
+char *cache_path(TALLOC_CTX *mem_ctx, const char *name)
 {
-	return xx_path(name, lp_cache_directory());
+	return xx_path(mem_ctx, name, lp_cache_directory());
 }
 
 /**

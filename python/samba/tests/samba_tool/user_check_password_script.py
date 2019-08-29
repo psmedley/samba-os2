@@ -25,6 +25,7 @@ from samba import (
         dsdb
         )
 
+
 class UserCheckPwdTestCase(SambaToolCmdTest):
     """Tests for samba-tool user subcommands"""
     users = []
@@ -33,7 +34,7 @@ class UserCheckPwdTestCase(SambaToolCmdTest):
     def setUp(self):
         super(UserCheckPwdTestCase, self).setUp()
         self.samdb = self.getSamDB("-H", "ldap://%s" % os.environ["DC_SERVER"],
-            "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
+                                   "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
         self.old_min_pwd_age = self.samdb.get_minPwdAge()
         self.samdb.set_minPwdAge("0")
 

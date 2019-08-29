@@ -719,6 +719,12 @@ _PUBLIC_ enum ndr_err_code ndr_pull_trailer_align(struct ndr_pull *ndr, size_t s
 */
 _PUBLIC_ enum ndr_err_code ndr_push_bytes(struct ndr_push *ndr, const uint8_t *data, uint32_t n)
 {
+	if (unlikely(n == 0)) {
+		return NDR_ERR_SUCCESS;
+	}
+	if (unlikely(data == NULL)) {
+		return NDR_ERR_INVALID_POINTER;
+	}
 	NDR_PUSH_NEED_BYTES(ndr, n);
 	memcpy(ndr->data + ndr->offset, data, n);
 	ndr->offset += n;

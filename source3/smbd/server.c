@@ -117,12 +117,18 @@ static void smbd_parent_conf_updated(struct messaging_context *msg,
 {
 	struct tevent_context *ev_ctx =
 		talloc_get_type_abort(private_data, struct tevent_context);
+	bool ok;
 
 	DEBUG(10,("smbd_parent_conf_updated: Got message saying smb.conf was "
 		  "updated. Reloading.\n"));
 	change_to_root_user();
 	reload_services(NULL, NULL, false);
 	printing_subsystem_update(ev_ctx, msg, false);
+
+	ok = reinit_guest_session_info(NULL);
+	if (!ok) {
+		DBG_ERR("Failed to reinit guest info\n");
+	}
 }
 
 /*******************************************************************
@@ -181,7 +187,7 @@ static void msg_inject_fault(struct messaging_context *msg,
 		return;
 	}
 
-#if HAVE_STRSIGNAL
+#ifdef HAVE_STRSIGNAL
 	DEBUG(0, ("Process %s requested injection of signal %d (%s)\n",
 		  server_id_str_buf(src, &tmp), sig, strsignal(sig)));
 #else
@@ -190,6 +196,36 @@ static void msg_inject_fault(struct messaging_context *msg,
 #endif
 
 	kill(getpid(), sig);
+}
+#endif /* DEVELOPER */
+
+#if defined(DEVELOPER) || defined(ENABLE_SELFTEST)
+/*
+ * Sleep for the specified number of seconds.
+ */
+static void msg_sleep(struct messaging_context *msg,
+		      void *private_data,
+		      uint32_t msg_type,
+		      struct server_id src,
+		      DATA_BLOB *data)
+{
+	unsigned int seconds;
+	struct server_id_buf tmp;
+
+	if (data->length != sizeof(seconds)) {
+		DBG_ERR("Process %s sent bogus sleep request\n",
+			server_id_str_buf(src, &tmp));
+		return;
+	}
+
+	seconds = *(unsigned int *)data->data;
+	DBG_ERR("Process %s request a sleep of %u seconds\n",
+		server_id_str_buf(src, &tmp),
+		seconds);
+	sleep(seconds);
+	DBG_ERR("Restarting after %u second sleep requested by process %s\n",
+		seconds,
+		server_id_str_buf(src, &tmp));
 }
 #endif /* DEVELOPER */
 
@@ -1218,7 +1254,7 @@ static bool open_sockets_smbd(struct smbd_parent_context *parent,
 		char *sock_tok;
 		const char *sock_ptr;
 
-#if HAVE_IPV6
+#ifdef HAVE_IPV6
 		sock_addr = "::,0.0.0.0";
 #else
 		sock_addr = "0.0.0.0";
@@ -1299,6 +1335,10 @@ static bool open_sockets_smbd(struct smbd_parent_context *parent,
 #ifdef DEVELOPER
 	messaging_register(msg_ctx, NULL, MSG_SMB_INJECT_FAULT,
 			   msg_inject_fault);
+#endif
+
+#if defined(DEVELOPER) || defined(ENABLE_SELFTEST)
+	messaging_register(msg_ctx, NULL, MSG_SMB_SLEEP, msg_sleep);
 #endif
 
 	if (lp_multicast_dns_register() && (dns_port != 0)) {
@@ -1764,6 +1804,13 @@ extern void build_options(bool screen);
 		exit(1);
 	}
 
+	/*
+	 * This calls unshare(CLONE_FS); on linux
+	 * in order to check if the running kernel/container
+	 * environment supports it.
+	 */
+	per_thread_cwd_check();
+
 	if (!cluster_probe_ok()) {
 		exit(1);
 	}
@@ -1776,7 +1823,7 @@ extern void build_options(bool screen);
 	 * initialized before the messaging context, cause the messaging
 	 * context holds an event context.
 	 */
-	ev_ctx = server_event_context();
+	ev_ctx = global_event_context();
 	if (ev_ctx == NULL) {
 		exit(1);
 	}
@@ -1785,7 +1832,7 @@ extern void build_options(bool screen);
 	 * Init the messaging context
 	 * FIXME: This should only call messaging_init()
 	 */
-	msg_ctx = server_messaging_context();
+	msg_ctx = global_messaging_context();
 	if (msg_ctx == NULL) {
 		exit(1);
 	}
@@ -1843,7 +1890,7 @@ extern void build_options(bool screen);
 		become_daemon(Fork, no_process_group, log_stdout);
 	}
 
-#if HAVE_SETPGID
+#ifdef HAVE_SETPGID
 	/*
 	 * If we're interactive we want to set our own process group for
 	 * signal management.

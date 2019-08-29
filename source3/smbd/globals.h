@@ -176,6 +176,7 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 			   uint32_t dirtype,
 			   bool dont_descend,
 			   bool ask_sharemode,
+			   bool get_dosmode,
 			   bool (*match_fn)(TALLOC_CTX *ctx,
 					    void *private_data,
 					    const char *dname,
@@ -184,6 +185,7 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 			   bool (*mode_fn)(TALLOC_CTX *ctx,
 					   void *private_data,
 					   struct smb_filename *smb_fname,
+					   bool get_dosmode,
 					   uint32_t *_mode),
 			   void *private_data,
 			   char **_fname,
@@ -201,12 +203,14 @@ NTSTATUS smbd_dirptr_lanman2_entry(TALLOC_CTX *ctx,
 			       int requires_resume_key,
 			       bool dont_descend,
 			       bool ask_sharemode,
+			       bool get_dosmode,
 			       uint8_t align,
 			       bool do_pad,
 			       char **ppdata,
 			       char *base_data,
 			       char *end_data,
 			       int space_remaining,
+			       struct smb_filename **smb_fname,
 			       bool *got_exact_match,
 			       int *_last_entry_off,
 			       struct ea_list *name_list,
@@ -586,7 +590,7 @@ struct tevent_req *smb2srv_session_shutdown_send(TALLOC_CTX *mem_ctx,
 					struct smbd_smb2_request *current_req);
 NTSTATUS smb2srv_session_shutdown_recv(struct tevent_req *req);
 NTSTATUS smbXsrv_session_logoff(struct smbXsrv_session *session);
-NTSTATUS smbXsrv_session_logoff_all(struct smbXsrv_connection *conn);
+NTSTATUS smbXsrv_session_logoff_all(struct smbXsrv_client *client);
 NTSTATUS smb1srv_session_table_init(struct smbXsrv_connection *conn);
 NTSTATUS smb1srv_session_lookup(struct smbXsrv_connection *conn,
 				uint16_t vuid, NTTIME now,
@@ -620,7 +624,7 @@ NTSTATUS smb1srv_tcon_create(struct smbXsrv_connection *conn,
 NTSTATUS smb1srv_tcon_lookup(struct smbXsrv_connection *conn,
 			     uint16_t tree_id, NTTIME now,
 			     struct smbXsrv_tcon **tcon);
-NTSTATUS smb1srv_tcon_disconnect_all(struct smbXsrv_connection *conn);
+NTSTATUS smb1srv_tcon_disconnect_all(struct smbXsrv_client *client);
 NTSTATUS smb2srv_tcon_table_init(struct smbXsrv_session *session);
 NTSTATUS smb2srv_tcon_create(struct smbXsrv_session *session,
 			     NTTIME now,
@@ -700,9 +704,6 @@ struct smbd_smb2_request {
 	/* the tcon the request operates on, maybe NULL */
 	struct smbXsrv_tcon *tcon;
 	uint32_t last_tid;
-
-	/* the tevent_context (wrapper) the request operates on */
-	struct tevent_context *ev_ctx;
 
 	int current_idx;
 	bool do_signing;
@@ -875,9 +876,7 @@ struct smbd_server_connection {
 	const struct tsocket_address *local_address;
 	const struct tsocket_address *remote_address;
 	const char *remote_hostname;
-	struct tevent_context *raw_ev_ctx;
-	struct tevent_context *root_ev_ctx;
-	struct tevent_context *guest_ev_ctx;
+	struct tevent_context *ev_ctx;
 	struct messaging_context *msg_ctx;
 	struct notify_context *notify_ctx;
 	bool using_smb2;

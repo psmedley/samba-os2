@@ -158,6 +158,19 @@ static NTSTATUS catia_string_replace_allocate(connection_struct *conn,
 	return status;
 }
 
+static int catia_connect(struct vfs_handle_struct *handle,
+			 const char *service,
+			 const char *user)
+{
+	/*
+	 * Unless we have an async implementation of get_dos_attributes turn
+	 * this off.
+	 */
+	lp_do_parameter(SNUM(handle->conn), "smbd:async dosmode", "false");
+
+	return SMB_VFS_NEXT_CONNECT(handle, service, user);
+}
+
 static DIR *catia_opendir(vfs_handle_struct *handle,
 			const struct smb_filename *smb_fname,
 			const char *mask,
@@ -180,7 +193,7 @@ static DIR *catia_opendir(vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 				name_mapped,
 				NULL,
-				NULL,
+				&smb_fname->st,
 				smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_smb_fname);
@@ -709,7 +722,7 @@ static int catia_chown(vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(name);
@@ -747,7 +760,7 @@ static int catia_lchown(vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(name);
@@ -784,7 +797,7 @@ static int catia_chmod(vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(name);
@@ -819,7 +832,7 @@ static int catia_rmdir(vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(name);
@@ -854,7 +867,7 @@ static int catia_mkdir(vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(name);
@@ -889,7 +902,7 @@ static int catia_chdir(vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(name);
@@ -955,7 +968,7 @@ catia_realpath(vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -988,7 +1001,7 @@ static int catia_chflags(struct vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(name);
@@ -1033,7 +1046,7 @@ catia_streaminfo(struct vfs_handle_struct *handle,
 	catia_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (catia_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -1113,7 +1126,7 @@ catia_get_nt_acl(struct vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -1152,7 +1165,7 @@ catia_sys_acl_get_file(vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -1197,7 +1210,7 @@ catia_sys_acl_set_file(vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -1240,7 +1253,7 @@ catia_sys_acl_delete_def_file(vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -1293,7 +1306,7 @@ catia_getxattr(vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -1340,7 +1353,7 @@ catia_listxattr(vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -1393,7 +1406,7 @@ catia_removexattr(vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -1452,7 +1465,7 @@ catia_setxattr(vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -2261,7 +2274,7 @@ static NTSTATUS catia_get_compression(vfs_handle_struct *handle,
 		mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 						mapped_name,
 						NULL,
-						NULL,
+						&smb_fname->st,
 						smb_fname->flags);
 		if (mapped_smb_fname == NULL) {
 			TALLOC_FREE(mapped_name);
@@ -2354,7 +2367,7 @@ static NTSTATUS catia_get_dos_attributes(struct vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -2388,7 +2401,7 @@ static NTSTATUS catia_set_dos_attributes(struct vfs_handle_struct *handle,
 	mapped_smb_fname = synthetic_smb_fname(talloc_tos(),
 					mapped_name,
 					NULL,
-					NULL,
+					&smb_fname->st,
 					smb_fname->flags);
 	if (mapped_smb_fname == NULL) {
 		TALLOC_FREE(mapped_name);
@@ -2405,6 +2418,8 @@ static NTSTATUS catia_set_dos_attributes(struct vfs_handle_struct *handle,
 }
 
 static struct vfs_fn_pointers vfs_catia_fns = {
+	.connect_fn = catia_connect,
+
 	/* Directory operations */
 	.mkdir_fn = catia_mkdir,
 	.rmdir_fn = catia_rmdir,
@@ -2447,6 +2462,8 @@ static struct vfs_fn_pointers vfs_catia_fns = {
 	.translate_name_fn = catia_translate_name,
 	.fsctl_fn = catia_fsctl,
 	.get_dos_attributes_fn = catia_get_dos_attributes,
+	.get_dos_attributes_send_fn = vfs_not_implemented_get_dos_attributes_send,
+	.get_dos_attributes_recv_fn = vfs_not_implemented_get_dos_attributes_recv,
 	.set_dos_attributes_fn = catia_set_dos_attributes,
 	.fset_dos_attributes_fn = catia_fset_dos_attributes,
 	.fget_dos_attributes_fn = catia_fget_dos_attributes,
@@ -2468,6 +2485,8 @@ static struct vfs_fn_pointers vfs_catia_fns = {
 
 	/* EA operations. */
 	.getxattr_fn = catia_getxattr,
+	.getxattrat_send_fn = vfs_not_implemented_getxattrat_send,
+	.getxattrat_recv_fn = vfs_not_implemented_getxattrat_recv,
 	.listxattr_fn = catia_listxattr,
 	.removexattr_fn = catia_removexattr,
 	.setxattr_fn = catia_setxattr,

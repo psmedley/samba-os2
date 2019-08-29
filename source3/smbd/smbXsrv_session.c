@@ -67,7 +67,7 @@ NTSTATUS smbXsrv_session_global_init(struct messaging_context *msg_ctx)
 	/*
 	 * This contains secret information like session keys!
 	 */
-	global_path = lock_path("smbXsrv_session_global.tdb");
+	global_path = lock_path(talloc_tos(), "smbXsrv_session_global.tdb");
 	if (global_path == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -89,7 +89,7 @@ NTSTATUS smbXsrv_session_global_init(struct messaging_context *msg_ctx)
 		return status;
 	}
 
-	db_ctx = db_open_watched(NULL, backend, server_messaging_context());
+	db_ctx = db_open_watched(NULL, &backend, global_messaging_context());
 	if (db_ctx == NULL) {
 		TALLOC_FREE(backend);
 		return NT_STATUS_NO_MEMORY;
@@ -1762,9 +1762,9 @@ struct smbXsrv_session_logoff_all_state {
 static int smbXsrv_session_logoff_all_callback(struct db_record *local_rec,
 					       void *private_data);
 
-NTSTATUS smbXsrv_session_logoff_all(struct smbXsrv_connection *conn)
+NTSTATUS smbXsrv_session_logoff_all(struct smbXsrv_client *client)
 {
-	struct smbXsrv_session_table *table = conn->client->session_table;
+	struct smbXsrv_session_table *table = client->session_table;
 	struct smbXsrv_session_logoff_all_state state;
 	NTSTATUS status;
 	int count = 0;

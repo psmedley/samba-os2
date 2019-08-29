@@ -27,6 +27,7 @@
 #include "messages.h"
 #include "../lib/util/pidfile.h"
 #include "util_cluster.h"
+#include "lib/gencache.h"
 
 int ClientNMB       = -1;
 int ClientDGRAM     = -1;
@@ -46,7 +47,7 @@ time_t StartupTime = 0;
 
 struct tevent_context *nmbd_event_context(void)
 {
-	return server_event_context();
+	return global_event_context();
 }
 
 /**************************************************************************** **
@@ -68,8 +69,6 @@ static void terminate(struct messaging_context *msg)
 
 	/* If there was an async dns child - kill it. */
 	kill_async_dns_child();
-
-	gencache_stabilize();
 
 	pidfile_unlink(lp_pid_directory(), "nmbd");
 
@@ -928,7 +927,7 @@ static bool open_sockets(bool isdaemon, int port)
 		exit(1);
 	}
 
-	msg = messaging_init(NULL, server_event_context());
+	msg = messaging_init(NULL, global_event_context());
 	if (msg == NULL) {
 		return 1;
 	}
@@ -958,7 +957,7 @@ static bool open_sockets(bool isdaemon, int port)
 		become_daemon(Fork, no_process_group, log_stdout);
 	}
 
-#if HAVE_SETPGID
+#ifdef HAVE_SETPGID
 	/*
 	 * If we're interactive we want to set our own process group for 
 	 * signal management.

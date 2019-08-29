@@ -3359,9 +3359,10 @@ static int cmd_posix_whoami(void)
 	}
 	d_printf("NUM_SIDS:%" PRIu32 "\n", num_sids);
 	for (i = 0; i < num_sids; i++) {
-		char *sid_str = dom_sid_string(ctx, &sids[i]);
-		d_printf("SIDS[%" PRIu32 "]:%s\n", i, sid_str);
-		TALLOC_FREE(sid_str);
+		struct dom_sid_buf buf;
+		d_printf("SIDS[%" PRIu32 "]:%s\n",
+			 i,
+			 dom_sid_str_buf(&sids[i], &buf));
 	}
 	return 0;
 }
@@ -4901,6 +4902,7 @@ static bool browse_host_rpc(bool sort)
 static bool browse_host(bool sort)
 {
 	int ret;
+
 	if (!grepable) {
 	        d_printf("\n\tSharename       Type      Comment\n");
 	        d_printf("\t---------       ----      -------\n");
@@ -4910,7 +4912,12 @@ static bool browse_host(bool sort)
 		return true;
 	}
 
-	if((ret = cli_RNetShareEnum(cli, browse_fn, NULL)) == -1) {
+	if (lp_client_min_protocol() > PROTOCOL_NT1) {
+		return false;
+	}
+
+	ret = cli_RNetShareEnum(cli, browse_fn, NULL);
+	if (ret == -1) {
 		NTSTATUS status = cli_nt_error(cli);
 		d_printf("Error returning browse list: %s\n",
 			 nt_errstr(status));
@@ -6227,7 +6234,7 @@ static int do_host_query(const char *query_host)
 				     smb_encrypt, max_proto,
 				     NBT_SMB_PORT, name_type, &cli);
 		if (!NT_STATUS_IS_OK(status)) {
-			d_printf("Failed to connect with SMB1 "
+			d_printf("Unable to connect with SMB1 "
 				 "-- no workgroup available\n");
 			return 0;
 		}

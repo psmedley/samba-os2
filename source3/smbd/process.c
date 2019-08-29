@@ -977,7 +977,7 @@ static void smbd_setup_sig_term_handler(struct smbd_server_connection *sconn)
 {
 	struct tevent_signal *se;
 
-	se = tevent_add_signal(sconn->root_ev_ctx,
+	se = tevent_add_signal(sconn->ev_ctx,
 			       sconn,
 			       SIGTERM, 0,
 			       smbd_sig_term_handler,
@@ -1007,7 +1007,7 @@ static void smbd_setup_sig_hup_handler(struct smbd_server_connection *sconn)
 {
 	struct tevent_signal *se;
 
-	se = tevent_add_signal(sconn->root_ev_ctx,
+	se = tevent_add_signal(sconn->ev_ctx,
 			       sconn,
 			       SIGHUP, 0,
 			       smbd_sig_hup_handler,
@@ -1506,8 +1506,6 @@ static connection_struct *switch_message(uint8_t type, struct smb_request *req)
 
 	errno = 0;
 
-	req->ev_ctx = NULL;
-
 	if (!xconn->smb1.negprot.done) {
 		switch (type) {
 			/*
@@ -1642,8 +1640,6 @@ static connection_struct *switch_message(uint8_t type, struct smb_request *req)
 			reply_nterror(req, NT_STATUS_ACCESS_DENIED);
 			return conn;
 		}
-
-		req->ev_ctx = conn->user_ev_ctx;
 	} else if (flags & AS_GUEST) {
 		/*
 		 * Does this protocol need to be run as guest? (Only archane
@@ -1653,13 +1649,9 @@ static connection_struct *switch_message(uint8_t type, struct smb_request *req)
 			reply_nterror(req, NT_STATUS_ACCESS_DENIED);
 			return conn;
 		}
-
-		req->ev_ctx = req->sconn->guest_ev_ctx;
 	} else {
 		/* This call needs to be run as root */
 		change_to_root_user();
-
-		req->ev_ctx = req->sconn->root_ev_ctx;
 	}
 
 	/* load service specific parameters */
@@ -3931,9 +3923,7 @@ void smbd_process(struct tevent_context *ev_ctx,
 	client->sconn = sconn;
 	sconn->client = client;
 
-	sconn->raw_ev_ctx = ev_ctx;
-	sconn->root_ev_ctx = ev_ctx;
-	sconn->guest_ev_ctx = ev_ctx;
+	sconn->ev_ctx = ev_ctx;
 	sconn->msg_ctx = msg_ctx;
 
 	ret = pthreadpool_tevent_init(sconn, lp_aio_max_threads(),
@@ -4072,7 +4062,7 @@ void smbd_process(struct tevent_context *ev_ctx,
 			   ID_CACHE_KILL, smbd_id_cache_kill);
 
 	messaging_deregister(sconn->msg_ctx,
-			     MSG_SMB_CONF_UPDATED, sconn->raw_ev_ctx);
+			     MSG_SMB_CONF_UPDATED, sconn->ev_ctx);
 	messaging_register(sconn->msg_ctx, sconn,
 			   MSG_SMB_CONF_UPDATED, smbd_conf_updated);
 

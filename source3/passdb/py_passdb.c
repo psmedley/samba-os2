@@ -3081,10 +3081,10 @@ static PyObject *py_pdb_set_trusted_domain(PyObject *self, PyObject *args)
 	}
 
 	py_tmp = PyDict_GetItemString(py_td_info, "domain_name");
-	td_info.domain_name = PyStr_AsString(py_tmp);
+	td_info.domain_name = discard_const_p(char, PyStr_AsString(py_tmp));
 
 	py_tmp = PyDict_GetItemString(py_td_info, "netbios_name");
-	td_info.netbios_name = PyStr_AsString(py_tmp);
+	td_info.netbios_name = discard_const_p(char, PyStr_AsString(py_tmp));
 
 	py_tmp = PyDict_GetItemString(py_td_info, "security_identifier");
 	td_info.security_identifier = *pytalloc_get_type(py_tmp, struct dom_sid);
@@ -3542,7 +3542,7 @@ static PyObject *py_pdb_new(PyTypeObject *type, PyObject *args, PyObject *kwargs
 		return NULL;
 	}
 
-	/* Initalize list of methods */
+	/* Initialize list of methods */
 	status = make_pdb_method_name(&methods, url);
 	if (!NT_STATUS_IS_OK(status)) {
 		PyErr_Format(py_pdb_error, "Cannot load backend methods for '%s' backend (%d,%s)",
@@ -3662,6 +3662,31 @@ static PyObject *py_reload_static_pdb(PyObject *self, PyObject *args)
 	Py_RETURN_NONE;
 }
 
+static PyObject *py_get_domain_sid(PyObject *self, PyObject *unused)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	struct dom_sid domain_sid, *domain_sid_copy;
+	PyObject *py_dom_sid = Py_None;
+	bool ret = false;
+
+	ret = secrets_fetch_domain_sid(lp_workgroup(), &domain_sid);
+	if (!ret) {
+		talloc_free(frame);
+		return PyErr_NoMemory();
+	}
+
+	domain_sid_copy = dom_sid_dup(frame, &domain_sid);
+	if (domain_sid_copy == NULL) {
+		talloc_free(frame);
+		return PyErr_NoMemory();
+	}
+
+	py_dom_sid = pytalloc_steal(dom_sid_Type, domain_sid_copy);
+
+	talloc_free(frame);
+	return py_dom_sid;
+}
+
 static PyObject *py_get_global_sam_sid(PyObject *self, PyObject *unused)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -3697,9 +3722,12 @@ static PyMethodDef py_passdb_methods[] = {
 	{ "get_global_sam_sid", py_get_global_sam_sid, METH_NOARGS,
 		"get_global_sam_sid() -> dom_sid\n\n \
 		Return domain SID." },
+	{ "get_domain_sid", py_get_domain_sid, METH_NOARGS,
+		"get_domain_sid() -> dom_sid\n\n \
+		Return domain SID from secrets database." },
 	{ "reload_static_pdb", py_reload_static_pdb, METH_NOARGS,
 		"reload_static_pdb() -> None\n\n \
-		Re-initalise the static pdb used internally.  Needed if 'passdb backend' is changed." },
+		Re-initialise the static pdb used internally.  Needed if 'passdb backend' is changed." },
 	{ NULL },
 };
 

@@ -26,6 +26,7 @@
 		<arg choice="opt">-w|--workgroup workgroup</arg>
 		<arg choice="opt">-W|--myworkgroup myworkgroup</arg>
 		<arg choice="opt">-U|--user user</arg>
+		<arg choice="opt">-A|--authentication-file authfile</arg>
 		<arg choice="opt">-I|--ipaddress ip-address</arg>
 		<arg choice="opt">-p|--port port</arg>
 		<arg choice="opt">-n myname</arg>
@@ -820,6 +821,30 @@ DOMAIN</replaceable>. Defaults to local domain.</para>
 
 <para>Give IP of master browser for specified <replaceable>DOMAIN</replaceable>
 or workgroup. Defaults to local domain.</para>
+
+</refsect3>
+
+<refsect3>
+<title>LOOKUP NAME [<replaceable>NAME</replaceable>]</title>
+
+<para>Lookup username's sid and type for specified <replaceable>NAME</replaceable>
+</para>
+
+</refsect3>
+
+<refsect3>
+<title>LOOKUP SID [<replaceable>SID</replaceable>]</title>
+
+<para>Give sid's name and type for specified <replaceable>SID</replaceable>
+</para>
+
+</refsect3>
+
+<refsect3>
+<title>LOOKUP DSGETDCNAME [<replaceable>NAME</replaceable>] [<replaceable>FLAGS</replaceable>] [<replaceable>SITENAME</replaceable>]</title>
+
+<para>Give Domain Controller information for specified domain <replaceable>NAME</replaceable>
+</para>
 
 </refsect3>
 

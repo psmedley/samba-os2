@@ -1,0 +1,16 @@
+# CTDB: /etc/default/nfs-kernel-server for clustering
+
+NFS_HOSTNAME="PLACE_HOSTNAME_HERE"
+
+# rpc.nfsd - user level part of nfs service (kernel: nfsd module)
+RPCNFSDPRIORITY=0
+RPCNFSDCOUNT=8
+RPCNFSDOPTS="-N 4"
+
+# rpc.mountd - server side of nfs mount protocol
+RPCMOUNTDOPTS="-p 32767 --manage-gids --no-nfs-version 4"
+
+# rpc.svcgssd - userspace daemon to handle sec context for kernel rpcsec_gss
+NEED_SVCGSSD="no"
+RPCSVCGSSDOPTS=""
+

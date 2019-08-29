@@ -939,20 +939,19 @@ static void take_reclock_handler(char status,
 	s->done = true;
 }
 
-static bool ctdb_recovery_lock(struct ctdb_recoverd *rec);
+static void force_election(struct ctdb_recoverd *rec,
+			   uint32_t pnn,
+			   struct ctdb_node_map_old *nodemap);
 
 static void lost_reclock_handler(void *private_data)
 {
 	struct ctdb_recoverd *rec = talloc_get_type_abort(
 		private_data, struct ctdb_recoverd);
 
-	DEBUG(DEBUG_ERR,
-	      ("Recovery lock helper terminated unexpectedly - "
-	       "trying to retake recovery lock\n"));
+	D_ERR("Recovery lock helper terminated, triggering an election\n");
 	TALLOC_FREE(rec->recovery_lock_handle);
-	if (! ctdb_recovery_lock(rec)) {
-		DEBUG(DEBUG_ERR, ("Failed to take recovery lock\n"));
-	}
+
+	force_election(rec, ctdb_get_pnn(rec->ctdb), rec->nodemap);
 }
 
 static bool ctdb_recovery_lock(struct ctdb_recoverd *rec)
@@ -1135,7 +1134,7 @@ static int helper_run(struct ctdb_recoverd *rec, TALLOC_CTX *mem_ctx,
 
 	state->done = false;
 
-	fde = tevent_add_fd(rec->ctdb->ev, rec->ctdb, state->fd[0],
+	fde = tevent_add_fd(rec->ctdb->ev, state, state->fd[0],
 			    TEVENT_FD_READ, helper_handler, state);
 	if (fde == NULL) {
 		goto fail;
@@ -2663,7 +2662,7 @@ static void main_loop(struct ctdb_context *ctdb, struct ctdb_recoverd *rec,
 		DEBUG(DEBUG_ERR, (__location__ " Failed to read debuglevel from parent\n"));
 		return;
 	}
-	DEBUGLEVEL = debug_level;
+	debuglevel_set(debug_level);
 
 	/* get relevant tunables */
 	ret = ctdb_ctrl_get_all_tunables(ctdb, CONTROL_TIMEOUT(), CTDB_CURRENT_NODE, &ctdb->tunable);

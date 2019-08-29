@@ -1,0 +1,19 @@
+# CTDB: /etc/default/nfs-common for clustering
+
+NFS_HOSTNAME="PLACE_HOSTNAME_HERE"
+
+# rpc.statd - daemon listening for reboot notifications (locks related)
+NEED_STATD="yes"
+STATDOPTS="-n ${NFS_HOSTNAME} -p 32765 -o 32766 -H /etc/ctdb/statd-callout -T 32768 -U 32768"
+STATD_HOSTNAME="$NFS_HOSTNAME"
+
+# rpc.gssd - security context for rpc connections
+NEED_GSSD="no"
+
+# rpc.idmapd - NFSv4 <-> name mapping daemon (fallback nowadays)
+# recent kernels use nfsidmap(8) instead
+NEED_IDMAPD="no"
+
+# rpc.quota - usage quota
+RPCRQUOTADOPTS="-p 32769"
+

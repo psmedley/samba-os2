@@ -1087,6 +1087,7 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 			   uint32_t dirtype,
 			   bool dont_descend,
 			   bool ask_sharemode,
+			   bool get_dosmode,
 			   bool (*match_fn)(TALLOC_CTX *ctx,
 					    void *private_data,
 					    const char *dname,
@@ -1095,6 +1096,7 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 			   bool (*mode_fn)(TALLOC_CTX *ctx,
 					   void *private_data,
 					   struct smb_filename *smb_fname,
+					   bool get_dosmode,
 					   uint32_t *_mode),
 			   void *private_data,
 			   char **_fname,
@@ -1189,7 +1191,7 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 			.base_name = pathreal, .st = sbuf
 		};
 
-		ok = mode_fn(ctx, private_data, &smb_fname, &mode);
+		ok = mode_fn(ctx, private_data, &smb_fname, get_dosmode, &mode);
 		if (!ok) {
 			TALLOC_FREE(dname);
 			TALLOC_FREE(fname);
@@ -1318,6 +1320,7 @@ static bool smbd_dirptr_8_3_match_fn(TALLOC_CTX *ctx,
 static bool smbd_dirptr_8_3_mode_fn(TALLOC_CTX *ctx,
 				    void *private_data,
 				    struct smb_filename *smb_fname,
+				    bool get_dosmode,
 				    uint32_t *_mode)
 {
 	connection_struct *conn = (connection_struct *)private_data;
@@ -1361,6 +1364,7 @@ bool get_dir_entry(TALLOC_CTX *ctx,
 				   dirtype,
 				   check_descend,
 				   ask_sharemode,
+				   true,
 				   smbd_dirptr_8_3_match_fn,
 				   smbd_dirptr_8_3_mode_fn,
 				   conn,
@@ -1532,6 +1536,7 @@ bool is_visible_file(connection_struct *conn, const char *dir_path,
 	bool hide_unreadable = lp_hide_unreadable(SNUM(conn));
 	bool hide_unwriteable = lp_hide_unwriteable_files(SNUM(conn));
 	bool hide_special = lp_hide_special_files(SNUM(conn));
+	int hide_new_files_timeout = lp_hide_new_files_timeout(SNUM(conn));
 	char *entry = NULL;
 	struct smb_filename *smb_fname_base = NULL;
 	bool ret = false;
@@ -1546,7 +1551,11 @@ bool is_visible_file(connection_struct *conn, const char *dir_path,
 		return False;
 	}
 
-	if (hide_unreadable || hide_unwriteable || hide_special) {
+	if (hide_unreadable ||
+	    hide_unwriteable ||
+	    hide_special ||
+	    (hide_new_files_timeout != 0))
+	{
 		entry = talloc_asprintf(talloc_tos(), "%s/%s", dir_path, name);
 		if (!entry) {
 			ret = false;
@@ -1598,6 +1607,17 @@ bool is_visible_file(connection_struct *conn, const char *dir_path,
 				 entry ));
 			ret = false;
 			goto out;
+		}
+
+		if (hide_new_files_timeout != 0) {
+
+			double age = timespec_elapsed(
+				&smb_fname_base->st.st_ex_mtime);
+
+			if (age < (double)hide_new_files_timeout) {
+				ret = false;
+				goto out;
+			}
 		}
 	}
 

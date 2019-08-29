@@ -17,7 +17,7 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin
 [ -r /etc/default/winbind ] && . /etc/default/winbind
 
 DAEMON=/usr/sbin/winbindd
-PIDDIR=/var/run/samba
+PIDDIR=/run/samba
 WINBINDPID=$PIDDIR/winbindd.pid
 
 # clear conflicting settings from the environment

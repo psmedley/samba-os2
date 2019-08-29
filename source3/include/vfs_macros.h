@@ -386,6 +386,21 @@
 #define SMB_VFS_NEXT_FGET_DOS_ATTRIBUTES(handle, fsp, attributes) \
 	smb_vfs_call_fget_dos_attributes((handle)->next, (fsp), (attributes))
 
+#define SMB_VFS_GET_DOS_ATTRIBUTES_SEND(mem_ctx, evg, dir_fsp, smb_fname) \
+	smb_vfs_call_get_dos_attributes_send((mem_ctx), (evg), \
+					     (dir_fsp)->conn->vfs_handles, \
+					     (dir_fsp), (smb_fname))
+#define SMB_VFS_GET_DOS_ATTRIBUTES_RECV(req, aio_state, dosmode) \
+	smb_vfs_call_get_dos_attributes_recv((req), (aio_state), (dosmode))
+
+#define SMB_VFS_NEXT_GET_DOS_ATTRIBUTES_SEND(mem_ctx, evg, handle, dir_fsp, \
+					     smb_fname) \
+	smb_vfs_call_get_dos_attributes_send((mem_ctx), (evg), \
+					     (handle)->next, \
+					     (dir_fsp), (smb_fname))
+#define SMB_VFS_NEXT_GET_DOS_ATTRIBUTES_RECV(req, aio_state, dosmode) \
+	smb_vfs_call_get_dos_attributes_recv((req), (aio_state), (dosmode))
+
 #define SMB_VFS_SET_DOS_ATTRIBUTES(conn, smb_fname, attributes) \
 	smb_vfs_call_set_dos_attributes((conn)->vfs_handles, (smb_fname), (attributes))
 #define SMB_VFS_NEXT_SET_DOS_ATTRIBUTES(handle, smb_fname, attributes) \
@@ -499,6 +514,24 @@
 	smb_vfs_call_getxattr((conn)->vfs_handles,(smb_fname),(name),(value),(size))
 #define SMB_VFS_NEXT_GETXATTR(handle,smb_fname,name,value,size) \
 	smb_vfs_call_getxattr((handle)->next,(smb_fname),(name),(value),(size))
+
+#define SMB_VFS_GETXATTRAT_SEND(mem_ctx,ev,dir_fsp,smb_fname, \
+				xattr_name, alloc_hint) \
+	smb_vfs_call_getxattrat_send((mem_ctx),(ev), \
+				     (dir_fsp)->conn->vfs_handles, \
+				     (dir_fsp),(smb_fname),(xattr_name), \
+				     (alloc_hint))
+#define SMB_VFS_GETXATTRAT_RECV(req, aio_state, mem_ctx, xattr_value) \
+	smb_vfs_call_getxattrat_recv((req),(aio_state),(mem_ctx),(xattr_value))
+
+#define SMB_VFS_NEXT_GETXATTRAT_SEND(mem_ctx,ev,handle,dir_fsp,smb_fname, \
+				     xattr_name,alloc_hint) \
+	smb_vfs_call_getxattrat_send((mem_ctx),(ev), \
+				     (handle)->next, \
+				     (dir_fsp), (smb_fname),(xattr_name), \
+				     (alloc_hint))
+#define SMB_VFS_NEXT_GETXATTRAT_RECV(req, aio_state, mem_ctx, xattr_value) \
+	smb_vfs_call_getxattrat_recv((req),(aio_state),(mem_ctx),(xattr_value))
 
 #define SMB_VFS_FGETXATTR(fsp,name,value,size) \
 	smb_vfs_call_fgetxattr((fsp)->conn->vfs_handles, (fsp), (name),(value),(size))

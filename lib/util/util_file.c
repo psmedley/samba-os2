@@ -24,6 +24,8 @@
 #include "system/filesys.h"
 #include <talloc.h>
 #include "lib/util/samba_util.h"
+#include "lib/util/sys_popen.h"
+#include "lib/util/sys_rw.h"
 #include "lib/util/debug.h"
 
 /**
@@ -168,30 +170,63 @@ load a file into memory from a fd.
 **/
 _PUBLIC_ char *fd_load(int fd, size_t *psize, size_t maxsize, TALLOC_CTX *mem_ctx)
 {
-	struct stat sbuf;
-	char *p;
-	size_t size;
+	FILE *file;
+	char *p = NULL;
+	size_t size = 0;
+	size_t chunk = 1024;
+	int err;
 
-	if (fstat(fd, &sbuf) != 0) return NULL;
-
-	size = sbuf.st_size;
-
-	if (maxsize) {
-		size = MIN(size, maxsize);
+	if (maxsize == 0) {
+		maxsize = SIZE_MAX;
 	}
 
-	p = (char *)talloc_size(mem_ctx, size+1);
-	if (!p) return NULL;
-
-	if (read(fd, p, size) != size) {
-		talloc_free(p);
+	file = fdopen(fd, "r");
+	if (file == NULL) {
 		return NULL;
 	}
-	p[size] = 0;
 
-	if (psize) *psize = size;
+	while (size < maxsize) {
+		size_t newbufsize;
+		size_t nread;
 
+		chunk = MIN(chunk, (maxsize - size));
+
+		newbufsize = size + (chunk+1); /* chunk+1 can't overflow */
+		if (newbufsize < size) {
+			goto fail; /* overflow */
+		}
+
+		p = talloc_realloc(mem_ctx, p, char, newbufsize);
+		if (p == NULL) {
+			goto fail;
+		}
+
+		nread = fread(p+size, 1, chunk, file);
+		size += nread;
+
+		if (nread != chunk) {
+			break;
+		}
+	}
+
+	err = ferror(file);
+	if (err != 0) {
+		goto fail;
+	}
+
+	p[size] = '\0';
+
+	if (psize != NULL) {
+		*psize = size;
+	}
+
+	fclose(file);
 	return p;
+
+fail:
+	TALLOC_FREE(p);
+	fclose(file);
+	return NULL;
 }
 
 /**
@@ -361,4 +396,50 @@ bool file_compare(const char *path1, const char *path2)
 	}
 	talloc_free(mem_ctx);
 	return true;
+}
+
+/**
+ Load from a pipe into memory.
+**/
+char *file_ploadv(char * const argl[], size_t *size)
+{
+	int fd, n;
+	char *p = NULL;
+	char buf[1024];
+	size_t total;
+
+	fd = sys_popenv(argl);
+	if (fd == -1) {
+		return NULL;
+	}
+
+	total = 0;
+
+	while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+		p = talloc_realloc(NULL, p, char, total + n + 1);
+		if (p == NULL) {
+		        DBG_ERR("failed to expand buffer!\n");
+			close(fd);
+			return NULL;
+		}
+		memcpy(p+total, buf, n);
+		total += n;
+	}
+
+	if (p != NULL) {
+		p[total] = 0;
+	}
+
+	/*
+	 * FIXME: Perhaps ought to check that the command completed
+	 * successfully (returned 0); if not the data may be
+	 * truncated.
+	 */
+	sys_pclose(fd);
+
+	if (size) {
+		*size = total;
+	}
+
+	return p;
 }

@@ -25,12 +25,14 @@ from samba.join import DCJoinContext
 from samba.dcerpc import drsuapi, misc, dns
 from samba.credentials import Credentials
 
+
 def get_logger(name="subunit"):
     """Get a logger object."""
     import logging
     logger = logging.getLogger(name)
     logger.addHandler(logging.StreamHandler(sys.stderr))
     return logger
+
 
 class JoinTestCase(DNSTKeyTest):
     def setUp(self):
@@ -80,9 +82,7 @@ class JoinTestCase(DNSTKeyTest):
 
         super(JoinTestCase, self).tearDown()
 
-
     def test_join_makes_records(self):
-
         "create a query packet containing one query record via TCP"
         p = self.make_name_packet(dns.DNS_OPCODE_QUERY)
         questions = []
@@ -114,7 +114,6 @@ class JoinTestCase(DNSTKeyTest):
         self.assertEquals(response.answers[0].rr_type, dns.DNS_QTYPE_CNAME)
         self.assertEquals(response.answers[0].rdata, self.join_ctx.dnshostname)
         self.assertEquals(response.answers[1].rr_type, dns.DNS_QTYPE_A)
-
 
     def test_join_records_can_update(self):
         dc_creds = Credentials()

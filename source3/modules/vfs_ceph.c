@@ -119,6 +119,17 @@ static int cephwrap_connect(struct vfs_handle_struct *handle,  const char *servi
 		goto err_cm_release;
 	}
 
+	/* libcephfs disables POSIX ACL support by default, enable it... */
+	ret = ceph_conf_set(cmount, "client_acl_type", "posix_acl");
+	if (ret < 0) {
+		goto err_cm_release;
+	}
+	/* tell libcephfs to perform local permission checks */
+	ret = ceph_conf_set(cmount, "fuse_default_permissions", "false");
+	if (ret < 0) {
+		goto err_cm_release;
+	}
+
 	DBG_DEBUG("[CEPH] calling: ceph_mount\n");
 	ret = ceph_mount(cmount, NULL);
 	if (ret < 0) {
@@ -131,6 +142,11 @@ static int cephwrap_connect(struct vfs_handle_struct *handle,  const char *servi
 	 */
 	handle->data = cmount;
 	cmount_cnt++;
+
+	/*
+	 * Unless we have an async implementation of getxattrat turn this off.
+	 */
+	lp_do_parameter(SNUM(handle->conn), "smbd:async dosmode", "false");
 
 	return 0;
 
@@ -1205,14 +1221,14 @@ static struct smb_filename *cephwrap_realpath(struct vfs_handle_struct *handle,
 	} else if ((len >= 2) && (path[0] == '.') && (path[1] == '/')) {
 		if (len == 2) {
 			r = asprintf(&result, "%s",
-					handle->conn->connectpath);
+					handle->conn->cwd_fname->base_name);
 		} else {
 			r = asprintf(&result, "%s/%s",
-					handle->conn->connectpath, &path[2]);
+					handle->conn->cwd_fname->base_name, &path[2]);
 		}
 	} else {
 		r = asprintf(&result, "%s/%s",
-				handle->conn->connectpath, path);
+				handle->conn->cwd_fname->base_name, path);
 	}
 
 	if (r < 0) {
@@ -1317,7 +1333,8 @@ static ssize_t cephwrap_listxattr(struct vfs_handle_struct *handle,
 static ssize_t cephwrap_flistxattr(struct vfs_handle_struct *handle, struct files_struct *fsp, char *list, size_t size)
 {
 	int ret;
-	DBG_DEBUG("[CEPH] flistxattr(%p, %p, %s, %llu)\n", handle, fsp, list, llu(size));
+	DBG_DEBUG("[CEPH] flistxattr(%p, %p, %p, %llu)\n",
+		  handle, fsp, list, llu(size));
 #if LIBCEPHFS_VERSION_CODE >= LIBCEPHFS_VERSION(0, 94, 0)
 	ret = ceph_flistxattr(handle->data, fsp->fh->fd, list, size);
 #else
@@ -1466,6 +1483,8 @@ static struct vfs_fn_pointers ceph_fns = {
 
 	/* EA operations. */
 	.getxattr_fn = cephwrap_getxattr,
+	.getxattrat_send_fn = vfs_not_implemented_getxattrat_send,
+	.getxattrat_recv_fn = vfs_not_implemented_getxattrat_recv,
 	.fgetxattr_fn = cephwrap_fgetxattr,
 	.listxattr_fn = cephwrap_listxattr,
 	.flistxattr_fn = cephwrap_flistxattr,

@@ -129,7 +129,7 @@ static void sig_hup(int sig)
 
 static void sig_term(int sig)
 {
-#if HAVE_GETPGRP
+#ifdef HAVE_GETPGRP
 	if (getpgrp() == getpid()) {
 		/*
 		 * We're the process group leader, send
@@ -199,7 +199,7 @@ static void server_stdin_handler(struct tevent_context *event_ctx,
 	if (read(0, &c, 1) == 0) {
 		DBG_ERR("%s: EOF on stdin - PID %d terminating\n",
 			state->binary_name, (int)getpid());
-#if HAVE_GETPGRP
+#ifdef HAVE_GETPGRP
 		if (getpgrp() == getpid()) {
 			DBG_ERR("Sending SIGTERM from pid %d\n",
 				(int)getpid());
@@ -586,7 +586,7 @@ static int binary_smbd_main(const char *binary_name,
 		binary_name,
 		SAMBA_VERSION_STRING));
 	DEBUGADD(0,("Copyright Andrew Tridgell and the Samba Team"
-		" 1992-2018\n"));
+		" 1992-2019\n"));
 
 	if (sizeof(uint16_t) < 2 ||
 			sizeof(uint32_t) < 4 ||
@@ -671,7 +671,7 @@ static int binary_smbd_main(const char *binary_name,
 		stdin_event_flags = 0;
 	}
 
-#if HAVE_SETPGID
+#ifdef HAVE_SETPGID
 	/*
 	 * If we're interactive we want to set our own process group for
 	 * signal management, unless --no-process-group specified.

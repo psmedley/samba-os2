@@ -2156,17 +2156,16 @@ enum samr_ValidationStatus samdb_check_password(TALLOC_CTX *mem_ctx,
 			DEBUG(0, ("check_password_complexity: check password script took too long!\n"));
 			TALLOC_FREE(password_script);
 			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
-		} else {
-			DEBUG(5,("check_password_complexity: check password script (%s) "
-				 "returned [%d]\n", password_script, check_ret));
+		}
+		DEBUG(5,("check_password_complexity: check password script (%s) "
+			 "returned [%d]\n", password_script, check_ret));
 
-			if (check_ret != 0) {
-				DEBUG(1,("check_password_complexity: "
-					 "check password script said new password is not good "
-					 "enough!\n"));
-				TALLOC_FREE(password_script);
-				return SAMR_VALIDATION_STATUS_NOT_COMPLEX_ENOUGH;
-			}
+		if (check_ret != 0) {
+			DEBUG(1,("check_password_complexity: "
+				 "check password script said new password is not good "
+				 "enough!\n"));
+			TALLOC_FREE(password_script);
+			return SAMR_VALIDATION_STATUS_NOT_COMPLEX_ENOUGH;
 		}
 
 		TALLOC_FREE(password_script);
@@ -4439,6 +4438,14 @@ int dsdb_request_add_controls(struct ldb_request *req, uint32_t dsdb_flags)
 	}
 
 	return LDB_SUCCESS;
+}
+
+/*
+   returns true if a control with the specified "oid" exists
+*/
+bool dsdb_request_has_control(struct ldb_request *req, const char *oid)
+{
+	return (ldb_request_get_control(req, oid) != NULL);
 }
 
 /*

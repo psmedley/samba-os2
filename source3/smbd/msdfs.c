@@ -28,6 +28,7 @@
 #include "smbd/globals.h"
 #include "msdfs.h"
 #include "auth.h"
+#include "../auth/auth_util.h"
 #include "lib/param/loadparm.h"
 #include "libcli/security/security.h"
 #include "librpc/gen_ndr/ndr_dfsblobs.h"
@@ -257,14 +258,12 @@ static NTSTATUS create_conn_struct_as_root(TALLOC_CTX *ctx,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	sconn->raw_ev_ctx = samba_tevent_context_init(sconn);
-	if (sconn->raw_ev_ctx == NULL) {
+	sconn->ev_ctx = samba_tevent_context_init(sconn);
+	if (sconn->ev_ctx == NULL) {
 		TALLOC_FREE(sconn);
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	sconn->root_ev_ctx = sconn->raw_ev_ctx;
-	sconn->guest_ev_ctx = sconn->raw_ev_ctx;
 	sconn->msg_ctx = msg;
 
 	conn = conn_new(sconn);
@@ -317,8 +316,6 @@ static NTSTATUS create_conn_struct_as_root(TALLOC_CTX *ctx,
 		/* use current authenticated user in absence of session_info */
 		vfs_user = get_current_username();
 	}
-
-	conn->user_ev_ctx = sconn->raw_ev_ctx;
 
 	set_conn_connectpath(conn, connpath);
 
@@ -1110,7 +1107,7 @@ NTSTATUS get_referred_path(TALLOC_CTX *ctx,
 		return NT_STATUS_OK;
 	}
 
-	status = create_conn_struct_tos_cwd(server_messaging_context(),
+	status = create_conn_struct_tos_cwd(global_messaging_context(),
 					    snum,
 					    lp_path(frame, snum),
 					    NULL,
@@ -1324,7 +1321,7 @@ static bool junction_to_local_path_tos(const struct junction_map *jucn,
 	if(snum < 0) {
 		return False;
 	}
-	status = create_conn_struct_tos_cwd(server_messaging_context(),
+	status = create_conn_struct_tos_cwd(global_messaging_context(),
 					    snum,
 					    lp_path(talloc_tos(), snum),
 					    NULL,
@@ -1494,7 +1491,7 @@ static int count_dfs_links(TALLOC_CTX *ctx, int snum)
 	 * Fake up a connection struct for the VFS layer.
 	 */
 
-	status = create_conn_struct_tos_cwd(server_messaging_context(),
+	status = create_conn_struct_tos_cwd(global_messaging_context(),
 					    snum,
 					    connect_path,
 					    NULL,
@@ -1591,7 +1588,7 @@ static int form_junctions(TALLOC_CTX *ctx,
 	 * Fake up a connection struct for the VFS layer.
 	 */
 
-	status = create_conn_struct_tos_cwd(server_messaging_context(),
+	status = create_conn_struct_tos_cwd(global_messaging_context(),
 					    snum,
 					    connect_path,
 					    NULL,

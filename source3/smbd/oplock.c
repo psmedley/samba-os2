@@ -25,7 +25,6 @@
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
 #include "messages.h"
-#include "../librpc/gen_ndr/open_files.h"
 #include "../librpc/gen_ndr/ndr_open_files.h"
 
 /*
@@ -59,13 +58,10 @@ NTSTATUS set_file_oplock(files_struct *fsp)
 	bool use_kernel = lp_kernel_oplocks(SNUM(fsp->conn)) &&
 			(koplocks != NULL);
 
-	if (fsp->oplock_type == LEVEL_II_OPLOCK) {
-		if (use_kernel &&
-		    !(koplocks->flags & KOPLOCKS_LEVEL2_SUPPORTED)) {
-			DEBUG(10, ("Refusing level2 oplock, kernel oplocks "
-				   "don't support them\n"));
-			return NT_STATUS_NOT_SUPPORTED;
-		}
+	if (fsp->oplock_type == LEVEL_II_OPLOCK && use_kernel) {
+		DEBUG(10, ("Refusing level2 oplock, kernel oplocks "
+			   "don't support them\n"));
+		return NT_STATUS_NOT_SUPPORTED;
 	}
 
 	if ((fsp->oplock_type != NO_OPLOCK) &&
@@ -91,6 +87,32 @@ NTSTATUS set_file_oplock(files_struct *fsp)
 	return NT_STATUS_OK;
 }
 
+static void release_fsp_kernel_oplock(files_struct *fsp)
+{
+	struct smbd_server_connection *sconn = fsp->conn->sconn;
+	struct kernel_oplocks *koplocks = sconn->oplocks.kernel_ops;
+	bool use_kernel;
+
+	if (koplocks == NULL) {
+		return;
+	}
+	use_kernel = lp_kernel_oplocks(SNUM(fsp->conn));
+	if (!use_kernel) {
+		return;
+	}
+	if (fsp->oplock_type == NO_OPLOCK) {
+		return;
+	}
+	if (fsp->oplock_type == LEASE_OPLOCK) {
+		/*
+		 * For leases we don't touch kernel oplocks at all
+		 */
+		return;
+	}
+
+	koplocks->ops->release_oplock(koplocks, fsp, NO_OPLOCK);
+}
+
 /****************************************************************************
  Attempt to release an oplock on a file. Decrements oplock count.
 ****************************************************************************/
@@ -98,14 +120,8 @@ NTSTATUS set_file_oplock(files_struct *fsp)
 static void release_file_oplock(files_struct *fsp)
 {
 	struct smbd_server_connection *sconn = fsp->conn->sconn;
-	struct kernel_oplocks *koplocks = sconn->oplocks.kernel_ops;
-	bool use_kernel = lp_kernel_oplocks(SNUM(fsp->conn)) &&
-			(koplocks != NULL);
 
-	if ((fsp->oplock_type != NO_OPLOCK) &&
-	    use_kernel) {
-		koplocks->ops->release_oplock(koplocks, fsp, NO_OPLOCK);
-	}
+	release_fsp_kernel_oplock(fsp);
 
 	if (fsp->oplock_type == LEVEL_II_OPLOCK) {
 		sconn->oplocks.level_II_open--;
@@ -338,11 +354,6 @@ static void lease_timeout_handler(struct tevent_context *ctx,
 	struct share_mode_lock *lck;
 	uint16_t old_epoch = lease->lease.lease_epoch;
 
-	/*
-	 * This function runs without any specific impersonation
-	 * and must not call any SMB_VFS operations!
-	 */
-
 	fsp = file_find_one_fsp_from_lease_key(lease->sconn,
 					       &lease->lease.lease_key);
 	if (fsp == NULL) {
@@ -350,6 +361,12 @@ static void lease_timeout_handler(struct tevent_context *ctx,
 		TALLOC_FREE(lease->timeout);
 		return;
 	}
+
+	/*
+	 * Paranoia check: There can only be one fsp_lease per lease
+	 * key
+	 */
+	SMB_ASSERT(fsp->lease == lease);
 
 	lck = get_existing_share_mode_lock(
 			talloc_tos(), fsp->file_id);
@@ -403,11 +420,7 @@ bool fsp_lease_update(struct share_mode_lock *lck,
 	struct share_mode_lease *l = NULL;
 
 	idx = find_share_mode_lease(d, client_guid, &lease->lease.lease_key);
-	if (idx != -1) {
-		l = &d->leases[idx];
-	}
-
-	if (l == NULL) {
+	if (idx == -1) {
 		DEBUG(1, ("%s: Could not find lease entry\n", __func__));
 		TALLOC_FREE(lease->timeout);
 		lease->lease.lease_state = SMB2_LEASE_NONE;
@@ -415,6 +428,8 @@ bool fsp_lease_update(struct share_mode_lock *lck,
 		lease->lease.lease_flags = 0;
 		return false;
 	}
+
+	l = &d->leases[idx];
 
 	DEBUG(10,("%s: refresh lease state\n", __func__));
 
@@ -434,12 +449,7 @@ bool fsp_lease_update(struct share_mode_lock *lck,
 
 			DEBUG(10,("%s: setup timeout handler\n", __func__));
 
-			/*
-			 * lease_timeout_handler() only accesses locking.tdb
-			 * so we don't use any impersonation and use
-			 * the raw tevent context.
-			 */
-			lease->timeout = tevent_add_timer(lease->sconn->raw_ev_ctx,
+			lease->timeout = tevent_add_timer(lease->sconn->ev_ctx,
 							  lease, t,
 							  lease_timeout_handler,
 							  lease);
@@ -525,8 +535,10 @@ NTSTATUS downgrade_lease(struct smbXsrv_connection *xconn,
 {
 	struct smbd_server_connection *sconn = xconn->client->sconn;
 	struct share_mode_lock *lck;
+	struct share_mode_data *d = NULL;
 	struct share_mode_lease *l = NULL;
 	const struct file_id id = ids[0];
+	int idx;
 	uint32_t i;
 	NTSTATUS status;
 
@@ -537,13 +549,64 @@ NTSTATUS downgrade_lease(struct smbXsrv_connection *xconn,
 	if (lck == NULL) {
 		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
-	status = downgrade_share_lease(sconn, lck, key, lease_state, &l);
+	d = lck->data;
 
-	DEBUG(10, ("%s: Downgrading %s to %x => %s\n", __func__,
-		   file_id_string_tos(&id), (unsigned)lease_state, nt_errstr(status)));
+	idx = find_share_mode_lease(
+		d, &sconn->client->connections->smb2.client.guid, key);
+	if (idx == -1) {
+		DEBUG(10, ("lease not found\n"));
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+	l = &d->leases[idx];
 
-	if (NT_STATUS_EQUAL(status, NT_STATUS_OPLOCK_BREAK_IN_PROGRESS)) {
+	if (!l->breaking) {
+		DBG_WARNING("Attempt to break from %"PRIu32" to %"PRIu32" - "
+			    "but we're not in breaking state\n",
+			    l->current_state, lease_state);
+		TALLOC_FREE(lck);
+		return NT_STATUS_UNSUCCESSFUL;
+	}
+
+	/*
+	 * Can't upgrade anything: l->breaking_to_requested (and l->current_state)
+	 * must be a strict bitwise superset of new_lease_state
+	 */
+	if ((lease_state & l->breaking_to_requested) != lease_state) {
+		DBG_WARNING("Attempt to upgrade from %"PRIu32" to %"PRIu32" "
+			    "- expected %"PRIu32"\n",
+			    l->current_state, lease_state,
+			    l->breaking_to_requested);
+		TALLOC_FREE(lck);
+		return NT_STATUS_REQUEST_NOT_ACCEPTED;
+	}
+
+	if (l->current_state != lease_state) {
+		l->current_state = lease_state;
+		d->modified = true;
+	}
+
+	status = NT_STATUS_OK;
+
+	d->modified = true;
+
+	if ((lease_state & ~l->breaking_to_required) != 0) {
 		struct downgrade_lease_additional_state *state;
+
+		DBG_INFO("lease state %"PRIu32" not fully broken from "
+			 "%"PRIu32" to %"PRIu32"\n",
+			 lease_state,
+			 l->current_state,
+			 l->breaking_to_required);
+
+		l->breaking_to_requested = l->breaking_to_required;
+
+		if (l->current_state & (SMB2_LEASE_WRITE|SMB2_LEASE_HANDLE)) {
+			/*
+			 * Here we break in steps, as windows does
+			 * see the breaking3 and v2_breaking3 tests.
+			 */
+			l->breaking_to_requested |= SMB2_LEASE_READ;
+		}
 
 		state = talloc_zero(xconn,
 				    struct downgrade_lease_additional_state);
@@ -560,9 +623,6 @@ NTSTATUS downgrade_lease(struct smbXsrv_connection *xconn,
 		}
 
 		state->xconn = xconn;
-		if (l->current_state & (~SMB2_LEASE_READ)) {
-			state->break_flags = SMB2_NOTIFY_BREAK_LEASE_FLAG_ACK_REQUIRED;
-		}
 		state->lease_key = l->lease_key;
 		state->break_from = l->current_state;
 		state->break_to = l->breaking_to_requested;
@@ -570,7 +630,10 @@ NTSTATUS downgrade_lease(struct smbXsrv_connection *xconn,
 			state->new_epoch = l->epoch;
 		}
 
-		if (state->break_flags == 0) {
+		if (l->current_state & (SMB2_LEASE_WRITE|SMB2_LEASE_HANDLE)) {
+			state->break_flags =
+				SMB2_NOTIFY_BREAK_LEASE_FLAG_ACK_REQUIRED;
+		} else {
 			/*
 			 * This is an async break without
 			 * SMB2_NOTIFY_BREAK_LEASE_FLAG_ACK_REQUIRED
@@ -590,7 +653,24 @@ NTSTATUS downgrade_lease(struct smbXsrv_connection *xconn,
 					  xconn->client->raw_ev_ctx,
 					  downgrade_lease_additional_trigger,
 					  state);
+
+		status = NT_STATUS_OPLOCK_BREAK_IN_PROGRESS;
+	} else {
+		DBG_DEBUG("breaking from %"PRIu32" to %"PRIu32" - "
+			  "expected %"PRIu32"\n",
+			  l->current_state,
+			  lease_state,
+			  l->breaking_to_requested);
+
+		l->breaking_to_requested = 0;
+		l->breaking_to_required = 0;
+		l->breaking = false;
+
+		d->modified = true;
 	}
+
+	DEBUG(10, ("%s: Downgrading %s to %x => %s\n", __func__,
+		   file_id_string_tos(&id), (unsigned)lease_state, nt_errstr(status)));
 
 	{
 		struct downgrade_lease_fsps_state state = {
@@ -727,11 +807,6 @@ static void oplock_timeout_handler(struct tevent_context *ctx,
 {
 	files_struct *fsp = (files_struct *)private_data;
 
-	/*
-	 * Note this function doesn't run under any specific impersonation and
-	 * is not expected to call any SMB_VFS operation!
-	 */
-
 	SMB_ASSERT(fsp->sent_oplock_break != NO_BREAK_SENT);
 
 	/* Remove the timed event handler. */
@@ -747,34 +822,13 @@ static void oplock_timeout_handler(struct tevent_context *ctx,
 
 static void add_oplock_timeout_handler(files_struct *fsp)
 {
-	struct smbd_server_connection *sconn = fsp->conn->sconn;
-	struct kernel_oplocks *koplocks = sconn->oplocks.kernel_ops;
-	bool use_kernel = lp_kernel_oplocks(SNUM(fsp->conn)) &&
-			(koplocks != NULL);
-
-	/*
-	 * If kernel oplocks already notifies smbds when an oplock break times
-	 * out, just return.
-	 */
-	if (use_kernel &&
-	    (koplocks->flags & KOPLOCKS_TIMEOUT_NOTIFICATION)) {
-		return;
-	}
-
 	if (fsp->oplock_timeout != NULL) {
 		DEBUG(0, ("Logic problem -- have an oplock event hanging "
 			  "around\n"));
 	}
 
-	/*
-	 * For now we keep the logic and use the
-	 * raw event context. We're called from
-	 * the messaging system from a raw event context.
-	 * Also oplock_timeout_handler doesn't invoke
-	 * SMB_VFS calls.
-	 */
 	fsp->oplock_timeout =
-		tevent_add_timer(fsp->conn->sconn->raw_ev_ctx, fsp,
+		tevent_add_timer(fsp->conn->sconn->ev_ctx, fsp,
 				 timeval_current_ofs(OPLOCK_BREAK_TIMEOUT, 0),
 				 oplock_timeout_handler, fsp);
 
@@ -877,7 +931,7 @@ static void process_oplock_break_message(struct messaging_context *msg_ctx,
 
 	use_kernel = lp_kernel_oplocks(SNUM(fsp->conn)) &&
 			(koplocks != NULL);
-	if (use_kernel && !(koplocks->flags & KOPLOCKS_LEVEL2_SUPPORTED)) {
+	if (use_kernel) {
 		DEBUG(10, ("Kernel oplocks don't allow level2\n"));
 		break_to &= ~SMB2_LEASE_READ;
 	}
@@ -1069,6 +1123,23 @@ static void process_kernel_oplock_break(struct messaging_context *msg_ctx,
 	add_oplock_timeout_handler(fsp);
 }
 
+static bool file_has_read_oplocks(struct files_struct *fsp)
+{
+	struct byte_range_lock *brl;
+	uint32_t num_read_oplocks = 0;
+
+	brl = brl_get_locks_readonly(fsp);
+	if (brl == NULL) {
+		return false;
+	}
+
+	num_read_oplocks = brl_num_read_oplocks(brl);
+
+	DBG_DEBUG("num_read_oplocks = %"PRIu32"\n", num_read_oplocks);
+
+	return (num_read_oplocks != 0);
+}
+
 struct break_to_none_state {
 	struct smbd_server_connection *sconn;
 	struct file_id id;
@@ -1091,8 +1162,7 @@ static void contend_level2_oplocks_begin_default(files_struct *fsp,
 	struct smbd_server_connection *sconn = fsp->conn->sconn;
 	struct tevent_immediate *im;
 	struct break_to_none_state *state;
-	struct byte_range_lock *brl;
-	uint32_t num_read_oplocks = 0;
+	bool has_read_oplocks;
 
 	/*
 	 * If this file is level II oplocked then we need
@@ -1109,14 +1179,8 @@ static void contend_level2_oplocks_begin_default(files_struct *fsp,
 		return;
 	}
 
-	brl = brl_get_locks_readonly(fsp);
-	if (brl != NULL) {
-		num_read_oplocks = brl_num_read_oplocks(brl);
-	}
-
-	DEBUG(10, ("num_read_oplocks = %"PRIu32"\n", num_read_oplocks));
-
-	if (num_read_oplocks == 0) {
+	has_read_oplocks = file_has_read_oplocks(fsp);
+	if (!has_read_oplocks) {
 		DEBUG(10, ("No read oplocks around\n"));
 		return;
 	}
@@ -1150,15 +1214,7 @@ static void contend_level2_oplocks_begin_default(files_struct *fsp,
 		TALLOC_FREE(state);
 		return;
 	}
-
-	/*
-	 * do_break_to_none() only operates on the
-	 * locking.tdb and send network packets to
-	 * the client. That doesn't require any
-	 * impersonation, so we just use the
-	 * raw tevent context here.
-	 */
-	tevent_schedule_immediate(im, sconn->raw_ev_ctx, do_break_to_none, state);
+	tevent_schedule_immediate(im, sconn->ev_ctx, do_break_to_none, state);
 }
 
 static void send_break_to_none(struct messaging_context *msg_ctx,
@@ -1184,11 +1240,6 @@ static void do_break_to_none(struct tevent_context *ctx,
 	uint32_t i;
 	struct share_mode_lock *lck;
 	struct share_mode_data *d;
-
-	/*
-	 * Note this function doesn't run under any specific impersonation and
-	 * is not expected to call any SMB_VFS operation!
-	 */
 
 	lck = get_existing_share_mode_lock(talloc_tos(), state->id);
 	if (lck == NULL) {
@@ -1298,31 +1349,13 @@ done:
 void smbd_contend_level2_oplocks_begin(files_struct *fsp,
 				  enum level2_contention_type type)
 {
-	struct smbd_server_connection *sconn = fsp->conn->sconn;
-	struct kernel_oplocks *koplocks = sconn->oplocks.kernel_ops;
-	bool use_kernel = lp_kernel_oplocks(SNUM(fsp->conn)) &&
-			(koplocks != NULL);
-
-	if (use_kernel && koplocks->ops->contend_level2_oplocks_begin) {
-		koplocks->ops->contend_level2_oplocks_begin(fsp, type);
-		return;
-	}
-
 	contend_level2_oplocks_begin_default(fsp, type);
 }
 
 void smbd_contend_level2_oplocks_end(files_struct *fsp,
 				enum level2_contention_type type)
 {
-	struct smbd_server_connection *sconn = fsp->conn->sconn;
-	struct kernel_oplocks *koplocks = sconn->oplocks.kernel_ops;
-	bool use_kernel = lp_kernel_oplocks(SNUM(fsp->conn)) &&
-			(koplocks != NULL);
-
-	/* Only kernel oplocks implement this so far */
-	if (use_kernel && koplocks->ops->contend_level2_oplocks_end) {
-		koplocks->ops->contend_level2_oplocks_end(fsp, type);
-	}
+	return;
 }
 
 /****************************************************************************
@@ -1401,9 +1434,7 @@ void init_kernel_oplocks(struct smbd_server_connection *sconn)
 
 	/* only initialize once */
 	if (koplocks == NULL) {
-#if HAVE_KERNEL_OPLOCKS_IRIX
-		koplocks = irix_init_kernel_oplocks(sconn);
-#elif HAVE_KERNEL_OPLOCKS_LINUX
+#ifdef HAVE_KERNEL_OPLOCKS_LINUX
 		koplocks = linux_init_kernel_oplocks(sconn);
 #endif
 		sconn->oplocks.kernel_ops = koplocks;

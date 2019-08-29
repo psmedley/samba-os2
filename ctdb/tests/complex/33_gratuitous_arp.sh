@@ -42,14 +42,11 @@ EOF
 
 set -e
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 ctdb_test_check_real_cluster
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 select_test_node_and_ips
 
@@ -82,6 +79,5 @@ echo "MAC address is: ${new_mac}"
 if [ "$original_mac" != "$new_mac" ] ; then
     echo "GOOD: MAC address changed"
 else
-    echo "BAD: MAC address did not change"
-    testfailures=1
+    die "BAD: MAC address did not change"
 fi

@@ -40,24 +40,83 @@ static void debug_callback(void *private_ptr, int level, const char *msg)
 	return;
 }
 
+static void auth_callback(const char *srv,
+			  const char *shr,
+			  char *wg, int wglen,
+			  char *un, int unlen,
+			  char *pw, int pwlen)
+{
+	const char *workgroup =
+		cli_credentials_get_domain(popt_get_cmdline_credentials());
+	const char *username =
+		cli_credentials_get_username(popt_get_cmdline_credentials());
+	const char *password =
+		cli_credentials_get_password(popt_get_cmdline_credentials());
+
+	if (workgroup != NULL) {
+		snprintf(wg, wglen, "%s", workgroup);
+	}
+
+	if (username != NULL) {
+		snprintf(un, unlen, "%s", username);
+	}
+
+	if (password != NULL) {
+		snprintf(pw, pwlen, "%s", password);
+	}
+};
+
 bool torture_libsmbclient_init_context(struct torture_context *tctx,
 				       SMBCCTX **ctx_p)
 {
-	SMBCCTX *ctx;
+	const char *workgroup =
+		cli_credentials_get_domain(popt_get_cmdline_credentials());
+	const char *username =
+		cli_credentials_get_username(popt_get_cmdline_credentials());
+	const char *client_proto =
+		torture_setting_string(tctx, "clientprotocol", NULL);
+	SMBCCTX *ctx = NULL;
+	SMBCCTX *p = NULL;
+	bool ok = true;
 
 	ctx = smbc_new_context();
-	torture_assert(tctx, ctx, "failed to get new context");
-	torture_assert(tctx, smbc_init_context(ctx), "failed to init context");
+	torture_assert_not_null_goto(tctx,
+				     ctx,
+				     ok,
+				     out,
+				     "Failed to create new context");
+
+	p = smbc_init_context(ctx);
+	torture_assert_not_null_goto(tctx,
+				     p,
+				     ok,
+				     out,
+				     "Failed to initialize context");
 
 	smbc_setDebug(ctx, DEBUGLEVEL);
 	smbc_setOptionDebugToStderr(ctx, 1);
 
-	smbc_setUser(ctx,
-		     cli_credentials_get_username(popt_get_cmdline_credentials()));
+	if (workgroup != NULL) {
+		smbc_setWorkgroup(ctx, workgroup);
+	}
+	if (username != NULL) {
+		smbc_setUser(ctx, username);
+	}
+
+	smbc_setFunctionAuthData(ctx, auth_callback);
+
+	if (client_proto != NULL) {
+		smbc_setOptionProtocols(ctx, client_proto, client_proto);
+	}
 
 	*ctx_p = ctx;
 
-	return true;
+out:
+	if (!ok) {
+		smbc_free_context(ctx, 1);
+	}
+
+	return ok;
 }
 
 static bool torture_libsmbclient_version(struct torture_context *tctx)
@@ -505,6 +564,62 @@ done:
 	return ok;
 }
 
+static bool torture_libsmbclient_list_shares(struct torture_context *tctx)
+{
+	const char *smburl = torture_setting_string(tctx, "smburl", NULL);
+	struct smbc_dirent *dirent = NULL;
+	SMBCCTX *ctx = NULL;
+	int dhandle = -1;
+	bool ipc_share_found = false;
+	bool ok = true;
+
+	if (smburl == NULL) {
+		torture_fail(tctx,
+			     "option --option=torture:smburl="
+			     "smb://user:password@server missing\n");
+	}
+
+	ok = torture_libsmbclient_init_context(tctx, &ctx);
+	torture_assert_goto(tctx,
+			    ok,
+			    ok,
+			    out,
+			    "Failed to init context");
+	smbc_set_context(ctx);
+
+	torture_comment(tctx, "Listing: %s\n", smburl);
+	dhandle = smbc_opendir(smburl);
+	torture_assert_int_not_equal_goto(tctx,
+					  dhandle,
+					  -1,
+					  ok,
+					  out,
+					  "Failed to open smburl");
+
+	while((dirent = smbc_readdir(dhandle)) != NULL) {
+		torture_comment(tctx, "DIR: %s\n", dirent->name);
+		torture_assert_not_null_goto(tctx,
+					     dirent->name,
+					     ok,
+					     out,
+					     "Failed to read name");
+
+		if (strequal(dirent->name, "IPC$")) {
+			ipc_share_found = true;
+		}
+	}
+
+	torture_assert_goto(tctx,
+			    ipc_share_found,
+			    ok,
+			    out,
+			    "Failed to list IPC$ share");
+
+out:
+	smbc_closedir(dhandle);
+	return ok;
+}
+
 NTSTATUS torture_libsmbclient_init(TALLOC_CTX *ctx)
 {
 	struct torture_suite *suite;
@@ -517,6 +632,7 @@ NTSTATUS torture_libsmbclient_init(TALLOC_CTX *ctx)
 	torture_suite_add_simple_test(suite, "setConfiguration", torture_libsmbclient_setConfiguration);
 	torture_suite_add_simple_test(suite, "options", torture_libsmbclient_options);
 	torture_suite_add_simple_test(suite, "opendir", torture_libsmbclient_opendir);
+	torture_suite_add_simple_test(suite, "list_shares", torture_libsmbclient_list_shares);
 	torture_suite_add_simple_test(suite, "readdirplus",
 		torture_libsmbclient_readdirplus);
 

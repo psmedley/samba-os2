@@ -155,9 +155,13 @@ NTSTATUS rpc_enum_dom_groups(TALLOC_CTX *mem_ctx,
 		for (g = 0; g < count; g++) {
 			struct wb_acct_info *i = &info[num_info + g];
 
-			fstrcpy(i->acct_name,
+			i->acct_name = talloc_strdup(info,
 				sam_array->entries[g].name.string);
-			fstrcpy(i->acct_desc, "");
+			if (i->acct_name == NULL) {
+				TALLOC_FREE(info);
+				return NT_STATUS_NO_MEMORY;
+			}
+			i->acct_desc = NULL;
 			i->rid = sam_array->entries[g].idx;
 		}
 
@@ -217,9 +221,13 @@ NTSTATUS rpc_enum_local_groups(TALLOC_CTX *mem_ctx,
 		for (g = 0; g < count; g++) {
 			struct wb_acct_info *i = &info[num_info + g];
 
-			fstrcpy(i->acct_name,
+			i->acct_name = talloc_strdup(info,
 				sam_array->entries[g].name.string);
-			fstrcpy(i->acct_desc, "");
+			if (i->acct_name == NULL) {
+				TALLOC_FREE(info);
+				return NT_STATUS_NO_MEMORY;
+			}
+			i->acct_desc = NULL;
 			i->rid = sam_array->entries[g].idx;
 		}
 
@@ -239,6 +247,7 @@ NTSTATUS rpc_name_to_sid(TALLOC_CTX *mem_ctx,
 			 const char *domain_name,
 			 const char *name,
 			 uint32_t flags,
+			 const char **pdom_name,
 			 struct dom_sid *sid,
 			 enum lsa_SidType *type)
 {
@@ -246,6 +255,7 @@ NTSTATUS rpc_name_to_sid(TALLOC_CTX *mem_ctx,
 	struct dom_sid *sids = NULL;
 	char *full_name = NULL;
 	const char *names[1];
+	const char **domains;
 	char *mapped_name = NULL;
 	NTSTATUS status;
 
@@ -282,7 +292,7 @@ NTSTATUS rpc_name_to_sid(TALLOC_CTX *mem_ctx,
 					 lsa_policy,
 					 1, /* num_names */
 					 names,
-					 NULL, /* domains */
+					 &domains,
 					 1, /* level */
 					 &sids,
 					 &types);
@@ -290,6 +300,17 @@ NTSTATUS rpc_name_to_sid(TALLOC_CTX *mem_ctx,
 		DEBUG(2,("name_to_sid: failed to lookup name: %s\n",
 			nt_errstr(status)));
 		return status;
+	}
+
+	if (pdom_name != NULL) {
+		const char *dom_name;
+
+		dom_name = talloc_strdup(mem_ctx, domains[0]);
+		if (dom_name == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+
+		*pdom_name = dom_name;
 	}
 
 	sid_copy(sid, &sids[0]);

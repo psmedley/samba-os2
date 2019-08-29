@@ -33,7 +33,6 @@
 #include "fake_file.h"
 #include "rpc_client/rpc_client.h"
 #include "../librpc/gen_ndr/ndr_spoolss_c.h"
-#include "../librpc/gen_ndr/open_files.h"
 #include "rpc_client/cli_spoolss.h"
 #include "rpc_client/init_spoolss.h"
 #include "rpc_server/rpc_ncacn_np.h"
@@ -4974,6 +4973,10 @@ bool is_valid_writeX_buffer(struct smbXsrv_connection *xconn,
 		DEBUG(10,("is_valid_writeX_buffer: printing tid\n"));
 		return false;
 	}
+	if (fsp->base_fsp != NULL) {
+		DEBUG(10,("is_valid_writeX_buffer: stream fsp\n"));
+		return false;
+	}
 	doff = SVAL(inbuf,smb_vwv11);
 
 	numtowrite = SVAL(inbuf,smb_vwv10);
@@ -5277,6 +5280,23 @@ void reply_lseek(struct smb_request *req)
 	return;
 }
 
+static struct files_struct *file_sync_one_fn(struct files_struct *fsp,
+					     void *private_data)
+{
+	connection_struct *conn = talloc_get_type_abort(
+		private_data, connection_struct);
+
+	if (conn != fsp->conn) {
+		return NULL;
+	}
+	if (fsp->fh->fd == -1) {
+		return NULL;
+	}
+	sync_file(conn, fsp, True /* write through */);
+
+	return NULL;
+}
+
 /****************************************************************************
  Reply to a flush.
 ****************************************************************************/
@@ -5302,7 +5322,7 @@ void reply_flush(struct smb_request *req)
 	}
 
 	if (!fsp) {
-		file_sync_all(conn);
+		files_forall(req->sconn, file_sync_one_fn, conn);
 	} else {
 		NTSTATUS status = sync_file(conn, fsp, True);
 		if (!NT_STATUS_IS_OK(status)) {
@@ -5401,7 +5421,7 @@ void reply_close(struct smb_request *req)
 		 */
 
 		fsp->deferred_close = tevent_wait_send(
-			fsp, req->ev_ctx);
+			fsp, fsp->conn->sconn->ev_ctx);
 		if (fsp->deferred_close == NULL) {
 			status = NT_STATUS_NO_MEMORY;
 			goto done;
@@ -6914,7 +6934,7 @@ NTSTATUS rename_internals_fsp(connection_struct *conn,
 			status = can_set_delete_on_close(fsp, 0);
 
 			if (NT_STATUS_IS_OK(status)) {
-				/* Note that here we set the *inital* delete on close flag,
+				/* Note that here we set the *initial* delete on close flag,
 				 * not the regular one. The magic gets handled in close. */
 				fsp->initial_delete_on_close = True;
 			}

@@ -7,12 +7,15 @@
       See <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span> for an overview of CTDB.
     </p></div><div class="refsect1"><a name="idm26"></a><h2>GENERAL OPTIONS</h2><div class="variablelist"><dl class="variablelist"><dt><span class="term">-i, --interactive</span></dt><dd><p>
 	    Enable interactive mode.  This will make ctdbd run in the
-	    foreground and not detach from the terminal.  By default
-	    ctdbd will detach itself and run in the background as a
-	    daemon.
+	    foreground and not detach from the terminal.  In this mode
+	    ctdbd will log to stderr.
+	  </p><p>
+	    By default ctdbd will detach itself and run in the
+	    background as a daemon, logging to the configured
+	    destination.
 	  </p></dd><dt><span class="term">-?, --help</span></dt><dd><p>
 	    Display a summary of options.
-	  </p></dd></dl></div></div><div class="refsect1"><a name="idm37"></a><h2>SEE ALSO</h2><p>
+	  </p></dd></dl></div></div><div class="refsect1"><a name="idm38"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(1)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">ctdbd_wrapper</span>(1)</span>,

@@ -94,9 +94,20 @@ sub bindir_path($$) {
 	my ($object, $path) = @_;
 
 	my $valpath = "$object->{bindir}/$path";
+	my $python_cmd = "";
+	my $result = $path;
+	if (defined $ENV{'PYTHON'}) {
+		$python_cmd = $ENV{'PYTHON'} . " ";
+	}
 
-	return $valpath if (-f $valpath or -d $valpath);
-	return $path;
+	if (-f $valpath or -d $valpath) {
+		$result = $valpath;
+	}
+	# make sure we prepend samba-tool with calling $PYTHON python version
+	if ($path eq "samba-tool") {
+		$result = $python_cmd . $result;
+	}
+	return $result;
 }
 
 sub nss_wrapper_winbind_so_path($) {
@@ -411,6 +422,12 @@ sub get_interface($)
     $interfaces{"restoredc"} = 41;
     $interfaces{"renamedc"} = 42;
     $interfaces{"labdc"} = 43;
+    $interfaces{"offlinebackupdc"} = 44;
+    $interfaces{"customdc"} = 45;
+    $interfaces{"prockilldc"} = 46;
+    $interfaces{"proclimitdc"} = 47;
+
+    $interfaces{"rootdnsforwarder"} = 64;
 
     # update lib/socket_wrapper/socket_wrapper.c
     #  #define MAX_WRAPPED_INTERFACES 64

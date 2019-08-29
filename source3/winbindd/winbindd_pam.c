@@ -45,6 +45,7 @@
 #include "lib/afs/afs_funcs.h"
 #include "libsmb/samlogon_cache.h"
 #include "rpc_client/util_netlogon.h"
+#include "libads/krb5_errs.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_WINBIND
@@ -139,17 +140,13 @@ static NTSTATUS append_info3_as_txt(TALLOC_CTX *mem_ctx,
 	}
 
 	for (i=0; i < info3->sidcount; i++) {
-		char *sid;
+		struct dom_sid_buf sidbuf;
 
-		sid = dom_sid_string(frame, info3->sids[i].sid);
-		if (sid == NULL) {
-			status = NT_STATUS_NO_MEMORY;
-			goto out;
-		}
-
-		ex = talloc_asprintf_append_buffer(ex, "%s:0x%08X\n",
-						   sid,
-						   info3->sids[i].attributes);
+		ex = talloc_asprintf_append_buffer(
+			ex,
+			"%s:0x%08X\n",
+			dom_sid_str_buf(info3->sids[i].sid, &sidbuf),
+			info3->sids[i].attributes);
 		if (ex == NULL) {
 			status = NT_STATUS_NO_MEMORY;
 			goto out;
@@ -251,13 +248,15 @@ static NTSTATUS append_afs_token(TALLOC_CTX *mem_ctx,
 
 	{
 		struct dom_sid user_sid;
-		fstring sidstr;
+		struct dom_sid_buf sidstr;
 
 		sid_compose(&user_sid, info3->base.domain_sid,
 			    info3->base.rid);
-		sid_to_fstring(sidstr, &user_sid);
-		afsname = talloc_string_sub(mem_ctx, afsname,
-					    "%s", sidstr);
+		afsname = talloc_string_sub(
+			mem_ctx,
+			afsname,
+			"%s",
+			dom_sid_str_buf(&user_sid, &sidstr));
 	}
 
 	if (afsname == NULL) {
@@ -376,8 +375,10 @@ static NTSTATUS check_info3_in_group(struct netr_SamInfo3 *info3,
 	security_token_debug(DBGC_CLASS, 10, token);
 
 	for (i=0; i<num_require_membership_of_sid; i++) {
-		DEBUG(10, ("Checking SID %s\n", sid_string_dbg(
-				   &require_membership_of_sid[i])));
+		struct dom_sid_buf buf;
+		DEBUG(10, ("Checking SID %s\n",
+			   dom_sid_str_buf(&require_membership_of_sid[i],
+					   &buf)));
 		if (nt_token_check_sid(&require_membership_of_sid[i],
 				       token)) {
 			DEBUG(10, ("Access ok\n"));
@@ -1619,7 +1620,7 @@ static NTSTATUS winbind_samlogon_retry_loop(struct winbindd_domain *domain,
 		}
 
 		/* if we get access denied, a possible cause was that we had
-		   and open connection to the DC, but someone changed our
+		   an open connection to the DC, but someone changed our
 		   machine account password out from underneath us using 'net
 		   rpc changetrustpw' */
 
@@ -2890,10 +2891,10 @@ static NTSTATUS extract_pac_vrfy_sigs(TALLOC_CTX *mem_ctx, DATA_BLOB pac_blob,
 	ZERO_STRUCT(entry);
 	ZERO_STRUCT(cursor);
 
-	k5ret = krb5_init_context(&krbctx);
+	k5ret = smb_krb5_init_context_common(&krbctx);
 	if (k5ret) {
-		DEBUG(1, ("Failed to initialize kerberos context: %s\n",
-			  error_message(k5ret)));
+		DBG_ERR("kerberos init context failed (%s)\n",
+			error_message(k5ret));
 		status = krb5_to_nt_status(k5ret);
 		goto out;
 	}
@@ -3047,6 +3048,7 @@ NTSTATUS winbindd_pam_auth_pac_verify(struct winbindd_cli_state *state,
 				info3_copy->base.logon_domain.string);
 		if (domain && domain->primary ) {
 			struct dom_sid user_sid;
+			struct dom_sid_buf buf;
 
 			sid_compose(&user_sid,
 				info3_copy->base.domain_sid,
@@ -3061,7 +3063,7 @@ NTSTATUS winbindd_pam_auth_pac_verify(struct winbindd_cli_state *state,
 			DBG_INFO("PAC for user %s\\%s SID %s primed cache\n",
 				info3_copy->base.logon_domain.string,
 				info3_copy->base.account_name.string,
-				sid_string_dbg(&user_sid));
+				dom_sid_str_buf(&user_sid, &buf));
 		}
 	}
 

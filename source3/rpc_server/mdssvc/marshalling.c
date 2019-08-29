@@ -1057,11 +1057,10 @@ static ssize_t sl_unpack_loop(DALLOC_CTX *query,
 {
 	int i, toc_index, subcount;
 	uint64_t result;
-	sl_nil_t nil;
-	sl_bool_t b;
-	struct sl_tag tag, cpx_tag;
 
 	while (count > 0) {
+		struct sl_tag tag;
+
 		if (offset >= toc_offset) {
 			return -1;
 		}
@@ -1072,7 +1071,9 @@ static ssize_t sl_unpack_loop(DALLOC_CTX *query,
 		}
 
 		switch (tag.type) {
-		case SQ_TYPE_COMPLEX:
+		case SQ_TYPE_COMPLEX: {
+			struct sl_tag cpx_tag;
+
 			if (tag.count < 1) {
 				DEBUG(1,("%s: invalid tag.count: %d\n",
 					 __func__, tag.count));
@@ -1102,13 +1103,15 @@ static ssize_t sl_unpack_loop(DALLOC_CTX *query,
 			 */
 			count--;
 			break;
+		}
 
-		case SQ_TYPE_NULL:
+		case SQ_TYPE_NULL: {
+			sl_nil_t nil = 0;
+
 			subcount = tag.count;
 			if (subcount > count) {
 				return -1;
 			}
-			nil = 0;
 			for (i = 0; i < subcount; i++) {
 				result = dalloc_add_copy(query, &nil, sl_nil_t);
 				if (result != 0) {
@@ -1118,9 +1121,11 @@ static ssize_t sl_unpack_loop(DALLOC_CTX *query,
 			offset += tag.size;
 			count -= subcount;
 			break;
+		}
 
-		case SQ_TYPE_BOOL:
-			b = tag.count != 0 ? true : false;
+		case SQ_TYPE_BOOL: {
+			sl_bool_t b = (tag.count != 0);
+
 			result = dalloc_add_copy(query, &b, sl_bool_t);
 			if (result != 0) {
 				return -1;
@@ -1128,6 +1133,7 @@ static ssize_t sl_unpack_loop(DALLOC_CTX *query,
 			offset += tag.size;
 			count--;
 			break;
+		}
 
 		case SQ_TYPE_INT64:
 			subcount = sl_unpack_ints(query, buf, offset, bufsize, encoding);

@@ -410,20 +410,12 @@ bool posix_locking_end(void)
 }
 
 /****************************************************************************
- Next - the functions that deal with storing fd's that have outstanding
- POSIX locks when closed.
+ Next - the functions that deal with reference count of number of locks open
+ on a dev/ino pair.
 ****************************************************************************/
 
 /****************************************************************************
- The records in posix_pending_close_db are composed of an array of
- ints keyed by dev/ino pair. Those ints are the fd's that were open on
- this dev/ino pair that should have been closed, but can't as the lock
- ref count is non zero.
-****************************************************************************/
-
-/****************************************************************************
- Keep a reference count of the number of locks open on this dev/ino
- pair. Creates entry if it doesn't exist.
+ Increase the lock ref count. Creates lock_ref_count entry if it doesn't exist.
 ****************************************************************************/
 
 static void increment_lock_ref_count(const files_struct *fsp)
@@ -440,8 +432,12 @@ static void increment_lock_ref_count(const files_struct *fsp)
 	SMB_ASSERT(lock_ref_count < INT32_MAX);
 
 	DEBUG(10,("lock_ref_count for file %s = %d\n",
-		  fsp_str_dbg(fsp), (int)lock_ref_count));
+		  fsp_str_dbg(fsp), (int)(lock_ref_count + 1)));
 }
+
+/****************************************************************************
+ Reduce the lock ref count.
+****************************************************************************/
 
 static void decrement_lock_ref_count(const files_struct *fsp)
 {
@@ -454,10 +450,10 @@ static void decrement_lock_ref_count(const files_struct *fsp)
 		&lock_ref_count, -1);
 
 	SMB_ASSERT(NT_STATUS_IS_OK(status));
-	SMB_ASSERT(lock_ref_count >= 0);
+	SMB_ASSERT(lock_ref_count > 0);
 
 	DEBUG(10,("lock_ref_count for file %s = %d\n",
-		  fsp_str_dbg(fsp), (int)lock_ref_count));
+		  fsp_str_dbg(fsp), (int)(lock_ref_count - 1)));
 }
 
 /****************************************************************************
@@ -501,7 +497,19 @@ static void delete_lock_ref_count(const files_struct *fsp)
 }
 
 /****************************************************************************
- Add an fd to the pending close tdb.
+ Next - the functions that deal with storing fd's that have outstanding
+ POSIX locks when closed.
+****************************************************************************/
+
+/****************************************************************************
+ The records in posix_pending_close_db are composed of an array of
+ ints keyed by dev/ino pair. Those ints are the fd's that were open on
+ this dev/ino pair that should have been closed, but can't as the lock
+ ref count is non zero.
+****************************************************************************/
+
+/****************************************************************************
+ Add an fd to the pending close db.
 ****************************************************************************/
 
 static void add_fd_to_close_entry(const files_struct *fsp)
@@ -591,7 +599,7 @@ static size_t get_posix_pending_close_entries(TALLOC_CTX *mem_ctx,
 
 /****************************************************************************
  Deal with pending closes needed by POSIX locking support.
- Note that posix_locking_close_file() is expected to have been called
+ Note that locking_close_file() is expected to have been called
  to delete all locks on this fsp before this function is called.
 ****************************************************************************/
 
@@ -618,8 +626,9 @@ int fd_close_posix(const struct files_struct *fsp)
 
 		/*
 		 * There are outstanding locks on this dev/inode pair on
-		 * other fds. Add our fd to the pending close tdb and set
-		 * fsp->fh->fd to -1.
+		 * other fds. Add our fd to the pending close db. We also
+		 * set fsp->fh->fd to -1 inside fd_close() after returning
+		 * from VFS layer.
 		 */
 
 		add_fd_to_close_entry(fsp);
@@ -628,7 +637,7 @@ int fd_close_posix(const struct files_struct *fsp)
 
 	/*
 	 * No outstanding locks. Get the pending close fd's
-	 * from the tdb and close them all.
+	 * from the db and close them all.
 	 */
 
 	count = get_posix_pending_close_entries(talloc_tos(), fsp, &fd_array);
@@ -644,7 +653,7 @@ int fd_close_posix(const struct files_struct *fsp)
 		}
 
 		/*
-		 * Delete all fd's stored in the tdb
+		 * Delete all fd's stored in the db
 		 * for this dev/inode pair.
 		 */
 

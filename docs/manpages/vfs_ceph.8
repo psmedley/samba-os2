@@ -2,12 +2,12 @@
 .\"     Title: vfs_ceph
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/12/2019
+.\"      Date: 08/22/2019
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.9.5
+.\"    Source: Samba 4.10.7
 .\"  Language: English
 .\"
-.TH "VFS_CEPH" "8" "03/12/2019" "Samba 4\&.9\&.5" "System Administration tools"
+.TH "VFS_CEPH" "8" "08/22/2019" "Samba 4\&.10\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -47,6 +47,21 @@ Ceph is a distributed network file system designed to provide excellent performa
 This module can be combined with other modules, but it should be the last module in the
 vfs objects
 list\&. Modules added to this list to the right of the ceph entry may not have any effect at all\&.
+.PP
+vfs_ceph
+performs mapping between Windows and POSIX Access Control Lists (ACLs)\&. To ensure correct processing and enforcement of POSIX ACLs, the following Ceph configuration parameters are automatically applied:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+		client acl type = posix_acl
+		fuse default permissions = false
+	
+.fi
+.if n \{\
+.RE
+.\}
 .SH "CONFIGURATION"
 .PP
 vfs_ceph
@@ -94,7 +109,7 @@ Example: ceph:user_id = samba
 .RE
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.9\&.5 of the Samba suite\&.
+This man page is part of version 4\&.10\&.7 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

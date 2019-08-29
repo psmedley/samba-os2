@@ -301,6 +301,9 @@ unless (defined($ENV{VALGRIND})) {
 # make all our python scripts unbuffered
 $ENV{PYTHONUNBUFFERED} = 1;
 
+# do not depend on the users setup
+$ENV{TZ} = "UTC";
+
 my $bindir_abs = abs_path($bindir);
 
 # Backwards compatibility:
@@ -815,6 +818,7 @@ sub get_running_env($)
 my @exported_envvars = (
 	# domain stuff
 	"DOMAIN",
+	"DNSNAME",
 	"REALM",
 	"DOMSID",
 
@@ -958,11 +962,7 @@ sub setup_env($$)
 	# variables don't leak in. Provisioning steps must explicitly set their
 	# necessary variables when calling out to other executables
 	foreach (@exported_envvars) {
-		unless ($_ == "NSS_WRAPPER_HOSTS" ||
-		        $_ == "RESOLV_WRAPPER_HOSTS")
-		{
-			delete $ENV{$_};
-		}
+		delete $ENV{$_};
 	}
 	delete $ENV{SOCKET_WRAPPER_DEFAULT_IFACE};
 	delete $ENV{SMB_CONF_PATH};

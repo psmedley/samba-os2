@@ -713,7 +713,6 @@ static void remove_share_mode_lease(struct share_mode_data *d,
 	for (i=0; i<d->num_share_modes; i++) {
 		if (d->share_modes[i].lease_idx == d->num_leases) {
 			d->share_modes[i].lease_idx = lease_idx;
-			d->share_modes[i].lease = &d->leases[lease_idx];
 		}
 	}
 
@@ -740,8 +739,10 @@ bool share_mode_stale_pid(struct share_mode_data *d, uint32_t idx)
 	struct share_mode_entry *e;
 
 	if (idx > d->num_share_modes) {
-		DEBUG(1, ("Asking for index %u, only %u around\n",
-			  idx, (unsigned)d->num_share_modes));
+		DBG_WARNING("Asking for index %"PRIu32", "
+			    "only %"PRIu32" around\n",
+			    idx,
+			    d->num_share_modes);
 		return false;
 	}
 	e = &d->share_modes[idx];
@@ -752,36 +753,36 @@ bool share_mode_stale_pid(struct share_mode_data *d, uint32_t idx)
 		return true;
 	}
 	if (serverid_exists(&e->pid)) {
-		DEBUG(10, ("PID %s (index %u out of %u) still exists\n",
-			   server_id_str_buf(e->pid, &tmp), idx,
-			   (unsigned)d->num_share_modes));
+		DBG_DEBUG("PID %s (index %"PRIu32" out of %"PRIu32") "
+			  "still exists\n",
+			  server_id_str_buf(e->pid, &tmp),
+			  idx,
+			  d->num_share_modes);
 		return false;
 	}
-	DEBUG(10, ("PID %s (index %u out of %u) does not exist anymore\n",
-		   server_id_str_buf(e->pid, &tmp), idx,
-		   (unsigned)d->num_share_modes));
+	DBG_DEBUG("PID %s (index %"PRIu32" out of %"PRIu32") "
+		  "does not exist anymore\n",
+		  server_id_str_buf(e->pid, &tmp),
+		  idx,
+		  d->num_share_modes);
 
 	e->stale = true;
 
 	if (d->num_delete_tokens != 0) {
-		uint32_t i, num_stale;
-
-		/*
-		 * We cannot have any delete tokens
-		 * if there are no valid share modes.
-		 */
-
-		num_stale = 0;
+		uint32_t i;
 
 		for (i=0; i<d->num_share_modes; i++) {
-			if (d->share_modes[i].stale) {
-				num_stale += 1;
+			bool valid = !d->share_modes[i].stale;
+			if (valid) {
+				break;
 			}
 		}
 
-		if (num_stale == d->num_share_modes) {
+		if (i == d->num_share_modes) {
 			/*
-			 * No non-stale share mode found
+			 * No valid (non-stale) share mode found, all
+			 * who might have set the delete token are
+			 * gone.
 			 */
 			TALLOC_FREE(d->delete_tokens);
 			d->num_delete_tokens = 0;
@@ -804,9 +805,9 @@ void remove_stale_share_mode_entries(struct share_mode_data *d)
 			struct share_mode_entry *m = d->share_modes;
 			m[i] = m[d->num_share_modes-1];
 			d->num_share_modes -= 1;
-		} else {
-			i += 1;
+			continue;
 		}
+		i += 1;
 	}
 }
 
@@ -816,14 +817,10 @@ bool set_share_mode(struct share_mode_lock *lck, struct files_struct *fsp,
 {
 	struct share_mode_data *d = lck->data;
 	struct share_mode_entry *tmp, *e;
-	struct share_mode_lease *lease = NULL;
 
-	if (lease_idx == UINT32_MAX) {
-		lease = NULL;
-	} else if (lease_idx >= d->num_leases) {
+	if ((lease_idx != UINT32_MAX) &&
+	    (lease_idx >= d->num_leases)) {
 		return false;
-	} else {
-		lease = &d->leases[lease_idx];
 	}
 
 	tmp = talloc_realloc(d, d->share_modes, struct share_mode_entry,
@@ -844,7 +841,6 @@ bool set_share_mode(struct share_mode_lock *lck, struct files_struct *fsp,
 	e->op_mid = mid;
 	e->op_type = op_type;
 	e->lease_idx = lease_idx;
-	e->lease = lease;
 	e->time.tv_sec = fsp->open_time.tv_sec;
 	e->time.tv_usec = fsp->open_time.tv_usec;
 	e->share_file_id = fsp->fh->gen_id;
@@ -883,8 +879,7 @@ struct share_mode_entry *find_share_mode_entry(
 }
 
 /*******************************************************************
- Del the share mode of a file for this process. Return the number of
- entries left.
+ Del the share mode of a file for this process.
 ********************************************************************/
 
 bool del_share_mode(struct share_mode_lock *lck, files_struct *fsp)
@@ -972,86 +967,6 @@ bool downgrade_share_oplock(struct share_mode_lock *lck, files_struct *fsp)
 	e->op_type = LEVEL_II_OPLOCK;
 	lck->data->modified = True;
 	return True;
-}
-
-NTSTATUS downgrade_share_lease(struct smbd_server_connection *sconn,
-			       struct share_mode_lock *lck,
-			       const struct smb2_lease_key *key,
-			       uint32_t new_lease_state,
-			       struct share_mode_lease **_l)
-{
-	struct share_mode_data *d = lck->data;
-	struct share_mode_lease *l;
-	uint32_t i;
-
-	*_l = NULL;
-
-	for (i=0; i<d->num_leases; i++) {
-		if (smb2_lease_equal(&sconn->client->connections->smb2.client.guid,
-				     key,
-				     &d->leases[i].client_guid,
-				     &d->leases[i].lease_key)) {
-			break;
-		}
-	}
-	if (i == d->num_leases) {
-		DEBUG(10, ("lease not found\n"));
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	l = &d->leases[i];
-
-	if (!l->breaking) {
-		DEBUG(1, ("Attempt to break from %d to %d - but we're not in breaking state\n",
-			   (int)l->current_state, (int)new_lease_state));
-		return NT_STATUS_UNSUCCESSFUL;
-	}
-
-	/*
-	 * Can't upgrade anything: l->breaking_to_requested (and l->current_state)
-	 * must be a strict bitwise superset of new_lease_state
-	 */
-	if ((new_lease_state & l->breaking_to_requested) != new_lease_state) {
-		DEBUG(1, ("Attempt to upgrade from %d to %d - expected %d\n",
-			   (int)l->current_state, (int)new_lease_state,
-			   (int)l->breaking_to_requested));
-		return NT_STATUS_REQUEST_NOT_ACCEPTED;
-	}
-
-	if (l->current_state != new_lease_state) {
-		l->current_state = new_lease_state;
-		d->modified = true;
-	}
-
-	if ((new_lease_state & ~l->breaking_to_required) != 0) {
-		DEBUG(5, ("lease state %d not fully broken from %d to %d\n",
-			   (int)new_lease_state,
-			   (int)l->current_state,
-			   (int)l->breaking_to_required));
-		l->breaking_to_requested = l->breaking_to_required;
-		if (l->current_state & (~SMB2_LEASE_READ)) {
-			/*
-			 * Here we break in steps, as windows does
-			 * see the breaking3 and v2_breaking3 tests.
-			 */
-			l->breaking_to_requested |= SMB2_LEASE_READ;
-		}
-		d->modified = true;
-		*_l = l;
-		return NT_STATUS_OPLOCK_BREAK_IN_PROGRESS;
-	}
-
-	DEBUG(10, ("breaking from %d to %d - expected %d\n",
-		   (int)l->current_state, (int)new_lease_state,
-		   (int)l->breaking_to_requested));
-
-	l->breaking_to_requested = 0;
-	l->breaking_to_required = 0;
-	l->breaking = false;
-
-	d->modified = true;
-
-	return NT_STATUS_OK;
 }
 
 /****************************************************************************

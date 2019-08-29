@@ -7,7 +7,7 @@ set -e
 # Do debconf stuff here
 . /usr/share/debconf/confmodule
 
-TEMPDIR=/var/run/samba/upgrades
+TEMPDIR=/run/samba/upgrades
 NEWFILE=$TEMPDIR/smb.conf
 CONFIG=/etc/samba/smb.conf
 

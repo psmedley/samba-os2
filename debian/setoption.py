@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # Helper to set a global option in the samba configuration file
 # Eventually this should be replaced by a call to samba-tool, but
 # for the moment that doesn't support setting individual configuration options.

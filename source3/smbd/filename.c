@@ -164,13 +164,11 @@ static NTSTATUS check_parent_exists(TALLOC_CTX *ctx,
 				char **pp_dirpath,
 				char **pp_start)
 {
-	struct smb_filename parent_fname;
+	struct smb_filename parent_fname = {0};
 	const char *last_component = NULL;
 	NTSTATUS status;
 	int ret;
-	bool parent_fname_has_wild = false;
 
-	ZERO_STRUCT(parent_fname);
 	if (!parent_dirname(ctx, smb_fname->base_name,
 				&parent_fname.base_name,
 				&last_component)) {
@@ -178,18 +176,18 @@ static NTSTATUS check_parent_exists(TALLOC_CTX *ctx,
 	}
 
 	if (!posix_pathnames) {
-		parent_fname_has_wild = ms_has_wild(parent_fname.base_name);
+		if (ms_has_wild(parent_fname.base_name)) {
+			goto no_optimization_out;
+		}
 	}
 
 	/*
 	 * If there was no parent component in
-	 * smb_fname->base_name of the parent name
-	 * contained a wildcard then don't do this
+	 * smb_fname->base_name then don't do this
 	 * optimization.
 	 */
-	if ((smb_fname->base_name == last_component) ||
-			parent_fname_has_wild) {
-		return NT_STATUS_OK;
+	if (smb_fname->base_name == last_component) {
+		goto no_optimization_out;
 	}
 
 	if (posix_pathnames) {
@@ -202,7 +200,7 @@ static NTSTATUS check_parent_exists(TALLOC_CTX *ctx,
 	   with the normal tree walk. */
 
 	if (ret == -1) {
-		return NT_STATUS_OK;
+		goto no_optimization_out;
 	}
 
 	status = check_for_dot_component(&parent_fname);
@@ -234,6 +232,28 @@ static NTSTATUS check_parent_exists(TALLOC_CTX *ctx,
 		*pp_dirpath,
 		*pp_start));
 
+	return NT_STATUS_OK;
+
+  no_optimization_out:
+
+	/*
+	 * We must still return an *pp_dirpath
+	 * initialized to ".", and a *pp_start
+	 * pointing at smb_fname->base_name.
+	 */
+
+	TALLOC_FREE(parent_fname.base_name);
+
+	*pp_dirpath = talloc_strdup(ctx, ".");
+	if (*pp_dirpath == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+	/*
+	 * Safe to use discard_const_p
+	 * here as by convention smb_fname->base_name
+	 * is allocated off ctx.
+	 */
+	*pp_start = discard_const_p(char, smb_fname->base_name);
 	return NT_STATUS_OK;
 }
 
@@ -599,7 +619,7 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 					goto err;
 				}
 				/* dirpath must exist. */
-				dirpath = talloc_strdup(ctx,"");
+				dirpath = talloc_strdup(ctx,".");
 				if (dirpath == NULL) {
 					status = NT_STATUS_NO_MEMORY;
 					goto err;
@@ -636,7 +656,7 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 	 * building the directories with talloc_asprintf and free it.
 	 */
 
-	if ((dirpath == NULL) && (!(dirpath = talloc_strdup(ctx,"")))) {
+	if ((dirpath == NULL) && (!(dirpath = talloc_strdup(ctx,".")))) {
 		DEBUG(0, ("talloc_strdup failed\n"));
 		status = NT_STATUS_NO_MEMORY;
 		goto err;
@@ -1079,7 +1099,7 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 					size_t start_ofs =
 					    start - smb_fname->base_name;
 
-					if (*dirpath != '\0') {
+					if (!ISDOT(dirpath)) {
 						tmp = talloc_asprintf(
 							smb_fname, "%s/%s",
 							dirpath, unmangled);
@@ -1114,7 +1134,7 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 				size_t start_ofs =
 				    start - smb_fname->base_name;
 
-				if (*dirpath != '\0') {
+				if (!ISDOT(dirpath)) {
 					tmp = talloc_asprintf(smb_fname,
 						"%s/%s/%s", dirpath,
 						found_name, end+1);
@@ -1139,7 +1159,7 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 				size_t start_ofs =
 				    start - smb_fname->base_name;
 
-				if (*dirpath != '\0') {
+				if (!ISDOT(dirpath)) {
 					tmp = talloc_asprintf(smb_fname,
 						"%s/%s", dirpath,
 						found_name);
@@ -1180,7 +1200,7 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 		 * Add to the dirpath that we have resolved so far.
 		 */
 
-		if (*dirpath != '\0') {
+		if (!ISDOT(dirpath)) {
 			char *tmp = talloc_asprintf(ctx,
 					"%s/%s", dirpath, start);
 			if (!tmp) {
@@ -1250,7 +1270,7 @@ NTSTATUS unix_convert(TALLOC_CTX *ctx,
 	return NT_STATUS_OK;
  fail:
 	DEBUG(10, ("dirpath = [%s] start = [%s]\n", dirpath, start));
-	if (dirpath && *dirpath != '\0') {
+	if (dirpath && !ISDOT(dirpath)) {
 		smb_fname->base_name = talloc_asprintf(smb_fname, "%s/%s",
 						       dirpath, start);
 	} else {
@@ -1352,6 +1372,76 @@ static bool fname_equal(const char *name1, const char *name2,
 	}
 
 	return(strequal(name1,name2));
+}
+
+static bool sname_equal(const char *name1, const char *name2,
+		bool case_sensitive)
+{
+	bool match;
+	const char *s1 = NULL;
+	const char *s2 = NULL;
+	size_t n1;
+	size_t n2;
+	const char *e1 = NULL;
+	const char *e2 = NULL;
+	char *c1 = NULL;
+	char *c2 = NULL;
+
+	match = fname_equal(name1, name2, case_sensitive);
+	if (match) {
+		return true;
+	}
+
+	if (name1[0] != ':') {
+		return false;
+	}
+	if (name2[0] != ':') {
+		return false;
+	}
+	s1 = &name1[1];
+	e1 = strchr(s1, ':');
+	if (e1 == NULL) {
+		n1 = strlen(s1);
+	} else {
+		n1 = PTR_DIFF(e1, s1);
+	}
+	s2 = &name2[1];
+	e2 = strchr(s2, ':');
+	if (e2 == NULL) {
+		n2 = strlen(s2);
+	} else {
+		n2 = PTR_DIFF(e2, s2);
+	}
+
+	/* Normal filename handling */
+	if (case_sensitive) {
+		return (strncmp(s1, s2, n1) == 0);
+	}
+
+	/*
+	 * We can't use strnequal() here
+	 * as it takes the number of codepoints
+	 * and not the number of bytes.
+	 *
+	 * So we make a copy before calling
+	 * strequal().
+	 *
+	 * Note that we TALLOC_FREE() in reverse order
+	 * in order to avoid memory fragmentation.
+	 */
+
+	c1 = talloc_strndup(talloc_tos(), s1, n1);
+	c2 = talloc_strndup(talloc_tos(), s2, n2);
+	if (c1 == NULL || c2 == NULL) {
+		TALLOC_FREE(c2);
+		TALLOC_FREE(c1);
+		return (strncmp(s1, s2, n1) == 0);
+	}
+
+	match = strequal(c1, c2);
+	TALLOC_FREE(c2);
+	TALLOC_FREE(c1);
+	return match;
 }
 
 /****************************************************************************
@@ -1550,7 +1640,7 @@ static NTSTATUS build_stream_path(TALLOC_CTX *mem_ctx,
 	for (i=0; i<num_streams; i++) {
 		DEBUG(10, ("comparing [%s] and [%s]: ",
 			   smb_fname->stream_name, streams[i].name));
-		if (fname_equal(smb_fname->stream_name, streams[i].name,
+		if (sname_equal(smb_fname->stream_name, streams[i].name,
 				conn->case_sensitive)) {
 			DEBUGADD(10, ("equal\n"));
 			break;

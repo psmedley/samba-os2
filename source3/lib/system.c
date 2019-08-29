@@ -509,7 +509,7 @@ int sys_fallocate(int fd, uint32_t mode, off_t offset, off_t len)
 #endif	/* HAVE_LINUX_FALLOCATE */
 }
 
-#if HAVE_KERNEL_SHARE_MODES
+#ifdef HAVE_KERNEL_SHARE_MODES
 #ifndef LOCK_MAND
 #define LOCK_MAND	32	/* This is a mandatory flock */
 #define LOCK_READ	64	/* ... Which allows concurrent read operations */
@@ -524,7 +524,7 @@ int sys_fallocate(int fd, uint32_t mode, off_t offset, off_t len)
 
 void kernel_flock(int fd, uint32_t share_mode, uint32_t access_mask)
 {
-#if HAVE_KERNEL_SHARE_MODES
+#ifdef HAVE_KERNEL_SHARE_MODES
 	int kernel_mode = 0;
 	if (share_mode == FILE_SHARE_WRITE) {
 		kernel_mode = LOCK_MAND|LOCK_WRITE;
@@ -580,7 +580,7 @@ char *sys_getwd(void)
 {
 #ifdef GETCWD_TAKES_NULL
 	return getcwd(NULL, 0);
-#elif HAVE_GETCWD
+#elif defined(HAVE_GETCWD)
 	char *wd = NULL, *s = NULL;
 	size_t allocated = PATH_MAX;
 

@@ -297,6 +297,11 @@
 </refsect3>
 
 <refsect3>
+	<title>domain backup offline</title>
+	<para>Backup (with proper locking) local domain directories into a tar file.</para>
+</refsect3>
+
+<refsect3>
 	<title>domain backup online</title>
 	<para>Copy a running DC's current DB into a backup tar file.</para>
 </refsect3>
@@ -637,6 +642,11 @@
 <refsect3>
 	<title>group show <replaceable>groupname</replaceable> [options]</title>
 	<para>Show group object and it's attributes.</para>
+</refsect3>
+
+<refsect3>
+	<title>group stats [options]</title>
+	<para>Show statistics for overall groups and group memberships.</para>
 </refsect3>
 
 <refsect2>

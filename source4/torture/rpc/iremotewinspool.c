@@ -33,31 +33,77 @@ struct test_iremotewinspool_context {
 	const char *environment;
 };
 
+enum client_os_version
+{
+	WIN_2000,
+	WIN_VISTA,
+	WIN_SERVER_2008,
+	WIN_7,
+	WIN_SERVER_2008R2,
+	WIN_8,
+	WIN_SERVER_2012,
+	WIN_10,
+	WIN_SERVER_2016
+};
+
+static struct spoolss_UserLevel1 test_get_client_info(struct torture_context *tctx,
+						      enum client_os_version os,
+						      enum spoolss_MajorVersion major_number,
+						      enum spoolss_MinorVersion minor_number)
+{
+	struct spoolss_UserLevel1 level1;
+
+	level1.size	= 28;
+	level1.client	= talloc_asprintf(tctx, "\\\\%s", "mthelena");
+	level1.user	= "GD";
+	level1.processor = PROCESSOR_ARCHITECTURE_AMD64;
+	level1.major	= major_number;
+	level1.minor	= minor_number;
+
+	switch (os) {
+		case WIN_SERVER_2016:
+		case WIN_10:
+			level1.build = 10586;
+			break;
+		case WIN_SERVER_2012:
+		case WIN_8:
+			level1.build = 9200;
+			break;
+		case WIN_SERVER_2008R2:
+		case WIN_7:
+			level1.build = 7007;
+			break;
+		case WIN_SERVER_2008:
+		case WIN_VISTA:
+			level1.build = 6000;
+			break;
+		case WIN_2000:
+			level1.build = 1382;
+			break;
+		default:
+			level1.build = 7007;
+	}
+
+	return level1;
+}
+
 static bool test_AsyncOpenPrinter_byprinter(struct torture_context *tctx,
 					    struct test_iremotewinspool_context *ctx,
 					    struct dcerpc_pipe *p,
 					    const char *printer_name,
+					    struct spoolss_UserLevel1 cinfo,
 					    struct policy_handle *handle)
 {
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	struct spoolss_DevmodeContainer devmode_ctr;
 	struct spoolss_UserLevelCtr client_info_ctr;
-	struct spoolss_UserLevel1 level1;
 	uint32_t access_mask = SERVER_ALL_ACCESS;
 	struct winspool_AsyncOpenPrinter r;
 
 	ZERO_STRUCT(devmode_ctr);
 
-	level1.size	= 28;
-	level1.client	= talloc_asprintf(tctx, "\\\\%s", "mthelena");
-	level1.user	= "GD";
-	level1.build	= 1381;
-	level1.major	= 3;
-	level1.minor	= 0;
-	level1.processor = PROCESSOR_ARCHITECTURE_AMD64;
-
 	client_info_ctr.level = 1;
-	client_info_ctr.user_info.level1 = &level1;
+	client_info_ctr.user_info.level1 = &cinfo;
 
 	r.in.pPrinterName	= printer_name;
 	r.in.pDatatype		= NULL;
@@ -196,6 +242,7 @@ static bool torture_rpc_iremotewinspool_setup_common(struct torture_context *tct
 						     struct test_iremotewinspool_context *t)
 {
 	const char *printer_name;
+	struct spoolss_UserLevel1 client_info;
 	struct dcerpc_binding *binding;
 
 	torture_assert_ntstatus_ok(tctx,
@@ -216,10 +263,12 @@ static bool torture_rpc_iremotewinspool_setup_common(struct torture_context *tct
 
 	printer_name = talloc_asprintf(tctx, "\\\\%s", dcerpc_server_name(t->iremotewinspool_pipe));
 
+	client_info = test_get_client_info(tctx, WIN_7, 6, 1);
+
 	torture_assert(tctx,
 		test_AsyncOpenPrinter_byprinter(tctx, t,
 						t->iremotewinspool_pipe, printer_name,
-						&t->server_handle),
+						client_info, &t->server_handle),
 						"failed to open printserver");
 	torture_assert(tctx,
 		test_get_environment(tctx,
@@ -269,12 +318,15 @@ static bool test_AsyncClosePrinter(struct torture_context *tctx,
 
 	struct dcerpc_pipe *p = ctx->iremotewinspool_pipe;
 	const char *printer_name;
+	struct spoolss_UserLevel1 client_info;
 	struct policy_handle handle;
 
 	printer_name = talloc_asprintf(tctx, "\\\\%s", dcerpc_server_name(p));
 
+	client_info = test_get_client_info(tctx, WIN_7, 6, 1);
+
 	torture_assert(tctx,
-		test_AsyncOpenPrinter_byprinter(tctx, ctx, p, printer_name, &handle),
+		test_AsyncOpenPrinter_byprinter(tctx, ctx, p, printer_name, client_info, &handle),
 		"failed to test AsyncOpenPrinter");
 
 	torture_assert(tctx,
@@ -292,17 +344,84 @@ static bool test_AsyncOpenPrinter(struct torture_context *tctx,
 
 	struct dcerpc_pipe *p = ctx->iremotewinspool_pipe;
 	const char *printer_name;
+	struct spoolss_UserLevel1 client_info;
 	struct policy_handle handle;
 
 	printer_name = talloc_asprintf(tctx, "\\\\%s", dcerpc_server_name(p));
 
+	client_info = test_get_client_info(tctx, WIN_7, 6, 1);
+
 	torture_assert(tctx,
-		test_AsyncOpenPrinter_byprinter(tctx, ctx, p, printer_name, &handle),
+		test_AsyncOpenPrinter_byprinter(tctx, ctx, p, printer_name, client_info, &handle),
 		"failed to test AsyncOpenPrinter");
 
 	test_AsyncClosePrinter_byhandle(tctx, ctx, p, &handle);
 
 	return true;
+}
+
+/*
+ * Validate the result of AsyncOpenPrinter calls based on client info
+ * build number. Windows Server 2016 rejects an advertised build
+ * number less than 6000(Windows Vista and Windows Server 2008, or older)
+ */
+static bool test_AsyncOpenPrinterValidateBuildNumber(struct torture_context *tctx,
+						     void *private_data)
+{
+	struct test_iremotewinspool_context *ctx =
+		talloc_get_type_abort(private_data, struct test_iremotewinspool_context);
+
+	struct dcerpc_pipe *p = ctx->iremotewinspool_pipe;
+	const char *printer_name;
+	struct spoolss_UserLevel1 client_info;
+	struct policy_handle handle;
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct spoolss_DevmodeContainer devmode_ctr;
+	struct spoolss_UserLevelCtr client_info_ctr = {
+		.level = 1,
+	};
+	uint32_t access_mask = SERVER_ALL_ACCESS;
+	struct winspool_AsyncOpenPrinter r;
+	NTSTATUS status;
+	bool ok = false;
+
+	printer_name = talloc_asprintf(tctx, "\\\\%s", dcerpc_server_name(p));
+	torture_assert_not_null(tctx, printer_name, "Cannot allocate memory");
+
+	/* fail with Windows 2000 build number */
+	client_info = test_get_client_info(tctx, WIN_2000, 3, SPOOLSS_MINOR_VERSION_0);
+
+	ZERO_STRUCT(devmode_ctr);
+
+	client_info_ctr.user_info.level1 = &client_info;
+
+	r.in.pPrinterName	= printer_name;
+	r.in.pDatatype		= NULL;
+	r.in.pDevModeContainer	= &devmode_ctr;
+	r.in.AccessRequired	= access_mask;
+	r.in.pClientInfo	= &client_info_ctr;
+	r.out.pHandle		= &handle;
+
+	status = dcerpc_winspool_AsyncOpenPrinter_r(b, tctx, &r);
+	torture_assert_ntstatus_ok(tctx, status, "AsyncOpenPrinter failed");
+	torture_assert_werr_equal(tctx, r.out.result, WERR_ACCESS_DENIED,
+		"AsyncOpenPrinter should have failed");
+
+	/* succeed with Windows 7 build number */
+	client_info = test_get_client_info(tctx, WIN_7, 6, 1);
+	client_info_ctr.user_info.level1 = &client_info;
+	r.in.pClientInfo	= &client_info_ctr;
+
+	status = dcerpc_winspool_AsyncOpenPrinter_r(b, tctx, &r);
+	torture_assert_ntstatus_ok(tctx, status, "AsyncOpenPrinter failed");
+	torture_assert_werr_ok(tctx, r.out.result,
+		"AsyncOpenPrinter failed");
+
+	ok = test_AsyncClosePrinter_byhandle(tctx, ctx, p, &handle);
+	torture_assert(tctx, ok, "failed to AsyncClosePrinter handle");
+
+	return true;
+
 }
 
 static struct spoolss_NotifyOption *setup_printserver_NotifyOption(struct torture_context *tctx)
@@ -871,6 +990,7 @@ static bool test_OpenPrinter(struct torture_context *tctx,
 	struct policy_handle handle;
 	struct dcerpc_pipe *s;
 	struct dcerpc_binding *binding;
+	struct spoolss_UserLevel1 client_info;
 	struct spoolss_ClosePrinter r;
 
 	torture_assert_ntstatus_ok(tctx,
@@ -891,8 +1011,10 @@ static bool test_OpenPrinter(struct torture_context *tctx,
 
 	printer_name = talloc_asprintf(tctx, "\\\\%s", dcerpc_server_name(p));
 
+	client_info = test_get_client_info(tctx, WIN_7, 6, 1);
+
 	torture_assert(tctx,
-		test_AsyncOpenPrinter_byprinter(tctx, ctx, p, printer_name, &handle),
+		test_AsyncOpenPrinter_byprinter(tctx, ctx, p, printer_name, client_info, &handle),
 		"failed to open printserver via winspool");
 
 
@@ -928,6 +1050,7 @@ struct torture_suite *torture_rpc_iremotewinspool(TALLOC_CTX *mem_ctx)
 	torture_tcase_add_simple_test(tcase, "AsyncCorePrinterDriverInstalled", test_AsyncCorePrinterDriverInstalled);
 	torture_tcase_add_simple_test(tcase, "AsyncDeletePrintDriverPackage", test_AsyncDeletePrintDriverPackage);
 	torture_tcase_add_simple_test(tcase, "AsyncGetPrinterDriverDirectory", test_AsyncGetPrinterDriverDirectory);
+	torture_tcase_add_simple_test(tcase, "AsyncOpenPrinterValidateBuildNumber", test_AsyncOpenPrinterValidateBuildNumber);
 
 	tcase = torture_suite_add_tcase(suite, "handles");
 

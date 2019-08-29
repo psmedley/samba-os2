@@ -41,7 +41,7 @@ bld.SAMBA_BINARY('test_encrypted_secrets_tdb',
             DSDB_MODULE_HELPERS
         ''',
         install=False)
-if bld.CONFIG_SET('HAVE_LMDB'):
+if conf.env.HAVE_LMDB:
     bld.SAMBA_BINARY('test_encrypted_secrets_mdb',
             source='tests/test_encrypted_secrets.c',
             cflags='-DTEST_BE=\"mdb\"',

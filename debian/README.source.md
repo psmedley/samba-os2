@@ -1,7 +1,7 @@
 The packaging is kept in https://salsa.debian.org/samba-team/samba.
 
 The version in unstable is on the `master` branch, with the corresponding
-upstream version in the `upstream_4.9` branch (with `pristine-tar` information
+upstream version in the `upstream_4.10` branch (with `pristine-tar` information
 in the `pristine-tar` branch).
 
 It should be possible to build the package by just running `gbp buildpackage`.
@@ -28,7 +28,7 @@ Merging minor upstream releases
 Importing a new upstream version can be done like this:
 
     # set target version
-    upstream_version=4.9.1
+    upstream_version=4.10.7
     # go to git repo
     cd $GIT_DIR
     # Import upstream

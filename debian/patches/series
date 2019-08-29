@@ -6,5 +6,5 @@ usershare.patch
 VERSION.patch
 add-so-version-to-private-libraries
 heimdal-rfc3454.txt
-nsswitch-Add-try_authtok-option-to-pam_winbind.patch
 smbd.service-Run-update-apparmor-samba-profile-befor.patch
+fix-nfs-service-name-to-nfs-kernel-server.patch

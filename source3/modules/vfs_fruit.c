@@ -29,7 +29,6 @@
 #include "messages.h"
 #include "libcli/security/security.h"
 #include "../libcli/smb/smb2_create_ctx.h"
-#include "lib/util/sys_rw.h"
 #include "lib/util/tevent_ntstatus.h"
 #include "lib/util/tevent_unix.h"
 #include "offload_token.h"
@@ -411,8 +410,7 @@ struct ad_entry {
 };
 
 struct adouble {
-	vfs_handle_struct        *ad_handle;
-	int                       ad_fd;
+	files_struct             *ad_fsp;
 	bool                      ad_opened;
 	adouble_type_t            ad_type;
 	uint32_t                  ad_magic;
@@ -447,18 +445,6 @@ static const
 struct ad_entry_order entry_order_dot_und[ADEID_NUM_DOT_UND + 1] = {
 	{ADEID_FINDERI,    ADEDOFF_FINDERI_DOT_UND,  ADEDLEN_FINDERI},
 	{ADEID_RFORK,      ADEDOFF_RFORK_DOT_UND,    0},
-	{0, 0, 0}
-};
-
-/*
- * Fake AppleDouble entry oder for resource fork xattr.  The xattr
- * isn't an AppleDouble file, it simply contains the resource data,
- * but in order to be able to use some API calls like ad_getentryoff()
- * we build a fake/helper struct adouble with this entry order struct.
- */
-static const
-struct ad_entry_order entry_order_rsrc_xattr[ADEID_NUM_RSRC_XATTR + 1] = {
-	{ADEID_RFORK, 0, 0},
 	{0, 0, 0}
 };
 
@@ -533,10 +519,18 @@ struct fio {
 /*
  * Forward declarations
  */
-static struct adouble *ad_init(TALLOC_CTX *ctx, vfs_handle_struct *handle,
+static struct adouble *ad_init(TALLOC_CTX *ctx,
 			       adouble_type_t type);
-static int ad_set(struct adouble *ad, const struct smb_filename *smb_fname);
-static int ad_fset(struct adouble *ad, files_struct *fsp);
+static struct adouble *ad_get(TALLOC_CTX *ctx,
+			      vfs_handle_struct *handle,
+			      const struct smb_filename *smb_fname,
+			      adouble_type_t type);
+static int ad_set(vfs_handle_struct *handle,
+		  struct adouble *ad,
+		  const struct smb_filename *smb_fname);
+static int ad_fset(struct vfs_handle_struct *handle,
+		   struct adouble *ad,
+		   files_struct *fsp);
 static int adouble_path(TALLOC_CTX *ctx,
 			const struct smb_filename *smb_fname__in,
 			struct smb_filename **ppsmb_fname_out);
@@ -997,67 +991,76 @@ static bool ad_unpack(struct adouble *ad, const size_t nentries,
 	return true;
 }
 
-static bool ad_convert_move_reso(struct adouble *ad,
+static bool ad_convert_move_reso(vfs_handle_struct *handle,
+				 struct adouble *ad,
 				 const struct smb_filename *smb_fname)
 {
-	char *map = MAP_FAILED;
-	size_t maplen;
-	ssize_t len;
-	int rc;
+	char *buf = NULL;
+	size_t rforklen;
+	size_t rforkoff;
+	ssize_t n;
+	int ret;
 	bool ok;
 
-	if (ad_getentrylen(ad, ADEID_RFORK) == 0) {
+	rforklen = ad_getentrylen(ad, ADEID_RFORK);
+	if (rforklen == 0) {
 		return true;
 	}
 
-	maplen = ad_getentryoff(ad, ADEID_RFORK) +
-		ad_getentrylen(ad, ADEID_RFORK);
-
-	/* FIXME: direct use of mmap(), vfs_aio_fork does it too */
-	map = mmap(NULL, maplen, PROT_READ|PROT_WRITE, MAP_SHARED,
-		   ad->ad_fd, 0);
-	if (map == MAP_FAILED) {
-		DBG_ERR("mmap AppleDouble: %s\n", strerror(errno));
+	buf = talloc_size(ad, rforklen);
+	if (buf == NULL) {
+		/*
+		 * This allocates a buffer for reading the resource fork data in
+		 * one big swoop. Resource forks won't be larger then, say, 64
+		 * MB, I swear, so just doing the allocation with the talloc
+		 * limit as safeguard seems safe.
+		 */
+		DBG_ERR("Failed to allocate %zu bytes for rfork\n",
+			rforklen);
 		return false;
 	}
 
+	rforkoff = ad_getentryoff(ad, ADEID_RFORK);
 
-	memmove(map + ADEDOFF_RFORK_DOT_UND,
-		map + ad_getentryoff(ad, ADEID_RFORK),
-		ad_getentrylen(ad, ADEID_RFORK));
+	n = SMB_VFS_PREAD(ad->ad_fsp, buf, rforklen, rforkoff);
+	if (n != rforklen) {
+		DBG_ERR("Reading %zu bytes from rfork [%s] failed: %s\n",
+			rforklen, fsp_str_dbg(ad->ad_fsp), strerror(errno));
+		return false;
+	}
 
-	rc = munmap(map, maplen);
-	if (rc != 0) {
-		DBG_ERR("munmap failed: %s\n", strerror(errno));
+	rforkoff = ADEDOFF_RFORK_DOT_UND;
+
+	n = SMB_VFS_PWRITE(ad->ad_fsp, buf, rforklen, rforkoff);
+	if (n != rforklen) {
+		DBG_ERR("Writing %zu bytes to rfork [%s] failed: %s\n",
+			rforklen, fsp_str_dbg(ad->ad_fsp), strerror(errno));
 		return false;
 	}
 
 	ad_setentryoff(ad, ADEID_RFORK, ADEDOFF_RFORK_DOT_UND);
-
 	ok = ad_pack(ad);
 	if (!ok) {
 		DBG_WARNING("ad_pack [%s] failed\n", smb_fname->base_name);
 		return false;
 	}
 
-	len = sys_pwrite(ad->ad_fd, ad->ad_data, AD_DATASZ_DOT_UND, 0);
-	if (len != AD_DATASZ_DOT_UND) {
-		DBG_ERR("%s: bad size: %zd\n", smb_fname->base_name, len);
+	ret = ad_fset(handle, ad, ad->ad_fsp);
+	if (ret != 0) {
+		DBG_ERR("ad_fset on [%s] failed\n", fsp_str_dbg(ad->ad_fsp));
 		return false;
 	}
 
 	return true;
 }
 
-static bool ad_convert_xattr(struct adouble *ad,
+static bool ad_convert_xattr(vfs_handle_struct *handle,
+			     struct adouble *ad,
 			     const struct smb_filename *smb_fname,
 			     bool *converted_xattr)
 {
 	static struct char_mappings **string_replace_cmaps = NULL;
-	char *map = MAP_FAILED;
-	size_t maplen;
 	uint16_t i;
-	ssize_t len;
 	int saved_errno = 0;
 	NTSTATUS status;
 	int rc;
@@ -1081,17 +1084,6 @@ static bool ad_convert_xattr(struct adouble *ad,
 		TALLOC_FREE(mappings);
 	}
 
-	maplen = ad_getentryoff(ad, ADEID_RFORK) +
-		ad_getentrylen(ad, ADEID_RFORK);
-
-	/* FIXME: direct use of mmap(), vfs_aio_fork does it too */
-	map = mmap(NULL, maplen, PROT_READ|PROT_WRITE, MAP_SHARED,
-		   ad->ad_fd, 0);
-	if (map == MAP_FAILED) {
-		DBG_ERR("mmap AppleDouble: %s\n", strerror(errno));
-		return false;
-	}
-
 	for (i = 0; i < ad->adx_header.adx_num_attrs; i++) {
 		struct ad_xattr_entry *e = &ad->adx_entries[i];
 		char *mapped_name = NULL;
@@ -1100,7 +1092,7 @@ static bool ad_convert_xattr(struct adouble *ad,
 		files_struct *fsp = NULL;
 		ssize_t nwritten;
 
-		status = string_replace_allocate(ad->ad_handle->conn,
+		status = string_replace_allocate(handle->conn,
 						 e->adx_name,
 						 string_replace_cmaps,
 						 talloc_tos(),
@@ -1137,7 +1129,7 @@ static bool ad_convert_xattr(struct adouble *ad,
 		DBG_DEBUG("stream_name: %s\n", smb_fname_str_dbg(stream_name));
 
 		status = SMB_VFS_CREATE_FILE(
-			ad->ad_handle->conn,		/* conn */
+			handle->conn,			/* conn */
 			NULL,				/* req */
 			0,				/* root_dir_fid */
 			stream_name,			/* fname */
@@ -1163,7 +1155,7 @@ static bool ad_convert_xattr(struct adouble *ad,
 		}
 
 		nwritten = SMB_VFS_PWRITE(fsp,
-					  map + e->adx_offset,
+					  ad->ad_data + e->adx_offset,
 					  e->adx_length,
 					  0);
 		if (nwritten == -1) {
@@ -1191,14 +1183,15 @@ static bool ad_convert_xattr(struct adouble *ad,
 		goto fail;
 	}
 
-	len = sys_pwrite(ad->ad_fd, ad->ad_data, AD_DATASZ_DOT_UND, 0);
-	if (len != AD_DATASZ_DOT_UND) {
-		DBG_ERR("%s: bad size: %zd\n", smb_fname->base_name, len);
+	rc = ad_fset(handle, ad, ad->ad_fsp);
+	if (rc != 0) {
+		DBG_ERR("ad_fset on [%s] failed: %s\n",
+			fsp_str_dbg(ad->ad_fsp), strerror(errno));
 		ok = false;
 		goto fail;
 	}
 
-	ok = ad_convert_move_reso(ad, smb_fname);
+	ok = ad_convert_move_reso(handle, ad, smb_fname);
 	if (!ok) {
 		goto fail;
 	}
@@ -1207,16 +1200,11 @@ static bool ad_convert_xattr(struct adouble *ad,
 	ok = true;
 
 fail:
-	rc = munmap(map, maplen);
-	if (rc != 0) {
-		DBG_ERR("munmap failed: %s\n", strerror(errno));
-		return false;
-	}
-
 	return ok;
 }
 
-static bool ad_convert_finderinfo(struct adouble *ad,
+static bool ad_convert_finderinfo(vfs_handle_struct *handle,
+				  struct adouble *ad,
 				  const struct smb_filename *smb_fname)
 {
 	char *p_ad = NULL;
@@ -1273,7 +1261,7 @@ static bool ad_convert_finderinfo(struct adouble *ad,
 	DBG_DEBUG("stream_name: %s\n", smb_fname_str_dbg(stream_name));
 
 	status = SMB_VFS_CREATE_FILE(
-		ad->ad_handle->conn,		/* conn */
+		handle->conn,			/* conn */
 		NULL,				/* req */
 		0,				/* root_dir_fid */
 		stream_name,			/* fname */
@@ -1318,17 +1306,16 @@ static bool ad_convert_finderinfo(struct adouble *ad,
 	return true;
 }
 
-static bool ad_convert_truncate(struct adouble *ad,
+static bool ad_convert_truncate(vfs_handle_struct *handle,
+				struct adouble *ad,
 				const struct smb_filename *smb_fname)
 {
 	int rc;
+	off_t newlen;
 
-	/*
-	 * FIXME: direct ftruncate(), but we don't have a fsp for the
-	 * VFS call
-	 */
-	rc = ftruncate(ad->ad_fd, ADEDOFF_RFORK_DOT_UND +
-		       ad_getentrylen(ad, ADEID_RFORK));
+	newlen = ADEDOFF_RFORK_DOT_UND + ad_getentrylen(ad, ADEID_RFORK);
+
+	rc = SMB_VFS_FTRUNCATE(ad->ad_fsp, newlen);
 	if (rc != 0) {
 		return false;
 	}
@@ -1336,63 +1323,52 @@ static bool ad_convert_truncate(struct adouble *ad,
 	return true;
 }
 
-static bool ad_convert_blank_rfork(struct adouble *ad,
+static bool ad_convert_blank_rfork(vfs_handle_struct *handle,
+				   struct adouble *ad,
 				   bool *blank)
 {
 	struct fruit_config_data *config = NULL;
-	uint8_t *map = MAP_FAILED;
-	size_t maplen;
+	size_t rforklen = sizeof(empty_resourcefork);
+	char buf[rforklen];
+	ssize_t nread;
 	int cmp;
-	ssize_t len;
 	int rc;
 	bool ok;
 
 	*blank = false;
 
-	SMB_VFS_HANDLE_GET_DATA(ad->ad_handle, config,
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct fruit_config_data, return false);
 
 	if (!config->wipe_intentionally_left_blank_rfork) {
 		return true;
 	}
 
-	if (ad_getentrylen(ad, ADEID_RFORK) != sizeof(empty_resourcefork)) {
+	if (ad_getentrylen(ad, ADEID_RFORK) != rforklen) {
 		return true;
 	}
 
-	maplen = ad_getentryoff(ad, ADEID_RFORK) +
-		ad_getentrylen(ad, ADEID_RFORK);
-
-	/* FIXME: direct use of mmap(), vfs_aio_fork does it too */
-	map = mmap(NULL, maplen, PROT_READ|PROT_WRITE, MAP_SHARED,
-		   ad->ad_fd, 0);
-	if (map == MAP_FAILED) {
-		DBG_ERR("mmap AppleDouble: %s\n", strerror(errno));
+	nread = SMB_VFS_PREAD(ad->ad_fsp, buf, rforklen, ADEDOFF_RFORK_DOT_UND);
+	if (nread != rforklen) {
+		DBG_ERR("Reading %zu bytes from rfork [%s] failed: %s\n",
+			rforklen, fsp_str_dbg(ad->ad_fsp), strerror(errno));
 		return false;
 	}
 
-	cmp = memcmp(map + ADEDOFF_RFORK_DOT_UND,
-		     empty_resourcefork,
-		     sizeof(empty_resourcefork));
-	rc = munmap(map, maplen);
-	if (rc != 0) {
-		DBG_ERR("munmap failed: %s\n", strerror(errno));
-		return false;
-	}
-
+	cmp = memcmp(buf, empty_resourcefork, rforklen);
 	if (cmp != 0) {
 		return true;
 	}
 
 	ad_setentrylen(ad, ADEID_RFORK, 0);
-
 	ok = ad_pack(ad);
 	if (!ok) {
 		return false;
 	}
 
-	len = sys_pwrite(ad->ad_fd, ad->ad_data, AD_DATASZ_DOT_UND, 0);
-	if (len != AD_DATASZ_DOT_UND) {
+	rc = ad_fset(handle, ad, ad->ad_fsp);
+	if (rc != 0) {
+		DBG_ERR("ad_fset on [%s] failed\n", fsp_str_dbg(ad->ad_fsp));
 		return false;
 	}
 
@@ -1400,7 +1376,8 @@ static bool ad_convert_blank_rfork(struct adouble *ad,
 	return true;
 }
 
-static bool ad_convert_delete_adfile(struct adouble *ad,
+static bool ad_convert_delete_adfile(vfs_handle_struct *handle,
+				     struct adouble *ad,
 				     const struct smb_filename *smb_fname)
 {
 	struct fruit_config_data *config = NULL;
@@ -1411,7 +1388,7 @@ static bool ad_convert_delete_adfile(struct adouble *ad,
 		return true;
 	}
 
-	SMB_VFS_HANDLE_GET_DATA(ad->ad_handle, config,
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct fruit_config_data, return false);
 
 	if (!config->delete_empty_adfiles) {
@@ -1423,7 +1400,7 @@ static bool ad_convert_delete_adfile(struct adouble *ad,
 		return false;
 	}
 
-	rc = SMB_VFS_NEXT_UNLINK(ad->ad_handle, ad_name);
+	rc = SMB_VFS_NEXT_UNLINK(handle, ad_name);
 	if (rc != 0) {
 		DBG_ERR("Unlinking [%s] failed: %s\n",
 			smb_fname_str_dbg(ad_name), strerror(errno));
@@ -1446,50 +1423,66 @@ static bool ad_convert_delete_adfile(struct adouble *ad,
  * @return -1 in case an error occurred, 0 if no conversion was done, 1
  * otherwise
  **/
-static int ad_convert(struct adouble *ad,
+static int ad_convert(struct vfs_handle_struct *handle,
 		      const struct smb_filename *smb_fname)
 {
+	struct adouble *ad = NULL;
 	bool ok;
 	bool converted_xattr = false;
 	bool blank;
+	int ret;
 
-	ok = ad_convert_xattr(ad, smb_fname, &converted_xattr);
-	if (!ok) {
-		return -1;
+	ad = ad_get(talloc_tos(), handle, smb_fname, ADOUBLE_RSRC);
+	if (ad == NULL) {
+		return 0;
 	}
 
-	ok = ad_convert_blank_rfork(ad, &blank);
+	ok = ad_convert_xattr(handle, ad, smb_fname, &converted_xattr);
 	if (!ok) {
-		return -1;
+		ret = -1;
+		goto done;
+	}
+
+	ok = ad_convert_blank_rfork(handle, ad, &blank);
+	if (!ok) {
+		ret = -1;
+		goto done;
 	}
 
 	if (converted_xattr || blank) {
-		ok = ad_convert_truncate(ad, smb_fname);
+		ok = ad_convert_truncate(handle, ad, smb_fname);
 		if (!ok) {
-			return -1;
+			ret = -1;
+			goto done;
 		}
 	}
 
-	ok = ad_convert_finderinfo(ad, smb_fname);
+	ok = ad_convert_finderinfo(handle, ad, smb_fname);
 	if (!ok) {
 		DBG_ERR("Failed to convert [%s]\n",
 			smb_fname_str_dbg(smb_fname));
-		return -1;
+		ret = -1;
+		goto done;
 	}
 
-	ok = ad_convert_delete_adfile(ad, smb_fname);
+	ok = ad_convert_delete_adfile(handle, ad, smb_fname);
 	if (!ok) {
-		return -1;
+		ret = -1;
+		goto done;
 	}
 
-	return 0;
+	ret = 0;
+done:
+	TALLOC_FREE(ad);
+	return ret;
 }
 
 /**
  * Read and parse Netatalk AppleDouble metadata xattr
  **/
-static ssize_t ad_read_meta(struct adouble *ad,
-				const struct smb_filename *smb_fname)
+static ssize_t ad_read_meta(vfs_handle_struct *handle,
+			    struct adouble *ad,
+			    const struct smb_filename *smb_fname)
 {
 	int      rc = 0;
 	ssize_t  ealen;
@@ -1497,7 +1490,7 @@ static ssize_t ad_read_meta(struct adouble *ad,
 
 	DEBUG(10, ("reading meta xattr for %s\n", smb_fname->base_name));
 
-	ealen = SMB_VFS_GETXATTR(ad->ad_handle->conn, smb_fname,
+	ealen = SMB_VFS_GETXATTR(handle->conn, smb_fname,
 				 AFPINFO_EA_NETATALK, ad->ad_data,
 				 AD_DATASZ_XATTR);
 	if (ealen == -1) {
@@ -1554,7 +1547,9 @@ exit:
 		ealen = -1;
 		if (errno == EINVAL) {
 			become_root();
-			removexattr(smb_fname->base_name, AFPINFO_EA_NETATALK);
+			(void)SMB_VFS_REMOVEXATTR(handle->conn,
+						  smb_fname,
+						  AFPINFO_EA_NETATALK);
 			unbecome_root();
 			errno = ENOENT;
 		}
@@ -1562,57 +1557,67 @@ exit:
 	return ealen;
 }
 
-static int ad_open_rsrc_xattr(const struct smb_filename *smb_fname,
-				int flags,
-				mode_t mode)
-{
-#ifdef HAVE_ATTROPEN
-	/* FIXME: direct Solaris xattr syscall */
-	return attropen(smb_fname->base_name,
-			AFPRESOURCE_EA_NETATALK, flags, mode);
-#else
-	errno = ENOSYS;
-	return -1;
-#endif
-}
-
-static int ad_open_rsrc_adouble(const struct smb_filename *smb_fname,
-				int flags,
-				mode_t mode)
+static int ad_open_rsrc(vfs_handle_struct *handle,
+			const struct smb_filename *smb_fname,
+			int flags,
+			mode_t mode,
+			files_struct **_fsp)
 {
 	int ret;
-	int fd;
 	struct smb_filename *adp_smb_fname = NULL;
+	files_struct *fsp = NULL;
+	uint32_t access_mask;
+	uint32_t share_access;
+	uint32_t create_disposition;
+	NTSTATUS status;
 
 	ret = adouble_path(talloc_tos(), smb_fname, &adp_smb_fname);
 	if (ret != 0) {
 		return -1;
 	}
 
-	fd = open(adp_smb_fname->base_name, flags, mode);
-	TALLOC_FREE(adp_smb_fname);
-
-	return fd;
-}
-
-static int ad_open_rsrc(vfs_handle_struct *handle,
-			const struct smb_filename *smb_fname,
-			int flags,
-			mode_t mode)
-{
-	struct fruit_config_data *config = NULL;
-	int fd;
-
-	SMB_VFS_HANDLE_GET_DATA(handle, config,
-				struct fruit_config_data, return -1);
-
-	if (config->rsrc == FRUIT_RSRC_XATTR) {
-		fd = ad_open_rsrc_xattr(smb_fname, flags, mode);
-	} else {
-		fd = ad_open_rsrc_adouble(smb_fname, flags, mode);
+	ret = SMB_VFS_STAT(handle->conn, adp_smb_fname);
+	if (ret != 0) {
+		TALLOC_FREE(adp_smb_fname);
+		return -1;
 	}
 
-	return fd;
+	access_mask = FILE_GENERIC_READ;
+	share_access = FILE_SHARE_READ | FILE_SHARE_WRITE;
+	create_disposition = FILE_OPEN;
+
+	if (flags & O_RDWR) {
+		access_mask |= FILE_GENERIC_WRITE;
+		share_access &= ~FILE_SHARE_WRITE;
+	}
+
+	status = SMB_VFS_CREATE_FILE(
+		handle->conn,			/* conn */
+		NULL,				/* req */
+		0,				/* root_dir_fid */
+		adp_smb_fname,
+		access_mask,
+		share_access,
+		create_disposition,
+		0,				/* create_options */
+		0,				/* file_attributes */
+		INTERNAL_OPEN_ONLY,		/* oplock_request */
+		NULL,				/* lease */
+		0,				/* allocation_size */
+		0,				/* private_flags */
+		NULL,				/* sd */
+		NULL,				/* ea_list */
+		&fsp,
+		NULL,				/* psbuf */
+		NULL, NULL);			/* create context */
+	TALLOC_FREE(adp_smb_fname);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("SMB_VFS_CREATE_FILE failed\n");
+		return -1;
+	}
+
+	*_fsp = fsp;
+	return 0;
 }
 
 /*
@@ -1627,7 +1632,7 @@ static int ad_open(vfs_handle_struct *handle,
 		   int flags,
 		   mode_t mode)
 {
-	int fd;
+	int ret;
 
 	DBG_DEBUG("Path [%s] type [%s]\n", smb_fname->base_name,
 		  ad->ad_type == ADOUBLE_META ? "meta" : "rsrc");
@@ -1636,56 +1641,39 @@ static int ad_open(vfs_handle_struct *handle,
 		return 0;
 	}
 
-	if ((fsp != NULL) && (fsp->fh != NULL) && (fsp->fh->fd != -1)) {
-		ad->ad_fd = fsp->fh->fd;
+	if (fsp != NULL) {
+		ad->ad_fsp = fsp;
 		ad->ad_opened = false;
 		return 0;
 	}
 
-	fd = ad_open_rsrc(handle, smb_fname, flags, mode);
-	if (fd == -1) {
+	ret = ad_open_rsrc(handle, smb_fname, flags, mode, &ad->ad_fsp);
+	if (ret != 0) {
 		return -1;
 	}
 	ad->ad_opened = true;
-	ad->ad_fd = fd;
 
-	DBG_DEBUG("Path [%s] type [%s] fd [%d]\n",
+	DBG_DEBUG("Path [%s] type [%s]\n",
 		  smb_fname->base_name,
-		  ad->ad_type == ADOUBLE_META ? "meta" : "rsrc", fd);
+		  ad->ad_type == ADOUBLE_META ? "meta" : "rsrc");
 
 	return 0;
 }
 
-static ssize_t ad_read_rsrc_xattr(struct adouble *ad)
+static ssize_t ad_read_rsrc_adouble(vfs_handle_struct *handle,
+				    struct adouble *ad,
+				    const struct smb_filename *smb_fname)
 {
-	int ret;
-	SMB_STRUCT_STAT st;
-
-	/* FIXME: direct sys_fstat(), don't have an fsp */
-	ret = sys_fstat(ad->ad_fd, &st,
-			lp_fake_directory_create_times(
-				SNUM(ad->ad_handle->conn)));
-	if (ret != 0) {
-		return -1;
-	}
-
-	ad_setentrylen(ad, ADEID_RFORK, st.st_ex_size);
-	return st.st_ex_size;
-}
-
-static ssize_t ad_read_rsrc_adouble(struct adouble *ad,
-				const struct smb_filename *smb_fname)
-{
-	SMB_STRUCT_STAT sbuf;
 	char *p_ad = NULL;
 	size_t size;
 	ssize_t len;
 	int ret;
 	bool ok;
 
-	ret = sys_fstat(ad->ad_fd, &sbuf, lp_fake_directory_create_times(
-				SNUM(ad->ad_handle->conn)));
+	ret = SMB_VFS_NEXT_FSTAT(handle, ad->ad_fsp, &ad->ad_fsp->fsp_name->st);
 	if (ret != 0) {
+		DBG_ERR("fstat [%s] failed: %s\n",
+			fsp_str_dbg(ad->ad_fsp), strerror(errno));
 		return -1;
 	}
 
@@ -1697,7 +1685,7 @@ static ssize_t ad_read_rsrc_adouble(struct adouble *ad,
 	 *
 	 * Read as much as we can up to AD_XATTR_MAX_HDR_SIZE.
 	 */
-	size = sbuf.st_ex_size;
+	size = ad->ad_fsp->fsp_name->st.st_ex_size;
 	if (size > talloc_array_length(ad->ad_data)) {
 		if (size > AD_XATTR_MAX_HDR_SIZE) {
 			size = AD_XATTR_MAX_HDR_SIZE;
@@ -1709,8 +1697,7 @@ static ssize_t ad_read_rsrc_adouble(struct adouble *ad,
 		ad->ad_data = p_ad;
 	}
 
-	len = sys_pread(ad->ad_fd, ad->ad_data,
-			talloc_array_length(ad->ad_data), 0);
+	len = SMB_VFS_NEXT_PREAD(handle, ad->ad_fsp, ad->ad_data, talloc_array_length(ad->ad_data), 0);
 	if (len != talloc_array_length(ad->ad_data)) {
 		DBG_NOTICE("%s %s: bad size: %zd\n",
 			   smb_fname->base_name, strerror(errno), len);
@@ -1718,7 +1705,7 @@ static ssize_t ad_read_rsrc_adouble(struct adouble *ad,
 	}
 
 	/* Now parse entries */
-	ok = ad_unpack(ad, ADEID_NUM_DOT_UND, sbuf.st_ex_size);
+	ok = ad_unpack(ad, ADEID_NUM_DOT_UND, size);
 	if (!ok) {
 		DBG_ERR("invalid AppleDouble resource %s\n",
 			smb_fname->base_name);
@@ -1735,51 +1722,31 @@ static ssize_t ad_read_rsrc_adouble(struct adouble *ad,
 		return -1;
 	}
 
-	/*
-	 * Try to fixup AppleDouble files created by OS X with xattrs
-	 * appended to the ADEID_FINDERI entry.
-	 */
-
-	ret = ad_convert(ad, smb_fname);
-	if (ret != 0) {
-		DBG_WARNING("Failed to convert [%s]\n", smb_fname->base_name);
-		return len;
-	}
-
 	return len;
 }
 
 /**
  * Read and parse resource fork, either ._ AppleDouble file or xattr
  **/
-static ssize_t ad_read_rsrc(struct adouble *ad,
-			const struct smb_filename *smb_fname)
+static ssize_t ad_read_rsrc(vfs_handle_struct *handle,
+			    struct adouble *ad,
+			    const struct smb_filename *smb_fname)
 {
-	struct fruit_config_data *config = NULL;
-	ssize_t len;
-
-	SMB_VFS_HANDLE_GET_DATA(ad->ad_handle, config,
-				struct fruit_config_data, return -1);
-
-	if (config->rsrc == FRUIT_RSRC_XATTR) {
-		len = ad_read_rsrc_xattr(ad);
-	} else {
-		len = ad_read_rsrc_adouble(ad, smb_fname);
-	}
-
-	return len;
+	return ad_read_rsrc_adouble(handle, ad, smb_fname);
 }
 
 /**
  * Read and unpack an AppleDouble metadata xattr or resource
  **/
-static ssize_t ad_read(struct adouble *ad, const struct smb_filename *smb_fname)
+static ssize_t ad_read(vfs_handle_struct *handle,
+		       struct adouble *ad,
+		       const struct smb_filename *smb_fname)
 {
 	switch (ad->ad_type) {
 	case ADOUBLE_META:
-		return ad_read_meta(ad, smb_fname);
+		return ad_read_meta(handle, ad, smb_fname);
 	case ADOUBLE_RSRC:
-		return ad_read_rsrc(ad, smb_fname);
+		return ad_read_rsrc(handle, ad, smb_fname);
 	default:
 		return -1;
 	}
@@ -1787,10 +1754,20 @@ static ssize_t ad_read(struct adouble *ad, const struct smb_filename *smb_fname)
 
 static int adouble_destructor(struct adouble *ad)
 {
-	if ((ad->ad_fd != -1) && ad->ad_opened) {
-		close(ad->ad_fd);
-		ad->ad_fd = -1;
+	NTSTATUS status;
+
+	if (!ad->ad_opened) {
+		return 0;
 	}
+
+	SMB_ASSERT(ad->ad_fsp != NULL);
+
+	status = close_file(NULL, ad->ad_fsp, NORMAL_CLOSE);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("Closing [%s] failed: %s\n",
+			fsp_str_dbg(ad->ad_fsp), nt_errstr(status));
+	}
+
 	return 0;
 }
 
@@ -1806,25 +1783,19 @@ static int adouble_destructor(struct adouble *ad)
  *
  * @return               adouble handle
  **/
-static struct adouble *ad_alloc(TALLOC_CTX *ctx, vfs_handle_struct *handle,
+static struct adouble *ad_alloc(TALLOC_CTX *ctx,
 				adouble_type_t type)
 {
 	int rc = 0;
 	size_t adsize = 0;
 	struct adouble *ad;
-	struct fruit_config_data *config;
-
-	SMB_VFS_HANDLE_GET_DATA(handle, config,
-				struct fruit_config_data, return NULL);
 
 	switch (type) {
 	case ADOUBLE_META:
 		adsize = AD_DATASZ_XATTR;
 		break;
 	case ADOUBLE_RSRC:
-		if (config->rsrc == FRUIT_RSRC_ADFILE) {
-			adsize = AD_DATASZ_DOT_UND;
-		}
+		adsize = AD_DATASZ_DOT_UND;
 		break;
 	default:
 		return NULL;
@@ -1844,11 +1815,9 @@ static struct adouble *ad_alloc(TALLOC_CTX *ctx, vfs_handle_struct *handle,
 		}
 	}
 
-	ad->ad_handle = handle;
 	ad->ad_type = type;
 	ad->ad_magic = AD_MAGIC;
 	ad->ad_version = AD_VERSION;
-	ad->ad_fd = -1;
 
 	talloc_set_destructor(ad, adouble_destructor);
 
@@ -1863,39 +1832,30 @@ exit:
  * Allocate and initialize a new struct adouble
  *
  * @param[in] ctx        talloc context
- * @param[in] handle     vfs handle
  * @param[in] type       type of AppleDouble, ADOUBLE_META or ADOUBLE_RSRC
  *
  * @return               adouble handle, initialized
  **/
-static struct adouble *ad_init(TALLOC_CTX *ctx, vfs_handle_struct *handle,
+static struct adouble *ad_init(TALLOC_CTX *ctx,
 			       adouble_type_t type)
 {
 	int rc = 0;
 	const struct ad_entry_order  *eid;
 	struct adouble *ad = NULL;
-	struct fruit_config_data *config;
 	time_t t = time(NULL);
-
-	SMB_VFS_HANDLE_GET_DATA(handle, config,
-				struct fruit_config_data, return NULL);
 
 	switch (type) {
 	case ADOUBLE_META:
 		eid = entry_order_meta_xattr;
 		break;
 	case ADOUBLE_RSRC:
-		if (config->rsrc == FRUIT_RSRC_ADFILE) {
-			eid = entry_order_dot_und;
-		} else {
-			eid = entry_order_rsrc_xattr;
-		}
+		eid = entry_order_dot_und;
 		break;
 	default:
 		return NULL;
 	}
 
-	ad = ad_alloc(ctx, handle, type);
+	ad = ad_alloc(ctx, type);
 	if (ad == NULL) {
 		return NULL;
 	}
@@ -1937,7 +1897,7 @@ static struct adouble *ad_get_internal(TALLOC_CTX *ctx,
 		   type == ADOUBLE_META ? "meta" : "rsrc",
 		   smb_fname->base_name));
 
-	ad = ad_alloc(ctx, handle, type);
+	ad = ad_alloc(ctx, type);
 	if (ad == NULL) {
 		rc = -1;
 		goto exit;
@@ -1958,7 +1918,7 @@ static struct adouble *ad_get_internal(TALLOC_CTX *ctx,
 
 	}
 
-	len = ad_read(ad, smb_fname);
+	len = ad_read(handle, ad, smb_fname);
 	if (len == -1) {
 		DEBUG(10, ("error reading AppleDouble for %s\n",
 			smb_fname->base_name));
@@ -2020,7 +1980,9 @@ static struct adouble *ad_fget(TALLOC_CTX *ctx, vfs_handle_struct *handle,
  *
  * @return            status code, 0 means success
  **/
-static int ad_set(struct adouble *ad, const struct smb_filename *smb_fname)
+static int ad_set(vfs_handle_struct *handle,
+		  struct adouble *ad,
+		  const struct smb_filename *smb_fname)
 {
 	bool ok;
 	int ret;
@@ -2038,7 +2000,7 @@ static int ad_set(struct adouble *ad, const struct smb_filename *smb_fname)
 		return -1;
 	}
 
-	ret = SMB_VFS_SETXATTR(ad->ad_handle->conn,
+	ret = SMB_VFS_SETXATTR(handle->conn,
 			       smb_fname,
 			       AFPINFO_EA_NETATALK,
 			       ad->ad_data,
@@ -2057,7 +2019,9 @@ static int ad_set(struct adouble *ad, const struct smb_filename *smb_fname)
  *
  * @return            status code, 0 means success
  **/
-static int ad_fset(struct adouble *ad, files_struct *fsp)
+static int ad_fset(struct vfs_handle_struct *handle,
+		   struct adouble *ad,
+		   files_struct *fsp)
 {
 	int rc = -1;
 	ssize_t len;
@@ -2079,7 +2043,7 @@ static int ad_fset(struct adouble *ad, files_struct *fsp)
 
 	switch (ad->ad_type) {
 	case ADOUBLE_META:
-		rc = SMB_VFS_NEXT_SETXATTR(ad->ad_handle,
+		rc = SMB_VFS_NEXT_SETXATTR(handle,
 					   fsp->fsp_name,
 					   AFPINFO_EA_NETATALK,
 					   ad->ad_data,
@@ -2087,7 +2051,7 @@ static int ad_fset(struct adouble *ad, files_struct *fsp)
 		break;
 
 	case ADOUBLE_RSRC:
-		len = SMB_VFS_NEXT_PWRITE(ad->ad_handle,
+		len = SMB_VFS_NEXT_PWRITE(handle,
 					  fsp,
 					  ad->ad_data,
 					  AD_DATASZ_DOT_UND,
@@ -2133,9 +2097,8 @@ static bool is_afpresource_stream(const struct smb_filename *smb_fname)
 }
 
 /**
- * Test whether stream is an Apple stream, not used atm
+ * Test whether stream is an Apple stream.
  **/
-#if 0
 static bool is_apple_stream(const struct smb_filename *smb_fname)
 {
 	if (is_afpinfo_stream(smb_fname)) {
@@ -2146,7 +2109,27 @@ static bool is_apple_stream(const struct smb_filename *smb_fname)
 	}
 	return false;
 }
-#endif
+
+static bool is_adouble_file(const char *path)
+{
+	const char *p = NULL;
+	int match;
+
+	p = strrchr(path, '/');
+	if (p == NULL) {
+		p = path;
+	} else {
+		p++;
+	}
+
+	match = strncmp(p,
+			ADOUBLE_NAME_PREFIX,
+			strlen(ADOUBLE_NAME_PREFIX));
+	if (match != 0) {
+		return false;
+	}
+	return true;
+}
 
 /**
  * Initialize config struct from our smb.conf config parameters
@@ -2612,7 +2595,7 @@ static off_t access_to_netatalk_brl(enum apple_fork fork_type,
 static off_t denymode_to_netatalk_brl(enum apple_fork fork_type,
 				      uint32_t deny_mode)
 {
-	off_t offset;
+	off_t offset = 0;
 
 	switch (deny_mode) {
 	case DENY_READ:
@@ -3173,12 +3156,12 @@ static uint64_t readdir_attr_rfork_size(struct vfs_handle_struct *handle,
 
 	switch (config->rsrc) {
 	case FRUIT_RSRC_ADFILE:
-	case FRUIT_RSRC_XATTR:
 		rfork_size = readdir_attr_rfork_size_adouble(handle,
 							     smb_fname);
 		break;
 
-	case FRUIT_META_STREAM:
+	case FRUIT_RSRC_XATTR:
+	case FRUIT_RSRC_STREAM:
 		rfork_size = readdir_attr_rfork_size_stream(handle,
 							    smb_fname);
 		break;
@@ -3574,7 +3557,7 @@ static int fruit_open_rsrc_adouble(vfs_handle_struct *handle,
 	}
 
 	if (flags & (O_CREAT | O_TRUNC)) {
-		ad = ad_init(fsp, handle, ADOUBLE_RSRC);
+		ad = ad_init(fsp, ADOUBLE_RSRC);
 		if (ad == NULL) {
 			rc = -1;
 			goto exit;
@@ -3582,7 +3565,7 @@ static int fruit_open_rsrc_adouble(vfs_handle_struct *handle,
 
 		fsp->fh->fd = hostfd;
 
-		rc = ad_fset(ad, fsp);
+		rc = ad_fset(handle, ad, fsp);
 		fsp->fh->fd = -1;
 		if (rc != 0) {
 			rc = -1;
@@ -4034,7 +4017,9 @@ static int fruit_unlink(vfs_handle_struct *handle,
 		return fruit_unlink_meta(handle, smb_fname);
 	} else if (is_afpresource_stream(smb_fname)) {
 		return fruit_unlink_rsrc(handle, smb_fname, false);
-	} if (is_ntfs_stream_smb_fname(smb_fname)) {
+	} else if (is_ntfs_stream_smb_fname(smb_fname)) {
+		return SMB_VFS_NEXT_UNLINK(handle, smb_fname);
+	} else if (is_adouble_file(smb_fname->base_name)) {
 		return SMB_VFS_NEXT_UNLINK(handle, smb_fname);
 	}
 
@@ -4180,16 +4165,12 @@ static int fruit_rmdir(struct vfs_handle_struct *handle,
 	}
 
 	while ((de = SMB_VFS_READDIR(handle->conn, dh, NULL)) != NULL) {
-		int match;
 		struct adouble *ad = NULL;
 		char *p = NULL;
 		struct smb_filename *ad_smb_fname = NULL;
 		int ret;
 
-		match = strncmp(de->d_name,
-				ADOUBLE_NAME_PREFIX,
-				strlen(ADOUBLE_NAME_PREFIX));
-		if (match != 0) {
+		if (!is_adouble_file(de->d_name)) {
 			continue;
 		}
 
@@ -4656,7 +4637,7 @@ static ssize_t fruit_pwrite_meta_netatalk(vfs_handle_struct *handle,
 
 	ad = ad_fget(talloc_tos(), handle, fsp, ADOUBLE_META);
 	if (ad == NULL) {
-		ad = ad_init(talloc_tos(), handle, ADOUBLE_META);
+		ad = ad_init(talloc_tos(), ADOUBLE_META);
 		if (ad == NULL) {
 			return -1;
 		}
@@ -4670,7 +4651,7 @@ static ssize_t fruit_pwrite_meta_netatalk(vfs_handle_struct *handle,
 
 	memcpy(p, &ai->afpi_FinderInfo[0], ADEDLEN_FINDERI);
 
-	ret = ad_fset(ad, fsp);
+	ret = ad_fset(handle, ad, fsp);
 	if (ret != 0) {
 		DBG_ERR("ad_pwrite [%s] failed\n", fsp_str_dbg(fsp));
 		TALLOC_FREE(ad);
@@ -4826,7 +4807,7 @@ static ssize_t fruit_pwrite_rsrc_adouble(vfs_handle_struct *handle,
 
 	if ((n + offset) > ad_getentrylen(ad, ADEID_RFORK)) {
 		ad_setentrylen(ad, ADEID_RFORK, n + offset);
-		ret = ad_fset(ad, fsp);
+		ret = ad_fset(handle, ad, fsp);
 		if (ret != 0) {
 			DBG_ERR("ad_pwrite [%s] failed\n", fsp_str_dbg(fsp));
 			TALLOC_FREE(ad);
@@ -5275,6 +5256,7 @@ static int fruit_fstat_meta_stream(vfs_handle_struct *handle,
 				   SMB_STRUCT_STAT *sbuf)
 {
 	struct fio *fio = (struct fio *)VFS_FETCH_FSP_EXTENSION(handle, fsp);
+	struct smb_filename smb_fname;
 	ino_t ino;
 	int ret;
 
@@ -5294,11 +5276,15 @@ static int fruit_fstat_meta_stream(vfs_handle_struct *handle,
 		return 0;
 	}
 
-	ret = fruit_stat_base(handle, fsp->base_fsp->fsp_name, false);
+	smb_fname = (struct smb_filename) {
+		.base_name = fsp->fsp_name->base_name,
+	};
+
+	ret = fruit_stat_base(handle, &smb_fname, false);
 	if (ret != 0) {
 		return -1;
 	}
-	*sbuf = fsp->base_fsp->fsp_name->st;
+	*sbuf = smb_fname.st;
 
 	ino = fruit_inode(sbuf, fsp->fsp_name->stream_name);
 
@@ -5859,7 +5845,7 @@ static int fruit_ntimes(vfs_handle_struct *handle,
 	ad_setdate(ad, AD_DATE_CREATE | AD_DATE_UNIX,
 		   convert_time_t_to_uint32_t(ft->create_time.tv_sec));
 
-	rc = ad_set(ad, smb_fname);
+	rc = ad_set(handle, ad, smb_fname);
 
 exit:
 
@@ -5923,7 +5909,7 @@ static int fruit_ftruncate_rsrc_adouble(struct vfs_handle_struct *handle,
 
 	ad_setentrylen(ad, ADEID_RFORK, offset);
 
-	rc = ad_fset(ad, fsp);
+	rc = ad_fset(handle, ad, fsp);
 	if (rc != 0) {
 		DBG_ERR("ad_fset [%s] failed [%s]\n",
 			fsp_str_dbg(fsp), strerror(errno));
@@ -6042,6 +6028,8 @@ static NTSTATUS fruit_create_file(vfs_handle_struct *handle,
 	struct fruit_config_data *config = NULL;
 	files_struct *fsp = NULL;
 	struct fio *fio = NULL;
+	bool internal_open = (oplock_request & INTERNAL_OPEN_ONLY);
+	int ret;
 
 	status = check_aapl(handle, req, in_context_blobs, out_context_blobs);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -6050,6 +6038,14 @@ static NTSTATUS fruit_create_file(vfs_handle_struct *handle,
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config, struct fruit_config_data,
 				return NT_STATUS_UNSUCCESSFUL);
+
+	if (is_apple_stream(smb_fname) && !internal_open) {
+		ret = ad_convert(handle, smb_fname);
+		if (ret != 0) {
+			DBG_ERR("ad_convert() failed\n");
+			return NT_STATUS_UNSUCCESSFUL;
+		}
+	}
 
 	status = SMB_VFS_NEXT_CREATE_FILE(
 		handle, req, root_dir_fid, smb_fname,
@@ -6102,7 +6098,9 @@ static NTSTATUS fruit_create_file(vfs_handle_struct *handle,
 		return status;
 	}
 
-	if (config->locking == FRUIT_LOCKING_NETATALK) {
+	if ((config->locking == FRUIT_LOCKING_NETATALK) &&
+	    (fsp->op != NULL))
+	{
 		status = fruit_check_access(
 			handle, *result,
 			access_mask,
@@ -6133,6 +6131,7 @@ static NTSTATUS fruit_readdir_attr(struct vfs_handle_struct *handle,
 	struct fruit_config_data *config = NULL;
 	struct readdir_attr_data *attr_data;
 	NTSTATUS status;
+	int ret;
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct fruit_config_data,
@@ -6143,6 +6142,12 @@ static NTSTATUS fruit_readdir_attr(struct vfs_handle_struct *handle,
 	}
 
 	DEBUG(10, ("fruit_readdir_attr %s\n", fname->base_name));
+
+	ret = ad_convert(handle, fname);
+	if (ret != 0) {
+		DBG_ERR("ad_convert() failed\n");
+		return NT_STATUS_UNSUCCESSFUL;
+	}
 
 	*pattr_data = talloc_zero(mem_ctx, struct readdir_attr_data);
 	if (*pattr_data == NULL) {

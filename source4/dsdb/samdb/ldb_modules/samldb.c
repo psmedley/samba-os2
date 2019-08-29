@@ -1333,7 +1333,7 @@ static int samldb_schema_info_update(struct samldb_ctx *ac)
 	}
 
 	/* do not update schemaInfo during provisioning */
-	if (ldb_request_get_control(ac->req, LDB_CONTROL_RELAX_OID)) {
+	if (ldb_request_get_control(ac->req, LDB_CONTROL_PROVISION_OID)) {
 		return LDB_SUCCESS;
 	}
 
@@ -4063,7 +4063,6 @@ static int check_rename_constraints(struct ldb_message *msg,
 	if (samdb_find_attribute(ldb, msg, "objectclass", "subnet") != NULL) {
 		ret = samldb_verify_subnet(ac, newdn);
 		if (ret != LDB_SUCCESS) {
-			talloc_free(ac);
 			return ret;
 		}
 	}

@@ -2,12 +2,12 @@
 .\"     Title: rpcclient
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/12/2019
+.\"      Date: 08/22/2019
 .\"    Manual: User Commands
-.\"    Source: Samba 4.9.5
+.\"    Source: Samba 4.10.7
 .\"  Language: English
 .\"
-.TH "RPCCLIENT" "1" "03/12/2019" "Samba 4\&.9\&.5" "User Commands"
+.TH "RPCCLIENT" "1" "08/22/2019" "Samba 4\&.10\&.7" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 rpcclient \- tool for executing client side MS\-RPC functions
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-rpcclient [\-A\ authfile] [\-c\ <command\ string>] [\-d\ debuglevel] [\-l\ logdir] [\-N] [\-s\ <smb\ config\ file>] [\-U\ username[%password]] [\-W\ workgroup] [\-I\ destinationIP] {server}
+rpcclient [\-A\ authfile] [\-c\ <command\ string>] [\-d\ debuglevel] [\-l\ logdir] [\-N] [\-s\ <smb\ config\ file>] [\-U\ username[%password]] [\-W\ workgroup] [\-I\ destinationIP] {BINDING\-STRING|HOST}
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -42,12 +42,336 @@ rpcclient
 is a utility initially developed to test MS\-RPC functionality in Samba itself\&. It has undergone several stages of development and stability\&. Many system administrators have now written scripts around it to manage Windows NT clients from their UNIX workstation\&.
 .SH "OPTIONS"
 .PP
-server
+BINDING\-STRING|HOST
 .RS 4
-NetBIOS name of Server to which to connect\&. The server can be any SMB/CIFS server\&. The name is resolved using the
-\m[blue]\fBname resolve order\fR\m[]
-line from
-\fBsmb.conf\fR(5)\&.
+When connecting to a dcerpc service you need to specify a binding string\&.
+.sp
+The format is:
+.sp
+TRANSPORT:host[options]
+.sp
+where TRANSPORT is either ncacn_np (named pipes) for SMB or ncacn_ip_tcp for DCERPC over TCP/IP\&.
+.sp
+"host" is an IP or hostname or netbios name\&. If the binding string identifies the server side of an endpoint, "host" may be an empty string\&. See below for more details\&.
+.sp
+"options" can include a SMB pipe name if using the ncacn_np transport or a TCP port number if using the ncacn_ip_tcp transport, otherwise they will be auto\-determined\&.
+.sp
+Examples:
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncacn_ip_tcp:samba\&.example\&.com[1024]\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncacn_ip_tcp:samba\&.example\&.com[sign,seal,krb5]\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncacn_ip_tcp:samba\&.example\&.com[sign,spnego]\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncacn_np:samba\&.example\&.com\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncacn_np:samba\&.example\&.com[samr]\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncacn_np:samba\&.example\&.com[samr,sign,print]\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncalrpc:/path/to/unix/socket\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fI//SAMBA\fR
+.RE
+.sp
+.RE
+The supported transports are:
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncacn_np\fR
+\- Connect using named pipes
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncacn_ip_tcp\fR
+\- Connect over TCP/IP
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIncalrpc\fR
+\- Connect over local RPC (unix sockets)
+.RE
+.sp
+.RE
+The supported options are:
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIsign\fR
+\- Use RPC integrety autentication level
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIseal\fR
+\- Enable RPC privacy (encryption) autentication level
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIconnect\fR
+\- Use RPC connect level authentication (auth, but no sign or seal)
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIpacket\fR
+\- Use RPC packet authentication level
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIspnego\fR
+\- Use SPNEGO instead of NTLMSSP authentication
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIntlm\fR
+\- Use plain NTLM instead of SPNEGO or NTLMSSP
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIkrb5\fR
+\- Use Kerberos instead of NTLMSSP authentication
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIschannel\fR
+\- Create a schannel connection
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIsmb1\fR
+\- Use SMB1 for named pipes
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIsmb2\fR
+\- Use SMB2/3 for named pipes
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIvalidate\fR
+\- Enable the NDR validator
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIprint\fR
+\- Enable debug output of packets
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIpadcheck\fR
+\- Check reply data for non\-zero pad bytes
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIbigendian\fR
+\- Use big endian for RPC
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIndr64\fR
+\- Use NDR64 for RPC
+.RE
+.sp
+.RE
 .RE
 .PP
 \-c|\-\-command=<command string>
@@ -803,7 +1127,7 @@ and
 that are incompatible for some commands or services\&. Additionally, the developers are sending reports to Microsoft, and problems found or reported to Microsoft are fixed in Service Packs, which may result in incompatibilities\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.9\&.5 of the Samba suite\&.
+This man page is part of version 4\&.10\&.7 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

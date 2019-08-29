@@ -30,13 +30,14 @@
 #include <tevent.h>
 #include <tdb.h>
 
-#include "common/version.h"
+#include "version.h"
 #include "lib/util/debug.h"
 #include "lib/util/samba_util.h"
 #include "lib/util/sys_rw.h"
 
 #include "common/db_hash.h"
 #include "common/logging.h"
+#include "common/path.h"
 #include "protocol/protocol.h"
 #include "protocol/protocol_api.h"
 #include "protocol/protocol_util.h"
@@ -586,7 +587,7 @@ static int h2i(char h)
 		return h - 'a' + 10;
 	}
 	if (h >= 'A' && h <= 'F') {
-		return h - 'f' + 10;
+		return h - 'A' + 10;
 	}
 	return h - '0';
 }
@@ -625,6 +626,9 @@ static int str_to_data(const char *str, size_t len, TALLOC_CTX *mem_ctx,
 
 	if (strncmp(str, "0x", 2) == 0) {
 		ret = hex_to_data(str+2, len-2, mem_ctx, &data);
+		if (ret != 0) {
+			return ret;
+		}
 	} else {
 		data.dptr = talloc_memdup(mem_ctx, str, len);
 		if (data.dptr == NULL) {
@@ -634,7 +638,7 @@ static int str_to_data(const char *str, size_t len, TALLOC_CTX *mem_ctx,
 	}
 
 	*out = data;
-	return ret;
+	return 0;
 }
 
 static int run_helper(TALLOC_CTX *mem_ctx, const char *command,
@@ -714,7 +718,7 @@ static int run_helper(TALLOC_CTX *mem_ctx, const char *command,
 static int control_version(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			   int argc, const char **argv)
 {
-	printf("%s\n", ctdb_version_string);
+	printf("%s\n", SAMBA_VERSION_STRING);
 	return 0;
 }
 
@@ -2434,8 +2438,8 @@ static int control_dumpmemory(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return ret;
 	}
 
-	n = write(1, mem_str, strlen(mem_str)+1);
-	if (n < 0 || n != strlen(mem_str)+1) {
+	n = write(1, mem_str, strlen(mem_str));
+	if (n < 0 || n != strlen(mem_str)) {
 		fprintf(stderr, "Failed to write talloc summary\n");
 		return 1;
 	}
@@ -2446,10 +2450,12 @@ static int control_dumpmemory(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 static void dump_memory(uint64_t srvid, TDB_DATA data, void *private_data)
 {
 	bool *done = (bool *)private_data;
+	size_t len;
 	ssize_t n;
 
-	n = write(1, data.dptr, data.dsize);
-	if (n < 0 || n != data.dsize) {
+	len = strnlen((const char *)data.dptr, data.dsize);
+	n = write(1, data.dptr, len);
+	if (n < 0 || n != len) {
 		fprintf(stderr, "Failed to write talloc summary\n");
 	}
 
@@ -3854,7 +3860,8 @@ static int control_addip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		usage("addip");
 	}
 
-	if (! parse_ip_mask(argv[0], argv[1], &addr, &mask)) {
+	ret = ctdb_sock_addr_mask_from_string(argv[0], &addr, &mask);
+	if (ret != 0) {
 		fprintf(stderr, "Invalid IP/Mask %s\n", argv[0]);
 		return 1;
 	}
@@ -4807,7 +4814,7 @@ static int control_pfetch(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	TDB_DATA key, data;
 	int ret;
 
-	if (argc < 2 || argc > 3) {
+	if (argc != 2) {
 		usage("pfetch");
 	}
 
@@ -5976,7 +5983,7 @@ static const struct ctdb_cmd {
 	{ "setdbsticky", control_setdbsticky, false, true,
 		"enable sticky records", "<dbname|dbid>"},
 	{ "pfetch", control_pfetch, false, false,
-		"fetch record from persistent database", "<dbname|dbid> <key> [<file>]" },
+		"fetch record from persistent database", "<dbname|dbid> <key>" },
 	{ "pstore", control_pstore, false, false,
 		"write record to persistent database", "<dbname|dbid> <key> <value>" },
 	{ "pdelete", control_pdelete, false, false,
@@ -6123,9 +6130,10 @@ static int process_command(const struct ctdb_cmd *cmd, int argc,
 		goto fail;
 	}
 
-	ctdb_socket = getenv("CTDB_SOCKET");
+	ctdb_socket = path_socket(ctdb, "ctdbd");
 	if (ctdb_socket == NULL) {
-		ctdb_socket = CTDB_SOCKET;
+		fprintf(stderr, "Memory allocation error\n");
+		goto fail;
 	}
 
 	ret = ctdb_client_init(ctdb, ctdb->ev, ctdb_socket, &ctdb->client);
@@ -6190,6 +6198,7 @@ int main(int argc, const char *argv[])
 	int extra_argc;
 	const struct ctdb_cmd *cmd;
 	int loglevel;
+	bool ok;
 	int ret;
 
 	setlinebuf(stdout);
@@ -6248,11 +6257,11 @@ int main(int argc, const char *argv[])
 
 	/* Enable logging */
 	setup_logging("ctdb", DEBUG_STDERR);
-	if (debug_level_parse(options.debuglevelstr, &loglevel)) {
-		DEBUGLEVEL = loglevel;
-	} else {
-		DEBUGLEVEL = DEBUG_ERR;
+	ok = debug_level_parse(options.debuglevelstr, &loglevel);
+	if (!ok) {
+		loglevel = DEBUG_ERR;
 	}
+	debuglevel_set(loglevel);
 
 	signal(SIGALRM, alarm_handler);
 	alarm(options.maxruntime);

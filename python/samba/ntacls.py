@@ -25,19 +25,20 @@ import tarfile
 import tempfile
 import shutil
 
-import samba.xattr_native, samba.xattr_tdb, samba.posix_eadb
+import samba.xattr_native
+import samba.xattr_tdb
+import samba.posix_eadb
 from samba.samba3 import param as s3param
 from samba.dcerpc import security, xattr, idmap
 from samba.ndr import ndr_pack, ndr_unpack
 from samba.samba3 import smbd
-from samba.auth import admin_session
-from samba import smb
+from samba.samba3 import libsmb_samba_internal as libsmb
 
 # don't include volumes
-SMB_FILE_ATTRIBUTE_FLAGS = smb.FILE_ATTRIBUTE_SYSTEM | \
-                           smb.FILE_ATTRIBUTE_DIRECTORY | \
-                           smb.FILE_ATTRIBUTE_ARCHIVE | \
-                           smb.FILE_ATTRIBUTE_HIDDEN
+SMB_FILE_ATTRIBUTE_FLAGS = libsmb.FILE_ATTRIBUTE_SYSTEM | \
+                           libsmb.FILE_ATTRIBUTE_DIRECTORY | \
+                           libsmb.FILE_ATTRIBUTE_ARCHIVE | \
+                           libsmb.FILE_ATTRIBUTE_HIDDEN
 
 
 SECURITY_SECINFO_FLAGS = security.SECINFO_OWNER | \
@@ -48,7 +49,7 @@ SECURITY_SECINFO_FLAGS = security.SECINFO_OWNER | \
 
 # SEC_FLAG_SYSTEM_SECURITY is required otherwise get Access Denied
 SECURITY_SEC_FLAGS = security.SEC_FLAG_SYSTEM_SECURITY | \
-                     security.SEC_FLAG_MAXIMUM_ALLOWED
+                     security.SEC_STD_READ_CONTROL
 
 
 class XattrBackendError(Exception):
@@ -76,9 +77,12 @@ def checkset_backend(lp, backend, eadbfile):
         if eadbfile is not None:
             return (samba.xattr_tdb, eadbfile)
         else:
-            return (samba.xattr_tdb, os.path.abspath(os.path.join(lp.get("state dir"), "xattr.tdb")))
+            state_dir = lp.get("state directory")
+            db_path = os.path.abspath(os.path.join(state_dir, "xattr.tdb"))
+            return (samba.xattr_tdb, db_path)
     else:
-        raise XattrBackendError("Invalid xattr backend choice %s"%backend)
+        raise XattrBackendError("Invalid xattr backend choice %s" % backend)
+
 
 def getdosinfo(lp, file):
     try:
@@ -89,7 +93,14 @@ def getdosinfo(lp, file):
 
     return ndr_unpack(xattr.DOSATTRIB, attribute)
 
-def getntacl(lp, file, backend=None, eadbfile=None, direct_db_access=True, service=None):
+
+def getntacl(lp,
+             file,
+             backend=None,
+             eadbfile=None,
+             direct_db_access=True,
+             service=None,
+             session_info=None):
     if direct_db_access:
         (backend_obj, dbname) = checkset_backend(lp, backend, eadbfile)
         if dbname is not None:
@@ -115,7 +126,10 @@ def getntacl(lp, file, backend=None, eadbfile=None, direct_db_access=True, servi
         elif ntacl.version == 4:
             return ntacl.info.sd
     else:
-        return smbd.get_nt_acl(file, SECURITY_SECINFO_FLAGS, service=service)
+        return smbd.get_nt_acl(file,
+                               SECURITY_SECINFO_FLAGS,
+                               service=service,
+                               session_info=session_info)
 
 
 def setntacl(lp, file, sddl, domsid,
@@ -255,14 +269,14 @@ def ldapmask2filemask(ldm):
 
     if (ldm & RIGHT_DS_READ_PROPERTY) and (ldm & RIGHT_DS_LIST_CONTENTS):
         filemask = filemask | (SYNCHRONIZE | FILE_LIST_DIRECTORY |
-                                FILE_READ_ATTRIBUTES | FILE_READ_EA |
-                                FILE_READ_DATA | FILE_EXECUTE)
+                               FILE_READ_ATTRIBUTES | FILE_READ_EA |
+                               FILE_READ_DATA | FILE_EXECUTE)
 
     if ldm & RIGHT_DS_WRITE_PROPERTY:
         filemask = filemask | (SYNCHRONIZE | FILE_WRITE_DATA |
-                                FILE_APPEND_DATA | FILE_WRITE_EA |
-                                FILE_WRITE_ATTRIBUTES | FILE_ADD_FILE |
-                                FILE_ADD_SUBDIRECTORY)
+                               FILE_APPEND_DATA | FILE_WRITE_EA |
+                               FILE_WRITE_ATTRIBUTES | FILE_ADD_FILE |
+                               FILE_ADD_SUBDIRECTORY)
 
     if ldm & RIGHT_DS_CREATE_CHILD:
         filemask = filemask | (FILE_ADD_SUBDIRECTORY | FILE_ADD_FILE)
@@ -290,12 +304,12 @@ def dsacl2fsacl(dssddl, sid, as_sddl=True):
     for i in range(0, len(aces)):
         ace = aces[i]
         if not ace.type & security.SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT and str(ace.trustee) != security.SID_BUILTIN_PREW2K:
-       #    if fdescr.type & security.SEC_DESC_DACL_AUTO_INHERITED:
+           #    if fdescr.type & security.SEC_DESC_DACL_AUTO_INHERITED:
             ace.flags = ace.flags | security.SEC_ACE_FLAG_OBJECT_INHERIT | security.SEC_ACE_FLAG_CONTAINER_INHERIT
             if str(ace.trustee) == security.SID_CREATOR_OWNER:
                 # For Creator/Owner the IO flag is set as this ACE has only a sense for child objects
                 ace.flags = ace.flags | security.SEC_ACE_FLAG_INHERIT_ONLY
-            ace.access_mask =  ldapmask2filemask(ace.access_mask)
+            ace.access_mask = ldapmask2filemask(ace.access_mask)
             fdescr.dacl_add(ace)
 
     if not as_sddl:
@@ -336,7 +350,7 @@ class SMBHelper:
 
         attrib is from list method.
         """
-        return bool(attrib & smb.FILE_ATTRIBUTE_DIRECTORY)
+        return bool(attrib & libsmb.FILE_ATTRIBUTE_DIRECTORY)
 
     def join(self, root, name):
         """
@@ -442,7 +456,8 @@ class NtaclsHelper:
 
     def setntacl(self, path, ntacl_sd):
         # ntacl_sd can be obj or str
-        return setntacl(self.lp, path, ntacl_sd, self.dom_sid)
+        return setntacl(self.lp, path, ntacl_sd, self.dom_sid,
+                        use_ntvfs=self.use_ntvfs)
 
 
 def _create_ntacl_file(dst, ntacl_sddl_str):

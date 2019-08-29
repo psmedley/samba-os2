@@ -121,7 +121,7 @@
 			<listitem><para><emphasis>prefork</emphasis></para>
 			<para>A process is started for each Samba service, and a
 			fixed number of worker processes are started for those
-			services that support it (currently only LDAP).
+			services that support it (currently LDAP, NETLOGON, and KDC).
 			The client connections are then shared amongst the worker
 			processes.
 			Requests for services not supporting prefork are handled
@@ -131,7 +131,7 @@
 			<citerefentry><refentrytitle>smb.conf</refentrytitle>
 			<manvolnum>5</manvolnum></citerefentry> parameter
 		        <smbconfoption name="prefork children"/>,
-			which defaults to 1.
+			which defaults to 4.
 			</para></listitem>
 		</itemizedlist>
 		</para></listitem>

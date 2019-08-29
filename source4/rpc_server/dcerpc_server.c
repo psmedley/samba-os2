@@ -65,18 +65,34 @@ static struct dcesrv_assoc_group *dcesrv_assoc_group_find(struct dcesrv_context 
 /*
   take a reference to an existing association group
  */
-static struct dcesrv_assoc_group *dcesrv_assoc_group_reference(TALLOC_CTX *mem_ctx,
-							       struct dcesrv_context *dce_ctx,
+static struct dcesrv_assoc_group *dcesrv_assoc_group_reference(struct dcesrv_connection *conn,
 							       uint32_t id)
 {
+	const struct dcesrv_endpoint *endpoint = conn->endpoint;
+	enum dcerpc_transport_t transport =
+		dcerpc_binding_get_transport(endpoint->ep_description);
 	struct dcesrv_assoc_group *assoc_group;
 
-	assoc_group = dcesrv_assoc_group_find(dce_ctx, id);
+	assoc_group = dcesrv_assoc_group_find(conn->dce_ctx, id);
 	if (assoc_group == NULL) {
-		DEBUG(2,(__location__ ": Failed to find assoc_group 0x%08x\n", id));
+		DBG_NOTICE("Failed to find assoc_group 0x%08x\n", id);
 		return NULL;
 	}
-	return talloc_reference(mem_ctx, assoc_group);
+	if (assoc_group->transport != transport) {
+		const char *at =
+			derpc_transport_string_by_transport(
+				assoc_group->transport);
+		const char *ct =
+			derpc_transport_string_by_transport(
+				transport);
+
+		DBG_NOTICE("assoc_group 0x%08x (transport %s) "
+			   "is not available on transport %s",
+			   id, at, ct);
+		return NULL;
+	}
+
+	return talloc_reference(conn, assoc_group);
 }
 
 static int dcesrv_assoc_group_destructor(struct dcesrv_assoc_group *assoc_group)
@@ -93,13 +109,16 @@ static int dcesrv_assoc_group_destructor(struct dcesrv_assoc_group *assoc_group)
 /*
   allocate a new association group
  */
-static struct dcesrv_assoc_group *dcesrv_assoc_group_new(TALLOC_CTX *mem_ctx,
-							 struct dcesrv_context *dce_ctx)
+static struct dcesrv_assoc_group *dcesrv_assoc_group_new(struct dcesrv_connection *conn)
 {
+	struct dcesrv_context *dce_ctx = conn->dce_ctx;
+	const struct dcesrv_endpoint *endpoint = conn->endpoint;
+	enum dcerpc_transport_t transport =
+		dcerpc_binding_get_transport(endpoint->ep_description);
 	struct dcesrv_assoc_group *assoc_group;
 	int id;
 
-	assoc_group = talloc_zero(mem_ctx, struct dcesrv_assoc_group);
+	assoc_group = talloc_zero(conn, struct dcesrv_assoc_group);
 	if (assoc_group == NULL) {
 		return NULL;
 	}
@@ -111,6 +130,7 @@ static struct dcesrv_assoc_group *dcesrv_assoc_group_new(TALLOC_CTX *mem_ctx,
 		return NULL;
 	}
 
+	assoc_group->transport = transport;
 	assoc_group->id = id;
 	assoc_group->dce_ctx = dce_ctx;
 
@@ -264,12 +284,14 @@ static struct dcesrv_call_state *dcesrv_find_fragmented_call(struct dcesrv_conne
 */
 _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 				   const char *ep_name,
+				   const char *ncacn_np_secondary_endpoint,
 				   const struct dcesrv_interface *iface,
 				   const struct security_descriptor *sd)
 {
 	struct dcesrv_endpoint *ep;
 	struct dcesrv_if_list *ifl;
 	struct dcerpc_binding *binding;
+	struct dcerpc_binding *binding2 = NULL;
 	bool add_ep = false;
 	NTSTATUS status;
 	enum dcerpc_transport_t transport;
@@ -334,6 +356,22 @@ _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 		}
 	}
 
+	if (transport == NCACN_NP && ncacn_np_secondary_endpoint != NULL) {
+		enum dcerpc_transport_t transport2;
+
+		status = dcerpc_parse_binding(dce_ctx,
+					      ncacn_np_secondary_endpoint,
+					      &binding2);
+		if (!NT_STATUS_IS_OK(status)) {
+			DEBUG(0, ("Trouble parsing 2nd binding string '%s'\n",
+				  ncacn_np_secondary_endpoint));
+			return status;
+		}
+
+		transport2 = dcerpc_binding_get_transport(binding2);
+		SMB_ASSERT(transport2 == transport);
+	}
+
 	/* see if the interface is already registered on the endpoint */
 	if (find_interface_by_binding(dce_ctx, binding, iface)!=NULL) {
 		DEBUG(0,("dcesrv_interface_register: interface '%s' already registered on endpoint '%s'\n",
@@ -375,6 +413,7 @@ _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 		}
 		ZERO_STRUCTP(ep);
 		ep->ep_description = talloc_move(ep, &binding);
+		ep->ep_2nd_description = talloc_move(ep, &binding2);
 		add_ep = true;
 
 		/* add mgmt interface */
@@ -459,25 +498,71 @@ _PUBLIC_ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 	return NT_STATUS_OK;
 }
 
-NTSTATUS dcesrv_inherited_session_key(struct dcesrv_connection *p,
-				      DATA_BLOB *session_key)
+static NTSTATUS dcesrv_session_info_session_key(struct dcesrv_auth *auth,
+						DATA_BLOB *session_key)
 {
-	if (p->auth_state.session_info->session_key.length) {
-		*session_key = p->auth_state.session_info->session_key;
-		return NT_STATUS_OK;
+	if (auth->session_info == NULL) {
+		return NT_STATUS_NO_USER_SESSION_KEY;
 	}
-	return NT_STATUS_NO_USER_SESSION_KEY;
+
+	if (auth->session_info->session_key.length == 0) {
+		return NT_STATUS_NO_USER_SESSION_KEY;
+	}
+
+	*session_key = auth->session_info->session_key;
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS dcesrv_remote_session_key(struct dcesrv_auth *auth,
+					  DATA_BLOB *session_key)
+{
+	if (auth->auth_type != DCERPC_AUTH_TYPE_NONE) {
+		return NT_STATUS_NO_USER_SESSION_KEY;
+	}
+
+	return dcesrv_session_info_session_key(auth, session_key);
+}
+
+static NTSTATUS dcesrv_local_fixed_session_key(struct dcesrv_auth *auth,
+					       DATA_BLOB *session_key)
+{
+	return dcerpc_generic_session_key(NULL, session_key);
 }
 
 /*
-  fetch the user session key - may be default (above) or the SMB session key
-
-  The key is always truncated to 16 bytes 
-*/
-_PUBLIC_ NTSTATUS dcesrv_fetch_session_key(struct dcesrv_connection *p,
-				  DATA_BLOB *session_key)
+ * Fetch the authentication session key if available.
+ *
+ * This is the key generated by a gensec authentication.
+ *
+ */
+_PUBLIC_ NTSTATUS dcesrv_auth_session_key(struct dcesrv_call_state *call,
+					  DATA_BLOB *session_key)
 {
-	NTSTATUS status = p->auth_state.session_key(p, session_key);
+	struct dcesrv_auth *auth = call->auth_state;
+	SMB_ASSERT(auth->auth_finished);
+	return dcesrv_session_info_session_key(auth, session_key);
+}
+
+/*
+ * Fetch the transport session key if available.
+ * Typically this is the SMB session key
+ * or a fixed key for local transports.
+ *
+ * The key is always truncated to 16 bytes.
+*/
+_PUBLIC_ NTSTATUS dcesrv_transport_session_key(struct dcesrv_call_state *call,
+					       DATA_BLOB *session_key)
+{
+	struct dcesrv_auth *auth = call->auth_state;
+	NTSTATUS status;
+
+	SMB_ASSERT(auth->auth_finished);
+
+	if (auth->session_key_fn == NULL) {
+		return NT_STATUS_NO_USER_SESSION_KEY;
+	}
+
+	status = auth->session_key_fn(auth, session_key);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -487,10 +572,41 @@ _PUBLIC_ NTSTATUS dcesrv_fetch_session_key(struct dcesrv_connection *p,
 	return NT_STATUS_OK;
 }
 
+static struct dcesrv_auth *dcesrv_auth_create(struct dcesrv_connection *conn)
+{
+	const struct dcesrv_endpoint *ep = conn->endpoint;
+	enum dcerpc_transport_t transport =
+		dcerpc_binding_get_transport(ep->ep_description);
+	struct dcesrv_auth *auth = NULL;
+
+	auth = talloc_zero(conn, struct dcesrv_auth);
+	if (auth == NULL) {
+		return NULL;
+	}
+
+	switch (transport) {
+	case NCACN_NP:
+		auth->session_key_fn = dcesrv_remote_session_key;
+		break;
+	case NCALRPC:
+	case NCACN_UNIX_STREAM:
+		auth->session_key_fn = dcesrv_local_fixed_session_key;
+		break;
+	default:
+		/*
+		 * All other's get a NULL pointer, which
+		 * results in NT_STATUS_NO_USER_SESSION_KEY
+		 */
+		break;
+	}
+
+	return auth;
+}
+
 /*
   connect to a dcerpc endpoint
 */
-_PUBLIC_ NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
+static NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
 				 TALLOC_CTX *mem_ctx,
 				 const struct dcesrv_endpoint *ep,
 				 struct auth_session_info *session_info,
@@ -500,6 +616,7 @@ _PUBLIC_ NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
 				 uint32_t state_flags,
 				 struct dcesrv_connection **_p)
 {
+	struct dcesrv_auth *auth = NULL;
 	struct dcesrv_connection *p;
 
 	if (!session_info) {
@@ -509,16 +626,9 @@ _PUBLIC_ NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
 	p = talloc_zero(mem_ctx, struct dcesrv_connection);
 	NT_STATUS_HAVE_NO_MEMORY(p);
 
-	if (!talloc_reference(p, session_info)) {
-		talloc_free(p);
-		return NT_STATUS_NO_MEMORY;
-	}
-
 	p->dce_ctx = dce_ctx;
 	p->endpoint = ep;
 	p->packet_log_dir = lpcfg_lock_directory(dce_ctx->lp_ctx);
-	p->auth_state.session_info = session_info;
-	p->auth_state.session_key = dcesrv_generic_session_key;
 	p->event_ctx = event_ctx;
 	p->msg_ctx = msg_ctx;
 	p->server_id = server_id;
@@ -527,6 +637,31 @@ _PUBLIC_ NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
 	p->max_recv_frag = 5840;
 	p->max_xmit_frag = 5840;
 	p->max_total_request_size = DCERPC_NCACN_REQUEST_DEFAULT_MAX_SIZE;
+
+	p->support_hdr_signing = lpcfg_parm_bool(dce_ctx->lp_ctx,
+						 NULL,
+						 "dcesrv",
+						 "header signing",
+						 true);
+	p->max_auth_states = lpcfg_parm_ulong(dce_ctx->lp_ctx,
+					      NULL,
+					      "dcesrv",
+					      "max auth states",
+					      2049);
+
+	auth = dcesrv_auth_create(p);
+	if (auth == NULL) {
+		talloc_free(p);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	auth->session_info = talloc_reference(auth, session_info);
+	if (auth->session_info == NULL) {
+		talloc_free(p);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	p->default_auth_state = auth;
 
 	/*
 	 * For now we only support NDR32.
@@ -577,14 +712,20 @@ static void dcesrv_call_set_list(struct dcesrv_call_state *call,
 static void dcesrv_call_disconnect_after(struct dcesrv_call_state *call,
 					 const char *reason)
 {
+	struct dcesrv_auth *a = NULL;
+
 	if (call->conn->terminate != NULL) {
 		return;
 	}
 
 	call->conn->allow_bind = false;
 	call->conn->allow_alter = false;
-	call->conn->allow_auth3 = false;
-	call->conn->allow_request = false;
+
+	call->conn->default_auth_state->auth_invalid = true;
+
+	for (a = call->conn->auth_states; a != NULL; a = a->next) {
+		a->auth_invalid = true;
+	}
 
 	call->terminate_reason = talloc_strdup(call, reason);
 	if (call->terminate_reason == NULL) {
@@ -698,44 +839,31 @@ static void dcesrv_prepare_context_auth(struct dcesrv_call_state *dce_call)
 					context->allow_connect);
 }
 
-NTSTATUS dcesrv_interface_bind_require_integrity(struct dcesrv_call_state *dce_call,
+NTSTATUS dcesrv_interface_bind_require_integrity(struct dcesrv_connection_context *context,
 						 const struct dcesrv_interface *iface)
 {
-	if (dce_call->context == NULL) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
-
 	/*
 	 * For connection oriented DCERPC DCERPC_AUTH_LEVEL_PACKET (4)
 	 * has the same behavior as DCERPC_AUTH_LEVEL_INTEGRITY (5).
 	 */
-	dce_call->context->min_auth_level = DCERPC_AUTH_LEVEL_PACKET;
+	context->min_auth_level = DCERPC_AUTH_LEVEL_PACKET;
 	return NT_STATUS_OK;
 }
 
-NTSTATUS dcesrv_interface_bind_require_privacy(struct dcesrv_call_state *dce_call,
+NTSTATUS dcesrv_interface_bind_require_privacy(struct dcesrv_connection_context *context,
 					       const struct dcesrv_interface *iface)
 {
-	if (dce_call->context == NULL) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
-
-	dce_call->context->min_auth_level = DCERPC_AUTH_LEVEL_PRIVACY;
+	context->min_auth_level = DCERPC_AUTH_LEVEL_PRIVACY;
 	return NT_STATUS_OK;
 }
 
-_PUBLIC_ NTSTATUS dcesrv_interface_bind_reject_connect(struct dcesrv_call_state *dce_call,
+_PUBLIC_ NTSTATUS dcesrv_interface_bind_reject_connect(struct dcesrv_connection_context *context,
 						       const struct dcesrv_interface *iface)
 {
-	struct loadparm_context *lp_ctx = dce_call->conn->dce_ctx->lp_ctx;
-	const struct dcesrv_endpoint *endpoint = dce_call->conn->endpoint;
+	struct loadparm_context *lp_ctx = context->conn->dce_ctx->lp_ctx;
+	const struct dcesrv_endpoint *endpoint = context->conn->endpoint;
 	enum dcerpc_transport_t transport =
 		dcerpc_binding_get_transport(endpoint->ep_description);
-	struct dcesrv_connection_context *context = dce_call->context;
-
-	if (context == NULL) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
 
 	if (transport == NCALRPC) {
 		context->allow_connect = true;
@@ -754,18 +882,13 @@ _PUBLIC_ NTSTATUS dcesrv_interface_bind_reject_connect(struct dcesrv_call_state 
 	return NT_STATUS_OK;
 }
 
-_PUBLIC_ NTSTATUS dcesrv_interface_bind_allow_connect(struct dcesrv_call_state *dce_call,
+_PUBLIC_ NTSTATUS dcesrv_interface_bind_allow_connect(struct dcesrv_connection_context *context,
 						      const struct dcesrv_interface *iface)
 {
-	struct loadparm_context *lp_ctx = dce_call->conn->dce_ctx->lp_ctx;
-	const struct dcesrv_endpoint *endpoint = dce_call->conn->endpoint;
+	struct loadparm_context *lp_ctx = context->conn->dce_ctx->lp_ctx;
+	const struct dcesrv_endpoint *endpoint = context->conn->endpoint;
 	enum dcerpc_transport_t transport =
 		dcerpc_binding_get_transport(endpoint->ep_description);
-	struct dcesrv_connection_context *context = dce_call->context;
-
-	if (context == NULL) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
 
 	if (transport == NCALRPC) {
 		context->allow_connect = true;
@@ -885,9 +1008,9 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 	uint32_t extra_flags = 0;
 	uint16_t max_req = 0;
 	uint16_t max_rep = 0;
-	const char *ep_prefix = "";
+	struct dcerpc_binding *ep_2nd_description = NULL;
 	const char *endpoint = NULL;
-	struct dcesrv_auth *auth = &call->conn->auth_state;
+	struct dcesrv_auth *auth = call->auth_state;
 	struct dcerpc_ack_ctx *ack_ctx_list = NULL;
 	struct dcerpc_ack_ctx *ack_features = NULL;
 	struct tevent_req *subreq = NULL;
@@ -931,11 +1054,9 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 	 */
 	if (call->pkt.u.bind.assoc_group_id != 0) {
 		call->conn->assoc_group = dcesrv_assoc_group_reference(call->conn,
-								       call->conn->dce_ctx,
 								       call->pkt.u.bind.assoc_group_id);
 	} else {
-		call->conn->assoc_group = dcesrv_assoc_group_new(call->conn,
-								 call->conn->dce_ctx);
+		call->conn->assoc_group = dcesrv_assoc_group_new(call->conn);
 	}
 
 	/*
@@ -961,8 +1082,7 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 	if (call->conn->assoc_group == NULL &&
 	    !call->conn->endpoint->use_single_process) {
 		call->conn->assoc_group
-			= dcesrv_assoc_group_new(call->conn,
-						 call->conn->dce_ctx);
+			= dcesrv_assoc_group_new(call->conn);
 	}
 	if (call->conn->assoc_group == NULL) {
 		return dcesrv_bind_nak(call, 0);
@@ -1017,14 +1137,17 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 		a->result = DCERPC_BIND_ACK_RESULT_NEGOTIATE_ACK;
 		a->reason.negotiate = 0;
 		if (features & DCERPC_BIND_TIME_SECURITY_CONTEXT_MULTIPLEXING) {
-			/* not supported yet */
+			if (call->conn->max_auth_states != 0) {
+				a->reason.negotiate |=
+				DCERPC_BIND_TIME_SECURITY_CONTEXT_MULTIPLEXING;
+			}
 		}
 		if (features & DCERPC_BIND_TIME_KEEP_CONNECTION_ON_ORPHAN) {
 			a->reason.negotiate |=
 				DCERPC_BIND_TIME_KEEP_CONNECTION_ON_ORPHAN;
 		}
 
-		call->conn->bind_time_features = a->reason.negotiate;
+		call->conn->assoc_group->bind_time_features = a->reason.negotiate;
 	}
 
 	/*
@@ -1098,29 +1221,19 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 	pkt->u.bind_ack.max_recv_frag = call->conn->max_recv_frag;
 	pkt->u.bind_ack.assoc_group_id = call->conn->assoc_group->id;
 
+	ep_2nd_description = call->conn->endpoint->ep_2nd_description;
+	if (ep_2nd_description == NULL) {
+		ep_2nd_description = call->conn->endpoint->ep_description;
+	}
+
 	endpoint = dcerpc_binding_get_string_option(
-				call->conn->endpoint->ep_description,
+				ep_2nd_description,
 				"endpoint");
 	if (endpoint == NULL) {
 		endpoint = "";
 	}
 
-	if (strncasecmp(endpoint, "\\pipe\\", 6) == 0) {
-		/*
-		 * TODO: check if this is really needed
-		 *
-		 * Or if we should fix this in our idl files.
-		 */
-		ep_prefix = "\\PIPE\\";
-		endpoint += 6;
-	}
-
-	pkt->u.bind_ack.secondary_address = talloc_asprintf(call, "%s%s",
-							   ep_prefix,
-							   endpoint);
-	if (pkt->u.bind_ack.secondary_address == NULL) {
-		return NT_STATUS_NO_MEMORY;
-	}
+	pkt->u.bind_ack.secondary_address = endpoint;
 	pkt->u.bind_ack.num_results = call->pkt.u.bind.num_contexts;
 	pkt->u.bind_ack.ctx_list = ack_ctx_list;
 	pkt->u.bind_ack.auth_info = data_blob_null;
@@ -1209,15 +1322,15 @@ static void dcesrv_auth3_done(struct tevent_req *subreq);
 static NTSTATUS dcesrv_auth3(struct dcesrv_call_state *call)
 {
 	struct dcesrv_connection *conn = call->conn;
-	struct dcesrv_auth *auth = &call->conn->auth_state;
+	struct dcesrv_auth *auth = call->auth_state;
 	struct tevent_req *subreq = NULL;
 	NTSTATUS status;
 
-	if (!call->conn->allow_auth3) {
+	if (!auth->auth_started) {
 		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
 	}
 
-	if (call->conn->auth_state.auth_finished) {
+	if (auth->auth_finished) {
 		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
 	}
 
@@ -1246,7 +1359,7 @@ static NTSTATUS dcesrv_auth3(struct dcesrv_call_state *call)
 		 * In anycase we mark the connection as
 		 * invalid.
 		 */
-		call->conn->auth_state.auth_invalid = true;
+		auth->auth_invalid = true;
 		if (call->fault_code != 0) {
 			return dcesrv_fault_disconnect(call, call->fault_code);
 		}
@@ -1271,6 +1384,7 @@ static void dcesrv_auth3_done(struct tevent_req *subreq)
 		tevent_req_callback_data(subreq,
 		struct dcesrv_call_state);
 	struct dcesrv_connection *conn = call->conn;
+	struct dcesrv_auth *auth = call->auth_state;
 	NTSTATUS status;
 
 	status = gensec_update_recv(subreq, call,
@@ -1286,7 +1400,7 @@ static void dcesrv_auth3_done(struct tevent_req *subreq)
 		 * In anycase we mark the connection as
 		 * invalid.
 		 */
-		call->conn->auth_state.auth_invalid = true;
+		auth->auth_invalid = true;
 		if (call->fault_code != 0) {
 			status = dcesrv_fault_disconnect(call, call->fault_code);
 			dcesrv_conn_auth_wait_finished(conn, status);
@@ -1433,7 +1547,6 @@ static NTSTATUS dcesrv_check_or_create_context(struct dcesrv_call_state *call,
 	context->context_id = ctx->context_id;
 	context->iface = iface;
 	context->transfer_syntax = *selected_transfer;
-	context->private_data = NULL;
 	DLIST_ADD(call->conn->contexts, context);
 	call->context = context;
 	talloc_set_destructor(context, dcesrv_connection_context_destructor);
@@ -1445,7 +1558,7 @@ static NTSTATUS dcesrv_check_or_create_context(struct dcesrv_call_state *call,
 	 */
 	call->state_flags |= DCESRV_CALL_STATE_FLAG_MULTIPLEXED;
 
-	status = iface->bind(call, iface, if_version);
+	status = iface->bind(context, iface);
 	call->context = NULL;
 	if (!NT_STATUS_IS_OK(status)) {
 		/* we don't want to trigger the iface->unbind() hook */
@@ -1546,7 +1659,7 @@ static NTSTATUS dcesrv_alter(struct dcesrv_call_state *call)
 	bool auth_ok = false;
 	struct ncacn_packet *pkt = &call->ack_pkt;
 	uint32_t extra_flags = 0;
-	struct dcesrv_auth *auth = &call->conn->auth_state;
+	struct dcesrv_auth *auth = call->auth_state;
 	struct dcerpc_ack_ctx *ack_ctx_list = NULL;
 	struct tevent_req *subreq = NULL;
 	size_t i;
@@ -1629,9 +1742,7 @@ static NTSTATUS dcesrv_alter(struct dcesrv_call_state *call)
 
 	/* handle any authentication that is being requested */
 	if (!auth_ok) {
-		if (call->in_auth_info.auth_type !=
-		    call->conn->auth_state.auth_type)
-		{
+		if (call->in_auth_info.auth_type != auth->auth_type) {
 			return dcesrv_fault_disconnect(call,
 					DCERPC_FAULT_SEC_PKG_ERROR);
 		}
@@ -1722,7 +1833,7 @@ static void dcesrv_save_call(struct dcesrv_call_state *call, const char *why)
 static NTSTATUS dcesrv_check_verification_trailer(struct dcesrv_call_state *call)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
-	const uint32_t bitmask1 = call->conn->auth_state.client_hdr_signing ?
+	const uint32_t bitmask1 = call->conn->client_hdr_signing ?
 		DCERPC_SEC_VT_CLIENT_SUPPORTS_HEADER_SIGNING : 0;
 	const struct dcerpc_sec_vt_pcontext pcontext = {
 		.abstract_syntax = call->context->iface->syntax_id,
@@ -1761,18 +1872,19 @@ done:
 static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 {
 	const struct dcesrv_endpoint *endpoint = call->conn->endpoint;
+	struct dcesrv_auth *auth = call->auth_state;
 	enum dcerpc_transport_t transport =
 		dcerpc_binding_get_transport(endpoint->ep_description);
 	struct ndr_pull *pull;
 	NTSTATUS status;
 
-	if (!call->conn->allow_request) {
+	if (!auth->auth_finished) {
 		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
 	}
 
 	/* if authenticated, and the mech we use can't do async replies, don't use them... */
-	if (call->conn->auth_state.gensec_security && 
-	    !gensec_have_feature(call->conn->auth_state.gensec_security, GENSEC_FEATURE_ASYNC_REPLIES)) {
+	if (auth->gensec_security != NULL &&
+	    !gensec_have_feature(auth->gensec_security, GENSEC_FEATURE_ASYNC_REPLIES)) {
 		call->state_flags &= ~DCESRV_CALL_STATE_FLAG_MAY_ASYNC;
 	}
 
@@ -1781,7 +1893,7 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 					DCERPC_PFC_FLAG_DID_NOT_EXECUTE);
 	}
 
-	switch (call->conn->auth_state.auth_level) {
+	switch (auth->auth_level) {
 	case DCERPC_AUTH_LEVEL_NONE:
 	case DCERPC_AUTH_LEVEL_PACKET:
 	case DCERPC_AUTH_LEVEL_INTEGRITY:
@@ -1798,8 +1910,8 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 				  "to [%s] with auth[type=0x%x,level=0x%x] "
 				  "on [%s] from [%s]\n",
 				  __func__, call->context->iface->name,
-				  call->conn->auth_state.auth_type,
-				  call->conn->auth_state.auth_level,
+				  auth->auth_type,
+				  auth->auth_level,
 				  derpc_transport_string_by_transport(transport),
 				  addr));
 			return dcesrv_fault(call, DCERPC_FAULT_ACCESS_DENIED);
@@ -1807,7 +1919,7 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 		break;
 	}
 
-	if (call->conn->auth_state.auth_level < call->context->min_auth_level) {
+	if (auth->auth_level < call->context->min_auth_level) {
 		char *addr;
 
 		addr = tsocket_address_string(call->conn->remote_address, call);
@@ -1818,8 +1930,8 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 			  __func__,
 			  call->context->min_auth_level,
 			  call->context->iface->name,
-			  call->conn->auth_state.auth_type,
-			  call->conn->auth_state.auth_level,
+			  auth->auth_type,
+			  auth->auth_level,
 			  derpc_transport_string_by_transport(transport),
 			  addr));
 		return dcesrv_fault(call, DCERPC_FAULT_ACCESS_DENIED);
@@ -1920,6 +2032,10 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 	NTSTATUS status;
 	struct dcesrv_call_state *call;
 	struct dcesrv_call_state *existing = NULL;
+	size_t num_auth_ctx = 0;
+	enum dcerpc_AuthType auth_type = 0;
+	enum dcerpc_AuthLevel auth_level = 0;
+	uint32_t auth_context_id = 0;
 
 	call = talloc_zero(dce_conn, struct dcesrv_call_state);
 	if (!call) {
@@ -1938,6 +2054,74 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 	talloc_steal(call, blob.data);
 	call->pkt = *pkt;
 
+	if (dce_conn->max_auth_states == 0) {
+		call->auth_state = dce_conn->default_auth_state;
+	} else if (call->pkt.auth_length == 0) {
+		if (call->pkt.ptype == DCERPC_PKT_REQUEST &&
+		    dce_conn->default_auth_level_connect != NULL)
+		{
+			call->auth_state = dce_conn->default_auth_level_connect;
+		} else {
+			call->auth_state = dce_conn->default_auth_state;
+		}
+	}
+
+	if (call->auth_state == NULL) {
+		struct dcesrv_auth *a = NULL;
+
+		auth_type = dcerpc_get_auth_type(&blob);
+		auth_level = dcerpc_get_auth_level(&blob);
+		auth_context_id = dcerpc_get_auth_context_id(&blob);
+
+		if (call->pkt.ptype == DCERPC_PKT_REQUEST) {
+			dce_conn->default_auth_level_connect = NULL;
+			if (auth_level == DCERPC_AUTH_LEVEL_CONNECT) {
+				dce_conn->got_explicit_auth_level_connect = true;
+			}
+		}
+
+		for (a = dce_conn->auth_states; a != NULL; a = a->next) {
+			num_auth_ctx++;
+
+			if (a->auth_type != auth_type) {
+				continue;
+			}
+			if (a->auth_finished && a->auth_level != auth_level) {
+				continue;
+			}
+			if (a->auth_context_id != auth_context_id) {
+				continue;
+			}
+
+			DLIST_PROMOTE(dce_conn->auth_states, a);
+			call->auth_state = a;
+			break;
+		}
+	}
+
+	if (call->auth_state == NULL) {
+		struct dcesrv_auth *a = NULL;
+
+		if (num_auth_ctx >= dce_conn->max_auth_states) {
+			return dcesrv_fault_disconnect(call,
+					DCERPC_NCA_S_PROTO_ERROR);
+		}
+
+		a = dcesrv_auth_create(dce_conn);
+		if (a == NULL) {
+			talloc_free(call);
+			return NT_STATUS_NO_MEMORY;
+		}
+		DLIST_ADD(dce_conn->auth_states, a);
+		if (call->pkt.ptype == DCERPC_PKT_REQUEST) {
+			/*
+			 * This can never be valid.
+			 */
+			a->auth_invalid = true;
+		}
+		call->auth_state = a;
+	}
+
 	talloc_set_destructor(call, dcesrv_call_dequeue);
 
 	if (call->conn->allow_bind) {
@@ -1951,7 +2135,10 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 	/* we have to check the signing here, before combining the
 	   pdus */
 	if (call->pkt.ptype == DCERPC_PKT_REQUEST) {
-		if (!call->conn->allow_request) {
+		dcesrv_default_auth_state_prepare_request(call);
+
+		if (call->auth_state->auth_started &&
+		    !call->auth_state->auth_finished) {
 			return dcesrv_fault_disconnect(call,
 					DCERPC_NCA_S_PROTO_ERROR);
 		}
@@ -2379,6 +2566,7 @@ const struct dcesrv_critical_sizes *dcerpc_module_version(void)
 static void dcesrv_terminate_connection(struct dcesrv_connection *dce_conn, const char *reason)
 {
 	struct dcesrv_context *dce_ctx = dce_conn->dce_ctx;
+	struct dcesrv_auth *a = NULL;
 	struct stream_connection *srv_conn;
 	srv_conn = talloc_get_type(dce_conn->transport.private_data,
 				   struct stream_connection);
@@ -2388,9 +2576,13 @@ static void dcesrv_terminate_connection(struct dcesrv_connection *dce_conn, cons
 	dce_conn->wait_private = NULL;
 
 	dce_conn->allow_bind = false;
-	dce_conn->allow_auth3 = false;
 	dce_conn->allow_alter = false;
-	dce_conn->allow_request = false;
+
+	dce_conn->default_auth_state->auth_invalid = true;
+
+	for (a = dce_conn->auth_states; a != NULL; a = a->next) {
+		a->auth_invalid = true;
+	}
 
 	if (dce_conn->pending_call_list == NULL) {
 		char *full_reason = talloc_asprintf(dce_conn, "dcesrv: %s", reason);
@@ -2661,7 +2853,6 @@ static void dcesrv_sock_accept(struct stream_connection *srv_conn)
 	}
 
 	if (transport == NCACN_NP) {
-		dcesrv_conn->auth_state.session_key = dcesrv_inherited_session_key;
 		dcesrv_conn->stream = talloc_move(dcesrv_conn,
 						  &srv_conn->tstream);
 	} else {
@@ -2722,8 +2913,6 @@ static void dcesrv_sock_accept(struct stream_connection *srv_conn)
 	}
 
 	srv_conn->private_data = dcesrv_conn;
-
-	irpc_add_name(srv_conn->msg_ctx, "rpc_server");
 
 	subreq = dcerpc_read_ncacn_packet_send(dcesrv_conn,
 					       dcesrv_conn->event_ctx,
@@ -3147,7 +3336,9 @@ NTSTATUS dcesrv_add_ep(struct dcesrv_context *dce_ctx,
  */
 _PUBLIC_ struct cli_credentials *dcesrv_call_credentials(struct dcesrv_call_state *dce_call)
 {
-	return dce_call->conn->auth_state.session_info->credentials;
+	struct dcesrv_auth *auth = dce_call->auth_state;
+	SMB_ASSERT(auth->auth_finished);
+	return auth->session_info->credentials;
 }
 
 /**
@@ -3155,8 +3346,10 @@ _PUBLIC_ struct cli_credentials *dcesrv_call_credentials(struct dcesrv_call_stat
  */
 _PUBLIC_ bool dcesrv_call_authenticated(struct dcesrv_call_state *dce_call)
 {
+	struct dcesrv_auth *auth = dce_call->auth_state;
 	enum security_user_level level;
-	level = security_session_user_level(dce_call->conn->auth_state.session_info, NULL);
+	SMB_ASSERT(auth->auth_finished);
+	level = security_session_user_level(auth->session_info, NULL);
 	return level >= SECURITY_USER;
 }
 
@@ -3165,5 +3358,36 @@ _PUBLIC_ bool dcesrv_call_authenticated(struct dcesrv_call_state *dce_call)
  */
 _PUBLIC_ const char *dcesrv_call_account_name(struct dcesrv_call_state *dce_call)
 {
-	return dce_call->context->conn->auth_state.session_info->info->account_name;
+	struct dcesrv_auth *auth = dce_call->auth_state;
+	SMB_ASSERT(auth->auth_finished);
+	return auth->session_info->info->account_name;
+}
+
+/**
+ * retrieve session_info from a dce_call
+ */
+_PUBLIC_ struct auth_session_info *dcesrv_call_session_info(struct dcesrv_call_state *dce_call)
+{
+	struct dcesrv_auth *auth = dce_call->auth_state;
+	SMB_ASSERT(auth->auth_finished);
+	return auth->session_info;
+}
+
+/**
+ * retrieve auth type/level from a dce_call
+ */
+_PUBLIC_ void dcesrv_call_auth_info(struct dcesrv_call_state *dce_call,
+				    enum dcerpc_AuthType *auth_type,
+				    enum dcerpc_AuthLevel *auth_level)
+{
+	struct dcesrv_auth *auth = dce_call->auth_state;
+
+	SMB_ASSERT(auth->auth_finished);
+
+	if (auth_type != NULL) {
+		*auth_type = auth->auth_type;
+	}
+	if (auth_level != NULL) {
+		*auth_level = auth->auth_level;
+	}
 }

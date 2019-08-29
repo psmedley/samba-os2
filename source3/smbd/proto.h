@@ -146,6 +146,9 @@ NTSTATUS delete_all_streams(connection_struct *conn,
 bool recursive_rmdir(TALLOC_CTX *ctx,
 		     connection_struct *conn,
 		     struct smb_filename *smb_dname);
+bool has_other_nonposix_opens(struct share_mode_lock *lck,
+			      struct files_struct *fsp,
+			      struct server_id self);
 
 /* The following definitions come from smbd/conn.c  */
 
@@ -260,6 +263,11 @@ mode_t unix_mode(connection_struct *conn, int dosmode,
 uint32_t dos_mode_msdfs(connection_struct *conn,
 		      const struct smb_filename *smb_fname);
 uint32_t dos_mode(connection_struct *conn, struct smb_filename *smb_fname);
+struct tevent_req *dos_mode_at_send(TALLOC_CTX *mem_ctx,
+				    struct tevent_context *ev,
+				    files_struct *dir_fsp,
+				    struct smb_filename *smb_fname);
+NTSTATUS dos_mode_at_recv(struct tevent_req *req, uint32_t *dosmode);
 int file_set_dosmode(connection_struct *conn, struct smb_filename *smb_fname,
 		     uint32_t dosmode, const char *parent_dir, bool newfile);
 NTSTATUS file_set_sparse(connection_struct *conn,
@@ -289,6 +297,10 @@ struct timespec get_create_timespec(connection_struct *conn,
 struct timespec get_change_timespec(connection_struct *conn,
 				struct files_struct *fsp,
 				const struct smb_filename *smb_fname);
+
+NTSTATUS parse_dos_attribute_blob(struct smb_filename *smb_fname,
+				  DATA_BLOB blob,
+				  uint32_t *pattr);
 
 /* The following definitions come from smbd/error.c  */
 
@@ -391,7 +403,6 @@ struct files_struct *file_find_one_fsp_from_lease_key(
 	struct smbd_server_connection *sconn,
 	const struct smb2_lease_key *lease_key);
 bool file_find_subpath(files_struct *dir_fsp);
-void file_sync_all(connection_struct *conn);
 void fsp_free(files_struct *fsp);
 void file_free(struct smb_request *req, files_struct *fsp);
 files_struct *file_fsp(struct smb_request *req, uint16_t fid);
@@ -745,10 +756,6 @@ void message_to_share_mode_entry(struct file_id *id,
 				 const char *msg);
 bool init_oplocks(struct smbd_server_connection *sconn);
 void init_kernel_oplocks(struct smbd_server_connection *sconn);
-
-/* The following definitions come from smbd/oplock_irix.c  */
-
-struct kernel_oplocks *irix_init_kernel_oplocks(struct smbd_server_connection *sconn);
 
 /* The following definitions come from smbd/oplock_linux.c  */
 

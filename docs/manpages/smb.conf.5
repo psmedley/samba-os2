@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/12/2019
+.\"      Date: 08/22/2019
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.9.5
+.\"    Source: Samba 4.10.7
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "03/12/2019" "Samba 4\&.9\&.5" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "08/22/2019" "Samba 4\&.10\&.7" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1458,7 +1458,7 @@ Example:
 async smb echo handler (G)
 .PP
 .RS 4
-This parameter specifies whether Samba should fork the async smb echo handler\&. It can be beneficial if your file system can block syscalls for a very long time\&. In some circumstances, it prolongs the timeout that Windows uses to determine whether a connection is dead\&.
+This parameter specifies whether Samba should fork the async smb echo handler\&. It can be beneficial if your file system can block syscalls for a very long time\&. In some circumstances, it prolongs the timeout that Windows uses to determine whether a connection is dead\&. This parameter is only for SMB1\&. For SMB2 and above TCP keepalives can be used instead\&.
 .sp
 Default:
 \fI\fIasync smb echo handler\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -3041,7 +3041,7 @@ Where the script dfree (which must be made executable) could be:
 .nf
  
 #!/bin/sh
-df $1 | tail \-1 | awk \*(Aq{print $(NF\-4),$(NF\-2)}\*(Aq
+df "$1" | tail \-1 | awk \*(Aq{print $(NF\-4),$(NF\-2)}\*(Aq
 .fi
 .if n \{\
 .RE
@@ -3055,13 +3055,13 @@ or perhaps (on Sys V based systems):
 .nf
  
 #!/bin/sh
-/usr/bin/df \-k $1 | tail \-1 | awk \*(Aq{print $3" "$5}\*(Aq
+/usr/bin/df \-k "$1" | tail \-1 | awk \*(Aq{print $3" "$5}\*(Aq
 .fi
 .if n \{\
 .RE
 .\}
 .sp
-Note that you may have to replace the command names with full path names on some systems\&.
+Note that you may have to replace the command names with full path names on some systems\&. Also note the arguments passed into the script should be quoted inside the script in case they contain special characters such as spaces or newlines\&.
 .sp
 By default internal routines for determining the disk capacity and remaining space will be used\&.
 .sp
@@ -4157,6 +4157,17 @@ Default:
 \fI\fIhide files\fR\fR\fI = \fR\fI # no file are hidden\fR\fI \fR
 .RE
 
+hide new files timeout (S)
+.PP
+.RS 4
+Setting this parameter to something but 0 hides files that have been modified less than N seconds ago\&.
+.sp
+It can be used for ingest/process queue style workloads\&. A processing application should only see files that are definitely finished\&. As many applications do not have proper external workflow control, this can be a way to make sure processing does not interfere with file ingest\&.
+.sp
+Default:
+\fI\fIhide new files timeout\fR\fR\fI = \fR\fI0\fR\fI \fR
+.RE
+
 hide special files (S)
 .PP
 .RS 4
@@ -4913,7 +4924,7 @@ kernel oplocks (S)
 .RS 4
 For UNIXes that support kernel based
 \m[blue]\fBoplocks\fR\m[]
-(currently only IRIX and the Linux 2\&.4 kernel), this parameter allows the use of them to be turned on or off\&. However, this disables Level II oplocks for clients as the Linux and IRIX kernels do not support them properly\&.
+(currently only Linux), this parameter allows the use of them to be turned on or off\&. However, this disables Level II oplocks for clients as the Linux kernel does not support them properly\&.
 .sp
 Kernel oplocks support allows Samba
 \fIoplocks \fR
@@ -4923,7 +4934,7 @@ has oplocked\&. This allows complete data consistency between SMB/CIFS, NFS and 
 \fIvery\fR
 cool feature :\-)\&.
 .sp
-If you do not need this interaction, you should disable the parameter on Linux and IRIX to get Level II oplocks and the associated performance benefit\&.
+If you do not need this interaction, you should disable the parameter on Linux to get Level II oplocks and the associated performance benefit\&.
 .sp
 This parameter defaults to
 \fBno\fR
@@ -4982,14 +4993,16 @@ no
 this will also result in sambaLMPassword in Samba\*(Aqs passdb being blanked after the next password change\&. As a result of that lanman clients won\*(Aqt be able to authenticate, even if lanman auth is re\-enabled later on\&.
 .sp
 Unlike the
-encrypt passwords
+\fIencrypt passwords\fR
 option, this parameter cannot alter client behaviour, and the LANMAN response will still be sent over the network\&. See the
 client lanman auth
 to disable this for Samba\*(Aqs clients (such as smbclient)
 .sp
-If this option, and
-ntlm auth
-are both disabled, then only NTLMv2 logins will be permited\&. Not all clients support NTLMv2, and most will require special configuration to use it\&.
+This parameter is overriden by
+\fIntlm auth\fR, so unless that it is also set to
+\fBntlmv1\-permitted\fR
+or
+\fByes\fR, then only NTLMv2 logins will be permited and no LM hash will be stored\&. All modern clients support NTLMv2, and but some older clients require special configuration to use it\&.
 .sp
 Default:
 \fI\fIlanman auth\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -5813,7 +5826,7 @@ The value of the parameter (a astring) allows the debug level (logging level) to
 smb\&.conf
 file\&.
 .sp
-This parameter has been extended since the 2\&.2\&.x series, now it allows one to specify the debug level for multiple debug classes\&. This is to give greater flexibility in the configuration of the system\&. The following debug classes are currently implemented:
+This parameter has been extended since the 2\&.2\&.x series, now it allows one to specify the debug level for multiple debug classes and distinct logfiles for debug classes\&. This is to give greater flexibility in the configuration of the system\&. The following debug classes are currently implemented:
 .RS
 .sp
 .RS 4
@@ -6202,7 +6215,13 @@ This parameter has been extended since the 2\&.2\&.x series, now it allows one t
 .RE
 .sp
 .RE
-Authentication and authorization audit information is logged under the auth_audit, and if Samba was not compiled with \-\-without\-json\-audit, a JSON representation is logged under auth_json_audit\&.
+To configure the logging for specific classes to go into a different file then
+\m[blue]\fBlog file\fR\m[], you can append
+\fI@PATH\fR
+to the class, eg
+\fIlog level = 1 full_audit:1@/var/log/audit\&.log\fR\&.
+.sp
+Authentication and authorization audit information is logged under the auth_audit, and if Samba was not compiled with \-\-without\-json, a JSON representation is logged under auth_json_audit\&.
 .sp
 Support is comprehensive for all authentication and authorisation of user accounts in the Samba Active Directory Domain Controller, as well as the implicit authentication in password changes\&. In the file server, NTLM authentication, SMB and RPC authorization is covered\&.
 .sp
@@ -6265,6 +6284,9 @@ Default:
 .sp
 Example:
 \fI\fIlog level\fR\fR\fI = \fR\fI3 passdb:5 auth:10 winbind:2\fR\fI \fR
+.sp
+Example:
+\fI\fIlog level\fR\fR\fI = \fR\fI1 full_audit:1@/var/log/audit\&.log winbind:2\fR\fI \fR
 .RE
 
 log nt token command (G)
@@ -7209,6 +7231,8 @@ processes concurrently running on a system and is intended as a stopgap to preve
 \fBsmbd\fR(8)
 associated with him or her to handle connections to all shares from a given host\&.
 .sp
+For a Samba ADDC running the standard process model this option limits the number of processes forked to handle requests\&. Currently new processes are only forked for ldap and netlogon requests\&.
+.sp
 Default:
 \fI\fImax smbd processes\fR\fR\fI = \fR\fI0\fR\fI \fR
 .sp
@@ -7224,7 +7248,7 @@ This parameter limits the size in memory of any
 being used to speed up case insensitive name mappings\&. It represents the number of kilobyte (1024) units the stat cache can use\&. A value of zero, meaning unlimited, is not advisable due to increased memory usage\&. You should not need to change this parameter\&.
 .sp
 Default:
-\fI\fImax stat cache size\fR\fR\fI = \fR\fI256\fR\fI \fR
+\fI\fImax stat cache size\fR\fR\fI = \fR\fI512\fR\fI \fR
 .sp
 Example:
 \fI\fImax stat cache size\fR\fR\fI = \fR\fI100\fR\fI \fR
@@ -7777,14 +7801,10 @@ If disabled, both NTLM and LanMan authencication against the local passdb is dis
 Note that these settings apply only to local users, authentication will still be forwarded to and NTLM authentication accepted against any domain we are joined to, and any trusted domain, even if disabled or if NTLMv2\-only is enforced here\&. To control NTLM authentiation for domain users, this must option must be configured on each DC\&.
 .sp
 By default with
-lanman auth
-set to
-\fBno\fR
-and
 ntlm auth
 set to
 \fBntlmv2\-only\fR
-only NTLMv2 logins will be permited\&. Most clients support NTLMv2 by default, but some older clients will require special configuration to use it\&.
+only NTLMv2 logins will be permited\&. All modern clients support NTLMv2 by default, but some older clients will require special configuration to use it\&.
 .sp
 The primary user of NTLMv1 is MSCHAPv2 for VPNs and 802\&.1x\&.
 .sp
@@ -7802,6 +7822,10 @@ The available settings are:
 \fBntlmv1\-permitted\fR
 (alias
 \fByes\fR) \- Allow NTLMv1 and above for all clients\&.
+.sp
+This is the required setting for to enable the
+\fIlanman auth\fR
+parameter\&.
 .RE
 .sp
 .RS 4
@@ -8621,19 +8645,41 @@ Default:
 \fI\fIpreferred master\fR\fR\fI = \fR\fIauto\fR\fI \fR
 .RE
 
+prefork backoff increment (G)
+.PP
+.RS 4
+This option specifies the number of seconds added to the delay before a prefork master or worker process is restarted\&. The restart is initially zero, the prefork backoff increment is added to the delay on each restart up to the value specified by "prefork maximum backoff"\&.
+.sp
+Additionally the the backoff for an individual service by using "prefork backoff increment: service name" i\&.e\&. "prefork backoff increment:ldap = 2" to set the backoff increment to 2\&.
+.sp
+If the backoff increment is 2 and the maximum backoff is 5\&. There will be a zero second delay for the first restart\&. A two second delay for the second restart\&. A four second delay for the third and any subsequent restarts
+.sp
+Default:
+\fI\fIprefork backoff increment\fR\fR\fI = \fR\fI10\fR\fI \fR
+.RE
+
 prefork children (G)
 .PP
 .RS 4
 This option controls the number of worker processes that are started for each service when prefork process model is enabled (see
 \fBsamba\fR(8)
-\-M)\&. The prefork children are only started for those services that support prefork (currently only ldap)\&. For processes that don\*(Aqt support preforking all requests are handled by a single process for that service\&.
+\-M) The prefork children are only started for those services that support prefork (currently ldap, kdc and netlogon)\&. For processes that don\*(Aqt support preforking all requests are handled by a single process for that service\&.
 .sp
 This should be set to a small multiple of the number of CPU\*(Aqs available on the server
 .sp
 Additionally the number of prefork children can be specified for an individual service by using "prefork children: service name" i\&.e\&. "prefork children:ldap = 8" to set the number of ldap worker processes\&.
 .sp
 Default:
-\fI\fIprefork children\fR\fR\fI = \fR\fI1\fR\fI \fR
+\fI\fIprefork children\fR\fR\fI = \fR\fI4\fR\fI \fR
+.RE
+
+prefork maximum backoff (G)
+.PP
+.RS 4
+This option controls the maximum delay before a failed pre\-fork process is restarted\&.
+.sp
+Default:
+\fI\fIprefork maximum backoff\fR\fR\fI = \fR\fI120\fR\fI \fR
 .RE
 
 preload modules (G)
@@ -10729,6 +10775,33 @@ Default:
 \fI\fIsmb2 max write\fR\fR\fI = \fR\fI8388608\fR\fI \fR
 .RE
 
+smbd async dosmode (S)
+.PP
+.RS 4
+This parameter control whether the fileserver will use sync or async methods for fetching the DOS attributes when doing a directory listing\&. By default sync methods will be used\&.
+.sp
+Default:
+\fI\fIsmbd async dosmode\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+smbd getinfo ask sharemode (S)
+.PP
+.RS 4
+This parameter allows disabling fetching file write time from the open file handle database locking\&.tdb when a client requests file or directory metadata\&. It\*(Aqs a performance optimisation at the expense of protocol correctness\&.
+.sp
+Default:
+\fI\fIsmbd getinfo ask sharemode\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
+smbd max async dosmode (S)
+.PP
+.RS 4
+This parameter controls how many async operations to fetch the DOS attributes the fileserver will queue when doing directory listings\&.
+.sp
+Default:
+\fI\fIsmbd max async dosmode\fR\fR\fI = \fR\fIaio max threads * 2\fR\fI \fR
+.RE
+
 smbd profiling level (G)
 .PP
 .RS 4
@@ -10745,6 +10818,15 @@ Default:
 .sp
 Example:
 \fI\fIsmbd profiling level\fR\fR\fI = \fR\fIon\fR\fI \fR
+.RE
+
+smbd search ask sharemode (S)
+.PP
+.RS 4
+This parameter allows disabling fetching file write time from the open file handle database locking\&.tdb\&. It\*(Aqs a performance optimisation at the expense of protocol correctness\&.
+.sp
+Default:
+\fI\fIsmbd search ask sharemode\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
 smb encrypt (S)
@@ -12990,7 +13072,7 @@ Example:
 wreplsrv:periodic_interval (G)
 .PP
 .RS 4
-This maximum interval in s between 2 periodically scheduled runs where we check for wins\&.ldb changes and do push notifications to our push partners\&. Also wins_config\&.ldb changes are checked in that interval and partner configuration reloads are done\&.
+This maximum interval in seconds between 2 periodically scheduled runs where we check for wins\&.ldb changes and do push notifications to our push partners\&. Also wins_config\&.ldb changes are checked in that interval and partner configuration reloads are done\&.
 .sp
 Default:
 \fI\fIwreplsrv:periodic_interval\fR\fR\fI = \fR\fI15\fR\fI \fR
@@ -13157,7 +13239,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.9\&.5 of the Samba suite\&.
+This man page is part of version 4\&.10\&.7 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

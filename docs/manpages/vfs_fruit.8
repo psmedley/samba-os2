@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/12/2019
+.\"      Date: 08/22/2019
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.9.5
+.\"    Source: Samba 4.10.7
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "03/12/2019" "Samba 4\&.9\&.5" "System Administration tools"
+.TH "VFS_FRUIT" "8" "08/22/2019" "Samba 4\&.10\&.7" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -451,7 +451,11 @@ When
 is set to
 \fIfile\fR, vfs_fruit may create \&._ AppleDouble files\&. This options controls whether these \&._ AppleDouble files are vetoed which prevents the client from accessing them\&.
 .sp
-Vetoing \&._ files may break some applications, eg extracting Mac ZIP archives from Mac clients failes, because they contain \&._ files\&. Setting this option to false will fix this, but the abstraction leak of exposing the internally created \&._ files may have other unknown side effects\&.
+Vetoing \&._ files may break some applications, e\&.g\&. extracting Mac ZIP archives from Mac clients fails, because they contain \&._ files\&.
+rsync
+will also be unable to sync files beginning with underscores, as the temporary files it uses for these will start with \&._ and so cannot be created\&.
+.sp
+Setting this option to false will fix this, but the abstraction leak of exposing the internally created \&._ files may have other unknown side effects\&.
 .sp
 The default is
 \fIyes\fR\&.

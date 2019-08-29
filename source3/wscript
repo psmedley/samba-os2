@@ -1,20 +1,23 @@
 #!/usr/bin/env python
 
-srcdir=".."
+srcdir = ".."
 
 import sys, os
 from optparse import SUPPRESS_HELP
-sys.path.insert(0, srcdir+"/buildtools/wafsamba")
+sys.path.insert(0, srcdir + "/buildtools/wafsamba")
 sys.path.insert(0, "source3")
-import wafsamba, Options, Logs, Utils, Scripting
+
+from waflib import Options, Logs, Errors
+import wafsamba
 import build.charset
-import samba_utils, samba_version
+from wafsamba import samba_utils
+from samba_utils import TO_LIST
 import samba3
-import bison, flex
+from waflib.Tools import bison, flex
 
 default_prefix = Options.default_prefix = '/usr/local/samba'
 
-def set_options(opt):
+def options(opt):
 
     opt.add_option('--with-static-modules',
                    help=("Comma-separated list of names of modules to statically link in. "+
@@ -44,7 +47,7 @@ def set_options(opt):
     opt.SAMBA3_ADD_OPTION('iprint', with_name="enable", without_name="disable")
     opt.SAMBA3_ADD_OPTION('pam')
     opt.SAMBA3_ADD_OPTION('quotas')
-    opt.SAMBA3_ADD_OPTION('sendfile-support')
+    opt.SAMBA3_ADD_OPTION('sendfile-support', default=None)
     opt.SAMBA3_ADD_OPTION('utmp')
     opt.SAMBA3_ADD_OPTION('avahi', with_name="enable", without_name="disable")
     opt.SAMBA3_ADD_OPTION('iconv')
@@ -78,8 +81,6 @@ def set_options(opt):
     opt.SAMBA3_ADD_OPTION('spotlight', with_name="enable", without_name="disable", default=False)
 
 def configure(conf):
-    from samba_utils import TO_LIST
-
     default_static_modules = []
     default_shared_modules = []
     required_static_modules = []
@@ -94,7 +95,9 @@ def configure(conf):
         conf.ADD_LDFLAGS("-Wl,--export-dynamic", testflags=True)
 
     # We crash without vfs_default
-    required_static_modules.extend(TO_LIST('vfs_default'))
+    # and vfs_not_implemented provides helper function
+    # for other modules
+    required_static_modules.extend(TO_LIST('vfs_default vfs_not_implemented'))
 
     conf.CHECK_HEADERS('netdb.h')
     conf.CHECK_HEADERS('linux/falloc.h linux/ioctl.h')
@@ -167,11 +170,6 @@ main() {
 }''', 'HAVE_KERNEL_OPLOCKS_LINUX', addmain=False, execute=True,
         msg="Checking for Linux kernel oplocks")
 
-    # Check for IRIX kernel oplock types
-    conf.CHECK_CODE('oplock_stat_t t; t.os_state = OP_REVOKE; t.os_dev = 1; t.os_ino = 1;',
-                    'HAVE_KERNEL_OPLOCKS_IRIX', headers='fcntl.h',
-                    msg="Checking for IRIX kernel oplock types")
-
     # Check for kernel share modes
     conf.CHECK_CODE('''
 #include <sys/types.h>
@@ -229,7 +227,7 @@ main() {
                        "libarchive support is required for the smbclient "
                        "tar-file mode")
     elif conf.CONFIG_GET('ENABLE_SELFTEST'):
-        raise Utils.WafError('libarchive library required for '
+        raise Errors.WafError('libarchive library required for '
                              '--enable-selftest')
 
 
@@ -811,6 +809,8 @@ msg.msg_accrightslen = sizeof(fd);
                                     define='HAVE_UT_UT_EXIT')
         conf.CHECK_STRUCTURE_MEMBER('struct utmpx', 'ut_syslen', headers='utmpx.h',
                                     define='HAVE_UX_UT_SYSLEN')
+        conf.CHECK_STRUCTURE_MEMBER('struct utmpx', 'ut_host', headers='utmpx.h',
+                                    define='HAVE_UX_UT_HOST')
         conf.CHECK_CODE('struct utmp utarg; struct utmp *utreturn; utreturn = pututline(&utarg);',
                         'PUTUTLINE_RETURNS_UTMP', headers='utmp.h',
                         msg="Checking whether pututline returns pointer")
@@ -964,23 +964,23 @@ syscall(SYS_setgroups32, 0, NULL);
         if (conf.CONFIG_SET('USE_LINUX_32BIT_SYSCALLS')):
             seteuid = conf.CHECK_CODE('''
                                 #define AUTOCONF_TEST 1
-                                #define USE_LINUX_THREAD_CREDENTIALS 1
+                                #define HAVE_LINUX_THREAD_CREDENTIALS 1
                                 #define USE_LINUX_32BIT_SYSCALLS 1
                                 #include "../lib/util/setid.c"
                                 #include "./lib/util_sec.c"
                                 ''',
-                                'USE_LINUX_THREAD_CREDENTIALS',
+                                'HAVE_LINUX_THREAD_CREDENTIALS',
                                 addmain=False,
                                 execute=True,
                                 msg="Checking whether we can use Linux thread-specific credentials with 32-bit system calls")
         else:
             seteuid = conf.CHECK_CODE('''
                                 #define AUTOCONF_TEST 1
-                                #define USE_LINUX_THREAD_CREDENTIALS 1
+                                #define HAVE_LINUX_THREAD_CREDENTIALS 1
                                 #include "../lib/util/setid.c"
                                 #include "./lib/util_sec.c"
                                 ''',
-                                'USE_LINUX_THREAD_CREDENTIALS',
+                                'HAVE_LINUX_THREAD_CREDENTIALS',
                                 addmain=False,
                                 execute=True,
                                 msg="Checking whether we can use Linux thread-specific credentials")
@@ -1034,7 +1034,7 @@ syscall(SYS_setgroups32, 0, NULL);
             Logs.warn("--with-dnsupdate=yes but gssapi support not sufficient")
         else:
             conf.DEFINE('WITH_DNS_UPDATES', 1)
-    conf.CHECK_HEADERS('valgrind.h valgrind/valgrind.h valgrind/memcheck.h')
+    # valgrind.h or valgrind/valgrind.h is checked in lib/replace/wscript
     if Options.options.developer:
         if conf.CONFIG_SET('HAVE_VALGRIND_H') or conf.CONFIG_SET('HAVE_VALGRIND_VALGRIND_H'):
             conf.DEFINE('VALGRIND', '1')
@@ -1219,6 +1219,9 @@ main() {
 #include <unistd.h>
 #endif
 #include <sys/types.h>
+#if defined(HAVE_SYS_SYSMACROS_H)
+#include <sys/sysmacros.h>
+#endif
 main() { dev_t dev = makedev(1,2); return 0; }
 ''',
         'HAVE_MAKEDEV',
@@ -1252,7 +1255,7 @@ main() {
                     addmain=False,
                     execute=True)
 
-    if Options.options.with_sendfile_support:
+    if not Options.options.with_sendfile_support == False:
         if (host_os.rfind('linux') > -1) or (host_os.rfind('gnu') > -1) or (host_os.rfind('k*bsd*-gnu') > -1) or (host_os.rfind('kopensolaris*-gnu') > -1):
             conf.CHECK_CODE('''
                             int tofd, fromfd;
@@ -1267,7 +1270,6 @@ main() {
             if conf.CONFIG_SET('_HAVE_SENDFILE'):
                 conf.DEFINE('HAVE_SENDFILE', '1')
                 conf.DEFINE('LINUX_SENDFILE_API', '1')
-                conf.DEFINE('WITH_SENDFILE', '1')
         elif (host_os.rfind('freebsd') > -1) or (host_os.rfind('dragonfly') > -1):
             conf.CHECK_CODE('''
                             #include <sys/types.h>
@@ -1291,7 +1293,6 @@ main() {
             if conf.CONFIG_SET('_HAVE_SENDFILE'):
                 conf.DEFINE('HAVE_SENDFILE', '1')
                 conf.DEFINE('FREEBSD_SENDFILE_API', '1')
-                conf.DEFINE('WITH_SENDFILE', '1')
         elif (host_os.rfind('darwin') > -1):
             conf.CHECK_CODE('''
                             #include <sys/types.h>
@@ -1314,7 +1315,6 @@ main() {
             if conf.CONFIG_SET('_HAVE_SENDFILE'):
                 conf.DEFINE('HAVE_SENDFILE', '1')
                 conf.DEFINE('DARWIN_SENDFILE_API', '1')
-                conf.DEFINE('WITH_SENDFILE', '1')
         elif (host_os.rfind('hpux') > -1) or (host_os.rfind('osf') > -1):
             conf.CHECK_CODE('''
                             #include <sys/socket.h>
@@ -1333,9 +1333,8 @@ main() {
             if conf.CONFIG_SET('_HAVE_SENDFILE'):
                 conf.DEFINE('HAVE_SENDFILE', '1')
                 conf.DEFINE('HPUX_SENDFILE_API', '1')
-                conf.DEFINE('WITH_SENDFILE', '1')
-        elif (host_os.rfind('solaris') > -1):
-            conf.CHECK_FUNCS_IN('sendfile', 'sendfilev')
+        elif (host_os.rfind('sunos') > -1):
+            conf.CHECK_FUNCS_IN('sendfilev', 'sendfile')
             conf.CHECK_CODE('''
                             #include <sys/sendfile.h>,
                             int sfvcnt;
@@ -1355,11 +1354,11 @@ main() {
                             nwritten = sendfilev(tofd, vec, sfvcnt, &xferred);
                             ''',
                             '_HAVE_SENDFILEV',
-                            msg='Checking for solaris sendfilev support')
+                            msg='Checking for solaris sendfilev support',
+                            lib='sendfile')
             if conf.CONFIG_SET('_HAVE_SENDFILEV'):
                 conf.DEFINE('HAVE_SENDFILEV', '1')
                 conf.DEFINE('SOLARIS_SENDFILE_API', '1')
-                conf.DEFINE('WITH_SENDFILE', '1')
         elif (host_os.rfind('aix') > -1):
             conf.CHECK_CODE('''
                             #include <sys/socket.h>
@@ -1381,8 +1380,9 @@ main() {
             if conf.CONFIG_SET('_HAVE_SENDFILE'):
                 conf.DEFINE('HAVE_SENDFILE', '1')
                 conf.DEFINE('AIX_SENDFILE_API', '1')
-                conf.DEFINE('WITH_SENDFILE', '1')
 
+    if Options.options.with_sendfile_support == True and not conf.CONFIG_SET('HAVE_SENDFILE'):
+        conf.fatal('sendfile support not found but it was requested !')
     # Check for getcwd allowing a NULL arg.
     conf.CHECK_CODE('''
 #include <unistd.h>
@@ -1439,7 +1439,7 @@ main() {
                                         headers='rpcsvc/rquota.h',
                                         lib='tirpc')
 
-            # Required fucntion for NFS quote support
+            # Required function for NFS quote support
             conf.CHECK_CODE('''
                             clnt_create("", RQUOTAPROG, RQUOTAVERS, "udp");
                             ''',
@@ -1505,6 +1505,11 @@ main() {
                 legacy_quota_libs = ''
     conf.env['legacy_quota_libs'] = legacy_quota_libs
 
+    conf.CHECK_CODE('(void)unshare(CLONE_FS);',
+                    headers='sched.h',
+                    define='HAVE_UNSHARE_CLONE_FS',
+                    msg='for Linux unshare(CLONE_FS)')
+
     #
     # cluster support (CTDB)
     #
@@ -1529,7 +1534,7 @@ main() {
         conf.CHECK_DECLS('FS_IOC_GETFLAGS FS_COMPR_FL', headers='linux/fs.h')):
             conf.DEFINE('HAVE_LINUX_IOCTL', '1')
 
-    conf.env['CCFLAGS_CEPHFS'] = "-D_FILE_OFFSET_BITS=64"
+    conf.env['CFLAGS_CEPHFS'] = "-D_FILE_OFFSET_BITS=64"
     if Options.options.libcephfs_dir:
         conf.env['CPPPATH_CEPHFS'] = Options.options.libcephfs_dir + '/include'
         conf.env['LIBPATH_CEPHFS'] = Options.options.libcephfs_dir + '/lib'
@@ -1618,12 +1623,12 @@ main() {
     if Options.options.with_spotlight:
 
         Logs.info("Requested Spotlight support, checking for bison")
-        bison.detect(conf)
+        bison.configure(conf)
         if not conf.env['BISON']:
             conf.fatal("Spotlight support requested but bison missing")
         conf.CHECK_COMMAND('%s --version | head -n1' % conf.env['BISON'], msg='Using bison version', define=None, on_target=False)
         Logs.info("Requested Spotlight support, checking for flex")
-        flex.detect(conf)
+        flex.configure(conf)
         if not conf.env['FLEX']:
             conf.fatal("Spotlight support requested but flex missing")
         conf.CHECK_COMMAND('%s --version' % conf.env['FLEX'], msg='Using flex version', define=None, on_target=False)
@@ -1774,13 +1779,13 @@ main() {
         if m.startswith('!'):
             m = m[1:]
             if m in required_static_modules:
-                raise Utils.WafError('These modules are REQUIRED as static modules: %s' %
+                raise Errors.WafError('These modules are REQUIRED as static modules: %s' %
                                      ' '.join(required_static_modules))
             if m in final_static_modules:
                 final_static_modules.remove(m)
             continue
         if m in forced_shared_modules:
-            raise Utils.WafError('These modules MUST be configured as shared modules: %s' %
+            raise Errors.WafError('These modules MUST be configured as shared modules: %s' %
                                  ' '.join(forced_shared_modules))
         if m in final_shared_modules:
             final_shared_modules.remove(m)
@@ -1795,10 +1800,10 @@ main() {
                 final_shared_modules.remove(m)
             continue
         if m in required_static_modules:
-            raise Utils.WafError('These modules are REQUIRED as static modules: %s' %
+            raise Errors.WafError('These modules are REQUIRED as static modules: %s' %
                                  ' '.join(required_static_modules))
         if m in forced_static_modules:
-            raise Utils.WafError('These module MUST be configured as static modules: %s' %
+            raise Errors.WafError('These module MUST be configured as static modules: %s' %
                                  ' '.join(forced_static_modules))
         if m in final_static_modules:
             final_static_modules.remove(m)

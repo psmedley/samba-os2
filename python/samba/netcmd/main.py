@@ -21,6 +21,7 @@ from samba import getopt as options
 
 from samba.netcmd import SuperCommand
 
+
 class cache_loader(dict):
     """
     We only load subcommand tools if they are actually used.
@@ -52,7 +53,7 @@ class cmd_sambatool(SuperCommand):
 
     takes_optiongroups = {
         "versionopts": options.VersionOptions,
-        }
+    }
 
     subcommands = cache_loader()
 

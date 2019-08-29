@@ -478,12 +478,8 @@ smb_krb5_init_context_basic(TALLOC_CTX *tmp_ctx,
 #endif
 	krb5_context krb5_ctx;
 
-	initialize_krb5_error_table();
-
-	ret = krb5_init_context(&krb5_ctx);
+	ret = smb_krb5_init_context_common(&krb5_ctx);
 	if (ret) {
-		DEBUG(1,("krb5_init_context failed (%s)\n",
-			 error_message(ret)));
 		return ret;
 	}
 
@@ -540,8 +536,6 @@ krb5_error_code smb_krb5_init_context(void *parent_ctx,
 #ifdef SAMBA4_USES_HEIMDAL
 	krb5_log_facility *logf;
 #endif
-
-	initialize_krb5_error_table();
 
 	tmp_ctx = talloc_new(parent_ctx);
 	*smb_krb5_context = talloc_zero(tmp_ctx, struct smb_krb5_context);

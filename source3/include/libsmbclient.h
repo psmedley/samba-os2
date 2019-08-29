@@ -831,7 +831,24 @@ smbc_getOptionUseNTHash(SMBCCTX *c);
 void
 smbc_setOptionUseNTHash(SMBCCTX *c, smbc_bool b);
 
-
+/**
+ * @brief Set the 'client min protocol' and the 'client max protocol'.
+ *
+ * IMPORTANT: This overrrides the values 'client min protocol' and 'client max
+ * protocol' set in the smb.conf file!
+ *
+ * @param[in]  c  The smbc context to use.
+ *
+ * @param[in]  min_proto  The minimal protocol to use or NULL for leaving it
+ *                        untouched.
+ *
+ * @param[in]  max_proto  The maximum protocol to use or NULL for leaving it
+ *                        untouched.
+ *
+ * @returns true for success, false otherwise
+ */
+smbc_bool
+smbc_setOptionProtocols(SMBCCTX *c, const char *min_proto, const char *max_proto);
 
 /*************************************
  * Getters and setters for FUNCTIONS *
@@ -2664,7 +2681,7 @@ int smbc_listxattr(const char *url,
  *                            extended attributes
  *
  * @note            This function always returns all attribute names supported
- *                  by NT file systems, regardless of wether the referenced
+ *                  by NT file systems, regardless of whether the referenced
  *                  file system supports extended attributes (e.g. a Windows
  *                  2000 machine supports extended attributes if NTFS is used,
  *                  but not if FAT is used, and Windows 98 doesn't support
@@ -2699,7 +2716,7 @@ int smbc_llistxattr(const char *url,
  *                            extended attributes
  *
  * @note            This function always returns all attribute names supported
- *                  by NT file systems, regardless of wether the referenced
+ *                  by NT file systems, regardless of whether the referenced
  *                  file system supports extended attributes (e.g. a Windows
  *                  2000 machine supports extended attributes if NTFS is used,
  *                  but not if FAT is used, and Windows 98 doesn't support

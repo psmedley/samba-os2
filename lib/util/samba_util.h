@@ -54,6 +54,7 @@ extern const char *panic_action;
 #endif
 
 #include "lib/util/memory.h"
+#include "lib/util/discard.h"
 
 #include "fault.h"
 
@@ -393,6 +394,11 @@ _PUBLIC_ int fdprintf(int fd, const char *format, ...) PRINTF_ATTRIBUTE(2,3);
   compare two files, return true if the two files have the same content
  */
 bool file_compare(const char *path1, const char *path2);
+
+/*
+  load from a pipe into memory.
+ */
+char *file_ploadv(char * const argl[], size_t *size);
 
 /* The following definitions come from lib/util/util.c  */
 

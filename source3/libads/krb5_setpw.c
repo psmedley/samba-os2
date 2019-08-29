@@ -69,10 +69,10 @@ ADS_STATUS ads_krb5_set_password(const char *kdc_host, const char *principal,
 	krb5_data result_code_string = { 0 };
 	krb5_data result_string = { 0 };
 
-	initialize_krb5_error_table();
-	ret = krb5_init_context(&context);
+	ret = smb_krb5_init_context_common(&context);
 	if (ret) {
-		DEBUG(1,("Failed to init krb5 context (%s)\n", error_message(ret)));
+		DBG_ERR("kerberos init context failed (%s)\n",
+			error_message(ret));
 		return ADS_ERROR_KRB5(ret);
 	}
 
@@ -177,10 +177,10 @@ static ADS_STATUS ads_krb5_chg_password(const char *kdc_host,
     krb5_data result_string = { 0 };
     smb_krb5_addresses *addr = NULL;
 
-    initialize_krb5_error_table();
-    ret = krb5_init_context(&context);
+    ret = smb_krb5_init_context_common(&context);
     if (ret) {
-	DEBUG(1,("Failed to init krb5 context (%s)\n", error_message(ret)));
+	DBG_ERR("kerberos init context failed (%s)\n",
+		error_message(ret));
 	return ADS_ERROR_KRB5(ret);
     }
 
@@ -217,19 +217,20 @@ static ADS_STATUS ads_krb5_chg_password(const char *kdc_host,
     }
 	krb5_get_init_creds_opt_set_address_list(opts, addr->addrs);
 
-    realm = smb_krb5_principal_get_realm(context, princ);
+    realm = smb_krb5_principal_get_realm(NULL, context, princ);
 
     /* We have to obtain an INITIAL changepw ticket for changing password */
     if (asprintf(&chpw_princ, "kadmin/changepw@%s", realm) == -1) {
+	krb5_free_principal(context, princ);
 	krb5_get_init_creds_opt_free(context, opts);
 	smb_krb5_free_addresses(context, addr);
 	krb5_free_context(context);
-	free(realm);
+	TALLOC_FREE(realm);
 	DEBUG(1,("ads_krb5_chg_password: asprintf fail\n"));
 	return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
     }
 
-    free(realm);
+    TALLOC_FREE(realm);
     password = SMB_STRDUP(oldpw);
     ret = krb5_get_init_creds_password(context, &creds, princ, password,
 					   kerb_prompter, NULL, 

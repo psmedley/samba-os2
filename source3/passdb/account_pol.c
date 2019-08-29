@@ -26,6 +26,7 @@
 #include "dbwrap/dbwrap_open.h"
 #include "../libcli/security/security.h"
 #include "lib/privileges.h"
+#include "lib/gencache.h"
 
 static struct db_context *db;
 
@@ -220,7 +221,7 @@ bool init_account_policy(void)
 		return True;
 	}
 
-	db_path = state_path("account_policy.tdb");
+	db_path = state_path(talloc_tos(), "account_policy.tdb");
 	if (db_path == NULL) {
 		return false;
 	}

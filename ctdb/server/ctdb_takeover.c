@@ -33,6 +33,8 @@
 #include "lib/util/sys_rw.h"
 #include "lib/util/util_process.h"
 
+#include "protocol/protocol_util.h"
+
 #include "ctdb_private.h"
 #include "ctdb_client.h"
 
@@ -374,8 +376,8 @@ static void ctdb_control_send_arp(struct tevent_context *ev,
 
 	ret = ctdb_sys_send_arp(&arp->addr, iface);
 	if (ret != 0) {
-		DEBUG(DEBUG_CRIT,(__location__ " sending of arp failed on iface '%s' (%s)\n",
-				  iface, strerror(errno)));
+		DBG_ERR("Failed to send ARP on interface %s: %s\n",
+			iface, strerror(ret));
 	}
 
 	tcparray = arp->tcparray;
@@ -1158,6 +1160,7 @@ int ctdb_set_public_addresses(struct ctdb_context *ctdb, bool check_addresses)
 		const char *addrstr;
 		const char *ifaces;
 		char *tok, *line;
+		int ret;
 
 		line = lines[i];
 		while ((*line == ' ') || (*line == '\t')) {
@@ -1181,11 +1184,21 @@ int ctdb_set_public_addresses(struct ctdb_context *ctdb, bool check_addresses)
 		}
 		ifaces = tok;
 
-		if (!addrstr || !parse_ip_mask(addrstr, ifaces, &addr, &mask)) {
-			DEBUG(DEBUG_CRIT,("Badly formed line %u in public address list\n", i+1));
+		if (addrstr == NULL) {
+			D_ERR("Badly formed line %u in public address list\n",
+			      i+1);
 			talloc_free(lines);
 			return -1;
 		}
+
+		ret = ctdb_sock_addr_mask_from_string(addrstr, &addr, &mask);
+		if (ret != 0) {
+			D_ERR("Badly formed line %u in public address list\n",
+			      i+1);
+			talloc_free(lines);
+			return -1;
+		}
+
 		if (ctdb_add_public_address(ctdb, &addr, mask, ifaces, check_addresses)) {
 			DEBUG(DEBUG_CRIT,("Failed to add line %u to the public address list\n", i+1));
 			talloc_free(lines);
@@ -2102,8 +2115,8 @@ static void send_gratious_arp(struct tevent_context *ev,
 
 	ret = ctdb_sys_send_arp(&arp->addr, arp->iface);
 	if (ret != 0) {
-		DEBUG(DEBUG_ERR,(__location__ " sending of gratious arp on iface '%s' failed (%s)\n",
-				 arp->iface, strerror(errno)));
+		DBG_ERR("Failed to send gratuitous ARP on iface %s: %s\n",
+			arp->iface, strerror(ret));
 	}
 
 

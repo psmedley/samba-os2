@@ -28,10 +28,10 @@ from samba.dcerpc import (
     drsblobs,
     drsuapi,
     misc,
-    )
+)
 from samba.common import dsdb_Dn
 from samba.ndr import ndr_unpack, ndr_pack
-from collections import Counter
+from collections import defaultdict
 
 
 class KCCError(Exception):
@@ -40,6 +40,7 @@ class KCCError(Exception):
 
 class NCType(object):
     (unknown, schema, domain, config, application) = range(0, 5)
+
 
 # map the NCType enum to strings for debugging
 nctype_lut = dict((v, k) for k, v in NCType.__dict__.items() if k[:2] != '__')
@@ -668,7 +669,7 @@ class DirectoryServiceAgent(object):
         if "options" in msg:
             self.options = int(msg["options"][0])
 
-        if "msDS-isRODC" in msg and msg["msDS-isRODC"][0] == "TRUE":
+        if "msDS-isRODC" in msg and str(msg["msDS-isRODC"][0]) == "TRUE":
             self.dsa_is_ro = True
         else:
             self.dsa_is_ro = False
@@ -743,7 +744,7 @@ class DirectoryServiceAgent(object):
                     flags = dsdn.get_binary_integer()
                     dnstr = str(dsdn.dn)
 
-                    if not dnstr in tmp_table:
+                    if dnstr not in tmp_table:
                         rep = NCReplica(self, dnstr)
                         tmp_table[dnstr] = rep
                     else:
@@ -971,7 +972,7 @@ class NTDSConnection(object):
             self.options = int(msg["options"][0])
 
         if "enabledConnection" in msg:
-            if msg["enabledConnection"][0].upper().lstrip().rstrip() == "TRUE":
+            if str(msg["enabledConnection"][0]).upper().lstrip().rstrip() == "TRUE":
                 self.enabled = True
 
         if "systemFlags" in msg:
@@ -993,7 +994,7 @@ class NTDSConnection(object):
             self.schedule = ndr_unpack(drsblobs.schedule, msg["schedule"][0])
 
         if "whenCreated" in msg:
-            self.whenCreated = ldb.string_to_time(msg["whenCreated"][0])
+            self.whenCreated = ldb.string_to_time(str(msg["whenCreated"][0]))
 
         if "fromServer" in msg:
             dsdn = dsdb_Dn(samdb, msg["fromServer"][0].decode('utf8'))
@@ -1352,7 +1353,7 @@ class Partition(NamingContext):
                 continue
 
             if k == "Enabled":
-                if msg[k][0].upper().lstrip().rstrip() == "TRUE":
+                if str(msg[k][0]).upper().lstrip().rstrip() == "TRUE":
                     self.enabled = True
                 else:
                     self.enabled = False
@@ -1645,7 +1646,7 @@ class Site(object):
                 i_idx = j_idx
                 t_time = 0
 
-            #XXX doc says current time < c.timeLastSyncSuccess - f
+            # XXX doc says current time < c.timeLastSyncSuccess - f
             # which is true only if f is negative or clocks are wrong.
             # f is not negative in the default case (2 hours).
             elif self.nt_now - cursor.last_sync_success > f:
@@ -2287,7 +2288,7 @@ def uncovered_sites_to_cover(samdb, site_name):
                             scope=ldb.SCOPE_SUBTREE,
                             expression="(objectClass=site)")
 
-    sites_in_use = Counter()
+    sites_in_use = defaultdict(int)
     dc_count = 0
 
     # Assume server is of form DC,Servers,Site-ABCD because of schema

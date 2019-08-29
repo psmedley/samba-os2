@@ -25,7 +25,6 @@
 #include "popt_common.h"
 #include "dbwrap/dbwrap.h"
 #include "dbwrap/dbwrap_open.h"
-#include "dbwrap/dbwrap_watch.h"
 #include "messages.h"
 #include "util_tdb.h"
 #include "cmdline_contexts.h"
@@ -281,13 +280,6 @@ static int dbwrap_tool_exists(struct db_context *db,
 	return (result)?0:1;
 }
 
-
-static int delete_fn(struct db_record *rec, void *priv)
-{
-	dbwrap_record_delete(rec);
-	return 0;
-}
-
 /**
  * dbwrap_tool_erase: erase the whole data base
  * the keyname argument is not used.
@@ -296,11 +288,11 @@ static int dbwrap_tool_erase(struct db_context *db,
 			     const char *keyname,
 			     const char *data)
 {
-	NTSTATUS status;
+	int ret;
 
-	status = dbwrap_traverse(db, delete_fn, NULL, NULL);
+	ret = dbwrap_wipe(db);
 
-	if (!NT_STATUS_IS_OK(status)) {
+	if (ret != 0) {
 		d_fprintf(stderr, "ERROR erasing the database\n");
 		return -1;
 	}
@@ -310,8 +302,9 @@ static int dbwrap_tool_erase(struct db_context *db,
 
 static int listkey_fn(struct db_record *rec, void *private_data)
 {
-	int length = dbwrap_record_get_key(rec).dsize;
-	unsigned char *p = (unsigned char *)dbwrap_record_get_key(rec).dptr;
+	TDB_DATA key = dbwrap_record_get_key(rec);
+	size_t length = key.dsize;
+	unsigned char *p = (unsigned char *)key.dptr;
 
 	while (length--) {
 		if (isprint(*p) && !strchr("\"\\", *p)) {
@@ -438,19 +431,18 @@ int main(int argc, const char **argv)
 			  "USAGE: %s [options] <database> <op> [<key> [<type> "
 			  "[<value>]]]\n"
 			  "       ops: fetch, store, delete, exists, "
-			  "erase, listkeys, listwatchers\n"
+			  "erase, listkeys\n"
 			  "       types: int32, uint32, string, hex\n",
 			 argv[0]);
 		goto done;
 	}
 
-	if ((persistent == 0 && non_persistent == 0) ||
-	    (persistent == 1 && non_persistent == 1))
-	{
+	if ((persistent + non_persistent) != 1) {
 		d_fprintf(stderr, "ERROR: you must specify exactly one "
 			  "of --persistent and --non-persistent\n");
 		goto done;
-	} else if (non_persistent == 1) {
+	}
+	if (non_persistent == 1) {
 		tdb_flags |= TDB_CLEAR_IF_FIRST;
 	}
 
@@ -511,7 +503,7 @@ int main(int argc, const char **argv)
 		d_fprintf(stderr,
 			  "ERROR: invalid op '%s' specified\n"
 			  "       supported ops: fetch, store, delete, exists, "
-			  "erase, listkeys, listwatchers\n",
+			  "erase, listkeys\n",
 			  opname);
 		goto done;
 	}

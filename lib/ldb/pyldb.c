@@ -79,6 +79,7 @@ static struct ldb_message_element *PyObject_AsMessageElement(
 						      PyObject *set_obj,
 						      unsigned int flags,
 						      const char *attr_name);
+static PyTypeObject PyLdbBytesType;
 
 #if PY_MAJOR_VERSION >= 3
 #define PyStr_Check PyUnicode_Check
@@ -92,6 +93,15 @@ static struct ldb_message_element *PyObject_AsMessageElement(
 
 #define PYARG_STR_UNI "es"
 
+static PyObject *PyLdbBytes_FromStringAndSize(const char *msg, int size)
+{
+	PyObject* result = NULL;
+	PyObject* args = NULL;
+	args = Py_BuildValue("(y#)", msg, size);
+	result = PyLdbBytesType.tp_new(&PyLdbBytesType, args, NULL);
+	Py_DECREF(args);
+	return result;
+}
 #else
 #define PyStr_Check PyString_Check
 #define PyStr_FromString PyString_FromString
@@ -99,6 +109,7 @@ static struct ldb_message_element *PyObject_AsMessageElement(
 #define PyStr_FromFormat PyString_FromFormat
 #define PyStr_FromFormatV PyString_FromFormatV
 #define PyStr_AsUTF8 PyString_AsString
+#define PyLdbBytes_FromStringAndSize PyString_FromStringAndSize
 
 #define PYARG_STR_UNI "et"
 
@@ -249,9 +260,16 @@ static PyObject *py_ldb_control_new(PyTypeObject *type, PyObject *args, PyObject
 }
 
 static PyGetSetDef py_ldb_control_getset[] = {
-	{ discard_const_p(char, "oid"), (getter)py_ldb_control_get_oid, NULL, NULL },
-	{ discard_const_p(char, "critical"), (getter)py_ldb_control_get_critical, (setter)py_ldb_control_set_critical, NULL },
-	{ NULL }
+	{
+		.name = discard_const_p(char, "oid"),
+		.get  = (getter)py_ldb_control_get_oid,
+	},
+	{
+		.name = discard_const_p(char, "critical"),
+		.get  = (getter)py_ldb_control_get_critical,
+		.set  = (setter)py_ldb_control_set_critical,
+	},
+	{ .name = NULL },
 };
 
 static PyTypeObject PyLdbControl = {
@@ -275,10 +293,34 @@ static void PyErr_SetLdbError(PyObject *error, int ret, struct ldb_context *ldb_
 			Py_BuildValue(discard_const_p(char, "(i,s)"), ret,
 				      ldb_ctx == NULL?ldb_strerror(ret):ldb_errstring(ldb_ctx)));
 }
+static PyObject *py_ldb_bytes_str(PyBytesObject *self)
+{
+	char *msg = NULL;
+	Py_ssize_t size;
+	int result = 0;
+	if (!PyBytes_Check(self)) {
+		PyErr_Format(PyExc_TypeError,"Unexpected type");
+		return NULL;
+	}
+	result = PyBytes_AsStringAndSize((PyObject *)self, &msg, &size);
+	if (result != 0) {
+		PyErr_Format(PyExc_TypeError, "Failed to extract bytes");
+		return NULL;
+	}
+	return PyUnicode_FromStringAndSize(msg, size);
+}
+
+static PyTypeObject PyLdbBytesType = {
+	PyVarObject_HEAD_INIT(NULL, 0)
+	.tp_name = "ldb.bytes",
+	.tp_doc = "str/bytes (with custom str)",
+        .tp_str = (reprfunc)py_ldb_bytes_str,
+	.tp_flags = Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,
+};
 
 static PyObject *PyObject_FromLdbValue(const struct ldb_val *val)
 {
-	return PyBytes_FromStringAndSize((const char *)val->data, val->length);
+	return PyLdbBytes_FromStringAndSize((const char *)val->data, val->length);
 }
 
 static PyObject *PyStr_FromLdbValue(const struct ldb_val *val)
@@ -1325,7 +1367,7 @@ static struct ldb_message *PyDict_AsMessage(TALLOC_CTX *mem_ctx,
 	}
 
 	while (PyDict_Next(py_obj, &dict_pos, &key, &value)) {
-		char *key_str = PyStr_AsUTF8(key);
+		const char *key_str = PyStr_AsUTF8(key);
 		if (ldb_attr_cmp(key_str, "dn") != 0) {
 			msg_el = PyObject_AsMessageElement(msg->elements, value,
 							   mod_flags, key_str);
@@ -2332,8 +2374,11 @@ static PyObject *py_ldb_get_firstmodule(PyLdbObject *self, void *closure)
 }
 
 static PyGetSetDef py_ldb_getset[] = {
-	{ discard_const_p(char, "firstmodule"), (getter)py_ldb_get_firstmodule, NULL, NULL },
-	{ NULL }
+	{
+		.name = discard_const_p(char, "firstmodule"),
+		.get  = (getter)py_ldb_get_firstmodule,
+	},
+	{ .name = NULL },
 };
 
 static int py_ldb_contains(PyLdbObject *self, PyObject *obj)
@@ -2448,11 +2493,23 @@ static PyObject *py_ldb_result_get_count(PyLdbResultObject *self, void *closure)
 }
 
 static PyGetSetDef py_ldb_result_getset[] = {
-	{ discard_const_p(char, "controls"), (getter)py_ldb_result_get_controls, NULL, NULL },
-	{ discard_const_p(char, "msgs"), (getter)py_ldb_result_get_msgs, NULL, NULL },
-	{ discard_const_p(char, "referals"), (getter)py_ldb_result_get_referals, NULL, NULL },
-	{ discard_const_p(char, "count"), (getter)py_ldb_result_get_count, NULL, NULL },
-	{ NULL }
+	{
+		.name = discard_const_p(char, "controls"),
+		.get  = (getter)py_ldb_result_get_controls,
+	},
+	{
+		.name = discard_const_p(char, "msgs"),
+		.get  = (getter)py_ldb_result_get_msgs,
+	},
+	{
+		.name = discard_const_p(char, "referals"),
+		.get  = (getter)py_ldb_result_get_referals,
+	},
+	{
+		.name = discard_const_p(char, "count"),
+		.get  = (getter)py_ldb_result_get_count,
+	},
+	{ .name = NULL },
 };
 
 static PyObject *py_ldb_result_iter(PyLdbResultObject *self)
@@ -2999,7 +3056,7 @@ static PyObject *py_ldb_msg_element_find(PyLdbMessageElementObject *self, Py_ssi
 		PyErr_SetString(PyExc_IndexError, "Out of range");
 		return NULL;
 	}
-	return PyBytes_FromStringAndSize((char *)el->values[idx].data, el->values[idx].length);
+	return PyLdbBytes_FromStringAndSize((char *)el->values[idx].data, el->values[idx].length);
 }
 
 static PySequenceMethods py_ldb_msg_element_seq = {
@@ -3206,8 +3263,11 @@ static PyObject *py_ldb_msg_element_get_text(PyObject *self, void *closure)
 }
 
 static PyGetSetDef py_ldb_msg_element_getset[] = {
-	{ discard_const_p(char, "text"), (getter)py_ldb_msg_element_get_text, NULL, NULL },
-	{ NULL }
+	{
+		.name = discard_const_p(char, "text"),
+		.get  = (getter)py_ldb_msg_element_get_text,
+	},
+	{ .name = NULL }
 };
 
 static PyTypeObject PyLdbMessageElement = {
@@ -3300,7 +3360,7 @@ static PyObject *py_ldb_msg_keys(PyLdbMessageObject *self)
 static PyObject *py_ldb_msg_getitem_helper(PyLdbMessageObject *self, PyObject *py_name)
 {
 	struct ldb_message_element *el;
-	char *name;
+	const char *name;
 	struct ldb_message *msg = pyldb_Message_AsMessage(self);
 	name = PyStr_AsUTF8(py_name);
 	if (name == NULL) {
@@ -3466,7 +3526,7 @@ static PyObject *py_ldb_msg_iter(PyLdbMessageObject *self)
 
 static int py_ldb_msg_setitem(PyLdbMessageObject *self, PyObject *name, PyObject *value)
 {
-	char *attr_name;
+	const char *attr_name;
 
 	attr_name = PyStr_AsUTF8(name);
 	if (attr_name == NULL) {
@@ -3590,9 +3650,16 @@ static PyObject *py_ldb_msg_get_text(PyObject *self, void *closure)
 }
 
 static PyGetSetDef py_ldb_msg_getset[] = {
-	{ discard_const_p(char, "dn"), (getter)py_ldb_msg_get_dn, (setter)py_ldb_msg_set_dn, NULL },
-	{ discard_const_p(char, "text"), (getter)py_ldb_msg_get_text, NULL, NULL },
-	{ NULL }
+	{
+		.name = discard_const_p(char, "dn"),
+		.get  = (getter)py_ldb_msg_get_dn,
+		.set  = (setter)py_ldb_msg_set_dn,
+	},
+	{
+		.name = discard_const_p(char, "text"),
+		.get  = (getter)py_ldb_msg_get_text,
+	},
+	{ .name = NULL },
 };
 
 static PyObject *py_ldb_msg_repr(PyLdbMessageObject *self)
@@ -4131,6 +4198,11 @@ static struct PyModuleDef moduledef = {
 static PyObject* module_init(void)
 {
 	PyObject *m;
+
+	PyLdbBytesType.tp_base = &PyBytes_Type;
+	if (PyType_Ready(&PyLdbBytesType) < 0) {
+		return NULL;
+	}
 
 	if (PyType_Ready(&PyLdbDn) < 0)
 		return NULL;

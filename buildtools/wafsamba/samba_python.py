@@ -1,11 +1,11 @@
 # waf build tool for building IDL files with pidl
 
-import os
-import Build, Logs, Utils, Configure
-from Configure import conf
+import os, sys
+from waflib import Build, Logs, Utils, Configure, Errors
+from waflib.Configure import conf
 
 @conf
-def SAMBA_CHECK_PYTHON(conf, mandatory=True, version=(2,4,2)):
+def SAMBA_CHECK_PYTHON(conf, mandatory=True, version=(2,6,0)):
     # enable tool to build python extensions
     if conf.env.HAVE_PYTHON_H:
         conf.check_python_version(version)
@@ -14,23 +14,25 @@ def SAMBA_CHECK_PYTHON(conf, mandatory=True, version=(2,4,2)):
     interpreters = []
 
     if conf.env['EXTRA_PYTHON']:
-        conf.all_envs['extrapython'] = conf.env.copy()
+        conf.all_envs['extrapython'] = conf.env.derive()
         conf.setenv('extrapython')
         conf.env['PYTHON'] = conf.env['EXTRA_PYTHON']
         conf.env['IS_EXTRA_PYTHON'] = 'yes'
         conf.find_program('python', var='PYTHON', mandatory=True)
-        conf.check_tool('python')
+        conf.load('python')
         try:
-            conf.check_python_version((3, 3, 0))
+            conf.check_python_version(version)
         except Exception:
-            Logs.warn('extra-python needs to be Python 3.3 or later')
+            Logs.warn('extra-python needs to be Python %s.%s.%s or later' %
+                      (version[0], version[1], version[2]))
             raise
         interpreters.append(conf.env['PYTHON'])
         conf.setenv('default')
 
-    conf.find_program('python', var='PYTHON', mandatory=mandatory)
-    conf.check_tool('python')
-    path_python = conf.find_program('python')
+    conf.find_program('python3', var='PYTHON', mandatory=mandatory)
+    conf.load('python')
+    path_python = conf.find_program('python3')
+
     conf.env.PYTHON_SPECIFIED = (conf.env.PYTHON != path_python)
     conf.check_python_version(version)
 
@@ -42,14 +44,16 @@ def SAMBA_CHECK_PYTHON(conf, mandatory=True, version=(2,4,2)):
 def SAMBA_CHECK_PYTHON_HEADERS(conf, mandatory=True):
     if conf.env.disable_python:
         if mandatory:
-            raise Utils.WafError("Cannot check for python headers when "
+            raise Errors.WafError("Cannot check for python headers when "
                                  "--disable-python specified")
 
         conf.msg("python headers", "Check disabled due to --disable-python")
         # we don't want PYTHONDIR in config.h, as otherwise changing
         # --prefix causes a complete rebuild
-        del(conf.env.defines['PYTHONDIR'])
-        del(conf.env.defines['PYTHONARCHDIR'])
+        conf.env.DEFINES = [x for x in conf.env.DEFINES
+            if not x.startswith('PYTHONDIR=')
+            and not x.startswith('PYTHONARCHDIR=')]
+
         return
 
     if conf.env["python_headers_checked"] == []:
@@ -64,21 +68,22 @@ def SAMBA_CHECK_PYTHON_HEADERS(conf, mandatory=True):
         if conf.env['EXTRA_PYTHON']:
             extraversion = conf.all_envs['extrapython']['PYTHON_VERSION']
             if extraversion == conf.env['PYTHON_VERSION']:
-                raise Utils.WafError("extrapython %s is same as main python %s" % (
+                raise Errors.WafError("extrapython %s is same as main python %s" % (
                     extraversion, conf.env['PYTHON_VERSION']))
     else:
         conf.msg("python headers", "using cache")
 
     # we don't want PYTHONDIR in config.h, as otherwise changing
     # --prefix causes a complete rebuild
-    del(conf.env.defines['PYTHONDIR'])
-    del(conf.env.defines['PYTHONARCHDIR'])
+    conf.env.DEFINES = [x for x in conf.env.DEFINES
+        if not x.startswith('PYTHONDIR=')
+        and not x.startswith('PYTHONARCHDIR=')]
 
 def _check_python_headers(conf, mandatory):
     try:
-        Configure.ConfigurationError
-        conf.check_python_headers(mandatory=mandatory)
-    except Configure.ConfigurationError:
+        conf.errors.ConfigurationError
+        conf.check_python_headers()
+    except conf.errors.ConfigurationError:
         if mandatory:
              raise
 
@@ -94,6 +99,11 @@ def _check_python_headers(conf, mandatory):
         if lib.startswith('-L'):
             conf.env.append_unique('LIBPATH_PYEMBED', lib[2:]) # strip '-L'
             conf.env['LINKFLAGS_PYEMBED'].remove(lib)
+
+    # same as in waf 1.5, keep only '-fno-strict-aliasing'
+    # and ignore defines such as NDEBUG _FORTIFY_SOURCE=2
+    conf.env.DEFINES_PYEXT = []
+    conf.env.CFLAGS_PYEXT = ['-fno-strict-aliasing']
 
     return
 
@@ -145,7 +155,7 @@ def SAMBA_PYTHON(bld, name,
     source = bld.EXPAND_VARIABLES(source, vars=vars)
 
     if realname is not None:
-        link_name = 'python_modules/%s' % realname
+        link_name = 'python/%s' % realname
     else:
         link_name = None
 

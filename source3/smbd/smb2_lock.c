@@ -134,7 +134,7 @@ NTSTATUS smbd_smb2_request_process_lock(struct smbd_smb2_request *req)
 		return smbd_smb2_request_error(req, NT_STATUS_FILE_CLOSED);
 	}
 
-	subreq = smbd_smb2_lock_send(req, req->ev_ctx,
+	subreq = smbd_smb2_lock_send(req, req->sconn->ev_ctx,
 				     req, in_fsp,
 				     in_lock_count,
 				     in_locks);
@@ -368,7 +368,7 @@ static struct tevent_req *smbd_smb2_lock_send(TALLOC_CTX *mem_ctx,
 	}
 
 	if (async) {
-		tevent_req_defer_callback(req, smb2req->ev_ctx);
+		tevent_req_defer_callback(req, smb2req->sconn->ev_ctx);
 		SMBPROFILE_IOBYTES_ASYNC_SET_IDLE(smb2req->profile);
 		return req;
 	}
@@ -568,12 +568,8 @@ static bool recalc_smb2_brl_timeout(struct smbd_server_connection *sconn)
 			(int)from_now.tv_sec, (int)from_now.tv_usec));
 	}
 
-	/*
-	 * brl_timeout_fn() calls change_to_root_user()
-	 * so we can use sconn->root_ev_ctx.
-	 */
 	sconn->smb2.locks.brl_timeout = tevent_add_timer(
-				sconn->root_ev_ctx,
+				sconn->ev_ctx,
 				NULL,
 				next_timeout,
 				brl_timeout_fn,

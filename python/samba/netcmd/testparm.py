@@ -37,6 +37,7 @@ import samba
 import samba.getopt as options
 from samba.netcmd import Command, CommandError, Option
 
+
 class cmd_testparm(Command):
     """Syntax check the configuration file."""
 
@@ -66,7 +67,7 @@ class cmd_testparm(Command):
         # These are harder to do with the new code structure
         Option("--show-all-parameters", action="store_true", default=False,
                help="Show the parameters, type, possible values")
-        ]
+    ]
 
     takes_args = []
 
@@ -201,9 +202,9 @@ class cmd_testparm(Command):
         # this is totally ugly, a real `quick' hack
         for s in lp.services():
             if (self.allow_access(lp.get("hosts deny"), lp.get("hosts allow"), cname,
-                             caddr) and
+                                  caddr) and
                 self.allow_access(lp.get("hosts deny", s), lp.get("hosts allow", s),
-                             cname, caddr)):
+                                  cname, caddr)):
                 logger.info("Allow connection from %s (%s) to %s", cname, caddr, s)
             else:
                 logger.info("Deny connection from %s (%s) to %s", cname, caddr, s)

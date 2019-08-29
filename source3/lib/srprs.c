@@ -24,9 +24,11 @@
  * @brief  A simple recursive parser.
  */
 
-#include "includes.h"
+#include "replace.h"
+#include "system/locale.h"
 #include "srprs.h"
 #include "cbuf.h"
+#include <assert.h>
 
 bool srprs_skipws(const char** ptr) {
 	while (isspace(**ptr))
@@ -42,7 +44,7 @@ bool srprs_char(const char** ptr, char c) {
 	return false;
 }
 
-bool srprs_str(const char** ptr, const char* str, size_t len)
+bool srprs_str(const char** ptr, const char* str, ssize_t len)
 {
 	if (len == -1)
 		len = strlen(str);

@@ -3,7 +3,7 @@ NTP Integration
 
 Add the following lines to your NTP configuration::
 
-  ntpsigndsocket /var/run/samba/ntp_signd
+  ntpsigndsocket /run/samba/ntp_signd
   restrict default mssntp
 
 Bind9 Integration

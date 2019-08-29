@@ -25,7 +25,6 @@ import io
 import re
 import tempfile
 import difflib
-import sys
 import fcntl
 import signal
 import errno
@@ -46,7 +45,7 @@ from samba import (
     gensec,
     generate_random_password,
     Ldb,
-    )
+)
 from samba.net import Net
 
 from samba.netcmd import (
@@ -54,8 +53,10 @@ from samba.netcmd import (
     CommandError,
     SuperCommand,
     Option,
-    )
+)
 from samba.compat import text_type
+from samba.compat import get_bytes
+from samba.compat import get_string
 
 
 # python[3]-gpgme is abandoned since ubuntu 1804 and debian 9
@@ -109,19 +110,19 @@ else:
 
 
 disabled_virtual_attributes = {
-    }
+}
 
 virtual_attributes = {
     "virtualClearTextUTF8": {
         "flags": ldb.ATTR_FLAG_FORCE_BASE64_LDIF,
-        },
+    },
     "virtualClearTextUTF16": {
         "flags": ldb.ATTR_FLAG_FORCE_BASE64_LDIF,
-        },
+    },
     "virtualSambaGPG": {
         "flags": ldb.ATTR_FLAG_FORCE_BASE64_LDIF,
-        },
-    }
+    },
+}
 
 get_random_bytes_fn = None
 if get_random_bytes_fn is None:
@@ -137,16 +138,19 @@ if get_random_bytes_fn is None:
     except ImportError as e:
         pass
 
+
 def check_random():
     if get_random_bytes_fn is not None:
         return None
     return "Crypto.Random or M2Crypto.Rand required"
+
 
 def get_random_bytes(num):
     random_reason = check_random()
     if random_reason is not None:
         raise ImportError(random_reason)
     return get_random_bytes_fn(num)
+
 
 def get_crypt_value(alg, utf8pw, rounds=0):
     algs = {
@@ -161,7 +165,7 @@ def get_crypt_value(alg, utf8pw, rounds=0):
     # we can ignore the possible == at the end
     # of the base64 string
     # we just need to replace '+' by '.'
-    b64salt = base64.b64encode(salt)[0:16].replace('+', '.').decode('utf8')
+    b64salt = base64.b64encode(salt)[0:16].replace(b'+', b'.').decode('utf8')
     crypt_salt = ""
     if rounds != 0:
         crypt_salt = "$%s$rounds=%s$%s$" % (alg, rounds, b64salt)
@@ -181,6 +185,8 @@ def get_crypt_value(alg, utf8pw, rounds=0):
 # i.e. options = "rounds=20;other=ignored;" will return 20
 # if the rounds option is not found or the value is not a number, 0 is returned
 # which indicates that the default number of rounds should be used.
+
+
 def get_rounds(options):
     if not options:
         return 0
@@ -195,6 +201,7 @@ def get_rounds(options):
                 return 0
     return 0
 
+
 try:
     random_reason = check_random()
     if random_reason is not None:
@@ -203,15 +210,15 @@ try:
     h = hashlib.sha1()
     h = None
     virtual_attributes["virtualSSHA"] = {
-        }
+    }
 except ImportError as e:
     reason = "hashlib.sha1()"
     if random_reason:
         reason += " and " + random_reason
     reason += " required"
     disabled_virtual_attributes["virtualSSHA"] = {
-        "reason" : reason,
-        }
+        "reason": reason,
+    }
 
 for (alg, attr) in [("5", "virtualCryptSHA256"), ("6", "virtualCryptSHA512")]:
     try:
@@ -222,20 +229,20 @@ for (alg, attr) in [("5", "virtualCryptSHA256"), ("6", "virtualCryptSHA512")]:
         v = get_crypt_value(alg, "")
         v = None
         virtual_attributes[attr] = {
-            }
+        }
     except ImportError as e:
         reason = "crypt"
         if random_reason:
             reason += " and " + random_reason
         reason += " required"
         disabled_virtual_attributes[attr] = {
-            "reason" : reason,
-            }
+            "reason": reason,
+        }
     except NotImplementedError as e:
         reason = "modern '$%s$' salt in crypt(3) required" % (alg)
         disabled_virtual_attributes[attr] = {
-            "reason" : reason,
-            }
+            "reason": reason,
+        }
 
 # Add the wDigest virtual attributes, virtualWDigest01 to virtualWDigest29
 for x in range(1, 30):
@@ -248,6 +255,7 @@ virtual_attributes_help  = "The attributes to display (comma separated). "
 virtual_attributes_help += "Possible supported virtual attributes: %s" % ", ".join(sorted(virtual_attributes.keys()))
 if len(disabled_virtual_attributes) != 0:
     virtual_attributes_help += "Unsupported virtual attributes: %s" % ", ".join(sorted(disabled_virtual_attributes.keys()))
+
 
 class cmd_user_create(Command):
     """Create a new user.
@@ -294,22 +302,22 @@ Example5 shows how to create an RFC2307/NIS domain enabled user account. If
 
     takes_options = [
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
-                metavar="URL", dest="H"),
+               metavar="URL", dest="H"),
         Option("--must-change-at-next-login",
-                help="Force password to be changed on next login",
-                action="store_true"),
+               help="Force password to be changed on next login",
+               action="store_true"),
         Option("--random-password",
-                help="Generate random password",
-                action="store_true"),
+               help="Generate random password",
+               action="store_true"),
         Option("--smartcard-required",
-                help="Require a smartcard for interactive logons",
-                action="store_true"),
+               help="Require a smartcard for interactive logons",
+               action="store_true"),
         Option("--use-username-as-cn",
-                help="Force use of username as user's CN",
-                action="store_true"),
+               help="Force use of username as user's CN",
+               action="store_true"),
         Option("--userou",
-                help="DN of alternative location (without domainDN counterpart) to default CN=Users in which new user object will be created. E. g. 'OU=<OU name>'",
-                type=str),
+               help="DN of alternative location (without domainDN counterpart) to default CN=Users in which new user object will be created. E. g. 'OU=<OU name>'",
+               type=str),
         Option("--surname", help="User's surname", type=str),
         Option("--given-name", help="User's given name", type=str),
         Option("--initials", help="User's initials", type=str),
@@ -326,11 +334,11 @@ Example5 shows how to create an RFC2307/NIS domain enabled user account. If
         Option("--telephone-number", help="User's phone number", type=str),
         Option("--physical-delivery-office", help="User's office location", type=str),
         Option("--rfc2307-from-nss",
-                help="Copy Unix user attributes from NSS (will be overridden by explicit UID/GID/GECOS/shell)",
-                action="store_true"),
+               help="Copy Unix user attributes from NSS (will be overridden by explicit UID/GID/GECOS/shell)",
+               action="store_true"),
         Option("--nis-domain", help="User's Unix/RFC2307 NIS domain", type=str),
         Option("--unix-home", help="User's Unix/RFC2307 home directory",
-                type=str),
+               type=str),
         Option("--uid", help="User's Unix/RFC2307 username", type=str),
         Option("--uid-number", help="User's Unix/RFC2307 numeric UID", type=int),
         Option("--gid-number", help="User's Unix/RFC2307 primary GID number", type=int),
@@ -344,7 +352,7 @@ Example5 shows how to create an RFC2307/NIS domain enabled user account. If
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, username, password=None, credopts=None, sambaopts=None,
             versionopts=None, H=None, must_change_at_next_login=False,
@@ -359,7 +367,7 @@ Example5 shows how to create an RFC2307/NIS domain enabled user account. If
             smartcard_required=False):
 
         if smartcard_required:
-            if password is not None and password is not '':
+            if password is not None and password != '':
                 raise CommandError('It is not allowed to specify '
                                    '--newpassword '
                                    'together with --smartcard-required.')
@@ -374,7 +382,7 @@ Example5 shows how to create an RFC2307/NIS domain enabled user account. If
         while True:
             if smartcard_required:
                 break
-            if password is not None and password is not '':
+            if password is not None and password != '':
                 break
             password = getpass("New Password: ")
             passwordverify = getpass("Retype Password: ")
@@ -474,7 +482,7 @@ Example2 shows how to delete a user in the domain against the local server.   su
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, username, credopts=None, sambaopts=None, versionopts=None,
             H=None):
@@ -485,7 +493,7 @@ Example2 shows how to delete a user in the domain against the local server.   su
                       credentials=creds, lp=lp)
 
         filter = ("(&(sAMAccountName=%s)(sAMAccountType=805306368))" %
-                   ldb.binary_encode(username))
+                  ldb.binary_encode(username))
 
         try:
             res = samdb.search(base=samdb.domain_dn(),
@@ -511,26 +519,26 @@ class cmd_user_list(Command):
     takes_options = [
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
-        ]
+    ]
 
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, sambaopts=None, credopts=None, versionopts=None, H=None):
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp, fallback_machine=True)
 
         samdb = SamDB(url=H, session_info=system_session(),
-            credentials=creds, lp=lp)
+                      credentials=creds, lp=lp)
 
         domain_dn = samdb.domain_dn()
         res = samdb.search(domain_dn, scope=ldb.SCOPE_SUBTREE,
-                    expression=("(&(objectClass=user)(userAccountControl:%s:=%u))"
-                    % (ldb.OID_COMPARATOR_AND, dsdb.UF_NORMAL_ACCOUNT)),
-                    attrs=["samaccountname"])
+                           expression=("(&(objectClass=user)(userAccountControl:%s:=%u))"
+                                       % (ldb.OID_COMPARATOR_AND, dsdb.UF_NORMAL_ACCOUNT)),
+                           attrs=["samaccountname"])
         if (len(res) == 0):
             return
 
@@ -572,7 +580,6 @@ Example3 shows how to enable a user in the domain against a local LDAP server.  
 """
     synopsis = "%prog (<username>|--filter <filter>) [options]"
 
-
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "versionopts": options.VersionOptions,
@@ -583,7 +590,7 @@ Example3 shows how to enable a user in the domain against a local LDAP server.  
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
         Option("--filter", help="LDAP Filter to set password on", type=str),
-        ]
+    ]
 
     takes_args = ["username?"]
 
@@ -599,7 +606,7 @@ Example3 shows how to enable a user in the domain against a local LDAP server.  
         creds = credopts.get_credentials(lp, fallback_machine=True)
 
         samdb = SamDB(url=H, session_info=system_session(),
-            credentials=creds, lp=lp)
+                      credentials=creds, lp=lp)
         try:
             samdb.enable_account(filter)
         except Exception as msg:
@@ -616,7 +623,7 @@ class cmd_user_disable(Command):
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
         Option("--filter", help="LDAP Filter to set password on", type=str),
-        ]
+    ]
 
     takes_args = ["username?"]
 
@@ -624,7 +631,7 @@ class cmd_user_disable(Command):
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, username=None, sambaopts=None, credopts=None,
             versionopts=None, filter=None, H=None):
@@ -638,7 +645,7 @@ class cmd_user_disable(Command):
         creds = credopts.get_credentials(lp, fallback_machine=True)
 
         samdb = SamDB(url=H, session_info=system_session(),
-            credentials=creds, lp=lp)
+                      credentials=creds, lp=lp)
         try:
             samdb.disable_account(filter)
         except Exception as msg:
@@ -704,10 +711,10 @@ Example4 shows how to set the account expiration so that it will never expire.  
         creds = credopts.get_credentials(lp)
 
         samdb = SamDB(url=H, session_info=system_session(),
-            credentials=creds, lp=lp)
+                      credentials=creds, lp=lp)
 
         try:
-            samdb.setexpiry(filter, days*24*3600, no_expiry_req=noexpiry)
+            samdb.setexpiry(filter, days * 24 * 3600, no_expiry_req=noexpiry)
         except Exception as msg:
             # FIXME: Catch more specific exception
             raise CommandError("Failed to set expiry for user '%s': %s" % (
@@ -728,16 +735,16 @@ class cmd_user_password(Command):
 
     takes_options = [
         Option("--newpassword", help="New password", type=str),
-        ]
+    ]
 
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, credopts=None, sambaopts=None, versionopts=None,
-                newpassword=None):
+            newpassword=None):
 
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp)
@@ -749,7 +756,7 @@ class cmd_user_password(Command):
 
         password = newpassword
         while True:
-            if password is not None and password is not '':
+            if password is not None and password != '':
                 break
             password = getpass("New Password: ")
             passwordverify = getpass("Retype Password: ")
@@ -811,15 +818,15 @@ Example3 shows how an administrator would reset TestUser3 user's password to pas
                help="Force password to be changed on next login",
                action="store_true"),
         Option("--random-password",
-                help="Generate random password",
-                action="store_true"),
+               help="Generate random password",
+               action="store_true"),
         Option("--smartcard-required",
-                help="Require a smartcard for interactive logons",
-                action="store_true"),
+               help="Require a smartcard for interactive logons",
+               action="store_true"),
         Option("--clear-smartcard-required",
-                help="Don't require a smartcard for interactive logons",
-                action="store_true"),
-        ]
+               help="Don't require a smartcard for interactive logons",
+               action="store_true"),
+    ]
 
     takes_args = ["username?"]
 
@@ -833,7 +840,7 @@ Example3 shows how an administrator would reset TestUser3 user's password to pas
         password = newpassword
 
         if smartcard_required:
-            if password is not None and password is not '':
+            if password is not None and password != '':
                 raise CommandError('It is not allowed to specify '
                                    '--newpassword '
                                    'together with --smartcard-required.')
@@ -852,7 +859,7 @@ Example3 shows how an administrator would reset TestUser3 user's password to pas
         while True:
             if smartcard_required:
                 break
-            if password is not None and password is not '':
+            if password is not None and password != '':
                 break
             password = getpass("New Password: ")
             passwordverify = getpass("Retype Password: ")
@@ -898,6 +905,7 @@ Example3 shows how an administrator would reset TestUser3 user's password to pas
                 # FIXME: catch more specific exception
                 raise CommandError("%s: %s" % (command, msg))
             self.outf.write("Changed password OK\n")
+
 
 class GetPasswordCommand(Command):
 
@@ -1022,11 +1030,11 @@ class GetPasswordCommand(Command):
             unicodePwd = obj["unicodePwd"][0]
             if add_unicodePwd:
                 del obj["unicodePwd"]
-        account_name = obj["sAMAccountName"][0]
+        account_name = str(obj["sAMAccountName"][0])
         if add_sAMAcountName:
             del obj["sAMAccountName"]
         if "userPrincipalName" in obj:
-            account_upn = obj["userPrincipalName"][0]
+            account_upn = str(obj["userPrincipalName"][0])
         else:
             realm = self.lp.get("realm")
             account_upn = "%s@%s" % (account_name, realm.lower())
@@ -1034,6 +1042,7 @@ class GetPasswordCommand(Command):
             del obj["userPrincipalName"]
 
         calculated = {}
+
         def get_package(name, min_idx=0):
             if name in calculated:
                 return calculated[name]
@@ -1089,7 +1098,7 @@ class GetPasswordCommand(Command):
 
         def get_utf8(a, b, username):
             try:
-                u = unicode(b, 'utf-16-le')
+                u = text_type(get_bytes(b), 'utf-16-le')
             except UnicodeDecodeError as e:
                 self.outf.write("WARNING: '%s': CLEARTEXT is invalid UTF-16-LE unable to generate %s\n" % (
                                 username, a))
@@ -1100,11 +1109,12 @@ class GetPasswordCommand(Command):
         # Extract the WDigest hash for the value specified by i.
         # Builds an htdigest compatible value
         DIGEST = "Digest"
+
         def get_wDigest(i, primary_wdigest, account_name, account_upn,
                         domain, dns_domain):
             if i == 1:
                 user  = account_name
-                realm= domain
+                realm = domain
             elif i == 2:
                 user  = account_name.lower()
                 realm = domain.lower()
@@ -1197,11 +1207,10 @@ class GetPasswordCommand(Command):
             digests = ndr_unpack(drsblobs.package_PrimaryWDigestBlob,
                                  primary_wdigest)
             try:
-                digest = binascii.hexlify(bytearray(digests.hashes[i-1].hash))
-                return "%s:%s:%s" % (user, realm, digest)
+                digest = binascii.hexlify(bytearray(digests.hashes[i - 1].hash))
+                return "%s:%s:%s" % (user, realm, get_string(digest))
             except IndexError:
                 return None
-
 
         # get the value for a virtualCrypt attribute.
         # look for an exact match on algorithm and rounds in supplemental creds
@@ -1221,7 +1230,9 @@ class GetPasswordCommand(Command):
                 if b is not None:
                     u8 = get_utf8(a, b, username or account_name)
                     if u8 is not None:
-                        sv = get_crypt_value(str(algorithm), u8, rounds)
+                        # in py2 using get_bytes should ensure u8 is unmodified
+                        # in py3 it will be decoded
+                        sv = get_crypt_value(str(algorithm), get_string(u8), rounds)
                 if sv is None:
                     # Unable to calculate a hash with the specified
                     # number of rounds, fall back to the first hash using
@@ -1248,12 +1259,15 @@ class GetPasswordCommand(Command):
             scheme_match = None
 
             for h in up.hashes:
+                # in PY2 this should just do nothing and in PY3 if bytes
+                # it will decode them
+                h_value = get_string(h.value)
                 if (scheme_match is None and
-                      h.scheme == SCHEME and
-                      h.value.startswith(scheme_prefix)):
-                    scheme_match = h.value
-                if h.scheme == SCHEME and h.value.startswith(prefix):
-                    return (h.value, scheme_match)
+                    h.scheme == SCHEME and
+                    h_value.startswith(scheme_prefix)):
+                    scheme_match = h_value
+                if h.scheme == SCHEME and h_value.startswith(prefix):
+                    return (h_value, scheme_match)
 
             # No match on the number of rounds, return the value of the
             # first matching scheme
@@ -1365,6 +1379,7 @@ class GetPasswordCommand(Command):
             password_attrs += [pa]
 
         return password_attrs
+
 
 class cmd_user_getpassword(GetPasswordCommand):
     """Get the password fields of a user/computer account.
@@ -1485,7 +1500,7 @@ samba-tool user getpassword --filter=samaccountname=TestUser3 --attributes=msDS-
         Option("--decrypt-samba-gpg",
                help=decrypt_samba_gpg_help,
                action="store_true", default=False, dest="decrypt_samba_gpg"),
-        ]
+    ]
 
     takes_args = ["username?"]
 
@@ -1520,6 +1535,7 @@ samba-tool user getpassword --filter=samaccountname=TestUser3 --attributes=msDS-
         ldif = samdb.write_ldif(obj, ldb.CHANGETYPE_NONE)
         self.outf.write("%s" % ldif)
         self.outf.write("Got password OK\n")
+
 
 class cmd_user_syncpasswords(GetPasswordCommand):
     """Sync the password of user accounts.
@@ -1748,7 +1764,7 @@ samba-tool user syncpasswords --terminate \\
         Option("--terminate",
                help="Send a SIGTERM to an already running (daemon) process",
                action="store_true", default=False, dest="terminate"),
-        ]
+    ]
 
     def run(self, cache_ldb_initialize=False, cache_ldb=None,
             H=None, filter=None,
@@ -1811,7 +1827,7 @@ samba-tool user syncpasswords --terminate \\
             dirsync_filter = "(&" + \
                                "(objectClass=user)" + \
                                "(userAccountControl:%s:=%u)" % (
-                                ldb.OID_COMPARATOR_AND, dsdb.UF_NORMAL_ACCOUNT) + \
+                                   ldb.OID_COMPARATOR_AND, dsdb.UF_NORMAL_ACCOUNT) + \
                                "(!(sAMAccountName=krbtgt*))" + \
                              ")"
 
@@ -1902,7 +1918,7 @@ samba-tool user syncpasswords --terminate \\
                                     attrs=cache_attrs)
             if len(res) == 1:
                 try:
-                    self.samdb_url = res[0]["samdbUrl"][0]
+                    self.samdb_url = str(res[0]["samdbUrl"][0])
                 except KeyError as e:
                     self.samdb_url = None
             else:
@@ -1917,20 +1933,20 @@ samba-tool user syncpasswords --terminate \\
                 self.samdb_url = H
                 self.dirsync_filter = dirsync_filter
                 self.dirsync_attrs = dirsync_attrs
-                self.dirsync_controls = ["dirsync:1:0:0", "extended_dn:1:0"];
+                self.dirsync_controls = ["dirsync:1:0:0", "extended_dn:1:0"]
                 self.password_attrs = password_attrs
                 self.decrypt_samba_gpg = decrypt_samba_gpg
                 self.sync_command = sync_command
                 add_ldif  = "dn: %s\n" % self.cache_dn
                 add_ldif += "objectClass: userSyncPasswords\n"
-                add_ldif += "samdbUrl:: %s\n" % base64.b64encode(self.samdb_url).decode('utf8')
-                add_ldif += "dirsyncFilter:: %s\n" % base64.b64encode(self.dirsync_filter).decode('utf8')
+                add_ldif += "samdbUrl:: %s\n" % base64.b64encode(get_bytes(self.samdb_url)).decode('utf8')
+                add_ldif += "dirsyncFilter:: %s\n" % base64.b64encode(get_bytes(self.dirsync_filter)).decode('utf8')
                 for a in self.dirsync_attrs:
-                    add_ldif += "dirsyncAttribute:: %s\n" % base64.b64encode(a).decode('utf8')
+                    add_ldif += "dirsyncAttribute:: %s\n" % base64.b64encode(get_bytes(a)).decode('utf8')
                 add_ldif += "dirsyncControl: %s\n" % self.dirsync_controls[0]
                 for a in self.password_attrs:
-                    add_ldif += "passwordAttribute:: %s\n" % base64.b64encode(a).decode('utf8')
-                if self.decrypt_samba_gpg == True:
+                    add_ldif += "passwordAttribute:: %s\n" % base64.b64encode(get_bytes(a)).decode('utf8')
+                if self.decrypt_samba_gpg:
                     add_ldif += "decryptSambaGPG: TRUE\n"
                 else:
                     add_ldif += "decryptSambaGPG: FALSE\n"
@@ -1945,22 +1961,22 @@ samba-tool user syncpasswords --terminate \\
                 ldif = self.cache.write_ldif(msg, ldb.CHANGETYPE_NONE)
                 self.outf.write("%s" % ldif)
             else:
-                self.dirsync_filter = res[0]["dirsyncFilter"][0]
+                self.dirsync_filter = str(res[0]["dirsyncFilter"][0])
                 self.dirsync_attrs = []
                 for a in res[0]["dirsyncAttribute"]:
-                    self.dirsync_attrs.append(a)
-                self.dirsync_controls = [res[0]["dirsyncControl"][0], "extended_dn:1:0"]
+                    self.dirsync_attrs.append(str(a))
+                self.dirsync_controls = [str(res[0]["dirsyncControl"][0]), "extended_dn:1:0"]
                 self.password_attrs = []
                 for a in res[0]["passwordAttribute"]:
-                    self.password_attrs.append(a)
-                decrypt_string = res[0]["decryptSambaGPG"][0]
+                    self.password_attrs.append(str(a))
+                decrypt_string = str(res[0]["decryptSambaGPG"][0])
                 assert(decrypt_string in ["TRUE", "FALSE"])
                 if decrypt_string == "TRUE":
                     self.decrypt_samba_gpg = True
                 else:
                     self.decrypt_samba_gpg = False
                 if "syncCommand" in res[0]:
-                    self.sync_command = res[0]["syncCommand"][0]
+                    self.sync_command = str(res[0]["syncCommand"][0])
                 else:
                     self.sync_command = None
                 if "currentPid" in res[0]:
@@ -2010,7 +2026,7 @@ samba-tool user syncpasswords --terminate \\
                         del dirsync_obj[a]
                         dirsync_obj["# %s::" % a] = ["REDACTED SECRET ATTRIBUTE"]
             dirsync_ldif = self.samdb.write_ldif(dirsync_obj, ldb.CHANGETYPE_NONE)
-            log_msg("# Dirsync[%d] %s %s\n%s" %(idx, guid, sid, dirsync_ldif))
+            log_msg("# Dirsync[%d] %s %s\n%s" % (idx, guid, sid, dirsync_ldif))
             obj = self.get_account_attributes(self.samdb,
                                               username="%s" % sid,
                                               basedn="<GUID=%s>" % guid,
@@ -2103,9 +2119,10 @@ samba-tool user syncpasswords --terminate \\
                         break
                     time.sleep(1)
                 if not got_exclusive:
-                    log_msg("update_pid(%r): failed to get exclusive lock[%s] - %s" %
+                    log_msg("update_pid(%r): failed to get exclusive lock[%s]" %
                             (pid, self.lockfile))
-                    raise CommandError("update_pid(%r): failed to get exclusive lock[%s] after 5 seconds" %
+                    raise CommandError("update_pid(%r): failed to get "
+                                       "exclusive lock[%s] after 5 seconds" %
                                        (pid, self.lockfile))
 
                 if pid is not None:
@@ -2115,7 +2132,7 @@ samba-tool user syncpasswords --terminate \\
                 try:
                     os.ftruncate(self.lockfd, 0)
                     if buf is not None:
-                        os.write(self.lockfd, buf)
+                        os.write(self.lockfd, get_bytes(buf))
                 except IOError as e3:
                     (err, msg) = e3.args
                     log_msg("check_current_pid_conflict: failed to write pid to [%s] - %s (%d)" %
@@ -2125,7 +2142,7 @@ samba-tool user syncpasswords --terminate \\
             if self.current_pid is not None:
                 log_msg("currentPid: %d\n" % self.current_pid)
 
-            modify_ldif =  "dn: %s\n" % (self.cache_dn)
+            modify_ldif = "dn: %s\n" % (self.cache_dn)
             modify_ldif += "changetype: modify\n"
             modify_ldif += "replace: currentPid\n"
             if self.current_pid is not None:
@@ -2143,7 +2160,7 @@ samba-tool user syncpasswords --terminate \\
             # This cookie can be extremely long
             # log_msg("dirsyncControls: %r\n" % self.dirsync_controls)
 
-            modify_ldif =  "dn: %s\n" % (self.cache_dn)
+            modify_ldif = "dn: %s\n" % (self.cache_dn)
             modify_ldif += "changetype: modify\n"
             modify_ldif += "replace: dirsyncControl\n"
             modify_ldif += "dirsyncControl: %s\n" % (self.dirsync_controls[0])
@@ -2190,7 +2207,7 @@ samba-tool user syncpasswords --terminate \\
                     add_ldif += "currentTime: %s\n" % ldb.timestring(int(time.time()))
                     self.cache.add_ldif(add_ldif)
                 else:
-                    modify_ldif =  "dn: %s\n" % (dn)
+                    modify_ldif = "dn: %s\n" % (dn)
                     modify_ldif += "changetype: modify\n"
                     modify_ldif += "replace: lastCookie\n"
                     modify_ldif += "lastCookie: %s\n" % (lastCookie)
@@ -2205,7 +2222,7 @@ samba-tool user syncpasswords --terminate \\
 
         def dirsync_loop():
             while True:
-                res = self.samdb.search(expression=self.dirsync_filter,
+                res = self.samdb.search(expression=str(self.dirsync_filter),
                                         scope=ldb.SCOPE_SUBTREE,
                                         attrs=self.dirsync_attrs,
                                         controls=self.dirsync_controls)
@@ -2263,7 +2280,7 @@ samba-tool user syncpasswords --terminate \\
             if pid == 0:
                 os.setsid()
                 pid = os.fork()
-                if pid == 0: # Actual daemon
+                if pid == 0:  # Actual daemon
                     pid = os.getpid()
                     log_msg("Daemonized as pid %d (from %d)\n" % (pid, orig_pid))
                     load_cache()
@@ -2281,7 +2298,7 @@ samba-tool user syncpasswords --terminate \\
             import resource      # Resource usage information.
             maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
             if maxfd == resource.RLIM_INFINITY:
-                maxfd = 1024 # Rough guess at maximum number of open file descriptors.
+                maxfd = 1024  # Rough guess at maximum number of open file descriptors.
             logfd = os.open(logfile, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
             self.outf.write("Using logfile[%s]\n" % logfile)
             for fd in range(0, maxfd):
@@ -2357,6 +2374,7 @@ samba-tool user syncpasswords --terminate \\
         update_pid(None)
         return
 
+
 class cmd_user_edit(Command):
     """Modify User AD object.
 
@@ -2406,7 +2424,7 @@ LDAP server using the 'nano' editor.
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, username, credopts=None, sambaopts=None, versionopts=None,
             H=None, editor=None):
@@ -2440,7 +2458,7 @@ LDAP server using the 'nano' editor.
                     editor = 'vi'
 
             with tempfile.NamedTemporaryFile(suffix=".tmp") as t_file:
-                t_file.write(result_ldif)
+                t_file.write(get_bytes(result_ldif))
                 t_file.flush()
                 try:
                     check_call([editor, t_file.name])
@@ -2462,19 +2480,19 @@ LDAP server using the 'nano' editor.
                     line = line[2:]
                     plus_lines.append(line)
 
-            user_ldif="dn: %s\n" % user_dn
+            user_ldif = "dn: %s\n" % user_dn
             user_ldif += "changetype: modify\n"
 
             for line in minus_lines:
                 attr, val = line.split(':', 1)
-                search_attr="%s:" % attr
+                search_attr = "%s:" % attr
                 if not re.search(r'^' + search_attr, str(plus_lines)):
                     user_ldif += "delete: %s\n" % attr
                     user_ldif += "%s: %s\n" % (attr, val)
 
             for line in plus_lines:
                 attr, val = line.split(':', 1)
-                search_attr="%s:" % attr
+                search_attr = "%s:" % attr
                 if re.search(r'^' + search_attr, str(minus_lines)):
                     user_ldif += "replace: %s\n" % attr
                     user_ldif += "%s: %s\n" % (attr, val)
@@ -2489,6 +2507,7 @@ LDAP server using the 'nano' editor.
                                    username, e)
 
             self.outf.write("Modified User '%s' successfully\n" % username)
+
 
 class cmd_user_show(Command):
     """Display a user AD object.
@@ -2538,7 +2557,7 @@ Example3 shows how to display a users objectSid and memberOf attributes.
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, username, credopts=None, sambaopts=None, versionopts=None,
             H=None, user_attrs=None):
@@ -2567,6 +2586,7 @@ Example3 shows how to display a users objectSid and memberOf attributes.
         for msg in res:
             user_ldif = samdb.write_ldif(msg, ldb.CHANGETYPE_NONE)
             self.outf.write(user_ldif)
+
 
 class cmd_user_move(Command):
     """Move a user to an organizational unit/container.
@@ -2605,12 +2625,12 @@ class cmd_user_move(Command):
                type=str, metavar="URL", dest="H"),
     ]
 
-    takes_args = [ "username", "new_parent_dn" ]
+    takes_args = ["username", "new_parent_dn"]
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, username, new_parent_dn, credopts=None, sambaopts=None,
             versionopts=None, H=None):
@@ -2634,10 +2654,10 @@ class cmd_user_move(Command):
             full_new_parent_dn = samdb.normalize_dn_in_domain(new_parent_dn)
         except Exception as e:
             raise CommandError('Invalid new_parent_dn "%s": %s' %
-                               (new_parent_dn, e.message))
+                               (new_parent_dn, e))
 
         full_new_user_dn = ldb.Dn(samdb, str(user_dn))
-        full_new_user_dn.remove_base_components(len(user_dn)-1)
+        full_new_user_dn.remove_base_components(len(user_dn) - 1)
         full_new_user_dn.add_base(full_new_parent_dn)
 
         try:
@@ -2646,6 +2666,7 @@ class cmd_user_move(Command):
             raise CommandError('Failed to move user "%s"' % username, e)
         self.outf.write('Moved user "%s" into "%s"\n' %
                         (username, full_new_parent_dn))
+
 
 class cmd_user(SuperCommand):
     """User management."""

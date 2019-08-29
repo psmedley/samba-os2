@@ -16,7 +16,7 @@ index 1bdabf6..008a214 100644
 --- a/buildtools/wafsamba/wafsamba.py
 +++ b/buildtools/wafsamba/wafsamba.py
 @@ -232,6 +232,9 @@ def SAMBA_LIBRARY(bld, libname, source,
-             raise Utils.WafError("public library '%s' must have header files" %
+             raise Errors.WafError("public library '%s' must have header files" %
                         libname)
  
 +    if private_library and not vnum:

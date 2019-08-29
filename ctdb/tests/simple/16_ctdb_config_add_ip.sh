@@ -12,14 +12,11 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 select_test_node_and_ips
 get_test_ip_mask_and_iface

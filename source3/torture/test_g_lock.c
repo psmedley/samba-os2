@@ -31,12 +31,12 @@ static bool get_g_lock_ctx(TALLOC_CTX *mem_ctx,
 			   struct messaging_context **msg,
 			   struct g_lock_ctx **ctx)
 {
-	*ev = server_event_context();
+	*ev = global_event_context();
 	if (*ev == NULL) {
 		fprintf(stderr, "tevent_context_init failed\n");
 		return false;
 	}
-	*msg = server_messaging_context();
+	*msg = global_messaging_context();
 	if (*msg == NULL) {
 		fprintf(stderr, "messaging_init failed\n");
 		TALLOC_FREE(*ev);
@@ -730,7 +730,7 @@ bool run_g_lock6(int dummy)
 	struct tevent_context *ev = NULL;
 	struct messaging_context *msg = NULL;
 	struct g_lock_ctx *ctx = NULL;
-	const char *lockname = "lock6";
+	TDB_DATA lockname = string_term_tdb_data("lock6");
 	pid_t child;
 	int exit_pipe[2], ready_pipe[2];
 	NTSTATUS status;
@@ -748,6 +748,24 @@ bool run_g_lock6(int dummy)
 	ok = get_g_lock_ctx(talloc_tos(), &ev, &msg, &ctx);
 	if (!ok) {
 		fprintf(stderr, "get_g_lock_ctx failed");
+		return false;
+	}
+
+	/*
+	 * Wipe all stale locks -- in clustered mode there's no
+	 * CLEAR_IF_FIRST
+	 */
+	status = g_lock_lock(ctx, lockname, G_LOCK_WRITE,
+			     (struct timeval) { .tv_sec = 1 });
+	if (!NT_STATUS_IS_OK(status)) {
+		fprintf(stderr, "g_lock_lock failed: %s\n",
+			nt_errstr(status));
+		return false;
+	}
+	status = g_lock_unlock(ctx, lockname);
+	if (!NT_STATUS_IS_OK(status)) {
+		fprintf(stderr, "g_lock_unlock failed: %s\n",
+			nt_errstr(status));
 		return false;
 	}
 
@@ -780,7 +798,7 @@ bool run_g_lock6(int dummy)
 				exit(1);
 			}
 			status = g_lock_lock(ctx,
-					     string_term_tdb_data(lockname),
+					     lockname,
 					     G_LOCK_READ,
 					     (struct timeval) { .tv_sec = 1 });
 			if (!NT_STATUS_IS_OK(status)) {
@@ -824,8 +842,7 @@ bool run_g_lock6(int dummy)
 	{
 		struct lock6_parser_state state;
 
-		status = g_lock_dump(ctx, string_term_tdb_data(lockname),
-				     lock6_parser, &state);
+		status = g_lock_dump(ctx, lockname, lock6_parser, &state);
 		if (!NT_STATUS_IS_OK(status)) {
 			fprintf(stderr, "g_lock_dump returned %s\n",
 				nt_errstr(status));
@@ -838,12 +855,21 @@ bool run_g_lock6(int dummy)
 			return false;
 		}
 
-		status = g_lock_lock(ctx, string_term_tdb_data(lockname),
+		status = g_lock_lock(ctx,
+				     lockname,
 				     G_LOCK_WRITE,
 				     (struct timeval) { .tv_sec = 1 });
 		if (!NT_STATUS_EQUAL(status, NT_STATUS_IO_TIMEOUT)) {
 			fprintf(stderr, "g_lock_lock should have failed with %s - %s\n",
 				nt_errstr(NT_STATUS_IO_TIMEOUT),
+				nt_errstr(status));
+			return false;
+		}
+
+		status = g_lock_lock(ctx, lockname, G_LOCK_READ,
+				     (struct timeval) { .tv_sec = 1 });
+		if (!NT_STATUS_IS_OK(status)) {
+			fprintf(stderr, "g_lock_lock failed: %s\n",
 				nt_errstr(status));
 			return false;
 		}
@@ -858,6 +884,14 @@ bool run_g_lock6(int dummy)
 			perror("waitpid failed");
 			return false;
 		}
+	}
+
+	status = g_lock_lock(ctx, lockname, G_LOCK_WRITE,
+			     (struct timeval) { .tv_sec = 1 });
+	if (!NT_STATUS_IS_OK(status)) {
+		fprintf(stderr, "g_lock_lock failed: %s\n",
+			nt_errstr(status));
+		return false;
 	}
 
 	return true;

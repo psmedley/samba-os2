@@ -28,6 +28,9 @@ if [ -d "$EVENTSCRIPTS_TESTS_VAR_DIR" ] ; then
 fi
 mkdir -p "$EVENTSCRIPTS_TESTS_VAR_DIR"
 
+# Force this to be absolute - event scripts can change directory
+EVENTSCRIPTS_TESTS_VAR_DIR=$(cd "$EVENTSCRIPTS_TESTS_VAR_DIR" && echo "$PWD")
+
 export CTDB_LOGGING="file:${EVENTSCRIPTS_TESTS_VAR_DIR}/log.ctdb"
 touch "${CTDB_LOGGING#file:}" || \
     die "Unable to setup logging for \"$CTDB_LOGGING\""
@@ -547,5 +550,5 @@ simple_test_event ()
 
 simple_test_command ()
 {
-    unit_test "$@"
+    unit_test_notrace "$@"
 }

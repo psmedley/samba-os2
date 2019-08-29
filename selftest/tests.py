@@ -18,7 +18,12 @@
 # three separated by newlines. All other lines in the output are considered
 # comments.
 
-from selftesthelpers import *
+import os
+from selftesthelpers import bindir, srcdir, python
+from selftesthelpers import planpythontestsuite, samba4srcdir
+from selftesthelpers import plantestsuite, bbdir
+from selftesthelpers import configuration, valgrindify
+from selftesthelpers import skiptestsuite
 
 try:
     config_h = os.environ["CONFIG_H"]
@@ -32,14 +37,15 @@ f = open(config_h, 'r')
 try:
     lines = f.readlines()
     config_hash = dict((x[0], ' '.join(x[1:]))
-            for x in map(lambda line: line.strip().split(' ')[1:],
-                         filter(lambda line: (line[0:7] == '#define') and (len(line.split(' ')) > 2), lines)))
+                       for x in map(lambda line: line.strip().split(' ')[1:],
+                                    list(filter(lambda line: (line[0:7] == '#define') and (len(line.split(' ')) > 2), lines))))
 finally:
     f.close()
 
 have_man_pages_support = ("XSLTPROC_MANPAGES" in config_hash)
 with_pam = ("WITH_PAM" in config_hash)
-pam_wrapper_so_path=config_hash["LIBPAM_WRAPPER_SO_PATH"]
+pam_wrapper_so_path = config_hash["LIBPAM_WRAPPER_SO_PATH"]
+pam_set_items_so_path = config_hash["PAM_SET_ITEMS_SO_PATH"]
 
 planpythontestsuite("none", "samba.tests.source", py3_compatible=True)
 if have_man_pages_support:
@@ -53,7 +59,7 @@ else:
     planpythontestsuite("none", "subunit.tests.test_suite")
 planpythontestsuite("none", "samba.tests.blackbox.ndrdump", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.blackbox.check_output", py3_compatible=True)
-planpythontestsuite("none", "api", name="ldb.python", extra_path=['lib/ldb/tests/python'])
+planpythontestsuite("none", "api", name="ldb.python", extra_path=['lib/ldb/tests/python'], py3_compatible=True)
 planpythontestsuite("none", "samba.tests.credentials", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.registry", py3_compatible=True)
 planpythontestsuite("ad_dc_ntvfs:local", "samba.tests.auth", py3_compatible=True)
@@ -71,7 +77,7 @@ planpythontestsuite("none", "samba.tests.strings")
 planpythontestsuite("none", "samba.tests.netcmd")
 planpythontestsuite("none", "samba.tests.dcerpc.rpc_talloc", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.dcerpc.array", py3_compatible=True)
-planpythontestsuite("none", "samba.tests.dcerpc.string", py3_compatible=True)
+planpythontestsuite("none", "samba.tests.dcerpc.string_tests", py3_compatible=True)
 planpythontestsuite("none", "samba.tests.hostconfig", py3_compatible=True)
 planpythontestsuite("ad_dc_ntvfs:local", "samba.tests.messaging",
                     py3_compatible=True)
@@ -84,7 +90,7 @@ planpythontestsuite("none", "samba.tests.samba3sam")
 planpythontestsuite(
     "none", "wafsamba.tests.test_suite",
     extra_path=[os.path.join(samba4srcdir, "..", "buildtools"),
-                os.path.join(samba4srcdir, "..", "third_party", "waf", "wafadmin")])
+                os.path.join(samba4srcdir, "..", "third_party", "waf")])
 plantestsuite(
     "samba4.blackbox.demote-saveddb", "none",
     ["PYTHON=%s" % python, os.path.join(bbdir, "demote-saveddb.sh"),
@@ -167,6 +173,15 @@ if with_pam:
                   [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
                    valgrindify(python), pam_wrapper_so_path,
                    "$DOMAIN", "$DC_USERNAME", "$DC_PASSWORD"])
+
+    for pam_options in ["''", "use_authtok", "try_authtok"]:
+        plantestsuite("samba.tests.pam_winbind_chauthtok with options %s" % pam_options, "ad_member",
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind_chauthtok.sh"),
+                       valgrindify(python), pam_wrapper_so_path, pam_set_items_so_path,
+                       "$DOMAIN", "TestPamOptionsUser", "oldp@ssword0", "newp@ssword0",
+                       pam_options, 'yes',
+                       "$DC_SERVER", "$DC_USERNAME", "$DC_PASSWORD"])
+
     plantestsuite("samba.tests.pam_winbind_warn_pwd_expire(domain)", "ad_member",
                   [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind_warn_pwd_expire.sh"),
                    valgrindify(python), pam_wrapper_so_path,
@@ -193,3 +208,5 @@ plantestsuite("samba.unittests.ms_fnmatch", "none",
               [os.path.join(bindir(), "default/lib/util/test_ms_fnmatch")])
 plantestsuite("samba.unittests.ntlm_check", "none",
               [os.path.join(bindir(), "default/libcli/auth/test_ntlm_check")])
+plantestsuite("samba.unittests.test_registry_regfio", "none",
+              [os.path.join(bindir(), "default/source3/test_registry_regfio")])

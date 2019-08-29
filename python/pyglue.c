@@ -23,6 +23,7 @@
 #include "version.h"
 #include "param/pyparam.h"
 #include "lib/socket/netif.h"
+#include "lib/util/debug.h"
 
 void init_glue(void);
 static PyObject *PyExc_NTSTATUSError;
@@ -161,13 +162,13 @@ static PyObject *py_set_debug_level(PyObject *self, PyObject *args)
 	unsigned level;
 	if (!PyArg_ParseTuple(args, "I", &level))
 		return NULL;
-	(DEBUGLEVEL) = level;
+	debuglevel_set(level);
 	Py_RETURN_NONE;
 }
 
 static PyObject *py_get_debug_level(PyObject *self)
 {
-	return PyInt_FromLong(DEBUGLEVEL);
+	return PyInt_FromLong(debuglevel_get());
 }
 
 static PyObject *py_fault_setup(PyObject *self)
@@ -297,26 +298,42 @@ static PyObject *py_interface_ips(PyObject *self, PyObject *args)
 
 static PyObject *py_strcasecmp_m(PyObject *self, PyObject *args)
 {
-	char *s1, *s2;
-
-	if (!PyArg_ParseTuple(args, "ss", &s1, &s2))
+	const char *s1 = NULL;
+	const char *s2 = NULL;
+	long cmp_result = 0;
+	if (!PyArg_ParseTuple(args, PYARG_STR_UNI
+			      PYARG_STR_UNI,
+			      "utf8", &s1, "utf8", &s2)) {
 		return NULL;
+	}
 
-	return PyInt_FromLong(strcasecmp_m(s1, s2));
+	cmp_result = strcasecmp_m(s1, s2);
+	PyMem_Free(discard_const_p(char, s1));
+	PyMem_Free(discard_const_p(char, s2));
+	return PyInt_FromLong(cmp_result);
 }
 
 static PyObject *py_strstr_m(PyObject *self, PyObject *args)
 {
-	char *s1, *s2, *ret;
-
-	if (!PyArg_ParseTuple(args, "ss", &s1, &s2))
+	const char *s1 = NULL;
+	const char *s2 = NULL;
+	char *strstr_ret = NULL;
+	PyObject *result = NULL;
+	if (!PyArg_ParseTuple(args, PYARG_STR_UNI
+			      PYARG_STR_UNI,
+			      "utf8", &s1, "utf8", &s2))
 		return NULL;
 
-	ret = strstr_m(s1, s2);
-	if (!ret) {
+	strstr_ret = strstr_m(s1, s2);
+	if (!strstr_ret) {
+		PyMem_Free(discard_const_p(char, s1));
+		PyMem_Free(discard_const_p(char, s2));
 		Py_RETURN_NONE;
 	}
-	return PyStr_FromString(ret);
+	result = PyUnicode_FromString(strstr_ret);
+	PyMem_Free(discard_const_p(char, s1));
+	PyMem_Free(discard_const_p(char, s2));
+	return result;
 }
 
 static PyMethodDef py_misc_methods[] = {

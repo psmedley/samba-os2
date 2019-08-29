@@ -333,7 +333,7 @@ static ssize_t shadow_copy2_posix_gmt_string(struct vfs_handle_struct *handle,
  * snapshot at the given timestamp of the input path.
  *
  * In the case of a parallel snapdir (specified with an
- * absolute path), this is the inital portion of the
+ * absolute path), this is the initial portion of the
  * local path of any snapshot file. The complete path is
  * obtained by appending the portion of the file's path
  * below the share root's mountpoint.
@@ -3403,6 +3403,8 @@ static struct vfs_fn_pointers vfs_shadow_copy2_fns = {
 	.mkdir_fn = shadow_copy2_mkdir,
 	.rmdir_fn = shadow_copy2_rmdir,
 	.getxattr_fn = shadow_copy2_getxattr,
+	.getxattrat_send_fn = vfs_not_implemented_getxattrat_send,
+	.getxattrat_recv_fn = vfs_not_implemented_getxattrat_recv,
 	.listxattr_fn = shadow_copy2_listxattr,
 	.removexattr_fn = shadow_copy2_removexattr,
 	.setxattr_fn = shadow_copy2_setxattr,

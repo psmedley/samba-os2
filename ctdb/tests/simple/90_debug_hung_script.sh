@@ -19,7 +19,7 @@ EOF
 
 set -e
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 cluster_is_healthy
 
@@ -27,9 +27,6 @@ if [ -z "$TEST_LOCAL_DAEMONS" ] ; then
 	echo "SKIPPING this test - only runs against local daemons"
 	exit 0
 fi
-
-# Reset configuration
-ctdb_restart_when_done
 
 # This is overkill but it at least provides a valid test node
 select_test_node_and_ips
@@ -57,11 +54,9 @@ wait_for_monitor_event $test_node
 
 echo "Waiting for debugging output to appear..."
 # Use test -s because the file is created above using mktemp
-wait_until 60 onnode $test_node test -s "$debug_output"
+wait_until 60 test -s "$debug_output"
 
 echo "Checking output of hung script debugging..."
-try_command_on_node -v $test_node cat "$debug_output"
-hung_script_output="$out"
 
 # Can we actually read kernel stacks
 if try_command_on_node $test_node "cat /proc/$$/stack >/dev/null 2>&1" ; then
@@ -75,7 +70,7 @@ fi
 
 while IFS="" read pattern ; do
     [ -n "$pattern" ] || continue
-    if grep -- "^${pattern}\$" <<<"$hung_script_output" >/dev/null ; then
+    if grep -q -- "^${pattern}\$" "$debug_output" ; then
 	printf 'GOOD: output contains "%s"\n' "$pattern"
     else
 	printf 'BAD: output does not contain "%s"\n' "$pattern"

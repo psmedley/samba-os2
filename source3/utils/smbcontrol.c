@@ -37,15 +37,15 @@
 #include "serverid.h"
 #include "cmdline_contexts.h"
 
-#if HAVE_LIBUNWIND_H
+#ifdef HAVE_LIBUNWIND_H
 #include <libunwind.h>
 #endif
 
-#if HAVE_LIBUNWIND_PTRACE_H
+#ifdef HAVE_LIBUNWIND_PTRACE_H
 #include <libunwind-ptrace.h>
 #endif
 
-#if HAVE_SYS_PTRACE_H
+#ifdef HAVE_SYS_PTRACE_H
 #include <sys/ptrace.h>
 #endif
 
@@ -380,11 +380,11 @@ static bool do_inject_fault(struct tevent_context *ev_ctx,
 		return False;
 	}
 
-#ifndef DEVELOPER
+#if !defined(DEVELOPER) && !defined(ENABLE_SELFTEST)
 	fprintf(stderr, "Fault injection is only available in "
-		"developer builds\n");
+		"developer and self test builds\n");
 	return False;
-#else /* DEVELOPER */
+#else /* DEVELOPER || ENABLE_SELFTEST */
 	{
 		int sig = 0;
 
@@ -407,7 +407,44 @@ static bool do_inject_fault(struct tevent_context *ev_ctx,
 		return send_message(msg_ctx, pid, MSG_SMB_INJECT_FAULT,
 				    &sig, sizeof(int));
 	}
-#endif /* DEVELOPER */
+#endif /* DEVELOPER || ENABLE_SELFTEST */
+}
+
+static bool do_sleep(struct tevent_context *ev_ctx,
+		     struct messaging_context *msg_ctx,
+		     const struct server_id pid,
+		     const int argc, const char **argv)
+{
+	unsigned int seconds;
+	long input;
+	const long MAX_SLEEP = 60 * 60; /* One hour maximum sleep */
+
+	if (argc != 2) {
+		fprintf(stderr, "Usage: smbcontrol <dest> sleep seconds\n");
+		return False;
+	}
+
+#if !defined(DEVELOPER) && !defined(ENABLE_SELFTEST)
+	fprintf(stderr, "Sleep is only available in "
+		"developer and self test builds\n");
+	return False;
+#else /* DEVELOPER || ENABLE_SELFTEST */
+
+	input = atol(argv[1]);
+	if (input < 1 || input > MAX_SLEEP) {
+		fprintf(stderr,
+			"Invalid duration for sleep '%s'\n"
+			"It should be at least 1 second and no more than %ld\n",
+			argv[1],
+			MAX_SLEEP);
+		return False;
+	}
+	seconds = input;
+	return send_message(msg_ctx, pid,
+			    MSG_SMB_SLEEP,
+			    &seconds,
+			    sizeof(unsigned int));
+#endif /* DEVELOPER || ENABLE_SELFTEST */
 }
 
 /* Force a browser election */
@@ -1062,7 +1099,7 @@ static bool do_winbind_online(struct tevent_context *ev_ctx,
 		return False;
 	}
 
-	db_path = state_path("winbindd_cache.tdb");
+	db_path = state_path(talloc_tos(), "winbindd_cache.tdb");
 	if (db_path == NULL) {
 		return false;
 	}
@@ -1100,7 +1137,7 @@ static bool do_winbind_offline(struct tevent_context *ev_ctx,
 		return False;
 	}
 
-	db_path = state_path("winbindd_cache.tdb");
+	db_path = state_path(talloc_tos(), "winbindd_cache.tdb");
 	if (db_path == NULL) {
 		return false;
 	}
@@ -1142,14 +1179,13 @@ static bool do_winbind_offline(struct tevent_context *ev_ctx,
 
 		/* Check that the entry "WINBINDD_OFFLINE" still exists. */
 		d = tdb_fetch_bystring( tdb, "WINBINDD_OFFLINE" );
-
-		if (!d.dptr || d.dsize != 4) {
-			SAFE_FREE(d.dptr);
-			DEBUG(10,("do_winbind_offline: offline state not set - retrying.\n"));
-		} else {
+		if (d.dptr != NULL && d.dsize == 4) {
 			SAFE_FREE(d.dptr);
 			break;
 		}
+
+		SAFE_FREE(d.dptr);
+		DEBUG(10,("do_winbind_offline: offline state not set - retrying.\n"));
 	}
 
 	tdb_close(tdb);
@@ -1422,6 +1458,7 @@ static const struct {
 	  "Print number of smbd child processes" },
 	{ "msg-cleanup", do_msg_cleanup },
 	{ "noop", do_noop, "Do nothing" },
+	{ "sleep", do_sleep, "Cause the target process to sleep" },
 	{ NULL }
 };
 
@@ -1618,7 +1655,7 @@ int main(int argc, const char **argv)
 		exit(1);
 	}
 
-	evt_ctx = server_event_context();
+	evt_ctx = global_event_context();
 
 	lp_load_global(get_dyn_CONFIGFILE());
 

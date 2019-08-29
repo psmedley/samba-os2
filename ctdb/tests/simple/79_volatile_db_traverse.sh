@@ -19,14 +19,11 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 #
 # Main test
@@ -78,7 +75,7 @@ try_command_on_node 1 $CTDB writekey "$TESTDB" "foo" "bar1"
 echo "do traverse on node 0"
 try_command_on_node -v 0 $CTDB catdb "$TESTDB"
 
-num=$(echo "$out" | sed -n -e 's|^Dumped \(.*\) records$|\1|p')
+num=$(sed -n -e 's|^Dumped \(.*\) records$|\1|p' "$outfile")
 if [ "$num" = 1 ] ; then
 	echo "OK: There was 1 record"
 else
@@ -86,7 +83,7 @@ else
 	exit 1
 fi
 
-if echo "$out" | grep -q "^data(4) = \"bar1\"\$" ; then
+if grep -q "^data(4) = \"bar1\"\$" "$outfile" ; then
 	echo "OK: Data from node 1 was returned"
 else
 	echo "BAD: Data from node 1 was not returned"

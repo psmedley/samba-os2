@@ -22,14 +22,17 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
 
-try_command_on_node -v 0 "$CTDB dumpmemory"
-
 pat='^([[:space:]].+[[:space:]]+contains[[:space:]]+[[:digit:]]+ bytes in[[:space:]]+[[:digit:]]+ blocks \(ref [[:digit:]]+\)[[:space:]]+0x[[:xdigit:]]+|[[:space:]]+reference to: .+|full talloc report on .+ \(total[[:space:]]+[[:digit:]]+ bytes in [[:digit:]]+ blocks\))$'
 
-sanity_check_output 10 "$pat" "$out"
+try_command_on_node -v 0 "$CTDB dumpmemory"
+sanity_check_output 10 "$pat"
+
+echo
+try_command_on_node -v 0 "$CTDB rddumpmemory"
+sanity_check_output 10 "$pat"

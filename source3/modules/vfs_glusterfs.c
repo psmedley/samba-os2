@@ -47,6 +47,7 @@
 #include "modules/posixacl_xattr.h"
 
 #define DEFAULT_VOLFILE_SERVER "localhost"
+#define GLUSTER_NAME_MAX 255
 
 static int read_fd = -1;
 static int write_fd = -1;
@@ -361,6 +362,11 @@ static int vfs_gluster_connect(struct vfs_handle_struct *handle,
 	 * https://bugzilla.samba.org/show_bug.cgi?id=13091
 	 */
 	lp_do_parameter(SNUM(handle->conn), "shadow:mountpoint", "/");
+
+	/*
+	 * Unless we have an async implementation of getxattrat turn this off.
+	 */
+	lp_do_parameter(SNUM(handle->conn), "smbd:async dosmode", "false");
 
 done:
 	if (ret < 0) {
@@ -772,16 +778,7 @@ static bool init_gluster_aio(struct vfs_handle_struct *handle)
 	read_fd = fds[0];
 	write_fd = fds[1];
 
-	/*
-	 * We use the raw tevent context here,
-	 * as this is a global event handler.
-	 *
-	 * The tevent_req_defer_callback()
-	 * calls will make sure the results
-	 * of async calls are propagated
-	 * to the correct tevent_context.
-	 */
-	aio_read_event = tevent_add_fd(handle->conn->sconn->raw_ev_ctx,
+	aio_read_event = tevent_add_fd(handle->conn->sconn->ev_ctx,
 					NULL,
 					read_fd,
 					TEVENT_FD_READ,
@@ -1453,21 +1450,22 @@ static int vfs_gluster_get_real_filename(struct vfs_handle_struct *handle,
 					 TALLOC_CTX *mem_ctx, char **found_name)
 {
 	int ret;
-	char key_buf[NAME_MAX + 64];
-	char val_buf[NAME_MAX + 1];
+	char key_buf[GLUSTER_NAME_MAX + 64];
+	char val_buf[GLUSTER_NAME_MAX + 1];
 
-	if (strlen(name) >= NAME_MAX) {
+	if (strlen(name) >= GLUSTER_NAME_MAX) {
 		errno = ENAMETOOLONG;
 		return -1;
 	}
 
-	snprintf(key_buf, NAME_MAX + 64,
+	snprintf(key_buf, GLUSTER_NAME_MAX + 64,
 		 "glusterfs.get_real_filename:%s", name);
 
-	ret = glfs_getxattr(handle->data, path, key_buf, val_buf, NAME_MAX + 1);
+	ret = glfs_getxattr(handle->data, path, key_buf, val_buf,
+			    GLUSTER_NAME_MAX + 1);
 	if (ret == -1) {
 		if (errno == ENOATTR) {
-			errno = EOPNOTSUPP;
+			errno = ENOENT;
 		}
 		return -1;
 	}
@@ -1679,6 +1677,8 @@ static struct vfs_fn_pointers glusterfs_fns = {
 
 	/* EA Operations */
 	.getxattr_fn = vfs_gluster_getxattr,
+	.getxattrat_send_fn = vfs_not_implemented_getxattrat_send,
+	.getxattrat_recv_fn = vfs_not_implemented_getxattrat_recv,
 	.fgetxattr_fn = vfs_gluster_fgetxattr,
 	.listxattr_fn = vfs_gluster_listxattr,
 	.flistxattr_fn = vfs_gluster_flistxattr,

@@ -436,6 +436,7 @@ static void ldapsrv_accept_tls_done(struct tevent_req *subreq)
 	}
 
 	conn->sockets.active = conn->sockets.tls;
+	conn->referral_scheme = LDAP_REFERRAL_SCHEME_LDAPS;
 	ldapsrv_call_read_next(conn);
 }
 
@@ -1122,7 +1123,7 @@ static NTSTATUS add_socket(struct task_server *task,
 /*
   open the ldap server sockets
 */
-static void ldapsrv_task_init(struct task_server *task)
+static NTSTATUS ldapsrv_task_init(struct task_server *task)
 {	
 	char *ldapi_path;
 #ifdef WITH_LDAPI_PRIV_SOCKET
@@ -1136,11 +1137,11 @@ static void ldapsrv_task_init(struct task_server *task)
 	case ROLE_STANDALONE:
 		task_server_terminate(task, "ldap_server: no LDAP server required in standalone configuration", 
 				      false);
-		return;
+		return NT_STATUS_INVALID_DOMAIN_ROLE;
 	case ROLE_DOMAIN_MEMBER:
 		task_server_terminate(task, "ldap_server: no LDAP server required in member server configuration", 
 				      false);
-		return;
+		return NT_STATUS_INVALID_DOMAIN_ROLE;
 	case ROLE_ACTIVE_DIRECTORY_DC:
 		/* Yes, we want an LDAP server */
 		break;
@@ -1149,14 +1150,20 @@ static void ldapsrv_task_init(struct task_server *task)
 	task_server_set_title(task, "task[ldapsrv]");
 
 	ldap_service = talloc_zero(task, struct ldapsrv_service);
-	if (ldap_service == NULL) goto failed;
+	if (ldap_service == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto failed;
+	}
 
 	ldap_service->task = task;
 
 	dns_host_name = talloc_asprintf(ldap_service, "%s.%s",
 					lpcfg_netbios_name(task->lp_ctx),
 					lpcfg_dnsdomain(task->lp_ctx));
-	if (dns_host_name == NULL) goto failed;
+	if (dns_host_name == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto failed;
+	}
 
 	status = tstream_tls_params_server(ldap_service,
 					   dns_host_name,
@@ -1175,7 +1182,10 @@ static void ldapsrv_task_init(struct task_server *task)
 	}
 
 	ldap_service->call_queue = tevent_queue_create(ldap_service, "ldapsrv_call_queue");
-	if (ldap_service->call_queue == NULL) goto failed;
+	if (ldap_service->call_queue == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto failed;
+	}
 
 	if (lpcfg_interfaces(task->lp_ctx) && lpcfg_bind_interfaces_only(task->lp_ctx)) {
 		struct interface *ifaces;
@@ -1202,6 +1212,7 @@ static void ldapsrv_task_init(struct task_server *task)
 		wcard = iface_list_wildcard(task);
 		if (wcard == NULL) {
 			DEBUG(0,("No wildcard addresses available\n"));
+			status = NT_STATUS_UNSUCCESSFUL;
 			goto failed;
 		}
 		for (i=0; wcard[i]; i++) {
@@ -1213,12 +1224,14 @@ static void ldapsrv_task_init(struct task_server *task)
 		}
 		talloc_free(wcard);
 		if (num_binds == 0) {
+			status = NT_STATUS_UNSUCCESSFUL;
 			goto failed;
 		}
 	}
 
 	ldapi_path = lpcfg_private_path(ldap_service, task->lp_ctx, "ldapi");
 	if (!ldapi_path) {
+		status = NT_STATUS_UNSUCCESSFUL;
 		goto failed;
 	}
 
@@ -1236,6 +1249,7 @@ static void ldapsrv_task_init(struct task_server *task)
 #ifdef WITH_LDAPI_PRIV_SOCKET
 	priv_dir = lpcfg_private_path(ldap_service, task->lp_ctx, "ldap_priv");
 	if (priv_dir == NULL) {
+		status = NT_STATUS_UNSUCCESSFUL;
 		goto failed;
 	}
 	/*
@@ -1245,11 +1259,12 @@ static void ldapsrv_task_init(struct task_server *task)
 	if (!directory_create_or_exist(priv_dir, 0750)) {
 		task_server_terminate(task, "Cannot create ldap "
 				      "privileged ldapi directory", true);
-		return;
+		return NT_STATUS_UNSUCCESSFUL;
 	}
 	ldapi_path = talloc_asprintf(ldap_service, "%s/ldapi", priv_dir);
 	talloc_free(priv_dir);
 	if (ldapi_path == NULL) {
+		status = NT_STATUS_NO_MEMORY;
 		goto failed;
 	}
 
@@ -1269,19 +1284,21 @@ static void ldapsrv_task_init(struct task_server *task)
 
 	/* register the server */
 	irpc_add_name(task->msg_ctx, "ldap_server");
-	return;
+	return NT_STATUS_OK;
 
 failed:
 	task_server_terminate(task, "Failed to startup ldap server task", true);
+	return status;
 }
 
 
 NTSTATUS server_service_ldap_init(TALLOC_CTX *ctx)
 {
-	struct service_details details = {
+	static const struct service_details details = {
 		.inhibit_fork_on_accept = false,
-		.inhibit_pre_fork = false
+		.inhibit_pre_fork = false,
+		.task_init = ldapsrv_task_init,
+		.post_fork = NULL
 	};
-	return register_server_service(ctx, "ldap", ldapsrv_task_init,
-				       &details);
+	return register_server_service(ctx, "ldap", &details);
 }

@@ -5,8 +5,8 @@
 	postrotate
 		if [ -x /usr/bin/smbcontrol ]; then
 			/usr/bin/smbcontrol winbindd reload-config
-		elif [ -f /var/run/samba/winbindd.pid ]; then
-			kill -HUP `cat /var/run/samba/winbindd.pid`
+		elif [ -f /run/samba/winbindd.pid ]; then
+			kill -HUP `cat /run/samba/winbindd.pid`
 		fi
 	endscript
 	compress

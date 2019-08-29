@@ -293,13 +293,13 @@ int main(int argc, const char **argv)
 
 	ret = event_config_init(e_state, &e_state->config);
 	if (ret != 0) {
-		D_ERR("Failed to initalize event config\n");
+		D_ERR("Failed to initialize event config\n");
 		goto fail;
 	}
 
 	e_state->ev = tevent_context_init(e_state->mem_ctx);
 	if (e_state->ev == NULL) {
-		D_ERR("Failed to initalize tevent\n");
+		D_ERR("Failed to initialize tevent\n");
 		ret = 1;
 		goto fail;
 	}
@@ -354,14 +354,14 @@ int main(int argc, const char **argv)
 	ret = sock_daemon_run(e_state->ev,
 			      e_state->sockd,
 			      e_state->pidfile,
-			      (interactive == 1),
+			      false,
 			      false,
 			      options.pid);
 	if (ret == EINTR) {
 		ret = 0;
 	}
 
-	if (getenv("CTDB_TEST_MODE") != NULL) {
+	if (t != NULL) {
 		talloc_report_full(e_state->mem_ctx, stderr);
 	}
 

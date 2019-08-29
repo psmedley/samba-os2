@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 # Tests for truncated index keys
 #
@@ -908,6 +908,7 @@ class MaxIndexKeyLengthTests(LdbBaseTest):
     # Test adding to non unique index with identical multivalued index
     # attributes
     #
+
     def test_index_multi_valued_identical_keys(self):
         # 0        1         2         3         4         5
         # 12345678901234567890123456789012345678901234567890
@@ -1311,17 +1312,17 @@ class RejectSubDBIndex(LdbBaseTest):
     def test_try_subdb_index(self):
         try:
             self.l.add({"dn": "@INDEXLIST",
-                    "@IDX_LMDB_SUBDB": [b"1"],
-                    "@IDXONE": [b"1"],
-                    "@IDXONE": [b"1"],
-                    "@IDXGUID": [b"objectUUID"],
-                    "@IDX_DN_GUID": [b"GUID"],
-            })
+                        "@IDX_LMDB_SUBDB": [b"1"],
+                        "@IDXONE": [b"1"],
+                        "@IDXGUID": [b"objectUUID"],
+                        "@IDX_DN_GUID": [b"GUID"],
+                        })
         except ldb.LdbError as e:
             code = e.args[0]
             string = e.args[1]
             self.assertEqual(ldb.ERR_OPERATIONS_ERROR, code)
             self.assertIn("sub-database index", string)
+
 
 if __name__ == '__main__':
     import unittest

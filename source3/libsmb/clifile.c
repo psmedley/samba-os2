@@ -1951,6 +1951,7 @@ static struct tevent_req *cli_ntcreate1_send(TALLOC_CTX *mem_ctx,
 					     uint32_t ShareAccess,
 					     uint32_t CreateDisposition,
 					     uint32_t CreateOptions,
+					     uint32_t ImpersonationLevel,
 					     uint8_t SecurityFlags)
 {
 	struct tevent_req *req, *subreq;
@@ -1985,7 +1986,7 @@ static struct tevent_req *cli_ntcreate1_send(TALLOC_CTX *mem_ctx,
 	SIVAL(vwv+17, 1, CreateDisposition);
 	SIVAL(vwv+19, 1, CreateOptions |
 		(cli->backup_intent ? FILE_OPEN_FOR_BACKUP_INTENT : 0));
-	SIVAL(vwv+21, 1, 0x02);	/* ImpersonationLevel */
+	SIVAL(vwv+21, 1, ImpersonationLevel);
 	SCVAL(vwv+23, 1, SecurityFlags);
 
 	bytes = talloc_array(state, uint8_t, 0);
@@ -2098,6 +2099,7 @@ struct tevent_req *cli_ntcreate_send(TALLOC_CTX *mem_ctx,
 				     uint32_t share_access,
 				     uint32_t create_disposition,
 				     uint32_t create_options,
+				     uint32_t impersonation_level,
 				     uint8_t security_flags)
 {
 	struct tevent_req *req, *subreq;
@@ -2116,7 +2118,8 @@ struct tevent_req *cli_ntcreate_send(TALLOC_CTX *mem_ctx,
 		}
 
 		subreq = cli_smb2_create_fnum_send(
-			state, ev, cli, fname, create_flags, desired_access,
+			state, ev, cli, fname, create_flags,
+			impersonation_level, desired_access,
 			file_attributes, share_access, create_disposition,
 			create_options);
 	} else {
@@ -2124,7 +2127,7 @@ struct tevent_req *cli_ntcreate_send(TALLOC_CTX *mem_ctx,
 		subreq = cli_ntcreate1_send(
 			state, ev, cli, fname, create_flags, desired_access,
 			file_attributes, share_access, create_disposition,
-			create_options, security_flags);
+			create_options, impersonation_level, security_flags);
 	}
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
@@ -2194,6 +2197,7 @@ NTSTATUS cli_ntcreate(struct cli_state *cli,
 	TALLOC_CTX *frame = talloc_stackframe();
 	struct tevent_context *ev;
 	struct tevent_req *req;
+	uint32_t ImpersonationLevel = SMB2_IMPERSONATION_IMPERSONATION;
 	NTSTATUS status = NT_STATUS_NO_MEMORY;
 
 	if (smbXcli_conn_has_async_calls(cli->conn)) {
@@ -2212,7 +2216,7 @@ NTSTATUS cli_ntcreate(struct cli_state *cli,
 	req = cli_ntcreate_send(frame, ev, cli, fname, CreatFlags,
 				DesiredAccess, FileAttributes, ShareAccess,
 				CreateDisposition, CreateOptions,
-				SecurityFlags);
+				ImpersonationLevel, SecurityFlags);
 	if (req == NULL) {
 		goto fail;
 	}
@@ -5491,12 +5495,15 @@ NTSTATUS cli_posix_rmdir(struct cli_state *cli, const char *fname)
 ****************************************************************************/
 
 struct cli_notify_state {
+	struct tevent_req *subreq;
 	uint8_t setup[8];
 	uint32_t num_changes;
 	struct notify_change *changes;
 };
 
 static void cli_notify_done(struct tevent_req *subreq);
+static void cli_notify_done_smb2(struct tevent_req *subreq);
+static bool cli_notify_cancel(struct tevent_req *req);
 
 struct tevent_req *cli_notify_send(TALLOC_CTX *mem_ctx,
 				   struct tevent_context *ev,
@@ -5504,13 +5511,38 @@ struct tevent_req *cli_notify_send(TALLOC_CTX *mem_ctx,
 				   uint32_t buffer_size,
 				   uint32_t completion_filter, bool recursive)
 {
-	struct tevent_req *req, *subreq;
+	struct tevent_req *req;
 	struct cli_notify_state *state;
 	unsigned old_timeout;
 
 	req = tevent_req_create(mem_ctx, &state, struct cli_notify_state);
 	if (req == NULL) {
 		return NULL;
+	}
+
+	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+		/*
+		 * Notifies should not time out
+		 */
+		old_timeout = cli_set_timeout(cli, 0);
+
+		state->subreq = cli_smb2_notify_send(
+			state,
+			ev,
+			cli,
+			fnum,
+			buffer_size,
+			completion_filter,
+			recursive);
+
+		cli_set_timeout(cli, old_timeout);
+
+		if (tevent_req_nomem(state->subreq, req)) {
+			return tevent_req_post(req, ev);
+		}
+		tevent_req_set_callback(
+			state->subreq, cli_notify_done_smb2, req);
+		goto done;
 	}
 
 	SIVAL(state->setup, 0, completion_filter);
@@ -5522,7 +5554,7 @@ struct tevent_req *cli_notify_send(TALLOC_CTX *mem_ctx,
 	 */
 	old_timeout = cli_set_timeout(cli, 0);
 
-	subreq = cli_trans_send(
+	state->subreq = cli_trans_send(
 		state,			/* mem ctx. */
 		ev,			/* event ctx. */
 		cli,			/* cli_state. */
@@ -5544,11 +5576,23 @@ struct tevent_req *cli_notify_send(TALLOC_CTX *mem_ctx,
 
 	cli_set_timeout(cli, old_timeout);
 
-	if (tevent_req_nomem(subreq, req)) {
+	if (tevent_req_nomem(state->subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
-	tevent_req_set_callback(subreq, cli_notify_done, req);
+	tevent_req_set_callback(state->subreq, cli_notify_done, req);
+done:
+	tevent_req_set_cancel_fn(req, cli_notify_cancel);
 	return req;
+}
+
+static bool cli_notify_cancel(struct tevent_req *req)
+{
+	struct cli_notify_state *state = tevent_req_data(
+		req, struct cli_notify_state);
+	bool ok;
+
+	ok = tevent_req_cancel(state->subreq);
+	return ok;
 }
 
 static void cli_notify_done(struct tevent_req *subreq)
@@ -5565,6 +5609,7 @@ static void cli_notify_done(struct tevent_req *subreq)
 	status = cli_trans_recv(subreq, talloc_tos(), &flags2, NULL, 0, NULL,
 				&params, 0, &num_params, NULL, 0, NULL);
 	TALLOC_FREE(subreq);
+	state->subreq = NULL;
 	if (tevent_req_nterror(req, status)) {
 		DEBUG(10, ("cli_trans_recv returned %s\n", nt_errstr(status)));
 		return;
@@ -5622,6 +5667,26 @@ static void cli_notify_done(struct tevent_req *subreq)
 	tevent_req_done(req);
 }
 
+static void cli_notify_done_smb2(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct cli_notify_state *state = tevent_req_data(
+		req, struct cli_notify_state);
+	NTSTATUS status;
+
+	status = cli_smb2_notify_recv(
+		subreq,
+		state,
+		&state->changes,
+		&state->num_changes);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+	tevent_req_done(req);
+}
+
 NTSTATUS cli_notify_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 			 uint32_t *pnum_changes,
 			 struct notify_change **pchanges)
@@ -5648,12 +5713,6 @@ NTSTATUS cli_notify(struct cli_state *cli, uint16_t fnum, uint32_t buffer_size,
 	struct tevent_context *ev;
 	struct tevent_req *req;
 	NTSTATUS status = NT_STATUS_NO_MEMORY;
-
-	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
-		return cli_smb2_notify(cli, fnum, buffer_size,
-				       completion_filter, recursive,
-				       mem_ctx, pchanges, pnum_changes);
-	}
 
 	frame = talloc_stackframe();
 

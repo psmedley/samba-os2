@@ -30,7 +30,7 @@
 #include "libds/common/roles.h"
 
 /* logged when starting the various Samba daemons */
-#define COPYRIGHT_STARTUP_MESSAGE	"Copyright Andrew Tridgell and the Samba Team 1992-2018"
+#define COPYRIGHT_STARTUP_MESSAGE	"Copyright Andrew Tridgell and the Samba Team 1992-2019"
 
 #define SAFETY_MARGIN 1024
 #define LARGE_WRITEX_HDR_SIZE 65
@@ -49,10 +49,6 @@
 #define Required (3)
 
 #define SIZEOFWORD 2
-
-#ifndef DEF_CREATE_MASK
-#define DEF_CREATE_MASK (0755)
-#endif
 
 /* string manipulation flags - see clistr.c and srvstr.c */
 #define STR_TERMINATE 1
@@ -546,13 +542,8 @@ enum remote_arch_types {RA_UNKNOWN, RA_WFWG, RA_OS2, RA_WIN95, RA_WINNT,
 
 #define FNUM_FIELD_INVALID 0
 
-/* 
- * Size of buffer to use when moving files across filesystems. 
- */
-#define COPYBUF_SIZE (8*1024)
-
 /*
- * Map the Core and Extended Oplock requesst bits down
+ * Map the Core and Extended Oplock request bits down
  * to common bits (EXCLUSIVE_OPLOCK & BATCH_OPLOCK).
  */
 
@@ -660,26 +651,9 @@ enum smbd_capability {
     DAC_OVERRIDE_CAPABILITY
 };
 
-/*
- * Kernel oplocks capability flags.
- */
-
-/* Level 2 oplocks are supported natively by kernel oplocks. */
-#define KOPLOCKS_LEVEL2_SUPPORTED		0x1
-
-/* The kernel notifies deferred openers when they can retry the open. */
-#define KOPLOCKS_DEFERRED_OPEN_NOTIFICATION	0x2
-
-/* The kernel notifies smbds when an oplock break times out. */
-#define KOPLOCKS_TIMEOUT_NOTIFICATION		0x4
-
-/* The kernel notifies smbds when an oplock is broken. */
-#define KOPLOCKS_OPLOCK_BROKEN_NOTIFICATION	0x8
-
 struct kernel_oplocks_ops;
 struct kernel_oplocks {
 	const struct kernel_oplocks_ops *ops;
-	uint32_t flags;
 	void *private_data;
 };
 
@@ -700,10 +674,6 @@ struct kernel_oplocks_ops {
 			   files_struct *fsp, int oplock_type);
 	void (*release_oplock)(struct kernel_oplocks *ctx,
 			       files_struct *fsp, int oplock_type);
-	void (*contend_level2_oplocks_begin)(files_struct *fsp,
-					     enum level2_contention_type type);
-	void (*contend_level2_oplocks_end)(files_struct *fsp,
-					   enum level2_contention_type type);
 };
 
 #include "smb_macros.h"

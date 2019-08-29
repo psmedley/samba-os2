@@ -22,7 +22,7 @@
 #include "replace.h"
 #include <krb5/localauth_plugin.h>
 #include <wbclient.h>
-#if HAVE_COM_ERR_H
+#ifdef HAVE_COM_ERR_H
 #include <com_err.h>
 #endif
 
@@ -51,6 +51,8 @@ static krb5_error_code winbind_init(krb5_context context,
 		free(d);
 		return ENOMEM;
 	}
+
+	wbcSetClientProcessName("krb5_localauth_plugin");
 
 	*data = d;
 

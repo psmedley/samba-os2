@@ -22,7 +22,6 @@ import ldb
 from samba.ndr import ndr_unpack
 from samba.dcerpc import security
 
-from getpass import getpass
 from samba.auth import system_session
 from samba.samdb import SamDB
 from samba.dsdb import (
@@ -35,6 +34,7 @@ from samba.dsdb import (
     GTYPE_DISTRIBUTION_GLOBAL_GROUP,
     GTYPE_DISTRIBUTION_UNIVERSAL_GROUP,
 )
+from collections import defaultdict
 
 security_group = dict({"Builtin": GTYPE_SECURITY_BUILTIN_LOCAL_GROUP,
                        "Domain": GTYPE_SECURITY_DOMAIN_LOCAL_GROUP,
@@ -89,12 +89,12 @@ Example3 adds a new RFC2307 enabled group for NIS domain samdom and GID 12345 (b
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
         Option("--groupou",
-           help="Alternative location (without domainDN counterpart) to default CN=Users in which new user object will be created",
-           type=str),
+               help="Alternative location (without domainDN counterpart) to default CN=Users in which new user object will be created",
+               type=str),
         Option("--group-scope", type="choice", choices=["Domain", "Global", "Universal"],
-            help="Group scope (Domain | Global | Universal)"),
+               help="Group scope (Domain | Global | Universal)"),
         Option("--group-type", type="choice", choices=["Security", "Distribution"],
-            help="Group type (Security | Distribution)"),
+               help="Group type (Security | Distribution)"),
         Option("--description", help="Group's description", type=str),
         Option("--mail-address", help="Group's email address", type=str),
         Option("--notes", help="Groups's notes", type=str),
@@ -122,9 +122,9 @@ Example3 adds a new RFC2307 enabled group for NIS domain samdom and GID 12345 (b
         try:
             samdb = SamDB(url=H, session_info=system_session(),
                           credentials=creds, lp=lp)
-            samdb.newgroup(groupname, groupou=groupou, grouptype = gtype,
-                          description=description, mailaddress=mail_address, notes=notes,
-                          gidnumber=gid_number, nisdomain=nis_domain)
+            samdb.newgroup(groupname, groupou=groupou, grouptype=gtype,
+                           description=description, mailaddress=mail_address, notes=notes,
+                           gidnumber=gid_number, nisdomain=nis_domain)
         except Exception as e:
             # FIXME: catch more specific exception
             raise CommandError('Failed to create group "%s"' % groupname, e)
@@ -239,7 +239,7 @@ Example2 shows how to add a single user account, User2, to the supergroup AD gro
                           credentials=creds, lp=lp)
             groupmembers = listofmembers.split(',')
             samdb.add_remove_group_members(groupname, groupmembers,
-                    add_members_operation=True)
+                                           add_members_operation=True)
         except Exception as e:
             # FIXME: catch more specific exception
             raise CommandError('Failed to add members "%s" to group "%s"' % (
@@ -290,7 +290,7 @@ Example2 shows how to remove a single user account, User2, from the supergroup A
             samdb = SamDB(url=H, session_info=system_session(),
                           credentials=creds, lp=lp)
             samdb.add_remove_group_members(groupname, listofmembers.split(","),
-                    add_members_operation=False)
+                                           add_members_operation=False)
         except Exception as e:
             # FIXME: Catch more specific exception
             raise CommandError('Failed to remove members "%s" from group "%s"' % (listofmembers, groupname), e)
@@ -309,13 +309,13 @@ class cmd_group_list(Command):
                help="Verbose output, showing group type and group scope.",
                action="store_true"),
 
-        ]
+    ]
 
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, sambaopts=None, credopts=None, versionopts=None, H=None,
             verbose=False):
@@ -323,41 +323,47 @@ class cmd_group_list(Command):
         creds = credopts.get_credentials(lp, fallback_machine=True)
 
         samdb = SamDB(url=H, session_info=system_session(),
-            credentials=creds, lp=lp)
+                      credentials=creds, lp=lp)
+        attrs=["samaccountname"]
 
+        if verbose:
+            attrs += ["grouptype", "member"]
         domain_dn = samdb.domain_dn()
         res = samdb.search(domain_dn, scope=ldb.SCOPE_SUBTREE,
-                    expression=("(objectClass=group)"),
-                    attrs=["samaccountname", "grouptype"])
+                           expression=("(objectClass=group)"),
+                           attrs=attrs)
         if (len(res) == 0):
             return
 
         if verbose:
-            self.outf.write("Group Name                                  Group Type      Group Scope\n")
-            self.outf.write("-----------------------------------------------------------------------------\n")
+            self.outf.write("Group Name                                  Group Type      Group Scope  Members\n")
+            self.outf.write("--------------------------------------------------------------------------------\n")
 
             for msg in res:
                 self.outf.write("%-44s" % msg.get("samaccountname", idx=0))
                 hgtype = hex(int("%s" % msg["grouptype"]) & 0x00000000FFFFFFFF)
                 if (hgtype == hex(int(security_group.get("Builtin")))):
-                    self.outf.write("Security         Builtin\n")
+                    self.outf.write("Security         Builtin  ")
                 elif (hgtype == hex(int(security_group.get("Domain")))):
-                    self.outf.write("Security         Domain\n")
+                    self.outf.write("Security         Domain   ")
                 elif (hgtype == hex(int(security_group.get("Global")))):
-                    self.outf.write("Security         Global\n")
+                    self.outf.write("Security         Global   ")
                 elif (hgtype == hex(int(security_group.get("Universal")))):
-                    self.outf.write("Security         Universal\n")
+                    self.outf.write("Security         Universal")
                 elif (hgtype == hex(int(distribution_group.get("Global")))):
-                    self.outf.write("Distribution     Global\n")
+                    self.outf.write("Distribution     Global   ")
                 elif (hgtype == hex(int(distribution_group.get("Domain")))):
-                    self.outf.write("Distribution     Domain\n")
+                    self.outf.write("Distribution     Domain   ")
                 elif (hgtype == hex(int(distribution_group.get("Universal")))):
-                    self.outf.write("Distribution     Universal\n")
+                    self.outf.write("Distribution     Universal")
                 else:
-                    self.outf.write("\n")
+                    self.outf.write("                          ")
+                num_members = len(msg.get("member", default=[]))
+                self.outf.write("    %6u\n" % num_members)
         else:
             for msg in res:
                 self.outf.write("%s\n" % msg.get("samaccountname", idx=0))
+
 
 class cmd_group_list_members(Command):
     """List all members of an AD group.
@@ -373,13 +379,13 @@ samba-tool group listmembers \"Domain Users\" -H ldap://samba.samdom.example.com
     takes_options = [
         Option("-H", "--URL", help="LDB URL for database or target server", type=str,
                metavar="URL", dest="H"),
-        ]
+    ]
 
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     takes_args = ["groupname"]
 
@@ -422,6 +428,7 @@ samba-tool group listmembers \"Domain Users\" -H ldap://samba.samdom.example.com
         except Exception as e:
             raise CommandError('Failed to list members of "%s" group ' % groupname, e)
 
+
 class cmd_group_move(Command):
     """Move a group to an organizational unit/container.
 
@@ -459,12 +466,12 @@ class cmd_group_move(Command):
                type=str, metavar="URL", dest="H"),
     ]
 
-    takes_args = [ "groupname", "new_parent_dn" ]
+    takes_args = ["groupname", "new_parent_dn"]
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, groupname, new_parent_dn, credopts=None, sambaopts=None,
             versionopts=None, H=None):
@@ -491,7 +498,7 @@ class cmd_group_move(Command):
                                (new_parent_dn, e.message))
 
         full_new_group_dn = ldb.Dn(samdb, str(group_dn))
-        full_new_group_dn.remove_base_components(len(group_dn)-1)
+        full_new_group_dn.remove_base_components(len(group_dn) - 1)
         full_new_group_dn.add_base(full_new_parent_dn)
 
         try:
@@ -500,6 +507,7 @@ class cmd_group_move(Command):
             raise CommandError('Failed to move group "%s"' % groupname, e)
         self.outf.write('Moved group "%s" into "%s"\n' %
                         (groupname, full_new_parent_dn))
+
 
 class cmd_group_show(Command):
     """Display a group AD object.
@@ -549,7 +557,7 @@ Example3 shows how to display a users objectGUID and member attributes.
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
         "versionopts": options.VersionOptions,
-        }
+    }
 
     def run(self, groupname, credopts=None, sambaopts=None, versionopts=None,
             H=None, group_attrs=None):
@@ -564,8 +572,8 @@ Example3 shows how to display a users objectGUID and member attributes.
             attrs = group_attrs.split(",")
 
         filter = ("(&(sAMAccountType=%d)(sAMAccountName=%s))" %
-                     ( ATYPE_SECURITY_GLOBAL_GROUP,
-                       ldb.binary_encode(groupname)))
+                  (ATYPE_SECURITY_GLOBAL_GROUP,
+                   ldb.binary_encode(groupname)))
 
         domaindn = samdb.domain_dn()
 
@@ -580,6 +588,109 @@ Example3 shows how to display a users objectGUID and member attributes.
             user_ldif = samdb.write_ldif(msg, ldb.CHANGETYPE_NONE)
             self.outf.write(user_ldif)
 
+
+class cmd_group_stats(Command):
+    """Summary statistics about group memberships."""
+
+    synopsis = "%prog [options]"
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server", type=str,
+               metavar="URL", dest="H"),
+    ]
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "credopts": options.CredentialsOptions,
+        "versionopts": options.VersionOptions,
+    }
+
+    def num_in_range(self, range_min, range_max, group_freqs):
+        total_count = 0
+        for members, count in group_freqs.items():
+            if range_min <= members and members <= range_max:
+                total_count += count
+
+        return total_count
+
+    def run(self, sambaopts=None, credopts=None, versionopts=None, H=None):
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp, fallback_machine=True)
+
+        samdb = SamDB(url=H, session_info=system_session(),
+                      credentials=creds, lp=lp)
+
+        domain_dn = samdb.domain_dn()
+        res = samdb.search(domain_dn, scope=ldb.SCOPE_SUBTREE,
+                           expression=("(objectClass=group)"),
+                           attrs=["samaccountname", "member"])
+
+        # first count up how many members each group has
+        group_assignments = {}
+        total_memberships = 0
+
+        for msg in res:
+            name = str(msg.get("samaccountname"))
+            num_members = len(msg.get("member", default=[]))
+            group_assignments[name] = num_members
+            total_memberships += num_members
+
+        num_groups = res.count
+        self.outf.write("Group membership statistics*\n")
+        self.outf.write("-------------------------------------------------\n")
+        self.outf.write("Total groups: {0}\n".format(num_groups))
+        self.outf.write("Total memberships: {0}\n".format(total_memberships))
+        average = total_memberships / float(num_groups)
+        self.outf.write("Average members per group: %.2f\n" % average)
+
+        # find the max and median memberships (note that some default groups
+        # always have zero members, so displaying the min is not very helpful)
+        group_names = list(group_assignments.keys())
+        group_members = list(group_assignments.values())
+        idx = group_members.index(max(group_members))
+        max_members = group_members[idx]
+        self.outf.write("Max members: {0} ({1})\n".format(max_members,
+                                                          group_names[idx]))
+        group_members.sort()
+        midpoint = num_groups // 2
+        median = group_members[midpoint]
+        if num_groups % 2 == 0:
+            median = (median + group_members[midpoint - 1]) / 2
+        self.outf.write("Median members per group: {0}\n\n".format(median))
+
+        # convert this to the frequency of group membership, i.e. how many
+        # groups have 5 members, how many have 6 members, etc
+        group_freqs = defaultdict(int)
+        for group, num_members in group_assignments.items():
+            group_freqs[num_members] += 1
+
+        # now squash this down even further, so that we just display the number
+        # of groups that fall into one of the following membership bands
+        bands = [(0, 1), (2, 4), (5, 9), (10, 14), (15, 19), (20, 24),
+                 (25, 29), (30, 39), (40, 49), (50, 59), (60, 69), (70, 79),
+                 (80, 89), (90, 99), (100, 149), (150, 199), (200, 249),
+                 (250, 299), (300, 399), (400, 499), (500, 999), (1000, 1999),
+                 (2000, 2999), (3000, 3999), (4000, 4999), (5000, 9999),
+                 (10000, max_members)]
+
+        self.outf.write("Members        Number of Groups\n")
+        self.outf.write("-------------------------------------------------\n")
+
+        for band in bands:
+            band_start = band[0]
+            band_end = band[1]
+            if band_start > max_members:
+                break
+
+            num_groups = self.num_in_range(band_start, band_end, group_freqs)
+
+            if num_groups != 0:
+                band_str = "{0}-{1}".format(band_start, band_end)
+                self.outf.write("%13s  %u\n" % (band_str, num_groups))
+
+        self.outf.write("\n* Note this does not include nested group memberships\n")
+
+
 class cmd_group(SuperCommand):
     """Group management."""
 
@@ -592,3 +703,4 @@ class cmd_group(SuperCommand):
     subcommands["listmembers"] = cmd_group_list_members()
     subcommands["move"] = cmd_group_move()
     subcommands["show"] = cmd_group_show()
+    subcommands["stats"] = cmd_group_stats()

@@ -12,17 +12,16 @@ include /usr/share/dpkg/pkg-info.mk
 DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
 DEB_HOST_ARCH_OS ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
 DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
-
-PYVERS=$(shell pyversions -vr)
+DEB_HOST_ARCH_CPU ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_CPU)
 
 LDB_VERSION = $(shell pkg-config --modversion ldb)
 LDB_EPOCH = $(shell dpkg-query -f '$${Version}' -W libldb-dev | sed 's/:.*//')
-LDB_NEXT_VERSION = $(shell python -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = str(int(x[-1])+1); print '.'.join(x)")
+LDB_NEXT_VERSION = $(shell python3 -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = str(int(x[-1])+1); print('.'.join(x))")
 # samba ships ldb modules, which are specific to the ldb version, so we need a
 # strict dependency on the upstream ldb version
 # this also mean samba needs a rebuild when the upstream ldb version changes
-LDB_DEPENDS = "libldb1 (<< $(LDB_EPOCH):1.5.1+really$(LDB_NEXT_VERSION)~), libldb1 (>> $(LDB_EPOCH):1.5.1+really$(LDB_VERSION)~)"
-export PYSHORT=$(shell pyversions -d)
+LDB_DEPENDS = "libldb1 (<< $(LDB_EPOCH):$(LDB_NEXT_VERSION)~), libldb1 (>> $(LDB_EPOCH):$(LDB_VERSION)~)"
+export PYSHORT=python3
 export PYTHON=$(shell which $(PYSHORT))
 export PYTHON_CONFIG="$(PYTHON)-config"
 WAF = $(PYTHON) ./buildtools/bin/waf -v
@@ -42,13 +41,13 @@ conf_args = \
 		--libexecdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
 		--with-privatedir=/var/lib/samba/private \
 		--with-smbpasswd-file=/etc/samba/smbpasswd \
-		--with-piddir=/var/run/samba \
+		--with-piddir=/run/samba \
 		--with-pammodulesdir=/lib/$(DEB_HOST_MULTIARCH)/security \
 		--with-pam \
 		--with-syslog \
 		--with-utmp \
 		--with-winbind \
-		--with-shared-modules=idmap_rid,idmap_ad,idmap_adex,idmap_hash,idmap_ldap,idmap_tdb2,vfs_dfs_samba4,auth_samba4 \
+		--with-shared-modules=idmap_rid,idmap_ad,idmap_adex,idmap_hash,idmap_ldap,idmap_tdb2,vfs_dfs_samba4,auth_samba4,vfs_nfs4acl_xattr \
 		--with-automount \
 		--with-ldap \
 		--with-ads \
@@ -57,7 +56,7 @@ conf_args = \
 		--libdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
 		--with-modulesdir=/usr/lib/$(DEB_HOST_MULTIARCH)/samba \
 		--datadir=/usr/share \
-		--with-lockdir=/var/run/samba \
+		--with-lockdir=/run/samba \
 		--with-statedir=/var/lib/samba \
 		--with-cachedir=/var/cache/samba \
 		--enable-avahi \
@@ -67,14 +66,16 @@ conf_args = \
 		--builtin-libraries=ccan,samba-cluster-support \
 		--minimum-library-version="$(shell ./debian/autodeps.py --minimum-library-version)" \
 		--with-cluster-support \
-		--with-socketpath=/var/run/ctdb/ctdbd.socket \
-		--with-logdir=/var/log/ctdb
+		--with-socketpath=/run/ctdb/ctdbd.socket \
+		--with-logdir=/var/log/ctdb \
+		--enable-etcd-reclock
 
 ifeq ($(DEB_HOST_ARCH_OS), linux)
 	conf_args += \
 		--with-systemd \
 		--systemd-install-services \
-		--with-systemddir=/lib/systemd/system
+		--with-systemddir=/lib/systemd/system \
+		--enable-ceph-reclock
 else
 	conf_args += \
 		--without-systemd
@@ -86,7 +87,7 @@ ifeq ($(DEB_HOST_ARCH_CPU), amd64)
 endif
 
 %:
-	dh $* --with python2
+	dh $* --with python3
 
 override_dh_auto_configure:
 	$(WAF) configure $(conf_args)
@@ -103,7 +104,7 @@ override_dh_auto_install:
 	# get list of files in build log
 	find ${DESTDIR}
 	# Included in python-tevent
-	rm $(DESTDIR)/usr/lib/python*/*-packages/_tevent.so
+	rm $(DESTDIR)/usr/lib/python*/*-packages/_tevent.*
 	rm $(DESTDIR)/usr/lib/python*/*-packages/tevent.py
 	# Already documented in debian/copyright
 	-rm $(DESTDIR)/usr/share/samba/setup/ad-schema/licence.txt
@@ -134,9 +135,11 @@ override_dh_auto_install:
 	mkdir -p $(DESTDIR)/usr/share/apport/package-hooks
 	install -D -m 644 debian/source_samba.py $(DESTDIR)/usr/share/apport/package-hooks/source_samba.py
 	# Install other stuff not installed by "make install"
+	# This moves the dckeytab module to the samba package in order to avoid
+	# a circular dependency between python3-samba, samba and samba-common-bin
 	mkdir -p debian/samba/usr/lib/$(PYSHORT)/dist-packages/samba
-	mv $(DESTDIR)/usr/lib/$(PYSHORT)/dist-packages/samba/dckeytab.so \
-	   debian/samba/usr/lib/$(PYSHORT)/dist-packages/samba/dckeytab.so
+	mv $(DESTDIR)/usr/lib/$(PYSHORT)/dist-packages/samba/dckeytab*.so \
+	   debian/samba/usr/lib/$(PYSHORT)/dist-packages/samba/
 	# use upstream version of smb.conf.5 if there is no built version
 	# this is a temporary workaround for #750593 in xsltproc
 	[ -e $(DESTDIR)/usr/share/man/man5/smb.conf.5 ] || \
@@ -170,6 +173,7 @@ endif
 	# such as OpenRC's opentmpfiles
 	mkdir -p $(DESTDIR)/usr/lib/tmpfiles.d
 	echo "d /run/samba 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/samba.conf
+	echo "d /run/ctdb 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/ctdb.conf
 
 override_dh_installdocs-arch:
 	cp ctdb/config/events/README ctdb/README.eventscripts
@@ -182,8 +186,15 @@ ifeq ($(DEB_HOST_ARCH_OS), kfreebsd)
 	dh_installdocs -pctdb debian/ctdb.README.kfreebsd
 endif
 
-override_dh_python2:
-	dh_python2 --no-guessing-versions
+override_dh_installexamples-arch:
+	# CTDB config examples and helper scripts
+	mkdir -p ctdb/doc/examples/nfs-kernel-server
+	cp debian/ctdb.example.enable.nfs.sh ctdb/doc/examples/nfs-kernel-server/enable-nfs.sh
+	cp debian/ctdb.example.nfs-common ctdb/doc/examples/nfs-kernel-server/nfs-common
+	cp debian/ctdb.example.nfs-kernel-server ctdb/doc/examples/nfs-kernel-server/nfs-kernel-server
+	cp debian/ctdb.example.services ctdb/doc/examples/nfs-kernel-server/services
+	cp debian/ctdb.example.sysctl-nfs-static-ports.conf ctdb/doc/examples/nfs-kernel-server/99-nfs-static-ports.conf
+	dh_installexamples
 
 override_dh_installchangelogs:
 	dh_installchangelogs
@@ -248,13 +259,16 @@ override_dh_makeshlibs:
 
 override_dh_shlibdeps:
 	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
-	  dh_shlibdeps -a -Xceph.so -Xglusterfs.so -Xsnapper.so
+	  dh_shlibdeps -a -Xceph.so -Xglusterfs.so -Xsnapper.so -Xctdb_mutex_ceph_rados_helper
 ifeq ($(DEB_HOST_ARCH_OS), linux)
 	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
 	  dh_shlibdeps -a -- -pvfsmods -dRecommends \
 	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so \
 	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/glusterfs.so \
 	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
+	  dh_shlibdeps -a -- -prados -dRecommends \
+	    -e debian/ctdb/usr/lib/*/ctdb/ctdb_mutex_ceph_rados_helper
 else
 	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
 	  dh_shlibdeps -a -- -pvfsmods -dRecommends \
@@ -275,3 +289,4 @@ override_dh_auto_clean:
 	rm -f .lock-wscript
 	rm -f ctdb/README.eventscripts
 	rm -f ctdb/README.notification
+	rm -rf ctdb/doc/examples/nfs-kernel-server/

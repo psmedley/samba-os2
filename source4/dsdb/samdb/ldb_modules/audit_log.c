@@ -33,6 +33,7 @@
 #include "libcli/security/dom_sid.h"
 #include "auth/common_auth.h"
 #include "param/param.h"
+#include "librpc/gen_ndr/windows_event_ids.h"
 
 #define OPERATION_JSON_TYPE "dsdbChange"
 #define OPERATION_HR_TAG "DSDB Change"
@@ -43,7 +44,7 @@
 #define PASSWORD_JSON_TYPE "passwordChange"
 #define PASSWORD_HR_TAG "Password Change"
 #define PASSWORD_MAJOR 1
-#define PASSWORD_MINOR 0
+#define PASSWORD_MINOR 1
 #define PASSWORD_LOG_LVL 5
 
 #define TRANSACTION_JSON_TYPE "dsdbTransaction"
@@ -122,6 +123,47 @@ static bool has_password_changed(const struct ldb_message *message)
 }
 
 /*
+ * @brief get the password change windows event id
+ *
+ * Get the Windows Event Id for the action being performed on the user password.
+ *
+ * This routine assumes that the request contains password attributes and that the
+ * password ACL checks have been performed by acl.c
+ *
+ * @param request the ldb_request to inspect
+ * @param reply the ldb_reply, will contain the password controls
+ *
+ * @return The windows event code.
+ */
+static enum event_id_type get_password_windows_event_id(
+	const struct ldb_request *request,
+	const struct ldb_reply *reply)
+{
+	if(request->operation == LDB_ADD) {
+		return EVT_ID_PASSWORD_RESET;
+	} else {
+		struct ldb_control *pav_ctrl = NULL;
+		struct dsdb_control_password_acl_validation *pav = NULL;
+
+		pav_ctrl = ldb_reply_get_control(
+			discard_const(reply),
+			DSDB_CONTROL_PASSWORD_ACL_VALIDATION_OID);
+		if (pav_ctrl == NULL) {
+			return EVT_ID_PASSWORD_RESET;
+		}
+
+		pav = talloc_get_type_abort(
+			pav_ctrl->data,
+			struct dsdb_control_password_acl_validation);
+
+		if (pav->pwd_reset) {
+			return EVT_ID_PASSWORD_RESET;
+		} else {
+			return EVT_ID_PASSWORD_CHANGE;
+		}
+	}
+}
+/*
  * @brief Is the request a password "Change" or a "Reset"
  *
  * Get a description of the action being performed on the user password.  This
@@ -163,8 +205,6 @@ static const char *get_password_action(
 	}
 }
 
-
-#ifdef HAVE_JANSSON
 /*
  * @brief generate a JSON object detailing an ldb operation.
  *
@@ -457,6 +497,7 @@ static struct json_object password_change_json(
 		= talloc_get_type_abort(ldb_module_get_private(module),
 					struct audit_private);
 	int rc = 0;
+	enum event_id_type event_id;
 
 	ldb = ldb_module_get_ctx(module);
 
@@ -465,12 +506,17 @@ static struct json_object password_change_json(
 	dn = dsdb_audit_get_primary_dn(request);
 	action = get_password_action(request, reply);
 	unique_session_token = dsdb_audit_get_unique_session_token(module);
+	event_id = get_password_windows_event_id(request, reply);
 
 	audit = json_new_object();
 	if (json_is_invalid(&audit)) {
 		goto failure;
 	}
 	rc = json_add_version(&audit, PASSWORD_MAJOR, PASSWORD_MINOR);
+	if (rc != 0) {
+		goto failure;
+	}
+	rc = json_add_int(&audit, "eventId", event_id);
 	if (rc != 0) {
 		goto failure;
 	}
@@ -710,7 +756,6 @@ failure:
 	return wrapper;
 }
 
-#endif
 /*
  * @brief Print a human readable log line for a password change event.
  *
@@ -884,6 +929,7 @@ static char *operation_human_readable(
 {
 	struct ldb_context *ldb = NULL;
 	const char *remote_host = NULL;
+	const struct tsocket_address *remote = NULL;
 	const struct dom_sid *sid = NULL;
 	const char *user_sid = NULL;
 	const char *timestamp = NULL;
@@ -898,7 +944,8 @@ static char *operation_human_readable(
 	ldb = ldb_module_get_ctx(module);
 
 	remote_host = dsdb_audit_get_remote_host(ldb, ctx);
-	if (remote_host != NULL && dsdb_audit_is_system_session(module)) {
+	remote = dsdb_audit_get_remote_address(ldb);
+	if (remote != NULL && dsdb_audit_is_system_session(module)) {
 		sid = dsdb_audit_get_actual_sid(ldb);
 	} else {
 		sid = dsdb_audit_get_user_sid(module);
@@ -1028,7 +1075,7 @@ static char *transaction_human_readable(
 
 	log_entry = talloc_asprintf(
 		mem_ctx,
-		"[%s] at [%s] duration [%ld]",
+		"[%s] at [%s] duration [%"PRIi64"]",
 		action,
 		timestamp,
 		duration);
@@ -1065,7 +1112,7 @@ static char *commit_failure_human_readable(
 
 	log_entry = talloc_asprintf(
 		mem_ctx,
-		"[%s] at [%s] duration [%ld] status [%d] reason [%s]",
+		"[%s] at [%s] duration [%"PRIi64"] status [%d] reason [%s]",
 		action,
 		timestamp,
 		duration,
@@ -1132,7 +1179,6 @@ static void log_standard_operation(
 			TALLOC_FREE(entry);
 		}
 	}
-#ifdef HAVE_JANSSON
 	if (CHECK_DEBUGLVLC(DBGC_DSDB_AUDIT_JSON, OPERATION_LOG_LVL) ||
 		(audit_private->msg_ctx
 		 && audit_private->send_samdb_events)) {
@@ -1172,7 +1218,6 @@ static void log_standard_operation(
 			json_free(&json);
 		}
 	}
-#endif
 	TALLOC_FREE(ctx);
 }
 
@@ -1213,7 +1258,6 @@ static void log_replicated_operation(
 			REPLICATION_LOG_LVL);
 		TALLOC_FREE(entry);
 	}
-#ifdef HAVE_JANSSON
 	if (CHECK_DEBUGLVLC(DBGC_DSDB_AUDIT_JSON, REPLICATION_LOG_LVL) ||
 		(audit_private->msg_ctx && audit_private->send_samdb_events)) {
 		struct json_object json;
@@ -1231,7 +1275,6 @@ static void log_replicated_operation(
 		}
 		json_free(&json);
 	}
-#endif
 	TALLOC_FREE(ctx);
 }
 
@@ -1299,7 +1342,6 @@ static void log_transaction(
 			log_level);
 		TALLOC_FREE(entry);
 	}
-#ifdef HAVE_JANSSON
 	if (CHECK_DEBUGLVLC(DBGC_DSDB_TXN_AUDIT_JSON, log_level) ||
 		(audit_private->msg_ctx && audit_private->send_samdb_events)) {
 		struct json_object json;
@@ -1320,7 +1362,6 @@ static void log_transaction(
 		}
 		json_free(&json);
 	}
-#endif
 	TALLOC_FREE(ctx);
 }
 
@@ -1368,7 +1409,6 @@ static void log_commit_failure(
 			TRANSACTION_LOG_FAILURE_LVL);
 		TALLOC_FREE(entry);
 	}
-#ifdef HAVE_JANSSON
 	if (CHECK_DEBUGLVLC(DBGC_DSDB_TXN_AUDIT_JSON, log_level) ||
 		(audit_private->msg_ctx
 		 && audit_private->send_samdb_events)) {
@@ -1391,7 +1431,6 @@ static void log_commit_failure(
 		}
 		json_free(&json);
 	}
-#endif
 	TALLOC_FREE(ctx);
 }
 

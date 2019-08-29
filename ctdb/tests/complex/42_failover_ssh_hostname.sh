@@ -36,14 +36,11 @@ EOF
 
 set -e
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 ctdb_test_check_real_cluster
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 select_test_node_and_ips
 
@@ -78,6 +75,5 @@ echo "Hostname is: ${new_hostname}"
 if [ "$original_hostname" != "$new_hostname" ] ; then
     echo "GOOD: hostname changed"
 else
-    echo "BAD: hostname did not change"
-    testfailures=1
+    die "BAD: hostname did not change"
 fi

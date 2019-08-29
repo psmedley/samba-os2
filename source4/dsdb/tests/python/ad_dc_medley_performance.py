@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
@@ -86,6 +86,7 @@ class GlobalState(object):
     next_removed_link_0 = 0
     test_number = 0
     active_links = set()
+
 
 class UserTests(samba.tests.TestCase):
 
@@ -201,7 +202,7 @@ class UserTests(samba.tests.TestCase):
     def _test_indexed_search(self):
         expressions = ['(objectclass=group)',
                        '(samaccountname=Administrator)'
-        ]
+                       ]
         for expression in expressions:
             t = time.time()
             for i in range(4000):
@@ -233,7 +234,8 @@ class UserTests(samba.tests.TestCase):
                 self.ldb.search(pattern % i,
                                 scope=SCOPE_BASE,
                                 attrs=['cn'])
-            except LdbError as (num, msg):
+            except LdbError as e:
+                (num, msg) = e
                 if num != ERR_NO_SUCH_OBJECT:
                     raise
 
@@ -254,7 +256,7 @@ class UserTests(samba.tests.TestCase):
     def _test_complex_search(self, n=100):
         classes = ['samaccountname', 'objectCategory', 'dn', 'member']
         values = ['*', '*t*', 'g*', 'user']
-        comparators = ['=', '<=', '>='] # '~=' causes error
+        comparators = ['=', '<=', '>=']  # '~=' causes error
         maybe_not = ['!(', '']
         joiners = ['&', '|']
 
@@ -420,7 +422,7 @@ class UserTests(samba.tests.TestCase):
         lines = ["dn: CN=g%d,%s" % (g, self.ou_groups),
                  "objectclass: group"]
 
-        for i in xrange(self.state.next_user_id):
+        for i in range(self.state.next_user_id):
             if random.random() <= link_chance:
                 lines.append("member: cn=u%d,%s" % (i, self.ou_users))
                 self.state.active_links.add((i, g))

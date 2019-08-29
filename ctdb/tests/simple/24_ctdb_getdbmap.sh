@@ -25,14 +25,11 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
-
-# Reset configuration
-ctdb_restart_when_done
 
 make_temp_db_filename ()
 {
@@ -45,24 +42,24 @@ try_command_on_node -v 0 "$CTDB getdbmap"
 
 db_map_pattern='^(Number of databases:[[:digit:]]+|dbid:0x[[:xdigit:]]+ name:[^[:space:]]+ path:[^[:space:]]+)$'
 
-sanity_check_output $(($num_db_init + 1)) "$dbmap_pattern" "$out"
+sanity_check_output $(($num_db_init + 1)) "$dbmap_pattern"
 
-num_db_init=$(echo "$out" | sed -n -e '1s/.*://p')
+num_db_init=$(sed -n -e '1s/.*://p' "$outfile")
 
 for i in $(seq 1 5) ; do
     f=$(make_temp_db_filename)
     echo "Creating test database: $f"
     try_command_on_node 0 $CTDB attach "$f"
     try_command_on_node 0 $CTDB getdbmap
-    sanity_check_output $(($num_db_init + 1)) "$dbmap_pattern" "$out"
-    num=$(echo "$out" | sed -n -e '1s/^.*://p')
+    sanity_check_output $(($num_db_init + 1)) "$dbmap_pattern"
+    num=$(sed -n -e '1s/^.*://p' "$outfile")
     if [ $num = $(($num_db_init + $i)) ] ; then
 	echo "OK: correct number of additional databases"
     else
 	echo "BAD: no additional database"
 	exit 1
     fi
-    if [ "${out/name:${f} /}" != "$out" ] ; then
+    if awk '{print $2}' "$outfile" | grep -Fqx "name:$f" ; then
 	echo "OK: getdbmap knows about \"$f\""
     else
 	echo "BAD: getdbmap does not know about \"$f\""

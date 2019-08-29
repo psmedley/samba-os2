@@ -29,9 +29,22 @@ disable_legacy() { # From ctdb/packaging/RPM/ctdb.spec.in
     fi
 }
 
+remove_leftover() {
+
+    # Remove files created after initalization
+
+    rm -f /etc/ctdb/nodes
+    rm -f /etc/ctdb/public_addresses
+    rm -f /var/lib/ctdb/volatile/*
+    rm -f /var/lib/ctdb/state/*
+    rm -f /var/lib/ctdb/persistent/*
+    rm -rf /var/lib/ctdb/scripts
+}
+
 case "$1" in
     purge)
         disable_legacy 0
+        remove_leftover
     ;;
 
     remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)

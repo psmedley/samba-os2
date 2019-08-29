@@ -3,7 +3,7 @@ Depends: samba, coreutils, systemd, cifs-utils, passwd
 Restrictions: needs-root, allow-stderr, isolation-machine
 
 Tests: python-smoke
-Depends: python-samba
+Depends: python3-samba
 
 Tests: smbclient-anonymous-share-list
 Depends: samba, smbclient

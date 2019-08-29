@@ -246,6 +246,8 @@ static const struct loadparm_service _sDefault =
 	.durable_handles = true,
 	.check_parent_directory_delete_on_close = false,
 	.param_opt = NULL,
+	.smbd_search_ask_sharemode = true,
+	.smbd_getinfo_ask_sharemode = true,
 	.dummy = ""
 };
 
@@ -696,7 +698,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.nt_status_support = true; /* Use NT status by default. */
 	Globals.smbd_profiling_level = 0;
 	Globals.stat_cache = true;	/* use stat cache by default */
-	Globals.max_stat_cache_size = 256; /* 256k by default */
+	Globals.max_stat_cache_size = 512; /* 512k by default */
 	Globals.restrict_anonymous = 0;
 	Globals.client_lanman_auth = false;	/* Do NOT use the LanMan hash if it is available */
 	Globals.client_plaintext_auth = false;	/* Do NOT use a plaintext password even if is requested by the server */
@@ -712,11 +714,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.oplock_break_wait_time = 0;	/* By Default, 0 msecs. */
 	Globals.enhanced_browsing = true;
 	Globals.lock_spin_time = WINDOWS_MINIMUM_LOCK_TIMEOUT_MS; /* msec. */
-#ifdef MMAP_BLACKLIST
-	Globals.use_mmap = false;
-#else
 	Globals.use_mmap = true;
-#endif
 	Globals.unicode = true;
 	Globals.unix_extensions = true;
 	Globals.reset_on_zero_vc = false;
@@ -957,7 +955,9 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 			 "49152-65535");
 	Globals.rpc_low_port = SERVER_TCP_LOW_PORT;
 	Globals.rpc_high_port = SERVER_TCP_HIGH_PORT;
-	Globals.prefork_children = 1;
+	Globals.prefork_children = 4;
+	Globals.prefork_backoff_increment = 10;
+	Globals.prefork_maximum_backoff = 120;
 
 	/* Now put back the settings that were set with lp_set_cmdline() */
 	apply_lp_set_cmdline();
@@ -4246,15 +4246,47 @@ const char *volume_label(TALLOC_CTX *ctx, int snum)
 {
 	char *ret;
 	const char *label = lp_volume(ctx, snum);
+	size_t end = 32;
+
 	if (!*label) {
 		label = lp_servicename(ctx, snum);
 	}
 
-	/* This returns a 33 byte guarenteed null terminated string. */
-	ret = talloc_strndup(ctx, label, 32);
+	/*
+	 * Volume label can be a max of 32 bytes. Make sure to truncate
+	 * it at a codepoint boundary if it's longer than 32 and contains
+	 * multibyte characters. Windows insists on a volume label being
+	 * a valid mb sequence, and errors out if not.
+	 */
+	if (strlen(label) > 32) {
+		/*
+		 * A MB char can be a max of 5 bytes, thus
+		 * we should have a valid mb character at a
+		 * minimum position of (32-5) = 27.
+		 */
+		while (end >= 27) {
+			/*
+			 * Check if a codepoint starting from next byte
+			 * is valid. If yes, then the current byte is the
+			 * end of a MB or ascii sequence and the label can
+			 * be safely truncated here. If not, keep going
+			 * backwards till a valid codepoint is found.
+			 */
+			size_t len = 0;
+			const char *s = &label[end];
+			codepoint_t c = next_codepoint(s, &len);
+			if (c != INVALID_CODEPOINT) {
+				break;
+			}
+			end--;
+		}
+	}
+
+	/* This returns a max of 33 byte guarenteed null terminated string. */
+	ret = talloc_strndup(ctx, label, end);
 	if (!ret) {
 		return "";
-	}		
+	}
 	return ret;
 }
 

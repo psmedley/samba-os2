@@ -7,9 +7,9 @@ Uploaders: Steve Langasek <vorlon@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
            Andrew Bartlett <abartlet+debian@catalyst.net.nz>
 Homepage: http://www.samba.org
-Standards-Version: 4.3.0
+Standards-Version: 4.4.0
 Build-Depends: bison,
-               debhelper (>= 11),
+               debhelper-compat (= 12),
                dh-exec,
                dh-python,
                docbook-xml,
@@ -24,7 +24,7 @@ Build-Depends: bison,
                libbsd-dev,
                libcap-dev [linux-any],
                libcephfs-dev [linux-any],
-               libcmocka-dev (>= 1.1.1),
+               libcmocka-dev (>= 1.1.3),
                libcups2-dev,
                libdbus-1-dev,
                libglusterfs-dev [linux-any],
@@ -32,27 +32,29 @@ Build-Depends: bison,
                libgpgme11-dev,
                libjansson-dev,
                libldap2-dev,
-               libldb-dev (>= 2:1.5.1+really1.4.6),
+               libldb-dev (>= 2:1.5.5~),
                libncurses5-dev,
                libpam0g-dev,
                libparse-yapp-perl,
                libpcap-dev [hurd-i386 kfreebsd-any],
                libpopt-dev,
+               librados-dev [linux-any],
                libreadline-dev,
                libsystemd-dev [linux-any],
-               libtalloc-dev (>= 2.1.14~),
-               libtdb-dev (>= 1.3.16~),
-               libtevent-dev (>= 0.9.37~),
+               libtalloc-dev (>= 2.1.16~),
+               libtdb-dev (>= 1.3.18~),
+               libtevent-dev (>= 0.9.39~),
                perl,
                pkg-config,
                po-debconf,
-               python-all-dev (>= 2.6.6-3),
-               python-dnspython,
-               python-ldb (>= 2:1.5.1+really1.4.6),
-               python-ldb-dev (>= 2:1.5.1+really1.4.6),
-               python-talloc-dev (>= 2.1.14~),
-               python-tdb (>= 1.3.16~),
-               python-testtools,
+               python3-all-dev,
+               python3-dnspython,
+               python3-etcd,
+               python3-ldb (>= 2:1.5.5~),
+               python3-ldb-dev (>= 2:1.5.5~),
+               python3-talloc-dev (>= 2.1.16~),
+               python3-tdb (>= 1.3.18~),
+               python3-testtools,
                python3,
                xfslibs-dev [linux-any],
                xsltproc,
@@ -69,14 +71,14 @@ Depends: adduser,
          libpam-runtime (>= 1.0.1-11),
          lsb-base (>= 4.1+Debian),
          procps,
-         python,
-         python-dnspython,
-         python-samba,
+         python3,
+         python3-dnspython,
+         python3-samba,
          samba-common (= ${source:Version}),
          samba-common-bin (=${binary:Version}),
          tdb-tools,
          ${misc:Depends},
-         ${python:Depends},
+         ${python3:Depends},
          ${shlibs:Depends}
 Recommends: attr, logrotate, samba-dsdb-modules, samba-vfs-modules
 Suggests: bind9 (>= 1:9.5.1),
@@ -109,8 +111,15 @@ Multi-Arch: same
 Architecture: any
 Section: libs
 Depends: ${misc:Depends}, ${shlibs:Depends}
-Breaks: libndr-standard0 (<< 4)
-Replaces: samba (<< 2:4.3.3+dfsg-1), libndr-standard0 (<< 4)
+Breaks: libndr-standard0 (<< 2:4.0.9),
+        libsamba-credentials0 (<< 2:4.0.9),
+        libsamba-hostconfig0 (<< 2:4.0.9),
+        libsamba-util0 (<< 2:4.0.9),
+Replaces: samba (<< 2:4.3.3+dfsg-1),
+          libndr-standard0 (<< 2:4.0.9),
+          libsamba-credentials0 (<< 2:4.0.9),
+          libsamba-hostconfig0 (<< 2:4.0.9),
+          libsamba-util0 (<< 2:4.0.9),
 Description: Samba core libraries
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,
@@ -134,12 +143,12 @@ Description: common files used by both the Samba server and client
 
 Package: samba-common-bin
 Architecture: any
-Depends: python,
-         python-samba,
+Depends: python3,
+         python3-samba,
          samba-common (=${source:Version}),
          samba-libs (= ${binary:Version}),
          ${misc:Depends},
-         ${python:Depends},
+         ${python3:Depends},
          ${shlibs:Depends}
 Recommends: samba-dsdb-modules
 Suggests: heimdal-clients
@@ -239,26 +248,26 @@ Description: tools for extending Samba
  This package contains include files shared by the various Samba-based
  libraries.
 
-Package: python-samba
+Package: python3-samba
 Pre-Depends: ${misc:Pre-Depends}
 Architecture: any
 Section: python
-Provides: ${python:Provides}
-Depends: python-crypto,
-         python-ldb,
-         python-tdb,
+Provides: ${python3:Provides}
+Depends: python3-crypto,
+         python3-ldb,
+         python3-tdb,
          samba-libs (= ${binary:Version}),
          ${misc:Depends},
-         ${python:Depends},
+         ${python3:Depends},
          ${shlibs:Depends}
-Recommends: python-gpg
-Description: Python bindings for Samba
+Recommends: python3-gpg
+Description: Python 3 bindings for Samba
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,
  and other Unix systems.  Samba can also function as a domain controller
  or member server in both NT4-style and Active Directory domains.
  .
- This package contains Python bindings for most Samba libraries.
+ This package contains Python 3 bindings for most Samba libraries.
 
 Package: samba-dsdb-modules
 Architecture: any
@@ -439,7 +448,7 @@ Depends: iproute2 [linux-any],
          time,
          ${misc:Depends},
          ${shlibs:Depends}
-Recommends: ethtool [linux-any]
+Recommends: ethtool [linux-any], python3-etcd, ${rados:Recommends}
 Suggests: logrotate, lsof
 Description: clustered database to store temporary data
  CTDB is a cluster implementation of the TDB database used by Samba and other

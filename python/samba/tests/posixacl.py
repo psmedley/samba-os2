@@ -20,7 +20,7 @@
 
 from samba.ntacls import setntacl, getntacl, checkset_backend
 from samba.dcerpc import security, smb_acl, idmap
-from samba.tests import TestCaseInTempDir
+from samba.tests.smbd_base import SmbdBaseTests
 from samba import provision
 import os
 from samba.samba3 import smbd, passdb
@@ -32,7 +32,7 @@ DOM_SID = "S-1-5-21-2212615479-2695158682-2101375467"
 ACL = "O:S-1-5-21-2212615479-2695158682-2101375467-512G:S-1-5-21-2212615479-2695158682-2101375467-513D:(A;OICI;0x001f01ff;;;S-1-5-21-2212615479-2695158682-2101375467-512)"
 
 
-class PosixAclMappingTests(TestCaseInTempDir):
+class PosixAclMappingTests(SmbdBaseTests):
 
     def setUp(self):
         super(PosixAclMappingTests, self).setUp()
@@ -80,7 +80,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
                  session_info=self.get_session_info())
         facl = getntacl(self.lp, self.tempf, direct_db_access=True)
         anysid = security.dom_sid(security.SID_NT_SELF)
-        self.assertEquals(facl.as_sddl(anysid),acl)
+        self.assertEquals(facl.as_sddl(anysid), acl)
 
     def test_setntacl_smbd_setposixacl_getntacl(self):
         acl = ACL
@@ -104,7 +104,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
         backend_obj.wrap_setxattr(dbname,
                                   self.tempf, "system.fake_access_acl", b"")
 
-        #however, as this is direct DB access, we do not notice it
+        # however, as this is direct DB access, we do not notice it
         facl = getntacl(self.lp, self.tempf, direct_db_access=True)
         anysid = security.dom_sid(security.SID_NT_SELF)
         self.assertEquals(acl, facl.as_sddl(anysid))
@@ -119,7 +119,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
         backend_obj.wrap_setxattr(dbname,
                                   self.tempf, "system.fake_access_acl", b"")
 
-        #the hash would break, and we return an ACL based only on the mode, except we set the ACL using the 'ntvfs' mode that doesn't include a hash
+        # the hash would break, and we return an ACL based only on the mode, except we set the ACL using the 'ntvfs' mode that doesn't include a hash
         facl = getntacl(self.lp, self.tempf)
         anysid = security.dom_sid(security.SID_NT_SELF)
         self.assertEquals(acl, facl.as_sddl(anysid))
@@ -136,7 +136,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
         backend_obj.wrap_setxattr(dbname,
                                   self.tempf, "system.fake_access_acl", b"")
 
-        #the hash will break, and we return an ACL based only on the mode
+        # the hash will break, and we return an ACL based only on the mode
         facl = getntacl(self.lp, self.tempf, direct_db_access=False)
         anysid = security.dom_sid(security.SID_NT_SELF)
         self.assertEquals(simple_acl_from_posix, facl.as_sddl(anysid))
@@ -147,7 +147,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
                  session_info=self.get_session_info())
         facl = getntacl(self.lp, self.tempf, direct_db_access=False)
         anysid = security.dom_sid(security.SID_NT_SELF)
-        self.assertEquals(facl.as_sddl(anysid),acl)
+        self.assertEquals(facl.as_sddl(anysid), acl)
 
     def test_setntacl_smbd_getntacl_smbd(self):
         acl = ACL
@@ -155,7 +155,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
                  session_info=self.get_session_info())
         facl = getntacl(self.lp, self.tempf, direct_db_access=False)
         anysid = security.dom_sid(security.SID_NT_SELF)
-        self.assertEquals(facl.as_sddl(anysid),acl)
+        self.assertEquals(facl.as_sddl(anysid), acl)
 
     def test_setntacl_smbd_setposixacl_getntacl_smbd(self):
         acl = ACL
@@ -176,11 +176,11 @@ class PosixAclMappingTests(TestCaseInTempDir):
                  session_info=self.get_session_info())
         # This invalidates the hash of the NT acl just set because there is a hook in the posix ACL set code
         s4_passdb = passdb.PDB(self.lp.get("passdb backend"))
-        (BA_gid,BA_type) = s4_passdb.sid_to_id(BA_sid)
+        (BA_gid, BA_type) = s4_passdb.sid_to_id(BA_sid)
         smbd.set_simple_acl(self.tempf, 0o640, BA_gid)
 
         # This should re-calculate an ACL based on the posix details
-        facl = getntacl(self.lp,self.tempf, direct_db_access=False)
+        facl = getntacl(self.lp, self.tempf, direct_db_access=False)
         anysid = security.dom_sid(security.SID_NT_SELF)
         self.assertEquals(simple_acl_from_posix, facl.as_sddl(anysid))
 
@@ -190,7 +190,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
                  session_info=self.get_session_info())
         facl = getntacl(self.lp, self.tempf, direct_db_access=False)
         domsid = security.dom_sid(DOM_SID)
-        self.assertEquals(facl.as_sddl(domsid),acl)
+        self.assertEquals(facl.as_sddl(domsid), acl)
 
     def test_setntacl_getposixacl(self):
         acl = ACL
@@ -198,7 +198,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
                  session_info=self.get_session_info())
         facl = getntacl(self.lp, self.tempf)
         anysid = security.dom_sid(security.SID_NT_SELF)
-        self.assertEquals(facl.as_sddl(anysid),acl)
+        self.assertEquals(facl.as_sddl(anysid), acl)
         posix_acl = smbd.get_sys_acl(self.tempf, smb_acl.SMB_ACL_TYPE_ACCESS)
 
     def test_setposixacl_getntacl(self):
@@ -221,10 +221,10 @@ class PosixAclMappingTests(TestCaseInTempDir):
         user_SID = s4_passdb.uid_to_sid(os.stat(self.tempdir).st_uid)
         BA_sid = security.dom_sid(security.SID_BUILTIN_ADMINISTRATORS)
         s4_passdb = passdb.PDB(self.lp.get("passdb backend"))
-        (BA_id,BA_type) = s4_passdb.sid_to_id(BA_sid)
+        (BA_id, BA_type) = s4_passdb.sid_to_id(BA_sid)
         self.assertEquals(BA_type, idmap.ID_TYPE_BOTH)
         SO_sid = security.dom_sid(security.SID_BUILTIN_SERVER_OPERATORS)
-        (SO_id,SO_type) = s4_passdb.sid_to_id(SO_sid)
+        (SO_id, SO_type) = s4_passdb.sid_to_id(SO_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
         smbd.chown(self.tempdir, BA_id, SO_id)
         smbd.set_simple_acl(self.tempdir, 0o750)
@@ -237,7 +237,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
     def test_setposixacl_group_getntacl_smbd(self):
         BA_sid = security.dom_sid(security.SID_BUILTIN_ADMINISTRATORS)
         s4_passdb = passdb.PDB(self.lp.get("passdb backend"))
-        (BA_gid,BA_type) = s4_passdb.sid_to_id(BA_sid)
+        (BA_gid, BA_type) = s4_passdb.sid_to_id(BA_sid)
         group_SID = s4_passdb.gid_to_sid(os.stat(self.tempf).st_gid)
         user_SID = s4_passdb.uid_to_sid(os.stat(self.tempf).st_uid)
         self.assertEquals(BA_type, idmap.ID_TYPE_BOTH)
@@ -285,7 +285,7 @@ class PosixAclMappingTests(TestCaseInTempDir):
     def test_setposixacl_group_getposixacl(self):
         BA_sid = security.dom_sid(security.SID_BUILTIN_ADMINISTRATORS)
         s4_passdb = passdb.PDB(self.lp.get("passdb backend"))
-        (BA_gid,BA_type) = s4_passdb.sid_to_id(BA_sid)
+        (BA_gid, BA_type) = s4_passdb.sid_to_id(BA_sid)
         self.assertEquals(BA_type, idmap.ID_TYPE_BOTH)
         smbd.set_simple_acl(self.tempf, 0o670, BA_gid)
         posix_acl = smbd.get_sys_acl(self.tempf, smb_acl.SMB_ACL_TYPE_ACCESS)
@@ -315,16 +315,16 @@ class PosixAclMappingTests(TestCaseInTempDir):
         setntacl(self.lp, self.tempf, acl, str(domsid), use_ntvfs=False,
                  session_info=session_info)
         facl = getntacl(self.lp, self.tempf)
-        self.assertEquals(facl.as_sddl(domsid),acl)
+        self.assertEquals(facl.as_sddl(domsid), acl)
         posix_acl = smbd.get_sys_acl(self.tempf, smb_acl.SMB_ACL_TYPE_ACCESS)
 
         nwrap_module_so_path = os.getenv('NSS_WRAPPER_MODULE_SO_PATH')
         nwrap_module_fn_prefix = os.getenv('NSS_WRAPPER_MODULE_FN_PREFIX')
 
         nwrap_winbind_active = (nwrap_module_so_path != "" and
-                nwrap_module_fn_prefix == "winbind")
+                                nwrap_module_fn_prefix == "winbind")
 
-        LA_sid = security.dom_sid(str(domsid)+"-"+str(security.DOMAIN_RID_ADMINISTRATOR))
+        LA_sid = security.dom_sid(str(domsid) + "-" + str(security.DOMAIN_RID_ADMINISTRATOR))
         BA_sid = security.dom_sid(security.SID_BUILTIN_ADMINISTRATORS)
         SO_sid = security.dom_sid(security.SID_BUILTIN_SERVER_OPERATORS)
         SY_sid = security.dom_sid(security.SID_NT_SYSTEM)
@@ -335,15 +335,15 @@ class PosixAclMappingTests(TestCaseInTempDir):
         # These assertions correct for current ad_dc selftest
         # configuration.  When other environments have a broad range of
         # groups mapped via passdb, we can relax some of these checks
-        (LA_uid,LA_type) = s4_passdb.sid_to_id(LA_sid)
+        (LA_uid, LA_type) = s4_passdb.sid_to_id(LA_sid)
         self.assertEquals(LA_type, idmap.ID_TYPE_UID)
-        (BA_gid,BA_type) = s4_passdb.sid_to_id(BA_sid)
+        (BA_gid, BA_type) = s4_passdb.sid_to_id(BA_sid)
         self.assertEquals(BA_type, idmap.ID_TYPE_BOTH)
-        (SO_gid,SO_type) = s4_passdb.sid_to_id(SO_sid)
+        (SO_gid, SO_type) = s4_passdb.sid_to_id(SO_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
-        (SY_gid,SY_type) = s4_passdb.sid_to_id(SY_sid)
+        (SY_gid, SY_type) = s4_passdb.sid_to_id(SY_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
-        (AU_gid,AU_type) = s4_passdb.sid_to_id(AU_sid)
+        (AU_gid, AU_type) = s4_passdb.sid_to_id(AU_sid)
         self.assertEquals(AU_type, idmap.ID_TYPE_BOTH)
 
         self.assertEquals(posix_acl.count, 13, self.print_posix_acl(posix_acl))
@@ -402,59 +402,54 @@ class PosixAclMappingTests(TestCaseInTempDir):
         self.assertEquals(posix_acl.acl[12].a_type, smb_acl.SMB_ACL_MASK)
         self.assertEquals(posix_acl.acl[12].a_perm, 7)
 
+        # check that it matches:
+        # user::rwx
+        # user:root:rwx (selftest user actually)
+        # group::rwx
+        # group:Local Admins:rwx
+        # group:3000000:r-x
+        # group:3000001:rwx
+        # group:3000002:r-x
+        # mask::rwx
+        # other::---
 
-# check that it matches:
-# user::rwx
-# user:root:rwx (selftest user actually)
-# group::rwx
-# group:Local Admins:rwx
-# group:3000000:r-x
-# group:3000001:rwx
-# group:3000002:r-x
-# mask::rwx
-# other::---
-
-#
-# This is in this order in the NDR smb_acl (not re-orderded for display)
-# a_type: GROUP
-# a_perm: 7
-# uid: -1
-# gid: 10
-# a_type: USER
-# a_perm: 6
-# uid: 0 (selftest user actually)
-# gid: -1
-# a_type: OTHER
-# a_perm: 0
-# uid: -1
-# gid: -1
-# a_type: USER_OBJ
-# a_perm: 6
-# uid: -1
-# gid: -1
-# a_type: GROUP_OBJ
-# a_perm: 7
-# uid: -1
-# gid: -1
-# a_type: GROUP
-# a_perm: 5
-# uid: -1
-# gid: 3000020
-# a_type: GROUP
-# a_perm: 7
-# uid: -1
-# gid: 3000000
-# a_type: GROUP
-# a_perm: 5
-# uid: -1
-# gid: 3000001
-# a_type: MASK
-# a_perm: 7
-# uid: -1
-# gid: -1
-
-#
-
+        # This is in this order in the NDR smb_acl(not re-orderded for display)
+        # a_type: GROUP
+        # a_perm: 7
+        # uid: -1
+        # gid: 10
+        # a_type: USER
+        # a_perm: 6
+        # uid: 0 (selftest user actually)
+        # gid: -1
+        # a_type: OTHER
+        # a_perm: 0
+        # uid: -1
+        # gid: -1
+        # a_type: USER_OBJ
+        # a_perm: 6
+        # uid: -1
+        # gid: -1
+        # a_type: GROUP_OBJ
+        # a_perm: 7
+        # uid: -1
+        # gid: -1
+        # a_type: GROUP
+        # a_perm: 5
+        # uid: -1
+        # gid: 3000020
+        # a_type: GROUP
+        # a_perm: 7
+        # uid: -1
+        # gid: 3000000
+        # a_type: GROUP
+        # a_perm: 5
+        # uid: -1
+        # gid: 3000001
+        # a_type: MASK
+        # a_perm: 7
+        # uid: -1
+        # gid: -1
 
     def test_setntacl_sysvol_dir_check_getposixacl(self):
         acl = provision.SYSVOL_ACL
@@ -463,10 +458,10 @@ class PosixAclMappingTests(TestCaseInTempDir):
         setntacl(self.lp, self.tempdir, acl, str(domsid), use_ntvfs=False,
                  session_info=session_info)
         facl = getntacl(self.lp, self.tempdir)
-        self.assertEquals(facl.as_sddl(domsid),acl)
+        self.assertEquals(facl.as_sddl(domsid), acl)
         posix_acl = smbd.get_sys_acl(self.tempdir, smb_acl.SMB_ACL_TYPE_ACCESS)
 
-        LA_sid = security.dom_sid(str(domsid)+"-"+str(security.DOMAIN_RID_ADMINISTRATOR))
+        LA_sid = security.dom_sid(str(domsid) + "-" + str(security.DOMAIN_RID_ADMINISTRATOR))
         BA_sid = security.dom_sid(security.SID_BUILTIN_ADMINISTRATORS)
         SO_sid = security.dom_sid(security.SID_BUILTIN_SERVER_OPERATORS)
         SY_sid = security.dom_sid(security.SID_NT_SYSTEM)
@@ -477,15 +472,15 @@ class PosixAclMappingTests(TestCaseInTempDir):
         # These assertions correct for current ad_dc selftest
         # configuration.  When other environments have a broad range of
         # groups mapped via passdb, we can relax some of these checks
-        (LA_uid,LA_type) = s4_passdb.sid_to_id(LA_sid)
+        (LA_uid, LA_type) = s4_passdb.sid_to_id(LA_sid)
         self.assertEquals(LA_type, idmap.ID_TYPE_UID)
-        (BA_gid,BA_type) = s4_passdb.sid_to_id(BA_sid)
+        (BA_gid, BA_type) = s4_passdb.sid_to_id(BA_sid)
         self.assertEquals(BA_type, idmap.ID_TYPE_BOTH)
-        (SO_gid,SO_type) = s4_passdb.sid_to_id(SO_sid)
+        (SO_gid, SO_type) = s4_passdb.sid_to_id(SO_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
-        (SY_gid,SY_type) = s4_passdb.sid_to_id(SY_sid)
+        (SY_gid, SY_type) = s4_passdb.sid_to_id(SY_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
-        (AU_gid,AU_type) = s4_passdb.sid_to_id(AU_sid)
+        (AU_gid, AU_type) = s4_passdb.sid_to_id(AU_sid)
         self.assertEquals(AU_type, idmap.ID_TYPE_BOTH)
 
         self.assertEquals(posix_acl.count, 13, self.print_posix_acl(posix_acl))
@@ -538,18 +533,16 @@ class PosixAclMappingTests(TestCaseInTempDir):
         self.assertEquals(posix_acl.acl[12].a_type, smb_acl.SMB_ACL_MASK)
         self.assertEquals(posix_acl.acl[12].a_perm, 7)
 
-
-# check that it matches:
-# user::rwx
-# user:root:rwx (selftest user actually)
-# group::rwx
-# group:3000000:rwx
-# group:3000001:r-x
-# group:3000002:rwx
-# group:3000003:r-x
-# mask::rwx
-# other::---
-
+        # check that it matches:
+        # user::rwx
+        # user:root:rwx (selftest user actually)
+        # group::rwx
+        # group:3000000:rwx
+        # group:3000001:r-x
+        # group:3000002:rwx
+        # group:3000003:r-x
+        # mask::rwx
+        # other::---
 
     def test_setntacl_policies_dir_check_getposixacl(self):
         acl = provision.POLICIES_ACL
@@ -558,32 +551,32 @@ class PosixAclMappingTests(TestCaseInTempDir):
         setntacl(self.lp, self.tempdir, acl, str(domsid), use_ntvfs=False,
                  session_info=session_info)
         facl = getntacl(self.lp, self.tempdir)
-        self.assertEquals(facl.as_sddl(domsid),acl)
+        self.assertEquals(facl.as_sddl(domsid), acl)
         posix_acl = smbd.get_sys_acl(self.tempdir, smb_acl.SMB_ACL_TYPE_ACCESS)
 
-        LA_sid = security.dom_sid(str(domsid)+"-"+str(security.DOMAIN_RID_ADMINISTRATOR))
+        LA_sid = security.dom_sid(str(domsid) + "-" + str(security.DOMAIN_RID_ADMINISTRATOR))
         BA_sid = security.dom_sid(security.SID_BUILTIN_ADMINISTRATORS)
         SO_sid = security.dom_sid(security.SID_BUILTIN_SERVER_OPERATORS)
         SY_sid = security.dom_sid(security.SID_NT_SYSTEM)
         AU_sid = security.dom_sid(security.SID_NT_AUTHENTICATED_USERS)
-        PA_sid = security.dom_sid(str(domsid)+"-"+str(security.DOMAIN_RID_POLICY_ADMINS))
+        PA_sid = security.dom_sid(str(domsid) + "-" + str(security.DOMAIN_RID_POLICY_ADMINS))
 
         s4_passdb = passdb.PDB(self.lp.get("passdb backend"))
 
         # These assertions correct for current ad_dc selftest
         # configuration.  When other environments have a broad range of
         # groups mapped via passdb, we can relax some of these checks
-        (LA_uid,LA_type) = s4_passdb.sid_to_id(LA_sid)
+        (LA_uid, LA_type) = s4_passdb.sid_to_id(LA_sid)
         self.assertEquals(LA_type, idmap.ID_TYPE_UID)
-        (BA_gid,BA_type) = s4_passdb.sid_to_id(BA_sid)
+        (BA_gid, BA_type) = s4_passdb.sid_to_id(BA_sid)
         self.assertEquals(BA_type, idmap.ID_TYPE_BOTH)
-        (SO_gid,SO_type) = s4_passdb.sid_to_id(SO_sid)
+        (SO_gid, SO_type) = s4_passdb.sid_to_id(SO_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
-        (SY_gid,SY_type) = s4_passdb.sid_to_id(SY_sid)
+        (SY_gid, SY_type) = s4_passdb.sid_to_id(SY_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
-        (AU_gid,AU_type) = s4_passdb.sid_to_id(AU_sid)
+        (AU_gid, AU_type) = s4_passdb.sid_to_id(AU_sid)
         self.assertEquals(AU_type, idmap.ID_TYPE_BOTH)
-        (PA_gid,PA_type) = s4_passdb.sid_to_id(PA_sid)
+        (PA_gid, PA_type) = s4_passdb.sid_to_id(PA_sid)
         self.assertEquals(PA_type, idmap.ID_TYPE_BOTH)
 
         self.assertEquals(posix_acl.count, 15, self.print_posix_acl(posix_acl))
@@ -644,20 +637,17 @@ class PosixAclMappingTests(TestCaseInTempDir):
         self.assertEquals(posix_acl.acl[14].a_type, smb_acl.SMB_ACL_MASK)
         self.assertEquals(posix_acl.acl[14].a_perm, 7)
 
-
-# check that it matches:
-# user::rwx
-# user:root:rwx  (selftest user actually)
-# group::rwx
-# group:3000000:rwx
-# group:3000001:r-x
-# group:3000002:rwx
-# group:3000003:r-x
-# group:3000004:rwx
-# mask::rwx
-# other::---
-
-
+        # check that it matches:
+        # user::rwx
+        # user:root:rwx  (selftest user actually)
+        # group::rwx
+        # group:3000000:rwx
+        # group:3000001:r-x
+        # group:3000002:rwx
+        # group:3000003:r-x
+        # group:3000004:rwx
+        # mask::rwx
+        # other::---
 
     def test_setntacl_policies_check_getposixacl(self):
         acl = provision.POLICIES_ACL
@@ -665,40 +655,40 @@ class PosixAclMappingTests(TestCaseInTempDir):
         domsid = passdb.get_global_sam_sid()
         session_info = self.get_session_info(domsid)
         setntacl(self.lp, self.tempf, acl, str(domsid), use_ntvfs=False,
-            session_info=session_info)
+                 session_info=session_info)
         facl = getntacl(self.lp, self.tempf)
-        self.assertEquals(facl.as_sddl(domsid),acl)
+        self.assertEquals(facl.as_sddl(domsid), acl)
         posix_acl = smbd.get_sys_acl(self.tempf, smb_acl.SMB_ACL_TYPE_ACCESS)
 
         nwrap_module_so_path = os.getenv('NSS_WRAPPER_MODULE_SO_PATH')
         nwrap_module_fn_prefix = os.getenv('NSS_WRAPPER_MODULE_FN_PREFIX')
 
         nwrap_winbind_active = (nwrap_module_so_path != "" and
-                nwrap_module_fn_prefix == "winbind")
+                                nwrap_module_fn_prefix == "winbind")
 
-        LA_sid = security.dom_sid(str(domsid)+"-"+str(security.DOMAIN_RID_ADMINISTRATOR))
+        LA_sid = security.dom_sid(str(domsid) + "-" + str(security.DOMAIN_RID_ADMINISTRATOR))
         BA_sid = security.dom_sid(security.SID_BUILTIN_ADMINISTRATORS)
         SO_sid = security.dom_sid(security.SID_BUILTIN_SERVER_OPERATORS)
         SY_sid = security.dom_sid(security.SID_NT_SYSTEM)
         AU_sid = security.dom_sid(security.SID_NT_AUTHENTICATED_USERS)
-        PA_sid = security.dom_sid(str(domsid)+"-"+str(security.DOMAIN_RID_POLICY_ADMINS))
+        PA_sid = security.dom_sid(str(domsid) + "-" + str(security.DOMAIN_RID_POLICY_ADMINS))
 
         s4_passdb = passdb.PDB(self.lp.get("passdb backend"))
 
         # These assertions correct for current ad_dc selftest
         # configuration.  When other environments have a broad range of
         # groups mapped via passdb, we can relax some of these checks
-        (LA_uid,LA_type) = s4_passdb.sid_to_id(LA_sid)
+        (LA_uid, LA_type) = s4_passdb.sid_to_id(LA_sid)
         self.assertEquals(LA_type, idmap.ID_TYPE_UID)
-        (BA_gid,BA_type) = s4_passdb.sid_to_id(BA_sid)
+        (BA_gid, BA_type) = s4_passdb.sid_to_id(BA_sid)
         self.assertEquals(BA_type, idmap.ID_TYPE_BOTH)
-        (SO_gid,SO_type) = s4_passdb.sid_to_id(SO_sid)
+        (SO_gid, SO_type) = s4_passdb.sid_to_id(SO_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
-        (SY_gid,SY_type) = s4_passdb.sid_to_id(SY_sid)
+        (SY_gid, SY_type) = s4_passdb.sid_to_id(SY_sid)
         self.assertEquals(SO_type, idmap.ID_TYPE_BOTH)
-        (AU_gid,AU_type) = s4_passdb.sid_to_id(AU_sid)
+        (AU_gid, AU_type) = s4_passdb.sid_to_id(AU_sid)
         self.assertEquals(AU_type, idmap.ID_TYPE_BOTH)
-        (PA_gid,PA_type) = s4_passdb.sid_to_id(PA_sid)
+        (PA_gid, PA_type) = s4_passdb.sid_to_id(PA_sid)
         self.assertEquals(PA_type, idmap.ID_TYPE_BOTH)
 
         self.assertEquals(posix_acl.count, 15, self.print_posix_acl(posix_acl))
@@ -765,61 +755,60 @@ class PosixAclMappingTests(TestCaseInTempDir):
         self.assertEquals(posix_acl.acl[14].a_type, smb_acl.SMB_ACL_MASK)
         self.assertEquals(posix_acl.acl[14].a_perm, 7)
 
+        # check that it matches:
+        # user::rwx
+        # user:root:rwx (selftest user actually)
+        # group::rwx
+        # group:Local Admins:rwx
+        # group:3000000:r-x
+        # group:3000001:rwx
+        # group:3000002:r-x
+        # group:3000003:rwx
+        # mask::rwx
+        # other::---
 
-# check that it matches:
-# user::rwx
-# user:root:rwx (selftest user actually)
-# group::rwx
-# group:Local Admins:rwx
-# group:3000000:r-x
-# group:3000001:rwx
-# group:3000002:r-x
-# group:3000003:rwx
-# mask::rwx
-# other::---
+        # This is in this order in the NDR smb_acl(not re-orderded for display)
+        # a_type: GROUP
+        # a_perm: 7
+        # uid: -1
+        # gid: 10
+        # a_type: USER
+        # a_perm: 6
+        # uid: 0 (selftest user actually)
+        # gid: -1
+        # a_type: OTHER
+        # a_perm: 0
+        # uid: -1
+        # gid: -1
+        # a_type: USER_OBJ
+        # a_perm: 6
+        # uid: -1
+        # gid: -1
+        # a_type: GROUP_OBJ
+        # a_perm: 7
+        # uid: -1
+        # gid: -1
+        # a_type: GROUP
+        # a_perm: 5
+        # uid: -1
+        # gid: 3000020
+        # a_type: GROUP
+        # a_perm: 7
+        # uid: -1
+        # gid: 3000000
+        # a_type: GROUP
+        # a_perm: 5
+        # uid: -1
+        # gid: 3000001
+        # a_type: GROUP
+        # a_perm: 7
+        # uid: -1
+        # gid: 3000003
+        # a_type: MASK
+        # a_perm: 7
+        # uid: -1
+        # gid: -1
 
-#
-# This is in this order in the NDR smb_acl (not re-orderded for display)
-# a_type: GROUP
-# a_perm: 7
-# uid: -1
-# gid: 10
-# a_type: USER
-# a_perm: 6
-# uid: 0 (selftest user actually)
-# gid: -1
-# a_type: OTHER
-# a_perm: 0
-# uid: -1
-# gid: -1
-# a_type: USER_OBJ
-# a_perm: 6
-# uid: -1
-# gid: -1
-# a_type: GROUP_OBJ
-# a_perm: 7
-# uid: -1
-# gid: -1
-# a_type: GROUP
-# a_perm: 5
-# uid: -1
-# gid: 3000020
-# a_type: GROUP
-# a_perm: 7
-# uid: -1
-# gid: 3000000
-# a_type: GROUP
-# a_perm: 5
-# uid: -1
-# gid: 3000001
-# a_type: GROUP
-# a_perm: 7
-# uid: -1
-# gid: 3000003
-# a_type: MASK
-# a_perm: 7
-# uid: -1
-# gid: -1
 
 class SessionedPosixAclMappingTests(PosixAclMappingTests):
     """
@@ -834,12 +823,13 @@ class SessionedPosixAclMappingTests(PosixAclMappingTests):
             # fake it with admin session as domsid is not in local db
             return auth.admin_session(self.lp, str(domsid))
 
-        dn = '<SID={}-{}>'.format(domsid, security.DOMAIN_RID_ADMINISTRATOR)
+        dn = '<SID={0}-{1}>'.format(domsid, security.DOMAIN_RID_ADMINISTRATOR)
         flags = (auth.AUTH_SESSION_INFO_DEFAULT_GROUPS |
                  auth.AUTH_SESSION_INFO_AUTHENTICATED |
                  auth.AUTH_SESSION_INFO_SIMPLE_PRIVILEGES)
         return auth.user_session(self.samdb, lp_ctx=self.lp, dn=dn,
                                  session_info_flags=flags)
+
 
 class UnixSessionedPosixAclMappingTests(PosixAclMappingTests):
     """
@@ -854,7 +844,7 @@ class UnixSessionedPosixAclMappingTests(PosixAclMappingTests):
             # fake it with admin session as domsid is not in local db
             return auth.admin_session(self.lp, str(domsid))
 
-        dn = '<SID={}-{}>'.format(domsid, security.DOMAIN_RID_ADMINISTRATOR)
+        dn = '<SID={0}-{1}>'.format(domsid, security.DOMAIN_RID_ADMINISTRATOR)
         flags = (auth.AUTH_SESSION_INFO_DEFAULT_GROUPS |
                  auth.AUTH_SESSION_INFO_AUTHENTICATED |
                  auth.AUTH_SESSION_INFO_SIMPLE_PRIVILEGES)

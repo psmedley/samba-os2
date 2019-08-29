@@ -32,21 +32,19 @@ recovery_loop_start()
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
 cluster_is_healthy
-
-ctdb_restart_when_done
 
 TESTDB="persistent_trans.tdb"
 
 try_command_on_node 0 "$CTDB attach $TESTDB persistent"
 try_command_on_node 0 "$CTDB wipedb $TESTDB"
 
-try_command_on_node 0 "$CTDB listnodes"
-num_nodes=$(echo "$out" | wc -l)
+try_command_on_node 0 "$CTDB listnodes | wc -l"
+num_nodes="$out"
 
 if [ -z "$CTDB_TEST_TIMELIMIT" ] ; then
     CTDB_TEST_TIMELIMIT=30

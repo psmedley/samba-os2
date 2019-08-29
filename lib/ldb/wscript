@@ -1,20 +1,22 @@
 #!/usr/bin/env python
 
 APPNAME = 'ldb'
-VERSION = '1.4.6'
-
-blddir = 'bin'
+VERSION = '1.5.5'
 
 import sys, os
-import Logs
 
 # find the buildtools directory
-srcdir = '.'
-while not os.path.exists(srcdir+'/buildtools') and len(srcdir.split('/')) < 5:
-    srcdir = srcdir + '/..'
-sys.path.insert(0, srcdir + '/buildtools/wafsamba')
+top = '.'
+while not os.path.exists(top+'/buildtools') and len(top.split('/')) < 5:
+    top = top + '/..'
+sys.path.insert(0, top + '/buildtools/wafsamba')
 
-import wafsamba, samba_dist, Utils, Options
+out = 'bin'
+
+import wafsamba
+from wafsamba import samba_dist, samba_utils
+from waflib import Errors, Options, Logs, Context
+import shutil
 
 samba_dist.DIST_DIRS('''lib/ldb:. lib/replace:lib/replace lib/talloc:lib/talloc
                         lib/tdb:lib/tdb lib/tdb:lib/tdb lib/tevent:lib/tevent
@@ -24,13 +26,13 @@ samba_dist.DIST_DIRS('''lib/ldb:. lib/replace:lib/replace lib/talloc:lib/talloc
 
 samba_dist.DIST_FILES('''lib/util/binsearch.h:lib/util/binsearch.h''')
 
-def set_options(opt):
+def options(opt):
     opt.BUILTIN_DEFAULT('replace')
     opt.PRIVATE_EXTENSION_DEFAULT('ldb', noextension='ldb')
     opt.RECURSE('lib/tdb')
     opt.RECURSE('lib/tevent')
     opt.RECURSE('lib/replace')
-    opt.tool_options('python') # options for disabling pyc or pyo compilation
+    opt.load('python') # options for disabling pyc or pyo compilation
 
     opt.add_option('--without-ldb-lmdb',
                    help='disable new LMDB backend for LDB',
@@ -46,19 +48,19 @@ def configure(conf):
         conf.RECURSE('third_party/cmocka')
     else:
         if not conf.CHECK_POPT():
-            raise Utils.WafError('popt development packages have not been found.\nIf third_party is installed, check that it is in the proper place.')
+            raise Errors.WafError('popt development packages have not been found.\nIf third_party is installed, check that it is in the proper place.')
         else:
             conf.define('USING_SYSTEM_POPT', 1)
 
         if not conf.CHECK_CMOCKA():
-            raise Utils.WafError('cmocka development package have not been found.\nIf third_party is installed, check that it is in the proper place.')
+            raise Errors.WafError('cmocka development package have not been found.\nIf third_party is installed, check that it is in the proper place.')
         else:
             conf.define('USING_SYSTEM_CMOCKA', 1)
 
     conf.RECURSE('lib/replace')
     conf.find_program('python', var='PYTHON')
     conf.find_program('xsltproc', var='XSLTPROC')
-    conf.check_tool('python')
+    conf.load('python')
     conf.check_python_version((2,4,2))
     conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=not conf.env.disable_python)
 
@@ -82,7 +84,8 @@ def configure(conf):
                 conf.define('USING_SYSTEM_LDB', 1)
         else:
             using_system_pyldb_util = True
-            if not conf.CHECK_BUNDLED_SYSTEM_PKG('pyldb-util',
+            dflt_name = 'pyldb-util' + conf.all_envs['default']['PYTHON_SO_ABI_FLAG']
+            if not conf.CHECK_BUNDLED_SYSTEM_PKG(dflt_name,
                                                  minversion=VERSION,
                                                  maxversion=max_ldb_version_dots,
                                                  onlyif='talloc tdb tevent',
@@ -106,7 +109,7 @@ def configure(conf):
             if conf.CHECK_BUNDLED_SYSTEM_PKG('ldb',
                                              minversion=VERSION,
                                              maxversion=max_ldb_version_dots,
-                                             onlyif='talloc tdb tevent pyldb-util',
+                                             onlyif='talloc tdb tevent %s' % dflt_name,
                                              implied_deps='replace talloc tdb tevent'):
                 conf.define('USING_SYSTEM_LDB', 1)
 
@@ -136,7 +139,7 @@ def configure(conf):
             if Options.options.without_ldb_lmdb:
                 if not Options.options.without_ad_dc and \
                    conf.CONFIG_GET('ENABLE_SELFTEST'):
-                    raise Utils.WafError('--without-ldb-lmdb conflicts '
+                    raise Errors.WafError('--without-ldb-lmdb conflicts '
                                          'with --enable-selftest while '
                                          'building the AD DC')
 
@@ -184,11 +187,11 @@ def configure(conf):
                     msg='Checking for lmdb >= 0.9.16 via header check'):
 
                 if conf.env.standalone_ldb:
-                    raise Utils.WafError('ldb build (unless --without-ldb-lmdb) '
+                    raise Errors.WafError('ldb build (unless --without-ldb-lmdb) '
                                          'requires '
                                          'lmdb 0.9.16 or later')
                 elif not Options.options.without_ad_dc:
-                    raise Utils.WafError('Samba AD DC and --enable-selftest '
+                    raise Errors.WafError('Samba AD DC and --enable-selftest '
                                          'requires '
                                          'lmdb 0.9.16 or later')
 
@@ -245,7 +248,7 @@ def build(bld):
 
                 name = bld.pyembed_libname('pyldb-util')
                 bld.SAMBA_LIBRARY(name,
-                                  deps='ldb',
+                                  deps='replace ldb',
                                   source='pyldb_util.c',
                                   public_headers=('' if private_library else 'pyldb.h'),
                                   public_headers_install=not private_library,
@@ -259,7 +262,7 @@ def build(bld):
 
                 if not bld.CONFIG_SET('USING_SYSTEM_LDB'):
                     bld.SAMBA_PYTHON('pyldb', 'pyldb.c',
-                                     deps='ldb ' + name,
+                                     deps='replace ldb ' + name,
                                      realname='ldb.so',
                                      cflags='-DPACKAGE_VERSION=\"%s\"' % VERSION)
 
@@ -324,15 +327,6 @@ def build(bld):
                                 public_headers_install=not private_library)
         t.env.LDB_VERSION = VERSION
 
-
-        bld.SAMBA_MODULE('ldb_paged_results',
-                         'modules/paged_results.c',
-                         init_function='ldb_paged_results_init',
-                         module_init_name='ldb_init_module',
-                         internal_module=False,
-                         deps='ldb',
-                         subsystem='ldb')
-
         bld.SAMBA_MODULE('ldb_asq',
                          'modules/asq.c',
                          init_function='ldb_asq_init',
@@ -396,15 +390,27 @@ def build(bld):
                          init_function='ldb_tdb_init',
                          module_init_name='ldb_init_module',
                          internal_module=False,
-                         deps='tdb ldb ldb_key_value',
+                         deps='ldb ldb_tdb_int ldb_key_value',
                          subsystem='ldb')
 
-        bld.SAMBA_LIBRARY('ldb_key_value',
+        bld.SAMBA_LIBRARY('ldb_tdb_int',
                           bld.SUBDIR('ldb_tdb',
-                                    '''ldb_tdb.c ldb_search.c ldb_index.c
-                                    ldb_cache.c ldb_tdb_wrap.c'''),
+                                     '''ldb_tdb_wrap.c ldb_tdb.c'''),
                           private_library=True,
-                          deps='tdb ldb')
+                          deps='ldb tdb ldb_key_value ldb_tdb_err_map')
+
+        bld.SAMBA_LIBRARY('ldb_tdb_err_map',
+                          bld.SUBDIR('ldb_tdb',
+                                     '''ldb_tdb_err_map.c '''),
+                          private_library=True,
+                          deps='ldb tdb')
+
+        bld.SAMBA_LIBRARY('ldb_key_value',
+                          bld.SUBDIR('ldb_key_value',
+                                    '''ldb_kv.c ldb_kv_search.c ldb_kv_index.c
+                                    ldb_kv_cache.c'''),
+                          private_library=True,
+                          deps='tdb ldb ldb_tdb_err_map')
 
         if bld.CONFIG_SET('HAVE_LMDB'):
             bld.SAMBA_MODULE('ldb_mdb',
@@ -432,7 +438,7 @@ def build(bld):
                          init_function='ldb_ldb_init',
                          module_init_name='ldb_init_module',
                          internal_module=False,
-                         deps='ldb ldb_key_value' + lmdb_deps,
+                         deps='ldb ldb_tdb_int ldb_key_value' + lmdb_deps,
                          subsystem='ldb')
 
         # have a separate subsystem for common/ldb.c, so it can rebuild
@@ -500,6 +506,11 @@ def build(bld):
                          deps='cmocka ldb',
                          install=False)
 
+        bld.SAMBA_BINARY('test_ldb_dn',
+                         source='tests/test_ldb_dn.c',
+                         deps='cmocka ldb',
+                         install=False)
+
         bld.SAMBA_BINARY('ldb_match_test',
                          source='tests/ldb_match_test.c',
                          deps='cmocka ldb',
@@ -531,23 +542,22 @@ def build(bld):
 
 def test(ctx):
     '''run ldb testsuite'''
-    import Utils, samba_utils, shutil
     env = samba_utils.LOAD_ENVIRONMENT()
     ctx.env = env
 
     if not env.HAVE_LMDB:
-        raise Utils.WafError('make test called, but ldb was built '
+        raise Errors.WafError('make test called, but ldb was built '
                              '--without-ldb-lmdb')
 
-    test_prefix = "%s/st" % (Utils.g_module.blddir)
+    test_prefix = "%s/st" % (Context.g_module.out)
     shutil.rmtree(test_prefix, ignore_errors=True)
     os.makedirs(test_prefix)
     os.environ['TEST_DATA_PREFIX'] = test_prefix
-    os.environ['LDB_MODULES_PATH'] = Utils.g_module.blddir + "/modules/ldb"
+    os.environ['LDB_MODULES_PATH'] = Context.g_module.out + "/modules/ldb"
     samba_utils.ADD_LD_LIBRARY_PATH('bin/shared')
     samba_utils.ADD_LD_LIBRARY_PATH('bin/shared/private')
 
-    cmd = 'tests/test-tdb.sh %s' % Utils.g_module.blddir
+    cmd = 'tests/test-tdb.sh %s' % Context.g_module.out
     ret = samba_utils.RUN_COMMAND(cmd)
     print("testsuite returned %d" % ret)
 
@@ -561,6 +571,7 @@ def test(ctx):
 
     cmocka_ret = 0
     test_exes = ['test_ldb_qsort',
+                 'test_ldb_dn',
                  'ldb_msg_test',
                  'ldb_tdb_mod_op_test',
                  'ldb_tdb_guid_mod_op_test',
@@ -576,7 +587,7 @@ def test(ctx):
                  'ldb_match_test']
 
     for test_exe in test_exes:
-            cmd = os.path.join(Utils.g_module.blddir, test_exe)
+            cmd = os.path.join(Context.g_module.out, test_exe)
             cmocka_ret = cmocka_ret or samba_utils.RUN_COMMAND(cmd)
 
     sys.exit(ret or pyret or cmocka_ret)

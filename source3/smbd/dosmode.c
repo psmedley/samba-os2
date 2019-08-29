@@ -19,12 +19,14 @@
 */
 
 #include "includes.h"
+#include "globals.h"
 #include "system/filesys.h"
 #include "librpc/gen_ndr/ndr_xattr.h"
 #include "librpc/gen_ndr/ioctl.h"
 #include "../libcli/security/security.h"
 #include "smbd/smbd.h"
 #include "lib/param/loadparm.h"
+#include "lib/util/tevent_ntstatus.h"
 
 static NTSTATUS get_file_handle_for_metadata(connection_struct *conn,
 				const struct smb_filename *smb_fname,
@@ -260,16 +262,96 @@ static uint32_t dos_mode_from_sbuf(connection_struct *conn,
  This can also pull the create time into the stat struct inside smb_fname.
 ****************************************************************************/
 
+NTSTATUS parse_dos_attribute_blob(struct smb_filename *smb_fname,
+				  DATA_BLOB blob,
+				  uint32_t *pattr)
+{
+	struct xattr_DOSATTRIB dosattrib;
+	enum ndr_err_code ndr_err;
+	uint32_t dosattr;
+
+	ndr_err = ndr_pull_struct_blob(&blob, talloc_tos(), &dosattrib,
+			(ndr_pull_flags_fn_t)ndr_pull_xattr_DOSATTRIB);
+
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		DBG_WARNING("bad ndr decode "
+			    "from EA on file %s: Error = %s\n",
+			    smb_fname_str_dbg(smb_fname),
+			    ndr_errstr(ndr_err));
+		return ndr_map_error2ntstatus(ndr_err);
+	}
+
+	DBG_DEBUG("%s attr = %s\n",
+		  smb_fname_str_dbg(smb_fname), dosattrib.attrib_hex);
+
+	switch (dosattrib.version) {
+	case 0xFFFF:
+		dosattr = dosattrib.info.compatinfoFFFF.attrib;
+		break;
+	case 1:
+		dosattr = dosattrib.info.info1.attrib;
+		if (!null_nttime(dosattrib.info.info1.create_time)) {
+			struct timespec create_time =
+				nt_time_to_unix_timespec(
+					dosattrib.info.info1.create_time);
+
+			update_stat_ex_create_time(&smb_fname->st,
+						   create_time);
+
+			DBG_DEBUG("file %s case 1 set btime %s\n",
+				  smb_fname_str_dbg(smb_fname),
+				  time_to_asc(convert_timespec_to_time_t(
+						      create_time)));
+		}
+		break;
+	case 2:
+		dosattr = dosattrib.info.oldinfo2.attrib;
+		/* Don't know what flags to check for this case. */
+		break;
+	case 3:
+		dosattr = dosattrib.info.info3.attrib;
+		if ((dosattrib.info.info3.valid_flags & XATTR_DOSINFO_CREATE_TIME) &&
+		    !null_nttime(dosattrib.info.info3.create_time)) {
+			struct timespec create_time =
+				nt_time_to_unix_timespec(
+					dosattrib.info.info3.create_time);
+
+			update_stat_ex_create_time(&smb_fname->st,
+						   create_time);
+
+			DBG_DEBUG("file %s case 3 set btime %s\n",
+				  smb_fname_str_dbg(smb_fname),
+				  time_to_asc(convert_timespec_to_time_t(
+						      create_time)));
+		}
+		break;
+	default:
+		DBG_WARNING("Badly formed DOSATTRIB on file %s - %s\n",
+			    smb_fname_str_dbg(smb_fname), blob.data);
+		/* Should this be INTERNAL_ERROR? */
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+
+	if (S_ISDIR(smb_fname->st.st_ex_mode)) {
+		dosattr |= FILE_ATTRIBUTE_DIRECTORY;
+	}
+
+	/* FILE_ATTRIBUTE_SPARSE is valid on get but not on set. */
+	*pattr |= (uint32_t)(dosattr & (SAMBA_ATTRIBUTES_MASK|FILE_ATTRIBUTE_SPARSE));
+
+	dos_mode_debug_print(__func__, *pattr);
+
+	return NT_STATUS_OK;
+}
+
 NTSTATUS get_ea_dos_attribute(connection_struct *conn,
 			      struct smb_filename *smb_fname,
 			      uint32_t *pattr)
 {
-	struct xattr_DOSATTRIB dosattrib;
-	enum ndr_err_code ndr_err;
 	DATA_BLOB blob;
 	ssize_t sizeret;
 	fstring attrstr;
-	uint32_t dosattr;
+	NTSTATUS status;
 
 	if (!lp_store_dos_attributes(SNUM(conn))) {
 		return NT_STATUS_NOT_IMPLEMENTED;
@@ -327,78 +409,10 @@ NTSTATUS get_ea_dos_attribute(connection_struct *conn,
 	blob.data = (uint8_t *)attrstr;
 	blob.length = sizeret;
 
-	ndr_err = ndr_pull_struct_blob(&blob, talloc_tos(), &dosattrib,
-			(ndr_pull_flags_fn_t)ndr_pull_xattr_DOSATTRIB);
-
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		DEBUG(1,("get_ea_dos_attribute: bad ndr decode "
-			 "from EA on file %s: Error = %s\n",
-			 smb_fname_str_dbg(smb_fname),
-			 ndr_errstr(ndr_err)));
-		return ndr_map_error2ntstatus(ndr_err);
+	status = parse_dos_attribute_blob(smb_fname, blob, pattr);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
 	}
-
-	DEBUG(10,("get_ea_dos_attribute: %s attr = %s\n",
-		  smb_fname_str_dbg(smb_fname), dosattrib.attrib_hex));
-
-	switch (dosattrib.version) {
-		case 0xFFFF:
-			dosattr = dosattrib.info.compatinfoFFFF.attrib;
-			break;
-		case 1:
-			dosattr = dosattrib.info.info1.attrib;
-			if (!null_nttime(dosattrib.info.info1.create_time)) {
-				struct timespec create_time =
-					nt_time_to_unix_timespec(
-						dosattrib.info.info1.create_time);
-
-				update_stat_ex_create_time(&smb_fname->st,
-							create_time);
-
-				DEBUG(10,("get_ea_dos_attribute: file %s case 1 "
-					"set btime %s\n",
-					smb_fname_str_dbg(smb_fname),
-					time_to_asc(convert_timespec_to_time_t(
-						create_time)) ));
-			}
-			break;
-		case 2:
-			dosattr = dosattrib.info.oldinfo2.attrib;
-			/* Don't know what flags to check for this case. */
-			break;
-		case 3:
-			dosattr = dosattrib.info.info3.attrib;
-			if ((dosattrib.info.info3.valid_flags & XATTR_DOSINFO_CREATE_TIME) &&
-					!null_nttime(dosattrib.info.info3.create_time)) {
-				struct timespec create_time =
-					nt_time_to_unix_timespec(
-						dosattrib.info.info3.create_time);
-
-				update_stat_ex_create_time(&smb_fname->st,
-							create_time);
-
-				DEBUG(10,("get_ea_dos_attribute: file %s case 3 "
-					"set btime %s\n",
-					smb_fname_str_dbg(smb_fname),
-					time_to_asc(convert_timespec_to_time_t(
-						create_time)) ));
-			}
-			break;
-		default:
-			DEBUG(1,("get_ea_dos_attribute: Badly formed DOSATTRIB on "
-				 "file %s - %s\n", smb_fname_str_dbg(smb_fname),
-				 attrstr));
-			/* Should this be INTERNAL_ERROR? */
-	                return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	if (S_ISDIR(smb_fname->st.st_ex_mode)) {
-		dosattr |= FILE_ATTRIBUTE_DIRECTORY;
-	}
-	/* FILE_ATTRIBUTE_SPARSE is valid on get but not on set. */
-	*pattr |= (uint32_t)(dosattr & (SAMBA_ATTRIBUTES_MASK|FILE_ATTRIBUTE_SPARSE));
-
-	dos_mode_debug_print(__func__, *pattr);
 
 	return NT_STATUS_OK;
 }
@@ -653,6 +667,59 @@ static uint32_t dos_mode_from_name(connection_struct *conn,
 	return result;
 }
 
+static uint32_t dos_mode_post(uint32_t dosmode,
+			      connection_struct *conn,
+			      struct smb_filename *smb_fname,
+			      const char *func)
+{
+	NTSTATUS status;
+
+	/*
+	 * According to MS-FSA a stream name does not have
+	 * separate DOS attribute metadata, so we must return
+	 * the DOS attribute from the base filename. With one caveat,
+	 * a non-default stream name can never be a directory.
+	 *
+	 * As this is common to all streams data stores, we handle
+	 * it here instead of inside all stream VFS modules.
+	 *
+	 * BUG: https://bugzilla.samba.org/show_bug.cgi?id=13380
+	 */
+
+	if (is_ntfs_stream_smb_fname(smb_fname)) {
+		/* is_ntfs_stream_smb_fname() returns false for a POSIX path. */
+		if (!is_ntfs_default_stream_smb_fname(smb_fname)) {
+			/*
+			 * Non-default stream name, not a posix path.
+			 */
+			dosmode &= ~(FILE_ATTRIBUTE_DIRECTORY);
+		}
+	}
+
+	if (conn->fs_capabilities & FILE_FILE_COMPRESSION) {
+		bool compressed = false;
+
+		status = dos_mode_check_compressed(conn, smb_fname,
+						   &compressed);
+		if (NT_STATUS_IS_OK(status) && compressed) {
+			dosmode |= FILE_ATTRIBUTE_COMPRESSED;
+		}
+	}
+
+	dosmode |= dos_mode_from_name(conn, smb_fname, dosmode);
+
+	if (S_ISDIR(smb_fname->st.st_ex_mode)) {
+		dosmode |= FILE_ATTRIBUTE_DIRECTORY;
+	} else if (dosmode == 0) {
+		dosmode = FILE_ATTRIBUTE_NORMAL;
+	}
+
+	dosmode = filter_mode_by_protocol(dosmode);
+
+	dos_mode_debug_print(func, dosmode);
+	return dosmode;
+}
+
 /****************************************************************************
  Change a unix mode to a dos mode.
  May also read the create timespec into the stat struct in smb_fname
@@ -681,50 +748,150 @@ uint32_t dos_mode(connection_struct *conn, struct smb_filename *smb_fname)
 		}
 	}
 
+	result = dos_mode_post(result, conn, smb_fname, __func__);
+	return result;
+}
+
+struct dos_mode_at_state {
+	files_struct *dir_fsp;
+	struct smb_filename *smb_fname;
+	uint32_t dosmode;
+};
+
+static void dos_mode_at_vfs_get_dosmode_done(struct tevent_req *subreq);
+
+struct tevent_req *dos_mode_at_send(TALLOC_CTX *mem_ctx,
+				    struct tevent_context *ev,
+				    files_struct *dir_fsp,
+				    struct smb_filename *smb_fname)
+{
+	struct tevent_req *req = NULL;
+	struct dos_mode_at_state *state = NULL;
+	struct tevent_req *subreq = NULL;
+
+	DBG_DEBUG("%s\n", smb_fname_str_dbg(smb_fname));
+
+	req = tevent_req_create(mem_ctx, &state,
+				struct dos_mode_at_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	*state = (struct dos_mode_at_state) {
+		.dir_fsp = dir_fsp,
+		.smb_fname = smb_fname,
+	};
+
+	if (!VALID_STAT(smb_fname->st)) {
+		tevent_req_done(req);
+		return tevent_req_post(req, ev);
+	}
+
+	subreq = SMB_VFS_GET_DOS_ATTRIBUTES_SEND(state,
+						 ev,
+						 dir_fsp,
+						 smb_fname);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, dos_mode_at_vfs_get_dosmode_done, req);
+
+	return req;
+}
+
+static void dos_mode_at_vfs_get_dosmode_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq,
+		struct tevent_req);
+	struct dos_mode_at_state *state =
+		tevent_req_data(req,
+		struct dos_mode_at_state);
+	char *path = NULL;
+	struct smb_filename *smb_path = NULL;
+	struct vfs_aio_state aio_state;
+	NTSTATUS status;
+	bool ok;
+
 	/*
-	 * According to MS-FSA a stream name does not have
-	 * separate DOS attribute metadata, so we must return
-	 * the DOS attribute from the base filename. With one caveat,
-	 * a non-default stream name can never be a directory.
-	 *
-	 * As this is common to all streams data stores, we handle
-	 * it here instead of inside all stream VFS modules.
-	 *
-	 * BUG: https://bugzilla.samba.org/show_bug.cgi?id=13380
+	 * Make sure we run as the user again
+	 */
+	ok = change_to_user_by_fsp(state->dir_fsp);
+	SMB_ASSERT(ok);
+
+	status = SMB_VFS_GET_DOS_ATTRIBUTES_RECV(subreq,
+						 &aio_state,
+						 &state->dosmode);
+	TALLOC_FREE(subreq);
+	if (!NT_STATUS_IS_OK(status)) {
+		/*
+		 * Both the sync dos_mode() as well as the async
+		 * dos_mode_at_[send|recv] have no real error return, the only
+		 * unhandled error is when the stat info in smb_fname is not
+		 * valid (cf the checks in dos_mode() and dos_mode_at_send().
+		 *
+		 * If SMB_VFS_GET_DOS_ATTRIBUTES[_SEND|_RECV] fails we must call
+		 * dos_mode_post() which also does the mapping of a last ressort
+		 * from S_IFMT(st_mode).
+		 *
+		 * Only if we get NT_STATUS_NOT_IMPLEMENTED from a stacked VFS
+		 * module we must fallback to sync processing.
+		 */
+		if (!NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
+			/*
+			 * state->dosmode should still be 0, but reset
+			 * it to be sure.
+			 */
+			state->dosmode = 0;
+			status = NT_STATUS_OK;
+		}
+	}
+	if (NT_STATUS_IS_OK(status)) {
+		state->dosmode = dos_mode_post(state->dosmode,
+					       state->dir_fsp->conn,
+					       state->smb_fname,
+					       __func__);
+		tevent_req_done(req);
+		return;
+	}
+
+	/*
+	 * Fall back to sync dos_mode() if we got NOT_IMPLEMENTED.
 	 */
 
-	if (is_ntfs_stream_smb_fname(smb_fname)) {
-		/* is_ntfs_stream_smb_fname() returns false for a POSIX path. */
-		if (!is_ntfs_default_stream_smb_fname(smb_fname)) {
-			/*
-			 * Non-default stream name, not a posix path.
-			 */
-			result &= ~(FILE_ATTRIBUTE_DIRECTORY);
-		}
+	path = talloc_asprintf(state,
+			       "%s/%s",
+			       state->dir_fsp->fsp_name->base_name,
+			       state->smb_fname->base_name);
+	if (tevent_req_nomem(path, req)) {
+		return;
 	}
 
-	if (conn->fs_capabilities & FILE_FILE_COMPRESSION) {
-		bool compressed = false;
-		status = dos_mode_check_compressed(conn, smb_fname,
-						   &compressed);
-		if (NT_STATUS_IS_OK(status) && compressed) {
-			result |= FILE_ATTRIBUTE_COMPRESSED;
-		}
+	smb_path = synthetic_smb_fname(state, path, NULL, NULL, 0);
+	if (tevent_req_nomem(path, req)) {
+		return;
 	}
 
-	result |= dos_mode_from_name(conn, smb_fname, result);
+	state->dosmode = dos_mode(state->dir_fsp->conn, smb_path);
+	tevent_req_done(req);
+	return;
+}
 
-	if (S_ISDIR(smb_fname->st.st_ex_mode)) {
-		result |= FILE_ATTRIBUTE_DIRECTORY;
-	} else if (result == 0) {
-		result = FILE_ATTRIBUTE_NORMAL;
+NTSTATUS dos_mode_at_recv(struct tevent_req *req, uint32_t *dosmode)
+{
+	struct dos_mode_at_state *state =
+		tevent_req_data(req,
+		struct dos_mode_at_state);
+	NTSTATUS status;
+
+	if (tevent_req_is_nterror(req, &status)) {
+		tevent_req_received(req);
+		return status;
 	}
 
-	result = filter_mode_by_protocol(result);
-
-	dos_mode_debug_print(__func__, result);
-
-	return result;
+	*dosmode = state->dosmode;
+	tevent_req_received(req);
+	return NT_STATUS_OK;
 }
 
 /*******************************************************************

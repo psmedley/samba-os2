@@ -446,12 +446,14 @@ static int info_fn(struct file_list *fl, void *priv)
 			}
 
 		} else {
-			fstring sidstr;
-			sid_to_fstring(sidstr,
-				       &psd->dacl->aces[num_aces].trustee);
-			acl_str = talloc_asprintf_append(acl_str,
-						"%s",
-						sidstr);
+			struct dom_sid_buf sidstr;
+
+			acl_str = talloc_asprintf_append(
+				acl_str,
+				"%s",
+				dom_sid_str_buf(
+					&psd->dacl->aces[num_aces].trustee,
+					&sidstr));
 			if (!acl_str) {
 				return -1;
 			}
@@ -816,6 +818,7 @@ static int net_usershare_add(struct net_context *c, int argc, const char **argv)
 
 	for (i = 0; i < num_aces; i++) {
 		struct dom_sid sid;
+		struct dom_sid_buf buf;
 		const char *pcolon = strchr_m(pacl, ':');
 		const char *name;
 
@@ -879,7 +882,10 @@ static int net_usershare_add(struct net_context *c, int argc, const char **argv)
 			}
 		}
 		us_acl = talloc_asprintf_append(
-			us_acl, "%s:%c,", sid_string_tos(&sid), pcolon[1]);
+			us_acl,
+			"%s:%c,",
+			dom_sid_str_buf(&sid, &buf),
+			pcolon[1]);
 
 		/* Move to the next ACL entry. */
 		if (pcolon[2] == ',') {

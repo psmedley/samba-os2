@@ -313,6 +313,7 @@ static int ldb_ldif_write_trace(struct ldb_context *ldb,
 
 	for (i=0;i<msg->num_elements;i++) {
 		const struct ldb_schema_attribute *a;
+		size_t namelen;
 
 		if (msg->elements[i].name == NULL) {
 			ldb_debug(ldb, LDB_DEBUG_ERROR,
@@ -321,6 +322,7 @@ static int ldb_ldif_write_trace(struct ldb_context *ldb,
 			return -1;
 		}
 
+		namelen = strlen(msg->elements[i].name);
 		a = ldb_schema_attribute_by_name(ldb, msg->elements[i].name);
 
 		if (ldif->changetype == LDB_CHANGETYPE_MODIFY) {
@@ -347,7 +349,6 @@ static int ldb_ldif_write_trace(struct ldb_context *ldb,
 			CHECK_RET;
 			continue;
 		}
-
 		for (j=0;j<msg->elements[i].num_values;j++) {
 			struct ldb_val v;
 			bool use_b64_encode = false;
@@ -371,7 +372,7 @@ static int ldb_ldif_write_trace(struct ldb_context *ldb,
 				CHECK_RET;
 				ret = base64_encode_f(ldb, fprintf_fn, private_data,
 						      (char *)v.data, v.length,
-						      strlen(msg->elements[i].name)+3);
+						      namelen + 3);
 				CHECK_RET;
 				ret = fprintf_fn(private_data, "\n");
 				CHECK_RET;
@@ -384,7 +385,7 @@ static int ldb_ldif_write_trace(struct ldb_context *ldb,
 				} else {
 					ret = fold_string(fprintf_fn, private_data,
 							  (char *)v.data, v.length,
-							  strlen(msg->elements[i].name)+2);
+							  namelen + 2);
 				}
 				CHECK_RET;
 				ret = fprintf_fn(private_data, "\n");

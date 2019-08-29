@@ -31,6 +31,7 @@
 #include "secrets.h"
 #include "../lib/tsocket/tsocket.h"
 #include "lib/util/asn1.h"
+#include "krb5_errs.h"
 
 #ifdef HAVE_KRB5
 
@@ -59,7 +60,7 @@ kerb_prompter(krb5_context ctx, void *data,
 		 * version have looping detection and return with a proper error code.
 		 */
 
-#if HAVE_KRB5_PROMPT_TYPE /* Heimdal */
+#if defined(HAVE_KRB5_PROMPT_TYPE) /* Heimdal */
 		 if (prompts[0].type == KRB5_PROMPT_TYPE_NEW_PASSWORD &&
 		     prompts[1].type == KRB5_PROMPT_TYPE_NEW_PASSWORD_AGAIN) {
 			/*
@@ -127,9 +128,12 @@ int kerberos_kinit_password_ext(const char *principal,
 
 	ZERO_STRUCT(my_creds);
 
-	initialize_krb5_error_table();
-	if ((code = krb5_init_context(&ctx)))
-		goto out;
+	code = smb_krb5_init_context_common(&ctx);
+	if (code != 0) {
+		DBG_ERR("kerberos init context failed (%s)\n",
+			error_message(code));
+		return code;
+	}
 
 	if (time_offset != 0) {
 		krb5_set_real_time(ctx, time(NULL) + time_offset, 0);
@@ -243,10 +247,10 @@ int ads_kdestroy(const char *cc_name)
 	krb5_context ctx = NULL;
 	krb5_ccache cc = NULL;
 
-	initialize_krb5_error_table();
-	if ((code = krb5_init_context (&ctx))) {
-		DEBUG(3, ("ads_kdestroy: kdb5_init_context failed: %s\n", 
-			error_message(code)));
+	code = smb_krb5_init_context_common(&ctx);
+	if (code != 0) {
+		DBG_ERR("kerberos init context failed (%s)\n",
+			error_message(code));
 		return code;
 	}
 
@@ -628,7 +632,7 @@ bool create_local_private_krb5_conf_for_domain(const char *realm,
 		return false;
 	}
 
-	dname = lock_path("smb_krb5");
+	dname = lock_path(talloc_tos(), "smb_krb5");
 	if (!dname) {
 		return false;
 	}
@@ -639,7 +643,7 @@ bool create_local_private_krb5_conf_for_domain(const char *realm,
 		goto done;
 	}
 
-	tmpname = lock_path("smb_tmp_krb5.XXXXXX");
+	tmpname = lock_path(talloc_tos(), "smb_tmp_krb5.XXXXXX");
 	if (!tmpname) {
 		goto done;
 	}
@@ -673,11 +677,19 @@ bool create_local_private_krb5_conf_for_domain(const char *realm,
 	}
 #endif
 
+	/*
+	 * We are setting 'dns_lookup_kdc' to true, because we want to lookup
+	 * KDCs which are not configured via DNS SRV records, eg. if we do:
+	 *
+	 *     net ads join -Uadmin@otherdomain
+	 */
 	file_contents =
 	    talloc_asprintf(fname,
-			    "[libdefaults]\n\tdefault_realm = %s\n"
+			    "[libdefaults]\n"
+			    "\tdefault_realm = %s\n"
 			    "%s"
-			    "\tdns_lookup_realm = false\n\n"
+			    "\tdns_lookup_realm = false\n"
+			    "\tdns_lookup_kdc = true\n\n"
 			    "[realms]\n\t%s = {\n"
 			    "%s\t}\n"
 			    "%s\n",

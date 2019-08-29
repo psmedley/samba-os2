@@ -101,7 +101,15 @@ typedef void TALLOC_CTX;
 #endif
 #endif
 
+#ifndef _DEPRECATED_
+#ifdef HAVE___ATTRIBUTE__
+#define _DEPRECATED_ __attribute__ ((deprecated))
+#else
+#define _DEPRECATED_
+#endif
+#endif
 #ifdef DOXYGEN
+
 /**
  * @brief Create a new talloc context.
  *
@@ -1047,7 +1055,7 @@ int talloc_unlink(const void *context, void *ptr);
  *
  * @return              A talloc context, NULL on error.
  */
-void *talloc_autofree_context(void);
+void *talloc_autofree_context(void) _DEPRECATED_;
 
 /**
  * @brief Get the size of a talloc chunk.
@@ -1907,10 +1915,13 @@ void talloc_set_log_stderr(void);
  *	  move causes the new parent to exceed its limits. However
  *	  any further allocation on that hierarchy will then fail.
  *
+ * @warning talloc memlimit functionality is deprecated. Please
+ *	    consider using cgroup memory limits instead.
+ *
  * @param[in]	ctx		The talloc context to set the limit on
  * @param[in]	max_size	The (new) max_size
  */
-int talloc_set_memlimit(const void *ctx, size_t max_size);
+int talloc_set_memlimit(const void *ctx, size_t max_size) _DEPRECATED_;
 
 /* @} ******************************************************************/
 

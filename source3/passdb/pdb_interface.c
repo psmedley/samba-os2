@@ -648,7 +648,7 @@ NTSTATUS pdb_delete_user(TALLOC_CTX *mem_ctx, struct samu *sam_acct)
 		 * just return */
 		return status;
 	}
-	messaging_send_all(server_messaging_context(),
+	messaging_send_all(global_messaging_context(),
 			   ID_CACHE_DELETE,
 			   msg_data,
 			   strlen(msg_data) + 1);
@@ -741,7 +741,7 @@ static NTSTATUS pdb_default_create_dom_group(struct pdb_methods *methods,
 {
 	struct dom_sid group_sid;
 	struct group *grp;
-	fstring tmp;
+	struct dom_sid_buf tmp;
 
 	grp = getgrnam(name);
 
@@ -769,8 +769,12 @@ static NTSTATUS pdb_default_create_dom_group(struct pdb_methods *methods,
 
 	sid_compose(&group_sid, get_global_sam_sid(), *rid);
 
-	return add_initial_entry(grp->gr_gid, sid_to_fstring(tmp, &group_sid),
-				 SID_NAME_DOM_GRP, name, NULL);
+	return add_initial_entry(
+		grp->gr_gid,
+		dom_sid_str_buf(&group_sid, &tmp),
+		SID_NAME_DOM_GRP,
+		name,
+		NULL);
 }
 
 NTSTATUS pdb_create_dom_group(TALLOC_CTX *mem_ctx, const char *name,
@@ -1238,7 +1242,7 @@ bool pdb_sid_to_id(const struct dom_sid *sid, struct unixid *id)
 
 	ret = pdb->sid_to_id(pdb, sid, id);
 
-	if (ret == true) {
+	if (ret) {
 		idmap_cache_set_sid2unixid(sid, id);
 	}
 
@@ -1493,6 +1497,8 @@ static bool pdb_default_sid_to_id(struct pdb_methods *methods,
 	TALLOC_CTX *mem_ctx;
 	bool ret = False;
 	uint32_t rid;
+	struct dom_sid_buf buf;
+
 	id->id = -1;
 
 	mem_ctx = talloc_new(NULL);
@@ -1525,13 +1531,14 @@ static bool pdb_default_sid_to_id(struct pdb_methods *methods,
 					  "an object exists in the database, "
 					   "but it is neither a user nor a "
 					   "group (got type %d).\n",
-					  sid_string_dbg(sid), type));
+					  dom_sid_str_buf(sid, &buf),
+					  type));
 				ret = false;
 			}
 		} else {
 			DEBUG(5, ("SID %s belongs to our domain, but there is "
 				  "no corresponding object in the database.\n",
-				  sid_string_dbg(sid)));
+				  dom_sid_str_buf(sid, &buf)));
 		}
 		goto done;
 	}
@@ -1540,7 +1547,7 @@ static bool pdb_default_sid_to_id(struct pdb_methods *methods,
 	 * "Unix User" and "Unix Group"
 	 */
 	ret = pdb_sid_to_id_unix_users_and_groups(sid, id);
-	if (ret == true) {
+	if (ret) {
 		goto done;
 	}
 
@@ -1559,13 +1566,14 @@ static bool pdb_default_sid_to_id(struct pdb_methods *methods,
 
 		if (!NT_STATUS_IS_OK(methods->getgrsid(methods, map, *sid))) {
 			DEBUG(10, ("Could not find map for sid %s\n",
-				   sid_string_dbg(sid)));
+				   dom_sid_str_buf(sid, &buf)));
 			goto done;
 		}
 		if ((map->sid_name_use != SID_NAME_ALIAS) &&
 		    (map->sid_name_use != SID_NAME_WKN_GRP)) {
 			DEBUG(10, ("Map for sid %s is a %s, expected an "
-				   "alias\n", sid_string_dbg(sid),
+				   "alias\n",
+				   dom_sid_str_buf(sid, &buf),
 				   sid_type_lookup(map->sid_name_use)));
 			goto done;
 		}
@@ -1577,7 +1585,7 @@ static bool pdb_default_sid_to_id(struct pdb_methods *methods,
 	}
 
 	DEBUG(5, ("Sid %s is neither ours, a Unix SID, nor builtin\n",
-		  sid_string_dbg(sid)));
+		  dom_sid_str_buf(sid, &buf)));
 
  done:
 

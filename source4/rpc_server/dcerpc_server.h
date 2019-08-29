@@ -38,13 +38,14 @@ struct dcesrv_connection;
 struct dcesrv_call_state;
 struct dcesrv_auth;
 struct dcesrv_connection_context;
+struct dcesrv_iface_state;
 
 struct dcesrv_interface {
 	const char *name;
 	struct ndr_syntax_id syntax_id;
 
 	/* this function is called when the client binds to this interface  */
-	NTSTATUS (*bind)(struct dcesrv_call_state *, const struct dcesrv_interface *, uint32_t if_version);
+	NTSTATUS (*bind)(struct dcesrv_connection_context *, const struct dcesrv_interface *);
 
 	/* this function is called when the client disconnects the endpoint */
 	void (*unbind)(struct dcesrv_connection_context *, const struct dcesrv_interface *);
@@ -88,6 +89,7 @@ struct data_blob_list_item {
 /* the state of an ongoing dcerpc call */
 struct dcesrv_call_state {
 	struct dcesrv_call_state *next, *prev;
+	struct dcesrv_auth *auth_state;
 	struct dcesrv_connection *conn;
 	struct dcesrv_connection_context *context;
 	struct ncacn_packet pkt;
@@ -161,20 +163,20 @@ struct dcesrv_call_state {
 * created and fetch using the dcesrv_handle_* functions.
 *
 * Use
-* dcesrv_handle_new(struct dcesrv_connection \*, uint8 handle_type)
+* dcesrv_handle_create(struct dcesrv_call_state \*, uint8 handle_type)
 * to obtain a new handle of the specified type. Handle types are
 * unique within each pipe.
 *
 * The handle can later be fetched again using:
 *
-* struct dcesrv_handle *dcesrv_handle_fetch(
-*         struct dcesrv_connection *dce_conn,
+* struct dcesrv_handle *dcesrv_handle_lookup(
+*         struct dcesrv_call_state *dce_call,
 *         struct policy_handle *p,
 *         uint8 handle_type)
 *
 * and destroyed by:
 *
-* 	dcesrv_handle_destroy(struct dcesrv_handle *).
+* 	TALLOC_FREE(struct dcesrv_handle *).
 *
 * User data should be stored in the 'data' member of the dcesrv_handle
 * struct.
@@ -188,21 +190,23 @@ struct dcesrv_handle {
 	struct dcesrv_assoc_group *assoc_group;
 	struct policy_handle wire_handle;
 	struct dom_sid *sid;
+	enum dcerpc_AuthLevel min_auth_level;
 	const struct dcesrv_interface *iface;
 	void *data;
 };
 
 /* hold the authentication state information */
 struct dcesrv_auth {
+	struct dcesrv_auth *prev, *next;
 	enum dcerpc_AuthType auth_type;
 	enum dcerpc_AuthLevel auth_level;
 	uint32_t auth_context_id;
 	struct gensec_security *gensec_security;
 	struct auth_session_info *session_info;
-	NTSTATUS (*session_key)(struct dcesrv_connection *, DATA_BLOB *session_key);
-	bool client_hdr_signing;
-	bool hdr_signing;
+	NTSTATUS (*session_key_fn)(struct dcesrv_auth *, DATA_BLOB *session_key);
+	bool auth_started;
 	bool auth_finished;
+	bool auth_audited;
 	bool auth_invalid;
 };
 
@@ -215,9 +219,6 @@ struct dcesrv_connection_context {
 
 	/* the ndr function table for the chosen interface */
 	const struct dcesrv_interface *iface;
-
-	/* private data for the interface implementation */
-	void *private_data;
 
 	/*
 	 * the minimum required auth level for this interface
@@ -268,9 +269,6 @@ struct dcesrv_connection {
 	/* the server_id that will be used for this connection */
 	struct server_id server_id;
 
-	/* the transport level session key */
-	DATA_BLOB transport_session_key;
-
 	/* is this connection pending termination?  If so, why? */
 	const char *terminate;
 
@@ -291,15 +289,20 @@ struct dcesrv_connection {
 	const struct tsocket_address *remote_address;
 
 	/* the current authentication state */
-	struct dcesrv_auth auth_state;
+	struct dcesrv_auth *default_auth_state;
+	size_t max_auth_states;
+	struct dcesrv_auth *auth_states;
+	bool got_explicit_auth_level_connect;
+	struct dcesrv_auth *default_auth_level_connect;
+	bool client_hdr_signing;
+	bool support_hdr_signing;
+	bool negotiated_hdr_signing;
 
 	/*
 	 * remember which pdu types are allowed
 	 */
 	bool allow_bind;
-	bool allow_auth3;
 	bool allow_alter;
-	bool allow_request;
 
 	/* the association group the connection belongs to */
 	struct dcesrv_assoc_group *assoc_group;
@@ -311,9 +314,6 @@ struct dcesrv_connection {
 	 * Our preferred transfer syntax.
 	 */
 	const struct ndr_syntax_id *preferred_transfer;
-
-	/* the negotiated bind time features */
-	uint16_t bind_time_features;
 
 	/*
 	 * This is used to block the connection during
@@ -354,15 +354,23 @@ struct dcesrv_endpoint_server {
 struct dcesrv_assoc_group {
 	/* the wire id */
 	uint32_t id;
-	
+
+	/* The transport this is valid on */
+	enum dcerpc_transport_t transport;
+
 	/* list of handles in this association group */
 	struct dcesrv_handle *handles;
+
+	/*
+	 * list of iface states per assoc/conn
+	 */
+	struct dcesrv_iface_state *iface_states;
 
 	/* parent context */
 	struct dcesrv_context *dce_ctx;
 
-	/* Remote association group ID (if proxied) */
-	uint32_t proxied_id;
+	/* the negotiated bind time features */
+	uint16_t bind_time_features;
 };
 
 /* server-wide context information for the dcerpc server */
@@ -381,6 +389,8 @@ struct dcesrv_context {
 		struct dcesrv_endpoint *next, *prev;
 		/* the type and location of the endpoint */
 		struct dcerpc_binding *ep_description;
+		/* the secondary endpoint description for the BIND_ACK */
+		struct dcerpc_binding *ep_2nd_description;
 		/* the security descriptor for smb named pipes */
 		struct security_descriptor *sd;
 		/* the list of interfaces available on this endpoint */
@@ -422,35 +432,42 @@ struct model_ops;
 
 NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 				   const char *ep_name,
+				   const char *ncacn_np_secondary_endpoint,
 				   const struct dcesrv_interface *iface,
 				   const struct security_descriptor *sd);
 NTSTATUS dcerpc_register_ep_server(const struct dcesrv_endpoint_server *ep_server);
 NTSTATUS dcesrv_init_context(TALLOC_CTX *mem_ctx, 
 				      struct loadparm_context *lp_ctx,
 				      const char **endpoint_servers, struct dcesrv_context **_dce_ctx);
-NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
-				 TALLOC_CTX *mem_ctx,
-				 const struct dcesrv_endpoint *ep,
-				 struct auth_session_info *session_info,
-				 struct tevent_context *event_ctx,
-				 struct imessaging_context *msg_ctx,
-				 struct server_id server_id,
-				 uint32_t state_flags,
-				 struct dcesrv_connection **_p);
 
 NTSTATUS dcesrv_reply(struct dcesrv_call_state *call);
-struct dcesrv_handle *dcesrv_handle_new(struct dcesrv_connection_context *context, 
-					uint8_t handle_type);
+struct dcesrv_handle *dcesrv_handle_create(struct dcesrv_call_state *call,
+					   uint8_t handle_type);
 
-struct dcesrv_handle *dcesrv_handle_fetch(
-					  struct dcesrv_connection_context *context, 
-					  struct policy_handle *p,
-					  uint8_t handle_type);
+struct dcesrv_handle *dcesrv_handle_lookup(struct dcesrv_call_state *call,
+					   const struct policy_handle *p,
+					   uint8_t handle_type);
 
 const struct tsocket_address *dcesrv_connection_get_local_address(struct dcesrv_connection *conn);
 const struct tsocket_address *dcesrv_connection_get_remote_address(struct dcesrv_connection *conn);
 
-NTSTATUS dcesrv_fetch_session_key(struct dcesrv_connection *p, DATA_BLOB *session_key);
+/*
+ * Fetch the authentication session key if available.
+ *
+ * This is the key generated by a gensec authentication.
+ */
+NTSTATUS dcesrv_auth_session_key(struct dcesrv_call_state *call,
+				 DATA_BLOB *session_key);
+
+/*
+ * Fetch the transport session key if available.
+ * Typically this is the SMB session key
+ * or a fixed key for local transports.
+ *
+ * The key is always truncated to 16 bytes.
+*/
+NTSTATUS dcesrv_transport_session_key(struct dcesrv_call_state *call,
+				      DATA_BLOB *session_key);
 
 /* a useful macro for generating a RPC fault in the backend code */
 #define DCESRV_FAULT(code) do { \
@@ -472,7 +489,7 @@ NTSTATUS dcesrv_fetch_session_key(struct dcesrv_connection *p, DATA_BLOB *sessio
    invalid handle or retval if the handle is of the
    wrong type */
 #define DCESRV_PULL_HANDLE_RETVAL(h, inhandle, t, retval) do { \
-	(h) = dcesrv_handle_fetch(dce_call->context, (inhandle), DCESRV_HANDLE_ANY); \
+	(h) = dcesrv_handle_lookup(dce_call, (inhandle), DCESRV_HANDLE_ANY); \
 	DCESRV_CHECK_HANDLE(h); \
 	if ((t) != DCESRV_HANDLE_ANY && (h)->wire_handle.handle_type != (t)) { \
 		return retval; \
@@ -482,7 +499,7 @@ NTSTATUS dcesrv_fetch_session_key(struct dcesrv_connection *p, DATA_BLOB *sessio
 /* this checks for a valid policy handle and gives a dcerpc fault 
    if its the wrong type of handle */
 #define DCESRV_PULL_HANDLE_FAULT(h, inhandle, t) do { \
-	(h) = dcesrv_handle_fetch(dce_call->context, (inhandle), t); \
+	(h) = dcesrv_handle_lookup(dce_call, (inhandle), t); \
 	DCESRV_CHECK_HANDLE(h); \
 } while (0)
 
@@ -511,13 +528,57 @@ _PUBLIC_ bool dcesrv_call_authenticated(struct dcesrv_call_state *dce_call);
  */
 _PUBLIC_ const char *dcesrv_call_account_name(struct dcesrv_call_state *dce_call);
 
-_PUBLIC_ NTSTATUS dcesrv_interface_bind_require_integrity(struct dcesrv_call_state *dce_call,
+/**
+ * retrieve session_info from a dce_call
+ */
+_PUBLIC_ struct auth_session_info *dcesrv_call_session_info(struct dcesrv_call_state *dce_call);
+
+/**
+ * retrieve auth type/level from a dce_call
+ */
+_PUBLIC_ void dcesrv_call_auth_info(struct dcesrv_call_state *dce_call,
+				    enum dcerpc_AuthType *auth_type,
+				    enum dcerpc_AuthLevel *auth_level);
+
+_PUBLIC_ NTSTATUS dcesrv_interface_bind_require_integrity(struct dcesrv_connection_context *context,
 							  const struct dcesrv_interface *iface);
-_PUBLIC_ NTSTATUS dcesrv_interface_bind_require_privacy(struct dcesrv_call_state *dce_call,
+_PUBLIC_ NTSTATUS dcesrv_interface_bind_require_privacy(struct dcesrv_connection_context *context,
 						        const struct dcesrv_interface *iface);
-_PUBLIC_ NTSTATUS dcesrv_interface_bind_reject_connect(struct dcesrv_call_state *dce_call,
+_PUBLIC_ NTSTATUS dcesrv_interface_bind_reject_connect(struct dcesrv_connection_context *context,
 						       const struct dcesrv_interface *iface);
-_PUBLIC_ NTSTATUS dcesrv_interface_bind_allow_connect(struct dcesrv_call_state *dce_call,
+_PUBLIC_ NTSTATUS dcesrv_interface_bind_allow_connect(struct dcesrv_connection_context *context,
 						      const struct dcesrv_interface *iface);
+
+_PUBLIC_ NTSTATUS _dcesrv_iface_state_store_assoc(
+		struct dcesrv_call_state *call,
+		uint64_t magic,
+		void *ptr,
+		const char *location);
+#define dcesrv_iface_state_store_assoc(call, magic, ptr) \
+	_dcesrv_iface_state_store_assoc((call), (magic), (ptr), \
+					__location__)
+_PUBLIC_ void *_dcesrv_iface_state_find_assoc(
+		struct dcesrv_call_state *call,
+		uint64_t magic);
+#define dcesrv_iface_state_find_assoc(call, magic, _type) \
+	talloc_get_type( \
+		_dcesrv_iface_state_find_assoc((call), (magic)), \
+		_type)
+
+_PUBLIC_ NTSTATUS _dcesrv_iface_state_store_conn(
+		struct dcesrv_call_state *call,
+		uint64_t magic,
+		void *_pptr,
+		const char *location);
+#define dcesrv_iface_state_store_conn(call, magic, ptr) \
+	_dcesrv_iface_state_store_conn((call), (magic), (ptr), \
+					__location__)
+_PUBLIC_ void *_dcesrv_iface_state_find_conn(
+		struct dcesrv_call_state *call,
+		uint64_t magic);
+#define dcesrv_iface_state_find_conn(call, magic, _type) \
+	talloc_get_type( \
+		_dcesrv_iface_state_find_conn((call), (magic)), \
+		_type)
 
 #endif /* SAMBA_DCERPC_SERVER_H */

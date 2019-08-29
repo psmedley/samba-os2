@@ -30,6 +30,11 @@ import samba
 from subprocess import call
 from ldb import LdbError
 from samba.tests.password_test import PasswordCommon
+from samba.dcerpc.windows_event_ids import (
+    EVT_ID_SUCCESSFUL_LOGON,
+    EVT_ID_UNSUCCESSFUL_LOGON,
+    EVT_LOGON_NETWORK
+)
 
 USER_NAME = "authlogtestuser"
 USER_PASS = samba.generate_random_password(32, 32)
@@ -81,7 +86,11 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "SAMR Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "samr_ChangePasswordUser3"))
+                        "samr_ChangePasswordUser3") and
+                    (msg["Authentication"]["eventId"] ==
+                        EVT_ID_SUCCESSFUL_LOGON) and
+                    (msg["Authentication"]["logonType"] ==
+                        EVT_LOGON_NETWORK))
 
         creds = self.insta_creds(template=self.get_credentials())
 
@@ -89,7 +98,7 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
         net = Net(creds, lp, server=self.server_ip)
         password = "newPassword!!42"
 
-        net.change_password(newpassword=password.encode('utf-8'),
+        net.change_password(newpassword=password,
                             username=USER_NAME,
                             oldpassword=USER_PASS)
 
@@ -107,7 +116,11 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "SAMR Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "samr_ChangePasswordUser3"))
+                        "samr_ChangePasswordUser3") and
+                    (msg["Authentication"]["eventId"] ==
+                        EVT_ID_UNSUCCESSFUL_LOGON) and
+                    (msg["Authentication"]["logonType"] ==
+                        EVT_LOGON_NETWORK))
 
         creds = self.insta_creds(template=self.get_credentials())
 
@@ -117,7 +130,7 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
 
         exception_thrown = False
         try:
-            net.change_password(newpassword=password.encode('utf-8'),
+            net.change_password(newpassword=password,
                                 oldpassword=USER_PASS,
                                 username=USER_NAME)
         except Exception:
@@ -138,7 +151,11 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "SAMR Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "samr_ChangePasswordUser3"))
+                        "samr_ChangePasswordUser3") and
+                    (msg["Authentication"]["eventId"] ==
+                        EVT_ID_UNSUCCESSFUL_LOGON) and
+                    (msg["Authentication"]["logonType"] ==
+                        EVT_LOGON_NETWORK))
 
         creds = self.insta_creds(template=self.get_credentials())
 
@@ -148,7 +165,7 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
 
         exception_thrown = False
         try:
-            net.change_password(newpassword=password.encode('utf-8'),
+            net.change_password(newpassword=password,
                                 oldpassword=USER_PASS,
                                 username="badUser")
         except Exception:
@@ -169,7 +186,11 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "SAMR Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "samr_ChangePasswordUser3"))
+                        "samr_ChangePasswordUser3") and
+                    (msg["Authentication"]["eventId"] ==
+                        EVT_ID_UNSUCCESSFUL_LOGON) and
+                    (msg["Authentication"]["logonType"] ==
+                        EVT_LOGON_NETWORK))
 
         creds = self.insta_creds(template=self.get_credentials())
 
@@ -179,7 +200,7 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
 
         exception_thrown = False
         try:
-            net.change_password(newpassword=password.encode('utf-8'),
+            net.change_password(newpassword=password,
                                 oldpassword="badPassword",
                                 username=USER_NAME)
         except Exception:
@@ -204,7 +225,11 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["status"] ==
                         "NT_STATUS_WRONG_PASSWORD") and
                     (msg["Authentication"]["authDescription"] ==
-                        "OemChangePasswordUser2"))
+                        "OemChangePasswordUser2") and
+                    (msg["Authentication"]["eventId"] ==
+                        EVT_ID_UNSUCCESSFUL_LOGON) and
+                    (msg["Authentication"]["logonType"] ==
+                        EVT_LOGON_NETWORK))
 
         username = os.environ["USERNAME"]
         server = os.environ["SERVER"]
@@ -227,7 +252,11 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "LDAP Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "LDAP Modify"))
+                        "LDAP Modify") and
+                    (msg["Authentication"]["eventId"] ==
+                        EVT_ID_SUCCESSFUL_LOGON) and
+                    (msg["Authentication"]["logonType"] ==
+                        EVT_LOGON_NETWORK))
 
         new_password = samba.generate_random_password(32, 32)
         self.ldb.modify_ldif(
@@ -282,7 +311,11 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "LDAP Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "LDAP Modify"))
+                        "LDAP Modify") and
+                    (msg["Authentication"]["eventId"] ==
+                        EVT_ID_UNSUCCESSFUL_LOGON) and
+                    (msg["Authentication"]["logonType"] ==
+                        EVT_LOGON_NETWORK))
 
         new_password = samba.generate_random_password(32, 32)
         try:

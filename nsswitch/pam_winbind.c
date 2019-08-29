@@ -492,6 +492,8 @@ config_from_pam:
 			ctrl |= WINBIND_SILENT;
 		else if (!strcasecmp(*v, "use_authtok"))
 			ctrl |= WINBIND_USE_AUTHTOK_ARG;
+		else if (!strcasecmp(*v, "try_authtok"))
+			ctrl |= WINBIND_TRY_AUTHTOK_ARG;
 		else if (!strcasecmp(*v, "use_first_pass"))
 			ctrl |= WINBIND_USE_FIRST_PASS_ARG;
 		else if (!strcasecmp(*v, "try_first_pass"))
@@ -562,6 +564,8 @@ static int _pam_winbind_init_context(pam_handle_t *pamh,
 				     struct pwb_context **ctx_p)
 {
 	struct pwb_context *r = NULL;
+	const char *service = NULL;
+	char service_name[32] = {0};
 	int ctrl_code;
 
 #ifdef HAVE_GETTEXT
@@ -591,6 +595,12 @@ static int _pam_winbind_init_context(pam_handle_t *pamh,
 		TALLOC_FREE(r);
 		return PAM_SYSTEM_ERR;
 	}
+
+	pam_get_item(pamh, PAM_SERVICE, (const void **)&service);
+
+	snprintf(service_name, sizeof(service_name), "PAM_WINBIND[%s]", service);
+
+	wbcSetClientProcessName(service_name);
 
 	*ctx_p = r;
 
@@ -1921,6 +1931,11 @@ static int winbind_auth_request(struct pwb_context *ctx,
 	wbcFreeMemory(logon.blobs);
 	if (info && info->blobs && !p_info) {
 		wbcFreeMemory(info->blobs);
+		/*
+		 * We set blobs to NULL to prevent a use after free in the
+		 * in the wbcLogonUserInfoDestructor
+		 */
+		info->blobs = NULL;
 	}
 	if (error && !p_error) {
 		wbcFreeMemory(error);
@@ -3180,6 +3195,9 @@ int pam_sm_chauthtok(pam_handle_t * pamh, int flags,
 
 		if (on(WINBIND_USE_AUTHTOK_ARG, lctrl)) {
 			lctrl |= WINBIND_USE_FIRST_PASS_ARG;
+		}
+		if (on(WINBIND_TRY_AUTHTOK_ARG, lctrl)) {
+			lctrl |= WINBIND_TRY_FIRST_PASS_ARG;
 		}
 		retry = 0;
 		ret = PAM_AUTHTOK_ERR;

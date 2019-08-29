@@ -25,6 +25,7 @@ from samba.credentials import Credentials
 from samba import gensec, auth
 import samba.tests
 
+
 class GensecTests(samba.tests.TestCase):
 
     def setUp(self):
@@ -147,7 +148,6 @@ class GensecTests(samba.tests.TestCase):
 
     def test_update_ntlmssp_to_spnego(self):
         self._test_update("GSS-SPNEGO", "ntlmssp")
-
 
     def test_max_update_size(self):
         """Test GENSEC by doing an exchange with ourselves using GSSAPI against a KDC"""

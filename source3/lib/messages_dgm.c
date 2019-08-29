@@ -993,12 +993,6 @@ int messaging_dgm_init(struct tevent_context *ev,
 		return EEXIST;
 	}
 
-	if (tevent_context_is_wrapper(ev)) {
-		/* This is really a programmer error! */
-		DBG_ERR("Should not be used with a wrapper tevent context\n");
-		return EINVAL;
-	}
-
 	ctx = talloc_zero(NULL, struct messaging_dgm_context);
 	if (ctx == NULL) {
 		goto fail_nomem;
@@ -1072,7 +1066,7 @@ int messaging_dgm_init(struct tevent_context *ev,
 
 	ctx->have_dgm_context = &have_dgm_context;
 
-	ret = pthreadpool_tevent_init(ctx, 0, &ctx->pool);
+	ret = pthreadpool_tevent_init(ctx, UINT_MAX, &ctx->pool);
 	if (ret != 0) {
 		DBG_WARNING("pthreadpool_tevent_init failed: %s\n",
 			    strerror(ret));
@@ -1249,6 +1243,7 @@ static void messaging_dgm_read_handler(struct tevent_context *ev,
 	size_t msgbufsize = msghdr_prep_recv_fds(NULL, NULL, 0, INT8_MAX);
 	uint8_t msgbuf[msgbufsize];
 	uint8_t buf[MESSAGING_DGM_FRAGMENT_LENGTH];
+	size_t num_fds;
 
 	messaging_dgm_validate(ctx);
 
@@ -1284,8 +1279,12 @@ static void messaging_dgm_read_handler(struct tevent_context *ev,
 		return;
 	}
 
-	{
-		size_t num_fds = msghdr_extract_fds(&msg, NULL, 0);
+	num_fds = msghdr_extract_fds(&msg, NULL, 0);
+	if (num_fds == 0) {
+		int fds[1];
+
+		messaging_dgm_recv(ctx, ev, buf, received, fds, 0);
+	} else {
 		size_t i;
 		int fds[num_fds];
 
@@ -1303,7 +1302,6 @@ static void messaging_dgm_read_handler(struct tevent_context *ev,
 
 		messaging_dgm_recv(ctx, ev, buf, received, fds, num_fds);
 	}
-
 }
 
 static int messaging_dgm_in_msg_destructor(struct messaging_dgm_in_msg *m)
@@ -1712,40 +1710,12 @@ struct messaging_dgm_fde *messaging_dgm_register_tevent_context(
 			 */
 			continue;
 		}
-
-		/*
-		 * We can only have one tevent_fd
-		 * per low level tevent_context.
-		 *
-		 * This means any wrapper tevent_context
-		 * needs to share the structure with
-		 * the main tevent_context and/or
-		 * any sibling wrapper tevent_context.
-		 *
-		 * This means we need to use tevent_context_same_loop()
-		 * instead of just (fde_ev->ev == ev).
-		 *
-		 * Note: the tevent_context_is_wrapper() check below
-		 * makes sure that fde_ev->ev is always a raw
-		 * tevent context.
-		 */
-		if (tevent_context_same_loop(fde_ev->ev, ev)) {
+		if (fde_ev->ev == ev) {
 			break;
 		}
 	}
 
 	if (fde_ev == NULL) {
-		if (tevent_context_is_wrapper(ev)) {
-			/*
-			 * This is really a programmer error!
-			 *
-			 * The main/raw tevent context should
-			 * have been registered first!
-			 */
-			DBG_ERR("Should not be used with a wrapper tevent context\n");
-			return NULL;
-		}
-
 		fde_ev = talloc(fde, struct messaging_dgm_fde_ev);
 		if (fde_ev == NULL) {
 			return NULL;

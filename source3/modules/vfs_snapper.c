@@ -2164,24 +2164,6 @@ static int snapper_gmt_lstat(vfs_handle_struct *handle,
 	return ret;
 }
 
-static int snapper_gmt_fstat(vfs_handle_struct *handle, files_struct *fsp,
-			     SMB_STRUCT_STAT *sbuf)
-{
-	time_t timestamp;
-	int ret;
-
-	ret = SMB_VFS_NEXT_FSTAT(handle, fsp, sbuf);
-	if (ret == -1) {
-		return ret;
-	}
-	if (!snapper_gmt_strip_snapshot(talloc_tos(), handle,
-					fsp->fsp_name->base_name,
-					&timestamp, NULL)) {
-		return 0;
-	}
-	return 0;
-}
-
 static int snapper_gmt_open(vfs_handle_struct *handle,
 			    struct smb_filename *smb_fname, files_struct *fsp,
 			    int flags, mode_t mode)
@@ -3110,7 +3092,6 @@ static struct vfs_fn_pointers snapper_fns = {
 	.symlink_fn = snapper_gmt_symlink,
 	.stat_fn = snapper_gmt_stat,
 	.lstat_fn = snapper_gmt_lstat,
-	.fstat_fn = snapper_gmt_fstat,
 	.open_fn = snapper_gmt_open,
 	.unlink_fn = snapper_gmt_unlink,
 	.chmod_fn = snapper_gmt_chmod,
@@ -3125,6 +3106,8 @@ static struct vfs_fn_pointers snapper_fns = {
 	.mkdir_fn = snapper_gmt_mkdir,
 	.rmdir_fn = snapper_gmt_rmdir,
 	.getxattr_fn = snapper_gmt_getxattr,
+	.getxattrat_send_fn = vfs_not_implemented_getxattrat_send,
+	.getxattrat_recv_fn = vfs_not_implemented_getxattrat_recv,
 	.listxattr_fn = snapper_gmt_listxattr,
 	.removexattr_fn = snapper_gmt_removexattr,
 	.setxattr_fn = snapper_gmt_setxattr,

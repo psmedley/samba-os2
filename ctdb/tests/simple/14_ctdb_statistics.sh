@@ -25,7 +25,7 @@ EOF
 
 . "${TEST_SCRIPTS_DIR}/integration.bash"
 
-ctdb_test_init "$@"
+ctdb_test_init
 
 set -e
 
@@ -35,4 +35,4 @@ pattern='^(CTDB version 1|Current time of statistics[[:space:]]*:.*|Statistics c
 
 try_command_on_node -v 1 "$CTDB statistics"
 
-sanity_check_output 40 "$pattern" "$out"
+sanity_check_output 40 "$pattern"

@@ -1,0 +1,1 @@
+ctdb: python-script-but-no-python-dep usr/lib/*/ctdb/ctdb_etcd_lock #!/usr/bin/python

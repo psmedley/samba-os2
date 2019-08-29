@@ -22,7 +22,6 @@
 #include "smbd/smbd.h"
 #include "system/filesys.h"
 #include "librpc/gen_ndr/xattr.h"
-#include "../lib/crypto/sha256.h"
 #include "dbwrap/dbwrap.h"
 #include "dbwrap/dbwrap_open.h"
 #include "auth.h"
@@ -50,7 +49,7 @@ static bool acl_tdb_init(void)
 		return true;
 	}
 
-	dbname = state_path("file_ntacls.tdb");
+	dbname = state_path(talloc_tos(), "file_ntacls.tdb");
 
 	if (dbname == NULL) {
 		errno = ENOSYS;

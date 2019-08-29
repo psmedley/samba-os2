@@ -21,6 +21,7 @@
 #include "winbindd.h"
 #include "librpc/gen_ndr/ndr_winbind_c.h"
 #include "librpc/gen_ndr/ndr_netlogon.h"
+#include "lib/gencache.h"
 
 struct wb_dsgetdcname_state {
 	struct netr_DsRGetDCNameInfo *dcinfo;
@@ -171,12 +172,14 @@ struct dcinfo_parser_state {
 	struct netr_DsRGetDCNameInfo *dcinfo;
 };
 
-static void dcinfo_parser(time_t timeout, DATA_BLOB blob, void *private_data)
+static void dcinfo_parser(const struct gencache_timeout *timeout,
+			  DATA_BLOB blob,
+			  void *private_data)
 {
 	struct dcinfo_parser_state *state = private_data;
 	enum ndr_err_code ndr_err;
 
-	if (timeout <= time(NULL)) {
+	if (gencache_timeout_expired(timeout)) {
 		return;
 	}
 
