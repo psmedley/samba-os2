@@ -10,6 +10,7 @@ samba-team/:
     jelmer: owner
     sathieu: owner
     vorlon: owner
+    carnil: developer
   unknown_members: delete
   variables: []
   unknown_variables: delete
@@ -83,7 +84,7 @@ samba-team/:
       push_access_level: maintainer
   unknown_protected_branches: delete
   protected_tags:
-    '*': maintainer
+    '*': developer
   unknown_protected_tags: delete
   archived: false
   variables: []

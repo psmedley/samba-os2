@@ -1,3 +1,12 @@
+samba (2:4.10.8+dfsg-1) unstable; urgency=medium
+
+  * Upload to unstable
+  * New upstream release:
+    - CVE-2019-10197: Combination of parameters and permissions can allow user
+      to escape from the share path definition
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 10 Sep 2019 18:46:54 +0200
+
 samba (2:4.10.7+dfsg-1) experimental; urgency=medium
 
   [ Mathieu Parent ]
