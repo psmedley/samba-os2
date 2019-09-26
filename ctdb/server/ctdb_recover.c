@@ -144,7 +144,7 @@ ctdb_control_getnodemap(struct ctdb_context *ctdb, uint32_t opcode, TDB_DATA ind
 int
 ctdb_control_reload_nodes_file(struct ctdb_context *ctdb, uint32_t opcode)
 {
-	int i, num_nodes;
+	unsigned int i, num_nodes;
 	TALLOC_CTX *tmp_ctx;
 	struct ctdb_node **nodes;
 
@@ -453,7 +453,8 @@ int32_t ctdb_control_push_db(struct ctdb_context *ctdb, TDB_DATA indata)
 {
 	struct ctdb_marshall_buffer *reply = (struct ctdb_marshall_buffer *)indata.dptr;
 	struct ctdb_db_context *ctdb_db;
-	int i, ret;
+	unsigned int i;
+	int ret;
 	struct ctdb_rec_data_old *rec;
 
 	if (indata.dsize < offsetof(struct ctdb_marshall_buffer, data)) {
@@ -554,7 +555,8 @@ static void db_push_msg_handler(uint64_t srvid, TDB_DATA indata,
 		private_data, struct db_push_state);
 	struct ctdb_marshall_buffer *recs;
 	struct ctdb_rec_data_old *rec;
-	int i, ret;
+	unsigned int i;
+	int ret;
 
 	if (state->failed) {
 		return;
@@ -1255,7 +1257,7 @@ int32_t ctdb_control_try_delete_records(struct ctdb_context *ctdb, TDB_DATA inda
 {
 	struct ctdb_marshall_buffer *reply = (struct ctdb_marshall_buffer *)indata.dptr;
 	struct ctdb_db_context *ctdb_db;
-	int i;
+	unsigned int i;
 	struct ctdb_rec_data_old *rec;
 	struct ctdb_marshall_buffer *records;
 
@@ -1418,11 +1420,56 @@ int32_t ctdb_control_set_recmaster(struct ctdb_context *ctdb, uint32_t opcode, T
 	return 0;
 }
 
+void ctdb_node_become_inactive(struct ctdb_context *ctdb)
+{
+	struct ctdb_db_context *ctdb_db;
+
+	D_WARNING("Making node INACTIVE\n");
+
+	/*
+	 * Do not service database calls - reset generation to invalid
+	 * so this node ignores any REQ/REPLY CALL/DMASTER
+	 */
+	ctdb->vnn_map->generation = INVALID_GENERATION;
+	for (ctdb_db = ctdb->db_list; ctdb_db != NULL; ctdb_db = ctdb_db->next) {
+		ctdb_db->generation = INVALID_GENERATION;
+	}
+
+	/*
+	 * Although this bypasses the control, the only thing missing
+	 * is the deferred drop of all public IPs, which isn't
+	 * necessary because they are dropped below
+	 */
+	if (ctdb->recovery_mode != CTDB_RECOVERY_ACTIVE) {
+		D_NOTICE("Recovery mode set to ACTIVE\n");
+		ctdb->recovery_mode = CTDB_RECOVERY_ACTIVE;
+	}
+
+	/*
+	 * Initiate database freeze - this will be scheduled for
+	 * immediate execution and will be in progress long before the
+	 * calling control returns
+	 */
+	ctdb_daemon_send_control(ctdb,
+				 ctdb->pnn,
+				 0,
+				 CTDB_CONTROL_FREEZE,
+				 0,
+				 CTDB_CTRL_FLAG_NOREPLY,
+				 tdb_null,
+				 NULL,
+				 NULL);
+
+	D_NOTICE("Dropping all public IP addresses\n");
+	ctdb_release_all_ips(ctdb);
+}
 
 int32_t ctdb_control_stop_node(struct ctdb_context *ctdb)
 {
 	DEBUG(DEBUG_ERR, ("Stopping node\n"));
 	ctdb->nodes[ctdb->pnn]->flags |= NODE_FLAGS_STOPPED;
+
+	ctdb_node_become_inactive(ctdb);
 
 	return 0;
 }

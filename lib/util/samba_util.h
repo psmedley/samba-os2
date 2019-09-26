@@ -48,6 +48,7 @@ extern const char *panic_action;
 #include "lib/util/data_blob.h"
 #include "lib/util/byteorder.h"
 #include "lib/util/talloc_stack.h"
+#include "lib/util/talloc_keep_secret.h"
 
 #ifndef ABS
 #define ABS(a) ((a)>0?(a):(-(a)))
@@ -91,6 +92,11 @@ _PUBLIC_ int sys_getnameinfo(const struct sockaddr *psa,
   generate a single random uint32_t
 **/
 _PUBLIC_ uint32_t generate_random(void);
+
+/**
+  generate a single random uint64_t
+**/
+_PUBLIC_ uint64_t generate_random_u64(void);
 
 /**
   very basic password quality checker
@@ -655,6 +661,7 @@ struct tevent_req *samba_runcmd_send(TALLOC_CTX *mem_ctx,
 				     int stderr_log_level,
 				     const char * const *argv0, ...);
 int samba_runcmd_recv(struct tevent_req *req, int *perrno);
+int samba_runcmd_export_stdin(struct tevent_req *req);
 
 #ifdef DEVELOPER
 void samba_start_debugger(void);

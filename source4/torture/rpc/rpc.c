@@ -516,6 +516,7 @@ NTSTATUS torture_rpc_init(TALLOC_CTX *ctx)
 	torture_suite_add_suite(suite, torture_rpc_spoolss_driver(suite));
 	torture_suite_add_suite(suite, torture_rpc_spoolss_access(suite));
 	torture_suite_add_suite(suite, torture_rpc_iremotewinspool(suite));
+	torture_suite_add_suite(suite, torture_rpc_iremotewinspool_drv(suite));
 	torture_suite_add_simple_test(suite, "samr", torture_rpc_samr);
 	torture_suite_add_simple_test(suite, "samr.users", torture_rpc_samr_users);
 	torture_suite_add_simple_test(suite, "samr.passwords", torture_rpc_samr_passwords);
@@ -546,7 +547,6 @@ NTSTATUS torture_rpc_init(TALLOC_CTX *ctx)
 	torture_suite_add_suite(suite, torture_rpc_remact(suite));
 	torture_suite_add_simple_test(suite, "mgmt", torture_rpc_mgmt);
 	torture_suite_add_simple_test(suite, "scanner", torture_rpc_scanner);
-	torture_suite_add_simple_test(suite, "autoidl", torture_rpc_autoidl);
 	torture_suite_add_simple_test(suite, "countcalls", torture_rpc_countcalls);
 	torture_suite_add_simple_test(suite, "authcontext", torture_bind_authcontext);
 	torture_suite_add_suite(suite, torture_rpc_samba3(suite));

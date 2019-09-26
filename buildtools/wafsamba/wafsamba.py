@@ -10,6 +10,7 @@ TaskGen.task_gen.apply_verif = Utils.nada
 
 # bring in the other samba modules
 from samba_utils import *
+from samba_utils import symlink
 from samba_version import *
 from samba_autoconf import *
 from samba_patterns import *
@@ -61,7 +62,7 @@ def SAMBA_BUILD_ENV(conf):
     for (source, target) in [('shared', 'shared'), ('modules', 'modules'), ('python', 'python')]:
         link_target = os.path.join(conf.env.BUILD_DIRECTORY, 'default/' + target)
         if not os.path.lexists(link_target):
-            os.symlink('../' + source, link_target)
+            symlink('../' + source, link_target)
 
     # get perl to put the blib files in the build directory
     blib_bld = os.path.join(conf.env.BUILD_DIRECTORY, 'default/pidl/blib')
@@ -134,9 +135,6 @@ def SAMBA_LIBRARY(bld, libname, source,
                   allow_warnings=False,
                   enabled=True):
     '''define a Samba library'''
-
-    if pyembed and bld.env['IS_EXTRA_PYTHON']:
-        public_headers = None
 
     if private_library and public_headers:
         raise Errors.WafError("private library '%s' must not have public header files" %
@@ -221,7 +219,7 @@ def SAMBA_LIBRARY(bld, libname, source,
         if pc_files is None:
             raise Errors.WafError("public library '%s' must have pkg-config file" %
                        libname)
-        if public_headers is None and not bld.env['IS_EXTRA_PYTHON']:
+        if public_headers is None:
             raise Errors.WafError("public library '%s' must have header files" %
                        libname)
 
@@ -253,10 +251,10 @@ def SAMBA_LIBRARY(bld, libname, source,
         features += ' abi_check'
 
     if pyembed and bld.env['PYTHON_SO_ABI_FLAG']:
-        # For ABI checking, we don't care about the exact Python version.
-        # Replace the Python ABI tag (e.g. ".cpython-35m") by a generic ".py3"
+        # For ABI checking, we don't care about the Python version.
+        # Remove the Python ABI tag (e.g. ".cpython-35m")
         abi_flag = bld.env['PYTHON_SO_ABI_FLAG']
-        replacement = '.py%s' % bld.env['PYTHON_VERSION'].split('.')[0]
+        replacement = ''
         version_libname = libname.replace(abi_flag, replacement)
     else:
         version_libname = libname
@@ -739,10 +737,10 @@ def SAMBA_SCRIPT(bld, name, pattern, installdir, installname=None):
         link_dst = os.path.join(tgtdir, os.path.basename(iname))
         if os.path.islink(link_dst) and os.readlink(link_dst) == link_src:
             continue
-        if os.path.exists(link_dst):
+        if os.path.islink(link_dst):
             os.unlink(link_dst)
         Logs.info("symlink: %s -> %s/%s" % (s, installdir, iname))
-        os.symlink(link_src, link_dst)
+        symlink(link_src, link_dst)
 Build.BuildContext.SAMBA_SCRIPT = SAMBA_SCRIPT
 
 
@@ -920,7 +918,7 @@ def SAMBAMANPAGES(bld, manpages, extra_source=None):
     '''build and install manual pages'''
     bld.env.SAMBA_EXPAND_XSL = bld.srcnode.abspath() + '/docs-xml/xslt/expand-sambadoc.xsl'
     bld.env.SAMBA_MAN_XSL = bld.srcnode.abspath() + '/docs-xml/xslt/man.xsl'
-    bld.env.SAMBA_CATALOG = bld.srcnode.abspath() + '/bin/default/docs-xml/build/catalog.xml'
+    bld.env.SAMBA_CATALOG = bld.bldnode.abspath() + '/docs-xml/build/catalog.xml'
     bld.env.SAMBA_CATALOGS = 'file:///etc/xml/catalog file:///usr/local/share/xml/catalog file://' + bld.env.SAMBA_CATALOG
 
     for m in manpages.split():

@@ -9,9 +9,12 @@
  ^samba3.smbtorture_s3.crypt_server\(nt4_dc\).SMB2-SESSION-REAUTH # expected to give ACCESS_DENIED SMB2.1 doesn't have encryption
 ^samba3.smbtorture_s3.crypt_server\(nt4_dc\).SMB2-SESSION-RECONNECT # expected to give CONNECTION_DISCONNECTED, we need to fix the test
 ^samba3.smbtorture_s3.plain.*SMB2-DIR-FSYNC.*\(ad_dc_ntvfs\)
+^samba3.smbtorture_s3.plain.LOCK11.*\(ad_dc_ntvfs\)
 ^samba3.smb2.session enc.reconnect # expected to give CONNECTION_DISCONNECTED, we need to fix the test
 ^samba3.raw.session enc # expected to give ACCESS_DENIED as SMB1 encryption isn't used
 ^samba3.smbtorture_s3.crypt_server # expected to give ACCESS_DENIED as SMB1 encryption isn't used
+^samba3.smbtorture_s3.*.LOCK12.*\(fileserver\)
+^samba3.smbtorture_s3.*.LOCK12.*\(nt4_dc\)
 ^samba3.nbt.dgram.*netlogon2\(nt4_dc\)
 ^samba3.*rap.sam.*.useradd # Not provided by Samba 3
 ^samba3.*rap.sam.*.userdelete # Not provided by Samba 3
@@ -44,6 +47,15 @@
 ^samba3.raw.acls nfs4acl_xattr-xdr-41.create_owner_file\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-xdr-41.create_owner_dir\(nt4_dc\)
 ^samba3.raw.acls nfs4acl_xattr-xdr-41.nulldacl\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-40.INHERITFLAGS\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-40.create_owner_file\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-40.create_owner_dir\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-40.nulldacl\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-40.inherit_creator_owner\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-40.inherit_creator_group\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-41.create_owner_file\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-41.create_owner_dir\(nt4_dc\)
+^samba3.raw.acls nfs4acl_xattr-nfs-41.nulldacl\(nt4_dc\)
 ^samba3.base.delete.deltest16a
 ^samba3.base.delete.deltest17a
 ^samba3.unix.whoami anonymous connection.whoami\(ad_dc\) # We need to resolve if we should be including SID_NT_WORLD and SID_NT_NETWORK in this token
@@ -86,8 +98,8 @@
 ^samba4.rpc.netlogon.*.GetPassword
 ^samba4.rpc.netlogon.*.DatabaseRedo
 ^samba4.rpc.netlogon.*.netlogon.lsa_over_netlogon\(ad_dc\) #Broken by split of \\pipe\lsass from \\pipe\netlogon in the IDL
-^samba4.rpc.netlogon.*.netlogon.SetupCredentialsDowngrade\(ad_dc_ntvfs\) # Broken by allowing NT4 crypto on this environment
-^samba4.rpc.netlogon.*.netlogon.SetupCredentialsDowngrade\(ad_dc_ntvfs:local\) # Broken by allowing NT4 crypto on this environment
+^samba4.rpc.netlogon.*.netlogon.SetupCredentialsDowngrade\(ad_dc_default\) # Broken by allowing NT4 crypto on this environment
+^samba4.rpc.netlogon.*.netlogon.SetupCredentialsDowngrade\(ad_dc_default:local\) # Broken by allowing NT4 crypto on this environment
 ^samba4.rpc.drsuapi.*ncacn_ip_tcp.*validate # should only work with seal
 ^samba4.rpc.drsuapi.*ncacn_ip_tcp.*bigendian # should only work with seal
 ^samba4.rpc.samr.passwords.validate.*ncacn_ip_tcp.*with.validate # should only work with seal
@@ -97,7 +109,8 @@
 .*net.api.delshare.*				# DelShare isn't implemented yet
 ^samba4.smb2.oplock.doc
 ^samba4.smb2.lock.valid-request
-^samba4.ldap.python \(ad_dc_ntvfs\).Test add_ldif\(\) with BASE64 security descriptor input using WRONG domain SID\(.*\)$
+^samba4.raw.lock.multilock6.ad_dc_ntvfs
+^samba4.ldap.python \(ad_dc_default\).Test add_ldif\(\) with BASE64 security descriptor input using WRONG domain SID\(.*\)$
 ^samba4.raw.lock.*.async # bug 6960
 ^samba4.raw.open.ntcreatex_supersede
 ^samba4.smb2.lock.*.multiple-unlock # bug 6959
@@ -123,8 +136,8 @@
 ^samba4.smb2.acls.*.inheritflags
 ^samba4.smb2.acls.*.owner
 ^samba4.smb2.acls.*.ACCESSBASED
-^samba4.ldap.dirsync.python.ad_dc_ntvfs..__main__.ExtendedDirsyncTests.test_dirsync_deleted_items
-#^samba4.ldap.dirsync.python.ad_dc_ntvfs..__main__.ExtendedDirsyncTests.*
+^samba4.ldap.dirsync.python.ad_dc_default..__main__.ExtendedDirsyncTests.test_dirsync_deleted_items
+#^samba4.ldap.dirsync.python.ad_dc_default..__main__.ExtendedDirsyncTests.*
 ^samba4.libsmbclient.opendir.(NT1|SMB3).opendir # This requires netbios browsing
 ^samba4.rpc.drsuapi.*.drsuapi.DsGetDomainControllerInfo\(.*\)$
 ^samba4.smb2.oplock.exclusive2\(.*\)$ # samba 4 oplocks are a mess
@@ -161,7 +174,6 @@
 ^samba3.smb2.create.gentest
 ^samba3.smb2.create.blob
 ^samba3.smb2.create.open
-^samba3.smb2.notify.valid-req
 ^samba3.smb2.notify.rec
 ^samba3.smb2.durable-open.delete_on_close2
 ^samba3.smb2.durable-v2-open.app-instance
@@ -193,6 +205,7 @@
 ^samba3.smb2.lock.*replay
 ^samba3.smb2.lease.statopen3
 ^samba3.smb2.lease.unlink # we currently do not downgrade RH lease to R after unlink
+^samba3.smb2.multichannel
 ^samba4.smb2.ioctl.compress_notsup.*\(ad_dc_ntvfs\)
 ^samba3.raw.session.*reauth2 # maybe fix this?
 ^samba3.rpc.lsa.secrets.seal # This gives NT_STATUS_LOCAL_USER_SESSION_KEY
@@ -337,9 +350,9 @@
 ^samba4.blackbox.dbcheck-links.release-4-5-0-pre1.dbcheck_dangling_multi_valued_clean
 ^samba4.blackbox.dbcheck-links.release-4-5-0-pre1.dangling_multi_valued_check_missing
 #
-# rap password tests don't function in the ad_dc_ntvfs:local environment
+# rap password tests don't function in the ad_dc_ntvfs environment
 #
-^samba.tests.auth_log_pass_change.samba.tests.auth_log_pass_change.AuthLogPassChangeTests.test_rap_change_password\(ad_dc_ntvfs:local\)
+^samba.tests.auth_log_pass_change.samba.tests.auth_log_pass_change.AuthLogPassChangeTests.test_rap_change_password\(ad_dc_ntvfs\)
 # We currently don't send referrals for LDAP modify of non-replicated attrs
 ^samba4.ldap.rodc.python\(rodc\).__main__.RodcTests.test_modify_nonreplicated.*
 ^samba4.ldap.rodc_rwdc.python.*.__main__.RodcRwdcTests.test_change_password_reveal_on_demand_kerberos

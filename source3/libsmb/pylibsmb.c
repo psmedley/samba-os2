@@ -24,6 +24,7 @@
 #include <Python.h>
 #include "includes.h"
 #include "python/py3compat.h"
+#include "python/modules.h"
 #include "libcli/smb/smbXcli_base.h"
 #include "libsmb/libsmb.h"
 #include "libcli/security/security.h"
@@ -786,8 +787,7 @@ static size_t push_data(uint8_t *buf, size_t n, void *priv)
 /*
  * Writes a file with the contents specified
  */
-static PyObject *py_smb_savefile(struct py_cli_state *self, PyObject *args,
-				 PyObject *kwargs)
+static PyObject *py_smb_savefile(struct py_cli_state *self, PyObject *args)
 {
 	uint16_t fnum;
 	const char *filename = NULL;
@@ -856,7 +856,7 @@ static PyObject *py_cli_write(struct py_cli_state *self, PyObject *args,
 		"fnum", "buffer", "offset", "mode", NULL };
 
 	if (!ParseTupleAndKeywords(
-		    args, kwds, "I" PYARG_BYTES_LEN "K|I", kwlist,
+		    args, kwds, "i" PYARG_BYTES_LEN "K|I", kwlist,
 		    &fnum, &buf, &buflen, &offset, &mode)) {
 		return NULL;
 	}
@@ -910,8 +910,7 @@ static NTSTATUS py_smb_filesize(struct py_cli_state *self, uint16_t fnum,
 /*
  * Loads the specified file's contents and returns it
  */
-static PyObject *py_smb_loadfile(struct py_cli_state *self, PyObject *args,
-				 PyObject *kwargs)
+static PyObject *py_smb_loadfile(struct py_cli_state *self, PyObject *args)
 {
 	NTSTATUS status;
 	const char *filename = NULL;
@@ -1012,7 +1011,7 @@ static PyObject *py_cli_read(struct py_cli_state *self, PyObject *args,
 		"fnum", "offset", "size", NULL };
 
 	if (!ParseTupleAndKeywords(
-		    args, kwds, "IKI", kwlist, &fnum, &offset,
+		    args, kwds, "iKI", kwlist, &fnum, &offset,
 		    &size)) {
 		return NULL;
 	}
@@ -1124,13 +1123,14 @@ static NTSTATUS list_helper(const char *mntpoint, struct file_info *finfo,
 {
 	PyObject *result = (PyObject *)state;
 	PyObject *file = NULL;
+	PyObject *size = NULL;
 	int ret;
 
 	/* suppress '.' and '..' in the results we return */
 	if (ISDOT(finfo->name) || ISDOTDOT(finfo->name)) {
 		return NT_STATUS_OK;
 	}
-
+	size = PyLong_FromUnsignedLongLong(finfo->size);
 	/*
 	 * Build a dictionary representing the file info.
 	 * Note: Windows does not always return short_name (so it may be None)
@@ -1139,15 +1139,18 @@ static NTSTATUS list_helper(const char *mntpoint, struct file_info *finfo,
 			     "name", finfo->name,
 			     "attrib", (int)finfo->mode,
 			     "short_name", finfo->short_name,
-			     "size", PyLong_FromUnsignedLongLong(finfo->size),
+			     "size", size,
 			     "mtime",
 			     convert_timespec_to_time_t(finfo->mtime_ts));
+
+	Py_CLEAR(size);
 
 	if (file == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
 
 	ret = PyList_Append(result, file);
+	Py_CLEAR(file);
 	if (ret == -1) {
 		return NT_STATUS_INTERNAL_ERROR;
 	}
@@ -1223,10 +1226,10 @@ static PyObject *py_cli_list(struct py_cli_state *self,
 	char *user_mask = NULL;
 	unsigned int attribute = LIST_ATTRIBUTE_MASK;
 	NTSTATUS status;
-	PyObject *result;
+	PyObject *result = NULL;
 	const char *kwlist[] = { "directory", "mask", "attribs", NULL };
 
-	if (!ParseTupleAndKeywords(args, kwds, "z|sH:list", kwlist,
+	if (!ParseTupleAndKeywords(args, kwds, "z|sI:list", kwlist,
 				   &base_dir, &user_mask, &attribute)) {
 		return NULL;
 	}
@@ -1313,7 +1316,7 @@ static NTSTATUS remove_dir(struct py_cli_state *self, const char *dirname)
 static PyObject *py_smb_rmdir(struct py_cli_state *self, PyObject *args)
 {
 	NTSTATUS status;
-	const char *dirname;
+	const char *dirname = NULL;
 
 	if (!PyArg_ParseTuple(args, "s:rmdir", &dirname)) {
 		return NULL;
@@ -1331,7 +1334,7 @@ static PyObject *py_smb_rmdir(struct py_cli_state *self, PyObject *args)
 static PyObject *py_smb_mkdir(struct py_cli_state *self, PyObject *args)
 {
 	NTSTATUS status;
-	const char *dirname;
+	const char *dirname = NULL;
 
 	if (!PyArg_ParseTuple(args, "s:mkdir", &dirname)) {
 		return NULL;
@@ -1379,7 +1382,7 @@ static bool check_dir_path(struct py_cli_state *self, const char *path)
 
 static PyObject *py_smb_chkpath(struct py_cli_state *self, PyObject *args)
 {
-	const char *path;
+	const char *path = NULL;
 	bool dir_exists;
 
 	if (!PyArg_ParseTuple(args, "s:chkpath", &path)) {
@@ -1577,21 +1580,27 @@ static PyObject *py_smb_setacl(struct py_cli_state *self, PyObject *args)
 static PyMethodDef py_cli_state_methods[] = {
 	{ "settimeout", (PyCFunction)py_cli_settimeout, METH_VARARGS,
 	  "settimeout(new_timeout_msecs) => return old_timeout_msecs" },
-	{ "create", (PyCFunction)py_cli_create, METH_VARARGS|METH_KEYWORDS,
+	{ "create", PY_DISCARD_FUNC_SIG(PyCFunction, py_cli_create),
+		METH_VARARGS|METH_KEYWORDS,
 	  "Open a file" },
 	{ "close", (PyCFunction)py_cli_close, METH_VARARGS,
 	  "Close a file handle" },
-	{ "write", (PyCFunction)py_cli_write, METH_VARARGS|METH_KEYWORDS,
+	{ "write", PY_DISCARD_FUNC_SIG(PyCFunction, py_cli_write),
+		METH_VARARGS|METH_KEYWORDS,
 	  "Write to a file handle" },
-	{ "read", (PyCFunction)py_cli_read, METH_VARARGS|METH_KEYWORDS,
+	{ "read", PY_DISCARD_FUNC_SIG(PyCFunction, py_cli_read),
+		METH_VARARGS|METH_KEYWORDS,
 	  "Read from a file handle" },
-	{ "truncate", (PyCFunction)py_cli_ftruncate,
+	{ "truncate", PY_DISCARD_FUNC_SIG(PyCFunction,
+			py_cli_ftruncate),
 	  METH_VARARGS|METH_KEYWORDS,
 	  "Truncate a file" },
-	{ "delete_on_close", (PyCFunction)py_cli_delete_on_close,
+	{ "delete_on_close", PY_DISCARD_FUNC_SIG(PyCFunction,
+					 py_cli_delete_on_close),
 	  METH_VARARGS|METH_KEYWORDS,
 	  "Set/Reset the delete on close flag" },
-	{ "list", (PyCFunction)py_cli_list, METH_VARARGS|METH_KEYWORDS,
+	{ "list", PY_DISCARD_FUNC_SIG(PyCFunction, py_cli_list),
+		METH_VARARGS|METH_KEYWORDS,
 	  "list(directory, mask='*', attribs=DEFAULT_ATTRS) -> "
 	  "directory contents as a dictionary\n"
 	  "\t\tDEFAULT_ATTRS: FILE_ATTRIBUTE_SYSTEM | "

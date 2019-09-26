@@ -681,6 +681,12 @@ static NTSTATUS close_normal_file(struct smb_request *req, files_struct *fsp,
 		}
 	}
 
+	while (talloc_array_length(fsp->blocked_smb1_lock_reqs) != 0) {
+		smbd_smb1_brl_finish_by_req(
+			fsp->blocked_smb1_lock_reqs[0],
+			NT_STATUS_RANGE_NOT_LOCKED);
+	}
+
 	/*
 	 * If we're flushing on a close we can get a write
 	 * error here, we must remember this.
@@ -775,7 +781,7 @@ static NTSTATUS close_normal_file(struct smb_request *req, files_struct *fsp,
 		status = ntstatus_keeperror(status, tmp);
 	}
 
-	locking_close_file(conn->sconn->msg_ctx, fsp, close_type);
+	locking_close_file(fsp, close_type);
 
 	tmp = fd_close(fsp);
 	status = ntstatus_keeperror(status, tmp);

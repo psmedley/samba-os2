@@ -2,12 +2,12 @@
 .\"     Title: vfs_fruit
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/27/2019
+.\"      Date: 09/17/2019
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.10.8
+.\"    Source: Samba 4.11.0
 .\"  Language: English
 .\"
-.TH "VFS_FRUIT" "8" "08/27/2019" "Samba 4\&.10\&.8" "System Administration tools"
+.TH "VFS_FRUIT" "8" "09/17/2019" "Samba 4\&.11\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -163,18 +163,6 @@ WARNING: the copyfile request is blocking the client while the server does the c
 .sp
 The default is
 \fIno\fR\&.
-.RE
-.PP
-fruit:zero_file_id = yes | no
-.RS 4
-A
-\fIglobal\fR
-option whether to return zero to queries of on\-disk file identifier, if the client has negotiated AAPL\&.
-.sp
-Mac applications and / or the Mac SMB client code expect the on\-disk file identifier to have the semantics of HFS+ Catalog Node Identifier (CNID)\&. Samba doesn\*(Aqt provide those semantics, and that occasionally cause usability issues or even data loss\&. Returning a file identifier of zero causes the Mac client to stop using and trusting the file id returned from the server\&.
-.sp
-The default is
-\fIyes\fR\&.
 .RE
 .PP
 fruit:model = MacSamba
@@ -508,6 +496,18 @@ Whether to delete empty AppleDouble files\&. Empty means that the resource fork 
 .sp
 The default is
 \fIno\fR\&.
+.RE
+.PP
+fruit:zero_file_id = yes | no
+.RS 4
+Whether to return zero to queries of on\-disk file identifier if the client has negotiated AAPL\&.
+.sp
+Mac applications and / or the Mac SMB client code expect the on\-disk file identifier to have the semantics of HFS+ Catalog Node Identifier (CNID)\&. Samba provides File\-IDs based on a file\*(Aqs initial creation date if the option
+\m[blue]\fBstore dos attributes\fR\m[]
+is enabled\&. Returning a file identifier of zero causes the Mac client to stop using and trusting the file id returned from the server\&.
+.sp
+The default is
+\fIyes\fR\&.
 .RE
 .SH "EXAMPLES"
 .sp

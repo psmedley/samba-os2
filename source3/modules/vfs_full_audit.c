@@ -158,12 +158,12 @@ typedef enum _vfs_op_type {
 	SMB_VFS_OP_REALPATH,
 	SMB_VFS_OP_CHFLAGS,
 	SMB_VFS_OP_FILE_ID_CREATE,
+	SMB_VFS_OP_FS_FILE_ID,
 	SMB_VFS_OP_STREAMINFO,
 	SMB_VFS_OP_GET_REAL_FILENAME,
 	SMB_VFS_OP_CONNECTPATH,
 	SMB_VFS_OP_BRL_LOCK_WINDOWS,
 	SMB_VFS_OP_BRL_UNLOCK_WINDOWS,
-	SMB_VFS_OP_BRL_CANCEL_WINDOWS,
 	SMB_VFS_OP_STRICT_LOCK_CHECK,
 	SMB_VFS_OP_TRANSLATE_NAME,
 	SMB_VFS_OP_FSCTL,
@@ -301,12 +301,12 @@ static struct {
 	{ SMB_VFS_OP_REALPATH,	"realpath" },
 	{ SMB_VFS_OP_CHFLAGS,	"chflags" },
 	{ SMB_VFS_OP_FILE_ID_CREATE,	"file_id_create" },
+	{ SMB_VFS_OP_FS_FILE_ID,	"fs_file_id" },
 	{ SMB_VFS_OP_STREAMINFO,	"streaminfo" },
 	{ SMB_VFS_OP_GET_REAL_FILENAME, "get_real_filename" },
 	{ SMB_VFS_OP_CONNECTPATH,	"connectpath" },
 	{ SMB_VFS_OP_BRL_LOCK_WINDOWS,  "brl_lock_windows" },
 	{ SMB_VFS_OP_BRL_UNLOCK_WINDOWS, "brl_unlock_windows" },
-	{ SMB_VFS_OP_BRL_CANCEL_WINDOWS, "brl_cancel_windows" },
 	{ SMB_VFS_OP_STRICT_LOCK_CHECK, "strict_lock_check" },
 	{ SMB_VFS_OP_TRANSLATE_NAME,	"translate_name" },
 	{ SMB_VFS_OP_FSCTL,		"fsctl" },
@@ -1822,6 +1822,20 @@ static struct file_id smb_full_audit_file_id_create(struct vfs_handle_struct *ha
 	return result;
 }
 
+static uint64_t smb_full_audit_fs_file_id(struct vfs_handle_struct *handle,
+					  const SMB_STRUCT_STAT *sbuf)
+{
+	uint64_t result;
+
+	result = SMB_VFS_NEXT_FS_FILE_ID(handle, sbuf);
+
+	do_log(SMB_VFS_OP_FS_FILE_ID,
+	       result != 0,
+	       handle, "%" PRIu64, result);
+
+	return result;
+}
+
 static NTSTATUS smb_full_audit_streaminfo(vfs_handle_struct *handle,
 					  struct files_struct *fsp,
 					  const struct smb_filename *smb_fname,
@@ -1852,7 +1866,7 @@ static int smb_full_audit_get_real_filename(struct vfs_handle_struct *handle,
 						found_name);
 
 	do_log(SMB_VFS_OP_GET_REAL_FILENAME, (result == 0), handle,
-	       "%s/%s->%s", path, name, (result == 0) ? "" : *found_name);
+	       "%s/%s->%s", path, name, (result == 0) ? *found_name : "");
 
 	return result;
 }
@@ -1872,37 +1886,15 @@ static const char *smb_full_audit_connectpath(vfs_handle_struct *handle,
 
 static NTSTATUS smb_full_audit_brl_lock_windows(struct vfs_handle_struct *handle,
 					        struct byte_range_lock *br_lck,
-					        struct lock_struct *plock,
-					        bool blocking_lock)
+					        struct lock_struct *plock)
 {
 	NTSTATUS result;
 
-	result = SMB_VFS_NEXT_BRL_LOCK_WINDOWS(handle, br_lck, plock,
-					       blocking_lock);
+	result = SMB_VFS_NEXT_BRL_LOCK_WINDOWS(handle, br_lck, plock);
 
 	do_log(SMB_VFS_OP_BRL_LOCK_WINDOWS, NT_STATUS_IS_OK(result), handle,
-	    "%s:%llu-%llu. type=%d. blocking=%d",
+	    "%s:%llu-%llu. type=%d.",
 	       fsp_str_do_log(brl_fsp(br_lck)),
-	       (unsigned long long)plock->start,
-	       (unsigned long long)plock->size,
-	       plock->lock_type,
-	       blocking_lock);
-
-	return result;
-}
-
-static bool smb_full_audit_brl_unlock_windows(struct vfs_handle_struct *handle,
-				              struct messaging_context *msg_ctx,
-				              struct byte_range_lock *br_lck,
-				              const struct lock_struct *plock)
-{
-	bool result;
-
-	result = SMB_VFS_NEXT_BRL_UNLOCK_WINDOWS(handle, msg_ctx, br_lck,
-	    plock);
-
-	do_log(SMB_VFS_OP_BRL_UNLOCK_WINDOWS, (result == 0), handle,
-	       "%s:%llu-%llu:%d", fsp_str_do_log(brl_fsp(br_lck)),
 	       (unsigned long long)plock->start,
 	       (unsigned long long)plock->size,
 	       plock->lock_type);
@@ -1910,15 +1902,15 @@ static bool smb_full_audit_brl_unlock_windows(struct vfs_handle_struct *handle,
 	return result;
 }
 
-static bool smb_full_audit_brl_cancel_windows(struct vfs_handle_struct *handle,
+static bool smb_full_audit_brl_unlock_windows(struct vfs_handle_struct *handle,
 				              struct byte_range_lock *br_lck,
-					      struct lock_struct *plock)
+				              const struct lock_struct *plock)
 {
 	bool result;
 
-	result = SMB_VFS_NEXT_BRL_CANCEL_WINDOWS(handle, br_lck, plock);
+	result = SMB_VFS_NEXT_BRL_UNLOCK_WINDOWS(handle, br_lck, plock);
 
-	do_log(SMB_VFS_OP_BRL_CANCEL_WINDOWS, (result == 0), handle,
+	do_log(SMB_VFS_OP_BRL_UNLOCK_WINDOWS, (result == 0), handle,
 	       "%s:%llu-%llu:%d", fsp_str_do_log(brl_fsp(br_lck)),
 	       (unsigned long long)plock->start,
 	       (unsigned long long)plock->size,
@@ -2883,6 +2875,7 @@ static struct vfs_fn_pointers vfs_full_audit_fns = {
 	.realpath_fn = smb_full_audit_realpath,
 	.chflags_fn = smb_full_audit_chflags,
 	.file_id_create_fn = smb_full_audit_file_id_create,
+	.fs_file_id_fn = smb_full_audit_fs_file_id,
 	.offload_read_send_fn = smb_full_audit_offload_read_send,
 	.offload_read_recv_fn = smb_full_audit_offload_read_recv,
 	.offload_write_send_fn = smb_full_audit_offload_write_send,
@@ -2897,7 +2890,6 @@ static struct vfs_fn_pointers vfs_full_audit_fns = {
 	.connectpath_fn = smb_full_audit_connectpath,
 	.brl_lock_windows_fn = smb_full_audit_brl_lock_windows,
 	.brl_unlock_windows_fn = smb_full_audit_brl_unlock_windows,
-	.brl_cancel_windows_fn = smb_full_audit_brl_cancel_windows,
 	.strict_lock_check_fn = smb_full_audit_strict_lock_check,
 	.translate_name_fn = smb_full_audit_translate_name,
 	.fsctl_fn = smb_full_audit_fsctl,

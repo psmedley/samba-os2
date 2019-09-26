@@ -51,6 +51,7 @@ struct auth_usersupplied_info
 
 	bool mapped_state;
 	bool was_mapped;
+	uint64_t logon_id;
 	/* the values the client gives us */
 	struct {
 		const char *account_name;
@@ -186,7 +187,6 @@ void log_authentication_event(struct imessaging_context *msg_ctx,
 			      NTSTATUS status,
 			      const char *account_name,
 			      const char *domain_name,
-			      const char *unix_username,
 			      struct dom_sid *sid);
 
 /*

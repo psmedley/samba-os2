@@ -24,7 +24,34 @@
 #include "../lib/crypto/crypto.h"
 #include "lib/util/iov_buf.h"
 
-NTSTATUS smb2_signing_sign_pdu(DATA_BLOB signing_key,
+#include "lib/crypto/gnutls_helpers.h"
+#include <gnutls/gnutls.h>
+#include <gnutls/crypto.h>
+
+int smb2_signing_key_destructor(struct smb2_signing_key *key)
+{
+	if (key->hmac_hnd != NULL) {
+		gnutls_hmac_deinit(key->hmac_hnd, NULL);
+		key->hmac_hnd = NULL;
+	}
+
+	return 0;
+}
+
+bool smb2_signing_key_valid(const struct smb2_signing_key *key)
+{
+	if (key == NULL) {
+		return false;
+	}
+
+	if (key->blob.length == 0 || key->blob.data == NULL) {
+		return false;
+	}
+
+	return true;
+}
+
+NTSTATUS smb2_signing_sign_pdu(struct smb2_signing_key *signing_key,
 			       enum protocol_types protocol,
 			       struct iovec *vector,
 			       int count)
@@ -53,9 +80,9 @@ NTSTATUS smb2_signing_sign_pdu(DATA_BLOB signing_key,
 		return NT_STATUS_OK;
 	}
 
-	if (signing_key.length == 0) {
-		DEBUG(2,("Wrong session key length %u for SMB2 signing\n",
-			 (unsigned)signing_key.length));
+	if (!smb2_signing_key_valid(signing_key)) {
+		DBG_WARNING("Wrong session key length %zu for SMB2 signing\n",
+			    signing_key->blob.length);
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
@@ -67,7 +94,9 @@ NTSTATUS smb2_signing_sign_pdu(DATA_BLOB signing_key,
 		struct aes_cmac_128_context ctx;
 		uint8_t key[AES_BLOCK_SIZE] = {0};
 
-		memcpy(key, signing_key.data, MIN(signing_key.length, 16));
+		memcpy(key,
+		       signing_key->blob.data,
+		       MIN(signing_key->blob.length, 16));
 
 		aes_cmac_128_init(&ctx, key);
 		for (i=0; i < count; i++) {
@@ -76,18 +105,32 @@ NTSTATUS smb2_signing_sign_pdu(DATA_BLOB signing_key,
 					vector[i].iov_len);
 		}
 		aes_cmac_128_final(&ctx, res);
-	} else {
-		struct HMACSHA256Context m;
-		uint8_t digest[SHA256_DIGEST_LENGTH];
 
-		ZERO_STRUCT(m);
-		hmac_sha256_init(signing_key.data, MIN(signing_key.length, 16), &m);
-		for (i=0; i < count; i++) {
-			hmac_sha256_update((const uint8_t *)vector[i].iov_base,
-					   vector[i].iov_len, &m);
+		ZERO_ARRAY(key);
+	} else {
+		uint8_t digest[gnutls_hmac_get_len(GNUTLS_MAC_SHA256)];
+		int rc;
+
+		if (signing_key->hmac_hnd == NULL) {
+			rc = gnutls_hmac_init(&signing_key->hmac_hnd,
+					      GNUTLS_MAC_SHA256,
+					      signing_key->blob.data,
+					      MIN(signing_key->blob.length, 16));
+			if (rc < 0) {
+				return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+			}
 		}
-		hmac_sha256_final(digest, &m);
-		memcpy(res, digest, 16);
+
+		for (i = 0; i < count; i++) {
+			rc = gnutls_hmac(signing_key->hmac_hnd,
+					 vector[i].iov_base,
+					 vector[i].iov_len);
+			if (rc < 0) {
+				return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+			}
+		}
+		gnutls_hmac_output(signing_key->hmac_hnd, digest);
+		memcpy(res, digest, sizeof(res));
 	}
 	DEBUG(5,("signed SMB2 message\n"));
 
@@ -96,7 +139,7 @@ NTSTATUS smb2_signing_sign_pdu(DATA_BLOB signing_key,
 	return NT_STATUS_OK;
 }
 
-NTSTATUS smb2_signing_check_pdu(DATA_BLOB signing_key,
+NTSTATUS smb2_signing_check_pdu(struct smb2_signing_key *signing_key,
 				enum protocol_types protocol,
 				const struct iovec *vector,
 				int count)
@@ -127,7 +170,7 @@ NTSTATUS smb2_signing_check_pdu(DATA_BLOB signing_key,
 		return NT_STATUS_OK;
 	}
 
-	if (signing_key.length == 0) {
+	if (!smb2_signing_key_valid(signing_key)) {
 		/* we don't have the session key yet */
 		return NT_STATUS_OK;
 	}
@@ -138,7 +181,9 @@ NTSTATUS smb2_signing_check_pdu(DATA_BLOB signing_key,
 		struct aes_cmac_128_context ctx;
 		uint8_t key[AES_BLOCK_SIZE] = {0};
 
-		memcpy(key, signing_key.data, MIN(signing_key.length, 16));
+		memcpy(key,
+		       signing_key->blob.data,
+		       MIN(signing_key->blob.length, 16));
 
 		aes_cmac_128_init(&ctx, key);
 		aes_cmac_128_update(&ctx, hdr, SMB2_HDR_SIGNATURE);
@@ -149,20 +194,42 @@ NTSTATUS smb2_signing_check_pdu(DATA_BLOB signing_key,
 					vector[i].iov_len);
 		}
 		aes_cmac_128_final(&ctx, res);
-	} else {
-		struct HMACSHA256Context m;
-		uint8_t digest[SHA256_DIGEST_LENGTH];
 
-		ZERO_STRUCT(m);
-		hmac_sha256_init(signing_key.data, MIN(signing_key.length, 16), &m);
-		hmac_sha256_update(hdr, SMB2_HDR_SIGNATURE, &m);
-		hmac_sha256_update(zero_sig, 16, &m);
-		for (i=1; i < count; i++) {
-			hmac_sha256_update((const uint8_t *)vector[i].iov_base,
-					   vector[i].iov_len, &m);
+		ZERO_ARRAY(key);
+	} else {
+		uint8_t digest[gnutls_hash_get_len(GNUTLS_MAC_SHA256)];
+		int rc;
+
+		if (signing_key->hmac_hnd == NULL) {
+			rc = gnutls_hmac_init(&signing_key->hmac_hnd,
+					      GNUTLS_MAC_SHA256,
+					      signing_key->blob.data,
+					      MIN(signing_key->blob.length, 16));
+			if (rc < 0) {
+				return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+			}
 		}
-		hmac_sha256_final(digest, &m);
+
+		rc = gnutls_hmac(signing_key->hmac_hnd, hdr, SMB2_HDR_SIGNATURE);
+		if (rc < 0) {
+			return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+		}
+		rc = gnutls_hmac(signing_key->hmac_hnd, zero_sig, 16);
+		if (rc < 0) {
+			return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+		}
+
+		for (i = 1; i < count; i++) {
+			rc = gnutls_hmac(signing_key->hmac_hnd,
+					 vector[i].iov_base,
+					 vector[i].iov_len);
+			if (rc < 0) {
+				return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+			}
+		}
+		gnutls_hmac_output(signing_key->hmac_hnd, digest);
 		memcpy(res, digest, 16);
+		ZERO_ARRAY(digest);
 	}
 
 	if (memcmp_const_time(res, sig, 16) != 0) {
@@ -175,36 +242,72 @@ NTSTATUS smb2_signing_check_pdu(DATA_BLOB signing_key,
 	return NT_STATUS_OK;
 }
 
-void smb2_key_derivation(const uint8_t *KI, size_t KI_len,
-			 const uint8_t *Label, size_t Label_len,
-			 const uint8_t *Context, size_t Context_len,
-			 uint8_t KO[16])
+NTSTATUS smb2_key_derivation(const uint8_t *KI, size_t KI_len,
+			     const uint8_t *Label, size_t Label_len,
+			     const uint8_t *Context, size_t Context_len,
+			     uint8_t KO[16])
 {
-	struct HMACSHA256Context ctx;
+	gnutls_hmac_hd_t hmac_hnd = NULL;
 	uint8_t buf[4];
 	static const uint8_t zero = 0;
-	uint8_t digest[SHA256_DIGEST_LENGTH];
+	uint8_t digest[gnutls_hash_get_len(GNUTLS_MAC_SHA256)];
 	uint32_t i = 1;
 	uint32_t L = 128;
+	int rc;
 
 	/*
 	 * a simplified version of
 	 * "NIST Special Publication 800-108" section 5.1
 	 * using hmac-sha256.
 	 */
-	hmac_sha256_init(KI, KI_len, &ctx);
+	rc = gnutls_hmac_init(&hmac_hnd,
+			      GNUTLS_MAC_SHA256,
+			      KI,
+			      KI_len);
+	if (rc < 0) {
+		return gnutls_error_to_ntstatus(rc,
+						NT_STATUS_HMAC_NOT_SUPPORTED);
+	}
 
 	RSIVAL(buf, 0, i);
-	hmac_sha256_update(buf, sizeof(buf), &ctx);
-	hmac_sha256_update(Label, Label_len, &ctx);
-	hmac_sha256_update(&zero, 1, &ctx);
-	hmac_sha256_update(Context, Context_len, &ctx);
+	rc = gnutls_hmac(hmac_hnd, buf, sizeof(buf));
+	if (rc < 0) {
+		return gnutls_error_to_ntstatus(rc,
+						NT_STATUS_HMAC_NOT_SUPPORTED);
+	}
+	rc = gnutls_hmac(hmac_hnd, Label, Label_len);
+	if (rc < 0) {
+		gnutls_hmac_deinit(hmac_hnd, NULL);
+		return gnutls_error_to_ntstatus(rc,
+						NT_STATUS_HMAC_NOT_SUPPORTED);
+	}
+	rc = gnutls_hmac(hmac_hnd, &zero, 1);
+	if (rc < 0) {
+		gnutls_hmac_deinit(hmac_hnd, NULL);
+		return gnutls_error_to_ntstatus(rc,
+						NT_STATUS_HMAC_NOT_SUPPORTED);
+	}
+	rc = gnutls_hmac(hmac_hnd, Context, Context_len);
+	if (rc < 0) {
+		gnutls_hmac_deinit(hmac_hnd, NULL);
+		return gnutls_error_to_ntstatus(rc,
+						NT_STATUS_HMAC_NOT_SUPPORTED);
+	}
 	RSIVAL(buf, 0, L);
-	hmac_sha256_update(buf, sizeof(buf), &ctx);
+	rc = gnutls_hmac(hmac_hnd, buf, sizeof(buf));
+	if (rc < 0) {
+		gnutls_hmac_deinit(hmac_hnd, NULL);
+		return gnutls_error_to_ntstatus(rc,
+						NT_STATUS_HMAC_NOT_SUPPORTED);
+	}
 
-	hmac_sha256_final(digest, &ctx);
+	gnutls_hmac_deinit(hmac_hnd, digest);
 
 	memcpy(KO, digest, 16);
+
+	ZERO_ARRAY(digest);
+
+	return NT_STATUS_OK;
 }
 
 NTSTATUS smb2_signing_encrypt_pdu(DATA_BLOB encryption_key,

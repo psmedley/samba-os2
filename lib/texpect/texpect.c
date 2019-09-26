@@ -380,8 +380,20 @@ static int eval_parent(pid_t pid)
  */
 struct poptOption long_options[] = {
 	POPT_AUTOHELP
-	{"timeout", 't', POPT_ARG_INT,	&opt_timeout, 't'},
-	{"verbose", 'v', POPT_ARG_NONE,	&opt_verbose, 'v'},
+	{
+		.longName  = "timeout",
+		.shortName = 't',
+		.argInfo   = POPT_ARG_INT,
+		.arg       = &opt_timeout,
+		.val       = 't',
+	},
+	{
+		.longName  = "verbose",
+		.shortName = 'v',
+		.argInfo   = POPT_ARG_NONE,
+		.arg       = &opt_verbose,
+		.val       = 'v',
+	},
 	POPT_TABLEEND
 };
 
@@ -412,6 +424,11 @@ int main(int argc, const char **argv)
 
 	instruction_file = poptGetArg(pc);
 	args = poptGetArgs(pc);
+	if (args == NULL) {
+		poptPrintHelp(pc, stderr, 0);
+		return 1;
+	}
+
 	program_args = (char * const *)discard_const_p(char *, args);
 	program = program_args[0];
 
@@ -420,7 +437,7 @@ int main(int argc, const char **argv)
 
 		printf("Using instruction_file: %s\n", instruction_file);
 		printf("Executing '%s' ", program);
-		for (i = 0; program_args && program_args[i] != NULL; i++) {
+		for (i = 0; program_args[i] != NULL; i++) {
 			printf("'%s' ", program_args[i]);
 		}
 		printf("\n");

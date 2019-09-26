@@ -21,6 +21,7 @@
 */
 
 #include "includes.h"
+#include "smb1_utils.h"
 #include "system/filesys.h"
 #include "lib/util/server_id.h"
 #include "printing.h"
@@ -29,7 +30,7 @@
 #include "fake_file.h"
 #include "../libcli/security/security.h"
 #include "../librpc/gen_ndr/ndr_security.h"
-#include "../librpc/gen_ndr/open_files.h"
+#include "../librpc/gen_ndr/ndr_open_files.h"
 #include "../librpc/gen_ndr/idmap.h"
 #include "../librpc/gen_ndr/ioctl.h"
 #include "passdb/lookup_sid.h"
@@ -258,21 +259,24 @@ NTSTATUS check_parent_access(struct connection_struct *conn,
 	uint32_t name_hash;
 	bool delete_on_close_set;
 	int ret;
+	TALLOC_CTX *frame = talloc_stackframe();
 
-	if (!parent_dirname(talloc_tos(),
+	if (!parent_dirname(frame,
 				smb_fname->base_name,
 				&parent_dir,
 				NULL)) {
-		return NT_STATUS_NO_MEMORY;
+		status = NT_STATUS_NO_MEMORY;
+		goto out;
 	}
 
-	parent_smb_fname = synthetic_smb_fname(talloc_tos(),
+	parent_smb_fname = synthetic_smb_fname(frame,
 				parent_dir,
 				NULL,
 				NULL,
 				smb_fname->flags);
 	if (parent_smb_fname == NULL) {
-		return NT_STATUS_NO_MEMORY;
+		status = NT_STATUS_NO_MEMORY;
+		goto out;
 	}
 
 	if (get_current_uid(conn) == (uid_t)0) {
@@ -281,13 +285,14 @@ NTSTATUS check_parent_access(struct connection_struct *conn,
 			"on %s. Granting 0x%x\n",
 			smb_fname_str_dbg(smb_fname),
 			(unsigned int)access_mask ));
-		return NT_STATUS_OK;
+		status = NT_STATUS_OK;
+		goto out;
 	}
 
 	status = SMB_VFS_GET_NT_ACL(conn,
 				parent_smb_fname,
 				SECINFO_DACL,
-				    talloc_tos(),
+				frame,
 				&parent_sd);
 
 	if (!NT_STATUS_IS_OK(status)) {
@@ -295,7 +300,7 @@ NTSTATUS check_parent_access(struct connection_struct *conn,
 			"%s with error %s\n",
 			parent_dir,
 			nt_errstr(status)));
-		return status;
+		goto out;
 	}
 
  	/*
@@ -322,14 +327,16 @@ NTSTATUS check_parent_access(struct connection_struct *conn,
 			access_mask,
 			access_granted,
 			nt_errstr(status) ));
-		return status;
+		goto out;
 	}
 
 	if (!(access_mask & (SEC_DIR_ADD_FILE | SEC_DIR_ADD_SUBDIR))) {
-		return NT_STATUS_OK;
+		status = NT_STATUS_OK;
+		goto out;
 	}
 	if (!lp_check_parent_directory_delete_on_close(SNUM(conn))) {
-		return NT_STATUS_OK;
+		status = NT_STATUS_OK;
+		goto out;
 	}
 
 	/* Check if the directory has delete-on-close set */
@@ -346,7 +353,7 @@ NTSTATUS check_parent_access(struct connection_struct *conn,
 		goto out;
 	}
 
-	lck = get_existing_share_mode_lock(talloc_tos(), id);
+	lck = get_existing_share_mode_lock(frame, id);
 	if (lck == NULL) {
 		status = NT_STATUS_OK;
 		goto out;
@@ -361,8 +368,7 @@ NTSTATUS check_parent_access(struct connection_struct *conn,
 	status = NT_STATUS_OK;
 
 out:
-	TALLOC_FREE(lck);
-	TALLOC_FREE(parent_smb_fname);
+	TALLOC_FREE(frame);
 	return status;
 }
 
@@ -1201,7 +1207,10 @@ static NTSTATUS open_file(files_struct *fsp,
 		local_flags = (flags & ~O_ACCMODE)|O_RDWR;
 	}
 
-	if ((open_access_mask & (FILE_READ_DATA|FILE_WRITE_DATA|FILE_APPEND_DATA|FILE_EXECUTE)) ||
+	if ((open_access_mask & (FILE_READ_DATA|FILE_WRITE_DATA|
+				 FILE_APPEND_DATA|FILE_EXECUTE|
+				 WRITE_DAC_ACCESS|WRITE_OWNER_ACCESS|
+				 READ_CONTROL_ACCESS))||
 	    (!file_existed && (local_flags & O_CREAT)) ||
 	    ((local_flags & O_TRUNC) == O_TRUNC) ) {
 		const char *wild;
@@ -1310,7 +1319,7 @@ static NTSTATUS open_file(files_struct *fsp,
 			 * GPFS can return ETIMEDOUT for pread on
 			 * nonblocking file descriptors when files
 			 * migrated to tape need to be recalled. I
-			 * could imagine this happens elsehwere
+			 * could imagine this happens elsewhere
 			 * too. With blocking file descriptors this
 			 * does not happen.
 			 */
@@ -1467,10 +1476,6 @@ static bool share_conflict(struct share_mode_entry *entry,
 		  (unsigned int)entry->private_options));
 
 	if (server_id_is_disconnected(&entry->pid)) {
-		/*
-		 * note: cleanup should have been done by
-		 * delay_for_batch_oplocks()
-		 */
 		return false;
 	}
 
@@ -1640,10 +1645,6 @@ static NTSTATUS open_mode_check(connection_struct *conn,
 {
 	uint32_t i;
 
-	if(lck->data->num_share_modes == 0) {
-		return NT_STATUS_OK;
-	}
-
 	if (is_stat_open(access_mask)) {
 		/* Stat open that doesn't trigger oplock breaks or share mode
 		 * checks... ! JRA. */
@@ -1694,26 +1695,36 @@ NTSTATUS send_break_message(struct messaging_context *msg_ctx,
 			    const struct share_mode_entry *exclusive,
 			    uint16_t break_to)
 {
+	struct oplock_break_message msg = {
+		.id = *id,
+		.share_file_id = exclusive->share_file_id,
+		.break_to = break_to,
+	};
+	enum ndr_err_code ndr_err;
+	DATA_BLOB blob;
 	NTSTATUS status;
-	char msg[MSG_SMB_SHARE_MODE_ENTRY_SIZE];
-	struct server_id_buf tmp;
 
-	DEBUG(10, ("Sending break request to PID %s\n",
-		   server_id_str_buf(exclusive->pid, &tmp)));
+	if (DEBUGLVL(10)) {
+		struct server_id_buf buf;
+		DBG_DEBUG("Sending break message to %s\n",
+			  server_id_str_buf(exclusive->pid, &buf));
+		NDR_PRINT_DEBUG(oplock_break_message, &msg);
+	}
 
-	/* Create the message. */
-	share_mode_entry_to_message(msg, id, exclusive);
+	ndr_err = ndr_push_struct_blob(
+		&blob,
+		talloc_tos(),
+		&msg,
+		(ndr_push_flags_fn_t)ndr_push_oplock_break_message);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		DBG_WARNING("ndr_push_oplock_break_message failed: %s\n",
+			    ndr_errstr(ndr_err));
+		return ndr_map_error2ntstatus(ndr_err);
+	}
 
-	/* Overload entry->op_type */
-	/*
-	 * This is a cut from uint32_t to uint16_t, but so far only the lower 3
-	 * bits (LEASE_WRITE/HANDLE/READ are used anyway.
-	 */
-	SSVAL(msg,OP_BREAK_MSG_OP_TYPE_OFFSET, break_to);
-
-	status = messaging_send_buf(msg_ctx, exclusive->pid,
-				    MSG_SMB_BREAK_REQUEST,
-				    (uint8_t *)msg, sizeof(msg));
+	status = messaging_send(
+		msg_ctx, exclusive->pid, MSG_SMB_BREAK_REQUEST, &blob);
+	TALLOC_FREE(blob.data);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(3, ("Could not send oplock break message: %s\n",
 			  nt_errstr(status)));
@@ -1838,6 +1849,8 @@ static bool delay_for_oplock(files_struct *fsp,
 	uint32_t i;
 	bool delay = false;
 	bool will_overwrite;
+	const uint32_t delay_mask = have_sharing_violation ?
+		SMB2_LEASE_HANDLE : SMB2_LEASE_WRITE;
 
 	if ((oplock_request & INTERNAL_OPEN_ONLY) ||
 	    is_stat_open(fsp->access_mask)) {
@@ -1857,19 +1870,37 @@ static bool delay_for_oplock(files_struct *fsp,
 
 	for (i=0; i<d->num_share_modes; i++) {
 		struct share_mode_entry *e = &d->share_modes[i];
-		struct share_mode_lease *l = NULL;
+		bool e_is_lease = (e->op_type == LEASE_OPLOCK);
 		uint32_t e_lease_type = get_lease_type(d, e);
 		uint32_t break_to;
-		uint32_t delay_mask = 0;
+		bool lease_is_breaking = false;
 
-		if (e->op_type == LEASE_OPLOCK) {
-			l = &d->leases[e->lease_idx];
-		}
+		if (e_is_lease) {
+			NTSTATUS status;
 
-		if (have_sharing_violation) {
-			delay_mask = SMB2_LEASE_HANDLE;
-		} else {
-			delay_mask = SMB2_LEASE_WRITE;
+			if (lease != NULL) {
+				bool our_lease = smb2_lease_equal(
+					fsp_client_guid(fsp),
+					&lease->lease_key,
+					&e->client_guid,
+					&e->lease_key);
+				if (our_lease) {
+					DBG_DEBUG("Ignoring our own lease\n");
+					continue;
+				}
+			}
+
+			status = leases_db_get(
+				&e->client_guid,
+				&e->lease_key,
+				&fsp->file_id,
+				NULL, /* current_state */
+				&lease_is_breaking,
+				NULL, /* breaking_to_requested */
+				NULL, /* breaking_to_required */
+				NULL, /* lease_version */
+				NULL); /* epoch */
+			SMB_ASSERT(NT_STATUS_IS_OK(status));
 		}
 
 		break_to = e_lease_type & ~delay_mask;
@@ -1882,20 +1913,8 @@ static bool delay_for_oplock(files_struct *fsp,
 			   (unsigned)i, (unsigned)e_lease_type,
 			   (unsigned)will_overwrite));
 
-		if (lease != NULL && l != NULL) {
-			bool ign;
-
-			ign = smb2_lease_equal(fsp_client_guid(fsp),
-					       &lease->lease_key,
-					       &l->client_guid,
-					       &l->lease_key);
-			if (ign) {
-				continue;
-			}
-		}
-
 		if ((e_lease_type & ~break_to) == 0) {
-			if (l != NULL && l->breaking) {
+			if (lease_is_breaking) {
 				delay = true;
 			}
 			continue;
@@ -1914,7 +1933,7 @@ static bool delay_for_oplock(files_struct *fsp,
 			break_to &= ~(SMB2_LEASE_READ|SMB2_LEASE_WRITE);
 		}
 
-		if (e->op_type != LEASE_OPLOCK) {
+		if (!e_is_lease) {
 			/*
 			 * Oplocks only support breaking to R or NONE.
 			 */
@@ -1928,10 +1947,9 @@ static bool delay_for_oplock(files_struct *fsp,
 		if (e_lease_type & delay_mask) {
 			delay = true;
 		}
-		if (l != NULL && l->breaking && !first_open_attempt) {
+		if (lease_is_breaking && !first_open_attempt) {
 			delay = true;
 		}
-		continue;
 	}
 
 	return delay;
@@ -1948,29 +1966,11 @@ static bool file_has_brlocks(files_struct *fsp)
 	return (brl_num_locks(br_lck) > 0);
 }
 
-int find_share_mode_lease(struct share_mode_data *d,
-			  const struct GUID *client_guid,
-			  const struct smb2_lease_key *key)
-{
-	uint32_t i;
-
-	for (i=0; i<d->num_leases; i++) {
-		struct share_mode_lease *l = &d->leases[i];
-
-		if (smb2_lease_equal(client_guid,
-				     key,
-				     &l->client_guid,
-				     &l->lease_key)) {
-			return i;
-		}
-	}
-
-	return -1;
-}
-
 struct fsp_lease *find_fsp_lease(struct files_struct *new_fsp,
 				 const struct smb2_lease_key *key,
-				 const struct share_mode_lease *l)
+				 uint32_t current_state,
+				 uint16_t lease_version,
+				 uint16_t lease_epoch)
 {
 	struct files_struct *fsp;
 
@@ -2003,100 +2003,124 @@ struct fsp_lease *find_fsp_lease(struct files_struct *new_fsp,
 	new_fsp->lease->ref_count = 1;
 	new_fsp->lease->sconn = new_fsp->conn->sconn;
 	new_fsp->lease->lease.lease_key = *key;
-	new_fsp->lease->lease.lease_state = l->current_state;
+	new_fsp->lease->lease.lease_state = current_state;
 	/*
 	 * We internally treat all leases as V2 and update
 	 * the epoch, but when sending breaks it matters if
 	 * the requesting lease was v1 or v2.
 	 */
-	new_fsp->lease->lease.lease_version = l->lease_version;
-	new_fsp->lease->lease.lease_epoch = l->epoch;
+	new_fsp->lease->lease.lease_version = lease_version;
+	new_fsp->lease->lease.lease_epoch = lease_epoch;
 	return new_fsp->lease;
 }
 
-static NTSTATUS grant_fsp_lease(struct files_struct *fsp,
-				struct share_mode_lock *lck,
-				const struct smb2_lease *lease,
-				uint32_t *p_lease_idx,
-				uint32_t granted)
+static NTSTATUS try_lease_upgrade(struct files_struct *fsp,
+				  struct share_mode_lock *lck,
+				  const struct GUID *client_guid,
+				  const struct smb2_lease *lease,
+				  uint32_t granted)
 {
-	struct share_mode_data *d = lck->data;
-	const struct GUID *client_guid = fsp_client_guid(fsp);
-	struct share_mode_lease *tmp;
+	bool do_upgrade;
+	uint32_t current_state, breaking_to_requested, breaking_to_required;
+	bool breaking;
+	uint16_t lease_version, epoch;
+	uint32_t existing, requested;
 	NTSTATUS status;
-	int idx;
 
-	idx = find_share_mode_lease(d, client_guid, &lease->lease_key);
+	status = leases_db_get(
+		client_guid,
+		&lease->lease_key,
+		&fsp->file_id,
+		&current_state,
+		&breaking,
+		&breaking_to_requested,
+		&breaking_to_required,
+		&lease_version,
+		&epoch);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
 
-	if (idx != -1) {
-		struct share_mode_lease *l = &d->leases[idx];
-		bool do_upgrade;
-		uint32_t existing, requested;
-
-		fsp->lease = find_fsp_lease(fsp, &lease->lease_key, l);
-		if (fsp->lease == NULL) {
-			DEBUG(1, ("Did not find existing lease for file %s\n",
-				  fsp_str_dbg(fsp)));
-			return NT_STATUS_NO_MEMORY;
-		}
-
-		*p_lease_idx = idx;
-
-		/*
-		 * Upgrade only if the requested lease is a strict upgrade.
-		 */
-		existing = l->current_state;
-		requested = lease->lease_state;
-
-		/*
-		 * Tricky: This test makes sure that "requested" is a
-		 * strict bitwise superset of "existing".
-		 */
-		do_upgrade = ((existing & requested) == existing);
-
-		/*
-		 * Upgrade only if there's a change.
-		 */
-		do_upgrade &= (granted != existing);
-
-		/*
-		 * Upgrade only if other leases don't prevent what was asked
-		 * for.
-		 */
-		do_upgrade &= (granted == requested);
-
-		/*
-		 * only upgrade if we are not in breaking state
-		 */
-		do_upgrade &= !l->breaking;
-
-		DEBUG(10, ("existing=%"PRIu32", requested=%"PRIu32", "
-			   "granted=%"PRIu32", do_upgrade=%d\n",
-			   existing, requested, granted, (int)do_upgrade));
-
-		if (do_upgrade) {
-			l->current_state = granted;
-			l->epoch += 1;
-		}
-
-		/* Ensure we're in sync with current lease state. */
-		fsp_lease_update(lck, fsp_client_guid(fsp), fsp->lease);
-		return NT_STATUS_OK;
+	fsp->lease = find_fsp_lease(
+		fsp,
+		&lease->lease_key,
+		current_state,
+		lease_version,
+		epoch);
+	if (fsp->lease == NULL) {
+		DEBUG(1, ("Did not find existing lease for file %s\n",
+			  fsp_str_dbg(fsp)));
+		return NT_STATUS_NO_MEMORY;
 	}
 
 	/*
-	 * Create new lease
+	 * Upgrade only if the requested lease is a strict upgrade.
 	 */
+	existing = current_state;
+	requested = lease->lease_state;
 
-	tmp = talloc_realloc(d, d->leases, struct share_mode_lease,
-			     d->num_leases+1);
-	if (tmp == NULL) {
-		/*
-		 * See [MS-SMB2]
-		 */
-		return NT_STATUS_INSUFFICIENT_RESOURCES;
+	/*
+	 * Tricky: This test makes sure that "requested" is a
+	 * strict bitwise superset of "existing".
+	 */
+	do_upgrade = ((existing & requested) == existing);
+
+	/*
+	 * Upgrade only if there's a change.
+	 */
+	do_upgrade &= (granted != existing);
+
+	/*
+	 * Upgrade only if other leases don't prevent what was asked
+	 * for.
+	 */
+	do_upgrade &= (granted == requested);
+
+	/*
+	 * only upgrade if we are not in breaking state
+	 */
+	do_upgrade &= !breaking;
+
+	DEBUG(10, ("existing=%"PRIu32", requested=%"PRIu32", "
+		   "granted=%"PRIu32", do_upgrade=%d\n",
+		   existing, requested, granted, (int)do_upgrade));
+
+	if (do_upgrade) {
+		NTSTATUS set_status;
+
+		current_state = granted;
+		epoch += 1;
+
+		set_status = leases_db_set(
+			client_guid,
+			&lease->lease_key,
+			current_state,
+			breaking,
+			breaking_to_requested,
+			breaking_to_required,
+			lease_version,
+			epoch);
+
+		if (!NT_STATUS_IS_OK(set_status)) {
+			DBG_DEBUG("leases_db_set failed: %s\n",
+				  nt_errstr(set_status));
+			return set_status;
+		}
 	}
-	d->leases = tmp;
+
+	fsp_lease_update(fsp);
+
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS grant_new_fsp_lease(struct files_struct *fsp,
+				    struct share_mode_lock *lck,
+				    const struct GUID *client_guid,
+				    const struct smb2_lease *lease,
+				    uint32_t granted)
+{
+	struct share_mode_data *d = lck->data;
+	NTSTATUS status;
 
 	fsp->lease = talloc_zero(fsp->conn->sconn, struct fsp_lease);
 	if (fsp->lease == NULL) {
@@ -2109,19 +2133,12 @@ static NTSTATUS grant_fsp_lease(struct files_struct *fsp,
 	fsp->lease->lease.lease_state = granted;
 	fsp->lease->lease.lease_epoch = lease->lease_epoch + 1;
 
-	*p_lease_idx = d->num_leases;
-
-	d->leases[d->num_leases] = (struct share_mode_lease) {
-		.client_guid = *client_guid,
-		.lease_key = fsp->lease->lease.lease_key,
-		.current_state = fsp->lease->lease.lease_state,
-		.lease_version = fsp->lease->lease.lease_version,
-		.epoch = fsp->lease->lease.lease_epoch,
-	};
-
 	status = leases_db_add(client_guid,
 			       &lease->lease_key,
 			       &fsp->file_id,
+			       fsp->lease->lease.lease_state,
+			       fsp->lease->lease.lease_version,
+			       fsp->lease->lease.lease_epoch,
 			       fsp->conn->connectpath,
 			       fsp->fsp_name->base_name,
 			       fsp->fsp_name->stream_name);
@@ -2132,10 +2149,27 @@ static NTSTATUS grant_fsp_lease(struct files_struct *fsp,
 		return NT_STATUS_INSUFFICIENT_RESOURCES;
 	}
 
-	d->num_leases += 1;
 	d->modified = true;
 
 	return NT_STATUS_OK;
+}
+
+static NTSTATUS grant_fsp_lease(struct files_struct *fsp,
+				struct share_mode_lock *lck,
+				const struct smb2_lease *lease,
+				uint32_t granted)
+{
+	const struct GUID *client_guid = fsp_client_guid(fsp);
+	NTSTATUS status;
+
+	status = try_lease_upgrade(fsp, lck, client_guid, lease, granted);
+
+	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_FOUND)) {
+		status = grant_new_fsp_lease(
+			fsp, lck, client_guid, lease, granted);
+	}
+
+	return status;
 }
 
 static bool is_same_lease(const files_struct *fsp,
@@ -2152,8 +2186,28 @@ static bool is_same_lease(const files_struct *fsp,
 
 	return smb2_lease_equal(fsp_client_guid(fsp),
 				&lease->lease_key,
-				&d->leases[e->lease_idx].client_guid,
-				&d->leases[e->lease_idx].lease_key);
+				&e->client_guid,
+				&e->lease_key);
+}
+
+static int map_lease_type_to_oplock(uint32_t lease_type)
+{
+	int result = NO_OPLOCK;
+
+	switch (lease_type) {
+	case SMB2_LEASE_READ|SMB2_LEASE_WRITE|SMB2_LEASE_HANDLE:
+		result = BATCH_OPLOCK|EXCLUSIVE_OPLOCK;
+		break;
+	case SMB2_LEASE_READ|SMB2_LEASE_WRITE:
+		result = EXCLUSIVE_OPLOCK;
+		break;
+	case SMB2_LEASE_READ|SMB2_LEASE_HANDLE:
+	case SMB2_LEASE_READ:
+		result = LEVEL_II_OPLOCK;
+		break;
+	}
+
+	return result;
 }
 
 static NTSTATUS grant_fsp_oplock_type(struct smb_request *req,
@@ -2167,7 +2221,8 @@ static NTSTATUS grant_fsp_oplock_type(struct smb_request *req,
 	bool got_oplock = false;
 	uint32_t i;
 	uint32_t granted;
-	uint32_t lease_idx = UINT32_MAX;
+	const struct GUID *client_guid = NULL;
+	const struct smb2_lease_key *lease_key = NULL;
 	bool ok;
 	NTSTATUS status;
 
@@ -2258,34 +2313,23 @@ static NTSTATUS grant_fsp_oplock_type(struct smb_request *req,
 
 		fsp->oplock_type = LEASE_OPLOCK;
 
-		status = grant_fsp_lease(fsp, lck, lease, &lease_idx,
-					 granted);
+		status = grant_fsp_lease(fsp, lck, lease, granted);
 		if (!NT_STATUS_IS_OK(status)) {
 			return status;
 
 		}
 		*lease = fsp->lease->lease;
+
+		lease_key = &fsp->lease->lease.lease_key;
+		client_guid = fsp_client_guid(fsp);
+
 		DEBUG(10, ("lease_state=%d\n", lease->lease_state));
 	} else {
 		if (got_handle_lease) {
 			granted = SMB2_LEASE_NONE;
 		}
 
-		switch (granted) {
-		case SMB2_LEASE_READ|SMB2_LEASE_WRITE|SMB2_LEASE_HANDLE:
-			fsp->oplock_type = BATCH_OPLOCK|EXCLUSIVE_OPLOCK;
-			break;
-		case SMB2_LEASE_READ|SMB2_LEASE_WRITE:
-			fsp->oplock_type = EXCLUSIVE_OPLOCK;
-			break;
-		case SMB2_LEASE_READ|SMB2_LEASE_HANDLE:
-		case SMB2_LEASE_READ:
-			fsp->oplock_type = LEVEL_II_OPLOCK;
-			break;
-		default:
-			fsp->oplock_type = NO_OPLOCK;
-			break;
-		}
+		fsp->oplock_type = map_lease_type_to_oplock(granted);
 
 		status = set_file_oplock(fsp);
 		if (!NT_STATUS_IS_OK(status)) {
@@ -2296,18 +2340,20 @@ static NTSTATUS grant_fsp_oplock_type(struct smb_request *req,
 		}
 	}
 
-	ok = set_share_mode(lck, fsp, get_current_uid(fsp->conn),
-			    req ? req->mid : 0,
-			    fsp->oplock_type,
-			    lease_idx);
+	ok = set_share_mode(
+		lck,
+		fsp,
+		get_current_uid(fsp->conn),
+		req ? req->mid : 0,
+		fsp->oplock_type,
+		client_guid,
+		lease_key);
 	if (!ok) {
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	ok = update_num_read_oplocks(fsp, lck);
-	if (!ok) {
-		del_share_mode(lck, fsp);
-		return NT_STATUS_INTERNAL_ERROR;
+	if (granted & SMB2_LEASE_READ) {
+		lck->data->flags |= SHARE_MODE_HAS_READ_LEASE;
 	}
 
 	DEBUG(10,("grant_fsp_oplock_type: oplock type 0x%x on file %s\n",
@@ -2561,69 +2607,6 @@ static bool open_match_attributes(connection_struct *conn,
 		}
 	}
 	return True;
-}
-
-/****************************************************************************
- Special FCB or DOS processing in the case of a sharing violation.
- Try and find a duplicated file handle.
-****************************************************************************/
-
-static NTSTATUS fcb_or_dos_open(struct smb_request *req,
-				connection_struct *conn,
-				files_struct *fsp_to_dup_into,
-				const struct smb_filename *smb_fname,
-				struct file_id id,
-				uint16_t file_pid,
-				uint64_t vuid,
-				uint32_t access_mask,
-				uint32_t share_access,
-				uint32_t create_options)
-{
-	files_struct *fsp;
-
-	DEBUG(5,("fcb_or_dos_open: attempting old open semantics for "
-		 "file %s.\n", smb_fname_str_dbg(smb_fname)));
-
-	for(fsp = file_find_di_first(conn->sconn, id); fsp;
-	    fsp = file_find_di_next(fsp)) {
-
-		DEBUG(10,("fcb_or_dos_open: checking file %s, fd = %d, "
-			  "vuid = %llu, file_pid = %u, private_options = 0x%x "
-			  "access_mask = 0x%x\n", fsp_str_dbg(fsp),
-			  fsp->fh->fd, (unsigned long long)fsp->vuid,
-			  (unsigned int)fsp->file_pid,
-			  (unsigned int)fsp->fh->private_options,
-			  (unsigned int)fsp->access_mask ));
-
-		if (fsp != fsp_to_dup_into &&
-		    fsp->fh->fd != -1 &&
-		    fsp->vuid == vuid &&
-		    fsp->file_pid == file_pid &&
-		    (fsp->fh->private_options & (NTCREATEX_OPTIONS_PRIVATE_DENY_DOS |
-						 NTCREATEX_OPTIONS_PRIVATE_DENY_FCB)) &&
-		    (fsp->access_mask & FILE_WRITE_DATA) &&
-		    strequal(fsp->fsp_name->base_name, smb_fname->base_name) &&
-		    strequal(fsp->fsp_name->stream_name,
-			     smb_fname->stream_name)) {
-			DEBUG(10,("fcb_or_dos_open: file match\n"));
-			break;
-		}
-	}
-
-	if (!fsp) {
-		return NT_STATUS_NOT_FOUND;
-	}
-
-	/* quite an insane set of semantics ... */
-	if (is_executable(smb_fname->base_name) &&
-	    (fsp->fh->private_options & NTCREATEX_OPTIONS_PRIVATE_DENY_DOS)) {
-		DEBUG(10,("fcb_or_dos_open: file fail due to is_executable.\n"));
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	/* We need to duplicate this fsp. */
-	return dup_file_fsp(req, fsp, access_mask, share_access,
-			    create_options, fsp_to_dup_into);
 }
 
 static void schedule_defer_open(struct share_mode_lock *lck,
@@ -3072,7 +3055,7 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 		new_dos_attributes &= SAMBA_ATTRIBUTES_MASK;
 		if (file_existed) {
 			/*
-			 * Only use strored DOS attributes for checks
+			 * Only use stored DOS attributes for checks
 			 * against requested attributes (below via
 			 * open_match_attributes()), cf bug #11992
 			 * for details. -slow
@@ -3502,41 +3485,6 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 
 		SMB_ASSERT(NT_STATUS_EQUAL(status, NT_STATUS_SHARING_VIOLATION));
 
-		/* Check if this can be done with the deny_dos and fcb
-		 * calls. */
-		if (private_flags &
-		    (NTCREATEX_OPTIONS_PRIVATE_DENY_DOS|
-		     NTCREATEX_OPTIONS_PRIVATE_DENY_FCB)) {
-			if (req == NULL) {
-				DEBUG(0, ("DOS open without an SMB "
-					  "request!\n"));
-				TALLOC_FREE(lck);
-				fd_close(fsp);
-				return NT_STATUS_INTERNAL_ERROR;
-			}
-
-			/* Use the client requested access mask here,
-			 * not the one we open with. */
-			status = fcb_or_dos_open(req,
-						 conn,
-						 fsp,
-						 smb_fname,
-						 id,
-						 req->smbpid,
-						 req->vuid,
-						 access_mask,
-						 share_access,
-						 create_options);
-
-			if (NT_STATUS_IS_OK(status)) {
-				TALLOC_FREE(lck);
-				if (pinfo) {
-					*pinfo = FILE_WAS_OPENED;
-				}
-				return NT_STATUS_OK;
-			}
-		}
-
 		/*
 		 * This next line is a subtlety we need for
 		 * MS-Access. If a file open will fail due to share
@@ -3760,6 +3708,19 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 		fsp->initial_delete_on_close = True;
 	}
 
+	if (info == FILE_WAS_CREATED) {
+		smb_fname->st.st_ex_iflags &= ~ST_EX_IFLAG_CALCULATED_ITIME;
+
+		if (lp_store_dos_attributes(SNUM(conn)) &&
+		    smb_fname->st.st_ex_iflags & ST_EX_IFLAG_CALCULATED_FILE_ID)
+		{
+			uint64_t file_id;
+
+			file_id = make_file_id_from_itime(&smb_fname->st);
+			update_stat_ex_file_id(&smb_fname->st, file_id);
+		}
+	}
+
 	if (info != FILE_WAS_OPENED) {
 		/* Overwritten files should be initially set as archive */
 		if ((info == FILE_WAS_OVERWRITTEN && lp_map_archive(SNUM(conn))) ||
@@ -3907,7 +3868,17 @@ static NTSTATUS mkdir_internal(connection_struct *conn,
 		return NT_STATUS_NOT_A_DIRECTORY;
 	}
 
+	smb_dname->st.st_ex_iflags &= ~ST_EX_IFLAG_CALCULATED_ITIME;
+
 	if (lp_store_dos_attributes(SNUM(conn))) {
+		if (smb_dname->st.st_ex_iflags & ST_EX_IFLAG_CALCULATED_FILE_ID)
+		{
+			uint64_t file_id;
+
+			file_id = make_file_id_from_itime(&smb_dname->st);
+			update_stat_ex_file_id(&smb_dname->st, file_id);
+		}
+
 		if (!posix_open) {
 			file_set_dosmode(conn, smb_dname,
 					 file_attributes | FILE_ATTRIBUTE_DIRECTORY,
@@ -4186,30 +4157,19 @@ static NTSTATUS open_directory(connection_struct *conn,
 	*/
 	ZERO_STRUCT(mtimespec);
 
-	if (access_mask & (FILE_LIST_DIRECTORY|
-			   FILE_ADD_FILE|
-			   FILE_ADD_SUBDIRECTORY|
-			   FILE_TRAVERSE|
-			   DELETE_ACCESS|
-			   FILE_DELETE_CHILD)) {
 #ifdef O_DIRECTORY
-		status = fd_open(conn, fsp, O_RDONLY|O_DIRECTORY, 0);
+	status = fd_open(conn, fsp, O_RDONLY|O_DIRECTORY, 0);
 #else
-		/* POSIX allows us to open a directory with O_RDONLY. */
-		status = fd_open(conn, fsp, O_RDONLY, 0);
+	/* POSIX allows us to open a directory with O_RDONLY. */
+	status = fd_open(conn, fsp, O_RDONLY, 0);
 #endif
-		if (!NT_STATUS_IS_OK(status)) {
-			DEBUG(5, ("open_directory: Could not open fd for "
-				"%s (%s)\n",
-				smb_fname_str_dbg(smb_dname),
-				nt_errstr(status)));
-			file_free(req, fsp);
-			return status;
-		}
-	} else {
-		fsp->fh->fd = -1;
-		DEBUG(10, ("Not opening Directory %s\n",
-			smb_fname_str_dbg(smb_dname)));
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_INFO("Could not open fd for "
+			"%s (%s)\n",
+			smb_fname_str_dbg(smb_dname),
+			nt_errstr(status));
+		file_free(req, fsp);
+		return status;
 	}
 
 	status = vfs_stat_fsp(fsp);
@@ -4268,9 +4228,14 @@ static NTSTATUS open_directory(connection_struct *conn,
 		return status;
 	}
 
-	ok = set_share_mode(lck, fsp, get_current_uid(conn),
-			    req ? req->mid : 0, NO_OPLOCK,
-			    UINT32_MAX);
+	ok = set_share_mode(
+		lck,
+		fsp,
+		get_current_uid(conn),
+		req ? req->mid : 0,
+		NO_OPLOCK,
+		NULL,
+		NULL);
 	if (!ok) {
 		TALLOC_FREE(lck);
 		fd_close(fsp);
@@ -4357,87 +4322,89 @@ NTSTATUS create_directory(connection_struct *conn, struct smb_request *req,
  smbd process.
 ****************************************************************************/
 
-void msg_file_was_renamed(struct messaging_context *msg,
+void msg_file_was_renamed(struct messaging_context *msg_ctx,
 			  void *private_data,
 			  uint32_t msg_type,
-			  struct server_id server_id,
+			  struct server_id src,
 			  DATA_BLOB *data)
 {
+	struct file_rename_message *msg = NULL;
+	enum ndr_err_code ndr_err;
 	files_struct *fsp;
-	char *frm = (char *)data->data;
-	struct file_id id;
-	const char *sharepath;
-	const char *base_name;
-	const char *stream_name;
 	struct smb_filename *smb_fname = NULL;
-	size_t sp_len, bn_len;
-	NTSTATUS status;
 	struct smbd_server_connection *sconn =
 		talloc_get_type_abort(private_data,
 		struct smbd_server_connection);
 
-	if (data->data == NULL
-	    || data->length < MSG_FILE_RENAMED_MIN_SIZE + 2) {
-                DEBUG(0, ("msg_file_was_renamed: Got invalid msg len %d\n",
-			  (int)data->length));
-                return;
-        }
-
-	/* Unpack the message. */
-	pull_file_id_24(frm, &id);
-	sharepath = &frm[24];
-	sp_len = strlen(sharepath);
-	base_name = sharepath + sp_len + 1;
-	bn_len = strlen(base_name);
-	stream_name = sharepath + sp_len + 1 + bn_len + 1;
-
-	/* stream_name must always be NULL if there is no stream. */
-	if (stream_name[0] == '\0') {
-		stream_name = NULL;
-	}
-
-	smb_fname = synthetic_smb_fname(talloc_tos(),
-					base_name,
-					stream_name,
-					NULL,
-					0);
-	if (smb_fname == NULL) {
+	msg = talloc(talloc_tos(), struct file_rename_message);
+	if (msg == NULL) {
+		DBG_WARNING("talloc failed\n");
 		return;
 	}
 
-	DEBUG(10,("msg_file_was_renamed: Got rename message for sharepath %s, new name %s, "
-		"file_id %s\n",
-		sharepath, smb_fname_str_dbg(smb_fname),
-		file_id_string_tos(&id)));
+	ndr_err = ndr_pull_struct_blob_all(
+		data,
+		msg,
+		msg,
+		(ndr_pull_flags_fn_t)ndr_pull_file_rename_message);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		DBG_DEBUG("ndr_pull_oplock_break_message failed: %s\n",
+			  ndr_errstr(ndr_err));
+		goto out;
+	}
+	if (DEBUGLEVEL >= 10) {
+		struct server_id_buf buf;
+		DBG_DEBUG("Got rename message from %s\n",
+			  server_id_str_buf(src, &buf));
+		NDR_PRINT_DEBUG(file_rename_message, msg);
+	}
 
-	for(fsp = file_find_di_first(sconn, id); fsp;
-	    fsp = file_find_di_next(fsp)) {
-		if (memcmp(fsp->conn->connectpath, sharepath, sp_len) == 0) {
+	/* stream_name must always be NULL if there is no stream. */
+	if ((msg->stream_name != NULL) && (msg->stream_name[0] == '\0')) {
+		msg->stream_name = NULL;
+	}
 
-			DEBUG(10,("msg_file_was_renamed: renaming file %s from %s -> %s\n",
-				fsp_fnum_dbg(fsp), fsp_str_dbg(fsp),
-				smb_fname_str_dbg(smb_fname)));
-			status = fsp_set_smb_fname(fsp, smb_fname);
-			if (!NT_STATUS_IS_OK(status)) {
-				goto out;
-			}
-		} else {
-			/* TODO. JRA. */
-			/* Now we have the complete path we can work out if this is
-			   actually within this share and adjust newname accordingly. */
-	                DEBUG(10,("msg_file_was_renamed: share mismatch (sharepath %s "
-				"not sharepath %s) "
-				"%s from %s -> %s\n",
-				fsp->conn->connectpath,
-				sharepath,
-				fsp_fnum_dbg(fsp),
-				fsp_str_dbg(fsp),
-				smb_fname_str_dbg(smb_fname)));
+	smb_fname = synthetic_smb_fname(
+		msg, msg->base_name, msg->stream_name, NULL, 0);
+	if (smb_fname == NULL) {
+		DBG_DEBUG("synthetic_smb_fname failed\n");
+		goto out;
+	}
+
+	fsp = file_find_dif(sconn, msg->id, msg->share_file_id);
+	if (fsp == NULL) {
+		DBG_DEBUG("fsp not found\n");
+		goto out;
+	}
+
+	if (strcmp(fsp->conn->connectpath, msg->servicepath) == 0) {
+		NTSTATUS status;
+		DBG_DEBUG("renaming file %s from %s -> %s\n",
+			  fsp_fnum_dbg(fsp),
+			  fsp_str_dbg(fsp),
+			  smb_fname_str_dbg(smb_fname));
+		status = fsp_set_smb_fname(fsp, smb_fname);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_DEBUG("fsp_set_smb_fname failed: %s\n",
+				  nt_errstr(status));
 		}
-        }
+	} else {
+		/* TODO. JRA. */
+		/*
+		 * Now we have the complete path we can work out if
+		 * this is actually within this share and adjust
+		 * newname accordingly.
+		 */
+		DBG_DEBUG("share mismatch (sharepath %s not sharepath %s) "
+			  "%s from %s -> %s\n",
+			  fsp->conn->connectpath,
+			  msg->servicepath,
+			  fsp_fnum_dbg(fsp),
+			  fsp_str_dbg(fsp),
+			  smb_fname_str_dbg(smb_fname));
+	}
  out:
-	TALLOC_FREE(smb_fname);
-	return;
+	TALLOC_FREE(msg);
 }
 
 /*
@@ -4959,6 +4926,7 @@ static NTSTATUS lease_match(connection_struct *conn,
 	for (i = 0; i < state.num_file_ids; i++) {
 		struct share_mode_lock *lck;
 		struct share_mode_data *d;
+		struct share_mode_entry *lease_entry = NULL;
 		uint32_t j;
 
 		if (file_id_equal(&state.ids[i], &state.id)) {
@@ -4981,14 +4949,11 @@ static NTSTATUS lease_match(connection_struct *conn,
 			}
 
 			if (e->op_type == LEASE_OPLOCK) {
-				struct share_mode_lease *l = NULL;
-				l = &lck->data->leases[e->lease_idx];
-				if (!smb2_lease_key_equal(&l->lease_key,
+				if (!smb2_lease_key_equal(&e->lease_key,
 							  lease_key)) {
 					continue;
 				}
-				*p_epoch = l->epoch;
-				*p_version = l->lease_version;
+				lease_entry = e;
 			}
 
 			if (e_lease_type == SMB2_LEASE_NONE) {
@@ -5022,6 +4987,25 @@ static NTSTATUS lease_match(connection_struct *conn,
 			 */
 
 		}
+
+		if (lease_entry != NULL) {
+			status = leases_db_get(
+				&lease_entry->client_guid,
+				&lease_entry->lease_key,
+				&d->id,
+				NULL, /* current_state */
+				NULL, /* breaking */
+				NULL, /* breaking_to_requested */
+				NULL, /* breaking_to_required */
+				p_version, /* lease_version */
+				p_epoch); /* epoch */
+			if (!NT_STATUS_IS_OK(status)) {
+				DBG_WARNING("Could not find version/epoch: "
+					    "%s\n",
+					    nt_errstr(status));
+			}
+		}
+
 		TALLOC_FREE(lck);
 	}
 	/*
@@ -5464,11 +5448,12 @@ static NTSTATUS create_file_unixpath(connection_struct *conn,
 /*
  * Calculate the full path name given a relative fid.
  */
-NTSTATUS get_relative_fid_filename(connection_struct *conn,
-				   struct smb_request *req,
-				   uint16_t root_dir_fid,
-				   const struct smb_filename *smb_fname,
-				   struct smb_filename **smb_fname_out)
+static NTSTATUS get_relative_fid_filename(
+	connection_struct *conn,
+	struct smb_request *req,
+	uint16_t root_dir_fid,
+	const struct smb_filename *smb_fname,
+	struct smb_filename **smb_fname_out)
 {
 	files_struct *dir_fsp;
 	char *parent_fname = NULL;

@@ -329,9 +329,17 @@ int ctdb_sys_send_arp(const ctdb_sock_addr *addr, const char *iface)
 {
 	int s;
 	struct sockaddr_ll sall = {0};
-	struct ifreq if_hwaddr = {{{0}}};
+	struct ifreq if_hwaddr = {
+		.ifr_ifru = {
+			.ifru_flags = 0
+		},
+	};
 	uint8_t buffer[MAX(ARP_BUFFER_SIZE, IP6_NA_BUFFER_SIZE)];
-	struct ifreq ifr = {{{0}}};
+	struct ifreq ifr = {
+		.ifr_ifru = {
+			.ifru_flags = 0
+		},
+	};
 	struct ether_addr *hwaddr = NULL;
 	struct ether_addr *ether_dhost = NULL;
 	size_t len = 0;
@@ -673,8 +681,12 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 			     sizeof(dest->ip));
 		saved_errno = errno;
 		close(s);
-		if (ret != len) {
+		if (ret == -1) {
 			D_ERR("Failed sendto (%s)\n", strerror(saved_errno));
+			return -1;
+		}
+		if ((size_t)ret != len) {
+			DBG_ERR("Failed sendto - didn't send full packet\n");
 			return -1;
 		}
 		break;
@@ -714,9 +726,12 @@ int ctdb_sys_send_tcp(const ctdb_sock_addr *dest,
 			     sizeof(tmpdest));
 		saved_errno = errno;
 		close(s);
-
-		if (ret != len) {
+		if (ret == -1) {
 			D_ERR("Failed sendto (%s)\n", strerror(saved_errno));
+			return -1;
+		}
+		if ((size_t)ret != len) {
+			DBG_ERR("Failed sendto - didn't send full packet\n");
 			return -1;
 		}
 		break;
@@ -906,7 +921,10 @@ int ctdb_sys_read_tcp_packet(int s, void *private_data,
 	int ret;
 
 	nread = recv(s, pkt, sizeof(pkt), MSG_TRUNC);
-	if (nread < sizeof(*eth)) {
+	if (nread == -1) {
+		return errno;
+	}
+	if ((size_t)nread < sizeof(*eth)) {
 		return EMSGSIZE;
 	}
 

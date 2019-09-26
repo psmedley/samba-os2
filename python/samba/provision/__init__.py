@@ -540,6 +540,16 @@ def findnss_gid(names):
     return findnss(grp.getgrnam, names)[2]
 
 
+def get_root_uid(root, logger):
+    try:
+        root_uid = findnss_uid(root)
+    except KeyError as e:
+        logger.info(e)
+        logger.info("Assuming root user has UID zero")
+        root_uid = 0
+    return root_uid
+
+
 def provision_paths_from_lp(lp, dnsdomain):
     """Set the default paths for provisioning.
 
@@ -764,18 +774,24 @@ def make_smbconf(smbconf, hostname, domain, realm, targetdir,
         lp.set("binddns dir", global_settings["binddns dir"])
 
     if eadb:
-        if use_ntvfs and not lp.get("posix:eadb"):
+        if use_ntvfs:
             if targetdir is not None:
                 privdir = os.path.join(targetdir, "private")
-            else:
+                lp.set("posix:eadb",
+                       os.path.abspath(os.path.join(privdir, "eadb.tdb")))
+            elif not lp.get("posix:eadb"):
                 privdir = lp.get("private dir")
-            lp.set("posix:eadb", os.path.abspath(os.path.join(privdir, "eadb.tdb")))
-        elif not use_ntvfs and not lp.get("xattr_tdb:file"):
+                lp.set("posix:eadb",
+                       os.path.abspath(os.path.join(privdir, "eadb.tdb")))
+        else:
             if targetdir is not None:
                 statedir = os.path.join(targetdir, "state")
-            else:
+                lp.set("xattr_tdb:file",
+                       os.path.abspath(os.path.join(statedir, "xattr.tdb")))
+            elif not lp.get("xattr_tdb:file"):
                 statedir = lp.get("state directory")
-            lp.set("xattr_tdb:file", os.path.abspath(os.path.join(statedir, "xattr.tdb")))
+                lp.set("xattr_tdb:file",
+                       os.path.abspath(os.path.join(statedir, "xattr.tdb")))
 
     shares = {}
     if serverrole == "active directory domain controller":
@@ -830,7 +846,7 @@ def setup_name_mappings(idmap, sid, root_uid, nobody_uid,
 def setup_samdb_partitions(samdb_path, logger, lp, session_info,
                            provision_backend, names, serverrole,
                            erase=False, plaintext_secrets=False,
-                           backend_store=None):
+                           backend_store=None,backend_store_size=None):
     """Setup the partitions for the SAM database.
 
     Alternatively, provision() may call this, and then populate the database.
@@ -1279,9 +1295,13 @@ def create_default_gpo(sysvolpath, dnsdomain, policyguid, policyguid_dc):
     create_gpo_struct(policy_path)
 
 
+# Default the database size to 8Gb
+DEFAULT_BACKEND_SIZE = 8 * 1024 * 1024 *1024
+
 def setup_samdb(path, session_info, provision_backend, lp, names,
                 logger, fill, serverrole, schema, am_rodc=False,
-                plaintext_secrets=False, backend_store=None):
+                plaintext_secrets=False, backend_store=None,
+                backend_store_size=None, batch_mode=False):
     """Setup a complete SAM Database.
 
     :note: This will wipe the main SAM database file!
@@ -1291,13 +1311,30 @@ def setup_samdb(path, session_info, provision_backend, lp, names,
     setup_samdb_partitions(path, logger=logger, lp=lp,
                            provision_backend=provision_backend, session_info=session_info,
                            names=names, serverrole=serverrole, plaintext_secrets=plaintext_secrets,
-                           backend_store=backend_store)
+                           backend_store=backend_store,
+                           backend_store_size=backend_store_size)
+
+    store_size = DEFAULT_BACKEND_SIZE
+    if backend_store_size:
+        store_size = backend_store_size
+
+    options = []
+    if backend_store == "mdb":
+        options.append("lmdb_env_size:" + str(store_size))
+    if batch_mode:
+        options.append("batch_mode:1")
+    if batch_mode:
+        # Estimate the number of index records in the transaction_index_cache
+        # Numbers chosen give the prime 202481 for the default backend size,
+        # which works well for a 100,000 user database
+        cache_size = int(store_size / 42423) + 1
+        options.append("transaction_index_cache_size:" + str(cache_size))
 
     # Load the database, but don's load the global schema and don't connect
     # quite yet
     samdb = SamDB(session_info=session_info, url=None, auto_connect=False,
                   credentials=provision_backend.credentials, lp=lp,
-                  global_schema=False, am_rodc=am_rodc)
+                  global_schema=False, am_rodc=am_rodc, options=options)
 
     logger.info("Pre-loading the Samba 4 and AD schema")
 
@@ -1311,7 +1348,7 @@ def setup_samdb(path, session_info, provision_backend, lp, names,
     # And now we can connect to the DB - the schema won't be loaded from the
     # DB
     try:
-        samdb.connect(path)
+        samdb.connect(path, options=options)
     except ldb.LdbError as e2:
         (num, string_error) = e2.args
         if (num == ldb.ERR_INSUFFICIENT_ACCESS_RIGHTS):
@@ -1331,7 +1368,8 @@ def fill_samdb(samdb, lp, names, logger, policyguid,
                policyguid_dc, fill, adminpass, krbtgtpass, machinepass, dns_backend,
                dnspass, invocationid, ntdsguid, serverrole, am_rodc=False,
                dom_for_fun_level=None, schema=None, next_rid=None, dc_rid=None,
-               backend_store=None):
+               backend_store=None,
+               backend_store_size=None):
 
     if next_rid is None:
         next_rid = 1000
@@ -1710,7 +1748,7 @@ def setsysvolacl(samdb, netlogon, sysvol, uid, gid, domainsid, dnsdomain,
 
     # use admin sid dn as user dn, since admin should own most of the files,
     # the operation will be much faster
-    userdn = '<SID={0}-{1}>'.format(domainsid, security.DOMAIN_RID_ADMINISTRATOR)
+    userdn = '<SID={}-{}>'.format(domainsid, security.DOMAIN_RID_ADMINISTRATOR)
 
     flags = (auth.AUTH_SESSION_INFO_DEFAULT_GROUPS |
              auth.AUTH_SESSION_INFO_AUTHENTICATED |
@@ -1862,9 +1900,9 @@ def checksysvolacl(samdb, netlogon, sysvol, domainsid, dnsdomain, domaindn,
                        direct_db_access)
 
 
-def interface_ips_v4(lp):
+def interface_ips_v4(lp, all_interfaces=False):
     """return only IPv4 IPs"""
-    ips = samba.interface_ips(lp, False)
+    ips = samba.interface_ips(lp, all_interfaces)
     ret = []
     for i in ips:
         if i.find(':') == -1:
@@ -1892,7 +1930,8 @@ def provision_fill(samdb, secrets_ldb, logger, names, paths,
                    dns_backend=None, dnspass=None,
                    serverrole=None, dom_for_fun_level=None,
                    am_rodc=False, lp=None, use_ntvfs=False,
-                   skip_sysvolacl=False, backend_store=None):
+                   skip_sysvolacl=False, backend_store=None,
+                   backend_store_size=None):
     # create/adapt the group policy GUIDs
     # Default GUID for default policy are described at
     # "How Core Group Policy Works"
@@ -1925,7 +1964,8 @@ def provision_fill(samdb, secrets_ldb, logger, names, paths,
                            ntdsguid=ntdsguid, serverrole=serverrole,
                            dom_for_fun_level=dom_for_fun_level, am_rodc=am_rodc,
                            next_rid=next_rid, dc_rid=dc_rid,
-                           backend_store=backend_store)
+                           backend_store=backend_store,
+                           backend_store_size=backend_store_size)
 
         # Set up group policies (domain policy and domain controller
         # policy)
@@ -2128,8 +2168,9 @@ def provision(logger, session_info, smbconf=None,
               useeadb=False, am_rodc=False, lp=None, use_ntvfs=False,
               use_rfc2307=False, maxuid=None, maxgid=None, skip_sysvolacl=True,
               ldap_backend_forced_uri=None, nosync=False, ldap_dryrun_mode=False,
-              ldap_backend_extra_port=None, base_schema=None,
-              plaintext_secrets=False, backend_store=None):
+              ldap_backend_extra_port=None, base_schema="2012_R2",
+              plaintext_secrets=False, backend_store=None,
+              backend_store_size=None, batch_mode=False):
     """Provision samba4
 
     :note: caution, this wipes all existing data!
@@ -2152,7 +2193,7 @@ def provision(logger, session_info, smbconf=None,
     if domainsid is None:
         domainsid = security.random_sid()
 
-    root_uid = findnss_uid([root or "root"])
+    root_uid = get_root_uid([root or "root"], logger)
     nobody_uid = findnss_uid([nobody or "nobody"])
     users_gid = findnss_gid([users or "users", 'users', 'other', 'staff'])
     root_gid = pwd.getpwuid(root_uid).pw_gid
@@ -2304,7 +2345,9 @@ def provision(logger, session_info, smbconf=None,
                             serverrole=serverrole,
                             schema=schema, fill=samdb_fill, am_rodc=am_rodc,
                             plaintext_secrets=plaintext_secrets,
-                            backend_store=backend_store)
+                            backend_store=backend_store,
+                            backend_store_size=backend_store_size,
+                            batch_mode=batch_mode)
 
         if serverrole == "active directory domain controller":
             if paths.netlogon is None:
@@ -2337,7 +2380,8 @@ def provision(logger, session_info, smbconf=None,
                            dom_for_fun_level=dom_for_fun_level, am_rodc=am_rodc,
                            lp=lp, use_ntvfs=use_ntvfs,
                            skip_sysvolacl=skip_sysvolacl,
-                           backend_store=backend_store)
+                           backend_store=backend_store,
+                           backend_store_size=backend_store_size)
 
         if not is_heimdal_built():
             create_kdc_conf(paths.kdcconf, realm, domain, os.path.dirname(lp.get("log file")))

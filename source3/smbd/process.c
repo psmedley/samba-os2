@@ -44,6 +44,7 @@
 #include "system/threads.h"
 #include "lib/pthreadpool/pthreadpool_tevent.h"
 #include "util_event.h"
+#include "libcli/smb/smbXcli_base.h"
 
 /* Internal message queue for deferred opens. */
 struct pending_message_list {
@@ -227,8 +228,15 @@ bool srv_send_smb(struct smbXsrv_connection *xconn, char *buffer,
 	smbd_lock_socket(xconn);
 
 	if (do_signing) {
+		NTSTATUS status;
+
 		/* Sign the outgoing packet if required. */
-		srv_calculate_sign_mac(xconn, buf_out, seqnum);
+		status = srv_calculate_sign_mac(xconn, buf_out, seqnum);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_ERR("Failed to calculate signing mac: %s\n",
+				nt_errstr(status));
+			return false;
+		}
 	}
 
 	if (do_encrypt) {
@@ -1980,11 +1988,11 @@ static void process_smb(struct smbXsrv_connection *xconn,
 
 		/* special magic for immediate exit */
 		if ((nread == 9) &&
-		    (IVAL(inbuf, 4) == 0x74697865) &&
+		    (IVAL(inbuf, 4) == SMB_SUICIDE_PACKET) &&
 		    lp_parm_bool(-1, "smbd", "suicide mode", false)) {
 			uint8_t exitcode = CVAL(inbuf, 8);
-			DEBUG(1, ("Exiting immediately with code %d\n",
-				  (int)exitcode));
+			DBG_WARNING("SUICIDE: Exiting immediately with code %d\n",
+				    (int)exitcode);
 			exit(exitcode);
 		}
 
@@ -2096,7 +2104,7 @@ static bool find_andx_cmd_ofs(uint8_t *buf, size_t *pofs)
 
 	cmd = CVAL(buf, smb_com);
 
-	if (!is_andx_req(cmd)) {
+	if (!smb1cli_is_andx_req(cmd)) {
 		return false;
 	}
 
@@ -2104,7 +2112,7 @@ static bool find_andx_cmd_ofs(uint8_t *buf, size_t *pofs)
 
 	while (CVAL(buf, ofs) != 0xff) {
 
-		if (!is_andx_req(CVAL(buf, ofs))) {
+		if (!smb1cli_is_andx_req(CVAL(buf, ofs))) {
 			return false;
 		}
 
@@ -2261,7 +2269,7 @@ bool smb1_is_chain(const uint8_t *buf)
 	uint8_t cmd, wct, andx_cmd;
 
 	cmd = CVAL(buf, smb_com);
-	if (!is_andx_req(cmd)) {
+	if (!smb1cli_is_andx_req(cmd)) {
 		return false;
 	}
 	wct = CVAL(buf, smb_wct);
@@ -2297,7 +2305,7 @@ bool smb1_walk_chain(const uint8_t *buf,
 		return false;
 	}
 
-	if (!is_andx_req(cmd)) {
+	if (!smb1cli_is_andx_req(cmd)) {
 		return true;
 	}
 	if (wct < 2) {
@@ -2355,7 +2363,7 @@ bool smb1_walk_chain(const uint8_t *buf,
 
 		wct = CVAL(smb_buf, chain_offset);
 
-		if (is_andx_req(chain_cmd) && (wct < 2)) {
+		if (smb1cli_is_andx_req(chain_cmd) && (wct < 2)) {
 			return false;
 		}
 
@@ -2390,7 +2398,7 @@ bool smb1_walk_chain(const uint8_t *buf,
 			return false;
 		}
 
-		if (!is_andx_req(chain_cmd)) {
+		if (!smb1cli_is_andx_req(chain_cmd)) {
 			return true;
 		}
 		chain_cmd = CVAL(vwv, 0);
@@ -4138,7 +4146,7 @@ bool req_is_in_chain(const struct smb_request *req)
 		return true;
 	}
 
-	if (!is_andx_req(req->cmd)) {
+	if (!smb1cli_is_andx_req(req->cmd)) {
 		return false;
 	}
 

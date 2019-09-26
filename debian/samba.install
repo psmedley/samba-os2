@@ -3,6 +3,7 @@ etc/ufw/applications.d/samba
 [linux-any] lib/systemd/system/nmbd.service
 [linux-any] lib/systemd/system/samba-ad-dc.service
 [linux-any] lib/systemd/system/smbd.service
+usr/bin/dumpmscat
 usr/bin/mvxattr
 usr/bin/oLschema2ldif
 usr/bin/pdbedit
@@ -16,6 +17,7 @@ usr/lib/*/samba/libhdb-samba4.so.11
 usr/lib/*/samba/libhdb-samba4.so.11.0.2
 usr/lib/*/samba/libkdc-samba4.so.2
 usr/lib/*/samba/libkdc-samba4.so.2.0.0
+usr/lib/*/samba/libmscat.so.0
 usr/lib/*/samba/libpac.so.*
 usr/lib/*/samba/service/*.so
 usr/sbin/eventlogadm
@@ -24,6 +26,7 @@ usr/sbin/nmbd
 usr/sbin/samba
 usr/sbin/samba-gpupdate
 usr/sbin/samba_dnsupdate
+usr/sbin/samba_downgrade_db
 usr/sbin/samba_spnupdate
 usr/sbin/samba_upgradedns
 usr/sbin/smbd
@@ -39,6 +42,7 @@ usr/share/man/man8/idmap_script.8
 usr/share/man/man8/nmbd.8
 usr/share/man/man8/pdbedit.8
 usr/share/man/man8/samba-gpupdate.8
+usr/share/man/man8/samba_downgrade_db.8
 usr/share/man/man8/samba.8
 usr/share/man/man8/smbd.8
 usr/share/samba/setup

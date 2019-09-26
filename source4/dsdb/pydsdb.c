@@ -53,10 +53,13 @@
 static PyObject *py_ldb_get_exception(void)
 {
 	PyObject *mod = PyImport_ImportModule("ldb");
+	PyObject *result = NULL;
 	if (mod == NULL)
 		return NULL;
 
-	return PyObject_GetAttrString(mod, "LdbError");
+	result = PyObject_GetAttrString(mod, "LdbError");
+	Py_CLEAR(mod);
+	return result;
 }
 
 static void PyErr_SetLdbError(PyObject *error, int ret, struct ldb_context *ldb_ctx)
@@ -94,7 +97,7 @@ static PyObject *py_samdb_server_site_name(PyObject *self, PyObject *args)
 		return NULL;
 	}
 
-	result = PyStr_FromString(site);
+	result = PyUnicode_FromString(site);
 	talloc_free(mem_ctx);
 	return result;
 }
@@ -120,7 +123,7 @@ static PyObject *py_dsdb_convert_schema_to_openldap(PyObject *self,
 		return NULL;
 	} 
 
-	ret = PyStr_FromString(retstr);
+	ret = PyUnicode_FromString(retstr);
 	talloc_free(retstr);
 	return ret;
 }
@@ -137,7 +140,7 @@ static PyObject *py_samdb_set_domain_sid(PyLdbObject *self, PyObject *args)
 	
 	PyErr_LDB_OR_RAISE(py_ldb, ldb);
 
-	sid = dom_sid_parse_talloc(NULL, PyStr_AsString(py_sid));
+	sid = dom_sid_parse_talloc(NULL, PyUnicode_AsUTF8(py_sid));
 	if (sid == NULL) {
 		PyErr_NoMemory();
 		return NULL;
@@ -205,7 +208,7 @@ static PyObject *py_samdb_get_domain_sid(PyLdbObject *self, PyObject *args)
 		return NULL;
 	}
 
-	ret = PyStr_FromString(dom_sid_str_buf(sid, &buf));
+	ret = PyUnicode_FromString(dom_sid_str_buf(sid, &buf));
 	return ret;
 }
 
@@ -234,7 +237,7 @@ static PyObject *py_samdb_ntds_invocation_id(PyObject *self, PyObject *args)
 		PyErr_NoMemory();
 		return NULL;
 	}
-	result = PyStr_FromString(retstr);
+	result = PyUnicode_FromString(retstr);
 	talloc_free(retstr);
 	return result;
 }
@@ -276,7 +279,7 @@ static PyObject *py_dsdb_get_oid_from_attid(PyObject *self, PyObject *args)
 		return NULL;
 	}
 
-	ret = PyStr_FromString(oid);
+	ret = PyUnicode_FromString(oid);
 
 	talloc_free(mem_ctx);
 
@@ -431,7 +434,7 @@ static PyObject *py_dsdb_get_backlink_from_lDAPDisplayName(PyObject *self, PyObj
 		Py_RETURN_NONE;
 	}
 
-	return PyStr_FromString(target_attr->lDAPDisplayName);
+	return PyUnicode_FromString(target_attr->lDAPDisplayName);
 }
 
 
@@ -461,7 +464,7 @@ static PyObject *py_dsdb_get_lDAPDisplayName_by_attid(PyObject *self, PyObject *
 		return NULL;
 	}
 
-	return PyStr_FromString(a->lDAPDisplayName);
+	return PyUnicode_FromString(a->lDAPDisplayName);
 }
 
 
@@ -494,7 +497,7 @@ static PyObject *py_dsdb_get_syntax_oid_from_lDAPDisplayName(PyObject *self, PyO
 		return NULL;
 	}
 
-	return PyStr_FromString(attribute->syntax->ldap_oid);
+	return PyUnicode_FromString(attribute->syntax->ldap_oid);
 }
 
 /*
@@ -741,13 +744,23 @@ static PyObject *py_dsdb_normalise_attributes(PyObject *self, PyObject *args)
 
 	py_type = (PyTypeObject *)PyObject_GetAttrString(module, "MessageElement");
 	if (py_type == NULL) {
+		Py_DECREF(module);
 		return NULL;
 	}
+
+	Py_CLEAR(module);
+
 	py_ret = py_type->tp_alloc(py_type, 0);
+	Py_CLEAR(py_type);
+	if (py_ret == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
 	ret = (PyLdbMessageElementObject *)py_ret;
 
 	ret->mem_ctx = talloc_new(NULL);
 	if (talloc_reference(ret->mem_ctx, new_el) == NULL) {
+		Py_CLEAR(py_ret);
 		PyErr_NoMemory();
 		return NULL;
 	}
@@ -769,7 +782,7 @@ static PyObject *py_dsdb_set_ntds_invocation_id(PyObject *self, PyObject *args)
 		return NULL;
 
 	PyErr_LDB_OR_RAISE(py_ldb, ldb);
-	GUID_from_string(PyStr_AsString(py_guid), &guid);
+	GUID_from_string(PyUnicode_AsUTF8(py_guid), &guid);
 
 	if (GUID_all_zero(&guid)) {
 		PyErr_SetString(PyExc_RuntimeError, "set_ntds_invocation_id rejected due to all-zero invocation ID");
@@ -808,7 +821,7 @@ static PyObject *py_samdb_ntds_objectGUID(PyObject *self, PyObject *args)
 		PyErr_NoMemory();
 		return NULL;
 	}
-	result = PyStr_FromString(retstr);
+	result = PyUnicode_FromString(retstr);
 	talloc_free(retstr);
 	return result;
 }
@@ -867,11 +880,10 @@ static PyObject *py_dsdb_load_partition_usn(PyObject *self, PyObject *args)
 
 	talloc_free(mem_ctx);
 
-	result = PyDict_New();
-
-	PyDict_SetItemString(result, "uSNHighest", PyInt_FromLong((uint64_t)highest_uSN));
-	PyDict_SetItemString(result, "uSNUrgent", PyInt_FromLong((uint64_t)urgent_uSN));
-
+	result = Py_BuildValue(
+			"{s:l, s:l}",
+			"uSNHighest", (uint64_t)highest_uSN,
+			"uSNUrgent", (uint64_t)urgent_uSN);
 
 	return result;
 }
@@ -1270,7 +1282,7 @@ static PyObject *py_dsdb_garbage_collect_tombstones(PyObject *self, PyObject *ar
 	length = PyList_GET_SIZE(py_list_dn);
 
 	for (i = 0; i < length; i++) {
-		const char *part_str = PyStr_AsString(PyList_GetItem(py_list_dn, i));
+		const char *part_str = PyUnicode_AsUTF8(PyList_GetItem(py_list_dn, i));
 		struct ldb_dn *p;
 		struct dsdb_ldb_dn_list_node *node;
 
@@ -1644,7 +1656,7 @@ MODULE_INIT_FUNC(dsdb)
 	ADD_DSDB_FLAG(GPO_INHERIT);
 	ADD_DSDB_FLAG(GPO_BLOCK_INHERITANCE);
 
-#define ADD_DSDB_STRING(val)  PyModule_AddObject(m, #val, PyStr_FromString(val))
+#define ADD_DSDB_STRING(val)  PyModule_AddObject(m, #val, PyUnicode_FromString(val))
 
 	ADD_DSDB_STRING(DSDB_SYNTAX_BINARY_DN);
 	ADD_DSDB_STRING(DSDB_SYNTAX_STRING_DN);

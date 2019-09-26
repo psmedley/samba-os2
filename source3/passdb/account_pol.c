@@ -456,7 +456,17 @@ bool cache_account_policy_get(enum pdb_policy_type type, uint32_t *value)
 	}
 
 	if (gencache_get(cache_key, talloc_tos(), &cache_value, NULL)) {
-		uint32_t tmp = strtoul(cache_value, NULL, 10);
+		int error = 0;
+		uint32_t tmp;
+
+		tmp = smb_strtoul(cache_value,
+				  NULL,
+				  10,
+				  &error,
+				  SMB_STR_STANDARD);
+		if (error != 0) {
+			goto done;
+		}
 		*value = tmp;
 		ret = True;
 	}

@@ -48,7 +48,6 @@ struct gpfs_config_data {
 	bool ftruncate;
 	bool getrealfilename;
 	bool dfreequota;
-	bool prealloc;
 	bool acl;
 	bool settimes;
 	bool recalls;
@@ -673,6 +672,71 @@ static NTSTATUS gpfsacl_get_nt_acl(vfs_handle_struct *handle,
 	return map_nt_error_from_unix(errno);
 }
 
+static bool vfs_gpfs_nfs4_ace_to_gpfs_ace(SMB_ACE4PROP_T *nfs4_ace,
+					  struct gpfs_ace_v4 *gace,
+					  uid_t owner_uid)
+{
+	gace->aceType = nfs4_ace->aceType;
+	gace->aceFlags = nfs4_ace->aceFlags;
+	gace->aceMask = nfs4_ace->aceMask;
+
+	if (nfs4_ace->flags & SMB_ACE4_ID_SPECIAL) {
+		switch(nfs4_ace->who.special_id) {
+		case SMB_ACE4_WHO_EVERYONE:
+			gace->aceIFlags = ACE4_IFLAG_SPECIAL_ID;
+			gace->aceWho = ACE4_SPECIAL_EVERYONE;
+			break;
+		case SMB_ACE4_WHO_OWNER:
+			/*
+			 * With GPFS it is not possible to deny ACL or
+			 * attribute access to the owner. Setting an
+			 * ACL with such an entry is not possible.
+			 * Denying ACL or attribute access for the
+			 * owner through a named ACL entry can be
+			 * stored in an ACL, it is just not effective.
+			 *
+			 * Map this case to a named entry to allow at
+			 * least setting this ACL, which will be
+			 * enforced by the smbd permission check. Do
+			 * not do this for an inheriting OWNER entry,
+			 * as this represents a CREATOR OWNER ACE. The
+			 * remaining limitation is that CREATOR OWNER
+			 * cannot deny ACL or attribute access.
+			 */
+			if (!nfs_ace_is_inherit(nfs4_ace) &&
+			    nfs4_ace->aceType ==
+					SMB_ACE4_ACCESS_DENIED_ACE_TYPE &&
+			    nfs4_ace->aceMask & (SMB_ACE4_READ_ATTRIBUTES|
+						 SMB_ACE4_WRITE_ATTRIBUTES|
+						 SMB_ACE4_READ_ACL|
+						 SMB_ACE4_WRITE_ACL)) {
+				gace->aceIFlags = 0;
+				gace->aceWho = owner_uid;
+			} else {
+				gace->aceIFlags = ACE4_IFLAG_SPECIAL_ID;
+				gace->aceWho = ACE4_SPECIAL_OWNER;
+			}
+			break;
+		case SMB_ACE4_WHO_GROUP:
+			gace->aceIFlags = ACE4_IFLAG_SPECIAL_ID;
+			gace->aceWho = ACE4_SPECIAL_GROUP;
+			break;
+		default:
+			DBG_WARNING("Unsupported special_id %d\n",
+				    nfs4_ace->who.special_id);
+			return false;
+		}
+
+		return true;
+	}
+
+	gace->aceIFlags = 0;
+	gace->aceWho = (nfs4_ace->aceFlags & SMB_ACE4_IDENTIFIER_GROUP) ?
+		nfs4_ace->who.gid : nfs4_ace->who.uid;
+
+	return true;
+}
+
 static struct gpfs_acl *vfs_gpfs_smbacl2gpfsacl(TALLOC_CTX *mem_ctx,
 						files_struct *fsp,
 						struct SMB4ACL_T *smbacl,
@@ -705,58 +769,12 @@ static struct gpfs_acl *vfs_gpfs_smbacl2gpfsacl(TALLOC_CTX *mem_ctx,
 	for (smbace=smb_first_ace4(smbacl); smbace!=NULL; smbace = smb_next_ace4(smbace)) {
 		struct gpfs_ace_v4 *gace = gpfs_ace_ptr(gacl, gacl->acl_nace);
 		SMB_ACE4PROP_T	*aceprop = smb_get_ace4(smbace);
+		bool add_ace;
 
-		gace->aceType = aceprop->aceType;
-		gace->aceFlags = aceprop->aceFlags;
-		gace->aceMask = aceprop->aceMask;
-
-		/*
-		 * GPFS can't distinguish between WRITE and APPEND on
-		 * files, so one being set without the other is an
-		 * error. Sorry for the many ()'s :-)
-		 */
-
-		if (!fsp->is_directory
-		    &&
-		    ((((gace->aceMask & ACE4_MASK_WRITE) == 0)
-		      && ((gace->aceMask & ACE4_MASK_APPEND) != 0))
-		     ||
-		     (((gace->aceMask & ACE4_MASK_WRITE) != 0)
-		      && ((gace->aceMask & ACE4_MASK_APPEND) == 0)))
-		    &&
-		    lp_parm_bool(fsp->conn->params->service, "gpfs",
-				 "merge_writeappend", True)) {
-			DEBUG(2, ("vfs_gpfs.c: file [%s]: ACE contains "
-				  "WRITE^APPEND, setting WRITE|APPEND\n",
-				  fsp_str_dbg(fsp)));
-			gace->aceMask |= ACE4_MASK_WRITE|ACE4_MASK_APPEND;
-		}
-
-		gace->aceIFlags = (aceprop->flags&SMB_ACE4_ID_SPECIAL) ? ACE4_IFLAG_SPECIAL_ID : 0;
-
-		if (aceprop->flags&SMB_ACE4_ID_SPECIAL)
-		{
-			switch(aceprop->who.special_id)
-			{
-			case SMB_ACE4_WHO_EVERYONE:
-				gace->aceWho = ACE4_SPECIAL_EVERYONE;
-				break;
-			case SMB_ACE4_WHO_OWNER:
-				gace->aceWho = ACE4_SPECIAL_OWNER;
-				break;
-			case SMB_ACE4_WHO_GROUP:
-				gace->aceWho = ACE4_SPECIAL_GROUP;
-				break;
-			default:
-				DEBUG(8, ("unsupported special_id %d\n", aceprop->who.special_id));
-				continue; /* don't add it !!! */
-			}
-		} else {
-			/* just only for the type safety... */
-			if (aceprop->aceFlags&SMB_ACE4_IDENTIFIER_GROUP)
-				gace->aceWho = aceprop->who.gid;
-			else
-				gace->aceWho = aceprop->who.uid;
+		add_ace = vfs_gpfs_nfs4_ace_to_gpfs_ace(aceprop, gace,
+							fsp->fsp_name->st.st_ex_uid);
+		if (!add_ace) {
+			continue;
 		}
 
 		gacl->acl_nace++;
@@ -1631,7 +1649,7 @@ static NTSTATUS vfs_gpfs_get_dos_attributes(struct vfs_handle_struct *handle,
 	}
 
 	*dosmode |= vfs_gpfs_winattrs_to_dosmode(attrs.winAttrs);
-	smb_fname->st.st_ex_calculated_birthtime = false;
+	smb_fname->st.st_ex_iflags &= ~ST_EX_IFLAG_CALCULATED_BTIME;
 	smb_fname->st.st_ex_btime.tv_sec = attrs.creationTime.tv_sec;
 	smb_fname->st.st_ex_btime.tv_nsec = attrs.creationTime.tv_nsec;
 
@@ -1690,7 +1708,7 @@ static NTSTATUS vfs_gpfs_fget_dos_attributes(struct vfs_handle_struct *handle,
 	}
 
 	*dosmode |= vfs_gpfs_winattrs_to_dosmode(attrs.winAttrs);
-	fsp->fsp_name->st.st_ex_calculated_birthtime = false;
+	fsp->fsp_name->st.st_ex_iflags &= ~ST_EX_IFLAG_CALCULATED_BTIME;
 	fsp->fsp_name->st.st_ex_btime.tv_sec = attrs.creationTime.tv_sec;
 	fsp->fsp_name->st.st_ex_btime.tv_nsec = attrs.creationTime.tv_nsec;
 
@@ -1944,40 +1962,25 @@ static int vfs_gpfs_ntimes(struct vfs_handle_struct *handle,
 }
 
 static int vfs_gpfs_fallocate(struct vfs_handle_struct *handle,
-		       struct files_struct *fsp, uint32_t mode,
-		       off_t offset, off_t len)
+			      struct files_struct *fsp, uint32_t mode,
+			      off_t offset, off_t len)
 {
-	int ret;
-	struct gpfs_config_data *config;
-
-	SMB_VFS_HANDLE_GET_DATA(handle, config,
-				struct gpfs_config_data,
-				return -1);
-
-	if (!config->prealloc) {
-		/* you should better not run fallocate() on GPFS at all */
+	if (mode == (VFS_FALLOCATE_FL_PUNCH_HOLE|VFS_FALLOCATE_FL_KEEP_SIZE) &&
+	    !fsp->is_sparse &&
+	    lp_strict_allocate(SNUM(fsp->conn))) {
+		/*
+		 * This is from a ZERO_DATA request on a non-sparse
+		 * file. GPFS does not support FL_KEEP_SIZE and thus
+		 * cannot fill the whole again in the subsequent
+		 * fallocate(FL_KEEP_SIZE). Deny this FL_PUNCH_HOLE
+		 * call to not end up with a hole in a non-sparse
+		 * file.
+		 */
 		errno = ENOTSUP;
 		return -1;
 	}
 
-	if (mode != 0) {
-		DEBUG(10, ("unmapped fallocate flags: %lx\n",
-		      (unsigned long)mode));
-		errno = ENOTSUP;
-		return -1;
-	}
-
-	ret = gpfswrap_prealloc(fsp->fh->fd, offset, len);
-
-	if (ret == -1 && errno != ENOSYS) {
-		DEBUG(0, ("GPFS prealloc failed: %s\n", strerror(errno)));
-	} else if (ret == -1 && errno == ENOSYS) {
-		DEBUG(10, ("GPFS prealloc not supported.\n"));
-	} else {
-		DEBUG(10, ("GPFS prealloc succeeded.\n"));
-	}
-
-	return ret;
+	return SMB_VFS_NEXT_FALLOCATE(handle, fsp, mode, offset, len);
 }
 
 static int vfs_gpfs_ftruncate(vfs_handle_struct *handle, files_struct *fsp,
@@ -2011,7 +2014,7 @@ static bool vfs_gpfs_is_offline(struct vfs_handle_struct *handle,
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config,
 				struct gpfs_config_data,
-				return -1);
+				return false);
 
 	if (!config->winattr) {
 		return false;
@@ -2112,8 +2115,10 @@ static int vfs_gpfs_connect(struct vfs_handle_struct *handle,
 
 		if (buf.f_type != GPFS_SUPER_MAGIC) {
 			DBG_ERR("SMB share %s, path %s not in GPFS file system."
-				" statfs magic: 0x%lx\n",
-				service, connectpath, buf.f_type);
+				" statfs magic: 0x%jx\n",
+				service,
+				connectpath,
+				(uintmax_t)buf.f_type);
 			errno = EINVAL;
 			TALLOC_FREE(config);
 			return -1;
@@ -2149,9 +2154,6 @@ static int vfs_gpfs_connect(struct vfs_handle_struct *handle,
 
 	config->dfreequota = lp_parm_bool(SNUM(handle->conn), "gpfs",
 					  "dfreequota", false);
-
-	config->prealloc = lp_parm_bool(SNUM(handle->conn), "gpfs",
-				   "prealloc", true);
 
 	config->acl = lp_parm_bool(SNUM(handle->conn), "gpfs", "acl", true);
 

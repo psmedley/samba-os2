@@ -242,6 +242,7 @@ struct kv_ctx {
 	int (*parser)(struct ldb_val key,
 		      struct ldb_val data,
 		      void *private_data);
+	int parser_ret;
 };
 
 static int ltdb_traverse_fn_wrapper(struct tdb_context *tdb,
@@ -286,7 +287,7 @@ static int ltdb_update_in_iterate(struct ldb_kv_private *ldb_kv,
 	struct ldb_context *ldb;
 	struct ldb_kv_reindex_context *ctx =
 	    (struct ldb_kv_reindex_context *)state;
-	struct ldb_module *module = ctx->module;
+	struct ldb_module *module = ldb_kv->module;
 	TDB_DATA key = {
 		.dptr = ldb_key.data,
 		.dsize = ldb_key.length
@@ -350,7 +351,8 @@ static int ltdb_parse_record_wrapper(TDB_DATA tdb_key,
 		.data = tdb_data.dptr,
 	};
 
-	return kv_ctx->parser(key, data, kv_ctx->ctx);
+	kv_ctx->parser_ret = kv_ctx->parser(key, data, kv_ctx->ctx);
+	return kv_ctx->parser_ret;
 }
 
 static int ltdb_parse_record(struct ldb_kv_private *ldb_kv,
@@ -374,10 +376,28 @@ static int ltdb_parse_record(struct ldb_kv_private *ldb_kv,
 
 	ret = tdb_parse_record(
 	    ldb_kv->tdb, key, ltdb_parse_record_wrapper, &kv_ctx);
-	if (ret == 0) {
+	if (kv_ctx.parser_ret != LDB_SUCCESS) {
+		return kv_ctx.parser_ret;
+	} else if (ret == 0) {
 		return LDB_SUCCESS;
 	}
 	return ltdb_err_map(tdb_error(ldb_kv->tdb));
+}
+
+static int ltdb_iterate_range(struct ldb_kv_private *ldb_kv,
+			      struct ldb_val start_key,
+			      struct ldb_val end_key,
+			      ldb_kv_traverse_fn fn,
+			      void *ctx)
+{
+	/*
+	 * We do not implement this operation because we do not know how to
+	 * iterate from one key to the next (in a sorted fashion).
+	 *
+	 * We could mimic it potentially, but it would violate boundaries of
+	 * knowledge (data type representation).
+	 */
+	return LDB_ERR_OPERATIONS_ERROR;
 }
 
 static const char *ltdb_name(struct ldb_kv_private *ldb_kv)
@@ -400,23 +420,78 @@ static bool ltdb_transaction_active(struct ldb_kv_private *ldb_kv)
 	return tdb_transaction_active(ldb_kv->tdb);
 }
 
+/*
+ * Get an estimate of the number of records in a tdb database.
+ *
+ * This implementation will overestimate the number of records in a sparsely
+ * populated database. The size estimate is only used for allocating
+ * an in memory tdb to cache index records during a reindex, overestimating
+ * the contents is acceptable, and preferable to underestimating
+ */
+#define RECORD_SIZE 500
+static size_t ltdb_get_size(struct ldb_kv_private *ldb_kv)
+{
+	size_t map_size = tdb_map_size(ldb_kv->tdb);
+	size_t size = map_size / RECORD_SIZE;
+
+	return size;
+}
+
+/*
+ * Start a sub transaction
+ * As TDB does not currently support nested transactions, we do nothing and
+ * return LDB_SUCCESS
+ */
+static int ltdb_nested_transaction_start(struct ldb_kv_private *ldb_kv)
+{
+	return LDB_SUCCESS;
+}
+
+/*
+ * Commit a sub transaction
+ * As TDB does not currently support nested transactions, we do nothing and
+ * return LDB_SUCCESS
+ */
+static int ltdb_nested_transaction_commit(struct ldb_kv_private *ldb_kv)
+{
+	return LDB_SUCCESS;
+}
+
+/*
+ * Cancel a sub transaction
+ * As TDB does not currently support nested transactions, we do nothing and
+ * return LDB_SUCCESS
+ */
+static int ltdb_nested_transaction_cancel(struct ldb_kv_private *ldb_kv)
+{
+	return LDB_SUCCESS;
+}
+
 static const struct kv_db_ops key_value_ops = {
-    .store = ltdb_store,
-    .delete = ltdb_delete,
-    .iterate = ltdb_traverse_fn,
-    .update_in_iterate = ltdb_update_in_iterate,
-    .fetch_and_parse = ltdb_parse_record,
-    .lock_read = ltdb_lock_read,
-    .unlock_read = ltdb_unlock_read,
-    .begin_write = ltdb_transaction_start,
-    .prepare_write = ltdb_transaction_prepare_commit,
-    .finish_write = ltdb_transaction_commit,
-    .abort_write = ltdb_transaction_cancel,
-    .error = ltdb_error,
-    .errorstr = ltdb_errorstr,
-    .name = ltdb_name,
-    .has_changed = ltdb_changed,
-    .transaction_active = ltdb_transaction_active,
+	/* No support for any additional features */
+	.options = 0,
+
+	.store = ltdb_store,
+	.delete = ltdb_delete,
+	.iterate = ltdb_traverse_fn,
+	.update_in_iterate = ltdb_update_in_iterate,
+	.fetch_and_parse = ltdb_parse_record,
+	.iterate_range = ltdb_iterate_range,
+	.lock_read = ltdb_lock_read,
+	.unlock_read = ltdb_unlock_read,
+	.begin_write = ltdb_transaction_start,
+	.prepare_write = ltdb_transaction_prepare_commit,
+	.finish_write = ltdb_transaction_commit,
+	.abort_write = ltdb_transaction_cancel,
+	.error = ltdb_error,
+	.errorstr = ltdb_errorstr,
+	.name = ltdb_name,
+	.has_changed = ltdb_changed,
+	.transaction_active = ltdb_transaction_active,
+	.get_size = ltdb_get_size,
+	.begin_nested_write = ltdb_nested_transaction_start,
+	.finish_nested_write = ltdb_nested_transaction_commit,
+	.abort_nested_write = ltdb_nested_transaction_cancel,
 };
 
 /*

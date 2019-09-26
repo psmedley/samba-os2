@@ -149,7 +149,7 @@ bld.SAMBA3_LIBRARY('samba-passdb',
                                   ''',
                    abi_match=private_pdb_match,
                    abi_directory='passdb/ABI',
-                   vnum='0.27.2')
+                   vnum='0.28.0')
 
 bld.SAMBA3_SUBSYSTEM('pdb',
                    source='''
@@ -168,8 +168,7 @@ bld.SAMBA3_SUBSYSTEM('pdb',
                           lib/winbind_util.c
                           passdb/pdb_util.c
                           passdb/pdb_interface.c
-                          passdb/pdb_secrets.c
-                          passdb/pdb_unixid.c''',
+                          passdb/pdb_secrets.c''',
                    deps='''
                         secrets3
                         GROUPDB
@@ -209,10 +208,6 @@ bld.SAMBA_BINARY('test_registry_regfio',
                  deps='cmocka samba3-util smbconf REGFIO',
                  local_include=False,
                  install=False)
-
-bld.SAMBA3_SUBSYSTEM('REG_API_REGF',
-                    source='registry/reg_api_regf.c',
-                    deps='samba-util')
 
 # Do not link against this use 'smbconf'
 bld.SAMBA3_SUBSYSTEM('SMBREGISTRY',
@@ -373,6 +368,7 @@ bld.SAMBA3_LIBRARY('messages_dgm',
                         PTHREADPOOL
                         msghdr
                         genrand
+			samba-util
                         ''',
                    private_library=True)
 
@@ -401,7 +397,6 @@ bld.SAMBA3_SUBSYSTEM('samba3core',
                           lib/ms_fnmatch.c
                           lib/tallocmsg.c
                           lib/dmallocmsg.c
-                          intl/lang_tdb.c
                           lib/gencache.c
                           lib/util_event.c
                           lib/global_contexts.c
@@ -617,6 +612,7 @@ bld.SAMBA3_SUBSYSTEM('sysquotas',
                         lib/sysquotas_xfs.c
                         lib/sysquotas_4A.c
                         lib/sysquotas_4B.c
+                        lib/sysquotas_jfs2.c
                         lib/sysquotas_nfs.c
                      ''',
                      allow_warnings=True,
@@ -674,7 +670,6 @@ bld.SAMBA3_LIBRARY('smbd_base',
                           smbd/error.c
                           printing/printspoolss.c
                           lib/sessionid_tdb.c
-                          lib/conn_tdb.c
                           lib/cleanupdb.c
                           smbd/fake_file.c
                           smbd/quotas.c
@@ -723,6 +718,7 @@ bld.SAMBA3_LIBRARY('smbd_base',
                           smbd/notify.c
                           smbd/notify_msg.c
                           smbd/build_options.c
+                          smbd/smb1_utils.c
                           ''' + NOTIFY_SOURCES,
                    deps='''
                         talloc
@@ -754,6 +750,7 @@ bld.SAMBA3_LIBRARY('smbd_base',
                         notifyd
                         vfs_acl_common
                         NDR_QUOTA
+                        GNUTLS_HELPERS
                    ''' +
                    bld.env['dmapi_lib'] +
                    bld.env['legacy_quota_libs'] +
@@ -1066,7 +1063,7 @@ bld.SAMBA3_SUBSYSTEM('INIT_NETLOGON',
 
 bld.SAMBA3_SUBSYSTEM('INIT_SAMR',
                     source='rpc_client/init_samr.c',
-                    deps='samba-util')
+                    deps='samba-util GNUTLS_HELPERS')
 
 bld.SAMBA3_SUBSYSTEM('LIBLSA',
                      source='lib/lsa.c')
@@ -1077,6 +1074,12 @@ bld.SAMBA3_SUBSYSTEM('SPOOLSSD',
                          samba-util
                          RPC_SOCK_HELPER
                          ''')
+
+bld.SAMBA3_SUBSYSTEM('tevent-glib-glue',
+                    source='lib/tevent_glib_glue.c',
+                    deps='glib-2.0',
+                    enabled=bld.CONFIG_SET('WITH_TEVENT_GLIB_GLUE'),
+)
 
 ########################## BINARIES #################################
 
@@ -1148,25 +1151,6 @@ bld.SAMBA3_BINARY('locktest2',
                       ''',
                  install=False)
 
-smbstatus_source = 'utils/status.c smbd/notify_msg.c'
-
-if bld.CONFIG_GET("WITH_PROFILE"):
-    smbstatus_source += ' utils/status_profile.c'
-else:
-    smbstatus_source += ' utils/status_profile_dummy.c'
-
-bld.SAMBA3_BINARY('smbstatus',
-                 source=smbstatus_source,
-                 deps='''
-                      talloc
-                      smbconf
-                      popt_samba3
-                      cmdline_contexts
-                      smbd_base
-                      LOCKING
-                      PROFILE
-                      ''')
-
 bld.SAMBA3_BINARY('smbtorture' + bld.env.suffix3,
                  source='''
                         torture/torture.c
@@ -1231,11 +1215,6 @@ bld.SAMBA3_BINARY('smbconftort',
                       smbconf
                       popt_samba3
                       ''',
-                 install=False)
-
-bld.SAMBA3_BINARY('replacetort',
-                 source='../lib/replace/test/main.c',
-                 deps='replace replace-test',
                  install=False)
 
 bld.SAMBA3_BINARY('msgtest',
@@ -1316,20 +1295,16 @@ bld.SAMBA3_BINARY('vlp',
                  install=False)
 
 
-for env in bld.gen_python_environments():
-    pyrpc_util = bld.pyembed_libname('pyrpc_util')
-    pytalloc_util = bld.pyembed_libname('pytalloc-util')
-    bld.SAMBA3_PYTHON('pysmbd',
+pyrpc_util = bld.pyembed_libname('pyrpc_util')
+pytalloc_util = bld.pyembed_libname('pytalloc-util')
+bld.SAMBA3_PYTHON('pysmbd',
                   source='smbd/pysmbd.c',
                   deps=' '.join(['smbd_base', pyrpc_util, pytalloc_util]),
                   realname='samba/samba3/smbd.so'
                   )
 
-for env in bld.gen_python_environments():
-    pycredentials = 'pycredentials'
-    if bld.env['IS_EXTRA_PYTHON']:
-        pycredentials = 'extra-' + pycredentials
-    bld.SAMBA3_PYTHON('pylibsmb',
+pycredentials = 'pycredentials'
+bld.SAMBA3_PYTHON('pylibsmb',
                   source='libsmb/pylibsmb.c',
                   deps='smbclient samba-credentials %s' % pycredentials,
                   realname='samba/samba3/libsmb_samba_internal.so'
@@ -1343,6 +1318,26 @@ bld.SAMBA3_BINARY('spotlight2sparql',
                  rpc_server/mdssvc/sparql_mapping.c''',
                  deps='samba3-util talloc ' + bld.env['libtracker'],
                  enabled=bld.env.with_spotlight,
+                 install=False)
+
+bld.SAMBA3_BINARY('tevent_glib_glue_test',
+                 source='lib/tevent_glib_glue_tests.c',
+                 deps='''
+                 talloc
+                 libsmb
+                 popt_samba3
+                 tevent-glib-glue''',
+                 enabled=bld.CONFIG_SET('WITH_TEVENT_GLIB_GLUE'),
+                 install=False)
+
+bld.SAMBA3_BINARY('tevent_glib_tracker',
+                 source='utils/async-tracker.c',
+                 deps='''
+                 talloc
+                 libsmb
+                 popt_samba3
+                 tevent-glib-glue ''' + bld.env['libtracker'],
+                 enabled=bld.CONFIG_SET('HAVE_TRACKER') and bld.CONFIG_SET('WITH_TEVENT_GLIB_GLUE'),
                  install=False)
 
 ########################## INCLUDES #################################
@@ -1370,6 +1365,7 @@ bld.RECURSE('smbd/notifyd')
 bld.RECURSE('rpcclient')
 bld.RECURSE('utils')
 bld.RECURSE('nmbd')
+bld.RECURSE('lib/util')
 
 bld.ENFORCE_GROUP_ORDERING()
 bld.CHECK_PROJECT_RULES()

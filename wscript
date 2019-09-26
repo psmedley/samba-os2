@@ -40,7 +40,6 @@ def options(opt):
     opt.RECURSE('packaging')
     opt.RECURSE('lib/ldb')
     opt.RECURSE('selftest')
-    opt.RECURSE('source4/lib/tls')
     opt.RECURSE('source4/dsdb/samdb/ldb_modules')
     opt.RECURSE('pidl')
     opt.RECURSE('source3')
@@ -151,8 +150,8 @@ def configure(conf):
         if not (Options.options.without_ad_dc):
             raise Errors.WafError('--disable-python requires --without-ad-dc')
 
-    conf.SAMBA_CHECK_PYTHON(mandatory=True, version=(2, 6, 0))
-    conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=(not conf.env.disable_python))
+    conf.SAMBA_CHECK_PYTHON()
+    conf.SAMBA_CHECK_PYTHON_HEADERS()
 
     if sys.platform == 'darwin' and not conf.env['HAVE_ENVIRON_DECL']:
         # Mac OSX needs to have this and it's also needed that the python is compiled with this
@@ -246,15 +245,13 @@ def configure(conf):
                                  'hx509', 'wind', 'gssapi', 'hcrypto',
                                  'krb5', 'heimbase', 'asn1_compile',
                                  'compile_et', 'kdc', 'hdb', 'heimntlm')
+        conf.PROCESS_SEPARATE_RULE('system_heimdal')
 
-    # Only process heimdal_build for non-MIT KRB5 builds
-    # When MIT KRB5 checks are done as above, conf.env.KRB5_VENDOR will be set
-    # to the lowcased output of 'krb5-config --vendor'.
-    # If it is not set or the output is 'heimdal', we are dealing with
-    # system-provided or embedded Heimdal build
-    if conf.CONFIG_GET('KRB5_VENDOR') in (None, 'heimdal'):
-        conf.RECURSE('source4/heimdal_build')
-    conf.RECURSE('source4/lib/tls')
+    if not conf.CONFIG_GET('KRB5_VENDOR'):
+        conf.PROCESS_SEPARATE_RULE('embedded_heimdal')
+
+    conf.PROCESS_SEPARATE_RULE('system_gnutls')
+
     conf.RECURSE('source4/dsdb/samdb/ldb_modules')
     conf.RECURSE('source4/ntvfs/sysdep')
     conf.RECURSE('lib/util')

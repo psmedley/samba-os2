@@ -72,6 +72,11 @@ class cmd_dbcheck(Command):
         Option("--reindex", dest="reindex", default=False, action="store_true", help="force database re-index"),
         Option("--force-modules", dest="force_modules", default=False, action="store_true", help="force loading of Samba modules and ignore the @MODULES record (for very old databases)"),
         Option("--reset-well-known-acls", dest="reset_well_known_acls", default=False, action="store_true", help="reset ACLs on objects with well known default ACL values to the default"),
+        Option("--quick-membership-checks", dest="quick_membership_checks",
+               help=("Skips missing/orphaned memberOf backlinks checks, "
+                     "but speeds up dbcheck dramatically for domains with "
+                     "large groups"),
+               default=False, action="store_true"),
         Option("-H", "--URL", help="LDB URL for database or target server (defaults to local SAM database)",
                type=str, metavar="URL", dest="H"),
         Option("--selftest-check-expired-tombstones",
@@ -83,6 +88,7 @@ class cmd_dbcheck(Command):
             cross_ncs=False, quiet=False,
             scope="SUB", credopts=None, sambaopts=None, versionopts=None,
             attrs=None, reindex=False, force_modules=False,
+            quick_membership_checks=False,
             reset_well_known_acls=False,
             selftest_check_expired_tombstones=False,
             yes_rules=[]):
@@ -137,6 +143,7 @@ class cmd_dbcheck(Command):
             chk = dbcheck(samdb, samdb_schema=samdb_schema, verbose=verbose,
                           fix=fix, yes=yes, quiet=quiet,
                           in_transaction=started_transaction,
+                          quick_membership_checks=quick_membership_checks,
                           reset_well_known_acls=reset_well_known_acls,
                           check_expired_tombstones=selftest_check_expired_tombstones)
 

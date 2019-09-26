@@ -30,6 +30,7 @@
 #include "librpc/gen_ndr/ndr_open_files.h"
 #include "serverid.h"
 #include "fake_file.h"
+#include "locking/leases_db.h"
 
 NTSTATUS vfs_default_durable_cookie(struct files_struct *fsp,
 				    TALLOC_CTX *mem_ctx,
@@ -117,11 +118,10 @@ NTSTATUS vfs_default_durable_cookie(struct files_struct *fsp,
 	cookie.stat_info.st_ex_mtime = fsp->fsp_name->st.st_ex_mtime;
 	cookie.stat_info.st_ex_ctime = fsp->fsp_name->st.st_ex_ctime;
 	cookie.stat_info.st_ex_btime = fsp->fsp_name->st.st_ex_btime;
-	cookie.stat_info.st_ex_calculated_birthtime = fsp->fsp_name->st.st_ex_calculated_birthtime;
+	cookie.stat_info.st_ex_iflags = fsp->fsp_name->st.st_ex_iflags;
 	cookie.stat_info.st_ex_blksize = fsp->fsp_name->st.st_ex_blksize;
 	cookie.stat_info.st_ex_blocks = fsp->fsp_name->st.st_ex_blocks;
 	cookie.stat_info.st_ex_flags = fsp->fsp_name->st.st_ex_flags;
-	cookie.stat_info.st_ex_mask = fsp->fsp_name->st.st_ex_mask;
 
 	ndr_err = ndr_push_struct_blob(cookie_blob, mem_ctx, &cookie,
 			(ndr_push_flags_fn_t)ndr_push_vfs_default_durable_cookie);
@@ -267,11 +267,10 @@ NTSTATUS vfs_default_durable_disconnect(struct files_struct *fsp,
 	cookie.stat_info.st_ex_mtime = fsp->fsp_name->st.st_ex_mtime;
 	cookie.stat_info.st_ex_ctime = fsp->fsp_name->st.st_ex_ctime;
 	cookie.stat_info.st_ex_btime = fsp->fsp_name->st.st_ex_btime;
-	cookie.stat_info.st_ex_calculated_birthtime = fsp->fsp_name->st.st_ex_calculated_birthtime;
+	cookie.stat_info.st_ex_iflags = fsp->fsp_name->st.st_ex_iflags;
 	cookie.stat_info.st_ex_blksize = fsp->fsp_name->st.st_ex_blksize;
 	cookie.stat_info.st_ex_blocks = fsp->fsp_name->st.st_ex_blocks;
 	cookie.stat_info.st_ex_flags = fsp->fsp_name->st.st_ex_flags;
-	cookie.stat_info.st_ex_mask = fsp->fsp_name->st.st_ex_mask;
 
 	ndr_err = ndr_push_struct_blob(&new_cookie_blob, mem_ctx, &cookie,
 			(ndr_push_flags_fn_t)ndr_push_vfs_default_durable_cookie);
@@ -446,17 +445,15 @@ static bool vfs_default_durable_reconnect_check_stat(
 		return false;
 	}
 
-	if (cookie_st->st_ex_calculated_birthtime !=
-	    fsp_st->st_ex_calculated_birthtime)
-	{
+	if (cookie_st->st_ex_iflags != fsp_st->st_ex_iflags) {
 		DEBUG(1, ("vfs_default_durable_reconnect (%s): "
 			  "stat_ex.%s differs: "
 			  "cookie:%llu != stat:%llu, "
 			  "denying durable reconnect\n",
 			  name,
 			  "st_ex_calculated_birthtime",
-			  (unsigned long long)cookie_st->st_ex_calculated_birthtime,
-			  (unsigned long long)fsp_st->st_ex_calculated_birthtime));
+			  (unsigned long long)cookie_st->st_ex_iflags,
+			  (unsigned long long)fsp_st->st_ex_iflags));
 		return false;
 	}
 
@@ -493,18 +490,6 @@ static bool vfs_default_durable_reconnect_check_stat(
 			  "st_ex_flags",
 			  (unsigned long long)cookie_st->st_ex_flags,
 			  (unsigned long long)fsp_st->st_ex_flags));
-		return false;
-	}
-
-	if (cookie_st->st_ex_mask != fsp_st->st_ex_mask) {
-		DEBUG(1, ("vfs_default_durable_reconnect (%s): "
-			  "stat_ex.%s differs: "
-			  "cookie:%llu != stat:%llu, "
-			  "denying durable reconnect\n",
-			  name,
-			  "st_ex_mask",
-			  (unsigned long long)cookie_st->st_ex_mask,
-			  (unsigned long long)fsp_st->st_ex_mask));
 		return false;
 	}
 
@@ -703,28 +688,46 @@ NTSTATUS vfs_default_durable_reconnect(struct connection_struct *conn,
 	fsp->oplock_type = e->op_type;
 
 	if (fsp->oplock_type == LEASE_OPLOCK) {
-		struct share_mode_lease *l = &lck->data->leases[e->lease_idx];
-		struct smb2_lease_key key;
+		uint32_t current_state;
+		uint16_t lease_version, epoch;
 
-		key.data[0] = l->lease_key.data[0];
-		key.data[1] = l->lease_key.data[1];
+		/*
+		 * Ensure the existing client guid matches the
+		 * stored one in the share_mode_entry.
+		 */
+		if (!GUID_equal(fsp_client_guid(fsp),
+				&e->client_guid)) {
+			TALLOC_FREE(lck);
+			fsp_free(fsp);
+			return NT_STATUS_OBJECT_NAME_NOT_FOUND;
+		}
 
-		fsp->lease = find_fsp_lease(fsp, &key, l);
+		status = leases_db_get(
+			&e->client_guid,
+			&e->lease_key,
+			&file_id,
+			&current_state, /* current_state */
+			NULL, /* breaking */
+			NULL, /* breaking_to_requested */
+			NULL, /* breaking_to_required */
+			&lease_version, /* lease_version */
+			&epoch); /* epoch */
+		if (!NT_STATUS_IS_OK(status)) {
+			TALLOC_FREE(lck);
+			fsp_free(fsp);
+			return status;
+		}
+
+		fsp->lease = find_fsp_lease(
+			fsp,
+			&e->lease_key,
+			current_state,
+			lease_version,
+			epoch);
 		if (fsp->lease == NULL) {
 			TALLOC_FREE(lck);
 			fsp_free(fsp);
 			return NT_STATUS_NO_MEMORY;
-		}
-
-		/*
-		 * Ensure the existing client guid matches the
-		 * stored one in the share_mode_lease.
-		 */
-		if (!GUID_equal(fsp_client_guid(fsp),
-				&l->client_guid)) {
-			TALLOC_FREE(lck);
-			fsp_free(fsp);
-			return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 		}
 	}
 
@@ -838,6 +841,8 @@ NTSTATUS vfs_default_durable_reconnect(struct connection_struct *conn,
 		fsp_free(fsp);
 		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
+
+	(void)dos_mode(fsp->conn, fsp->fsp_name);
 
 	ok = vfs_default_durable_reconnect_check_stat(&cookie.stat_info,
 						      &fsp->fsp_name->st,

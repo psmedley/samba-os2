@@ -227,6 +227,9 @@ static struct {
 	int (*get_quota)(const char *path, const char *bdev, enum SMB_QUOTA_TYPE qtype, unid_t id, SMB_DISK_QUOTA *dp);
 	int (*set_quota)(const char *path, const char *bdev, enum SMB_QUOTA_TYPE qtype, unid_t id, SMB_DISK_QUOTA *dp);
 } sys_quota_backends[] = {
+#ifdef HAVE_JFS_QUOTA_H
+	{"jfs2", sys_get_jfs2_quota, 	sys_set_jfs2_quota},
+#endif
 #if defined HAVE_XFS_QUOTAS
 	{"xfs", sys_get_xfs_quota, 	sys_set_xfs_quota},
 	{"gfs", sys_get_xfs_quota, 	sys_set_xfs_quota},
@@ -249,6 +252,7 @@ static int command_get_quota(const char *path, enum SMB_QUOTA_TYPE qtype, unid_t
 		const char *p;
 		char *p2;
 		int _id = -1;
+		int error = 0;
 		char **argl = NULL;
 
 		switch(qtype) {
@@ -307,7 +311,15 @@ static int command_get_quota(const char *path, enum SMB_QUOTA_TYPE qtype, unid_t
 
 			/* we need to deal with long long unsigned here, if supported */
 
-			dp->qflags = strtoul(line, &p2, 10);
+			dp->qflags = smb_strtoul(line,
+						 &p2,
+						 10,
+						 &error,
+						 SMB_STR_STANDARD);
+			if (error != 0) {
+				goto invalid_param;
+			}
+
 			p = p2;
 			while (p && *p && isspace(*p)) {
 				p++;

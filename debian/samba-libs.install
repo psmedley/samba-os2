@@ -1,5 +1,3 @@
-#!/usr/bin/dh-exec --with-scripts=filter-arch
-[any-amd64] usr/lib/*/samba/libaesni-intel.so.0
 usr/lib/*/libdcerpc-binding.so.*
 usr/lib/*/libdcerpc-samr.so.*
 usr/lib/*/libdcerpc-server.so.*
@@ -13,9 +11,8 @@ usr/lib/*/libsamba-credentials.so.0*
 usr/lib/*/libsamba-errors.so.*
 usr/lib/*/libsamba-hostconfig.so.*
 usr/lib/*/libsamba-passdb.so.0
-usr/lib/*/libsamba-passdb.so.0.27.2
+usr/lib/*/libsamba-passdb.so.0.28.0
 usr/lib/*/libsamba-policy.cpython-*.so.*
-usr/lib/*/libsamba-util.so.*
 usr/lib/*/libsamdb.so.*
 usr/lib/*/libsmbconf.so.0
 usr/lib/*/libsmbldap.so.2
@@ -60,9 +57,9 @@ usr/lib/*/samba/libdsdb-garbage-collect-tombstones.so.0
 usr/lib/*/samba/libdsdb-module.so.*
 usr/lib/*/samba/libevents.so.*
 usr/lib/*/samba/libflag-mapping.so.0
-usr/lib/*/samba/libgenrand.so.0
 usr/lib/*/samba/libgensec.so.0*
 usr/lib/*/samba/libgpext.so.0
+usr/lib/*/samba/libgpo.so.0
 usr/lib/*/samba/libgse.so.*
 usr/lib/*/samba/libgssapi-samba4.so.2
 usr/lib/*/samba/libgssapi-samba4.so.2.0.0
@@ -76,7 +73,6 @@ usr/lib/*/samba/libhttp.so.0
 usr/lib/*/samba/libhx509-samba4.so.5
 usr/lib/*/samba/libhx509-samba4.so.5.0.0
 usr/lib/*/samba/libinterfaces.so.*
-usr/lib/*/samba/libiov-buf.so.0
 usr/lib/*/samba/libkrb5-samba4.so.26
 usr/lib/*/samba/libkrb5-samba4.so.26.0.0
 usr/lib/*/samba/libkrb5samba.so.*
@@ -97,12 +93,12 @@ usr/lib/*/samba/libnss-info.so.0
 usr/lib/*/samba/libpopt-samba3.so.0
 usr/lib/*/samba/libpopt-samba3-cmdline.so.0
 usr/lib/*/samba/libposix-eadb.so.0
+usr/lib/*/samba/libprinter-driver.so.0
 usr/lib/*/samba/libprinting-migrate.so.0
 usr/lib/*/samba/libprocess-model.so.0
 usr/lib/*/samba/libregistry.so.*
 usr/lib/*/samba/libroken-samba4.so.19
 usr/lib/*/samba/libroken-samba4.so.19.0.1
-usr/lib/*/samba/libsamba-debug.so.0
 usr/lib/*/samba/libsamba-modules.so.*
 usr/lib/*/samba/libsamba-net.cpython-*.so.*
 usr/lib/*/samba/libsamba-python.cpython-*.so.0
@@ -123,11 +119,8 @@ usr/lib/*/samba/libsmbd-conn.so.0
 usr/lib/*/samba/libsmbd-shim.so.0
 usr/lib/*/samba/libsmbldaphelper.so.*
 usr/lib/*/samba/libsmbpasswdparser.so.*
-usr/lib/*/samba/libsocket-blocking.so.0
-usr/lib/*/samba/libsys-rw.so.0
 usr/lib/*/samba/libtalloc-report.so.0
 usr/lib/*/samba/libtdb-wrap.so.*
-usr/lib/*/samba/libtime-basic.so.0
 usr/lib/*/samba/libtrusts-util.so.0
 usr/lib/*/samba/libutil-cmdline.so.0
 usr/lib/*/samba/libutil-reg.so.0

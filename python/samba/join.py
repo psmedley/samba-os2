@@ -67,7 +67,9 @@ class DCJoinContext(object):
                  netbios_name=None, targetdir=None, domain=None,
                  machinepass=None, use_ntvfs=False, dns_backend=None,
                  promote_existing=False, plaintext_secrets=False,
-                 backend_store=None, forced_local_samdb=None):
+                 backend_store=None,
+                 backend_store_size=None,
+                 forced_local_samdb=None):
 
         ctx.logger = logger
         ctx.creds = creds
@@ -77,6 +79,7 @@ class DCJoinContext(object):
         ctx.use_ntvfs = use_ntvfs
         ctx.plaintext_secrets = plaintext_secrets
         ctx.backend_store = backend_store
+        ctx.backend_store_size = backend_store_size
 
         ctx.promote_existing = promote_existing
         ctx.promote_from_dn = None
@@ -302,8 +305,9 @@ class DCJoinContext(object):
             objectAttr = lsa.ObjectAttribute()
             objectAttr.sec_qos = lsa.QosInfo()
 
-            pol_handle = lsaconn.OpenPolicy2(''.decode('utf-8'),
-                                             objectAttr, security.SEC_FLAG_MAXIMUM_ALLOWED)
+            pol_handle = lsaconn.OpenPolicy2('',
+                                             objectAttr,
+                                             security.SEC_FLAG_MAXIMUM_ALLOWED)
 
             name = lsa.String()
             name.string = ctx.realm
@@ -881,8 +885,9 @@ class DCJoinContext(object):
                             sitename=ctx.site, lp=ctx.lp, ntdsguid=ctx.ntds_guid,
                             use_ntvfs=ctx.use_ntvfs, dns_backend=ctx.dns_backend,
                             plaintext_secrets=ctx.plaintext_secrets,
-                            backend_store=ctx.backend_store
-                            )
+                            backend_store=ctx.backend_store,
+                            backend_store_size=ctx.backend_store_size,
+                            batch_mode=True)
         print("Provision OK for domain DN %s" % presult.domaindn)
         ctx.local_samdb = presult.samdb
         ctx.lp          = presult.lp
@@ -897,8 +902,13 @@ class DCJoinContext(object):
 
         # we now operate exclusively on the local database, which
         # we need to reopen in order to get the newly created schema
+        # we set the transaction_index_cache_size to 200,000 to ensure it is
+        # not too small, if it's too small the performance of the join will
+        # be negatively impacted.
         print("Reconnecting to local samdb")
         ctx.samdb = SamDB(url=ctx.local_samdb.url,
+                         options=[
+                             "transaction_index_cache_size:200000"],
                           session_info=system_session(),
                           lp=ctx.local_samdb.lp,
                           global_schema=False)
@@ -1463,13 +1473,15 @@ def join_RODC(logger=None, server=None, creds=None, lp=None, site=None, netbios_
               targetdir=None, domain=None, domain_critical_only=False,
               machinepass=None, use_ntvfs=False, dns_backend=None,
               promote_existing=False, plaintext_secrets=False,
-              backend_store=None):
+              backend_store=None,
+              backend_store_size=None):
     """Join as a RODC."""
 
     ctx = DCJoinContext(logger, server, creds, lp, site, netbios_name,
                         targetdir, domain, machinepass, use_ntvfs, dns_backend,
                         promote_existing, plaintext_secrets,
-                        backend_store=backend_store)
+                        backend_store=backend_store,
+                        backend_store_size=backend_store_size)
 
     lp.set("workgroup", ctx.domain_name)
     logger.info("workgroup is %s" % ctx.domain_name)
@@ -1517,12 +1529,14 @@ def join_DC(logger=None, server=None, creds=None, lp=None, site=None, netbios_na
             targetdir=None, domain=None, domain_critical_only=False,
             machinepass=None, use_ntvfs=False, dns_backend=None,
             promote_existing=False, plaintext_secrets=False,
-            backend_store=None):
+            backend_store=None,
+            backend_store_size=None):
     """Join as a DC."""
     ctx = DCJoinContext(logger, server, creds, lp, site, netbios_name,
                         targetdir, domain, machinepass, use_ntvfs, dns_backend,
                         promote_existing, plaintext_secrets,
-                        backend_store=backend_store)
+                        backend_store=backend_store,
+                        backend_store_size=backend_store_size)
 
     lp.set("workgroup", ctx.domain_name)
     logger.info("workgroup is %s" % ctx.domain_name)
@@ -1547,12 +1561,14 @@ def join_DC(logger=None, server=None, creds=None, lp=None, site=None, netbios_na
 
 def join_clone(logger=None, server=None, creds=None, lp=None,
                targetdir=None, domain=None, include_secrets=False,
-               dns_backend="NONE", backend_store=None):
+               dns_backend="NONE", backend_store=None,
+               backend_store_size=None):
     """Creates a local clone of a remote DC."""
     ctx = DCCloneContext(logger, server, creds, lp, targetdir=targetdir,
                          domain=domain, dns_backend=dns_backend,
                          include_secrets=include_secrets,
-                         backend_store=backend_store)
+                         backend_store=backend_store,
+                         backend_store_size=backend_store_size)
 
     lp.set("workgroup", ctx.domain_name)
     logger.info("workgroup is %s" % ctx.domain_name)
@@ -1569,12 +1585,13 @@ def join_subdomain(logger=None, server=None, creds=None, lp=None, site=None,
                    netbios_name=None, targetdir=None, parent_domain=None, dnsdomain=None,
                    netbios_domain=None, machinepass=None, adminpass=None, use_ntvfs=False,
                    dns_backend=None, plaintext_secrets=False,
-                   backend_store=None):
+                   backend_store=None, backend_store_size=None):
     """Join as a DC."""
     ctx = DCJoinContext(logger, server, creds, lp, site, netbios_name,
                         targetdir, parent_domain, machinepass, use_ntvfs,
                         dns_backend, plaintext_secrets,
-                        backend_store=backend_store)
+                        backend_store=backend_store,
+                        backend_store_size=backend_store_size)
     ctx.subdomain = True
     if adminpass is None:
         ctx.adminpass = samba.generate_random_password(12, 32)
@@ -1625,11 +1642,13 @@ class DCCloneContext(DCJoinContext):
 
     def __init__(ctx, logger=None, server=None, creds=None, lp=None,
                  targetdir=None, domain=None, dns_backend=None,
-                 include_secrets=False, backend_store=None):
+                 include_secrets=False, backend_store=None,
+                 backend_store_size=None):
         super(DCCloneContext, ctx).__init__(logger, server, creds, lp,
                                             targetdir=targetdir, domain=domain,
                                             dns_backend=dns_backend,
-                                            backend_store=backend_store)
+                                            backend_store=backend_store,
+                                            backend_store_size=backend_store_size)
 
         # As we don't want to create or delete these DNs, we set them to None
         ctx.server_dn = None

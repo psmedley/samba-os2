@@ -2,12 +2,12 @@
 .\"     Title: smbclient
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/27/2019
+.\"      Date: 09/17/2019
 .\"    Manual: User Commands
-.\"    Source: Samba 4.10.8
+.\"    Source: Samba 4.11.0
 .\"  Language: English
 .\"
-.TH "SMBCLIENT" "1" "08/27/2019" "Samba 4\&.10\&.8" "User Commands"
+.TH "SMBCLIENT" "1" "09/17/2019" "Samba 4\&.11\&.0" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -436,6 +436,20 @@ compatible backups of all the files on an SMB/CIFS share\&. The secondary tar fl
 \- Create a tar backup archive on the local system\&. Must be followed by the name of a tar file, tape device or "\-" for standard output\&. If using standard output you must turn the log level to its lowest value \-d0 to avoid corrupting your tar file\&. This flag is mutually exclusive with the
 \fIx\fR
 flag\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIn\fR
+\- In combination with the
+\fIc\fR
+flag, do not actually create the archive, instead perform a dry run that attempts everything that involved in creation other than writing the file\&.
 .RE
 .sp
 .RS 4
@@ -1151,7 +1165,7 @@ Most diagnostics issued by the client are logged in a specified log file\&. The 
 The number and nature of diagnostics available depends on the debug level used by the client\&. If you have problems, set the debug level to 3 and peruse the log files\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.10\&.8 of the Samba suite\&.
+This man page is part of version 4\&.11\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

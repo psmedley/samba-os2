@@ -20,7 +20,7 @@ LDB_NEXT_VERSION = $(shell python3 -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = 
 # samba ships ldb modules, which are specific to the ldb version, so we need a
 # strict dependency on the upstream ldb version
 # this also mean samba needs a rebuild when the upstream ldb version changes
-LDB_DEPENDS = "libldb1 (<< $(LDB_EPOCH):$(LDB_NEXT_VERSION)~), libldb1 (>> $(LDB_EPOCH):$(LDB_VERSION)~)"
+LDB_DEPENDS = "libldb2 (<< $(LDB_EPOCH):$(LDB_NEXT_VERSION)~), libldb2 (>> $(LDB_EPOCH):$(LDB_VERSION)~)"
 export PYSHORT=python3
 export PYTHON=$(shell which $(PYSHORT))
 export PYTHON_CONFIG="$(PYTHON)-config"
@@ -68,14 +68,22 @@ conf_args = \
 		--with-cluster-support \
 		--with-socketpath=/run/ctdb/ctdbd.socket \
 		--with-logdir=/var/log/ctdb \
-		--enable-etcd-reclock
+		--enable-etcd-reclock \
+		--enable-spotlight
+
+ifneq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32, $(DEB_HOST_ARCH)))
+        conf_args += \
+                --enable-ceph-reclock
+else
+        conf_args += \
+                --disable-cephfs
+endif
 
 ifeq ($(DEB_HOST_ARCH_OS), linux)
 	conf_args += \
 		--with-systemd \
 		--systemd-install-services \
-		--with-systemddir=/lib/systemd/system \
-		--enable-ceph-reclock
+		--with-systemddir=/lib/systemd/system
 else
 	conf_args += \
 		--without-systemd
@@ -234,7 +242,6 @@ override_dh_perl-arch:
 	dh_perl -a
 	# Fix Perl shbangs
 	sed -i '1s@^#!/usr/bin/env perl@#!/usr/bin/perl@' \
-	  debian/libparse-pidl-perl/usr/bin/pidl \
 	  debian/smbclient/usr/bin/findsmb
 
 override_dh_fixperms:
@@ -276,10 +283,7 @@ else
 endif
 
 override_dh_gencontrol:
-ifneq (,$(filter libparse-pidl-perl, $(shell dh_listpackages)))
-	dh_gencontrol --package=libparse-pidl-perl -- -v$(DEB_VERSION)+really0.02
-endif
-	dh_gencontrol --remaining-packages -- -Vldb:Depends=$(LDB_DEPENDS)
+	dh_gencontrol -- -Vldb:Depends=$(LDB_DEPENDS)
 
 override_dh_auto_clean:
 	-$(WAF) clean

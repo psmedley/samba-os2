@@ -77,7 +77,7 @@ bld.SAMBA3_SUBSYSTEM('RPC_INITSHUTDOWN',
 bld.SAMBA3_SUBSYSTEM('RPC_LSARPC',
                     source='''lsa/srv_lsa_nt.c
                     ../../librpc/gen_ndr/srv_lsa.c''',
-                    deps='SRV_ACCESS_CHECK LIBLSA')
+                    deps='SRV_ACCESS_CHECK LIBLSA GNUTLS_HELPERS')
 
 bld.SAMBA3_SUBSYSTEM('RPC_NETDFS',
                     source='''dfs/srv_dfs_nt.c
@@ -131,7 +131,7 @@ bld.SAMBA3_SUBSYSTEM('RPC_SVCCTL',
 bld.SAMBA3_SUBSYSTEM('RPC_WINREG',
                     source='''winreg/srv_winreg_nt.c
                     ../../librpc/gen_ndr/srv_winreg.c''',
-                    deps='REG_FULL REGFIO REG_API_REGF NDR_PERFCOUNT')
+                    deps='REG_FULL REGFIO NDR_PERFCOUNT')
 
 bld.SAMBA3_SUBSYSTEM('RPC_WKSSVC',
                     source='''wkssvc/srv_wkssvc_nt.c
@@ -150,7 +150,7 @@ bld.SAMBA3_MODULE('rpc_mdssvc_module',
                   mdssvc/srv_mdssvc_nt.c
                   ../../librpc/gen_ndr/srv_mdssvc.c''',
                   init_function='',
-                  deps='samba-util ' + bld.env['libtracker'],
+                  deps='samba-util tevent-glib-glue ' + bld.env['libtracker'],
                   internal_module=bld.SAMBA3_IS_STATIC_MODULE('rpc_mdssvc_module'),
                   enabled=bld.SAMBA3_IS_ENABLED_MODULE('rpc_mdssvc_module'))
 
@@ -205,5 +205,5 @@ bld.SAMBA3_SUBSYSTEM('FSSD',
 
 bld.SAMBA3_SUBSYSTEM('MDSSD',
                     source='mdssd.c',
-                    deps='RPC_SOCK_HELPER RPC_MODULES samba-util',
+                    deps='RPC_SOCK_HELPER RPC_MODULES samba-util tevent-glib-glue',
                     enabled=bld.env.with_spotlight)

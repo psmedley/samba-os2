@@ -150,18 +150,31 @@ static int dirsync_filter_entry(struct ldb_request *req,
 	 * list only the attribute that have been modified since last interogation
 	 *
 	 */
-	newmsg = talloc_zero(dsc->req, struct ldb_message);
+	newmsg = ldb_msg_new(dsc->req);
 	if (newmsg == NULL) {
 		return ldb_oom(ldb);
 	}
 	for (i = msg->num_elements - 1; i >= 0; i--) {
-		attr = dsdb_attribute_by_lDAPDisplayName(dsc->schema, msg->elements[i].name);
 		if (ldb_attr_cmp(msg->elements[i].name, "uSNChanged") == 0) {
+			int error = 0;
 			/* Read the USN it will used at the end of the filtering
 			 * to update the max USN in the cookie if we
 			 * decide to keep this entry
 			 */
-			val = strtoull((const char*)msg->elements[i].values[0].data, NULL, 0);
+			val = smb_strtoull(
+				(const char*)msg->elements[i].values[0].data,
+				NULL,
+				0,
+				&error,
+				SMB_STR_STANDARD);
+			if (error != 0) {
+				ldb_set_errstring(ldb,
+						  "Failed to convert USN");
+				return ldb_module_done(dsc->req,
+						       NULL,
+						       NULL,
+						       LDB_ERR_OPERATIONS_ERROR);
+			}
 			continue;
 		}
 
@@ -343,6 +356,10 @@ skip:
 
 		attr = dsdb_attribute_by_lDAPDisplayName(dsc->schema,
 				el->name);
+		if (attr == NULL) {
+			continue;
+		}
+
 		keep = false;
 
 		if (attr->linkID & 1) {
@@ -839,6 +856,9 @@ static int dirsync_search_callback(struct ldb_request *req, struct ldb_reply *ar
 		}
 
 		tmp = strchr(tmp, '/');
+		if (tmp == NULL) {
+			return ldb_operr(ldb);
+		}
 		tmp++;
 
 		dn = ldb_dn_new(dsc, ldb, tmp);

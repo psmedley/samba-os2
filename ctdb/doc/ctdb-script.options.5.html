@@ -470,20 +470,7 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 	    </p><p>
 	      Default is 80, so warnings will be logged when memory
 	      usage reaches 80%.
-	    </p></dd><dt><span class="term">
-	    CTDB_MONITOR_SWAP_USAGE=<em class="parameter"><code>SWAP-LIMITS</code></em>
-	  </span></dt><dd><p>
-	      SWAP-LIMITS takes the form
-	      <em class="parameter"><code>WARN_LIMIT</code></em>[<span class="optional">:<em class="parameter"><code>UNHEALTHY_LIMIT</code></em></span>]
-	       indicating that warnings should be logged if
-	      swap usage reaches WARN_LIMIT%.  If usage reaches
-	      UNHEALTHY_LIMIT then the node should be flagged
-	      unhealthy.  Either WARN_LIMIT or UNHEALTHY_LIMIT may be
-	      left blank, meaning that check will be omitted.
-	    </p><p>
-	      Default is 25, so warnings will be logged when swap
-	      usage reaches 25%.
-	    </p></dd></dl></div></div></div><div class="refsect1"><a name="idm377"></a><h2>EVENT SCRIPT DEBUGGING</h2><div class="refsect2"><a name="idm379"></a><h3>
+	    </p></dd></dl></div></div></div><div class="refsect1"><a name="idm368"></a><h2>EVENT SCRIPT DEBUGGING</h2><div class="refsect2"><a name="idm370"></a><h3>
 	debug-hung-script.sh
       </h3><div class="variablelist"><dl class="variablelist"><dt><span class="term">CTDB_DEBUG_HUNG_SCRIPT_STACKPAT=<em class="parameter"><code>REGEXP</code></em></span></dt><dd><p>
 	      REGEXP specifies interesting processes for which stack
@@ -495,7 +482,7 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 	      [event] "debug script" option.
 	    </p><p>
 	      Default is "exportfs|rpcinfo".
-	    </p></dd></dl></div></div></div><div class="refsect1"><a name="idm391"></a><h2>FILES</h2><table border="0" summary="Simple list" class="simplelist"><tr><td><code class="filename">/usr/local/etc/ctdb/script.options</code></td></tr></table></div><div class="refsect1"><a name="idm396"></a><h2>SEE ALSO</h2><p>
+	    </p></dd></dl></div></div></div><div class="refsect1"><a name="idm382"></a><h2>FILES</h2><table border="0" summary="Simple list" class="simplelist"><tr><td><code class="filename">/usr/local/etc/ctdb/script.options</code></td></tr></table></div><div class="refsect1"><a name="idm387"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdbd</span>(1)</span>,
 
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span>,

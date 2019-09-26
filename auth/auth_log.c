@@ -41,7 +41,7 @@
  * increment the major version.
  */
 #define AUTH_MAJOR 1
-#define AUTH_MINOR 1
+#define AUTH_MINOR 2
 #define AUTHZ_MAJOR 1
 #define AUTHZ_MINOR 1
 
@@ -143,7 +143,6 @@ static void log_authentication_event_json(
 	NTSTATUS status,
 	const char *domain_name,
 	const char *account_name,
-	const char *unix_username,
 	struct dom_sid *sid,
 	enum event_id_type event_id,
 	int debug_level)
@@ -151,6 +150,7 @@ static void log_authentication_event_json(
 	struct json_object wrapper = json_empty_object;
 	struct json_object authentication = json_empty_object;
 	char negotiate_flags[11];
+	char logon_id[19];
 	int rc = 0;
 
 	authentication = json_new_object();
@@ -164,6 +164,14 @@ static void log_authentication_event_json(
 	rc = json_add_int(&authentication,
 			  "eventId",
 			  event_id);
+	if (rc != 0) {
+		goto failure;
+	}
+	snprintf(logon_id,
+		 sizeof( logon_id),
+		 "%"PRIx64"",
+		 ui->logon_id);
+	rc = json_add_string(&authentication, "logonId", logon_id);
 	if (rc != 0) {
 		goto failure;
 	}
@@ -489,7 +497,6 @@ static void log_authentication_event_json(
 	NTSTATUS status,
 	const char *domain_name,
 	const char *account_name,
-	const char *unix_username,
 	struct dom_sid *sid,
 	enum event_id_type event_id,
 	int debug_level)
@@ -574,7 +581,6 @@ static void log_authentication_event_human_readable(
 	NTSTATUS status,
 	const char *domain_name,
 	const char *account_name,
-	const char *unix_username,
 	struct dom_sid *sid,
 	int debug_level)
 {
@@ -664,7 +670,6 @@ void log_authentication_event(
 	NTSTATUS status,
 	const char *domain_name,
 	const char *account_name,
-	const char *unix_username,
 	struct dom_sid *sid)
 {
 	/* set the log level */
@@ -684,7 +689,6 @@ void log_authentication_event(
 							status,
 							domain_name,
 							account_name,
-							unix_username,
 							sid,
 							debug_level);
 	}
@@ -697,7 +701,6 @@ void log_authentication_event(
 					      status,
 					      domain_name,
 					      account_name,
-					      unix_username,
 					      sid,
 					      event_id,
 					      debug_level);
@@ -716,7 +719,6 @@ static void log_successful_authz_event_human_readable(
 	const struct tsocket_address *local,
 	const char *service_description,
 	const char *auth_type,
-	const char *transport_protection,
 	struct auth_session_info *session_info,
 	int debug_level)
 {
@@ -787,7 +789,6 @@ void log_successful_authz_event(
 							  local,
 							  service_description,
 							  auth_type,
-							  transport_protection,
 							  session_info,
 							  debug_level);
 	}

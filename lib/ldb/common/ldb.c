@@ -257,6 +257,15 @@ int ldb_connect(struct ldb_context *ldb, const char *url,
 		return ret;
 	}
 
+	/*
+	 * Take a copy of the options.
+	 */
+	ldb->options = ldb_options_copy(ldb, options);
+	if (ldb->options == NULL && options != NULL) {
+		ldb_oom(ldb);
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+
 	ret = ldb_module_connect_backend(ldb, url, options, &ldb->modules);
 	if (ret != LDB_SUCCESS) {
 		return ret;
@@ -1088,7 +1097,6 @@ static int lock_search(struct ldb_module *lock_module, struct ldb_request *req)
 	if (ret == LDB_ERR_UNSUPPORTED_CRITICAL_EXTENSION) {
 		/* We might be talking LDAP */
 		ldb_reset_err_string(ldb);
-		ret = 0;
 		TALLOC_FREE(lock_context);
 
 		return ldb_next_request(lock_module, req);

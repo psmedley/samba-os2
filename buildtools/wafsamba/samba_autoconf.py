@@ -97,7 +97,7 @@ def CHECK_HEADER(conf, h, add_headers=False, lib=None):
     hdrs = hlist_to_string(conf, headers=h)
     if lib is None:
         lib = ""
-    ret = conf.check(fragment='%s\nint main(void) { return 0; }' % hdrs,
+    ret = conf.check(fragment='%s\nint main(void) { return 0; }\n' % hdrs,
                      type='nolink',
                      execute=0,
                      cflags=ccflags,
@@ -251,7 +251,10 @@ def CHECK_FUNC(conf, f, link=True, lib=None, headers=None):
 
     ret = False
 
-    conf.COMPOUND_START('Checking for %s' % f)
+    in_lib_str = ""
+    if lib:
+        in_lib_str = " in %s" % lib
+    conf.COMPOUND_START('Checking for %s%s' % (f, in_lib_str))
 
     if link is None or link:
         ret = CHECK_CODE(conf,
@@ -397,13 +400,8 @@ def CHECK_CODE(conf, code, define,
     # Be strict when relying on a compiler check
     # Some compilers (e.g. xlc) ignore non-supported features as warnings
     if strict:
-        extra_cflags = None
-        if conf.env["CC_NAME"] == "gcc":
-            extra_cflags = "-Werror"
-        elif conf.env["CC_NAME"] == "xlc":
-            extra_cflags = "-qhalt=w"
-        if extra_cflags:
-            cflags.append(extra_cflags)
+        if 'WERROR_CFLAGS' in conf.env:
+            cflags.extend(conf.env['WERROR_CFLAGS'])
 
     if local_include:
         cflags.append('-I%s' % conf.path.abspath())
@@ -733,6 +731,15 @@ def SAMBA_CONFIG_H(conf, path=None):
         conf.ADD_CFLAGS('-Wall', testflags=True)
         conf.ADD_CFLAGS('-Wshadow', testflags=True)
         conf.ADD_CFLAGS('-Wmissing-prototypes', testflags=True)
+        if CHECK_CODE(conf,
+                      'struct a { int b; }; struct c { struct a d; } e = { };',
+                      'CHECK_C99_INIT',
+                      link=False,
+                      cflags='-Wmissing-field-initializers -Werror=missing-field-initializers',
+                      msg="Checking C99 init of nested structs."):
+            conf.ADD_CFLAGS('-Wmissing-field-initializers', testflags=True)
+        conf.ADD_CFLAGS('-Wformat-overflow=2', testflags=True)
+        conf.ADD_CFLAGS('-Wformat-zero-length', testflags=True)
         conf.ADD_CFLAGS('-Wcast-align -Wcast-qual', testflags=True)
         conf.ADD_CFLAGS('-fno-common', testflags=True)
 
@@ -786,10 +793,20 @@ int main(void) {
     if Options.options.pedantic:
         conf.ADD_CFLAGS('-W', testflags=True)
 
+    if (Options.options.address_sanitizer or
+        Options.options.undefined_sanitizer):
+        conf.ADD_CFLAGS('-g -O1', testflags=True)
     if Options.options.address_sanitizer:
-        conf.ADD_CFLAGS('-fno-omit-frame-pointer -O1 -fsanitize=address', testflags=True)
+        conf.ADD_CFLAGS('-fno-omit-frame-pointer', testflags=True)
+        conf.ADD_CFLAGS('-fsanitize=address', testflags=True)
         conf.ADD_LDFLAGS('-fsanitize=address', testflags=True)
         conf.env['ADDRESS_SANITIZER'] = True
+    if Options.options.undefined_sanitizer:
+        conf.ADD_CFLAGS('-fsanitize=undefined', testflags=True)
+        conf.ADD_CFLAGS('-fsanitize=null', testflags=True)
+        conf.ADD_CFLAGS('-fsanitize=alignment', testflags=True)
+        conf.ADD_LDFLAGS('-fsanitize=undefined', testflags=True)
+        conf.env['UNDEFINED_SANITIZER'] = True
 
 
     # Let people pass an additional ADDITIONAL_{CFLAGS,LDFLAGS}
@@ -921,12 +938,11 @@ def SETUP_CONFIGURE_CACHE(conf, enable):
 
 @conf
 def SAMBA_CHECK_UNDEFINED_SYMBOL_FLAGS(conf):
-    # we don't want any libraries or modules to rely on runtime
-    # resolution of symbols
     if not sys.platform.startswith("openbsd"):
+        # we don't want any libraries or modules to rely on runtime
+        # resolution of symbols
         conf.env.undefined_ldflags = conf.ADD_LDFLAGS('-Wl,-no-undefined', testflags=True)
 
-    if not sys.platform.startswith("openbsd") and conf.env.undefined_ignore_ldflags == []:
-        if conf.CHECK_LDFLAGS(['-undefined', 'dynamic_lookup']):
+        if (conf.env.undefined_ignore_ldflags == [] and
+            conf.CHECK_LDFLAGS(['-undefined', 'dynamic_lookup'])):
             conf.env.undefined_ignore_ldflags = ['-undefined', 'dynamic_lookup']
-

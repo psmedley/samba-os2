@@ -291,8 +291,8 @@ samba-tool user create User4 passw4rd --rfc2307-from-nss --gecos 'some text'
 Example4 shows how to create a new user with Unix UID, GID and login-shell set from the local NSS and GECOS set to 'some text'.
 
 Example5:
-samba-tool user create User5 passw5rd --nis-domain=samdom --unix-home=/home/User5 \
-           --uid-number=10005 --login-shell=/bin/false --gid-number=10000
+samba-tool user create User5 passw5rd --nis-domain=samdom --unix-home=/home/User5 \\
+    --uid-number=10005 --login-shell=/bin/false --gid-number=10000
 
 Example5 shows how to create an RFC2307/NIS domain enabled user account. If
 --nis-domain is set, then the other four parameters are mandatory.
@@ -2389,8 +2389,8 @@ The -H or --URL= option can be used to execute the command against a remote
 server.
 
 Example1:
-samba-tool user edit User1 -H ldap://samba.samdom.example.com \
--U administrator --password=passw1rd
+samba-tool user edit User1 -H ldap://samba.samdom.example.com \\
+    -U administrator --password=passw1rd
 
 Example1 shows how to edit a users attributes in the domain against a remote
 LDAP server.
@@ -2428,6 +2428,7 @@ LDAP server using the 'nano' editor.
 
     def run(self, username, credopts=None, sambaopts=None, versionopts=None,
             H=None, editor=None):
+        from . import common
 
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp, fallback_machine=True)
@@ -2448,9 +2449,7 @@ LDAP server using the 'nano' editor.
             raise CommandError('Unable to find user "%s"' % (username))
 
         for msg in res:
-            r_ldif = samdb.write_ldif(msg, 1)
-            # remove 'changetype' line
-            result_ldif = re.sub('changetype: add\n', '', r_ldif)
+            result_ldif = common.get_ldif_for_editor(samdb, msg)
 
             if editor is None:
                 editor = os.environ.get('EDITOR')
@@ -2467,46 +2466,21 @@ LDAP server using the 'nano' editor.
                 with open(t_file.name) as edited_file:
                     edited_message = edited_file.read()
 
-        if result_ldif != edited_message:
-            diff = difflib.ndiff(result_ldif.splitlines(),
-                                 edited_message.splitlines())
-            minus_lines = []
-            plus_lines = []
-            for line in diff:
-                if line.startswith('-'):
-                    line = line[2:]
-                    minus_lines.append(line)
-                elif line.startswith('+'):
-                    line = line[2:]
-                    plus_lines.append(line)
 
-            user_ldif = "dn: %s\n" % user_dn
-            user_ldif += "changetype: modify\n"
+        msgs_edited = samdb.parse_ldif(edited_message)
+        msg_edited = next(msgs_edited)[1]
 
-            for line in minus_lines:
-                attr, val = line.split(':', 1)
-                search_attr = "%s:" % attr
-                if not re.search(r'^' + search_attr, str(plus_lines)):
-                    user_ldif += "delete: %s\n" % attr
-                    user_ldif += "%s: %s\n" % (attr, val)
+        res_msg_diff = samdb.msg_diff(msg, msg_edited)
+        if len(res_msg_diff) == 0:
+            self.outf.write("Nothing to do\n")
+            return
 
-            for line in plus_lines:
-                attr, val = line.split(':', 1)
-                search_attr = "%s:" % attr
-                if re.search(r'^' + search_attr, str(minus_lines)):
-                    user_ldif += "replace: %s\n" % attr
-                    user_ldif += "%s: %s\n" % (attr, val)
-                if not re.search(r'^' + search_attr, str(minus_lines)):
-                    user_ldif += "add: %s\n" % attr
-                    user_ldif += "%s: %s\n" % (attr, val)
+        try:
+            samdb.modify(res_msg_diff)
+        except Exception as e:
+            raise CommandError("Failed to modify user '%s': " % username, e)
 
-            try:
-                samdb.modify_ldif(user_ldif)
-            except Exception as e:
-                raise CommandError("Failed to modify user '%s': " %
-                                   username, e)
-
-            self.outf.write("Modified User '%s' successfully\n" % username)
+        self.outf.write("Modified User '%s' successfully\n" % username)
 
 
 class cmd_user_show(Command):
@@ -2522,8 +2496,8 @@ The -H or --URL= option can be used to execute the command against a remote
 server.
 
 Example1:
-samba-tool user show User1 -H ldap://samba.samdom.example.com \
--U administrator --password=passw1rd
+samba-tool user show User1 -H ldap://samba.samdom.example.com \\
+    -U administrator --password=passw1rd
 
 Example1 shows how to display a users attributes in the domain against a remote
 LDAP server.
@@ -2603,7 +2577,7 @@ class cmd_user_move(Command):
     server.
 
     Example1:
-    samba-tool user move User1 'OU=OrgUnit,DC=samdom.DC=example,DC=com' \
+    samba-tool user move User1 'OU=OrgUnit,DC=samdom.DC=example,DC=com' \\
         -H ldap://samba.samdom.example.com -U administrator
 
     Example1 shows how to move a user User1 into the 'OrgUnit' organizational

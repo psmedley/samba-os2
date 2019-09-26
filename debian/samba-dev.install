@@ -43,7 +43,6 @@ usr/lib/*/libsamba-errors.so
 usr/lib/*/libsamba-hostconfig.so
 usr/lib/*/libsamba-passdb.so
 usr/lib/*/libsamba-policy.cpython-*.so
-usr/lib/*/libsamba-util.so
 usr/lib/*/libsamdb.so
 usr/lib/*/libsmbconf.so
 usr/lib/*/libsmbldap.so
@@ -59,5 +58,4 @@ usr/lib/*/pkgconfig/netapi.pc
 usr/lib/*/pkgconfig/samba-credentials.pc
 usr/lib/*/pkgconfig/samba-hostconfig.pc
 usr/lib/*/pkgconfig/samba-policy.cpython-*.pc
-usr/lib/*/pkgconfig/samba-util.pc
 usr/lib/*/pkgconfig/samdb.pc

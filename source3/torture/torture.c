@@ -26,6 +26,7 @@
 #include "libcli/security/security.h"
 #include "tldap.h"
 #include "tldap_util.h"
+#include "tldap_gensec_bind.h"
 #include "../librpc/gen_ndr/svcctl.h"
 #include "../lib/util/memcache.h"
 #include "nsswitch/winbind_client.h"
@@ -44,8 +45,13 @@
 #include "lib/util/sys_rw_data.h"
 #include "lib/util/base64.h"
 #include "lib/util/time.h"
-#include "lib/crypto/md5.h"
 #include "lib/gencache.h"
+#include "lib/util/asn1.h"
+#include "lib/param/param.h"
+#include "auth/gensec/gensec.h"
+
+#include <gnutls/gnutls.h>
+#include <gnutls/crypto.h>
 
 extern char *optarg;
 extern int optind;
@@ -2537,10 +2543,10 @@ static void alarm_handler(int dummy)
 
 static void alarm_handler_parent(int dummy)
 {
-	smbXcli_conn_disconnect(alarm_cli->conn, NT_STATUS_OK);
+	smbXcli_conn_disconnect(alarm_cli->conn, NT_STATUS_LOCAL_DISCONNECT);
 }
 
-static void do_local_lock(int read_fd, int write_fd)
+static void do_local_lock(const char *fname, int read_fd, int write_fd)
 {
 	int fd;
 	char c = '\0';
@@ -2549,7 +2555,7 @@ static void do_local_lock(int read_fd, int write_fd)
 	int ret;
 
 	local_pathname = talloc_asprintf(talloc_tos(),
-			"%s/lockt9.lck", local_path);
+			"%s/%s", local_path, fname);
 	if (!local_pathname) {
 		printf("child: alloc fail\n");
 		exit(1);
@@ -2608,10 +2614,10 @@ static void do_local_lock(int read_fd, int write_fd)
 	exit(0);
 }
 
-static bool run_locktest9(int dummy)
+static bool _run_locktest9X(const char *fname, int timeout)
 {
 	struct cli_state *cli1;
-	const char *fname = "\\lockt9.lck";
+	char *fpath = talloc_asprintf(talloc_tos(), "\\%s", fname);
 	uint16_t fnum;
 	bool correct = False;
 	int pipe_in[2], pipe_out[2];
@@ -2622,10 +2628,10 @@ static bool run_locktest9(int dummy)
 	double seconds;
 	NTSTATUS status;
 
-	printf("starting locktest9\n");
+	printf("starting locktest9X: %s\n", fname);
 
 	if (local_path == NULL) {
-		d_fprintf(stderr, "locktest9 must be given a local path via -l <localpath>\n");
+		d_fprintf(stderr, "locktest9X must be given a local path via -l <localpath>\n");
 		return false;
 	}
 
@@ -2640,7 +2646,7 @@ static bool run_locktest9(int dummy)
 
 	if (child_pid == 0) {
 		/* Child. */
-		do_local_lock(pipe_out[0], pipe_in[1]);
+		do_local_lock(fname, pipe_out[0], pipe_in[1]);
 		exit(0);
 	}
 
@@ -2663,7 +2669,7 @@ static bool run_locktest9(int dummy)
 
 	smbXcli_conn_set_sockopt(cli1->conn, sockops);
 
-	status = cli_openx(cli1, fname, O_RDWR, DENY_NONE,
+	status = cli_openx(cli1, fpath, O_RDWR, DENY_NONE,
 			  &fnum);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_fprintf(stderr, "cli_openx returned %s\n", nt_errstr(status));
@@ -2694,7 +2700,7 @@ static bool run_locktest9(int dummy)
 
 	start = timeval_current();
 
-	status = cli_lock32(cli1, fnum, 0, 4, -1, WRITE_LOCK);
+	status = cli_lock32(cli1, fnum, 0, 4, timeout, WRITE_LOCK);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_fprintf(stderr, "Unable to apply write lock on range 0:4, error was "
 		       "%s\n", nt_errstr(status));
@@ -2721,8 +2727,823 @@ fail:
 
 fail_nofd:
 
-	printf("finished locktest9\n");
+	printf("finished locktest9X: %s\n", fname);
 	return correct;
+}
+
+static bool run_locktest9a(int dummy)
+{
+	return _run_locktest9X("lock9a.dat", -1);
+}
+
+static bool run_locktest9b(int dummy)
+{
+	return _run_locktest9X("lock9b.dat", 10000);
+}
+
+struct locktest10_state {
+	bool ok;
+	bool done;
+};
+
+static void locktest10_lockingx_done(struct tevent_req *subreq);
+static void locktest10_read_andx_done(struct tevent_req *subreq);
+
+static bool run_locktest10(int dummy)
+{
+	struct tevent_context *ev = NULL;
+	struct cli_state *cli1 = NULL;
+	struct cli_state *cli2 = NULL;
+	struct smb1_lock_element lck = { 0 };
+	struct tevent_req *reqs[2] = { NULL };
+	struct tevent_req *smbreqs[2] = { NULL };
+	const char fname[] = "\\lockt10.lck";
+	uint16_t fnum1, fnum2;
+	bool ret = false;
+	bool ok;
+	uint8_t data = 1;
+	struct locktest10_state state = { .ok = true };
+	NTSTATUS status;
+
+	printf("starting locktest10\n");
+
+	ev = samba_tevent_context_init(NULL);
+	if (ev == NULL) {
+		d_fprintf(stderr, "samba_tevent_context_init failed\n");
+		goto done;
+	}
+
+	ok = torture_open_connection(&cli1, 0);
+	if (!ok) {
+		goto done;
+	}
+	smbXcli_conn_set_sockopt(cli1->conn, sockops);
+
+	ok = torture_open_connection(&cli2, 1);
+	if (!ok) {
+		goto done;
+	}
+	smbXcli_conn_set_sockopt(cli2->conn, sockops);
+
+	status = cli_openx(cli1, fname, O_CREAT|O_RDWR, DENY_NONE, &fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_openx failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_writeall(cli1, fnum1, 0, &data, 0, sizeof(data), NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_writeall failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_openx(cli2, fname, O_CREAT|O_RDWR, DENY_NONE, &fnum2);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_openx failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_locktype(
+		cli2, fnum2, 0, 1, 0, LOCKING_ANDX_EXCLUSIVE_LOCK);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_locktype failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	lck = (struct smb1_lock_element) {
+		.pid = cli_getpid(cli1), .offset = 0, .length = 1,
+	};
+
+	reqs[0] = cli_lockingx_create(
+		ev,				/* mem_ctx */
+		ev,				/* tevent_context */
+		cli1,				/* cli */
+		fnum1,				/* fnum */
+		LOCKING_ANDX_EXCLUSIVE_LOCK,	/* typeoflock */
+		0,				/* newoplocklevel */
+		1,				/* timeout */
+		0,				/* num_unlocks */
+		NULL,				/* unlocks */
+		1,				/* num_locks */
+		&lck,				/* locks */
+		&smbreqs[0]);			/* psmbreq */
+	if (reqs[0] == NULL) {
+		d_fprintf(stderr, "cli_lockingx_create failed\n");
+		goto done;
+	}
+	tevent_req_set_callback(reqs[0], locktest10_lockingx_done, &state);
+
+	reqs[1] = cli_read_andx_create(
+		ev,		/* mem_ctx */
+		ev,		/* ev */
+		cli1,		/* cli */
+		fnum1,		/* fnum */
+		0,		/* offset */
+		1,		/* size */
+		&smbreqs[1]);	/* psmbreq */
+	if (reqs[1] == NULL) {
+		d_fprintf(stderr, "cli_read_andx_create failed\n");
+		goto done;
+	}
+	tevent_req_set_callback(reqs[1], locktest10_read_andx_done, &state);
+
+	status = smb1cli_req_chain_submit(smbreqs, ARRAY_SIZE(smbreqs));
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "smb1cli_req_chain_submit failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	while (!state.done) {
+		tevent_loop_once(ev);
+	}
+
+	torture_close_connection(cli1);
+
+	if (state.ok) {
+		ret = true;
+	}
+done:
+	return ret;
+}
+
+static void locktest10_lockingx_done(struct tevent_req *subreq)
+{
+	struct locktest10_state *state = tevent_req_callback_data_void(subreq);
+	NTSTATUS status;
+
+	status = cli_lockingx_recv(subreq);
+	TALLOC_FREE(subreq);
+
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_FILE_LOCK_CONFLICT)) {
+		d_printf("cli_lockingx returned %s\n", nt_errstr(status));
+		state->ok = false;
+	}
+}
+
+static void locktest10_read_andx_done(struct tevent_req *subreq)
+{
+	struct locktest10_state *state = tevent_req_callback_data_void(subreq);
+	ssize_t received = -1;
+	uint8_t *rcvbuf = NULL;
+	NTSTATUS status;
+
+	status = cli_read_andx_recv(subreq, &received, &rcvbuf);
+
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_REQUEST_ABORTED)) {
+		d_printf("cli_read_andx returned %s\n", nt_errstr(status));
+		state->ok = false;
+	}
+
+	state->done = true;
+	TALLOC_FREE(subreq);
+}
+
+static bool run_locktest11(int dummy)
+{
+	struct cli_state *cli1;
+	const char *fname = "\\lockt11.lck";
+	NTSTATUS status;
+	uint16_t fnum;
+	bool ret = false;
+
+	if (!torture_open_connection(&cli1, 0)) {
+		return false;
+	}
+
+	smbXcli_conn_set_sockopt(cli1->conn, sockops);
+
+	cli_unlink(cli1, fname, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN);
+
+	status = cli_openx(cli1, fname, O_CREAT|O_RDWR, DENY_NONE, &fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_openx returned %s\n",
+			  nt_errstr(status));
+		return false;
+	}
+
+	/*
+	 * Test that LOCKING_ANDX_CANCEL_LOCK without any locks
+	 * returns NT_STATUS_OK
+	 */
+
+	status = cli_lockingx(
+		cli1,				/* cli */
+		fnum,				/* fnum */
+		LOCKING_ANDX_CANCEL_LOCK,	/* typeoflock */
+		0,				/* newoplocklevel */
+		0,				/* timeout */
+		0,				/* num_unlocks */
+		NULL,				/* unlocks */
+		0,				/* num_locks */
+		NULL);				/* locks */
+
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("cli_lockingX returned %s\n", nt_errstr(status));
+		goto fail;
+	}
+
+	ret = true;
+fail:
+	cli_close(cli1, fnum);
+	cli_unlink(cli1, fname, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN);
+
+	return ret;
+}
+
+struct deferred_close_state {
+	struct tevent_context *ev;
+	struct cli_state *cli;
+	uint16_t fnum;
+};
+
+static void deferred_close_waited(struct tevent_req *subreq);
+static void deferred_close_done(struct tevent_req *subreq);
+
+static struct tevent_req *deferred_close_send(
+	TALLOC_CTX *mem_ctx,
+	struct tevent_context *ev,
+	int wait_secs,
+	struct cli_state *cli,
+	uint16_t fnum)
+{
+	struct tevent_req *req = NULL, *subreq = NULL;
+	struct deferred_close_state *state = NULL;
+	struct timeval wakeup_time = timeval_current_ofs(wait_secs, 0);
+
+	req = tevent_req_create(
+		mem_ctx, &state, struct deferred_close_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	state->ev = ev;
+	state->cli = cli;
+	state->fnum = fnum;
+
+	subreq = tevent_wakeup_send(state, state->ev, wakeup_time);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, deferred_close_waited, req);
+	return req;
+}
+
+static void deferred_close_waited(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct deferred_close_state *state = tevent_req_data(
+		req, struct deferred_close_state);
+	bool ok;
+
+	ok = tevent_wakeup_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (!ok) {
+		tevent_req_oom(req);
+		return;
+	}
+
+	subreq = cli_close_send(state, state->ev, state->cli, state->fnum);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, deferred_close_done, req);
+}
+
+static void deferred_close_done(struct tevent_req *subreq)
+{
+	NTSTATUS status = cli_close_recv(subreq);
+	tevent_req_simple_finish_ntstatus(subreq, status);
+}
+
+static NTSTATUS deferred_close_recv(struct tevent_req *req)
+{
+	return tevent_req_simple_recv_ntstatus(req);
+}
+
+struct lockread_state {
+	struct smb1_lock_element lck;
+	struct tevent_req *reqs[2];
+	struct tevent_req *smbreqs[2];
+	NTSTATUS lock_status;
+	NTSTATUS read_status;
+	uint8_t *readbuf;
+};
+
+static void lockread_lockingx_done(struct tevent_req *subreq);
+static void lockread_read_andx_done(struct tevent_req *subreq);
+
+static struct tevent_req *lockread_send(
+	TALLOC_CTX *mem_ctx,
+	struct tevent_context *ev,
+	struct cli_state *cli,
+	uint16_t fnum)
+{
+	struct tevent_req *req = NULL;
+	struct lockread_state *state = NULL;
+	NTSTATUS status;
+
+	req = tevent_req_create(mem_ctx, &state, struct lockread_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	state->lck = (struct smb1_lock_element) {
+		.pid = cli_getpid(cli), .offset = 0, .length = 1,
+	};
+
+	state->reqs[0] = cli_lockingx_create(
+		ev,				/* mem_ctx */
+		ev,				/* tevent_context */
+		cli,				/* cli */
+		fnum,				/* fnum */
+		LOCKING_ANDX_EXCLUSIVE_LOCK,	/* typeoflock */
+		0,				/* newoplocklevel */
+		10000,				/* timeout */
+		0,				/* num_unlocks */
+		NULL,				/* unlocks */
+		1,				/* num_locks */
+		&state->lck,			/* locks */
+		&state->smbreqs[0]);		/* psmbreq */
+	if (tevent_req_nomem(state->reqs[0], req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(
+		state->reqs[0], lockread_lockingx_done, req);
+
+	state->reqs[1] = cli_read_andx_create(
+		ev,		/* mem_ctx */
+		ev,		/* ev */
+		cli,		/* cli */
+		fnum,		/* fnum */
+		0,		/* offset */
+		1,		/* size */
+		&state->smbreqs[1]);	/* psmbreq */
+	if (tevent_req_nomem(state->reqs[1], req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(
+		state->reqs[1], lockread_read_andx_done, req);
+
+	status = smb1cli_req_chain_submit(state->smbreqs, 2);
+	if (tevent_req_nterror(req, status)) {
+		return tevent_req_post(req, ev);
+	}
+	return req;
+}
+
+static void lockread_lockingx_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct lockread_state *state = tevent_req_data(
+		req, struct lockread_state);
+	state->lock_status = cli_lockingx_recv(subreq);
+	TALLOC_FREE(subreq);
+	d_fprintf(stderr,
+		  "lockingx returned %s\n",
+		  nt_errstr(state->lock_status));
+}
+
+static void lockread_read_andx_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct lockread_state *state = tevent_req_data(
+		req, struct lockread_state);
+	ssize_t received = -1;
+	uint8_t *rcvbuf = NULL;
+
+	state->read_status = cli_read_andx_recv(subreq, &received, &rcvbuf);
+
+	d_fprintf(stderr,
+		  "read returned %s\n",
+		  nt_errstr(state->read_status));
+
+	if (!NT_STATUS_IS_OK(state->read_status)) {
+		TALLOC_FREE(subreq);
+		tevent_req_done(req);
+		return;
+	}
+
+	if (received > 0) {
+		state->readbuf = talloc_memdup(state, rcvbuf, received);
+		TALLOC_FREE(subreq);
+		if (tevent_req_nomem(state->readbuf, req)) {
+			return;
+		}
+	}
+	TALLOC_FREE(subreq);
+	tevent_req_done(req);
+}
+
+static NTSTATUS lockread_recv(
+	struct tevent_req *req,
+	NTSTATUS *lock_status,
+	NTSTATUS *read_status,
+	TALLOC_CTX *mem_ctx,
+	uint8_t **read_buf)
+{
+	struct lockread_state *state = tevent_req_data(
+		req, struct lockread_state);
+	NTSTATUS status;
+
+	if (tevent_req_is_nterror(req, &status)) {
+		return status;
+	}
+
+	*lock_status = state->lock_status;
+	*read_status = state->read_status;
+	if (state->readbuf != NULL) {
+		*read_buf = talloc_move(mem_ctx, &state->readbuf);
+	} else {
+		*read_buf = NULL;
+	}
+
+	return NT_STATUS_OK;
+}
+
+struct lock12_state {
+	uint8_t dummy;
+};
+
+static void lock12_closed(struct tevent_req *subreq);
+static void lock12_read(struct tevent_req *subreq);
+
+static struct tevent_req *lock12_send(
+	TALLOC_CTX *mem_ctx,
+	struct tevent_context *ev,
+	struct cli_state *cli,
+	uint16_t fnum1,
+	uint16_t fnum2)
+{
+	struct tevent_req *req = NULL, *subreq = NULL;
+	struct lock12_state *state = NULL;
+
+	req = tevent_req_create(mem_ctx, &state, struct lock12_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	subreq = deferred_close_send(state, ev, 1, cli, fnum1);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, lock12_closed, req);
+
+	subreq = lockread_send(state, ev, cli, fnum2);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, lock12_read, req);
+
+	return req;
+}
+
+static void lock12_closed(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	NTSTATUS status;
+
+	status = deferred_close_recv(subreq);
+	TALLOC_FREE(subreq);
+	DBG_DEBUG("close returned %s\n", nt_errstr(status));
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+}
+
+static void lock12_read(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct lock12_state *state = tevent_req_data(
+		req, struct lock12_state);
+	NTSTATUS status, lock_status, read_status;
+	uint8_t *buf = NULL;
+
+	status = lockread_recv(
+		subreq, &lock_status, &read_status, state, &buf);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status) ||
+	    tevent_req_nterror(req, lock_status) ||
+	    tevent_req_nterror(req, read_status)) {
+		return;
+	}
+	tevent_req_done(req);
+}
+
+static NTSTATUS lock12_recv(struct tevent_req *req)
+
+{
+	NTSTATUS status;
+
+	if (tevent_req_is_nterror(req, &status)) {
+		return status;
+	}
+	return NT_STATUS_OK;
+}
+
+static bool run_locktest12(int dummy)
+{
+	struct tevent_context *ev = NULL;
+	struct tevent_req *req = NULL;
+	struct cli_state *cli = NULL;
+	const char fname[] = "\\lockt12.lck";
+	uint16_t fnum1, fnum2;
+	bool ret = false;
+	bool ok;
+	uint8_t data = 1;
+	NTSTATUS status;
+
+	printf("starting locktest12\n");
+
+	ev = samba_tevent_context_init(NULL);
+	if (ev == NULL) {
+		d_fprintf(stderr, "samba_tevent_context_init failed\n");
+		goto done;
+	}
+
+	ok = torture_open_connection(&cli, 0);
+	if (!ok) {
+		goto done;
+	}
+	smbXcli_conn_set_sockopt(cli->conn, sockops);
+
+	status = cli_openx(cli, fname, O_CREAT|O_RDWR, DENY_NONE, &fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_openx failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_openx(cli, fname, O_CREAT|O_RDWR, DENY_NONE, &fnum2);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_openx failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_writeall(cli, fnum1, 0, &data, 0, sizeof(data), NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_writeall failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_locktype(
+		cli, fnum1, 0, 1, 0, LOCKING_ANDX_EXCLUSIVE_LOCK);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_locktype failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	req = lock12_send(ev, ev, cli, fnum1, fnum2);
+	if (req == NULL) {
+		d_fprintf(stderr, "lock12_send failed\n");
+		goto done;
+	}
+
+	ok = tevent_req_poll_ntstatus(req, ev, &status);
+	if (!ok) {
+		d_fprintf(stderr, "tevent_req_poll_ntstatus failed\n");
+		goto done;
+	}
+
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "tevent_req_poll_ntstatus returned %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = lock12_recv(req);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "lock12 returned %s\n", nt_errstr(status));
+		goto done;
+	}
+
+	ret = true;
+done:
+	torture_close_connection(cli);
+	return ret;
+}
+
+struct lock_ntcancel_state {
+	struct timeval start;
+	struct smb1_lock_element lck;
+	struct tevent_req *subreq;
+};
+
+static void lock_ntcancel_waited(struct tevent_req *subreq);
+static void lock_ntcancel_done(struct tevent_req *subreq);
+
+static struct tevent_req *lock_ntcancel_send(
+	TALLOC_CTX *mem_ctx,
+	struct tevent_context *ev,
+	struct cli_state *cli,
+	uint16_t fnum)
+{
+	struct tevent_req *req = NULL, *subreq = NULL;
+	struct lock_ntcancel_state *state = NULL;
+
+	req = tevent_req_create(mem_ctx, &state, struct lock_ntcancel_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	state->lck = (struct smb1_lock_element) {
+		.pid = cli_getpid(cli), .offset = 0, .length = 1,
+	};
+	state->start = timeval_current();
+
+	state->subreq = cli_lockingx_send(
+		state,				/* mem_ctx */
+		ev,				/* tevent_context */
+		cli,				/* cli */
+		fnum,				/* fnum */
+		LOCKING_ANDX_EXCLUSIVE_LOCK,	/* typeoflock */
+		0,				/* newoplocklevel */
+		10000,				/* timeout */
+		0,				/* num_unlocks */
+		NULL,				/* unlocks */
+		1,				/* num_locks */
+		&state->lck);			/* locks */
+	if (tevent_req_nomem(state->subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(state->subreq, lock_ntcancel_done, req);
+
+	subreq = tevent_wakeup_send(state, ev, timeval_current_ofs(1, 0));
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, lock_ntcancel_waited, req);
+	return req;
+}
+
+static void lock_ntcancel_waited(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct lock_ntcancel_state *state = tevent_req_data(
+		req, struct lock_ntcancel_state);
+	bool ok;
+
+	ok = tevent_wakeup_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (!ok) {
+		tevent_req_oom(req);
+		return;
+	}
+
+	ok = tevent_req_cancel(state->subreq);
+	if (!ok) {
+		d_fprintf(stderr, "Could not cancel subreq\n");
+		tevent_req_oom(req);
+		return;
+	}
+}
+
+static void lock_ntcancel_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct lock_ntcancel_state *state = tevent_req_data(
+		req, struct lock_ntcancel_state);
+	NTSTATUS status;
+	double elapsed;
+
+	status = cli_lockingx_recv(subreq);
+	TALLOC_FREE(subreq);
+
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_FILE_LOCK_CONFLICT)) {
+		d_printf("cli_lockingx returned %s\n", nt_errstr(status));
+		tevent_req_nterror(req, NT_STATUS_UNSUCCESSFUL);
+		return;
+	}
+
+	elapsed = timeval_elapsed(&state->start);
+
+	if (elapsed > 3) {
+		d_printf("cli_lockingx was too slow, cancel did not work\n");
+		tevent_req_nterror(req, NT_STATUS_UNSUCCESSFUL);
+		return;
+	}
+
+	tevent_req_done(req);
+}
+
+static NTSTATUS lock_ntcancel_recv(struct tevent_req *req)
+{
+	return tevent_req_simple_recv_ntstatus(req);
+}
+
+static bool run_locktest13(int dummy)
+{
+	struct tevent_context *ev = NULL;
+	struct tevent_req *req = NULL;
+	struct cli_state *cli = NULL;
+	const char fname[] = "\\lockt13.lck";
+	uint16_t fnum1, fnum2;
+	bool ret = false;
+	bool ok;
+	uint8_t data = 1;
+	NTSTATUS status;
+
+	printf("starting locktest13\n");
+
+	ev = samba_tevent_context_init(NULL);
+	if (ev == NULL) {
+		d_fprintf(stderr, "samba_tevent_context_init failed\n");
+		goto done;
+	}
+
+	ok = torture_open_connection(&cli, 0);
+	if (!ok) {
+		goto done;
+	}
+	smbXcli_conn_set_sockopt(cli->conn, sockops);
+
+	status = cli_openx(cli, fname, O_CREAT|O_RDWR, DENY_NONE, &fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_openx failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_openx(cli, fname, O_CREAT|O_RDWR, DENY_NONE, &fnum2);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_openx failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_writeall(cli, fnum1, 0, &data, 0, sizeof(data), NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_writeall failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = cli_locktype(
+		cli, fnum1, 0, 1, 0, LOCKING_ANDX_EXCLUSIVE_LOCK);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "cli_locktype failed: %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	req = lock_ntcancel_send(ev, ev, cli, fnum2);
+	if (req == NULL) {
+		d_fprintf(stderr, "lock_ntcancel_send failed\n");
+		goto done;
+	}
+
+	ok = tevent_req_poll_ntstatus(req, ev, &status);
+	if (!ok) {
+		d_fprintf(stderr, "tevent_req_poll_ntstatus failed\n");
+		goto done;
+	}
+
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "tevent_req_poll_ntstatus returned %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	status = lock_ntcancel_recv(req);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr,
+			  "lock_ntcancel returned %s\n",
+			  nt_errstr(status));
+		goto done;
+	}
+
+	ret = true;
+done:
+	torture_close_connection(cli);
+	return ret;
 }
 
 /*
@@ -3833,7 +4654,7 @@ static bool run_oplock4(int dummy)
 	}
 
 	/* Now create a hardlink. */
-	status = cli_nt_hardlink(cli1, fname, fname_ln);
+	status = cli_hardlink(cli1, fname, fname_ln);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("nt hardlink failed (%s)\n", nt_errstr(status));
 		return false;
@@ -4737,7 +5558,7 @@ static bool run_deletetest_ln(int dummy)
 	}
 
 	/* Now create a hardlink. */
-	status = cli_nt_hardlink(cli, fname, fname_ln);
+	status = cli_hardlink(cli, fname, fname_ln);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("nt hardlink failed (%s)\n", nt_errstr(status));
 		return false;
@@ -6228,7 +7049,7 @@ static bool run_simple_posix_open_test(int dummy)
 	const char *sname = "posix:symlink";
 	const char *dname = "posix:dir";
 	char buf[10];
-	char namebuf[11];
+	char *target = NULL;
 	uint16_t fnum1 = (uint16_t)-1;
 	SMB_STRUCT_STAT sbuf;
 	bool correct = false;
@@ -6416,7 +7237,9 @@ static bool run_simple_posix_open_test(int dummy)
 	/* What happens when we try and POSIX open a directory for write ? */
 	status = cli_posix_open(cli1, dname, O_RDWR, 0, &fnum1);
 	if (NT_STATUS_IS_OK(status)) {
-		printf("POSIX open of directory %s succeeded, should have failed.\n", fname);
+		printf("POSIX open of directory %s succeeded, "
+		       "should have failed.\n",
+		       dname);
 		goto out;
 	} else {
 		if (!check_both_error(__LINE__, status, ERRDOS, EISDIR,
@@ -6513,15 +7336,15 @@ static bool run_simple_posix_open_test(int dummy)
 		}
 	}
 
-	status = cli_posix_readlink(cli1, sname, namebuf, sizeof(namebuf));
+	status = cli_posix_readlink(cli1, sname, talloc_tos(), &target);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("POSIX readlink on %s failed (%s)\n", sname, nt_errstr(status));
 		goto out;
 	}
 
-	if (strcmp(namebuf, fname) != 0) {
+	if (strcmp(target, fname) != 0) {
 		printf("POSIX readlink on %s failed to match name %s (read %s)\n",
-			sname, fname, namebuf);
+			sname, fname, target);
 		goto out;
 	}
 
@@ -6718,11 +7541,31 @@ static bool run_acl_symlink_test(int dummy)
 		goto out;
 	}
 
-	/* Open a handle on the symlink. */
+	/* Open a handle on the symlink for SD set/get should fail. */
 	status = cli_ntcreate(cli,
 			sname,
 			0,
 			READ_CONTROL_ACCESS|SEC_STD_WRITE_DAC,
+			0,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			FILE_OPEN,
+			0x0,
+			0x0,
+			&fnum,
+			NULL);
+
+	if (NT_STATUS_IS_OK(status)) {
+		printf("Symlink open for getsd/setsd of %s "
+			"succeeded (should fail)\n",
+			sname);
+		goto out;
+	}
+
+	/* Open a handle on the symlink. */
+	status = cli_ntcreate(cli,
+			sname,
+			0,
+			FILE_READ_ATTRIBUTES|FILE_WRITE_ATTRIBUTES,
 			0,
 			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
 			FILE_OPEN,
@@ -6785,7 +7628,7 @@ static bool run_acl_symlink_test(int dummy)
 				posix_acl_len);
 
 	if (!NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
-		printf("cli_posix_getacl on a symlink gave %s. "
+		printf("cli_posix_setacl on a symlink gave %s. "
 			"Should be NT_STATUS_ACCESS_DENIED.\n",
 			nt_errstr(status));
 		goto out;
@@ -7256,6 +8099,283 @@ static bool run_posix_ofd_lock_test(int dummy)
 	return correct;
 }
 
+struct posix_blocking_state {
+	struct tevent_context *ev;
+	struct cli_state *cli1;
+	uint16_t fnum1;
+	struct cli_state *cli2;
+	uint16_t fnum2;
+	bool gotblocked;
+	bool gotecho;
+};
+
+static void posix_blocking_locked(struct tevent_req *subreq);
+static void posix_blocking_gotblocked(struct tevent_req *subreq);
+static void posix_blocking_gotecho(struct tevent_req *subreq);
+static void posix_blocking_unlocked(struct tevent_req *subreq);
+
+static struct tevent_req *posix_blocking_send(
+	TALLOC_CTX *mem_ctx,
+	struct tevent_context *ev,
+	struct cli_state *cli1,
+	uint16_t fnum1,
+	struct cli_state *cli2,
+	uint16_t fnum2)
+{
+	struct tevent_req *req = NULL, *subreq = NULL;
+	struct posix_blocking_state *state = NULL;
+
+	req = tevent_req_create(mem_ctx, &state, struct posix_blocking_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	state->ev = ev;
+	state->cli1 = cli1;
+	state->fnum1 = fnum1;
+	state->cli2 = cli2;
+	state->fnum2 = fnum2;
+
+	subreq = cli_posix_lock_send(
+		state,
+		state->ev,
+		state->cli1,
+		state->fnum1,
+		0,
+		1,
+		false,
+		WRITE_LOCK);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, posix_blocking_locked, req);
+	return req;
+}
+
+static void posix_blocking_locked(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct posix_blocking_state *state = tevent_req_data(
+		req, struct posix_blocking_state);
+	NTSTATUS status;
+
+	status = cli_posix_lock_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+
+	subreq = cli_posix_lock_send(
+		state,
+		state->ev,
+		state->cli2,
+		state->fnum2,
+		0,
+		1,
+		true,
+		WRITE_LOCK);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, posix_blocking_gotblocked, req);
+
+	/* Make sure the blocking request is delivered */
+	subreq = cli_echo_send(
+		state,
+		state->ev,
+		state->cli2,
+		1,
+		(DATA_BLOB) { .data = (uint8_t *)state, .length = 1 });
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, posix_blocking_gotecho, req);
+}
+
+static void posix_blocking_gotblocked(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct posix_blocking_state *state = tevent_req_data(
+		req, struct posix_blocking_state);
+	NTSTATUS status;
+
+	status = cli_posix_lock_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+	if (!state->gotecho) {
+		printf("blocked req got through before echo\n");
+		tevent_req_nterror(req, NT_STATUS_INVALID_LOCK_SEQUENCE);
+		return;
+	}
+	tevent_req_done(req);
+}
+
+static void posix_blocking_gotecho(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct posix_blocking_state *state = tevent_req_data(
+		req, struct posix_blocking_state);
+	NTSTATUS status;
+
+	status = cli_echo_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+	if (state->gotblocked) {
+		printf("blocked req got through before echo\n");
+		tevent_req_nterror(req, NT_STATUS_INVALID_LOCK_SEQUENCE);
+		return;
+	}
+	state->gotecho = true;
+
+	subreq = cli_posix_lock_send(
+		state,
+		state->ev,
+		state->cli1,
+		state->fnum1,
+		0,
+		1,
+		false,
+		UNLOCK_LOCK);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, posix_blocking_unlocked, req);
+}
+
+static void posix_blocking_unlocked(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	NTSTATUS status;
+
+	status = cli_posix_lock_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+	/* tevent_req_done in posix_blocking_gotlocked */
+}
+
+static NTSTATUS posix_blocking_recv(struct tevent_req *req)
+{
+	return tevent_req_simple_recv_ntstatus(req);
+}
+
+static bool run_posix_blocking_lock(int dummy)
+{
+	struct tevent_context *ev = NULL;
+	struct cli_state *cli1 = NULL, *cli2 = NULL;
+	const char *fname = "posix_blocking";
+	uint16_t fnum1 = UINT16_MAX, fnum2 = UINT16_MAX;
+	struct tevent_req *req = NULL;
+	NTSTATUS status;
+	bool ret = false;
+	bool ok;
+
+	printf("Starting posix blocking lock test\n");
+
+	ev = samba_tevent_context_init(NULL);
+	if (ev == NULL) {
+		return false;
+	}
+
+	ok = torture_open_connection(&cli1, 0);
+	if (!ok) {
+		goto fail;
+	}
+	ok = torture_open_connection(&cli2, 0);
+	if (!ok) {
+		goto fail;
+	}
+
+	smbXcli_conn_set_sockopt(cli1->conn, sockops);
+
+	status = torture_setup_unix_extensions(cli1);
+	if (!NT_STATUS_IS_OK(status)) {
+		return false;
+	}
+
+	cli_setatr(cli1, fname, 0, 0);
+	cli_posix_unlink(cli1, fname);
+
+	status = cli_posix_open(cli1, fname, O_RDWR|O_CREAT|O_EXCL,
+				0600, &fnum1);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("First POSIX open of %s failed: %s\n",
+		       fname,
+		       nt_errstr(status));
+		goto fail;
+	}
+
+	status = cli_posix_open(cli2, fname, O_RDWR, 0600, &fnum2);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("Second POSIX open of %s failed: %s\n",
+		       fname,
+		       nt_errstr(status));
+		goto fail;
+	}
+
+	req = posix_blocking_send(ev, ev, cli1, fnum1, cli2, fnum2);
+	if (req == NULL) {
+		printf("cli_posix_blocking failed\n");
+		goto fail;
+	}
+
+	ok = tevent_req_poll_ntstatus(req, ev, &status);
+	if (!ok) {
+		printf("tevent_req_poll_ntstatus failed: %s\n",
+		       nt_errstr(status));
+		goto fail;
+	}
+	status = posix_blocking_recv(req);
+	TALLOC_FREE(req);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("posix_blocking_recv returned %s\n",
+		       nt_errstr(status));
+		goto fail;
+	}
+
+	ret = true;
+fail:
+
+	if (fnum1 != UINT16_MAX) {
+		cli_close(cli1, fnum1);
+		fnum1 = UINT16_MAX;
+	}
+	if (fnum2 != UINT16_MAX) {
+		cli_close(cli2, fnum2);
+		fnum2 = UINT16_MAX;
+	}
+
+	if (cli1 != NULL) {
+		cli_setatr(cli1, fname, 0, 0);
+		cli_posix_unlink(cli1, fname);
+	}
+
+	ok = true;
+
+	if (cli1 != NULL) {
+		ok &= torture_close_connection(cli1);
+		cli1 = NULL;
+	}
+	if (cli2 != NULL) {
+		ok &= torture_close_connection(cli2);
+		cli2 = NULL;
+	}
+
+	if (!ok) {
+		ret = false;
+	}
+	TALLOC_FREE(ev);
+	return ret;
+}
+
 /*
   Test POSIX mkdir is case-sensitive.
  */
@@ -7456,6 +8576,334 @@ static bool run_posix_mkdir_test(int dummy)
 	return correct;
 }
 
+struct posix_acl_oplock_state {
+	struct tevent_context *ev;
+	struct cli_state *cli;
+	bool *got_break;
+	bool *acl_ret;
+	NTSTATUS status;
+};
+
+static void posix_acl_oplock_got_break(struct tevent_req *req)
+{
+	struct posix_acl_oplock_state *state = tevent_req_callback_data(
+		req, struct posix_acl_oplock_state);
+	uint16_t fnum;
+	uint8_t level;
+	NTSTATUS status;
+
+	status = cli_smb_oplock_break_waiter_recv(req, &fnum, &level);
+	TALLOC_FREE(req);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_smb_oplock_break_waiter_recv returned %s\n",
+		       nt_errstr(status));
+		return;
+	}
+	*state->got_break = true;
+
+	req = cli_oplock_ack_send(state, state->ev, state->cli, fnum,
+				  NO_OPLOCK);
+	if (req == NULL) {
+		printf("cli_oplock_ack_send failed\n");
+		return;
+	}
+}
+
+static void posix_acl_oplock_got_acl(struct tevent_req *req)
+{
+	struct posix_acl_oplock_state *state = tevent_req_callback_data(
+		req, struct posix_acl_oplock_state);
+	size_t ret_size = 0;
+	char *ret_data = NULL;
+
+	state->status = cli_posix_getacl_recv(req,
+			state,
+			&ret_size,
+			&ret_data);
+
+	if (!NT_STATUS_IS_OK(state->status)) {
+		printf("cli_posix_getacl_recv returned %s\n",
+			nt_errstr(state->status));
+	}
+	*state->acl_ret = true;
+}
+
+static bool run_posix_acl_oplock_test(int dummy)
+{
+	struct tevent_context *ev;
+	struct cli_state *cli1, *cli2;
+	struct tevent_req *oplock_req, *getacl_req;
+	const char *fname = "posix_acl_oplock";
+	uint16_t fnum;
+	int saved_use_oplocks = use_oplocks;
+	NTSTATUS status;
+	bool correct = true;
+	bool got_break = false;
+	bool acl_ret = false;
+
+	struct posix_acl_oplock_state *state;
+
+	printf("starting posix_acl_oplock test\n");
+
+	if (!torture_open_connection(&cli1, 0)) {
+		use_level_II_oplocks = false;
+		use_oplocks = saved_use_oplocks;
+		return false;
+	}
+
+	if (!torture_open_connection(&cli2, 1)) {
+		use_level_II_oplocks = false;
+		use_oplocks = saved_use_oplocks;
+		return false;
+	}
+
+	/* Setup posix on cli2 only. */
+	status = torture_setup_unix_extensions(cli2);
+	if (!NT_STATUS_IS_OK(status)) {
+		return false;
+	}
+
+	smbXcli_conn_set_sockopt(cli1->conn, sockops);
+	smbXcli_conn_set_sockopt(cli2->conn, sockops);
+
+	cli_unlink(cli1, fname, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN);
+
+	/* Create the file on the Windows connection. */
+	status = cli_openx(cli1, fname, O_RDWR|O_CREAT|O_EXCL, DENY_NONE,
+	                  &fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("open of %s failed (%s)\n", fname, nt_errstr(status));
+		return false;
+	}
+
+	status = cli_close(cli1, fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("close1 failed (%s)\n", nt_errstr(status));
+		return false;
+	}
+
+	cli1->use_oplocks = true;
+
+	/* Open with oplock. */
+	status = cli_ntcreate(cli1,
+			fname,
+			0,
+			FILE_READ_DATA,
+			FILE_ATTRIBUTE_NORMAL,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			FILE_OPEN,
+			0,
+			0,
+			&fnum,
+			NULL);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("open of %s failed (%s)\n", fname, nt_errstr(status));
+		return false;
+	}
+
+	ev = samba_tevent_context_init(talloc_tos());
+	if (ev == NULL) {
+		printf("tevent_context_init failed\n");
+		return false;
+	}
+
+	state = talloc_zero(ev, struct posix_acl_oplock_state);
+	if (state == NULL) {
+		printf("talloc failed\n");
+		return false;
+	}
+	state->ev = ev;
+	state->cli = cli1;
+	state->got_break = &got_break;
+	state->acl_ret = &acl_ret;
+
+	oplock_req = cli_smb_oplock_break_waiter_send(
+		talloc_tos(), ev, cli1);
+	if (oplock_req == NULL) {
+		printf("cli_smb_oplock_break_waiter_send failed\n");
+		return false;
+	}
+	tevent_req_set_callback(oplock_req, posix_acl_oplock_got_break, state);
+
+	/* Get ACL on POSIX connection - should break oplock. */
+	getacl_req = cli_posix_getacl_send(talloc_tos(),
+				ev,
+				cli2,
+				fname);
+	if (getacl_req == NULL) {
+		printf("cli_posix_getacl_send failed\n");
+		return false;
+	}
+	tevent_req_set_callback(getacl_req, posix_acl_oplock_got_acl, state);
+
+	while (!got_break || !acl_ret) {
+		int ret;
+		ret = tevent_loop_once(ev);
+		if (ret == -1) {
+			printf("tevent_loop_once failed: %s\n",
+			       strerror(errno));
+			return false;
+		}
+	}
+
+	if (!NT_STATUS_IS_OK(state->status)) {
+		printf("getacl failed (%s)\n", nt_errstr(state->status));
+		correct = false;
+	}
+
+	status = cli_close(cli1, fnum);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("close2 failed (%s)\n", nt_errstr(status));
+		correct = false;
+	}
+
+	status = cli_unlink(cli1,
+			fname,
+			FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("unlink failed (%s)\n", nt_errstr(status));
+		correct = false;
+	}
+
+	if (!torture_close_connection(cli1)) {
+		correct = false;
+	}
+	if (!torture_close_connection(cli2)) {
+		correct = false;
+	}
+
+	if (!got_break) {
+		correct = false;
+	}
+
+	printf("finished posix acl oplock test\n");
+
+	return correct;
+}
+
+static bool run_posix_acl_shareroot_test(int dummy)
+{
+	struct cli_state *cli;
+	NTSTATUS status;
+	bool correct = false;
+	char *posix_acl = NULL;
+	size_t posix_acl_len = 0;
+	uint16_t num_file_acls = 0;
+	uint16_t num_dir_acls = 0;
+	uint16_t i;
+	uint32_t expected_size = 0;
+	bool got_user = false;
+	bool got_group = false;
+	bool got_other = false;
+	TALLOC_CTX *frame = NULL;
+
+	frame = talloc_stackframe();
+
+	printf("starting posix_acl_shareroot test\n");
+
+	if (!torture_open_connection(&cli, 0)) {
+		TALLOC_FREE(frame);
+		return false;
+	}
+
+	smbXcli_conn_set_sockopt(cli->conn, sockops);
+
+	status = torture_setup_unix_extensions(cli);
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("Failed to setup unix extensions\n");
+		goto out;
+	}
+
+	/* Get the POSIX ACL on the root of the share. */
+	status = cli_posix_getacl(cli,
+				".",
+				frame,
+				&posix_acl_len,
+				&posix_acl);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		printf("cli_posix_getacl of '.' failed (%s)\n",
+			nt_errstr(status));
+		goto out;
+	}
+
+	if (posix_acl_len < 6 ||
+			SVAL(posix_acl,0) != SMB_POSIX_ACL_VERSION) {
+		printf("getfacl ., unknown POSIX acl version %u.\n",
+			(unsigned int)CVAL(posix_acl,0) );
+		goto out;
+        }
+
+	num_file_acls = SVAL(posix_acl,2);
+	num_dir_acls = SVAL(posix_acl,4);
+	expected_size = SMB_POSIX_ACL_HEADER_SIZE +
+				SMB_POSIX_ACL_ENTRY_SIZE*
+				(num_file_acls+num_dir_acls);
+
+	if (posix_acl_len != expected_size) {
+                printf("incorrect POSIX acl buffer size "
+			"(should be %u, was %u).\n",
+                        (unsigned int)expected_size,
+                        (unsigned int)posix_acl_len);
+		goto out;
+        }
+
+	/*
+	 * We don't need to know what the ACL's are
+	 * we just need to know we have at least 3
+	 * file entries (u,g,o).
+	 */
+
+	for (i = 0; i < num_file_acls; i++) {
+		unsigned char tagtype =
+			CVAL(posix_acl,
+				SMB_POSIX_ACL_HEADER_SIZE+
+				(i*SMB_POSIX_ACL_ENTRY_SIZE));
+
+		switch(tagtype) {
+			case SMB_POSIX_ACL_USER_OBJ:
+				got_user = true;
+				break;
+			case SMB_POSIX_ACL_GROUP_OBJ:
+				got_group = true;
+				break;
+			case SMB_POSIX_ACL_OTHER:
+				got_other = true;
+				break;
+			default:
+				break;
+		}
+	}
+
+	if (!got_user) {
+		printf("Missing user entry\n");
+		goto out;
+	}
+
+	if (!got_group) {
+		printf("Missing group entry\n");
+		goto out;
+	}
+
+	if (!got_other) {
+		printf("Missing other entry\n");
+		goto out;
+	}
+
+	correct = true;
+
+  out:
+
+	if (!torture_close_connection(cli)) {
+		correct = false;
+	}
+
+	printf("finished posix acl shareroot test\n");
+	TALLOC_FREE(frame);
+
+	return correct;
+}
 
 static uint32_t open_attrs_table[] = {
 		FILE_ATTRIBUTE_NORMAL,
@@ -9464,7 +10912,6 @@ static bool run_cli_splice(int dummy)
 	uint16_t fnum2 = UINT16_MAX;
 	size_t file_size = 2*1024*1024;
 	size_t splice_size = 1*1024*1024 + 713;
-	MD5_CTX md5_ctx;
 	uint8_t digest1[16], digest2[16];
 	off_t written = 0;
 	size_t nread = 0;
@@ -9502,9 +10949,10 @@ static bool run_cli_splice(int dummy)
 	generate_random_buffer(buf, file_size);
 
 	/* MD5 the first 1MB + 713 bytes. */
-	MD5Init(&md5_ctx);
-	MD5Update(&md5_ctx, buf, splice_size);
-	MD5Final(digest1, &md5_ctx);
+	gnutls_hash_fast(GNUTLS_DIG_MD5,
+			 buf,
+			 splice_size,
+			 digest1);
 
 	status = cli_writeall(cli1,
 			      fnum1,
@@ -9561,9 +11009,10 @@ static bool run_cli_splice(int dummy)
 	}
 
 	/* MD5 the first 1MB + 713 bytes. */
-	MD5Init(&md5_ctx);
-	MD5Update(&md5_ctx, buf, splice_size);
-	MD5Final(digest2, &md5_ctx);
+	gnutls_hash_fast(GNUTLS_DIG_MD5,
+			 buf,
+			 splice_size,
+			 digest2);
 
 	/* Must be the same. */
 	if (memcmp(digest1, digest2, 16) != 0) {
@@ -9851,6 +11300,8 @@ static bool run_shortname_test(int dummy)
 	return correct;
 }
 
+TLDAPRC callback_code;
+
 static void pagedsearch_cb(struct tevent_req *req)
 {
 	TLDAPRC rc;
@@ -9861,6 +11312,7 @@ static void pagedsearch_cb(struct tevent_req *req)
 	if (!TLDAP_RC_IS_SUCCESS(rc)) {
 		d_printf("tldap_search_paged_recv failed: %s\n",
 			 tldap_rc2string(rc));
+		callback_code = rc;
 		return;
 	}
 	if (tldap_msg_type(msg) != TLDAP_RES_SEARCH_ENTRY) {
@@ -9873,6 +11325,134 @@ static void pagedsearch_cb(struct tevent_req *req)
 	}
 	d_printf("%s\n", dn);
 	TALLOC_FREE(msg);
+}
+
+enum tldap_extended_val {
+	EXTENDED_ZERO = 0,
+	EXTENDED_ONE = 1,
+	EXTENDED_NONE = 2,
+};
+
+/*
+ * Construct an extended dn control with either no value, 0 or 1
+ *
+ * No value and 0 are equivalent (non-hyphenated GUID)
+ * 1 has the hyphenated GUID
+ */
+static struct tldap_control *
+tldap_build_extended_control(enum tldap_extended_val val)
+{
+	struct tldap_control empty_control;
+	struct asn1_data *data;
+
+	ZERO_STRUCT(empty_control);
+
+	if (val != EXTENDED_NONE) {
+		data = asn1_init(talloc_tos());
+
+		if (!data) {
+			return NULL;
+		}
+
+		if (!asn1_push_tag(data, ASN1_SEQUENCE(0))) {
+			return NULL;
+		}
+
+		if (!asn1_write_Integer(data, (int)val)) {
+			return NULL;
+		}
+
+		if (!asn1_pop_tag(data)) {
+			return NULL;
+		}
+
+		if (!asn1_blob(data, &empty_control.value)) {
+			return NULL;
+		}
+	}
+
+	empty_control.oid = "1.2.840.113556.1.4.529";
+	empty_control.critical = true;
+
+	return tldap_add_control(talloc_tos(), NULL, 0, &empty_control);
+
+}
+
+static bool tldap_test_dn_guid_format(struct tldap_context *ld, const char *basedn,
+				      enum tldap_extended_val control_val)
+{
+	struct tldap_control *control = tldap_build_extended_control(control_val);
+	char *dn = NULL;
+	struct tldap_message **msg;
+	TLDAPRC rc;
+
+	rc = tldap_search(ld, basedn, TLDAP_SCOPE_BASE,
+			  "(objectClass=*)", NULL, 0, 0,
+			  control, 1, NULL,
+			  0, 0, 0, 0, talloc_tos(), &msg);
+	if (!TLDAP_RC_IS_SUCCESS(rc)) {
+		d_printf("tldap_search for domain DN failed: %s\n",
+			 tldap_errstr(talloc_tos(), ld, rc));
+		return false;
+	}
+
+	if (!tldap_entry_dn(msg[0], &dn)) {
+		d_printf("tldap_search domain DN fetch failed: %s\n",
+			 tldap_errstr(talloc_tos(), ld, rc));
+		return false;
+	}
+
+	d_printf("%s\n", dn);
+	{
+		uint32_t time_low;
+		uint32_t time_mid, time_hi_and_version;
+		uint32_t clock_seq[2];
+		uint32_t node[6];
+		char next;
+
+		switch (control_val) {
+		case EXTENDED_NONE:
+		case EXTENDED_ZERO:
+			/*
+			 * When reading GUIDs with hyphens, scanf will treat
+			 * hyphen as a hex character (and counts as part of the
+			 * width). This creates leftover GUID string which we
+			 * check will for with 'next' and closing '>'.
+			 */
+			if (12 == sscanf(dn, "<GUID=%08x%04x%04x%02x%02x%02x%02x%02x%02x%02x%02x>%c",
+					 &time_low, &time_mid,
+					 &time_hi_and_version, &clock_seq[0],
+					 &clock_seq[1], &node[0], &node[1],
+					 &node[2], &node[3], &node[4],
+					 &node[5], &next)) {
+				/* This GUID is good */
+			} else {
+				d_printf("GUID format in control (no hyphens) doesn't match output\n");
+				return false;
+			}
+
+			break;
+		case EXTENDED_ONE:
+			if (12 == sscanf(dn,
+					 "<GUID=%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x>%c",
+					 &time_low, &time_mid,
+					 &time_hi_and_version, &clock_seq[0],
+					 &clock_seq[1], &node[0], &node[1],
+					 &node[2], &node[3], &node[4],
+					 &node[5], &next)) {
+				/* This GUID is good */
+			} else {
+				d_printf("GUID format in control (with hyphens) doesn't match output\n");
+				return false;
+			}
+
+			break;
+		default:
+			return false;
+		}
+	}
+
+	return true;
 }
 
 static bool run_tldap(int dummy)
@@ -9925,6 +11505,18 @@ static bool run_tldap(int dummy)
 		return false;
 	}
 
+	rc = tldap_gensec_bind(ld, torture_creds, "ldap", host, NULL,
+			       loadparm_init_s3(talloc_tos(),
+						loadparm_s3_helpers()),
+			       GENSEC_FEATURE_SIGN | GENSEC_FEATURE_SEAL);
+
+	if (!TLDAP_RC_IS_SUCCESS(rc)) {
+		d_printf("tldap_gensec_bind failed\n");
+		return false;
+	}
+
+	callback_code = TLDAP_SUCCESS;
+
 	req = tldap_search_paged_send(talloc_tos(), ev, ld, basedn,
 				      TLDAP_SCOPE_SUB, "(objectclass=*)",
 				      NULL, 0, 0,
@@ -9939,6 +11531,14 @@ static bool run_tldap(int dummy)
 
 	TALLOC_FREE(req);
 
+	rc = callback_code;
+
+	if (!TLDAP_RC_IS_SUCCESS(rc)) {
+		d_printf("tldap_search with paging failed: %s\n",
+			 tldap_errstr(talloc_tos(), ld, rc));
+		return false;
+	}
+
 	/* test search filters against rootDSE */
 	filter = "(&(|(name=samba)(nextRid<=10000000)(usnChanged>=10)(samba~=ambas)(!(name=s*m*a)))"
 		   "(|(name:=samba)(name:dn:2.5.13.5:=samba)(:dn:2.5.13.5:=samba)(!(name=*samba))))";
@@ -9948,6 +11548,29 @@ static bool run_tldap(int dummy)
 			  talloc_tos(), NULL);
 	if (!TLDAP_RC_IS_SUCCESS(rc)) {
 		d_printf("tldap_search with complex filter failed: %s\n",
+			 tldap_errstr(talloc_tos(), ld, rc));
+		return false;
+	}
+
+	/*
+	 * Tests to check for regression of:
+	 *
+	 * https://bugzilla.samba.org/show_bug.cgi?id=14029
+	 *
+	 * TLDAP used here to pick apart the original string DN (with GUID)
+	 */
+	if (!tldap_test_dn_guid_format(ld, basedn, EXTENDED_NONE)) {
+		d_printf("tldap_search with extended dn (no val) failed: %s\n",
+			 tldap_errstr(talloc_tos(), ld, rc));
+		return false;
+	}
+	if (!tldap_test_dn_guid_format(ld, basedn, EXTENDED_ZERO)) {
+		d_printf("tldap_search with extended dn (0) failed: %s\n",
+			 tldap_errstr(talloc_tos(), ld, rc));
+		return false;
+	}
+	if (!tldap_test_dn_guid_format(ld, basedn, EXTENDED_ONE)) {
+		d_printf("tldap_search with extended dn (1) failed: %s\n",
 			 tldap_errstr(talloc_tos(), ld, rc));
 		return false;
 	}
@@ -10878,6 +12501,7 @@ static bool run_local_sid_to_string(int dummy) {
 }
 
 static bool run_local_binary_to_sid(int dummy) {
+	ssize_t ret;
 	struct dom_sid *sid = talloc(NULL, struct dom_sid);
 	static const uint8_t good_binary_sid[] = {
 		0x1, /* revision number */
@@ -10962,13 +12586,16 @@ static bool run_local_binary_to_sid(int dummy) {
 		0x1, 0x1, 0x1, 0x1, /* auth[31] */
 	};
 
-	if (!sid_parse(good_binary_sid, sizeof(good_binary_sid), sid)) {
+	ret = sid_parse(good_binary_sid, sizeof(good_binary_sid), sid);
+	if (ret == -1) {
 		return false;
 	}
-	if (sid_parse(long_binary_sid2, sizeof(long_binary_sid2), sid)) {
+	ret = sid_parse(long_binary_sid2, sizeof(long_binary_sid2), sid);
+	if (ret != -1) {
 		return false;
 	}
-	if (sid_parse(long_binary_sid, sizeof(long_binary_sid), sid)) {
+	ret = sid_parse(long_binary_sid, sizeof(long_binary_sid), sid);
+	if (ret != -1) {
 		return false;
 	}
 	return true;
@@ -11997,162 +13624,659 @@ static struct {
 	bool (*fn)(int);
 	unsigned flags;
 } torture_ops[] = {
-	{"FDPASS", run_fdpasstest, 0},
-	{"LOCK1",  run_locktest1,  0},
-	{"LOCK2",  run_locktest2,  0},
-	{"LOCK3",  run_locktest3,  0},
-	{"LOCK4",  run_locktest4,  0},
-	{"LOCK5",  run_locktest5,  0},
-	{"LOCK6",  run_locktest6,  0},
-	{"LOCK7",  run_locktest7,  0},
-	{"LOCK8",  run_locktest8,  0},
-	{"LOCK9",  run_locktest9,  0},
-	{"UNLINK", run_unlinktest, 0},
-	{"BROWSE", run_browsetest, 0},
-	{"ATTR",   run_attrtest,   0},
-	{"TRANS2", run_trans2test, 0},
-	{"MAXFID", run_maxfidtest, FLAG_MULTIPROC},
-	{"TORTURE",run_torture,    FLAG_MULTIPROC},
-	{"RANDOMIPC", run_randomipc, 0},
-	{"NEGNOWAIT", run_negprot_nowait, 0},
-	{"NBENCH",  run_nbench, 0},
-	{"NBENCH2", run_nbench2, 0},
-	{"OPLOCK1",  run_oplock1, 0},
-	{"OPLOCK2",  run_oplock2, 0},
-	{"OPLOCK4",  run_oplock4, 0},
-	{"DIR",  run_dirtest, 0},
-	{"DIR1",  run_dirtest1, 0},
-	{"DIR-CREATETIME",  run_dir_createtime, 0},
-	{"DENY1",  torture_denytest1, 0},
-	{"DENY2",  torture_denytest2, 0},
-	{"TCON",  run_tcon_test, 0},
-	{"TCONDEV",  run_tcon_devtype_test, 0},
-	{"RW1",  run_readwritetest, 0},
-	{"RW2",  run_readwritemulti, FLAG_MULTIPROC},
-	{"RW3",  run_readwritelarge, 0},
-	{"RW-SIGNING",  run_readwritelarge_signtest, 0},
-	{"OPEN", run_opentest, 0},
-	{"POSIX", run_simple_posix_open_test, 0},
-	{"POSIX-APPEND", run_posix_append, 0},
-	{"POSIX-SYMLINK-ACL", run_acl_symlink_test, 0},
-	{"POSIX-SYMLINK-EA", run_ea_symlink_test, 0},
-	{"POSIX-STREAM-DELETE", run_posix_stream_delete, 0},
-	{"POSIX-OFD-LOCK", run_posix_ofd_lock_test, 0},
-	{"POSIX-MKDIR", run_posix_mkdir_test, 0},
-	{"WINDOWS-BAD-SYMLINK", run_symlink_open_test, 0},
-	{"CASE-INSENSITIVE-CREATE", run_case_insensitive_create, 0},
-	{"ASYNC-ECHO", run_async_echo, 0},
-	{ "UID-REGRESSION-TEST", run_uid_regression_test, 0},
-	{ "SHORTNAME-TEST", run_shortname_test, 0},
-	{ "ADDRCHANGE", run_addrchange, 0},
+	{
+		.name = "FDPASS",
+		.fn   = run_fdpasstest,
+	},
+	{
+		.name = "LOCK1",
+		.fn   = run_locktest1,
+	},
+	{
+		.name = "LOCK2",
+		.fn   =  run_locktest2,
+	},
+	{
+		.name = "LOCK3",
+		.fn   =  run_locktest3,
+	},
+	{
+		.name = "LOCK4",
+		.fn   =  run_locktest4,
+	},
+	{
+		.name = "LOCK5",
+		.fn   =  run_locktest5,
+	},
+	{
+		.name = "LOCK6",
+		.fn   =  run_locktest6,
+	},
+	{
+		.name = "LOCK7",
+		.fn   =  run_locktest7,
+	},
+	{
+		.name = "LOCK8",
+		.fn   =  run_locktest8,
+	},
+	{
+		.name = "LOCK9A",
+		.fn   =  run_locktest9a,
+	},
+	{
+		.name = "LOCK9B",
+		.fn   =  run_locktest9b,
+	},
+	{
+		.name = "LOCK10",
+		.fn   =  run_locktest10,
+	},
+	{
+		.name = "LOCK11",
+		.fn   =  run_locktest11,
+	},
+	{
+		.name = "LOCK12",
+		.fn   =  run_locktest12,
+	},
+	{
+		.name = "LOCK13",
+		.fn   =  run_locktest13,
+	},
+	{
+		.name = "UNLINK",
+		.fn   = run_unlinktest,
+	},
+	{
+		.name = "BROWSE",
+		.fn   = run_browsetest,
+	},
+	{
+		.name = "ATTR",
+		.fn   =   run_attrtest,
+	},
+	{
+		.name = "TRANS2",
+		.fn   = run_trans2test,
+	},
+	{
+		.name  = "MAXFID",
+		.fn    = run_maxfidtest,
+		.flags = FLAG_MULTIPROC,
+	},
+	{
+		.name  = "TORTURE",
+		.fn    = run_torture,
+		.flags = FLAG_MULTIPROC,
+	},
+	{
+		.name  = "RANDOMIPC",
+		.fn    = run_randomipc,
+	},
+	{
+		.name  = "NEGNOWAIT",
+		.fn    = run_negprot_nowait,
+	},
+	{
+		.name  = "NBENCH",
+		.fn    =  run_nbench,
+	},
+	{
+		.name  = "NBENCH2",
+		.fn    = run_nbench2,
+	},
+	{
+		.name  = "OPLOCK1",
+		.fn    =  run_oplock1,
+	},
+	{
+		.name  = "OPLOCK2",
+		.fn    =  run_oplock2,
+	},
+	{
+		.name  = "OPLOCK4",
+		.fn    =  run_oplock4,
+	},
+	{
+		.name  = "DIR",
+		.fn    =  run_dirtest,
+	},
+	{
+		.name  = "DIR1",
+		.fn    =  run_dirtest1,
+	},
+	{
+		.name  = "DIR-CREATETIME",
+		.fn    =  run_dir_createtime,
+	},
+	{
+		.name  = "DENY1",
+		.fn    =  torture_denytest1,
+	},
+	{
+		.name  = "DENY2",
+		.fn    =  torture_denytest2,
+	},
+	{
+		.name  = "TCON",
+		.fn    =  run_tcon_test,
+	},
+	{
+		.name  = "TCONDEV",
+		.fn    =  run_tcon_devtype_test,
+	},
+	{
+		.name  = "RW1",
+		.fn    =  run_readwritetest,
+	},
+	{
+		.name  = "RW2",
+		.fn    =  run_readwritemulti,
+		.flags = FLAG_MULTIPROC
+	},
+	{
+		.name  = "RW3",
+		.fn    =  run_readwritelarge,
+	},
+	{
+		.name  = "RW-SIGNING",
+		.fn    =  run_readwritelarge_signtest,
+	},
+	{
+		.name  = "OPEN",
+		.fn    = run_opentest,
+	},
+	{
+		.name  = "POSIX",
+		.fn    = run_simple_posix_open_test,
+	},
+	{
+		.name  = "POSIX-APPEND",
+		.fn    = run_posix_append,
+	},
+	{
+		.name  = "POSIX-SYMLINK-ACL",
+		.fn    = run_acl_symlink_test,
+	},
+	{
+		.name  = "POSIX-SYMLINK-EA",
+		.fn    = run_ea_symlink_test,
+	},
+	{
+		.name  = "POSIX-STREAM-DELETE",
+		.fn    = run_posix_stream_delete,
+	},
+	{
+		.name  = "POSIX-OFD-LOCK",
+		.fn    = run_posix_ofd_lock_test,
+	},
+	{
+		.name  = "POSIX-BLOCKING-LOCK",
+		.fn    = run_posix_blocking_lock,
+	},
+	{
+		.name  = "POSIX-MKDIR",
+		.fn    = run_posix_mkdir_test,
+	},
+	{
+		.name  = "POSIX-ACL-OPLOCK",
+		.fn    = run_posix_acl_oplock_test,
+	},
+	{
+		.name  = "POSIX-ACL-SHAREROOT",
+		.fn    = run_posix_acl_shareroot_test,
+	},
+	{
+		.name  = "WINDOWS-BAD-SYMLINK",
+		.fn    = run_symlink_open_test,
+	},
+	{
+		.name  = "CASE-INSENSITIVE-CREATE",
+		.fn    = run_case_insensitive_create,
+	},
+	{
+		.name  = "ASYNC-ECHO",
+		.fn    = run_async_echo,
+	},
+	{
+		.name  = "UID-REGRESSION-TEST",
+		.fn    = run_uid_regression_test,
+	},
+	{
+		.name  = "SHORTNAME-TEST",
+		.fn    = run_shortname_test,
+	},
+	{
+		.name  = "ADDRCHANGE",
+		.fn    = run_addrchange,
+	},
 #if 1
-	{"OPENATTR", run_openattrtest, 0},
+	{
+		.name  = "OPENATTR",
+		.fn    = run_openattrtest,
+	},
 #endif
-	{"XCOPY", run_xcopy, 0},
-	{"RENAME", run_rename, 0},
-	{"RENAME-ACCESS", run_rename_access, 0},
-	{"OWNER-RIGHTS", run_owner_rights, 0},
-	{"DELETE", run_deletetest, 0},
-	{"DELETE-PRINT", run_delete_print_test, 0},
-	{"WILDDELETE", run_wild_deletetest, 0},
-	{"DELETE-LN", run_deletetest_ln, 0},
-	{"PROPERTIES", run_properties, 0},
-	{"MANGLE", torture_mangle, 0},
-	{"MANGLE1", run_mangle1, 0},
-	{"MANGLE-ILLEGAL", run_mangle_illegal, 0},
-	{"W2K", run_w2ktest, 0},
-	{"TRANS2SCAN", torture_trans2_scan, 0},
-	{"NTTRANSSCAN", torture_nttrans_scan, 0},
-	{"UTABLE", torture_utable, 0},
-	{"CASETABLE", torture_casetable, 0},
-	{"ERRMAPEXTRACT", run_error_map_extract, 0},
-	{"PIPE_NUMBER", run_pipe_number, 0},
-	{"TCON2",  run_tcon2_test, 0},
-	{"IOCTL",  torture_ioctl_test, 0},
-	{"CHKPATH",  torture_chkpath_test, 0},
-	{"FDSESS", run_fdsesstest, 0},
-	{ "EATEST", run_eatest, 0},
-	{ "SESSSETUP_BENCH", run_sesssetup_bench, 0},
-	{ "CHAIN1", run_chain1, 0},
-	{ "CHAIN2", run_chain2, 0},
-	{ "CHAIN3", run_chain3, 0},
-	{ "WINDOWS-WRITE", run_windows_write, 0},
-	{ "LARGE_READX", run_large_readx, 0},
-	{ "NTTRANS-CREATE", run_nttrans_create, 0},
-	{ "NTTRANS-FSCTL", run_nttrans_fsctl, 0},
-	{ "CLI_ECHO", run_cli_echo, 0},
-	{ "CLI_SPLICE", run_cli_splice, 0},
-	{ "TLDAP", run_tldap },
-	{ "STREAMERROR", run_streamerror },
-	{ "NOTIFY-BENCH", run_notify_bench },
-	{ "NOTIFY-BENCH2", run_notify_bench2 },
-	{ "NOTIFY-BENCH3", run_notify_bench3 },
-	{ "BAD-NBT-SESSION", run_bad_nbt_session },
-	{ "IGN-BAD-NEGPROT", run_ign_bad_negprot },
-	{ "SMB-ANY-CONNECT", run_smb_any_connect },
-	{ "NOTIFY-ONLINE", run_notify_online },
-	{ "SMB2-BASIC", run_smb2_basic },
-	{ "SMB2-NEGPROT", run_smb2_negprot },
-	{ "SMB2-ANONYMOUS", run_smb2_anonymous },
-	{ "SMB2-SESSION-RECONNECT", run_smb2_session_reconnect },
-	{ "SMB2-TCON-DEPENDENCE", run_smb2_tcon_dependence },
-	{ "SMB2-MULTI-CHANNEL", run_smb2_multi_channel },
-	{ "SMB2-SESSION-REAUTH", run_smb2_session_reauth },
-	{ "SMB2-FTRUNCATE", run_smb2_ftruncate },
-	{ "SMB2-DIR-FSYNC", run_smb2_dir_fsync },
-	{ "CLEANUP1", run_cleanup1 },
-	{ "CLEANUP2", run_cleanup2 },
-	{ "CLEANUP3", run_cleanup3 },
-	{ "CLEANUP4", run_cleanup4 },
-	{ "OPLOCK-CANCEL", run_oplock_cancel },
-	{ "PIDHIGH", run_pidhigh },
-	{ "LOCAL-SUBSTITUTE", run_local_substitute, 0},
-	{ "LOCAL-GENCACHE", run_local_gencache, 0},
-	{ "LOCAL-DBWRAP-WATCH1", run_dbwrap_watch1, 0 },
-	{ "LOCAL-DBWRAP-WATCH2", run_dbwrap_watch2, 0 },
-	{ "LOCAL-DBWRAP-DO-LOCKED1", run_dbwrap_do_locked1, 0 },
-	{ "LOCAL-MESSAGING-READ1", run_messaging_read1, 0 },
-	{ "LOCAL-MESSAGING-READ2", run_messaging_read2, 0 },
-	{ "LOCAL-MESSAGING-READ3", run_messaging_read3, 0 },
-	{ "LOCAL-MESSAGING-READ4", run_messaging_read4, 0 },
-	{ "LOCAL-MESSAGING-FDPASS1", run_messaging_fdpass1, 0 },
-	{ "LOCAL-MESSAGING-FDPASS2", run_messaging_fdpass2, 0 },
-	{ "LOCAL-MESSAGING-FDPASS2a", run_messaging_fdpass2a, 0 },
-	{ "LOCAL-MESSAGING-FDPASS2b", run_messaging_fdpass2b, 0 },
-	{ "LOCAL-MESSAGING-SEND-ALL", run_messaging_send_all, 0 },
-	{ "LOCAL-BASE64", run_local_base64, 0},
-	{ "LOCAL-RBTREE", run_local_rbtree, 0},
-	{ "LOCAL-MEMCACHE", run_local_memcache, 0},
-	{ "LOCAL-STREAM-NAME", run_local_stream_name, 0},
-	{ "WBCLIENT-MULTI-PING", run_wbclient_multi_ping, 0},
-	{ "LOCAL-string_to_sid", run_local_string_to_sid, 0},
-	{ "LOCAL-sid_to_string", run_local_sid_to_string, 0},
-	{ "LOCAL-binary_to_sid", run_local_binary_to_sid, 0},
-	{ "LOCAL-DBTRANS", run_local_dbtrans, 0},
-	{ "LOCAL-TEVENT-POLL", run_local_tevent_poll, 0},
-	{ "LOCAL-CONVERT-STRING", run_local_convert_string, 0},
-	{ "LOCAL-CONV-AUTH-INFO", run_local_conv_auth_info, 0},
-	{ "LOCAL-hex_encode_buf", run_local_hex_encode_buf, 0},
-	{ "LOCAL-IDMAP-TDB-COMMON", run_idmap_tdb_common_test, 0},
-	{ "LOCAL-remove_duplicate_addrs2", run_local_remove_duplicate_addrs2, 0},
-	{ "local-tdb-opener", run_local_tdb_opener, 0 },
-	{ "local-tdb-writer", run_local_tdb_writer, 0 },
-	{ "LOCAL-DBWRAP-CTDB", run_local_dbwrap_ctdb, 0 },
-	{ "LOCAL-BENCH-PTHREADPOOL", run_bench_pthreadpool, 0 },
-	{ "LOCAL-PTHREADPOOL-TEVENT", run_pthreadpool_tevent, 0 },
-	{ "LOCAL-G-LOCK1", run_g_lock1, 0 },
-	{ "LOCAL-G-LOCK2", run_g_lock2, 0 },
-	{ "LOCAL-G-LOCK3", run_g_lock3, 0 },
-	{ "LOCAL-G-LOCK4", run_g_lock4, 0 },
-	{ "LOCAL-G-LOCK5", run_g_lock5, 0 },
-	{ "LOCAL-G-LOCK6", run_g_lock6, 0 },
-	{ "LOCAL-G-LOCK-PING-PONG", run_g_lock_ping_pong, 0 },
-	{ "LOCAL-CANONICALIZE-PATH", run_local_canonicalize_path, 0 },
-	{ "LOCAL-NAMEMAP-CACHE1", run_local_namemap_cache1, 0 },
-	{ "LOCAL-IDMAP-CACHE1", run_local_idmap_cache1, 0 },
-	{ "qpathinfo-bufsize", run_qpathinfo_bufsize, 0 },
-	{ "hide-new-files-timeout", run_hidenewfiles, 0 },
-	{NULL, NULL, 0}};
+	{
+		.name  = "XCOPY",
+		.fn    = run_xcopy,
+	},
+	{
+		.name  = "RENAME",
+		.fn    = run_rename,
+	},
+	{
+		.name  = "RENAME-ACCESS",
+		.fn    = run_rename_access,
+	},
+	{
+		.name  = "OWNER-RIGHTS",
+		.fn    = run_owner_rights,
+	},
+	{
+		.name  = "DELETE",
+		.fn    = run_deletetest,
+	},
+	{
+		.name  = "DELETE-PRINT",
+		.fn    = run_delete_print_test,
+	},
+	{
+		.name  = "WILDDELETE",
+		.fn    = run_wild_deletetest,
+	},
+	{
+		.name  = "DELETE-LN",
+		.fn    = run_deletetest_ln,
+	},
+	{
+		.name  = "PROPERTIES",
+		.fn    = run_properties,
+	},
+	{
+		.name  = "MANGLE",
+		.fn    = torture_mangle,
+	},
+	{
+		.name  = "MANGLE1",
+		.fn    = run_mangle1,
+	},
+	{
+		.name  = "MANGLE-ILLEGAL",
+		.fn    = run_mangle_illegal,
+	},
+	{
+		.name  = "W2K",
+		.fn    = run_w2ktest,
+	},
+	{
+		.name  = "TRANS2SCAN",
+		.fn    = torture_trans2_scan,
+	},
+	{
+		.name  = "NTTRANSSCAN",
+		.fn    = torture_nttrans_scan,
+	},
+	{
+		.name  = "UTABLE",
+		.fn    = torture_utable,
+	},
+	{
+		.name  = "CASETABLE",
+		.fn    = torture_casetable,
+	},
+	{
+		.name  = "ERRMAPEXTRACT",
+		.fn    = run_error_map_extract,
+	},
+	{
+		.name  = "PIPE_NUMBER",
+		.fn    = run_pipe_number,
+	},
+	{
+		.name  = "TCON2",
+		.fn    =  run_tcon2_test,
+	},
+	{
+		.name  = "IOCTL",
+		.fn    =  torture_ioctl_test,
+	},
+	{
+		.name  = "CHKPATH",
+		.fn    =  torture_chkpath_test,
+	},
+	{
+		.name  = "FDSESS",
+		.fn    = run_fdsesstest,
+	},
+	{
+		.name  = "EATEST",
+		.fn    = run_eatest,
+	},
+	{
+		.name  = "SESSSETUP_BENCH",
+		.fn    = run_sesssetup_bench,
+	},
+	{
+		.name  = "CHAIN1",
+		.fn    = run_chain1,
+	},
+	{
+		.name  = "CHAIN2",
+		.fn    = run_chain2,
+	},
+	{
+		.name  = "CHAIN3",
+		.fn    = run_chain3,
+	},
+	{
+		.name  = "WINDOWS-WRITE",
+		.fn    = run_windows_write,
+	},
+	{
+		.name  = "LARGE_READX",
+		.fn    = run_large_readx,
+	},
+	{
+		.name  = "NTTRANS-CREATE",
+		.fn    = run_nttrans_create,
+	},
+	{
+		.name  = "NTTRANS-FSCTL",
+		.fn    = run_nttrans_fsctl,
+	},
+	{
+		.name  = "CLI_ECHO",
+		.fn    = run_cli_echo,
+	},
+	{
+		.name  = "CLI_SPLICE",
+		.fn    = run_cli_splice,
+	},
+	{
+		.name  = "TLDAP",
+		.fn    = run_tldap,
+	},
+	{
+		.name  = "STREAMERROR",
+		.fn    = run_streamerror,
+	},
+	{
+		.name  = "NOTIFY-BENCH",
+		.fn    = run_notify_bench,
+	},
+	{
+		.name  = "NOTIFY-BENCH2",
+		.fn    = run_notify_bench2,
+	},
+	{
+		.name  = "NOTIFY-BENCH3",
+		.fn    = run_notify_bench3,
+	},
+	{
+		.name  = "BAD-NBT-SESSION",
+		.fn    = run_bad_nbt_session,
+	},
+	{
+		.name  = "IGN-BAD-NEGPROT",
+		.fn    = run_ign_bad_negprot,
+	},
+	{
+		.name  = "SMB-ANY-CONNECT",
+		.fn    = run_smb_any_connect,
+	},
+	{
+		.name  = "NOTIFY-ONLINE",
+		.fn    = run_notify_online,
+	},
+	{
+		.name  = "SMB2-BASIC",
+		.fn    = run_smb2_basic,
+	},
+	{
+		.name  = "SMB2-NEGPROT",
+		.fn    = run_smb2_negprot,
+	},
+	{
+		.name  = "SMB2-ANONYMOUS",
+		.fn    = run_smb2_anonymous,
+	},
+	{
+		.name  = "SMB2-SESSION-RECONNECT",
+		.fn    = run_smb2_session_reconnect,
+	},
+	{
+		.name  = "SMB2-TCON-DEPENDENCE",
+		.fn    = run_smb2_tcon_dependence,
+	},
+	{
+		.name  = "SMB2-MULTI-CHANNEL",
+		.fn    = run_smb2_multi_channel,
+	},
+	{
+		.name  = "SMB2-SESSION-REAUTH",
+		.fn    = run_smb2_session_reauth,
+	},
+	{
+		.name  = "SMB2-FTRUNCATE",
+		.fn    = run_smb2_ftruncate,
+	},
+	{
+		.name  = "SMB2-DIR-FSYNC",
+		.fn    = run_smb2_dir_fsync,
+	},
+	{
+		.name  = "CLEANUP1",
+		.fn    = run_cleanup1,
+	},
+	{
+		.name  = "CLEANUP2",
+		.fn    = run_cleanup2,
+	},
+	{
+		.name  = "CLEANUP3",
+		.fn    = run_cleanup3,
+	},
+	{
+		.name  = "CLEANUP4",
+		.fn    = run_cleanup4,
+	},
+	{
+		.name  = "OPLOCK-CANCEL",
+		.fn    = run_oplock_cancel,
+	},
+	{
+		.name  = "PIDHIGH",
+		.fn    = run_pidhigh,
+	},
+	{
+		.name  = "LOCAL-SUBSTITUTE",
+		.fn    = run_local_substitute,
+	},
+	{
+		.name  = "LOCAL-GENCACHE",
+		.fn    = run_local_gencache,
+	},
+	{
+		.name  = "LOCAL-DBWRAP-WATCH1",
+		.fn    = run_dbwrap_watch1,
+	},
+	{
+		.name  = "LOCAL-DBWRAP-WATCH2",
+		.fn    = run_dbwrap_watch2,
+	},
+	{
+		.name  = "LOCAL-DBWRAP-DO-LOCKED1",
+		.fn    = run_dbwrap_do_locked1,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-READ1",
+		.fn    = run_messaging_read1,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-READ2",
+		.fn    = run_messaging_read2,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-READ3",
+		.fn    = run_messaging_read3,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-READ4",
+		.fn    = run_messaging_read4,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-FDPASS1",
+		.fn    = run_messaging_fdpass1,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-FDPASS2",
+		.fn    = run_messaging_fdpass2,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-FDPASS2a",
+		.fn    = run_messaging_fdpass2a,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-FDPASS2b",
+		.fn    = run_messaging_fdpass2b,
+	},
+	{
+		.name  = "LOCAL-MESSAGING-SEND-ALL",
+		.fn    = run_messaging_send_all,
+	},
+	{
+		.name  = "LOCAL-BASE64",
+		.fn    = run_local_base64,
+	},
+	{
+		.name  = "LOCAL-RBTREE",
+		.fn    = run_local_rbtree,
+	},
+	{
+		.name  = "LOCAL-MEMCACHE",
+		.fn    = run_local_memcache,
+	},
+	{
+		.name  = "LOCAL-STREAM-NAME",
+		.fn    = run_local_stream_name,
+	},
+	{
+		.name  = "WBCLIENT-MULTI-PING",
+		.fn    = run_wbclient_multi_ping,
+	},
+	{
+		.name  = "LOCAL-string_to_sid",
+		.fn    = run_local_string_to_sid,
+	},
+	{
+		.name  = "LOCAL-sid_to_string",
+		.fn    = run_local_sid_to_string,
+	},
+	{
+		.name  = "LOCAL-binary_to_sid",
+		.fn    = run_local_binary_to_sid,
+	},
+	{
+		.name  = "LOCAL-DBTRANS",
+		.fn    = run_local_dbtrans,
+	},
+	{
+		.name  = "LOCAL-TEVENT-POLL",
+		.fn    = run_local_tevent_poll,
+	},
+	{
+		.name  = "LOCAL-CONVERT-STRING",
+		.fn    = run_local_convert_string,
+	},
+	{
+		.name  = "LOCAL-CONV-AUTH-INFO",
+		.fn    = run_local_conv_auth_info,
+	},
+	{
+		.name  = "LOCAL-hex_encode_buf",
+		.fn    = run_local_hex_encode_buf,
+	},
+	{
+		.name  = "LOCAL-IDMAP-TDB-COMMON",
+		.fn    = run_idmap_tdb_common_test,
+	},
+	{
+		.name  = "LOCAL-remove_duplicate_addrs2",
+		.fn    = run_local_remove_duplicate_addrs2,
+	},
+	{
+		.name  = "local-tdb-opener",
+		.fn    = run_local_tdb_opener,
+	},
+	{
+		.name  = "local-tdb-writer",
+		.fn    = run_local_tdb_writer,
+	},
+	{
+		.name  = "LOCAL-DBWRAP-CTDB",
+		.fn    = run_local_dbwrap_ctdb,
+	},
+	{
+		.name  = "LOCAL-BENCH-PTHREADPOOL",
+		.fn    = run_bench_pthreadpool,
+	},
+	{
+		.name  = "LOCAL-PTHREADPOOL-TEVENT",
+		.fn    = run_pthreadpool_tevent,
+	},
+	{
+		.name  = "LOCAL-G-LOCK1",
+		.fn    = run_g_lock1,
+	},
+	{
+		.name  = "LOCAL-G-LOCK2",
+		.fn    = run_g_lock2,
+	},
+	{
+		.name  = "LOCAL-G-LOCK3",
+		.fn    = run_g_lock3,
+	},
+	{
+		.name  = "LOCAL-G-LOCK4",
+		.fn    = run_g_lock4,
+	},
+	{
+		.name  = "LOCAL-G-LOCK5",
+		.fn    = run_g_lock5,
+	},
+	{
+		.name  = "LOCAL-G-LOCK6",
+		.fn    = run_g_lock6,
+	},
+	{
+		.name  = "LOCAL-G-LOCK-PING-PONG",
+		.fn    = run_g_lock_ping_pong,
+	},
+	{
+		.name  = "LOCAL-CANONICALIZE-PATH",
+		.fn    = run_local_canonicalize_path,
+	},
+	{
+		.name  = "LOCAL-NAMEMAP-CACHE1",
+		.fn    = run_local_namemap_cache1,
+	},
+	{
+		.name  = "LOCAL-IDMAP-CACHE1",
+		.fn    = run_local_idmap_cache1,
+	},
+	{
+		.name  = "qpathinfo-bufsize",
+		.fn    = run_qpathinfo_bufsize,
+	},
+	{
+		.name  = "hide-new-files-timeout",
+		.fn    = run_hidenewfiles,
+	},
+	{
+		.name = NULL,
+	},
+};
 
 /****************************************************************************
 run a specified test or "ALL"

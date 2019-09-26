@@ -207,8 +207,8 @@ static NTSTATUS dbwrap_watched_storev(struct db_record *rec,
 				      const TDB_DATA *dbufs, int num_dbufs,
 				      int flags);
 static NTSTATUS dbwrap_watched_delete(struct db_record *rec);
-static void dbwrap_watched_wakeup(struct db_record *rec,
-				  struct dbwrap_watch_rec *wrec);
+static void dbwrap_watched_subrec_wakeup(
+	struct db_record *rec, struct db_watched_subrec *subrec);
 static NTSTATUS dbwrap_watched_save(struct db_record *rec,
 				    struct dbwrap_watch_rec *wrec,
 				    struct server_id *addwatch,
@@ -347,9 +347,10 @@ static NTSTATUS dbwrap_watched_do_locked(struct db_context *db, TDB_DATA key,
 	return state.status;
 }
 
-static void dbwrap_watched_wakeup(struct db_record *rec,
-				  struct dbwrap_watch_rec *wrec)
+static void dbwrap_watched_subrec_wakeup(
+	struct db_record *rec, struct db_watched_subrec *subrec)
 {
+	struct dbwrap_watch_rec *wrec = &subrec->wrec;
 	struct db_context *db = rec->db;
 	struct db_watched_ctx *ctx = talloc_get_type_abort(
 		db->private_data, struct db_watched_ctx);
@@ -361,7 +362,8 @@ static void dbwrap_watched_wakeup(struct db_record *rec,
 
 	SIVAL(len_buf, 0, db_id_len);
 
-	iov[0] = (struct iovec) { .iov_base = len_buf, .iov_len = 4 };
+	iov[0] = (struct iovec) { .iov_base = len_buf,
+				  .iov_len = sizeof(len_buf) };
 	iov[1] = (struct iovec) { .iov_base = db_id, .iov_len = db_id_len };
 	iov[2] = (struct iovec) { .iov_base = rec->key.dptr,
 				  .iov_len = rec->key.dsize };
@@ -450,7 +452,7 @@ static NTSTATUS dbwrap_watched_subrec_storev(
 {
 	NTSTATUS status;
 
-	dbwrap_watched_wakeup(rec, &subrec->wrec);
+	dbwrap_watched_subrec_wakeup(rec, subrec);
 
 	subrec->wrec.deleted = false;
 
@@ -477,7 +479,7 @@ static NTSTATUS dbwrap_watched_subrec_delete(
 {
 	NTSTATUS status;
 
-	dbwrap_watched_wakeup(rec, &subrec->wrec);
+	dbwrap_watched_subrec_wakeup(rec, subrec);
 
 	if (subrec->wrec.num_watchers == 0) {
 		return dbwrap_record_delete(subrec->subrec);
@@ -735,6 +737,22 @@ static size_t dbwrap_watched_id(struct db_context *db, uint8_t *id,
 		db->private_data, struct db_watched_ctx);
 
 	return dbwrap_db_id(ctx->backend, id, idlen);
+}
+
+void dbwrap_watched_wakeup(struct db_record *rec)
+{
+	struct db_watched_subrec *subrec = NULL;
+
+	if (rec->storev == dbwrap_watched_do_locked_storev) {
+		struct dbwrap_watched_do_locked_state *state =
+			rec->private_data;
+		subrec = &state->subrec;
+	} else {
+		subrec = talloc_get_type_abort(
+			rec->private_data, struct db_watched_subrec);
+	}
+
+	dbwrap_watched_subrec_wakeup(rec, subrec);
 }
 
 struct db_context *db_open_watched(TALLOC_CTX *mem_ctx,

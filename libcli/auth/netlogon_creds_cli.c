@@ -37,7 +37,7 @@
 #include "source3/include/messages.h"
 #include "source3/include/g_lock.h"
 #include "libds/common/roles.h"
-#include "lib/crypto/crypto.h"
+#include "lib/crypto/md4.h"
 #include "auth/credentials/credentials.h"
 
 struct netlogon_creds_cli_locked_state;
@@ -1992,9 +1992,13 @@ static void netlogon_creds_cli_ServerPasswordSet_locked(struct tevent_req *subre
 					state->samr_crypt_password.data,
 					516);
 		} else {
-			netlogon_creds_arcfour_crypt(&state->tmp_creds,
-					state->samr_crypt_password.data,
-					516);
+			status = netlogon_creds_arcfour_crypt(&state->tmp_creds,
+							      state->samr_crypt_password.data,
+							      516);
+			if (tevent_req_nterror(req, status)) {
+				netlogon_creds_cli_ServerPasswordSet_cleanup(req, status);
+				return;
+			}
 		}
 
 		memcpy(state->netr_crypt_password.data,
@@ -2365,9 +2369,15 @@ static void netlogon_creds_cli_LogonSamLogon_start(struct tevent_req *req)
 				return;
 			}
 
-			netlogon_creds_encrypt_samlogon_logon(state->ro_creds,
-							      state->logon_level,
-							      state->logon);
+			status = netlogon_creds_encrypt_samlogon_logon(state->ro_creds,
+								       state->logon_level,
+								       state->logon);
+			if (!NT_STATUS_IS_OK(status)) {
+				status = NT_STATUS_ACCESS_DENIED;
+				tevent_req_nterror(req, status);
+				netlogon_creds_cli_LogonSamLogon_cleanup(req, status);
+				return;
+			}
 		}
 
 		subreq = dcerpc_netr_LogonSamLogonEx_send(state, state->ev,
@@ -2419,9 +2429,13 @@ static void netlogon_creds_cli_LogonSamLogon_start(struct tevent_req *req)
 		return;
 	}
 
-	netlogon_creds_encrypt_samlogon_logon(&state->tmp_creds,
-					      state->logon_level,
-					      state->logon);
+	status = netlogon_creds_encrypt_samlogon_logon(&state->tmp_creds,
+						       state->logon_level,
+						       state->logon);
+	if (tevent_req_nterror(req, status)) {
+		netlogon_creds_cli_LogonSamLogon_cleanup(req, status);
+		return;
+	}
 
 	state->validation_level = 3;
 
@@ -2531,9 +2545,13 @@ static void netlogon_creds_cli_LogonSamLogon_done(struct tevent_req *subreq)
 			return;
 		}
 
-		netlogon_creds_decrypt_samlogon_validation(state->ro_creds,
-							state->validation_level,
-							state->validation);
+		status = netlogon_creds_decrypt_samlogon_validation(state->ro_creds,
+								    state->validation_level,
+								    state->validation);
+		if (tevent_req_nterror(req, status)) {
+			netlogon_creds_cli_LogonSamLogon_cleanup(req, status);
+			return;
+		}
 
 		tevent_req_done(req);
 		return;
@@ -2601,9 +2619,13 @@ static void netlogon_creds_cli_LogonSamLogon_done(struct tevent_req *subreq)
 		return;
 	}
 
-	netlogon_creds_decrypt_samlogon_validation(&state->tmp_creds,
-						state->validation_level,
-						state->validation);
+	status = netlogon_creds_decrypt_samlogon_validation(&state->tmp_creds,
+							    state->validation_level,
+							    state->validation);
+	if (tevent_req_nterror(req, result)) {
+		netlogon_creds_cli_LogonSamLogon_cleanup(req, result);
+		return;
+	}
 
 	tevent_req_done(req);
 }
@@ -3667,9 +3689,13 @@ static void netlogon_creds_cli_SendToSam_locked(struct tevent_req *subreq)
 					   state->opaque.data,
 					   state->opaque.length);
 	} else {
-		netlogon_creds_arcfour_crypt(&state->tmp_creds,
-					     state->opaque.data,
-					     state->opaque.length);
+		status = netlogon_creds_arcfour_crypt(&state->tmp_creds,
+						      state->opaque.data,
+						      state->opaque.length);
+		if (tevent_req_nterror(req, status)) {
+			netlogon_creds_cli_SendToSam_cleanup(req, status);
+			return;
+		}
 	}
 
 	subreq = dcerpc_netr_NetrLogonSendToSam_send(state, state->ev,

@@ -291,22 +291,17 @@ static struct parsed_dn *get_parsed_dns(
 	TALLOC_CTX *mem_ctx,
 	struct ldb_message_element *el)
 {
+	int ret;
 	struct parsed_dn *pdn = NULL;
-
-	int i;
 
 	if (el == NULL || el->num_values == 0) {
 		return NULL;
 	}
 
-	pdn = talloc_zero_array(mem_ctx, struct parsed_dn, el->num_values);
-	if (pdn == NULL) {
+	ret = get_parsed_dns_trusted(mem_ctx, el, &pdn);
+	if (ret == LDB_ERR_OPERATIONS_ERROR) {
 		DBG_ERR("Out of memory\n");
 		return NULL;
-	}
-
-	for (i = 0; i < el->num_values; i++) {
-		pdn[i].v = &el->values[i];
 	}
 	return pdn;
 
@@ -1012,14 +1007,33 @@ static void log_group_membership_changes(
 			new_val = ldb_msg_find_element(res->msgs[0], "member");
 			group_type = ldb_msg_find_attr_as_uint(
 			    res->msgs[0], "groupType", 0);
+			log_membership_changes(acc->module,
+					       acc->request,
+					       new_val,
+					       acc->members,
+					       group_type,
+					       status);
+			TALLOC_FREE(ctx);
+			return;
 		}
 	}
-	log_membership_changes(acc->module,
-			       acc->request,
-			       new_val,
-			       acc->members,
-			       group_type,
-			       status);
+	/*
+	 * If we get here either
+	 *   one of the lower level modules failed and the group record did
+	 *   not get updated
+	 * or
+	 *   the updated group record could not be read.
+	 *
+	 * In both cases it does not make sense to log individual membership
+	 * changes so we log a group membership change "Failure" message.
+	 *
+	 */
+	log_membership_change(acc->module,
+	                      acc->request,
+			      "Failure",
+			      "",
+			      EVT_ID_NONE,
+			      status);
 	TALLOC_FREE(ctx);
 }
 

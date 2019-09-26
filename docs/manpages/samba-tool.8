@@ -2,12 +2,12 @@
 .\"     Title: samba-tool
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/27/2019
+.\"      Date: 09/17/2019
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.10.8
+.\"    Source: Samba 4.11.0
 .\"  Language: English
 .\"
-.TH "SAMBA\-TOOL" "8" "08/27/2019" "Samba 4\&.10\&.8" "System Administration tools"
+.TH "SAMBA\-TOOL" "8" "09/17/2019" "Samba 4\&.11\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -126,6 +126,9 @@ Set the
 option "<name>" to value "<value>" from the command line\&. This overrides compiled\-in defaults and options read from the configuration file\&.
 .RE
 .SH "COMMANDS"
+.SS "computer"
+.PP
+Manage computer accounts\&.
 .SS "computer create computername [options]"
 .PP
 Create a new computer in the Active Directory Domain\&.
@@ -161,6 +164,16 @@ Prepare enabled machine account for oldjoin mechanism\&.
 Delete an existing computer account\&.
 .PP
 The computer name specified on the command is the sAMAccountName, with or without the trailing dollar sign\&.
+.SS "computer edit computername"
+.PP
+Edit a computer AD object\&.
+.PP
+The computer name specified on the command is the sAMAccountName, with or without the trailing dollar sign\&.
+.PP
+\-\-editor=EDITOR
+.RS 4
+Specifies the editor to use instead of the system default, or \*(Aqvi\*(Aq if no system default is set\&.
+.RE
 .SS "computer list"
 .PP
 List all computers\&.
@@ -178,6 +191,122 @@ Display a computer AD object\&.
 The computer name specified on the command is the sAMAccountName, with or without the trailing dollar sign\&.
 .PP
 \-\-attributes=USER_ATTRS
+.RS 4
+Comma separated list of attributes, which will be printed\&.
+.RE
+.SS "contact"
+.PP
+Manage contacts\&.
+.SS "contact create [contactname] [options]"
+.PP
+Create a new contact in the Active Directory Domain\&.
+.PP
+The name of the new contact can be specified by the first argument \*(Aqcontactname\*(Aq or the \-\-given\-name, \-\-initial and \-\-surname arguments\&. If no \*(Aqcontactname\*(Aq is given, contact\*(Aqs name will be made up of the given arguments by combining the given\-name, initials and surname\&. Each argument is optional\&. A dot (\*(Aq\&.\*(Aq) will be appended to the initials automatically\&.
+.PP
+\-\-ou=OU
+.RS 4
+DN of alternative location (with or without domainDN counterpart) in which the new contact will be created\&. E\&.g\&. \*(AqOU=OUname\*(Aq\&. Default is the domain base\&.
+.RE
+.PP
+\-\-description=DESCRIPTION
+.RS 4
+The new contacts\*(Aqs description\&.
+.RE
+.PP
+\-\-surname=SURNAME
+.RS 4
+Contact\*(Aqs surname\&.
+.RE
+.PP
+\-\-given\-name=GIVEN_NAME
+.RS 4
+Contact\*(Aqs given name\&.
+.RE
+.PP
+\-\-initials=INITIALS
+.RS 4
+Contact\*(Aqs initials\&.
+.RE
+.PP
+\-\-display\-name=DISPLAY_NAME
+.RS 4
+Contact\*(Aqs display name\&.
+.RE
+.PP
+\-\-job\-title=JOB_TITLE
+.RS 4
+Contact\*(Aqs job title\&.
+.RE
+.PP
+\-\-department=DEPARTMENT
+.RS 4
+Contact\*(Aqs department\&.
+.RE
+.PP
+\-\-company=COMPANY
+.RS 4
+Contact\*(Aqs company\&.
+.RE
+.PP
+\-\-mail\-address=MAIL_ADDRESS
+.RS 4
+Contact\*(Aqs email address\&.
+.RE
+.PP
+\-\-internet\-address=INTERNET_ADDRESS
+.RS 4
+Contact\*(Aqs home page\&.
+.RE
+.PP
+\-\-telephone\-number=TELEPHONE_NUMBER
+.RS 4
+Contact\*(Aqs phone number\&.
+.RE
+.PP
+\-\-mobile\-number=MOBILE_NUMBER
+.RS 4
+Contact\*(Aqs mobile phone number\&.
+.RE
+.PP
+\-\-physical\-delivery\-office=PHYSICAL_DELIVERY_OFFICE
+.RS 4
+Contact\*(Aqs office location\&.
+.RE
+.SS "contact delete contactname [options]"
+.PP
+Delete an existing contact\&.
+.PP
+The contactname specified on the command is the common name or the distinguished name of the contact object\&. The distinguished name of the contact can be specified with or without the domainDN component\&.
+.SS "contact edit contactname"
+.PP
+Modify a contact AD object\&.
+.PP
+The contactname specified on the command is the common name or the distinguished name of the contact object\&. The distinguished name of the contact can be specified with or without the domainDN component\&.
+.PP
+\-\-editor=EDITOR
+.RS 4
+Specifies the editor to use instead of the system default, or \*(Aqvi\*(Aq if no system default is set\&.
+.RE
+.SS "contact list [options]"
+.PP
+List all contacts\&.
+.PP
+\-\-full\-dn
+.RS 4
+Display contact\*(Aqs full DN instead of the name\&.
+.RE
+.SS "contact move contactname new_parent_dn [options]"
+.PP
+This command moves a contact into the specified organizational unit or container\&.
+.PP
+The contactname specified on the command is the common name or the distinguished name of the contact object\&. The distinguished name of the contact can be specified with or without the domainDN component\&.
+.SS "contact show contactname [options]"
+.PP
+Display a contact AD object\&.
+.PP
+The contactname specified on the command is the common name or the distinguished name of the contact object\&. The distinguished name of the contact can be specified with or without the domainDN component\&.
+.PP
+\-\-attributes=CONTACT_ATTRS
 .RS 4
 Comma separated list of attributes, which will be printed\&.
 .RE
@@ -433,6 +562,14 @@ Add members to an AD group\&.
 .SS "group delete groupname [options]"
 .PP
 Delete an AD group\&.
+.SS "group edit groupname"
+.PP
+Edit a group AD object\&.
+.PP
+\-\-editor=EDITOR
+.RS 4
+Specifies the editor to use instead of the system default, or \*(Aqvi\*(Aq if no system default is set\&.
+.RE
 .SS "group list"
 .PP
 List all groups\&.
@@ -463,6 +600,49 @@ Compare two LDAP databases\&.
 .SS "ntacl"
 .PP
 Manage NT ACLs\&.
+.SS "ntacl changedomsid original-domain-SID new-domain-SID file [options]"
+.PP
+Change the domain SID for ACLs\&. Can be used to change all entries in acl_xattr when the machine\*(Aqs SID has accidentially changed or the data set has been copied to another machine either via backup/restore or rsync\&.
+.PP
+\-\-use\-ntvfs
+.RS 4
+Set the ACLs directly to the TDB or xattr\&. The POSIX permissions will NOT be changed, only the NT ACL will be stored\&.
+.RE
+.PP
+\-\-service=SERVICE
+.RS 4
+Specify the name of the smb\&.conf service to use\&. This option is required in combination with the \-\-use\-s3fs option\&.
+.RE
+.PP
+\-\-use\-s3fs
+.RS 4
+Set the ACLs for use with the default s3fs file server via the VFS layer\&. This option requires a smb\&.conf service, specified by the \-\-service=SERVICE option\&.
+.RE
+.PP
+\-\-xattr\-backend=[native|tdb]
+.RS 4
+Specify the xattr backend type (native fs or tdb)\&.
+.RE
+.PP
+\-\-eadb\-file=EADB_FILE
+.RS 4
+Name of the tdb file where attributes are stored\&.
+.RE
+.PP
+\-\-recursive
+.RS 4
+Set the ACLs for directories and their contents recursively\&.
+.RE
+.PP
+\-\-follow\-symlinks
+.RS 4
+Follow symlinks when \-\-recursive is specified\&.
+.RE
+.PP
+\-\-verbose
+.RS 4
+Verbosely list files and ACLs which are being processed\&.
+.RE
 .SS "ntacl get file [options]"
 .PP
 Get ACLs on a file\&.
@@ -475,6 +655,9 @@ Check sysvol ACLs match defaults (including correct ACLs on GPOs)\&.
 .SS "ntacl sysvolreset"
 .PP
 Reset sysvol ACLs to defaults (including correct ACLs on GPOs)\&.
+.SS "ou"
+.PP
+Manage organizational units (OUs)\&.
 .SS "ou create ou_dn [options]"
 .PP
 Create an organizational unit\&.
@@ -592,10 +775,18 @@ Create a new user in the Active Directory Domain\&.
 Delete an existing user account\&.
 .SS "user disable username"
 .PP
-Disable an user account\&.
+Disable a user account\&.
+.SS "user edit username"
+.PP
+Edit a user account AD object\&.
+.PP
+\-\-editor=EDITOR
+.RS 4
+Specifies the editor to use instead of the system default, or \*(Aqvi\*(Aq if no system default is set\&.
+.RE
 .SS "user enable username"
 .PP
-Enable an user account\&.
+Enable a user account\&.
 .SS "user list"
 .PP
 List all users\&.
@@ -616,16 +807,16 @@ The username specified on the command is the sAMAccountName\&.
 The name of the organizational unit or container can be specified as a full DN or without the domainDN component\&.
 .SS "user password [options]"
 .PP
-Change password for an user account (the one provided in authentication)\&.
+Change password for a user account (the one provided in authentication)\&.
 .SS "user setexpiry username [options]"
 .PP
-Set the expiration of an user account\&.
+Set the expiration of a user account\&.
 .SS "user setpassword username [options]"
 .PP
-Sets or resets the password of an user account\&.
+Sets or resets the password of a user account\&.
 .SS "user getpassword username [options]"
 .PP
-Gets the password of an user account\&.
+Gets the password of a user account\&.
 .SS "user syncpasswords --cache-ldb-initialize [options]"
 .PP
 Syncs the passwords of all user accounts, using an optional script\&.
@@ -696,7 +887,7 @@ because the repsFrom/To objects are not replicated, and it can reveal replicatio
 Gives usage information\&.
 .SH "VERSION"
 .PP
-This man page is complete for version 4\&.10\&.8 of the Samba suite\&.
+This man page is complete for version 4\&.11\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

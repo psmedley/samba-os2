@@ -202,7 +202,6 @@ static struct tevent_req *delay_rename_for_lease_break(struct tevent_req *req,
 
 	for (i=0; i<d->num_share_modes; i++) {
 		struct share_mode_entry *e = &d->share_modes[i];
-		struct share_mode_lease *l = NULL;
 		uint32_t e_lease_type;
 		uint32_t break_to;
 
@@ -216,12 +215,10 @@ static struct tevent_req *delay_rename_for_lease_break(struct tevent_req *req,
 			continue;
 		}
 
-		l = &d->leases[e->lease_idx];
-
 		if (smb2_lease_equal(fsp_client_guid(fsp),
 				&fsp->lease->lease.lease_key,
-				&l->client_guid,
-				&l->lease_key)) {
+				&e->client_guid,
+				&e->lease_key)) {
 			continue;
 		}
 
@@ -389,7 +386,7 @@ static struct tevent_req *smbd_smb2_setinfo_send(TALLOC_CTX *mem_ctx,
 	}
 
 	switch (in_info_type) {
-	case 0x01:/* SMB2_SETINFO_FILE */
+	case SMB2_0_INFO_FILE:
 	{
 		uint16_t file_info_level;
 		char *data;
@@ -409,7 +406,7 @@ static struct tevent_req *smbd_smb2_setinfo_send(TALLOC_CTX *mem_ctx,
 			 * handle (returned from an NT SMB). NT5.0 seems
 			 * to do this call. JRA.
 			 */
-			if (INFO_LEVEL_IS_UNIX(file_info_level)) {
+			if (fsp->fsp_name->flags & SMB_FILENAME_POSIX_PATH) {
 				/* Always do lstat for UNIX calls. */
 				if (SMB_VFS_LSTAT(conn, fsp->fsp_name)) {
 					DEBUG(3,("smbd_smb2_setinfo_send: "
@@ -446,11 +443,9 @@ static struct tevent_req *smbd_smb2_setinfo_send(TALLOC_CTX *mem_ctx,
 
 				tevent_req_done(req);
 				return tevent_req_post(req, ev);
-			} else {
-				tevent_req_nterror(req,
-					NT_STATUS_OBJECT_PATH_INVALID);
-				return tevent_req_post(req, ev);
 			}
+			tevent_req_nterror(req, NT_STATUS_OBJECT_PATH_INVALID);
+			return tevent_req_post(req, ev);
 		} else {
 			/*
 			 * Original code - this is an open file.
@@ -530,7 +525,7 @@ static struct tevent_req *smbd_smb2_setinfo_send(TALLOC_CTX *mem_ctx,
 		break;
 	}
 
-	case 0x02:/* SMB2_SETINFO_FS */
+	case SMB2_0_INFO_FILESYSTEM:
 	{
 		uint16_t file_info_level = in_file_info_class + 1000;
 
@@ -548,7 +543,7 @@ static struct tevent_req *smbd_smb2_setinfo_send(TALLOC_CTX *mem_ctx,
 		break;
 	}
 
-	case 0x03:/* SMB2_SETINFO_SECURITY */
+	case SMB2_0_INFO_SECURITY:
 	{
 		if (!CAN_WRITE(conn)) {
 			tevent_req_nterror(req, NT_STATUS_ACCESS_DENIED);
@@ -567,7 +562,7 @@ static struct tevent_req *smbd_smb2_setinfo_send(TALLOC_CTX *mem_ctx,
 		break;
 	}
 
-	case 0x04:/* SMB2_SETINFO_QUOTA */
+	case SMB2_0_INFO_QUOTA:
 	{
 #ifdef HAVE_SYS_QUOTAS
 		struct file_quota_information info = {0};

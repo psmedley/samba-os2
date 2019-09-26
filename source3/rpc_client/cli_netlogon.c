@@ -458,6 +458,7 @@ NTSTATUS rpccli_netlogon_password_logon(
 	const char *username,
 	const char *password,
 	const char *workstation,
+	const uint64_t logon_id,
 	enum netr_LogonInfoClass logon_type,
 	uint8_t *authoritative,
 	uint32_t *flags,
@@ -513,8 +514,7 @@ NTSTATUS rpccli_netlogon_password_logon(
 
 		password_info->identity_info.domain_name.string		= domain;
 		password_info->identity_info.parameter_control		= logon_parameters;
-		password_info->identity_info.logon_id_low		= 0xdead;
-		password_info->identity_info.logon_id_high		= 0xbeef;
+		password_info->identity_info.logon_id			= logon_id;
 		password_info->identity_info.account_name.string	= username;
 		password_info->identity_info.workstation.string		= workstation_slash;
 
@@ -552,8 +552,7 @@ NTSTATUS rpccli_netlogon_password_logon(
 
 		network_info->identity_info.domain_name.string		= domain;
 		network_info->identity_info.parameter_control		= logon_parameters;
-		network_info->identity_info.logon_id_low		= 0xdead;
-		network_info->identity_info.logon_id_high		= 0xbeef;
+		network_info->identity_info.logon_id			= logon_id;
 		network_info->identity_info.account_name.string		= username;
 		network_info->identity_info.workstation.string		= workstation_slash;
 
@@ -608,6 +607,7 @@ NTSTATUS rpccli_netlogon_network_logon(
 	const char *username,
 	const char *domain,
 	const char *workstation,
+	const uint64_t logon_id,
 	const uint8_t chal[8],
 	DATA_BLOB lm_response,
 	DATA_BLOB nt_response,
@@ -671,8 +671,7 @@ NTSTATUS rpccli_netlogon_network_logon(
 
 	network_info->identity_info.domain_name.string		= domain;
 	network_info->identity_info.parameter_control		= logon_parameters;
-	network_info->identity_info.logon_id_low		= 0xdead;
-	network_info->identity_info.logon_id_high		= 0xbeef;
+	network_info->identity_info.logon_id			= logon_id;
 	network_info->identity_info.account_name.string		= username;
 	network_info->identity_info.workstation.string		= workstation_name_slash;
 
@@ -711,6 +710,7 @@ NTSTATUS rpccli_netlogon_interactive_logon(
 	const char *username,
 	const char *domain,
 	const char *workstation,
+	const uint64_t logon_id,
 	DATA_BLOB lm_hash,
 	DATA_BLOB nt_hash,
 	enum netr_LogonInfoClass logon_type,
@@ -772,8 +772,7 @@ NTSTATUS rpccli_netlogon_interactive_logon(
 
 	password_info->identity_info.domain_name.string		= domain;
 	password_info->identity_info.parameter_control		= logon_parameters;
-	password_info->identity_info.logon_id_low		= 0xdead;
-	password_info->identity_info.logon_id_high		= 0xbeef;
+	password_info->identity_info.logon_id			= logon_id;
 	password_info->identity_info.account_name.string	= username;
 	password_info->identity_info.workstation.string		= workstation_name_slash;
 

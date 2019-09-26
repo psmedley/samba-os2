@@ -374,6 +374,7 @@ static WERROR dnsserver_query_server(struct dnsserver_state *dsstate,
 	}
 
 	is_integer = 0;
+	answer_integer = 0;
 
 	if (strcasecmp(operation, "AddressAnswerLimit") == 0) {
 		answer_integer = serverinfo->cAddressAnswerLimit;
@@ -834,7 +835,7 @@ static WERROR dnsserver_query_zone(struct dnsserver_state *dsstate,
 					union DNSSRV_RPC_UNION *r)
 {
 	uint8_t is_integer, is_addresses, is_string;
-	uint32_t answer_integer;
+	uint32_t answer_integer = 0;
 	struct IP4_ARRAY *answer_iparray;
 	struct DNS_ADDR_ARRAY *answer_addrarray;
 	char *answer_string;
@@ -1726,6 +1727,10 @@ static WERROR dnsserver_enumerate_root_records(struct dnsserver_state *dsstate,
 							NULL, NULL);
 			talloc_free(rname);
 			talloc_free(res);
+			if (!W_ERROR_IS_OK(status)) {
+				talloc_free(tmp_ctx);
+				return status;
+			}
 		}
 	}
 
@@ -1884,6 +1889,10 @@ static WERROR dnsserver_enumerate_records(struct dnsserver_state *dsstate,
 							NULL, NULL);
 			talloc_free(rname);
 			talloc_free(res);
+			if (!W_ERROR_IS_OK(status)) {
+				talloc_free(tmp_ctx);
+				return status;
+			}
 		}
 	}
 

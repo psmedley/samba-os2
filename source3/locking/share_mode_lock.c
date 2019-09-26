@@ -77,7 +77,11 @@ static bool locking_init_internal(bool read_only)
 
 	backend = db_open(NULL, db_path,
 			  SMB_OPEN_DATABASE_TDB_HASH_SIZE,
-			  TDB_DEFAULT|TDB_VOLATILE|TDB_CLEAR_IF_FIRST|TDB_INCOMPATIBLE_HASH,
+			  TDB_DEFAULT|
+			  TDB_VOLATILE|
+			  TDB_CLEAR_IF_FIRST|
+			  TDB_INCOMPATIBLE_HASH|
+			  TDB_SEQNUM,
 			  read_only?O_RDONLY:O_RDWR|O_CREAT, 0644,
 			  DBWRAP_LOCK_ORDER_1, DBWRAP_FLAG_NONE);
 	TALLOC_FREE(db_path);
@@ -147,20 +151,6 @@ static DATA_BLOB memcache_key(const struct file_id *id)
 	return data_blob_const((const void *)id, sizeof(*id));
 }
 
-static void share_mode_memcache_delete(struct share_mode_data *d)
-{
-	const DATA_BLOB key = memcache_key(&d->id);
-
-	DBG_DEBUG("deleting entry for file %s seq %"PRIx64" key %s\n",
-		  d->base_name,
-		  d->sequence_number,
-		  file_id_string(talloc_tos(), &d->id));
-
-	memcache_delete(NULL,
-			SHARE_MODE_LOCK_CACHE,
-			key);
-}
-
 static void share_mode_memcache_store(struct share_mode_data *d)
 {
 	const DATA_BLOB key = memcache_key(&d->id);
@@ -177,7 +167,8 @@ static void share_mode_memcache_store(struct share_mode_data *d)
 	/*
 	 * Ensure the memory going into the cache
 	 * doesn't have a destructor so it can be
-	 * cleanly freed by share_mode_memcache_delete().
+	 * cleanly evicted by the memcache LRU
+	 * mechanism.
 	 */
 	talloc_set_destructor(d, NULL);
 
@@ -192,15 +183,76 @@ static void share_mode_memcache_store(struct share_mode_data *d)
  * NB. We use ndr_pull_hyper on a stack-created
  * struct ndr_pull with no talloc allowed, as we
  * need this to be really fast as an ndr-peek into
- * the first 8 bytes of the blob.
+ * the first 9 bytes of the blob.
  */
 
-static enum ndr_err_code get_blob_sequence_number(DATA_BLOB *blob,
-						uint64_t *pseq)
+static enum ndr_err_code get_share_mode_blob_header(
+	DATA_BLOB *blob, uint64_t *pseq, uint8_t *pflags)
 {
 	struct ndr_pull ndr = {.data = blob->data, .data_size = blob->length};
 	NDR_CHECK(ndr_pull_hyper(&ndr, NDR_SCALARS, pseq));
+	NDR_CHECK(ndr_pull_uint8(&ndr, NDR_SCALARS, pflags));
 	return NDR_ERR_SUCCESS;
+}
+
+struct fsp_update_share_mode_flags_state {
+	enum ndr_err_code ndr_err;
+	uint8_t share_mode_flags;
+};
+
+static void fsp_update_share_mode_flags_fn(
+	struct db_record *rec, bool *modified_dependent, void *private_data)
+{
+	struct fsp_update_share_mode_flags_state *state = private_data;
+	TDB_DATA value = dbwrap_record_get_value(rec);
+	DATA_BLOB blob = { .data = value.dptr, .length = value.dsize };
+	uint64_t seq;
+
+	state->ndr_err = get_share_mode_blob_header(
+		&blob, &seq, &state->share_mode_flags);
+}
+
+static NTSTATUS fsp_update_share_mode_flags(struct files_struct *fsp)
+{
+	struct fsp_update_share_mode_flags_state state = {0};
+	int seqnum = dbwrap_get_seqnum(lock_db);
+	NTSTATUS status;
+
+	if (seqnum == fsp->share_mode_flags_seqnum) {
+		return NT_STATUS_OK;
+	}
+
+	status = share_mode_do_locked(
+		fsp->file_id, fsp_update_share_mode_flags_fn, &state);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_DEBUG("share_mode_do_locked returned %s\n",
+			  nt_errstr(status));
+		return status;
+	}
+
+	if (!NDR_ERR_CODE_IS_SUCCESS(state.ndr_err)) {
+		DBG_DEBUG("get_share_mode_blob_header returned %s\n",
+			  ndr_errstr(state.ndr_err));
+		return ndr_map_error2ntstatus(state.ndr_err);
+	}
+
+	fsp->share_mode_flags_seqnum = seqnum;
+	fsp->share_mode_flags = state.share_mode_flags;
+
+	return NT_STATUS_OK;
+}
+
+bool file_has_read_lease(struct files_struct *fsp)
+{
+	NTSTATUS status;
+
+	status = fsp_update_share_mode_flags(fsp);
+	if (!NT_STATUS_IS_OK(status)) {
+		/* Safe default for leases */
+		return true;
+	}
+
+	return (fsp->share_mode_flags & SHARE_MODE_HAS_READ_LEASE) != 0;
 }
 
 static int share_mode_data_nofree_destructor(struct share_mode_data *d)
@@ -215,6 +267,7 @@ static struct share_mode_data *share_mode_memcache_fetch(TALLOC_CTX *mem_ctx,
 	enum ndr_err_code ndr_err;
 	struct share_mode_data *d;
 	uint64_t sequence_number;
+	uint8_t flags;
 	void *ptr;
 	struct file_id id;
 	DATA_BLOB key;
@@ -236,7 +289,7 @@ static struct share_mode_data *share_mode_memcache_fetch(TALLOC_CTX *mem_ctx,
 		return NULL;
 	}
 	/* sequence number key is at start of blob. */
-	ndr_err = get_blob_sequence_number(blob, &sequence_number);
+	ndr_err = get_share_mode_blob_header(blob, &sequence_number, &flags);
 	if (ndr_err != NDR_ERR_SUCCESS) {
 		/* Bad blob. Remove entry. */
 		DEBUG(10,("bad blob %u key %s\n",
@@ -317,8 +370,8 @@ static struct share_mode_data *parse_share_modes(TALLOC_CTX *mem_ctx,
 	ndr_err = ndr_pull_struct_blob_all(
 		&blob, d, d, (ndr_pull_flags_fn_t)ndr_pull_share_mode_data);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		DEBUG(1, ("ndr_pull_share_mode_lock failed: %s\n",
-			  ndr_errstr(ndr_err)));
+		DBG_WARNING("ndr_pull_share_mode_data failed: %s\n",
+			    ndr_errstr(ndr_err));
 		goto fail;
 	}
 
@@ -334,113 +387,57 @@ fail:
 }
 
 /*******************************************************************
- Create a storable data blob from a modified share_mode_data struct.
+ If modified, store the share_mode_data back into the database.
 ********************************************************************/
 
-static TDB_DATA unparse_share_modes(struct share_mode_data *d)
+static NTSTATUS share_mode_data_store(struct share_mode_data *d)
 {
 	DATA_BLOB blob;
 	enum ndr_err_code ndr_err;
+	NTSTATUS status;
+
+	if (!d->modified) {
+		DBG_DEBUG("not modified\n");
+		return NT_STATUS_OK;
+	}
 
 	if (DEBUGLEVEL >= 10) {
-		DEBUG(10, ("unparse_share_modes:\n"));
+		DBG_DEBUG("\n");
 		NDR_PRINT_DEBUG(share_mode_data, d);
 	}
 
-	share_mode_memcache_delete(d);
-
-	/* Update the sequence number. */
 	d->sequence_number += 1;
-
 	remove_stale_share_mode_entries(d);
 
 	if (d->num_share_modes == 0) {
-		DEBUG(10, ("No used share mode found\n"));
-		return make_tdb_data(NULL, 0);
+		if (d->fresh) {
+			DBG_DEBUG("Ignoring fresh emtpy record\n");
+			return NT_STATUS_OK;
+		}
+		status = dbwrap_record_delete(d->record);
+		return status;
 	}
 
 	ndr_err = ndr_push_struct_blob(
 		&blob, d, d, (ndr_push_flags_fn_t)ndr_push_share_mode_data);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		smb_panic("ndr_push_share_mode_lock failed");
+		DBG_DEBUG("ndr_push_share_mode_data failed: %s\n",
+			  ndr_errstr(ndr_err));
+		return ndr_map_error2ntstatus(ndr_err);
 	}
 
-	return make_tdb_data(blob.data, blob.length);
-}
+	status = dbwrap_record_store(
+		d->record,
+		(TDB_DATA) { .dptr = blob.data, .dsize = blob.length },
+		TDB_REPLACE);
+	TALLOC_FREE(blob.data);
 
-/*******************************************************************
- If modified, store the share_mode_data back into the database.
-********************************************************************/
-
-static int share_mode_data_destructor(struct share_mode_data *d)
-{
-	NTSTATUS status;
-	TDB_DATA data;
-
-	if (!d->modified) {
-		return 0;
-	}
-
-	data = unparse_share_modes(d);
-
-	if (data.dptr == NULL) {
-		if (!d->fresh) {
-			/* There has been an entry before, delete it */
-
-			status = dbwrap_record_delete(d->record);
-			if (!NT_STATUS_IS_OK(status)) {
-				char *errmsg;
-
-				DEBUG(0, ("delete_rec returned %s\n",
-					  nt_errstr(status)));
-
-				if (asprintf(&errmsg, "could not delete share "
-					     "entry: %s\n",
-					     nt_errstr(status)) == -1) {
-					smb_panic("could not delete share"
-						  "entry");
-				}
-				smb_panic(errmsg);
-			}
-		}
-		/*
-		 * Nothing to store in cache - allow the normal
-		 * release of record lock and memory free.
-		 */
-		return 0;
-	}
-
-	status = dbwrap_record_store(d->record, data, TDB_REPLACE);
 	if (!NT_STATUS_IS_OK(status)) {
-		char *errmsg;
-
-		DEBUG(0, ("store returned %s\n", nt_errstr(status)));
-
-		if (asprintf(&errmsg, "could not store share mode entry: %s",
-			     nt_errstr(status)) == -1) {
-			smb_panic("could not store share mode entry");
-		}
-		smb_panic(errmsg);
+		DBG_DEBUG("dbwrap_record_store failed: %s\n",
+			  nt_errstr(status));
 	}
 
-	/*
-	 * Release the record lock before putting in the cache.
-	 */
-	TALLOC_FREE(d->record);
-
-	/*
-	 * Release the dptr as well before reparenting to NULL
-	 * (in-memory cache) context.
-	 */
-	TALLOC_FREE(data.dptr);
-	/*
-	 * Reparent d into the in-memory cache so it can be reused if the
-	 * sequence number matches. See parse_share_modes()
-	 * for details.
-	 */
-
-	share_mode_memcache_store(d);
-	return -1;
+	return status;
 }
 
 /*******************************************************************
@@ -491,73 +488,66 @@ fail:
 	return NULL;
 }
 
+/*
+ * We can only ever have one share mode locked. Use a static
+ * share_mode_data pointer that is shared by multiple nested
+ * share_mode_lock structures, explicitly refcounted.
+ */
+static struct share_mode_data *static_share_mode_data = NULL;
+static size_t static_share_mode_data_refcount = 0;
+
+/*
+ * db_record for the above. With dbwrap_do_locked we can get a
+ * db_record on the stack, which we can't TALLOC_FREE but which we
+ * need to share with a nested get_share_mode_lock call.
+ */
+static struct db_record *static_share_mode_record = NULL;
+static bool static_share_mode_record_talloced = false;
+
 /*******************************************************************
  Either fetch a share mode from the database, or allocate a fresh
  one if the record doesn't exist.
 ********************************************************************/
 
-static struct share_mode_lock *get_share_mode_lock_internal(
-	TALLOC_CTX *mem_ctx, struct file_id id,
-	const char *servicepath, const struct smb_filename *smb_fname,
+static NTSTATUS get_static_share_mode_data(
+	struct db_record *rec,
+	struct file_id id,
+	const char *servicepath,
+	const struct smb_filename *smb_fname,
 	const struct timespec *old_write_time)
 {
-	struct share_mode_lock *lck;
 	struct share_mode_data *d;
-	struct db_record *rec;
-	TDB_DATA key = locking_key(&id);
-	TDB_DATA value;
+	TDB_DATA value = dbwrap_record_get_value(rec);
 
-	rec = dbwrap_fetch_locked(lock_db, mem_ctx, key);
-	if (rec == NULL) {
-		DEBUG(3, ("Could not lock share entry\n"));
-		return NULL;
-	}
-
-	value = dbwrap_record_get_value(rec);
+	SMB_ASSERT(static_share_mode_data == NULL);
 
 	if (value.dptr == NULL) {
-		d = fresh_share_mode_lock(mem_ctx, servicepath, smb_fname,
-					  old_write_time);
+		d = fresh_share_mode_lock(
+			lock_db, servicepath, smb_fname, old_write_time);
+		if (d == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
 	} else {
-		d = parse_share_modes(mem_ctx, key, value);
+		TDB_DATA key = locking_key(&id);
+		d = parse_share_modes(lock_db, key, value);
+		if (d == NULL) {
+			return NT_STATUS_INTERNAL_DB_CORRUPTION;
+		}
 	}
 
-	if (d == NULL) {
-		DEBUG(5, ("get_share_mode_lock_internal: "
-			"Could not get share mode lock\n"));
-		TALLOC_FREE(rec);
-		return NULL;
-	}
 	d->id = id;
-	d->record = talloc_move(d, &rec);
-	talloc_set_destructor(d, share_mode_data_destructor);
+	d->record = rec;
 
-	lck = talloc(mem_ctx, struct share_mode_lock);
-	if (lck == NULL) {
-		DEBUG(1, ("talloc failed\n"));
-		TALLOC_FREE(d);
-		return NULL;
-	}
-	lck->data = talloc_move(lck, &d);
-	return lck;
-}
+	static_share_mode_data = d;
 
-/*
- * We can only ever have one share mode locked. Users of
- * get_share_mode_lock never see this, it will be refcounted by
- * talloc_reference.
- */
-static struct share_mode_lock *the_lock;
-
-static int the_lock_destructor(struct share_mode_lock *l)
-{
-	the_lock = NULL;
-	return 0;
+	return NT_STATUS_OK;
 }
 
 /*******************************************************************
  Get a share_mode_lock, Reference counted to allow nested calls.
 ********************************************************************/
+
+static int share_mode_lock_destructor(struct share_mode_lock *lck);
 
 struct share_mode_lock *get_share_mode_lock(
 	TALLOC_CTX *mem_ctx,
@@ -566,7 +556,9 @@ struct share_mode_lock *get_share_mode_lock(
 	const struct smb_filename *smb_fname,
 	const struct timespec *old_write_time)
 {
-	struct share_mode_lock *lck;
+	TDB_DATA key = locking_key(&id);
+	struct share_mode_lock *lck = NULL;
+	NTSTATUS status;
 
 	lck = talloc(mem_ctx, struct share_mode_lock);
 	if (lck == NULL) {
@@ -574,29 +566,221 @@ struct share_mode_lock *get_share_mode_lock(
 		return NULL;
 	}
 
-	if (the_lock == NULL) {
-		the_lock = get_share_mode_lock_internal(
-			lck, id, servicepath, smb_fname, old_write_time);
-		if (the_lock == NULL) {
-			goto fail;
-		}
-		talloc_set_destructor(the_lock, the_lock_destructor);
-	} else {
-		if (!file_id_equal(&the_lock->data->id, &id)) {
+	if (static_share_mode_data != NULL) {
+		if (!file_id_equal(&static_share_mode_data->id, &id)) {
 			DEBUG(1, ("Can not lock two share modes "
 				  "simultaneously\n"));
 			goto fail;
 		}
-		if (talloc_reference(lck, the_lock) == NULL) {
-			DEBUG(1, ("talloc_reference failed\n"));
+		goto done;
+	}
+
+	SMB_ASSERT(static_share_mode_data_refcount == 0);
+
+	if (static_share_mode_record == NULL) {
+		static_share_mode_record = dbwrap_fetch_locked(
+			lock_db, lock_db, key);
+		if (static_share_mode_record == NULL) {
+			DEBUG(3, ("Could not lock share entry\n"));
+			goto fail;
+		}
+		static_share_mode_record_talloced = true;
+
+		status = get_static_share_mode_data(
+			static_share_mode_record,
+			id,
+			servicepath,
+			smb_fname,
+			old_write_time);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_WARNING("get_static_share_mode_data failed: %s\n",
+				    nt_errstr(status));
+			TALLOC_FREE(static_share_mode_record);
+			goto fail;
+		}
+	} else {
+		TDB_DATA static_key;
+		int cmp;
+
+		static_key = dbwrap_record_get_key(static_share_mode_record);
+
+		cmp = tdb_data_cmp(static_key, key);
+		if (cmp != 0) {
+			DBG_WARNING("Can not lock two share modes "
+				    "simultaneously\n");
+			return NULL;
+		}
+
+		status = get_static_share_mode_data(
+			static_share_mode_record,
+			id,
+			servicepath,
+			smb_fname,
+			old_write_time);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_WARNING("get_static_share_mode_data failed: %s\n",
+				    nt_errstr(status));
 			goto fail;
 		}
 	}
-	lck->data = the_lock->data;
+
+done:
+	static_share_mode_data_refcount += 1;
+	lck->data = static_share_mode_data;
+
+	talloc_set_destructor(lck, share_mode_lock_destructor);
+
 	return lck;
 fail:
 	TALLOC_FREE(lck);
 	return NULL;
+}
+
+static int share_mode_lock_destructor(struct share_mode_lock *lck)
+{
+	NTSTATUS status;
+
+	SMB_ASSERT(static_share_mode_data_refcount > 0);
+	static_share_mode_data_refcount -= 1;
+
+	if (static_share_mode_data_refcount > 0) {
+		return 0;
+	}
+
+	status = share_mode_data_store(static_share_mode_data);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("share_mode_data_store failed: %s\n",
+			nt_errstr(status));
+		smb_panic("Could not store share mode data\n");
+	}
+
+	/*
+	 * Drop the locking.tdb lock before moving the share_mode_data
+	 * to memcache
+	 */
+	SMB_ASSERT(static_share_mode_data->record == static_share_mode_record);
+	static_share_mode_data->record = NULL;
+
+	if (static_share_mode_record_talloced) {
+		TALLOC_FREE(static_share_mode_record);
+	}
+
+	if (static_share_mode_data->num_share_modes != 0) {
+		/*
+		 * This is worth keeping. Without share modes,
+		 * share_mode_data_store above has left nothing in the
+		 * database.
+		 */
+		share_mode_memcache_store(static_share_mode_data);
+		static_share_mode_data = NULL;
+	} else {
+		/*
+		 * The next opener of this file will find an empty
+		 * locking.tdb record. Don't store the share_mode_data
+		 * in the memcache, fresh_share_mode_lock() will
+		 * generate a fresh seqnum anyway, obsoleting the
+		 * cache entry.
+		 */
+		TALLOC_FREE(static_share_mode_data);
+	}
+
+	return 0;
+}
+
+struct share_mode_do_locked_state {
+	void (*fn)(struct db_record *rec,
+		   bool *modified_dependent,
+		   void *private_data);
+	void *private_data;
+};
+
+static void share_mode_do_locked_fn(struct db_record *rec,
+				    void *private_data)
+{
+	struct share_mode_do_locked_state *state = private_data;
+	bool modified_dependent = false;
+	bool reset_static_share_mode_record = false;
+
+	if (static_share_mode_record == NULL) {
+		static_share_mode_record = rec;
+		static_share_mode_record_talloced = false;
+		reset_static_share_mode_record = true;
+	} else {
+		SMB_ASSERT(static_share_mode_record == rec);
+	}
+
+	state->fn(rec, &modified_dependent, state->private_data);
+
+	if (modified_dependent) {
+		dbwrap_watched_wakeup(rec);
+	}
+
+	if (reset_static_share_mode_record) {
+		static_share_mode_record = NULL;
+	}
+}
+
+NTSTATUS share_mode_do_locked(
+	struct file_id id,
+	void (*fn)(struct db_record *rec,
+		   bool *modified_dependent,
+		   void *private_data),
+	void *private_data)
+{
+	TDB_DATA key = locking_key(&id);
+	size_t refcount = static_share_mode_data_refcount;
+
+	if (static_share_mode_record != NULL) {
+		bool modified_dependent = false;
+		TDB_DATA static_key;
+		int cmp;
+
+		static_key = dbwrap_record_get_key(static_share_mode_record);
+
+		cmp = tdb_data_cmp(static_key, key);
+		if (cmp != 0) {
+			DBG_WARNING("Can not lock two share modes "
+				    "simultaneously\n");
+			return NT_STATUS_INVALID_LOCK_SEQUENCE;
+		}
+
+		fn(static_share_mode_record,
+		   &modified_dependent,
+		   private_data);
+
+		if (modified_dependent) {
+			dbwrap_watched_wakeup(static_share_mode_record);
+		}
+	} else {
+		struct share_mode_do_locked_state state = {
+			.fn = fn, .private_data = private_data,
+		};
+		NTSTATUS status;
+
+		status = dbwrap_do_locked(
+			lock_db, key, share_mode_do_locked_fn, &state);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_WARNING("dbwrap_do_locked failed: %s\n",
+				    nt_errstr(status));
+			return status;
+		}
+	}
+
+	SMB_ASSERT(refcount == static_share_mode_data_refcount);
+
+	return NT_STATUS_OK;
+}
+
+static void share_mode_wakeup_waiters_fn(struct db_record *rec,
+					 bool *modified_dependent,
+					 void *private_data)
+{
+	*modified_dependent = true;
+}
+
+NTSTATUS share_mode_wakeup_waiters(struct file_id id)
+{
+	return share_mode_do_locked(id, share_mode_wakeup_waiters_fn, NULL);
 }
 
 struct fetch_share_mode_unlocked_state {
@@ -889,6 +1073,23 @@ int share_entry_forall(int (*fn)(struct file_id fid,
 	return share_mode_forall(share_entry_traverse_fn, &state);
 }
 
+static bool cleanup_disconnected_lease(struct share_mode_lock *lck,
+				       struct share_mode_entry *e,
+				       void *private_data)
+{
+	struct share_mode_data *d = lck->data;
+	NTSTATUS status;
+
+	status = leases_db_del(&e->client_guid, &e->lease_key, &d->id);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_DEBUG("leases_db_del failed: %s\n",
+			  nt_errstr(status));
+	}
+
+	return false;
+}
+
 bool share_mode_cleanup_disconnected(struct file_id fid,
 				     uint64_t open_persistent_id)
 {
@@ -946,14 +1147,20 @@ bool share_mode_cleanup_disconnected(struct file_id fid,
 		}
 	}
 
-	for (n=0; n < data->num_leases; n++) {
-		struct share_mode_lease *l = &data->leases[n];
-		NTSTATUS status;
-
-		status = leases_db_del(&l->client_guid, &l->lease_key, &fid);
-
-		DEBUG(10, ("%s: leases_db_del returned %s\n", __func__,
-			   nt_errstr(status)));
+	ok = share_mode_forall_leases(lck, cleanup_disconnected_lease, NULL);
+	if (!ok) {
+		DBG_DEBUG("failed to clean up leases associated "
+			  "with file (file-id='%s', servicepath='%s', "
+			  "base_name='%s%s%s') and open_persistent_id %"PRIu64" "
+			  "==> do not cleanup\n",
+			  file_id_string(frame, &fid),
+			  data->servicepath,
+			  data->base_name,
+			  (data->stream_name == NULL)
+			  ? "" : "', stream_name='",
+			  (data->stream_name == NULL)
+			  ? "" : data->stream_name,
+			  open_persistent_id);
 	}
 
 	ok = brl_cleanup_disconnected(fid, open_persistent_id);
@@ -988,7 +1195,6 @@ bool share_mode_cleanup_disconnected(struct file_id fid,
 		  open_persistent_id);
 
 	data->num_share_modes = 0;
-	data->num_leases = 0;
 	data->modified = true;
 
 	ret = true;

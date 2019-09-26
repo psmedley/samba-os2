@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 APPNAME = 'tdb'
-VERSION = '1.3.18'
+VERSION = '1.4.2'
 
 import sys, os
 
@@ -97,14 +97,8 @@ def configure(conf):
 
     conf.CHECK_XSLTPROC_MANPAGES()
 
-    if not conf.env.disable_python:
-        # also disable if we don't have the python libs installed
-        conf.SAMBA_CHECK_PYTHON(mandatory=False)
-        conf.check_python_version((2,4,2))
-        conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=False)
-        if not conf.env.HAVE_PYTHON_H:
-            Logs.warn('Disabling pytdb as python devel libs not found')
-            conf.env.disable_python = True
+    conf.SAMBA_CHECK_PYTHON()
+    conf.SAMBA_CHECK_PYTHON_HEADERS()
 
     conf.SAMBA_CONFIG_H()
 
@@ -182,21 +176,19 @@ def build(bld):
                                  includes='include', install=False)
 
     if not bld.CONFIG_SET('USING_SYSTEM_PYTDB'):
-        for env in bld.gen_python_environments(['PKGCONFIGDIR']):
-            bld.SAMBA_PYTHON('pytdb',
-                             'pytdb.c',
-                             deps='tdb',
-                             enabled=not bld.env.disable_python,
-                             realname='tdb.so',
-                             cflags='-DPACKAGE_VERSION=\"%s\"' % VERSION)
+        bld.SAMBA_PYTHON('pytdb',
+                         'pytdb.c',
+                         deps='tdb',
+                         enabled=not bld.env.disable_python,
+                         realname='tdb.so',
+                         cflags='-DPACKAGE_VERSION=\"%s\"' % VERSION)
 
         if not bld.env.disable_python:
-            for env in bld.gen_python_environments(['PKGCONFIGDIR']):
-                bld.SAMBA_SCRIPT('_tdb_text.py',
-                                 pattern='_tdb_text.py',
-                                 installdir='python')
-
-                bld.INSTALL_FILES('${PYTHONARCHDIR}', '_tdb_text.py')
+            bld.SAMBA_SCRIPT('_tdb_text.py',
+                             pattern='_tdb_text.py',
+                             installdir='python')
+            
+            bld.INSTALL_FILES('${PYTHONARCHDIR}', '_tdb_text.py')
 
 def testonly(ctx):
     '''run tdb testsuite'''

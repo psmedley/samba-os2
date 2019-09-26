@@ -13,7 +13,7 @@ import build.charset
 from wafsamba import samba_utils
 from samba_utils import TO_LIST
 import samba3
-from waflib.Tools import bison, flex
+from waflib.Tools import bison
 
 default_prefix = Options.default_prefix = '/usr/local/samba'
 
@@ -40,45 +40,45 @@ def options(opt):
                          "--with-shared-modules"),
                    action="store", dest='shared_modules', default=None)
 
-    opt.SAMBA3_ADD_OPTION('winbind')
-    opt.SAMBA3_ADD_OPTION('ads')
-    opt.SAMBA3_ADD_OPTION('ldap')
-    opt.SAMBA3_ADD_OPTION('cups', with_name="enable", without_name="disable")
-    opt.SAMBA3_ADD_OPTION('iprint', with_name="enable", without_name="disable")
-    opt.SAMBA3_ADD_OPTION('pam')
-    opt.SAMBA3_ADD_OPTION('quotas')
-    opt.SAMBA3_ADD_OPTION('sendfile-support', default=None)
-    opt.SAMBA3_ADD_OPTION('utmp')
-    opt.SAMBA3_ADD_OPTION('avahi', with_name="enable", without_name="disable")
-    opt.SAMBA3_ADD_OPTION('iconv')
-    opt.SAMBA3_ADD_OPTION('acl-support')
-    opt.SAMBA3_ADD_OPTION('dnsupdate')
-    opt.SAMBA3_ADD_OPTION('syslog')
-    opt.SAMBA3_ADD_OPTION('automount')
-    opt.SAMBA3_ADD_OPTION('dmapi', default=None) # None means autodetection
-    opt.SAMBA3_ADD_OPTION('fam', default=None) # None means autodetection
-    opt.SAMBA3_ADD_OPTION('profiling-data', default=False)
-    opt.SAMBA3_ADD_OPTION('libarchive', default=True)
+    opt.samba_add_onoff_option('winbind')
+    opt.samba_add_onoff_option('ads')
+    opt.samba_add_onoff_option('ldap')
+    opt.samba_add_onoff_option('cups', with_name="enable", without_name="disable")
+    opt.samba_add_onoff_option('iprint', with_name="enable", without_name="disable")
+    opt.samba_add_onoff_option('pam')
+    opt.samba_add_onoff_option('quotas', default=None)
+    opt.samba_add_onoff_option('sendfile-support', default=None)
+    opt.samba_add_onoff_option('utmp')
+    opt.samba_add_onoff_option('avahi', with_name="enable", without_name="disable")
+    opt.samba_add_onoff_option('iconv')
+    opt.samba_add_onoff_option('acl-support')
+    opt.samba_add_onoff_option('dnsupdate')
+    opt.samba_add_onoff_option('syslog')
+    opt.samba_add_onoff_option('automount')
+    opt.samba_add_onoff_option('dmapi', default=None) # None means autodetection
+    opt.samba_add_onoff_option('fam', default=None) # None means autodetection
+    opt.samba_add_onoff_option('profiling-data', default=False)
+    opt.samba_add_onoff_option('libarchive', default=True)
 
-    opt.SAMBA3_ADD_OPTION('cluster-support', default=False)
+    opt.samba_add_onoff_option('cluster-support', default=False)
 
-    opt.SAMBA3_ADD_OPTION('regedit', default=None)
+    opt.samba_add_onoff_option('regedit', default=None)
 
-    opt.SAMBA3_ADD_OPTION('fake-kaserver',
+    opt.samba_add_onoff_option('fake-kaserver',
                           help=("Include AFS fake-kaserver support"), default=False)
 
     opt.add_option('--with-libcephfs',
                    help=("Directory under which libcephfs is installed"),
                    action="store", dest='libcephfs_dir', default=None)
 
-    opt.SAMBA3_ADD_OPTION('glusterfs', with_name="enable", without_name="disable", default=True)
-    opt.SAMBA3_ADD_OPTION('cephfs', with_name="enable", without_name="disable", default=True)
+    opt.samba_add_onoff_option('glusterfs', with_name="enable", without_name="disable", default=True)
+    opt.samba_add_onoff_option('cephfs', with_name="enable", without_name="disable", default=True)
 
     opt.add_option('--enable-vxfs',
                   help=("enable support for VxFS (default=no)"),
                   action="store_true", dest='enable_vxfs', default=False)
 
-    opt.SAMBA3_ADD_OPTION('spotlight', with_name="enable", without_name="disable", default=False)
+    opt.samba_add_onoff_option('spotlight', with_name="enable", without_name="disable", default=False)
 
 def configure(conf):
     default_static_modules = []
@@ -120,8 +120,6 @@ def configure(conf):
     conf.CHECK_FUNCS('lutimes futimes utimensat futimens')
     conf.CHECK_FUNCS('mlock munlock mlockall munlockall')
     conf.CHECK_FUNCS('memalign posix_memalign hstrerror')
-    conf.CHECK_FUNCS('shmget')
-    conf.CHECK_FUNCS_IN('shm_open', 'rt', checklibc=True)
     conf.CHECK_FUNCS_IN('yp_get_default_domain', 'nsl')
     conf.CHECK_FUNCS_IN('dn_expand _dn_expand __dn_expand', 'resolv')
     conf.CHECK_FUNCS_IN('dn_expand', 'inet')
@@ -409,7 +407,6 @@ rdchk _read __read _readdir __readdir
 _seekdir __seekdir
 select setenv setgidx setgroups setlocale setluid
 setmntent setpgid setpriv setsid setuidx
-shmget shm_open
 _stat __stat statvfs
 strcasecmp strchr strpbrk strsignal strtol strupr sysconf sysctl sysctlbyname
 __sys_llseek syslog _telldir __telldir timegm
@@ -1255,6 +1252,8 @@ main() {
                     addmain=False,
                     execute=True)
 
+    conf.SET_TARGET_TYPE('sendfile', 'EMPTY')
+    conf.CHECK_LIB('sendfile')
     if not Options.options.with_sendfile_support == False:
         if (host_os.rfind('linux') > -1) or (host_os.rfind('gnu') > -1) or (host_os.rfind('k*bsd*-gnu') > -1) or (host_os.rfind('kopensolaris*-gnu') > -1):
             conf.CHECK_CODE('''
@@ -1399,13 +1398,15 @@ main() {
     conf.CHECK_FUNCS_IN('getspnam', 'sec')
 
     legacy_quota_libs = ''
-    if Options.options.with_quotas:
+    if not Options.options.with_quotas == False:
         # For quotas on Veritas VxFS filesystems
         conf.CHECK_HEADERS('sys/fs/vx_quota.h')
         # For sys/quota.h and linux/quota.h
         conf.CHECK_HEADERS('sys/quota.h')
         # For quotas on BSD systems
         conf.CHECK_HEADERS('ufs/ufs/quota.h')
+        # For quotas on AIX systems
+        conf.CHECK_HEADERS('jfs/quota.h')
         # For quotas on Linux XFS filesystems
         if conf.CHECK_HEADERS('xfs/xqm.h'):
             conf.DEFINE('HAVE_XFS_QUOTAS', '1')
@@ -1505,10 +1506,25 @@ main() {
                 legacy_quota_libs = ''
     conf.env['legacy_quota_libs'] = legacy_quota_libs
 
+    if Options.options.with_quotas == True and not conf.CONFIG_SET('WITH_QUOTAS'):
+        conf.fatal('quota support not found but it was equested !')
+
     conf.CHECK_CODE('(void)unshare(CLONE_FS);',
                     headers='sched.h',
                     define='HAVE_UNSHARE_CLONE_FS',
                     msg='for Linux unshare(CLONE_FS)')
+
+    # Check for mallinfo
+    conf.CHECK_CODE('''
+    struct mallinfo mi;
+    int tmp;
+
+    mi = mallinfo();
+    tmp = mi.arena + mi.ordblks + mi.smblks + mi.hblks +
+          mi.hblkhd + mi.usmblks + mi.fsmblks +  mi.uordblks +
+          mi.fordblks + mi.keepcost;
+    return tmp;
+    ''', 'HAVE_MALLINFO', msg="Checking for mallinfo()", headers='malloc.h')
 
     #
     # cluster support (CTDB)
@@ -1618,36 +1634,63 @@ main() {
         else:
             conf.fatal('AFS headers not available, but --with-fake-kaserver was specified')
 
+    if conf.CHECK_CFG(package='glib-2.0',
+                      args='--cflags --libs',
+                      msg='Checking for glib-2.0',
+                      uselib_store="GLIB-2.0"):
+        if (conf.CHECK_HEADERS('glib.h', lib='glib-2.0') and conf.CHECK_LIB('glib-2.0', shlib=True)):
+            conf.DEFINE('HAVE_GLIB', 1)
+
+    if conf.CONFIG_SET('HAVE_GLIB'):
+        conf.DEFINE('WITH_TEVENT_GLIB_GLUE', '1')
+
     conf.env['libtracker']=''
+    tracker_versions = ['2.0', '1.0', '0.16', '0.14']
+
+    for version in tracker_versions:
+        testlib = 'tracker-sparql-' + version
+        if conf.CHECK_CFG(package=testlib,
+                          args='--cflags --libs',
+                          mandatory=False):
+            conf.SET_TARGET_TYPE(testlib, 'SYSLIB')
+            conf.env['libtracker'] = testlib
+            conf.DEFINE('HAVE_TRACKER', '1')
+            break
+
+    Logs.info("Checking for bison")
+    bison.configure(conf)
+    if conf.env['BISON']:
+        conf.CHECK_COMMAND('%s --version  | head -n1' % conf.env.BISON[0],
+                           msg='Using bison version',
+                           define=None,
+                           on_target=False)
+
+    Logs.info("Checking for flex")
+    conf.find_program('flex', var='FLEX')
+    if conf.env['FLEX']:
+        conf.env.FLEXFLAGS = ['-t']
+        conf.CHECK_COMMAND('%s --version' % conf.env.FLEX[0],
+                           msg='Using flex version',
+                           define=None,
+                           on_target=False)
+
     conf.env.with_spotlight = False
     if Options.options.with_spotlight:
-
-        Logs.info("Requested Spotlight support, checking for bison")
-        bison.configure(conf)
         if not conf.env['BISON']:
             conf.fatal("Spotlight support requested but bison missing")
-        conf.CHECK_COMMAND('%s --version | head -n1' % conf.env['BISON'], msg='Using bison version', define=None, on_target=False)
-        Logs.info("Requested Spotlight support, checking for flex")
-        flex.configure(conf)
         if not conf.env['FLEX']:
             conf.fatal("Spotlight support requested but flex missing")
-        conf.CHECK_COMMAND('%s --version' % conf.env['FLEX'], msg='Using flex version', define=None, on_target=False)
-        versions = ['2.0', '1.0', '0.16', '0.14']
-        for version in versions:
-            testlib = 'tracker-sparql-' + version
-            if conf.CHECK_CFG(package=testlib,
-                              args='--cflags --libs',
-                              mandatory=False):
-                conf.SET_TARGET_TYPE(testlib, 'SYSLIB')
-                conf.env['libtracker'] = testlib
-                conf.env.with_spotlight = True
-                conf.DEFINE('WITH_SPOTLIGHT', '1')
-                break
 
-        if not conf.env.with_spotlight:
-            conf.fatal("Spotlight support requested but tracker-sparql library missing")
+        if not conf.CONFIG_SET('HAVE_TRACKER'):
+            conf.fatal('Missing Gnome Tracker development files')
+
+        if not conf.CONFIG_SET('HAVE_GLIB'):
+            conf.fatal('Missing glib-2.0 development files')
+
         Logs.info("building with Spotlight support")
         default_static_modules.extend(TO_LIST('rpc_mdssvc_module'))
+        conf.DEFINE('WITH_SPOTLIGHT', '1')
+        conf.env.with_spotlight = True
 
     conf.CHECK_HEADERS('rpc/xdr.h', lib='tirpc')
 
@@ -1670,7 +1713,6 @@ main() {
                                       vfs_media_harmony vfs_unityed_media vfs_fruit vfs_shell_snap
                                       vfs_commit vfs_worm vfs_crossrename vfs_linux_xfs_sgid
                                       vfs_time_audit vfs_offline vfs_virusfilter
-                                      vfs_glusterfs_fuse
                                   '''))
     default_shared_modules.extend(TO_LIST('auth_script idmap_tdb2 idmap_script'))
     # these have broken dependencies
@@ -1723,9 +1765,17 @@ main() {
 
     if conf.CONFIG_SET("HAVE_CEPH"):
         default_shared_modules.extend(TO_LIST('vfs_ceph'))
+        # Unlike vfs_ceph, vfs_ceph_snapshots doesn't depend on libcephfs, so
+        # can be enabled atop a kernel CephFS share (with vfs_default) in
+        # addition to vfs_ceph. Still, only enable vfs_ceph_snapshots builds
+        # if we're building with libcephfs for now.
+        default_shared_modules.extend(TO_LIST('vfs_ceph_snapshots'))
 
     if conf.CONFIG_SET('HAVE_GLUSTERFS'):
         default_shared_modules.extend(TO_LIST('vfs_glusterfs'))
+
+    if conf.CONFIG_SET('HAVE_SETMNTENT'):
+        default_shared_modules.extend(TO_LIST('vfs_glusterfs_fuse'))
 
     if conf.CONFIG_SET('HAVE_VXFS'):
         default_shared_modules.extend(TO_LIST('vfs_vxfs'))

@@ -21,6 +21,8 @@
 #ifndef _SMBXCLI_BASE_H_
 #define _SMBXCLI_BASE_H_
 
+#define SMB_SUICIDE_PACKET 0x74697865
+
 struct smbXcli_conn;
 struct smbXcli_session;
 struct smbXcli_tcon;
@@ -464,10 +466,19 @@ NTSTATUS smb2cli_validate_negotiate_info_recv(struct tevent_req *req);
 
 struct smbXcli_session *smbXcli_session_create(TALLOC_CTX *mem_ctx,
 					       struct smbXcli_conn *conn);
-struct smbXcli_session *smbXcli_session_copy(TALLOC_CTX *mem_ctx,
+struct smbXcli_session *smbXcli_session_shallow_copy(TALLOC_CTX *mem_ctx,
 					       struct smbXcli_session *src);
 bool smbXcli_session_is_guest(struct smbXcli_session *session);
 bool smbXcli_session_is_authenticated(struct smbXcli_session *session);
+NTSTATUS smb2cli_session_signing_key(struct smbXcli_session *session,
+				     TALLOC_CTX *mem_ctx,
+				     DATA_BLOB *key);
+NTSTATUS smb2cli_session_encryption_key(struct smbXcli_session *session,
+					TALLOC_CTX *mem_ctx,
+					DATA_BLOB *key);
+NTSTATUS smb2cli_session_decryption_key(struct smbXcli_session *session,
+					TALLOC_CTX *mem_ctx,
+					DATA_BLOB *key);
 NTSTATUS smbXcli_session_application_key(struct smbXcli_session *session,
 					 TALLOC_CTX *mem_ctx,
 					 DATA_BLOB *key);

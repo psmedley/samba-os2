@@ -29,7 +29,7 @@ bld.SAMBA_MKVERSION('version.h')
 # bld.ENABLE_MAGIC_ORDERING()
 
 bld.env.ABS_TOP_SRCDIR = bld.srcnode.abspath() + '/docs-xml'
-bld.env.ABS_TOP_BUILDDIR = bld.srcnode.abspath() + '/bin/default/docs-xml'
+bld.env.ABS_TOP_BUILDDIR = bld.bldnode.abspath() + '/docs-xml'
 bld.CONFIGURE_FILE('docs-xml/build/catalog.xml',
                    ABS_TOP_BUILDDIR = bld.env.ABS_TOP_BUILDDIR,
                    ABS_TOP_SRCDIR=bld.env.ABS_TOP_SRCDIR)
@@ -46,6 +46,7 @@ bld.RECURSE('lib/texpect')
 bld.RECURSE('lib/addns')
 bld.RECURSE('lib/ldb')
 bld.RECURSE('lib/param')
+bld.RECURSE('lib/printer_driver')
 bld.RECURSE('lib/audit_logging')
 bld.RECURSE('dynconfig')
 bld.RECURSE('lib/util/charset')
@@ -88,13 +89,12 @@ bld.RECURSE('source4/echo_server')
 bld.RECURSE('source4/smb_server')
 bld.RECURSE('source4/rpc_server')
 bld.RECURSE('source4/ldap_server')
-bld.RECURSE('source4/web_server')
 bld.RECURSE('source4/winbind')
 bld.RECURSE('source4/nbt_server')
 bld.RECURSE('source4/wrepl_server')
 bld.RECURSE('source4/cldap_server')
 bld.RECURSE('source4/ntp_signd')
-bld.RECURSE('source4/utils')
+bld.RECURSE('source4/utils/oLschema2ldif')
 bld.RECURSE('source4/ntvfs')
 bld.RECURSE('source4/torture')
 bld.RECURSE('librpc')

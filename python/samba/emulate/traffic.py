@@ -28,6 +28,8 @@ import signal
 from errno import ECHILD, ESRCH
 
 from collections import OrderedDict, Counter, defaultdict, namedtuple
+from dns.resolver import query as dns_query
+
 from samba.emulate import traffic_packets
 from samba.samdb import SamDB
 import ldb
@@ -365,7 +367,10 @@ class ReplayContext(object):
         self.netlogon_connection      = None
         self.creds                    = creds
         self.lp                       = lp
-        self.prefer_kerberos          = prefer_kerberos
+        if prefer_kerberos:
+            self.kerberos_state = MUST_USE_KERBEROS
+        else:
+            self.kerberos_state = DONT_USE_KERBEROS
         self.ou                       = ou
         self.base_dn                  = base_dn
         self.domain                   = domain
@@ -510,20 +515,14 @@ class ReplayContext(object):
         self.user_creds.set_password(self.userpass)
         self.user_creds.set_username(self.username)
         self.user_creds.set_domain(self.domain)
-        if self.prefer_kerberos:
-            self.user_creds.set_kerberos_state(MUST_USE_KERBEROS)
-        else:
-            self.user_creds.set_kerberos_state(DONT_USE_KERBEROS)
+        self.user_creds.set_kerberos_state(self.kerberos_state)
 
         self.user_creds_bad = Credentials()
         self.user_creds_bad.guess(self.lp)
         self.user_creds_bad.set_workstation(self.netbios_name)
         self.user_creds_bad.set_password(self.userpass[:-4])
         self.user_creds_bad.set_username(self.username)
-        if self.prefer_kerberos:
-            self.user_creds_bad.set_kerberos_state(MUST_USE_KERBEROS)
-        else:
-            self.user_creds_bad.set_kerberos_state(DONT_USE_KERBEROS)
+        self.user_creds_bad.set_kerberos_state(self.kerberos_state)
 
         # Credentials for ldap simple bind.
         self.simple_bind_creds = Credentials()
@@ -533,10 +532,7 @@ class ReplayContext(object):
         self.simple_bind_creds.set_username(self.username)
         self.simple_bind_creds.set_gensec_features(
             self.simple_bind_creds.get_gensec_features() | gensec.FEATURE_SEAL)
-        if self.prefer_kerberos:
-            self.simple_bind_creds.set_kerberos_state(MUST_USE_KERBEROS)
-        else:
-            self.simple_bind_creds.set_kerberos_state(DONT_USE_KERBEROS)
+        self.simple_bind_creds.set_kerberos_state(self.kerberos_state)
         self.simple_bind_creds.set_bind_dn(self.user_dn)
 
         self.simple_bind_creds_bad = Credentials()
@@ -547,10 +543,7 @@ class ReplayContext(object):
         self.simple_bind_creds_bad.set_gensec_features(
             self.simple_bind_creds_bad.get_gensec_features() |
             gensec.FEATURE_SEAL)
-        if self.prefer_kerberos:
-            self.simple_bind_creds_bad.set_kerberos_state(MUST_USE_KERBEROS)
-        else:
-            self.simple_bind_creds_bad.set_kerberos_state(DONT_USE_KERBEROS)
+        self.simple_bind_creds_bad.set_kerberos_state(self.kerberos_state)
         self.simple_bind_creds_bad.set_bind_dn(self.user_dn)
 
     def generate_machine_creds(self):
@@ -568,10 +561,7 @@ class ReplayContext(object):
         self.machine_creds.set_password(self.machinepass)
         self.machine_creds.set_username(self.netbios_name + "$")
         self.machine_creds.set_domain(self.domain)
-        if self.prefer_kerberos:
-            self.machine_creds.set_kerberos_state(MUST_USE_KERBEROS)
-        else:
-            self.machine_creds.set_kerberos_state(DONT_USE_KERBEROS)
+        self.machine_creds.set_kerberos_state(self.kerberos_state)
 
         self.machine_creds_bad = Credentials()
         self.machine_creds_bad.guess(self.lp)
@@ -579,10 +569,7 @@ class ReplayContext(object):
         self.machine_creds_bad.set_secure_channel_type(SEC_CHAN_BDC)
         self.machine_creds_bad.set_password(self.machinepass[:-4])
         self.machine_creds_bad.set_username(self.netbios_name + "$")
-        if self.prefer_kerberos:
-            self.machine_creds_bad.set_kerberos_state(MUST_USE_KERBEROS)
-        else:
-            self.machine_creds_bad.set_kerberos_state(DONT_USE_KERBEROS)
+        self.machine_creds_bad.set_kerberos_state(self.kerberos_state)
 
     def get_matching_dn(self, pattern, attributes=None):
         # If the pattern is an empty string, we assume ROOTDSE,
@@ -872,11 +859,8 @@ class Conversation(object):
         if not client:
             src, dest = dest, src
         key = (protocol, opcode)
-        desc = OP_DESCRIPTIONS[key] if key in OP_DESCRIPTIONS else ''
-        if protocol in IP_PROTOCOLS:
-            ip_protocol = IP_PROTOCOLS[protocol]
-        else:
-            ip_protocol = '06'
+        desc = OP_DESCRIPTIONS.get(key, '')
+        ip_protocol = IP_PROTOCOLS.get(protocol, '06')
         packet = Packet(timestamp - self.start_time, ip_protocol,
                         '', src, dest,
                         protocol, opcode, desc, extra)
@@ -909,10 +893,7 @@ class Conversation(object):
         return self.packets[-1].timestamp - self.packets[0].timestamp
 
     def replay_as_summary_lines(self):
-        lines = []
-        for p in self.packets:
-            lines.append(p.as_summary(self.start_time))
-        return lines
+        return [p.as_summary(self.start_time) for p in self.packets]
 
     def replay_with_delay(self, start, context=None, account=None):
         """Replay the conversation at the right time.
@@ -988,22 +969,56 @@ class DnsHammer(Conversation):
     """A lightweight conversation that generates a lot of dns:0 packets on
     the fly"""
 
-    def __init__(self, dns_rate, duration):
+    def __init__(self, dns_rate, duration, query_file=None):
         n = int(dns_rate * duration)
         self.times = [random.uniform(0, duration) for i in range(n)]
         self.times.sort()
         self.rate = dns_rate
         self.duration = duration
         self.start_time = 0
-        self.msg = random_colour_print()
+        self.query_choices = self._get_query_choices(query_file=query_file)
 
     def __str__(self):
         return ("<DnsHammer %d packets over %.1fs (rate %.2f)>" %
                 (len(self.times), self.duration, self.rate))
 
+    def _get_query_choices(self, query_file=None):
+        """
+        Read dns query choices from a file, or return default
+
+        rname may contain format string like `{realm}`
+        realm can be fetched from context.realm
+        """
+
+        if query_file:
+            with open(query_file, 'r') as f:
+                text = f.read()
+            choices = []
+            for line in text.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    args = line.split(',')
+                    assert len(args) == 4
+                    choices.append(args)
+            return choices
+        else:
+            return [
+                (0, '{realm}', 'A', 'yes'),
+                (1, '{realm}', 'NS', 'yes'),
+                (2, '*.{realm}', 'A', 'no'),
+                (3, '*.{realm}', 'NS', 'no'),
+                (10, '_msdcs.{realm}', 'A', 'yes'),
+                (11, '_msdcs.{realm}', 'NS', 'yes'),
+                (20, 'nx.realm.com', 'A', 'no'),
+                (21, 'nx.realm.com', 'NS', 'no'),
+                (22, '*.nx.realm.com', 'A', 'no'),
+                (23, '*.nx.realm.com', 'NS', 'no'),
+            ]
+
     def replay(self, context=None):
+        assert context
+        assert context.realm
         start = time.time()
-        fn = traffic_packets.packet_dns_0
         for t in self.times:
             now = time.time() - start
             gap = t - now
@@ -1011,16 +1026,21 @@ class DnsHammer(Conversation):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
+            opcode, rname, rtype, exist = random.choice(self.query_choices)
+            rname = rname.format(realm=context.realm)
+            success = True
             packet_start = time.time()
             try:
-                fn(None, None, context)
+                answers = dns_query(rname, rtype)
+                if exist == 'yes' and not len(answers):
+                    # expect answers but didn't get, fail
+                    success = False
+            except Exception:
+                success = False
+            finally:
                 end = time.time()
                 duration = end - packet_start
-                print("%f\tDNS\tdns\t0\t%f\tTrue\t" % (end, duration))
-            except Exception as e:
-                end = time.time()
-                duration = end - packet_start
-                print("%f\tDNS\tdns\t0\t%f\tFalse\t%s" % (end, duration, e))
+                print("%f\tDNS\tdns\t%s\t%f\t%s\t" % (end, opcode, duration, success))
 
 
 def ingest_summaries(files, dns_mode='count'):
@@ -1537,17 +1557,30 @@ def replay_seq_in_fork(cs, start, context, account, client_id, server_id=1):
         os._exit(status)
 
 
-def dnshammer_in_fork(dns_rate, duration):
+def dnshammer_in_fork(dns_rate, duration, context, query_file=None):
     sys.stdout.flush()
     sys.stderr.flush()
     pid = os.fork()
     if pid != 0:
         return pid
+
+    sys.stdin.close()
+    os.close(0)
+
+    try:
+        sys.stdout.close()
+        os.close(1)
+    except IOError as e:
+        LOGGER.warn("stdout closing failed with %s" % e)
+        pass
+    filename = os.path.join(context.statsdir, 'stats-dns')
+    sys.stdout = open(filename, 'w')
+
     try:
         status = 0
         signal.signal(signal.SIGTERM, flushing_signal_handler)
-        hammer = DnsHammer(dns_rate, duration)
-        hammer.replay()
+        hammer = DnsHammer(dns_rate, duration, query_file=query_file)
+        hammer.replay(context=context)
     except Exception:
         status = 1
         print(("EXCEPTION in child PID %d, the DNS hammer" % (os.getpid())),
@@ -1565,6 +1598,7 @@ def replay(conversation_seq,
            lp=None,
            accounts=None,
            dns_rate=0,
+           dns_query_file=None,
            duration=None,
            latency_timeout=1.0,
            stop_on_any_error=False,
@@ -1614,7 +1648,8 @@ def replay(conversation_seq,
     children = {}
     try:
         if dns_rate:
-            pid = dnshammer_in_fork(dns_rate, duration)
+            pid = dnshammer_in_fork(dns_rate, duration, context,
+                                    query_file=dns_query_file)
             children[pid] = 1
 
         for i, cs in enumerate(conversation_seq):

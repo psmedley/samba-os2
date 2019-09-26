@@ -1,3 +1,37 @@
+samba (2:4.11.0+dfsg-1) experimental; urgency=medium
+
+  [ Mathieu Parent ]
+  * Upload to experimental
+  * New upstream major release
+    - Update d/gbp.conf, d/watch and d/README.source for 4.11
+    - Import upstream release
+    - Update fix-nfs-service-name-to-nfs-kernel-server.patch
+    - Bump build-depends talloc >= 2.2.0, tdb >= 1.4.2, tevent >= 0.10.0 and
+      ldb >= 2:2.0.7
+    - libsamba-passdb.so bumped to 0.28.0
+    - libnon-posix-acls is now a subsystem
+    - Drop libparse-pidl-perl package (Closes: #939419)
+    - Add new files to d/*.install
+    - Move libsamba-util.so.* to libwbclient0, to avoid circular dependencies
+    - Move libsamba-util deps to libwbclient0
+  * Add build-Remove-tests-for-getdents-and-getdirentries.patch, to fix FTBFS on
+    armel and armhf
+  * salsa-ci: Build on experimental
+
+  [ John Paul Adrian Glaubitz ]
+  * Disable cephfs support on architectures where it's not stable
+    (Closes: #940697)
+
+  [ Louis van Belle ]
+  * d/control, d/samba.install: added libtasn1-bin, libtasn1-6-dev to build
+    dumpmscat
+  * d/control, d/rules: Enable spotlight (TimeMachine)
+  * d/control: Bump libtdb-dev (>= 2) in samba-dev deps
+  * Update libwbclient0.symbols
+  * d/rules: adjust LDB_DEPENDS
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 26 Sep 2019 09:37:51 +0200
+
 samba (2:4.10.8+dfsg-1) unstable; urgency=medium
 
   * Upload to unstable
@@ -7960,7 +7994,7 @@ samba (1.9.17p1-1) unstable; urgency=low
   * Linking with libcrypt (LIBM='... -lcrypt'). Without including this
     library smbd generates a seg. fault when authenticating users (?).
 
- -- Eloy A. Paris <debian.org>  Wed, 10 Sep 1997 22:09:18 -0400
+ -- Eloy A. Paris <peloy@debian.org>  Wed, 10 Sep 1997 22:09:18 -0400
 
 samba (1.9.17-1) unstable; urgency=low
 

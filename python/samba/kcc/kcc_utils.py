@@ -19,7 +19,8 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
+from __future__ import print_function
+import sys
 import ldb
 import uuid
 
@@ -31,7 +32,7 @@ from samba.dcerpc import (
 )
 from samba.common import dsdb_Dn
 from samba.ndr import ndr_unpack, ndr_pack
-from collections import defaultdict
+from collections import Counter
 
 
 class KCCError(Exception):
@@ -314,8 +315,13 @@ class NCReplica(NamingContext):
         # Possibly no repsFrom if this is a singleton DC
         if "repsFrom" in msg:
             for value in msg["repsFrom"]:
-                rep = RepsFromTo(self.nc_dnstr,
-                                 ndr_unpack(drsblobs.repsFromToBlob, value))
+                try:
+                    unpacked = ndr_unpack(drsblobs.repsFromToBlob, value)
+                except RuntimeError as e:
+                    print("bad repsFrom NDR: %r" % (value),
+                          file=sys.stderr)
+                    continue
+                rep = RepsFromTo(self.nc_dnstr, unpacked)
                 self.rep_repsFrom.append(rep)
 
     def commit_repsFrom(self, samdb, ro=False):
@@ -468,8 +474,13 @@ class NCReplica(NamingContext):
         # Possibly no repsTo if this is a singleton DC
         if "repsTo" in msg:
             for value in msg["repsTo"]:
-                rep = RepsFromTo(self.nc_dnstr,
-                                 ndr_unpack(drsblobs.repsFromToBlob, value))
+                try:
+                    unpacked = ndr_unpack(drsblobs.repsFromToBlob, value)
+                except RuntimeError as e:
+                    print("bad repsTo NDR: %r" % (value),
+                          file=sys.stderr)
+                    continue
+                rep = RepsFromTo(self.nc_dnstr, unpacked)
                 self.rep_repsTo.append(rep)
 
     def commit_repsTo(self, samdb, ro=False):
@@ -2288,7 +2299,7 @@ def uncovered_sites_to_cover(samdb, site_name):
                             scope=ldb.SCOPE_SUBTREE,
                             expression="(objectClass=site)")
 
-    sites_in_use = defaultdict(int)
+    sites_in_use = Counter()
     dc_count = 0
 
     # Assume server is of form DC,Servers,Site-ABCD because of schema

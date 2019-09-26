@@ -3487,7 +3487,7 @@ static int cmd_readlink(void)
 	char *name= NULL;
 	char *buf = NULL;
 	char *targetname = NULL;
-	char linkname[PATH_MAX+1];
+	char *linkname = NULL;
 	struct cli_state *targetcli;
         NTSTATUS status;
 
@@ -3519,7 +3519,7 @@ static int cmd_readlink(void)
 		return 1;
 	}
 
-	status = cli_posix_readlink(targetcli, name, linkname, PATH_MAX+1);
+	status = cli_posix_readlink(targetcli, name, talloc_tos(), &linkname);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("%s readlink on file %s\n",
 			 nt_errstr(status), name);
@@ -3527,6 +3527,8 @@ static int cmd_readlink(void)
 	}
 
 	d_printf("%s -> %s\n", name, linkname);
+
+	TALLOC_FREE(linkname);
 
 	return 0;
 }
@@ -4492,7 +4494,7 @@ static int cmd_hardlink(void)
 		return 1;
 	}
 
-	status = cli_nt_hardlink(targetcli, targetname, dest);
+	status = cli_hardlink(targetcli, targetname, dest);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("%s doing an NT hard link of files\n",
 			 nt_errstr(status));
@@ -5533,8 +5535,8 @@ static struct {
 } commands[] = {
   {"?",cmd_help,"[command] give help on a command",{COMPL_NONE,COMPL_NONE}},
   {"allinfo",cmd_allinfo,"<file> show all available info",
-   {COMPL_NONE,COMPL_NONE}},
-  {"altname",cmd_altname,"<file> show alt name",{COMPL_NONE,COMPL_NONE}},
+   {COMPL_REMOTE,COMPL_NONE}},
+  {"altname",cmd_altname,"<file> show alt name",{COMPL_REMOTE,COMPL_NONE}},
   {"archive",cmd_archive,"<level>\n0=ignore archive bit\n1=only get archive files\n2=only get archive files and reset archive bit\n3=get all files and reset archive bit",{COMPL_NONE,COMPL_NONE}},
   {"backup",cmd_backup,"toggle backup intent state",{COMPL_NONE,COMPL_NONE}},
   {"blocksize",cmd_block,"blocksize <number> (default 20)",{COMPL_NONE,COMPL_NONE}},
@@ -6340,21 +6342,136 @@ int main(int argc,char *argv[])
 	struct poptOption long_options[] = {
 		POPT_AUTOHELP
 
-		{ "name-resolve", 'R', POPT_ARG_STRING, &new_name_resolve_order, 'R', "Use these name resolution services only", "NAME-RESOLVE-ORDER" },
-		{ "message", 'M', POPT_ARG_STRING, NULL, 'M', "Send message", "HOST" },
-		{ "ip-address", 'I', POPT_ARG_STRING, NULL, 'I', "Use this IP to connect to", "IP" },
-		{ "stderr", 'E', POPT_ARG_NONE, NULL, 'E', "Write messages to stderr instead of stdout" },
-		{ "list", 'L', POPT_ARG_STRING, NULL, 'L', "Get a list of shares available on a host", "HOST" },
-		{ "max-protocol", 'm', POPT_ARG_STRING, NULL, 'm', "Set the max protocol level", "LEVEL" },
-		{ "tar", 'T', POPT_ARG_STRING, NULL, 'T', "Command line tar", "<c|x>IXFqgbNan" },
-		{ "directory", 'D', POPT_ARG_STRING, NULL, 'D', "Start from directory", "DIR" },
-		{ "command", 'c', POPT_ARG_STRING, &cmdstr, 'c', "Execute semicolon separated commands" },
-		{ "send-buffer", 'b', POPT_ARG_INT, &io_bufsize, 'b', "Changes the transmit/send buffer", "BYTES" },
-		{ "timeout", 't', POPT_ARG_INT, &io_timeout, 'b', "Changes the per-operation timeout", "SECONDS" },
-		{ "port", 'p', POPT_ARG_INT, &port, 'p', "Port to connect to", "PORT" },
-		{ "grepable", 'g', POPT_ARG_NONE, NULL, 'g', "Produce grepable output" },
-		{ "quiet", 'q', POPT_ARG_NONE, NULL, 'q', "Suppress help message" },
-                { "browse", 'B', POPT_ARG_NONE, NULL, 'B', "Browse SMB servers using DNS" },
+		{
+			.longName   = "name-resolve",
+			.shortName  = 'R',
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &new_name_resolve_order,
+			.val        = 'R',
+			.descrip    = "Use these name resolution services only",
+			.argDescrip = "NAME-RESOLVE-ORDER",
+		},
+		{
+			.longName   = "message",
+			.shortName  = 'M',
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = NULL,
+			.val        = 'M',
+			.descrip    = "Send message",
+			.argDescrip = "HOST",
+		},
+		{
+			.longName   = "ip-address",
+			.shortName  = 'I',
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = NULL,
+			.val        = 'I',
+			.descrip    = "Use this IP to connect to",
+			.argDescrip = "IP",
+		},
+		{
+			.longName   = "stderr",
+			.shortName  = 'E',
+			.argInfo    = POPT_ARG_NONE,
+			.arg        = NULL,
+			.val        = 'E',
+			.descrip    = "Write messages to stderr instead of stdout",
+		},
+		{
+			.longName   = "list",
+			.shortName  = 'L',
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = NULL,
+			.val        = 'L',
+			.descrip    = "Get a list of shares available on a host",
+			.argDescrip = "HOST",
+		},
+		{
+			.longName   = "max-protocol",
+			.shortName  = 'm',
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = NULL,
+			.val        = 'm',
+			.descrip    = "Set the max protocol level",
+			.argDescrip = "LEVEL",
+		},
+		{
+			.longName   = "tar",
+			.shortName  = 'T',
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = NULL,
+			.val        = 'T',
+			.descrip    = "Command line tar",
+			.argDescrip = "<c|x>IXFqgbNan",
+		},
+		{
+			.longName   = "directory",
+			.shortName  = 'D',
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = NULL,
+			.val        = 'D',
+			.descrip    = "Start from directory",
+			.argDescrip = "DIR",
+		},
+		{
+			.longName   = "command",
+			.shortName  = 'c',
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &cmdstr,
+			.val        = 'c',
+			.descrip    = "Execute semicolon separated commands",
+		},
+		{
+			.longName   = "send-buffer",
+			.shortName  = 'b',
+			.argInfo    = POPT_ARG_INT,
+			.arg        = &io_bufsize,
+			.val        = 'b',
+			.descrip    = "Changes the transmit/send buffer",
+			.argDescrip = "BYTES",
+		},
+		{
+			.longName   = "timeout",
+			.shortName  = 't',
+			.argInfo    = POPT_ARG_INT,
+			.arg        = &io_timeout,
+			.val        = 'b',
+			.descrip    = "Changes the per-operation timeout",
+			.argDescrip = "SECONDS",
+		},
+		{
+			.longName   = "port",
+			.shortName  = 'p',
+			.argInfo    = POPT_ARG_INT,
+			.arg        = &port,
+			.val        = 'p',
+			.descrip    = "Port to connect to",
+			.argDescrip = "PORT",
+		},
+		{
+			.longName   = "grepable",
+			.shortName  = 'g',
+			.argInfo    = POPT_ARG_NONE,
+			.arg        = NULL,
+			.val        = 'g',
+			.descrip    = "Produce grepable output",
+		},
+		{
+			.longName   = "quiet",
+			.shortName  = 'q',
+			.argInfo    = POPT_ARG_NONE,
+			.arg        = NULL,
+			.val        = 'q',
+			.descrip    = "Suppress help message",
+		},
+		{
+			.longName   = "browse",
+			.shortName  = 'B',
+			.argInfo    = POPT_ARG_NONE,
+			.arg        = NULL,
+			.val        = 'B',
+			.descrip    = "Browse SMB servers using DNS",
+		},
 		POPT_COMMON_SAMBA
 		POPT_COMMON_CONNECTION
 		POPT_COMMON_CREDENTIALS

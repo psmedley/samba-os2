@@ -352,6 +352,7 @@ static int ldb_ldif_write_trace(struct ldb_context *ldb,
 		for (j=0;j<msg->elements[i].num_values;j++) {
 			struct ldb_val v;
 			bool use_b64_encode = false;
+			bool copy_raw_bytes = false;
 
 			ret = a->syntax->ldif_write_fn(ldb, mem_ctx, &msg->elements[i].values[j], &v);
 			if (ret != LDB_SUCCESS) {
@@ -360,8 +361,13 @@ static int ldb_ldif_write_trace(struct ldb_context *ldb,
 
 			if (ldb->flags & LDB_FLG_SHOW_BINARY) {
 				use_b64_encode = false;
+				copy_raw_bytes = true;
 			} else if (a->flags & LDB_ATTR_FLAG_FORCE_BASE64_LDIF) {
 				use_b64_encode = true;
+			} else if (msg->elements[i].flags &
+			           LDB_FLAG_FORCE_NO_BASE64_LDIF) {
+				use_b64_encode = false;
+				copy_raw_bytes = true;
 			} else {
 				use_b64_encode = ldb_should_b64_encode(ldb, &v);
 			}
@@ -379,7 +385,7 @@ static int ldb_ldif_write_trace(struct ldb_context *ldb,
 			} else {
 				ret = fprintf_fn(private_data, "%s: ", msg->elements[i].name);
 				CHECK_RET;
-				if (ldb->flags & LDB_FLG_SHOW_BINARY) {
+				if (copy_raw_bytes) {
 					ret = fprintf_fn(private_data, "%*.*s",
 							 v.length, v.length, (char *)v.data);
 				} else {
@@ -728,7 +734,7 @@ int ldb_ldif_parse_modrdn(struct ldb_context *ldb,
 	if (_deleteoldrdn) {
 		*_deleteoldrdn = deleteoldrdn;
 	}
-	if (_newsuperior) {
+	if (_newsuperior != NULL && _newrdn != NULL) {
 		if (newsuperior_val) {
 			*_newrdn = talloc_move(mem_ctx, &newrdn);
 		} else {
@@ -772,7 +778,7 @@ struct ldb_ldif *ldb_ldif_read(struct ldb_context *ldb,
 	ldif = talloc(ldb, struct ldb_ldif);
 	if (!ldif) return NULL;
 
-	ldif->msg = talloc(ldif, struct ldb_message);
+	ldif->msg = ldb_msg_new(ldif);
 	if (ldif->msg == NULL) {
 		talloc_free(ldif);
 		return NULL;
@@ -780,10 +786,6 @@ struct ldb_ldif *ldb_ldif_read(struct ldb_context *ldb,
 
 	ldif->changetype = LDB_CHANGETYPE_NONE;
 	msg = ldif->msg;
-
-	msg->dn = NULL;
-	msg->elements = NULL;
-	msg->num_elements = 0;
 
 	chunk = next_chunk(ldb, ldif, fgetc_fn, private_data);
 	if (!chunk) {

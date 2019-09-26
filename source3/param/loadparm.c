@@ -201,7 +201,7 @@ static const struct loadparm_service _sDefault =
 	.oplocks = true,
 	.kernel_oplocks = false,
 	.level2_oplocks = true,
-	.mangled_names = MANGLED_NAMES_YES,
+	.mangled_names = MANGLED_NAMES_ILLEGAL,
 	.wide_links = false,
 	.follow_symlinks = true,
 	.sync_always = false,
@@ -236,7 +236,6 @@ static const struct loadparm_service _sDefault =
 	.acl_map_full_control = true,
 	.acl_group_control = false,
 	.acl_allow_execute_always = false,
-	.allocation_roundup_size = SMB_ROUNDUP_ALLOCATION_SIZE,
 	.aio_read_size = 1,
 	.aio_write_size = 1,
 	.map_readonly = MAP_READONLY_NO,
@@ -641,15 +640,15 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals._disable_spoolss = false;
 	Globals.max_smbd_processes = 0;/* no limit specified */
 	Globals.username_level = 0;
-	Globals.deadtime = 0;
+	Globals.deadtime = 10080;
 	Globals.getwd_cache = true;
 	Globals.large_readwrite = true;
 	Globals.max_log_size = 5000;
 	Globals.max_open_files = max_open_files();
 	Globals.server_max_protocol = PROTOCOL_SMB3_11;
-	Globals.server_min_protocol = PROTOCOL_LANMAN1;
+	Globals.server_min_protocol = PROTOCOL_SMB2_02;
 	Globals._client_max_protocol = PROTOCOL_DEFAULT;
-	Globals.client_min_protocol = PROTOCOL_CORE;
+	Globals.client_min_protocol = PROTOCOL_SMB2_02;
 	Globals._client_ipc_max_protocol = PROTOCOL_DEFAULT;
 	Globals._client_ipc_min_protocol = PROTOCOL_DEFAULT;
 	Globals._security = SEC_AUTO;
@@ -945,8 +944,6 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.krb5_port = 88;
 
 	Globals.kpasswd_port = 464;
-
-	Globals.web_port = 901;
 
 	Globals.aio_max_threads = 100;
 

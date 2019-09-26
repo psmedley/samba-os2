@@ -65,11 +65,6 @@ bld.SAMBA_SUBSYSTEM('NDR_FRSRPC',
     public_deps='ndr'
     )
 
-bld.SAMBA_SUBSYSTEM('RPC_NDR_FRSRPC',
-	source='gen_ndr/ndr_frsrpc_c.c',
-	public_deps='NDR_FRSRPC'
-	)
-
 bld.SAMBA_SUBSYSTEM('NDR_FRSAPI',
     source='gen_ndr/ndr_frsapi.c',
     public_deps='ndr'
@@ -92,11 +87,6 @@ bld.SAMBA_SUBSYSTEM('NDR_BKUPBLOBS',
 
 bld.SAMBA_SUBSYSTEM('NDR_FSCC',
 	source='gen_ndr/ndr_fscc.c',
-	public_deps='ndr'
-	)
-
-bld.SAMBA_SUBSYSTEM('NDR_FRSBLOBS',
-	source='gen_ndr/ndr_frsblobs.c',
 	public_deps='ndr'
 	)
 
@@ -445,21 +435,6 @@ bld.SAMBA_SUBSYSTEM('NDR_MESSAGING',
     public_deps='ndr NDR_SERVER_ID'
     )
 
-bld.SAMBA_SUBSYSTEM('RPC_NDR_XATTR',
-    source='gen_ndr/ndr_xattr_c.c',
-    public_deps='NDR_XATTR dcerpc-binding'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_IDMAP',
-    source='gen_ndr/ndr_idmap_c.c',
-    public_deps='NDR_IDMAP dcerpc-binding'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_SMB_ACL',
-    source='gen_ndr/ndr_smb_acl_c.c',
-    public_deps='NDR_SMB_ACL dcerpc-binding'
-    )
-
 bld.SAMBA_SUBSYSTEM('RPC_NDR_ROT',
     source='gen_ndr/ndr_rot_c.c',
     public_deps='NDR_ROT dcerpc-binding'
@@ -470,24 +445,9 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_ATSVC',
     public_deps='dcerpc-binding NDR_ATSVC'
     )
 
-bld.SAMBA_SUBSYSTEM('RPC_NDR_AUDIOSRV',
-    source='gen_ndr/ndr_audiosrv_c.c',
-    public_deps='NDR_AUDIOSRV dcerpc-binding'
-    )
-
 bld.SAMBA_SUBSYSTEM('RPC_NDR_ECHO',
     source='gen_ndr/ndr_echo_c.c',
     public_deps='dcerpc-binding NDR_ECHO'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_DSBACKUP',
-    source='gen_ndr/ndr_dsbackup_c.c',
-    public_deps='dcerpc-binding NDR_DSBACKUP'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_EFS',
-    source='gen_ndr/ndr_efs_c.c',
-    public_deps='dcerpc-binding NDR_EFS'
     )
 
 bld.SAMBA_SUBSYSTEM('RPC_NDR_LSA',
@@ -515,21 +475,6 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_DRSUAPI',
     public_deps='dcerpc-binding NDR_DRSUAPI'
     )
 
-bld.SAMBA_SUBSYSTEM('RPC_NDR_DRSBLOBS',
-    source='gen_ndr/ndr_drsblobs_c.c',
-    public_deps='dcerpc-binding NDR_DRSBLOBS'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_NTLMSSP',
-    source='gen_ndr/ndr_ntlmssp_c.c',
-    public_deps='dcerpc-binding NDR_NTLMSSP'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_POLICYAGENT',
-    source='gen_ndr/ndr_policyagent_c.c',
-    public_deps='dcerpc-binding NDR_POLICYAGENT'
-    )
-
 bld.SAMBA_SUBSYSTEM('RPC_NDR_UNIXINFO',
     source='gen_ndr/ndr_unixinfo_c.c',
     public_deps='dcerpc-binding NDR_UNIXINFO'
@@ -548,11 +493,6 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_SPOOLSS',
 bld.SAMBA_SUBSYSTEM('RPC_NDR_WINSPOOL',
     source='gen_ndr/ndr_winspool_c.c',
     public_deps='dcerpc-binding NDR_WINSPOOL'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_NBT',
-    source='gen_ndr/ndr_nbt_c.c',
-    public_deps='dcerpc-binding ndr_nbt'
     )
 
 bld.SAMBA_SUBSYSTEM('RPC_NDR_WKSSVC',
@@ -582,19 +522,9 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_EPMAPPER',
     public_deps='tevent NDR_EPMAPPER'
     )
 
-bld.SAMBA_SUBSYSTEM('RPC_NDR_DBGIDL',
-    source='gen_ndr/ndr_dbgidl_c.c',
-    public_deps='dcerpc-binding NDR_DBGIDL'
-    )
-
 bld.SAMBA_SUBSYSTEM('RPC_NDR_DSSETUP',
     source='gen_ndr/ndr_dssetup_c.c',
     public_deps='dcerpc-binding NDR_DSSETUP'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_MSGSVC',
-    source='gen_ndr/ndr_msgsvc_c.c',
-    public_deps='dcerpc-binding NDR_MSGSVC'
     )
 
 bld.SAMBA_SUBSYSTEM('RPC_NDR_WINREG',
@@ -622,24 +552,9 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_REMACT',
     public_deps='dcerpc-binding NDR_REMACT'
     )
 
-bld.SAMBA_SUBSYSTEM('RPC_NDR_WZCSVC',
-    source='gen_ndr/ndr_wzcsvc_c.c',
-    public_deps='dcerpc-binding NDR_WZCSVC'
-    )
-
 bld.SAMBA_SUBSYSTEM('RPC_NDR_W32TIME',
     source='gen_ndr/ndr_w32time_c.c',
     public_deps='dcerpc-binding NDR_W32TIME'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_SCERPC',
-    source='gen_ndr/ndr_scerpc_c.c',
-    public_deps='dcerpc-binding NDR_SCERPC'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_SERVER_ID',
-    source='gen_ndr/ndr_server_id_c.c',
-    public_deps='dcerpc-binding NDR_SERVER_ID'
     )
 
 bld.SAMBA_SUBSYSTEM('RPC_NDR_NTSVCS',
@@ -650,16 +565,6 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_NTSVCS',
 bld.SAMBA_SUBSYSTEM('RPC_NDR_NETLOGON',
     source='gen_ndr/ndr_netlogon_c.c',
     public_deps='ndr-standard tevent'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_TRKWKS',
-    source='gen_ndr/ndr_trkwks_c.c',
-    public_deps='dcerpc-binding NDR_TRKWKS'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_KEYSVC',
-    source='gen_ndr/ndr_keysvc_c.c',
-    public_deps='dcerpc-binding NDR_KEYSVC'
     )
 
 bld.SAMBA_SUBSYSTEM('RPC_NDR_BACKUPKEY',
@@ -690,11 +595,6 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_WITNESS',
 bld.SAMBA_SUBSYSTEM('RPC_NDR_CLUSAPI',
     source='gen_ndr/ndr_clusapi_c.c',
     public_deps='dcerpc-binding NDR_CLUSAPI'
-    )
-
-bld.SAMBA_SUBSYSTEM('RPC_NDR_MDSSVC',
-    source='gen_ndr/ndr_mdssvc_c.c',
-    public_deps='dcerpc-binding NDR_MDSSVC'
     )
 
 # a grouping library for NDR subsystems that may be used by more than one target

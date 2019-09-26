@@ -140,8 +140,10 @@ def configure(conf):
     if conf.env.standalone_ctdb:
         conf.SAMBA_CHECK_PERL(mandatory=True)
 
-        conf.SAMBA_CHECK_PYTHON(mandatory=False, version=(2,5,0))
-        conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=False)
+        # This is just for consistency and to check the version for the
+        # build system, see Options.options.disable_python = True above
+        conf.SAMBA_CHECK_PYTHON()
+        conf.SAMBA_CHECK_PYTHON_HEADERS()
 
     if conf.CHECK_FOR_THIRD_PARTY():
         conf.RECURSE('third_party/popt')
@@ -178,6 +180,7 @@ def configure(conf):
         Logs.error('Need sched_setscheduler()')
         sys.exit(1)
     conf.CHECK_FUNCS('mlockall')
+    conf.CHECK_FUNCS('getrusage', headers="sys/time.h sys/resource.h")
 
     if not conf.CHECK_VARIABLE('ETIME', headers='errno.h'):
         conf.DEFINE('ETIME', 'ETIMEDOUT')
@@ -631,7 +634,7 @@ def build(bld):
                         target='utils/smnotify/smnotify.h',
                         rule='rpcgen -h ${SRC} > ${TGT}')
 
-    xdr_buf_hack = 'sed -e "s@^\([ \t]*register int32_t \*buf\);@\\1 = buf;@"'
+    xdr_buf_hack = 'grep -Fv "register int32_t *buf;"'
 
     bld.SAMBA_GENERATOR('ctdb-smnotify-x',
                         source='utils/smnotify/smnotify.x',
@@ -677,10 +680,13 @@ def build(bld):
                           destname='README')
 
     if bld.env.HAVE_LIBRADOS:
+        rados_inc = ' include'
+        if bld.CONFIG_GET('CPPPATH_RADOS') is not None:
+            rados_inc = bld.CONFIG_GET('CPPPATH_RADOS') + rados_inc
         bld.SAMBA_BINARY('ctdb_mutex_ceph_rados_helper',
                          source='utils/ceph/ctdb_mutex_ceph_rados_helper.c',
 			 deps='talloc tevent rados ceph-common',
-			 includes='include',
+			 includes=rados_inc,
 			 install_path='${CTDB_HELPER_BINDIR}')
 
     sed_expr1 = 's|/usr/local/var/lib/ctdb|%s|g'  % (bld.env.CTDB_VARDIR)
@@ -1034,7 +1040,7 @@ def build(bld):
                               ib_deps,
                          install_path='${CTDB_TEST_LIBEXECDIR}')
 
-    if bld.env.HAVE_ROBUST_MUTEXES and sys.platform.startswith('linux'):
+    if bld.env.HAVE_ROBUST_MUTEXES and sys.platform.startswith('linux') and bld.env.DEVELOPER:
         bld.SAMBA_BINARY('test_mutex_raw',
                          source='tests/src/test_mutex_raw.c',
                          deps='pthread',

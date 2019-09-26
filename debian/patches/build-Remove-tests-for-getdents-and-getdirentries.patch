@@ -1,0 +1,54 @@
+From f3b77f815ed9bba8e0969ecc8b359f6721210146 Mon Sep 17 00:00:00 2001
+From: Andrew Bartlett <abartlet@samba.org>
+Date: Fri, 6 Sep 2019 07:39:09 +1200
+Subject: [PATCH] build: Remove tests for getdents() and getdirentries()
+
+These date back to 3a9beef2b7b25427ee4611cfc375e05cc82a1150 in 2003 and
+829e72fe9c97feaa3d45b768984a4c47b906a23a in 1998 and appear to be related
+to smbwrapper.
+
+More of these should be removed but the getdirents() test caused a timeout
+on an ARM builder in Debian.  It might just be a fluke but the tests are
+pointless regardless.
+
+Signed-off-by: Andrew Bartlett <abartlet@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+
+Autobuild-User(master): Andreas Schneider <asn@cryptomilk.org>
+Autobuild-Date(master): Tue Sep 17 13:48:18 UTC 2019 on sn-devel-184
+
+Forwarded: https://gitlab.com/samba-team/samba/commit/16eb80058ca4a34df96388c26736590247b6a3f4
+---
+ lib/replace/wscript | 2 +-
+ source3/wscript     | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lib/replace/wscript b/lib/replace/wscript
+index 4df1b4d77c4..fcdee8933d8 100644
+--- a/lib/replace/wscript
++++ b/lib/replace/wscript
+@@ -421,7 +421,7 @@ def configure(conf):
+                         define = 'HAVE_BSD_STRTOLL',
+                         )
+     conf.CHECK_FUNCS('if_nametoindex strerror_r')
+-    conf.CHECK_FUNCS('getdirentries getdents syslog')
++    conf.CHECK_FUNCS('syslog')
+     conf.CHECK_FUNCS('gai_strerror get_current_dir_name')
+     conf.CHECK_FUNCS('timegm getifaddrs freeifaddrs mmap setgroups syscall setsid')
+     conf.CHECK_FUNCS('getgrent_r getgrgid_r getgrnam_r getgrouplist getpagesize')
+diff --git a/source3/wscript b/source3/wscript
+index 4a3e75605e7..8fd759707ee 100644
+--- a/source3/wscript
++++ b/source3/wscript
+@@ -392,7 +392,7 @@ __fchdir fchmod fchown _fcntl __fcntl fcvt fcvtl fdatasync
+ _fork __fork fseeko
+ _fstat __fstat fsync
+ futimens futimes __fxstat getauthuid
+-getcwd _getcwd __getcwd getdents __getdents getdirentries
++getcwd _getcwd __getcwd
+ getgrent getgrnam getgrouplist getgrset getmntent getpagesize
+ getpwanam getpwent_r getrlimit
+ glob grantpt hstrerror initgroups innetgr
+-- 
+2.20.1
+

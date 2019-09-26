@@ -965,7 +965,8 @@ _PUBLIC_ void cli_credentials_guess(struct cli_credentials *cred,
 		cli_credentials_parse_password_file(cred, p, CRED_GUESS_FILE);
 	}
 	
-	if (cli_credentials_get_kerberos_state(cred) != CRED_DONT_USE_KERBEROS) {
+	if (lp_ctx != NULL &&
+	    cli_credentials_get_kerberos_state(cred) != CRED_DONT_USE_KERBEROS) {
 		cli_credentials_set_ccache(cred, lp_ctx, NULL, CRED_GUESS_FILE,
 					   &error_string);
 	}
@@ -1316,6 +1317,8 @@ _PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
 	struct netlogon_creds_CredentialState *state,
 	DATA_BLOB data)
 {
+	NTSTATUS status;
+
 	if (data.data == NULL || data.length == 0) {
 		DBG_ERR("Nothing to encrypt "
 			"data.data == NULL or data.length == 0");
@@ -1334,9 +1337,12 @@ _PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
 					   data.data,
 					   data.length);
 	} else if (state->negotiate_flags & NETLOGON_NEG_ARCFOUR) {
-		netlogon_creds_arcfour_crypt(state,
-					     data.data,
-					     data.length);
+		status = netlogon_creds_arcfour_crypt(state,
+						      data.data,
+						      data.length);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 	} else {
 		DBG_ERR("Unsupported encryption option negotiated");
 		return NT_STATUS_NOT_SUPPORTED;

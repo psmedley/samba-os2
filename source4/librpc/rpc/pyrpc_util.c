@@ -23,6 +23,7 @@
 #include <Python.h>
 #include "python/py3compat.h"
 #include "includes.h"
+#include "python/modules.h"
 #include "librpc/rpc/pyrpc_util.h"
 #include "librpc/rpc/dcerpc.h"
 #include "librpc/rpc/pyrpc.h"
@@ -116,6 +117,11 @@ PyObject *py_dcerpc_interface_init_helper(PyTypeObject *type, PyObject *args, Py
 	}
 
 	ret = PyObject_New(dcerpc_InterfaceObject, type);
+	if (ret == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
+
 	ret->pipe = NULL;
 	ret->binding_handle = NULL;
 	ret->ev = NULL;
@@ -130,7 +136,8 @@ PyObject *py_dcerpc_interface_init_helper(PyTypeObject *type, PyObject *args, Py
 
 		ret->ev = s4_event_context_init(ret->mem_ctx);
 		if (ret->ev == NULL) {
-			PyErr_SetString(PyExc_TypeError, "Expected loadparm context");
+			PyErr_SetString(PyExc_TypeError,
+					"Unable to initialise event context");
 			Py_DECREF(ret);
 			return NULL;
 		}
@@ -319,13 +326,15 @@ bool PyInterface_AddNdrRpcMethods(PyTypeObject *ifacetype, const struct PyNdrRpc
 		}
 		wb->name = discard_const_p(char, mds[i].name);
 		wb->flags = PyWrapperFlag_KEYWORDS;
-		wb->wrapper = (wrapperfunc)py_dcerpc_call_wrapper;
+		wb->wrapper = PY_DISCARD_FUNC_SIG(wrapperfunc,
+						  py_dcerpc_call_wrapper);
 		wb->doc = discard_const_p(char, mds[i].doc);
 
 		ret = PyDescr_NewWrapper(ifacetype, wb, discard_const_p(void, &mds[i]));
 
 		PyDict_SetItemString(ifacetype->tp_dict, mds[i].name, 
 				     (PyObject *)ret);
+		Py_CLEAR(ret);
 	}
 
 	return true;
@@ -379,6 +388,7 @@ PyObject *py_return_ndr_struct(const char *module_name, const char *type_name,
 {
 	PyTypeObject *py_type;
 	PyObject *module;
+	PyObject *result = NULL;
 
 	if (r == NULL) {
 		Py_RETURN_NONE;
@@ -395,7 +405,10 @@ PyObject *py_return_ndr_struct(const char *module_name, const char *type_name,
 		return NULL;
 	}
 
-	return pytalloc_reference_ex(py_type, r_ctx, r);
+	result = pytalloc_reference_ex(py_type, r_ctx, r);
+	Py_CLEAR(module);
+	Py_CLEAR(py_type);
+	return result;
 }
 
 PyObject *PyString_FromStringOrNULL(const char *str)
@@ -403,7 +416,7 @@ PyObject *PyString_FromStringOrNULL(const char *str)
 	if (str == NULL) {
 		Py_RETURN_NONE;
 	}
-	return PyStr_FromString(str);
+	return PyUnicode_FromString(str);
 }
 
 PyObject *pyrpc_import_union(PyTypeObject *type, TALLOC_CTX *mem_ctx, int level,

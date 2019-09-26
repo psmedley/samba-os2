@@ -304,7 +304,13 @@ bool test_SetupCredentials3(struct dcerpc_pipe *p, struct torture_context *tctx,
 	uint32_t rid;
 	const char *machine_name;
 	const char *plain_pass;
-	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct dcerpc_binding_handle *b = NULL;
+
+	if (p == NULL) {
+		return false;
+	}
+
+	b = p->binding_handle;
 
 	machine_name = cli_credentials_get_workstation(machine_credentials);
 	torture_assert(tctx, machine_name != NULL, "machine_name");
@@ -988,8 +994,7 @@ static bool test_netlogon_ops_args(struct dcerpc_pipe *p, struct torture_context
 	ninfo.nt.length = nt_resp.length;
 
 	ninfo.identity_info.parameter_control = 0;
-	ninfo.identity_info.logon_id_low = 0;
-	ninfo.identity_info.logon_id_high = 0;
+	ninfo.identity_info.logon_id = 0;
 	ninfo.identity_info.workstation.string = cli_credentials_get_workstation(credentials);
 
 	logon.network = &ninfo;

@@ -556,7 +556,6 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3(
 		status,
 		lpcfg_workgroup(dce_call->conn->dce_ctx->lp_ctx),
 		trust_account_in_db,
-		NULL,
 		sid);
 
 	return status;
@@ -750,7 +749,12 @@ static NTSTATUS dcesrv_netr_ServerPasswordSet2(struct dcesrv_call_state *dce_cal
 	if (creds->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
 		netlogon_creds_aes_decrypt(creds, password_buf.data, 516);
 	} else {
-		netlogon_creds_arcfour_crypt(creds, password_buf.data, 516);
+		nt_status = netlogon_creds_arcfour_crypt(creds,
+							 password_buf.data,
+							 516);
+		if (!NT_STATUS_IS_OK(nt_status)) {
+			return nt_status;
+		}
 	}
 
 	switch (creds->secure_channel_type) {
@@ -971,9 +975,10 @@ static NTSTATUS dcesrv_netr_LogonSamLogon_base_call(struct dcesrv_netr_LogonSamL
 
 	user_info->service_description = "SamLogon";
 
-	netlogon_creds_decrypt_samlogon_logon(creds,
-					      r->in.logon_level,
-					      r->in.logon);
+	nt_status = netlogon_creds_decrypt_samlogon_logon(creds,
+							  r->in.logon_level,
+							  r->in.logon);
+	NT_STATUS_NOT_OK_RETURN(nt_status);
 
 	switch (r->in.logon_level) {
 	case NetlogonInteractiveInformation:
@@ -1041,6 +1046,9 @@ static NTSTATUS dcesrv_netr_LogonSamLogon_base_call(struct dcesrv_netr_LogonSamL
 		NT_STATUS_HAVE_NO_MEMORY(user_info->password.hash.nt);
 		*user_info->password.hash.nt = r->in.logon->password->ntpassword;
 
+		user_info->logon_id
+		    = r->in.logon->password->identity_info.logon_id;
+
 		break;
 	case NetlogonNetworkInformation:
 	case NetlogonNetworkTransitiveInformation:
@@ -1064,6 +1072,9 @@ static NTSTATUS dcesrv_netr_LogonSamLogon_base_call(struct dcesrv_netr_LogonSamL
 		user_info->password_state = AUTH_PASSWORD_RESPONSE;
 		user_info->password.response.lanman = data_blob_talloc(mem_ctx, r->in.logon->network->lm.data, r->in.logon->network->lm.length);
 		user_info->password.response.nt = data_blob_talloc(mem_ctx, r->in.logon->network->nt.data, r->in.logon->network->nt.length);
+
+		user_info->logon_id
+		    = r->in.logon->network->identity_info.logon_id;
 
 		nt_status = NTLMv2_RESPONSE_verify_netlogon_creds(
 					user_info->client.account_name,
@@ -1092,6 +1103,9 @@ static NTSTATUS dcesrv_netr_LogonSamLogon_base_call(struct dcesrv_netr_LogonSamL
 			NT_STATUS_HAVE_NO_MEMORY(generic);
 
 			r->out.validation->generic = generic;
+
+			user_info->logon_id
+			    = r->in.logon->generic->identity_info.logon_id;
 
 			irpc_handle = irpc_binding_handle_by_name(mem_ctx,
 								  dce_call->msg_ctx,
@@ -1254,9 +1268,14 @@ static void dcesrv_netr_LogonSamLogon_base_reply(
 	NTSTATUS status;
 
 	if (NT_STATUS_IS_OK(r->out.result)) {
-		netlogon_creds_encrypt_samlogon_validation(state->creds,
-							   r->in.validation_level,
-							   r->out.validation);
+		status = netlogon_creds_encrypt_samlogon_validation(state->creds,
+								    r->in.validation_level,
+								    r->out.validation);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_ERR("netlogon_creds_encrypt_samlogon_validation() "
+				"failed - %s\n",
+				nt_errstr(status));
+		}
 	}
 
 	if (state->_r.lslex != NULL) {
@@ -2786,7 +2805,12 @@ static NTSTATUS dcesrv_netr_NetrLogonSendToSam(struct dcesrv_call_state *dce_cal
 	if (creds->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
 		netlogon_creds_aes_decrypt(creds, r->in.opaque_buffer, r->in.buffer_len);
 	} else {
-		netlogon_creds_arcfour_crypt(creds, r->in.opaque_buffer, r->in.buffer_len);
+		nt_status = netlogon_creds_arcfour_crypt(creds,
+							 r->in.opaque_buffer,
+							 r->in.buffer_len);
+		if (!NT_STATUS_IS_OK(nt_status)) {
+			return nt_status;
+		}
 	}
 
 	decrypted_blob.data = r->in.opaque_buffer;

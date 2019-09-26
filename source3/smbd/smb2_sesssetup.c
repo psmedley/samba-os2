@@ -28,10 +28,13 @@
 #include "../lib/tsocket/tsocket.h"
 #include "../libcli/security/security.h"
 #include "../lib/util/tevent_ntstatus.h"
-#include "lib/crypto/sha512.h"
 #include "lib/crypto/aes.h"
 #include "lib/crypto/aes_ccm_128.h"
 #include "lib/crypto/aes_gcm_128.h"
+
+#include "lib/crypto/gnutls_helpers.h"
+#include <gnutls/gnutls.h>
+#include <gnutls/crypto.h>
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_SMB2
@@ -220,19 +223,32 @@ static NTSTATUS smbd_smb2_auth_generic_return(struct smbXsrv_session *session,
 		struct smbXsrv_preauth *preauth;
 		struct _derivation *d;
 		DATA_BLOB p;
-		struct hc_sha512state sctx;
+		gnutls_hash_hd_t hash_hnd;
+		int rc;
 
 		preauth = talloc_move(smb2req, &auth->preauth);
 
-		samba_SHA512_Init(&sctx);
-		samba_SHA512_Update(&sctx, preauth->sha512_value,
-				    sizeof(preauth->sha512_value));
-		for (i = 1; i < smb2req->in.vector_count; i++) {
-			samba_SHA512_Update(&sctx,
-					    smb2req->in.vector[i].iov_base,
-					    smb2req->in.vector[i].iov_len);
+		rc = gnutls_hash_init(&hash_hnd, GNUTLS_DIG_SHA512);
+		if (rc < 0) {
+			return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
 		}
-		samba_SHA512_Final(preauth->sha512_value, &sctx);
+		rc = gnutls_hash(hash_hnd,
+				 preauth->sha512_value,
+				 sizeof(preauth->sha512_value));
+		if (rc < 0) {
+			gnutls_hash_deinit(hash_hnd, NULL);
+			return NT_STATUS_ACCESS_DENIED;
+		}
+		for (i = 1; i < smb2req->in.vector_count; i++) {
+			rc = gnutls_hash(hash_hnd,
+					 smb2req->in.vector[i].iov_base,
+					 smb2req->in.vector[i].iov_len);
+			if (rc < 0) {
+				gnutls_hash_deinit(hash_hnd, NULL);
+				return NT_STATUS_ACCESS_DENIED;
+			}
+		}
+		gnutls_hash_deinit(hash_hnd, preauth->sha512_value);
 
 		p = data_blob_const(preauth->sha512_value,
 				    sizeof(preauth->sha512_value));
@@ -323,10 +339,21 @@ static NTSTATUS smbd_smb2_auth_generic_return(struct smbXsrv_session *session,
 	memcpy(session_key, session_info->session_key.data,
 	       MIN(session_info->session_key.length, sizeof(session_key)));
 
-	x->global->signing_key = data_blob_talloc(x->global,
-						  session_key,
-						  sizeof(session_key));
-	if (x->global->signing_key.data == NULL) {
+	x->global->signing_key = talloc_zero(x->global,
+					     struct smb2_signing_key);
+	if (x->global->signing_key == NULL) {
+		ZERO_STRUCT(session_key);
+		return NT_STATUS_NO_MEMORY;
+	}
+	talloc_set_destructor(x->global->signing_key,
+			      smb2_signing_key_destructor);
+
+	x->global->signing_key->blob =
+		x->global->signing_key_blob =
+			data_blob_talloc(x->global,
+					 session_key,
+					 sizeof(session_key));
+	if (!smb2_signing_key_valid(x->global->signing_key)) {
 		ZERO_STRUCT(session_key);
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -334,45 +361,54 @@ static NTSTATUS smbd_smb2_auth_generic_return(struct smbXsrv_session *session,
 	if (xconn->protocol >= PROTOCOL_SMB2_24) {
 		struct _derivation *d = &derivation.signing;
 
-		smb2_key_derivation(session_key, sizeof(session_key),
-				    d->label.data, d->label.length,
-				    d->context.data, d->context.length,
-				    x->global->signing_key.data);
+		status = smb2_key_derivation(session_key, sizeof(session_key),
+					     d->label.data, d->label.length,
+					     d->context.data, d->context.length,
+					     x->global->signing_key->blob.data);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 	}
 
 	if (xconn->protocol >= PROTOCOL_SMB2_24) {
 		struct _derivation *d = &derivation.decryption;
 
-		x->global->decryption_key = data_blob_talloc(x->global,
+		x->global->decryption_key_blob = data_blob_talloc(x->global,
 							     session_key,
 							     sizeof(session_key));
-		if (x->global->decryption_key.data == NULL) {
+		if (x->global->decryption_key_blob.data == NULL) {
 			ZERO_STRUCT(session_key);
 			return NT_STATUS_NO_MEMORY;
 		}
 
-		smb2_key_derivation(session_key, sizeof(session_key),
-				    d->label.data, d->label.length,
-				    d->context.data, d->context.length,
-				    x->global->decryption_key.data);
+		status = smb2_key_derivation(session_key, sizeof(session_key),
+					     d->label.data, d->label.length,
+					     d->context.data, d->context.length,
+					     x->global->decryption_key_blob.data);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 	}
 
 	if (xconn->protocol >= PROTOCOL_SMB2_24) {
 		struct _derivation *d = &derivation.encryption;
 		size_t nonce_size;
 
-		x->global->encryption_key = data_blob_talloc(x->global,
+		x->global->encryption_key_blob = data_blob_talloc(x->global,
 							     session_key,
 							     sizeof(session_key));
-		if (x->global->encryption_key.data == NULL) {
+		if (x->global->encryption_key_blob.data == NULL) {
 			ZERO_STRUCT(session_key);
 			return NT_STATUS_NO_MEMORY;
 		}
 
-		smb2_key_derivation(session_key, sizeof(session_key),
-				    d->label.data, d->label.length,
-				    d->context.data, d->context.length,
-				    x->global->encryption_key.data);
+		status = smb2_key_derivation(session_key, sizeof(session_key),
+					     d->label.data, d->label.length,
+					     d->context.data, d->context.length,
+					     x->global->encryption_key_blob.data);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 
 		/*
 		 * CCM and GCM algorithms must never have their
@@ -401,28 +437,68 @@ static NTSTATUS smbd_smb2_auth_generic_return(struct smbXsrv_session *session,
 		x->nonce_low = 0;
 	}
 
-	x->global->application_key = data_blob_dup_talloc(x->global,
-						x->global->signing_key);
+	x->global->application_key =
+		data_blob_dup_talloc(x->global, x->global->signing_key->blob);
 	if (x->global->application_key.data == NULL) {
 		ZERO_STRUCT(session_key);
 		return NT_STATUS_NO_MEMORY;
 	}
+	talloc_keep_secret(x->global->application_key.data);
 
 	if (xconn->protocol >= PROTOCOL_SMB2_24) {
 		struct _derivation *d = &derivation.application;
 
-		smb2_key_derivation(session_key, sizeof(session_key),
-				    d->label.data, d->label.length,
-				    d->context.data, d->context.length,
-				    x->global->application_key.data);
+		status = smb2_key_derivation(session_key, sizeof(session_key),
+					     d->label.data, d->label.length,
+					     d->context.data, d->context.length,
+					     x->global->application_key.data);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 	}
+
+	if (xconn->protocol >= PROTOCOL_SMB3_00 && lp_debug_encryption()) {
+		DEBUG(0, ("debug encryption: dumping generated session keys\n"));
+		DEBUGADD(0, ("Session Id    "));
+		dump_data(0, (uint8_t*)&session->global->session_wire_id,
+			  sizeof(session->global->session_wire_id));
+		DEBUGADD(0, ("Session Key   "));
+		dump_data(0, session_key, sizeof(session_key));
+		DEBUGADD(0, ("Signing Key   "));
+		dump_data(0, x->global->signing_key->blob.data,
+			  x->global->signing_key->blob.length);
+		DEBUGADD(0, ("App Key       "));
+		dump_data(0, x->global->application_key.data,
+			  x->global->application_key.length);
+
+		/* In server code, ServerIn is the decryption key */
+
+		DEBUGADD(0, ("ServerIn Key  "));
+		dump_data(0, x->global->decryption_key_blob.data,
+			  x->global->decryption_key_blob.length);
+		DEBUGADD(0, ("ServerOut Key "));
+		dump_data(0, x->global->encryption_key_blob.data,
+			  x->global->encryption_key_blob.length);
+	}
+
 	ZERO_STRUCT(session_key);
 
-	x->global->channels[0].signing_key = data_blob_dup_talloc(x->global->channels,
-						x->global->signing_key);
-	if (x->global->channels[0].signing_key.data == NULL) {
+	x->global->channels[0].signing_key =
+		talloc_zero(x->global->channels, struct smb2_signing_key);
+	if (x->global->channels[0].signing_key == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
+	talloc_set_destructor(x->global->channels[0].signing_key,
+			      smb2_signing_key_destructor);
+
+	x->global->channels[0].signing_key->blob =
+		x->global->channels[0].signing_key_blob =
+			data_blob_dup_talloc(x->global->channels[0].signing_key,
+					     x->global->signing_key->blob);
+	if (!smb2_signing_key_valid(x->global->channels[0].signing_key)) {
+		return NT_STATUS_NO_MEMORY;
+	}
+	talloc_keep_secret(x->global->channels[0].signing_key->blob.data);
 
 	data_blob_clear_free(&session_info->session_key);
 	session_info->session_key = data_blob_dup_talloc(session_info,
@@ -430,6 +506,7 @@ static NTSTATUS smbd_smb2_auth_generic_return(struct smbXsrv_session *session,
 	if (session_info->session_key.data == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
+	talloc_keep_secret(session_info->session_key.data);
 
 	session->compat = talloc_zero(session, struct user_struct);
 	if (session->compat == NULL) {
@@ -521,6 +598,7 @@ static NTSTATUS smbd_smb2_reauth_generic_return(struct smbXsrv_session *session,
 	if (session_info->session_key.data == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
+	talloc_keep_secret(session_info->session_key.data);
 
 	session->compat->session_info = session_info;
 	session->compat->vuid = session->global->session_wire_id;
@@ -598,19 +676,33 @@ static NTSTATUS smbd_smb2_bind_auth_return(struct smbXsrv_session *session,
 		struct smbXsrv_preauth *preauth;
 		struct _derivation *d;
 		DATA_BLOB p;
-		struct hc_sha512state sctx;
+		gnutls_hash_hd_t hash_hnd = NULL;
+		int rc;
 
 		preauth = talloc_move(smb2req, &auth->preauth);
 
-		samba_SHA512_Init(&sctx);
-		samba_SHA512_Update(&sctx, preauth->sha512_value,
-				    sizeof(preauth->sha512_value));
-		for (i = 1; i < smb2req->in.vector_count; i++) {
-			samba_SHA512_Update(&sctx,
-					    smb2req->in.vector[i].iov_base,
-					    smb2req->in.vector[i].iov_len);
+		rc = gnutls_hash_init(&hash_hnd, GNUTLS_DIG_SHA512);
+		if (rc < 0) {
+			return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
 		}
-		samba_SHA512_Final(preauth->sha512_value, &sctx);
+
+		rc = gnutls_hash(hash_hnd,
+				 preauth->sha512_value,
+				 sizeof(preauth->sha512_value));
+		if (rc < 0) {
+			gnutls_hash_deinit(hash_hnd, NULL);
+			return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
+		}
+		for (i = 1; i < smb2req->in.vector_count; i++) {
+			rc = gnutls_hash(hash_hnd,
+					 smb2req->in.vector[i].iov_base,
+					 smb2req->in.vector[i].iov_len);
+			if (rc < 0) {
+				gnutls_hash_deinit(hash_hnd, NULL);
+				return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
+			}
+		}
+		gnutls_hash_deinit(hash_hnd, preauth->sha512_value);
 
 		p = data_blob_const(preauth->sha512_value,
 				    sizeof(preauth->sha512_value));
@@ -647,21 +739,35 @@ static NTSTATUS smbd_smb2_bind_auth_return(struct smbXsrv_session *session,
 	memcpy(session_key, session_info->session_key.data,
 	       MIN(session_info->session_key.length, sizeof(session_key)));
 
-	c->signing_key = data_blob_talloc(x->global,
-					  session_key,
-					  sizeof(session_key));
-	if (c->signing_key.data == NULL) {
+	c->signing_key = talloc_zero(x->global, struct smb2_signing_key);
+	if (c->signing_key == NULL) {
 		ZERO_STRUCT(session_key);
 		return NT_STATUS_NO_MEMORY;
 	}
+	talloc_set_destructor(c->signing_key,
+			      smb2_signing_key_destructor);
+
+	c->signing_key->blob =
+		c->signing_key_blob =
+			data_blob_talloc(c->signing_key,
+					 session_key,
+					 sizeof(session_key));
+	if (!smb2_signing_key_valid(c->signing_key)) {
+		ZERO_STRUCT(session_key);
+		return NT_STATUS_NO_MEMORY;
+	}
+	talloc_keep_secret(c->signing_key->blob.data);
 
 	if (xconn->protocol >= PROTOCOL_SMB2_24) {
 		struct _derivation *d = &derivation.signing;
 
-		smb2_key_derivation(session_key, sizeof(session_key),
-				    d->label.data, d->label.length,
-				    d->context.data, d->context.length,
-				    c->signing_key.data);
+		status = smb2_key_derivation(session_key, sizeof(session_key),
+					     d->label.data, d->label.length,
+					     d->context.data, d->context.length,
+					     c->signing_key->blob.data);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 	}
 	ZERO_STRUCT(session_key);
 
@@ -759,7 +865,7 @@ static struct tevent_req *smbd_smb2_session_setup_send(TALLOC_CTX *mem_ctx,
 						      smb2req->xconn,
 						      &c);
 		if (NT_STATUS_IS_OK(status)) {
-			if (c->signing_key.length == 0) {
+			if (!smb2_signing_key_valid(c->signing_key)) {
 				goto auth;
 			}
 			tevent_req_nterror(req, NT_STATUS_REQUEST_NOT_ACCEPTED);

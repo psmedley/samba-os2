@@ -37,6 +37,7 @@
 #define LDB_KV_FLAG_CASE_INSENSITIVE (1<<0)
 #define LDB_KV_FLAG_INTEGER          (1<<1)
 #define LDB_KV_FLAG_UNIQUE_INDEX     (1<<2)
+#define LDB_KV_FLAG_ORDERED_INTEGER  (1<<3)
 
 /* valid attribute flags */
 static const struct {
@@ -45,6 +46,7 @@ static const struct {
 } ldb_kv_valid_attr_flags[] = {
 	{ "CASE_INSENSITIVE", LDB_KV_FLAG_CASE_INSENSITIVE },
 	{ "INTEGER", LDB_KV_FLAG_INTEGER },
+	{ "ORDERED_INTEGER", LDB_KV_FLAG_ORDERED_INTEGER },
 	{ "HIDDEN", 0 },
 	{ "UNIQUE_INDEX",  LDB_KV_FLAG_UNIQUE_INDEX},
 	{ "NONE", 0 },
@@ -125,8 +127,7 @@ static int ldb_kv_attributes_load(struct ldb_module *module)
 	r = ldb_kv_search_dn1(module,
 			      dn,
 			      attrs_msg,
-			      LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC |
-				  LDB_UNPACK_DATA_FLAG_NO_VALUES_ALLOC |
+			      LDB_UNPACK_DATA_FLAG_NO_VALUES_ALLOC |
 				  LDB_UNPACK_DATA_FLAG_NO_DN);
 	talloc_free(dn);
 	if (r != LDB_SUCCESS && r != LDB_ERR_NO_SUCH_OBJECT) {
@@ -181,6 +182,8 @@ static int ldb_kv_attributes_load(struct ldb_module *module)
 			syntax = LDB_SYNTAX_DIRECTORY_STRING;
 		} else if (flags == LDB_KV_FLAG_INTEGER) {
 			syntax = LDB_SYNTAX_INTEGER;
+		} else if (flags == LDB_KV_FLAG_ORDERED_INTEGER) {
+			syntax = LDB_SYNTAX_ORDERED_INTEGER;
 		} else if (flags == 0) {
 			syntax = LDB_SYNTAX_OCTET_STRING;
 		} else {
@@ -274,8 +277,7 @@ static int ldb_kv_index_load(struct ldb_module *module,
 	r = ldb_kv_search_dn1(module,
 			      indexlist_dn,
 			      ldb_kv->cache->indexlist,
-			      LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC |
-				  LDB_UNPACK_DATA_FLAG_NO_VALUES_ALLOC |
+			      LDB_UNPACK_DATA_FLAG_NO_VALUES_ALLOC |
 				  LDB_UNPACK_DATA_FLAG_NO_DN);
 	TALLOC_FREE(indexlist_dn);
 
@@ -302,7 +304,7 @@ static int ldb_kv_index_load(struct ldb_module *module,
 	if (lmdb_subdb_version != 0) {
 		ldb_set_errstring(ldb,
 				  "FATAL: This ldb_mdb database has "
-				  "been written in a new verson of LDB "
+				  "been written in a new version of LDB "
 				  "using a sub-database index that "
 				  "is not understood by ldb "
 				  LDB_VERSION);
@@ -393,6 +395,13 @@ int ldb_kv_cache_reload(struct ldb_module *module)
 	ldb_kv_cache_free(module);
 	return ldb_kv_cache_load(module);
 }
+static int get_pack_format_version(struct ldb_val key,
+				   struct ldb_val data,
+				   void *private_data)
+{
+	uint32_t *v = (uint32_t *) private_data;
+	return ldb_unpack_get_format(&data, v);
+}
 
 /*
   load the cache records
@@ -409,6 +418,7 @@ int ldb_kv_cache_load(struct ldb_module *module)
 	const struct ldb_schema_attribute *a;
 	bool have_write_txn = false;
 	int r;
+	struct ldb_val key;
 
 	ldb = ldb_module_get_ctx(module);
 
@@ -433,10 +443,16 @@ int ldb_kv_cache_load(struct ldb_module *module)
 	if (r != LDB_SUCCESS) {
 		goto failed;
 	}
-	r = ldb_kv_search_dn1(module, baseinfo_dn, baseinfo, 0);
-	if (r != LDB_SUCCESS && r != LDB_ERR_NO_SUCH_OBJECT) {
+
+	key = ldb_kv_key_dn(baseinfo, baseinfo_dn);
+	if (!key.data) {
 		goto failed_and_unlock;
 	}
+
+	/* Read packing format from first 4 bytes of @BASEINFO record */
+	r = ldb_kv->kv_ops->fetch_and_parse(ldb_kv, key,
+					    get_pack_format_version,
+					    &ldb_kv->pack_format_version);
 
 	/* possibly initialise the baseinfo */
 	if (r == LDB_ERR_NO_SUCH_OBJECT) {
@@ -453,15 +469,25 @@ int ldb_kv_cache_load(struct ldb_module *module)
 
 		have_write_txn = true;
 
+		/*
+		 * We need to write but haven't figured out packing format yet.
+		 * Just go with version 1 and we'll repack if we got it wrong.
+		 */
+		ldb_kv->pack_format_version = LDB_PACKING_FORMAT;
+		ldb_kv->target_pack_format_version = LDB_PACKING_FORMAT;
+
 		/* error handling for ltdb_baseinfo_init() is by
 		   looking for the record again. */
 		ldb_kv_baseinfo_init(module);
 
-		if (ldb_kv_search_dn1(module, baseinfo_dn, baseinfo, 0) !=
-		    LDB_SUCCESS) {
-			goto failed_and_unlock;
-		}
+	} else if (r != LDB_SUCCESS) {
+		goto failed_and_unlock;
+	}
 
+	/* OK now we definitely have a @BASEINFO record so fetch it */
+	r = ldb_kv_search_dn1(module, baseinfo_dn, baseinfo, 0);
+	if (r != LDB_SUCCESS) {
+		goto failed_and_unlock;
 	}
 
 	/* Ignore the result, and update the sequence number */
@@ -523,8 +549,15 @@ int ldb_kv_cache_load(struct ldb_module *module)
 		goto failed_and_unlock;
 	}
 
+	/*
+	 * Initialise packing version and GUID index syntax, and force the
+	 * two to travel together, ie a GUID indexed database must use V2
+	 * packing format and a DN indexed database must use V1.
+	 */
 	ldb_kv->GUID_index_syntax = NULL;
 	if (ldb_kv->cache->GUID_index_attribute != NULL) {
+		ldb_kv->target_pack_format_version = LDB_PACKING_FORMAT_V2;
+
 		/*
 		 * Now the attributes are loaded, set the guid_index_syntax.
 		 * This can't fail, it will return a default at worst
@@ -532,6 +565,8 @@ int ldb_kv_cache_load(struct ldb_module *module)
 		a = ldb_schema_attribute_by_name(
 		    ldb, ldb_kv->cache->GUID_index_attribute);
 		ldb_kv->GUID_index_syntax = a->syntax;
+	} else {
+		ldb_kv->target_pack_format_version = LDB_PACKING_FORMAT;
 	}
 
 done:

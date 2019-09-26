@@ -50,6 +50,7 @@
 #include "lib/util/dlinklist.h"
 #include "dsdb/samdb/ldb_modules/util.h"
 #include "lib/util/tsort.h"
+#include "lib/util/binsearch.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS            DBGC_DRS_REPL
@@ -325,37 +326,24 @@ static int replmd_init(struct ldb_module *module)
 {
 	struct replmd_private *replmd_private;
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
-	static const char *samba_dsdb_attrs[] = { SAMBA_COMPATIBLE_FEATURES_ATTR, NULL };
-	struct ldb_dn *samba_dsdb_dn;
-	struct ldb_result *res;
 	int ret;
-	TALLOC_CTX *frame = talloc_stackframe();
+
 	replmd_private = talloc_zero(module, struct replmd_private);
 	if (replmd_private == NULL) {
 		ldb_oom(ldb);
-		TALLOC_FREE(frame);
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
-	ldb_module_set_private(module, replmd_private);
+
+	ret = dsdb_check_samba_compatible_feature(module,
+						  SAMBA_SORTED_LINKS_FEATURE,
+						  &replmd_private->sorted_links);
+	if (ret != LDB_SUCCESS) {
+		talloc_free(replmd_private);
+		return ret;
+	}
 
 	replmd_private->schema_dn = ldb_get_schema_basedn(ldb);
-
-	samba_dsdb_dn = ldb_dn_new(frame, ldb, "@SAMBA_DSDB");
-	if (!samba_dsdb_dn) {
-		TALLOC_FREE(frame);
-		return ldb_oom(ldb);
-	}
-
-	ret = dsdb_module_search_dn(module, frame, &res, samba_dsdb_dn,
-	                            samba_dsdb_attrs, DSDB_FLAG_NEXT_MODULE, NULL);
-	if (ret == LDB_SUCCESS) {
-		replmd_private->sorted_links
-			= ldb_msg_check_string_attribute(res->msgs[0],
-							 SAMBA_COMPATIBLE_FEATURES_ATTR,
-							 SAMBA_SORTED_LINKS_FEATURE);
-	}
-	TALLOC_FREE(frame);
-
+	ldb_module_set_private(module, replmd_private);
 	return ldb_next_init(module);
 }
 
@@ -2160,15 +2148,14 @@ static int get_parsed_dns(struct ldb_module *module, TALLOC_CTX *mem_ctx,
  * We also ensure that the links are in the Functional Level 2003
  * linked attributes format.
  */
-static int get_parsed_dns_trusted(struct ldb_module *module,
-				  struct replmd_private *replmd_private,
-				  TALLOC_CTX *mem_ctx,
-				  struct ldb_message_element *el,
-				  struct parsed_dn **pdn,
-				  const char *ldap_oid,
-				  struct ldb_request *parent)
+static int get_parsed_dns_trusted_fallback(struct ldb_module *module,
+					   struct replmd_private *replmd_private,
+					   TALLOC_CTX *mem_ctx,
+					   struct ldb_message_element *el,
+					   struct parsed_dn **pdn,
+					   const char *ldap_oid,
+					   struct ldb_request *parent)
 {
-	unsigned int i;
 	int ret;
 	if (el == NULL) {
 		*pdn = NULL;
@@ -2185,16 +2172,10 @@ static int get_parsed_dns_trusted(struct ldb_module *module,
 			return ret;
 		}
 	} else {
-		/* Here we get a list of 'struct parsed_dns' without the parsing */
-		*pdn = talloc_zero_array(mem_ctx, struct parsed_dn,
-					 el->num_values);
-		if (!*pdn) {
+		ret = get_parsed_dns_trusted(mem_ctx, el, pdn);
+		if (ret != LDB_SUCCESS) {
 			ldb_module_oom(module);
 			return LDB_ERR_OPERATIONS_ERROR;
-		}
-
-		for (i = 0; i < el->num_values; i++) {
-			(*pdn)[i].v = &el->values[i];
 		}
 	}
 
@@ -2336,10 +2317,10 @@ static int replmd_check_upgrade_links(struct ldb_context *ldb,
 
 	/*
 	 * This sort() is critical for the operation of
-	 * get_parsed_dns_trusted() because callers of this function
+	 * get_parsed_dns_trusted_fallback() because callers of this function
 	 * expect a sorted list, and FL2000 style links are not
 	 * sorted.  In particular, as well as the upgrade case,
-	 * get_parsed_dns_trusted() is called from
+	 * get_parsed_dns_trusted_fallback() is called from
 	 * replmd_delete_remove_link() even in FL2000 mode
 	 *
 	 * We do not normally pay the cost of the qsort() due to the
@@ -2514,9 +2495,10 @@ static int replmd_modify_la_add(struct ldb_module *module,
 	}
 
 	/* get the existing DNs, lazily parsed */
-	ret = get_parsed_dns_trusted(module, replmd_private,
-				     tmp_ctx, old_el, &old_dns,
-				     schema_attr->syntax->ldap_oid, parent);
+	ret = get_parsed_dns_trusted_fallback(module, replmd_private,
+					      tmp_ctx, old_el, &old_dns,
+					      schema_attr->syntax->ldap_oid,
+					      parent);
 
 	if (ret != LDB_SUCCESS) {
 		talloc_free(tmp_ctx);
@@ -2838,9 +2820,10 @@ static int replmd_modify_la_delete(struct ldb_module *module,
 		return ret;
 	}
 
-	ret = get_parsed_dns_trusted(module, replmd_private,
-				     tmp_ctx, old_el, &old_dns,
-				     schema_attr->syntax->ldap_oid, parent);
+	ret = get_parsed_dns_trusted_fallback(module, replmd_private,
+					      tmp_ctx, old_el, &old_dns,
+					      schema_attr->syntax->ldap_oid,
+					      parent);
 
 	if (ret != LDB_SUCCESS) {
 		talloc_free(tmp_ctx);
@@ -3412,7 +3395,11 @@ static int replmd_modify_handle_linked_attribs(struct ldb_module *module,
 					       el->flags, el->name);
 			return LDB_ERR_UNWILLING_TO_PERFORM;
 		}
-		if (dsdb_check_single_valued_link(schema_attr, el) != LDB_SUCCESS) {
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+		ret = dsdb_check_single_valued_link(schema_attr, el);
+		if (ret != LDB_SUCCESS) {
 			ldb_asprintf_errstring(ldb,
 					       "Attribute %s is single valued but more than one value has been supplied",
 					       el->name);
@@ -3426,9 +3413,6 @@ static int replmd_modify_handle_linked_attribs(struct ldb_module *module,
 			el->flags |= LDB_FLAG_INTERNAL_DISABLE_SINGLE_VALUE_CHECK;
 		}
 
-		if (ret != LDB_SUCCESS) {
-			return ret;
-		}
 		if (old_el) {
 			ldb_msg_remove_attr(old_msg, el->name);
 		}
@@ -3864,7 +3848,7 @@ static int replmd_rename_callback(struct ldb_request *req, struct ldb_reply *are
 
 	if (ares->type != LDB_REPLY_DONE) {
 		ldb_set_errstring(ldb,
-				  "invalid ldb_reply_type in callback");
+			"invalid reply type in repl_meta_data rename callback");
 		talloc_free(ares);
 		return ldb_module_done(ac->req, NULL, NULL,
 					LDB_ERR_OPERATIONS_ERROR);
@@ -4129,9 +4113,11 @@ static int replmd_delete_remove_link(struct ldb_module *module,
 		 * this is safe to call in FL2000 or on databases that
 		 * have been run at that level in the past.
 		 */
-		ret = get_parsed_dns_trusted(module, replmd_private, tmp_ctx,
-					     link_el, &link_dns,
-					     target_attr->syntax->ldap_oid, parent);
+		ret = get_parsed_dns_trusted_fallback(module, replmd_private,
+						tmp_ctx,
+						link_el, &link_dns,
+						target_attr->syntax->ldap_oid,
+						parent);
 		if (ret != LDB_SUCCESS) {
 			talloc_free(tmp_ctx);
 			return ret;
@@ -4211,50 +4197,61 @@ static int replmd_delete_internals(struct ldb_module *module, struct ldb_request
 	TALLOC_CTX *tmp_ctx;
 	struct ldb_result *res, *parent_res;
 	static const char * const preserved_attrs[] = {
-		/* yes, this really is a hard coded list. See MS-ADTS
-		   section 3.1.1.5.5.1.1 */
+		/*
+		 * This list MUST be kept in case-insensitive sorted order,
+		 * as we  use it in a binary search with ldb_attr_cmp().
+		 *
+		 * We get this hard-coded list from
+		 * MS-ADTS section 3.1.1.5.5.1.1 "Tombstone Requirements".
+		 */
 		"attributeID",
 		"attributeSyntax",
+		"distinguishedName",
 		"dNReferenceUpdate",
 		"dNSHostName",
 		"flatName",
 		"governsID",
 		"groupType",
 		"instanceType",
-		"lDAPDisplayName",
-		"legacyExchangeDN",
 		"isDeleted",
 		"isRecycled",
 		"lastKnownParent",
+		"lDAPDisplayName",
+		"legacyExchangeDN",
+		"mS-DS-CreatorSID",
 		"msDS-LastKnownRDN",
 		"msDS-PortLDAP",
-		"mS-DS-CreatorSID",
 		"mSMQOwnerID",
+		"name",
 		"nCName",
+		"nTSecurityDescriptor",
 		"objectClass",
-		"distinguishedName",
 		"objectGUID",
 		"objectSid",
 		"oMSyntax",
 		"proxiedObjectName",
-		"name",
-		"nTSecurityDescriptor",
 		"replPropertyMetaData",
 		"sAMAccountName",
 		"securityIdentifier",
 		"sIDHistory",
 		"subClassOf",
 		"systemFlags",
-		"trustPartner",
-		"trustDirection",
-		"trustType",
 		"trustAttributes",
+		"trustDirection",
+		"trustPartner",
+		"trustType",
 		"userAccountControl",
 		"uSNChanged",
 		"uSNCreated",
-		"whenCreated",
 		"whenChanged",
-		NULL
+		"whenCreated",
+		/*
+		 * DO NOT JUST APPEND TO THIS LIST.
+		 *
+		 * In case you missed the note at the top, this list is kept
+		 * in case-insensitive sorted order. In the unlikely event you
+		 * need to add an attrbute, please add it in the RIGHT PLACE.
+		 */
 	};
 	static const char * const all_attrs[] = {
 		DSDB_SECRET_ATTRIBUTES,
@@ -4663,10 +4660,16 @@ static int replmd_delete_internals(struct ldb_module *module, struct ldb_request
 				dsdb_flags |= DSDB_REPLMD_VANISH_LINKS;
 
 			} else if (sa->linkID == 0) {
-				if (ldb_attr_in_list(preserved_attrs, el->name)) {
+				const char * const *attr = NULL;
+				if (sa->searchFlags & SEARCH_FLAG_PRESERVEONDELETE) {
 					continue;
 				}
-				if (sa->searchFlags & SEARCH_FLAG_PRESERVEONDELETE) {
+				BINARY_ARRAY_SEARCH_V(preserved_attrs,
+						      ARRAY_SIZE(preserved_attrs),
+						      el->name,
+						      ldb_attr_cmp,
+						      attr);
+				if (attr != NULL) {
 					continue;
 				}
 			} else {
@@ -5524,8 +5527,7 @@ static int replmd_replicated_apply_add(struct replmd_replicated_request *ar)
 
 			DEBUG(4,(__location__ ": Removing attribute %s with num_values==0\n",
 				 el->name));
-			memmove(el, el+1, sizeof(*el)*(msg->num_elements - (i+1)));
-			msg->num_elements--;
+			ldb_msg_remove_element(msg, &msg->elements[i]);
 			i--;
 			continue;
 		}
@@ -7431,27 +7433,28 @@ static int replmd_allow_missing_target(struct ldb_module *module,
 		return LDB_SUCCESS;
 	}
 
-	if (dsdb_repl_flags & DSDB_REPL_FLAG_TARGETS_UPTODATE) {
-
-		/*
-		 * target should already be up-to-date so there's no point in
-		 * retrying. This could be due to bad timing, or if a target
-		 * on a one-way link was deleted. We ignore the link rather
-		 * than failing the replication cycle completely
-		 */
-		*ignore_link = true;
-		DBG_WARNING("%s is %s but up to date. Ignoring link from %s\n",
-			    ldb_dn_get_linearized(target_dn), missing_str,
-			    ldb_dn_get_linearized(source_dn));
-		return LDB_SUCCESS;
-	}
-	
 	is_in_same_nc = dsdb_objects_have_same_nc(ldb,
 						  mem_ctx,
 						  source_dn,
 						  target_dn);
 	if (is_in_same_nc) {
-		/* fail the replication and retry with GET_TGT */
+
+		/*
+		 * if the target is already be up-to-date there's no point in
+		 * retrying. This could be due to bad timing, or if a target
+		 * on a one-way link was deleted. We ignore the link rather
+		 * than failing the replication cycle completely
+		 */
+		if (dsdb_repl_flags & DSDB_REPL_FLAG_TARGETS_UPTODATE) {
+			*ignore_link = true;
+			DBG_WARNING("%s is %s "
+				    "but up to date. Ignoring link from %s\n",
+				    ldb_dn_get_linearized(target_dn), missing_str,
+				    ldb_dn_get_linearized(source_dn));
+			return LDB_SUCCESS;
+		}
+
+		/* otherwise fail the replication and retry with GET_TGT */
 		ldb_asprintf_errstring(ldb, "%s target %s GUID %s linked from %s\n",
 				       missing_str,
 				       ldb_dn_get_linearized(target_dn),
@@ -8376,11 +8379,12 @@ static int replmd_process_la_group(struct ldb_module *module,
 		 * group, so we try to minimize the times we do it)
 		 */
 		if (pdn_list == NULL) {
-			ret = get_parsed_dns_trusted(module, replmd_private,
-						     tmp_ctx, old_el,
-						     &pdn_list,
-						     attr->syntax->ldap_oid,
-						     NULL);
+			ret = get_parsed_dns_trusted_fallback(module,
+							replmd_private,
+							tmp_ctx, old_el,
+							&pdn_list,
+							attr->syntax->ldap_oid,
+							NULL);
 
 			if (ret != LDB_SUCCESS) {
 				return ret;
@@ -8455,12 +8459,11 @@ static int replmd_process_la_group(struct ldb_module *module,
 	ret = linked_attr_modify(module, msg, NULL);
 	if (ret != LDB_SUCCESS) {
 		ldb_debug(ldb, LDB_DEBUG_WARNING,
-			  "Failed to apply linked attribute change '%s'\n%s\n",
+			  "Failed to apply linked attribute change "
+			  "Error: '%s' DN: '%s' Attribute: '%s'\n",
 			  ldb_errstring(ldb),
-			  ldb_ldif_message_redacted_string(ldb,
-							   tmp_ctx,
-							   LDB_CHANGETYPE_MODIFY,
-							   msg));
+			  ldb_dn_get_linearized(msg->dn),
+			  attr->lDAPDisplayName);
 		TALLOC_FREE(tmp_ctx);
 		return ret;
 	}

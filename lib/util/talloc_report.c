@@ -49,9 +49,11 @@ static char *talloc_vasprintf_append_largebuf(char *buf, ssize_t *pstr_len,
 	}
 	buflen = talloc_get_size(buf);
 
-	if (buflen > str_len) {
+	if (buflen > (size_t)str_len) {
 		start = buf + str_len;
 		space = buflen - str_len;
+	} else {
+		return NULL;
 	}
 
 	va_copy(ap2, ap);

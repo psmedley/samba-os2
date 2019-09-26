@@ -2078,12 +2078,7 @@ union smb_lock {
 			uint16_t lock_count;
 			uint32_t lock_sequence;
 			/* struct smb2_handle handle; */
-			struct smb2_lock_element {
-				uint64_t offset;
-				uint64_t length;
-				uint32_t flags;
-				uint32_t reserved;
-			} *locks;
+			struct smb2_lock_element *locks;
 		} in;
 		struct {
 			/* static body buffer 4 (0x04) bytes */
@@ -2283,16 +2278,17 @@ union smb_ioctl {
 
 			/* static body buffer 56 (0x38) bytes */
 			/* uint16_t buffer_code;  0x39 = 0x38 + 1 */
-			uint16_t _pad;
+			uint16_t reserved;
 			uint32_t function;
 			/*struct smb2_handle handle;*/
 			/* uint32_t out_ofs; */
 			/* uint32_t out_size; */
-			uint32_t unknown2;
+			uint32_t max_input_response;
 			/* uint32_t in_ofs; */
 			/* uint32_t in_size; */
-			uint32_t max_response_size;
-			uint64_t flags;
+			uint32_t max_output_response;
+			uint32_t flags;
+			uint32_t reserved2;
 
 			/* dynamic body */
 			DATA_BLOB out;
@@ -2303,15 +2299,15 @@ union smb_ioctl {
 
 			/* static body buffer 48 (0x30) bytes */
 			/* uint16_t buffer_code;  0x31 = 0x30 + 1 */
-			uint16_t _pad;
+			uint16_t reserved;
 			uint32_t function;
 			/* struct smb2_handle handle; */
 			/* uint32_t in_ofs; */
 			/* uint32_t in_size; */
 			/* uint32_t out_ofs; */
 			/* uint32_t out_size; */
-			uint32_t unknown2;
-			uint32_t unknown3;
+			uint32_t flags;
+			uint32_t reserved2;
 
 			/* dynamic body */
 			DATA_BLOB in;

@@ -58,6 +58,7 @@ static const char version_message_fmt[] = "winexe version %d.%d\n"
 
 struct program_options {
 	char *hostname;
+	int port;
 	char *cmd;
 	struct cli_credentials *credentials;
 	char *runas;
@@ -77,6 +78,9 @@ static void parse_args(int argc, const char *argv[],
 	int argc_new;
 	char **argv_new;
 
+	int port = 445;
+	char *port_str = NULL;
+
 	int flag_interactive = SVC_IGNORE_INTERACTIVE;
 	int flag_ostype = 2;
 	int flag_reinstall = 0;
@@ -88,41 +92,122 @@ static void parse_args(int argc, const char *argv[],
 	char *opt_kerberos = NULL;
 	char *opt_auth_file = NULL;
 	char *opt_debuglevel = NULL;
-
 	struct poptOption long_options[] = {
-		{ "help", 'h', POPT_ARG_NONE, &flag_help, 0,
-		  "Display help message" },
-		{ "version", 'V', POPT_ARG_NONE, &flag_version, 0,
-		  "Display version number" },
-		{ "user", 'U', POPT_ARG_STRING, &opt_user, 0,
-		  "Set the network username", "[DOMAIN/]USERNAME[%PASSWORD]" },
-		{ "authentication-file", 'A',
-		  POPT_ARG_STRING, &opt_auth_file, 0,
-		  "Get the credentials from a file", "FILE" },
-		{ "no-pass", 'N', POPT_ARG_NONE, &flag_nopass, 0,
-		  "Do not ask for a password", NULL },
-		{ "kerberos", 'k', POPT_ARG_STRING, &opt_kerberos, 0,
-		  "Use Kerberos, -k [yes|no]" },
-		{ "debuglevel", 'd', POPT_ARG_STRING, &opt_debuglevel, 0,
-		  "Set debug level", "DEBUGLEVEL" },
-		{ "uninstall", 0, POPT_ARG_NONE, &flag_uninstall, 0,
-		  "Uninstall winexe service after remote execution", NULL},
-		{ "reinstall", 0, POPT_ARG_NONE, &flag_reinstall, 0,
-		  "Reinstall winexe service before remote execution", NULL},
-		{ "runas", 0, POPT_ARG_STRING, &options->runas, 0,
-		  "Run as the given user (BEWARE: this password is sent "
-		  "in cleartext over the network!)",
-		  "[DOMAIN\\]USERNAME%PASSWORD"},
-		{ "runas-file", 0, POPT_ARG_STRING, &options->runas_file, 0,
-		  "Run as user options defined in a file", "FILE"},
-		{ "interactive", 0, POPT_ARG_INT, &flag_interactive, 0,
-		  "Desktop interaction: 0 - disallow, 1 - allow. If allow, "
-		  "also use the --system switch (Windows requirement). Vista "
-		  "does not support this option.", "0|1"},
-		{ "ostype", 0, POPT_ARG_INT, &flag_ostype, 0,
-		  "OS type: 0 - 32-bit, 1 - 64-bit, 2 - winexe will decide. "
-		  "Determines which version (32-bit or 64-bit) of service "
-		  "will be installed.", "0|1|2"},
+		{
+			.longName = "help",
+			.shortName = 'h',
+			.argInfo = POPT_ARG_NONE,
+			.arg = &flag_help,
+			.val = 0,
+			.descrip = "Display help message",
+			.argDescrip = NULL,
+		},{
+			.longName = "version",
+			.shortName = 'V',
+			.argInfo = POPT_ARG_NONE,
+			.arg = &flag_version,
+			.val = 0,
+			.descrip = "Display version number",
+			.argDescrip = NULL,
+		},{
+			.longName = "user",
+			.shortName = 'U',
+			.argInfo = POPT_ARG_STRING,
+			.arg = &opt_user,
+			.val = 0,
+			.descrip = "Set the network username",
+			.argDescrip = "[DOMAIN/]USERNAME[%PASSWORD]",
+		},{
+			.longName = "authentication-file",
+			.shortName = 'A',
+			.argInfo = POPT_ARG_STRING,
+			.arg = &opt_auth_file,
+			.val = 0,
+			.descrip = "Get the credentials from a file",
+			.argDescrip = "FILE",
+		},{
+			.longName = "no-pass",
+			.shortName = 'N',
+			.argInfo = POPT_ARG_NONE,
+			.arg = &flag_nopass,
+			.val = 0,
+			.descrip = "Do not ask for a password",
+			.argDescrip = NULL
+		},{
+			.longName = "kerberos",
+			.shortName = 'k',
+			.argInfo = POPT_ARG_STRING,
+			.arg = &opt_kerberos,
+			.val = 0,
+			.descrip = "Use Kerberos",
+			.argDescrip = "[yes|no]",
+		},{
+			.longName = "debuglevel",
+			.shortName = 'd',
+			.argInfo = POPT_ARG_STRING,
+			.arg = &opt_debuglevel,
+			.val = 0,
+			.descrip = "Set debug level",
+			.argDescrip = "DEBUGLEVEL",
+		},{
+			.longName = "uninstall",
+			.shortName = 0,
+			.argInfo = POPT_ARG_NONE,
+			.arg = &flag_uninstall,
+			.val = 0,
+			.descrip = "Uninstall winexe service after "
+				   "remote execution",
+			.argDescrip = NULL,
+		},{
+			.longName = "reinstall",
+			.shortName = 0,
+			.argInfo = POPT_ARG_NONE,
+			.arg = &flag_reinstall,
+			.val = 0,
+			.descrip = "Reinstall winexe service before "
+				   "remote execution",
+			.argDescrip = NULL,
+		},{
+			.longName = "runas",
+			.shortName = 0,
+			.argInfo = POPT_ARG_STRING,
+			.arg = &options->runas,
+			.val = 0,
+			.descrip = "Run as the given user (BEWARE: this "
+				   "password is sent in cleartext over "
+				   "the network!)",
+			.argDescrip = "[DOMAIN\\]USERNAME%PASSWORD",
+		},{
+			.longName = "runas-file",
+			.shortName = 0,
+			.argInfo = POPT_ARG_STRING,
+			.arg = &options->runas_file,
+			.val = 0,
+			.descrip = "Run as user options defined in a file",
+			.argDescrip = "FILE",
+		},{
+			.longName = "interactive",
+			.shortName = 0,
+			.argInfo = POPT_ARG_INT,
+			.arg = &flag_interactive,
+			.val = 0,
+			.descrip = "Desktop interaction: 0 - disallow, "
+				   "1 - allow. If allow, also use the "
+				   "--system switch (Windows requirement). "
+				   "Vista does not support this option.",
+			.argDescrip = "0|1",
+		},{
+			.longName = "ostype",
+			.shortName = 0,
+			.argInfo = POPT_ARG_INT,
+			.arg = &flag_ostype,
+			.val = 0,
+			.descrip = "OS type: 0 - 32-bit, 1 - 64-bit, "
+				   "2 - winexe will decide. "
+				   "Determines which version (32-bit or 64-bit)"
+				   " of service will be installed.",
+			.argDescrip = "0|1|2",
+		},
 		POPT_TABLEEND
 	};
 
@@ -131,7 +216,7 @@ static void parse_args(int argc, const char *argv[],
 	pc = poptGetContext(argv[0], argc, (const char **) argv, long_options,
 			    0);
 
-	poptSetOtherOptionHelp(pc, "[OPTION]... //HOST COMMAND\nOptions:");
+	poptSetOtherOptionHelp(pc, "[OPTION]... //HOST[:PORT] COMMAND\nOptions:");
 
 	if (((opt = poptGetNextOpt(pc)) != -1) || flag_help || flag_version) {
 		fprintf(stderr, version_message_fmt, SAMBA_VERSION_MAJOR,
@@ -161,6 +246,17 @@ static void parse_args(int argc, const char *argv[],
 			SAMBA_VERSION_MINOR);
 		poptPrintHelp(pc, stdout, 0);
 		exit(1);
+	}
+
+	port_str = strchr(argv_new[0], ':');
+	if (port_str) {
+		if (sscanf(port_str + 1, "%d", &port) != 1 || port <= 0) {
+			fprintf(stderr, version_message_fmt,
+				SAMBA_VERSION_MAJOR, SAMBA_VERSION_MINOR);
+			poptPrintHelp(pc, stdout, 0);
+			exit(1);
+		}
+		*port_str = '\0';
 	}
 
 	if (opt_debuglevel) {
@@ -223,6 +319,7 @@ static void parse_args(int argc, const char *argv[],
 	options->credentials = cred;
 
 	options->hostname = argv_new[0] + 2;
+	options->port = port;
 	options->cmd = argv_new[1];
 
 	options->flags = flag_interactive;
@@ -242,6 +339,7 @@ static void parse_args(int argc, const char *argv[],
 
 static NTSTATUS winexe_svc_upload(
 	const char *hostname,
+	int port,
 	const char *service_filename,
 	const DATA_BLOB *svc32_exe,
 	const DATA_BLOB *svc64_exe,
@@ -258,7 +356,7 @@ static NTSTATUS winexe_svc_upload(
 		NULL,
 		hostname,
 		NULL,
-		445,
+		port,
 		"ADMIN$",
 		"?????",
 		credentials,
@@ -340,6 +438,7 @@ done:
 static NTSTATUS winexe_svc_install(
 	struct cli_state *cli,
 	const char *hostname,
+	int port,
 	const char *service_name,
 	const char *service_filename,
 	const DATA_BLOB *svc32_exe,
@@ -547,6 +646,7 @@ static NTSTATUS winexe_svc_install(
 	if (need_start) {
 		status = winexe_svc_upload(
 			hostname,
+			port,
 			service_filename,
 			svc32_exe,
 			svc64_exe,
@@ -1813,7 +1913,7 @@ int main(int argc, const char *argv[])
 		NULL,
 		options.hostname,
 		NULL,
-		445,
+		options.port,
 		"IPC$",
 		"?????",
 		options.credentials,
@@ -1829,6 +1929,7 @@ int main(int argc, const char *argv[])
 	status = winexe_svc_install(
 		cli,
 		options.hostname,
+		options.port,
 		service_name,
 		service_filename,
 		winexesvc32_exe,

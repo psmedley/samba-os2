@@ -778,6 +778,7 @@ struct dns_tree *dns_build_tree(TALLOC_CTX *mem_ctx, const char *name, struct ld
 
 	root = dns_tree_init(mem_ctx, nlist[rootcount-1], NULL);
 	if (root == NULL) {
+		talloc_free(nlist);
 		return NULL;
 	}
 
@@ -794,6 +795,11 @@ struct dns_tree *dns_build_tree(TALLOC_CTX *mem_ctx, const char *name, struct ld
 	/* Add all names in the result in a tree */
 	for (i=0; i<res->count; i++) {
 		ptr = ldb_msg_find_attr_as_string(res->msgs[i], "name", NULL);
+		if (ptr == NULL) {
+			DBG_ERR("dnsserver: dns record has no name (%s)",
+				ldb_dn_get_linearized(res->msgs[i]->dn));
+			goto failed;
+		}
 
 		if (strcmp(ptr, "@") == 0) {
 			base->data = res->msgs[i];
@@ -844,6 +850,7 @@ struct dns_tree *dns_build_tree(TALLOC_CTX *mem_ctx, const char *name, struct ld
 	return root;
 
 failed:
+	talloc_free(nlist);
 	talloc_free(root);
 	return NULL;
 }
@@ -868,6 +875,7 @@ static void _dns_add_name(TALLOC_CTX *mem_ctx, const char *name, char ***add_nam
 
 	ptr[count] = talloc_strdup(mem_ctx, name);
 	if (ptr[count] == NULL) {
+		talloc_free(ptr);
 		return;
 	}
 
@@ -963,6 +971,12 @@ WERROR dns_fill_records_array(TALLOC_CTX *mem_ctx,
 	}
 
 	ptr = ldb_msg_find_attr_as_string(msg, "name", NULL);
+	if (ptr == NULL) {
+		DBG_ERR("dnsserver: dns record has no name (%s)",
+			ldb_dn_get_linearized(msg->dn));
+		return WERR_INTERNAL_DB_ERROR;
+	}
+
 	el = ldb_msg_find_element(msg, "dnsRecord");
 	if (el == NULL || el->values == 0) {
 		return WERR_OK;

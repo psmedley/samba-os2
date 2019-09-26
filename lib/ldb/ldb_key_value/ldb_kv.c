@@ -51,6 +51,7 @@
 
 #include "ldb_kv.h"
 #include "ldb_private.h"
+#include "lib/util/attr.h"
 
 /*
   prevent memory errors on callbacks
@@ -106,8 +107,7 @@ bool ldb_kv_key_is_normal_record(struct ldb_val key)
   note that the key for a record can depend on whether the
   dn refers to a case sensitive index record or not
 */
-struct ldb_val ldb_kv_key_dn(struct ldb_module *module,
-			     TALLOC_CTX *mem_ctx,
+struct ldb_val ldb_kv_key_dn(TALLOC_CTX *mem_ctx,
 			     struct ldb_dn *dn)
 {
 	struct ldb_val key;
@@ -154,9 +154,7 @@ failed:
 }
 
 /* The caller is to provide a correctly sized key */
-int ldb_kv_guid_to_key(struct ldb_module *module,
-		       struct ldb_kv_private *ldb_kv,
-		       const struct ldb_val *GUID_val,
+int ldb_kv_guid_to_key(const struct ldb_val *GUID_val,
 		       struct ldb_val *key)
 {
 	const char *GUID_prefix = LDB_KV_GUID_KEY_PREFIX;
@@ -186,7 +184,7 @@ int ldb_kv_idx_to_key(struct ldb_module *module,
 	struct ldb_dn *dn;
 
 	if (ldb_kv->cache->GUID_index_attribute != NULL) {
-		return ldb_kv_guid_to_key(module, ldb_kv, idx_val, key);
+		return ldb_kv_guid_to_key(idx_val, key);
 	}
 
 	dn = ldb_dn_from_ldb_val(mem_ctx, ldb, idx_val);
@@ -198,7 +196,7 @@ int ldb_kv_idx_to_key(struct ldb_module *module,
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 	/* form the key */
-	*key = ldb_kv_key_dn(module, mem_ctx, dn);
+	*key = ldb_kv_key_dn(mem_ctx, dn);
 	TALLOC_FREE(dn);
 	if (!key->data) {
 		return ldb_module_oom(module);
@@ -226,11 +224,11 @@ struct ldb_val ldb_kv_key_msg(struct ldb_module *module,
 	int ret;
 
 	if (ldb_kv->cache->GUID_index_attribute == NULL) {
-		return ldb_kv_key_dn(module, mem_ctx, msg->dn);
+		return ldb_kv_key_dn(mem_ctx, msg->dn);
 	}
 
 	if (ldb_dn_is_special(msg->dn)) {
-		return ldb_kv_key_dn(module, mem_ctx, msg->dn);
+		return ldb_kv_key_dn(mem_ctx, msg->dn);
 	}
 
 	guid_val =
@@ -258,7 +256,7 @@ struct ldb_val ldb_kv_key_msg(struct ldb_module *module,
 	}
 	key.length = talloc_get_size(key.data);
 
-	ret = ldb_kv_guid_to_key(module, ldb_kv, guid_val, &key);
+	ret = ldb_kv_guid_to_key(guid_val, &key);
 
 	if (ret != LDB_SUCCESS) {
 		errno = EINVAL;
@@ -301,6 +299,32 @@ static int ldb_kv_check_special_dn(struct ldb_module *module,
 	return LDB_SUCCESS;
 }
 
+/*
+ * Called after modifies and when starting a transaction. Checks target pack
+ * format version and current pack format version, which are set by cache_load,
+ * and repacks if necessary.
+ */
+static int ldb_kv_maybe_repack(struct ldb_kv_private *ldb_kv) {
+	/* Override option taken from ldb options */
+	if (ldb_kv->pack_format_override != 0) {
+		ldb_kv->target_pack_format_version =
+			ldb_kv->pack_format_override;
+	}
+
+	if (ldb_kv->pack_format_version !=
+	    ldb_kv->target_pack_format_version) {
+		int r;
+		struct ldb_context *ldb = ldb_module_get_ctx(ldb_kv->module);
+		r = ldb_kv_repack(ldb_kv->module);
+		if (r != LDB_SUCCESS) {
+			ldb_debug(ldb, LDB_DEBUG_ERROR,
+				  "Database repack failed.");
+		}
+		return r;
+	}
+
+	return LDB_SUCCESS;
+}
 
 /*
   we've made a modification to a dn - possibly reindex and
@@ -384,7 +408,8 @@ int ldb_kv_store(struct ldb_module *module,
 	}
 
 	ret = ldb_pack_data(ldb_module_get_ctx(module),
-			    msg, &ldb_data);
+			    msg, &ldb_data,
+			    ldb_kv->pack_format_version);
 	if (ret == -1) {
 		TALLOC_FREE(key_ctx);
 		return LDB_ERR_OTHER;
@@ -440,6 +465,74 @@ static bool ldb_kv_single_valued(const struct ldb_schema_attribute *a,
 		return true;
 	}
 	return false;
+}
+
+/*
+ * Starts a sub transaction if they are supported by the backend
+ * and the ldb connection has not been opened in batch mode.
+ */
+static int ldb_kv_sub_transaction_start(struct ldb_kv_private *ldb_kv)
+{
+	int ret = LDB_SUCCESS;
+
+	if (ldb_kv->batch_mode) {
+		return ret;
+	}
+
+	ret = ldb_kv->kv_ops->begin_nested_write(ldb_kv);
+	if (ret == LDB_SUCCESS) {
+		ret = ldb_kv_index_sub_transaction_start(ldb_kv);
+	}
+	return ret;
+}
+
+/*
+ * Commits a sub transaction if they are supported by the backend
+ * and the ldb connection has not been opened in batch mode.
+ */
+static int ldb_kv_sub_transaction_commit(struct ldb_kv_private *ldb_kv)
+{
+	int ret = LDB_SUCCESS;
+
+	if (ldb_kv->batch_mode) {
+		return ret;
+	}
+
+	ret = ldb_kv_index_sub_transaction_commit(ldb_kv);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+	ret = ldb_kv->kv_ops->finish_nested_write(ldb_kv);
+	return ret;
+}
+
+/*
+ * Cancels a sub transaction if they are supported by the backend
+ * and the ldb connection has not been opened in batch mode.
+ */
+static int ldb_kv_sub_transaction_cancel(struct ldb_kv_private *ldb_kv)
+{
+	int ret = LDB_SUCCESS;
+
+	if (ldb_kv->batch_mode) {
+		return ret;
+	}
+
+	ret = ldb_kv_index_sub_transaction_cancel(ldb_kv);
+	if (ret != LDB_SUCCESS) {
+		struct ldb_context *ldb = ldb_module_get_ctx(ldb_kv->module);
+		/*
+		 * In the event of a failure we log the failure and continue
+		 * as we need to cancel the database transaction.
+		 */
+		ldb_debug(ldb,
+			  LDB_DEBUG_ERROR,
+			  __location__": ldb_kv_index_sub_transaction_cancel "
+			  "failed: %s",
+			  ldb_errstring(ldb));
+	}
+	ret = ldb_kv->kv_ops->abort_nested_write(ldb_kv);
+	return ret;
 }
 
 static int ldb_kv_add_internal(struct ldb_module *module,
@@ -553,6 +646,15 @@ static int ldb_kv_add_internal(struct ldb_module *module,
 
 	ret = ldb_kv_modified(module, msg->dn);
 
+	/*
+	 * To allow testing of the error recovery code in ldb_kv_add
+	 * cmocka tests can define CMOCKA_UNIT_TEST_ADD_INTERNAL_FAIL
+	 * to inject failures at this point.
+	 */
+#ifdef CMOCKA_UNIT_TEST_ADD_INTERNAL_FAIL
+	CMOCKA_UNIT_TEST_ADD_INTERNAL_FAIL
+#endif
+
 	return ret;
 }
 
@@ -588,7 +690,24 @@ static int ldb_kv_add(struct ldb_kv_context *ctx)
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
+	ret = ldb_kv_sub_transaction_start(ldb_kv);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
 	ret = ldb_kv_add_internal(module, ldb_kv, req->op.add.message, true);
+	if (ret != LDB_SUCCESS) {
+		int r = ldb_kv_sub_transaction_cancel(ldb_kv);
+		if (r != LDB_SUCCESS) {
+			ldb_debug(
+				ldb_module_get_ctx(module),
+				LDB_DEBUG_FATAL,
+				__location__
+				": Unable to roll back sub transaction");
+		}
+		ldb_kv->operation_failed = true;
+		return ret;
+	}
+	ret = ldb_kv_sub_transaction_commit(ldb_kv);
 
 	return ret;
 }
@@ -622,7 +741,7 @@ int ldb_kv_delete_noindex(struct ldb_module *module,
 		return LDB_ERR_OTHER;
 	}
 
-	ret = ldb_kv->kv_ops->delete (ldb_kv, key);
+	ret = ldb_kv->kv_ops->delete(ldb_kv, key);
 	TALLOC_FREE(tdb_key_ctx);
 
 	if (ret != 0) {
@@ -644,8 +763,7 @@ static int ldb_kv_delete_internal(struct ldb_module *module, struct ldb_dn *dn)
 
 	/* in case any attribute of the message was indexed, we need
 	   to fetch the old record */
-	ret = ldb_kv_search_dn1(
-	    module, dn, msg, LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC);
+	ret = ldb_kv_search_dn1(module, dn, msg, 0);
 	if (ret != LDB_SUCCESS) {
 		/* not finding the old record is an error */
 		goto done;
@@ -669,6 +787,14 @@ static int ldb_kv_delete_internal(struct ldb_module *module, struct ldb_dn *dn)
 
 done:
 	talloc_free(msg);
+	/*
+	 * To allow testing of the error recovery code in ldb_kv_delete
+	 * cmocka tests can define CMOCKA_UNIT_TEST_DELETE_INTERNAL_FAIL
+	 * to inject failures at this point.
+	 */
+#ifdef CMOCKA_UNIT_TEST_DELETE_INTERNAL_FAIL
+	CMOCKA_UNIT_TEST_DELETE_INTERNAL_FAIL
+#endif
 	return ret;
 }
 
@@ -679,6 +805,9 @@ static int ldb_kv_delete(struct ldb_kv_context *ctx)
 {
 	struct ldb_module *module = ctx->module;
 	struct ldb_request *req = ctx->req;
+	void *data = ldb_module_get_private(module);
+	struct ldb_kv_private *ldb_kv =
+	    talloc_get_type(data, struct ldb_kv_private);
 	int ret = LDB_SUCCESS;
 
 	ldb_request_set_state(req, LDB_ASYNC_PENDING);
@@ -687,7 +816,26 @@ static int ldb_kv_delete(struct ldb_kv_context *ctx)
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
+	ret = ldb_kv_sub_transaction_start(ldb_kv);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
 	ret = ldb_kv_delete_internal(module, req->op.del.dn);
+	if (ret != LDB_SUCCESS) {
+		int r = ldb_kv_sub_transaction_cancel(ldb_kv);
+		if (r != LDB_SUCCESS) {
+			ldb_debug(
+				ldb_module_get_ctx(module),
+				LDB_DEBUG_FATAL,
+				__location__
+				": Unable to roll back sub transaction");
+		}
+		if (ret != LDB_ERR_NO_SUCH_OBJECT) {
+			ldb_kv->operation_failed = true;
+		}
+		return ret;
+	}
+	ret = ldb_kv_sub_transaction_commit(ldb_kv);
 
 	return ret;
 }
@@ -766,7 +914,6 @@ static int ldb_kv_msg_delete_attribute(struct ldb_module *module,
 				       struct ldb_message *msg,
 				       const char *name)
 {
-	unsigned int i;
 	int ret;
 	struct ldb_message_element *el;
 	bool is_special = ldb_dn_is_special(msg->dn);
@@ -785,7 +932,6 @@ static int ldb_kv_msg_delete_attribute(struct ldb_module *module,
 	if (el == NULL) {
 		return LDB_ERR_NO_SUCH_ATTRIBUTE;
 	}
-	i = el - msg->elements;
 
 	ret = ldb_kv_index_del_element(module, ldb_kv, msg, el);
 	if (ret != LDB_SUCCESS) {
@@ -793,10 +939,7 @@ static int ldb_kv_msg_delete_attribute(struct ldb_module *module,
 	}
 
 	talloc_free(el->values);
-	if (msg->num_elements > (i+1)) {
-		memmove(el, el+1, sizeof(*el) * (msg->num_elements - (i+1)));
-	}
-	msg->num_elements--;
+	ldb_msg_remove_element(msg, el);
 	msg->elements = talloc_realloc(msg, msg->elements,
 				       struct ldb_message_element,
 				       msg->num_elements);
@@ -907,8 +1050,7 @@ int ldb_kv_modify_internal(struct ldb_module *module,
 		goto done;
 	}
 
-	ret = ldb_kv_search_dn1(
-	    module, msg->dn, msg2, LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC);
+	ret = ldb_kv_search_dn1(module, msg->dn, msg2, 0);
 	if (ret != LDB_SUCCESS) {
 		goto done;
 	}
@@ -1207,6 +1349,14 @@ int ldb_kv_modify_internal(struct ldb_module *module,
 
 done:
 	TALLOC_FREE(mem_ctx);
+	/*
+	 * To allow testing of the error recovery code in ldb_kv_modify
+	 * cmocka tests can define CMOCKA_UNIT_TEST_MODIFY_INTERNAL_FAIL
+	 * to inject failures at this point.
+	 */
+#ifdef CMOCKA_UNIT_TEST_MODIFY_INTERNAL_FAIL
+	CMOCKA_UNIT_TEST_MODIFY_INTERNAL_FAIL
+#endif
 	return ret;
 }
 
@@ -1217,6 +1367,9 @@ static int ldb_kv_modify(struct ldb_kv_context *ctx)
 {
 	struct ldb_module *module = ctx->module;
 	struct ldb_request *req = ctx->req;
+	void *data = ldb_module_get_private(module);
+	struct ldb_kv_private *ldb_kv =
+	    talloc_get_type(data, struct ldb_kv_private);
 	int ret = LDB_SUCCESS;
 
 	ret = ldb_kv_check_special_dn(module, req->op.mod.message);
@@ -1230,8 +1383,68 @@ static int ldb_kv_modify(struct ldb_kv_context *ctx)
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
+	ret = ldb_kv_sub_transaction_start(ldb_kv);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
 	ret = ldb_kv_modify_internal(module, req->op.mod.message, req);
+	if (ret != LDB_SUCCESS) {
+		int r = ldb_kv_sub_transaction_cancel(ldb_kv);
+		if (r != LDB_SUCCESS) {
+			ldb_debug(
+				ldb_module_get_ctx(module),
+				LDB_DEBUG_FATAL,
+				__location__
+				": Unable to roll back sub transaction");
+		}
+		if (ret != LDB_ERR_NO_SUCH_OBJECT) {
+			ldb_kv->operation_failed = true;
+		}
+		return ret;
+	}
+	ret = ldb_kv_sub_transaction_commit(ldb_kv);
 
+
+	return ret;
+}
+
+static int ldb_kv_rename_internal(struct ldb_module *module,
+			   struct ldb_request *req,
+			   struct ldb_message *msg)
+{
+	void *data = ldb_module_get_private(module);
+	struct ldb_kv_private *ldb_kv =
+	    talloc_get_type(data, struct ldb_kv_private);
+	int ret = LDB_SUCCESS;
+
+	/* Always delete first then add, to avoid conflicts with
+	 * unique indexes. We rely on the transaction to make this
+	 * atomic
+	 */
+	ret = ldb_kv_delete_internal(module, msg->dn);
+	if (ret != LDB_SUCCESS) {
+		return ret;
+	}
+
+	msg->dn = ldb_dn_copy(msg, req->op.rename.newdn);
+	if (msg->dn == NULL) {
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+
+	/* We don't check single value as we can have more than 1 with
+	 * deleted attributes. We could go through all elements but that's
+	 * maybe not the most efficient way
+	 */
+	ret = ldb_kv_add_internal(module, ldb_kv, msg, false);
+
+	/*
+	 * To allow testing of the error recovery code in ldb_kv_rename
+	 * cmocka tests can define CMOCKA_UNIT_TEST_RENAME_INTERNAL_FAIL
+	 * to inject failures at this point.
+	 */
+#ifdef CMOCKA_UNIT_TEST_RENAME_INTERNAL_FAIL
+	CMOCKA_UNIT_TEST_RENAME_INTERNAL_FAIL
+#endif
 	return ret;
 }
 
@@ -1272,10 +1485,7 @@ static int ldb_kv_rename(struct ldb_kv_context *ctx)
 	}
 
 	/* we need to fetch the old record to re-add under the new name */
-	ret = ldb_kv_search_dn1(module,
-				req->op.rename.olddn,
-				msg,
-				LDB_UNPACK_DATA_FLAG_NO_DATA_ALLOC);
+	ret = ldb_kv_search_dn1(module, req->op.rename.olddn, msg, 0);
 	if (ret == LDB_ERR_INVALID_DN_SYNTAX) {
 		ldb_asprintf_errstring(ldb_module_get_ctx(module),
 				       "Invalid Old DN: %s",
@@ -1293,13 +1503,13 @@ static int ldb_kv_rename(struct ldb_kv_context *ctx)
 	 * Even in GUID index mode we use ltdb_key_dn() as we are
 	 * trying to figure out if this is just a case rename
 	 */
-	key = ldb_kv_key_dn(module, msg, req->op.rename.newdn);
+	key = ldb_kv_key_dn(msg, req->op.rename.newdn);
 	if (!key.data) {
 		talloc_free(msg);
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	key_old = ldb_kv_key_dn(module, msg, req->op.rename.olddn);
+	key_old = ldb_kv_key_dn(msg, req->op.rename.olddn);
 	if (!key_old.data) {
 		talloc_free(msg);
 		talloc_free(key.data);
@@ -1338,28 +1548,27 @@ static int ldb_kv_rename(struct ldb_kv_context *ctx)
 	talloc_free(key_old.data);
 	talloc_free(key.data);
 
-	/* Always delete first then add, to avoid conflicts with
-	 * unique indexes. We rely on the transaction to make this
-	 * atomic
-	 */
-	ret = ldb_kv_delete_internal(module, msg->dn);
+
+	ret = ldb_kv_sub_transaction_start(ldb_kv);
 	if (ret != LDB_SUCCESS) {
 		talloc_free(msg);
 		return ret;
 	}
-
-	msg->dn = ldb_dn_copy(msg, req->op.rename.newdn);
-	if (msg->dn == NULL) {
+	ret = ldb_kv_rename_internal(module, req, msg);
+	if (ret != LDB_SUCCESS) {
+		int r = ldb_kv_sub_transaction_cancel(ldb_kv);
+		if (r != LDB_SUCCESS) {
+			ldb_debug(
+				ldb_module_get_ctx(module),
+				LDB_DEBUG_FATAL,
+				__location__
+				": Unable to roll back sub transaction");
+		}
 		talloc_free(msg);
-		return LDB_ERR_OPERATIONS_ERROR;
+		ldb_kv->operation_failed = true;
+		return ret;
 	}
-
-	/* We don't check single value as we can have more than 1 with
-	 * deleted attributes. We could go through all elements but that's
-	 * maybe not the most efficient way
-	 */
-	ret = ldb_kv_add_internal(module, ldb_kv, msg, false);
-
+	ret = ldb_kv_sub_transaction_commit(ldb_kv);
 	talloc_free(msg);
 
 	return ret;
@@ -1392,9 +1601,12 @@ static int ldb_kv_start_trans(struct ldb_module *module)
 		return ldb_kv->kv_ops->error(ldb_kv);
 	}
 
-	ldb_kv_index_transaction_start(module);
+	ldb_kv_index_transaction_start(
+		module,
+		ldb_kv->index_transaction_cache_size);
 
 	ldb_kv->reindex_failed = false;
+	ldb_kv->operation_failed = false;
 
 	return LDB_SUCCESS;
 }
@@ -1454,6 +1666,20 @@ static int ldb_kv_prepare_commit(struct ldb_module *module)
 		return ret;
 	}
 
+	/*
+	 * If GUID indexing was toggled in this transaction, we repack at
+	 * format version 2 if GUID indexing was enabled, or version 1 if
+	 * it was disabled.
+	 */
+	ret = ldb_kv_maybe_repack(ldb_kv);
+	if (ret != LDB_SUCCESS) {
+		ldb_kv_del_trans(module);
+		ldb_set_errstring(ldb_module_get_ctx(module),
+				  "Failure during re-pack, so "
+				  "transaction must be aborted.");
+		return ret;
+	}
+
 	if (ldb_kv->kv_ops->prepare_write(ldb_kv) != 0) {
 		ret = ldb_kv->kv_ops->error(ldb_kv);
 		ldb_debug_set(ldb_module_get_ctx(module),
@@ -1476,6 +1702,32 @@ static int ldb_kv_end_trans(struct ldb_module *module)
 	void *data = ldb_module_get_private(module);
 	struct ldb_kv_private *ldb_kv =
 	    talloc_get_type(data, struct ldb_kv_private);
+
+	/*
+	 * If in batch mode and there has been an operation failure
+	 * rollback the transaction rather than committing it to avoid
+	 * any possible corruption
+	 */
+	if (ldb_kv->batch_mode && ldb_kv->operation_failed) {
+		ret = ldb_kv_del_trans( module);
+		if (ret != LDB_SUCCESS) {
+			ldb_debug_set(ldb_module_get_ctx(module),
+				      LDB_DEBUG_FATAL,
+				      "An operation failed during a batch mode "
+				      "transaction. The transaction could not"
+				      "be rolled back, ldb_kv_del_trans "
+				      "returned (%s, %s)",
+				      ldb_kv->kv_ops->errorstr(ldb_kv),
+				      ldb_strerror(ret));
+		} else {
+			ldb_debug_set(ldb_module_get_ctx(module),
+				      LDB_DEBUG_FATAL,
+				      "An operation failed during a batch mode "
+				      "transaction, the transaction was "
+				      "rolled back");
+		}
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
 
 	if (!ldb_kv->prepared_commit) {
 		ret = ldb_kv_prepare_commit(module);
@@ -1637,9 +1889,9 @@ static void ldb_kv_request_done(struct ldb_kv_context *ctx, int error)
 	req->callback(req, ares);
 }
 
-static void ldb_kv_timeout(struct tevent_context *ev,
-			   struct tevent_timer *te,
-			   struct timeval t,
+static void ldb_kv_timeout(_UNUSED_ struct tevent_context *ev,
+			   _UNUSED_ struct tevent_timer *te,
+			   _UNUSED_ struct timeval t,
 			   void *private_data)
 {
 	struct ldb_kv_context *ctx;
@@ -1904,6 +2156,8 @@ int ldb_kv_init_store(struct ldb_kv_private *ldb_kv,
 
 	ldb_kv->pid = getpid();
 
+	ldb_kv->pack_format_override = 0;
+
 	ldb_kv->module = ldb_module_new(ldb, ldb, name, &ldb_kv_ops);
 	if (!ldb_kv->module) {
 		ldb_oom(ldb);
@@ -1941,6 +2195,40 @@ int ldb_kv_init_store(struct ldb_kv_private *ldb_kv,
 	}
 
 	/*
+	 * Usually the presence of GUID indexing determines the pack format
+	 * we use but in certain circumstances such as downgrading an
+	 * MDB-backed database, we want to override the target pack format.
+	 *
+	 * We set/get opaques here because in the Samba partitions module,
+	 * 'options' are not passed correctly so sub-databases can't see
+	 * the options they need.
+	 */
+	{
+		const char *pack_format_override =
+			ldb_options_find(ldb, options, "pack_format_override");
+		if (pack_format_override != NULL) {
+			int ret;
+			ldb_kv->pack_format_override =
+				strtoul(pack_format_override, NULL, 0);
+			ret = ldb_set_opaque(ldb,
+					     "pack_format_override",
+			     (void *)(intptr_t)ldb_kv->pack_format_override);
+			if (ret != LDB_SUCCESS) {
+				talloc_free(ldb_kv->module);
+				return ldb_module_operr(ldb_kv->module);
+			}
+		} else {
+			/*
+			 * NULL -> 0 is fine, otherwise we get back
+			 * the number we needed
+			 */
+			ldb_kv->pack_format_override
+				= (intptr_t)ldb_get_opaque(ldb,
+						   "pack_format_override");
+		}
+	}
+
+	/*
 	 * Override full DB scans
 	 *
 	 * A full DB scan is expensive on a large database.  This
@@ -1953,6 +2241,50 @@ int ldb_kv_init_store(struct ldb_kv_private *ldb_kv,
 					 "disable_full_db_scan_for_self_test");
 		if (len_str != NULL) {
 			ldb_kv->disable_full_db_scan = true;
+		}
+	}
+
+	/*
+	 * Set the size of the transaction index cache.
+	 * If the ldb option "transaction_index_cache_size" is set use that
+	 * otherwise use DEFAULT_INDEX_CACHE_SIZE
+	 */
+	ldb_kv->index_transaction_cache_size = DEFAULT_INDEX_CACHE_SIZE;
+	{
+		const char *size = ldb_options_find(
+			ldb,
+			options,
+			"transaction_index_cache_size");
+		if (size != NULL) {
+			size_t cache_size = 0;
+			errno = 0;
+
+			cache_size = strtoul( size, NULL, 0);
+			if (cache_size == 0 || errno == ERANGE) {
+				ldb_debug(
+					ldb,
+					LDB_DEBUG_WARNING,
+					"Invalid transaction_index_cache_size "
+					"value [%s], using default(%d)\n",
+					size,
+					DEFAULT_INDEX_CACHE_SIZE);
+			} else {
+				ldb_kv->index_transaction_cache_size =
+					cache_size;
+			}
+		}
+	}
+	/*
+	 * Set batch mode operation.
+	 * This disables the nested sub transactions, and increases the
+	 * chance of index corruption.  If using this mode the transaction
+	 * commit will be aborted if any operation fails.
+	 */
+	{
+		const char *batch_mode = ldb_options_find(
+			ldb, options, "batch_mode");
+		if (batch_mode != NULL) {
+			ldb_kv->batch_mode = true;
 		}
 	}
 

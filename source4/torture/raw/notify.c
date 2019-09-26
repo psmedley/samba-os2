@@ -768,7 +768,7 @@ static bool test_notify_mask(struct torture_context *tctx,
 		fnum = io.ntcreatex.out.file.fnum; \
 		setup \
 		notify.nttrans.in.file.fnum = fnum;	\
-		notify.nttrans.in.completion_filter = (1<<i); \
+		notify.nttrans.in.completion_filter = ((uint32_t)1<<i); \
 		req = smb_raw_changenotify_send(cli->tree, &notify); \
 		smb_raw_chkpath(cli->tree, &chkpath); \
 		op \
@@ -817,7 +817,7 @@ static bool test_notify_mask(struct torture_context *tctx,
 					notify.nttrans.in.completion_filter, \
 					notify.nttrans.out.changes[0].name.s));\
 		} \
-		mask |= (1<<i); \
+		mask |= ((uint32_t)1<<i); \
 	} \
 	if ((expected) != mask) { \
 		torture_assert_int_not_equal_goto(tctx, ((expected) & ~mask), \
@@ -1348,7 +1348,7 @@ static bool test_notify_tcp_dis(struct torture_context *tctx,
 
 	req = smb_raw_changenotify_send(cli->tree, &notify);
 
-	smbcli_transport_idle_handler(cli->transport, tcp_dis_handler, 250, cli);
+	smbcli_transport_idle_handler(cli->transport, tcp_dis_handler, 250000, cli);
 
 	status = smb_raw_changenotify_recv(req, tctx, &notify);
 	torture_assert_ntstatus_equal_goto(tctx, status,
@@ -1465,46 +1465,126 @@ static bool test_notify_tree(struct torture_context *tctx,
 		int fnum;
 		int counted;
 	} dirs[] = {
-		{BASEDIR_CN1_TNT "\\abc",
-			true, FILE_NOTIFY_CHANGE_NAME, 30 },
-		{BASEDIR_CN1_TNT "\\zqy",
-			true, FILE_NOTIFY_CHANGE_NAME, 8 },
-		{BASEDIR_CN1_TNT "\\atsy",
-			true, FILE_NOTIFY_CHANGE_NAME, 4 },
-		{BASEDIR_CN1_TNT "\\abc\\foo",
-			true,  FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_CN1_TNT "\\abc\\blah",
-			true,  FILE_NOTIFY_CHANGE_NAME, 13 },
-		{BASEDIR_CN1_TNT "\\abc\\blah",
-			false, FILE_NOTIFY_CHANGE_NAME, 7 },
-		{BASEDIR_CN1_TNT "\\abc\\blah\\a",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_CN1_TNT "\\abc\\blah\\b",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_CN1_TNT "\\abc\\blah\\c",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_CN1_TNT "\\abc\\fooblah",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_CN1_TNT "\\zqy\\xx",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_CN1_TNT "\\zqy\\yyy",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_CN1_TNT "\\zqy\\..",
-			true, FILE_NOTIFY_CHANGE_NAME, 40 },
-		{BASEDIR_CN1_TNT,
-			true, FILE_NOTIFY_CHANGE_NAME, 40 },
-		{BASEDIR_CN1_TNT,
-			false,FILE_NOTIFY_CHANGE_NAME, 6 },
-		{BASEDIR_CN1_TNT "\\atsy",
-			false,FILE_NOTIFY_CHANGE_NAME, 4 },
-		{BASEDIR_CN1_TNT "\\abc",
-			true, FILE_NOTIFY_CHANGE_NAME, 24 },
-		{BASEDIR_CN1_TNT "\\abc",
-			false,FILE_NOTIFY_CHANGE_FILE_NAME, 0 },
-		{BASEDIR_CN1_TNT "\\abc",
-			true, FILE_NOTIFY_CHANGE_FILE_NAME, 0 },
-		{BASEDIR_CN1_TNT "\\abc",
-			true, FILE_NOTIFY_CHANGE_NAME, 24 },
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 30,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\zqy",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 8,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\atsy",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 4,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc\\foo",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc\\blah",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 13,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc\\blah",
+			.recursive = false,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 7,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc\\blah\\a",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc\\blah\\b",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc\\blah\\c",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc\\fooblah",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\zqy\\xx",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\zqy\\yyy",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\zqy\\..",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 40,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT,
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 40,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT,
+			.recursive = false,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 6,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\atsy",
+			.recursive = false,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 4,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 24,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc",
+			.recursive = false,
+			.filter    = FILE_NOTIFY_CHANGE_FILE_NAME,
+			.expected  = 0,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_FILE_NAME,
+			.expected  = 0,
+		},
+		{
+			.path      = BASEDIR_CN1_TNT "\\abc",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 24,
+		},
 	};
 	int i;
 	NTSTATUS status;

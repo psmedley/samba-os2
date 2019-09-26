@@ -190,6 +190,11 @@ typedef uint64_t br_off;
 #define SOFF_T_R(p, ofs, v) (SIVAL(p,(ofs)+4,(v)&0xFFFFFFFF), SIVAL(p,ofs,(v)>>32))
 #define IVAL_TO_SMB_OFF_T(buf,off) ((off_t)(( ((uint64_t)(IVAL((buf),(off)))) & ((uint64_t)0xFFFFFFFF) )))
 
+/* Is birthtime real, or was it calculated ? */
+#define ST_EX_IFLAG_CALCULATED_BTIME		(1 << 0)
+#define ST_EX_IFLAG_CALCULATED_ITIME		(1 << 1)
+#define ST_EX_IFLAG_CALCULATED_FILE_ID		(1 << 2)
+
 /*
  * Type for stat structure.
  */
@@ -197,6 +202,7 @@ typedef uint64_t br_off;
 struct stat_ex {
 	dev_t		st_ex_dev;
 	ino_t		st_ex_ino;
+	uint64_t	st_ex_file_id;
 	mode_t		st_ex_mode;
 	nlink_t		st_ex_nlink;
 	uid_t		st_ex_uid;
@@ -207,13 +213,17 @@ struct stat_ex {
 	struct timespec st_ex_mtime;
 	struct timespec st_ex_ctime;
 	struct timespec st_ex_btime; /* birthtime */
-	/* Is birthtime real, or was it calculated ? */
-	bool		st_ex_calculated_birthtime;
+	/*
+	 * Immutable original birth time aka instantiation time. Set when a file
+	 * is created, never changes thereafter. May not be set by the client.
+	 */
+	struct timespec st_ex_itime; /* instantiation time */
+
 	blksize_t	st_ex_blksize;
 	blkcnt_t	st_ex_blocks;
 
 	uint32_t	st_ex_flags;
-	uint32_t	st_ex_mask;
+	uint32_t	st_ex_iflags;
 };
 
 typedef struct stat_ex SMB_STRUCT_STAT;

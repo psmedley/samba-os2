@@ -2121,13 +2121,14 @@ ADS_STATUS ads_create_machine_acct(ADS_STRUCT *ads,
 	}
 
 	ret = ads_find_machine_acct(ads, &res, machine_escaped);
-	ads_msgfree(ads, res);
-	if (ADS_ERR_OK(ret)) {
+	if (ADS_ERR_OK(ret) && ads_count_replies(ads, res) == 1) {
 		DBG_DEBUG("Host account for %s already exists.\n",
 				machine_escaped);
 		ret = ADS_ERROR_LDAP(LDAP_ALREADY_EXISTS);
+		ads_msgfree(ads, res);
 		goto done;
 	}
+	ads_msgfree(ads, res);
 
 	new_dn = talloc_asprintf(ctx, "cn=%s,%s", machine_escaped, org_unit);
 	samAccountName = talloc_asprintf(ctx, "%s$", machine_name);
@@ -2245,8 +2246,9 @@ done:
 */
 static void dump_binary(ADS_STRUCT *ads, const char *field, struct berval **values)
 {
-	int i, j;
+	size_t i;
 	for (i=0; values[i]; i++) {
+		ber_len_t j;
 		printf("%s: ", field);
 		for (j=0; j<values[i]->bv_len; j++) {
 			printf("%02X", (unsigned char)values[i]->bv_val[j]);
@@ -2279,13 +2281,15 @@ static void dump_sid(ADS_STRUCT *ads, const char *field, struct berval **values)
 {
 	int i;
 	for (i=0; values[i]; i++) {
+		ssize_t ret;
 		struct dom_sid sid;
-		fstring tmp;
-		if (!sid_parse((const uint8_t *)values[i]->bv_val,
-			       values[i]->bv_len, &sid)) {
+		struct dom_sid_buf tmp;
+		ret = sid_parse((const uint8_t *)values[i]->bv_val,
+				values[i]->bv_len, &sid);
+		if (ret == -1) {
 			return;
 		}
-		printf("%s: %s\n", field, sid_to_fstring(tmp, &sid));
+		printf("%s: %s\n", field, dom_sid_str_buf(&sid, &tmp));
 	}
 }
 
@@ -2556,8 +2560,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
 {
 	char **values;
 	char **ret = NULL;
-	int i;
-	size_t converted_size;
+	size_t i, converted_size;
 
 	values = ldap_get_values(ads->ldap.ld, msg, field);
 	if (!values)
@@ -2789,7 +2792,6 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
 		   LDAPMessage *msg, const char *field, struct dom_sid **sids)
 {
 	struct berval **values;
-	bool ret;
 	int count, i;
 
 	values = ldap_get_values_len(ads->ldap.ld, msg, field);
@@ -2812,9 +2814,10 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
 
 	count = 0;
 	for (i=0; values[i]; i++) {
+		ssize_t ret;
 		ret = sid_parse((const uint8_t *)values[i]->bv_val,
 				values[i]->bv_len, &(*sids)[count]);
-		if (ret) {
+		if (ret != -1) {
 			struct dom_sid_buf buf;
 			DBG_DEBUG("pulling SID: %s\n",
 				  dom_sid_str_buf(&(*sids)[count], &buf));
@@ -3372,6 +3375,7 @@ ADS_STATUS ads_get_sid_from_extended_dn(TALLOC_CTX *mem_ctx,
 		}
 		break;
 	case ADS_EXTENDED_DN_HEX_STRING: {
+		ssize_t ret;
 		fstring buf;
 		size_t buf_len;
 
@@ -3380,7 +3384,8 @@ ADS_STATUS ads_get_sid_from_extended_dn(TALLOC_CTX *mem_ctx,
 			return ADS_ERROR_NT(NT_STATUS_INVALID_PARAMETER);
 		}
 
-		if (!sid_parse((const uint8_t *)buf, buf_len, sid)) {
+		ret = sid_parse((const uint8_t *)buf, buf_len, sid);
+		if (ret == -1) {
 			DEBUG(10,("failed to parse sid\n"));
 			return ADS_ERROR_NT(NT_STATUS_INVALID_PARAMETER);
 		}

@@ -97,7 +97,9 @@ int ctdb_call_local(struct ctdb_db_context *ctdb_db, struct ctdb_call *call,
 	c->header = header;
 
 	for (fn=ctdb_db->calls;fn;fn=fn->next) {
-		if (fn->id == call->call_id) break;
+		if (fn->id == (uint32_t)call->call_id) {
+			break;
+		}
 	}
 	if (fn == NULL) {
 		ctdb_set_error(ctdb, "Unknown call id %u\n", call->call_id);
@@ -1746,7 +1748,7 @@ uint32_t *list_of_vnnmap_nodes(struct ctdb_context *ctdb,
 				TALLOC_CTX *mem_ctx,
 				bool include_self)
 {
-	int i, j, num_nodes;
+	unsigned int i, j, num_nodes;
 	uint32_t *nodes;
 
 	for (i=num_nodes=0;i<vnn_map->size;i++) {
@@ -1769,17 +1771,18 @@ uint32_t *list_of_vnnmap_nodes(struct ctdb_context *ctdb,
 	return nodes;
 }
 
-/* Get list of nodes not including those with flags specified by mask.
- * If exclude_pnn is not -1 then exclude that pnn from the list.
- */
-uint32_t *list_of_nodes(struct ctdb_context *ctdb,
-			struct ctdb_node_map_old *node_map,
-			TALLOC_CTX *mem_ctx,
-			uint32_t mask,
-			int exclude_pnn)
+/* Get list of nodes not including those with flags specified by mask */
+static uint32_t *list_of_nodes(struct ctdb_context *ctdb,
+			       struct ctdb_node_map_old *node_map,
+			       TALLOC_CTX *mem_ctx,
+			       uint32_t mask,
+			       bool include_self)
 {
-	int i, j, num_nodes;
+	unsigned int i, j, num_nodes;
+	uint32_t exclude_pnn;
 	uint32_t *nodes;
+
+	exclude_pnn = include_self ? CTDB_UNKNOWN_PNN : ctdb->pnn;
 
 	for (i=num_nodes=0;i<node_map->num;i++) {
 		if (node_map->nodes[i].flags & mask) {
@@ -1812,8 +1815,11 @@ uint32_t *list_of_active_nodes(struct ctdb_context *ctdb,
 				TALLOC_CTX *mem_ctx,
 				bool include_self)
 {
-	return list_of_nodes(ctdb, node_map, mem_ctx, NODE_FLAGS_INACTIVE,
-			     include_self ? -1 : ctdb->pnn);
+	return list_of_nodes(ctdb,
+			     node_map,
+			     mem_ctx,
+			     NODE_FLAGS_INACTIVE,
+			     include_self);
 }
 
 uint32_t *list_of_connected_nodes(struct ctdb_context *ctdb,
@@ -1821,8 +1827,11 @@ uint32_t *list_of_connected_nodes(struct ctdb_context *ctdb,
 				TALLOC_CTX *mem_ctx,
 				bool include_self)
 {
-	return list_of_nodes(ctdb, node_map, mem_ctx, NODE_FLAGS_DISCONNECTED,
-			     include_self ? -1 : ctdb->pnn);
+	return list_of_nodes(ctdb,
+			     node_map,
+			     mem_ctx,
+			     NODE_FLAGS_DISCONNECTED,
+			     include_self);
 }
 
 /*

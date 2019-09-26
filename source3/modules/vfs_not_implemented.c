@@ -511,6 +511,13 @@ struct file_id vfs_not_implemented_file_id_create(vfs_handle_struct *handle,
 	return id;
 }
 
+uint64_t vfs_not_implemented_fs_file_id(vfs_handle_struct *handle,
+					const SMB_STRUCT_STAT *sbuf)
+{
+	errno = ENOSYS;
+	return 0;
+}
+
 struct vfs_not_implemented_offload_read_state {
 	bool dummy;
 };
@@ -643,24 +650,14 @@ const char *vfs_not_implemented_connectpath(struct vfs_handle_struct *handle,
 
 NTSTATUS vfs_not_implemented_brl_lock_windows(struct vfs_handle_struct *handle,
 					      struct byte_range_lock *br_lck,
-					      struct lock_struct *plock,
-					      bool blocking_lock)
+					      struct lock_struct *plock)
 {
 	return NT_STATUS_NOT_IMPLEMENTED;
 }
 
 bool vfs_not_implemented_brl_unlock_windows(struct vfs_handle_struct *handle,
-					    struct messaging_context *msg_ctx,
 					    struct byte_range_lock *br_lck,
 					    const struct lock_struct *plock)
-{
-	errno = ENOSYS;
-	return false;
-}
-
-bool vfs_not_implemented_brl_cancel_windows(struct vfs_handle_struct *handle,
-					    struct byte_range_lock *br_lck,
-					    struct lock_struct *plock)
 {
 	errno = ENOSYS;
 	return false;
@@ -1096,6 +1093,7 @@ static struct vfs_fn_pointers vfs_not_implemented_fns = {
 	.realpath_fn = vfs_not_implemented_realpath,
 	.chflags_fn = vfs_not_implemented_chflags,
 	.file_id_create_fn = vfs_not_implemented_file_id_create,
+	.fs_file_id_fn = vfs_not_implemented_fs_file_id,
 	.offload_read_send_fn = vfs_not_implemented_offload_read_send,
 	.offload_read_recv_fn = vfs_not_implemented_offload_read_recv,
 	.offload_write_send_fn = vfs_not_implemented_offload_write_send,
@@ -1108,7 +1106,6 @@ static struct vfs_fn_pointers vfs_not_implemented_fns = {
 	.connectpath_fn = vfs_not_implemented_connectpath,
 	.brl_lock_windows_fn = vfs_not_implemented_brl_lock_windows,
 	.brl_unlock_windows_fn = vfs_not_implemented_brl_unlock_windows,
-	.brl_cancel_windows_fn = vfs_not_implemented_brl_cancel_windows,
 	.strict_lock_check_fn = vfs_not_implemented_strict_lock_check,
 	.translate_name_fn = vfs_not_implemented_translate_name,
 	.fsctl_fn = vfs_not_implemented_fsctl,

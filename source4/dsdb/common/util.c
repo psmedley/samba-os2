@@ -45,7 +45,6 @@
 #include "lib/socket/socket.h"
 #include "librpc/gen_ndr/irpc.h"
 #include "libds/common/flag_mapping.h"
-#include "../lib/util/util_runcmd.h"
 #include "lib/util/access.h"
 #include "lib/util/util_str_hex.h"
 #include "libcli/util/ntstatus.h"
@@ -204,26 +203,6 @@ struct dom_sid *samdb_search_dom_sid(struct ldb_context *sam_ldb,
 }
 
 /*
-  return the count of the number of records in the sam matching the query
-*/
-int samdb_search_count(struct ldb_context *sam_ldb,
-		       TALLOC_CTX *mem_ctx,
-		       struct ldb_dn *basedn,
-		       const char *format, ...) _PRINTF_ATTRIBUTE(4,5)
-{
-	va_list ap;
-	const char *attrs[] = { NULL };
-	int ret;
-
-	va_start(ap, format);
-	ret = gendb_search_v(sam_ldb, mem_ctx, basedn, NULL, attrs, format, ap);
-	va_end(ap);
-
-	return ret;
-}
-
-
-/*
   search the sam for a single integer attribute in exactly 1 record
 */
 unsigned int samdb_search_uint(struct ldb_context *sam_ldb,
@@ -363,7 +342,7 @@ uint32_t samdb_result_rid_from_sid(TALLOC_CTX *mem_ctx, const struct ldb_message
 struct dom_sid *samdb_result_dom_sid(TALLOC_CTX *mem_ctx, const struct ldb_message *msg, 
 				     const char *attr)
 {
-	bool ok;
+	ssize_t ret;
 	const struct ldb_val *v;
 	struct dom_sid *sid;
 	v = ldb_msg_find_ldb_val(msg, attr);
@@ -374,8 +353,8 @@ struct dom_sid *samdb_result_dom_sid(TALLOC_CTX *mem_ctx, const struct ldb_messa
 	if (sid == NULL) {
 		return NULL;
 	}
-	ok = sid_parse(v->data, v->length, sid);
-	if (!ok) {
+	ret = sid_parse(v->data, v->length, sid);
+	if (ret == -1) {
 		talloc_free(sid);
 		return NULL;
 	}
@@ -724,7 +703,7 @@ NTSTATUS samdb_result_parameters(TALLOC_CTX *mem_ctx,
 /* Find an attribute, with a particular value */
 
 /* The current callers of this function expect a very specific
- * behaviour: In particular, objectClass subclass equivilance is not
+ * behaviour: In particular, objectClass subclass equivalence is not
  * wanted.  This means that we should not lookup the schema for the
  * comparison function */
 struct ldb_message_element *samdb_find_attribute(struct ldb_context *ldb, 
@@ -1442,122 +1421,23 @@ failed:
 }
 
 /*
-  work out the ntds settings invocationId for the current open ldb
+  work out the ntds settings invocationID/objectGUID for the current open ldb
 */
-const struct GUID *samdb_ntds_invocation_id(struct ldb_context *ldb)
+static const struct GUID *samdb_ntds_GUID(struct ldb_context *ldb,
+					  const char *attribute,
+					  const char *cache_name)
 {
 	TALLOC_CTX *tmp_ctx;
-	const char *attrs[] = { "invocationId", NULL };
-	int ret;
-	struct ldb_result *res;
-	struct GUID *invocation_id;
-
-	/* see if we have a cached copy */
-	invocation_id = (struct GUID *)ldb_get_opaque(ldb, "cache.invocation_id");
-	if (invocation_id) {
-		SMB_ASSERT(!GUID_all_zero(invocation_id));
-		return invocation_id;
-	}
-
-	tmp_ctx = talloc_new(ldb);
-	if (tmp_ctx == NULL) {
-		goto failed;
-	}
-
-	ret = ldb_search(ldb, tmp_ctx, &res, samdb_ntds_settings_dn(ldb, tmp_ctx), LDB_SCOPE_BASE, attrs, NULL);
-	if (ret) {
-		goto failed;
-	}
-
-	if (res->count != 1) {
-		goto failed;
-	}
-
-	invocation_id = talloc(tmp_ctx, struct GUID);
-	if (!invocation_id) {
-		goto failed;
-	}
-
-	*invocation_id = samdb_result_guid(res->msgs[0], "invocationId");
-	if (GUID_all_zero(invocation_id)) {
-		if (ldb_msg_find_ldb_val(res->msgs[0], "invocationId")) {
-			DEBUG(0, ("Failed to find our own NTDS Settings invocationId in the ldb!\n"));	
-		} else {
-			DEBUG(0, ("Failed to find parse own NTDS Settings invocationId from the ldb!\n"));
-		}
-		goto failed;
-	}
-
-	/* cache the domain_sid in the ldb */
-	if (ldb_set_opaque(ldb, "cache.invocation_id", invocation_id) != LDB_SUCCESS) {
-		goto failed;
-	}
-
-	talloc_steal(ldb, invocation_id);
-	talloc_free(tmp_ctx);
-
-	return invocation_id;
-
-failed:
-	DEBUG(1,("Failed to find our own NTDS Settings invocationId in the ldb!\n"));
-	talloc_free(tmp_ctx);
-	return NULL;
-}
-
-bool samdb_set_ntds_invocation_id(struct ldb_context *ldb, const struct GUID *invocation_id_in)
-{
-	TALLOC_CTX *tmp_ctx;
-	struct GUID *invocation_id_new;
-	struct GUID *invocation_id_old;
-
-	/* see if we have a cached copy */
-	invocation_id_old = (struct GUID *)ldb_get_opaque(ldb, 
-							 "cache.invocation_id");
-
-	tmp_ctx = talloc_new(ldb);
-	if (tmp_ctx == NULL) {
-		goto failed;
-	}
-
-	invocation_id_new = talloc(tmp_ctx, struct GUID);
-	if (!invocation_id_new) {
-		goto failed;
-	}
-
-	SMB_ASSERT(!GUID_all_zero(invocation_id_in));
-	*invocation_id_new = *invocation_id_in;
-
-	/* cache the domain_sid in the ldb */
-	if (ldb_set_opaque(ldb, "cache.invocation_id", invocation_id_new) != LDB_SUCCESS) {
-		goto failed;
-	}
-
-	talloc_steal(ldb, invocation_id_new);
-	talloc_free(tmp_ctx);
-	talloc_free(invocation_id_old);
-
-	return true;
-
-failed:
-	DEBUG(1,("Failed to set our own cached invocationId in the ldb!\n"));
-	talloc_free(tmp_ctx);
-	return false;
-}
-
-/*
-  work out the ntds settings objectGUID for the current open ldb
-*/
-const struct GUID *samdb_ntds_objectGUID(struct ldb_context *ldb)
-{
-	TALLOC_CTX *tmp_ctx;
-	const char *attrs[] = { "objectGUID", NULL };
+	const char *attrs[] = { attribute, NULL };
 	int ret;
 	struct ldb_result *res;
 	struct GUID *ntds_guid;
+	struct ldb_dn *ntds_settings_dn = NULL;
+	const char *errstr = NULL;
 
 	/* see if we have a cached copy */
-	ntds_guid = (struct GUID *)ldb_get_opaque(ldb, "cache.ntds_guid");
-	if (ntds_guid) {
+	ntds_guid = (struct GUID *)ldb_get_opaque(ldb, cache_name);
+	if (ntds_guid != NULL) {
 		return ntds_guid;
 	}
 
@@ -1566,24 +1446,43 @@ const struct GUID *samdb_ntds_objectGUID(struct ldb_context *ldb)
 		goto failed;
 	}
 
-	ret = ldb_search(ldb, tmp_ctx, &res, samdb_ntds_settings_dn(ldb, tmp_ctx), LDB_SCOPE_BASE, attrs, NULL);
+	ntds_settings_dn = samdb_ntds_settings_dn(ldb, tmp_ctx);
+	if (ntds_settings_dn == NULL) {
+		errstr = "samdb_ntds_settings_dn() returned NULL";
+		goto failed;
+	}
+
+	ret = ldb_search(ldb, tmp_ctx, &res, ntds_settings_dn,
+			 LDB_SCOPE_BASE, attrs, NULL);
 	if (ret) {
+		errstr = ldb_errstring(ldb);
 		goto failed;
 	}
 
 	if (res->count != 1) {
+		errstr = "incorrect number of results from base search";
 		goto failed;
 	}
 
 	ntds_guid = talloc(tmp_ctx, struct GUID);
-	if (!ntds_guid) {
+	if (ntds_guid == NULL) {
 		goto failed;
 	}
 
-	*ntds_guid = samdb_result_guid(res->msgs[0], "objectGUID");
+	*ntds_guid = samdb_result_guid(res->msgs[0], attribute);
+
+	if (GUID_all_zero(ntds_guid)) {
+		if (ldb_msg_find_ldb_val(res->msgs[0], attribute)) {
+			errstr = "failed to find the GUID attribute";
+		} else {
+			errstr = "failed to parse the GUID";
+		}
+		goto failed;
+	}
 
 	/* cache the domain_sid in the ldb */
-	if (ldb_set_opaque(ldb, "cache.ntds_guid", ntds_guid) != LDB_SUCCESS) {
+	if (ldb_set_opaque(ldb, cache_name, ntds_guid) != LDB_SUCCESS) {
+		errstr = "ldb_set_opaque() failed";
 		goto failed;
 	}
 
@@ -1593,19 +1492,39 @@ const struct GUID *samdb_ntds_objectGUID(struct ldb_context *ldb)
 	return ntds_guid;
 
 failed:
-	DEBUG(1,("Failed to find our own NTDS Settings objectGUID in the ldb!\n"));
+	DBG_WARNING("Failed to find our own NTDS Settings %s in the ldb: %s!\n",
+		    attribute, errstr);
 	talloc_free(tmp_ctx);
 	return NULL;
 }
 
-bool samdb_set_ntds_objectGUID(struct ldb_context *ldb, const struct GUID *ntds_guid_in)
+/*
+  work out the ntds settings objectGUID for the current open ldb
+*/
+const struct GUID *samdb_ntds_objectGUID(struct ldb_context *ldb)
+{
+	return samdb_ntds_GUID(ldb, "objectGUID", "cache.ntds_guid");
+}
+
+/*
+  work out the ntds settings invocationId for the current open ldb
+*/
+const struct GUID *samdb_ntds_invocation_id(struct ldb_context *ldb)
+{
+	return samdb_ntds_GUID(ldb, "invocationId", "cache.invocation_id");
+}
+
+static bool samdb_set_ntds_GUID(struct ldb_context *ldb,
+				const struct GUID *ntds_guid_in,
+				const char *attribute,
+				const char *cache_name)
 {
 	TALLOC_CTX *tmp_ctx;
 	struct GUID *ntds_guid_new;
 	struct GUID *ntds_guid_old;
 
 	/* see if we have a cached copy */
-	ntds_guid_old = (struct GUID *)ldb_get_opaque(ldb, "cache.ntds_guid");
+	ntds_guid_old = (struct GUID *)ldb_get_opaque(ldb, cache_name);
 
 	tmp_ctx = talloc_new(ldb);
 	if (tmp_ctx == NULL) {
@@ -1620,7 +1539,7 @@ bool samdb_set_ntds_objectGUID(struct ldb_context *ldb, const struct GUID *ntds_
 	*ntds_guid_new = *ntds_guid_in;
 
 	/* cache the domain_sid in the ldb */
-	if (ldb_set_opaque(ldb, "cache.ntds_guid", ntds_guid_new) != LDB_SUCCESS) {
+	if (ldb_set_opaque(ldb, cache_name, ntds_guid_new) != LDB_SUCCESS) {
 		goto failed;
 	}
 
@@ -1631,9 +1550,26 @@ bool samdb_set_ntds_objectGUID(struct ldb_context *ldb, const struct GUID *ntds_
 	return true;
 
 failed:
-	DEBUG(1,("Failed to set our own cached invocationId in the ldb!\n"));
+	DBG_WARNING("Failed to set our own cached %s in the ldb!\n",
+		    attribute);
 	talloc_free(tmp_ctx);
 	return false;
+}
+
+bool samdb_set_ntds_objectGUID(struct ldb_context *ldb, const struct GUID *ntds_guid_in)
+{
+	return samdb_set_ntds_GUID(ldb,
+				   ntds_guid_in,
+				   "objectGUID",
+				   "cache.ntds_guid");
+}
+
+bool samdb_set_ntds_invocation_id(struct ldb_context *ldb, const struct GUID *invocation_id_in)
+{
+	return samdb_set_ntds_GUID(ldb,
+				   invocation_id_in,
+				   "invocationId",
+				   "cache.invocation_id");
 }
 
 /*
@@ -1894,13 +1830,16 @@ const char *samdb_client_site_name(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 				   bool fallback)
 {
 	const char *attrs[] = { "cn", "siteObject", NULL };
-	struct ldb_dn *sites_container_dn, *subnets_dn, *sites_dn;
-	struct ldb_result *res;
-	const struct ldb_val *val;
-	const char *site_name = NULL, *l_subnet_name = NULL;
+	struct ldb_dn *sites_container_dn = NULL;
+	struct ldb_dn *subnets_dn = NULL;
+	struct ldb_dn *sites_dn = NULL;
+	struct ldb_result *res = NULL;
+	const struct ldb_val *val = NULL;
+	const char *site_name = NULL;
+	const char *l_subnet_name = NULL;
 	const char *allow_list[2] = { NULL, NULL };
 	unsigned int i, count;
-	int cnt, ret;
+	int ret;
 
 	/*
 	 * if we don't have a client ip e.g. ncalrpc
@@ -1912,14 +1851,12 @@ const char *samdb_client_site_name(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 
 	sites_container_dn = samdb_sites_dn(ldb, mem_ctx);
 	if (sites_container_dn == NULL) {
-		return NULL;
+		goto exit;
 	}
 
 	subnets_dn = ldb_dn_copy(mem_ctx, sites_container_dn);
 	if ( ! ldb_dn_add_child_fmt(subnets_dn, "CN=Subnets")) {
-		talloc_free(sites_container_dn);
-		talloc_free(subnets_dn);
-		return NULL;
+		goto exit;
 	}
 
 	ret = ldb_search(ldb, mem_ctx, &res, subnets_dn, LDB_SCOPE_ONELEVEL,
@@ -1927,9 +1864,7 @@ const char *samdb_client_site_name(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 	if (ret == LDB_ERR_NO_SUCH_OBJECT) {
 		count = 0;
 	} else if (ret != LDB_SUCCESS) {
-		talloc_free(sites_container_dn);
-		talloc_free(subnets_dn);
-		return NULL;
+		goto exit;
 	} else {
 		count = res->count;
 	}
@@ -1954,7 +1889,7 @@ const char *samdb_client_site_name(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 			site_name = talloc_strdup(mem_ctx,
 						  (const char *) val->data);
 
-			talloc_free(sites_dn);
+			TALLOC_FREE(sites_dn);
 
 			break;
 		}
@@ -1966,8 +1901,17 @@ const char *samdb_client_site_name(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 		 * is for sure the same as our server site). If more sites do
 		 * exist then we don't know which one to use and set the site
 		 * name to "". */
-		cnt = samdb_search_count(ldb, mem_ctx, sites_container_dn,
-					 "(objectClass=site)");
+		size_t cnt = 0;
+		ret = dsdb_domain_count(
+			ldb,
+			&cnt,
+			sites_container_dn,
+			NULL,
+			LDB_SCOPE_SUBTREE,
+			"(objectClass=site)");
+		if (ret != LDB_SUCCESS) {
+			goto exit;
+		}
 		if (cnt == 1) {
 			site_name = samdb_server_site_name(ldb, mem_ctx);
 		} else {
@@ -1980,9 +1924,10 @@ const char *samdb_client_site_name(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 		*subnet_name = talloc_strdup(mem_ctx, l_subnet_name);
 	}
 
-	talloc_free(sites_container_dn);
-	talloc_free(subnets_dn);
-	talloc_free(res);
+exit:
+	TALLOC_FREE(sites_container_dn);
+	TALLOC_FREE(subnets_dn);
+	TALLOC_FREE(res);
 
 	return site_name;
 }
@@ -2084,6 +2029,9 @@ static void pwd_timeout_debug(struct tevent_context *unused1,
  */
 enum samr_ValidationStatus samdb_check_password(TALLOC_CTX *mem_ctx,
 						struct loadparm_context *lp_ctx,
+						const char *account_name,
+						const char *user_principal_name,
+						const char *full_name,
 						const DATA_BLOB *utf8_blob,
 						const uint32_t pwdProperties,
 						const uint32_t minPwdLength)
@@ -2112,7 +2060,7 @@ enum samr_ValidationStatus samdb_check_password(TALLOC_CTX *mem_ctx,
 		int error = 0;
 		struct tevent_context *event_ctx = NULL;
 		struct tevent_req *req = NULL;
-		struct samba_runcmd_state *run_cmd = NULL;
+		int cps_stdin = -1;
 		const char * const cmd[4] = {
 			"/bin/sh", "-c",
 			password_script,
@@ -2130,18 +2078,58 @@ enum samr_ValidationStatus samdb_check_password(TALLOC_CTX *mem_ctx,
 				 tevent_timeval_current_ofs(1, 0),
 				 pwd_timeout_debug, NULL);
 
-		req = samba_runcmd_send(event_ctx, event_ctx,
-					tevent_timeval_current_ofs(10, 0),
-					100, 100, cmd, NULL);
-		run_cmd = tevent_req_data(req, struct samba_runcmd_state);
-		if (write(run_cmd->fd_stdin, utf8_pw, utf8_len) != utf8_len) {
+		check_ret = setenv("SAMBA_CPS_ACCOUNT_NAME", account_name, 1);
+		if (check_ret != 0) {
+			TALLOC_FREE(password_script);
+			TALLOC_FREE(event_ctx);
+			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
+		}
+		if (user_principal_name != NULL) {
+			check_ret = setenv("SAMBA_CPS_USER_PRINCIPAL_NAME",
+					   user_principal_name, 1);
+		} else {
+			unsetenv("SAMBA_CPS_USER_PRINCIPAL_NAME");
+		}
+		if (check_ret != 0) {
+			TALLOC_FREE(password_script);
+			TALLOC_FREE(event_ctx);
+			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
+		}
+		if (full_name != NULL) {
+			check_ret = setenv("SAMBA_CPS_FULL_NAME", full_name, 1);
+		} else {
+			unsetenv("SAMBA_CPS_FULL_NAME");
+		}
+		if (check_ret != 0) {
 			TALLOC_FREE(password_script);
 			TALLOC_FREE(event_ctx);
 			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
 		}
 
-		close(run_cmd->fd_stdin);
-		run_cmd->fd_stdin = -1;
+		req = samba_runcmd_send(event_ctx, event_ctx,
+					tevent_timeval_current_ofs(10, 0),
+					100, 100, cmd, NULL);
+		unsetenv("SAMBA_CPS_ACCOUNT_NAME");
+		unsetenv("SAMBA_CPS_USER_PRINCIPAL_NAME");
+		unsetenv("SAMBA_CPS_FULL_NAME");
+		if (req == NULL) {
+			TALLOC_FREE(password_script);
+			TALLOC_FREE(event_ctx);
+			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
+		}
+
+		cps_stdin = samba_runcmd_export_stdin(req);
+
+		if (write(cps_stdin, utf8_pw, utf8_len) != utf8_len) {
+			close(cps_stdin);
+			cps_stdin = -1;
+			TALLOC_FREE(password_script);
+			TALLOC_FREE(event_ctx);
+			return SAMR_VALIDATION_STATUS_PASSWORD_FILTER_ERROR;
+		}
+
+		close(cps_stdin);
+		cps_stdin = -1;
 
 		if (!tevent_req_poll(req, event_ctx)) {
 			TALLOC_FREE(password_script);
@@ -2525,12 +2513,18 @@ NTSTATUS samdb_set_password_sid(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 		uint32_t trust_direction;
 		uint32_t i;
 		const struct ldb_val *old_val = NULL;
-		struct trustAuthInOutBlob old_blob = {};
+		struct trustAuthInOutBlob old_blob = {
+			.count = 0,
+		};
 		uint32_t old_version = 0;
 		struct AuthenticationInformation *old_version_a = NULL;
 		uint32_t _new_version = 0;
-		struct trustAuthInOutBlob new_blob = {};
-		struct ldb_val new_val = {};
+		struct trustAuthInOutBlob new_blob = {
+			.count = 0,
+		};
+		struct ldb_val new_val = {
+			.length = 0,
+		};
 		struct timeval tv = timeval_current();
 		NTTIME now = timeval_to_nttime(&tv);
 		enum ndr_err_code ndr_err;
@@ -3836,6 +3830,7 @@ NTSTATUS dsdb_get_extended_dn_guid(struct ldb_dn *dn, struct GUID *guid, const c
 NTSTATUS dsdb_get_extended_dn_uint64(struct ldb_dn *dn, uint64_t *val, const char *component_name)
 {
 	const struct ldb_val *v;
+	int error = 0;
 
 	v = ldb_dn_get_extended_component(dn, component_name);
 	if (v == NULL) {
@@ -3850,7 +3845,10 @@ NTSTATUS dsdb_get_extended_dn_uint64(struct ldb_dn *dn, uint64_t *val, const cha
 		memcpy(s, v->data, v->length);
 		s[v->length] = 0;
 
-		*val = strtoull(s, NULL, 0);
+		*val = smb_strtoull(s, NULL, 0, &error, SMB_STR_STANDARD);
+		if (error != 0) {
+			return NT_STATUS_INVALID_PARAMETER;
+		}
 	}
 	return NT_STATUS_OK;
 }
@@ -3869,6 +3867,7 @@ NTSTATUS dsdb_get_extended_dn_nttime(struct ldb_dn *dn, NTTIME *nttime, const ch
 NTSTATUS dsdb_get_extended_dn_uint32(struct ldb_dn *dn, uint32_t *val, const char *component_name)
 {
 	const struct ldb_val *v;
+	int error = 0;
 
 	v = ldb_dn_get_extended_component(dn, component_name);
 	if (v == NULL) {
@@ -3882,7 +3881,10 @@ NTSTATUS dsdb_get_extended_dn_uint32(struct ldb_dn *dn, uint32_t *val, const cha
 		char s[v->length + 1];
 		memcpy(s, v->data, v->length);
 		s[v->length] = 0;
-		*val = strtoul(s, NULL, 0);
+		*val = smb_strtoul(s, NULL, 0, &error, SMB_STR_STANDARD);
+		if (error != 0) {
+			return NT_STATUS_INVALID_PARAMETER;
+		}
 	}
 
 	return NT_STATUS_OK;
@@ -3936,6 +3938,7 @@ uint32_t dsdb_dn_val_rmd_flags(const struct ldb_val *val)
 	const char *p;
 	uint32_t flags;
 	char *end;
+	int error = 0;
 
 	if (val->length < 13) {
 		return 0;
@@ -3944,8 +3947,8 @@ uint32_t dsdb_dn_val_rmd_flags(const struct ldb_val *val)
 	if (!p) {
 		return 0;
 	}
-	flags = strtoul(p+11, &end, 10);
-	if (!end || *end != '>') {
+	flags = smb_strtoul(p+11, &end, 10, &error, SMB_STR_STANDARD);
+	if (!end || *end != '>' || error != 0) {
 		/* it must end in a > */
 		return 0;
 	}
@@ -5756,4 +5759,183 @@ bool dsdb_objects_have_same_nc(struct ldb_context *ldb,
 	talloc_free(tmp_ctx);
 
 	return same_nc;
+}
+/*
+ * Context for dsdb_count_domain_callback
+ */
+struct dsdb_count_domain_context {
+	/*
+	 * Number of matching records
+	 */
+	size_t count;
+	/*
+	 * sid of the domain that the records must belong to.
+	 * if NULL records can belong to any domain.
+	 */
+	struct dom_sid *dom_sid;
+};
+
+/*
+ * @brief ldb aysnc callback for dsdb_domain_count.
+ *
+ * count the number of records in the database matching an LDAP query,
+ * optionally filtering for domain membership.
+ *
+ * @param [in,out] req the ldb request being processed
+ *                    req->context contains:
+ *                        count   The number of matching records
+ *                        dom_sid The domain sid, if present records must belong
+ *                                to the domain to be counted.
+ *@param [in,out] ares The query result.
+ *
+ * @return an LDB error code
+ *
+ */
+static int dsdb_count_domain_callback(
+	struct ldb_request *req,
+	struct ldb_reply *ares)
+{
+
+	if (ares == NULL) {
+		return ldb_request_done(req, LDB_ERR_OPERATIONS_ERROR);
+	}
+	if (ares->error != LDB_SUCCESS) {
+		int error = ares->error;
+		TALLOC_FREE(ares);
+		return ldb_request_done(req, error);
+	}
+
+	switch (ares->type) {
+	case LDB_REPLY_ENTRY:
+	{
+		struct dsdb_count_domain_context *context = NULL;
+		ssize_t ret;
+		bool in_domain;
+		struct dom_sid sid;
+		const struct ldb_val *v;
+
+		context = req->context;
+		if (context->dom_sid == NULL) {
+			context->count++;
+			break;
+		}
+
+		v = ldb_msg_find_ldb_val(ares->message, "objectSid");
+		if (v == NULL) {
+			break;
+		}
+
+		ret = sid_parse(v->data, v->length, &sid);
+		if (ret == -1) {
+			break;
+		}
+
+		in_domain = dom_sid_in_domain(context->dom_sid, &sid);
+		if (!in_domain) {
+			break;
+		}
+
+		context->count++;
+		break;
+	}
+	case LDB_REPLY_REFERRAL:
+		break;
+
+	case LDB_REPLY_DONE:
+		TALLOC_FREE(ares);
+		return ldb_request_done(req, LDB_SUCCESS);
+	}
+
+	TALLOC_FREE(ares);
+
+	return LDB_SUCCESS;
+}
+
+/*
+ * @brief Count the number of records matching a query.
+ *
+ * Count the number of entries in the database matching the supplied query,
+ * optionally filtering only those entries belonging to the supplied domain.
+ *
+ * @param ldb [in] Current ldb context
+ * @param count [out] Pointer to the count
+ * @param base [in] The base dn for the quey
+ * @param dom_sid [in] The domain sid, if non NULL records that are not a member
+ *                     of the domain are ignored.
+ * @param scope [in] Search scope.
+ * @param exp_fmt [in] format string for the query.
+ *
+ * @return LDB_STATUS code.
+ */
+int dsdb_domain_count(
+	struct ldb_context *ldb,
+	size_t *count,
+	struct ldb_dn *base,
+	struct dom_sid *dom_sid,
+	enum ldb_scope scope,
+	const char *exp_fmt, ...)
+{
+	TALLOC_CTX *tmp_ctx = NULL;
+	struct ldb_request *req = NULL;
+	struct dsdb_count_domain_context *context = NULL;
+	char *expression = NULL;
+	const char *object_sid[] = {"objectSid", NULL};
+	const char *none[] = {NULL};
+	va_list ap;
+	int ret;
+
+	*count = 0;
+	tmp_ctx = talloc_new(ldb);
+
+	context = talloc_zero(tmp_ctx, struct dsdb_count_domain_context);
+	if (context == NULL) {
+		return LDB_ERR_OPERATIONS_ERROR;
+	}
+	context->dom_sid = dom_sid;
+
+	if (exp_fmt) {
+		va_start(ap, exp_fmt);
+		expression = talloc_vasprintf(tmp_ctx, exp_fmt, ap);
+		va_end(ap);
+
+		if (expression == NULL) {
+			TALLOC_FREE(context);
+			TALLOC_FREE(tmp_ctx);
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
+	}
+
+	ret = ldb_build_search_req(
+		&req,
+		ldb,
+		tmp_ctx,
+		base,
+		scope,
+		expression,
+		(dom_sid == NULL) ? none : object_sid,
+		NULL,
+		context,
+		dsdb_count_domain_callback,
+		NULL);
+	ldb_req_set_location(req, "dsdb_domain_count");
+
+	if (ret != LDB_SUCCESS) goto done;
+
+	ret = ldb_request(ldb, req);
+
+	if (ret == LDB_SUCCESS) {
+		ret = ldb_wait(req->handle, LDB_WAIT_ALL);
+		if (ret == LDB_SUCCESS) {
+			*count = context->count;
+		}
+	}
+
+
+done:
+	TALLOC_FREE(expression);
+	TALLOC_FREE(req);
+	TALLOC_FREE(context);
+	TALLOC_FREE(tmp_ctx);
+
+	return ret;
 }

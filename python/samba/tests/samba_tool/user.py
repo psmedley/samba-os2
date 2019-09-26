@@ -68,7 +68,7 @@ class UserCmdTestCase(SambaToolCmdTest):
             if self._find_user(user["name"]):
                 self.runsubcmd("user", "delete", user["name"])
         lp = env_loadparm()
-        # second run of this test (e.g. with --extra-python)
+        # second run of this test
         # the cache is still there and '--cache-ldb-initialize'
         # will fail
         cachedb = lp.private_path("user-syncpasswords-cache.ldb")
@@ -592,7 +592,7 @@ sAMAccountName: %s
         search_filter = "(&(sAMAccountName=%s)(objectCategory=%s,%s))" % (ldb.binary_encode(name), "CN=Person,CN=Schema,CN=Configuration", self.samdb.domain_dn())
         userlist = self.samdb.search(base=self.samdb.domain_dn(),
                                      scope=ldb.SCOPE_SUBTREE,
-                                     expression=search_filter, attrs=[])
+                                     expression=search_filter)
         if userlist:
             return userlist[0]
         else:

@@ -331,13 +331,21 @@ int lp_int(const char *s)
  */
 unsigned long lp_ulong(const char *s)
 {
+	int error = 0;
+	unsigned long int ret;
 
 	if (!s || !*s) {
-		DEBUG(0,("lp_ulong(%s): is called with NULL!\n",s));
+		DBG_DEBUG("lp_ulong(%s): is called with NULL!\n",s);
 		return -1;
 	}
 
-	return strtoul(s, NULL, 0);
+	ret = smb_strtoul(s, NULL, 0, &error, SMB_STR_STANDARD);
+	if (error != 0) {
+		DBG_DEBUG("lp_ulong(%s): conversion failed\n",s);
+		return -1;
+	}
+
+	return ret;
 }
 
 /**
@@ -345,13 +353,21 @@ unsigned long lp_ulong(const char *s)
  */
 unsigned long long lp_ulonglong(const char *s)
 {
+	int error = 0;
+	unsigned long long int ret;
 
 	if (!s || !*s) {
-		DEBUG(0, ("lp_ulonglong(%s): is called with NULL!\n", s));
+		DBG_DEBUG("lp_ulonglong(%s): is called with NULL!\n", s);
 		return -1;
 	}
 
-	return strtoull(s, NULL, 0);
+	ret = smb_strtoull(s, NULL, 0, &error, SMB_STR_STANDARD);
+	if (error != 0) {
+		DBG_DEBUG("lp_ulonglong(%s): conversion failed\n",s);
+		return -1;
+	}
+
+	return ret;
 }
 
 /**
@@ -2145,15 +2161,14 @@ static bool do_section(const char *pszSectionName, void *userdata)
 	isglobal = ((strwicmp(pszSectionName, GLOBAL_NAME) == 0) ||
 			 (strwicmp(pszSectionName, GLOBAL_NAME2) == 0));
 
-	bRetval = false;
-
 	/* if we've just struck a global section, note the fact. */
 	lp_ctx->bInGlobalSection = isglobal;
 
 	/* check for multiple global sections */
 	if (lp_ctx->bInGlobalSection) {
 		DEBUG(4, ("Processing section \"[%s]\"\n", pszSectionName));
-		return true;
+		bRetval = true;
+		goto out;
 	}
 
 	/* if we have a current service, tidy it up before moving on */
@@ -2172,10 +2187,11 @@ static bool do_section(const char *pszSectionName, void *userdata)
 								   pszSectionName))
 		    == NULL) {
 			DEBUG(0, ("Failed to add a new service\n"));
-			return false;
+			bRetval = false;
+			goto out;
 		}
 	}
-
+out:
 	return bRetval;
 }
 
@@ -2695,9 +2711,9 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "host msdfs", "true");
 
 	lpcfg_do_global_parameter(lp_ctx, "LargeReadwrite", "True");
-	lpcfg_do_global_parameter(lp_ctx, "server min protocol", "LANMAN1");
+	lpcfg_do_global_parameter(lp_ctx, "server min protocol", "SMB2_02");
 	lpcfg_do_global_parameter(lp_ctx, "server max protocol", "SMB3");
-	lpcfg_do_global_parameter(lp_ctx, "client min protocol", "CORE");
+	lpcfg_do_global_parameter(lp_ctx, "client min protocol", "SMB2_02");
 	lpcfg_do_global_parameter(lp_ctx, "client max protocol", "default");
 	lpcfg_do_global_parameter(lp_ctx, "client ipc min protocol", "default");
 	lpcfg_do_global_parameter(lp_ctx, "client ipc max protocol", "default");
@@ -2761,7 +2777,6 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "cldap port", "389");
 	lpcfg_do_global_parameter(lp_ctx, "krb5 port", "88");
 	lpcfg_do_global_parameter(lp_ctx, "kpasswd port", "464");
-	lpcfg_do_global_parameter(lp_ctx, "web port", "901");
 
 	lpcfg_do_global_parameter(lp_ctx, "nt status support", "True");
 
@@ -2818,11 +2833,13 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 
 	lpcfg_do_global_parameter(lp_ctx, "passdb backend", "tdbsam");
 
+	lpcfg_do_global_parameter(lp_ctx, "deadtime", "10080");
+
 	lpcfg_do_global_parameter(lp_ctx, "getwd cache", "True");
 
 	lpcfg_do_global_parameter(lp_ctx, "winbind nested groups", "True");
 
-	lpcfg_do_global_parameter(lp_ctx, "mangled names", "True");
+	lpcfg_do_global_parameter(lp_ctx, "mangled names", "illegal");
 
 	lpcfg_do_global_parameter_var(lp_ctx, "smb2 max credits", "%u", DEFAULT_SMB2_MAX_CREDITS);
 
@@ -2871,8 +2888,6 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "level2 oplocks", "yes");
 
 	lpcfg_do_global_parameter(lp_ctx, "show add printer wizard", "yes");
-
-	lpcfg_do_global_parameter(lp_ctx, "allocation roundup size", "1048576");
 
 	lpcfg_do_global_parameter(lp_ctx, "ldap page size", "1000");
 
@@ -3007,6 +3022,8 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "ea support", "yes");
 
 	lpcfg_do_global_parameter(lp_ctx, "store dos attributes", "yes");
+
+	lpcfg_do_global_parameter(lp_ctx, "debug encryption", "no");
 
 	for (i = 0; parm_table[i].label; i++) {
 		if (!(lp_ctx->flags[i] & FLAG_CMDLINE)) {
@@ -3303,7 +3320,7 @@ struct loadparm_service *lpcfg_service(struct loadparm_context *lp_ctx,
 
 const char *lpcfg_servicename(const struct loadparm_service *service)
 {
-	return lpcfg_string((const char *)service->szService);
+	return service ? lpcfg_string((const char *)service->szService) : NULL;
 }
 
 /**

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 APPNAME = 'ldb'
-VERSION = '1.5.5'
+VERSION = '2.0.7'
 
 import sys, os
 
@@ -24,7 +24,8 @@ samba_dist.DIST_DIRS('''lib/ldb:. lib/replace:lib/replace lib/talloc:lib/talloc
                         third_party/cmocka:third_party/cmocka
                         buildtools:buildtools third_party/waf:third_party/waf''')
 
-samba_dist.DIST_FILES('''lib/util/binsearch.h:lib/util/binsearch.h''')
+samba_dist.DIST_FILES('''lib/util/binsearch.h:lib/util/binsearch.h
+                         lib/util/attr.h:lib/util/attr.h''')
 
 def options(opt):
     opt.BUILTIN_DEFAULT('replace')
@@ -58,11 +59,9 @@ def configure(conf):
             conf.define('USING_SYSTEM_CMOCKA', 1)
 
     conf.RECURSE('lib/replace')
-    conf.find_program('python', var='PYTHON')
     conf.find_program('xsltproc', var='XSLTPROC')
-    conf.load('python')
-    conf.check_python_version((2,4,2))
-    conf.SAMBA_CHECK_PYTHON_HEADERS(mandatory=not conf.env.disable_python)
+    conf.SAMBA_CHECK_PYTHON()
+    conf.SAMBA_CHECK_PYTHON_HEADERS()
 
     # where does the default LIBDIR end up? in conf.env somewhere?
     #
@@ -91,17 +90,6 @@ def configure(conf):
                                                  onlyif='talloc tdb tevent',
                                                  implied_deps='replace talloc tdb tevent ldb'):
                 using_system_pyldb_util = False
-
-            # We need to get a pyldb-util for all the python versions
-            # we are building for
-            if conf.env['EXTRA_PYTHON']:
-                name = 'pyldb-util' + conf.all_envs['extrapython']['PYTHON_SO_ABI_FLAG']
-                if not conf.CHECK_BUNDLED_SYSTEM_PKG(name,
-                                                     minversion=VERSION,
-                                                     maxversion=max_ldb_version_dots,
-                                                     onlyif='talloc tdb tevent',
-                                                     implied_deps='replace talloc tdb tevent ldb'):
-                    using_system_pyldb_util = False
 
             if using_system_pyldb_util:
                 conf.define('USING_SYSTEM_PYLDB_UTIL', 1)
@@ -197,6 +185,7 @@ def configure(conf):
 
         if conf.CHECK_FUNCS_IN('mdb_env_create', 'lmdb', headers='lmdb.h'):
             conf.DEFINE('HAVE_LMDB', '1')
+            conf.env.HAVE_LMDB = True
 
 
     conf.DEFINE('HAVE_CONFIG_H', 1, add_to_cflags=True)
@@ -244,37 +233,34 @@ def build(bld):
 
     if bld.PYTHON_BUILD_IS_ENABLED():
         if not bld.CONFIG_SET('USING_SYSTEM_PYLDB_UTIL'):
-            for env in bld.gen_python_environments(['PKGCONFIGDIR']):
+            name = bld.pyembed_libname('pyldb-util')
+            bld.SAMBA_LIBRARY(name,
+                              deps='replace ldb',
+                              source='pyldb_util.c',
+                              public_headers=('' if private_library else 'pyldb.h'),
+                              public_headers_install=not private_library,
+                              vnum=VERSION,
+                              private_library=private_library,
+                              pc_files='pyldb-util.pc',
+                              pyembed=True,
+                              enabled=bld.PYTHON_BUILD_IS_ENABLED(),
+                              abi_directory='ABI',
+                              abi_match='pyldb_*')
 
-                name = bld.pyembed_libname('pyldb-util')
-                bld.SAMBA_LIBRARY(name,
-                                  deps='replace ldb',
-                                  source='pyldb_util.c',
-                                  public_headers=('' if private_library else 'pyldb.h'),
-                                  public_headers_install=not private_library,
-                                  vnum=VERSION,
-                                  private_library=private_library,
-                                  pc_files='pyldb-util.pc',
-                                  pyembed=True,
-                                  enabled=bld.PYTHON_BUILD_IS_ENABLED(),
-                                  abi_directory='ABI',
-                                  abi_match='pyldb_*')
-
-                if not bld.CONFIG_SET('USING_SYSTEM_LDB'):
-                    bld.SAMBA_PYTHON('pyldb', 'pyldb.c',
-                                     deps='replace ldb ' + name,
-                                     realname='ldb.so',
-                                     cflags='-DPACKAGE_VERSION=\"%s\"' % VERSION)
+            if not bld.CONFIG_SET('USING_SYSTEM_LDB'):
+                bld.SAMBA_PYTHON('pyldb', 'pyldb.c',
+                                 deps='replace ldb ' + name,
+                                 realname='ldb.so',
+                                 cflags='-DPACKAGE_VERSION=\"%s\"' % VERSION)
 
         # Do only install this file as part of the Samba build if we do not
         # use the system libldb!
         if not bld.CONFIG_SET('USING_SYSTEM_PYLDB_UTIL'):
-            for env in bld.gen_python_environments(['PKGCONFIGDIR']):
-                    bld.SAMBA_SCRIPT('_ldb_text.py',
-                                     pattern='_ldb_text.py',
-                                     installdir='python')
+            bld.SAMBA_SCRIPT('_ldb_text.py',
+                             pattern='_ldb_text.py',
+                             installdir='python')
 
-                    bld.INSTALL_FILES('${PYTHONARCHDIR}', '_ldb_text.py')
+            bld.INSTALL_FILES('${PYTHONARCHDIR}', '_ldb_text.py')
 
     if not bld.CONFIG_SET('USING_SYSTEM_LDB'):
         if bld.is_install:
@@ -516,6 +502,31 @@ def build(bld):
                          deps='cmocka ldb',
                          install=False)
 
+        bld.SAMBA_BINARY('ldb_key_value_test',
+                         source='tests/ldb_key_value_test.c',
+                         deps='cmocka ldb ldb_tdb_err_map',
+                         install=False)
+
+        bld.SAMBA_BINARY('ldb_parse_test',
+                         source='tests/ldb_parse_test.c',
+                         deps='cmocka ldb ldb_tdb_err_map',
+                         install=False)
+
+        bld.SAMBA_BINARY('ldb_filter_attrs_test',
+                         source='tests/ldb_filter_attrs_test.c',
+                         deps='cmocka ldb ldb_tdb_err_map',
+                         install=False)
+
+        bld.SAMBA_BINARY('ldb_key_value_sub_txn_tdb_test',
+                         bld.SUBDIR('ldb_key_value',
+                             '''ldb_kv_search.c
+                                ldb_kv_index.c
+                                ldb_kv_cache.c''') +
+                         'tests/ldb_key_value_sub_txn_test.c',
+                         cflags='-DTEST_BE=\"tdb\"',
+                         deps='cmocka ldb ldb_tdb_err_map',
+                         install=False)
+
         if bld.CONFIG_SET('HAVE_LMDB'):
             bld.SAMBA_BINARY('ldb_mdb_mod_op_test',
                              source='tests/ldb_mod_op_test.c',
@@ -536,7 +547,30 @@ def build(bld):
 
             bld.SAMBA_BINARY('ldb_mdb_kv_ops_test',
                              source='tests/ldb_kv_ops_test.c',
+                             cflags='-DTEST_BE=\"mdb\" -DTEST_LMDB=1',
+                             deps='cmocka ldb',
+                             install=False)
+
+            #
+            # We rely on the versions of the ldb_key_value functions included
+            # in ldb_key_value_sub_txn_test.c taking priority over the versions
+            # in the ldb_key_value shared library.
+            # If this turns out to not be the case, the dependencies will
+            # need to be unrolled, and all the source files included and the
+            # ldb_tdb module initialization code will need to be called
+            # manually.
+            bld.SAMBA_BINARY('ldb_key_value_sub_txn_mdb_test',
+                             bld.SUBDIR('ldb_key_value',
+                                 '''ldb_kv_search.c
+                                    ldb_kv_index.c
+                                    ldb_kv_cache.c''') +
+                             'tests/ldb_key_value_sub_txn_test.c',
                              cflags='-DTEST_BE=\"mdb\"',
+                             deps='cmocka ldb ldb_tdb_err_map',
+                             install=False)
+        else:
+            bld.SAMBA_BINARY('ldb_no_lmdb_test',
+                             source='tests/ldb_no_lmdb_test.c',
                              deps='cmocka ldb',
                              install=False)
 
@@ -545,15 +579,15 @@ def test(ctx):
     env = samba_utils.LOAD_ENVIRONMENT()
     ctx.env = env
 
-    if not env.HAVE_LMDB:
-        raise Errors.WafError('make test called, but ldb was built '
-                             '--without-ldb-lmdb')
-
     test_prefix = "%s/st" % (Context.g_module.out)
     shutil.rmtree(test_prefix, ignore_errors=True)
     os.makedirs(test_prefix)
     os.environ['TEST_DATA_PREFIX'] = test_prefix
     os.environ['LDB_MODULES_PATH'] = Context.g_module.out + "/modules/ldb"
+    if env.HAVE_LMDB:
+        os.environ['HAVE_LMDB'] = '1'
+    else:
+        os.environ['HAVE_LMDB'] = '0'
     samba_utils.ADD_LD_LIBRARY_PATH('bin/shared')
     samba_utils.ADD_LD_LIBRARY_PATH('bin/shared/private')
 
@@ -565,7 +599,9 @@ def test(ctx):
     if not os.path.exists(tmp_dir):
         os.mkdir(tmp_dir)
     pyret = samba_utils.RUN_PYTHON_TESTS(
-        ['tests/python/api.py', 'tests/python/index.py'],
+        ['tests/python/api.py',
+         'tests/python/index.py',
+         'tests/python/repack.py'],
         extra_env={'SELFTEST_PREFIX': test_prefix})
     print("Python testsuite returned %d" % pyret)
 
@@ -578,13 +614,25 @@ def test(ctx):
                  'ldb_msg_test',
                  'ldb_tdb_kv_ops_test',
                  'ldb_tdb_test',
-                 'ldb_mdb_mod_op_test',
-                 'ldb_lmdb_test',
-                 # we don't want to run ldb_lmdb_size_test (which proves we can
-                 # fit > 4G of data into the DB), it would fill up the disk on
-                 # many of our test instances
-                 'ldb_mdb_kv_ops_test',
-                 'ldb_match_test']
+                 'ldb_match_test',
+                 'ldb_key_value_test',
+                 # we currently don't run ldb_key_value_sub_txn_tdb_test as it
+                 # tests the nested/sub transaction handling
+                 # on operations which the TDB backend does not currently
+                 # support
+                 # 'ldb_key_value_sub_txn_tdb_test'
+                 'ldb_parse_test']
+
+    if env.HAVE_LMDB:
+        test_exes += ['ldb_mdb_mod_op_test',
+                     'ldb_lmdb_test',
+                     # we don't want to run ldb_lmdb_size_test (which proves we can
+                     # fit > 4G of data into the DB), it would fill up the disk on
+                     # many of our test instances
+                     'ldb_mdb_kv_ops_test',
+                     'ldb_key_value_sub_txn_mdb_test']
+    else:
+        test_exes += ['ldb_no_lmdb_test']
 
     for test_exe in test_exes:
             cmd = os.path.join(Context.g_module.out, test_exe)

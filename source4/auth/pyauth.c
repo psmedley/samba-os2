@@ -20,6 +20,7 @@
 #include <Python.h>
 #include "python/py3compat.h"
 #include "includes.h"
+#include "python/modules.h"
 #include "libcli/util/pyerrors.h"
 #include "param/param.h"
 #include "pyauth.h"
@@ -190,6 +191,10 @@ static PyObject *py_user_session(PyObject *module, PyObject *args, PyObject *kwa
 	}
 
 	ldb_ctx = pyldb_Ldb_AsLdbContext(py_ldb);
+	if (ldb_ctx == NULL) {
+		talloc_free(mem_ctx);
+		return NULL;
+	}
 
 	if (py_dn == Py_None) {
 		user_dn = NULL;
@@ -296,11 +301,11 @@ static const char **PyList_AsStringList(TALLOC_CTX *mem_ctx, PyObject *list,
 		const char *value;
 		Py_ssize_t size;
 		PyObject *item = PyList_GetItem(list, i);
-		if (!(PyStr_Check(item) || PyUnicode_Check(item))) {
+		if (!PyUnicode_Check(item)) {
 			PyErr_Format(PyExc_TypeError, "%s should be strings", paramname);
 			return NULL;
 		}
-		value = PyStr_AsUTF8AndSize(item, &size);
+		value = PyUnicode_AsUTF8AndSize(item, &size);
 		if (value == NULL) {
 			talloc_free(ret);
 			return NULL;
@@ -349,16 +354,22 @@ static PyObject *py_auth_context_new(PyTypeObject *type, PyObject *args, PyObjec
 
 	if (py_ldb != Py_None) {
 		ldb = pyldb_Ldb_AsLdbContext(py_ldb);
+		if (ldb == NULL) {
+			talloc_free(mem_ctx);
+			return NULL;
+		}
 	}
 
 	lp_ctx = lpcfg_from_py_object(mem_ctx, py_lp_ctx);
 	if (lp_ctx == NULL) {
+		talloc_free(mem_ctx);
 		PyErr_NoMemory();
 		return NULL;
 	}
 
 	ev = s4_event_context_init(mem_ctx);
 	if (ev == NULL) {
+		talloc_free(mem_ctx);
 		PyErr_NoMemory();
 		return NULL;
 	}
@@ -413,13 +424,14 @@ static PyTypeObject PyAuthContext = {
 static PyMethodDef py_auth_methods[] = {
 	{ "system_session", (PyCFunction)py_system_session, METH_VARARGS, NULL },
 	{ "admin_session", (PyCFunction)py_admin_session, METH_VARARGS, NULL },
-	{ "user_session", (PyCFunction)py_user_session, METH_VARARGS|METH_KEYWORDS, NULL },
+	{ "user_session", PY_DISCARD_FUNC_SIG(PyCFunction,py_user_session),
+			  METH_VARARGS|METH_KEYWORDS, NULL },
 	{ "session_info_fill_unix",
-	  (PyCFunction)py_session_info_fill_unix,
+	  PY_DISCARD_FUNC_SIG(PyCFunction,py_session_info_fill_unix),
 	  METH_VARARGS|METH_KEYWORDS,
 	  NULL },
 	{ "copy_session_info",
-	  (PyCFunction)py_copy_session_info,
+	  PY_DISCARD_FUNC_SIG(PyCFunction,py_copy_session_info),
 	  METH_VARARGS|METH_KEYWORDS,
 	  NULL },
 	{ NULL },

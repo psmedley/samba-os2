@@ -88,7 +88,7 @@ def set_auto_replication(dc, allow):
                              stdout=subprocess.PIPE)
         stdout, stderr = p.communicate()
         if p.returncode:
-            if 'LDAP_REFERRAL' not in stderr:
+            if b'LDAP_REFERRAL' not in stderr:
                 raise RodcRwdcTestException()
             print("ignoring +%s REFERRAL error; assuming %s is RODC" %
                   (opt, dc))
@@ -343,7 +343,7 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
         creds = self.lockout1ntlm_creds
 
         # Open a second LDB connection with the user credentials. Use the
-        # command line credentials for informations like the domain, the realm
+        # command line credentials for information like the domain, the realm
         # and the workstation.
         creds_lockout = self.insta_creds(creds)
 
@@ -403,7 +403,7 @@ class RodcRwdcCachedTests(password_lockout_base.BasePasswordTestCase):
         userpass = creds.get_password()
 
         # Open a second LDB connection with the user credentials. Use the
-        # command line credentials for informations like the domain, the realm
+        # command line credentials for information like the domain, the realm
         # and the workstation.
         creds_lockout = self.insta_creds(creds)
 

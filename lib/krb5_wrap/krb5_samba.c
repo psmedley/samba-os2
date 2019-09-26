@@ -23,7 +23,7 @@
 #include "includes.h"
 #include "system/filesys.h"
 #include "krb5_samba.h"
-#include "lib/crypto/crypto.h"
+#include "lib/crypto/md4.h"
 #include "../libds/common/flags.h"
 
 #ifdef HAVE_COM_ERR_H
@@ -2001,6 +2001,7 @@ krb5_error_code smb_krb5_kinit_keyblock_ccache(krb5_context ctx,
 	char tmp_name[sizeof(SMB_CREDS_KEYTAB)];
 	krb5_keytab_entry entry;
 	krb5_keytab keytab;
+	int tmpfd;
 	mode_t mask;
 
 	memset(&entry, 0, sizeof(entry));
@@ -2009,11 +2010,13 @@ krb5_error_code smb_krb5_kinit_keyblock_ccache(krb5_context ctx,
 
 	memcpy(tmp_name, SMB_CREDS_KEYTAB, sizeof(SMB_CREDS_KEYTAB));
 	mask = umask(S_IRWXO | S_IRWXG);
-	mktemp(tmp_name);
+	tmpfd = mkstemp(tmp_name);
 	umask(mask);
-	if (tmp_name[0] == 0) {
+	if (tmpfd == -1) {
+		DBG_ERR("Failed to mkstemp %s\n", tmp_name);
 		return KRB5_KT_BADNAME;
 	}
+	close(tmpfd);
 	code = krb5_kt_resolve(ctx, tmp_name, &keytab);
 	if (code) {
 		return code;
@@ -3234,7 +3237,7 @@ static krb5_error_code ads_create_gss_checksum(krb5_data *in_data, /* [inout] */
 
 	SIVAL(gss_cksum, 20, gss_flags);
 
-	if (orig_length) {
+	if (orig_length && in_data->data != NULL) {
 		SSVAL(gss_cksum, 24, 1); /* The Delegation Option identifier */
 		SSVAL(gss_cksum, 26, orig_length);
 		/* Copy the kerberos KRB_CRED data */

@@ -2,12 +2,12 @@
 .\"     Title: smbcacls
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/27/2019
+.\"      Date: 09/17/2019
 .\"    Manual: User Commands
-.\"    Source: Samba 4.10.8
+.\"    Source: Samba 4.11.0
 .\"  Language: English
 .\"
-.TH "SMBCACLS" "1" "08/27/2019" "Samba 4\&.10\&.8" "User Commands"
+.TH "SMBCACLS" "1" "09/17/2019" "Samba 4\&.11\&.0" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 smbcacls \- Set or get ACLs on an NT file or directory names
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-smbcacls {//server/share} {/filename} [\-D|\-\-delete\ acl] [\-M|\-\-modify\ acl] [\-a|\-\-add\ acl] [\-S|\-\-set\ acl] [\-C|\-\-chown\ name] [\-G|\-\-chgrp\ name] [\-I\ allow|remove|copy] [\-\-numeric] [\-t] [\-U\ username] [\-d] [\-e] [\-m|\-\-max\-protocol\ LEVEL] [\-\-query\-security\-info\ FLAGS] [\-\-set\-security\-info\ FLAGS] [\-\-sddl] [\-\-domain\-sid\ SID]
+smbcacls {//server/share} {/filename} [\-D|\-\-delete\ acl] [\-M|\-\-modify\ acl] [\-a|\-\-add\ acl] [\-S|\-\-set\ acl] [\-C|\-\-chown\ name] [\-G|\-\-chgrp\ name] [\-I\ allow|remove|copy] [\-\-numeric] [\-t] [\-U\ username] [\-d] [\-e] [\-m|\-\-max\-protocol\ LEVEL] [\-\-query\-security\-info\ FLAGS] [\-\-set\-security\-info\ FLAGS] [\-\-sddl] [\-\-domain\-sid\ SID] [\-x|\-\-maximum\-access]
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -125,6 +125,11 @@ Output and input acls in sddl format\&.
 \-\-domain\-sid SID
 .RS 4
 SID used for sddl processing\&.
+.RE
+.PP
+\-x|\-\-maximum\-access
+.RS 4
+When displaying an ACL additionally query the server for effective maximum permissions\&. Note that this is only supported with SMB protocol version 2 or higher\&.
 .RE
 .PP
 \-d|\-\-debuglevel=level
@@ -491,7 +496,7 @@ smbcacls
 couldn\*(Aqt connect to the specified server, or there was an error getting or setting the ACLs, an exit status of 1 is returned\&. If there was an error parsing any command line arguments, an exit status of 2 is returned\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.10\&.8 of the Samba suite\&.
+This man page is part of version 4\&.11\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

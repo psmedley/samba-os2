@@ -5,7 +5,11 @@ from waflib import Build, Logs, Utils, Configure, Errors
 from waflib.Configure import conf
 
 @conf
-def SAMBA_CHECK_PYTHON(conf, mandatory=True, version=(2,6,0)):
+def SAMBA_CHECK_PYTHON(conf, version=(3,4,0)):
+
+    if conf.env.disable_python:
+        version=(2,6,0)
+
     # enable tool to build python extensions
     if conf.env.HAVE_PYTHON_H:
         conf.check_python_version(version)
@@ -13,23 +17,8 @@ def SAMBA_CHECK_PYTHON(conf, mandatory=True, version=(2,6,0)):
 
     interpreters = []
 
-    if conf.env['EXTRA_PYTHON']:
-        conf.all_envs['extrapython'] = conf.env.derive()
-        conf.setenv('extrapython')
-        conf.env['PYTHON'] = conf.env['EXTRA_PYTHON']
-        conf.env['IS_EXTRA_PYTHON'] = 'yes'
-        conf.find_program('python', var='PYTHON', mandatory=True)
-        conf.load('python')
-        try:
-            conf.check_python_version(version)
-        except Exception:
-            Logs.warn('extra-python needs to be Python %s.%s.%s or later' %
-                      (version[0], version[1], version[2]))
-            raise
-        interpreters.append(conf.env['PYTHON'])
-        conf.setenv('default')
-
-    conf.find_program('python3', var='PYTHON', mandatory=mandatory)
+    conf.find_program('python3', var='PYTHON',
+                      mandatory=not conf.env.disable_python)
     conf.load('python')
     path_python = conf.find_program('python3')
 
@@ -41,11 +30,8 @@ def SAMBA_CHECK_PYTHON(conf, mandatory=True, version=(2,6,0)):
 
 
 @conf
-def SAMBA_CHECK_PYTHON_HEADERS(conf, mandatory=True):
+def SAMBA_CHECK_PYTHON_HEADERS(conf):
     if conf.env.disable_python:
-        if mandatory:
-            raise Errors.WafError("Cannot check for python headers when "
-                                 "--disable-python specified")
 
         conf.msg("python headers", "Check disabled due to --disable-python")
         # we don't want PYTHONDIR in config.h, as otherwise changing
@@ -57,19 +43,9 @@ def SAMBA_CHECK_PYTHON_HEADERS(conf, mandatory=True):
         return
 
     if conf.env["python_headers_checked"] == []:
-        if conf.env['EXTRA_PYTHON']:
-            conf.setenv('extrapython')
-            _check_python_headers(conf, mandatory=True)
-            conf.setenv('default')
-
-        _check_python_headers(conf, mandatory)
+        _check_python_headers(conf)
         conf.env["python_headers_checked"] = "yes"
 
-        if conf.env['EXTRA_PYTHON']:
-            extraversion = conf.all_envs['extrapython']['PYTHON_VERSION']
-            if extraversion == conf.env['PYTHON_VERSION']:
-                raise Errors.WafError("extrapython %s is same as main python %s" % (
-                    extraversion, conf.env['PYTHON_VERSION']))
     else:
         conf.msg("python headers", "using cache")
 
@@ -79,13 +55,8 @@ def SAMBA_CHECK_PYTHON_HEADERS(conf, mandatory=True):
         if not x.startswith('PYTHONDIR=')
         and not x.startswith('PYTHONARCHDIR=')]
 
-def _check_python_headers(conf, mandatory):
-    try:
-        conf.errors.ConfigurationError
-        conf.check_python_headers()
-    except conf.errors.ConfigurationError:
-        if mandatory:
-             raise
+def _check_python_headers(conf):
+    conf.check_python_headers()
 
     if conf.env['PYTHON_VERSION'] > '3':
         abi_pattern = os.path.splitext(conf.env['pyext_PATTERN'])[0]
@@ -133,9 +104,6 @@ def SAMBA_PYTHON(bld, name,
     if not bld.PYTHON_BUILD_IS_ENABLED():
         enabled = False
 
-    if bld.env['IS_EXTRA_PYTHON']:
-        name = 'extra-' + name
-
     # when we support static python modules we'll need to gather
     # the list from all the SAMBA_PYTHON() targets
     if init_function_sentinel is not None:
@@ -180,7 +148,7 @@ def SAMBA_PYTHON(bld, name,
 Build.BuildContext.SAMBA_PYTHON = SAMBA_PYTHON
 
 
-def pyembed_libname(bld, name, extrapython=False):
+def pyembed_libname(bld, name):
     if bld.env['PYTHON_SO_ABI_FLAG']:
         return name + bld.env['PYTHON_SO_ABI_FLAG']
     else:
@@ -189,23 +157,3 @@ def pyembed_libname(bld, name, extrapython=False):
 Build.BuildContext.pyembed_libname = pyembed_libname
 
 
-def gen_python_environments(bld, extra_env_vars=()):
-    """Generate all Python environments
-
-    To be used in a for loop. Normally, the loop body will be executed once.
-
-    When --extra-python is used, the body will additionaly be executed
-    with the extra-python environment active.
-    """
-    yield
-
-    if bld.env['EXTRA_PYTHON']:
-        copied = ('GLOBAL_DEPENDENCIES', 'TARGET_TYPE') + tuple(extra_env_vars)
-        for name in copied:
-            bld.all_envs['extrapython'][name] = bld.all_envs['default'][name]
-        default_env = bld.all_envs['default']
-        bld.all_envs['default'] = bld.all_envs['extrapython']
-        yield
-        bld.all_envs['default'] = default_env
-
-Build.BuildContext.gen_python_environments = gen_python_environments

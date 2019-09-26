@@ -96,7 +96,6 @@
 
 /* the following control timings of various actions. Don't change 
    them unless you know what you are doing. These are all in seconds */
-#define DEFAULT_SMBD_TIMEOUT (60*60*24*7)
 #define SMBD_RELOAD_CHECK (180)
 #define IDLE_CLOSED_TIMEOUT (60)
 #define DPTR_IDLE_TIMEOUT (120)
@@ -151,9 +150,6 @@
 
 /* the maximum age in seconds of a password. Should be a lp_ parameter */
 #define MAX_PASSWORD_AGE (21*24*60*60)
-
-/* Default allocation roundup. */
-#define SMB_ROUNDUP_ALLOCATION_SIZE 0x100000
 
 /* shall we deny oplocks to clients that get timeouts? */
 #define FASCIST_OPLOCK_BACKOFF 1

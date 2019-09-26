@@ -1406,6 +1406,7 @@ int vfs_stat_smb_basename(struct connection_struct *conn,
 NTSTATUS vfs_stat_fsp(files_struct *fsp)
 {
 	int ret;
+	struct stat_ex saved_stat = fsp->fsp_name->st;
 
 	if(fsp->fh->fd == -1) {
 		if (fsp->posix_flags & FSP_POSIX_FLAGS_OPEN) {
@@ -1413,14 +1414,13 @@ NTSTATUS vfs_stat_fsp(files_struct *fsp)
 		} else {
 			ret = SMB_VFS_STAT(fsp->conn, fsp->fsp_name);
 		}
-		if (ret == -1) {
-			return map_nt_error_from_unix(errno);
-		}
 	} else {
-		if(SMB_VFS_FSTAT(fsp, &fsp->fsp_name->st) != 0) {
-			return map_nt_error_from_unix(errno);
-		}
+		ret = SMB_VFS_FSTAT(fsp, &fsp->fsp_name->st);
 	}
+	if (ret == -1) {
+		return map_nt_error_from_unix(errno);
+	}
+	update_stat_ex_from_saved_stat(&fsp->fsp_name->st, &saved_stat);
 	return NT_STATUS_OK;
 }
 
@@ -2235,6 +2235,13 @@ struct file_id smb_vfs_call_file_id_create(struct vfs_handle_struct *handle,
 {
 	VFS_FIND(file_id_create);
 	return handle->fns->file_id_create_fn(handle, sbuf);
+}
+
+uint64_t smb_vfs_call_fs_file_id(struct vfs_handle_struct *handle,
+				 const SMB_STRUCT_STAT *sbuf)
+{
+	VFS_FIND(fs_file_id);
+	return handle->fns->fs_file_id_fn(handle, sbuf);
 }
 
 NTSTATUS smb_vfs_call_streaminfo(struct vfs_handle_struct *handle,

@@ -36,8 +36,14 @@
 #include <standards.h>
 #endif
 
-/* Needs to be defined before std*.h and string*.h are included */
-#define __STDC_WANT_LIB_EXT1__ 1
+/*
+ * Needs to be defined before std*.h and string*.h are included
+ * As it's also needed when Python.h is the first header we
+ * require a global -D__STDC_WANT_LIB_EXT1__=1
+ */
+#ifndef __STDC_WANT_LIB_EXT1__
+#error -D__STDC_WANT_LIB_EXT1__=1 required
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -829,6 +835,11 @@ typedef unsigned long long ptrdiff_t ;
  * pointer
  */
 #define ZERO_ARRAY(x) memset_s((char *)(x), sizeof(x), 0, sizeof(x))
+
+/**
+ * Zero a given len of an array
+ */
+#define ZERO_ARRAY_LEN(x, l) memset_s((char *)(x), (l), 0, (l))
 
 /**
  * Work out how many elements there are in a static array.

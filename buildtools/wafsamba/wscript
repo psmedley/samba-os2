@@ -102,6 +102,10 @@ def options(opt):
     gr.add_option('--enable-developer',
                    help=("Turn on developer warnings and debugging"),
                    action="store_true", dest='developer', default=False)
+    opt.add_option('--enable-coverage',
+                   help=("enable options necessary for code coverage "
+                         "reporting on selftest (default=no)"),
+                   action="store_true", dest='enable_coverage', default=False)
     def picky_developer_callback(option, opt_str, value, parser):
         parser.values.developer = True
         parser.values.picky_developer = True
@@ -124,6 +128,11 @@ def options(opt):
     gr.add_option('--address-sanitizer',
                    help=("Enable address sanitizer compile and linker flags"),
                    action="store_true", dest='address_sanitizer', default=False)
+    gr.add_option('--undefined-sanitizer',
+        help=("Enable undefined behaviour sanitizer compile and linker flags"),
+        action="store_true",
+        dest='undefined_sanitizer',
+        default=False)
 
     gr.add_option('--abi-check',
 		   help=("Check ABI signatures for libraries"),
@@ -203,12 +212,6 @@ def options(opt):
                     help='do not generate python modules',
                     action='store_true', dest='disable_python', default=False)
 
-    opt.add_option('--extra-python', type=str,
-                    help=("build selected libraries for the specified "
-                          "additional version of Python "
-                          "(example: --extra-python=/usr/bin/python3)"),
-                    metavar="PYTHON", dest='EXTRA_PYTHON', default=None)
-
 
 @Utils.run_once
 def configure(conf):
@@ -266,12 +269,6 @@ def configure(conf):
 
     conf.env.disable_python = Options.options.disable_python
 
-    conf.env.EXTRA_PYTHON = Options.options.EXTRA_PYTHON
-
-    if (conf.env.disable_python and conf.env.EXTRA_PYTHON):
-        Logs.error('ERROR: cannot specify both --disable-python and --extra-python.')
-        sys.exit(1)
-
     if (conf.env.AUTOCONF_HOST and
         conf.env.AUTOCONF_BUILD and
         conf.env.AUTOCONF_BUILD != conf.env.AUTOCONF_HOST):
@@ -288,6 +285,13 @@ def configure(conf):
     try:
         conf.find_program('gdb', mandatory=True)
     except:
+        conf.env.ABI_CHECK = False
+
+    conf.env.enable_coverage = Options.options.enable_coverage
+    if conf.env.enable_coverage:
+        conf.ADD_LDFLAGS('-lgcov', testflags=True)
+        conf.ADD_CFLAGS('--coverage', testflags=True)
+        # disable abi check for coverage, otherwise ld will fail
         conf.env.ABI_CHECK = False
 
     conf.env.GIT_LOCAL_CHANGES = Options.options.GIT_LOCAL_CHANGES
@@ -308,15 +312,16 @@ def configure(conf):
               "-qhalt=w",     # IBM xlc
               "-w2",           # Tru64
              ]:
-        if conf.CHECK_CFLAGS([f], '''
-'''):
+        if conf.CHECK_CFLAGS([f]):
             if not 'WERROR_CFLAGS' in conf.env:
                 conf.env['WERROR_CFLAGS'] = []
             conf.env['WERROR_CFLAGS'].extend([f])
             break
 
     # check which compiler/linker flags are needed for rpath support
-    if not conf.CHECK_LDFLAGS(['-Wl,-rpath,.']) and conf.CHECK_LDFLAGS(['-Wl,-R,.']):
+    if conf.CHECK_LDFLAGS(['-Wl,-rpath,.']):
+        conf.env['RPATH_ST'] = '-Wl,-rpath,%s'
+    elif conf.CHECK_LDFLAGS(['-Wl,-R,.']):
         conf.env['RPATH_ST'] = '-Wl,-R,%s'
 
     # check for rpath
@@ -348,10 +353,10 @@ def configure(conf):
     else:
         conf.env.HAVE_LD_VERSION_SCRIPT = False
 
-    if conf.CHECK_CFLAGS(['-fvisibility=hidden'] + conf.env.WERROR_CFLAGS):
+    if conf.CHECK_CFLAGS(['-fvisibility=hidden']):
         conf.env.VISIBILITY_CFLAGS = '-fvisibility=hidden'
         conf.CHECK_CODE('''int main(void) { return 0; }
-                           __attribute__((visibility("default"))) void vis_foo2(void) {}''',
+                           __attribute__((visibility("default"))) void vis_foo2(void) {}\n''',
                         cflags=conf.env.VISIBILITY_CFLAGS,
                         strict=True,
                         define='HAVE_VISIBILITY_ATTR', addmain=False)
@@ -444,6 +449,15 @@ def configure(conf):
     conf.DEFINE('_GNU_SOURCE', 1, add_to_cflags=True)
     conf.DEFINE('_XOPEN_SOURCE_EXTENDED', 1, add_to_cflags=True)
 
+    #
+    # Needs to be defined before std*.h and string*.h are included
+    # As Python.h already brings string.h we need it in CFLAGS.
+    # See memset_s() details here:
+    # https://en.cppreference.com/w/c/string/byte/memset
+    #
+    if conf.CHECK_CFLAGS(['-D__STDC_WANT_LIB_EXT1__=1']):
+        conf.ADD_CFLAGS('-D__STDC_WANT_LIB_EXT1__=1')
+
     # on Tru64 certain features are only available with _OSF_SOURCE set to 1
     # and _XOPEN_SOURCE set to 600
     if conf.env['SYSTEM_UNAME_SYSNAME'] == 'OSF1':
@@ -512,7 +526,7 @@ struct foo bar = { .y = 'X', .x = 1 };
                         #if !defined(LITTLE) || !defined(B) || LITTLE != B
                         #error Not little endian.
                         #endif
-                        int main(void) { return 0; }""",
+                        int main(void) { return 0; }\n""",
                             addmain=False,
                             headers="endian.h sys/endian.h",
                             define="HAVE_LITTLE_ENDIAN")
@@ -531,7 +545,7 @@ struct foo bar = { .y = 'X', .x = 1 };
                         #if !defined(BIG) || !defined(B) || BIG != B
                         #error Not big endian.
                         #endif
-                        int main(void) { return 0; }""",
+                        int main(void) { return 0; }\n""",
                             addmain=False,
                             headers="endian.h sys/endian.h",
                             define="HAVE_BIG_ENDIAN")

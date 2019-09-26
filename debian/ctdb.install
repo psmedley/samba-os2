@@ -19,7 +19,7 @@ usr/lib/*/ctdb/ctdb-path
 usr/lib/*/ctdb/ctdb_killtcp
 usr/lib/*/ctdb/ctdb_lock_helper
 usr/lib/*/ctdb/ctdb_lvs
-[linux-any] usr/lib/*/ctdb/ctdb_mutex_ceph_rados_helper
+[amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32] usr/lib/*/ctdb/ctdb_mutex_ceph_rados_helper
 usr/lib/*/ctdb/ctdb_mutex_fcntl_helper
 usr/lib/*/ctdb/ctdb_natgw
 usr/lib/*/ctdb/ctdb_recovery_helper
@@ -43,5 +43,5 @@ usr/share/man/man5/ctdb.sysconfig.5
 usr/share/man/man7/ctdb-etcd.7
 usr/share/man/man7/ctdb-statistics.7
 usr/share/man/man7/ctdb-tunables.7
-[linux-any] usr/share/man/man7/ctdb_mutex_ceph_rados_helper.7
+[amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32] usr/share/man/man7/ctdb_mutex_ceph_rados_helper.7
 usr/share/man/man7/ctdb.7

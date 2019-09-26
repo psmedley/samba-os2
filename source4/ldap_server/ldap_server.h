@@ -76,8 +76,11 @@ struct ldapsrv_call {
 	struct ldapsrv_reply {
 		struct ldapsrv_reply *prev, *next;
 		struct ldap_message *msg;
+		DATA_BLOB blob;
 	} *replies;
-	struct iovec out_iov;
+	struct iovec *out_iov;
+	size_t iov_count;
+	size_t reply_size;
 
 	struct tevent_req *(*wait_send)(TALLOC_CTX *mem_ctx,
 					struct tevent_context *ev,
@@ -97,6 +100,17 @@ struct ldapsrv_call {
 	} notification;
 };
 
+/*
+ * This matches the previous implicit size limit via talloc's maximum
+ * allocation size
+ */
+#define LDAP_SERVER_MAX_REPLY_SIZE ((size_t)(256 * 1024 * 1024))
+
+/*
+ * Start writing to the network before we hit this size
+ */
+#define LDAP_SERVER_MAX_CHUNK_SIZE ((size_t)(25 * 1024 * 1024))
+
 struct ldapsrv_service {
 	struct tstream_tls_params *tls_params;
 	struct task_server *task;
@@ -106,6 +120,8 @@ struct ldapsrv_service {
 		uint64_t generation;
 		struct tevent_req *retry;
 	} notification;
+
+	struct ldb_context *sam_ctx;
 };
 
 #include "ldap_server/proto.h"

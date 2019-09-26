@@ -331,6 +331,11 @@
 #define SMB_VFS_NEXT_FILE_ID_CREATE(handle, sbuf) \
 	smb_vfs_call_file_id_create((handle)->next, (sbuf))
 
+#define SMB_VFS_FS_FILE_ID(conn, sbuf) \
+	smb_vfs_call_fs_file_id((conn)->vfs_handles, (sbuf))
+#define SMB_VFS_NEXT_FS_FILE_ID(handle, sbuf) \
+	smb_vfs_call_fs_file_id((handle)->next, (sbuf))
+
 #define SMB_VFS_STREAMINFO(conn, fsp, smb_fname, mem_ctx, num_streams, streams) \
 	smb_vfs_call_streaminfo((conn)->vfs_handles, (fsp), (smb_fname), (mem_ctx), (num_streams), (streams))
 #define SMB_VFS_NEXT_STREAMINFO(handle, fsp, smb_fname, mem_ctx, num_streams, streams) \
@@ -346,20 +351,15 @@
 #define SMB_VFS_NEXT_CONNECTPATH(conn, smb_fname) \
 	smb_vfs_call_connectpath((conn)->next, (smb_fname))
 
-#define SMB_VFS_BRL_LOCK_WINDOWS(conn, br_lck, plock, blocking_lock) \
-	smb_vfs_call_brl_lock_windows((conn)->vfs_handles, (br_lck), (plock), (blocking_lock))
-#define SMB_VFS_NEXT_BRL_LOCK_WINDOWS(handle, br_lck, plock, blocking_lock) \
-	smb_vfs_call_brl_lock_windows((handle)->next, (br_lck), (plock), (blocking_lock))
+#define SMB_VFS_BRL_LOCK_WINDOWS(conn, br_lck, plock) \
+	smb_vfs_call_brl_lock_windows((conn)->vfs_handles, (br_lck), (plock))
+#define SMB_VFS_NEXT_BRL_LOCK_WINDOWS(handle, br_lck, plock) \
+	smb_vfs_call_brl_lock_windows((handle)->next, (br_lck), (plock))
 
-#define SMB_VFS_BRL_UNLOCK_WINDOWS(conn, msg_ctx, br_lck, plock) \
-	smb_vfs_call_brl_unlock_windows((conn)->vfs_handles, (msg_ctx), (br_lck), (plock))
-#define SMB_VFS_NEXT_BRL_UNLOCK_WINDOWS(handle, msg_ctx, br_lck, plock) \
-	smb_vfs_call_brl_unlock_windows((handle)->next, (msg_ctx), (br_lck), (plock))
-
-#define SMB_VFS_BRL_CANCEL_WINDOWS(conn, br_lck, plock) \
-	smb_vfs_call_brl_cancel_windows((conn)->vfs_handles, (br_lck), (plock))
-#define SMB_VFS_NEXT_BRL_CANCEL_WINDOWS(handle, br_lck, plock) \
-	smb_vfs_call_brl_cancel_windows((handle)->next, (br_lck), (plock))
+#define SMB_VFS_BRL_UNLOCK_WINDOWS(conn, br_lck, plock) \
+	smb_vfs_call_brl_unlock_windows((conn)->vfs_handles, (br_lck), (plock))
+#define SMB_VFS_NEXT_BRL_UNLOCK_WINDOWS(handle, br_lck, plock) \
+	smb_vfs_call_brl_unlock_windows((handle)->next, (br_lck), (plock))
 
 #define SMB_VFS_STRICT_LOCK_CHECK(conn, fsp, plock) \
 	smb_vfs_call_strict_lock_check((conn)->vfs_handles, (fsp), (plock))

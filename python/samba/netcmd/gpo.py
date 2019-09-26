@@ -93,6 +93,10 @@ def gplink_options_string(value):
 def parse_gplink(gplink):
     '''parse a gPLink into an array of dn and options'''
     ret = []
+
+    if gplink.strip() == '':
+        return ret
+
     a = gplink.split(']')
     for g in a:
         if not g:
@@ -167,7 +171,9 @@ def get_gpo_info(samdb, gpo=None, displayname=None, dn=None,
                                   'flags',
                                   'name',
                                   'displayName',
-                                  'gPCFileSysPath'],
+                                  'gPCFileSysPath',
+                                  'gPCMachineExtensionNames',
+                                  'gPCUserExtensionNames'],
                            controls=['sd_flags:1:%d' % sd_flags])
     except Exception as e:
         if gpo is not None:
@@ -255,6 +261,12 @@ def find_parser(name, flags=re.IGNORECASE):
         return GPScriptsIniParser()
     if re.match('psscripts.ini$', name, flags=flags):
         return GPScriptsIniParser()
+    if re.match('GPE\.INI$', name, flags=flags):
+        # This file does not appear in the protocol specifications!
+        #
+        # It appears to be a legacy file used to maintain gPCUserExtensionNames
+        # and gPCMachineExtensionNames. We should just copy the file as binary.
+        return GPParser()
     if re.match('.*\.ini$', name, flags=flags):
         return GPIniParser()
     if re.match('.*\.pol$', name, flags=flags):
@@ -326,7 +338,8 @@ def copy_directory_remote_to_local(conn, remotedir, localdir):
 
 
 def copy_directory_local_to_remote(conn, localdir, remotedir,
-                                   ignore_existing=False):
+                                   ignore_existing_dir=False,
+                                   keep_existing_files=False):
     if not conn.chkpath(remotedir):
         conn.mkdir(remotedir)
     l_dirs = [localdir]
@@ -347,9 +360,16 @@ def copy_directory_local_to_remote(conn, localdir, remotedir,
                 try:
                     conn.mkdir(r_name)
                 except NTSTATUSError:
-                    if not ignore_existing:
+                    if not ignore_existing_dir:
                         raise
             else:
+                if keep_existing_files:
+                    try:
+                        conn.loadfile(r_name)
+                        continue
+                    except NTSTATUSError:
+                        pass
+
                 data = open(l_name, 'rb').read()
                 conn.savefile(r_name, data)
 
@@ -656,7 +676,7 @@ class cmd_getlink(GPOCommand):
         except Exception:
             raise CommandError("Container '%s' does not exist" % container_dn)
 
-        if msg['gPLink']:
+        if 'gPLink' in msg and msg['gPLink']:
             self.outf.write("GPO(s) linked to DN %s\n" % container_dn)
             gplist = parse_gplink(str(msg['gPLink'][0]))
             for g in gplist:
@@ -1072,6 +1092,12 @@ class cmd_backup(GPOCommand):
                 self.outf.write('\nEntities:\n')
                 self.outf.write(ents)
 
+        # Backup the enabled GPO extension names
+        for ext in ('gPCMachineExtensionNames', 'gPCUserExtensionNames'):
+            if ext in msg:
+                with open(os.path.join(gpodir, ext + '.SAMBAEXT'), 'wb') as f:
+                    f.write(msg[ext][0])
+
     @staticmethod
     def generalize_xml_entities(outf, sourcedir, targetdir):
         entities = {}
@@ -1284,7 +1310,9 @@ class cmd_restore(cmd_create):
     takes_options = [
         Option("-H", help="LDB URL for database or target server", type=str),
         Option("--tmpdir", help="Temporary directory for copying policy files", type=str),
-        Option("--entities", help="File defining XML entities to insert into DOCTYPE header", type=str)
+        Option("--entities", help="File defining XML entities to insert into DOCTYPE header", type=str),
+        Option("--restore-metadata", help="Keep the old GPT.INI file and associated version number",
+               default=False, action="store_true")
     ]
 
     def restore_from_backup_to_local_dir(self, sourcedir, targetdir, dtd_header=''):
@@ -1356,7 +1384,7 @@ class cmd_restore(cmd_create):
                             self.outf.write('WARNING: Falling back to simple copy-restore.\n')
 
     def run(self, displayname, backup, H=None, tmpdir=None, entities=None, sambaopts=None, credopts=None,
-            versionopts=None):
+            versionopts=None, restore_metadata=None):
 
         dtd_header = ''
 
@@ -1393,10 +1421,29 @@ class cmd_restore(cmd_create):
             self.restore_from_backup_to_local_dir(backup, self.gpodir,
                                                   dtd_header)
 
+            keep_new_files = not restore_metadata
+
             # Copy GPO files over SMB
             copy_directory_local_to_remote(self.conn, self.gpodir,
                                            self.sharepath,
-                                           ignore_existing=True)
+                                           ignore_existing_dir=True,
+                                           keep_existing_files=keep_new_files)
+
+            gpo_dn = get_gpo_dn(self.samdb, self.gpo_name)
+
+            # Restore the enabled extensions
+            for ext in ('gPCMachineExtensionNames', 'gPCUserExtensionNames'):
+                ext_file = os.path.join(backup, ext + '.SAMBAEXT')
+                if os.path.exists(ext_file):
+                    with open(ext_file, 'rb') as f:
+                        data = f.read()
+
+                    m = ldb.Message()
+                    m.dn = gpo_dn
+                    m[ext] = ldb.MessageElement(data, ldb.FLAG_MOD_REPLACE,
+                                                ext)
+
+                    self.samdb.modify(m)
 
         except Exception as e:
             import traceback
@@ -1532,6 +1579,10 @@ class cmd_aclcheck(GPOCommand):
                                   creds=self.creds)
 
             fs_sd = conn.get_acl(sharepath, security.SECINFO_OWNER | security.SECINFO_GROUP | security.SECINFO_DACL, security.SEC_FLAG_MAXIMUM_ALLOWED)
+
+            if 'nTSecurityDescriptor' not in m:
+                raise CommandError("Could not read nTSecurityDescriptor. "
+                                   "This requires an Administrator account")
 
             ds_sd_ndr = m['nTSecurityDescriptor'][0]
             ds_sd = ndr_unpack(security.descriptor, ds_sd_ndr).as_sddl()

@@ -5,13 +5,13 @@
 # Print a message and exit.
 die ()
 {
-	echo "$1" >&2 ; exit ${2:-1}
+	echo "$1" >&2 ; exit "${2:-1}"
 }
 
 # This expands the most probable problem cases like "." and "..".
 TEST_SUBDIR=$(dirname "$0")
-if [ $(dirname "$TEST_SUBDIR") = "." ] ; then
-	TEST_SUBDIR=$(cd "$TEST_SUBDIR" ; pwd)
+if [ "$(dirname "$TEST_SUBDIR")" = "." ] ; then
+	TEST_SUBDIR=$(cd "$TEST_SUBDIR" && pwd)
 fi
 
 . "${TEST_SCRIPTS_DIR}/script_install_paths.sh"
@@ -29,43 +29,42 @@ fi
 # I is the recheck interval.
 wait_until ()
 {
-    local timeout="$1" ; shift # "$@" is the command...
+	_timeout="$1" ; shift # "$@" is the command...
 
-    local interval=1
-    case "$timeout" in
+	_interval=1
+	case "$_timeout" in
 	*/*)
-	    interval="${timeout#*/}"
-	    timeout="${timeout%/*}"
-    esac
+		_interval="${_timeout#*/}"
+		_timeout="${_timeout%/*}"
+	esac
 
-    local negate=false
-    if [ "$1" = "!" ] ; then
-	negate=true
-	shift
-    fi
-
-    echo -n "<${timeout}|"
-    local t=$timeout
-    while [ $t -gt 0 ] ; do
-	local rc=0
-	"$@" || rc=$?
-	if { ! $negate && [ $rc -eq 0 ] ; } || \
-	    { $negate && [ $rc -ne 0 ] ; } ; then
-	    echo "|$(($timeout - $t))|"
-	    echo "OK"
-	    return 0
+	_negate=false
+	if [ "$1" = "!" ] ; then
+		_negate=true
+		shift
 	fi
-	local i
-	for i in $(seq 1 $interval) ; do
-	    echo -n .
+
+	printf '<%d|' "$_timeout"
+	_t="$_timeout"
+	while [ "$_t" -gt 0 ] ; do
+		_rc=0
+		"$@" || _rc=$?
+		if { ! $_negate && [ $_rc -eq 0 ] ; } || \
+			   { $_negate && [ $_rc -ne 0 ] ; } ; then
+			echo "|$((_timeout - _t))|"
+			echo "OK"
+			return 0
+		fi
+		for _i in $(seq 1 "$_interval") ; do
+			printf '.'
+		done
+		_t=$((_t - _interval))
+		sleep "$_interval"
 	done
-	t=$(($t - $interval))
-	sleep $interval
-    done
 
-    echo "*TIMEOUT*"
+	echo "*TIMEOUT*"
 
-    return 1
+	return 1
 }
 
 # setup_ctdb_base <parent> <subdir> [item-to-copy]...
@@ -74,8 +73,9 @@ setup_ctdb_base ()
 	[ $# -ge 2 ] || die "usage: setup_ctdb_base <parent> <subdir> [item]..."
 	# If empty arguments are passed then we attempt to remove /
 	# (i.e. the root directory) below
-	[ -n "$1" -a -n "$2" ] || \
+	if [ -z "$1" ] || [ -z "$2" ] ; then
 		die "usage: setup_ctdb_base <parent> <subdir> [item]..."
+	fi
 
 	_parent="$1"
 	_subdir="$2"

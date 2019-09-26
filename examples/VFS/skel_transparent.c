@@ -600,6 +600,12 @@ static struct file_id skel_file_id_create(vfs_handle_struct *handle,
 	return SMB_VFS_NEXT_FILE_ID_CREATE(handle, sbuf);
 }
 
+static uint64_t skel_fs_file_id(vfs_handle_struct *handle,
+				const SMB_STRUCT_STAT *sbuf)
+{
+	return SMB_VFS_NEXT_FS_FILE_ID(handle, sbuf);
+}
+
 struct skel_offload_read_state {
 	struct vfs_handle_struct *handle;
 	DATA_BLOB token;
@@ -812,26 +818,16 @@ static const char *skel_connectpath(struct vfs_handle_struct *handle,
 
 static NTSTATUS skel_brl_lock_windows(struct vfs_handle_struct *handle,
 				      struct byte_range_lock *br_lck,
-				      struct lock_struct *plock,
-				      bool blocking_lock)
+				      struct lock_struct *plock)
 {
-	return SMB_VFS_NEXT_BRL_LOCK_WINDOWS(handle,
-					     br_lck, plock, blocking_lock);
+	return SMB_VFS_NEXT_BRL_LOCK_WINDOWS(handle, br_lck, plock);
 }
 
 static bool skel_brl_unlock_windows(struct vfs_handle_struct *handle,
-				    struct messaging_context *msg_ctx,
 				    struct byte_range_lock *br_lck,
 				    const struct lock_struct *plock)
 {
-	return SMB_VFS_NEXT_BRL_UNLOCK_WINDOWS(handle, msg_ctx, br_lck, plock);
-}
-
-static bool skel_brl_cancel_windows(struct vfs_handle_struct *handle,
-				    struct byte_range_lock *br_lck,
-				    struct lock_struct *plock)
-{
-	return SMB_VFS_NEXT_BRL_CANCEL_WINDOWS(handle, br_lck, plock);
+	return SMB_VFS_NEXT_BRL_UNLOCK_WINDOWS(handle, br_lck, plock);
 }
 
 static bool skel_strict_lock_check(struct vfs_handle_struct *handle,
@@ -1355,6 +1351,7 @@ static struct vfs_fn_pointers skel_transparent_fns = {
 	.realpath_fn = skel_realpath,
 	.chflags_fn = skel_chflags,
 	.file_id_create_fn = skel_file_id_create,
+	.fs_file_id_fn = skel_fs_file_id,
 	.offload_read_send_fn = skel_offload_read_send,
 	.offload_read_recv_fn = skel_offload_read_recv,
 	.offload_write_send_fn = skel_offload_write_send,
@@ -1367,7 +1364,6 @@ static struct vfs_fn_pointers skel_transparent_fns = {
 	.connectpath_fn = skel_connectpath,
 	.brl_lock_windows_fn = skel_brl_lock_windows,
 	.brl_unlock_windows_fn = skel_brl_unlock_windows,
-	.brl_cancel_windows_fn = skel_brl_cancel_windows,
 	.strict_lock_check_fn = skel_strict_lock_check,
 	.translate_name_fn = skel_translate_name,
 	.fsctl_fn = skel_fsctl,

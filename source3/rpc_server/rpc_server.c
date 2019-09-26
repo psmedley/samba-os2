@@ -42,10 +42,11 @@ int make_server_pipes_struct(TALLOC_CTX *mem_ctx,
 			     enum dcerpc_transport_t transport,
 			     const struct tsocket_address *remote_address,
 			     const struct tsocket_address *local_address,
-			     struct auth_session_info *session_info,
+			     struct auth_session_info **psession_info,
 			     struct pipes_struct **_p,
 			     int *perrno)
 {
+	struct auth_session_info *session_info = *psession_info;
 	struct pipes_struct *p;
 	int ret;
 
@@ -57,15 +58,17 @@ int make_server_pipes_struct(TALLOC_CTX *mem_ctx,
 		return -1;
 	}
 
-	if (session_info->unix_token && session_info->unix_info && session_info->security_token) {
-		/* Don't call create_local_token(), we already have the full details here */
-		p->session_info = talloc_steal(p, session_info);
-
-	} else {
-		DEBUG(0, ("Supplied session_info in make_server_pipes_struct was incomplete!"));
+	if ((session_info->unix_token == NULL) ||
+	    (session_info->unix_info == NULL) ||
+	    (session_info->security_token == NULL)) {
+		DBG_ERR("Supplied session_info was incomplete!\n");
+		TALLOC_FREE(p);
 		*perrno = EINVAL;
 		return -1;
 	}
+
+	/* Don't call create_local_token(), we already have the full details here */
+	p->session_info = talloc_move(p, psession_info);
 
 	*_p = p;
 	return 0;
@@ -290,26 +293,21 @@ void named_pipe_accept_function(struct tevent_context *ev_ctx,
 	struct tevent_req *subreq;
 	int ret;
 
-	npc = talloc_zero(ev_ctx, struct named_pipe_client);
-	if (!npc) {
+	npc = named_pipe_client_init(
+		ev_ctx,
+		ev_ctx,
+		msg_ctx,
+		pipe_name,
+		term_fn,
+		FILE_TYPE_MESSAGE_MODE_PIPE, /* file_type */
+		0xff | 0x0400 | 0x0100,	     /* device_state */
+		4096,			     /* allocation_size */
+		private_data);
+	if (npc == NULL) {
 		DEBUG(0, ("Out of memory!\n"));
 		close(fd);
 		return;
 	}
-
-	npc->pipe_name = talloc_strdup(npc, pipe_name);
-	if (npc->pipe_name == NULL) {
-		DEBUG(0, ("Out of memory!\n"));
-		TALLOC_FREE(npc);
-		close(fd);
-		return;
-	}
-	npc->ev = ev_ctx;
-	npc->msg_ctx = msg_ctx;
-	npc->term_fn = term_fn;
-	npc->private_data = private_data;
-
-	talloc_set_destructor(npc, named_pipe_destructor);
 
 	/* make sure socket is in NON blocking state */
 	ret = set_blocking(fd, false);
@@ -327,10 +325,6 @@ void named_pipe_accept_function(struct tevent_context *ev_ctx,
 		close(fd);
 		return;
 	}
-
-	npc->file_type = FILE_TYPE_MESSAGE_MODE_PIPE;
-	npc->device_state = 0xff | 0x0400 | 0x0100;
-	npc->allocation_size = 4096;
 
 	subreq = tstream_npa_accept_existing_send(npc, npc->ev, plain,
 						  npc->file_type,
@@ -363,8 +357,6 @@ static void named_pipe_accept_done(struct tevent_req *subreq)
 						&npc->local_server_name,
 						&session_info_transport);
 
-	npc->session_info = talloc_move(npc, &session_info_transport->session_info);
-
 	TALLOC_FREE(subreq);
 	if (ret != 0) {
 		DEBUG(2, ("Failed to accept named pipe connection! (%s)\n",
@@ -373,12 +365,15 @@ static void named_pipe_accept_done(struct tevent_req *subreq)
 		return;
 	}
 
+	npc->session_info = talloc_move(
+		npc, &session_info_transport->session_info);
+
 	ret = make_server_pipes_struct(npc,
 				       npc->msg_ctx,
 				       npc->pipe_name, NCACN_NP,
 				       npc->remote_client_addr,
 				       npc->local_server_addr,
-				       npc->session_info,
+				       &npc->session_info,
 				       &npc->p, &error);
 	if (ret != 0) {
 		DEBUG(2, ("Failed to create pipes_struct! (%s)\n",
@@ -502,14 +497,14 @@ void named_pipe_packet_process(struct tevent_req *subreq)
 		return;
 	}
 
-	DEBUG(10, ("Sending %u fragments in a total of %u bytes\n",
-		   (unsigned int)npc->count,
-		   (unsigned int)npc->p->out_data.data_sent_length));
+	DBG_DEBUG("Sending %zu fragments in a total of %"PRIu32" bytes\n",
+		  npc->count,
+		  npc->p->out_data.data_sent_length);
 
 	for (i = 0; i < npc->count; i++) {
-		DEBUG(10, ("Sending PDU number: %d, PDU Length: %u\n",
-			  (unsigned int)i,
-			  (unsigned int)npc->iov[i].iov_len));
+		DBG_DEBUG("Sending PDU number: %zu, PDU Length: %zu\n",
+			  i,
+			  npc->iov[i].iov_len);
 		dump_data(11, (const uint8_t *)npc->iov[i].iov_base,
 				npc->iov[i].iov_len);
 
@@ -1125,7 +1120,7 @@ void dcerpc_ncacn_accept(struct tevent_context *ev_ctx,
 				      ncacn_conn->transport,
 				      ncacn_conn->remote_client_addr,
 				      ncacn_conn->local_server_addr,
-				      ncacn_conn->session_info,
+				      &ncacn_conn->session_info,
 				      &ncacn_conn->p,
 				      &sys_errno);
 	if (rc < 0) {

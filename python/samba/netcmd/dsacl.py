@@ -113,25 +113,31 @@ class cmd_dsacl_set(Command):
     def add_ace(self, samdb, object_dn, new_ace):
         """Add new ace explicitly."""
         desc = self.read_descriptor(samdb, object_dn)
-        desc_sddl = desc.as_sddl(self.get_domain_sid(samdb))
-        # TODO add bindings for descriptor manipulation and get rid of this
-        desc_aces = re.findall("\(.*?\)", desc_sddl)
-        for ace in desc_aces:
-            if ("ID" in ace):
-                desc_sddl = desc_sddl.replace(ace, "")
-        if new_ace in desc_sddl:
-            return
-        if desc_sddl.find("(") >= 0:
-            desc_sddl = desc_sddl[:desc_sddl.index("(")] + new_ace + desc_sddl[desc_sddl.index("("):]
-        else:
-            desc_sddl = desc_sddl + new_ace
-        desc = security.descriptor.from_sddl(desc_sddl, self.get_domain_sid(samdb))
-        self.modify_descriptor(samdb, object_dn, desc)
+        new_ace = security.descriptor.from_sddl("D:" + new_ace,self.get_domain_sid(samdb))
+        new_ace_list = re.findall("\(.*?\)",new_ace.as_sddl())
+        for new_ace in new_ace_list:
+            desc_sddl = desc.as_sddl(self.get_domain_sid(samdb))
+            # TODO add bindings for descriptor manipulation and get rid of this
+            desc_aces = re.findall("\(.*?\)", desc_sddl)
+            for ace in desc_aces:
+                if ("ID" in ace):
+                    desc_sddl = desc_sddl.replace(ace, "")
+            if new_ace in desc_sddl:
+                continue
+            if desc_sddl.find("(") >= 0:
+                desc_sddl = desc_sddl[:desc_sddl.index("(")] + new_ace + desc_sddl[desc_sddl.index("("):]
+            else:
+                desc_sddl = desc_sddl + new_ace
+            desc = security.descriptor.from_sddl(desc_sddl, self.get_domain_sid(samdb))
+            self.modify_descriptor(samdb, object_dn, desc)
 
-    def print_new_acl(self, samdb, object_dn):
+    def print_acl(self, samdb, object_dn, new=False):
         desc = self.read_descriptor(samdb, object_dn)
         desc_sddl = desc.as_sddl(self.get_domain_sid(samdb))
-        self.outf.write("new descriptor for %s:\n" % object_dn)
+        if new:
+            self.outf.write("new descriptor for %s:\n" % object_dn)
+        else:
+            self.outf.write("old descriptor for %s:\n" % object_dn)
         self.outf.write(desc_sddl + "\n")
 
     def run(self, car, action, objectdn, trusteedn, sddl,
@@ -169,9 +175,56 @@ class cmd_dsacl_set(Command):
         else:
             raise CommandError("Wrong argument '%s'!" % action)
 
-        self.print_new_acl(samdb, objectdn)
+        self.print_acl(samdb, objectdn)
         self.add_ace(samdb, objectdn, new_ace)
-        self.print_new_acl(samdb, objectdn)
+        self.print_acl(samdb, objectdn, new=True)
+
+
+class cmd_dsacl_get(Command):
+    """Print access list on a directory object."""
+
+    synopsis = "%prog [options]"
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+        "credopts": options.CredentialsOptions,
+        "versionopts": options.VersionOptions,
+        }
+
+    takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server",
+               type=str, metavar="URL", dest="H"),
+        Option("--objectdn", help="DN of the object whose SD to modify",
+            type="string"),
+        ]
+
+    def read_descriptor(self, samdb, object_dn):
+        res = samdb.search(base=object_dn, scope=SCOPE_BASE,
+                attrs=["nTSecurityDescriptor"])
+        # we should theoretically always have an SD
+        assert(len(res) == 1)
+        desc = res[0]["nTSecurityDescriptor"][0]
+        return ndr_unpack(security.descriptor, desc)
+
+    def get_domain_sid(self, samdb):
+        res = samdb.search(base=samdb.domain_dn(),
+                expression="(objectClass=*)", scope=SCOPE_BASE)
+        return ndr_unpack( security.dom_sid,res[0]["objectSid"][0])
+
+    def print_acl(self, samdb, object_dn):
+        desc = self.read_descriptor(samdb, object_dn)
+        desc_sddl = desc.as_sddl(self.get_domain_sid(samdb))
+        self.outf.write("descriptor for %s:\n" % object_dn)
+        self.outf.write(desc_sddl + "\n")
+
+    def run(self, objectdn,
+            H=None, credopts=None, sambaopts=None, versionopts=None):
+        lp = sambaopts.get_loadparm()
+        creds = credopts.get_credentials(lp)
+
+        samdb = SamDB(url=H, session_info=system_session(),
+            credentials=creds, lp=lp)
+        self.print_acl(samdb, objectdn)
 
 
 class cmd_dsacl(SuperCommand):
@@ -179,3 +232,4 @@ class cmd_dsacl(SuperCommand):
 
     subcommands = {}
     subcommands["set"] = cmd_dsacl_set()
+    subcommands["get"] = cmd_dsacl_get()

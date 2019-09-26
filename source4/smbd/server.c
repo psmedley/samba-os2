@@ -381,7 +381,9 @@ static NTSTATUS setup_parent_messaging(struct server_state *state,
 {
 	struct imessaging_context *msg;
 	NTSTATUS status;
-
+	if (state == NULL) {
+		return NT_STATUS_UNSUCCESSFUL;
+	}
 	msg = imessaging_init(state->event_ctx,
 			      lp_ctx,
 			      cluster_id(getpid(), SAMBA_PARENT_TASKID),
@@ -494,7 +496,7 @@ static int binary_smbd_main(const char *binary_name,
 	init_module_fn *shared_init;
 	uint16_t stdin_event_flags;
 	NTSTATUS status;
-	const char *model = "standard";
+	const char *model = "prefork";
 	int max_runtime = 0;
 	struct stat st;
 	enum {
@@ -507,24 +509,59 @@ static int binary_smbd_main(const char *binary_name,
 	};
 	struct poptOption long_options[] = {
 		POPT_AUTOHELP
-		{"daemon", 'D', POPT_ARG_NONE, NULL, OPT_DAEMON,
-		 "Become a daemon (default)", NULL },
-		{"foreground", 'F', POPT_ARG_NONE, NULL, OPT_FOREGROUND,
-		 "Run the daemon in foreground", NULL },
-		{"interactive",	'i', POPT_ARG_NONE, NULL, OPT_INTERACTIVE,
-		 "Run interactive (not a daemon)", NULL},
-		{"model", 'M', POPT_ARG_STRING,	NULL, OPT_PROCESS_MODEL,
-		 "Select process model", "MODEL"},
-		{"maximum-runtime",0, POPT_ARG_INT, &max_runtime, 0,
-		 "set maximum runtime of the server process, "
-			"till autotermination", "seconds"},
-		{"show-build", 'b', POPT_ARG_NONE, NULL, OPT_SHOW_BUILD,
-			"show build info", NULL },
-		{"no-process-group", '\0', POPT_ARG_NONE, NULL,
-		  OPT_NO_PROCESS_GROUP, "Don't create a new process group" },
+		{
+			.longName   = "daemon",
+			.shortName  = 'D',
+			.argInfo    = POPT_ARG_NONE,
+			.val        = OPT_DAEMON,
+			.descrip    = "Become a daemon (default)",
+		},
+		{
+			.longName   = "foreground",
+			.shortName  = 'F',
+			.argInfo    = POPT_ARG_NONE,
+			.val        = OPT_FOREGROUND,
+			.descrip    = "Run the daemon in foreground",
+		},
+		{
+			.longName   = "interactive",
+			.shortName  = 'i',
+			.argInfo    = POPT_ARG_NONE,
+			.val        = OPT_INTERACTIVE,
+			.descrip    = "Run interactive (not a daemon)",
+		},
+		{
+			.longName   = "model",
+			.shortName  = 'M',
+			.argInfo    = POPT_ARG_STRING,
+			.val        = OPT_PROCESS_MODEL,
+			.descrip    = "Select process model",
+			.argDescrip = "MODEL",
+		},
+		{
+			.longName   = "maximum-runtime",
+			.argInfo    = POPT_ARG_INT,
+			.arg        = &max_runtime,
+			.descrip    = "set maximum runtime of the server process, "
+			              "till autotermination",
+			.argDescrip = "seconds"
+		},
+		{
+			.longName   = "show-build",
+			.shortName  = 'b',
+			.argInfo    = POPT_ARG_NONE,
+			.val        = OPT_SHOW_BUILD,
+			.descrip    = "show build info",
+		},
+		{
+			.longName   = "no-process-group",
+			.argInfo    = POPT_ARG_NONE,
+			.val        = OPT_NO_PROCESS_GROUP,
+			.descrip    = "Don't create a new process group",
+		},
 		POPT_COMMON_SAMBA
 		POPT_COMMON_VERSION
-		{ NULL }
+		POPT_TABLEEND
 	};
 	struct server_state *state = NULL;
 	struct tevent_signal *se = NULL;
@@ -610,6 +647,11 @@ static int binary_smbd_main(const char *binary_name,
 	state = talloc_zero(NULL, struct server_state);
 	if (state == NULL) {
 		exit_daemon("Samba cannot create server state", ENOMEM);
+		/*
+		 * return is never reached but is here to satisfy static
+		 * checkers
+		 */
+		return 1;
 	};
 	state->binary_name = binary_name;
 
@@ -631,6 +673,11 @@ static int binary_smbd_main(const char *binary_name,
 			TALLOC_FREE(state);
 			exit_daemon("Samba cannot open schannel store "
 				"for secured NETLOGON operations.", EACCES);
+			/*
+			 * return is never reached but is here to satisfy static
+			 * checkers
+			 */
+			return 1;
 		}
 	}
 
@@ -639,6 +686,11 @@ static int binary_smbd_main(const char *binary_name,
 		TALLOC_FREE(state);
 		exit_daemon("Samba failed to disable recusive "
 			"winbindd calls.", EACCES);
+		/*
+		 * return is never reached but is here to satisfy static
+		 * checkers
+		 */
+		return 1;
 	}
 
 	gensec_init(); /* FIXME: */
@@ -659,6 +711,11 @@ static int binary_smbd_main(const char *binary_name,
 	if (state->event_ctx == NULL) {
 		TALLOC_FREE(state);
 		exit_daemon("Initializing event context failed", EACCES);
+		/*
+		 * return is never reached but is here to satisfy static
+		 * checkers
+		 */
+		return 1;
 	}
 
 	talloc_set_destructor(state->event_ctx, event_ctx_destructor);
@@ -689,6 +746,11 @@ static int binary_smbd_main(const char *binary_name,
 		TALLOC_FREE(state);
 		exit_daemon("Samba failed to set standard input handler",
 				ENOTTY);
+		/*
+		 * return is never reached but is here to satisfy static
+		 * checkers
+		 */
+		return 1;
 	}
 
 	if (S_ISFIFO(st.st_mode) || S_ISSOCK(st.st_mode)) {
@@ -701,6 +763,11 @@ static int binary_smbd_main(const char *binary_name,
 		if (fde == NULL) {
 			TALLOC_FREE(state);
 			exit_daemon("Initializing stdin failed", ENOMEM);
+			/*
+			 * return is never reached but is here to
+			 * satisfy static checkers
+			 */
+			return 1;
 		}
 	}
 
@@ -717,7 +784,12 @@ static int binary_smbd_main(const char *binary_name,
 		if (te == NULL) {
 			TALLOC_FREE(state);
 			exit_daemon("Maxruntime handler failed", ENOMEM);
-		}
+			/*
+			 * return is never reached but is here to
+			 * satisfy static checkers
+			 */
+			return 1;
+			}
 	}
 
 	se = tevent_add_signal(state->event_ctx,
@@ -729,6 +801,11 @@ static int binary_smbd_main(const char *binary_name,
 	if (se == NULL) {
 		TALLOC_FREE(state);
 		exit_daemon("Initialize SIGTERM handler failed", ENOMEM);
+		/*
+		 * return is never reached but is here to satisfy static
+		 * checkers
+		 */
+		return 1;
 	}
 
 	if (lpcfg_server_role(cmdline_lp_ctx) != ROLE_ACTIVE_DIRECTORY_DC
@@ -755,12 +832,22 @@ static int binary_smbd_main(const char *binary_name,
 	if (ret != LDB_SUCCESS) {
 		TALLOC_FREE(state);
 		exit_daemon("Samba failed to prime database", EINVAL);
+		/*
+		 * return is never reached but is here to satisfy static
+		 * checkers
+		 */
+		return 1;
 	}
 
 	if (db_is_backup) {
 		TALLOC_FREE(state);
 		exit_daemon("Database is a backup. Please run samba-tool domain"
 			    " backup restore", EINVAL);
+		/*
+		 * return is never reached but is here to satisfy static
+		 * checkers
+		 */
+		return 1;
 	}
 
 	status = setup_parent_messaging(state, cmdline_lp_ctx);
@@ -768,6 +855,11 @@ static int binary_smbd_main(const char *binary_name,
 		TALLOC_FREE(state);
 		exit_daemon("Samba failed to setup parent messaging",
 			NT_STATUS_V(status));
+		/*
+		 * return is never reached but is here to satisfy static
+		 * checkers
+		 */
+		return 1;
 	}
 
 	DBG_ERR("%s: using '%s' process model\n", binary_name, model);
@@ -782,6 +874,11 @@ static int binary_smbd_main(const char *binary_name,
 			TALLOC_FREE(state);
 			exit_daemon("Samba failed to open process control pipe",
 				    errno);
+			/*
+			 * return is never reached but is here to satisfy static
+			 * checkers
+			 */
+			return 1;
 		}
 		smb_set_close_on_exec(child_pipe[0]);
 		smb_set_close_on_exec(child_pipe[1]);
@@ -818,6 +915,11 @@ static int binary_smbd_main(const char *binary_name,
 				TALLOC_FREE(state);
 				exit_daemon("Samba failed to start services",
 				NT_STATUS_V(status));
+				/*
+				 * return is never reached but is here to
+				 * satisfy static checkers
+				 */
+				return 1;
 			}
 		}
 	}

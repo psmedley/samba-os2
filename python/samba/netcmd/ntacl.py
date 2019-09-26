@@ -25,6 +25,7 @@ from samba.ndr import ndr_unpack, ndr_print
 from samba.samdb import SamDB
 from samba.samba3 import param as s3param, passdb, smbd
 from samba import provision
+import os
 
 from samba.auth import (
     system_session,
@@ -45,6 +46,36 @@ def system_session_unix():
     session_info_fill_unix(session_info_unix, None)
 
     return session_info_unix
+
+def get_local_domain_sid(lp):
+    is_ad_dc = False
+    server_role = lp.server_role()
+    if server_role == "ROLE_ACTIVE_DIRECTORY_DC":
+        is_ad_dc = True
+
+    s3conf = s3param.get_context()
+    s3conf.load(lp.configfile)
+
+    if is_ad_dc:
+        try:
+            samdb = SamDB(session_info=system_session(),
+                          lp=lp)
+        except Exception as e:
+            raise CommandError("Unable to open samdb:", e)
+        # ensure we are using the right samba_dsdb passdb backend, no
+        # matter what
+        s3conf.set("passdb backend", "samba_dsdb:%s" % samdb.url)
+
+    try:
+        if is_ad_dc:
+            domain_sid = security.dom_sid(samdb.domain_sid)
+        else:
+            domain_sid = passdb.get_domain_sid()
+    except:
+        raise CommandError("Unable to read domain SID from configuration "
+                           "files")
+    return domain_sid
+
 
 class cmd_ntacl_set(Command):
     """Set ACLs on a file."""
@@ -75,38 +106,12 @@ class cmd_ntacl_set(Command):
             service=None):
         logger = self.get_logger()
         lp = sambaopts.get_loadparm()
-
-        is_ad_dc = False
-        server_role = lp.server_role()
-        if server_role == "ROLE_ACTIVE_DIRECTORY_DC":
-            is_ad_dc = True
+        domain_sid = get_local_domain_sid(lp)
 
         if not use_ntvfs and not use_s3fs:
             use_ntvfs = "smb" in lp.get("server services")
         elif use_s3fs:
             use_ntvfs = False
-
-        s3conf = s3param.get_context()
-        s3conf.load(lp.configfile)
-
-        if is_ad_dc:
-            try:
-                samdb = SamDB(session_info=system_session(),
-                              lp=lp)
-            except Exception as e:
-                raise CommandError("Unable to open samdb:", e)
-            # ensure we are using the right samba_dsdb passdb backend, no
-            # matter what
-            s3conf.set("passdb backend", "samba_dsdb:%s" % samdb.url)
-
-        try:
-            if is_ad_dc:
-                domain_sid = security.dom_sid(samdb.domain_sid)
-            else:
-                domain_sid = passdb.get_domain_sid()
-        except:
-            raise CommandError("Unable to read domain SID from configuration "
-                               "files")
 
         setntacl(lp,
                  file,
@@ -171,29 +176,12 @@ class cmd_ntacl_get(Command):
             credopts=None, sambaopts=None, versionopts=None,
             service=None):
         lp = sambaopts.get_loadparm()
-
-        is_ad_dc = False
-        server_role = lp.server_role()
-        if server_role == "ROLE_ACTIVE_DIRECTORY_DC":
-            is_ad_dc = True
+        domain_sid = get_local_domain_sid(lp)
 
         if not use_ntvfs and not use_s3fs:
             use_ntvfs = "smb" in lp.get("server services")
         elif use_s3fs:
             use_ntvfs = False
-
-        s3conf = s3param.get_context()
-        s3conf.load(lp.configfile)
-        if is_ad_dc:
-            try:
-                samdb = SamDB(session_info=system_session(),
-                              lp=lp)
-            except Exception as e:
-                raise CommandError("Unable to open samdb:", e)
-
-            # ensure we are using the right samba_dsdb passdb backend, no
-            # matter what
-            s3conf.set("passdb backend", "samba_dsdb:%s" % samdb.url)
 
         acl = getntacl(lp,
                        file,
@@ -203,17 +191,171 @@ class cmd_ntacl_get(Command):
                        service=service,
                        session_info=system_session_unix())
         if as_sddl:
-            try:
-                if is_ad_dc:
-                    domain_sid = security.dom_sid(samdb.domain_sid)
-                else:
-                    domain_sid = passdb.get_domain_sid()
-            except:
-                raise CommandError("Unable to read domain SID from "
-                                   "configuration files")
             self.outf.write(acl.as_sddl(domain_sid) + "\n")
         else:
             self.outf.write(ndr_print(acl))
+
+
+class cmd_ntacl_changedomsid(Command):
+    """Change the domain SID for ACLs"""
+    synopsis = "%prog <Orig-Domain-SID> <New-Domain-SID> <file> [options]"
+
+    takes_optiongroups = {
+        "sambaopts": options.SambaOptions,
+    }
+
+    takes_options = [
+        Option(
+            "--service",
+            help="Name of the smb.conf service to use",
+            type="string"),
+        Option(
+            "--use-ntvfs",
+            help=("Set the ACLs directly to the TDB or xattr for use with the "
+                  "ntvfs file server"),
+            action="store_true"),
+        Option(
+            "--use-s3fs",
+            help=("Set the ACLs for use with the default s3fs file server via "
+                  "the VFS layer"),
+            action="store_true"),
+        Option(
+            "--eadb-file",
+            help="Name of the tdb file where attributes are stored",
+            type="string"),
+        Option(
+            "--xattr-backend",
+            type="choice",
+            help="xattr backend type (native fs or tdb)",
+            choices=["native", "tdb"]),
+        Option(
+            "-r",
+            "--recursive",
+            help="Set the ACLs for directories and their contents recursively",
+            action="store_true"),
+        Option(
+            "--follow-symlinks",
+            help="Follow symlinks",
+            action="store_true"),
+        Option(
+            "-v",
+            "--verbose",
+            help="Be verbose",
+            action="store_true"),
+    ]
+
+    takes_args = ["old_domain_sid", "new_domain_sid", "file"]
+
+    def run(self,
+            old_domain_sid_str,
+            new_domain_sid_str,
+            file,
+            use_ntvfs=False,
+            use_s3fs=False,
+            service=None,
+            xattr_backend=None,
+            eadb_file=None,
+            sambaopts=None,
+            recursive=False,
+            follow_symlinks=False,
+            verbose=False):
+        logger = self.get_logger()
+        lp = sambaopts.get_loadparm()
+        domain_sid = get_local_domain_sid(lp)
+
+        if not use_ntvfs and not use_s3fs:
+            use_ntvfs = "smb" in lp.get("server services")
+        elif use_s3fs:
+            use_ntvfs = False
+
+        if not use_ntvfs and not service:
+            raise CommandError(
+                "Must provide a share name with --service=<share>")
+
+        try:
+            old_domain_sid = security.dom_sid(old_domain_sid_str)
+        except Exception as e:
+            raise CommandError("Could not parse old sid %s: %s" %
+                               (old_domain_sid_str, e))
+
+        try:
+            new_domain_sid = security.dom_sid(new_domain_sid_str)
+        except Exception as e:
+            raise CommandError("Could not parse old sid %s: %s" %
+                               (new_domain_sid_str, e))
+
+        def changedom_sids(file):
+            if verbose:
+                self.outf.write("file: %s\n" % file)
+
+            try:
+                acl = getntacl(lp,
+                               file,
+                               xattr_backend,
+                               eadb_file,
+                               direct_db_access=use_ntvfs,
+                               service=service,
+                               session_info=system_session_unix())
+            except Exception as e:
+                raise CommandError("Could not get acl for %s: %s" % (file, e))
+
+            orig_sddl = acl.as_sddl(domain_sid)
+            if verbose:
+                self.outf.write("before:\n%s\n" % orig_sddl)
+
+            def replace_domain_sid(sid):
+                (dom, rid) = sid.split()
+                if dom == old_domain_sid:
+                    return security.dom_sid("%s-%i" % (new_domain_sid, rid))
+                return sid
+
+            acl.owner_sid = replace_domain_sid(acl.owner_sid)
+            acl.group_sid = replace_domain_sid(acl.group_sid)
+
+            if acl.sacl:
+                for ace in acl.sacl.aces:
+                    ace.trustee = replace_domain_sid(ace.trustee)
+            if acl.dacl:
+                for ace in acl.dacl.aces:
+                    ace.trustee = replace_domain_sid(ace.trustee)
+
+            new_sddl = acl.as_sddl(domain_sid)
+            if verbose:
+                self.outf.write("after:\n%s\n" % new_sddl)
+
+            if orig_sddl == new_sddl:
+                if verbose:
+                    self.outf.write("nothing to do\n")
+                return True
+
+            try:
+                setntacl(lp,
+                         file,
+                         acl,
+                         new_domain_sid,
+                         xattr_backend,
+                         eadb_file,
+                         use_ntvfs=use_ntvfs,
+                         service=service,
+                         session_info=system_session_unix())
+            except Exception as e:
+                raise CommandError("Could not set acl for %s: %s" % (file, e))
+
+        def recursive_changedom_sids(file):
+            for root, dirs, files in os.walk(file, followlinks=follow_symlinks):
+                for f in files:
+                    changedom_sids(os.path.join(root, f))
+
+                for d in dirs:
+                    changedom_sids(os.path.join(root, d))
+
+        changedom_sids(file)
+        if recursive and os.path.isdir(file):
+            recursive_changedom_sids(file)
+
+        if use_ntvfs:
+            logger.warning("Please note that POSIX permissions have NOT been "
+                           "changed, only the stored NT ACL.")
 
 
 class cmd_ntacl_sysvolreset(Command):
@@ -320,6 +462,7 @@ class cmd_ntacl(SuperCommand):
     subcommands = {}
     subcommands["set"] = cmd_ntacl_set()
     subcommands["get"] = cmd_ntacl_get()
+    subcommands["changedomsid"] = cmd_ntacl_changedomsid()
     subcommands["sysvolreset"] = cmd_ntacl_sysvolreset()
     subcommands["sysvolcheck"] = cmd_ntacl_sysvolcheck()
     subcommands["getdosinfo"] = cmd_dosinfo_get()

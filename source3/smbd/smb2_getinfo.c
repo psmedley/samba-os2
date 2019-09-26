@@ -288,7 +288,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 	}
 
 	switch (in_info_type) {
-	case SMB2_GETINFO_FILE:
+	case SMB2_0_INFO_FILE:
 	{
 		uint16_t file_info_level;
 		char *data = NULL;
@@ -341,7 +341,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 			 * to do this call. JRA.
 			 */
 
-			if (INFO_LEVEL_IS_UNIX(file_info_level)) {
+			if (fsp->fsp_name->flags & SMB_FILENAME_POSIX_PATH) {
 				/* Always do lstat for UNIX calls. */
 				if (SMB_VFS_LSTAT(conn, fsp->fsp_name)) {
 					DEBUG(3,("smbd_smb2_getinfo_send: "
@@ -392,6 +392,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 		}
 
 		status = smbd_do_qfilepathinfo(conn, state,
+					       smbreq,
 					       file_info_level,
 					       fsp,
 					       fsp->fsp_name,
@@ -437,7 +438,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 		break;
 	}
 
-	case SMB2_GETINFO_FS:
+	case SMB2_0_INFO_FILESYSTEM:
 	{
 		uint16_t file_info_level;
 		char *data = NULL;
@@ -490,7 +491,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 		break;
 	}
 
-	case SMB2_GETINFO_SECURITY:
+	case SMB2_0_INFO_SECURITY:
 	{
 		uint8_t *p_marshalled_sd = NULL;
 		size_t sd_size = 0;
@@ -537,7 +538,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 		break;
 	}
 
-	case SMB2_GETINFO_QUOTA: {
+	case SMB2_0_INFO_QUOTA: {
 #ifdef HAVE_SYS_QUOTAS
 		struct smb2_query_quota_info info;
 		enum ndr_err_code err;

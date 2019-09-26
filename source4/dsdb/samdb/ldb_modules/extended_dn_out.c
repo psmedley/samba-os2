@@ -188,11 +188,10 @@ static int handle_dereference_openldap(struct ldb_dn *dn,
 			      const char *attr, const DATA_BLOB *val)
 {
 	const struct ldb_val *entryUUIDblob, *sid_blob;
-	struct ldb_message fake_msg; /* easier to use routines that expect an ldb_message */
+	/* easier to use routines that expect an ldb_message */
+	struct ldb_message fake_msg = {0};
 	unsigned int j;
-	
-	fake_msg.num_elements = 0;
-			
+
 	/* Look for this attribute in the returned control */
 	for (j = 0; dereference_attrs && dereference_attrs[j]; j++) {
 		struct ldb_val source_dn = data_blob_string_const(dereference_attrs[j]->dereferenced_dn);
@@ -241,11 +240,10 @@ static int handle_dereference_fds(struct ldb_dn *dn,
 			      const char *attr, const DATA_BLOB *val)
 {
 	const struct ldb_val *nsUniqueIdBlob, *sidBlob;
-	struct ldb_message fake_msg; /* easier to use routines that expect an ldb_message */
+	struct ldb_message fake_msg = {0}; /* easier to use routines that expect an ldb_message */
 	unsigned int j;
-	
-	fake_msg.num_elements = 0;
-			
+
+
 	/* Look for this attribute in the returned control */
 	for (j = 0; dereference_attrs && dereference_attrs[j]; j++) {
 		struct ldb_val source_dn = data_blob_string_const(dereference_attrs[j]->dereferenced_dn);
@@ -398,7 +396,7 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 	struct ldb_control *control;
 	struct dsdb_openldap_dereference_result_control *dereference_control = NULL;
 	int ret;
-	unsigned int i, j;
+	unsigned int i, j, k;
 	struct ldb_message *msg;
 	struct extended_dn_out_private *p;
 	struct ldb_context *ldb;
@@ -523,11 +521,11 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 			make_extended_dn = (strcmp(attribute->syntax->ldap_oid, DSDB_SYNTAX_OR_NAME) != 0);
 		}
 
-		for (j = 0; j < msg->elements[i].num_values; j++) {
+		for (k = 0, j = 0; j < msg->elements[i].num_values; j++) {
 			const char *dn_str;
 			struct ldb_dn *dn;
 			struct dsdb_dn *dsdb_dn = NULL;
-			struct ldb_val *plain_dn = &msg->elements[i].values[j];		
+			struct ldb_val *plain_dn = &msg->elements[i].values[j];
 			bool is_deleted_objects = false;
 
 			/* this is a fast method for detecting deleted
@@ -536,11 +534,7 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 			if (dsdb_dn_is_deleted_val(plain_dn) && !have_reveal_control) {
 				/* it's a deleted linked attribute,
 				  and we don't have the reveal control */
-				memmove(&msg->elements[i].values[j],
-					&msg->elements[i].values[j+1],
-					(msg->elements[i].num_values-(j+1))*sizeof(struct ldb_val));
-				msg->elements[i].num_values--;
-				j--;
+				/* we won't keep this one, so not incrementing k */
 				continue;
 			}
 
@@ -548,8 +542,8 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 			dsdb_dn = dsdb_dn_parse_trusted(msg, ldb, plain_dn, attribute->syntax->ldap_oid);
 
 			if (!dsdb_dn) {
-				ldb_asprintf_errstring(ldb, 
-						       "could not parse %.*s in %s on %s as a %s DN", 
+				ldb_asprintf_errstring(ldb,
+						       "could not parse %.*s in %s on %s as a %s DN",
 						       (int)plain_dn->length, plain_dn->data,
 						       msg->elements[i].name, ldb_dn_get_linearized(msg->dn),
 						       attribute->syntax->ldap_oid);
@@ -576,7 +570,7 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 					return ldb_module_done(ac->req, NULL, NULL, ret);
 				}
 			}
-			
+
 			/* If we are running in dereference mode (such
 			 * as against OpenLDAP) then the DN in the msg
 			 * above does not contain the extended values,
@@ -613,11 +607,7 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 					/* we show these with REVEAL
 					   to allow dbcheck to find and
 					   cleanup these orphaned links */
-					memmove(&msg->elements[i].values[j],
-						&msg->elements[i].values[j+1],
-						(msg->elements[i].num_values-(j+1))*sizeof(struct ldb_val));
-					msg->elements[i].num_values--;
-					j--;
+					/* we won't keep this one, so not incrementing k */
 					continue;
 				}
 			}
@@ -641,26 +631,27 @@ static int extended_callback(struct ldb_request *req, struct ldb_reply *ares,
 				dn_str = dsdb_dn_get_extended_linearized(msg->elements[i].values,
 									 dsdb_dn, ac->extended_type);
 			} else {
-				dn_str = dsdb_dn_get_linearized(msg->elements[i].values, 
+				dn_str = dsdb_dn_get_linearized(msg->elements[i].values,
 								dsdb_dn);
 			}
-			
+
 			if (!dn_str) {
 				ldb_oom(ldb);
 				talloc_free(dsdb_dn);
 				return ldb_module_done(ac->req, NULL, NULL, LDB_ERR_OPERATIONS_ERROR);
 			}
-			msg->elements[i].values[j] = data_blob_string_const(dn_str);
+			msg->elements[i].values[k] = data_blob_string_const(dn_str);
 			talloc_free(dsdb_dn);
+			k++;
 		}
-		if (msg->elements[i].num_values == 0) {
+
+		if (k == 0) {
 			/* we've deleted all of the values from this
 			 * element - remove the element */
-			memmove(&msg->elements[i],
-				&msg->elements[i+1],
-				(msg->num_elements-(i+1))*sizeof(struct ldb_message_element));
-			msg->num_elements--;
+			ldb_msg_remove_element(msg, &msg->elements[i]);
 			i--;
+		} else {
+			msg->elements[i].num_values = k;
 		}
 	}
 	return ldb_module_send_entry(ac->req, msg, ares->controls);

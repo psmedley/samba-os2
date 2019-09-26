@@ -19,6 +19,7 @@
 #include <Python.h>
 #include "python/py3compat.h"
 #include "includes.h"
+#include "python/modules.h"
 #include "param/pyparam.h"
 #include "auth/gensec/gensec.h"
 #include "auth/gensec/gensec_internal.h" /* TODO: remove this */
@@ -44,7 +45,7 @@ static PyObject *py_get_name_by_authtype(PyObject *self, PyObject *args)
 	if (name == NULL)
 		Py_RETURN_NONE;
 
-	return PyStr_FromString(name);
+	return PyUnicode_FromString(name);
 }
 
 static struct gensec_settings *settings_from_object(TALLOC_CTX *mem_ctx, PyObject *object)
@@ -72,7 +73,7 @@ static struct gensec_settings *settings_from_object(TALLOC_CTX *mem_ctx, PyObjec
 		return NULL;
 	}
 
-	s->target_hostname = PyStr_AsString(py_hostname);
+	s->target_hostname = PyUnicode_AsUTF8(py_hostname);
 	s->lp_ctx = lpcfg_from_py_object(s, py_lp_ctx);
 	return s;
 }
@@ -176,7 +177,15 @@ static PyObject *py_gensec_start_server(PyTypeObject *type, PyObject *args, PyOb
 	}
 
 	if (py_auth_context != Py_None) {
-		auth_context = pytalloc_get_type(py_auth_context, struct auth4_context);
+		bool ok = py_check_dcerpc_type(py_auth_context,
+					       "samba.auth",
+					       "AuthContext");
+		if (!ok) {
+			return NULL;
+		}
+
+		auth_context = pytalloc_get_type(py_auth_context,
+						 struct auth4_context);
 		if (!auth_context) {
 			PyErr_Format(PyExc_TypeError,
 				     "Expected auth.AuthContext for auth_context argument, got %s",
@@ -287,7 +296,8 @@ static PyObject *py_gensec_set_credentials(PyObject *self, PyObject *args)
 	Py_RETURN_NONE;
 }
 
-static PyObject *py_gensec_session_info(PyObject *self)
+static PyObject *py_gensec_session_info(PyObject *self,
+		PyObject *Py_UNUSED(ignored))
 {
 	TALLOC_CTX *mem_ctx;
 	NTSTATUS status;
@@ -312,7 +322,8 @@ static PyObject *py_gensec_session_info(PyObject *self)
 	return py_session_info;
 }
 
-static PyObject *py_gensec_session_key(PyObject *self)
+static PyObject *py_gensec_session_key(PyObject *self,
+		PyObject *Py_UNUSED(ignored))
 {
 	TALLOC_CTX *mem_ctx;
 	NTSTATUS status;
@@ -432,7 +443,8 @@ static PyObject *py_gensec_set_max_update_size(PyObject *self, PyObject *args)
 	Py_RETURN_NONE;
 }
 
-static PyObject *py_gensec_max_update_size(PyObject *self)
+static PyObject *py_gensec_max_update_size(PyObject *self,
+		PyObject *Py_UNUSED(ignored))
 {
 	struct gensec_security *security = pytalloc_get_type(self, struct gensec_security);
 	unsigned int max_update_size = gensec_max_update_size(security);
@@ -445,7 +457,7 @@ static PyObject *py_gensec_update(PyObject *self, PyObject *args)
 	NTSTATUS status;
 	TALLOC_CTX *mem_ctx;
 	DATA_BLOB in, out;
-	PyObject *ret, *py_in;
+	PyObject *py_bytes, *result, *py_in;
 	struct gensec_security *security = pytalloc_get_type(self, struct gensec_security);
 	PyObject *finished_processing;
 
@@ -469,7 +481,8 @@ static PyObject *py_gensec_update(PyObject *self, PyObject *args)
 		talloc_free(mem_ctx);
 		return NULL;
 	}
-	ret = PyBytes_FromStringAndSize((const char *)out.data, out.length);
+	py_bytes = PyBytes_FromStringAndSize((const char *)out.data,
+					     out.length);
 	talloc_free(mem_ctx);
 
 	if (NT_STATUS_EQUAL(status, NT_STATUS_MORE_PROCESSING_REQUIRED)) {
@@ -478,7 +491,9 @@ static PyObject *py_gensec_update(PyObject *self, PyObject *args)
 		finished_processing = Py_True;
 	}
 
-	return PyTuple_Pack(2, finished_processing, ret);
+	result = PyTuple_Pack(2, finished_processing, py_bytes);
+	Py_XDECREF(py_bytes);
+	return result;
 }
 
 static PyObject *py_gensec_wrap(PyObject *self, PyObject *args)
@@ -629,9 +644,13 @@ static PyObject *py_gensec_check_packet(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef py_gensec_security_methods[] = {
-	{ "start_client", (PyCFunction)py_gensec_start_client, METH_VARARGS|METH_KEYWORDS|METH_CLASS, 
+	{ "start_client", PY_DISCARD_FUNC_SIG(PyCFunction,
+					      py_gensec_start_client),
+		METH_VARARGS|METH_KEYWORDS|METH_CLASS,
 		"S.start_client(settings) -> gensec" },
-	{ "start_server", (PyCFunction)py_gensec_start_server, METH_VARARGS|METH_KEYWORDS|METH_CLASS,
+	{ "start_server", PY_DISCARD_FUNC_SIG(PyCFunction,
+					      py_gensec_start_server),
+		METH_VARARGS|METH_KEYWORDS|METH_CLASS,
 		"S.start_server(auth_ctx, settings) -> gensec" },
 	{ "set_credentials", (PyCFunction)py_gensec_set_credentials, METH_VARARGS, 
 		"S.start_client(credentials)" },

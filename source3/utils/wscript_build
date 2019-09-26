@@ -4,6 +4,9 @@ bld.SAMBA3_SUBSYSTEM('PASSWD_UTIL',
                     source='passwd_util.c',
                     deps='samba-util')
 
+bld.SAMBA3_SUBSYSTEM('CONN_TDB',
+                     source='conn_tdb.c')
+
 bld.SAMBA3_BINARY('profiles',
                  source='profiles.c',
                  deps='''
@@ -238,7 +241,7 @@ bld.SAMBA3_BINARY('net',
                  KRBCLIENT
                  ndr-standard
                  msrpc3
-                 gpext
+                 gpo
                  ads
                  smbd_base
                  LIBADS_SERVER
@@ -263,6 +266,7 @@ bld.SAMBA3_BINARY('net',
                  printing_migrate
                  trusts_util
                  IDMAP_AUTORID_TDB
+                 CONN_TDB
                  jansson
                  common_auth
                  ''')
@@ -283,3 +287,23 @@ bld.SAMBA3_BINARY('destroy_netlogon_creds_cli',
                       NETLOGON_CREDS_CLI
                   ''',
                   install=False)
+
+smbstatus_source = 'status.c ../smbd/notify_msg.c'
+
+if bld.CONFIG_GET("WITH_PROFILE"):
+    smbstatus_source += ' status_profile.c'
+else:
+    smbstatus_source += ' status_profile_dummy.c'
+
+bld.SAMBA3_BINARY('smbstatus',
+                 source=smbstatus_source,
+                 deps='''
+                      talloc
+                      smbconf
+                      popt_samba3
+                      cmdline_contexts
+                      smbd_base
+                      LOCKING
+                      PROFILE
+                      CONN_TDB
+                      ''')

@@ -28,9 +28,6 @@
             numbers.  These nodes don't need to be listed in the nodes
             file.  You can avoid the nodes file entirely by combining
             this with <code class="code">-f /dev/null</code>.
-	  </p></dd><dt><span class="term">-o <em class="parameter"><code>PREFIX</code></em></span></dt><dd><p>
-	    Causes standard output from each node to be saved into a
-	    file with name PREFIX.<em class="replaceable"><code>IP</code></em>.
 	  </p></dd><dt><span class="term">-p</span></dt><dd><p>
             Run COMMAND in parallel on the specified nodes.  The
             default is to run COMMAND sequentially on each node.
@@ -48,7 +45,7 @@
             more than one node is specified.
 	  </p></dd><dt><span class="term">-h, --help</span></dt><dd><p>
             Show a short usage guide.
-	  </p></dd></dl></div></div><div class="refsect1"><a name="idm77"></a><h2>NODES SPECIFICATION</h2><p>
+	  </p></dd></dl></div></div><div class="refsect1"><a name="idm71"></a><h2>NODES SPECIFICATION</h2><p>
       Nodes can be specified via numeric node numbers (from 0 to N-1)
       or mnemonics.  Multiple nodes are specified using lists of
       nodes, separated by commas, and ranges of numeric node numbers,
@@ -67,7 +64,7 @@
             unhealthy.
 	  </p></dd><dt><span class="term">con | connected</span></dt><dd><p>
             All nodes that are not disconnected.
-	  </p></dd></dl></div></div><div class="refsect1"><a name="idm98"></a><h2>EXAMPLES</h2><p>
+	  </p></dd></dl></div></div><div class="refsect1"><a name="idm92"></a><h2>EXAMPLES</h2><p>
       The following command would show the process ID of ctdbd on all nodes
     </p><pre class="screen">
       onnode all ctdb getpid
@@ -86,7 +83,7 @@
       directory, in parallel, on nodes 0, 2, 3 and 4.
     </p><pre class="screen">
       onnode -c -p 0,2-4 ./foo
-    </pre></div><div class="refsect1"><a name="idm108"></a><h2>FILES</h2><div class="variablelist"><dl class="variablelist"><dt><span class="term"><code class="filename">/usr/local/etc/ctdb/nodes</code></span></dt><dd><p>
+    </pre></div><div class="refsect1"><a name="idm102"></a><h2>FILES</h2><div class="variablelist"><dl class="variablelist"><dt><span class="term"><code class="filename">/usr/local/etc/ctdb/nodes</code></span></dt><dd><p>
             Default file containing a list of each node's IP address
             or hostname.
 	  </p><p>
@@ -103,7 +100,7 @@
 	    purpose is to allow the administrator to set
 	    <code class="envar">ONNODE_SSH</code> to something other than "ssh".
 	    In this case the -t option is ignored.
-	  </p></dd></dl></div></div><div class="refsect1"><a name="idm126"></a><h2>SEE ALSO</h2><p>
+	  </p></dd></dl></div></div><div class="refsect1"><a name="idm120"></a><h2>SEE ALSO</h2><p>
       <span class="citerefentry"><span class="refentrytitle">ctdb</span>(7)</span>,
 
       <a class="ulink" href="http://ctdb.samba.org/" target="_top">http://ctdb.samba.org/</a>

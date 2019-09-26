@@ -38,16 +38,21 @@ static int tnode_destructor(struct ctdb_tcp_node *tnode)
 {
   //	struct ctdb_node *node = talloc_find_parent_bytype(tnode, struct ctdb_node);
 
-	if (tnode->fd != -1) {
-		close(tnode->fd);
-		tnode->fd = -1;
+	if (tnode->out_fd != -1) {
+		close(tnode->out_fd);
+		tnode->out_fd = -1;
+	}
+
+	if (tnode->in_fd != -1) {
+		close(tnode->in_fd);
+		tnode->in_fd = -1;
 	}
 
 	return 0;
 }
 
 /*
-  initialise tcp portion of a ctdb node 
+  initialise tcp portion of a ctdb node
 */
 static int ctdb_tcp_add_node(struct ctdb_node *node)
 {
@@ -55,13 +60,13 @@ static int ctdb_tcp_add_node(struct ctdb_node *node)
 	tnode = talloc_zero(node, struct ctdb_tcp_node);
 	CTDB_NO_MEMORY(node->ctdb, tnode);
 
-	tnode->fd = -1;
+	tnode->out_fd = -1;
+	tnode->in_fd = -1;
+	tnode->ctdb = node->ctdb;
+
 	node->private_data = tnode;
 	talloc_set_destructor(tnode, tnode_destructor);
 
-	tnode->out_queue = ctdb_queue_setup(node->ctdb, node, tnode->fd, CTDB_TCP_ALIGNMENT,
-					    ctdb_tcp_tnode_cb, node, "to-node-%s", node->name);
-	
 	return 0;
 }
 
@@ -70,7 +75,7 @@ static int ctdb_tcp_add_node(struct ctdb_node *node)
 */
 static int ctdb_tcp_initialise(struct ctdb_context *ctdb)
 {
-	int i;
+	unsigned int i;
 
 	/* listen on our own address */
 	if (ctdb_tcp_listen(ctdb) != 0) {
@@ -147,7 +152,7 @@ static void ctdb_tcp_shutdown(struct ctdb_context *ctdb)
 */
 static int ctdb_tcp_start(struct ctdb_context *ctdb)
 {
-	int i;
+	unsigned int i;
 
 	for (i=0; i < ctdb->num_nodes; i++) {
 		if (ctdb->nodes[i]->flags & NODE_FLAGS_DELETED) {

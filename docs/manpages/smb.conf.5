@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/27/2019
+.\"      Date: 09/17/2019
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.10.8
+.\"    Source: Samba 4.11.0
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "08/27/2019" "Samba 4\&.10\&.8" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "09/17/2019" "Samba 4\&.11\&.0" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1321,15 +1321,17 @@ Example:
 allocation roundup size (S)
 .PP
 .RS 4
-This parameter allows an administrator to tune the allocation size reported to Windows clients\&. The default size of 1Mb generally results in improved Windows client performance\&. However, rounding the allocation size may cause difficulties for some applications, e\&.g\&. MS Visual Studio\&. If the MS Visual Studio compiler starts to crash with an internal error, set this parameter to zero for this share\&.
+This parameter allows an administrator to tune the allocation size reported to Windows clients\&. This is only useful for old SMB1 clients because modern SMB dialects eliminated that bottleneck and have better performance by default\&. Using this parameter may cause difficulties for some applications, e\&.g\&. MS Visual Studio\&. If the MS Visual Studio compiler starts to crash with an internal error, set this parameter to zero for this share\&. Settings this parameter to a large value can also cause small files to allocate more space on the disk than needed\&.
+.sp
+This parameter is deprecated and will be removed in one of the next Samba releases\&.
 .sp
 The integer parameter specifies the roundup size in bytes\&.
 .sp
 Default:
-\fI\fIallocation roundup size\fR\fR\fI = \fR\fI1048576\fR\fI \fR
+\fI\fIallocation roundup size\fR\fR\fI = \fR\fI0\fR\fI \fR
 .sp
 Example:
-\fI\fIallocation roundup size\fR\fR\fI = \fR\fI0 # (to disable roundups)\fR\fI \fR
+\fI\fIallocation roundup size\fR\fR\fI = \fR\fI1048576 # (to set it to the former default of 1 MiB)\fR\fI \fR
 .RE
 
 allow dcerpc auth level connect (G)
@@ -1844,6 +1846,43 @@ by
 \fBsamba\fR(8)
 without any substitutions\&.
 .sp
+Note that starting with Samba 4\&.11 the following environment variables are exported to the script:
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+SAMBA_CPS_ACCOUNT_NAME is always present and contains the sAMAccountName of user, the is the same as the %u substitutions in the none AD DC case\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+SAMBA_CPS_USER_PRINCIPAL_NAME is optional in the AD DC case if the userPrincipalName is present\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+SAMBA_CPS_FULL_NAME is optional if the displayName is present\&.
+.RE
+.sp
+.RE
 Note: In the example directory is a sample program called
 crackcheck
 that uses cracklib to check the password quality\&.
@@ -2195,7 +2234,7 @@ client min protocol (G)
 .RS 4
 This setting controls the minimum protocol version that the client will attempt to use\&.
 .sp
-Normally this option should not be set as the automatic negotiation phase in the SMB protocol takes care of choosing the appropriate protocol\&.
+Normally this option should not be set as the automatic negotiation phase in the SMB protocol takes care of choosing the appropriate protocol unless you connect to a legacy SMB1\-only server\&.
 .sp
 See
 Related command: \m[blue]\fBclient max protocol\fR\m[]
@@ -2205,8 +2244,10 @@ IPC$ connections for DCERPC e\&.g\&. in winbindd, are handled by the
 \m[blue]\fBclient ipc min protocol\fR\m[]
 option\&.
 .sp
+Note that most command line tools support \-\-option=\*(Aqclient min protocol=NT1\*(Aq, so it may not be required to enable SMB1 protocols globally in smb\&.conf\&.
+.sp
 Default:
-\fI\fIclient min protocol\fR\fR\fI = \fR\fICORE\fR\fI \fR
+\fI\fIclient min protocol\fR\fR\fI = \fR\fISMB2_02\fR\fI \fR
 .sp
 Example:
 \fI\fIclient min protocol\fR\fR\fI = \fR\fINT1\fR\fI \fR
@@ -2338,7 +2379,11 @@ Default:
 cluster addresses (G)
 .PP
 .RS 4
-With this parameter you can add additional addresses nmbd will register with a WINS server\&. These addresses are not necessarily present on all nodes simultaneously, but they will be registered with the WINS server so that clients can contact any of the nodes\&.
+With this parameter you can add additional addresses that nmbd will register with a WINS server\&. Similarly, these addresses will be registered by default when
+\fInet ads dns register\fR
+is called with
+\m[blue]\fBclustering = yes\fR\m[]
+configured\&.
 .sp
 Default:
 \fI\fIcluster addresses\fR\fR\fI = \fR\fI\fR\fI \fR
@@ -2652,7 +2697,7 @@ Using this parameter with a timeout of a few minutes is recommended for most sys
 A deadtime of zero indicates that no auto\-disconnection should be performed\&.
 .sp
 Default:
-\fI\fIdeadtime\fR\fR\fI = \fR\fI0\fR\fI \fR
+\fI\fIdeadtime\fR\fR\fI = \fR\fI10080\fR\fI \fR
 .sp
 Example:
 \fI\fIdeadtime\fR\fR\fI = \fR\fI15\fR\fI \fR
@@ -2668,6 +2713,17 @@ For more information about currently available debug classes, see section about
 .sp
 Default:
 \fI\fIdebug class\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+debug encryption (G)
+.PP
+.RS 4
+This option will make the smbd server and client code using libsmb (smbclient, smbget, smbspool, \&.\&.\&.) dump the Session Id, the decrypted Session Key, the Signing Key, the Application Key, the Encryption Key and the Decryption Key every time an SMB3+ session is established\&. This information will be printed in logs at level 0\&.
+.sp
+Warning: access to these values enables the decryption of any encrypted traffic on the dumped sessions\&. This option should only be enabled for debugging purposes\&.
+.sp
+Default:
+\fI\fIdebug encryption\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 debug hires timestamp (G)
@@ -3183,7 +3239,7 @@ Default:
 \fI\fIdns forwarder\fR\fR\fI = \fR\fI\fR\fI \fR
 .sp
 Example:
-\fI\fIdns forwarder\fR\fR\fI = \fR\fI192\&.168\&.0\&.1\fR\fI \fR
+\fI\fIdns forwarder\fR\fR\fI = \fR\fI192\&.168\&.0\&.1 192\&.168\&.0\&.2\fR\fI \fR
 .RE
 
 dns proxy (G)
@@ -3524,6 +3580,12 @@ Default:
 encrypt passwords (G)
 .PP
 .RS 4
+This parameter has been deprecated since Samba 4\&.11 and support for plaintext (as distinct from NTLM, NTLMv2 or Kerberos authentication) will be removed in a future Samba release\&.
+.sp
+That is, in the future, the current default of
+encrypt passwords = yes
+will be the enforced behaviour\&.
+.sp
 This boolean controls whether encrypted passwords will be negotiated with the client\&. Note that Windows NT 4\&.0 SP3 and above and also Windows 98 will by default expect encrypted passwords unless a registry entry is changed\&. To use encrypted passwords in Samba see the chapter "User Database" in the Samba HOWTO Collection\&.
 .sp
 MS Windows clients that expect Microsoft encrypted passwords and that do not have plain text password support enabled will be able to connect only to a Samba server that has encrypted password support enabled and for which the user accounts have a valid encrypted password\&. Refer to the smbpasswd command man page for information regarding the creation of encrypted passwords for user accounts\&.
@@ -4982,6 +5044,12 @@ Default:
 lanman auth (G)
 .PP
 .RS 4
+This parameter has been deprecated since Samba 4\&.11 and support for LanMan (as distinct from NTLM, NTLMv2 or Kerberos authentication) will be removed in a future Samba release\&.
+.sp
+That is, in the future, the current default of
+lanman auth = no
+will be the enforced behaviour\&.
+.sp
 This parameter determines whether or not
 \fBsmbd\fR(8)
 will attempt to authenticate users or permit password changes using the LANMAN password hash\&. If disabled, only clients which support NT password hashes (e\&.g\&. Windows NT/2000 clients, smbclient, but not Windows 95/98 or the MS DOS network client) will be able to connect to the Samba host\&.
@@ -5822,7 +5890,7 @@ log level\&.
 log level (G)
 .PP
 .RS 4
-The value of the parameter (a astring) allows the debug level (logging level) to be specified in the
+The value of the parameter (a string) allows the debug level (logging level) to be specified in the
 smb\&.conf
 file\&.
 .sp
@@ -6853,10 +6921,10 @@ This algorithm can cause name collisions only if files in a directory share the 
 The name mangling (if enabled) allows a file to be copied between UNIX directories from Windows/DOS while retaining the long UNIX filename\&. UNIX files can be renamed to a new extension from Windows/DOS and will retain the same basename\&. Mangled names do not change between sessions\&.
 .sp
 Default:
-\fI\fImangled names\fR\fR\fI = \fR\fIyes\fR\fI \fR
+\fI\fImangled names\fR\fR\fI = \fR\fIillegal\fR\fI \fR
 .sp
 Example:
-\fI\fImangled names\fR\fR\fI = \fR\fIillegal\fR\fI \fR
+\fI\fImangled names\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
 mangle prefix (G)
@@ -7872,7 +7940,7 @@ The default changed from
 \fByes\fR
 to
 \fBno\fR
-with Samba 4\&.5\&. The default chagned again to
+with Samba 4\&.5\&. The default changed again to
 \fBntlmv2\-only\fR
 with Samba 4\&.7, however the behaviour is unchanged\&.
 .sp
@@ -8258,7 +8326,7 @@ must be executed on the NIS master\&.
 .sp
 The string can contain the macro
 \fI%n\fR
-which is substituted for the new password\&. The old passsword (\fI%o\fR) is only available when
+which is substituted for the new password\&. The old password (\fI%o\fR) is only available when
 \m[blue]\fBencrypt passwords\fR\m[]
 has been disabled\&. The chat sequence can also contain the standard macros \en, \er, \et and \es to give line\-feed, carriage\-return, tab and space\&. The chat sequence string can also contain a \*(Aq*\*(Aq which matches any sequence of characters\&. Double quotes can be used to collect strings with spaces in them into a single string\&.
 .sp
@@ -9325,39 +9393,31 @@ Default:
 restrict anonymous (G)
 .PP
 .RS 4
-The setting of this parameter determines whether user and group list information is returned for an anonymous connection\&. and mirrors the effects of the
+The setting of this parameter determines whether SAMR and LSA DCERPC services can be accessed anonymously\&. This corresponds to the following Windows Server registry options:
 .sp
 .if n \{\
 .RS 4
 .\}
 .nf
-HKEY_LOCAL_MACHINE\eSYSTEM\eCurrentControlSet\e
-           Control\eLSA\eRestrictAnonymous
+		HKEY_LOCAL_MACHINE\eSYSTEM\eCurrentControlSet\eControl\eLsa\eRestrictAnonymous
+	
 .fi
 .if n \{\
 .RE
 .\}
 .sp
-registry key in Windows 2000 and Windows NT\&. When set to 0, user and group list information is returned to anyone who asks\&. When set to 1, only an authenticated user can retrieve user and group list information\&. For the value 2, supported by Windows 2000/XP and Samba, no anonymous connections are allowed at all\&. This can break third party and Microsoft applications which expect to be allowed to perform operations anonymously\&.
+The option also affects the browse option which is required by legacy clients which rely on Netbios browsing\&. While modern Windows version should be fine with restricting the access there could still be applications relying on anonymous access\&.
 .sp
-The security advantage of using restrict anonymous = 1 is dubious, as user and group list information can be obtained using other means\&.
-.if n \{\
+Setting
+\m[blue]\fBrestrict anonymous = 1\fR\m[]
+will disable anonymous SAMR access\&.
 .sp
-.\}
-.RS 4
-.it 1 an-trap
-.nr an-no-space-flag 1
-.nr an-break-flag 1
-.br
-.ps +1
-\fBNote\fR
-.ps -1
-.br
-The security advantage of using restrict anonymous = 2 is removed by setting
+Setting
+\m[blue]\fBrestrict anonymous = 2\fR\m[]
+will, in addition to restricting SAMR access, disallow anonymous connections to the IPC$ share in general\&. Setting
 \m[blue]\fBguest ok = yes\fR\m[]
-on any share\&.
-.sp .5v
-.RE
+on any share will remove the security advantage\&.
+.sp
 Default:
 \fI\fIrestrict anonymous\fR\fR\fI = \fR\fI0\fR\fI \fR
 .RE
@@ -9365,7 +9425,11 @@ Default:
 rndc command (G)
 .PP
 .RS 4
+This option is deprecated with Samba 4\&.11 and will be removed in future\&.
+.sp
 This option specifies the path to the name server control utility\&.
+.sp
+This option is only useful when Samba as an AD DC is configured with BIND9_FLATFILE for DNS\&.
 .sp
 The
 rndc
@@ -10150,14 +10214,14 @@ server min protocol (G)
 .RS 4
 This setting controls the minimum protocol version that the server will allow the client to use\&.
 .sp
-Normally this option should not be set as the automatic negotiation phase in the SMB protocol takes care of choosing the appropriate protocol\&.
+Normally this option should not be set as the automatic negotiation phase in the SMB protocol takes care of choosing the appropriate protocol unless you have legacy clients which are SMB1 capable only\&.
 .sp
 See
 Related command: \m[blue]\fBserver max protocol\fR\m[]
 for a full list of available protocols\&.
 .sp
 Default:
-\fI\fIserver min protocol\fR\fR\fI = \fR\fILANMAN1\fR\fI \fR
+\fI\fIserver min protocol\fR\fR\fI = \fR\fISMB2_02\fR\fI \fR
 .sp
 Example:
 \fI\fIserver min protocol\fR\fR\fI = \fR\fINT1\fR\fI \fR
@@ -12512,18 +12576,6 @@ Default:
 \fI\fIvolume\fR\fR\fI = \fR\fI # the name of the share\fR\fI \fR
 .RE
 
-web port (G)
-.PP
-.RS 4
-Specifies which port the Samba web server should listen on\&.
-.sp
-Default:
-\fI\fIweb port\fR\fR\fI = \fR\fI901\fR\fI \fR
-.sp
-Example:
-\fI\fIweb port\fR\fR\fI = \fR\fI80\fR\fI \fR
-.RE
-
 wide links (S)
 .PP
 .RS 4
@@ -13239,7 +13291,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.10\&.8 of the Samba suite\&.
+This man page is part of version 4\&.11\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

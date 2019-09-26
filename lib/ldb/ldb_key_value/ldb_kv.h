@@ -4,6 +4,8 @@
 #include "tdb.h"
 #include "ldb_module.h"
 
+#ifndef __LDB_KV_H__
+#define __LDB_KV_H__
 struct ldb_kv_private;
 typedef int (*ldb_kv_traverse_fn)(struct ldb_kv_private *ldb_kv,
 				  struct ldb_val key,
@@ -11,6 +13,8 @@ typedef int (*ldb_kv_traverse_fn)(struct ldb_kv_private *ldb_kv,
 				  void *ctx);
 
 struct kv_db_ops {
+	uint32_t options;
+
 	int (*store)(struct ldb_kv_private *ldb_kv,
 		     struct ldb_val key,
 		     struct ldb_val data,
@@ -30,6 +34,11 @@ struct kv_db_ops {
 					     struct ldb_val data,
 					     void *private_data),
 			       void *ctx);
+	int (*iterate_range)(struct ldb_kv_private *ldb_kv,
+			     struct ldb_val start_key,
+			     struct ldb_val end_key,
+			     ldb_kv_traverse_fn fn,
+			     void *ctx);
 	int (*lock_read)(struct ldb_module *);
 	int (*unlock_read)(struct ldb_module *);
 	int (*begin_write)(struct ldb_kv_private *);
@@ -41,6 +50,10 @@ struct kv_db_ops {
 	const char *(*name)(struct ldb_kv_private *ldb_kv);
 	bool (*has_changed)(struct ldb_kv_private *ldb_kv);
 	bool (*transaction_active)(struct ldb_kv_private *ldb_kv);
+	size_t (*get_size)(struct ldb_kv_private *ldb_kv);
+	int (*begin_nested_write)(struct ldb_kv_private *);
+	int (*finish_nested_write)(struct ldb_kv_private *);
+	int (*abort_nested_write)(struct ldb_kv_private *);
 };
 
 /* this private structure is used by the key value backends in the
@@ -53,6 +66,9 @@ struct ldb_kv_private {
 	unsigned int connect_flags;
 
 	unsigned long long sequence_number;
+	uint32_t pack_format_version;
+	uint32_t target_pack_format_version;
+	uint32_t pack_format_override;
 
 	/* the low level tdb seqnum - used to avoid loading BASEINFO when
 	   possible */
@@ -69,7 +85,32 @@ struct ldb_kv_private {
 
 	bool check_base;
 	bool disallow_dn_filter;
+	/*
+	 * To improve the performance of batch operations we maintain a cache
+	 * of index records, these entries get written to disk in the
+	 * prepare_commit phase.
+	 */
 	struct ldb_kv_idxptr *idxptr;
+	/*
+	 * To ensure that the indexes in idxptr are consistent we cache any
+	 * index updates during an operation, i.e. ldb_kv_add, ldb_kv_delete ...
+	 * Once the changes to the data record have been commited to disk
+	 * the contents of this cache are copied to idxptr
+	 */
+	struct ldb_kv_idxptr *nested_idx_ptr;
+	/*
+	 * If batch mode is set the sub transactions and index caching
+	 * wrapping individual operations is disabled.
+	 * This is to improve the performance of large batch operations
+	 * i.e. domain joins.
+	 */
+	bool batch_mode;
+	/*
+	 * Has an operation failed, if true and we're in batch_mode
+	 * the transaction commit will fail.
+	 */
+	bool operation_failed;
+
 	bool prepared_commit;
 	int read_lock_count;
 
@@ -100,6 +141,11 @@ struct ldb_kv_private {
 	 * fork()ed child.
 	 */
 	pid_t pid;
+
+	/*
+	 * The size to be used for the index transaction cache
+	 */
+	size_t index_transaction_cache_size;
 };
 
 struct ldb_kv_context {
@@ -121,9 +167,15 @@ struct ldb_kv_context {
 };
 
 struct ldb_kv_reindex_context {
-	struct ldb_module *module;
 	int error;
 	uint32_t count;
+};
+
+struct ldb_kv_repack_context {
+	int error;
+	uint32_t count;
+	bool normal_record_seen;
+	uint32_t old_version;
 };
 
 
@@ -162,6 +214,13 @@ struct ldb_kv_reindex_context {
 #define LDB_KV_GUID_SIZE 16
 #define LDB_KV_GUID_KEY_SIZE (LDB_KV_GUID_SIZE + sizeof(LDB_KV_GUID_KEY_PREFIX) - 1)
 
+/* LDB KV options */
+/*
+ * This allows pointers to be referenced after the callback to any variant of
+ * iterate or fetch_and_parse -- as long as an overall read lock is held.
+ */
+#define LDB_KV_OPTION_STABLE_READ_LOCK 0x00000001
+
 /*
  * The following definitions come from lib/ldb/ldb_key_value/ldb_kv_cache.c
  */
@@ -174,6 +233,13 @@ int ldb_kv_check_at_attributes_values(const struct ldb_val *value);
 /*
  * The following definitions come from lib/ldb/ldb_key_value/ldb_kv_index.c
  */
+
+/*
+ * The default size of the in memory TDB used to cache index records
+ * The value chosen gives a prime modulo for the hash table and keeps the
+ * tdb memory overhead under 4 kB
+ */
+#define DEFAULT_INDEX_CACHE_SIZE 491
 
 struct ldb_parse_tree;
 
@@ -197,7 +263,10 @@ int ldb_kv_index_del_value(struct ldb_module *module,
 			   struct ldb_message_element *el,
 			   unsigned int v_idx);
 int ldb_kv_reindex(struct ldb_module *module);
-int ldb_kv_index_transaction_start(struct ldb_module *module);
+int ldb_kv_repack(struct ldb_module *module);
+int ldb_kv_index_transaction_start(
+	struct ldb_module *module,
+	size_t cache_size);
 int ldb_kv_index_transaction_commit(struct ldb_module *module);
 int ldb_kv_index_transaction_cancel(struct ldb_module *module);
 int ldb_kv_key_dn_from_idx(struct ldb_module *module,
@@ -222,10 +291,10 @@ int ldb_kv_search_key(struct ldb_module *module,
 		      const struct ldb_val ldb_key,
 		      struct ldb_message *msg,
 		      unsigned int unpack_flags);
-int ldb_kv_filter_attrs(TALLOC_CTX *mem_ctx,
+int ldb_kv_filter_attrs(struct ldb_context *ldb,
 			const struct ldb_message *msg,
 			const char *const *attrs,
-			struct ldb_message **filtered_msg);
+			struct ldb_message *filtered_msg);
 int ldb_kv_search(struct ldb_kv_context *ctx);
 
 /*
@@ -236,15 +305,12 @@ int ldb_kv_search(struct ldb_kv_context *ctx);
  * DN=@.
  */
 bool ldb_kv_key_is_normal_record(struct ldb_val key);
-struct ldb_val ldb_kv_key_dn(struct ldb_module *module,
-			     TALLOC_CTX *mem_ctx,
+struct ldb_val ldb_kv_key_dn(TALLOC_CTX *mem_ctx,
 			     struct ldb_dn *dn);
 struct ldb_val ldb_kv_key_msg(struct ldb_module *module,
 			     TALLOC_CTX *mem_ctx,
 			      const struct ldb_message *msg);
-int ldb_kv_guid_to_key(struct ldb_module *module,
-		       struct ldb_kv_private *ldb_kv,
-		       const struct ldb_val *GUID_val,
+int ldb_kv_guid_to_key(const struct ldb_val *GUID_val,
 		       struct ldb_val *key);
 int ldb_kv_idx_to_key(struct ldb_module *module,
 		      struct ldb_kv_private *ldb_kv,
@@ -264,3 +330,7 @@ int ldb_kv_init_store(struct ldb_kv_private *ldb_kv,
 		      struct ldb_context *ldb,
 		      const char *options[],
 		      struct ldb_module **_module);
+int ldb_kv_index_sub_transaction_start(struct ldb_kv_private *ldb_kv);
+int ldb_kv_index_sub_transaction_cancel(struct ldb_kv_private *ldb_kv);
+int ldb_kv_index_sub_transaction_commit(struct ldb_kv_private *ldb_kv);
+#endif /* __LDB_KV_H__ */

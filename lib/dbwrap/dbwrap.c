@@ -520,7 +520,7 @@ NTSTATUS dbwrap_do_locked(struct db_context *db, TDB_DATA key,
 	struct db_record *rec;
 
 	if (db->do_locked != NULL) {
-		struct db_context **lockptr;
+		struct db_context **lockptr = NULL;
 		NTSTATUS status;
 
 		if (db->lock_order != DBWRAP_LOCK_ORDER_NONE) {
@@ -529,7 +529,8 @@ NTSTATUS dbwrap_do_locked(struct db_context *db, TDB_DATA key,
 
 		status = db->do_locked(db, key, fn, private_data);
 
-		if (db->lock_order != DBWRAP_LOCK_ORDER_NONE) {
+		if (db->lock_order != DBWRAP_LOCK_ORDER_NONE &&
+		    lockptr != NULL) {
 			dbwrap_lock_order_unlock(db, lockptr);
 		}
 
@@ -634,16 +635,14 @@ static ssize_t tdb_data_buf(const TDB_DATA *dbufs, int num_dbufs,
 
 	for (i=0; i<num_dbufs; i++) {
 		size_t thislen = dbufs[i].dsize;
-		size_t tmp;
 
-		tmp = needed + thislen;
-		if (tmp < needed) {
+		needed += thislen;
+		if (needed < thislen) {
 			/* wrap */
 			return -1;
 		}
-		needed = tmp;
 
-		if (needed <= buflen) {
+		if (p != NULL && (thislen != 0) && (needed <= buflen)) {
 			memcpy(p, dbufs[i].dptr, thislen);
 			p += thislen;
 		}

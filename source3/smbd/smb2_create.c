@@ -1258,8 +1258,6 @@ static void smbd_smb2_create_before_exec(struct tevent_req *req)
 			}
 		}
 	}
-
-	return;
 }
 
 static void smbd_smb2_create_after_exec(struct tevent_req *req)
@@ -1391,8 +1389,9 @@ static void smbd_smb2_create_after_exec(struct tevent_req *req)
 
 	if (state->qfid != NULL) {
 		uint8_t p[32];
-		uint64_t file_index = get_FileIndex(state->result->conn,
-						    &state->result->fsp_name->st);
+		uint64_t file_id = SMB_VFS_FS_FILE_ID(
+			state->result->conn,
+			&state->result->fsp_name->st);
 		DATA_BLOB blob = data_blob_const(p, sizeof(p));
 
 		ZERO_STRUCT(p);
@@ -1401,7 +1400,7 @@ static void smbd_smb2_create_after_exec(struct tevent_req *req)
 		   the MS plugfest. The first 8 bytes are the "volume index"
 		   == inode, the second 8 bytes are the "volume id",
 		   == dev. This will be updated in the SMB2 doc. */
-		SBVAL(p, 0, file_index);
+		SBVAL(p, 0, file_id);
 		SIVAL(p, 8, state->result->fsp_name->st.st_ex_dev);/* FileIndexHigh */
 
 		status = smb2_create_blob_add(state->out_context_blobs,
@@ -1504,7 +1503,6 @@ static void smbd_smb2_create_finish(struct tevent_req *req)
 
 	tevent_req_done(req);
 	tevent_req_post(req, state->ev);
-	return;
 }
 
 static NTSTATUS smbd_smb2_create_recv(struct tevent_req *req,

@@ -264,8 +264,7 @@ void trigger_write_time_update_immediate(struct files_struct *fsp)
 	fsp->update_write_time_triggered = true;
         fsp->update_write_time_on_close = false;
 
-	ZERO_STRUCT(ft);
-	ft.mtime = timespec_current();
+	ft = (struct smb_file_time) { .mtime = timespec_current() };
 
 	/* Update the time in the open file db. */
 	(void)set_write_time(fsp->file_id, ft.mtime);
@@ -1068,21 +1067,4 @@ NTSTATUS sync_file(connection_struct *conn, files_struct *fsp, bool write_throug
 		}
 	}
 	return NT_STATUS_OK;
-}
-
-/************************************************************
- Perform a stat whether a valid fd or not.
-************************************************************/
-
-int fsp_stat(files_struct *fsp)
-{
-	if (fsp->fh->fd == -1) {
-		if (fsp->posix_flags & FSP_POSIX_FLAGS_OPEN) {
-			return SMB_VFS_LSTAT(fsp->conn, fsp->fsp_name);
-		} else {
-			return SMB_VFS_STAT(fsp->conn, fsp->fsp_name);
-		}
-	} else {
-		return SMB_VFS_FSTAT(fsp, &fsp->fsp_name->st);
-	}
 }

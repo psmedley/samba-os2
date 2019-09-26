@@ -1025,10 +1025,7 @@ static off_t vfswrap_lseek(vfs_handle_struct *handle, files_struct *fsp, off_t o
 
 	START_PROFILE(syscall_lseek);
 
-	/* Cope with 'stat' file opens. */
-	if (fsp->fh->fd != -1)
-		result = lseek(fsp->fh->fd, offset, whence);
-
+	result = lseek(fsp->fh->fd, offset, whence);
 	/*
 	 * We want to maintain the fiction that we can seek
 	 * on a fifo for file system purposes. This allows
@@ -1358,6 +1355,7 @@ static NTSTATUS vfswrap_fsctl(struct vfs_handle_struct *handle,
 		 *
 		 * but I have to check that --metze
 		 */
+		ssize_t ret;
 		struct dom_sid sid;
 		struct dom_sid_buf buf;
 		uid_t uid;
@@ -1376,7 +1374,8 @@ static NTSTATUS vfswrap_fsctl(struct vfs_handle_struct *handle,
 		/* unknown 4 bytes: this is not the length of the sid :-(  */
 		/*unknown = IVAL(pdata,0);*/
 
-		if (!sid_parse(_in_data + 4, sid_len, &sid)) {
+		ret = sid_parse(_in_data + 4, sid_len, &sid);
+		if (ret == -1) {
 			return NT_STATUS_INVALID_PARAMETER;
 		}
 		DEBUGADD(10, ("for SID: %s\n",
@@ -2729,6 +2728,28 @@ static struct file_id vfswrap_file_id_create(struct vfs_handle_struct *handle,
 	return key;
 }
 
+static uint64_t vfswrap_fs_file_id(struct vfs_handle_struct *handle,
+				   const SMB_STRUCT_STAT *psbuf)
+{
+	uint64_t file_id;
+
+	if (!(psbuf->st_ex_iflags & ST_EX_IFLAG_CALCULATED_FILE_ID)) {
+		return psbuf->st_ex_file_id;
+	}
+
+	if (handle->conn->base_share_dev == psbuf->st_ex_dev) {
+		return (uint64_t)psbuf->st_ex_ino;
+	}
+
+	/* FileIDLow */
+	file_id = ((psbuf->st_ex_ino) & UINT32_MAX);
+
+	/* FileIDHigh */
+	file_id |= ((uint64_t)((psbuf->st_ex_dev) & UINT32_MAX)) << 32;
+
+	return file_id;
+}
+
 static NTSTATUS vfswrap_streaminfo(vfs_handle_struct *handle,
 				   struct files_struct *fsp,
 				   const struct smb_filename *smb_fname,
@@ -2814,33 +2835,21 @@ static const char *vfswrap_connectpath(struct vfs_handle_struct *handle,
 
 static NTSTATUS vfswrap_brl_lock_windows(struct vfs_handle_struct *handle,
 					 struct byte_range_lock *br_lck,
-					 struct lock_struct *plock,
-					 bool blocking_lock)
+					 struct lock_struct *plock)
 {
 	SMB_ASSERT(plock->lock_flav == WINDOWS_LOCK);
 
 	/* Note: blr is not used in the default implementation. */
-	return brl_lock_windows_default(br_lck, plock, blocking_lock);
+	return brl_lock_windows_default(br_lck, plock);
 }
 
 static bool vfswrap_brl_unlock_windows(struct vfs_handle_struct *handle,
-				       struct messaging_context *msg_ctx,
 				       struct byte_range_lock *br_lck,
 			               const struct lock_struct *plock)
 {
 	SMB_ASSERT(plock->lock_flav == WINDOWS_LOCK);
 
-	return brl_unlock_windows_default(msg_ctx, br_lck, plock);
-}
-
-static bool vfswrap_brl_cancel_windows(struct vfs_handle_struct *handle,
-				       struct byte_range_lock *br_lck,
-				       struct lock_struct *plock)
-{
-	SMB_ASSERT(plock->lock_flav == WINDOWS_LOCK);
-
-	/* Note: blr is not used in the default implementation. */
-	return brl_lock_cancel_default(br_lck, plock);
+	return brl_unlock_windows_default(br_lck, plock);
 }
 
 static bool vfswrap_strict_lock_check(struct vfs_handle_struct *handle,
@@ -3458,12 +3467,12 @@ static struct vfs_fn_pointers vfs_default_fns = {
 	.realpath_fn = vfswrap_realpath,
 	.chflags_fn = vfswrap_chflags,
 	.file_id_create_fn = vfswrap_file_id_create,
+	.fs_file_id_fn = vfswrap_fs_file_id,
 	.streaminfo_fn = vfswrap_streaminfo,
 	.get_real_filename_fn = vfswrap_get_real_filename,
 	.connectpath_fn = vfswrap_connectpath,
 	.brl_lock_windows_fn = vfswrap_brl_lock_windows,
 	.brl_unlock_windows_fn = vfswrap_brl_unlock_windows,
-	.brl_cancel_windows_fn = vfswrap_brl_cancel_windows,
 	.strict_lock_check_fn = vfswrap_strict_lock_check,
 	.translate_name_fn = vfswrap_translate_name,
 	.fsctl_fn = vfswrap_fsctl,

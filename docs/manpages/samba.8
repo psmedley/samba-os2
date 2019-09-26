@@ -2,12 +2,12 @@
 .\"     Title: samba
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/27/2019
+.\"      Date: 09/17/2019
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.10.8
+.\"    Source: Samba 4.11.0
 .\"  Language: English
 .\"
-.TH "SAMBA" "8" "08/27/2019" "Samba 4\&.10\&.8" "System Administration tools"
+.TH "SAMBA" "8" "09/17/2019" "Samba 4\&.11\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -98,6 +98,8 @@ All Samba services run in a single process\&. This is not recommended for produc
 \fIstandard\fR
 .sp
 A process is created for each Samba service, and for those services that support it (currently only LDAP and NETLOGON) a new processes is started for each new client connection\&.
+.sp
+Historically, this was the \*(Aqstandard\*(Aq way Samba behaved up until v4\&.10\&. Note that this model can be resource intensive if you have a large number of client connections\&.
 .RE
 .sp
 .RS 4
@@ -110,7 +112,7 @@ A process is created for each Samba service, and for those services that support
 .\}
 \fIprefork\fR
 .sp
-A process is started for each Samba service, and a fixed number of worker processes are started for those services that support it (currently LDAP, NETLOGON, and KDC)\&. The client connections are then shared amongst the worker processes\&. Requests for services not supporting prefork are handled by a single process for that service\&.
+The default\&. A process is started for each Samba service, and a fixed number of worker processes are started for those services that support it (currently LDAP, NETLOGON, and KDC)\&. The client connections are then shared amongst the worker processes\&. Requests for services not supporting prefork are handled by a single process for that service\&.
 .sp
 The number of prefork worker processes started is controlled by the
 \fBsmb.conf\fR(5)
@@ -239,7 +241,7 @@ The number and nature of diagnostics available depends on the debug level used b
 Most messages are reasonably self\-explanatory\&. Unfortunately, at the time this man page was created, there are too many diagnostics available in the source code to warrant describing each and every diagnostic\&. At this stage your best bet is still to grep the source code and inspect the conditions that gave rise to the diagnostics you are seeing\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.10\&.8 of the Samba suite\&.
+This man page is part of version 4\&.11\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBhosts_access\fR(5)

@@ -1640,7 +1640,8 @@ int ctdb_rec_buffer_traverse(struct ctdb_rec_buffer *recbuf,
 	TDB_DATA key, data;
 	uint32_t reqid;
 	size_t offset, reclen;
-	int ret = 0, i;
+	unsigned int i;
+	int ret = 0;
 
 	offset = 0;
 	for (i=0; i<recbuf->count; i++) {
@@ -1679,19 +1680,19 @@ int ctdb_rec_buffer_write(struct ctdb_rec_buffer *recbuf, int fd)
 	ssize_t n;
 
 	n = write(fd, &recbuf->db_id, sizeof(uint32_t));
-	if (n == -1 || n != sizeof(uint32_t)) {
+	if (n == -1 || (size_t)n != sizeof(uint32_t)) {
 		return (errno != 0 ? errno : EIO);
 	}
 	n = write(fd, &recbuf->count, sizeof(uint32_t));
-	if (n == -1 || n != sizeof(uint32_t)) {
+	if (n == -1 || (size_t)n != sizeof(uint32_t)) {
 		return (errno != 0 ? errno : EIO);
 	}
 	n = write(fd, &recbuf->buflen, sizeof(size_t));
-	if (n == -1 || n != sizeof(size_t)) {
+	if (n == -1 || (size_t)n != sizeof(size_t)) {
 		return (errno != 0 ? errno : EIO);
 	}
 	n = write(fd, recbuf->buf, recbuf->buflen);
-	if (n == -1 || n != recbuf->buflen) {
+	if (n == -1 || (size_t)n != recbuf->buflen) {
 		return (errno != 0 ? errno : EIO);
 	}
 
@@ -1710,15 +1711,15 @@ int ctdb_rec_buffer_read(int fd, TALLOC_CTX *mem_ctx,
 	}
 
 	n = read(fd, &recbuf->db_id, sizeof(uint32_t));
-	if (n == -1 || n != sizeof(uint32_t)) {
+	if (n == -1 || (size_t)n != sizeof(uint32_t)) {
 		return (errno != 0 ? errno : EIO);
 	}
 	n = read(fd, &recbuf->count, sizeof(uint32_t));
-	if (n == -1 || n != sizeof(uint32_t)) {
+	if (n == -1 || (size_t)n != sizeof(uint32_t)) {
 		return (errno != 0 ? errno : EIO);
 	}
 	n = read(fd, &recbuf->buflen, sizeof(size_t));
-	if (n == -1 || n != sizeof(size_t)) {
+	if (n == -1 || (size_t)n != sizeof(size_t)) {
 		return (errno != 0 ? errno : EIO);
 	}
 
@@ -1728,7 +1729,7 @@ int ctdb_rec_buffer_read(int fd, TALLOC_CTX *mem_ctx,
 	}
 
 	n = read(fd, recbuf->buf, recbuf->buflen);
-	if (n == -1 || n != recbuf->buflen) {
+	if (n == -1 || (size_t)n != recbuf->buflen) {
 		return (errno != 0 ? errno : EIO);
 	}
 
@@ -5208,5 +5209,5 @@ done:
 
 fail:
 	talloc_free(val);
-	return ENOMEM;
+	return ret;
 }

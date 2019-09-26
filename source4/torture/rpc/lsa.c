@@ -35,8 +35,11 @@
 #include "source4/auth/kerberos/kerberos.h"
 #include "source4/auth/kerberos/kerberos_util.h"
 #include "lib/util/util_net.h"
-#include "../lib/crypto/crypto.h"
 #include "libcli/resolve/resolve.h"
+
+#include <gnutls/gnutls.h>
+#include <gnutls/crypto.h>
+
 #define TEST_MACHINENAME "lsatestmach"
 #define TRUSTPW "12345678"
 
@@ -154,7 +157,8 @@ static bool test_OpenPolicy_fail(struct dcerpc_binding_handle *b,
 bool test_lsa_OpenPolicy2_ex(struct dcerpc_binding_handle *b,
 			     struct torture_context *tctx,
 			     struct policy_handle **handle,
-			     NTSTATUS expected_status)
+			     NTSTATUS expected_status,
+			     NTSTATUS expected_status2)
 {
 	struct lsa_ObjectAttribute attr;
 	struct lsa_QosInfo qos;
@@ -184,9 +188,15 @@ bool test_lsa_OpenPolicy2_ex(struct dcerpc_binding_handle *b,
 	r.out.handle = *handle;
 
 	status = dcerpc_lsa_OpenPolicy2_r(b, tctx, &r);
-	torture_assert_ntstatus_equal(tctx, status, expected_status,
-				   "OpenPolicy2 failed");
-	if (!NT_STATUS_IS_OK(expected_status)) {
+
+	/* Allow two possible failure status codes */
+	if (!NT_STATUS_EQUAL(status, expected_status2)) {
+		torture_assert_ntstatus_equal(tctx, status,
+					      expected_status,
+					      "OpenPolicy2 failed");
+	}
+	if (!NT_STATUS_IS_OK(expected_status) ||
+	    !NT_STATUS_IS_OK(expected_status2)) {
 		return true;
 	}
 
@@ -202,7 +212,8 @@ bool test_lsa_OpenPolicy2(struct dcerpc_binding_handle *b,
 			  struct torture_context *tctx,
 			  struct policy_handle **handle)
 {
-	return test_lsa_OpenPolicy2_ex(b, tctx, handle, NT_STATUS_OK);
+	return test_lsa_OpenPolicy2_ex(b, tctx, handle,
+				       NT_STATUS_OK, NT_STATUS_OK);
 }
 
 static bool test_OpenPolicy2_fail(struct dcerpc_binding_handle *b,
@@ -2654,6 +2665,8 @@ static bool gen_authinfo_internal(TALLOC_CTX *mem_ctx,
 	DATA_BLOB auth_blob;
 	enum ndr_err_code ndr_err;
 	bool ok;
+	gnutls_cipher_hd_t cipher_hnd = NULL;
+	gnutls_datum_t _session_key;
 
 	authinfo_internal = talloc_zero(mem_ctx, struct lsa_TrustDomainInfoAuthInfoInternal);
 	if (authinfo_internal == NULL) {
@@ -2723,7 +2736,19 @@ static bool gen_authinfo_internal(TALLOC_CTX *mem_ctx,
 		return false;
 	}
 
-	arcfour_crypt_blob(auth_blob.data, auth_blob.length, &session_key);
+	_session_key = (gnutls_datum_t) {
+		.data = session_key.data,
+		.size = session_key.length,
+	};
+
+	gnutls_cipher_init(&cipher_hnd,
+			   GNUTLS_CIPHER_ARCFOUR_128,
+			   &_session_key,
+			   NULL);
+	gnutls_cipher_encrypt(cipher_hnd,
+			      auth_blob.data,
+			      auth_blob.length);
+	gnutls_cipher_deinit(cipher_hnd);
 
 	authinfo_internal->auth_blob.size = auth_blob.length;
 	authinfo_internal->auth_blob.data = auth_blob.data;

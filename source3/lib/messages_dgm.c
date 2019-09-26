@@ -18,6 +18,7 @@
  */
 
 #include "replace.h"
+#include "util/util.h"
 #include "system/network.h"
 #include "system/filesys.h"
 #include "system/dir.h"
@@ -322,6 +323,13 @@ static int messaging_dgm_out_get(struct messaging_dgm_context *ctx, pid_t pid,
 	}
 
 	messaging_dgm_out_rearm_idle_timer(out);
+	/*
+	 * shouldn't be possible, should be set if messaging_dgm_out_create
+	 * succeeded. This check is to satisfy static checker
+	 */
+	if (out == NULL) {
+		return EINVAL;
+	}
 
 	*pout = out;
 	return 0;
@@ -1458,6 +1466,7 @@ static int messaging_dgm_read_unique(int fd, uint64_t *punique)
 {
 	char buf[25];
 	ssize_t rw_ret;
+	int error = 0;
 	unsigned long long unique;
 	char *endptr;
 
@@ -1467,13 +1476,11 @@ static int messaging_dgm_read_unique(int fd, uint64_t *punique)
 	}
 	buf[rw_ret] = '\0';
 
-	unique = strtoull(buf, &endptr, 10);
-	if ((unique == 0) && (errno == EINVAL)) {
-		return EINVAL;
+	unique = smb_strtoull(buf, &endptr, 10, &error, SMB_STR_STANDARD);
+	if (error != 0) {
+		return error;
 	}
-	if ((unique == ULLONG_MAX) && (errno == ERANGE)) {
-		return ERANGE;
-	}
+
 	if (endptr[0] != '\n') {
 		return EINVAL;
 	}
@@ -1524,7 +1531,9 @@ int messaging_dgm_cleanup(pid_t pid)
 	struct messaging_dgm_context *ctx = global_dgm_context;
 	struct sun_path_buf lockfile_name, socket_name;
 	int fd, len, ret;
-	struct flock lck = {};
+	struct flock lck = {
+		.l_pid = 0,
+	};
 
 	if (ctx == NULL) {
 		return ENOTCONN;
@@ -1615,6 +1624,7 @@ int messaging_dgm_forall(int (*fn)(pid_t pid, void *private_data),
 	struct messaging_dgm_context *ctx = global_dgm_context;
 	DIR *msgdir;
 	struct dirent *dp;
+	int error = 0;
 
 	if (ctx == NULL) {
 		return ENOTCONN;
@@ -1637,8 +1647,8 @@ int messaging_dgm_forall(int (*fn)(pid_t pid, void *private_data),
 		unsigned long pid;
 		int ret;
 
-		pid = strtoul(dp->d_name, NULL, 10);
-		if (pid == 0) {
+		pid = smb_strtoul(dp->d_name, NULL, 10, &error, SMB_STR_STANDARD);
+		if ((pid == 0) || (error != 0)) {
 			/*
 			 * . and .. and other malformed entries
 			 */

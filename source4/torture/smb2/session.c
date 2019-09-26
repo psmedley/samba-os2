@@ -1417,7 +1417,7 @@ static bool test_session_expire2i(struct torture_context *tctx,
 	ZERO_STRUCT(ctl);
 	ctl.in.file.handle = *h1;
 	ctl.in.function = FSCTL_SRV_ENUM_SNAPS;
-	ctl.in.max_response_size = 16;
+	ctl.in.max_output_response = 16;
 	ctl.in.flags = SMB2_IOCTL_FLAG_IS_FSCTL;
 	status = smb2_ioctl(tree, tctx, &ctl);
 	torture_assert_ntstatus_equal_goto(tctx, status,
@@ -1717,6 +1717,7 @@ bool test_session_bind1(struct torture_context *tctx, struct smb2_tree *tree1)
 	bool ret = false;
 	struct smb2_tree *tree2 = NULL;
 	struct smb2_transport *transport1 = tree1->session->transport;
+	struct smbcli_options options2;
 	struct smb2_transport *transport2 = NULL;
 	struct smb2_session *session1_1 = tree1->session;
 	struct smb2_session *session1_2 = NULL;
@@ -1728,6 +1729,13 @@ bool test_session_bind1(struct torture_context *tctx, struct smb2_tree *tree1)
 	if (!(caps & SMB2_CAP_MULTI_CHANNEL)) {
 		torture_skip(tctx, "server doesn't support SMB2_CAP_MULTI_CHANNEL\n");
 	}
+
+	/*
+	 * We always want signing for this test!
+	 */
+	smb2cli_tcon_should_sign(tree1->smbXcli, true);
+	options2 = transport1->options;
+	options2.signing = SMB_SIGNING_REQUIRED;
 
 	/* Add some random component to the file name. */
 	snprintf(fname, sizeof(fname), "session_bind1_%s.dat",
@@ -1757,7 +1765,7 @@ bool test_session_bind1(struct torture_context *tctx, struct smb2_tree *tree1)
 			      credentials,
 			      &tree2,
 			      tctx->ev,
-			      &transport1->options,
+			      &options2,
 			      lpcfg_socket_options(tctx->lp_ctx),
 			      lpcfg_gensec_settings(tctx, tctx->lp_ctx)
 			      );

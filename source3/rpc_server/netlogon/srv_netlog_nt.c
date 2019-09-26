@@ -38,7 +38,6 @@
 #include "../libcli/security/security.h"
 #include "../libcli/security/dom_sid.h"
 #include "librpc/gen_ndr/ndr_drsblobs.h"
-#include "lib/crypto/arcfour.h"
 #include "lib/crypto/md4.h"
 #include "nsswitch/libwbclient/wbclient.h"
 #include "../libcli/registry/util_reg.h"
@@ -1362,7 +1361,12 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
 	if (creds->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
 		netlogon_creds_aes_decrypt(creds, password_buf.data, 516);
 	} else {
-		netlogon_creds_arcfour_crypt(creds, password_buf.data, 516);
+		status = netlogon_creds_arcfour_crypt(creds,
+						      password_buf.data,
+						      516);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 	}
 
 	if (!decode_pw_buffer(p->mem_ctx,
@@ -1585,11 +1589,12 @@ static NTSTATUS _netr_LogonSamLogon_base(struct pipes_struct *p,
 	DEBUG(5,("Attempting validation level %d for unmapped username %s.\n",
 		r->in.validation_level, nt_username));
 
-	status = NT_STATUS_OK;
-
-	netlogon_creds_decrypt_samlogon_logon(creds,
-					      r->in.logon_level,
-					      logon);
+	status = netlogon_creds_decrypt_samlogon_logon(creds,
+						       r->in.logon_level,
+						       logon);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
 
 	status = make_auth3_context_for_netlogon(talloc_tos(), &auth_context);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -1753,10 +1758,11 @@ static NTSTATUS _netr_LogonSamLogon_base(struct pipes_struct *p,
 		return status;
 	}
 
-	netlogon_creds_encrypt_samlogon_validation(creds,
-						   r->in.validation_level,
-						   r->out.validation);
-	return NT_STATUS_OK;
+	status = netlogon_creds_encrypt_samlogon_validation(creds,
+							    r->in.validation_level,
+							    r->out.validation);
+
+	return status;
 }
 
 /****************************************************************

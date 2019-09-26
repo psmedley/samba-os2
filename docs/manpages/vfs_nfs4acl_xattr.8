@@ -2,12 +2,12 @@
 .\"     Title: vfs_nfs4acl_xattr
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 08/27/2019
+.\"      Date: 09/17/2019
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.10.8
+.\"    Source: Samba 4.11.0
 .\"  Language: English
 .\"
-.TH "VFS_NFS4ACL_XATTR" "8" "08/27/2019" "Samba 4\&.10\&.8" "System Administration tools"
+.TH "VFS_NFS4ACL_XATTR" "8" "09/17/2019" "Samba 4\&.11\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -45,9 +45,14 @@ VFS module stores NTFS Access Control Lists (ACLs) in Extended Attributes (EAs/x
 This module is stackable\&.
 .SH "OPTIONS"
 .PP
-nfs4acl_xattr:encoding = [ndr|xdr]
+nfs4acl_xattr:encoding = [nfs|ndr|xdr]
 .RS 4
 This parameter configures the marshaling format used in the ACL blob and the default extended attribute name used to store the blob\&.
+.sp
+When set to
+\fInfs\fR
+\- fetch and store the NT ACL in NFS 4\&.0 or 4\&.1 compatible XDR encoding\&. By default this uses the extended attribute "system\&.nfs4_acl"\&. This setting also disables
+\fIvalidate_mode\fR\&.
 .sp
 When set to
 \fIndr (default)\fR
@@ -92,6 +97,26 @@ This parameter configures the extended attribute name used to store the marshale
 .sp
 The default depends on the setting for
 \fInfs4acl_xattr:encoding\fR\&.
+.RE
+.PP
+nfs4acl_xattr:nfs4_id_numeric = yes|no (default: no)
+.RS 4
+This parameter tells the module how the NFS4 server encodes user and group identifiers on the network\&. With the default setting the module expects identifiers encoded as per the NFS4 RFC as user@domain\&.
+.sp
+When set to
+\fIyes\fR, the module expects the identifiers as numeric string\&.
+.sp
+The default for this options\fIno\fR\&.
+.RE
+.PP
+nfs4acl_xattr:validate_mode = yes|no
+.RS 4
+This parameter configures whether the module enforces the POSIX mode is set to 0777 for directores and 0666 for files\&. If this constrained is not met, the xattr with the ACL blob is discarded\&.
+.sp
+The default depends on the setting for
+\fInfs4acl_xattr:encoding\fR: when set to
+\fInfs\fR
+this setting is disabled by default, otherwise it is enabled\&.
 .RE
 .SH "EXAMPLES"
 .PP

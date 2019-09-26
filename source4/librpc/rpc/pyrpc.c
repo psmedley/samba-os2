@@ -20,6 +20,7 @@
 #include <Python.h>
 #include "python/py3compat.h"
 #include "includes.h"
+#include "python/modules.h"
 #include <structmember.h>
 #include "librpc/rpc/pyrpc.h"
 #include "lib/events/events.h"
@@ -40,7 +41,7 @@ static PyTypeObject *ndr_syntax_id_Type;
 static bool PyString_AsGUID(PyObject *object, struct GUID *uuid)
 {
 	NTSTATUS status;
-	status = GUID_from_string(PyStr_AsString(object), uuid);
+	status = GUID_from_string(PyUnicode_AsUTF8(object), uuid);
 	if (NT_STATUS_IS_ERR(status)) {
 		PyErr_SetNTSTATUS(status);
 		return false;
@@ -52,7 +53,7 @@ static bool ndr_syntax_from_py_object(PyObject *object, struct ndr_syntax_id *sy
 {
 	ZERO_STRUCTP(syntax_id);
 
-	if (PyStr_Check(object) || PyUnicode_Check(object)) {
+	if (PyUnicode_Check(object)) {
 		return PyString_AsGUID(object, &syntax_id->uuid);
 	} else if (PyTuple_Check(object)) {
 		PyObject *item = NULL;
@@ -62,7 +63,7 @@ static bool ndr_syntax_from_py_object(PyObject *object, struct ndr_syntax_id *sy
 		}
 
 		item = PyTuple_GetItem(object, 0);
-		if (!(PyStr_Check(item) || PyUnicode_Check(item))) {
+		if (!PyUnicode_Check(item)) {
 			PyErr_SetString(PyExc_ValueError, "Expected GUID as first element in tuple");
 			return false;
 		}
@@ -94,7 +95,7 @@ static PyObject *py_iface_server_name(PyObject *obj, void *closure)
 	if (server_name == NULL)
 		Py_RETURN_NONE;
 
-	return PyStr_FromString(server_name);
+	return PyUnicode_FromString(server_name);
 }
 
 static PyObject *py_ndr_syntax_id(struct ndr_syntax_id *syntax_id)
@@ -205,19 +206,38 @@ static int py_iface_set_timeout(PyObject *obj, PyObject *value, void *closure)
 }
 
 static PyGetSetDef dcerpc_interface_getsetters[] = {
-	{ discard_const_p(char, "server_name"), py_iface_server_name, NULL,
-	  discard_const_p(char, "name of the server, if connected over SMB") },
-	{ discard_const_p(char, "abstract_syntax"), py_iface_abstract_syntax, NULL, 
- 	  discard_const_p(char, "syntax id of the abstract syntax") },
-	{ discard_const_p(char, "transfer_syntax"), py_iface_transfer_syntax, NULL, 
- 	  discard_const_p(char, "syntax id of the transfersyntax") },
-	{ discard_const_p(char, "session_key"), py_iface_session_key, NULL,
-	  discard_const_p(char, "session key (as used for blob encryption on LSA and SAMR)") },
-	{ discard_const_p(char, "user_session_key"), py_iface_user_session_key, NULL,
-	  discard_const_p(char, "user_session key (as used for blob encryption on DRSUAPI)") },
-	{ discard_const_p(char, "request_timeout"), py_iface_get_timeout, py_iface_set_timeout,
-	  discard_const_p(char, "request timeout, in seconds") },
-	{ NULL }
+	{
+		.name = discard_const_p(char, "server_name"),
+		.get  = py_iface_server_name,
+		.doc  = discard_const_p(char, "name of the server, if connected over SMB"),
+	},
+	{
+		.name = discard_const_p(char, "abstract_syntax"),
+		.get  = py_iface_abstract_syntax,
+		.doc  = discard_const_p(char, "syntax id of the abstract syntax"),
+	},
+	{
+		.name = discard_const_p(char, "transfer_syntax"),
+		.get  = py_iface_transfer_syntax,
+		.doc  = discard_const_p(char, "syntax id of the transfer syntax"),
+	},
+	{
+		.name = discard_const_p(char, "session_key"),
+		.get  = py_iface_session_key,
+		.doc  = discard_const_p(char, "session key (as used for blob encryption on LSA and SAMR)"),
+	},
+	{
+		.name = discard_const_p(char, "user_session_key"),
+		.get  = py_iface_user_session_key,
+		.doc  = discard_const_p(char, "user_session key (as used for blob encryption on DRSUAPI)"),
+	},
+	{
+		.name = discard_const_p(char, "request_timeout"),
+		.get  = py_iface_get_timeout,
+		.set  = py_iface_set_timeout,
+		.doc  = discard_const_p(char, "request timeout,	in seconds"),
+	},
+	{ .name = NULL }
 };
 
 static PyObject *py_iface_request(PyObject *self, PyObject *args, PyObject *kwargs)
@@ -274,7 +294,10 @@ static PyObject *py_iface_request(PyObject *self, PyObject *args, PyObject *kwar
 }
 
 static PyMethodDef dcerpc_interface_methods[] = {
-	{ "request", (PyCFunction)py_iface_request, METH_VARARGS|METH_KEYWORDS, "S.request(opnum, data, object=None) -> data\nMake a raw request" },
+	{ "request", PY_DISCARD_FUNC_SIG(PyCFunction, py_iface_request),
+		METH_VARARGS|METH_KEYWORDS,
+		"S.request(opnum, data, object=None) -> data\n"
+		"Make a raw request" },
 	{ NULL, NULL, 0, NULL },
 };
 
@@ -483,11 +506,15 @@ static int py_dcerpc_ndr_pointer_set_value(PyObject *self, PyObject *value, void
 }
 
 static PyGetSetDef py_dcerpc_ndr_pointer_getsetters[] = {
-	{ discard_const_p(char, "value"),
-	  py_dcerpc_ndr_pointer_get_value,
-	  py_dcerpc_ndr_pointer_set_value,
-	  discard_const_p(char, "the value store by the pointer") },
-	{ NULL }
+	{
+		.name = discard_const_p(char, "value"),
+		.get  = py_dcerpc_ndr_pointer_get_value,
+		.set  = py_dcerpc_ndr_pointer_set_value,
+		.doc  = discard_const_p(char, "the value store by the pointer"),
+	},
+	{
+		.name = NULL,
+	},
 };
 
 static PyObject *py_dcerpc_ndr_pointer_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
@@ -547,16 +574,22 @@ MODULE_INIT_FUNC(base)
 		return NULL;
 
 	BaseObject_Type = (PyTypeObject *)PyObject_GetAttrString(dep_talloc, "BaseObject");
-	if (BaseObject_Type == NULL)
+	if (BaseObject_Type == NULL) {
+		Py_CLEAR(dep_talloc);
 		return NULL;
+	}
 
+	Py_CLEAR(dep_talloc);
 	dep_samba_dcerpc_misc = PyImport_ImportModule("samba.dcerpc.misc");
-	if (dep_samba_dcerpc_misc == NULL)
+	if (dep_samba_dcerpc_misc == NULL) {
 		return NULL;
+	}
 
 	ndr_syntax_id_Type = (PyTypeObject *)PyObject_GetAttrString(dep_samba_dcerpc_misc, "ndr_syntax_id");
-	if (ndr_syntax_id_Type == NULL)
+	Py_CLEAR(dep_samba_dcerpc_misc);
+	if (ndr_syntax_id_Type == NULL) {
 		return NULL;
+	}
 
 	py_transfer_syntax_ndr_SyntaxType.tp_base = ndr_syntax_id_Type;
 	py_transfer_syntax_ndr_SyntaxType.tp_basicsize = pytalloc_BaseObject_size();
@@ -568,22 +601,28 @@ MODULE_INIT_FUNC(base)
 	py_dcerpc_ndr_pointer_type.tp_base = BaseObject_Type;
 	py_dcerpc_ndr_pointer_type.tp_basicsize = pytalloc_BaseObject_size();
 
-	if (PyType_Ready(&dcerpc_InterfaceType) < 0)
+	if (PyType_Ready(&dcerpc_InterfaceType) < 0) {
 		return NULL;
+	}
 
-	if (PyType_Ready(&py_transfer_syntax_ndr_SyntaxType) < 0)
+	if (PyType_Ready(&py_transfer_syntax_ndr_SyntaxType) < 0) {
 		return NULL;
-	if (PyType_Ready(&py_transfer_syntax_ndr64_SyntaxType) < 0)
+	}
+	if (PyType_Ready(&py_transfer_syntax_ndr64_SyntaxType) < 0) {
 		return NULL;
-	if (PyType_Ready(&py_bind_time_features_syntax_SyntaxType) < 0)
+	}
+	if (PyType_Ready(&py_bind_time_features_syntax_SyntaxType) < 0) {
 		return NULL;
+	}
 
-	if (PyType_Ready(&py_dcerpc_ndr_pointer_type) < 0)
+	if (PyType_Ready(&py_dcerpc_ndr_pointer_type) < 0) {
 		return NULL;
+	}
 
 	m = PyModule_Create(&moduledef);
-	if (m == NULL)
+	if (m == NULL) {
 		return NULL;
+	}
 
 	Py_INCREF((PyObject *)&dcerpc_InterfaceType);
 	PyModule_AddObject(m, "ClientConnection", (PyObject *)&dcerpc_InterfaceType);

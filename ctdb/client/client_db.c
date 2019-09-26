@@ -1442,7 +1442,7 @@ int ctdb_fetch_lock(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 {
 	struct tevent_req *req;
 	struct ctdb_record_handle *h;
-	int ret;
+	int ret = 0;
 
 	req = ctdb_fetch_lock_send(mem_ctx, ev, client, db, key, readonly);
 	if (req == NULL) {
@@ -2018,7 +2018,8 @@ static int ctdb_g_lock_unlock_update(struct tevent_req *req)
 	struct ctdb_g_lock_unlock_state *state = tevent_req_data(
 		req, struct ctdb_g_lock_unlock_state);
 	struct ctdb_g_lock *lock;
-	int ret, i;
+	unsigned int i;
+	int ret;
 
 	for (i=0; i<state->lock_list->num; i++) {
 		lock = &state->lock_list->lock[i];
@@ -2248,7 +2249,7 @@ int ctdb_transaction_start(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 {
 	struct tevent_req *req;
 	struct ctdb_transaction_handle *h;
-	int ret;
+	int ret = 0;
 
 	req = ctdb_transaction_start_send(mem_ctx, ev, client, timeout, db,
 					  readonly);

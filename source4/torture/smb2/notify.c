@@ -91,15 +91,15 @@ static bool test_valid_request(struct torture_context *torture,
 
 	torture_comment(torture, "TESTING VALIDITY OF CHANGE NOTIFY REQUEST\n");
 
+	smb2_transport_credits_ask_num(tree->session->transport, 256);
+
 	smb2_util_unlink(tree, FNAME);
 
 	status = smb2_util_roothandle(tree, &dh);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
-	/* 0x00080000 is the default max buffer size for Windows servers
-	 * pre-Win7 */
-	max_buffer_size = torture_setting_ulong(torture, "cn_max_buffer_size",
-						0x00080000);
+	max_buffer_size =
+		smb2cli_conn_max_trans_size(tree->session->transport->conn);
 
 	n.in.recursive		= 0x0000;
 	n.in.buffer_size	= max_buffer_size;
@@ -114,7 +114,7 @@ static bool test_valid_request(struct torture_context *torture,
 		}
 	}
 
-	status = torture_setup_complex_file(torture, tree, FNAME);
+	status = torture_setup_simple_file(torture, tree, FNAME);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
 	status = smb2_notify_recv(req, torture, &n);
@@ -136,7 +136,7 @@ static bool test_valid_request(struct torture_context *torture,
 		}
 	}
 
-	status = torture_setup_complex_file(torture, tree, FNAME);
+	status = torture_setup_simple_file(torture, tree, FNAME);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
 	status = smb2_notify_recv(req, torture, &n);
@@ -155,7 +155,7 @@ static bool test_valid_request(struct torture_context *torture,
 		}
 	}
 
-	status = torture_setup_complex_file(torture, tree, FNAME);
+	status = torture_setup_simple_file(torture, tree, FNAME);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
 	status = smb2_notify_recv(req, torture, &n);
@@ -187,7 +187,7 @@ static bool test_valid_request(struct torture_context *torture,
 		}
 	}
 
-	status = torture_setup_complex_file(torture, tree, FNAME);
+	status = torture_setup_simple_file(torture, tree, FNAME);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
 	status = smb2_notify_recv(req, torture, &n);
@@ -201,7 +201,7 @@ static bool test_valid_request(struct torture_context *torture,
 		}
 	}
 
-	status = torture_setup_complex_file(torture, tree, FNAME);
+	status = torture_setup_simple_file(torture, tree, FNAME);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
 	status = smb2_notify_recv(req, torture, &n);
@@ -913,7 +913,7 @@ static bool torture_smb2_notify_mask(struct torture_context *torture,
 		h1 = io.smb2.out.file.handle; \
 		setup \
 		notify.smb2.in.file.handle = h1;	\
-		notify.smb2.in.completion_filter = (1<<i); \
+		notify.smb2.in.completion_filter = ((uint32_t)1<<i); \
 		/* cancel initial requests so the buffer is setup */	\
 		req = smb2_notify_send(tree1, &(notify.smb2)); \
 		smb2_cancel(req); \
@@ -965,7 +965,7 @@ static bool torture_smb2_notify_mask(struct torture_context *torture,
 			       notify.smb2.out.changes[0].name.s);	\
 			ret = false; \
 		} \
-		mask |= (1<<i); \
+		mask |= ((uint32_t)1<<i); \
 	} \
 	} while (0); \
 	} while (0);
@@ -1722,7 +1722,7 @@ static bool torture_smb2_notify_tcp_disconnect(
 	notify.smb2.in.recursive = true;
 	req = smb2_notify_send(tree, &(notify.smb2));
 	smb2_transport_idle_handler(tree->session->transport,
-				tcp_dis_handler, 250, tree);
+				tcp_dis_handler, 250000, tree);
 	tree = NULL;
 	status = smb2_notify_recv(req, torture, &(notify.smb2));
 	CHECK_STATUS(status, NT_STATUS_LOCAL_DISCONNECT);
@@ -1840,46 +1840,126 @@ static bool torture_smb2_notify_tree(struct torture_context *torture,
 		struct smb2_handle h1;
 		int counted;
 	} dirs[] = {
-		{BASEDIR_TREE "\\abc",
-			true, FILE_NOTIFY_CHANGE_NAME, 30 },
-		{BASEDIR_TREE "\\zqy",
-			true, FILE_NOTIFY_CHANGE_NAME, 8 },
-		{BASEDIR_TREE "\\atsy",
-			true, FILE_NOTIFY_CHANGE_NAME, 4 },
-		{BASEDIR_TREE "\\abc\\foo",
-			true,  FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_TREE "\\abc\\blah",
-			true,  FILE_NOTIFY_CHANGE_NAME, 13 },
-		{BASEDIR_TREE "\\abc\\blah",
-			false, FILE_NOTIFY_CHANGE_NAME, 7 },
-		{BASEDIR_TREE "\\abc\\blah\\a",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_TREE "\\abc\\blah\\b",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_TREE "\\abc\\blah\\c",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_TREE "\\abc\\fooblah",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_TREE "\\zqy\\xx",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_TREE "\\zqy\\yyy",
-			true, FILE_NOTIFY_CHANGE_NAME, 2 },
-		{BASEDIR_TREE "\\zqy\\..",
-			true, FILE_NOTIFY_CHANGE_NAME, 40 },
-		{BASEDIR_TREE,
-			true, FILE_NOTIFY_CHANGE_NAME, 40 },
-		{BASEDIR_TREE,
-			false,FILE_NOTIFY_CHANGE_NAME, 6 },
-		{BASEDIR_TREE "\\atsy",
-			false,FILE_NOTIFY_CHANGE_NAME, 4 },
-		{BASEDIR_TREE "\\abc",
-			true, FILE_NOTIFY_CHANGE_NAME, 24 },
-		{BASEDIR_TREE "\\abc",
-			false,FILE_NOTIFY_CHANGE_FILE_NAME, 0 },
-		{BASEDIR_TREE "\\abc",
-			true, FILE_NOTIFY_CHANGE_FILE_NAME, 0 },
-		{BASEDIR_TREE "\\abc",
-			true, FILE_NOTIFY_CHANGE_NAME, 24 },
+		{
+			.path      = BASEDIR_TREE "\\abc",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 30,
+		},
+		{
+			.path      = BASEDIR_TREE "\\zqy",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 8,
+		},
+		{
+			.path      = BASEDIR_TREE "\\atsy",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 4,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc\\foo",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc\\blah",
+			.recursive = true,
+			.filter    =  FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 13,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc\\blah",
+			.recursive = false,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 7,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc\\blah\\a",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc\\blah\\b",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc\\blah\\c",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc\\fooblah",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_TREE "\\zqy\\xx",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_TREE "\\zqy\\yyy",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 2,
+		},
+		{
+			.path      = BASEDIR_TREE "\\zqy\\..",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 40,
+		},
+		{
+			.path      = BASEDIR_TREE,
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 40,
+		},
+		{
+			.path      = BASEDIR_TREE,
+			.recursive = false,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 6,
+		},
+		{
+			.path      = BASEDIR_TREE "\\atsy",
+			.recursive = false,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 4,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 24,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc",
+			.recursive = false,
+			.filter    = FILE_NOTIFY_CHANGE_FILE_NAME,
+			.expected  = 0,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_FILE_NAME,
+			.expected  = 0,
+		},
+		{
+			.path      = BASEDIR_TREE "\\abc",
+			.recursive = true,
+			.filter    = FILE_NOTIFY_CHANGE_NAME,
+			.expected  = 24,
+		},
 	};
 	int i;
 	NTSTATUS status;

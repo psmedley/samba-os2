@@ -710,12 +710,37 @@ class SimpleLdb(LdbBaseTest):
 class SimpleLdbLmdb(SimpleLdb):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         self.index = MDB_INDEX_OBJ
         super(SimpleLdbLmdb, self).setUp()
 
     def tearDown(self):
         super(SimpleLdbLmdb, self).tearDown()
+
+
+class SimpleLdbNoLmdb(LdbBaseTest):
+
+    def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') != '0':
+            self.skipTest("lmdb backend enabled")
+        self.prefix = MDB_PREFIX
+        self.index = MDB_INDEX_OBJ
+        super(SimpleLdbNoLmdb, self).setUp()
+
+    def tearDown(self):
+        super(SimpleLdbNoLmdb, self).tearDown()
+
+    def test_lmdb_disabled(self):
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "test.ldb")
+        try:
+            self.ldb = ldb.Ldb(self.url(), flags=self.flags())
+            self.fail("Should have failed on missing LMDB")
+        except ldb.LdbError as err:
+            enum = err.args[0]
+            self.assertEqual(enum, ldb.ERR_OTHER)
 
 
 class SearchTests(LdbBaseTest):
@@ -1369,6 +1394,8 @@ class SearchTests(LdbBaseTest):
 class SearchTestsLmdb(SearchTests):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         self.index = MDB_INDEX_OBJ
         super(SearchTestsLmdb, self).setUp()
@@ -1510,6 +1537,8 @@ class GUIDAndOneLevelIndexedSearchTests(SearchTests):
 class GUIDIndexedSearchTestsLmdb(GUIDIndexedSearchTests):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         super(GUIDIndexedSearchTestsLmdb, self).setUp()
 
@@ -1520,6 +1549,8 @@ class GUIDIndexedSearchTestsLmdb(GUIDIndexedSearchTests):
 class GUIDIndexedDNFilterSearchTestsLmdb(GUIDIndexedDNFilterSearchTests):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         super(GUIDIndexedDNFilterSearchTestsLmdb, self).setUp()
 
@@ -1530,6 +1561,8 @@ class GUIDIndexedDNFilterSearchTestsLmdb(GUIDIndexedDNFilterSearchTests):
 class GUIDAndOneLevelIndexedSearchTestsLmdb(GUIDAndOneLevelIndexedSearchTests):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         super(GUIDAndOneLevelIndexedSearchTestsLmdb, self).setUp()
 
@@ -1740,6 +1773,8 @@ class AddModifyTests(LdbBaseTest):
 class AddModifyTestsLmdb(AddModifyTests):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         self.index = MDB_INDEX_OBJ
         super(AddModifyTestsLmdb, self).setUp()
@@ -1755,7 +1790,7 @@ class IndexedAddModifyTests(AddModifyTests):
     def setUp(self):
         if not hasattr(self, 'index'):
             self.index = {"dn": "@INDEXLIST",
-                          "@IDXATTR": [b"x", b"y", b"ou", b"objectUUID"],
+                          "@IDXATTR": [b"x", b"y", b"ou", b"objectUUID", b"z"],
                           "@IDXONE": [b"1"]}
         super(IndexedAddModifyTests, self).setUp()
 
@@ -1827,6 +1862,16 @@ class IndexedAddModifyTests(AddModifyTests):
                     "x": "z", "y": "a",
                     "objectUUID": b"0123456789abcde2"})
 
+    def test_duplicate_index_values(self):
+        self.l.add({"dn": "OU=DIV1,DC=SAMBA,DC=ORG",
+                    "name": b"Admins",
+                    "z": "1",
+                    "objectUUID": b"0123456789abcdff"})
+        self.l.add({"dn": "OU=DIV2,DC=SAMBA,DC=ORG",
+                    "name": b"Admins",
+                    "z": "1",
+                    "objectUUID": b"0123456789abcdfd"})
+
 
 class GUIDIndexedAddModifyTests(IndexedAddModifyTests):
     """Test searches using the index, to ensure the index doesn't
@@ -1868,6 +1913,8 @@ class TransIndexedAddModifyTests(IndexedAddModifyTests):
 class GuidIndexedAddModifyTestsLmdb(GUIDIndexedAddModifyTests):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         super(GuidIndexedAddModifyTestsLmdb, self).setUp()
 
@@ -1878,6 +1925,8 @@ class GuidIndexedAddModifyTestsLmdb(GUIDIndexedAddModifyTests):
 class GuidTransIndexedAddModifyTestsLmdb(GUIDTransIndexedAddModifyTests):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         super(GuidTransIndexedAddModifyTestsLmdb, self).setUp()
 
@@ -1915,7 +1964,7 @@ class BadIndexTests(LdbBaseTest):
 
         res = self.ldb.search(expression="(y=1)",
                               base="dc=samba,dc=org")
-        self.assertEquals(len(res), 3)
+        self.assertEqual(len(res), 3)
 
         # Now set this to unique index, but forget to check the result
         try:
@@ -1928,7 +1977,7 @@ class BadIndexTests(LdbBaseTest):
         # We must still have a working index
         res = self.ldb.search(expression="(y=1)",
                               base="dc=samba,dc=org")
-        self.assertEquals(len(res), 3)
+        self.assertEqual(len(res), 3)
 
     def test_unique_transaction(self):
         self.ldb.add({"dn": "x=x,dc=samba,dc=org",
@@ -1943,7 +1992,7 @@ class BadIndexTests(LdbBaseTest):
 
         res = self.ldb.search(expression="(y=1)",
                               base="dc=samba,dc=org")
-        self.assertEquals(len(res), 3)
+        self.assertEqual(len(res), 3)
 
         self.ldb.transaction_start()
 
@@ -1966,7 +2015,7 @@ class BadIndexTests(LdbBaseTest):
         res = self.ldb.search(expression="(y=1)",
                               base="dc=samba,dc=org")
 
-        self.assertEquals(len(res), 3)
+        self.assertEqual(len(res), 3)
 
     def test_casefold(self):
         self.ldb.add({"dn": "x=x,dc=samba,dc=org",
@@ -1981,7 +2030,7 @@ class BadIndexTests(LdbBaseTest):
 
         res = self.ldb.search(expression="(y=a)",
                               base="dc=samba,dc=org")
-        self.assertEquals(len(res), 2)
+        self.assertEqual(len(res), 2)
 
         self.ldb.add({"dn": "@ATTRIBUTES",
                       "y": "CASE_INSENSITIVE"})
@@ -1991,12 +2040,12 @@ class BadIndexTests(LdbBaseTest):
                               base="dc=samba,dc=org")
 
         if hasattr(self, 'IDXGUID'):
-            self.assertEquals(len(res), 3)
+            self.assertEqual(len(res), 3)
         else:
             # We should not return this entry twice, but sadly
             # we have not yet fixed
             # https://bugzilla.samba.org/show_bug.cgi?id=13361
-            self.assertEquals(len(res), 4)
+            self.assertEqual(len(res), 4)
 
     def test_casefold_transaction(self):
         self.ldb.add({"dn": "x=x,dc=samba,dc=org",
@@ -2011,7 +2060,7 @@ class BadIndexTests(LdbBaseTest):
 
         res = self.ldb.search(expression="(y=a)",
                               base="dc=samba,dc=org")
-        self.assertEquals(len(res), 2)
+        self.assertEqual(len(res), 2)
 
         self.ldb.transaction_start()
 
@@ -2025,12 +2074,68 @@ class BadIndexTests(LdbBaseTest):
                               base="dc=samba,dc=org")
 
         if hasattr(self, 'IDXGUID'):
-            self.assertEquals(len(res), 3)
+            self.assertEqual(len(res), 3)
         else:
             # We should not return this entry twice, but sadly
             # we have not yet fixed
             # https://bugzilla.samba.org/show_bug.cgi?id=13361
-            self.assertEquals(len(res), 4)
+            self.assertEqual(len(res), 4)
+
+    def test_modify_transaction(self):
+        self.ldb.add({"dn": "x=y,dc=samba,dc=org",
+                      "objectUUID": b"0123456789abcde1",
+                      "y": "2",
+                      "z": "2"})
+
+        res = self.ldb.search(expression="(y=2)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+
+        self.ldb.add({"dn": "@ATTRIBUTES",
+                      "y": "UNIQUE_INDEX"})
+
+        self.ldb.transaction_start()
+
+        m = ldb.Message()
+        m.dn = ldb.Dn(self.ldb, "x=y,dc=samba,dc=org")
+        m["0"] = ldb.MessageElement([], ldb.FLAG_MOD_DELETE, "y")
+        m["1"] = ldb.MessageElement([], ldb.FLAG_MOD_DELETE, "not-here")
+
+        try:
+            self.ldb.modify(m)
+            self.fail()
+
+        except ldb.LdbError as err:
+            enum = err.args[0]
+            self.assertEqual(enum, ldb.ERR_NO_SUCH_ATTRIBUTE)
+
+        try:
+            self.ldb.transaction_commit()
+            # We should fail here, but we want to be sure
+            # we fail below
+
+        except ldb.LdbError as err:
+            enum = err.args[0]
+            self.assertEqual(enum, ldb.ERR_OPERATIONS_ERROR)
+
+        # The index should still be pointing to x=y
+        res = self.ldb.search(expression="(y=2)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+
+        try:
+            self.ldb.add({"dn": "x=y2,dc=samba,dc=org",
+                        "objectUUID": b"0123456789abcde2",
+                        "y": "2"})
+            self.fail("Added unique attribute twice")
+        except ldb.LdbError as err:
+            enum = err.args[0]
+            self.assertEqual(enum, ldb.ERR_CONSTRAINT_VIOLATION)
+
+        res = self.ldb.search(expression="(y=2)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+        self.assertEqual(str(res[0].dn), "x=y,dc=samba,dc=org")
 
     def tearDown(self):
         super(BadIndexTests, self).tearDown()
@@ -2043,6 +2148,77 @@ class GUIDBadIndexTests(BadIndexTests):
         self.IDXGUID = True
 
         super(GUIDBadIndexTests, self).setUp()
+
+
+class GUIDBadIndexTestsLmdb(BadIndexTests):
+
+    def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
+        self.prefix = MDB_PREFIX
+        self.index = MDB_INDEX_OBJ
+        self.IDXGUID = True
+        super(GUIDBadIndexTestsLmdb, self).setUp()
+
+    def tearDown(self):
+        super(GUIDBadIndexTestsLmdb, self).tearDown()
+
+
+class BatchModeTests(LdbBaseTest):
+
+    def setUp(self):
+        super(BatchModeTests, self).setUp()
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "test.ldb")
+        self.ldb = ldb.Ldb(self.url(),
+                           flags=self.flags(),
+                           options=["batch_mode:1"])
+        if hasattr(self, 'IDXGUID'):
+            self.ldb.add({"dn": "@INDEXLIST",
+                          "@IDXATTR": [b"x", b"y", b"ou"],
+                          "@IDXGUID": [b"objectUUID"],
+                          "@IDX_DN_GUID": [b"GUID"]})
+        else:
+            self.ldb.add({"dn": "@INDEXLIST",
+                          "@IDXATTR": [b"x", b"y", b"ou"]})
+
+    def test_modify_transaction(self):
+        self.ldb.add({"dn": "x=y,dc=samba,dc=org",
+                      "objectUUID": b"0123456789abcde1",
+                      "y": "2",
+                      "z": "2"})
+
+        res = self.ldb.search(expression="(y=2)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+
+        self.ldb.add({"dn": "@ATTRIBUTES",
+                      "y": "UNIQUE_INDEX"})
+
+        self.ldb.transaction_start()
+
+        m = ldb.Message()
+        m.dn = ldb.Dn(self.ldb, "x=y,dc=samba,dc=org")
+        m["0"] = ldb.MessageElement([], ldb.FLAG_MOD_DELETE, "y")
+        m["1"] = ldb.MessageElement([], ldb.FLAG_MOD_DELETE, "not-here")
+
+        try:
+            self.ldb.modify(m)
+            self.fail()
+
+        except ldb.LdbError as err:
+            enum = err.args[0]
+            self.assertEqual(enum, ldb.ERR_NO_SUCH_ATTRIBUTE)
+
+        try:
+            self.ldb.transaction_commit()
+            self.fail("Commit should have failed as we were in batch mode")
+        except ldb.LdbError as err:
+            enum = err.args[0]
+            self.assertEqual(enum, ldb.ERR_OPERATIONS_ERROR)
+
+    def tearDown(self):
+        super(BatchModeTests, self).tearDown()
 
 
 class DnTests(TestCase):
@@ -2163,6 +2339,57 @@ class DnTests(TestCase):
         self.assertEqual("foo=bar", str(msg[1].dn))
         msg = next(msgs)
         self.assertEqual("bar=bar", str(msg[1].dn))
+
+    def test_print_ldif(self):
+        ldif = '''dn: dc=foo27
+foo: foo
+
+'''
+        self.msg = ldb.Message(ldb.Dn(self.ldb, "dc=foo27"))
+        self.msg["foo"] = [b"foo"]
+        self.assertEqual(ldif,
+                         self.ldb.write_ldif(self.msg,
+                                             ldb.CHANGETYPE_NONE))
+
+    def test_print_ldif_binary(self):
+        # this also confirms that ldb flags are set even without a URL)
+        self.ldb = ldb.Ldb(flags=ldb.FLG_SHOW_BINARY)
+        ldif = '''dn: dc=foo27
+foo: f
+öö
+
+'''
+        self.msg = ldb.Message(ldb.Dn(self.ldb, "dc=foo27"))
+        self.msg["foo"] = ["f\nöö"]
+        self.assertEqual(ldif,
+                         self.ldb.write_ldif(self.msg,
+                                             ldb.CHANGETYPE_NONE))
+
+
+    def test_print_ldif_no_base64_bad(self):
+        ldif = '''dn: dc=foo27
+foo: f
+öö
+
+'''
+        self.msg = ldb.Message(ldb.Dn(self.ldb, "dc=foo27"))
+        self.msg["foo"] = ["f\nöö"]
+        self.msg["foo"].set_flags(ldb.FLAG_FORCE_NO_BASE64_LDIF)
+        self.assertEqual(ldif,
+                         self.ldb.write_ldif(self.msg,
+                                             ldb.CHANGETYPE_NONE))
+
+    def test_print_ldif_no_base64_good(self):
+        ldif = '''dn: dc=foo27
+foo: föö
+
+'''
+        self.msg = ldb.Message(ldb.Dn(self.ldb, "dc=foo27"))
+        self.msg["foo"] = ["föö"]
+        self.msg["foo"].set_flags(ldb.FLAG_FORCE_NO_BASE64_LDIF)
+        self.assertEqual(ldif,
+                         self.ldb.write_ldif(self.msg,
+                                             ldb.CHANGETYPE_NONE))
 
     def test_canonical_string(self):
         x = ldb.Dn(self.ldb, "dc=foo25,bar=bloe")
@@ -2933,6 +3160,8 @@ class LdbResultTests(LdbBaseTest):
 class LdbResultTestsLmdb(LdbResultTests):
 
     def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
         self.prefix = MDB_PREFIX
         self.index = MDB_INDEX_OBJ
         super(LdbResultTestsLmdb, self).setUp()
@@ -2987,6 +3216,109 @@ class VersionTests(TestCase):
 
     def test_version(self):
         self.assertTrue(isinstance(ldb.__version__, str))
+
+class NestedTransactionTests(LdbBaseTest):
+    def setUp(self):
+        super(NestedTransactionTests, self).setUp()
+        self.testdir = tempdir()
+        self.filename = os.path.join(self.testdir, "test.ldb")
+        self.ldb = ldb.Ldb(self.url(), flags=self.flags())
+        self.ldb.add({"dn": "@INDEXLIST",
+                      "@IDXATTR": [b"x", b"y", b"ou"],
+                      "@IDXGUID": [b"objectUUID"],
+                      "@IDX_DN_GUID": [b"GUID"]})
+
+        super(NestedTransactionTests, self).setUp()
+
+    #
+    # This test documents that currently ldb does not support true nested
+    # transactions.
+    #
+    # Note: The test is written so that it treats failure as pass.
+    #       It is done this way as standalone ldb builds do not use the samba
+    #       known fail mechanism
+    #
+    def test_nested_transactions(self):
+
+        self.ldb.transaction_start()
+
+        self.ldb.add({"dn": "x=x1,dc=samba,dc=org",
+                      "objectUUID": b"0123456789abcde1"})
+        res = self.ldb.search(expression="(objectUUID=0123456789abcde1)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+
+        self.ldb.add({"dn": "x=x2,dc=samba,dc=org",
+                      "objectUUID": b"0123456789abcde2"})
+        res = self.ldb.search(expression="(objectUUID=0123456789abcde2)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+
+        self.ldb.transaction_start()
+        self.ldb.add({"dn": "x=x3,dc=samba,dc=org",
+                      "objectUUID": b"0123456789abcde3"})
+        res = self.ldb.search(expression="(objectUUID=0123456789abcde3)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+        self.ldb.transaction_cancel()
+        #
+        # Check that we can not see the record added by the cancelled
+        # transaction.
+        # Currently this fails as ldb does not support true nested
+        # transactions, and only the outer commits and cancels have an effect
+        #
+        res = self.ldb.search(expression="(objectUUID=0123456789abcde3)",
+                              base="dc=samba,dc=org")
+        #
+        # FIXME this test currently passes on a failure, i.e. if nested
+        #       transaction support worked correctly the correct test would
+        #       be.
+        #         self.assertEqual(len(res), 0)
+        #       as the add of objectUUID=0123456789abcde3 would reverted when
+        #       the sub transaction it was nested in was rolled back.
+        #
+        #       Currently this is not the case so the record is still present.
+        self.assertEqual(len(res), 1)
+
+
+        # Commit the outer transaction
+        #
+        self.ldb.transaction_commit()
+        #
+        # Now check we can still see the records added in the outer
+        # transaction.
+        #
+        res = self.ldb.search(expression="(objectUUID=0123456789abcde1)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+        res = self.ldb.search(expression="(objectUUID=0123456789abcde2)",
+                              base="dc=samba,dc=org")
+        self.assertEqual(len(res), 1)
+        #
+        # And that we can't see the records added by the nested transaction.
+        #
+        res = self.ldb.search(expression="(objectUUID=0123456789abcde3)",
+                              base="dc=samba,dc=org")
+        # FIXME again if nested transactions worked correctly we would not
+        #       see this record. The test should be.
+        #         self.assertEqual(len(res), 0)
+        self.assertEqual(len(res), 1)
+
+    def tearDown(self):
+        super(NestedTransactionTests, self).tearDown()
+
+
+class LmdbNestedTransactionTests(NestedTransactionTests):
+
+    def setUp(self):
+        if os.environ.get('HAVE_LMDB', '1') == '0':
+            self.skipTest("No lmdb backend")
+        self.prefix = MDB_PREFIX
+        self.index = MDB_INDEX_OBJ
+        super(LmdbNestedTransactionTests, self).setUp()
+
+    def tearDown(self):
+        super(LmdbNestedTransactionTests, self).tearDown()
 
 
 if __name__ == '__main__':

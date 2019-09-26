@@ -364,7 +364,7 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 	NT_STATUS_HAVE_NO_MEMORY(user_info_dc);
 
 	tmp_ctx = talloc_new(user_info_dc);
-	if (user_info_dc == NULL) {
+	if (tmp_ctx == NULL) {
 		TALLOC_FREE(user_info_dc);
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -377,7 +377,7 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 
 	num_sids = 2;
 
-	account_sid = samdb_result_dom_sid(user_info_dc, msg, "objectSid");
+	account_sid = samdb_result_dom_sid(tmp_ctx, msg, "objectSid");
 	if (account_sid == NULL) {
 		TALLOC_FREE(user_info_dc);
 		return NT_STATUS_NO_MEMORY;
@@ -886,8 +886,10 @@ NTSTATUS authsam_update_bad_pwd_count(struct ldb_context *sam_ctx,
 
 done:
 	if (ret != LDB_SUCCESS) {
-		DEBUG(0, ("Failed to update badPwdCount, badPasswordTime or set lockoutTime on %s: %s\n",
-			  ldb_dn_get_linearized(msg_mod->dn), ldb_errstring(sam_ctx)));
+		DBG_ERR("Failed to update badPwdCount, badPasswordTime or "
+			"set lockoutTime on %s: %s\n",
+			ldb_dn_get_linearized(msg->dn),
+			ldb_errstring(sam_ctx));
 		TALLOC_FREE(mem_ctx);
 		return NT_STATUS_INTERNAL_ERROR;
 	}
