@@ -102,6 +102,12 @@ samba-team/ldb:
   description: |-
     ldb packaging
 
+samba-team/libsmb2:
+  extends: .samba-project
+  name: libsmb2
+  description: |-
+    libsmb2 packaging
+
 samba-team/samba:
   extends: .samba-project
   name: samba

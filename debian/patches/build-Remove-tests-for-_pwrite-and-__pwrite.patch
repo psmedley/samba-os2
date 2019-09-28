@@ -1,0 +1,36 @@
+From cb8c9e6b7173eb5ffd3aea40257de7355483a3fb Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Sat, 28 Sep 2019 11:32:50 +0200
+Subject: [PATCH] build: Remove tests for _pwrite() and __pwrite()
+
+These date back to e19196110cc9d29c3fb330737507adc364f3bd9a "s3-waf: more
+configure tests and minor fixes" in 2010 and were not used at that time and now.
+
+More of these should be removed but the __pwrite() test caused a timeout
+on an ARM builder in Debian. It might just be a fluke but the tests are
+pointless regardless.
+
+See also 16eb80058ca4a34df96388c26736590247b6a3f4 "build: Remove tests for
+getdents() and getdirentries()"
+
+Forwarded: https://gitlab.com/samba-team/samba/merge_requests/820
+---
+ source3/wscript | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/source3/wscript b/source3/wscript
+index 8fd759707ee..e73f2818773 100644
+--- a/source3/wscript
++++ b/source3/wscript
+@@ -402,7 +402,7 @@ __lxstat memalign mknod mlock mlockall munlock munlockall
+ _open __open _opendir __opendir
+ pathconf poll
+ posix_memalign pread _pread __pread
+-pwrite _pwrite __pwrite
++pwrite
+ rdchk _read __read _readdir __readdir
+ _seekdir __seekdir
+ select setenv setgidx setgroups setlocale setluid
+-- 
+2.20.1
+
