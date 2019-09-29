@@ -38,7 +38,7 @@ Build-Depends: bison,
                libparse-yapp-perl,
                libpcap-dev [hurd-i386 kfreebsd-any],
                libpopt-dev,
-               librados-dev [linux-any],
+               librados-dev [amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32],
                libreadline-dev,
                libsystemd-dev [linux-any],
                libtalloc-dev (>= 2.2.0~),
@@ -280,7 +280,7 @@ Multi-Arch: same
 Breaks: samba (<< 2:4.3.2+dfsg-1), samba-libs (<< 2:4.3.2+dfsg-1)
 Replaces: samba (<< 2:4.3.2+dfsg-1), samba-libs (<< 2:4.3.2+dfsg-1)
 Depends: samba-libs (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
-Recommends: ${vfsmods:Recommends}
+Recommends: ${vfsceph:Recommends}, ${vfsglusterfs:Recommends}, ${vfssnapper:Recommends}
 Enhances: samba
 Description: Samba Virtual FileSystem plugins
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,

@@ -1,3 +1,16 @@
+samba (2:4.11.0+dfsg-4) experimental; urgency=medium
+
+  * Use the same arches for librados-dev than libcephfs-dev (Fix missing
+    build-depends on alpha and sh4)
+  * Split vfsmods:Recommends substvar into
+    {vfsceph,vfsglusterfs,vfssnapper}:Recommends to make the code more readable
+    and fix FTBFS on linux platforms without ceph (hppa and sparc64, and also
+    alpha and sh4)
+  * Add patch for "build: Remove tests for _readdir() and _readdir()", to
+    hopefully fix FTBFS on armel
+
+ -- Mathieu Parent <sathieu@debian.org>  Sun, 29 Sep 2019 09:29:03 +0200
+
 samba (2:4.11.0+dfsg-3) experimental; urgency=medium
 
   * Try to fix FTBFS on armel (armhf is fixed):

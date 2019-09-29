@@ -13,6 +13,7 @@ See also 16eb80058ca4a34df96388c26736590247b6a3f4 "build: Remove tests for
 getdents() and getdirentries()"
 
 Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+Forwarded: https://gitlab.com/samba-team/samba/merge_requests/821
 ---
  source3/wscript | 4 ++--
  1 file changed, 2 insertions(+), 2 deletions(-)
