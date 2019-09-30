@@ -1,0 +1,72 @@
+From c5239c6505545c4e686cf09f02c7f1fb4a39401f Mon Sep 17 00:00:00 2001
+From: Ralph Boehme <slow@samba.org>
+Date: Mon, 30 Sep 2019 11:49:28 +0200
+Subject: [PATCH 1/2] wscript: remove all checks for _FUNC and __FUNC
+
+Those where historic artifacts not needed anymore.
+
+Signed-off-by: Ralph Boehme <slow@samba.org>
+---
+ source3/wscript | 39 ++++++++++++++++++---------------------
+ 1 file changed, 18 insertions(+), 21 deletions(-)
+
+diff --git a/source3/wscript b/source3/wscript
+index d45222625c4..8d499704c62 100644
+--- a/source3/wscript
++++ b/source3/wscript
+@@ -383,34 +383,31 @@ int main(int argc, char **argv) {
+                     msg="Checking for LL suffix on long long integers")
+ 
+     conf.CHECK_FUNCS('''
+-_acl __acl atexit
+- _chdir __chdir chflags chmod _close __close _closedir
+-__closedir crypt16 devnm dirfd
+-DNSServiceRegister _dup __dup _dup2 __dup2 endmntent execl
+-_facl __facl _fchdir
+-__fchdir fchmod fchown _fcntl __fcntl fcvt fcvtl fdatasync
+-_fork __fork fseeko
+-_fstat __fstat fsync
+-futimens futimes __fxstat getauthuid
+-getcwd _getcwd __getcwd
++atexit
++chflags chmod
++crypt16 devnm dirfd
++DNSServiceRegister endmntent execl
++fchmod fchown fcvt fcvtl fdatasync
++fseeko
++fsync
++futimens futimes getauthuid
++getcwd
+ getgrent getgrnam getgrouplist getgrset getmntent getpagesize
+ getpwanam getpwent_r getrlimit
+ glob grantpt hstrerror initgroups innetgr
+-llseek _llseek __llseek _lseek __lseek
+-_lstat __lstat lutimes
+-__lxstat memalign mknod mlock mlockall munlock munlockall
+-_open __open _opendir __opendir
++llseek
++lutimes
++memalign mknod mlock mlockall munlock munlockall
+ pathconf poll
+-posix_memalign pread _pread __pread
+-pwrite _pwrite __pwrite
+-rdchk _read __read _readdir __readdir
+-_seekdir __seekdir
++posix_memalign pread
++pwrite
++rdchk
+ select setenv setgidx setgroups setlocale setluid
+ setmntent setpgid setpriv setsid setuidx
+-_stat __stat statvfs
++statvfs
+ strcasecmp strchr strpbrk strsignal strtol strupr sysconf sysctl sysctlbyname
+-__sys_llseek syslog _telldir __telldir timegm
+-utimensat vsyslog _write __write __xstat
++syslog timegm
++utimensat vsyslog
+ ''')
+ 
+     conf.CHECK_SAMBA3_CHARSET() # see build/charset.py
+-- 
+2.20.1
+

@@ -1,3 +1,16 @@
+samba (2:4.11.0+dfsg-5) experimental; urgency=medium
+
+  * d/gitlabracadabra.yml: only_allow_merge_if_pipeline_succeeds: false
+  * Remove patches:
+    - "build: Remove tests for _readdir() and __readdir()"
+    - "build: Remove tests for rdchk()"
+    - "build: Remove tests for _pwrite() and __pwrite()"
+  * Add patches by Ralph Boehme:
+    - "wscript: remove all checks for _FUNC and __FUNC"
+    - "wscript: split function check to one per line and sort alphabetically"
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 30 Sep 2019 13:37:50 +0200
+
 samba (2:4.11.0+dfsg-4) experimental; urgency=medium
 
   * Use the same arches for librados-dev than libcephfs-dev (Fix missing

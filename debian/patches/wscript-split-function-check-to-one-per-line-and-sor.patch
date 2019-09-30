@@ -1,0 +1,112 @@
+From 3761ccecbb081eec439d2327a5978d98a03e131c Mon Sep 17 00:00:00 2001
+From: Ralph Boehme <slow@samba.org>
+Date: Mon, 30 Sep 2019 11:52:06 +0200
+Subject: [PATCH 2/2] wscript: split function check to one per line and sort
+ alphabetically
+
+Signed-off-by: Ralph Boehme <slow@samba.org>
+---
+ source3/wscript | 77 +++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 62 insertions(+), 15 deletions(-)
+
+diff --git a/source3/wscript b/source3/wscript
+index 8d499704c62..9580c3b552a 100644
+--- a/source3/wscript
++++ b/source3/wscript
+@@ -383,31 +383,78 @@ int main(int argc, char **argv) {
+                     msg="Checking for LL suffix on long long integers")
+ 
+     conf.CHECK_FUNCS('''
++DNSServiceRegister
+ atexit
+-chflags chmod
+-crypt16 devnm dirfd
+-DNSServiceRegister endmntent execl
+-fchmod fchown fcvt fcvtl fdatasync
++chflags
++chmod
++crypt16
++devnm
++dirfd
++endmntent
++execl
++fchmod
++fchown
++fcvt
++fcvtl
++fdatasync
+ fseeko
+ fsync
+-futimens futimes getauthuid
++futimens
++futimes
++getauthuid
+ getcwd
+-getgrent getgrnam getgrouplist getgrset getmntent getpagesize
+-getpwanam getpwent_r getrlimit
+-glob grantpt hstrerror initgroups innetgr
++getgrent
++getgrnam
++getgrouplist
++getgrset
++getmntent
++getpagesize
++getpwanam
++getpwent_r
++getrlimit
++glob
++grantpt
++hstrerror
++initgroups
++innetgr
+ llseek
+ lutimes
+-memalign mknod mlock mlockall munlock munlockall
++memalign
++mknod
++mlock
++mlockall
++munlock
++munlockall
+ pathconf poll
+-posix_memalign pread
++posix_memalign
++pread
+ pwrite
+ rdchk
+-select setenv setgidx setgroups setlocale setluid
+-setmntent setpgid setpriv setsid setuidx
++select
++setenv
++setgidx
++setgroups
++setlocale
++setluid
++setmntent
++setpgid
++setpriv
++setsid
++setuidx
+ statvfs
+-strcasecmp strchr strpbrk strsignal strtol strupr sysconf sysctl sysctlbyname
+-syslog timegm
+-utimensat vsyslog
++strcasecmp
++strchr
++strpbrk
++strsignal
++strtol
++strupr
++sysconf
++sysctl
++sysctlbyname
++syslog
++timegm
++utimensat
++vsyslog
+ ''')
+ 
+     conf.CHECK_SAMBA3_CHARSET() # see build/charset.py
+-- 
+2.20.1
+

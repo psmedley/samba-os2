@@ -39,7 +39,7 @@ samba-team/:
   shared_runners_enabled: true
   visibility: public
   public_builds:
-  only_allow_merge_if_pipeline_succeeds: true
+  only_allow_merge_if_pipeline_succeeds: false
   only_allow_merge_if_all_discussions_are_resolved: true
   merge_method: merge
   lfs_enabled: false
