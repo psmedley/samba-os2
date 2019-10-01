@@ -1,3 +1,9 @@
+samba (2:4.11.0+dfsg-6) unstable; urgency=medium
+
+  * Do not run waf configure in parallel. Fix FTBFS on arm (Closes: #941467)
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 01 Oct 2019 22:35:36 +0200
+
 samba (2:4.11.0+dfsg-5) experimental; urgency=medium
 
   * d/gitlabracadabra.yml: only_allow_merge_if_pipeline_succeeds: false
