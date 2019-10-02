@@ -24,8 +24,8 @@ LDB_DEPENDS = "libldb2 (<< $(LDB_EPOCH):$(LDB_NEXT_VERSION)~), libldb2 (>> $(LDB
 export PYSHORT=python3
 export PYTHON=$(shell which $(PYSHORT))
 export PYTHON_CONFIG="$(PYTHON)-config"
-WAF = $(PYTHON) ./buildtools/bin/waf -v
-WAF_NO_PARALLEL = $(WAF)
+WAF := $(PYTHON) ./buildtools/bin/waf -v
+WAF_NO_PARALLEL := $(WAF)
 
 # wrapper around cups-config, to work around #726726
 export PATH:=$(CURDIR)/debian/bin:$(PATH)
