@@ -25,7 +25,7 @@ export PYSHORT=python3
 export PYTHON=$(shell which $(PYSHORT))
 export PYTHON_CONFIG="$(PYTHON)-config"
 WAF := $(PYTHON) ./buildtools/bin/waf -v
-WAF_NO_PARALLEL := $(WAF)
+WAF_NO_PARALLEL := $(WAF) -j 1
 
 # wrapper around cups-config, to work around #726726
 export PATH:=$(CURDIR)/debian/bin:$(PATH)

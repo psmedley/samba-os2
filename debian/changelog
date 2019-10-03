@@ -1,3 +1,13 @@
+samba (2:4.11.0+dfsg-8) unstable; urgency=medium
+
+  * d/gbp.conf: sign-tags = True
+  * Do not check smb.conf with testparm when server role=active directory domain
+    controller (Closes: #931734)
+  * Force one job during configure step with -j 1 (Closes: #941467).
+    Not setting -j leads to default which is number of cpus
+
+ -- Mathieu Parent <sathieu@debian.org>  Thu, 03 Oct 2019 07:52:39 +0200
+
 samba (2:4.11.0+dfsg-7) unstable; urgency=medium
 
   * Always evaluate WAF_NO_PARALLEL to ensure correct value (Closes: #941467)
