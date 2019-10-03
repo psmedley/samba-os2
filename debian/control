@@ -217,10 +217,10 @@ Package: samba-dev
 Architecture: any
 Multi-Arch: same
 Depends: libc6-dev,
-         libldb-dev,
+         libldb-dev (>= 2:2),
          libpopt-dev,
          libtalloc-dev,
-         libtdb-dev (>= 2),
+         libtdb-dev,
          libtevent-dev,
          samba-libs (= ${binary:Version}),
          ${misc:Depends}
