@@ -1,3 +1,10 @@
+samba (2:4.11.0+dfsg-10) unstable; urgency=medium
+
+  * Add libwbclient-dev to samba-dev depends as samba-util was moved there
+    (Closes: #941750)
+
+ -- Mathieu Parent <sathieu@debian.org>  Sat, 05 Oct 2019 15:57:07 +0200
+
 samba (2:4.11.0+dfsg-9) unstable; urgency=medium
 
   * Remove versioned depends on libtdb-dev (>= 2) and add libldb-dev (>= 2:2)

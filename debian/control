@@ -222,6 +222,7 @@ Depends: libc6-dev,
          libtalloc-dev,
          libtdb-dev,
          libtevent-dev,
+         libwbclient-dev,
          samba-libs (= ${binary:Version}),
          ${misc:Depends}
 Section: devel
