@@ -7,7 +7,7 @@ Uploaders: Steve Langasek <vorlon@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
            Andrew Bartlett <abartlet+debian@catalyst.net.nz>
 Homepage: http://www.samba.org
-Standards-Version: 4.4.0
+Standards-Version: 4.4.1
 Build-Depends: bison,
                debhelper-compat (= 12),
                dh-exec,
@@ -46,8 +46,6 @@ Build-Depends: bison,
                libtasn1-bin,
                libtdb-dev (>= 1.4.2~),
                libtevent-dev (>= 0.10.0~),
-               libtracker-miner-2.0-dev,
-               libtracker-sparql-2.0-dev,
                perl,
                pkg-config,
                po-debconf,
@@ -63,6 +61,8 @@ Build-Depends: bison,
                xfslibs-dev [linux-any],
                xsltproc,
                zlib1g-dev (>= 1:1.2.3)
+Build-Conflicts: libtracker-miner-2.0-dev,
+                 libtracker-sparql-2.0-dev
 Rules-Requires-Root: binary-targets
 Vcs-Browser: https://salsa.debian.org/samba-team/samba
 Vcs-Git: https://salsa.debian.org/samba-team/samba.git

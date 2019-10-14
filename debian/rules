@@ -48,6 +48,7 @@ conf_args = \
 		--with-syslog \
 		--with-utmp \
 		--with-winbind \
+		--with-quota \
 		--with-shared-modules=idmap_rid,idmap_ad,idmap_adex,idmap_hash,idmap_ldap,idmap_tdb2,vfs_dfs_samba4,auth_samba4,vfs_nfs4acl_xattr \
 		--with-automount \
 		--with-ldap \
@@ -69,8 +70,7 @@ conf_args = \
 		--with-cluster-support \
 		--with-socketpath=/run/ctdb/ctdbd.socket \
 		--with-logdir=/var/log/ctdb \
-		--enable-etcd-reclock \
-		--enable-spotlight
+		--enable-etcd-reclock
 
 ifneq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32, $(DEB_HOST_ARCH)))
         conf_args += \
