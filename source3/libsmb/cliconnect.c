@@ -229,59 +229,17 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 	const char *user_account = NULL;
 	const char *user_domain = NULL;
 	const char *pass = NULL;
+	char *canon_principal = NULL;
+	char *canon_realm = NULL;
 	const char *target_hostname = NULL;
-	const DATA_BLOB *server_blob = NULL;
-	bool got_kerberos_mechanism = false;
 	enum credentials_use_kerberos krb5_state;
 	bool try_kerberos = false;
 	bool need_kinit = false;
 	bool auth_requested = true;
 	int ret;
+	bool ok;
 
 	target_hostname = smbXcli_conn_remote_name(cli->conn);
-	server_blob = smbXcli_conn_server_gss_blob(cli->conn);
-
-	/* the server might not even do spnego */
-	if (server_blob != NULL && server_blob->length != 0) {
-		char *OIDs[ASN1_MAX_OIDS] = { NULL, };
-		size_t i;
-		bool ok;
-
-		/*
-		 * The server sent us the first part of the SPNEGO exchange in the
-		 * negprot reply. It is WRONG to depend on the principal sent in the
-		 * negprot reply, but right now we do it. If we don't receive one,
-		 * we try to best guess, then fall back to NTLM.
-		 */
-		ok = spnego_parse_negTokenInit(frame,
-					       *server_blob,
-					       OIDs,
-					       NULL,
-					       NULL);
-		if (!ok) {
-			TALLOC_FREE(frame);
-			return NT_STATUS_INVALID_PARAMETER;
-		}
-		if (OIDs[0] == NULL) {
-			TALLOC_FREE(frame);
-			return NT_STATUS_INVALID_PARAMETER;
-		}
-
-		/* make sure the server understands kerberos */
-		for (i = 0; OIDs[i] != NULL; i++) {
-			if (i == 0) {
-				DEBUG(3,("got OID=%s\n", OIDs[i]));
-			} else {
-				DEBUGADD(3,("got OID=%s\n", OIDs[i]));
-			}
-
-			if (strcmp(OIDs[i], OID_KERBEROS5_OLD) == 0 ||
-			    strcmp(OIDs[i], OID_KERBEROS5) == 0) {
-				got_kerberos_mechanism = true;
-				break;
-			}
-		}
-	}
 
 	auth_requested = cli_credentials_authentication_requested(creds);
 	if (auth_requested) {
@@ -331,12 +289,6 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 		need_kinit = false;
 	} else if (krb5_state == CRED_MUST_USE_KERBEROS) {
 		need_kinit = try_kerberos;
-	} else if (!got_kerberos_mechanism) {
-		/*
-		 * Most likely the server doesn't support
-		 * Kerberos, don't waste time doing a kinit
-		 */
-		need_kinit = false;
 	} else {
 		need_kinit = try_kerberos;
 	}
@@ -354,9 +306,19 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 	 * only if required!
 	 */
 	setenv(KRB5_ENV_CCNAME, "MEMORY:cliconnect", 1);
-	ret = kerberos_kinit_password(user_principal, pass,
-				0 /* no time correction for now */,
-				NULL);
+	ret = kerberos_kinit_password_ext(user_principal,
+					  pass,
+					  0,
+					  0,
+					  0,
+					  NULL,
+					  false,
+					  false,
+					  0,
+					  frame,
+					  &canon_principal,
+					  &canon_realm,
+					  NULL);
 	if (ret != 0) {
 		int dbglvl = DBGLVL_NOTICE;
 
@@ -375,11 +337,30 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
 		/*
 		 * Ignore the error and hope that NTLM will work
 		 */
+		TALLOC_FREE(frame);
+		return NT_STATUS_OK;
 	}
 
-	DBG_DEBUG("Successfully authenticated as %s to access %s using "
+	ok = cli_credentials_set_principal(creds,
+					   canon_principal,
+					   CRED_SPECIFIED);
+	if (!ok) {
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	ok = cli_credentials_set_realm(creds,
+				       canon_realm,
+				       CRED_SPECIFIED);
+	if (!ok) {
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	DBG_DEBUG("Successfully authenticated as %s (%s) to access %s using "
 		  "Kerberos\n",
 		  user_principal,
+		  canon_principal,
 		  target_hostname);
 
 	TALLOC_FREE(frame);

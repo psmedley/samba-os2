@@ -701,6 +701,11 @@ krb5_error_code smb_krb5_parse_name(krb5_context context,
 	}
 
 	ret = krb5_parse_name(context, utf8_name, principal);
+	if (ret == KRB5_PARSE_MALFORMED) {
+		ret = krb5_parse_name_flags(context, utf8_name,
+					    KRB5_PRINCIPAL_PARSE_ENTERPRISE,
+					    principal);
+	}
 	TALLOC_FREE(frame);
 	return ret;
 }
@@ -1997,26 +2002,23 @@ krb5_error_code smb_krb5_kinit_keyblock_ccache(krb5_context ctx,
 					    krb_options);
 #elif defined(HAVE_KRB5_GET_INIT_CREDS_KEYTAB)
 {
-#define SMB_CREDS_KEYTAB "MEMORY:tmp_smb_creds_XXXXXX"
-	char tmp_name[sizeof(SMB_CREDS_KEYTAB)];
+#define SMB_CREDS_KEYTAB "MEMORY:tmp_kinit_keyblock_ccache"
+	char tmp_name[64] = {0};
 	krb5_keytab_entry entry;
 	krb5_keytab keytab;
-	int tmpfd;
-	mode_t mask;
+	int rc;
 
 	memset(&entry, 0, sizeof(entry));
 	entry.principal = principal;
 	*(KRB5_KT_KEY(&entry)) = *keyblock;
 
-	memcpy(tmp_name, SMB_CREDS_KEYTAB, sizeof(SMB_CREDS_KEYTAB));
-	mask = umask(S_IRWXO | S_IRWXG);
-	tmpfd = mkstemp(tmp_name);
-	umask(mask);
-	if (tmpfd == -1) {
-		DBG_ERR("Failed to mkstemp %s\n", tmp_name);
+	rc = snprintf(tmp_name, sizeof(tmp_name),
+		      "%s-%p",
+		      SMB_CREDS_KEYTAB,
+		      &my_creds);
+	if (rc < 0) {
 		return KRB5_KT_BADNAME;
 	}
-	close(tmpfd);
 	code = krb5_kt_resolve(ctx, tmp_name, &keytab);
 	if (code) {
 		return code;
@@ -2114,14 +2116,12 @@ krb5_error_code smb_krb5_kinit_password_ccache(krb5_context ctx,
 		return code;
 	}
 
-#ifndef SAMBA4_USES_HEIMDAL /* MIT */
 	/*
 	 * We need to store the principal as returned from the KDC to the
 	 * credentials cache. If we don't do that the KRB5 library is not
 	 * able to find the tickets it is looking for
 	 */
 	principal = my_creds.client;
-#endif
 	code = krb5_cc_initialize(ctx, cc, principal);
 	if (code) {
 		goto done;

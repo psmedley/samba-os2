@@ -110,7 +110,10 @@ static ADS_STATUS ads_cached_connection_connect(ADS_STRUCT **adsp,
 	/* we don't want this to affect the users ccache */
 	setenv("KRB5CCNAME", WINBIND_CCACHE_NAME, 1);
 
-	ads = ads_init(target_realm, target_dom_name, ldap_server);
+	ads = ads_init(target_realm,
+		       target_dom_name,
+		       ldap_server,
+		       ADS_SASL_SEAL);
 	if (!ads) {
 		DEBUG(1,("ads_init for domain %s failed\n", target_dom_name));
 		return ADS_ERROR(LDAP_NO_MEMORY);
@@ -1457,7 +1460,7 @@ static NTSTATUS trusted_domains(struct winbindd_domain *domain,
 		 */
 
 		if ((trust->trust_attributes
-		     == LSA_TRUST_ATTRIBUTE_QUARANTINED_DOMAIN) &&
+		     & LSA_TRUST_ATTRIBUTE_QUARANTINED_DOMAIN) &&
 		    !domain->primary )
 		{
 			DEBUG(10,("trusted_domains: Skipping external trusted "

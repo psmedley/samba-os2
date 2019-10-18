@@ -31,6 +31,16 @@ if [ -x "$BINDIR/ldbsearch" ]; then
 	ldbsearch="$BINDIR/ldbsearch"
 fi
 
+ldbadd="ldbadd"
+if [ -x "$BINDIR/ldbadd" ]; then
+	ldbadd="$BINDIR/ldbadd"
+fi
+
+ldbdel="ldbdel"
+if [ -x "$BINDIR/ldbdel" ]; then
+	ldbdel="$BINDIR/ldbdel"
+fi
+
 # Load test functions
 . `dirname $0`/subunit.sh
 
@@ -141,10 +151,10 @@ testit "test spn service doensn't exist in AD but is present in keytab file afte
 # SPN parser is very basic but does detect some illegal combination
 
 windows_spn="$spn_service/$spn_host:"
-testit_expect_failure "test (dedicated keytab) fail to parse windows spn with missing port" $VALGRIND $net_tool ads keytab add $windows_spn -U$DC_USERNAME%$DC_PASSWORD --option="kerberosmethod=dedicatedkeytab" --option="dedicatedkeytabfile=$dedicated_keytab_file" || failed=`expr $failed + 1
+testit_expect_failure "test (dedicated keytab) fail to parse windows spn with missing port" $VALGRIND $net_tool ads keytab add $windows_spn -U$DC_USERNAME%$DC_PASSWORD --option="kerberosmethod=dedicatedkeytab" --option="dedicatedkeytabfile=$dedicated_keytab_file" || failed=`expr $failed + 1`
 
 windows_spn="$spn_service/$spn_host/"
-testit_expect_failure "test (dedicated keytab) fail to parse windows spn with missing servicename" $VALGRIND $net_tool ads keytab add $windows_spn -U$DC_USERNAME%$DC_PASSWORD --option="kerberosmethod=dedicatedkeytab" --option="dedicatedkeytabfile=$dedicated_keytab_file" || failed=`expr $failed + 1
+testit_expect_failure "test (dedicated keytab) fail to parse windows spn with missing servicename" $VALGRIND $net_tool ads keytab add $windows_spn -U$DC_USERNAME%$DC_PASSWORD --option="kerberosmethod=dedicatedkeytab" --option="dedicatedkeytabfile=$dedicated_keytab_file" || failed=`expr $failed + 1`
 
 testit "changetrustpw (dedicated keytab)" $VALGRIND $net_tool ads changetrustpw || failed=`expr $failed + 1`
 
@@ -188,8 +198,9 @@ testit "testjoin user+password" $VALGRIND $net_tool ads testjoin -U$DC_USERNAME%
 
 testit "leave+keep_account" $VALGRIND $net_tool ads leave -U$DC_USERNAME%$DC_PASSWORD --keep-account || failed=`expr $failed + 1`
 
-computers_ldb_ou="CN=Computers,DC=addom,DC=samba,DC=example,DC=com"
-testit "ldb check for existence of machine account" $ldbsearch -U$DC_USERNAME%$DC_PASSWORD -H ldap://$SERVER.$REALM -s base -b "cn=$HOSTNAME,$computers_ldb_ou" || failed=`expr $failed + 1`
+base_dn="DC=addom,DC=samba,DC=example,DC=com"
+computers_dn="CN=Computers,$base_dn"
+testit "ldb check for existence of machine account" $ldbsearch -U$DC_USERNAME%$DC_PASSWORD -H ldap://$SERVER.$REALM -s base -b "cn=$HOSTNAME,$computers_dn" || failed=`expr $failed + 1`
 
 testit "join" $VALGRIND $net_tool ads join -U$DC_USERNAME%$DC_PASSWORD || failed=`expr $failed + 1`
 
@@ -197,6 +208,23 @@ testit "testjoin" $VALGRIND $net_tool ads testjoin || failed=`expr $failed + 1`
 
 ##Goodbye...
 testit "leave" $VALGRIND $net_tool ads leave -U$DC_USERNAME%$DC_PASSWORD || failed=`expr $failed + 1`
+
+#
+# Test createcomputer option of 'net ads join'
+#
+testit "Create OU=Servers,$base_dn" $VALGRIND $ldbadd -U$DC_USERNAME%$DC_PASSWORD -H ldap://$SERVER <<EOF
+dn: OU=Servers,$base_dn
+objectClass: organizationalUnit
+EOF
+
+testit "join+createcomputer" $VALGRIND $net_tool ads join -U$DC_USERNAME%$DC_PASSWORD createcomputer=Servers || failed=`expr $failed + 1`
+
+testit "ldb check for existence of machine account in OU=Servers" $ldbsearch -U$DC_USERNAME%$DC_PASSWORD -H ldap://$SERVER.$REALM -s base -b "cn=$HOSTNAME,OU=Servers,$base_dn" || failed=`expr $failed + 1`
+
+## Goodbye...
+testit "leave+createcomputer" $VALGRIND $net_tool ads leave -U$DC_USERNAME%$DC_PASSWORD || failed=`expr $failed + 1`
+
+testit "Remove OU=Servers" $VALGRIND $ldbdel -U$DC_USERNAME%$DC_PASSWORD -H ldap://$SERVER "OU=Servers,$base_dn"
 
 rm -rf $BASEDIR/$WORKDIR
 

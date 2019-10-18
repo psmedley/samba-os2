@@ -1,3 +1,9 @@
+samba (2:4.11.1+dfsg-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Mathieu Parent <sathieu@debian.org>  Fri, 18 Oct 2019 19:00:46 +0200
+
 samba (2:4.11.0+dfsg-11) unstable; urgency=medium
 
   * Stop building with spotlight support which pulls glib (Closes: #941654)

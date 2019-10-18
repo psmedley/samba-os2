@@ -213,27 +213,156 @@ planpythontestsuite("none", "samba.tests.tdb_util")
 planpythontestsuite("none", "samba.tests.samdb_api")
 
 if with_pam:
-    plantestsuite("samba.tests.pam_winbind(local)", "ad_member",
-                  [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
-                   valgrindify(python), pam_wrapper_so_path,
-                   "$SERVER", "$USERNAME", "$PASSWORD"])
-    plantestsuite("samba.tests.pam_winbind(domain)", "ad_member",
-                  [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
-                   valgrindify(python), pam_wrapper_so_path,
-                   "$DOMAIN", "$DC_USERNAME", "$DC_PASSWORD"])
+    env = "ad_member"
+    options = [
+        {
+            "description": "krb5",
+            "pam_options": "krb5_auth krb5_ccache_type=FILE",
+        },
+        {
+            "description": "default",
+            "pam_options": "",
+        },
+    ]
+    for o in options:
+        description = o["description"]
+        pam_options = "'%s'" % o["pam_options"]
 
-    for pam_options in ["''", "use_authtok", "try_authtok"]:
-        plantestsuite("samba.tests.pam_winbind_chauthtok with options %s" % pam_options, "ad_member",
-                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind_chauthtok.sh"),
-                       valgrindify(python), pam_wrapper_so_path, pam_set_items_so_path,
-                       "$DOMAIN", "TestPamOptionsUser", "oldp@ssword0", "newp@ssword0",
-                       pam_options, 'yes',
-                       "$DC_SERVER", "$DC_USERNAME", "$DC_PASSWORD"])
+        plantestsuite("samba.tests.pam_winbind(local+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$SERVER", "$USERNAME", "$PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(domain1+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$DOMAIN", "$DC_USERNAME", "$DC_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(domain2+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$REALM", "$DC_USERNAME", "$DC_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(domain3+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "''", "${DC_USERNAME}@${DOMAIN}", "$DC_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(domain4+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "''", "${DC_USERNAME}@${REALM}", "$DC_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(domain5+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$REALM", "${DC_USERNAME}@${DOMAIN}", "$DC_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(domain6+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$DOMAIN", "${DC_USERNAME}@${REALM}", "$DC_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_f_both1+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$TRUST_F_BOTH_DOMAIN",
+                       "$TRUST_F_BOTH_USERNAME",
+                       "$TRUST_F_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_f_both2+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$TRUST_F_BOTH_REALM",
+                       "$TRUST_F_BOTH_USERNAME",
+                       "$TRUST_F_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_f_both3+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "''",
+                       "${TRUST_F_BOTH_USERNAME}@${TRUST_F_BOTH_DOMAIN}",
+                       "$TRUST_F_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_f_both4+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "''",
+                       "${TRUST_F_BOTH_USERNAME}@${TRUST_F_BOTH_REALM}",
+                       "$TRUST_F_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_f_both5+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "${TRUST_F_BOTH_REALM}",
+                       "${TRUST_F_BOTH_USERNAME}@${TRUST_F_BOTH_DOMAIN}",
+                       "$TRUST_F_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_f_both6+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "${TRUST_F_BOTH_DOMAIN}",
+                       "${TRUST_F_BOTH_USERNAME}@${TRUST_F_BOTH_REALM}",
+                       "$TRUST_F_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_e_both1+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$TRUST_E_BOTH_DOMAIN",
+                       "$TRUST_E_BOTH_USERNAME",
+                       "$TRUST_E_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_e_both2+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$TRUST_E_BOTH_REALM",
+                       "$TRUST_E_BOTH_USERNAME",
+                       "$TRUST_E_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_e_both3+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "''",
+                       "${TRUST_E_BOTH_USERNAME}@${TRUST_E_BOTH_DOMAIN}",
+                       "$TRUST_E_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_e_both4+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "''",
+                       "${TRUST_E_BOTH_USERNAME}@${TRUST_E_BOTH_REALM}",
+                       "$TRUST_E_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_e_both5+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "${TRUST_E_BOTH_REALM}",
+                       "${TRUST_E_BOTH_USERNAME}@${TRUST_E_BOTH_DOMAIN}",
+                       "$TRUST_E_BOTH_PASSWORD",
+                       pam_options])
+        plantestsuite("samba.tests.pam_winbind(trust_e_both6+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "${TRUST_E_BOTH_DOMAIN}",
+                       "${TRUST_E_BOTH_USERNAME}@${TRUST_E_BOTH_REALM}",
+                       "$TRUST_E_BOTH_PASSWORD",
+                       pam_options])
 
-    plantestsuite("samba.tests.pam_winbind_warn_pwd_expire(domain)", "ad_member",
-                  [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind_warn_pwd_expire.sh"),
-                   valgrindify(python), pam_wrapper_so_path,
-                   "$DOMAIN", "alice", "Secret007"])
+        for authtok_options in ["", "use_authtok", "try_authtok"]:
+            _pam_options = "'%s %s'" % (o["pam_options"], authtok_options)
+            _description = "%s %s" % (description, authtok_options)
+            plantestsuite("samba.tests.pam_winbind_chauthtok(domain+%s)" % _description, env,
+                          [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind_chauthtok.sh"),
+                           valgrindify(python), pam_wrapper_so_path, pam_set_items_so_path,
+                           "$DOMAIN", "TestPamOptionsUser", "oldp@ssword0", "newp@ssword0",
+                           _pam_options, 'yes',
+                           "$DC_SERVER", "$DC_USERNAME", "$DC_PASSWORD"])
+
+        plantestsuite("samba.tests.pam_winbind_warn_pwd_expire(domain+%s)" % description, env,
+                      [os.path.join(srcdir(), "python/samba/tests/test_pam_winbind_warn_pwd_expire.sh"),
+                       valgrindify(python), pam_wrapper_so_path,
+                       "$DOMAIN", "alice", "Secret007",
+                       pam_options])
 
 
 plantestsuite("samba.unittests.krb5samba", "none",
@@ -261,6 +390,8 @@ plantestsuite("samba.unittests.byteorder", "none",
               [os.path.join(bindir(), "default/lib/util/test_byteorder")])
 plantestsuite("samba.unittests.ntlm_check", "none",
               [os.path.join(bindir(), "default/libcli/auth/test_ntlm_check")])
+plantestsuite("samba.unittests.schannel", "none",
+              [os.path.join(bindir(), "default/libcli/auth/test_schannel")])
 plantestsuite("samba.unittests.test_registry_regfio", "none",
               [os.path.join(bindir(), "default/source3/test_registry_regfio")])
 plantestsuite("samba.unittests.test_oLschema2ldif", "none",

@@ -181,7 +181,7 @@ sub check_env($$)
 
 	nt4_member          => ["nt4_dc"],
 
-	ad_member           => ["ad_dc"],
+	ad_member           => ["ad_dc", "fl2008r2dc", "fl2003dc"],
 	ad_member_rfc2307   => ["ad_dc_ntvfs"],
 	ad_member_idmap_rid => ["ad_dc"],
 	ad_member_idmap_ad  => ["fl2008r2dc"],
@@ -369,7 +369,7 @@ sub setup_nt4_member
 
 sub setup_ad_member
 {
-	my ($self, $prefix, $dcvars) = @_;
+	my ($self, $prefix, $dcvars, $trustvars_f, $trustvars_e) = @_;
 
 	my $prefix_abs = abs_path($prefix);
 	my @dirs = ();
@@ -416,6 +416,8 @@ sub setup_ad_member
 	template homedir = /home/%D/%G/%U
 	auth event notification = true
 	password server = $dcvars->{SERVER}
+	winbind scan trusted domains = no
+	winbind use krb5 enterprise principals = yes
 
 [sub_dug]
 	path = $share_dir/D_%D/U_%U/G_%G
@@ -492,6 +494,26 @@ sub setup_ad_member
 	$ret->{DC_NETBIOSNAME} = $dcvars->{NETBIOSNAME};
 	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
 	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
+
+	# forest trust
+	$ret->{TRUST_F_BOTH_SERVER} = $trustvars_f->{SERVER};
+	$ret->{TRUST_F_BOTH_SERVER_IP} = $trustvars_f->{SERVER_IP};
+	$ret->{TRUST_F_BOTH_SERVER_IPV6} = $trustvars_f->{SERVER_IPV6};
+	$ret->{TRUST_F_BOTH_NETBIOSNAME} = $trustvars_f->{NETBIOSNAME};
+	$ret->{TRUST_F_BOTH_USERNAME} = $trustvars_f->{USERNAME};
+	$ret->{TRUST_F_BOTH_PASSWORD} = $trustvars_f->{PASSWORD};
+	$ret->{TRUST_F_BOTH_DOMAIN} = $trustvars_f->{DOMAIN};
+	$ret->{TRUST_F_BOTH_REALM} = $trustvars_f->{REALM};
+
+	# external trust
+	$ret->{TRUST_E_BOTH_SERVER} = $trustvars_e->{SERVER};
+	$ret->{TRUST_E_BOTH_SERVER_IP} = $trustvars_e->{SERVER_IP};
+	$ret->{TRUST_E_BOTH_SERVER_IPV6} = $trustvars_e->{SERVER_IPV6};
+	$ret->{TRUST_E_BOTH_NETBIOSNAME} = $trustvars_e->{NETBIOSNAME};
+	$ret->{TRUST_E_BOTH_USERNAME} = $trustvars_e->{USERNAME};
+	$ret->{TRUST_E_BOTH_PASSWORD} = $trustvars_e->{PASSWORD};
+	$ret->{TRUST_E_BOTH_DOMAIN} = $trustvars_e->{DOMAIN};
+	$ret->{TRUST_E_BOTH_REALM} = $trustvars_e->{REALM};
 
 	return $ret;
 }
@@ -1586,6 +1608,7 @@ sub provision($$$$$$$$$)
 	my $dfqconffile="$libdir/dfq.conf";
 	my $errorinjectconf="$libdir/error_inject.conf";
 	my $delayinjectconf="$libdir/delay_inject.conf";
+	my $globalinjectconf="$libdir/global_inject.conf";
 
 	my $nss_wrapper_pl = "$ENV{PERL} $self->{srcdir}/third_party/nss_wrapper/nss_wrapper.pl";
 	my $nss_wrapper_passwd = "$privatedir/passwd";
@@ -1773,6 +1796,8 @@ sub provision($$$$$$$$$)
 	#this does not mean that we use non-secure test env,
 	#it just means we ALLOW one to be configured.
 	allow insecure wide links = yes
+
+	include = $globalinjectconf
 
 	# Begin extra options
 	$extra_options
@@ -2308,6 +2333,12 @@ sub provision($$$$$$$$$)
 		return undef;
 	}
 	close(DFQCONF);
+
+	unless (open(DELAYCONF, ">$globalinjectconf")) {
+		warn("Unable to open $globalinjectconf");
+		return undef;
+	}
+	close(DELAYCONF);
 
 	##
 	## create a test account

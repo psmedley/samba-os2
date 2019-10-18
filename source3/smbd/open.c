@@ -3708,7 +3708,16 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 		fsp->initial_delete_on_close = True;
 	}
 
-	if (info == FILE_WAS_CREATED) {
+	/*
+	 * If we created a file and it's not a stream, this is the point where
+	 * we set the itime (aka invented time) that get's stored in the DOS
+	 * attribute xattr. The value is going to be either what the filesystem
+	 * provided or a copy of the creation date.
+	 *
+	 * Either way, we turn the itime into a File-ID, unless the filesystem
+	 * provided one (unlikely).
+	 */
+	if (info == FILE_WAS_CREATED && !is_named_stream(smb_fname)) {
 		smb_fname->st.st_ex_iflags &= ~ST_EX_IFLAG_CALCULATED_ITIME;
 
 		if (lp_store_dos_attributes(SNUM(conn)) &&
@@ -3725,6 +3734,7 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 		/* Overwritten files should be initially set as archive */
 		if ((info == FILE_WAS_OVERWRITTEN && lp_map_archive(SNUM(conn))) ||
 		    lp_store_dos_attributes(SNUM(conn))) {
+			(void)dos_mode(conn, smb_fname);
 			if (!posix_open) {
 				if (file_set_dosmode(conn, smb_fname,
 					    new_dos_attributes | FILE_ATTRIBUTE_ARCHIVE,
