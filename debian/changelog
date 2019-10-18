@@ -1,3 +1,14 @@
+samba (2:4.11.1+dfsg-2) unstable; urgency=high
+
+  * New upstream security release
+    - CVE-2019-10218: Malicious servers can cause Samba client code to return
+      filenames containing path separators to calling code.
+    - CVE-2019-14833: When the password contains multi-byte (non-ASCII)
+      characters, the check password script does not receive the full password
+      string.
+
+ -- Mathieu Parent <sathieu@debian.org>  Fri, 18 Oct 2019 20:26:45 +0200
+
 samba (2:4.11.1+dfsg-1) unstable; urgency=medium
 
   * New upstream release

@@ -11,3 +11,5 @@ fix-nfs-service-name-to-nfs-kernel-server.patch
 build-Remove-tests-for-getdents-and-getdirentries.patch
 wscript-remove-all-checks-for-_FUNC-and-__FUNC.patch
 wscript-split-function-check-to-one-per-line-and-sor.patch
+CVE-2019-10218.master.patch
+CVE-2019-14833-4.11-01.patch
