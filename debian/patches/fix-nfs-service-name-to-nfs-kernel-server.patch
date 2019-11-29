@@ -49,11 +49,29 @@ index 71d8ecf8074..9c698f5ad91 100755
  
  case "$nfs_distro_style" in
  systemd-*)
-@@ -33,6 +33,7 @@ systemd-*)
+@@ -33,6 +33,14 @@
  		;;
  	*-debian)
  		nfs_rquotad_service="quotarpc"
++		nfs_lock_service=""
++		nfs_lock_service=""
++		nfs_mountd_service=""
++		nfs_status_service=""
++		nfs_rquotad_service=""
++		nfs_service="nfs-kernel-server"
 +		nfs_config="/etc/default/nfs-kernel-server"
++		nfs_rquotad_config="/etc/default/quota"
  		;;
  	*)
  		echo "Internal error"
+--- a/ctdb/config/statd-callout
++++ b/ctdb/config/statd-callout
+@@ -21,7 +21,7 @@
+ }
+ 
+ # Try different variables to find config file for NFS_HOSTNAME
+-load_system_config "nfs" "nfs-common"
++load_system_config "nfs-kernel-server"
+ 
+ [ -n "$NFS_HOSTNAME" ] || \
+     die "NFS_HOSTNAME is not configured. statd-callout failed"
