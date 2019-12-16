@@ -1,3 +1,18 @@
+samba (2:4.11.3+dfsg-1) unstable; urgency=high
+
+  * New upstream security release
+    - Drop merged patches for previous security fixes
+    - CVE-2019-14861: An authenticated user can crash the DCE/RPC DNS management
+      server by creating records with matching the zone name.
+    - CVE-2019-14870: The DelegationNotAllowed Kerberos feature restriction was
+      not being applied when processing protocol transition requests (S4U2Self),
+      in the AD DC KDC.
+  * d/control: drop python3-matplotlib
+  * d/control: Fix stronger-dependency-implies-weaker
+    (samba depends -> recommends python3-dnspython)
+
+ -- Mathieu Parent <sathieu@debian.org>  Mon, 16 Dec 2019 09:47:45 +0100
+
 samba (2:4.11.1+dfsg-3) unstable; urgency=medium
 
   * Add some python dependencies:

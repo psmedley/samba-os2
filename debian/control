@@ -86,9 +86,7 @@ Depends: adduser,
          ${shlibs:Depends}
 Recommends: attr,
             logrotate,
-            python3-matplotlib,
             python3-markdown,
-            python3-dnspython,
             samba-dsdb-modules,
             samba-vfs-modules
 Suggests: bind9 (>= 1:9.5.1),
@@ -162,7 +160,6 @@ Depends: python3,
          ${shlibs:Depends}
 Recommends: samba-dsdb-modules
 Suggests: heimdal-clients,
-          python3-matplotlib,
           python3-markdown,
           python3-dnspython
 Description: Samba common files used by both the server and the client
