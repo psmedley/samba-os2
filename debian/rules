@@ -14,6 +14,12 @@ DEB_HOST_ARCH_OS ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
 DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 DEB_HOST_ARCH_CPU ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_CPU)
 
+# Ubuntu i386 binary compatibility only effort
+UBUNTU_I386 = 0
+ifeq ($(shell dpkg-vendor --is Ubuntu && echo yes) $(DEB_HOST_ARCH), yes i386)
+    UBUNTU_I386 = 1
+endif
+
 LDB_VERSION = $(shell pkg-config --modversion ldb)
 LDB_EPOCH = $(shell dpkg-query -f '$${Version}' -W libldb-dev | sed 's/:.*//')
 LDB_NEXT_VERSION = $(shell python3 -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = str(int(x[-1])+1); print('.'.join(x))")
@@ -72,12 +78,20 @@ conf_args = \
 		--with-logdir=/var/log/ctdb \
 		--enable-etcd-reclock
 
+ifeq ($(UBUNTU_I386), 0)
 ifneq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32, $(DEB_HOST_ARCH)))
-        conf_args += \
-                --enable-ceph-reclock
+	conf_args += \
+		--enable-ceph-reclock
 else
-        conf_args += \
-                --disable-cephfs
+	conf_args += \
+		--disable-cephfs
+endif
+endif
+
+# Ubuntu i386 binary compatibility only effort: Disable ceph support
+ifeq ($(UBUNTU_I386), 1)
+	conf_args += \
+		--disable-cephfs
 endif
 
 ifeq ($(DEB_HOST_ARCH_OS), linux)
@@ -95,8 +109,21 @@ ifeq ($(DEB_HOST_ARCH_CPU), amd64)
 		--accel-aes=intelaesni
 endif
 
+# Ubuntu i386 binary compatibility only effort: Disable some i386 packages
+ifeq ($(UBUNTU_I386), 1)
+	BUILD_PACKAGES += \
+		-Nctdb \
+		-Nlibnss-winbind \
+		-Nlibpam-winbind \
+		-Npython3-samba \
+		-Nsamba \
+		-Nsamba-common-bin \
+		-Nsamba-testsuite \
+		-Nwinbind
+endif
+
 %:
-	dh $* --with python3
+	dh $* --with python3 $(BUILD_PACKAGES)
 
 override_dh_auto_configure:
 	$(WAF_NO_PARALLEL) configure $(conf_args)
@@ -269,12 +296,14 @@ override_dh_shlibdeps:
 	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
 	  dh_shlibdeps -a -Xceph.so -Xsnapper.so -Xctdb_mutex_ceph_rados_helper
 ifneq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32, $(DEB_HOST_ARCH)))
+ifeq ($(UBUNTU_I386), 0)
 	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
 	  dh_shlibdeps -a -- -pvfsceph -dRecommends \
 	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so
 	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
 	  dh_shlibdeps -a -- -prados -dRecommends \
 	    -e debian/ctdb/usr/lib/*/ctdb/ctdb_mutex_ceph_rados_helper
+endif
 endif
 	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
 	  dh_shlibdeps -a -- -pvfssnapper -dRecommends \
