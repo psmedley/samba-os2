@@ -1,3 +1,15 @@
+samba (2:4.11.5+dfsg-1) unstable; urgency=medium
+
+  * New upstream security release
+    - CVE-2019-14902: Replication of ACLs set to inherit down a subtree on AD
+      Directory not automatic.
+    - CVE-2019-14907: Crash after failed character conversion at log level 3 or
+      above.
+    - CVE-2019-19344: Use after free during DNS zone scavenging in Samba AD DC.
+    - Bump build-depends ldb >= 2.0.8
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 28 Jan 2020 07:19:46 +0100
+
 samba (2:4.11.3+dfsg-1) unstable; urgency=high
 
   * New upstream security release
