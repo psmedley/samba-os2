@@ -113,13 +113,9 @@ endif
 ifeq ($(UBUNTU_I386), 1)
 	BUILD_PACKAGES += \
 		-Nctdb \
-		-Nlibnss-winbind \
 		-Nlibpam-winbind \
-		-Npython3-samba \
 		-Nsamba \
-		-Nsamba-common-bin \
-		-Nsamba-testsuite \
-		-Nwinbind
+		-Nsamba-testsuite
 endif
 
 %:
