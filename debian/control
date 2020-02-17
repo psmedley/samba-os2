@@ -1,7 +1,8 @@
 Source: samba
 Section: net
 Priority: optional
-Maintainer: Debian Samba Maintainers <pkg-samba-maint@lists.alioth.debian.org>
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+XSBC-Original-Maintainer: Debian Samba Maintainers <pkg-samba-maint@lists.alioth.debian.org>
 Uploaders: Steve Langasek <vorlon@debian.org>,
            Jelmer Vernooĳ <jelmer@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
