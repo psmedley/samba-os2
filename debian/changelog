@@ -25,6 +25,161 @@ samba (2:4.11.3+dfsg-1) unstable; urgency=high
 
  -- Mathieu Parent <sathieu@debian.org>  Mon, 16 Dec 2019 09:47:45 +0100
 
+samba (2:4.11.1+dfsg-3ubuntu4) focal; urgency=medium
+
+   * Ubuntu i386 binary compatibility effort: (LP: #1861316)
+    - debian/rules:
+        + re-enable the following binary packages generation:
+          - libnss-winbind
+          - samba-common-bin
+          - python3-samba
+          - winbind
+
+ -- Rafael David Tinoco <rafaeldtinoco@ubuntu.com>  Thu, 06 Feb 2020 14:42:38 +0000
+
+samba (2:4.11.1+dfsg-3ubuntu3) focal; urgency=medium
+
+  * No-change rebuild to build with python3.8.
+
+ -- Matthias Klose <doko@ubuntu.com>  Sat, 25 Jan 2020 06:06:11 +0000
+
+samba (2:4.11.1+dfsg-3ubuntu2) focal; urgency=medium
+
+  * Ubuntu i386 binary compatibility effort: (LP: #1858479)
+    - debian/control:
+        + drop ceph support
+    - debian/rules:
+        + drop ceph support
+        + disable the following binary packages generation:
+          - ctdb
+          - libnss-winbind
+          - libpam-winbind
+          - python3-samba
+          - samba
+          - samba-common-bin
+          - samba-testsuite
+          - winbind
+
+ -- Rafael David Tinoco <rafaeldtinoco@ubuntu.com>  Thu, 09 Jan 2020 00:40:31 +0000
+
+samba (2:4.11.1+dfsg-3ubuntu1) focal; urgency=medium
+
+  * Merge with Debian unstable. Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - d/control, d/rules: Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+    - d/p/fix-nfs-service-name-to-nfs-kernel-server.patch:
+      change nfs service name from nfs to nfs-kernel-server
+      (LP #722201)
+      [Adopted the Debian version and added a couple of extra hunks
+      we had]
+    - d/p/ctdb-config-enable-syslog-by-default.patch:
+      enable syslog and systemd journal by default
+  * Dropped:
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+      [In 2:4.9.4+dfsg-2]
+    - Removed patches already applied upstream:
+      + d/p/nsswitch-Add-try_authtok-option-to-pam_winbind.patch
+        [Removed in 2:4.10.7+dfsg-1]
+      + d/p/s3-auth-ignore-create_builtin_guests-failing-without.patch
+        [Removed in 4.9.5+dfsg-1]
+    - d/p/add-so-version-to-private-libraries: refreshed to remove fuzz
+      [Refreshed in 2:4.1.17+dfsg-1]
+    - d/control: Updated build dependencies (already updated in Debian):
+      + tdb >= 1.3.17
+      + talloc >= 2.1.15
+      + tevent >= 0.9.38
+      + ldb >= 1.5.3
+    - d/samba-common.docs: README is now README.md
+      [In 2:4.10.7+dfsg-1]
+    - d/libsmbclient.symbols: update symbols for this version
+    - d/libwbclient0.symbols: update symbols for this version
+    - d/ctdb.install: new binary ctdb_local_daemons
+      [In 2:4.10.7+dfsg-1]
+    - d/samba-dev.install: use globbing for the header files with
+      exceptions for wbclient.h and libsmbclient.h, which belong in
+      other packages.
+      [In 2:4.10.7+dfsg-1]
+    - d/rules: fix globbing used to move the dckeytab python module to the
+      samba package, and add a comment explaining why this is being done.
+      [In 2:4.10.7+dfsg-1]
+    - Switch to python3 (in 2:4.10.7+dfsg-1):
+      + d/rules: calculate the ldb version using python3, and drop the
+        "really" bit since the real 1.5.x series is being used now.
+      + d/rules: make sure python3 is used for the build
+      + d/rules: adjust globbing to remove the python3 version of tevent.so
+      + d/rules: drop PYVERS, unused
+      + d/control: adjust dependencies (build and runtime) for python3
+      + d/python3-samba.install, d/control: new python3-samba package
+        (LP #1440381)
+      + d/control, d/python-samba.install: get rid of python-samba, which is py2
+      + d/python3-samba.lintian-overrides: use the same overrides we had for
+        python-samba, now deleted.
+      + d/samba-dev.install, d/samba-libs.install: update file list
+      + d/t/control, d/t/python-smoke: use python3
+      + d/control: use ${python3:Depends} now instead of the python 2
+        counterpart for samba and samba-common-bin.
+    - d/control: drop suggests for python-gpgme, it's no longer available.
+      [In 2:4.10.7+dfsg-1]
+    - d/gbp.conf, d/watch, r/README.source: updated for 4.10
+      [In 2:4.10.7+dfsg-1]
+    - d/control: update cmocka build-depends to >= 1.1.3
+      [In 2:4.10.7+dfsg-1]
+    - d/samba-libs.install: bump passdb minor to 0.27.2
+      [In 2:4.10.7+dfsg-1]
+    - d/ctdb.install, d/rules: create ctdb run directory into tmpfiles.d
+      to allow pid file to exist (LP #1821775)
+      [In 2:4.10.7+dfsg-1]
+    - Allow proper ctdb initalization (LP #1828799):
+      + d/ctdb.dirs: added /var/lib/ctdb/* directories
+      + d/ctdb.postrm: remove leftovers from:
+        /var/lib/ctdb/{state,persistent,volatile,scripts}
+      [In 2:4.10.7+dfsg-1]
+    - d/rules: installing provided config examples and helper scripts
+    - Examples of NFS HA CTDB config files + helper script:
+      + d/ctdb.example.enable.nfs.sh
+      + d/ctdb.example.nfs-common
+      + d/ctdb.example.nfs-kernel-server
+      + d/ctdb.example.services
+      + d/ctdb.example.sysctl-nfs-static-ports.conf
+      [In 2:4.10.7+dfsg-1]
+    - debian/rules: Make DEB_HOST_ARCH_CPU initialized through
+      dpkg-architecture (Closes: #931138)
+      [In 2:4.10.7+dfsg-1]
+    - d/control: update ldb build-deps to 1.5.5
+      [In 2:4.10.7+dfsg-1]
+    - SECURITY UPDATE: restricted share escape by user (LP #1842533)
+      [fixed upstream in 4.11.0rc2]
+      + debian/patches/CVE-2019-10197-01-v4-10.patch: smbd: separate
+        out impersonation debug info into a new function.
+      + debian/patches/CVE-2019-10197-02-v4-10.patch: smbd: make sure that
+        change_to_user_internal() always resets current_user.done_chdir
+      + debian/patches/CVE-2019-10197-03-v4-10.patch: smbd: make sure we
+        reset current_user.{need,done}_chdir in become_root()
+      + debian/patches/CVE-2019-10197-04-v4-10.patch: selftest: make
+        fsrvp_share its own independent subdirectory
+      + debian/patches/CVE-2019-10197-05-v4-10.patch:
+        test_smbclient_s3.sh: add regression test for the no permission
+        on share root problem
+      + debian/patches/CVE-2019-10197-06-v4-10.patch: smbd: split
+        change_to_user_impersonate() out of change_to_user_internal()
+      + CVE-2019-10197
+  * Added:
+    - d/control: drop python3-matplotlib. It's only used in
+      script/attr_count_read which is not installed with the
+      samba packages.
+
+ -- Andreas Hasenack <andreas@canonical.com>  Fri, 29 Nov 2019 18:00:22 -0300
+
 samba (2:4.11.1+dfsg-3) unstable; urgency=medium
 
   * Add some python dependencies:
@@ -233,6 +388,209 @@ samba (2:4.10.7+dfsg-1) experimental; urgency=medium
 
  -- Mathieu Parent <sathieu@debian.org>  Thu, 29 Aug 2019 14:32:52 +0200
 
+samba (2:4.10.7+dfsg-0ubuntu3) focal; urgency=medium
+
+  * No-change rebuild to build with python3.8.
+
+ -- Matthias Klose <doko@ubuntu.com>  Fri, 18 Oct 2019 18:53:34 +0000
+
+samba (2:4.10.7+dfsg-0ubuntu2) eoan; urgency=medium
+
+  * SECURITY UPDATE: restricted share escape by user (LP: #1842533)
+    - debian/patches/CVE-2019-10197-01-v4-10.patch: smbd: separate
+      out impersonation debug info into a new function.
+    - debian/patches/CVE-2019-10197-02-v4-10.patch: smbd: make sure that
+      change_to_user_internal() always resets current_user.done_chdir
+    - debian/patches/CVE-2019-10197-03-v4-10.patch: smbd: make sure we
+      reset current_user.{need,done}_chdir in become_root()
+    - debian/patches/CVE-2019-10197-04-v4-10.patch: selftest: make
+      fsrvp_share its own independent subdirectory
+    - debian/patches/CVE-2019-10197-05-v4-10.patch:
+      test_smbclient_s3.sh: add regression test for the no permission
+      on share root problem
+    - debian/patches/CVE-2019-10197-06-v4-10.patch: smbd: split
+      change_to_user_impersonate() out of change_to_user_internal()
+    - CVE-2019-10197
+
+ -- Steve Beattie <sbeattie@ubuntu.com>  Fri, 30 Aug 2019 11:07:19 -0700
+
+samba (2:4.10.7+dfsg-0ubuntu1) eoan; urgency=medium
+
+  * New upstream version: 4.10.7
+    - d/p/ctdb-config-depend-on-etc-default-nodes-file.patch: dropped,
+      included upstream in 4.10.7
+
+ -- Andreas Hasenack <andreas@canonical.com>  Thu, 22 Aug 2019 15:03:23 -0300
+
+samba (2:4.10.6+dfsg-0ubuntu1) eoan; urgency=medium
+
+  * New upstream version: 4.10.6
+    - d/p/fix-nfs-service-name-to-nfs-kernel-server.patch: changed to update
+      the Debian config and use it.
+    - d/control: update ldb build-deps to 1.5.5
+  * Dropped:
+    - d/p/CVE-2019-12436.patch: fixed upstream in 4.10.5
+    - d/p/CVE-2019-12435-*.patch: fixed upstream in 4.10.5
+    - d/p/CVE-2018-16860-*.patch: fixed upstream in 4.10.3
+    - d/p/CVE-2019-3880.patch: fixed upstream in 4.10.2
+    - d/p/CVE-2019-3870-*.patch: fixed upstream in 4.10.2
+    - d/p/dlz_bind_zone_update.patch: fixed upstream in 4.10.1
+    - d/p/ctdb-scripts-fix-tcp_tw_recycle-existence-check.patch: fixed
+      upstream in 4.10.5
+
+ -- Andreas Hasenack <andreas@canonical.com>  Wed, 07 Aug 2019 17:20:48 -0300
+
+samba (2:4.10.0+dfsg-0ubuntu6) eoan; urgency=medium
+
+  * d/p/fix-nfs-service-name-to-nfs-kernel-server.patch:
+    change service name from nfs to nfs-kernel-server in
+    legacy script 06.nfs.script also (LP: #722201)
+
+ -- Rafael David Tinoco <rafaeldtinoco@ubuntu.com>  Thu, 11 Jul 2019 21:44:49 +0000
+
+samba (2:4.10.0+dfsg-0ubuntu5) eoan; urgency=medium
+
+  * debian/rules: Make DEB_HOST_ARCH_CPU initialized through
+    dpkg-architecture (Closes: #931138)
+  * d/p/ctdb-scripts-fix-tcp_tw_recycle-existence-check.patch:
+    fix tcp_tw_recycle existence check. (LP: #722201)
+  * d/p/fix-nfs-service-name-to-nfs-kernel-server.patch:
+    change nfs service name from nfs to nfs-kernel-server
+    (LP: #722201)
+  * d/ctdb.install, d/rules: create ctdb run directory into tmpfiles.d
+    to allow pid file to exist (LP: #1821775)
+  * Allow proper ctdb initialization (LP: #1828799):
+    - d/ctdb.dirs: added /var/lib/ctdb/* directories
+    - d/ctdb.postrm: remove leftovers from:
+      /var/lib/ctdb/{state,persistent,volatile,scripts}
+  * d/rules: installing provided config examples and helper scripts
+  * Examples of NFS HA CTDB config files + helper script:
+    - d/ctdb.example.enable.nfs.sh
+    - d/ctdb.example.nfs-common
+    - d/ctdb.example.nfs-kernel-server
+    - d/ctdb.example.services
+    - d/ctdb.example.sysctl-nfs-static-ports.conf
+  * d/p/ctdb-config-depend-on-etc-default-nodes-file.patch:
+    do not try to start daemon if /etc/ctdb/nodes does not exist
+  * d/p/ctdb-config-enable-syslog-by-default.patch:
+    enable syslog and systemd journal by default
+
+ -- Rafael David Tinoco <rafaeldtinoco@ubuntu.com>  Fri, 28 Jun 2019 00:14:27 +0000
+
+samba (2:4.10.0+dfsg-0ubuntu4) eoan; urgency=medium
+
+  * SECURITY UPDATE: zone operations can crash rpc server
+    - debian/patches/CVE-2019-12435-1.patch: avoid NULL deference if zone
+      not found in DnssrvOperation in
+      python/samba/tests/dcerpc/dnsserver.py,
+      source4/rpc_server/dnsserver/dcerpc_dnsserver.c.
+    - debian/patches/CVE-2019-12435-2.patch: avoid NULL deference if zone
+      not found in DnssrvOperation2 in
+      python/samba/tests/dcerpc/dnsserver.py,
+      source4/rpc_server/dnsserver/dcerpc_dnsserver.c.
+    - CVE-2019-12435
+  * SECURITY UPDATE: paged_searches crash on LDAP and homes access
+    - debian/patches/CVE-2019-12436.patch: ignore successful results
+      without messages in source4/dsdb/samdb/ldb_modules/paged_results.c,
+      source4/dsdb/tests/python/vlv.py.
+    - CVE-2019-12436
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Wed, 12 Jun 2019 10:08:44 -0400
+
+samba (2:4.10.0+dfsg-0ubuntu3) eoan; urgency=medium
+
+  * SECURITY UPDATE: Samba AD DC S4U2Self/S4U2Proxy unkeyed checksum
+    - debian/patches/CVE-2018-16860-1.patch: add test for S4U2Self with
+      unkeyed checksum in selftest/knownfail.d/mitm-s4u2self,
+      source4/torture/krb5/kdc-canon-heimdal.c.
+    - debian/patches/CVE-2018-16860-2.patch: reject PA-S4U2Self with
+      unkeyed checksum in selftest/knownfail.d/mitm-s4u2self,
+      source4/heimdal/kdc/krb5tgs.c.
+    - CVE-2018-16860
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Tue, 14 May 2019 09:10:24 -0400
+
+samba (2:4.10.0+dfsg-0ubuntu2) disco; urgency=medium
+
+  * SECURITY UPDATE: world writable files in Samba AD DC private/ dir
+    - debian/patches/CVE-2019-3870-1.patch: extend smbd tests to check for
+      umask being overwritten in python/samba/tests/ntacls_backup.py,
+      python/samba/tests/posixacl.py, python/samba/tests/smbd_base.py,
+      selftest/knownfail.d/umask-leak.
+    - debian/patches/CVE-2019-3870-2.patch: add test to check
+      file-permissions are correct after provision in
+      selftest/knownfail.d/provision_fileperms, source4/selftest/tests.py,
+      source4/setup/tests/provision_fileperms.sh.
+    - debian/patches/CVE-2019-3870-3.patch: include tests to show the
+      outside umask has no impact in python/samba/tests/ntacls_backup.py,
+      python/samba/tests/smbd_base.py, selftest/knownfail.d/pymkdir-umask.
+    - debian/patches/CVE-2019-3870-4.patch: move umask manipuations as
+      close as possible to users in source3/smbd/pysmbd.c,
+      selftest/knownfail.d/provision_fileperms,
+      selftest/knownfail.d/umask-leak.
+    - debian/patches/CVE-2019-3870-5.patch: ensure a zero umask is set for
+      smbd.mkdir() in selftest/knownfail.d/pymkdir-umask,
+      source3/smbd/pysmbd.c.
+    - CVE-2019-3870
+  * SECURITY UPDATE: save registry file outside share as unprivileged user
+    - debian/patches/CVE-2019-3880.patch: remove implementations of
+      SaveKey/RestoreKey in source3/rpc_server/winreg/srv_winreg_nt.c.
+    - CVE-2019-3880
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Mon, 08 Apr 2019 10:32:30 -0400
+
+samba (2:4.10.0+dfsg-0ubuntu1) disco; urgency=medium
+
+  * New upstream version: 4.10.0
+    - d/gbp.conf, d/watch, r/README.source: updated for 4.10
+    - d/control: update cmocka build-depends to >= 1.1.3
+    - d/samba-libs.install: bump passdb minor to 0.27.2
+  * d/p/dlz_bind_zone_update.patch: make b9_has_soa check dc=@ node. Thanks to
+    Michael Saxl <mike@mwsys.mine.bz>. (LP: #1820846)
+
+ -- Andreas Hasenack <andreas@canonical.com>  Thu, 21 Mar 2019 14:40:32 -0300
+
+samba (2:4.10.0~rc4+dfsg-0ubuntu1) disco; urgency=medium
+
+  * New upstream version 4.10.0rc4 (LP: #1818518):
+    - Removed patches already applied upstream:
+      + d/p/nsswitch-Add-try_authtok-option-to-pam_winbind.patch
+      + d/p/s3-auth-ignore-create_builtin_guests-failing-without.patch
+    - d/p/add-so-version-to-private-libraries: refreshed to remove fuzz
+    - d/control: Updated build dependencies:
+      + tdb >= 1.3.17
+      + talloc >= 2.1.15
+      + tevent >= 0.9.38
+      + ldb >= 1.5.3
+    - d/samba-common.docs: README is now README.md
+    - d/libsmbclient.symbols: update symbols for this version
+    - d/libwbclient0.symbols: update symbols for this version
+    - d/ctdb.install: new binary ctdb_local_daemons
+    - d/samba-dev.install: use globbing for the header files with
+      exceptions for wbclient.h and libsmbclient.h, which belong in
+     other packages.
+    - d/rules: fix globbing used to move the dckeytab python module to the
+      samba package, and add a comment explaining why this is being done.
+  * Switch to python3:
+    - d/rules: calculate the ldb version using python3, and drop the
+      "really" bit since the real 1.5.x series is being used now.
+    - d/rules: make sure python3 is used for the build
+    - d/rules: adjust globbing to remove the python3 version of tevent.so
+    - d/rules: drop PYVERS, unused
+    - d/control: adjust dependencies (build and runtime) for python3
+    - d/python3-samba.install, d/control: new python3-samba package
+      (LP: #1440381)
+    - d/control, d/python-samba.install: get rid of python-samba, which is py2
+    - d/python3-samba.lintian-overrides: use the same overrides we had for
+      python-samba, now deleted.
+    - d/samba-dev.install, d/samba-libs.install: update file list
+    - d/t/control, d/t/python-smoke: use python3
+    - d/control: use ${python3:Depends} now instead of the python 2
+      counterpart for samba and samba-common-bin.
+  * d/control: drop suggests for python-gpgme, it's no longer available.
+
+ -- Andreas Hasenack <andreas@canonical.com>  Sat, 09 Mar 2019 12:45:25 +0000
+
 samba (2:4.9.5+dfsg-1) experimental; urgency=medium
 
   * New upstream release
@@ -277,6 +635,31 @@ samba (2:4.9.4+dfsg-2) unstable; urgency=medium
 
  -- Mathieu Parent <sathieu@debian.org>  Wed, 23 Jan 2019 20:59:08 +0100
 
+samba (2:4.9.4+dfsg-1ubuntu1) disco; urgency=medium
+
+  * Merge with Debian unstable. Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - d/control, d/rules: Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+  * Dropped:
+    - d/p/smbd-startup-with-winbind.patch: ignore create_builtin_guests()
+      failing without a valid idmap configuration. This fixes the smbd startup
+      on a standalone server where winbind is available and running. Thanks to
+      Stefan Metzmacher <metze@samba.org>. (LP #1806035)
+      [Fixed in 2:4.9.4+dfsg-1]
+
+ -- Andreas Hasenack <andreas@canonical.com>  Thu, 17 Jan 2019 18:23:52 -0200
+
 samba (2:4.9.4+dfsg-1) unstable; urgency=medium
 
   * New upstream release
@@ -286,6 +669,44 @@ samba (2:4.9.4+dfsg-1) unstable; urgency=medium
     (Closes: #909465, #899269)
 
  -- Mathieu Parent <sathieu@debian.org>  Sat, 22 Dec 2018 18:32:00 +0100
+
+samba (2:4.9.2+dfsg-2ubuntu3) disco; urgency=medium
+
+  * No-change rebuild for readline soname change.
+
+ -- Matthias Klose <doko@ubuntu.com>  Mon, 14 Jan 2019 20:03:58 +0000
+
+samba (2:4.9.2+dfsg-2ubuntu2) disco; urgency=medium
+
+  * d/p/smbd-startup-with-winbind.patch: ignore create_builtin_guests()
+    failing without a valid idmap configuration. This fixes the smbd startup
+    on a standalone server where winbind is available and running. Thanks to
+    Stefan Metzmacher <metze@samba.org>. (LP: #1806035)
+
+ -- Andreas Hasenack <andreas@canonical.com>  Fri, 21 Dec 2018 10:39:23 -0200
+
+samba (2:4.9.2+dfsg-2ubuntu1) disco; urgency=medium
+
+  * Merge with Debian unstable. Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - d/control, d/rules: Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+  * Dropped:
+    - d/p/fix-rmdir.patch: Fix to make smbclient report directory-not-empty
+      errors (LP: 1795772)
+      [Fixed upstream]
+
+ -- Andreas Hasenack <andreas@canonical.com>  Wed, 28 Nov 2018 20:06:47 -0200
 
 samba (2:4.9.2+dfsg-2) unstable; urgency=high
 
@@ -395,6 +816,58 @@ samba (2:4.8.5+dfsg-1) unstable; urgency=medium
   * Standards-Version: 4.2.1
 
  -- Mathieu Parent <sathieu@debian.org>  Thu, 30 Aug 2018 19:32:24 +0200
+
+samba (2:4.8.4+dfsg-2ubuntu3) disco; urgency=medium
+
+  * No-change rebuild against libldb1 1.4.2
+
+ -- Steve Langasek <steve.langasek@ubuntu.com>  Wed, 14 Nov 2018 22:46:24 +0000
+
+samba (2:4.8.4+dfsg-2ubuntu2) cosmic; urgency=high
+
+  [ Karl Stenerud ]
+  * d/p/fix-rmdir.patch: Fix to make the samba client library report
+    directory-not-empty errors (LP: #1795772)
+
+ -- Andreas Hasenack <andreas@canonical.com>  Tue, 09 Oct 2018 14:32:16 -0300
+
+samba (2:4.8.4+dfsg-2ubuntu1) cosmic; urgency=medium
+
+  * Merge with Debian unstable (LP: #1778125). Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - d/control, d/rules: Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+  * Drop:
+    - Add extra DEP8 tests to samba (LP #1696823):
+      + d/t/control, d/t/cifs-share-access: access a file in a share using cifs
+      + d/t/control, d/t/smbclient-anonymous-share-list: list available shares
+        anonymously
+      + d/t/control, d/t/smbclient-authenticated-share-list: list available
+        shares using an authenticated connection
+      + d/t/control, d/t/smbclient-share-access: create a share and download a
+        file from it
+      [Accepted by Debian in 2:4.7.4+dfsg-2]
+    - d/samba-common.dhcp: If systemctl is available, use it to query the
+      status of the smbd service before trying to reload it. Otherwise,
+      keep the same check as before and reload the service based on the
+      existence of the initscript. (LP #1579597)
+      [In Debian since 2:4.7.4+dfsg-2]
+    - debian/patches/passdb_dont_return_ok_if_pinfo_not_filled.patch:
+      [PATCH] s3:passdb: Do not return OK if we don't have pinfo filled.
+      Thanks to Andreas Schneider <asn@samba.org>. (LP #1761737)
+      [Fixed upstream]
+
+ -- Andreas Hasenack <andreas@canonical.com>  Tue, 21 Aug 2018 09:57:57 -0300
 
 samba (2:4.8.4+dfsg-2) unstable; urgency=high
 
@@ -553,6 +1026,55 @@ samba (2:4.8.0+dfsg-1) experimental; urgency=medium
 
  -- Mathieu Parent <sathieu@debian.org>  Mon, 19 Mar 2018 13:02:51 +0100
 
+samba (2:4.7.6+dfsg~ubuntu-0ubuntu3) cosmic; urgency=medium
+
+  * No change rebuild to link with new ldb 1.3.3
+
+ -- Andreas Hasenack <andreas@canonical.com>  Tue, 03 Jul 2018 09:57:24 -0300
+
+samba (2:4.7.6+dfsg~ubuntu-0ubuntu2) bionic; urgency=medium
+
+  * debian/patches/passdb_dont_return_ok_if_pinfo_not_filled.patch:
+    [PATCH] s3:passdb: Do not return OK if we don't have pinfo filled.
+    Thanks to Andreas Schneider <asn@samba.org>. (LP: #1761737)
+
+ -- Andreas Hasenack <andreas@canonical.com>  Wed, 18 Apr 2018 11:49:55 -0300
+
+samba (2:4.7.6+dfsg~ubuntu-0ubuntu1) bionic; urgency=medium
+
+  * New upstream version:
+    - Fix database corruption bug when upgrading from samba 4.6 or lower
+      AD controllers (LP: #1755057)
+    - Fix security issues: CVE-2018-1050 and CVE-2018-1057 (LP: #1755059)
+  * Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - Add extra DEP8 tests to samba (LP #1696823):
+      + d/t/control, d/t/cifs-share-access: access a file in a share using cifs
+      + d/t/control, d/t/smbclient-anonymous-share-list: list available shares
+        anonymously
+      + d/t/control, d/t/smbclient-authenticated-share-list: list available
+        shares using an authenticated connection
+      + d/t/control, d/t/smbclient-share-access: create a share and download a
+        file from it
+    - d/samba-common.dhcp: If systemctl is available, use it to query the
+      status of the smbd service before trying to reload it. Otherwise,
+      keep the same check as before and reload the service based on the
+      existence of the initscript. (LP #1579597)
+    - d/control, d/rules: Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+
+ -- Andreas Hasenack <andreas@canonical.com>  Tue, 13 Mar 2018 16:58:49 -0300
+
 samba (2:4.7.4+dfsg-2) unstable; urgency=high
 
   [ Mathieu Parent ]
@@ -583,6 +1105,37 @@ samba (2:4.7.4+dfsg-2) unstable; urgency=high
 
  -- Mathieu Parent <sathieu@debian.org>  Fri, 02 Mar 2018 20:55:06 +0100
 
+samba (2:4.7.4+dfsg-1ubuntu1) bionic; urgency=medium
+
+  * Merge with Debian unstable (LP: #1744779). Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - Add extra DEP8 tests to samba (LP #1696823):
+      + d/t/control, d/t/cifs-share-access: access a file in a share using cifs
+      + d/t/control, d/t/smbclient-anonymous-share-list: list available shares
+        anonymously
+      + d/t/control, d/t/smbclient-authenticated-share-list: list available
+        shares using an authenticated connection
+      + d/t/control, d/t/smbclient-share-access: create a share and download a
+        file from it
+    - d/samba-common.dhcp: If systemctl is available, use it to query the
+      status of the smbd service before trying to reload it. Otherwise,
+      keep the same check as before and reload the service based on the
+      existence of the initscript. (LP #1579597)
+    - d/control, d/rules: Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+
+ -- Andreas Hasenack <andreas@canonical.com>  Mon, 22 Jan 2018 16:31:41 -0200
+
 samba (2:4.7.4+dfsg-1) unstable; urgency=medium
 
   * New upstream version
@@ -598,6 +1151,42 @@ samba (2:4.7.4+dfsg-1) unstable; urgency=medium
   * Move libnss-winbind: to section admin
 
  -- Mathieu Parent <sathieu@debian.org>  Thu, 11 Jan 2018 20:49:28 +0100
+
+samba (2:4.7.3+dfsg-1ubuntu1) bionic; urgency=medium
+
+  * Merge with Debian; remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - Add extra DEP8 tests to samba (LP #1696823):
+      + d/t/control: enable the new DEP8 tests
+      + d/t/smbclient-anonymous-share-list: list available shares anonymously
+      + d/t/smbclient-authenticated-share-list: list available shares using
+        an authenticated connection
+      + d/t/smbclient-share-access: create a share and download a file from it
+      + d/t/cifs-share-access: access a file in a share using cifs
+    - Ask the user if we can run testparm against the config file. If yes,
+      include its stderr and exit status in the bug report. Otherwise, only
+      include the exit status. (LP #1694334)
+    - If systemctl is available, use it to query the status of the smbd
+      service before trying to reload it. Otherwise, keep the same check
+      as before and reload the service based on the existence of the
+      initscript. (LP #1579597)
+    - d/rules: Compile winbindd/winbindd statically.
+    - Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+    - d/source_samba.py: use the new recommended findmnt(8) tool to list
+      mountpoints and correctly filter by the cifs filesystem type.
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Tue, 05 Dec 2017 12:49:20 -0500
 
 samba (2:4.7.3+dfsg-1) unstable; urgency=high
 
@@ -621,6 +1210,42 @@ samba (2:4.7.1+dfsg-2) unstable; urgency=high
     - CVE-2017-14746: s3: smbd: Fix SMB1 use-after-free crash bug.
 
  -- Mathieu Parent <sathieu@debian.org>  Sun, 12 Nov 2017 10:02:19 +0100
+
+samba (2:4.7.1+dfsg-1ubuntu1) bionic; urgency=medium
+
+  * Merge with Debian; remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - Add extra DEP8 tests to samba (LP #1696823):
+      + d/t/control: enable the new DEP8 tests
+      + d/t/smbclient-anonymous-share-list: list available shares anonymously
+      + d/t/smbclient-authenticated-share-list: list available shares using
+        an authenticated connection
+      + d/t/smbclient-share-access: create a share and download a file from it
+      + d/t/cifs-share-access: access a file in a share using cifs
+    - Ask the user if we can run testparm against the config file. If yes,
+      include its stderr and exit status in the bug report. Otherwise, only
+      include the exit status. (LP #1694334)
+    - If systemctl is available, use it to query the status of the smbd
+      service before trying to reload it. Otherwise, keep the same check
+      as before and reload the service based on the existence of the
+      initscript. (LP #1579597)
+    - d/rules: Compile winbindd/winbindd statically.
+    - Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+    - d/source_samba.py: use the new recommended findmnt(8) tool to list
+      mountpoints and correctly filter by the cifs filesystem type.
+
+ -- Matthias Klose <doko@ubuntu.com>  Fri, 10 Nov 2017 10:03:57 +0100
 
 samba (2:4.7.1+dfsg-1) unstable; urgency=medium
 
@@ -670,6 +1295,87 @@ samba (2:4.6.7+dfsg-2) unstable; urgency=high
 
  -- Mathieu Parent <sathieu@debian.org>  Tue, 19 Sep 2017 22:00:13 +0200
 
+samba (2:4.6.7+dfsg-1ubuntu3) artful; urgency=medium
+
+  * SECURITY UPDATE: SMB1/2/3 connections may not require signing where
+    they should
+    - debian/patches/CVE-2017-12150-1.patch: don't turn a guessed username
+      into a specified one in source3/include/auth_info.h,
+      source3/lib/popt_common.c, source3/lib/util_cmdline.c.
+    - debian/patches/CVE-2017-12150-2.patch: add SMB_SIGNING_REQUIRED to
+      source3/lib/util_cmdline.c.
+    - debian/patches/CVE-2017-12150-3.patch: add SMB_SIGNING_REQUIRED to
+      source3/libsmb/pylibsmb.c.
+    - debian/patches/CVE-2017-12150-4.patch: add SMB_SIGNING_REQUIRED to
+      libgpo/gpo_fetch.c.
+    - debian/patches/CVE-2017-12150-5.patch: add check for
+      NTLM_CCACHE/SIGN/SEAL to auth/credentials/credentials.c.
+    - debian/patches/CVE-2017-12150-6.patch: add
+      smbXcli_conn_signing_mandatory() to libcli/smb/smbXcli_base.*.
+    - debian/patches/CVE-2017-12150-7.patch: only fallback to anonymous if
+      authentication was not requested in source3/libsmb/clidfs.c.
+    - CVE-2017-12150
+  * SECURITY UPDATE: SMB3 connections don't keep encryption across DFS
+    redirects
+    - debian/patches/CVE-2017-12151-1.patch: add
+      cli_state_is_encryption_on() helper function to
+      source3/libsmb/clientgen.c, source3/libsmb/proto.h.
+    - debian/patches/CVE-2017-12151-2.patch: make use of
+      cli_state_is_encryption_on() in source3/libsmb/clidfs.c,
+      source3/libsmb/libsmb_context.c.
+    - CVE-2017-12151
+  * SECURITY UPDATE: Server memory information leak over SMB1
+    - debian/patches/CVE-2017-12163.patch: prevent client short SMB1 write
+      from writing server memory to file in source3/smbd/reply.c.
+    - CVE-2017-12163
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Thu, 21 Sep 2017 08:10:03 -0400
+
+samba (2:4.6.7+dfsg-1ubuntu2) artful; urgency=medium
+
+  * d/source_samba.py: use the new recommended findmnt(8) tool to list
+    mountpoints and correctly filter by the cifs filesystem type.
+    (LP: #1703604)
+
+ -- Andreas Hasenack <andreas@canonical.com>  Fri, 01 Sep 2017 09:47:58 -0300
+
+samba (2:4.6.7+dfsg-1ubuntu1) artful; urgency=medium
+
+  * Merge with Debian unstable (LP: #1710281).
+    - Upstream version 4.6.7 fixes the CVE-2017-2619 regression with non-wide
+      symlinks to directories (LP: #1701073)
+  * Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - Add extra DEP8 tests to samba (LP #1696823):
+      + d/t/control: enable the new DEP8 tests
+      + d/t/smbclient-anonymous-share-list: list available shares anonymously
+      + d/t/smbclient-authenticated-share-list: list available shares using
+        an authenticated connection
+      + d/t/smbclient-share-access: create a share and download a file from it
+      + d/t/cifs-share-access: access a file in a share using cifs
+    - Ask the user if we can run testparm against the config file. If yes,
+      include its stderr and exit status in the bug report. Otherwise, only
+      include the exit status. (LP #1694334)
+    - If systemctl is available, use it to query the status of the smbd
+      service before trying to reload it. Otherwise, keep the same check
+      as before and reload the service based on the existence of the
+      initscript. (LP #1579597)
+    - d/rules: Compile winbindd/winbindd statically.
+    - Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+
+ -- Andreas Hasenack <andreas@canonical.com>  Mon, 21 Aug 2017 17:27:08 -0300
+
 samba (2:4.6.7+dfsg-1) unstable; urgency=medium
 
   * New upstream version
@@ -680,6 +1386,60 @@ samba (2:4.6.7+dfsg-1) unstable; urgency=medium
   * Fix samba.logrotate (Thanks Thomas A. Reim)
 
  -- Mathieu Parent <sathieu@debian.org>  Tue, 15 Aug 2017 23:06:36 +0200
+
+samba (2:4.6.5+dfsg-8ubuntu1) artful; urgency=medium
+
+  * Merge with Debian unstable (LP: #1700644). Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - Add extra DEP8 tests to samba (LP #1696823):
+      + d/t/control: enable the new DEP8 tests
+      + d/t/smbclient-anonymous-share-list: list available shares anonymously
+      + d/t/smbclient-authenticated-share-list: list available shares using
+        an authenticated connection
+      + d/t/smbclient-share-access: create a share and download a file from it
+      + d/t/cifs-share-access: access a file in a share using cifs
+    - Ask the user if we can run testparm against the config file. If yes,
+      include its stderr and exit status in the bug report. Otherwise, only
+      include the exit status. (LP #1694334)
+    - If systemctl is available, use it to query the status of the smbd
+      service before trying to reload it. Otherwise, keep the same check
+      as before and reload the service based on the existence of the
+      initscript. (LP #1579597)
+  * Drop:
+    - d/rules: Compile winbindd/winbindd statically. (LP: #1700527)
+      [This hunk was missed in 2:4.5.8+dfsg-2ubuntu2 when patch
+      fix-1584485.patch was dropped there.]
+    - d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure
+      [Replaced by d/p/s3-gse_krb5-fix-a-possible-crash-in-fill_mem_keytab.patch
+      in 2:4.6.5+dfsg-3 that closed Debian's bug #739768]
+    - debian/patches/winbind_trusted_domains.patch: make sure domain
+      members can talk to trusted domains DCs.
+      [Upstream committed a different fix, see updated patch attached to
+      https://bugzilla.samba.org/show_bug.cgi?id=11830]
+    - d/control: add libcephfs-dev as b-d to build vfs_ceph
+      [Adopted by Debian in 2:4.6.5+dfsg-1]
+    - debian/patches/CVE-2017-11103.patch: use encrypted service
+      name rather than unencrypted (and therefore spoofable) version
+      in heimdal
+      [Adopted by Debian as
+      d/p/CVE-2017-11103-Orpheus-Lyre-KDC-REP-service-name-val.patch]
+    - Cherrypick upstream patch to fix FTBFS with new ceph lib.
+      [Merged upstream in 4.6.0rc1]
+  * Disable glusterfs support because it's not in main.
+    MIR bug is https://launchpad.net/bugs/1274247
+
+ -- Andreas Hasenack <andreas@canonical.com>  Thu, 10 Aug 2017 22:20:22 -0300
 
 samba (2:4.6.5+dfsg-8) unstable; urgency=medium
 
@@ -800,6 +1560,77 @@ samba (2:4.6.5+dfsg-1) experimental; urgency=medium
 
  -- Mathieu Parent <sathieu@debian.org>  Mon, 12 Jun 2017 08:09:43 +0200
 
+samba (2:4.5.8+dfsg-2ubuntu5) artful; urgency=medium
+
+  * Cherrypick upstream patch to fix FTBFS with new ceph lib.
+
+ -- Dimitri John Ledkov <xnox@ubuntu.com>  Wed, 26 Jul 2017 08:34:24 +0100
+
+samba (2:4.5.8+dfsg-2ubuntu4) artful; urgency=medium
+
+  * SECURITY UPDATE: KDC-REP service name impersonation
+    - debian/patches/CVE-2017-11103.patch: use encrypted service
+      name rather than unencrypted (and therefore spoofable) version
+      in heimdal
+    - CVE-2017-11103
+
+ -- Steve Beattie <sbeattie@ubuntu.com>  Mon, 17 Jul 2017 16:22:28 -0700
+
+samba (2:4.5.8+dfsg-2ubuntu3) artful; urgency=medium
+
+  * No-change rebuild against libldb 1.1.29
+
+ -- Steve Langasek <steve.langasek@ubuntu.com>  Sun, 25 Jun 2017 16:09:33 -0700
+
+samba (2:4.5.8+dfsg-2ubuntu2) artful; urgency=medium
+
+  * Add extra DEP8 tests to samba (LP: #1696823):
+    - d/t/control: enable the new DEP8 tests
+    - d/t/smbclient-anonymous-share-list: list available shares anonymously
+    - d/t/smbclient-authenticated-share-list: list available shares using
+      an authenticated connection
+    - d/t/smbclient-share-access: create a share and download a file from it
+    - d/t/cifs-share-access: access a file in a share using cifs
+  * Ask the user if we can run testparm against the config file. If yes,
+    include its stderr and exit status in the bug report. Otherwise, only
+    include the exit status. (LP: #1694334)
+  * If systemctl is available, use it to query the status of the smbd
+    service before trying to reload it. Otherwise, keep the same check
+    as before and reload the service based on the existence of the
+    initscript. (LP: #1579597)
+  * Remove d/p/fix-1584485.patch as it builds a broken pam_winbind
+    module. There is a fixed version of that patch attached to
+    #1677329 but it has not been vetted yet, so for now it's best
+    to revert (again) so that pam_winbind can be used.
+    (LP: #1677329, LP: #1644428)
+
+ -- Andreas Hasenack <andreas@canonical.com>  Mon, 19 Jun 2017 10:49:29 -0700
+
+samba (2:4.5.8+dfsg-2ubuntu1) artful; urgency=medium
+
+  * Merge from Debian unstable. Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - Add apport hook:
+      + Created debian/source_samba.py.
+      + debian/rules, debian/samba-common-bin.install: install hook.
+    - d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure
+    - debian/patches/winbind_trusted_domains.patch: make sure domain
+      members can talk to trusted domains DCs.
+    - d/p/fix-1584485.patch: Make libnss-winbind and libpam-winbind
+      to be statically linked
+    - d/rules: Compile winbindd/winbindd statically.
+    - d/control: add libcephfs-dev as b-d to build vfs_ceph
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Thu, 15 Jun 2017 14:17:43 -0400
+
 samba (2:4.5.8+dfsg-2) unstable; urgency=high
 
   * CVE-2017-7494: rpc_server3: Refuse to open pipe names with / inside
@@ -813,6 +1644,23 @@ samba (2:4.5.8+dfsg-1) unstable; urgency=high
     - Fix CVE-2017-2619 regression with "follow symlink = no" (Closes: #858564)
 
  -- Mathieu Parent <sathieu@debian.org>  Sat, 01 Apr 2017 20:39:17 +0200
+
+samba (2:4.5.8+dfsg-0ubuntu1) artful; urgency=medium
+
+  * SECURITY UPDATE: remote code execution from a writable share
+    - debian/patches/CVE-2017-7494.patch: refuse to open pipe names with a
+      slash inside in source3/rpc_server/srv_pipe.c.
+    - CVE-2017-7494
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Wed, 24 May 2017 07:39:13 -0400
+
+samba (2:4.5.8+dfsg-0ubuntu0.17.04.1) zesty-security; urgency=medium
+
+  * SECURITY UPDATE: Symlink race allows access outside share definition
+    - Updated to new upstream release 4.5.8.
+    - CVE-2017-2619
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 21 Apr 2017 07:33:25 -0400
 
 samba (2:4.5.6+dfsg-2) unstable; urgency=high
 
@@ -842,6 +1690,61 @@ samba (2:4.5.5+dfsg-1) unstable; urgency=medium
     - Thanks to Matthew Gabeler-Lee for the proposed fix.
 
  -- Mathieu Parent <sathieu@debian.org>  Sun, 05 Mar 2017 23:21:09 +0100
+
+samba (2:4.5.4+dfsg-1ubuntu2) zesty; urgency=medium
+
+  * d/control: add libcephfs-dev as b-d to build vfs_ceph
+    (LP: #1668940).
+
+ -- Nishanth Aravamudan <nish.aravamudan@canonical.com>  Mon, 06 Mar 2017 11:13:41 -0800
+
+samba (2:4.5.4+dfsg-1ubuntu1) zesty; urgency=medium
+
+  * Merge from Debian unstable (LP: #1659707, LP: #1639962). Remaining
+    changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    + debian/smb.conf;
+      - Add "(Samba, Ubuntu)" to server string.
+      - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure (LP #1310919)
+    + debian/patches/winbind_trusted_domains.patch: make sure domain members
+      can talk to trusted domains DCs.
+      [ update patch based upon upstream discussion ]
+    + d/p/fix-1584485.patch: Make libnss-winbind and libpam-winbind
+      to be statically linked fixes LP #1584485.
+    + d/rules: Compile winbindd/winbindd statically.
+  * Drop:
+    - Delete debian/.gitignore
+    [ Previously undocumented ]
+    - debian/patches/git_smbclient_cpu.patch:
+      + backport upstream patch to fix smbclient users hanging/eating cpu on
+        trying to contact a machine which is not there (lp #1572260)
+    [ Fixed upstream ]
+    - SECURITY UPDATE: remote code execution via heap overflow in NDR parsing
+      + debian/patches/CVE-2016-2123.patch: check lengths in
+        librpc/ndr/ndr_dnsp.c.
+      + CVE-2016-2123
+    [ Fixed in Debian ]
+    - SECURITY UPDATE: unconditional privilege delegation to Kerberos servers
+      + debian/patches/CVE-2016-2125.patch: don't use GSS_C_DELEG_FLAG in
+        source4/scripting/bin/nsupdate-gss, source3/librpc/crypto/gse.c,
+        source4/auth/gensec/gensec_gssapi.c.
+      + CVE-2016-2125
+    [ Fixed in Debian ]
+    - SECURITY UPDATE: privilege elevation in Kerberos PAC validation
+      + debian/patches/CVE-2016-2126.patch: only allow known checksum types
+        in auth/kerberos/kerberos_pac.c.
+      + CVE-2016-2126
+    [ Fixed in Debian ]
+
+ -- Nishanth Aravamudan <nish.aravamudan@canonical.com>  Thu, 26 Jan 2017 17:20:15 -0800
 
 samba (2:4.5.4+dfsg-1) unstable; urgency=medium
 
@@ -970,6 +1873,77 @@ samba (2:4.4.5+dfsg-3) unstable; urgency=medium
 
  -- Mathieu Parent <sathieu@debian.org>  Fri, 09 Sep 2016 13:00:54 +0200
 
+samba (2:4.4.5+dfsg-2ubuntu7) zesty; urgency=medium
+
+  * SECURITY UPDATE: remote code execution via heap overflow in NDR parsing
+    - debian/patches/CVE-2016-2123.patch: check lengths in
+      librpc/ndr/ndr_dnsp.c.
+    - CVE-2016-2123
+  * SECURITY UPDATE: unconditional privilege delegation to Kerberos servers
+    - debian/patches/CVE-2016-2125.patch: don't use GSS_C_DELEG_FLAG in
+      source4/scripting/bin/nsupdate-gss, source3/librpc/crypto/gse.c,
+      source4/auth/gensec/gensec_gssapi.c.
+    - CVE-2016-2125
+  * SECURITY UPDATE: privilege elevation in Kerberos PAC validation
+    - debian/patches/CVE-2016-2126.patch: only allow known checksum types
+      in auth/kerberos/kerberos_pac.c.
+    - CVE-2016-2126
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 20 Jan 2017 12:32:25 -0500
+
+samba (2:4.4.5+dfsg-2ubuntu6) zesty; urgency=high
+
+  * d/p/fix-1584485.patch: Make libnss-winbind and libpam-winbind 
+    to be statically linked fixes LP: #1584485.
+
+  * d/rules: Compile winbindd/winbindd statically.
+
+ -- Jorge Niedbalski <jorge.niedbalski@canonical.com>  Wed, 02 Nov 2016 13:59:10 +0100
+
+samba (2:4.4.5+dfsg-2ubuntu5) yakkety; urgency=medium
+
+  * No-change rebuild for readline soname change.
+
+ -- Matthias Klose <doko@ubuntu.com>  Sun, 18 Sep 2016 10:26:52 +0000
+
+samba (2:4.4.5+dfsg-2ubuntu4) yakkety; urgency=medium
+
+  * No-change rebuild for readline soname change.
+
+ -- Matthias Klose <doko@ubuntu.com>  Sat, 17 Sep 2016 12:09:21 +0000
+
+samba (2:4.4.5+dfsg-2ubuntu3) yakkety; urgency=medium
+
+  * debian/patches/git_smbclient_cpu.patch:
+    - backport upstream patch to fix smbclient users hanging/eating cpu on
+      trying to contact a machine which is not there (lp: #1572260)
+
+ -- Sebastien Bacher <seb128@ubuntu.com>  Fri, 05 Aug 2016 17:32:43 +0200
+
+samba (2:4.4.5+dfsg-2ubuntu1) yakkety; urgency=low
+
+  * Merge from Debian unstable.  Remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    + debian/smb.conf;
+      - Add "(Samba, Ubuntu)" to server string.
+      - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure (LP: #1310919)
+    + debian/patches/winbind_trusted_domains.patch: make sure domain members
+      can talk to trusted domains DCs.
+  * Dropped changes:
+    - build-depends on libgnutls-dev instead of libgnutsl28-dev: rename was
+      never done in Debian, revert.
+    - ufw integration: included in Debian.
+
+ -- Steve Langasek <steve.langasek@ubuntu.com>  Thu, 14 Jul 2016 17:45:46 -0700
+
 samba (2:4.4.5+dfsg-2) unstable; urgency=medium
 
   * Disable running of 'make quicktest' during build, as it takes very
@@ -1097,6 +2071,20 @@ samba (2:4.4.0+dfsg-1) experimental; urgency=medium
 
  -- Andrew Bartlett <abartlet+debian@catalyst.net.nz>  Wed, 06 Apr 2016 17:08:20 +1200
 
+samba (2:4.3.9+dfsg-0ubuntu1) yakkety; urgency=medium
+
+  * SECURITY REGRESSION: Updated to 4.3.9 to fix multiple regressions in
+    the previous security updates. (LP: #1577739)
+    - debian/control: bump tevent Build-Depends to 0.9.28.
+  * SECURITY REGRESSION: NTLM authentication issues (LP: #1578576)
+    - debian/patches/samba-bug11912.patch: let msrpc_parse() return
+      talloc'ed empty strings in libcli/auth/msrpc_parse.c.
+    - debian/patches/samba-bug11914.patch: make
+      ntlm_auth_generate_session_info() more complete in
+      source3/utils/ntlm_auth.c.
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Wed, 25 May 2016 09:29:15 -0400
+
 samba (2:4.3.8+dfsg-1) unstable; urgency=low
 
   [ Jelmer Vernooĳ ]
@@ -1110,6 +2098,25 @@ samba (2:4.3.8+dfsg-1) unstable; urgency=low
     4.3.2+dfsg-1, to fix jessie->stretch upgrades. Closes: #821070
 
  -- Jelmer Vernooĳ <jelmer@debian.org>  Sat, 16 Apr 2016 01:18:36 +0000
+
+samba (2:4.3.8+dfsg-0ubuntu1) xenial; urgency=medium
+
+  * SECURITY UPDATE: Updated to 4.3.8 to fix multiple security issues
+    - CVE-2015-5370: Multiple errors in DCE-RPC code
+    - CVE-2016-2110: Man in the middle attacks possible with NTLMSSP
+    - CVE-2016-2111: NETLOGON Spoofing Vulnerability
+    - CVE-2016-2112: The LDAP client and server don't enforce integrity
+      protection
+    - CVE-2016-2113: Missing TLS certificate validation allows man in the
+      middle attacks
+    - CVE-2016-2114: "server signing = mandatory" not enforced
+    - CVE-2016-2115: SMB client connections for IPC traffic are not
+      integrity protected
+    - CVE-2016-2118: SAMR and LSA man in the middle attacks possible
+  * debian/patches/winbind_trusted_domains.patch: make sure domain members
+    can talk to trusted domains DCs.
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Tue, 12 Apr 2016 07:26:29 -0400
 
 samba (2:4.3.7+dfsg-1) unstable; urgency=high
 
@@ -1152,6 +2159,29 @@ samba (2:4.3.6+dfsg-2) unstable; urgency=low
     2.1.6 (Closes: #820015)
 
  -- Mathieu Parent <sathieu@debian.org>  Thu, 31 Mar 2016 22:26:11 +0200
+
+samba (2:4.3.6+dfsg-1ubuntu1) xenial; urgency=medium
+
+  * Merge with Debian; remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    + debian/smb.conf;
+      - Add "(Samba, Ubuntu)" to server string.
+      - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + debian/control:
+      - Switch build depends from transitional libgnutsl28-dev to libgnutls-dev
+    + Add ufw integration:
+      - Created debian/samba.ufw.profile:
+      - debian/rules, debian/samba.install: install profile
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure (LP: #1310919)
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Wed, 09 Mar 2016 08:49:12 -0500
 
 samba (2:4.3.6+dfsg-1) unstable; urgency=medium
 
@@ -1197,6 +2227,42 @@ samba (2:4.3.3+dfsg-2) unstable; urgency=medium
   * Fix CTDB behavior since CVE-2015-8543 (Closes: #813406)
 
  -- Mathieu Parent <sathieu@debian.org>  Thu, 04 Feb 2016 13:25:01 +0100
+
+samba (2:4.3.3+dfsg-1ubuntu3) xenial; urgency=medium
+
+  * No-change rebuild for gnutls transition.
+
+ -- Matthias Klose <doko@ubuntu.com>  Wed, 17 Feb 2016 22:41:43 +0000
+
+samba (2:4.3.3+dfsg-1ubuntu2) xenial; urgency=medium
+
+  * Fixes regression introduced by debian/patches/CVE-2015-5252.patch.
+    (LP: #1545750)
+
+ -- Dariusz Gadomski <dariusz.gadomski@canonical.com>  Mon, 15 Feb 2016 16:05:12 +0100
+
+samba (2:4.3.3+dfsg-1ubuntu1) xenial; urgency=medium
+
+  * Merge with Debian; remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    + debian/smb.conf;
+      - Add "(Samba, Ubuntu)" to server string.
+      - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + debian/control:
+      - Switch build depends from transitional libgnutsl28-dev to libgnutls-dev
+    + Add ufw integration:
+      - Created debian/samba.ufw.profile:
+      - debian/rules, debian/samba.install: install profile
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure (LP: #1310919)
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Wed, 06 Jan 2016 07:41:39 -0500
 
 samba (2:4.3.3+dfsg-1) unstable; urgency=medium
 
@@ -1282,6 +2348,63 @@ samba (2:4.2.1+dfsg-1) experimental; urgency=medium
 
  -- Jelmer Vernooij <jelmer@debian.org>  Sun, 07 Dec 2014 15:34:36 +0000
 
+samba (2:4.1.20+dfsg-1ubuntu5) xenial; urgency=medium
+
+  * Resolve small merge error in the rules
+
+ -- Sebastien Bacher <seb128@ubuntu.com>  Wed, 16 Dec 2015 12:02:12 +0100
+
+samba (2:4.1.20+dfsg-1ubuntu4) xenial; urgency=medium
+
+  * Backport Debian change to remove libpam-smbpasswd, it segfaults
+    leading to non working session (lp: #1515207)
+
+ -- Sebastien Bacher <seb128@ubuntu.com>  Wed, 16 Dec 2015 11:47:44 +0100
+
+samba (2:4.1.20+dfsg-1ubuntu3) xenial; urgency=medium
+
+  * Build with the new ldb
+
+ -- Sebastien Bacher <seb128@ubuntu.com>  Wed, 18 Nov 2015 11:45:32 +0100
+
+samba (2:4.1.20+dfsg-1ubuntu2) xenial; urgency=medium
+
+  * debian/samba.logrotate:
+    - revert to Debian version of the logrotate reload command, fix an 
+      invalid syntax introduced in the upstart->systemd transition 
+      (lp: #1385868)
+
+ -- Sebastien Bacher <seb128@ubuntu.com>  Tue, 10 Nov 2015 19:01:06 +0100
+
+samba (2:4.1.20+dfsg-1ubuntu1) xenial; urgency=medium
+
+  * Merge with Debian; remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    + debian/smb.conf;
+      - Add "(Samba, Ubuntu)" to server string.
+      - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + debian/control:
+      - Don't build against or suggest ctdb and tdb.
+      - Switch build depends from transitional libgnutsl28-dev to libgnutls-dev
+    + debian/rules:
+      - Drop explicit configuration options for ctdb and tdb.
+    + Add ufw integration:
+      - Created debian/samba.ufw.profile:
+      - debian/rules, debian/samba.install: install profile
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + debian/samba.logrotate: use service command to reload (send SIGHUP) the main
+      processes such that it works under both upstart and systemd.
+    + debian/samba-common.dirs: Move /var/lib/samba/private from samba.dirs.
+    + d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure (LP: #1310919)
+
+ -- Matthias Klose <doko@ubuntu.com>  Sat, 24 Oct 2015 14:57:47 +0200
+
 samba (2:4.1.20+dfsg-1) unstable; urgency=medium
 
   * New upstream release (last compatible with current OpenChange).
@@ -1294,6 +2417,44 @@ samba (2:4.1.17+dfsg-5) unstable; urgency=medium
   * Rebuild against new ldb. Closes: #799569
 
  -- Jelmer Vernooij <jelmer@debian.org>  Sun, 20 Sep 2015 13:20:53 +0000
+
+samba (2:4.1.17+dfsg-4ubuntu2) wily; urgency=medium
+
+  * debian/control:
+    - Switch build depends from transitional libgnutsl28-dev to libgnutls-dev
+
+ -- Robert Ancell <robert.ancell@canonical.com>  Tue, 11 Aug 2015 11:34:50 +1200
+
+samba (2:4.1.17+dfsg-4ubuntu1) wily; urgency=medium
+
+  * Merge from Debian unstable.  Remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    + debian/smb.conf;
+      - Add "(Samba, Ubuntu)" to server string.
+      - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + debian/control:
+      - Don't build against or suggest ctdb and tdb.
+    + debian/rules:
+      - Drop explicit configuration options for ctdb and tdb.
+    + Add ufw integration:
+      - Created debian/samba.ufw.profile:
+      - debian/rules, debian/samba.install: install profile
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + debian/samba.logrotate: use service command to reload (send SIGHUP) the main
+      processes such that it works under both upstart and systemd.
+    + debian/samba-common.dirs: Move /var/lib/samba/private from samba.dirs.
+    + d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure (LP: #1310919)
+    + debian/patches/git_timeout_client_error.patch:
+    - don't let smb mounts timeout that leads to errors when trying to
+      reuse a mount after idling for a while in e.g nautilus (lp: #310932)
+
+ -- Martin Pitt <martin.pitt@ubuntu.com>  Fri, 08 May 2015 10:49:12 +0200
 
 samba (2:4.1.17+dfsg-4) unstable; urgency=medium
 
@@ -1330,6 +2491,53 @@ samba (2:4.1.17+dfsg-1) unstable; urgency=high
   * Build-depend on reverted ldb version (with increased epoch).
 
  -- Ivo De Decker <ivodd@debian.org>  Mon, 23 Feb 2015 20:20:21 +0100
+
+samba (2:4.1.13+dfsg-4ubuntu3) vivid; urgency=medium
+
+  * debian/patches/git_timeout_client_error.patch:
+    - don't let smb mounts timeout that leads to errors when trying to 
+      reuse a mount after idling for a while in e.g nautilus (lp: #310932)
+
+ -- Sebastien Bacher <seb128@ubuntu.com>  Fri, 03 Apr 2015 17:20:06 +0200
+
+samba (2:4.1.13+dfsg-4ubuntu2) vivid; urgency=medium
+
+  * SECURITY UPDATE: code execution vulnerability in smbd daemon
+    - debian/patches/CVE-2015-0240.patch: don't call talloc_free on an
+      uninitialized pointer and don't dereference a NULL pointer in
+      source3/rpc_server/netlogon/srv_netlog_nt.c.
+    - CVE-2015-0240
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Mon, 23 Feb 2015 08:36:51 -0500
+
+samba (2:4.1.13+dfsg-4ubuntu1) vivid; urgency=low
+
+  * Merge from Debian unstable.  Remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    + debian/smb.conf;
+      - Add "(Samba, Ubuntu)" to server string.
+      - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + debian/control:
+      - Don't build against or suggest ctdb and tdb.
+    + debian/rules:
+      - Drop explicit configuration options for ctdb and tdb.
+    + Add ufw integration:
+      - Created debian/samba.ufw.profile:
+      - debian/rules, debian/samba.install: install profile
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + debian/samba.logrotate: use service command to reload (send SIGHUP) the main
+      processes such that it works under both upstart and systemd.
+    + debian/samba-common.dirs: Move /var/lib/samba/private from samba.dirs.
+    + d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+      pam_winbind krb5_ccache_type=FILE failure (LP: #1310919)
+    + debian/patches/CVE-2014-8143.patch fix CVE-2014-8143.
+
+ -- Gianfranco Costamagna <costamagnagianfranco@yahoo.it>  Wed, 21 Jan 2015 15:48:05 +0100
 
 samba (2:4.1.13+dfsg-4) unstable; urgency=medium
 
@@ -1373,6 +2581,69 @@ samba (2:4.1.11+dfsg-2) unstable; urgency=medium
 
  -- Jelmer Vernooij <jelmer@debian.org>  Sun, 07 Sep 2014 20:52:27 +0200
 
+samba (2:4.1.11+dfsg-1ubuntu4) vivid; urgency=medium
+
+  * SECURITY UPDATE: elevation of privilege to AD Domain Controller
+    - debian/patches/CVE-2014-8143.patch: check for extended access rights
+      before allowing changes to userAccountControl in
+      librpc/idl/security.idl, source4/auth/session.c,
+      source4/dsdb/common/util.c, source4/dsdb/pydsdb.c,
+      source4/dsdb/samdb/ldb_modules/samldb.c, source4/dsdb/samdb/samdb.h,
+      source4/rpc_server/lsa/dcesrv_lsa.c,
+      source4/setup/schema_samba4.ldif.
+    - CVE-2014-8143
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Wed, 21 Jan 2015 09:19:12 -0500
+
+samba (2:4.1.11+dfsg-1ubuntu3) vivid; urgency=medium
+
+  * No-change rebuild against current ldb. Note that I'm not claiming the
+    merging for this package.
+
+ -- Martin Pitt <martin.pitt@ubuntu.com>  Thu, 04 Dec 2014 07:50:22 +0100
+
+samba (2:4.1.11+dfsg-1ubuntu2) utopic; urgency=medium
+
+  * d/p/krb_zero_cursor.patch - apply proposed-upstream fix for
+    pam_winbind krb5_ccache_type=FILE failure (LP: #1310919)
+
+ -- Serge Hallyn <serge.hallyn@ubuntu.com>  Thu, 11 Sep 2014 11:53:36 -0500
+
+samba (2:4.1.11+dfsg-1ubuntu1) utopic; urgency=medium
+
+  * Merge from Debian unstable.  Remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    +  debian/smb.conf;
+       - Add "(Samba, Ubuntu)" to server string.
+       - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + debian/control:
+      - Don't build against or suggest ctdb and tdb.
+    + debian/rules:
+      - Drop explicit configuration options for ctdb and tdb.
+    + Add ufw integration:
+      - Created debian/samba.ufw.profile:
+      - debian/rules, debian/samba.install: install profile
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + debian/samba.logrotate: call upstart interfaces unconditionally instead
+      of hacking arround with pid files.
+    + Set sbmclients conflicts with samba4-clients less than 4.0.3+dfsg1-0.1ubuntu4, 
+      first dummy transitional package version.
+    + debian/samba-common.dirs: Move /var/lib/samba/private from samba.dirs.
+
+  * In logrotate, use service command to reload (send SIGHUP) the main
+    processes such that it works under both upstart and systemd.
+  * Drop CVE patches, applied upstream.
+  * Drop patches absent from series: readline-ftbfs.patch,
+    krb5_kt_start_seq.diff, config-bind99.patch
+  * Drop debian/source/include-binaries, pyc files are correctly cleaned up
+
+ -- Dimitri John Ledkov <xnox@ubuntu.com>  Sat, 09 Aug 2014 21:26:23 +0100
+
 samba (2:4.1.11+dfsg-1) unstable; urgency=high
 
   * New upstream release. Fixes:
@@ -1407,6 +2678,62 @@ samba (2:4.1.9+dfsg-1) unstable; urgency=high
     - CVE-2014-3493: smbd denial of service: server crash/memory corruption
 
  -- Ivo De Decker <ivo.dedecker@ugent.be>  Mon, 23 Jun 2014 18:33:27 +0200
+
+samba (2:4.1.8+dfsg-1ubuntu3) utopic; urgency=medium
+
+  * SECURITY UPDATE: remote code execution on unauthenticated nmbd
+    - debian/patches/CVE-2014-3560.patch: fix unstrcpy in
+      lib/util/string_wrappers.h.
+    - CVE-2014-3560
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 01 Aug 2014 17:54:54 -0400
+
+samba (2:4.1.8+dfsg-1ubuntu2) utopic; urgency=medium
+
+  * SECURITY UPDATE: denial of service on nmbd malformed packet
+    - debian/patches/CVE-2014-0244.patch: return on EWOULDBLOCK/EAGAIN in
+      source3/lib/system.c.
+    - CVE-2014-0244
+  * SECURITY UPDATE: denial of service via bad unicode conversion
+    - debian/patches/CVE-2014-3493.patch: refactor code in
+      source3/lib/charcnv.c, change return code checks in
+      source3/libsmb/clirap.c, source3/smbd/lanman.c.
+    - CVE-2014-3493
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Mon, 23 Jun 2014 14:10:12 -0400
+
+samba (2:4.1.8+dfsg-1ubuntu1) utopic; urgency=low
+
+  * Merge from Debian unstable.  Remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    +  debian/smb.conf;
+       - Add "(Samba, Ubuntu)" to server string.
+       - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + debian/control:
+      - Don't build against or suggest ctdb and tdb.
+    + debian/rules:
+      - Drop explicit configuration options for ctdb and tdb.
+    + Add ufw integration:
+      - Created debian/samba.ufw.profile:
+      - debian/rules, debian/samba.install: install profile
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + debian/samba.logrotate: call upstart interfaces unconditionally instead
+      of hacking arround with pid files.
+    + Set sbmclients conflicts with samba4-clients less than 4.0.3+dfsg1-0.1ubuntu4, 
+      first dummy transitional package version.
+    + Dropped patches:
+      - debian/patches/CVE-2013-4496.patch: Dropped no longer needed
+      - debian/patches/CVE-2013-6442.patch: Dropped no longer needed.
+      - debian/patches/readline-ftbfs.patch: Use the debian version.
+    + debian/samba-common.dirs: Move /var/lib/samba/private from samba.dirs.
+      (LP: #1268180)
+
+ -- Chuck Short <zulcss@ubuntu.com>  Wed, 18 Jun 2014 10:50:25 -0400
 
 samba (2:4.1.8+dfsg-1) unstable; urgency=medium
 
@@ -1444,6 +2771,74 @@ samba (2:4.1.7+dfsg-1) unstable; urgency=medium
   * Don't try to delete Parse/Yapp/Driver.pm, which is no longer installed.
 
  -- Ivo De Decker <ivo.dedecker@ugent.be>  Sat, 19 Apr 2014 13:39:09 +0200
+
+samba (2:4.1.6+dfsg-1ubuntu6) utopic; urgency=medium
+
+  * Set the stack size to unlimited during the build to avoid a SIGBUS in
+    xsltproc on some architectures.
+
+ -- Colin Watson <cjwatson@ubuntu.com>  Mon, 02 Jun 2014 23:18:40 +0100
+
+samba (2:4.1.6+dfsg-1ubuntu5) utopic; urgency=medium
+
+  * Backport from unstable (Ivo De Decker):
+    - Build-depend on heimdal-dev.
+
+ -- Colin Watson <cjwatson@ubuntu.com>  Mon, 02 Jun 2014 15:39:54 +0100
+
+samba (2:4.1.6+dfsg-1ubuntu4) utopic; urgency=high
+
+  * No change rebuild against new dh_installinit, to call update-rc.d at
+    postinst.
+
+ -- Dimitri John Ledkov <xnox@ubuntu.com>  Wed, 28 May 2014 10:41:32 +0100
+
+samba (2:4.1.6+dfsg-1ubuntu3) utopic; urgency=medium
+
+  * cherrypick upstream patch 1310919 to fix pam_winbind regression
+    (LP: #1310919)
+
+ -- Serge Hallyn <serge.hallyn@ubuntu.com>  Tue, 29 Apr 2014 16:05:44 -0500
+
+samba (2:4.1.6+dfsg-1ubuntu2) trusty; urgency=medium
+
+  * Fix a grammatical error in smb.conf that showed up in a ucf prompt on
+    upgrade.
+
+ -- Steve Langasek <steve.langasek@ubuntu.com>  Thu, 03 Apr 2014 19:08:03 -0700
+
+samba (2:4.1.6+dfsg-1ubuntu1) trusty; urgency=low
+
+  * Merge from Debian unstable.  Remaining changes:
+    + debian/VERSION.patch: Update vendor string to "Ubuntu".
+    +  debian/smb.conf;
+       - Add "(Samba, Ubuntu)" to server string.
+       - Comment out the default [homes] share, and add a comment about "valid users = %s"
+         to show users how to restrict access to \\server\username to only username.
+    + debian/samba-common.config:
+      - Do not change prioritiy to high if dhclient3 is installed.
+    + debian/control:
+      - Don't build against or suggest ctdb and tdb.
+    + debian/rules:
+      - Drop explicit configuration options for ctdb and tdb.
+    + Add ufw integration:
+      - Created debian/samba.ufw.profile:
+      - debian/rules, debian/samba.install: install profile
+    + Add apport hook:
+      - Created debian/source_samba.py.
+      - debian/rules, debia/samb-common-bin.install: install hook.
+    + debian/samba.logrotate: call upstart interfaces unconditionally instead
+      of hacking arround with pid files.
+    + Set sbmclients conflicts with samba4-clients less than 4.0.3+dfsg1-0.1ubuntu4, 
+      first dummy transitional package version.
+    + Dropped patches:
+      - debian/patches/CVE-2013-4496.patch: Dropped no longer needed
+      - debian/patches/CVE-2013-6442.patch: Dropped no longer needed.
+      - debian/patches/readline-ftbfs.patch: Use the debian version.
+    + debian/samba-common.dirs: Move /var/lib/samba/private from samba.dirs.
+      (LP: #1268180)
+
+ -- Chuck Short <zulcss@ubuntu.com>  Wed, 02 Apr 2014 13:40:30 -0400
 
 samba (2:4.1.6+dfsg-1) unstable; urgency=high
 
@@ -1504,6 +2899,77 @@ samba (2:4.1.4+dfsg-1) unstable; urgency=medium
 
  -- Ivo De Decker <ivo.dedecker@ugent.be>  Sat, 18 Jan 2014 14:07:15 +0100
 
+samba (2:4.1.3+dfsg-2ubuntu5) trusty; urgency=medium
+
+  * debian/smb.conf: comment back some of the "share definitions"
+    options (including "valid users"). That was an Ubuntu diff and seems to
+    have been dropped in the trusty merge. Those changes seem needed to
+    get the usershare feature working (used by nautilus-share) (lp: #1261873)
+
+ -- Sebastien Bacher <seb128@ubuntu.com>  Tue, 01 Apr 2014 16:01:04 +0200
+
+samba (2:4.1.3+dfsg-2ubuntu4) trusty; urgency=medium
+
+  * SECURITY UPDATE: Password lockout not enforced for SAMR password
+    changes
+    - debian/patches/CVE-2013-4496.patch: refactor password lockout code in
+      source3/auth/check_samsec.c,
+      source3/rpc_server/samr/srv_samr_chgpasswd.c,
+      source3/rpc_server/samr/srv_samr_nt.c,
+      source3/smbd/lanman.c,
+      source4/rpc_server/samr/samr_password.c,
+      source4/torture/rpc/samr.c.
+    - CVE-2013-4496
+  * SECURITY UPDATE: smbcacls can remove a file or directory ACL by
+    mistake
+    - debian/patches/CVE-2013-6442.patch: handle existing ACL in
+      source3/utils/smbcacls.c.
+    - CVE-2013-6442
+  * debian/patches/readline-ftbfs.patch: fix ftbfs with newer readline6.
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Mon, 17 Mar 2014 08:32:30 -0400
+
+samba (2:4.1.3+dfsg-2ubuntu3) trusty; urgency=medium
+
+  * Depend on tdb-tools (LP: #1279593)
+  * Updated generated config for Bind9.9.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 12 Feb 2014 21:26:00 -0500
+
+samba (2:4.1.3+dfsg-2ubuntu2) trusty; urgency=medium
+
+  * Add missing python-ntdb dependency to python-samba (spotted by
+    autopkgtest).
+
+ -- Martin Pitt <martin.pitt@ubuntu.com>  Mon, 10 Feb 2014 09:53:01 +0100
+
+samba (2:4.1.3+dfsg-2ubuntu1) trusty; urgency=low
+
+  * Merge from Debian Unstable:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+  * debian/smb.conf;
+    - Add "(Samba, Ubuntu)" to server string.
+    - Comment out the default [homes] share, and add a comment about "valid users = %s"
+      to show users how to restrict access to \\server\username to only username.
+  + debian/samba-common.config:
+    - Do not change prioritiy to high if dhclient3 is installed.
+  + debian/control:
+    - Don't build against or suggest ctdb and tdb.
+  + debian/rules:
+    - Drop explicit configuration options for ctdb and tdb.
+  + Add ufw integration:
+    - Created debian/samba.ufw.profile:
+    - debian/rules, debian/samba.install: install profile
+  + Add apport hook:
+   - Created debian/source_samba.py.
+   - debian/rules, debia/samb-common-bin.install: install hook.
+  + debian/samba.logrotate: call upstart interfaces unconditionally instead
+    of hacking arround with pid files.
+  + Set sbmclients conflicts with samba4-clients less than 4.0.3+dfsg1-0.1ubuntu4, 
+    first dummy transitional package version.
+
+ -- Chuck Short <zulcss@ubuntu.com>  Mon, 13 Jan 2014 08:52:31 -0500
+
 samba (2:4.1.3+dfsg-2) unstable; urgency=medium
 
   * Add debug symbols for all binaries to samba-dbg. Closes: #732493
@@ -1545,6 +3011,33 @@ samba (2:4.0.13+dfsg-2) UNRELEASED; urgency=low
   * Spanish (Javier Fernández-Sanguino).  Closes: #731800
 
  -- Steve Langasek <vorlon@debian.org>  Mon, 09 Dec 2013 11:13:59 -0800
+
+samba (2:4.0.13+dfsg-1ubuntu1) trusty; urgency=low
+
+  * Merge from Debian Unstable:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+  * debian/smb.conf;
+    - Add "(Samba, Ubuntu)" to server string.
+    - Comment out the default [homes] share, and add a comment about "valid users = %s"
+      to show users how to restrict access to \\server\username to only username.
+  + debian/samba-common.config:
+    - Do not change prioritiy to high if dhclient3 is installed.
+  + debian/control:
+    - Don't build against or suggest ctdb and tdb.
+  + debian/rules:
+    - Drop explicit configuration options for ctdb and tdb.
+  + Add ufw integration:
+    - Created debian/samba.ufw.profile:
+    - debian/rules, debian/samba.install: install profile
+  + Add apport hook:
+   - Created debian/source_samba.py.
+   - debian/rules, debia/samb-common-bin.install: install hook.
+  + debian/samba.logrotate: call upstart interfaces unconditionally instead
+    of hacking arround with pid files.
+  + Set sbmclients conflicts with samba4-clients less than 4.0.3+dfsg1-0.1ubuntu4, 
+    first dummy transitional package version.
+
+ -- Chuck Short <zulcss@ubuntu.com>  Wed, 11 Dec 2013 19:55:47 -0500
 
 samba (2:4.0.13+dfsg-1) unstable; urgency=high
 
@@ -1599,6 +3092,37 @@ samba (2:4.0.11+dfsg-1) unstable; urgency=high
   * Update samba-libs.lintian-overrides for moved libtorture0.
 
  -- Ivo De Decker <ivo.dedecker@ugent.be>  Mon, 11 Nov 2013 15:42:40 +0100
+
+samba (2:4.0.10+dfsg-4ubuntu2) trusty; urgency=low
+
+  * Set sbmclients conflicts with samba4-clients less than 4.0.3+dfsg1-0.1ubuntu4, first dummy transitional package version.
+
+ -- Dmitrijs Ledkovs <xnox@ubuntu.com>  Wed, 27 Nov 2013 21:50:43 +0000
+
+samba (2:4.0.10+dfsg-4ubuntu1) trusty; urgency=low
+
+  * Merge from Debian Unstable:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+  * debian/smb.conf;
+    - Add "(Samba, Ubuntu)" to server string.
+    - Comment out the default [homes] share, and add a comment about "valid users = %s"
+      to show users how to restrict access to \\server\username to only username.
+  + debian/samba-common.config:
+    - Do not change prioritiy to high if dhclient3 is installed.
+  + debian/control:
+    - Don't build against or suggest ctdb and tdb.
+  + debian/rules:
+    - Drop explicit configuration options for ctdb and tdb.
+  + Add ufw integration:
+    - Created debian/samba.ufw.profile:
+    - debian/rules, debian/samba.install: install profile
+  + Add apport hook:
+   - Created debian/source_samba.py.
+   - debian/rules, debia/samb-common-bin.install: install hook.
+  + debian/samba.logrotate: call upstart interfaces unconditionally instead
+    of hacking arround with pid files.
+
+ -- Chuck Short <zulcss@ubuntu.com>  Fri, 08 Nov 2013 13:47:46 +0800
 
 samba (2:4.0.10+dfsg-4) unstable; urgency=low
 
