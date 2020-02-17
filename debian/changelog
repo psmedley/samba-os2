@@ -1,3 +1,48 @@
+samba (2:4.11.5+dfsg-1ubuntu1) focal; urgency=medium
+
+  * Merge with Debian unstable. Remaining changes:
+    - debian/VERSION.patch: Update vendor string to "Ubuntu".
+    - debian/smb.conf;
+      + Add "(Samba, Ubuntu)" to server string.
+      + Comment out the default [homes] share, and add a comment about
+        "valid users = %s" to show users how to restrict access to
+        \\server\username to only username.
+    - debian/samba-common.config:
+      + Do not change priority to high if dhclient3 is installed.
+    - d/control, d/rules: Disable glusterfs support because it's not in main.
+      MIR bug is https://launchpad.net/bugs/1274247
+    - d/p/fix-nfs-service-name-to-nfs-kernel-server.patch:
+      change nfs service name from nfs to nfs-kernel-server
+      (LP #722201)
+    - d/p/ctdb-config-enable-syslog-by-default.patch:
+      enable syslog and systemd journal by default
+    - debian/rules: Ubuntu i386 binary compatibility:
+      + drop ceph support
+      + disable the following binary packages:
+        - ctdb
+        - libnss-winbind
+        - libpam-winbind
+        - python3-samba
+        - samba
+        - samba-common-bin
+        - samba-testsuite
+        - winbind
+    - debian/control: Ubuntu i386 binary compatibility:
+      + drop ceph support
+    - debian/rules: Ubuntu i386 binary compatibility:
+      + re-enable the following binary packages:
+        - libnss-winbind
+        - samba-common-bin
+        - python3-samba
+        - winbind
+  * Dropped:
+    - d/control: drop python3-matplotlib. It's only used in
+      script/attr_count_read which is not installed with the
+      samba packages.
+      [In 2:4.11.3+dfsg-1]
+
+ -- Andreas Hasenack <andreas@canonical.com>  Mon, 17 Feb 2020 15:29:35 -0300
+
 samba (2:4.11.5+dfsg-1) unstable; urgency=medium
 
   * New upstream security release
