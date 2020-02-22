@@ -1,0 +1,38 @@
+From a7505aabbe9710a0b025f40ffd5c4db1a6d78ed0 Mon Sep 17 00:00:00 2001
+From: Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+Date: Tue, 3 Dec 2019 11:17:26 +1300
+Subject: [PATCH] pygpo: use correct method flags
+
+The METH_KEYWORDS argument must always be combined with METH_VARARGS.
+
+In Python up to 3.7 this was checked at runtime, and as we had no callers to
+get_unix_path() in Python we never noticed. In Python 3.8 it is checked at
+import time, and everyone notices even if they aren't directly using GPOs.
+
+Found and reported by Val Kulkov.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14209
+Signed-off-by: Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+Reviewed-by: Andrew Bartlett <abartlet@samba.org>
+(cherry picked from commit 12cccf3447333dfd4f5e437cd57ca5ec68724fdd)
+---
+ libgpo/pygpo.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Origin: upstream, https://github.com/samba-team/samba/commit/a7505aabbe9710a0b025f40ffd5c4db1a6d78ed0
+Bug-Ubuntu: https://bugs.launchpad.net/samba/+bug/1864324
+Last-Update: 2020-02-22
+
+diff --git a/libgpo/pygpo.c b/libgpo/pygpo.c
+index 581d20e0649..97bbb3ec528 100644
+--- a/libgpo/pygpo.c
++++ b/libgpo/pygpo.c
+@@ -118,7 +118,7 @@ static PyObject *py_gpo_get_unix_path(PyObject *self, PyObject *args,
+ static PyMethodDef GPO_methods[] = {
+ 	{"get_unix_path", PY_DISCARD_FUNC_SIG(PyCFunction,
+ 					      py_gpo_get_unix_path),
+-		METH_KEYWORDS,
++		METH_VARARGS | METH_KEYWORDS,
+ 		NULL },
+ 	{NULL}
+ };
