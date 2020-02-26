@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 01/14/2020
+.\"      Date: 01/28/2020
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.11.5
+.\"    Source: Samba 4.11.6
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "01/14/2020" "Samba 4\&.11\&.5" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "01/28/2020" "Samba 4\&.11\&.6" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -12815,9 +12815,11 @@ and
 .IP \(bu 2.3
 .\}
 \fI<sfu | sfu20 | rfc2307 >\fR
-\- When Samba is running in security = ads and your Active Directory Domain Controller does support the Microsoft "Services for Unix" (SFU) LDAP schema, winbind can retrieve the login shell and the home directory attributes directly from your Directory Server\&. For SFU 3\&.0 or 3\&.5 simply choose "sfu", if you use SFU 2\&.0 please choose "sfu20"\&. Note that retrieving UID and GID from your ADS\-Server requires to use
-\fIidmap config DOMAIN:backend\fR
-= ad as well\&. The primary group membership is currently always calculated via the "primaryGroupID" LDAP attribute\&.
+\- When Samba is running in security = ads and your Active Directory Domain Controller does support the Microsoft "Services for Unix" (SFU) LDAP schema, winbind can retrieve the login shell and the home directory attributes directly from your Directory Server\&. For SFU 3\&.0 or 3\&.5 simply choose "sfu", if you use SFU 2\&.0 please choose "sfu20"\&.
+.sp
+Note that for the idmap backend
+idmap_ad
+you need to configure those settings in the idmap configuration section\&. Make sure to consult the documentation of the idmap backend that you are using\&.
 .RE
 .sp
 .RE
@@ -13327,7 +13329,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.11\&.5 of the Samba suite\&.
+This man page is part of version 4\&.11\&.6 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),
