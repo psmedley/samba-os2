@@ -1,3 +1,10 @@
+samba (2:4.11.6+dfsg-0ubuntu1) focal; urgency=medium
+
+  * New upstream release: 4.11.6
+  * d/p/samba-tool-py38-*.patch: dropped, fixed upstream
+
+ -- Andreas Hasenack <andreas@canonical.com>  Wed, 26 Feb 2020 11:55:16 -0300
+
 samba (2:4.11.5+dfsg-1ubuntu2) focal; urgency=medium
 
   * d/p/samba-tool-py38-*.patch: use correct method flags (LP: #1864324)
