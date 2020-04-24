@@ -1,3 +1,45 @@
+samba (2:4.11.6+dfsg-0ubuntu1.1) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Use-after-free in AD DC LDAP server
+    - debian/patches/CVE-2020-10700-1.patch: add test for ASQ and ASQ in
+      combination with paged_results in selftest/knownfail.d/asq,
+      source4/dsdb/tests/python/asq.py, source4/selftest/tests.py.
+    - debian/patches/CVE-2020-10700-3.patch: do not permit the ASQ control
+      for the GUID search in paged_results in selftest/knownfail.d/asq,
+      source4/dsdb/samdb/ldb_modules/paged_results.c.
+    - debian/control: bump libldb-dev, python3-ldb, and python3-ldb-dev
+      Build-Depends to 2.0.10.
+    - CVE-2020-10700
+  * SECURITY UPDATE: Stack overflow in AD DC LDAP server
+    - debian/patches/CVE-2020-10704-1.patch: add ASN.1 max tree depth in
+      auth/gensec/gensec_util.c, lib/util/asn1.c, lib/util/asn1.h,
+      lib/util/tests/asn1_tests.c, libcli/auth/spnego_parse.c,
+      libcli/cldap/cldap.c, libcli/ldap/ldap_message.c,
+      source3/lib/tldap.c, source3/lib/tldap_util.c,
+      source3/libsmb/clispnego.c, source3/torture/torture.c,
+      source4/auth/gensec/gensec_krb5.c, source4/ldap_server/ldap_server.c,
+      source4/libcli/ldap/ldap_client.c,
+      source4/libcli/ldap/ldap_controls.c.
+    - debian/patches/CVE-2020-10704-3.patch: check parse tree depth in
+      lib/util/asn1.c.
+    - debian/patches/CVE-2020-10704-5.patch: add max ldap request sizes in
+      docs-xml/smbdotconf/ldap/ldapmaxanonrequest.xml,
+      docs-xml/smbdotconf/ldap/ldapmaxauthrequest.xml,
+      lib/param/loadparm.c, source3/param/loadparm.c.
+    - debian/patches/CVE-2020-10704-6.patch: limit request sizes in
+      source4/ldap_server/ldap_server.c.
+    - debian/patches/CVE-2020-10704-7.patch: add search size limits to
+      ldap_decode in docs-xml/smbdotconf/ldap/ldapmaxsearchrequest.xml,
+      lib/param/loadparm.c, libcli/cldap/cldap.c,
+      libcli/ldap/ldap_message.c, libcli/ldap/ldap_message.h,
+      source3/param/loadparm.c, source4/ldap_server/ldap_server.c,
+      source4/libcli/ldap/ldap_client.c.
+    - debian/patches/CVE-2020-10704-8.patch: check search request lengths
+      in lib/util/asn1.c, lib/util/asn1.h, libcli/ldap/ldap_message.c.
+    - CVE-2020-10704
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 24 Apr 2020 08:08:38 -0400
+
 samba (2:4.11.6+dfsg-0ubuntu1) focal; urgency=medium
 
   * New upstream release: 4.11.6

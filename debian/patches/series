@@ -12,3 +12,11 @@ build-Remove-tests-for-getdents-and-getdirentries.patch
 wscript-remove-all-checks-for-_FUNC-and-__FUNC.patch
 wscript-split-function-check-to-one-per-line-and-sor.patch
 ctdb-config-enable-syslog-by-default.patch
+CVE-2020-10700-1.patch
+CVE-2020-10700-3.patch
+CVE-2020-10704-1.patch
+CVE-2020-10704-3.patch
+CVE-2020-10704-5.patch
+CVE-2020-10704-6.patch
+CVE-2020-10704-7.patch
+CVE-2020-10704-8.patch
