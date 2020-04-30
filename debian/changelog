@@ -1,3 +1,12 @@
+samba (2:4.11.6+dfsg-0ubuntu1.2) focal; urgency=medium
+
+  * Fix "Shared files are shown as folders" (LP: #1872476)
+    - d/p/0023-libsmb-Don-t-try-to-find-posix-stat-info-in-SMBC_get.patch:
+      Don't obtain stat(2) information if dealing with older protocols on
+      UNIX-like systems.
+
+ -- Sergio Durigan Junior <sergio.durigan@canonical.com>  Thu, 30 Apr 2020 15:17:24 -0400
+
 samba (2:4.11.6+dfsg-0ubuntu1.1) focal-security; urgency=medium
 
   * SECURITY UPDATE: Use-after-free in AD DC LDAP server
