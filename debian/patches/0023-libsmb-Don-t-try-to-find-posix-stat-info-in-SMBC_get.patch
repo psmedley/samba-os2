@@ -1,0 +1,88 @@
+From: Volker Lendecke <vl@samba.org>
+Date: Thu, 19 Mar 2020 11:01:41 +0100
+Subject: libsmb: Don't try to find posix stat info in SMBC_getatr()
+
+This wrongly used "frame" instead of "fname", which can never have
+worked. A first attempt to fix in 51551e0d53fa6 caused a few followup
+patches in an attempt to clean up the test failures 51551e0d53fa6
+introduced. They were reverted after a few discussions. So rather than
+changing behaviour, just remove the code that introduced the valgrind
+error again.
+
+Signed-off-by: Volker Lendecke <vl@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+
+Author: Volker Lendecke <vl@samba.org>
+Origin: upstream, https://gitlab.com/samba-team/devel/samba/-/commit/39c910fd9cb
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/samba/+bug/1872476
+Reviewed-By: Sergio Durigan Junior <sergio.durigan@canonical.com>
+Last-Update: 2020-04-30
+---
+ source3/include/libsmb_internal.h |  1 -
+ source3/libsmb/libsmb_file.c      | 20 --------------------
+ source3/libsmb/libsmb_server.c    |  9 ---------
+ 3 files changed, 30 deletions(-)
+
+diff --git a/source3/include/libsmb_internal.h b/source3/include/libsmb_internal.h
+index af56df5..edd19c7 100644
+--- a/source3/include/libsmb_internal.h
++++ b/source3/include/libsmb_internal.h
+@@ -76,7 +76,6 @@ typedef struct DOS_ATTR_DESC {
+ struct _SMBCSRV {
+ 	struct cli_state *cli;
+ 	dev_t dev;
+-	bool try_posixinfo;
+ 	bool no_pathinfo;
+ 	bool no_pathinfo2;
+ 	bool no_pathinfo3;
+diff --git a/source3/libsmb/libsmb_file.c b/source3/libsmb/libsmb_file.c
+index 1577010..f0a16c6 100644
+--- a/source3/libsmb/libsmb_file.c
++++ b/source3/libsmb/libsmb_file.c
+@@ -504,26 +504,6 @@ SMBC_getatr(SMBCCTX * context,
+ 		return False;
+ 	}
+ 
+-	if (srv->try_posixinfo) {
+-		SMB_STRUCT_STAT sbuf;
+-
+-		status = cli_posix_stat(targetcli, frame, &sbuf);
+-		if (NT_STATUS_IS_OK(status)) {
+-			setup_stat_from_stat_ex(&sbuf, path, sb);
+-
+-			TALLOC_FREE(frame);
+-			return true;
+-		}
+-		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED) ||
+-		    NT_STATUS_EQUAL(status, NT_STATUS_INVALID_LEVEL)) {
+-			/*
+-			 * Turn this off if the server doesn't
+-			 * support it.
+-			 */
+-			srv->try_posixinfo = false;
+-		}
+-	}
+-
+ 	if (!srv->no_pathinfo2) {
+ 		status = cli_qpathinfo2(targetcli,
+ 					targetpath,
+diff --git a/source3/libsmb/libsmb_server.c b/source3/libsmb/libsmb_server.c
+index d4f71d8..0067df4 100644
+--- a/source3/libsmb/libsmb_server.c
++++ b/source3/libsmb/libsmb_server.c
+@@ -657,15 +657,6 @@ SMBC_server_internal(TALLOC_CTX *ctx,
+ 	ZERO_STRUCTP(srv);
+ 	DLIST_ADD(srv->cli, c);
+ 	srv->dev = (dev_t)(str_checksum(server) ^ str_checksum(share));
+-	srv->try_posixinfo = false;
+-	/*
+-	 * Until SMB2 POSIX is done, only
+-	 * try POSIX stat on SMB1 with POSIX capabilities.
+-	 */
+-	if ((smbXcli_conn_protocol(c->conn) < PROTOCOL_SMB2_02) &&
+-	    (smb1cli_conn_capabilities(c->conn) & CAP_UNIX)) {
+-		srv->try_posixinfo = true;
+-	}
+         srv->no_pathinfo = False;
+         srv->no_pathinfo2 = False;
+ 	srv->no_pathinfo3 = False;

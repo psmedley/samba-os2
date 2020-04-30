@@ -20,3 +20,4 @@ CVE-2020-10704-5.patch
 CVE-2020-10704-6.patch
 CVE-2020-10704-7.patch
 CVE-2020-10704-8.patch
+0023-libsmb-Don-t-try-to-find-posix-stat-info-in-SMBC_get.patch
