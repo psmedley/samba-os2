@@ -1,3 +1,23 @@
+samba (2:4.11.6+dfsg-0ubuntu1.3) focal-security; urgency=medium
+
+  * SECURITY UPDATE: NULL pointer de-reference and use-after-free in Samba
+    AD DC LDAP Server with ASQ, VLV and paged_results
+    - debian/patches/CVE-2020-10730-*.patch: multiple upstream patches to
+      fix the issue.
+    - CVE-2020-10730
+  * SECURITY UPDATE: Parsing and packing of NBT and DNS packets can consume
+    excessive CPU
+    - debian/patches/CVE-2020-10745-*.patch: multiple upstream patches to
+      fix the issue.
+    - CVE-2020-10745
+  * SECURITY UPDATE: LDAP Use-after-free in Samba AD DC Global Catalog with
+    paged_results and VLV
+    - debian/patches/CVE-2020-10760-*.patch: multiple upstream patches to
+      fix the issue.
+    - CVE-2020-10760
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 19 Jun 2020 08:34:26 -0400
+
 samba (2:4.11.6+dfsg-0ubuntu1.2) focal; urgency=medium
 
   * Fix "Shared files are shown as folders" (LP: #1872476)
