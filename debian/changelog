@@ -1,3 +1,12 @@
+samba (2:4.11.6+dfsg-0ubuntu1.4) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Empty UDP packet DoS in Samba AD DC nbtd
+    - debian/patches/CVE-2020-14303.patch: fix busy loop on empty UDP
+      packet in libcli/nbt/nbtsocket.c.
+    - CVE-2020-14303
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 07 Aug 2020 13:31:00 -0400
+
 samba (2:4.11.6+dfsg-0ubuntu1.3) focal-security; urgency=medium
 
   * SECURITY UPDATE: NULL pointer de-reference and use-after-free in Samba
