@@ -1,0 +1,32 @@
+From a71bc6c974db72fd3ef0a234fb9a0ef4fdc4d963 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 16 Sep 2020 16:10:53 +0200
+Subject: [PATCH] CVE-2020-1472(ZeroLogon): s3:rpc_server:netlogon: make use of
+ netlogon_creds_random_challenge()
+
+This is not strictly needed, but makes things more clear.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14497
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ source3/rpc_server/netlogon/srv_netlog_nt.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/source3/rpc_server/netlogon/srv_netlog_nt.c b/source3/rpc_server/netlogon/srv_netlog_nt.c
+index c9aaa90cbb9..3894eecd7ae 100644
+--- a/source3/rpc_server/netlogon/srv_netlog_nt.c
++++ b/source3/rpc_server/netlogon/srv_netlog_nt.c
+@@ -839,8 +839,7 @@ NTSTATUS _netr_ServerReqChallenge(struct pipes_struct *p,
+ 
+ 	pipe_state->client_challenge = *r->in.credentials;
+ 
+-	generate_random_buffer(pipe_state->server_challenge.data,
+-			       sizeof(pipe_state->server_challenge.data));
++	netlogon_creds_random_challenge(&pipe_state->server_challenge);
+ 
+ 	*r->out.return_credentials = pipe_state->server_challenge;
+ 
+-- 
+2.28.0
+

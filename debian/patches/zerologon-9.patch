@@ -1,0 +1,31 @@
+From d5926ad40ffc31a9b0f6e2cb66d47aa58e1e5e4e Mon Sep 17 00:00:00 2001
+From: Jeremy Allison <jra@samba.org>
+Date: Wed, 16 Sep 2020 12:48:21 -0700
+Subject: [PATCH] CVE-2020-1472(ZeroLogon): s3:rpc_server/netlogon: Fix mem
+ leak onto p->mem_ctx in error path of _netr_ServerPasswordSet2().
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14497
+
+Signed-off-by: Jeremy Allison <jra@samba.org>
+
+[dbagnall@samba.org, abartlet@samba.org: adapt for indentation
+changes]
+---
+ source3/rpc_server/netlogon/srv_netlog_nt.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/source3/rpc_server/netlogon/srv_netlog_nt.c b/source3/rpc_server/netlogon/srv_netlog_nt.c
+index 3894eecd7ae..bc5ec654a95 100644
+--- a/source3/rpc_server/netlogon/srv_netlog_nt.c
++++ b/source3/rpc_server/netlogon/srv_netlog_nt.c
+@@ -1364,6 +1364,7 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
+ 						      password_buf.data,
+ 						      516);
+ 		if (!NT_STATUS_IS_OK(status)) {
++			TALLOC_FREE(creds);
+ 			return status;
+ 		}
+ 	}
+-- 
+2.28.0
+

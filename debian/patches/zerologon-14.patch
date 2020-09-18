@@ -1,0 +1,100 @@
+From 5ee9480a89860d6906710fac39067e7d9db14feb Mon Sep 17 00:00:00 2001
+From: =?utf8?q?G=C3=BCnther=20Deschner?= <gd@samba.org>
+Date: Thu, 17 Sep 2020 14:57:22 +0200
+Subject: [PATCH] CVE-2020-1472(ZeroLogon): s3:rpc_server/netlogon: refactor
+ dcesrv_netr_creds_server_step_check()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf8
+Content-Transfer-Encoding: 8bit
+
+We should debug more details about the failing request.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14497
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: GÃ¼nther Deschner <gd@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ source3/rpc_server/netlogon/srv_netlog_nt.c | 43 +++++++++++++++++----
+ 1 file changed, 35 insertions(+), 8 deletions(-)
+
+diff --git a/source3/rpc_server/netlogon/srv_netlog_nt.c b/source3/rpc_server/netlogon/srv_netlog_nt.c
+index 3ffdde34142..d1ce1e94cb5 100644
+--- a/source3/rpc_server/netlogon/srv_netlog_nt.c
++++ b/source3/rpc_server/netlogon/srv_netlog_nt.c
+@@ -47,6 +47,7 @@
+ #include "../lib/tsocket/tsocket.h"
+ #include "lib/param/param.h"
+ #include "libsmb/dsgetdcname.h"
++#include "lib/util/util_str_escape.h"
+ 
+ extern userdom_struct current_user_info;
+ 
+@@ -1072,19 +1073,21 @@ static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
+ 	NTSTATUS status;
+ 	bool schannel_global_required = (lp_server_schannel() == true) ? true:false;
+ 	struct loadparm_context *lp_ctx;
++	struct netlogon_creds_CredentialState *creds = NULL;
++	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
++	uint16_t opnum = p->opnum;
++	const char *opname = "<unknown>";
+ 
+ 	if (creds_out != NULL) {
+ 		*creds_out = NULL;
+ 	}
+ 
+-	if (schannel_global_required) {
+-		if (p->auth.auth_type != DCERPC_AUTH_TYPE_SCHANNEL) {
+-			DBG_ERR("[%s] is not using schannel\n",
+-				computer_name);
+-			return NT_STATUS_ACCESS_DENIED;
+-		}
++	if (opnum < ndr_table_netlogon.num_calls) {
++		opname = ndr_table_netlogon.calls[opnum].name;
+ 	}
+ 
++	auth_type = p->auth.auth_type;
++
+ 	lp_ctx = loadparm_init_s3(mem_ctx, loadparm_s3_helpers());
+ 	if (lp_ctx == NULL) {
+ 		DEBUG(0, ("loadparm_init_s3 failed\n"));
+@@ -1093,9 +1096,33 @@ static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
+ 
+ 	status = schannel_check_creds_state(mem_ctx, lp_ctx,
+ 					    computer_name, received_authenticator,
+-					    return_authenticator, creds_out);
++					    return_authenticator, &creds);
+ 	talloc_unlink(mem_ctx, lp_ctx);
+-	return status;
++
++	if (!NT_STATUS_IS_OK(status)) {
++		ZERO_STRUCTP(return_authenticator);
++		return status;
++	}
++
++	if (schannel_global_required) {
++		if (auth_type == DCERPC_AUTH_TYPE_SCHANNEL) {
++			*creds_out = creds;
++			return NT_STATUS_OK;
++		}
++
++		DBG_ERR("CVE-2020-1472(ZeroLogon): "
++			"%s request (opnum[%u]) without schannel from "
++			"client_account[%s] client_computer_name[%s]\n",
++			opname, opnum,
++			log_escape(mem_ctx, creds->account_name),
++			log_escape(mem_ctx, creds->computer_name));
++		TALLOC_FREE(creds);
++		ZERO_STRUCTP(return_authenticator);
++		return NT_STATUS_ACCESS_DENIED;
++	}
++
++	*creds_out = creds;
++	return NT_STATUS_OK;
+ }
+ 
+ 
+-- 
+2.28.0
+

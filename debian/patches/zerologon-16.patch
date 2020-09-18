@@ -1,0 +1,127 @@
+From 86c54d3a270ab984bfc7c7c0cc334210ed7956ce Mon Sep 17 00:00:00 2001
+From: =?utf8?q?G=C3=BCnther=20Deschner?= <gd@samba.org>
+Date: Thu, 17 Sep 2020 14:42:52 +0200
+Subject: [PATCH] CVE-2020-1472(ZeroLogon): s3:rpc_server/netlogon: log
+ warnings about unsecure configurations
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf8
+Content-Transfer-Encoding: 8bit
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14497
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: GÃ¼nther Deschner <gd@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ source3/rpc_server/netlogon/srv_netlog_nt.c | 70 +++++++++++++++++++--
+ 1 file changed, 66 insertions(+), 4 deletions(-)
+
+diff --git a/source3/rpc_server/netlogon/srv_netlog_nt.c b/source3/rpc_server/netlogon/srv_netlog_nt.c
+index 63dd9dc0d5f..3221ebaa2e2 100644
+--- a/source3/rpc_server/netlogon/srv_netlog_nt.c
++++ b/source3/rpc_server/netlogon/srv_netlog_nt.c
+@@ -1073,11 +1073,13 @@ static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
+ 	NTSTATUS status;
+ 	bool schannel_global_required = (lp_server_schannel() == true) ? true:false;
+ 	bool schannel_required = schannel_global_required;
++	const char *explicit_opt = NULL;
+ 	struct loadparm_context *lp_ctx;
+ 	struct netlogon_creds_CredentialState *creds = NULL;
+ 	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
+ 	uint16_t opnum = p->opnum;
+ 	const char *opname = "<unknown>";
++	static bool warned_global_once = false;
+ 
+ 	if (creds_out != NULL) {
+ 		*creds_out = NULL;
+@@ -1105,10 +1107,20 @@ static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
+ 		return status;
+ 	}
+ 
+-	schannel_required = lp_parm_bool(GLOBAL_SECTION_SNUM,
+-					 "server require schannel",
+-					 creds->account_name,
+-					 schannel_global_required);
++	/*
++	 * We don't use lp_parm_bool(), as we
++	 * need the explicit_opt pointer in order to
++	 * adjust the debug messages.
++	 */
++
++	explicit_opt = lp_parm_const_string(GLOBAL_SECTION_SNUM,
++					    "server require schannel",
++					    creds->account_name,
++					    NULL);
++	if (explicit_opt != NULL) {
++		schannel_required = lp_bool(explicit_opt);
++	}
++
+ 	if (schannel_required) {
+ 		if (auth_type == DCERPC_AUTH_TYPE_SCHANNEL) {
+ 			*creds_out = creds;
+@@ -1121,11 +1133,61 @@ static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
+ 			opname, opnum,
+ 			log_escape(mem_ctx, creds->account_name),
+ 			log_escape(mem_ctx, creds->computer_name));
++		DBG_ERR("CVE-2020-1472(ZeroLogon): Check if option "
++			"'server require schannel:%s = no' is needed! \n",
++			log_escape(mem_ctx, creds->account_name));
+ 		TALLOC_FREE(creds);
+ 		ZERO_STRUCTP(return_authenticator);
+ 		return NT_STATUS_ACCESS_DENIED;
+ 	}
+ 
++	if (!schannel_global_required && !warned_global_once) {
++		/*
++		 * We want admins to notice their misconfiguration!
++		 */
++		DBG_ERR("CVE-2020-1472(ZeroLogon): "
++			"Please configure 'server schannel = yes', "
++			"See https://bugzilla.samba.org/show_bug.cgi?id=14497\n");
++		warned_global_once = true;
++	}
++
++	if (auth_type == DCERPC_AUTH_TYPE_SCHANNEL) {
++		DBG_ERR("CVE-2020-1472(ZeroLogon): "
++			"%s request (opnum[%u]) WITH schannel from "
++			"client_account[%s] client_computer_name[%s]\n",
++			opname, opnum,
++			log_escape(mem_ctx, creds->account_name),
++			log_escape(mem_ctx, creds->computer_name));
++		DBG_ERR("CVE-2020-1472(ZeroLogon): "
++			"Option 'server require schannel:%s = no' not needed!?\n",
++			log_escape(mem_ctx, creds->account_name));
++
++		*creds_out = creds;
++		return NT_STATUS_OK;
++	}
++
++	if (explicit_opt != NULL) {
++		DBG_INFO("CVE-2020-1472(ZeroLogon): "
++			 "%s request (opnum[%u]) without schannel from "
++			 "client_account[%s] client_computer_name[%s]\n",
++			 opname, opnum,
++			 log_escape(mem_ctx, creds->account_name),
++			 log_escape(mem_ctx, creds->computer_name));
++		DBG_INFO("CVE-2020-1472(ZeroLogon): "
++			 "Option 'server require schannel:%s = no' still needed!\n",
++			 log_escape(mem_ctx, creds->account_name));
++	} else {
++		DBG_ERR("CVE-2020-1472(ZeroLogon): "
++			"%s request (opnum[%u]) without schannel from "
++			"client_account[%s] client_computer_name[%s]\n",
++			opname, opnum,
++			log_escape(mem_ctx, creds->account_name),
++			log_escape(mem_ctx, creds->computer_name));
++		DBG_ERR("CVE-2020-1472(ZeroLogon): Check if option "
++			"'server require schannel:%s = no' might be needed!\n",
++			log_escape(mem_ctx, creds->account_name));
++	}
++
+ 	*creds_out = creds;
+ 	return NT_STATUS_OK;
+ }
+-- 
+2.28.0
+

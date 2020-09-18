@@ -1,3 +1,19 @@
+samba (2:4.11.6+dfsg-0ubuntu1.5) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Unauthenticated domain controller compromise by
+    subverting Netlogon cryptography (ZeroLogon)
+    - debian/patches/zerologon-*.patch: backport upstream patches:
+      + For compatibility reasons, allow specifying an insecure netlogon
+        configuration per machine. See the following link for examples:
+        https://www.samba.org/samba/security/CVE-2020-1472.html
+      + Add additional server checks for the protocol attack in the
+        client-specified challenge to provide some protection when
+        'server schannel = no/auto' and avoid the false-positive results
+        when running the proof-of-concept exploit.
+    - CVE-2020-1472
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 18 Sep 2020 12:33:05 -0400
+
 samba (2:4.11.6+dfsg-0ubuntu1.4) focal-security; urgency=medium
 
   * SECURITY UPDATE: Empty UDP packet DoS in Samba AD DC nbtd

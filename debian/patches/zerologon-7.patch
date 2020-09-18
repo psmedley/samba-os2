@@ -1,0 +1,81 @@
+From fd05519caa2e738da317432371f42e4967514773 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 16 Sep 2020 16:17:29 +0200
+Subject: [PATCH] CVE-2020-1472(ZeroLogon): libcli/auth: reject weak client
+ challenges in netlogon_creds_server_init()
+
+This implements the note from MS-NRPC 3.1.4.1 Session-Key Negotiation:
+
+ 7. If none of the first 5 bytes of the client challenge is unique, the
+    server MUST fail session-key negotiation without further processing of
+    the following steps.
+
+It lets ./zerologon_tester.py from
+https://github.com/SecuraBV/CVE-2020-1472.git
+report: "Attack failed. Target is probably patched."
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14497
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ libcli/auth/credentials.c | 16 ++++++++++++++++
+ libcli/auth/wscript_build |  2 +-
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/libcli/auth/credentials.c b/libcli/auth/credentials.c
+index dce0a9151e9..0ba1d95afd3 100644
+--- a/libcli/auth/credentials.c
++++ b/libcli/auth/credentials.c
+@@ -25,6 +25,7 @@
+ #include "../lib/crypto/crypto.h"
+ #include "libcli/auth/libcli_auth.h"
+ #include "../libcli/security/dom_sid.h"
++#include "lib/util/util_str_escape.h"
+ 
+ #include "lib/crypto/gnutls_helpers.h"
+ #include <gnutls/gnutls.h>
+@@ -534,6 +535,7 @@ struct netlogon_creds_CredentialState *netlogon_creds_server_init(TALLOC_CTX *me
+ {
+ 
+ 	struct netlogon_creds_CredentialState *creds = talloc_zero(mem_ctx, struct netlogon_creds_CredentialState);
++	bool ok;
+ 
+ 	if (!creds) {
+ 		return NULL;
+@@ -546,6 +548,20 @@ struct netlogon_creds_CredentialState *netlogon_creds_server_init(TALLOC_CTX *me
+ 	dump_data_pw("Server chall", server_challenge->data, sizeof(server_challenge->data));
+ 	dump_data_pw("Machine Pass", machine_password->hash, sizeof(machine_password->hash));
+ 
++	ok = netlogon_creds_is_random_challenge(client_challenge);
++	if (!ok) {
++		DBG_WARNING("CVE-2020-1472(ZeroLogon): "
++			    "non-random client challenge rejected for "
++			    "client_account[%s] client_computer_name[%s]\n",
++			    log_escape(mem_ctx, client_account),
++			    log_escape(mem_ctx, client_computer_name));
++		dump_data(DBGLVL_WARNING,
++			  client_challenge->data,
++			  sizeof(client_challenge->data));
++		talloc_free(creds);
++		return NULL;
++	}
++
+ 	creds->computer_name = talloc_strdup(creds, client_computer_name);
+ 	if (!creds->computer_name) {
+ 		talloc_free(creds);
+diff --git a/libcli/auth/wscript_build b/libcli/auth/wscript_build
+index 04e2b09eadf..6f7d9a76404 100644
+--- a/libcli/auth/wscript_build
++++ b/libcli/auth/wscript_build
+@@ -18,7 +18,7 @@ bld.SAMBA_SUBSYSTEM('NTLM_CHECK',
+ 
+ bld.SAMBA_SUBSYSTEM('LIBCLI_AUTH',
+ 	source='credentials.c session.c smbencrypt.c smbdes.c',
+-	public_deps='MSRPC_PARSE gnutls GNUTLS_HELPERS',
++	public_deps='MSRPC_PARSE gnutls GNUTLS_HELPERS util_str_escape',
+ 	public_headers='credentials.h:domain_credentials.h'
+ 	)
+ 
+-- 
+2.28.0
+

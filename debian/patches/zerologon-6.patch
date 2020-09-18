@@ -1,0 +1,69 @@
+From 13185dd83563cc7927a511f5d2a4a56cc2186743 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 16 Sep 2020 16:15:26 +0200
+Subject: [PATCH] CVE-2020-1472(ZeroLogon): libcli/auth: add
+ netlogon_creds_is_random_challenge() to avoid weak values
+
+This is the check Windows is using, so we won't generate challenges,
+which are rejected by Windows DCs (and future Samba DCs).
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14497
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ libcli/auth/credentials.c | 23 ++++++++++++++++++++++-
+ libcli/auth/proto.h       |  1 +
+ 2 files changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/libcli/auth/credentials.c b/libcli/auth/credentials.c
+index c79f5e2ce24..dce0a9151e9 100644
+--- a/libcli/auth/credentials.c
++++ b/libcli/auth/credentials.c
+@@ -30,10 +30,31 @@
+ #include <gnutls/gnutls.h>
+ #include <gnutls/crypto.h>
+ 
++bool netlogon_creds_is_random_challenge(const struct netr_Credential *challenge)
++{
++	/*
++	 * If none of the first 5 bytes of the client challenge is unique, the
++	 * server MUST fail session-key negotiation without further processing
++	 * of the following steps.
++	 */
++
++	if (challenge->data[1] == challenge->data[0] &&
++	    challenge->data[2] == challenge->data[0] &&
++	    challenge->data[3] == challenge->data[0] &&
++	    challenge->data[4] == challenge->data[0])
++	{
++		return false;
++	}
++
++	return true;
++}
++
+ void netlogon_creds_random_challenge(struct netr_Credential *challenge)
+ {
+ 	ZERO_STRUCTP(challenge);
+-	generate_random_buffer(challenge->data, sizeof(challenge->data));
++	while (!netlogon_creds_is_random_challenge(challenge)) {
++		generate_random_buffer(challenge->data, sizeof(challenge->data));
++	}
+ }
+ 
+ static void netlogon_creds_step_crypt(struct netlogon_creds_CredentialState *creds,
+diff --git a/libcli/auth/proto.h b/libcli/auth/proto.h
+index 19a0e846357..51d5deaab2d 100644
+--- a/libcli/auth/proto.h
++++ b/libcli/auth/proto.h
+@@ -11,6 +11,7 @@
+ 
+ /* The following definitions come from /home/jeremy/src/samba/git/master/source3/../source4/../libcli/auth/credentials.c  */
+ 
++bool netlogon_creds_is_random_challenge(const struct netr_Credential *challenge);
+ void netlogon_creds_random_challenge(struct netr_Credential *challenge);
+ 
+ void netlogon_creds_des_encrypt_LMKey(struct netlogon_creds_CredentialState *creds, struct netr_LMSessionKey *key);
+-- 
+2.28.0
+
