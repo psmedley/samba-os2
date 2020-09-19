@@ -348,7 +348,7 @@ struct krb5_cc_ops;
 #define KRB5_USE_PATH_TOKENS 1
 #endif
 
-#ifdef KRB5_USE_PATH_TOKENS
+#if defined(KRB5_USE_PATH_TOKENS) || defined(__OS2__)
 #define KRB5_DEFAULT_CCFILE_ROOT "%{TEMP}/krb5cc_"
 #else
 #define KRB5_DEFAULT_CCFILE_ROOT "/tmp/krb5cc_"

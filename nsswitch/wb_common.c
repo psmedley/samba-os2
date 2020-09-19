@@ -290,6 +290,7 @@ static int winbind_named_pipe_sock(const char *dir)
 	int slept;
 	int ret;
 
+#ifndef __OS2__
 	/* Check permissions on unix socket directory */
 
 	if (lstat(dir, &st) == -1) {
@@ -306,18 +307,23 @@ static int winbind_named_pipe_sock(const char *dir)
 		errno = ENOENT;
 		return -1;
 	}
-
+#endif
 	/* Connect to socket */
 
 	sunaddr = (struct sockaddr_un) { .sun_family = AF_UNIX };
 
 	ret = snprintf(sunaddr.sun_path, sizeof(sunaddr.sun_path),
+#ifndef __OS2__
 		       "%s/%s", dir, WINBINDD_SOCKET_NAME);
+#else
+		       "\\socket\\winbindd\\%s", WINBINDD_SOCKET_NAME);
+#endif
 	if ((ret == -1) || (ret >= sizeof(sunaddr.sun_path))) {
 		errno = ENAMETOOLONG;
 		return -1;
 	}
 
+#ifndef __OS2__
 	/* If socket file doesn't exist, don't bother trying to connect
 	   with retry.  This is an attempt to make the system usable when
 	   the winbindd daemon is not running. */
@@ -338,7 +344,7 @@ static int winbind_named_pipe_sock(const char *dir)
 		errno = ENOENT;
 		return -1;
 	}
-
+#endif
 	/* Connect to socket */
 
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {

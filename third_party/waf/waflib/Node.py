@@ -539,7 +539,7 @@ class Node(object):
 		self.cache_abspath = val
 		return val
 
-	if Utils.is_win32:
+	if (Utils.is_win32 or Utils.is_os2):
 		def abspath(self):
 			try:
 				return self.cache_abspath
@@ -802,7 +802,7 @@ class Node(object):
 			cur = cur.parent
 		# the file is external to the current project, make a fake root in the current build directory
 		lst.reverse()
-		if lst and Utils.is_win32 and len(lst[0]) == 2 and lst[0].endswith(':'):
+		if lst and (Utils.is_win32 or Utils.is_os2) and len(lst[0]) == 2 and lst[0].endswith(':'):
 			lst[0] = lst[0][0]
 		return self.ctx.bldnode.make_node(['__root__'] + lst)
 

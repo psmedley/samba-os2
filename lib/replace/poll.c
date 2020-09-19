@@ -131,7 +131,11 @@ int rep_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 			fds[i].revents |= fds[i].events
 				& (POLLPRI | POLLRDBAND);
 		}
+#ifdef __OS2__ // if we only increment rc when no POLLHUB we loop
+		if (fds[i].revents != 0) {
+#else
 		if (fds[i].revents & ~POLLHUP) {
+#endif
 			rc++;
 		}
 	}

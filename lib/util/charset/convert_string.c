@@ -127,7 +127,9 @@ bool convert_string_error_handle(struct smb_iconv_handle *ic,
 #endif
 
 	if (srclen == 0) {
+#ifndef __OS2__ /* Don't understand why, but this causes a SIGSEGV on OS2 */
 		*converted_size = 0;
+#endif
 		return true;
 	}
 

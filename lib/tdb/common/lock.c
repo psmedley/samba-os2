@@ -53,9 +53,43 @@ static int fcntl_lock(struct tdb_context *tdb,
 	fl.l_len = len;
 	fl.l_pid = 0;
 
+#ifdef __OS2__
+	int rc = 0;
+	int lockFile = 0;
+
+	if (off == ACTIVE_LOCK || off == OPEN_LOCK || off == TRANSACTION_LOCK)
+		lockFile = tdb->hActiveLock;
+	else
+		lockFile = tdb->fd;
+
+	cmd = 0;
+	if (waitflag)
+		cmd = F_SETLKW;
+	else
+		cmd = F_SETLK;
+
+	rc = fcntl(lockFile, cmd, &fl);
+	// if the first lock doesn't work and it's a complete lock,
+	// we split it in 2 parts. first hash size*4 and then the rest
+	if (rc != 0 && off == FREELIST_TOP && len == 0) { 
+		fl.l_len = DEFAULT_HASH_SIZE;
+		rc = fcntl(lockFile, cmd, &fl);
+		if (rc == 0) {
+			fl.l_start = off + DEFAULT_HASH_SIZE;
+			fl.l_len = 0;
+			rc = fcntl(lockFile, cmd, &fl);
+		}
+	}
+
+	TDB_LOG((tdb, TDB_DEBUG_TRACE,"fcntl_lock: (fd=%d) offset=%lld rw_type=%d len=%lld waitflag=%d (rc=%d) pid=%d\n",
+		lockFile, off, rw, len, waitflag, rc, getpid()));
+
+	return rc;
+#else
 	cmd = waitflag ? F_SETLKW : F_SETLK;
 
 	return fcntl(tdb->fd, cmd, &fl);
+#endif
 }
 
 static int fcntl_unlock(struct tdb_context *tdb, int rw, off_t off, off_t len)
@@ -134,7 +168,37 @@ static int fcntl_unlock(struct tdb_context *tdb, int rw, off_t off, off_t len)
 	fl.l_len = len;
 	fl.l_pid = 0;
 
+#ifdef __OS2__
+	int rc = 0;
+	int lockFile = 0;
+	if (off == ACTIVE_LOCK || off == OPEN_LOCK || off == TRANSACTION_LOCK)
+		lockFile = tdb->hActiveLock;
+	else
+		lockFile = tdb->fd;
+
+	rc = fcntl(lockFile, F_SETLKW, &fl);
+
+	// if the first unlock doesn't work and it's a complete unlock,
+	// we split it in 2 parts. first hash size*4 and then the rest
+	// as it was locked that way as well. and it seems fcntl() doesn't care
+	if (rc != 0 && off == FREELIST_TOP && len == 0) { 
+		fl.l_len = DEFAULT_HASH_SIZE;
+		rc = fcntl(lockFile, F_SETLKW, &fl);
+
+		if (rc == 0) {
+			fl.l_start = off + DEFAULT_HASH_SIZE;
+			fl.l_len = 0;
+			rc = fcntl(lockFile, F_SETLKW, &fl);
+		}
+	}
+
+	TDB_LOG((tdb, TDB_DEBUG_TRACE,"fcntl_unlock: (fd=%d) offset=%lld rw_type=%d len=%lld (rc=%d) pid=%d\n",
+		 lockFile, off, rw, len, rc, getpid()));
+
+	return rc;
+#else
 	return fcntl(tdb->fd, F_SETLKW, &fl);
+#endif
 }
 
 /*
@@ -256,6 +320,11 @@ static int tdb_brlock_retry(struct tdb_context *tdb,
 	while (count--) {
 		struct timeval tv;
 		int ret;
+
+#ifdef __OS2__
+		// we need to remove locks, as upgrade doesn't work
+		tdb_brunlock(tdb, F_RDLCK, FREELIST_TOP, 0);
+#endif
 
 		ret = tdb_brlock(tdb, rw_type, offset, len, flags);
 		if (ret == 0) {

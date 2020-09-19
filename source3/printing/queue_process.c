@@ -35,6 +35,9 @@
 #include "auth.h"
 #include "nt_printing.h"
 #include "util_event.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 extern pid_t start_spoolssd(struct tevent_context *ev_ctx,
 			    struct messaging_context *msg_ctx);

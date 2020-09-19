@@ -439,14 +439,23 @@ SMB_ACL_T sys_acl_get_file(vfs_handle_struct *handle,
 			SMB_ACL_TYPE_T type,
 			TALLOC_CTX *mem_ctx)
 {
+#if 0
 	return tru64acl_sys_acl_get_file(handle, smb_fname, type,
 					 mem_ctx);
+#else
+	return tru64acl_sys_acl_get_file(handle, smb_fname, type);
+
+#endif
 }
 
 SMB_ACL_T sys_acl_get_fd(vfs_handle_struct *handle, files_struct *fsp,
 			 TALLOC_CTX *mem_ctx)
 {
+#if 0
 	return tru64acl_sys_acl_get_fd(handle, fsp, mem_ctx);
+#else
+	return tru64acl_sys_acl_get_fd(handle, fsp);
+#endif
 }
 
 int sys_acl_set_file(vfs_handle_struct *handle,

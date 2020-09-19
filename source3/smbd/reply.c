@@ -7060,6 +7060,10 @@ NTSTATUS rename_internals_fsp(connection_struct *conn,
 	 */
 
 	SMB_ASSERT(lck != NULL);
+#ifdef __OS2__
+	// OS/2 can't rename an open file, close the fd of the source file before attempting a rename
+	close(fsp->fh->fd);
+#endif
 
 	if(SMB_VFS_RENAME(conn, fsp->fsp_name, smb_fname_dst) == 0) {
 		uint32_t create_options = fsp->fh->private_options;

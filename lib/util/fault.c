@@ -108,6 +108,7 @@ void fault_setup(void)
 		return;
 	}
 #if !defined(HAVE_DISABLE_FAULT_HANDLING)
+#ifndef __OS2__
 #ifdef SIGSEGV
 	CatchSignal(SIGSEGV, sig_fault);
 #endif
@@ -116,6 +117,7 @@ void fault_setup(void)
 #endif
 #ifdef SIGABRT
 	CatchSignal(SIGABRT, sig_fault);
+#endif
 #endif
 #endif
 }

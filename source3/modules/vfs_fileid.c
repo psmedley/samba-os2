@@ -104,9 +104,12 @@ static void fileid_load_mount_entries(struct fileid_handle_data *data)
 	data->num_mount_entries = 0;
 	TALLOC_FREE(data->mount_entries);
 
+#ifndef __OS2__
 	f = setmntent("/etc/mtab", "r");
+#endif
 	if (!f) return;
 
+#ifndef __OS2__
 	while ((m = getmntent(f))) {
 		struct stat st;
 		struct statfs sfs;
@@ -144,6 +147,7 @@ static void fileid_load_mount_entries(struct fileid_handle_data *data)
 		data->num_mount_entries++;
 	}
 	endmntent(f);
+#endif
 	return;
 	
 nomem:

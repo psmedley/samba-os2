@@ -114,6 +114,9 @@ struct file_info {
 	struct timespec mtime_ts;
 	struct timespec atime_ts;
 	struct timespec ctime_ts;
+#ifdef __OS2__
+	int easize;
+#endif
 	char *name;
 	char *short_name;
 };

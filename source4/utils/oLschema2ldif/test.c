@@ -61,7 +61,7 @@ static struct schema_conv process_data_blob(void **state, DATA_BLOB input)
 	assert_non_null(test_ctx);
 	assert_non_null(input.data);
 
-	opt.in = fmemopen(input.data, input.length, "r");
+//	opt.in = fmemopen(input.data, input.length, "r");
 	opt.out = fopen("/dev/null", "w");
 	opt.ldb_ctx = ldb_init(test_ctx, NULL);
 

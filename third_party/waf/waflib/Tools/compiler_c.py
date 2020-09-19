@@ -43,6 +43,7 @@ c_compiler = {
 'linux':  ['gcc', 'clang', 'icc'],
 'sunos':  ['suncc', 'gcc'],
 'irix':   ['gcc', 'irixcc'],
+'os2knix':    ['gcc'],
 'hpux':   ['gcc'],
 'osf1V':  ['gcc'],
 'gnu':    ['gcc', 'clang'],

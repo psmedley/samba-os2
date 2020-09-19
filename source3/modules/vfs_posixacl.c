@@ -21,6 +21,9 @@
 #include "system/filesys.h"
 #include "smbd/smbd.h"
 #include "modules/vfs_posixacl.h"
+#ifdef __OS2__
+#include <acl.h>
+#endif
 
 /* prototypes for static functions first - for clarity */
 
@@ -108,6 +111,7 @@ int posixacl_sys_acl_set_file(vfs_handle_struct *handle,
 	if ((acl = smb_acl_to_posix(theacl)) == NULL) {
 		return -1;
 	}
+	DEBUG(3, ("PS Debug acl_set_file: file = %s\n", smb_fname->base_name));
 	res = acl_set_file(smb_fname->base_name, acl_type, acl);
 	if (res != 0) {
 		DEBUG(10, ("acl_set_file failed: %s\n", strerror(errno)));

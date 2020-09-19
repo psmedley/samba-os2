@@ -4,6 +4,7 @@ void exit(int);
 
 int main()
 {
+#ifndef __OS2__
 #if !defined(HAVE_FCNTL_LOCK)
 #error "ERROR: No locking available. Running Samba would be unsafe"
 #endif
@@ -23,6 +24,6 @@ int main()
 #if !((defined(HAVE_RANDOM) || defined(HAVE_RAND)) && (defined(HAVE_SRANDOM) || defined(HAVE_SRAND)))
 #error "ERROR: No random or srandom routine!"
 #endif
-
+#endif
 	exit(0);
 }

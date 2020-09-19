@@ -34,6 +34,10 @@
 #ifdef HAVE_SYS_PRCTL_H
 #include <sys/prctl.h>
 #endif
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#undef HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC
+#endif
 
 /*
    The idea is that this file will eventually have wrappers around all

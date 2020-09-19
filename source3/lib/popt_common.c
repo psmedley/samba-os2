@@ -45,9 +45,12 @@ static void set_logfile(poptContext con, const char * arg)
 	char lfile[PATH_MAX];
 	const char *pname;
 	int ret;
-
 	/* Find out basename of current program */
+#ifndef __OS2__
 	pname = strrchr_m(poptGetInvocationName(con), '/');
+#else
+	pname = strrchr_m(poptGetInvocationName(con), '\\');
+#endif
 	if (pname == NULL) {
 		pname = poptGetInvocationName(con);
 	} else {

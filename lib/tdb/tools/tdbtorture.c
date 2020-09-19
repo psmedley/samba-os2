@@ -12,6 +12,10 @@
 #include <getopt.h>
 #endif
 
+#ifdef __OS2__
+#include <sys/socket.h>
+#define pipe(A) socketpair(AF_UNIX, SOCK_STREAM, 0, A)
+#endif
 
 #define REOPEN_PROB 30
 #define DELETE_PROB 8
@@ -266,6 +270,7 @@ static int run_child(const char *filename, int i, int seed, unsigned num_loops, 
 	signal(SIGUSR1, send_count_and_suicide);
 
 	for (;loopnum<num_loops && error_count == 0;loopnum++) {
+		printf("loop %i\n", loopnum);
 		addrec_db();
 	}
 

@@ -428,7 +428,7 @@ def find_program(self, filename, **kw):
 	:raises: :py:class:`waflib.Errors.ConfigurationError`
 	"""
 
-	exts = kw.get('exts', Utils.is_win32 and '.exe,.com,.bat,.cmd' or ',.sh,.pl,.py')
+	exts = kw.get('exts', (Utils.is_win32 or Utils.is_os2) and '.exe,.com,.bat,.cmd' or ',.sh,.pl,.py')
 
 	environ = kw.get('environ', getattr(self, 'environ', os.environ))
 

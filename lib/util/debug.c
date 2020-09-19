@@ -1247,6 +1247,9 @@ static void do_one_check_log_size(off_t maxlog, int *_fd, const char *logfile)
 {
 	char name[strlen(logfile) + 5];
 	struct stat st;
+#ifdef __OS2__
+	int force_trunc = 0;
+#endif
 	int fd = *_fd;
 	int ret;
 	bool ok;
@@ -1280,9 +1283,29 @@ static void do_one_check_log_size(off_t maxlog, int *_fd, const char *logfile)
 
 	snprintf(name, sizeof(name), "%s.old", logfile);
 
+#ifdef __OS2__
+	/* Renaming an open file is not possible on
+	 * OS/2 so we close it and then rename. Note
+	 * that if this log file is also in use by
+	 * another process, rename will still fail; in
+	 * this case we fall back to simply truncating
+	 * the current file to stop its growth. */
+	debug_close_fd(fd);
+	fd = -1;
+	if (rename(logfile, name) == -1) {
+		/* Most likely, some other samba process
+		 * is using this log file. In either case
+		 * our only option is to truncate it. */
+		force_trunc = 1;
+	}
+	if (reopen_logs_internal() && force_trunc) {
+		ftruncate(fd, 0);
+	}
+#else
 	(void)rename(logfile, name);
 
 	ok = reopen_logs_internal();
+#endif
 	if (ok) {
 		return;
 	}

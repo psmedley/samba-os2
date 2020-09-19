@@ -43,6 +43,9 @@
 #include "lib/util/sys_rw.h"
 #include <arpa/nameser.h>
 #include <resolv.h>
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 struct dns_ex_state {
 	bool do_fallback;

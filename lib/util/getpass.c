@@ -170,6 +170,7 @@ int samba_getpass(const char *prompt,
 		return -1;
 	}
 
+#ifndef __OS2__
 	if (isatty (STDIN_FILENO)) {
 
 		ZERO_STRUCT(attr);
@@ -222,7 +223,9 @@ int samba_getpass(const char *prompt,
 		memset (buf, '\0', len);
 		return -1;
 	}
-
+#else
+	strncpy(buf, getpass(prompt), len);
+#endif
 	/* force termination */
 	buf[len - 1] = '\0';
 

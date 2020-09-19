@@ -984,7 +984,11 @@ bool validate_net_name( const char *name,
  of characters. UNIX charset format.
 *******************************************************************/
 
+#ifdef __OS2__
+#define INCLUDE_LIST "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_/ \t.,:"
+#else
 #define INCLUDE_LIST "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_/ \t.,"
+#endif
 #define INSIDE_DQUOTE_LIST "$`\n\"\\"
 
 char *escape_shell_string(const char *src)

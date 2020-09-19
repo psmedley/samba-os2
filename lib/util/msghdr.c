@@ -95,6 +95,12 @@ size_t msghdr_extract_fds(struct msghdr *msg, int *fds, size_t fds_size)
 	    cmsg != NULL;
 	    cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
+#ifdef __OS2__
+	/* fixes hang on OS/2 */
+		if (cmsg->cmsg_len == 0) {
+			return 0;
+		}
+#endif
 		if ((cmsg->cmsg_type == SCM_RIGHTS) &&
 		    (cmsg->cmsg_level == SOL_SOCKET)) {
 			break;

@@ -95,7 +95,10 @@ static NTSTATUS map_smb2_handle_to_fnum(struct cli_state *cli,
  Return the smb2_hnd pointer associated with the given fnum.
 ***************************************************************/
 
-static NTSTATUS map_fnum_to_smb2_handle(struct cli_state *cli,
+#ifndef __OS2__
+static 
+#endif
+NTSTATUS map_fnum_to_smb2_handle(struct cli_state *cli,
 				uint16_t fnum,		/* In */
 				struct smb2_hnd **pph)	/* Out */
 {
@@ -1202,7 +1205,10 @@ fail:
  Utility function to parse a SMB2_FIND_ID_BOTH_DIRECTORY_INFO reply.
 ***************************************************************/
 
-static NTSTATUS parse_finfo_id_both_directory_info(uint8_t *dir_data,
+#ifndef __OS2__
+static 
+#endif
+NTSTATUS parse_finfo_id_both_directory_info(uint8_t *dir_data,
 				uint32_t dir_data_length,
 				struct file_info *finfo,
 				uint32_t *next_offset)
@@ -1276,7 +1282,10 @@ static NTSTATUS parse_finfo_id_both_directory_info(uint8_t *dir_data,
  Given a filename - get its directory name
 ********************************************************************/
 
-static bool windows_parent_dirname(TALLOC_CTX *mem_ctx,
+#ifndef __OS2__
+static 
+#endif
+bool windows_parent_dirname(TALLOC_CTX *mem_ctx,
 				const char *dir,
 				char **parent,
 				const char **name)

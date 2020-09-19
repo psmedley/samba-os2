@@ -46,6 +46,10 @@
 #include "protocol/protocol_util.h"
 #include "event/event_protocol_api.h"
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 /*
  * Setting up event daemon
  */

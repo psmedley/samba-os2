@@ -31,6 +31,9 @@
 #include "lib/messaging/messaging.h"
 #include "lib/util/debug.h"
 #include "source3/lib/messages_dgm.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 static unsigned connections_active = 0;
 static unsigned smbd_max_processes = 0;

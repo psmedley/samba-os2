@@ -33,6 +33,9 @@
 #include "offload_token.h"
 #include "string_replace.h"
 #include "hash_inode.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 /*
  * Enhanced OS X and Netatalk compatibility

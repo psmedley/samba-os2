@@ -92,11 +92,13 @@ struct cli_state *cli_state_create(TALLOC_CTX *mem_ctx,
 		client_guid = GUID_random();
 	}
 
+#ifndef __OS2__
 	/* Check the effective uid - make sure we are not setuid */
 	if (is_setuid_root()) {
 		DEBUG(0,("libsmb based programs must *NOT* be setuid root.\n"));
 		return NULL;
 	}
+#endif
 
 	cli = talloc_zero(mem_ctx, struct cli_state);
 	if (!cli) {

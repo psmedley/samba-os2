@@ -41,6 +41,10 @@
 #include "common/common.h"
 #include "common/logging.h"
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 #define TIMELIMIT() timeval_current_ofs(10, 0)
 
 enum vacuum_child_status { VACUUM_RUNNING, VACUUM_OK, VACUUM_ERROR, VACUUM_TIMEOUT};

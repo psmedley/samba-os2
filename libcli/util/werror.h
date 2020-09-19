@@ -29,7 +29,7 @@
    from using bool for internal functions 
 */
 
-#if defined(HAVE_IMMEDIATE_STRUCTURES)
+#if defined(HAVE_IMMEDIATE_STRUCTURES) && !defined(__OS2__)
 typedef struct {uint32_t w;} WERROR;
 #define W_ERROR(x) ((WERROR) { x })
 #define W_ERROR_V(x) ((x).w)

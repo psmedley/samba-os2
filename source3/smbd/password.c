@@ -136,6 +136,15 @@ int register_homes_share(const char *username)
 		return -1;
 	}
 
+#ifdef __OS2__
+	/* On OS/2 we use drive letters which have a colon.  This is also the field
+	   separator in master.passwd, so we use a $ instead of a colon for the drive
+	   separator, ie e$/user instead of e:/user.  This code simply exchanges any $
+	   for a : in the user's homedir */
+ 	if (pwd->pw_dir[1] == '$')
+		pwd->pw_dir[1] = ':';
+#endif
+
 	DEBUG(3, ("Adding homes service for user '%s' using home directory: "
 		  "'%s'\n", username, pwd->pw_dir));
 

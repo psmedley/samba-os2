@@ -49,6 +49,10 @@
 
 #include "server/ipalloc.h"
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 #define TAKEOVER_TIMEOUT() timeval_current_ofs(ctdb->tunable.takeover_timeout,0)
 
 #define CTDB_ARP_INTERVAL 1

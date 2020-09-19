@@ -981,6 +981,9 @@ static int net_usershare_add(struct net_context *c, int argc, const char **argv)
 		return -1;
 	}
 
+#ifdef __OS2__
+	close(tmpfd);
+#endif
 	/* Attempt to replace any existing share by this name. */
 	if (rename(full_path_tmp, full_path) != 0) {
 		unlink(full_path_tmp);
@@ -993,7 +996,9 @@ static int net_usershare_add(struct net_context *c, int argc, const char **argv)
 		return -1;
 	}
 
+#ifndef __OS2__
 	close(tmpfd);
+#endif
 
 	if (c->opt_long_list_entries) {
 		const char *my_argv[2];

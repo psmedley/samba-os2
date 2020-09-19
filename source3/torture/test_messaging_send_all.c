@@ -23,6 +23,9 @@
 #include "messages.h"
 #include "lib/async_req/async_sock.h"
 #include "lib/util/sys_rw.h"
+#ifdef __OS2__
+#define	EMULTIHOP	110	/* Multihop attempted */
+#endif
 
 static pid_t fork_responder(struct messaging_context *msg_ctx,
 			    int exit_pipe[2])

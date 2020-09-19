@@ -30,6 +30,9 @@
 #ifdef HAVE_PTHREAD
 #include <pthread.h>
 #endif
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 #ifdef NDEBUG
 #undef NDEBUG

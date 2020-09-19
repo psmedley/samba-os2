@@ -93,6 +93,7 @@ static int getgrouplist_getgrset(const char *user, gid_t gid, gid_t *groups,
 static int getgrouplist_internals(const char *user, gid_t gid, gid_t *groups,
 				  int *grpcnt)
 {
+#ifndef __OS2__groups
 	gid_t *gids_saved;
 	int ret, ngrp_saved, num_gids;
 
@@ -164,6 +165,10 @@ static int getgrouplist_internals(const char *user, gid_t gid, gid_t *groups,
 
 	free(gids_saved);
 	return ret;
+#else
+	*grpcnt = 0;
+	return 0;
+#endif
 }
 #endif /* HAVE_GETGRSET */
 #endif /* HAVE_GETGROUPLIST */

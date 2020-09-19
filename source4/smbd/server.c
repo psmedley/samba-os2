@@ -46,6 +46,9 @@
 #include "lib/util/tfork.h"
 #include "dsdb/samdb/ldb_modules/util.h"
 #include "lib/util/server_id.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 #ifdef HAVE_PTHREAD
 #include <pthread.h>

@@ -120,8 +120,9 @@ char *canonicalize_absolute_path(TALLOC_CTX *ctx, const char *abs_path)
         }
 	d = destname;
 
+#ifndef __OS2__
 	*d++ = '/'; /* Always start with root. */
-
+#endif
 	while (*s) {
 		if (*s == '/') {
 			/* Eat multiple '/' */

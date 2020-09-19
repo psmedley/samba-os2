@@ -41,6 +41,9 @@
 #ifdef HAVE_SYS_PRCTL_H
 #include <sys/prctl.h>
 #endif
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 /* Max allowable allococation - 256mb - 0x10000000 */
 #define MAX_ALLOC_SIZE (1024*1024*256)
@@ -1412,7 +1415,7 @@ void zero_free(void *p, size_t size)
 
 int set_maxfiles(int requested_max)
 {
-#if (defined(HAVE_GETRLIMIT) && defined(RLIMIT_NOFILE))
+#if (defined(HAVE_GETRLIMIT) && defined(RLIMIT_NOFILE) && !defined(__OS2__))
 	struct rlimit rlp;
 	int saved_current_limit;
 

@@ -265,6 +265,7 @@ static bool posix_fcntl_getlock(files_struct *fsp, off_t *poffset, off_t *pcount
 
 	ret = SMB_VFS_GETLOCK(fsp, poffset, pcount, ptype, &pid);
 
+#ifndef __OS2__ /* file locks currently fail with OS/2's libc */
 	if (!ret && ((errno == EFBIG) || (errno == ENOLCK) || (errno ==  EINVAL))) {
 
 		DEBUG(0, ("posix_fcntl_getlock: WARNING: lock request at "
@@ -292,6 +293,7 @@ static bool posix_fcntl_getlock(files_struct *fsp, off_t *poffset, off_t *pcount
 			ret = SMB_VFS_GETLOCK(fsp,poffset,pcount,ptype,&pid);
 		}
 	}
+#endif
 
 	DEBUG(8,("posix_fcntl_getlock: Lock query call %s\n", ret ? "successful" : "failed"));
 	return ret;

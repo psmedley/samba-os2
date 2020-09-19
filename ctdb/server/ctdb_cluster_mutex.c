@@ -36,6 +36,9 @@
 #include "common/logging.h"
 
 #include "ctdb_cluster_mutex.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 struct ctdb_cluster_mutex_handle {
 	struct ctdb_context *ctdb;

@@ -437,11 +437,12 @@ def build(bld):
 
         LDB_TOOLS='ldbadd ldbsearch ldbdel ldbmodify ldbedit ldbrename'
         for t in LDB_TOOLS.split():
-            bld.SAMBA_BINARY(t, 'tools/%s.c' % t, deps='ldb-cmdline ldb',
-                             manpages='man/%s.1' % t)
+            bld.SAMBA_BINARY(t, 'tools/%s.c ../../source3/lib/os2helper.c ' % t, 
+		deps='ldb-cmdline ldb replace talloc tevent popt',
+		manpages='man/%s.1' % t)
 
         # ldbtest doesn't get installed
-        bld.SAMBA_BINARY('ldbtest', 'tools/ldbtest.c', deps='ldb-cmdline ldb',
+        bld.SAMBA_BINARY('ldbtest', 'tools/ldbtest.c ../../source3/lib/os2helper.c', deps='ldb-cmdline ldb replace talloc tevent popt',
                          install=False)
 
         if bld.CONFIG_SET('HAVE_LMDB'):
@@ -451,70 +452,70 @@ def build(bld):
         # ldbdump doesn't get installed
         bld.SAMBA_BINARY('ldbdump',
                          'tools/ldbdump.c',
-                         deps='ldb-cmdline ldb' + lmdb_deps,
+                         deps='ldb-cmdline ldb replace talloc tevent popt tdb' + lmdb_deps,
                          install=False)
 
         bld.SAMBA_LIBRARY('ldb-cmdline',
-                          source='tools/ldbutil.c tools/cmdline.c',
+                          source='tools/ldbutil.c tools/cmdline.c  ../../source3/lib/os2helper.c',
                           deps='ldb dl popt',
                           private_library=True)
 
         bld.SAMBA_BINARY('ldb_tdb_mod_op_test',
-                         source='tests/ldb_mod_op_test.c',
+                         source='tests/ldb_mod_op_test.c ../../source3/lib/os2helper.c',
                          cflags='-DTEST_BE=\"tdb\"',
-                         deps='cmocka ldb',
+                         deps='cmocka ldb replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_tdb_guid_mod_op_test',
-                         source='tests/ldb_mod_op_test.c',
+                         source='tests/ldb_mod_op_test.c  ../../source3/lib/os2helper.c',
                          cflags='-DTEST_BE=\"tdb\" -DGUID_IDX=1',
-                         deps='cmocka ldb',
+                         deps='cmocka ldb replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_tdb_kv_ops_test',
-                         source='tests/ldb_kv_ops_test.c',
+                         source='tests/ldb_kv_ops_test.c ../../source3/lib/os2helper.c',
                          cflags='-DTEST_BE=\"tdb\"',
-                         deps='cmocka ldb',
+                         deps='cmocka ldb replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_tdb_test',
-                         source='tests/ldb_tdb_test.c',
-                         deps='cmocka ldb',
+                         source='tests/ldb_tdb_test.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb replace talloc tevent popt tdb',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_msg_test',
-                         source='tests/ldb_msg.c',
-                         deps='cmocka ldb',
+                         source='tests/ldb_msg.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('test_ldb_qsort',
-                         source='tests/test_ldb_qsort.c',
-                         deps='cmocka ldb',
+                         source='tests/test_ldb_qsort.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('test_ldb_dn',
-                         source='tests/test_ldb_dn.c',
-                         deps='cmocka ldb',
+                         source='tests/test_ldb_dn.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_match_test',
-                         source='tests/ldb_match_test.c',
-                         deps='cmocka ldb',
+                         source='tests/ldb_match_test.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_key_value_test',
-                         source='tests/ldb_key_value_test.c',
-                         deps='cmocka ldb ldb_tdb_err_map',
+                         source='tests/ldb_key_value_test.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb ldb_tdb_err_map replace talloc tevent popt tdb',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_parse_test',
-                         source='tests/ldb_parse_test.c',
-                         deps='cmocka ldb ldb_tdb_err_map',
+                         source='tests/ldb_parse_test.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb ldb_tdb_err_map replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_filter_attrs_test',
-                         source='tests/ldb_filter_attrs_test.c',
-                         deps='cmocka ldb ldb_tdb_err_map',
+                         source='tests/ldb_filter_attrs_test.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb ldb_tdb_err_map replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_key_value_sub_txn_tdb_test',
@@ -522,33 +523,33 @@ def build(bld):
                              '''ldb_kv_search.c
                                 ldb_kv_index.c
                                 ldb_kv_cache.c''') +
-                         'tests/ldb_key_value_sub_txn_test.c',
+                         'tests/ldb_key_value_sub_txn_test.c  ../../source3/lib/os2helper.c',
                          cflags='-DTEST_BE=\"tdb\"',
-                         deps='cmocka ldb ldb_tdb_err_map',
+                         deps='cmocka ldb ldb_tdb_err_map replace talloc tevent popt tdb',
                          install=False)
 
         if bld.CONFIG_SET('HAVE_LMDB'):
             bld.SAMBA_BINARY('ldb_mdb_mod_op_test',
-                             source='tests/ldb_mod_op_test.c',
+                             source='tests/ldb_mod_op_test.c ../../source3/lib/os2helper.c',
                              cflags='-DTEST_BE=\"mdb\" -DGUID_IDX=1 '
                                   + '-DTEST_LMDB=1',
-                             deps='cmocka ldb lmdb',
+                             deps='cmocka ldb lmdb replace talloc tevent popt',
                              install=False)
 
             bld.SAMBA_BINARY('ldb_lmdb_test',
-                             source='tests/ldb_lmdb_test.c',
-                             deps='cmocka ldb',
+                             source='tests/ldb_lmdb_test.c ../../source3/lib/os2helper.c',
+                             deps='cmocka ldb replace talloc tevent popt',
                              install=False)
 
             bld.SAMBA_BINARY('ldb_lmdb_size_test',
-                             source='tests/ldb_lmdb_size_test.c',
-                             deps='cmocka ldb',
+                             source='tests/ldb_lmdb_size_test.c ../../source3/lib/os2helper.c',
+                             deps='cmocka ldb replace talloc tevent popt',
                              install=False)
 
             bld.SAMBA_BINARY('ldb_mdb_kv_ops_test',
-                             source='tests/ldb_kv_ops_test.c',
+                             source='tests/ldb_kv_ops_test.c ../../source3/lib/os2helper.c',
                              cflags='-DTEST_BE=\"mdb\" -DTEST_LMDB=1',
-                             deps='cmocka ldb',
+                             deps='cmocka ldb replace talloc tevent popt',
                              install=False)
 
             #
@@ -563,15 +564,15 @@ def build(bld):
                              bld.SUBDIR('ldb_key_value',
                                  '''ldb_kv_search.c
                                     ldb_kv_index.c
-                                    ldb_kv_cache.c''') +
+                                    ldb_kv_cache.c ../../source3/lib/os2helper.c''') +
                              'tests/ldb_key_value_sub_txn_test.c',
                              cflags='-DTEST_BE=\"mdb\"',
-                             deps='cmocka ldb ldb_tdb_err_map',
+                             deps='cmocka ldb ldb_tdb_err_map tdb replace talloc tevent popt',
                              install=False)
         else:
             bld.SAMBA_BINARY('ldb_no_lmdb_test',
-                             source='tests/ldb_no_lmdb_test.c',
-                             deps='cmocka ldb',
+                             source='tests/ldb_no_lmdb_test.c ../../source3/lib/os2helper.c',
+                             deps='cmocka ldb replace talloc tevent popt',
                              install=False)
 
 def test(ctx):

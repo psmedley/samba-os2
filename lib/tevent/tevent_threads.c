@@ -27,6 +27,9 @@
 #include "tevent.h"
 #include "tevent_internal.h"
 #include "tevent_util.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 #ifdef HAVE_PTHREAD
 #include "system/threads.h"

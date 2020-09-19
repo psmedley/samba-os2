@@ -1492,7 +1492,7 @@ _krb5_homedir_access(krb5_context context)
 {
     krb5_boolean allow;
 
-#ifdef HAVE_GETEUID
+#if defined(HAVE_GETEUID) && !defined(__OS2__)
     /* is never allowed for root */
     if (geteuid() == 0)
 	return FALSE;

@@ -88,6 +88,22 @@ def gxx_modifier_cygwin(conf):
 	v.CXXFLAGS_cxxshlib   = []
 
 @conf
+def gxx_modifier_os2knix(conf):
+	v = conf.env
+	v.cxxprogram_PATTERN    = '%s.exe'
+	v.LINKFLAGS_cxxprogram   = ['-Zexe', '-Zomf','-Zbin-files', '-Zmap', '-static-libgcc', '-lgpg-error', '-lmmap', '-lbz2', '-llzma', '-lcrypto', '-lxml2', '-lcxsmbd', '-lacl', '-lattr', '-lgnutls']
+	v.cxxshlib_PATTERN      = 'lib%s.dll'
+	v.implib_PATTERN      = 'lib%s.dll.a'
+	v.IMPLIB_ST           = '-Wl,--out-implib,%s'
+
+	v.SHLIB_MARKER        = ''
+
+	# Auto-import is enabled by default even without this option,
+	# but enabling it explicitly has the nice effect of suppressing the rather boring, debug-level messages
+	# that the linker emits otherwise.
+
+
+@conf
 def gxx_modifier_darwin(conf):
 	"""Configuration flags for executing g++ on MacOS"""
 	v = conf.env

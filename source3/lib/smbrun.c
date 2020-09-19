@@ -19,6 +19,9 @@
 
 #include "includes.h"
 #include "system/filesys.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 /* need to move this from here!! need some sleep ... */
 struct current_user current_user;
@@ -88,6 +91,34 @@ static int smbrun_internal(const char *cmd, int *outfd, bool sanitize,
 		return -1;
 	}
 
+#ifdef __OS2__
+		char buf[8192];
+		int	n, w;
+		const char *newcmd = sanitize ? escape_shell_string(cmd) : cmd;
+		if (!newcmd) {
+			close(*outfd);
+			*outfd = -1;
+			return(82);
+		}
+		// execute script and capture stdout
+		FILE* pipe = popen( newcmd, "rb");
+		if (pipe) {
+			// get stdout from pipe
+			while( !feof( pipe)) {
+				n = fread( buf, 1, 8192, pipe);
+				// write to file if required
+				if (n>0 && outfd!=NULL)
+					w = write( *outfd, buf, n);
+			}
+			// close and return status
+			pclose( pipe);
+			return 0;
+		}
+		// error, close files
+		close(*outfd);
+		*outfd = -1;
+		return 83;
+#else
 	/* in this method we will exec /bin/sh with the correct
 	   arguments, after first setting stdout to point at the file */
 
@@ -213,6 +244,7 @@ static int smbrun_internal(const char *cmd, int *outfd, bool sanitize,
 	/* not reached */
 	exit(83);
 	return 1;
+#endif
 }
 
 /****************************************************************************

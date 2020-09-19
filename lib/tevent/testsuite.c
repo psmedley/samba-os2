@@ -36,6 +36,9 @@
 #include "system/threads.h"
 #include <assert.h>
 #endif
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 static int fde_count;
 
