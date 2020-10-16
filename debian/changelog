@@ -1,3 +1,23 @@
+samba (2:4.11.6+dfsg-0ubuntu1.6) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Missing handle permissions check in ChangeNotify
+    - debian/patches/CVE-2020-14318-*.patch: ensure change notifies can't
+      get set unless the directory handle is open for SEC_DIR_LIST in
+      source4/torture/smb2/notify.c, source3/smbd/notify.c.
+    - CVE-2020-14318
+  * SECURITY UPDATE: Unprivileged user can crash winbind
+    - debian/patches/CVE-2020-14323-*.patch: fix invalid lookupsids DoS in
+      source3/winbindd/winbindd_lookupsids.c,
+      source4/torture/winbind/struct_based.c.
+    - CVE-2020-14323
+  * SECURITY UPDATE: DNS server crash via invalid records
+    - debian/patches/CVE-2020-14383-*.patch: ensure variable initialization
+      with NULL  and do not crash when additional data not found in
+      source4/rpc_server/dnsserver/dcerpc_dnsserver.c.
+    - CVE-2020-14383
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Fri, 16 Oct 2020 06:48:54 -0400
+
 samba (2:4.11.6+dfsg-0ubuntu1.5) focal-security; urgency=medium
 
   * SECURITY UPDATE: Unauthenticated domain controller compromise by
