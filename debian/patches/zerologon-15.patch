@@ -1,0 +1,50 @@
+From 615cc75074b0f51734da261dc9b57ad209780e13 Mon Sep 17 00:00:00 2001
+From: =?utf8?q?G=C3=BCnther=20Deschner?= <gd@samba.org>
+Date: Thu, 17 Sep 2020 14:23:16 +0200
+Subject: [PATCH] CVE-2020-1472(ZeroLogon): s3:rpc_server/netlogon: support
+ "server require schannel:WORKSTATION$ = no"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf8
+Content-Transfer-Encoding: 8bit
+
+This allows to add expections for individual workstations, when using "server schannel = yes".
+"server schannel = auto" is very insecure and will be removed soon.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14497
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: GÃ¼nther Deschner <gd@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ source3/rpc_server/netlogon/srv_netlog_nt.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/source3/rpc_server/netlogon/srv_netlog_nt.c b/source3/rpc_server/netlogon/srv_netlog_nt.c
+index d1ce1e94cb5..63dd9dc0d5f 100644
+--- a/source3/rpc_server/netlogon/srv_netlog_nt.c
++++ b/source3/rpc_server/netlogon/srv_netlog_nt.c
+@@ -1072,6 +1072,7 @@ static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
+ {
+ 	NTSTATUS status;
+ 	bool schannel_global_required = (lp_server_schannel() == true) ? true:false;
++	bool schannel_required = schannel_global_required;
+ 	struct loadparm_context *lp_ctx;
+ 	struct netlogon_creds_CredentialState *creds = NULL;
+ 	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
+@@ -1104,7 +1105,11 @@ static NTSTATUS netr_creds_server_step_check(struct pipes_struct *p,
+ 		return status;
+ 	}
+ 
+-	if (schannel_global_required) {
++	schannel_required = lp_parm_bool(GLOBAL_SECTION_SNUM,
++					 "server require schannel",
++					 creds->account_name,
++					 schannel_global_required);
++	if (schannel_required) {
+ 		if (auth_type == DCERPC_AUTH_TYPE_SCHANNEL) {
+ 			*creds_out = creds;
+ 			return NT_STATUS_OK;
+-- 
+2.28.0
+

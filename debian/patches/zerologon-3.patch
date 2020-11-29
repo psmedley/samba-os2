@@ -1,0 +1,33 @@
+From f7b0e7a6dde36bd6721c7f8d926dfdd0d70ba68e Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 16 Sep 2020 16:08:38 +0200
+Subject: [PATCH] CVE-2020-1472(ZeroLogon): libcli/auth: make use of
+ netlogon_creds_random_challenge() in netlogon_creds_cli.c
+
+This will avoid getting rejected by the server if we generate
+a weak challenge.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14497
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ libcli/auth/netlogon_creds_cli.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/libcli/auth/netlogon_creds_cli.c b/libcli/auth/netlogon_creds_cli.c
+index 50a5f50a57d..0b31dc91b4b 100644
+--- a/libcli/auth/netlogon_creds_cli.c
++++ b/libcli/auth/netlogon_creds_cli.c
+@@ -1177,8 +1177,7 @@ static void netlogon_creds_cli_auth_challenge_start(struct tevent_req *req)
+ 
+ 	TALLOC_FREE(state->creds);
+ 
+-	generate_random_buffer(state->client_challenge.data,
+-			       sizeof(state->client_challenge.data));
++	netlogon_creds_random_challenge(&state->client_challenge);
+ 
+ 	subreq = dcerpc_netr_ServerReqChallenge_send(state, state->ev,
+ 						state->binding_handle,
+-- 
+2.28.0
+
