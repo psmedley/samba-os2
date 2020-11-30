@@ -237,14 +237,16 @@ static int paged_search_by_dn_guid(struct ldb_module *module,
 	return ret;
 }
 
-static int paged_results(struct paged_context *ac)
+static int paged_results(struct paged_context *ac, struct ldb_reply *ares)
 {
 	struct ldb_paged_control *paged;
 	unsigned int i, num_ctrls;
 	int ret;
 
 	if (ac->store == NULL) {
-		return LDB_ERR_OPERATIONS_ERROR;
+		ret = LDB_ERR_OPERATIONS_ERROR;
+		return ldb_module_done(
+			ac->req, ac->controls, ares->response, ret);
 	}
 
 	while (ac->store->last_i < ac->store->num_entries && ac->size > 0) {
@@ -273,12 +275,17 @@ static int paged_results(struct paged_context *ac)
 			   instead. */
 			continue;
 		} else if (ret != LDB_SUCCESS) {
-			return ret;
+			return ldb_module_done(
+				ac->req, ac->controls, ares->response, ret);
 		}
 
 		ret = ldb_module_send_entry(ac->req, result->msgs[0],
 					    NULL);
 		if (ret != LDB_SUCCESS) {
+			/*
+			 * ldb_module_send_entry will have called
+			 * ldb_module_done if an error occurred.
+			 */
 			return ret;
 		}
 	}
@@ -289,6 +296,10 @@ static int paged_results(struct paged_context *ac)
 		*/
 		ret = send_referrals(ac->store, ac->req);
 		if (ret != LDB_SUCCESS) {
+			/*
+			 * send_referrals will have called ldb_module_done
+			 * if an error occurred.
+			 */
 			return ret;
 		}
 	}
@@ -305,7 +316,9 @@ static int paged_results(struct paged_context *ac)
 
 	ac->controls = talloc_array(ac, struct ldb_control *, num_ctrls +1);
 	if (ac->controls == NULL) {
-		return LDB_ERR_OPERATIONS_ERROR;
+		ret = LDB_ERR_OPERATIONS_ERROR;
+		return ldb_module_done(
+			ac->req, ac->controls, ares->response, ret);
 	}
 	ac->controls[num_ctrls] = NULL;
 
@@ -316,20 +329,26 @@ static int paged_results(struct paged_context *ac)
 
 	ac->controls[i] = talloc(ac->controls, struct ldb_control);
 	if (ac->controls[i] == NULL) {
-		return LDB_ERR_OPERATIONS_ERROR;
+		ret = LDB_ERR_OPERATIONS_ERROR;
+		return ldb_module_done(
+			ac->req, ac->controls, ares->response, ret);
 	}
 
 	ac->controls[i]->oid = talloc_strdup(ac->controls[i],
 						LDB_CONTROL_PAGED_RESULTS_OID);
 	if (ac->controls[i]->oid == NULL) {
-		return LDB_ERR_OPERATIONS_ERROR;
+		ret = LDB_ERR_OPERATIONS_ERROR;
+		return ldb_module_done(
+			ac->req, ac->controls, ares->response, ret);
 	}
 
 	ac->controls[i]->critical = 0;
 
 	paged = talloc(ac->controls[i], struct ldb_paged_control);
 	if (paged == NULL) {
-		return LDB_ERR_OPERATIONS_ERROR;
+		ret = LDB_ERR_OPERATIONS_ERROR;
+		return ldb_module_done(
+			ac->req, ac->controls, ares->response, ret);
 	}
 
 	ac->controls[i]->data = paged;
@@ -416,6 +435,10 @@ static int paged_search_callback(struct ldb_request *req,
 
 		guid_blob = ldb_dn_get_extended_component(ares->message->dn,
 							  "GUID");
+		if (guid_blob == NULL) {
+			return ldb_module_done(ac->req, NULL, NULL,
+					       LDB_ERR_OPERATIONS_ERROR);
+		}
 		status = GUID_from_ndr_blob(guid_blob, &guid);
 		if (!NT_STATUS_IS_OK(status)) {
 			return ldb_module_done(ac->req, NULL, NULL,
@@ -452,7 +475,13 @@ static int paged_search_callback(struct ldb_request *req,
 		store->result_array_size = store->num_entries;
 
 		ac->store->controls = talloc_move(ac->store, &ares->controls);
-		ret = paged_results(ac);
+		ret = paged_results(ac, ares);
+		if (ret != LDB_SUCCESS) {
+			/* paged_results will have called ldb_module_done
+			 * if an error occurred
+			 */
+			return ret;
+		}
 		return ldb_module_done(ac->req, ac->controls,
 					ares->response, ret);
 	}
@@ -483,11 +512,25 @@ paged_results_copy_down_controls(TALLOC_CTX *mem_ctx,
 		if (control->oid == NULL) {
 			continue;
 		}
-		if (strncmp(control->oid, LDB_CONTROL_PAGED_RESULTS_OID,
-		    sizeof(LDB_CONTROL_PAGED_RESULTS_OID)) == 0) {
+		if (strcmp(control->oid, LDB_CONTROL_PAGED_RESULTS_OID) == 0) {
+			continue;
+		}
+		/*
+		 * ASQ changes everything, do not copy it down for the
+		 * per-GUID search
+		 */
+		if (strcmp(control->oid, LDB_CONTROL_ASQ_OID) == 0) {
 			continue;
 		}
 		new_controls[j] = talloc_steal(new_controls, control);
+
+		/*
+		 * Sadly the caller is not obliged to make this a
+		 * proper talloc tree, so we do so here.
+		 */
+		if (control->data) {
+			talloc_steal(control, control->data);
+		}
 		j++;
 	}
 	new_controls[j] = NULL;
@@ -534,21 +577,23 @@ static bool paged_controls_same(struct ldb_request *req,
 
 	num_non_null_req_controls = 0;
 	for (i=0; req->controls[i] != NULL; i++) {
-		if (req->controls[i]->oid != NULL) {
+		if (req->controls[i]->oid != NULL &&
+		    strcmp(req->controls[i]->oid,
+			   LDB_CONTROL_ASQ_OID) != 0) {
 			num_non_null_req_controls++;
 		}
 	}
 
 	/* At this point we have the number of non-null entries for both
 	 * control lists and we know that:
-	 * 1. down_controls does not contain the paged control
+	 * 1. down_controls does not contain the paged control or ASQ
 	 * 	(because paged_results_copy_down_controls excludes it)
 	 * 2. req->controls does contain the paged control
 	 * 	(because this function is only called if this is true)
 	 * 3. down_controls is a subset of non-null controls in req->controls
 	 * 	(checked above)
 	 * So to confirm that the two lists are identical except for the paged
-	 * control, all we need to check is: */
+	 * control and possibly ASQ, all we need to check is: */
 	if (num_non_null_req_controls == num_down_controls + 1) {
 		return true;
 	}
@@ -577,6 +622,7 @@ static int paged_search(struct ldb_module *module, struct ldb_request *req)
 {
 	struct ldb_context *ldb;
 	struct ldb_control *control;
+	struct ldb_control *vlv_control;
 	struct private_data *private_data;
 	struct ldb_paged_control *paged_ctrl;
 	struct ldb_request *search_req;
@@ -599,6 +645,15 @@ static int paged_search(struct ldb_module *module, struct ldb_request *req)
 
 	private_data = talloc_get_type(ldb_module_get_private(module),
 					struct private_data);
+
+	vlv_control = ldb_request_get_control(req, LDB_CONTROL_VLV_REQ_OID);
+	if (vlv_control != NULL) {
+		/*
+		 * VLV and paged_results are not allowed at the same
+		 * time
+		 */
+		return LDB_ERR_UNSUPPORTED_CRITICAL_EXTENSION;
+	}
 
 	ac = talloc_zero(req, struct paged_context);
 	if (ac == NULL) {
@@ -746,7 +801,7 @@ static int paged_search(struct ldb_module *module, struct ldb_request *req)
 								LDB_SUCCESS);
 		}
 
-		ret = paged_results(ac);
+		ret = paged_results(ac, NULL);
 		if (ret != LDB_SUCCESS) {
 			return ldb_module_done(req, NULL, NULL, ret);
 		}

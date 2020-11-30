@@ -421,6 +421,16 @@ plantestsuite_loadlist("samba.tests.dns_wildcard", "ad_dc", [python, os.path.joi
 
 plantestsuite_loadlist("samba.tests.dns_invalid", "ad_dc", [python, os.path.join(srcdir(), "python/samba/tests/dns_invalid.py"), '$SERVER_IP', '--machine-pass', '-U"$USERNAME%$PASSWORD"', '--workgroup=$DOMAIN', '$LOADLIST', '$LISTOPT'])
 
+plantestsuite_loadlist("samba.tests.dns_packet",
+                       "ad_dc",
+                       [python,
+                        '-msamba.subunit.run',
+                        '$LOADLIST',
+                        "$LISTOPT"
+                        "samba.tests.dns_packet"
+                       ])
+
+
 for t in smbtorture4_testsuites("dns_internal."):
     plansmbtorture4testsuite(t, "ad_dc_default:local", '//$SERVER/whavever')
 
@@ -885,6 +895,7 @@ plantestsuite_loadlist("samba4.tokengroups.krb5.python(ad_dc_default)", "ad_dc_d
 plantestsuite_loadlist("samba4.tokengroups.ntlm.python(ad_dc_default)", "ad_dc_default:local", [python, os.path.join(DSDB_PYTEST_DIR, "token_group.py"), '$SERVER', '-U"$USERNAME%$PASSWORD"', '--workgroup=$DOMAIN', '-k', 'no', '$LOADLIST', '$LISTOPT'])
 plantestsuite("samba4.sam.python(fl2008r2dc)", "fl2008r2dc", [python, os.path.join(DSDB_PYTEST_DIR, "sam.py"), '$SERVER', '-U"$USERNAME%$PASSWORD"', '--workgroup=$DOMAIN'])
 plantestsuite("samba4.sam.python(ad_dc_default)", "ad_dc_default", [python, os.path.join(DSDB_PYTEST_DIR, "sam.py"), '$SERVER', '-U"$USERNAME%$PASSWORD"', '--workgroup=$DOMAIN'])
+plantestsuite("samba4.asq.python(ad_dc_default)", "ad_dc_default", [python, os.path.join(DSDB_PYTEST_DIR, "asq.py"), '$SERVER', '-U"$USERNAME%$PASSWORD"', '--workgroup=$DOMAIN'])
 plantestsuite("samba4.user_account_control.python(ad_dc_default)", "ad_dc_default", [python, os.path.join(DSDB_PYTEST_DIR, "user_account_control.py"), '$SERVER', '-U"$USERNAME%$PASSWORD"', '--workgroup=$DOMAIN'])
 
 for env in ['ad_dc_default:local', 'schema_dc:local']:
@@ -1321,6 +1332,8 @@ plantestsuite("samba4.dcerpc.dnsserver.dnsutils", "none",
               [os.path.join(bindir(), "test_rpc_dns_server_dnsutils")])
 plantestsuite("libcli.drsuapi.repl_decrypt", "none",
               [os.path.join(bindir(), "test_repl_decrypt")])
+plantestsuite("librpc.ndr.ndr_dns_nbt", "none",
+              [os.path.join(bindir(), "test_ndr_dns_nbt")])
 
 # process restart and limit tests, these break the environment so need to run
 # in their own specific environment

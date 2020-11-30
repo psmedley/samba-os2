@@ -1,0 +1,69 @@
+Copy of debian/patches/series with status of applied patches
+
+NOT APPLIED (debian specific) - 07_private_lib
+NOT APPLIED (debian specific) - bug_221618_precise-64bit-prototype.patch
+NOT APPLIED (debian specific) - README_nosmbldap-tools.patch
+NOT APPLIED (debian specific) - smbclient-pager.patch
+NOT APPLIED (debian specific) - usershare.patch
+NOT APPLIED (debian specific) - VERSION.patch /* Do we want to add a vendor string? */
+NOT APPLIED (debian specific) - add-so-version-to-private-libraries
+NOT APPLIED (debian specific) - heimdal-rfc3454.txt
+NOT APPLIED (debian specific) - smbd.service-Run-update-apparmor-samba-profile-befor.patch
+NOT APPLIED (debian specific) - fix-nfs-service-name-to-nfs-kernel-server.patch
+APPLIED - build-Remove-tests-for-getdents-and-getdirentries.patch
+APPLIED - wscript-remove-all-checks-for-_FUNC-and-__FUNC.patch
+APPLIED - wscript-split-function-check-to-one-per-line-and-sor.patch
+NOT APPLIED (debian specific) - ctdb-config-enable-syslog-by-default.patch
+APPLIED - CVE-2020-10700-1.patch
+APPLIED - CVE-2020-10700-3.patch
+APPLIED - CVE-2020-10704-1.patch
+APPLIED - CVE-2020-10704-3.patch
+APPLIED - CVE-2020-10704-5.patch
+APPLIED - CVE-2020-10704-6.patch
+APPLIED - CVE-2020-10704-7.patch
+APPLIED - CVE-2020-10704-8.patch
+APPLIED - 0023-libsmb-Don-t-try-to-find-posix-stat-info-in-SMBC_get.patch
+APPLIED - CVE-2020-10730-01.patch
+APPLIED - CVE-2020-10730-02.patch
+APPLIED - CVE-2020-10730-03.patch
+APPLIED - CVE-2020-10730-04.patch
+APPLIED - CVE-2020-10730-05.patch
+APPLIED - CVE-2020-10730-06.patch
+APPLIED - CVE-2020-10730-07.patch
+APPLIED - CVE-2020-10730-08.patch
+APPLIED - CVE-2020-10730-09.patch
+APPLIED - CVE-2020-10745-1.patch
+APPLIED - CVE-2020-10745-2.patch
+APPLIED - CVE-2020-10745-3.patch
+APPLIED - CVE-2020-10745-4.patch
+APPLIED - CVE-2020-10745-5.patch
+APPLIED - CVE-2020-10745-6.patch
+APPLIED - CVE-2020-10745-7.patch
+APPLIED - CVE-2020-10760-1.patch
+APPLIED - CVE-2020-10760-2.patch
+APPLIED - CVE-2020-14303.patch
+APPLIED - zerologon-1.patch
+APPLIED - zerologon-2.patch
+APPLIED - zerologon-3.patch
+APPLIED - zerologon-4.patch
+APPLIED - zerologon-5.patch
+APPLIED - zerologon-6.patch
+APPLIED - zerologon-7.patch
+APPLIED - zerologon-8.patch
+APPLIED - zerologon-9.patch
+APPLIED - zerologon-10.patch
+APPLIED - zerologon-11.patch
+APPLIED - zerologon-12.patch
+APPLIED - zerologon-13.patch
+APPLIED - zerologon-14.patch
+APPLIED - zerologon-15.patch
+APPLIED - zerologon-16.patch
+APPLIED - zerologon-17.patch
+APPLIED - zerologon-18.patch
+APPLIED - zerologon-19.patch
+APPLIED - CVE-2020-14318-1.patch
+APPLIED - CVE-2020-14318-2.patch
+APPLIED - CVE-2020-14323-1.patch
+APPLIED - CVE-2020-14323-2.patch
+APPLIED - CVE-2020-14383-1.patch
+APPLIED - CVE-2020-14383-2.patch
