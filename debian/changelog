@@ -1,3 +1,12 @@
+samba (2:4.11.6+dfsg-0ubuntu1.8) focal-security; urgency=medium
+
+  * SECURITY UPDATE: wrong group entries via negative idmap cache entries
+    - debian/patches/CVE-2021-20254.patch: Simplify sids_to_unixids() in
+      source3/passdb/lookup_sid.c.
+    - CVE-2021-20254
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Wed, 14 Apr 2021 07:02:48 -0400
+
 samba (2:4.11.6+dfsg-0ubuntu1.6) focal-security; urgency=medium
 
   * SECURITY UPDATE: Missing handle permissions check in ChangeNotify
