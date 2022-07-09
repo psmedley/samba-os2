@@ -299,6 +299,7 @@ _PUBLIC_ bool file_check_permissions(const char *fname,
 		return false;
 	}
 
+#ifndef __OS2__ /* Don't care about permissions/ownership on OS/2 */
 	if (pst->st_uid != uid && !uid_wrapper_enabled()) {
 		DEBUG(0, ("invalid ownership of file '%s': "
 			 "owned by uid %u, should be %u\n",
@@ -314,7 +315,7 @@ _PUBLIC_ bool file_check_permissions(const char *fname,
 			 (unsigned int)file_perms));
 		return false;
 	}
-
+#endif
 	return true;
 }
 
