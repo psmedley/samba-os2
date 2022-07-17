@@ -38,10 +38,6 @@ char cmdline[1024];
 static int disable_mmap;
 static int _disable_lock;
 
-#ifdef __OS2__
-static bool createDbCmd;
-#endif
-
 enum commands {
 	CMD_CREATE_TDB,
 	CMD_OPEN_TDB,
@@ -302,11 +298,7 @@ static void open_tdb(const char *tdbname)
 				  &log_ctx, NULL);
 	}
 
-#ifdef __OS2__
-        if (!tdb && !createDbCmd) {
-#else
 	if (!tdb) {
-#endif
 		printf("Could not open %s: %s\n", tdbname, strerror(errno));
 	}
 }
@@ -703,9 +695,6 @@ static int do_command(void)
 	enum commands mycmd = CMD_HELP;
 	int cmd_len;
 
-#ifdef __OS2__
-    if (cmdname) {
-#endif
 	if (cmdname != NULL) {
 		if (strlen(cmdname) == 0) {
 			mycmd = CMD_NEXT;
@@ -720,9 +709,6 @@ static int do_command(void)
 			}
 		}
 	}
-#ifdef __OS2__
-   }
-#endif
 
 	switch (mycmd) {
 	case CMD_CREATE_TDB:
@@ -906,18 +892,6 @@ int main(int argc, char *argv[])
 		argc -= 1;
 	}
 
-#ifdef __OS2__
-        int cnt = 1;
-        createDbCmd = false;
-        while (argv[cnt]) {
-		if (strncmp("create",argv[cnt],6) == 0) {
-			createDbCmd = true;
-			break;
-		}
-		cnt++;
-        }
-#endif
-
 	if (argv[1]) {
 		cmdname = "open";
 		arg1 = argv[1];
@@ -960,11 +934,6 @@ int main(int argc, char *argv[])
 		cmdname = argv[2];
 		FALL_THROUGH;
 	default:
-#ifdef __OS2__
-            if (argc == 3) {
-               arg1 = convert_string(argv[1], &arg1len);
-            }
-#endif
 		do_command();
 		break;
 	}
