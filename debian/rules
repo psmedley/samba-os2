@@ -1,0 +1,319 @@
+#!/usr/bin/make -f
+# By Jelmer Vernooij <jelmer@samba.org>
+#
+DESTDIR = $(CURDIR)/debian/tmp
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+include /usr/share/dpkg/pkg-info.mk
+
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+DEB_HOST_ARCH_OS ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+DEB_HOST_ARCH_CPU ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_CPU)
+
+# Ubuntu i386 binary compatibility only effort
+UBUNTU_I386 = 0
+ifeq ($(shell dpkg-vendor --is Ubuntu && echo yes) $(DEB_HOST_ARCH), yes i386)
+    UBUNTU_I386 = 1
+endif
+
+LDB_VERSION = $(shell pkg-config --modversion ldb)
+LDB_EPOCH = $(shell dpkg-query -f '$${Version}' -W libldb-dev | sed 's/:.*//')
+LDB_NEXT_VERSION = $(shell python3 -c "x = '$(LDB_VERSION)'.split('.'); x[-1] = str(int(x[-1])+1); print('.'.join(x))")
+# samba ships ldb modules, which are specific to the ldb version, so we need a
+# strict dependency on the upstream ldb version
+# this also mean samba needs a rebuild when the upstream ldb version changes
+LDB_DEPENDS = "libldb2 (<< $(LDB_EPOCH):$(LDB_NEXT_VERSION)~), libldb2 (>> $(LDB_EPOCH):$(LDB_VERSION)~)"
+export PYSHORT=python3
+export PYTHON=$(shell which $(PYSHORT))
+export PYTHON_CONFIG="$(PYTHON)-config"
+WAF := $(PYTHON) ./buildtools/bin/waf -v
+WAF_NO_PARALLEL := $(WAF) -j 1
+
+# wrapper around cups-config, to work around #726726
+export PATH:=$(CURDIR)/debian/bin:$(PATH)
+
+ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+WAF += -j $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+endif
+
+conf_args = \
+		--prefix=/usr \
+		--enable-fhs \
+		--sysconfdir=/etc \
+		--localstatedir=/var \
+		--libexecdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
+		--with-privatedir=/var/lib/samba/private \
+		--with-smbpasswd-file=/etc/samba/smbpasswd \
+		--with-piddir=/run/samba \
+		--with-pammodulesdir=/lib/$(DEB_HOST_MULTIARCH)/security \
+		--with-pam \
+		--with-syslog \
+		--with-utmp \
+		--with-winbind \
+		--with-quota \
+		--with-shared-modules=idmap_rid,idmap_ad,idmap_adex,idmap_hash,idmap_ldap,idmap_tdb2,vfs_dfs_samba4,auth_samba4,vfs_nfs4acl_xattr \
+		--with-automount \
+		--with-ldap \
+		--with-ads \
+		--with-dnsupdate \
+		--with-gpgme \
+		--libdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
+		--with-modulesdir=/usr/lib/$(DEB_HOST_MULTIARCH)/samba \
+		--datadir=/usr/share \
+		--with-lockdir=/run/samba \
+		--with-statedir=/var/lib/samba \
+		--with-cachedir=/var/cache/samba \
+		--enable-avahi \
+		--disable-rpath \
+		--disable-rpath-install \
+		--bundled-libraries=NONE,pytevent,iniparser,roken,replace,wind,hx509,asn1,heimbase,hcrypto,krb5,gssapi,heimntlm,hdb,kdc,com_err,compile_et,asn1_compile \
+		--builtin-libraries=ccan,samba-cluster-support \
+		--minimum-library-version="$(shell ./debian/autodeps.py --minimum-library-version)" \
+		--with-cluster-support \
+		--with-socketpath=/run/ctdb/ctdbd.socket \
+		--with-logdir=/var/log/ctdb \
+		--enable-etcd-reclock \
+		--enable-spotlight
+
+
+ifeq ($(UBUNTU_I386), 0)
+ifneq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32, $(DEB_HOST_ARCH)))
+	conf_args += \
+		--enable-ceph-reclock
+else
+	conf_args += \
+		--disable-cephfs
+endif
+endif
+
+# Ubuntu i386 binary compatibility only effort: Disable ceph support
+ifeq ($(UBUNTU_I386), 1)
+	conf_args += \
+		--disable-cephfs
+endif
+
+ifeq ($(DEB_HOST_ARCH_OS), linux)
+	conf_args += \
+		--with-systemd \
+		--systemd-install-services \
+		--with-systemddir=/lib/systemd/system
+else
+	conf_args += \
+		--without-systemd
+endif
+
+# Ubuntu i386 binary compatibility only effort: Disable some i386 packages
+ifeq ($(UBUNTU_I386), 1)
+	BUILD_PACKAGES += \
+		-Nctdb \
+		-Nlibpam-winbind \
+		-Nsamba \
+		-Nsamba-testsuite
+endif
+
+%:
+	dh $* --with python3 $(BUILD_PACKAGES)
+
+override_dh_auto_configure:
+	$(WAF_NO_PARALLEL) configure $(conf_args)
+
+override_dh_auto_build:
+	DESTDIR="$(DESTDIR)" $(WAF)
+
+override_dh_auto_test:
+	# Running make test requires configuration with --enable-selftest, which
+	# we don't want to do for production systems.
+
+override_dh_auto_install:
+	DESTDIR="$(DESTDIR)" $(WAF) install
+	# get list of files in build log
+	find ${DESTDIR}
+	# Included in python-tevent
+	rm $(DESTDIR)/usr/lib/python*/*-packages/_tevent.*
+	rm $(DESTDIR)/usr/lib/python*/*-packages/tevent.py
+	# Already documented in debian/copyright
+	-rm $(DESTDIR)/usr/share/samba/setup/ad-schema/licence.txt
+	# System ldb loads its modules from a different path
+	mkdir -p $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/ldb/modules/ldb
+	ln -sf ../../../samba/ldb $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/ldb/modules/ldb/samba
+	# pam stuff
+	mkdir -p $(DESTDIR)/usr/share/pam-configs
+	install -m 0644 debian/winbind.pam-config $(DESTDIR)/usr/share/pam-configs/winbind
+	mv $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/libnss_* $(DESTDIR)/lib/$(DEB_HOST_MULTIARCH)/
+	# we don't ship the symlinks
+	rm $(DESTDIR)/lib/$(DEB_HOST_MULTIARCH)/libnss_*.so
+	#Remove unused vfstest manpage vfstest is no longer installed
+	rm $(DESTDIR)/usr/share/man/man1/vfstest.1
+	# Debian goodies to set global option in smb.conf and add a share
+	install -m 0755 debian/setoption.py $(DESTDIR)/usr/share/samba
+	install -m 0755 debian/addshare.py $(DESTDIR)/usr/share/samba
+	# Debian goodies
+	cp debian/smb.conf* $(DESTDIR)/usr/share/samba/
+	install -m755 debian/panic-action $(DESTDIR)/usr/share/samba/panic-action
+	install -m755 debian/update-apparmor-samba-profile $(DESTDIR)/usr/share/samba/update-apparmor-samba-profile
+	cp debian/gdbcommands $(DESTDIR)/etc/samba/
+	mkdir -p $(DESTDIR)/etc/dhcp/dhclient-enter-hooks.d
+	install -m755 debian/samba-common.dhcp $(DESTDIR)/etc/dhcp/dhclient-enter-hooks.d/samba
+	install -m 0755 debian/mksmbpasswd.awk $(DESTDIR)/usr/sbin/mksmbpasswd
+	mkdir -p $(DESTDIR)/etc/ufw/applications.d
+	install -m644 debian/samba.ufw.profile $(DESTDIR)/etc/ufw/applications.d/samba
+	mkdir -p $(DESTDIR)/usr/share/apport/package-hooks
+	install -D -m 644 debian/source_samba.py $(DESTDIR)/usr/share/apport/package-hooks/source_samba.py
+	# Install other stuff not installed by "make install"
+	# This moves the dckeytab module to the samba package in order to avoid
+	# a circular dependency between python3-samba, samba and samba-common-bin
+	mkdir -p debian/samba/usr/lib/$(PYSHORT)/dist-packages/samba
+	mv $(DESTDIR)/usr/lib/$(PYSHORT)/dist-packages/samba/dckeytab*.so \
+	   debian/samba/usr/lib/$(PYSHORT)/dist-packages/samba/
+	# use upstream version of smb.conf.5 if there is no built version
+	# this is a temporary workaround for #750593 in xsltproc
+	[ -e $(DESTDIR)/usr/share/man/man5/smb.conf.5 ] || \
+	   cp docs/manpages/smb.conf.5 $(DESTDIR)/usr/share/man/man5/smb.conf.5
+	# Tests that shouldn't be installed
+	rm -f $(DESTDIR)/usr/bin/async_connect_send_test
+	# Remove ctdb tests
+	rm $(DESTDIR)/usr/bin/ctdb_run_tests
+	rm $(DESTDIR)/usr/bin/ctdb_run_cluster_tests
+	rm -r $(DESTDIR)/usr/lib/*/ctdb/tests
+	rm -r $(DESTDIR)/usr/share/ctdb/tests
+ifeq ($(DEB_HOST_ARCH_OS), linux)
+	# Install systemd configs
+	mkdir -p $(DESTDIR)/lib/systemd/system/
+	install -m 0644 ctdb/config/ctdb.service $(DESTDIR)/lib/systemd/system/
+	# Services fixups
+	mv $(DESTDIR)/lib/systemd/system/nmb.service $(DESTDIR)/lib/systemd/system/nmbd.service
+	mv $(DESTDIR)/lib/systemd/system/smb.service $(DESTDIR)/lib/systemd/system/smbd.service
+	mv $(DESTDIR)/lib/systemd/system/samba.service $(DESTDIR)/lib/systemd/system/samba-ad-dc.service
+	sed -i \
+	  -e 's|/etc/sysconfig/|/etc/default/|' \
+	  -e 's|nmb\.service|nmbd.service|' \
+	  -e 's|smb\.service|smbd.service|' \
+	  -e 's|samba\.service|samba-ad-dc.service|' \
+	  $(DESTDIR)/lib/systemd/system/nmbd.service \
+	  $(DESTDIR)/lib/systemd/system/samba-ad-dc.service \
+	  $(DESTDIR)/lib/systemd/system/smbd.service \
+	  $(DESTDIR)/lib/systemd/system/winbind.service
+endif
+	# Harmless on systems without systemd-tmpfiles, and other consumers exist
+	# such as OpenRC's opentmpfiles
+	mkdir -p $(DESTDIR)/usr/lib/tmpfiles.d
+	echo "d /run/samba 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/samba.conf
+	echo "d /run/ctdb 0755 root root -" > $(DESTDIR)/usr/lib/tmpfiles.d/ctdb.conf
+
+override_dh_installdocs-arch:
+	cp ctdb/config/events/README ctdb/README.eventscripts
+	cp ctdb/config/notification.README ctdb/README.notification
+	dh_installdocs
+ifeq ($(DEB_HOST_ARCH_OS), hurd)
+	dh_installdocs -pctdb debian/ctdb.README.hurd
+endif
+ifeq ($(DEB_HOST_ARCH_OS), kfreebsd)
+	dh_installdocs -pctdb debian/ctdb.README.kfreebsd
+endif
+
+override_dh_installexamples-arch:
+	# CTDB config examples and helper scripts
+	mkdir -p ctdb/doc/examples/nfs-kernel-server
+	cp debian/ctdb.example.enable.nfs.sh ctdb/doc/examples/nfs-kernel-server/enable-nfs.sh
+	cp debian/ctdb.example.nfs-common ctdb/doc/examples/nfs-kernel-server/nfs-common
+	cp debian/ctdb.example.nfs-kernel-server ctdb/doc/examples/nfs-kernel-server/nfs-kernel-server
+	cp debian/ctdb.example.services ctdb/doc/examples/nfs-kernel-server/services
+	cp debian/ctdb.example.sysctl-nfs-static-ports.conf ctdb/doc/examples/nfs-kernel-server/99-nfs-static-ports.conf
+	dh_installexamples
+
+override_dh_installchangelogs:
+	dh_installchangelogs
+
+override_dh_installinit:
+ifneq (,$(filter samba, $(shell dh_listpackages)))
+	dh_installinit -psamba --name smbd
+	dh_installinit -psamba --name nmbd --error-handler nmbd_error_handler
+	dh_installinit -psamba --name samba-ad-dc
+endif
+ifneq (,$(filter winbind, $(shell dh_listpackages)))
+	dh_installinit -pwinbind
+endif
+ifneq (,$(filter ctdb, $(shell dh_listpackages)))
+	# Install /etc/init.d/ctdb
+	mkdir -p $(CURDIR)/debian/ctdb/etc/init.d
+	install -m755 ctdb/config/ctdb.init $(CURDIR)/debian/ctdb/etc/init.d/ctdb
+	# Install dh scripts
+	dh_installinit -pctdb --no-start --no-stop-on-upgrade --onlyscripts
+endif
+
+override_dh_installsystemd:
+ifneq (,$(filter samba, $(shell dh_listpackages)))
+	dh_installsystemd -psamba
+endif
+ifneq (,$(filter winbind, $(shell dh_listpackages)))
+	dh_installsystemd -pwinbind
+endif
+ifneq (,$(filter ctdb, $(shell dh_listpackages)))
+	dh_installsystemd -pctdb --no-start --no-stop-on-upgrade
+endif
+ifneq (,$(filter samba-common-bin, $(shell dh_listpackages)))
+	dh_installsystemd -psamba-common-bin
+endif
+
+override_dh_installpam:
+	dh_installpam --name=samba
+
+override_dh_perl-arch:
+	dh_perl -a
+	# Fix Perl shbangs
+	sed -i '1s@^#!/usr/bin/env perl@#!/usr/bin/perl@' \
+	  debian/smbclient/usr/bin/findsmb
+
+override_dh_fixperms:
+	dh_fixperms
+ifneq (,$(filter samba-common, $(shell dh_listpackages)))
+	chmod a+x debian/samba-common/usr/share/samba/panic-action
+endif
+ifneq (,$(filter samba, $(shell dh_listpackages)))
+	chmod 1777 debian/samba/var/spool/samba/
+endif
+ifneq (,$(filter smbclient, $(shell dh_listpackages)))
+	chmod 0700 debian/smbclient/usr/lib/*/samba/smbspool_krb5_wrapper
+endif
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+override_dh_makeshlibs:
+	# create symbols and shlibs files in separate wrapper script to deal with
+	# private libraries
+	debian/make_shlibs
+
+override_dh_shlibdeps:
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
+	  dh_shlibdeps -a -Xceph.so -Xsnapper.so -Xctdb_mutex_ceph_rados_helper
+ifneq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32, $(DEB_HOST_ARCH)))
+ifeq ($(UBUNTU_I386), 0)
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
+	  dh_shlibdeps -a -- -pvfsceph -dRecommends \
+	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
+	  dh_shlibdeps -a -- -prados -dRecommends \
+	    -e debian/ctdb/usr/lib/*/ctdb/ctdb_mutex_ceph_rados_helper
+endif
+endif
+	LD_LIBRARY_PATH=$(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/samba:$$LD_LIBRARY_PATH \
+	  dh_shlibdeps -a -- -pvfssnapper -dRecommends \
+	    -e debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so
+
+override_dh_gencontrol:
+	dh_gencontrol -- -Vldb:Depends=$(LDB_DEPENDS)
+
+override_dh_auto_clean:
+	-$(WAF) clean
+	find . -name "*.pyc" | xargs rm -f
+	rm -rf buildtools/bin/.waf-*
+	rm -rf bin
+	rm -f .lock-wscript
+	rm -f ctdb/README.eventscripts
+	rm -f ctdb/README.notification
+	rm -rf ctdb/doc/examples/nfs-kernel-server/

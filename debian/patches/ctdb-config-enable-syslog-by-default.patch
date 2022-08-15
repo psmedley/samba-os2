@@ -1,0 +1,49 @@
+ctdb-config: enable syslog by default
+
+CTDB uses /var/log/ctdb/ directory for the default log files. With
+syslog disabled, systemd journal is not able to correctly inform
+errors happening during service initialization.
+
+Upstream community creates generic config files to be used by different
+distributions, so this change makes no big difference to be accepted by
+upstream.
+
+With this patch the end user will be able to identify initialization
+errors by executing:
+
+  systemctl status ctdb.service
+
+or to follow ctdb logs by executing:
+
+  journalctl -f -u ctdb
+
+Signed-off-by: Rafael David Tinoco <rafaeldtinoco@ubuntu.com>
+-
+Author: Rafael David Tinoco <rafaeldtinoco@ubuntu.com>
+Bug-Debian: https://bugs.debian.org/929931
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/722201
+Last-Update: 2018-06-27
+---
+ ctdb/config/ctdb.conf | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ctdb/config/ctdb.conf b/ctdb/config/ctdb.conf
+index 5440600a4..cde24280e 100644
+--- a/ctdb/config/ctdb.conf
++++ b/ctdb/config/ctdb.conf
+@@ -5,10 +5,10 @@
+ 
+ [logging]
+ 	# Enable logging to syslog
+-	# location = syslog
++	location = syslog
+ 
+ 	# Default log level
+-	# log level = NOTICE
++	log level = NOTICE
+ 
+ [cluster]
+ 	# Shared recovery lock file to avoid split brain.  Daemon
+-- 
+2.20.1
+

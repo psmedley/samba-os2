@@ -1,0 +1,10 @@
+usr/lib/*/libsamba-util.so.*
+usr/lib/*/libwbclient.so.0*
+usr/lib/*/samba/libgenrand.so.0
+usr/lib/*/samba/libiov-buf.so.0
+usr/lib/*/samba/libreplace.so.0
+usr/lib/*/samba/libsamba-debug.so.0
+usr/lib/*/samba/libsocket-blocking.so.0
+usr/lib/*/samba/libsys-rw.so.0
+usr/lib/*/samba/libtime-basic.so.0
+usr/lib/*/samba/libwinbind-client.so.*

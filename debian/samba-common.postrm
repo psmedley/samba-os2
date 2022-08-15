@@ -1,0 +1,25 @@
+#!/bin/sh
+
+set -e
+if [ "$1" = purge ]; then
+
+	# Remove Samba's state files, both volatile and non-volatile
+	rm -Rf /run/samba/ /var/cache/samba/ /var/lib/samba
+
+	# Remove log files
+	rm -Rf /var/log/samba/
+
+	# Remove config files
+	rm -Rf /etc/samba/
+	if [ -x "`which ucf 2>/dev/null`" ]; then
+		ucf --purge /etc/samba/smb.conf
+	fi
+	if [ -x "`which ucfr 2>/dev/null`" ]; then
+		ucfr --purge samba-common /etc/samba/smb.conf
+	fi
+	if [ -f /var/lib/samba/dhcp.conf ]; then
+		rm /var/lib/samba/dhcp.conf
+	fi
+fi
+
+#DEBHELPER#

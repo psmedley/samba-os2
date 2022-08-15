@@ -1,0 +1,50 @@
+#!/bin/sh
+
+set -e
+
+mask_services() {
+    local reason="$1"
+    shift
+    local masked_count=0
+    mkdir -p /etc/systemd/system
+    echo "${reason}: Masking $*"
+    echo "Please ignore the following error about deb-systemd-helper not finding those services."
+    while true; do
+        local service_name="$1"
+        if [ -z "$service_name" ]; then
+            break
+        fi
+        shift
+        if [ ! -e "/etc/systemd/system/${service_name}" ]; then
+            ln -s /dev/null "/etc/systemd/system/${service_name}"
+            echo "(${service_name} masked)"
+            masked_count=$((masked_count+1))
+        elif [ -h "/etc/systemd/system/${service_name}" ] \
+            && [ "$(realpath /etc/systemd/system/${service_name})" = /dev/null ] \
+        ; then
+            echo "(${service_name} already masked)"
+        else
+            echo "WARNING ${service_name} should be masked. The install may fail."
+        fi
+    done
+    # In case this system is running systemd, we make systemd reload the unit files
+    # to pick up changes.
+    if [ "${masked_count}" -ge 1 -a -d /run/systemd/system ] ; then
+        systemctl --system daemon-reload >/dev/null || true
+    fi
+}
+
+getent group winbindd_priv >/dev/null 2>&1 ||
+	addgroup --system --force-badname --quiet winbindd_priv
+
+winbindd_privileged_socket_directory='/var/lib/samba/winbindd_privileged'
+mkdir -pv "$winbindd_privileged_socket_directory"
+chgrp -c winbindd_priv "$winbindd_privileged_socket_directory"
+chmod -c 0750 "$winbindd_privileged_socket_directory"
+
+SERVER_ROLE=`samba-tool testparm --parameter-name="server role"  2>/dev/null | tail -1`
+if [ "$SERVER_ROLE" = "active directory domain controller" ]; then
+    mask_services "Samba is being run as an AD Domain Controller" winbind.service
+fi
+
+#DEBHELPER#

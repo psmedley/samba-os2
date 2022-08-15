@@ -1,0 +1,5 @@
+var/log/ctdb
+var/lib/ctdb
+var/lib/ctdb/persistent
+var/lib/ctdb/state
+var/lib/ctdb/volatile

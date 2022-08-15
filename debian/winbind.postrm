@@ -1,0 +1,12 @@
+#!/bin/sh
+
+set -e
+if [ "$1" = purge ]; then
+	winbindd_privileged_socket_directory='/var/lib/samba/winbindd_privileged'
+	rm -rf /var/cache/samba/netsamlogon_cache.tdb /var/cache/samba/winbindd_cache.tdb
+	rm -rf "$winbindd_privileged_socket_directory"
+	rm -rf /var/log/samba/log.winbind* /var/log/samba/log.wb*
+	rm -rf /run/samba/winbindd.pid
+fi
+
+#DEBHELPER#

@@ -1,0 +1,27 @@
+From c037d972b8709c3f22714eba6cb9a03f9129339b Mon Sep 17 00:00:00 2001
+From: Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+Date: Wed, 1 Dec 2021 10:20:48 +1300
+Subject: [PATCH 2/2] samba-tool domain backup: backup but do not follow
+ symlinks
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14918
+
+Signed-off-by: Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+---
+ python/samba/netcmd/domain_backup.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/python/samba/netcmd/domain_backup.py
++++ b/python/samba/netcmd/domain_backup.py
+@@ -1104,9 +1104,9 @@ class cmd_domain_backup_offline(samba.ne
+                     # duplicates if one backup dir is a subdirectory of another,
+                     # or if backup dirs contain hardlinks.
+                     try:
+-                        s = os.stat(full_path)
++                        s = os.stat(full_path, follow_symlinks=False)
+                     except FileNotFoundError:
+-                        logger.info(f"{full_path} does not exist (dangling symlink?)")
++                        logger.warning(f"{full_path} does not exist!")
+                         continue
+ 
+                     if (s.st_ino, s.st_dev) in all_stats:

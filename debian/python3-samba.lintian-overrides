@@ -1,0 +1,2 @@
+# False positives, see #896012
+python3-samba: library-not-linked-against-libc *

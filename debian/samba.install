@@ -1,0 +1,51 @@
+#!/usr/bin/dh-exec --with-scripts=filter-arch
+etc/ufw/applications.d/samba
+[linux-any] lib/systemd/system/nmbd.service
+[linux-any] lib/systemd/system/samba-ad-dc.service
+[linux-any] lib/systemd/system/smbd.service
+usr/bin/dumpmscat
+usr/bin/mvxattr
+usr/bin/oLschema2ldif
+usr/bin/pdbedit
+usr/bin/profiles
+usr/bin/sharesec
+usr/bin/smbcontrol
+usr/bin/smbstatus
+usr/lib/*/samba/libHDB-SAMBA4.so.0
+usr/lib/*/samba/libdb-glue.so.*
+usr/lib/*/samba/libhdb-samba4.so.11
+usr/lib/*/samba/libhdb-samba4.so.11.0.2
+usr/lib/*/samba/libkdc-samba4.so.2
+usr/lib/*/samba/libkdc-samba4.so.2.0.0
+usr/lib/*/samba/libmscat.so.0
+usr/lib/*/samba/libpac.so.*
+usr/lib/*/samba/service/*.so
+usr/sbin/eventlogadm
+usr/sbin/mksmbpasswd
+usr/sbin/nmbd
+usr/sbin/samba
+usr/sbin/samba-gpupdate
+usr/sbin/samba_dnsupdate
+usr/sbin/samba_downgrade_db
+usr/sbin/samba_spnupdate
+usr/sbin/samba_upgradedns
+usr/sbin/smbd
+usr/share/man/man1/log2pcap.1
+usr/share/man/man1/mvxattr.1
+usr/share/man/man1/oLschema2ldif.1
+usr/share/man/man1/profiles.1
+usr/share/man/man1/sharesec.1
+usr/share/man/man1/smbcontrol.1
+usr/share/man/man1/smbstatus.1
+usr/share/man/man8/eventlogadm.8
+usr/share/man/man8/idmap_script.8
+usr/share/man/man8/nmbd.8
+usr/share/man/man8/pdbedit.8
+usr/share/man/man8/samba-gpupdate.8
+usr/share/man/man8/samba_downgrade_db.8
+usr/share/man/man8/samba.8
+usr/share/man/man8/smbd.8
+usr/share/samba/admx/
+usr/share/samba/mdssvc/elasticsearch_mappings.json
+usr/share/samba/setup
+usr/share/samba/update-apparmor-samba-profile

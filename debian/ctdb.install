@@ -1,0 +1,47 @@
+#!/usr/bin/dh-exec --with-scripts=filter-arch
+ctdb/config/ctdb.conf etc/ctdb
+ctdb/config/ctdb.tunables etc/ctdb
+ctdb/config/script.options etc/ctdb
+etc/ctdb
+etc/sudoers.d
+[linux-any] lib/systemd/system/ctdb.service
+usr/bin/ctdb
+usr/bin/ctdb_diagnostics
+usr/bin/ctdb_local_daemons
+usr/bin/ltdbtool
+usr/bin/onnode
+usr/bin/ping_pong
+usr/lib/*/ctdb/ctdb-config
+usr/lib/*/ctdb/ctdb_etcd_lock
+usr/lib/*/ctdb/ctdb-event
+usr/lib/*/ctdb/ctdb-eventd
+usr/lib/*/ctdb/ctdb-path
+usr/lib/*/ctdb/ctdb_killtcp
+usr/lib/*/ctdb/ctdb_lock_helper
+usr/lib/*/ctdb/ctdb_lvs
+[amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32] usr/lib/*/ctdb/ctdb_mutex_ceph_rados_helper
+usr/lib/*/ctdb/ctdb_mutex_fcntl_helper
+usr/lib/*/ctdb/ctdb_natgw
+usr/lib/*/ctdb/ctdb_recovery_helper
+usr/lib/*/ctdb/ctdb_takeover_helper
+usr/lib/*/ctdb/smnotify
+usr/lib/*/samba/libctdb-event-client.so.0
+usr/lib/tmpfiles.d/ctdb.conf
+usr/sbin/ctdbd
+usr/sbin/ctdbd_wrapper
+usr/share/ctdb/events/legacy/*.script
+usr/share/man/man1/ctdb.1
+usr/share/man/man1/ctdb_diagnostics.1
+usr/share/man/man1/ctdbd.1
+usr/share/man/man1/ctdbd_wrapper.1
+usr/share/man/man1/ltdbtool.1
+usr/share/man/man1/onnode.1
+usr/share/man/man1/ping_pong.1
+usr/share/man/man5/ctdb-script.options.5
+usr/share/man/man5/ctdb.conf.5
+usr/share/man/man5/ctdb.sysconfig.5
+usr/share/man/man7/ctdb-etcd.7
+usr/share/man/man7/ctdb-statistics.7
+usr/share/man/man7/ctdb-tunables.7
+[amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32] usr/share/man/man7/ctdb_mutex_ceph_rados_helper.7
+usr/share/man/man7/ctdb.7

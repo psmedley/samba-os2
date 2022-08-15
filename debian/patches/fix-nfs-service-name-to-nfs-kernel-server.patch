@@ -1,0 +1,79 @@
+From: Rafael David Tinoco <rafaeldtinoco@gmail.com>
+Subject: fix nfs related service names
+
+Upstream defines nfs related service names based on the Linux
+distribution. This patch fixes the names for Debian and derivatives.
+
+Bug-Debian: https://bugs.debian.org/929931
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/722201
+Last-Update: 2018-08-05
+Index: samba/ctdb/config/events/legacy/06.nfs.script
+===================================================================
+--- samba.orig/ctdb/config/events/legacy/06.nfs.script	2020-11-24 18:11:53.506104058 -0500
++++ samba/ctdb/config/events/legacy/06.nfs.script	2020-11-24 18:11:53.502104093 -0500
+@@ -6,7 +6,7 @@
+ 
+ . "${CTDB_BASE}/functions"
+ 
+-service_name="nfs"
++service_name="nfs-kernel-server"
+ 
+ load_script_options "service" "60.nfs"
+ 
+Index: samba/ctdb/config/events/legacy/60.nfs.script
+===================================================================
+--- samba.orig/ctdb/config/events/legacy/60.nfs.script	2020-11-24 18:11:53.506104058 -0500
++++ samba/ctdb/config/events/legacy/60.nfs.script	2020-11-24 18:11:53.502104093 -0500
+@@ -6,9 +6,9 @@
+ 
+ . "${CTDB_BASE}/functions"
+ 
+-service_name="nfs"
++service_name="nfs-kernel-server"
+ 
+-load_system_config "nfs"
++load_system_config "nfs-kernel-server"
+ 
+ load_script_options
+ 
+Index: samba/ctdb/config/nfs-linux-kernel-callout
+===================================================================
+--- samba.orig/ctdb/config/nfs-linux-kernel-callout	2020-11-24 18:11:53.506104058 -0500
++++ samba/ctdb/config/nfs-linux-kernel-callout	2020-11-24 18:11:53.502104093 -0500
+@@ -14,7 +14,7 @@
+ 
+ # As above, edit the default value below.  CTDB_NFS_DISTRO_STYLE is a
+ # test variable only.
+-nfs_distro_style="${CTDB_NFS_DISTRO_STYLE:-systemd-redhat}"
++nfs_distro_style="${CTDB_NFS_DISTRO_STYLE:-systemd-debian}"
+ 
+ case "$nfs_distro_style" in
+ systemd-*)
+@@ -33,6 +33,14 @@
+ 		;;
+ 	*-debian)
+ 		nfs_rquotad_service="quotarpc"
++		nfs_lock_service=""
++		nfs_lock_service=""
++		nfs_mountd_service=""
++		nfs_status_service=""
++		nfs_rquotad_service=""
++		nfs_service="nfs-kernel-server"
++		nfs_config="/etc/default/nfs-kernel-server"
++		nfs_rquotad_config="/etc/default/quota"
+ 		;;
+ 	*)
+ 		echo "Internal error"
+Index: samba/ctdb/config/statd-callout
+===================================================================
+--- samba.orig/ctdb/config/statd-callout	2020-11-24 18:11:53.506104058 -0500
++++ samba/ctdb/config/statd-callout	2020-11-24 18:11:53.502104093 -0500
+@@ -29,7 +29,7 @@
+ }
+ 
+ # Try different variables to find config file for NFS_HOSTNAME
+-load_system_config "nfs" "nfs-common"
++load_system_config "nfs-kernel-server"
+ 
+ # If NFS_HOSTNAME not set then try to pull it out of /etc/nfs.conf
+ if [ -z "$NFS_HOSTNAME" ] && type nfsconf >/dev/null 2>&1 ; then

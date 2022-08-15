@@ -1,0 +1,184 @@
+From 32d876c6fa18cfbd2f81823c122a9eb5c50a6313 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Sat, 4 Jul 2020 23:16:40 +0200
+Subject: [PATCH] Rename mdfind to mdsearch
+
+GNUstep as an mdfind binary, and both should be co-instalable.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14431
+
+Signed-off-by: Mathieu Parent <math.parent@gmail.com>
+---
+ docs-xml/manpages/{mdfind.1.xml => mdsearch.1.xml}     | 10 +++++-----
+ docs-xml/wscript_build                                 |  2 +-
+ python/samba/tests/blackbox/{mdfind.py => mdsearch.py} | 10 +++++-----
+ source3/rpc_server/mdssvc/es_mapping.c                 |  2 +-
+ source3/utils/{mdfind.c => mdsearch.c}                 |  2 +-
+ source3/utils/wscript_build                            |  4 ++--
+ source4/selftest/tests.py                              |  2 +-
+ 7 files changed, 16 insertions(+), 16 deletions(-)
+ rename docs-xml/manpages/{mdfind.1.xml => mdsearch.1.xml} (94%)
+ rename python/samba/tests/blackbox/{mdfind.py => mdsearch.py} (93%)
+ rename source3/utils/{mdfind.c => mdsearch.c} (98%)
+
+diff --git a/docs-xml/manpages/mdfind.1.xml b/docs-xml/manpages/mdsearch.1.xml
+similarity index 94%
+rename from docs-xml/manpages/mdfind.1.xml
+rename to docs-xml/manpages/mdsearch.1.xml
+index 0deef066059..c75d1f045f0 100644
+--- a/docs-xml/manpages/mdfind.1.xml
++++ b/docs-xml/manpages/mdsearch.1.xml
+@@ -1,9 +1,9 @@
+ <?xml version="1.0" encoding="iso-8859-1"?>
+ <!DOCTYPE refentry PUBLIC "-//Samba-Team//DTD DocBook V4.2-Based Variant V1.0//EN" "http://www.samba.org/samba/DTD/samba-doc">
+-<refentry id="mdfind.1">
++<refentry id="mdsearch.1">
+ 
+   <refmeta>
+-    <refentrytitle>mdfind</refentrytitle>
++    <refentrytitle>mdsearch</refentrytitle>
+     <manvolnum>1</manvolnum>
+     <refmiscinfo class="source">Samba</refmiscinfo>
+     <refmiscinfo class="manual">User Commands</refmiscinfo>
+@@ -11,7 +11,7 @@
+   </refmeta>
+ 
+   <refnamediv>
+-    <refname>mdfind</refname>
++    <refname>mdsearch</refname>
+     <refpurpose>Run Spotlight searches against an SMB server</refpurpose>
+   </refnamediv>
+ 
+@@ -32,7 +32,7 @@
+     <para>This tool is part of the <citerefentry><refentrytitle>samba</refentrytitle>
+     <manvolnum>1</manvolnum></citerefentry> suite.</para>
+ 
+-    <para>mdfind is a simple utility to run Spotlight searches against an SMB server
++    <para>mdsearch is a simple utility to run Spotlight searches against an SMB server
+     that runs the Spotlight <emphasis>mdssvc</emphasis> RPC service.</para>
+   </refsect1>
+ 
+@@ -143,6 +143,6 @@
+     Andrew Tridgell. Samba is now developed by the Samba Team as an Open
+     Source project similar to the way the Linux kernel is developed.</para>
+ 
+-    <para>The mdfind manpage was written by Ralph Boehme.</para>
++    <para>The mdsearch manpage was written by Ralph Boehme.</para>
+   </refsect1>
+ </refentry>
+diff --git a/docs-xml/wscript_build b/docs-xml/wscript_build
+index dc5f31459e7..37094147e0b 100644
+--- a/docs-xml/wscript_build
++++ b/docs-xml/wscript_build
+@@ -19,7 +19,7 @@ manpages='''
+          manpages/libsmbclient.7
+          manpages/lmhosts.5
+          manpages/log2pcap.1
+-         manpages/mdfind.1
++         manpages/mdsearch.1
+          manpages/mvxattr.1
+          manpages/net.8
+          manpages/nmbd.8
+diff --git a/python/samba/tests/blackbox/mdfind.py b/python/samba/tests/blackbox/mdsearch.py
+similarity index 93%
+rename from python/samba/tests/blackbox/mdfind.py
+rename to python/samba/tests/blackbox/mdsearch.py
+index 5c1c0c3d155..8da5a49e136 100644
+--- a/python/samba/tests/blackbox/mdfind.py
++++ b/python/samba/tests/blackbox/mdsearch.py
+@@ -1,5 +1,5 @@
+ #
+-# Blackbox tests for mdfind
++# Blackbox tests for mdsearch
+ #
+ # Copyright (C) Ralph Boehme                    2019
+ #
+@@ -17,7 +17,7 @@
+ # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #
+ 
+-"""Blackbox test for mdfind"""
++"""Blackbox test for mdsearch"""
+ 
+ import os
+ import time
+@@ -95,8 +95,8 @@ class MdfindBlackboxTests(BlackboxTestCase):
+         self.server.server_activate()
+         self.server.serve_forever()
+ 
+-    def test_mdfind(self):
+-        """Simple blackbox test for mdfind"""
++    def test_mdsearch(self):
++        """Simple blackbox test for mdsearch"""
+ 
+         username = os.environ["USERNAME"]
+         password = os.environ["PASSWORD"]
+@@ -123,7 +123,7 @@ class MdfindBlackboxTests(BlackboxTestCase):
+         self.server.json_in = json_in.replace("%BASEPATH%", self.sharepath)
+         self.server.json_out = json_out.replace("%BASEPATH%", self.sharepath)
+ 
+-        output = self.check_output("mdfind -s %s -U %s%%%s fileserver spotlight '*==\"samba*\"'" % (config, username, password))
++        output = self.check_output("mdsearch -s %s -U %s%%%s fileserver spotlight '*==\"samba*\"'" % (config, username, password))
+ 
+         actual = output.decode('utf-8').splitlines()
+         expected = ["%s/%s" % (self.sharepath, file) for file in testfiles]
+diff --git a/source3/rpc_server/mdssvc/es_mapping.c b/source3/rpc_server/mdssvc/es_mapping.c
+index 5c71e503bf5..e55a0768d47 100644
+--- a/source3/rpc_server/mdssvc/es_mapping.c
++++ b/source3/rpc_server/mdssvc/es_mapping.c
+@@ -41,7 +41,7 @@
+  * search term, the corresponding Spotlight query and the final string that gets
+  * sent to the target Elasticsearch server.
+  *
+- * string | mdfind | http
++ * string | mdsearch | http
+  * -------+--------+------
+  * x!x     x!x      x\\!x
+  * x&x     x&x      x\\&x
+diff --git a/source3/utils/mdfind.c b/source3/utils/mdsearch.c
+similarity index 98%
+rename from source3/utils/mdfind.c
+rename to source3/utils/mdsearch.c
+index 2f952c29b4f..df146063508 100644
+--- a/source3/utils/mdfind.c
++++ b/source3/utils/mdsearch.c
+@@ -90,7 +90,7 @@ int main(int argc, char **argv)
+ 			    long_options,
+ 			    POPT_CONTEXT_KEEP_FIRST);
+ 
+-	poptSetOtherOptionHelp(pc, "mdfind [OPTIONS] <server> <share> <query>\n");
++	poptSetOtherOptionHelp(pc, "mdsearch [OPTIONS] <server> <share> <query>\n");
+ 
+ 	while ((opt = poptGetNextOpt(pc)) != -1) {
+ 		DBG_ERR("Invalid option %s: %s\n",
+diff --git a/source3/utils/wscript_build b/source3/utils/wscript_build
+index 6157cac9050..3393111ccfc 100644
+--- a/source3/utils/wscript_build
++++ b/source3/utils/wscript_build
+@@ -312,8 +312,8 @@ bld.SAMBA3_BINARY('smbstatus',
+                       CONN_TDB
+                       ''')
+ 
+-bld.SAMBA3_BINARY('mdfind',
+-                 source='mdfind.c',
++bld.SAMBA3_BINARY('mdsearch',
++                 source='mdsearch.c',
+                  deps='''
+                  talloc
+                  tevent
+diff --git a/source4/selftest/tests.py b/source4/selftest/tests.py
+index 3a903a7eee0..d16fb02f43c 100755
+--- a/source4/selftest/tests.py
++++ b/source4/selftest/tests.py
+@@ -929,7 +929,7 @@ planoldpythontestsuite("ad_dc_ntvfs",
+                        extra_args=['-U"$USERNAME%$PASSWORD"'])
+ planoldpythontestsuite("none", "samba.tests.loadparm")
+ planoldpythontestsuite("fileserver",
+-                       "samba.tests.blackbox.mdfind",
++                       "samba.tests.blackbox.mdsearch",
+                        extra_args=['-U"$USERNAME%$PASSWORD"'])
+ planoldpythontestsuite("fileserver",
+                        "samba.tests.blackbox.smbcacls_basic")
+-- 
+2.26.2
+

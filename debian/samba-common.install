@@ -1,0 +1,5 @@
+etc/dhcp/
+etc/samba/
+etc/samba/gdbcommands
+usr/share/samba/panic-action
+usr/share/samba/smb.conf*

@@ -1,0 +1,2 @@
+# Standard path for [printers] section is world-writeable with sticky bit set
+samba: non-standard-dir-perm var/spool/samba/ 1777 != 0755

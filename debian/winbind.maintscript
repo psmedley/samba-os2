@@ -1,0 +1,1 @@
+rm_conffile /etc/init/winbind.conf 2:4.6.5+dfsg-5~

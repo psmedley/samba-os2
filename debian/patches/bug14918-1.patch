@@ -1,0 +1,51 @@
+From 0020bb2bc161b8aefc5462564c6ffcca720b4b53 Mon Sep 17 00:00:00 2001
+From: Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+Date: Thu, 25 Nov 2021 09:26:54 +1300
+Subject: [PATCH 1/2] samba-tool domain backup: cope better with dangling
+ symlinks
+
+Our previous behaviour was to try to os.stat() the non-existent
+target.
+
+The new code greatly improves efficiency for this little task.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14918
+
+Signed-off-by: Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+---
+ python/samba/netcmd/domain_backup.py | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+--- a/python/samba/netcmd/domain_backup.py
++++ b/python/samba/netcmd/domain_backup.py
+@@ -1085,6 +1085,7 @@ class cmd_domain_backup_offline(samba.ne
+ 
+         # Recursively get all file paths in the backup directories
+         all_files = []
++        all_stats = set()
+         for backup_dir in backup_dirs:
+             for (working_dir, _, filenames) in os.walk(backup_dir):
+                 if working_dir.startswith(paths.sysvol):
+@@ -1102,7 +1103,13 @@ class cmd_domain_backup_offline(samba.ne
+                     # Ignore files that have already been added. This prevents
+                     # duplicates if one backup dir is a subdirectory of another,
+                     # or if backup dirs contain hardlinks.
+-                    if any(os.path.samefile(full_path, file) for file in all_files):
++                    try:
++                        s = os.stat(full_path)
++                    except FileNotFoundError:
++                        logger.info(f"{full_path} does not exist (dangling symlink?)")
++                        continue
++
++                    if (s.st_ino, s.st_dev) in all_stats:
+                         continue
+ 
+                     # Assume existing backup files are from a previous backup.
+@@ -1116,6 +1123,7 @@ class cmd_domain_backup_offline(samba.ne
+                         continue
+ 
+                     all_files.append(full_path)
++                    all_stats.add((s.st_ino, s.st_dev))
+ 
+         # Backup secrets, sam.ldb and their downstream files
+         self.backup_secrets(paths.private_dir, lp, logger)

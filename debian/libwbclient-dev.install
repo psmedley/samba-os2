@@ -1,0 +1,5 @@
+usr/include/samba-4.0/wbclient.h
+usr/lib/*/libsamba-util.so
+usr/lib/*/libwbclient.so
+usr/lib/*/pkgconfig/samba-util.pc
+usr/lib/*/pkgconfig/wbclient.pc

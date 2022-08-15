@@ -1,0 +1,226 @@
+From 9e3c363030dd3108d9658e87f7c4101d0b470c47 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Sat, 22 Jan 2022 01:08:26 +0100
+Subject: [PATCH] dcesrv_core: wrap gensec_*() calls in [un]become_root() calls
+
+This is important for the source3/rpc_server code as it might
+be called embedded in smbd and may not run as root with access
+to our private tdb/ldb files.
+
+Note this is only really needed for 4.15 and older, as
+we no longer run the rpc_server embedded in smbd,
+but we better be consistent for now.
+
+This should be able to fix the problem the printing no longer works
+on Windows 7 with 2021-10 monthly rollup patch (KB5006743).
+
+Windows uses NTLMSSP with privacy at the DCERPC layer on top
+of NCACN_NP (smb).
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=14867
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+(similar to commit 0651fa474cd68b18d8eb9bdc7c4ba5b847ba9ad9)
+---
+ librpc/rpc/dcesrv_auth.c         |  6 ++++++
+ librpc/rpc/dcesrv_core.c         | 18 ++++++++++++++++++
+ librpc/rpc/dcesrv_core.h         |  2 ++
+ source3/rpc_server/rpc_config.c  |  2 ++
+ source4/rpc_server/service_rpc.c | 10 ++++++++++
+ 5 files changed, 38 insertions(+)
+
+Origin: upstream, https://git.samba.org/samba.git/?p=samba.git;a=commit;h=9e3c363030dd3108d9658e87f7c4101d0b470c47
+Bug: https://bugzilla.samba.org/show_bug.cgi?id=14867
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/samba/+bug/1951490
+Last-Update: 2022-03-10
+--- a/librpc/rpc/dcesrv_auth.c
++++ b/librpc/rpc/dcesrv_auth.c
+@@ -81,6 +81,7 @@ static bool dcesrv_auth_prepare_gensec(s
+ {
+ 	struct dcesrv_connection *dce_conn = call->conn;
+ 	struct dcesrv_auth *auth = call->auth_state;
++	struct dcesrv_context_callbacks *cb = &call->conn->dce_ctx->callbacks;
+ 	NTSTATUS status;
+ 
+ 	if (auth->auth_started) {
+@@ -129,9 +130,11 @@ static bool dcesrv_auth_prepare_gensec(s
+ 	auth->auth_level = call->in_auth_info.auth_level;
+ 	auth->auth_context_id = call->in_auth_info.auth_context_id;
+ 
++	cb->auth.become_root();
+ 	status = call->conn->dce_ctx->callbacks.auth.gensec_prepare(auth,
+ 						call,
+ 						&auth->gensec_security);
++	cb->auth.unbecome_root();
+ 	if (!NT_STATUS_IS_OK(status)) {
+ 		DEBUG(1, ("Failed to call samba_server_gensec_start %s\n",
+ 			  nt_errstr(status)));
+@@ -324,6 +327,7 @@ bool dcesrv_auth_bind(struct dcesrv_call
+ NTSTATUS dcesrv_auth_complete(struct dcesrv_call_state *call, NTSTATUS status)
+ {
+ 	struct dcesrv_auth *auth = call->auth_state;
++	struct dcesrv_context_callbacks *cb = &call->conn->dce_ctx->callbacks;
+ 	const char *pdu = "<unknown>";
+ 
+ 	switch (call->pkt.ptype) {
+@@ -354,9 +358,11 @@ NTSTATUS dcesrv_auth_complete(struct dce
+ 		return status;
+ 	}
+ 
++	cb->auth.become_root();
+ 	status = gensec_session_info(auth->gensec_security,
+ 				     auth,
+ 				     &auth->session_info);
++	cb->auth.unbecome_root();
+ 	if (!NT_STATUS_IS_OK(status)) {
+ 		DEBUG(1, ("Failed to establish session_info: %s\n",
+ 			  nt_errstr(status)));
+--- a/librpc/rpc/dcesrv_core.c
++++ b/librpc/rpc/dcesrv_core.c
+@@ -949,6 +949,7 @@ static NTSTATUS dcesrv_bind(struct dcesr
+ 	struct dcerpc_binding *ep_2nd_description = NULL;
+ 	const char *endpoint = NULL;
+ 	struct dcesrv_auth *auth = call->auth_state;
++	struct dcesrv_context_callbacks *cb = &call->conn->dce_ctx->callbacks;
+ 	struct dcerpc_ack_ctx *ack_ctx_list = NULL;
+ 	struct dcerpc_ack_ctx *ack_features = NULL;
+ 	struct tevent_req *subreq = NULL;
+@@ -1153,9 +1154,11 @@ static NTSTATUS dcesrv_bind(struct dcesr
+ 		return dcesrv_auth_reply(call);
+ 	}
+ 
++	cb->auth.become_root();
+ 	subreq = gensec_update_send(call, call->event_ctx,
+ 				    auth->gensec_security,
+ 				    call->in_auth_info.credentials);
++	cb->auth.unbecome_root();
+ 	if (subreq == NULL) {
+ 		return NT_STATUS_NO_MEMORY;
+ 	}
+@@ -1170,10 +1173,13 @@ static void dcesrv_bind_done(struct teve
+ 		tevent_req_callback_data(subreq,
+ 		struct dcesrv_call_state);
+ 	struct dcesrv_connection *conn = call->conn;
++	struct dcesrv_context_callbacks *cb = &call->conn->dce_ctx->callbacks;
+ 	NTSTATUS status;
+ 
++	cb->auth.become_root();
+ 	status = gensec_update_recv(subreq, call,
+ 				    &call->out_auth_info->credentials);
++	cb->auth.unbecome_root();
+ 	TALLOC_FREE(subreq);
+ 
+ 	status = dcesrv_auth_complete(call, status);
+@@ -1231,6 +1237,7 @@ static NTSTATUS dcesrv_auth3(struct dces
+ {
+ 	struct dcesrv_connection *conn = call->conn;
+ 	struct dcesrv_auth *auth = call->auth_state;
++	struct dcesrv_context_callbacks *cb = &call->conn->dce_ctx->callbacks;
+ 	struct tevent_req *subreq = NULL;
+ 	NTSTATUS status;
+ 
+@@ -1275,9 +1282,11 @@ static NTSTATUS dcesrv_auth3(struct dces
+ 		return NT_STATUS_OK;
+ 	}
+ 
++	cb->auth.become_root();
+ 	subreq = gensec_update_send(call, call->event_ctx,
+ 				    auth->gensec_security,
+ 				    call->in_auth_info.credentials);
++	cb->auth.unbecome_root();
+ 	if (subreq == NULL) {
+ 		return NT_STATUS_NO_MEMORY;
+ 	}
+@@ -1293,10 +1302,13 @@ static void dcesrv_auth3_done(struct tev
+ 		struct dcesrv_call_state);
+ 	struct dcesrv_connection *conn = call->conn;
+ 	struct dcesrv_auth *auth = call->auth_state;
++	struct dcesrv_context_callbacks *cb = &call->conn->dce_ctx->callbacks;
+ 	NTSTATUS status;
+ 
++	cb->auth.become_root();
+ 	status = gensec_update_recv(subreq, call,
+ 				    &call->out_auth_info->credentials);
++	cb->auth.unbecome_root();
+ 	TALLOC_FREE(subreq);
+ 
+ 	status = dcesrv_auth_complete(call, status);
+@@ -1568,6 +1580,7 @@ static NTSTATUS dcesrv_alter(struct dces
+ 	struct ncacn_packet *pkt = &call->ack_pkt;
+ 	uint32_t extra_flags = 0;
+ 	struct dcesrv_auth *auth = call->auth_state;
++	struct dcesrv_context_callbacks *cb = &call->conn->dce_ctx->callbacks;
+ 	struct dcerpc_ack_ctx *ack_ctx_list = NULL;
+ 	struct tevent_req *subreq = NULL;
+ 	size_t i;
+@@ -1679,9 +1692,11 @@ static NTSTATUS dcesrv_alter(struct dces
+ 		return dcesrv_auth_reply(call);
+ 	}
+ 
++	cb->auth.become_root();
+ 	subreq = gensec_update_send(call, call->event_ctx,
+ 				    auth->gensec_security,
+ 				    call->in_auth_info.credentials);
++	cb->auth.unbecome_root();
+ 	if (subreq == NULL) {
+ 		return NT_STATUS_NO_MEMORY;
+ 	}
+@@ -1696,10 +1711,13 @@ static void dcesrv_alter_done(struct tev
+ 		tevent_req_callback_data(subreq,
+ 		struct dcesrv_call_state);
+ 	struct dcesrv_connection *conn = call->conn;
++	struct dcesrv_context_callbacks *cb = &call->conn->dce_ctx->callbacks;
+ 	NTSTATUS status;
+ 
++	cb->auth.become_root();
+ 	status = gensec_update_recv(subreq, call,
+ 				    &call->out_auth_info->credentials);
++	cb->auth.unbecome_root();
+ 	TALLOC_FREE(subreq);
+ 
+ 	status = dcesrv_auth_complete(call, status);
+--- a/librpc/rpc/dcesrv_core.h
++++ b/librpc/rpc/dcesrv_core.h
+@@ -386,6 +386,8 @@ struct dcesrv_context_callbacks {
+ 		NTSTATUS (*gensec_prepare)(TALLOC_CTX *mem_ctx,
+ 					struct dcesrv_call_state *call,
+ 					struct gensec_security **out);
++		void (*become_root)(void);
++		void (*unbecome_root)(void);
+ 	} auth;
+ 	struct {
+ 		NTSTATUS (*find)(struct dcesrv_call_state *);
+--- a/source3/rpc_server/rpc_config.c
++++ b/source3/rpc_server/rpc_config.c
+@@ -30,6 +30,8 @@
+ static struct dcesrv_context_callbacks srv_callbacks = {
+ 	.log.successful_authz = dcesrv_log_successful_authz,
+ 	.auth.gensec_prepare = dcesrv_auth_gensec_prepare,
++	.auth.become_root = become_root,
++	.auth.unbecome_root = unbecome_root,
+ 	.assoc_group.find = dcesrv_assoc_group_find,
+ };
+ 
+--- a/source4/rpc_server/service_rpc.c
++++ b/source4/rpc_server/service_rpc.c
+@@ -40,9 +40,19 @@
+ #include "../libcli/named_pipe_auth/npa_tstream.h"
+ #include "smbd/process_model.h"
+ 
++static void skip_become_root(void)
++{
++}
++
++static void skip_unbecome_root(void)
++{
++}
++
+ struct dcesrv_context_callbacks srv_callbacks = {
+ 	.log.successful_authz = log_successful_dcesrv_authz_event,
+ 	.auth.gensec_prepare = dcesrv_gensec_prepare,
++	.auth.become_root = skip_become_root,
++	.auth.unbecome_root = skip_unbecome_root,
+ 	.assoc_group.find = dcesrv_assoc_group_find,
+ };
+ 

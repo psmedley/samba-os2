@@ -1,0 +1,2 @@
+# False positives, see #896012
+samba-vfs-modules: library-not-linked-against-libc *

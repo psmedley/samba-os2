@@ -1,0 +1,11 @@
+#!/bin/sh
+
+set -xe
+
+# Test regression on systemd-tmpfiles /run/samba presence for postinst script
+if [ -z $AUTOPKGTEST_REBOOT_MARK ]; then
+  apt remove -y samba-common-bin
+  /tmp/autopkgtest-reboot reboot_mark
+else
+  apt install -y samba-common-bin
+fi
