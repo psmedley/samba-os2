@@ -88,6 +88,21 @@ def gcc_modifier_cygwin(conf):
 	v.CFLAGS_cshlib = []
 
 @conf
+def gcc_modifier_os2knix(conf):
+	v = conf.env
+	v.cprogram_PATTERN    = '%s.exe'
+	v.LINKFLAGS_cprogram   = ['-Zexe', '-Zomf','-Zbin-files', '-Zmap', '-static-libgcc', '-lgpg-error', '-lmmap', '-lbz2', '-llzma', '-lcrypto', '-lxml2', '-lcxsmbd', '-lacl', '-lattr', '-lgnutls', '-licuuc', '-licui18n', '-licudata', '-llibstdc++', '/extras/lib/iconv.a', '-llibcoreutils']
+	v.cshlib_PATTERN      = 'lib%s.a'
+	v.implib_PATTERN      = 'lib%s.dll.a'
+	v.IMPLIB_ST           = '-Wl,--out-implib,%s'
+
+	v.SHLIB_MARKER        = ''
+
+	# Auto-import is enabled by default even without this option,
+	# but enabling it explicitly has the nice effect of suppressing the rather boring, debug-level messages
+	# that the linker emits otherwise.
+
+@conf
 def gcc_modifier_darwin(conf):
 	"""Configuration flags for executing gcc on MacOS"""
 	v = conf.env

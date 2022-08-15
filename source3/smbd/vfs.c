@@ -920,7 +920,11 @@ int vfs_ChDir(connection_struct *conn, const struct smb_filename *smb_fname)
 		return 0;
 	}
 
+#ifndef __OS2__
 	if (smb_fname->base_name[0] == '/' &&
+#else
+	if ((*smb_fname->base_name == '/' || (*smb_fname->base_name && smb_fname->base_name[1] == ':')) &&
+#endif
 	    strcsequal(LastDir,smb_fname->base_name))
 	{
 		/*
@@ -1249,6 +1253,9 @@ NTSTATUS check_reduced_name_with_privilege(connection_struct *conn,
 				rootdir_len) == 0);
 
 		if (!matched || (resolved_name[rootdir_len] != '/' &&
+#ifdef __OS2__
+                               (rootdir_len <= 1 || resolved_name[1] != ':') &&
+#endif
 				 resolved_name[rootdir_len] != '\0')) {
 			DBG_WARNING("%s is a symlink outside the "
 				    "share path\n",
@@ -1389,7 +1396,11 @@ NTSTATUS check_reduced_name(connection_struct *conn,
 	DEBUG(10,("check_reduced_name realpath [%s] -> [%s]\n", fname,
 		  resolved_name));
 
+#ifdef __OS2__
+	if (*resolved_name != '/' && *resolved_name != '\\' && (strlen(resolved_name) <= 1 || resolved_name[1] != ':')) {
+#else
 	if (*resolved_name != '/') {
+#endif
 		DEBUG(0,("check_reduced_name: realpath doesn't return "
 			 "absolute paths !\n"));
 		TALLOC_FREE(resolved_fname);

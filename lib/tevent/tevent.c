@@ -69,6 +69,9 @@
 #ifdef HAVE_EVENTFD
 #include <sys/eventfd.h>
 #endif
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 struct tevent_ops_list {
 	struct tevent_ops_list *next, *prev;

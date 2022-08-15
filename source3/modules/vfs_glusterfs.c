@@ -47,6 +47,10 @@
 #include "modules/posixacl_xattr.h"
 #include "lib/pthreadpool/pthreadpool_tevent.h"
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 #define DEFAULT_VOLFILE_SERVER "localhost"
 #define GLUSTER_NAME_MAX 255
 

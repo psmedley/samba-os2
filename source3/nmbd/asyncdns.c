@@ -20,6 +20,10 @@
 #include "includes.h"
 #include "nmbd/nmbd.h"
 #include "lib/util/sys_rw_data.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 
 /***************************************************************************
   Add a DNS result to the name cache.

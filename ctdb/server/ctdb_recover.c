@@ -39,6 +39,9 @@
 #include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 #include "ctdb_cluster_mutex.h"
 

@@ -129,6 +129,7 @@ abort if we haven't set the uid correctly
 ****************************************************************************/
 static void assert_uid(uid_t ruid, uid_t euid)
 {
+#ifndef __OS2__
 	if ((euid != (uid_t)-1 && geteuid() != euid) ||
 	    (ruid != (uid_t)-1 && getuid() != ruid)) {
 		if (!non_root_mode()) {
@@ -139,6 +140,7 @@ static void assert_uid(uid_t ruid, uid_t euid)
 			exit(1);
 		}
 	}
+#endif
 }
 
 /****************************************************************************
@@ -146,6 +148,7 @@ abort if we haven't set the gid correctly
 ****************************************************************************/
 static void assert_gid(gid_t rgid, gid_t egid)
 {
+#ifndef __OS2__
 	if ((egid != (gid_t)-1 && getegid() != egid) ||
 	    (rgid != (gid_t)-1 && getgid() != rgid)) {
 		if (!non_root_mode()) {
@@ -157,6 +160,7 @@ static void assert_gid(gid_t rgid, gid_t egid)
 			exit(1);
 		}
 	}
+#endif
 }
 
 /****************************************************************************

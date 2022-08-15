@@ -36,6 +36,9 @@
 #include "auth.h"
 #include "nt_printing.h"
 #include "util_event.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 /**
  * @brief Purge stale printers and reload from pre-populated pcap cache.

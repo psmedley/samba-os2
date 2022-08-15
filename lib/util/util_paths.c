@@ -26,6 +26,9 @@
 #include "dynconfig/dynconfig.h"
 #include "lib/util/util_paths.h"
 #include "system/passwd.h"
+#ifdef __OS2__
+#define NSS_BUFLEN_PASSWD 1024
+#endif
 
 /**
  * @brief Returns an absolute path to a file in the Samba modules directory.

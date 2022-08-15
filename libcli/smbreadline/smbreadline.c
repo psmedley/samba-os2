@@ -99,6 +99,55 @@ static char *smb_readline_replacement(const char *prompt, void (*callback)(void)
 			}
 			return ret;
 		}
+#ifdef __OS2__
+#include <conio.h>
+		{
+		char * cp = line;
+		char c;
+		int flag = 1;
+		while (flag && cp < line + sizeof(line) - 1) 
+		{
+			c = getch();
+			switch (c) 
+			{
+				case 8:
+				{
+					if (cp > line) 
+					{
+						cp--;
+						putchar(8);
+						putchar(32);
+						putchar(8);
+					}
+				} break;
+				case 0: break;
+				case 10: // generally should not be
+				case 13:
+				{
+					flag = 0;
+				} break;
+			        case 27: 
+				{
+					for (; cp > line; cp--) 
+					{
+						putchar(8);
+						putchar(32);
+						putchar(8);
+					}
+				} break;
+				default:
+				{
+					*cp++ = c;
+					putchar(c);
+				}
+			}
+		}
+		*cp = 0;
+		printf("\n");
+		return line;
+		}
+#endif /* __OS2__ */
+
 		if (callback) {
 			callback();
 		}

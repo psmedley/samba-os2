@@ -3150,7 +3150,11 @@ const char *lp_default_path(void)
     if (getenv("SMB_CONF_PATH"))
         return getenv("SMB_CONF_PATH");
     else
+#ifndef __OS2__
         return dyn_CONFIGFILE;
+#else
+	return get_dyn_CONFIGFILE();
+#endif
 }
 
 /**

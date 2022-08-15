@@ -1775,8 +1775,10 @@ static bool b9_record_match(struct dlz_bind9_data *state,
 {
 	bool status;
 	int i;
+#ifndef __OS2__
 	struct in6_addr rec1_in_addr6;
 	struct in6_addr rec2_in_addr6;
+#endif
 
 	if (rec1->wType != rec2->wType) {
 		return false;
@@ -1790,6 +1792,7 @@ static bool b9_record_match(struct dlz_bind9_data *state,
 	switch (rec1->wType) {
 	case DNS_TYPE_A:
 		return strcmp(rec1->data.ipv4, rec2->data.ipv4) == 0;
+#ifndef __OS2__
 	case DNS_TYPE_AAAA: {
 		int ret;
 
@@ -1804,6 +1807,7 @@ static bool b9_record_match(struct dlz_bind9_data *state,
 
 		return memcmp(&rec1_in_addr6, &rec2_in_addr6, sizeof(rec1_in_addr6)) == 0;
 	}
+#endif
 	case DNS_TYPE_CNAME:
 		return dns_name_equal(rec1->data.cname, rec2->data.cname);
 	case DNS_TYPE_TXT:

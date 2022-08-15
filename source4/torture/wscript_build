@@ -331,14 +331,21 @@ bld.SAMBA_BINARY('smbtorture',
 bld.SAMBA_BINARY('gentest',
 	source='gentest.c',
 	manpages='man/gentest.1',
-	deps='samba-hostconfig samba-util popt POPT_SAMBA POPT_CREDENTIALS LIBCLI_SMB smbclient-raw param_options'
+	deps='''samba-hostconfig samba-util popt POPT_SAMBA POPT_CREDENTIALS LIBCLI_SMB smbclient-raw param_options
+ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS
+samba-util popt POPT_SAMBA ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth
+''',
+
 	)
 
 
 bld.SAMBA_BINARY('masktest',
 	source='masktest.c',
 	manpages='man/masktest.1',
-	deps='samba-hostconfig samba-util popt POPT_SAMBA POPT_CREDENTIALS LIBCLI_SMB param_options'
+	deps='''samba-hostconfig samba-util popt POPT_SAMBA POPT_CREDENTIALS LIBCLI_SMB param_options
+ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS
+samba-util popt POPT_SAMBA ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth
+''',
 	)
 
 
@@ -349,7 +356,10 @@ bld.SAMBA_BINARY('locktest',
 	#cflags='--coverage',
 	# GCOV='1',
 	manpages='man/locktest.1',
-	deps='popt POPT_SAMBA POPT_CREDENTIALS samba-util LIBCLI_SMB samba-hostconfig param_options',
+	deps='''popt POPT_SAMBA POPT_CREDENTIALS samba-util LIBCLI_SMB samba-hostconfig param_options
+ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS
+samba-util popt POPT_SAMBA ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth
+''',
 	)
 
 bld.SAMBA_MODULE('TORTURE_DSDB',

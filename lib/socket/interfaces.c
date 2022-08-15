@@ -25,7 +25,9 @@
 #include "interfaces.h"
 #include "lib/util/tsort.h"
 #include "librpc/gen_ndr/ioctl.h"
-
+#ifdef __OS2__
+#include <netinet/in.h>
+#endif
 #ifdef HAVE_ETHTOOL
 #include "linux/sockios.h"
 #include "linux/ethtool.h"
@@ -229,7 +231,11 @@ static int _get_interfaces(TALLOC_CTX *mem_ctx, struct iface_struct **pifaces)
 	int total = 0;
 	size_t copy_size;
 
+#ifndef __OS2__x
 	if (getifaddrs(&iflist) < 0) {
+#else
+	if (os2_getifaddrs(&iflist) < 0) {
+#endif
 		return -1;
 	}
 

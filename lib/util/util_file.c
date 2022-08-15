@@ -239,7 +239,11 @@ _PUBLIC_ char *file_load(const char *fname, size_t *size, size_t maxsize, TALLOC
 
 	if (!fname || !*fname) return NULL;
 
+#ifdef __OS2__
+	fd = open(fname, O_RDONLY | O_BINARY);
+#else
 	fd = open(fname,O_RDONLY);
+#endif
 	if (fd == -1) return NULL;
 
 	p = fd_load(fd, size, maxsize, mem_ctx);

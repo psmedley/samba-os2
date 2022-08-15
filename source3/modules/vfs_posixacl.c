@@ -21,6 +21,9 @@
 #include "system/filesys.h"
 #include "smbd/smbd.h"
 #include "modules/vfs_posixacl.h"
+#ifdef __OS2__
+#include <acl.h>
+#endif
 
 /* prototypes for static functions first - for clarity */
 

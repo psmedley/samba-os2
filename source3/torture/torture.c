@@ -9973,7 +9973,11 @@ static bool run_eatest(int dummy)
 
 	printf("num_eas = %d\n", (int)num_eas);
 
+#ifdef __OS2__ // add libc UNIX emulation EAs
+	if (num_eas != 27) {
+#else
 	if (num_eas != 20) {
+#endif
 		printf("Should be 20 EA's stored... failing.\n");
 		correct = False;
 	}

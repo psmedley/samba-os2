@@ -29,6 +29,9 @@
 #include "system/filesys.h"
 #include "lib/util/util_net.h"
 #undef strcasecmp
+#ifdef __OS2__
+#include <netinet/in.h>
+#endif
 
 /*******************************************************************
  Set an address to INADDR_ANY.

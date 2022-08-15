@@ -306,7 +306,11 @@ void write_browse_list(time_t t, bool force_write)
 	if (!fname) {
 		return;
 	}
+#ifndef __OS2__
 	fnamenew = talloc_asprintf(ctx, "%s.",
+#else
+        fnamenew = talloc_asprintf(ctx, "%s.tmp",
+#endif
 				fname);
 	if (!fnamenew) {
 		talloc_free(fname);
@@ -407,6 +411,9 @@ void write_browse_list(time_t t, bool force_write)
 	}
 
 	fclose(fp);
+#ifdef __OS2__
+	close(fp);
+#endif
 	unlink(fname);
 	chmod(fnamenew,0644);
 	rename(fnamenew,fname);

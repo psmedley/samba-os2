@@ -484,6 +484,12 @@ struct cli_credentials *net_context_creds(struct net_context *c,
 	struct cli_credentials *creds = NULL;
 	struct loadparm_context *lp_ctx = NULL;
 
+#ifdef __OS2__
+        if (!c->opt_user_name || c->opt_user_name == NULL) {
+                d_printf("The username was not set.\n");
+                return NT_STATUS_LOGON_FAILURE;
+        }
+#endif
 	c->opt_password = net_prompt_pass(c, c->opt_user_name);
 
 	creds = cli_credentials_init(mem_ctx);

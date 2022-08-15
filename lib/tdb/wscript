@@ -119,7 +119,6 @@ def build(bld):
         private_library = False
     else:
         private_library = True
-
     if not bld.CONFIG_SET('USING_SYSTEM_TDB'):
 
         tdb_deps = 'replace'
@@ -142,25 +141,25 @@ def build(bld):
 
         bld.SAMBA_BINARY('tdbtorture',
                          'tools/tdbtorture.c',
-                         'tdb',
+                         'tdb replace',
                          install=False)
 
         bld.SAMBA_BINARY('tdbrestore',
                          'tools/tdbrestore.c',
-                         'tdb', manpages='man/tdbrestore.8')
+                         'tdb replace', manpages='man/tdbrestore.8')
 
         bld.SAMBA_BINARY('tdbdump',
                          'tools/tdbdump.c',
-                         'tdb', manpages='man/tdbdump.8')
+                         'tdb replace', manpages='man/tdbdump.8')
 
         bld.SAMBA_BINARY('tdbbackup',
                          'tools/tdbbackup.c',
-                         'tdb',
+                         'tdb replace',
                          manpages='man/tdbbackup.8')
 
         bld.SAMBA_BINARY('tdbtool',
-                         'tools/tdbtool.c',
-                         'tdb', manpages='man/tdbtool.8')
+                         source='tools/tdbtool.c ../../source3/lib/os2helper.c ../async_req/async_sock.c ../crypto/gnutls_error.c',
+                         deps='tdb replace charset samba-util samba-debug time-basic socket-blocking samba3-util smbconf errors3 samba-cluster-support util_setid interfaces dbwrap tevent tevent-util util_reg samba-security messages_dgm msghdr ndr samba-hostconfig genrand iov_buf cli_smb_common tdb-wrap3 server-role util_tdb CHARSET3 sys_rw smbd_shim messages_util server_id_db LIBTSOCKET tdb-wrap talloc_report talloc_report_printf', manpages='man/tdbtool.8')
 
         if bld.env.standalone_tdb:
             # FIXME: This hardcoded list is stupid, stupid, stupid.

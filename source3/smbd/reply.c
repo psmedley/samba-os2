@@ -7830,6 +7830,10 @@ NTSTATUS rename_internals_fsp(connection_struct *conn,
 	 */
 
 	SMB_ASSERT(lck != NULL);
+#ifdef __OS2__
+	// OS/2 can't rename an open file, close the fd of the source file before attempting a rename
+	close(fsp->fh->fd);
+#endif
 
 	ret = SMB_VFS_RENAMEAT(conn,
 			conn->cwd_fsp,

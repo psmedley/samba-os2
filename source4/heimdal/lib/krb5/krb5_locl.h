@@ -194,6 +194,10 @@ struct _krb5_krb_auth_data;
 
 #define krb5_einval(context, argnum) _krb5_einval((context), __func__, (argnum))
 
+#ifdef __OS2__
+#define PATH_SEP ";"
+#endif
+
 #ifndef PATH_SEP
 #define PATH_SEP ":"
 #endif

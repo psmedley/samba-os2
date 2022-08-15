@@ -45,14 +45,20 @@ static void set_logfile(poptContext con, const char * arg)
 	char lfile[PATH_MAX];
 	const char *pname;
 	int ret;
-
 	/* Find out basename of current program */
+#ifdef __OS2__
+	char *fname = SMB_STRDUP(_getname(poptGetInvocationName(con)));
+	_remext(fname);
+	pname = fname;
+#else
 	pname = strrchr_m(poptGetInvocationName(con), '/');
+
 	if (pname == NULL) {
 		pname = poptGetInvocationName(con);
 	} else {
 		pname++;
 	}
+#endif
 
 	ret = snprintf(lfile, sizeof(lfile), "%s/log.%s", arg, pname);
 	if (ret >= sizeof(lfile)) {

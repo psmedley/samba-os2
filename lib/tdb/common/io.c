@@ -224,6 +224,31 @@ static int tdb_write(struct tdb_context *tdb, tdb_off_t off,
 	if (tdb_oob(tdb, off, len, 0) != 0)
 		return -1;
 
+#ifdef __OS2__
+	// YD we must upgrade read locks to write locks (exclusive), as otherwise
+	// the owner (us) is not allowed to write to the file (different from unix)
+	// if a wider previous lock is in effect, we cannot write lock our segment
+	// (e.g. a lock_upgrade locks all the file), so we hope the previous lock 
+	// is a write lock: do not wait for lock.
+	// so this is what we try here:
+	// 1. add a write lock and see it it works
+	// 2. if the write lock wasn't set, we try to unlock the segment
+	//    first and add the write lock afterwards
+	// 3. we remove the write lock further down 
+	// 4. we add the removed lock from step #2 again 
+	int upgradeLockRC = 0;
+	int unlockRC = -1;
+	upgradeLockRC = tdb_brlock(tdb, F_WRLCK, off, len, TDB_LOCK_NOWAIT);
+	if (upgradeLockRC != 0) {
+		unlockRC = tdb_brunlock(tdb, F_RDLCK, off, 1);
+		upgradeLockRC = tdb_brlock(tdb, F_WRLCK, off, len, TDB_LOCK_NOWAIT);
+	}
+	// no need to log a successful upgrade
+	if (upgradeLockRC != 0)
+	TDB_LOG((tdb, TDB_DEBUG_TRACE,"upgrading lock at %d len=%d "
+		"before writing %s (rc=%d).\n", off, len,
+		 upgradeLockRC ? "failed":"was successful", upgradeLockRC));
+#endif
 	if (tdb->map_ptr) {
 		memcpy(off + (char *)tdb->map_ptr, buf, len);
 	} else {
@@ -255,10 +280,22 @@ static int tdb_write(struct tdb_context *tdb, tdb_off_t off,
 			TDB_LOG((tdb, TDB_DEBUG_FATAL, "tdb_write: failed to "
 				 "write %u bytes at %u in two attempts\n",
 				 len, off));
+#ifdef __OS2__ // remove our lock, if upgrade succeded
+			if (upgradeLockRC == 0)
+				tdb_brunlock( tdb, F_WRLCK, off, len);
+			if (unlockRC == 0)
+				tdb_brlock( tdb, F_RDLCK, off, 1, TDB_LOCK_WAIT);
+#endif
 			return -1;
 		}
 #endif
 	}
+#ifdef __OS2__ // remove our lock, if upgrade succeded
+	if (upgradeLockRC == 0)
+		tdb_brunlock( tdb, F_WRLCK, off, len);
+	if (unlockRC == 0)
+		tdb_brlock( tdb, F_RDLCK, off, 1, TDB_LOCK_WAIT);
+#endif
 	return 0;
 }
 

@@ -31,7 +31,7 @@
    from using bool for internal functions 
 */
 
-#if defined(HAVE_IMMEDIATE_STRUCTURES)
+#if defined(HAVE_IMMEDIATE_STRUCTURES)  && !defined(__OS2__)
 typedef struct {uint32_t v;} NTSTATUS;
 #define NT_STATUS(x) ((NTSTATUS) { x })
 #define NT_STATUS_V(x) ((x).v)

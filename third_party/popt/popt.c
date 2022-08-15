@@ -9,6 +9,9 @@
 #undef	MYDEBUG
 
 #include "system.h"
+#ifdef __KLIBC__
+#define HAVE_FLOAT_H 1
+#endif
 
 #if defined(__LCLINT__)
 /*@-declundef -exportheader @*/

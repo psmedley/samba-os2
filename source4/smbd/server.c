@@ -48,6 +48,10 @@
 #include "lib/util/server_id.h"
 #include "server_util.h"
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 #ifdef HAVE_PTHREAD
 #include <pthread.h>
 #endif

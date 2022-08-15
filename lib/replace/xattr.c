@@ -114,6 +114,8 @@ ssize_t rep_getxattr (const char *path, const char *name, void *value, size_t si
 		close(attrfd);
 	}
 	return ret;
+#elif defined(__OS2__)
+        return unigetxattr(path, 0, name, value, size);
 #else
 	errno = ENOSYS;
 	return -1;
@@ -182,6 +184,8 @@ ssize_t rep_fgetxattr (int filedes, const char *name, void *value, size_t size)
 		close(attrfd);
 	}
 	return ret;
+#elif defined(__OS2__)
+	return unigetxattr(0, filedes, name, value, size);
 #else
 	errno = ENOSYS;
 	return -1;
@@ -374,6 +378,8 @@ ssize_t rep_listxattr (const char *path, char *list, size_t size)
 		close(attrdirfd);
 	}
 	return ret;
+#elif defined(__OS2__)
+	return unilistxattr(path, 0, list, size);
 #else
 	errno = ENOSYS;
 	return -1;
@@ -407,6 +413,8 @@ ssize_t rep_flistxattr (int filedes, char *list, size_t size)
 		close(attrdirfd);
 	}
 	return ret;
+#elif defined(__OS2__)
+	return unilistxattr(0, filedes, list, size);
 #else
 	errno = ENOSYS;
 	return -1;
@@ -457,6 +465,8 @@ int rep_removexattr (const char *path, const char *name)
 		close(attrdirfd);
 	}
 	return ret;
+#elif defined(__OS2__)
+	return uniremovexattr (path, 0, name);
 #else
 	errno = ENOSYS;
 	return -1;
@@ -507,6 +517,8 @@ int rep_fremovexattr (int filedes, const char *name)
 		close(attrdirfd);
 	}
 	return ret;
+#elif defined(__OS2__)
+	return uniremovexattr (0, filedes, name);
 #else
 	errno = ENOSYS;
 	return -1;
@@ -614,6 +626,8 @@ int rep_setxattr (const char *path, const char *name, const void *value, size_t 
 		close(attrfd);
 	}
 	return retval;
+#elif defined(__OS2__)
+	return unisetxattr (path, 0, name, value, size, flags);
 #else
 	errno = ENOSYS;
 	return -1;
@@ -715,6 +729,8 @@ int rep_fsetxattr (int filedes, const char *name, const void *value, size_t size
 		close(attrfd);
 	}
 	return retval;
+#elif defined(__OS2__)
+	return unisetxattr (0, filedes, name, value, size, flags);
 #else
 	errno = ENOSYS;
 	return -1;

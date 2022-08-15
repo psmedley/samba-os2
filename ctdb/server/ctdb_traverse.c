@@ -40,6 +40,9 @@
 #include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 typedef void (*ctdb_traverse_fn_t)(void *private_data, TDB_DATA key, TDB_DATA data);
 

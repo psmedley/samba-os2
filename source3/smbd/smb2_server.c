@@ -2986,6 +2986,7 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 
 	call = smbd_smb2_call(opcode);
 	if (call == NULL) {
+
 		return smbd_smb2_request_error(req, NT_STATUS_INVALID_PARAMETER);
 	}
 
@@ -3385,6 +3386,7 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 		return_value = smbd_smb2_request_error(req, NT_STATUS_INVALID_PARAMETER);
 		break;
 	}
+
 	return return_value;
 }
 
@@ -4625,12 +4627,17 @@ static NTSTATUS smbd_smb2_flush_send_queue(struct smbXsrv_connection *xconn)
 			continue;
 		}
 
+#ifndef __OS2__
 		msg = (struct msghdr) {
 			.msg_iov = e->vector,
 			.msg_iovlen = e->count,
 		};
 
 		ret = sendmsg(xconn->transport.sock, &msg, 0);
+#else
+		/* Need to investigate why, but sendmsg() fails on OS/2, reverting to writev as used in 4.11 fixes things */
+		ret = writev(xconn->transport.sock, e->vector, e->count);
+#endif
 		if (ret == 0) {
 			/* propagate end of file */
 			return NT_STATUS_INTERNAL_ERROR;

@@ -170,6 +170,11 @@ static void async_connect_cleanup(struct tevent_req *req,
 		int ret;
 
 		ret = fcntl(state->fd, F_SETFL, state->old_sockflags);
+#ifdef __OS2__ // if the old flags have blocking set we need to set it also (fcntl bug)
+	        if (!(state->old_sockflags & O_NONBLOCK)) {
+	                set_blocking(state->fd, true);
+	        }
+#endif
 		if (ret == -1) {
 			abort();
 		}

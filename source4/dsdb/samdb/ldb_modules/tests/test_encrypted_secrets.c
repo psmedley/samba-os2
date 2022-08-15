@@ -39,6 +39,7 @@ struct ldbtest_ctx {
 	const char *dbpath;
 };
 
+#ifndef __OS2__ /* defined elsewhere */
 /* -------------------------------------------------------------------------- */
 /*
  * Replace the dsdb helper routines used by the operational_init function
@@ -79,6 +80,7 @@ int dsdb_module_reference_dn(
 {
 	return LDB_SUCCESS;
 }
+#endif
 /* -------------------------------------------------------------------------- */
 
 static void unlink_old_db(struct ldbtest_ctx *test_ctx)

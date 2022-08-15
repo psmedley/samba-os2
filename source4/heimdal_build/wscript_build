@@ -252,7 +252,8 @@ def HEIMDAL_LIBRARY(libname, source, deps, vnum, version_script, includes=''):
         bundled_name = libname
     version = "%s_%s" % (Context.g_module.APPNAME, Context.g_module.VERSION)
 
-    features = 'c cshlib symlink_lib install_lib'
+#    features = 'c cshlib symlink_lib install_lib'
+    features = 'c cstaticlib symlink_lib install_lib'
 
     bld.set_group('main')
     t = bld(
@@ -334,7 +335,7 @@ if not bld.CONFIG_SET('USING_SYSTEM_ROKEN'):
     if not bld.CONFIG_SET('HAVE_IFADDRS_H'):
         HEIMDAL_GENERATOR(
             name="HEIMDAL_IFADDRS_H",
-            rule="rm -f ${TGT} && ln ${SRC} ${TGT}",
+            rule="rm -f ${TGT} && cp ${SRC} ${TGT}",
             source = 'ifaddrs.hin',
             target = 'ifaddrs.h',
             )

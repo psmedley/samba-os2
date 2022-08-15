@@ -47,6 +47,10 @@
 #include "libcli/smb/smbXcli_base.h"
 #include "lib/util/time_basic.h"
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 /* Internal message queue for deferred opens. */
 struct pending_message_list {
 	struct pending_message_list *next, *prev;

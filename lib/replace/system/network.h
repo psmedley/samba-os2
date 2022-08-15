@@ -91,6 +91,10 @@
 #include <stropts.h>
 #endif
 
+#ifdef __OS2__
+#include <libcx/net.h>
+#endif
+
 #ifndef HAVE_SOCKLEN_T
 #define HAVE_SOCKLEN_T
 typedef int socklen_t;

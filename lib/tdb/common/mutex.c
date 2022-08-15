@@ -26,6 +26,9 @@
 */
 #include "tdb_private.h"
 #include "system/threads.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 #ifdef USE_TDB_MUTEX_LOCKING
 

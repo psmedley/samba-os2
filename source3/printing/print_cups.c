@@ -38,6 +38,10 @@
 #define HTTP_URI_STATUS_OK HTTP_URI_OK
 #endif
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 #if (CUPS_VERSION_MAJOR > 1) || (CUPS_VERSION_MINOR > 5)
 #define HAVE_CUPS_1_6 1
 #endif

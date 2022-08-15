@@ -285,6 +285,7 @@ Error was %s\n", pfile, strerror(errno) ));
 			 * prevent infinate loops. JRA.
 			 */
 
+#ifndef __OS2__
 			if (sys_stat(pfile, &sbuf1, false) != 0) {
 				DEBUG(0, ("startsmbfilepwent_internal: unable to stat file %s. \
 Error was %s\n", pfile, strerror(errno)));
@@ -302,7 +303,10 @@ Error was %s\n", pfile, strerror(errno)));
 			}
 
 			if( sbuf1.st_ex_ino == sbuf2.st_ex_ino) {
+#else
 				/* No race. */
+                        {
+#endif
 				break;
 			}
 
@@ -323,6 +327,7 @@ Error was %s\n", pfile, strerror(errno)));
 	/* Set a buffer to do more efficient reads */
 	setvbuf(fp, (char *)NULL, _IOFBF, 1024);
 
+#ifndef __OS2__
 	/* Make sure it is only rw by the owner */
 #ifdef HAVE_FCHMOD
 	if(fchmod(fileno(fp), S_IRUSR|S_IWUSR) == -1) {
@@ -335,6 +340,7 @@ Error was %s\n.", pfile, strerror(errno) ));
 		fclose(fp);
 		return NULL;
 	}
+#endif
 
 	/* We have a lock on the file. */
 	return fp;
@@ -1176,12 +1182,18 @@ Error was %s\n", pwd->smb_name, pfile2, strerror(errno)));
 	 * Do an atomic rename - then release the locks.
 	 */
 
+#ifdef __OS2__
+	endsmbfilepwent(fp, &smbpasswd_state->pw_file_lock_depth);
+	endsmbfilepwent(fp_write,&pfile2_lockdepth);
+#endif
 	if(rename(pfile2,pfile) != 0) {
 		unlink(pfile2);
 	}
 
+#ifndef __OS2__
 	endsmbfilepwent(fp, &smbpasswd_state->pw_file_lock_depth);
 	endsmbfilepwent(fp_write,&pfile2_lockdepth);
+#endif
 	return True;
 }
 

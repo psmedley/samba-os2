@@ -24,6 +24,11 @@
    You should have received a copy of the GNU Lesser General Public
    License along with this library; if not, see <http://www.gnu.org/licenses/>.
 */
+#ifdef __OS2__
+#define INCL_ERRORS
+#define INCL_DOS
+#include <os2.h>
+#endif
 
 #include "replace.h"
 #include "system/filesys.h"
@@ -263,6 +268,9 @@ struct tdb_context {
 	int tracefd;
 #endif
 	volatile sig_atomic_t *interrupt_sig_ptr;
+#ifdef __OS2__
+	int hActiveLock;
+#endif
 };
 
 

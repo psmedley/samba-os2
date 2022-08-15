@@ -198,7 +198,6 @@ def configure(conf):
                     headers='sys/socket.h netdb.h netinet/in.h')
     conf.CHECK_TYPE_IN('struct sockaddr_storage', 'sys/socket.h')
     conf.CHECK_TYPE_IN('sa_family_t', 'sys/socket.h')
-
     conf.CHECK_TYPE_IN('sig_atomic_t', 'signal.h', define='HAVE_SIG_ATOMIC_T_TYPE')
     conf.CHECK_FUNCS('sigsetmask siggetmask sigprocmask sigblock sigaction sigset')
 

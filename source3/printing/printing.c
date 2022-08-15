@@ -38,6 +38,10 @@
 #include "lib/param/loadparm.h"
 #include "lib/util/sys_rw_data.h"
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 extern userdom_struct current_user_info;
 
 /* Current printer interface */
@@ -2801,6 +2805,11 @@ static WERROR print_job_spool_file(int snum, uint32_t jobid,
 		 PRINT_SPOOL_PREFIX);
 	mask = umask(S_IRWXO | S_IRWXG);
 	pjob->fd = mkstemp(pjob->filename);
+#ifdef __OS2__
+	if (pjob->fd >= 0)
+		setmode(pjob->fd, O_BINARY);
+#endif
+
 	umask(mask);
 
 	if (pjob->fd == -1) {

@@ -20,16 +20,23 @@ bld.SAMBA_SUBSYSTEM('DSDB_MODULE_HELPER_RIDALLOC',
 
 # Build the cmocka unit tests
 bld.SAMBA_BINARY('test_unique_object_sids',
-        source='tests/test_unique_object_sids.c',
+        source='tests/test_unique_object_sids.c ../../../..//lib/async_req/async_sock.c ../../../..//lib/crypto/gnutls_error.c',
         deps='''
             talloc
             samdb
             cmocka
             DSDB_MODULE_HELPERS
+            replace
+            samba-util
+            ndr-standard
+            NDR_LSA
+            NDR_DNSP
+            NDR_SPOOLSS
+samba-util popt POPT_SAMBA ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA
         ''',
         for_selftest=True)
 bld.SAMBA_BINARY('test_encrypted_secrets_tdb',
-        source='tests/test_encrypted_secrets.c',
+        source='tests/test_encrypted_secrets.c  ../../../..//lib/async_req/async_sock.c ../../../..//lib/crypto/gnutls_error.c',
         cflags='-DTEST_BE=\"tdb\"',
         deps='''
             talloc
@@ -39,11 +46,16 @@ bld.SAMBA_BINARY('test_encrypted_secrets_tdb',
             cmocka
             gnutls
             DSDB_MODULE_HELPERS
+            ndr-standard
+            NDR_LSA
+            NDR_DNSP
+            NDR_SPOOLSS
+samba-util popt POPT_SAMBA ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA
         ''',
         for_selftest=True)
 if conf.env.HAVE_LMDB:
     bld.SAMBA_BINARY('test_encrypted_secrets_mdb',
-            source='tests/test_encrypted_secrets.c',
+            source='tests/test_encrypted_secrets.c ../../../..//lib/async_req/async_sock.c ../../../..//lib/crypto/gnutls_error.c',
             cflags='-DTEST_BE=\"mdb\"',
             deps='''
                 talloc
@@ -53,6 +65,11 @@ if conf.env.HAVE_LMDB:
                 cmocka
                 gnutls
                 DSDB_MODULE_HELPERS
+            ndr-standard
+            NDR_LSA
+            NDR_DNSP
+            NDR_SPOOLSS
+samba-util popt POPT_SAMBA ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA
             ''',
             for_selftest=True)
 
