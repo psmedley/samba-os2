@@ -4740,12 +4740,17 @@ again:
 		state->vector.iov_len = NBT_HDR_SIZE;
 	}
 
+#ifndef __OS2__
 	msg = (struct msghdr) {
 		.msg_iov = &state->vector,
 		.msg_iovlen = 1,
 	};
 
 	ret = recvmsg(xconn->transport.sock, &msg, 0);
+#else
+	/* Need to investigate why, but recvmsg() fails on OS/2, reverting to readv as used in 4.11 fixes things */
+	ret = readv(xconn->transport.sock, &state->vector, 1);
+#endif
 	if (ret == 0) {
 		/* propagate end of file */
 		status = NT_STATUS_END_OF_FILE;
