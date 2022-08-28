@@ -42,6 +42,9 @@
 #include "common/common.h"
 #include "common/logging.h"
 #include "common/hash_count.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 struct ctdb_sticky_record {
 	struct ctdb_context *ctdb;

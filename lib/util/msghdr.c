@@ -42,6 +42,7 @@ ssize_t msghdr_prep_fds(struct msghdr *msg, uint8_t *buf, size_t bufsize,
 		 */
 		return 1;
 	}
+
 	if (num_fds > INT8_MAX) {
 		return -1;
 	}
@@ -95,6 +96,12 @@ size_t msghdr_extract_fds(struct msghdr *msg, int *fds, size_t fds_size)
 	    cmsg != NULL;
 	    cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
+#if 1
+	/* fixes hang on OS/2 */
+		if (cmsg->cmsg_len == 0) {
+			return 0;
+		}
+#endif
 		if ((cmsg->cmsg_type == SCM_RIGHTS) &&
 		    (cmsg->cmsg_level == SOL_SOCKET)) {
 			break;
@@ -237,6 +244,9 @@ ssize_t msghdr_copy(struct msghdr_buf *msg, size_t msgsize,
 				return -1;
 			}
 			memcpy(&msg->addr, addr, addrlen);
+/*../../lib/util/msghdr.c:242:22: warning: assignment to 'caddr_t' {aka 'char *'}
+from incompatible pointer type 'struct sockaddr_storage *' [-Wincompatible-point
+er-types]*/
 			msg->msg.msg_name = &msg->addr;
 			msg->msg.msg_namelen = addrlen;
 		} else {

@@ -128,12 +128,10 @@ bool convert_string_error_handle(struct smb_iconv_handle *ic,
 #ifdef DEVELOPER
 	SMB_ASSERT(destlen != (size_t)-1);
 #endif
-
 	if (srclen == 0) {
 		*converted_size = 0;
 		return true;
 	}
-
 	if (from != CH_UTF16LE && from != CH_UTF16BE && to != CH_UTF16LE && to != CH_UTF16BE) {
 		const unsigned char *p = (const unsigned char *)src;
 		unsigned char *q = (unsigned char *)dest;
@@ -265,7 +263,6 @@ bool convert_string_error_handle(struct smb_iconv_handle *ic,
 		}
 
 		*converted_size = retval;
-
 		if (!dlen) {
 			/* Even if we fast path we should note if we ran out of room. */
 			if (((slen != (size_t)-1) && slen) ||

@@ -209,6 +209,7 @@ class lazy_generator(object):
 	next = __next__
 
 is_win32 = os.sep == '\\' or sys.platform == 'win32' or os.name == 'nt' # msys2
+is_os2 = os.sep == '\\' or sys.platform == 'os2knix' # msys2
 """
 Whether this system is a Windows series
 """
@@ -487,7 +488,7 @@ def split_path_msys(path):
 		path = os.path.normpath(msysroot + os.sep + path)
 	return split_path_win32(path)
 
-if sys.platform == 'cygwin':
+if sys.platform == 'cygwin' or 'os2knix':
 	split_path = split_path_cygwin
 elif is_win32:
 	# Consider this an MSYSTEM environment if $MSYSTEM is set and python
@@ -732,7 +733,7 @@ def unversioned_sys_platform():
 		elif s.startswith('Windows '):
 			return 'win32'
 		elif s == 'OS/2':
-			return 'os2'
+			return 'os2knix'
 		elif s == 'HP-UX':
 			return 'hp-ux'
 		elif s in ('SunOS', 'Solaris'):
@@ -742,7 +743,7 @@ def unversioned_sys_platform():
 	# powerpc == darwin for our purposes
 	if s == 'powerpc':
 		return 'darwin'
-	if s == 'win32' or s == 'os2':
+	if s == 'win32' or s == 'os2knix':
 		return s
 	if s == 'cli' and os.name == 'nt':
 		# ironpython is only on windows as far as we know

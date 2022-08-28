@@ -122,8 +122,10 @@ char *canonicalize_absolute_path(TALLOC_CTX *ctx, const char *pathname_in)
 		return NULL;
 	}
 
+#ifndef __OS2__
 	/* Always start with a '/'. */
 	*p++ = '/';
+#endif
 	wrote_slash = true;
 
 	while (*s) {

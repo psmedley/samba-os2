@@ -30,6 +30,9 @@
 #include "lib/util/dlinklist.h"
 
 #include "common/run_proc.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 /*
  * Process abstraction

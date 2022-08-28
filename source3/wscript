@@ -516,6 +516,7 @@ vsyslog
         else:
             conf.CHECK_FUNCS_IN(['acl_get_file'], 'acl')
             if conf.CHECK_CODE('''
+#include <acl.h>
 acl_t acl;
 int entry_id;
 acl_entry_t *entry_p;
@@ -550,11 +551,11 @@ return acl_get_perm_np(permset_d, perm);
     if conf.CHECK_FUNCS('dirfd'):
         conf.DEFINE('HAVE_DIRFD_DECL', 1)
 
-    conf.CHECK_CODE('struct statfs fsd; fsid_t fsid = fsd.f_fsid; return statfs(".", &fsd);',
-                    'HAVE_STATFS_F_FSID',
-                    msg="vfs_fileid checking for statfs() and struct statfs.f_fsid",
-                    headers='sys/types.h sys/statfs.h',
-                    execute=True)
+#    conf.CHECK_CODE('struct statfs fsd; fsid_t fsid = fsd.f_fsid; return statfs(".", &fsd);',
+#                    'HAVE_STATFS_F_FSID',
+#                    msg="vfs_fileid checking for statfs() and struct statfs.f_fsid",
+#                    headers='sys/types.h sys/statfs.h',
+#                    execute=True)
 
     if conf.CONFIG_SET('HAVE_FALLOCATE'):
         conf.CHECK_CODE('''

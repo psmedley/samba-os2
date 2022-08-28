@@ -353,8 +353,13 @@ static void popt_samba_callback(poptContext popt_ctx,
 	bool ok;
 
 	/* Find out basename of current program */
+#ifdef __OS2__
+	char *fname = getprogname();
+	_remext(fname);
+	pname = fname;
+#else
 	pname = getprogname();
-
+#endif
 	if (reason == POPT_CALLBACK_REASON_PRE) {
 		if (lp_ctx == NULL) {
 			fprintf(stderr,

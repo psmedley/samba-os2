@@ -43,6 +43,10 @@
 #include "lib/global_contexts.h"
 #include "lib/util/pidfile.h"
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 /**
  * @brief Purge stale printers and reload from pre-populated pcap cache.
  *
@@ -422,7 +426,10 @@ bool printing_subsystem_init(struct tevent_context *ev_ctx,
 			     bool background_queue)
 {
 	pid_t pid = -1;
-
+#ifdef __OS2__
+	//FIXME  -smbd from 4.15 won't start due to 'daemon failed to start: Samba failed to init printing subsystem, error code 13'
+	return true;
+#endif
 	if (!print_backend_init(msg_ctx)) {
 		return false;
 	}

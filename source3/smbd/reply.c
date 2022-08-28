@@ -51,6 +51,9 @@
 #include "lib/util/string_wrappers.h"
 #include "source3/printing/rap_jobid.h"
 #include "source3/lib/substitute.h"
+#ifdef __OS2__
+#include "fd_handle_private.h"
+#endif
 
 /****************************************************************************
  Ensure we check the path in *exactly* the same way as W2K for a findfirst/findnext
@@ -7449,6 +7452,10 @@ NTSTATUS rename_internals_fsp(connection_struct *conn,
 	 */
 
 	SMB_ASSERT(lck != NULL);
+#ifdef __OS2__
+	// OS/2 can't rename an open file, close the fd of the source file before attempting a rename
+	fd_close(fsp);
+#endif
 
 	ret = SMB_VFS_RENAMEAT(conn,
 			parent_dir_fname_src->fsp,

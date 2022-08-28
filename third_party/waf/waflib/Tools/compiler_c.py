@@ -44,6 +44,7 @@ c_compiler = {
 'sunos':       ['suncc', 'gcc'],
 'irix':        ['gcc', 'irixcc'],
 'hpux':        ['gcc'],
+'os2knix':     ['gcc'],
 'osf1V':       ['gcc'],
 'gnu':         ['gcc', 'clang'],
 'java':        ['gcc', 'msvc', 'clang', 'icc'],

@@ -417,6 +417,15 @@ static bool reload_nmbd_services(bool test)
 
 	reopen_logs();
 
+#ifdef __OS2__
+	/* restore the logfile to log.nmbd always */
+	char *lfile = NULL;
+	if (asprintf(&lfile, "%s/log.nmbd.%d", get_dyn_LOGFILEBASE(), getpid()) < 0)
+		exit(1);
+
+	lp_set_logfile(lfile);
+	SAFE_FREE(lfile);
+#endif
 	return(ret);
 }
 

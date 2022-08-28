@@ -34,6 +34,9 @@
 #include "../lib/util/tevent_unix.h"
 #include "../lib/util/tfork.h"
 #include "../lib/util/sys_rw.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 struct samba_runcmd_state {
 	int stdout_log_level;

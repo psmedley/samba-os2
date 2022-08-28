@@ -2557,7 +2557,7 @@ static uint64_t vfswrap_get_alloc_size(vfs_handle_struct *handle,
 		goto out;
 	}
 
-#if defined(HAVE_STAT_ST_BLOCKS) && defined(STAT_ST_BLOCKSIZE)
+#if defined(HAVE_STAT_ST_BLOCKS) && defined(STAT_ST_BLOCKSIZE) && !defined(__OS2__)
 	/* The type of st_blocksize is blkcnt_t which *MUST* be
 	   signed (according to POSIX) and can be less than 64-bits.
 	   Ensure when we're converting to 64 bits wide we don't

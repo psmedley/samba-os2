@@ -299,6 +299,9 @@ _PUBLIC_ struct tdb_context *tdb_open_ex(const char *name, int hash_size, int td
 	tdb->name = NULL;
 	tdb->map_ptr = NULL;
 	tdb->flags = tdb_flags;
+#ifdef __OS2__
+	open_flags |= O_BINARY;
+#endif
 	tdb->open_flags = open_flags;
 	if (log_ctx) {
 		tdb->log = *log_ctx;
@@ -462,6 +465,11 @@ _PUBLIC_ struct tdb_context *tdb_open_ex(const char *name, int hash_size, int td
 	/* on exec, don't inherit the fd */
 	v = fcntl(tdb->fd, F_GETFD, 0);
         fcntl(tdb->fd, F_SETFD, v | FD_CLOEXEC);
+
+#ifdef __OS2__
+	if (os2_crtActiveLock(tdb, name, "tdb_open_ex") != 0)
+		goto fail;
+#endif
 
 	/* ensure there is only one process initialising at once */
 	if (tdb_nest_lock(tdb, OPEN_LOCK, F_WRLCK, TDB_LOCK_WAIT) == -1) {
@@ -746,6 +754,10 @@ _PUBLIC_ struct tdb_context *tdb_open_ex(const char *name, int hash_size, int td
  fail:
 	{ int save_errno = errno;
 
+#ifdef __OS2__
+	close(tdb->hActiveLock);
+	tdb->hActiveLock = -1;
+#endif
 	if (!tdb)
 		return NULL;
 
@@ -816,6 +828,11 @@ _PUBLIC_ int tdb_close(struct tdb_context *tdb)
 			break;
 		}
 	}
+
+#ifdef __OS2__
+	close(tdb->hActiveLock);
+	tdb->hActiveLock = -1;
+#endif
 
 #ifdef TDB_TRACE
 	close(tdb->tracefd);
@@ -900,6 +917,13 @@ static int tdb_reopen_internal(struct tdb_context *tdb, bool active_lock)
 	}
 #endif /* fake pread or pwrite */
 
+#ifdef __OS2__
+	close(tdb->hActiveLock);
+	tdb->hActiveLock = -1;
+
+	if (os2_crtActiveLock(tdb, tdb->name, "tdb_reopen") != 0)
+		goto fail;
+#endif
 	/* We may still think we hold the active lock. */
 	tdb->num_lockrecs = 0;
 	SAFE_FREE(tdb->lockrecs);
@@ -960,3 +984,35 @@ _PUBLIC_ int tdb_reopen_all(int parent_longlived)
 
 	return 0;
 }
+#ifdef __OS2__
+int os2_crtActiveLock(struct tdb_context *tdb, const char *name, const char *origin)
+{
+	// name could be null, so handle it
+	if (name == NULL)
+		return 0;
+
+	struct stat st;
+	bool emptytdb = false;
+	char activeLockName[_MAX_PATH];
+	char *emptyString = "used for active lock\n\0";
+	sprintf(activeLockName, "%s_AL", name);
+
+	if ((stat(activeLockName, &st) == -1) || (st.st_size < strlen(emptyString)))
+		emptytdb = true;
+
+	tdb->hActiveLock = open(activeLockName, tdb->open_flags | O_CREAT, 0777);
+	if (tdb->hActiveLock == -1) {
+		TDB_LOG((tdb, TDB_DEBUG_ERROR, "os2_crtActiveLock: cannot create activeLock %s called from %s %s\n",
+			activeLockName, origin, strerror(errno)));
+		errno = EINVAL;
+		return -1;
+	}
+
+	// we try to truncate the db when called from tdb_open_ex
+	// but if it's not working it's ok as well
+	if (emptytdb)
+		tdb_write_all(tdb->hActiveLock, emptyString, strlen(emptyString));
+
+	return 0;
+} 
+#endif

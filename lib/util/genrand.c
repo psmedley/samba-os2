@@ -33,8 +33,34 @@
 
 _PUBLIC_ void generate_random_buffer(uint8_t *out, int len)
 {
+#ifndef __OS2__
 	/* Random number generator for temporary keys. */
 	gnutls_rnd(GNUTLS_RND_RANDOM, out, len);
+#else
+	ssize_t rw_ret;
+
+	unsigned char md4_buf[64];
+	unsigned char tmp_buf[16];
+	unsigned char *p;
+
+	/*
+	 * Generate random numbers in chunks of 64 bytes,
+	 * then md4 them & copy to the output buffer.
+	 * This way the raw state of the stream is never externally
+	 * seen.
+	 */
+
+	p = out;
+	while(len > 0) {
+		int copy_len = len > 16 ? 16 : len;
+
+		os2_randget(md4_buf, sizeof(md4_buf));
+		mdfour(tmp_buf, md4_buf, sizeof(md4_buf));
+		memcpy(p, tmp_buf, copy_len);
+		p += copy_len;
+		len -= copy_len;
+	}
+#endif
 }
 
 _PUBLIC_ void generate_secret_buffer(uint8_t *out, int len)

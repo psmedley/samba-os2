@@ -37,6 +37,9 @@
 #include "common/system.h"
 #include "common/common.h"
 #include "common/logging.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 struct ctdb_persistent_write_state {
 	struct ctdb_db_context *ctdb_db;

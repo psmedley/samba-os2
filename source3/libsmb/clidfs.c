@@ -43,7 +43,10 @@
  Ensure a connection is encrypted.
 ********************************************************************/
 
-static NTSTATUS cli_cm_force_encryption_creds(struct cli_state *c,
+#ifndef __OS2__
+static 
+#endif
+NTSTATUS cli_cm_force_encryption_creds(struct cli_state *c,
 					      struct cli_credentials *creds,
 					      const char *sharename)
 {

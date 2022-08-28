@@ -33,6 +33,9 @@
 #include "messages.h"
 #include "../librpc/gen_ndr/open_files.h"
 #include "lib/util/tevent_ntstatus.h"
+#ifdef __OS2__
+#include "fd_handle_private.h"
+#endif
 
 /****************************************************************************
  Run a file if it is a magic script.
@@ -475,7 +478,10 @@ static NTSTATUS close_remove_share_mode(files_struct *fsp,
 	if (!NT_STATUS_IS_OK(status)) {
 		goto done;
 	}
-
+#ifdef __OS2__
+	/* can't unlink the file if it's still open - close it first */
+	fd_close(fsp);
+#endif
 	ret = SMB_VFS_UNLINKAT(conn,
 			       parent_fname->fsp,
 			       base_fname,
@@ -829,7 +835,6 @@ static NTSTATUS close_normal_file(struct smb_request *req, files_struct *fsp,
 		tmp = check_magic(fsp);
 		status = ntstatus_keeperror(status, tmp);
 	}
-
 	DEBUG(2,("%s closed file %s (numopen=%d) %s\n",
 		conn->session_info->unix_info->unix_name, fsp_str_dbg(fsp),
 		conn->num_files_open - 1,

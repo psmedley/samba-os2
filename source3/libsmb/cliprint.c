@@ -121,6 +121,83 @@ int cli_print_queue(struct cli_state *cli,
 	return i;
 }
 
+#ifdef __OS2__
+// this is a exact copy of the above cli_print_queue, but we need to pass the 
+// state also to the callback, as our client needs that!!
+
+/****************************************************************************
+call fn() on each entry in a print queue
+****************************************************************************/
+
+int cli_print_queue_state(struct cli_state *cli,
+		    void (*fn)(struct print_job_info *, void *), void *state)
+{
+	char *rparam = NULL;
+	char *rdata = NULL;
+	char *p;
+	unsigned int rdrcnt, rprcnt;
+	char param[1024];
+	int result_code=0;
+	int i = -1;
+
+	memset(param,'\0',sizeof(param));
+
+	p = param;
+	SSVAL(p,0,76);         /* API function number 76 (DosPrintJobEnum) */
+	p += 2;
+	strlcpy_base(p,"zWrLeh", param, sizeof(param));   /* parameter description? */
+	p = skip_string(param,sizeof(param),p);
+	strlcpy_base(p,"WWzWWDDzz", param, sizeof(param));  /* returned data format */
+	p = skip_string(param,sizeof(param),p);
+	strlcpy_base(p,cli->share, param, sizeof(param));    /* name of queue */
+	p = skip_string(param,sizeof(param),p);
+	SSVAL(p,0,2);   /* API function level 2, PRJINFO_2 data structure */
+	SSVAL(p,2,1000); /* size of bytes of returned data buffer */
+	p += 4;
+	strlcpy_base(p,"", param,sizeof(param));   /* subformat */
+	p = skip_string(param,sizeof(param),p);
+
+	DEBUG(4,("doing cli_print_queue_state for %s\n", cli->share));
+
+	if (cli_api(cli,
+		    param, PTR_DIFF(p,param), 1024,  /* Param, length, maxlen */
+		    NULL, 0, CLI_BUFFER_SIZE,            /* data, length, maxlen */
+		    &rparam, &rprcnt,                /* return params, length */
+		    &rdata, &rdrcnt)) {               /* return data, length */
+		int converter;
+		result_code = SVAL(rparam,0);
+		converter = SVAL(rparam,2);       /* conversion factor */
+
+		if (result_code == 0) {
+			struct print_job_info job;
+
+			p = rdata;
+
+			for (i = 0; i < SVAL(rparam,4); ++i) {
+				job.id = SVAL(p,0);
+				job.priority = SVAL(p,2);
+				fstrcpy(job.user,
+					fix_char_ptr(SVAL(p,4), converter,
+						     rdata, rdrcnt));
+				job.t = make_unix_date3(
+					p + 12, smb1cli_conn_server_time_zone(cli->conn));
+				job.size = IVAL(p,16);
+				fstrcpy(job.name,fix_char_ptr(SVAL(p,24),
+							      converter,
+							      rdata, rdrcnt));
+				fn(&job, state);
+				p += 28;
+			}
+		}
+	}
+
+	/* If any parameters or data were returned, free the storage. */
+	SAFE_FREE(rparam);
+	SAFE_FREE(rdata);
+
+	return i;
+}
+#endif
 /****************************************************************************
   cancel a print job
   ****************************************************************************/

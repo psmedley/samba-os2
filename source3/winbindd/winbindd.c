@@ -1307,6 +1307,7 @@ static bool winbindd_setup_listeners(void)
 	}
 
 	pub_state->privileged = false;
+DEBUG(1, ("lp_winbindd_socket_directory() = %s, WINBINDD_SOCKET_NAME = %s\n", lp_winbindd_socket_directory(), WINBINDD_SOCKET_NAME));
 	pub_state->fd = create_pipe_sock(
 		lp_winbindd_socket_directory(), WINBINDD_SOCKET_NAME, 0755);
 	if (pub_state->fd == -1) {

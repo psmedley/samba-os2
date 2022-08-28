@@ -263,9 +263,13 @@ NTSTATUS get_ea_value_fsp(TALLOC_CTX *mem_ctx,
 	dump_data(10, (uint8_t *)val, sizeret);
 
 	pea->flags = 0;
+#ifndef __OS2__
 	if (strnequal(ea_name, "user.", 5)) {
 		pea->name = talloc_strdup(mem_ctx, &ea_name[5]);
 	} else {
+#else
+	{
+#endif
 		pea->name = talloc_strdup(mem_ctx, ea_name);
 	}
 	if (pea->name == NULL) {
@@ -450,8 +454,12 @@ static NTSTATUS get_ea_list_from_fsp(TALLOC_CTX *mem_ctx,
 		struct ea_list *listp;
 		fstring dos_ea_name;
 
+#ifndef __OS2__
 		if (strnequal(names[i], "system.", 7)
 		    || samba_private_attr_name(names[i]))
+#else
+                if (samba_private_attr_name(names[i]))
+#endif
 			continue;
 
 		/*
@@ -778,8 +786,13 @@ NTSTATUS set_ea(connection_struct *conn, files_struct *fsp,
 		int ret;
 		fstring unix_ea_name;
 
+#ifdef __OS2__
+		/* All EA's must start with user - except on OS/2 */
+		fstrcpy(unix_ea_name, ea_list->ea.name);
+#else
 		fstrcpy(unix_ea_name, "user."); /* All EA's must start with user. */
 		fstrcat(unix_ea_name, ea_list->ea.name);
+#endif
 
 		canonicalize_ea_name(fsp, unix_ea_name);
 
@@ -6575,6 +6588,10 @@ NTSTATUS smb_set_file_time(connection_struct *conn,
 
 	ret = file_ntimes(conn, set_fsp, ft);
 	if (ret != 0) {
+#ifdef __OS2__
+	// final fix for ticket #60 and ticket #165
+		if (!setting_write_time)
+#endif
 		return map_nt_error_from_unix(errno);
 	}
 

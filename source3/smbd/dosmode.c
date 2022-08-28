@@ -198,7 +198,11 @@ static uint32_t dos_mode_from_sbuf(connection_struct *conn,
 #endif
 	if (ro_opts == MAP_READONLY_YES) {
 		/* Original Samba method - map inverse of user "w" bit. */
+#ifndef __OS2__
 		if ((smb_fname->st.st_ex_mode & S_IWUSR) == 0) {
+#else
+                if (os2_isattribute(smb_fname->base_name, FILE_ATTRIBUTE_READONLY) == 0) {
+#endif
 			result |= FILE_ATTRIBUTE_READONLY;
 		}
 	} else if (ro_opts == MAP_READONLY_PERMISSIONS) {
@@ -212,13 +216,25 @@ static uint32_t dos_mode_from_sbuf(connection_struct *conn,
 		}
 	} /* Else never set the readonly bit. */
 
+#ifndef __OS2__
 	if (MAP_ARCHIVE(conn) && ((smb_fname->st.st_ex_mode & S_IXUSR) != 0))
+#else
+        if (os2_isattribute(smb_fname->base_name, FILE_ATTRIBUTE_ARCHIVE) == 0)
+#endif
 		result |= FILE_ATTRIBUTE_ARCHIVE;
 
+#ifndef __OS2__
 	if (MAP_SYSTEM(conn) && ((smb_fname->st.st_ex_mode & S_IXGRP) != 0))
+#else
+        if (os2_isattribute(smb_fname->base_name, FILE_ATTRIBUTE_SYSTEM) == 0)
+#endif
 		result |= FILE_ATTRIBUTE_SYSTEM;
 
+#ifndef __OS2__
 	if (MAP_HIDDEN(conn) && ((smb_fname->st.st_ex_mode & S_IXOTH) != 0))
+#else
+        if (os2_isattribute(smb_fname->base_name, FILE_ATTRIBUTE_HIDDEN) == 0)
+#endif
 		result |= FILE_ATTRIBUTE_HIDDEN;
 
 	if (S_ISDIR(smb_fname->st.st_ex_mode))
@@ -393,6 +409,9 @@ NTSTATUS fget_ea_dos_attribute(struct files_struct *fsp,
 		unbecome_root();
 	}
 	if (sizeret == -1) {
+#ifdef __OS2__ //on os2 no error in case of ./.. and errno 2
+        if ((strncmp(fsp_str_dbg(fsp), "./..", 4) !=0) || (errno !=2))
+#endif
 		DBG_INFO("Cannot get attribute "
 			 "from EA on file %s: Error = %s\n",
 			 fsp_str_dbg(fsp), strerror(errno));

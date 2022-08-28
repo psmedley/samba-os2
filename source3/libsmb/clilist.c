@@ -88,7 +88,11 @@ NTSTATUS is_bad_finfo_name(const struct cli_state *cli,
  Calculate a safe next_entry_offset.
 ****************************************************************************/
 
+#ifndef __OS2__
 static size_t calc_next_entry_offset(const char *base, const char *pdata_end)
+#else
+size_t calc_next_entry_offset(const char *base, const char *pdata_end)
+#endif
 {
 	size_t next_entry_offset = (size_t)IVAL(base,0);
 
@@ -158,6 +162,9 @@ static size_t interpret_long_filename(TALLOC_CTX *ctx,
 			if (recv_flags2 & FLAGS2_UNICODE_STRINGS) {
 				p += ucs2_align(base_ptr, p, STR_UNICODE);
 			}
+#ifdef __OS2__
+			finfo->easize = -1;
+#endif
 
 			/* We can safely use len here (which is required by OS/2)
 			 * and the NAS-BASIC server instead of +2 or +1 as the
@@ -212,6 +219,9 @@ static size_t interpret_long_filename(TALLOC_CTX *ctx,
 				make_unix_date2(p+12, smb1cli_conn_server_time_zone(cli->conn)));
 			finfo->size = IVAL(p,16);
 			finfo->attr = SVAL(p,24);
+#ifdef __OS2__
+			finfo->easize = IVAL(p,26);
+#endif
 			len = CVAL(p, 30);
 			p += 31;
 			/* check for unisys! */
@@ -261,6 +271,9 @@ static size_t interpret_long_filename(TALLOC_CTX *ctx,
 			p += 4;
 			namelen = IVAL(p,0);
 			p += 4;
+#ifdef __OS2__
+			finfo->easize = IVAL(p,0);
+#endif
 			p += 4; /* EA size */
 			slen = CVAL(p, 0);
 			if (slen > 24) {
@@ -268,6 +281,7 @@ static size_t interpret_long_filename(TALLOC_CTX *ctx,
 				return pdata_end - base;
 			}
 			p += 2;
+#ifndef __OS2__
 			ret = pull_string_talloc(ctx,
 						 base_ptr,
 						 recv_flags2,
@@ -278,6 +292,7 @@ static size_t interpret_long_filename(TALLOC_CTX *ctx,
 			if (ret == (size_t)-1) {
 				return pdata_end - base;
 			}
+#endif
 			p += 24; /* short name? */
 			if (p + namelen < p || p + namelen > pdata_end) {
 				return pdata_end - base;
@@ -298,11 +313,13 @@ static size_t interpret_long_filename(TALLOC_CTX *ctx,
 			   Namelen doesn't include the terminating unicode null, so
 			   copy it here. */
 
+#ifndef __OS2__
 			if (p_last_name_raw) {
 				*p_last_name_raw = data_blob(NULL, namelen+2);
 				memcpy(p_last_name_raw->data, p, namelen);
 				SSVAL(p_last_name_raw->data, namelen, 0);
 			}
+#endif
 			return calc_next_entry_offset(base, pdata_end);
 		}
 	}
@@ -370,7 +387,10 @@ struct cli_list_old_state {
 
 static void cli_list_old_done(struct tevent_req *subreq);
 
-static struct tevent_req *cli_list_old_send(TALLOC_CTX *mem_ctx,
+#ifndef __OS2__
+static 
+#endif
+struct tevent_req *cli_list_old_send(TALLOC_CTX *mem_ctx,
 					    struct tevent_context *ev,
 					    struct cli_state *cli,
 					    const char *mask,
@@ -524,7 +544,10 @@ static void cli_list_old_done(struct tevent_req *subreq)
 	tevent_req_set_callback(subreq, cli_list_old_done, req);
 }
 
-static NTSTATUS cli_list_old_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
+#ifndef __OS2__
+static 
+#endif
+NTSTATUS cli_list_old_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 				  struct file_info **pfinfo)
 {
 	struct cli_list_old_state *state = tevent_req_data(
@@ -1127,7 +1150,10 @@ struct cli_list_sync_state {
 	bool processed_file;
 };
 
-static void cli_list_sync_cb(struct tevent_req *subreq)
+#ifndef __OS2__
+static 
+#endif
+void cli_list_sync_cb(struct tevent_req *subreq)
 {
 	struct cli_list_sync_state *state =
 		tevent_req_callback_data_void(subreq);

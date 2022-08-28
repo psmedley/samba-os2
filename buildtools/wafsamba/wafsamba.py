@@ -241,7 +241,10 @@ def SAMBA_LIBRARY(bld, libname, source,
     if bld.env['ENABLE_RELRO'] is True:
         ldflags.extend(TO_LIST('-Wl,-z,relro,-z,now'))
 
-    features = 'c cshlib symlink_lib install_lib'
+    features = 'c cstlib install_lib'
+#removed symlink_lib for 4.10
+#    features = 'c cstlib symlink_lib install_lib'
+#    features = 'c cshlib symlink_lib install_lib'
     if pyext:
         features += ' pyext'
     if pyembed:

@@ -16509,10 +16509,17 @@ struct smb_iconv_handle *get_iconv_handle(void)
 	if (global_iconv_handle == NULL) {
 		global_iconv_handle =
 			smb_iconv_handle_reinit(NULL,
+#ifdef __OS2__
+						lp_dos_charset(), 
+						lp_unix_charset(), 
+						true, 
+						NULL);
+#else
 						"ASCII",
 						"UTF-8",
 						true,
 						NULL);
+#endif
 	}
 
 	return global_iconv_handle;
@@ -16691,6 +16698,11 @@ _PUBLIC_ codepoint_t next_codepoint_handle_ext(
 	uint8_t buf[4];
 	smb_iconv_t descriptor;
 	size_t ilen_orig;
+#ifdef __OS2__
+	size_t ilen_max;
+	size_t olen_orig;
+	const char *inbuf;
+#endif
 	size_t ilen;
 	size_t olen;
 	char *outbuf;
@@ -16708,6 +16720,10 @@ _PUBLIC_ codepoint_t next_codepoint_handle_ext(
 	 * This is OK as we only support codepoints up to 1M (U+100000)
 	 */
 	ilen_orig = MIN(len, 5);
+#ifdef __OS2__
+	ilen_max = strnlen(str, 5);
+	*bytes_consumed = 1;
+#endif
 	ilen = ilen_orig;
 
 	descriptor = get_conv_handle(ic, src_charset, CH_UTF16);
@@ -16716,6 +16732,42 @@ _PUBLIC_ codepoint_t next_codepoint_handle_ext(
 		return INVALID_CODEPOINT;
 	}
 
+#ifdef __OS2__
+	ilen_orig = 1;
+	olen_orig = 2;
+	while( 1 )
+	{
+		ilen = ilen_orig;
+		olen = olen_orig;
+		inbuf = str;
+		outbuf = ( char * )buf;
+		if( smb_iconv( descriptor, &inbuf, &ilen, &outbuf, &olen ) != ( size_t )-1 )
+			break;
+
+		switch( errno )
+		{
+			case E2BIG :
+				if( olen_orig == 2 )
+					olen_orig = 4;
+				else
+					return INVALID_CODEPOINT;
+				break;
+
+
+			case EINVAL :
+				if( ilen_orig < ilen_max )
+					ilen_orig++;
+				else
+					return INVALID_CODEPOINT;
+				break;
+
+			case EILSEQ :
+			default :
+				return INVALID_CODEPOINT;
+		}
+	}
+	olen = olen_orig - olen;
+#else
 	/*
 	 * this looks a little strange, but it is needed to cope with
 	 * codepoints above 64k (U+1000) which are encoded as per RFC2781.
@@ -16736,6 +16788,7 @@ _PUBLIC_ codepoint_t next_codepoint_handle_ext(
 	} else {
 		olen = 2 - olen;
 	}
+#endif /* __OS2__ */
 
 	*bytes_consumed = ilen_orig - ilen;
 

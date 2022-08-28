@@ -41,11 +41,12 @@ int pidfile_path_create(const char *path, int *pfd, pid_t *existing_pid)
 		return errno;
 	}
 
+#ifndef __OS2__
 	if (! set_close_on_exec(fd)) {
 		ret = errno;
 		goto fail;
 	}
-
+#endif
 retry:
 	lck = (struct flock) {
 		.l_type = F_WRLCK,
@@ -121,6 +122,9 @@ retry:
 	}
 
 	*pfd = fd;
+#ifdef __OS2__ // If we leave the file open & locked on OS/2 - we can't read it, so close the fd
+	close(fd);
+#endif
 	return 0;
 
 fail_unlink:
@@ -184,13 +188,14 @@ pid_t pidfile_pid(const char *piddir, const char *name)
 		goto noproc;
 	}
 
+#ifndef __OS2__ // if we lock the file, we won't be able to read it later on OS/2
 	if (fcntl_lock(fd,F_SETLK,0,1,F_RDLCK)) {
 		/* we could get the lock - it can't be a Samba process */
 		DEBUG(10, ("Process with PID=%d is not a Samba process.\n",
 			(int)ret));
 		goto noproc;
 	}
-
+#endif
 	close(fd);
 	DEBUG(10, ("Process with PID=%d is running.\n", (int)ret));
 	return ret;

@@ -41,6 +41,9 @@
 #include "common/system_socket.h"
 #include "common/common.h"
 #include "common/logging.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 #include "server/ctdb_config.h"
 

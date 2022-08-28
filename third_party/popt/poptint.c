@@ -2,6 +2,13 @@
 #include <stdarg.h>
 #include "poptint.h"
 
+
+#ifdef __OS2__xx //20220723
+#define iconv iconv
+#define iconv_open iconv_open
+#define iconv_close iconv_close
+#endif
+
 /* Any pair of 32 bit hashes can be used. lookup3.c generates pairs, will do. */
 #define _JLU3_jlu32lpair        1
 #define	jlu32lpair	poptJlu32lpair

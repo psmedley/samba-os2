@@ -215,6 +215,9 @@ static int messaging_dgm_out_create(TALLOC_CTX *mem_ctx,
 	int ret = ENOMEM;
 	int out_pathlen;
 	char addr_buf[sizeof(addr.sun_path) + (3 * sizeof(unsigned) + 2)];
+#ifdef __OS2__
+	char file_buf[sizeof(addr.sun_path) + (3 * sizeof(unsigned) + 2)];
+#endif
 
 	out = talloc(mem_ctx, struct messaging_dgm_out);
 	if (out == NULL) {
@@ -227,8 +230,13 @@ static int messaging_dgm_out_create(TALLOC_CTX *mem_ctx,
 		.cookie = 1
 	};
 
+#ifndef __OS2__
 	out_pathlen = snprintf(addr_buf, sizeof(addr_buf),
 			       "%s/%u", ctx->socket_dir.buf, (unsigned)pid);
+#else
+	out_pathlen = snprintf(addr_buf, sizeof(addr_buf),
+			       "\\socket\\messages%u", (unsigned)pid);
+#endif
 	if (out_pathlen < 0) {
 		goto errno_fail;
 	}
@@ -260,6 +268,9 @@ static int messaging_dgm_out_create(TALLOC_CTX *mem_ctx,
 	} while ((ret == -1) && (errno == EINTR));
 
 	if (ret == -1) {
+#ifdef __OS2__
+		unlink(file_buf);
+#endif
 		goto errno_fail;
 	}
 
@@ -1032,7 +1043,11 @@ int messaging_dgm_init(struct tevent_context *ev,
 	socket_address = (struct sockaddr_un) { .sun_family = AF_UNIX };
 	len = snprintf(socket_address.sun_path,
 		       sizeof(socket_address.sun_path),
+#ifndef __OS2__
 		       "%s/%u", socket_dir, (unsigned)ctx->pid);
+#else
+		       "\\socket\\messages%u", (unsigned)ctx->pid);
+#endif
 	if (len >= sizeof(socket_address.sun_path)) {
 		TALLOC_FREE(ctx);
 		return ENAMETOOLONG;
@@ -1047,8 +1062,15 @@ int messaging_dgm_init(struct tevent_context *ev,
 		return ret;
 	}
 
+#ifndef __OS2__
 	unlink(socket_address.sun_path);
-
+#else
+	char filename[sizeof(socket_address.sun_path)];
+	len = snprintf(filename,
+		       sizeof(filename),
+		       "%s/%u", socket_dir, (unsigned)ctx->pid);
+	unlink(filename);
+#endif
 	ctx->sock = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (ctx->sock == -1) {
 		ret = errno;
@@ -1074,7 +1096,13 @@ int messaging_dgm_init(struct tevent_context *ev,
 		TALLOC_FREE(ctx);
 		return ret;
 	}
-
+#ifdef __OS2__
+// need to also create a file in socket_dir
+	int socketfile_fd;
+	socketfile_fd = open(filename, O_NONBLOCK|O_CREAT|O_RDWR,
+			   0644);
+	close(socketfile_fd);
+#endif
 	talloc_set_destructor(ctx, messaging_dgm_context_destructor);
 
 	ctx->have_dgm_context = &have_dgm_context;
@@ -1274,6 +1302,11 @@ static void messaging_dgm_read_handler(struct tevent_context *ev,
 #endif
 
 	received = recvmsg(ctx->sock, &msg, 0);
+#ifdef __OS2__
+	struct cmsghdr *cmsg;
+	cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg = CMSG_NXTHDR(&msg, cmsg);
+#endif
 	if (received == -1) {
 		if ((errno == EAGAIN) ||
 		    (errno == EWOULDBLOCK) ||

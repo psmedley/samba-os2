@@ -26,6 +26,9 @@
 #include "includes.h"
 #include "system/filesys.h"
 #include "lib/util/sys_rw.h"
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
 
 /* Do this on our own in TRANSFER_BUF_SIZE chunks.
  * It's safe to make direct syscalls to lseek/write here

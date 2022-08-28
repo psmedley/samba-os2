@@ -51,6 +51,10 @@ void daemon_sd_notifications(bool enable)
 
 void become_daemon(bool do_fork, bool no_session, bool log_stdout)
 {
+#ifdef __OS2__
+// fork daemonize scheme not working in os/2, thus the parent process will currently kill and reap all children when it exits
+	do_fork = 0;
+#endif
 	pid_t newpid;
 	if (do_fork) {
 		newpid = fork();
@@ -67,7 +71,7 @@ void become_daemon(bool do_fork, bool no_session, bool log_stdout)
 	}
 
 	/* detach from the terminal */
-#ifdef HAVE_SETSID
+#if defined(HAVE_SETSID) && !defined(__OS2__)
 	if (!no_session) {
 		int ret = setsid();
 		if (ret == -1) {

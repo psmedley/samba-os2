@@ -133,6 +133,10 @@ NTSTATUS print_spool_open(files_struct *fsp,
 	errno = 0;
 	mask = umask(S_IRWXO | S_IRWXG);
 	fd = mkstemp(pf->filename);
+#ifdef __OS2__
+	if (fd >= 0)
+		setmode(fd, O_BINARY);
+#endif
 	umask(mask);
 	if (fd == -1) {
 		if (errno == EACCES) {

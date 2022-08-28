@@ -203,6 +203,11 @@
 #undef O_PATH
 #endif
 
+#ifdef __OS2__
+#define AT_FDCWD                -100    /* Special value used to indicate
+                                           openat should use the current
+                                           working directory. */
+#endif
 /*
    this allows us to use a uniform error handling for our xattr
    wrappers

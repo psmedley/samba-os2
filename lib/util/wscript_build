@@ -156,8 +156,8 @@ else:
     bld.env.public_headers_skip.append('charset_compat.h')
 
     bld.SAMBA_BINARY('genrandperf',
-                     source='tests/genrandperf.c',
-                     deps='genrand replace',
+                     source='tests/genrandperf.c ../../source3/lib/os2helper.c',
+                     deps='genrand replace socket-blocking samba-util',
                      local_include=False,
                      install=False)
 
@@ -305,25 +305,28 @@ else:
 
     bld.SAMBA_BINARY('test_rfc1738',
                      source='tests/rfc1738.c',
-                     deps='cmocka replace samba-util',
+                     deps='cmocka replace samba-util talloc',
                      local_include=False,
                      for_selftest=True)
 
     bld.SAMBA_BINARY('test_ms_fnmatch',
                      source='tests/test_ms_fnmatch.c',
-                     deps='cmocka replace samba-util',
+                     deps='''cmocka replace samba-util talloc samba-debug smbconf
+ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS
+samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth
+''',
                      local_include=False,
                      for_selftest=True)
 
     bld.SAMBA_BINARY('test_talloc_keep_secret',
                      source='tests/test_talloc_keep_secret.c',
-                     deps='cmocka replace samba-util',
+                     deps='cmocka replace samba-util talloc',
                      local_include=False,
                      for_selftest=True)
 
     bld.SAMBA_BINARY('test_byteorder',
                      source='tests/test_byteorder.c',
-                     deps='cmocka replace samba-util',
+                     deps='cmocka replace samba-util talloc',
                      local_include=False,
                      for_selftest=True)
 
@@ -340,14 +343,17 @@ else:
                      for_selftest=True)
 
     bld.SAMBA_BINARY('test_util_paths',
-                     source='tests/test_util_paths.c',
+                     source='tests/test_util_paths.c../../source3/lib/os2helper.c',
                      deps='cmocka replace talloc samba-util',
                      local_include=False,
                      for_selftest=True)
 
     bld.SAMBA_BINARY('test_util',
                      source='tests/test_util.c',
-                     deps='cmocka replace talloc samba-util',
+                     deps='''cmocka replace talloc samba-util time-basic smbconf samba-debug
+ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS
+samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth
+''',
                      local_include=False,
                      for_selftest=True)
 

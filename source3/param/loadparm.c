@@ -97,6 +97,10 @@ extern userdom_struct current_user_info;
 static bool in_client = false;		/* Not in the client by default */
 static struct smbconf_csn conf_last_csn;
 
+#ifdef __OS2__
+static bool newLockDir = False;
+#endif
+
 static int config_backend = CONFIG_BACKEND_FILE;
 
 /* some helpful bits */
@@ -573,13 +577,35 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 
 	lpcfg_string_set(Globals.ctx, &Globals.guest_account, GUEST_ACCOUNT);
 
+#ifndef __OS2__
 	/* using UTF8 by default allows us to support all chars */
 	lpcfg_string_set(Globals.ctx, &Globals.unix_charset,
 			 DEFAULT_UNIX_CHARSET);
+#else
+        /* search the system codepage and set OS2CodePageStr */
+        unsigned long _System DosQueryCp (unsigned long ulLength, unsigned long *pCodePageList, unsigned long *pDataLength);
+        char *OS2CodePageStr=NULL;
+        unsigned long OS2CodePage[3];
+        unsigned long OS2CodePageLen;
+        if ( DosQueryCp( sizeof(OS2CodePage), OS2CodePage, &OS2CodePageLen ) )
+           asprintf(&OS2CodePageStr, "SYSTEM");
+          else
+           asprintf(&OS2CodePageStr, "IBM-%u", OS2CodePage[0]);
 
+	/* On OS/2, using UTF8 causes problems with display of foreign 
+	   characters - default to system codepage */
+	lpcfg_string_set(Globals.ctx, &Globals.unix_charset, OS2CodePageStr);
+#endif
+
+#ifndef __OS2__
 	/* Use codepage 850 as a default for the dos character set */
 	lpcfg_string_set(Globals.ctx, &Globals.dos_charset,
 			 DEFAULT_DOS_CHARSET);
+#else
+	/* On OS/2, using UTF8 causes problems with display of foreign 
+	   characters - default to system codepage */
+	lpcfg_string_set(Globals.ctx, &Globals.dos_charset, OS2CodePageStr);
+#endif
 
 	/*
 	 * Allow the default PASSWD_CHAT to be overridden in local.h.
@@ -592,6 +618,9 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	lpcfg_string_set(Globals.ctx, &Globals.passwd_program, "");
 	lpcfg_string_set(Globals.ctx, &Globals.lock_directory,
 			 get_dyn_LOCKDIR());
+#ifdef __OS2__
+        newLockDir = True;
+#endif
 	lpcfg_string_set(Globals.ctx, &Globals.state_directory,
 			 get_dyn_STATEDIR());
 	lpcfg_string_set(Globals.ctx, &Globals.cache_directory,
@@ -793,9 +822,13 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	lpcfg_string_set(Globals.ctx, &Globals.template_homedir,
 			 "/home/%D/%U");
 	lpcfg_string_set(Globals.ctx, &Globals.winbind_separator, "\\");
+#ifndef __OS2__
 	lpcfg_string_set(Globals.ctx, &Globals.winbindd_socket_directory,
 			 dyn_WINBINDD_SOCKET_DIR);
-
+#else
+	lpcfg_string_set(Globals.ctx, &Globals.winbindd_socket_directory,
+			 "\\socket\\winbindd");
+#endif
 	lpcfg_string_set(Globals.ctx, &Globals.cups_server, "");
 	lpcfg_string_set(Globals.ctx, &Globals.iprint_server, "");
 
@@ -4082,6 +4115,29 @@ static bool lp_load_ex(const char *pszFname,
 		lp_do_parameter(GLOBAL_SECTION_SNUM, "wins server", "127.0.0.1");
 	}
 
+#ifdef __OS2__x
+        if (lp_is_in_client() && newLockDir) {
+           char* s=NULL;
+	   if (asprintf(&s, "%s/%s", lp_lockdir(), "client") < 0) {
+		smb_panic("init_globals: ENOMEM");
+	   }
+	   lp_do_parameter(GLOBAL_SECTION_SNUM, "lock directory", s);
+
+           s=NULL;
+	   if (asprintf(&s, "%s/%s", lp_statedir(), "client") < 0) {
+		smb_panic("init_globals: ENOMEM");
+	   }
+	   lp_do_parameter(GLOBAL_SECTION_SNUM, "state directory", s);
+
+           s=NULL;
+	   if (asprintf(&s, "%s/%s", lp_cachedir(), "client") < 0) {
+		smb_panic("init_globals: ENOMEM");
+	   }
+	   lp_do_parameter(GLOBAL_SECTION_SNUM, "cache directory", s);
+	   SAFE_FREE(s);
+           newLockDir = False;
+        }
+#endif
 	init_iconv();
 
 	fault_configure(smb_panic_s3);

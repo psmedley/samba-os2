@@ -4297,7 +4297,11 @@ static NTSTATUS mkdir_internal(connection_struct *conn,
 	 */
 	fsp->fsp_flags.is_pathref = true;
 
+#ifndef __OS2__
 	status = fd_openat(conn->cwd_fsp, smb_dname, fsp, O_RDONLY | O_DIRECTORY, 0);
+#else
+	status = fd_openat(conn->cwd_fsp, smb_dname, fsp, O_RDONLY, 0);
+#endif
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -4608,7 +4612,11 @@ static NTSTATUS open_directory(connection_struct *conn,
 		FILE_ADD_SUBDIRECTORY;
 
 	if (access_mask & need_fd_access) {
+#ifndef __OS2__
 		status = reopen_from_fsp(fsp, O_RDONLY | O_DIRECTORY, 0, NULL);
+#else
+		status = reopen_from_fsp(fsp, O_RDONLY, 0, NULL);
+#endif
 		if (!NT_STATUS_IS_OK(status)) {
 			DBG_INFO("Could not open fd for [%s]: %s\n",
 				 smb_fname_str_dbg(smb_dname),

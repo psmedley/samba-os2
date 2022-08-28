@@ -66,6 +66,10 @@
 #include "ctdb_protocol.h"
 #endif
 
+#ifdef __OS2__
+#define pipe(A) os2_pipe(A)
+#endif
+
 struct smbd_open_socket;
 struct smbd_child_pid;
 
@@ -1730,6 +1734,16 @@ extern void build_options(bool screen);
 	umask(0);
 
 	reopen_logs();
+#ifdef __OS2__
+	unsigned long  _System DosSetPriority (unsigned long  ulScope, unsigned long  ulClass, long lDelta, unsigned long ulID);
+	int rc;
+	rc = DosSetPriority(
+		0,                      /* Scope: only one process */
+		4,             /* set to PRTYC_FOREGROUNDSERVER */
+		0,                      /* set delta - was 0 */
+		0);                     /* Assume current process */
+	DEBUG(0,( "Server priority set to PRTYC_FOREGROUNDSERVER\n"));
+#endif
 
 	DEBUG(0,("smbd version %s started.\n", samba_version_string()));
 	DEBUGADD(0,("%s\n", COPYRIGHT_STARTUP_MESSAGE));

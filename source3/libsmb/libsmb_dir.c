@@ -351,7 +351,11 @@ dir_list_fn(struct file_info *finfo,
 	return NT_STATUS_OK;
 }
 
+#ifndef __OS2__
 static NTSTATUS
+#else
+NTSTATUS
+#endif
 net_share_enum_rpc(struct cli_state *cli,
                    void (*fn)(const char *name,
                               uint32_t type,

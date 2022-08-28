@@ -101,11 +101,12 @@ static struct tdb_wrap_private *tdb_wrap_private_open(TALLOC_CTX *mem_ctx,
 	/* Doesn't fail, see talloc_pooled_object */
 	result->name = talloc_strdup(result, name);
 
+#ifndef __OS2__
 	/*
 	 * TDB files don't make sense after execve()
 	 */
 	open_flags |= O_CLOEXEC;
-
+#endif
 	result->tdb = tdb_open_ex(name, hash_size, tdb_flags,
 				  open_flags, mode, &lctx, NULL);
 	if (result->tdb == NULL) {

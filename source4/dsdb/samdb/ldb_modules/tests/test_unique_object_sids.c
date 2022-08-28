@@ -37,6 +37,7 @@ int ldb_unique_object_sids_init(const char *version);
 
 static struct ldb_request *last_request;
 
+#ifndef __OS2__ /* present in ldb.a */
 /*
  * ldb_next_request mock, records the request passed in last_request
  * so it can be examined in the test cases.
@@ -48,6 +49,7 @@ int ldb_next_request(
 	last_request = request;
 	return ldb_module_done(request, NULL, NULL, LDB_SUCCESS);
 }
+#endif
 
 /*
  * Test context

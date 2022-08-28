@@ -378,7 +378,10 @@ static int smb_fname_fsp_destructor(struct smb_filename *smb_fname)
 	}
 
 	status = fd_close(fsp);
+#ifndef __OS2__
+	/* we've already closed the file, so this fails */
 	SMB_ASSERT(NT_STATUS_IS_OK(status));
+#endif
 	file_free(NULL, fsp);
 	smb_fname->fsp = NULL;
 
@@ -474,7 +477,9 @@ NTSTATUS openat_pathref_fsp(const struct files_struct *dirfsp,
 	fsp->fsp_flags.is_pathref = true;
 	if (S_ISDIR(smb_fname->st.st_ex_mode)) {
 		fsp->fsp_flags.is_directory = true;
+#ifdef O_DIRECTORY
 		open_flags |= O_DIRECTORY;
+#endif
 	}
 
 	full_fname = full_path_from_dirfsp_atname(fsp,

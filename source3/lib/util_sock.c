@@ -938,13 +938,14 @@ int create_pipe_sock(const char *socket_dir,
 
 	old_umask = umask(0);
 
+#ifndef __OS2__
 	ok = directory_create_or_exist_strict(socket_dir,
 					      sec_initial_uid(),
 					      dir_perms);
 	if (!ok) {
 		goto out_close;
 	}
-
+#endif
 	/* Create the socket file */
 	sock = socket(AF_UNIX, SOCK_STREAM, 0);
 
@@ -954,7 +955,11 @@ int create_pipe_sock(const char *socket_dir,
                 goto out_close;
 	}
 
+#ifdef __OS2__
+	if (asprintf(&path, "\\socket\\samba\\%s\\%s", socket_dir, socket_name) == -1) {
+#else
 	if (asprintf(&path, "%s/%s", socket_dir, socket_name) == -1) {
+#endif
                 goto out_close;
 	}
 
