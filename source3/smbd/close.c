@@ -33,9 +33,6 @@
 #include "messages.h"
 #include "../librpc/gen_ndr/open_files.h"
 #include "lib/util/tevent_ntstatus.h"
-#ifdef __OS2__
-#include "fd_handle_private.h"
-#endif
 
 /****************************************************************************
  Run a file if it is a magic script.
