@@ -26,6 +26,9 @@
 */
 
 #include "tdb_private.h"
+#ifdef __OS2__
+int os2_crtActiveLock(struct tdb_context *tdb, const char *name, const char *origin);
+#endif
 
 /* all contexts, to ensure no double-opens (fcntl locks don't nest!) */
 static struct tdb_context *tdbs = NULL;

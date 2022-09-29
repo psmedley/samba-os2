@@ -28,6 +28,7 @@
 #define INCL_ERRORS
 #define INCL_DOS
 #include <os2.h>
+#define HAVE_COPY_FILE_RANGE
 #endif
 
 #include "replace.h"
