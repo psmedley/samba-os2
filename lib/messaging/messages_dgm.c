@@ -974,6 +974,9 @@ static int messaging_dgm_lockfile_create(struct messaging_dgm_context *ctx,
 	return 0;
 
 fail_unlink:
+#ifdef __OS2__
+	close(lockfile_fd);
+#endif
 	unlink(lockfile_name.buf);
 fail_close:
 	close(lockfile_fd);
@@ -1637,9 +1640,14 @@ int messaging_dgm_cleanup(pid_t pid)
 
 	DEBUG(10, ("%s: Cleaning up : %s\n", __func__, strerror(ret)));
 
+#ifdef __OS2__
+	(void)close(fd);
+#endif
 	(void)unlink(socket_name.buf);
 	(void)unlink(lockfile_name.buf);
+#ifndef __OS2__
 	(void)close(fd);
+#endif
 	return 0;
 }
 
