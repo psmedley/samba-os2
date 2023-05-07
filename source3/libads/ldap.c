@@ -25,6 +25,7 @@
 #include "ads.h"
 #include "libads/sitename_cache.h"
 #include "libads/cldap.h"
+#include "../lib/tsocket/tsocket.h"
 #include "../lib/addns/dnsquery.h"
 #include "../libds/common/flags.h"
 #include "smbldap.h"
@@ -32,6 +33,7 @@
 #include "../librpc/gen_ndr/netlogon.h"
 #include "lib/param/loadparm.h"
 #include "libsmb/namequery.h"
+#include "../librpc/gen_ndr/ndr_ads.h"
 
 #ifdef HAVE_LDAP
 
@@ -249,6 +251,113 @@ bool ads_closest_dc(ADS_STRUCT *ads)
 	return False;
 }
 
+static bool ads_fill_cldap_reply(ADS_STRUCT *ads,
+				 bool gc,
+				 const struct sockaddr_storage *ss,
+				 const struct NETLOGON_SAM_LOGON_RESPONSE_EX *cldap_reply)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	bool ret = false;
+	char addr[INET6_ADDRSTRLEN];
+	ADS_STATUS status;
+	char *dn;
+
+	print_sockaddr(addr, sizeof(addr), ss);
+
+	/* Check the CLDAP reply flags */
+
+	if (!(cldap_reply->server_type & NBT_SERVER_LDAP)) {
+		DBG_WARNING("%s's CLDAP reply says it is not an LDAP server!\n",
+			    addr);
+		ret = false;
+		goto out;
+	}
+
+	/* Fill in the ads->config values */
+
+	ADS_TALLOC_CONST_FREE(ads->config.realm);
+	ADS_TALLOC_CONST_FREE(ads->config.bind_path);
+	ADS_TALLOC_CONST_FREE(ads->config.ldap_server_name);
+	ADS_TALLOC_CONST_FREE(ads->config.server_site_name);
+	ADS_TALLOC_CONST_FREE(ads->config.client_site_name);
+	ADS_TALLOC_CONST_FREE(ads->server.workgroup);
+
+	if (!check_cldap_reply_required_flags(cldap_reply->server_type,
+					      ads->config.flags)) {
+		ret = false;
+		goto out;
+	}
+
+	ads->config.ldap_server_name = talloc_strdup(ads,
+						     cldap_reply->pdc_dns_name);
+	if (ads->config.ldap_server_name == NULL) {
+		DBG_WARNING("Out of memory\n");
+		ret = false;
+		goto out;
+	}
+
+	ads->config.realm = talloc_asprintf_strupper_m(ads,
+						       "%s",
+						       cldap_reply->dns_domain);
+	if (ads->config.realm == NULL) {
+		DBG_WARNING("Out of memory\n");
+		ret = false;
+		goto out;
+	}
+
+	status = ads_build_dn(ads->config.realm, ads, &dn);
+	if (!ADS_ERR_OK(status)) {
+		DBG_DEBUG("Failed to build bind path: %s\n",
+			  ads_errstr(status));
+		ret = false;
+		goto out;
+	}
+	ads->config.bind_path = dn;
+
+	if (*cldap_reply->server_site) {
+		ads->config.server_site_name =
+			talloc_strdup(ads, cldap_reply->server_site);
+		if (ads->config.server_site_name == NULL) {
+			DBG_WARNING("Out of memory\n");
+			ret = false;
+			goto out;
+		}
+	}
+
+	if (*cldap_reply->client_site) {
+		ads->config.client_site_name =
+			talloc_strdup(ads, cldap_reply->client_site);
+		if (ads->config.client_site_name == NULL) {
+			DBG_WARNING("Out of memory\n");
+			ret = false;
+			goto out;
+		}
+	}
+
+	ads->server.workgroup = talloc_strdup(ads, cldap_reply->domain_name);
+	if (ads->server.workgroup == NULL) {
+		DBG_WARNING("Out of memory\n");
+		ret = false;
+		goto out;
+	}
+
+	ads->ldap.port = gc ? LDAP_GC_PORT : LDAP_PORT;
+	ads->ldap.ss = *ss;
+
+	/* Store our site name. */
+	sitename_store(cldap_reply->domain_name, cldap_reply->client_site);
+	sitename_store(cldap_reply->dns_domain, cldap_reply->client_site);
+
+	/* Leave this until last so that the flags are not clobbered */
+	ads->config.flags = cldap_reply->server_type;
+
+	ret = true;
+
+ out:
+
+	TALLOC_FREE(frame);
+	return ret;
+}
 
 /*
   try a connection to a given ldap server, returning True and setting the servers IP
@@ -257,87 +366,39 @@ bool ads_closest_dc(ADS_STRUCT *ads)
 static bool ads_try_connect(ADS_STRUCT *ads, bool gc,
 			    struct sockaddr_storage *ss)
 {
-	struct NETLOGON_SAM_LOGON_RESPONSE_EX cldap_reply;
+	struct NETLOGON_SAM_LOGON_RESPONSE_EX cldap_reply = {};
 	TALLOC_CTX *frame = talloc_stackframe();
-	bool ret = false;
-	char addr[INET6_ADDRSTRLEN];
+	bool ok;
+	char addr[INET6_ADDRSTRLEN] = { 0, };
 
 	if (ss == NULL) {
 		TALLOC_FREE(frame);
-		return False;
+		return false;
 	}
 
 	print_sockaddr(addr, sizeof(addr), ss);
 
-	DEBUG(5,("ads_try_connect: sending CLDAP request to %s (realm: %s)\n",
-		addr, ads->server.realm));
+	DBG_INFO("ads_try_connect: sending CLDAP request to %s (realm: %s)\n",
+		 addr, ads->server.realm);
 
-	ZERO_STRUCT( cldap_reply );
-
-	if ( !ads_cldap_netlogon_5(frame, ss, ads->server.realm, &cldap_reply ) ) {
-		DEBUG(3,("ads_try_connect: CLDAP request %s failed.\n", addr));
-		ret = false;
-		goto out;
+	ok = ads_cldap_netlogon_5(frame, ss, ads->server.realm, &cldap_reply);
+	if (!ok) {
+		DBG_NOTICE("ads_cldap_netlogon_5(%s, %s) failed.\n",
+			   addr, ads->server.realm);
+		TALLOC_FREE(frame);
+		return false;
 	}
 
-	/* Check the CLDAP reply flags */
-
-	if ( !(cldap_reply.server_type & NBT_SERVER_LDAP) ) {
-		DEBUG(1,("ads_try_connect: %s's CLDAP reply says it is not an LDAP server!\n",
-			addr));
-		ret = false;
-		goto out;
+	ok = ads_fill_cldap_reply(ads, gc, ss, &cldap_reply);
+	if (!ok) {
+		DBG_NOTICE("ads_fill_cldap_reply(%s, %s) failed.\n",
+			   addr, ads->server.realm);
+		TALLOC_FREE(frame);
+		return false;
 	}
-
-	/* Fill in the ads->config values */
-
-	SAFE_FREE(ads->config.realm);
-	SAFE_FREE(ads->config.bind_path);
-	SAFE_FREE(ads->config.ldap_server_name);
-	SAFE_FREE(ads->config.server_site_name);
-	SAFE_FREE(ads->config.client_site_name);
-	SAFE_FREE(ads->server.workgroup);
-
-	if (!check_cldap_reply_required_flags(cldap_reply.server_type,
-					      ads->config.flags)) {
-		ret = false;
-		goto out;
-	}
-
-	ads->config.ldap_server_name   = SMB_STRDUP(cldap_reply.pdc_dns_name);
-	ads->config.realm              = SMB_STRDUP(cldap_reply.dns_domain);
-	if (!strupper_m(ads->config.realm)) {
-		ret = false;
-		goto out;
-	}
-
-	ads->config.bind_path          = ads_build_dn(ads->config.realm);
-	if (*cldap_reply.server_site) {
-		ads->config.server_site_name =
-			SMB_STRDUP(cldap_reply.server_site);
-	}
-	if (*cldap_reply.client_site) {
-		ads->config.client_site_name =
-			SMB_STRDUP(cldap_reply.client_site);
-	}
-	ads->server.workgroup          = SMB_STRDUP(cldap_reply.domain_name);
-
-	ads->ldap.port = gc ? LDAP_GC_PORT : LDAP_PORT;
-	ads->ldap.ss = *ss;
-
-	/* Store our site name. */
-	sitename_store( cldap_reply.domain_name, cldap_reply.client_site);
-	sitename_store( cldap_reply.dns_domain, cldap_reply.client_site);
-
-	/* Leave this until last so that the flags are not clobbered */
-	ads->config.flags	       = cldap_reply.server_type;
-
-	ret = true;
-
- out:
 
 	TALLOC_FREE(frame);
-	return ret;
+	return true;
 }
 
 /**********************************************************************
@@ -351,11 +412,44 @@ static NTSTATUS cldap_ping_list(ADS_STRUCT *ads,
 			struct samba_sockaddr *sa_list,
 			size_t count)
 {
+	TALLOC_CTX *frame = talloc_stackframe();
+	struct timeval endtime = timeval_current_ofs(MAX(3,lp_ldap_timeout()/2), 0);
+	uint32_t nt_version = NETLOGON_NT_VERSION_5 | NETLOGON_NT_VERSION_5EX;
+	struct tsocket_address **ts_list = NULL;
+	const struct tsocket_address * const *ts_list_const = NULL;
+	struct samba_sockaddr **req_sa_list = NULL;
+	struct netlogon_samlogon_response **responses = NULL;
+	size_t num_requests = 0;
+	NTSTATUS status;
 	size_t i;
-	bool ok;
+	bool ok = false;
+	bool retry;
+
+	ts_list = talloc_zero_array(frame,
+				    struct tsocket_address *,
+				    count);
+	if (ts_list == NULL) {
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	req_sa_list = talloc_zero_array(frame,
+					struct samba_sockaddr *,
+					count);
+	if (req_sa_list == NULL) {
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+again:
+	/*
+	 * The retry loop is bound by the timeout
+	 */
+	retry = false;
 
 	for (i = 0; i < count; i++) {
 		char server[INET6_ADDRSTRLEN];
+		int ret;
 
 		if (is_zero_addr(&sa_list[i].u.ss)) {
 			continue;
@@ -363,22 +457,124 @@ static NTSTATUS cldap_ping_list(ADS_STRUCT *ads,
 
 		print_sockaddr(server, sizeof(server), &sa_list[i].u.ss);
 
-		if (!NT_STATUS_IS_OK(
-			check_negative_conn_cache(domain, server)))
+		status = check_negative_conn_cache(domain, server);
+		if (!NT_STATUS_IS_OK(status)) {
 			continue;
+		}
+
+		ret = tsocket_address_inet_from_strings(ts_list, "ip",
+							server, LDAP_PORT,
+							&ts_list[num_requests]);
+		if (ret != 0) {
+			status = map_nt_error_from_unix(errno);
+			DBG_WARNING("Failed to create tsocket_address for %s - %s\n",
+				    server, nt_errstr(status));
+			TALLOC_FREE(frame);
+			return status;
+		}
+
+		req_sa_list[num_requests] = &sa_list[i];
+		num_requests += 1;
+	}
+
+	if (num_requests == 0) {
+		status = NT_STATUS_NO_LOGON_SERVERS;
+		DBG_WARNING("domain[%s] num_requests[%zu] for count[%zu] - %s\n",
+			    domain, num_requests, count, nt_errstr(status));
+		TALLOC_FREE(frame);
+		return status;
+	}
+
+	ts_list_const = (const struct tsocket_address * const *)ts_list;
+
+	status = cldap_multi_netlogon(frame,
+				      ts_list_const, num_requests,
+				      ads->server.realm, NULL,
+				      nt_version,
+				      1, endtime, &responses);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_WARNING("cldap_multi_netlogon(realm=%s, num_requests=%zu) "
+			    "for count[%zu] - %s\n",
+			    ads->server.realm,
+			    num_requests, count,
+			    nt_errstr(status));
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_LOGON_SERVERS;
+	}
+
+	for (i = 0; i < num_requests; i++) {
+		struct NETLOGON_SAM_LOGON_RESPONSE_EX *cldap_reply = NULL;
+		char server[INET6_ADDRSTRLEN];
+
+		if (responses[i] == NULL) {
+			continue;
+		}
+
+		print_sockaddr(server, sizeof(server), &req_sa_list[i]->u.ss);
+
+		if (responses[i]->ntver != NETLOGON_NT_VERSION_5EX) {
+			DBG_NOTICE("realm=[%s] nt_version mismatch: 0x%08x for %s\n",
+				   ads->server.realm,
+				   responses[i]->ntver, server);
+			continue;
+		}
+
+		cldap_reply = &responses[i]->data.nt5_ex;
 
 		/* Returns ok only if it matches the correct server type */
-		ok = ads_try_connect(ads, false, &sa_list[i].u.ss);
-
+		ok = ads_fill_cldap_reply(ads,
+					  false,
+					  &req_sa_list[i]->u.ss,
+					  cldap_reply);
 		if (ok) {
+			DBG_DEBUG("realm[%s]: selected %s => %s\n",
+				  ads->server.realm,
+				  server, cldap_reply->pdc_dns_name);
+			if (CHECK_DEBUGLVL(DBGLVL_DEBUG)) {
+				NDR_PRINT_DEBUG(NETLOGON_SAM_LOGON_RESPONSE_EX,
+						cldap_reply);
+			}
+			TALLOC_FREE(frame);
 			return NT_STATUS_OK;
 		}
 
-		/* keep track of failures */
+		DBG_NOTICE("realm[%s] server %s %s - not usable\n",
+			   ads->server.realm,
+			   server, cldap_reply->pdc_dns_name);
+		if (CHECK_DEBUGLVL(DBGLVL_NOTICE)) {
+			NDR_PRINT_DEBUG(NETLOGON_SAM_LOGON_RESPONSE_EX,
+					cldap_reply);
+		}
+		add_failed_connection_entry(domain, server,
+				NT_STATUS_CLIENT_SERVER_PARAMETERS_INVALID);
+		retry = true;
+	}
+
+	if (retry) {
+		bool expired;
+
+		expired = timeval_expired(&endtime);
+		if (!expired) {
+			goto again;
+		}
+	}
+
+	/* keep track of failures as all were not suitable */
+	for (i = 0; i < num_requests; i++) {
+		char server[INET6_ADDRSTRLEN];
+
+		print_sockaddr(server, sizeof(server), &req_sa_list[i]->u.ss);
+
 		add_failed_connection_entry(domain, server,
 					    NT_STATUS_UNSUCCESSFUL);
 	}
 
+	status = NT_STATUS_NO_LOGON_SERVERS;
+	DBG_WARNING("realm[%s] no valid response "
+		    "num_requests[%zu] for count[%zu] - %s\n",
+		    ads->server.realm,
+		    num_requests, count, nt_errstr(status));
+	TALLOC_FREE(frame);
 	return NT_STATUS_NO_LOGON_SERVERS;
 }
 
@@ -630,8 +826,8 @@ ADS_STATUS ads_connect(ADS_STRUCT *ads)
 	 * to ads_find_dc() in the reuse case.
 	 *
 	 * If a caller wants a clean ADS_STRUCT they
-	 * will re-initialize by calling ads_init(), or
-	 * call ads_destroy() both of which ensures
+	 * will TALLOC_FREE it and allocate a new one
+	 * by calling ads_init(), which ensures
 	 * ads->ldap.ss is a properly zero'ed out valid IP
 	 * address.
 	 */
@@ -721,20 +917,31 @@ got_connection:
 	if (!ads->auth.user_name) {
 		/* Must use the userPrincipalName value here or sAMAccountName
 		   and not servicePrincipalName; found by Guenther Deschner */
-
-		if (asprintf(&ads->auth.user_name, "%s$", lp_netbios_name() ) == -1) {
-			DEBUG(0,("ads_connect: asprintf fail.\n"));
-			ads->auth.user_name = NULL;
+		ads->auth.user_name = talloc_asprintf(ads,
+						      "%s$",
+						      lp_netbios_name());
+		if (ads->auth.user_name == NULL) {
+			DBG_ERR("talloc_asprintf failed\n");
+			status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+			goto out;
 		}
 	}
 
-	if (!ads->auth.realm) {
-		ads->auth.realm = SMB_STRDUP(ads->config.realm);
+	if (ads->auth.realm == NULL) {
+		ads->auth.realm = talloc_strdup(ads, ads->config.realm);
+		if (ads->auth.realm == NULL) {
+			status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+			goto out;
+		}
 	}
 
 	if (!ads->auth.kdc_server) {
 		print_sockaddr(addr, sizeof(addr), &ads->ldap.ss);
-		ads->auth.kdc_server = SMB_STRDUP(addr);
+		ads->auth.kdc_server = talloc_strdup(ads, addr);
+		if (ads->auth.kdc_server == NULL) {
+			status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+			goto out;
+		}
 	}
 
 	/* If the caller() requested no LDAP bind, then we are done */
@@ -1756,7 +1963,9 @@ ADS_STATUS ads_del_dn(ADS_STRUCT *ads, char *del_dn)
  **/
 char *ads_ou_string(ADS_STRUCT *ads, const char *org_unit)
 {
+	ADS_STATUS status;
 	char *ret = NULL;
+	char *dn = NULL;
 
 	if (!org_unit || !*org_unit) {
 
@@ -1773,7 +1982,12 @@ char *ads_ou_string(ADS_STRUCT *ads, const char *org_unit)
 	/* jmcd: removed "\\" from the separation chars, because it is
 	   needed as an escape for chars like '#' which are valid in an
 	   OU name */
-	return ads_build_path(org_unit, "/", "ou=", 1);
+	status = ads_build_path(org_unit, "/", "ou=", 1, &dn);
+	if (!ADS_ERR_OK(status)) {
+		return NULL;
+	}
+
+	return dn;
 }
 
 /**
@@ -3286,12 +3500,8 @@ ADS_STATUS ads_current_time(ADS_STRUCT *ads)
 	ADS_STATUS status;
 	LDAPMessage *res;
 	char *timestr;
-	TALLOC_CTX *ctx;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STRUCT *ads_s = ads;
-
-	if (!(ctx = talloc_init("ads_current_time"))) {
-		return ADS_ERROR(LDAP_NO_MEMORY);
-	}
 
         /* establish a new ldap tcp session if necessary */
 
@@ -3310,7 +3520,8 @@ ADS_STATUS ads_current_time(ADS_STRUCT *ads)
 		 * through ads_find_dc() again we want to avoid repeating.
 		 */
 		if (is_zero_addr(&ads->ldap.ss)) {
-			ads_s = ads_init(ads->server.realm,
+			ads_s = ads_init(tmp_ctx,
+					 ads->server.realm,
 					 ads->server.workgroup,
 					 ads->server.ldap_server,
 					 ADS_SASL_PLAIN );
@@ -3337,7 +3548,7 @@ ADS_STATUS ads_current_time(ADS_STRUCT *ads)
 		goto done;
 	}
 
-	timestr = ads_pull_string(ads_s, ctx, res, "currentTime");
+	timestr = ads_pull_string(ads_s, tmp_ctx, res, "currentTime");
 	if (!timestr) {
 		ads_msgfree(ads_s, res);
 		status = ADS_ERROR(LDAP_NO_RESULTS_RETURNED);
@@ -3358,11 +3569,7 @@ ADS_STATUS ads_current_time(ADS_STRUCT *ads)
 	status = ADS_SUCCESS;
 
 done:
-	/* free any temporary ads connections */
-	if ( ads_s != ads ) {
-		ads_destroy( &ads_s );
-	}
-	talloc_destroy(ctx);
+	TALLOC_FREE(tmp_ctx);
 
 	return status;
 }
@@ -3372,6 +3579,7 @@ done:
 
 ADS_STATUS ads_domain_func_level(ADS_STRUCT *ads, uint32_t *val)
 {
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	const char *attrs[] = {"domainFunctionality", NULL};
 	ADS_STATUS status;
 	LDAPMessage *res;
@@ -3396,7 +3604,8 @@ ADS_STATUS ads_domain_func_level(ADS_STRUCT *ads, uint32_t *val)
 		 * through ads_find_dc() again we want to avoid repeating.
 		 */
 		if (is_zero_addr(&ads->ldap.ss)) {
-			ads_s = ads_init(ads->server.realm,
+			ads_s = ads_init(tmp_ctx,
+					 ads->server.realm,
 					 ads->server.workgroup,
 					 ads->server.ldap_server,
 					 ADS_SASL_PLAIN );
@@ -3405,6 +3614,13 @@ ADS_STATUS ads_domain_func_level(ADS_STRUCT *ads, uint32_t *val)
 				goto done;
 			}
 		}
+
+		/*
+		 * Reset ads->config.flags as it can contain the flags
+		 * returned by the previous CLDAP ping when reusing the struct.
+		 */
+		ads_s->config.flags = 0;
+
 		ads_s->auth.flags = ADS_AUTH_ANON_BIND;
 		status = ads_connect( ads_s );
 		if ( !ADS_ERR_OK(status))
@@ -3428,13 +3644,10 @@ ADS_STATUS ads_domain_func_level(ADS_STRUCT *ads, uint32_t *val)
 	DEBUG(3,("ads_domain_func_level: %d\n", *val));
 
 
-	ads_msgfree(ads, res);
+	ads_msgfree(ads_s, res);
 
 done:
-	/* free any temporary ads connections */
-	if ( ads_s != ads ) {
-		ads_destroy( &ads_s );
-	}
+	TALLOC_FREE(tmp_ctx);
 
 	return status;
 }

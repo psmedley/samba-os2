@@ -3,15 +3,10 @@
 # our source tree for users that don't have them installed on their system
 
 # Third party directory
-THIRD_PARTY_DIR="`dirname $0`"
+THIRD_PARTY_DIR="$(dirname $0)"
 # Library directory where projects live that haven't been migrated to
 # $THIRD_PARTY_DIR yet.
-WORKDIR="`mktemp -d`"
-
-echo "Updating pep8..."
-git clone git://git.samba.org/third_party/pep8 "$WORKDIR/pep8"
-rm -rf "$WORKDIR/pep8/.git"
-rsync -avz --delete "$WORKDIR/pep8/" "$THIRD_PARTY_DIR/pep8/"
+WORKDIR="$(mktemp -d)"
 
 echo "Updating zlib..."
 git clone git://git.samba.org/third_party/zlib "$WORKDIR/zlib"

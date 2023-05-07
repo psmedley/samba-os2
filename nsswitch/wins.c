@@ -40,6 +40,15 @@ static pthread_mutex_t wins_nss_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define INADDRSZ 4
 #endif
 
+#ifndef NETDB_INTERNAL
+#define NETDB_INTERNAL -1
+#endif
+
+#ifndef NETDB_SUCCESS
+#define NETDB_SUCCESS 0
+#endif
+
+_PUBLIC_ON_LINUX_
 NSS_STATUS _nss_wins_gethostbyname_r(const char *hostname,
 				     struct hostent *he,
 				     char *buffer,
@@ -236,6 +245,7 @@ static char *get_static(char **buffer, size_t *buflen, size_t len)
 gethostbyname() - we ignore any domain portion of the name and only
 handle names that are at most 15 characters long
   **************************************************************************/
+_PUBLIC_ON_LINUX_
 NSS_STATUS
 _nss_wins_gethostbyname_r(const char *hostname,
 			  struct hostent *he,
@@ -361,6 +371,7 @@ _nss_wins_gethostbyname_r(const char *hostname,
 }
 
 
+_PUBLIC_ON_LINUX_
 NSS_STATUS
 _nss_wins_gethostbyname2_r(const char *name,
 			   int af,

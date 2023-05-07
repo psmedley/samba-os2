@@ -592,7 +592,7 @@ static char *get_kdc_ip_string(char *mem_ctx,
 	result = talloc_move(mem_ctx, &kdc_str);
 out:
 	if (result != NULL) {
-		DBG_DEBUG("Returning\n%s\n", kdc_str);
+		DBG_DEBUG("Returning\n%s\n", result);
 	} else {
 		DBG_NOTICE("Failed to get KDC ip address\n");
 	}
@@ -622,20 +622,16 @@ static char *get_enctypes(TALLOC_CTX *mem_ctx)
 
 	if (lp_kerberos_encryption_types() == KERBEROS_ETYPES_ALL ||
 	    lp_kerberos_encryption_types() == KERBEROS_ETYPES_STRONG) {
-#ifdef HAVE_ENCTYPE_AES256_CTS_HMAC_SHA1_96
 		aes_enctypes = talloc_asprintf_append(
 		    aes_enctypes, "%s", "aes256-cts-hmac-sha1-96 ");
 		if (aes_enctypes == NULL) {
 			goto done;
 		}
-#endif
-#ifdef HAVE_ENCTYPE_AES128_CTS_HMAC_SHA1_96
 		aes_enctypes = talloc_asprintf_append(
 		    aes_enctypes, "%s", "aes128-cts-hmac-sha1-96");
 		if (aes_enctypes == NULL) {
 			goto done;
 		}
-#endif
 	}
 
 	if (lp_weak_crypto() == SAMBA_WEAK_CRYPTO_ALLOWED &&
@@ -669,7 +665,7 @@ static char *get_enctypes(TALLOC_CTX *mem_ctx)
 
 	if (lp_kerberos_encryption_types() == KERBEROS_ETYPES_ALL ||
 	    lp_kerberos_encryption_types() == KERBEROS_ETYPES_LEGACY) {
-		legacy_enctypes = "arcfour-hmac-md5 des-cbc-crc des-cbc-md5";
+		legacy_enctypes = "arcfour-hmac-md5";
 	}
 
 	enctypes = talloc_asprintf(mem_ctx, "\tdefault_etypes = %s %s\n",
@@ -793,9 +789,9 @@ bool create_local_private_krb5_conf_for_domain(const char *realm,
 	fd = mkstemp(tmpname);
 	umask(mask);
 	if (fd == -1) {
-		DEBUG(0,("create_local_private_krb5_conf_for_domain: smb_mkstemp failed,"
-			" for file %s. Errno %s\n",
-			tmpname, strerror(errno) ));
+		DBG_ERR("mkstemp failed, for file %s. Errno %s\n",
+			tmpname,
+			strerror(errno));
 		goto done;
 	}
 

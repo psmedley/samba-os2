@@ -444,29 +444,6 @@ void cli_cm_display(struct cli_state *cli)
 	}
 }
 
-/****************************************************************************
-****************************************************************************/
-
-/****************************************************************************
-****************************************************************************/
-
-#if 0
-void cli_cm_set_credentials(struct user_auth_info *auth_info)
-{
-	SAFE_FREE(cm_creds.username);
-	cm_creds.username = SMB_STRDUP(get_cmdline_auth_info_username(
-					       auth_info));
-
-	if (get_cmdline_auth_info_got_pass(auth_info)) {
-		cm_set_password(get_cmdline_auth_info_password(auth_info));
-	}
-
-	cm_creds.use_kerberos = get_cmdline_auth_info_use_kerberos(auth_info);
-	cm_creds.fallback_after_kerberos = false;
-	cm_creds.signing_state = get_cmdline_auth_info_signing_state(auth_info);
-}
-#endif
-
 /**********************************************************************
  split a dfs path into the server, share name, and extrapath components
 **********************************************************************/
@@ -612,6 +589,46 @@ static char *cli_dfs_make_full_path(TALLOC_CTX *ctx,
 			cli->share,
 			path_sep,
 			dir);
+}
+
+/********************************************************************
+ Check if a path has already been converted to DFS.
+********************************************************************/
+
+bool cli_dfs_is_already_full_path(struct cli_state *cli, const char *path)
+{
+	const char *server = smbXcli_conn_remote_name(cli->conn);
+	size_t server_len = strlen(server);
+	bool found_server = false;
+	const char *share = cli->share;
+	size_t share_len = strlen(share);
+	bool found_share = false;
+
+	if (!IS_DIRECTORY_SEP(path[0])) {
+		return false;
+	}
+	path++;
+	found_server = (strncasecmp_m(path, server, server_len) == 0);
+	if (!found_server) {
+		return false;
+	}
+	path += server_len;
+	if (!IS_DIRECTORY_SEP(path[0])) {
+		return false;
+	}
+	path++;
+	found_share = (strncasecmp_m(path, share, share_len) == 0);
+	if (!found_share) {
+		return false;
+	}
+	path += share_len;
+	if (path[0] == '\0') {
+		return true;
+	}
+	if (IS_DIRECTORY_SEP(path[0])) {
+		return true;
+	}
+	return false;
 }
 
 /********************************************************************
@@ -891,6 +908,7 @@ NTSTATUS cli_resolve_path(TALLOC_CTX *ctx,
 	struct smbXcli_tcon *target_tcon = NULL;
 	struct cli_dfs_path_split *dfs_refs = NULL;
 	bool ok;
+	bool is_already_dfs = false;
 
 	if ( !rootcli || !path || !targetcli ) {
 		return NT_STATUS_INVALID_PARAMETER;
@@ -914,6 +932,24 @@ NTSTATUS cli_resolve_path(TALLOC_CTX *ctx,
 	}
 
 	*targetcli = NULL;
+
+	is_already_dfs = cli_dfs_is_already_full_path(rootcli, path);
+	if (is_already_dfs) {
+		const char *localpath = NULL;
+		/*
+		 * Given path is already converted to DFS.
+		 * Convert to a local path so clean_path()
+		 * can correctly strip any wildcards.
+		 */
+		status = cli_dfs_target_check(ctx,
+					      rootcli,
+					      path,
+					      &localpath);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
+		path = localpath;
+	}
 
 	/* Send a trans2_query_path_info to check for a referral. */
 
@@ -1182,6 +1218,7 @@ bool cli_check_msdfs_proxy(TALLOC_CTX *ctx,
 	char *fullpath = NULL;
 	bool res;
 	struct smbXcli_tcon *orig_tcon = NULL;
+	char *orig_share = NULL;
 	char *newextrapath = NULL;
 	NTSTATUS status;
 	const char *remote_name;
@@ -1209,16 +1246,13 @@ bool cli_check_msdfs_proxy(TALLOC_CTX *ctx,
 
 	/* Store tcon state. */
 	if (cli_state_has_tcon(cli)) {
-		orig_tcon = cli_state_save_tcon(cli);
-		if (orig_tcon == NULL) {
-			return false;
-		}
+		cli_state_save_tcon_share(cli, &orig_tcon, &orig_share);
 	}
 
 	/* check for the referral */
 
 	if (!NT_STATUS_IS_OK(cli_tree_connect(cli, "IPC$", "IPC", NULL))) {
-		cli_state_restore_tcon(cli, orig_tcon);
+		cli_state_restore_tcon_share(cli, orig_tcon, orig_share);
 		return false;
 	}
 
@@ -1237,7 +1271,9 @@ bool cli_check_msdfs_proxy(TALLOC_CTX *ctx,
 				 * tcon so we don't leak it.
 				 */
 				cli_tdis(cli);
-				cli_state_restore_tcon(cli, orig_tcon);
+				cli_state_restore_tcon_share(cli,
+							     orig_tcon,
+							     orig_share);
 				return false;
 			}
 		}
@@ -1249,7 +1285,7 @@ bool cli_check_msdfs_proxy(TALLOC_CTX *ctx,
 
 	status = cli_tdis(cli);
 
-	cli_state_restore_tcon(cli, orig_tcon);
+	cli_state_restore_tcon_share(cli, orig_tcon, orig_share);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		return false;
@@ -1287,7 +1323,6 @@ bool cli_check_msdfs_proxy(TALLOC_CTX *ctx,
 
 NTSTATUS cli_dfs_target_check(TALLOC_CTX *mem_ctx,
 			struct cli_state *cli,
-			const char *fname_src,
 			const char *fname_dst,
 			const char **fname_dst_out)
 {
@@ -1333,4 +1368,54 @@ NTSTATUS cli_dfs_target_check(TALLOC_CTX *mem_ctx,
 	*fname_dst_out = fname_dst;
 	TALLOC_FREE(dfs_prefix);
 	return NT_STATUS_OK;
+}
+
+/********************************************************************
+ Convert a pathname into a DFS path if it hasn't already been converted.
+ Always returns a talloc'ed path, makes it easy to pass const paths in.
+********************************************************************/
+
+char *smb1_dfs_share_path(TALLOC_CTX *ctx,
+			  struct cli_state *cli,
+			  const char *path)
+{
+	bool is_dfs = smbXcli_conn_dfs_supported(cli->conn) &&
+			smbXcli_tcon_is_dfs_share(cli->smb1.tcon);
+	bool is_already_dfs_path = false;
+	bool posix = (cli->requested_posix_capabilities &
+			CIFS_UNIX_POSIX_PATHNAMES_CAP);
+	char sepchar = (posix ? '/' : '\\');
+
+	if (!is_dfs) {
+		return talloc_strdup(ctx, path);
+	}
+	is_already_dfs_path = cli_dfs_is_already_full_path(cli, path);
+	if (is_already_dfs_path) {
+		return talloc_strdup(ctx, path);
+	}
+	/*
+	 * We don't use cli_dfs_make_full_path() as,
+	 * when given a null path, cli_dfs_make_full_path
+	 * deliberately adds a trailing '\\' (this is by
+	 * design to check for an existing DFS prefix match).
+	 */
+	if (path[0] == '\0') {
+		return talloc_asprintf(ctx,
+				       "%c%s%c%s",
+				       sepchar,
+				       smbXcli_conn_remote_name(cli->conn),
+				       sepchar,
+				       cli->share);
+	}
+	while (*path == sepchar) {
+		path++;
+	}
+	return talloc_asprintf(ctx,
+			       "%c%s%c%s%c%s",
+			       sepchar,
+			       smbXcli_conn_remote_name(cli->conn),
+			       sepchar,
+			       cli->share,
+			       sepchar,
+			       path);
 }

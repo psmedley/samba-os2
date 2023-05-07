@@ -8,12 +8,12 @@
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation; either version 3 of the License, or
  *  (at your option) any later version.
- *  
+ *
  *  This program is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *  
+ *
  *  You should have received a copy of the GNU General Public License
  *  along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
@@ -201,7 +201,7 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 	g_timeout = timeval_current_ofs(10, 0);
 	status = g_lock_lock(state->g_ctx,
 			     string_term_tdb_data(state->g_lock_key),
-			     G_LOCK_WRITE, g_timeout);
+			     G_LOCK_WRITE, g_timeout, NULL, NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1, ("could not get g_lock on [%s]!\n",
 			  state->g_lock_key));
@@ -311,6 +311,7 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 		TALLOC_FREE(frame);
 		return status;
 	}
+	talloc_keep_secret(new_trust_pw_blob.data);
 
 	switch (sec_channel_type) {
 
@@ -365,7 +366,7 @@ NTSTATUS trust_pw_change(struct netlogon_creds_cli_context *context,
 		 * We use the password that's already persistent in
 		 * our database in order to handle failures.
 		 */
-		data_blob_clear_free(&new_trust_pw_blob);
+		data_blob_free(&new_trust_pw_blob);
 		new_trust_pw_blob = info->next_change->password->cleartext_blob;
 		break;
 

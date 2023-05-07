@@ -195,7 +195,7 @@ static bool do_idmap_check(void)
 			if (maxranges < 2) {
 				fprintf(stderr,
 					"ERROR: The idmap autorid range "
-					"[%u-%u] needs to be at least twice as"
+					"[%u-%u] needs to be at least twice as "
 					"big as the rangesize [%u]!"
 					"\n\n",
 					c->low,
@@ -598,11 +598,94 @@ static int do_global_checks(void)
 		ret = 1;
 	}
 
-	if (!lp_server_schannel()) {
+	if (lp_server_schannel() != true) { /* can be 'auto' */
 		fprintf(stderr,
-			"WARNING: You have configured 'server schannel = no'. "
+			"WARNING: You have not configured "
+			"'server schannel = yes' (the default). "
 			"Your server is vulernable to \"ZeroLogon\" "
-			"(CVE-2020-1472)\n\n");
+			"(CVE-2020-1472)\n"
+			"If required use individual "
+			"'server require schannel:COMPUTERACCOUNT$ = no' "
+			"options\n\n");
+	}
+	if (lp_allow_nt4_crypto()) {
+		fprintf(stderr,
+			"WARNING: You have not configured "
+			"'allow nt4 crypto = no' (the default). "
+			"Your server is vulernable to "
+			"CVE-2022-38023 and others!\n"
+			"If required use individual "
+			"'allow nt4 crypto:COMPUTERACCOUNT$ = yes' "
+			"options\n\n");
+	}
+	if (!lp_reject_md5_clients()) {
+		fprintf(stderr,
+			"WARNING: You have not configured "
+			"'reject md5 clients = yes' (the default). "
+			"Your server is vulernable to "
+			"CVE-2022-38023!\n"
+			"If required use individual "
+			"'server reject md5 schannel:COMPUTERACCOUNT$ = yes' "
+			"options\n\n");
+	}
+	if (!lp_server_schannel_require_seal()) {
+		fprintf(stderr,
+			"WARNING: You have not configured "
+			"'server schannel require seal = yes' (the default). "
+			"Your server is vulernable to "
+			"CVE-2022-38023!\n"
+			"If required use individual "
+			"'server schannel require seal:COMPUTERACCOUNT$ = no' "
+			"options\n\n");
+	}
+
+	if (lp_client_schannel() != true) { /* can be 'auto' */
+		fprintf(stderr,
+			"WARNING: You have not configured "
+			"'client schannel = yes' (the default). "
+			"Your server is vulernable to \"ZeroLogon\" "
+			"(CVE-2020-1472)\n"
+			"If required use individual "
+			"'client schannel:NETBIOSDOMAIN = no' "
+			"options\n\n");
+	}
+	if (!lp_reject_md5_servers()) {
+		fprintf(stderr,
+			"WARNING: You have not configured "
+			"'reject md5 servers = yes' (the default). "
+			"Your server is vulernable to "
+			"CVE-2022-38023\n"
+			"If required use individual "
+			"'reject md5 servers:NETBIOSDOMAIN = no' "
+			"options\n\n");
+	}
+	if (!lp_require_strong_key()) {
+		fprintf(stderr,
+			"WARNING: You have not configured "
+			"'require strong key = yes' (the default). "
+			"Your server is vulernable to "
+			"CVE-2022-38023\n"
+			"If required use individual "
+			"'require strong key:NETBIOSDOMAIN = no' "
+			"options\n\n");
+	}
+	if (!lp_winbind_sealed_pipes()) {
+		fprintf(stderr,
+			"WARNING: You have not configured "
+			"'winbind sealed pipes = yes' (the default). "
+			"Your server is vulernable to "
+			"CVE-2022-38023\n"
+			"If required use individual "
+			"'winbind sealed pipes:NETBIOSDOMAIN = no' "
+			"options\n\n");
+	}
+
+	if (lp_kerberos_encryption_types() == KERBEROS_ETYPES_LEGACY) {
+		fprintf(stderr,
+			"WARNING: You have configured "
+			"'kerberos encryption types = legacy'. "
+			"Your server is vulernable to "
+			"CVE-2022-37966\n\n");
 	}
 
 	return ret;
@@ -735,7 +818,6 @@ static void do_per_share_checks(int s)
 	const char *caddr;
 	static int show_defaults;
 	static int skip_logic_checks = 0;
-	const char *weak_crypo_str = "";
 	bool ok;
 
 	struct poptOption long_options[] = {
@@ -844,13 +926,18 @@ static void do_per_share_checks(int s)
 	}
 
 	if (poptPeekArg(pc)) {
-		config_file = poptGetArg(pc);
+		config_file = talloc_strdup(frame, poptGetArg(pc));
+                if (config_file == NULL) {
+                        DBG_ERR("out of memory\n");
+                        TALLOC_FREE(frame);
+                        exit(1);
+                }
 	} else {
 		config_file = get_dyn_CONFIGFILE();
 	}
 
-	cname = poptGetArg(pc);
-	caddr = poptGetArg(pc);
+	cname = talloc_strdup(frame, poptGetArg(pc));
+	caddr = talloc_strdup(frame, poptGetArg(pc));
 
 	poptFreeContext(pc);
 
@@ -870,12 +957,10 @@ static void do_per_share_checks(int s)
 
 	fprintf(stderr,"Loaded services file OK.\n");
 
-	if (samba_gnutls_weak_crypto_allowed()) {
-		weak_crypo_str = "allowed";
-	} else {
-		weak_crypo_str = "disallowed";
-	}
-	fprintf(stderr, "Weak crypto is %s\n", weak_crypo_str);
+	fprintf(stderr,
+		"Weak crypto is %sallowed by GnuTLS "
+		"(e.g. NTLM as a compatibility fallback)\n",
+	        samba_gnutls_weak_crypto_allowed() ? "" : "dis");
 
 	if (skip_logic_checks == 0) {
 		ret = do_global_checks();
@@ -954,4 +1039,3 @@ done:
 	TALLOC_FREE(frame);
 	return ret;
 }
-

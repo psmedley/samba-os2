@@ -391,7 +391,7 @@ SMB_ACL_T sys_acl_get_fd(vfs_handle_struct *handle,
 			 SMB_ACL_TYPE_T type,
 			 TALLOC_CTX *mem_ctx)
 {
-	return aixacl_sys_acl_get_fd(handle, fsp, mem_ctx);
+	return aixacl_sys_acl_get_fd(handle, fsp, type, mem_ctx);
 }
 
 int sys_acl_set_fd(vfs_handle_struct *handle,

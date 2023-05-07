@@ -718,7 +718,7 @@ NTSTATUS smb2_signing_check_pdu(struct smb2_signing_key *signing_key,
 		return status;
 	}
 
-	if (memcmp_const_time(res, sig, 16) != 0) {
+	if (!mem_equal_const_time(res, sig, 16)) {
 		DEBUG(0,("Bad SMB2 (sign_algo_id=%u) signature for message\n",
 			 (unsigned)sign_algo_id));
 		dump_data(0, sig, 16);
@@ -986,9 +986,11 @@ NTSTATUS smb2_signing_encrypt_pdu(struct smb2_signing_key *encryption_key,
 		}
 
 		for (i = 1; i < count; i++) {
-			memcpy(ptext + len,
-			       vector[i].iov_base,
-			       vector[i].iov_len);
+			if (vector[i].iov_base != NULL) {
+				memcpy(ptext + len,
+				       vector[i].iov_base,
+				       vector[i].iov_len);
+			}
 
 			len += vector[i].iov_len;
 			if (len > ptext_size) {
@@ -1018,9 +1020,11 @@ NTSTATUS smb2_signing_encrypt_pdu(struct smb2_signing_key *encryption_key,
 
 		len = 0;
 		for (i = 1; i < count; i++) {
-			memcpy(vector[i].iov_base,
-			       ctext + len,
-			       vector[i].iov_len);
+			if (vector[i].iov_base != NULL) {
+				memcpy(vector[i].iov_base,
+				       ctext + len,
+				       vector[i].iov_len);
+			}
 
 			len += vector[i].iov_len;
 		}

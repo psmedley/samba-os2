@@ -283,7 +283,7 @@
 }
 
 static krb5_error_code kerberos_pac_buffer_present(krb5_context context,
-						   const krb5_pac pac,
+						   const krb5_const_pac pac,
 						   uint32_t type)
 {
 #ifdef SAMBA4_USES_HEIMDAL
@@ -305,7 +305,7 @@ static krb5_error_code kerberos_pac_buffer_present(krb5_context context,
 }
 
 krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
-					     krb5_pac pac,
+					     krb5_const_pac pac,
 					     krb5_context context,
 					     struct auth_user_info_dc **user_info_dc,
 					     struct PAC_SIGNATURE_DATA *pac_srv_sig,
@@ -322,7 +322,7 @@ krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
 
 	union PAC_INFO info;
 	union PAC_INFO _upn_dns_info;
-	const struct PAC_UPN_DNS_INFO *upn_dns_info = NULL;
+	struct PAC_UPN_DNS_INFO *upn_dns_info = NULL;
 	struct auth_user_info_dc *user_info_dc_out;
 
 	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
@@ -385,12 +385,18 @@ krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
 		upn_dns_info = &_upn_dns_info.upn_dns_info;
 	}
 
-	/* Pull this right into the normal auth sysstem structures */
+	/* Pull this right into the normal auth system structures */
 	nt_status = make_user_info_dc_pac(mem_ctx,
 					 info.logon_info.info,
 					 upn_dns_info,
 					 &user_info_dc_out);
 	if (!NT_STATUS_IS_OK(nt_status)) {
+		DBG_ERR("make_user_info_dc_pac() failed -%s\n",
+			nt_errstr(nt_status));
+		NDR_PRINT_DEBUG(PAC_LOGON_INFO, info.logon_info.info);
+		if (upn_dns_info != NULL) {
+			NDR_PRINT_DEBUG(PAC_UPN_DNS_INFO, upn_dns_info);
+		}
 		talloc_free(tmp_ctx);
 		return EINVAL;
 	}
@@ -410,7 +416,7 @@ krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
 		smb_krb5_free_data_contents(context, &k5pac_srv_checksum_in);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 			nt_status = ndr_map_error2ntstatus(ndr_err);
-			DEBUG(0,("can't parse the KDC signature: %s\n",
+			DEBUG(0,("can't parse the server signature: %s\n",
 				 nt_errstr(nt_status)));
 			return EINVAL;
 		}

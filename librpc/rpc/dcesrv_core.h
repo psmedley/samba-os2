@@ -464,6 +464,11 @@ NTSTATUS dcesrv_interface_register(struct dcesrv_context *dce_ctx,
 				   const char *ncacn_np_secondary_endpoint,
 				   const struct dcesrv_interface *iface,
 				   const struct security_descriptor *sd);
+NTSTATUS dcesrv_interface_register_b(struct dcesrv_context *dce_ctx,
+				   struct dcerpc_binding *binding,
+				   struct dcerpc_binding *binding2,
+				   const struct dcesrv_interface *iface,
+				   const struct security_descriptor *sd);
 NTSTATUS dcerpc_register_ep_server(const struct dcesrv_endpoint_server *ep_server);
 NTSTATUS dcesrv_init_ep_servers(struct dcesrv_context *dce_ctx,
 				const char **ep_servers);
@@ -479,7 +484,9 @@ NTSTATUS dcesrv_init_context(TALLOC_CTX *mem_ctx,
 			     struct loadparm_context *lp_ctx,
 			     struct dcesrv_context_callbacks *cb,
 			     struct dcesrv_context **_dce_ctx);
-NTSTATUS dcesrv_reinit_context(struct dcesrv_context *dce_ctx);
+void dcesrv_context_set_callbacks(
+	struct dcesrv_context *dce_ctx,
+	struct dcesrv_context_callbacks *cb);
 
 NTSTATUS dcesrv_reply(struct dcesrv_call_state *call);
 struct dcesrv_handle *dcesrv_handle_create(struct dcesrv_call_state *call,
@@ -633,6 +640,11 @@ _PUBLIC_ void dcesrv_terminate_connection(struct dcesrv_connection *dce_conn,
 _PUBLIC_ void dcesrv_sock_report_output_data(struct dcesrv_connection *dce_conn);
 
 _PUBLIC_ NTSTATUS dcesrv_connection_loop_start(struct dcesrv_connection *conn);
+
+_PUBLIC_ void dcesrv_loop_next_packet(
+	struct dcesrv_connection *dce_conn,
+	struct ncacn_packet *pkt,
+	DATA_BLOB buffer);
 
 _PUBLIC_ NTSTATUS dcesrv_call_dispatch_local(struct dcesrv_call_state *call);
 

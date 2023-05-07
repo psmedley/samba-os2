@@ -37,6 +37,7 @@
 #include "../libcli/security/security.h"
 #include "passdb/machine_sid.h"
 #include "auth.h"
+#include "source3/lib/global_contexts.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_WINBIND
@@ -48,6 +49,7 @@
  * winbindd or a part of this process
  */
 struct winbind_internal_pipes {
+	struct tevent_timer *shutdown_timer;
 	struct rpc_pipe_client *samr_pipe;
 	struct policy_handle samr_domain_hnd;
 	struct rpc_pipe_client *lsa_pipe;
@@ -120,6 +122,26 @@ NTSTATUS open_internal_lsa_conn(TALLOC_CTX *mem_ctx,
 	return status;
 }
 
+static void cached_internal_pipe_close(
+	struct tevent_context *ev,
+	struct tevent_timer *te,
+	struct timeval current_time,
+	void *private_data)
+{
+	struct winbindd_domain *domain = talloc_get_type_abort(
+		private_data, struct winbindd_domain);
+	/*
+	 * Freeing samr_pipes closes the cached pipes.
+	 *
+	 * We can do a hard close because at the time of this commit
+	 * we only use sychronous calls to external pipes. So we can't
+	 * have any outstanding requests. Also, we don't set
+	 * dcerpc_binding_handle_set_sync_ev in winbind, so we don't
+	 * get nested event loops. Once we start to get async in
+	 * winbind children, we need to check for outstanding calls
+	 */
+	TALLOC_FREE(domain->backend_data.samr_pipes);
+}
 
 static NTSTATUS open_cached_internal_pipe_conn(
 	struct winbindd_domain *domain,
@@ -157,6 +179,17 @@ static NTSTATUS open_cached_internal_pipe_conn(
 			return status;
 		}
 
+		internal_pipes->shutdown_timer = tevent_add_timer(
+			global_event_context(),
+			internal_pipes,
+			timeval_current_ofs(5, 0),
+			cached_internal_pipe_close,
+			domain);
+		if (internal_pipes->shutdown_timer == NULL) {
+			TALLOC_FREE(frame);
+			return NT_STATUS_NO_MEMORY;
+		}
+
 		domain->backend_data.samr_pipes =
 			talloc_steal(domain, internal_pipes);
 
@@ -178,6 +211,10 @@ static NTSTATUS open_cached_internal_pipe_conn(
 	if (lsa_pipe) {
 		*lsa_pipe = internal_pipes->lsa_pipe;
 	}
+
+	tevent_update_timer(
+		internal_pipes->shutdown_timer,
+		timeval_current_ofs(5, 0));
 
 	return NT_STATUS_OK;
 }
@@ -637,7 +674,7 @@ static NTSTATUS sam_name_to_sid(struct winbindd_domain *domain,
 			tmp_ctx, name, &normalized);
 		if (NT_STATUS_IS_OK(nstatus) ||
 		    NT_STATUS_EQUAL(nstatus, NT_STATUS_FILE_RENAMED)) {
-			name = normalized;
+			lsa_name.string = normalized;
 		}
 	}
 
@@ -922,7 +959,6 @@ static NTSTATUS sam_rids_to_names(struct winbindd_domain *domain,
 
 		for (i=0; i<num_rids; i++) {
 			struct dom_sid sid;
-			char *dom_name = NULL;
 			char *name = NULL;
 
 			sid_compose(&sid, domain_sid, rids[i]);
@@ -934,16 +970,10 @@ static NTSTATUS sam_rids_to_names(struct winbindd_domain *domain,
 				domain,
 				tmp_ctx,
 				&sid,
-				&dom_name,
+				NULL,
 				&name,
 				&types[i]);
 			if (NT_STATUS_IS_OK(status)) {
-				if (domain_name == NULL) {
-					domain_name = dom_name;
-				} else {
-					/* always the same */
-					TALLOC_FREE(dom_name);
-				}
 				names[i] = talloc_move(names, &name);
 				num_mapped += 1;
 			}

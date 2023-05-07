@@ -31,6 +31,9 @@
 #include "kdc/kpasswd-helper.h"
 #include "param/param.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_KERBEROS
+
 #define HEADER_LEN 6
 #ifndef RFC3244_VERSION
 #define RFC3244_VERSION 0xff80
@@ -326,8 +329,7 @@ reply:
 			goto done;
 		}
 
-		k_dec_data.length = dec_data_blob.length;
-		k_dec_data.data   = (char *)dec_data_blob.data;
+		k_dec_data = smb_krb5_data_from_blob(dec_data_blob);
 
 		principal_string = cli_credentials_get_principal(server_credentials,
 								 tmp_ctx);

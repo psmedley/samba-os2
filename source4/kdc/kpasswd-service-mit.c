@@ -31,6 +31,9 @@
 #include "kdc/kpasswd-helper.h"
 #include "../lib/util/asn1.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_KERBEROS
+
 #define RFC3244_VERSION 0xff80
 
 krb5_error_code decode_krb5_setpw_req(const krb5_data *code,
@@ -112,7 +115,6 @@ static krb5_error_code kpasswd_change_password(struct kdc_server *kdc,
 	status = samdb_kpasswd_change_password(mem_ctx,
 					       kdc->task->lp_ctx,
 					       kdc->task->event_ctx,
-					       kdc->samdb,
 					       session_info,
 					       password,
 					       &reject_reason,
@@ -170,8 +172,7 @@ static krb5_error_code kpasswd_set_password(struct kdc_server *kdc,
 	struct samr_DomInfo1 *dominfo = NULL;
 	NTSTATUS status;
 
-	k_dec_data.length = decoded_data->length;
-	k_dec_data.data   = (char *)decoded_data->data;
+	k_dec_data = smb_krb5_data_from_blob(*decoded_data);
 
 	code = decode_krb5_setpw_req(&k_dec_data,
 				     &k_clear_data,

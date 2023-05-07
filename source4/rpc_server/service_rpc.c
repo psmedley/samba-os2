@@ -37,7 +37,6 @@
 #include "librpc/rpc/dcerpc_proto.h"
 #include "../lib/util/tevent_ntstatus.h"
 #include "libcli/raw/smb.h"
-#include "../libcli/named_pipe_auth/npa_tstream.h"
 #include "samba/process_model.h"
 
 static void skip_become_root(void)
@@ -53,7 +52,7 @@ static struct dcesrv_context_callbacks srv_callbacks = {
 	.auth.gensec_prepare = dcesrv_gensec_prepare,
 	.auth.become_root = skip_become_root,
 	.auth.unbecome_root = skip_unbecome_root,
-	.assoc_group.find = dcesrv_assoc_group_find,
+	.assoc_group.find = dcesrv_assoc_group_find_s4,
 };
 
 /*

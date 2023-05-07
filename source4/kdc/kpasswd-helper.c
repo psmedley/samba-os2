@@ -27,6 +27,9 @@
 #include "auth/auth.h"
 #include "kdc/kpasswd-helper.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_KERBEROS
+
 bool kpasswd_make_error_reply(TALLOC_CTX *mem_ctx,
 			      krb5_error_code error_code,
 			      const char *error_string,
@@ -220,10 +223,8 @@ NTSTATUS kpasswd_samdb_set_password(TALLOC_CTX *mem_ctx,
 				    target_dn,
 				    NULL, /* domain_dn */
 				    password,
-				    NULL, /* lmNewHash */
 				    NULL, /* ntNewHash */
-				    NULL, /* lmOldHash */
-				    NULL, /* ntOldHash */
+				    DSDB_PASSWORD_RESET,
 				    reject_reason,
 				    dominfo);
 	if (NT_STATUS_IS_OK(status)) {

@@ -40,6 +40,32 @@
 #define pipe(A) os2_pipe(A)
 #endif
 
+static struct tevent_context *
+test_tevent_context_init(TALLOC_CTX *mem_ctx)
+{
+	struct tevent_context *ev = NULL;
+
+	ev = tevent_context_init(mem_ctx);
+	if (ev != NULL) {
+		samba_tevent_set_debug(ev, "<default>");
+	}
+
+	return ev;
+}
+
+static struct tevent_context *
+test_tevent_context_init_byname(TALLOC_CTX *mem_ctx, const char *name)
+{
+	struct tevent_context *ev = NULL;
+
+	ev = tevent_context_init_byname(mem_ctx, name);
+	if (ev != NULL) {
+		samba_tevent_set_debug(ev, name);
+	}
+
+	return ev;
+}
+
 static int fde_count;
 
 static void do_read(int fd, void *buf, size_t count)
@@ -146,7 +172,7 @@ static bool test_event_context(struct torture_context *test,
 	struct timeval t;
 	int ret;
 
-	ev_ctx = tevent_context_init_byname(test, backend);
+	ev_ctx = test_tevent_context_init_byname(test, backend);
 	if (ev_ctx == NULL) {
 		torture_comment(test, "event backend '%s' not supported\n", backend);
 		return true;
@@ -386,7 +412,7 @@ static bool test_event_fd1(struct torture_context *tctx,
 	state.tctx = tctx;
 	state.backend = (const char *)test_data;
 
-	state.ev = tevent_context_init_byname(tctx, state.backend);
+	state.ev = test_tevent_context_init_byname(tctx, state.backend);
 	if (state.ev == NULL) {
 		torture_skip(tctx, talloc_asprintf(tctx,
 			     "event backend '%s' not supported\n",
@@ -394,7 +420,6 @@ static bool test_event_fd1(struct torture_context *tctx,
 		return true;
 	}
 
-	tevent_set_debug_stderr(state.ev);
 	torture_comment(tctx, "backend '%s' - %s\n",
 			state.backend, __FUNCTION__);
 
@@ -626,7 +651,7 @@ static bool test_event_fd2(struct torture_context *tctx,
 	state.tctx = tctx;
 	state.backend = (const char *)test_data;
 
-	state.ev = tevent_context_init_byname(tctx, state.backend);
+	state.ev = test_tevent_context_init_byname(tctx, state.backend);
 	if (state.ev == NULL) {
 		torture_skip(tctx, talloc_asprintf(tctx,
 			     "event backend '%s' not supported\n",
@@ -634,7 +659,6 @@ static bool test_event_fd2(struct torture_context *tctx,
 		return true;
 	}
 
-	tevent_set_debug_stderr(state.ev);
 	torture_comment(tctx, "backend '%s' - %s\n",
 			state.backend, __FUNCTION__);
 
@@ -959,7 +983,7 @@ static bool test_wrapper(struct torture_context *tctx,
 	bool ok = false;
 	bool ret2;
 
-	ev = tevent_context_init_byname(tctx, backend);
+	ev = test_tevent_context_init_byname(tctx, backend);
 	if (ev == NULL) {
 		torture_skip(tctx, talloc_asprintf(tctx,
 			     "event backend '%s' not supported\n",
@@ -967,7 +991,6 @@ static bool test_wrapper(struct torture_context *tctx,
 		return true;
 	}
 
-	tevent_set_debug_stderr(ev);
 	torture_comment(tctx, "tevent backend '%s'\n", backend);
 
 	wrap_ev = tevent_context_wrapper_create(
@@ -1133,7 +1156,7 @@ static bool test_free_wrapper(struct torture_context *tctx,
 	int ret;
 	bool ok = false;
 
-	ev = tevent_context_init_byname(frame, backend);
+	ev = test_tevent_context_init_byname(frame, backend);
 	if (ev == NULL) {
 		torture_skip(tctx, talloc_asprintf(tctx,
 			     "event backend '%s' not supported\n",
@@ -1141,7 +1164,6 @@ static bool test_free_wrapper(struct torture_context *tctx,
 		return true;
 	}
 
-	tevent_set_debug_stderr(ev);
 	torture_comment(tctx, "tevent backend '%s'\n", backend);
 
 	wrap_ev = tevent_context_wrapper_create(
@@ -1297,7 +1319,7 @@ static bool test_event_context_threaded(struct torture_context *test,
 	int ret;
 	char c = 0;
 
-	ev = tevent_context_init_byname(test, "poll_mt");
+	ev = test_tevent_context_init_byname(test, "poll_mt");
 	torture_assert(test, ev != NULL, "poll_mt not supported");
 
 	tevent_set_trace_callback(ev, test_event_threaded_trace, NULL);
@@ -1414,11 +1436,10 @@ static bool test_multi_tevent_threaded(struct torture_context *test,
 	thread_test_ctx = test;
 	thread_counter = 0;
 
-	master_ev = tevent_context_init(NULL);
+	master_ev = test_tevent_context_init(NULL);
 	if (master_ev == NULL) {
 		return false;
 	}
-	tevent_set_debug_stderr(master_ev);
 
 	tp = tevent_thread_proxy_create(master_ev);
 	if (tp == NULL) {
@@ -1615,11 +1636,10 @@ static bool test_multi_tevent_threaded_1(struct torture_context *test,
 	thread_test_ctx = test;
 	thread_counter = 0;
 
-	master_ev = tevent_context_init(NULL);
+	master_ev = test_tevent_context_init(NULL);
 	if (master_ev == NULL) {
 		return false;
 	}
-	tevent_set_debug_stderr(master_ev);
 
 	master_tp = tevent_thread_proxy_create(master_ev);
 	if (master_tp == NULL) {
@@ -1717,7 +1737,7 @@ static bool test_multi_tevent_threaded_2(struct torture_context *test,
 	thread_test_ctx = test;
 	thread_counter = 0;
 
-	ev = tevent_context_init(test);
+	ev = test_tevent_context_init(test);
 	torture_assert(test, ev != NULL, "tevent_context_init failed");
 
 	/*
@@ -1764,7 +1784,74 @@ static bool test_multi_tevent_threaded_2(struct torture_context *test,
 	talloc_free(ev);
 	return true;
 }
+
+struct test_cached_pid_thread_state {
+	pid_t thread_cached_pid;
+	pid_t thread_pid;
+};
+
+static void *test_cached_pid_thread(void *private_data)
+{
+	struct test_cached_pid_thread_state *state =
+		(struct test_cached_pid_thread_state *)private_data;
+
+	state->thread_cached_pid = tevent_cached_getpid();
+	state->thread_pid = getpid();
+
+	return NULL;
+}
 #endif
+
+static bool test_cached_pid(struct torture_context *test,
+			    const void *test_data)
+{
+	pid_t parent_pid = getpid();
+	pid_t child_pid;
+	pid_t finished_pid;
+	int child_status;
+
+	torture_assert(test, tevent_cached_getpid() == parent_pid, "tevent_cached_getpid()");
+
+#ifdef HAVE_PTHREAD
+	{
+		struct test_cached_pid_thread_state state = { .thread_cached_pid = -1, };
+		pthread_t thread;
+		void *retval = NULL;
+		int ret;
+
+		ret = pthread_create(&thread, NULL, test_cached_pid_thread, &state);
+		torture_assert(test, ret == 0, "pthread_create failed");
+
+		ret = pthread_join(thread, &retval);
+		torture_assert(test, ret == 0, "pthread_join failed");
+
+		torture_assert(test, state.thread_pid == parent_pid, "getpid() in thread");
+		torture_assert(test, state.thread_cached_pid == parent_pid, "tevent_cached_getpid() in thread");
+	}
+#endif /* HAVE_PTHREAD */
+
+	child_pid = fork();
+	if (child_pid == 0) {
+		/* child */
+		pid_t pid = getpid();
+		pid_t cached_pid = tevent_cached_getpid();
+
+		if (parent_pid == pid) {
+			exit(1);
+		}
+		if (pid != cached_pid) {
+			exit(2);
+		}
+		exit(0);
+	}
+	torture_assert(test, child_pid > 0, "fork failed");
+
+	finished_pid = waitpid(child_pid, &child_status, 0);
+	torture_assert(test, finished_pid == child_pid, "wrong child");
+	torture_assert(test, child_status == 0, "child_status");
+
+	return true;
+}
 
 struct torture_suite *torture_local_event(TALLOC_CTX *mem_ctx)
 {
@@ -1819,6 +1906,10 @@ struct torture_suite *torture_local_event(TALLOC_CTX *mem_ctx)
 					     NULL);
 
 #endif
+
+	torture_suite_add_simple_tcase_const(suite, "tevent_cached_getpid",
+					     test_cached_pid,
+					     NULL);
 
 	return suite;
 }

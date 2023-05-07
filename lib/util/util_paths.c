@@ -23,9 +23,11 @@
 */
 
 #include "includes.h"
+#include "replace.h"
 #include "dynconfig/dynconfig.h"
 #include "lib/util/util_paths.h"
 #include "system/passwd.h"
+#include "system/filesys.h"
 #ifdef __OS2__
 #define NSS_BUFLEN_PASSWD 1024
 #endif

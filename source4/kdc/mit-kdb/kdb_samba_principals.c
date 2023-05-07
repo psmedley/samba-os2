@@ -68,7 +68,7 @@ static void ks_free_principal_e_data(krb5_context context, krb5_octet *e_data)
 
 	skdc_entry = talloc_get_type_abort(e_data,
 					   struct samba_kdc_entry);
-	talloc_set_destructor(skdc_entry, NULL);
+	skdc_entry->kdc_entry = NULL;
 	TALLOC_FREE(skdc_entry);
 }
 

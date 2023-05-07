@@ -41,12 +41,9 @@
 #endif
 
 struct ctdb_log_state {
-	const char *prefix;
 	int fd, pfd;
 	char buf[1024];
 	uint16_t buf_used;
-	void (*logfn)(const char *, uint16_t, void *);
-	void *logfn_private;
 };
 
 /* Used by ctdb_set_child_logging() */
@@ -71,21 +68,9 @@ bool ctdb_logging_init(TALLOC_CTX *mem_ctx, const char *logging,
 	return true;
 }
 
-/* Note that do_debug always uses the global log state. */
-static void write_to_log(struct ctdb_log_state *log,
-			 const char *buf, unsigned int len)
+static void write_to_log(const char *buf, unsigned int len)
 {
-	if (script_log_level <= DEBUGLEVEL) {
-		if (log != NULL && log->prefix != NULL) {
-			dbgtext("%s: %*.*s\n", log->prefix, len, len, buf);
-		} else {
-			dbgtext("%*.*s\n", len, len, buf);
-		}
-		/* log it in the eventsystem as well */
-		if (log && log->logfn) {
-			log->logfn(log->buf, len, log->logfn_private);
-		}
-	}
+	DEBUG(script_log_level, ("%*.*s\n", len, len, buf));
 }
 
 /*
@@ -122,7 +107,7 @@ static void ctdb_child_log_handler(struct tevent_context *ev,
 		if (n2 > 0 && log->buf[n2-1] == '\r') {
 			n2--;
 		}
-		write_to_log(log, log->buf, n2);
+		write_to_log(log->buf, n2);
 		memmove(log->buf, p+1, sizeof(log->buf) - n1);
 		log->buf_used -= n1;
 	}
@@ -130,7 +115,7 @@ static void ctdb_child_log_handler(struct tevent_context *ev,
 	/* the buffer could have completely filled - unfortunately we have
 	   no choice but to dump it out straight away */
 	if (log->buf_used == sizeof(log->buf)) {
-		write_to_log(log, log->buf, log->buf_used);
+		write_to_log(log->buf, log->buf_used);
 		log->buf_used = 0;
 	}
 }

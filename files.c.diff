@@ -1,0 +1,23 @@
+--- ../samba-4.15.11/source3/smbd/files.c	2022-09-29 01:03:39.120876800 +0930
++++ source3/smbd/files.c	2023-05-07 18:45:58.822241796 +0930
+@@ -378,7 +378,10 @@
+ 	}
+ 
+ 	status = fd_close(fsp);
++#ifndef __OS2__
++	/* we've already closed the file, so this fails */
+ 	SMB_ASSERT(NT_STATUS_IS_OK(status));
++#endif
+ 	file_free(NULL, fsp);
+ 	smb_fname->fsp = NULL;
+ 
+@@ -474,7 +477,9 @@
+ 	fsp->fsp_flags.is_pathref = true;
+ 	if (S_ISDIR(smb_fname->st.st_ex_mode)) {
+ 		fsp->fsp_flags.is_directory = true;
++#ifdef O_DIRECTORY
+ 		open_flags |= O_DIRECTORY;
++#endif
+ 	}
+ 
+ 	full_fname = full_path_from_dirfsp_atname(fsp,

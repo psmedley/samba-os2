@@ -29,14 +29,15 @@
 #include "locking/share_mode_lock.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
+#include "smbd/smbXsrv_open.h"
 #include "registry/reg_init_full.h"
 #include "libcli/auth/schannel.h"
 #include "secrets.h"
 #include "../lib/util/memcache.h"
 #include "ctdbd_conn.h"
+#include "lib/util/util_process.h"
 #include "util_cluster.h"
 #include "printing/queue_process.h"
-#include "rpc_server/rpc_service_setup.h"
 #include "rpc_server/rpc_config.h"
 #include "passdb.h"
 #include "auth.h"
@@ -55,10 +56,6 @@
 #include "lib/util/sys_rw.h"
 #include "cleanupdb.h"
 #include "g_lock.h"
-#include "rpc_server/epmd.h"
-#include "rpc_server/lsasd.h"
-#include "rpc_server/fssd.h"
-#include "rpc_server/mdssd.h"
 #include "lib/global_contexts.h"
 #include "source3/lib/substitute.h"
 
@@ -78,7 +75,6 @@ struct smbd_parent_context {
 
 	struct tevent_context *ev_ctx;
 	struct messaging_context *msg_ctx;
-	struct dcesrv_context *dce_ctx;
 
 	/* the list of listening sockets */
 	struct smbd_open_socket *sockets;
@@ -118,36 +114,18 @@ static void smbd_parent_conf_updated(struct messaging_context *msg,
 				     struct server_id server_id,
 				     DATA_BLOB *data)
 {
-	struct tevent_context *ev_ctx =
-		talloc_get_type_abort(private_data, struct tevent_context);
 	bool ok;
 
 	DEBUG(10,("smbd_parent_conf_updated: Got message saying smb.conf was "
 		  "updated. Reloading.\n"));
 	change_to_root_user();
 	reload_services(NULL, NULL, false);
-	printing_subsystem_update(ev_ctx, msg, false);
 
 	ok = reinit_guest_session_info(NULL);
 	if (!ok) {
 		DBG_ERR("Failed to reinit guest info\n");
 	}
 	messaging_send_to_children(msg, MSG_SMB_CONF_UPDATED, NULL);
-}
-
-/*******************************************************************
- Delete a statcache entry.
- ********************************************************************/
-
-static void smb_stat_cache_delete(struct messaging_context *msg,
-				  void *private_data,
-				  uint32_t msg_tnype,
-				  struct server_id server_id,
-				  DATA_BLOB *data)
-{
-	const char *name = (const char *)data->data;
-	DEBUG(10,("smb_stat_cache_delete: delete name %s\n", name));
-	stat_cache_delete(name);
 }
 
 /****************************************************************************
@@ -407,6 +385,7 @@ static void notifyd_sig_hup_handler(struct tevent_context *ev,
 {
 	DBG_NOTICE("notifyd: Reloading services after SIGHUP\n");
 	reload_services(NULL, NULL, false);
+	reopen_logs();
 }
 
 static bool smbd_notifyd_init(struct messaging_context *msg, bool interactive,
@@ -414,10 +393,10 @@ static bool smbd_notifyd_init(struct messaging_context *msg, bool interactive,
 {
 	struct tevent_context *ev = messaging_tevent_context(msg);
 	struct tevent_req *req;
+	struct tevent_signal *se = NULL;
 	pid_t pid;
 	NTSTATUS status;
 	bool ok;
-	struct tevent_signal *se;
 
 	if (interactive) {
 		req = notifyd_req(msg, ev);
@@ -439,12 +418,14 @@ static bool smbd_notifyd_init(struct messaging_context *msg, bool interactive,
 		return true;
 	}
 
-	status = smbd_reinit_after_fork(msg, ev, true, "smbd-notifyd");
+	status = smbd_reinit_after_fork(msg, ev, true);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1, ("%s: reinit_after_fork failed: %s\n",
 			  __func__, nt_errstr(status)));
 		exit(1);
 	}
+
+	process_set_title("smbd-notifyd", "notifyd");
 
 	reopen_logs();
 
@@ -574,6 +555,17 @@ static void notifyd_started(struct tevent_req *req)
 	}
 }
 
+static void cleanupd_sig_hup_handler(struct tevent_context *ev,
+				     struct tevent_signal *se,
+				     int signum,
+				     int count,
+				     void *siginfo,
+				     void *pvt)
+{
+	DBG_NOTICE("cleanupd: Reloading services after SIGHUP\n");
+	reopen_logs();
+}
+
 static void cleanupd_stopped(struct tevent_req *req);
 
 static bool cleanupd_init(struct messaging_context *msg, bool interactive,
@@ -581,6 +573,7 @@ static bool cleanupd_init(struct messaging_context *msg, bool interactive,
 {
 	struct tevent_context *ev = messaging_tevent_context(msg);
 	struct server_id parent_id = messaging_server_id(msg);
+	struct tevent_signal *se = NULL;
 	struct tevent_req *req;
 	pid_t pid;
 	NTSTATUS status;
@@ -641,13 +634,26 @@ static bool cleanupd_init(struct messaging_context *msg, bool interactive,
 
 	close(up_pipe[0]);
 
-	status = smbd_reinit_after_fork(msg, ev, true, "cleanupd");
+	status = smbd_reinit_after_fork(msg, ev, true);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("reinit_after_fork failed: %s\n",
 			    nt_errstr(status));
 		c = 1;
 		sys_write(up_pipe[1], &c, 1);
 
+		exit(1);
+	}
+
+	process_set_title("smbd-cleanupd", "cleanupd");
+
+	se = tevent_add_signal(ev,
+			       ev,
+			       SIGHUP,
+			       0,
+			       cleanupd_sig_hup_handler,
+			       NULL);
+	if (se == NULL) {
+		DBG_ERR("Could not add SIGHUP handler\n");
 		exit(1);
 	}
 
@@ -955,7 +961,6 @@ static void smbd_accept_connection(struct tevent_context *ev,
 	struct smbd_open_socket *s = talloc_get_type_abort(private_data,
 				     struct smbd_open_socket);
 	struct messaging_context *msg_ctx = s->parent->msg_ctx;
-	struct dcesrv_context *dce_ctx = s->parent->dce_ctx;
 	struct sockaddr_storage addr;
 	socklen_t in_addrlen = sizeof(addr);
 	int fd;
@@ -973,8 +978,8 @@ static void smbd_accept_connection(struct tevent_context *ev,
 	smb_set_close_on_exec(fd);
 
 	if (s->parent->interactive) {
-		reinit_after_fork(msg_ctx, ev, true, NULL);
-		smbd_process(ev, msg_ctx, dce_ctx, fd, true);
+		reinit_after_fork(msg_ctx, ev, true);
+		smbd_process(ev, msg_ctx, fd, true);
 		exit_server_cleanly("end of interactive mode");
 		return;
 	}
@@ -986,6 +991,7 @@ static void smbd_accept_connection(struct tevent_context *ev,
 
 	pid = fork();
 	if (pid == 0) {
+		char addrstr[INET6_ADDRSTRLEN];
 		NTSTATUS status = NT_STATUS_OK;
 
 		/*
@@ -999,7 +1005,7 @@ static void smbd_accept_connection(struct tevent_context *ev,
 		 * them, counting worker smbds. */
 		CatchChild();
 
-		status = smbd_reinit_after_fork(msg_ctx, ev, true, NULL);
+		status = smbd_reinit_after_fork(msg_ctx, ev, true);
 		if (!NT_STATUS_IS_OK(status)) {
 			if (NT_STATUS_EQUAL(status,
 					    NT_STATUS_TOO_MANY_OPENED_FILES)) {
@@ -1023,7 +1029,10 @@ static void smbd_accept_connection(struct tevent_context *ev,
 			smb_panic("reinit_after_fork() failed");
 		}
 
-		smbd_process(ev, msg_ctx, dce_ctx, fd, false);
+		print_sockaddr(addrstr, sizeof(addrstr), &addr);
+		process_set_title("smbd[%s]", "client [%s]", addrstr);
+
+		smbd_process(ev, msg_ctx, fd, false);
 	 exit:
 		exit_server_cleanly("end of child");
 		return;
@@ -1260,8 +1269,6 @@ static bool open_sockets_smbd(struct smbd_parent_context *parent,
 	messaging_register(msg_ctx, NULL, MSG_SHUTDOWN, msg_exit_server);
 	messaging_register(msg_ctx, ev_ctx, MSG_SMB_CONF_UPDATED,
 			   smbd_parent_conf_updated);
-	messaging_register(msg_ctx, NULL, MSG_SMB_STAT_CACHE_DELETE,
-			   smb_stat_cache_delete);
 	messaging_register(msg_ctx, NULL, MSG_DEBUG, smbd_msg_debug);
 	messaging_register(msg_ctx, NULL, MSG_SMB_FORCE_TDIS,
 			   smb_parent_send_to_children);
@@ -1413,15 +1420,9 @@ static void smbd_parent_sig_hup_handler(struct tevent_context *ev,
 					void *siginfo,
 					void *private_data)
 {
-	struct smbd_parent_context *parent =
-		talloc_get_type_abort(private_data,
-		struct smbd_parent_context);
-
 	change_to_root_user();
 	DEBUG(1,("parent: Reloading services after SIGHUP\n"));
 	reload_services(NULL, NULL, false);
-
-	printing_subsystem_update(parent->ev_ctx, parent->msg_ctx, true);
 }
 
 struct smbd_claim_version_state {
@@ -1431,7 +1432,7 @@ struct smbd_claim_version_state {
 
 static void smbd_claim_version_parser(struct server_id exclusive,
 				      size_t num_shared,
-				      struct server_id *shared,
+				      const struct server_id *shared,
 				      const uint8_t *data,
 				      size_t datalen,
 				      void *private_data)
@@ -1466,8 +1467,12 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return NT_STATUS_UNSUCCESSFUL;
 	}
 
-	status = g_lock_lock(
-		ctx, key, G_LOCK_READ, (struct timeval) { .tv_sec = 60 });
+	status = g_lock_lock(ctx,
+			     key,
+			     G_LOCK_READ,
+			     (struct timeval) { .tv_sec = 60 },
+			     NULL,
+			     NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_READ) failed: %s\n",
 			    nt_errstr(status));
@@ -1495,8 +1500,12 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return NT_STATUS_OK;
 	}
 
-	status = g_lock_lock(
-		ctx, key, G_LOCK_UPGRADE, (struct timeval) { .tv_sec = 60 });
+	status = g_lock_lock(ctx,
+			     key,
+			     G_LOCK_UPGRADE,
+			     (struct timeval) { .tv_sec = 60 },
+			     NULL,
+			     NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_WRITE) failed: %s\n",
 			    nt_errstr(status));
@@ -1515,8 +1524,12 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return status;
 	}
 
-	status = g_lock_lock(
-		ctx, key, G_LOCK_DOWNGRADE, (struct timeval) { .tv_sec = 60 });
+	status = g_lock_lock(ctx,
+			     key,
+			     G_LOCK_DOWNGRADE,
+			     (struct timeval) { .tv_sec = 60 },
+			     NULL,
+			     NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_READ) failed: %s\n",
 			    nt_errstr(status));
@@ -1549,7 +1562,6 @@ extern void build_options(bool screen);
 	char *profile_level = NULL;
 	int opt;
 	poptContext pc;
-	bool serving_printers = false;
 	struct server_id main_server_id = {0};
 	struct poptOption long_options[] = {
 		POPT_AUTOHELP
@@ -1587,7 +1599,6 @@ extern void build_options(bool screen);
 	NTSTATUS status;
 	struct tevent_context *ev_ctx;
 	struct messaging_context *msg_ctx;
-	struct dcesrv_context *dce_ctx = NULL;
 	struct server_id server_id;
 	struct tevent_signal *se;
 	int profiling_level;
@@ -1596,7 +1607,6 @@ extern void build_options(bool screen);
 		loadparm_s3_global_substitution();
 	static const struct smbd_shim smbd_shim_fns =
 	{
-		.send_stat_cache_delete_message = smbd_send_stat_cache_delete_message,
 		.change_to_root_user = smbd_change_to_root_user,
 		.become_authenticated_pipe_user = smbd_become_authenticated_pipe_user,
 		.unbecome_authenticated_pipe_user = smbd_unbecome_authenticated_pipe_user,
@@ -1611,6 +1621,8 @@ extern void build_options(bool screen);
 		.exit_server_cleanly = smbd_exit_server_cleanly,
 	};
 	bool ok;
+
+	setproctitle_init(argc, discard_const(argv), environ);
 
 	/*
 	 * Do this before any other talloc operation
@@ -1751,7 +1763,7 @@ extern void build_options(bool screen);
 	DEBUG(2,("uid=%d gid=%d euid=%d egid=%d\n",
 		 (int)getuid(),(int)getgid(),(int)geteuid(),(int)getegid()));
 
-	/* Output the build options to the debug log */ 
+	/* Output the build options to the debug log */
 	build_options(False);
 
 	if (sizeof(uint16_t) < 2 || sizeof(uint32_t) < 4) {
@@ -1789,11 +1801,6 @@ extern void build_options(bool screen);
 	 */
 	msg_ctx = global_messaging_context();
 	if (msg_ctx == NULL) {
-		exit(1);
-	}
-
-	dce_ctx = global_dcesrv_context();
-	if (dce_ctx == NULL) {
 		exit(1);
 	}
 
@@ -1878,7 +1885,7 @@ extern void build_options(bool screen);
 	if (cmdline_daemon_cfg->daemon)
 		pidfile_create(lp_pid_directory(), "smbd");
 
-	status = reinit_after_fork(msg_ctx, ev_ctx, false, NULL);
+	status = reinit_after_fork(msg_ctx, ev_ctx, false);
 	if (!NT_STATUS_IS_OK(status)) {
 		exit_daemon("reinit_after_fork() failed", map_errno_from_nt_status(status));
 	}
@@ -1902,7 +1909,6 @@ extern void build_options(bool screen);
 	parent->interactive = cmdline_daemon_cfg->interactive;
 	parent->ev_ctx = ev_ctx;
 	parent->msg_ctx = msg_ctx;
-	parent->dce_ctx = dce_ctx;
 	am_parent = parent;
 
 	se = tevent_add_signal(parent->ev_ctx,
@@ -2065,63 +2071,8 @@ extern void build_options(bool screen);
 		return -1;
 	}
 
-	status = dcesrv_init(ev_ctx, ev_ctx, msg_ctx, dce_ctx);
-	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("Failed to setup RPC server: %s\n", nt_errstr(status));
-		exit_daemon("Samba cannot setup ep pipe", EACCES);
-	}
-
 	if (!cmdline_daemon_cfg->interactive) {
 		daemon_ready("smbd");
-	}
-
-	serving_printers = (!lp__disable_spoolss() &&
-			    (rpc_spoolss_daemon() != RPC_DAEMON_DISABLED));
-
-	/* only start other daemons if we are running as a daemon
-	 * -- bad things will happen if smbd is launched via inetd
-	 *  and we fork a copy of ourselves here */
-	if (cmdline_daemon_cfg->daemon && !cmdline_daemon_cfg->interactive) {
-
-		if (rpc_epmapper_daemon() == RPC_DAEMON_FORK) {
-			start_epmd(ev_ctx, msg_ctx, dce_ctx);
-		}
-
-		if (rpc_lsasd_daemon() == RPC_DAEMON_FORK) {
-			start_lsasd(ev_ctx, msg_ctx, dce_ctx);
-		}
-
-		if (rpc_fss_daemon() == RPC_DAEMON_FORK) {
-			start_fssd(ev_ctx, msg_ctx, dce_ctx);
-		}
-
-		if (serving_printers) {
-			bool bgq = lp_parm_bool(-1, "smbd", "backgroundqueue", true);
-			ok = printing_subsystem_init(ev_ctx,
-						     msg_ctx,
-						     dce_ctx,
-						     true,
-						     bgq);
-			if (!ok) {
-				exit_daemon("Samba failed to init printing subsystem", EACCES);
-			}
-		}
-
-#ifdef WITH_SPOTLIGHT
-		if ((rpc_mdssvc_mode() == RPC_SERVICE_MODE_EXTERNAL) &&
-		    (rpc_mdssd_daemon() == RPC_DAEMON_FORK)) {
-			start_mdssd(ev_ctx, msg_ctx, dce_ctx);
-		}
-#endif
-	} else if (serving_printers) {
-		ok = printing_subsystem_init(ev_ctx,
-					     msg_ctx,
-					     dce_ctx,
-					     false,
-					     false);
-		if (!ok) {
-			exit(1);
-		}
 	}
 
 	if (!cmdline_daemon_cfg->daemon) {
@@ -2157,7 +2108,7 @@ extern void build_options(bool screen);
 	        /* Stop zombies */
 		smbd_setup_sig_chld_handler(parent);
 
-		smbd_process(ev_ctx, msg_ctx, dce_ctx, sock, true);
+		smbd_process(ev_ctx, msg_ctx, sock, true);
 
 		exit_server_cleanly(NULL);
 		return(0);
@@ -2165,13 +2116,6 @@ extern void build_options(bool screen);
 
 	if (!open_sockets_smbd(parent, ev_ctx, msg_ctx, ports))
 		exit_server("open_sockets_smbd() failed");
-
-	/* do a printer update now that all messaging has been set up,
-	 * before we allow clients to start connecting */
-	if (!lp__disable_spoolss() &&
-	    (rpc_spoolss_daemon() != RPC_DAEMON_DISABLED)) {
-		printing_subsystem_update(ev_ctx, msg_ctx, false);
-	}
 
 	TALLOC_FREE(frame);
 	/* make sure we always have a valid stackframe */
@@ -2185,7 +2129,7 @@ extern void build_options(bool screen);
 		*/
 		struct stat st;
 		if (fstat(0, &st) != 0) {
-			return false;
+			return 1;
 		}
 		if (S_ISFIFO(st.st_mode) || S_ISSOCK(st.st_mode)) {
 			tevent_add_fd(ev_ctx,

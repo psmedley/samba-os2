@@ -55,6 +55,17 @@ samba-util popt CMDLINE_S4 ndr-table samba-errors NDR_DCERPC replace samba-debug
         for_selftest=True
         )
 
+bld.SAMBA_BINARY('test_auth_sam',
+        source='tests/sam.c',
+        deps='cmocka samdb samba-security ldb tevent',
+        local_include=False,
+        for_selftest=True,
+        ldflags='''
+            -Wl,--wrap,dsdb_search_dn
+            -Wl,--wrap,samdb_msg_add_int64
+        '''
+        )
+
 bld.SAMBA_BINARY('test_heimdal_gensec_unwrap_des',
                  source='tests/heimdal_unwrap_des.c',
                  deps='cmocka talloc gssapi-subsystem',

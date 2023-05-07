@@ -472,8 +472,7 @@ static int xattr_tdb_openat(struct vfs_handle_struct *handle,
 			    const struct files_struct *dirfsp,
 			    const struct smb_filename *smb_fname,
 			    struct files_struct *fsp,
-			    int flags,
-			    mode_t mode)
+			    const struct vfs_open_how *how)
 {
 	struct xattr_tdb_config *config = NULL;
 	SMB_STRUCT_STAT sbuf;
@@ -488,14 +487,12 @@ static int xattr_tdb_openat(struct vfs_handle_struct *handle,
 				 dirfsp,
 				 smb_fname,
 				 fsp,
-				 flags,
-				 mode);
-
+				 how);
 	if (fd == -1) {
 		return -1;
 	}
 
-	if ((flags & (O_CREAT|O_EXCL)) != (O_CREAT|O_EXCL)) {
+	if ((how->flags & (O_CREAT|O_EXCL)) != (O_CREAT|O_EXCL)) {
 		return fd;
 	}
 
@@ -528,10 +525,9 @@ static int xattr_tdb_mkdirat(vfs_handle_struct *handle,
 		mode_t mode)
 {
 	struct xattr_tdb_config *config = NULL;
-	TALLOC_CTX *frame = NULL;
 	struct file_id fileid;
+	struct stat_ex sbuf = { .st_ex_nlink = 0, };
 	int ret;
-	struct smb_filename *full_fname = NULL;
 
 	if (!xattr_tdb_init(handle, &config)) {
 		return -1;
@@ -545,33 +541,21 @@ static int xattr_tdb_mkdirat(vfs_handle_struct *handle,
 		return ret;
 	}
 
-	frame = talloc_stackframe();
+	ret = SMB_VFS_NEXT_FSTATAT(
+		handle, dirfsp, smb_fname, &sbuf, AT_SYMLINK_NOFOLLOW);
 
-	full_fname = full_path_from_dirfsp_atname(talloc_tos(),
-						  dirfsp,
-						  smb_fname);
-	if (full_fname == NULL) {
-		errno = ENOMEM;
-		return -1;
-	}
-
-	/* Always use LSTAT here - we just created the directory. */
-	ret = SMB_VFS_LSTAT(handle->conn, full_fname);
 	if (ret == -1) {
 		/* Rename race. Let upper level take care of it. */
-		TALLOC_FREE(frame);
 		return -1;
 	}
-	if (!S_ISDIR(full_fname->st.st_ex_mode)) {
+	if (!S_ISDIR(sbuf.st_ex_mode)) {
 		/* Rename race. Let upper level take care of it. */
-		TALLOC_FREE(frame);
 		return -1;
 	}
 
-	fileid = SMB_VFS_FILE_ID_CREATE(handle->conn, &full_fname->st);
+	fileid = SMB_VFS_FILE_ID_CREATE(handle->conn, &sbuf);
 
 	xattr_tdb_remove_all_attrs(config->db, &fileid);
-	TALLOC_FREE(frame);
 	return 0;
 }
 

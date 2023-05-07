@@ -20,6 +20,12 @@ import time
 
 
 class BasePasswordTestCase(PasswordTestCase):
+    if False:
+        debug = print
+    else:
+        def debug(self, *args, **kwargs):
+            pass
+
     def _open_samr_user(self, res):
         self.assertTrue("objectSid" in res[0])
 
@@ -56,7 +62,7 @@ class BasePasswordTestCase(PasswordTestCase):
                         msg="attr[%s]=%r on dn[%s]" %
                         (name, res[0][name], res[0].dn))
 
-        print("%s = '%s'" % (name, res[0][name][0]))
+        self.debug("%s = '%s'" % (name, res[0][name][0]))
 
         if mode == "present":
             return
@@ -108,9 +114,9 @@ class BasePasswordTestCase(PasswordTestCase):
                        effective_bad_password_count=None,
                        msg=None,
                        badPwdCountOnly=False):
-        print('-=' * 36)
+        self.debug('-=' * 36)
         if msg is not None:
-            print("\033[01;32m %s \033[00m\n" % msg)
+            self.debug("\033[01;32m %s \033[00m\n" % msg)
         attrs = [
             "objectSid",
            "sAMAccountName",
@@ -251,15 +257,26 @@ userPassword: """ + userpass + """
                                       username=username,
                                       userpass=userpass + "X",
                                       kerberos_state=use_kerberos)
+        if simple:
+            fail_creds.set_bind_dn(userdn)
+
         self._check_account_initial(userdn)
 
         # Fail once to get a badPasswordTime
         self.assertLoginFailure(ldap_url, fail_creds, self.lp)
 
-        # Succeed to reset everything to 0
-        ldb = self.assertLoginSuccess(ldap_url, creds, self.lp)
+        # Always reset with Simple bind or Kerberos, allows testing without NTLM
+        if simple or use_kerberos == MUST_USE_KERBEROS:
+            success_creds = creds
+        else:
+            success_creds = self.insta_creds(self.template_creds,
+                                             username=username,
+                                             userpass=userpass)
+            success_creds.set_bind_dn(userdn)
+            ldap_url = self.host_url_ldaps
 
-        return ldb
+        # Succeed to reset everything to 0
+        self.assertLoginSuccess(ldap_url, success_creds, self.lp)
 
     def assertLoginFailure(self, url, creds, lp, errno=ERR_INVALID_CREDENTIALS):
         try:
@@ -362,23 +379,20 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
                                                    username="lockout1krb5",
                                                    userpass="thatsAcomplPASS0",
                                                    kerberos_state=MUST_USE_KERBEROS)
-        self.lockout1krb5_ldb = self._readd_user(self.lockout1krb5_creds)
+        self._readd_user(self.lockout1krb5_creds)
         self.lockout1ntlm_creds = self.insta_creds(self.template_creds,
                                                    username="lockout1ntlm",
                                                    userpass="thatsAcomplPASS0",
                                                    kerberos_state=DONT_USE_KERBEROS)
-        self.lockout1ntlm_ldb = self._readd_user(self.lockout1ntlm_creds)
+        self._readd_user(self.lockout1ntlm_creds)
         self.lockout1simple_creds = self.insta_creds(self.template_creds,
-                                                   username="lockout1simple",
-                                                   userpass="thatsAcomplPASS0",
-                                                   kerberos_state=DONT_USE_KERBEROS)
-        self.lockout1simple_ldb = self._readd_user(self.lockout1simple_creds,
-                                                   simple=True)
+                                                     username="lockout1simple",
+                                                     userpass="thatsAcomplPASS0",
+                                                     kerberos_state=DONT_USE_KERBEROS)
+        self._readd_user(self.lockout1simple_creds,
+                         simple=True)
 
     def delete_ldb_connections(self):
-        del self.lockout1krb5_ldb
-        del self.lockout1ntlm_ldb
-        del self.lockout1simple_ldb
         del self.ldb
 
     def tearDown(self):
@@ -394,11 +408,11 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         if use_kerberos == MUST_USE_KERBEROS:
             logoncount_relation = 'greater'
             lastlogon_relation = 'greater'
-            print("Performs a lockout attempt against LDAP using Kerberos")
+            self.debug("Performs a lockout attempt against LDAP using Kerberos")
         else:
             logoncount_relation = 'equal'
             lastlogon_relation = 'equal'
-            print("Performs a lockout attempt against LDAP using NTLM")
+            self.debug("Performs a lockout attempt against LDAP using NTLM")
 
         # Change password on a connection as another user
         res = self._check_account(userdn,
@@ -414,8 +428,8 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         lastLogon = int(res[0]["lastLogon"][0])
         firstLogon = lastLogon
         lastLogonTimestamp = int(res[0]["lastLogonTimestamp"][0])
-        print(firstLogon)
-        print(lastLogonTimestamp)
+        self.debug(firstLogon)
+        self.debug(lastLogonTimestamp)
 
         self.assertGreater(lastLogon, badPasswordTime)
         self.assertGreaterEqual(lastLogon, lastLogonTimestamp)
@@ -499,7 +513,7 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
                                   msDSUserAccountControlComputed=0)
         badPasswordTime = int(res[0]["badPasswordTime"][0])
 
-        print("two failed password change")
+        self.debug("two failed password change")
 
         # The wrong password
         creds_lockout.set_password("thatsAcomplPASS1x")
@@ -587,7 +601,7 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
 
         # wait for the lockout to end
         time.sleep(self.account_lockout_duration + 1)
-        print(self.account_lockout_duration + 1)
+        self.debug(self.account_lockout_duration + 1)
 
         res = self._check_account(userdn,
                                   badPwdCount=3, effective_bad_password_count=0,
@@ -722,11 +736,11 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
 
         use_kerberos = creds.get_kerberos_state()
         if use_kerberos == MUST_USE_KERBEROS:
-            print("Testing multiple logon with Kerberos")
+            self.debug("Testing multiple logon with Kerberos")
             logoncount_relation = 'greater'
             lastlogon_relation = 'greater'
         else:
-            print("Testing multiple logon with NTLM")
+            self.debug("Testing multiple logon with NTLM")
             logoncount_relation = 'equal'
             lastlogon_relation = 'equal'
 
@@ -745,7 +759,7 @@ lockoutThreshold: """ + str(lockoutThreshold) + """
         lastLogon = int(res[0]["lastLogon"][0])
         lastLogonTimestamp = int(res[0]["lastLogonTimestamp"][0])
         firstLogon = lastLogon
-        print("last logon is %d" % lastLogon)
+        self.debug("last logon is %d" % lastLogon)
         self.assertGreater(lastLogon, badPasswordTime)
         self.assertGreaterEqual(lastLogon, lastLogonTimestamp)
 

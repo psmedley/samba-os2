@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
 
    Winbind daemon for ntdom nss module
@@ -75,8 +75,8 @@ struct getpwent_state {
 
 struct getgrent_state {
 	struct winbindd_domain *domain;
-	int next_group;
-	int num_groups;
+	uint32_t next_group;
+	uint32_t num_groups;
 	struct wbint_Principal *groups;
 };
 
@@ -103,13 +103,6 @@ struct winbindd_cm_conn {
 
 struct winbindd_domain;
 
-struct winbindd_child_dispatch_table {
-	const char *name;
-	enum winbindd_cmd struct_cmd;
-	enum winbindd_result (*struct_fn)(struct winbindd_domain *domain,
-					  struct winbindd_cli_state *state);
-};
-
 struct winbindd_child {
 	pid_t pid;
 	struct winbindd_domain *domain;
@@ -122,8 +115,6 @@ struct winbindd_child {
 
 	struct tevent_timer *lockout_policy_event;
 	struct tevent_timer *machine_password_change_event;
-
-	const struct winbindd_child_dispatch_table *table;
 };
 
 /* Structures to hold per domain information */
@@ -162,6 +153,7 @@ struct winbindd_domain {
 	} backend_data;
 
 	/* A working DC */
+	bool force_dc;
 	char *dcname;
 	const char *ping_dcname;
 	struct sockaddr_storage dcaddr;
@@ -200,6 +192,7 @@ struct wb_parent_idmap_config_dom {
 struct wb_parent_idmap_config {
 	struct tevent_queue *queue;
 	uint32_t num_doms;
+	bool initialized;
 	struct wb_parent_idmap_config_dom *doms;
 };
 

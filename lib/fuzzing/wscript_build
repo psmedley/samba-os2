@@ -22,7 +22,7 @@ samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR
 
 bld.SAMBA_BINARY('fuzz_parse_lpq_entry',
                  source='fuzz_parse_lpq_entry.c',
-                 deps='''fuzzing  afl-fuzz-main smbd_base
+                 deps='''fuzzing  afl-fuzz-main smbd_base PRINTING
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS samba-credentials samba-hostconfig krb5samba authkrb5 
 samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
 ''',
@@ -67,6 +67,31 @@ bld.SAMBA_BINARY('fuzz_lzxpress',
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS samba-credentials samba-hostconfig krb5samba authkrb5 
 samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
 ''',
+                 fuzzer=True)
+
+bld.SAMBA_BINARY('fuzz_lzxpress_compress',
+                 source='fuzz_lzxpress_compress.c',
+                 deps='fuzzing LZXPRESS afl-fuzz-main',
+                 fuzzer=True)
+
+bld.SAMBA_BINARY('fuzz_lzxpress_round_trip',
+                 source='fuzz_lzxpress_round_trip.c',
+                 deps='fuzzing LZXPRESS afl-fuzz-main',
+                 fuzzer=True)
+
+bld.SAMBA_BINARY('fuzz_lzxpress_huffman_decompress',
+                 source='fuzz_lzxpress_huffman_decompress.c',
+                 deps='fuzzing LZXPRESS afl-fuzz-main',
+                 fuzzer=True)
+
+bld.SAMBA_BINARY('fuzz_lzxpress_huffman_compress',
+                 source='fuzz_lzxpress_huffman_compress.c',
+                 deps='fuzzing LZXPRESS afl-fuzz-main',
+                 fuzzer=True)
+
+bld.SAMBA_BINARY('fuzz_lzxpress_huffman_round_trip',
+                 source='fuzz_lzxpress_huffman_round_trip.c',
+                 deps='fuzzing LZXPRESS afl-fuzz-main',
                  fuzzer=True)
 
 bld.SAMBA_BINARY('fuzz_ldap_decode',
@@ -129,6 +154,16 @@ samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR
 bld.SAMBA_BINARY('fuzz_cli_credentials_parse_string',
                  source='fuzz_cli_credentials_parse_string.c',
                  deps='fuzzing samba-credentials afl-fuzz-main',
+                 fuzzer=True)
+
+bld.SAMBA_BINARY('fuzz_stable_sort',
+                 source='fuzz_stable_sort.c',
+                 deps='fuzzing stable_sort afl-fuzz-main',
+                 fuzzer=True)
+
+bld.SAMBA_BINARY('fuzz_stable_sort_r',
+                 source='fuzz_stable_sort_r.c',
+                 deps='fuzzing stable_sort afl-fuzz-main',
                  fuzzer=True)
 
 # The fuzz_type and fuzz_function parameters make the built

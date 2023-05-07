@@ -7,6 +7,10 @@ bld.SAMBA3_SUBSYSTEM('PASSWD_UTIL',
 bld.SAMBA3_SUBSYSTEM('CONN_TDB',
                      source='conn_tdb.c')
 
+bld.SAMBA3_SUBSYSTEM('DNS_UTIL',
+                     source='net_dns.c net_ads_join_dns.c',
+                     deps='addns')
+
 bld.SAMBA3_BINARY('profiles',
                  source='profiles.c',
                  deps='''
@@ -93,13 +97,14 @@ samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug
 ''')
 
 bld.SAMBA3_BINARY('smbcacls',
-                 source='smbcacls.c ../lib/util_sd.c',
+                 source='smbcacls.c',
                  deps='''
                  talloc
                  CMDLINE_S3
                  msrpc3
                  libcli_lsa3
                  krb5samba
+                 util_sd
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS gse  CMDLINE_S3 secrets3 cli_cldap MESSAGING smbldap smbldaphelper pdb printing_migrate samba-passdb libcli_netlogon3 libsmb cli_spoolss ads
 samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth krb5samba authkrb5 krb5samba common_auth npa_tstream msrpc3 auth libcli_lsa3  netapi trusts_util xattr_tdb dcerpc-server-core
 ''')
@@ -129,13 +134,14 @@ samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug
                  install_path='${SBINDIR}')
 
 bld.SAMBA3_BINARY('sharesec',
-                 source='sharesec.c ../lib/util_sd.c',
+                 source='sharesec.c',
                  deps='''
                  talloc
                  msrpc3
                  libcli_lsa3
                  CMDLINE_S3
                  cmdline_contexts
+                 util_sd
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS gse  CMDLINE_S3 secrets3 cli_cldap MESSAGING smbldap smbldaphelper pdb printing_migrate samba-passdb libcli_netlogon3 libsmb cli_spoolss ads
 samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth krb5samba authkrb5 krb5samba common_auth npa_tstream msrpc3 auth libcli_lsa3  netapi trusts_util xattr_tdb dcerpc-server-core
                  ''')
@@ -169,6 +175,7 @@ bld.SAMBA3_BINARY('ntlm_auth',
                  CMDLINE_S3
                  cmdline_contexts
                  gse gensec
+                 wbclient
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS gse  CMDLINE_S3 secrets3 cli_cldap MESSAGING smbldap smbldaphelper pdb printing_migrate samba-passdb libcli_netlogon3 libsmb cli_spoolss ads
 samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth krb5samba authkrb5 krb5samba common_auth npa_tstream msrpc3 auth libcli_lsa3  netapi trusts_util xattr_tdb dcerpc-server-core
 ''')
@@ -262,7 +269,6 @@ bld.SAMBA3_BINARY('net',
                  net_util.c
                  net_rpc_sh_acct.c
                  net_rpc_audit.c
-                 net_dns.c
                  net_ads_gpo.c
                  net_conf.c
                  net_conf_util.c
@@ -288,7 +294,6 @@ bld.SAMBA3_BINARY('net',
                  ../registry/reg_format.c
                  ../registry/reg_import.c
                  net_registry_util.c
-                 ../lib/util_sd.c
                  net_help_common.c''',
                  deps='''
                  talloc
@@ -334,6 +339,8 @@ bld.SAMBA3_BINARY('net',
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS gse  CMDLINE_S3 secrets3 cli_cldap MESSAGING smbldap smbldaphelper pdb printing_migrate samba-passdb libcli_netlogon3 libsmb cli_spoolss ads
 samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth krb5samba authkrb5 krb5samba common_auth npa_tstream msrpc3 auth libcli_lsa3  netapi trusts_util xattr_tdb dcerpc-server-core cmdline_contexts dcerpc-server-core
                  ADOUBLE
+                 DNS_UTIL
+                 util_sd
                  ''')
 
 bld.SAMBA3_BINARY('mvxattr',
@@ -358,12 +365,17 @@ samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug
                   ''',
                   install=False)
 
-smbstatus_source = 'status.c ../smbd/notify_msg.c'
+smbstatus_source = 'status.c'
 
 if bld.CONFIG_GET("WITH_PROFILE"):
     smbstatus_source += ' status_profile.c'
 else:
     smbstatus_source += ' status_profile_dummy.c'
+
+if bld.CONFIG_GET("HAVE_JANSSON"):
+    smbstatus_source += ' status_json.c'
+else:
+    smbstatus_source += ' status_json_dummy.c'
 
 bld.SAMBA3_BINARY('smbstatus',
                  source=smbstatus_source,
@@ -400,6 +412,6 @@ pytalloc_util = bld.pyembed_libname('pytalloc-util')
 pyrpc_util = bld.pyembed_libname('pyrpc_util')
 bld.SAMBA3_PYTHON('python_net_s3',
         source='py_net.c',
-        deps='LIBNET cmdline_contexts %s %s' % (pytalloc_util, pyrpc_util),
+        deps='LIBNET DNS_UTIL cmdline_contexts %s %s' % (pytalloc_util, pyrpc_util),
         realname='samba/net_s3.so'
         )

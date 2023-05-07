@@ -1673,7 +1673,6 @@ static NTSTATUS get_tdo(struct ldb_context *sam, TALLOC_CTX *mem_ctx,
 	};
 	char *dns = NULL;
 	char *nbn = NULL;
-	char *sidstr = NULL;
 	char *filter;
 	int ret;
 
@@ -1685,49 +1684,32 @@ static NTSTATUS get_tdo(struct ldb_context *sam, TALLOC_CTX *mem_ctx,
 		filter = talloc_strdup(mem_ctx,
 				       "(objectclass=trustedDomain)");
 	}
-	if (!filter) {
-		return NT_STATUS_NO_MEMORY;
-	}
 
 	if (dns_domain) {
 		dns = ldb_binary_encode_string(mem_ctx, dns_domain);
 		if (!dns) {
 			return NT_STATUS_NO_MEMORY;
 		}
-		filter = talloc_asprintf_append(filter,
-						"(trustPartner=%s)", dns);
-		if (!filter) {
-			return NT_STATUS_NO_MEMORY;
-		}
+		talloc_asprintf_addbuf(&filter, "(trustPartner=%s)", dns);
 	}
 	if (netbios) {
 		nbn = ldb_binary_encode_string(mem_ctx, netbios);
 		if (!nbn) {
 			return NT_STATUS_NO_MEMORY;
 		}
-		filter = talloc_asprintf_append(filter,
-						"(flatname=%s)", nbn);
-		if (!filter) {
-			return NT_STATUS_NO_MEMORY;
-		}
+		talloc_asprintf_addbuf(&filter, "(flatname=%s)", nbn);
 	}
 	if (sid) {
-		sidstr = dom_sid_string(mem_ctx, sid);
-		if (!sidstr) {
-			return NT_STATUS_INVALID_PARAMETER;
-		}
-		filter = talloc_asprintf_append(filter,
-						"(securityIdentifier=%s)",
-						sidstr);
-		if (!filter) {
-			return NT_STATUS_NO_MEMORY;
-		}
+		struct dom_sid_buf buf;
+		char *sidstr = dom_sid_str_buf(sid, &buf);
+		talloc_asprintf_addbuf(
+			&filter, "(securityIdentifier=%s)", sidstr);
 	}
 	if (dns_domain || netbios || sid) {
-		filter = talloc_asprintf_append(filter, "))");
-		if (!filter) {
-			return NT_STATUS_NO_MEMORY;
-		}
+		talloc_asprintf_addbuf(&filter, "))");
+	}
+	if (filter == NULL) {
+		return NT_STATUS_NO_MEMORY;
 	}
 
 	ret = gendb_search(sam, mem_ctx, basedn, msgs, attrs, "%s", filter);
@@ -2249,7 +2231,7 @@ done:
 }
 
 /*
-  lsa_SetInfomrationTrustedDomain
+  lsa_SetInformationTrustedDomain
 */
 static NTSTATUS dcesrv_lsa_SetInformationTrustedDomain(
 				struct dcesrv_call_state *dce_call,
