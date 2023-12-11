@@ -780,6 +780,15 @@ again:
 			smb_fname_rel,
 			&fsp->fsp_name->st,
 			AT_SYMLINK_NOFOLLOW);
+
+		if (ret == -1) {
+			/*
+			 * Keep the original error. Otherwise we would
+			 * mask for example EROFS for open(O_CREAT),
+			 * turning it into ENOENT.
+			 */
+			goto out;
+		}
 	} else {
 		ret = SMB_VFS_FSTAT(fsp, &fsp->fsp_name->st);
 	}
@@ -988,7 +997,20 @@ NTSTATUS fd_close(files_struct *fsp)
 	if (fsp->fsp_flags.fstat_before_close) {
 		status = vfs_stat_fsp(fsp);
 		if (!NT_STATUS_IS_OK(status)) {
-			return status;
+			/*
+			 * If this is a stream and delete-on-close was set, the
+			 * backing object (an xattr from streams_xattr) might
+			 * already be deleted so fstat() fails with
+			 * NT_STATUS_NOT_FOUND. So if fsp refers to a stream we
+			 * ignore the error and only bail for normal files where
+			 * an fstat() should still work. NB. We cannot use
+			 * fsp_is_alternate_stream(fsp) for this as the base_fsp
+			 * has already been closed at this point and so the value
+			 * fsp_is_alternate_stream() checks for is already NULL.
+			 */
+			if (fsp->fsp_name->stream_name == NULL) {
+				return status;
+			}
 		}
 	}
 
@@ -1433,7 +1455,7 @@ static NTSTATUS open_file(struct smb_request *req,
 						dirfsp,
 						fsp,
 						false,
-						access_mask);
+						open_access_mask);
 
 				if (!NT_STATUS_IS_OK(status)) {
 					DBG_DEBUG("smbd_check_access_rights_fsp"
@@ -1624,7 +1646,7 @@ static NTSTATUS open_file(struct smb_request *req,
 			status = smbd_check_access_rights_fsp(dirfsp,
 							      fsp,
 							      false,
-							      access_mask);
+							      open_access_mask);
 
 			if (NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_NAME_NOT_FOUND) &&
 			    posix_open &&

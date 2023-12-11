@@ -708,6 +708,7 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 			 * connect to a foreign domain
 			 * without a direct outbound trust.
 			 */
+			close(sockfd);
 			return NT_STATUS_NO_TRUST_LSA_SECRET;
 		}
 
@@ -761,6 +762,13 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		goto done;
 	}
 
+	/*
+	 * cm_prepare_connection() is responsible that sockfd does not leak.
+	 * Once cli_state_create() returns with success, the
+	 * smbXcli_conn_destructor() makes sure that close(sockfd) is finally
+	 * called. Till that, close(sockfd) must be called on every unsuccessful
+	 * return.
+	 */
 	*cli = cli_state_create(NULL, sockfd, controller,
 				smb_sign_client_connections, flags);
 	if (*cli == NULL) {
@@ -1559,7 +1567,7 @@ static bool find_dc(TALLOC_CTX *mem_ctx,
 	if (*dcnames[fd_index] != '\0' && !is_ipaddress(dcnames[fd_index])) {
 		/* Ok, we've got a name for the DC */
 		TALLOC_FREE(domain->dcname);
-		domain->dcname = talloc_strdup(mem_ctx, dcnames[fd_index]);
+		domain->dcname = talloc_strdup(domain, dcnames[fd_index]);
 		if (domain->dcname == NULL) {
 			return false;
 		}
@@ -1749,8 +1757,6 @@ static NTSTATUS cm_open_connection(struct winbindd_domain *domain,
 		if (NT_STATUS_IS_OK(result)) {
 			break;
 		}
-		close(fd);
-		fd = -1;
 		if (!retry) {
 			break;
 		}

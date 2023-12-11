@@ -1,13 +1,13 @@
 '\" t
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
-.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 04/19/2023
+.\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
+.\"      Date: 11/29/2023
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.18.2
+.\"    Source: Samba 4.18.9
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "04/19/2023" "Samba 4\&.18\&.2" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "11/29/2023" "Samba 4\&.18\&.9" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1301,7 +1301,7 @@ Default:
 aio read size (S)
 .PP
 .RS 4
-If this integer parameter is set to a non\-zero value, Samba will read from files asynchronously when the request size is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads and when not using write cache\&.
+If this integer parameter is set to a non\-zero value, Samba will read from files asynchronously when the request size is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads\&.
 .sp
 The only reasonable values for this parameter are 0 (no async I/O) and 1 (always do async I/O)\&.
 .sp
@@ -1334,7 +1334,7 @@ Example:
 aio write size (S)
 .PP
 .RS 4
-If this integer parameter is set to a non\-zero value, Samba will write to files asynchronously when the request size is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining reads and when not using write cache\&.
+If this integer parameter is set to a non\-zero value, Samba will write to files asynchronously when the request size is bigger than this value\&. Note that it happens only for non\-chained and non\-chaining writes\&.
 .sp
 The only reasonable values for this parameter are 0 (no async I/O) and 1 (always do async I/O)\&.
 .sp
@@ -3088,7 +3088,7 @@ dcerpc endpoint servers (G)
 Specifies which DCE/RPC endpoint servers should be run\&.
 .sp
 Default:
-\fI\fIdcerpc endpoint servers\fR\fR\fI = \fR\fIepmapper, wkssvc, rpcecho, samr, netlogon, lsarpc, drsuapi, dssetup, unixinfo, browser, eventlog6, backupkey, dnsserver\fR\fI \fR
+\fI\fIdcerpc endpoint servers\fR\fR\fI = \fR\fIepmapper, wkssvc, samr, netlogon, lsarpc, drsuapi, dssetup, unixinfo, browser, eventlog6, backupkey, dnsserver\fR\fI \fR
 .sp
 Example:
 \fI\fIdcerpc endpoint servers\fR\fR\fI = \fR\fIrpcecho\fR\fI \fR
@@ -12194,8 +12194,6 @@ This is only available with
 and
 \m[blue]\fBkernel oplocks = no\fR\m[]\&.
 .sp
-Note that the write cache won\*(Aqt be used for file handles with a smb2 write lease\&.
-.sp
 Default:
 \fI\fIsmb2 leases\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
@@ -14531,7 +14529,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.18\&.2 of the Samba suite\&.
+This man page is part of version 4\&.18\&.9 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

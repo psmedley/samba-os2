@@ -34,6 +34,7 @@ from selftesthelpers import valgrindify, smbtorture4_testsuites
 from selftesthelpers import smbtorture4_options
 from selftesthelpers import smbcontrol
 from selftesthelpers import smbstatus
+from selftesthelpers import timelimit
 smbtorture4_options.extend([
     '--option=torture:sharedelay=100000',
    '--option=torture:writetimeupdatedelay=500000',
@@ -65,6 +66,8 @@ try:
 except KeyError:
     samba4bindir = bindir()
     config_h = os.path.join(samba4bindir, "default/include/config.h")
+
+bbdir = os.path.join(srcdir(), "testprogs/blackbox")
 
 # check available features
 config_hash = dict()
@@ -216,6 +219,39 @@ plantestsuite("samba3.smbtorture_s3.hidenewfiles_showdirs",
                "",
                "-l $LOCAL_PATH"])
 
+plantestsuite("samba3.smbtorture_s3.smb1.SMB1-TRUNCATED-SESSSETUP",
+                "fileserver_smb1",
+                [os.path.join(samba3srcdir,
+                              "script/tests/test_smbtorture_s3.sh"),
+                'SMB1-TRUNCATED-SESSSETUP',
+                '//$SERVER_IP/tmp',
+                '$USERNAME',
+                '$PASSWORD',
+                smbtorture3,
+                "-mNT1"])
+
+plantestsuite("samba3.smbtorture_s3.smb1.SMB1-NEGOTIATE-EXIT",
+                "fileserver_smb1",
+                [os.path.join(samba3srcdir,
+                              "script/tests/test_smbtorture_s3.sh"),
+                'SMB1-NEGOTIATE-EXIT',
+                '//$SERVER_IP/tmp',
+                '$USERNAME',
+                '$PASSWORD',
+                smbtorture3,
+                "-mNT1"])
+
+plantestsuite("samba3.smbtorture_s3.smb1.SMB1-NEGOTIATE-TCON",
+                "fileserver_smb1",
+                [os.path.join(samba3srcdir,
+                              "script/tests/test_smbtorture_s3.sh"),
+                'SMB1-NEGOTIATE-TCON',
+                '//$SERVER_IP/tmp',
+                '$USERNAME',
+                '$PASSWORD',
+                smbtorture3,
+                "-mNT1"])
+
 #
 # MSDFS attribute tests.
 #
@@ -268,6 +304,20 @@ plantestsuite("samba3.smbtorture_s3.smb2.SMB2-DFS-FILENAME-LEADING-BACKSLASH",
                               "script/tests/test_smbtorture_s3.sh"),
                 'SMB2-DFS-FILENAME-LEADING-BACKSLASH',
                 '//$SERVER_IP/msdfs-pathname-share',
+                '$USERNAME',
+                '$PASSWORD',
+                smbtorture3,
+                "-mSMB2"])
+
+# BUG: https://bugzilla.samba.org/show_bug.cgi?id=15422
+# Prevent bad pipenames.
+#
+plantestsuite("samba3.smbtorture_s3.smb2.SMB2-INVALID-PIPENAME",
+                "fileserver",
+                [os.path.join(samba3srcdir,
+                              "script/tests/test_smbtorture_s3.sh"),
+                'SMB2-INVALID-PIPENAME',
+                '//$SERVER_IP/tmp',
                 '$USERNAME',
                 '$PASSWORD',
                 smbtorture3,
@@ -354,6 +404,20 @@ plantestsuite("samba3.smbtorture_s3.smb1.SMB1-DFS-OPERATIONS",
                 '$PASSWORD',
                 smbtorture3,
                 "-mNT1"])
+#
+# SMB1-DFS-BADPATH needs to run against a special share msdfs-pathname-share
+# BUG: https://bugzilla.samba.org/show_bug.cgi?id=15419
+#
+plantestsuite("samba3.smbtorture_s3.smb1.SMB1-DFS-BADPATH",
+                "fileserver_smb1",
+                [os.path.join(samba3srcdir,
+                              "script/tests/test_smbtorture_s3.sh"),
+                'SMB1-DFS-BADPATH',
+                '//$SERVER_IP/msdfs-pathname-share',
+                '$USERNAME',
+                '$PASSWORD',
+                smbtorture3,
+                "-mNT1"])
 
 #
 # SMB2-STREAM-ACL needs to run against a special share - vfs_wo_fruit
@@ -423,6 +487,22 @@ plantestsuite("samba3.smbtorture_s3.plain.%s" % "SMB2-DEL-ON-CLOSE-NONWRITE-DELE
                               "script/tests/test_smbtorture_s3.sh"),
                 'SMB2-DEL-ON-CLOSE-NONWRITE-DELETE-NO',
                 '//$SERVER_IP/delete_no_unwrite',
+                '$USERNAME',
+                '$PASSWORD',
+                smbtorture3,
+                "",
+                "-l $LOCAL_PATH"])
+
+#
+# Test doing an async read + disconnect on a pipe doesn't crash the server.
+# BUG: https://bugzilla.samba.org/show_bug.cgi?id=15423
+#
+plantestsuite("samba3.smbtorture_s3.plain.%s" % "SMB2-PIPE-READ-ASYNC-DISCONNECT",
+                "fileserver",
+                [os.path.join(samba3srcdir,
+                              "script/tests/test_smbtorture_nocrash_s3.sh"),
+                'SMB2-PIPE-READ-ASYNC-DISCONNECT',
+                '//$SERVER_IP/tmp',
                 '$USERNAME',
                 '$PASSWORD',
                 smbtorture3,
@@ -777,6 +857,10 @@ for env in ["fileserver"]:
                   [os.path.join(samba3srcdir, "script/tests/test_stream_dir_rename.sh"),
                   '$SERVER', '$USERNAME', '$PASSWORD', '$PREFIX', smbclient3])
 
+    plantestsuite("samba3.blackbox.test_symlink_dosmode", env,
+                  [os.path.join(samba3srcdir, "script/tests/test_symlink_dosmode.sh"),
+                  '$SERVER', '$SERVER_IP', '$USERNAME', '$PASSWORD', '$LOCAL_PATH/local_symlinks',
+                  '$PREFIX', smbclient3])
     #
     # tar command tests
     #
@@ -817,6 +901,11 @@ for env in ["fileserver"]:
                   [os.path.join(samba3srcdir, "script/tests/test_fruit_resource_stream.sh"),
                   '$SERVER', 'fruit_resource_stream', '$USERNAME', '$PASSWORD',
                   '$LOCAL_PATH/fruit_resource_stream', smbclient3])
+
+plantestsuite("samba3.blackbox.smbclient_old_dir", "fileserver_smb1",
+              [os.path.join(samba3srcdir,
+                            "script/tests/test_old_dirlisting.sh"),
+               timelimit, smbclient3])
 
 for env in ["fileserver:local"]:
     plantestsuite("samba3.blackbox.net_usershare", env, [os.path.join(samba3srcdir, "script/tests/test_net_usershare.sh"), '$SERVER', '$SERVER_IP', '$USERNAME', '$PASSWORD', smbclient3])
@@ -879,6 +968,10 @@ if with_pthreadpool:
                   [os.path.join(samba3srcdir,
                                 "script/tests/test_libwbclient_threads.sh"),
                    "$DOMAIN", "$DC_USERNAME"])
+    plantestsuite("b15464_testcase", "none",
+                  [os.path.join(bbdir, "b15464-testcase.sh"),
+                   binpath("b15464-testcase"),
+                   binpath("plugins/libnss_winbind.so.2")])
 
 plantestsuite("samba3.test_nfs4_acl", "none",
               [os.path.join(bindir(), "test_nfs4_acls"),
@@ -1065,6 +1158,8 @@ for t in tests:
         # Certain tests fail when run against ad_member with MIT kerberos because the private krb5.conf overrides the provisioned lib/krb5.conf,
         # ad_member_idmap_rid sets "create krb5.conf = no"
         plansmbtorture4testsuite(t, "ad_member_idmap_rid", '//$SERVER/tmp -k yes -U$DC_USERNAME@$REALM%$DC_PASSWORD', 'krb5')
+    elif t == "smb2.session-require-signing":
+        plansmbtorture4testsuite(t, "ad_member_idmap_rid", '//$SERVER_IP/tmp -U$DC_USERNAME@$REALM%$DC_PASSWORD')
     elif t == "rpc.lsa":
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD', 'over ncacn_np ')
         plansmbtorture4testsuite(t, "nt4_dc", 'ncacn_ip_tcp:$SERVER_IP -U$USERNAME%$PASSWORD', 'over ncacn_ip_tcp ')
@@ -1410,6 +1505,13 @@ plantestsuite("samba3.blackbox.chdir-cache", "simpleserver:local",
                '$PREFIX',
                'simpleserver'])
 
+plantestsuite("samba3.blackbox.rofs_error", "simpleserver",
+              [os.path.join(samba3srcdir, "script/tests/test_rofs.sh"),
+               configuration,
+               os.path.join(bindir(), "smbclient"),
+               '$SERVER_IP',
+               "error_inject"])
+
 plantestsuite("samba3.blackbox.zero_readsize",
               "simpleserver:local",
               [os.path.join(samba3srcdir,
@@ -1653,6 +1755,16 @@ plantestsuite(
      smbtorture3,
      "",
      "-b $PREFIX/clusteredmember/unclists/tmp.txt -N 5 -o 10"])
+
+plantestsuite("samba3.blackbox.smbclient-bug15435",
+              "fileserver",
+              [os.path.join(samba3srcdir, "script/tests/test_bug15435_widelink_dfs.sh"),
+               "$SERVER",
+               "$SERVER_IP",
+               "$USERNAME",
+               "$PASSWORD",
+               smbclient3,
+               configuration])
 
 plantestsuite(
     "samba3.net_machine_account",

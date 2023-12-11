@@ -21,6 +21,11 @@ samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug
 ''',
 		     for_selftest=True
 		     )
+    bld.SAMBA_BINARY('b15464-testcase',
+		     source='b15464-testcase.c',
+		     deps='replace pthread dl',
+		     for_selftest=True
+		     )
 
 # The nss_wrapper code relies strictly on the linux implementation and
 # name, so compile but do not install a copy under this name.

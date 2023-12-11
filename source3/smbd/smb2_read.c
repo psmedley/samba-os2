@@ -353,7 +353,6 @@ static NTSTATUS schedule_smb2_sendfile_read(struct smbd_smb2_request *smb2req,
 	 * Signing is active OR
 	 * This is a compound SMB2 operation OR
 	 * fsp is a STREAM file OR
-	 * We're using a write cache OR
 	 * It's not a regular file OR
 	 * Requested offset is greater than file size OR
 	 * there's not enough data in the file.
@@ -495,6 +494,7 @@ static struct tevent_req *smbd_smb2_read_send(TALLOC_CTX *mem_ctx,
 
 	if (IS_IPC(smbreq->conn)) {
 		struct tevent_req *subreq = NULL;
+		bool ok;
 
 		state->out_data = data_blob_talloc(state, NULL, in_length);
 		if (in_length > 0 && tevent_req_nomem(state->out_data.data, req)) {
@@ -516,6 +516,18 @@ static struct tevent_req *smbd_smb2_read_send(TALLOC_CTX *mem_ctx,
 		tevent_req_set_callback(subreq,
 					smbd_smb2_read_pipe_done,
 					req);
+
+		/*
+		 * Make sure we mark the fsp as having outstanding async
+		 * activity so we don't crash on shutdown close.
+		 */
+
+		ok = aio_add_req_to_fsp(fsp, req);
+		if (!ok) {
+			tevent_req_nterror(req, NT_STATUS_NO_MEMORY);
+			return tevent_req_post(req, ev);
+		}
+
 		return req;
 	}
 

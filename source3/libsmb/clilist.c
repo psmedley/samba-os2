@@ -567,6 +567,11 @@ NTSTATUS cli_list_old_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 		return status;
 	}
 
+	if (state->dirlist == NULL) {
+		*pfinfo = NULL;
+		return NT_STATUS_OK;
+	}
+
 	num_received = talloc_array_length(state->dirlist) / DIR_STRUCT_SIZE;
 
 	finfo = talloc_array(mem_ctx, struct file_info, num_received);
@@ -593,6 +598,7 @@ NTSTATUS cli_list_old_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 			return status;
 		}
 	}
+	TALLOC_FREE(state->dirlist);
 	*pfinfo = finfo;
 	return NT_STATUS_OK;
 }

@@ -56,7 +56,6 @@ struct dirsync_context {
 	bool linkIncrVal;
 	bool localonly;
 	bool partial;
-	bool assystem;
 	int functional_level;
 	const struct GUID *our_invocation_id;
 	const struct dsdb_schema *schema;
@@ -152,10 +151,6 @@ static int dirsync_filter_entry(struct ldb_request *req,
 	 * list only the attribute that have been modified since last interogation
 	 *
 	 */
-	newmsg = ldb_msg_new(dsc->req);
-	if (newmsg == NULL) {
-		return ldb_oom(ldb);
-	}
 	for (i = msg->num_elements - 1; i >= 0; i--) {
 		if (ldb_attr_cmp(msg->elements[i].name, "uSNChanged") == 0) {
 			int error = 0;
@@ -202,11 +197,6 @@ static int dirsync_filter_entry(struct ldb_request *req,
 			 */
 			return LDB_SUCCESS;
 		}
-		newmsg->dn = ldb_dn_new(newmsg, ldb, "");
-		if (newmsg->dn == NULL) {
-			return ldb_oom(ldb);
-		}
-
 		el = ldb_msg_find_element(msg, "objectGUID");
 		if ( el != NULL) {
 			guidfound = true;
@@ -217,46 +207,12 @@ static int dirsync_filter_entry(struct ldb_request *req,
 		 * well will uncomment the code bellow
 		 */
 		SMB_ASSERT(guidfound == true);
-		/*
-		if (guidfound == false) {
-			struct GUID guid;
-			struct ldb_val *new_val;
-			DATA_BLOB guid_blob;
-
-			tmp[0] = '\0';
-			txt = strrchr(txt, ':');
-			if (txt == NULL) {
-				return ldb_module_done(dsc->req, NULL, NULL, LDB_ERR_OPERATIONS_ERROR);
-			}
-			txt++;
-
-			status = GUID_from_string(txt, &guid);
-			if (!NT_STATUS_IS_OK(status)) {
-				return ldb_module_done(dsc->req, NULL, NULL, LDB_ERR_OPERATIONS_ERROR);
-			}
-
-			status = GUID_to_ndr_blob(&guid, msg, &guid_blob);
-			if (!NT_STATUS_IS_OK(status)) {
-				return ldb_module_done(dsc->req, NULL, NULL, LDB_ERR_OPERATIONS_ERROR);
-			}
-
-			new_val = talloc(msg, struct ldb_val);
-			if (new_val == NULL) {
-				return ldb_oom(ldb);
-			}
-			new_val->data = talloc_steal(new_val, guid_blob.data);
-			new_val->length = guid_blob.length;
-			if (ldb_msg_add_value(msg, "objectGUID", new_val, NULL) != 0) {
-				return ldb_module_done(dsc->req, NULL, NULL, LDB_ERR_OPERATIONS_ERROR);
-			}
-		}
-		*/
-		ldb_msg_add(newmsg, el, LDB_FLAG_MOD_ADD);
-		talloc_steal(newmsg->elements, el->name);
-		talloc_steal(newmsg->elements, el->values);
-
-		talloc_steal(newmsg->elements, msg);
 		return ldb_module_send_entry(dsc->req, msg, controls);
+	}
+
+	newmsg = ldb_msg_new(dsc->req);
+	if (newmsg == NULL) {
+		return ldb_oom(ldb);
 	}
 
 	ndr_err = ndr_pull_struct_blob(replMetaData, dsc, &rmd,
@@ -872,10 +828,6 @@ static int dirsync_search_callback(struct ldb_request *req, struct ldb_reply *ar
 			DSDB_SEARCH_SHOW_DELETED |
 			DSDB_SEARCH_SHOW_EXTENDED_DN;
 
-		if (dsc->assystem) {
-			flags = flags | DSDB_FLAG_AS_SYSTEM;
-		}
-
 		ret = dsdb_module_search_tree(dsc->module, dsc, &res,
 					dn, LDB_SCOPE_BASE,
 					req->op.search.tree,
@@ -1005,7 +957,6 @@ static int dirsync_ldb_search(struct ldb_module *module, struct ldb_request *req
 	struct dirsync_context *dsc;
 	struct ldb_context *ldb;
 	struct ldb_parse_tree *new_tree = req->op.search.tree;
-	uint32_t flags = 0;
 	enum ndr_err_code ndr_err;
 	DATA_BLOB blob;
 	const char **attrs;
@@ -1103,27 +1054,27 @@ static int dirsync_ldb_search(struct ldb_module *module, struct ldb_request *req
 			return LDB_ERR_OPERATIONS_ERROR;
 		}
 		objectclass = dsdb_get_structural_oc_from_msg(schema, acl_res->msgs[0]);
+
+		/*
+		 * While we never use the answer to this for access
+		 * control (after CVE-2023-4154), we return a
+		 * different error message depending on if the user
+		 * was granted GUID_DRS_GET_CHANGES to provide a closer
+		 * emulation and keep some tests passing.
+		 *
+		 * (Samba's ACL logic is not well suited to redacting
+		 * only the secret and RODC filtered attributes).
+		 */
 		ret = acl_check_extended_right(dsc, module, req, objectclass,
 					       sd, acl_user_token(module),
 					       GUID_DRS_GET_CHANGES, SEC_ADS_CONTROL_ACCESS, sid);
-
-		if (ret == LDB_ERR_INSUFFICIENT_ACCESS_RIGHTS) {
-			return ret;
-		}
-		dsc->assystem = true;
-		ret = ldb_request_add_control(req, LDB_CONTROL_AS_SYSTEM_OID, false, NULL);
 
 		if (ret != LDB_SUCCESS) {
 			return ret;
 		}
 		talloc_free(acl_res);
-	} else {
-		flags |= DSDB_ACL_CHECKS_DIRSYNC_FLAG;
-
-		if (ret != LDB_SUCCESS) {
-			return ret;
-		}
-
+	} else if (ret != LDB_SUCCESS) {
+		return ret;
 	}
 
 	dsc->functional_level = dsdb_functional_level(ldb);
@@ -1394,7 +1345,6 @@ static int dirsync_ldb_search(struct ldb_module *module, struct ldb_request *req
 				      req->controls,
 				      dsc, dirsync_search_callback,
 				      req);
-	ldb_req_set_custom_flags(down_req, flags);
 	LDB_REQ_SET_LOCATION(down_req);
 	if (ret != LDB_SUCCESS) {
 		return ret;
