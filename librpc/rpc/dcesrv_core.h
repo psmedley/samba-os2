@@ -27,6 +27,9 @@
 #include "librpc/rpc/rpc_common.h"
 #include "librpc/ndr/libndr.h"
 #include "librpc/gen_ndr/security.h"
+#ifdef __OS2__
+#include <sys/time.h>
+#endif
 
 /* modules can use the following to determine if the interface has changed
  * please increment the version number after each interface change

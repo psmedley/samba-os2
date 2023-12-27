@@ -1305,9 +1305,10 @@ bool dns_record_match(struct dnsp_DnssrvRpcRecord *rec1,
 		      struct dnsp_DnssrvRpcRecord *rec2)
 {
 	int i;
+#ifndef __OS2__
 	struct in6_addr rec1_in_addr6;
 	struct in6_addr rec2_in_addr6;
-
+#endif
 	if (rec1->wType != rec2->wType) {
 		return false;
 	}
@@ -1316,6 +1317,7 @@ bool dns_record_match(struct dnsp_DnssrvRpcRecord *rec1,
 	switch (rec1->wType) {
 	case DNS_TYPE_A:
 		return strcmp(rec1->data.ipv4, rec2->data.ipv4) == 0;
+#ifndef __OS2__
 	case DNS_TYPE_AAAA: {
 		int ret;
 
@@ -1330,6 +1332,7 @@ bool dns_record_match(struct dnsp_DnssrvRpcRecord *rec1,
 
 		return memcmp(&rec1_in_addr6, &rec2_in_addr6, sizeof(rec1_in_addr6)) == 0;
 	}
+#endif
 	case DNS_TYPE_CNAME:
 		return samba_dns_name_equal(rec1->data.cname,
 					    rec2->data.cname);

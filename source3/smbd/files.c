@@ -759,7 +759,11 @@ NTSTATUS openat_pathref_dirfsp_nosymlink(
 	int fd;
 	NTSTATUS status;
 	struct vfs_open_how how = {
+#ifdef O_DIRECTORY
 		.flags = O_NOFOLLOW|O_DIRECTORY,
+#else
+		.flags = O_NOFOLLOW,
+#endif
 		.mode = 0,
 	};
 

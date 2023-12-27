@@ -146,7 +146,7 @@ def build(bld):
 
         bld.SAMBA_BINARY('tdbtortseq',
                          'tools/tdbtortseq.c',
-                         'tdb',
+                         'tdb replace',
                          install=False)
 
         bld.SAMBA_BINARY('tdbrestore',

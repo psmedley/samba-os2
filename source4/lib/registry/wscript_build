@@ -29,8 +29,8 @@ bld.SAMBA_BINARY('regdiff',
 	source='tools/regdiff.c ../../../lib/async_req/async_sock.c',
 	manpages='man/regdiff.1',
 	deps='''samba-hostconfig registry popt CMDLINE_S4
-ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS samba-credentials samba-hostconfig krb5samba authkrb5 
-samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
+ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS samba-credentials samba-hostconfig krb5samba authkrb5 cluster 
+samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
 ''',
 	)
 
@@ -38,9 +38,9 @@ samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR
 bld.SAMBA_BINARY('regpatch',
 	source='tools/regpatch.c ../../../lib/async_req/async_sock.c',
 	manpages='man/regpatch.1',
-	deps='''samba-hostconfig registry popt CMDLINE_S4 registry_common
+	deps='''samba-hostconfig registry popt CMDLINE_S4 registry_common cluster 
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS samba-credentials samba-hostconfig krb5samba authkrb5 
-samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
+samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
 ''',
 	)
 
@@ -48,9 +48,9 @@ samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR
 bld.SAMBA_BINARY('regshell',
 	source='tools/regshell.c ../../../lib/async_req/async_sock.c',
 	manpages='man/regshell.1',
-	deps='''samba-hostconfig popt registry CMDLINE_S4 SMBREADLINE registry_common
+	deps='''samba-hostconfig popt registry CMDLINE_S4 SMBREADLINE registry_common cluster 
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS samba-credentials samba-hostconfig krb5samba authkrb5 
-samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
+samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
 ''',
 	)
 
@@ -58,9 +58,9 @@ samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR
 bld.SAMBA_BINARY('regtree',
 	source='tools/regtree.c',
 	manpages='man/regtree.1',
-	deps='''samba-hostconfig popt registry CMDLINE_S4 registry_common
+	deps='''samba-hostconfig popt registry CMDLINE_S4 registry_common cluster 
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS samba-credentials samba-hostconfig krb5samba authkrb5 
-samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth winbind-client RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
+samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns talloc_report_printf dcerpc-pkt-auth
 ''',
 	)
 

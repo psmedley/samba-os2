@@ -328,7 +328,7 @@ static int tevent_init_globals(void)
 
 _PUBLIC_ pid_t tevent_cached_getpid(void)
 {
-#ifdef HAVE_PTHREAD
+#if defined(HAVE_PTHREAD) && !defined(__OS2__) // TODO - workout why this gives wrong PID values on OS/2
 	tevent_init_globals();
 #ifdef TEVENT_VERIFY_CACHED_GETPID
 	if (tevent_cached_global_pid != getpid()) {

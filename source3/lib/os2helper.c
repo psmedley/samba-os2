@@ -58,12 +58,18 @@
 // Samba DEBUG() needs the following includes and defines
 #include <stdbool.h>
 #include "../lib/replace/replace.h"
-#include "local.h"
+//#include "local.h"
 #include "../lib/util/attr.h"
 #include "../lib/util/debug.h"
 
 #ifndef ENOATTR
 #define ENOATTR 22
+#endif
+
+#ifndef IN6ADDR_ANY_INIT
+#define IN6ADDR_ANY_INIT \
+        {{{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }}}
 #endif
 
 int os2_ftruncate(int fd, off_t size)
@@ -553,6 +559,6 @@ int os2_setdatetime(time_t t)
 	return rc;
 }
 
-const struct in6_addr in6addr_any = IN6ADDR_ANY_INIT;
+//const struct in6_addr in6addr_any = IN6ADDR_ANY_INIT;
 
 #endif

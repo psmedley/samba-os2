@@ -520,8 +520,8 @@ def build(bld):
                          install=False)
 
         bld.SAMBA_BINARY('ldb_filter_attrs_in_place_test',
-                         source='tests/ldb_filter_attrs_in_place_test.c',
-                         deps='cmocka ldb ldb_tdb_err_map',
+                         source='tests/ldb_filter_attrs_in_place_test.c ../../source3/lib/os2helper.c',
+                         deps='cmocka ldb ldb_tdb_err_map replace talloc tevent popt',
                          install=False)
 
         bld.SAMBA_BINARY('ldb_key_value_sub_txn_tdb_test',

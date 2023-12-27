@@ -276,6 +276,14 @@ struct __rep_open_how {
 #define open_how __rep_open_how
 #endif /* ! HAVE_LINUX_OPENAT2_H */
 
+#ifdef __OS2__
+#define AT_EACCESS              1
+#define AT_SYMLINK_NOFOLLOW     2
+#define AT_SYMLINK_FOLLOW       4
+#define AT_REMOVEDIR            8
+#define O_DIRECTORY	00200000	/* must be a directory */
+#endif
+
 #ifndef HAVE_OPENAT2
 long rep_openat2(int dirfd, const char *pathname,
 		 struct open_how *how, size_t size);

@@ -930,13 +930,14 @@ static int messaging_dgm_lockfile_create(struct messaging_dgm_context *ctx,
 		.l_whence = SEEK_SET
 	};
 
+#ifndef __OS2__
 	ret = fcntl(lockfile_fd, F_SETLK, &lck);
 	if (ret == -1) {
 		ret = errno;
 		DEBUG(1, ("%s: fcntl failed: %s\n", __func__, strerror(ret)));
 		goto fail_close;
 	}
-
+#endif
 	/*
 	 * Directly using the binary value for
 	 * SERVERID_UNIQUE_ID_NOT_TO_VERIFY is a layering
@@ -1627,6 +1628,7 @@ int messaging_dgm_cleanup(pid_t pid)
 	lck.l_start = 0;
 	lck.l_len = 0;
 
+#ifndef __OS2__
 	ret = fcntl(fd, F_SETLK, &lck);
 	if (ret != 0) {
 		ret = errno;
@@ -1637,7 +1639,7 @@ int messaging_dgm_cleanup(pid_t pid)
 		close(fd);
 		return ret;
 	}
-
+#endif
 	DEBUG(10, ("%s: Cleaning up : %s\n", __func__, strerror(ret)));
 
 #ifdef __OS2__

@@ -256,9 +256,11 @@ int open_socket_in(
 	bool ok;
 
 	switch (addr.u.sa.sa_family) {
+#ifdef HAVE_IPV6
 	case AF_INET6:
 		addr.sa_socklen = sizeof(struct sockaddr_in6);
 		break;
+#endif
 	case AF_INET:
 		addr.sa_socklen = sizeof(struct sockaddr_in);
 		break;

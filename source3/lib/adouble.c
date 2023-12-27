@@ -2127,7 +2127,9 @@ static ssize_t ad_read_meta(vfs_handle_struct *handle,
 
 	if (ealen == -1) {
 		switch (errno) {
+#ifndef __OS2__
 		case ENOATTR:
+#endif
 		case ENOENT:
 			if (errno == ENOATTR) {
 				errno = ENOENT;

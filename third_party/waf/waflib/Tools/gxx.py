@@ -91,7 +91,7 @@ def gxx_modifier_cygwin(conf):
 def gxx_modifier_os2knix(conf):
 	v = conf.env
 	v.cxxprogram_PATTERN    = '%s.exe'
-	v.LINKFLAGS_cxxprogram   = ['-Zexe', '-Zomf','-Zbin-files', '-Zmap', '-static-libgcc', '-lgpg-error', '-lmmap', '-lbz2', '-llzma', '-lcrypto', '-lxml2', '-lcxsmbd', '-lacl', '-lattr', '-lgnutls', '-licuuc', '-licui18n', '-licudata', '-llibstdc++', '/extras/lib/iconv.a']
+	v.LINKFLAGS_cxxprogram   = ['-Zexe', '-Zomf','-Zbin-files', '-Zmap', '-static-libgcc', '-lgpg-error', '-lbz2', '-llzma', '-lcrypto', '-lxml2', '-lcx', '-lacl', '-lattr', '-lgnutls', '-licuuc', '-llibstdc++', '/extras/lib/iconv.a', '-lintl', '-ltinfo']
 	v.cxxshlib_PATTERN      = 'lib%s.dll'
 	v.implib_PATTERN      = 'lib%s.dll.a'
 	v.IMPLIB_ST           = '-Wl,--out-implib,%s'

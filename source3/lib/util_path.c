@@ -314,9 +314,13 @@ bool subdir_of(const char *parent,
 	const char *relative = NULL;
 	bool matched;
 
+#ifndef __OS2__
 	SMB_ASSERT(parent[0] == '/');
 	SMB_ASSERT(subdir[0] == '/');
-
+#else
+	SMB_ASSERT(parent[2] == '/');
+	SMB_ASSERT(subdir[2] == '/');
+#endif
 	if (parent_len == 1) {
 		/*
 		 * Everything is below "/"

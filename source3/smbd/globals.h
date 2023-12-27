@@ -30,6 +30,14 @@ struct smbd_dmapi_context;
 extern struct smbd_dmapi_context *dmapi_ctx;
 #endif
 
+#ifdef __OS2__
+#define AT_EACCESS              1
+#define AT_SYMLINK_NOFOLLOW     2
+#define AT_SYMLINK_FOLLOW       4
+#define AT_REMOVEDIR            8
+#define O_DIRECTORY	00200000	/* must be a directory */
+#endif
+
 /* A singleton cache to speed up searching by dev/inode. */
 struct fsp_singleton_cache {
 	files_struct *fsp;

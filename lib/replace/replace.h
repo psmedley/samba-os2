@@ -36,6 +36,10 @@
 #include <standards.h>
 #endif
 
+#ifdef __OS2__
+#define RTLD_DEFAULT    ((void *)0LL)
+#endif
+
 /*
  * Needs to be defined before std*.h and string*.h are included
  * As it's also needed when Python.h is the first header we
