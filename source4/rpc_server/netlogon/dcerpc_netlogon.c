@@ -839,7 +839,9 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3(
 		status,
 		lpcfg_workgroup(dce_call->conn->dce_ctx->lp_ctx),
 		trust_account_in_db,
-		sid);
+		sid,
+		NULL /* client_audit_info */,
+		NULL /* server_audit_info */);
 
 	return status;
 }
@@ -1469,6 +1471,7 @@ static void dcesrv_netr_LogonSamLogon_base_auth_done(struct tevent_req *subreq)
 	case 2:
 		nt_status = auth_convert_user_info_dc_saminfo2(mem_ctx,
 							       user_info_dc,
+							       AUTH_INCLUDE_RESOURCE_GROUPS,
 							       &sam2);
 		if (!NT_STATUS_IS_OK(nt_status)) {
 			r->out.result = nt_status;
@@ -1482,7 +1485,8 @@ static void dcesrv_netr_LogonSamLogon_base_auth_done(struct tevent_req *subreq)
 	case 3:
 		nt_status = auth_convert_user_info_dc_saminfo3(mem_ctx,
 							       user_info_dc,
-							       &sam3);
+							       AUTH_INCLUDE_RESOURCE_GROUPS,
+							       &sam3, NULL);
 		if (!NT_STATUS_IS_OK(nt_status)) {
 			r->out.result = nt_status;
 			dcesrv_netr_LogonSamLogon_base_reply(state);
@@ -1495,7 +1499,8 @@ static void dcesrv_netr_LogonSamLogon_base_auth_done(struct tevent_req *subreq)
 	case 6:
 		nt_status = auth_convert_user_info_dc_saminfo6(mem_ctx,
 							       user_info_dc,
-							       &sam6);
+							       AUTH_INCLUDE_RESOURCE_GROUPS,
+							       &sam6, NULL);
 		if (!NT_STATUS_IS_OK(nt_status)) {
 			r->out.result = nt_status;
 			dcesrv_netr_LogonSamLogon_base_reply(state);
@@ -3209,7 +3214,9 @@ static WERROR dcesrv_netr_DsRGetDCName_base_call(struct dcesrv_netr_DsRGetDCName
 	const char *domain_name = NULL;
 	const char *pdc_ip;
 	bool different_domain = true;
+	bool force_remote_lookup = false;
 	uint32_t valid_flags;
+	uint32_t this_dc_valid_flags;
 	int dc_level;
 
 	ZERO_STRUCTP(r->out.info);
@@ -3274,17 +3281,8 @@ static WERROR dcesrv_netr_DsRGetDCName_base_call(struct dcesrv_netr_DsRGetDCName
 	 * ...
 	 */
 
-	dc_level = dsdb_dc_functional_level(sam_ctx);
 	valid_flags = DSGETDC_VALID_FLAGS;
-	if (dc_level >= DS_DOMAIN_FUNCTION_2012) {
-		valid_flags |= DS_DIRECTORY_SERVICE_8_REQUIRED;
-	}
-	if (dc_level >= DS_DOMAIN_FUNCTION_2012_R2) {
-		valid_flags |= DS_DIRECTORY_SERVICE_9_REQUIRED;
-	}
-	if (dc_level >= DS_DOMAIN_FUNCTION_2016) {
-		valid_flags |= DS_DIRECTORY_SERVICE_10_REQUIRED;
-	}
+
 	if (r->in.flags & ~valid_flags) {
 		/*
 		 * TODO: add tests to prove this (maybe based on the
@@ -3379,12 +3377,44 @@ static WERROR dcesrv_netr_DsRGetDCName_base_call(struct dcesrv_netr_DsRGetDCName
 		different_domain = false;
 	}
 
+	if (!different_domain) {
+		dc_level = dsdb_dc_functional_level(sam_ctx);
+
+		/*
+		 * Do not return a local response if we do not support the
+		 * functional level or feature (eg web services)
+		 */
+		this_dc_valid_flags = valid_flags;
+
+		/* Samba does not implement this */
+		this_dc_valid_flags &= ~DS_WEB_SERVICE_REQUIRED;
+
+		if (dc_level < DS_DOMAIN_FUNCTION_2012) {
+			this_dc_valid_flags &= ~DS_DIRECTORY_SERVICE_8_REQUIRED;
+		}
+		if (dc_level < DS_DOMAIN_FUNCTION_2012_R2) {
+			this_dc_valid_flags &= ~DS_DIRECTORY_SERVICE_9_REQUIRED;
+		}
+		if (dc_level < DS_DOMAIN_FUNCTION_2016) {
+			this_dc_valid_flags &= ~DS_DIRECTORY_SERVICE_10_REQUIRED;
+		}
+		if (r->in.flags & ~this_dc_valid_flags) {
+			DBG_INFO("Forcing remote lookup to find another DC "
+				 "in this domain %s with more features, "
+				 "as this Samba DC is Functional level %d but flags are 0x08%x\n",
+				 r->in.domain_name, dc_level, (unsigned int)r->in.flags);
+			force_remote_lookup = true;
+		}
+	}
+
 	/* Proof server site parameter "site_name" if it was specified */
 	server_site_name = samdb_server_site_name(sam_ctx, state);
 	W_ERROR_HAVE_NO_MEMORY(server_site_name);
-	if (different_domain || (r->in.site_name != NULL &&
-				 (strcasecmp_m(r->in.site_name,
-					     server_site_name) != 0))) {
+	if (force_remote_lookup
+	    || different_domain
+	    || (r->in.site_name != NULL &&
+		(strcasecmp_m(r->in.site_name,
+			      server_site_name) != 0))) {
 
 		struct dcerpc_binding_handle *irpc_handle = NULL;
 		struct tevent_req *subreq = NULL;

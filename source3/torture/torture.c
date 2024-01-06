@@ -5846,7 +5846,7 @@ static bool run_deletetest(int dummy)
 
   fail:
 	/* FIXME: This will crash if we aborted before cli2 got
-	 * intialized, because these functions don't handle
+	 * initialized, because these functions don't handle
 	 * uninitialized connections. */
 
 	if (fnum1 != (uint16_t)-1) cli_close(cli1, fnum1);
@@ -9908,7 +9908,7 @@ bool torture_ioctl_test(int dummy)
 
 
 /*
-  tries varients of chkpath
+  tries variants of chkpath
  */
 bool torture_chkpath_test(int dummy)
 {
@@ -10077,7 +10077,7 @@ static bool run_eatest(int dummy)
 	}
 
 	/* Setting EA's to zero length deletes them. Test this */
-	printf("Now deleting all EA's - case indepenent....\n");
+	printf("Now deleting all EA's - case independent....\n");
 
 #if 1
 	cli_set_ea_path(cli, fname, "", "", 0);
@@ -10180,7 +10180,7 @@ static bool run_dirtest1(int dummy)
 		correct = False;
 
 	/* Ensure if we have the "must have" bits we only see the
-	 * relevent entries.
+	 * relevant entries.
 	 */
 	num_seen = 0;
 	cli_list_old(cli, "\\LISTDIR\\*", (FILE_ATTRIBUTE_DIRECTORY<<8)|FILE_ATTRIBUTE_DIRECTORY, list_fn, &num_seen);
@@ -15732,6 +15732,10 @@ static struct {
 		.fn    = run_smb2_quota1,
 	},
 	{
+		.name  = "SMB2-INVALID-PIPENAME",
+		.fn    = run_smb2_invalid_pipename,
+	},
+	{
 		.name  = "SMB2-STREAM-ACL",
 		.fn    = run_smb2_stream_acl,
 	},
@@ -15766,10 +15770,6 @@ static struct {
 	{
 		.name  = "SMB2-DFS-FILENAME-LEADING-BACKSLASH",
 		.fn    = run_smb2_dfs_filename_leading_backslash,
-	},
-	{
-		.name  = "SMB2-INVALID-PIPENAME",
-		.fn    = run_smb2_invalid_pipename,
 	},
 	{
 		.name  = "SMB2-PIPE-READ-ASYNC-DISCONNECT",
@@ -16052,6 +16052,10 @@ static struct {
 	{
 		.name  = "rpc-scale",
 		.fn    = run_rpc_scale,
+	},
+	{
+		.name  = "LOCAL-TDB-VALIDATE",
+		.fn    = run_tdb_validate,
 	},
 	{
 		.name = NULL,

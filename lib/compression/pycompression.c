@@ -26,7 +26,7 @@
 
 #include "includes.h"
 #include <talloc.h>
-#include <Python.h>
+#include "lib/replace/system/python.h"
 #include "lzxpress.h"
 #include "lzxpress_huffman.h"
 
@@ -270,7 +270,7 @@ static PyMethodDef mod_methods[] = {
 };
 
 
-#define MODULE_DOC PyDoc_STR("LZXpress compresssion/decompression bindings")
+#define MODULE_DOC PyDoc_STR("LZXpress compression/decompression bindings")
 
 static struct PyModuleDef moduledef = {
     PyModuleDef_HEAD_INIT,

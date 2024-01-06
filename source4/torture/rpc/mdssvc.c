@@ -152,7 +152,7 @@ done:
 					  0,
 					  &state->ph,
 					  &state->mdscmd_close.status);
-		ZERO_STRUCT(state);
+		ZERO_STRUCTP(state);
 	}
 	return ok;
 }
@@ -162,13 +162,17 @@ static bool torture_rpc_mdssvc_close(struct torture_context *tctx,
 {
 	struct torture_mdsscv_state *state = talloc_get_type_abort(
 		data, struct torture_mdsscv_state);
-	struct dcerpc_binding_handle *b = state->p->binding_handle;
 	NTSTATUS status;
 	bool ok = true;
 
 	torture_comment(tctx, "test_teardown_mdssvc_disconnect\n");
 
-	status = dcerpc_mdssvc_close(b,
+	if (state->p == NULL) {
+		/* We have already been disconnected. */
+		goto done;
+	}
+
+	status = dcerpc_mdssvc_close(state->p->binding_handle,
 				     state,
 				     &state->ph,
 				     0,
@@ -180,7 +184,7 @@ static bool torture_rpc_mdssvc_close(struct torture_context *tctx,
 	torture_assert_ntstatus_ok_goto(tctx, status, ok, done,
 					"dcerpc_mdssvc_close failed\n");
 
-	ZERO_STRUCT(state);
+	ZERO_STRUCTP(state);
 
 done:
 	return ok;
@@ -497,6 +501,10 @@ static bool test_mdssvc_invalid_ph_unknown1(struct torture_context *tctx,
 		tctx, status, NT_STATUS_RPC_PROTOCOL_ERROR, ok, done,
 		"dcerpc_mdssvc_unknown1 failed\n");
 
+	/* Free and set to NULL the no-longer-usable pipe. */
+	b = NULL;
+	TALLOC_FREE(state->p);
+
 done:
 	return ok;
 }
@@ -557,6 +565,10 @@ static bool test_mdssvc_invalid_ph_cmd(struct torture_context *tctx,
 	torture_assert_ntstatus_equal_goto(
 		tctx, status, NT_STATUS_RPC_PROTOCOL_ERROR, ok, done,
 		"dcerpc_mdssvc_unknown1 failed\n");
+
+	/* Free and set to NULL the no-longer-usable pipe. */
+	b = NULL;
+	TALLOC_FREE(state->p);
 
 done:
 	return ok;
@@ -806,6 +818,10 @@ static bool test_mdssvc_invalid_ph_close(struct torture_context *tctx,
 	torture_assert_ntstatus_equal_goto(
 		tctx, status, NT_STATUS_RPC_PROTOCOL_ERROR, ok, done,
 		"dcerpc_mdssvc_unknown1 failed\n");
+
+	/* Free and set to NULL the no-longer-usable pipe. */
+	b = NULL;
+	TALLOC_FREE(state->p);
 
 done:
 	return ok;

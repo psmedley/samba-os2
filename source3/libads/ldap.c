@@ -165,7 +165,7 @@ static int ldap_search_with_timeout(LDAP *ld,
 		/* Setup alarm timeout. */
 		CatchSignal(SIGALRM, gotalarm_sig);
 		/* Make the alarm time one second beyond
-		   the timout we're setting for the
+		   the timeout we're setting for the
 		   remote search timeout, to allow that
 		   to fire in preference. */
 		alarm(to+1);
@@ -477,6 +477,12 @@ again:
 		req_sa_list[num_requests] = &sa_list[i];
 		num_requests += 1;
 	}
+
+	DBG_DEBUG("Try to create %zu netlogon connections for domain '%s' "
+		  "(provided count of addresses was %zu).\n",
+		  num_requests,
+		  domain,
+		  count);
 
 	if (num_requests == 0) {
 		status = NT_STATUS_NO_LOGON_SERVERS;
@@ -855,6 +861,8 @@ ADS_STATUS ads_connect(ADS_STRUCT *ads)
 		bool ok = false;
 		struct sockaddr_storage ss;
 
+		DBG_DEBUG("Resolving name of LDAP server '%s'.\n",
+			  ads->server.ldap_server);
 		ok = resolve_name(ads->server.ldap_server, &ss, 0x20, true);
 		if (!ok) {
 			DEBUG(5,("ads_connect: unable to resolve name %s\n",
@@ -900,6 +908,8 @@ ADS_STATUS ads_connect(ADS_STRUCT *ads)
 		 * Keep trying to find a server and fall through
 		 * into ads_find_dc() again.
 		 */
+		DBG_DEBUG("Failed to connect to DC via LDAP server IP address, "
+			  "trying to find another DC.\n");
 	}
 
 	ntstatus = ads_find_dc(ads);
@@ -1244,7 +1254,7 @@ static ADS_STATUS ads_do_paged_search_args(ADS_STRUCT *ads,
 		ExternalCtrl.ldctl_oid = discard_const_p(char, external_control->control);
 		ExternalCtrl.ldctl_iscritical = (char) external_control->critical;
 
-		/* win2k does not accept a ldctl_value beeing passed in */
+		/* win2k does not accept a ldctl_value being passed in */
 
 		if (external_control->val != 0) {
 
@@ -2342,7 +2352,7 @@ done:
  * @param machine_name the NetBIOS name of the computer, which is used to identify the computer account.
  * @param spns An array or strings for the service principals to add,
  *        i.e. 'cifs/machine_name', 'http/machine.full.domain.com' etc.
- * @return 0 upon sucess, or non-zero if a failure occurs
+ * @return 0 upon success, or non-zero if a failure occurs
  **/
 
 ADS_STATUS ads_add_service_principal_names(ADS_STRUCT *ads,
@@ -2534,7 +2544,7 @@ done:
 
 /**
  * adds a machine account to the ADS server
- * @param ads An intialized ADS_STRUCT
+ * @param ads An initialized ADS_STRUCT
  * @param machine_name - the NetBIOS machine name of this account.
  * @param account_type A number indicating the type of account to create
  * @param org_unit The LDAP path in which to place this account
@@ -2718,7 +2728,7 @@ done:
 
 /**
  * move a machine account to another OU on the ADS server
- * @param ads - An intialized ADS_STRUCT
+ * @param ads - An initialized ADS_STRUCT
  * @param machine_name - the NetBIOS machine name of this account.
  * @param org_unit - The LDAP path in which to place this account
  * @param moved - whether we moved the machine account (optional)
@@ -3208,7 +3218,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
 
 	if ((*num_strings) != range_start) {
 		DEBUG(1, ("ads_pull_strings_range: Range attribute (%s) doesn't start at %u, but at %lu"
-			  " - aborting range retreival\n",
+			  " - aborting range retrieval\n",
 			  range_attr, (unsigned int)(*num_strings) + 1, range_start));
 		ldap_memfree(range_attr);
 		*more_strings = False;
@@ -3219,7 +3229,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
 
 	if (*more_strings && ((*num_strings + num_new_strings) != (range_end + 1))) {
 		DEBUG(1, ("ads_pull_strings_range: Range attribute (%s) tells us we have %lu "
-			  "strings in this bunch, but we only got %lu - aborting range retreival\n",
+			  "strings in this bunch, but we only got %lu - aborting range retrieval\n",
 			  range_attr, (unsigned long int)range_end - range_start + 1,
 			  (unsigned long int)num_new_strings));
 		ldap_memfree(range_attr);
@@ -3268,7 +3278,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
  * @param msg Results of search
  * @param field Attribute to retrieve
  * @param v Pointer to int to store result
- * @return boolean inidicating success
+ * @return boolean indicating success
 */
  bool ads_pull_uint32(ADS_STRUCT *ads, LDAPMessage *msg, const char *field,
 		      uint32_t *v)
@@ -3317,7 +3327,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
  * @param msg Results of search
  * @param field Attribute to retrieve
  * @param sid Pointer to sid to store result
- * @return boolean inidicating success
+ * @return boolean indicating success
 */
  bool ads_pull_sid(ADS_STRUCT *ads, LDAPMessage *msg, const char *field,
 		   struct dom_sid *sid)
@@ -3382,7 +3392,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
  * @param msg Results of search
  * @param field Attribute to retrieve
  * @param sd Pointer to *struct security_descriptor to store result (talloc()ed)
- * @return boolean inidicating success
+ * @return boolean indicating success
 */
  bool ads_pull_sd(ADS_STRUCT *ads, TALLOC_CTX *mem_ctx,
 		  LDAPMessage *msg, const char *field,
@@ -4030,7 +4040,7 @@ static char **get_addl_hosts(ADS_STRUCT *ads, TALLOC_CTX *mem_ctx,
 
 	/*
 	 * Windows DC implicitly adds a short name for each FQDN added to
-	 * msDS-AdditionalDnsHostName, but it comes with a strage binary
+	 * msDS-AdditionalDnsHostName, but it comes with a strange binary
 	 * suffix "\0$" which we should ignore (see bug #14406).
 	 */
 

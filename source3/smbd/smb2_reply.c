@@ -63,8 +63,7 @@
 /* Custom version for processing POSIX paths. */
 #define IS_PATH_SEP(c,posix_only) ((c) == '/' || (!(posix_only) && (c) == '\\'))
 
-static NTSTATUS check_path_syntax_internal(char *path,
-					   bool posix_path)
+NTSTATUS check_path_syntax(char *path, bool posix_path)
 {
 	char *d = path;
 	const char *s = path;
@@ -189,10 +188,10 @@ static NTSTATUS check_path_syntax_internal(char *path,
 			}
 			*d++ = *s++;
 		} else {
-			size_t siz;
+			size_t ch_size;
 			/* Get the size of the next MB character. */
-			next_codepoint(s,&siz);
-			switch(siz) {
+			next_codepoint(s,&ch_size);
+			switch(ch_size) {
 				case 5:
 					*d++ = *s++;
 					FALL_THROUGH;
@@ -209,7 +208,7 @@ static NTSTATUS check_path_syntax_internal(char *path,
 					*d++ = *s++;
 					break;
 				default:
-					DEBUG(0,("check_path_syntax_internal: character length assumptions invalid !\n"));
+					DBG_ERR("character length assumptions invalid !\n");
 					*d = '\0';
 					return NT_STATUS_INVALID_PARAMETER;
 			}
@@ -223,69 +222,59 @@ static NTSTATUS check_path_syntax_internal(char *path,
 }
 
 /****************************************************************************
- Ensure we check the path in *exactly* the same way as W2K for regular pathnames.
- No wildcards allowed.
+ SMB2-only code to strip an MSDFS prefix from an incoming pathname.
 ****************************************************************************/
 
-NTSTATUS check_path_syntax(char *path)
+NTSTATUS smb2_strip_dfs_path(const char *in_path, const char **out_path)
 {
-	return check_path_syntax_internal(path, false);
-}
+	const char *path = in_path;
 
-/****************************************************************************
- Check the path for a POSIX client.
- We're assuming here that '/' is not the second byte in any multibyte char
- set (a safe assumption).
-****************************************************************************/
-
-NTSTATUS check_path_syntax_posix(char *path)
-{
-	return check_path_syntax_internal(path, true);
-}
-
-/****************************************************************************
- Check the path for an SMB2 DFS path.
- SMB2 DFS paths look like hostname\share (followed by a possible \extrapath.
- Path returned from here must look like:
-	hostname/share (followed by a possible /extrapath).
-****************************************************************************/
-
-static NTSTATUS check_path_syntax_smb2_msdfs(char *path)
-{
-	char *share = NULL;
-	char *remaining_path = NULL;
-	/* No SMB2 names can start with '\\' */
-	if (path[0] == '\\') {
-		return NT_STATUS_OBJECT_NAME_INVALID;
+	/* Match the Windows 2022 behavior for an empty DFS pathname. */
+	if (*path == '\0') {
+		return NT_STATUS_INVALID_PARAMETER;
 	}
-	/*
-	 * smbclient libraries sometimes set the DFS flag and send
-	 * local pathnames. Cope with this by just calling
-	 * check_path_syntax() on the whole path if it doesn't
-	 * look like a DFS path, similar to what parse_dfs_path() does.
-	 */
-	/* servername should be at path[0] */
-	share = strchr(path, '\\');
-	if (share == NULL) {
-		return check_path_syntax(path);
+	/* Strip any leading '\\' characters - MacOSX client behavior. */
+	while (*path == '\\') {
+		path++;
 	}
-	*share++ = '/';
-	remaining_path = strchr(share, '\\');
-	if (remaining_path == NULL) {
-		/* Only hostname\share. We're done. */
-		return NT_STATUS_OK;
+	/* We should now be pointing at the server name. Go past it. */
+	for (;;) {
+		if (*path == '\0') {
+			/* End of complete path. Exit OK. */
+			goto out;
+		}
+		if (*path == '\\') {
+			/* End of server name. Go past and break. */
+			path++;
+			break;
+		}
+		path++; /* Continue looking for end of server name or string. */
 	}
-	*remaining_path++ = '/';
-	return check_path_syntax(remaining_path);
-}
 
-NTSTATUS check_path_syntax_smb2(char *path, bool dfs_path)
-{
-	if (dfs_path) {
-		return check_path_syntax_smb2_msdfs(path);
-	} else {
-		return check_path_syntax(path);
+	/* We should now be pointing at the share name. Go past it. */
+	for (;;) {
+		if (*path == '\0') {
+			/* End of complete path. Exit OK. */
+			goto out;
+		}
+		if (*path == '\\') {
+			/* End of share name. Go past and break. */
+			path++;
+			break;
+		}
+		if (*path == ':') {
+			/* Only invalid character in sharename. */
+			return NT_STATUS_OBJECT_NAME_INVALID;
+		}
+		path++; /* Continue looking for end of share name or string. */
 	}
+
+	/* path now points at the start of the real filename (if any). */
+
+  out:
+	/* We have stripped the DFS path prefix (if any). */
+	*out_path = path;
+	return NT_STATUS_OK;
 }
 
 /****************************************************************************
@@ -444,11 +433,7 @@ static size_t srvstr_get_path_internal(TALLOC_CTX *ctx,
 
   local_path:
 
-	if (posix_pathnames) {
-		*err = check_path_syntax_posix(dst);
-	} else {
-		*err = check_path_syntax(dst);
-	}
+	*err = check_path_syntax(dst, posix_pathnames);
 
 	return ret;
 }
@@ -703,8 +688,7 @@ static bool netbios_session_retarget(struct smbXsrv_connection *xconn,
 	*(uint32_t *)(outbuf+4) = in_addr->sin_addr.s_addr;
 	*(uint16_t *)(outbuf+8) = htons(retarget_port);
 
-	if (!smb1_srv_send(xconn, (char *)outbuf, false, 0, false,
-			  NULL)) {
+	if (!smb1_srv_send(xconn, (char *)outbuf, false, 0, false)) {
 		exit_server_cleanly("netbios_session_retarget: smb1_srv_send "
 				    "failed.");
 	}
@@ -745,7 +729,7 @@ void reply_special(struct smbXsrv_connection *xconn, char *inbuf, size_t inbuf_s
 	switch (msg_type) {
 	case NBSSrequest: /* session request */
 	{
-		/* inbuf_size is guarenteed to be at least 4. */
+		/* inbuf_size is guaranteed to be at least 4. */
 		fstring name1,name2;
 		int name_type1, name_type2;
 		int name_len1, name_len2;
@@ -862,7 +846,7 @@ void reply_special(struct smbXsrv_connection *xconn, char *inbuf, size_t inbuf_s
 	DEBUG(5,("init msg_type=0x%x msg_flags=0x%x\n",
 		    msg_type, msg_flags));
 
-	if (!smb1_srv_send(xconn, outbuf, false, 0, false, NULL)) {
+	if (!smb1_srv_send(xconn, outbuf, false, 0, false)) {
 		exit_server_cleanly("reply_special: smb1_srv_send failed.");
 	}
 

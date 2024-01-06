@@ -18,7 +18,7 @@ import os, grp, pwd
 import errno
 from samba import gpo, tests
 from samba.gp.gpclass import register_gp_extension, list_gp_extensions, \
-    unregister_gp_extension, GPOStorage
+    unregister_gp_extension, GPOStorage, get_gpo_list
 from samba.param import LoadParm
 from samba.gp.gpclass import check_refresh_gpo_list, check_safe_path, \
     check_guid, parse_gpext_conf, atomic_write_conf, get_deleted_gpos_list
@@ -73,6 +73,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding
 from datetime import datetime, timedelta
+from samba.samba3 import param as s3param
 
 def dummy_certificate():
     name = x509.Name([
@@ -5039,7 +5040,7 @@ class GPOTests(tests.TestCase):
         super(GPOTests, self).setUp()
         self.server = os.environ["SERVER"]
         self.dc_account = self.server.upper() + '$'
-        self.lp = LoadParm()
+        self.lp = s3param.get_context()
         self.lp.load_default()
         self.creds = self.insta_creds(template=self.get_credentials())
 
@@ -5048,9 +5049,8 @@ class GPOTests(tests.TestCase):
 
     def test_gpo_list(self):
         global poldir, dspath
-        ads = gpo.ADS_STRUCT(self.server, self.lp, self.creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(self.creds.get_username())
+        gpos = get_gpo_list(self.server, self.creds, self.lp,
+                            self.creds.get_username())
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         names = ['Local Policy', guid]
         file_sys_paths = [None, '%s\\%s' % (poldir, guid)]
@@ -5062,12 +5062,6 @@ class GPOTests(tests.TestCase):
                               'file_sys_path did not match expected %s' % gpos[i].file_sys_path)
             self.assertEqual(gpos[i].ds_path, ds_paths[i],
                               'ds_path did not match expected %s' % gpos[i].ds_path)
-
-    def test_gpo_ads_does_not_segfault(self):
-        try:
-            ads = gpo.ADS_STRUCT(self.server, 42, self.creds)
-        except:
-            pass
 
     def test_gpt_version(self):
         global gpt_data
@@ -5088,9 +5082,8 @@ class GPOTests(tests.TestCase):
 
     def test_check_refresh_gpo_list(self):
         cache = self.lp.cache_path('gpo_cache')
-        ads = gpo.ADS_STRUCT(self.server, self.lp, self.creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(self.creds.get_username())
+        gpos = get_gpo_list(self.server, self.creds, self.lp,
+                            self.creds.get_username())
         check_refresh_gpo_list(self.server, self.lp, self.creds, gpos)
 
         self.assertTrue(os.path.exists(cache),
@@ -5207,9 +5200,8 @@ class GPOTests(tests.TestCase):
                                  days2rel_nttime(998),
                                  'minPwdAge policy not set')
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, self.creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(self.dc_account)
+        gpos = get_gpo_list(self.server, self.creds, self.lp,
+                            self.dc_account)
         del_gpos = get_deleted_gpos_list(gp_db, gpos[:-1])
         self.assertEqual(len(del_gpos), 1, 'Returned delete gpos is incorrect')
         self.assertEqual(guids[-1], del_gpos[0][0],
@@ -5243,9 +5235,8 @@ class GPOTests(tests.TestCase):
         ext = gp_krb_ext(self.lp, machine_creds,
                          machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Include MaxClockSkew to ensure we don't fail on a key we ignore
         stage = '[Kerberos Policy]\nMaxTicketAge = %d\nMaxClockSkew = 5'
@@ -5298,9 +5289,8 @@ class GPOTests(tests.TestCase):
         ext = gp_scripts_ext(self.lp, machine_creds,
                              machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         reg_key = b'Software\\Policies\\Samba\\Unix Settings'
         sections = { b'%s\\Daily Scripts' % reg_key : '.cron.daily',
@@ -5324,7 +5314,7 @@ class GPOTests(tests.TestCase):
             with TemporaryDirectory(sections[keyname]) as dname:
                 ext.process_group_policy([], gpos, dname)
                 scripts = os.listdir(dname)
-                self.assertEquals(len(scripts), 1,
+                self.assertEqual(len(scripts), 1,
                     'The %s script was not created' % keyname.decode())
                 out, _ = Popen([os.path.join(dname, scripts[0])], stdout=PIPE).communicate()
                 self.assertIn(b'hello world', out,
@@ -5332,14 +5322,14 @@ class GPOTests(tests.TestCase):
 
                 # Check that a call to gpupdate --rsop also succeeds
                 ret = rsop(self.lp)
-                self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+                self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
                 # Remove policy
                 gp_db = store.get_gplog(machine_creds.get_username())
                 del_gpos = get_deleted_gpos_list(gp_db, [])
                 ext.process_group_policy(del_gpos, [])
-                self.assertEquals(len(os.listdir(dname)), 0,
-                                  'Unapply failed to cleanup scripts')
+                self.assertEqual(len(os.listdir(dname)), 0,
+                                 'Unapply failed to cleanup scripts')
 
             # Unstage the Registry.pol file
             unstage_file(reg_pol)
@@ -5360,9 +5350,8 @@ class GPOTests(tests.TestCase):
         ext = gp_sudoers_ext(self.lp, machine_creds,
                              machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         stage = preg.file()
@@ -5380,21 +5369,21 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             sudoers = os.listdir(dname)
-            self.assertEquals(len(sudoers), 1, 'The sudoer file was not created')
+            self.assertEqual(len(sudoers), 1, 'The sudoer file was not created')
             self.assertIn(e.data,
                     open(os.path.join(dname, sudoers[0]), 'r').read(),
                     'The sudoers entry was not applied')
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
-            self.assertEquals(len(os.listdir(dname)), 0,
-                              'Unapply failed to cleanup scripts')
+            self.assertEqual(len(os.listdir(dname)), 0,
+                             'Unapply failed to cleanup scripts')
 
         # Unstage the Registry.pol file
         unstage_file(reg_pol)
@@ -5415,9 +5404,8 @@ class GPOTests(tests.TestCase):
         ext = vgp_sudoers_ext(self.lp, machine_creds,
                               machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -5476,7 +5464,7 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             sudoers = os.listdir(dname)
-            self.assertEquals(len(sudoers), 3, 'The sudoer file was not created')
+            self.assertEqual(len(sudoers), 3, 'The sudoer file was not created')
             output = open(os.path.join(dname, sudoers[0]), 'r').read() + \
                      open(os.path.join(dname, sudoers[1]), 'r').read() + \
                      open(os.path.join(dname, sudoers[2]), 'r').read()
@@ -5489,14 +5477,14 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
-            self.assertEquals(len(os.listdir(dname)), 0,
-                              'Unapply failed to cleanup scripts')
+            self.assertEqual(len(os.listdir(dname)), 0,
+                             'Unapply failed to cleanup scripts')
 
         # Unstage the Registry.pol file
         unstage_file(manifest)
@@ -5522,8 +5510,8 @@ class GPOTests(tests.TestCase):
                 self.fail('Failed to parse utf-16')
             self.assertIn('Kerberos Policy', inf_conf.keys(),
                           'Kerberos Policy was not read from the file')
-            self.assertEquals(inf_conf.get('Kerberos Policy', 'MaxTicketAge'),
-                              '99', 'MaxTicketAge was not read from the file')
+            self.assertEqual(inf_conf.get('Kerberos Policy', 'MaxTicketAge'),
+                             '99', 'MaxTicketAge was not read from the file')
 
         with NamedTemporaryFile() as f:
             with codecs.open(f.name, 'w', 'utf-8') as w:
@@ -5531,8 +5519,8 @@ class GPOTests(tests.TestCase):
             inf_conf = ext.read(f.name)
             self.assertIn('Kerberos Policy', inf_conf.keys(),
                           'Kerberos Policy was not read from the file')
-            self.assertEquals(inf_conf.get('Kerberos Policy', 'MaxTicketAge'),
-                              '99', 'MaxTicketAge was not read from the file')
+            self.assertEqual(inf_conf.get('Kerberos Policy', 'MaxTicketAge'),
+                             '99', 'MaxTicketAge was not read from the file')
 
     def test_rsop(self):
         cache_dir = self.lp.get('cache directory')
@@ -5543,9 +5531,8 @@ class GPOTests(tests.TestCase):
         machine_creds.guess(self.lp)
         machine_creds.set_machine_account()
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         gp_extensions = []
         gp_extensions.append(gp_krb_ext)
@@ -5597,8 +5584,8 @@ class GPOTests(tests.TestCase):
                 ext = ext(self.lp, machine_creds,
                           machine_creds.get_username(), store)
                 ret = ext.rsop(g)
-                self.assertEquals(len(ret.keys()), 1,
-                                  'A single policy should have been displayed')
+                self.assertEqual(len(ret.keys()), 1,
+                                 'A single policy should have been displayed')
 
                 # Check the Security Extension
                 if type(ext) == gp_krb_ext:
@@ -5606,8 +5593,8 @@ class GPOTests(tests.TestCase):
                                   'Kerberos Policy not found')
                     self.assertIn('MaxTicketAge', ret['Kerberos Policy'],
                                   'MaxTicketAge setting not found')
-                    self.assertEquals(ret['Kerberos Policy']['MaxTicketAge'], '99',
-                                      'MaxTicketAge was not set to 99')
+                    self.assertEqual(ret['Kerberos Policy']['MaxTicketAge'], '99',
+                                     'MaxTicketAge was not set to 99')
                 # Check the Scripts Extension
                 elif type(ext) == gp_scripts_ext:
                     self.assertIn('Daily Scripts', ret.keys(),
@@ -5627,18 +5614,18 @@ class GPOTests(tests.TestCase):
                                   'apply group policies was not applied')
                     self.assertIn(e3.valuename, ret['smb.conf'],
                                   'apply group policies was not applied')
-                    self.assertEquals(ret['smb.conf'][e3.valuename], e3.data,
-                                      'apply group policies was not set')
+                    self.assertEqual(ret['smb.conf'][e3.valuename], e3.data,
+                                     'apply group policies was not set')
                 # Check the Messages Extension
                 elif type(ext) == gp_msgs_ext:
                     self.assertIn('/etc/issue', ret,
                                   'Login Prompt Message not applied')
-                    self.assertEquals(ret['/etc/issue'], e4.data,
-                                      'Login Prompt Message not set')
+                    self.assertEqual(ret['/etc/issue'], e4.data,
+                                     'Login Prompt Message not set')
 
                 # Check that a call to gpupdate --rsop also succeeds
                 ret = rsop(self.lp)
-                self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+                self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             unstage_file(gpofile % g.name)
             unstage_file(reg_pol % g.name)
@@ -5653,9 +5640,8 @@ class GPOTests(tests.TestCase):
         machine_creds.guess(self.lp)
         machine_creds.set_machine_account()
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         gp_extensions = []
         gp_extensions.append(gp_krb_ext)
@@ -5736,9 +5722,8 @@ class GPOTests(tests.TestCase):
         machine_creds.guess(self.lp)
         machine_creds.set_machine_account()
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         entries = []
         e = preg.entry()
@@ -5777,17 +5762,17 @@ class GPOTests(tests.TestCase):
             lp = LoadParm(f.name)
 
             template_homedir = lp.get('template homedir')
-            self.assertEquals(template_homedir, '/home/samba/%D/%U',
+            self.assertEqual(template_homedir, '/home/samba/%D/%U',
                               'template homedir was not applied')
             apply_group_policies = lp.get('apply group policies')
             self.assertTrue(apply_group_policies,
                             'apply group policies was not applied')
             ldap_timeout = lp.get('ldap timeout')
-            self.assertEquals(ldap_timeout, 9999, 'ldap timeout was not applied')
+            self.assertEqual(ldap_timeout, 9999, 'ldap timeout was not applied')
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -5797,13 +5782,13 @@ class GPOTests(tests.TestCase):
             lp = LoadParm(f.name)
 
             template_homedir = lp.get('template homedir')
-            self.assertEquals(template_homedir, self.lp.get('template homedir'),
+            self.assertEqual(template_homedir, self.lp.get('template homedir'),
                               'template homedir was not unapplied')
             apply_group_policies = lp.get('apply group policies')
-            self.assertEquals(apply_group_policies, self.lp.get('apply group policies'),
+            self.assertEqual(apply_group_policies, self.lp.get('apply group policies'),
                               'apply group policies was not unapplied')
             ldap_timeout = lp.get('ldap timeout')
-            self.assertEquals(ldap_timeout, self.lp.get('ldap timeout'),
+            self.assertEqual(ldap_timeout, self.lp.get('ldap timeout'),
                               'ldap timeout was not unapplied')
 
         # Unstage the Registry.pol file
@@ -5825,9 +5810,8 @@ class GPOTests(tests.TestCase):
         ext = gp_msgs_ext(self.lp, machine_creds,
                           machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         stage = preg.file()
@@ -5853,16 +5837,16 @@ class GPOTests(tests.TestCase):
             self.assertTrue(os.path.exists(motd_file),
                             'Message of the day file not created')
             data = open(motd_file, 'r').read()
-            self.assertEquals(data, e1.data, 'Message of the day not applied')
+            self.assertEqual(data, e1.data, 'Message of the day not applied')
             issue_file = os.path.join(dname, 'issue')
             self.assertTrue(os.path.exists(issue_file),
                             'Login Prompt Message file not created')
             data = open(issue_file, 'r').read()
-            self.assertEquals(data, e2.data, 'Login Prompt Message not applied')
+            self.assertEqual(data, e2.data, 'Login Prompt Message not applied')
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Unapply policy, and ensure the test files are removed
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -5892,9 +5876,8 @@ class GPOTests(tests.TestCase):
         ext = vgp_symlink_ext(self.lp, machine_creds,
                               machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         with TemporaryDirectory() as dname:
             test_source = os.path.join(dname, 'test.source')
@@ -5948,7 +5931,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
         # Unstage the manifest.xml file
         unstage_file(manifest)
@@ -5973,9 +5956,8 @@ class GPOTests(tests.TestCase):
         ext = vgp_files_ext(self.lp, machine_creds,
                             machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         with TemporaryDirectory() as dname:
@@ -6017,9 +5999,9 @@ class GPOTests(tests.TestCase):
             ext.process_group_policy([], gpos)
             self.assertTrue(os.path.exists(target.text),
                             'The target file does not exist')
-            self.assertEquals(os.stat(target.text).st_mode & 0o777, 0o755,
+            self.assertEqual(os.stat(target.text).st_mode & 0o777, 0o755,
                               'The target file permissions are incorrect')
-            self.assertEquals(open(target.text).read(), source_data,
+            self.assertEqual(open(target.text).read(), source_data,
                               'The target file contents are incorrect')
 
             # Remove policy
@@ -6039,7 +6021,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
         # Unstage the manifest and source files
         unstage_file(manifest)
@@ -6061,9 +6043,8 @@ class GPOTests(tests.TestCase):
         ext = vgp_openssh_ext(self.lp, machine_creds,
                               machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -6096,14 +6077,14 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             conf = os.listdir(dname)
-            self.assertEquals(len(conf), 1, 'The conf file was not created')
+            self.assertEqual(len(conf), 1, 'The conf file was not created')
             gp_cfg = os.path.join(dname, conf[0])
             self.assertIn(data, open(gp_cfg, 'r').read(),
                     'The sshd_config entry was not applied')
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -6135,9 +6116,8 @@ class GPOTests(tests.TestCase):
         ext = vgp_startup_scripts_ext(self.lp, machine_creds,
                                       machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -6162,7 +6142,7 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             files = os.listdir(dname)
-            self.assertEquals(len(files), 1,
+            self.assertEqual(len(files), 1,
                               'The target script was not created')
             entry = '@reboot %s %s %s' % (run_as.text, test_script,
                                           parameters.text)
@@ -6175,8 +6155,8 @@ class GPOTests(tests.TestCase):
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
             files = os.listdir(dname)
-            self.assertEquals(len(files), 0,
-                              'The target script was not removed')
+            self.assertEqual(len(files), 0,
+                             'The target script was not removed')
 
             # Test rsop
             g = [g for g in gpos if g.name == guid][0]
@@ -6186,7 +6166,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
         # Unstage the manifest.xml and script files
         unstage_file(manifest)
@@ -6208,18 +6188,18 @@ class GPOTests(tests.TestCase):
 
             ext.process_group_policy([], gpos, dname)
             files = os.listdir(dname)
-            self.assertEquals(len(files), 1,
-                              'The test file was not created')
-            self.assertEquals(files[0], os.path.basename(test_file),
-                              'The test file was not created')
+            self.assertEqual(len(files), 1,
+                             'The test file was not created')
+            self.assertEqual(files[0], os.path.basename(test_file),
+                             'The test file was not created')
 
             # Unlink the test file and ensure that processing
             # policy again does not recreate it.
             os.unlink(test_file)
             ext.process_group_policy([], gpos, dname)
             files = os.listdir(dname)
-            self.assertEquals(len(files), 0,
-                              'The test file should not have been created')
+            self.assertEqual(len(files), 0,
+                             'The test file should not have been created')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -6236,7 +6216,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
         # Unstage the manifest.xml and script files
         unstage_file(manifest)
@@ -6265,8 +6245,8 @@ class GPOTests(tests.TestCase):
             except Exception as e:
                 self.fail(str(e))
             files = os.listdir(dname)
-            self.assertEquals(len(files), 1,
-                              'The target script was not created')
+            self.assertEqual(len(files), 1,
+                             'The target script was not created')
             entry = '@reboot %s %s' % (run_as.text, test_script)
             self.assertIn(entry,
                           open(os.path.join(dname, files[0]), 'r').read(),
@@ -6277,8 +6257,8 @@ class GPOTests(tests.TestCase):
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
             files = os.listdir(dname)
-            self.assertEquals(len(files), 0,
-                              'The target script was not removed')
+            self.assertEqual(len(files), 0,
+                             'The target script was not removed')
 
             # Test rsop
             g = [g for g in gpos if g.name == guid][0]
@@ -6288,7 +6268,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
         # Unstage the manifest.xml and script files
         unstage_file(manifest)
@@ -6310,9 +6290,8 @@ class GPOTests(tests.TestCase):
         ext = vgp_motd_ext(self.lp, machine_creds,
                            machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -6330,12 +6309,12 @@ class GPOTests(tests.TestCase):
         # Process all gpos, with temp output directory
         with NamedTemporaryFile() as f:
             ext.process_group_policy([], gpos, f.name)
-            self.assertEquals(open(f.name, 'r').read(), text.text,
-                              'The motd was not applied')
+            self.assertEqual(open(f.name, 'r').read(), text.text,
+                             'The motd was not applied')
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -6363,9 +6342,8 @@ class GPOTests(tests.TestCase):
         ext = vgp_issue_ext(self.lp, machine_creds,
                             machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -6383,12 +6361,12 @@ class GPOTests(tests.TestCase):
         # Process all gpos, with temp output directory
         with NamedTemporaryFile() as f:
             ext.process_group_policy([], gpos, f.name)
-            self.assertEquals(open(f.name, 'r').read(), text.text,
-                              'The issue was not applied')
+            self.assertEqual(open(f.name, 'r').read(), text.text,
+                             'The issue was not applied')
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -6415,12 +6393,14 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
+        winbind_sep = self.lp.get('winbind separator')
+        self.addCleanup(self.lp.set, 'winbind separator', winbind_sep)
+        self.lp.set('winbind separator', '+')
         ext = vgp_access_ext(self.lp, machine_creds,
                              machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml allow file
         stage = etree.Element('vgppolicy')
@@ -6509,7 +6489,7 @@ class GPOTests(tests.TestCase):
             ext.process_group_policy([], gpos, dname)
             conf = os.listdir(dname)
             # There will be 2 files, the policy file and the deny file
-            self.assertEquals(len(conf), 2, 'The conf file was not created')
+            self.assertEqual(len(conf), 2, 'The conf file was not created')
             # Ignore the DENY_ALL conf file
             gp_cfg = os.path.join(dname,
                 [c for c in conf if '_gp_DENY_ALL.conf' not in c][0])
@@ -6517,14 +6497,14 @@ class GPOTests(tests.TestCase):
             # Check the access config for the correct access.conf entries
             print('Config file %s found' % gp_cfg)
             data = open(gp_cfg, 'r').read()
-            self.assertIn('+:%s\\goodguy:ALL' % realm, data)
-            self.assertIn('+:%s\\goodguys:ALL' % realm, data)
-            self.assertIn('-:%s\\badguy:ALL' % realm, data)
-            self.assertIn('-:%s\\badguys:ALL' % realm, data)
+            self.assertIn('+:%s+goodguy:ALL' % realm, data)
+            self.assertIn('+:%s+goodguys:ALL' % realm, data)
+            self.assertIn('-:%s+badguy:ALL' % realm, data)
+            self.assertIn('-:%s+badguys:ALL' % realm, data)
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -6553,9 +6533,8 @@ class GPOTests(tests.TestCase):
         ext = gp_gnome_settings_ext(self.lp, machine_creds,
                                     machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -6571,7 +6550,7 @@ class GPOTests(tests.TestCase):
                             'Local db dir not created')
             def db_check(name, data, count=1):
                 db = glob(os.path.join(local_db, '*-%s' % name))
-                self.assertEquals(len(db), count, '%s not created' % name)
+                self.assertEqual(len(db), count, '%s not created' % name)
                 file_contents = ConfigParser()
                 file_contents.read(db)
                 for key in data.keys():
@@ -6585,14 +6564,14 @@ class GPOTests(tests.TestCase):
 
             def del_db_check(name):
                 db = glob(os.path.join(local_db, '*-%s' % name))
-                self.assertEquals(len(db), 0, '%s not deleted' % name)
+                self.assertEqual(len(db), 0, '%s not deleted' % name)
 
             locks = os.path.join(local_db, 'locks')
             self.assertTrue(os.path.isdir(local_db), 'Locks dir not created')
             def lock_check(name, items, count=1):
                 lock = glob(os.path.join(locks, '*%s' % name))
-                self.assertEquals(len(lock), count,
-                                  '%s lock not created' % name)
+                self.assertEqual(len(lock), count,
+                                 '%s lock not created' % name)
                 file_contents = []
                 for i in range(count):
                     file_contents.extend(open(lock[i], 'r').read().split('\n'))
@@ -6602,7 +6581,7 @@ class GPOTests(tests.TestCase):
 
             def del_lock_check(name):
                 lock = glob(os.path.join(locks, '*%s' % name))
-                self.assertEquals(len(lock), 0, '%s lock not deleted' % name)
+                self.assertEqual(len(lock), 0, '%s lock not deleted' % name)
 
             # Check the user profile
             user_profile = os.path.join(dname, 'etc/dconf/profile/user')
@@ -6673,23 +6652,23 @@ class GPOTests(tests.TestCase):
             actions = os.path.join(dname, 'etc/share/polkit-1/actions')
             udisk2 = glob(os.path.join(actions,
                           'org.freedesktop.[u|U][d|D]isks2.policy'))
-            self.assertEquals(len(udisk2), 1, 'udisk2 policy not created')
+            self.assertEqual(len(udisk2), 1, 'udisk2 policy not created')
             udisk2_tree = etree.fromstring(open(udisk2[0], 'r').read())
             actions = udisk2_tree.findall('action')
             md = 'org.freedesktop.udisks2.modify-device'
             action = [a for a in actions if a.attrib['id'] == md]
-            self.assertEquals(len(action), 1, 'modify-device not found')
+            self.assertEqual(len(action), 1, 'modify-device not found')
             defaults = action[0].find('defaults')
             self.assertTrue(defaults is not None,
                             'modify-device defaults not found')
             allow_any = defaults.find('allow_any').text
-            self.assertEquals(allow_any, 'no',
+            self.assertEqual(allow_any, 'no',
                               'modify-device allow_any not set to no')
             allow_inactive = defaults.find('allow_inactive').text
-            self.assertEquals(allow_inactive, 'no',
+            self.assertEqual(allow_inactive, 'no',
                               'modify-device allow_inactive not set to no')
             allow_active = defaults.find('allow_active').text
-            self.assertEquals(allow_active, 'yes',
+            self.assertEqual(allow_active, 'yes',
                               'modify-device allow_active not set to yes')
 
             # Disable printing
@@ -6729,7 +6708,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -6750,7 +6729,7 @@ class GPOTests(tests.TestCase):
             actions = os.path.join(dname, 'etc/share/polkit-1/actions')
             udisk2 = glob(os.path.join(actions,
                           'org.freedesktop.[u|U][d|D]isks2.policy'))
-            self.assertEquals(len(udisk2), 0, 'udisk2 policy not deleted')
+            self.assertEqual(len(udisk2), 0, 'udisk2 policy not deleted')
             del_db_check('printing')
             del_lock_check('printing')
             del_db_check('filesaving')
@@ -6779,9 +6758,8 @@ class GPOTests(tests.TestCase):
         ext = cae.gp_cert_auto_enroll_ext(self.lp, machine_creds,
                                           machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -6839,7 +6817,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -6881,9 +6859,8 @@ class GPOTests(tests.TestCase):
         ext = gp_user_scripts_ext(self.lp, machine_creds,
                                   os.environ.get('DC_USERNAME'), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         reg_key = b'Software\\Policies\\Samba\\Unix Settings'
         sections = { b'%s\\Daily Scripts' % reg_key : b'@daily',
@@ -6914,7 +6891,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(os.environ.get('DC_USERNAME'))
@@ -6945,9 +6922,8 @@ class GPOTests(tests.TestCase):
         ext = gp_firefox_ext(self.lp, machine_creds,
                              machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -6975,7 +6951,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Unapply the policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -7006,9 +6982,8 @@ class GPOTests(tests.TestCase):
         ext = gp_chromium_ext(self.lp, machine_creds,
                               machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -7020,15 +6995,15 @@ class GPOTests(tests.TestCase):
             ext.process_group_policy([], gpos, dname)
             managed = os.path.join(dname, 'managed')
             managed_files = os.listdir(managed)
-            self.assertEquals(len(managed_files), 1,
-                              'Chromium policies are missing')
+            self.assertEqual(len(managed_files), 1,
+                             'Chromium policies are missing')
             managed_file = os.path.join(managed, managed_files[0])
             with open(managed_file, 'r') as r:
                 managed_data = json.load(r)
             recommended = os.path.join(dname, 'recommended')
             recommended_files = os.listdir(recommended)
-            self.assertEquals(len(recommended_files), 1,
-                              'Chromium policies are missing')
+            self.assertEqual(len(recommended_files), 1,
+                             'Chromium policies are missing')
             recommended_file = os.path.join(recommended, recommended_files[0])
             with open(recommended_file, 'r') as r:
                 recommended_data = json.load(r)
@@ -7062,16 +7037,16 @@ class GPOTests(tests.TestCase):
 
             ext.process_group_policy([], gpos, dname)
             managed_files = os.listdir(managed)
-            self.assertEquals(len(managed_files), 1,
-                              'Number of Chromium policies is incorrect')
+            self.assertEqual(len(managed_files), 1,
+                             'Number of Chromium policies is incorrect')
             omanaged_file = managed_file
             managed_file = os.path.join(managed, managed_files[0])
             self.assertNotEqual(omanaged_file, managed_file,
                                 'The managed Chromium file did not change')
 
             recommended_files = os.listdir(recommended)
-            self.assertEquals(len(recommended_files), 1,
-                              'Number of Chromium policies is incorrect')
+            self.assertEqual(len(recommended_files), 1,
+                             'Number of Chromium policies is incorrect')
             orecommended_file = recommended_file
             recommended_file = os.path.join(recommended, recommended_files[0])
             self.assertNotEqual(orecommended_file, recommended_file,
@@ -7082,7 +7057,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Unapply the policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -7118,9 +7093,8 @@ class GPOTests(tests.TestCase):
         ext = gp_firewalld_ext(self.lp, machine_creds,
                                machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -7153,14 +7127,14 @@ class GPOTests(tests.TestCase):
         out, err = p.communicate()
         rule = b'rule family=ipv4 source address=172.25.1.7 ' + \
                b'service name=ftp reject'
-        self.assertEquals(rule, out.strip(), 'Failed to set rich rule')
+        self.assertEqual(rule, out.strip(), 'Failed to set rich rule')
 
         # Verify RSOP does not fail
         ext.rsop([g for g in gpos if g.name == guid][0])
 
         # Check that a call to gpupdate --rsop also succeeds
         ret = rsop(self.lp)
-        self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+        self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
         # Unapply the policy
         gp_db = store.get_gplog(machine_creds.get_username())
@@ -7193,9 +7167,8 @@ class GPOTests(tests.TestCase):
         ext = cae.gp_cert_auto_enroll_ext(self.lp, machine_creds,
                                           machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         admin_creds = Credentials()
         admin_creds.set_username(os.environ.get('DC_USERNAME'))
@@ -7265,7 +7238,7 @@ class GPOTests(tests.TestCase):
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -7308,9 +7281,8 @@ class GPOTests(tests.TestCase):
         ext = gp_centrify_sudoers_ext(self.lp, machine_creds,
                                       machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         stage = preg.file()
@@ -7333,7 +7305,7 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             sudoers = os.listdir(dname)
-            self.assertEquals(len(sudoers), 1, 'The sudoer file was not created')
+            self.assertEqual(len(sudoers), 1, 'The sudoer file was not created')
             sudoers_file = os.path.join(dname, sudoers[0])
             self.assertIn(e2.data, open(sudoers_file, 'r').read(),
                     'The sudoers entry was not applied')
@@ -7342,22 +7314,22 @@ class GPOTests(tests.TestCase):
             os.unlink(sudoers_file)
             ext.process_group_policy([], gpos, dname)
             sudoers = os.listdir(dname)
-            self.assertEquals(len(sudoers), 1,
-                              'The sudoer file was not recreated')
+            self.assertEqual(len(sudoers), 1,
+                             'The sudoer file was not recreated')
             sudoers_file = os.path.join(dname, sudoers[0])
             self.assertIn(e2.data, open(sudoers_file, 'r').read(),
                     'The sudoers entry was not reapplied')
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
-            self.assertEquals(len(os.listdir(dname)), 0,
-                              'Unapply failed to cleanup scripts')
+            self.assertEqual(len(os.listdir(dname)), 0,
+                             'Unapply failed to cleanup scripts')
 
         # Unstage the Registry.pol file
         unstage_file(reg_pol)
@@ -7378,9 +7350,8 @@ class GPOTests(tests.TestCase):
         ext = gp_centrify_crontab_ext(self.lp, machine_creds,
                                       machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         stage = preg.file()
@@ -7399,21 +7370,21 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             cron_entries = os.listdir(dname)
-            self.assertEquals(len(cron_entries), 1, 'Cron entry not created')
+            self.assertEqual(len(cron_entries), 1, 'Cron entry not created')
             fname = os.path.join(dname, cron_entries[0])
             data = open(fname, 'rb').read()
             self.assertIn(get_bytes(e.data), data, 'Cron entry is missing')
 
             # Check that a call to gpupdate --rsop also succeeds
             ret = rsop(self.lp)
-            self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
-            self.assertEquals(len(os.listdir(dname)), 0,
-                              'Unapply failed to cleanup script')
+            self.assertEqual(len(os.listdir(dname)), 0,
+                             'Unapply failed to cleanup script')
 
             # Unstage the Registry.pol file
             unstage_file(reg_pol)
@@ -7435,9 +7406,8 @@ class GPOTests(tests.TestCase):
                                            os.environ.get('DC_USERNAME'),
                                            store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         stage = preg.file()
@@ -7462,7 +7432,7 @@ class GPOTests(tests.TestCase):
 
         # Check that a call to gpupdate --rsop also succeeds
         ret = rsop(self.lp)
-        self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
+        self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
         # Remove policy
         gp_db = store.get_gplog(os.environ.get('DC_USERNAME'))

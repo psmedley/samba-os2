@@ -2,7 +2,7 @@
 
 void exit(int);
 
-int main()
+int main(void)
 {
 #ifndef __OS2__
 #if !defined(HAVE_FCNTL_LOCK)

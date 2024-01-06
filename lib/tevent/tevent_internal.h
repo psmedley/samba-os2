@@ -48,6 +48,10 @@ struct tevent_req {
 		 * @brief Private data for the completion function
 		 */
 		void *private_data;
+		/**
+		 * @brief  The completion function name, for flow tracing.
+		 */
+		const char *fn_name;
 	} async;
 
 	/**
@@ -75,7 +79,10 @@ struct tevent_req {
 	 * that is called when the tevent_req_cancel() function
 	 * was called.
 	 */
-	tevent_req_cancel_fn private_cancel;
+	struct {
+		tevent_req_cancel_fn fn;
+		const char *fn_name;
+	} private_cancel;
 
 	/**
 	 * @brief A function to cleanup the request
@@ -86,6 +93,7 @@ struct tevent_req {
 	 */
 	struct {
 		tevent_req_cleanup_fn fn;
+		const char *fn_name;
 		enum tevent_req_state state;
 	} private_cleanup;
 
@@ -284,6 +292,7 @@ struct tevent_threaded_context {
 };
 
 struct tevent_debug_ops {
+	enum tevent_debug_level max_level;
 	void (*debug)(void *context, enum tevent_debug_level level,
 		      const char *fmt, va_list ap) PRINTF_ATTRIBUTE(3,0);
 	void *context;
@@ -291,6 +300,13 @@ struct tevent_debug_ops {
 
 void tevent_debug(struct tevent_context *ev, enum tevent_debug_level level,
 		  const char *fmt, ...) PRINTF_ATTRIBUTE(3,4);
+#define TEVENT_DEBUG(__ev, __level, __fmt, ...) do { \
+	if (unlikely((__ev) != NULL && \
+		     (__level) <= (__ev)->debug_ops.max_level)) \
+	{ \
+		tevent_debug((__ev), (__level), (__fmt), __VA_ARGS__); \
+	} \
+} while(0)
 
 void tevent_abort(struct tevent_context *ev, const char *reason);
 
@@ -407,6 +423,14 @@ int tevent_common_context_destructor(struct tevent_context *ev);
 int tevent_common_loop_wait(struct tevent_context *ev,
 			    const char *location);
 
+struct tevent_common_fd_buf {
+	char buf[128];
+};
+
+const char *tevent_common_fd_str(struct tevent_common_fd_buf *buf,
+				 const char *description,
+				 const struct tevent_fd *fde);
+
 int tevent_common_fd_destructor(struct tevent_fd *fde);
 struct tevent_fd *tevent_common_add_fd(struct tevent_context *ev,
 				       TALLOC_CTX *mem_ctx,
@@ -503,7 +527,21 @@ void tevent_epoll_set_panic_fallback(struct tevent_context *ev,
 					       bool replay));
 #endif
 
-void tevent_thread_call_depth_set(size_t depth);
+static inline void tevent_thread_call_depth_notify(
+			enum tevent_thread_call_depth_cmd cmd,
+			struct tevent_req *req,
+			size_t depth,
+			const char *fname)
+{
+	if (tevent_thread_call_depth_state_g.cb != NULL) {
+		tevent_thread_call_depth_state_g.cb(
+			tevent_thread_call_depth_state_g.cb_private,
+			cmd,
+			req,
+			depth,
+			fname);
+	}
+}
 
 void tevent_trace_point_callback(struct tevent_context *ev,
 				 enum tevent_trace_point);

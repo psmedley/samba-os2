@@ -1703,8 +1703,8 @@ static NTSTATUS pdb_samba_dsdb_enum_alias_memberships(struct pdb_methods *m,
 	uint32_t *alias_rids = NULL;
 	size_t num_alias_rids = 0;
 	int i;
-	struct dom_sid *groupSIDs = NULL;
-	unsigned int num_groupSIDs = 0;
+	struct auth_SidAttr *groupSIDs = NULL;
+	uint32_t num_groupSIDs = 0;
 	char *filter;
 	NTSTATUS status;
 	const char *sid_dn;
@@ -1717,7 +1717,7 @@ static NTSTATUS pdb_samba_dsdb_enum_alias_memberships(struct pdb_methods *m,
 	 * either the SAM or BUILTIN
 	 */
 
-	filter = talloc_asprintf(tmp_ctx, "(&(objectClass=group)(groupType:1.2.840.113556.1.4.803:=%u))",
+	filter = talloc_asprintf(tmp_ctx, "(&(objectClass=group)(groupType:"LDB_OID_COMPARATOR_AND":=%u))",
 				 GROUP_TYPE_BUILTIN_LOCAL_GROUP);
 	if (filter == NULL) {
 		return NT_STATUS_NO_MEMORY;
@@ -1752,7 +1752,7 @@ static NTSTATUS pdb_samba_dsdb_enum_alias_memberships(struct pdb_methods *m,
 	}
 
 	for (i=0; i<num_groupSIDs; i++) {
-		if (sid_peek_check_rid(domain_sid, &groupSIDs[i],
+		if (sid_peek_check_rid(domain_sid, &groupSIDs[i].sid,
 				       &alias_rids[num_alias_rids])) {
 			num_alias_rids++;;
 		}

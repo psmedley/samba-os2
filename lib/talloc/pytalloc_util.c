@@ -21,7 +21,7 @@
    License along with this library; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <Python.h>
+#include "lib/replace/system/python.h"
 #include "replace.h"
 #include <talloc.h>
 #include "pytalloc.h"
@@ -116,7 +116,7 @@ _PUBLIC_ PyObject *pytalloc_reference_ex(PyTypeObject *py_type,
 
 
 /**
- * Internal function that either steals or referecences the talloc
+ * Internal function that either steals or references the talloc
  * pointer into a new talloc context.
  */
 static PyObject *pytalloc_steal_or_reference(PyTypeObject *py_type,

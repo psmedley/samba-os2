@@ -17,7 +17,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <Python.h>
+#include "lib/replace/system/python.h"
 #include "python/py3compat.h"
 #include "includes.h"
 #include "python/modules.h"
@@ -36,40 +36,44 @@ static PyObject *PyExc_DsExtendedError;
 
 static PyObject *py_generate_random_str(PyObject *self, PyObject *args)
 {
-	int len;
+	Py_ssize_t len;
 	PyObject *ret;
 	char *retstr;
-	if (!PyArg_ParseTuple(args, "i", &len)) {
+
+	if (!PyArg_ParseTuple(args, "n", &len)) {
 		return NULL;
 	}
 	if (len < 0) {
 		PyErr_Format(PyExc_ValueError,
-			     "random string length should be positive, not %d",
+			     "random string length should be positive, not %zd",
 			     len);
 		return NULL;
 	}
 	retstr = generate_random_str(NULL, len);
-	ret = PyUnicode_FromString(retstr);
+	if (retstr == NULL) {
+		return PyErr_NoMemory();
+	}
+	ret = PyUnicode_FromStringAndSize(retstr, len);
 	talloc_free(retstr);
 	return ret;
 }
 
 static PyObject *py_generate_random_password(PyObject *self, PyObject *args)
 {
-	int min, max;
+	Py_ssize_t min, max;
 	PyObject *ret;
 	char *retstr;
-	if (!PyArg_ParseTuple(args, "ii", &min, &max)) {
+
+	if (!PyArg_ParseTuple(args, "nn", &min, &max)) {
 		return NULL;
 	}
 	if (max < 0 || min < 0) {
 		/*
-		 * The real range checks happen in generate_random_password().
-		 * Here we are just checking the values won't overflow into
-		 * numbers when cast to size_t.
+		 * The real range checks happens in generate_random_password().
+		 * Here just filter out any negative numbers.
 		 */
 		PyErr_Format(PyExc_ValueError,
-			     "invalid range: %d - %d",
+			     "invalid range: %zd - %zd",
 			     min, max);
 		return NULL;
 	}
@@ -77,11 +81,11 @@ static PyObject *py_generate_random_password(PyObject *self, PyObject *args)
 	retstr = generate_random_password(NULL, min, max);
 	if (retstr == NULL) {
 		if (errno == EINVAL) {
-			PyErr_Format(PyExc_ValueError,
-				     "invalid range: %d - %d",
-				     min, max);
+			return PyErr_Format(PyExc_ValueError,
+					    "invalid range: %zd - %zd",
+					    min, max);
 		}
-		return NULL;
+		return PyErr_NoMemory();
 	}
 	ret = PyUnicode_FromString(retstr);
 	talloc_free(retstr);
@@ -90,21 +94,21 @@ static PyObject *py_generate_random_password(PyObject *self, PyObject *args)
 
 static PyObject *py_generate_random_machine_password(PyObject *self, PyObject *args)
 {
-	int min, max;
+	Py_ssize_t min, max;
 	PyObject *ret;
 	char *retstr;
-	if (!PyArg_ParseTuple(args, "ii", &min, &max)) {
+
+	if (!PyArg_ParseTuple(args, "nn", &min, &max)) {
 		return NULL;
 	}
 	if (max < 0 || min < 0) {
 		/*
-		 * The real range checks happen in
+		 * The real range checks happens in
 		 * generate_random_machine_password().
-		 * Here we are just checking the values won't overflow into
-		 * numbers when cast to size_t.
+		 * Here we just filter out any negative numbers.
 		 */
 		PyErr_Format(PyExc_ValueError,
-			     "invalid range: %d - %d",
+			     "invalid range: %zd - %zd",
 			     min, max);
 		return NULL;
 	}
@@ -112,11 +116,11 @@ static PyObject *py_generate_random_machine_password(PyObject *self, PyObject *a
 	retstr = generate_random_machine_password(NULL, min, max);
 	if (retstr == NULL) {
 		if (errno == EINVAL) {
-			PyErr_Format(PyExc_ValueError,
-				     "invalid range: %d - %d",
-				     min, max);
+			return PyErr_Format(PyExc_ValueError,
+					    "invalid range: %zd - %zd",
+					    min, max);
 		}
-		return NULL;
+		return PyErr_NoMemory();
 	}
 	ret = PyUnicode_FromString(retstr);
 	talloc_free(retstr);
@@ -136,16 +140,16 @@ static PyObject *py_check_password_quality(PyObject *self, PyObject *args)
 
 static PyObject *py_generate_random_bytes(PyObject *self, PyObject *args)
 {
-	int len;
+	Py_ssize_t len;
 	PyObject *ret;
 	uint8_t *bytes = NULL;
 
-	if (!PyArg_ParseTuple(args, "i", &len)) {
+	if (!PyArg_ParseTuple(args, "n", &len)) {
 		return NULL;
 	}
 	if (len < 0) {
 		PyErr_Format(PyExc_ValueError,
-			     "random bytes length should be positive, not %d",
+			     "random bytes length should be positive, not %zd",
 			     len);
 		return NULL;
 	}
@@ -355,7 +359,7 @@ static PyObject *py_interface_ips(PyObject *self, PyObject *args)
 	lp_ctx = lpcfg_from_py_object(tmp_ctx, py_lp_ctx);
 	if (lp_ctx == NULL) {
 		talloc_free(tmp_ctx);
-		return NULL;
+		return PyErr_NoMemory();
 	}
 
 	load_interface_list(tmp_ctx, lp_ctx, &ifaces);
