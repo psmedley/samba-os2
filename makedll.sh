@@ -6,6 +6,6 @@ u:/dev/exceptq/bin/mapxqs.exe smbcl418.map
 cp smbcl418.dll client
 cp smbcl418.map client
 
-gcc -Zomf -Zmap -Zbin-files -o smbclient.exe ./bin/default/source3/client/cl*.o ./bin/default/source3/client/dnsbrow*.o ./bin/default/lib/cmdline/cmdline_s3*.o ./bin/default/libcli/smbreadline/smbreadline*.o -lsmbcl418 -larchive -lxml2 -lz -llzma -lpthread -lcxsmbd -lbz2 -lssl -lcrypto -lssp libreadline.lib -lncurses
+gcc -Zomf -Zmap -Zbin-files -o smbclient.exe ./bin/default/source3/client/cl*.o ./bin/default/source3/client/dnsbrow*.o ./bin/default/lib/cmdline/cmdline_s3*.o ./bin/default/libcli/smbreadline/smbreadline*.o -lsmbcl418 -larchive -lxml2 -lz -llzma -lpthread -lcxsmbd -lbz2 -lssl -lcrypto -lssp libreadline.lib -lncurses -ltinfo
 cp smbclient.exe client
 cp smbclient.map client
