@@ -650,7 +650,11 @@ static void notifyd_trigger(struct messaging_context *msg_ctx,
 		  tstate.msg->filter,
 		  path);
 
+#ifndef __OS2__
 	if (path[0] != '/') {
+#else
+	if ((path[0] != '/') && (path[1] != ':') {
+#endif
 		DBG_WARNING("path %s does not start with /, ignoring\n",
 			    path);
 		return;

@@ -192,7 +192,11 @@ char *canonicalize_absolute_path(TALLOC_CTX *ctx, const char *pathname_in)
 		/* Non-separator character, just copy. */
 		*p++ = *s++;
 	}
+#ifndef __OS2__
 	if (p[-1] == '/') {
+#else
+	if ((p[-1] == '/') && (p[-2] !=':')) {
+#endif
 		/*
 		 * We finished on a '/'.
 		 * Remove the trailing '/', but not if it's

@@ -313,7 +313,7 @@ __attribute__((destructor))
 #endif
 static void winbind_destructor(void)
 {
-#ifdef HAVE_PTHREAD
+#if defined(HAVE_PTHREAD) && !defined(__OS2__)
 	if (wb_global_ctx.key_initialized) {
 		int ret;
 		ret = pthread_key_delete(wb_global_ctx.key);
