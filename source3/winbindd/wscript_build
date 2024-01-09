@@ -286,7 +286,7 @@ bld.SAMBA3_BINARY('winbindd',
                  winbindd.c
                  ''',
                  deps='''
-                 CMDLINE_S3 cluster
+                 CMDLINE_S3 cluster stable_sort
                  winbindd-lib
                  ''',
                  enabled=bld.env.build_winbind,
