@@ -1757,8 +1757,9 @@ extern void build_options(bool screen);
 	DEBUG(0,( "Server priority set to PRTYC_FOREGROUNDSERVER\n"));
 #endif
 
-	DEBUG(0,("smbd version %s started.\n", samba_version_string()));
-	DEBUGADD(0,("%s\n", COPYRIGHT_STARTUP_MESSAGE));
+	DBG_STARTUP_NOTICE("smbd version %s started.\n%s\n",
+			   samba_version_string(),
+			   samba_copyright_string());
 
 	DEBUG(2,("uid=%d gid=%d euid=%d egid=%d\n",
 		 (int)getuid(),(int)getgid(),(int)geteuid(),(int)getegid()));
