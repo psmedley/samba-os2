@@ -374,10 +374,11 @@ static NTSTATUS get_ea_list_from_fsp(TALLOC_CTX *mem_ctx,
 		 * well, and only present the EAs that are available for
 		 * arbitrary use.
 		 */
+#ifndef __OS2__ // OS/2 doesn't use user. namespace
 		if (!strnequal(names[i], "user.", 5)
 		    || samba_private_attr_name(names[i]))
 			continue;
-
+#endif
 		/*
 		 * Filter out any underlying POSIX EA names
 		 * that a Windows client can't handle.
