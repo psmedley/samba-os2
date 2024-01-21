@@ -1505,12 +1505,13 @@ static void do_one_check_log_size(off_t maxlog, struct debug_class *config)
 	(void)rename(config->logfile, name);
 
 	ok = reopen_logs_internal();
-#endif
+
 	if (ok) {
 		return;
 	}
 	/* We failed to reopen a log - continue using the old name. */
 	(void)rename(name, config->logfile);
+#endif
 }
 
 static void do_check_log_size(off_t maxlog)
