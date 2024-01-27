@@ -909,8 +909,11 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.smb2_max_trans = DEFAULT_SMB2_MAX_TRANSACT;
 	Globals.smb2_max_credits = DEFAULT_SMB2_MAX_CREDITS;
 	Globals.smb2_leases = true;
+#ifndef __OS2__
 	Globals.server_multi_channel_support = true;
-
+#else
+	Globals.server_multi_channel_support = false;
+#endif
 	lpcfg_string_set(Globals.ctx, &Globals.ncalrpc_dir,
 			 get_dyn_NCALRPCDIR());
 
