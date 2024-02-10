@@ -215,9 +215,6 @@ static int messaging_dgm_out_create(TALLOC_CTX *mem_ctx,
 	int ret = ENOMEM;
 	int out_pathlen;
 	char addr_buf[sizeof(addr.sun_path) + (3 * sizeof(unsigned) + 2)];
-#ifdef __OS2__
-	char file_buf[sizeof(addr.sun_path) + (3 * sizeof(unsigned) + 2)];
-#endif
 
 	out = talloc(mem_ctx, struct messaging_dgm_out);
 	if (out == NULL) {
@@ -268,9 +265,6 @@ static int messaging_dgm_out_create(TALLOC_CTX *mem_ctx,
 	} while ((ret == -1) && (errno == EINTR));
 
 	if (ret == -1) {
-#ifdef __OS2__
-		unlink(file_buf);
-#endif
 		goto errno_fail;
 	}
 
@@ -912,7 +906,12 @@ static int messaging_dgm_lockfile_create(struct messaging_dgm_context *ctx,
                  * Yes, this is racy, but I don't see a way to deal
                  * with this properly.
                  */
+#ifndef __OS2__
 		unlink(lockfile_name.buf);
+#else
+		ret = unlink(lockfile_name.buf);
+		if (ret == -1) DEBUG(1, ("%s: unlink failed: %s\n", __func__, strerror(errno)));
+#endif
 
 		lockfile_fd = open(lockfile_name.buf,
 				   O_NONBLOCK|O_CREAT|O_WRONLY,
@@ -977,8 +976,11 @@ static int messaging_dgm_lockfile_create(struct messaging_dgm_context *ctx,
 fail_unlink:
 #ifdef __OS2__
 	close(lockfile_fd);
-#endif
+	ret = unlink(lockfile_name.buf);
+	if (ret == -1) DEBUG(1, ("%s: unlink failed: %s\n", __func__, strerror(errno)));
+#else
 	unlink(lockfile_name.buf);
+#endif
 fail_close:
 	close(lockfile_fd);
 	return ret;
@@ -1072,8 +1074,11 @@ int messaging_dgm_init(struct tevent_context *ev,
 	char filename[sizeof(socket_address.sun_path)];
 	len = snprintf(filename,
 		       sizeof(filename),
-		       "%s/%u", socket_dir, (unsigned)ctx->pid);
-	unlink(filename);
+		       "%s/%u", lockfile_dir, (unsigned)ctx->pid);
+// Closing this prevents  winbindd from starting
+//	close(ctx->lockfile_fd);
+	ret = unlink(filename);
+	if (ret == -1) DEBUG(1, ("%s: unlink of %s failed: %s\n", __func__, filename, strerror(errno)));
 #endif
 	ctx->sock = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (ctx->sock == -1) {
@@ -1172,7 +1177,13 @@ static int messaging_dgm_context_destructor(struct messaging_dgm_context *c)
 			 */
 			abort();
 		}
+#ifndef __OS2__
 		unlink(name.buf);
+#else
+		close(c->lockfile_fd);
+		ret = unlink(name.buf);
+		if (ret == -1) DEBUG(1, ("%s: unlink of %s failed: %s\n", __func__, name.buf, strerror(errno)));
+#endif
 	}
 	close(c->lockfile_fd);
 
@@ -1525,6 +1536,7 @@ static int messaging_dgm_read_unique(int fd, uint64_t *punique)
 	int error = 0;
 	unsigned long long unique;
 	char *endptr;
+DEBUG(2,("messaging_dgm_read_unique\n"));
 
 	rw_ret = pread(fd, buf, sizeof(buf)-1, 0);
 	if (rw_ret == -1) {
@@ -1549,8 +1561,10 @@ int messaging_dgm_get_unique(pid_t pid, uint64_t *unique)
 	struct messaging_dgm_context *ctx = global_dgm_context;
 	struct sun_path_buf lockfile_name;
 	int ret, fd;
+DEBUG(2,("messaging_dgm_get_unique\n"));
 
 	if (ctx == NULL) {
+DEBUG(2,("messaging_dgm_get_unique2\n"));
 		return EBADF;
 	}
 
@@ -1560,25 +1574,30 @@ int messaging_dgm_get_unique(pid_t pid, uint64_t *unique)
 		/*
 		 * Protect against losing our own lock
 		 */
+DEBUG(2,("messaging_dgm_get_unique3\n"));
 		return messaging_dgm_read_unique(ctx->lockfile_fd, unique);
 	}
 
 	ret = snprintf(lockfile_name.buf, sizeof(lockfile_name.buf),
 		       "%s/%u", ctx->lockfile_dir.buf, (int)pid);
 	if (ret < 0) {
+DEBUG(2,("messaging_dgm_get_unique4\n"));
 		return errno;
 	}
 	if ((size_t)ret >= sizeof(lockfile_name.buf)) {
+DEBUG(2,("messaging_dgm_get_unique5\n"));
 		return ENAMETOOLONG;
 	}
 
 	fd = open(lockfile_name.buf, O_NONBLOCK|O_RDONLY, 0);
 	if (fd == -1) {
+DEBUG(2,("messaging_dgm_get_unique6\n"));
 		return errno;
 	}
 
 	ret = messaging_dgm_read_unique(fd, unique);
 	close(fd);
+DEBUG(2,("messaging_dgm_get_unique, ret = %d\n",ret));
 	return ret;
 }
 
@@ -1645,8 +1664,15 @@ int messaging_dgm_cleanup(pid_t pid)
 #ifdef __OS2__
 	(void)close(fd);
 #endif
+#ifndef __OS2__
 	(void)unlink(socket_name.buf);
 	(void)unlink(lockfile_name.buf);
+#else
+	ret = unlink(socket_name.buf);
+	if (ret == -1) DEBUG(1, ("%s: unlink failed: %s\n", __func__, strerror(errno)));
+	ret = unlink(lockfile_name.buf);
+	if (ret == -1) DEBUG(1, ("%s: unlink failed: %s\n", __func__, strerror(errno)));
+#endif
 #ifndef __OS2__
 	(void)close(fd);
 #endif
