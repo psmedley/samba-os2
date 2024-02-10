@@ -420,10 +420,12 @@ int net_offlinejoin_composeodj(struct net_context *c,
 			in4 = (struct sockaddr_in *)&c->opt_dest_ip;
 			p = inet_ntop(AF_INET, &in4->sin_addr, dc_address, sizeof(dc_address));
 			break;
+#ifndef __OS2__
 		case AF_INET6:
 			in6 = (struct sockaddr_in6 *)&c->opt_dest_ip;
 			p = inet_ntop(AF_INET6, &in6->sin6_addr, dc_address, sizeof(dc_address));
 			break;
+#endif
 		default:
 			d_printf("Unknown IP address family\n");
 			return -1;
