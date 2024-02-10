@@ -1536,7 +1536,6 @@ static int messaging_dgm_read_unique(int fd, uint64_t *punique)
 	int error = 0;
 	unsigned long long unique;
 	char *endptr;
-DEBUG(2,("messaging_dgm_read_unique\n"));
 
 	rw_ret = pread(fd, buf, sizeof(buf)-1, 0);
 	if (rw_ret == -1) {
@@ -1561,10 +1560,8 @@ int messaging_dgm_get_unique(pid_t pid, uint64_t *unique)
 	struct messaging_dgm_context *ctx = global_dgm_context;
 	struct sun_path_buf lockfile_name;
 	int ret, fd;
-DEBUG(2,("messaging_dgm_get_unique\n"));
 
 	if (ctx == NULL) {
-DEBUG(2,("messaging_dgm_get_unique2\n"));
 		return EBADF;
 	}
 
@@ -1574,30 +1571,25 @@ DEBUG(2,("messaging_dgm_get_unique2\n"));
 		/*
 		 * Protect against losing our own lock
 		 */
-DEBUG(2,("messaging_dgm_get_unique3\n"));
 		return messaging_dgm_read_unique(ctx->lockfile_fd, unique);
 	}
 
 	ret = snprintf(lockfile_name.buf, sizeof(lockfile_name.buf),
 		       "%s/%u", ctx->lockfile_dir.buf, (int)pid);
 	if (ret < 0) {
-DEBUG(2,("messaging_dgm_get_unique4\n"));
 		return errno;
 	}
 	if ((size_t)ret >= sizeof(lockfile_name.buf)) {
-DEBUG(2,("messaging_dgm_get_unique5\n"));
 		return ENAMETOOLONG;
 	}
 
 	fd = open(lockfile_name.buf, O_NONBLOCK|O_RDONLY, 0);
 	if (fd == -1) {
-DEBUG(2,("messaging_dgm_get_unique6\n"));
 		return errno;
 	}
 
 	ret = messaging_dgm_read_unique(fd, unique);
 	close(fd);
-DEBUG(2,("messaging_dgm_get_unique, ret = %d\n",ret));
 	return ret;
 }
 
