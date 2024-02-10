@@ -232,7 +232,24 @@ static void exit_server_common(enum server_exit_reason how,
 			pidfile_unlink(lp_pid_directory(), "smbd");
 		}
 	}
+#ifdef __OS2__
+	char lockfile_dir[256];
+	char lockfile_name[256];
+        struct dirent *pDirent;
+        DIR *pDir;
+	int index = 0;
 
+	snprintf(lockfile_dir, sizeof(lockfile_dir), "%s/msg.lock", get_dyn_LOCKDIR());
+	pDir = opendir (lockfile_dir);
+	while ((pDirent = readdir(pDir)) != NULL) {
+		if ((pDirent->d_name != '.') && (pDirent->d_name != '..')) {
+			snprintf(lockfile_name, sizeof(lockfile_name), "%s/%s", lockfile_dir, pDirent->d_name);
+			int ret = unlink(lockfile_name);
+			if (ret == -1) DEBUG(1, ("%s: unlink of %s failed: %s\n", __func__, lockfile_name, strerror(errno)));
+		}
+        }
+        closedir (pDir);
+#endif
 	exit(0);
 }
 
