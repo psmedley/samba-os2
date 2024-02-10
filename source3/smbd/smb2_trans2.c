@@ -175,9 +175,13 @@ NTSTATUS get_ea_value_fsp(TALLOC_CTX *mem_ctx,
 	dump_data(10, (uint8_t *)val, sizeret);
 
 	pea->flags = 0;
+#ifndef __OS2__
 	if (strnequal(ea_name, "user.", 5)) {
 		pea->name = talloc_strdup(mem_ctx, &ea_name[5]);
 	} else {
+#else
+	{
+#endif
 		pea->name = talloc_strdup(mem_ctx, ea_name);
 	}
 	if (pea->name == NULL) {
