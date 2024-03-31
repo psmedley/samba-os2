@@ -656,6 +656,54 @@ static bool check_error(int line, NTSTATUS status,
 	return True;
 }
 
+NTSTATUS cli_qpathinfo1(struct cli_state *cli,
+			const char *fname,
+			time_t *change_time,
+			time_t *access_time,
+			time_t *write_time,
+			off_t *size,
+			uint32_t *pattr)
+{
+	int timezone = smb1cli_conn_server_time_zone(cli->conn);
+	time_t (*date_fn)(const void *buf, int serverzone) = NULL;
+	uint8_t *rdata = NULL;
+	uint32_t num_rdata;
+	NTSTATUS status;
+
+	status = cli_qpathinfo(talloc_tos(),
+			       cli,
+			       fname,
+			       SMB_INFO_STANDARD,
+			       22,
+			       CLI_BUFFER_SIZE,
+			       &rdata,
+			       &num_rdata);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+	if (cli->win95) {
+		date_fn = make_unix_date;
+	} else {
+		date_fn = make_unix_date2;
+	}
+
+	if (change_time) {
+		*change_time = date_fn(rdata + 0, timezone);
+	}
+	if (access_time) {
+		*access_time = date_fn(rdata + 4, timezone);
+	}
+	if (write_time) {
+		*write_time = date_fn(rdata + 8, timezone);
+	}
+	if (size) {
+		*size = PULL_LE_U32(rdata, 12);
+	}
+	if (pattr) {
+		*pattr = PULL_LE_U16(rdata, l1_attrFile);
+	}
+	return NT_STATUS_OK;
+}
 
 static bool wait_lock(struct cli_state *c, int fnum, uint32_t offset, uint32_t len)
 {
@@ -3129,7 +3177,7 @@ static void deferred_close_waited(struct tevent_req *subreq)
 		return;
 	}
 
-	subreq = cli_close_send(state, state->ev, state->cli, state->fnum);
+	subreq = cli_close_send(state, state->ev, state->cli, state->fnum, 0);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
 	}
@@ -4486,8 +4534,16 @@ static bool run_trans2test(int dummy)
 	cli_openx(cli, fname, 
 			O_RDWR | O_CREAT | O_TRUNC, DENY_NONE, &fnum);
 	cli_close(cli, fnum);
-	status = cli_qpathinfo2(cli, fname, &c_time_ts, &a_time_ts, &w_time_ts,
-				&m_time_ts, &size, NULL, &ino);
+	status = cli_qpathinfo2(cli,
+				fname,
+				&c_time_ts,
+				&a_time_ts,
+				&w_time_ts,
+				&m_time_ts,
+				&size,
+				NULL,
+				&ino,
+				NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("ERROR: qpathinfo2 failed (%s)\n", nt_errstr(status));
 		correct = False;
@@ -4523,8 +4579,16 @@ static bool run_trans2test(int dummy)
 		correct = False;
 	}
 	sleep(3);
-	status = cli_qpathinfo2(cli, "\\trans2\\", &c_time_ts, &a_time_ts,
-				&w_time_ts, &m_time_ts, &size, NULL, NULL);
+	status = cli_qpathinfo2(cli,
+				"\\trans2\\",
+				&c_time_ts,
+				&a_time_ts,
+				&w_time_ts,
+				&m_time_ts,
+				&size,
+				NULL,
+				NULL,
+				NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("ERROR: qpathinfo2 failed (%s)\n", nt_errstr(status));
 		correct = False;
@@ -4534,8 +4598,16 @@ static bool run_trans2test(int dummy)
 			O_RDWR | O_CREAT | O_TRUNC, DENY_NONE, &fnum);
 	cli_writeall(cli, fnum,  0, (uint8_t *)&fnum, 0, sizeof(fnum), NULL);
 	cli_close(cli, fnum);
-	status = cli_qpathinfo2(cli, "\\trans2\\", &c_time_ts, &a_time_ts,
-				&w_time_ts, &m_time2_ts, &size, NULL, NULL);
+	status = cli_qpathinfo2(cli,
+				"\\trans2\\",
+				&c_time_ts,
+				&a_time_ts,
+				&w_time_ts,
+				&m_time2_ts,
+				&size,
+				NULL,
+				NULL,
+				NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("ERROR: qpathinfo2 failed (%s)\n", nt_errstr(status));
 		correct = False;
@@ -5897,7 +5969,7 @@ static struct tevent_req *delete_stream_send(
 	}
 	tevent_req_set_callback(subreq, delete_stream_unlinked, req);
 
-	subreq = cli_close_send(state, ev, cli, stream_fnum);
+	subreq = cli_close_send(state, ev, cli, stream_fnum, 0);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -9853,6 +9925,42 @@ static NTSTATUS del_fn(struct file_info *finfo, const char *mask,
 
 
 /*
+   send a raw ioctl - used by the torture code
+*/
+static NTSTATUS cli_raw_ioctl(struct cli_state *cli,
+			      uint16_t fnum,
+			      uint32_t code,
+			      DATA_BLOB *blob)
+{
+	uint16_t vwv[3];
+	NTSTATUS status;
+
+	PUSH_LE_U16(vwv + 0, 0, fnum);
+	PUSH_LE_U16(vwv + 1, 0, code >> 16);
+	PUSH_LE_U16(vwv + 2, 0, (code & 0xFFFF));
+
+	status = cli_smb(talloc_tos(),
+			 cli,
+			 SMBioctl,
+			 0,
+			 3,
+			 vwv,
+			 0,
+			 NULL,
+			 NULL,
+			 0,
+			 NULL,
+			 NULL,
+			 NULL,
+			 NULL);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+	*blob = data_blob_null;
+	return NT_STATUS_OK;
+}
+
+/*
   sees what IOCTLs are supported
  */
 bool torture_ioctl_test(int dummy)
@@ -10238,8 +10346,13 @@ static bool run_error_map_extract(int dummy) {
 	}
 	disable_spnego = false;
 
-	status = smbXcli_negprot(c_nt->conn, c_nt->timeout, PROTOCOL_CORE,
-				 PROTOCOL_NT1);
+	status = smbXcli_negprot(c_nt->conn,
+				 c_nt->timeout,
+				 PROTOCOL_CORE,
+				 PROTOCOL_NT1,
+				 NULL,
+				 NULL,
+				 NULL);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("%s rejected the NT-error negprot (%s)\n", host,
@@ -10266,8 +10379,13 @@ static bool run_error_map_extract(int dummy) {
 	disable_spnego = false;
 	force_dos_errors = false;
 
-	status = smbXcli_negprot(c_dos->conn, c_dos->timeout, PROTOCOL_CORE,
-				 PROTOCOL_NT1);
+	status = smbXcli_negprot(c_dos->conn,
+				 c_dos->timeout,
+				 PROTOCOL_CORE,
+				 PROTOCOL_NT1,
+				 NULL,
+				 NULL,
+				 NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("%s rejected the DOS-error negprot (%s)\n", host,
 		       nt_errstr(status));
@@ -10608,7 +10726,7 @@ static void torture_createdel_created(struct tevent_req *subreq)
 		return;
 	}
 
-	subreq = cli_close_send(state, state->ev, state->cli, fnum);
+	subreq = cli_close_send(state, state->ev, state->cli, fnum, 0);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
 	}
@@ -10959,9 +11077,6 @@ static bool run_mangle1(int dummy)
 	uint16_t fnum;
 	fstring alt_name;
 	NTSTATUS status;
-	time_t change_time, access_time, write_time;
-	off_t size;
-	uint32_t attr;
 
 	printf("starting mangle1 test\n");
 	if (!torture_open_connection(&cli, 0)) {
@@ -10995,8 +11110,7 @@ static bool run_mangle1(int dummy)
 	}
 	cli_close(cli, fnum);
 
-	status = cli_qpathinfo1(cli, alt_name, &change_time, &access_time,
-				&write_time, &size, &attr);
+	status = cli_qpathinfo1(cli, alt_name, NULL, NULL, NULL, NULL, NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("cli_qpathinfo1(%s) failed: %s\n", alt_name,
 			 nt_errstr(status));
@@ -11449,7 +11563,10 @@ static bool run_large_readx(int dummy)
 		status = smbXcli_negprot(cli2->conn,
 					 cli2->timeout,
 					 runs[i].protocol,
-					 runs[i].protocol);
+					 runs[i].protocol,
+					 NULL,
+					 NULL,
+					 NULL);
 		if (!NT_STATUS_IS_OK(status)) {
 			goto out;
 		}
@@ -12382,8 +12499,16 @@ static bool run_dir_createtime(int dummy)
 		goto out;
 	}
 
-	status = cli_qpathinfo2(cli, dname, &create_time, NULL, NULL, NULL,
-				NULL, NULL, &ino);
+	status = cli_qpathinfo2(cli,
+				dname,
+				&create_time,
+				NULL,
+				NULL,
+				NULL,
+				NULL,
+				NULL,
+				&ino,
+				NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("cli_qpathinfo2 returned %s\n",
 		       nt_errstr(status));
@@ -12414,8 +12539,16 @@ static bool run_dir_createtime(int dummy)
 		goto out;
 	}
 
-	status = cli_qpathinfo2(cli, dname, &create_time1, NULL, NULL, NULL,
-				NULL, NULL, NULL);
+	status = cli_qpathinfo2(cli,
+				dname,
+				&create_time1,
+				NULL,
+				NULL,
+				NULL,
+				NULL,
+				NULL,
+				NULL,
+				NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("cli_qpathinfo2 (2) returned %s\n",
 		       nt_errstr(status));
@@ -14789,7 +14922,13 @@ static bool run_smb1_truncated_sesssetup(int dummy)
 		return false;
 	}
 
-	status = smbXcli_negprot(conn, 0, PROTOCOL_NT1, PROTOCOL_NT1);
+	status = smbXcli_negprot(conn,
+				 0,
+				 PROTOCOL_NT1,
+				 PROTOCOL_NT1,
+				 NULL,
+				 NULL,
+				 NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_fprintf(stderr, "smbXcli_negprot failed!\n");
 		return false;
@@ -14972,7 +15111,13 @@ static bool run_smb1_negotiate_exit(int dummy)
 		return false;
 	}
 
-	status = smbXcli_negprot(conn, 0, PROTOCOL_NT1, PROTOCOL_NT1);
+	status = smbXcli_negprot(conn,
+				 0,
+				 PROTOCOL_NT1,
+				 PROTOCOL_NT1,
+				 NULL,
+				 NULL,
+				 NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_fprintf(stderr, "smbXcli_negprot failed!\n");
 		return false;
@@ -15018,7 +15163,13 @@ static bool run_smb1_negotiate_tcon(int dummy)
 	}
 	smbXcli_conn_set_sockopt(cli->conn, sockops);
 
-	status = smbXcli_negprot(cli->conn, 0, PROTOCOL_NT1, PROTOCOL_NT1);
+	status = smbXcli_negprot(cli->conn,
+				 0,
+				 PROTOCOL_NT1,
+				 PROTOCOL_NT1,
+				 NULL,
+				 NULL,
+				 NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_fprintf(stderr, "smbXcli_negprot failed %s!\n",
 			nt_errstr(status));
@@ -15071,7 +15222,13 @@ static bool run_ign_bad_negprot(int dummy)
 		return false;
 	}
 
-	status = smbXcli_negprot(conn, 0, PROTOCOL_CORE, PROTOCOL_CORE);
+	status = smbXcli_negprot(conn,
+				 0,
+				 PROTOCOL_CORE,
+				 PROTOCOL_CORE,
+				 NULL,
+				 NULL,
+				 NULL);
 	if (NT_STATUS_IS_OK(status)) {
 		d_fprintf(stderr, "smbXcli_negprot succeeded!\n");
 		return false;
@@ -16165,6 +16322,7 @@ static void usage(void)
 	bool correct = True;
 	TALLOC_CTX *frame = talloc_stackframe();
 	int seed = time(NULL);
+	struct loadparm_context *lp_ctx = NULL;
 
 #ifdef HAVE_SETBUFFER
 	setbuffer(stdout, NULL, 0);
@@ -16174,6 +16332,13 @@ static void usage(void)
 
 	smb_init_locale();
 	fault_setup();
+
+	lp_ctx = loadparm_init_s3(frame, loadparm_s3_helpers());
+	if (lp_ctx == NULL) {
+		fprintf(stderr,
+			"Failed to initialise the global parameter structure.\n");
+		return 1;
+	}
 
 	if (is_default_dyn_CONFIGFILE()) {
 		if(getenv("SMB_CONF_PATH")) {
@@ -16231,7 +16396,7 @@ static void usage(void)
 			fstrcpy(workgroup,optarg);
 			break;
 		case 'm':
-			lp_set_cmdline("client max protocol", optarg);
+			lpcfg_set_cmdline(lp_ctx, "client max protocol", optarg);
 			break;
 		case 'N':
 			torture_nprocs = atoi(optarg);
@@ -16240,7 +16405,7 @@ static void usage(void)
 			torture_numops = atoi(optarg);
 			break;
 		case 'd':
-			lp_set_cmdline("log level", optarg);
+			lpcfg_set_cmdline(lp_ctx, "log level", optarg);
 			break;
 		case 'O':
 			sockops = optarg;

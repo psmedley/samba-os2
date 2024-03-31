@@ -43,7 +43,7 @@ struct dirsync_context {
 	/*
 	 * We keep a track of the number of attributes that we
 	 * add just for the need of the implementation
-	 * it will be usefull to track then entries that needs not to
+	 * it will be useful to track the entries that need not to
 	 * be returned because there is no real change
 	 */
 
@@ -83,7 +83,7 @@ static int dirsync_filter_entry(struct ldb_request *req,
 	bool namereturned = false;
 	bool nameasked = false;
 	NTSTATUS status;
-	/* Ajustment for the added attributes, it will reduce the number of
+	/* Adjustment for the added attributes, it will reduce the number of
 	 * expected to be here attributes*/
 	unsigned int delta = 0;
 	const char **myaccept = NULL;
@@ -121,7 +121,7 @@ static int dirsync_filter_entry(struct ldb_request *req,
 	/*
 	 * if objectGUID is asked and we are dealing for the referrals entries and
 	 * the usn searched is 0 then we didn't count the objectGUID as an automatically
-	 * returned attribute, do to so we increament delta.
+	 * returned attribute, do to so we increment delta.
 	 */
 	if (referral == true &&
 			ldb_attr_in_list(req->op.search.attrs, "objectGUID") &&
@@ -148,13 +148,13 @@ static int dirsync_filter_entry(struct ldb_request *req,
 	 * We have a O(n'*p') complexity, in worse case n' = n and p' = p
 	 * but in most case n' = n/2 (at least half of returned attributes
 	 * are not replicated or generated) and p' is small as we
-	 * list only the attribute that have been modified since last interogation
+	 * list only the attribute that have been modified since last interrogation
 	 *
 	 */
 	for (i = msg->num_elements - 1; i >= 0; i--) {
 		if (ldb_attr_cmp(msg->elements[i].name, "uSNChanged") == 0) {
 			int error = 0;
-			/* Read the USN it will used at the end of the filtering
+			/* Read the USN it will be used at the end of the filtering
 			 * to update the max USN in the cookie if we
 			 * decide to keep this entry
 			 */
@@ -202,9 +202,7 @@ static int dirsync_filter_entry(struct ldb_request *req,
 			guidfound = true;
 		}
 		/*
-		 * We expect to find the GUID in the object,
-		 * if it turns out not to be the case sometime
-		 * well will uncomment the code bellow
+		 * We expect to find the GUID in the object
 		 */
 		SMB_ASSERT(guidfound == true);
 		return ldb_module_send_entry(dsc->req, msg, controls);
@@ -227,7 +225,7 @@ static int dirsync_filter_entry(struct ldb_request *req,
 	}
 
 	/*
-		* If we don't have an USN and no updateness array then we skip the
+		* If we don't have an USN and no uptodateness array then we skip the
 		* test phase this is an optimisation for the case when you
 		* first query the DC without a cookie.
 		* As this query is most probably the one
@@ -756,7 +754,7 @@ static int dirsync_create_vector(struct ldb_request *req,
 	tab[0].source_dsa_invocation_id = *(dsc->our_invocation_id);
 
 
-	/* We have to add the updateness vector that we have*/
+	/* We have to add the uptodateness vector that we have*/
 	/* Version is always 1 in dirsync cookies */
 	cookie->blob.extra.uptodateness_vector.version = 1;
 	cookie->blob.extra.uptodateness_vector.reserved = 0;
@@ -803,7 +801,7 @@ static int dirsync_search_callback(struct ldb_request *req, struct ldb_reply *ar
 		/* Skip the ldap(s):// so up to 8 chars,
 		 * we don't care to be precise as the goal is to be in
 		 * the name of DC, then we search the next '/'
-		 * as it will be the last char before the DN of the referal
+		 * as it will be the last char before the DN of the referral
 		 */
 		if (strncmp(ares->referral, "ldap://", 7) == 0) {
 			tmp = ares->referral + 7;
@@ -877,7 +875,7 @@ static int dirsync_search_callback(struct ldb_request *req, struct ldb_reply *ar
 		 * It *very* important to steal otherwise as val is in a subcontext
 		 * related to res2, when the value will be one more time stolen
 		 * it's elements[x].values that will be stolen, so it's important to
-		 * recreate the context hierrachy as if it was done from a ldb_request
+		 * recreate the context hierarchy as if it was done from a ldb_request
 		 */
 		talloc_steal(res->msgs[0]->elements[0].values, val);
 		if (ret != LDB_SUCCESS) {
@@ -896,8 +894,8 @@ static int dirsync_search_callback(struct ldb_request *req, struct ldb_reply *ar
 		}
 
 		/*
-		 * When outputing flags is used to say more results.
-		 * For the moment we didn't honnor the size info */
+		 * When outputting flags is used to say more results.
+		 * For the moment we didn't honour the size info */
 
 		control->flags = 0;
 
@@ -1073,8 +1071,6 @@ static int dirsync_ldb_search(struct ldb_module *module, struct ldb_request *req
 			return ret;
 		}
 		talloc_free(acl_res);
-	} else if (ret != LDB_SUCCESS) {
-		return ret;
 	}
 
 	dsc->functional_level = dsdb_functional_level(ldb);
@@ -1100,7 +1096,7 @@ static int dirsync_ldb_search(struct ldb_module *module, struct ldb_request *req
 		}
 		/*
 		 * When returning all the attributes return also the SD as
-		 * Windws do so.
+		 * Windows does so.
 		 */
 		if (ldb_attr_in_list(attrs, "*")) {
 			struct ldb_sd_flags_control *sdctr = talloc_zero(dsc, struct ldb_sd_flags_control);
@@ -1118,7 +1114,7 @@ static int dirsync_ldb_search(struct ldb_module *module, struct ldb_request *req
 				return ldb_oom(ldb);
 			}
 			/*
-			* When no attributes are asked we in anycase expect at least 3 attributes:
+			* When no attributes are asked we in any case expect at least 3 attributes:
 			* * instanceType
 			* * objectGUID
 			* * parentGUID

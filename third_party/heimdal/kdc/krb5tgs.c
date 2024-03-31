@@ -96,7 +96,6 @@ _kdc_check_pac(astgs_request_t r,
     krb5_pac pac = NULL;
     krb5_error_code ret;
     krb5_boolean signedticket;
-    krb5_boolean is_trusted = FALSE;
 
     *kdc_issued = FALSE;
     *ppac = NULL;
@@ -126,12 +125,8 @@ _kdc_check_pac(astgs_request_t r,
     /* Verify the KDC signatures. */
     ret = _kdc_pac_verify(r,
 			  client_principal, delegated_proxy,
-			  client, server, krbtgt, tkt, pac, &is_trusted);
+			  client, server, krbtgt, tkt, pac);
     if (ret == 0) {
-	if (is_trusted) {
-	    krb5_pac_set_trusted(pac, TRUE);
-	}
-
 	if (pac_canon_name) {
 	    ret = _krb5_pac_get_canon_principal(context, pac, pac_canon_name);
 	    if (ret && ret != ENOENT) {
@@ -967,7 +962,13 @@ tgs_parse_request(astgs_request_t r,
 	goto out;
     }
 
-    if(!get_krbtgt_realm(&ap_req.ticket.sname)){
+    if(!krb5_principalname_is_krbtgt(r->context, &ap_req.ticket.sname)){
+	/*
+	 * Note: this check is not to be depended upon for security. Nothing
+	 * prevents a client modifying the sname, as it is located in the
+	 * unencrypted part of the ticket.
+	 */
+
 	/* XXX check for ticket.sname == req.sname */
 	kdc_log(r->context, config, 4, "PA-DATA is not a ticket-granting ticket");
 	ret = KRB5KDC_ERR_POLICY; /* ? */
@@ -1636,7 +1637,13 @@ server_lookup:
 		goto out;
 	    }
 	    t = &b->additional_tickets->val[0];
-	    if(!get_krbtgt_realm(&t->sname)){
+	    if(!krb5_principalname_is_krbtgt(context, &t->sname)){
+		/*
+		 * Note: this check is not to be depended upon for
+		 * security. Nothing prevents a client modifying the sname, as
+		 * it is located in the unencrypted part of the ticket.
+		 */
+
 		kdc_log(context, config, 4,
 			"Additional ticket is not a ticket-granting ticket");
 		kdc_audit_addreason((kdc_request_t)priv,
@@ -1782,7 +1789,7 @@ server_lookup:
 		    break;
 	    if(i == b->etype.len) {
 		kdc_log(context, config, 4,
-			"Addition ticket have not matching etypes");
+			"Addition ticket has no matching etypes");
 		krb5_clear_error_message(context);
 		ret = KRB5KDC_ERR_ETYPE_NOSUPP;
                 kdc_audit_addreason((kdc_request_t)priv,

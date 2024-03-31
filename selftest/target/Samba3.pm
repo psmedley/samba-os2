@@ -262,7 +262,7 @@ sub check_env($$)
 
 sub setup_nt4_dc
 {
-	my ($self, $path, $more_conf, $server) = @_;
+	my ($self, $path, $more_conf, $domain, $server) = @_;
 
 	print "PROVISIONING NT4 DC...";
 
@@ -312,12 +312,15 @@ sub setup_nt4_dc
 	if (defined($more_conf)) {
 		$nt4_dc_options = $nt4_dc_options . $more_conf;
 	}
+	if (!defined($domain)) {
+		$domain = "SAMBA-TEST";
+	}
 	if (!defined($server)) {
 		$server = "LOCALNT4DC2";
 	}
 	my $vars = $self->provision(
 	    prefix => $path,
-	    domain => "SAMBA-TEST",
+	    domain => $domain,
 	    server => $server,
 	    password => "localntdc2pass",
 	    extra_options => $nt4_dc_options);
@@ -352,7 +355,7 @@ sub setup_nt4_dc_smb1
 	client min protocol = CORE
 	server min protocol = LANMAN1
 ";
-	return $self->setup_nt4_dc($path, $conf, "LCLNT4DC2SMB1");
+	return $self->setup_nt4_dc($path, $conf, "NT4SMB1", "LCLNT4DC2SMB1");
 }
 
 sub setup_nt4_dc_smb1_done
@@ -503,8 +506,6 @@ sub setup_clusteredmember
 	my $prefix_abs = abs_path($prefix);
 	mkdir($prefix_abs, 0777);
 
-	my $server_name = "CLUSTEREDMEMBER";
-
 	my $ctdb_data = $self->setup_ctdb($prefix);
 
 	if (not $ctdb_data) {
@@ -539,6 +540,8 @@ sub setup_clusteredmember
        security = domain
        server signing = on
        clustering = yes
+       rpc start on demand helpers = false
+       rpcd witness:include node ips = yes
        ctdbd socket = ${socket}
        include = registry
        dbwrap_tdb_mutexes:* = yes
@@ -632,6 +635,7 @@ sub setup_clusteredmember
 		my $ok;
 		$ok = $self->check_or_start(
 		    env_vars => $node_provision,
+		    samba_dcerpcd => "yes",
 		    winbindd => "yes",
 		    smbd => "yes",
 		    child_cleanup => sub {
@@ -745,6 +749,9 @@ sub provision_ad_member
 
 	$substitution_path = "$share_dir/D_$dcvars->{DOMAIN}/u_$dcvars->{DOMAIN}/alice/g_$dcvars->{DOMAIN}/domain users";
 	push(@dirs, $substitution_path);
+
+	my $smbcacls_sharedir="$share_dir/smbcacls";
+	push(@dirs,$smbcacls_sharedir);
 
 	my $option_offline_logon = "no";
 	if (defined($offline_logon)) {
@@ -1412,6 +1419,7 @@ sub setup_ad_member_idmap_ad
 	idmap config $dcvars->{TRUST_DOMAIN} : backend = ad
 	idmap config $dcvars->{TRUST_DOMAIN} : range = 2000000-2999999
 	gensec_gssapi:requested_life_time = 5
+	winbind scan trusted domains = yes
 ";
 
 	my $ret = $self->provision(
@@ -1877,6 +1885,7 @@ sub setup_fileserver
 
 	my $ip4 = Samba::get_ipv4_addr("FILESERVER");
 	my $fileserver_options = "
+        smb3 unix extensions = yes
 	kernel change notify = yes
 	spotlight backend = elasticsearch
 	elasticsearch:address = $ip4
@@ -2033,6 +2042,11 @@ sub setup_fileserver
 	path = $share_dir
 	vfs objects = acl_xattr
 	acl_xattr:security_acl_name = user.hackme
+	read only = no
+
+[io_uring]
+	path = $share_dir
+	vfs objects = acl_xattr fake_acls xattr_tdb streams_depot time_audit full_audit io_uring
 	read only = no
 
 [homes]
@@ -2672,11 +2686,20 @@ sub provision($$)
 	my $local_symlinks_shrdir="$shrdir/local_symlinks";
 	push(@dirs,$local_symlinks_shrdir);
 
+	my $worm_shrdir="$shrdir/worm";
+	push(@dirs,$worm_shrdir);
+
 	my $fruit_resource_stream_shrdir="$shrdir/fruit_resource_stream";
 	push(@dirs,$fruit_resource_stream_shrdir);
 
 	my $smbget_sharedir="$shrdir/smbget";
 	push(@dirs, $smbget_sharedir);
+
+	my $recycle_shrdir="$shrdir/recycle";
+	push(@dirs,$recycle_shrdir);
+
+	my $fakedircreatetimes_shrdir="$shrdir/fakedircreatetimes";
+	push(@dirs,$fakedircreatetimes_shrdir);
 
 	# this gets autocreated by winbindd
 	my $wbsockdir="$prefix_abs/wbsock";
@@ -3266,6 +3289,7 @@ sub provision($$)
 	fruit:resource = file
 	fruit:metadata = stream
 	fruit:zero_file_id=yes
+	fruit:validate_afpinfo = no
 
 [fruit_resource_stream]
 	path = $fruit_resource_stream_shrdir
@@ -3493,6 +3517,13 @@ sub provision($$)
 	path = $local_symlinks_shrdir
 	follow symlinks = yes
 
+[worm]
+	copy = tmp
+	path = $worm_shrdir
+	vfs objects = worm
+	worm:grace_period = 1
+	comment = vfs_worm with 1s grace_period
+
 [kernel_oplocks]
 	copy = tmp
 	kernel oplocks = yes
@@ -3585,6 +3616,19 @@ sub provision($$)
 [smbget]
 	path = $smbget_sharedir
 	comment = smb username is [%U]
+
+[recycle]
+	copy = tmp
+	path = $recycle_shrdir
+	vfs objects = recycle
+	recycle : repository = .trash
+	recycle : exclude = *.tmp
+	recycle : directory_mode = 755
+
+[fakedircreatetimes]
+	copy = tmp
+	path = $fakedircreatetimes_shrdir
+	fake directory create times = yes
 
 [smbget_guest]
 	path = $smbget_sharedir
@@ -3765,7 +3809,7 @@ jacknomappergroup:x:$gid_jacknomapper:jacknomapper
 	$ret{USERID} = $unix_uid;
 	$ret{DOMAIN} = $domain;
 	$ret{SAMSID} = $samsid;
-	$ret{NETBIOSNAME} = $server;
+	$ret{NETBIOSNAME} = $netbios_name;
 	$ret{PASSWORD} = $password;
 	$ret{PIDDIR} = $piddir;
 	$ret{SELFTEST_WINBINDD_SOCKET_DIR} = $wbsockdir;
@@ -3814,7 +3858,7 @@ sub wait_for_start($$$$$)
 	    print "checking for samba_dcerpcd\n";
 
 	    do {
-		$ret = system("$rpcclient $envvars->{CONFIGURATION} ncalrpc: -c epmmap");
+		$ret = system("UID_WRAPPER_ROOT=1 $rpcclient $envvars->{CONFIGURATION} ncalrpc: -c epmmap");
 
 		if ($ret != 0) {
 		    sleep(1);

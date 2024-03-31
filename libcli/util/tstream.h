@@ -23,6 +23,8 @@
 /**
  * @brief The function which will report the size of the full pdu.
  *
+ * @param[in]  stream   The tstream_context to operate on
+ *
  * @param[in]  private_data Some private data which could be used.
  *
  * @param[in]  blob     The received blob to get the size from.
@@ -32,7 +34,8 @@
  * @return              NT_STATUS_OK on success, STATUS_MORE_ENTRIES if there
  *                      are more entries.
  */
-typedef NTSTATUS tstream_read_pdu_blob_full_fn_t(void *private_data,
+typedef NTSTATUS tstream_read_pdu_blob_full_fn_t(struct tstream_context *stream,
+						 void *private_data,
 						 DATA_BLOB blob,
 						 size_t *packet_size);
 
@@ -89,5 +92,32 @@ struct tevent_req *tstream_read_pdu_blob_send(TALLOC_CTX *mem_ctx,
 NTSTATUS tstream_read_pdu_blob_recv(struct tevent_req *req,
 				    TALLOC_CTX *mem_ctx,
 				    DATA_BLOB *pdu_blob);
+
+/**
+ * @brief Get a PDU size with a 32 bit size header field
+ *
+ * Work out if a packet is complete for protocols that use a 32 bit
+ * network byte order length.
+ *
+ * @see tstream_read_pdu_blob_send()
+ * @see tstream_read_pdu_blob_recv()
+ */
+NTSTATUS tstream_full_request_u32(struct tstream_context *stream,
+				  void *private_data,
+				  DATA_BLOB blob, size_t *size);
+
+/**
+ * @brief Get a PDU size with a 16 bit size header field
+ *
+ * Work out if a packet is complete for protocols that use a 16 bit
+ * network byte order length.
+ *
+ * @see tstream_read_pdu_blob_send()
+ * @see tstream_read_pdu_blob_recv()
+ */
+NTSTATUS tstream_full_request_u16(struct tstream_context *stream,
+				  void *private_data,
+				  DATA_BLOB blob, size_t *size);
+
 
 #endif /* _LIBCLI_UTIL_TSTREAM_H_ */

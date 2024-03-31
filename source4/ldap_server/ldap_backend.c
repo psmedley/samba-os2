@@ -218,7 +218,7 @@ int ldapsrv_backend_Init(struct ldapsrv_connection *conn,
 			     opaque_connection_state);
 	if (ret != LDB_SUCCESS) {
 		DBG_ERR("ldb_set_opaque() failed to store our "
-			"encrypted connection state!");
+			"encrypted connection state!\n");
 		return ret;
 	}
 
@@ -288,14 +288,15 @@ static NTSTATUS ldapsrv_encode(TALLOC_CTX *mem_ctx,
 				samba_ldap_control_handlers(),
 				&reply->blob,
 				mem_ctx);
-	TALLOC_FREE(reply->msg);
 	if (!bret) {
-		DEBUG(0,("Failed to encode ldap reply of type %d: "
+		DBG_ERR("Failed to encode ldap reply of type %d: "
 			 "ldap_encode() failed\n",
-			 reply->msg->type));
+			 reply->msg->type);
+		TALLOC_FREE(reply->msg);
 		return NT_STATUS_NO_MEMORY;
 	}
 
+	TALLOC_FREE(reply->msg);
 	talloc_set_name_const(reply->blob.data,
 			      "Outgoing, encoded single LDAP reply");
 
@@ -352,7 +353,7 @@ static NTSTATUS ldapsrv_unwilling(struct ldapsrv_call *call, int error)
 	struct ldapsrv_reply *reply;
 	struct ldap_ExtendedResponse *r;
 
-	DEBUG(10,("Unwilling type[%d] id[%d]\n", call->request->type, call->request->messageid));
+	DBG_DEBUG("type[%d] id[%d]\n", call->request->type, call->request->messageid);
 
 	reply = ldapsrv_init_reply(call, LDAP_TAG_ExtendedResponse);
 	if (!reply) {
@@ -594,7 +595,7 @@ struct ldapsrv_context {
 	int extended_type;
 	bool attributesonly;
 	struct ldb_control **controls;
-	size_t count; /* For notificaiton only */
+	size_t count; /* For notification only */
 };
 
 static int ldap_server_search_callback(struct ldb_request *req, struct ldb_reply *ares)
@@ -770,15 +771,12 @@ static NTSTATUS ldapsrv_SearchRequest(struct ldapsrv_call *call)
 
 	switch (req->scope) {
 	case LDAP_SEARCH_SCOPE_BASE:
-		scope_str = "BASE";
 		scope = LDB_SCOPE_BASE;
 		break;
 	case LDAP_SEARCH_SCOPE_SINGLE:
-		scope_str = "ONE";
 		scope = LDB_SCOPE_ONELEVEL;
 		break;
 	case LDAP_SEARCH_SCOPE_SUB:
-		scope_str = "SUB";
 		scope = LDB_SCOPE_SUBTREE;
 		break;
 	default:
@@ -790,21 +788,23 @@ static NTSTATUS ldapsrv_SearchRequest(struct ldapsrv_call *call)
 					 "%s. Invalid scope", errstr);
 		goto reply;
 	}
-	DEBUG(10,("SearchRequest: scope: [%s]\n", scope_str));
+	scope_str = dsdb_search_scope_as_string(scope);
+
+	DBG_DEBUG("scope: [%s]\n", scope_str);
 
 	if (req->num_attributes >= 1) {
 		attrs = talloc_array(local_ctx, const char *, req->num_attributes+1);
 		NT_STATUS_HAVE_NO_MEMORY(attrs);
 
 		for (i=0; i < req->num_attributes; i++) {
-			DEBUG(10,("SearchRequest: attrs: [%s]\n",req->attributes[i]));
+			DBG_DEBUG("attrs: [%s]\n",req->attributes[i]);
 			attrs[i] = req->attributes[i];
 		}
 		attrs[i] = NULL;
 	}
 
-	DEBUG(5,("ldb_request %s dn=%s filter=%s\n", 
-		 scope_str, req->basedn, ldb_filter_from_tree(call, req->tree)));
+	DBG_INFO("ldb_request %s dn=%s filter=%s\n",
+		 scope_str, req->basedn, ldb_filter_from_tree(call, req->tree));
 
 	callback_ctx = talloc_zero(local_ctx, struct ldapsrv_context);
 	NT_STATUS_HAVE_NO_MEMORY(callback_ctx);
@@ -863,7 +863,7 @@ static NTSTATUS ldapsrv_SearchRequest(struct ldapsrv_call *call)
 		}
 
 		if (count >= call->conn->limits.max_notifications) {
-			DEBUG(10,("SearchRequest: error MaxNotificationPerConn\n"));
+			DBG_DEBUG("error MaxNotificationPerConn\n");
 			result = map_ldb_error(local_ctx,
 					       LDB_ERR_ADMIN_LIMIT_EXCEEDED,
 					       "MaxNotificationPerConn reached",
@@ -1029,7 +1029,7 @@ reply:
 		}
 		result = LDB_SUCCESS;
 	} else {
-		DEBUG(10,("SearchRequest: error\n"));
+		DBG_DEBUG("error\n");
 		result = map_ldb_error(local_ctx, ldb_ret, ldb_errstring(samdb),
 				       &errstr);
 	}
@@ -1057,8 +1057,7 @@ static NTSTATUS ldapsrv_ModifyRequest(struct ldapsrv_call *call)
 	unsigned int i,j;
 	struct ldb_result *res = NULL;
 
-	DEBUG(10, ("ModifyRequest"));
-	DEBUGADD(10, (" dn: %s\n", req->dn));
+	DBG_DEBUG("dn: %s\n", req->dn);
 
 	local_ctx = talloc_named(call, 0, "ModifyRequest local memory context");
 	NT_STATUS_HAVE_NO_MEMORY(local_ctx);
@@ -1066,7 +1065,7 @@ static NTSTATUS ldapsrv_ModifyRequest(struct ldapsrv_call *call)
 	dn = ldb_dn_new(local_ctx, samdb, req->dn);
 	NT_STATUS_HAVE_NO_MEMORY(dn);
 
-	DEBUG(10, ("ModifyRequest: dn: [%s]\n", req->dn));
+	DBG_DEBUG("dn: [%s]\n", req->dn);
 
 	msg = ldb_msg_new(local_ctx);
 	NT_STATUS_HAVE_NO_MEMORY(msg);
@@ -1162,8 +1161,7 @@ static NTSTATUS ldapsrv_AddRequest(struct ldapsrv_call *call)
 	unsigned int i,j;
 	struct ldb_result *res = NULL;
 
-	DEBUG(10, ("AddRequest"));
-	DEBUGADD(10, (" dn: %s\n", req->dn));
+	DBG_DEBUG("dn: %s\n", req->dn);
 
 	local_ctx = talloc_named(call, 0, "AddRequest local memory context");
 	NT_STATUS_HAVE_NO_MEMORY(local_ctx);
@@ -1171,7 +1169,7 @@ static NTSTATUS ldapsrv_AddRequest(struct ldapsrv_call *call)
 	dn = ldb_dn_new(local_ctx, samdb, req->dn);
 	NT_STATUS_HAVE_NO_MEMORY(dn);
 
-	DEBUG(10, ("AddRequest: dn: [%s]\n", req->dn));
+	DBG_DEBUG("dn: [%s]\n", req->dn);
 
 	msg = talloc(local_ctx, struct ldb_message);
 	NT_STATUS_HAVE_NO_MEMORY(msg);
@@ -1248,8 +1246,7 @@ static NTSTATUS ldapsrv_DelRequest(struct ldapsrv_call *call)
 	int ldb_ret;
 	struct ldb_result *res = NULL;
 
-	DEBUG(10, ("DelRequest"));
-	DEBUGADD(10, (" dn: %s\n", req->dn));
+	DBG_DEBUG("dn: %s\n", req->dn);
 
 	local_ctx = talloc_named(call, 0, "DelRequest local memory context");
 	NT_STATUS_HAVE_NO_MEMORY(local_ctx);
@@ -1257,7 +1254,7 @@ static NTSTATUS ldapsrv_DelRequest(struct ldapsrv_call *call)
 	dn = ldb_dn_new(local_ctx, samdb, req->dn);
 	NT_STATUS_HAVE_NO_MEMORY(dn);
 
-	DEBUG(10, ("DelRequest: dn: [%s]\n", req->dn));
+	DBG_DEBUG("dn: [%s]\n", req->dn);
 
 	del_reply = ldapsrv_init_reply(call, LDAP_TAG_DelResponse);
 	NT_STATUS_HAVE_NO_MEMORY(del_reply);
@@ -1303,9 +1300,8 @@ static NTSTATUS ldapsrv_ModifyDNRequest(struct ldapsrv_call *call)
 	int ldb_ret;
 	struct ldb_result *res = NULL;
 
-	DEBUG(10, ("ModifyDNRequest"));
-	DEBUGADD(10, (" dn: %s", req->dn));
-	DEBUGADD(10, (" newrdn: %s\n", req->newrdn));
+	DBG_DEBUG("dn: %s newrdn: %s\n",
+		  req->dn, req->newrdn);
 
 	local_ctx = talloc_named(call, 0, "ModifyDNRequest local memory context");
 	NT_STATUS_HAVE_NO_MEMORY(local_ctx);
@@ -1316,8 +1312,8 @@ static NTSTATUS ldapsrv_ModifyDNRequest(struct ldapsrv_call *call)
 	newrdn = ldb_dn_new(local_ctx, samdb, req->newrdn);
 	NT_STATUS_HAVE_NO_MEMORY(newrdn);
 
-	DEBUG(10, ("ModifyDNRequest: olddn: [%s]\n", req->dn));
-	DEBUG(10, ("ModifyDNRequest: newrdn: [%s]\n", req->newrdn));
+	DBG_DEBUG("olddn: [%s] newrdn: [%s]\n",
+		  req->dn, req->newrdn);
 
 	if (ldb_dn_get_comp_num(newrdn) == 0) {
 		result = LDAP_PROTOCOL_ERROR;
@@ -1344,7 +1340,7 @@ static NTSTATUS ldapsrv_ModifyDNRequest(struct ldapsrv_call *call)
 	}
 
 	if (req->newsuperior) {
-		DEBUG(10, ("ModifyDNRequest: newsuperior: [%s]\n", req->newsuperior));
+		DBG_DEBUG("newsuperior: [%s]\n", req->newsuperior);
 		parentdn = ldb_dn_new(local_ctx, samdb, req->newsuperior);
 	}
 
@@ -1410,8 +1406,7 @@ static NTSTATUS ldapsrv_CompareRequest(struct ldapsrv_call *call)
 	int result = LDAP_SUCCESS;
 	int ldb_ret;
 
-	DEBUG(10, ("CompareRequest"));
-	DEBUGADD(10, (" dn: %s\n", req->dn));
+	DBG_DEBUG("dn: %s\n", req->dn);
 
 	local_ctx = talloc_named(call, 0, "CompareRequest local_memory_context");
 	NT_STATUS_HAVE_NO_MEMORY(local_ctx);
@@ -1419,12 +1414,12 @@ static NTSTATUS ldapsrv_CompareRequest(struct ldapsrv_call *call)
 	dn = ldb_dn_new(local_ctx, samdb, req->dn);
 	NT_STATUS_HAVE_NO_MEMORY(dn);
 
-	DEBUG(10, ("CompareRequest: dn: [%s]\n", req->dn));
+	DBG_DEBUG("dn: [%s]\n", req->dn);
 	filter = talloc_asprintf(local_ctx, "(%s=%*s)", req->attribute, 
 				 (int)req->value.length, req->value.data);
 	NT_STATUS_HAVE_NO_MEMORY(filter);
 
-	DEBUGADD(10, ("CompareRequest: attribute: [%s]\n", filter));
+	DBG_DEBUG("attribute: [%s]\n", filter);
 
 	attrs[0] = NULL;
 
@@ -1437,13 +1432,13 @@ static NTSTATUS ldapsrv_CompareRequest(struct ldapsrv_call *call)
 		if (ldb_ret != LDB_SUCCESS) {
 			result = map_ldb_error(local_ctx, ldb_ret,
 					       ldb_errstring(samdb), &errstr);
-			DEBUG(10,("CompareRequest: error: %s\n", errstr));
+			DBG_DEBUG("error: %s\n", errstr);
 		} else if (res->count == 0) {
-			DEBUG(10,("CompareRequest: doesn't matched\n"));
+			DBG_DEBUG("didn't match\n");
 			result = LDAP_COMPARE_FALSE;
 			errstr = NULL;
 		} else if (res->count == 1) {
-			DEBUG(10,("CompareRequest: matched\n"));
+			DBG_DEBUG("matched\n");
 			result = LDAP_COMPARE_TRUE;
 			errstr = NULL;
 		} else if (res->count > 1) {
@@ -1451,7 +1446,7 @@ static NTSTATUS ldapsrv_CompareRequest(struct ldapsrv_call *call)
 			map_ldb_error(local_ctx, LDB_ERR_OTHER, NULL, &errstr);
 			errstr = talloc_asprintf(local_ctx,
 				"%s. Too many objects match!", errstr);
-			DEBUG(10,("CompareRequest: %d results: %s\n", res->count, errstr));
+			DBG_DEBUG("%u results: %s\n", res->count, errstr);
 		}
 	}
 
@@ -1472,7 +1467,7 @@ static NTSTATUS ldapsrv_AbandonRequest(struct ldapsrv_call *call)
 	struct ldapsrv_call *c = NULL;
 	struct ldapsrv_call *n = NULL;
 
-	DEBUG(10, ("AbandonRequest\n"));
+	DBG_DEBUG("abandoned\n");
 
 	for (c = call->conn->pending_calls; c != NULL; c = n) {
 		n = c->next;
@@ -1535,8 +1530,8 @@ NTSTATUS ldapsrv_do_call(struct ldapsrv_call *call)
 	for (i=0; msg->controls && msg->controls[i]; i++) {
 		if (!msg->controls_decoded[i] && 
 		    msg->controls[i]->critical) {
-			DEBUG(3, ("ldapsrv_do_call: Critical extension %s is not known to this server\n",
-				  msg->controls[i]->oid));
+			DBG_NOTICE("Critical extension %s is not known to this server\n",
+				  msg->controls[i]->oid);
 			return ldapsrv_unwilling(call, LDAP_UNAVAILABLE_CRITICAL_EXTENSION);
 		}
 	}

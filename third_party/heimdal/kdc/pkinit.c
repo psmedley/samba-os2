@@ -111,7 +111,7 @@ pk_check_pkauthenticator_win2k(krb5_context context,
 
 static krb5_error_code
 pk_check_pkauthenticator(krb5_context context,
-			 PKAuthenticator *a,
+			 const PKAuthenticator *a,
 			 const KDC_REQ *req)
 {
     krb5_error_code ret;
@@ -534,8 +534,8 @@ _kdc_pk_rd_padata(astgs_request_t priv,
 
 	    }
 	    /*
-	     * If the client sent more then 10 EDI, don't bother
-	     * looking more then 10 of performance reasons.
+	     * If the client sent more than 10 EDIs, don't bother
+	     * looking at more than 10 for performance reasons.
 	     */
 	    maxedi = edi->len;
 	    if (maxedi > 10)
@@ -873,7 +873,7 @@ pk_mk_pa_reply_enckey(krb5_context context,
     *kdc_cert = NULL;
 
     /*
-     * If the message client is a win2k-type but it send pa data
+     * If the message client is a win2k-type but it sends pa data
      * 09-binding it expects a IETF (checksum) reply so there can be
      * no replay attacks.
      */
@@ -1078,9 +1078,9 @@ pk_mk_pa_reply_dh(krb5_context context,
         unsigned char *p;
         ret = _kdc_serialize_ecdh_key(context, cp->u.ecdh.key, &p,
                                       &dh_info.subjectPublicKey.length);
-        dh_info.subjectPublicKey.data = p;
         if (ret)
             goto out;
+        dh_info.subjectPublicKey.data = p;
     } else
 	krb5_abortx(context, "no keyex selected ?");
 
@@ -1509,7 +1509,7 @@ _kdc_pk_mk_pa_reply(astgs_request_t r, pk_client_params *cp)
 	    if (ret) {
 		close(fd);
 		kdc_log(r->context, config, 0,
-			"PKINIT failed to stat ocsp data %d", ret);
+			"PKINIT failed to allocate ocsp data %d", ret);
 		goto out_ocsp;
 	    }
 	    ocsp.data.length = sb.st_size;
@@ -1533,7 +1533,7 @@ _kdc_pk_mk_pa_reply(astgs_request_t r, pk_client_params *cp)
 		krb5_data_free(&ocsp.data);
 		ocsp.expire = 0;
 	    } else if (ocsp.expire > 180) {
-		ocsp.expire -= 180; /* refetch the ocsp before it expire */
+		ocsp.expire -= 180; /* refetch the ocsp before it expires */
 		ocsp.next_update = ocsp.expire;
 	    } else {
 		ocsp.next_update = kdc_time;
@@ -1649,8 +1649,12 @@ match_ms_upn_san(krb5_context context,
 	goto out;
 
     if (list.len != 1) {
-	kdc_log(context, config, 0,
-		"More than one PKINIT MS UPN SAN");
+	if (list.len)
+	    kdc_log(context, config, 0,
+		    "More than one PKINIT MS UPN SAN");
+	else
+	    kdc_log(context, config, 0,
+		    "No PKINIT MS UPN SAN");
 	ret = KRB5_KDC_ERR_CLIENT_NAME_MISMATCH;
 	goto out;
     }
@@ -1662,7 +1666,7 @@ match_ms_upn_san(krb5_context context,
     }
     if (size != list.val[0].length) {
 	free_MS_UPN_SAN(&upn);
-	kdc_log(context, config, 0, "Trailing data in ");
+	kdc_log(context, config, 0, "Trailing data in MS UPN SAN");
 	ret = KRB5_KDC_ERR_CLIENT_NAME_MISMATCH;
 	goto out;
     }
@@ -1804,7 +1808,7 @@ _kdc_pk_check_client(astgs_request_t r,
 	    if (strcmp(*subject_name, acl->val[0].subject) != 0)
 		continue;
 
-	    /* Don't support isser and anchor checking right now */
+	    /* Don't support issuer and anchor checking right now */
 	    if (acl->val[0].issuer)
 		continue;
 	    if (acl->val[0].anchor)
@@ -2139,7 +2143,7 @@ krb5_kdc_pk_initialize(krb5_context context,
 			   NULL,
 			   NULL);
     if (ret) {
-	krb5_warn(context, ret, "PKINIT: ");
+	krb5_warn(context, ret, "PKINIT: failed to load ID");
 	config->enable_pkinit = 0;
 	return ret;
     }

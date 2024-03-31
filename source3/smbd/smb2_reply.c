@@ -51,6 +51,7 @@
 #include "lib/util/string_wrappers.h"
 #include "source3/printing/rap_jobid.h"
 #include "source3/lib/substitute.h"
+#include "source3/smbd/dir.h"
 
 /****************************************************************************
  Ensure we check the path in *exactly* the same way as W2K for a findfirst/findnext
@@ -964,7 +965,8 @@ NTSTATUS unlink_internals(connection_struct *conn,
 		 DELETE_ACCESS,		/* access_mask */
 		 FILE_SHARE_NONE,	/* share_access */
 		 FILE_OPEN,		/* create_disposition*/
-		 FILE_NON_DIRECTORY_FILE, /* create_options */
+		 FILE_NON_DIRECTORY_FILE |
+			FILE_OPEN_REPARSE_POINT, /* create_options */
 		 FILE_ATTRIBUTE_NORMAL,	/* file_attributes */
 		 0,			/* oplock_request */
 		 NULL,			/* lease */
@@ -1393,7 +1395,6 @@ static NTSTATUS parent_dirname_compatible_open(connection_struct *conn,
 
 NTSTATUS rename_internals_fsp(connection_struct *conn,
 			files_struct *fsp,
-			struct files_struct *dst_dirfsp,
 			struct smb_filename *smb_fname_dst_in,
 			const char *dst_original_lcomp,
 			uint32_t attrs,
@@ -1769,7 +1770,6 @@ NTSTATUS rename_internals_fsp(connection_struct *conn,
 				  smb_fname_dst);
 
 		if (!fsp->fsp_flags.is_directory &&
-		    !(fsp->posix_flags & FSP_POSIX_FLAGS_PATHNAMES) &&
 		    (lp_map_archive(SNUM(conn)) ||
 		     lp_store_dos_attributes(SNUM(conn))))
 		{
@@ -1855,7 +1855,6 @@ NTSTATUS rename_internals(TALLOC_CTX *ctx,
 			struct smb_request *req,
 			struct files_struct *src_dirfsp,
 			struct smb_filename *smb_fname_src,
-			struct files_struct *dst_dirfsp,
 			struct smb_filename *smb_fname_dst,
 			const char *dst_original_lcomp,
 			uint32_t attrs,
@@ -1863,7 +1862,7 @@ NTSTATUS rename_internals(TALLOC_CTX *ctx,
 			uint32_t access_mask)
 {
 	NTSTATUS status = NT_STATUS_OK;
-	int create_options = 0;
+	int create_options = FILE_OPEN_REPARSE_POINT;
 	struct smb2_create_blobs *posx = NULL;
 	struct files_struct *fsp = NULL;
 	bool posix_pathname = (smb_fname_src->flags & SMB_FILENAME_POSIX_PATH);
@@ -1945,7 +1944,6 @@ NTSTATUS rename_internals(TALLOC_CTX *ctx,
 
 	status = rename_internals_fsp(conn,
 					fsp,
-					dst_dirfsp,
 					smb_fname_dst,
 					dst_original_lcomp,
 					attrs,

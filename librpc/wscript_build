@@ -305,6 +305,28 @@ bld.SAMBA_SUBSYSTEM('NDR_FSRVP',
 	public_deps='ndr'
 	)
 
+bld.SAMBA_GENERATOR('gen_wsp_props',
+	source='../source4/scripting/bin/gen_wsp_props.py wsp/allprops-from-ms-wsp-spec.csv wsp/extra-props.csv',
+target='wsp/wsp_props_gen.c',
+	group='build_source',
+	rule='${PYTHON} ${SRC[0].abspath(env)} ${SRC[1].abspath(env)} ${TGT[0].abspath(env)} ${SRC[2].abspath(env)}'
+	)
+
+bld.SAMBA_SUBSYSTEM('NDR_WSP',
+	source='gen_ndr/ndr_wsp.c wsp/wsp_helper.c wsp/wsp_props_gen.c',
+	public_deps='ndr gen_wsp_props'
+	)
+
+bld.SAMBA_SUBSYSTEM('NDR_WSP_DATA',
+	source='gen_ndr/ndr_wsp_data.c',
+	public_deps='ndr'
+	)
+
+bld.SAMBA_SUBSYSTEM('WSP_UTIL',
+	source='wsp/wsp_util.c wsp/wsp_props_gen.c',
+	public_deps='ndr gen_wsp_props'
+	)
+
 bld.SAMBA_SUBSYSTEM('NDR_WITNESS',
     source='gen_ndr/ndr_witness.c ndr/ndr_witness.c',
     public_deps='ndr'
@@ -368,6 +390,14 @@ bld.SAMBA_SUBSYSTEM('NDR_CLAIMS',
     source='gen_ndr/ndr_claims.c ndr/ndr_claims.c',
     deps='ndr NDR_COMPRESSION LZXPRESS')
 
+bld.SAMBA_SUBSYSTEM('NDR_GKDI',
+    source='gen_ndr/ndr_gkdi.c',
+    deps='ndr')
+
+bld.SAMBA_SUBSYSTEM('NDR_GMSA',
+    source='gen_ndr/ndr_gmsa.c',
+    deps='ndr')
+
 bld.SAMBA_LIBRARY('ndr-standard',
     source='',
     vnum='0.0.1',
@@ -386,6 +416,11 @@ bld.SAMBA_SUBSYSTEM('NDR_XATTR',
     source='ndr/ndr_xattr.c gen_ndr/ndr_xattr.c',
     public_deps='ndr NDR_SECURITY'
     )
+
+bld.SAMBA_SUBSYSTEM('NDR_SMB3POSIX',
+                    source='gen_ndr/ndr_smb3posix.c',
+                    public_deps='ndr',
+                    public_headers='gen_ndr/smb3posix.h')
 
 bld.SAMBA_SUBSYSTEM('NDR_SMB2_LEASE_STRUCT',
     source='gen_ndr/ndr_smb2_lease_struct.c',
@@ -445,6 +480,11 @@ bld.SAMBA_SUBSYSTEM('NDR_MESSAGING',
 
 bld.SAMBA_SUBSYSTEM('NDR_WINSTATION',
 	source='gen_ndr/ndr_winstation.c',
+	public_deps='ndr'
+	)
+
+bld.SAMBA_SUBSYSTEM('NDR_CONDITIONAL_ACE',
+	source='gen_ndr/ndr_conditional_ace.c',
 	public_deps='ndr'
 	)
 
@@ -595,13 +635,19 @@ bld.SAMBA_SUBSYSTEM('RPC_NDR_MDSSVC',
     public_deps='dcerpc-binding NDR_MDSSVC'
     )
 
+bld.SAMBA_SUBSYSTEM('RPC_NDR_GKDI',
+    source='gen_ndr/ndr_gkdi_c.c',
+    public_deps='dcerpc-binding NDR_GKDI'
+    )
+
 # a grouping library for NDR subsystems that may be used by more than one target
 bld.SAMBA_LIBRARY('ndr-samba',
     source=[],
     deps='''NDR_DRSBLOBS NDR_DRSUAPI NDR_IDMAP NDR_NTLMSSP NDR_NEGOEX NDR_SCHANNEL NDR_MGMT
     NDR_DNSSERVER NDR_EPMAPPER NDR_XATTR NDR_UNIXINFO NDR_NAMED_PIPE_AUTH
     NDR_NTPRINTING NDR_FSRVP NDR_WITNESS NDR_MDSSVC NDR_OPEN_FILES NDR_SMBXSRV
-    NDR_KRB5CCACHE''',
+    NDR_SMB3POSIX NDR_RPCD_WITNESS
+    NDR_KRB5CCACHE NDR_WSP NDR_GKDI NDR_GMSA''',
     private_library=True,
     grouping_library=True
     )
@@ -612,7 +658,7 @@ bld.SAMBA_LIBRARY('dcerpc-samba',
     deps='''RPC_NDR_LSA RPC_NDR_SAMR RPC_NDR_NETLOGON RPC_NDR_EVENTLOG
     RPC_NDR_DFS RPC_NDR_NTSVCS RPC_NDR_SVCCTL RPC_NDR_INITSHUTDOWN
     RPC_NDR_WKSSVC RPC_NDR_SRVSVC RPC_NDR_WINREG RPC_NDR_ECHO RPC_NDR_EPMAPPER
-    RPC_NDR_ATSVC RPC_NDR_SPOOLSS RPC_NDR_DNSSERVER''',
+    RPC_NDR_ATSVC RPC_NDR_SPOOLSS RPC_NDR_DNSSERVER RPC_NDR_GKDI''',
     public_deps='ndr-standard',
     private_library=True,
     grouping_library=True
@@ -628,7 +674,7 @@ bld.SAMBA_LIBRARY('ndr',
     public_deps='samba-errors talloc samba-util util_str_hex',
     public_headers='gen_ndr/misc.h gen_ndr/ndr_misc.h ndr/libndr.h:ndr.h',
     header_path= [('*gen_ndr*', 'gen_ndr')],
-    vnum='3.0.1',
+    vnum='4.0.0',
     abi_directory='ABI',
     abi_match='!ndr_table_* ndr_* GUID_* _ndr_pull_error* _ndr_push_error*',
     )
@@ -747,3 +793,14 @@ ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS gse  CMDLINE_S3 secrets3 cli_cldap MES
 samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth krb5samba authkrb5 krb5samba common_auth npa_tstream msrpc3 auth libcli_lsa3  netapi trusts_util xattr_tdb
                       ''',
                  for_selftest=True)
+
+bld.SAMBA_BINARY(
+    'test_ndr_gmsa',
+    source='tests/test_ndr_gmsa.c',
+    deps='''
+        cmocka
+        talloc
+        NDR_GMSA
+    ''',
+    for_selftest=True,
+)

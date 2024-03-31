@@ -184,7 +184,7 @@ bld.SAMBA_LIBRARY('dcerpc',
 	# If we just put header_path = 'gen_ndr' then all the public_headers will go
 	# in 'gen_ndr' and for dcerpc.h (at least) it will cause a problem as
 	# we have already a dcerpc.h installed by librpc/wscript_build
-	# and one will overright the other which is not what we expect.
+	# and one will overwrite the other which is not what we expect.
 	header_path=[ ('*gen_ndr*', 'gen_ndr') ],
 	vnum='0.0.1'
 	)
@@ -232,6 +232,14 @@ bld.SAMBA_PYTHON('python_dcerpc_security',
         cflags_end=gen_cflags
         )
 
+bld.SAMBA_PYTHON('python_conditional_ace',
+        source=('../../librpc/gen_ndr/py_conditional_ace.c '
+                '../../librpc/gen_ndr/ndr_conditional_ace.c'),
+        deps='%s %s' % (pytalloc_util, pyrpc_util),
+        realname='samba/dcerpc/conditional_ace.so',
+        cflags_end=gen_cflags
+        )
+
 bld.SAMBA_PYTHON('python_lsa',
         source='../../librpc/gen_ndr/py_lsa.c',
         deps='RPC_NDR_LSA %s %s' % (pytalloc_util, pyrpc_util),
@@ -257,6 +265,20 @@ bld.SAMBA_PYTHON('python_claims',
         source='../../librpc/gen_ndr/py_claims.c',
         deps='NDR_CLAIMS %s %s' % (pytalloc_util, pyrpc_util),
         realname='samba/dcerpc/claims.so',
+        cflags_end=gen_cflags
+        )
+
+bld.SAMBA_PYTHON('python_gkdi',
+        source='../../librpc/gen_ndr/py_gkdi.c',
+        deps='RPC_NDR_GKDI %s %s' % (pytalloc_util, pyrpc_util),
+        realname='samba/dcerpc/gkdi.so',
+        cflags_end=gen_cflags
+        )
+
+bld.SAMBA_PYTHON('python_gmsa',
+        source='../../librpc/gen_ndr/py_gmsa.c',
+        deps='NDR_GMSA %s %s' % (pytalloc_util, pyrpc_util),
+        realname='samba/dcerpc/gmsa.so',
         cflags_end=gen_cflags
         )
 
@@ -462,6 +484,13 @@ bld.SAMBA_PYTHON('python_dcerpc_xattr',
         cflags_end=gen_cflags
         )
 
+bld.SAMBA_PYTHON('python_dcerpc_smb3posix',
+        source='../../librpc/gen_ndr/py_smb3posix.c',
+        deps='%s %s NDR_SMB3POSIX' % (pytalloc_util, pyrpc_util),
+        realname='samba/dcerpc/smb3posix.so',
+        cflags_end=gen_cflags
+        )
+
 bld.SAMBA_PYTHON('python_dcerpc_idmap',
         source='../../librpc/gen_ndr/py_idmap.c',
         deps='%s %s NDR_IDMAP' % (pytalloc_util, pyrpc_util),
@@ -501,6 +530,18 @@ bld.SAMBA_PYTHON('python_mdssvc',
         source='../../librpc/gen_ndr/py_mdssvc.c',
         deps='RPC_NDR_MDSSVC %s %s' % (pytalloc_util, pyrpc_util),
         realname='samba/dcerpc/mdssvc.so',
+        cflags_end=gen_cflags
+        )
+
+bld.SAMBA_SUBSYSTEM('RPC_NDR_SMBXSRV',
+    source='../../source3/librpc/gen_ndr/ndr_smbXsrv_c.c',
+    public_deps='dcerpc-binding NDR_SMBXSRV'
+    )
+
+bld.SAMBA_PYTHON('python_smbXsrv',
+        source='../../source3/librpc/gen_ndr/py_smbXsrv.c',
+        deps='RPC_NDR_SMBXSRV %s %s' % (pytalloc_util, pyrpc_util),
+        realname='samba/dcerpc/smbXsrv.so',
         cflags_end=gen_cflags
         )
 

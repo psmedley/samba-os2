@@ -127,6 +127,16 @@ samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug
                   ''',
                   install_path='${SAMBA_LIBEXECDIR}')
 
+bld.SAMBA3_BINARY('rpcd_witness',
+                  source='rpcd_witness.c',
+                  deps='''
+                  CMDLINE_S3
+                  RPC_WORKER
+                  RPC_WITNESS
+                  ''',
+                  install_path='${SAMBA_LIBEXECDIR}',
+                  enabled=bld.env.with_ctdb)
+
 bld.SAMBA3_SUBSYSTEM('RPC_CONFIG',
                     source='rpc_config.c',
                     deps='talloc')
@@ -221,6 +231,7 @@ bld.SAMBA3_SUBSYSTEM('RPC_IREMOTEWINSPOOL',
                     source='''
                     spoolss/srv_iremotewinspool_nt.c
                     spoolss/srv_iremotewinspool.c
+                    spoolss/iremotewinspool_util.c
                     ''',
                     deps='RPC_SPOOLSS')
 
@@ -240,6 +251,11 @@ bld.SAMBA3_SUBSYSTEM('RPC_WINREG',
 bld.SAMBA3_SUBSYSTEM('RPC_WKSSVC',
                     source='''wkssvc/srv_wkssvc_nt.c''',
                     deps='LIBNET')
+
+bld.SAMBA3_SUBSYSTEM('RPC_WITNESS',
+                    source='''witness/srv_witness_nt.c''',
+                    deps='samba-util samba-cluster-support samba3core',
+                    enabled=bld.env.with_ctdb)
 
 bld.SAMBA3_SUBSYSTEM('mdssvc',
                     source='''

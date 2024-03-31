@@ -75,9 +75,9 @@ struct iovec;
  * @defgroup tsocket_address The tsocket_address abstraction
  * @ingroup tsocket
  *
- * The tsocket_address represents an socket endpoint genericly.
+ * The tsocket_address represents an socket endpoint generically.
  * As it's like an abstract class it has no specific constructor.
- * The specific constructors are descripted in later sections.
+ * The specific constructors are described in later sections.
  *
  * @{
  */
@@ -278,7 +278,7 @@ ssize_t tdgram_sendto_recv(struct tevent_req *req,
  *
  * @param[in]  ev       The tevent_context to run on.
  *
- * @param[in]  dgram    The dgram context diconnect from.
+ * @param[in]  dgram    The dgram context to disconnect from.
  *
  * @return              Returns a 'tevent_req' handle, where the caller can
  *                      register a callback with tevent_req_set_callback().
@@ -551,7 +551,7 @@ int _tsocket_address_inet_from_strings(TALLOC_CTX *mem_ctx,
  *
  * @param[in]  host_port_addr   A valid ip address string based on the
  *                      selected family (dns names are not allowed!). A port
- *                      number may follow sepatated by a colon. IPv6 may be
+ *                      number may follow separated by a colon. IPv6 may be
  *                      surrounded in square brackets, and these are required
  *                      if appending a port number. It's valid to pass NULL,
  *                      which gets mapped to "0.0.0.0" or "::".
@@ -677,7 +677,7 @@ char *tsocket_address_unix_path(const struct tsocket_address *addr,
  * You can use this function to wrap an existing file descriptors into the
  * tdgram abstraction. After that you're not able to use this file descriptor
  * for anything else. The file descriptor will be closed when the stream gets
- * freed. If you still want to use the fd you have have to create a duplicate.
+ * freed. If you still want to use the fd you have to create a duplicate.
  *
  * @param[in]  mem_ctx  The talloc memory context to use.
  *
@@ -845,6 +845,28 @@ bool tstream_bsd_optimize_readv(struct tstream_context *stream,
 				bool on);
 
 /**
+ * @brief Request that tstream_readv_send() fails within pending data
+ *
+ * By default we allow pending data to be drained from the
+ * recv queue, before we report EPIPE when reaching EOF.
+ *
+ * For server applications it's typically useful to
+ * fail early in order to avoid useless work,
+ * as the response can't be transferred to the client anyway.
+ *
+ * @param[in]  stream   The tstream_context of a bsd socket, if this
+ *                      not a bsd socket the function does nothing.
+ *
+ * @param[in]  on       The boolean value to turn the early fail on and off.
+ *
+ * @return              The old boolean value.
+ *
+ * @see tstream_readv_send()
+ */
+bool tstream_bsd_fail_readv_first_error(struct tstream_context *stream,
+					bool on);
+
+/**
  * @brief Connect async to a TCP endpoint and create a tstream_context for the
  * stream based communication.
  *
@@ -909,7 +931,7 @@ int _tstream_inet_tcp_connect_recv(struct tevent_req *req,
  * @brief Connect async to a unix domain endpoint and create a tstream_context
  * for the stream based communication.
  *
- * Use this function to connenct asynchronously to a unix domainendpoint and
+ * Use this function to connect asynchronously to a unix domainendpoint and
  * create a tstream_context for the stream based communication.
  *
  * The callback is triggered when a socket is connected and ready for IO or an
@@ -1087,7 +1109,7 @@ ssize_t tsocket_address_bsd_sockaddr(const struct tsocket_address *addr,
  * You can use this function to wrap an existing file descriptors into the
  * tstream abstraction. After that you're not able to use this file descriptor
  * for anything else. The file descriptor will be closed when the stream gets
- * freed. If you still want to use the fd you have have to create a duplicate.
+ * freed. If you still want to use the fd you have to create a duplicate.
  *
  * @param[in]  mem_ctx  The talloc memory context to use.
  *

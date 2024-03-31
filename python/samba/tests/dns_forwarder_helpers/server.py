@@ -77,7 +77,7 @@ class DnsHandler(SocketServer.BaseRequestHandler):
         debug("%s: %s wrote:" % (SERVER_ID, self.client_address[0]))
 
         global timeout
-        m = re.match(b'^timeout\s+([\d.]+)$', data.strip())
+        m = re.match(br'^timeout\s+([\d.]+)$', data.strip())
         if m:
             timeout = float(m.group(1))
             debug("timing out at %s" % timeout)
@@ -92,7 +92,7 @@ class TestUDPServer(SocketServer.UDPServer):
             self.address_family = socket.AF_INET6
         else:
             self.address_family = socket.AF_INET
-        super(SocketServer.UDPServer, self).__init__(server_address, RequestHandlerClass)
+        super().__init__(server_address, RequestHandlerClass)
 
 def main():
     global SERVER_ID

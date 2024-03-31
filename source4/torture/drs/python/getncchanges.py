@@ -1297,7 +1297,7 @@ class DrsReplicaSyncIntegrityTestCase(drs_base.DrsBaseTestCase):
             self.nc_change()
 
         if mid_change:
-            # create even moire objects
+            # create even more objects
             objs = self.create_object_range(301, 450, prefix="obj2")
 
         base_msg = self.default_conn.ldb_dc.search(base=self.base_dn,
@@ -1329,9 +1329,9 @@ class DrsReplicaSyncIntegrityTestCase(drs_base.DrsBaseTestCase):
 
         # Check some predicates about USN ordering that the below tests will rely on
         if ou_change and nc_change:
-            self.assertGreater(ou_usn, base_usn);
+            self.assertGreater(ou_usn, base_usn)
         elif not ou_change and nc_change:
-            self.assertGreater(base_usn, ou_usn);
+            self.assertGreater(base_usn, ou_usn)
 
         ctr6 = self.repl_get_next()
 

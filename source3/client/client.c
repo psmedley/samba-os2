@@ -41,6 +41,8 @@
 #include "lib/util/time_basic.h"
 #include "lib/util/string_wrappers.h"
 #include "lib/cmdline/cmdline.h"
+#include "libcli/smb/reparse.h"
+#include "lib/param/param.h"
 
 #ifndef REGISTER
 #define REGISTER 0
@@ -620,7 +622,7 @@ static NTSTATUS display_finfo(struct cli_state *cli_state, struct file_info *fin
 						   ctx, &sd);
 			if (!NT_STATUS_IS_OK(status)) {
 				DEBUG( 0, ("display_finfo() failed to "
-					   "get security descriptor: %s",
+					   "get security descriptor: %s\n",
 					   nt_errstr(status)));
 			} else {
 				display_sec_desc(sd);
@@ -1696,9 +1698,11 @@ static int do_allinfo(const char *name)
 	status = cli_qpathinfo_streams(cli, name, talloc_tos(), &num_streams,
 				       &streams);
 	if (!NT_STATUS_IS_OK(status)) {
-		d_printf("%s getting streams for %s\n", nt_errstr(status),
-			 name);
-		return false;
+		d_fprintf(stderr,
+			  "%s getting streams for %s\n",
+			  nt_errstr(status),
+			  name);
+		num_streams = 0;
 	}
 
 	for (i=0; i<num_streams; i++) {
@@ -1707,20 +1711,38 @@ static int do_allinfo(const char *name)
 	}
 
 	if (attr & FILE_ATTRIBUTE_REPARSE_POINT) {
-		char *subst, *print;
-		uint32_t flags;
+		struct reparse_data_buffer *rep = NULL;
+		uint8_t *data = NULL;
+		uint32_t datalen;
+		char *s = NULL;
 
-		status = cli_readlink(cli, name, talloc_tos(), &subst, &print,
-				      &flags);
-		if (!NT_STATUS_IS_OK(status)) {
-			d_fprintf(stderr, "cli_readlink returned %s\n",
-				  nt_errstr(status));
-		} else {
-			d_printf("symlink: subst=[%s], print=[%s], flags=%x\n",
-				 subst, print, flags);
-			TALLOC_FREE(subst);
-			TALLOC_FREE(print);
+		rep = talloc_zero(talloc_tos(), struct reparse_data_buffer);
+		if (rep == NULL) {
+			d_printf("talloc_zero() failed\n");
+			return false;
 		}
+
+		status = cli_get_reparse_data(cli, name, rep, &data, &datalen);
+		if (!NT_STATUS_IS_OK(status)) {
+			d_fprintf(stderr,
+				  "cli_get_reparse_data() failed: %s\n",
+				  nt_errstr(status));
+			TALLOC_FREE(rep);
+			return false;
+		}
+
+		status = reparse_data_buffer_parse(rep, rep, data, datalen);
+		if (!NT_STATUS_IS_OK(status)) {
+			d_fprintf(stderr,
+				  "reparse_data_buffer_parse() failed: %s\n",
+				  nt_errstr(status));
+			TALLOC_FREE(rep);
+			return false;
+		}
+
+		s = reparse_data_buffer_str(rep, rep);
+		d_printf("%s", s);
+		TALLOC_FREE(rep);
 	}
 
 	status = cli_ntcreate(cli, name, 0,
@@ -1746,15 +1768,20 @@ static int do_allinfo(const char *name)
 
 	status = cli_shadow_copy_data(talloc_tos(), cli, fnum,
 				      false, &snapshots, &num_snapshots);
-	if (!NT_STATUS_IS_OK(status)) {
-		cli_close(cli, fnum);
-		return 0;
+	if (NT_STATUS_IS_OK(status)) {
+		status = cli_shadow_copy_data(talloc_tos(),
+					      cli,
+					      fnum,
+					      true,
+					      &snapshots,
+					      &num_snapshots);
 	}
-	status = cli_shadow_copy_data(talloc_tos(), cli, fnum,
-				      true, &snapshots, &num_snapshots);
 	if (!NT_STATUS_IS_OK(status)) {
-		cli_close(cli, fnum);
-		return 0;
+		d_fprintf(stderr,
+			  "%s getting shadow copy data for %s\n",
+			  nt_errstr(status),
+			  name);
+		num_snapshots = 0;
 	}
 
 	for (j=0; j<num_snapshots; j++) {
@@ -2198,7 +2225,7 @@ static int cmd_mput(void)
 					}
 					if (!NT_STATUS_IS_OK(cli_chkpath(cli, rname)) &&
 					    !do_mkdir(rname)) {
-						DEBUG (0, ("Unable to make dir, skipping..."));
+						DEBUG (0, ("Unable to make dir, skipping...\n"));
 						/* Skip the directory */
 						lname[strlen(lname)-1] = '/';
 						if (!seek_list(temp_list, lname)) {
@@ -2255,11 +2282,12 @@ static int cmd_mput(void)
 
 static int do_cancel(int job)
 {
-	if (cli_printjob_del(cli, job)) {
+	NTSTATUS status = cli_printjob_del(cli, job);
+
+	if (NT_STATUS_IS_OK(status)) {
 		d_printf("Job %d cancelled\n",job);
 		return 0;
 	} else {
-		NTSTATUS status = cli_nt_error(cli);
 		d_printf("Error cancelling job %d : %s\n",
 			 job, nt_errstr(status));
 		return 1;
@@ -3048,6 +3076,64 @@ static int cmd_posix_rmdir(void)
 	return 0;
 }
 
+static int cmd_mkfifo(void)
+{
+	TALLOC_CTX *ctx = talloc_tos();
+	char *mask = NULL;
+	char *buf = NULL;
+	char *targetname = NULL;
+	struct cli_state *targetcli;
+	mode_t mode;
+	struct cli_credentials *creds = samba_cmdline_get_creds();
+	NTSTATUS status;
+
+	if (!next_token_talloc(ctx, &cmd_ptr, &buf, NULL)) {
+		d_printf("mkfifo <filename> 0<mode>\n");
+		return 1;
+	}
+	mask = talloc_asprintf(ctx, "%s%s", client_get_cur_dir(), buf);
+	if (!mask) {
+		return 1;
+	}
+	mask = client_clean_name(ctx, mask);
+	if (mask == NULL) {
+		return 1;
+	}
+
+	if (!next_token_talloc(ctx, &cmd_ptr, &buf, NULL)) {
+		d_printf("mkfifo <filename> 0<mode>\n");
+		return 1;
+	}
+
+	mode = (mode_t)strtol(buf, (char **)NULL, 8);
+	if ((mode & ~(S_IRWXU | S_IRWXG | S_IRWXO)) != 0) {
+		d_printf("mode %o can only contain permission bits\n", mode);
+		return 1;
+	}
+
+	status = cli_resolve_path(ctx,
+				  "",
+				  creds,
+				  cli,
+				  mask,
+				  &targetcli,
+				  &targetname);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("mkfifo %s: %s\n", mask, nt_errstr(status));
+		return 1;
+	}
+
+	status = cli_mknod(targetcli, targetname, mode | S_IFIFO, 0);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_printf("Failed to open file %s. %s\n",
+			 targetname,
+			 nt_errstr(status));
+	} else {
+		d_printf("mkfifo created %s\n", targetname);
+	}
+	return 0;
+}
+
 static int cmd_close(void)
 {
 	TALLOC_CTX *ctx = talloc_tos();
@@ -3078,9 +3164,14 @@ static int cmd_posix(void)
 	char *caps;
 	NTSTATUS status;
 
-	if (!SERVER_HAS_UNIX_CIFS(cli)) {
+	if (!smbXcli_conn_have_posix(cli->conn)) {
 		d_printf("Server doesn't support UNIX CIFS extensions.\n");
 		return 1;
+	}
+
+	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB3_11) {
+		cli->smb2.client_smb311_posix = true;
+		return 0;
 	}
 
 	status = cli_unix_extensions_version(cli, &major, &minor, &caplow,
@@ -3094,62 +3185,36 @@ static int cmd_posix(void)
 	d_printf("Server supports CIFS extensions %u.%u\n", (unsigned int)major, (unsigned int)minor);
 
 	caps = talloc_strdup(ctx, "");
-	if (!caps) {
-		return 1;
-	}
-        if (caplow & CIFS_UNIX_FCNTL_LOCKS_CAP) {
-		caps = talloc_asprintf_append(caps, "locks ");
-		if (!caps) {
-			return 1;
-		}
+	if (caplow & CIFS_UNIX_FCNTL_LOCKS_CAP) {
+		talloc_asprintf_addbuf(&caps, "locks ");
 	}
         if (caplow & CIFS_UNIX_POSIX_ACLS_CAP) {
-		caps = talloc_asprintf_append(caps, "acls ");
-		if (!caps) {
-			return 1;
-		}
+		talloc_asprintf_addbuf(&caps, "acls ");
 	}
         if (caplow & CIFS_UNIX_XATTTR_CAP) {
-		caps = talloc_asprintf_append(caps, "eas ");
-		if (!caps) {
-			return 1;
-		}
+		talloc_asprintf_addbuf(&caps, "eas ");
 	}
         if (caplow & CIFS_UNIX_POSIX_PATHNAMES_CAP) {
-		caps = talloc_asprintf_append(caps, "pathnames ");
-		if (!caps) {
-			return 1;
-		}
+		talloc_asprintf_addbuf(&caps, "pathnames ");
 	}
         if (caplow & CIFS_UNIX_POSIX_PATH_OPERATIONS_CAP) {
-		caps = talloc_asprintf_append(caps, "posix_path_operations ");
-		if (!caps) {
-			return 1;
-		}
+		talloc_asprintf_addbuf(&caps, "posix_path_operations ");
 	}
         if (caplow & CIFS_UNIX_LARGE_READ_CAP) {
-		caps = talloc_asprintf_append(caps, "large_read ");
-		if (!caps) {
-			return 1;
-		}
+		talloc_asprintf_addbuf(&caps, "large_read ");
 	}
         if (caplow & CIFS_UNIX_LARGE_WRITE_CAP) {
-		caps = talloc_asprintf_append(caps, "large_write ");
-		if (!caps) {
-			return 1;
-		}
+		talloc_asprintf_addbuf(&caps, "large_write ");
 	}
 	if (caplow & CIFS_UNIX_TRANSPORT_ENCRYPTION_CAP) {
-		caps = talloc_asprintf_append(caps, "posix_encrypt ");
-		if (!caps) {
-			return 1;
-		}
+		talloc_asprintf_addbuf(&caps, "posix_encrypt ");
 	}
 	if (caplow & CIFS_UNIX_TRANSPORT_ENCRYPTION_MANDATORY_CAP) {
-		caps = talloc_asprintf_append(caps, "mandatory_posix_encrypt ");
-		if (!caps) {
-			return 1;
-		}
+		talloc_asprintf_addbuf(&caps, "mandatory_posix_encrypt ");
+	}
+
+	if (caps == NULL) {
+		return 1;
 	}
 
 	if (*caps && caps[strlen(caps)-1] == ' ') {
@@ -5594,6 +5659,7 @@ static struct {
   {"md",cmd_mkdir,"<directory> make a directory",{COMPL_NONE,COMPL_NONE}},
   {"mget",cmd_mget,"<mask> get all the matching files",{COMPL_REMOTE,COMPL_NONE}},
   {"mkdir",cmd_mkdir,"<directory> make a directory",{COMPL_NONE,COMPL_NONE}},
+  {"mkfifo",cmd_mkfifo,"<file mode> make a fifo",{COMPL_NONE,COMPL_NONE}},
   {"more",cmd_more,"<remote name> view a remote file with your pager",{COMPL_REMOTE,COMPL_NONE}},
   {"mput",cmd_mput,"<mask> put all matching files",{COMPL_REMOTE,COMPL_NONE}},
   {"newer",cmd_newer,"<file> only mget files newer than the specified local file",{COMPL_LOCAL,COMPL_NONE}},
@@ -6211,7 +6277,8 @@ static int process(const char *base_directory)
  Handle a -L query.
 ****************************************************************************/
 
-static int do_host_query(const char *query_host)
+static int do_host_query(struct loadparm_context *lp_ctx,
+			 const char *query_host)
 {
 	NTSTATUS status;
 	struct cli_credentials *creds = samba_cmdline_get_creds();
@@ -6261,7 +6328,7 @@ static int do_host_query(const char *query_host)
 
 		cli_shutdown(cli);
 		d_printf("Reconnecting with SMB1 for workgroup listing.\n");
-		lp_set_cmdline("client max protocol", "NT1");
+		lpcfg_set_cmdline(lp_ctx, "client max protocol", "NT1");
 		status = cli_cm_open(talloc_tos(), NULL,
 				     query_host,
 				     "IPC$",
@@ -6502,6 +6569,7 @@ int main(int argc,char *argv[])
 	};
 	TALLOC_CTX *frame = talloc_stackframe();
 	struct cli_credentials *creds = NULL;
+	struct loadparm_context *lp_ctx = NULL;
 
 	if (!client_set_cur_dir("\\")) {
 		exit(ENOMEM);
@@ -6516,7 +6584,8 @@ int main(int argc,char *argv[])
 		DBG_ERR("Failed to init cmdline parser!\n");
 		exit(ENOMEM);
 	}
-	lp_set_cmdline("log level", "1");
+	lp_ctx = samba_cmdline_get_lp_ctx();
+	lpcfg_set_cmdline(lp_ctx, "log level", "1");
 
 	/* skip argv(0) */
 	pc = samba_popt_get_context(getprogname(),
@@ -6687,7 +6756,9 @@ int main(int argc,char *argv[])
 	}
 
 	if(new_name_resolve_order)
-		lp_set_cmdline("name resolve order", new_name_resolve_order);
+		lpcfg_set_cmdline(lp_ctx,
+				  "name resolve order",
+				  new_name_resolve_order);
 
 	if (!tar_to_process(tar_ctx) && !query_host && !service && !message) {
 		poptPrintUsage(pc, stderr, 0);
@@ -6721,12 +6792,14 @@ int main(int argc,char *argv[])
 			sscanf(p, "%x", &name_type);
 		}
 
-		rc = do_host_query(qhost);
+		rc = do_host_query(lp_ctx, qhost);
 	} else if (message) {
 		rc = do_message_op(creds);
 	} else if (process(base_directory)) {
 		rc = 1;
 	}
+
+	gfree_all();
 
 	TALLOC_FREE(frame);
 	return rc;

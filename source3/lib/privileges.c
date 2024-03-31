@@ -339,24 +339,21 @@ NTSTATUS privilege_enum_sids(enum sec_privilege privilege, TALLOC_CTX *mem_ctx,
 
 static bool grant_privilege_bitmap(const struct dom_sid *sid, const uint64_t priv_mask)
 {
-	uint64_t old_mask, new_mask;
+	uint64_t old_mask = 0, new_mask = 0;
 	struct dom_sid_buf buf;
 
-	ZERO_STRUCT( old_mask );
-	ZERO_STRUCT( new_mask );
-
-	if ( get_privileges( sid, &old_mask ) )
+	if ( get_privileges( sid, &old_mask ) ) {
 		new_mask = old_mask;
-	else
-		new_mask = 0;
+	}
 
 	new_mask |= priv_mask;
 
-	DEBUG(10,("grant_privilege: %s\n", dom_sid_str_buf(sid, &buf)));
-
-	DEBUGADD( 10, ("original privilege mask: 0x%llx\n", (unsigned long long)new_mask));
-
-	DEBUGADD( 10, ("new privilege mask:      0x%llx\n", (unsigned long long)new_mask));
+	DBG_DEBUG("%s\n"
+		  "original privilege mask: 0x%"PRIx64"\n"
+		  "new privilege mask:      0x%"PRIx64"\n",
+		  dom_sid_str_buf(sid, &buf),
+		  old_mask,
+		  new_mask);
 
 	return set_privileges( sid, new_mask );
 }

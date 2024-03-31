@@ -20,15 +20,23 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+from ldb import Dn
+
 from samba.dsdb import DS_GUID_USERS_CONTAINER
 
-from .fields import DnField, StringField
+from .fields import DnField, SIDField, StringField
 from .model import Model
 
 
 class User(Model):
     username = StringField("sAMAccountName")
+    assigned_policy = DnField("msDS-AssignedAuthNPolicy")
     assigned_silo = DnField("msDS-AssignedAuthNPolicySilo")
+    object_sid = SIDField("objectSid")
+
+    def __str__(self):
+        """Return username rather than cn for User model."""
+        return self.username
 
     @staticmethod
     def get_base_dn(ldb):
@@ -52,3 +60,16 @@ class User(Model):
     @staticmethod
     def get_object_class():
         return "user"
+
+    @classmethod
+    def find(cls, ldb, name):
+        """Helper function to find a user first by Dn then username.
+
+        If the Dn can't be parsed, use sAMAccountName instead.
+        """
+        try:
+            query = {"dn": Dn(ldb, name)}
+        except ValueError:
+            query = {"username": name}
+
+        return cls.get(ldb, **query)

@@ -35,6 +35,7 @@
 #include "hash_inode.h"
 #include "lib/adouble.h"
 #include "lib/util_macstreams.h"
+#include "source3/smbd/dir.h"
 
 #ifdef __OS2__
 #define pipe(A) os2_pipe(A)
@@ -138,6 +139,7 @@ struct fruit_config_data {
 	bool convert_adouble;
 	bool wipe_intentionally_left_blank_rfork;
 	bool delete_empty_adfiles;
+	bool validate_afpinfo;
 
 	/*
 	 * Additional options, all enabled by default,
@@ -380,6 +382,10 @@ static int init_fruit_config(vfs_handle_struct *handle)
 	config->delete_empty_adfiles = lp_parm_bool(
 		SNUM(handle->conn), FRUIT_PARAM_TYPE_NAME,
 		"delete_empty_adfiles", false);
+
+	config->validate_afpinfo = lp_parm_bool(
+		SNUM(handle->conn), FRUIT_PARAM_TYPE_NAME,
+		"validate_afpinfo", true);
 
 	SMB_VFS_HANDLE_SET_DATA(handle, config,
 				NULL, struct fruit_config_data,
@@ -2109,7 +2115,7 @@ static int fruit_unlink_rsrc_adouble(vfs_handle_struct *handle,
 			adp_smb_fname,
 			0);
 	TALLOC_FREE(adp_smb_fname);
-	if ((rc != 0) && (errno == ENOENT) && force_unlink) {
+	if ((rc != 0) && (errno == ENOENT || errno == ENAMETOOLONG) && force_unlink) {
 		rc = 0;
 	}
 
@@ -2394,7 +2400,7 @@ static ssize_t fruit_pread_meta(vfs_handle_struct *handle,
 	}
 
 	if (fio == NULL) {
-		DBG_ERR("Failed to fetch fsp extension");
+		DBG_ERR("Failed to fetch fsp extension\n");
 		return -1;
 	}
 
@@ -2641,10 +2647,12 @@ static ssize_t fruit_pread_recv(struct tevent_req *req,
 }
 
 static ssize_t fruit_pwrite_meta_stream(vfs_handle_struct *handle,
-					files_struct *fsp, const void *data,
+					files_struct *fsp, const void *indata,
 					size_t n, off_t offset)
 {
 	struct fio *fio = fruit_get_complete_fio(handle, fsp);
+	const void *data = indata;
+	char afpinfo_buf[AFP_INFO_SIZE];
 	AfpInfo *ai = NULL;
 	size_t nwritten;
 	int ret;
@@ -2685,7 +2693,7 @@ static ssize_t fruit_pwrite_meta_stream(vfs_handle_struct *handle,
 		fio->fake_fd = false;
 	}
 
-	ai = afpinfo_unpack(talloc_tos(), data);
+	ai = afpinfo_unpack(talloc_tos(), data, fio->config->validate_afpinfo);
 	if (ai == NULL) {
 		return -1;
 	}
@@ -2717,6 +2725,21 @@ static ssize_t fruit_pwrite_meta_stream(vfs_handle_struct *handle,
 		return n;
 	}
 
+	if (!fio->config->validate_afpinfo) {
+		/*
+		 * Ensure the buffer contains a valid header, so marshall
+		 * the data from the afpinfo struck back into a buffer
+		 * and write that instead of the possibly malformed data
+		 * we got from the client.
+		 */
+		nwritten = afpinfo_pack(ai, afpinfo_buf);
+		if (nwritten != AFP_INFO_SIZE) {
+			errno = EINVAL;
+			return -1;
+		}
+		data = afpinfo_buf;
+	}
+
 	nwritten = SMB_VFS_NEXT_PWRITE(handle, fsp, data, n, offset);
 	if (nwritten != n) {
 		return -1;
@@ -2729,13 +2752,17 @@ static ssize_t fruit_pwrite_meta_netatalk(vfs_handle_struct *handle,
 					  files_struct *fsp, const void *data,
 					  size_t n, off_t offset)
 {
+	struct fruit_config_data *config = NULL;
 	struct adouble *ad = NULL;
 	AfpInfo *ai = NULL;
 	char *p = NULL;
 	int ret;
 	bool ok;
 
-	ai = afpinfo_unpack(talloc_tos(), data);
+	SMB_VFS_HANDLE_GET_DATA(handle, config,
+				struct fruit_config_data, return -1);
+
+	ai = afpinfo_unpack(talloc_tos(), data, config->validate_afpinfo);
 	if (ai == NULL) {
 		return -1;
 	}
@@ -2801,7 +2828,7 @@ static ssize_t fruit_pwrite_meta(vfs_handle_struct *handle,
 	int cmp;
 
 	if (fio == NULL) {
-		DBG_ERR("Failed to fetch fsp extension");
+		DBG_ERR("Failed to fetch fsp extension\n");
 		return -1;
 	}
 
@@ -2815,10 +2842,12 @@ static ssize_t fruit_pwrite_meta(vfs_handle_struct *handle,
 		return -1;
 	}
 
-	cmp = memcmp(data, "AFP", 3);
-	if (cmp != 0) {
-		errno = EINVAL;
-		return -1;
+	if (fio->config->validate_afpinfo) {
+		cmp = memcmp(data, "AFP", 3);
+		if (cmp != 0) {
+			errno = EINVAL;
+			return -1;
+		}
 	}
 
 	if (n <= AFP_OFF_FinderInfo) {
@@ -2940,7 +2969,7 @@ static ssize_t fruit_pwrite_rsrc(vfs_handle_struct *handle,
 	ssize_t nwritten;
 
 	if (fio == NULL) {
-		DBG_ERR("Failed to fetch fsp extension");
+		DBG_ERR("Failed to fetch fsp extension\n");
 		return -1;
 	}
 
@@ -4071,7 +4100,7 @@ static int fruit_fntimes(vfs_handle_struct *handle,
 		return SMB_VFS_NEXT_FNTIMES(handle, fsp, ft);
 	}
 
-	DBG_DEBUG("set btime for %s to %s\n", fsp_str_dbg(fsp),
+	DBG_DEBUG("set btime for %s to %s", fsp_str_dbg(fsp),
 		  time_to_asc(convert_timespec_to_time_t(ft->create_time)));
 
 	ad = ad_fget(talloc_tos(), handle, fsp, ADOUBLE_META);
@@ -4180,7 +4209,7 @@ static int fruit_ftruncate_rsrc(struct vfs_handle_struct *handle,
 	int ret;
 
 	if (fio == NULL) {
-		DBG_ERR("Failed to fetch fsp extension");
+		DBG_ERR("Failed to fetch fsp extension\n");
 		return -1;
 	}
 
@@ -4211,7 +4240,7 @@ static int fruit_ftruncate_meta(struct vfs_handle_struct *handle,
 				off_t offset)
 {
 	if (offset > 60) {
-		DBG_WARNING("ftruncate %s to %jd",
+		DBG_WARNING("ftruncate %s to %jd\n",
 			    fsp_str_dbg(fsp), (intmax_t)offset);
 		/* OS X returns NT_STATUS_ALLOTTED_SPACE_EXCEEDED  */
 		errno = EOVERFLOW;

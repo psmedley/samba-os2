@@ -4393,7 +4393,7 @@ static struct tevent_req *smbXcli_negprot_smb1_subreq(struct smbXcli_negprot_sta
 		}
 
 		/*
-		 * We now it is already ascii and
+		 * We know it is already ascii and
 		 * we want NULL termination.
 		 */
 		ok = data_blob_append(state, &bytes,
@@ -4615,8 +4615,8 @@ static void smbXcli_negprot_smb1_done(struct tevent_req *subreq)
 			if (blob1.length > 0) {
 				size_t len;
 
-				len = utf16_len_n(blob1.data,
-						  blob1.length);
+				len = utf16_null_terminated_len_n(blob1.data,
+								  blob1.length);
 				blob1.length = len;
 
 				ok = convert_string_talloc(state,
@@ -4637,10 +4637,6 @@ static void smbXcli_negprot_smb1_done(struct tevent_req *subreq)
 			blob2.length -= blob1.length;
 			if (blob2.length > 0) {
 				size_t len;
-
-				len = utf16_len_n(blob1.data,
-						  blob1.length);
-				blob1.length = len;
 
 				ok = convert_string_talloc(state,
 							   CH_UTF16LE,
@@ -4737,8 +4733,8 @@ static void smbXcli_negprot_smb1_done(struct tevent_req *subreq)
 			size_t len;
 			bool ok;
 
-			len = utf16_len_n(blob1.data,
-					  blob1.length);
+			len = utf16_null_terminated_len_n(blob1.data,
+							  blob1.length);
 			blob1.length = len;
 
 			ok = convert_string_talloc(state,
@@ -5451,13 +5447,6 @@ static void smbXcli_negprot_smb2_done(struct tevent_req *subreq)
 		}
 	}
 
-	if (rc < 0) {
-		gnutls_hash_deinit(hash_hnd, NULL);
-		tevent_req_nterror(req,
-				   gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED));
-		return;
-	}
-
 	/* This resets the hash state */
 	gnutls_hash_output(hash_hnd, conn->smb2.preauth_sha512);
 	TALLOC_FREE(subreq);
@@ -5599,7 +5588,10 @@ NTSTATUS smbXcli_negprot_recv(
 NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 			 uint32_t timeout_msec,
 			 enum protocol_types min_protocol,
-			 enum protocol_types max_protocol)
+			 enum protocol_types max_protocol,
+			 struct smb2_negotiate_contexts *in_ctx,
+			 TALLOC_CTX *mem_ctx,
+			 struct smb2_negotiate_contexts **out_ctx)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
 	struct tevent_context *ev;
@@ -5626,7 +5618,7 @@ NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 		min_protocol,
 		max_protocol,
 		WINDOWS_CLIENT_PURE_SMB2_NEGPROT_INITIAL_CREDIT_ASK,
-		NULL);
+		in_ctx);
 	if (req == NULL) {
 		goto fail;
 	}
@@ -5634,7 +5626,7 @@ NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 	if (!ok) {
 		goto fail;
 	}
-	status = smbXcli_negprot_recv(req, NULL, NULL);
+	status = smbXcli_negprot_recv(req, mem_ctx, out_ctx);
  fail:
 	TALLOC_FREE(frame);
 	return status;
@@ -6677,11 +6669,18 @@ NTSTATUS smb2cli_session_set_channel_key(struct smbXcli_session *session,
 	if (conn->protocol >= PROTOCOL_SMB3_00) {
 		struct _derivation *d = &derivation.signing;
 
-		status = smb2_key_derivation(channel_key, sizeof(channel_key),
-					     d->label.data, d->label.length,
-					     d->context.data, d->context.length,
-					     session->smb2_channel.signing_key->blob.data,
-					     session->smb2_channel.signing_key->blob.length);
+		status = samba_gnutls_sp800_108_derive_key(
+			channel_key,
+			sizeof(channel_key),
+			NULL,
+			0,
+			d->label.data,
+			d->label.length,
+			d->context.data,
+			d->context.length,
+			GNUTLS_MAC_SHA256,
+			session->smb2_channel.signing_key->blob.data,
+			session->smb2_channel.signing_key->blob.length);
 		if (!NT_STATUS_IS_OK(status)) {
 			return status;
 		}

@@ -1,5 +1,5 @@
 /*
- * Unix SMB/CIFS implementation. 
+ * Unix SMB/CIFS implementation.
  * SMB parameters and setup
  * Copyright (C) Andrew Tridgell   1992-1998
  * Copyright (C) Simo Sorce        2000-2003
@@ -7,17 +7,17 @@
  * Copyright (C) Jeremy Allison    2001-2009
  * Copyright (C) Andrew Bartlett   2002
  * Copyright (C) Jim McDonough <jmcd@us.ibm.com> 2005
- * 
+ *
  * This program is free software; you can redistribute it and/or modify it under
  * the terms of the GNU General Public License as published by the Free
  * Software Foundation; either version 3 of the License, or (at your option)
  * any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License along with
  * this program; if not, see <http://www.gnu.org/licenses/>.
  */
@@ -613,7 +613,7 @@ static NTSTATUS tdbsam_getsampwnam (struct pdb_methods *my_methods,
   	/* unpack the buffer */
 
 	if (!init_samu_from_buffer(user, SAMU_BUFFER_LATEST, data.dptr, data.dsize)) {
-		DEBUG(0,("pdb_getsampwent: Bad struct samu entry returned from TDB!\n"));
+		DBG_ERR("Bad struct samu entry returned from TDB!\n");
 		TALLOC_FREE(data.dptr);
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -786,7 +786,7 @@ static NTSTATUS tdbsam_delete_sam_account(struct pdb_methods *my_methods,
 
 /***************************************************************************
  Update the TDB SAM account record only
- Assumes that the tdbsam is already open 
+ Assumes that the tdbsam is already open
 ****************************************************************************/
 static bool tdb_update_samacct_only( struct samu* newpwd, int flag )
 {
@@ -821,7 +821,7 @@ static bool tdb_update_samacct_only( struct samu* newpwd, int flag )
 
 	status = dbwrap_store_bystring(db_sam, keystr, data, flag);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0, ("Unable to modify passwd TDB: %s!",
+		DEBUG(0, ("Unable to modify passwd TDB: %s!\n",
 			  nt_errstr(status)));
 		goto done;
 	}
@@ -929,7 +929,7 @@ static bool tdb_update_sam(struct pdb_methods *my_methods, struct samu* newpwd,
 	/* Now take care of the case where the RID changed. We need
 	 * to delete the old RID key and add the new. */
 
-	if (flag == TDB_MODIFY && newrid != oldrid) { 
+	if (flag == TDB_MODIFY && newrid != oldrid) {
 		fstring keystr;
 
 		/* Delete old RID key */
@@ -974,7 +974,7 @@ static NTSTATUS tdbsam_update_sam_account (struct pdb_methods *my_methods, struc
 {
 	if ( !tdb_update_sam(my_methods, newpwd, TDB_MODIFY) )
 		return NT_STATUS_UNSUCCESSFUL;
-	
+
 	return NT_STATUS_OK;
 }
 
@@ -986,7 +986,7 @@ static NTSTATUS tdbsam_add_sam_account (struct pdb_methods *my_methods, struct s
 {
 	if ( !tdb_update_sam(my_methods, newpwd, TDB_INSERT) )
 		return NT_STATUS_UNSUCCESSFUL;
-		
+
 	return NT_STATUS_OK;
 }
 
@@ -1114,7 +1114,7 @@ static NTSTATUS tdbsam_rename_sam_account(struct pdb_methods *my_methods,
 		 */
 		DEBUG(0, ("transaction_commit failed\n"));
 		TALLOC_FREE(new_acct);
-		return NT_STATUS_INTERNAL_DB_CORRUPTION;	
+		return NT_STATUS_INTERNAL_DB_CORRUPTION;
 	}
 
 	TALLOC_FREE(new_acct );
@@ -1127,7 +1127,7 @@ static NTSTATUS tdbsam_rename_sam_account(struct pdb_methods *my_methods,
 
 	TALLOC_FREE(new_acct);
 
-	return NT_STATUS_ACCESS_DENIED;	
+	return NT_STATUS_ACCESS_DENIED;
 }
 
 static uint32_t tdbsam_capabilities(struct pdb_methods *methods)
@@ -1346,6 +1346,9 @@ static NTSTATUS pdb_init_tdbsam(struct pdb_methods **pdb_method, const char *loc
 		}
 		pfile = tdbfile;
 	}
+
+	/* Do not leak memory if the init function is called more than once */
+	SAFE_FREE(tdbsam_filename);
 	tdbsam_filename = SMB_STRDUP(pfile);
 	if (!tdbsam_filename) {
 		return NT_STATUS_NO_MEMORY;

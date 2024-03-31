@@ -246,7 +246,8 @@ static bool test_OpenPolicy2_fail(struct dcerpc_binding_handle *b,
 
 	status = dcerpc_lsa_OpenPolicy2_r(b, tctx, &r);
 	if (!NT_STATUS_IS_OK(status)) {
-		if (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
+		if (NT_STATUS_EQUAL(status, NT_STATUS_CONNECTION_DISCONNECTED) ||
+		    NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
 			torture_comment(tctx,
 					"OpenPolicy2 correctly returned with "
 					"status: %s\n",
@@ -273,6 +274,174 @@ static bool test_OpenPolicy2_fail(struct dcerpc_binding_handle *b,
 
 	torture_fail(tctx,
 		     "OpenPolicy2 return value should be "
+		     "ACCESS_DENIED or RPC_PROTSEQ_NOT_SUPPORTED");
+
+	return false;
+}
+
+bool test_lsa_OpenPolicy3_ex(struct dcerpc_binding_handle *b,
+			     struct torture_context *tctx,
+			     struct policy_handle **handle,
+			     NTSTATUS expected_status,
+			     NTSTATUS expected_status2)
+{
+	struct lsa_QosInfo qos = {
+		.impersonation_level = 2,
+		.context_mode = 1,
+	};
+	struct lsa_ObjectAttribute attr = {
+		.len = 0,
+		.sec_qos = &qos,
+	};
+	struct lsa_revision_info1 in_rinfo1 = {
+		.revision = 1,
+		.supported_features = 0,
+	};
+	union lsa_revision_info in_rinfo = {
+		.info1 = in_rinfo1,
+	};
+	struct lsa_revision_info1 out_rinfo1 = {
+		.revision = 0,
+	};
+	union lsa_revision_info out_rinfo = {
+		.info1 = out_rinfo1,
+	};
+	uint32_t out_version = 0;
+	struct lsa_OpenPolicy3 r = {
+		.in.system_name = "\\",
+		.in.attr = &attr,
+		.in.access_mask = SEC_FLAG_MAXIMUM_ALLOWED,
+		.in.in_version = 1,
+		.in.in_revision_info = &in_rinfo,
+		.out.out_version = &out_version,
+		.out.out_revision_info = &out_rinfo,
+	};
+	NTSTATUS status;
+
+	torture_comment(tctx, "\nTesting OpenPolicy3\n");
+
+	*handle = talloc(tctx, struct policy_handle);
+	torture_assert(tctx,
+		       *handle != NULL,
+		       "talloc(tctx, struct policy_handle)");
+	r.out.handle = *handle;
+
+	status = dcerpc_lsa_OpenPolicy3_r(b, tctx, &r);
+
+	/* Allow two possible failure status codes */
+	if (!NT_STATUS_EQUAL(status, expected_status2)) {
+		torture_assert_ntstatus_equal(tctx,
+					      status,
+					      expected_status,
+					      "OpenPolicy3 failed");
+	}
+	if (!NT_STATUS_IS_OK(expected_status) ||
+	    !NT_STATUS_IS_OK(expected_status2)) {
+		return true;
+	}
+
+	torture_assert_ntstatus_ok(tctx, r.out.result, "OpenPolicy3 failed");
+	torture_assert_int_equal(tctx, out_version, 1, "Invalid out_version");
+	torture_assert_int_equal(tctx,
+				 out_rinfo1.revision,
+				 1,
+				 "Invalid revision");
+#if 0 /* TODO: Enable as soon as it is supported */
+	torture_assert_int_equal(tctx,
+				 out_rinfo1.supported_features,
+				 LSA_FEATURE_TDO_AUTH_INFO_AES_CIPHER,
+				 "Invalid supported feature set");
+#endif
+
+	return true;
+}
+
+bool test_lsa_OpenPolicy3(struct dcerpc_binding_handle *b,
+			  struct torture_context *tctx,
+			  struct policy_handle **handle)
+{
+	return test_lsa_OpenPolicy3_ex(b,
+				       tctx,
+				       handle,
+				       NT_STATUS_OK,
+				       NT_STATUS_RPC_PROCNUM_OUT_OF_RANGE);
+}
+
+static bool test_OpenPolicy3_fail(struct dcerpc_binding_handle *b,
+				  struct torture_context *tctx)
+{
+	struct policy_handle handle = {
+		.handle_type = 0,
+	};
+	struct lsa_QosInfo qos = {
+		.impersonation_level = 2,
+		.context_mode = 1,
+	};
+	struct lsa_ObjectAttribute attr = {
+		.len = 0,
+		.sec_qos = &qos,
+	};
+	struct lsa_revision_info1 in_rinfo1 = {
+		.revision = 0,
+		.supported_features = 0,
+	};
+	union lsa_revision_info in_rinfo = {
+		.info1 = in_rinfo1,
+	};
+	struct lsa_revision_info1 out_rinfo1 = {
+		.revision = 0,
+	};
+	union lsa_revision_info out_rinfo = {
+		.info1 = out_rinfo1,
+	};
+	uint32_t out_version = 0;
+	struct lsa_OpenPolicy3 r = {
+		.in.system_name = "\\",
+		.in.attr = &attr,
+		.in.access_mask = SEC_FLAG_MAXIMUM_ALLOWED,
+		.in.in_version = 1,
+		.in.in_revision_info = &in_rinfo,
+		.out.out_version = &out_version,
+		.out.out_revision_info = &out_rinfo,
+		.out.handle = &handle,
+	};
+	NTSTATUS status;
+
+	torture_comment(tctx, "\nTesting OpenPolicy3_fail\n");
+
+	status = dcerpc_lsa_OpenPolicy3_r(b, tctx, &r);
+	if (!NT_STATUS_IS_OK(status)) {
+		if (NT_STATUS_EQUAL(status, NT_STATUS_CONNECTION_DISCONNECTED) ||
+		    NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED) ||
+		    NT_STATUS_EQUAL(status,
+				    NT_STATUS_RPC_PROCNUM_OUT_OF_RANGE)) {
+			torture_comment(tctx,
+					"OpenPolicy3 correctly returned with "
+					"status: %s\n",
+					nt_errstr(status));
+			return true;
+		}
+
+		torture_assert_ntstatus_equal(tctx,
+					      status,
+					      NT_STATUS_ACCESS_DENIED,
+					      "OpenPolicy3 return value should "
+					      "be ACCESS_DENIED or CONNECTION_DISCONNECTED");
+		return true;
+	}
+
+	if (NT_STATUS_EQUAL(r.out.result, NT_STATUS_ACCESS_DENIED) ||
+	    NT_STATUS_EQUAL(r.out.result,
+			    NT_STATUS_RPC_PROTSEQ_NOT_SUPPORTED)) {
+		torture_comment(tctx,
+				"OpenPolicy3 correctly returned with "
+				"result: %s\n",
+				nt_errstr(r.out.result));
+		return true;
+	}
+
+	torture_fail(tctx,
+		     "OpenPolicy3 return value should be "
 		     "ACCESS_DENIED or RPC_PROTSEQ_NOT_SUPPORTED");
 
 	return false;
@@ -730,7 +899,8 @@ static bool test_LookupNames4_fail(struct dcerpc_binding_handle *b,
 
 	status = dcerpc_lsa_LookupNames4_r(b, tctx, &r);
 	if (!NT_STATUS_IS_OK(status)) {
-		if (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
+		if (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED) ||
+		    NT_STATUS_EQUAL(status, NT_STATUS_CONNECTION_DISCONNECTED)) {
 			torture_comment(tctx,
 					"LookupNames4 correctly returned with "
 					"status: %s\n",
@@ -937,7 +1107,8 @@ static bool test_LookupSids3_fail(struct dcerpc_binding_handle *b,
 
 	status = dcerpc_lsa_LookupSids3_r(b, tctx, &r);
 	if (!NT_STATUS_IS_OK(status)) {
-		if (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
+		if (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED) ||
+		    NT_STATUS_EQUAL(status, NT_STATUS_CONNECTION_DISCONNECTED)) {
 			torture_comment(tctx,
 					"LookupSids3 correctly returned with "
 					"status: %s\n",
@@ -3636,7 +3807,7 @@ static bool check_pw_with_krb5(struct torture_context *tctx,
 		torture_assert_int_not_equal(tctx, t_kvno, 0, assertion_message);
 	} else {
 		assertion_message = talloc_asprintf(ctx,
-				"krbtgt_referral_ticket(%s) kvno(NULL) exptected(%u) current(%u)",
+				"krbtgt_referral_ticket(%s) kvno(NULL) expected(%u) current(%u)",
 				krbtgt_trust_realm_string,
 				(unsigned)expected_kvno,(unsigned)kvno);
 		torture_comment(tctx, "%s\n", assertion_message);
@@ -5149,6 +5320,10 @@ bool torture_rpc_lsa(struct torture_context *tctx)
 			ret = false;
 		}
 
+		if (!test_OpenPolicy3_fail(b, tctx)) {
+			ret = false;
+		}
+
 		if (!test_many_LookupSids(p, tctx, handle, LSA_LOOKUP_NAMES_ALL)) {
 			ret = false;
 		}
@@ -5161,6 +5336,10 @@ bool torture_rpc_lsa(struct torture_context *tctx)
 	}
 
 	if (!test_lsa_OpenPolicy2(b, tctx, &handle)) {
+		ret = false;
+	}
+
+	if (!test_lsa_OpenPolicy3(b, tctx, &handle)) {
 		ret = false;
 	}
 

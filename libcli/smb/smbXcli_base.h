@@ -23,6 +23,13 @@
 
 #define SMB_SUICIDE_PACKET 0x74697865
 
+#include "replace.h"
+#include <tevent.h>
+#include "libcli/smb/smb_constants.h"
+#include "libcli/util/ntstatus.h"
+#include "lib/util/time.h"
+#include "lib/util/data_blob.h"
+
 struct smbXcli_conn;
 struct smbXcli_session;
 struct smbXcli_tcon;
@@ -474,7 +481,10 @@ NTSTATUS smbXcli_negprot_recv(
 NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 			 uint32_t timeout_msec,
 			 enum protocol_types min_protocol,
-			 enum protocol_types max_protocol);
+			 enum protocol_types max_protocol,
+			 struct smb2_negotiate_contexts *in_ctx,
+			 TALLOC_CTX *mem_ctx,
+			 struct smb2_negotiate_contexts **out_ctx);
 
 struct tevent_req *smb2cli_validate_negotiate_info_send(TALLOC_CTX *mem_ctx,
 						struct tevent_context *ev,
@@ -937,5 +947,23 @@ struct tevent_req *smb2cli_echo_send(TALLOC_CTX *mem_ctx,
 NTSTATUS smb2cli_echo_recv(struct tevent_req *req);
 NTSTATUS smb2cli_echo(struct smbXcli_conn *conn,
 		      uint32_t timeout_msec);
+
+struct tevent_req *smb2cli_ioctl_pipe_wait_send(TALLOC_CTX *mem_ctx,
+						struct tevent_context *ev,
+						struct smbXcli_conn *conn,
+						uint32_t timeout_msec,
+						struct smbXcli_session *session,
+						struct smbXcli_tcon *tcon,
+						const char *pipe_name,
+						uint64_t pipe_wait_timeout);
+
+NTSTATUS smb2cli_ioctl_pipe_wait_recv(struct tevent_req *req);
+
+NTSTATUS smb2cli_ioctl_pipe_wait(struct smbXcli_conn *conn,
+				 uint32_t timeout_msec,
+				 struct smbXcli_session *session,
+				 struct smbXcli_tcon *tcon,
+				 const char *pipe_name,
+				 uint64_t pipe_wait_timeout);
 
 #endif /* _SMBXCLI_BASE_H_ */

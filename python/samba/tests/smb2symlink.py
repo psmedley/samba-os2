@@ -23,39 +23,37 @@ import samba.tests.libsmb
 
 class Smb2SymlinkTests(samba.tests.libsmb.LibsmbTests):
 
-    def connections(self):
-        share = samba.tests.env_get_var_value(
-            "SMB1_SHARE", allow_missing=True)
-        if not share:
-            share = "nosymlinks_smb1allow"
+    def connections(self, smb1share=None, smb2share=None):
+        if not smb1share:
+            smb1share = samba.tests.env_get_var_value(
+                "SMB1_SHARE", allow_missing=True)
+            if not smb1share:
+                smb1share = "nosymlinks_smb1allow"
 
         try:
             smb1 = libsmb.Conn(
                 self.server_ip,
-                share,
+                smb1share,
                 self.lp,
-                self.creds)
+                self.creds,
+                force_smb1=True)
         except NTSTATUSError as e:
             if e.args[0] != ntstatus.NT_STATUS_CONNECTION_RESET:
                 raise
+        smb1.smb1_posix()
 
-        share = samba.tests.env_get_var_value(
-            "SMB2_SHARE", allow_missing=True)
-        if not share:
-            share = "nosymlinks"
+        if not smb2share:
+            smb2share = samba.tests.env_get_var_value(
+                "SMB2_SHARE", allow_missing=True)
+            if not smb2share:
+                smb2share = "nosymlinks"
+
         smb2 = libsmb.Conn(
             self.server_ip,
-            share,
+            smb2share,
             self.lp,
             self.creds)
         return (smb1, smb2)
-
-    def clean_file(self, conn, filename):
-        try:
-            conn.unlink(filename)
-        except NTSTATUSError as e:
-            if e.args[0] != ntstatus.NT_STATUS_OBJECT_NAME_NOT_FOUND:
-                raise
 
     def create_symlink(self, conn, target, symlink):
         self.clean_file(conn, symlink)
@@ -93,7 +91,7 @@ class Smb2SymlinkTests(samba.tests.libsmb.LibsmbTests):
         target="foo"
         suffix="bar"
 
-        self.create_symlink(smb1, target, symlink);
+        self.create_symlink(smb1, target, symlink)
 
         with self.assertRaises(NTSTATUSError) as e:
             fd = smb2.create_ex(f'{symlink}\\{suffix}')
@@ -113,7 +111,7 @@ class Smb2SymlinkTests(samba.tests.libsmb.LibsmbTests):
         symlink="syml"
         target="foo"
 
-        self.create_symlink(smb1, target, symlink);
+        self.create_symlink(smb1, target, symlink)
 
         with self.assertRaises(NTSTATUSError) as e:
             fd = smb2.create_ex(f'{symlink}')
@@ -174,6 +172,44 @@ class Smb2SymlinkTests(samba.tests.libsmb.LibsmbTests):
               'flags' : 0 })
 
         self.clean_file(smb1, symlink)
+
+    def test_symlink_reparse_data_buffer_parse(self):
+        """Test parsing a symlink reparse buffer coming from Windows"""
+
+        buf = (b'\x0c\x00\x00\xa0\x18\x00\x00\x00'
+               b'\x06\x00\x06\x00\x00\x00\x06\x00'
+               b'\x01\x00\x00\x00\x62\x00\x61\x00'
+               b'\x72\x00\x62\x00\x61\x00\x72\x00')
+
+        try:
+            syml = reparse_symlink.symlink_get(buf);
+        except:
+            self.fail("Could not parse symlink buffer")
+
+        self.assertEqual(syml, ('bar', 'bar', 0, 1));
+
+    def test_bug15505(self):
+        """Test an absolute intermediate symlink inside the share"""
+        (smb1,smb2) = self.connections(smb1share="tmp",smb2share="tmp")
+        symlink="syml"
+
+        localpath=samba.tests.env_get_var_value("LOCAL_PATH")
+
+        smb1.mkdir("sub")
+        self.addCleanup(self.clean_file, smb1, "sub")
+
+        self.create_symlink(smb1, f'{localpath}/sub1', "sub/lnk")
+        self.addCleanup(self.clean_file, smb1, "sub/lnk")
+
+        smb1.mkdir("sub1")
+        self.addCleanup(self.clean_file, smb1, "sub1")
+
+        fd = smb1.create("sub1/x", CreateDisposition=libsmb.FILE_CREATE);
+        smb1.close(fd)
+        self.addCleanup(self.clean_file, smb1, "sub1/x")
+
+        fd = smb2.create("sub\\lnk\\x")
+        smb2.close(fd)
 
 if __name__ == '__main__':
     import unittest

@@ -49,7 +49,7 @@ _PUBLIC_ void ndr_print_cf_date(struct ndr_print *ndr, const char *name, const s
 	year += 1980;
 	month = (r->date >> 5 & 0xf);
 	day = (r->date & 0x1f);
-	s = talloc_asprintf(ndr, "%02d/%02d/%04d", day, month, year);
+	s = talloc_asprintf(ndr, "%02"PRIu8"/%02"PRIu8"/%04"PRIu16, day, month, year);
 	if (s == NULL) { return; }
 	ndr_print_string(ndr, "date", s);
 	talloc_free(s);
@@ -248,13 +248,13 @@ static enum ndr_err_code ndr_push_folder_cfdata(struct ndr_push *ndr,
 	return NDR_ERR_SUCCESS;
 }
 
-_PUBLIC_ enum ndr_err_code ndr_push_cab_file(struct ndr_push *ndr, int ndr_flags, const struct cab_file *r)
+_PUBLIC_ enum ndr_err_code ndr_push_cab_file(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct cab_file *r)
 {
 	uint32_t cntr_cffolders_0;
 	uint32_t cntr_cffiles_0;
 	size_t processed_cfdata = 0;
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_PRINT_ARRAY_HEX|LIBNDR_FLAG_LITTLE_ENDIAN|LIBNDR_FLAG_NOALIGN);
 		NDR_PUSH_CHECK_FLAGS(ndr, ndr_flags);
 
@@ -381,7 +381,7 @@ static enum ndr_err_code ndr_pull_folder_cfdata(struct ndr_pull *ndr,
 	return NDR_ERR_SUCCESS;
 }
 
-_PUBLIC_ enum ndr_err_code ndr_pull_cab_file(struct ndr_pull *ndr, int ndr_flags, struct cab_file *r)
+_PUBLIC_ enum ndr_err_code ndr_pull_cab_file(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct cab_file *r)
 {
 	uint32_t size_cffolders_0 = 0;
 	uint32_t cntr_cffolders_0;
@@ -393,7 +393,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_cab_file(struct ndr_pull *ndr, int ndr_flags
 	size_t processed_cfdata = 0;
 	TALLOC_CTX *_mem_save_cfdata_0 = NULL;
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_PRINT_ARRAY_HEX|LIBNDR_FLAG_LITTLE_ENDIAN|LIBNDR_FLAG_NOALIGN);
 		NDR_PULL_CHECK_FLAGS(ndr, ndr_flags);
 		if (ndr_flags & NDR_SCALARS) {

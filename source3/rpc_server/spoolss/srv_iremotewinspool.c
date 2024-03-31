@@ -12,6 +12,7 @@
 #include "librpc/gen_ndr/ndr_spoolss_scompat.h"
 #include "rpc_server/rpc_config.h"
 #include "rpc_server/rpc_server.h"
+#include "rpc_server/spoolss/iremotewinspool_util.h"
 
 static bool forward_opnum_to_spoolss(uint16_t opnum) {
 	switch (opnum) {
@@ -53,10 +54,16 @@ NTSTATUS iremotewinspool__op_ndr_pull(struct dcesrv_call_state *dce_call, TALLOC
 {
 	enum ndr_err_code ndr_err;
 	uint16_t opnum = dce_call->pkt.u.request.opnum;
+	uint16_t mapped_opnum;
 
 	dce_call->fault_code = 0;
 
 	if (forward_opnum_to_spoolss(opnum)) {
+		bool ok;
+		ok = iremotewinspool_map_opcode(opnum, &mapped_opnum);
+		if (ok) {
+			dce_call->pkt.u.request.opnum = mapped_opnum;
+		}
 		return spoolss__op_ndr_pull(dce_call, mem_ctx, pull, r);
 	}
 
@@ -84,6 +91,25 @@ static NTSTATUS iremotewinspool__op_dispatch_internal(struct dcesrv_call_state *
 	struct pipes_struct *p = NULL;
 	NTSTATUS status = NT_STATUS_OK;
 	bool impersonated = false;
+	bool ok;
+	struct GUID object_uuid;
+
+	ok = dce_call->pkt.pfc_flags & DCERPC_PFC_FLAG_OBJECT_UUID;
+	if (!ok) {
+		dce_call->fault_code = DCERPC_NCA_S_UNSUPPORTED_TYPE;
+		return NT_STATUS_NET_WRITE_FAULT;
+	}
+
+	status = GUID_from_string(IREMOTEWINSPOOL_OBJECT_GUID, &object_uuid);
+	if (!NT_STATUS_IS_OK(status)) {
+		dce_call->fault_code = DCERPC_NCA_S_UNSUPPORTED_TYPE;
+		return NT_STATUS_NET_WRITE_FAULT;
+	}
+
+	if (!GUID_equal(&dce_call->pkt.u.request.object.object, &object_uuid)) {
+		dce_call->fault_code = DCERPC_NCA_S_UNSUPPORTED_TYPE;
+		return NT_STATUS_NET_WRITE_FAULT;
+	}
 
 	if (forward_opnum_to_spoolss(opnum)) {
 		return spoolss__op_dispatch(dce_call, mem_ctx, r);

@@ -390,7 +390,7 @@ static NTSTATUS parse_object(TALLOC_CTX *mem_ctx,
 						     entry->password.data,
 						     entry->password.length);
 			if (!name) {
-				DEBUG(1, ("talloc failed!"));
+				DEBUG(1, ("talloc failed!\n"));
 				return NT_STATUS_NO_MEMORY;
 			} else {
 				DEBUG(10, ("found name %s\n", name));
@@ -502,7 +502,7 @@ static NTSTATUS parse_object(TALLOC_CTX *mem_ctx,
 		}
 	}
 
-	if ((kvno < 0) && (kvno < pwd_history_len)) {
+	if (kvno < pwd_history_len) {
 		return status;
 	}
 

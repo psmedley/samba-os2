@@ -74,9 +74,14 @@ int dom_sid_compare(const struct dom_sid *sid1, const struct dom_sid *sid2)
 	if (sid1->num_auths != sid2->num_auths)
 		return sid1->num_auths - sid2->num_auths;
 
-	for (i = sid1->num_auths-1; i >= 0; --i)
-		if (sid1->sub_auths[i] != sid2->sub_auths[i])
-			return sid1->sub_auths[i] - sid2->sub_auths[i];
+	for (i = sid1->num_auths-1; i >= 0; --i) {
+		if (sid1->sub_auths[i] < sid2->sub_auths[i]) {
+			return -1;
+		}
+		if (sid1->sub_auths[i] > sid2->sub_auths[i]) {
+			return 1;
+		}
+	}
 
 	return dom_sid_compare_auth(sid1, sid2);
 }
@@ -114,9 +119,14 @@ int dom_sid_compare_domain(const struct dom_sid *sid1,
 
 	n = MIN(sid1->num_auths, sid2->num_auths);
 
-	for (i = n-1; i >= 0; --i)
-		if (sid1->sub_auths[i] != sid2->sub_auths[i])
-			return sid1->sub_auths[i] - sid2->sub_auths[i];
+	for (i = n-1; i >= 0; --i) {
+		if (sid1->sub_auths[i] < sid2->sub_auths[i]) {
+			return -1;
+		}
+		if (sid1->sub_auths[i] > sid2->sub_auths[i]) {
+			return 1;
+		}
+	}
 
 	return dom_sid_compare_auth(sid1, sid2);
 }
@@ -136,7 +146,7 @@ bool dom_sid_parse_endp(const char *sidstr,struct dom_sid *sidout,
 	uint64_t conv;
 	int error = 0;
 
-	ZERO_STRUCTP(sidout);
+	*sidout = (struct dom_sid) {};
 
 	if ((sidstr[0] != 'S' && sidstr[0] != 's') || sidstr[1] != '-') {
 		goto format_error;

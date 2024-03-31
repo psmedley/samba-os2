@@ -100,9 +100,9 @@ static NTSTATUS set_lsa_secret(TALLOC_CTX *mem_ctx,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	ret = ldb_search(ldb, mem_ctx, &res, system_dn, LDB_SCOPE_SUBTREE, attrs,
+	ret = ldb_search(ldb, frame, &res, system_dn, LDB_SCOPE_SUBTREE, attrs,
 			   "(&(cn=%s)(objectclass=secret))",
-			   ldb_binary_encode_string(mem_ctx, name2));
+			   ldb_binary_encode_string(frame, name2));
 
 	if (ret != LDB_SUCCESS ||  res->count != 0 ) {
 		DEBUG(2, ("Secret %s already exists !\n", name2));
@@ -202,7 +202,7 @@ static NTSTATUS get_lsa_secret(TALLOC_CTX *mem_ctx,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	ret = ldb_search(ldb, mem_ctx, &res, system_dn, LDB_SCOPE_SUBTREE, attrs,
+	ret = ldb_search(ldb, tmp_mem, &res, system_dn, LDB_SCOPE_SUBTREE, attrs,
 			   "(&(cn=%s Secret)(objectclass=secret))",
 			   ldb_binary_encode_string(tmp_mem, name));
 
@@ -431,14 +431,21 @@ static WERROR get_and_verify_access_check(TALLOC_CTX *sub_ctx,
 			return WERR_INVALID_DATA;
 		}
 
-		gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA1);
-		gnutls_hash(dig_ctx,
-			    blob_us.data,
-			    blob_us.length - hash_size);
+		rc = gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA1);
+		if (rc != GNUTLS_E_SUCCESS) {
+			return gnutls_error_to_werror(rc, WERR_INTERNAL_ERROR);
+		}
+		rc = gnutls_hash(dig_ctx,
+				 blob_us.data,
+				 blob_us.length - hash_size);
 		gnutls_hash_deinit(dig_ctx, hash);
+		if (rc != GNUTLS_E_SUCCESS) {
+			return gnutls_error_to_werror(rc, WERR_INTERNAL_ERROR);
+		}
+
 		/*
 		 * We free it after the sha1 calculation because blob.data
-		 * point to the same area
+		 * points to the same area
 		 */
 
 		if (!mem_equal_const_time(hash, uncrypted_accesscheckv2.hash, hash_size)) {
@@ -465,15 +472,21 @@ static WERROR get_and_verify_access_check(TALLOC_CTX *sub_ctx,
 			return WERR_INVALID_DATA;
 		}
 
-		gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA512);
-		gnutls_hash(dig_ctx,
-			    blob_us.data,
-			    blob_us.length - hash_size);
+		rc = gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA512);
+		if (rc != GNUTLS_E_SUCCESS) {
+			return gnutls_error_to_werror(rc, WERR_INTERNAL_ERROR);
+		}
+		rc = gnutls_hash(dig_ctx,
+				 blob_us.data,
+				 blob_us.length - hash_size);
 		gnutls_hash_deinit(dig_ctx, hash);
+		if (rc != GNUTLS_E_SUCCESS) {
+			return gnutls_error_to_werror(rc, WERR_INTERNAL_ERROR);
+		}
 
 		/*
 		 * We free it after the sha1 calculation because blob.data
-		 * point to the same area
+		 * points to the same area
 		 */
 
 		if (!mem_equal_const_time(hash, uncrypted_accesscheckv3.hash, hash_size)) {
@@ -724,9 +737,9 @@ static WERROR bkrp_client_wrap_decrypt_data(struct dcesrv_call_state *dce_call,
 		return WERR_INVALID_DATA;
 	}
 
-	/* There is a magic value a the beginning of the data
-	 * we can use an adhoc structure but as the
-	 * parent structure is just an array of bytes it a lot of work
+	/* There is a magic value at the beginning of the data
+	 * we can use an ad hoc structure but as the
+	 * parent structure is just an array of bytes it is a lot of
 	 * work just prepending 4 bytes
 	 */
 	*(r->out.data_out) = talloc_zero_array(mem_ctx, uint8_t, uncrypted_data->length + 4);
@@ -1165,7 +1178,7 @@ static WERROR bkrp_retrieve_client_wrap_key(struct dcesrv_call_state *dce_call, 
 	NTSTATUS status;
 
 	/*
-	 * here we basicaly need to return our certificate
+	 * here we basically need to return our certificate
 	 * search for lsa secret BCKUPKEY_PREFERRED first
 	 */
 
@@ -1585,7 +1598,7 @@ static WERROR bkrp_generic_decrypt_data(struct dcesrv_call_state *dce_call, TALL
  * will be stored.  There is only one active encryption key per domain,
  * it is pointed at with G$BCKUPKEY_P in the LSA secrets store.
  *
- * The potentially multiple valid decryptiong keys (and the encryption
+ * The potentially multiple valid decryption keys (and the encryption
  * key) are in turn stored in the LSA secrets store as
  * G$BCKUPKEY_keyGuidString.
  *
@@ -1655,7 +1668,7 @@ static WERROR bkrp_server_wrap_encrypt_data(struct dcesrv_call_state *dce_call, 
 	 * and mackey values are unique for this operation, and
 	 * discovering these (by reversing the RC4 over the
 	 * attacker-controlled data) does not return something able to
-	 * be used to decyrpt the encrypted data of other users
+	 * be used to decrypt the encrypted data of other users
 	 */
 	generate_random_buffer(server_side_wrapped.r2, sizeof(server_side_wrapped.r2));
 

@@ -17,7 +17,6 @@
 import os
 from samba.gp.gpclass import gp_xml_ext, gp_file_applier
 from samba.gp.gp_sudoers_ext import sudo_applier_func
-from samba.gp.util.logging import log
 
 class vgp_sudoers_ext(gp_xml_ext, gp_file_applier):
     def __str__(self):
@@ -48,7 +47,7 @@ class vgp_sudoers_ext(gp_xml_ext, gp_file_applier):
                     for listelement in listelements:
                         principals.extend(listelement.findall('principal'))
                     if len(principals) > 0:
-                        uname = ','.join([u.text if u.attrib['type'] == 'user' \
+                        uname = ','.join([u.text if u.attrib['type'] == 'user'
                             else '%s%%' % u.text for u in principals])
                     else:
                         uname = 'ALL'
@@ -85,7 +84,7 @@ class vgp_sudoers_ext(gp_xml_ext, gp_file_applier):
                 for listelement in listelements:
                     principals.extend(listelement.findall('principal'))
                 if len(principals) > 0:
-                    uname = ','.join([u.text if u.attrib['type'] == 'user' \
+                    uname = ','.join([u.text if u.attrib['type'] == 'user'
                         else '%s%%' % u.text for u in principals])
                 else:
                     uname = 'ALL'

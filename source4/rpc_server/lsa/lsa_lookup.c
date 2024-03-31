@@ -600,10 +600,7 @@ static void dcesrv_lsa_LookupSids_base_done(struct tevent_req *subreq)
 	state->r.out.result = status;
 	dcesrv_lsa_LookupSids_base_map(state);
 
-	status = dcesrv_reply(dce_call);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,(__location__ ": dcesrv_reply() failed - %s\n", nt_errstr(status)));
-	}
+	dcesrv_async_reply(dce_call);
 }
 
 /*
@@ -663,7 +660,7 @@ NTSTATUS dcesrv_lsa_LookupSids2(struct dcesrv_call_state *dce_call,
 	return status;
 }
 
-/* A random hexidecimal number (honest!) */
+/* A random hexadecimal number (honest!) */
 #define LSA_SERVER_IMPLICIT_POLICY_STATE_MAGIC 0xc0c99e00
 
 /*
@@ -720,7 +717,7 @@ static NTSTATUS schannel_call_setup(struct dcesrv_call_state *dce_call,
 		/*
 		 * This will talloc_steal() policy_state onto the
 		 * connection, which has longer lifetime than the
-		 * immidiate caller requires
+		 * immediate caller requires
 		 */
 		status = dcesrv_iface_state_store_conn(dce_call,
 						       LSA_SERVER_IMPLICIT_POLICY_STATE_MAGIC,
@@ -1284,10 +1281,7 @@ static void dcesrv_lsa_LookupNames_base_done(struct tevent_req *subreq)
 	state->r.out.result = status;
 	dcesrv_lsa_LookupNames_base_map(state);
 
-	status = dcesrv_reply(dce_call);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,(__location__ ": dcesrv_reply() failed - %s\n", nt_errstr(status)));
-	}
+	dcesrv_async_reply(dce_call);
 }
 
 /*

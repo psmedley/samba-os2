@@ -30,8 +30,12 @@ typedef struct stat_ex SMB_STRUCT_STAT;
 typedef struct files_struct files_struct;
 struct smbd_server_connection;
 struct security_descriptor;
+struct loadparm_context;
 
 /* The following definitions come from param/loadparm.c  */
+
+void loadparm_s3_init_globals(struct loadparm_context *lp_ctx,
+			      bool reinit_globals);
 
 const struct loadparm_substitution *loadparm_s3_global_substitution(void);
 
@@ -118,7 +122,6 @@ struct loadparm_service *lp_default_loadparm_service(void);
 void *lp_parm_ptr(struct loadparm_service *service, struct parm_struct *parm);
 void *lp_local_ptr_by_snum(int snum, struct parm_struct *parm);
 bool lp_do_parameter(int snum, const char *pszParmName, const char *pszParmValue);
-bool lp_set_cmdline(const char *pszParmName, const char *pszParmValue);
 bool dump_a_parameter(int snum, char *parm_name, FILE * f, bool isGlobal);
 bool lp_snum_ok(int iService);
 void lp_add_one_printer(const char *name, const char *comment,
@@ -183,7 +186,6 @@ void widelinks_warning(int snum);
 const char *lp_ncalrpc_dir(void);
 void _lp_set_server_role(int server_role);
 uint32_t lp_get_async_dns_timeout(void);
-bool lp_smb3_unix_extensions(void);
 
 /* The following definitions come from param/loadparm_ctx.c  */
 

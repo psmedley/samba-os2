@@ -24,16 +24,13 @@
 #include "source4/kdc/ad_claims.h"
 #include "source4/kdc/authn_policy_util.h"
 #include "ldb_module.h"
-#include "libcli/security/security.h"
-#include "libcli/util/werror.h"
 #include "dsdb/samdb/samdb.h"
 #include "dsdb/samdb/ldb_modules/util.h"
 #include "librpc/gen_ndr/claims.h"
 #include "librpc/gen_ndr/ndr_claims.h"
-#include "librpc/gen_ndr/krb5pac.h"
 #include "librpc/gen_ndr/ndr_krb5pac.h"
-#include "lzxpress_huffman.h"
 #include "lib/util/binsearch.h"
+#include "auth/session.h"
 
 #undef strcasecmp
 
@@ -458,7 +455,13 @@ static int fill_claim_entry(TALLOC_CTX *mem_ctx,
 			    struct CLAIM_ENTRY *claim_entry)
 {
 
-	claim_entry->id = (const char *)name.data;
+	claim_entry->id = talloc_strndup(mem_ctx,
+				     (const char *)name.data,
+				     name.length);
+	if (claim_entry->id == NULL) {
+		return ldb_oom(ldb);
+	}
+
 	claim_entry->type = claim_type;
 
 	switch (claim_type) {
@@ -506,7 +509,7 @@ static int fill_claim_entry(TALLOC_CTX *mem_ctx,
 }
 
 /*
- * Determine wheter a claim applies to the most specific objectClass of the
+ * Determine whether a claim applies to the most specific objectClass of the
  * principal.
  */
 static int claim_applies_to_class(TALLOC_CTX *mem_ctx,
@@ -673,62 +676,6 @@ static uint32_t claim_get_value_count(const struct CLAIM_ENTRY *claim)
 	return 0;
 }
 
-static int encode_claims_set(struct ldb_context *ldb,
-			     TALLOC_CTX *mem_ctx,
-			     struct CLAIMS_SET *claims_set,
-			     DATA_BLOB *claims_blob)
-{
-	TALLOC_CTX *tmp_ctx = NULL;
-	enum ndr_err_code ndr_err;
-	struct CLAIMS_SET_NDR *claims_set_info = NULL;
-	struct CLAIMS_SET_METADATA *metadata = NULL;
-	struct CLAIMS_SET_METADATA_NDR *metadata_ndr = NULL;
-
-	tmp_ctx = talloc_new(mem_ctx);
-	if (tmp_ctx == NULL) {
-		return ldb_oom(ldb);
-	}
-
-	metadata_ndr = talloc_zero(tmp_ctx, struct CLAIMS_SET_METADATA_NDR);
-	if (metadata_ndr == NULL) {
-		talloc_free(tmp_ctx);
-		return ldb_oom(ldb);
-	}
-
-	metadata = talloc_zero(metadata_ndr, struct CLAIMS_SET_METADATA);
-	if (metadata == NULL) {
-		talloc_free(tmp_ctx);
-		return ldb_oom(ldb);
-	}
-
-	claims_set_info = talloc_zero(metadata, struct CLAIMS_SET_NDR);
-	if (claims_set_info == NULL) {
-		talloc_free(tmp_ctx);
-		return ldb_oom(ldb);
-	}
-
-	metadata_ndr->claims.metadata = metadata;
-
-	metadata->claims_set = claims_set_info;
-	metadata->compression_format = CLAIMS_COMPRESSION_FORMAT_XPRESS_HUFF;
-
-	claims_set_info->claims.claims = claims_set;
-
-	ndr_err = ndr_push_struct_blob(claims_blob, mem_ctx, metadata_ndr,
-				       (ndr_push_flags_fn_t)ndr_push_CLAIMS_SET_METADATA_NDR);
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		NTSTATUS nt_status = ndr_map_error2ntstatus(ndr_err);
-		DBG_ERR("CLAIMS_SET_METADATA_NDR push failed: %s\n",
-			nt_errstr(nt_status));
-
-		talloc_free(tmp_ctx);
-		return ldb_operr(ldb);
-	}
-
-	talloc_free(tmp_ctx);
-	return LDB_SUCCESS;
-}
-
 static bool is_schema_dn(struct ldb_dn *dn,
 			 struct ldb_dn *schema_dn)
 {
@@ -784,7 +731,7 @@ static int get_all_claims(struct ldb_context *ldb,
 			  TALLOC_CTX *mem_ctx,
 			  const struct ldb_message *principal,
 			  uint32_t principal_class_id,
-			  DATA_BLOB *claims_blob)
+			  struct CLAIMS_SET **claims_set_out)
 {
 	TALLOC_CTX *tmp_ctx = NULL;
 
@@ -821,16 +768,22 @@ static int get_all_claims(struct ldb_context *ldb,
 	unsigned i;
 
 	/* The structure which we'll use to build up the claims. */
-	struct CLAIMS_SET claims_set = {};
+	struct CLAIMS_SET *claims_set = NULL;
 
 	struct CLAIMS_ARRAY *ad_sourced_constructed = NULL;
 
 	struct assigned_silo assigned_silo = new_assigned_silo();
 
-	*claims_blob = data_blob_null;
+	*claims_set_out = NULL;
 
 	tmp_ctx = talloc_new(mem_ctx);
 	if (tmp_ctx == NULL) {
+		return ldb_oom(ldb);
+	}
+
+	claims_set = talloc_zero(tmp_ctx, struct CLAIMS_SET);
+	if (claims_set == NULL) {
+		talloc_free(tmp_ctx);
 		return ldb_oom(ldb);
 	}
 
@@ -1060,16 +1013,16 @@ static int get_all_claims(struct ldb_context *ldb,
 			}
 
 			if (ad_sourced_constructed == NULL) {
-				claims_set.claims_arrays = talloc_realloc(tmp_ctx,
-									  claims_set.claims_arrays,
-									  struct CLAIMS_ARRAY,
-									  claims_set.claims_array_count + 1);
-				if (claims_set.claims_arrays == NULL) {
+				claims_set->claims_arrays = talloc_realloc(claims_set,
+									       claims_set->claims_arrays,
+									       struct CLAIMS_ARRAY,
+									       claims_set->claims_array_count + 1);
+				if (claims_set->claims_arrays == NULL) {
 					talloc_free(tmp_ctx);
 					return ldb_oom(ldb);
 				}
 
-				ad_sourced_constructed = &claims_set.claims_arrays[claims_set.claims_array_count++];
+				ad_sourced_constructed = &claims_set->claims_arrays[claims_set->claims_array_count++];
 				*ad_sourced_constructed = (struct CLAIMS_ARRAY) {
 					.claims_source_type = CLAIMS_SOURCE_TYPE_AD,
 				};
@@ -1077,7 +1030,7 @@ static int get_all_claims(struct ldb_context *ldb,
 
 			/* Add the claim to the array. */
 			ad_sourced_constructed->claim_entries = talloc_realloc(
-				tmp_ctx,
+				claims_set->claims_arrays,
 				ad_sourced_constructed->claim_entries,
 				struct CLAIM_ENTRY,
 				ad_sourced_constructed->claims_count + 1);
@@ -1161,7 +1114,7 @@ static int get_all_claims(struct ldb_context *ldb,
 		for (i = 0; i < ad_claims_count; ++i) {
 			const struct ldb_message_element *principal_attribute = NULL;
 			struct CLAIM_ENTRY *claim_entry = NULL;
-			uint32_t new_claims_array_count = claims_set.claims_array_count;
+			uint32_t new_claims_array_count = claims_set->claims_array_count;
 
 			/* Get the value of the claim attribute for the principal. */
 			principal_attribute = ldb_msg_find_element(principal_msg,
@@ -1173,23 +1126,23 @@ static int get_all_claims(struct ldb_context *ldb,
 			/* Add the claim to the array. */
 
 			if (ad_sourced_constructed == NULL) {
-				claims_set.claims_arrays = talloc_realloc(tmp_ctx,
-									  claims_set.claims_arrays,
-									  struct CLAIMS_ARRAY,
-									  new_claims_array_count + 1);
-				if (claims_set.claims_arrays == NULL) {
+				claims_set->claims_arrays = talloc_realloc(claims_set,
+									       claims_set->claims_arrays,
+									       struct CLAIMS_ARRAY,
+									       new_claims_array_count + 1);
+				if (claims_set->claims_arrays == NULL) {
 					talloc_free(tmp_ctx);
 					return ldb_oom(ldb);
 				}
 
-				ad_sourced_constructed = &claims_set.claims_arrays[new_claims_array_count++];
+				ad_sourced_constructed = &claims_set->claims_arrays[new_claims_array_count++];
 				*ad_sourced_constructed = (struct CLAIMS_ARRAY) {
 					.claims_source_type = CLAIMS_SOURCE_TYPE_AD,
 				};
 			}
 
 			ad_sourced_constructed->claim_entries = talloc_realloc(
-				tmp_ctx,
+				claims_set->claims_arrays,
 				ad_sourced_constructed->claim_entries,
 				struct CLAIM_ENTRY,
 				ad_sourced_constructed->claims_count + 1);
@@ -1220,34 +1173,29 @@ static int get_all_claims(struct ldb_context *ldb,
 				 * array(s).
 				 */
 				++ad_sourced_constructed->claims_count;
-				claims_set.claims_array_count = new_claims_array_count;
+				claims_set->claims_array_count = new_claims_array_count;
 			}
 		}
 	}
 
-	if (claims_set.claims_array_count == 0) {
-		/* If we have no claims, we're done. */
-		talloc_free(tmp_ctx);
-		return LDB_SUCCESS;
+	if (claims_set->claims_array_count) {
+		*claims_set_out = talloc_steal(mem_ctx, claims_set);
 	}
 
-	/* Encode the claims ready to go into a PAC buffer. */
-	ret = encode_claims_set(ldb, mem_ctx, &claims_set, claims_blob);
-
 	talloc_free(tmp_ctx);
-	return ret;
+	return LDB_SUCCESS;
 }
 
-int get_claims_for_principal(struct ldb_context *ldb,
-			     TALLOC_CTX *mem_ctx,
-			     const struct ldb_message *principal,
-			     DATA_BLOB *claims_blob)
+int get_claims_set_for_principal(struct ldb_context *ldb,
+				 TALLOC_CTX *mem_ctx,
+				 const struct ldb_message *principal,
+				 struct CLAIMS_SET **claims_set_out)
 {
 	struct ldb_message_element *principal_class_el = NULL;
 	struct dsdb_schema *schema = NULL;
 	const struct dsdb_class *principal_class = NULL;
 
-	*claims_blob = data_blob_null;
+	*claims_set_out = NULL;
 
 	if (!ad_claims_are_issued(ldb)) {
 		return LDB_SUCCESS;
@@ -1273,5 +1221,5 @@ int get_claims_for_principal(struct ldb_context *ldb,
 			      mem_ctx,
 			      principal,
 			      principal_class->governsID_id,
-			      claims_blob);
+			      claims_set_out);
 }

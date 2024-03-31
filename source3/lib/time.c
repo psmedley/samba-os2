@@ -30,11 +30,7 @@
 
 #define NTTIME_INFINITY (NTTIME)0x8000000000000000LL
 
-#if (SIZEOF_LONG == 8)
-#define TIME_FIXUP_CONSTANT_INT 11644473600L
-#elif (SIZEOF_LONG_LONG == 8)
-#define TIME_FIXUP_CONSTANT_INT 11644473600LL
-#endif
+#define TIME_FIXUP_CONSTANT_INT INT64_C(11644473600)
 
 /**************************************************************
  Handle conversions between time_t and uint32, taking care to
@@ -129,8 +125,9 @@ void srv_put_dos_date(char *buf,int offset,time_t unixdate)
 	push_dos_date((uint8_t *)buf, offset, unixdate, server_zone_offset);
 }
 
-void srv_put_dos_date2(char *buf,int offset, time_t unixdate)
+void srv_put_dos_date2_ts(char *buf, int offset, struct timespec unix_ts)
 {
+	time_t unixdate = convert_timespec_to_time_t(unix_ts);
 	push_dos_date2((uint8_t *)buf, offset, unixdate, server_zone_offset);
 }
 
@@ -254,10 +251,8 @@ time_t srv_make_unix_date3(const void *date_ptr)
  will be returned as (time_t)-1, whereas nt_time_to_unix returns 0 in this case.
 ****************************************************************************/
 
-struct timespec interpret_long_date(const char *p)
+struct timespec interpret_long_date(NTTIME nt)
 {
-	NTTIME nt;
-	nt = BVAL(p, 0);
 	if (nt == (uint64_t)-1) {
 		struct timespec ret;
 		ret.tv_sec = (time_t)-1;
@@ -406,12 +401,12 @@ const char *time_to_asc(const time_t t)
 	struct tm *lt = localtime(&t);
 
 	if (!lt) {
-		return "unknown time";
+		return "unknown time\n";
 	}
 
 	asct = asctime(lt);
 	if (!asct) {
-		return "unknown time";
+		return "unknown time\n";
 	}
 	return asct;
 }

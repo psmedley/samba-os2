@@ -87,7 +87,7 @@ static enum ndr_err_code ndr_pull_component(struct ndr_pull *ndr,
 			/* its a reserved length field */
 			return ndr_pull_error(ndr, NDR_ERR_STRING,
 					      "BAD DNS NAME component, " \
-					      "reserved length field: 0x%02x",
+					      "reserved length field: 0x%02"PRIx8,
 					      (len &0xC));
 		}
 		if (*offset + len + 1 > ndr->data_size) {
@@ -112,7 +112,7 @@ static enum ndr_err_code ndr_pull_component(struct ndr_pull *ndr,
   pull a dns_string from the wire
 */
 _PUBLIC_ enum ndr_err_code ndr_pull_dns_string(struct ndr_pull *ndr,
-					       int ndr_flags,
+					       ndr_flags_type ndr_flags,
 					       const char **s)
 {
 	uint32_t offset = ndr->offset;
@@ -157,7 +157,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_dns_string(struct ndr_pull *ndr,
   push a dns string to the wire
 */
 _PUBLIC_ enum ndr_err_code ndr_push_dns_string(struct ndr_push *ndr,
-					       int ndr_flags,
+					       ndr_flags_type ndr_flags,
 					       const char *s)
 {
 	return ndr_push_dns_string_list(ndr,
@@ -167,7 +167,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_dns_string(struct ndr_push *ndr,
 					false);
 }
 
-_PUBLIC_ enum ndr_err_code ndr_pull_dns_txt_record(struct ndr_pull *ndr, int ndr_flags, struct dns_txt_record *r)
+_PUBLIC_ enum ndr_err_code ndr_pull_dns_txt_record(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct dns_txt_record *r)
 {
 	NDR_PULL_CHECK_FLAGS(ndr, ndr_flags);
 	if (ndr_flags & NDR_SCALARS) {
@@ -191,16 +191,16 @@ _PUBLIC_ enum ndr_err_code ndr_pull_dns_txt_record(struct ndr_pull *ndr, int ndr
 }
 
 _PUBLIC_ enum ndr_err_code ndr_push_dns_res_rec(struct ndr_push *ndr,
-						int ndr_flags,
+						ndr_flags_type ndr_flags,
 						const struct dns_res_rec *r)
 {
-	uint32_t _flags_save_STRUCT = ndr->flags;
+	libndr_flags _flags_save_STRUCT = ndr->flags;
 	uint32_t _saved_offset1, _saved_offset2;
 	uint16_t length;
 	ndr_set_flags(&ndr->flags, LIBNDR_PRINT_ARRAY_HEX |
 				   LIBNDR_FLAG_NOALIGN);
 	if (ndr_flags & NDR_SCALARS) {
-		uint32_t _flags_save_name = ndr->flags;
+		libndr_flags _flags_save_name = ndr->flags;
 
 		NDR_CHECK(ndr_push_align(ndr, 4));
 
@@ -266,10 +266,10 @@ _PUBLIC_ enum ndr_err_code ndr_push_dns_res_rec(struct ndr_push *ndr,
 }
 
 _PUBLIC_ enum ndr_err_code ndr_pull_dns_res_rec(struct ndr_pull *ndr,
-						int ndr_flags,
+						ndr_flags_type ndr_flags,
 						struct dns_res_rec *r)
 {
-	uint32_t _flags_save_STRUCT = ndr->flags;
+	libndr_flags _flags_save_STRUCT = ndr->flags;
 	uint32_t _saved_offset1;
 	uint32_t pad, length;
 

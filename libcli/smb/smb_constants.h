@@ -329,7 +329,7 @@ enum csc_policy {
 #define FLAGS2_UNICODE_STRINGS         0x8000
 
 /* FileAttributes (search attributes) field */
-#define FILE_ATTRIBUTES_INVALID 	0x0000L
+#define FILE_ATTRIBUTE_INVALID 		0x0000L
 #define FILE_ATTRIBUTE_READONLY		0x0001L
 #define FILE_ATTRIBUTE_HIDDEN		0x0002L
 #define FILE_ATTRIBUTE_SYSTEM		0x0004L
@@ -607,6 +607,7 @@ enum csc_policy {
  * A few values from [MS-FSCC] 2.1.2.1 Reparse Tags
  */
 
+#define IO_REPARSE_TAG_RESERVED_ZERO 0x00000000
 #define IO_REPARSE_TAG_SYMLINK	     0xA000000C
 #define IO_REPARSE_TAG_MOUNT_POINT   0xA0000003
 #define IO_REPARSE_TAG_HSM           0xC0000004

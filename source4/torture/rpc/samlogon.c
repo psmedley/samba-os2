@@ -781,7 +781,7 @@ static bool test_lmv2_ntlmv2_broken(struct samlogon_state *samlogon_state,
 			   sizeof(user_session_key)) != 0) {
 			if (memcmp(lmv2_session_key.data, user_session_key,
 				   sizeof(user_session_key)) == 0) {
-				torture_comment(samlogon_state->tctx, "USER (NTLMv2) Session Key expected, got LMv2 sessesion key instead:\n");
+				torture_comment(samlogon_state->tctx, "USER (NTLMv2) Session Key expected, got LMv2 session key instead:\n");
 				torture_comment(samlogon_state->tctx, "user_session_key:\n");
 				dump_data(1, user_session_key, 16);
 				torture_comment(samlogon_state->tctx, "expected:\n");
@@ -801,7 +801,7 @@ static bool test_lmv2_ntlmv2_broken(struct samlogon_state *samlogon_state,
 			   sizeof(lm_session_key)) != 0) {
 			if (memcmp(lmv2_session_key.data, lm_session_key,
 				   sizeof(lm_session_key)) == 0) {
-				torture_comment(samlogon_state->tctx, "LM (NTLMv2) Session Key expected, got LMv2 sessesion key instead:\n");
+				torture_comment(samlogon_state->tctx, "LM (NTLMv2) Session Key expected, got LMv2 session key instead:\n");
 				torture_comment(samlogon_state->tctx, "user_session_key:\n");
 				dump_data(1, lm_session_key, 8);
 				torture_comment(samlogon_state->tctx, "expected:\n");
@@ -1116,7 +1116,7 @@ static bool test_lmv2_ntlm_break_lm_no_dom(struct samlogon_state *samlogon_state
 }
 
 /*
- * Test the NTLM2 response (extra challenge in LM feild)
+ * Test the NTLM2 response (extra challenge in LM field)
  *
  * This test is the same as the 'break LM' test, but checks that the
  * server implements NTLM2 session security in the right place
@@ -1838,7 +1838,7 @@ bool torture_rpc_samlogon(struct torture_context *torture)
 				     creds = cli_credentials_get_netlogon_creds(machine_credentials),
 				     ret,
 				     failed,
-				     "obtaining credentails");
+				     "obtaining credentials");
 
 	{
 

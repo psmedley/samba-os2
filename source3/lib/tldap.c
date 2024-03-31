@@ -159,7 +159,7 @@ static int tldap_next_msgid(struct tldap_context *ld)
 	int result;
 
 	result = ld->msgid++;
-	if (ld->msgid == 2147483647) {
+	if (ld->msgid == INT_MAX) {
 		ld->msgid = 1;
 	}
 	return result;
@@ -1238,6 +1238,7 @@ static char *tldap_get_val(TALLOC_CTX *memctx,
 	while (*s) {
 		s = strchr(s, ')');
 		if (s && (*(s - 1) == '\\')) {
+			s++;
 			continue;
 		}
 		break;
@@ -1775,10 +1776,10 @@ static bool tldap_push_filter_substring(struct tldap_context *ld,
 	return asn1_pop_tag(data);
 }
 
-/* NOTE: although openldap libraries allow for spaces in some places, mosly
- * around parenthesis, we do not allow any spaces (except in values of
- * course) as I couldn't fine any place in RFC 4512 or RFC 4515 where
- * leading or trailing spaces where allowed.
+/* NOTE: although openldap libraries allow for spaces in some places, mostly
+ * around parentheses, we do not allow any spaces (except in values of
+ * course) as I couldn't find any place in RFC 4512 or RFC 4515 where
+ * leading or trailing spaces were allowed.
  */
 static bool tldap_push_filter(struct tldap_context *ld,
 			      struct asn1_data *data,

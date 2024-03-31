@@ -37,6 +37,7 @@ extern const struct dom_sid global_sid_NT_Authority;
 extern const struct dom_sid global_sid_Enterprise_DCs;
 extern const struct dom_sid global_sid_System;
 extern const struct dom_sid global_sid_NULL;
+extern const struct dom_sid global_sid_Self;
 extern const struct dom_sid global_sid_Authenticated_Users;
 extern const struct dom_sid global_sid_Network;
 extern const struct dom_sid global_sid_Asserted_Identity;
@@ -46,6 +47,8 @@ extern const struct dom_sid global_sid_Creator_Owner;
 extern const struct dom_sid global_sid_Creator_Group;
 extern const struct dom_sid global_sid_Owner_Rights;
 extern const struct dom_sid global_sid_Anonymous;
+extern const struct dom_sid global_sid_Compounded_Authentication;
+extern const struct dom_sid global_sid_Claims_Valid;
 extern const struct dom_sid global_sid_Builtin;
 extern const struct dom_sid global_sid_Builtin_Administrators;
 extern const struct dom_sid global_sid_Builtin_Users;
@@ -123,7 +126,6 @@ bool sid_peek_rid(const struct dom_sid *sid, uint32_t *rid);
 bool sid_peek_check_rid(const struct dom_sid *exp_dom_sid, const struct dom_sid *sid, uint32_t *rid);
 void sid_copy(struct dom_sid *dst, const struct dom_sid *src);
 ssize_t sid_parse(const uint8_t *inbuf, size_t len, struct dom_sid *sid);
-int sid_compare_domain(const struct dom_sid *sid1, const struct dom_sid *sid2);
 NTSTATUS add_sid_to_array(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 			  struct dom_sid **sids, uint32_t *num);
 NTSTATUS add_sid_to_array_unique(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
@@ -139,6 +141,15 @@ void del_sid_from_array(const struct dom_sid *sid, struct dom_sid **sids,
 bool add_rid_to_array_unique(TALLOC_CTX *mem_ctx,
 			     uint32_t rid, uint32_t **pp_rids, size_t *p_num);
 bool is_null_sid(const struct dom_sid *sid);
+bool sids_contains_sid(const struct dom_sid *sids,
+		       const uint32_t num_sids,
+		       const struct dom_sid *sid);
+bool sid_attrs_contains_sid(const struct auth_SidAttr *sids,
+			    const uint32_t num_sids,
+			    const struct dom_sid *sid);
+bool sids_contains_sid_attrs(const struct auth_SidAttr *sids,
+			     const uint32_t num_sids,
+			     const struct dom_sid *sid,
+			     uint32_t attrs);
 
 #endif /*_DOM_SID_H_*/
-

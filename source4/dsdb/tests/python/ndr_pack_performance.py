@@ -4,16 +4,8 @@ import optparse
 import sys
 sys.path.insert(0, 'bin/python')
 
-import os
 import samba
-import samba.getopt as options
-import random
-import tempfile
-import shutil
-import time
 import gzip
-
-from samba.netcmd.main import cmd_sambatool
 
 # We try to use the test infrastructure of Samba 4.3+, but if it
 # doesn't work, we are probably in a back-ported patch and trying to
@@ -21,47 +13,12 @@ from samba.netcmd.main import cmd_sambatool
 #
 # Don't copy this horror into ordinary tests -- it is special for
 # performance tests that want to apply to old versions.
-try:
-    from samba.tests.subunitrun import SubunitOptions, TestProgram
-    ANCIENT_SAMBA = False
-except ImportError:
-    ANCIENT_SAMBA = True
-    samba.ensure_external_module("testtools", "testtools")
-    samba.ensure_external_module("subunit", "subunit/python")
-    from subunit.run import SubunitTestRunner
-    import unittest
 
-from samba.samdb import SamDB
-from samba.auth import system_session
+from samba.tests.subunitrun import TestProgram
 
 from samba.ndr import ndr_pack, ndr_unpack
 from samba.dcerpc import security
 from samba.dcerpc import drsuapi
-
-parser = optparse.OptionParser("ndr_pack_performance.py [options] <host>")
-sambaopts = options.SambaOptions(parser)
-parser.add_option_group(sambaopts)
-parser.add_option_group(options.VersionOptions(parser))
-
-if not ANCIENT_SAMBA:
-    subunitopts = SubunitOptions(parser)
-    parser.add_option_group(subunitopts)
-
-# use command line creds if available
-credopts = options.CredentialsOptions(parser)
-parser.add_option_group(credopts)
-opts, args = parser.parse_args()
-
-if len(args) < 1:
-    parser.print_usage()
-    sys.exit(1)
-
-host = args[0]
-
-lp = sambaopts.get_loadparm()
-creds = credopts.get_credentials(lp)
-
-random.seed(1)
 
 
 BIG_SD_SDDL = ''.join(
@@ -138,6 +95,23 @@ IOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa0030
 0aa003049e2;RU)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a86-0d
 e6-11d0-a285-00aa003049e2;ED)""".split())
 
+
+CONDITIONAL_ACE_SDDL = ('O:SYG:SYD:(XA;OICI;CR;;;WD;'
+                        '(@USER.ad://ext/AuthenticationSilo == "siloname"))')
+
+NON_OBJECT_SDDL = (
+    "O:S-1-5-21-2212615479-2695158682-2101375468-512"
+    "G:S-1-5-21-2212615479-2695158682-2101375468-513"
+    "D:P(A;OICI;FA;;;S-1-5-21-2212615479-2695158682-2101375468-512)"
+    "(A;OICI;FA;;;S-1-5-21-2212615479-2695158682-2101375468-519)"
+    "(A;OICIIO;FA;;;CO)"
+    "(A;OICI;FA;;;S-1-5-21-2212615479-2695158682-2101375468-512)"
+    "(A;OICI;FA;;;SY)"
+    "(A;OICI;0x1200a9;;;AU)"
+    "(A;OICI;0x1200a9;;;ED)")
+
+
+
 # set SCALE = 100 for normal test, or 1 for testing the test.
 SCALE = 100
 
@@ -152,55 +126,80 @@ class UserTests(samba.tests.TestCase):
         return f.read()
 
     def get_desc(self, sddl):
-        dummy_sid = security.dom_sid("S-2-0-0")
+        dummy_sid = security.dom_sid("S-1-2-3")
         return security.descriptor.from_sddl(sddl, dummy_sid)
 
     def get_blob(self, sddl):
         return ndr_pack(self.get_desc(sddl))
 
-    def test_00_00_do_nothing(self):
+    def test_00_00_do_nothing(self, cycles=10000):
         # this gives us an idea of the overhead
-        pass
+        for i in range(SCALE * cycles):
+            pass
 
     def _test_pack(self, unpacked, cycles=10000):
+        pack = unpacked.__ndr_pack__
         for i in range(SCALE * cycles):
-            ndr_pack(unpacked)
+            pack()
 
     def _test_unpack(self, blob, cycles=10000, cls=security.descriptor):
         for i in range(SCALE * cycles):
-            ndr_unpack(cls, blob)
+            cls().__ndr_unpack__(blob)
 
     def _test_pack_unpack(self, desc, cycles=5000, cls=security.descriptor):
         blob2 = ndr_pack(desc)
-
         for i in range(SCALE * cycles):
             blob = ndr_pack(desc)
             desc = ndr_unpack(cls, blob)
 
         self.assertEqual(blob, blob2)
 
-    def test_pack_big_sd(self):
+    def test_pack_big_sd_with_object_aces(self):
         unpacked = self.get_desc(BIG_SD_SDDL)
         self._test_pack(unpacked)
 
-    def test_unpack_big_sd(self):
+    def test_unpack_big_sd_with_object_aces(self):
         blob = self.get_blob(BIG_SD_SDDL)
         self._test_unpack(blob)
 
-    def test_pack_unpack_big_sd(self):
+    def test_pack_unpack_big_sd_with_object_aces(self):
         unpacked = self.get_desc(BIG_SD_SDDL)
         self._test_pack_unpack(unpacked)
 
-    def test_pack_little_sd(self):
+    def test_pack_little_sd_with_object_aces(self):
         unpacked = self.get_desc(LITTLE_SD_SDDL)
         self._test_pack(unpacked)
 
-    def test_unpack_little_sd(self):
+    def test_unpack_little_sd_with_object_aces(self):
         blob = self.get_blob(LITTLE_SD_SDDL)
         self._test_unpack(blob)
 
-    def test_pack_unpack_little_sd(self):
+    def test_pack_unpack_little_sd_with_object_aces(self):
         unpacked = self.get_desc(LITTLE_SD_SDDL)
+        self._test_pack_unpack(unpacked)
+
+    def test_pack_conditional_ace_sd(self):
+        unpacked = self.get_desc(CONDITIONAL_ACE_SDDL)
+        self._test_pack(unpacked)
+
+    def test_unpack_conditional_ace_sd(self):
+        blob = self.get_blob(CONDITIONAL_ACE_SDDL)
+        self._test_unpack(blob)
+
+    def test_pack_unpack_conditional_ace_sd(self):
+        unpacked = self.get_desc(CONDITIONAL_ACE_SDDL)
+        self._test_pack_unpack(unpacked)
+
+    def test_pack_non_object_sd(self):
+        unpacked = self.get_desc(NON_OBJECT_SDDL)
+        self._test_pack(unpacked)
+
+    def test_unpack_non_object_sd(self):
+        blob = self.get_blob(NON_OBJECT_SDDL)
+        self._test_unpack(blob)
+
+    def test_pack_unpack_non_object_sd(self):
+        unpacked = self.get_desc(NON_OBJECT_SDDL)
         self._test_pack_unpack(unpacked)
 
     def test_unpack_repl_sample(self):
@@ -213,17 +212,4 @@ class UserTests(samba.tests.TestCase):
         self._test_pack(desc, cycles=20)
 
 
-if "://" not in host:
-    if os.path.isfile(host):
-        host = "tdb://%s" % host
-    else:
-        host = "ldap://%s" % host
-
-
-if ANCIENT_SAMBA:
-    runner = SubunitTestRunner()
-    if not runner.run(unittest.makeSuite(UserTests)).wasSuccessful():
-        sys.exit(1)
-    sys.exit(0)
-else:
-    TestProgram(module=__name__, opts=subunitopts)
+TestProgram(module=__name__)

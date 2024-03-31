@@ -307,7 +307,7 @@ static PyObject *py_dcerpc_run_function(dcerpc_InterfaceObject *iface,
 }
 
 static PyObject *py_dcerpc_call_wrapper(PyObject *self, PyObject *args, void *wrapped, PyObject *kwargs)
-{	
+{
 	dcerpc_InterfaceObject *iface = (dcerpc_InterfaceObject *)self;
 	const struct PyNdrRpcMethodDef *md = (const struct PyNdrRpcMethodDef *)wrapped;
 
@@ -332,7 +332,7 @@ bool PyInterface_AddNdrRpcMethods(PyTypeObject *ifacetype, const struct PyNdrRpc
 
 		ret = PyDescr_NewWrapper(ifacetype, wb, discard_const_p(void, &mds[i]));
 
-		PyDict_SetItemString(ifacetype->tp_dict, mds[i].name, 
+		PyDict_SetItemString(ifacetype->tp_dict, mds[i].name,
 				     (PyObject *)ret);
 		Py_CLEAR(ret);
 	}
@@ -417,6 +417,55 @@ PyObject *PyString_FromStringOrNULL(const char *str)
 		Py_RETURN_NONE;
 	}
 	return PyUnicode_FromString(str);
+}
+
+PyObject *PyBytes_FromUtf16StringOrNULL(const unsigned char *str)
+{
+	size_t len;
+
+	if (str == NULL) {
+		Py_RETURN_NONE;
+	}
+
+	len = utf16_len(str);
+	return PyBytes_FromStringAndSize((const char *)str, len);
+}
+
+unsigned char *PyUtf16String_FromBytes(TALLOC_CTX *mem_ctx, PyObject *value)
+{
+	char *bytes = NULL;
+	Py_ssize_t len = 0;
+	unsigned char *utf16_string = NULL;
+	int ret;
+
+	ret = PyBytes_AsStringAndSize(value, &bytes, &len);
+	if (ret) {
+		return NULL;
+	}
+
+	if (len < 0) {
+		PyErr_SetString(PyExc_ValueError, "bytes length is negative");
+		return NULL;
+	}
+	if (len & 1) {
+		PyErr_SetString(PyExc_ValueError, "bytes length is odd");
+		return NULL;
+	}
+
+	/* Ensure that the bytes object contains no embedded null terminator. */
+	if ((size_t)len != utf16_len_n(bytes, len)) {
+		PyErr_SetString(PyExc_ValueError,
+				"value contains an embedded null terminator");
+		return NULL;
+	}
+
+	utf16_string = talloc_utf16_strlendup(mem_ctx, bytes, len);
+	if (utf16_string == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
+
+	return utf16_string;
 }
 
 PyObject *pyrpc_import_union(PyTypeObject *type, TALLOC_CTX *mem_ctx, int level,

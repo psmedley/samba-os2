@@ -49,17 +49,37 @@ static WERROR dcesrv_mgmt_inq_if_ids(struct dcesrv_call_state *dce_call, TALLOC_
 		       struct mgmt_inq_if_ids *r)
 {
 	const struct dcesrv_endpoint *ep = dce_call->conn->endpoint;
-	struct dcesrv_if_list *l;
-	struct rpc_if_id_vector_t *vector;
+	struct dcesrv_if_list *l = NULL;
+	struct rpc_if_id_vector_t *vector = NULL;
 
-	vector = *r->out.if_id_vector = talloc(mem_ctx, struct rpc_if_id_vector_t);
+	vector = talloc(mem_ctx, struct rpc_if_id_vector_t);
+	if (vector == NULL) {
+		return WERR_NOT_ENOUGH_MEMORY;
+	}
+
 	vector->count = 0;
 	vector->if_id = NULL;
+
 	for (l = ep->interface_list; l; l = l->next) {
+		bool filter;
+
+		filter = ndr_syntax_id_equal(&l->iface->syntax_id, &ndr_table_mgmt.syntax_id);
+		if (filter) {
+			/*
+			 * We should not return the mgmt syntax itself here
+			 */
+			continue;
+		}
+
 		vector->count++;
-		vector->if_id = talloc_realloc(mem_ctx, vector->if_id, struct ndr_syntax_id_p, vector->count);
+		vector->if_id = talloc_realloc(vector, vector->if_id, struct ndr_syntax_id_p, vector->count);
+		if (vector->if_id == NULL) {
+			return WERR_NOT_ENOUGH_MEMORY;
+		}
 		vector->if_id[vector->count-1].id = &l->iface->syntax_id;
 	}
+
+	*r->out.if_id_vector = vector;
 	return WERR_OK;
 }
 
@@ -73,8 +93,13 @@ static WERROR dcesrv_mgmt_inq_stats(struct dcesrv_call_state *dce_call, TALLOC_C
 	if (r->in.max_count != MGMT_STATS_ARRAY_MAX_SIZE)
 		return WERR_NOT_SUPPORTED;
 
+	r->out.statistics->statistics = talloc_zero_array(mem_ctx,
+							  uint32_t,
+							  r->in.max_count);
+	if (r->out.statistics->statistics == NULL) {
+		return WERR_NOT_ENOUGH_MEMORY;
+	}
 	r->out.statistics->count = r->in.max_count;
-	r->out.statistics->statistics = talloc_array(mem_ctx, uint32_t, r->in.max_count);
 	/* FIXME */
 	r->out.statistics->statistics[MGMT_STATS_CALLS_IN] = 0;
 	r->out.statistics->statistics[MGMT_STATS_CALLS_OUT] = 0;
@@ -112,7 +137,26 @@ static WERROR dcesrv_mgmt_stop_server_listening(struct dcesrv_call_state *dce_ca
 static WERROR dcesrv_mgmt_inq_princ_name(struct dcesrv_call_state *dce_call, TALLOC_CTX *mem_ctx,
 		       struct mgmt_inq_princ_name *r)
 {
-	DCESRV_FAULT(DCERPC_FAULT_OP_RNG_ERROR);
+	const char *principal = NULL;
+
+	if (r->in.princ_name_size < 1) {
+		DCESRV_FAULT(DCERPC_FAULT_BAD_STUB_DATA);
+	}
+
+	r->out.princ_name = "";
+
+	principal = dcesrv_auth_type_principal_find(dce_call->conn->dce_ctx,
+						    r->in.authn_proto);
+	if (principal == NULL) {
+		return WERR_RPC_S_UNKNOWN_AUTHN_SERVICE;
+	}
+
+	if (strlen(principal) + 1 > r->in.princ_name_size) {
+		return WERR_INSUFFICIENT_BUFFER;
+	}
+
+	r->out.princ_name = principal;
+	return WERR_OK;
 }
 
 

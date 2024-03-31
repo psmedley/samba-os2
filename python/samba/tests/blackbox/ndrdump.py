@@ -356,7 +356,7 @@ WARNING! 2 unread bytes
                         info                     : union spoolss_FormInfo(case 0)
             needed                   : *
                 needed                   : 0x00000000 (0)
-            result                   : DOS code 0xa9a9a900
+            result                   : HRES code 0xa9a9a900
 dump OK
 '''
         try:
@@ -533,6 +533,30 @@ dump OK
             actual = self.check_output(
                 "ndrdump --debug-stdout claims CLAIMS_SET_NDR struct --hex-input " + \
                 self.data_path("claims_CLAIMS_SET_NDR.dat"))
+        except BlackboxProcessError as e:
+            self.fail(e)
+
+        self.assertEqual(actual, expected)
+
+    def test_ndrdump_gmsa_MANAGEDPASSWORD_BLOB(self):
+        with open(self.data_path('gmsa_MANAGEDPASSWORD_BLOB.txt'), 'rb') as f:
+            expected = f.read()
+
+        try:
+            actual = self.check_output(
+                'ndrdump gmsa MANAGEDPASSWORD_BLOB struct '
+                '--debug-stdout --validate --hex-input --input '
+                '01000000220100001000000012011a01678657a1136e547f46ee7988c808'
+                'd904ed0e4b0592f89eb82bd292685867c3119dd6eaaef5810a1aa4e08e49'
+                '7cc31163b2e799e6ea66e3022c100bf59585a3464274ebad2488fc28acbd'
+                '10a9b44dde436a6d35fff0e95ae7903609e825220ad30db6a86bb544fa34'
+                '0f864d2d3895193d4007df72478d71ce3f789bb139c4c1cffd6d39948c0a'
+                'fa6a65e3f5f8f90d8c70f7272ce65a3f632793eb0e4697e576c21f36ac55'
+                'f4167a22b4ebb2593c2d22dc4ac8d4ca455f299a182b8d4d8dd1232dde1e'
+                'fe3acaf14b137453195f45455f5d48a0c441913b80f94d4696b171379b5a'
+                'c3b02c501cf8e16b43beaca52263411d5cf772e763e8d29a70a1293e7218'
+                'a1e300007495016980170000743731b67f170000'
+            )
         except BlackboxProcessError as e:
             self.fail(e)
 

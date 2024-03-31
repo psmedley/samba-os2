@@ -2,12 +2,12 @@
 .\"     Title: samba-dcerpcd
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 02/19/2024
+.\"      Date: 03/27/2024
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.19.5
+.\"    Source: Samba 4.20.0
 .\"  Language: English
 .\"
-.TH "SAMBA\-DCERPCD" "8" "02/19/2024" "Samba 4\&.19\&.5" "System Administration tools"
+.TH "SAMBA\-DCERPCD" "8" "03/27/2024" "Samba 4\&.20\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -28,7 +28,7 @@
 .\" * MAIN CONTENT STARTS HERE *
 .\" -----------------------------------------------------------------
 .SH "NAME"
-samba-dcerpcd \- This is one of Samba\*(Aqs DCERPC server processes that can listen on sockets where RPC services are offered and is the parent process of the DCERPC services it invokes\&. Unless separately invoked it is started on demand from smbd or winbind and serves DCERPC only over named pipes (np) as a helper process\&. This will be the standard setup for most installations (standalone/member server/AD server) unless they modify their startup scripts\&. Note in when Samba is configured as an Active Directory Domain controller the samba process that invokes smbd will still provide its normal DCERPC services, not samba\-dcerpcd\&. When separately invoked by system startup scripts or a a daemon, the global smb\&.conf option \m[blue]\fBrpc start on demand helpers = false\fR\m[] MUST be set to allow samba\-dcerpcd to start standalone\&.
+samba-dcerpcd \- This is one of Samba\*(Aqs DCERPC server processes that can listen on sockets where RPC services are offered and is the parent process of the DCERPC services it invokes\&. Unless separately invoked it is started on demand from smbd or winbind and serves DCERPC only over named pipes (np) as a helper process\&. This will be the standard setup for most installations (standalone/member server/AD server) unless they modify their startup scripts\&. Note in when Samba is configured as an Active Directory Domain controller the samba process that invokes smbd will still provide its normal DCERPC services, not samba\-dcerpcd\&. When separately invoked by system startup scripts or a daemon, the global smb\&.conf option \m[blue]\fBrpc start on demand helpers = false\fR\m[] MUST be set to allow samba\-dcerpcd to start standalone\&.
 .SH "SYNOPSIS"
 .HP \w'\ 'u
 samba\-dcerpcd [\-D|\-\-daemon] [\-i|\-\-interactive] [\-F|\-\-foreground] [\-\-no\-process\-group] [\-d\ <debug\ level>] [\-\-debug\-stdout] [\-\-configfile=<configuration\ file>] [\-\-option=<name>=<value>] [\-\-leak\-report] [\-\-leak\-report\-full] [\-V|\-\-version] [\-\-libexec\-rpcds] [\-\-np\-helper] [\-\-ready\-signal\-fd=<fd>] [<SERVICE_1>] [<SERVICE_2>] [<\&.\&.\&.>]

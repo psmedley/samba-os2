@@ -160,7 +160,7 @@ def run_dcpromo(t, vm):
     t.info("Joining a windows VM ${WIN_VM} to the domain as a DC using dcpromo")
     child = t.open_telnet("${WIN_HOSTNAME}", "administrator", "${WIN_PASS}", set_ip=True, set_noexpire=True)
     child.sendline("copy /Y con answers.txt")
-    child.sendline(b'''
+    child.sendline(br'''
 [DCINSTALL]
 RebootOnSuccess=Yes
 RebootOnCompletion=Yes
@@ -171,7 +171,7 @@ InstallDNS=No
 ConfirmGc=Yes
 CreateDNSDelegation=No
 UserDomain=${LCREALM}
-UserName=${LCREALM}\\administrator
+UserName=${LCREALM}\administrator
 Password=${PASSWORD1}
 DatabasePath="C:\Windows\NTDS"
 LogPath="C:\Windows\NTDS"
@@ -187,7 +187,7 @@ SafeModeAdminPassword=${PASSWORD1}
     if i == 1 or i == 2:
         child.sendline("echo off")
         child.sendline("echo START DCPROMO log")
-        child.sendline("more c:\windows\debug\dcpromoui.log")
+        child.sendline(r"more c:\windows\debug\dcpromoui.log")
         child.sendline("echo END DCPROMO log")
         child.expect("END DCPROMO")
         raise Exception("dcpromo failed")
@@ -295,7 +295,7 @@ def test_dcpromo(t, vm):
     t.retry_cmd("%s -L ${HOSTNAME}.${LCREALM} -Utest3%%${PASSWORD3} -k no" % (smbclient), ['Sharename', 'IPC'])
     t.retry_cmd("%s -L ${HOSTNAME}.${LCREALM} -Utest3%%${PASSWORD3} -k yes" % (smbclient), ['Sharename', 'IPC'])
 
-    t.info("Checking propogation of user deletion")
+    t.info("Checking propagation of user deletion")
     t.run_cmd('bin/samba-tool user delete test2 -Uadministrator@${LCREALM}%${PASSWORD1}')
     child.sendline("net user test3 /del")
     child.expect("The command completed successfully")
@@ -315,7 +315,7 @@ def run_dcpromo_rodc(t, vm):
     t.vm_restore("${WIN_VM}", "${WIN_SNAPSHOT}")
     child = t.open_telnet("${WIN_HOSTNAME}", "administrator", "${WIN_PASS}", set_ip=True)
     child.sendline("copy /Y con answers.txt")
-    child.sendline(b'''
+    child.sendline(br'''
 [DCInstall]
 ReplicaOrNewDomain=ReadOnlyReplica
 ReplicaDomainDNSName=${LCREALM}
@@ -325,13 +325,13 @@ PasswordReplicationDenied="BUILTIN\Backup Operators"
 PasswordReplicationDenied="BUILTIN\Account Operators"
 PasswordReplicationDenied="${DOMAIN}\Denied RODC Password Replication Group"
 PasswordReplicationAllowed="${DOMAIN}\Allowed RODC Password Replication Group"
-DelegatedAdmin="${DOMAIN}\\Administrator"
+DelegatedAdmin="${DOMAIN}\Administrator"
 SiteName=Default-First-Site-Name
 InstallDNS=No
 ConfirmGc=Yes
 CreateDNSDelegation=No
 UserDomain=${LCREALM}
-UserName=${LCREALM}\\administrator
+UserName=${LCREALM}\administrator
 Password=${PASSWORD1}
 DatabasePath="C:\Windows\NTDS"
 LogPath="C:\Windows\NTDS"
@@ -346,7 +346,7 @@ RebootOnCompletion=No
     if i != 0:
         child.sendline("echo off")
         child.sendline("echo START DCPROMO log")
-        child.sendline("more c:\windows\debug\dcpromoui.log")
+        child.sendline(r"more c:\windows\debug\dcpromoui.log")
         child.sendline("echo END DCPROMO log")
         child.expect("END DCPROMO")
         raise Exception("dcpromo failed")
@@ -404,7 +404,7 @@ def test_dcpromo_rodc(t, vm):
 
 
 def prep_join_as_dc(t, vm):
-    '''start VM and shutdown Samba in preperation to join a windows domain as a DC'''
+    '''start VM and shutdown Samba in preparation to join a windows domain as a DC'''
     t.info("Starting VMs for joining ${WIN_VM} as a second DC using samba-tool domain join DC")
     t.chdir('${PREFIX}')
     t.run_cmd('killall -9 -q samba smbd nmbd winbindd', checkfail=False)
@@ -478,7 +478,7 @@ def test_join_as_dc(t, vm):
     t.retry_cmd("%s -L ${HOSTNAME}.${WIN_REALM} -Utest3%%${PASSWORD3} -k no" % (smbclient), ['Sharename', 'IPC'])
     t.retry_cmd("%s -L ${HOSTNAME}.${WIN_REALM} -Utest3%%${PASSWORD3} -k yes" % (smbclient), ['Sharename', 'IPC'])
 
-    t.info("Checking propogation of user deletion")
+    t.info("Checking propagation of user deletion")
     t.run_cmd('bin/samba-tool user delete test2 -Uadministrator@${WIN_REALM}%${WIN_PASS}')
     child.sendline("net user test3 /del")
     child.expect("The command completed successfully")
@@ -557,7 +557,7 @@ def test_join_as_rodc(t, vm):
     t.info("Checking if new users propagate to windows")
     t.cmd_contains('bin/samba-tool user add test2 ${PASSWORD2}', ['No RID Set DN'])
 
-    t.info("Checking propogation of user deletion")
+    t.info("Checking propagation of user deletion")
     child.sendline("net user test3 /del")
     child.expect("The command completed successfully")
 

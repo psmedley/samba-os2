@@ -73,7 +73,7 @@ class MdssvcHTTPRequestHandler(BaseHTTPRequestHandler):
 class MdssvcTests(RpcInterfaceTestCase):
 
     def setUp(self):
-        super(MdssvcTests, self).setUp()
+        super().setUp()
 
         self.pipe = mdssvc.mdssvc('ncacn_np:fileserver[/pipe/mdssvc]', self.get_loadparm())
 
@@ -96,7 +96,7 @@ class MdssvcTests(RpcInterfaceTestCase):
             f.close()
 
     def tearDown(self):
-        super(RpcInterfaceTestCase, self).tearDown()
+        super().tearDown()
         for file in testfiles:
             os.remove("%s/%s" % (self.sharepath, file))
 

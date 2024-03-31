@@ -22,7 +22,9 @@
 
 from ldb import FLAG_MOD_ADD, FLAG_MOD_DELETE, LdbError, Message, MessageElement
 
-from .exceptions import AddMemberError, RemoveMemberError
+from samba.sd_utils import escaped_claim_id
+
+from .exceptions import GrantMemberError, RevokeMemberError
 from .fields import DnField, BooleanField, StringField
 from .model import Model
 
@@ -30,9 +32,9 @@ from .model import Model
 class AuthenticationSilo(Model):
     description = StringField("description")
     enforced = BooleanField("msDS-AuthNPolicySiloEnforced")
-    user_policy = DnField("msDS-UserAuthNPolicy")
-    service_policy = DnField("msDS-ServiceAuthNPolicy")
-    computer_policy = DnField("msDS-ComputerAuthNPolicy")
+    user_authentication_policy = DnField("msDS-UserAuthNPolicy")
+    service_authentication_policy = DnField("msDS-ServiceAuthNPolicy")
+    computer_authentication_policy = DnField("msDS-ComputerAuthNPolicy")
     members = DnField("msDS-AuthNPolicySiloMembers", many=True)
 
     @staticmethod
@@ -51,14 +53,14 @@ class AuthenticationSilo(Model):
     def get_object_class():
         return "msDS-AuthNPolicySilo"
 
-    def add_member(self, ldb, member):
-        """Add a member to the Authentication Silo.
+    def grant(self, ldb, member):
+        """Grant a member access to the Authentication Silo.
 
         Rather than saving the silo object and writing the entire member
         list out again, just add one member only.
 
         :param ldb: Ldb connection
-        :param member: Member to add to silo
+        :param member: Member to grant access to silo
         """
         # Create a message with only an add member operation.
         message = Message(dn=self.dn)
@@ -69,19 +71,19 @@ class AuthenticationSilo(Model):
         try:
             ldb.modify(message)
         except LdbError as e:
-            raise AddMemberError(f"Failed to add silo member: {e}")
+            raise GrantMemberError(f"Failed to grant access to silo member: {e}")
 
         # If the modify operation was successful refresh members field.
         self.refresh(ldb, fields=["members"])
 
-    def remove_member(self, ldb, member):
-        """Remove a member from the Authentication Silo.
+    def revoke(self, ldb, member):
+        """Revoke a member from the Authentication Silo.
 
         Rather than saving the silo object and writing the entire member
         list out again, just remove one member only.
 
         :param ldb: Ldb connection
-        :param member: Member to remove from silo
+        :param member: Member to revoke from silo
         """
         # Create a message with only a remove member operation.
         message = Message(dn=self.dn)
@@ -92,7 +94,11 @@ class AuthenticationSilo(Model):
         try:
             ldb.modify(message)
         except LdbError as e:
-            raise RemoveMemberError(f"Failed to remove silo member: {e}")
+            raise RevokeMemberError(f"Failed to revoke silo member: {e}")
 
         # If the modify operation was successful refresh members field.
         self.refresh(ldb, fields=["members"])
+
+    def get_authentication_sddl(self):
+        return ('O:SYG:SYD:(XA;OICI;CR;;;WD;(@USER.ad://ext/'
+                f'AuthenticationSilo == "{escaped_claim_id(self.name)}"))')

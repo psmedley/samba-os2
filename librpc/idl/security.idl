@@ -31,6 +31,7 @@ cpp_quote("#define dom_sid0 dom_sid")
 	 */
 	uuid("cbf7d408-2d6c-11e2-ae5b-0b5692790e18"),
 	version(0.0),
+	helper("../libcli/security/security.h"),
 	pyhelper("librpc/ndr/py_security.c"),
 	pointer_default(unique)
 ]
@@ -48,12 +49,12 @@ interface security
 	/*
 	  access masks are divided up like this:
                 0xabccdddd
-		where 
+		where
 		   a = generic rights bits        SEC_GENERIC_
 		   b = flags                      SEC_FLAG_
 		   c = standard rights bits       SEC_STD_
 		   d = object type specific bits  SEC_{FILE,DIR,REG,xxx}_
-		   
+
           common combinations of bits are prefixed with SEC_RIGHTS_
 	*/
 	const int SEC_MASK_GENERIC         = 0xF0000000;
@@ -125,22 +126,22 @@ interface security
 	const int SEC_MASK_INVALID         = 0x0ce0fe00;
 
 	/* generic->specific mappings for files */
-	const int SEC_RIGHTS_FILE_READ    = SEC_STD_READ_CONTROL | 
-	                                    SEC_STD_SYNCHRONIZE | 
-					    SEC_FILE_READ_DATA | 
-                                            SEC_FILE_READ_ATTRIBUTE | 
+	const int SEC_RIGHTS_FILE_READ    = SEC_STD_READ_CONTROL |
+	                                    SEC_STD_SYNCHRONIZE |
+					    SEC_FILE_READ_DATA |
+                                            SEC_FILE_READ_ATTRIBUTE |
                                             SEC_FILE_READ_EA;
 
-	const int SEC_RIGHTS_FILE_WRITE   = SEC_STD_READ_CONTROL | 
-	                                    SEC_STD_SYNCHRONIZE | 
-					    SEC_FILE_WRITE_DATA | 
-                                            SEC_FILE_WRITE_ATTRIBUTE | 
+	const int SEC_RIGHTS_FILE_WRITE   = SEC_STD_READ_CONTROL |
+	                                    SEC_STD_SYNCHRONIZE |
+					    SEC_FILE_WRITE_DATA |
+                                            SEC_FILE_WRITE_ATTRIBUTE |
                                             SEC_FILE_WRITE_EA |
                                             SEC_FILE_APPEND_DATA;
-	
-	const int SEC_RIGHTS_FILE_EXECUTE = SEC_STD_SYNCHRONIZE | 
-	                                    SEC_STD_READ_CONTROL | 
-	                                    SEC_FILE_READ_ATTRIBUTE | 
+
+	const int SEC_RIGHTS_FILE_EXECUTE = SEC_STD_SYNCHRONIZE |
+	                                    SEC_STD_READ_CONTROL |
+	                                    SEC_FILE_READ_ATTRIBUTE |
                                             SEC_FILE_EXECUTE;
 
 	const int SEC_RIGHTS_FILE_ALL     = SEC_STD_ALL | SEC_FILE_ALL;
@@ -544,15 +545,34 @@ interface security
 	} security_ace_flags;
 
 	typedef [public,enum8bit] enum {
+		/*
+		 * The following entries tagged *reserved* have been
+		 * named and allocated by Microsoft but apparently not
+		 * implemented (MS-DTYP 2.4.4.1).
+		 *
+		 * The entries marked *unused* are more or less
+		 * completely ignored by Samba.
+		 */
 		SEC_ACE_TYPE_ACCESS_ALLOWED		= 0,
 		SEC_ACE_TYPE_ACCESS_DENIED		= 1,
 		SEC_ACE_TYPE_SYSTEM_AUDIT		= 2,
-		SEC_ACE_TYPE_SYSTEM_ALARM		= 3,
-		SEC_ACE_TYPE_ALLOWED_COMPOUND		= 4,
+		SEC_ACE_TYPE_SYSTEM_ALARM		= 3, /* reserved */
+		SEC_ACE_TYPE_ALLOWED_COMPOUND		= 4, /* reserved */
 		SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT	= 5,
 		SEC_ACE_TYPE_ACCESS_DENIED_OBJECT	= 6,
 		SEC_ACE_TYPE_SYSTEM_AUDIT_OBJECT	= 7,
-		SEC_ACE_TYPE_SYSTEM_ALARM_OBJECT	= 8
+		SEC_ACE_TYPE_SYSTEM_ALARM_OBJECT	= 8, /* reserved */
+		SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK	= 9,
+		SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK	= 10,
+		SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT	= 11,
+		SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT	= 12,
+		SEC_ACE_TYPE_SYSTEM_AUDIT_CALLBACK		= 13,
+		SEC_ACE_TYPE_SYSTEM_ALARM_CALLBACK		= 14, /* reserved */
+		SEC_ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT	= 15,
+		SEC_ACE_TYPE_SYSTEM_ALARM_CALLBACK_OBJECT	= 16, /* reserved */
+		SEC_ACE_TYPE_SYSTEM_MANDATORY_LABEL		= 17, /*unused */
+		SEC_ACE_TYPE_SYSTEM_RESOURCE_ATTRIBUTE		= 18,
+		SEC_ACE_TYPE_SYSTEM_SCOPED_POLICY_ID		= 19 /* unused */
 	} security_ace_type;
 
 	typedef [bitmap32bit] bitmap {
@@ -580,21 +600,129 @@ interface security
 		[switch_is(flags & SEC_ACE_INHERITED_OBJECT_TYPE_PRESENT)] security_ace_object_inherited_type inherited_type;
 	} security_ace_object;
 
+
+
+	/*
+	 * flags that might occur in
+	 * CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1.flags.
+	 *
+	 * Not all of them do anything. Conditional ACEs also use some
+	 * of these flags.
+	 */
+	typedef [bitmap32bit] bitmap {
+		CLAIM_SECURITY_ATTRIBUTE_NON_INHERITABLE =      1,
+		CLAIM_SECURITY_ATTRIBUTE_VALUE_CASE_SENSITIVE = 2,
+		CLAIM_SECURITY_ATTRIBUTE_USE_FOR_DENY_ONLY    = 4, /*reserved*/
+		CLAIM_SECURITY_ATTRIBUTE_DISABLED_BY_DEFAULT  = 8,
+		CLAIM_SECURITY_ATTRIBUTE_DISABLED          = 0x10, /*reserved*/
+		CLAIM_SECURITY_ATTRIBUTE_MANDATORY         = 0x20,
+
+		/*
+		 * These next two are curiously defined in [MS-DTYP] 2.4.10.1:
+		 *
+		 * > Flags: The upper two bytes of this DWORD are available for
+		 * > application-specific data. The two lowest-order bits in the
+		 * > lower of these two bytes are reserved. These two bytes
+		 * > MAY contain only one of the following values in those two
+		 * > bits:
+		 * >
+		 * >  FCI_CLAIM_SECURITY_ATTRIBUTE_MANUAL	   0x0001
+		 * >  FCI_CLAIM_SECURITY_ATTRIBUTE_POLICY_DERIVED  0x0002
+		 *
+		 * That is saying these mutually exclusive flags have offset
+		 * values that are measured from the middle of flags field. We
+		 * instead measure from the start.
+		 */
+		CLAIM_SECURITY_ATTRIBUTE_MANUAL                 =    1 << 16,
+		CLAIM_SECURITY_ATTRIBUTE_POLICY_DERIVED         =    1 << 17,
+
+		/*
+		 * As the quote from [MS-DTYP] 2.4.10.1 above says,
+		 * the upper 14 bits are for application-specific
+		 * data. In Samba's case, we have one application
+		 * specific flag to help us remember when we have
+		 * sorted a claim and checked that it contains no
+		 * duplicate values. We need to check this, and the
+		 * check can be expensive, so it helps to remember.
+		 * Having the values sorted is useful for comparisons
+		 * in conditional ACEs.
+		 *
+		 * We can't just sort every claim_v1 we see, because
+		 * resource attribute ACEs in SACLs contain them and
+		 * are not meant to be evaluated prematurely (i.e. you
+		 * can parse and reserialise a SACL even if it
+		 * contains an ACE that would cause an error when used
+		 * as a claim).
+		 *
+		 * In the case of string claims, evaluating uniqueness
+		 * depends on the _CASE_SENSITIVE flag.
+		 */
+		CLAIM_SECURITY_ATTRIBUTE_UNIQUE_AND_SORTED     =    1 << 30,
+		/*
+		 * Conditional ACEs use some of the above flags in
+		 * combination with an internal one defined in
+		 * conditional_ace.idl.
+		 * This next definition is warning us in case a clash
+		 * develops (which seems very unlikely).
+		 */
+		CLAIM_SECURITY_ATTRIBUTE_RESERVED_FOR_SAMBA   = 1UL << 31
+	} claim_flags;
+
+	/*
+	 * These claim types for v1 claims mirror those of on-the-wire
+	 * PAC claims, but not conditional ace literal token types.
+	 */
+	typedef [public] enum {
+		CLAIM_SECURITY_ATTRIBUTE_TYPE_INT64 = 0x0001,
+		CLAIM_SECURITY_ATTRIBUTE_TYPE_UINT64 =	0x0002,
+		CLAIM_SECURITY_ATTRIBUTE_TYPE_STRING = 0x0003,
+		CLAIM_SECURITY_ATTRIBUTE_TYPE_SID = 0x0005,
+		CLAIM_SECURITY_ATTRIBUTE_TYPE_BOOLEAN = 0x0006,
+		CLAIM_SECURITY_ATTRIBUTE_TYPE_OCTET_STRING = 0x0010
+	} security_claim_value_type;
+
+	typedef [nodiscriminant,flag(NDR_NOALIGN)] union {
+		[case(CLAIM_SECURITY_ATTRIBUTE_TYPE_INT64),relative] int64 *int_value;
+		[case(CLAIM_SECURITY_ATTRIBUTE_TYPE_UINT64),relative] hyper *uint_value;
+		[case(CLAIM_SECURITY_ATTRIBUTE_TYPE_STRING),relative] nstring *string_value;
+		[case(CLAIM_SECURITY_ATTRIBUTE_TYPE_SID),relative] DATA_BLOB *sid_value;
+		[case(CLAIM_SECURITY_ATTRIBUTE_TYPE_OCTET_STRING),relative] DATA_BLOB *octet_value;
+		[case(CLAIM_SECURITY_ATTRIBUTE_TYPE_BOOLEAN),relative] hyper *uint_value;
+	} claim_values;
+
+	typedef [public,gensize] struct {
+		[relative] nstring *name;
+		uint16 value_type;
+		uint32 flags;
+		uint32 value_count;
+		[switch_is(value_type)] claim_values values[value_count];
+	} CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1;
+
 	typedef [public,nodiscriminant] union {
-		[case(SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT)] security_ace_object object;
-		[case(SEC_ACE_TYPE_ACCESS_DENIED_OBJECT)] security_ace_object object;
-		[case(SEC_ACE_TYPE_SYSTEM_AUDIT_OBJECT)] security_ace_object object;
-		[case(SEC_ACE_TYPE_SYSTEM_ALARM_OBJECT)] security_ace_object object;
-		[default];
+		[default] security_ace_object object;
+		[case(false)];
 	} security_ace_object_ctr;
 
-	typedef [public,nopull,gensize,nosize] struct {
+	typedef [public,nodiscriminant,gensize] union {
+		[case(SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK)] [flag(NDR_REMAINING)] DATA_BLOB conditions;
+		[case(SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK)] [flag(NDR_REMAINING)] DATA_BLOB conditions;
+		[case(SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT)] [flag(NDR_REMAINING)] DATA_BLOB conditions;
+		[case(SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT)] [flag(NDR_REMAINING)] DATA_BLOB conditions;
+		[case(SEC_ACE_TYPE_SYSTEM_AUDIT_CALLBACK)] [flag(NDR_REMAINING)] DATA_BLOB conditions;
+		[case(SEC_ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT)] [flag(NDR_REMAINING)] DATA_BLOB conditions;
+
+		[case(SEC_ACE_TYPE_SYSTEM_RESOURCE_ATTRIBUTE)] CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1 claim;
+		[default][flag(NDR_REMAINING)] DATA_BLOB ignored;
+	} security_ace_coda;
+
+	typedef [public,gensize,nosize,nopush,nopull] struct {
 		security_ace_type type;  /* SEC_ACE_TYPE_* */
 		security_ace_flags flags; /* SEC_ACE_FLAG_* */
 		[value(ndr_size_security_ace(r,ndr->flags))] uint16 size;
 		uint32 access_mask;
-		[switch_is(type)] security_ace_object_ctr object;
+		[switch_is(sec_ace_object(type))] security_ace_object_ctr object;
 		dom_sid trustee;
+		[switch_is(type), subcontext(0), subcontext_size(ndr_subcontext_size_of_ace_coda(r, size, ndr->flags))] security_ace_coda coda;
 	} security_ace;
 
 	typedef enum {
@@ -641,7 +769,7 @@ interface security
 	typedef [gensize,nosize,public,flag(NDR_LITTLE_ENDIAN)] struct {
 		security_descriptor_revision revision;
 		security_descriptor_type type;     /* SEC_DESC_xxxx flags */
-		[relative] dom_sid *owner_sid; 
+		[relative] dom_sid *owner_sid;
 		[relative] dom_sid *group_sid;
 		[relative] security_acl *sacl; /* system ACL */
 		[relative] security_acl *dacl; /* user (discretionary) ACL */
@@ -670,12 +798,42 @@ interface security
 		SE_GROUP_ENABLED_BY_DEFAULT |
 		SE_GROUP_ENABLED;
 
-	/* This is not yet sent over the network, but is simply defined in IDL */
+	/*
+	 * Should claims be evaluated on this token?
+	 *
+	 * 0 is invalid to catch a zeroed token
+	 */
+	typedef enum {
+		CLAIMS_EVALUATION_INVALID_STATE=0,
+		CLAIMS_EVALUATION_NEVER = 1,
+		CLAIMS_EVALUATION_ALWAYS = 2
+	} claims_evaluation_control;
+
+	/*
+	 * This is linearised to pass authentication over the NP proxy
+	 * from smbd to RPC servers, but is not in public network protocols
+	 */
 	typedef [public] struct {
 		uint32 num_sids;
 		[size_is(num_sids)] dom_sid sids[*];
 		se_privilege privilege_mask;
 		lsa_SystemAccessModeFlags rights_mask;
+		uint32 num_local_claims;
+		uint32 num_user_claims;
+		uint32 num_device_claims;
+		uint32 num_device_sids;
+		[size_is(num_local_claims)] CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1 local_claims[*];
+		[size_is(num_user_claims)] CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1 user_claims[*];
+		[size_is(num_device_claims)] CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1 device_claims[*];
+		[size_is(num_device_sids)] dom_sid device_sids[*];
+
+		/*
+		 * This allows us to disable claims evaluation on a
+		 * per-token basis, allowing library code to remain
+		 * distinct from configuration by passing this in as a
+		 * flag here
+		 */
+		claims_evaluation_control evaluate_claims;
 	} security_token;
 
         typedef [public] struct {

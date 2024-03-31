@@ -26,7 +26,7 @@ from samba.tests import TestCase, ldb_err
 from samba.tests import DynamicTestCase
 import samba.getopt as options
 import optparse
-from samba.colour import c_RED, c_GREEN, c_DARK_YELLOW
+from samba.colour import c_DARK_YELLOW
 import re
 import pprint
 from samba.dsdb import (
@@ -485,7 +485,7 @@ def main():
     global LP, CREDS, SERVER, REALM
 
     parser = optparse.OptionParser(
-        "python3 ldap_upn_sam_account_name.py <server> [options]")
+        "python3 ldap_upn_sam_account.py <server> [options]")
     sambaopts = options.SambaOptions(parser)
     parser.add_option_group(sambaopts)
 

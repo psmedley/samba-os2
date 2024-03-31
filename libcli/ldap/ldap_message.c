@@ -546,6 +546,9 @@ _PUBLIC_ bool ldap_encode(struct ldap_message *msg,
 		for (i=0; i<r->num_attributes; i++) {
 			struct ldb_message_element *attrib = &r->attributes[i];
 			if (!asn1_push_tag(data, ASN1_SEQUENCE(0))) goto err;
+			if (attrib->name == NULL) {
+				goto err;
+			}
 			if (!asn1_write_OctetString(data, attrib->name,
 					       strlen(attrib->name))) goto err;
 			if (!asn1_push_tag(data, ASN1_SET)) goto err;
@@ -1647,7 +1650,10 @@ _PUBLIC_ NTSTATUS ldap_decode(struct asn1_data *data,
   return NT_STATUS_OK if a blob has enough bytes in it to be a full
   ldap packet. Set packet_size if true.
 */
-NTSTATUS ldap_full_packet(void *private_data, DATA_BLOB blob, size_t *packet_size)
+NTSTATUS ldap_full_packet(struct tstream_context *stream,
+			  void *private_data,
+			  DATA_BLOB blob,
+			  size_t *packet_size)
 {
 	int ret;
 

@@ -271,6 +271,45 @@ static bool test_QueryServiceConfig2W(struct torture_context *tctx, struct dcerp
 	return true;
 }
 
+static bool test_QueryServiceConfigEx(struct torture_context *tctx, struct dcerpc_pipe *p)
+{
+	struct svcctl_QueryServiceConfigEx r;
+	struct policy_handle h, s;
+	NTSTATUS status;
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	struct SC_RPC_CONFIG_INFOW info;
+	int i;
+
+	if (!test_OpenSCManager(b, tctx, &h))
+		return false;
+
+	if (!test_OpenService(b, tctx, &h, TORTURE_DEFAULT_SERVICE, &s))
+		return false;
+
+	for (i=0; i < 16; i++) {
+
+		r.in.hService = s;
+		r.in.dwInfoLevel = i;
+		r.out.pInfo = &info;
+
+		status = dcerpc_svcctl_QueryServiceConfigEx_r(b, tctx, &r);
+		if (i == 8) {
+			torture_assert_ntstatus_ok(tctx, status, "QueryServiceConfigEx failed!");
+			torture_assert_werr_ok(tctx, r.out.result, "QueryServiceConfigEx failed!");
+		} else {
+			torture_assert_ntstatus_equal(tctx, status, NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE, "QueryServiceConfigEx failed!");
+		}
+	}
+
+	if (!test_CloseServiceHandle(b, tctx, &s))
+		return false;
+
+	if (!test_CloseServiceHandle(b, tctx, &h))
+		return false;
+
+	return true;
+}
+
 static bool test_QueryServiceObjectSecurity(struct torture_context *tctx,
 					    struct dcerpc_pipe *p)
 {
@@ -456,6 +495,55 @@ static bool test_ControlService(struct torture_context *tctx,
 		"ControlService failed!");
 	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAMETER,
 		"ControlService failed!");
+
+	if (!test_CloseServiceHandle(b, tctx, &s))
+		return false;
+
+	if (!test_CloseServiceHandle(b, tctx, &h))
+		return false;
+
+	return true;
+}
+
+static bool test_ControlServiceExW(struct torture_context *tctx,
+				   struct dcerpc_pipe *p)
+{
+	struct svcctl_ControlServiceExW r;
+	struct policy_handle h, s;
+	struct dcerpc_binding_handle *b = p->binding_handle;
+	union SC_RPC_SERVICE_CONTROL_IN_PARAMSW ControlInParams;
+	union SC_RPC_SERVICE_CONTROL_OUT_PARAMSW ControlOutParams;
+	struct SERVICE_CONTROL_STATUS_REASON_OUT_PARAMS psrOutParams;
+	struct SERVICE_CONTROL_STATUS_REASON_IN_PARAMSW psrInParams;
+
+	if (!test_OpenSCManager(b, tctx, &h))
+		return false;
+
+	if (!test_OpenService(b, tctx, &h, TORTURE_DEFAULT_SERVICE, &s))
+		return false;
+
+	ZERO_STRUCT(psrInParams);
+	ZERO_STRUCT(psrOutParams);
+
+	psrInParams.dwReason =	SERVICE_STOP_CUSTOM |
+				SERVICE_STOP_REASON_MAJOR_APPLICATION |
+				SERVICE_STOP_REASON_MINOR_ENVIRONMENT;
+	psrInParams.pszComment = "wurst";
+
+	ControlInParams.psrInParams = &psrInParams;
+	ControlOutParams.psrOutParams = &psrOutParams;
+
+	r.in.hService = s;
+	r.in.dwControl = SVCCTL_CONTROL_STOP;
+	r.in.dwInfoLevel = 1;
+	r.in.pControlInParams = &ControlInParams;
+	r.out.pControlOutParams = &ControlOutParams;
+
+	torture_assert_ntstatus_ok(tctx,
+		dcerpc_svcctl_ControlServiceExW_r(b, tctx, &r),
+		"ControlServiceExW failed!");
+	torture_assert_werr_equal(tctx, r.out.result, WERR_INVALID_PARAMETER,
+		"ControlServiceExW failed!");
 
 	if (!test_CloseServiceHandle(b, tctx, &s))
 		return false;
@@ -721,6 +809,8 @@ struct torture_suite *torture_rpc_svcctl(TALLOC_CTX *mem_ctx)
 				   test_QueryServiceConfigW);
 	torture_rpc_tcase_add_test(tcase, "QueryServiceConfig2W",
 				   test_QueryServiceConfig2W);
+	torture_rpc_tcase_add_test(tcase, "QueryServiceConfigEx",
+				   test_QueryServiceConfigEx);
 	torture_rpc_tcase_add_test(tcase, "QueryServiceObjectSecurity",
 				   test_QueryServiceObjectSecurity);
 	torture_rpc_tcase_add_test(tcase, "SetServiceObjectSecurity",
@@ -729,6 +819,8 @@ struct torture_suite *torture_rpc_svcctl(TALLOC_CTX *mem_ctx)
 				   test_StartServiceW);
 	torture_rpc_tcase_add_test(tcase, "ControlService",
 				   test_ControlService);
+	torture_rpc_tcase_add_test(tcase, "ControlServiceExW",
+				   test_ControlServiceExW);
 	torture_rpc_tcase_add_test(tcase, "ChangeServiceConfigW",
 				   test_ChangeServiceConfigW);
 

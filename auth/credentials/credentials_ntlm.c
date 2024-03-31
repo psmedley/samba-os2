@@ -347,7 +347,7 @@ done:
  *
  * This is required because the nt_hash is calculated over the raw utf16 blob,
  * which might not be completely valid utf16, which means the conversion
- * from CH_UTF16MUNGED to CH_UTF8 might loose information.
+ * from CH_UTF16MUNGED to CH_UTF8 might lose information.
  */
 _PUBLIC_ bool cli_credentials_set_utf16_password(struct cli_credentials *cred,
 						 const DATA_BLOB *password_utf16,
@@ -374,7 +374,7 @@ _PUBLIC_ bool cli_credentials_set_utf16_password(struct cli_credentials *cred,
 					   CH_UTF16MUNGED, CH_UTF8,
 					   password_utf16->data,
 					   password_utf16->length,
-					   (void *)&password_talloc,
+					   &password_talloc,
 					   &password_len);
 		if (!ok) {
 			TALLOC_FREE(nt_hash);
@@ -401,7 +401,7 @@ _PUBLIC_ bool cli_credentials_set_utf16_password(struct cli_credentials *cred,
  *
  * This is required because the nt_hash is calculated over the raw utf16 blob,
  * which might not be completely valid utf16, which means the conversion
- * from CH_UTF16MUNGED to CH_UTF8 might loose information.
+ * from CH_UTF16MUNGED to CH_UTF8 might lose information.
  */
 _PUBLIC_ bool cli_credentials_set_old_utf16_password(struct cli_credentials *cred,
 						     const DATA_BLOB *password_utf16)
@@ -424,7 +424,7 @@ _PUBLIC_ bool cli_credentials_set_old_utf16_password(struct cli_credentials *cre
 				   CH_UTF16MUNGED, CH_UTF8,
 				   password_utf16->data,
 				   password_utf16->length,
-				   (void *)&password_talloc,
+				   &password_talloc,
 				   &password_len);
 	if (!ok) {
 		TALLOC_FREE(nt_hash);

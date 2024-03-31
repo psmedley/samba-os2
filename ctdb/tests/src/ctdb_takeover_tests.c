@@ -1,4 +1,4 @@
-/* 
+/*
    Tests for ctdb_takeover.c
 
    Copyright (C) Martin Schwenke 2011
@@ -7,12 +7,12 @@
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
@@ -84,24 +84,27 @@ static uint32_t *get_tunable_values(TALLOC_CTX *tmp_ctx,
 	uint32_t *tvals = talloc_zero_array(tmp_ctx, uint32_t, numnodes);
 	char *t = getenv(tunable);
 
-	if (t) {
-		if (strcmp(t, "1") == 0) {
-			for (i=0; i<numnodes; i++) {
-				tvals[i] = 1;
-			}
-		} else {
-			tok = strtok(t, ",");
-			i = 0;
-			while (tok != NULL) {
-				tvals[i] =
-					(uint32_t) strtol(tok, NULL, 0);
-				i++;
-				tok = strtok(NULL, ",");
-			}
-			if (i != numnodes) {
-				fprintf(stderr, "ERROR: Wrong number of values in %s\n", tunable);
-				exit(1);
-			}
+	if (t == NULL) {
+		return tvals;
+	}
+
+	if (strcmp(t, "1") == 0) {
+		for (i = 0; i < numnodes; i++) {
+			tvals[i] = 1;
+		}
+	} else {
+		tok = strtok(t, ",");
+		i = 0;
+		while (tok != NULL) {
+			tvals[i] = (uint32_t)strtol(tok, NULL, 0);
+			i++;
+			tok = strtok(NULL, ",");
+		}
+		if (i != numnodes) {
+			fprintf(stderr,
+				"ERROR: Wrong number of values in %s\n",
+				tunable);
+			exit(1);
 		}
 	}
 

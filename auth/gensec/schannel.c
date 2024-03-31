@@ -208,11 +208,10 @@ static NTSTATUS netsec_do_seq_num(struct schannel_state *state,
 				      checksum,
 				      checksum_length,
 				      _sequence_key);
+		ZERO_ARRAY(digest1);
 		if (rc < 0) {
 			return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
 		}
-
-		ZERO_ARRAY(digest1);
 
 		rc = gnutls_cipher_init(&cipher_hnd,
 					GNUTLS_CIPHER_ARCFOUR_128,
@@ -480,13 +479,13 @@ static NTSTATUS netsec_do_sign(struct schannel_state *state,
 
 		rc = gnutls_hash_init(&hash_hnd, GNUTLS_DIG_MD5);
 		if (rc < 0) {
-			return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+			return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
 		}
 
 		rc = gnutls_hash(hash_hnd, zeros, sizeof(zeros));
 		if (rc < 0) {
 			gnutls_hash_deinit(hash_hnd, NULL);
-			return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+			return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
 		}
 		if (confounder) {
 			SSVAL(header, 0, NL_SIGN_HMAC_MD5);
@@ -497,12 +496,12 @@ static NTSTATUS netsec_do_sign(struct schannel_state *state,
 			rc = gnutls_hash(hash_hnd, header, 8);
 			if (rc < 0) {
 				gnutls_hash_deinit(hash_hnd, NULL);
-				return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+				return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
 			}
 			rc = gnutls_hash(hash_hnd, confounder, 8);
 			if (rc < 0) {
 				gnutls_hash_deinit(hash_hnd, NULL);
-				return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+				return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
 			}
 		} else {
 			SSVAL(header, 0, NL_SIGN_HMAC_MD5);
@@ -513,13 +512,13 @@ static NTSTATUS netsec_do_sign(struct schannel_state *state,
 			rc = gnutls_hash(hash_hnd, header, 8);
 			if (rc < 0) {
 				gnutls_hash_deinit(hash_hnd, NULL);
-				return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+				return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
 			}
 		}
 		rc = gnutls_hash(hash_hnd, data, length);
 		if (rc < 0) {
 			gnutls_hash_deinit(hash_hnd, NULL);
-			return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
+			return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
 		}
 		gnutls_hash_deinit(hash_hnd, packet_digest);
 

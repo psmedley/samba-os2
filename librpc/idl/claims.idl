@@ -27,7 +27,8 @@ interface claims
 #define wchar_t uint16
 #define CLAIM_ID [string, charset(UTF16)] wchar_t *
 
-	const int CLAIM_MINIMUM_BYTES_TO_COMPRESS = 384;
+	const int CLAIM_LOWER_COMPRESSION_THRESHOLD = 368;
+	const int CLAIM_UPPER_COMPRESSION_THRESHOLD = 384;
 
 	typedef enum {
 		CLAIM_TYPE_INT64 = 1,
@@ -49,17 +50,17 @@ interface claims
 	} CLAIMS_COMPRESSION_FORMAT;
 
 	typedef struct {
-		[range(1, 10*1024*1024)] uint32 value_count;
+		[range(0, 10*1024*1024)] uint32 value_count;
 		[size_is(value_count)] int64 *values;
 	} CLAIM_INT64;
 
 	typedef struct {
-		[range(1, 10*1024*1024)] uint32 value_count;
+		[range(0, 10*1024*1024)] uint32 value_count;
 		[size_is(value_count)] hyper *values;
 	} CLAIM_UINT64;
 
 	typedef struct {
-		[range(1, 10*1024*1024)] uint32 value_count;
+		[range(0, 10*1024*1024)] uint32 value_count;
 		[size_is(value_count), string, charset(UTF16)] wchar_t **values;
 	} CLAIM_STRING;
 

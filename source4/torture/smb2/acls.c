@@ -1734,10 +1734,10 @@ static bool test_sd_flags_vs_chown(struct torture_context *tctx,
 			CHECK_SECURITY_DESCRIPTOR(q.query_secdesc.out.sd, sd2);
 
 			/*
-			 * Check that changing ownder doesn't affect SD flags.
+			 * Check that changing owner doesn't affect SD flags.
 			 *
-			 * Do this by first changing ownder to world and then
-			 * back to the original ownder. Afterwards compare SD,
+			 * Do this by first changing owner to world and then
+			 * back to the original owner. Afterwards compare SD,
 			 * should be the same.
 			 */
 			owner_sd->owner_sid = &world_sid;
@@ -3076,7 +3076,7 @@ static bool test_overwrite_read_only_file(struct torture_context *tctx,
 	ZERO_STRUCT(handle);
 
 	for (i = 0; i < ARRAY_SIZE(tcases); i++) {
-		torture_comment(tctx, "Verify open with %s dispostion\n",
+		torture_comment(tctx, "Verify open with %s disposition\n",
 				tcases[i].disposition_string);
 
 		c = (struct smb2_create) {

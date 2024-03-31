@@ -34,7 +34,7 @@ Tests behaviour when NTLM is disabled
 class NtlmDisabledTests(TestCase):
 
     def setUp(self):
-        super(NtlmDisabledTests, self).setUp()
+        super().setUp()
 
         self.lp          = self.get_loadparm()
         self.server      = os.getenv("SERVER")
@@ -45,9 +45,6 @@ class NtlmDisabledTests(TestCase):
         self.creds.set_domain(self.server)
         self.creds.set_password(os.getenv("PASSWORD"))
         self.creds.set_kerberos_state(DONT_USE_KERBEROS)
-
-    def tearDown(self):
-        super(NtlmDisabledTests, self).tearDown()
 
     def test_ntlm_connection(self):
         try:

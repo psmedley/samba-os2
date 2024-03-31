@@ -170,7 +170,8 @@ struct rpc_work_process {
 	 * MSG_RPC_HOST_WORKER_STATUS sent by workers whenever a
 	 * client exits.
 	 */
-	uint32_t num_clients;
+	uint32_t num_associations;
+	uint32_t num_connections;
 
 	/*
 	 * Send SHUTDOWN to an idle child after a while
@@ -202,7 +203,7 @@ struct rpc_server {
 	 * between RPC servers: netlogon requires samr, everybody
 	 * requires winreg. And if a deep call in netlogon asks for a
 	 * samr connection, this must never end up in the same
-	 * process. named_pipe_auth_req_info7->need_idle_server is set
+	 * process. named_pipe_auth_req_info8->need_idle_server is set
 	 * in those cases.
 	 */
 	struct rpc_work_process *workers;
@@ -603,6 +604,15 @@ static void rpc_server_get_endpoints_done(struct tevent_req *subreq)
 		tevent_req_error(req, ret);
 		return;
 	}
+	/*
+	 * We need to limit the number of workers in order
+	 * to put the worker index into a 16-bit space,
+	 * in order to use a 16-bit association group space
+	 * per worker.
+	 */
+	if (state->num_workers > 65536) {
+		state->num_workers = 65536;
+	}
 
 	state->idle_seconds = smb_strtoul(
 		lines[1], NULL, 10, &ret, SMB_STR_FULL_STR_CONV);
@@ -706,14 +716,14 @@ static int rpc_server_get_endpoints_recv(
  * anonymous session info.
  */
 
-static NTSTATUS rpc_host_generate_npa_info7_from_sock(
+static NTSTATUS rpc_host_generate_npa_info8_from_sock(
 	TALLOC_CTX *mem_ctx,
 	enum dcerpc_transport_t transport,
 	int sock,
 	const struct samba_sockaddr *peer_addr,
-	struct named_pipe_auth_req_info7 **pinfo7)
+	struct named_pipe_auth_req_info8 **pinfo8)
 {
-	struct named_pipe_auth_req_info7 *info7 = NULL;
+	struct named_pipe_auth_req_info8 *info8 = NULL;
 	struct samba_sockaddr local_addr = {
 		.sa_socklen = sizeof(struct sockaddr_storage),
 	};
@@ -736,26 +746,26 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 	tsocket_address_to_name_fn = (transport == NCACN_IP_TCP) ?
 		tsocket_address_inet_addr_string : tsocket_address_unix_path;
 
-	info7 = talloc_zero(mem_ctx, struct named_pipe_auth_req_info7);
-	if (info7 == NULL) {
+	info8 = talloc_zero(mem_ctx, struct named_pipe_auth_req_info8);
+	if (info8 == NULL) {
 		goto fail;
 	}
-	info7->session_info =
-		talloc_zero(info7, struct auth_session_info_transport);
-	if (info7->session_info == NULL) {
+	info8->session_info =
+		talloc_zero(info8, struct auth_session_info_transport);
+	if (info8->session_info == NULL) {
 		goto fail;
 	}
 
 	status = make_session_info_anonymous(
-		info7->session_info,
-		&info7->session_info->session_info);
+		info8->session_info,
+		&info8->session_info->session_info);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_DEBUG("make_session_info_anonymous failed: %s\n",
 			  nt_errstr(status));
 		goto fail;
 	}
 
-	ret = tsocket_address_bsd_from_samba_sockaddr(info7,
+	ret = tsocket_address_bsd_from_samba_sockaddr(info8,
 						      peer_addr,
 						      &taddr);
 	if (ret == -1) {
@@ -765,14 +775,14 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 			  strerror(errno));
 		goto fail;
 	}
-	remote_client_addr = tsocket_address_to_name_fn(taddr, info7);
+	remote_client_addr = tsocket_address_to_name_fn(taddr, info8);
 	if (remote_client_addr == NULL) {
 		DBG_DEBUG("tsocket_address_to_name_fn failed\n");
 		goto nomem;
 	}
 	TALLOC_FREE(taddr);
 
-	remote_client_name = talloc_strdup(info7, remote_client_addr);
+	remote_client_name = talloc_strdup(info8, remote_client_addr);
 	if (remote_client_name == NULL) {
 		DBG_DEBUG("talloc_strdup failed\n");
 		goto nomem;
@@ -780,7 +790,7 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 
 	if (transport == NCACN_IP_TCP) {
 		bool ok = samba_sockaddr_get_port(peer_addr,
-						  &info7->remote_client_port);
+						  &info8->remote_client_port);
 		if (!ok) {
 			DBG_DEBUG("samba_sockaddr_get_port failed\n");
 			status = NT_STATUS_INVALID_PARAMETER;
@@ -795,7 +805,7 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 		goto fail;
 	}
 
-	ret = tsocket_address_bsd_from_samba_sockaddr(info7,
+	ret = tsocket_address_bsd_from_samba_sockaddr(info8,
 						      &local_addr,
 						      &taddr);
 	if (ret == -1) {
@@ -805,14 +815,14 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 			  strerror(errno));
 		goto fail;
 	}
-	local_server_addr = tsocket_address_to_name_fn(taddr, info7);
+	local_server_addr = tsocket_address_to_name_fn(taddr, info8);
 	if (local_server_addr == NULL) {
 		DBG_DEBUG("tsocket_address_to_name_fn failed\n");
 		goto nomem;
 	}
 	TALLOC_FREE(taddr);
 
-	local_server_name = talloc_strdup(info7, local_server_addr);
+	local_server_name = talloc_strdup(info8, local_server_addr);
 	if (local_server_name == NULL) {
 		DBG_DEBUG("talloc_strdup failed\n");
 		goto nomem;
@@ -820,7 +830,7 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 
 	if (transport == NCACN_IP_TCP) {
 		bool ok = samba_sockaddr_get_port(&local_addr,
-						  &info7->local_server_port);
+						  &info8->local_server_port);
 		if (!ok) {
 			DBG_DEBUG("samba_sockaddr_get_port failed\n");
 			status = NT_STATUS_INVALID_PARAMETER;
@@ -849,7 +859,7 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 			TALLOC_FREE(remote_client_name);
 
 			ret = tsocket_address_unix_from_path(
-				info7,
+				info8,
 				AS_SYSTEM_MAGIC_PATH_TOKEN,
 				&taddr);
 			if (ret == -1) {
@@ -859,14 +869,14 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 			}
 
 			remote_client_addr =
-				tsocket_address_unix_path(taddr, info7);
+				tsocket_address_unix_path(taddr, info8);
 			if (remote_client_addr == NULL) {
 				DBG_DEBUG("tsocket_address_unix_path "
 					  "failed\n");
 				goto nomem;
 			}
 			remote_client_name =
-				talloc_strdup(info7, remote_client_addr);
+				talloc_strdup(info8, remote_client_addr);
 			if (remote_client_name == NULL) {
 				DBG_DEBUG("talloc_strdup failed\n");
 				goto nomem;
@@ -874,18 +884,18 @@ static NTSTATUS rpc_host_generate_npa_info7_from_sock(
 		}
 	}
 
-	info7->remote_client_addr = remote_client_addr;
-	info7->remote_client_name = remote_client_name;
-	info7->local_server_addr = local_server_addr;
-	info7->local_server_name = local_server_name;
+	info8->remote_client_addr = remote_client_addr;
+	info8->remote_client_name = remote_client_name;
+	info8->local_server_addr = local_server_addr;
+	info8->local_server_name = local_server_name;
 
-	*pinfo7 = info7;
+	*pinfo8 = info8;
 	return NT_STATUS_OK;
 
 nomem:
 	status = NT_STATUS_NO_MEMORY;
 fail:
-	TALLOC_FREE(info7);
+	TALLOC_FREE(info8);
 	return status;
 }
 
@@ -957,6 +967,8 @@ static struct tevent_req *rpc_host_bind_read_send(
 		close(sock_dup);
 		return tevent_req_post(req, ev);
 	}
+	/* as server we want to fail early */
+	tstream_bsd_fail_readv_first_error(state->plain, true);
 
 	if (transport == NCACN_NP) {
 		subreq = tstream_npa_accept_existing_send(
@@ -974,12 +986,12 @@ static struct tevent_req *rpc_host_bind_read_send(
 		return req;
 	}
 
-	status = rpc_host_generate_npa_info7_from_sock(
+	status = rpc_host_generate_npa_info8_from_sock(
 		state->client,
 		transport,
 		state->sock,
 		peer_addr,
-		&state->client->npa_info7);
+		&state->client->npa_info8);
 	if (!NT_STATUS_IS_OK(status)) {
 		tevent_req_oom(req);
 		return tevent_req_post(req, ev);
@@ -1011,14 +1023,14 @@ static void rpc_host_bind_read_got_npa(struct tevent_req *subreq)
 		subreq, struct tevent_req);
 	struct rpc_host_bind_read_state *state = tevent_req_data(
 		req, struct rpc_host_bind_read_state);
-	struct named_pipe_auth_req_info7 *info7 = NULL;
+	struct named_pipe_auth_req_info8 *info8 = NULL;
 	int ret, err;
 
 	ret = tstream_npa_accept_existing_recv(subreq,
 					       &err,
 					       state,
 					       &state->npa_stream,
-					       &info7,
+					       &info8,
 					       NULL,  /* transport */
 					       NULL,  /* remote_client_addr */
 					       NULL,  /* remote_client_name */
@@ -1030,7 +1042,7 @@ static void rpc_host_bind_read_got_npa(struct tevent_req *subreq)
 		return;
 	}
 
-	state->client->npa_info7 = talloc_move(state->client, &info7);
+	state->client->npa_info8 = talloc_move(state->client, &info8);
 
 	subreq = dcerpc_read_ncacn_packet_send(
 		state, state->ev, state->npa_stream);
@@ -1153,11 +1165,10 @@ fail:
 static struct rpc_work_process *rpc_host_find_worker(struct rpc_server *server)
 {
 	struct rpc_work_process *worker = NULL;
-	size_t i;
+	struct rpc_work_process *perfect_worker = NULL;
+	struct rpc_work_process *best_worker = NULL;
 	size_t empty_slot = SIZE_MAX;
-
-	uint32_t min_clients = UINT32_MAX;
-	size_t min_worker = server->max_workers;
+	size_t i;
 
 	for (i=0; i<server->max_workers; i++) {
 		worker = &server->workers[i];
@@ -1169,14 +1180,46 @@ static struct rpc_work_process *rpc_host_find_worker(struct rpc_server *server)
 		if (!worker->available) {
 			continue;
 		}
-		if (worker->num_clients < min_clients) {
-			min_clients = worker->num_clients;
-			min_worker = i;
+		if (worker->num_associations == 0) {
+			/*
+			 * We have an idle worker...
+			 */
+			perfect_worker = worker;
+			break;
+		}
+		if (best_worker == NULL) {
+			/*
+			 * It's busy, but the best so far...
+			 */
+			best_worker = worker;
+			continue;
+		}
+		if (worker->num_associations < best_worker->num_associations) {
+			/*
+			 * It's also busy, but has less association groups
+			 * (logical clients)
+			 */
+			best_worker = worker;
+			continue;
+		}
+		if (worker->num_associations > best_worker->num_associations) {
+			/*
+			 * It's not better
+			 */
+			continue;
+		}
+		/*
+		 * Ok, with the same number of association groups
+		 * we pick the one with the lowest number of connections
+		 */
+		if (worker->num_connections < best_worker->num_connections) {
+			best_worker = worker;
+			continue;
 		}
 	}
 
-	if (min_clients == 0) {
-		return &server->workers[min_worker];
+	if (perfect_worker != NULL) {
+		return perfect_worker;
 	}
 
 	if (empty_slot < SIZE_MAX) {
@@ -1188,8 +1231,8 @@ static struct rpc_work_process *rpc_host_find_worker(struct rpc_server *server)
 		return NULL;
 	}
 
-	if (min_worker < server->max_workers) {
-		return &server->workers[min_worker];
+	if (best_worker != NULL) {
+		return best_worker;
 	}
 
 	return NULL;
@@ -1217,7 +1260,7 @@ static struct rpc_work_process *rpc_host_find_idle_worker(
 		if (!worker->available) {
 			continue;
 		}
-		if (worker->num_clients == 0) {
+		if (worker->num_associations == 0) {
 			return &server->workers[i];
 		}
 	}
@@ -1235,7 +1278,10 @@ static struct rpc_work_process *rpc_host_find_idle_worker(
 	 * All workers are busy. We need to expand the number of
 	 * workers because we were asked for an idle worker.
 	 */
-	if (num_workers+1 < num_workers) {
+	if (num_workers >= UINT16_MAX) {
+		/*
+		 * The worker index would not fit into 16-bits
+		 */
 		return NULL;
 	}
 	tmp = talloc_realloc(
@@ -1270,6 +1316,7 @@ static void rpc_host_distribute_clients(struct rpc_server *server)
 	struct iovec iov;
 	enum ndr_err_code ndr_err;
 	NTSTATUS status;
+	const char *client_type = NULL;
 
 again:
 	pending_client = server->pending_clients;
@@ -1282,7 +1329,9 @@ again:
 
 	if (assoc_group_id != 0) {
 		size_t num_workers = talloc_array_length(server->workers);
-		uint8_t worker_index = assoc_group_id >> 24;
+		uint16_t worker_index = assoc_group_id >> 16;
+
+		client_type = "associated";
 
 		if (worker_index >= num_workers) {
 			DBG_DEBUG("Invalid assoc group id %"PRIu32"\n",
@@ -1292,21 +1341,24 @@ again:
 		worker = &server->workers[worker_index];
 
 		if ((worker->pid == -1) || !worker->available) {
-			DBG_DEBUG("Requested worker index %"PRIu8": "
-				  "pid=%d, available=%d",
+			DBG_DEBUG("Requested worker index %"PRIu16": "
+				  "pid=%d, available=%d\n",
 				  worker_index,
 				  (int)worker->pid,
 				  (int)worker->available);
 			/*
 			 * Pick a random one for a proper bind nack
 			 */
+			client_type = "associated+lost";
 			worker = rpc_host_find_worker(server);
 		}
 	} else {
 		struct auth_session_info_transport *session_info =
-			pending_client->client->npa_info7->session_info;
+			pending_client->client->npa_info8->session_info;
 		uint32_t flags = 0;
 		bool found;
+
+		client_type = "new";
 
 		found = security_token_find_npa_flags(
 			session_info->session_info->security_token,
@@ -1314,14 +1366,16 @@ again:
 
 		/* fresh assoc group requested */
 		if (found & (flags & SAMBA_NPA_FLAGS_NEED_IDLE)) {
+			client_type = "new+exclusive";
 			worker = rpc_host_find_idle_worker(server);
 		} else {
+			client_type = "new";
 			worker = rpc_host_find_worker(server);
 		}
 	}
 
 	if (worker == NULL) {
-		DBG_DEBUG("No worker found\n");
+		DBG_DEBUG("No worker found for %s client\n", client_type);
 		return;
 	}
 
@@ -1338,10 +1392,13 @@ again:
 		goto done;
 	}
 
-	DBG_INFO("Sending new client %s to %d with %"PRIu32" clients\n",
+	DBG_INFO("Sending %s client %s to %d with "
+		 "%"PRIu32" associations and %"PRIu32" connections\n",
+		 client_type,
 		 server->rpc_server_exe,
 		 worker->pid,
-		 worker->num_clients);
+		 worker->num_associations,
+		 worker->num_connections);
 
 	iov = (struct iovec) {
 		.iov_base = blob.data, .iov_len = blob.length,
@@ -1367,7 +1424,10 @@ again:
 			  nt_errstr(status));
 		goto done;
 	}
-	worker->num_clients += 1;
+	if (assoc_group_id == 0) {
+		worker->num_associations += 1;
+	}
+	worker->num_connections += 1;
 	TALLOC_FREE(worker->exit_timer);
 
 	TALLOC_FREE(server->host->np_helper_shutdown);
@@ -1813,7 +1873,7 @@ static void rpc_host_exit_worker(
 		}
 		w->exit_timer = NULL;
 
-		SMB_ASSERT(w->num_clients == 0);
+		SMB_ASSERT(w->num_associations == 0);
 
 		status = messaging_send(
 			server->host->msg_ctx,
@@ -1893,9 +1953,10 @@ static void rpc_host_child_status_recv(
 	}
 
 	worker->available = true;
-	worker->num_clients = status_message.num_clients;
+	worker->num_associations = status_message.num_association_groups;
+	worker->num_connections = status_message.num_connections;
 
-	if (worker->num_clients != 0) {
+	if (worker->num_associations != 0) {
 		TALLOC_FREE(worker->exit_timer);
 	} else {
 		worker->exit_timer = tevent_add_timer(
@@ -2296,10 +2357,11 @@ static bool rpc_host_dump_status_filter(
 			}
 
 			fprintf(f,
-				" worker[%zu]: pid=%d, num_clients=%"PRIu32"\n",
+				" worker[%zu]: pid=%d, num_associations=%"PRIu32", num_connections=%"PRIu32"\n",
 				j,
 				(int)w->pid,
-				w->num_clients);
+				w->num_associations,
+				w->num_connections);
 		}
 	}
 

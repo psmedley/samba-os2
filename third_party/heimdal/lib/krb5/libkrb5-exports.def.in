@@ -374,6 +374,9 @@ EXPORTS
 	krb5_get_init_creds_opt_set_salt
 	krb5_get_init_creds_opt_set_tkt_life
 	krb5_get_init_creds_opt_set_win2k
+	krb5_get_init_creds_opt_set_fast_ccache
+	krb5_get_init_creds_opt_set_fast_ccache_name
+	krb5_get_init_creds_opt_set_fast_flags
 	krb5_get_init_creds_password
 	krb5_get_instance
 	krb5_get_kdc_cred
@@ -539,6 +542,7 @@ EXPORTS
 	krb5_principal_set_comp_string
 	krb5_principal_set_realm
 	krb5_principal_set_type
+	krb5_principalname_is_krbtgt
 	krb5_print_address
 	krb5_program_setup
 	krb5_prompter_posix

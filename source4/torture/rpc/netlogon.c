@@ -267,7 +267,7 @@ bool test_SetupCredentials2ex(struct dcerpc_pipe *p, struct torture_context *tct
 			       "Credential chaining failed");
 	} else {
 		torture_assert(tctx, !netlogon_creds_client_check(creds, &credentials3),
-			       "Credential chaining passed unexptected");
+			       "Credential chaining passed unexpected");
 	}
 
 	torture_comment(tctx, "negotiate_flags=0x%08x\n", negotiate_flags);
@@ -892,7 +892,7 @@ static bool test_ServerAuthenticate2_encrypts_to_zero(
 			"Unable to obtain a suitable session key, "
 			"after [%u] attempts\n",
 			i);
-		torture_fail(tctx, "Unable obtain suitable session key");
+		torture_fail(tctx, "Unable to obtain suitable session key");
 	}
 
 	torture_assert_ntstatus_ok(
@@ -2066,7 +2066,7 @@ bool test_netlogon_capabilities(struct dcerpc_pipe *p, struct torture_context *t
 	 * because dcerpc_netr_LogonGetCapabilities with
 	 * an unknown query level returns DCERPC_NCA_S_FAULT_INVALID_TAG
 	 * => NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE
-	 * without looking a the authenticator.
+	 * without looking at the authenticator.
 	 */
 	tmp_creds = *creds;
 	netlogon_creds_client_authenticator(&tmp_creds, &auth);
@@ -2085,7 +2085,7 @@ bool test_netlogon_capabilities(struct dcerpc_pipe *p, struct torture_context *t
 	 * because dcerpc_netr_LogonGetCapabilities with
 	 * an unknown query level returns DCERPC_NCA_S_FAULT_INVALID_TAG
 	 * => NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE
-	 * without looking a the authenticator.
+	 * without looking at the authenticator.
 	 */
 	tmp_creds = *creds;
 	netlogon_creds_client_authenticator(&tmp_creds, &auth);
@@ -2103,7 +2103,7 @@ bool test_netlogon_capabilities(struct dcerpc_pipe *p, struct torture_context *t
 	 * we need to operate on a temporary copy of creds
 	 * because dcerpc_netr_LogonGetCapabilities was
 	 * dcerpc_netr_DummyFunction and returns NT_STATUS_NOT_IMPLEMENTED
-	 * without looking a the authenticator.
+	 * without looking at the authenticator.
 	 */
 	tmp_creds = *creds;
 	netlogon_creds_client_authenticator(&tmp_creds, &auth);
@@ -2134,7 +2134,7 @@ bool test_netlogon_capabilities(struct dcerpc_pipe *p, struct torture_context *t
 	 * because dcerpc_netr_LogonGetCapabilities with
 	 * an query level 2 may returns DCERPC_NCA_S_FAULT_INVALID_TAG
 	 * => NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE
-	 * without looking a the authenticator.
+	 * without looking at the authenticator.
 	 */
 	tmp_creds = *creds;
 	netlogon_creds_client_authenticator(&tmp_creds, &auth);
@@ -2292,7 +2292,7 @@ static bool test_ServerReqChallengeGlobal(struct torture_context *tctx,
 
 /*
  * Test the re-use of the challenge is not possible on a third
- * connection, after first useing it second one.
+ * connection, after first using it second one.
  */
 
 static bool test_ServerReqChallengeReuseGlobal(struct torture_context *tctx,
@@ -5551,7 +5551,7 @@ static bool test_GetDomainInfo(struct torture_context *tctx,
 					 "trust_list flags TREEROOT on forest root");
 		torture_assert_int_equal(tctx,
 					 tex2->parent_index, 0,
-					 "trust_list no parent on foreset root");
+					 "trust_list no parent on forest root");
 	}
 	torture_assert_int_equal(tctx,
 				 tex2->trust_type, LSA_TRUST_TYPE_UPLEVEL,

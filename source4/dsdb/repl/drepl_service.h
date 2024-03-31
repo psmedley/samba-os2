@@ -87,7 +87,7 @@ struct dreplsrv_partition {
 	struct drsuapi_DsReplicaObjectIdentifier nc;
 
 	/* 
-	 * uptodate vector needs to be updated before and after each DsGetNCChanges() call
+	 * up-to-date vector needs to be updated before and after each DsGetNCChanges() call
 	 *
 	 * - before: we need to use our own invocationId together with our highestCommittedUSN
 	 * - after: we need to merge in the remote uptodatevector, to avoid reading it again
@@ -181,7 +181,7 @@ struct dreplsrv_service {
 
 		/*
 		 * the timestamp for the next event,
-		 * this is the timstamp passed to event_add_timed()
+		 * this is the timestamp passed to event_add_timed()
 		 */
 		struct timeval next_event;
 
@@ -192,7 +192,7 @@ struct dreplsrv_service {
 	/* some stuff for running only the incoming notify ops */
 	struct {
 		/* 
-		 * here we have a reference to the immidicate event that was
+		 * here we have a reference to the immediate event that was
 		 * scheduled from the DsReplicaSync
 		 */
 		struct tevent_immediate *im;
@@ -207,7 +207,7 @@ struct dreplsrv_service {
 
 		/*
 		 * the timestamp for the next event,
-		 * this is the timstamp passed to event_add_timed()
+		 * this is the timestamp passed to event_add_timed()
 		 */
 		struct timeval next_event;
 

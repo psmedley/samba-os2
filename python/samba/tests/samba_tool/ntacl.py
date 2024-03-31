@@ -19,8 +19,6 @@
 #
 
 import os
-import time
-import ldb
 from samba.tests.samba_tool.base import SambaToolCmdTest
 from samba.tests import env_loadparm
 import random
@@ -90,7 +88,7 @@ class NtACLCmdSysvolTestCase(SambaToolCmdTest):
                 self.assertCmdFail(result, f"succeeded with {args} with missing dir")
                 self.assertNotIn("uncaught exception", err,
                                  "Shouldn't be uncaught exception")
-                self.assertNotRegex(err, '^\s*File [^,]+, line \d+, in',
+                self.assertNotRegex(err, r'^\s*File [^,]+, line \d+, in',
                                     "Shouldn't be lines of traceback")
                 self.assertEqual(out, "", "Shouldn't be any output messages")
         finally:

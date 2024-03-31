@@ -163,39 +163,10 @@ NTSTATUS smbd_do_qfsinfo(struct smbXsrv_connection *xconn,
 			 uint16_t flags2,
 			 unsigned int max_data_bytes,
 			 size_t *fixed_portion,
+			 struct files_struct *fsp,
 			 struct smb_filename *smb_fname,
 			 char **ppdata,
 			 int *ret_data_len);
-
-bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
-			   struct dptr_struct *dirptr,
-			   const char *mask,
-			   uint32_t dirtype,
-			   bool dont_descend,
-			   bool ask_sharemode,
-			   bool get_dosmode,
-			   bool (*match_fn)(TALLOC_CTX *ctx,
-					    void *private_data,
-					    const char *dname,
-					    const char *mask,
-					    char **_fname),
-			   bool (*mode_fn)(TALLOC_CTX *ctx,
-					   void *private_data,
-					   struct files_struct *dirfsp,
-					   struct smb_filename *smb_fname,
-					   bool get_dosmode,
-					   uint32_t *_mode),
-			   void *private_data,
-			   char **_fname,
-			   struct smb_filename **_smb_fname,
-			   uint32_t *_mode);
-void smbd_dirptr_push_overflow(struct dptr_struct *dirptr,
-			       char **_fname,
-			       struct smb_filename **_smb_fname,
-			       uint32_t mode);
-void smbd_dirptr_set_last_name_sent(struct dptr_struct *dirptr,
-				    char **_fname);
-char *smbd_dirptr_get_last_name_sent(struct dptr_struct *dirptr);
 
 NTSTATUS smbd_dirptr_lanman2_entry(TALLOC_CTX *ctx,
 			       connection_struct *conn,
@@ -468,9 +439,11 @@ struct smbXsrv_connection {
 			struct smbd_smb2_request *req;
 			struct {
 				uint8_t nbt[NBT_HDR_SIZE];
-				bool done;
 			} hdr;
-			struct iovec vector;
+			struct iovec _vector[1];
+			struct iovec *vector;
+			int count;
+			struct msghdr msg;
 			bool doing_receivefile;
 			size_t min_recv_size;
 			size_t pktfull;
@@ -694,6 +667,8 @@ struct smbd_smb2_send_queue {
 	DATA_BLOB *sendfile_header;
 	uint32_t sendfile_body_size;
 	NTSTATUS *sendfile_status;
+
+	struct msghdr msg;
 	struct iovec *vector;
 	int count;
 

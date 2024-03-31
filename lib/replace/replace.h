@@ -45,7 +45,7 @@
  * As it's also needed when Python.h is the first header we
  * require a global -D__STDC_WANT_LIB_EXT1__=1
  */
-#ifndef __STDC_WANT_LIB_EXT1__
+#if __STDC_WANT_LIB_EXT1__ != 1
 #error -D__STDC_WANT_LIB_EXT1__=1 required
 #endif
 
@@ -209,7 +209,7 @@
 #endif
 
 #ifndef HAVE_STRERROR
-extern char *sys_errlist[];
+extern const char *const sys_errlist[];
 #define strerror(i) sys_errlist[i]
 #endif
 

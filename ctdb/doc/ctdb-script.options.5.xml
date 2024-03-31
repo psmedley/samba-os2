@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="iso-8859-1"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE refentry
 	PUBLIC "-//OASIS//DTD DocBook XML V4.5//EN"
 	"http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd">
@@ -20,51 +20,81 @@
   <refsect1>
     <title>DESCRIPTION</title>
 
-    <para>
-      Each CTDB script has 2 possible locations for its configuration options:
-    </para>
+    <refsect2>
+      <title>Location</title>
+      <para>
+	Each CTDB script has 2 possible locations for its configuration options:
+      </para>
 
-    <variablelist>
+      <variablelist>
 
-      <varlistentry>
-	<term>
-	  <filename>/usr/local/etc/ctdb/script.options</filename>
-	</term>
-	<listitem>
-	  <para>
-	    This is a catch-all global file for general purpose
-	    scripts and for options that are used in multiple event
-	    scripts.
-	  </para>
-	</listitem>
-      </varlistentry>
+	<varlistentry>
+	  <term>
+	    <filename>/usr/local/etc/ctdb/script.options</filename>
+	  </term>
+	  <listitem>
+	    <para>
+	      This is a catch-all global file for general purpose
+	      scripts and for options that are used in multiple event
+	      scripts.
+	    </para>
+	  </listitem>
+	</varlistentry>
 
-      <varlistentry>
-	<term>
-	  <parameter>SCRIPT</parameter>.options
-	</term>
-	<listitem>
-	  <para>
-	    That is, options for
-	    <filename><parameter>SCRIPT</parameter></filename> are
-	    placed in a file alongside the script, with a ".script"
-	    suffix added.  This style is usually recommended for event
-	    scripts.
-	  </para>
+	<varlistentry>
+	  <term>
+	    <parameter>SCRIPT</parameter>.options
+	  </term>
+	  <listitem>
+	    <para>
+	      That is, options for
+	      <filename><parameter>SCRIPT</parameter></filename> are
+	      placed in a file alongside the script, with a ".script"
+	      suffix added.  This style is usually recommended for event
+	      scripts.
+	    </para>
 
-	  <para>
-	    Options in this script-specific file override those in
-	    the global file.
-	  </para>
-	</listitem>
-      </varlistentry>
+	    <para>
+	      Options in this script-specific file override those in
+	      the global file.
+	    </para>
+	  </listitem>
+	</varlistentry>
 
-    </variablelist>
+      </variablelist>
+    </refsect2>
 
-    <para>
-      These files should include simple shell-style variable
-      assignments and shell-style comments.
-    </para>
+    <refsect2>
+      <title>Contents</title>
+
+      <para>
+	These files should include simple shell-style variable
+	assignments and shell-style comments.
+      </para>
+    </refsect2>
+
+    <refsect2>
+      <title>Monitoring Thresholds</title>
+
+      <para>
+	Event scripts can monitor resources or services.  When a
+	problem is detected, it may be better to warn about a problem
+	rather than to immediately fail monitoring and mark a node as
+	unhealthy.  CTDB provides support for event scripts to do
+	threshold-based monitoring.
+      </para>
+
+      <para>
+	A threshold setting looks like
+	<parameter>WARNING_THRESHOLD<optional>:ERROR_THRESHOLD</optional></parameter>.
+	If the number of problems is ≥ WARNING_THRESHOLD then the
+	script will log a warning and continue.  If the number
+	problems is ≥ ERROR_THRESHOLD then the script will log an
+	error and exit with failure, causing monitoring to fail.  Note
+	that ERROR_THRESHOLD is optional, and follows the optional
+	colon (:) separator.
+      </para>
+    </refsect2>
 
   </refsect1>
 
@@ -573,6 +603,37 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 	    </para>
 	    <para>
 	      No default.
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+      </variablelist>
+
+    </refsect2>
+
+    <refsect2>
+      <title>40.vsftpd</title>
+
+      <para>
+	Provides CTDB's vsftpd service management.
+      </para>
+
+      <variablelist>
+	<varlistentry>
+	  <term>
+	    CTDB_VSFTPD_MONITOR_THRESHOLDS=<parameter>THRESHOLDS</parameter>
+	  </term>
+	  <listitem>
+	    <para>
+	      THRESHOLDS indicates how many consecutive monitoring
+	      attempts need to report that vsftpd is not listening on
+	      TCP port 21 before a warning is logged and before
+	      monitoring fails.  See the <citetitle>Monitoring
+	      Thresholds</citetitle> for a description of how
+	      monitoring thresholds work.
+	    </para>
+	    <para>
+	      Default is 1:2.
 	    </para>
 	  </listitem>
 	</varlistentry>

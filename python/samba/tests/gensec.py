@@ -29,13 +29,13 @@ import samba.tests
 class GensecTests(samba.tests.TestCase):
 
     def setUp(self):
-        super(GensecTests, self).setUp()
+        super().setUp()
         self.settings = {}
         self.settings["lp_ctx"] = self.lp_ctx = samba.tests.env_loadparm()
         self.settings["target_hostname"] = self.lp_ctx.get("netbios name")
         self.lp_ctx.set("spnego:simulate_w2k", "no")
 
-        """This is just for the API tests"""
+        # This is just for the API tests
         self.gensec = gensec.Security.start_client(self.settings)
 
     def test_start_mech_by_unknown_name(self):
@@ -47,10 +47,13 @@ class GensecTests(samba.tests.TestCase):
     def test_info_uninitialized(self):
         self.assertRaises(RuntimeError, self.gensec.session_info)
 
-    def _test_update(self, mech, client_mech=None, client_only_opt=None):
+    def _test_update(self, mech, *, creds=None, client_mech=None, client_only_opt=None):
         """Test GENSEC by doing an exchange with ourselves using GSSAPI against a KDC"""
 
-        """Start up a client and server GENSEC instance to test things with"""
+        # Start up a client and server GENSEC instance to test things with
+
+        if creds is None:
+            creds = self.get_credentials()
 
         if client_only_opt:
             orig_client_opt = self.lp_ctx.get(client_only_opt)
@@ -59,7 +62,7 @@ class GensecTests(samba.tests.TestCase):
             self.lp_ctx.set(client_only_opt, "yes")
 
         self.gensec_client = gensec.Security.start_client(self.settings)
-        self.gensec_client.set_credentials(self.get_credentials())
+        self.gensec_client.set_credentials(creds)
         self.gensec_client.want_feature(gensec.FEATURE_SEAL)
         if client_mech is not None:
             self.gensec_client.start_mech_by_name(client_mech)
@@ -84,7 +87,7 @@ class GensecTests(samba.tests.TestCase):
         server_to_client = b""
         client_to_server = b""
 
-        """Run the actual call loop"""
+        # Run the actual call loop
         while True:
             if not client_finished:
                 if client_only_opt:
@@ -138,10 +141,10 @@ class GensecTests(samba.tests.TestCase):
         self._test_update("GSS-SPNEGO")
 
     def test_update_spnego_downgrade(self):
-        self._test_update("GSS-SPNEGO", "spnego", "gensec:gssapi_krb5")
+        self._test_update("GSS-SPNEGO", client_mech="spnego", client_only_opt="gensec:gssapi_krb5")
 
     def test_update_no_optimistic_spnego(self):
-        self._test_update("GSS-SPNEGO", "spnego", "spnego:client_no_optimistic")
+        self._test_update("GSS-SPNEGO", client_mech="spnego", client_only_opt="spnego:client_no_optimistic")
 
     def test_update_w2k_spnego_client(self):
         self.lp_ctx.set("spnego:simulate_w2k", "yes")
@@ -172,15 +175,39 @@ class GensecTests(samba.tests.TestCase):
         self._test_update("GSS-SPNEGO")
 
     def test_update_gss_krb5_to_spnego(self):
-        self._test_update("GSS-SPNEGO", "gssapi_krb5")
+        self._test_update("GSS-SPNEGO", client_mech="gssapi_krb5")
 
     def test_update_ntlmssp_to_spnego(self):
-        self._test_update("GSS-SPNEGO", "ntlmssp")
+        self._test_update("GSS-SPNEGO", client_mech="ntlmssp")
+
+    def test_update_fast(self):
+        """Test associating a machine account with the credentials
+           to protect the password from cracking and show
+           'log in from device' pattern.
+
+           (Note we can't tell if FAST armor was actually used with this test)"""
+        creds = self.insta_creds(template=self.get_credentials())
+        machine_creds = Credentials()
+        machine_creds.guess(self.lp_ctx)
+        machine_creds.set_machine_account(self.lp_ctx)
+        creds.set_krb5_fast_armor_credentials(machine_creds, True)
+        self._test_update("GSSAPI", creds=creds)
+
+    def test_update_anon_fast(self):
+        """Test setting no FAST credentials, but requiring FAST.
+           Against a Heimdal KDC this will trigger the anonymous
+           PKINIT protection.
+
+           (Note we can't tell if FAST armor was actually used with this test)
+        """
+        creds = self.insta_creds(template=self.get_credentials())
+        creds.set_krb5_fast_armor_credentials(None, True)
+        self._test_update("GSSAPI", creds=creds)
 
     def test_max_update_size(self):
         """Test GENSEC by doing an exchange with ourselves using GSSAPI against a KDC"""
 
-        """Start up a client and server GENSEC instance to test things with"""
+        # Start up a client and server GENSEC instance to test things with
 
         self.gensec_client = gensec.Security.start_client(self.settings)
         self.gensec_client.set_credentials(self.get_credentials())
@@ -202,7 +229,7 @@ class GensecTests(samba.tests.TestCase):
         server_finished = False
         server_to_client = b""
 
-        """Run the actual call loop"""
+        # Run the actual call loop
         i = 0
         while not client_finished or not server_finished:
             i += 1
@@ -213,7 +240,7 @@ class GensecTests(samba.tests.TestCase):
                 print("running server gensec_update: %d: %r" % (len(client_to_server), client_to_server))
                 (server_finished, server_to_client) = self.gensec_server.update(client_to_server)
 
-        """Here we expect a lot more than the typical 1 or 2 roundtrips"""
+        # Here we expect a lot more than the typical 1 or 2 roundtrips
         self.assertTrue(i > 10)
 
         session_info = self.gensec_server.session_info()

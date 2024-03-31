@@ -31,7 +31,7 @@ interface rpc_host_msg
 		/**
 		 * @brief Auth info inherited from SMB
 		 */
-		named_pipe_auth_req_info7 *npa_info7;
+		named_pipe_auth_req_info8 *npa_info8;
 
 		/**
 		 * @brief Raw bind PDU
@@ -61,16 +61,33 @@ interface rpc_host_msg
 		 * in its arrays to find the rpcd that sent this
 		 * message.
 		 */
-		uint8 server_index;
+		uint32 server_index;
 
 		/**
 		 * @brief Which of the processes of a helper prog is this from
+		 *
+		 * @note while this is uint32, we currently only support 16-bit
+		 * values, as we use it in the high 16-bits of the 32-bit
+		 * association group id.
 		 */
 		uint32 worker_index;
 
+
 		/**
-		 * @brief How many clients this process serves right now
+		 * @brief How many association groups this process serves right now
+		 *
+		 * @note while this is uint32, we currently only support 16-bit
+		 * values, as we use the worker_index in the high 16-bits of
+		 * so we only have 16-bit per worker in order to form the 32-bit
+		 * association group id.
 		 */
-		uint32 num_clients;
+		uint32 num_association_groups;
+
+		/**
+		 * @brief How many client connections this process serves right now
+		 *
+		 * @note might be greater or equal to num_association_groups.
+		 */
+		uint32 num_connections;
 	} rpc_worker_status;
 }

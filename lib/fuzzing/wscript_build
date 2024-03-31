@@ -52,6 +52,16 @@ samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR
 ''',
                  fuzzer=True)
 
+bld.SAMBA_BINARY('fuzz_sess_crypt_blob',
+                 source='fuzz_sess_crypt_blob.c',
+                 deps='fuzzing samba-security LIBCLI_AUTH NDR_DSSETUP  afl-fuzz-main',
+                 fuzzer=True)
+
+bld.SAMBA_BINARY('fuzz_conditional_ace_blob',
+                 source='fuzz_conditional_ace_blob.c',
+                 deps='fuzzing samba-security  afl-fuzz-main',
+                 fuzzer=True)
+
 bld.SAMBA_BINARY('fuzz_nmblib_parse_packet',
                  source='fuzz_nmblib_parse_packet.c',
                  deps='''fuzzing libsmb afl-fuzz-main
@@ -167,6 +177,11 @@ samba-util ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR
 ''',
                  fuzzer=True)
 
+bld.SAMBA_BINARY('fuzz_ldb_comparison_fold',
+                 source='fuzz_ldb_comparison_fold.c',
+                 deps='fuzzing ldb afl-fuzz-main',
+                 fuzzer=True)
+
 bld.SAMBA_BINARY('fuzz_dcerpc_parse_binding',
                  source='fuzz_dcerpc_parse_binding.c',
                  deps='''fuzzing dcerpc afl-fuzz-main
@@ -243,7 +258,7 @@ def SAMBA_NDR_FUZZ(bld, interface, auto_deps=False,
 
 Build.BuildContext.SAMBA_NDR_FUZZ = SAMBA_NDR_FUZZ
 
-# fuzz_ndr_X is generated from the list if IDL fed to PIDL
+# fuzz_ndr_X is generated from the list of IDL fed to PIDL
 # however there are exceptions to the normal pattern
 bld.SAMBA_NDR_FUZZ('iremotewinspool') # winspool.idl
 bld.SAMBA_NDR_FUZZ('FileServerVssAgent') # fsvrp.idl

@@ -51,7 +51,7 @@ c = libsmb.Conn("127.0.0.1",
 #include "python/modules.h"
 #include "libcli/smb/smbXcli_base.h"
 #include "libcli/smb/smb2_negotiate_context.h"
-#include "libcli/smb/reparse_symlink.h"
+#include "libcli/smb/reparse.h"
 #include "libsmb/libsmb.h"
 #include "libcli/security/security.h"
 #include "system/select.h"
@@ -1209,26 +1209,10 @@ static PyObject *py_cli_create_ex(
 		goto nomem;
 	}
 
-	v = PyTuple_New(3);
-	if (v == NULL) {
-		goto nomem;
-	}
-	ret = PyTuple_SetItem(v, 0, Py_BuildValue("I", (unsigned)fnum));
-	if (ret == -1) {
-		status = NT_STATUS_INTERNAL_ERROR;
-		goto fail;
-	}
-	ret = PyTuple_SetItem(v, 1, py_cr);
-	if (ret == -1) {
-		status = NT_STATUS_INTERNAL_ERROR;
-		goto fail;
-	}
-	ret = PyTuple_SetItem(v, 2, py_create_contexts_out);
-	if (ret == -1) {
-		status = NT_STATUS_INTERNAL_ERROR;
-		goto fail;
-	}
-
+	v = Py_BuildValue("(IOO)",
+			  (unsigned)fnum,
+			  py_cr,
+			  py_create_contexts_out);
 	return v;
 nomem:
 	status = NT_STATUS_NO_MEMORY;
@@ -1258,13 +1242,14 @@ static PyObject *py_cli_close(struct py_cli_state *self, PyObject *args)
 {
 	struct tevent_req *req;
 	int fnum;
+	int flags = 0;
 	NTSTATUS status;
 
-	if (!PyArg_ParseTuple(args, "i", &fnum)) {
+	if (!PyArg_ParseTuple(args, "i|i", &fnum, &flags)) {
 		return NULL;
 	}
 
-	req = cli_close_send(NULL, self->ev, self->cli, fnum);
+	req = cli_close_send(NULL, self->ev, self->cli, fnum, flags);
 	if (!py_tevent_req_wait_exc(self, req)) {
 		return NULL;
 	}
@@ -1386,7 +1371,7 @@ static PyObject *py_smb_savefile(struct py_cli_state *self, PyObject *args)
 	PyErr_NTSTATUS_NOT_OK_RAISE(status);
 
 	/* close the file handle */
-	req = cli_close_send(NULL, self->ev, self->cli, fnum);
+	req = cli_close_send(NULL, self->ev, self->cli, fnum, 0);
 	if (!py_tevent_req_wait_exc(self, req)) {
 		return NULL;
 	}
@@ -1508,7 +1493,7 @@ static PyObject *py_smb_loadfile(struct py_cli_state *self, PyObject *args)
 	}
 
 	/* close the file handle */
-	req = cli_close_send(NULL, self->ev, self->cli, fnum);
+	req = cli_close_send(NULL, self->ev, self->cli, fnum, 0);
 	if (!py_tevent_req_wait_exc(self, req)) {
 		Py_XDECREF(result);
 		return NULL;
@@ -1875,7 +1860,7 @@ static PyMethodDef py_cli_notify_state_methods[] = {
 			   "\t\tList contents of a directory. The keys are, \n"
 			   "\t\t\tname: name of changed object\n"
 			   "\t\t\taction: type of the change\n"
-			   "None is returned if there's no response jet and "
+			   "None is returned if there's no response yet and "
 			   "wait=False is passed"
 	},
 	{
@@ -1901,31 +1886,41 @@ static NTSTATUS list_posix_helper(struct file_info *finfo,
 {
 	PyObject *result = (PyObject *)state;
 	PyObject *file = NULL;
-	PyObject *size = NULL;
 	int ret;
 
-	size = PyLong_FromUnsignedLongLong(finfo->size);
 	/*
 	 * Build a dictionary representing the file info.
-	 * Note: Windows does not always return short_name (so it may be None)
 	 */
-	file = Py_BuildValue("{s:s,s:i,s:s,s:O,s:l,s:i,s:i,s:i,s:s,s:s}",
+	file = Py_BuildValue("{s:s,s:I,"
+			     "s:K,s:K,"
+			     "s:l,s:l,s:l,s:l,"
+			     "s:i,s:K,s:i,s:i,s:I,"
+			     "s:s,s:s}",
 			     "name", finfo->name,
-			     "attrib", (int)finfo->attr,
-			     "short_name", finfo->short_name,
-			     "size", size,
+			     "attrib", finfo->attr,
+
+			     "size", finfo->size,
+			     "allocaction_size", finfo->allocated_size,
+
+			     "btime",
+			     convert_timespec_to_time_t(finfo->btime_ts),
+			     "atime",
+			     convert_timespec_to_time_t(finfo->atime_ts),
 			     "mtime",
 			     convert_timespec_to_time_t(finfo->mtime_ts),
+			     "ctime",
+			     convert_timespec_to_time_t(finfo->ctime_ts),
+
 			     "perms", finfo->st_ex_mode,
 			     "ino", finfo->ino,
 			     "dev", finfo->st_ex_dev,
+			     "nlink", finfo->st_ex_nlink,
+			     "reparse_tag", finfo->reparse_tag,
+
 			     "owner_sid",
 			     dom_sid_string(finfo, &finfo->owner_sid),
 			     "group_sid",
 			     dom_sid_string(finfo, &finfo->group_sid));
-
-	Py_CLEAR(size);
-
 	if (file == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -2021,7 +2016,6 @@ static NTSTATUS do_listing(struct py_cli_state *self,
 			   const char *base_dir, const char *user_mask,
 			   uint16_t attribute,
 			   unsigned int info_level,
-			   bool posix,
 			   NTSTATUS (*callback_fn)(struct file_info *,
 						   const char *, void *),
 			   void *priv)
@@ -2047,7 +2041,7 @@ static NTSTATUS do_listing(struct py_cli_state *self,
 	dos_format(mask);
 
 	req = cli_list_send(NULL, self->ev, self->cli, mask, attribute,
-			    info_level, posix);
+			    info_level);
 	if (req == NULL) {
 		status = NT_STATUS_NO_MEMORY;
 		goto done;
@@ -2077,18 +2071,17 @@ static PyObject *py_cli_list(struct py_cli_state *self,
 	char *user_mask = NULL;
 	unsigned int attribute = LIST_ATTRIBUTE_MASK;
 	unsigned int info_level = 0;
-	bool posix = false;
 	NTSTATUS status;
 	enum protocol_types proto = smbXcli_conn_protocol(self->cli->conn);
 	PyObject *result = NULL;
-	const char *kwlist[] = { "directory", "mask", "attribs", "posix",
+	const char *kwlist[] = { "directory", "mask", "attribs",
 				 "info_level", NULL };
 	NTSTATUS (*callback_fn)(struct file_info *, const char *, void *) =
 		&list_helper;
 
-	if (!ParseTupleAndKeywords(args, kwds, "z|sIpI:list", kwlist,
+	if (!ParseTupleAndKeywords(args, kwds, "z|sII:list", kwlist,
 				   &base_dir, &user_mask, &attribute,
-				   &posix, &info_level)) {
+				   &info_level)) {
 		return NULL;
 	}
 
@@ -2105,11 +2098,11 @@ static PyObject *py_cli_list(struct py_cli_state *self,
 		}
 	}
 
-	if (posix) {
+	if (info_level == SMB2_FIND_POSIX_INFORMATION) {
 		callback_fn = &list_posix_helper;
 	}
 	status = do_listing(self, base_dir, user_mask, attribute,
-			    info_level, posix, callback_fn, result);
+			    info_level, callback_fn, result);
 
 	if (!NT_STATUS_IS_OK(status)) {
 		Py_XDECREF(result);
@@ -2997,6 +2990,7 @@ MODULE_INIT_FUNC(libsmb_samba_cwrapper)
 	ADD_FLAGS(SYMLINK_TRUST_UNKNOWN);
 	ADD_FLAGS(SYMLINK_TRUST_MASK);
 
+	ADD_FLAGS(IO_REPARSE_TAG_RESERVED_ZERO);
 	ADD_FLAGS(IO_REPARSE_TAG_SYMLINK);
 	ADD_FLAGS(IO_REPARSE_TAG_MOUNT_POINT);
 	ADD_FLAGS(IO_REPARSE_TAG_HSM);
@@ -3029,6 +3023,8 @@ MODULE_INIT_FUNC(libsmb_samba_cwrapper)
 	ADD_FLAGS(FILE_OVERWRITE);
 	ADD_FLAGS(FILE_OVERWRITE_IF);
 	ADD_FLAGS(FILE_DIRECTORY_FILE);
+
+	ADD_FLAGS(SMB2_CLOSE_FLAGS_FULL_INFORMATION);
 
 	return m;
 }

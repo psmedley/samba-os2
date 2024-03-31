@@ -112,7 +112,8 @@ mode_t unix_mode(connection_struct *conn, int dosmode,
 	mode_t dir_mode = 0; /* Mode of the inherit_from directory if
 			      * inheriting. */
 
-	if (!lp_store_dos_attributes(SNUM(conn)) && IS_DOS_READONLY(dosmode)) {
+	if ((dosmode & FILE_ATTRIBUTE_READONLY) &&
+	    !lp_store_dos_attributes(SNUM(conn))) {
 		result &= ~(S_IWUSR | S_IWGRP | S_IWOTH);
 	}
 
@@ -140,7 +141,7 @@ mode_t unix_mode(connection_struct *conn, int dosmode,
 		result = 0;
 	}
 
-	if (IS_DOS_DIR(dosmode)) {
+	if (dosmode & FILE_ATTRIBUTE_DIRECTORY) {
 		/* We never make directories read only for the owner as under DOS a user
 		can always create a file in a read-only directory. */
 		result |= (S_IFDIR | S_IWUSR);
@@ -158,14 +159,20 @@ mode_t unix_mode(connection_struct *conn, int dosmode,
 			result |= lp_force_directory_mode(SNUM(conn));
 		}
 	} else {
-		if (lp_map_archive(SNUM(conn)) && IS_DOS_ARCHIVE(dosmode))
+		if ((dosmode & FILE_ATTRIBUTE_ARCHIVE) &&
+		    lp_map_archive(SNUM(conn))) {
 			result |= S_IXUSR;
+		}
 
-		if (lp_map_system(SNUM(conn)) && IS_DOS_SYSTEM(dosmode))
+		if ((dosmode & FILE_ATTRIBUTE_SYSTEM) &&
+		    lp_map_system(SNUM(conn))) {
 			result |= S_IXGRP;
+		}
 
-		if (lp_map_hidden(SNUM(conn)) && IS_DOS_HIDDEN(dosmode))
+		if ((dosmode & FILE_ATTRIBUTE_HIDDEN) &&
+		    lp_map_hidden(SNUM(conn))) {
 			result |= S_IXOTH;
+		}
 
 		if (dir_mode) {
 			/* Inherit 666 component of parent directory mode */
@@ -302,7 +309,7 @@ NTSTATUS parse_dos_attribute_blob(struct smb_filename *smb_fname,
 			update_stat_ex_create_time(&smb_fname->st,
 						   create_time);
 
-			DBG_DEBUG("file %s case 1 set btime %s\n",
+			DBG_DEBUG("file %s case 1 set btime %s",
 				  smb_fname_str_dbg(smb_fname),
 				  time_to_asc(convert_timespec_to_time_t(
 						      create_time)));
@@ -323,7 +330,7 @@ NTSTATUS parse_dos_attribute_blob(struct smb_filename *smb_fname,
 			update_stat_ex_create_time(&smb_fname->st,
 						   create_time);
 
-			DBG_DEBUG("file %s case 3 set btime %s\n",
+			DBG_DEBUG("file %s case 3 set btime %s",
 				  smb_fname_str_dbg(smb_fname),
 				  time_to_asc(convert_timespec_to_time_t(
 						      create_time)));
@@ -706,16 +713,6 @@ uint32_t fdos_mode(struct files_struct *fsp)
 	uint32_t result = 0;
 	NTSTATUS status = NT_STATUS_OK;
 
-	if (fsp == NULL) {
-		/*
-		 * The pathological case where a callers does
-		 * fdos_mode(smb_fname->fsp) passing a pathref fsp. But as
-		 * smb_fname points at a symlink in POSIX context smb_fname->fsp
-		 * is NULL.
-		 */
-		return FILE_ATTRIBUTE_NORMAL;
-	}
-
 	DBG_DEBUG("%s\n", fsp_str_dbg(fsp));
 
 	if (fsp->fake_file_handle != NULL) {
@@ -730,12 +727,14 @@ uint32_t fdos_mode(struct files_struct *fsp)
 		return FILE_ATTRIBUTE_NORMAL;
 	}
 
-	if (fsp->fsp_name->st.cached_dos_attributes != FILE_ATTRIBUTES_INVALID) {
+	if (fsp->fsp_name->st.cached_dos_attributes != FILE_ATTRIBUTE_INVALID) {
 		return fsp->fsp_name->st.cached_dos_attributes;
 	}
 
 	/* Get the DOS attributes via the VFS if we can */
-	status = vfs_fget_dos_attributes(fsp, &result);
+	status = SMB_VFS_FGET_DOS_ATTRIBUTES(fsp->conn,
+					     metadata_fsp(fsp),
+					     &result);
 	if (!NT_STATUS_IS_OK(status)) {
 		/*
 		 * Only fall back to using UNIX modes if we get NOT_IMPLEMENTED.
@@ -923,6 +922,11 @@ int file_set_dosmode(connection_struct *conn,
 		return -1;
 	}
 
+	if (S_ISLNK(smb_fname->st.st_ex_mode)) {
+		/* A symlink in POSIX context, ignore */
+		return 0;
+	}
+
 	if ((S_ISDIR(smb_fname->st.st_ex_mode)) &&
 	    (dosmode & FILE_ATTRIBUTE_TEMPORARY))
 	{
@@ -935,26 +939,30 @@ int file_set_dosmode(connection_struct *conn,
 	DEBUG(10,("file_set_dosmode: setting dos mode 0x%x on file %s\n",
 		  dosmode, smb_fname_str_dbg(smb_fname)));
 
+	if (smb_fname->fsp == NULL) {
+		errno = ENOENT;
+		return -1;
+	}
+
+	if (smb_fname->fsp->posix_flags & FSP_POSIX_FLAGS_OPEN &&
+	    !lp_store_dos_attributes(SNUM(conn)))
+	{
+		return 0;
+	}
+
 	unixmode = smb_fname->st.st_ex_mode;
 
-	if (smb_fname->fsp != NULL) {
-		get_acl_group_bits(
-			conn, smb_fname->fsp, &smb_fname->st.st_ex_mode);
-	}
+	get_acl_group_bits(conn, smb_fname->fsp, &smb_fname->st.st_ex_mode);
 
 	if (S_ISDIR(smb_fname->st.st_ex_mode))
 		dosmode |= FILE_ATTRIBUTE_DIRECTORY;
 	else
 		dosmode &= ~FILE_ATTRIBUTE_DIRECTORY;
 
-	if (smb_fname->fsp != NULL) {
-		/* Store the DOS attributes in an EA by preference. */
-		status = SMB_VFS_FSET_DOS_ATTRIBUTES(
-			conn, metadata_fsp(smb_fname->fsp), dosmode);
-	} else {
-		status = NT_STATUS_OBJECT_NAME_NOT_FOUND;
-	}
-
+	/* Store the DOS attributes in an EA by preference. */
+	status = SMB_VFS_FSET_DOS_ATTRIBUTES(conn,
+					     metadata_fsp(smb_fname->fsp),
+					     dosmode);
 	if (NT_STATUS_IS_OK(status)) {
 		smb_fname->st.cached_dos_attributes = dosmode;
 		ret = 0;
@@ -1006,7 +1014,7 @@ int file_set_dosmode(connection_struct *conn,
 
 	/* if we previously had any w bits set then leave them alone
 		whilst adding in the new w bits, if the new mode is not rdonly */
-	if (!IS_DOS_READONLY(dosmode)) {
+	if (!(dosmode & FILE_ATTRIBUTE_READONLY)) {
 		unixmode |= (smb_fname->st.st_ex_mode & (S_IWUSR|S_IWGRP|S_IWOTH));
 	}
 
@@ -1305,6 +1313,10 @@ struct timespec get_create_timespec(connection_struct *conn,
 				struct files_struct *fsp,
 				const struct smb_filename *smb_fname)
 {
+	if (fsp != NULL) {
+		struct files_struct *meta_fsp = metadata_fsp(fsp);
+		return meta_fsp->fsp_name->st.st_ex_btime;
+	}
 	return smb_fname->st.st_ex_btime;
 }
 

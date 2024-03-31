@@ -1,36 +1,46 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    charset defines
    Copyright (C) Andrew Tridgell 2001
    Copyright (C) Jelmer Vernooij 2002
-   
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-/* This is a public header file that is installed as part of Samba. 
- * If you remove any functions or change their signature, update 
+/* This is a public header file that is installed as part of Samba.
+ * If you remove any functions or change their signature, update
  * the so version number. */
 
 #ifndef __CHARSET_H__
 #define __CHARSET_H__
 
 #include <talloc.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 /* this defines the charset types used in samba */
-typedef enum {CH_UTF16LE=0, CH_UTF16=0, CH_UNIX, CH_DOS, CH_UTF8, CH_UTF16BE, CH_UTF16MUNGED} charset_t;
-
-#define NUM_CHARSETS 7
+typedef enum {
+	CH_UTF16LE = 0,
+	CH_UTF16 = 0,
+	CH_UNIX,
+	CH_DOS,
+	CH_UTF8,
+	CH_UTF16BE,
+	CH_UTF16MUNGED,
+	/* The number of distinct character sets. */
+	NUM_CHARSETS
+} charset_t;
 
 /*
  * SMB UCS2 (16-bit unicode) internal type.
@@ -97,22 +107,37 @@ size_t ucs2_align(const void *base_ptr, const void *p, int flags);
 
 /**
 return the number of bytes occupied by a buffer in CH_UTF16 format
-the result includes the null termination
 **/
 size_t utf16_len(const void *buf);
 
 /**
 return the number of bytes occupied by a buffer in CH_UTF16 format
 the result includes the null termination
+**/
+size_t utf16_null_terminated_len(const void *buf);
+
+/**
+return the number of bytes occupied by a buffer in CH_UTF16 format
 limited by 'n' bytes
 **/
 size_t utf16_len_n(const void *src, size_t n);
 
+/**
+return the number of bytes occupied by a buffer in CH_UTF16 format
+the result includes the null termination
+limited by 'n' bytes
+**/
+size_t utf16_null_terminated_len_n(const void *src, size_t n);
+
+unsigned char *talloc_utf16_strlendup(TALLOC_CTX *mem_ctx, const char *str, size_t len);
+unsigned char *talloc_utf16_strdup(TALLOC_CTX *mem_ctx, const char *str);
+unsigned char *talloc_utf16_strndup(TALLOC_CTX *mem_ctx, const char *str, size_t n);
+
 char *strchr_m(const char *s, char c);
 /**
  * Calculate the number of units (8 or 16-bit, depending on the
- * destination charset), that would be needed to convert the input
- * string which is expected to be in in src_charset encoding to the
+ * destination charset) that would be needed to convert the input
+ * string, which is expected to be in src_charset encoding, to the
  * destination charset (which should be a unicode charset).
  */
 size_t strlen_m_ext_handle(struct smb_iconv_handle *ic,
@@ -159,6 +184,11 @@ char *strrchr_m(const char *s, char c);
 char *strchr_m(const char *s, char c);
 char *strstr_m(const char *src, const char *findstr);
 
+bool utf8_check(const char *input, size_t maxlen,
+		size_t *byte_len,
+		size_t *char_len,
+		size_t *utf16_len);
+
 bool push_ascii_talloc(TALLOC_CTX *ctx, char **dest, const char *src, size_t *converted_size);
 bool push_ucs2_talloc(TALLOC_CTX *ctx, smb_ucs2_t **dest, const char *src, size_t *converted_size);
 bool push_utf8_talloc(TALLOC_CTX *ctx, char **dest, const char *src, size_t *converted_size);
@@ -168,13 +198,13 @@ bool pull_utf8_talloc(TALLOC_CTX *ctx, char **dest, const char *src, size_t *con
 ssize_t push_string(void *dest, const char *src, size_t dest_len, int flags);
 ssize_t pull_string(char *dest, const void *src, size_t dest_len, size_t src_len, int flags);
 
-bool convert_string_talloc(TALLOC_CTX *ctx, 
-			   charset_t from, charset_t to, 
-			   void const *src, size_t srclen, 
+bool convert_string_talloc(TALLOC_CTX *ctx,
+			   charset_t from, charset_t to,
+			   void const *src, size_t srclen,
 			   void *dest, size_t *converted_size);
 
 bool convert_string(charset_t from, charset_t to,
-		      void const *src, size_t srclen, 
+		      void const *src, size_t srclen,
 		      void *dest, size_t destlen,
 		      size_t *converted_size);
 bool convert_string_error(charset_t from, charset_t to,
@@ -183,8 +213,8 @@ bool convert_string_error(charset_t from, charset_t to,
 			  size_t *converted_size);
 
 struct smb_iconv_handle *get_iconv_handle(void);
-struct smb_iconv_handle *get_iconv_testing_handle(TALLOC_CTX *mem_ctx, 
-						  const char *dos_charset, 
+struct smb_iconv_handle *get_iconv_testing_handle(TALLOC_CTX *mem_ctx,
+						  const char *dos_charset,
 						  const char *unix_charset,
 						  bool use_builtin_handlers);
 struct smb_iconv_handle *reinit_iconv_handle(TALLOC_CTX *mem_ctx,
@@ -226,7 +256,7 @@ struct smb_iconv_handle *smb_iconv_handle_reinit(TALLOC_CTX *mem_ctx,
 
 bool convert_string_handle(struct smb_iconv_handle *ic,
 				charset_t from, charset_t to,
-				void const *src, size_t srclen, 
+				void const *src, size_t srclen,
 				void *dest, size_t destlen, size_t *converted_size);
 bool convert_string_error_handle(struct smb_iconv_handle *ic,
 				 charset_t from, charset_t to,
@@ -236,16 +266,16 @@ bool convert_string_error_handle(struct smb_iconv_handle *ic,
 
 bool convert_string_talloc_handle(TALLOC_CTX *ctx,
 				       struct smb_iconv_handle *ic,
-				       charset_t from, charset_t to, 
-				       void const *src, size_t srclen, 
+				       charset_t from, charset_t to,
+				       void const *src, size_t srclen,
 				       void *dest, size_t *converted_size);
 /* iconv */
 smb_iconv_t smb_iconv_open(const char *tocode, const char *fromcode);
 int smb_iconv_close(smb_iconv_t cd);
-size_t smb_iconv(smb_iconv_t cd, 
+size_t smb_iconv(smb_iconv_t cd,
 		 const char **inbuf, size_t *inbytesleft,
 		 char **outbuf, size_t *outbytesleft);
-smb_iconv_t smb_iconv_open_ex(TALLOC_CTX *mem_ctx, const char *tocode, 
+smb_iconv_t smb_iconv_open_ex(TALLOC_CTX *mem_ctx, const char *tocode,
 			      const char *fromcode, bool use_builtin_handlers);
 
 void smb_init_locale(void);

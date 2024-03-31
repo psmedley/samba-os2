@@ -23,62 +23,7 @@
 
 
 import sys
-
-# parsed error data
-Errors = []
-
-# error data model
-class ErrorDef:
-
-    def __init__(self):
-        self.err_code = ""
-        self.err_define = None
-        self.err_string = ""
-        self.isWinError = False
-        self.linenum = ""
-
-def escapeString( input ):
-    output = input.replace('"','\\"')
-    output = output.replace("\\<","\\\\<")
-    output = output.replace('\t',"")
-    return output
-
-def parseErrorDescriptions( input_file, isWinError ):
-    # read in the data
-    fileContents = open(input_file,"r")
-    count = 0
-    for line in fileContents:
-        content = line.strip().split(None,1)
-        # start new error definition ?
-        if len(content) == 0:
-            continue
-        if line.startswith("0x"):
-            newError = ErrorDef()
-            newError.err_code = content[0]
-            # escape the usual suspects
-            if len(content) > 1:
-                newError.err_string = escapeString(content[1])
-            newError.linenum = count
-            newError.isWinError = isWinError
-            Errors.append(newError)
-        else:
-            if len(Errors) == 0:
-                print("Error parsing file as line %d"%count)
-                sys.exit()
-            err = Errors[-1]
-            if err.err_define is None:
-                err.err_define = "HRES_" + content[0]
-            else:
-                if len(content) > 0:
-                    desc =  escapeString(line.strip())
-                    if len(desc):
-                        if err.err_string == "":
-                            err.err_string = desc
-                        else:
-                            err.err_string = err.err_string + " " + desc
-        count = count + 1
-    fileContents.close()
-    print("parsed %d lines generated %d error definitions"%(count,len(Errors)))
+from gen_error_common import parseErrorDescriptions
 
 def write_license(out_file):
     out_file.write("/*\n")
@@ -103,7 +48,7 @@ def write_license(out_file):
     out_file.write(" */\n")
     out_file.write("\n")
 
-def generateHeaderFile(out_file):
+def generateHeaderFile(out_file, errors):
     write_license(out_file)
     out_file.write("#ifndef _HRESULT_H_\n")
     out_file.write("#define _HRESULT_H_\n\n")
@@ -128,8 +73,8 @@ def generateHeaderFile(out_file):
     out_file.write(" */\n")
     out_file.write("\n")
 
-    for err in Errors:
-        line = "#define {0:49} HRES_ERROR({1})\n".format(err.err_define ,err.err_code)
+    for err in errors:
+        line = "#define {0:49} HRES_ERROR(0x{1:08X})\n".format(err.err_define ,err.err_code)
         out_file.write(line)
     out_file.write("\nconst char *hresult_errstr_const(HRESULT err_code);\n")
     out_file.write("\nconst char *hresult_errstr(HRESULT err_code);\n")
@@ -140,7 +85,7 @@ def generateHeaderFile(out_file):
     out_file.write("\n\n\n#endif /*_HRESULT_H_*/")
 
 
-def generateSourceFile(out_file):
+def generateSourceFile(out_file, errors):
     write_license(out_file)
     out_file.write("#include \"includes.h\"\n")
     out_file.write("#include \"hresult.h\"\n")
@@ -149,79 +94,111 @@ def generateSourceFile(out_file):
     out_file.write(" * see http://msdn.microsoft.com/en-us/library/cc704587.aspx\n")
     out_file.write(" */\n")
     out_file.write("\n")
-    out_file.write("static const struct {\n")
-    out_file.write("	HRESULT error_code;\n")
-    out_file.write("	const char *error_str;\n")
-    out_file.write("	const char *error_message;\n")
-    out_file.write("} hresult_errs[] = {\n")
-
-    for err in Errors:
-        out_file.write("	{\n")
-        if err.isWinError:
-            out_file.write("		HRESULT_FROM_WIN32(%s),\n"%err.err_define)
-            out_file.write("		\"HRESULT_FROM_WIN32(%s)\",\n"%err.err_define)
-        else:
-            out_file.write("		%s,\n"%err.err_define)
-            out_file.write("		\"%s\",\n"%err.err_define)
-        out_file.write("		\"%s\"\n"%err.err_string)
-        out_file.write("	},\n")
-    out_file.write("};\n")
-    out_file.write("\n")
     out_file.write("const char *hresult_errstr_const(HRESULT err_code)\n")
     out_file.write("{\n")
     out_file.write("	const char *result = NULL;\n")
-    out_file.write("	int i;\n")
-    out_file.write("	for (i = 0; i < ARRAY_SIZE(hresult_errs); ++i) {\n")
-    out_file.write("		if (HRES_IS_EQUAL(err_code, hresult_errs[i].error_code)) {\n")
-    out_file.write("			result = hresult_errs[i].error_message;\n")
-    out_file.write("			break;\n")
-    out_file.write("		}\n")
+    out_file.write("\n")
+    out_file.write("	switch (HRES_ERROR_V(err_code)) {\n")
+    for err in errors:
+        out_file.write(f'            case 0x{err.err_code:X}:\n')
+        out_file.write(f'                result = \"{err.err_define}\";\n')
+        out_file.write(f'                break;\n')
     out_file.write("	}\n")
+    out_file.write("\n")
     out_file.write("	/* convert & check win32 error space? */\n")
     out_file.write("	if (result == NULL && HRESULT_IS_LIKELY_WERR(err_code)) {\n")
     out_file.write("		WERROR wErr = W_ERROR(WIN32_FROM_HRESULT(err_code));\n")
     out_file.write("		result = get_friendly_werror_msg(wErr);\n")
     out_file.write("	}\n")
     out_file.write("	return result;\n")
-    out_file.write("};\n")
+    out_file.write("}\n")
     out_file.write("\n")
     out_file.write("const char *hresult_errstr(HRESULT err_code)\n")
     out_file.write("{\n")
     out_file.write("	static char msg[22];\n")
-    out_file.write("	int i;\n")
     out_file.write("\n")
-    out_file.write("	for (i = 0; i < ARRAY_SIZE(hresult_errs); i++) {\n")
-    out_file.write("		if (HRES_IS_EQUAL(err_code, hresult_errs[i].error_code)) {\n")
-    out_file.write("			return hresult_errs[i].error_str;\n")
-    out_file.write("		}\n")
+    out_file.write("	switch (HRES_ERROR_V(err_code)) {\n")
+    for err in errors:
+        out_file.write(f'            case 0x{err.err_code:X}:\n')
+        out_file.write(f'                return \"{err.err_string}\";\n')
+        out_file.write(f'                break;\n')
     out_file.write("	}\n")
     out_file.write("	snprintf(msg, sizeof(msg), \"HRES code 0x%08x\", HRES_ERROR_V(err_code));\n")
     out_file.write("	return msg;\n")
-    out_file.write("};\n")
+    out_file.write("}\n")
+
+def generatePythonFile(out_file, errors):
+    out_file.write("/*\n")
+    out_file.write(" * Errors generated from\n")
+    out_file.write(" * [MS-ERREF] http://msdn.microsoft.com/en-us/library/cc704587.aspx\n")
+    out_file.write(" */\n")
+    out_file.write("#include \"lib/replace/system/python.h\"\n")
+    out_file.write("#include \"python/py3compat.h\"\n")
+    out_file.write("#include \"includes.h\"\n\n")
+    out_file.write("static struct PyModuleDef moduledef = {\n")
+    out_file.write("\tPyModuleDef_HEAD_INIT,\n")
+    out_file.write("\t.m_name = \"hresult\",\n")
+    out_file.write("\t.m_doc = \"HRESULT defines\",\n")
+    out_file.write("\t.m_size = -1,\n")
+    out_file.write("\t};\n\n")
+    out_file.write("MODULE_INIT_FUNC(hresult)\n")
+    out_file.write("{\n")
+    out_file.write("\tPyObject *m = NULL;\n")
+    out_file.write("\tPyObject *py_obj = NULL;\n")
+    out_file.write("\tint ret;\n\n")
+    out_file.write("\tm = PyModule_Create(&moduledef);\n")
+    out_file.write("\tif (m == NULL) {\n")
+    out_file.write("\t\treturn NULL;\n")
+    out_file.write("\t}\n\n")
+    for err in errors:
+        out_file.write(f"\tpy_obj = PyLong_FromUnsignedLongLong(HRES_ERROR_V({err.err_define}));\n")
+        out_file.write(f"\tret = PyModule_AddObject(m, \"{err.err_define}\", py_obj);\n")
+        out_file.write("\tif (ret) {\n")
+        out_file.write("\t\tPy_XDECREF(py_obj);\n")
+        out_file.write("\t\tPy_DECREF(m);\n")
+        out_file.write("\t\treturn NULL;\n")
+        out_file.write("\t}\n")
+    out_file.write("\n")
+    out_file.write("\treturn m;\n")
+    out_file.write("}\n")
+
+def transformErrorName(error_name):
+    return "HRES_" + error_name
 
 # Very simple script to generate files hresult.c & hresult.h
-# The script simply takes a text file as input, format of input file is
-# very simple and is just the content of a html table ( such as that found
-# in http://msdn.microsoft.com/en-us/library/cc704587.aspx ) copied and
-# pasted into a text file
+# This script takes four inputs:
+# [1]: The name of the text file which is the content of an HTML table
+#      (such as that found at https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/705fb797-2175-4a90-b5a3-3918024b10b8)
+#      copied and pasted.
+# [2]: The name of the output generated header file with HResult #defines
+# [3]: The name of the output generated source file with C arrays
+# [4]: The name of the output generated python file
 
 def main ():
     input_file1 = None
-    filename = "hresult"
-    headerfile_name = filename + ".h"
-    sourcefile_name = filename + ".c"
-    if len(sys.argv) > 1:
+
+    if len(sys.argv) == 5:
         input_file1 =  sys.argv[1]
+        gen_headerfile_name = sys.argv[2]
+        gen_sourcefile_name = sys.argv[3]
+        gen_pythonfile_name = sys.argv[4]
     else:
-        print("usage: %s winerrorfile"%(sys.argv[0]))
+        print("usage: %s winerrorfile headerfile sourcefile pythonfile"%(sys.argv[0]))
         sys.exit()
 
-    parseErrorDescriptions(input_file1, False)
-    out_file = open(headerfile_name,"w")
-    generateHeaderFile(out_file)
-    out_file.close()
-    out_file = open(sourcefile_name,"w")
-    generateSourceFile(out_file)
+    # read in the data
+    with open(input_file1) as file_contents:
+        errors = parseErrorDescriptions(file_contents, False, transformErrorName)
+
+    print(f"writing new header file: {gen_headerfile_name}")
+    with open(gen_headerfile_name,"w") as out_file:
+        generateHeaderFile(out_file, errors)
+    print(f"writing new source file: {gen_sourcefile_name}")
+    with open(gen_sourcefile_name,"w") as out_file:
+        generateSourceFile(out_file, errors)
+    print(f"writing new python file: {gen_pythonfile_name}")
+    with open(gen_pythonfile_name,"w") as out_file:
+        generatePythonFile(out_file, errors)
 
 if __name__ == '__main__':
 

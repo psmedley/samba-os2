@@ -8,11 +8,12 @@ import "misc.idl";
   pointer_default(unique),
   helpstring("SMB Witness Service"),
   helper("../librpc/ndr/ndr_witness.h"),
-  endpoint("ncacn_ip_tcp:")
+  endpoint("ncacn_ip_tcp:"),
+  authservice("cifs")
 ]
 interface witness
 {
-	typedef [v1_enum] enum {
+	typedef [flag(NDR_PAHEX),v1_enum,public] enum {
 		WITNESS_V1 = 0x00010001,
 		WITNESS_V2 = 0x00020000,
 		WITNESS_UNSPECIFIED_VERSION = 0xFFFFFFFF
@@ -21,7 +22,7 @@ interface witness
 	/*****************/
 	/* Function 0x00 */
 
-	typedef [enum16bit] enum {
+	typedef [flag(NDR_PAHEX),enum16bit] enum {
 		WITNESS_STATE_UNKNOWN     = 0x00,
 		WITNESS_STATE_AVAILABLE   = 0x01,
 		WITNESS_STATE_UNAVAILABLE = 0xff
@@ -42,7 +43,7 @@ interface witness
 		witness_interfaceInfo_flags flags;
 	} witness_interfaceInfo;
 
-	typedef struct {
+	typedef [public] struct {
 		uint32 num_interfaces;
 		[size_is(num_interfaces)] witness_interfaceInfo *interfaces;
 	} witness_interfaceList;
@@ -79,7 +80,7 @@ interface witness
 		WITNESS_NOTIFY_IP_CHANGE       = 4
 	} witness_notifyResponse_type;
 
-	typedef [v1_enum] enum {
+	typedef [flag(NDR_PAHEX),v1_enum] enum {
 		WITNESS_RESOURCE_STATE_UNKNOWN     = 0x00,
 		WITNESS_RESOURCE_STATE_AVAILABLE   = 0x01,
 		WITNESS_RESOURCE_STATE_UNAVAILABLE = 0xff
@@ -134,7 +135,7 @@ interface witness
 	/*****************/
 	/* Function 0x04 */
 
-	typedef [bitmap32bit] bitmap {
+	typedef [bitmap32bit,public] bitmap {
 		WITNESS_REGISTER_NONE            = 0x00,
 		WITNESS_REGISTER_IP_NOTIFICATION = 0x01
 	} witness_RegisterEx_flags;

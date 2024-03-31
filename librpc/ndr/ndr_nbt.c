@@ -98,7 +98,7 @@ static enum ndr_err_code ndr_pull_component(struct ndr_pull *ndr,
 /**
   pull a nbt_string from the wire
 */
-_PUBLIC_ enum ndr_err_code ndr_pull_nbt_string(struct ndr_pull *ndr, int ndr_flags, const char **s)
+_PUBLIC_ enum ndr_err_code ndr_pull_nbt_string(struct ndr_pull *ndr, ndr_flags_type ndr_flags, const char **s)
 {
 	uint32_t offset = ndr->offset;
 	uint32_t max_offset = offset;
@@ -141,7 +141,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_nbt_string(struct ndr_pull *ndr, int ndr_fla
 /**
   push a nbt string to the wire
 */
-_PUBLIC_ enum ndr_err_code ndr_push_nbt_string(struct ndr_push *ndr, int ndr_flags, const char *s)
+_PUBLIC_ enum ndr_err_code ndr_push_nbt_string(struct ndr_push *ndr, ndr_flags_type ndr_flags, const char *s)
 {
 	return ndr_push_dns_string_list(ndr,
 					&ndr->dns_string_list,
@@ -152,25 +152,25 @@ _PUBLIC_ enum ndr_err_code ndr_push_nbt_string(struct ndr_push *ndr, int ndr_fla
 
 
 /* Manually modified to handle the dom_sid being optional based on if it is present or all zero */
-enum ndr_err_code ndr_push_NETLOGON_SAM_LOGON_REQUEST(struct ndr_push *ndr, int ndr_flags, const struct NETLOGON_SAM_LOGON_REQUEST *r)
+enum ndr_err_code ndr_push_NETLOGON_SAM_LOGON_REQUEST(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct NETLOGON_SAM_LOGON_REQUEST *r)
 {
 	if (ndr_flags & NDR_SCALARS) {
 		NDR_CHECK(ndr_push_align(ndr, 4));
 		NDR_CHECK(ndr_push_uint16(ndr, NDR_SCALARS, r->request_count));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_string(ndr, NDR_SCALARS, r->computer_name));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_string(ndr, NDR_SCALARS, r->user_name));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_ASCII|LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_string(ndr, NDR_SCALARS, r->mailslot_name));
 			ndr->flags = _flags_save_string;
@@ -179,7 +179,7 @@ enum ndr_err_code ndr_push_NETLOGON_SAM_LOGON_REQUEST(struct ndr_push *ndr, int 
 		NDR_CHECK(ndr_push_uint32(ndr, NDR_SCALARS, ndr_size_dom_sid0(&r->sid, ndr->flags)));
 		if (ndr_size_dom_sid0(&r->sid, ndr->flags)) {
 			struct ndr_push *_ndr_sid;
-			uint32_t _flags_save_DATA_BLOB = ndr->flags;
+			libndr_flags _flags_save_DATA_BLOB = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_ALIGN4);
 			NDR_CHECK(ndr_push_DATA_BLOB(ndr, NDR_SCALARS, r->_pad));
 			ndr->flags = _flags_save_DATA_BLOB;
@@ -197,25 +197,25 @@ enum ndr_err_code ndr_push_NETLOGON_SAM_LOGON_REQUEST(struct ndr_push *ndr, int 
 }
 
 /* Manually modified to handle the dom_sid being optional based on if it is present (size is non-zero) or not */
-enum ndr_err_code ndr_pull_NETLOGON_SAM_LOGON_REQUEST(struct ndr_pull *ndr, int ndr_flags, struct NETLOGON_SAM_LOGON_REQUEST *r)
+enum ndr_err_code ndr_pull_NETLOGON_SAM_LOGON_REQUEST(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct NETLOGON_SAM_LOGON_REQUEST *r)
 {
 	if (ndr_flags & NDR_SCALARS) {
 		NDR_CHECK(ndr_pull_align(ndr, 4));
 		NDR_CHECK(ndr_pull_uint16(ndr, NDR_SCALARS, &r->request_count));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_string(ndr, NDR_SCALARS, &r->computer_name));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_string(ndr, NDR_SCALARS, &r->user_name));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_ASCII|LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_string(ndr, NDR_SCALARS, &r->mailslot_name));
 			ndr->flags = _flags_save_string;
@@ -223,7 +223,7 @@ enum ndr_err_code ndr_pull_NETLOGON_SAM_LOGON_REQUEST(struct ndr_pull *ndr, int 
 		NDR_CHECK(ndr_pull_uint32(ndr, NDR_SCALARS, &r->acct_control));
 		NDR_CHECK(ndr_pull_uint32(ndr, NDR_SCALARS, &r->sid_size));
 		if (r->sid_size) {
-			uint32_t _flags_save_DATA_BLOB = ndr->flags;
+			libndr_flags _flags_save_DATA_BLOB = ndr->flags;
 			struct ndr_pull *_ndr_sid;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_ALIGN4);
 			NDR_CHECK(ndr_pull_DATA_BLOB(ndr, NDR_SCALARS, &r->_pad));
@@ -244,10 +244,10 @@ enum ndr_err_code ndr_pull_NETLOGON_SAM_LOGON_REQUEST(struct ndr_pull *ndr, int 
 }
 
 /* Manually modified to only push some parts of the structure if certain flags are set */
-enum ndr_err_code ndr_push_NETLOGON_SAM_LOGON_RESPONSE_EX_with_flags(struct ndr_push *ndr, int ndr_flags, const struct NETLOGON_SAM_LOGON_RESPONSE_EX *r)
+enum ndr_err_code ndr_push_NETLOGON_SAM_LOGON_RESPONSE_EX_with_flags(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct NETLOGON_SAM_LOGON_RESPONSE_EX *r)
 {
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_FLAG_NOALIGN);
 		if (ndr_flags & NDR_SCALARS) {
 			NDR_CHECK(ndr_push_align(ndr, 4));
@@ -288,11 +288,11 @@ enum ndr_err_code ndr_push_NETLOGON_SAM_LOGON_RESPONSE_EX_with_flags(struct ndr_
 }
 
 /* Manually modified to only pull some parts of the structure if certain flags provided */
-enum ndr_err_code ndr_pull_NETLOGON_SAM_LOGON_RESPONSE_EX_with_flags(struct ndr_pull *ndr, int ndr_flags, struct NETLOGON_SAM_LOGON_RESPONSE_EX *r,
+enum ndr_err_code ndr_pull_NETLOGON_SAM_LOGON_RESPONSE_EX_with_flags(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct NETLOGON_SAM_LOGON_RESPONSE_EX *r,
 								     uint32_t nt_version_flags)
 {
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ZERO_STRUCTP(r);
 		ndr_set_flags(&ndr->flags, LIBNDR_FLAG_NOALIGN);
 		if (ndr_flags & NDR_SCALARS) {
@@ -336,7 +336,7 @@ enum ndr_err_code ndr_pull_NETLOGON_SAM_LOGON_RESPONSE_EX_with_flags(struct ndr_
 	return NDR_ERR_SUCCESS;
 }
 
-_PUBLIC_ enum ndr_err_code ndr_push_netlogon_samlogon_response(struct ndr_push *ndr, int ndr_flags, const struct netlogon_samlogon_response *r)
+_PUBLIC_ enum ndr_err_code ndr_push_netlogon_samlogon_response(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct netlogon_samlogon_response *r)
 {
 	if (r->ntver == NETLOGON_NT_VERSION_1) {
 		NDR_CHECK(ndr_push_NETLOGON_SAM_LOGON_RESPONSE_NT40(
@@ -354,7 +354,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_netlogon_samlogon_response(struct ndr_push *
 	return NDR_ERR_SUCCESS;
 }
 
-_PUBLIC_ enum ndr_err_code ndr_pull_netlogon_samlogon_response(struct ndr_pull *ndr, int ndr_flags, struct netlogon_samlogon_response *r)
+_PUBLIC_ enum ndr_err_code ndr_pull_netlogon_samlogon_response(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct netlogon_samlogon_response *r)
 {
 	if (ndr->data_size < 8) {
 		return NDR_ERR_BUFSIZE;
@@ -379,7 +379,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_netlogon_samlogon_response(struct ndr_pull *
 			ndr, ndr_flags, &r->data.nt5_ex, r->ntver));
 		if (ndr->offset < ndr->data_size) {
 			return ndr_pull_error(ndr, NDR_ERR_UNREAD_BYTES,
-						 "not all bytes consumed ofs[%u] size[%u]",
+						 "not all bytes consumed ofs[%"PRIu32"] size[%"PRIu32"]",
 						 ndr->offset, ndr->data_size);
 		}
 	} else if (r->ntver & NETLOGON_NT_VERSION_5) {
@@ -392,7 +392,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_netlogon_samlogon_response(struct ndr_pull *
 	return NDR_ERR_SUCCESS;
 }
 
-_PUBLIC_ void ndr_print_netlogon_samlogon_response(struct ndr_print *ndr, const char *name, struct netlogon_samlogon_response *r)
+_PUBLIC_ void ndr_print_netlogon_samlogon_response(struct ndr_print *ndr, const char *name, const struct netlogon_samlogon_response *r)
 {
 	ndr_print_struct(ndr, name, "netlogon_samlogon_response");
 	if (r == NULL) { ndr_print_null(ndr); return; }

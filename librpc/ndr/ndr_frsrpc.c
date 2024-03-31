@@ -23,12 +23,12 @@
 #include "librpc/gen_ndr/ndr_frsrpc.h"
 
 enum ndr_err_code ndr_push_frsrpc_CommPktChunkCtr(struct ndr_push *ndr,
-					int ndr_flags,
+					ndr_flags_type ndr_flags,
 					const struct frsrpc_CommPktChunkCtr *r)
 {
 	uint32_t cntr_chunks_0;
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_FLAG_NOALIGN);
 		if (ndr_flags & NDR_SCALARS) {
 			NDR_CHECK(ndr_push_align(ndr, 2));
@@ -54,12 +54,12 @@ enum ndr_err_code ndr_push_frsrpc_CommPktChunkCtr(struct ndr_push *ndr,
 } while (0)
 
 enum ndr_err_code ndr_pull_frsrpc_CommPktChunkCtr(struct ndr_pull *ndr,
-					int ndr_flags,
+					ndr_flags_type ndr_flags,
 					struct frsrpc_CommPktChunkCtr *r)
 {
 	uint32_t cntr_chunks_0;
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_FLAG_NOALIGN);
 		if (ndr_flags & NDR_SCALARS) {
 			uint32_t remaining = ndr->data_size - ndr->offset;
@@ -84,7 +84,7 @@ enum ndr_err_code ndr_pull_frsrpc_CommPktChunkCtr(struct ndr_pull *ndr,
 }
 
 size_t ndr_size_frsrpc_CommPktChunkCtr(const struct frsrpc_CommPktChunkCtr *r,
-				       int flags)
+				       libndr_flags flags)
 {
 	flags |= LIBNDR_FLAG_NOALIGN;
 	return ndr_size_struct(r, flags,

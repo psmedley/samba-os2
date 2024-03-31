@@ -64,7 +64,7 @@ static struct dcesrv_assoc_group *dcesrv_assoc_group_reference(struct dcesrv_con
 				transport);
 
 		DBG_NOTICE("assoc_group 0x%08x (transport %s) "
-			   "is not available on transport %s",
+			   "is not available on transport %s\n",
 			   id, at, ct);
 		return NULL;
 	}
@@ -80,6 +80,8 @@ static int dcesrv_assoc_group_destructor(struct dcesrv_assoc_group *assoc_group)
 		DEBUG(0,(__location__ ": Failed to remove assoc_group 0x%08x\n",
 			 assoc_group->id));
 	}
+	SMB_ASSERT(assoc_group->dce_ctx->assoc_groups_num > 0);
+	assoc_group->dce_ctx->assoc_groups_num -= 1;
 	return 0;
 }
 
@@ -114,6 +116,9 @@ static struct dcesrv_assoc_group *dcesrv_assoc_group_new(struct dcesrv_connectio
 
 	talloc_set_destructor(assoc_group, dcesrv_assoc_group_destructor);
 
+	SMB_ASSERT(dce_ctx->assoc_groups_num < UINT16_MAX);
+	dce_ctx->assoc_groups_num += 1;
+
 	return assoc_group;
 }
 
@@ -139,7 +144,7 @@ NTSTATUS dcesrv_assoc_group_find_s4(
 	 *
 	 * We have to do this when it is not run as a single process,
 	 * because then it can't see the other valid association
-	 * groups.  We handle this genericly for all endpoints not
+	 * groups.  We handle this generically for all endpoints not
 	 * running in single process mode.
 	 *
 	 * We know which endpoint we are on even before checking the
@@ -269,6 +274,8 @@ static void dcesrv_sock_accept(struct stream_connection *srv_conn)
 			return;
 		}
 		socket_set_flags(srv_conn->socket, SOCKET_FLAG_NOCLOSE);
+		/* as server we want to fail early */
+		tstream_bsd_fail_readv_first_error(dcesrv_conn->stream, true);
 	}
 
 	dcesrv_conn->local_address = srv_conn->local_address;

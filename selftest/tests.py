@@ -95,6 +95,7 @@ planpythontestsuite("none", "samba.tests.samba3sam")
 planpythontestsuite("none", "samba.tests.dsdb_api")
 planpythontestsuite("none", "samba.tests.smbconf")
 planpythontestsuite("none", "samba.tests.logfiles")
+planpythontestsuite("none", "samba.tests.conditional_ace_claims")
 planpythontestsuite(
     "none", "wafsamba.tests.test_suite",
     extra_path=[os.path.join(samba4srcdir, "..", "buildtools"),
@@ -233,7 +234,9 @@ planpythontestsuite("none", "samba.tests.glue")
 planpythontestsuite("none", "samba.tests.tdb_util")
 planpythontestsuite("none", "samba.tests.samdb")
 planpythontestsuite("none", "samba.tests.samdb_api")
-planpythontestsuite("none", "samba.tests.ndr")
+planpythontestsuite("none", "samba.tests.ndr.gkdi")
+planpythontestsuite("none", "samba.tests.ndr.gmsa")
+planpythontestsuite("none", "samba.tests.ndr.wbint")
 
 if with_pam:
     env = "ad_member"
@@ -456,6 +459,8 @@ plantestsuite("samba.unittests.auth.sam", "none",
 if have_heimdal_support and not using_system_gssapi:
     plantestsuite("samba.unittests.auth.heimdal_gensec_unwrap_des", "none",
                   [valgrindify(os.path.join(bindir(), "test_heimdal_gensec_unwrap_des"))])
+plantestsuite("samba.unittests.test_wsp_parser", "none",
+              [os.path.join(bindir(), "default/libcli/wsp/test_wsp_parser")] + [configuration])
 if with_elasticsearch_backend:
     plantestsuite("samba.unittests.mdsparser_es", "none",
                   [os.path.join(bindir(), "default/source3/test_mdsparser_es")] + [configuration])
@@ -477,6 +482,10 @@ plantestsuite("samba.unittests.adouble", "none",
               [os.path.join(bindir(), "test_adouble")])
 plantestsuite("samba.unittests.gnutls_aead_aes_256_cbc_hmac_sha512", "none",
               [os.path.join(bindir(), "test_gnutls_aead_aes_256_cbc_hmac_sha512")])
+plantestsuite("samba.unittests.gnutls_sp800_108", "none",
+              [os.path.join(bindir(), "test_gnutls_sp800_108")])
+plantestsuite("samba.unittests.gkdi_key_derivation", "none",
+              [os.path.join(bindir(), "test_gkdi_key_derivation")])
 plantestsuite("samba.unittests.encode_decode", "none",
               [os.path.join(bindir(), "test_encode_decode")])
 
@@ -485,3 +494,10 @@ plantestsuite("samba.unittests.compression.lzxpress_huffman", "none",
 plantestsuite("samba.unittests.compression.lzxpress_plain", "none",
               [os.path.join(bindir(),
                             "default/lib/compression/test_lzxpress_plain")])
+
+plantestsuite("samba.unittests.sddl_conditional_ace", "none",
+              [os.path.join(bindir(), "test_sddl_conditional_ace")])
+plantestsuite("samba.unittests.run_conditional_ace", "none",
+              [os.path.join(bindir(), "test_run_conditional_ace")])
+plantestsuite("samba.unittests.claim_conversion", "none",
+              [os.path.join(bindir(), "test_claim_conversion")])

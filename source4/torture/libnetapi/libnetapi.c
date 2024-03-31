@@ -32,6 +32,7 @@ bool torture_libnetapi_init_context(struct torture_context *tctx,
 	NET_API_STATUS status;
 	struct libnetapi_ctx *ctx;
 	TALLOC_CTX *frame = talloc_stackframe();
+	struct cli_credentials *creds = samba_cmdline_get_creds();
 
 	if (!lp_load_global(lpcfg_configfile(tctx->lp_ctx))) {
 		fprintf(stderr, "error loading %s\n", lpcfg_configfile(tctx->lp_ctx));
@@ -41,16 +42,11 @@ bool torture_libnetapi_init_context(struct torture_context *tctx,
 
 	load_interfaces();
 
-	status = libnetapi_net_init(&ctx);
+	status = libnetapi_net_init(&ctx, tctx->lp_ctx, creds);
 	if (status != 0) {
 		talloc_free(frame);
 		return false;
 	}
-
-	libnetapi_set_username(ctx,
-		cli_credentials_get_username(samba_cmdline_get_creds()));
-	libnetapi_set_password(ctx,
-		cli_credentials_get_password(samba_cmdline_get_creds()));
 
 	*ctx_p = ctx;
 
@@ -72,7 +68,7 @@ static bool torture_libnetapi_initialize(struct torture_context *tctx)
 	status = libnetapi_init(&ctx);
 
 	torture_assert(tctx, ctx != NULL, "Failed to get a libnetapi_ctx");
-	torture_assert_int_equal(tctx, status, 0, "libnetapi_init failed despite alredy being set up");
+	torture_assert_int_equal(tctx, status, 0, "libnetapi_init failed despite already being set up");
 
 	libnetapi_free(ctx);
 

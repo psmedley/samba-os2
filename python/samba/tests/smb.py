@@ -39,7 +39,7 @@ test_file = os.path.join(test_dir, 'testing').replace('/', '\\')
 
 class SMBTests(samba.tests.TestCase):
     def setUp(self):
-        super(SMBTests, self).setUp()
+        super().setUp()
         self.server = os.environ["SERVER"]
         creds = self.insta_creds(template=self.get_credentials())
 
@@ -51,7 +51,7 @@ class SMBTests(samba.tests.TestCase):
         self.smb_conn.mkdir(test_dir)
 
     def tearDown(self):
-        super(SMBTests, self).tearDown()
+        super().tearDown()
         try:
             self.smb_conn.deltree(test_dir)
         except:
@@ -109,7 +109,7 @@ class SMBTests(samba.tests.TestCase):
             for i in range(1, 4):
                 contents = "I'm file {0} in dir {1}!".format(i, subdir)
                 path = self.make_sysvol_path(subdir, "file-{0}.txt".format(i))
-                self.smb_conn.savefile(path, test_contents.encode('utf8'))
+                self.smb_conn.savefile(path, contents.encode('utf8'))
                 filepaths.append(path)
 
         # sanity-check these dirs/files exist
@@ -147,7 +147,7 @@ class SMBTests(samba.tests.TestCase):
         """Returns whether a regular file exists (by trying to open it)"""
         try:
             self.smb_conn.loadfile(filepath)
-            exists = True;
+            exists = True
         except NTSTATUSError as err:
             if (err.args[0] == NT_STATUS_OBJECT_NAME_NOT_FOUND or
                 err.args[0] == NT_STATUS_OBJECT_PATH_NOT_FOUND):

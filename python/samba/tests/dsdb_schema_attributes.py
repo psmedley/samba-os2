@@ -34,7 +34,7 @@ from ldb import SCOPE_BASE, LdbError
 class SchemaAttributesTestCase(samba.tests.TestCase):
 
     def setUp(self):
-        super(SchemaAttributesTestCase, self).setUp()
+        super().setUp()
 
         self.lp = samba.tests.env_loadparm()
         self.samdb = samba.tests.connect_samdb(self.lp.samdb_url())
@@ -45,9 +45,6 @@ class SchemaAttributesTestCase(samba.tests.TestCase):
         self.schema_dn = res[0]["schemaNamingContext"][0]
         self.base_dn = res[0]["defaultNamingContext"][0]
         self.forest_level = int(res[0]["forestFunctionality"][0])
-
-    def tearDown(self):
-        super(SchemaAttributesTestCase, self).tearDown()
 
     def _ldap_schemaUpdateNow(self):
         ldif = """

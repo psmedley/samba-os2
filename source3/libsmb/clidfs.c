@@ -28,6 +28,7 @@
 #include "../libcli/smb/smbXcli_base.h"
 #include "auth/credentials/credentials.h"
 #include "lib/param/param.h"
+#include "libcli/smb/smb2_negotiate_context.h"
 
 /********************************************************************
  Important point.
@@ -151,6 +152,8 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 		cli_credentials_get_smb_signing(creds);
 	enum smb_encryption_setting encryption_state =
 		cli_credentials_get_smb_encryption(creds);
+	struct smb2_negotiate_contexts *in_contexts = NULL;
+	struct smb2_negotiate_contexts *out_contexts = NULL;
 
 	if (encryption_state >= SMB_ENCRYPTION_DESIRED) {
 		signing_state = SMB_SIGNING_REQUIRED;
@@ -185,7 +188,7 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 
 	if (!NT_STATUS_IS_OK(status)) {
 		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
-			DBG_ERR("NetBIOS support disabled, unable to connect");
+			DBG_ERR("NetBIOS support disabled, unable to connect\n");
 		}
 
 		DBG_WARNING("Connection to %s failed (Error %s)\n",
@@ -196,9 +199,29 @@ static NTSTATUS do_connect(TALLOC_CTX *ctx,
 
 	DEBUG(4,(" session request ok\n"));
 
-	status = smbXcli_negprot(c->conn, c->timeout,
+	in_contexts = talloc_zero(ctx, struct smb2_negotiate_contexts);
+	if (in_contexts == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = smb2_negotiate_context_add(
+		in_contexts,
+		in_contexts,
+		SMB2_POSIX_EXTENSIONS_AVAILABLE,
+		(const uint8_t *)SMB2_CREATE_TAG_POSIX,
+		strlen(SMB2_CREATE_TAG_POSIX));
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	status = smbXcli_negprot(c->conn,
+				 c->timeout,
 				 lp_client_min_protocol(),
-				 lp_client_max_protocol());
+				 lp_client_max_protocol(),
+				 in_contexts,
+				 ctx,
+				 &out_contexts);
+	TALLOC_FREE(in_contexts);
 
 	if (NT_STATUS_EQUAL(status, NT_STATUS_IO_TIMEOUT)) {
 		d_printf("Protocol negotiation (with timeout %d ms) timed out against server %s\n",

@@ -111,7 +111,8 @@ static void tstream_read_pdu_blob_done(struct tevent_req *subreq)
 		return;
 	}
 
-	status = state->caller.full_fn(state->caller.full_private,
+	status = state->caller.full_fn(state->caller.stream,
+				       state->caller.full_private,
 				       state->pdu_blob, &pdu_size);
 	if (NT_STATUS_IS_OK(status)) {
 		tevent_req_done(req);
@@ -175,3 +176,30 @@ NTSTATUS tstream_read_pdu_blob_recv(struct tevent_req *req,
 	return NT_STATUS_OK;
 }
 
+NTSTATUS tstream_full_request_u32(struct tstream_context *stream,
+				  void *private_data,
+				  DATA_BLOB blob, size_t *size)
+{
+	if (blob.length < 4) {
+		return STATUS_MORE_ENTRIES;
+	}
+	*size = 4 + RIVAL(blob.data, 0);
+	if (*size > blob.length) {
+		return STATUS_MORE_ENTRIES;
+	}
+	return NT_STATUS_OK;
+}
+
+NTSTATUS tstream_full_request_u16(struct tstream_context *stream,
+				  void *private_data,
+				  DATA_BLOB blob, size_t *size)
+{
+	if (blob.length < 2) {
+		return STATUS_MORE_ENTRIES;
+	}
+	*size = 2 + RSVAL(blob.data, 0);
+	if (*size > blob.length) {
+		return STATUS_MORE_ENTRIES;
+	}
+	return NT_STATUS_OK;
+}

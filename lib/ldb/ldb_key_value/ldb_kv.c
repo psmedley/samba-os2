@@ -861,7 +861,7 @@ static int ldb_kv_find_element(const struct ldb_message *msg, const char *name)
 
 /*
   add an element to an existing record. Assumes a elements array that we
-  can call re-alloc on, and assumed that we can re-use the data pointers from
+  can call re-alloc on, and assumes that we can reuse the data pointers from
   the passed in additional values. Use with care!
 
   returns 0 on success, -1 on failure (and sets errno)
@@ -1582,7 +1582,7 @@ static int ldb_kv_start_trans(struct ldb_module *module)
 	if (ldb_kv->pid != pid) {
 		ldb_asprintf_errstring(ldb_module_get_ctx(ldb_kv->module),
 				       __location__
-				       ": Reusing ldb opend by pid %d in "
+				       ": Reusing ldb opened by pid %d in "
 				       "process %d\n",
 				       ldb_kv->pid,
 				       pid);
@@ -1625,7 +1625,7 @@ static int ldb_kv_prepare_commit(struct ldb_module *module)
 	if (ldb_kv->pid != pid) {
 		ldb_asprintf_errstring(ldb_module_get_ctx(module),
 				       __location__
-				       ": Reusing ldb opend by pid %d in "
+				       ": Reusing ldb opened by pid %d in "
 				       "process %d\n",
 				       ldb_kv->pid,
 				       pid);

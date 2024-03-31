@@ -1498,6 +1498,25 @@ request_create(struct request_create_options *opt, int argc, char **argv)
     if (ret)
 	hx509_err(context, 1, ret, "Could not initialize CSR context");
 
+    if (opt->ca_flag && opt->ee_flag)
+	errx(1, "request-create --ca and --ee are mutually exclusive");
+
+    if (opt->ca_flag) {
+        unsigned pathLenConstraint = 0;
+        unsigned *pathLenConstraintPtr = NULL;
+
+        if (opt->ca_path_length_integer > 0 &&
+            opt->ca_path_length_integer < INT_MAX) {
+            pathLenConstraint = opt->ca_path_length_integer;
+            pathLenConstraintPtr = &pathLenConstraint;
+        }
+        ret = hx509_request_set_cA(context, req, pathLenConstraintPtr);
+	if (ret)
+	    errx(1, "hx509_request_set_cA: %d\n", ret);
+    } else if (opt->ee_flag) {
+        hx509_request_set_eE(context, req);
+    }
+
     if (opt->subject_string) {
 	hx509_name name = NULL;
 
@@ -2902,9 +2921,11 @@ ptime(const char *s)
     char *rest;
     int at_s;
 
+    memset(&at_tm, 0, sizeof at_tm);
     if ((rest = strptime(s, "%Y-%m-%dT%H:%M:%S", &at_tm)) != NULL &&
         rest[0] == '\0')
         return mktime(&at_tm);
+    memset(&at_tm, 0, sizeof at_tm);
     if ((rest = strptime(s, "%Y%m%d%H%M%S", &at_tm)) != NULL && rest[0] == '\0')
         return mktime(&at_tm);
     if ((at_s = parse_time(s, "s")) != -1)

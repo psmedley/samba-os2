@@ -55,7 +55,7 @@ dn: @INDEX:NAME:DNSUPDATEPROXY
 
 In this format, @IDX is multi-valued, one entry for each match
 
-The corrosponding entry is stored in a TDB record with key:
+The corresponding entry is stored in a TDB record with key:
 
 DN=CN=DNSUPDATEPROXY,CN=USERS,DC=ADDOM,DC=SAMBA,DC=EXAMPLE,DC=COM
 
@@ -79,7 +79,7 @@ by the @IDXGUID attribute on @INDEXLIST.
 If there are multiple values the @IDX value simply becomes longer,
 in multiples of 16.
 
-The corrosponding entry is stored in a TDB record with key:
+The corresponding entry is stored in a TDB record with key:
 
 GUID=<binary GUID>
 
@@ -1089,7 +1089,7 @@ static struct ldb_dn *ldb_kv_index_key(struct ldb_context *ldb,
 
 	/*
 	 * We do not base 64 encode a DN in a key, it has already been
-	 * casefold and lineraized, that is good enough.  That already
+	 * casefolded and linearized, that is good enough.  That already
 	 * avoids embedded NUL etc.
 	 */
 	if (ldb_kv->cache->GUID_index_attribute != NULL) {

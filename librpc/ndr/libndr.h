@@ -48,6 +48,120 @@ struct ndr_token_list {
 
 struct ndr_compression_state;
 
+#define LIBNDR_STATIC_ASSERT(msg, cond) \
+	typedef char static_assert_##msg[(cond) ? 1 : -1]
+
+/*
+ * If you’re considering changing the size of this type, see also
+ * $scalar_alignment in pidl/lib/Parse/Pidl/NDR.pm.
+ */
+typedef enum {
+	LIBNDR_FLAG_BIGENDIAN = 1U << 0,
+	LIBNDR_FLAG_NOALIGN = 1U << 1,
+
+	LIBNDR_FLAG_STR_ASCII = 1U << 2,
+	LIBNDR_FLAG_STR_LEN4 = 1U << 3,
+	LIBNDR_FLAG_STR_SIZE4 = 1U << 4,
+	LIBNDR_FLAG_STR_NOTERM = 1U << 5,
+	LIBNDR_FLAG_STR_NULLTERM = 1U << 6,
+	LIBNDR_FLAG_STR_SIZE2 = 1U << 7,
+	LIBNDR_FLAG_STR_BYTESIZE = 1U << 8,
+	LIBNDR_FLAG_STR_NO_EMBEDDED_NUL = 1U << 9,
+	LIBNDR_FLAG_STR_CONFORMANT = 1U << 10,
+	LIBNDR_FLAG_STR_CHARLEN = 1U << 11,
+	LIBNDR_FLAG_STR_UTF8 = 1U << 12,
+	LIBNDR_FLAG_STR_RAW8 = 1U << 13,
+
+	/*
+	 * Mark an element as SECRET, it won't be printed via
+	 * ndr_print* unless NDR_PRINT_SECRETS is specified.
+	 */
+	LIBNDR_FLAG_IS_SECRET = 1U << 14,
+
+	/* Disable string token compression  */
+	LIBNDR_FLAG_NO_COMPRESSION = 1U << 15,
+
+	/*
+	 * don't debug NDR_ERR_BUFSIZE failures,
+	 * as the available buffer might be incomplete.
+	 *
+	 * return NDR_ERR_INCOMPLETE_BUFFER instead.
+	 */
+	LIBNDR_FLAG_INCOMPLETE_BUFFER = 1U << 16,
+
+	/*
+	 * This lets ndr_pull_subcontext_end() return
+	 * NDR_ERR_UNREAD_BYTES.
+	 */
+	LIBNDR_FLAG_SUBCONTEXT_NO_UNREAD_BYTES = 1U << 17,
+
+	/* set if relative pointers should *not* be marshalled in reverse order */
+	LIBNDR_FLAG_NO_RELATIVE_REVERSE = 1U << 18,
+
+	/* set if relative pointers are marshalled in reverse order */
+	LIBNDR_FLAG_RELATIVE_REVERSE = 1U << 19,
+
+	LIBNDR_FLAG_REF_ALLOC = 1U << 20,
+	LIBNDR_FLAG_REMAINING = 1U << 21,
+	LIBNDR_FLAG_ALIGN2 = 1U << 22,
+	LIBNDR_FLAG_ALIGN4 = 1U << 23,
+	LIBNDR_FLAG_ALIGN8 = 1U << 24,
+
+	LIBNDR_PRINT_ARRAY_HEX = 1U << 25,
+	LIBNDR_PRINT_SET_VALUES = 1U << 26,
+
+	/* used to force a section of IDL to be little-endian */
+	LIBNDR_FLAG_LITTLE_ENDIAN = 1U << 27,
+
+	/* used to check if alignment padding is zero */
+	LIBNDR_FLAG_PAD_CHECK = 1U << 28,
+
+	LIBNDR_FLAG_NDR64 = 1U << 29,
+
+	/* set if an object uuid will be present */
+	LIBNDR_FLAG_OBJECT_PRESENT = 1U << 30,
+
+	/* set to avoid recursion in ndr_size_*() calculation */
+	LIBNDR_FLAG_NO_NDR_SIZE = 1U << 31,
+
+	/*
+	 * present to keep the size of this enumeration 64 bits until we need a
+	 * 33rd flag.
+	 */
+	LIBNDR_FLAG_0x100000000 = UINT64_C(1) << 32,
+} libndr_flags;
+LIBNDR_STATIC_ASSERT(libndr_flags_are_64_bit, sizeof (libndr_flags) == 8);
+#define PRI_LIBNDR_FLAGS PRIx64
+#define PRI_LIBNDR_FLAGS_DECIMAL PRIu64
+
+/*
+* If you’re considering changing the size of this type, see also
+* $scalar_alignment in pidl/lib/Parse/Pidl/NDR.pm.
+*/
+typedef enum {
+	/*
+	  flags passed to control parse flow
+	  These are deliberately in a different range to the NDR_IN/NDR_OUT
+	  flags to catch mixups
+	*/
+	NDR_SCALARS = 0x100,
+	NDR_BUFFERS = 0x200,
+
+	/*
+	  flags passed to ndr_print_*() and ndr pull/push for functions
+	  These are deliberately in a different range to the
+	  NDR_SCALARS/NDR_BUFFERS flags to catch mixups
+	*/
+	NDR_IN = 0x10,
+	NDR_OUT = 0x20,
+	NDR_BOTH = 0x30,
+	NDR_SET_VALUES = 0x40,
+} ndr_flags_type;
+LIBNDR_STATIC_ASSERT(ndr_flags_are_32_bit, sizeof (ndr_flags_type) == 4);
+#define PRI_NDR_FLAGS_TYPE PRIx32
+
+#undef LIBNDR_STATIC_ASSERT
+
 /* this is the base structure passed to routines that
    parse MSRPC formatted data
 
@@ -57,7 +171,7 @@ struct ndr_compression_state;
    particular transport
 */
 struct ndr_pull {
-	uint32_t flags; /* LIBNDR_FLAG_* */
+	libndr_flags flags; /* LIBNDR_FLAG_* */
 	uint8_t *data;
 	uint32_t data_size;
 	uint32_t offset;
@@ -91,7 +205,7 @@ struct ndr_pull {
 
 /* structure passed to functions that generate NDR formatted data */
 struct ndr_push {
-	uint32_t flags; /* LIBNDR_FLAG_* */
+	libndr_flags flags; /* LIBNDR_FLAG_* */
 	uint8_t *data;
 	uint32_t alloc_size;
 	uint32_t offset;
@@ -116,7 +230,7 @@ struct ndr_push {
 
 /* structure passed to functions that print IDL structures */
 struct ndr_print {
-	uint32_t flags; /* LIBNDR_FLAG_* */
+	libndr_flags flags; /* LIBNDR_FLAG_* */
 	uint32_t depth;
 	struct ndr_token_list switch_list;
 	void (*print)(struct ndr_print *, const char *, ...) PRINTF_ATTRIBUTE(2,3);
@@ -125,20 +239,6 @@ struct ndr_print {
 	bool print_secrets;
 };
 
-#define LIBNDR_FLAG_BIGENDIAN  (1U<<0)
-#define LIBNDR_FLAG_NOALIGN    (1U<<1)
-
-#define LIBNDR_FLAG_STR_ASCII		(1U<<2)
-#define LIBNDR_FLAG_STR_LEN4		(1U<<3)
-#define LIBNDR_FLAG_STR_SIZE4		(1U<<4)
-#define LIBNDR_FLAG_STR_NOTERM		(1U<<5)
-#define LIBNDR_FLAG_STR_NULLTERM	(1U<<6)
-#define LIBNDR_FLAG_STR_SIZE2		(1U<<7)
-#define LIBNDR_FLAG_STR_BYTESIZE	(1U<<8)
-#define LIBNDR_FLAG_STR_CONFORMANT	(1U<<10)
-#define LIBNDR_FLAG_STR_CHARLEN		(1U<<11)
-#define LIBNDR_FLAG_STR_UTF8		(1U<<12)
-#define LIBNDR_FLAG_STR_RAW8		(1U<<13)
 #define LIBNDR_STRING_FLAGS		(0U | \
 		LIBNDR_FLAG_STR_ASCII | \
 		LIBNDR_FLAG_STR_LEN4 | \
@@ -147,46 +247,18 @@ struct ndr_print {
 		LIBNDR_FLAG_STR_NULLTERM | \
 		LIBNDR_FLAG_STR_SIZE2 | \
 		LIBNDR_FLAG_STR_BYTESIZE | \
+		LIBNDR_FLAG_STR_NO_EMBEDDED_NUL | \
 		LIBNDR_FLAG_STR_CONFORMANT | \
 		LIBNDR_FLAG_STR_CHARLEN | \
 		LIBNDR_FLAG_STR_UTF8 | \
 		LIBNDR_FLAG_STR_RAW8 | \
 		0)
 
-/*
- * Mark an element as SECRET, it won't be printed by
- * via ndr_print* unless NDR_PRINT_SECRETS is specified.
- */
-#define LIBNDR_FLAG_IS_SECRET		(1U<<14)
-
-/* Disable string token compression  */
-#define LIBNDR_FLAG_NO_COMPRESSION	(1U<<15)
-
-/*
- * don't debug NDR_ERR_BUFSIZE failures,
- * as the available buffer might be incomplete.
- *
- * return NDR_ERR_INCOMPLETE_BUFFER instead.
- */
-#define LIBNDR_FLAG_INCOMPLETE_BUFFER (1U<<16)
-
-/*
- * This lets ndr_pull_subcontext_end() return
- * NDR_ERR_UNREAD_BYTES.
- */
-#define LIBNDR_FLAG_SUBCONTEXT_NO_UNREAD_BYTES (1U<<17)
-
-/* set if relative pointers should *not* be marshalled in reverse order */
-#define LIBNDR_FLAG_NO_RELATIVE_REVERSE	(1U<<18)
-
-/* set if relative pointers are marshalled in reverse order */
-#define LIBNDR_FLAG_RELATIVE_REVERSE	(1U<<19)
-
-#define LIBNDR_FLAG_REF_ALLOC    (1U<<20)
-#define LIBNDR_FLAG_REMAINING    (1U<<21)
-#define LIBNDR_FLAG_ALIGN2       (1U<<22)
-#define LIBNDR_FLAG_ALIGN4       (1U<<23)
-#define LIBNDR_FLAG_ALIGN8       (1U<<24)
+#define LIBNDR_ENCODING_FLAGS		(0U | \
+		LIBNDR_FLAG_STR_ASCII | \
+		LIBNDR_FLAG_STR_UTF8 | \
+		LIBNDR_FLAG_STR_RAW8 | \
+		0)
 
 #define LIBNDR_ALIGN_FLAGS ( 0        | \
 		LIBNDR_FLAG_NOALIGN   | \
@@ -195,23 +267,6 @@ struct ndr_print {
 		LIBNDR_FLAG_ALIGN4    | \
 		LIBNDR_FLAG_ALIGN8    | \
 		0)
-
-#define LIBNDR_PRINT_ARRAY_HEX   (1U<<25)
-#define LIBNDR_PRINT_SET_VALUES  (1U<<26)
-
-/* used to force a section of IDL to be little-endian */
-#define LIBNDR_FLAG_LITTLE_ENDIAN (1U<<27)
-
-/* used to check if alignment padding is zero */
-#define LIBNDR_FLAG_PAD_CHECK     (1U<<28)
-
-#define LIBNDR_FLAG_NDR64         (1U<<29)
-
-/* set if an object uuid will be present */
-#define LIBNDR_FLAG_OBJECT_PRESENT    (1U<<30)
-
-/* set to avoid recursion in ndr_size_*() calculation */
-#define LIBNDR_FLAG_NO_NDR_SIZE		(1U<<31)
 
 /* useful macro for debugging */
 #define NDR_PRINT_DEBUG(type, p) (void)ndr_print_debug(1, (ndr_print_fn_t)ndr_print_ ##type, #p, p, __location__, __func__)
@@ -311,45 +366,26 @@ enum ndr_compression_alg {
 	NDR_COMPRESSION_INVALID         = 255,
 };
 
-/*
-  flags passed to control parse flow
-  These are deliberately in a different range to the NDR_IN/NDR_OUT
-  flags to catch mixups
-*/
-#define NDR_SCALARS    0x100
-#define NDR_BUFFERS    0x200
-
-/*
-  flags passed to ndr_print_*() and ndr pull/push for functions
-  These are deliberately in a different range to the NDR_SCALARS/NDR_BUFFERS
-  flags to catch mixups
-*/
-#define NDR_IN         0x10
-#define NDR_OUT        0x20
-#define NDR_BOTH       0x30
-#define NDR_SET_VALUES 0x40
-
-
 #define NDR_PULL_CHECK_FLAGS(ndr, ndr_flags) do { \
-	if ((ndr_flags) & ~(NDR_SCALARS|NDR_BUFFERS)) { \
-		return ndr_pull_error(ndr, NDR_ERR_FLAGS, "Invalid pull struct ndr_flags 0x%x", ndr_flags); \
+	if (unlikely((ndr_flags) & ~(NDR_SCALARS|NDR_BUFFERS))) { \
+		return ndr_pull_error(ndr, NDR_ERR_FLAGS, "Invalid pull struct ndr_flags 0x%"PRI_NDR_FLAGS_TYPE, ndr_flags); \
 	} \
 } while (0)
 
 #define NDR_PUSH_CHECK_FLAGS(ndr, ndr_flags) do { \
 	if ((ndr_flags) & ~(NDR_SCALARS|NDR_BUFFERS)) \
-		return ndr_push_error(ndr, NDR_ERR_FLAGS, "Invalid push struct ndr_flags 0x%x", ndr_flags); \
+		return ndr_push_error(ndr, NDR_ERR_FLAGS, "Invalid push struct ndr_flags 0x%"PRI_NDR_FLAGS_TYPE, ndr_flags); \
 } while (0)
 
 #define NDR_PULL_CHECK_FN_FLAGS(ndr, flags) do { \
 	if ((flags) & ~(NDR_BOTH|NDR_SET_VALUES)) { \
-		return ndr_pull_error(ndr, NDR_ERR_FLAGS, "Invalid fn pull flags 0x%x", flags); \
+		return ndr_pull_error(ndr, NDR_ERR_FLAGS, "Invalid fn pull flags 0x%"PRI_NDR_FLAGS_TYPE, flags); \
 	} \
 } while (0)
 
 #define NDR_PUSH_CHECK_FN_FLAGS(ndr, flags) do { \
 	if ((flags) & ~(NDR_BOTH|NDR_SET_VALUES)) \
-		return ndr_push_error(ndr, NDR_ERR_FLAGS, "Invalid fn push flags 0x%x", flags); \
+		return ndr_push_error(ndr, NDR_ERR_FLAGS, "Invalid fn push flags 0x%"PRI_NDR_FLAGS_TYPE, flags); \
 } while (0)
 
 #define NDR_PULL_NEED_BYTES(ndr, n) do { \
@@ -362,7 +398,7 @@ enum ndr_compression_alg {
 			uint32_t _missing = n - _available; \
 			ndr->relative_highest_offset = _missing; \
 		} \
-		return ndr_pull_error(ndr, NDR_ERR_BUFSIZE, "Pull bytes %u (%s)", (unsigned)n, __location__); \
+		return ndr_pull_error(ndr, NDR_ERR_BUFSIZE, "Pull bytes %zu (%s)", (size_t)n, __location__); \
 	} \
 } while(0)
 
@@ -380,7 +416,7 @@ enum ndr_compression_alg {
 			return ndr_pull_error( \
 				ndr, \
 				NDR_ERR_BUFSIZE, \
-				"Pull align (overflow) %u", (unsigned)n); \
+				"Pull align (overflow) %zu", (size_t)n); \
 		} \
 		ndr->offset = (ndr->offset + (n-1)) & ~(n-1); \
 	} \
@@ -389,7 +425,7 @@ enum ndr_compression_alg {
 			uint32_t _missing = ndr->offset - ndr->data_size; \
 			ndr->relative_highest_offset = _missing; \
 		} \
-		return ndr_pull_error(ndr, NDR_ERR_BUFSIZE, "Pull align %u", (unsigned)n); \
+		return ndr_pull_error(ndr, NDR_ERR_BUFSIZE, "Pull align %zu", (size_t)n); \
 	} \
 } while(0)
 
@@ -476,13 +512,13 @@ enum ndr_compression_alg {
 #define NDR_PULL_ALLOC_N(ndr, s, n) do { \
 	_NDR_PULL_FIX_CURRENT_MEM_CTX(ndr);\
 	(s) = talloc_array_ptrtype(ndr->current_mem_ctx, (s), n); \
-	if (unlikely(!(s))) return ndr_pull_error(ndr, NDR_ERR_ALLOC, "Alloc %u * %s failed: %s\n", (unsigned)n, # s, __location__); \
+	if (unlikely(!(s))) return ndr_pull_error(ndr, NDR_ERR_ALLOC, "Alloc %zu * %s failed: %s\n", (size_t)n, # s, __location__); \
 } while (0)
 
 
 #define NDR_PUSH_ALLOC_SIZE(ndr, s, size) do { \
        (s) = talloc_array(ndr, uint8_t, size); \
-       if (unlikely(!(s))) return ndr_push_error(ndr, NDR_ERR_ALLOC, "push alloc %u failed: %s\n", (unsigned)size, __location__); \
+       if (unlikely(!(s))) return ndr_push_error(ndr, NDR_ERR_ALLOC, "push alloc %zu failed: %s\n", (size_t)size, __location__); \
 } while (0)
 
 #define NDR_PUSH_ALLOC(ndr, s) do { \
@@ -498,10 +534,10 @@ enum ndr_compression_alg {
 } while(0)
 
 /* these are used when generic fn pointers are needed for ndr push/pull fns */
-typedef enum ndr_err_code (*ndr_push_flags_fn_t)(struct ndr_push *, int ndr_flags, const void *);
-typedef enum ndr_err_code (*ndr_pull_flags_fn_t)(struct ndr_pull *, int ndr_flags, void *);
+typedef enum ndr_err_code (*ndr_push_flags_fn_t)(struct ndr_push *, ndr_flags_type ndr_flags, const void *);
+typedef enum ndr_err_code (*ndr_pull_flags_fn_t)(struct ndr_pull *, ndr_flags_type ndr_flags, void *);
 typedef void (*ndr_print_fn_t)(struct ndr_print *, const char *, const void *);
-typedef void (*ndr_print_function_t)(struct ndr_print *, const char *, int, const void *);
+typedef void (*ndr_print_function_t)(struct ndr_print *, const char *, ndr_flags_type, const void *);
 
 #include "../libcli/util/error.h"
 #include "librpc/gen_ndr/misc.h"
@@ -576,17 +612,17 @@ const char *ndr_map_error2string(enum ndr_err_code ndr_err);
 
 /* FIXME: Use represent_as instead */
 struct dom_sid;
-enum ndr_err_code ndr_push_dom_sid2(struct ndr_push *ndr, int ndr_flags, const struct dom_sid *sid);
-enum ndr_err_code ndr_pull_dom_sid2(struct ndr_pull *ndr, int ndr_flags, struct dom_sid *sid);
+enum ndr_err_code ndr_push_dom_sid2(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct dom_sid *sid);
+enum ndr_err_code ndr_pull_dom_sid2(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct dom_sid *sid);
 void ndr_print_dom_sid2(struct ndr_print *ndr, const char *name, const struct dom_sid *sid);
-enum ndr_err_code ndr_push_dom_sid28(struct ndr_push *ndr, int ndr_flags, const struct dom_sid *sid);
-enum ndr_err_code ndr_pull_dom_sid28(struct ndr_pull *ndr, int ndr_flags, struct dom_sid *sid);
+enum ndr_err_code ndr_push_dom_sid28(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct dom_sid *sid);
+enum ndr_err_code ndr_pull_dom_sid28(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct dom_sid *sid);
 void ndr_print_dom_sid28(struct ndr_print *ndr, const char *name, const struct dom_sid *sid);
-size_t ndr_size_dom_sid28(const struct dom_sid *sid, int flags);
-enum ndr_err_code ndr_push_dom_sid0(struct ndr_push *ndr, int ndr_flags, const struct dom_sid *sid);
-enum ndr_err_code ndr_pull_dom_sid0(struct ndr_pull *ndr, int ndr_flags, struct dom_sid *sid);
+size_t ndr_size_dom_sid28(const struct dom_sid *sid, libndr_flags flags);
+enum ndr_err_code ndr_push_dom_sid0(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct dom_sid *sid);
+enum ndr_err_code ndr_pull_dom_sid0(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct dom_sid *sid);
 void ndr_print_dom_sid0(struct ndr_print *ndr, const char *name, const struct dom_sid *sid);
-size_t ndr_size_dom_sid0(const struct dom_sid *sid, int flags);
+size_t ndr_size_dom_sid0(const struct dom_sid *sid, libndr_flags flags);
 void ndr_print_GUID(struct ndr_print *ndr, const char *name, const struct GUID *guid);
 void ndr_print_sockaddr_storage(struct ndr_print *ndr, const char *name, const struct sockaddr_storage *ss);
 void ndr_zero_memory(void *ptr, size_t len);
@@ -603,8 +639,8 @@ enum ndr_err_code ndr_push_struct_into_fixed_blob(DATA_BLOB *blob,
 						  const void *p,
 						  ndr_push_flags_fn_t fn);
 enum ndr_err_code ndr_push_union_blob(DATA_BLOB *blob, TALLOC_CTX *mem_ctx, void *p, uint32_t level, ndr_push_flags_fn_t fn);
-size_t ndr_size_struct(const void *p, int flags, ndr_push_flags_fn_t push);
-size_t ndr_size_union(const void *p, int flags, uint32_t level, ndr_push_flags_fn_t push);
+size_t ndr_size_struct(const void *p, libndr_flags flags, ndr_push_flags_fn_t push);
+size_t ndr_size_union(const void *p, libndr_flags flags, uint32_t level, ndr_push_flags_fn_t push);
 uint32_t ndr_push_get_relative_base_offset(struct ndr_push *ndr);
 void ndr_push_restore_relative_base_offset(struct ndr_push *ndr, uint32_t offset);
 enum ndr_err_code ndr_push_setup_relative_base_offset1(struct ndr_push *ndr, const void *p, uint32_t offset);
@@ -636,13 +672,13 @@ void ndr_print_string_helper(struct ndr_print *ndr, const char *format, ...) PRI
 bool ndr_print_debug(int level, ndr_print_fn_t fn, const char *name, void *ptr, const char *location, const char *function);
 void ndr_print_debugc(int dbgc_class, ndr_print_fn_t fn, const char *name, void *ptr);
 void ndr_print_union_debug(ndr_print_fn_t fn, const char *name, uint32_t level, void *ptr);
-void ndr_print_function_debug(ndr_print_function_t fn, const char *name, int flags, void *ptr);
+void ndr_print_function_debug(ndr_print_function_t fn, const char *name, ndr_flags_type flags, void *ptr);
 char *ndr_print_struct_string(TALLOC_CTX *mem_ctx, ndr_print_fn_t fn, const char *name, void *ptr);
 char *ndr_print_union_string(TALLOC_CTX *mem_ctx, ndr_print_fn_t fn, const char *name, uint32_t level, void *ptr);
 char *ndr_print_function_string(TALLOC_CTX *mem_ctx,
 				ndr_print_function_t fn, const char *name,
-				int flags, void *ptr);
-void ndr_set_flags(uint32_t *pflags, uint32_t new_flags);
+				ndr_flags_type flags, void *ptr);
+void ndr_set_flags(libndr_flags *pflags, libndr_flags new_flags);
 enum ndr_err_code _ndr_pull_error(struct ndr_pull *ndr,
 				  enum ndr_err_code ndr_err,
 				  const char *function,
@@ -699,8 +735,8 @@ enum ndr_err_code ndr_get_array_length(struct ndr_pull *ndr, const void *p, uint
 enum ndr_err_code ndr_steal_array_length(struct ndr_pull *ndr, const void *p, uint32_t *length);
 enum ndr_err_code ndr_check_array_length(struct ndr_pull *ndr, const void *p, uint32_t length);
 enum ndr_err_code ndr_check_steal_array_length(struct ndr_pull *ndr, const void *p, uint32_t length);
-enum ndr_err_code ndr_push_pipe_chunk_trailer(struct ndr_push *ndr, int ndr_flags, uint32_t count);
-enum ndr_err_code ndr_check_pipe_chunk_trailer(struct ndr_pull *ndr, int ndr_flags, uint32_t count);
+enum ndr_err_code ndr_push_pipe_chunk_trailer(struct ndr_push *ndr, ndr_flags_type ndr_flags, uint32_t count);
+enum ndr_err_code ndr_check_pipe_chunk_trailer(struct ndr_pull *ndr, ndr_flags_type ndr_flags, uint32_t count);
 enum ndr_err_code ndr_push_set_switch_value(struct ndr_push *ndr, const void *p, uint32_t val);
 enum ndr_err_code ndr_pull_set_switch_value(struct ndr_pull *ndr, const void *p, uint32_t val);
 enum ndr_err_code ndr_print_set_switch_value(struct ndr_print *ndr, const void *p, uint32_t val);
@@ -716,6 +752,11 @@ enum ndr_err_code ndr_pull_steal_switch_value(struct ndr_pull *ndr,
 					      uint32_t *v);
 enum ndr_err_code ndr_pull_struct_blob(const DATA_BLOB *blob, TALLOC_CTX *mem_ctx, void *p, ndr_pull_flags_fn_t fn);
 enum ndr_err_code ndr_pull_struct_blob_all(const DATA_BLOB *blob, TALLOC_CTX *mem_ctx, void *p, ndr_pull_flags_fn_t fn);
+_PUBLIC_ enum ndr_err_code ndr_pull_struct_blob_noalloc(const uint8_t *buf,
+							size_t buflen,
+							void *p,
+							ndr_pull_flags_fn_t fn,
+							size_t *consumed);
 enum ndr_err_code ndr_pull_struct_blob_all_noalloc(const DATA_BLOB *blob,
 						   void *p, ndr_pull_flags_fn_t fn);
 enum ndr_err_code ndr_pull_union_blob(const DATA_BLOB *blob, TALLOC_CTX *mem_ctx, void *p, uint32_t level, ndr_pull_flags_fn_t fn);
@@ -723,18 +764,18 @@ enum ndr_err_code ndr_pull_union_blob_all(const DATA_BLOB *blob, TALLOC_CTX *mem
 
 /* from libndr_basic.h */
 #define NDR_SCALAR_PROTO(name, type) \
-enum ndr_err_code ndr_push_ ## name(struct ndr_push *ndr, int ndr_flags, type v); \
-enum ndr_err_code ndr_pull_ ## name(struct ndr_pull *ndr, int ndr_flags, type *v); \
+enum ndr_err_code ndr_push_ ## name(struct ndr_push *ndr, ndr_flags_type ndr_flags, type v); \
+enum ndr_err_code ndr_pull_ ## name(struct ndr_pull *ndr, ndr_flags_type ndr_flags, type *v); \
 void ndr_print_ ## name(struct ndr_print *ndr, const char *var_name, type v);
 
 #define NDR_SCALAR_PTR_PROTO(name, type) \
-enum ndr_err_code ndr_push_ ## name(struct ndr_push *ndr, int ndr_flags, const type *v); \
-enum ndr_err_code ndr_pull_ ## name(struct ndr_pull *ndr, int ndr_flags, type **v); \
+enum ndr_err_code ndr_push_ ## name(struct ndr_push *ndr, ndr_flags_type ndr_flags, const type *v); \
+enum ndr_err_code ndr_pull_ ## name(struct ndr_pull *ndr, ndr_flags_type ndr_flags, type **v); \
 void ndr_print_ ## name(struct ndr_print *ndr, const char *var_name, const type *v);
 
 #define NDR_BUFFER_PROTO(name, type) \
-enum ndr_err_code ndr_push_ ## name(struct ndr_push *ndr, int ndr_flags, const type *v); \
-enum ndr_err_code ndr_pull_ ## name(struct ndr_pull *ndr, int ndr_flags, type *v); \
+enum ndr_err_code ndr_push_ ## name(struct ndr_push *ndr, ndr_flags_type ndr_flags, const type *v); \
+enum ndr_err_code ndr_pull_ ## name(struct ndr_pull *ndr, ndr_flags_type ndr_flags, type *v); \
 void ndr_print_ ## name(struct ndr_print *ndr, const char *var_name, const type *v);
 
 NDR_SCALAR_PROTO(uint8, uint8_t)
@@ -765,10 +806,11 @@ NDR_SCALAR_PROTO(DATA_BLOB, DATA_BLOB)
 NDR_SCALAR_PROTO(ipv4address, const char *)
 NDR_SCALAR_PROTO(ipv6address, const char *)
 NDR_SCALAR_PROTO(string, const char *)
+NDR_SCALAR_PROTO(u16string, const unsigned char *)
 NDR_SCALAR_PROTO(double, double)
 
-enum ndr_err_code ndr_pull_policy_handle(struct ndr_pull *ndr, int ndr_flags, struct policy_handle *r);
-enum ndr_err_code ndr_push_policy_handle(struct ndr_push *ndr, int ndr_flags, const struct policy_handle *r);
+enum ndr_err_code ndr_pull_policy_handle(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct policy_handle *r);
+enum ndr_err_code ndr_push_policy_handle(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct policy_handle *r);
 void ndr_print_policy_handle(struct ndr_print *ndr, const char *name, const struct policy_handle *r);
 bool ndr_policy_handle_empty(const struct policy_handle *h);
 #define is_valid_policy_hnd(hnd) (!ndr_policy_handle_empty(hnd))
@@ -779,7 +821,7 @@ void ndr_check_padding(struct ndr_pull *ndr, size_t n);
 enum ndr_err_code ndr_pull_generic_ptr(struct ndr_pull *ndr, uint32_t *v);
 enum ndr_err_code ndr_pull_ref_ptr(struct ndr_pull *ndr, uint32_t *v);
 enum ndr_err_code ndr_pull_bytes(struct ndr_pull *ndr, uint8_t *data, uint32_t n);
-enum ndr_err_code ndr_pull_array_uint8(struct ndr_pull *ndr, int ndr_flags, uint8_t *data, uint32_t n);
+enum ndr_err_code ndr_pull_array_uint8(struct ndr_pull *ndr, ndr_flags_type ndr_flags, uint8_t *data, uint32_t n);
 enum ndr_err_code ndr_push_align(struct ndr_push *ndr, size_t size);
 enum ndr_err_code ndr_pull_align(struct ndr_pull *ndr, size_t size);
 enum ndr_err_code ndr_push_union_align(struct ndr_push *ndr, size_t size);
@@ -788,7 +830,7 @@ enum ndr_err_code ndr_push_trailer_align(struct ndr_push *ndr, size_t size);
 enum ndr_err_code ndr_pull_trailer_align(struct ndr_pull *ndr, size_t size);
 enum ndr_err_code ndr_push_bytes(struct ndr_push *ndr, const uint8_t *data, uint32_t n);
 enum ndr_err_code ndr_push_zero(struct ndr_push *ndr, uint32_t n);
-enum ndr_err_code ndr_push_array_uint8(struct ndr_push *ndr, int ndr_flags, const uint8_t *data, uint32_t n);
+enum ndr_err_code ndr_push_array_uint8(struct ndr_push *ndr, ndr_flags_type ndr_flags, const uint8_t *data, uint32_t n);
 enum ndr_err_code ndr_push_unique_ptr(struct ndr_push *ndr, const void *p);
 enum ndr_err_code ndr_push_full_ptr(struct ndr_push *ndr, const void *p);
 enum ndr_err_code ndr_push_ref_ptr(struct ndr_push *ndr);
@@ -801,22 +843,22 @@ void ndr_print_ptr(struct ndr_print *ndr, const char *name, const void *p);
 void ndr_print_union(struct ndr_print *ndr, const char *name, int level, const char *type);
 void ndr_print_bad_level(struct ndr_print *ndr, const char *name, uint16_t level);
 void ndr_print_array_uint8(struct ndr_print *ndr, const char *name, const uint8_t *data, uint32_t count);
-uint32_t ndr_size_DATA_BLOB(int ret, const DATA_BLOB *data, int flags);
+uint32_t ndr_size_DATA_BLOB(int ret, const DATA_BLOB *data, ndr_flags_type flags);
 
 /* strings */
 uint32_t ndr_charset_length(const void *var, charset_t chset);
 size_t ndr_string_array_size(struct ndr_push *ndr, const char *s);
-uint32_t ndr_size_string(int ret, const char * const* string, int flags);
-enum ndr_err_code ndr_pull_string_array(struct ndr_pull *ndr, int ndr_flags, const char ***_a);
-enum ndr_err_code ndr_push_string_array(struct ndr_push *ndr, int ndr_flags, const char **a);
+uint32_t ndr_size_string(int ret, const char * const* string, ndr_flags_type flags);
+enum ndr_err_code ndr_pull_string_array(struct ndr_pull *ndr, ndr_flags_type ndr_flags, const char ***_a);
+enum ndr_err_code ndr_push_string_array(struct ndr_push *ndr, ndr_flags_type ndr_flags, const char **a);
 void ndr_print_string_array(struct ndr_print *ndr, const char *name, const char **a);
-size_t ndr_size_string_array(const char **a, uint32_t count, int flags);
+size_t ndr_size_string_array(const char **a, uint32_t count, libndr_flags flags);
 uint32_t ndr_string_length(const void *_var, uint32_t element_size);
 enum ndr_err_code ndr_check_string_terminator(struct ndr_pull *ndr, uint32_t count, uint32_t element_size);
-enum ndr_err_code ndr_pull_charset(struct ndr_pull *ndr, int ndr_flags, const char **var, uint32_t length, uint8_t byte_mul, charset_t chset);
-enum ndr_err_code ndr_pull_charset_to_null(struct ndr_pull *ndr, int ndr_flags, const char **var, uint32_t length, uint8_t byte_mul, charset_t chset);
-enum ndr_err_code ndr_push_charset(struct ndr_push *ndr, int ndr_flags, const char *var, uint32_t length, uint8_t byte_mul, charset_t chset);
-enum ndr_err_code ndr_push_charset_to_null(struct ndr_push *ndr, int ndr_flags, const char *var, uint32_t length, uint8_t byte_mul, charset_t chset);
+enum ndr_err_code ndr_pull_charset(struct ndr_pull *ndr, ndr_flags_type ndr_flags, const char **var, uint32_t length, uint8_t byte_mul, charset_t chset);
+enum ndr_err_code ndr_pull_charset_to_null(struct ndr_pull *ndr, ndr_flags_type ndr_flags, const char **var, uint32_t length, uint8_t byte_mul, charset_t chset);
+enum ndr_err_code ndr_push_charset(struct ndr_push *ndr, ndr_flags_type ndr_flags, const char *var, uint32_t length, uint8_t byte_mul, charset_t chset);
+enum ndr_err_code ndr_push_charset_to_null(struct ndr_push *ndr, ndr_flags_type ndr_flags, const char *var, uint32_t length, uint8_t byte_mul, charset_t chset);
 
 /* GUIDs */
 bool GUID_equal(const struct GUID *u1, const struct GUID *u2);
@@ -840,35 +882,37 @@ struct GUID_txt_buf { char buf[39]; };
 _PUBLIC_ char* GUID_buf_string(const struct GUID *guid,
 			       struct GUID_txt_buf *dst);
 
-_PUBLIC_ enum ndr_err_code ndr_pull_enum_uint8(struct ndr_pull *ndr, int ndr_flags, uint8_t *v);
-_PUBLIC_ enum ndr_err_code ndr_pull_enum_uint16(struct ndr_pull *ndr, int ndr_flags, uint16_t *v);
-_PUBLIC_ enum ndr_err_code ndr_pull_enum_uint32(struct ndr_pull *ndr, int ndr_flags, uint32_t *v);
-_PUBLIC_ enum ndr_err_code ndr_pull_enum_uint1632(struct ndr_pull *ndr, int ndr_flags, uint16_t *v);
-_PUBLIC_ enum ndr_err_code ndr_push_enum_uint8(struct ndr_push *ndr, int ndr_flags, uint8_t v);
-_PUBLIC_ enum ndr_err_code ndr_push_enum_uint16(struct ndr_push *ndr, int ndr_flags, uint16_t v);
-_PUBLIC_ enum ndr_err_code ndr_push_enum_uint32(struct ndr_push *ndr, int ndr_flags, uint32_t v);
-_PUBLIC_ enum ndr_err_code ndr_push_enum_uint1632(struct ndr_push *ndr, int ndr_flags, uint16_t v);
+_PUBLIC_ enum ndr_err_code ndr_pull_enum_uint8(struct ndr_pull *ndr, ndr_flags_type ndr_flags, uint8_t *v);
+_PUBLIC_ enum ndr_err_code ndr_pull_enum_uint16(struct ndr_pull *ndr, ndr_flags_type ndr_flags, uint16_t *v);
+_PUBLIC_ enum ndr_err_code ndr_pull_enum_uint32(struct ndr_pull *ndr, ndr_flags_type ndr_flags, uint32_t *v);
+_PUBLIC_ enum ndr_err_code ndr_pull_enum_uint1632(struct ndr_pull *ndr, ndr_flags_type ndr_flags, uint16_t *v);
+_PUBLIC_ enum ndr_err_code ndr_push_enum_uint8(struct ndr_push *ndr, ndr_flags_type ndr_flags, uint8_t v);
+_PUBLIC_ enum ndr_err_code ndr_push_enum_uint16(struct ndr_push *ndr, ndr_flags_type ndr_flags, uint16_t v);
+_PUBLIC_ enum ndr_err_code ndr_push_enum_uint32(struct ndr_push *ndr, ndr_flags_type ndr_flags, uint32_t v);
+_PUBLIC_ enum ndr_err_code ndr_push_enum_uint1632(struct ndr_push *ndr, ndr_flags_type ndr_flags, uint16_t v);
 
 _PUBLIC_ void ndr_print_bool(struct ndr_print *ndr, const char *name, const bool b);
 
 _PUBLIC_ enum ndr_err_code ndr_push_timespec(struct ndr_push *ndr,
-					     int ndr_flags,
+					     ndr_flags_type ndr_flags,
 					     const struct timespec *t);
 _PUBLIC_ enum ndr_err_code ndr_pull_timespec(struct ndr_pull *ndr,
-					     int ndr_flags,
+					     ndr_flags_type ndr_flags,
 					     struct timespec *t);
 _PUBLIC_ void ndr_print_timespec(struct ndr_print *ndr, const char *name,
 				 const struct timespec *t);
 
 _PUBLIC_ enum ndr_err_code ndr_push_timeval(struct ndr_push *ndr,
-					    int ndr_flags,
+					    ndr_flags_type ndr_flags,
 					    const struct timeval *t);
 _PUBLIC_ enum ndr_err_code ndr_pull_timeval(struct ndr_pull *ndr,
-					    int ndr_flags,
+					    ndr_flags_type ndr_flags,
 					    struct timeval *t);
 _PUBLIC_ void ndr_print_timeval(struct ndr_print *ndr, const char *name,
 				const struct timeval *t);
 
+_PUBLIC_ void ndr_print_libndr_flags(struct ndr_print *ndr, const char *name,
+				       libndr_flags flags);
 
 
 #endif /* __LIBNDR_H__ */

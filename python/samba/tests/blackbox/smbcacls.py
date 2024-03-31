@@ -1,4 +1,4 @@
-# Blackbox tests for smbcaclcs
+# Blackbox tests for smbcacls
 #
 # Copyright (C) Noel Power noel.power@suse.com
 #
@@ -25,7 +25,7 @@ import os
 class SmbCaclsBlockboxTestBase(BlackboxTestCase):
 
     def setUp(self):
-        super(SmbCaclsBlockboxTestBase, self).setUp()
+        super().setUp()
         self.lp = s3param.get_context()
         self.server = os.environ["SERVER"]
         self.user = os.environ["USER"]

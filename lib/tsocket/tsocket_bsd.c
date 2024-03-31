@@ -24,10 +24,8 @@
 #include "replace.h"
 #include "system/filesys.h"
 #include "system/network.h"
-#include "system/select.h"
 #include "tsocket.h"
 #include "tsocket_internal.h"
-#include "lib/util/select.h"
 #include "lib/util/iov_buf.h"
 #include "lib/util/blocking.h"
 #include "lib/util/util_net.h"
@@ -173,103 +171,6 @@ static ssize_t tsocket_bsd_netlink_pending(int fd)
 }
 #endif
 
-static int tsocket_bsd_poll_error(int fd)
-{
-	struct pollfd pfd = {
-		.fd = fd,
-#ifdef POLLRDHUP
-		.events = POLLRDHUP, /* POLLERR and POLLHUP are not needed */
-#endif
-	};
-	int ret;
-
-	errno = 0;
-	ret = sys_poll_intr(&pfd, 1, 0);
-	if (ret == 0) {
-		return 0;
-	}
-	if (ret != 1) {
-		return POLLNVAL;
-	}
-
-	if (pfd.revents & POLLERR) {
-		return POLLERR;
-	}
-	if (pfd.revents & POLLHUP) {
-		return POLLHUP;
-	}
-#ifdef POLLRDHUP
-	if (pfd.revents & POLLRDHUP) {
-		return POLLRDHUP;
-	}
-#endif
-
-	/* should never be reached! */
-	return POLLNVAL;
-}
-
-static int tsocket_bsd_sock_error(int fd)
-{
-	int ret, error = 0;
-	socklen_t len = sizeof(error);
-
-	/*
-	 * if no data is available check if the socket is in error state. For
-	 * dgram sockets it's the way to return ICMP error messages of
-	 * connected sockets to the caller.
-	 */
-	ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len);
-	if (ret == -1) {
-		return ret;
-	}
-	if (error != 0) {
-		errno = error;
-		return -1;
-	}
-	return 0;
-}
-
-static int tsocket_bsd_error(int fd)
-{
-	int ret;
-	int poll_error = 0;
-
-	poll_error = tsocket_bsd_poll_error(fd);
-	if (poll_error == 0) {
-		return 0;
-	}
-
-#ifdef POLLRDHUP
-	if (poll_error == POLLRDHUP) {
-		errno = ECONNRESET;
-		return -1;
-	}
-#endif
-
-	if (poll_error == POLLHUP) {
-		errno = EPIPE;
-		return -1;
-	}
-
-	/*
-	 * POLLERR and POLLNVAL fallback to
-	 * getsockopt(fd, SOL_SOCKET, SO_ERROR)
-	 * and force EPIPE as fallback.
-	 */
-
-	errno = 0;
-	ret = tsocket_bsd_sock_error(fd);
-	if (ret == 0) {
-		errno = EPIPE;
-	}
-
-	if (errno == 0) {
-		errno = EPIPE;
-	}
-
-	return -1;
-}
-
 static ssize_t tsocket_bsd_pending(int fd)
 {
 	int ret;
@@ -290,7 +191,7 @@ static ssize_t tsocket_bsd_pending(int fd)
 		return value;
 	}
 
-	return tsocket_bsd_error(fd);
+	return samba_socket_poll_or_sock_error(fd);
 }
 
 static const struct tsocket_address_ops tsocket_address_bsd_ops;
@@ -1749,14 +1650,12 @@ struct tstream_bsd {
 	void *event_ptr;
 	struct tevent_fd *fde;
 	bool optimize_readv;
+	bool fail_readv_first_error;
 
 	void *readable_private;
 	void (*readable_handler)(void *private_data);
 	void *writeable_private;
 	void (*writeable_handler)(void *private_data);
-
-	struct tevent_context *error_ctx;
-	struct tevent_timer *error_timer;
 };
 
 bool tstream_bsd_optimize_readv(struct tstream_context *stream,
@@ -1778,26 +1677,23 @@ bool tstream_bsd_optimize_readv(struct tstream_context *stream,
 	return old;
 }
 
-static void tstream_bsd_error_timer(struct tevent_context *ev,
-				    struct tevent_timer *te,
-				    struct timeval current_time,
-				    void *private_data)
+bool tstream_bsd_fail_readv_first_error(struct tstream_context *stream,
+					bool on)
 {
 	struct tstream_bsd *bsds =
-		talloc_get_type(private_data,
+		talloc_get_type(_tstream_context_data(stream),
 		struct tstream_bsd);
+	bool old;
 
-	TALLOC_FREE(bsds->error_timer);
-
-	/*
-	 * Turn on TEVENT_FD_READABLE() again
-	 * if we have a writeable_handler that
-	 * wants to monitor the connection
-	 * for errors.
-	 */
-	if (bsds->writeable_handler != NULL) {
-		TEVENT_FD_READABLE(bsds->fde);
+	if (bsds == NULL) {
+		/* not a bsd socket */
+		return false;
 	}
+
+	old = bsds->fail_readv_first_error;
+	bsds->fail_readv_first_error = on;
+
+	return old;
 }
 
 static void tstream_bsd_fde_handler(struct tevent_context *ev,
@@ -1808,80 +1704,106 @@ static void tstream_bsd_fde_handler(struct tevent_context *ev,
 	struct tstream_bsd *bsds = talloc_get_type_abort(private_data,
 				   struct tstream_bsd);
 
+	if (flags & TEVENT_FD_ERROR) {
+		/*
+		 * We lazily keep TEVENT_FD_READ alive
+		 * in tstream_bsd_set_readable_handler()
+		 *
+		 * So we have to check TEVENT_FD_READ
+		 * as well as bsds->readable_handler
+		 *
+		 * We only drain remaining data from the
+		 * the recv queue if available and desired.
+		 */
+		if ((flags & TEVENT_FD_READ) &&
+		    !bsds->fail_readv_first_error &&
+		    (bsds->readable_handler != NULL))
+		{
+			/*
+			 * If there's still data to read
+			 * we allow it to be read until
+			 * we reach EOF (=> EPIPE).
+			 */
+			bsds->readable_handler(bsds->readable_private);
+			return;
+		}
+
+		/*
+		 * If there's no data left to read,
+		 * we get the error.
+		 *
+		 * It means we no longer call any readv or
+		 * writev, as bsds->error is checked first.
+		 */
+		if (bsds->error == 0) {
+			int ret = samba_socket_poll_or_sock_error(bsds->fd);
+
+			if (ret == -1) {
+				bsds->error = errno;
+			}
+			/* fallback to EPIPE */
+			if (bsds->error == 0) {
+				bsds->error = EPIPE;
+			}
+		}
+
+		/*
+		 * Let write to fail early.
+		 *
+		 * Note we only need to check TEVENT_FD_WRITE
+		 * as tstream_bsd_set_writeable_handler()
+		 * clear it together with the handler.
+		 */
+		if (flags & TEVENT_FD_WRITE) {
+			bsds->writeable_handler(bsds->writeable_private);
+			return;
+		}
+
+		/* We prefer the readable handler to fire first. */
+		if (bsds->readable_handler != NULL) {
+			bsds->readable_handler(bsds->readable_private);
+			return;
+		}
+
+		/* As last resort we notify the writeable handler */
+		if (bsds->writeable_handler != NULL) {
+			bsds->writeable_handler(bsds->writeable_private);
+			return;
+		}
+
+		/*
+		 * We may hit this because we don't clear TEVENT_FD_ERROR
+		 * in tstream_bsd_set_readable_handler() nor
+		 * tstream_bsd_set_writeable_handler().
+		 *
+		 * As we already captured the error, we can remove
+		 * the fde completely.
+		 */
+		TALLOC_FREE(bsds->fde);
+		return;
+	}
 	if (flags & TEVENT_FD_WRITE) {
 		bsds->writeable_handler(bsds->writeable_private);
 		return;
 	}
 	if (flags & TEVENT_FD_READ) {
 		if (!bsds->readable_handler) {
-			struct timeval recheck_time;
-
 			/*
+			 * tstream_bsd_set_readable_handler
+			 * doesn't clear TEVENT_FD_READ.
+			 *
 			 * In order to avoid cpu-spinning
-			 * we no longer want to get TEVENT_FD_READ
+			 * we need to clear it here.
 			 */
 			TEVENT_FD_NOT_READABLE(bsds->fde);
 
-			if (!bsds->writeable_handler) {
-				return;
-			}
-
 			/*
-			 * If we have a writeable handler we
-			 * want that to report connection errors
-			 * early.
-			 *
-			 * So we check if the socket is in an
-			 * error state.
+			 * Here we're lazy and keep TEVENT_FD_ERROR
+			 * alive. If it's triggered the next time
+			 * we'll handle it gracefully above
+			 * and end up with TALLOC_FREE(bsds->fde);
+			 * in order to spin on TEVENT_FD_ERROR.
 			 */
-			if (bsds->error == 0) {
-				int ret = tsocket_bsd_error(bsds->fd);
-
-				if (ret == -1) {
-					bsds->error = errno;
-				}
-			}
-
-			if (bsds->error != 0) {
-				/*
-				 * Let the writeable handler report the error
-				 */
-				bsds->writeable_handler(bsds->writeable_private);
-				return;
-			}
-
-			/*
-			 * Here we called TEVENT_FD_NOT_READABLE() without
-			 * calling into the writeable handler.
-			 *
-			 * So we may have to wait for the kernels tcp stack
-			 * to report TEVENT_FD_WRITE in order to let
-			 * make progress and turn on TEVENT_FD_READABLE()
-			 * again.
-			 *
-			 * As a fallback we use a timer that turns on
-			 * TEVENT_FD_READABLE() again after a timeout of
-			 * 1 second.
-			 */
-
-			if (bsds->error_timer != NULL) {
-				return;
-			}
-
-			recheck_time = timeval_current_ofs(1, 0);
-			bsds->error_timer = tevent_add_timer(bsds->error_ctx,
-							     bsds,
-							     recheck_time,
-							     tstream_bsd_error_timer,
-							     bsds);
-			if (bsds->error_timer == NULL) {
-				bsds->error = ENOMEM;
-				/*
-				 * Let the writeable handler report the error
-				 */
-				bsds->writeable_handler(bsds->writeable_private);
-				return;
-			}
 			return;
 		}
 		bsds->readable_handler(bsds->readable_private);
@@ -1905,6 +1827,11 @@ static int tstream_bsd_set_readable_handler(struct tstream_bsd *bsds,
 		bsds->readable_handler = NULL;
 		bsds->readable_private = NULL;
 
+		/*
+		 * Here we are lazy as it's very likely that the next
+		 * tevent_readv_send() will come in shortly,
+		 * so we keep TEVENT_FD_READ alive.
+		 */
 		return 0;
 	}
 
@@ -1922,7 +1849,8 @@ static int tstream_bsd_set_readable_handler(struct tstream_bsd *bsds,
 		TALLOC_FREE(bsds->fde);
 
 		bsds->fde = tevent_add_fd(ev, bsds,
-					  bsds->fd, TEVENT_FD_READ,
+					  bsds->fd,
+					  TEVENT_FD_ERROR | TEVENT_FD_READ,
 					  tstream_bsd_fde_handler,
 					  bsds);
 		if (!bsds->fde) {
@@ -1934,9 +1862,12 @@ static int tstream_bsd_set_readable_handler(struct tstream_bsd *bsds,
 		bsds->event_ptr = ev;
 	} else if (!bsds->readable_handler) {
 		TEVENT_FD_READABLE(bsds->fde);
+		/*
+		 * TEVENT_FD_ERROR is likely already set, so
+		 * TEVENT_FD_WANTERROR() is most likely a no-op.
+		 */
+		TEVENT_FD_WANTERROR(bsds->fde);
 	}
-
-	TALLOC_FREE(bsds->error_timer);
 
 	bsds->readable_handler = handler;
 	bsds->readable_private = private_data;
@@ -1959,9 +1890,18 @@ static int tstream_bsd_set_writeable_handler(struct tstream_bsd *bsds,
 		}
 		bsds->writeable_handler = NULL;
 		bsds->writeable_private = NULL;
+
+		/*
+		 * The writeable handler is only
+		 * set if we got EAGAIN or a short
+		 * writev on the first try, so
+		 * this isn't the hot path.
+		 *
+		 * Here we are lazy and leave TEVENT_FD_ERROR
+		 * alive as it's shared with the readable
+		 * handler. So we only clear TEVENT_FD_WRITE.
+		 */
 		TEVENT_FD_NOT_WRITEABLE(bsds->fde);
-		TALLOC_FREE(bsds->error_timer);
-		bsds->error_ctx = NULL;
 		return 0;
 	}
 
@@ -1973,8 +1913,6 @@ static int tstream_bsd_set_writeable_handler(struct tstream_bsd *bsds,
 		}
 		bsds->event_ptr = NULL;
 		TALLOC_FREE(bsds->fde);
-		TALLOC_FREE(bsds->error_timer);
-		bsds->error_ctx = NULL;
 	}
 
 	if (tevent_fd_get_flags(bsds->fde) == 0) {
@@ -1982,7 +1920,7 @@ static int tstream_bsd_set_writeable_handler(struct tstream_bsd *bsds,
 
 		bsds->fde = tevent_add_fd(ev, bsds,
 					  bsds->fd,
-					  TEVENT_FD_READ | TEVENT_FD_WRITE,
+					  TEVENT_FD_ERROR | TEVENT_FD_WRITE,
 					  tstream_bsd_fde_handler,
 					  bsds);
 		if (!bsds->fde) {
@@ -1993,14 +1931,16 @@ static int tstream_bsd_set_writeable_handler(struct tstream_bsd *bsds,
 		/* cache the event context we're running on */
 		bsds->event_ptr = ev;
 	} else if (!bsds->writeable_handler) {
-		uint16_t flags = tevent_fd_get_flags(bsds->fde);
-		flags |= TEVENT_FD_READ | TEVENT_FD_WRITE;
-		tevent_fd_set_flags(bsds->fde, flags);
+		TEVENT_FD_WRITEABLE(bsds->fde);
+		/*
+		 * TEVENT_FD_ERROR is likely already set, so
+		 * TEVENT_FD_WANTERROR() is most likely a no-op.
+		 */
+		TEVENT_FD_WANTERROR(bsds->fde);
 	}
 
 	bsds->writeable_handler = handler;
 	bsds->writeable_private = private_data;
-	bsds->error_ctx = ev;
 
 	return 0;
 }
@@ -2308,12 +2248,7 @@ static void tstream_bsd_writev_handler(void *private_data)
 	if (retry) {
 		/*
 		 * retry later...
-		 *
-		 * make sure we also wait readable again
-		 * in order to notice errors early
 		 */
-		TEVENT_FD_READABLE(bsds->fde);
-		TALLOC_FREE(bsds->error_timer);
 		return;
 	}
 	if (err != 0) {
@@ -2341,11 +2276,7 @@ static void tstream_bsd_writev_handler(void *private_data)
 	if (state->count > 0) {
 		/*
 		 * we have more to write
-		 *
-		 * make sure we also wait readable again
-		 * in order to notice errors early
 		 */
-		TEVENT_FD_READABLE(bsds->fde);
 		return;
 	}
 
@@ -2393,8 +2324,6 @@ static struct tevent_req *tstream_bsd_disconnect_send(TALLOC_CTX *mem_ctx,
 		goto post;
 	}
 
-	TALLOC_FREE(bsds->error_timer);
-	bsds->error_ctx = NULL;
 	TALLOC_FREE(bsds->fde);
 	ret = close(bsds->fd);
 	bsds->fd = -1;
@@ -2437,8 +2366,6 @@ static const struct tstream_context_ops tstream_bsd_ops = {
 
 static int tstream_bsd_destructor(struct tstream_bsd *bsds)
 {
-	TALLOC_FREE(bsds->error_timer);
-	bsds->error_ctx = NULL;
 	TALLOC_FREE(bsds->fde);
 	if (bsds->fd != -1) {
 		close(bsds->fd);
@@ -2687,7 +2614,7 @@ static struct tevent_req *tstream_bsd_connect_send(TALLOC_CTX *mem_ctx,
 	 */
 	state->fde = tevent_add_fd(ev, state,
 				   state->fd,
-				   TEVENT_FD_READ | TEVENT_FD_WRITE,
+				   TEVENT_FD_ERROR | TEVENT_FD_WRITE,
 				   tstream_bsd_connect_fde_handler,
 				   req);
 	if (tevent_req_nomem(state->fde, req)) {
@@ -2712,18 +2639,10 @@ static void tstream_bsd_connect_fde_handler(struct tevent_context *ev,
 					struct tstream_bsd_connect_state);
 	struct samba_sockaddr *lrbsda = NULL;
 	int ret;
-	int error=0;
-	socklen_t len = sizeof(error);
 	int err;
 	bool retry;
 
-	ret = getsockopt(state->fd, SOL_SOCKET, SO_ERROR, &error, &len);
-	if (ret == 0) {
-		if (error != 0) {
-			errno = error;
-			ret = -1;
-		}
-	}
+	ret = samba_socket_sock_error(state->fd);
 	err = tsocket_bsd_error_from_errno(ret, errno, &retry);
 	if (retry) {
 		/* retry later */

@@ -1312,12 +1312,7 @@ int net_rpc_user(struct net_context *c, int argc, const char **argv)
 		{NULL, NULL, 0, NULL, NULL}
 	};
 
-	status = libnetapi_net_init(&c->netapi_ctx);
-	if (status != 0) {
-		return -1;
-	}
-
-	status = libnetapi_set_creds(c->netapi_ctx, c->creds);
+	status = libnetapi_net_init(&c->netapi_ctx, c->lp_ctx, c->creds);
 	if (status != 0) {
 		return -1;
 	}
@@ -1635,7 +1630,7 @@ static NTSTATUS rpc_sh_user_flag_edit_internals(struct net_context *c,
 	if ((argc > 1) ||
 	    ((argc == 1) && !strequal(argv[0], "yes") &&
 	     !strequal(argv[0], "no"))) {
-		/* TRANSATORS: The yes|no here are program keywords. Please do
+		/* TRANSLATORS: The yes|no here are program keywords. Please do
 		   not translate. */
 		d_fprintf(stderr, _("Usage: %s <username> [yes|no]\n"),
 			  ctx->whoami);
@@ -3505,12 +3500,7 @@ int net_rpc_group(struct net_context *c, int argc, const char **argv)
 		{NULL, NULL, 0, NULL, NULL}
 	};
 
-	status = libnetapi_net_init(&c->netapi_ctx);
-	if (status != 0) {
-		return -1;
-	}
-
-	status = libnetapi_set_creds(c->netapi_ctx, c->creds);
+	status = libnetapi_net_init(&c->netapi_ctx, c->lp_ctx, c->creds);
 	if (status != 0) {
 		return -1;
 	}
@@ -4816,46 +4806,46 @@ static NTSTATUS rpc_aliaslist_internals(struct net_context *c,
 	return status;
 }
 
-static void init_user_token(struct security_token *token, struct dom_sid *user_sid)
-{
-	token->num_sids = 4;
-
-	if (!(token->sids = SMB_MALLOC_ARRAY(struct dom_sid, 4))) {
-		d_fprintf(stderr, "malloc %s\n",_("failed"));
-		token->num_sids = 0;
-		return;
-	}
-
-	token->sids[0] = *user_sid;
-	sid_copy(&token->sids[1], &global_sid_World);
-	sid_copy(&token->sids[2], &global_sid_Network);
-	sid_copy(&token->sids[3], &global_sid_Authenticated_Users);
-}
-
-static void free_user_token(struct security_token *token)
-{
-	SAFE_FREE(token->sids);
-}
-
-static void add_sid_to_token(struct security_token *token, struct dom_sid *sid)
-{
-	if (security_token_has_sid(token, sid))
-		return;
-
-	token->sids = SMB_REALLOC_ARRAY(token->sids, struct dom_sid, token->num_sids+1);
-	if (!token->sids) {
-		return;
-	}
-
-	sid_copy(&token->sids[token->num_sids], sid);
-
-	token->num_sids += 1;
-}
-
 struct user_token {
 	fstring name;
-	struct security_token token;
+	struct security_token *token;
 };
+
+static void add_sid_to_token(struct security_token *token, const struct dom_sid *sid)
+{
+	NTSTATUS status = add_sid_to_array_unique(token, sid,
+						  &token->sids, &token->num_sids);
+	/*
+	 * This is both very unlikely and mostly harmless in a command
+	 * line tool
+	 */
+	SMB_ASSERT(NT_STATUS_IS_OK(status));
+}
+
+static void init_user_token(struct user_token *token_list,
+			    struct security_token **token,
+			    struct dom_sid *user_sid)
+{
+	/*
+	 * This token is not from the auth stack, only has user SIDs
+	 * and must fail if conditional ACEs are found in the security
+	 * descriptor
+	 */
+	*token = security_token_initialise(token_list, CLAIMS_EVALUATION_INVALID_STATE);
+	SMB_ASSERT(*token);
+
+	add_sid_to_token(*token,
+			 user_sid);
+
+	add_sid_to_token(*token,
+			 &global_sid_World);
+
+	add_sid_to_token(*token,
+			 &global_sid_Network);
+
+	add_sid_to_token(*token,
+			 &global_sid_Authenticated_Users);
+}
 
 static void dump_user_token(struct user_token *token)
 {
@@ -4863,10 +4853,10 @@ static void dump_user_token(struct user_token *token)
 
 	d_printf("%s\n", token->name);
 
-	for (i=0; i<token->token.num_sids; i++) {
+	for (i=0; i<token->token->num_sids; i++) {
 		struct dom_sid_buf buf;
 		d_printf(" %s\n",
-			 dom_sid_str_buf(&token->token.sids[i], &buf));
+			 dom_sid_str_buf(&token->token->sids[i], &buf));
 	}
 }
 
@@ -4910,7 +4900,9 @@ static void collect_alias_memberships(struct security_token *token)
 	}
 }
 
-static bool get_user_sids(const char *domain, const char *user, struct security_token *token)
+static bool get_user_sids(const char *domain, const char *user,
+			  struct user_token *token_list,
+			  struct security_token **token)
 {
 	wbcErr wbc_status = WBC_ERR_UNKNOWN_FAILURE;
 	enum wbcSidType type;
@@ -4947,7 +4939,7 @@ static bool get_user_sids(const char *domain, const char *user, struct security_
 		return false;
 	}
 
-	init_user_token(token, &user_sid);
+	init_user_token(token_list, token, &user_sid);
 
 	/* And now the groups winbind knows about */
 
@@ -4981,7 +4973,7 @@ static bool get_user_sids(const char *domain, const char *user, struct security_
 			wbcFreeMemory(groups);
 			return false;
 		}
-		add_sid_to_token(token, &sid);
+		add_sid_to_token(*token, &sid);
 	}
 	wbcFreeMemory(groups);
 
@@ -5017,10 +5009,10 @@ static bool get_user_tokens(struct net_context *c, int *num_tokens,
 		return false;
 	}
 
-	result = SMB_MALLOC_ARRAY(struct user_token, num_users);
+	result = talloc_zero_array(NULL, struct user_token, num_users);
 
 	if (result == NULL) {
-		DEBUG(1, ("Could not malloc sid array\n"));
+		DBG_ERR("Could not talloc token array\n");
 		wbcFreeMemory(users);
 		return false;
 	}
@@ -5050,7 +5042,7 @@ static bool get_user_tokens(struct net_context *c, int *num_tokens,
 			fstrcpy(user, p);
 		}
 
-		get_user_sids(domain, user, &(result[i].token));
+		get_user_sids(domain, user, result, &(result[i].token));
 	}
 	TALLOC_FREE(frame);
 	wbcFreeMemory(users);
@@ -5089,20 +5081,23 @@ static bool get_user_tokens_from_file(FILE *f,
 			}
 
 			if (token == NULL) {
-				DEBUG(0, ("File does not begin with username"));
+				DEBUG(0, ("File does not begin with username\n"));
 				return false;
 			}
 
-			add_sid_to_token(&token->token, &sid);
+			add_sid_to_token(token->token, &sid);
 			continue;
 		}
 
 		/* And a new user... */
 
 		*num_tokens += 1;
-		*tokens = SMB_REALLOC_ARRAY(*tokens, struct user_token, *num_tokens);
+		*tokens = talloc_realloc(NULL,
+					 *tokens,
+					 struct user_token,
+					 *num_tokens);
 		if (*tokens == NULL) {
-			DEBUG(0, ("Could not realloc tokens\n"));
+			DBG_ERR("Could not talloc_realloc tokens\n");
 			return false;
 		}
 
@@ -5111,8 +5106,15 @@ static bool get_user_tokens_from_file(FILE *f,
 		if (strlcpy(token->name, line, sizeof(token->name)) >= sizeof(token->name)) {
 			return false;
 		}
-		token->token.num_sids = 0;
-		token->token.sids = NULL;
+		token->token
+			= security_token_initialise(*tokens,
+						    CLAIMS_EVALUATION_INVALID_STATE);
+		if (token->token == NULL) {
+			DBG_ERR("security_token_initialise() failed: "
+				"Could not allocate security_token with \n");
+			return false;
+		}
+
 		continue;
 	}
 
@@ -5180,7 +5182,7 @@ static void show_userlist(struct rpc_pipe_client *pipe_hnd,
 		uint32_t acc_granted;
 
 		if (share_sd != NULL) {
-			status = se_access_check(share_sd, &tokens[i].token,
+			status = se_access_check(share_sd, tokens[i].token,
 					     1, &acc_granted);
 
 			if (!NT_STATUS_IS_OK(status)) {
@@ -5196,8 +5198,8 @@ static void show_userlist(struct rpc_pipe_client *pipe_hnd,
 			continue;
 		}
 
-		status = se_access_check(root_sd, &tokens[i].token,
-				     1, &acc_granted);
+		status = se_access_check(root_sd, tokens[i].token,
+					 1, &acc_granted);
 		if (!NT_STATUS_IS_OK(status)) {
 			DEBUG(1, ("Could not check root_sd for user %s\n",
 				  tokens[i].name));
@@ -5282,7 +5284,7 @@ static NTSTATUS rpc_share_allowedusers_internals(struct net_context *c,
 	}
 
 	for (i=0; i<num_tokens; i++)
-		collect_alias_memberships(&tokens[i].token);
+		collect_alias_memberships(tokens[i].token);
 
 	ZERO_STRUCT(info_ctr);
 	ZERO_STRUCT(ctr1);
@@ -5343,10 +5345,7 @@ static NTSTATUS rpc_share_allowedusers_internals(struct net_context *c,
 			      num_tokens, tokens);
 	}
  done:
-	for (i=0; i<num_tokens; i++) {
-		free_user_token(&tokens[i].token);
-	}
-	SAFE_FREE(tokens);
+	TALLOC_FREE(tokens);
 	TALLOC_FREE(server_aliases);
 
 	return nt_status;
@@ -5401,10 +5400,9 @@ int net_usersidlist(struct net_context *c, int argc, const char **argv)
 
 	for (i=0; i<num_tokens; i++) {
 		dump_user_token(&tokens[i]);
-		free_user_token(&tokens[i].token);
 	}
 
-	SAFE_FREE(tokens);
+	TALLOC_FREE(tokens);
 	return 0;
 }
 
@@ -5474,16 +5472,10 @@ int net_rpc_share(struct net_context *c, int argc, const char **argv)
 		{NULL, NULL, 0, NULL, NULL}
 	};
 
-	status = libnetapi_net_init(&c->netapi_ctx);
+	status = libnetapi_net_init(&c->netapi_ctx, c->lp_ctx, c->creds);
 	if (status != 0) {
 		return -1;
 	}
-
-	status = libnetapi_set_creds(c->netapi_ctx, c->creds);
-	if (status != 0) {
-		return -1;
-	}
-
 
 	if (argc == 0) {
 		if (c->display_usage) {
@@ -5757,12 +5749,7 @@ int net_rpc_file(struct net_context *c, int argc, const char **argv)
 		{NULL, NULL, 0, NULL, NULL}
 	};
 
-	status = libnetapi_net_init(&c->netapi_ctx);
-	if (status != 0) {
-		return -1;
-	}
-
-	status = libnetapi_set_creds(c->netapi_ctx, c->creds);
+	status = libnetapi_net_init(&c->netapi_ctx, c->lp_ctx, c->creds);
 	if (status != 0) {
 		return -1;
 	}
@@ -6500,8 +6487,8 @@ static NTSTATUS rpc_trustdom_get_pdc(struct net_context *c,
 		return NT_STATUS_OK;
 	}
 
-	DEBUG(1,("NetServerEnum2 error: Couldn't find primary domain controller\
-		 for domain %s\n", domain_name));
+	DEBUG(1,("NetServerEnum2 error: Couldn't find primary domain controller "
+		 "for domain %s\n", domain_name));
 
 	/* Try netr_GetDcName */
 
@@ -6524,8 +6511,8 @@ static NTSTATUS rpc_trustdom_get_pdc(struct net_context *c,
 		return status;
 	}
 
-	DEBUG(1,("netr_GetDcName error: Couldn't find primary domain controller\
-		 for domain %s\n", domain_name));
+	DEBUG(1,("netr_GetDcName error: Couldn't find primary domain controller "
+		 "for domain %s\n", domain_name));
 
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
@@ -6555,12 +6542,18 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 	TALLOC_CTX *mem_ctx;
 	NTSTATUS nt_status, result;
 	struct dom_sid *domain_sid;
-
 	char* domain_name;
 	char* acct_name;
+	const char *pwd = NULL;
 	fstring pdc_name;
 	union lsa_PolicyInformation *info = NULL;
 	struct dcerpc_binding_handle *b;
+	union lsa_revision_info out_revision_info = {
+		.info1 = {
+			.revision = 0,
+		},
+	};
+	uint32_t out_version = 0;
 
 	/*
 	 * Connect to \\server\ipc$ as 'our domain' account with password
@@ -6588,6 +6581,7 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 		SAFE_FREE(acct_name);
 		return -1;
 	}
+	cli_credentials_set_username(c->creds, acct_name, CRED_SPECIFIED);
 
 	/*
 	 * opt_workgroup will be used by connection functions further,
@@ -6596,9 +6590,6 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 	if (c->opt_workgroup) {
 		c->opt_workgroup = smb_xstrdup(domain_name);
 	};
-
-	c->opt_user_name = acct_name;
-	c->opt_user_specified = true;
 
 	/* find the domain controller */
 	if (!net_find_pdc(&server_ss, pdc_name, domain_name)) {
@@ -6664,13 +6655,20 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 
 	b = pipe_hnd->binding_handle;
 
-	nt_status = rpccli_lsa_open_policy2(pipe_hnd, mem_ctx, true, KEY_QUERY_VALUE,
-	                                 &connect_hnd);
-	if (NT_STATUS_IS_ERR(nt_status)) {
-		DEBUG(0, ("Couldn't open policy handle. Error was %s\n",
-			nt_errstr(nt_status)));
+	nt_status = dcerpc_lsa_open_policy_fallback(b,
+						    mem_ctx,
+						    pipe_hnd->srv_name_slash,
+						    true,
+						    KEY_QUERY_VALUE,
+						    &out_version,
+						    &out_revision_info,
+						    &connect_hnd,
+						    &result);
+	if (any_nt_status_not_ok(nt_status, result, &nt_status)) {
+		DBG_ERR("Couldn't open policy handle: %s\n",
+			nt_errstr(nt_status));
 		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
+		talloc_free(mem_ctx);
 		return -1;
 	}
 
@@ -6705,7 +6703,9 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 	 * Store the password in secrets db
 	 */
 
-	if (!pdb_set_trusteddom_pw(domain_name, c->opt_password, domain_sid)) {
+	pwd = cli_credentials_get_password(c->creds);
+
+	if (!pdb_set_trusteddom_pw(domain_name, pwd, domain_sid)) {
 		DEBUG(0, ("Storing password for trusted domain failed.\n"));
 		cli_shutdown(cli);
 		talloc_destroy(mem_ctx);
@@ -6891,6 +6891,12 @@ static int rpc_trustdom_vampire(struct net_context *c, int argc,
 	struct lsa_DomainList dom_list;
 	fstring pdc_name;
 	struct dcerpc_binding_handle *b;
+	union lsa_revision_info out_revision_info = {
+		.info1 = {
+			.revision = 0,
+		},
+	};
+	uint32_t out_version = 0;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -6942,15 +6948,22 @@ static int rpc_trustdom_vampire(struct net_context *c, int argc,
 
 	b = pipe_hnd->binding_handle;
 
-	nt_status = rpccli_lsa_open_policy2(pipe_hnd, mem_ctx, false, KEY_QUERY_VALUE,
-					&connect_hnd);
-	if (NT_STATUS_IS_ERR(nt_status)) {
-		DEBUG(0, ("Couldn't open policy handle. Error was %s\n",
- 			nt_errstr(nt_status)));
+	nt_status = dcerpc_lsa_open_policy_fallback(b,
+						    mem_ctx,
+						    pipe_hnd->srv_name_slash,
+						    false,
+						    KEY_QUERY_VALUE,
+						    &out_version,
+						    &out_revision_info,
+						    &connect_hnd,
+						    &result);
+	if (any_nt_status_not_ok(nt_status, result, &nt_status)) {
+		DBG_ERR("Couldn't open policy handle: %s\n",
+			nt_errstr(nt_status));
 		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
+		talloc_free(mem_ctx);
 		return -1;
-	};
+	}
 
 	/* query info level 5 to obtain sid of a domain being queried */
 	nt_status = dcerpc_lsa_QueryInfoPolicy(b, mem_ctx,
@@ -7071,6 +7084,12 @@ static int rpc_trustdom_list(struct net_context *c, int argc, const char **argv)
 	/* trusting domains listing variables */
 	struct policy_handle domain_hnd;
 	struct samr_SamArray *trusts = NULL;
+	union lsa_revision_info out_revision_info = {
+		.info1 = {
+			.revision = 0,
+		},
+	};
+	uint32_t out_version = 0;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -7122,15 +7141,22 @@ static int rpc_trustdom_list(struct net_context *c, int argc, const char **argv)
 
 	b = pipe_hnd->binding_handle;
 
-	nt_status = rpccli_lsa_open_policy2(pipe_hnd, mem_ctx, false, KEY_QUERY_VALUE,
-					&connect_hnd);
-	if (NT_STATUS_IS_ERR(nt_status)) {
-		DEBUG(0, ("Couldn't open policy handle. Error was %s\n",
- 			nt_errstr(nt_status)));
+	nt_status = dcerpc_lsa_open_policy_fallback(b,
+						    mem_ctx,
+						    pipe_hnd->srv_name_slash,
+						    true,
+						    KEY_QUERY_VALUE,
+						    &out_version,
+						    &out_revision_info,
+						    &connect_hnd,
+						    &result);
+	if (any_nt_status_not_ok(nt_status, result, &nt_status)) {
+		DBG_ERR("Couldn't open policy handle: %s\n",
+			nt_errstr(nt_status));
 		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
+		talloc_free(mem_ctx);
 		return -1;
-	};
+	}
 
 	/* query info level 5 to obtain sid of a domain being queried */
 	nt_status = dcerpc_lsa_QueryInfoPolicy(b, mem_ctx,
@@ -7484,9 +7510,13 @@ bool net_rpc_check(struct net_context *c, unsigned flags)
 		}
 		return false;
 	}
-	status = smbXcli_negprot(cli->conn, cli->timeout,
+	status = smbXcli_negprot(cli->conn,
+				 cli->timeout,
 				 lp_client_min_protocol(),
-				 lp_client_max_protocol());
+				 lp_client_max_protocol(),
+				 NULL,
+				 NULL,
+				 NULL);
 	if (!NT_STATUS_IS_OK(status))
 		goto done;
 	if (smbXcli_conn_protocol(cli->conn) < PROTOCOL_NT1)
@@ -8369,12 +8399,7 @@ int net_rpc(struct net_context *c, int argc, const char **argv)
 		{NULL, NULL, 0, NULL, NULL}
 	};
 
-	status = libnetapi_net_init(&c->netapi_ctx);
-	if (status != 0) {
-		return -1;
-	}
-
-	status = libnetapi_set_creds(c->netapi_ctx, c->creds);
+	status = libnetapi_net_init(&c->netapi_ctx, c->lp_ctx, c->creds);
 	if (status != 0) {
 		return -1;
 	}

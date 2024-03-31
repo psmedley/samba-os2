@@ -24,6 +24,8 @@
 #include "replace.h"
 #include "lib/util/debug.h"
 #include "libcli/security/security.h"
+#include "librpc/gen_ndr/conditional_ace.h"
+#include "libcli/security/conditional_ace.h"
 
 /* Map generic access rights to object specific rights.  This technique is
    used to give meaning to assigning read, write, execute and all access to
@@ -102,6 +104,130 @@ void se_map_standard(uint32_t *access_mask, const struct standard_mapping *mappi
 			   old_mask, *access_mask));
 	}
 }
+
+enum ace_callback_result {
+	ACE_CALLBACK_DENY,
+	ACE_CALLBACK_ALLOW,
+	ACE_CALLBACK_SKIP,      /* do not apply this ACE */
+	ACE_CALLBACK_INVALID    /* we don't want to process the conditional ACE */
+};
+
+
+static enum ace_callback_result check_callback_ace_allow(
+	const struct security_ace *ace,
+	const struct security_token *token,
+	const struct security_descriptor *sd)
+{
+	bool ok;
+	int result;
+
+	switch (token->evaluate_claims) {
+	case CLAIMS_EVALUATION_ALWAYS:
+		break;
+
+	case CLAIMS_EVALUATION_INVALID_STATE:
+		DBG_WARNING("Refusing to evaluate ACL with "
+			    "conditional ACE against security "
+			    "token with CLAIMS_EVALUATION_INVALID_STATE\n");
+		return ACE_CALLBACK_INVALID;
+	case CLAIMS_EVALUATION_NEVER:
+	default:
+		/*
+		 * We are asked to pretend we never understood this
+		 * ACE type.
+		 *
+		 * By returning SKIP, this ACE will not adjust any
+		 * permission bits making it an effective no-op, which
+		 * was the default behaviour up to Samba 4.19.
+		 */
+		return ACE_CALLBACK_SKIP;
+	}
+
+	if (ace->type != SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK &&
+	    ace->type != SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT) {
+		/* This indicates a programming error */
+		DBG_ERR("bad conditional allow ACE type: %u\n", ace->type);
+		return ACE_CALLBACK_INVALID;
+	}
+
+	/*
+	 * Until we discover otherwise, we assume all callback ACEs
+	 * are conditional ACEs.
+	 */
+	ok = access_check_conditional_ace(ace, token, sd, &result);
+	if (!ok) {
+		/*
+		 * An error in processing the conditional ACE is
+		 * treated as UNKNOWN, which amounts to a DENY/SKIP
+		 * result.
+		 *
+		 * This is different from the INVALID result which
+		 * means we should not be thinking about conditional
+		 * ACES at all, and will abort the whole access check.
+		 */
+		DBG_WARNING("callback ACE was not a valid conditional ACE\n");
+		return ACE_CALLBACK_SKIP;
+	}
+	if (result == ACE_CONDITION_TRUE) {
+		return ACE_CALLBACK_ALLOW;
+	}
+	/* UNKNOWN means do not allow */
+	return ACE_CALLBACK_SKIP;
+}
+
+
+static enum ace_callback_result check_callback_ace_deny(
+	const struct security_ace *ace,
+	const struct security_token *token,
+	const struct security_descriptor *sd)
+{
+	bool ok;
+	int result;
+
+	switch (token->evaluate_claims) {
+	case CLAIMS_EVALUATION_ALWAYS:
+		break;
+
+	case CLAIMS_EVALUATION_INVALID_STATE:
+		DBG_WARNING("Refusing to evaluate ACL with "
+			    "conditional ACE against security "
+			    "token with CLAIMS_EVALUATION_INVALID_STATE\n");
+		return ACE_CALLBACK_INVALID;
+	case CLAIMS_EVALUATION_NEVER:
+	default:
+		/*
+		 * We are asked to pretend we never understood this
+		 * ACE type.
+		 */
+		return ACE_CALLBACK_SKIP;
+	}
+
+	if (ace->type != SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK &&
+	    ace->type != SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT) {
+		DBG_ERR("bad conditional deny ACE type: %u\n", ace->type);
+		return ACE_CALLBACK_INVALID;
+	}
+
+	/*
+	 * Until we discover otherwise, we assume all callback ACEs
+	 * are conditional ACEs.
+	 */
+	ok = access_check_conditional_ace(ace, token, sd, &result);
+	if (!ok) {
+		/*
+		 * An error in processing the conditional ACE is
+		 * treated as UNKNOWN, which means DENY.
+		 */
+		DBG_WARNING("callback ACE was not a valid conditional ACE\n");
+		return ACE_CALLBACK_DENY;
+	}
+	if (result != ACE_CONDITION_FALSE) {
+		/* UNKNOWN means deny */
+		return ACE_CALLBACK_DENY;
+	}
+	return ACE_CALLBACK_SKIP;
+}
+
 
 /*
   perform a SEC_FLAG_MAXIMUM_ALLOWED access check
@@ -191,6 +317,33 @@ static uint32_t access_check_max_allowed(const struct security_descriptor *sd,
 		case SEC_ACE_TYPE_ACCESS_DENIED_OBJECT:
 			denied |= ~granted & ace->access_mask;
 			break;
+
+		case SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK:
+		{
+			enum ace_callback_result allow =
+				check_callback_ace_allow(ace, token, sd);
+			if (allow == ACE_CALLBACK_INVALID) {
+				return 0;
+			}
+			if (allow == ACE_CALLBACK_ALLOW) {
+				granted |= ace->access_mask;
+			}
+			break;
+		}
+
+		case SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK:
+		{
+			enum ace_callback_result deny =
+				check_callback_ace_deny(ace, token, sd);
+			if (deny == ACE_CALLBACK_INVALID) {
+				return 0;
+			}
+			if (deny == ACE_CALLBACK_DENY) {
+				denied |= ~granted & ace->access_mask;
+			}
+			break;
+		}
+
 		default:	/* Other ACE types not handled/supported */
 			break;
 		}
@@ -198,6 +351,8 @@ static uint32_t access_check_max_allowed(const struct security_descriptor *sd,
 
 	return granted & ~denied;
 }
+
+
 
 static NTSTATUS se_access_check_implicit_owner(const struct security_descriptor *sd,
 					       const struct security_token *token,
@@ -210,6 +365,22 @@ static NTSTATUS se_access_check_implicit_owner(const struct security_descriptor 
 	uint32_t explicitly_denied_bits = 0;
 	bool am_owner = false;
 	bool have_owner_rights_ace = false;
+
+	switch (token->evaluate_claims) {
+	case CLAIMS_EVALUATION_INVALID_STATE:
+		if (token->num_local_claims > 0 ||
+		    token->num_user_claims > 0 ||
+		    token->num_device_claims > 0 ||
+		    token->num_device_sids > 0) {
+			DBG_WARNING("Refusing to evaluate token with claims or device SIDs but also "
+				    "with CLAIMS_EVALUATION_INVALID_STATE\n");
+			return NT_STATUS_INVALID_TOKEN;
+		}
+		break;
+	case CLAIMS_EVALUATION_ALWAYS:
+	case CLAIMS_EVALUATION_NEVER:
+		break;
+	}
 
 	*access_granted = access_desired;
 	bits_remaining = access_desired;
@@ -301,6 +472,34 @@ static NTSTATUS se_access_check_implicit_owner(const struct security_descriptor 
 		case SEC_ACE_TYPE_ACCESS_DENIED_OBJECT:
 			explicitly_denied_bits |= (bits_remaining & ace->access_mask);
 			break;
+
+		case SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK:
+		{
+			enum ace_callback_result allow =
+				check_callback_ace_allow(ace, token, sd);
+			if (allow == ACE_CALLBACK_INVALID) {
+				return NT_STATUS_INVALID_ACE_CONDITION;
+			}
+			if (allow == ACE_CALLBACK_ALLOW) {
+				bits_remaining &= ~ace->access_mask;
+			}
+			break;
+		}
+
+		case SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK:
+		case SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT:
+		{
+			enum ace_callback_result deny =
+				check_callback_ace_deny(ace, token, sd);
+			if (deny == ACE_CALLBACK_INVALID) {
+				return NT_STATUS_INVALID_ACE_CONDITION;
+			}
+			if (deny == ACE_CALLBACK_DENY) {
+				explicitly_denied_bits |= (bits_remaining & ace->access_mask);
+			}
+			break;
+		}
+
 		default:	/* Other ACE types not handled/supported */
 			break;
 		}
@@ -482,8 +681,8 @@ static NTSTATUS check_object_specific_access(const struct security_ace *ace,
 		}
 	}
 
-	if (ace->type == SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT) {
-
+	if (ace->type == SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT ||
+	    ace->type == SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT) {
 		/* apply the access rights to this node, and any children */
 		object_tree_modify_access(node, ace->access_mask);
 
@@ -516,6 +715,7 @@ static NTSTATUS check_object_specific_access(const struct security_ace *ace,
 	return NT_STATUS_OK;
 }
 
+
 NTSTATUS sec_access_check_ds_implicit_owner(const struct security_descriptor *sd,
 					    const struct security_token *token,
 					    uint32_t access_desired,
@@ -526,9 +726,6 @@ NTSTATUS sec_access_check_ds_implicit_owner(const struct security_descriptor *sd
 {
 	uint32_t i;
 	uint32_t bits_remaining;
-	struct dom_sid self_sid;
-
-	dom_sid_parse(SID_NT_SELF, &self_sid);
 
 	*access_granted = access_desired;
 	bits_remaining = access_desired;
@@ -589,7 +786,7 @@ NTSTATUS sec_access_check_ds_implicit_owner(const struct security_descriptor *sd
 			continue;
 		}
 
-		if (dom_sid_equal(&ace->trustee, &self_sid) && replace_sid) {
+		if (dom_sid_equal(&ace->trustee, &global_sid_Self) && replace_sid) {
 			trustee = replace_sid;
 		} else {
 			trustee = &ace->trustee;
@@ -612,6 +809,34 @@ NTSTATUS sec_access_check_ds_implicit_owner(const struct security_descriptor *sd
 				return NT_STATUS_ACCESS_DENIED;
 			}
 			break;
+		case SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK:
+		{
+			enum ace_callback_result allow =
+				check_callback_ace_allow(ace, token, sd);
+			if (allow == ACE_CALLBACK_INVALID) {
+				return NT_STATUS_INVALID_ACE_CONDITION;
+			}
+			if (allow == ACE_CALLBACK_ALLOW) {
+				bits_remaining &= ~ace->access_mask;
+			}
+			break;
+		}
+
+		case SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK:
+		{
+			enum ace_callback_result deny =
+				check_callback_ace_deny(ace, token, sd);
+			if (deny == ACE_CALLBACK_INVALID) {
+				return NT_STATUS_INVALID_ACE_CONDITION;
+			}
+			if (deny == ACE_CALLBACK_DENY) {
+				if (bits_remaining & ace->access_mask) {
+					return NT_STATUS_ACCESS_DENIED;
+				}
+			}
+			break;
+		}
+
 		case SEC_ACE_TYPE_ACCESS_DENIED_OBJECT:
 		case SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT:
 			status = check_object_specific_access(ace, tree,
@@ -625,6 +850,62 @@ NTSTATUS sec_access_check_ds_implicit_owner(const struct security_descriptor *sd
 				return NT_STATUS_OK;
 			}
 			break;
+		case SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT:
+		{
+			/*
+			 * if the callback says ALLOW, we treat this as a
+			 * SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT.
+			 *
+			 * Otherwise we act as if this ACE does not exist.
+			 */
+			enum ace_callback_result allow =
+				check_callback_ace_allow(ace, token, sd);
+			if (allow == ACE_CALLBACK_INVALID) {
+				return NT_STATUS_INVALID_ACE_CONDITION;
+			}
+			if (allow != ACE_CALLBACK_ALLOW) {
+				break;
+			}
+
+			status = check_object_specific_access(ace, tree,
+							      &grant_access);
+
+			if (!NT_STATUS_IS_OK(status)) {
+				return status;
+			}
+
+			if (grant_access) {
+				return NT_STATUS_OK;
+			}
+			break;
+		}
+		case SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT:
+		{
+			/*
+			 * ACCESS_DENIED_OBJECT ACEs can't grant access --
+			 * they either don't match the object and slide
+			 * harmlessly past or they return
+			 * NT_STATUS_ACCESS_DENIED.
+			 *
+			 * ACCESS_DENIED_CALLBACK_OBJECT ACEs add another way
+			 * of not applying, and another way of failing.
+			 */
+			enum ace_callback_result deny =
+				check_callback_ace_deny(ace, token, sd);
+			if (deny == ACE_CALLBACK_INVALID) {
+				return NT_STATUS_INVALID_ACE_CONDITION;
+			}
+			if (deny != ACE_CALLBACK_DENY) {
+				break;
+			}
+			status = check_object_specific_access(ace, tree,
+							      &grant_access);
+
+			if (!NT_STATUS_IS_OK(status)) {
+				return status;
+			}
+			break;
+		}
 		default:	/* Other ACE types not handled/supported */
 			break;
 		}

@@ -414,7 +414,7 @@ static void continue_bind_auth(struct composite_context *ctx);
 
 
 /*
-  Stage 2 of auth_schannel: Receive schannel key and intitiate an
+  Stage 2 of auth_schannel: Receive schannel key and initiate an
   authenticated bind using received credentials
  */
 static void continue_schannel_key(struct composite_context *ctx)
@@ -447,7 +447,7 @@ static void continue_schannel_key(struct composite_context *ctx)
 
 
 /*
-  Stage 3 of auth_schannel: Receivce result of authenticated bind
+  Stage 3 of auth_schannel: Receive result of authenticated bind
   and say if we're done ok.
 */
 static void continue_bind_auth(struct composite_context *ctx)
@@ -504,7 +504,7 @@ static void continue_bind_auth(struct composite_context *ctx)
 }
 
 /*
-  Stage 4 of auth_schannel: Get the Logon Capablities and verify them.
+  Stage 4 of auth_schannel: Get the Logon Capabilities and verify them.
 */
 static void continue_get_capabilities(struct tevent_req *subreq)
 {
@@ -567,7 +567,7 @@ static void continue_get_capabilities(struct tevent_req *subreq)
 		return;
 	}
 
-	/* TODO: Add downgrade dectection. */
+	/* TODO: Add downgrade detection. */
 
 	composite_done(c);
 }

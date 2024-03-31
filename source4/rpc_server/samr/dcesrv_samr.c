@@ -454,7 +454,7 @@ static NTSTATUS dcesrv_samr_OpenDomain(struct dcesrv_call_state *dce_call, TALLO
 
 	d_state->domain_sid = talloc_steal(d_state, r->in.sid);
 
-	if (dom_sid_equal(d_state->domain_sid, dom_sid_parse_talloc(mem_ctx, SID_BUILTIN))) {
+	if (dom_sid_equal(d_state->domain_sid, &global_sid_Builtin)) {
 		d_state->builtin = true;
 		d_state->domain_name = "BUILTIN";
 	} else {
@@ -1120,7 +1120,7 @@ static NTSTATUS dcesrv_samr_CreateDomainGroup(struct dcesrv_call_state *dce_call
 	d_state = h->data;
 
 	if (d_state->builtin) {
-		DEBUG(5, ("Cannot create a domain group in the BUILTIN domain"));
+		DEBUG(5, ("Cannot create a domain group in the BUILTIN domain\n"));
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
@@ -1448,7 +1448,7 @@ static NTSTATUS dcesrv_samr_EnumDomainGroups(struct dcesrv_call_state *dce_call,
 
   This call uses transactions to ensure we don't get a new conflicting
   user while we are processing this, and to ensure the user either
-  completly exists, or does not.
+  completely exists, or does not.
 */
 static NTSTATUS dcesrv_samr_CreateUser2(struct dcesrv_call_state *dce_call, TALLOC_CTX *mem_ctx,
 				 struct samr_CreateUser2 *r)
@@ -1471,7 +1471,7 @@ static NTSTATUS dcesrv_samr_CreateUser2(struct dcesrv_call_state *dce_call, TALL
 	d_state = h->data;
 
 	if (d_state->builtin) {
-		DEBUG(5, ("Cannot create a user in the BUILTIN domain"));
+		DEBUG(5, ("Cannot create a user in the BUILTIN domain\n"));
 		return NT_STATUS_ACCESS_DENIED;
 	} else if (r->in.acct_flags == ACB_DOMTRUST) {
 		/* Domain trust accounts must be created by the LSA calls */
@@ -1778,7 +1778,7 @@ static NTSTATUS dcesrv_samr_EnumDomainUsers(struct dcesrv_call_state *dce_call,
 		}
 
 		if (ac->num_entries == 0) {
-			DBG_WARNING("No users in domain %s",
+			DBG_WARNING("No users in domain %s\n",
 				    ldb_dn_get_linearized(d_state->domain_dn));
 			talloc_free(ac);
 
@@ -1895,7 +1895,7 @@ static NTSTATUS dcesrv_samr_CreateDomAlias(struct dcesrv_call_state *dce_call, T
 	d_state = h->data;
 
 	if (d_state->builtin) {
-		DEBUG(5, ("Cannot create a domain alias in the BUILTIN domain"));
+		DEBUG(5, ("Cannot create a domain alias in the BUILTIN domain\n"));
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
@@ -5260,8 +5260,8 @@ static NTSTATUS dcesrv_samr_ValidatePassword(struct dcesrv_call_state *dce_call,
 					     TALLOC_CTX *mem_ctx,
 					     struct samr_ValidatePassword *r)
 {
-	struct samr_GetDomPwInfo r2;
-	struct samr_PwInfo pwInfo;
+	struct samr_GetDomPwInfo r2 = {};
+	struct samr_PwInfo pwInfo = {};
 	const char *account = NULL;
 	DATA_BLOB password;
 	enum samr_ValidationStatus res;

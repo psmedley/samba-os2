@@ -53,7 +53,7 @@ static krb5_error_code ads_keytab_open(krb5_context context,
 					   keytab_str,
 					   sizeof(keytab_str) - 2);
 		if (ret != 0) {
-			DBG_WARNING("Failed to get default keytab name");
+			DBG_WARNING("Failed to get default keytab name\n");
 			goto out;
 		}
 		keytab_name = keytab_str;
@@ -390,7 +390,7 @@ int ads_keytab_add_entry(ADS_STRUCT *ads, const char *srvPrinc, bool update_ads)
 		goto out;
 	}
 
-	/* make sure we have a single instance of a the computer account */
+	/* make sure we have a single instance of the computer account */
 	if (!ads_has_samaccountname(ads, tmpctx, lp_netbios_name())) {
 		DBG_ERR("unable to determine machine account's short name in "
 			"AD!\n");

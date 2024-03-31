@@ -371,7 +371,7 @@ NTSTATUS SMBsesskeygen_ntv2(const uint8_t kr[16],
 			      16,
 			      sess_key);
 	if (rc != 0) {
-		return gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED);
+		return gnutls_error_to_ntstatus(rc, NT_STATUS_HMAC_NOT_SUPPORTED);
 	}
 
 #ifdef DEBUG_PASSWORD
@@ -968,7 +968,7 @@ bool decode_pw_buffer(TALLOC_CTX *ctx,
 				   CH_UNIX,
 				   new_password.data,
 				   new_password.length,
-				   (void *)pp_new_pwrd,
+				   pp_new_pwrd,
 				   new_pw_len);
 	data_blob_free(&new_password);
 	if (!ok) {
@@ -1062,7 +1062,7 @@ bool decode_pwd_string_from_buffer514(TALLOC_CTX *mem_ctx,
 				   CH_UNIX,
 				   new_password.data,
 				   new_password.length,
-				   (void *)&decoded_password->data,
+				   &decoded_password->data,
 				   &decoded_password->length);
 	data_blob_free(&new_password);
 	if (!ok) {

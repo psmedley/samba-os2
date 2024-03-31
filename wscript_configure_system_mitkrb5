@@ -9,7 +9,7 @@ krb5_min_required_version = "1.9"
 # Required versions
 krb5_required_version = krb5_min_required_version
 if conf.CONFIG_SET('AD_DC_BUILD_IS_ENABLED'):
-    krb5_required_version = "1.19"
+    krb5_required_version = "1.21"
 
 def parse_version(v):
     return tuple(map(int, (v.split("."))))
@@ -46,7 +46,7 @@ if conf.env.KRB5_CONFIG:
         if 'krb5' in conf.env['LIB_KRB5']:
             krb5_define_syslib(conf, "krb5", conf.env['LIB_KRB5'])
         if 'k5crypto' in conf.env['LIB_KRB5']:
-            krb5_define_syslib(conf, "k5crypto", conf.env['LIB_GSSAPI'])
+            krb5_define_syslib(conf, "k5crypto", conf.env['LIB_KRB5'])
     else:
         raise Errors.WafError('Unable to find required krb5 library!')
 
@@ -98,10 +98,6 @@ if conf.env.KRB5_CONFIG:
     else:
         Logs.info('MIT Kerberos %s detected, MIT krb5 build can proceed' % (krb5_version))
 
-    if parse_version(krb5_version) < parse_version('1.20'):
-        conf.DEFINE('HAVE_MIT_KRB5_PRE_1_20', 1)
-    if parse_version(krb5_version) >= parse_version('1.20'):
-        conf.DEFINE('HAVE_MIT_KRB5_1_20', 1)
     conf.define('USING_SYSTEM_MITKRB5', '"%s"' % krb5_version)
 
 conf.CHECK_HEADERS('krb5.h krb5/locate_plugin.h', lib='krb5')
@@ -172,6 +168,8 @@ conf.CHECK_FUNCS('''
        krb5_mk_req_extended krb5_kt_compare
        krb5_free_enctypes
        krb5_free_string
+       krb5_get_init_creds_opt_set_fast_ccache
+       krb5_get_init_creds_opt_set_fast_flags
        ''',
      lib='krb5 k5crypto',
      headers='krb5.h')
@@ -285,21 +283,21 @@ conf.CHECK_CODE('''
        ''',
     '_HAVE_ENCTYPE_ARCFOUR_HMAC_MD5',
     headers='krb5.h', lib='krb5',
-    msg="Checking whether the ENCTYPE_ARCFOUR_HMAC_MD5 key type definition is available");
+    msg="Checking whether the ENCTYPE_ARCFOUR_HMAC_MD5 key type definition is available")
 conf.CHECK_CODE('''
        krb5_enctype enctype;
        enctype = ENCTYPE_ARCFOUR_HMAC_MD5_56;
        ''',
     '_HAVE_ENCTYPE_ARCFOUR_HMAC_MD5_56',
     headers='krb5.h', lib='krb5',
-    msg="Checking whether the ENCTYPE_ARCFOUR_HMAC_MD5_56 key type definition is available");
+    msg="Checking whether the ENCTYPE_ARCFOUR_HMAC_MD5_56 key type definition is available")
 conf.CHECK_CODE('''
        krb5_keytype keytype;
        keytype = KEYTYPE_ARCFOUR_56;
        ''',
     '_HAVE_KEYTYPE_ARCFOUR_56',
     headers='krb5.h', lib='krb5',
-    msg="Checking whether the HAVE_KEYTYPE_ARCFOUR_56 key type definition is available");
+    msg="Checking whether the HAVE_KEYTYPE_ARCFOUR_56 key type definition is available")
 if conf.CONFIG_SET('_HAVE_ENCTYPE_ARCFOUR_HMAC_MD5') and conf.CONFIG_SET('_HAVE_KEYTYPE_ARCFOUR_56'):
     conf.DEFINE('HAVE_ENCTYPE_ARCFOUR_HMAC_MD5', '1')
 if conf.CONFIG_SET('_HAVE_ENCTYPE_ARCFOUR_HMAC_MD5_56') and conf.CONFIG_SET('_HAVE_KEYTYPE_ARCFOUR_56'):
@@ -311,14 +309,14 @@ conf.CHECK_CODE('''
        ''',
     'HAVE_ENCTYPE_ARCFOUR_HMAC',
     headers='krb5.h', lib='krb5',
-    msg="Checking whether the ENCTYPE_ARCFOUR_HMAC key type definition is available");
+    msg="Checking whether the ENCTYPE_ARCFOUR_HMAC key type definition is available")
 conf.CHECK_CODE('''
        krb5_enctype enctype;
        enctype = ENCTYPE_ARCFOUR_HMAC_EXP;
        ''',
     'HAVE_ENCTYPE_ARCFOUR_HMAC_EXP',
     headers='krb5.h', lib='krb5',
-    msg="Checking whether the ENCTYPE_ARCFOUR_HMAC_EXP key type definition is available");
+    msg="Checking whether the ENCTYPE_ARCFOUR_HMAC_EXP key type definition is available")
 
 conf.CHECK_CODE('''
        krb5_context context;
@@ -328,7 +326,7 @@ conf.CHECK_CODE('''
        ''',
     'HAVE_WRFILE_KEYTAB',
     headers='krb5.h', lib='krb5', execute=True,
-    msg="Checking whether the WRFILE -keytab is supported");
+    msg="Checking whether the WRFILE -keytab is supported")
 # Check for KRB5_DEPRECATED handling
 conf.CHECK_CODE('''#define KRB5_DEPRECATED 1
        #include <krb5.h>''',
@@ -348,7 +346,7 @@ conf.CHECK_CODE('''
 # Check for MIT KDC
 if conf.CONFIG_SET('AD_DC_BUILD_IS_ENABLED'):
     Logs.info("Looking for MIT KDC")
-    conf.DEFINE('SAMBA_USES_MITKDC', 1);
+    conf.DEFINE('SAMBA_USES_MITKDC', 1)
 
     kdc_path_list = [ '/usr/sbin', '/usr/lib/mit/sbin']
 

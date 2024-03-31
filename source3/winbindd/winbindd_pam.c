@@ -457,13 +457,19 @@ static NTSTATUS check_info3_in_group(struct netr_SamInfo3 *info3,
 		return NT_STATUS_OK;
 	}
 
-	token = talloc_zero(talloc_tos(), struct security_token);
+	/*
+	 * This is a limited-use security_token for the purpose of
+	 * checking the SID list below, so no claims need to be added
+	 * and se_access_check() will never run.
+	 */
+	token = security_token_initialise(talloc_tos(),
+					  CLAIMS_EVALUATION_INVALID_STATE);
 	if (token == NULL) {
 		DEBUG(0, ("talloc failed\n"));
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	status = sid_array_from_info3(talloc_tos(), info3,
+	status = sid_array_from_info3(token, info3,
 				      &token->sids,
 				      &token->num_sids,
 				      true);
@@ -731,7 +737,9 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 	const char *cc = NULL;
 	const char *principal_s = NULL;
 	char *realm = NULL;
-	fstring name_namespace, name_domain, name_user;
+	char *name_namespace = NULL;
+	char *name_domain = NULL;
+	char *name_user = NULL;
 	time_t ticket_lifetime = 0;
 	time_t renewal_until = 0;
 	time_t time_offset = 0;
@@ -784,7 +792,11 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 	/* 3rd step:
 	 * do kerberos auth and setup ccache as the user */
 
-	ok = parse_domain_user(user, name_namespace, name_domain, name_user);
+	ok = parse_domain_user(mem_ctx,
+			user,
+			&name_namespace,
+			&name_domain,
+			&name_user);
 	if (!ok) {
 		return NT_STATUS_INVALID_PARAMETER;
 	}
@@ -1104,7 +1116,9 @@ static NTSTATUS winbindd_dual_pam_auth_cached(struct winbindd_domain *domain,
 	TALLOC_CTX *tmp_ctx = NULL;
 	NTSTATUS result = NT_STATUS_LOGON_FAILURE;
 	uint16_t max_allowed_bad_attempts;
-	fstring name_namespace, name_domain, name_user;
+	char *name_namespace = NULL;
+	char *name_domain = NULL;
+	char *name_user = NULL;
 	struct dom_sid sid;
 	enum lsa_SidType type;
 	uchar new_nt_pass[NT_HASH_LEN];
@@ -1136,7 +1150,11 @@ static NTSTATUS winbindd_dual_pam_auth_cached(struct winbindd_domain *domain,
 
 	/* Parse domain and username */
 
-	ok = parse_domain_user(user, name_namespace, name_domain, name_user);
+	ok = parse_domain_user(tmp_ctx,
+			user,
+			&name_namespace,
+			&name_domain,
+			&name_user);
 	if (!ok) {
 		DBG_DEBUG("parse_domain_user failed\n");
 		result = NT_STATUS_NO_SUCH_USER;
@@ -1438,7 +1456,9 @@ static NTSTATUS winbindd_dual_pam_auth_kerberos(struct winbindd_domain *domain,
 {
 	struct netr_SamInfo6 *info6 = NULL;
 	struct winbindd_domain *contact_domain;
-	fstring name_namespace, name_domain, name_user;
+	char *name_namespace = NULL;
+	char *name_domain = NULL;
+	char *name_user = NULL;
 	NTSTATUS result;
 	bool ok;
 
@@ -1446,10 +1466,11 @@ static NTSTATUS winbindd_dual_pam_auth_kerberos(struct winbindd_domain *domain,
 
 	/* Parse domain and username */
 
-	ok = parse_domain_user(user,
-			       name_namespace,
-			       name_domain,
-			       name_user);
+	ok = parse_domain_user(mem_ctx,
+			       user,
+			       &name_namespace,
+			       &name_domain,
+			       &name_user);
 	if (!ok) {
 		result = NT_STATUS_INVALID_PARAMETER;
 		goto done;
@@ -2022,7 +2043,9 @@ static NTSTATUS winbindd_dual_pam_auth_samlogon(
 	uint16_t *_validation_level,
 	union netr_Validation **_validation)
 {
-	fstring name_namespace, name_domain, name_user;
+	char *name_namespace = NULL;
+	char *name_domain = NULL;
+	char *name_user = NULL;
 	NTSTATUS result;
 	uint8_t authoritative = 1;
 	uint32_t flags = 0;
@@ -2034,7 +2057,11 @@ static NTSTATUS winbindd_dual_pam_auth_samlogon(
 
 	/* Parse domain and username */
 
-	ok = parse_domain_user(user, name_namespace, name_domain, name_user);
+	ok = parse_domain_user(mem_ctx,
+			user,
+			&name_namespace,
+			&name_domain,
+			&name_user);
 	if (!ok) {
 		return NT_STATUS_INVALID_PARAMETER;
 	}
@@ -2173,7 +2200,7 @@ static void log_authentication(
 		client_name,
 		client_pid);
 	if (ui->auth_description == NULL) {
-		DBG_ERR("OOM Unable to create auth_description");
+		DBG_ERR("OOM Unable to create auth_description\n");
 	}
 	ui->client.account_name = user_name;
 	ui->client.domain_name = domain_name;
@@ -2213,7 +2240,9 @@ NTSTATUS _wbint_PamAuth(struct pipes_struct *p,
 	struct winbindd_domain *domain = wb_child_domain();
 	NTSTATUS result = NT_STATUS_LOGON_FAILURE;
 	NTSTATUS krb5_result = NT_STATUS_OK;
-	fstring name_namespace, name_domain, name_user;
+	char *name_namespace = NULL;
+	char *name_domain = NULL;
+	char *name_user = NULL;
 	char *mapped_user = NULL;
 	const char *domain_user = NULL;
 	uint16_t validation_level = UINT16_MAX;
@@ -2271,10 +2300,11 @@ NTSTATUS _wbint_PamAuth(struct pipes_struct *p,
 		mapped_user = discard_const(r->in.info->username);
 	}
 
-	ok = parse_domain_user(mapped_user,
-			       name_namespace,
-			       name_domain,
-			       name_user);
+	ok = parse_domain_user(p->mem_ctx,
+			       mapped_user,
+			       &name_namespace,
+			       &name_domain,
+			       &name_user);
 	if (!ok) {
 		result = NT_STATUS_INVALID_PARAMETER;
 		goto done;
@@ -2929,7 +2959,9 @@ NTSTATUS _wbint_PamAuthChangePassword(struct pipes_struct *p,
 	struct userPwdChangeFailureInformation *reject = NULL;
 	NTSTATUS status = NT_STATUS_UNSUCCESSFUL;
 	NTSTATUS result = NT_STATUS_UNSUCCESSFUL;
-	fstring namespace, domain, user;
+	char *namespace = NULL;
+	char *domain = NULL;
+	char *user = NULL;
 	struct dcerpc_binding_handle *b = NULL;
 	bool ok;
 	pid_t client_pid;
@@ -2950,10 +2982,11 @@ NTSTATUS _wbint_PamAuthChangePassword(struct pipes_struct *p,
 	DBG_NOTICE("[%"PRIu32"]: dual pam chauthtok %s\n",
 		   client_pid, r->in.user);
 
-	ok = parse_domain_user(r->in.user,
-			       namespace,
-			       domain,
-			       user);
+	ok = parse_domain_user(p->mem_ctx,
+			       r->in.user,
+			       &namespace,
+			       &domain,
+			       &user);
 	if (!ok) {
 		goto done;
 	}
@@ -3065,8 +3098,8 @@ done:
 		result = winbindd_update_creds_by_name(contact_domain, user,
 						       r->in.new_password);
 		/* Again, this happens when we login from gdm or xdm
-		 * and the password expires, *BUT* cached crendentials
-		 * doesn't exist. winbindd_update_creds_by_name()
+		 * and the password expires, *BUT* cached credentials
+		 * don't exist. winbindd_update_creds_by_name()
 		 * returns NT_STATUS_NO_SUCH_USER.
 		 * This is not a failure.
 		 * --- BoYang
@@ -3215,11 +3248,14 @@ NTSTATUS _wbint_PamAuthCrapChangePassword(struct pipes_struct *p,
 				struct wbint_PamAuthCrapChangePassword *r)
 {
 	NTSTATUS result;
-	fstring  namespace, domain, user;
+	char *namespace = NULL;
+	char *domain = NULL;
+	char *user = NULL;
 	struct policy_handle dom_pol;
 	struct winbindd_domain *contact_domain = wb_child_domain();
 	struct rpc_pipe_client *cli = NULL;
 	struct dcerpc_binding_handle *b = NULL;
+	TALLOC_CTX *frame = talloc_stackframe();
 	pid_t client_pid;
 
 	ZERO_STRUCT(dom_pol);
@@ -3235,10 +3271,6 @@ NTSTATUS _wbint_PamAuthCrapChangePassword(struct pipes_struct *p,
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
-	domain[0] = '\0';
-	namespace[0] = '\0';
-	user[0] = '\0';
-
 	DBG_NOTICE("[%"PRIu32"]: pam change pswd auth crap domain: %s "
 		   "user: %s\n", client_pid, r->in.domain, r->in.user);
 
@@ -3250,14 +3282,22 @@ NTSTATUS _wbint_PamAuthCrapChangePassword(struct pipes_struct *p,
 	}
 
 	if (r->in.domain != NULL && strlen(r->in.domain) > 0) {
-		fstrcpy(domain, r->in.domain);
+		user = talloc_strdup(frame, "");
+		namespace = talloc_strdup(frame, "");
+		domain = talloc_strdup(frame, r->in.domain);
+		if (domain == NULL || user == NULL || namespace == NULL) {
+			result = NT_STATUS_NO_MEMORY;
+			goto done;
+		}
+
 	} else {
 		bool ok;
 
-		ok = parse_domain_user(r->in.user,
-				       namespace,
-				       domain,
-				       user);
+		ok = parse_domain_user(frame,
+				       r->in.user,
+				       &namespace,
+				       &domain,
+				       &user);
 		if (!ok) {
 			result = NT_STATUS_INVALID_PARAMETER;
 			goto done;
@@ -3272,7 +3312,12 @@ NTSTATUS _wbint_PamAuthCrapChangePassword(struct pipes_struct *p,
 	}
 
 	if (!*domain && lp_winbind_use_default_domain()) {
-		fstrcpy(domain,lp_workgroup());
+		TALLOC_FREE(domain);
+		domain = talloc_strdup(frame, lp_workgroup());
+		if (domain == NULL) {
+			result = NT_STATUS_NO_MEMORY;
+			goto done;
+		}
 	}
 
 	if (!is_allowed_domain(domain)) {
@@ -3285,7 +3330,12 @@ NTSTATUS _wbint_PamAuthCrapChangePassword(struct pipes_struct *p,
 	}
 
 	if(!*user) {
-		fstrcpy(user, r->in.user);
+		TALLOC_FREE(user);
+		user = talloc_strdup(frame, r->in.user);
+		if (user == NULL) {
+			result = NT_STATUS_NO_SUCH_USER;
+			goto done;
+		}
 	}
 
 	/* Get sam handle */
@@ -3331,7 +3381,7 @@ NTSTATUS _wbint_PamAuthCrapChangePassword(struct pipes_struct *p,
 	       domain, user,
 	       nt_errstr(result),
 	       nt_status_to_pam(result)));
-
+	TALLOC_FREE(frame);
 	return result;
 }
 

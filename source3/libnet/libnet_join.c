@@ -1357,7 +1357,7 @@ static NTSTATUS libnet_join_joindomain_rpc_unsecure(TALLOC_CTX *mem_ctx,
 	len = strlen(r->in.machine_password);
 	ok = convert_string_talloc(frame, CH_UNIX, CH_UTF16,
 				   r->in.machine_password, len,
-				   (void **)&new_trust_blob.data,
+				   &new_trust_blob.data,
 				   &new_trust_blob.length);
 	if (!ok) {
 		status = NT_STATUS_UNMAPPABLE_CHARACTER;
@@ -2795,7 +2795,7 @@ static WERROR libnet_DomainJoin(TALLOC_CTX *mem_ctx,
 		}
 
 		/* The domain parameter is only used as modifier
-		 * to krb5.conf file name. _JOIN_ is is not a valid
+		 * to krb5.conf file name. _JOIN_ is not a valid
 		 * NetBIOS name so it cannot clash with another domain
 		 * -- Uri.
 		 */

@@ -2,7 +2,7 @@
 
 if [ $# -lt 4 ]; then
 	cat <<EOF
-Usage: test_smbclient_basic.sh SERVER SERVER_IP DOMAIN USERNAME PASSWORD
+Usage: test_smbspool.sh SERVER SERVER_IP USERNAME PASSWORD TARGET_ENV
 EOF
 	exit 1
 fi
@@ -59,7 +59,7 @@ test_smbspool_authinforequired_none()
 
 	if [ $ret != 0 ]; then
 		echo "$out"
-		echo "failed to execute $smbspool_krb5"
+		echo "failed to execute $samba_smbspool_krb5"
 		return 1
 	fi
 
@@ -85,7 +85,7 @@ test_smbspool_authinforequired_unknown()
 	*)
 		echo "ret=$ret"
 		echo "$out"
-		echo "failed to test $smbspool_krb5 against unknown value of AUTH_INFO_REQUIRED"
+		echo "failed to test $samba_smbspool_krb5 against unknown value of AUTH_INFO_REQUIRED"
 		return 1
 		;;
 	esac
@@ -257,7 +257,7 @@ testit "vlp verify example.ps" \
 DEVICE_URI="smb://$USERNAME:$PASSWORD@$SERVER_IP/print1"
 export DEVICE_URI
 testit "smbspool print sanitized Device URI in argv0 example.ps" \
-	$smbspool_argv_wrapper $samba_smbspool smb://$SERVER_IP/print1 200 $USERNAME "Testprint" 1 "options" $SRCDIR/testdata/printing/example.ps ||
+	$samba_argv_wrapper $samba_smbspool smb://$SERVER_IP/print1 200 $USERNAME "Testprint" 1 "options" $SRCDIR/testdata/printing/example.ps ||
 	failed=$(expr $failed + 1)
 unset DEVICE_URI
 
@@ -268,7 +268,7 @@ testit "vlp verify example.ps" \
 DEVICE_URI="smb://$USERNAME:$PASSWORD@$SERVER_IP/print1"
 export DEVICE_URI
 testit "smbspool print sanitized Device URI in argv0 example.ps via stdin" \
-	$smbspool_argv_wrapper $samba_smbspool smb://$SERVER_IP/print1 200 $USERNAME "Testprint" 1 "options" <$SRCDIR/testdata/printing/example.ps ||
+	$samba_argv_wrapper $samba_smbspool smb://$SERVER_IP/print1 200 $USERNAME "Testprint" 1 "options" <$SRCDIR/testdata/printing/example.ps ||
 	failed=$(expr $failed + 1)
 unset DEVICE_URI
 

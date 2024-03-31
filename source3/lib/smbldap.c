@@ -670,7 +670,6 @@ static int smb_ldap_setup_conn(LDAP **ldap_struct, const char *uri)
 				ldap_err2string(rc)));
 	}
 
-	return LDAP_SUCCESS;
 #else
 
 	/* Parse the string manually */
@@ -719,7 +718,6 @@ static int smb_ldap_setup_conn(LDAP **ldap_struct, const char *uri)
 #endif /* LDAP_OPT_X_TLS */
 		}
 	}
-#endif /* HAVE_LDAP_INITIALIZE */
 
 	/* now set connection timeout */
 #ifdef LDAP_X_OPT_CONNECT_TIMEOUT /* Netscape */
@@ -744,6 +742,7 @@ static int smb_ldap_setup_conn(LDAP **ldap_struct, const char *uri)
 	}
 #endif
 
+#endif /* HAVE_LDAP_INITIALIZE */
 	return LDAP_SUCCESS;
 }
 
@@ -1760,7 +1759,7 @@ static int smbldap_state_destructor(struct smbldap_state *state)
 
 
 /**********************************************************************
- Intitalise the 'general' ldap structures, on which ldap operations may be conducted
+ Initialise the 'general' ldap structures, on which ldap operations may be conducted
  *********************************************************************/
 
 NTSTATUS smbldap_init(TALLOC_CTX *mem_ctx, struct tevent_context *tevent_ctx,

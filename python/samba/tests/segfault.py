@@ -22,9 +22,8 @@
 import samba.tests
 import os
 import sys
-from samba.net import Net, LIBNET_JOIN_AUTOMATIC
+from samba.net import Net
 from samba.credentials import DONT_USE_KERBEROS
-from samba import NTSTATUSError, ntstatus
 from samba.dcerpc import misc, drsuapi, samr, unixinfo, dnsserver
 from samba import auth, gensec
 from samba.samdb import SamDB
@@ -188,8 +187,8 @@ class SegfaultTests(samba.tests.TestCase):
     @segfault_detector
     def test_dcerpc_idl_set_inline_arrays(self):
         """Setting an inline array was incorrectly handled."""
-        a = dnsserver.DNS_EXTENSION();
-        x = dnsserver.DNS_RPC_DP_INFO();
+        a = dnsserver.DNS_EXTENSION()
+        x = dnsserver.DNS_RPC_DP_INFO()
         x.pwszReserved = [a, a, a]
 
     @no_gdb_backtrace
@@ -205,7 +204,7 @@ class SegfaultTests(samba.tests.TestCase):
     @segfault_detector
     def test_dns_record(self):
         from samba.dnsserver import TXTRecord
-        from samba.dcerpc import dnsp, dnsserver
+        from samba.dcerpc import dnsp
         # there are many others here
         rec = TXTRecord(["a", "b", "c"])
         rec.wType = dnsp.DNS_TYPE_A

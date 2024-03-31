@@ -91,6 +91,15 @@ struct net_context {
 	int opt_recursive;
 	int opt_follow_symlink;
 	int opt_dns_ttl;
+	const char *opt_witness_registration;
+	const char *opt_witness_net_name;
+	const char *opt_witness_share_name;
+	const char *opt_witness_ip_address;
+	const char *opt_witness_client_computer_name;
+	int opt_witness_apply_to_all;
+	const char *opt_witness_new_ip;
+	int opt_witness_new_node;
+	const char *opt_witness_forced_response;
 
 	int opt_have_ip;
 	struct sockaddr_storage opt_dest_ip;

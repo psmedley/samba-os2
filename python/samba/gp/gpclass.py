@@ -21,7 +21,7 @@ import errno
 import tdb
 import pwd
 sys.path.insert(0, "bin/python")
-from samba import NTSTATUSError, WERRORError
+from samba import WERRORError
 from configparser import ConfigParser
 from io import StringIO
 import traceback
@@ -33,12 +33,10 @@ from samba.net import Net
 from samba.dcerpc import nbt
 from samba.samba3 import libsmb_samba_internal as libsmb
 import samba.gpo as gpo
-from samba.param import LoadParm
 from uuid import UUID
 from tempfile import NamedTemporaryFile
 from samba.dcerpc import preg
-from samba.dcerpc import misc
-from samba.ndr import ndr_pack, ndr_unpack
+from samba.ndr import ndr_unpack
 from samba.credentials import SMB_SIGNING_REQUIRED
 from samba.gp.util.logging import log
 from hashlib import blake2b
@@ -47,11 +45,12 @@ from samba.common import get_string
 from samba.samdb import SamDB
 from samba.auth import system_session
 import ldb
-from samba.dsdb import UF_WORKSTATION_TRUST_ACCOUNT, UF_SERVER_TRUST_ACCOUNT, GPLINK_OPT_ENFORCE, GPLINK_OPT_DISABLE, GPO_INHERIT, GPO_BLOCK_INHERITANCE
+from samba.dsdb import UF_WORKSTATION_TRUST_ACCOUNT, UF_SERVER_TRUST_ACCOUNT, GPLINK_OPT_ENFORCE, GPLINK_OPT_DISABLE, GPO_BLOCK_INHERITANCE
 from samba.auth import AUTH_SESSION_INFO_DEFAULT_GROUPS, AUTH_SESSION_INFO_AUTHENTICATED, AUTH_SESSION_INFO_SIMPLE_PRIVILEGES
 from samba.dcerpc import security
 import samba.security
-from samba.dcerpc import netlogon
+from samba.dcerpc import nbt
+from datetime import datetime
 
 
 try:
@@ -65,7 +64,7 @@ except ImportError:
 
 
 class gp_log:
-    ''' Log settings overwritten by gpo apply
+    """ Log settings overwritten by gpo apply
     The gp_log is an xml file that stores a history of gpo changes (and the
     original setting value).
 
@@ -101,15 +100,15 @@ class gp_log:
     The applylog keeps track of the order in which the GPOs were applied, so
     that they can be rolled back in reverse, returning the machine to the state
     prior to policy application.
-    '''
+    """
     def __init__(self, user, gpostore, db_log=None):
-        ''' Initialize the gp_log
+        """ Initialize the gp_log
         param user          - the username (or machine name) that policies are
                               being applied to
         param gpostore      - the GPOStorage obj which references the tdb which
                               contains gp_logs
         param db_log        - (optional) a string to initialize the gp_log
-        '''
+        """
         self._state = GPOSTATE.APPLY
         self.gpostore = gpostore
         self.username = user
@@ -124,7 +123,7 @@ class gp_log:
             user_obj.attrib['name'] = user
 
     def state(self, value):
-        ''' Policy application state
+        """ Policy application state
         param value         - APPLY, ENFORCE, or UNAPPLY
 
         The behavior of the gp_log depends on whether we are applying policy,
@@ -133,7 +132,7 @@ class gp_log:
         but the gp_log does not change. During an unapply, additions to the log
         should be ignored (since function calls to apply settings are actually
         reverting policy), but removals from the log are allowed.
-        '''
+        """
         # If we're enforcing, but we've unapplied, apply instead
         if value == GPOSTATE.ENFORCE:
             user_obj = self.gpdb.find('user[@name="%s"]' % self.user)
@@ -146,15 +145,15 @@ class gp_log:
             self._state = value
 
     def get_state(self):
-        '''Check the GPOSTATE
-        '''
+        """Check the GPOSTATE
+        """
         return self._state
 
     def set_guid(self, guid):
-        ''' Log to a different GPO guid
+        """ Log to a different GPO guid
         param guid          - guid value of the GPO from which we're applying
                               policy
-        '''
+        """
         self.guid = guid
         user_obj = self.gpdb.find('user[@name="%s"]' % self.user)
         obj = user_obj.find('guid[@value="%s"]' % guid)
@@ -172,12 +171,12 @@ class gp_log:
                 item.attrib['value'] = guid
 
     def store(self, gp_ext_name, attribute, old_val):
-        ''' Store an attribute in the gp_log
+        """ Store an attribute in the gp_log
         param gp_ext_name   - Name of the extension applying policy
         param attribute     - The attribute being modified
         param old_val       - The value of the attribute prior to policy
                               application
-        '''
+        """
         if self._state == GPOSTATE.UNAPPLY or self._state == GPOSTATE.ENFORCE:
             return None
         user_obj = self.gpdb.find('user[@name="%s"]' % self.user)
@@ -194,12 +193,12 @@ class gp_log:
             attr.text = old_val
 
     def retrieve(self, gp_ext_name, attribute):
-        ''' Retrieve a stored attribute from the gp_log
+        """ Retrieve a stored attribute from the gp_log
         param gp_ext_name   - Name of the extension which applied policy
         param attribute     - The attribute being retrieved
         return              - The value of the attribute prior to policy
                               application
-        '''
+        """
         user_obj = self.gpdb.find('user[@name="%s"]' % self.user)
         guid_obj = user_obj.find('guid[@value="%s"]' % self.guid)
         assert guid_obj is not None, "gpo guid was not set"
@@ -211,11 +210,11 @@ class gp_log:
         return None
 
     def retrieve_all(self, gp_ext_name):
-        ''' Retrieve all stored attributes for this user, GPO guid, and CSE
+        """ Retrieve all stored attributes for this user, GPO guid, and CSE
         param gp_ext_name   - Name of the extension which applied policy
         return              - The values of the attributes prior to policy
                               application
-        '''
+        """
         user_obj = self.gpdb.find('user[@name="%s"]' % self.user)
         guid_obj = user_obj.find('guid[@value="%s"]' % self.guid)
         assert guid_obj is not None, "gpo guid was not set"
@@ -226,10 +225,10 @@ class gp_log:
         return {}
 
     def get_applied_guids(self):
-        ''' Return a list of applied ext guids
+        """ Return a list of applied ext guids
         return              - List of guids for gpos that have applied settings
                               to the system.
-        '''
+        """
         guids = []
         user_obj = self.gpdb.find('user[@name="%s"]' % self.user)
         if user_obj is not None:
@@ -243,12 +242,12 @@ class gp_log:
         return guids
 
     def get_applied_settings(self, guids):
-        ''' Return a list of applied ext guids
+        """ Return a list of applied ext guids
         return              - List of tuples containing the guid of a gpo, then
                               a dictionary of policies and their values prior
                               policy application. These are sorted so that the
                               most recently applied settings are removed first.
-        '''
+        """
         ret = []
         user_obj = self.gpdb.find('user[@name="%s"]' % self.user)
         for guid in guids:
@@ -265,11 +264,11 @@ class gp_log:
         return ret
 
     def delete(self, gp_ext_name, attribute):
-        ''' Remove an attribute from the gp_log
+        """ Remove an attribute from the gp_log
         param gp_ext_name   - name of extension from which to remove the
                               attribute
         param attribute     - attribute to remove
-        '''
+        """
         user_obj = self.gpdb.find('user[@name="%s"]' % self.user)
         guid_obj = user_obj.find('guid[@value="%s"]' % self.guid)
         assert guid_obj is not None, "gpo guid was not set"
@@ -282,7 +281,7 @@ class gp_log:
                     guid_obj.remove(ext)
 
     def commit(self):
-        ''' Write gp_log changes to disk '''
+        """ Write gp_log changes to disk """
         self.gpostore.store(self.username, etree.tostring(self.gpdb, 'utf-8'))
 
 
@@ -359,25 +358,28 @@ class gp_ext(object):
 
 class gp_inf_ext(gp_ext):
     def read(self, data_file):
-        policy = open(data_file, 'rb').read()
+        with open(data_file, 'rb') as f:
+            policy = f.read()
         inf_conf = ConfigParser(interpolation=None)
         inf_conf.optionxform = str
         try:
-            inf_conf.readfp(StringIO(policy.decode()))
+            inf_conf.read_file(StringIO(policy.decode()))
         except UnicodeDecodeError:
-            inf_conf.readfp(StringIO(policy.decode('utf-16')))
+            inf_conf.read_file(StringIO(policy.decode('utf-16')))
         return inf_conf
 
 
 class gp_pol_ext(gp_ext):
     def read(self, data_file):
-        raw = open(data_file, 'rb').read()
+        with open(data_file, 'rb') as f:
+            raw = f.read()
         return ndr_unpack(preg.file, raw)
 
 
 class gp_xml_ext(gp_ext):
     def read(self, data_file):
-        raw = open(data_file, 'rb').read()
+        with open(data_file, 'rb') as f:
+            raw = f.read()
         try:
             return etree.fromstring(raw.decode())
         except UnicodeDecodeError:
@@ -385,60 +387,60 @@ class gp_xml_ext(gp_ext):
 
 
 class gp_applier(object):
-    '''Group Policy Applier/Unapplier/Modifier
+    """Group Policy Applier/Unapplier/Modifier
     The applier defines functions for monitoring policy application,
     removal, and modification. It must be a multi-derived class paired
     with a subclass of gp_ext.
-    '''
+    """
     __metaclass__ = ABCMeta
 
     def cache_add_attribute(self, guid, attribute, value):
-        '''Add an attribute and value to the Group Policy cache
+        """Add an attribute and value to the Group Policy cache
         guid        - The GPO guid which applies this policy
         attribute   - The attribute name of the policy being applied
         value       - The value of the policy being applied
 
         Normally called by the subclass apply() function after applying policy.
-        '''
+        """
         self.gp_db.set_guid(guid)
         self.gp_db.store(str(self), attribute, value)
         self.gp_db.commit()
 
     def cache_remove_attribute(self, guid, attribute):
-        '''Remove an attribute from the Group Policy cache
+        """Remove an attribute from the Group Policy cache
         guid        - The GPO guid which applies this policy
         attribute   - The attribute name of the policy being unapplied
 
         Normally called by the subclass unapply() function when removing old
         policy.
-        '''
+        """
         self.gp_db.set_guid(guid)
         self.gp_db.delete(str(self), attribute)
         self.gp_db.commit()
 
     def cache_get_attribute_value(self, guid, attribute):
-        '''Retrieve the value stored in the cache for the given attribute
+        """Retrieve the value stored in the cache for the given attribute
         guid        - The GPO guid which applies this policy
         attribute   - The attribute name of the policy
-        '''
+        """
         self.gp_db.set_guid(guid)
         return self.gp_db.retrieve(str(self), attribute)
 
     def cache_get_all_attribute_values(self, guid):
-        '''Retrieve all attribute/values currently stored for this gpo+policy
+        """Retrieve all attribute/values currently stored for this gpo+policy
         guid        - The GPO guid which applies this policy
-        '''
+        """
         self.gp_db.set_guid(guid)
         return self.gp_db.retrieve_all(str(self))
 
     def cache_get_apply_state(self):
-        '''Return the current apply state
+        """Return the current apply state
         return      - APPLY|ENFORCE|UNAPPLY
-        '''
+        """
         return self.gp_db.get_state()
 
     def generate_attribute(self, name, *args):
-        '''Generate an attribute name from arbitrary data
+        """Generate an attribute name from arbitrary data
         name            - A name to ensure uniqueness
         args            - Any arbitrary set of args, str or bytes
         return          - A blake2b digest of the data, the attribute
@@ -447,30 +449,30 @@ class gp_applier(object):
         reproducible and uniquely identifies it. Hashing the name with
         the data ensures we don't falsely identify a match which is the same
         text in a different file. Using this attribute generator is optional.
-        '''
+        """
         data = b''.join([get_bytes(arg) for arg in [*args]])
         return blake2b(get_bytes(name)+data).hexdigest()
 
     def generate_value_hash(self, *args):
-        '''Generate a unique value which identifies value changes
+        """Generate a unique value which identifies value changes
         args            - Any arbitrary set of args, str or bytes
         return          - A blake2b digest of the data, the value represented
-        '''
+        """
         data = b''.join([get_bytes(arg) for arg in [*args]])
         return blake2b(data).hexdigest()
 
     @abstractmethod
     def unapply(self, guid, attribute, value):
-        '''Group Policy Unapply
+        """Group Policy Unapply
         guid            - The GPO guid which applies this policy
         attribute       - The attribute name of the policy being unapplied
         value           - The value of the policy being unapplied
-        '''
+        """
         pass
 
     @abstractmethod
     def apply(self, guid, attribute, applier_func, *args):
-        '''Group Policy Apply
+        """Group Policy Apply
         guid            - The GPO guid which applies this policy
         attribute       - The attribute name of the policy being applied
         applier_func    - An applier function which takes variable args
@@ -481,11 +483,11 @@ class gp_applier(object):
         first unapply any changed policy. See for example calls to
         `cache_get_all_attribute_values()` which searches for all policies
         applied by this GPO for this Client Side Extension (CSE).
-        '''
+        """
         pass
 
     def clean(self, guid, keep=None, remove=None, **kwargs):
-        '''Cleanup old removed attributes
+        """Cleanup old removed attributes
         keep    - A list of attributes to keep
         remove  - A single attribute to remove, or a list of attributes to
                   remove
@@ -493,7 +495,7 @@ class gp_applier(object):
                   function
 
         This is only necessary for CSEs which provide multiple attributes.
-        '''
+        """
         # Clean syntax is, either provide a single remove attribute,
         # or a list of either removal attributes or keep attributes.
         if keep is None:
@@ -513,11 +515,38 @@ class gp_applier(object):
                     self.unapply(guid, attribute, value, **kwargs)
 
 
+class gp_misc_applier(gp_applier):
+    """Group Policy Miscellaneous Applier/Unapplier/Modifier
+    """
+
+    def generate_value(self, **kwargs):
+        data = etree.Element('data')
+        for k, v in kwargs.items():
+            arg = etree.SubElement(data, k)
+            arg.text = get_string(v)
+        return get_string(etree.tostring(data, 'utf-8'))
+
+    def parse_value(self, value):
+        vals = {}
+        try:
+            data = etree.fromstring(value)
+        except etree.ParseError:
+            # If parsing fails, then it's an old cache value
+            return {'old_val': value}
+        except TypeError:
+            return {}
+        itr = data.iter()
+        next(itr) # Skip the top element
+        for item in itr:
+            vals[item.tag] = item.text
+        return vals
+
+
 class gp_file_applier(gp_applier):
-    '''Group Policy File Applier/Unapplier/Modifier
+    """Group Policy File Applier/Unapplier/Modifier
     Subclass of abstract class gp_applier for monitoring policy applied
     via a file.
-    '''
+    """
 
     def __generate_value(self, value_hash, files, sep):
         data = [value_hash]
@@ -525,9 +554,9 @@ class gp_file_applier(gp_applier):
         return sep.join(data)
 
     def __parse_value(self, value, sep):
-        '''Parse a value
+        """Parse a value
         return          - A unique HASH, followed by the file list
-        '''
+        """
         if value is None:
             return None, []
         data = value.split(sep)
@@ -548,18 +577,18 @@ class gp_file_applier(gp_applier):
         self.cache_remove_attribute(guid, attribute)
 
     def apply(self, guid, attribute, value_hash, applier_func, *args, sep=':'):
-        '''
+        """
         applier_func MUST return a list of files created by the applier.
 
         This applier is for policies which only apply to a single file (with
         a couple small exceptions). This applier will remove any policy applied
         by this GPO which doesn't match the new policy.
-        '''
+        """
         # If the policy has changed, unapply, then apply new policy
         old_val = self.cache_get_attribute_value(guid, attribute)
         # Ignore removal if this policy is applied and hasn't changed
         old_val_hash, old_val_files = self.__parse_value(old_val, sep)
-        if (old_val_hash != value_hash or \
+        if (old_val_hash != value_hash or
                 self.cache_get_apply_state() == GPOSTATE.ENFORCE) or \
                 not all([os.path.exists(f) for f in old_val_files]):
             self.unapply(guid, attribute, old_val_files)
@@ -573,7 +602,7 @@ class gp_file_applier(gp_applier):
         self.cache_add_attribute(guid, attribute, new_value)
 
 
-''' Fetch the hostname of a writable DC '''
+""" Fetch the hostname of a writable DC """
 
 
 def get_dc_hostname(creds, lp):
@@ -582,14 +611,8 @@ def get_dc_hostname(creds, lp):
                                                           nbt.NBT_SERVER_DS))
     return cldap_ret.pdc_dns_name
 
-def get_dc_netbios_hostname(creds, lp):
-    net = Net(creds=creds, lp=lp)
-    cldap_ret = net.finddc(domain=lp.get('realm'), flags=(nbt.NBT_SERVER_LDAP |
-                                                          nbt.NBT_SERVER_DS))
-    return cldap_ret.pdc_name
 
-
-''' Fetch a list of GUIDs for applicable GPOs '''
+""" Fetch a list of GUIDs for applicable GPOs """
 
 
 def get_gpo(samdb, gpo_dn):
@@ -684,7 +707,7 @@ def get_gpo_link(samdb, link_dn):
                        '(objectclass=*)', ['gPLink', 'gPOptions'])
     if res.count != 1:
         raise ldb.LdbError(ldb.ERR_NO_SUCH_OBJECT, 'get_gpo_link: no result')
-    if not 'gPLink' in res.msgs[0]:
+    if 'gPLink' not in res.msgs[0]:
         raise ldb.LdbError(ldb.ERR_NO_SUCH_ATTRIBUTE,
             "get_gpo_link: no 'gPLink' attribute found for '{}'".format(link_dn)
         )
@@ -748,35 +771,65 @@ def add_gplink_to_gpo_list(samdb, gpo_list, forced_gpo_list, link_dn, gp_link,
             log.debug("add_gplink_to_gpo_list: added GPLINK #%d %s "
                       "to GPO list" % (i, gp_link.link_names[i]))
 
-def merge_nt_token(token_1, token_2):
+def merge_with_system_token(token_1):
     sids = token_1.sids
-    sids.extend(token_2.sids)
+    system_token = system_session().security_token
+    sids.extend(system_token.sids)
     token_1.sids = sids
-    token_1.rights_mask |= token_2.rights_mask
-    token_1.privilege_mask |= token_2.privilege_mask
+    token_1.rights_mask |= system_token.rights_mask
+    token_1.privilege_mask |= system_token.privilege_mask
+    # There are no claims in the system token, so it is safe not to merge the claims
     return token_1
+
 
 def site_dn_for_machine(samdb, dc_hostname, lp, creds, hostname):
     # [MS-GPOL] 3.2.5.1.4 Site Search
-    config_context = samdb.get_config_basedn()
-    try:
-        c = netlogon.netlogon("ncacn_np:%s[seal]" % dc_hostname, lp, creds)
-        site_name = c.netr_DsRGetSiteName(hostname)
-        return 'CN={},CN=Sites,{}'.format(site_name, config_context)
-    except WERRORError:
-        # Fallback to the old method found in ads_site_dn_for_machine
-        nb_hostname = get_dc_netbios_hostname(creds, lp)
-        res = samdb.search(config_context, ldb.SCOPE_SUBTREE,
-                           "(cn=%s)" % nb_hostname, ['dn'])
-        if res.count != 1:
-            raise ldb.LdbError(ldb.ERR_NO_SUCH_OBJECT,
-                               'site_dn_for_machine: no result')
-        dn = res.msgs[0]['dn']
-        site_dn = dn.parent().parent()
-        return site_dn
+
+    # The netr_DsRGetSiteName() needs to run over local rpc, however we do not
+    # have the call implemented in our rpc_server.
+    # What netr_DsRGetSiteName() actually does is an ldap query to get
+    # the sitename, we can do the same.
+
+    # NtVer=(NETLOGON_NT_VERSION_IP|NETLOGON_NT_VERSION_WITH_CLOSEST_SITE|
+    #        NETLOGON_NT_VERSION_5EX) [0x20000014]
+    expr = "(&(DnsDomain=%s.)(User=%s)(NtVer=\\14\\00\\00\\20))" % (
+        samdb.domain_dns_name(),
+        hostname)
+    res = samdb.search(
+        base='',
+        scope=ldb.SCOPE_BASE,
+        expression=expr,
+        attrs=["Netlogon"])
+    if res.count != 1:
+        raise RuntimeError('site_dn_for_machine: No result')
+
+    samlogon_response = ndr_unpack(nbt.netlogon_samlogon_response,
+                                   bytes(res.msgs[0]['Netlogon'][0]))
+    if samlogon_response.ntver not in [nbt.NETLOGON_NT_VERSION_5EX,
+                                       (nbt.NETLOGON_NT_VERSION_1
+                                        | nbt.NETLOGON_NT_VERSION_5EX)]:
+        raise RuntimeError('site_dn_for_machine: Invalid NtVer in '
+                           + 'netlogon_samlogon_response')
+
+    # We want NETLOGON_NT_VERSION_5EX out of the union!
+    samlogon_response.ntver = nbt.NETLOGON_NT_VERSION_5EX
+    samlogon_response_ex = samlogon_response.data
+
+    client_site = "Default-First-Site-Name"
+    if (samlogon_response_ex.client_site
+            and len(samlogon_response_ex.client_site) > 1):
+        client_site = samlogon_response_ex.client_site
+
+    site_dn = samdb.get_config_basedn()
+    site_dn.add_child("CN=Sites")
+    site_dn.add_child("CN=%s" % (client_site))
+
+    return site_dn
+
+
 
 def get_gpo_list(dc_hostname, creds, lp, username):
-    '''Get the full list of GROUP_POLICY_OBJECTs for a given username.
+    """Get the full list of GROUP_POLICY_OBJECTs for a given username.
     Push GPOs to gpo_list so that the traversal order of the list matches
     the order of application:
     (L)ocal (S)ite (D)omain (O)rganizational(U)nit
@@ -786,7 +839,7 @@ def get_gpo_list(dc_hostname, creds, lp, username):
     pushed in the opposite order of application (OUs first, local last,
     child-to-parent).
     Forced GPOs are appended in the end since they override all others.
-    '''
+    """
     gpo_list = []
     forced_gpo_list = []
     url = 'ldap://' + dc_hostname
@@ -807,8 +860,7 @@ def get_gpo_list(dc_hostname, creds, lp, username):
     gpo_list_machine = False
     if uac & UF_WORKSTATION_TRUST_ACCOUNT or uac & UF_SERVER_TRUST_ACCOUNT:
         gpo_list_machine = True
-        token = merge_nt_token(session.security_token,
-                               system_session().security_token)
+        token = merge_with_system_token(session.security_token)
     else:
         token = session.security_token
 
@@ -1153,18 +1205,18 @@ def unregister_gp_extension(guid, smb_conf=None):
 
 
 def set_privileges(username, uid, gid):
-    '''
+    """
     Set current process privileges
-    '''
+    """
 
     os.setegid(gid)
     os.seteuid(uid)
 
 
 def drop_privileges(username, func, *args):
-    '''
+    """
     Run supplied function with privileges for specified username.
-    '''
+    """
     current_uid = os.getuid()
 
     if not current_uid == 0:
@@ -1192,3 +1244,69 @@ def drop_privileges(username, func, *args):
         raise exc
 
     return out
+
+def expand_pref_variables(text, gpt_path, lp, username=None):
+    utc_dt = datetime.utcnow()
+    dt = datetime.now()
+    cache_path = lp.cache_path(os.path.join('gpo_cache'))
+    # These are all the possible preference variables that MS supports. The
+    # variables set to 'None' here are currently unsupported by Samba, and will
+    # prevent the individual policy from applying.
+    variables = { 'AppDataDir': os.path.expanduser('~/.config'),
+                  'BinaryComputerSid': None,
+                  'BinaryUserSid': None,
+                  'CommonAppdataDir': None,
+                  'CommonDesktopDir': None,
+                  'CommonFavoritesDir': None,
+                  'CommonProgramsDir': None,
+                  'CommonStartUpDir': None,
+                  'ComputerName': lp.get('netbios name'),
+                  'CurrentProccessId': None,
+                  'CurrentThreadId': None,
+                  'DateTime': utc_dt.strftime('%Y-%m-%d %H:%M:%S UTC'),
+                  'DateTimeEx': str(utc_dt),
+                  'DesktopDir': os.path.expanduser('~/Desktop'),
+                  'DomainName': lp.get('realm'),
+                  'FavoritesDir': None,
+                  'GphPath': None,
+                  'GptPath': os.path.join(cache_path,
+                                          check_safe_path(gpt_path).upper()),
+                  'GroupPolicyVersion': None,
+                  'LastDriveMapped': None,
+                  'LastError': None,
+                  'LastErrorText': None,
+                  'LdapComputerSid': None,
+                  'LdapUserSid': None,
+                  'LocalTime': dt.strftime('%H:%M:%S'),
+                  'LocalTimeEx': dt.strftime('%H:%M:%S.%f'),
+                  'LogonDomain': lp.get('realm'),
+                  'LogonServer': None,
+                  'LogonUser': username,
+                  'LogonUserSid': None,
+                  'MacAddress': None,
+                  'NetPlacesDir': None,
+                  'OsVersion': None,
+                  'ProgramFilesDir': None,
+                  'ProgramsDir': None,
+                  'RecentDocumentsDir': None,
+                  'ResultCode': None,
+                  'ResultText': None,
+                  'ReversedComputerSid': None,
+                  'ReversedUserSid': None,
+                  'SendToDir': None,
+                  'StartMenuDir': None,
+                  'StartUpDir': None,
+                  'SystemDir': None,
+                  'SystemDrive': '/',
+                  'TempDir': '/tmp',
+                  'TimeStamp': str(datetime.timestamp(dt)),
+                  'TraceFile': None,
+                  'WindowsDir': None
+    }
+    for exp_var, val in variables.items():
+        exp_var_fmt = '%%%s%%' % exp_var
+        if exp_var_fmt in text:
+            if val is None:
+                raise NameError('Expansion variable %s is undefined' % exp_var)
+            text = text.replace(exp_var_fmt, val)
+    return text

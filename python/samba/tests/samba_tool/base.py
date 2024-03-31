@@ -19,16 +19,19 @@
 # of the commands. A list of the environmental variables can be found in
 # ~/selftest/selftest.pl
 #
-# These can all be accesses via os.environ["VARIBLENAME"] when needed
+# These can all be accessed via os.environ["VARIABLENAME"] when needed
 
 import os
 import random
 import string
-from samba.auth import system_session
-from samba.samdb import SamDB
 from io import StringIO
-from samba.netcmd.main import cmd_sambatool
+
+import samba.getopt as options
 import samba.tests
+from samba.auth import system_session
+from samba.getopt import OptionParser
+from samba.netcmd.main import cmd_sambatool
+from samba.samdb import SamDB
 
 
 def truncate_string(s, cutoff=100):
@@ -42,41 +45,28 @@ class SambaToolCmdTest(samba.tests.BlackboxTestCase):
     # override if they need to (to e.g. add a lying isatty() method).
     stringIO = StringIO
 
-    def getSamDB(self, *argv):
+    @staticmethod
+    def getSamDB(*argv):
         """a convenience function to get a samdb instance so that we can query it"""
 
-        # We build a fake command to get the options created the same
-        # way the command classes do it. It would be better if the command
-        # classes had a way to more cleanly do this, but this lets us write
-        # tests for now
-        cmd = cmd_sambatool.subcommands["user"].subcommands["setexpiry"]
-        parser, optiongroups = cmd._create_parser("user")
-        opts, args = parser.parse_args(list(argv))
-        # Filter out options from option groups
-        args = args[1:]
-        kwargs = dict(opts.__dict__)
-        for option_group in parser.option_groups:
-            for option in option_group.option_list:
-                if option.dest is not None:
-                    del kwargs[option.dest]
-        kwargs.update(optiongroups)
-
-        H = kwargs.get("H", None)
-        sambaopts = kwargs.get("sambaopts", None)
-        credopts = kwargs.get("credopts", None)
+        parser = OptionParser()
+        sambaopts = options.SambaOptions(parser)
+        credopts = options.CredentialsOptions(parser)
+        hostopts = options.HostOptions(parser)
+        parser.parse_args(list(argv))
 
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp, fallback_machine=True)
 
-        samdb = SamDB(url=H, session_info=system_session(),
-                      credentials=creds, lp=lp)
-        return samdb
+        return SamDB(url=hostopts.H, session_info=system_session(),
+                     credentials=creds, lp=lp)
 
-    def _run(self, *argv):
+    @classmethod
+    def _run(cls, *argv):
         """run a samba-tool command"""
         cmd, args = cmd_sambatool()._resolve('samba-tool', *argv,
-                                             outf=self.stringIO(),
-                                             errf=self.stringIO())
+                                             outf=cls.stringIO(),
+                                             errf=cls.stringIO())
         result = cmd._run(*args)
         return (result, cmd.outf.getvalue(), cmd.errf.getvalue())
 

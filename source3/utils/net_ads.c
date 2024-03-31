@@ -1140,6 +1140,8 @@ static int ads_user_info(struct net_context *c, int argc, const char **argv)
 
 	ret = 0;
 out:
+	TALLOC_FREE(escaped_user);
+	TALLOC_FREE(searchstring);
 	ads_msgfree(ads, res);
 	TALLOC_FREE(tmp_ctx);
 	return ret;
@@ -1675,7 +1677,7 @@ static WERROR check_ads_config( void )
 	}
 
 	if ( lp_security() == SEC_ADS && !*lp_realm()) {
-		d_fprintf(stderr, _("realm must be set in in %s for ADS "
+		d_fprintf(stderr, _("realm must be set in %s for ADS "
 			  "join to succeed.\n"), get_dyn_CONFIGFILE());
 		return WERR_INVALID_PARAMETER;
 	}

@@ -92,18 +92,25 @@ NTSTATUS auth_system_session_info(TALLOC_CTX *parent_ctx,
 	}
 
 	/* references the user_info_dc into the session_info */
-	nt_status = auth_generate_session_info(parent_ctx, NULL, NULL, user_info_dc, AUTH_SESSION_INFO_SIMPLE_PRIVILEGES, &session_info);
+	nt_status = auth_generate_session_info(parent_ctx,
+					       lp_ctx,
+					       NULL /* sam_ctx */,
+					       user_info_dc,
+					       AUTH_SESSION_INFO_SIMPLE_PRIVILEGES,
+					       &session_info);
 	talloc_free(mem_ctx);
 
 	NT_STATUS_NOT_OK_RETURN(nt_status);
 
 	session_info->credentials = cli_credentials_init(session_info);
 	if (!session_info->credentials) {
+		talloc_free(session_info);
 		return NT_STATUS_NO_MEMORY;
 	}
 
 	ok = cli_credentials_set_conf(session_info->credentials, lp_ctx);
 	if (!ok) {
+		talloc_free(session_info);
 		return NT_STATUS_INTERNAL_ERROR;
 	}
 
@@ -126,7 +133,10 @@ NTSTATUS auth_system_user_info_dc(TALLOC_CTX *mem_ctx, const char *netbios_name,
 	 * same as a 1 element list of struct dom_sid */
 	user_info_dc->num_sids = 1;
 	user_info_dc->sids = talloc(user_info_dc, struct auth_SidAttr);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->sids);
+	if (user_info_dc->sids == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	}
 
 	user_info_dc->sids->sid = global_sid_System;
 	user_info_dc->sids->attrs = SE_GROUP_DEFAULT_FLAGS;
@@ -134,40 +144,73 @@ NTSTATUS auth_system_user_info_dc(TALLOC_CTX *mem_ctx, const char *netbios_name,
 	/* annoying, but the Anonymous really does have a session key, 
 	   and it is all zeros! */
 	user_info_dc->user_session_key = data_blob_talloc(user_info_dc, NULL, 16);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->user_session_key.data);
+	if (user_info_dc->user_session_key.data == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	}
 
 	user_info_dc->lm_session_key = data_blob_talloc(user_info_dc, NULL, 16);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->lm_session_key.data);
+	if (user_info_dc->lm_session_key.data == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	}
 
 	data_blob_clear(&user_info_dc->user_session_key);
 	data_blob_clear(&user_info_dc->lm_session_key);
 
 	user_info_dc->info = info = talloc_zero(user_info_dc, struct auth_user_info);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->info);
+	if (user_info_dc->info == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->account_name = talloc_strdup(info, "SYSTEM");
-	NT_STATUS_HAVE_NO_MEMORY(info->account_name);
+	if (info->account_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->domain_name = talloc_strdup(info, "NT AUTHORITY");
-	NT_STATUS_HAVE_NO_MEMORY(info->domain_name);
+	if (info->domain_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->full_name = talloc_strdup(info, "System");
-	NT_STATUS_HAVE_NO_MEMORY(info->full_name);
+	if (info->full_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->logon_script = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->logon_script);
+	if (info->logon_script == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->profile_path = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->profile_path);
+	if (info->profile_path == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->home_directory = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->home_directory);
+	if (info->home_directory == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->home_drive = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->home_drive);
+	if (info->home_drive == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->logon_server = talloc_strdup(info, netbios_name);
-	NT_STATUS_HAVE_NO_MEMORY(info->logon_server);
+	if (info->logon_server == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->last_logon = 0;
 	info->last_logoff = 0;
@@ -233,40 +276,73 @@ static NTSTATUS auth_domain_admin_user_info_dc(TALLOC_CTX *mem_ctx,
 
 	/* What should the session key be?*/
 	user_info_dc->user_session_key = data_blob_talloc(user_info_dc, NULL, 16);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->user_session_key.data);
+	if (user_info_dc->user_session_key.data == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	user_info_dc->lm_session_key = data_blob_talloc(user_info_dc, NULL, 16);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->lm_session_key.data);
+	if (user_info_dc->lm_session_key.data == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	data_blob_clear(&user_info_dc->user_session_key);
 	data_blob_clear(&user_info_dc->lm_session_key);
 
 	user_info_dc->info = info = talloc_zero(user_info_dc, struct auth_user_info);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->info);
+	if (user_info_dc->info == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->account_name = talloc_strdup(info, "Administrator");
-	NT_STATUS_HAVE_NO_MEMORY(info->account_name);
+	if (info->account_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->domain_name = talloc_strdup(info, domain_name);
-	NT_STATUS_HAVE_NO_MEMORY(info->domain_name);
+	if (info->domain_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->full_name = talloc_strdup(info, "Administrator");
-	NT_STATUS_HAVE_NO_MEMORY(info->full_name);
+	if (info->full_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->logon_script = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->logon_script);
+	if (info->logon_script == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->profile_path = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->profile_path);
+	if (info->profile_path == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->home_directory = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->home_directory);
+	if (info->home_directory == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->home_drive = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->home_drive);
+	if (info->home_drive == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->logon_server = talloc_strdup(info, netbios_name);
-	NT_STATUS_HAVE_NO_MEMORY(info->logon_server);
+	if (info->logon_server == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->last_logon = 0;
 	info->last_logoff = 0;
@@ -298,15 +374,20 @@ static NTSTATUS auth_domain_admin_session_info(TALLOC_CTX *parent_ctx,
 
 	NT_STATUS_HAVE_NO_MEMORY(mem_ctx);
 
-	nt_status = auth_domain_admin_user_info_dc(mem_ctx, lpcfg_netbios_name(lp_ctx),
-						  lpcfg_workgroup(lp_ctx), domain_sid,
-						  &user_info_dc);
+	nt_status = auth_domain_admin_user_info_dc(mem_ctx,
+						   lpcfg_netbios_name(lp_ctx),
+						   lpcfg_workgroup(lp_ctx),
+						   domain_sid,
+						   &user_info_dc);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		talloc_free(mem_ctx);
 		return nt_status;
 	}
 
-	nt_status = auth_generate_session_info(mem_ctx, NULL, NULL, user_info_dc,
+	nt_status = auth_generate_session_info(mem_ctx,
+					       lp_ctx,
+					       NULL /* sam_ctx */,
+					       user_info_dc,
 					       AUTH_SESSION_INFO_SIMPLE_PRIVILEGES|AUTH_SESSION_INFO_AUTHENTICATED|AUTH_SESSION_INFO_DEFAULT_GROUPS,
 					       session_info);
 	/* There is already a reference between the session_info and user_info_dc */
@@ -340,28 +421,39 @@ _PUBLIC_ NTSTATUS auth_anonymous_session_info(TALLOC_CTX *parent_ctx,
 	struct auth_session_info *session_info = NULL;
 	TALLOC_CTX *mem_ctx = talloc_new(parent_ctx);
 	bool ok;
+
+	if (mem_ctx == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
 	
 	nt_status = auth_anonymous_user_info_dc(mem_ctx,
-					       lpcfg_netbios_name(lp_ctx),
-					       &user_info_dc);
+						lpcfg_netbios_name(lp_ctx),
+						&user_info_dc);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		talloc_free(mem_ctx);
 		return nt_status;
 	}
 
 	/* references the user_info_dc into the session_info */
-	nt_status = auth_generate_session_info(parent_ctx, NULL, NULL, user_info_dc, AUTH_SESSION_INFO_SIMPLE_PRIVILEGES, &session_info);
+	nt_status = auth_generate_session_info(parent_ctx,
+					       lp_ctx,
+					       NULL /* sam_ctx */,
+					       user_info_dc,
+					       AUTH_SESSION_INFO_SIMPLE_PRIVILEGES,
+					       &session_info);
 	talloc_free(mem_ctx);
 
 	NT_STATUS_NOT_OK_RETURN(nt_status);
 
 	session_info->credentials = cli_credentials_init(session_info);
 	if (!session_info->credentials) {
+		talloc_free(session_info);
 		return NT_STATUS_NO_MEMORY;
 	}
 
 	ok = cli_credentials_set_conf(session_info->credentials, lp_ctx);
 	if (!ok) {
+		talloc_free(session_info);
 		return NT_STATUS_INTERNAL_ERROR;
 	}
 	cli_credentials_set_anonymous(session_info->credentials);
@@ -384,48 +476,84 @@ _PUBLIC_ NTSTATUS auth_anonymous_user_info_dc(TALLOC_CTX *mem_ctx,
 	 * same as a 1 element list of struct dom_sid */
 	user_info_dc->num_sids = 1;
 	user_info_dc->sids = talloc(user_info_dc, struct auth_SidAttr);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->sids);
+	if (user_info_dc->sids == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	user_info_dc->sids->sid = global_sid_Anonymous;
 	user_info_dc->sids->attrs = SE_GROUP_DEFAULT_FLAGS;
 
 	/* annoying, but the Anonymous really does have a session key... */
 	user_info_dc->user_session_key = data_blob_talloc(user_info_dc, NULL, 16);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->user_session_key.data);
+	if (user_info_dc->user_session_key.data == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	user_info_dc->lm_session_key = data_blob_talloc(user_info_dc, NULL, 16);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->lm_session_key.data);
+	if (user_info_dc->lm_session_key.data == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	/*  and it is all zeros! */
 	data_blob_clear(&user_info_dc->user_session_key);
 	data_blob_clear(&user_info_dc->lm_session_key);
 
 	user_info_dc->info = info = talloc_zero(user_info_dc, struct auth_user_info);
-	NT_STATUS_HAVE_NO_MEMORY(user_info_dc->info);
+	if (user_info_dc->info == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->account_name = talloc_strdup(info, "ANONYMOUS LOGON");
-	NT_STATUS_HAVE_NO_MEMORY(info->account_name);
+	if (info->account_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->domain_name = talloc_strdup(info, "NT AUTHORITY");
-	NT_STATUS_HAVE_NO_MEMORY(info->domain_name);
+	if (info->domain_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->full_name = talloc_strdup(info, "Anonymous Logon");
-	NT_STATUS_HAVE_NO_MEMORY(info->full_name);
+	if (info->full_name == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->logon_script = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->logon_script);
+	if (info->logon_script == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->profile_path = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->profile_path);
+	if (info->profile_path == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->home_directory = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->home_directory);
+	if (info->home_directory == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->home_drive = talloc_strdup(info, "");
-	NT_STATUS_HAVE_NO_MEMORY(info->home_drive);
+	if (info->home_drive == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->logon_server = talloc_strdup(info, netbios_name);
-	NT_STATUS_HAVE_NO_MEMORY(info->logon_server);
+	if (info->logon_server == NULL) {
+		talloc_free(user_info_dc);
+		return NT_STATUS_NO_MEMORY;
+	};
 
 	info->last_logon = 0;
 	info->last_logoff = 0;

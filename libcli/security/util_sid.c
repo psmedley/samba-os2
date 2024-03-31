@@ -61,12 +61,15 @@ const struct dom_sid global_sid_System =			/* System */
 /* S-1-0-0 */
 const struct dom_sid global_sid_NULL =            		/* NULL sid */
 { 1, 1, {0,0,0,0,0,0}, {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
+/* S-1-5-10 */
+const struct dom_sid global_sid_Self =				/* SELF */
+{ 1, 1, {0,0,0,0,0,5}, {10,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 /* S-1-5-11 */
 const struct dom_sid global_sid_Authenticated_Users =	/* All authenticated rids */
 { 1, 1, {0,0,0,0,0,5}, {11,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 #if 0
 /* for documentation S-1-5-12 */
-const struct dom_sid global_sid_Restriced =			/* Restricted Code */
+const struct dom_sid global_sid_Restricted =			/* Restricted Code */
 { 1, 1, {0,0,0,0,0,5}, {12,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 #endif
 
@@ -74,10 +77,10 @@ const struct dom_sid global_sid_Restriced =			/* Restricted Code */
 const struct dom_sid global_sid_Asserted_Identity =       /* Asserted Identity */
 { 1, 0, {0,0,0,0,0,18}, {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 /* S-1-18-1 */
-const struct dom_sid global_sid_Asserted_Identity_Service =	/* Asserted Identity Service */
+const struct dom_sid global_sid_Asserted_Identity_Authentication_Authority =	/* Asserted Identity Authentication Authority */
 { 1, 1, {0,0,0,0,0,18}, {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 /* S-1-18-2 */
-const struct dom_sid global_sid_Asserted_Identity_Authentication_Authority =	/* Asserted Identity Authentication Authority */
+const struct dom_sid global_sid_Asserted_Identity_Service =	/* Asserted Identity Service */
 { 1, 1, {0,0,0,0,0,18}, {2,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 
 /* S-1-5-2 */
@@ -99,6 +102,12 @@ const struct dom_sid global_sid_Anonymous =			/* Anonymous login */
 /* S-1-5-9 */
 const struct dom_sid global_sid_Enterprise_DCs =		/* Enterprise DCs */
 { 1, 1, {0,0,0,0,0,5}, {9,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
+/* S-1-5-21-0-0-0-496 */
+const struct dom_sid global_sid_Compounded_Authentication = 	/* Compounded Authentication */
+{1, 5, {0,0,0,0,0,5}, {21,0,0,0,496,0,0,0,0,0,0,0,0,0,0}};
+/* S-1-5-21-0-0-0-497 */
+const struct dom_sid global_sid_Claims_Valid = 		/* Claims Valid */
+{1, 5, {0,0,0,0,0,5}, {21,0,0,0,497,0,0,0,0,0,0,0,0,0,0}};
 /* S-1-5-32 */
 const struct dom_sid global_sid_Builtin = 			/* Local well-known domain */
 { 1, 1, {0,0,0,0,0,5}, {32,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
@@ -193,32 +202,42 @@ static const struct security_token system_token = {
  Lookup string names for SID types.
 ****************************************************************************/
 
-static const struct {
-	enum lsa_SidType sid_type;
-	const char *string;
-} sid_name_type[] = {
-	{SID_NAME_USE_NONE, "None"},
-	{SID_NAME_USER, "User"},
-	{SID_NAME_DOM_GRP, "Domain Group"},
-	{SID_NAME_DOMAIN, "Domain"},
-	{SID_NAME_ALIAS, "Local Group"},
-	{SID_NAME_WKN_GRP, "Well-known Group"},
-	{SID_NAME_DELETED, "Deleted Account"},
-	{SID_NAME_INVALID, "Invalid Account"},
-	{SID_NAME_UNKNOWN, "UNKNOWN"},
-	{SID_NAME_COMPUTER, "Computer"},
-	{SID_NAME_LABEL, "Mandatory Label"}
-};
-
 const char *sid_type_lookup(uint32_t sid_type)
 {
-	size_t i;
-
-	/* Look through list */
-	for (i=0; i < ARRAY_SIZE(sid_name_type); i++) {
-		if (sid_name_type[i].sid_type == sid_type) {
-			return sid_name_type[i].string;
-		}
+	switch (sid_type) {
+	case SID_NAME_USE_NONE:
+		return "None";
+		break;
+	case SID_NAME_USER:
+		return "User";
+		break;
+	case SID_NAME_DOM_GRP:
+		return "Domain Group";
+		break;
+	case SID_NAME_DOMAIN:
+		return "Domain";
+		break;
+	case SID_NAME_ALIAS:
+		return "Local Group";
+		break;
+	case SID_NAME_WKN_GRP:
+		return "Well-known Group";
+		break;
+	case SID_NAME_DELETED:
+		return "Deleted Account";
+		break;
+	case SID_NAME_INVALID:
+		return "Invalid Account";
+		break;
+	case SID_NAME_UNKNOWN:
+		return "UNKNOWN";
+		break;
+	case SID_NAME_COMPUTER:
+		return "Computer";
+		break;
+	case SID_NAME_LABEL:
+		return "Mandatory Label";
+		break;
 	}
 
 	/* Default return */
@@ -286,7 +305,7 @@ bool sid_peek_check_rid(const struct dom_sid *exp_dom_sid, const struct dom_sid 
 		return false;
 	}
 
-	if (sid_compare_domain(exp_dom_sid, sid)!=0){
+	if (dom_sid_compare_domain(exp_dom_sid, sid)!=0){
 		*rid=(-1);
 		return false;
 	}
@@ -330,24 +349,6 @@ ssize_t sid_parse(const uint8_t *inbuf, size_t len, struct dom_sid *sid)
 	return ndr_size_dom_sid(sid, 0);
 }
 
-/*****************************************************************
- See if 2 SIDs are in the same domain
- this just compares the leading sub-auths
-*****************************************************************/
-
-int sid_compare_domain(const struct dom_sid *sid1, const struct dom_sid *sid2)
-{
-	int n, i;
-
-	n = MIN(sid1->num_auths, sid2->num_auths);
-
-	for (i = n-1; i >= 0; --i)
-		if (sid1->sub_auths[i] != sid2->sub_auths[i])
-			return sid1->sub_auths[i] - sid2->sub_auths[i];
-
-	return dom_sid_compare_auth(sid1, sid2);
-}
-
 /********************************************************************
  Add SID to an array of SIDs
 ********************************************************************/
@@ -382,12 +383,11 @@ NTSTATUS add_sid_to_array(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 NTSTATUS add_sid_to_array_unique(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 				 struct dom_sid **sids, uint32_t *num_sids)
 {
-	uint32_t i;
+	bool contains;
 
-	for (i=0; i<(*num_sids); i++) {
-		if (dom_sid_equal(sid, &(*sids)[i])) {
-			return NT_STATUS_OK;
-		}
+	contains = sids_contains_sid(*sids, *num_sids, sid);
+	if (contains) {
+		return NT_STATUS_OK;
 	}
 
 	return add_sid_to_array(mem_ctx, sid, sids, num_sids);
@@ -436,23 +436,17 @@ NTSTATUS add_sid_to_array_attrs(TALLOC_CTX *mem_ctx,
  * @param [in] sid	The SID to append.
  * @param [in] attrs	SE_GROUP_* flags to go with the SID.
  * @param [inout] sids	A pointer to the auth_SidAttr array.
- * @param [inout] num	A pointer to the size of the auth_SidArray array.
+ * @param [inout] num_sids	A pointer to the size of the auth_SidArray array.
  * @returns NT_STATUS_OK on success.
  */
 NTSTATUS add_sid_to_array_attrs_unique(TALLOC_CTX *mem_ctx,
 				       const struct dom_sid *sid, uint32_t attrs,
 				       struct auth_SidAttr **sids, uint32_t *num_sids)
 {
-	uint32_t i;
+	bool contains;
 
-	for (i=0; i<(*num_sids); i++) {
-		if (attrs != (*sids)[i].attrs) {
-			continue;
-		}
-		if (!dom_sid_equal(sid, &(*sids)[i].sid)) {
-			continue;
-		}
-
+	contains = sids_contains_sid_attrs(*sids, *num_sids, sid, attrs);
+	if (contains) {
 		return NT_STATUS_OK;
 	}
 
@@ -486,8 +480,6 @@ void del_sid_from_array(const struct dom_sid *sid, struct dom_sid **sids,
 	for ( ; i<*num; i++ ) {
 		sid_copy( &sid_list[i], &sid_list[i+1] );
 	}
-
-	return;
 }
 
 bool add_rid_to_array_unique(TALLOC_CTX *mem_ctx,
@@ -516,6 +508,80 @@ bool is_null_sid(const struct dom_sid *sid)
 {
 	static const struct dom_sid null_sid = {0};
 	return dom_sid_equal(sid, &null_sid);
+}
+
+/**
+ * Return true if an array of SIDs contains a certain SID.
+ *
+ * @param [in] sids	The SID array.
+ * @param [in] num_sids	The size of the SID array.
+ * @param [in] sid	The SID in question.
+ * @returns true if the array contains the SID.
+ */
+bool sids_contains_sid(const struct dom_sid *sids,
+		       const uint32_t num_sids,
+		       const struct dom_sid *sid)
+{
+	uint32_t i;
+
+	for (i = 0; i < num_sids; i++) {
+		if (dom_sid_equal(&sids[i], sid)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Return true if an array of auth_SidAttr contains a certain SID.
+ *
+ * @param [in] sids	The auth_SidAttr array.
+ * @param [in] num_sids	The size of the auth_SidArray array.
+ * @param [in] sid	The SID in question.
+ * @returns true if the array contains the SID.
+ */
+bool sid_attrs_contains_sid(const struct auth_SidAttr *sids,
+			    const uint32_t num_sids,
+			    const struct dom_sid *sid)
+{
+	uint32_t i;
+
+	for (i = 0; i < num_sids; i++) {
+		if (dom_sid_equal(&sids[i].sid, sid)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Return true if an array of auth_SidAttr contains a certain SID with certain
+ * attributes.
+ *
+ * @param [in] sids	The auth_SidAttr array.
+ * @param [in] num_sids	The size of the auth_SidArray array.
+ * @param [in] sid	The SID in question.
+ * @param [in] attrs	The attributes of the SID.
+ * @returns true if the array contains the SID.
+ */
+bool sids_contains_sid_attrs(const struct auth_SidAttr *sids,
+			     const uint32_t num_sids,
+			     const struct dom_sid *sid,
+			     uint32_t attrs)
+{
+	uint32_t i;
+
+	for (i = 0; i < num_sids; i++) {
+		if (attrs != sids[i].attrs) {
+			continue;
+		}
+		if (!dom_sid_equal(&sids[i].sid, sid)) {
+			continue;
+		}
+
+		return true;
+	}
+	return false;
 }
 
 /*

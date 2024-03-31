@@ -174,7 +174,7 @@ class AsReqKerberosTests(AsReqBaseTest):
                 cls.generate_dynamic_test("test_as_req_no_preauth", tname, *targs)
 
     def setUp(self):
-        super(AsReqKerberosTests, self).setUp()
+        super().setUp()
         self.do_asn1_print = global_asn1_print
         self.do_hexdump = global_hexdump
 
@@ -529,6 +529,23 @@ class AsReqKerberosTests(AsReqBaseTest):
                 sname=wrong_krbtgt_princ,
                 expected_error=KDC_ERR_S_PRINCIPAL_UNKNOWN)
 
+    def test_krbtgt_single_component_krbtgt(self):
+        """Test that we can make a request to the single‐component krbtgt
+        principal."""
+
+        client_creds = self.get_client_creds()
+
+        # Create a krbtgt principal with a single component.
+        single_component_krbtgt_principal = self.PrincipalName_create(
+            name_type=NT_SRV_INST,
+            names=['krbtgt'])
+
+        self._run_as_req_enc_timestamp(
+            client_creds,
+            sname=single_component_krbtgt_principal,
+            # Don’t ask for canonicalization.
+            kdc_options=0)
+
     # Test that we can make a request for a ticket expiring post-2038.
     def test_future_till(self):
         client_creds = self.get_client_creds()
@@ -573,6 +590,12 @@ class AsReqKerberosTests(AsReqBaseTest):
             expect_status=ntstatus.NT_STATUS_INVALID_LOGON_HOURS,
             expected_pa_error=KDC_ERR_CLIENT_REVOKED,
             expect_pa_status=ntstatus.NT_STATUS_INVALID_LOGON_HOURS)
+
+    def test_as_req_unicode(self):
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER,
+            opts={'name_prefix': '🔐'})
+        self._run_as_req_enc_timestamp(client_creds)
 
 
 if __name__ == "__main__":

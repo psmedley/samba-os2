@@ -27,67 +27,72 @@
 #include "libcli/security/secdesc.h"
 #include "libcli/security/security.h"
 #include "../libcli/smb/smbXcli_base.h"
-#include "libcli/smb/reparse_symlink.h"
+#include "libcli/smb/reparse.h"
 
-struct cli_symlink_state {
+struct cli_create_reparse_point_state {
 	struct tevent_context *ev;
 	struct cli_state *cli;
-	const char *link_target;
-	const char *newpath;
-	uint32_t flags;
-
+	DATA_BLOB reparse_blob;
 	uint16_t fnum;
-	DATA_BLOB in;
-
 	NTSTATUS set_reparse_status;
 };
 
-static void cli_symlink_create_done(struct tevent_req *subreq);
-static void cli_symlink_set_reparse_done(struct tevent_req *subreq);
-static void cli_symlink_delete_on_close_done(struct tevent_req *subreq);
-static void cli_symlink_close_done(struct tevent_req *subreq);
+static void cli_create_reparse_point_opened(struct tevent_req *subreq);
+static void cli_create_reparse_point_done(struct tevent_req *subreq);
+static void cli_create_reparse_point_doc_done(struct tevent_req *subreq);
+static void cli_create_reparse_point_closed(struct tevent_req *subreq);
 
-struct tevent_req *cli_symlink_send(TALLOC_CTX *mem_ctx,
-				    struct tevent_context *ev,
-				    struct cli_state *cli,
-				    const char *link_target,
-				    const char *newpath,
-				    uint32_t flags)
+struct tevent_req *cli_create_reparse_point_send(TALLOC_CTX *mem_ctx,
+						 struct tevent_context *ev,
+						 struct cli_state *cli,
+						 const char *fname,
+						 DATA_BLOB reparse_blob)
 {
-	struct tevent_req *req, *subreq;
-	struct cli_symlink_state *state;
+	struct tevent_req *req = NULL, *subreq = NULL;
+	struct cli_create_reparse_point_state *state = NULL;
 
-	req = tevent_req_create(mem_ctx, &state, struct cli_symlink_state);
+	req = tevent_req_create(mem_ctx,
+				&state,
+				struct cli_create_reparse_point_state);
 	if (req == NULL) {
 		return NULL;
 	}
 	state->ev = ev;
 	state->cli = cli;
-	state->link_target = link_target;
-	state->newpath = newpath;
-	state->flags = flags;
+	state->reparse_blob = reparse_blob;
 
+	/*
+	 * The create arguments were taken from a Windows->Windows
+	 * symlink create call.
+	 */
 	subreq = cli_ntcreate_send(
-		state, ev, cli, state->newpath, 0,
-		SYNCHRONIZE_ACCESS|DELETE_ACCESS|
-		FILE_READ_ATTRIBUTES|FILE_WRITE_ATTRIBUTES,
-		FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE, FILE_CREATE,
-		FILE_OPEN_REPARSE_POINT|FILE_SYNCHRONOUS_IO_NONALERT|
-		FILE_NON_DIRECTORY_FILE,
-		SMB2_IMPERSONATION_IMPERSONATION, 0);
+		state,
+		ev,
+		cli,
+		fname,
+		0,
+		SYNCHRONIZE_ACCESS | DELETE_ACCESS | FILE_READ_ATTRIBUTES |
+			FILE_WRITE_ATTRIBUTES,
+		FILE_ATTRIBUTE_NORMAL,
+		FILE_SHARE_NONE,
+		FILE_CREATE,
+		FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT |
+			FILE_NON_DIRECTORY_FILE,
+		SMB2_IMPERSONATION_IMPERSONATION,
+		0);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
-	tevent_req_set_callback(subreq, cli_symlink_create_done, req);
+	tevent_req_set_callback(subreq, cli_create_reparse_point_opened, req);
 	return req;
 }
 
-static void cli_symlink_create_done(struct tevent_req *subreq)
+static void cli_create_reparse_point_opened(struct tevent_req *subreq)
 {
-	struct tevent_req *req = tevent_req_callback_data(
-		subreq, struct tevent_req);
-	struct cli_symlink_state *state = tevent_req_data(
-		req, struct cli_symlink_state);
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq, struct tevent_req);
+	struct cli_create_reparse_point_state *state =
+		tevent_req_data(req, struct cli_create_reparse_point_state);
 	NTSTATUS status;
 
 	status = cli_ntcreate_recv(subreq, &state->fnum, NULL);
@@ -96,44 +101,41 @@ static void cli_symlink_create_done(struct tevent_req *subreq)
 		return;
 	}
 
-	if (!symlink_reparse_buffer_marshall(
-		    state->link_target, NULL, 0, state->flags, state,
-		    &state->in.data, &state->in.length)) {
-		tevent_req_oom(req);
-		return;
-	}
-
-	subreq = cli_fsctl_send(
-		state,
-		state->ev,
-		state->cli,
-		state->fnum,
-		FSCTL_SET_REPARSE_POINT,
-		&state->in,
-		0);
+	subreq = cli_fsctl_send(state,
+				state->ev,
+				state->cli,
+				state->fnum,
+				FSCTL_SET_REPARSE_POINT,
+				&state->reparse_blob,
+				0);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
 	}
-	tevent_req_set_callback(subreq, cli_symlink_set_reparse_done, req);
+	tevent_req_set_callback(subreq, cli_create_reparse_point_done, req);
 }
 
-static void cli_symlink_set_reparse_done(struct tevent_req *subreq)
+static void cli_create_reparse_point_done(struct tevent_req *subreq)
 {
 	struct tevent_req *req = tevent_req_callback_data(
 		subreq, struct tevent_req);
-	struct cli_symlink_state *state = tevent_req_data(
-		req, struct cli_symlink_state);
+	struct cli_create_reparse_point_state *state =
+		tevent_req_data(req, struct cli_create_reparse_point_state);
 
 	state->set_reparse_status = cli_fsctl_recv(subreq, NULL, NULL);
 	TALLOC_FREE(subreq);
 
 	if (NT_STATUS_IS_OK(state->set_reparse_status)) {
-		subreq = cli_close_send(state, state->ev, state->cli,
-					state->fnum);
+		subreq = cli_close_send(state,
+					state->ev,
+					state->cli,
+					state->fnum,
+					0);
 		if (tevent_req_nomem(subreq, req)) {
 			return;
 		}
-		tevent_req_set_callback(subreq, cli_symlink_close_done, req);
+		tevent_req_set_callback(subreq,
+					cli_create_reparse_point_closed,
+					req);
 		return;
 	}
 	subreq = cli_nt_delete_on_close_send(
@@ -141,15 +143,17 @@ static void cli_symlink_set_reparse_done(struct tevent_req *subreq)
 	if (tevent_req_nomem(subreq, req)) {
 		return;
 	}
-	tevent_req_set_callback(subreq, cli_symlink_delete_on_close_done, req);
+	tevent_req_set_callback(subreq,
+				cli_create_reparse_point_doc_done,
+				req);
 }
 
-static void cli_symlink_delete_on_close_done(struct tevent_req *subreq)
+static void cli_create_reparse_point_doc_done(struct tevent_req *subreq)
 {
 	struct tevent_req *req = tevent_req_callback_data(
 		subreq, struct tevent_req);
-	struct cli_symlink_state *state = tevent_req_data(
-		req, struct cli_symlink_state);
+	struct cli_create_reparse_point_state *state =
+		tevent_req_data(req, struct cli_create_reparse_point_state);
 
 	/*
 	 * Ignore status, we can't do much anyway in case of failure
@@ -158,19 +162,19 @@ static void cli_symlink_delete_on_close_done(struct tevent_req *subreq)
 	(void)cli_nt_delete_on_close_recv(subreq);
 	TALLOC_FREE(subreq);
 
-	subreq = cli_close_send(state, state->ev, state->cli, state->fnum);
+	subreq = cli_close_send(state, state->ev, state->cli, state->fnum, 0);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
 	}
-	tevent_req_set_callback(subreq, cli_symlink_close_done, req);
+	tevent_req_set_callback(subreq, cli_create_reparse_point_closed, req);
 }
 
-static void cli_symlink_close_done(struct tevent_req *subreq)
+static void cli_create_reparse_point_closed(struct tevent_req *subreq)
 {
 	struct tevent_req *req = tevent_req_callback_data(
 		subreq, struct tevent_req);
-	struct cli_symlink_state *state = tevent_req_data(
-		req, struct cli_symlink_state);
+	struct cli_create_reparse_point_state *state =
+		tevent_req_data(req, struct cli_create_reparse_point_state);
 	NTSTATUS status;
 
 	status = cli_close_recv(subreq);
@@ -183,6 +187,79 @@ static void cli_symlink_close_done(struct tevent_req *subreq)
 		return;
 	}
 	tevent_req_done(req);
+}
+
+NTSTATUS cli_create_reparse_point_recv(struct tevent_req *req)
+{
+	return tevent_req_simple_recv_ntstatus(req);
+}
+
+struct cli_symlink_state {
+	uint8_t dummy;
+};
+
+static void cli_symlink_done(struct tevent_req *subreq);
+
+struct tevent_req *cli_symlink_send(TALLOC_CTX *mem_ctx,
+				    struct tevent_context *ev,
+				    struct cli_state *cli,
+				    const char *link_target,
+				    const char *newpath,
+				    uint32_t flags)
+{
+	struct tevent_req *req = NULL, *subreq = NULL;
+	struct cli_symlink_state *state = NULL;
+	struct reparse_data_buffer reparse_buf = {
+		.tag = IO_REPARSE_TAG_SYMLINK,
+		.parsed.lnk.substitute_name =
+			discard_const_p(char, link_target),
+		.parsed.lnk.print_name = discard_const_p(char, link_target),
+		.parsed.lnk.flags = flags,
+	};
+	uint8_t *buf;
+	ssize_t buflen;
+
+	req = tevent_req_create(mem_ctx, &state, struct cli_symlink_state);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	buflen = reparse_data_buffer_marshall(&reparse_buf, NULL, 0);
+	if (buflen == -1) {
+		tevent_req_oom(req);
+		return tevent_req_post(req, ev);
+	}
+
+	buf = talloc_array(state, uint8_t, buflen);
+	if (tevent_req_nomem(buf, req)) {
+		return tevent_req_post(req, ev);
+	}
+
+	buflen = reparse_data_buffer_marshall(&reparse_buf, buf, buflen);
+	if (buflen != talloc_array_length(buf)) {
+		tevent_req_nterror(req, NT_STATUS_INTERNAL_ERROR);
+		return tevent_req_post(req, ev);
+	}
+
+	subreq = cli_create_reparse_point_send(state,
+					       ev,
+					       cli,
+					       newpath,
+					       (DATA_BLOB){
+						       .data = buf,
+						       .length = buflen,
+					       });
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, cli_symlink_done, req);
+	return req;
+}
+
+static void cli_symlink_done(struct tevent_req *subreq)
+{
+	NTSTATUS status = cli_symlink_recv(subreq);
+	tevent_req_simple_finish_ntstatus(subreq, status);
 }
 
 NTSTATUS cli_symlink_recv(struct tevent_req *req)
@@ -219,22 +296,195 @@ NTSTATUS cli_symlink(struct cli_state *cli, const char *link_target,
 	return status;
 }
 
+struct cli_get_reparse_data_state {
+	struct tevent_context *ev;
+	struct cli_state *cli;
+	uint16_t fnum;
+
+	NTSTATUS get_reparse_status;
+	uint8_t *data;
+	uint32_t datalen;
+};
+
+static void cli_get_reparse_data_opened(struct tevent_req *subreq);
+static void cli_get_reparse_data_done(struct tevent_req *subreq);
+static void cli_get_reparse_data_closed(struct tevent_req *subreq);
+
+struct tevent_req *cli_get_reparse_data_send(TALLOC_CTX *mem_ctx,
+					     struct tevent_context *ev,
+					     struct cli_state *cli,
+					     const char *fname)
+{
+	struct tevent_req *req = NULL, *subreq = NULL;
+	struct cli_get_reparse_data_state *state = NULL;
+
+	req = tevent_req_create(mem_ctx,
+				&state,
+				struct cli_get_reparse_data_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	state->ev = ev;
+	state->cli = cli;
+
+	subreq = cli_ntcreate_send(state,
+				   ev,
+				   cli,
+				   fname,
+				   0,
+				   FILE_READ_ATTRIBUTES | FILE_READ_EA,
+				   0,
+				   FILE_SHARE_READ | FILE_SHARE_WRITE |
+					   FILE_SHARE_DELETE,
+				   FILE_OPEN,
+				   FILE_OPEN_REPARSE_POINT,
+				   SMB2_IMPERSONATION_IMPERSONATION,
+				   0);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq, cli_get_reparse_data_opened, req);
+	return req;
+}
+
+static void cli_get_reparse_data_opened(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq, struct tevent_req);
+	struct cli_get_reparse_data_state *state =
+		tevent_req_data(req, struct cli_get_reparse_data_state);
+	NTSTATUS status;
+
+	status = cli_ntcreate_recv(subreq, &state->fnum, NULL);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+
+	subreq = cli_fsctl_send(state,
+				state->ev,
+				state->cli,
+				state->fnum,
+				FSCTL_GET_REPARSE_POINT,
+				NULL,
+				65536);
+
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, cli_get_reparse_data_done, req);
+}
+
+static void cli_get_reparse_data_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq, struct tevent_req);
+	struct cli_get_reparse_data_state *state =
+		tevent_req_data(req, struct cli_get_reparse_data_state);
+	DATA_BLOB out = {
+		.data = NULL,
+	};
+
+	state->get_reparse_status = cli_fsctl_recv(subreq, state, &out);
+	TALLOC_FREE(subreq);
+
+	if (NT_STATUS_IS_OK(state->get_reparse_status)) {
+		state->data = out.data;
+		state->datalen = out.length;
+	}
+
+	subreq = cli_close_send(state, state->ev, state->cli, state->fnum, 0);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq, cli_get_reparse_data_closed, req);
+}
+
+static void cli_get_reparse_data_closed(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq, struct tevent_req);
+	struct cli_get_reparse_data_state *state =
+		tevent_req_data(req, struct cli_get_reparse_data_state);
+	NTSTATUS status;
+
+	status = cli_close_recv(subreq);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+	if (tevent_req_nterror(req, state->get_reparse_status)) {
+		return;
+	}
+	tevent_req_done(req);
+}
+
+NTSTATUS cli_get_reparse_data_recv(struct tevent_req *req,
+				   TALLOC_CTX *mem_ctx,
+				   uint8_t **_data,
+				   uint32_t *_datalen)
+{
+	struct cli_get_reparse_data_state *state =
+		tevent_req_data(req, struct cli_get_reparse_data_state);
+	NTSTATUS status;
+
+	if (tevent_req_is_nterror(req, &status)) {
+		return status;
+	}
+
+	*_data = talloc_move(mem_ctx, &state->data);
+	*_datalen = state->datalen;
+
+	tevent_req_received(req);
+
+	return NT_STATUS_OK;
+}
+
+NTSTATUS cli_get_reparse_data(struct cli_state *cli,
+			      const char *fname,
+			      TALLOC_CTX *mem_ctx,
+			      uint8_t **_data,
+			      uint32_t *_datalen)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	struct tevent_context *ev;
+	struct tevent_req *req;
+	NTSTATUS status = NT_STATUS_NO_MEMORY;
+
+	if (smbXcli_conn_has_async_calls(cli->conn)) {
+		status = NT_STATUS_INVALID_PARAMETER;
+		goto fail;
+	}
+	ev = samba_tevent_context_init(frame);
+	if (ev == NULL) {
+		goto fail;
+	}
+	req = cli_get_reparse_data_send(frame, ev, cli, fname);
+	if (req == NULL) {
+		goto fail;
+	}
+	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
+		goto fail;
+	}
+	status = cli_get_reparse_data_recv(req, mem_ctx, _data, _datalen);
+fail:
+	TALLOC_FREE(frame);
+	return status;
+}
+
 struct cli_readlink_state {
 	struct tevent_context *ev;
 	struct cli_state *cli;
 	uint16_t fnum;
 
 	uint16_t setup[4];
-	NTSTATUS get_reparse_status;
 	uint8_t *data;
 	uint32_t num_data;
 	char *target;
 };
 
 static void cli_readlink_posix1_done(struct tevent_req *subreq);
-static void cli_readlink_opened(struct tevent_req *subreq);
 static void cli_readlink_got_reparse_data(struct tevent_req *subreq);
-static void cli_readlink_closed(struct tevent_req *subreq);
 
 struct tevent_req *cli_readlink_send(TALLOC_CTX *mem_ctx,
 				     struct tevent_context *ev,
@@ -263,15 +513,11 @@ struct tevent_req *cli_readlink_send(TALLOC_CTX *mem_ctx,
 		return req;
 	}
 
-	subreq = cli_ntcreate_send(
-		state, ev, cli, fname, 0, FILE_READ_ATTRIBUTES | FILE_READ_EA,
-		0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		FILE_OPEN, FILE_OPEN_REPARSE_POINT,
-		SMB2_IMPERSONATION_IMPERSONATION, 0);
+	subreq = cli_get_reparse_data_send(state, ev, cli, fname);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
-	tevent_req_set_callback(subreq, cli_readlink_opened, req);
+	tevent_req_set_callback(subreq, cli_readlink_got_reparse_data, req);
 	return req;
 }
 
@@ -291,72 +537,20 @@ static void cli_readlink_posix1_done(struct tevent_req *subreq)
 	tevent_req_done(req);
 }
 
-static void cli_readlink_opened(struct tevent_req *subreq)
-{
-	struct tevent_req *req = tevent_req_callback_data(
-		subreq, struct tevent_req);
-	struct cli_readlink_state *state = tevent_req_data(
-		req, struct cli_readlink_state);
-	NTSTATUS status;
-
-	status = cli_ntcreate_recv(subreq, &state->fnum, NULL);
-	TALLOC_FREE(subreq);
-	if (tevent_req_nterror(req, status)) {
-		return;
-	}
-
-	subreq = cli_fsctl_send(
-		state,
-		state->ev,
-		state->cli,
-		state->fnum,
-		FSCTL_GET_REPARSE_POINT,
-		NULL,
-		65536);
-
-	if (tevent_req_nomem(subreq, req)) {
-		return;
-	}
-	tevent_req_set_callback(subreq, cli_readlink_got_reparse_data, req);
-}
-
 static void cli_readlink_got_reparse_data(struct tevent_req *subreq)
 {
 	struct tevent_req *req = tevent_req_callback_data(
 		subreq, struct tevent_req);
 	struct cli_readlink_state *state = tevent_req_data(
 		req, struct cli_readlink_state);
-	DATA_BLOB out = { .data = NULL, };
-
-	state->get_reparse_status = cli_fsctl_recv(subreq, state, &out);
-	TALLOC_FREE(subreq);
-
-	if (NT_STATUS_IS_OK(state->get_reparse_status)) {
-		state->data = out.data;
-		state->num_data = out.length;
-	}
-
-	subreq = cli_close_send(state, state->ev, state->cli, state->fnum);
-	if (tevent_req_nomem(subreq, req)) {
-		return;
-	}
-	tevent_req_set_callback(subreq, cli_readlink_closed, req);
-}
-
-static void cli_readlink_closed(struct tevent_req *subreq)
-{
-	struct tevent_req *req = tevent_req_callback_data(
-		subreq, struct tevent_req);
-	struct cli_readlink_state *state = tevent_req_data(
-		req, struct cli_readlink_state);
 	NTSTATUS status;
 
-	status = cli_close_recv(subreq);
+	status = cli_get_reparse_data_recv(subreq,
+					   state,
+					   &state->data,
+					   &state->num_data);
 	TALLOC_FREE(subreq);
 	if (tevent_req_nterror(req, status)) {
-		return;
-	}
-	if (tevent_req_nterror(req, state->get_reparse_status)) {
 		return;
 	}
 	tevent_req_done(req);
@@ -368,7 +562,9 @@ NTSTATUS cli_readlink_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 {
 	struct cli_readlink_state *state = tevent_req_data(
 		req, struct cli_readlink_state);
-	struct symlink_reparse_struct *symlink = NULL;
+	struct reparse_data_buffer buf = {
+		.tag = 0,
+	};
 	NTSTATUS status;
 
 	if (tevent_req_is_nterror(req, &status)) {
@@ -392,26 +588,32 @@ NTSTATUS cli_readlink_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
 		return NT_STATUS_OK;
 	}
 
-	symlink = symlink_reparse_buffer_parse(
-		talloc_tos(), state->data, state->num_data);
-	if (symlink == NULL) {
+	status = reparse_data_buffer_parse(state,
+					   &buf,
+					   state->data,
+					   state->num_data);
+	if (!NT_STATUS_IS_OK(status)) {
+		return NT_STATUS_INVALID_NETWORK_RESPONSE;
+	}
+	if (buf.tag != IO_REPARSE_TAG_SYMLINK) {
 		return NT_STATUS_INVALID_NETWORK_RESPONSE;
 	}
 
 	if (psubstitute_name != NULL) {
-		*psubstitute_name = talloc_move(
-			mem_ctx, &symlink->substitute_name);
+		*psubstitute_name =
+			talloc_move(mem_ctx, &buf.parsed.lnk.substitute_name);
 	}
 
 	if (pprint_name != NULL) {
-		*pprint_name = talloc_move(mem_ctx, &symlink->print_name);
+		*pprint_name =
+			talloc_move(mem_ctx, &buf.parsed.lnk.print_name);
 	}
 
 	if (pflags != NULL) {
-		*pflags = symlink->flags;
+		*pflags = buf.parsed.lnk.flags;
 	}
 
-	TALLOC_FREE(symlink);
+	tevent_req_received(req);
 
 	return NT_STATUS_OK;
 }

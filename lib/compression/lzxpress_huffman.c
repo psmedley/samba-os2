@@ -568,7 +568,7 @@ static int generate_huffman_codes(struct huffman_node *leaf_nodes,
 			if (tail_branch == n_leaves) {
 				/*
 				 * We're not getting here, no way, never ever.
-				 * Unless we made a terible mistake.
+				 * Unless we made a terrible mistake.
 				 *
 				 * That is, in a binary tree with n leaves,
 				 * there are ALWAYS n-1 internal nodes.
@@ -607,7 +607,7 @@ static int generate_huffman_codes(struct huffman_node *leaf_nodes,
 		}
 
 		/*
-		 * requantize by halfing and rounding up, so that small counts
+		 * requantize by halving and rounding up, so that small counts
 		 * become relatively bigger. This will lead to a flatter tree.
 		 */
 		for (i = 0; i < n_leaves; i++) {
@@ -1049,7 +1049,7 @@ static ssize_t write_compressed_bytes(uint16_t symbol_values[512],
 			}
 
 			len = intermediate[i + 1];
-			len |= intermediate[i + 2] << 16U;
+			len |= (uint32_t)intermediate[i + 2] << 16;
 			distance = intermediate[i + 3];
 			i += 3;
 		} else if (c == 0xffff) {
@@ -1514,7 +1514,7 @@ static bool fill_decomp_table(struct bitstream *input)
 	uint16_t sort_mem[512];
 	size_t i, n_symbols;
 	ssize_t code;
-	uint16_t len, prev_len;
+	uint16_t len = 0, prev_len;
 	const uint8_t *table_bytes = input->bytes + input->byte_pos;
 
 	if (input->byte_pos + 260 > input->byte_size) {
@@ -1739,11 +1739,11 @@ static ssize_t lzx_huffman_decompress_block(struct bitstream *input,
 	 * # input bytes are read for match lengths.
 	 *
 	 * Note that we *don't* specifically check for the EOF marker (symbol
-	 * 256) in this loop, because the a precondition for stopping for the
+	 * 256) in this loop, because the precondition for stopping for the
 	 * EOF marker is that the output buffer is full (otherwise, you
 	 * wouldn't know which 256 is EOF, rather than an actual symbol), and
 	 * we *always* want to stop when the buffer is full. So we work out if
-	 * there is an EOF in in another loop after we stop writing.
+	 * there is an EOF in another loop after we stop writing.
 	 */
 
 	index = 0;

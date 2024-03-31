@@ -1,11 +1,9 @@
 <samba:parameter name="smb3 unix extensions"
-                 context="G"
+                 context="S"
                  type="boolean"
-		 function="_smb3_unix_extensions"
                  xmlns:samba="http://www.samba.org/samba/DTD/samba-doc">
   <description>
-    <para>Incomplete SMB 3.11 Unix Extensions. This is only available
-    if Samba is compiled in DEVELOPER mode.</para>
+    <para>Experimental SMB 3.1.1 Unix Extensions.</para>
   </description>
   <value type="default">no</value>
 </samba:parameter>

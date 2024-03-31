@@ -1,19 +1,19 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    Samba utility functions
    Copyright (C) Andrew Tridgell 1992-2001
    Copyright (C) Simo Sorce 2001
-   
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -193,15 +193,36 @@ size_t ucs2_align(const void *base_ptr, const void *p, int flags)
 
 /**
 return the number of bytes occupied by a buffer in CH_UTF16 format
-the result includes the null termination
 **/
 size_t utf16_len(const void *buf)
 {
 	size_t len;
 
-	for (len = 0; SVAL(buf,len); len += 2) ;
+	for (len = 0; PULL_LE_U16(buf,len); len += 2) ;
 
-	return len + 2;
+	return len;
+}
+
+/**
+return the number of bytes occupied by a buffer in CH_UTF16 format
+the result includes the null termination
+**/
+size_t utf16_null_terminated_len(const void *buf)
+{
+	return utf16_len(buf) + 2;
+}
+
+/**
+return the number of bytes occupied by a buffer in CH_UTF16 format
+limited by 'n' bytes
+**/
+size_t utf16_len_n(const void *src, size_t n)
+{
+	size_t len;
+
+	for (len = 0; (len+2 <= n) && PULL_LE_U16(src, len); len += 2) ;
+
+	return len;
 }
 
 /**
@@ -209,11 +230,11 @@ return the number of bytes occupied by a buffer in CH_UTF16 format
 the result includes the null termination
 limited by 'n' bytes
 **/
-size_t utf16_len_n(const void *src, size_t n)
+size_t utf16_null_terminated_len_n(const void *src, size_t n)
 {
 	size_t len;
 
-	for (len = 0; (len+2 < n) && SVAL(src, len); len += 2) ;
+	len = utf16_len_n(src, n);
 
 	if (len+2 <= n) {
 		len += 2;
@@ -221,6 +242,172 @@ size_t utf16_len_n(const void *src, size_t n)
 
 	return len;
 }
+
+unsigned char *talloc_utf16_strlendup(TALLOC_CTX *mem_ctx, const char *str, size_t len)
+{
+	unsigned char *new_str = NULL;
+
+	/* Check for overflow. */
+	if (len > SIZE_MAX - 2) {
+		return NULL;
+	}
+
+	/*
+	 * Allocate the new string, including space for the
+	 * UTF‐16 null terminator.
+	 */
+	new_str = talloc_size(mem_ctx, len + 2);
+	if (new_str == NULL) {
+		return NULL;
+	}
+
+	memcpy(new_str, str, len);
+
+	/*
+	 * Ensure that the UTF‐16 string is
+	 * null‐terminated.
+	 */
+	new_str[len] = '\0';
+	new_str[len + 1] = '\0';
+
+	return new_str;
+}
+
+unsigned char *talloc_utf16_strdup(TALLOC_CTX *mem_ctx, const char *str)
+{
+	if (str == NULL) {
+		return NULL;
+	}
+	return talloc_utf16_strlendup(mem_ctx, str, utf16_len(str));
+}
+
+unsigned char *talloc_utf16_strndup(TALLOC_CTX *mem_ctx, const char *str, size_t n)
+{
+	if (str == NULL) {
+		return NULL;
+	}
+	return talloc_utf16_strlendup(mem_ctx, str, utf16_len_n(str, n));
+}
+
+/**
+ * Determine the length and validity of a utf-8 string.
+ *
+ * @param input the string pointer
+ * @param maxlen maximum size of the string
+ * @param byte_len receives the length of the valid section
+ * @param char_len receives the number of unicode characters in the valid section
+ * @param utf16_len receives the number of bytes the string would need in UTF16 encoding.
+ *
+ * @return true if the input is valid up to maxlen, or a '\0' byte, otherwise false.
+ */
+bool utf8_check(const char *input, size_t maxlen,
+		size_t *byte_len,
+		size_t *char_len,
+		size_t *utf16_len)
+{
+	const uint8_t *s = (const uint8_t *)input;
+	size_t i;
+	size_t chars = 0;
+	size_t long_chars = 0;
+	uint32_t codepoint;
+	uint8_t a, b, c, d;
+	for (i = 0; i < maxlen; i++, chars++) {
+		if (s[i] == 0) {
+			break;
+		}
+		if (s[i] < 0x80) {
+			continue;
+		}
+		if ((s[i] & 0xe0) == 0xc0) {
+			/* 110xxxxx 10xxxxxx */
+			a = s[i];
+			if (maxlen - i < 2) {
+				goto error;
+			}
+			b = s[i + 1];
+			if ((b & 0xc0) != 0x80) {
+				goto error;
+			}
+			codepoint = (a & 31) << 6 | (b & 63);
+			if (codepoint < 0x80) {
+				goto error;
+			}
+			i++;
+			continue;
+		}
+		if ((s[i] & 0xf0) == 0xe0) {
+			/* 1110xxxx 10xxxxxx 10xxxxxx */
+			if (maxlen - i < 3) {
+				goto error;
+			}
+			a = s[i];
+			b = s[i + 1];
+			c = s[i + 2];
+			if ((b & 0xc0) != 0x80 || (c & 0xc0) != 0x80) {
+				goto error;
+			}
+			codepoint = (c & 63) | (b & 63) << 6 | (a & 15) << 12;
+
+			if (codepoint < 0x800) {
+				goto error;
+			}
+			if (codepoint >= 0xd800 && codepoint <= 0xdfff) {
+				/*
+				 * This is an invalid codepoint, per
+				 * RFC3629, as it encodes part of a
+				 * UTF-16 surrogate pair for a
+				 * character over U+10000, which ought
+				 * to have been encoded as a four byte
+				 * utf-8 sequence.
+				 */
+				goto error;
+			}
+			i += 2;
+			continue;
+		}
+
+		if ((s[i] & 0xf8) == 0xf0) {
+			/* 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx */
+			if (maxlen - i < 4) {
+				goto error;
+			}
+			a = s[i];
+			b = s[i + 1];
+			c = s[i + 2];
+			d = s[i + 3];
+
+			if ((b & 0xc0) != 0x80 ||
+			    (c & 0xc0) != 0x80 ||
+			    (d & 0xc0) != 0x80) {
+				goto error;
+			}
+			codepoint = (d & 63) | (c & 63) << 6 | (b & 63) << 12 | (a & 7) << 18;
+
+			if (codepoint < 0x10000 || codepoint > 0x10ffff) {
+				goto error;
+			}
+			/* this one will need two UTF16 characters */
+			long_chars++;
+			i += 3;
+			continue;
+		}
+		/*
+		 * If it wasn't handled yet, it's wrong.
+		 */
+		goto error;
+	}
+	*byte_len = i;
+	*char_len = chars;
+	*utf16_len = chars + long_chars;
+	return true;
+
+error:
+	*byte_len = i;
+	*char_len = chars;
+	*utf16_len = chars + long_chars;
+	return false;
+}
+
 
 /**
  * Copy a string from a char* unix src to a dos codepage string destination.
@@ -380,9 +567,9 @@ static size_t pull_ucs2(char *dest, const void *src, size_t dest_len, size_t src
 
 	if (flags & STR_TERMINATE) {
 		if (src_len == (size_t)-1) {
-			src_len = utf16_len(src);
+			src_len = utf16_null_terminated_len(src);
 		} else {
-			src_len = utf16_len_n(src, src_len);
+			src_len = utf16_null_terminated_len_n(src, src_len);
 		}
 	}
 
@@ -400,7 +587,7 @@ static size_t pull_ucs2(char *dest, const void *src, size_t dest_len, size_t src
 
 /**
  Copy a string from a char* src to a unicode or ascii
- dos codepage destination choosing unicode or ascii based on the 
+ dos codepage destination choosing unicode or ascii based on the
  flags in the SMB buffer starting at base_ptr.
  Return the number of bytes occupied by the string in the destination.
  flags can have:

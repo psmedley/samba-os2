@@ -595,7 +595,7 @@ static NTSTATUS b9_generate_session_info_pac(struct auth4_context *auth_context,
 
 	session_info_flags |= AUTH_SESSION_INFO_SIMPLE_PRIVILEGES;
 
-	status = auth_generate_session_info(mem_ctx, NULL, NULL, user_info_dc,
+	status = auth_generate_session_info(mem_ctx, auth_context->lp_ctx, NULL, user_info_dc,
 					    session_info_flags, session_info);
 	if (!NT_STATUS_IS_OK(status)) {
 		talloc_free(tmp_ctx);
@@ -617,7 +617,7 @@ static void b9_debug(void *private_ptr, int msg_level, const char *msg)
 	};
 	struct dlz_bind9_data *state = private_ptr;
 	int     isc_log_level;
-	
+
 	if (msg_level >= ARRAY_SIZE(isc_log_map) || msg_level < 0) {
 		isc_log_level = ISC_LOG_INFO;
 	} else {
@@ -1107,15 +1107,15 @@ _PUBLIC_ isc_result_t dlz_allowzonexfr(void *dbdata, const char *name, const cha
 	denied_clients = lpcfg_dns_zone_transfer_clients_deny(state->lp);
 
 	/* The logic of allow_access() when both allow and deny lists are given
-	 * does not match our expectation here: it would allow clients thar are
+	 * does not match our expectation here: it would allow clients that are
 	 * neither allowed nor denied.
 	 * Here, we want to deny clients by default.
 	 * Using the allow_access() function is still useful as it takes care of
-	 * parsing IP adresses and subnets in a consistent way with other options
+	 * parsing IP addresses and subnets in a consistent way with other options
 	 * from smb.conf.
 	 *
 	 * We will then check the deny list first, then the allow list, so that
-	 * we accept only clients that are explicitely allowed AND not explicitely
+	 * we accept only clients that are explicitly allowed AND not explicitly
 	 * denied.
 	 */
 	if ((authorized_clients == NULL) && (denied_clients == NULL)) {
@@ -1409,7 +1409,7 @@ static bool b9_has_soa(struct dlz_bind9_data *state, struct ldb_dn *dn, const ch
 	}
 
 	/*
-	 * The SOA record is alwas stored under DC=@,DC=zonename
+	 * The SOA record is always stored under DC=@,DC=zonename
 	 * This can probably be removed when dns_common_lookup makes a fallback
 	 * lookup on @ pseudo record
 	 */
@@ -1981,7 +1981,7 @@ _PUBLIC_ isc_result_t dlz_addrdataset(const char *name, const char *rdatastr, vo
 		 * dns_common_replace() will work out whether to bump the
 		 * timestamp or not. But to do that, we need to tell it the
 		 * old timestamp.
-		 */		
+		 */
 		if (! dns_name_is_static(recs, num_recs)) {
 			rec->dwTimeStamp = recs[i].dwTimeStamp;
 		}

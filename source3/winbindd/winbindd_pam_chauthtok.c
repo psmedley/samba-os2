@@ -53,7 +53,10 @@ struct tevent_req *winbindd_pam_chauthtok_send(
 	struct tevent_req *req, *subreq;
 	struct winbindd_pam_chauthtok_state *state;
 	struct winbindd_domain *contact_domain;
-	fstring namespace, domain, user;
+	char *namespace = NULL;
+	char *domain = NULL;
+	char *user = NULL;
+	char *chauthtok_user = NULL;
 	char *mapped_user;
 	NTSTATUS status;
 	bool ok;
@@ -79,16 +82,20 @@ struct tevent_req *winbindd_pam_chauthtok_send(
 		fstrcpy(request->data.chauthtok.user, mapped_user);
 	}
 
-	ok = canonicalize_username(request->data.chauthtok.user,
-				   namespace,
-				   domain,
-				   user);
+	chauthtok_user = request->data.chauthtok.user;
+	ok = canonicalize_username(req,
+				   &chauthtok_user,
+				   &namespace,
+				   &domain,
+				   &user);
 	if (!ok) {
 		DEBUG(10, ("winbindd_pam_chauthtok: canonicalize_username %s "
 			   "failed with\n", request->data.chauthtok.user));
 		tevent_req_nterror(req, NT_STATUS_NO_SUCH_USER);
 		return tevent_req_post(req, ev);
 	}
+
+	fstrcpy(request->data.chauthtok.user, chauthtok_user);
 
 	contact_domain = find_domain_from_name(namespace);
 	if (contact_domain == NULL) {
@@ -184,7 +191,7 @@ NTSTATUS winbindd_pam_chauthtok_recv(struct tevent_req *req,
 		/*
 		 * When we login from gdm or xdm and password expires,
 		 * we change password, but there are no memory
-		 * crendentials So, winbindd_replace_memory_creds()
+		 * credentials. So, winbindd_replace_memory_creds()
 		 * returns NT_STATUS_OBJECT_NAME_NOT_FOUND. This is
 		 * not a failure.  --- BoYang
 		 */

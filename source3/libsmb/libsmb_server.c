@@ -546,7 +546,7 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 
 	if (!NT_STATUS_IS_OK(status)) {
 		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
-			DBG_ERR("NetBIOS support disabled, unable to connect");
+			DBG_ERR("NetBIOS support disabled, unable to connect\n");
 		}
 
 		errno = map_errno_from_nt_status(status);
@@ -555,9 +555,13 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 
 	cli_set_timeout(c, smbc_getTimeout(context));
 
-	status = smbXcli_negprot(c->conn, c->timeout,
+	status = smbXcli_negprot(c->conn,
+				 c->timeout,
 				 lp_client_min_protocol(),
-				 lp_client_max_protocol());
+				 lp_client_max_protocol(),
+				 NULL,
+				 NULL,
+				 NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		cli_shutdown(c);
 		errno = map_errno_from_nt_status(status);

@@ -2,12 +2,12 @@
 .\"     Title: samba-tool
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 02/19/2024
+.\"      Date: 03/27/2024
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.19.5
+.\"    Source: Samba 4.20.0
 .\"  Language: English
 .\"
-.TH "SAMBA\-TOOL" "8" "02/19/2024" "Samba 4\&.19\&.5" "System Administration tools"
+.TH "SAMBA\-TOOL" "8" "03/27/2024" "Samba 4\&.20\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -209,7 +209,7 @@ DN of alternative location (with or without domainDN counterpart) to default CN=
 .PP
 \-\-description=DESCRIPTION
 .RS 4
-The new computers\*(Aqs description\&.
+The new computer\*(Aqs description\&.
 .RE
 .PP
 \-\-ip\-address=IP_ADDRESS_LIST
@@ -284,7 +284,7 @@ DN of alternative location (with or without domainDN counterpart) in which the n
 .PP
 \-\-description=DESCRIPTION
 .RS 4
-The new contacts\*(Aqs description\&.
+The new contact\*(Aqs description\&.
 .RE
 .PP
 \-\-surname=SURNAME
@@ -585,17 +585,64 @@ Cannot be used together with \-\-audit\&.
 Strong NTLM Policy (Disabled, Optional, Required)\&.
 .RE
 .PP
-\-\-user\-tgt\-lifetime
+\-\-user\-tgt\-lifetime\-mins
 .RS 4
 Ticket\-Granting\-Ticket lifetime for user accounts\&.
 .RE
 .PP
 \-\-user\-allow\-ntlm\-auth
 .RS 4
-Allow NTLM network authentication when user is restricted to selected devices\&.
+Allow
+\fBNTLM\fR
+and
+\fB Interactive NETLOGON SamLogon\fR
+authentication despite the fact that
+\fBallowed\-to\-authenticate\-from\fR
+is in use, which would otherwise restrict the user to selected devices\&.
 .RE
 .PP
-\-\-service\-tgt\-lifetime
+\-\-user\-allowed\-to\-authenticate\-from
+.RS 4
+Conditions a device must meet for users covered by this policy to be allowed to authenticate\&. While this is a restriction on the device, any conditional ACE rules are expressed as if the device was a user\&.
+.sp
+Must be a valid SDDL string without reference to Device keywords\&.
+.sp
+Example: O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AU)}))
+.RE
+.PP
+\-\-user\-allowed\-to\-authenticate\-from\-silo
+.RS 4
+User is allowed to authenticate, if the device they authenticate from is assigned and granted membership of a given silo\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-user\-allowed\-to\-authenticate\-from
+.RE
+.PP
+\-\-user\-allowed\-to\-authenticate\-to=SDDL
+.RS 4
+This policy, applying to a user account that is offering a service, eg a web server with a user account, restricts which accounts may access it\&.
+.sp
+Must be a valid SDDL string\&. The SDDL can reference both bare (user) and Device conditions\&.
+.sp
+SDDL Example:
+\fBO:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))\fR
+.RE
+.PP
+\-\-user\-allowed\-to\-authenticate\-to\-by\-group=GROUP
+.RS 4
+The user account, offering a network service, covered by this policy, will only be allowed access from other accounts that are members of the given
+\fBGROUP\fR\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-user\-allowed\-to\-authenticate\-to
+.RE
+.PP
+\-\-user\-allowed\-to\-authenticate\-to\-by\-silo=SILO
+.RS 4
+The user account, offering a network service, covered by this policy, will only be allowed access from other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given SILO\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-user\-allowed\-to\-authenticate\-to
+.RE
+.PP
+\-\-service\-tgt\-lifetime\-mins
 .RS 4
 Ticket\-Granting\-Ticket lifetime for service accounts\&.
 .RE
@@ -605,86 +652,89 @@ Ticket\-Granting\-Ticket lifetime for service accounts\&.
 Allow NTLM network authentication when service is restricted to selected devices\&.
 .RE
 .PP
-\-\-computer\-tgt\-lifetime
+\-\-service\-allowed\-to\-authenticate\-from
+.RS 4
+Conditions a device must meet for service accounts covered by this policy to be allowed to authenticate\&. While this is a restriction on the device, any conditional ACE rules are expressed as if the device was a user\&.
+.sp
+Must be a valid SDDL string without reference to Device keywords\&.
+.sp
+SDDL Example:
+\fBO:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AU)}))\fR
+.RE
+.PP
+\-\-service\-allowed\-to\-authenticate\-from\-device\-silo=SILO
+.RS 4
+The service account (eg a Managed Service Account, Group Managed Service Account) is allowed to authenticate, if the device it authenticates from is assigned and granted membership of a given
+\fBSILO\fR\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-service\-allowed\-to\-authenticate\-from
+.RE
+.PP
+\-\-service\-allowed\-to\-authenticate\-from\-device\-group=GROUP
+.RS 4
+The service account (eg a Managed Service Account, Group Managed Service Account) is allowed to authenticate, if the device it authenticates from is a member of the given
+\fBgroup\fR\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-service\-allowed\-to\-authenticate\-from
+.RE
+.PP
+\-\-service\-allowed\-to\-authenticate\-to=SDDL
+.RS 4
+This policy, applying to a service account (eg a Managed Service Account, Group Managed Service Account), restricts which accounts may access it\&.
+.sp
+Must be a valid SDDL string\&. The SDDL can reference both bare (user) and Device conditions\&.
+.sp
+SDDL Example:
+\fBO:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))\fR
+.RE
+.PP
+\-\-service\-allowed\-to\-authenticate\-to\-by\-group=GROUP
+.RS 4
+The service account (eg a Managed Service Account, Group Managed Service Account), will only be allowed access by other accounts that are members of the given
+\fBGROUP\fR\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-service\-allowed\-to\-authenticate\-to
+.RE
+.PP
+\-\-service\-allowed\-to\-authenticate\-to\-by\-silo=SILO
+.RS 4
+The service account (eg a Managed Service Account, Group Managed Service Account), will only be allowed access by other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given SILO\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-service\-allowed\-to\-authenticate\-to
+.RE
+.PP
+\-\-computer\-tgt\-lifetime\-mins
 .RS 4
 Ticket\-Granting\-Ticket lifetime for computer accounts\&.
+.RE
+.PP
+\-\-computer\-allowed\-to\-authenticate\-to=SDDL
+.RS 4
+This policy, applying to a computer account (eg a server or workstation), restricts which accounts may access it\&.
+.sp
+Must be a valid SDDL string\&. The SDDL can reference both bare (user) and Device conditions\&.
+.sp
+SDDL Example: O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))
+.RE
+.PP
+\-\-computer\-allowed\-to\-authenticate\-to\-by\-group=GROUP
+.RS 4
+The computer account (eg a server or workstation), will only be allowed access by other accounts that are members of the given
+\fBGROUP\fR\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-computer\-allowed\-to\-authenticate\-to
+.RE
+.PP
+\-\-computer\-allowed\-to\-authenticate\-to\-by\-silo=SILO
+.RS 4
+The computer account (eg a server or workstation), will only be allowed access by other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given SILO\&.
+.sp
+This attribute avoids the need to write SDDL by hand and cannot be used with \-\-computer\-allowed\-to\-authenticate\-to
 .RE
 .SS "domain auth policy modify"
 .PP
-Modify authentication policies on the domain\&.
-.PP
-\-H, \-\-URL
-.RS 4
-LDB URL for database or target server\&.
-.RE
-.PP
-\-\-name
-.RS 4
-Name of the authentication policy (required)\&.
-.RE
-.PP
-\-\-description
-.RS 4
-Optional description for the authentication policy\&.
-.RE
-.PP
-\-\-protect
-.RS 4
-Protect authentication policy from accidental deletion\&.
-.sp
-Cannot be used together with \-\-unprotect\&.
-.RE
-.PP
-\-\-unprotect
-.RS 4
-Unprotect authentication policy from accidental deletion\&.
-.sp
-Cannot be used together with \-\-protect\&.
-.RE
-.PP
-\-\-audit
-.RS 4
-Only audit authentication policy\&.
-.sp
-Cannot be used together with \-\-enforce\&.
-.RE
-.PP
-\-\-enforce
-.RS 4
-Enforce authentication policy\&.
-.sp
-Cannot be used together with \-\-audit\&.
-.RE
-.PP
-\-\-strong\-ntlm\-policy
-.RS 4
-Strong NTLM Policy (Disabled, Optional, Required)\&.
-.RE
-.PP
-\-\-user\-tgt\-lifetime
-.RS 4
-Ticket\-Granting\-Ticket lifetime for user accounts\&.
-.RE
-.PP
-\-\-user\-allow\-ntlm\-auth
-.RS 4
-Allow NTLM network authentication when user is restricted to selected devices\&.
-.RE
-.PP
-\-\-service\-tgt\-lifetime
-.RS 4
-Ticket\-Granting\-Ticket lifetime for service accounts\&.
-.RE
-.PP
-\-\-service\-allow\-ntlm\-auth
-.RS 4
-Allow NTLM network authentication when service is restricted to selected devices\&.
-.RE
-.PP
-\-\-computer\-tgt\-lifetime
-.RS 4
-Ticket\-Granting\-Ticket lifetime for computer accounts\&.
-.RE
+Modify authentication policies on the domain\&. The same options apply as for
+\fBdomain auth policy create\fR\&.
 .SS "domain auth policy delete"
 .PP
 Delete authentication policies on the domain\&.
@@ -748,24 +798,19 @@ Name of the authentication silo (required)\&.
 Optional description for the authentication silo\&.
 .RE
 .PP
-\-\-policy
+\-\-user\-authentication\-policy
 .RS 4
-Use single policy for all principals in this silo\&.
+User account authentication policy\&.
 .RE
 .PP
-\-\-user\-policy
+\-\-service\-authentication\-policy
 .RS 4
-User account policy\&.
+Managed service account authentication policy\&.
 .RE
 .PP
-\-\-service\-policy
+\-\-computer\-authentication\-policy
 .RS 4
-Managed Service Account policy\&.
-.RE
-.PP
-\-\-computer\-policy
-.RS 4
-Computer Account policy\&.
+Computer authentication policy\&.
 .RE
 .PP
 \-\-protect
@@ -814,24 +859,19 @@ Name of the authentication silo (required)\&.
 Optional description for the authentication silo\&.
 .RE
 .PP
-\-\-policy
+\-\-user\-authentication\-policy
 .RS 4
-Use single policy for all principals in this silo\&.
+User account authentication policy\&.
 .RE
 .PP
-\-\-user\-policy
+\-\-service\-authentication\-policy
 .RS 4
-User account policy\&.
+Managed service account authentication policy\&.
 .RE
 .PP
-\-\-service\-policy
+\-\-computer\-authentication\-policy
 .RS 4
-Managed Service Account policy\&.
-.RE
-.PP
-\-\-computer\-policy
-.RS 4
-Computer Account policy\&.
+Computer authentication policy\&.
 .RE
 .PP
 \-\-protect
@@ -879,9 +919,9 @@ Name of authentication silo to delete (required)\&.
 .RS 4
 Force authentication silo delete even if it is protected\&.
 .RE
-.SS "domain auth silo member add"
+.SS "domain auth silo member grant"
 .PP
-Add a member to an authentication silo\&.
+Grant a member access to an authentication silo\&.
 .PP
 \-H, \-\-URL
 .RS 4
@@ -895,7 +935,7 @@ Name of authentication silo (required)\&.
 .PP
 \-\-member
 .RS 4
-Member to add to the silo (DN or account name)\&.
+Member to grant access to the silo (DN or account name)\&.
 .RE
 .SS "domain auth silo member list"
 .PP
@@ -915,9 +955,9 @@ Name of authentication silo (required)\&.
 .RS 4
 View members as JSON instead of a list\&.
 .RE
-.SS "domain auth silo member remove"
+.SS "domain auth silo member revoke"
 .PP
-Remove a member from an authentication silo\&.
+Revoke a member from an authentication silo\&.
 .PP
 \-H, \-\-URL
 .RS 4
@@ -931,7 +971,7 @@ Name of authentication silo (required)\&.
 .PP
 \-\-member
 .RS 4
-Member to remove from the silo (DN or account name)\&.
+Member to revoke from the silo (DN or account name)\&.
 .RE
 .SS "domain claim claim-type list"
 .PP
@@ -1596,6 +1636,17 @@ Show objectclasses that MAY or MUST contain this attribute\&.
 .SS "schema objectclass show objectclass [options]"
 .PP
 Display an objectclass schema definition\&.
+.SS "shell"
+.PP
+Opens an interactive Samba Python shell\&.
+.SS "shell [options]"
+.PP
+Opens an interactive Python shell for Samba ldb connection\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
 .SS "sites"
 .PP
 Manage sites\&.
@@ -1799,11 +1850,42 @@ This command unlocks a user account in the Active Directory domain\&.
 .SS "user getpassword username [options]"
 .PP
 Gets the password of a user account\&.
+.SS "user get-kerberos-ticket username [options]"
+.PP
+Gets a Kerberos Ticket Granting Ticket as the account\&.
 .SS "user syncpasswords --cache-ldb-initialize [options]"
 .PP
 Syncs the passwords of all user accounts, using an optional script\&.
 .PP
 Note that this command should run on a single domain controller only (typically the PDC\-emulator)\&.
+.SS "user auth policy assign username [options]"
+.PP
+Set assigned authentication policy for user\&.
+.PP
+\-\-policy
+.RS 4
+Name of authentication policy to assign or leave empty to remove\&.
+.RE
+.SS "user auth policy remove username"
+.PP
+Remove assigned authentication policy from user\&.
+.SS "user auth policy view username"
+.PP
+View the assigned authentication policy for user\&.
+.SS "user auth silo assign username [options]"
+.PP
+Set assigned authentication silo for user\&.
+.PP
+\-\-silo
+.RS 4
+Name of authentication silo to assign or leave empty to remove\&.
+.RE
+.SS "user auth silo remove username"
+.PP
+Remove assigned authentication silo from user\&.
+.SS "user auth silo view username"
+.PP
+View the assigned authentication silo for user\&.
 .SS "vampire [options] \fIdomain\fR"
 .PP
 Join and synchronise a remote AD domain to the local server\&. Please note that
@@ -1869,7 +1951,7 @@ because the repsFrom/To objects are not replicated, and it can reveal replicatio
 Gives usage information\&.
 .SH "VERSION"
 .PP
-This man page is complete for version 4\&.19\&.5 of the Samba suite\&.
+This man page is complete for version 4\&.20\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

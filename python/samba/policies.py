@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import json
 from io import StringIO
 import ldb
 from samba.ndr import ndr_unpack, ndr_pack
@@ -154,7 +153,7 @@ class RegistryGroupPolicies(object):
     def __pol_remove(self, pol_data, entry):
         entries = []
         for e in pol_data.entries:
-            if not (e.keyname == entry['keyname'] and \
+            if not (e.keyname == entry['keyname'] and
                     e.valuename == entry['valuename']):
                 entries.append(e)
         pol_data.entries = entries
@@ -209,7 +208,7 @@ class RegistryGroupPolicies(object):
     def __validate_extension_registration(self, ext_name, ext_attr):
         try:
             ext_name_guid = GUID(ext_name)
-        except samba.NTSTATUSError as e:
+        except NTSTATUSError as e:
             if e.args[0] == NT_STATUS_INVALID_PARAMETER:
                 raise SyntaxError('Extension name not formatted correctly')
             raise
@@ -257,7 +256,7 @@ class RegistryGroupPolicies(object):
         self.samdb.modify(m)
 
     def remove_s(self, json_input):
-        '''remove_s
+        """remove_s
         json_input: JSON list of entries to remove from GPO
 
         Example json_input:
@@ -273,7 +272,7 @@ class RegistryGroupPolicies(object):
                 "class": "USER",
             },
         ]
-        '''
+        """
         self.__validate_json(json_input, remove=True)
         user_pol_data = self.__load_registry_pol(self.pol_file % 'User')
         machine_pol_data = self.__load_registry_pol(self.pol_file % 'Machine')
@@ -299,7 +298,7 @@ class RegistryGroupPolicies(object):
         self.increment_gpt_ini(machine_changed, user_changed)
 
     def merge_s(self, json_input):
-        '''merge_s
+        """merge_s
         json_input: JSON list of entries to merge into GPO
 
         Example json_input:
@@ -319,7 +318,7 @@ class RegistryGroupPolicies(object):
                 "data": "google.com"
             },
         ]
-        '''
+        """
         self.__validate_json(json_input)
         user_pol_data = self.__load_registry_pol(self.pol_file % 'User')
         machine_pol_data = self.__load_registry_pol(self.pol_file % 'Machine')
@@ -345,7 +344,7 @@ class RegistryGroupPolicies(object):
         self.increment_gpt_ini(machine_changed, user_changed)
 
     def replace_s(self, json_input):
-        '''replace_s
+        """replace_s
         json_input: JSON list of entries to replace entries in GPO
 
         Example json_input:
@@ -363,7 +362,7 @@ class RegistryGroupPolicies(object):
                 "data": "google.com"
             },
         ]
-        '''
+        """
         self.__validate_json(json_input)
         user_pol_data = preg.file()
         machine_pol_data = preg.file()

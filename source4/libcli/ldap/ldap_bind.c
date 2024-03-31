@@ -334,7 +334,7 @@ try_logon_again:
 	}
 
 	/* reset the original gensec_features (on the credentials
-	 * context, so we don't tatoo it ) */
+	 * context, so we don't tattoo it ) */
 	cli_credentials_set_gensec_features(creds,
 					    old_gensec_features,
 					    CRED_SPECIFIED);
@@ -391,7 +391,7 @@ try_logon_again:
 		 * of the system.  Even if the other end accepts, if GENSEC
 		 * claims 'MORE_PROCESSING_REQUIRED' then you must keep
 		 * feeding it blobs, or else the remote host/attacker might
-		 * avoid mutal authentication requirements.
+		 * avoid mutual authentication requirements.
 		 *
 		 * Likewise, you must not feed GENSEC too much (after the OK),
 		 * it doesn't like that either.

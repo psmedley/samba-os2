@@ -29,6 +29,7 @@
 #include <ldb.h>
 #include <ldb_errors.h>
 #include "libcli/security/security.h"
+#include "libcli/security/claims-conversions.h"
 #include "libcli/auth/libcli_auth.h"
 #include "libcli/ldap/ldap_ndr.h"
 #include "system/time.h"
@@ -43,6 +44,7 @@
 #include "param/secrets.h"
 #include "auth/auth.h"
 #include "lib/tsocket/tsocket.h"
+#include "lib/param/loadparm.h"
 
 /*
   connect to the SAM database specified by URL
@@ -162,25 +164,62 @@ struct ldb_context *samdb_connect(TALLOC_CTX *mem_ctx,
 ****************************************************************************/
 NTSTATUS security_token_create(TALLOC_CTX *mem_ctx, 
 			       struct loadparm_context *lp_ctx,
-			       unsigned int num_sids,
-			       struct auth_SidAttr *sids,
+			       uint32_t num_sids,
+			       const struct auth_SidAttr *sids,
+			       uint32_t num_device_sids,
+			       const struct auth_SidAttr *device_sids,
+			       struct auth_claims auth_claims,
 			       uint32_t session_info_flags,
 			       struct security_token **token)
 {
 	struct security_token *ptoken;
-	unsigned int i;
+	uint32_t i;
 	NTSTATUS status;
+	enum claims_evaluation_control evaluate_claims;
+	bool sids_are_valid = false;
+	bool device_sids_are_valid = false;
+	bool authentication_was_compounded = session_info_flags & AUTH_SESSION_INFO_FORCE_COMPOUNDED_AUTHENTICATION;
 
-	ptoken = security_token_initialise(mem_ctx);
+	/*
+	 * Some special-case callers can't supply the lp_ctx, but do
+	 * not interact with claims or conditional ACEs
+	 */
+	if (lp_ctx == NULL) {
+		evaluate_claims = CLAIMS_EVALUATION_INVALID_STATE;
+	} else {
+		enum acl_claims_evaluation claims_evaultion_setting
+			= lpcfg_acl_claims_evaluation(lp_ctx);
+
+		/*
+		 * We are well inside the AD DC, so we do not need to check
+		 * the server role etc
+		 */
+		switch (claims_evaultion_setting) {
+		case ACL_CLAIMS_EVALUATION_AD_DC_ONLY:
+			evaluate_claims = CLAIMS_EVALUATION_ALWAYS;
+			break;
+		default:
+			evaluate_claims = CLAIMS_EVALUATION_NEVER;
+		}
+	}
+
+	ptoken = security_token_initialise(mem_ctx, evaluate_claims);
 	NT_STATUS_HAVE_NO_MEMORY(ptoken);
 
+	if (num_sids > UINT32_MAX - 6) {
+		talloc_free(ptoken);
+		return NT_STATUS_INVALID_PARAMETER;
+	}
 	ptoken->sids = talloc_array(ptoken, struct dom_sid, num_sids + 6 /* over-allocate */);
-	NT_STATUS_HAVE_NO_MEMORY(ptoken->sids);
+	if (ptoken->sids == NULL) {
+		talloc_free(ptoken);
+		return NT_STATUS_NO_MEMORY;
+	}
 
 	ptoken->num_sids = 0;
 
 	for (i = 0; i < num_sids; i++) {
-		size_t check_sid_idx;
+		uint32_t check_sid_idx;
 		for (check_sid_idx = 0;
 		     check_sid_idx < ptoken->num_sids;
 		     check_sid_idx++) {
@@ -190,15 +229,62 @@ NTSTATUS security_token_create(TALLOC_CTX *mem_ctx,
 		}
 
 		if (check_sid_idx == ptoken->num_sids) {
-			ptoken->sids = talloc_realloc(ptoken, ptoken->sids, struct dom_sid, ptoken->num_sids + 1);
-			NT_STATUS_HAVE_NO_MEMORY(ptoken->sids);
+			const struct dom_sid *sid = &sids[i].sid;
 
-			ptoken->sids[ptoken->num_sids] = sids[i].sid;
+			sids_are_valid = sids_are_valid || dom_sid_equal(
+				sid, &global_sid_Claims_Valid);
+			authentication_was_compounded = authentication_was_compounded || dom_sid_equal(
+				sid, &global_sid_Compounded_Authentication);
+
+			ptoken->sids = talloc_realloc(ptoken, ptoken->sids, struct dom_sid, ptoken->num_sids + 1);
+			if (ptoken->sids == NULL) {
+				talloc_free(ptoken);
+				return NT_STATUS_NO_MEMORY;
+			}
+
+			ptoken->sids[ptoken->num_sids] = *sid;
 			ptoken->num_sids++;
 		}
 	}
 
-	/* The caller may have requested simple privilages, for example if there isn't a local DB */
+	if (authentication_was_compounded && num_device_sids) {
+		ptoken->device_sids = talloc_array(ptoken, struct dom_sid, num_device_sids);
+		if (ptoken->device_sids == NULL) {
+			talloc_free(ptoken);
+			return NT_STATUS_NO_MEMORY;
+		}
+		for (i = 0; i < num_device_sids; i++) {
+			uint32_t check_sid_idx;
+			for (check_sid_idx = 0;
+			     check_sid_idx < ptoken->num_device_sids;
+			     check_sid_idx++) {
+				if (dom_sid_equal(&ptoken->device_sids[check_sid_idx], &device_sids[i].sid)) {
+					break;
+				}
+			}
+
+			if (check_sid_idx == ptoken->num_device_sids) {
+				const struct dom_sid *device_sid = &device_sids[i].sid;
+
+				device_sids_are_valid = device_sids_are_valid || dom_sid_equal(
+					device_sid, &global_sid_Claims_Valid);
+
+				ptoken->device_sids = talloc_realloc(ptoken,
+								     ptoken->device_sids,
+								     struct dom_sid,
+								     ptoken->num_device_sids + 1);
+				if (ptoken->device_sids == NULL) {
+					talloc_free(ptoken);
+					return NT_STATUS_NO_MEMORY;
+				}
+
+				ptoken->device_sids[ptoken->num_device_sids] = *device_sid;
+				ptoken->num_device_sids++;
+			}
+		}
+	}
+
+	/* The caller may have requested simple privileges, for example if there isn't a local DB */
 	if (session_info_flags & AUTH_SESSION_INFO_SIMPLE_PRIVILEGES) {
 		/* Shortcuts to prevent recursion and avoid lookups */
 		if (ptoken->sids == NULL) {
@@ -219,6 +305,33 @@ NTSTATUS security_token_create(TALLOC_CTX *mem_ctx,
 		if (!NT_STATUS_IS_OK(status)) {
 			talloc_free(ptoken);
 			DEBUG(1,("Unable to access privileges database\n"));
+			return status;
+		}
+	}
+
+	/*
+	 * TODO: we might want to regard ‘session_info_flags’ for the device
+	 * SIDs as well as for the client SIDs.
+	 */
+
+	if (sids_are_valid) {
+		status = claims_data_security_claims(ptoken,
+						     auth_claims.user_claims,
+						     &ptoken->user_claims,
+						     &ptoken->num_user_claims);
+		if (!NT_STATUS_IS_OK(status)) {
+			talloc_free(ptoken);
+			return status;
+		}
+	}
+
+	if (device_sids_are_valid && authentication_was_compounded) {
+		status = claims_data_security_claims(ptoken,
+						     auth_claims.device_claims,
+						     &ptoken->device_claims,
+						     &ptoken->num_device_claims);
+		if (!NT_STATUS_IS_OK(status)) {
+			talloc_free(ptoken);
 			return status;
 		}
 	}

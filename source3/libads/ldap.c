@@ -671,7 +671,7 @@ static NTSTATUS resolve_and_ping_dns(ADS_STRUCT *ads, const char *sitename,
 
 /**********************************************************************
  Try to find an AD dc using our internal name resolution routines
- Try the realm first and then then workgroup name if netbios is not
+ Try the realm first and then the workgroup name if netbios is not
  disabled
 **********************************************************************/
 
@@ -1156,7 +1156,7 @@ static char **ads_pull_strvals(TALLOC_CTX *ctx, const char **in_vals)
 		if (!pull_utf8_talloc(ctx, &values[i], in_vals[i],
 				      &converted_size)) {
 			DEBUG(0,("ads_pull_strvals: pull_utf8_talloc failed: "
-				 "%s", strerror(errno)));
+				 "%s\n", strerror(errno)));
 		}
 	}
 	return values;
@@ -1530,7 +1530,7 @@ ADS_STATUS ads_do_search_all_fn(ADS_STRUCT *ads, const char *bind_path,
 
 	*res = NULL;
 	if (!(ctx = talloc_init("ads_do_search"))) {
-		DEBUG(1,("ads_do_search: talloc_init() failed!"));
+		DEBUG(1,("ads_do_search: talloc_init() failed!\n"));
 		return ADS_ERROR(LDAP_NO_MEMORY);
 	}
 
@@ -1540,7 +1540,7 @@ ADS_STATUS ads_do_search_all_fn(ADS_STRUCT *ads, const char *bind_path,
 	if (!push_utf8_talloc(ctx, &utf8_expr, expr, &converted_size) ||
 	    !push_utf8_talloc(ctx, &utf8_path, bind_path, &converted_size))
 	{
-		DEBUG(1,("ads_do_search: push_utf8_talloc() failed!"));
+		DEBUG(1,("ads_do_search: push_utf8_talloc() failed!\n"));
 		rc = LDAP_NO_MEMORY;
 		goto done;
 	}
@@ -1552,7 +1552,7 @@ ADS_STATUS ads_do_search_all_fn(ADS_STRUCT *ads, const char *bind_path,
 		/* if (!(search_attrs = ads_push_strvals(ctx, attrs)))  */
 		if (!(search_attrs = str_list_copy(talloc_tos(), attrs)))
 		{
-			DEBUG(1,("ads_do_search: str_list_copy() failed!"));
+			DEBUG(1,("ads_do_search: str_list_copy() failed!\n"));
 			rc = LDAP_NO_MEMORY;
 			goto done;
 		}
@@ -1596,7 +1596,7 @@ ADS_STATUS ads_do_search_all_fn(ADS_STRUCT *ads, const char *bind_path,
  * Do a search on a specific DistinguishedName
  * @param ads connection to ads server
  * @param res ** which will contain results - free res* with ads_msgfree()
- * @param dn DistinguishName to search
+ * @param dn DistinguishedName to search
  * @param attrs Attributes to retrieve
  * @return status of search
  **/
@@ -1924,7 +1924,7 @@ ADS_STATUS ads_gen_add(ADS_STRUCT *ads, const char *new_dn, ADS_MODLIST mods)
 	DBG_INFO("AD LDAP: Adding %s\n", new_dn);
 
 	if (!push_utf8_talloc(talloc_tos(), &utf8_dn, new_dn, &converted_size)) {
-		DEBUG(1, ("ads_gen_add: push_utf8_talloc failed!"));
+		DEBUG(1, ("ads_gen_add: push_utf8_talloc failed!\n"));
 		return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
 	}
 
@@ -1951,7 +1951,7 @@ ADS_STATUS ads_del_dn(ADS_STRUCT *ads, char *del_dn)
 	char *utf8_dn = NULL;
 	size_t converted_size;
 	if (!push_utf8_talloc(talloc_tos(), &utf8_dn, del_dn, &converted_size)) {
-		DEBUG(1, ("ads_del_dn: push_utf8_talloc failed!"));
+		DEBUG(1, ("ads_del_dn: push_utf8_talloc failed!\n"));
 		return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
 	}
 
@@ -2192,7 +2192,7 @@ uint32_t ads_get_machine_kvno(ADS_STRUCT *ads, const char *machine_name)
 
 /**
  * This clears out all registered spn's for a given hostname
- * @param ads An initilaized ADS_STRUCT
+ * @param ads An initialized ADS_STRUCT
  * @param machine_name the NetBIOS name of the computer.
  * @return 0 upon success, non-zero otherwise.
  **/
@@ -2659,7 +2659,7 @@ ADS_STATUS ads_create_machine_acct(ADS_STRUCT *ads,
 			goto done;
 		}
 
-		ok = add_string_to_array(spn_array,
+		ok = add_string_to_array(ctx,
 					 spn,
 					 &spn_array,
 					 &num_spns);
@@ -2680,7 +2680,7 @@ ADS_STATUS ads_create_machine_acct(ADS_STRUCT *ads,
 			goto done;
 		}
 
-		ok = add_string_to_array(spn_array,
+		ok = add_string_to_array(ctx,
 					 spn,
 					 &spn_array,
 					 &num_spns);
@@ -2986,7 +2986,7 @@ static bool ads_dump_field(ADS_STRUCT *ads, char *field, void **values, void *da
 					      &converted_size))
 			{
 				DEBUG(0,("ads_process_results: "
-					 "pull_utf8_talloc failed: %s",
+					 "pull_utf8_talloc failed: %s\n",
 					 strerror(errno)));
 			}
 
@@ -3166,7 +3166,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
 			       bool *more_strings)
 {
 	char *attr;
-	char *expected_range_attrib, *range_attr;
+	char *expected_range_attrib, *range_attr = NULL;
 	BerElement *ptr = NULL;
 	char **strings;
 	char **new_strings;
@@ -3193,7 +3193,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
 		}
 		ldap_memfree(attr);
 	}
-	if (!attr) {
+	if (!range_attr) {
 		ber_free(ptr, 0);
 		/* nothing here - this field is just empty */
 		*more_strings = False;
@@ -3208,7 +3208,7 @@ int ads_count_replies(ADS_STRUCT *ads, void *res)
 			   &range_start) == 1) {
 			*more_strings = False;
 		} else {
-			DEBUG(1, ("ads_pull_strings_range:  Cannot parse Range attriubte (%s)\n",
+			DEBUG(1, ("ads_pull_strings_range:  Cannot parse Range attribute (%s)\n",
 				  range_attr));
 			ldap_memfree(range_attr);
 			*more_strings = False;
@@ -4469,7 +4469,7 @@ ADS_STATUS ads_leave_realm(ADS_STRUCT *ads, const char *hostname)
 }
 
 /**
- * Find a sAMAccoutName in LDAP
+ * Find a sAMAccountName in LDAP
  * @param ads connection to ads server
  * @param mem_ctx TALLOC_CTX for allocating sid array
  * @param samaccountname to search

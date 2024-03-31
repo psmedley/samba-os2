@@ -143,7 +143,7 @@ sub HeaderEnum($$;$)
 		my $count = 0;
 		my $with_val = 0;
 		my $without_val = 0;
-		pidl " { __do_not_use_enum_$name=0x7FFFFFFF}\n";
+		pidl " { __do_not_use_enum_$name=INT_MAX}\n";
 		foreach my $e (@{$enum->{ELEMENTS}}) {
 			my $t = "$e";
 			my $name;
@@ -494,7 +494,7 @@ sub EnvSubstituteValue($$)
 	# Substitute the value() values in the env
 	foreach my $e (@{$s->{ELEMENTS}}) {
 		next unless (defined(my $v = has_property($e, "value")));
-		
+
 		$env->{$e->{NAME}} = ParseExpr($v, $env, $e);
 	}
 

@@ -29,8 +29,8 @@
 #include "fake_file.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
-#include "lib/util/memcache.h"
-#include "libcli/smb/reparse_symlink.h"
+#include "libcli/smb/reparse.h"
+#include "source3/smbd/dir.h"
 
 uint32_t ucf_flags_from_smb_request(struct smb_request *req)
 {
@@ -406,53 +406,6 @@ NTSTATUS get_real_filename_at(struct files_struct *dirfsp,
 }
 
 /*
- * Create the memcache-key for GETREALFILENAME_CACHE: This supplements
- * the stat cache for the last component to be looked up. Cache
- * contents is the correctly capitalized translation of the parameter
- * "name" as it exists on disk. This is indexed by inode of the dirfsp
- * and name, and contrary to stat_cahce_lookup() it does not
- * vfs_stat() the last component. This will be taken care of by an
- * attempt to do a openat_pathref_fsp().
- */
-static bool get_real_filename_cache_key(
-	TALLOC_CTX *mem_ctx,
-	struct files_struct *dirfsp,
-	const char *name,
-	DATA_BLOB *_key)
-{
-	struct file_id fid = vfs_file_id_from_sbuf(
-		dirfsp->conn, &dirfsp->fsp_name->st);
-	char *upper = NULL;
-	uint8_t *key = NULL;
-	size_t namelen, keylen;
-
-	upper = talloc_strdup_upper(mem_ctx, name);
-	if (upper == NULL) {
-		return false;
-	}
-	namelen = talloc_get_size(upper);
-
-	keylen = namelen + sizeof(fid);
-	if (keylen < sizeof(fid)) {
-		TALLOC_FREE(upper);
-		return false;
-	}
-
-	key = talloc_size(mem_ctx, keylen);
-	if (key == NULL) {
-		TALLOC_FREE(upper);
-		return false;
-	}
-
-	memcpy(key, &fid, sizeof(fid));
-	memcpy(key + sizeof(fid), upper, namelen);
-	TALLOC_FREE(upper);
-
-	*_key = (DATA_BLOB) { .data = key, .length = keylen, };
-	return true;
-}
-
-/*
  * Lightweight function to just get last component
  * for rename / enumerate directory calls.
  */
@@ -481,93 +434,6 @@ char *get_original_lcomp(TALLOC_CTX *ctx,
 		return NULL;
 	}
 	return orig_lcomp;
-}
-
-/*
- * Deal with the SMB1 semantics of sending a pathname with a
- * wildcard as the terminal component for a SMB1search or
- * trans2 findfirst.
- */
-
-NTSTATUS filename_convert_smb1_search_path(TALLOC_CTX *ctx,
-					   connection_struct *conn,
-					   char *name_in,
-					   uint32_t ucf_flags,
-					   struct files_struct **_dirfsp,
-					   struct smb_filename **_smb_fname_out,
-					   char **_mask_out)
-{
-	NTSTATUS status;
-	char *p = NULL;
-	char *mask = NULL;
-	struct smb_filename *smb_fname = NULL;
-	NTTIME twrp = 0;
-
-	*_smb_fname_out = NULL;
-	*_dirfsp = NULL;
-	*_mask_out = NULL;
-
-	DBG_DEBUG("name_in: %s\n", name_in);
-
-	if (ucf_flags & UCF_GMT_PATHNAME) {
-		extract_snapshot_token(name_in, &twrp);
-		ucf_flags &= ~UCF_GMT_PATHNAME;
-	}
-
-	/* Get the original lcomp. */
-	mask = get_original_lcomp(ctx,
-				  conn,
-				  name_in,
-				  ucf_flags);
-	if (mask == NULL) {
-		return NT_STATUS_NO_MEMORY;
-	}
-
-	if (mask[0] == '\0') {
-		/* Windows and OS/2 systems treat search on the root as * */
-		TALLOC_FREE(mask);
-		mask = talloc_strdup(ctx, "*");
-		if (mask == NULL) {
-			return NT_STATUS_NO_MEMORY;
-		}
-	}
-
-	DBG_DEBUG("mask = %s\n", mask);
-
-	/*
-	 * Remove the terminal component so
-	 * filename_convert_dirfsp never sees the mask.
-	 */
-	p = strrchr_m(name_in,'/');
-	if (p == NULL) {
-		/* filename_convert_dirfsp handles a '\0' name. */
-		name_in[0] = '\0';
-	} else {
-		*p = '\0';
-	}
-
-	DBG_DEBUG("For filename_convert_dirfsp: name_in = %s\n",
-		name_in);
-
-	/* Convert the parent directory path. */
-	status = filename_convert_dirfsp(ctx,
-					 conn,
-					 name_in,
-					 ucf_flags,
-					 twrp,
-					 _dirfsp,
-					 &smb_fname);
-
-	if (!NT_STATUS_IS_OK(status)) {
-		DBG_DEBUG("filename_convert error for %s: %s\n",
-			name_in,
-			nt_errstr(status));
-	}
-
-	*_smb_fname_out = talloc_move(ctx, &smb_fname);
-	*_mask_out = talloc_move(ctx, &mask);
-
-	return status;
 }
 
 /*
@@ -728,177 +594,29 @@ static NTSTATUS filename_convert_normalize_new(
 	return NT_STATUS_OK;
 }
 
-/*
- * Open smb_fname_rel->fsp as a pathref fsp with a case insensitive
- * fallback using GETREALFILENAME_CACHE and get_real_filename_at() if
- * the first attempt based on the filename sent by the client gives
- * ENOENT.
- */
-static NTSTATUS openat_pathref_fsp_case_insensitive(
-	struct files_struct *dirfsp,
-	struct smb_filename *smb_fname_rel,
-	uint32_t ucf_flags)
-{
-	const bool posix = (ucf_flags & UCF_POSIX_PATHNAMES);
-	DATA_BLOB cache_key = { .data = NULL, };
-	char *found_name = NULL;
-	NTSTATUS status;
-	bool ok;
-
-	SET_STAT_INVALID(smb_fname_rel->st);
-
-	/* Check veto files - only looks at last component. */
-	if (IS_VETO_PATH(dirfsp->conn, smb_fname_rel->base_name)) {
-		DBG_DEBUG("veto files rejecting last component %s\n",
-			  smb_fname_str_dbg(smb_fname_rel));
-		return NT_STATUS_NETWORK_OPEN_RESTRICTION;
-	}
-
-	status = openat_pathref_fsp(dirfsp, smb_fname_rel);
-
-	if (NT_STATUS_IS_OK(status)) {
-		return NT_STATUS_OK;
-	}
-
-	if (VALID_STAT(smb_fname_rel->st)) {
-		/*
-		 * We got an error although the object existed. Might
-		 * be a symlink we don't want.
-		 */
-		return status;
-	}
-
-	if (!NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_NAME_NOT_FOUND)) {
-		/*
-		 * Only retry on ENOENT
-		 */
-		return status;
-	}
-
-	if (posix || dirfsp->conn->case_sensitive) {
-		/*
-		 * Only return case insensitive if required
-		 */
-		return status;
-	}
-
-	if (lp_stat_cache()) {
-		char *base_name = smb_fname_rel->base_name;
-		char *original_relname = NULL;
-		DATA_BLOB value = { .data = NULL };
-
-		ok = get_real_filename_cache_key(
-			talloc_tos(), dirfsp, base_name, &cache_key);
-		if (!ok) {
-			/*
-			 * probably ENOMEM, just bail
-			 */
-			return status;
-		}
-
-		DO_PROFILE_INC(statcache_lookups);
-
-		ok = memcache_lookup(
-			NULL, GETREALFILENAME_CACHE, cache_key, &value);
-		if (!ok) {
-			DO_PROFILE_INC(statcache_misses);
-			goto lookup;
-		}
-		DO_PROFILE_INC(statcache_hits);
-
-		/*
-		 * For the "new filename" case we need to preserve the
-		 * capitalization the client sent us, see
-		 * https://bugzilla.samba.org/show_bug.cgi?id=15481
-		 */
-		original_relname = smb_fname_rel->base_name;
-
-		smb_fname_rel->base_name = talloc_memdup(
-			smb_fname_rel, value.data, value.length);
-		if (smb_fname_rel->base_name == NULL) {
-			TALLOC_FREE(cache_key.data);
-			return NT_STATUS_NO_MEMORY;
-		}
-
-		if (IS_VETO_PATH(dirfsp->conn, smb_fname_rel->base_name)) {
-			DBG_DEBUG("veto files rejecting last component %s\n",
-				  smb_fname_str_dbg(smb_fname_rel));
-			TALLOC_FREE(cache_key.data);
-			return NT_STATUS_NETWORK_OPEN_RESTRICTION;
-		}
-
-		status = openat_pathref_fsp(dirfsp, smb_fname_rel);
-		if (NT_STATUS_IS_OK(status)) {
-			TALLOC_FREE(cache_key.data);
-			TALLOC_FREE(original_relname);
-			return NT_STATUS_OK;
-		}
-
-		memcache_delete(NULL, GETREALFILENAME_CACHE, cache_key);
-		TALLOC_FREE(smb_fname_rel->base_name);
-		smb_fname_rel->base_name = original_relname;
-	}
-
-lookup:
-	status = get_real_filename_at(
-		dirfsp, smb_fname_rel->base_name, smb_fname_rel, &found_name);
-	if (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED) &&
-	    (ucf_flags & UCF_PREP_CREATEFILE)) {
-		/*
-		 * dropbox
-		 */
-		status = NT_STATUS_OBJECT_NAME_NOT_FOUND;
-	}
-
-	if (NT_STATUS_IS_OK(status)) {
-		TALLOC_FREE(smb_fname_rel->base_name);
-		smb_fname_rel->base_name = found_name;
-
-		if (IS_VETO_PATH(dirfsp->conn, smb_fname_rel->base_name)) {
-			DBG_DEBUG("veto files rejecting last component %s\n",
-				smb_fname_str_dbg(smb_fname_rel));
-			return NT_STATUS_NETWORK_OPEN_RESTRICTION;
-		}
-
-		status = openat_pathref_fsp(dirfsp, smb_fname_rel);
-	}
-
-	if (NT_STATUS_IS_OK(status) && (cache_key.data != NULL)) {
-		DATA_BLOB value = {
-			.data = (uint8_t *)smb_fname_rel->base_name,
-			.length = strlen(smb_fname_rel->base_name) + 1,
-		};
-
-		memcache_add(NULL, GETREALFILENAME_CACHE, cache_key, value);
-	}
-
-	TALLOC_FREE(cache_key.data);
-
-	return status;
-}
-
 static const char *previous_slash(const char *name_in, const char *slash)
 {
-	const char *prev = name_in;
+	const char *prev = NULL;
 
-	while (true) {
-		const char *next = strchr_m(prev, '/');
+	SMB_ASSERT((name_in <= slash) && (slash[0] == '/'));
 
-		SMB_ASSERT(next != NULL); /* we have at least one slash */
+	prev = strchr_m(name_in, '/');
 
-		if (next == slash) {
-			break;
-		}
-
-		prev = next+1;
-	};
-
-	if (prev == name_in) {
-		/* no previous slash */
+	if (prev == slash) {
+		/* No previous slash */
 		return NULL;
 	}
 
-	return prev;
+	while (true) {
+		const char *next = strchr_m(prev + 1, '/');
+
+		if (next == slash) {
+			return prev;
+		}
+		prev = next;
+	}
+
+	return NULL; /* unreachable */
 }
 
 static char *symlink_target_path(
@@ -928,17 +646,16 @@ static char *symlink_target_path(
 	}
 
 	if (parent == NULL) {
-		/* no previous slash */
-		parent = name_in;
+		ret = talloc_asprintf(mem_ctx, "%s%s", substitute, p_unparsed);
+	} else {
+		ret = talloc_asprintf(mem_ctx,
+				      "%.*s/%s%s",
+				      (int)(parent - name_in),
+				      name_in,
+				      substitute,
+				      p_unparsed);
 	}
 
-	ret = talloc_asprintf(
-		mem_ctx,
-		"%.*s%s%s",
-		(int)(parent - name_in),
-		name_in,
-		substitute,
-		p_unparsed);
 	return ret;
 }
 
@@ -992,7 +709,8 @@ NTSTATUS safe_symlink_target_path(TALLOC_CTX *mem_ctx,
 		connectpath, strlen(connectpath), abs_target_canon, &relative);
 	if (!in_share) {
 		DBG_DEBUG("wide link to %s\n", abs_target_canon);
-		status = NT_STATUS_OBJECT_PATH_NOT_FOUND;
+		status = (unparsed != 0) ? NT_STATUS_OBJECT_PATH_NOT_FOUND
+					 : NT_STATUS_OBJECT_NAME_NOT_FOUND;
 		goto fail;
 	}
 
@@ -1019,12 +737,12 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 	NTTIME twrp,
 	struct files_struct **_dirfsp,
 	struct smb_filename **_smb_fname,
-	char **_substitute,
-	size_t *_unparsed)
+	struct open_symlink_err **_symlink_err)
 {
 	struct smb_filename *smb_dirname = NULL;
 	struct smb_filename *smb_fname_rel = NULL;
 	struct smb_filename *smb_fname = NULL;
+	struct open_symlink_err *symlink_err = NULL;
 	const bool posix = (ucf_flags & UCF_POSIX_PATHNAMES);
 	char *dirname = NULL;
 	const char *fname_rel = NULL;
@@ -1041,7 +759,10 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 		if (smb_fname == NULL) {
 			return NT_STATUS_NO_MEMORY;
 		}
-		smb_fname->st = (SMB_STRUCT_STAT) { .st_ex_nlink = 1 };
+		smb_fname->st = (SMB_STRUCT_STAT){
+			.st_ex_nlink = 1,
+			.st_ex_mode = S_IFREG | 0644,
+		};
 		smb_fname->st.st_ex_btime =
 			(struct timespec){0, SAMBA_UTIME_OMIT};
 		smb_fname->st.st_ex_atime =
@@ -1107,8 +828,6 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 			posix ? SMB_FILENAME_POSIX_PATH : 0,
 			&smb_dirname);
 	} else {
-		struct open_symlink_err *symlink_err = NULL;
-
 		status = normalize_filename_case(conn, dirname, ucf_flags);
 		if (!NT_STATUS_IS_OK(status)) {
 			DBG_ERR("normalize_filename_case %s failed: %s\n",
@@ -1129,24 +848,13 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 		if (NT_STATUS_EQUAL(status, NT_STATUS_STOPPED_ON_SYMLINK)) {
 			size_t name_in_len, dirname_len;
 
-			if (lp_host_msdfs() && lp_msdfs_root(SNUM(conn)) &&
-			    strnequal(symlink_err->reparse->substitute_name,
-				      "msdfs:",
-				      6)) {
-				status = NT_STATUS_PATH_NOT_COVERED;
-				goto fail;
-			}
-
 			name_in_len = strlen(name_in);
 			dirname_len = strlen(dirname);
 
 			SMB_ASSERT(name_in_len >= dirname_len);
 
-			*_substitute = talloc_move(
-				mem_ctx,
-				&symlink_err->reparse->substitute_name);
-			*_unparsed = symlink_err->unparsed +
-				     (name_in_len - dirname_len);
+			symlink_err->unparsed += (name_in_len - dirname_len);
+			*_symlink_err = symlink_err;
 
 			goto fail;
 		}
@@ -1232,45 +940,27 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 		goto fail;
 	}
 
-	status = openat_pathref_fsp_case_insensitive(
-		smb_dirname->fsp, smb_fname_rel, ucf_flags);
+	status = openat_pathref_fsp_lcomp(smb_dirname->fsp,
+					  smb_fname_rel,
+					  ucf_flags);
 
-	if (NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_NAME_NOT_FOUND) &&
-	    VALID_STAT(smb_fname_rel->st) &&
-	    S_ISLNK(smb_fname_rel->st.st_ex_mode)) {
+	if (NT_STATUS_IS_OK(status) && S_ISLNK(smb_fname_rel->st.st_ex_mode)) {
 
 		/*
-		 * If we're on an MSDFS share, see if this is
-		 * an MSDFS link.
+		 * Upper layers might need the link target. Here we
+		 * still have the relname around, get the symlink err.
 		 */
-		if (lp_host_msdfs() &&
-		    lp_msdfs_root(SNUM(conn)) &&
-		    is_msdfs_link(smb_dirname->fsp, smb_fname_rel))
-		{
-			status = NT_STATUS_PATH_NOT_COVERED;
+		status = create_open_symlink_err(mem_ctx,
+						 smb_dirname->fsp,
+						 smb_fname_rel,
+						 &symlink_err);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_DEBUG("Could not read symlink for %s: %s\n",
+				  smb_fname_str_dbg(
+					  smb_fname_rel->fsp->fsp_name),
+				  nt_errstr(status));
 			goto fail;
 		}
-
-#if defined(WITH_SMB1SERVER)
-		/*
-		 * In SMB1 posix mode, if this is a symlink,
-		 * allow access to the name with a NULL smb_fname->fsp.
-		 */
-		if (ucf_flags & UCF_LCOMP_LNK_OK) {
-			SMB_ASSERT(smb_fname_rel->fsp == NULL);
-			SMB_ASSERT(streamname == NULL);
-
-			smb_fname = full_path_from_dirfsp_atname(
-				mem_ctx,
-				smb_dirname->fsp,
-				smb_fname_rel);
-			if (smb_fname == NULL) {
-				status = NT_STATUS_NO_MEMORY;
-				goto fail;
-			}
-			goto done;
-		}
-#endif
 	}
 
 	if (NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_NAME_NOT_FOUND) &&
@@ -1403,6 +1093,7 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 done:
 	*_dirfsp = smb_dirname->fsp;
 	*_smb_fname = smb_fname;
+	*_symlink_err = symlink_err;
 
 	smb_fname_fsp_unlink(smb_fname_rel);
 	TALLOC_FREE(smb_fname_rel);
@@ -1435,8 +1126,7 @@ NTSTATUS filename_convert_dirfsp(
 	struct files_struct **_dirfsp,
 	struct smb_filename **_smb_fname)
 {
-	char *substitute = NULL;
-	size_t unparsed = 0;
+	struct open_symlink_err *symlink_err = NULL;
 	NTSTATUS status;
 	char *target = NULL;
 	char *safe_target = NULL;
@@ -1447,23 +1137,49 @@ next:
 		return NT_STATUS_OBJECT_PATH_NOT_FOUND;
 	}
 
-	status = filename_convert_dirfsp_nosymlink(
-		mem_ctx,
-		conn,
-		name_in,
-		ucf_flags,
-		twrp,
-		_dirfsp,
-		_smb_fname,
-		&substitute,
-		&unparsed);
+	status = filename_convert_dirfsp_nosymlink(mem_ctx,
+						   conn,
+						   name_in,
+						   ucf_flags,
+						   twrp,
+						   _dirfsp,
+						   _smb_fname,
+						   &symlink_err);
+
+	if (NT_STATUS_IS_OK(status) && S_ISLNK((*_smb_fname)->st.st_ex_mode)) {
+		/*
+		 * lcomp is a symlink
+		 */
+		if (ucf_flags & UCF_LCOMP_LNK_OK) {
+			TALLOC_FREE(symlink_err);
+			return NT_STATUS_OK;
+		}
+		close_file_free(NULL, _dirfsp, ERROR_CLOSE);
+		status = NT_STATUS_STOPPED_ON_SYMLINK;
+	}
 
 	if (!NT_STATUS_EQUAL(status, NT_STATUS_STOPPED_ON_SYMLINK)) {
 		return status;
 	}
 
+	/*
+	 * If we're on an MSDFS share, see if this is
+	 * an MSDFS link.
+	 */
+	if (lp_host_msdfs() && lp_msdfs_root(SNUM(conn)) &&
+	    strnequal(symlink_err->reparse->substitute_name, "msdfs:", 6))
+	{
+		TALLOC_FREE(*_smb_fname);
+		TALLOC_FREE(symlink_err);
+		return NT_STATUS_PATH_NOT_COVERED;
+	}
+
 	if (!lp_follow_symlinks(SNUM(conn))) {
-		return NT_STATUS_OBJECT_PATH_NOT_FOUND;
+		status = (symlink_err->unparsed == 0)
+				 ? NT_STATUS_OBJECT_NAME_NOT_FOUND
+				 : NT_STATUS_OBJECT_PATH_NOT_FOUND;
+		TALLOC_FREE(symlink_err);
+		return status;
 	}
 
 	/*
@@ -1478,7 +1194,10 @@ next:
 	 * resolve all symlinks locally.
 	 */
 
-	target = symlink_target_path(mem_ctx, name_in, substitute, unparsed);
+	target = symlink_target_path(mem_ctx,
+				     name_in,
+				     symlink_err->reparse->substitute_name,
+				     symlink_err->unparsed);
 	if (target == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -1487,9 +1206,9 @@ next:
 					  conn->connectpath,
 					  NULL,
 					  target,
-					  unparsed,
+					  symlink_err->unparsed,
 					  &safe_target);
-	TALLOC_FREE(target);
+	TALLOC_FREE(symlink_err);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}

@@ -88,7 +88,7 @@ const char *user_attrs[] = {
 	 * This ordering (having msDS-ResultantPSO first) is
 	 * important.  By processing this attribute first it is
 	 * available in the operational module for the other PSO
-	 * attribute calcuations to use.
+	 * attribute calculations to use.
 	 */
 	"msDS-ResultantPSO",
 
@@ -322,6 +322,9 @@ static NTSTATUS authsam_domain_group_filter(TALLOC_CTX *mem_ctx,
 	*_filter = NULL;
 
 	filter = talloc_strdup(mem_ctx, "(&(objectClass=group)");
+	if (filter == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
 
 	/*
 	 * Skip all builtin groups, they're added later.
@@ -329,6 +332,9 @@ static NTSTATUS authsam_domain_group_filter(TALLOC_CTX *mem_ctx,
 	talloc_asprintf_addbuf(&filter,
 			       "(!(groupType:"LDB_OID_COMPARATOR_AND":=%u))",
 			       GROUP_TYPE_BUILTIN_LOCAL_GROUP);
+	if (filter == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
 	/*
 	 * Only include security groups.
 	 */
@@ -376,6 +382,10 @@ _PUBLIC_ NTSTATUS authsam_make_user_info_dc(TALLOC_CTX *mem_ctx,
 	TALLOC_CTX *tmp_ctx;
 	struct ldb_message_element *el;
 	static const char * const group_type_attrs[] = { "groupType", NULL };
+
+	if (msg == NULL) {
+		return NT_STATUS_INVALID_PARAMETER;
+	}
 
 	user_info_dc = talloc_zero(mem_ctx, struct auth_user_info_dc);
 	NT_STATUS_HAVE_NO_MEMORY(user_info_dc);
@@ -729,10 +739,12 @@ _PUBLIC_ NTSTATUS authsam_update_user_info_dc(TALLOC_CTX *mem_ctx,
 						   &user_info_dc->sids,
 						   &user_info_dc->num_sids);
 		if (!NT_STATUS_IS_OK(status)) {
+			talloc_free(filter);
 			return status;
 		}
 	}
 
+	talloc_free(filter);
 	return NT_STATUS_OK;
 }
 
@@ -746,6 +758,14 @@ NTSTATUS authsam_shallow_copy_user_info_dc(TALLOC_CTX *mem_ctx,
 {
 	struct auth_user_info_dc *user_info_dc = NULL;
 	NTSTATUS status = NT_STATUS_OK;
+
+	if (user_info_dc_in == NULL) {
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+
+	if (user_info_dc_out == NULL) {
+		return NT_STATUS_INVALID_PARAMETER;
+	}
 
 	user_info_dc = talloc_zero(mem_ctx, struct auth_user_info_dc);
 	if (user_info_dc == NULL) {
@@ -892,6 +912,7 @@ NTSTATUS authsam_get_user_info_dc_principal(TALLOC_CTX *mem_ctx,
 
 		nt_status = dom_sid_split_rid(tmp_ctx, user_sid, &domain_sid, NULL);
 		if (!NT_STATUS_IS_OK(nt_status)) {
+			talloc_free(tmp_ctx);
 			return nt_status;
 		}
 
@@ -902,10 +923,12 @@ NTSTATUS authsam_get_user_info_dc_principal(TALLOC_CTX *mem_ctx,
 			struct dom_sid_buf buf;
 			DEBUG(3, ("authsam_get_user_info_dc_principal: Failed to find domain with: SID %s\n",
 				  dom_sid_str_buf(domain_sid, &buf)));
+			talloc_free(tmp_ctx);
 			return NT_STATUS_NO_SUCH_USER;
 		}
 
 	} else {
+		talloc_free(tmp_ctx);
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
@@ -1387,7 +1410,7 @@ error:
  * level is raised to DS_BEHAVIOR_WIN2003 or higher, is calculated as
  * 14 days minus a random percentage of 5 days", but we aren't doing
  * that. The blogosphere seems to think that this randomised update
- * happens everytime, but [MS-ADA1] doesn't agree.
+ * happens every time, but [MS-ADA1] doesn't agree.
  *
  * Dochelp referred us to the following blog post:
  * http://blogs.technet.com/b/askds/archive/2009/04/15/the-lastlogontimestamp-attribute-what-it-was-designed-for-and-how-it-works.aspx
@@ -1575,6 +1598,7 @@ NTSTATUS authsam_logon_success_accounting(struct ldb_context *sam_ctx,
 	status = authsam_check_bad_password_indicator(
 		sam_ctx, mem_ctx, &need_db_reread, msg);
 	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(mem_ctx);
 		return status;
 	}
 

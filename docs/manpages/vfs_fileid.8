@@ -2,12 +2,12 @@
 .\"     Title: vfs_fileid
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 02/19/2024
+.\"      Date: 03/27/2024
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.19.5
+.\"    Source: Samba 4.20.0
 .\"  Language: English
 .\"
-.TH "VFS_FILEID" "8" "02/19/2024" "Samba 4\&.19\&.5" "System Administration tools"
+.TH "VFS_FILEID" "8" "03/27/2024" "Samba 4\&.20\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -145,7 +145,7 @@ fileid:nolock_max_slots = NUMBER(1\-18446744073709551615)
 .RS 4
 This option alters the behavior of the
 nolock
-algorithm in a ways that it also breaks the lock coherency between individual processes on the same host\&. The default is to have just 1 concurrent slot available per host\&. By incressing the number of slots you can specify how many concurrent processes can work on a given inode without contention, the number should typically be larger than the a number of logical cpus, maybe 2 times of num_cpus\&.
+algorithm in a way that it also breaks the lock coherency between individual processes on the same host\&. The default is to have just 1 concurrent slot available per host\&. By increasing the number of slots you can specify how many concurrent processes can work on a given inode without contention, the number should typically be larger than the number of logical cpus, maybe 2 times num_cpus\&.
 .RE
 .PP
 fileid:nolock_all_dirs = BOOL
@@ -212,7 +212,7 @@ module in order avoid load on heavily contended (most likely read\-only) inodes\
 .\}
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.19\&.5 of the Samba suite\&.
+This man page is part of version 4\&.20\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

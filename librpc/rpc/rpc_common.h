@@ -27,6 +27,8 @@
 #include "gen_ndr/dcerpc.h"
 #include "lib/util/attr.h"
 
+#include "librpc/ndr/libndr.h"
+
 struct dcerpc_binding_handle;
 struct GUID;
 struct ndr_interface_table;
@@ -160,7 +162,7 @@ uint32_t dcerpc_binding_get_flags(const struct dcerpc_binding *b);
 NTSTATUS dcerpc_binding_set_flags(struct dcerpc_binding *b,
 				  uint32_t additional,
 				  uint32_t clear);
-NTSTATUS dcerpc_floor_get_lhs_data(const struct epm_floor *epm_floor, struct ndr_syntax_id *syntax);
+NTSTATUS dcerpc_floor_get_uuid_full(const struct epm_floor *epm_floor, struct ndr_syntax_id *syntax);
 const char *derpc_transport_string_by_transport(enum dcerpc_transport_t t);
 enum dcerpc_transport_t dcerpc_transport_by_name(const char *name);
 enum dcerpc_transport_t dcerpc_transport_by_tower(const struct epm_tower *tower);
@@ -202,7 +204,7 @@ struct dcerpc_binding_handle_ops {
 	bool (*ref_alloc)(struct dcerpc_binding_handle *h);
 	bool (*use_ndr64)(struct dcerpc_binding_handle *h);
 	void (*do_ndr_print)(struct dcerpc_binding_handle *h,
-			     int ndr_flags,
+			     ndr_flags_type ndr_flags,
 			     const void *struct_ptr,
 			     const struct ndr_interface_call *call);
 	void (*ndr_push_failed)(struct dcerpc_binding_handle *h,
@@ -327,7 +329,7 @@ bool dcerpc_sec_vt_header2_equal(const struct dcerpc_sec_vt_header2 *v1,
  *
  * @param[in] vt a pointer to the security verification trailer.
  * @param[in] bitmask1 which flags were negotiated on the connection.
- * @param[in] pcontext the syntaxes negotiatied for the presentation context.
+ * @param[in] pcontext the syntaxes negotiated for the presentation context.
  * @param[in] header2 some fields from the PDU header.
  *
  * @retval true on success.
@@ -382,7 +384,7 @@ NTSTATUS dcerpc_ncacn_push_auth(DATA_BLOB *blob,
 
 void dcerpc_log_packet(const char *packet_log_dir,
 		       const char *interface_name,
-		       uint32_t opnum, uint32_t flags,
+		       uint32_t opnum, ndr_flags_type flags,
 		       const DATA_BLOB *pkt,
 		       const char *why);
 
@@ -391,7 +393,7 @@ void dcerpc_save_ndr_fuzz_seed(TALLOC_CTX *mem_ctx,
 			       DATA_BLOB raw_blob,
 			       const char *dump_dir,
 			       const char *iface_name,
-			       int flags,
+			       ndr_flags_type flags,
 			       int opnum,
 			       bool ndr64);
 #else
@@ -399,7 +401,7 @@ static inline void dcerpc_save_ndr_fuzz_seed(TALLOC_CTX *mem_ctx,
 					     DATA_BLOB raw_blob,
 					     const char *dump_dir,
 					     const char *iface_name,
-					     int flags,
+					     ndr_flags_type flags,
 					     int opnum,
 					     bool ndr64)
 {

@@ -20,21 +20,181 @@
 __docformat__ = "restructuredText"
 
 import optparse
-from copy import copy
 import os
+import sys
+from abc import ABCMeta, abstractmethod
+from copy import copy
+
 from samba.credentials import (
     Credentials,
     AUTO_USE_KERBEROS,
     DONT_USE_KERBEROS,
     MUST_USE_KERBEROS,
 )
-import sys
 from samba._glue import get_burnt_commandline
 
-OptionError = optparse.OptionValueError
+
+def check_bytes(option, opt, value):
+    """Custom option type to allow the input of sizes using byte, kb, mb ...
+
+    units, e.g. 2Gb, 4KiB ...
+       e.g. Option("--size", type="bytes", metavar="SIZE")
+    """
+
+    multipliers = {"B": 1,
+                   "KB": 1024,
+                   "MB": 1024 * 1024,
+                   "GB": 1024 * 1024 * 1024}
+
+    # strip out any spaces
+    v = value.replace(" ", "")
+
+    # extract the numeric prefix
+    digits = ""
+    while v and v[0:1].isdigit() or v[0:1] == '.':
+        digits += v[0]
+        v = v[1:]
+
+    try:
+        m = float(digits)
+    except ValueError:
+        msg = ("{0} option requires a numeric value, "
+               "with an optional unit suffix").format(opt)
+        raise optparse.OptionValueError(msg)
+
+    # strip out the 'i' and convert to upper case so
+    # kib Kib kb KB are all equivalent
+    suffix = v.upper().replace("I", "")
+    try:
+        return m * multipliers[suffix]
+    except KeyError as k:
+        msg = ("{0} invalid suffix '{1}', "
+               "should be B, Kb, Mb or Gb").format(opt, v)
+        raise optparse.OptionValueError(msg)
 
 
-class SambaOptions(optparse.OptionGroup):
+class OptionMissingError(optparse.OptionValueError):
+    """One or more Options with required=True is missing."""
+
+    def __init__(self, options):
+        """Raised when required Options are missing from the command line.
+
+        :param options: list of 1 or more option
+        """
+        self.options = options
+
+    def __str__(self):
+        if len(self.options) == 1:
+            missing = self.options[0]
+            return f"Argument {missing} is required."
+        else:
+            options = sorted([str(option) for option in self.options])
+            missing = ", ".join(options)
+            return f"The arguments {missing} are required."
+
+
+class ValidationError(Exception):
+    """ValidationError is the exception raised by validators.
+
+    Should be raised from the __call__ method of the Validator subclass.
+    """
+    pass
+
+
+class Validator(metaclass=ABCMeta):
+    """Base class for Validators used by SambaOption.
+
+    Subclass this to make custom validators and implement __call__.
+    """
+
+    @abstractmethod
+    def __call__(self, field, value):
+        pass
+
+
+class Option(optparse.Option):
+    ATTRS = optparse.Option.ATTRS + ["required", "validators"]
+    TYPES = optparse.Option.TYPES + ("bytes",)
+    TYPE_CHECKER = copy(optparse.Option.TYPE_CHECKER)
+    TYPE_CHECKER["bytes"] = check_bytes
+
+    def run_validators(self, opt, value):
+        """Runs the list of validators on the current option."""
+        validators = getattr(self, "validators") or []
+        for validator in validators:
+            validator(opt, value)
+
+    def convert_value(self, opt, value):
+        """Override convert_value to run validators just after.
+
+        This can also be done in process() but there we would have to
+        replace the entire method.
+        """
+        value = super().convert_value(opt, value)
+        self.run_validators(opt, value)
+        return value
+
+
+class OptionParser(optparse.OptionParser):
+    """Samba OptionParser, adding support for required=True on Options."""
+
+    def __init__(self,
+                 usage=None,
+                 option_list=None,
+                 option_class=Option,
+                 version=None,
+                 conflict_handler="error",
+                 description=None,
+                 formatter=None,
+                 add_help_option=True,
+                 prog=None,
+                 epilog=None):
+        """
+        Ensure that option_class defaults to the Samba one.
+        """
+        super().__init__(usage, option_list, option_class, version,
+                         conflict_handler, description, formatter,
+                         add_help_option, prog, epilog)
+
+    def check_values(self, values, args):
+        """Loop through required options if value is missing raise exception."""
+        missing = []
+        for option in self._get_all_options():
+            if option.required:
+                value = getattr(values, option.dest)
+                if value is None:
+                    missing.append(option)
+
+        if missing:
+            raise OptionMissingError(missing)
+
+        return super().check_values(values, args)
+
+
+class OptionGroup(optparse.OptionGroup):
+    """Samba OptionGroup base class.
+
+    Provides a generic set_option method to be used as Option callback,
+    so that one doesn't need to be created for every available Option.
+
+    Also overrides the add_option method, so it correctly initialises
+    the defaults on the OptionGroup.
+    """
+
+    def add_option(self, *args, **kwargs):
+        """Override add_option so it applies defaults during constructor."""
+        opt = super().add_option(*args, **kwargs)
+        default = None if opt.default == optparse.NO_DEFAULT else opt.default
+        self.set_option(opt, opt.get_opt_string(), default, self.parser)
+        return opt
+
+    def set_option(self, option, opt_str, arg, parser):
+        """Callback to set the attribute based on the Option dest name."""
+        dest = option.dest or option._long_opts[0][2:].replace("-", "_")
+        setattr(self, dest, arg)
+
+
+class SambaOptions(OptionGroup):
     """General Samba-related command line options."""
 
     def __init__(self, parser):
@@ -60,7 +220,7 @@ class SambaOptions(optparse.OptionGroup):
                 sys.stderr.flush()
 
         from samba.param import LoadParm
-        optparse.OptionGroup.__init__(self, parser, "Samba Common Options")
+        super().__init__(parser, "Samba Common Options")
         self.add_option("-s", "--configfile", action="callback",
                         type=str, metavar="FILE", help="Configuration file",
                         callback=self._load_configfile)
@@ -89,14 +249,16 @@ class SambaOptions(optparse.OptionGroup):
         try:
             self._lp.set('debug level', arg)
         except RuntimeError:
-            raise OptionError(f"invalid -d/--debug value: '{arg}'")
+            raise optparse.OptionValueError(
+                f"invalid -d/--debug value: '{arg}'")
         parser.values.debuglevel = arg
 
     def _set_realm(self, option, opt_str, arg, parser):
         try:
             self._lp.set('realm', arg)
         except RuntimeError:
-            raise OptionError(f"invalid --realm value: '{arg}'")
+            raise optparse.OptionValueError(
+                f"invalid --realm value: '{arg}'")
         self.realm = arg
 
     def _set_option(self, option, opt_str, arg, parser):
@@ -125,15 +287,27 @@ class Samba3Options(SambaOptions):
     """General Samba-related command line options with an s3 param."""
 
     def __init__(self, parser):
-        SambaOptions.__init__(self, parser)
+        super().__init__(parser)
         from samba.samba3 import param as s3param
         self._lp = s3param.get_context()
 
 
-class VersionOptions(optparse.OptionGroup):
+class HostOptions(OptionGroup):
+    """Command line options for connecting to target host or database."""
+
+    def __init__(self, parser):
+        super().__init__(parser, "Host Options")
+
+        self.add_option("-H", "--URL",
+                        help="LDB URL for database or target server",
+                        type=str, metavar="URL", action="callback",
+                        callback=self.set_option, dest="H")
+
+
+class VersionOptions(OptionGroup):
     """Command line option for printing Samba version."""
     def __init__(self, parser):
-        optparse.OptionGroup.__init__(self, parser, "Version Options")
+        super().__init__(parser, "Version Options")
         self.add_option("-V", "--version", action="callback",
                         callback=self._display_version,
                         help="Display version number")
@@ -168,7 +342,7 @@ def parse_kerberos_arg(arg, opt_str):
                                         (opt_str, arg))
 
 
-class CredentialsOptions(optparse.OptionGroup):
+class CredentialsOptions(OptionGroup):
     """Command line options for specifying credentials."""
 
     def __init__(self, parser, special_name=None):
@@ -181,7 +355,7 @@ class CredentialsOptions(optparse.OptionGroup):
         self.ask_for_password = True
         self.ipaddress = None
         self.machine_pass = False
-        optparse.OptionGroup.__init__(self, parser, self.section)
+        super().__init__(parser, self.section)
         self._add_option("--simple-bind-dn", metavar="DN", action="callback",
                          callback=self._set_simple_bind_dn, type=str,
                          help="DN to use for a simple bind")
@@ -301,7 +475,7 @@ class CredentialsOptionsDouble(CredentialsOptions):
     """Command line options for specifying credentials of two servers."""
 
     def __init__(self, parser):
-        CredentialsOptions.__init__(self, parser)
+        super().__init__(parser)
         self.no_pass2 = True
         self.add_option("--simple-bind-dn2", metavar="DN2", action="callback",
                         callback=self._set_simple_bind_dn2, type=str,
@@ -363,47 +537,3 @@ class CredentialsOptionsDouble(CredentialsOptions):
         if self.no_pass2:
             self.creds2.set_cmdline_callbacks()
         return self.creds2
-
-# Custom option type to allow the input of sizes using byte, kb, mb ...
-# units, e.g. 2Gb, 4KiB ...
-#    e.g. Option("--size", type="bytes", metavar="SIZE")
-#
-def check_bytes(option, opt, value):
-
-    multipliers = {
-            "B"  : 1,
-            "KB" : 1024,
-            "MB" : 1024 * 1024,
-            "GB" : 1024 * 1024 * 1024}
-
-    # strip out any spaces
-    v = value.replace(" ", "")
-
-    # extract the numeric prefix
-    digits = ""
-    while v and v[0:1].isdigit() or v[0:1] == '.':
-        digits += v[0]
-        v = v[1:]
-
-    try:
-        m = float(digits)
-    except ValueError:
-        msg = ("{0} option requires a numeric value, "
-               "with an optional unit suffix").format(opt)
-        raise optparse.OptionValueError(msg)
-
-
-    # strip out the 'i' and convert to upper case so
-    # kib Kib kb KB are all equivalent
-    suffix = v.upper().replace("I", "")
-    try:
-        return m * multipliers[suffix]
-    except KeyError as k:
-        msg = ("{0} invalid suffix '{1}', "
-               "should be B, Kb, Mb or Gb").format(opt, v)
-        raise optparse.OptionValueError(msg)
-
-class SambaOption(optparse.Option):
-    TYPES = optparse.Option.TYPES + ("bytes",)
-    TYPE_CHECKER = copy(optparse.Option.TYPE_CHECKER)
-    TYPE_CHECKER["bytes"] = check_bytes

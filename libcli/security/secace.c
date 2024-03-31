@@ -25,34 +25,67 @@
 #include "libcli/security/security.h"
 #include "lib/util/tsort.h"
 
-#define  SEC_ACE_HEADER_SIZE (2 * sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint32_t))
-
 /**
  * Check if ACE has OBJECT type.
  */
 bool sec_ace_object(uint8_t type)
 {
 	if (type == SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT ||
-            type == SEC_ACE_TYPE_ACCESS_DENIED_OBJECT ||
-            type == SEC_ACE_TYPE_SYSTEM_AUDIT_OBJECT ||
-            type == SEC_ACE_TYPE_SYSTEM_ALARM_OBJECT) {
+	    type == SEC_ACE_TYPE_ACCESS_DENIED_OBJECT ||
+	    type == SEC_ACE_TYPE_SYSTEM_AUDIT_OBJECT ||
+	    type == SEC_ACE_TYPE_SYSTEM_ALARM_OBJECT ||
+	    type == SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT ||
+	    type == SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT ||
+	    type == SEC_ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT) {
+		/*
+		 * MS-DTYP has a reserved value for
+		 * SEC_ACE_TYPE_SYSTEM_ALARM_CALLBACK_OBJECT, but we
+		 * don't assume that it will be an object ACE just
+		 * because it sounds like one.
+		 */
 		return true;
 	}
 	return false;
 }
 
 /**
- * copy a struct security_ace structure.
+ * Check if ACE is a CALLBACK type, which means it will have a blob of data at
+ * the end.
  */
-void sec_ace_copy(struct security_ace *ace_dest, const struct security_ace *ace_src)
+bool sec_ace_callback(uint8_t type)
 {
-	ace_dest->type  = ace_src->type;
-	ace_dest->flags = ace_src->flags;
-	ace_dest->size  = ace_src->size;
-	ace_dest->access_mask = ace_src->access_mask;
-	ace_dest->object = ace_src->object;
-	ace_dest->trustee = ace_src->trustee;
+	if (type == SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK ||
+	    type == SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK ||
+	    type == SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT ||
+	    type == SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT ||
+	    type == SEC_ACE_TYPE_SYSTEM_AUDIT_CALLBACK ||
+	    type == SEC_ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT) {
+	    /*
+	     * While SEC_ACE_TYPE_SYSTEM_ALARM_CALLBACK and
+	     * SEC_ACE_TYPE_SYSTEM_ALARM_CALLBACK_OBJECT sound like
+	     * callback types, they are reserved values in MS-DTYP,
+	     * and their eventual use is not defined.
+	     */
+		return true;
+	}
+	return false;
 }
+
+/**
+ * Check if an ACE type is resource attribute, which means it will
+ * have a blob of data at the end defining an attribute on the object.
+ * Resource attribute ACEs should only occur in SACLs.
+ */
+bool sec_ace_resource(uint8_t type)
+{
+	return type == SEC_ACE_TYPE_SYSTEM_RESOURCE_ATTRIBUTE;
+}
+
+bool sec_ace_has_extra_blob(uint8_t type)
+{
+	return sec_ace_callback(type) || sec_ace_resource(type);
+}
+
 
 /*******************************************************************
  Sets up a struct security_ace structure.
@@ -67,6 +100,8 @@ void init_sec_ace(struct security_ace *t, const struct dom_sid *sid, enum securi
 	t->access_mask = mask;
 
 	t->trustee = *sid;
+	t->coda.ignored.data = NULL;
+	t->coda.ignored.length = 0;
 }
 
 int nt_ace_inherit_comp(const struct security_ace *a1, const struct security_ace *a2)

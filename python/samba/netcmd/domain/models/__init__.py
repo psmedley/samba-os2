@@ -23,6 +23,7 @@
 from .auth_policy import AuthenticationPolicy
 from .auth_silo import AuthenticationSilo
 from .claim_type import ClaimType
+from .group import Group
 from .model import MODELS
 from .schema import AttributeSchema, ClassSchema
 from .site import Site

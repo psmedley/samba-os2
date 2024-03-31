@@ -28,6 +28,7 @@
 #include "libsmb/clirap.h"
 #include "trans2.h"
 #include "../libcli/smb/smbXcli_base.h"
+#include "libcli/smb/reparse.h"
 #include "cli_smb2_fnum.h"
 #include "lib/util/string_wrappers.h"
 
@@ -552,137 +553,6 @@ done:
 	return (cli->rap_error == 0);
 }
 
-/****************************************************************************
- Send a qpathinfo call.
-****************************************************************************/
-
-struct cli_qpathinfo1_state {
-	struct cli_state *cli;
-	uint32_t num_data;
-	uint8_t *data;
-};
-
-static void cli_qpathinfo1_done(struct tevent_req *subreq);
-
-struct tevent_req *cli_qpathinfo1_send(TALLOC_CTX *mem_ctx,
-				       struct tevent_context *ev,
-				       struct cli_state *cli,
-				       const char *fname)
-{
-	struct tevent_req *req = NULL, *subreq = NULL;
-	struct cli_qpathinfo1_state *state = NULL;
-
-	req = tevent_req_create(mem_ctx, &state, struct cli_qpathinfo1_state);
-	if (req == NULL) {
-		return NULL;
-	}
-	state->cli = cli;
-	subreq = cli_qpathinfo_send(state, ev, cli, fname, SMB_INFO_STANDARD,
-				    22, CLI_BUFFER_SIZE);
-	if (tevent_req_nomem(subreq, req)) {
-		return tevent_req_post(req, ev);
-	}
-	tevent_req_set_callback(subreq, cli_qpathinfo1_done, req);
-	return req;
-}
-
-static void cli_qpathinfo1_done(struct tevent_req *subreq)
-{
-	struct tevent_req *req = tevent_req_callback_data(
-		subreq, struct tevent_req);
-	struct cli_qpathinfo1_state *state = tevent_req_data(
-		req, struct cli_qpathinfo1_state);
-	NTSTATUS status;
-
-	status = cli_qpathinfo_recv(subreq, state, &state->data,
-				    &state->num_data);
-	TALLOC_FREE(subreq);
-	if (!NT_STATUS_IS_OK(status)) {
-		tevent_req_nterror(req, status);
-		return;
-	}
-	tevent_req_done(req);
-}
-
-NTSTATUS cli_qpathinfo1_recv(struct tevent_req *req,
-			     time_t *change_time,
-			     time_t *access_time,
-			     time_t *write_time,
-			     off_t *size,
-			     uint32_t *pattr)
-{
-	struct cli_qpathinfo1_state *state = tevent_req_data(
-		req, struct cli_qpathinfo1_state);
-	NTSTATUS status;
-
-	time_t (*date_fn)(const void *buf, int serverzone);
-
-	if (tevent_req_is_nterror(req, &status)) {
-		return status;
-	}
-
-	if (state->cli->win95) {
-		date_fn = make_unix_date;
-	} else {
-		date_fn = make_unix_date2;
-	}
-
-	if (change_time) {
-		*change_time = date_fn(state->data+0, smb1cli_conn_server_time_zone(state->cli->conn));
-	}
-	if (access_time) {
-		*access_time = date_fn(state->data+4, smb1cli_conn_server_time_zone(state->cli->conn));
-	}
-	if (write_time) {
-		*write_time = date_fn(state->data+8, smb1cli_conn_server_time_zone(state->cli->conn));
-	}
-	if (size) {
-		*size = IVAL(state->data, 12);
-	}
-	if (pattr) {
-		*pattr = SVAL(state->data, l1_attrFile);
-	}
-	return NT_STATUS_OK;
-}
-
-NTSTATUS cli_qpathinfo1(struct cli_state *cli,
-			const char *fname,
-			time_t *change_time,
-			time_t *access_time,
-			time_t *write_time,
-			off_t *size,
-			uint32_t *pattr)
-{
-	TALLOC_CTX *frame = talloc_stackframe();
-	struct tevent_context *ev;
-	struct tevent_req *req;
-	NTSTATUS status = NT_STATUS_NO_MEMORY;
-
-	if (smbXcli_conn_has_async_calls(cli->conn)) {
-		/*
-		 * Can't use sync call while an async call is in flight
-		 */
-		status = NT_STATUS_INVALID_PARAMETER;
-		goto fail;
-	}
-	ev = samba_tevent_context_init(frame);
-	if (ev == NULL) {
-		goto fail;
-	}
-	req = cli_qpathinfo1_send(frame, ev, cli, fname);
-	if (req == NULL) {
-		goto fail;
-	}
-	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
-		goto fail;
-	}
-	status = cli_qpathinfo1_recv(req, change_time, access_time,
-				     write_time, size, pattr);
- fail:
-	TALLOC_FREE(frame);
-	return status;
-}
-
 static void prep_basic_information_buf(
 	uint8_t buf[40],
 	struct timespec create_time,
@@ -908,6 +778,9 @@ NTSTATUS cli_setfileinfo_ext(
 ****************************************************************************/
 
 struct cli_qpathinfo2_state {
+	struct tevent_context *ev;
+	struct cli_state *cli;
+	const char *fname;
 	struct timespec create_time;
 	struct timespec access_time;
 	struct timespec write_time;
@@ -915,10 +788,12 @@ struct cli_qpathinfo2_state {
 	off_t size;
 	uint32_t attr;
 	SMB_INO_T ino;
+	mode_t mode;
 };
 
 static void cli_qpathinfo2_done2(struct tevent_req *subreq);
 static void cli_qpathinfo2_done(struct tevent_req *subreq);
+static void cli_qpathinfo2_got_reparse(struct tevent_req *subreq);
 
 struct tevent_req *cli_qpathinfo2_send(TALLOC_CTX *mem_ctx,
 				       struct tevent_context *ev,
@@ -932,8 +807,20 @@ struct tevent_req *cli_qpathinfo2_send(TALLOC_CTX *mem_ctx,
 	if (req == NULL) {
 		return NULL;
 	}
+	state->ev = ev;
+	state->cli = cli;
+	state->fname = fname;
+
+	state->mode = S_IFREG;
+
 	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
-		subreq = cli_smb2_qpathinfo2_send(state, ev, cli, fname);
+		subreq = cli_smb2_qpathinfo_send(state,
+						 ev,
+						 cli,
+						 fname,
+						 FSCC_FILE_ALL_INFORMATION,
+						 0x60,
+						 UINT16_MAX);
 		if (tevent_req_nomem(subreq, req)) {
 			return tevent_req_post(req, ev);
 		}
@@ -956,20 +843,37 @@ static void cli_qpathinfo2_done2(struct tevent_req *subreq)
 		tevent_req_callback_data(subreq, struct tevent_req);
 	struct cli_qpathinfo2_state *state =
 		tevent_req_data(req, struct cli_qpathinfo2_state);
+	uint8_t *rdata = NULL;
+	uint32_t num_rdata;
 	NTSTATUS status;
 
-	status = cli_smb2_qpathinfo2_recv(subreq,
-					  &state->create_time,
-					  &state->access_time,
-					  &state->write_time,
-					  &state->change_time,
-					  &state->size,
-					  &state->attr,
-					  &state->ino);
+	status = cli_smb2_qpathinfo_recv(subreq, state, &rdata, &num_rdata);
 	TALLOC_FREE(subreq);
 	if (tevent_req_nterror(req, status)) {
 		return;
 	}
+	state->create_time = interpret_long_date(BVAL(rdata, 0x0));
+	state->access_time = interpret_long_date(BVAL(rdata, 0x8));
+	state->write_time = interpret_long_date(BVAL(rdata, 0x10));
+	state->change_time = interpret_long_date(BVAL(rdata, 0x18));
+	state->attr = PULL_LE_U32(rdata, 0x20);
+	state->size = PULL_LE_U64(rdata, 0x30);
+	state->ino = PULL_LE_U64(rdata, 0x40);
+
+	if (state->attr & FILE_ATTRIBUTE_REPARSE_POINT) {
+		subreq = cli_get_reparse_data_send(state,
+						   state->ev,
+						   state->cli,
+						   state->fname);
+		if (tevent_req_nomem(subreq, req)) {
+			return;
+		}
+		tevent_req_set_callback(subreq,
+					cli_qpathinfo2_got_reparse,
+					req);
+		return;
+	}
+
 	tevent_req_done(req);
 }
 
@@ -985,15 +889,14 @@ static void cli_qpathinfo2_done(struct tevent_req *subreq)
 
 	status = cli_qpathinfo_recv(subreq, state, &data, &num_data);
 	TALLOC_FREE(subreq);
-	if (!NT_STATUS_IS_OK(status)) {
-		tevent_req_nterror(req, status);
+	if (tevent_req_nterror(req, status)) {
 		return;
 	}
 
-	state->create_time = interpret_long_date((char *)data + 0);
-	state->access_time = interpret_long_date((char *)data + 8);
-	state->write_time = interpret_long_date((char *)data + 16);
-	state->change_time = interpret_long_date((char *)data + 24);
+	state->create_time = interpret_long_date(BVAL(data, 0));
+	state->access_time = interpret_long_date(BVAL(data, 8));
+	state->write_time = interpret_long_date(BVAL(data, 16));
+	state->change_time = interpret_long_date(BVAL(data, 24));
 	state->attr = PULL_LE_U32(data, 32);
 	state->size = PULL_LE_U64(data, 48);
 
@@ -1008,6 +911,73 @@ static void cli_qpathinfo2_done(struct tevent_req *subreq)
 
 	TALLOC_FREE(data);
 
+	if (state->attr & FILE_ATTRIBUTE_REPARSE_POINT) {
+		subreq = cli_get_reparse_data_send(state,
+						   state->ev,
+						   state->cli,
+						   state->fname);
+		if (tevent_req_nomem(subreq, req)) {
+			return;
+		}
+		tevent_req_set_callback(subreq,
+					cli_qpathinfo2_got_reparse,
+					req);
+		return;
+	}
+
+	tevent_req_done(req);
+}
+
+static void cli_qpathinfo2_got_reparse(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq, struct tevent_req);
+	struct cli_qpathinfo2_state *state =
+		tevent_req_data(req, struct cli_qpathinfo2_state);
+	uint8_t *data = NULL;
+	uint32_t num_data;
+	struct reparse_data_buffer reparse = {
+		.tag = 0,
+	};
+	NTSTATUS status;
+
+	status = cli_get_reparse_data_recv(subreq, state, &data, &num_data);
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+
+	status = reparse_data_buffer_parse(state, &reparse, data, num_data);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_DEBUG("Ignoring unknown reparse data\n");
+		goto done;
+	}
+
+	switch (reparse.tag) {
+	case IO_REPARSE_TAG_SYMLINK:
+		state->mode = S_IFLNK;
+		break;
+	case IO_REPARSE_TAG_NFS:
+		switch (reparse.parsed.nfs.type) {
+		case NFS_SPECFILE_LNK:
+			state->mode = S_IFLNK;
+			break;
+		case NFS_SPECFILE_CHR:
+			state->mode = S_IFCHR;
+			break;
+		case NFS_SPECFILE_BLK:
+			state->mode = S_IFBLK;
+			break;
+		case NFS_SPECFILE_FIFO:
+			state->mode = S_IFIFO;
+			break;
+		case NFS_SPECFILE_SOCK:
+			state->mode = S_IFSOCK;
+			break;
+		}
+		break;
+	}
+done:
 	tevent_req_done(req);
 }
 
@@ -1016,8 +986,10 @@ NTSTATUS cli_qpathinfo2_recv(struct tevent_req *req,
 			     struct timespec *access_time,
 			     struct timespec *write_time,
 			     struct timespec *change_time,
-			     off_t *size, uint32_t *pattr,
-			     SMB_INO_T *ino)
+			     off_t *size,
+			     uint32_t *pattr,
+			     SMB_INO_T *ino,
+			     mode_t *mode)
 {
 	struct cli_qpathinfo2_state *state = tevent_req_data(
 		req, struct cli_qpathinfo2_state);
@@ -1048,23 +1020,27 @@ NTSTATUS cli_qpathinfo2_recv(struct tevent_req *req,
 	if (ino) {
 		*ino = state->ino;
 	}
+	if (mode != NULL) {
+		*mode = state->mode;
+	}
 	return NT_STATUS_OK;
 }
 
-NTSTATUS cli_qpathinfo2(struct cli_state *cli, const char *fname,
+NTSTATUS cli_qpathinfo2(struct cli_state *cli,
+			const char *fname,
 			struct timespec *create_time,
 			struct timespec *access_time,
 			struct timespec *write_time,
 			struct timespec *change_time,
-			off_t *size, uint32_t *pattr,
-			SMB_INO_T *ino)
+			off_t *size,
+			uint32_t *pattr,
+			SMB_INO_T *ino,
+			mode_t *mode)
 {
-	TALLOC_CTX *frame = NULL;
-	struct tevent_context *ev;
-	struct tevent_req *req;
+	TALLOC_CTX *frame = talloc_stackframe();
+	struct tevent_context *ev = NULL;
+	struct tevent_req *req = NULL;
 	NTSTATUS status = NT_STATUS_NO_MEMORY;
-
-	frame = talloc_stackframe();
 
 	if (smbXcli_conn_has_async_calls(cli->conn)) {
 		/*
@@ -1084,8 +1060,15 @@ NTSTATUS cli_qpathinfo2(struct cli_state *cli, const char *fname,
 	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
 		goto fail;
 	}
-	status = cli_qpathinfo2_recv(req, create_time, access_time,
-				     write_time, change_time, size, pattr, ino);
+	status = cli_qpathinfo2_recv(req,
+				     create_time,
+				     access_time,
+				     write_time,
+				     change_time,
+				     size,
+				     pattr,
+				     ino,
+				     mode);
  fail:
 	TALLOC_FREE(frame);
 	return status;
@@ -1101,6 +1084,7 @@ struct cli_qpathinfo_streams_state {
 };
 
 static void cli_qpathinfo_streams_done(struct tevent_req *subreq);
+static void cli_qpathinfo_streams_done2(struct tevent_req *subreq);
 
 struct tevent_req *cli_qpathinfo_streams_send(TALLOC_CTX *mem_ctx,
 					      struct tevent_context *ev,
@@ -1114,6 +1098,22 @@ struct tevent_req *cli_qpathinfo_streams_send(TALLOC_CTX *mem_ctx,
 				struct cli_qpathinfo_streams_state);
 	if (req == NULL) {
 		return NULL;
+	}
+	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+		subreq = cli_smb2_qpathinfo_send(state,
+						 ev,
+						 cli,
+						 fname,
+						 FSCC_FILE_STREAM_INFORMATION,
+						 0,
+						 CLI_BUFFER_SIZE);
+		if (tevent_req_nomem(subreq, req)) {
+			return tevent_req_post(req, ev);
+		}
+		tevent_req_set_callback(subreq,
+					cli_qpathinfo_streams_done2,
+					req);
+		return req;
 	}
 	subreq = cli_qpathinfo_send(state, ev, cli, fname,
 				    SMB_FILE_STREAM_INFORMATION,
@@ -1135,12 +1135,22 @@ static void cli_qpathinfo_streams_done(struct tevent_req *subreq)
 
 	status = cli_qpathinfo_recv(subreq, state, &state->data,
 				    &state->num_data);
-	TALLOC_FREE(subreq);
-	if (!NT_STATUS_IS_OK(status)) {
-		tevent_req_nterror(req, status);
-		return;
-	}
-	tevent_req_done(req);
+	tevent_req_simple_finish_ntstatus(subreq, status);
+}
+
+static void cli_qpathinfo_streams_done2(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq, struct tevent_req);
+	struct cli_qpathinfo_streams_state *state =
+		tevent_req_data(req, struct cli_qpathinfo_streams_state);
+	NTSTATUS status;
+
+	status = cli_smb2_qpathinfo_recv(subreq,
+					 state,
+					 &state->data,
+					 &state->num_data);
+	tevent_req_simple_finish_ntstatus(subreq, status);
 }
 
 NTSTATUS cli_qpathinfo_streams_recv(struct tevent_req *req,
@@ -1171,14 +1181,6 @@ NTSTATUS cli_qpathinfo_streams(struct cli_state *cli, const char *fname,
 	struct tevent_context *ev;
 	struct tevent_req *req;
 	NTSTATUS status = NT_STATUS_NO_MEMORY;
-
-	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
-		return cli_smb2_qpathinfo_streams(cli,
-					fname,
-					mem_ctx,
-					pnum_streams,
-					pstreams);
-	}
 
 	frame = talloc_stackframe();
 
@@ -1399,10 +1401,10 @@ static void cli_qfileinfo_basic_done(struct tevent_req *subreq)
 		return;
 	}
 
-	state->create_time = interpret_long_date((char *)rdata+0);
-	state->access_time = interpret_long_date((char *)rdata+8);
-	state->write_time = interpret_long_date((char *)rdata+16);
-	state->change_time = interpret_long_date((char *)rdata+24);
+	state->create_time = interpret_long_date(BVAL(rdata, 0));
+	state->access_time = interpret_long_date(BVAL(rdata, 8));
+	state->write_time = interpret_long_date(BVAL(rdata, 16));
+	state->change_time = interpret_long_date(BVAL(rdata, 24));
 	state->attr = PULL_LE_U32(rdata, 32);
 	state->size = PULL_LE_U64(rdata,48);
 	state->ino = PULL_LE_U32(rdata, 64);
@@ -1454,14 +1456,10 @@ static void cli_qfileinfo_basic_done2(struct tevent_req *subreq)
 		return;
 	}
 
-	state->create_time = interpret_long_date(
-		(const char *)outbuf.data + 0x0);
-	state->access_time = interpret_long_date(
-		(const char *)outbuf.data + 0x8);
-	state->write_time = interpret_long_date(
-		(const char *)outbuf.data + 0x10);
-	state->change_time = interpret_long_date(
-		(const char *)outbuf.data + 0x18);
+	state->create_time = interpret_long_date(BVAL(outbuf.data, 0x0));
+	state->access_time = interpret_long_date(BVAL(outbuf.data, 0x8));
+	state->write_time = interpret_long_date(BVAL(outbuf.data, 0x10));
+	state->change_time = interpret_long_date(BVAL(outbuf.data, 0x18));
 	state->attr = IVAL(outbuf.data, 0x20);
 	state->size = BVAL(outbuf.data, 0x30);
 	state->ino = BVAL(outbuf.data, 0x40);
@@ -1616,8 +1614,7 @@ static void cli_qpathinfo_basic_done(struct tevent_req *subreq)
 	status = cli_qpathinfo_recv(subreq, state, &state->data,
 				    &state->num_data);
 	TALLOC_FREE(subreq);
-	if (!NT_STATUS_IS_OK(status)) {
-		tevent_req_nterror(req, status);
+	if (tevent_req_nterror(req, status)) {
 		return;
 	}
 	tevent_req_done(req);
@@ -1634,10 +1631,10 @@ NTSTATUS cli_qpathinfo_basic_recv(struct tevent_req *req,
 		return status;
 	}
 
-	sbuf->st_ex_btime = interpret_long_date((char *)state->data);
-	sbuf->st_ex_atime = interpret_long_date((char *)state->data+8);
-	sbuf->st_ex_mtime = interpret_long_date((char *)state->data+16);
-	sbuf->st_ex_ctime = interpret_long_date((char *)state->data+24);
+	sbuf->st_ex_btime = interpret_long_date(BVAL(state->data, 0));
+	sbuf->st_ex_atime = interpret_long_date(BVAL(state->data, 8));
+	sbuf->st_ex_mtime = interpret_long_date(BVAL(state->data, 16));
+	sbuf->st_ex_ctime = interpret_long_date(BVAL(state->data, 24));
 	*attributes = IVAL(state->data, 32);
 	return NT_STATUS_OK;
 }
@@ -1695,12 +1692,6 @@ NTSTATUS cli_qpathinfo_alt_name(struct cli_state *cli, const char *fname, fstrin
 	char *converted = NULL;
 	size_t converted_size = 0;
 	NTSTATUS status;
-
-	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
-		return cli_smb2_qpathinfo_alt_name(cli,
-						fname,
-						alt_name);
-	}
 
 	status = cli_qpathinfo(talloc_tos(), cli, fname,
 			       SMB_QUERY_FILE_ALT_NAME_INFO,
@@ -1804,9 +1795,16 @@ NTSTATUS cli_qpathinfo3(struct cli_state *cli, const char *fname,
 		 * an intermediate attr variable as below but can
 		 * pass pattr directly.
 		 */
-		return cli_qpathinfo2(cli, fname,
-				      create_time, access_time, write_time, change_time,
-				      size, pattr, ino);
+		return cli_qpathinfo2(cli,
+				      fname,
+				      create_time,
+				      access_time,
+				      write_time,
+				      change_time,
+				      size,
+				      pattr,
+				      ino,
+				      NULL);
 	}
 
 	if (create_time || access_time || write_time || change_time || pattr) {

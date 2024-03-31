@@ -54,7 +54,7 @@ struct mount_state {
 struct inode_state {
 	struct idr_context *ino_ctx;
 	fuse_ino_t ino;
-	char path[1];
+	char path[];
 };
 
 static int inode_state_destructor(struct inode_state *s);
@@ -284,14 +284,18 @@ static void cli_get_unixattr_opened(struct tevent_req *subreq)
 	}
 
 	subreq = smb2cli_query_info_send(
-		state, state->ev, cli->conn, 0,
-		cli->smb2.session, cli->smb2.tcon,
-		1, /* in_info_type */
-		(SMB_FILE_ALL_INFORMATION - 1000), /* in_file_info_class */
-		0xFFFF, /* in_max_output_length */
-		NULL, /* in_input_buffer */
-		0, /* in_additional_info */
-		0, /* in_flags */
+		state,
+		state->ev,
+		cli->conn,
+		0,
+		cli->smb2.session,
+		cli->smb2.tcon,
+		1,			   /* in_info_type */
+		FSCC_FILE_ALL_INFORMATION, /* in_file_info_class */
+		0xFFFF,			   /* in_max_output_length */
+		NULL,			   /* in_input_buffer */
+		0,			   /* in_additional_info */
+		0,			   /* in_flags */
 		state->fid_persistent,
 		state->fid_volatile);
 	if (tevent_req_nomem(subreq, req)) {
@@ -323,10 +327,10 @@ static void cli_get_unixattr_gotinfo(struct tevent_req *subreq)
 		return;
 	}
 
-	state->create_time = interpret_long_date((char *)outbuf.data + 0x0);
-	state->access_time = interpret_long_date((char *)outbuf.data + 0x8);
-	state->write_time  = interpret_long_date((char *)outbuf.data + 0x10);
-	state->change_time = interpret_long_date((char *)outbuf.data + 0x18);
+	state->create_time = interpret_long_date(BVAL(outbuf.data, 0));
+	state->access_time = interpret_long_date(BVAL(outbuf.data, 0x8));
+	state->write_time  = interpret_long_date(BVAL(outbuf.data, 0x10));
+	state->change_time = interpret_long_date(BVAL(outbuf.data, 0x18));
 	state->mode        = IVAL(outbuf.data, 0x20);
 	state->size        = BVAL(outbuf.data, 0x30);
 	state->ino         = BVAL(outbuf.data, 0x40);
@@ -366,7 +370,7 @@ static NTSTATUS cli_get_unixattr_recv(struct tevent_req *req,
 		return status;
 	}
 
-	if (IS_DOS_DIR(state->mode)) {
+	if (state->mode & FILE_ATTRIBUTE_DIRECTORY) {
 		st->st_mode = (S_IFDIR | 0555);
 		st->st_nlink = 2;
 	} else {
@@ -498,10 +502,10 @@ static NTSTATUS parse_finfo_id_both_directory_info(uint8_t *dir_data,
 		return NT_STATUS_INFO_LENGTH_MISMATCH;
 	}
 
-	finfo->btime_ts = interpret_long_date((const char *)dir_data + 8);
-	finfo->atime_ts = interpret_long_date((const char *)dir_data + 16);
-	finfo->mtime_ts = interpret_long_date((const char *)dir_data + 24);
-	finfo->ctime_ts = interpret_long_date((const char *)dir_data + 32);
+	finfo->btime_ts = interpret_long_date(BVAL(dir_data, 8));
+	finfo->atime_ts = interpret_long_date(BVAL(dir_data, 16));
+	finfo->mtime_ts = interpret_long_date(BVAL(dir_data, 24));
+	finfo->ctime_ts = interpret_long_date(BVAL(dir_data, 32));
 	finfo->size = IVAL2_TO_SMB_BIG_UINT(dir_data + 40, 0);
 	finfo->attr = IVAL(dir_data + 56, 0);
 	namelen = IVAL(dir_data + 60,0);
@@ -732,6 +736,25 @@ static void cli_ll_lookup_done(struct tevent_req *req)
 	TALLOC_FREE(state);
 }
 
+static void
+cli_ll_forget(fuse_req_t freq, fuse_ino_t ino, unsigned long nlookup)
+{
+	struct mount_state *mstate =
+		talloc_get_type_abort(fuse_req_userdata(freq),
+				      struct mount_state);
+	struct inode_state *istate = NULL;
+
+	DBG_DEBUG("ino=%ju, nlookup=%lu\n", (uintmax_t)ino, nlookup);
+
+	istate = idr_find(mstate->ino_ctx, ino);
+	if (istate == NULL) {
+		fuse_reply_err(freq, ENOENT);
+		return;
+	}
+	TALLOC_FREE(istate);
+	fuse_reply_none(freq);
+}
+
 struct ll_getattr_state {
 	struct mount_state *mstate;
 	fuse_req_t freq;
@@ -929,7 +952,7 @@ static void cli_ll_release(fuse_req_t freq, fuse_ino_t ino,
 
 	fnum = fi->fh;
 
-	req = cli_smb2_close_fnum_send(state, mstate->ev, mstate->cli, fnum);
+	req = cli_smb2_close_fnum_send(state, mstate->ev, mstate->cli, fnum, 0);
 	if (req == NULL) {
 		TALLOC_FREE(state);
 		fuse_reply_err(freq, ENOMEM);
@@ -1395,6 +1418,7 @@ static void cli_ll_releasedir_done(struct tevent_req *req)
 
 static struct fuse_lowlevel_ops cli_ll_ops = {
 	.lookup = cli_ll_lookup,
+	.forget = cli_ll_forget,
 	.getattr = cli_ll_getattr,
 	.open = cli_ll_open,
 	.create = cli_ll_create,

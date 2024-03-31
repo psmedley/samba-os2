@@ -24,7 +24,6 @@ We don't test samba-tool visualize reps here because repsTo and
 repsFrom are not replicated, and there are no actual remote servers to
 query.
 """
-import samba
 import os
 import tempfile
 import re
@@ -90,7 +89,7 @@ def collapse_space(s, keep_empty_lines=False):
 
 class SambaToolVisualizeLdif(SambaToolCmdTest):
     def setUp(self):
-        super(SambaToolVisualizeLdif, self).setUp()
+        super().setUp()
         self.lp = LoadParm()
         self.samdb, self.dbfile = samdb_from_ldif(MULTISITE_LDIF,
                                                   self.tempdir,
@@ -99,7 +98,7 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
 
     def tearDown(self):
         self.remove_files(self.dbfile)
-        super(SambaToolVisualizeLdif, self).tearDown()
+        super().tearDown()
 
     def remove_files(self, *files):
         for f in files:
@@ -151,9 +150,10 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
                                                  '--color=no', '-S')
         self.assertCmdSuccess(result, monochrome, err)
         self.assert_colour(monochrome, False)
+        cls = self.__class__
 
         try:
-            self.stringIO = StringIOThinksItIsATTY
+            cls.stringIO = StringIOThinksItIsATTY
             old_no_color = os.environ.pop('NO_COLOR', None)
             # First with no NO_COLOR env var. There should be colour.
             result, out, err = self.runsubcmd("visualize", "ntdsconn",
@@ -188,7 +188,7 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
                                                       '-H', self.dburl,
                                                       '-S',
                                                       opt)
-                except SystemExit as e:
+                except SystemExit:
                     # optparse makes us do this
                     self.fail(f"optparse rejects {env}, {opt}, {is_colour}")
 
@@ -205,7 +205,7 @@ class SambaToolVisualizeLdif(SambaToolCmdTest):
                 self.assert_colour(out, is_colour, monochrome)
 
         finally:
-            self.stringIO = StringIO
+            cls.stringIO = StringIO
             if old_no_color is None:
                 os.environ.pop('NO_COLOR', None)
             else:

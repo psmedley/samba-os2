@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    client error handling routines
    Copyright (C) Andrew Tridgell 1994-1998
@@ -41,29 +41,6 @@ NTSTATUS cli_nt_error(struct cli_state *cli)
 	}
 
 	return cli->raw_status;
-}
-
-
-/****************************************************************************
- Return the DOS error from the last packet - an error class and an error
- code.
-****************************************************************************/
-
-void cli_dos_error(struct cli_state *cli, uint8_t *eclass, uint32_t *ecode)
-{
-	if (!cli_state_is_connected(cli)) {
-		*eclass = ERRDOS;
-		*ecode = ERRnotconnected;
-		return;
-	}
-
-	if (!NT_STATUS_IS_DOS(cli->raw_status)) {
-		ntstatus_to_dos(cli->raw_status, eclass, ecode);
-		return;
-	}
-
-	*eclass = NT_STATUS_DOS_CLASS(cli->raw_status);
-	*ecode = NT_STATUS_DOS_CODE(cli->raw_status);
 }
 
 int cli_status_to_errno(NTSTATUS status)
@@ -126,30 +103,6 @@ bool cli_is_error(struct cli_state *cli)
 	}
 
 	return NT_STATUS_IS_ERR(cli->raw_status);
-}
-
-/* Return true if the last error was an NT error */
-
-bool cli_is_nt_error(struct cli_state *cli)
-{
-	/* A socket error is always an NT error. */
-	if (!cli_state_is_connected(cli)) {
-		return true;
-	}
-
-	return cli_is_error(cli) && !NT_STATUS_IS_DOS(cli->raw_status);
-}
-
-/* Return true if the last error was a DOS error */
-
-bool cli_is_dos_error(struct cli_state *cli)
-{
-	/* A socket error is always a DOS error. */
-	if (!cli_state_is_connected(cli)) {
-		return true;
-	}
-
-	return cli_is_error(cli) && NT_STATUS_IS_DOS(cli->raw_status);
 }
 
 bool cli_state_is_connected(struct cli_state *cli)

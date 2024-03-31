@@ -51,6 +51,7 @@
 #include "lib/util/string_wrappers.h"
 #include "source3/printing/rap_jobid.h"
 #include "source3/lib/substitute.h"
+#include "source3/smbd/dir.h"
 
 /****************************************************************************
  Check if we have a correct fsp pointing to a file. Basic check for open fsp.
@@ -1125,6 +1126,25 @@ static void make_dir_struct(TALLOC_CTX *ctx,
 	DEBUG(8,("put name [%s] from [%s] into dir struct\n",buf+30, fname));
 }
 
+/*******************************************************************
+ A wrapper that handles case sensitivity and the special handling
+ of the ".." name.
+*******************************************************************/
+
+static bool mask_match_search(const char *string,
+			      const char *pattern,
+			      bool is_case_sensitive)
+{
+	if (ISDOTDOT(string)) {
+		string = ".";
+	}
+	if (ISDOT(pattern)) {
+		return False;
+	}
+
+	return ms_fnmatch(pattern, string, True, is_case_sensitive) == 0;
+}
+
 static bool mangle_mask_match(connection_struct *conn,
 			      const char *filename,
 			      const char *mask)
@@ -1199,30 +1219,6 @@ static bool smbd_dirptr_8_3_match_fn(TALLOC_CTX *ctx,
 	return false;
 }
 
-static bool smbd_dirptr_8_3_mode_fn(TALLOC_CTX *ctx,
-				    void *private_data,
-				    struct files_struct *dirfsp,
-				    struct smb_filename *smb_fname,
-				    bool get_dosmode,
-				    uint32_t *_mode)
-{
-	if (*_mode & FILE_ATTRIBUTE_REPARSE_POINT) {
-		/*
-		 * Don't show symlinks/special files to old clients
-		 */
-		return false;
-	}
-
-	if (get_dosmode) {
-		SMB_ASSERT(smb_fname != NULL);
-		*_mode = fdos_mode(smb_fname->fsp);
-		if (smb_fname->fsp != NULL) {
-			smb_fname->st = smb_fname->fsp->fsp_name->st;
-		}
-	}
-	return true;
-}
-
 static bool get_dir_entry(TALLOC_CTX *ctx,
 			  connection_struct *conn,
 			  struct dptr_struct *dirptr,
@@ -1240,6 +1236,7 @@ static bool get_dir_entry(TALLOC_CTX *ctx,
 	uint32_t mode = 0;
 	bool ok;
 
+again:
 	ok = smbd_dirptr_get_entry(ctx,
 				   dirptr,
 				   mask,
@@ -1248,13 +1245,18 @@ static bool get_dir_entry(TALLOC_CTX *ctx,
 				   ask_sharemode,
 				   true,
 				   smbd_dirptr_8_3_match_fn,
-				   smbd_dirptr_8_3_mode_fn,
 				   conn,
 				   &fname,
 				   &smb_fname,
 				   &mode);
 	if (!ok) {
 		return false;
+	}
+	if (mode & FILE_ATTRIBUTE_REPARSE_POINT) {
+		/* hide reparse points from ancient clients */
+		TALLOC_FREE(fname);
+		TALLOC_FREE(smb_fname);
+		goto again;
 	}
 
 	*_fname = talloc_move(ctx, &fname);
@@ -2745,7 +2747,7 @@ void reply_unlink(struct smb_request *req)
 	status = filename_convert_dirfsp(ctx,
 					 conn,
 					 name,
-					 ucf_flags,
+					 ucf_flags | UCF_LCOMP_LNK_OK,
 					 twrp,
 					 &dirfsp,
 					 &smb_fname);
@@ -4092,7 +4094,7 @@ void reply_writebraw(struct smb_request *req)
 		goto out;
 	}
 
-	DEBUG(3,("reply_writebraw: secondart write %s start=%.0f num=%d "
+	DEBUG(3,("reply_writebraw: secondary write %s start=%.0f num=%d "
 		"wrote=%d\n",
 		fsp_fnum_dbg(fsp), (double)startpos, (int)numtowrite,
 		(int)total_written));
@@ -6027,7 +6029,10 @@ void reply_printqueue(struct smb_request *req)
 		for (i = first; i < num_to_get; i++) {
 			char blob[28];
 			char *p = blob;
-			time_t qtime = spoolss_Time_to_time_t(&info[i].info2.submitted);
+			struct timespec qtime = {
+				.tv_sec = spoolss_Time_to_time_t(
+					&info[i].info2.submitted),
+			};
 			int qstatus;
 			size_t len = 0;
 			uint16_t qrapjobid = pjobid_to_rap(sharename,
@@ -6039,7 +6044,7 @@ void reply_printqueue(struct smb_request *req)
 				qstatus = 3;
 			}
 
-			srv_put_dos_date2(p, 0, qtime);
+			srv_put_dos_date2_ts(p, 0, qtime);
 			SCVAL(p, 4, qstatus);
 			SSVAL(p, 5, qrapjobid);
 			SIVAL(p, 7, info[i].info2.size);
@@ -6291,7 +6296,8 @@ void reply_rmdir(struct smb_request *req)
 		(FILE_SHARE_READ | FILE_SHARE_WRITE |   /* share_access */
 			FILE_SHARE_DELETE),
 		FILE_OPEN,                              /* create_disposition*/
-		FILE_DIRECTORY_FILE,                    /* create_options */
+		FILE_DIRECTORY_FILE |
+			FILE_OPEN_REPARSE_POINT,	/* create_options */
 		FILE_ATTRIBUTE_DIRECTORY,               /* file_attributes */
 		0,                                      /* oplock_request */
 		NULL,					/* lease */
@@ -6489,7 +6495,6 @@ void reply_mv(struct smb_request *req)
 				req,
 				src_dirfsp, /* src_dirfsp */
 				smb_fname_src,
-				dst_dirfsp, /* dst_dirfsp */
 				smb_fname_dst,
 				dst_original_lcomp,
 				attrs,
@@ -7071,12 +7076,14 @@ void reply_getattrE(struct smb_request *req)
 	reply_smb1_outbuf(req, 11, 0);
 
 	create_ts = get_create_timespec(conn, fsp, fsp->fsp_name);
-	srv_put_dos_date2((char *)req->outbuf, smb_vwv0, create_ts.tv_sec);
-	srv_put_dos_date2((char *)req->outbuf, smb_vwv2,
-			  convert_timespec_to_time_t(fsp->fsp_name->st.st_ex_atime));
+	srv_put_dos_date2_ts((char *)req->outbuf, smb_vwv0, create_ts);
+	srv_put_dos_date2_ts((char *)req->outbuf,
+			     smb_vwv2,
+			     fsp->fsp_name->st.st_ex_atime);
 	/* Should we check pending modtime here ? JRA */
-	srv_put_dos_date2((char *)req->outbuf, smb_vwv4,
-			  convert_timespec_to_time_t(fsp->fsp_name->st.st_ex_mtime));
+	srv_put_dos_date2_ts((char *)req->outbuf,
+			     smb_vwv4,
+			     fsp->fsp_name->st.st_ex_mtime);
 
 	if (mode & FILE_ATTRIBUTE_DIRECTORY) {
 		SIVAL(req->outbuf, smb_vwv6, 0);

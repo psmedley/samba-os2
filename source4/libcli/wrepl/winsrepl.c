@@ -108,6 +108,8 @@ NTSTATUS wrepl_socket_donate_stream(struct wrepl_socket *wrepl_socket,
 	}
 
 	wrepl_socket->stream = talloc_move(wrepl_socket, stream);
+	/* as client we want to drain the recv queue on error */
+	tstream_bsd_fail_readv_first_error(wrepl_socket->stream, false);
 	return NT_STATUS_OK;
 }
 
@@ -474,7 +476,7 @@ static void wrepl_request_writev_done(struct tevent_req *subreq)
 					    state->caller.ev,
 					    state->caller.wrepl_socket->stream,
 					    4, /* initial_read_size */
-					    packet_full_request_u32,
+					    tstream_full_request_u32,
 					    NULL);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
@@ -639,7 +641,7 @@ struct tevent_req *wrepl_associate_send(TALLOC_CTX *mem_ctx,
 
 	/*
 	 * nt4 uses 41 bytes for the start_association call
-	 * so do it the same and as we don't know th emeanings of this bytes
+	 * so do it the same and as we don't know the meanings of these bytes
 	 * we just send zeros and nt4, w2k and w2k3 seems to be happy with this
 	 *
 	 * if we don't do this nt4 uses an old version of the wins replication protocol

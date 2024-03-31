@@ -1579,6 +1579,10 @@ _PUBLIC_ bool cli_credentials_parse_password_fd(struct cli_credentials *credenti
 	char *p;
 	char pass[128];
 
+	if (credentials->password_obtained >= obtained) {
+		return false;
+	}
+
 	for(p = pass, *p = '\0'; /* ensure that pass is null-terminated */
 		p && p - pass < sizeof(pass) - 1;) {
 		switch (read(fd, p, 1)) {
@@ -1906,7 +1910,7 @@ _PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
 
 	if (data.data == NULL || data.length == 0) {
 		DBG_ERR("Nothing to encrypt "
-			"data.data == NULL or data.length == 0");
+			"data.data == NULL or data.length == 0\n");
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 	/*
@@ -1914,7 +1918,7 @@ _PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
 	 * NETLOGON pipe session key .
 	 */
 	if (all_zero(data.data, data.length)) {
-		DBG_ERR("Supplied data all zeros, could leak session key");
+		DBG_ERR("Supplied data all zeros, could leak session key\n");
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 	if (state->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
@@ -1926,7 +1930,7 @@ _PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
 						      data.data,
 						      data.length);
 	} else {
-		DBG_ERR("Unsupported encryption option negotiated");
+		DBG_ERR("Unsupported encryption option negotiated\n");
 		status = NT_STATUS_NOT_SUPPORTED;
 	}
 	if (!NT_STATUS_IS_OK(status)) {

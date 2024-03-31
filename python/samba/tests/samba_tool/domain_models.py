@@ -25,12 +25,16 @@ from datetime import datetime
 from xml.etree import ElementTree
 
 from ldb import FLAG_MOD_ADD, MessageElement, SCOPE_ONELEVEL
+from samba.dcerpc import security
 from samba.dcerpc.misc import GUID
-from samba.netcmd.domain.models import User, fields
+from samba.netcmd.domain.models import Group, User, fields
 from samba.netcmd.domain.models.auth_policy import StrongNTLMPolicy
-from samba.ndr import ndr_unpack
+from samba.ndr import ndr_pack, ndr_unpack
 
 from .base import SambaToolCmdTest
+
+HOST = "ldap://{DC_SERVER}".format(**os.environ)
+CREDS = "-U{DC_USERNAME}%{DC_PASSWORD}".format(**os.environ)
 
 
 class FieldTestMixin:
@@ -39,11 +43,10 @@ class FieldTestMixin:
     Use a mixin since TestCase can't be marked as abstract.
     """
 
-    def setUp(self):
-        super().setUp()
-        self.host = "ldap://{DC_SERVER}".format(**os.environ)
-        self.creds = "-U{DC_USERNAME}%{DC_PASSWORD}".format(**os.environ)
-        self.samdb = self.getSamDB("-H", self.host, self.creds)
+    @classmethod
+    def setUpClass(cls):
+        cls.samdb = cls.getSamDB("-H", HOST, CREDS)
+        super().setUpClass()
 
     def get_users_dn(self):
         """Returns Users DN."""
@@ -56,7 +59,7 @@ class FieldTestMixin:
         # If the expected value is callable, treat it as a validation callback.
         # NOTE: perhaps we should be using subtests for this.
         for (value, expected) in self.to_db_value:
-            db_value = self.field.to_db_value(value, FLAG_MOD_ADD)
+            db_value = self.field.to_db_value(self.samdb, value, FLAG_MOD_ADD)
             if callable(expected):
                 self.assertTrue(expected(db_value))
             else:
@@ -218,6 +221,48 @@ class DnFieldTest(FieldTestMixin, SambaToolCmdTest):
         ]
 
 
+class SIDFieldTest(FieldTestMixin, SambaToolCmdTest):
+    field = fields.SIDField("FieldName")
+
+    @property
+    def to_db_value(self):
+        # Create a group for testing
+        group = Group(name="group1")
+        group.save(self.samdb)
+        self.addCleanup(group.delete, self.samdb)
+
+        # Get raw value to compare against
+        group_rec = self.samdb.search(Group.get_base_dn(self.samdb),
+                                      scope=SCOPE_ONELEVEL,
+                                      expression="(name=group1)",
+                                      attrs=["objectSid"])[0]
+        raw_sid = group_rec["objectSid"]
+
+        return [
+            (group.object_sid, raw_sid),
+            (None, None),
+        ]
+
+    @property
+    def from_db_value(self):
+        # Create a group for testing
+        group = Group(name="group1")
+        group.save(self.samdb)
+        self.addCleanup(group.delete, self.samdb)
+
+        # Get raw value to compare against
+        group_rec = self.samdb.search(Group.get_base_dn(self.samdb),
+                                      scope=SCOPE_ONELEVEL,
+                                      expression="(name=group1)",
+                                      attrs=["objectSid"])[0]
+        raw_sid = group_rec["objectSid"]
+
+        return [
+            (raw_sid, group.object_sid),
+            (None, None),
+        ]
+
+
 class GUIDFieldTest(FieldTestMixin, SambaToolCmdTest):
     field = fields.GUIDField("FieldName")
 
@@ -272,6 +317,45 @@ class GUIDFieldTest(FieldTestMixin, SambaToolCmdTest):
             ),
             (None, None),
         ]
+
+
+class SDDLFieldTest(FieldTestMixin, SambaToolCmdTest):
+    field = fields.SDDLField("FieldName")
+
+    def setUp(self):
+        super().setUp()
+        self.domain_sid = security.dom_sid(self.samdb.get_domain_sid())
+
+    def encode(self, value):
+        return ndr_pack(security.descriptor.from_sddl(value, self.domain_sid))
+
+    @property
+    def to_db_value(self):
+        values = [
+            "O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AU)}))",
+            "O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))",
+            "O:SYG:SYD:(XA;OICI;CR;;;WD;((Member_of {SID(AO)}) || (Member_of {SID(BO)})))",
+            "O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(%s)}))" % self.domain_sid,
+        ]
+        expected = [
+            (value, MessageElement(self.encode(value))) for value in values
+        ]
+        expected.append((None, None))
+        return expected
+
+    @property
+    def from_db_value(self):
+        values = [
+            "O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AU)}))",
+            "O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))",
+            "O:SYG:SYD:(XA;OICI;CR;;;WD;((Member_of {SID(AO)}) || (Member_of {SID(BO)})))",
+            "O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(%s)}))" % self.domain_sid,
+        ]
+        expected = [
+            (MessageElement(self.encode(value)), value) for value in values
+        ]
+        expected.append((None, None))
+        return expected
 
 
 class PossibleClaimValuesFieldTest(FieldTestMixin, SambaToolCmdTest):

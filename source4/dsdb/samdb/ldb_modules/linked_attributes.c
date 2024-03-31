@@ -842,13 +842,15 @@ static int linked_attributes_fix_forward_link(struct ldb_module *module,
 	}
 
 	if (exact == NULL) {
-		ldb_asprintf_errstring(
-			ldb,
-			"parsed_dn_find could not find %s link for %s",
-			el->name,
-			ldb_dn_get_linearized(msg->dn));
+		/*
+		 * Our only caller doesn’t want to know about errors finding a
+		 * forward link for which we have a backlink — in particular,
+		 * during the tombstoning of an object, the forward links have
+		 * already been removed when this routine is called by
+		 * dsdb_module_rename() inside replmd_delete_internals().
+		 */
 		talloc_free(tmp_ctx);
-		return LDB_ERR_OPERATIONS_ERROR;
+		return LDB_SUCCESS;
 	}
 
 	is_plain_dn = strcmp(syntax_oid, LDB_SYNTAX_DN) == 0;
@@ -1098,6 +1100,10 @@ static int linked_attributes_fix_links(struct ldb_module *module,
 				self_guid,
 				target->syntax->ldap_oid);
 		}
+		if (ret != LDB_SUCCESS) {
+			talloc_free(tmp_ctx);
+			return ret;
+		}
 		ret = dsdb_check_single_valued_link(target, el2);
 		if (ret != LDB_SUCCESS) {
 			talloc_free(tmp_ctx);
@@ -1236,7 +1242,7 @@ static int la_mod_del_callback(struct ldb_request *req, struct ldb_reply *ares)
 	ac->op_controls = talloc_steal(ac, ares->controls);
 	ac->op_response = talloc_steal(ac, ares->response);
 
-	/* If we have modfies to make, this is the time to do them for modify and delete */
+	/* If we have modifies to make, this is the time to do them for modify and delete */
 	ret = la_queue_mod_request(ac);
 
 	if (ret != LDB_SUCCESS) {

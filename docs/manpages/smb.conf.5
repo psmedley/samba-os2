@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 02/19/2024
+.\"      Date: 03/27/2024
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.19.5
+.\"    Source: Samba 4.20.0
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "02/19/2024" "Samba 4\&.19\&.5" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "03/27/2024" "Samba 4\&.20\&.0" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -605,7 +605,7 @@ The options are:
 .PP
 case sensitive = yes/no/auto
 .RS 4
-controls whether filenames are case sensitive\&. If they aren\*(Aqt, Samba must do a filename search and match on passed names\&. The default setting of auto allows clients that support case sensitive filenames (Linux CIFSVFS and smbclient 3\&.0\&.5 and above currently) to tell the Samba server on a per\-packet basis that they wish to access the file system in a case\-sensitive manner (to support UNIX case sensitive semantics)\&. No Windows or DOS system supports case\-sensitive filename so setting this option to auto is that same as setting it to no for them\&. Default
+controls whether filenames are case sensitive\&. If they aren\*(Aqt, Samba must do a filename search and match on passed names\&. The default setting of auto allows clients that support case sensitive filenames (Linux CIFSVFS and smbclient 3\&.0\&.5 and above currently) to tell the Samba server on a per\-packet basis that they wish to access the file system in a case\-sensitive manner (to support UNIX case sensitive semantics)\&. No Windows or DOS system supports case\-sensitive filename so setting this option to auto is the same as setting it to no for them\&. Default
 \fIauto\fR\&.
 .RE
 .PP
@@ -813,6 +813,46 @@ Default:
 \fI\fIacl check permissions\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
+acl claims evaluation (G)
+.PP
+.RS 4
+This option controls the way Samba handles evaluation of security descriptors in Samba, with regards to Active Directory Claims\&. AD Claims, introduced with Windows 2012, are essentially administrator\-defined key\-value pairs that can be set both in Active Directory (communicated via the Kerberos PAC) and in the security descriptor themselves\&.
+.sp
+Active Directory claims are new with Samba 4\&.20\&. Because the claims are evaluated against a very flexible expression language within the security descriptor, this option provides a mechanism to disable this logic if required by the administrator\&.
+.sp
+This default behaviour is that claims evaluation is enabled in the AD DC only\&. Additionally, claims evaluation on the AD DC is only enabled if the DC functional level is 2012 or later\&. See
+\m[blue]\fBad dc functional level\fR\m[]\&.
+.sp
+Possible values are :
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBAD DC only\fR: Enabled for the Samba AD DC (for DC functional level 2012 or higher)\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBnever\fR: Disabled in all cases\&. This option disables some but not all of the Authentication Policies and Authentication Policy Silos features of the Windows 2012R2 functional level in the AD DC\&.
+.RE
+.sp
+.RE
+Default:
+\fI\fIacl claims evaluation\fR\fR\fI = \fR\fIAD DC only\fR\fI \fR
+.RE
+
 acl flag inherited canonicalization (S)
 .PP
 .RS 4
@@ -821,7 +861,7 @@ This option controls the way Samba handles client requests setting the Security 
 On the other hand when a Security Descriptor is explicitly set on a file, the DI flag is cleared, unless the flag "DACL Inheritance Required" (DR) is also set in the new Security Descriptor (fwiw, DR is never stored on disk)\&.
 .sp
 This is the default behaviour when this option is enabled (the default)\&. When setting this option to
-no, the resulting value of the DI flag on\-disk is directly taken from the DI value of the to\-be\-set Security Descriptor\&. This can be used so dump tools like rsync that copy data blobs from xattrs that represent ACLs created by the acl_xattr VFS module will result in copies of the ACL that are identical to the source\&. Without this option, the copied ACLs would all loose the DI flag if set on the source\&.
+no, the resulting value of the DI flag on\-disk is directly taken from the DI value of the to\-be\-set Security Descriptor\&. This can be used so dump tools like rsync that copy data blobs from xattrs that represent ACLs created by the acl_xattr VFS module will result in copies of the ACL that are identical to the source\&. Without this option, the copied ACLs would all lose the DI flag if set on the source\&.
 .sp
 Default:
 \fI\fIacl flag inherited canonicalization\fR\fR\fI = \fR\fIyes\fR\fI \fR
@@ -2810,7 +2850,7 @@ Possible option settings are:
 .IP \(bu 2.3
 .\}
 \fIrequired\fR
-\- Kerberos authentication will be required\&. There will be no falllback to NTLM or a different alternative\&.
+\- Kerberos authentication will be required\&. There will be no fallback to NTLM or a different alternative\&.
 .RE
 .sp
 .RS 4
@@ -9190,7 +9230,7 @@ will attempt to authenticate users using the NTLM encrypted password response fo
 .sp
 If disabled, both NTLM and LanMan authentication against the local passdb is disabled\&.
 .sp
-Note that these settings apply only to local users, authentication will still be forwarded to and NTLM authentication accepted against any domain we are joined to, and any trusted domain, even if disabled or if NTLMv2\-only is enforced here\&. To control NTLM authentiation for domain users, this must option must be configured on each DC\&.
+Note that these settings apply only to local users, authentication will still be forwarded to and NTLM authentication accepted against any domain we are joined to, and any trusted domain, even if disabled or if NTLMv2\-only is enforced here\&. To control NTLM authentication for domain users, this option must be configured on each DC\&.
 .sp
 By default with
 ntlm auth
@@ -9215,7 +9255,7 @@ The available settings are:
 (alias
 \fByes\fR) \- Allow NTLMv1 and above for all clients\&.
 .sp
-This is the required setting for to enable the
+This is the required setting to enable the
 \fIlanman auth\fR
 parameter\&.
 .RE
@@ -12349,10 +12389,204 @@ Default:
 \fI\fIsmb2 max write\fR\fR\fI = \fR\fI8388608\fR\fI \fR
 .RE
 
-smb3 unix extensions (G)
+smb3 share cap:CONTINUOUS AVAILABILITY (S)
 .PP
 .RS 4
-Incomplete SMB 3\&.11 Unix Extensions\&. This is only available if Samba is compiled in DEVELOPER mode\&.
+The SMB3 protocol introduced the SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY flag\&. It means clients can have different expectations from the server (or cluster of servers)\&.
+.sp
+Note: this option only applies to disk shares\&.
+.sp
+In a ctdb cluster shares are continuously available, but windows clients mix this with the global persistent handles support\&.
+.sp
+Persistent handles are requested if SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY is present even without SMB2_CAP_PERSISTENT_HANDLES\&.
+.sp
+And SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY is required for SMB2_SHARE_CAP_CLUSTER to have an effect\&.
+.sp
+So we better don\*(Aqt announce this by default until we support persistent handles\&.
+.sp
+The
+\m[blue]\fBsmb3 share cap:CONTINUOUS AVAILABILITY\fR\m[]
+option can be used to force the announcement of SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY\&.
+.sp
+Warning: only use this if you know what you are doing!
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	smb3 share cap:CONTINUOUS AVAILABILITY = yes
+	
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fINo default\fR
+.RE
+
+smb3 share cap:SCALE OUT (S)
+.PP
+.RS 4
+The SMB3 protocol introduced the SMB2_SHARE_CAP_SCALEOUT flag\&. It means clients can have different expectations from cluster of multiple servers and alters the retry/reconnect behavior\&.
+.sp
+Note: this option only applies to disk shares\&.
+.sp
+In a ctdb cluster we have multiple active nodes, so we announce SMB2_SHARE_CAP_SCALEOUT in a cluster\&.
+.sp
+The
+\m[blue]\fBsmb3 share cap:SCALE OUT\fR\m[]
+option can be used to disable the announcement of SMB2_SHARE_CAP_SCALEOUT, even if
+\m[blue]\fBclustering\fR\m[]
+is yes\&.
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	clustering = yes
+	smb3 share cap: SCALE OUT = no
+	
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fINo default\fR
+.RE
+
+smb3 share cap:CLUSTER (S)
+.PP
+.RS 4
+The SMB3 protocol introduced the SMB2_SHARE_CAP_CLUSTER flag\&. It means clients can expect that all cluster nodes provide a witness service in order to use the [MS\-SWN] protocol to monitor the server cluster\&.
+.sp
+Note: this option only applies to disk shares\&.
+.sp
+rpcd_witness is only active if
+\fBsamba-dcerpcd\fR(8)
+is not started as on demand helper and only in a ctdb cluster\&.
+.sp
+So we announce SMB2_SHARE_CAP_CLUSTER only if
+\m[blue]\fBclustering\fR\m[]
+is yes and
+\m[blue]\fBrpc start on demand helpers\fR\m[]
+is no\&.
+.sp
+The
+\m[blue]\fBsmb3 share cap:SCALE OUT\fR\m[]
+option can be used to control the announcement of SMB2_SHARE_CAP_CLUSTER independent of
+\m[blue]\fBclustering\fR\m[]
+and
+\m[blue]\fBrpc start on demand helpers\fR\m[]\&.
+.sp
+Example to disable the announcement of SMB2_SHARE_CAP_CLUSTER:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	clustering = yes
+	rpc start on demand helpers = no
+	smb3 share cap: CLUSTER = no
+	
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+Example to force the announcement of SMB2_SHARE_CAP_CLUSTER:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	smb3 share cap: CLUSTER = yes
+	
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+Example to let Windows clients use the witness service, see
+\m[blue]\fBsmb3 share cap:CONTINUOUS AVAILABILITY\fR\m[]
+option and USE AT YOUR OWN RISK!:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	clustering = yes
+	rpc start on demand helpers = no
+	# This is the default with the above:
+	# smb3 share cap: CLUSTER = yes
+	#
+	# Use at you own risk!
+	smb3 share cap: CONTINUOUS AVAILABILITY = yes
+	
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fINo default\fR
+.RE
+
+smb3 share cap:ASYMMETRIC (S)
+.PP
+.RS 4
+The SMB3_02 protocol introduced the SMB2_SHARE_CAP_ASYMMETRIC flag\&. It means clients alters its behavior and uses isolated transport connections and witness registrations for the share\&. It means a client may connect to different cluster nodes for individual shares and
+net witness share\-move
+can be used to control the node usage\&.
+.sp
+Note: this option only applies to disk shares\&.
+.sp
+Shares in a ctdb cluster are symmetric by design, so we don\*(Aqt announce SMB2_SHARE_CAP_ASYMMETRIC by default\&.
+.sp
+The
+\m[blue]\fBsmb3 share cap:ASYMMETRIC\fR\m[]
+option can be used to force the announcement of SMB2_SHARE_CAP_ASYMMETRIC\&.
+.sp
+Example to force the announcement of SMB2_SHARE_CAP_ASYMMETRIC:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	smb3 share cap: ASYMMETRIC = yes
+	
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+Example to let Windows clients use the witness service, see
+\m[blue]\fBsmb3 share cap:CONTINUOUS AVAILABILITY\fR\m[]
+option and USE AT YOUR OWN RISK!:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	clustering = yes
+	rpc start on demand helpers = no
+	# This is the default with the above:
+	# smb3 share cap: CLUSTER = yes
+	#
+	# Use at you own risk!
+	smb3 share cap: CONTINUOUS AVAILABILITY = yes
+	smb3 share cap: ASYMMETRIC = yes
+	
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fINo default\fR
+.RE
+
+smb3 unix extensions (S)
+.PP
+.RS 4
+Experimental SMB 3\&.1\&.1 Unix Extensions\&.
 .sp
 Default:
 \fI\fIsmb3 unix extensions\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -14061,7 +14295,7 @@ winbind max domain connections (G)
 .RS 4
 This parameter specifies the maximum number of simultaneous connections that the
 \fBwinbindd\fR(8)
-daemon should open to the domain controller of one domain\&. Setting this parameter to a value greater than 1 can improve scalability with many simultaneous winbind requests, some of which might be slow\&.
+daemon should open to the domain controller of one domain\&. Setting this parameter to a value greater than 1 can improve scalability with many simultaneous winbind requests, some of which might be slow\&. Changing this value requires a restart of winbindd\&.
 .sp
 Note that if
 \m[blue]\fBwinbind offline logon\fR\m[]
@@ -14591,6 +14825,62 @@ Default:
 \fI\fIwrite raw\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
+wsp property file (G)
+.PP
+.RS 4
+\m[blue]\fBwsp property file\fR\m[]
+parameter\&. This parameter specifies the file where additional WSP Windows Search Protocol properties are stored\&. The format of the file is a csv consisting of 10 comma separated columns\&. The first 3 columns are required, the other columns are desirable but not necessary\&.
+.PP
+Property Name
+.RS 4
+A property name e\&.g\&. System\&.ItemUrl\&.
+.RE
+.PP
+GUID
+.RS 4
+A guid that identifies the propertyset the property belongs to\&.
+.RE
+.PP
+prop ID
+.RS 4
+A number that together with the GUID uniquely identifies the property\&.
+.RE
+.PP
+inInverted Index
+.RS 4
+Set to TRUE is the property is indexed\&.
+.RE
+.PP
+isColumn
+.RS 4
+Set to TRUE if the property is one that can be returned in rows returned from WSP query\&.
+.RE
+.PP
+type
+.RS 4
+One of
+\fIBoolean\fR,\fIBuffer\fR,\fIByte\fR,\fIDateTime\fR,\fIDouble\fR,\fIInt32\fR,\fIString\fR,\fIUInt16\fR,\fIUInt32\fR,\fIUInt64\fR
+.RE
+.PP
+MaxSize
+.RS 4
+maximum size when stored\&.
+.RE
+.PP
+Vector Property
+.RS 4
+TRUE if this is a multivalue property\&.
+.RE
+.PP
+Description
+.RS 4
+Description of what the property is used for\&.
+.RE
+.sp
+Default:
+\fI\fIwsp property file\fR\fR\fI = \fR\fI\fR\fI \fR
+.RE
+
 wtmp directory (G)
 .PP
 .RS 4
@@ -14622,7 +14912,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.19\&.5 of the Samba suite\&.
+This man page is part of version 4\&.20\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

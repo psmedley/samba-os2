@@ -92,6 +92,16 @@ NTSTATUS dcesrv_fault_with_flags(struct dcesrv_call_state *call,
 	struct data_blob_list_item *rep;
 	NTSTATUS status;
 
+	if (call->conn->terminate != NULL) {
+		/*
+		 * If we're already disconnecting
+		 * we should just drop a possible
+		 * response
+		 */
+		talloc_free(call);
+		return NT_STATUS_OK;
+	}
+
 	/* setup a fault */
 	dcesrv_init_hdr(&pkt, lpcfg_rpc_big_endian(call->conn->dce_ctx->lp_ctx));
 	pkt.auth_length = 0;
@@ -149,10 +159,25 @@ _PUBLIC_ NTSTATUS dcesrv_reply(struct dcesrv_call_state *call)
 	struct dcesrv_auth *auth = call->auth_state;
 	size_t sig_size = 0;
 
-	/* call the reply function */
+	/*
+	 * call the reply function,
+	 * it's mostly for debug messages
+	 * and dcesrv_fault() also checks for
+	 * (call->conn->terminate != NULL) internally.
+	 */
 	status = context->iface->reply(call, call, call->r);
 	if (!NT_STATUS_IS_OK(status)) {
 		return dcesrv_fault(call, call->fault_code);
+	}
+
+	if (call->conn->terminate != NULL) {
+		/*
+		 * If we're already disconnecting
+		 * we should just drop a possible
+		 * response
+		 */
+		talloc_free(call);
+		return NT_STATUS_OK;
 	}
 
 	/* form the reply NDR */
@@ -166,6 +191,10 @@ _PUBLIC_ NTSTATUS dcesrv_reply(struct dcesrv_call_state *call)
 
 	if (lpcfg_rpc_big_endian(call->conn->dce_ctx->lp_ctx)) {
 		push->flags |= LIBNDR_FLAG_BIGENDIAN;
+	}
+
+	if (context->ndr64) {
+		push->flags |= LIBNDR_FLAG_NDR64;
 	}
 
 	status = context->iface->ndr_push(call, call, push, call->r);
@@ -262,4 +291,19 @@ _PUBLIC_ NTSTATUS dcesrv_reply(struct dcesrv_call_state *call)
 	}
 
 	return NT_STATUS_OK;
+}
+
+_PUBLIC_ void _dcesrv_async_reply(struct dcesrv_call_state *call,
+				  const char *func,
+				  const char *location)
+{
+	struct dcesrv_connection *conn = call->conn;
+	NTSTATUS status;
+
+	status = dcesrv_reply(call);
+	if (!NT_STATUS_IS_OK(status)) {
+		D_ERR("%s: %s: dcesrv_async_reply() failed - %s\n",
+		      func, location, nt_errstr(status));
+		dcesrv_terminate_connection(conn, nt_errstr(status));
+	}
 }

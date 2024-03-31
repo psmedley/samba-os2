@@ -2,10 +2,16 @@
 
 
 bld.SAMBA_LIBRARY('samba-security',
-                  source='dom_sid.c display_sec.c secace.c secacl.c security_descriptor.c sddl.c privileges.c security_token.c access_check.c object_tree.c create_descriptor.c util_sid.c session.c secdesc.c',
+                  source=['dom_sid.c',
+                          'display_sec.c', 'secace.c', 'secacl.c',
+                          'security_descriptor.c', 'sddl.c', 'privileges.c',
+                          'security_token.c', 'access_check.c',
+                          'object_tree.c', 'create_descriptor.c',
+                          'util_sid.c', 'session.c', 'secdesc.c',
+                          'conditional_ace.c', 'sddl_conditional_ace.c',
+                          'claims-conversions.c'],
                   private_library=True,
-                  deps='talloc ndr NDR_SECURITY'
-                  )
+                  deps='stable_sort talloc ndr NDR_SECURITY NDR_CONDITIONAL_ACE')
 
 pytalloc_util = bld.pyembed_libname('pytalloc-util')
 bld.SAMBA_PYTHON('pysecurity',
@@ -13,3 +19,46 @@ bld.SAMBA_PYTHON('pysecurity',
                  deps='samba-security %s' % pytalloc_util,
                  realname='samba/security.so'
                  )
+
+bld.SAMBA_BINARY(
+    'test_sddl_conditional_ace',
+    source='tests/test_sddl_conditional_ace.c',
+    deps='''
+        cmocka
+        talloc
+        samba-util
+        asn1util
+        NDR_SECURITY
+        samba-security
+    ''',
+    for_selftest=True
+)
+
+bld.SAMBA_BINARY(
+    'test_run_conditional_ace',
+    source='tests/test_run_conditional_ace.c',
+    deps='''
+        cmocka
+        talloc
+        samba-util
+        asn1util
+        NDR_SECURITY
+        samba-security
+    ''',
+    for_selftest=True
+)
+
+bld.SAMBA_BINARY(
+    'test_claim_conversion',
+    source='tests/test_claim_conversion.c',
+    deps='''
+        cmocka
+        talloc
+        samba-util
+        asn1util
+        NDR_SECURITY
+        NDR_CLAIMS
+        samba-security
+    ''',
+    for_selftest=True
+)

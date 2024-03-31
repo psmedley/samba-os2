@@ -1642,7 +1642,7 @@ static int replmd_update_rpmd_element(struct ldb_context *ldb,
 	 * we have the provision control or if the attribute is
 	 * interSiteTopologyGenerator as this page explain:
 	 * http://support.microsoft.com/kb/224815 this attribute is
-	 * periodicaly written by the DC responsible for the intersite
+	 * periodically written by the DC responsible for the intersite
 	 * generation in a given site
 	 *
 	 * Unchanged could be deleting or replacing an already-gone
@@ -1939,7 +1939,7 @@ static int replmd_update_rpmd(struct ldb_module *module,
 	if (rmd_is_provided) {
 		/* In this case the change_replmetadata control was supplied */
 		/* We check that it's the only attribute that is provided
-		 * (it's a rare case so it's better to keep the code simplier)
+		 * (it's a rare case so it's better to keep the code simpler)
 		 * We also check that the highest local_usn is bigger or the same as
 		 * uSNChanged. */
 		uint64_t db_seq;
@@ -3516,11 +3516,14 @@ static int replmd_modify_handle_linked_attribs(struct ldb_module *module,
 		if (old_el) {
 			ldb_msg_remove_attr(old_msg, el->name);
 		}
-		ldb_msg_add_empty(old_msg, el->name, 0, &new_el);
+		ret = ldb_msg_add_empty(old_msg, el->name, 0, &new_el);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
 		new_el->num_values = el->num_values;
 		new_el->values = talloc_steal(msg->elements, el->values);
 
-		/* TODO: this relises a bit too heavily on the exact
+		/* TODO: this relies a bit too heavily on the exact
 		   behaviour of ldb_msg_find_element and
 		   ldb_msg_remove_element */
 		old_el = ldb_msg_find_element(msg, el->name);
@@ -3919,7 +3922,7 @@ static int replmd_rename(struct ldb_module *module, struct ldb_request *req)
 	return ldb_next_request(module, down_req);
 }
 
-/* After the rename is compleated, update the whenchanged etc */
+/* After the rename is completed, update the whenchanged etc */
 static int replmd_rename_callback(struct ldb_request *req, struct ldb_reply *ares)
 {
 	struct ldb_context *ldb;
@@ -4186,7 +4189,7 @@ static int replmd_delete_remove_link(struct ldb_module *module,
 
 		if (ret == LDB_ERR_NO_SUCH_OBJECT) {
 			DBG_WARNING("Failed to find forward link object %s "
-				    "to remove backlink %s on %s",
+				    "to remove backlink %s on %s\n",
 				    ldb_dn_get_linearized(msg->dn),
 				    sa->lDAPDisplayName,
 				    ldb_dn_get_linearized(dn));
@@ -4204,7 +4207,7 @@ static int replmd_delete_remove_link(struct ldb_module *module,
 					       target_attr->lDAPDisplayName);
 		if (link_el == NULL) {
 			DBG_WARNING("Failed to find forward link on %s "
-				    "as %s to remove backlink %s on %s",
+				    "as %s to remove backlink %s on %s\n",
 				    ldb_dn_get_linearized(msg->dn),
 				    target_attr->lDAPDisplayName,
 				    sa->lDAPDisplayName,
@@ -4241,7 +4244,7 @@ static int replmd_delete_remove_link(struct ldb_module *module,
 
 		if (p == NULL) {
 			DBG_WARNING("Failed to find forward link on %s "
-				    "as %s to remove backlink %s on %s",
+				    "as %s to remove backlink %s on %s\n",
 				    ldb_dn_get_linearized(msg->dn),
 				    target_attr->lDAPDisplayName,
 				    sa->lDAPDisplayName,
@@ -4368,7 +4371,7 @@ static int replmd_delete_internals(struct ldb_module *module, struct ldb_request
 		 *
 		 * In case you missed the note at the top, this list is kept
 		 * in case-insensitive sorted order. In the unlikely event you
-		 * need to add an attrbute, please add it in the RIGHT PLACE.
+		 * need to add an attribute, please add it in the RIGHT PLACE.
 		 */
 	};
 	static const char * const all_attrs[] = {
@@ -4922,14 +4925,14 @@ static int replmd_delete_internals(struct ldb_module *module, struct ldb_request
 			   ldb_dn_get_linearized(new_dn)) != 0) {
 			DBG_NOTICE("Failure to handle '%s' of object %s "
 				   "after successful rename to %s.  "
-				   "Error during tombstone modificaton was: %s\n",
+				   "Error during tombstone modification was: %s\n",
 				   re_delete ? "re-delete" : "delete",
 				   ldb_dn_get_linearized(new_dn),
 				   ldb_dn_get_linearized(old_dn),
 				   ldb_errstring(ldb));
 		} else {
 			DBG_NOTICE("Failure to handle '%s' of object %s. "
-				   "Error during tombstone modificaton was: %s\n",
+				   "Error during tombstone modification was: %s\n",
 				   re_delete ? "re-delete" : "delete",
 				   ldb_dn_get_linearized(new_dn),
 				   ldb_errstring(ldb));
@@ -5270,7 +5273,7 @@ static int replmd_name_modify(struct replmd_replicated_request *ar,
 				 DSDB_FLAG_OWN_MODULE|DSDB_FLAG_REPLICATED_UPDATE,
 				 req);
 	if (ret != LDB_SUCCESS) {
-		DEBUG(0,(__location__ ": Failed to modify rDN/name of DN being DRS renamed '%s' - %s",
+		DEBUG(0,(__location__ ": Failed to modify rDN/name of DN being DRS renamed '%s' - %s\n",
 			 ldb_dn_get_linearized(dn),
 			 ldb_errstring(ldb_module_get_ctx(ar->module))));
 		return ret;
@@ -5282,7 +5285,7 @@ static int replmd_name_modify(struct replmd_replicated_request *ar,
 
 failed:
 	talloc_free(msg);
-	DEBUG(0,(__location__ ": Failed to setup modify rDN/name of DN being DRS renamed '%s'",
+	DEBUG(0,(__location__ ": Failed to setup modify rDN/name of DN being DRS renamed '%s'\n",
 		 ldb_dn_get_linearized(dn)));
 	return LDB_ERR_OPERATIONS_ERROR;
 }
@@ -5345,7 +5348,7 @@ static int replmd_op_name_modify_callback(struct ldb_request *req, struct ldb_re
 
 		ret = dsdb_module_modify(ar->module, msg, DSDB_FLAG_OWN_MODULE, req);
 		if (ret != LDB_SUCCESS) {
-			DEBUG(0,(__location__ ": Failed to modify lastKnownParent of lostAndFound DN '%s' - %s",
+			DEBUG(0,(__location__ ": Failed to modify lastKnownParent of lostAndFound DN '%s' - %s\n",
 				 ldb_dn_get_linearized(msg->dn),
 				 ldb_errstring(ldb_module_get_ctx(ar->module))));
 			return ret;
@@ -5800,12 +5803,12 @@ static int replmd_replicated_apply_add(struct replmd_replicated_request *ar)
 
 	if (!remote_isDeleted) {
 		/*
-		 * Ensure any local ACL inheritence is applied from
+		 * Ensure any local ACL inheritance is applied from
 		 * the parent object.
 		 *
 		 * This is needed because descriptor is above
 		 * repl_meta_data in the module stack, so this will
-		 * not be trigered 'naturally' by the flow of
+		 * not be triggered 'naturally' by the flow of
 		 * operations.
 		 */
 		ret = dsdb_module_schedule_sd_propagation(ar->module,
@@ -6514,7 +6517,7 @@ static int replmd_replicated_apply_merge(struct replmd_replicated_request *ar)
 		 *
 		 * This is needed because descriptor is above
 		 * repl_meta_data in the module stack, so this will
-		 * not be trigered 'naturally' by the flow of
+		 * not be triggered 'naturally' by the flow of
 		 * operations.
 		 */
 		ret = dsdb_module_schedule_sd_propagation(ar->module,
@@ -6537,7 +6540,7 @@ static int replmd_replicated_apply_merge(struct replmd_replicated_request *ar)
 		 *
 		 * This is needed because descriptor is above
 		 * repl_meta_data in the module stack, so this will
-		 * not be trigered 'naturally' by the flow of
+		 * not be triggered 'naturally' by the flow of
 		 * operations.
 		 */
 		ret = dsdb_module_schedule_sd_propagation(ar->module,
@@ -7426,7 +7429,7 @@ static int replmd_replicated_uptodate_modify(struct replmd_replicated_request *a
 		char *s = ldb_ldif_message_redacted_string(ldb, ar,
 							   LDB_CHANGETYPE_MODIFY,
 							   msg);
-		DEBUG(4, ("DRS replication uptodate modify message:\n%s\n", s));
+		DEBUG(4, ("DRS replication up-to-date modify message:\n%s\n", s));
 		talloc_free(s);
 	}
 
@@ -7901,7 +7904,7 @@ linked_attributes[0]:
 	 * 'CN=g1_1527570609273,CN=Users,DC=samba,DC=example,DC=com':
 	 * 0x0'
 	 *
-	 * This is becaue isDeleted is a Boolean, so FALSE is a
+	 * This is because isDeleted is a Boolean, so FALSE is a
 	 * legitimate value (set by Samba's deletetest.py)
 	 */
 	attrs[0] = attr->lDAPDisplayName;
@@ -8551,7 +8554,7 @@ static int replmd_process_la_group(struct ldb_module *module,
 	 * 'CN=g1_1527570609273,CN=Users,DC=samba,DC=example,DC=com':
 	 * 0x0'
 	 *
-	 * This is becaue isDeleted is a Boolean, so FALSE is a
+	 * This is because isDeleted is a Boolean, so FALSE is a
 	 * legitimate value (set by Samba's deletetest.py)
 	 */
 	ldb_msg_remove_attr(msg, "isDeleted");

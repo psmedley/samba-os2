@@ -208,15 +208,8 @@ class DeviceTests(KDCBaseTest):
                 (security.DOMAIN_RID_USERS, SidType.BASE_SID, default_attrs),
                 (security.DOMAIN_RID_USERS, SidType.PRIMARY_GID, None),
                 (asserted_identity, SidType.EXTRA_SID, default_attrs),
-                (compounded_auth, SidType.EXTRA_SID, default_attrs),
+                # The Compounded Authentication SID should not be present.
                 (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
-            },
-            # The device info is still generated.
-            'tgs:device:expected': {
-                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.BASE_SID, default_attrs),
-                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.PRIMARY_GID, None),
-                (asserted_identity, SidType.EXTRA_SID, default_attrs),
-                frozenset([(security.SID_CLAIMS_VALID, SidType.RESOURCE_SID, default_attrs)]),
             },
         },
         {
@@ -1781,6 +1774,106 @@ class DeviceTests(KDCBaseTest):
                 # SIDs removed, and our elevation of privilege attack foiled.
             },
         },
+        {
+            'test': 'rodc-issued without claims valid',
+            'as:expected': {
+                (security.DOMAIN_RID_USERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_USERS, SidType.PRIMARY_GID, None),
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
+            },
+            'tgs:mach:sids': {
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.PRIMARY_GID, None),
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                # The Claims Valid SID is missing.
+            },
+            # The armor ticket was issued by an RODC.
+            'tgs:mach:from_rodc': True,
+            'tgs:to_krbtgt': False,
+            'tgs:compression': True,
+            'tgs:expected': {
+                (security.DOMAIN_RID_USERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_USERS, SidType.PRIMARY_GID, None),
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                (compounded_auth, SidType.EXTRA_SID, default_attrs),
+                (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
+            },
+            'tgs:device:expected': {
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.PRIMARY_GID, None),
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                # The Claims Valid SID is still added to the device info.
+                frozenset([(security.SID_CLAIMS_VALID, SidType.RESOURCE_SID, default_attrs)]),
+            },
+        },
+        {
+            'test': 'rodc-issued without asserted identity',
+            'as:expected': {
+                (security.DOMAIN_RID_USERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_USERS, SidType.PRIMARY_GID, None),
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
+            },
+            'tgs:mach:sids': {
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.PRIMARY_GID, None),
+                # The Asserted Identity SID is missing.
+                (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
+            },
+            # The armor ticket was issued by an RODC.
+            'tgs:mach:from_rodc': True,
+            'tgs:to_krbtgt': False,
+            'tgs:compression': True,
+            'tgs:expected': {
+                (security.DOMAIN_RID_USERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_USERS, SidType.PRIMARY_GID, None),
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                (compounded_auth, SidType.EXTRA_SID, default_attrs),
+                (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
+            },
+            'tgs:device:expected': {
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.PRIMARY_GID, None),
+                # The Asserted Identity SID is not added to the device info.
+                frozenset([(security.SID_CLAIMS_VALID, SidType.RESOURCE_SID, default_attrs)]),
+            },
+        },
+        {
+            'test': 'rodc-issued asserted identity without attributes',
+            'as:expected': {
+                (security.DOMAIN_RID_USERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_USERS, SidType.PRIMARY_GID, None),
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
+            },
+            'tgs:mach:sids': {
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.PRIMARY_GID, None),
+                # The Asserted Identity SID has no attributes set.
+                (asserted_identity, SidType.EXTRA_SID, 0),
+                (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
+            },
+            # The armor ticket was issued by an RODC.
+            'tgs:mach:from_rodc': True,
+            'tgs:to_krbtgt': False,
+            'tgs:compression': True,
+            'tgs:expected': {
+                (security.DOMAIN_RID_USERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_USERS, SidType.PRIMARY_GID, None),
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                (compounded_auth, SidType.EXTRA_SID, default_attrs),
+                (security.SID_CLAIMS_VALID, SidType.EXTRA_SID, default_attrs),
+            },
+            'tgs:device:expected': {
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.BASE_SID, default_attrs),
+                (security.DOMAIN_RID_DOMAIN_MEMBERS, SidType.PRIMARY_GID, None),
+                # The Asserted Identity SID appears in the device info with its
+                # attributes as normal.
+                (asserted_identity, SidType.EXTRA_SID, default_attrs),
+                frozenset([(security.SID_CLAIMS_VALID, SidType.RESOURCE_SID, default_attrs)]),
+            },
+        },
     ]
 
     @classmethod
@@ -1795,9 +1888,9 @@ class DeviceTests(KDCBaseTest):
                 # be skipped.
                 continue
             name = case.pop('test')
+            name = re.sub(r'\W+', '_', name)
             if FILTER and not re.search(FILTER, name):
                 continue
-            name = re.sub(r'\W+', '_', name)
 
             cls.generate_dynamic_test('test_device_info', name,
                                       dict(case))
@@ -1827,7 +1920,7 @@ class DeviceTests(KDCBaseTest):
         tgs_mach_from_rodc = case.pop('tgs:mach:from_rodc', None)
 
         # Optional groups which the machine is added to or removed from prior
-        # to a TGS-REQ , to test how the groups in the device PAC are expanded.
+        # to a TGS-REQ, to test how the groups in the device PAC are expanded.
         tgs_mach_added = case.pop('tgs:mach:added', None)
         tgs_mach_removed = case.pop('tgs:mach:removed', None)
 
@@ -2100,9 +2193,7 @@ class DeviceTests(KDCBaseTest):
             expected_supported_etypes=target_supported_etypes,
             expect_resource_groups_flag=expect_resource_groups_flag,
             expected_groups=tgs_expected_mapped,
-            unexpected_groups=None,
-            expect_device_claims=None,
-            expect_device_info=not tgs_to_krbtgt,
+            expect_device_info=bool(tgs_compound_id),
             expected_device_groups=tgs_device_expected_mapped)
 
         rep = self._generic_kdc_exchange(kdc_exchange_dict,

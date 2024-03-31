@@ -782,7 +782,7 @@ static NTSTATUS dreplsrv_op_pull_retry_with_flags(struct tevent_req *req,
 
 	/*
 	 * Check if we failed to apply the records due to a missing parent or
-	 * target object. If so, try again and ask for any mising parent/target
+	 * target object. If so, try again and ask for any missing parent/target
 	 * objects to be included this time.
 	 */
 	if (W_ERROR_EQUAL(error_code, WERR_DS_DRA_RECYCLED_TARGET)) {
@@ -1069,7 +1069,7 @@ static void dreplsrv_op_pull_source_apply_changes_trigger(struct tevent_req *req
 		 * We don't want to re-do the remote exop,
 		 * unless it was REPL_SECRET so we set the
 		 * fallback operation to just be a fetch of
-		 * the relevent partition.
+		 * the relevant partition.
 		 */
 
 
@@ -1088,7 +1088,7 @@ static void dreplsrv_op_pull_source_apply_changes_trigger(struct tevent_req *req
 								ldb_dn_get_linearized(nc_root),
 								&p);
 			if (!W_ERROR_IS_OK(status)) {
-				DEBUG(2, ("Failed to find requested Naming Context for %s: %s",
+				DEBUG(2, ("Failed to find requested Naming Context for %s: %s\n",
 					  ldb_dn_get_linearized(nc_root),
 					  win_errstr(status)));
 				nt_status = werror_to_ntstatus(status);
@@ -1101,7 +1101,7 @@ static void dreplsrv_op_pull_source_apply_changes_trigger(struct tevent_req *req
 
 			if (!W_ERROR_IS_OK(status)) {
 				struct GUID_txt_buf str;
-				DEBUG(2, ("Failed to find requested source DSA for %s and %s: %s",
+				DEBUG(2, ("Failed to find requested source DSA for %s and %s: %s\n",
 					  ldb_dn_get_linearized(nc_root),
 					  GUID_buf_string(&state->op->source_dsa->repsFrom1->source_dsa_obj_guid, &str),
 					  win_errstr(status)));
@@ -1117,7 +1117,7 @@ static void dreplsrv_op_pull_source_apply_changes_trigger(struct tevent_req *req
 							ldb_dn_get_linearized(schema_dn),
 							&p);
 		if (!W_ERROR_IS_OK(status)) {
-			DEBUG(2, ("Failed to find requested Naming Context for schema: %s",
+			DEBUG(2, ("Failed to find requested Naming Context for schema: %s\n",
 				  win_errstr(status)));
 			nt_status = werror_to_ntstatus(status);
 			tevent_req_nterror(req, nt_status);
@@ -1129,7 +1129,7 @@ static void dreplsrv_op_pull_source_apply_changes_trigger(struct tevent_req *req
 							       &state->op->source_dsa);
 		if (!W_ERROR_IS_OK(status)) {
 			struct GUID_txt_buf str;
-			DEBUG(2, ("Failed to find requested source DSA for %s and %s: %s",
+			DEBUG(2, ("Failed to find requested source DSA for %s and %s: %s\n",
 				  ldb_dn_get_linearized(schema_dn),
 				  GUID_buf_string(&state->op->source_dsa->repsFrom1->source_dsa_obj_guid, &str),
 				  win_errstr(status)));
@@ -1322,7 +1322,7 @@ static void dreplsrv_update_refs_done(struct tevent_req *subreq)
 		 * will reply us a WERR_DS_DRA_BUSY, this error will cause us to
 		 * answer to the DsReplicaSync with a non OK status, the other DC
 		 * will stop the demote due to this error.
-		 * In order to cope with this we will for the moment concider
+		 * In order to cope with this we will for the moment consider
 		 * a DS_DRA_BUSY not as an error.
 		 * It's not ideal but it should not have a too huge impact for
 		 * running production as this error otherwise never happen and

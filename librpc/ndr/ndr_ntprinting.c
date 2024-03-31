@@ -22,9 +22,9 @@
 #include "includes.h"
 #include "../librpc/gen_ndr/ndr_ntprinting.h"
 
-_PUBLIC_ uint32_t ndr_ntprinting_string_flags(uint32_t string_flags)
+_PUBLIC_ libndr_flags ndr_ntprinting_string_flags(libndr_flags string_flags)
 {
-	uint32_t flags = LIBNDR_FLAG_STR_NULLTERM;
+	libndr_flags flags = LIBNDR_FLAG_STR_NULLTERM;
 
 	if (string_flags & LIBNDR_FLAG_STR_ASCII) {
 		flags |= LIBNDR_FLAG_STR_ASCII;
@@ -37,12 +37,12 @@ _PUBLIC_ uint32_t ndr_ntprinting_string_flags(uint32_t string_flags)
 	return flags;
 }
 
-_PUBLIC_ enum ndr_err_code ndr_pull_ntprinting_printer(struct ndr_pull *ndr, int ndr_flags, struct ntprinting_printer *r)
+_PUBLIC_ enum ndr_err_code ndr_pull_ntprinting_printer(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct ntprinting_printer *r)
 {
 	uint32_t _ptr_devmode;
 	TALLOC_CTX *_mem_save_devmode_0;
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_FLAG_NOALIGN);
 		if (ndr_flags & NDR_SCALARS) {
 			NDR_CHECK(ndr_pull_align(ndr, 5));

@@ -77,13 +77,13 @@ class TestProtocolClient(unittest.TestResult):
 
     def startTest(self, test):
         """Mark a test as starting its test run."""
-        super(TestProtocolClient, self).startTest(test)
+        super().startTest(test)
         self._stream.write("test: " + test.id() + "\n")
         self._stream.flush()
 
     def stopTest(self, test):
         """Mark a test as having finished its test run."""
-        super(TestProtocolClient, self).stopTest(test)
+        super().stopTest(test)
         self.writeOutcome(test)
 
     def writeOutcome(self, test):
@@ -160,7 +160,7 @@ class TestProtocolClient(unittest.TestResult):
     def time(self, a_datetime):
         """Inform the client of the time.
 
-        ":param datetime: A datetime.datetime object.
+        ":param a_datetime: A datetime.datetime object.
         """
         time = a_datetime.astimezone(datetime.timezone.utc)
         self._stream.write("time: %04d-%02d-%02d %02d:%02d:%02d.%06dZ\n" % (
@@ -359,7 +359,7 @@ class HookedTestResultDecorator(TestResultDecorator):
     """A TestResult which calls a hook on every event."""
 
     def __init__(self, decorated):
-        self.super = super(HookedTestResultDecorator, self)
+        self.super = super()
         self.super.__init__(decorated)
 
     def startTest(self, test):
@@ -430,13 +430,13 @@ class AutoTimingTestResultDecorator(HookedTestResultDecorator):
 
     def __init__(self, decorated):
         self._time = None
-        super(AutoTimingTestResultDecorator, self).__init__(decorated)
+        super().__init__(decorated)
 
     def _before_event(self):
         time = self._time
         if time is not None:
             return
-        time = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+        time = datetime.datetime.now(tz=datetime.timezone.utc)
         self.decorated.time(time)
 
     @property
@@ -598,11 +598,11 @@ class TestProgram(object):
         parser.prog = self.progName
         parser.add_option('-v', '--verbose', dest='verbose', default=False,
                           help='Verbose output', action='store_true')
-        if self.catchbreak != False:
+        if self.catchbreak is not False:
             parser.add_option('-c', '--catch', dest='catchbreak', default=False,
                               help='Catch ctrl-C and display results so far',
                               action='store_true')
-        if self.buffer != False:
+        if self.buffer is not False:
             parser.add_option('-b', '--buffer', dest='buffer', default=False,
                               help='Buffer stdout and stderr during tests',
                               action='store_true')
@@ -666,9 +666,9 @@ class TestProgram(object):
             print (msg)
         usage = {'progName': self.progName, 'catchbreak': '',
                  'buffer': ''}
-        if self.catchbreak != False:
+        if self.catchbreak is not False:
             usage['catchbreak'] = CATCHBREAK
-        if self.buffer != False:
+        if self.buffer is not False:
             usage['buffer'] = BUFFEROUTPUT
         usage_text = self.USAGE % usage
         usage_lines = usage_text.split('\n')

@@ -146,7 +146,7 @@ class RawDCERPCTest(TestCase):
         return
 
     def setUp(self):
-        super(RawDCERPCTest, self).setUp()
+        super().setUp()
         self.do_ndr_print = False
         self.do_hexdump = False
 
@@ -170,7 +170,7 @@ class RawDCERPCTest(TestCase):
 
     def tearDown(self):
         self._disconnect("tearDown")
-        super(TestCase, self).tearDown()
+        super().tearDown()
 
     def noop(self):
         return

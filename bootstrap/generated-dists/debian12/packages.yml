@@ -10,6 +10,7 @@ packages:
   - build-essential
   - ccache
   - chrpath
+  - codespell
   - curl
   - debhelper
   - dnsutils
@@ -46,7 +47,6 @@ packages:
   - libicu-dev
   - libjansson-dev
   - libjs-jquery
-  - libjson-perl
   - libkeyutils-dev
   - libkrb5-dev
   - libldap2-dev
@@ -89,6 +89,8 @@ packages:
   - rng-tools
   - rsync
   - sed
+  - shellcheck
+  - shfmt
   - sudo
   - tar
   - tree

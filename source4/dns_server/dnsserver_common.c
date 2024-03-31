@@ -125,7 +125,7 @@ WERROR dns_common_extract(struct ldb_context *samdb,
 
 		ret = samdb_dns_host_name(samdb, &dnsHostName);
 		if (ret != LDB_SUCCESS || dnsHostName == NULL) {
-			DEBUG(0, ("Failed to get dnsHostName from rootDSE"));
+			DEBUG(0, ("Failed to get dnsHostName from rootDSE\n"));
 			return DNS_ERR(SERVER_FAILURE);
 		}
 
@@ -912,7 +912,7 @@ WERROR dns_get_zone_properties(struct ldb_context *samdb,
 			/*
 			 * If we can't pull it, then there is no valid
 			 * data to load into the zone, so ignore this
-			 * as Micosoft does.  Windows can load an
+			 * as Microsoft does.  Windows can load an
 			 * invalid property with a zero length into
 			 * the dnsProperty attribute.
 			 */
@@ -1034,6 +1034,11 @@ WERROR dns_common_replace(struct ldb_context *samdb,
 			 * record.
 			 */
 			if (records[i].data.EntombedTime != 0) {
+				if (rec_count != 1) {
+					DBG_ERR("tombstone record has %u neighbour "
+						"records.\n",
+						rec_count - 1);
+				}
 				was_tombstoned = true;
 			}
 			continue;
@@ -1543,7 +1548,7 @@ bool samba_dns_name_equal(const char *name1, const char *name2)
  * This becomes (NTTIME)-1ULL a.k.a. UINT64_MAX, 0xffffffffffffffff thence
  * 512409557 in hours since 1601. That in turn is 0xfffffffaf2028800 or
  * 18446744052000000000 in NTTIME (rounded to the hour), which might be
- * presented as -21709551616 or -0x50dfd7800, because NTITME is not completely
+ * presented as -21709551616 or -0x50dfd7800, because NTTIME is not completely
  * dedicated to being unsigned. If it gets shown as a year, it will be around
  * 60055.
  *

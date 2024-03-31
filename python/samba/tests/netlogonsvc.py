@@ -18,7 +18,6 @@
 from samba.tests import TestCase
 import os
 
-import samba
 from samba.credentials import Credentials
 from samba.dcerpc import netlogon
 from samba import NTSTATUSError, ntstatus
@@ -32,7 +31,7 @@ Tests whether the netlogon service is running
 class NetlogonServiceTests(TestCase):
 
     def setUp(self):
-        super(NetlogonServiceTests, self).setUp()
+        super().setUp()
 
         self.server      = os.environ["SERVER"]
         self.lp          = self.get_loadparm()
@@ -47,9 +46,6 @@ class NetlogonServiceTests(TestCase):
             self.creds.set_password(os.environ["PASSWORD"])
 
         self.creds.guess(self.lp)
-
-    def tearDown(self):
-        super(NetlogonServiceTests, self).tearDown()
 
     def test_have_netlogon_connection(self):
         try:

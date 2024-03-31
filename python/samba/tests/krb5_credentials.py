@@ -26,7 +26,7 @@ from samba.credentials import (
 from samba.dsdb import (
     UF_WORKSTATION_TRUST_ACCOUNT,
     UF_PASSWD_NOTREQD,
-    UF_NORMAL_ACCOUNT)
+)
 from samba.samdb import SamDB
 
 """KRB5 Integration tests for pycredentials.
@@ -43,7 +43,7 @@ MACHINE_NAME = "krb5credstest"
 class PyKrb5CredentialsTests(TestCase):
 
     def setUp(self):
-        super(PyKrb5CredentialsTests, self).setUp()
+        super().setUp()
 
         self.server      = os.environ["SERVER"]
         self.domain      = os.environ["DOMAIN"]
@@ -61,7 +61,7 @@ class PyKrb5CredentialsTests(TestCase):
         self.create_machine_account()
 
     def tearDown(self):
-        super(PyKrb5CredentialsTests, self).tearDown()
+        super().tearDown()
         delete_force(self.ldb, self.machine_dn)
 
     def test_get_named_ccache(self):

@@ -16,18 +16,17 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import ldb
+import optparse
 import sys
+
+import ldb
 import samba.getopt as options
-from samba.auth import system_session
-from samba.samdb import SamDB
-from samba.netcmd import (
-    Command,
-    CommandError,
-    Option
-)
-from samba.dbchecker import dbcheck
 from samba import colour
+from samba.auth import system_session
+from samba.dbchecker import dbcheck
+from samba.samdb import SamDB
+
+from . import Command, CommandError, Option
 
 
 class cmd_dbcheck(Command):
@@ -86,7 +85,7 @@ class cmd_dbcheck(Command):
                type=str, metavar="URL", dest="H"),
         Option("--selftest-check-expired-tombstones",
                dest="selftest_check_expired_tombstones", default=False, action="store_true",
-               help=Option.SUPPRESS_HELP), # This is only used by tests
+               help=optparse.SUPPRESS_HELP),  # This is only used by tests
     ]
 
     def run(self, DN=None, H=None, verbose=False, fix=False, yes=False,

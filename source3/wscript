@@ -100,6 +100,7 @@ def options(opt):
 
     # default = None means autodetection
     opt.samba_add_onoff_option('spotlight', with_name="enable", without_name="disable", default=None)
+    opt.samba_add_onoff_option('wsp', with_name="enable", without_name="disable", default=True)
 
 def configure(conf):
     default_static_modules = []
@@ -107,11 +108,6 @@ def configure(conf):
     required_static_modules = []
     forced_static_modules = []
     forced_shared_modules = []
-
-    if Options.options.developer:
-        conf.ADD_CFLAGS('-DDEVELOPER -DDEBUG_PASSWORD')
-        conf.env.developer = True
-        conf.DEFINE('HAVE_SMB3_UNIX_EXTENSIONS', '1')
 
     if sys.platform != 'openbsd5':
         conf.ADD_LDFLAGS("-Wl,--export-dynamic", testflags=True)
@@ -809,7 +805,7 @@ msg.msg_accrightslen = sizeof(fd);
     if Options.options.with_utmp:
         conf.env.with_utmp = True
         if not conf.CHECK_HEADERS('utmp.h'): conf.env.with_utmp = False
-        conf.CHECK_FUNCS('pututline pututxline updwtmp updwtmpx getutmpx getutxent')
+        conf.CHECK_FUNCS('pututline pututxline updwtmp updwtmpx getutmpx')
         conf.CHECK_STRUCTURE_MEMBER('struct utmp', 'ut_name', headers='utmp.h',
                                     define='HAVE_UT_UT_NAME')
         conf.CHECK_STRUCTURE_MEMBER('struct utmp', 'ut_user', headers='utmp.h',
@@ -1684,6 +1680,20 @@ int main(void) {
             conf.DEFINE('HAVE_CEPH', '1')
             conf.CHECK_FUNCS_IN('ceph_select_filesystem', 'cephfs',
                                 headers='cephfs/libcephfs.h')
+            conf.DEFINE('HAVE_MANDATORY_CEPH_API', '1')
+            for api in ['ceph_mkdirat', 'ceph_openat', 'ceph_unlinkat',
+                        'ceph_symlinkat', 'ceph_readlinkat', 'ceph_statxat',
+                        'ceph_fdopendir']:
+                if not conf.CHECK_FUNCS_IN(api, 'cephfs',
+                                           headers='cephfs/libcephfs.h'):
+                    conf.undefine('HAVE_MANDATORY_CEPH_API')
+            if not conf.env.HAVE_MANDATORY_CEPH_API:
+                Logs.warn("Installed Ceph version support is at the verge of "
+                          "deprecation due to the absence of some mandatory "
+                          "libcephfs APIs. This warning there shall result in "
+                          "disabling the Ceph VFS module altogether with the "
+                          "next major Samba version. It is highly recommended "
+                          "to update to a more recent/active version of Ceph.")
         else:
             Logs.warn('''Ceph support disabled due to --without-acl-support
                       or lack of ceph_statx support''')
@@ -1827,6 +1837,14 @@ int main(void) {
         and conf.env['FLEX']
         and conf.CONFIG_GET('HAVE_UTF8_NORMALISATION')
     )
+
+    conf.env.with_wsp = False
+    if conf.CONFIG_GET('ENABLE_SELFTEST'):
+        Options.options.with_wsp = True
+    if Options.options.with_wsp:
+        Logs.info("building with WSP support")
+        conf.DEFINE('WITH_WSP', '1')
+        conf.env.with_wsp = True
 
     conf.env.with_spotlight = False
     if Options.options.with_spotlight is not False:

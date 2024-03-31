@@ -76,7 +76,7 @@ bool gensec_security_ops_enabled(const struct gensec_security_ops *ops, struct g
  *   only add non-kerberos mechs
  *
  * Once we get things like NegoEx or moonshot, this will of course get
- * more compplex.
+ * more complex.
  */
 
 static const struct gensec_security_ops **gensec_use_kerberos_mechs(
@@ -104,7 +104,7 @@ static const struct gensec_security_ops **gensec_use_kerberos_mechs(
 		bool keep = false;
 
 		/*
-		 * We want to keep SPNGEO and other backends
+		 * We want to keep SPNEGO and other backends
 		 */
 		keep = old_gensec_list[i]->glue;
 
@@ -168,7 +168,7 @@ _PUBLIC_ const struct gensec_security_ops **gensec_security_mechs(
 
 			/*
 			 * Even if Kerberos is set to REQUIRED, keep the
-			 * schannel auth mechanism that machine accounts are
+			 * schannel auth mechanism so that machine accounts are
 			 * able to authenticate via netlogon.
 			 */
 			if (gensec_security->gensec_role == GENSEC_SERVER) {
@@ -975,7 +975,7 @@ _PUBLIC_ NTSTATUS gensec_start_mech_by_oid(struct gensec_security *gensec_securi
 }
 
 /**
- * Start a GENSEC sub-mechanism by a well know SASL name
+ * Start a GENSEC sub-mechanism by a well known SASL name
  *
  */
 

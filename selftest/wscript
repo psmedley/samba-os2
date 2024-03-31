@@ -5,12 +5,16 @@
 
 import sys
 import os
-import optparse
-from waflib import Scripting, Options, Utils
-from waflib.ConfigSet import ConfigSet as Environment
+from waflib import Options, Utils
 
-from samba_utils import *
-from samba_autoconf import *
+from samba_utils import (
+    ADD_LD_LIBRARY_PATH,
+    CHECK_MAKEFLAGS,
+    EXPAND_VARIABLES,
+    LOAD_ENVIRONMENT,
+    RUN_COMMAND,
+)
+from samba_autoconf import CONFIG_GET, CONFIG_SET
 import types
 
 DEFAULT_SELFTEST_PREFIX="./st"
@@ -139,6 +143,7 @@ def cmd_testonly(opt):
     env.FILTER_XFAIL = ('${PYTHON} -u ${srcdir}/selftest/filter-subunit '
                         '--expected-failures=${srcdir}/selftest/knownfail '
                         '--expected-failures=${srcdir}/selftest/knownfail.d '
+                        '--expected-failures=${srcdir}/selftest/expectedfail.d '
                         '--flapping=${srcdir}/selftest/flapping '
                         '--flapping=${srcdir}/selftest/flapping.d')
 
@@ -261,17 +266,10 @@ def cmd_testonly(opt):
 
     if CONFIG_GET(opt, 'USING_SYSTEM_KRB5') and CONFIG_GET(opt, 'MIT_KDC_PATH'):
         env.OPTIONS += " --exclude=${srcdir}/selftest/skip_mit_kdc"
-        if CONFIG_GET(opt, 'HAVE_MIT_KRB5_PRE_1_20'):
-            env.OPTIONS += " --exclude=${srcdir}/selftest/skip_mit_kdc_pre_1_20"
-
         env.FILTER_XFAIL += " --expected-failures=${srcdir}/selftest/"\
                             "knownfail_mit_kdc"
 
-        if CONFIG_GET(opt, 'HAVE_MIT_KRB5_PRE_1_20'):
-            env.FILTER_XFAIL += ' --expected-failures=${srcdir}/selftest/knownfail_mit_kdc_pre_1_20'
-
-        if CONFIG_GET(opt, 'HAVE_MIT_KRB5_1_20'):
-            env.FILTER_XFAIL += ' --expected-failures=${srcdir}/selftest/knownfail_mit_kdc_1_20'
+        env.FILTER_XFAIL += ' --expected-failures=${srcdir}/selftest/knownfail_mit_kdc_1_20'
     else:
         env.FILTER_XFAIL += " --expected-failures=${srcdir}/selftest/"\
                             "knownfail_heimdal_kdc"

@@ -21,13 +21,27 @@
 #ifndef __SDDL_H__
 #define __SDDL_H__
 
+#include <talloc.h>
+#include "lib/util/data_blob.h"
+
+#include "librpc/gen_ndr/conditional_ace.h"
 #include "librpc/gen_ndr/security.h"
 
 struct security_descriptor *sddl_decode(TALLOC_CTX *mem_ctx, const char *sddl,
 					const struct dom_sid *domain_sid);
+struct security_descriptor *sddl_decode_err_msg(TALLOC_CTX *mem_ctx, const char *sddl,
+						const struct dom_sid *domain_sid,
+						const enum ace_condition_flags ace_condition_flags,
+						const char **msg, size_t *msg_offset);
 char *sddl_encode(TALLOC_CTX *mem_ctx, const struct security_descriptor *sd,
 		  const struct dom_sid *domain_sid);
 char *sddl_encode_ace(TALLOC_CTX *mem_ctx, const struct security_ace *ace,
+		      const struct dom_sid *domain_sid);
+
+struct dom_sid *sddl_decode_sid(TALLOC_CTX *mem_ctx, const char **sddlp,
+				const struct dom_sid *domain_sid);
+
+char *sddl_encode_sid(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 		      const struct dom_sid *domain_sid);
 
 #endif /* __SDDL_H__ */

@@ -36,11 +36,7 @@
  * @brief time handling functions
  */
 
-#if (SIZEOF_LONG == 8)
-#define TIME_FIXUP_CONSTANT_INT 11644473600L
-#elif (SIZEOF_LONG_LONG == 8)
-#define TIME_FIXUP_CONSTANT_INT 11644473600LL
-#endif
+#define TIME_FIXUP_CONSTANT_INT INT64_C(11644473600)
 
 
 #define NSEC_PER_SEC 1000000000
@@ -140,7 +136,7 @@ _PUBLIC_ void unix_to_nt_time(NTTIME *nt, time_t t)
 	uint64_t t2;
 
 	if (t == (time_t)-1) {
-		*nt = (NTTIME)-1LL;
+		*nt = UINT64_MAX;
 		return;
 	}
 
@@ -901,7 +897,7 @@ struct timespec nt_time_to_unix_timespec(NTTIME nt)
 {
 	struct timespec ret;
 
-	if (nt == 0 || nt == (int64_t)-1) {
+	if (nt == 0 || nt == UINT64_MAX) {
 		ret.tv_sec = 0;
 		ret.tv_nsec = 0;
 		return ret;
@@ -1053,7 +1049,7 @@ _PUBLIC_ NTTIME unix_timespec_to_nt_time(struct timespec ts)
 		return 0x7fffffffffffffffLL;
 	}
 	if (ts.tv_sec == (time_t)-1) {
-		return (uint64_t)-1;
+		return UINT64_MAX;
 	}
 
 	d = ts.tv_sec;

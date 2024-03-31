@@ -36,9 +36,10 @@ const char *tevent_common_fd_str(struct tevent_common_fd_buf *buf,
 {
 	snprintf(buf->buf, sizeof(buf->buf),
 		 "%s[fde=%p,"
-		 "fd=%d,flags=0x%x(%s%s),%s]",
+		 "fd=%d,flags=0x%x(%s%s%s),%s]",
 		 description, fde, fde->fd,
 		 fde->flags,
+		 (fde->flags & TEVENT_FD_ERROR) ? "E" : "",
 		 (fde->flags & TEVENT_FD_READ) ? "R" : "",
 		 (fde->flags & TEVENT_FD_WRITE) ? "W" : "",
 		 fde->handler_name);
@@ -47,11 +48,25 @@ const char *tevent_common_fd_str(struct tevent_common_fd_buf *buf,
 
 int tevent_common_fd_destructor(struct tevent_fd *fde)
 {
+	struct tevent_fd *primary = NULL;
+
 	if (fde->destroyed) {
 		tevent_common_check_double_free(fde, "tevent_fd double free");
 		goto done;
 	}
 	fde->destroyed = true;
+
+	/*
+	 * The caller should have cleared it from any mpx relationship
+	 */
+	primary = tevent_common_fd_mpx_primary(fde);
+	if (primary != fde) {
+		tevent_abort(fde->event_ctx,
+			"tevent_common_fd_destructor: fde not mpx primary");
+	} else if (fde->mpx.list != NULL) {
+		tevent_abort(fde->event_ctx,
+			"tevent_common_fd_destructor: fde has mpx fdes");
+	}
 
 	if (fde->event_ctx) {
 		tevent_trace_fd_callback(fde->event_ctx, fde, TEVENT_EVENT_TRACE_DETACH);
@@ -104,6 +119,7 @@ struct tevent_fd *tevent_common_add_fd(struct tevent_context *ev, TALLOC_CTX *me
 
 	tevent_trace_fd_callback(fde->event_ctx, fde, TEVENT_EVENT_TRACE_ATTACH);
 	DLIST_ADD(ev->fd_events, fde);
+	tevent_common_fd_mpx_reinit(fde);
 
 	talloc_set_destructor(fde, tevent_common_fd_destructor);
 

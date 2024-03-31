@@ -2100,8 +2100,8 @@ WERROR print_job_delete(const struct auth_session_info *server_info,
 	if (!owner &&
 	    !W_ERROR_IS_OK(print_access_check(server_info, msg_ctx, snum,
 					      JOB_ACCESS_ADMINISTER))) {
-		DEBUG(0, ("print job delete denied."
-			  "User name: %s, Printer name: %s.",
+		DEBUG(0, ("print job delete denied. "
+			  "User name: %s, Printer name: %s.\n",
 			  uidtoname(server_info->unix_token->uid),
 			  lp_printername(tmp_ctx, lp_sub, snum)));
 
@@ -2187,8 +2187,8 @@ WERROR print_job_pause(const struct auth_session_info *server_info,
 	if (!is_owner(server_info, lp_const_servicename(snum), jobid) &&
 	    !W_ERROR_IS_OK(print_access_check(server_info, msg_ctx, snum,
 					      JOB_ACCESS_ADMINISTER))) {
-		DEBUG(0, ("print job pause denied."
-			  "User name: %s, Printer name: %s.",
+		DEBUG(0, ("print job pause denied. "
+			  "User name: %s, Printer name: %s.\n",
 			  uidtoname(server_info->unix_token->uid),
 			  lp_printername(tmp_ctx, lp_sub, snum)));
 
@@ -2256,8 +2256,8 @@ WERROR print_job_resume(const struct auth_session_info *server_info,
 	if (!is_owner(server_info, lp_const_servicename(snum), jobid) &&
 	    !W_ERROR_IS_OK(print_access_check(server_info, msg_ctx, snum,
 					      JOB_ACCESS_ADMINISTER))) {
-		DEBUG(0, ("print job resume denied."
-			  "User name: %s, Printer name: %s.",
+		DEBUG(0, ("print job resume denied. "
+			  "User name: %s, Printer name: %s.\n",
 			  uidtoname(server_info->unix_token->uid),
 			  lp_printername(tmp_ctx, lp_sub, snum)));
 

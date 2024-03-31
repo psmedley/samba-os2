@@ -279,6 +279,7 @@ bld.SAMBA3_BINARY('net',
                  net_afs.c
                  net_notify.c
                  net_tdb.c
+                 net_witness.c
                  net_vfs.c
                  ../registry/reg_format.c
                  ../registry/reg_import.c
@@ -396,6 +397,23 @@ bld.SAMBA3_BINARY('mdsearch',
 ndr-standard NDR_LSA NDR_DNSP NDR_SPOOLSS gse  CMDLINE_S3 secrets3 cli_cldap MESSAGING smbldap smbldaphelper pdb printing_migrate samba-passdb libcli_netlogon3 libsmb cli_spoolss ads cluster stable_sort
 samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_WITNESS NDR_SMBXSRV NDR_FSRVP NDR_IDMAP NDR_MDSSVC NDR_SPOOLSS NDR_NEGOEX ndr-standard ndr_nbt tdb util_tdb sys_rw time-basic socket-blocking server-role genrand ndr-krb5pac asn1util smbconf dbwrap messages_dgm msghdr tevent tevent-util samba3-util util_reg iov_buf interfaces util_setid cli_smb_common samba-cluster-support LIBTSOCKET CHARSET3 server_id_db smbd_shim messages_util tdb-wrap3 tdb-wrap talloc_report ldb samdb-common cli-ldap-common flag_mapping SAMDB_SCHEMA cliauth RPC_NDR_WINREG dcerpc dcerpc-binding http gensec LIBCLI_SMB_COMPOSITE wbclient samdb smb_transport common_auth samba-modules LP_RESOLVE MESSAGING_SEND cli-ldap clidns replace dcerpc-samba samba-debug talloc_report_printf dcerpc-pkt-auth krb5samba authkrb5 krb5samba common_auth npa_tstream msrpc3 auth libcli_lsa3  netapi trusts_util xattr_tdb dcerpc-server-core cmdline_contexts
                  ''')
+
+bld.SAMBA3_BINARY('wspsearch',
+                 source='wspsearch.c',
+                 deps='''
+                 talloc
+                 tevent
+                 smbconf
+                 CMDLINE_S3
+                 cmdline_contexts
+                 libsmb
+                 msrpc3
+                 LIBSAMBA_WSP
+                 RPCCLI_WSP
+                 WSP_UTIL
+                 dcerpc
+                 ''',
+                  enabled=bld.env.with_wsp)
 
 pytalloc_util = bld.pyembed_libname('pytalloc-util')
 pyrpc_util = bld.pyembed_libname('pyrpc_util')

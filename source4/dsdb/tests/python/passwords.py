@@ -24,6 +24,7 @@ import samba.getopt as options
 from samba.auth import system_session
 from samba.credentials import Credentials
 from samba.dcerpc import security
+from samba.hresult import HRES_SEC_E_INVALID_TOKEN
 from ldb import SCOPE_BASE, LdbError
 from ldb import ERR_ATTRIBUTE_OR_VALUE_EXISTS
 from ldb import ERR_UNWILLING_TO_PERFORM, ERR_INSUFFICIENT_ACCESS_RIGHTS
@@ -233,7 +234,7 @@ unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).
             self.assertTrue('0000052D' in msg)
 
     def test_old_password_simple_bind(self):
-        '''Shows that we can log in with the immediate previous password, but not any earlier passwords.'''
+        """Shows that we can log in with the immediate previous password, but not any earlier passwords."""
 
         user_dn_str = f'CN=testuser,CN=Users,{self.base_dn}'
         user_dn = Dn(self.ldb, user_dn_str)
@@ -267,16 +268,14 @@ unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).
             SamDB(url=host_ldaps,
                   credentials=self.creds, lp=lp)
         except LdbError as err:
-            HRES_SEC_E_INVALID_TOKEN = '80090308'
-
             num, estr = err.args
             self.assertEqual(ERR_INVALID_CREDENTIALS, num)
-            self.assertIn(HRES_SEC_E_INVALID_TOKEN, estr)
+            self.assertIn(f"{HRES_SEC_E_INVALID_TOKEN:08X}", estr)
         else:
             self.fail('should have failed to login with previous password!')
 
     def test_old_password_attempt_reuse(self):
-        '''Shows that we cannot reuse the original password after changing the password twice.'''
+        """Shows that we cannot reuse the original password after changing the password twice."""
         res = self.ldb.search(self.ldb.domain_dn(), scope=SCOPE_BASE,
                               attrs=['pwdHistoryLength'])
 
@@ -317,7 +316,7 @@ unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).
             previous_pwd = new_pwd
 
     def test_old_password_rename_simple_bind(self):
-        '''Shows that we can log in with the previous password after renaming the account.'''
+        """Shows that we can log in with the previous password after renaming the account."""
         user_dn_str = f'CN=testuser,CN=Users,{self.base_dn}'
         user_dn = Dn(self.ldb, user_dn_str)
 
@@ -353,7 +352,7 @@ unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).
             self.fail('failed to login with previous password!')
 
     def test_old_password_rename_simple_bind_2(self):
-        '''Shows that we can rename the account, change the password and log in with the previous password.'''
+        """Shows that we can rename the account, change the password and log in with the previous password."""
         user_dn_str = f'CN=testuser,CN=Users,{self.base_dn}'
         user_dn = Dn(self.ldb, user_dn_str)
 
@@ -382,7 +381,7 @@ unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).
             self.fail('failed to login with previous password!')
 
     def test_old_password_rename_attempt_reuse(self):
-        '''Shows that we cannot reuse the original password after renaming the account.'''
+        """Shows that we cannot reuse the original password after renaming the account."""
         user_dn_str = f'CN=testuser,CN=Users,{self.base_dn}'
         user_dn = Dn(self.ldb, user_dn_str)
 
@@ -433,7 +432,7 @@ unicodePwd:: """ + base64.b64encode("\"thatsAcomplPASS2\"".encode('utf-16-le')).
             self.fail('should not have been able to reuse password!')
 
     def test_old_password_rename_attempt_reuse_2(self):
-        '''Shows that we cannot reuse the original password after renaming the account and changing the password.'''
+        """Shows that we cannot reuse the original password after renaming the account and changing the password."""
         user_dn_str = f'CN=testuser,CN=Users,{self.base_dn}'
         user_dn = Dn(self.ldb, user_dn_str)
 

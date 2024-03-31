@@ -1108,7 +1108,7 @@ next_run:
 	lock[0].pid--;
 
 	/* 
-	 * demonstrate the a successful lock with count = 0 and the same offset,
+	 * demonstrate that a successful lock with count = 0 and the same offset,
 	 * doesn't reset the error cache
 	 */
 	lock[0].offset = 100;
@@ -1132,7 +1132,7 @@ next_run:
 	CHECK_STATUS(status, NT_STATUS_FILE_LOCK_CONFLICT);
 
 	/* 
-	 * demonstrate the a successful lock with count = 0 and outside the locked range,
+	 * demonstrate that a successful lock with count = 0 and outside the locked range,
 	 * doesn't reset the error cache
 	 */
 	lock[0].offset = 110;
@@ -1197,7 +1197,7 @@ next_run:
 	CHECK_STATUS(status, NT_STATUS_FILE_LOCK_CONFLICT);
 
 	/* 
-	 * demonstrate the a lock with count = 0 and inside the locked range,
+	 * demonstrate that a lock with count = 0 and inside the locked range,
 	 * fails and resets the error cache
 	 */
 	lock[0].offset = 101;
@@ -1228,7 +1228,7 @@ next_run:
 	status = smb_raw_lock(cli->tree, &io);
 	CHECK_STATUS(status, NT_STATUS_FILE_LOCK_CONFLICT);
 
-	/* demonstrate the a changing offset, resets the error cache */
+	/* demonstrate that a changing offset resets the error cache */
 	lock[0].offset = 105;
 	lock[0].count = 10;
 	io.lockx.in.file.fnum = fnum;
@@ -1286,7 +1286,7 @@ next_run:
 	CHECK_STATUS(status, NT_STATUS_FILE_LOCK_CONFLICT);
 
 	/* 
-	 * demonstrate the a successful lock in a different range, 
+	 * demonstrate that a successful lock in a different range
 	 * doesn't reset the cache, the failing lock on the 2nd handle
 	 * resets the cache
 	 */
@@ -2367,7 +2367,7 @@ done:
   to grant. For example:
 
   A blocked lock request containing 2 locks
-  will be satified before a subsequent blocked
+  will be satisfied before a subsequent blocked
   lock request over one of the same regions,
   even if that region is then unlocked. E.g.
 
@@ -2508,7 +2508,7 @@ done:
   For example:
 
   A blocked lock request containing 2 locks
-  will be satified before a subsequent blocked
+  will be satisfied before a subsequent blocked
   lock request over one of the same regions,
   even if that region is then unlocked. But
   a lock of a different region goes through. E.g.

@@ -1471,7 +1471,7 @@ int ldb_extended_default_callback(struct ldb_request *req, struct ldb_reply *are
   \param ldb the context associated with the database (from ldb_init())
   \param mem_ctx a talloc memory context (used as parent of ret_req)
   \param oid the OID of the extended operation.
-  \param data a void pointer a the extended operation specific parameters,
+  \param data a void pointer to the extended operation specific parameters,
   it needs to be NULL or a valid talloc pointer! talloc_get_type() will be used on it
   \param controls an array of controls
   \param context the callback function context
@@ -1495,7 +1495,7 @@ int ldb_build_extended_req(struct ldb_request **ret_req,
 
   \param ldb the context associated with the database (from ldb_init())
   \param oid the OID of the extended operation.
-  \param data a void pointer a the extended operation specific parameters,
+  \param data a void pointer to the extended operation specific parameters,
   it needs to be NULL or a valid talloc pointer! talloc_get_type() will be used on it
   \param res the result of the extended operation
 
@@ -1559,7 +1559,7 @@ void ldb_set_utf8_default(struct ldb_context *ldb);
    \brief Casefold a string
 
    Note that the callback needs to be ASCII compatible. So first ASCII needs
-   to be handle before any UTF-8. This is needed to avoid issues with dottet
+   to be handle before any UTF-8. This is needed to avoid issues with dotted
    languages.
 
    \param ldb the ldb context
@@ -1776,7 +1776,7 @@ char *ldb_ldif_message_string(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
          'const char * const *' within the LDB_SECRET_ATTRIBUTE_LIST
          opaque set on the ldb
 
-   \sa ldb_ldif_message_string for an exact representiation of the
+   \sa ldb_ldif_message_string for an exact representation of the
        message as LDIF
 */
 char *ldb_ldif_message_redacted_string(struct ldb_context *ldb,
@@ -1856,7 +1856,7 @@ int ldb_dn_extended_add_syntax(struct ldb_context *ldb,
   \param mem_ctx TALLOC context to return resulting ldb_dn structure on
   \param dn The new DN
 
-  \note The DN will not be parsed at this time.  Use ldb_dn_validate to tell if the DN is syntacticly correct
+  \note The DN will not be parsed at this time.  Use ldb_dn_validate to tell if the DN is syntactically correct
 */
 
 struct ldb_dn *ldb_dn_new(TALLOC_CTX *mem_ctx, struct ldb_context *ldb, const char *dn);
@@ -1864,7 +1864,7 @@ struct ldb_dn *ldb_dn_new(TALLOC_CTX *mem_ctx, struct ldb_context *ldb, const ch
   Allocate a new DN from a printf style format string and arguments
 
   \param mem_ctx TALLOC context to return resulting ldb_dn structure on
-  \param new_fms The new DN as a format string (plus arguments)
+  \param new_fmt The new DN as a format string (plus arguments)
 
   \note The DN will not be parsed at this time.  Use ldb_dn_validate to tell if the DN is syntactically correct
 */
@@ -1876,7 +1876,7 @@ struct ldb_dn *ldb_dn_new_fmt(TALLOC_CTX *mem_ctx, struct ldb_context *ldb, cons
   \param mem_ctx TALLOC context to return resulting ldb_dn structure on
   \param dn The new DN
 
-  \note The DN will not be parsed at this time.  Use ldb_dn_validate to tell if the DN is syntacticly correct
+  \note The DN will not be parsed at this time.  Use ldb_dn_validate to tell if the DN is syntactically correct
 */
 
 struct ldb_dn *ldb_dn_from_ldb_val(TALLOC_CTX *mem_ctx, struct ldb_context *ldb, const struct ldb_val *strdn);
@@ -2054,7 +2054,7 @@ int ldb_msg_element_compare_name(struct ldb_message_element *el1,
    Find elements in a message.
 
    This function finds elements and converts to a specific type, with
-   a give default value if not found. Assumes that elements are
+   a given default value if not found. Assumes that elements are
    single valued.
 */
 const struct ldb_val *ldb_msg_find_ldb_val(const struct ldb_message *msg, const char *attr_name);
@@ -2093,7 +2093,7 @@ struct ldb_message *ldb_msg_copy(TALLOC_CTX *mem_ctx,
 				 const struct ldb_message *msg);
 
 /*
- * ldb_msg_canonicalize() is now depreciated
+ * ldb_msg_canonicalize() is now deprecated
  * Please use ldb_msg_normalize() instead
  *
  * NOTE: Returned ldb_message object is allocated
@@ -2111,7 +2111,7 @@ int ldb_msg_normalize(struct ldb_context *ldb,
 
 
 /*
- * ldb_msg_diff() is now depreciated
+ * ldb_msg_diff() is now deprecated
  * Please use ldb_msg_difference() instead
  *
  * NOTE: Returned ldb_message object is allocated
@@ -2196,7 +2196,7 @@ int ldb_set_debug(struct ldb_context *ldb,
 
 /**
   this allows the user to set custom utf8 function for error reporting. make
-  sure it is able to handle ASCII first, so it prevents issues with dottet
+  sure it is able to handle ASCII first, so it prevents issues with dotted
   languages.
 */
 void ldb_set_utf8_fns(struct ldb_context *ldb,

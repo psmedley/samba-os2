@@ -116,6 +116,18 @@ static NTSTATUS create_trust(TALLOC_CTX *mem_ctx,
 	struct lsa_CreateTrustedDomainEx2 r;
 	struct lsa_TrustDomainInfoInfoEx trustinfo;
 	struct policy_handle trustdom_handle;
+	bool is_nt4 = trust_name_dns == NULL;
+
+	if (!is_nt4) {
+		fprintf(stdout, "Creating AD trust\n");
+		trustinfo.trust_type = LSA_TRUST_TYPE_UPLEVEL;
+		trustinfo.trust_attributes = LSA_TRUST_ATTRIBUTE_FOREST_TRANSITIVE;
+	} else {
+		fprintf(stdout, "Creating NT4 trust\n");
+		trustinfo.trust_type = LSA_TRUST_TYPE_DOWNLEVEL;
+		trustinfo.trust_attributes = 0;
+		trust_name_dns = trust_name;
+	}
 
 	trustinfo.sid = domsid;
 	trustinfo.netbios_name.string = trust_name;
@@ -123,10 +135,6 @@ static NTSTATUS create_trust(TALLOC_CTX *mem_ctx,
 
 	trustinfo.trust_direction = LSA_TRUST_DIRECTION_INBOUND |
 				    LSA_TRUST_DIRECTION_OUTBOUND;
-
-	trustinfo.trust_type = LSA_TRUST_TYPE_UPLEVEL;
-
-	trustinfo.trust_attributes = LSA_TRUST_ATTRIBUTE_FOREST_TRANSITIVE;
 
 	r.in.policy_handle = pol_hnd;
 	r.in.info = &trustinfo;
@@ -203,7 +211,13 @@ static NTSTATUS connect_and_get_info(TALLOC_CTX *mem_ctx,
 				     DATA_BLOB *session_key)
 {
 	NTSTATUS status;
-	NTSTATUS result;
+	NTSTATUS result = NT_STATUS_UNSUCCESSFUL;
+	uint32_t out_version = 0;
+	union lsa_revision_info out_revision_info = {
+		.info1 = {
+			.revision = 0,
+		},
+	};
 
 	status = net_make_ipc_connection_ex(net_ctx, NULL, NULL, NULL,
 					    NET_FLAGS_PDC, cli);
@@ -220,24 +234,22 @@ static NTSTATUS connect_and_get_info(TALLOC_CTX *mem_ctx,
 		return status;
 	}
 
-	status = dcerpc_lsa_open_policy2((*pipe_hnd)->binding_handle,
-					 mem_ctx,
-					 (*pipe_hnd)->srv_name_slash,
-					 false,
-					 (LSA_POLICY_VIEW_LOCAL_INFORMATION |
-					  LSA_POLICY_TRUST_ADMIN |
-					  LSA_POLICY_CREATE_SECRET),
-					 pol_hnd,
-					 &result);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0, ("Failed to open policy handle with error [%s]\n",
-			  nt_errstr(status)));
+	status = dcerpc_lsa_open_policy_fallback(
+		(*pipe_hnd)->binding_handle,
+		mem_ctx,
+		(*pipe_hnd)->srv_name_slash,
+		false,
+		LSA_POLICY_VIEW_LOCAL_INFORMATION |
+		LSA_POLICY_TRUST_ADMIN |
+		LSA_POLICY_CREATE_SECRET,
+		&out_version,
+		&out_revision_info,
+		pol_hnd,
+		&result);
+	if (any_nt_status_not_ok(status, result, &status)) {
+		DBG_ERR("Failed to open policy handle: %s\n",
+			nt_errstr(result));
 		return status;
-	}
-	if (!NT_STATUS_IS_OK(result)) {
-		DEBUG(0, ("lsa_open_policy2 with error [%s]\n",
-			  nt_errstr(result)));
-		return result;
 	}
 
 	status = get_domain_info(mem_ctx, (*pipe_hnd)->binding_handle,
@@ -404,7 +416,7 @@ static void print_trust_usage(void)
 		   "\totheruser=Admin user in other domain\n"
 		   "\totherdomainsid=SID of other domain\n"
 		   "\tother_netbios_domain=NetBIOS/short name of other domain\n"
-		   "\totherdomain=Full/DNS name of other domain\n"
+		   "\totherdomain=Full/DNS name of other domain (if not used, create an NT4 trust)\n"
 		   "\ttrustpw=Trust password\n"
 		   "\nExamples:\n"
 		   "\tnet rpc trust create otherserver=oname otheruser=ouser -S lname -U luser\n"
@@ -476,18 +488,24 @@ static int rpc_trust_common(struct net_context *net_ctx, int argc,
 		}
 
 		other_net_ctx->opt_host = other_dom_data->host;
-		other_net_ctx->opt_user_name = other_dom_data->user_name;
-		other_net_ctx->opt_user_specified = true;
+		other_net_ctx->creds = cli_credentials_init(other_net_ctx);
+		cli_credentials_parse_string(other_net_ctx->creds,
+					     other_dom_data->user_name,
+					     CRED_SPECIFIED);
 	} else {
 		dom_data[1].domsid = dom_sid_parse_talloc(mem_ctx,
 						other_dom_data->domain_sid_str);
 		dom_data[1].domain_name = other_dom_data->domain_name;
 		dom_data[1].dns_domain_name = other_dom_data->dns_domain_name;
 
+		if (dom_data[1].dns_domain_name == NULL) {
+			fprintf(stdout, "No DNS domain name passed, "
+				"assuming NT4 trust!\n");
+		}
+
 		if (dom_data[1].domsid == NULL ||
 		    (op == TRUST_CREATE &&
-		     (dom_data[1].domain_name == NULL ||
-		      dom_data[1].dns_domain_name == NULL))) {
+		     (dom_data[1].domain_name == NULL))) {
 			DEBUG(0, ("Missing required argument.\n"));
 			usage();
 			goto done;

@@ -36,8 +36,6 @@ from samba.dcerpc import dnsp, misc, security
 from samba.dsdb import (
     DS_DOMAIN_FUNCTION_2000,
     DS_DOMAIN_FUNCTION_2003,
-    DS_DOMAIN_FUNCTION_2008_R2,
-    DS_DOMAIN_FUNCTION_2012_R2,
     DS_DOMAIN_FUNCTION_2016,
     DS_GUID_USERS_CONTAINER
 )
@@ -57,8 +55,6 @@ from samba.provision.common import (
     setup_ldb,
     FILL_FULL,
     FILL_SUBDOMAIN,
-    FILL_NT4SYNC,
-    FILL_DRS,
 )
 
 from samba.samdb import get_default_backend_store
@@ -90,7 +86,7 @@ def get_dnsadmins_sid(samdb, domaindn):
 class ARecord(dnsp.DnssrvRpcRecord):
 
     def __init__(self, ip_addr, serial=1, ttl=900, rank=dnsp.DNS_RANK_ZONE):
-        super(ARecord, self).__init__()
+        super().__init__()
         self.wType = dnsp.DNS_TYPE_A
         self.rank = rank
         self.dwSerial = serial
@@ -101,7 +97,7 @@ class ARecord(dnsp.DnssrvRpcRecord):
 class AAAARecord(dnsp.DnssrvRpcRecord):
 
     def __init__(self, ip6_addr, serial=1, ttl=900, rank=dnsp.DNS_RANK_ZONE):
-        super(AAAARecord, self).__init__()
+        super().__init__()
         self.wType = dnsp.DNS_TYPE_AAAA
         self.rank = rank
         self.dwSerial = serial
@@ -123,7 +119,7 @@ class CNAMERecord(dnsp.DnssrvRpcRecord):
 class NSRecord(dnsp.DnssrvRpcRecord):
 
     def __init__(self, dns_server, serial=1, ttl=900, rank=dnsp.DNS_RANK_ZONE):
-        super(NSRecord, self).__init__()
+        super().__init__()
         self.wType = dnsp.DNS_TYPE_NS
         self.rank = rank
         self.dwSerial = serial
@@ -135,7 +131,7 @@ class SOARecord(dnsp.DnssrvRpcRecord):
 
     def __init__(self, mname, rname, serial=1, refresh=900, retry=600,
                  expire=86400, minimum=3600, ttl=3600, rank=dnsp.DNS_RANK_ZONE):
-        super(SOARecord, self).__init__()
+        super().__init__()
         self.wType = dnsp.DNS_TYPE_SOA
         self.rank = rank
         self.dwSerial = serial
@@ -155,7 +151,7 @@ class SRVRecord(dnsp.DnssrvRpcRecord):
 
     def __init__(self, target, port, priority=0, weight=100, serial=1, ttl=900,
                  rank=dnsp.DNS_RANK_ZONE):
-        super(SRVRecord, self).__init__()
+        super().__init__()
         self.wType = dnsp.DNS_TYPE_SRV
         self.rank = rank
         self.dwSerial = serial
@@ -171,7 +167,7 @@ class SRVRecord(dnsp.DnssrvRpcRecord):
 class TXTRecord(dnsp.DnssrvRpcRecord):
 
     def __init__(self, slist, serial=1, ttl=900, rank=dnsp.DNS_RANK_ZONE):
-        super(TXTRecord, self).__init__()
+        super().__init__()
         self.wType = dnsp.DNS_TYPE_TXT
         self.rank = rank
         self.dwSerial = serial
@@ -185,7 +181,7 @@ class TXTRecord(dnsp.DnssrvRpcRecord):
 class TypeProperty(dnsp.DnsProperty):
 
     def __init__(self, zone_type=dnsp.DNS_ZONE_TYPE_PRIMARY):
-        super(TypeProperty, self).__init__()
+        super().__init__()
         self.wDataLength = 1
         self.version = 1
         self.id = dnsp.DSPROPERTY_ZONE_TYPE
@@ -195,7 +191,7 @@ class TypeProperty(dnsp.DnsProperty):
 class AllowUpdateProperty(dnsp.DnsProperty):
 
     def __init__(self, allow_update=dnsp.DNS_ZONE_UPDATE_SECURE):
-        super(AllowUpdateProperty, self).__init__()
+        super().__init__()
         self.wDataLength = 1
         self.version = 1
         self.id = dnsp.DSPROPERTY_ZONE_ALLOW_UPDATE
@@ -205,7 +201,7 @@ class AllowUpdateProperty(dnsp.DnsProperty):
 class SecureTimeProperty(dnsp.DnsProperty):
 
     def __init__(self, secure_time=0):
-        super(SecureTimeProperty, self).__init__()
+        super().__init__()
         self.wDataLength = 1
         self.version = 1
         self.id = dnsp.DSPROPERTY_ZONE_SECURE_TIME
@@ -215,7 +211,7 @@ class SecureTimeProperty(dnsp.DnsProperty):
 class NorefreshIntervalProperty(dnsp.DnsProperty):
 
     def __init__(self, norefresh_interval=0):
-        super(NorefreshIntervalProperty, self).__init__()
+        super().__init__()
         self.wDataLength = 1
         self.version = 1
         self.id = dnsp.DSPROPERTY_ZONE_NOREFRESH_INTERVAL
@@ -225,7 +221,7 @@ class NorefreshIntervalProperty(dnsp.DnsProperty):
 class RefreshIntervalProperty(dnsp.DnsProperty):
 
     def __init__(self, refresh_interval=0):
-        super(RefreshIntervalProperty, self).__init__()
+        super().__init__()
         self.wDataLength = 1
         self.version = 1
         self.id = dnsp.DSPROPERTY_ZONE_REFRESH_INTERVAL
@@ -235,7 +231,7 @@ class RefreshIntervalProperty(dnsp.DnsProperty):
 class AgingStateProperty(dnsp.DnsProperty):
 
     def __init__(self, aging_enabled=0):
-        super(AgingStateProperty, self).__init__()
+        super().__init__()
         self.wDataLength = 1
         self.version = 1
         self.id = dnsp.DSPROPERTY_ZONE_AGING_STATE
@@ -245,7 +241,7 @@ class AgingStateProperty(dnsp.DnsProperty):
 class AgingEnabledTimeProperty(dnsp.DnsProperty):
 
     def __init__(self, next_cycle_hours=0):
-        super(AgingEnabledTimeProperty, self).__init__()
+        super().__init__()
         self.wDataLength = 1
         self.version = 1
         self.id = dnsp.DSPROPERTY_ZONE_AGING_ENABLED_TIME
@@ -429,7 +425,7 @@ def add_at_record(samdb, container_dn, prefix, hostname, dnsdomain, hostip, host
         at_aaaa_record = AAAARecord(hostip6)
         at_records.append(ndr_pack(at_aaaa_record))
 
-    msg = ldb.Message(ldb.Dn(samdb, "DC=@,%s" % container_dn))
+    msg = ldb.Message(ldb.Dn(samdb, "%s,%s" % (prefix, container_dn)))
     msg["objectClass"] = ["top", "dnsNode"]
     msg["dnsRecord"] = ldb.MessageElement(at_records, ldb.FLAG_MOD_ADD, "dnsRecord")
     samdb.add(msg)
@@ -769,7 +765,7 @@ def create_dns_dir_keytab_link(logger, paths):
                                 bind_dns_keytab_path, paths.bind_gid)
 
 
-def create_zone_file(lp, logger, paths, targetdir, dnsdomain,
+def create_zone_file(logger, paths, dnsdomain,
                      hostip, hostip6, hostname, realm, domainguid,
                      ntdsguid, site):
     """Write out a DNS zone file, from the info in the current database.
@@ -967,7 +963,7 @@ def create_samdb_copy(samdb, logger, paths, names, domainsid, domainguid):
                 set permissions to sam.ldb* files manually""")
 
 
-def create_dns_update_list(lp, logger, paths):
+def create_dns_update_list(paths):
     """Write out a dns_update_list file"""
     # note that we use no variable substitution on this file
     # the substitution is done at runtime by samba_dnsupdate, samba_spnupdate
@@ -1169,23 +1165,21 @@ def fill_dns_data_partitions(samdb, domainsid, site, domaindn, forestdn,
                                  domainguid, ntdsguid)
 
 
-def setup_ad_dns(samdb, secretsdb, names, paths, lp, logger,
+def setup_ad_dns(samdb, secretsdb, names, paths, logger,
                  dns_backend, os_level, dnspass=None, hostip=None, hostip6=None,
-                 targetdir=None, fill_level=FILL_FULL, backend_store=None):
+                 fill_level=FILL_FULL):
     """Provision DNS information (assuming GC role)
 
     :param samdb: LDB object connected to sam.ldb file
     :param secretsdb: LDB object connected to secrets.ldb file
     :param names: Names shortcut
     :param paths: Paths shortcut
-    :param lp: Loadparm object
     :param logger: Logger object
     :param dns_backend: Type of DNS backend
     :param os_level: Functional level (treated as os level)
     :param dnspass: Password for bind's DNS account
     :param hostip: IPv4 address
     :param hostip6: IPv6 address
-    :param targetdir: Target directory for creating DNS-related files for BIND9
     """
 
     if not is_valid_dns_backend(dns_backend):
@@ -1264,23 +1258,20 @@ def setup_ad_dns(samdb, secretsdb, names, paths, lp, logger,
         samdb.transaction_commit()
 
     if dns_backend.startswith("BIND9_"):
-        setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
+        setup_bind9_dns(samdb, secretsdb, names, paths, logger,
                         dns_backend, os_level, site=site, dnspass=dnspass, hostip=hostip,
-                        hostip6=hostip6, targetdir=targetdir,
-                        backend_store=backend_store)
+                        hostip6=hostip6)
 
 
-def setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
+def setup_bind9_dns(samdb, secretsdb, names, paths, logger,
                     dns_backend, os_level, site=None, dnspass=None, hostip=None,
-                    hostip6=None, targetdir=None, key_version_number=None,
-                    backend_store=None):
+                    hostip6=None, key_version_number=None):
     """Provision DNS information (assuming BIND9 backend in DC role)
 
     :param samdb: LDB object connected to sam.ldb file
     :param secretsdb: LDB object connected to secrets.ldb file
     :param names: Names shortcut
     :param paths: Paths shortcut
-    :param lp: Loadparm object
     :param logger: Logger object
     :param dns_backend: Type of DNS backend
     :param os_level: Functional level (treated as os level)
@@ -1288,7 +1279,6 @@ def setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
     :param dnspass: Password for bind's DNS account
     :param hostip: IPv4 address
     :param hostip6: IPv6 address
-    :param targetdir: Target directory for creating DNS-related files for BIND9
     """
 
     if (not is_valid_dns_backend(dns_backend) or
@@ -1314,7 +1304,7 @@ def setup_bind9_dns(samdb, secretsdb, names, paths, lp, logger,
     create_dns_dir_keytab_link(logger, paths)
 
     if dns_backend == "BIND9_FLATFILE":
-        create_zone_file(lp, logger, paths, targetdir, site=site,
+        create_zone_file(logger, paths, site=site,
                          dnsdomain=names.dnsdomain, hostip=hostip,
                          hostip6=hostip6, hostname=names.hostname,
                          realm=names.realm, domainguid=domainguid,

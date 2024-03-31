@@ -217,7 +217,7 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3_check_downgrade(
 	reject_des_client = !allow_nt4_crypto;
 
 	/*
-	 * If weak cryto is disabled, do not announce that we support RC4.
+	 * If weak crypto is disabled, do not announce that we support RC4.
 	 */
 	if (lpcfg_weak_crypto(lp_ctx) == SAMBA_WEAK_CRYPTO_DISALLOWED) {
 		/* Without RC4 and DES we require AES */
@@ -494,7 +494,7 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3_helper(
 		       NETLOGON_NEG_AUTHENTICATED_RPC;
 
 	/*
-	 * If weak cryto is disabled, do not announce that we support RC4.
+	 * If weak crypto is disabled, do not announce that we support RC4.
 	 */
 	if (lpcfg_weak_crypto(dce_call->conn->dce_ctx->lp_ctx) ==
 	    SAMBA_WEAK_CRYPTO_DISALLOWED) {
@@ -694,29 +694,49 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3_helper(
 		return NT_STATUS_NO_TRUST_SAM_ACCOUNT;
 	}
 
-	if (r->in.secure_channel_type == SEC_CHAN_WKSTA) {
+	switch (r->in.secure_channel_type) {
+	case SEC_CHAN_WKSTA:
 		if (!(user_account_control & UF_WORKSTATION_TRUST_ACCOUNT)) {
-			DEBUG(1, ("Client asked for a workstation secure channel, but is not a workstation (member server) acb flags: 0x%x\n", user_account_control));
+			DBG_WARNING("Client asked for a workstation "
+				    "secure channel, but is not a workstation "
+				    "(member server) acb flags: 0x%x\n",
+				    user_account_control);
 			return NT_STATUS_NO_TRUST_SAM_ACCOUNT;
 		}
-	} else if (r->in.secure_channel_type == SEC_CHAN_DOMAIN ||
-		   r->in.secure_channel_type == SEC_CHAN_DNS_DOMAIN) {
-		if (!(user_account_control & UF_INTERDOMAIN_TRUST_ACCOUNT)) {
-			DEBUG(1, ("Client asked for a trusted domain secure channel, but is not a trusted domain: acb flags: 0x%x\n", user_account_control));
+		break;
 
+	case SEC_CHAN_DOMAIN:
+		FALL_THROUGH;
+	case SEC_CHAN_DNS_DOMAIN:
+		if (!(user_account_control & UF_INTERDOMAIN_TRUST_ACCOUNT)) {
+			DBG_WARNING("Client asked for a trusted domain "
+				    "secure channel, but is not a trusted "
+				    "domain: acb flags: 0x%x\n",
+				    user_account_control);
 			return NT_STATUS_NO_TRUST_SAM_ACCOUNT;
 		}
-	} else if (r->in.secure_channel_type == SEC_CHAN_BDC) {
+		break;
+
+	case SEC_CHAN_BDC:
 		if (!(user_account_control & UF_SERVER_TRUST_ACCOUNT)) {
-			DEBUG(1, ("Client asked for a server secure channel, but is not a server (domain controller): acb flags: 0x%x\n", user_account_control));
+			DBG_WARNING("Client asked for a server "
+				    "secure channel, but is not a server "
+				    "(domain controller): acb flags: 0x%x\n",
+				    user_account_control);
 			return NT_STATUS_NO_TRUST_SAM_ACCOUNT;
 		}
-	} else if (r->in.secure_channel_type == SEC_CHAN_RODC) {
+		break;
+
+	case SEC_CHAN_RODC:
 		if (!(user_account_control & UF_PARTIAL_SECRETS_ACCOUNT)) {
-			DEBUG(1, ("Client asked for a RODC secure channel, but is not a RODC: acb flags: 0x%x\n", user_account_control));
+			DBG_WARNING("Client asked for a RODC secure channel, "
+				    "but is not a RODC: acb flags: 0x%x\n",
+				    user_account_control);
 			return NT_STATUS_NO_TRUST_SAM_ACCOUNT;
 		}
-	} else {
+		break;
+
+	default:
 		/* we should never reach this */
 		return NT_STATUS_INTERNAL_ERROR;
 	}
@@ -1428,7 +1448,7 @@ static NTSTATUS dcesrv_netr_LogonSamLogon_base_call(struct dcesrv_netr_LogonSamL
 			return NT_STATUS_OK;
 		}
 
-		/* Until we get an implemetnation of these other packages */
+		/* Until we get an implementation of these other packages */
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 	default:
@@ -1584,11 +1604,7 @@ static void dcesrv_netr_LogonSamLogon_base_reply(
 		_r->out.result = r->out.result;
 	}
 
-	status = dcesrv_reply(state->dce_call);
-	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("dcesrv_reply() failed - %s\n",
-			nt_errstr(status));
-	}
+	dcesrv_async_reply(state->dce_call);
 }
 
 static NTSTATUS dcesrv_netr_LogonSamLogonEx(struct dcesrv_call_state *dce_call, TALLOC_CTX *mem_ctx,
@@ -1872,7 +1888,7 @@ static WERROR dcesrv_netr_GetDcName(struct dcesrv_call_state *dce_call, TALLOC_C
 		}
 
 		/*
-		 * TODO: Should we also varify that only valid
+		 * TODO: Should we also verify that only valid
 		 *       netbios name characters are used?
 		 */
 	}
@@ -2163,10 +2179,7 @@ static void dcesrv_netr_LogonControl_base_done(struct tevent_req *subreq)
 		r->out.result = state->r.out.result;
 	}
 
-	status = dcesrv_reply(state->dce_call);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,(__location__ ": dcesrv_reply() failed - %s\n", nt_errstr(status)));
-	}
+	dcesrv_async_reply(state->dce_call);
 }
 
 /*
@@ -2645,8 +2658,8 @@ static NTSTATUS dcesrv_netr_LogonGetDomainInfo(struct dcesrv_call_state *dce_cal
 						frame);
 		local  = tsocket_address_string(dce_call->conn->local_address,
 						frame);
-		DBG_ERR(("Bad credentials - "
-		         "computer[%s] remote[%s] local[%s]\n"),
+		DBG_ERR("Bad credentials - "
+			"computer[%s] remote[%s] local[%s]\n",
 			log_escape(frame, r->in.computer_name),
 			remote,
 			local);
@@ -2872,7 +2885,7 @@ static NTSTATUS dcesrv_netr_LogonGetDomainInfo(struct dcesrv_call_state *dce_cal
 
 		ZERO_STRUCTP(domain_info);
 
-		/* Informations about the local and trusted domains */
+		/* Information about the local and trusted domains */
 
 		status = fill_our_one_domain_info(mem_ctx,
 						  our_tdo,
@@ -3652,11 +3665,7 @@ finished:
 	}
 
 	TALLOC_FREE(state);
-	status = dcesrv_reply(dce_call);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,(__location__ ": dcesrv_reply() failed - %s\n",
-			 nt_errstr(status)));
-	}
+	dcesrv_async_reply(dce_call);
 }
 
 /*
@@ -3982,8 +3991,6 @@ static WERROR fill_trusted_domains_array(TALLOC_CTX *mem_ctx,
 				  ldb_dn_get_linearized(dom_res[i]->dn)));
 		}
 
-		trusts->array[n].dns_name = talloc_steal(trusts->array, ldb_msg_find_attr_as_string(dom_res[i], "trustPartner", NULL));
-
 		trusts->array[n].trust_flags = flags;
 		if ((trust_flags & NETR_TRUST_FLAG_IN_FOREST) &&
 		    !(flags & NETR_TRUST_FLAG_TREEROOT)) {
@@ -3997,6 +4004,16 @@ static WERROR fill_trusted_domains_array(TALLOC_CTX *mem_ctx,
 		trusts->array[n].trust_attributes =
 				ldb_msg_find_attr_as_uint(dom_res[i],
 						  "trustAttributes", 0);
+
+		if (trusts->array[n].trust_type != LSA_TRUST_TYPE_DOWNLEVEL) {
+			trusts->array[n].dns_name = talloc_steal(
+				trusts->array,
+				ldb_msg_find_attr_as_string(dom_res[i],
+							    "trustPartner",
+							    NULL));
+		} else {
+			trusts->array[n].dns_name = NULL;
+		}
 
 		if ((trusts->array[n].trust_type == LSA_TRUST_TYPE_MIT) ||
 		    (trusts->array[n].trust_type == LSA_TRUST_TYPE_DCE)) {
@@ -4313,10 +4330,7 @@ static void dcesrv_netr_DsRGetForestTrustInformation_done(struct tevent_req *sub
 			 nt_errstr(status)));
 	}
 
-	status = dcesrv_reply(state->dce_call);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,(__location__ ": dcesrv_reply() failed - %s\n", nt_errstr(status)));
-	}
+	dcesrv_async_reply(state->dce_call);
 }
 
 /*
@@ -4586,10 +4600,7 @@ static void netr_dnsupdate_RODC_callback(struct tevent_req *subreq)
 
 	st->r->out.dns_names = talloc_steal(st->dce_call, st->r2->out.dns_names);
 
-	status = dcesrv_reply(st->dce_call);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,(__location__ ": dcesrv_reply() failed - %s\n", nt_errstr(status)));
-	}
+	dcesrv_async_reply(st->dce_call);
 }
 
 /*

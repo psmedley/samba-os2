@@ -16,13 +16,13 @@
 
 from samba import Ldb,tests
 from samba.samba3 import param as s3param
-from samba import (credentials,NTSTATUSError)
+from samba import credentials
 import os
 
 class LdapWhoami(tests.TestCase):
     def test_ldap_whoami(self):
         lp = s3param.get_context()
-        lp.load(os.getenv("SERVERCONFFILE"));
+        lp.load(os.getenv("SERVERCONFFILE"))
 
         domain=os.getenv("DOMAIN")
         username=os.getenv("DC_USERNAME")

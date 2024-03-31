@@ -39,7 +39,7 @@ class SmbMinDomainUid(KDCBaseTest):
     """
 
     def setUp(self):
-        super(KDCBaseTest, self).setUp()
+        super().setUp()
 
         # Create a user account, along with a Kerberos credentials cache file
         # where the service ticket authenticating the user are stored.
@@ -91,7 +91,7 @@ class SmbMinDomainUid(KDCBaseTest):
 
         conn = libsmb.Conn(self.mach_name, self.share, lp=s3_lp, creds=creds)
         # Disconnect
-        conn = None
+        del conn
 
         with open(self.global_inject, 'w') as f:
             f.truncate()
@@ -115,7 +115,7 @@ class SmbMinDomainUid(KDCBaseTest):
         with open(self.global_inject, 'w') as f:
             f.truncate()
 
-        super(KDCBaseTest, self).tearDown()
+        super().tearDown()
 
 if __name__ == "__main__":
     import unittest

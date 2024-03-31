@@ -21,6 +21,7 @@ apt-get -y install \
     build-essential \
     ccache \
     chrpath \
+    codespell \
     curl \
     debhelper \
     dnsutils \
@@ -58,7 +59,6 @@ apt-get -y install \
     libicu-dev \
     libjansson-dev \
     libjs-jquery \
-    libjson-perl \
     libkeyutils-dev \
     libkrb5-dev \
     libldap2-dev \
@@ -101,6 +101,8 @@ apt-get -y install \
     rng-tools \
     rsync \
     sed \
+    shellcheck \
+    shfmt \
     sudo \
     tar \
     tree \

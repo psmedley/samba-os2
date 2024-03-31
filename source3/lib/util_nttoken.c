@@ -2,7 +2,7 @@
  *  Unix SMB/CIFS implementation.
  *  Authentication utility functions
  *  Copyright (C) Andrew Tridgell 1992-1998
- *  Copyright (C) Andrew Bartlett 2001
+ *  Copyright (C) Andrew Bartlett 2001-2023
  *  Copyright (C) Jeremy Allison 2000-2001
  *  Copyright (C) Rafal Szczesniak 2002
  *  Copyright (C) Volker Lendecke 2006
@@ -29,49 +29,14 @@
 #include "../libcli/security/security.h"
 
 /****************************************************************************
- Duplicate a SID token.
-****************************************************************************/
-
-struct security_token *dup_nt_token(TALLOC_CTX *mem_ctx, const struct security_token *ptoken)
-{
-	struct security_token *token;
-
-	if (!ptoken)
-		return NULL;
-
-	token = talloc_zero(mem_ctx, struct security_token);
-	if (token == NULL) {
-		DEBUG(0, ("talloc failed\n"));
-		return NULL;
-	}
-
-	if (ptoken->sids && ptoken->num_sids) {
-		token->sids = (struct dom_sid *)talloc_memdup(
-			token, ptoken->sids, sizeof(struct dom_sid) * ptoken->num_sids );
-
-		if (token->sids == NULL) {
-			DEBUG(0, ("talloc_memdup failed\n"));
-			TALLOC_FREE(token);
-			return NULL;
-		}
-		token->num_sids = ptoken->num_sids;
-	}
-	
-	token->privilege_mask = ptoken->privilege_mask;
-	token->rights_mask = ptoken->rights_mask;
-
-	return token;
-}
-
-/****************************************************************************
  merge NT tokens
 ****************************************************************************/
 
-NTSTATUS merge_nt_token(TALLOC_CTX *mem_ctx,
-			const struct security_token *token_1,
-			const struct security_token *token_2,
-			struct security_token **token_out)
+NTSTATUS merge_with_system_token(TALLOC_CTX *mem_ctx,
+				 const struct security_token *token_1,
+				 struct security_token **token_out)
 {
+	const struct security_token *token_2 = get_system_token();
 	struct security_token *token = NULL;
 	NTSTATUS status;
 	uint32_t i;
@@ -110,6 +75,11 @@ NTSTATUS merge_nt_token(TALLOC_CTX *mem_ctx,
 
 	token->rights_mask |= token_1->rights_mask;
 	token->rights_mask |= token_2->rights_mask;
+
+	/*
+	 * We don't need to merge claims as the system token has no
+	 * claims
+	 */
 
 	*token_out = token;
 

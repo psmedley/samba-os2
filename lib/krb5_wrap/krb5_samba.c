@@ -126,31 +126,54 @@ void krb5_free_string(krb5_context context, char *val) {
 }
 #endif
 
-#if defined(HAVE_KRB5_PRINCIPAL_GET_COMP_STRING) && !defined(HAVE_KRB5_PRINC_COMPONENT)
-const krb5_data *krb5_princ_component(krb5_context context,
-				      krb5_principal principal, int i);
-
-const krb5_data *krb5_princ_component(krb5_context context,
-				      krb5_principal principal, int i)
+krb5_error_code smb_krb5_princ_component(krb5_context context,
+					 krb5_const_principal principal,
+					 int i,
+					 krb5_data *data);
+krb5_error_code smb_krb5_princ_component(krb5_context context,
+					 krb5_const_principal principal,
+					 int i,
+					 krb5_data *data)
 {
-	static krb5_data kdata;
+#if defined(HAVE_KRB5_PRINCIPAL_GET_COMP_STRING) && !defined(HAVE_KRB5_PRINC_COMPONENT)
+	const char *component = NULL;
 
-	kdata.data = discard_const_p(char, krb5_principal_get_comp_string(context, principal, i));
-	kdata.length = strlen((const char *)kdata.data);
-	return &kdata;
-}
+	if (i < 0) {
+		return EINVAL;
+	}
+
+	component = krb5_principal_get_comp_string(context, principal, i);
+	if (component == NULL) {
+		return ENOENT;
+	}
+
+	*data = smb_krb5_make_data(discard_const_p(char, component), strlen(component));
+
+	return 0;
+#else
+	const krb5_data *kdata = NULL;
+
+	if (i < 0) {
+		return EINVAL;
+	}
+
+	kdata = krb5_princ_component(context, principal, i);
+	if (kdata == NULL) {
+		return ENOENT;
+	}
+
+	*data = *kdata;
+
+	return 0;
 #endif
-
+}
 
 /**********************************************************
  * WRAPPING FUNCTIONS
  **********************************************************/
 
-#if defined(HAVE_ADDR_TYPE_IN_KRB5_ADDRESS)
-/* HEIMDAL */
-
 /**
- * @brief Stores the address of a 'struct sockaddr_storage' a krb5_address
+ * @brief Stores the address of a 'struct sockaddr_storage' into a krb5_address
  *
  * @param[in]  paddr    A pointer to a 'struct sockaddr_storage to extract the
  *                      address from.
@@ -163,6 +186,8 @@ bool smb_krb5_sockaddr_to_kaddr(struct sockaddr_storage *paddr,
 				krb5_address *pkaddr)
 {
 	memset(pkaddr, '\0', sizeof(krb5_address));
+#if defined(HAVE_ADDR_TYPE_IN_KRB5_ADDRESS)
+/* HEIMDAL */
 #ifdef HAVE_IPV6
 	if (paddr->ss_family == AF_INET6) {
 		pkaddr->addr_type = KRB5_ADDRESS_INET6;
@@ -177,25 +202,8 @@ bool smb_krb5_sockaddr_to_kaddr(struct sockaddr_storage *paddr,
 		pkaddr->address.data = (char *)&(((struct sockaddr_in *)paddr)->sin_addr);
 		return true;
 	}
-	return false;
-}
 #elif defined(HAVE_ADDRTYPE_IN_KRB5_ADDRESS)
 /* MIT */
-
-/**
- * @brief Stores the address of a 'struct sockaddr_storage' a krb5_address
- *
- * @param[in]  paddr    A pointer to a 'struct sockaddr_storage to extract the
- *                      address from.
- *
- * @param[in]  pkaddr A Kerberos address to store the address in.
- *
- * @return True on success, false if an error occurred.
- */
-bool smb_krb5_sockaddr_to_kaddr(struct sockaddr_storage *paddr,
-				krb5_address *pkaddr)
-{
-	memset(pkaddr, '\0', sizeof(krb5_address));
 #ifdef HAVE_IPV6
 	if (paddr->ss_family == AF_INET6) {
 		pkaddr->addrtype = ADDRTYPE_INET6;
@@ -210,11 +218,11 @@ bool smb_krb5_sockaddr_to_kaddr(struct sockaddr_storage *paddr,
 		pkaddr->contents = (krb5_octet *)&(((struct sockaddr_in *)paddr)->sin_addr);
 		return true;
 	}
-	return false;
-}
 #else
 #error UNKNOWN_ADDRTYPE
 #endif
+	return false;
+}
 
 krb5_error_code smb_krb5_mk_error(krb5_context context,
 				  krb5_error_code error_code,
@@ -253,13 +261,10 @@ krb5_error_code smb_krb5_mk_error(krb5_context context,
 
 	errpkt.text.length = 0;
 	if (e_text != NULL) {
-		errpkt.text.length = strlen(e_text);
-		errpkt.text.data = discard_const_p(char, e_text);
+		errpkt.text = smb_krb5_make_data(discard_const_p(char, e_text), strlen(e_text));
 	}
 
-	errpkt.e_data.magic = KV5M_DATA;
-	errpkt.e_data.length = 0;
-	errpkt.e_data.data = NULL;
+	errpkt.e_data = smb_krb5_make_data(NULL, 0);
 	if (e_data != NULL) {
 		errpkt.e_data = *e_data;
 	}
@@ -323,7 +328,7 @@ int smb_krb5_create_key_from_string(krb5_context context,
 
 		ok = convert_string_talloc(frame, CH_UNIX, CH_UTF16LE,
 					   password->data, password->length,
-					   (void **)&utf16, &utf16_size);
+					   &utf16, &utf16_size);
 		if (!ok) {
 			if (errno == 0) {
 				errno = EINVAL;
@@ -421,8 +426,7 @@ int smb_krb5_get_pw_salt(krb5_context context,
 		return ret;
 	}
 
-	psalt->data = salt.saltvalue.data;
-	psalt->length = salt.saltvalue.length;
+	*psalt = salt.saltvalue;
 
 	return ret;
 }
@@ -456,7 +460,7 @@ int smb_krb5_get_pw_salt(krb5_context context,
  * @param[in]  sAMAccountName     The sAMAccountName attribute of the object.
  *
  * @param[in]  userPrincipalName  The userPrincipalName attribute of the object
- *                                or NULL is not available.
+ *                                or NULL if not available.
  *
  * @param[in]  uac_flags          UF_ACCOUNT_TYPE_MASKed userAccountControl field
  *
@@ -656,7 +660,7 @@ int smb_krb5_salt_principal(krb5_context krb5_ctx,
  * @param[in]  sAMAccountName     The sAMAccountName attribute of the object.
  *
  * @param[in]  userPrincipalName  The userPrincipalName attribute of the object
- *                                or NULL is not available.
+ *                                or NULL if not available.
  *
  * @param[in]  uac_flags          UF_ACCOUNT_TYPE_MASKed userAccountControl field
  *
@@ -735,7 +739,7 @@ int smb_krb5_salt_principal_str(const char *realm,
  * @param[in]  sAMAccountName     The sAMAccountName attribute of the object.
  *
  * @param[in]  userPrincipalName  The userPrincipalName attribute of the object
- *                                or NULL is not available.
+ *                                or NULL if not available.
  *
  * @param[in]  is_computer        The indication of the object includes
  *                                objectClass=computer.
@@ -865,7 +869,7 @@ krb5_error_code smb_krb5_parse_name(krb5_context context,
  *
  * @param[in]  principal The principal.
  *
- * @param[out] unix_name A string representation of the princpial name as with
+ * @param[out] unix_name A string representation of the principal name as with
  *                       unix charset.
  *
  * Use talloc_free() to free the string representation if it is no longer
@@ -1043,32 +1047,50 @@ done:
  * @param[in] context		The krb5_context
  * @param[in] principal		The principal
  * @param[in] component		The component
- * @return string component
+ * @param[out] out			The output string
+ * @return krb5_error_code
  *
  * Caller must talloc_free if the return value is not NULL.
  *
  */
-char *smb_krb5_principal_get_comp_string(TALLOC_CTX *mem_ctx,
-					 krb5_context context,
-					 krb5_const_principal principal,
-					 unsigned int component)
+krb5_error_code smb_krb5_principal_get_comp_string(TALLOC_CTX *mem_ctx,
+						   krb5_context context,
+						   krb5_const_principal principal,
+						   unsigned int component,
+						   char **out)
 {
+	char *out_str = NULL;
 #if defined(HAVE_KRB5_PRINCIPAL_GET_COMP_STRING)
-	return talloc_strdup(mem_ctx, krb5_principal_get_comp_string(context, principal, component));
+	const char *str = NULL;
+
+	str = krb5_principal_get_comp_string(context, principal, component);
+	if (str == NULL) {
+		return ENOENT;
+	}
+
+	out_str = talloc_strdup(mem_ctx, str);
+	if (out_str == NULL) {
+		return ENOMEM;
+	}
 #else
 	krb5_data *data;
 
 	if (component >= krb5_princ_size(context, principal)) {
-		return NULL;
+		return ENOENT;
 	}
 
 	data = krb5_princ_component(context, principal, component);
 	if (data == NULL) {
-		return NULL;
+		return ENOENT;
 	}
 
-	return talloc_strndup(mem_ctx, data->data, data->length);
+	out_str = talloc_strndup(mem_ctx, data->data, data->length);
+	if (out_str == NULL) {
+		return ENOMEM;
+	}
 #endif
+	*out = out_str;
+	return 0;
 }
 
 /**
@@ -1441,7 +1463,7 @@ krb5_error_code smb_krb5_kt_open_relative(krb5_context context,
 		return krb5_kt_default(context, keytab);
 	}
 
-	mem_ctx = talloc_init("smb_krb5_open_keytab");
+	mem_ctx = talloc_init("smb_krb5_kt_open_relative");
 	if (!mem_ctx) {
 		return ENOMEM;
 	}
@@ -1482,7 +1504,7 @@ krb5_error_code smb_krb5_kt_open_relative(krb5_context context,
 		goto out;
 	}
 
-	DEBUG(10,("smb_krb5_open_keytab: krb5_kt_default_name returned %s\n", keytab_string));
+	DBG_DEBUG("krb5_kt_default_name returned %s\n", keytab_string);
 
 	tmp = talloc_strdup(mem_ctx, keytab_string);
 	if (!tmp) {
@@ -1535,7 +1557,7 @@ krb5_error_code smb_krb5_kt_open_relative(krb5_context context,
 	}
 
 resolve:
-	DEBUG(10,("smb_krb5_open_keytab: resolving: %s\n", tmp));
+	DBG_DEBUG("resolving: %s\n", tmp);
 	ret = krb5_kt_resolve(context, tmp, keytab);
 
 out:
@@ -1644,7 +1666,7 @@ krb5_error_code smb_krb5_kt_get_name(TALLOC_CTX *mem_ctx,
  *
  * @param[in]  keep_old_kvno Keep the entries with the previous kvno.
  *
- * @param[in]  kvno          The kvnco to use.
+ * @param[in]  kvno          The kvno to use.
  *
  * @param[in]  enctype_only  Only evaluate the enctype argument if true
  *
@@ -1690,15 +1712,20 @@ krb5_error_code smb_krb5_kt_seek_and_delete_old_entries(krb5_context context,
 	ZERO_STRUCT(cursor);
 	ZERO_STRUCT(kt_entry);
 
-	ret = krb5_kt_start_seq_get(context, keytab, &cursor);
-	if (ret == KRB5_KT_END || ret == ENOENT ) {
-		/* no entries */
-		return 0;
-	}
-
+	/*
+	 * Start with talloc_new() and only then call krb5_kt_start_seq_get().
+	 * If any of them fails, the cleanup code is simpler.
+	 */
 	tmp_ctx = talloc_new(NULL);
 	if (tmp_ctx == NULL) {
 		return ENOMEM;
+	}
+
+	ret = krb5_kt_start_seq_get(context, keytab, &cursor);
+	if (ret == KRB5_KT_END || ret == ENOENT ) {
+		/* no entries */
+		talloc_free(tmp_ctx);
+		return 0;
 	}
 
 	DEBUG(3, (__location__ ": Will try to delete old keytab entries\n"));
@@ -1754,7 +1781,7 @@ krb5_error_code smb_krb5_kt_seek_and_delete_old_entries(krb5_context context,
 		 * Save the entries with kvno - 1. This is what microsoft does
 		 * to allow people with existing sessions that have kvno - 1
 		 * to still work. Otherwise, when the password for the machine
-		 * changes, all kerberizied sessions will 'break' until either
+		 * changes, all kerberized sessions will 'break' until either
 		 * the client reboots or the client's session key expires and
 		 * they get a new session ticket with the new kvno.
 		 * Some keytab files only store the kvno in 8bits, limit
@@ -2346,7 +2373,7 @@ done:
  *
  * @param[in]  password  The password (or NULL).
  *
- * @param[in]  impersonate_principal The impersonatiion principal (or NULL).
+ * @param[in]  impersonate_principal The impersonation principal (or NULL).
  *
  * @param[in]  self_service The local service for S4U2Self if
  *                          impersonate_principal is specified).
@@ -2663,10 +2690,9 @@ krb5_error_code smb_krb5_kinit_s4u2_ccache(krb5_context ctx,
 		if (code != 0) {
 			ip = NULL;
 		}
-		DEBUG(1, ("smb_krb5_kinit_password_cache: "
-			  "KDC returned self principal[%s] while impersonating [%s]\n",
-			  sp?sp:"<no memory>",
-			  ip?ip:"<no memory>"));
+		DBG_WARNING("KDC returned self principal[%s] while impersonating [%s]\n",
+			    sp?sp:"<no memory>",
+			    ip?ip:"<no memory>");
 
 		SAFE_FREE(sp);
 		SAFE_FREE(ip);
@@ -2693,10 +2719,9 @@ krb5_error_code smb_krb5_kinit_s4u2_ccache(krb5_context ctx,
 		if (code != 0) {
 			ep = NULL;
 		}
-		DEBUG(1, ("smb_krb5_kinit_password_cache: "
-			  "KDC returned wrong principal[%s] we expected [%s]\n",
-			  sp?sp:"<no memory>",
-			  ep?ep:"<no memory>"));
+		DBG_WARNING("KDC returned wrong principal[%s] we expected [%s]\n",
+			    sp?sp:"<no memory>",
+			    ep?ep:"<no memory>");
 
 		SAFE_FREE(sp);
 		SAFE_FREE(ep);
@@ -3177,11 +3202,22 @@ char *smb_krb5_principal_get_realm(TALLOC_CTX *mem_ctx,
 				   krb5_const_principal principal)
 {
 #ifdef HAVE_KRB5_PRINCIPAL_GET_REALM /* Heimdal */
-	return talloc_strdup(mem_ctx,
-			     krb5_principal_get_realm(context, principal));
+	const char *realm = NULL;
+
+	realm = krb5_principal_get_realm(context, principal);
+	if (realm == NULL) {
+		return NULL;
+	}
+
+	return talloc_strdup(mem_ctx, realm);
 #elif defined(krb5_princ_realm) /* MIT */
-	const krb5_data *realm;
+	const krb5_data *realm = NULL;
+
 	realm = krb5_princ_realm(context, principal);
+	if (realm == NULL) {
+		return NULL;
+	}
+
 	return talloc_strndup(mem_ctx, realm->data, realm->length);
 #else
 #error UNKNOWN_GET_PRINC_REALM_FUNCTIONS
@@ -3416,14 +3452,20 @@ int smb_krb5_principal_is_tgs(krb5_context context,
 {
 	char *p = NULL;
 	int eq = 1;
+	krb5_error_code ret = 0;
 
-	p = smb_krb5_principal_get_comp_string(NULL, context, principal, 0);
-	if (p == NULL) {
+	if (krb5_princ_size(context, principal) > 2) {
+		return 0;
+	}
+
+	ret = smb_krb5_principal_get_comp_string(NULL, context, principal, 0, &p);
+	if (ret == ENOENT) {
+		return 0;
+	} else if (ret) {
 		return -1;
 	}
 
-	eq = krb5_princ_size(context, principal) == 2 &&
-	     (strcmp(p, KRB5_TGS_NAME) == 0);
+	eq = strcmp(p, KRB5_TGS_NAME) == 0;
 
 	talloc_free(p);
 

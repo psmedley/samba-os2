@@ -147,7 +147,6 @@ struct verify_uc {
     hdb_entry *krbtgt;
     EncTicketPart *ticket;
     krb5_pac pac;
-    krb5_boolean *is_trusted;
 };
 
 static krb5_error_code KRB5_LIB_CALL
@@ -165,8 +164,7 @@ verify(krb5_context context, const void *plug, void *plugctx, void *userctx)
 			 uc->client_principal,
 			 uc->delegated_proxy,
 			 uc->client, uc->server, uc->krbtgt,
-			 uc->ticket, uc->pac,
-			 uc->is_trusted);
+			 uc->ticket, uc->pac);
     return ret;
 }
 
@@ -178,8 +176,7 @@ _kdc_pac_verify(astgs_request_t r,
 		hdb_entry *server,
 		hdb_entry *krbtgt,
 		EncTicketPart *ticket,
-		krb5_pac pac,
-		krb5_boolean *is_trusted)
+		krb5_pac pac)
 {
     struct verify_uc uc;
 
@@ -194,7 +191,6 @@ _kdc_pac_verify(astgs_request_t r,
     uc.krbtgt = krbtgt;
     uc.ticket = ticket,
     uc.pac = pac;
-    uc.is_trusted = is_trusted;
 
     return _krb5_plugin_run_f(r->context, &kdc_plugin_data,
 			     0, &uc, verify);
@@ -532,6 +528,19 @@ kdc_request_add_pac_buffer(astgs_request_t r,
 	heim_release(pac);
 
     return ret;
+}
+
+/*
+ * Override the e-data field to be returned in an error reply. The data will be
+ * owned by the KDC and eventually will be freed with krb5_data_free().
+ */
+KDC_LIB_FUNCTION krb5_error_code KDC_LIB_CALL
+kdc_request_set_e_data(astgs_request_t r, heim_octet_string e_data)
+{
+    krb5_data_free(&r->e_data);
+    r->e_data = e_data;
+
+    return 0;
 }
 
 #undef _KDC_REQUEST_GET_ACCESSOR

@@ -67,13 +67,15 @@ static size_t lsad_interfaces(
 	return num_ifaces;
 }
 
-static size_t lsad_servers(
+static NTSTATUS lsad_servers(
 	struct dcesrv_context *dce_ctx,
 	const struct dcesrv_endpoint_server ***_ep_servers,
+	size_t *_num_ep_servers,
 	void *private_data)
 {
 	static const struct dcesrv_endpoint_server *ep_servers[4] = { NULL, };
 	size_t num_servers = ARRAY_SIZE(ep_servers);
+	NTSTATUS status;
 	bool ok;
 
 	ep_servers[0] = lsarpc_get_ep_server();
@@ -85,6 +87,11 @@ static size_t lsad_servers(
 	if (!ok) {
 		DBG_ERR("secrets_init() failed\n");
 		exit(1);
+	}
+
+	status = dcesrv_register_default_auth_types_machine_principal(dce_ctx);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
 	}
 
 	switch(lp_server_role()) {
@@ -102,11 +109,22 @@ static size_t lsad_servers(
 		num_servers = 0;
 		break;
 	default:
+		/*
+		 * As DC we also register schannel with an
+		 * empty principal
+		 */
+		status = dcesrv_auth_type_principal_register(dce_ctx,
+							     DCERPC_AUTH_TYPE_SCHANNEL,
+							     "");
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 		break;
 	}
 
 	*_ep_servers = ep_servers;
-	return num_servers;
+	*_num_ep_servers = num_servers;
+	return NT_STATUS_OK;
 }
 
 int main(int argc, const char *argv[])

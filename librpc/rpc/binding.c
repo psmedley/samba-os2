@@ -134,7 +134,7 @@ const char *epm_floor_string(TALLOC_CTX *mem_ctx, struct epm_floor *epm_floor)
 
 	switch(epm_floor->lhs.protocol) {
 		case EPM_PROTOCOL_UUID:
-			status = dcerpc_floor_get_lhs_data(epm_floor, &syntax);
+			status = dcerpc_floor_get_uuid_full(epm_floor, &syntax);
 			if (NT_STATUS_IS_OK(status)) {
 				/* lhs is used: UUID */
 				struct GUID_txt_buf buf;
@@ -194,13 +194,13 @@ const char *epm_floor_string(TALLOC_CTX *mem_ctx, struct epm_floor *epm_floor)
 			return "NB_IPX";
 
 		case EPM_PROTOCOL_HTTP:
-			return talloc_asprintf(mem_ctx, "HTTP:%d", epm_floor->rhs.http.port);
+			return talloc_asprintf(mem_ctx, "HTTP:%"PRIu16, epm_floor->rhs.http.port);
 
 		case EPM_PROTOCOL_TCP:
-			return talloc_asprintf(mem_ctx, "TCP:%d", epm_floor->rhs.tcp.port);
+			return talloc_asprintf(mem_ctx, "TCP:%"PRIu16, epm_floor->rhs.tcp.port);
 
 		case EPM_PROTOCOL_UDP:
-			return talloc_asprintf(mem_ctx, "UDP:%d", epm_floor->rhs.udp.port);
+			return talloc_asprintf(mem_ctx, "UDP:%"PRIu16, epm_floor->rhs.udp.port);
 
 		default:
 			return talloc_asprintf(mem_ctx, "UNK(%02x):", epm_floor->lhs.protocol);
@@ -894,13 +894,20 @@ _PUBLIC_ NTSTATUS dcerpc_binding_set_flags(struct dcerpc_binding *b,
 	return NT_STATUS_OK;
 }
 
-_PUBLIC_ NTSTATUS dcerpc_floor_get_lhs_data(const struct epm_floor *epm_floor,
-					    struct ndr_syntax_id *syntax)
+_PUBLIC_ NTSTATUS dcerpc_floor_get_uuid_full(const struct epm_floor *epm_floor,
+					     struct ndr_syntax_id *syntax)
 {
 	TALLOC_CTX *mem_ctx = talloc_init("floor_get_lhs_data");
 	struct ndr_pull *ndr;
 	enum ndr_err_code ndr_err;
 	uint16_t if_version=0;
+
+	*syntax = (struct ndr_syntax_id) { .if_version = 0, };
+
+	if (epm_floor->lhs.protocol != EPM_PROTOCOL_UUID) {
+		talloc_free(mem_ctx);
+		return NT_STATUS_INVALID_PARAMETER;
+	}
 
 	ndr = ndr_pull_init_blob(&epm_floor->lhs.lhs_data, mem_ctx);
 	if (ndr == NULL) {
@@ -922,6 +929,23 @@ _PUBLIC_ NTSTATUS dcerpc_floor_get_lhs_data(const struct epm_floor *epm_floor,
 	}
 
 	syntax->if_version = if_version;
+
+	TALLOC_FREE(ndr);
+
+	ndr = ndr_pull_init_blob(&epm_floor->rhs.uuid.unknown, mem_ctx);
+	if (ndr == NULL) {
+		talloc_free(mem_ctx);
+		return NT_STATUS_NO_MEMORY;
+	}
+	ndr->flags |= LIBNDR_FLAG_NOALIGN;
+
+	ndr_err = ndr_pull_uint16(ndr, NDR_SCALARS, &if_version);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		talloc_free(mem_ctx);
+		return ndr_map_error2ntstatus(ndr_err);
+	}
+
+	syntax->if_version |= (((uint32_t)if_version) << 16) & 0xffff0000;
 
 	talloc_free(mem_ctx);
 
@@ -982,20 +1006,43 @@ static bool dcerpc_floor_pack_rhs_if_version_data(
 	return true;
 }
 
+static NTSTATUS dcerpc_floor_pack_uuid_full(TALLOC_CTX *mem_ctx,
+					    struct epm_floor *floor,
+					    const struct ndr_syntax_id *syntax)
+{
+	bool ok;
+
+	floor->lhs.protocol = EPM_PROTOCOL_UUID;
+
+	floor->lhs.lhs_data = dcerpc_floor_pack_lhs_data(mem_ctx, syntax);
+	if (floor->lhs.lhs_data.data == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	ok = dcerpc_floor_pack_rhs_if_version_data(mem_ctx, syntax,
+				&floor->rhs.uuid.unknown);
+	if (!ok) {
+		data_blob_free(&floor->lhs.lhs_data);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	return NT_STATUS_OK;
+}
+
 char *dcerpc_floor_get_rhs_data(TALLOC_CTX *mem_ctx, struct epm_floor *epm_floor)
 {
 	switch (epm_floor->lhs.protocol) {
 	case EPM_PROTOCOL_TCP:
 		if (epm_floor->rhs.tcp.port == 0) return NULL;
-		return talloc_asprintf(mem_ctx, "%d", epm_floor->rhs.tcp.port);
+		return talloc_asprintf(mem_ctx, "%"PRIu16, epm_floor->rhs.tcp.port);
 
 	case EPM_PROTOCOL_UDP:
 		if (epm_floor->rhs.udp.port == 0) return NULL;
-		return talloc_asprintf(mem_ctx, "%d", epm_floor->rhs.udp.port);
+		return talloc_asprintf(mem_ctx, "%"PRIu16, epm_floor->rhs.udp.port);
 
 	case EPM_PROTOCOL_HTTP:
 		if (epm_floor->rhs.http.port == 0) return NULL;
-		return talloc_asprintf(mem_ctx, "%d", epm_floor->rhs.http.port);
+		return talloc_asprintf(mem_ctx, "%"PRIu16, epm_floor->rhs.http.port);
 
 	case EPM_PROTOCOL_IP:
 		return talloc_strdup(mem_ctx, epm_floor->rhs.ip.ipaddr);
@@ -1022,10 +1069,10 @@ char *dcerpc_floor_get_rhs_data(TALLOC_CTX *mem_ctx, struct epm_floor *epm_floor
 		return NULL;
 
 	case EPM_PROTOCOL_VINES_SPP:
-		return talloc_asprintf(mem_ctx, "%d", epm_floor->rhs.vines_spp.port);
+		return talloc_asprintf(mem_ctx, "%"PRIu16, epm_floor->rhs.vines_spp.port);
 
 	case EPM_PROTOCOL_VINES_IPC:
-		return talloc_asprintf(mem_ctx, "%d", epm_floor->rhs.vines_ipc.port);
+		return talloc_asprintf(mem_ctx, "%"PRIu16, epm_floor->rhs.vines_ipc.port);
 
 	case EPM_PROTOCOL_STREETTALK:
 		return talloc_strdup(mem_ctx, epm_floor->rhs.streettalk.streettalk);
@@ -1238,7 +1285,7 @@ _PUBLIC_ NTSTATUS dcerpc_binding_from_tower(TALLOC_CTX *mem_ctx,
 	}
 
 	/* Set abstract syntax */
-	status = dcerpc_floor_get_lhs_data(&tower->floors[0], &abstract_syntax);
+	status = dcerpc_floor_get_uuid_full(&tower->floors[0], &abstract_syntax);
 	if (!NT_STATUS_IS_OK(status)) {
 		talloc_free(b);
 		return status;
@@ -1402,25 +1449,21 @@ _PUBLIC_ NTSTATUS dcerpc_binding_build_tower(TALLOC_CTX *mem_ctx,
 	}
 
 	/* Floor 0 */
-	tower->floors[0].lhs.protocol = EPM_PROTOCOL_UUID;
-
 	abstract_syntax = dcerpc_binding_get_abstract_syntax(binding);
-	tower->floors[0].lhs.lhs_data = dcerpc_floor_pack_lhs_data(tower->floors,
-								   &abstract_syntax);
-
-	if (!dcerpc_floor_pack_rhs_if_version_data(
-		    tower->floors, &abstract_syntax,
-		    &tower->floors[0].rhs.uuid.unknown)) {
-		return NT_STATUS_NO_MEMORY;
+	status = dcerpc_floor_pack_uuid_full(tower->floors,
+					     &tower->floors[0],
+					     &abstract_syntax);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
 	}
 
 	/* Floor 1 */
-	tower->floors[1].lhs.protocol = EPM_PROTOCOL_UUID;
-
-	tower->floors[1].lhs.lhs_data = dcerpc_floor_pack_lhs_data(tower->floors, 
-								&ndr_transfer_syntax_ndr);
-
-	tower->floors[1].rhs.uuid.unknown = data_blob_talloc_zero(tower->floors, 2);
+	status = dcerpc_floor_pack_uuid_full(tower->floors,
+					     &tower->floors[1],
+					     &ndr_transfer_syntax_ndr);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
 
 	/* Floor 2 to num_protocols */
 	for (i = 0; i < num_protocols; i++) {

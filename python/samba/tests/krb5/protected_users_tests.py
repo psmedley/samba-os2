@@ -28,6 +28,7 @@ import ldb
 
 from samba import generate_random_password, ntstatus
 from samba.dcerpc import netlogon, security
+from samba.hresult import HRES_SEC_E_LOGON_DENIED
 
 import samba.tests.krb5.kcrypto as kcrypto
 from samba.tests.krb5.kdc_base_test import KDCBaseTest
@@ -50,8 +51,6 @@ import samba.tests.krb5.rfc4120_pyasn1 as krb5_asn1
 
 global_asn1_print = False
 global_hexdump = False
-
-HRES_SEC_E_LOGON_DENIED = 0x8009030C
 
 
 class ProtectedUsersTests(KDCBaseTest):
@@ -93,6 +92,8 @@ class ProtectedUsersTests(KDCBaseTest):
 
         if members:
             opts['member_of'] = members
+        if supported_enctypes is not None:
+            opts['supported_enctypes'] = supported_enctypes
 
         return self.get_cached_creds(account_type=account_type,
                                      opts=opts,

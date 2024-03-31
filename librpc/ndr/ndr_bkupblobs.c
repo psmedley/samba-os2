@@ -23,11 +23,11 @@
 #include "librpc/gen_ndr/ndr_bkupblobs.h"
 
 
-_PUBLIC_ enum ndr_err_code ndr_push_bkup_NTBackupFile(struct ndr_push *ndr, int ndr_flags, const struct bkup_NTBackupFile *r)
+_PUBLIC_ enum ndr_err_code ndr_push_bkup_NTBackupFile(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct bkup_NTBackupFile *r)
 {
 	uint32_t cntr_streams_0;
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_FLAG_NOALIGN);
 		if (ndr_flags & NDR_SCALARS) {
 			NDR_CHECK(ndr_push_align(ndr, 2));
@@ -53,11 +53,11 @@ _PUBLIC_ enum ndr_err_code ndr_push_bkup_NTBackupFile(struct ndr_push *ndr, int 
 	} \
 } while (0)
 
-_PUBLIC_ enum ndr_err_code ndr_pull_bkup_NTBackupFile(struct ndr_pull *ndr, int ndr_flags, struct bkup_NTBackupFile *r)
+_PUBLIC_ enum ndr_err_code ndr_pull_bkup_NTBackupFile(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct bkup_NTBackupFile *r)
 {
 	uint32_t cntr_streams_0;
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_FLAG_NOALIGN);
 		if (ndr_flags & NDR_SCALARS) {
 			uint32_t remaining = ndr->data_size - ndr->offset;

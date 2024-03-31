@@ -2,12 +2,12 @@
 .\"     Title: idmap_nss
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 02/19/2024
+.\"      Date: 03/27/2024
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.19.5
+.\"    Source: Samba 4.20.0
 .\"  Language: English
 .\"
-.TH "IDMAP_NSS" "8" "02/19/2024" "Samba 4\&.19\&.5" "System Administration tools"
+.TH "IDMAP_NSS" "8" "03/27/2024" "Samba 4\&.20\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -32,6 +32,21 @@ idmap_nss \- Samba\*(Aqs idmap_nss Backend for Winbind
 .SH "DESCRIPTION"
 .PP
 The idmap_nss plugin provides a means to map Unix users and groups to Windows accounts\&. This provides a simple means of ensuring that the SID for a Unix user named jsmith is reported as the one assigned to DOMAIN\ejsmith which is necessary for reporting ACLs on files and printers stored on a Samba member server\&.
+.SH "IDMAP OPTIONS"
+.PP
+range = low \- high
+.RS 4
+Defines the available matching UID and GID range for which the backend is authoritative\&. Note that the range acts as a filter\&. Returned UIDs or GIDs by NSS modules that fall outside the range are ignored and the corresponding maps discarded\&. It is intended as a way to avoid accidental UID/GID overlaps between local and remotely defined IDs\&.
+.RE
+.PP
+use_upn = <yes | no>
+.RS 4
+Some NSS modules can return and handle UPNs and/or down\-level logon names (e\&.g\&., DOMAIN\euser or user@REALM)\&.
+.sp
+If this parameter is enabled the returned names from NSS will be parsed and the resulting namespace will be used as the authoritative namespace instead of the IDMAP domain name\&. Also, down\-level logon names will be sent to NSS instead of the plain username to give NSS modules a hint about the user\*(Aqs correct domain\&.
+.sp
+Default: no
+.RE
 .SH "EXAMPLES"
 .PP
 This example shows how to use idmap_nss to obtain the local account ID\*(Aqs for its own domain (SAMBA) from NSS, whilst allocating new mappings for the default domain (*) and any trusted domains\&.

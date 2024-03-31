@@ -47,11 +47,8 @@ import re
 class AuthLogTests(samba.tests.auth_log_base.AuthLogTestBase):
 
     def setUp(self):
-        super(AuthLogTests, self).setUp()
+        super().setUp()
         self.remoteAddress = os.environ["CLIENT_IP"]
-
-    def tearDown(self):
-        super(AuthLogTests, self).tearDown()
 
     def smb_connection(self, creds, use_spnego="yes", ntlmv2_auth="yes",
                        force_smb1=False):

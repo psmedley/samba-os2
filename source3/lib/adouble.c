@@ -328,7 +328,7 @@ static bool ad_entry_check_size(uint32_t eid,
 	}
 	if (ad_checks[eid].fixed_size) {
 		if (ad_checks[eid].expected_len != got_len) {
-			/* Wrong size fo fixed size entry. */
+			/* Wrong size for fixed size entry. */
 			return false;
 		}
 	} else {
@@ -2709,7 +2709,7 @@ int ad_fset(struct vfs_handle_struct *handle,
 					  ad_getentryoff(ad, ADEID_RFORK),
 					  0);
 		if (len != ad_getentryoff(ad, ADEID_RFORK)) {
-			DBG_ERR("short write on %s: %zd", fsp_str_dbg(fsp), len);
+			DBG_ERR("short write on %s: %zd\n", fsp_str_dbg(fsp), len);
 			return -1;
 		}
 		rc = 0;
@@ -2829,7 +2829,7 @@ ssize_t afpinfo_pack(const AfpInfo *ai, char *buf)
  * Buffer size must be at least AFP_INFO_SIZE
  * Returns allocated AfpInfo struct
  **/
-AfpInfo *afpinfo_unpack(TALLOC_CTX *ctx, const void *data)
+AfpInfo *afpinfo_unpack(TALLOC_CTX *ctx, const void *data, bool validate)
 {
 	AfpInfo *ai = talloc_zero(ctx, AfpInfo);
 	if (ai == NULL) {
@@ -2842,10 +2842,16 @@ AfpInfo *afpinfo_unpack(TALLOC_CTX *ctx, const void *data)
 	memcpy(ai->afpi_FinderInfo, (const char *)data + 16,
 	       sizeof(ai->afpi_FinderInfo));
 
-	if (ai->afpi_Signature != AFP_Signature
-	    || ai->afpi_Version != AFP_Version) {
-		DEBUG(1, ("Bad AfpInfo signature or version\n"));
-		TALLOC_FREE(ai);
+	if (validate) {
+		if (ai->afpi_Signature != AFP_Signature
+		    || ai->afpi_Version != AFP_Version)
+		{
+			DEBUG(1, ("Bad AfpInfo signature or version\n"));
+			TALLOC_FREE(ai);
+		}
+	} else {
+		ai->afpi_Signature = AFP_Signature;
+		ai->afpi_Version = AFP_Version;
 	}
 
 	return ai;

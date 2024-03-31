@@ -27,13 +27,6 @@
 #define BOOLSTR(b) ((b) ? "Yes" : "No")
 #define BITSETW(ptr,bit) ((SVAL(ptr,0) & (1<<(bit)))!=0)
 
-/* for readability... */
-#define IS_DOS_READONLY(test_mode) (((test_mode) & FILE_ATTRIBUTE_READONLY) != 0)
-#define IS_DOS_DIR(test_mode)      (((test_mode) & FILE_ATTRIBUTE_DIRECTORY) != 0)
-#define IS_DOS_ARCHIVE(test_mode)  (((test_mode) & FILE_ATTRIBUTE_ARCHIVE) != 0)
-#define IS_DOS_SYSTEM(test_mode)   (((test_mode) & FILE_ATTRIBUTE_SYSTEM) != 0)
-#define IS_DOS_HIDDEN(test_mode)   (((test_mode) & FILE_ATTRIBUTE_HIDDEN) != 0)
-
 /* these are useful macros for checking validity of handles */
 #define IS_IPC(conn)       ((conn) && (conn)->ipc)
 #define IS_PRINT(conn)       ((conn) && (conn)->printer)
@@ -105,7 +98,7 @@
 #define VALID_STAT_OF_DIR(st) (VALID_STAT(st) && S_ISDIR((st).st_ex_mode))
 #define SET_STAT_INVALID(st) { \
 		(st).st_ex_nlink = 0;					\
-		(st).cached_dos_attributes = FILE_ATTRIBUTES_INVALID;	\
+		(st).cached_dos_attributes = FILE_ATTRIBUTE_INVALID;	\
 };
 
 /* Macros to get at offsets within smb_lkrng and smb_unlkrng

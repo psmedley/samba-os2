@@ -145,7 +145,7 @@ static int partition_req_callback(struct ldb_request *req,
 
 	partition_ctrl = ldb_request_get_control(req, DSDB_CONTROL_CURRENT_PARTITION_OID);
 	if (partition_ctrl && (ac->num_requests == 1 || ares->type == LDB_REPLY_ENTRY)) {
-		/* If we didn't fan this request out to mulitple partitions,
+		/* If we didn't fan this request out to multiple partitions,
 		 * or this is an individual search result, we can
 		 * deterministically tell the caller what partition this was
 		 * written to (repl_meta_data likes to know) */
@@ -428,11 +428,11 @@ static int partition_copy_all_callback_action(
 	 * lead to an error
 	 */
 	search_ret = dsdb_module_search_dn(module, ac, &res, dn, NULL, DSDB_FLAG_NEXT_MODULE, req);
-	if (search_ret != LDB_SUCCESS) {
+	if (search_ret != LDB_SUCCESS && search_ret != LDB_ERR_NO_SUCH_OBJECT) {
 		return search_ret;
 	}
 
-	/* now delete the object in the other partitions, if requried
+	/* now delete the object in the other partitions, if required
 	*/
 	if (search_ret == LDB_ERR_NO_SUCH_OBJECT) {
 		for (i=0; data->partitions && data->partitions[i]; i++) {
@@ -488,7 +488,7 @@ static int partition_copy_all_callback_action(
 		if (req->operation == LDB_MODIFY) {
 			const struct ldb_message *req_msg = req->op.mod.message;
 			/*
-			 * mark elements to be removed, if there were
+			 * mark elements to be removed, if these were
 			 * deleted entirely above we need to delete
 			 * them here too
 			 */
@@ -1607,7 +1607,7 @@ int partition_read_unlock(struct ldb_module *module)
 					   LDB_DEBUG_FATAL,
 					   "Failed to lock db: %s / %s for %s",
 					   ldb_errstring(ldb),
-					   ldb_strerror(ret),
+					   ldb_strerror(ret2),
 					   ldb_dn_get_linearized(p->ctrl->dn));
 
 				/*
@@ -1643,7 +1643,7 @@ int partition_read_unlock(struct ldb_module *module)
 		}
 	}
 
-	ret = partition_metadata_read_unlock(module);
+	ret2 = partition_metadata_read_unlock(module);
 
 	/*
 	 * Don't overwrite the original failure code

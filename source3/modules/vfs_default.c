@@ -670,7 +670,8 @@ static int vfswrap_openat(vfs_handle_struct *handle,
 
 	START_PROFILE(syscall_openat);
 
-	if (how->resolve & ~VFS_OPEN_HOW_RESOLVE_NO_SYMLINKS) {
+	if (how->resolve & ~(VFS_OPEN_HOW_RESOLVE_NO_SYMLINKS |
+			     VFS_OPEN_HOW_WITH_BACKUP_INTENT)) {
 		errno = ENOSYS;
 		result = -1;
 		goto out;
@@ -743,11 +744,22 @@ static int vfswrap_openat(vfs_handle_struct *handle,
 			mode);
 
 	if (became_root) {
+		int err = errno;
 		unbecome_root();
+		errno = err;
 	}
 
 done:
-	fsp->fsp_flags.have_proc_fds = fsp->conn->have_proc_fds;
+	if (result >= 0) {
+		fsp->fsp_flags.have_proc_fds = fsp->conn->have_proc_fds;
+	} else {
+		/*
+		 * "/proc/self/fd/-1" never exists. Indicate to upper
+		 * layers that for this fsp a possible name-based
+		 * fallback is the only way to go.
+		 */
+		fsp->fsp_flags.have_proc_fds = false;
+	}
 
 out:
 	END_PROFILE(syscall_openat);
@@ -2682,15 +2694,10 @@ static int vfswrap_fchmod(vfs_handle_struct *handle, files_struct *fsp, mode_t m
 
 	if (fsp->fsp_flags.have_proc_fds) {
 		int fd = fsp_get_pathref_fd(fsp);
-		const char *p = NULL;
-		char buf[PATH_MAX];
+		struct sys_proc_fd_path_buf buf;
 
-		p = sys_proc_fd_path(fd, buf, sizeof(buf));
-		if (p != NULL) {
-			result = chmod(p, mode);
-		} else {
-			result = -1;
-		}
+		result = chmod(sys_proc_fd_path(fd, &buf), mode);
+
 		END_PROFILE(syscall_fchmod);
 		return result;
 	}
@@ -2718,15 +2725,10 @@ static int vfswrap_fchown(vfs_handle_struct *handle, files_struct *fsp, uid_t ui
 
 	if (fsp->fsp_flags.have_proc_fds) {
 		int fd = fsp_get_pathref_fd(fsp);
-		const char *p = NULL;
-		char buf[PATH_MAX];
+		struct sys_proc_fd_path_buf buf;
 
-		p = sys_proc_fd_path(fd, buf, sizeof(buf));
-		if (p != NULL) {
-			result = chown(p, uid, gid);
-		} else {
-			result = -1;
-		}
+		result = chown(sys_proc_fd_path(fd, &buf), uid, gid);
+
 		END_PROFILE(syscall_fchown);
 		return result;
 	}
@@ -2851,19 +2853,12 @@ static int vfswrap_fntimes(vfs_handle_struct *handle,
 
 	if (fsp->fsp_flags.have_proc_fds) {
 		int fd = fsp_get_pathref_fd(fsp);
-		const char *p = NULL;
-		char buf[PATH_MAX];
+		struct sys_proc_fd_path_buf buf;
 
-		p = sys_proc_fd_path(fd, buf, sizeof(buf));
-		if (p != NULL) {
-			/*
-			 * The dirfd argument of utimensat is ignored when
-			 * pathname is an absolute path
-			 */
-			result = utimensat(AT_FDCWD, p, times, 0);
-		} else {
-			result = -1;
-		}
+		result = utimensat(AT_FDCWD,
+				   sys_proc_fd_path(fd, &buf),
+				   times,
+				   0);
 
 		goto out;
 	}
@@ -3279,15 +3274,9 @@ static int vfswrap_fchflags(vfs_handle_struct *handle,
 	}
 
 	if (fsp->fsp_flags.have_proc_fds) {
-		const char *p = NULL;
-		char buf[PATH_MAX];
+		struct sys_proc_fd_path_buf buf;
 
-		p = sys_proc_fd_path(fd, buf, sizeof(buf));
-		if (p == NULL) {
-			return -1;
-		}
-
-		return chflags(p, flags);
+		return chflags(sys_proc_fd_path(fd, &buf), flags);
 	}
 
 	/*
@@ -3526,15 +3515,9 @@ static ssize_t vfswrap_fgetxattr(struct vfs_handle_struct *handle,
 	}
 
 	if (fsp->fsp_flags.have_proc_fds) {
-		const char *p = NULL;
-		char buf[PATH_MAX];
+		struct sys_proc_fd_path_buf buf;
 
-		p = sys_proc_fd_path(fd, buf, sizeof(buf));
-		if (p == NULL) {
-			return -1;
-		}
-
-		return getxattr(p, name, value, size);
+		return getxattr(sys_proc_fd_path(fd, &buf), name, value, size);
 	}
 
 	/*
@@ -3852,15 +3835,9 @@ static ssize_t vfswrap_flistxattr(struct vfs_handle_struct *handle, struct files
 	}
 
 	if (fsp->fsp_flags.have_proc_fds) {
-		const char *p = NULL;
-		char buf[PATH_MAX];
+		struct sys_proc_fd_path_buf buf;
 
-		p = sys_proc_fd_path(fd, buf, sizeof(buf));
-		if (p == NULL) {
-			return -1;
-		}
-
-		return listxattr(p, list, size);
+		return listxattr(sys_proc_fd_path(fd, &buf), list, size);
 	}
 
 	/*
@@ -3880,15 +3857,9 @@ static int vfswrap_fremovexattr(struct vfs_handle_struct *handle, struct files_s
 	}
 
 	if (fsp->fsp_flags.have_proc_fds) {
-		const char *p = NULL;
-		char buf[PATH_MAX];
+		struct sys_proc_fd_path_buf buf;
 
-		p = sys_proc_fd_path(fd, buf, sizeof(buf));
-		if (p == NULL) {
-			return -1;
-		}
-
-		return removexattr(p, name);
+		return removexattr(sys_proc_fd_path(fd, &buf), name);
 	}
 
 	/*
@@ -3908,15 +3879,13 @@ static int vfswrap_fsetxattr(struct vfs_handle_struct *handle, struct files_stru
 	}
 
 	if (fsp->fsp_flags.have_proc_fds) {
-		const char *p = NULL;
-		char buf[PATH_MAX];
+		struct sys_proc_fd_path_buf buf;
 
-		p = sys_proc_fd_path(fd, buf, sizeof(buf));
-		if (p == NULL) {
-			return -1;
-		}
-
-		return setxattr(p, name, value, size, flags);
+		return setxattr(sys_proc_fd_path(fd, &buf),
+				name,
+				value,
+				size,
+				flags);
 	}
 
 	/*

@@ -317,11 +317,13 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 		ndr_err = ndr_pull_struct_blob_all(&sce->values[0], scb, scb,
 				(ndr_pull_flags_fn_t)ndr_pull_supplementalCredentialsBlob);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			talloc_free(scb);
 			return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 					 "ndr_pull_struct_blob_all");
 		}
 
 		if (scb->sub.num_packages < 2) {
+			talloc_free(scb);
 			return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 					 "num_packages < 2");
 		}
@@ -331,11 +333,13 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 
 			subblob = strhex_to_data_blob(scb, scb->sub.packages[i].data);
 			if (subblob.data == NULL) {
+				talloc_free(scb);
 				return ldb_module_oom(module);
 			}
 
 			if (strcmp(scb->sub.packages[i].name, "Packages") == 0) {
 				if (scpp) {
+					talloc_free(scb);
 					return ldb_error(ldb,
 							 LDB_ERR_CONSTRAINT_VIOLATION,
 							 "Packages twice");
@@ -346,6 +350,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 			}
 			if (strcmp(scb->sub.packages[i].name, "Primary:Kerberos") == 0) {
 				if (scpk) {
+					talloc_free(scb);
 					return ldb_error(ldb,
 							 LDB_ERR_CONSTRAINT_VIOLATION,
 							 "Primary:Kerberos twice");
@@ -356,6 +361,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 			}
 			if (strcmp(scb->sub.packages[i].name, "Primary:Kerberos-Newer-Keys") == 0) {
 				if (scpkn) {
+					talloc_free(scb);
 					return ldb_error(ldb,
 							 LDB_ERR_CONSTRAINT_VIOLATION,
 							 "Primary:Kerberos-Newer-Keys twice");
@@ -366,6 +372,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 			}
 			if (strcmp(scb->sub.packages[i].name, "Primary:CLEARTEXT") == 0) {
 				if (scpct) {
+					talloc_free(scb);
 					return ldb_error(ldb,
 							 LDB_ERR_CONSTRAINT_VIOLATION,
 							 "Primary:CLEARTEXT twice");
@@ -379,6 +386,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 		}
 
 		if (scpp == NULL) {
+			talloc_free(scb);
 			return ldb_error(ldb,
 					 LDB_ERR_CONSTRAINT_VIOLATION,
 					 "Primary:Packages missing");
@@ -389,6 +397,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 			 * If Primary:Kerberos is missing w2k8r2 reboots
 			 * when a password is changed.
 			 */
+			talloc_free(scb);
 			return ldb_error(ldb,
 					 LDB_ERR_CONSTRAINT_VIOLATION,
 					 "Primary:Kerberos missing");
@@ -400,17 +409,20 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 
 			p = talloc_zero(scb, struct package_PackagesBlob);
 			if (p == NULL) {
+				talloc_free(scb);
 				return ldb_module_oom(module);
 			}
 
 			ndr_err = ndr_pull_struct_blob(&scpbp, p, p,
 					(ndr_pull_flags_fn_t)ndr_pull_package_PackagesBlob);
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "ndr_pull_struct_blob Packages");
 			}
 
 			if (p->names == NULL) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "Packages names == NULL");
 			}
@@ -420,6 +432,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 			}
 
 			if (scb->sub.num_packages != (n + 1)) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "Packages num_packages != num_names + 1");
 			}
@@ -432,55 +445,66 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 
 			k = talloc_zero(scb, struct package_PrimaryKerberosBlob);
 			if (k == NULL) {
+				talloc_free(scb);
 				return ldb_module_oom(module);
 			}
 
 			ndr_err = ndr_pull_struct_blob(&scpbk, k, k,
 					(ndr_pull_flags_fn_t)ndr_pull_package_PrimaryKerberosBlob);
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "ndr_pull_struct_blob PrimaryKerberos");
 			}
 
 			if (k->version != 3) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos version != 3");
 			}
 
 			if (k->ctr.ctr3.salt.string == NULL) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos salt == NULL");
 			}
 
 			if (strlen(k->ctr.ctr3.salt.string) == 0) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos strlen(salt) == 0");
 			}
 
 			if (k->ctr.ctr3.num_keys != 2) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos num_keys != 2");
 			}
 
 			if (k->ctr.ctr3.num_old_keys > k->ctr.ctr3.num_keys) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos num_old_keys > num_keys");
 			}
 
 			if (k->ctr.ctr3.keys[0].keytype != ENCTYPE_DES_CBC_MD5) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos key[0] != DES_CBC_MD5");
 			}
 			if (k->ctr.ctr3.keys[1].keytype != ENCTYPE_DES_CBC_CRC) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos key[1] != DES_CBC_CRC");
 			}
 
 			if (k->ctr.ctr3.keys[0].value_len != 8) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos key[0] value_len != 8");
 			}
 			if (k->ctr.ctr3.keys[1].value_len != 8) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos key[1] value_len != 8");
 			}
@@ -493,6 +517,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 					continue;
 				}
 
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryKerberos old_keys type/value_len doesn't match");
 			}
@@ -505,76 +530,92 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 
 			k = talloc_zero(scb, struct package_PrimaryKerberosBlob);
 			if (k == NULL) {
+				talloc_free(scb);
 				return ldb_module_oom(module);
 			}
 
 			ndr_err = ndr_pull_struct_blob(&scpbkn, k, k,
 					(ndr_pull_flags_fn_t)ndr_pull_package_PrimaryKerberosBlob);
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "ndr_pull_struct_blob PrimaryKerberosNeverKeys");
 			}
 
 			if (k->version != 4) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNerverKeys version != 4");
 			}
 
 			if (k->ctr.ctr4.salt.string == NULL) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys salt == NULL");
 			}
 
 			if (strlen(k->ctr.ctr4.salt.string) == 0) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys strlen(salt) == 0");
 			}
 
 			if (k->ctr.ctr4.num_keys != 4) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
-						 "KerberosNewerKeys num_keys != 2");
+						 "KerberosNewerKeys num_keys != 4");
 			}
 
 			if (k->ctr.ctr4.num_old_keys > k->ctr.ctr4.num_keys) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys num_old_keys > num_keys");
 			}
 
 			if (k->ctr.ctr4.num_older_keys > k->ctr.ctr4.num_old_keys) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys num_older_keys > num_old_keys");
 			}
 
 			if (k->ctr.ctr4.keys[0].keytype != ENCTYPE_AES256_CTS_HMAC_SHA1_96) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys key[0] != AES256");
 			}
 			if (k->ctr.ctr4.keys[1].keytype != ENCTYPE_AES128_CTS_HMAC_SHA1_96) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys key[1] != AES128");
 			}
 			if (k->ctr.ctr4.keys[2].keytype != ENCTYPE_DES_CBC_MD5) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys key[2] != DES_CBC_MD5");
 			}
 			if (k->ctr.ctr4.keys[3].keytype != ENCTYPE_DES_CBC_CRC) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys key[3] != DES_CBC_CRC");
 			}
 
 			if (k->ctr.ctr4.keys[0].value_len != 32) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys key[0] value_len != 32");
 			}
 			if (k->ctr.ctr4.keys[1].value_len != 16) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys key[1] value_len != 16");
 			}
 			if (k->ctr.ctr4.keys[2].value_len != 8) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys key[2] value_len != 8");
 			}
 			if (k->ctr.ctr4.keys[3].value_len != 8) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "KerberosNewerKeys key[3] value_len != 8");
 			}
@@ -596,17 +637,20 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 
 			ct = talloc_zero(scb, struct package_PrimaryCLEARTEXTBlob);
 			if (ct == NULL) {
+				talloc_free(scb);
 				return ldb_module_oom(module);
 			}
 
 			ndr_err = ndr_pull_struct_blob(&scpbct, ct, ct,
 					(ndr_pull_flags_fn_t)ndr_pull_package_PrimaryCLEARTEXTBlob);
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "ndr_pull_struct_blob PrimaryCLEARTEXT");
 			}
 
 			if ((ct->cleartext.length % 2) != 0) {
+				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 						 "PrimaryCLEARTEXT length % 2 != 0");
 			}
@@ -617,16 +661,19 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 		ndr_err = ndr_push_struct_blob(&blob, scb, scb,
 				(ndr_push_flags_fn_t)ndr_push_supplementalCredentialsBlob);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			talloc_free(scb);
 			return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 					 "ndr_pull_struct_blob_all");
 		}
 
 		if (sce->values[0].length != blob.length) {
+			talloc_free(scb);
 			return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 					 "supplementalCredentialsBlob length differ");
 		}
 
 		if (!mem_equal_const_time(sce->values[0].data, blob.data, blob.length)) {
+			talloc_free(scb);
 			return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
 					 "supplementalCredentialsBlob memcmp differ");
 		}
@@ -740,11 +787,13 @@ static int setup_kerberos_keys(struct setup_password_fields_io *io)
 	salt.data	= talloc_strndup(io->ac,
 					 (char *)salt_data.data,
 					 salt_data.length);
-	io->g.salt      = salt.data;
-	salt.length	= strlen(io->g.salt);
-
 	smb_krb5_free_data_contents(io->smb_krb5_context->krb5_context,
 				    &salt_data);
+	if (salt.data == NULL) {
+		return ldb_oom(ldb);
+	}
+	io->g.salt      = salt.data;
+	salt.length	= strlen(io->g.salt);
 
 	/*
 	 * create ENCTYPE_AES256_CTS_HMAC_SHA1_96 key out of
@@ -1302,7 +1351,7 @@ static int setup_primary_wdigest(struct setup_password_fields_io *io,
 
 	/*
 	 * the following ones are guessed depending on the technet2 article
-	 * but not reproducable on a w2k3 server
+	 * but not reproducible on a w2k3 server
 	 */
 	/* sAMAccountName with "Digest" realm */
 		{
@@ -1551,7 +1600,7 @@ static int setup_primary_userPassword_hash(
 	};
 #endif
 
-	/* Genrate a random password salt */
+	/* Generate a random password salt */
 	salt = generate_random_str_list(frame,
 					SHA_SALT_SIZE,
 					SHA_SALT_PERMITTED_CHARS);
@@ -1560,7 +1609,7 @@ static int setup_primary_userPassword_hash(
 		return ldb_oom(ldb);
 	}
 
-	/* determine the hashing algoritm and number of rounds*/
+	/* determine the hashing algorithm and number of rounds*/
 	if (!parse_scheme(scheme, &algorithm, &rounds)) {
 		ldb_asprintf_errstring(
 			ldb,
@@ -1572,6 +1621,10 @@ static int setup_primary_userPassword_hash(
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 	hash_value->scheme = talloc_strdup(ctx, CRYPT);
+	if (hash_value->scheme == NULL) {
+		TALLOC_FREE(frame);
+		return ldb_oom(ldb);
+	}
 	hash_value->scheme_len = strlen(CRYPT) + 1;
 
 	/* generate the id/salt parameter used by crypt */
@@ -1581,8 +1634,16 @@ static int setup_primary_userPassword_hash(
 				      algorithm,
 				      rounds,
 				      salt);
+		if (cmd == NULL) {
+			TALLOC_FREE(frame);
+			return ldb_oom(ldb);
+		}
 	} else {
 		cmd = talloc_asprintf(frame, "$%d$%s", algorithm, salt);
+		if (cmd == NULL) {
+			TALLOC_FREE(frame);
+			return ldb_oom(ldb);
+		}
 	}
 
 	/*
@@ -1894,7 +1955,7 @@ static int setup_primary_samba_gpg(struct setup_password_fields_io *io,
 static int setup_supplemental_field(struct setup_password_fields_io *io)
 {
 	struct ldb_context *ldb;
-	struct supplementalCredentialsBlob scb;
+	struct supplementalCredentialsBlob scb = {};
 	struct supplementalCredentialsBlob *old_scb = NULL;
 	/*
 	 * Packages +
@@ -1902,9 +1963,9 @@ static int setup_supplemental_field(struct setup_password_fields_io *io)
 	 *   WDigest, CLEARTEXT, userPassword, SambaGPG)
 	 */
 	uint32_t num_names = 0;
-	const char *names[1+NUM_PACKAGES];
+	const char *names[1+NUM_PACKAGES] = {};
 	uint32_t num_packages = 0;
-	struct supplementalCredentialsPackage packages[1+NUM_PACKAGES];
+	struct supplementalCredentialsPackage packages[1+NUM_PACKAGES] = {};
 	struct supplementalCredentialsPackage *pp = packages;
 	int ret;
 	enum ndr_err_code ndr_err;
@@ -1913,9 +1974,6 @@ static int setup_supplemental_field(struct setup_password_fields_io *io)
 	bool do_samba_gpg = false;
 	struct loadparm_context *lp_ctx = NULL;
 
-	ZERO_STRUCT(names);
-	ZERO_STRUCT(packages);
-
 	ldb = ldb_module_get_ctx(io->ac->module);
 	lp_ctx = talloc_get_type(ldb_get_opaque(ldb, "loadparm"),
 				 struct loadparm_context);
@@ -1923,12 +1981,12 @@ static int setup_supplemental_field(struct setup_password_fields_io *io)
 	if (!io->n.cleartext_utf8) {
 		/*
 		 * when we don't have a cleartext password
-		 * we can't setup a supplementalCredential value
+		 * we can't setup a supplementalCredentials value
 		 */
 		return LDB_SUCCESS;
 	}
 
-	/* if there's an old supplementaCredentials blob then use it */
+	/* if there's an old supplementalCredentials blob then use it */
 	if (io->o.supplemental) {
 		if (io->o.scb.sub.signature == SUPPLEMENTAL_CREDENTIALS_SIGNATURE) {
 			old_scb = &io->o.scb;
@@ -2265,7 +2323,6 @@ static int setup_supplemental_field(struct setup_password_fields_io *io)
 		*prev = *pp;
 		*pp = temp;
 
-		ZERO_STRUCT(scb);
 		scb.sub.signature	= SUPPLEMENTAL_CREDENTIALS_SIGNATURE;
 		scb.sub.num_packages	= num_packages;
 		scb.sub.packages	= packages;
@@ -2475,7 +2532,7 @@ static int setup_given_passwords(struct setup_password_fields_io *io,
 					   CH_UTF8, CH_UTF16,
 					   g->cleartext_utf8->data,
 					   g->cleartext_utf8->length,
-					   (void *)&cleartext_utf16_blob->data,
+					   &cleartext_utf16_blob->data,
 					   &cleartext_utf16_blob->length)) {
 			if (g->cleartext_utf8->length != 0) {
 				talloc_free(cleartext_utf16_blob);
@@ -2502,7 +2559,7 @@ static int setup_given_passwords(struct setup_password_fields_io *io,
 					   CH_UTF16MUNGED, CH_UTF8,
 					   g->cleartext_utf16->data,
 					   g->cleartext_utf16->length,
-					   (void *)&cleartext_utf8_blob->data,
+					   &cleartext_utf8_blob->data,
 					   &cleartext_utf8_blob->length)) {
 			if (g->cleartext_utf16->length != 0) {
 				/* We must bail out here, the input wasn't even
@@ -2740,7 +2797,7 @@ static int make_error_and_update_badPwdCount(struct setup_password_fields_io *io
 	 * OK, horrible semantics ahead.
 	 *
 	 * - We need to abort any existing transaction
-	 * - create a transaction arround the badPwdCount update
+	 * - create a transaction around the badPwdCount update
 	 * - re-open the transaction so the upper layer
 	 *   doesn't know what happened.
 	 *
@@ -2980,7 +3037,7 @@ static int check_password_restrictions(struct setup_password_fields_io *io, WERR
 			*werror = WERR_PASSWORD_RESTRICTION;
 			ldb_asprintf_errstring(ldb,
 				"%08X: %s - check_password_restrictions: "
-				"the password is too short. It should be equal or longer than %u characters!",
+				"the password is too short. It should be equal to or longer than %u characters!",
 				W_ERROR_V(*werror),
 				ldb_strerror(ret),
 				io->ac->status->domain_data.minPwdLength);
@@ -3116,7 +3173,7 @@ static int check_password_restrictions(struct setup_password_fields_io *io, WERR
 		if (krb5_ret == ENOENT) {
 			/*
 			 * If there is no old AES hash (perhaps an imported DB with
-			 * just unicodePwd) then we just wont have an old
+			 * just unicodePwd) then we just won't have an old
 			 * password to compare to if there is no NT hash
 			 */
 			break;
@@ -3474,7 +3531,7 @@ static int setup_io(struct ph_context *ac,
 	struct dom_sid *account_sid = NULL;
 	int rodc_krbtgt = 0;
 
-	ZERO_STRUCTP(io);
+	*io = (struct setup_password_fields_io) {};
 
 	/* Some operations below require kerberos contexts */
 
@@ -3737,6 +3794,9 @@ static int setup_io(struct ph_context *ac,
 		}
 
 		io->n.nt_hash = talloc(io->ac, struct samr_Password);
+		if (io->n.nt_hash == NULL) {
+			return ldb_oom(ldb);
+		}
 		memcpy(io->n.nt_hash->hash, quoted_utf16->data,
 		       MIN(quoted_utf16->length, sizeof(io->n.nt_hash->hash)));
 	}
@@ -3786,6 +3846,9 @@ static int setup_io(struct ph_context *ac,
 		}
 
 		io->og.nt_hash = talloc(io->ac, struct samr_Password);
+		if (io->og.nt_hash == NULL) {
+			return ldb_oom(ldb);
+		}
 		memcpy(io->og.nt_hash->hash, old_quoted_utf16->data,
 		       MIN(old_quoted_utf16->length, sizeof(io->og.nt_hash->hash)));
 	}
@@ -3811,7 +3874,7 @@ static int setup_io(struct ph_context *ac,
 
 	/*
 	 * Handles the password change control if it's specified. It has the
-	 * precedance and overrides already specified old password values of
+	 * precedence and overrides already specified old password values of
 	 * change requests (but that shouldn't happen since the control is
 	 * fully internal and only used in conjunction with replace requests!).
 	 */
@@ -4009,7 +4072,7 @@ static int setup_io(struct ph_context *ac,
 		if (krb5_ret == ENOENT) {
 			/*
 			 * If there is no old AES hash (perhaps an imported DB with
-			 * just unicodePwd) then we just wont have an old
+			 * just unicodePwd) then we just won't have an old
 			 * password to compare to if there is no NT hash
 			 */
 			return LDB_SUCCESS;
@@ -4261,7 +4324,7 @@ static int get_pso_data_callback(struct ldb_request *req,
 		}
 
 		if (ac->pso_res != NULL) {
-			DBG_ERR("Too many PSO results for %s",
+			DBG_ERR("Too many PSO results for %s\n",
 				ldb_dn_get_linearized(ac->search_res->message->dn));
 			talloc_free(ac->pso_res);
 		}
@@ -4321,7 +4384,7 @@ done:
 }
 
 /*
- * Builds and returns a search request to lookup up the PSO that applies to
+ * Builds and returns a search request to look up the PSO that applies to
  * the user in question. Returns NULL if no PSO applies, or could not be found
  */
 static struct ldb_request * build_pso_data_request(struct ph_context *ac)
@@ -4360,7 +4423,7 @@ static struct ldb_request * build_pso_data_request(struct ph_context *ac)
 
 	/* log errors, but continue with the default domain settings */
 	if (ret != LDB_SUCCESS) {
-		DBG_ERR("Error %d constructing PSO query for user %s", ret,
+		DBG_ERR("Error %d constructing PSO query for user %s\n", ret,
 			ldb_dn_get_linearized(ac->search_res->message->dn));
 	}
 	LDB_REQ_SET_LOCATION(pso_req);
@@ -4883,7 +4946,7 @@ static int password_hash_modify(struct ldb_module *module, struct ldb_request *r
 					DSDB_CONTROL_RESTORE_TOMBSTONE_OID);
 	if (restore == NULL) {
 		/*
-		 * A tomstone reanimation generates a double update
+		 * A tombstone reanimation generates a double update
 		 * of pwdLastSet.
 		 *
 		 * So we only remove it without the

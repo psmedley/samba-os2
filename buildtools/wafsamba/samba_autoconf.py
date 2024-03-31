@@ -625,7 +625,7 @@ int foo()
 
         if not res:
             if mandatory:
-                Logs.error("Mandatory library '%s' not found for functions '%s'" % (lib, list))
+                Logs.error("Mandatory library '%s' not found for functions '%s'" % (lib, libs))
                 sys.exit(1)
             if empty_decl:
                 # if it isn't a mandatory library, then remove it from dependency lists
@@ -817,6 +817,9 @@ int main(void) {
         if CHECK_CFLAGS(conf, ["-Wno-error=array-bounds"]):
             conf.define('HAVE_WNO_ERROR_ARRAY_BOUNDS', 1)
 
+        if CHECK_CFLAGS(conf, ["-Wno-error=stringop-overflow"]):
+            conf.define('HAVE_WNO_ERROR_STRINGOP_OVERFLOW', 1)
+
         if CHECK_CFLAGS(conf, ["-Wno-error=declaration-after-statement"]):
             conf.define('HAVE_WNO_ERROR_DECLARATION_AFTER_STATEMENT', 1)
 
@@ -963,10 +966,10 @@ def CURRENT_CFLAGS(bld, target, cflags,
     if not 'EXTRA_CFLAGS' in bld.env:
         list = []
     else:
-        list = bld.env['EXTRA_CFLAGS'];
+        list = bld.env['EXTRA_CFLAGS']
     ret.extend(list)
     if not allow_warnings and 'PICKY_CFLAGS' in bld.env:
-        list = bld.env['PICKY_CFLAGS'];
+        list = bld.env['PICKY_CFLAGS']
         ret.extend(list)
     if hide_symbols and bld.env.HAVE_VISIBILITY_ATTR:
         ret.append(bld.env.VISIBILITY_CFLAGS)

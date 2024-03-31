@@ -349,9 +349,6 @@ size_t imessaging_deregister(struct imessaging_context *msg, uint32_t msg_type, 
 */
 int imessaging_cleanup(struct imessaging_context *msg)
 {
-	if (!msg) {
-		return 0;
-	}
 	return 0;
 }
 
@@ -1411,7 +1408,7 @@ static bool irpc_bh_ref_alloc(struct dcerpc_binding_handle *h)
 }
 
 static void irpc_bh_do_ndr_print(struct dcerpc_binding_handle *h,
-				 int ndr_flags,
+				 ndr_flags_type ndr_flags,
 				 const void *_struct_ptr,
 				 const struct ndr_interface_call *call)
 {

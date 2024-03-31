@@ -5,6 +5,7 @@
 #define STR_NOTERM	LIBNDR_FLAG_STR_NOTERM
 #define STR_NULLTERM	LIBNDR_FLAG_STR_NULLTERM
 #define STR_BYTESIZE	LIBNDR_FLAG_STR_BYTESIZE
+#define STR_NO_EMBEDDED_NUL LIBNDR_FLAG_STR_NO_EMBEDDED_NUL
 #define STR_CONFORMANT  LIBNDR_FLAG_STR_CONFORMANT
 #define STR_CHARLEN	LIBNDR_FLAG_STR_CHARLEN
 #define STR_UTF8	LIBNDR_FLAG_STR_UTF8
@@ -29,6 +30,11 @@
   a null terminated "raw" string (null terminated byte sequence)
 */
 #define raw8string	[flag(STR_RAW8|STR_NULLTERM)] string
+
+/*
+  a secret null terminated UTF‐16 string (null terminated word sequence)
+*/
+#define secret_u16string	[flag(NDR_SECRET|STR_NULLTERM)] u16string
 
 /*
   a null terminated UCS2 string

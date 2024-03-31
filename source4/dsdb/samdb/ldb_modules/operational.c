@@ -10,12 +10,12 @@
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -54,7 +54,7 @@
   primaryGroupToken: HIDDEN, CONSTRUCTED, SEARCHABLE
 
      contains the RID of a certain group object
-    
+
 
   attributeTypes: in schema only
   objectClasses: in schema only
@@ -70,11 +70,8 @@
 
 #include "librpc/gen_ndr/ndr_misc.h"
 #include "librpc/gen_ndr/ndr_drsblobs.h"
-#include "param/param.h"
 #include "dsdb/samdb/samdb.h"
 #include "dsdb/samdb/ldb_modules/util.h"
-
-#include "libcli/security/security.h"
 
 #include "auth/auth.h"
 
@@ -130,7 +127,7 @@ static int construct_primary_group_token(struct ldb_module *module,
 {
 	struct ldb_context *ldb;
 	uint32_t primary_group_token;
-	
+
 	ldb = ldb_module_get_ctx(module);
 	if (ldb_match_msg_objectclass(msg, "group") == 1) {
 		primary_group_token
@@ -249,7 +246,7 @@ static int get_group_sids(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 
 	status = dsdb_expand_nested_groups(ldb, &account_sid_blob,
 					   true, /* We don't want to add the object's SID itself,
-						    it's not returend in this attribute */
+						    it's not returned in this attribute */
 					   filter,
 					   mem_ctx, groupSIDs, num_groupSIDs);
 
@@ -398,7 +395,7 @@ static int construct_parent_guid(struct ldb_module *module,
 	                            DSDB_SEARCH_SHOW_RECYCLED, parent);
 	/* not NC, so the object should have a parent*/
 	if (ret == LDB_ERR_NO_SUCH_OBJECT) {
-		ret = ldb_error(ldb_module_get_ctx(module), LDB_ERR_OPERATIONS_ERROR, 
+		ret = ldb_error(ldb_module_get_ctx(module), LDB_ERR_OPERATIONS_ERROR,
 				 talloc_asprintf(msg, "Parent dn %s for %s does not exist",
 						 ldb_dn_get_linearized(parent_dn),
 						 ldb_dn_get_linearized(msg->dn)));
@@ -644,7 +641,7 @@ static int construct_msds_isrodc(struct ldb_module *module,
 /*
   construct msDS-keyVersionNumber attr
 
-  TODO:  Make this based on the 'win2k' DS huristics bit...
+  TODO:  Make this based on the 'win2k' DS heuristics bit...
 
 */
 static int construct_msds_keyversionnumber(struct ldb_module *module,
@@ -759,7 +756,7 @@ static NTTIME get_msds_user_password_expiry_time_computed(struct ldb_module *mod
 					"userAccountControl",
 					0);
 	if (userAccountControl & _UF_NO_EXPIRY_ACCOUNTS) {
-		return 0x7FFFFFFFFFFFFFFFULL;
+		return INT64_MAX;
 	}
 
 	pwdLastSet = ldb_msg_find_attr_as_int64(msg, "pwdLastSet", 0);
@@ -771,14 +768,14 @@ static NTTIME get_msds_user_password_expiry_time_computed(struct ldb_module *mod
 		/*
 		 * This can't really happen...
 		 */
-		return 0x7FFFFFFFFFFFFFFFULL;
+		return INT64_MAX;
 	}
 
-	if (pwdLastSet >= 0x7FFFFFFFFFFFFFFFLL) {
+	if (pwdLastSet >= INT64_MAX) {
 		/*
 		 * Somethings wrong with the clock...
 		 */
-		return 0x7FFFFFFFFFFFFFFFULL;
+		return INT64_MAX;
 	}
 
 	/*
@@ -788,7 +785,7 @@ static NTTIME get_msds_user_password_expiry_time_computed(struct ldb_module *mod
 	 *
 	 * maxPwdAge: -864000000001
 	 * to
-	 * maxPwdAge: -9223372036854775808 (-0x8000000000000000ULL)
+	 * maxPwdAge: -9223372036854775808 (INT64_MIN)
 	 *
 	 */
 	maxPwdAge = get_user_max_pwd_age(module, msg, parent, domain_dn);
@@ -796,21 +793,21 @@ static NTTIME get_msds_user_password_expiry_time_computed(struct ldb_module *mod
 		/*
 		 * This is not really possible...
 		 */
-		return 0x7FFFFFFFFFFFFFFFULL;
+		return INT64_MAX;
 	}
 
-	if (maxPwdAge == -0x8000000000000000LL) {
-		return 0x7FFFFFFFFFFFFFFFULL;
+	if (maxPwdAge == INT64_MIN) {
+		return INT64_MAX;
 	}
 
 	/*
-	 * Note we already caught maxPwdAge == -0x8000000000000000ULL
-	 * and pwdLastSet >= 0x7FFFFFFFFFFFFFFFULL above.
+	 * Note we already caught maxPwdAge == INT64_MIN
+	 * and pwdLastSet >= INT64_MAX above.
 	 *
 	 * Remember maxPwdAge is a negative number,
 	 * so it results in the following.
 	 *
-	 * 0x7FFFFFFFFFFFFFFEULL + 0x7FFFFFFFFFFFFFFFULL
+	 * 0x7FFFFFFFFFFFFFFEULL + INT64_MAX
 	 * =
 	 * 0xFFFFFFFFFFFFFFFDULL
 	 *
@@ -818,8 +815,8 @@ static NTTIME get_msds_user_password_expiry_time_computed(struct ldb_module *mod
 	 * ever be more than 1<<64, therefore this result can't wrap.
 	 */
 	ret = (NTTIME)pwdLastSet - (NTTIME)maxPwdAge;
-	if (ret >= 0x7FFFFFFFFFFFFFFFULL) {
-		return 0x7FFFFFFFFFFFFFFFULL;
+	if (ret >= INT64_MAX) {
+		return INT64_MAX;
 	}
 
 	return ret;
@@ -1442,7 +1439,7 @@ enum op_remove {
 	OPERATIONAL_REMOVE_ALWAYS, /* remove always */
 	OPERATIONAL_REMOVE_UNASKED,/* remove if not requested */
 	OPERATIONAL_SD_FLAGS,	   /* show if SD_FLAGS_OID set, or asked for */
-	OPERATIONAL_REMOVE_UNLESS_CONTROL	 /* remove always unless an adhoc control has been specified */
+	OPERATIONAL_REMOVE_UNLESS_CONTROL	 /* remove always unless an ad hoc control has been specified */
 };
 
 /*
@@ -1556,6 +1553,7 @@ struct operational_context {
 	struct ldb_request *req;
 	enum ldb_scope scope;
 	const char * const *attrs;
+	struct ldb_parse_tree *tree;
 	struct op_controls_flags* controls_flags;
 	struct op_attributes_operations *list_operations;
 	unsigned int list_operations_size;
@@ -1681,12 +1679,61 @@ static struct op_attributes_operations* operation_get_op_list(TALLOC_CTX *ctx,
 	return list;
 }
 
+struct operational_present_ctx {
+	const char *attr;
+	bool found_operational;
+};
+
+/*
+  callback to determine if an operational attribute (needing
+  replacement) is in use at all
+ */
+static int operational_present(struct ldb_parse_tree *tree, void *private_context)
+{
+	struct operational_present_ctx *ctx = private_context;
+	switch (tree->operation) {
+	case LDB_OP_EQUALITY:
+		if (ldb_attr_cmp(tree->u.equality.attr, ctx->attr) == 0) {
+			ctx->found_operational = true;
+		}
+		break;
+	case LDB_OP_GREATER:
+	case LDB_OP_LESS:
+	case LDB_OP_APPROX:
+		if (ldb_attr_cmp(tree->u.comparison.attr, ctx->attr) == 0) {
+			ctx->found_operational = true;
+		}
+		break;
+	case LDB_OP_SUBSTRING:
+		if (ldb_attr_cmp(tree->u.substring.attr, ctx->attr) == 0) {
+			ctx->found_operational = true;
+		}
+		break;
+	case LDB_OP_PRESENT:
+		if (ldb_attr_cmp(tree->u.present.attr, ctx->attr) == 0) {
+			ctx->found_operational = true;
+		}
+		break;
+	case LDB_OP_EXTENDED:
+		if (tree->u.extended.attr &&
+		    ldb_attr_cmp(tree->u.extended.attr, ctx->attr) == 0) {
+			ctx->found_operational = true;
+		}
+		break;
+	default:
+		break;
+	}
+	return LDB_SUCCESS;
+}
+
+
 static int operational_search(struct ldb_module *module, struct ldb_request *req)
 {
 	struct ldb_context *ldb;
 	struct operational_context *ac;
 	struct ldb_request *down_req;
 	const char **search_attrs = NULL;
+	struct operational_present_ctx ctx;
 	unsigned int i, a;
 	int ret;
 
@@ -1707,15 +1754,44 @@ static int operational_search(struct ldb_module *module, struct ldb_request *req
 	ac->scope = req->op.search.scope;
 	ac->attrs = req->op.search.attrs;
 
-	/*  FIXME: We must copy the tree and keep the original
-	 *  unmodified. SSS */
-	/* replace any attributes in the parse tree that are
-	   searchable, but are stored using a different name in the
-	   backend */
+	ctx.found_operational = false;
+
+	/*
+	 * find any attributes in the parse tree that are searchable,
+	 * but are stored using a different name in the backend, so we
+	 * only duplicate the memory when needed
+	 */
 	for (i=0;i<ARRAY_SIZE(parse_tree_sub);i++) {
-		ldb_parse_tree_attr_replace(req->op.search.tree,
-					    parse_tree_sub[i].attr,
-					    parse_tree_sub[i].replace);
+		ctx.attr = parse_tree_sub[i].attr;
+
+		ldb_parse_tree_walk(req->op.search.tree,
+				    operational_present,
+				    &ctx);
+		if (ctx.found_operational) {
+			break;
+		}
+	}
+
+	if (ctx.found_operational) {
+
+		ac->tree = ldb_parse_tree_copy_shallow(ac,
+						       req->op.search.tree);
+
+		if (ac->tree == NULL) {
+			return ldb_operr(ldb);
+		}
+
+		/* replace any attributes in the parse tree that are
+		   searchable, but are stored using a different name in the
+		   backend */
+		for (i=0;i<ARRAY_SIZE(parse_tree_sub);i++) {
+			ldb_parse_tree_attr_replace(ac->tree,
+						    parse_tree_sub[i].attr,
+						    parse_tree_sub[i].replace);
+		}
+	} else {
+		/* Avoid allocating a copy if we do not need to */
+		ac->tree = req->op.search.tree;
 	}
 
 	ac->controls_flags = talloc(ac, struct op_controls_flags);
@@ -1761,7 +1837,7 @@ static int operational_search(struct ldb_module *module, struct ldb_request *req
 				for (j = 0; search_sub[i].extra_attrs[j]; j++) {
 					search_attrs2 = ldb_attr_list_copy_add(req, search_attrs
 									       ? search_attrs
-									       : ac->attrs, 
+									       : ac->attrs,
 									       search_sub[i].extra_attrs[j]);
 					if (search_attrs2 == NULL) {
 						return ldb_operr(ldb);
@@ -1795,7 +1871,7 @@ static int operational_search(struct ldb_module *module, struct ldb_request *req
 	ret = ldb_build_search_req_ex(&down_req, ldb, ac,
 					req->op.search.base,
 					req->op.search.scope,
-					req->op.search.tree,
+					ac->tree,
 					/* use new set of attrs if any */
 					search_attrs == NULL?req->op.search.attrs:search_attrs,
 					req->controls,

@@ -47,8 +47,6 @@
  * Winbind daemon for NT domain authentication nss module.
  **/
 
-static bool add_trusted_domains_dc(void);
-
 /* The list of trusted domains.  Note that the list can be deleted and
    recreated using the init_domain_list() function so pointers to
    individual winbindd_domain structures cannot be made.  Keep a copy of
@@ -668,7 +666,7 @@ static void rescan_forest_trusts( void )
  async process:
  (a) ask our domain
  (b) ask the root domain in our forest
- (c) ask the a DC in any Win2003 trusted forests
+ (c) ask a DC in any Win2003 trusted forests
 *********************************************************************/
 
 void rescan_trusted_domains(struct tevent_context *ev, struct tevent_timer *te,
@@ -676,7 +674,7 @@ void rescan_trusted_domains(struct tevent_context *ev, struct tevent_timer *te,
 {
 	TALLOC_FREE(te);
 
-	/* I use to clear the cache here and start over but that
+	/* I used to clear the cache here and start over but that
 	   caused problems in child processes that needed the
 	   trust dom list early on.  Removing it means we
 	   could have some trusted domains listed that have been
@@ -821,7 +819,7 @@ static bool migrate_secrets_tdb_to_ldb(struct winbindd_domain *domain)
 	NTSTATUS can_migrate = pdb_get_trust_credentials(domain->name,
 							 NULL, domain, &creds);
 	if (!NT_STATUS_IS_OK(can_migrate)) {
-		DEBUG(0, ("Failed to fetch our own, local AD domain join "
+		DEBUG(0, ("Failed to fetch our own local AD domain join "
 			"password for winbindd's internal use, both from "
 			"secrets.tdb and secrets.ldb: %s\n",
 			nt_errstr(can_migrate)));
@@ -845,7 +843,7 @@ static bool migrate_secrets_tdb_to_ldb(struct winbindd_domain *domain)
 		   false /* do_delete: Do not delete */);
 	TALLOC_FREE(creds);
 	if (ok == false) {
-		DEBUG(0, ("Failed to write our our own, "
+		DEBUG(0, ("Failed to write our own "
 			  "local AD domain join password for "
 			  "winbindd's internal use into secrets.tdb\n"));
 		return false;
@@ -853,7 +851,7 @@ static bool migrate_secrets_tdb_to_ldb(struct winbindd_domain *domain)
 	return true;
 }
 
-static bool add_trusted_domains_dc(void)
+bool add_trusted_domains_dc(void)
 {
 	struct winbindd_domain *domain =  NULL;
 	struct pdb_trusted_domain **domains = NULL;
@@ -1093,7 +1091,7 @@ bool init_domain_list(void)
 		struct samr_Password current_nt_hash;
 
 		if (pdb_domain_info == NULL) {
-			DEBUG(0, ("Failed to fetch our own, local AD "
+			DEBUG(0, ("Failed to fetch our own local AD "
 				"domain info from sam.ldb\n"));
 			return false;
 		}
@@ -1120,7 +1118,7 @@ bool init_domain_list(void)
 					    &domain);
 		TALLOC_FREE(pdb_domain_info);
 		if (!NT_STATUS_IS_OK(status)) {
-			DBG_ERR("Failed to add our own, local AD "
+			DBG_ERR("Failed to add our own local AD "
 				"domain to winbindd's internal list\n");
 			return false;
 		}
@@ -1142,7 +1140,7 @@ bool init_domain_list(void)
 			ok = migrate_secrets_tdb_to_ldb(domain);
 
 			if (!ok) {
-				DEBUG(0, ("Failed to migrate our own, "
+				DEBUG(0, ("Failed to migrate our own "
 					  "local AD domain join password for "
 					  "winbindd's internal use into "
 					  "secrets.tdb\n"));
@@ -1153,7 +1151,7 @@ bool init_domain_list(void)
 					       &account_name,
 					       &sec_chan_type);
 			if (!ok) {
-				DEBUG(0, ("Failed to find our our own, just "
+				DEBUG(0, ("Failed to find our own just "
 					  "written local AD domain join "
 					  "password for winbindd's internal "
 					  "use in secrets.tdb\n"));
@@ -1547,12 +1545,16 @@ static bool assume_domain(const char *domain)
 }
 
 /* Parse a DOMAIN\user or UPN string into a domain, namespace and a user */
-bool parse_domain_user(const char *domuser,
-		       fstring namespace,
-		       fstring domain,
-		       fstring user)
+bool parse_domain_user(TALLOC_CTX *ctx,
+		       const char *domuser,
+		       char **pnamespace,
+		       char **pdomain,
+		       char **puser)
 {
 	char *p = NULL;
+	char *namespace = NULL;
+	char *domain = NULL;
+	char *user = NULL;
 
 	if (strlen(domuser) == 0) {
 		return false;
@@ -1560,54 +1562,112 @@ bool parse_domain_user(const char *domuser,
 
 	p = strchr(domuser, *lp_winbind_separator());
 	if (p != NULL) {
-		fstrcpy(user, p + 1);
-		fstrcpy(domain, domuser);
+		user = talloc_strdup(ctx, p + 1);
+		if (user == NULL) {
+			goto fail;
+		}
+		domain = talloc_strdup(ctx,
+				domuser);
+		if (domain == NULL) {
+			goto fail;
+		}
 		domain[PTR_DIFF(p, domuser)] = '\0';
-		fstrcpy(namespace, domain);
+		namespace = talloc_strdup(ctx, domain);
+		if (namespace == NULL) {
+			goto fail;
+		}
 	} else {
-		fstrcpy(user, domuser);
-
-		domain[0] = '\0';
-		namespace[0] = '\0';
+		user = talloc_strdup(ctx, domuser);
+		if (user == NULL) {
+			goto fail;
+		}
 		p = strchr(domuser, '@');
 		if (p != NULL) {
 			/* upn */
-			fstrcpy(namespace, p + 1);
+			namespace = talloc_strdup(ctx, p + 1);
+			if (namespace == NULL) {
+				goto fail;
+			}
+			domain = talloc_strdup(ctx, "");
+			if (domain == NULL) {
+				goto fail;
+			}
+
 		} else if (assume_domain(lp_workgroup())) {
-			fstrcpy(domain, lp_workgroup());
-			fstrcpy(namespace, domain);
+			domain = talloc_strdup(ctx, lp_workgroup());
+			if (domain == NULL) {
+				goto fail;
+			}
+			namespace = talloc_strdup(ctx, domain);
+			if (namespace == NULL) {
+				goto fail;
+			}
 		} else {
-			fstrcpy(namespace, lp_netbios_name());
+			namespace = talloc_strdup(ctx, lp_netbios_name());
+			if (namespace == NULL) {
+				goto fail;
+			}
+			domain = talloc_strdup(ctx, "");
+			if (domain == NULL) {
+				goto fail;
+			}
 		}
 	}
 
-	return strupper_m(domain);
+	if (!strupper_m(domain)) {
+		goto fail;
+	}
+
+	*pnamespace = namespace;
+	*pdomain = domain;
+	*puser = user;
+	return true;
+fail:
+	TALLOC_FREE(user);
+	TALLOC_FREE(domain);
+	TALLOC_FREE(namespace);
+	return false;
 }
 
-/* Ensure an incoming username from NSS is fully qualified. Replace the
-   incoming fstring with DOMAIN <separator> user. Returns the same
-   values as parse_domain_user() but also replaces the incoming username.
-   Used to ensure all names are fully qualified within winbindd.
-   Used by the NSS protocols of auth, chauthtok, logoff and ccache_ntlm_auth.
-   The protocol definitions of auth_crap, chng_pswd_auth_crap
-   really should be changed to use this instead of doing things
-   by hand. JRA. */
-
-bool canonicalize_username(fstring username_inout,
-			   fstring namespace,
-			   fstring domain,
-			   fstring user)
+bool canonicalize_username(TALLOC_CTX *mem_ctx,
+			   char **pusername_inout,
+			   char **pnamespace,
+			   char **pdomain,
+			   char **puser)
 {
 	bool ok;
+	char *namespace = NULL;
+	char *domain = NULL;
+	char *user = NULL;
+	char *username_inout = NULL;
 
-	ok = parse_domain_user(username_inout, namespace, domain, user);
+	ok = parse_domain_user(mem_ctx,
+			*pusername_inout,
+			&namespace, &domain, &user);
+
 	if (!ok) {
 		return False;
 	}
-	slprintf(username_inout, sizeof(fstring) - 1, "%s%c%s",
+
+	username_inout = talloc_asprintf(mem_ctx, "%s%c%s",
 		 domain, *lp_winbind_separator(),
 		 user);
+
+	if (username_inout == NULL) {
+		goto fail;
+	}
+
+	*pnamespace = namespace;
+	*puser = user;
+	*pdomain = domain;
+	*pusername_inout = username_inout;
 	return True;
+fail:
+	TALLOC_FREE(username_inout);
+	TALLOC_FREE(namespace);
+	TALLOC_FREE(domain);
+	TALLOC_FREE(user);
+	return false;
 }
 
 /*

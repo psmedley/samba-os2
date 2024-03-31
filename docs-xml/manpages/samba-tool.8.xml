@@ -126,7 +126,7 @@
 	<varlistentry>
 	<term>--description=DESCRIPTION</term>
 	<listitem><para>
-	The new computers's description.
+	The new computer's description.
 	</para></listitem>
 	</varlistentry>
 
@@ -246,7 +246,7 @@
 	<varlistentry>
 	<term>--description=DESCRIPTION</term>
 	<listitem><para>
-	The new contacts's description.
+	The new contact's description.
 	</para></listitem>
 	</varlistentry>
 
@@ -712,7 +712,7 @@
 			</listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--user-tgt-lifetime</term>
+			<term>--user-tgt-lifetime-mins</term>
 			<listitem>
 				<para>
 					Ticket-Granting-Ticket lifetime for user accounts.
@@ -723,13 +723,113 @@
 			<term>--user-allow-ntlm-auth</term>
 			<listitem>
 				<para>
-					Allow NTLM network authentication when user
-					is restricted to selected devices.
+					Allow <constant>NTLM</constant> and <constant>
+					Interactive NETLOGON SamLogon</constant>
+					authentication despite the
+					fact that
+					<constant>allowed-to-authenticate-from</constant>
+					is in use, which would
+					otherwise restrict the user to selected devices.
 				</para>
 			</listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--service-tgt-lifetime</term>
+			<term>--user-allowed-to-authenticate-from</term>
+			<listitem>
+				<para>
+					Conditions a device must meet
+					for users covered by this
+					policy to be allowed to
+					authenticate.  While this is a
+					restriction on the device,
+					any conditional ACE rules are
+					expressed as if the device was
+					a user.
+				</para>
+				<para>
+					Must be a valid SDDL string
+					without reference to Device
+					keywords.
+				</para>
+				<para>
+					Example: O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AU)}))
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--user-allowed-to-authenticate-from-silo</term>
+			<listitem>
+				<para>
+					User is allowed to
+					authenticate, if the device they
+					authenticate from is assigned
+					and granted membership of a
+					given silo.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --user-allowed-to-authenticate-from
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--user-allowed-to-authenticate-to=SDDL</term>
+			<listitem>
+				<para>
+					This policy, applying to a
+					user account that is offering
+					a service, eg a web server
+					with a user account, restricts
+					which accounts may access it.
+				</para>
+				<para>
+					Must be a valid SDDL string.
+					The SDDL can reference both
+					bare (user) and Device conditions.
+				</para>
+				<para>
+					SDDL Example: <constant>O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))</constant>
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--user-allowed-to-authenticate-to-by-group=GROUP</term>
+			<listitem>
+				<para>
+					The user account, offering a
+					network service, covered by
+					this policy, will only be allowed
+					access from other accounts
+					that are members of the given
+					<constant>GROUP</constant>.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --user-allowed-to-authenticate-to
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--user-allowed-to-authenticate-to-by-silo=SILO</term>
+			<listitem>
+				<para>
+					The user account, offering a
+					network service, covered by
+					this policy, will only be
+					allowed access from other accounts
+					that are assigned to,
+					granted membership of (and
+					meet any authentication
+					conditions of) the given SILO.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --user-allowed-to-authenticate-to
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--service-tgt-lifetime-mins</term>
 			<listitem>
 				<para>
 					Ticket-Granting-Ticket lifetime for service accounts.
@@ -746,133 +846,189 @@
 			</listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--computer-tgt-lifetime</term>
+			<term>--service-allowed-to-authenticate-from</term>
+			<listitem>
+				<para>
+					Conditions a device must meet
+					for service accounts covered
+					by this policy to be allowed
+					to authenticate.  While this
+					is a restriction on the
+					device, any conditional ACE
+					rules are expressed as if the
+					device was a user.
+				</para>
+				<para>
+					Must be a valid SDDL string
+					without reference to Device
+					keywords.
+				</para>
+				<para>
+					SDDL Example: <constant>O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AU)}))</constant>
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--service-allowed-to-authenticate-from-device-silo=SILO</term>
+			<listitem>
+				<para>
+					The service account (eg a Managed
+					Service Account, Group Managed
+					Service Account) is allowed to
+					authenticate, if the device it
+					authenticates from is assigned
+					and granted membership of a
+					given <constant>SILO</constant>.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --service-allowed-to-authenticate-from
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--service-allowed-to-authenticate-from-device-group=GROUP</term>
+			<listitem>
+				<para>
+					The service account (eg a Managed
+					Service Account, Group Managed
+					Service Account) is allowed to
+					authenticate, if the device it
+					authenticates from is a member
+					of the given <constant>group</constant>.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --service-allowed-to-authenticate-from
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--service-allowed-to-authenticate-to=SDDL</term>
+			<listitem>
+				<para>
+					This policy, applying to a
+					service account (eg a Managed
+					Service Account, Group Managed
+					Service Account), restricts
+					which accounts may access it.
+				</para>
+				<para>
+					Must be a valid SDDL string.
+					The SDDL can reference both
+					bare (user) and Device conditions.
+				</para>
+				<para>
+					SDDL Example: <constant>O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))</constant>
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--service-allowed-to-authenticate-to-by-group=GROUP</term>
+			<listitem>
+				<para>
+					The service account (eg a Managed
+					Service Account, Group Managed
+					Service Account), will only be
+					allowed access by other accounts
+					that are members of the given
+					<constant>GROUP</constant>.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --service-allowed-to-authenticate-to
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--service-allowed-to-authenticate-to-by-silo=SILO</term>
+			<listitem>
+				<para>
+					The service account (eg a
+					Managed Service Account, Group
+					Managed Service Account), will
+					only be allowed access by other
+					accounts that are assigned
+					to, granted membership of (and
+					meet any authentication
+					conditions of) the given SILO.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --service-allowed-to-authenticate-to
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--computer-tgt-lifetime-mins</term>
 			<listitem>
 				<para>
 					Ticket-Granting-Ticket lifetime for computer accounts.
 				</para>
 			</listitem>
 		</varlistentry>
-	</variablelist>
+		<varlistentry>
+			<term>--computer-allowed-to-authenticate-to=SDDL</term>
+			<listitem>
+				<para>
+					This policy, applying to a
+					computer account (eg a server
+					or workstation), restricts
+					which accounts may access it.
+				</para>
+				<para>
+					Must be a valid SDDL string.
+					The SDDL can reference both
+					bare (user) and Device conditions.
+				</para>
+				<para>
+					SDDL Example: O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--computer-allowed-to-authenticate-to-by-group=GROUP</term>
+			<listitem>
+				<para>
+					The computer account (eg a server
+					or workstation), will only be
+					allowed access by other accounts
+					that are members of the given
+					<constant>GROUP</constant>.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --computer-allowed-to-authenticate-to
+				</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term>--computer-allowed-to-authenticate-to-by-silo=SILO</term>
+			<listitem>
+				<para>
+					The computer account (eg a
+					server or workstation), will
+					only be allowed access by
+					other accounts that are
+					assigned to, granted
+					membership of (and meet any
+					authentication conditions of)
+					the given SILO.
+				</para>
+				<para>
+					This attribute avoids the need to write SDDL by hand and
+					cannot be used with --computer-allowed-to-authenticate-to
+				</para>
+			</listitem>
+		</varlistentry>
+
+	      </variablelist>
 </refsect3>
 
 <refsect3>
 	<title>domain auth policy modify</title>
-	<para>Modify authentication policies on the domain.</para>
-	<variablelist>
-		<varlistentry>
-			<term>-H, --URL</term>
-			<listitem><para>
-				LDB URL for database or target server.
-			</para></listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--name</term>
-			<listitem><para>
-				Name of the authentication policy (required).
-			</para></listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--description</term>
-			<listitem><para>
-				Optional description for the authentication policy.
-			</para></listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--protect</term>
-			<listitem>
-				<para>
-					Protect authentication policy from accidental deletion.
-				</para>
-				<para>
-					Cannot be used together with --unprotect.
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--unprotect</term>
-			<listitem>
-				<para>
-					Unprotect authentication policy from accidental deletion.
-				</para>
-				<para>
-					Cannot be used together with --protect.
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--audit</term>
-			<listitem>
-				<para>
-					Only audit authentication policy.
-				</para>
-				<para>
-					Cannot be used together with --enforce.
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--enforce</term>
-			<listitem>
-				<para>
-					Enforce authentication policy.
-				</para>
-				<para>
-					Cannot be used together with --audit.
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--strong-ntlm-policy</term>
-			<listitem>
-				<para>
-					Strong NTLM Policy (Disabled, Optional, Required).
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--user-tgt-lifetime</term>
-			<listitem>
-				<para>
-					Ticket-Granting-Ticket lifetime for user accounts.
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--user-allow-ntlm-auth</term>
-			<listitem>
-				<para>
-					Allow NTLM network authentication when user
-					is restricted to selected devices.
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--service-tgt-lifetime</term>
-			<listitem>
-				<para>
-					Ticket-Granting-Ticket lifetime for service accounts.
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--service-allow-ntlm-auth</term>
-			<listitem>
-				<para>
-					Allow NTLM network authentication when service
-					is restricted to selected devices.
-				</para>
-			</listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--computer-tgt-lifetime</term>
-			<listitem>
-				<para>
-					Ticket-Granting-Ticket lifetime for computer accounts.
-				</para>
-			</listitem>
-		</varlistentry>
-	</variablelist>
+	<para>Modify authentication policies on the domain.  The same
+	options apply as for <constant>domain auth policy create</constant>.</para>
 </refsect3>
 
 <refsect3>
@@ -961,27 +1117,21 @@
 			</para></listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--policy</term>
+			<term>--user-authentication-policy</term>
 			<listitem><para>
-				Use single policy for all principals in this silo.
+				User account authentication policy.
 			</para></listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--user-policy</term>
+			<term>--service-authentication-policy</term>
 			<listitem><para>
-				User account policy.
+				Managed service account authentication policy.
 			</para></listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--service-policy</term>
+			<term>--computer-authentication-policy</term>
 			<listitem><para>
-				Managed Service Account policy.
-			</para></listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--computer-policy</term>
-			<listitem><para>
-				Computer Account policy.
+				Computer authentication policy.
 			</para></listitem>
 		</varlistentry>
 		<varlistentry>
@@ -1054,27 +1204,21 @@
 			</para></listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--policy</term>
+			<term>--user-authentication-policy</term>
 			<listitem><para>
-				Use single policy for all principals in this silo.
+				User account authentication policy.
 			</para></listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--user-policy</term>
+			<term>--service-authentication-policy</term>
 			<listitem><para>
-				User account policy.
+				Managed service account authentication policy.
 			</para></listitem>
 		</varlistentry>
 		<varlistentry>
-			<term>--service-policy</term>
+			<term>--computer-authentication-policy</term>
 			<listitem><para>
-				Managed Service Account policy.
-			</para></listitem>
-		</varlistentry>
-		<varlistentry>
-			<term>--computer-policy</term>
-			<listitem><para>
-				Computer Account policy.
+				Computer authentication policy.
 			</para></listitem>
 		</varlistentry>
 		<varlistentry>
@@ -1150,8 +1294,8 @@
 </refsect3>
 
 <refsect3>
-	<title>domain auth silo member add</title>
-	<para>Add a member to an authentication silo.</para>
+	<title>domain auth silo member grant</title>
+	<para>Grant a member access to an authentication silo.</para>
 	<variablelist>
 		<varlistentry>
 			<term>-H, --URL</term>
@@ -1168,7 +1312,7 @@
 		<varlistentry>
 			<term>--member</term>
 			<listitem><para>
-				Member to add to the silo (DN or account name).
+				Member to grant access to the silo (DN or account name).
 			</para></listitem>
 		</varlistentry>
 	</variablelist>
@@ -1200,8 +1344,8 @@
 </refsect3>
 
 <refsect3>
-	<title>domain auth silo member remove</title>
-	<para>Remove a member from an authentication silo.</para>
+	<title>domain auth silo member revoke</title>
+	<para>Revoke a member from an authentication silo.</para>
 	<variablelist>
 		<varlistentry>
 			<term>-H, --URL</term>
@@ -1218,7 +1362,7 @@
 		<varlistentry>
 			<term>--member</term>
 			<listitem><para>
-				Member to remove from the silo (DN or account name).
+				Member to revoke from the silo (DN or account name).
 			</para></listitem>
 		</varlistentry>
 	</variablelist>
@@ -2263,6 +2407,24 @@
 </refsect3>
 
 <refsect2>
+	<title>shell</title>
+	<para>Opens an interactive Samba Python shell.</para>
+</refsect2>
+
+<refsect3>
+	<title>shell [options]</title>
+	<para>Opens an interactive Python shell for Samba ldb connection.</para>
+	<variablelist>
+		<varlistentry>
+			<term>-H, --URL</term>
+			<listitem><para>
+				LDB URL for database or target server.
+			</para></listitem>
+		</varlistentry>
+	</variablelist>
+</refsect3>
+
+<refsect2>
 	<title>sites</title>
 	<para>Manage sites.</para>
 </refsect2>
@@ -2582,10 +2744,61 @@
 </refsect3>
 
 <refsect3>
+	<title>user get-kerberos-ticket <replaceable>username</replaceable> [options]</title>
+	<para>Gets a Kerberos Ticket Granting Ticket as the account.</para>
+</refsect3>
+
+<refsect3>
 	<title>user syncpasswords <replaceable>--cache-ldb-initialize</replaceable> [options]</title>
 	<para>Syncs the passwords of all user accounts, using an optional script.</para>
 	<para>Note that this command should run on a single domain controller only
 	(typically the PDC-emulator).</para>
+</refsect3>
+
+<refsect3>
+	<title>user auth policy assign <replaceable>username</replaceable> [options]</title>
+	<para>Set assigned authentication policy for user.</para>
+	<variablelist>
+		<varlistentry>
+			<term>--policy</term>
+			<listitem><para>
+				Name of authentication policy to assign or leave empty to remove.
+			</para></listitem>
+		</varlistentry>
+	</variablelist>
+</refsect3>
+
+<refsect3>
+	<title>user auth policy remove <replaceable>username</replaceable></title>
+	<para>Remove assigned authentication policy from user.</para>
+</refsect3>
+
+<refsect3>
+	<title>user auth policy view <replaceable>username</replaceable></title>
+	<para>View the assigned authentication policy for user.</para>
+</refsect3>
+
+<refsect3>
+	<title>user auth silo assign <replaceable>username</replaceable> [options]</title>
+	<para>Set assigned authentication silo for user.</para>
+	<variablelist>
+		<varlistentry>
+			<term>--silo</term>
+			<listitem><para>
+				Name of authentication silo to assign or leave empty to remove.
+			</para></listitem>
+		</varlistentry>
+	</variablelist>
+</refsect3>
+
+<refsect3>
+	<title>user auth silo remove <replaceable>username</replaceable></title>
+	<para>Remove assigned authentication silo from user.</para>
+</refsect3>
+
+<refsect3>
+	<title>user auth silo view <replaceable>username</replaceable></title>
+	<para>View the assigned authentication silo for user.</para>
 </refsect3>
 
 <refsect2>

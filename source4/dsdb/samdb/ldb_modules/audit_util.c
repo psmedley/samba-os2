@@ -460,7 +460,7 @@ const char *dsdb_audit_get_modification_action(unsigned int flags)
  *           value is not encoded.
  *
  * truncated Indicates that the length of the value exceeded MAX_LENGTH and was
- *           truncated.  Note that vales are truncated and then base64 encoded.
+ *           truncated.  Note that values are truncated and then base64 encoded.
  *           so an encoded value can be longer than MAX_LENGTH.
  *
  * @param array the JSON array to append the value to.
@@ -543,7 +543,7 @@ failure:
 	 * so it needs to be freed to prevent a leak.
 	 */
 	json_free(&value);
-	DBG_ERR("unable to add ldb value to JSON audit message");
+	DBG_ERR("unable to add ldb value to JSON audit message\n");
 	return -1;
 }
 
@@ -552,7 +552,7 @@ failure:
  *
  * Build a JSON object containing all the attributes in an ldb_message.
  * The attributes are keyed by attribute name, the values of "secret attributes"
- * are supressed.
+ * are suppressed.
  *
  * {
  * 	"password":{

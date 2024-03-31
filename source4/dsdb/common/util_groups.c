@@ -26,27 +26,6 @@
 #include "libcli/security/security.h"
 #include "dsdb/common/util.h"
 
-/* This function tests if a SID structure "sids" contains the SID "sid" */
-static bool sids_contains_sid(const struct auth_SidAttr *sids,
-			      const uint32_t num_sids,
-			      const struct dom_sid *sid,
-			      uint32_t attrs)
-{
-	unsigned int i;
-
-	for (i = 0; i < num_sids; i++) {
-		if (attrs != sids[i].attrs) {
-			continue;
-		}
-		if (!dom_sid_equal(&sids[i].sid, sid)) {
-			continue;
-		}
-
-		return true;
-	}
-	return false;
-}
-
 /*
  * This function generates the transitive closure of a given SAM object "dn_val"
  * (it basically expands nested memberships).
@@ -184,8 +163,8 @@ NTSTATUS dsdb_expand_nested_groups(struct ldb_context *sam_ctx,
 		}
 
 		/* This is an O(n^2) linear search */
-		already_there = sids_contains_sid(*res_sids, *num_res_sids,
-						  &sid, sid_attrs);
+		already_there = sids_contains_sid_attrs(*res_sids, *num_res_sids,
+							&sid, sid_attrs);
 		if (already_there) {
 			talloc_free(tmp_ctx);
 			return NT_STATUS_OK;

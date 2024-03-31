@@ -22,8 +22,10 @@
 #include "replace.h"
 #include "lib/util/debug.h"
 #include "libcli/security/security.h"
+#include "libcli/security/conditional_ace.h"
 #include "librpc/gen_ndr/ndr_misc.h"
 #include "lib/util/smb_strtox.h"
+#include "libcli/security/sddl.h"
 #include "system/locale.h"
 #include "lib/util/util_str_hex.h"
 
@@ -64,7 +66,7 @@ static bool sddl_map_flag(
 */
 static bool sddl_map_flags(const struct flag_map *map, const char *str,
 			   uint32_t *pflags, size_t *plen,
-                           bool unknown_flag_is_part_of_next_thing)
+			   bool unknown_flag_is_part_of_next_thing)
 {
 	const char *str0 = str;
 	if (plen != NULL) {
@@ -91,15 +93,15 @@ static bool sddl_map_flags(const struct flag_map *map, const char *str,
 	 * For ACL flags, unknown_flag_is_part_of_next_thing is set,
 	 * and we expect some more stuff that isn't flags.
 	 *
-         * For ACE flags, unknown_flag_is_part_of_next_thing is unset,
-         * and the flags have been tokenised into their own little
-         * string. We don't expect anything here, even whitespace.
-         */
-        if (*str == '\0' || unknown_flag_is_part_of_next_thing) {
-                return true;
-        }
+	 * For ACE flags, unknown_flag_is_part_of_next_thing is unset,
+	 * and the flags have been tokenised into their own little
+	 * string. We don't expect anything here, even whitespace.
+	 */
+	if (*str == '\0' || unknown_flag_is_part_of_next_thing) {
+		return true;
+	}
 	DBG_WARNING("Unknown flag - '%s' in '%s'\n", str, str0);
-        return false;
+	return false;
 }
 
 
@@ -199,18 +201,18 @@ static const struct {
   decode a SID
   It can either be a special 2 letter code, or in S-* format
 */
-static struct dom_sid *sddl_decode_sid(TALLOC_CTX *mem_ctx, const char **sddlp,
-				       struct sddl_transition_state *state)
+static struct dom_sid *sddl_transition_decode_sid(TALLOC_CTX *mem_ctx, const char **sddlp,
+						  struct sddl_transition_state *state)
 {
 	const char *sddl = (*sddlp);
 	size_t i;
 
 	/* see if its in the numeric format */
-	if (strncmp(sddl, "S-", 2) == 0) {
+	if (strncasecmp(sddl, "S-", 2) == 0) {
 		struct dom_sid *sid = NULL;
 		char *sid_str = NULL;
-                const char *end = NULL;
-                bool ok;
+		const char *end = NULL;
+		bool ok;
 		size_t len = strspn(sddl + 2, "-0123456789ABCDEFabcdefxX") + 2;
 		if (len < 5) { /* S-1-x */
 			return NULL;
@@ -228,23 +230,30 @@ static struct dom_sid *sddl_decode_sid(TALLOC_CTX *mem_ctx, const char **sddlp,
 		if (sid_str == NULL) {
 			return NULL;
 		}
-                sid = talloc(mem_ctx, struct dom_sid);
-                if (sid == NULL) {
+		if (sid_str[0] == 's') {
+			/*
+			 * In SDDL, but not in the dom_sid parsers, a
+			 * lowercase "s-1-1-0" is accepted.
+			 */
+			sid_str[0] = 'S';
+		}
+		sid = talloc(mem_ctx, struct dom_sid);
+		if (sid == NULL) {
 			TALLOC_FREE(sid_str);
-                        return NULL;
-                };
-                ok = dom_sid_parse_endp(sid_str, sid, &end);
-                if (!ok) {
+			return NULL;
+		};
+		ok = dom_sid_parse_endp(sid_str, sid, &end);
+		if (!ok) {
 			DBG_WARNING("could not parse SID '%s'\n", sid_str);
 			TALLOC_FREE(sid_str);
-                        TALLOC_FREE(sid);
-                        return NULL;
-                }
+			TALLOC_FREE(sid);
+			return NULL;
+		}
 		if (end - sid_str != len) {
 			DBG_WARNING("trailing junk after SID '%s'\n", sid_str);
 			TALLOC_FREE(sid_str);
-                        TALLOC_FREE(sid);
-                        return NULL;
+			TALLOC_FREE(sid);
+			return NULL;
 		}
 		TALLOC_FREE(sid_str);
 		(*sddlp) += len;
@@ -281,6 +290,23 @@ static struct dom_sid *sddl_decode_sid(TALLOC_CTX *mem_ctx, const char **sddlp,
 	return dom_sid_parse_talloc(mem_ctx, sid_codes[i].sid);
 }
 
+struct dom_sid *sddl_decode_sid(TALLOC_CTX *mem_ctx, const char **sddlp,
+				const struct dom_sid *domain_sid)
+{
+	struct sddl_transition_state state = {
+		/*
+		 * TODO: verify .machine_rid values really belong
+		 * to the machine_sid on a member, once
+		 * we pass machine_sid from the caller...
+		 */
+		.machine_sid = domain_sid,
+		.domain_sid = domain_sid,
+		.forest_sid = domain_sid,
+	};
+	return sddl_transition_decode_sid(mem_ctx, sddlp, &state);
+}
+
+
 static const struct flag_map ace_types[] = {
 	{ "AU", SEC_ACE_TYPE_SYSTEM_AUDIT },
 	{ "AL", SEC_ACE_TYPE_SYSTEM_ALARM },
@@ -288,8 +314,22 @@ static const struct flag_map ace_types[] = {
 	{ "OD", SEC_ACE_TYPE_ACCESS_DENIED_OBJECT },
 	{ "OU", SEC_ACE_TYPE_SYSTEM_AUDIT_OBJECT },
 	{ "OL", SEC_ACE_TYPE_SYSTEM_ALARM_OBJECT },
-	{ "A",  SEC_ACE_TYPE_ACCESS_ALLOWED },
-	{ "D",  SEC_ACE_TYPE_ACCESS_DENIED },
+	{ "A",	SEC_ACE_TYPE_ACCESS_ALLOWED },
+	{ "D",	SEC_ACE_TYPE_ACCESS_DENIED },
+
+	{ "XA", SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK },
+	{ "XD", SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK },
+	{ "ZA", SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT },
+	/*
+	 * SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT exists but has
+	 * no SDDL flag.
+	 *
+	 * ZA and XU are switched in [MS-DTYP] as of version 36.0,
+	 * but this should be corrected in later versions.
+	 */
+	{ "XU", SEC_ACE_TYPE_SYSTEM_AUDIT_CALLBACK },
+
+	{ "RA", SEC_ACE_TYPE_SYSTEM_RESOURCE_ATTRIBUTE },
 	{ NULL, 0 }
 };
 
@@ -352,7 +392,7 @@ static char *sddl_match_file_rights(TALLOC_CTX *mem_ctx,
 static bool sddl_decode_access(const char *str, uint32_t *pmask)
 {
 	const char *str0 = str;
-        char *end = NULL;
+	char *end = NULL;
 	uint32_t mask = 0;
 	unsigned long long numeric_mask;
 	int err;
@@ -427,10 +467,10 @@ static bool sddl_decode_access(const char *str, uint32_t *pmask)
 		mask |= flags;
 		str += len;
 	}
-        if (*str != '\0') {
+	if (*str != '\0') {
 		DBG_WARNING("Bad characters in '%s'\n", str0);
-                return false;
-        }
+		return false;
+	}
 	*pmask = mask;
 	return true;
 }
@@ -438,10 +478,38 @@ static bool sddl_decode_access(const char *str, uint32_t *pmask)
 
 static bool sddl_decode_guid(const char *str, struct GUID *guid)
 {
-        if (strlen(str) != 36) {
-                return false;
-        }
-        return parse_guid_string(str, guid);
+	if (strlen(str) != 36) {
+		return false;
+	}
+	return parse_guid_string(str, guid);
+}
+
+
+
+static DATA_BLOB sddl_decode_conditions(TALLOC_CTX *mem_ctx,
+					const enum ace_condition_flags ace_condition_flags,
+					const char *conditions,
+					size_t *length,
+					const char **msg,
+					size_t *msg_offset)
+{
+	DATA_BLOB blob = {0};
+	struct ace_condition_script *script = NULL;
+	script = ace_conditions_compile_sddl(mem_ctx,
+					     ace_condition_flags,
+					     conditions,
+					     msg,
+					     msg_offset,
+					     length);
+	if (script != NULL) {
+		bool ok = conditional_ace_encode_binary(mem_ctx,
+							script,
+							&blob);
+		if (! ok) {
+			DBG_ERR("could not blobify '%s'\n", conditions);
+		}
+	}
+	return blob;
 }
 
 
@@ -450,44 +518,129 @@ static bool sddl_decode_guid(const char *str, struct GUID *guid)
   return true on success, false on failure
   note that this routine modifies the string
 */
-static bool sddl_decode_ace(TALLOC_CTX *mem_ctx, struct security_ace *ace, char *str,
-			    struct sddl_transition_state *state)
+static bool sddl_decode_ace(TALLOC_CTX *mem_ctx,
+			    struct security_ace *ace,
+			    const enum ace_condition_flags ace_condition_flags,
+			    char **sddl_copy,
+			    struct sddl_transition_state *state,
+			    const char **msg, size_t *msg_offset)
 {
-	const char *tok[6];
+	const char *tok[7];
 	const char *s;
-	int i;
 	uint32_t v;
 	struct dom_sid *sid;
 	bool ok;
 	size_t len;
-
+	size_t count = 0;
+	char *str = *sddl_copy;
+	bool has_extra_data = false;
 	ZERO_STRUCTP(ace);
 
-	/* parse out the 6 tokens */
+	*msg_offset = 1;
+	if (*str != '(') {
+		*msg = talloc_strdup(mem_ctx, "Not an ACE");
+		return false;
+	}
+	str++;
+	/*
+	 * First we split apart the 6 (or 7) tokens.
+	 *
+	 * 0.		 ace type
+	 * 1.		 ace flags
+	 * 2.		 access mask
+	 * 3.		 object guid
+	 * 4.		 inherit guid
+	 * 5.		 sid
+	 *
+	 * 6/extra_data	 rare optional extra data
+	 */
 	tok[0] = str;
-	for (i=0;i<5;i++) {
-		char *ptr = strchr(str, ';');
-		if (ptr == NULL) return false;
-		*ptr = 0;
-		str = ptr+1;
-		tok[i+1] = str;
+	while (*str != '\0') {
+		if (*str == ';') {
+			*str = '\0';
+			str++;
+			count++;
+			tok[count] = str;
+			if (count == 6) {
+				/*
+				 * this looks like a conditional ACE
+				 * or resource ACE, but we can't say
+				 * for sure until we look at the ACE
+				 * type (tok[0]), after the loop.
+				 */
+				has_extra_data = true;
+				break;
+			}
+			continue;
+		}
+		/*
+		 * we are not expecting a ')' in the 6 sections of an
+		 * ordinary ACE, except ending the last one.
+		 */
+		if (*str == ')') {
+			count++;
+			*str = '\0';
+			str++;
+			break;
+		}
+		str++;
+	}
+	if (count != 6) {
+		/* we hit the '\0' or ')' before all of ';;;;;)' */
+		*msg = talloc_asprintf(mem_ctx,
+				       "malformed ACE with only %zu ';'",
+				       MIN(count - 1, count));
+		return false;
 	}
 
 	/* parse ace type */
 	ok = sddl_map_flag(ace_types, tok[0], &len, &v);
 	if (!ok) {
-		DBG_WARNING("Unknown ACE type - %s\n", tok[0]);
+		*msg = talloc_asprintf(mem_ctx,
+				       "Unknown ACE type - %s", tok[0]);
 		return false;
 	}
 	if (tok[0][len] != '\0') {
-		DBG_WARNING("Garbage after ACE type - %s\n", tok[0]);
+		*msg = talloc_asprintf(mem_ctx,
+				       "Garbage after ACE type - %s", tok[0]);
 		return false;
 	}
 
 	ace->type = v;
 
+	/*
+	 * Only callback and resource aces should have trailing data.
+	 */
+	if (sec_ace_callback(ace->type)) {
+		if (! has_extra_data) {
+			*msg = talloc_strdup(
+				mem_ctx,
+				"callback ACE has no trailing data");
+			*msg_offset = str - *sddl_copy;
+			return false;
+		}
+	} else if (sec_ace_resource(ace->type)) {
+		if (! has_extra_data) {
+			*msg = talloc_strdup(
+				mem_ctx,
+				"resource attribute ACE has no trailing data");
+			*msg_offset = str - *sddl_copy;
+			return false;
+		}
+	} else if (has_extra_data) {
+		*msg = talloc_strdup(
+			mem_ctx,
+			"ACE has trailing section but is not a "
+			"callback or resource ACE");
+		*msg_offset = str - *sddl_copy;
+		return false;
+	}
+
 	/* ace flags */
 	if (!sddl_map_flags(ace_flags, tok[1], &v, NULL, false)) {
+		*msg = talloc_strdup(mem_ctx,
+				     "could not parse flags");
+		*msg_offset = tok[1] - *sddl_copy;
 		return false;
 	}
 	ace->flags = v;
@@ -495,6 +648,9 @@ static bool sddl_decode_ace(TALLOC_CTX *mem_ctx, struct security_ace *ace, char 
 	/* access mask */
 	ok = sddl_decode_access(tok[2], &ace->access_mask);
 	if (!ok) {
+		*msg = talloc_strdup(mem_ctx,
+				     "could not parse access string");
+		*msg_offset = tok[2] - *sddl_copy;
 		return false;
 	}
 
@@ -502,6 +658,9 @@ static bool sddl_decode_ace(TALLOC_CTX *mem_ctx, struct security_ace *ace, char 
 	if (tok[3][0] != 0) {
 		ok = sddl_decode_guid(tok[3], &ace->object.object.type.type);
 		if (!ok) {
+			*msg = talloc_strdup(mem_ctx,
+					     "could not parse object GUID");
+			*msg_offset = tok[3] - *sddl_copy;
 			return false;
 		}
 		ace->object.object.flags |= SEC_ACE_OBJECT_TYPE_PRESENT;
@@ -512,6 +671,10 @@ static bool sddl_decode_ace(TALLOC_CTX *mem_ctx, struct security_ace *ace, char 
 		ok = sddl_decode_guid(tok[4],
 				      &ace->object.object.inherited_type.inherited_type);
 		if (!ok) {
+			*msg = talloc_strdup(
+				mem_ctx,
+				"could not parse inherited object GUID");
+			*msg_offset = tok[4] - *sddl_copy;
 			return false;
 		}
 		ace->object.object.flags |= SEC_ACE_INHERITED_OBJECT_TYPE_PRESENT;
@@ -519,15 +682,101 @@ static bool sddl_decode_ace(TALLOC_CTX *mem_ctx, struct security_ace *ace, char 
 
 	/* trustee */
 	s = tok[5];
-	sid = sddl_decode_sid(mem_ctx, &s, state);
+	sid = sddl_transition_decode_sid(mem_ctx, &s, state);
 	if (sid == NULL) {
+		*msg = talloc_strdup(
+			mem_ctx,
+			"could not parse trustee SID");
+		*msg_offset = tok[5] - *sddl_copy;
 		return false;
 	}
 	ace->trustee = *sid;
 	talloc_free(sid);
 	if (*s != '\0') {
+		*msg = talloc_strdup(
+			mem_ctx,
+			"garbage after trustee SID");
+		*msg_offset = s - *sddl_copy;
 		return false;
 	}
+
+	if (sec_ace_callback(ace->type)) {
+		/*
+		 * This is either a conditional ACE or some unknown
+		 * type of callback ACE that will be rejected by the
+		 * conditional ACE compiler.
+		 */
+		size_t length;
+		DATA_BLOB conditions = {0};
+		s = tok[6];
+
+		conditions = sddl_decode_conditions(mem_ctx,
+						    ace_condition_flags,
+						    s,
+						    &length,
+						    msg,
+						    msg_offset);
+		if (conditions.data == NULL) {
+			DBG_NOTICE("Conditional ACE compilation failure at %zu: %s\n",
+				   *msg_offset, *msg);
+			*msg_offset += s - *sddl_copy;
+			return false;
+		}
+		ace->coda.conditions = conditions;
+
+		/*
+		 * We have found the end of the conditions, and the
+		 * next character should be the ')' to end the ACE.
+		 */
+		if (s[length] != ')') {
+			*msg = talloc_strdup(
+				mem_ctx,
+				"Conditional ACE has trailing bytes"
+				" or lacks ')'");
+			*msg_offset = s + length - *sddl_copy;
+			return false;
+		}
+		str = discard_const_p(char, s + length + 1);
+	} else if (sec_ace_resource(ace->type)) {
+		size_t length;
+		struct CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1 *claim = NULL;
+
+		if (! dom_sid_equal(&ace->trustee, &global_sid_World)) {
+			/* these are just the rules */
+			*msg = talloc_strdup(
+				mem_ctx,
+				"Resource Attribute ACE trustee must be "
+				"'S-1-1-0' or 'WD'.");
+			*msg_offset = tok[5] - *sddl_copy;
+			return false;
+		}
+
+		s = tok[6];
+		claim = sddl_decode_resource_attr(mem_ctx, s, &length);
+		if (claim == NULL) {
+			*msg = talloc_strdup(
+				mem_ctx,
+				"Resource Attribute ACE parse failure");
+			*msg_offset = s - *sddl_copy;
+			return false;
+		}
+		ace->coda.claim = *claim;
+
+		/*
+		 * We want a ')' to end the ACE.
+		 */
+		if (s[length] != ')') {
+			*msg = talloc_strdup(
+				mem_ctx,
+				"Resource Attribute ACE has trailing bytes"
+				" or lacks ')'");
+			*msg_offset = s + length - *sddl_copy;
+			return false;
+		}
+		str = discard_const_p(char, s + length + 1);
+	}
+
+	*sddl_copy = str;
 	return true;
 }
 
@@ -542,79 +791,115 @@ static const struct flag_map acl_flags[] = {
   decode an ACL
 */
 static struct security_acl *sddl_decode_acl(struct security_descriptor *sd,
+					    const enum ace_condition_flags ace_condition_flags,
 					    const char **sddlp, uint32_t *flags,
-					    struct sddl_transition_state *state)
+					    struct sddl_transition_state *state,
+					    const char **msg, size_t *msg_offset)
 {
 	const char *sddl = *sddlp;
+	char *sddl_copy = NULL;
+	char *aces_start = NULL;
 	struct security_acl *acl;
 	size_t len;
-
 	*flags = 0;
 
 	acl = talloc_zero(sd, struct security_acl);
-	if (acl == NULL) return NULL;
+	if (acl == NULL) {
+		return NULL;
+	}
 	acl->revision = SECURITY_ACL_REVISION_ADS;
 
-	if (isupper(sddl[0]) && sddl[1] == ':') {
+	if (isupper((unsigned char)sddl[0]) && sddl[1] == ':') {
 		/* its an empty ACL */
 		return acl;
 	}
 
 	/* work out the ACL flags */
 	if (!sddl_map_flags(acl_flags, sddl, flags, &len, true)) {
+		*msg = talloc_strdup(sd, "bad ACL flags");
+		*msg_offset = 0;
 		talloc_free(acl);
 		return NULL;
 	}
 	sddl += len;
 
-	/* now the ACEs */
-	while (*sddl == '(') {
-		char *astr;
-		len = strcspn(sddl+1, ")");
-		astr = talloc_strndup(acl, sddl+1, len);
-		if (astr == NULL || sddl[len+1] != ')') {
+	if (sddl[0] != '(') {
+		/*
+		 * it is empty apart from the flags
+		 * (or the flags are bad, and we will find out when
+		 * we try to parse the next bit as a top-level fragment)
+		 */
+		*sddlp = sddl;
+		return acl;
+	}
+
+	/*
+	 * now the ACEs
+	 *
+	 * For this we make a copy of the rest of the SDDL, which the ACE
+	 * tokeniser will mutilate by putting '\0' where it finds ';'.
+	 *
+	 * We need to copy the rest of the SDDL string because it is not
+	 * possible in general to find where an ACL ends if there are
+	 * conditional ACEs.
+	 */
+
+	sddl_copy = talloc_strdup(acl, sddl);
+	if (sddl_copy == NULL) {
+		TALLOC_FREE(acl);
+		return NULL;
+	}
+	aces_start = sddl_copy;
+
+	while (*sddl_copy == '(') {
+		bool ok;
+		if (acl->num_aces > UINT16_MAX / 16) {
+			/*
+			 * We can't fit this many ACEs in a wire ACL
+			 * which has a 16 bit size field (and 16 is
+			 * the minimal size of an ACE with no subauths).
+			 */
 			talloc_free(acl);
 			return NULL;
 		}
+
 		acl->aces = talloc_realloc(acl, acl->aces, struct security_ace,
 					   acl->num_aces+1);
 		if (acl->aces == NULL) {
 			talloc_free(acl);
 			return NULL;
 		}
-		if (!sddl_decode_ace(acl->aces, &acl->aces[acl->num_aces],
-				     astr, state)) {
+		ok = sddl_decode_ace(acl->aces, &acl->aces[acl->num_aces],
+				     ace_condition_flags,
+				     &sddl_copy, state, msg, msg_offset);
+		if (!ok) {
+			*msg_offset += sddl_copy - aces_start;
+			talloc_steal(sd, *msg);
 			talloc_free(acl);
 			return NULL;
 		}
-		switch (acl->aces[acl->num_aces].type) {
-		case SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT:
-		case SEC_ACE_TYPE_ACCESS_DENIED_OBJECT:
-		case SEC_ACE_TYPE_SYSTEM_AUDIT_OBJECT:
-		case SEC_ACE_TYPE_SYSTEM_ALARM_OBJECT:
-			acl->revision = SECURITY_ACL_REVISION_ADS;
-			break;
-		default:
-			break;
-		}
-		talloc_free(astr);
-		sddl += len+2;
 		acl->num_aces++;
 	}
-
+	sddl += sddl_copy - aces_start;
+	TALLOC_FREE(aces_start);
 	(*sddlp) = sddl;
 	return acl;
 }
 
 /*
-  decode a security descriptor in SDDL format
-*/
-struct security_descriptor *sddl_decode(TALLOC_CTX *mem_ctx, const char *sddl,
-					const struct dom_sid *domain_sid)
+ * Decode a security descriptor in SDDL format, catching compilation
+ * error messages, if any.
+ *
+ * The message will be a direct talloc child of mem_ctx or NULL.
+ */
+struct security_descriptor *sddl_decode_err_msg(TALLOC_CTX *mem_ctx, const char *sddl,
+						const struct dom_sid *domain_sid,
+						const enum ace_condition_flags ace_condition_flags,
+						const char **msg, size_t *msg_offset)
 {
 	struct sddl_transition_state state = {
 		/*
-		 * TODO: verify .machine_rid values really belong to
+		 * TODO: verify .machine_rid values really belong
 		 * to the machine_sid on a member, once
 		 * we pass machine_sid from the caller...
 		 */
@@ -622,28 +907,44 @@ struct security_descriptor *sddl_decode(TALLOC_CTX *mem_ctx, const char *sddl,
 		.domain_sid = domain_sid,
 		.forest_sid = domain_sid,
 	};
-	struct security_descriptor *sd;
-	sd = talloc_zero(mem_ctx, struct security_descriptor);
+	const char *start = sddl;
+	struct security_descriptor *sd = NULL;
 
+	if (msg == NULL || msg_offset == NULL) {
+		DBG_ERR("Programmer misbehaviour: use sddl_decode() "
+			"or provide msg pointers.\n");
+		return NULL;
+	}
+	*msg = NULL;
+	*msg_offset = 0;
+
+	sd = talloc_zero(mem_ctx, struct security_descriptor);
+	if (sd == NULL) {
+		return NULL;
+	}
 	sd->revision = SECURITY_DESCRIPTOR_REVISION_1;
 	sd->type     = SEC_DESC_SELF_RELATIVE;
 
 	while (*sddl) {
 		uint32_t flags;
 		char c = sddl[0];
-		if (sddl[1] != ':') goto failed;
-
+		if (sddl[1] != ':') {
+			*msg = talloc_strdup(mem_ctx,
+					     "expected '[OGDS]:' section start "
+					     "(or the previous section ended prematurely)");
+			goto failed;
+		}
 		sddl += 2;
 		switch (c) {
 		case 'D':
 			if (sd->dacl != NULL) goto failed;
-			sd->dacl = sddl_decode_acl(sd, &sddl, &flags, &state);
+			sd->dacl = sddl_decode_acl(sd, ace_condition_flags, &sddl, &flags, &state, msg, msg_offset);
 			if (sd->dacl == NULL) goto failed;
 			sd->type |= flags | SEC_DESC_DACL_PRESENT;
 			break;
 		case 'S':
 			if (sd->sacl != NULL) goto failed;
-			sd->sacl = sddl_decode_acl(sd, &sddl, &flags, &state);
+			sd->sacl = sddl_decode_acl(sd, ace_condition_flags, &sddl, &flags, &state, msg, msg_offset);
 			if (sd->sacl == NULL) goto failed;
 			/* this relies on the SEC_DESC_SACL_* flags being
 			   1 bit shifted from the SEC_DESC_DACL_* flags */
@@ -651,25 +952,71 @@ struct security_descriptor *sddl_decode(TALLOC_CTX *mem_ctx, const char *sddl,
 			break;
 		case 'O':
 			if (sd->owner_sid != NULL) goto failed;
-			sd->owner_sid = sddl_decode_sid(sd, &sddl, &state);
+			sd->owner_sid = sddl_transition_decode_sid(sd, &sddl, &state);
 			if (sd->owner_sid == NULL) goto failed;
 			break;
 		case 'G':
 			if (sd->group_sid != NULL) goto failed;
-			sd->group_sid = sddl_decode_sid(sd, &sddl, &state);
+			sd->group_sid = sddl_transition_decode_sid(sd, &sddl, &state);
 			if (sd->group_sid == NULL) goto failed;
 			break;
 		default:
+			*msg = talloc_strdup(mem_ctx, "unexpected character (expected [OGDS])");
 			goto failed;
 		}
 	}
-
 	return sd;
-
 failed:
+	if (*msg != NULL) {
+		*msg = talloc_steal(mem_ctx, *msg);
+	}
+	/*
+	 * The actual message (*msg) might still be NULL, but the
+	 * offset at least provides a clue.
+	 */
+	*msg_offset += sddl - start;
+
+	if (*msg_offset > strlen(sddl)) {
+		/*
+		 * It's not that we *don't* trust our pointer difference
+		 * arithmetic, just that we *shouldn't*. Let's render it
+		 * harmless, before Python tries printing 18 quadrillion
+		 * spaces.
+		 */
+		DBG_WARNING("sddl error message offset %zu is too big\n",
+			    *msg_offset);
+		*msg_offset = 0;
+	}
 	DEBUG(2,("Badly formatted SDDL '%s'\n", sddl));
 	talloc_free(sd);
 	return NULL;
+}
+
+
+/*
+  decode a security descriptor in SDDL format
+*/
+struct security_descriptor *sddl_decode(TALLOC_CTX *mem_ctx, const char *sddl,
+					const struct dom_sid *domain_sid)
+{
+	const char *msg = NULL;
+	size_t msg_offset = 0;
+	struct security_descriptor *sd = sddl_decode_err_msg(mem_ctx,
+							     sddl,
+							     domain_sid,
+							     ACE_CONDITION_FLAG_ALLOW_DEVICE,
+							     &msg,
+							     &msg_offset);
+	if (sd == NULL) {
+		DBG_NOTICE("could not decode '%s'\n", sddl);
+		if (msg != NULL) {
+			DBG_NOTICE("                  %*c\n",
+				   (int)msg_offset, '^');
+			DBG_NOTICE("error '%s'\n", msg);
+			talloc_free(discard_const(msg));
+		}
+	}
+	return sd;
 }
 
 /*
@@ -713,8 +1060,8 @@ failed:
 /*
   encode a sid in SDDL format
 */
-static char *sddl_encode_sid(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
-			     struct sddl_transition_state *state)
+static char *sddl_transition_encode_sid(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
+					struct sddl_transition_state *state)
 {
 	bool in_machine = dom_sid_in_domain(state->machine_sid, sid);
 	bool in_domain = dom_sid_in_domain(state->domain_sid, sid);
@@ -759,6 +1106,23 @@ static char *sddl_encode_sid(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 	return talloc_strdup(mem_ctx, sidstr);
 }
 
+char *sddl_encode_sid(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
+		      const struct dom_sid *domain_sid)
+{
+	struct sddl_transition_state state = {
+		/*
+		 * TODO: verify .machine_rid values really belong
+		 * to the machine_sid on a member, once
+		 * we pass machine_sid from the caller...
+		 */
+		.machine_sid = domain_sid,
+		.domain_sid = domain_sid,
+		.forest_sid = domain_sid,
+	};
+	return sddl_transition_encode_sid(mem_ctx, sid, &state);
+}
+
+
 
 /*
   encode an ACE in SDDL format
@@ -771,7 +1135,6 @@ static char *sddl_transition_encode_ace(TALLOC_CTX *mem_ctx, const struct securi
 	struct GUID_txt_buf object_buf, iobject_buf;
 	const char *sddl_type="", *sddl_flags="", *sddl_mask="",
 		*sddl_object="", *sddl_iobject="", *sddl_trustee="";
-
 	tmp_ctx = talloc_new(mem_ctx);
 	if (tmp_ctx == NULL) {
 		DEBUG(0, ("talloc_new failed\n"));
@@ -803,10 +1166,7 @@ static char *sddl_transition_encode_ace(TALLOC_CTX *mem_ctx, const struct securi
 		}
 	}
 
-	if (ace->type == SEC_ACE_TYPE_ACCESS_ALLOWED_OBJECT ||
-	    ace->type == SEC_ACE_TYPE_ACCESS_DENIED_OBJECT ||
-	    ace->type == SEC_ACE_TYPE_SYSTEM_AUDIT_OBJECT ||
-	    ace->type == SEC_ACE_TYPE_SYSTEM_ALARM_OBJECT) {
+	if (sec_ace_object(ace->type)) {
 		const struct security_ace_object *object = &ace->object.object;
 
 		if (ace->object.object.flags & SEC_ACE_OBJECT_TYPE_PRESENT) {
@@ -821,16 +1181,50 @@ static char *sddl_transition_encode_ace(TALLOC_CTX *mem_ctx, const struct securi
 				&iobject_buf);
 		}
 	}
-
-	sddl_trustee = sddl_encode_sid(tmp_ctx, &ace->trustee, state);
+	sddl_trustee = sddl_transition_encode_sid(tmp_ctx, &ace->trustee, state);
 	if (sddl_trustee == NULL) {
 		goto failed;
 	}
 
-	sddl = talloc_asprintf(mem_ctx, "%s;%s;%s;%s;%s;%s",
-			       sddl_type, sddl_flags, sddl_mask, sddl_object,
-			       sddl_iobject, sddl_trustee);
+	if (sec_ace_callback(ace->type)) {
+		/* encode the conditional part */
+		struct ace_condition_script *s = NULL;
+		const char *sddl_conditions = NULL;
 
+		s = parse_conditional_ace(tmp_ctx, ace->coda.conditions);
+
+		if (s == NULL) {
+			goto failed;
+		}
+
+		sddl_conditions = sddl_from_conditional_ace(tmp_ctx, s);
+		if (sddl_conditions == NULL) {
+			goto failed;
+		}
+
+		sddl = talloc_asprintf(mem_ctx, "%s;%s;%s;%s;%s;%s;%s",
+				       sddl_type, sddl_flags, sddl_mask,
+				       sddl_object, sddl_iobject,
+				       sddl_trustee, sddl_conditions);
+	} else if (sec_ace_resource(ace->type)) {
+		/* encode the resource part */
+		const char *coda = NULL;
+		coda = sddl_resource_attr_from_claim(tmp_ctx,
+						     &ace->coda.claim);
+
+		if (coda == NULL) {
+			DBG_WARNING("resource ACE has invalid claim\n");
+			goto failed;
+		}
+		sddl = talloc_asprintf(mem_ctx, "%s;%s;%s;%s;%s;%s;%s",
+				       sddl_type, sddl_flags, sddl_mask,
+				       sddl_object, sddl_iobject,
+				       sddl_trustee, coda);
+	} else {
+		sddl = talloc_asprintf(mem_ctx, "%s;%s;%s;%s;%s;%s",
+				       sddl_type, sddl_flags, sddl_mask,
+				       sddl_object, sddl_iobject, sddl_trustee);
+	}
 failed:
 	talloc_free(tmp_ctx);
 	return sddl;
@@ -841,7 +1235,7 @@ char *sddl_encode_ace(TALLOC_CTX *mem_ctx, const struct security_ace *ace,
 {
 	struct sddl_transition_state state = {
 		/*
-		 * TODO: verify .machine_rid values really belong to
+		 * TODO: verify .machine_rid values really belong
 		 * to the machine_sid on a member, once
 		 * we pass machine_sid from the caller...
 		 */
@@ -890,7 +1284,7 @@ char *sddl_encode(TALLOC_CTX *mem_ctx, const struct security_descriptor *sd,
 {
 	struct sddl_transition_state state = {
 		/*
-		 * TODO: verify .machine_rid values really belong to
+		 * TODO: verify .machine_rid values really belong
 		 * to the machine_sid on a member, once
 		 * we pass machine_sid from the caller...
 		 */
@@ -905,17 +1299,20 @@ char *sddl_encode(TALLOC_CTX *mem_ctx, const struct security_descriptor *sd,
 	sddl = talloc_strdup(mem_ctx, "");
 	if (sddl == NULL) goto failed;
 
-	tmp_ctx = talloc_new(mem_ctx);
+	tmp_ctx = talloc_new(sddl);
+	if (tmp_ctx == NULL) {
+		goto failed;
+	}
 
 	if (sd->owner_sid != NULL) {
-		char *sid = sddl_encode_sid(tmp_ctx, sd->owner_sid, &state);
+		char *sid = sddl_transition_encode_sid(tmp_ctx, sd->owner_sid, &state);
 		if (sid == NULL) goto failed;
 		sddl = talloc_asprintf_append_buffer(sddl, "O:%s", sid);
 		if (sddl == NULL) goto failed;
 	}
 
 	if (sd->group_sid != NULL) {
-		char *sid = sddl_encode_sid(tmp_ctx, sd->group_sid, &state);
+		char *sid = sddl_transition_encode_sid(tmp_ctx, sd->group_sid, &state);
 		if (sid == NULL) goto failed;
 		sddl = talloc_asprintf_append_buffer(sddl, "G:%s", sid);
 		if (sddl == NULL) goto failed;

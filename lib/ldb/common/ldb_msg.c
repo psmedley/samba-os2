@@ -346,7 +346,7 @@ static int _ldb_msg_add_el(struct ldb_message *msg,
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	ZERO_STRUCT(els[msg->num_elements]);
+	els[msg->num_elements] = (struct ldb_message_element) {};
 
 	msg->elements = els;
 	msg->num_elements++;
@@ -788,6 +788,18 @@ bool ldb_msg_element_equal_ordered(const struct ldb_message_element *el1,
 int ldb_msg_element_compare_name(struct ldb_message_element *el1,
 				 struct ldb_message_element *el2)
 {
+	if (el1->name == el2->name) {
+		return 0;
+	}
+
+	if (el1->name == NULL) {
+		return -1;
+	}
+
+	if (el2->name == NULL) {
+		return 1;
+	}
+
 	return ldb_attr_cmp(el1->name, el2->name);
 }
 
@@ -836,7 +848,7 @@ int ldb_msg_find_attr_as_int(const struct ldb_message *msg,
 			     int default_value)
 {
 	const struct ldb_val *v = ldb_msg_find_ldb_val(msg, attr_name);
-	char buf[sizeof("-2147483648")];
+	char buf[sizeof("-2147483648")] = {};
 	char *end = NULL;
 	int ret;
 
@@ -844,7 +856,6 @@ int ldb_msg_find_attr_as_int(const struct ldb_message *msg,
 		return default_value;
 	}
 
-	ZERO_STRUCT(buf);
 	if (v->length >= sizeof(buf)) {
 		return default_value;
 	}
@@ -866,7 +877,7 @@ unsigned int ldb_msg_find_attr_as_uint(const struct ldb_message *msg,
 				       unsigned int default_value)
 {
 	const struct ldb_val *v = ldb_msg_find_ldb_val(msg, attr_name);
-	char buf[sizeof("-2147483648")];
+	char buf[sizeof("-2147483648")] = {};
 	char *end = NULL;
 	unsigned int ret;
 
@@ -874,7 +885,6 @@ unsigned int ldb_msg_find_attr_as_uint(const struct ldb_message *msg,
 		return default_value;
 	}
 
-	ZERO_STRUCT(buf);
 	if (v->length >= sizeof(buf)) {
 		return default_value;
 	}
@@ -907,7 +917,7 @@ int64_t ldb_msg_find_attr_as_int64(const struct ldb_message *msg,
 
 int ldb_val_as_int64(const struct ldb_val *v, int64_t *val)
 {
-	char buf[sizeof("-9223372036854775808")];
+	char buf[sizeof("-9223372036854775808")] = {};
 	char *end = NULL;
 	int64_t result;
 
@@ -915,7 +925,6 @@ int ldb_val_as_int64(const struct ldb_val *v, int64_t *val)
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	ZERO_STRUCT(buf);
 	if (v->length >= sizeof(buf)) {
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
@@ -946,7 +955,7 @@ uint64_t ldb_msg_find_attr_as_uint64(const struct ldb_message *msg,
 
 int ldb_val_as_uint64(const struct ldb_val *v, uint64_t *val)
 {
-	char buf[sizeof("-9223372036854775808")];
+	char buf[sizeof("-9223372036854775808")] = {};
 	char *end = NULL;
 	uint64_t result;
 
@@ -954,7 +963,6 @@ int ldb_val_as_uint64(const struct ldb_val *v, uint64_t *val)
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	ZERO_STRUCT(buf);
 	if (v->length >= sizeof(buf)) {
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
@@ -1157,8 +1165,10 @@ struct ldb_message *ldb_msg_copy(TALLOC_CTX *mem_ctx,
 	for (i=0;i<msg2->num_elements;i++) {
 		struct ldb_message_element *el = &msg2->elements[i];
 		struct ldb_val *values = el->values;
-		el->name = talloc_strdup(msg2->elements, el->name);
-		if (el->name == NULL) goto failed;
+		if (el->name != NULL) {
+			el->name = talloc_strdup(msg2->elements, el->name);
+			if (el->name == NULL) goto failed;
+		}
 		el->values = talloc_array(msg2->elements, struct ldb_val, el->num_values);
 		if (el->values == NULL) goto failed;
 		for (j=0;j<el->num_values;j++) {
@@ -1562,7 +1572,7 @@ char *ldb_timestring(TALLOC_CTX *mem_ctx, time_t t)
 		return NULL;
 	}
 
-	/* we now exactly how long this string will be */
+	/* we know exactly how long this string will be */
 	ts = talloc_array(mem_ctx, char, 18);
 
 	/* formatted like: 20040408072012.0Z */
@@ -1678,7 +1688,7 @@ char *ldb_timestring_utc(TALLOC_CTX *mem_ctx, time_t t)
 		return NULL;
 	}
 
-	/* we now exactly how long this string will be */
+	/* we know exactly how long this string will be */
 	ts = talloc_array(mem_ctx, char, 14);
 
 	/* formatted like: 20040408072012.0Z => 040408072012Z */

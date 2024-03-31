@@ -79,7 +79,7 @@ class gp_krb_ext(gp_inf_ext):
         log.info('%s was changed from %s to %s' % (attribute, old_val, val))
         if val is not None:
             self.gp_db.gpostore.store(attribute, get_string(val))
-            self.gp_db.store(str(self), attribute, get_string(old_val) \
+            self.gp_db.store(str(self), attribute, get_string(old_val)
                     if old_val else None)
         else:
             self.gp_db.gpostore.delete(attribute)
@@ -106,16 +106,16 @@ class gp_krb_ext(gp_inf_ext):
                 return output
             if str(self) in inf_conf.sections():
                 section = str(self)
-                output[section] = {k: v for k, v in inf_conf.items(section) \
+                output[section] = {k: v for k, v in inf_conf.items(section)
                                       if gp_krb_ext.apply_map.get(k)}
         return output
 
 
 class gp_access_ext(gp_inf_ext):
-    '''This class takes the .inf file parameter (essentially a GPO file mapped
+    """This class takes the .inf file parameter (essentially a GPO file mapped
     to a GUID), hashmaps it to the Samba parameter, which then uses an ldb
     object to update the parameter to Samba4. Not registry oriented whatsoever.
-    '''
+    """
 
     def load_ldb(self):
         try:
@@ -191,7 +191,7 @@ class gp_access_ext(gp_inf_ext):
         self.ldb.set_pwdProperties(val)
 
     def mapper(self):
-        '''ldap value : samba setter'''
+        """ldap value : samba setter"""
         return {"minPwdAge": (self.ch_minPwdAge, days2rel_nttime),
                 "maxPwdAge": (self.ch_maxPwdAge, days2rel_nttime),
                 # Could be none, but I like the method assignment in
@@ -216,6 +216,6 @@ class gp_access_ext(gp_inf_ext):
                 return output
             if str(self) in inf_conf.sections():
                 section = str(self)
-                output[section] = {k: v for k, v in inf_conf.items(section) \
+                output[section] = {k: v for k, v in inf_conf.items(section)
                                       if gp_access_ext.apply_map.get(k)}
         return output

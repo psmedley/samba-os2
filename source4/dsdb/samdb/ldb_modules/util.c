@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    Samba utility functions
 
@@ -102,8 +102,8 @@ int dsdb_module_search_dn(struct ldb_module *module,
 	if (res->count != 1) {
 		/* we may be reading a DB that does not have the 'check base on search' option... */
 		ret = LDB_ERR_NO_SUCH_OBJECT;
-		ldb_asprintf_errstring(ldb_module_get_ctx(module), 
-				       "dsdb_module_search_dn: did not find base dn %s (%d results)", 
+		ldb_asprintf_errstring(ldb_module_get_ctx(module),
+				       "dsdb_module_search_dn: did not find base dn %s (%d results)",
 				       ldb_dn_get_linearized(basedn), res->count);
 	} else {
 		*_res = talloc_steal(mem_ctx, res);
@@ -766,7 +766,7 @@ int dsdb_check_samba_compatible_feature(struct ldb_module *module,
 
   Note that features can be marked as enabled in more than one
   place. For example, the recyclebin feature is marked as enabled both
-  on the CN=Partitions,CN=Configurration object and on the NTDS DN of
+  on the CN=Partitions,CN=Configuration object and on the NTDS DN of
   each DC in the forest. It seems likely that it is the job of the KCC
   to propagate between the two
  */
@@ -1562,7 +1562,7 @@ int dsdb_get_expected_new_values(TALLOC_CTX *mem_ctx,
 			el_count++;
 			tmp = val_count + msg->elements[i].num_values;
 			if (unlikely(tmp < val_count)) {
-				DBG_ERR("too many values for one element!");
+				DBG_ERR("too many values for one element!\n");
 				return LDB_ERR_OPERATIONS_ERROR;
 			}
 			val_count = tmp;
@@ -1828,8 +1828,8 @@ bool dsdb_is_subclass_of(const struct dsdb_schema *schema,
 }
 
 /* Fix the DN so that the relative attribute names are in upper case so that the DN:
-   cn=Adminstrator,cn=users,dc=samba,dc=example,dc=com becomes
-   CN=Adminstrator,CN=users,DC=samba,DC=example,DC=com
+   cn=Administrator,cn=users,dc=samba,dc=example,dc=com becomes
+   CN=Administrator,CN=users,DC=samba,DC=example,DC=com
 */
 int dsdb_fix_dn_rdncase(struct ldb_context *ldb, struct ldb_dn *dn)
 {
@@ -1862,7 +1862,7 @@ int dsdb_fix_dn_rdncase(struct ldb_context *ldb, struct ldb_dn *dn)
  * @param ldb	ldb context
  * @param schema cached schema for ldb. We may get it, but it is very time consuming.
  * 			Hence leave the responsibility to the caller.
- * @param obj	AD object to determint objectCategory for
+ * @param obj	AD object to determine objectCategory for
  * @param mem_ctx Memory context - usually it is obj actually
  * @param pobjectcategory location to store found objectCategory
  *

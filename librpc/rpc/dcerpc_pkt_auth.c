@@ -384,7 +384,7 @@ void dcerpc_save_ndr_fuzz_seed(TALLOC_CTX *mem_ctx,
 			       DATA_BLOB raw_blob,
 			       const char *dump_dir,
 			       const char *iface_name,
-			       int flags,
+			       ndr_flags_type flags,
 			       int opnum,
 			       bool ndr64)
 {
@@ -467,7 +467,7 @@ void dcerpc_save_ndr_fuzz_seed(TALLOC_CTX *mem_ctx,
 		 */
 		NTSTATUS status = gnutls_error_to_ntstatus(rc,
 						  NT_STATUS_HASH_NOT_SUPPORTED);
-		DBG_ERR("Failed to generate SHA1 to save fuzz seed: %s",
+		DBG_ERR("Failed to generate SHA1 to save fuzz seed: %s\n",
 			nt_errstr(status));
 		talloc_free(temp_ctx);
 		return;

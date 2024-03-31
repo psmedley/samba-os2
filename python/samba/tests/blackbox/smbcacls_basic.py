@@ -1,4 +1,4 @@
-# Blackbox tests for smbcaclcs
+# Blackbox tests for smbcacls
 #
 # Copyright (C) Noel Power noel.power@suse.com
 #
@@ -19,9 +19,6 @@ from samba.tests.blackbox.smbcacls import SmbCaclsBlockboxTestBase
 from samba.tests import BlackboxProcessError
 
 class BasicSmbCaclsTests(SmbCaclsBlockboxTestBase):
-
-    def setUp(self):
-        super(BasicSmbCaclsTests, self).setUp()
 
     def test_simple_single_set(self):
         """test smbcacls '--set' attempts to overwrite the ACL for the file

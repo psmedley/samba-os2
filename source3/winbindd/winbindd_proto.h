@@ -365,6 +365,7 @@ void winbindd_msg_reload_services_parent(struct messaging_context *msg,
 NTSTATUS winbindd_reinit_after_fork(const struct winbindd_child *myself,
 				    const char *logfilename);
 struct winbindd_domain *wb_child_domain(void);
+bool add_trusted_domains_dc(void);
 
 /* The following definitions come from winbindd/winbindd_group.c  */
 bool fill_grent(TALLOC_CTX *mem_ctx, struct winbindd_gr *gr,
@@ -383,7 +384,7 @@ struct tevent_req *wb_parent_idmap_setup_send(TALLOC_CTX *mem_ctx,
 NTSTATUS wb_parent_idmap_setup_recv(struct tevent_req *req,
 				    const struct wb_parent_idmap_config **_cfg);
 
-void init_idmap_child(void);
+NTSTATUS init_idmap_child(TALLOC_CTX *mem_ctx);
 struct winbindd_child *idmap_child(void);
 bool is_idmap_child(const struct winbindd_child *child);
 pid_t idmap_child_pid(void);
@@ -404,7 +405,7 @@ bool lp_scan_idmap_domains(bool (*fn)(const char *domname,
 
 /* The following definitions come from winbindd/winbindd_locator.c  */
 
-void init_locator_child(void);
+NTSTATUS init_locator_child(TALLOC_CTX *mem_ctx);
 struct winbindd_child *locator_child(void);
 struct dcerpc_binding_handle *locator_child_handle(void);
 
@@ -516,14 +517,48 @@ struct winbindd_domain *find_our_domain(void);
 struct winbindd_domain *find_default_route_domain(void);
 struct winbindd_domain *find_lookup_domain_from_sid(const struct dom_sid *sid);
 struct winbindd_domain *find_lookup_domain_from_name(const char *domain_name);
-bool parse_domain_user(const char *domuser,
-		       fstring namespace,
-		       fstring domain,
-		       fstring user);
-bool canonicalize_username(fstring username_inout,
-			   fstring namespace,
-			   fstring domain,
-			   fstring user);
+/**
+ * Parse a DOMAIN\user or UPN string into a domain, namespace and a user
+ *
+ * @param[in] ctx talloc context
+ * @param[in] domuser  a DOMAIN\user or UPN string
+ * @param[out] namespace
+ * @param[out] domain
+ * @param[out] user
+ * @return bool indicating success or failure
+ */
+bool parse_domain_user(TALLOC_CTX *ctx,
+		       const char *domuser,
+		       char **namespace,
+		       char **domain,
+		       char **user);
+/**
+ * Ensure an incoming username from NSS is fully qualified. Replace the
+ * incoming username with DOMAIN <separator> user. Additionally returns
+ * the same values as parse_domain_user() as out params.
+ * Used to ensure all names are fully qualified within winbindd.
+ * Used by the NSS protocols of auth, chauthtok, logoff and ccache_ntlm_auth.
+ * The protocol definitions of auth_crap, chng_pswd_auth_crap
+ * really should be changed to use this instead of doing things
+ * by hand. JRA.
+ *
+ * @param[in] mem_ctx talloc context
+ * @param[in,out] username_inout populated with fully qualified name
+		  with format 'DOMAIN <separator> user' where DOMAIN and
+		  user are determined by the output of parse_domain_user()
+ * @param[out] namespace populated with namespace returned from
+               parse_domain_user()
+ * @param[out] domain populated with domain returned from
+               parse_domain_user()
+ * @param[out] populated with user returned from
+               parse_domain_user()
+ * @return bool indicating success or failure
+ */
+bool canonicalize_username(TALLOC_CTX *mem_ctx,
+			   char **username_inout,
+			   char **namespace,
+			   char **domain,
+			   char **user);
 char *fill_domain_username_talloc(TALLOC_CTX *ctx,
 				  const char *domain,
 				  const char *user,

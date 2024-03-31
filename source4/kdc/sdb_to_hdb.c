@@ -75,13 +75,14 @@ static int sdb_salt_to_Salt(const struct sdb_salt *s, Salt *h)
 {
 	int ret;
 
+	*h = (struct Salt) {};
+
 	h->type = s->type;
 	ret = smb_krb5_copy_data_contents(&h->salt, s->salt.data, s->salt.length);
 	if (ret != 0) {
 		free_Salt(h);
 		return ENOMEM;
 	}
-	h->opaque = NULL;
 
 	return 0;
 }
@@ -90,7 +91,7 @@ static int sdb_key_to_Key(const struct sdb_key *s, Key *h)
 {
 	int rc;
 
-	ZERO_STRUCTP(h);
+	*h = (struct Key) {};
 
 	h->key.keytype = s->key.keytype;
 	rc = smb_krb5_copy_data_contents(&h->key.keyvalue,
@@ -111,8 +112,6 @@ static int sdb_key_to_Key(const struct sdb_key *s, Key *h)
 		if (rc != 0) {
 			goto error_nomem;
 		}
-	} else {
-		h->salt = NULL;
 	}
 
 	return 0;
@@ -126,22 +125,23 @@ static int sdb_keys_to_Keys(const struct sdb_keys *s, Keys *h)
 {
 	int ret, i;
 
-	h->len = s->len;
+	*h = (struct Keys) {};
+
 	if (s->val != NULL) {
-		h->val = malloc(h->len * sizeof(Key));
+		h->val = malloc(s->len * sizeof(Key));
 		if (h->val == NULL) {
 			return ENOMEM;
 		}
-		for (i = 0; i < h->len; i++) {
+		for (i = 0; i < s->len; i++) {
 			ret = sdb_key_to_Key(&s->val[i],
 					     &h->val[i]);
 			if (ret != 0) {
 				free_Keys(h);
 				return ENOMEM;
 			}
+
+			++h->len;
 		}
-	} else {
-		h->val = NULL;
 	}
 
 	return 0;
@@ -177,6 +177,8 @@ static int sdb_event_to_Event(krb5_context context,
 {
 	int ret;
 
+	*h = (struct Event) {};
+
 	if (s->principal != NULL) {
 		ret = krb5_copy_principal(context,
 					  s->principal,
@@ -185,8 +187,6 @@ static int sdb_event_to_Event(krb5_context context,
 			free_Event(h);
 			return ret;
 		}
-	} else {
-		h->principal = NULL;
 	}
 	h->time = s->time;
 
@@ -201,13 +201,15 @@ int sdb_entry_to_hdb_entry(krb5_context context,
 	unsigned int i;
 	int rc;
 
-	ZERO_STRUCTP(h);
+	*h = (hdb_entry) {};
 
-	rc = krb5_copy_principal(context,
-				 s->principal,
-				 &h->principal);
-	if (rc != 0) {
-		return rc;
+	if (s->principal != NULL) {
+		rc = krb5_copy_principal(context,
+					 s->principal,
+					 &h->principal);
+		if (rc != 0) {
+			return rc;
+		}
 	}
 
 	h->kvno = s->kvno;
@@ -257,8 +259,6 @@ int sdb_entry_to_hdb_entry(krb5_context context,
 		if (rc != 0) {
 			goto error;
 		}
-	} else {
-		h->modified_by = NULL;
 	}
 
 	if (s->valid_start != NULL) {
@@ -268,8 +268,6 @@ int sdb_entry_to_hdb_entry(krb5_context context,
 			goto error;
 		}
 		*h->valid_start = *s->valid_start;
-	} else {
-		h->valid_start = NULL;
 	}
 
 	if (s->valid_end != NULL) {
@@ -279,8 +277,6 @@ int sdb_entry_to_hdb_entry(krb5_context context,
 			goto error;
 		}
 		*h->valid_end = *s->valid_end;
-	} else {
-		h->valid_end = NULL;
 	}
 
 	if (s->pw_end != NULL) {
@@ -290,8 +286,6 @@ int sdb_entry_to_hdb_entry(krb5_context context,
 			goto error;
 		}
 		*h->pw_end = *s->pw_end;
-	} else {
-		h->pw_end = NULL;
 	}
 
 	if (s->max_life != NULL) {
@@ -301,8 +295,6 @@ int sdb_entry_to_hdb_entry(krb5_context context,
 			goto error;
 		}
 		*h->max_life = *s->max_life;
-	} else {
-		h->max_life = NULL;
 	}
 
 	if (s->max_renew != NULL) {
@@ -312,13 +304,10 @@ int sdb_entry_to_hdb_entry(krb5_context context,
 			goto error;
 		}
 		*h->max_renew = *s->max_renew;
-	} else {
-		h->max_renew = NULL;
 	}
 
 	sdb_flags_to_hdb_flags(&s->flags, &h->flags);
 
-	h->etypes = NULL;
 	if (s->etypes != NULL) {
 		h->etypes = malloc(sizeof(*h->etypes));
 		if (h->etypes == NULL) {
@@ -339,7 +328,6 @@ int sdb_entry_to_hdb_entry(krb5_context context,
 		}
 	}
 
-	h->session_etypes = NULL;
 	if (s->session_etypes != NULL) {
 		h->session_etypes = malloc(sizeof(*h->session_etypes));
 		if (h->session_etypes == NULL) {

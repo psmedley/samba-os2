@@ -442,14 +442,15 @@ hx509_ca_tbs_set_from_csr(hx509_context context,
 	                  hx509_request req)
 {
     hx509_san_type san_type;
-    heim_oid oid = { 0, 0 };
+    heim_oid oid = { 0, NULL };
     KeyUsage ku;
     size_t i;
     char *s = NULL;
     int ret;
 
     if (hx509_request_count_unauthorized(req)) {
-        hx509_set_error_string(context, 0, ENOMEM, "out of memory");
+        hx509_set_error_string(context, 0, EACCES,
+                               "Some certificate features requested in the CSR were not authorized");
         return EACCES;
     }
 
@@ -1187,8 +1188,7 @@ hx509_ca_tbs_add_san_permanentIdentifier_string(hx509_context context,
     p = strchr(freeme, ':');
     if (!p) {
         hx509_set_error_string(context, 0, EINVAL,
-                               "Invalid PermanentIdentifier string (should be \"[<oid>]:[<id>]\")",
-                               oidstr);
+                               "Invalid PermanentIdentifier string (should be \"[<oid>]:[<id>]\")");
         free(freeme);
         return EINVAL;
     }
@@ -1297,8 +1297,7 @@ hx509_ca_tbs_add_san_hardwareModuleName_string(hx509_context context,
     if (!p) {
         hx509_set_error_string(context, 0, EINVAL,
                                "Invalid HardwareModuleName string (should be "
-                               "\"<oid>:<serial>\")",
-                               oidstr);
+                               "\"<oid>:<serial>\")");
         free(freeme);
         return EINVAL;
     }
@@ -1735,7 +1734,12 @@ ca_sign(hx509_context context,
 	    hx509_set_error_string(context, 0, ret, "Out of memory");
 	    goto out;
 	}
-	RAND_bytes(tbsc->serialNumber.data, tbsc->serialNumber.length);
+	ret = RAND_bytes(tbsc->serialNumber.data, tbsc->serialNumber.length);
+	if (ret != 1) {
+	    ret = HX509_CRYPTO_INTERNAL_ERROR;
+	    hx509_set_error_string(context, 0, ret, "Failed to generate random bytes");
+	    goto out;
+	}
 	((unsigned char *)tbsc->serialNumber.data)[0] &= 0x7f;
 	((unsigned char *)tbsc->serialNumber.data)[0] |= 0x40;
     }
@@ -2673,7 +2677,7 @@ set_template(hx509_context context,
         size_t i;
 
         for (i = 0; ret == 0 && ekus[i]; i++) {
-            heim_oid oid = { 0, 0 };
+            heim_oid oid = { 0, NULL };
 
             if ((ret = der_find_or_parse_heim_oid(ekus[i], ".", &oid)) == 0)
                 ret = hx509_ca_tbs_add_eku(context, tbs, &oid);

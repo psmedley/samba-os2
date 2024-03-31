@@ -664,8 +664,9 @@ static NTSTATUS dcesrv_lsa_QueryInfoPolicy2(struct dcesrv_call_state *dce_call, 
 		return NT_STATUS_OK;
 
 	case LSA_POLICY_INFO_DNS:
-	case LSA_POLICY_INFO_DNS_INT:
 		return dcesrv_lsa_info_DNS(state, mem_ctx, &info->dns);
+	case LSA_POLICY_INFO_DNS_INT:
+		return dcesrv_lsa_info_DNS(state, mem_ctx, &info->dns_int);
 
 	case LSA_POLICY_INFO_REPLICA:
 		ZERO_STRUCT(info->replica);
@@ -1431,7 +1432,7 @@ static NTSTATUS dcesrv_lsa_CreateTrustedDomainEx(struct dcesrv_call_state *dce_c
 					  TALLOC_CTX *mem_ctx,
 					  struct lsa_CreateTrustedDomainEx *r)
 {
-	struct lsa_CreateTrustedDomainEx2 r2;
+	struct lsa_CreateTrustedDomainEx2 r2 = {};
 
 	r2.in.policy_handle = r->in.policy_handle;
 	r2.in.info = r->in.info;
@@ -1445,7 +1446,7 @@ static NTSTATUS dcesrv_lsa_CreateTrustedDomainEx(struct dcesrv_call_state *dce_c
 static NTSTATUS dcesrv_lsa_CreateTrustedDomain(struct dcesrv_call_state *dce_call, TALLOC_CTX *mem_ctx,
 					struct lsa_CreateTrustedDomain *r)
 {
-	struct lsa_CreateTrustedDomainEx2 r2;
+	struct lsa_CreateTrustedDomainEx2 r2 = {};
 
 	r2.in.policy_handle = r->in.policy_handle;
 	r2.in.info = talloc(mem_ctx, struct lsa_TrustDomainInfoInfoEx);
@@ -2202,7 +2203,7 @@ static NTSTATUS setInfoTrustedDomain_base(struct dcesrv_call_state *dce_call,
 			goto done;
 		}
 
-		/* We use trustAuthIncoming.data to incidate that auth_struct.incoming is valid */
+		/* We use trustAuthIncoming.data to indicate that auth_struct.incoming is valid */
 		nt_status = update_trust_user(mem_ctx,
 					      p_state->sam_ldb,
 					      p_state->domain_dn,
@@ -2529,7 +2530,7 @@ static NTSTATUS dcesrv_lsa_CloseTrustedDomainEx(struct dcesrv_call_state *dce_ca
 					 struct lsa_CloseTrustedDomainEx *r)
 {
 	/* The result of a bad hair day from an IDL programmer?  Not
-	 * implmented in Win2k3.  You should always just lsa_Close
+	 * implemented in Win2k3.  You should always just lsa_Close
 	 * anyway. */
 	return NT_STATUS_NOT_IMPLEMENTED;
 }
@@ -2876,7 +2877,7 @@ static NTSTATUS dcesrv_lsa_EnumAccountRights(struct dcesrv_call_state *dce_call,
 		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
 	if (ret != 1) {
-		DEBUG(3, ("searching for account rights for SID: %s failed: %s",
+		DEBUG(3, ("searching for account rights for SID: %s failed: %s\n",
 			  dom_sid_string(mem_ctx, r->in.sid),
 			  ldb_errstring(state->pdb)));
 		return NT_STATUS_INTERNAL_DB_CORRUPTION;
@@ -3020,7 +3021,7 @@ static NTSTATUS dcesrv_lsa_AddRemoveAccountRights(struct dcesrv_call_state *dce_
 			talloc_free(msg);
 			return NT_STATUS_OK;
 		}
-		DEBUG(3, ("Could not %s attributes from %s: %s",
+		DEBUG(3, ("Could not %s attributes from %s: %s\n",
 			  LDB_FLAG_MOD_TYPE(ldb_flag) == LDB_FLAG_MOD_DELETE ? "delete" : "add",
 			  ldb_dn_get_linearized(msg->dn), ldb_errstring(state->pdb)));
 		talloc_free(msg);
@@ -3241,7 +3242,7 @@ static NTSTATUS dcesrv_lsa_CreateSecret(struct dcesrv_call_state *dce_call, TALL
 	case SECURITY_ADMINISTRATOR:
 		break;
 	default:
-		/* Users and annonymous are not allowed create secrets */
+		/* Users and anonymous are not allowed create secrets */
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
@@ -3409,7 +3410,7 @@ static NTSTATUS dcesrv_lsa_OpenSecret(struct dcesrv_call_state *dce_call, TALLOC
 	case SECURITY_ADMINISTRATOR:
 		break;
 	default:
-		/* Users and annonymous are not allowed to access secrets */
+		/* Users and anonymous are not allowed to access secrets */
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
@@ -3695,7 +3696,7 @@ static NTSTATUS dcesrv_lsa_QuerySecret(struct dcesrv_call_state *dce_call, TALLO
 	case SECURITY_ADMINISTRATOR:
 		break;
 	default:
-		/* Users and annonymous are not allowed to read secrets */
+		/* Users and anonymous are not allowed to read secrets */
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
@@ -4715,6 +4716,519 @@ static NTSTATUS dcesrv_lsa_LSARADTREPORTSECURITYEVENT(struct dcesrv_call_state *
 	DCESRV_FAULT(DCERPC_FAULT_OP_RNG_ERROR);
 }
 
+/*
+  lsa_Opnum82NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum82NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum82NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum83NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum83NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum83NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum84NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum84NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum84NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum85NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum85NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum85NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum86NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum86NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum86NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum87NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum87NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum87NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum88NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum88NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum88NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum89NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum89NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum89NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum90NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum90NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum90NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum91NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum91NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum91NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum92NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum92NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum92NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum93NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum93NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum93NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum94NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum94NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum94NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum95NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum95NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum95NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum96NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum96NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum96NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum97NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum97NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum97NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum98NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum98NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum98NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum99NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum99NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum99NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum100NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum100NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum100NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum101NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum101NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum101NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum102NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum102NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum102NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum103NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum103NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum103NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum104NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum104NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum104NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum105NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum105NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum105NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum106NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum106NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum106NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum107NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum107NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum107NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum108NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum108NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum108NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum109NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum109NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum109NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum110NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum110NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum110NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum111NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum111NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum111NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum112NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum112NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum112NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum113NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum113NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum113NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum114NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum114NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum114NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum115NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum115NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum115NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum116NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum116NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum116NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum117NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum117NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum117NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum118NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum118NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum118NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum119NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum119NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum119NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum120NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum120NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum120NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum121NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum121NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum121NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum122NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum122NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum122NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum123NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum123NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum123NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum124NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum124NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum124NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum125NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum125NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum125NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum126NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum126NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum126NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum127NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum127NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum127NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum128NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum128NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum128NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_CreateTrustedDomainEx3
+*/
+static NTSTATUS dcesrv_lsa_CreateTrustedDomainEx3(struct dcesrv_call_state *dce_call,
+						  TALLOC_CTX *mem_ctx,
+						  struct lsa_CreateTrustedDomainEx3 *r)
+{
+	/* TODO */
+	DCESRV_FAULT(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_Opnum131NotUsedOnWire
+*/
+static void dcesrv_lsa_Opnum131NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					    TALLOC_CTX *mem_ctx,
+					    struct lsa_Opnum131NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_lsaRQueryForestTrustInformation2
+*/
+static NTSTATUS dcesrv_lsa_lsaRQueryForestTrustInformation2(
+		struct dcesrv_call_state *dce_call,
+		TALLOC_CTX *mem_ctx,
+		struct lsa_lsaRQueryForestTrustInformation2 *r)
+{
+	/* TODO */
+	DCESRV_FAULT(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+/*
+  lsa_lsaRSetForestTrustInformation2
+*/
+static NTSTATUS dcesrv_lsa_lsaRSetForestTrustInformation2(struct dcesrv_call_state *dce_call,
+							  TALLOC_CTX *mem_ctx,
+							  struct lsa_lsaRSetForestTrustInformation2 *r)
+{
+	/* TODO */
+	DCESRV_FAULT(DCERPC_FAULT_OP_RNG_ERROR);
+}
 
 /* include the generated boilerplate */
 #include "librpc/gen_ndr/ndr_lsa_s.c"

@@ -1272,14 +1272,14 @@ static int samldb_add_handle_msDS_IntId(struct samldb_ctx *ac)
 		/*
 		 * We search in the schema if we have already this
 		 * intid (using dsdb_attribute_by_attributeID_id
-		 * because in the range 0x80000000 0xBFFFFFFFF,
+		 * because in the range 0x80000000 0xBFFFFFFF,
 		 * attributeID is a DSDB_ATTID_TYPE_INTID).
 		 *
 		 * If so generate another random value.
 		 *
 		 * We have to check the DB in case someone else has
 		 * modified the database while we are doing our
-		 * changes too (this case should be very bery rare) in
+		 * changes too (this case should be very very rare) in
 		 * order to be sure.
 		 */
 		if (dsdb_attribute_by_attributeID_id(schema, msds_intid)) {

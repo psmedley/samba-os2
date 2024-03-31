@@ -137,6 +137,7 @@ bool profile_setup(struct messaging_context *msg_ctx, bool rdonly)
 		NULL, db_name, 0,
 		rdonly ? 0 : TDB_CLEAR_IF_FIRST|TDB_MUTEX_LOCKING,
 		O_CREAT | (rdonly ? O_RDONLY : O_RDWR), 0644);
+	TALLOC_FREE(db_name);
 	if (smbprofile_state.internal.db == NULL) {
 		return false;
 	}
@@ -232,6 +233,16 @@ void smbprofile_dump(void)
 
 	pid = tevent_cached_getpid();
 
+	ret = tdb_chainlock(smbprofile_state.internal.db->tdb, key);
+	if (ret != 0) {
+		return;
+	}
+
+	tdb_parse_record(smbprofile_state.internal.db->tdb,
+			 key, profile_stats_parser, &s);
+
+	smbprofile_stats_accumulate(profile_p, &s);
+
 #ifdef HAVE_GETRUSAGE
 	ret = getrusage(RUSAGE_SELF, &rself);
 	if (ret != 0) {
@@ -245,16 +256,6 @@ void smbprofile_dump(void)
 		(rself.ru_stime.tv_sec * 1000000) +
 		rself.ru_stime.tv_usec;
 #endif /* HAVE_GETRUSAGE */
-
-	ret = tdb_chainlock(smbprofile_state.internal.db->tdb, key);
-	if (ret != 0) {
-		return;
-	}
-
-	tdb_parse_record(smbprofile_state.internal.db->tdb,
-			 key, profile_stats_parser, &s);
-
-	smbprofile_stats_accumulate(profile_p, &s);
 
 	tdb_store(smbprofile_state.internal.db->tdb, key,
 		  (TDB_DATA) {

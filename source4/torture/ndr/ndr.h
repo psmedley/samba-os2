@@ -34,8 +34,8 @@ _PUBLIC_ struct torture_test *_torture_suite_add_ndr_pullpush_test(
 					const char *db_name,
 					DATA_BLOB db,
 					size_t struct_size,
-					int ndr_flags,
-					int flags,
+					ndr_flags_type ndr_flags,
+					libndr_flags flags,
 					const char *check_fn_name,
 					bool (*check_fn) (struct torture_context *, void *data));
 
@@ -49,7 +49,7 @@ _PUBLIC_ struct torture_test *_torture_suite_add_ndr_pull_inout_test(
 					const char *db_out_name,
 					DATA_BLOB db_out,
 					size_t struct_size,
-					int flags,
+					libndr_flags flags,
 					const char *check_fn_name,
 					bool (*check_fn) (struct torture_context *ctx, void *data));
 
@@ -60,8 +60,8 @@ _PUBLIC_ struct torture_test *_torture_suite_add_ndr_pull_invalid_data_test(
 	const char *db_name,
 	DATA_BLOB db,
 	size_t struct_size,
-	int ndr_flags,
-	int flags,
+	ndr_flags_type ndr_flags,
+	libndr_flags flags,
 	enum ndr_err_code ndr_err);
 
 #define torture_suite_add_ndr_pull_test(suite,name,data,check_fn) \

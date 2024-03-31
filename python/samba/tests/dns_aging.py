@@ -26,7 +26,7 @@ import ldb
 from samba import credentials
 from samba.dcerpc import dns, dnsp, dnsserver
 from samba.dnsserver import TXTRecord, ARecord
-from samba.dnsserver import recbuf_from_string, ipv6_normalise
+from samba.dnsserver import ipv6_normalise
 from samba.tests.subunitrun import SubunitOptions, TestProgram
 from samba import werror, WERRORError
 from samba.tests.dns_base import DNSTest
@@ -384,6 +384,7 @@ class TestDNSAging(DNSTest):
         self.rpc_replace(name, old, None)
 
     def get_one_node(self, name):
+        self.assertIsInstance(name, str)
         expr = f"(&(objectClass=dnsNode)(name={name}))"
         nodes = self.samdb.search(base=self.zone_dn,
                                   scope=ldb.SCOPE_SUBTREE,
@@ -604,7 +605,7 @@ class TestDNSAging(DNSTest):
         r.wType = dnsp.DNS_TYPE_TOMBSTONE
         # r.dwTimeStamp is a 32 bit value in hours, and r.data is an
         # NTTIME (100 nanosecond intervals), both in the 1601 epoch. A
-        # tombstome will have both, but expiration calculations use
+        # tombstone will have both, but expiration calculations use
         # the r.data NTTIME EntombedTime timestamp (see [MS-DNSP]).
         r.dwTimeStamp = epoch_hours
         if epoch_nttime is None:
@@ -1507,7 +1508,7 @@ class TestDNSAging(DNSTest):
         timestamp3 = self.get_unique_txt_record(name, txt3).dwTimeStamp
         timestamp1 = self.get_unique_txt_record(name, txt1).dwTimeStamp
 
-        # Here, although there is no record frm which to get the zero
+        # Here, although there is no record from which to get the zero
         # timestamp, record 4 does it anyway.
         self.assert_timestamps_equal(timestamp1, longer_ago)
         self.assert_timestamps_equal(timestamp2, n_days_ago)
@@ -2162,7 +2163,7 @@ class TestDNSAging(DNSTest):
         self.assertEqual(r.ancount, 0)
         recs = self.ldap_get_records(D)
         self.assertEqual(len(recs), 1)
-        self.assert_tombstoned(recs[0])
+        self.assert_tombstoned(D)
 
         # others unchanged.
         atime = self.get_unique_txt_record(A, A).dwTimeStamp
@@ -2182,17 +2183,17 @@ class TestDNSAging(DNSTest):
         dsdb._dns_delete_tombstones(file_samdb)
         recs = self.ldap_get_records(D)
         self.assertEqual(len(recs), 1)
-        self.assert_tombstoned(recs[0])
+        self.assert_tombstoned(D)
 
         # Let's delete C using rpc, and ensure it survives dns_delete_tombstones
         self.rpc_delete_txt(C, C)
         recs = self.ldap_get_records(C)
         self.assertEqual(len(recs), 1)
-        self.assert_tombstoned(recs[0])
+        self.assert_tombstoned(C)
         dsdb._dns_delete_tombstones(file_samdb)
         recs = self.ldap_get_records(C)
         self.assertEqual(len(recs), 1)
-        self.assert_tombstoned(recs[0])
+        self.assert_tombstoned(C)
 
         # now let's wind A and B back to either side of the two week
         # threshold. A should survive, B should not.
@@ -2202,7 +2203,7 @@ class TestDNSAging(DNSTest):
 
         recs = self.ldap_get_records(A)
         self.assertEqual(len(recs), 1)
-        self.assert_tombstoned(recs[0])
+        self.assert_tombstoned(A)
 
         recs = self.ldap_get_records(B)
         self.assertEqual(len(recs), 0)
@@ -2435,6 +2436,8 @@ class TestDNSAging(DNSTest):
         r = self.dns_query(name, dns.DNS_QTYPE_TXT)
         rset = set(x.rdata.txt.str[0] for x in r.answers)
         self.assertEqual(rset, set('ABCD'))
+
+        self.assert_timestamps_equal(dtime, self.get_unique_txt_record(name, D))
 
         self.dns_delete(name, D)
         self.assert_timestamps_equal(atime, self.get_unique_txt_record(name, A))

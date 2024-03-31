@@ -846,7 +846,7 @@ off_t vfs_transfer_file(files_struct *in, files_struct *out, off_t n)
 
 const char *vfs_readdirname(connection_struct *conn,
 			    struct files_struct *dirfsp,
-			    void *p,
+			    DIR *d,
 			    char **talloced)
 {
 	struct dirent *ptr= NULL;
@@ -854,10 +854,11 @@ const char *vfs_readdirname(connection_struct *conn,
 	char *translated;
 	NTSTATUS status;
 
-	if (!p)
+	if (d == NULL) {
 		return(NULL);
+	}
 
-	ptr = SMB_VFS_READDIR(conn, dirfsp, (DIR *)p);
+	ptr = SMB_VFS_READDIR(conn, dirfsp, d);
 	if (!ptr)
 		return(NULL);
 
@@ -1170,6 +1171,10 @@ NTSTATUS vfs_stat_fsp(files_struct *fsp)
 	int ret;
 	struct stat_ex saved_stat = fsp->fsp_name->st;
 
+	if (fsp->fake_file_handle != NULL) {
+		return NT_STATUS_OK;
+	}
+
 	if (fsp_get_pathref_fd(fsp) == -1) {
 		if (fsp->posix_flags & FSP_POSIX_FLAGS_OPEN) {
 			ret = SMB_VFS_LSTAT(fsp->conn, fsp->fsp_name);
@@ -1294,45 +1299,6 @@ NTSTATUS vfs_at_fspcwd(TALLOC_CTX *mem_ctx,
 	fsp->conn = conn;
 
 	*_fsp = fsp;
-	return NT_STATUS_OK;
-}
-
-NTSTATUS vfs_fget_dos_attributes(struct files_struct *fsp,
-				 uint32_t *dosmode)
-{
-	NTSTATUS status;
-
-	/*
-	 * First make sure to pass the base_fsp to the VFS
-	 */
-	status = SMB_VFS_FGET_DOS_ATTRIBUTES(
-		fsp->conn, metadata_fsp(fsp), dosmode);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
-
-	/*
-	 * If this isn't a stream fsp we're done, ...
-	 */
-	if (!fsp_is_alternate_stream(fsp)) {
-		return NT_STATUS_OK;
-	}
-
-	/*
-	 * ...otherwise the VFS might have updated the btime, propagate the
-	 * btime from the base_fsp to the stream fsp.
-	 */
-
-	if (fsp->base_fsp->fsp_name->st.st_ex_iflags & ST_EX_IFLAG_CALCULATED_BTIME) {
-		/*
-		 * Not a value from backend storage, ignore it
-		 */
-		return NT_STATUS_OK;
-	}
-
-	update_stat_ex_create_time(&fsp->fsp_name->st,
-				   fsp->base_fsp->fsp_name->st.st_ex_btime);
-
 	return NT_STATUS_OK;
 }
 

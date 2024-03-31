@@ -1,475 +1,145 @@
                    ==============================
-                   Release Notes for Samba 4.19.5
-                         February 19, 2024
+                   Release Notes for Samba 4.20.0
+                           March 27, 2024
                    ==============================
 
 
-This is the latest stable release of the Samba 4.19 release series.
-
-
-Changes since 4.19.4
---------------------
-
-o  Ralph Boehme <slow@samba.org>
-   * BUG 13688: Windows 2016 fails to restore previous version of a file from a
-     shadow_copy2 snapshot.
-   * BUG 15549: Symlinks on AIX are broken in 4.19 (and a few version before
-     that).
-
-o  Bjoern Jacke <bj@sernet.de>
-   * BUG 12421: Fake directory create times has no effect.
-
-o  Björn Jacke <bjacke@samba.org>
-   * BUG 15550: ctime mixed up with mtime by smbd.
-
-o  David Mulder <dmulder@samba.org>
-   * BUG 15548: samba-gpupdate --rsop fails if machine is not in a site.
-
-o  Gabriel Nagy <gabriel.nagy@canonical.com>
-   * BUG 15557: gpupdate: The root cert import when NDES is not available is
-     broken.
-
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15552: samba-gpupdate should print a useful message if cepces-submit
-     can't be found.
-   * BUG 15558: samba-gpupdate logging doesn't work.
-
-o  Jones Syue <jonessyue@qnap.com>
-   * BUG 15555: smbpasswd reset permissions only if not 0600.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-Release notes for older releases follow:
-----------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.19.4
-                          January 08, 2024
-                   ==============================
-
-
-This is the latest stable release of the Samba 4.19 release series.
-
-
-Changes since 4.19.3
---------------------
-
-o  Samuel Cabrero <scabrero@samba.org>
-   * BUG 13577: net changesecretpw cannot set the machine account password if
-     secrets.tdb is empty.
-
-o  Björn Jacke <bjacke@samba.org>
-   * BUG 15540: For generating doc, take, if defined, env XML_CATALOG_FILES.
-   * BUG 15541: Trivial C typo in nsswitch/winbind_nss_netbsd.c.
-   * BUG 15542: vfs_linux_xfs is incorrectly named.
-
-o  Björn Jacke <bj@sernet.de>
-   * BUG 15377: systemd stumbled over copyright-message at smbd startup.
-
-o  Volker Lendecke <vl@samba.org>
-   * BUG 15505: Following intermediate abolute share-local symlinks is broken.
-   * BUG 15523: ctdb RELEASE_IP causes a crash in release_ip if a connection to
-     a non-public address disconnects first.
-   * BUG 15544: shadow_copy2 broken when current fileset's directories are
-     removed.
-
-o  Stefan Metzmacher <metze@samba.org>
-   * BUG 15377: systemd stumbled over copyright-message at smbd startup.
-   * BUG 15523: ctdb RELEASE_IP causes a crash in release_ip if a connection to
-     a non-public address disconnects first.
-   * BUG 15534: smbd does not detect ctdb public ipv6 addresses for multichannel
-     exclusion.
-
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15469: 'force user = localunixuser' doesn't work if 'allow trusted
-     domains = no' is set.
-   * BUG 15525: smbget debug logging doesn't work.
-   * BUG 15532: smget: username in the smburl and interactive password entry
-     doesn't work.
-   * BUG 15538: smbget auth function doesn't set values for password prompt
-     correctly.
-
-o  Martin Schwenke <mschwenke@ddn.com>
-   * BUG 15523: ctdb RELEASE_IP causes a crash in release_ip if a connection to
-     a non-public address disconnects first.
-
-o  Shachar Sharon <ssharon@redhat.com>
-   * BUG 15440: Unable to copy and write files from clients to Ceph cluster via
-     SMB Linux gateway with Ceph VFS module.
-
-o  Jones Syue <jonessyue@qnap.com>
-   * BUG 15547: Multichannel refresh network information.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-----------------------------------------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.19.3
-                         November 27, 2023
-                   ==============================
-
-
-This is the latest stable release of the Samba 4.19 release series.
-It contains the security-relevant bugfix CVE-2018-14628:
-
-    Wrong ntSecurityDescriptor values for "CN=Deleted Objects"
-    allow read of object tombstones over LDAP
-    (Administrator action required!)
-    https://www.samba.org/samba/security/CVE-2018-14628.html
-
-
-Description of CVE-2018-14628
------------------------------
-
-All versions of Samba from 4.0.0 onwards are vulnerable to an
-information leak (compared with the established behaviour of
-Microsoft's Active Directory) when Samba is an Active Directory Domain
-Controller.
-
-When a domain was provisioned with an unpatched Samba version,
-the ntSecurityDescriptor is simply inherited from Domain/Partition-HEAD-Object
-instead of being very strict (as on a Windows provisioned domain).
-
-This means also non privileged users can use the
-LDAP_SERVER_SHOW_DELETED_OID control in order to view,
-the names and preserved attributes of deleted objects.
-
-No information that was hidden before the deletion is visible, but in
-with the correct ntSecurityDescriptor value in place the whole object
-is also not visible without administrative rights.
-
-There is no further vulnerability associated with this error, merely an
-information disclosure.
-
-Action required in order to resolve CVE-2018-14628!
----------------------------------------------------
-
-The patched Samba does NOT protect existing domains!
-
-The administrator needs to run the following command
-(on only one domain controller)
-in order to apply the protection to an existing domain:
-
-  samba-tool dbcheck --cross-ncs --attrs=nTSecurityDescriptor --fix
-
-The above requires manual interaction in order to review the
-changes before they are applied. Typicall question look like this:
-
-  Reset nTSecurityDescriptor on CN=Deleted Objects,DC=samba,DC=org back to provision default?
-        Owner mismatch: SY (in ref) DA(in current)
-        Group mismatch: SY (in ref) DA(in current)
-        Part dacl is different between reference and current here is the detail:
-                (A;;LCRPLORC;;;AU) ACE is not present in the reference
-                (A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY) ACE is not present in the reference
-                (A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;DA) ACE is not present in the reference
-                (A;;CCDCLCSWRPWPSDRCWDWO;;;SY) ACE is not present in the current
-                (A;;LCRP;;;BA) ACE is not present in the current
-   [y/N/all/none] y
-  Fixed attribute 'nTSecurityDescriptor' of 'CN=Deleted Objects,DC=samba,DC=org'
-
-The change should be confirmed with 'y' for all objects starting with
-'CN=Deleted Objects'.
-
-
-Changes since 4.19.2
---------------------
-
-o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
-   * BUG 15520: sid_strings test broken by unix epoch > 1700000000.
-
-o  Ralph Boehme <slow@samba.org>
-   * BUG 15487: smbd crashes if asked to return full information on close of a
-     stream handle with delete on close disposition set.
-   * BUG 15521: smbd: fix close order of base_fsp and stream_fsp in
-     smb_fname_fsp_destructor().
-
-o  Pavel Filipenský <pfilipensky@samba.org>
-   * BUG 15499: Improve logging for failover scenarios.
-
-o  Björn Jacke <bj@sernet.de>
-   * BUG 15093: Files without "read attributes" NFS4 ACL permission are not
-     listed in directories.
-
-o  Stefan Metzmacher <metze@samba.org>
-   * BUG 13595: CVE-2018-14628 [SECURITY] Deleted Object tombstones visible in
-     AD LDAP to normal users.
-   * BUG 15492: Kerberos TGS-REQ with User2User does not work for normal
-     accounts.
-
-o  Christof Schmitt <cs@samba.org>
-   * BUG 15507: vfs_gpfs stat calls fail due to file system permissions.
-
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15513: Samba doesn't build with Python 3.12.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-----------------------------------------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.19.2
-                          October 16, 2023
-                   ==============================
-
-
-This is the latest stable release of the Samba 4.19 release series.
-
-
-Changes since 4.19.1
---------------------
-
-o  Jeremy Allison <jra@samba.org>
-   * BUG 15423: Use-after-free in aio_del_req_from_fsp during smbd shutdown
-     after failed IPC FSCTL_PIPE_TRANSCEIVE.
-   * BUG 15426: clidfs.c do_connect() missing a "return" after a cli_shutdown()
-     call.
-
-o  Ralph Boehme <slow@samba.org>
-   * BUG 15463: macOS mdfind returns only 50 results.
-
-o  Volker Lendecke <vl@samba.org>
-   * BUG 15481: GETREALFILENAME_CACHE can modify incoming new filename with
-     previous cache entry value.
-
-o  Stefan Metzmacher <metze@samba.org>
-   * BUG 15464: libnss_winbind causes memory corruption since samba-4.18,
-     impacts sendmail, zabbix, potentially more.
-
-o  Martin Schwenke <mschwenke@ddn.com>
-   * BUG 15479: ctdbd: setproctitle not initialized messages flooding logs.
-
-o  Joseph Sutton <josephsutton@catalyst.net.nz>
-   * BUG 15491: CVE-2023-5568 Heap buffer overflow with freshness tokens in the
-     Heimdal KDC in Samba 4.19
-   * BUG 15477: The heimdal KDC doesn't detect s4u2self correctly when fast is
-     in use.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-----------------------------------------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.19.1
-                          October 10, 2023
-                   ==============================
-
-
-This is a security release in order to address the following defects:
-
-
-o CVE-2023-3961:  Unsanitized pipe names allow SMB clients to connect as root to
-                  existing unix domain sockets on the file system.
-                  https://www.samba.org/samba/security/CVE-2023-3961.html
-
-o CVE-2023-4091:  SMB client can truncate files to 0 bytes by opening files with
-                  OVERWRITE disposition when using the acl_xattr Samba VFS
-                  module with the smb.conf setting
-                  "acl_xattr:ignore system acls = yes"
-                  https://www.samba.org/samba/security/CVE-2023-4091.html
-
-o CVE-2023-4154:  An RODC and a user with the GET_CHANGES right can view all
-                  attributes, including secrets and passwords.  Additionally,
-                  the access check fails open on error conditions.
-                  https://www.samba.org/samba/security/CVE-2023-4154.html
-
-o CVE-2023-42669: Calls to the rpcecho server on the AD DC can request that the
-                  server block for a user-defined amount of time, denying
-                  service.
-                  https://www.samba.org/samba/security/CVE-2023-42669.html
-
-o CVE-2023-42670: Samba can be made to start multiple incompatible RPC
-                  listeners, disrupting service on the AD DC.
-                  https://www.samba.org/samba/security/CVE-2023-42670.html
-
-
-Changes since 4.19.0
---------------------
-
-o  Jeremy Allison <jra@samba.org>
-   * BUG 15422: CVE-2023-3961.
-
-o  Andrew Bartlett <abartlet@samba.org>
-   * BUG 15424: CVE-2023-4154.
-   * BUG 15473: CVE-2023-42670.
-   * BUG 15474: CVE-2023-42669.
-
-o  Ralph Boehme <slow@samba.org>
-   * BUG 15439: CVE-2023-4091.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-----------------------------------------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.19.0
-                         September 04, 2023
-                   ==============================
-
-This is the first stable release of the Samba 4.19 release series.
+This is the first stable release of the Samba 4.20 release series.
 Please read the release notes carefully before upgrading.
+
 
 NEW FEATURES/CHANGES
 ====================
 
-Migrated smbget to use common command line parser
--------------------------------------------------
+New Minimum MIT Krb5 version for Samba AD Domain Controller
+-----------------------------------------------------------
 
-The smbget utility implemented its own command line parsing logic. After
-discovering an issue we decided to migrate it to use the common command line
-parser. This has some advantages as you get all the feature it provides like
-Kerberos authentication. The downside is that breaks the options interface.
-The support for smbgetrc has been removed. You can use an authentication file
-if needed, this is documented in the manpage.
+Samba now requires MIT 1.21 when built against a system MIT Krb5 and
+acting as an Active Directory DC.  This addresses the issues that were
+fixed in CVE-2022-37967 (KrbtgtFullPacSignature) and ensures that
+Samba builds against the MIT version that allows us to avoid that
+attack.
 
-Please check the smbget manpage or --help output.
+Removed dependency on Perl JSON module
+--------------------------------------
 
-gpupdate changes
-----------------
+Distributions are advised that the Perl JSON package is no longer
+required by Samba builds that use the imported Heimdal.  The build
+instead uses Perl's JSON::PP built into recent perl5 versions.
 
-The libgpo.get_gpo_list function has been deprecated in favor of
-an implementation written in python. The new function can be imported via
-`import samba.gp`. The python implementation connects to Active Directory
-using the SamDB module, instead of ADS (which is what libgpo uses).
+Current lists of packages required by Samba for major distributions
+are found in the bootstrap/generated-dists/ directory of a Samba
+source tree.  While there will be some differences - due to features
+chosen by packagers - comparing these lists with the build dependencies
+in a package may locate other dependencies we no longer require.
 
-Improved winbind logging and a new tool for parsing the winbind logs
---------------------------------------------------------------------
+samba-tool user getpassword / syncpasswords ;rounds= change
+-----------------------------------------------------------
 
-Winbind logs (if smb.conf 'winbind debug traceid = yes' is set) contain new
-trace header fields 'traceid' and 'depth'.  Field 'traceid' allows to track the
-trace records belonging to the same request.  Field 'depth' allows to track the
-request nesting level. A new tool samba-log-parser is added for better log
-parsing.
+The password access tool "samba-tool user getpassword" and the
+password sync tool "samba-tool user syncpasswords" allow attributes to
+be chosen for output, and accept parameters like
+pwdLastSet;format=GeneralizedTime
 
-AD database prepared to FL 2016 standards for new domains
----------------------------------------------------------
+These attributes then appear, in the same format, as the attributes in
+the LDIF output.  This was not the case for the ;rounds= parameter of
+virtualCryptSHA256 and virtualCryptSHA512, for example as
+--attributes="virtualCryptSHA256;rounds=50000"
 
-While Samba still provides only Functional Level 2008R2 by default,
-Samba as an AD DC will now, in provision ensure that the blank
-database is already prepared for Functional Level 2016, with AD Schema
-2019.
+This release makes the behaviour consistent between these two
+features.  Installations using GPG-encrypted passwords (or plaintext
+storage) and the rounds= option, will find the output has changed
 
-This preparation is of the default objects in the database, adding
-containers for Authentication Policies, Authentication Silos and AD
-claims in particular.  These DB objects must be updated to allow
-operation of the new features found in higher functional levels.
+from:
+virtualCryptSHA256: {CRYPT}$5$rounds=2561$hXem.M9onhM9Vuix$dFdSBwF
 
-Kerberos Claims, Authentication Silos and NTLM authentication policies
+to:
+virtualCryptSHA256;rounds=2561: {CRYPT}$5$rounds=2561$hXem.M9onhM9Vuix$dFdSBwF
+
+Group Managed service account client-side features
+--------------------------------------------------
+
+samba-tool has been extended to provide client-side support for Group
+Managed Service accounts.  These accounts have passwords that change
+automatically, giving the advantages of service isolation without risk
+of poor, unchanging passwords.
+
+Where possible, Samba's existing samba-tool password handling
+commands, which in the past have only operated against the local
+sam.ldb have been extended to permit operation against a remote server
+with authenticated access to "-H ldap://$DCNAME"
+
+Supported operations include:
+ - reading the current and previous gMSA password via
+   "samba-tool user getpassword"
+ - writing a Kerberos Ticket Granting Ticket (TGT) to a local
+   credentials cache with a new command
+   "samba-tool user get-kerberos-ticket"
+
+New Windows Search Protocol Client
+----------------------------------
+
+Samba now by default builds new experimental Windows Search Protocol (WSP)
+command line client "wspsearch"
+
+The "wspsearch" cmd-line utility allows a WSP search request to be sent
+to a server (such as a windows server) that has the (WSP)
+Windows Search Protocol service configured and enabled.
+
+For more details see the wspsearch man page.
+
+Allow 'smbcacls' to save/restore DACLs to file
+--------------------------------------------
+
+'smbcacls' has been extended to allow DACLs to be saved and restored
+to/from a file. This feature mimics the functionality that windows cmd
+line tool 'icacls.exe' provides. Additionally files created either
+by 'smbcalcs' or 'icacls.exe' are interchangeable and can be used by
+either tool as the same file format is used.
+
+New options added are:
+ - '--save savefile'    Saves DACLs in sddl format to file
+ - '--recurse'          Performs the '--save' operation above on directory
+                        and all files/directories below.
+ - '--restore savefile' Restores the stored DACLS to files in directory
+
+Samba-tool extensions for AD Claims, Authentication Policies and Silos
 ----------------------------------------------------------------------
 
-An initial, partial implementation of Active Directory Functional
-Level 2012, 2012R2 and 2016 is available in this release.
+samba-tool now allows users to be associated with claims.  In the
+Samba AD DC, claims derive from Active Directory attributes mapped
+into specific names.  These claims can be used in rules, which are
+conditional ACEs in a security descriptor, that decide if a user is
+restricted by an authentication policy.
 
-In particular Samba will issue Active Directory "Claims" in the PAC,
-for member servers that support these, and honour in-directory
-configuration for Authentication Policies and Authentication Silos.
+samba-tool also allows the creation and management of authentication
+policies, which are rules about where a user may authenticate from,
+if NTLM is permitted, and what services a user may authenticate to.
 
-The primary limitation is that while Samba can read and write claims
-in the directory, and populate the PAC, Samba does not yet use them
-for access control decisions.
+Finally, support is added for the creation and management of
+authentication silos, which are helpful in defining network boundaries
+by grouping users and the services they connect to.
 
-While we continue to develop these features, existing domains can
-test the feature by selecting the functional level in provision or
-raising the DC functional level by setting
+Please note: The command line syntax for these tools is not final, and
+may change before the next release, as we gain user feedback.  The
+syntax will be locked in once Samba offers 2016 AD Functional Level as
+a default.
+
+AD DC support for Authentication Silos and Authentication Policies
+------------------------------------------------------------------
+
+The Samba AD DC now also honours any existing claims, authentication
+policy and authentication silo configuration previously created (eg
+from an import of a Microsoft AD), as well as new configurations
+created with samba-tool.  The use of Microsoft's Powershell based
+client tools is not expected to work.
+
+To use this feature, the functional level must be set to 2012_R2 or
+later with:
 
  ad dc functional level = 2016
 
-in the smb.conf
+in the smb.conf.
 
 The smb.conf file on each DC must have 'ad dc functional level = 2016'
 set to have the partially complete feature available.  This will also,
@@ -489,149 +159,107 @@ samba-tool domain schemaupgrade --schema=2019
 samba-tool domain functionalprep --function-level=2016
 samba-tool domain level raise --domain-level=2016 --forest-level=2016
 
-Improved KDC Auditing
----------------------
+This support is still new, so is not enabled by default in this
+release.  The above instructions are set at 2016, which while not
+complete, matches what our testing environment validates.
 
-As part of the auditing required to allow successful deployment of
-Authentication Policies and Authentication Silos, our KDC now provides
-Samba-style JSON audit logging of all issued Kerberos tickets,
-including if they would fail a policy that is not yet enforced.
-Additionally most failures are audited, (after the initial
-pre-validation of the request).
+Conditional ACEs and Resource Attribute ACEs
+--------------------------------------------
 
-Kerberos Armoring (FAST) Support for Windows clients
-----------------------------------------------------
+Ordinary Access Control Entries (ACEs) unconditionally allow or deny
+access to a given user or group. Conditional ACEs have an additional
+section that describes conditions under which the ACE applies. If the
+conditional expression is true, the ACE works like an ordinary ACE,
+otherwise it is ignored. The condition terms can refer to claims,
+group memberships, and attributes on the object itself. These
+attributes are described in Resource Attribute ACEs that occur in the
+object's System Access Control List (SACL). Conditional ACEs are
+described in Microsoft documentation.
 
-In domains where the domain controller functional level is set, as
-above, to 2012, 2012_R2 or 2016, Windows clients will, if configured
-via GPO, use FAST to protect user passwords between (in particular) a
-workstation and the KDC on the AD DC.  This is a significant security
-improvement, as weak passwords in an AS-REQ are no longer available
-for offline attack.
+Conditional ACE evaluation is controlled by the "acl claims
+evaluation" smb.conf option. The default value is "AD DC only" which
+enables them in AD DC settings. The other option is "never", which
+disables them altogether. There is currently no option to enable them
+on the file server (this is likely to change in future releases).
 
-Claims compression in the AD PAC
---------------------------------
+The Security Descriptor Definition Language has extensions for
+conditional ACEs and resource attribute ACEs; these are now supported
+by Samba.
 
-Samba as an AD DC will compress "AD claims" using the same compression
-algorithm as Microsoft Windows.
+Service Witness Protocol [MS-SWN]
+---------------------------------
 
-Resource SID compression in the AD PAC
---------------------------------------
+In a ctdb cluster it is now possible to provide
+the SMB witness service that allows clients to
+monitor their current smb connection to cluster
+node A by asking cluster node B to notify the
+client if the ip address from node A or the
+whole node A becomes unavailable.
 
-Samba as an AD DC will now correctly populate the various PAC group
-membership buffers, splitting global and local groups correctly.
+For disk shares in a ctdb cluster
+SMB2_SHARE_CAP_SCALEOUT is now always returned
+for SMB3 tree connect responses.
 
-Additionally, Samba marshals Resource SIDs, being local groups in the
-member server's own domain, to only consume a header and 4 bytes per
-group in the PAC, not a full-length SID worth of space each.  This is
-known as "Resource SID compression".
+If the witness service is active
+SMB2_SHARE_CAP_CLUSTER is now also returned.
 
-Resource Based Constrained Delegation (RBCD) support in both MIT and Heimdal
------------------------------------------------------------------------------
+In order to activate the witness service
+"rpc start on demand helpers = no" needs to
+be configured in the global section.
+At the same time the 'samba-dcerpcd' service
+needs to be started explicitly, typically
+with the '--libexec-rpcds' option in order
+to make all available services usable.
+One important aspect is that tcp ports
+135 (for the endpoint mapper) and various
+ports in the 'rpc server dynamic port range'
+will be used to provide the witness service
+(rpcd_witness).
 
-Samba AD DC built with MIT Kerberos (1.20 and later) has offered RBCD
-support since Samba 4.17.  Samba 4.19 brings this feature to the
-default Heimdal KDC.
+ctdb provides a '47.samba-dcerpcd.script' in order
+to manage the samba-dcerpcd.service.
+Typically as systemd service, but that's up
+to the packager and/or admin.
 
-Samba 4.17 added to samba-tool delegation the 'add-principal' and
-'del-principal' subcommands in order to manage RBCD, and the database
-changes made by these tools are now honoured by the Heimdal KDC once
-Samba is upgraded.
+Please note that current windows client
+requires SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY
+in addition to SMB2_SHARE_CAP_CLUSTER in order
+to make use of the witness service.
+But SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY implies
+the windows clients always ask for persistent handle
+(which are not implemented in samba yet), so
+that every open generates a warning in the
+windows smb client event log.
+That's why SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY
+is not returned by default.
+An explicit 'smb3 share cap:CONTINUOUS AVAILABILITY = yes'
+is needed.
 
-Likewise, now both MIT (1.20 and later) and Heimdal KDCs add the
-Asserted Identity [1] SID into the PAC for constrained delegation.
+There are also new 'net witness' commands in order
+to let the admin list active client registrations
+or ask specific clients to move their smb connection
+to another cluster node. These are available:
 
-[1] https://docs.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview
+ net witness list
+ net witness client-move
+ net witness share-move
+ net witness force-unregister
+ net witness force-response
 
-New samba-tool support for silos, claims, sites and subnets.
-------------------------------------------------------------
+Consult 'man net' or 'net witness help' for further details.
 
-samba-tool can now list, show, add and manipulate Authentication Silos
-(silos) and Active Directory Authentication Claims (claims).
 
-samba-tool can now list and show Active Directory sites and subnets.
-
-A new Object Relational Model (ORM) based architecture, similar to
-that used with Django, has been built to make adding new samba-tool
-subcommands simpler and more consistent, with JSON output available
-standard on these new commands.
-
-Updated GnuTLS requirement / in-tree cryptography removal
-----------------------------------------------------------
-
-Samba requires GnuTLS 3.6.13 and prefers GnuTLS 3.6.14 or later.
-
-This has allowed Samba to remove all of our in-tree cryptography,
-except that found in our Heimdal import.  Samba's runtime cryptography
-needs are now all provided by GnuTLS.
-
-(The GnuTLS vesion requirement is raised to 3.7.2 on systems without
-the Linux getrandom())
-
-We also use Python's cryptography module for our testing.
-
-The use of well known cryptography libraries makes Samba easier for
-end-users to validate and deploy, and for distributors to ship.  This
-is the end of a very long journey for Samba.
-
-Updated Heimdal import
-----------------------
-
-Samba's Heimdal branch (known as lorikeet-heimdal) has been updated to
-the current pre-8.0 (master) tree from upstream Heimdal, ensuring that
-this vendored copy, included in our release remains as close as
-possible to the current upstream code.
-
-Revocation support in Heimdal KDC for PKINIT certificates
----------------------------------------------------------
-
-Samba will now correctly honour the revocation of 'smart card'
-certificates used for PKINIT Kerberos authentication.
-
-This list is reloaded each time the file changes, so no further action
-other than replacing the file is required.  The additional krb5.conf
-option is:
-
- [kdc]
-	pkinit_revoke = FILE:/path/to/crl.pem
-
-Information on the "Smart Card login" feature as a whole is at:
- https://wiki.samba.org/index.php/Samba_AD_Smart_Card_Login
-
-Protocol level testsuite for (Smart Card Logon) PKINIT
-------------------------------------------------------
-
-Previously Samba's PKINIT support in the KDC was tested by use of
-shell scripts around the client tools of MIT or Heimdal Kerberos.
-Samba's independently written python testsuite has been extended to
-validate KDC behaviour for PKINIT.
-
-Require encrypted connection to modify unicodePwd on the AD DC
---------------------------------------------------------------
-
-Setting the password on an AD account on should never be attempted
-over a plaintext or signed-only LDAP connection.  If the unicodePwd
-(or userPassword) attribute is modified without encryption (as seen by
-Samba), the request will be rejected.  This is to encourage the
-administrator to use an encrypted connection in the future.
-
-NOTE WELL: If Samba is accessed via a TLS frontend or load balancer,
-the LDAP request will be regarded as plaintext.
-
-Samba AD TLS Certificates can be reloaded
------------------------------------------
-
-The TLS certificates used for Samba's AD DC LDAP server were
-previously only read on startup, and this meant that when then expired
-it was required to restart Samba, disrupting service to other users.
-
- smbcontrol ldap_server reload-certs
-
-This will now allow these certificates to be reloaded 'on the fly'
-
-================
 REMOVED FEATURES
 ================
+
+Get locally logged on users from utmp
+-------------------------------------
+
+The Workstation Service Remote Protocol [MS-WKST] calls NetWkstaGetInfo
+level 102 and NetWkstaEnumUsers level 0 and 1 return the list of locally
+logged on users. Samba was getting the list from utmp, which is not
+Y2038 safe. This feature has been completely removed and Samba will
+always return an empty list.
 
 
 smb.conf changes
@@ -639,89 +267,86 @@ smb.conf changes
 
   Parameter Name                          Description     Default
   --------------                          -----------     -------
-  winbind debug traceid                   Add traceid     No
-  directory name cache size               Removed
+  acl claims evaluation                   new             AD DC only
+  smb3 unix extensions                    Per share       -
+  smb3 share cap:ASYMMETRIC               new             no
+  smb3 share cap:CLUSTER                  new             see 'man smb.conf'
+  smb3 share cap:CONTINUOUS AVAILABILITY  new             no
+  smb3 share cap:SCALE OUT                new             see 'man smb.conf'
 
 
-CHANGES SINCE 4.19.0rc4
+Changes since 4.20.0rc4
 =======================
 
-o  MikeLiu <mikeliu@qnap.com>
-   * BUG 15453: File doesn't show when user doesn't have permission if
-     aio_pthread is loaded.
+o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+   * BUG 15606: Avoid null-dereference with bad claims.
+   * BUG 15613: ndr_pull_security_ace can leave resource attribute ACE coda
+     claim struct undefined.
 
-o  Martin Schwenke <mschwenke@ddn.com>
-   * BUG 15451: ctdb_killtcp fails to work with --enable-pcap and libpcap ≥
-     1.9.1.
+o  Ralph Boehme <slow@samba.org>
+   * BUG 15527: fd_handle_destructor() panics within an smbd_smb2_close() if
+     vfs_stat_fsp() fails in fd_close().
 
-
-CHANGES SINCE 4.19.0rc3
-=======================
-
-o  Martin Schwenke <mschwenke@ddn.com>
-   * BUG 15460: Logging to stdout/stderr with DEBUG_SYSLOG_FORMAT_ALWAYS can log
-     to syslog.
-
-o  Joseph Sutton <josephsutton@catalyst.net.nz>
-   * BUG 15458: ‘samba-tool domain level raise’ fails unless given a URL.
-
-
-CHANGES SINCE 4.19.0rc2
-=======================
-
-o  Jeremy Allison <jra@samba.org>
-   * BUG 15420: reply_sesssetup_and_X() can dereference uninitialized tmp
-     pointer.
-   * BUG 15430: missing return in reply_exit_done().
-   * BUG 15432: TREE_CONNECT without SETUP causes smbd to use uninitialized
-     pointer.
-
-o  Andrew Bartlett <abartlet@samba.org>
-   * BUG 15401: Avoid infinite loop in initial user sync with Azure AD Connect
-     when synchronising a large Samba AD domain.
-   * BUG 15407: Samba replication logs show (null) DN.
-
-o  Stefan Metzmacher <metze@samba.org>
-   * BUG 15346: 2-3min delays at reconnect with smb2_validate_sequence_number:
-     bad message_id 2.
-   * BUG 15446: DCERPC_PKT_CO_CANCEL and DCERPC_PKT_ORPHANED can't be parsed.
-
-o  Martin Schwenke <mschwenke@ddn.com>
-   * BUG 15438: CID 1539212 causes real issue when output contains only
-     newlines.
-
-o  Joseph Sutton <josephsutton@catalyst.net.nz>
-   * BUG 15452: KDC encodes INT64 claims incorrectly.
-
-o  Jones Syue <jonessyue@qnap.com>
-   * BUG 15449: mdssvc: Do an early talloc_free() in _mdssvc_open().
-
-
-CHANGES SINCE 4.19.0rc1
-=======================
-
-o  Andrew Bartlett <abartlet@samba.org>
-   * BUG 9959: Windows client join fails if a second container CN=System exists
-    somewhere.
+o  Björn Jacke <bjacke@samba.org>
+   * BUG 15583: set_nt_acl sometimes fails with NT_STATUS_INVALID_PARAMETER -
+     openat() EACCES.
 
 o  Noel Power <noel.power@suse.com>
-   * BUG 15435: regression DFS not working with widelinks = true.
+   * BUG 15527: fd_handle_destructor() panics within an smbd_smb2_close() if
+     vfs_stat_fsp() fails in fd_close().
 
-o  Arvid Requate <requate@univention.de>
-   * BUG 9959: Windows client join fails if a second container CN=System exists
-    somewhere.
+o  Andreas Schneider <asn@samba.org>
+   * BUG 15599: libgpo: Segfault in python bindings.
 
-o  Joseph Sutton <josephsutton@catalyst.net.nz>
-   * BUG 15443: Heimdal fails to build on 32-bit FreeBSD.
+o  Jo Sutton <josutton@catalyst.net.nz>
+   * BUG 15607: Samba AD is missing some authentication policy tests.
 
-o  Jones Syue <jonessyue@qnap.com>
-   * BUG 15441: samba-tool ntacl get segfault if aio_pthread appended.
+
+CHANGES SINCE 4.20.0rc3
+=======================
+
+o  Andreas Schneider <asn@samba.org>
+   * BUG 15588: samba-gpupdate: Correctly implement site support.
+
+
+CHANGES SINCE 4.20.0rc2
+=======================
+
+o  Rob van der Linde <rob@catalyst.net.nz>
+   * BUG 15575: Remove unsupported "Final" keyword missing from Python 3.6.
+
+o  Stefan Metzmacher <metze@samba.org>
+   * BUG 15577: Additional witness backports for 4.20.0.
+
+o  Noel Power <noel.power@suse.com>
+   * BUG 15579: Error output with wspsearch.
+
+o  Martin Schwenke <mschwenke@ddn.com>
+   * BUG 15580: Packet marshalling push support missing for
+     CTDB_CONTROL_TCP_CLIENT_DISCONNECTED and
+     CTDB_CONTROL_TCP_CLIENT_PASSED.
+
+o  Jo Sutton <josutton@catalyst.net.nz>
+   * BUG 15575: Remove unsupported "Final" keyword missing from Python 3.6.
+
+
+CHANGES SINCE 4.20.0rc1
+=======================
+
+o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+   * BUG 15574: Performance regression for NDR parsing of security descriptors.
+
+o  Anoop C S <anoopcs@samba.org>
+   * BUG 15565: Build and install man page for wspsearch client utility.
+
+o  Andreas Schneider <asn@samba.org>
+   * BUG 15558: samba-gpupdate logging doesn't work.
 
 
 KNOWN ISSUES
 ============
 
-https://wiki.samba.org/index.php/Release_Planning_for_Samba_4.19#Release_blocking_bugs
+https://wiki.samba.org/index.php/Release_Planning_for_Samba_4.20#Release_blocking_bugs
 
 
 #######################################

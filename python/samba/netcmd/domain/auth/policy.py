@@ -22,11 +22,149 @@
 
 import samba.getopt as options
 from samba.netcmd import Command, CommandError, Option, SuperCommand
-from samba.netcmd.domain.models import AuthenticationPolicy
+from samba.netcmd.domain.models import AuthenticationPolicy,\
+    AuthenticationSilo, Group
 from samba.netcmd.domain.models.auth_policy import MIN_TGT_LIFETIME,\
     MAX_TGT_LIFETIME, StrongNTLMPolicy
 from samba.netcmd.domain.models.exceptions import ModelError
 from samba.netcmd.validators import Range
+
+
+def check_similar_args(option, args):
+    """Helper method for checking similar mutually exclusive args.
+
+    Example: --user-allowed-to-authenticate-from and
+             --user-allowed-to-authenticate-from-device-silo
+    """
+    num = sum(arg is not None for arg in args)
+    if num > 1:
+        raise CommandError(f"{option} argument repeated {num} times.")
+
+
+class UserOptions(options.OptionGroup):
+    """User options used by policy create and policy modify commands."""
+
+    def __init__(self, parser):
+        super().__init__(parser, "User Options")
+
+        self.add_option("--user-tgt-lifetime-mins",
+                        help="Ticket-Granting-Ticket lifetime for user accounts.",
+                        dest="tgt_lifetime", type=int, action="callback",
+                        callback=self.set_option,
+                        validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)])
+        self.add_option("--user-allow-ntlm-auth",
+                        help="Allow NTLM network authentication despite the fact that the user "
+                             "is restricted to selected devices.",
+                        dest="allow_ntlm_auth", default=False,
+                        action="callback", callback=self.set_option)
+        self.add_option("--user-allowed-to-authenticate-from",
+                        help="SDDL Rules setting which device the user is allowed to authenticate from.",
+                        type=str, dest="allowed_to_authenticate_from",
+                        action="callback", callback=self.set_option,
+                        metavar="SDDL")
+        self.add_option("--user-allowed-to-authenticate-from-device-silo",
+                        help="To authenticate, the user must log in from a device in SILO.",
+                        type=str, dest="allowed_to_authenticate_from_device_silo",
+                        action="callback", callback=self.set_option,
+                        metavar="SILO")
+        self.add_option("--user-allowed-to-authenticate-from-device-group",
+                        help="To authenticate, the user must log in from a device in GROUP.",
+                        type=str, dest="allowed_to_authenticate_from_device_group",
+                        action="callback", callback=self.set_option,
+                        metavar="GROUP")
+        self.add_option("--user-allowed-to-authenticate-to",
+                        help="A target service, on a user account, requires the connecting user to match SDDL",
+                        type=str, dest="allowed_to_authenticate_to",
+                        action="callback", callback=self.set_option,
+                        metavar="SDDL")
+        self.add_option("--user-allowed-to-authenticate-to-by-group",
+                        help="A target service, on a user account, requires the connecting user to be in GROUP",
+                        type=str, dest="allowed_to_authenticate_to_by_group",
+                        action="callback", callback=self.set_option,
+                        metavar="GROUP")
+        self.add_option("--user-allowed-to-authenticate-to-by-silo",
+                        help="A target service, on a user account, requires the connecting user to be in SILO",
+                        type=str, dest="allowed_to_authenticate_to_by_silo",
+                        action="callback", callback=self.set_option,
+                        metavar="SILO")
+
+
+class ServiceOptions(options.OptionGroup):
+    """Service options used by policy create and policy modify commands."""
+
+    def __init__(self, parser):
+        super().__init__(parser, "Service Options")
+
+        self.add_option("--service-tgt-lifetime-mins",
+                        help="Ticket-Granting-Ticket lifetime for service accounts.",
+                        dest="tgt_lifetime", type=int, action="callback",
+                        callback=self.set_option,
+                        validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)])
+        self.add_option("--service-allow-ntlm-auth",
+                        help="Allow NTLM network authentication despite "
+                             "the fact that the service account "
+                             "is restricted to selected devices.",
+                        dest="allow_ntlm_auth", default=False,
+                        action="callback", callback=self.set_option)
+        self.add_option("--service-allowed-to-authenticate-from",
+                        help="SDDL Rules setting which device the "
+                        "service account is allowed to authenticate from.",
+                        type=str, dest="allowed_to_authenticate_from",
+                        action="callback", callback=self.set_option,
+                        metavar="SDDL")
+        self.add_option("--service-allowed-to-authenticate-from-device-silo",
+                        help="To authenticate, the service must authenticate on a device in SILO.",
+                        type=str, dest="allowed_to_authenticate_from_device_silo",
+                        action="callback", callback=self.set_option,
+                        metavar="SILO")
+        self.add_option("--service-allowed-to-authenticate-from-device-group",
+                        help="To authenticate, the service must authenticate on a device in GROUP.",
+                        type=str, dest="allowed_to_authenticate_from_device_group",
+                        action="callback", callback=self.set_option,
+                        metavar="GROUP")
+        self.add_option("--service-allowed-to-authenticate-to",
+                        help="The target service requires the connecting user to match SDDL",
+                        type=str, dest="allowed_to_authenticate_to",
+                        action="callback", callback=self.set_option,
+                        metavar="SDDL")
+        self.add_option("--service-allowed-to-authenticate-to-by-group",
+                        help="The target service requires the connecting user to be in GROUP",
+                        type=str, dest="allowed_to_authenticate_to_by_group",
+                        action="callback", callback=self.set_option,
+                        metavar="GROUP")
+        self.add_option("--service-allowed-to-authenticate-to-by-silo",
+                        help="The target service requires the connecting user to be in SILO",
+                        type=str, dest="allowed_to_authenticate_to_by_silo",
+                        action="callback", callback=self.set_option,
+                        metavar="SILO")
+
+
+class ComputerOptions(options.OptionGroup):
+    """Computer options used by policy create and policy modify commands."""
+
+    def __init__(self, parser):
+        super().__init__(parser, "Computer Options")
+
+        self.add_option("--computer-tgt-lifetime-mins",
+                        help="Ticket-Granting-Ticket lifetime for computer accounts.",
+                        dest="tgt_lifetime", type=int, action="callback",
+                        callback=self.set_option,
+                        validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)])
+        self.add_option("--computer-allowed-to-authenticate-to",
+                        help="The computer account (server, workstation) service requires the connecting user to match SDDL",
+                        type=str, dest="allowed_to_authenticate_to",
+                        action="callback", callback=self.set_option,
+                        metavar="SDDL")
+        self.add_option("--computer-allowed-to-authenticate-to-by-group",
+                        help="The computer account (server, workstation) service requires the connecting user to be in GROUP",
+                        type=str, dest="allowed_to_authenticate_to_by_group",
+                        action="callback", callback=self.set_option,
+                        metavar="GROUP")
+        self.add_option("--computer-allowed-to-authenticate-to-by-silo",
+                        help="The computer account (server, workstation) service requires the connecting user to be in SILO",
+                        type=str, dest="allowed_to_authenticate_to_by_silo",
+                        action="callback", callback=self.set_option,
+                        metavar="SILO")
 
 
 class cmd_domain_auth_policy_list(Command):
@@ -37,19 +175,18 @@ class cmd_domain_auth_policy_list(Command):
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
+        "hostopts": options.HostOptions,
     }
 
     takes_options = [
-        Option("-H", "--URL", help="LDB URL for database or target server.",
-               type=str, metavar="URL", dest="ldap_url"),
         Option("--json", help="Output results in JSON format.",
                dest="output_format", action="store_const", const="json"),
     ]
 
-    def run(self, ldap_url=None, sambaopts=None, credopts=None,
+    def run(self, hostopts=None, sambaopts=None, credopts=None,
             output_format=None):
 
-        ldb = self.ldb_connect(ldap_url, sambaopts, credopts)
+        ldb = self.ldb_connect(hostopts, sambaopts, credopts)
 
         # Authentication policies grouped by cn.
         try:
@@ -74,22 +211,18 @@ class cmd_domain_auth_policy_view(Command):
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
+        "hostopts": options.HostOptions,
     }
 
     takes_options = [
-        Option("-H", "--URL", help="LDB URL for database or target server.",
-               type=str, metavar="URL", dest="ldap_url"),
         Option("--name",
                help="Name of authentication policy to view (required).",
-               dest="name", action="store", type=str),
+               dest="name", action="store", type=str, required=True),
     ]
 
-    def run(self, ldap_url=None, sambaopts=None, credopts=None, name=None):
+    def run(self, hostopts=None, sambaopts=None, credopts=None, name=None):
 
-        if not name:
-            raise CommandError("Argument --name is required.")
-
-        ldb = self.ldb_connect(ldap_url, sambaopts, credopts)
+        ldb = self.ldb_connect(hostopts, sambaopts, credopts)
 
         try:
             policy = AuthenticationPolicy.get(ldb, cn=name)
@@ -112,13 +245,15 @@ class cmd_domain_auth_policy_create(Command):
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
+        "hostopts": options.HostOptions,
+        "useropts": UserOptions,
+        "serviceopts": ServiceOptions,
+        "computeropts": ComputerOptions,
     }
 
     takes_options = [
-        Option("-H", "--URL", help="LDB URL for database or target server.",
-               type=str, metavar="URL", dest="ldap_url"),
         Option("--name", help="Name of authentication policy (required).",
-               dest="name", action="store", type=str),
+               dest="name", action="store", type=str, required=True),
         Option("--description",
                help="Optional description for authentication policy.",
                dest="description", action="store", type=str),
@@ -139,44 +274,101 @@ class cmd_domain_auth_policy_create(Command):
                dest="strong_ntlm_policy", type="choice", action="store",
                choices=StrongNTLMPolicy.get_choices(),
                default="Disabled"),
-        Option("--user-tgt-lifetime",
-               help="Ticket-Granting-Ticket lifetime for user accounts.",
-               dest="user_tgt_lifetime", type=int, action="store",
-               validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)]),
-        Option("--user-allow-ntlm-auth",
-               help="Allow NTLM network authentication when user "
-                    "is restricted to selected devices.",
-               dest="user_allow_ntlm_auth", action="store_true",
-               default=False),
-        Option("--service-tgt-lifetime",
-               help="Ticket-Granting-Ticket lifetime for service accounts.",
-               dest="service_tgt_lifetime", type=int, action="store",
-               validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)]),
-        Option("--service-allow-ntlm-auth",
-               help="Allow NTLM network authentication when service "
-                    "is restricted to selected devices.",
-               dest="service_allow_ntlm_auth", action="store_true",
-               default=False),
-        Option("--computer-tgt-lifetime",
-               help="Ticket-Granting-Ticket lifetime for computer accounts.",
-               dest="computer_tgt_lifetime", type=int, action="store",
-               validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)]),
     ]
 
-    def run(self, ldap_url=None, sambaopts=None, credopts=None, name=None,
-            description=None, protect=None, unprotect=None, audit=None,
-            enforce=None, strong_ntlm_policy=None, user_tgt_lifetime=None,
-            user_allow_ntlm_auth=None, service_tgt_lifetime=None,
-            service_allow_ntlm_auth=None, computer_tgt_lifetime=None):
+    def run(self, hostopts=None, sambaopts=None, credopts=None, useropts=None,
+            serviceopts=None, computeropts=None, name=None, description=None,
+            protect=None, unprotect=None, audit=None, enforce=None,
+            strong_ntlm_policy=None):
 
-        if not name:
-            raise CommandError("Argument --name is required.")
         if protect and unprotect:
             raise CommandError("--protect and --unprotect cannot be used together.")
         if audit and enforce:
             raise CommandError("--audit and --enforce cannot be used together.")
 
-        ldb = self.ldb_connect(ldap_url, sambaopts, credopts)
+        # Check for repeated, similar arguments.
+        check_similar_args("--user-allowed-to-authenticate-from",
+                           [useropts.allowed_to_authenticate_from,
+                            useropts.allowed_to_authenticate_from_device_group,
+                            useropts.allowed_to_authenticate_from_device_silo])
+        check_similar_args("--user-allowed-to-authenticate-to",
+                           [useropts.allowed_to_authenticate_to,
+                            useropts.allowed_to_authenticate_to_by_group,
+                            useropts.allowed_to_authenticate_to_by_silo])
+        check_similar_args("--service-allowed-to-authenticate-from",
+                           [serviceopts.allowed_to_authenticate_from,
+                            serviceopts.allowed_to_authenticate_from_device_group,
+                            serviceopts.allowed_to_authenticate_from_device_silo])
+        check_similar_args("--service-allowed-to-authenticate-to",
+                           [serviceopts.allowed_to_authenticate_to,
+                            serviceopts.allowed_to_authenticate_to_by_group,
+                            serviceopts.allowed_to_authenticate_to_by_silo])
+        check_similar_args("--computer-allowed-to-authenticate-to",
+                           [computeropts.allowed_to_authenticate_to,
+                            computeropts.allowed_to_authenticate_to_by_group,
+                            computeropts.allowed_to_authenticate_to_by_silo])
+
+        ldb = self.ldb_connect(hostopts, sambaopts, credopts)
+
+        # Generate SDDL for authenticating users from a device in a group
+        if useropts.allowed_to_authenticate_from_device_group:
+            group = Group.get(
+                ldb, cn=useropts.allowed_to_authenticate_from_device_group)
+            useropts.allowed_to_authenticate_from = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating users from a device in a silo
+        if useropts.allowed_to_authenticate_from_device_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=useropts.allowed_to_authenticate_from_device_silo)
+            useropts.allowed_to_authenticate_from = silo.get_authentication_sddl()
+
+        # Generate SDDL for authenticating user accounts to a group
+        if useropts.allowed_to_authenticate_to_by_group:
+            group = Group.get(
+                ldb, cn=useropts.allowed_to_authenticate_to_by_group)
+            useropts.allowed_to_authenticate_to = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating user accounts to a silo
+        if useropts.allowed_to_authenticate_to_by_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=useropts.allowed_to_authenticate_to_by_silo)
+            useropts.allowed_to_authenticate_to = silo.get_authentication_sddl()
+
+        # Generate SDDL for authenticating service accounts from a device in a group
+        if serviceopts.allowed_to_authenticate_from_device_group:
+            group = Group.get(
+                ldb, cn=serviceopts.allowed_to_authenticate_from_device_group)
+            serviceopts.allowed_to_authenticate_from = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating service accounts from a device in a silo
+        if serviceopts.allowed_to_authenticate_from_device_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=serviceopts.allowed_to_authenticate_from_device_silo)
+            serviceopts.allowed_to_authenticate_from = silo.get_authentication_sddl()
+
+        # Generate SDDL for authenticating service accounts to a group
+        if serviceopts.allowed_to_authenticate_to_by_group:
+            group = Group.get(
+                ldb, cn=serviceopts.allowed_to_authenticate_to_by_group)
+            serviceopts.allowed_to_authenticate_to = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating service accounts to a silo
+        if serviceopts.allowed_to_authenticate_to_by_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=serviceopts.allowed_to_authenticate_to_by_silo)
+            serviceopts.allowed_to_authenticate_to = silo.get_authentication_sddl()
+
+        # Generate SDDL for authenticating computer accounts to a group
+        if computeropts.allowed_to_authenticate_to_by_group:
+            group = Group.get(
+                ldb, cn=computeropts.allowed_to_authenticate_to_by_group)
+            computeropts.allowed_to_authenticate_to = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating computer accounts to a silo
+        if computeropts.allowed_to_authenticate_to_by_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=computeropts.allowed_to_authenticate_to_by_silo)
+            computeropts.allowed_to_authenticate_to = silo.get_authentication_sddl()
 
         try:
             policy = AuthenticationPolicy.get(ldb, cn=name)
@@ -192,11 +384,16 @@ class cmd_domain_auth_policy_create(Command):
             cn=name,
             description=description,
             strong_ntlm_policy=StrongNTLMPolicy[strong_ntlm_policy.upper()],
-            user_allow_ntlm_auth=user_allow_ntlm_auth,
-            user_tgt_lifetime=user_tgt_lifetime,
-            service_allow_ntlm_auth=service_allow_ntlm_auth,
-            service_tgt_lifetime=service_tgt_lifetime,
-            computer_tgt_lifetime=computer_tgt_lifetime,
+            user_allow_ntlm_auth=useropts.allow_ntlm_auth,
+            user_tgt_lifetime=useropts.tgt_lifetime,
+            user_allowed_to_authenticate_from=useropts.allowed_to_authenticate_from,
+            user_allowed_to_authenticate_to=useropts.allowed_to_authenticate_to,
+            service_allow_ntlm_auth=serviceopts.allow_ntlm_auth,
+            service_tgt_lifetime=serviceopts.tgt_lifetime,
+            service_allowed_to_authenticate_from=serviceopts.allowed_to_authenticate_from,
+            service_allowed_to_authenticate_to=serviceopts.allowed_to_authenticate_to,
+            computer_tgt_lifetime=computeropts.tgt_lifetime,
+            computer_allowed_to_authenticate_to=computeropts.allowed_to_authenticate_to,
         )
 
         # Either --enforce will be set or --audit but never both.
@@ -227,13 +424,15 @@ class cmd_domain_auth_policy_modify(Command):
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
+        "hostopts": options.HostOptions,
+        "useropts": UserOptions,
+        "serviceopts": ServiceOptions,
+        "computeropts": ComputerOptions,
     }
 
     takes_options = [
-        Option("-H", "--URL", help="LDB URL for database or target server.",
-               type=str, metavar="URL", dest="ldap_url"),
         Option("--name", help="Name of authentication policy (required).",
-               dest="name", action="store", type=str),
+               dest="name", action="store", type=str, required=True),
         Option("--description",
                help="Optional description for authentication policy.",
                dest="description", action="store", type=str),
@@ -253,44 +452,101 @@ class cmd_domain_auth_policy_modify(Command):
                help=f"Strong NTLM Policy ({StrongNTLMPolicy.choices_str()}).",
                dest="strong_ntlm_policy", type="choice", action="store",
                choices=StrongNTLMPolicy.get_choices()),
-        Option("--user-tgt-lifetime",
-               help="Ticket-Granting-Ticket lifetime for user accounts.",
-               dest="user_tgt_lifetime", type=int, action="store",
-               validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)]),
-        Option("--user-allow-ntlm-auth",
-               help="Allow NTLM network authentication when user "
-                    "is restricted to selected devices.",
-               dest="user_allow_ntlm_auth", action="store_true",
-               default=False),
-        Option("--service-tgt-lifetime",
-               help="Ticket-Granting-Ticket lifetime for service accounts.",
-               dest="service_tgt_lifetime", type=int, action="store",
-               validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)]),
-        Option("--service-allow-ntlm-auth",
-               help="Allow NTLM network authentication when service "
-                    "is restricted to selected devices.",
-               dest="service_allow_ntlm_auth", action="store_true",
-               default=False),
-        Option("--computer-tgt-lifetime",
-               help="Ticket-Granting-Ticket lifetime for computer accounts.",
-               dest="computer_tgt_lifetime", type=int, action="store",
-               validators=[Range(min=MIN_TGT_LIFETIME, max=MAX_TGT_LIFETIME)]),
     ]
 
-    def run(self, ldap_url=None, sambaopts=None, credopts=None, name=None,
-            description=None, protect=None, unprotect=None, audit=None,
-            enforce=None, strong_ntlm_policy=None, user_tgt_lifetime=None,
-            user_allow_ntlm_auth=None, service_tgt_lifetime=None,
-            service_allow_ntlm_auth=None, computer_tgt_lifetime=None):
+    def run(self, hostopts=None, sambaopts=None, credopts=None, useropts=None,
+            serviceopts=None, computeropts=None, name=None, description=None,
+            protect=None, unprotect=None, audit=None, enforce=None,
+            strong_ntlm_policy=None):
 
-        if not name:
-            raise CommandError("Argument --name is required.")
         if protect and unprotect:
             raise CommandError("--protect and --unprotect cannot be used together.")
         if audit and enforce:
             raise CommandError("--audit and --enforce cannot be used together.")
 
-        ldb = self.ldb_connect(ldap_url, sambaopts, credopts)
+        # Check for repeated, similar arguments.
+        check_similar_args("--user-allowed-to-authenticate-from",
+                           [useropts.allowed_to_authenticate_from,
+                            useropts.allowed_to_authenticate_from_device_group,
+                            useropts.allowed_to_authenticate_from_device_silo])
+        check_similar_args("--user-allowed-to-authenticate-to",
+                           [useropts.allowed_to_authenticate_to,
+                            useropts.allowed_to_authenticate_to_by_group,
+                            useropts.allowed_to_authenticate_to_by_silo])
+        check_similar_args("--service-allowed-to-authenticate-from",
+                           [serviceopts.allowed_to_authenticate_from,
+                            serviceopts.allowed_to_authenticate_from_device_group,
+                            serviceopts.allowed_to_authenticate_from_device_silo])
+        check_similar_args("--service-allowed-to-authenticate-to",
+                           [serviceopts.allowed_to_authenticate_to,
+                            serviceopts.allowed_to_authenticate_to_by_group,
+                            serviceopts.allowed_to_authenticate_to_by_silo])
+        check_similar_args("--computer-allowed-to-authenticate-to",
+                           [computeropts.allowed_to_authenticate_to,
+                            computeropts.allowed_to_authenticate_to_by_group,
+                            computeropts.allowed_to_authenticate_to_by_silo])
+
+        ldb = self.ldb_connect(hostopts, sambaopts, credopts)
+
+        # Generate SDDL for authenticating users from a device in a group
+        if useropts.allowed_to_authenticate_from_device_group:
+            group = Group.get(
+                ldb, cn=useropts.allowed_to_authenticate_from_device_group)
+            useropts.allowed_to_authenticate_from = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating users from a device in a silo
+        if useropts.allowed_to_authenticate_from_device_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=useropts.allowed_to_authenticate_from_device_silo)
+            useropts.allowed_to_authenticate_from = silo.get_authentication_sddl()
+
+        # Generate SDDL for authenticating user accounts to a group
+        if useropts.allowed_to_authenticate_to_by_group:
+            group = Group.get(
+                ldb, cn=useropts.allowed_to_authenticate_to_by_group)
+            useropts.allowed_to_authenticate_to = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating user accounts to a silo
+        if useropts.allowed_to_authenticate_to_by_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=useropts.allowed_to_authenticate_to_by_silo)
+            useropts.allowed_to_authenticate_to = silo.get_authentication_sddl()
+
+        # Generate SDDL for authenticating users from a device a device in a group
+        if serviceopts.allowed_to_authenticate_from_device_group:
+            group = Group.get(
+                ldb, cn=serviceopts.allowed_to_authenticate_from_device_group)
+            serviceopts.allowed_to_authenticate_from = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating service accounts from a device in a silo
+        if serviceopts.allowed_to_authenticate_from_device_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=serviceopts.allowed_to_authenticate_from_device_silo)
+            serviceopts.allowed_to_authenticate_from = silo.get_authentication_sddl()
+
+        # Generate SDDL for authenticating service accounts to a group
+        if serviceopts.allowed_to_authenticate_to_by_group:
+            group = Group.get(
+                ldb, cn=serviceopts.allowed_to_authenticate_to_by_group)
+            serviceopts.allowed_to_authenticate_to = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating service accounts to a silo
+        if serviceopts.allowed_to_authenticate_to_by_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=serviceopts.allowed_to_authenticate_to_by_silo)
+            serviceopts.allowed_to_authenticate_to = silo.get_authentication_sddl()
+
+        # Generate SDDL for authenticating computer accounts to a group
+        if computeropts.allowed_to_authenticate_to_by_group:
+            group = Group.get(
+                ldb, cn=computeropts.allowed_to_authenticate_to_by_group)
+            computeropts.allowed_to_authenticate_to = group.get_authentication_sddl()
+
+        # Generate SDDL for authenticating computer accounts to a silo
+        if computeropts.allowed_to_authenticate_to_by_silo:
+            silo = AuthenticationSilo.get(
+                ldb, cn=computeropts.allowed_to_authenticate_to_by_silo)
+            computeropts.allowed_to_authenticate_to = silo.get_authentication_sddl()
 
         try:
             policy = AuthenticationPolicy.get(ldb, cn=name)
@@ -318,20 +574,40 @@ class cmd_domain_auth_policy_modify(Command):
             policy.strong_ntlm_policy = \
                 StrongNTLMPolicy[strong_ntlm_policy.upper()]
 
-        if user_tgt_lifetime is not None:
-            policy.user_tgt_lifetime = user_tgt_lifetime
+        if useropts.tgt_lifetime is not None:
+            policy.user_tgt_lifetime = useropts.tgt_lifetime
+
+        if useropts.allowed_to_authenticate_from is not None:
+            policy.user_allowed_to_authenticate_from = \
+                useropts.allowed_to_authenticate_from
+
+        if useropts.allowed_to_authenticate_to is not None:
+            policy.user_allowed_to_authenticate_to = \
+                useropts.allowed_to_authenticate_to
 
         # Service sign on
         ##################
 
-        if service_tgt_lifetime is not None:
-            policy.service_tgt_lifetime = service_tgt_lifetime
+        if serviceopts.tgt_lifetime is not None:
+            policy.service_tgt_lifetime = serviceopts.tgt_lifetime
+
+        if serviceopts.allowed_to_authenticate_from is not None:
+            policy.service_allowed_to_authenticate_from = \
+                serviceopts.allowed_to_authenticate_from
+
+        if serviceopts.allowed_to_authenticate_to is not None:
+            policy.service_allowed_to_authenticate_to = \
+                serviceopts.allowed_to_authenticate_to
 
         # Computer
         ###########
 
-        if computer_tgt_lifetime is not None:
-            policy.computer_tgt_lifetime = computer_tgt_lifetime
+        if computeropts.tgt_lifetime is not None:
+            policy.computer_tgt_lifetime = computeropts.tgt_lifetime
+
+        if computeropts.allowed_to_authenticate_to is not None:
+            policy.computer_allowed_to_authenticate_to = \
+                computeropts.allowed_to_authenticate_to
 
         # Update policy.
         try:
@@ -356,24 +632,20 @@ class cmd_domain_auth_policy_delete(Command):
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
+        "hostopts": options.HostOptions,
     }
 
     takes_options = [
-        Option("-H", "--URL", help="LDB URL for database or target server.",
-               type=str, metavar="URL", dest="ldap_url"),
         Option("--name", help="Name of authentication policy (required).",
-               dest="name", action="store", type=str),
+               dest="name", action="store", type=str, required=True),
         Option("--force", help="Force delete protected authentication policy.",
                dest="force", action="store_true")
     ]
 
-    def run(self, ldap_url=None, sambaopts=None, credopts=None, name=None,
+    def run(self, hostopts=None, sambaopts=None, credopts=None, name=None,
             force=None):
 
-        if not name:
-            raise CommandError("Argument --name is required.")
-
-        ldb = self.ldb_connect(ldap_url, sambaopts, credopts)
+        ldb = self.ldb_connect(hostopts, sambaopts, credopts)
 
         try:
             policy = AuthenticationPolicy.get(ldb, cn=name)

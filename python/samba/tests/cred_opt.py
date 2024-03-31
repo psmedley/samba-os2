@@ -46,7 +46,7 @@ def auth_fle_opt(auth_file_path, long_opt=True):
 class CredentialsOptionsTests(samba.tests.TestCase):
 
     def setUp(self):
-        super(samba.tests.TestCase, self).setUp()
+        super().setUp()
         self.old_proctitle = setproctitle.getproctitle()
 
         # We must append two options to get the " " we look for in the
@@ -66,14 +66,14 @@ class CredentialsOptionsTests(samba.tests.TestCase):
         self.assertIn(clear_password_opt, setproctitle.getproctitle())
 
     def tearDown(self):
-        super(samba.tests.TestCase, self).tearDown()
+        super().tearDown()
         setproctitle.setproctitle(self.old_proctitle)
         sys.argv.pop()
 
 class AuthenticationFileTests(samba.tests.TestCaseInTempDir):
 
     def setUp(self):
-        super(AuthenticationFileTests, self).setUp()
+        super().setUp()
 
         self.parser = optparse.OptionParser()
         self.credopts = CredentialsOptions(self.parser)
@@ -94,7 +94,7 @@ class AuthenticationFileTests(samba.tests.TestCaseInTempDir):
         auth_file_fd.close()
 
     def tearDown(self):
-        super(AuthenticationFileTests, self).tearDown()
+        super().tearDown()
 
         os.unlink(self.auth_file_name)
 

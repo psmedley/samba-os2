@@ -100,9 +100,7 @@ static struct {
 	debug_callback_fn callback;
 	void *callback_private;
 	char header_str[300];
-	char header_str_no_nl[300];
 	size_t hs_len;
-	char msg_no_nl[FORMAT_BUFR_SIZE];
 } state = {
 	.settings = {
 		.timestamp_logs = true
@@ -245,48 +243,6 @@ static int debug_level_to_priority(int level)
 #endif
 
 /* -------------------------------------------------------------------------- **
- * Produce a version of the given buffer without any trailing newlines.
- */
-#if defined(HAVE_LIBSYSTEMD_JOURNAL) || defined(HAVE_LIBSYSTEMD) || \
-	defined(HAVE_LTTNG_TRACEF) || defined(HAVE_GPFS)
-static void copy_no_nl(char *out,
-		       size_t out_size,
-		       const char *in,
-		       size_t in_len)
-{
-	size_t len;
-	/*
-	 * Some backends already add an extra newline, so also provide
-	 * a buffer without the newline character.
-	 */
-	len = MIN(in_len, out_size - 1);
-	if ((len > 0) && (in[len - 1] == '\n')) {
-		len--;
-	}
-
-	memcpy(out, in, len);
-	out[len] = '\0';
-}
-
-static void ensure_copy_no_nl(char *out,
-			      size_t out_size,
-			      const char *in,
-			      size_t in_len)
-{
-	/*
-	 * Assume out is a static buffer that is reused as a cache.
-	 * If it isn't empty then this has already been done with the
-	 * same input.
-	 */
-	if (out[0] != '\0') {
-		return;
-	}
-
-	copy_no_nl(out, out_size, in, in_len);
-}
-#endif
-
-/* -------------------------------------------------------------------------- **
  * Debug backends. When logging to DEBUG_FILE, send the log entries to
  * all active backends.
  */
@@ -366,24 +322,33 @@ static void debug_syslog_log(int msg_level, const char *msg, size_t msg_len)
 static void debug_systemd_log(int msg_level, const char *msg, size_t msg_len)
 {
 	if (state.hs_len > 0) {
-		ensure_copy_no_nl(state.header_str_no_nl,
-				  sizeof(state.header_str_no_nl),
-				  state.header_str,
-				  state.hs_len);
-		sd_journal_send("MESSAGE=%s",
-				state.header_str_no_nl,
+		size_t len = state.hs_len;
+
+		if (state.header_str[len - 1] == '\n') {
+			len -= 1;
+		}
+
+		sd_journal_send("MESSAGE=%.*s",
+				(int)len,
+				state.header_str,
 				"PRIORITY=%d",
 				debug_level_to_priority(msg_level),
 				"LEVEL=%d",
 				msg_level,
 				NULL);
 	}
-	ensure_copy_no_nl(state.msg_no_nl,
-			  sizeof(state.msg_no_nl),
-			  msg, msg_len);
-	sd_journal_send("MESSAGE=%s", state.msg_no_nl,
-			"PRIORITY=%d", debug_level_to_priority(msg_level),
-			"LEVEL=%d", msg_level,
+
+	if ((msg_len > 0) && (msg[msg_len - 1] == '\n')) {
+		msg_len -= 1;
+	}
+
+	sd_journal_send("MESSAGE=%.*s",
+			(int)msg_len,
+			msg,
+			"PRIORITY=%d",
+			debug_level_to_priority(msg_level),
+			"LEVEL=%d",
+			msg_level,
 			NULL);
 }
 #endif
@@ -393,16 +358,19 @@ static void debug_systemd_log(int msg_level, const char *msg, size_t msg_len)
 static void debug_lttng_log(int msg_level, const char *msg, size_t msg_len)
 {
 	if (state.hs_len > 0) {
-		ensure_copy_no_nl(state.header_str_no_nl,
-				  sizeof(state.header_str_no_nl),
-				  state.header_str,
-				  state.hs_len);
-		tracef(state.header_str_no_nl);
+		size_t len = state.hs_len;
+
+		if (state.header_str[len - 1] == '\n') {
+			len -= 1;
+		}
+
+		tracef("%.*s", (int)len, state.header_str);
 	}
-	ensure_copy_no_nl(state.msg_no_nl,
-			  sizeof(state.msg_no_nl),
-			  msg, msg_len);
-	tracef(state.msg_no_nl);
+
+	if ((msg_len > 0) && (msg[msg_len - 1] == '\n')) {
+		msg_len -= 1;
+	}
+	tracef("%.*s", (int)msg_len, msg);
 }
 #endif /* WITH_LTTNG_TRACEF */
 
@@ -433,19 +401,39 @@ static void debug_gpfs_reload(bool enabled, bool previously_enabled,
 	}
 }
 
+static void copy_no_nl(char *out,
+		       size_t out_size,
+		       const char *in,
+		       size_t in_len)
+{
+	size_t len;
+	/*
+	 * Some backends already add an extra newline, so also provide
+	 * a buffer without the newline character.
+	 */
+	len = MIN(in_len, out_size - 1);
+	if ((len > 0) && (in[len - 1] == '\n')) {
+		len--;
+	}
+
+	memcpy(out, in, len);
+	out[len] = '\0';
+}
+
 static void debug_gpfs_log(int msg_level, const char *msg, size_t msg_len)
 {
+	char no_nl[FORMAT_BUFR_SIZE];
+
 	if (state.hs_len > 0) {
-		ensure_copy_no_nl(state.header_str_no_nl,
-				  sizeof(state.header_str_no_nl),
-				  state.header_str,
-				  state.hs_len);
-		gpfswrap_add_trace(msg_level, state.header_str_no_nl);
+		copy_no_nl(no_nl,
+			   sizeof(no_nl),
+			   state.header_str,
+			   state.hs_len);
+		gpfswrap_add_trace(msg_level, no_nl);
 	}
-	ensure_copy_no_nl(state.msg_no_nl,
-			  sizeof(state.msg_no_nl),
-			  msg, msg_len);
-	gpfswrap_add_trace(msg_level, state.msg_no_nl);
+
+	copy_no_nl(no_nl, sizeof(no_nl), msg, msg_len);
+	gpfswrap_add_trace(msg_level, no_nl);
 }
 #endif /* HAVE_GPFS */
 
@@ -699,13 +687,6 @@ static void debug_set_backends(const char *param)
 static void debug_backends_log(const char *msg, size_t msg_len, int msg_level)
 {
 	size_t i;
-
-	/*
-	 * Some backends already add an extra newline, so initialize a
-	 * buffer without the newline character.  It will be filled by
-	 * the first backend that needs it.
-	 */
-	state.msg_no_nl[0] = '\0';
 
 	for (i = 0; i < ARRAY_SIZE(debug_backends); i++) {
 		if (msg_level <= debug_backends[i].log_level) {
@@ -1301,7 +1282,7 @@ bool reopen_logs_internal(void)
 	struct debug_backend *b = NULL;
 	mode_t oldumask;
 	size_t i;
-	bool ok;
+	bool ok = true;
 
 	if (state.reopening_logs) {
 		return true;
@@ -1954,8 +1935,6 @@ full:
 	if (state.hs_len >= sizeof(state.header_str)) {
 		state.hs_len = sizeof(state.header_str) - 1;
 	}
-
-	state.header_str_no_nl[0] = '\0';
 
 	errno = old_errno;
 	return( true );

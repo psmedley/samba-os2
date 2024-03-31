@@ -475,7 +475,7 @@ static int virusfilter_vfs_connect(
 
 	config->io_h = virusfilter_io_new(config, connect_timeout, io_timeout);
 	if (config->io_h == NULL) {
-		DBG_ERR("virusfilter_io_new failed");
+		DBG_ERR("virusfilter_io_new failed\n");
 		return -1;
 	}
 
@@ -1221,7 +1221,7 @@ virusfilter_scan_result_eval:
 					scan_result, scan_report);
 			if (!ok) {
 				DBG_ERR("Cannot create cache entry: "
-					"virusfilter_cache_entry_new failed");
+					"virusfilter_cache_entry_new failed\n");
 				goto virusfilter_scan_return;
 			}
 		} else if (is_cache) {
@@ -1495,9 +1495,7 @@ static int virusfilter_vfs_close(
 		return close_result;
 	}
 
-	if (config->exclude_files && is_in_path(fname,
-	    config->exclude_files, false))
-	{
+	if (is_in_path(fname, config->exclude_files, false)) {
 		DBG_INFO("Not scanned: exclude files: %s/%s\n",
 			 cwd_fname, fname);
 		return close_result;

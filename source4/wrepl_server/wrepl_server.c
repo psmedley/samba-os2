@@ -111,7 +111,7 @@ static NTSTATUS wreplsrv_open_winsdb(struct wreplsrv_service *service,
 	service->config.scavenging_interval=lpcfg_parm_int(lp_ctx, NULL,"wreplsrv","scavenging_interval",
 							service->config.renew_interval/2);
 
-	/* the maximun interval to the next periodic processing event */
+	/* the maximum interval to the next periodic processing event */
 	service->config.periodic_interval = lpcfg_parm_int(lp_ctx, NULL,"wreplsrv","periodic_interval", 15);
 
 	return NT_STATUS_OK;
@@ -128,6 +128,44 @@ struct wreplsrv_partner *wreplsrv_find_partner(struct wreplsrv_service *service,
 	}
 
 	return NULL;
+}
+
+static uint32_t wreplsrv_find_attr_as_uint32(const struct ldb_message *msg,
+					     const char *attr_name,
+					     uint32_t default_value)
+{
+	const struct ldb_val *v = ldb_msg_find_ldb_val(msg, attr_name);
+	char buf[sizeof("-2147483648")] = {};
+	char *end = NULL;
+	uint32_t ret;
+	int base = 10;
+
+	if (!v || !v->data) {
+		return default_value;
+	}
+
+	if (v->length >= sizeof(buf)) {
+		return default_value;
+	}
+
+	memcpy(buf, v->data, v->length);
+	if (buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')) {
+		base = 16;
+	}
+
+	errno = 0;
+	ret = strtoll(buf, &end, base);
+	if (errno == ERANGE || errno == EINVAL) {
+		errno = 0;
+		ret = strtoull(buf, &end, base);
+		if (errno == ERANGE || errno == EINVAL) {
+			return default_value;
+		}
+	}
+	if (end && end[0] != '\0') {
+		return default_value;
+	}
+	return ret;
 }
 
 /*
@@ -200,7 +238,7 @@ NTSTATUS wreplsrv_load_partners(struct wreplsrv_service *service)
 		partner->our_address		= ldb_msg_find_attr_as_string(res->msgs[i], "ourAddress", NULL);
 		talloc_steal(partner, partner->our_address);
 
-		partner->type			= ldb_msg_find_attr_as_uint(res->msgs[i], "type", WINSREPL_PARTNER_BOTH);
+		partner->type			= wreplsrv_find_attr_as_uint32(res->msgs[i], "type", WINSREPL_PARTNER_BOTH);
 		partner->pull.interval		= ldb_msg_find_attr_as_uint(res->msgs[i], "pullInterval",
 								    WINSREPL_DEFAULT_PULL_INTERVAL);
 		partner->pull.retry_interval	= ldb_msg_find_attr_as_uint(res->msgs[i], "pullRetryInterval",

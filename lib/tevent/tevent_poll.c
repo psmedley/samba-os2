@@ -173,6 +173,7 @@ _PRIVATE_ bool tevent_poll_event_add_fd_internal(struct tevent_context *ev,
 	size_t num_fdes;
 
 	fde->additional_flags = UINT64_MAX;
+	tevent_common_fd_mpx_reinit(fde);
 	talloc_set_destructor(fde, poll_event_fd_destructor);
 
 	if (fde->flags == 0) {
@@ -258,6 +259,43 @@ static struct tevent_fd *poll_event_add_fd(struct tevent_context *ev,
 }
 
 /*
+  map from TEVENT_FD_* to POLLIN/POLLOUT
+*/
+static uint16_t poll_map_flags(uint16_t flags)
+{
+	uint16_t pollflags = 0;
+
+	/*
+	 * we do not need to specify POLLERR | POLLHUP
+	 * they are always reported.
+	 */
+
+	if (flags & TEVENT_FD_READ) {
+		pollflags |= POLLIN;
+#ifdef POLLRDHUP
+		/*
+		 * Note that at least on Linux
+		 * POLLRDHUP always returns
+		 * POLLIN in addition, so this
+		 * is not strictly needed, but
+		 * we want to make it explicit.
+		 */
+		pollflags |= POLLRDHUP;
+#endif
+	}
+	if (flags & TEVENT_FD_WRITE) {
+		pollflags |= POLLOUT;
+	}
+	if (flags & TEVENT_FD_ERROR) {
+#ifdef POLLRDHUP
+		pollflags |= POLLRDHUP;
+#endif
+	}
+
+	return pollflags;
+}
+
+/*
   set the fd event flags
 */
 static void poll_event_set_fd_flags(struct tevent_fd *fde, uint16_t flags)
@@ -265,7 +303,6 @@ static void poll_event_set_fd_flags(struct tevent_fd *fde, uint16_t flags)
 	struct tevent_context *ev = fde->event_ctx;
 	struct poll_event_context *poll_ev;
 	uint64_t idx = fde->additional_flags;
-	uint16_t pollflags;
 
 	if (ev == NULL) {
 		return;
@@ -310,15 +347,7 @@ static void poll_event_set_fd_flags(struct tevent_fd *fde, uint16_t flags)
 		return;
 	}
 
-	pollflags = 0;
-
-	if (flags & TEVENT_FD_READ) {
-		pollflags |= (POLLIN|POLLHUP);
-	}
-	if (flags & TEVENT_FD_WRITE) {
-		pollflags |= (POLLOUT);
-	}
-	poll_ev->fds[idx].events = pollflags;
+	poll_ev->fds[idx].events = poll_map_flags(flags);
 
 	poll_event_wake_pollthread(poll_ev);
 }
@@ -404,15 +433,8 @@ static bool poll_event_sync_arrays(struct tevent_context *ev,
 		}
 
 		pfd->fd = fde->fd;
-		pfd->events = 0;
+		pfd->events = poll_map_flags(fde->flags);
 		pfd->revents = 0;
-
-		if (fde->flags & TEVENT_FD_READ) {
-			pfd->events |= (POLLIN|POLLHUP);
-		}
-		if (fde->flags & TEVENT_FD_WRITE) {
-			pfd->events |= (POLLOUT);
-		}
 
 		poll_ev->num_fds += 1;
 	}
@@ -537,23 +559,35 @@ static int poll_event_loop_poll(struct tevent_context *ev,
 				     fde, pfd->fd);
 			poll_ev->fdes[idx] = NULL;
 			poll_ev->deleted = true;
-			DLIST_REMOVE(ev->fd_events, fde);
-			fde->wrapper = NULL;
-			fde->event_ctx = NULL;
+			tevent_common_fd_disarm(fde);
 			continue;
 		}
 
-		if (pfd->revents & (POLLHUP|POLLERR)) {
-			/* If we only wait for TEVENT_FD_WRITE, we
-			   should not tell the event handler about it,
-			   and remove the writable flag, as we only
-			   report errors when waiting for read events
-			   to match the select behavior. */
-			if (!(fde->flags & TEVENT_FD_READ)) {
+#ifdef POLLRDHUP
+#define __POLL_RETURN_ERROR_FLAGS (POLLHUP|POLLERR|POLLRDHUP)
+#else
+#define __POLL_RETURN_ERROR_FLAGS (POLLHUP|POLLERR)
+#endif
+
+		if (pfd->revents & __POLL_RETURN_ERROR_FLAGS) {
+			/*
+			 * If we only wait for TEVENT_FD_WRITE, we
+			 * should not tell the event handler about it,
+			 * and remove the writable flag, as we only
+			 * report errors when waiting for read events
+			 * or explicit for errors.
+			 */
+			if (!(fde->flags & (TEVENT_FD_READ|TEVENT_FD_ERROR)))
+			{
 				TEVENT_FD_NOT_WRITEABLE(fde);
 				continue;
 			}
-			flags |= TEVENT_FD_READ;
+			if (fde->flags & TEVENT_FD_ERROR) {
+				flags |= TEVENT_FD_ERROR;
+			}
+			if (fde->flags & TEVENT_FD_READ) {
+				flags |= TEVENT_FD_READ;
+			}
 		}
 		if (pfd->revents & POLLIN) {
 			flags |= TEVENT_FD_READ;
@@ -589,9 +623,7 @@ static int poll_event_loop_poll(struct tevent_context *ev,
 			poll_ev->fdes[i] = NULL;
 			poll_ev->deleted = true;
 			if (fde != NULL) {
-				DLIST_REMOVE(ev->fd_events, fde);
-				fde->wrapper = NULL;
-				fde->event_ctx = NULL;
+				tevent_common_fd_disarm(fde);
 			}
 		}
 	}

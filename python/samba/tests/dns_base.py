@@ -31,7 +31,7 @@ import time
 class DNSTest(TestCaseInTempDir):
 
     def setUp(self):
-        super(DNSTest, self).setUp()
+        super().setUp()
         self.timeout = None
 
     def errstr(self, errcode):
@@ -207,7 +207,7 @@ class DNSTest(TestCaseInTempDir):
 
 class DNSTKeyTest(DNSTest):
     def setUp(self):
-        super(DNSTKeyTest, self).setUp()
+        super().setUp()
         self.settings = {}
         self.settings["lp_ctx"] = self.lp_ctx = tests.env_loadparm()
         self.settings["target_hostname"] = self.server
@@ -363,8 +363,8 @@ class DNSTKeyTest(DNSTest):
         return mac
 
     def bad_sign_packet(self, packet, key_name):
-        '''Add bad signature for a packet by bitflipping
-        the final byte in the MAC'''
+        """Add bad signature for a packet by bitflipping
+        the final byte in the MAC"""
 
         mac_list = [x if isinstance(x, int) else ord(x) for x in list("badmac")]
 

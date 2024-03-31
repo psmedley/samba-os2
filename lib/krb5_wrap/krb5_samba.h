@@ -23,6 +23,9 @@
 #ifndef _KRB5_SAMBA_H
 #define _KRB5_SAMBA_H
 
+#include "lib/util/data_blob.h"
+#include "libcli/util/ntstatus.h"
+
 #ifdef HAVE_KRB5
 
 #define KRB5_PRIVATE    1       /* this file uses PRIVATE interfaces! */
@@ -397,10 +400,11 @@ int smb_krb5_create_key_from_string(krb5_context context,
 #endif
 #endif
 
-char *smb_krb5_principal_get_comp_string(TALLOC_CTX *mem_ctx,
-					 krb5_context context,
-					 krb5_const_principal principal,
-					 unsigned int component);
+krb5_error_code smb_krb5_principal_get_comp_string(TALLOC_CTX *mem_ctx,
+						   krb5_context context,
+						   krb5_const_principal principal,
+						   unsigned int component,
+						   char **out);
 
 krb5_error_code smb_krb5_copy_data_contents(krb5_data *p,
 					    const void *data,

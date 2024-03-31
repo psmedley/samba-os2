@@ -726,7 +726,7 @@ _PUBLIC_ size_t talloc_total_blocks(const void *ptr);
  *
  * @param[in]  p        The memory chunk you want to duplicate.
  *
- * @param[in]  size     Number of char's that you want copy.
+ * @param[in]  size     Number of chars that you want to copy.
  *
  * @return              The allocated memory chunk.
  *
@@ -787,7 +787,7 @@ type *talloc_get_type(const void *ptr, #type);
  *
  * This macro is used together with talloc(mem_ctx, struct foo). If you had to
  * assign the talloc chunk pointer to some void pointer variable,
- * talloc_get_type_abort() is the recommended way to get the convert the void
+ * talloc_get_type_abort() is the recommended way to convert the void
  * pointer back to a typed pointer.
  *
  * @param[in]  ptr      The void pointer to convert.

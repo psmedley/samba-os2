@@ -556,9 +556,12 @@ static NTSTATUS _authn_policy_access_check(TALLOC_CTX *mem_ctx,
 					   struct ldb_context *samdb,
 					   struct loadparm_context* lp_ctx,
 					   const struct auth_user_info_dc *client_info,
+					   const struct auth_user_info_dc *device_info,
+					   const struct auth_claims auth_claims,
 					   const struct authn_policy *policy,
 					   const struct authn_int64_optional tgt_lifetime_raw,
 					   const enum authn_audit_event restriction_event,
+					   const struct authn_policy_flags authn_policy_flags,
 					   const DATA_BLOB *descriptor_blob,
 					   const char *location,
 					   struct authn_audit_info **audit_info_out)
@@ -571,6 +574,7 @@ static NTSTATUS _authn_policy_access_check(TALLOC_CTX *mem_ctx,
 	struct security_token *security_token = NULL;
 	uint32_t session_info_flags =
 		AUTH_SESSION_INFO_DEFAULT_GROUPS |
+		AUTH_SESSION_INFO_DEVICE_DEFAULT_GROUPS |
 		AUTH_SESSION_INFO_SIMPLE_PRIVILEGES;
 	const uint32_t access_desired = SEC_ADS_CONTROL_ACCESS;
 	uint32_t access_granted;
@@ -589,6 +593,14 @@ static NTSTATUS _authn_policy_access_check(TALLOC_CTX *mem_ctx,
 
 	if (!(client_info->info->user_flags & NETLOGON_GUEST)) {
 		session_info_flags |= AUTH_SESSION_INFO_AUTHENTICATED;
+	}
+
+	if (device_info != NULL && !(device_info->info->user_flags & NETLOGON_GUEST)) {
+		session_info_flags |= AUTH_SESSION_INFO_DEVICE_AUTHENTICATED;
+	}
+
+	if (authn_policy_flags.force_compounded_authentication) {
+		session_info_flags |= AUTH_SESSION_INFO_FORCE_COMPOUNDED_AUTHENTICATION;
 	}
 
 	descriptor = talloc(tmp_ctx, struct security_descriptor);
@@ -618,11 +630,13 @@ static NTSTATUS _authn_policy_access_check(TALLOC_CTX *mem_ctx,
 	}
 
 	status = auth_generate_security_token(tmp_ctx,
-					       lp_ctx,
-					       samdb,
-					       client_info,
-					       session_info_flags,
-					       &security_token);
+					      lp_ctx,
+					      samdb,
+					      client_info,
+					      device_info,
+					      auth_claims,
+					      session_info_flags,
+					      &security_token);
 	if (!NT_STATUS_IS_OK(status)) {
 		reason = AUTHN_AUDIT_REASON_SECURITY_TOKEN_FAILURE;
 		goto out;
@@ -671,18 +685,24 @@ out:
 	samdb, \
 	lp_ctx, \
 	client_info, \
+	device_info, \
+	auth_claims, \
 	policy, \
 	tgt_lifetime_raw, \
 	restriction_event, \
+	authn_policy_flags, \
 	descriptor_blob, \
 	audit_info_out) \
 	_authn_policy_access_check(mem_ctx, \
 		samdb, \
 		lp_ctx, \
 		client_info, \
+		device_info, \
+		auth_claims, \
 		policy, \
 		tgt_lifetime_raw, \
 		restriction_event, \
+		authn_policy_flags,	\
 		descriptor_blob, \
 		__location__, \
 		audit_info_out)
@@ -830,6 +850,7 @@ NTSTATUS authn_policy_authenticate_from_device(TALLOC_CTX *mem_ctx,
 					       struct ldb_context *samdb,
 					       struct loadparm_context* lp_ctx,
 					       const struct auth_user_info_dc *device_info,
+					       const struct auth_claims auth_claims,
 					       const struct authn_kerberos_client_policy *client_policy,
 					       struct authn_audit_info **client_audit_info_out)
 {
@@ -845,9 +866,13 @@ NTSTATUS authn_policy_authenticate_from_device(TALLOC_CTX *mem_ctx,
 					   samdb,
 					   lp_ctx,
 					   device_info,
+					   /* The device itself has no device. */
+					   NULL /* device_info */,
+					   auth_claims,
 					   &client_policy->policy,
 					   authn_int64_some(client_policy->tgt_lifetime_raw),
 					   AUTHN_AUDIT_EVENT_KERBEROS_DEVICE_RESTRICTION,
+					   (struct authn_policy_flags) {},
 					   restrictions,
 					   client_audit_info_out);
 out:
@@ -1157,7 +1182,10 @@ NTSTATUS authn_policy_authenticate_to_service(TALLOC_CTX *mem_ctx,
 					      struct loadparm_context* lp_ctx,
 					      const enum authn_policy_auth_type auth_type,
 					      const struct auth_user_info_dc *user_info,
+					      const struct auth_user_info_dc *device_info,
+					      const struct auth_claims auth_claims,
 					      const struct authn_server_policy *server_policy,
+					      const struct authn_policy_flags authn_policy_flags,
 					      struct authn_audit_info **server_audit_info_out)
 {
 	NTSTATUS status = NT_STATUS_OK;
@@ -1190,9 +1218,12 @@ NTSTATUS authn_policy_authenticate_to_service(TALLOC_CTX *mem_ctx,
 					   samdb,
 					   lp_ctx,
 					   user_info,
+					   device_info,
+					   auth_claims,
 					   &server_policy->policy,
 					   authn_int64_none() /* tgt_lifetime_raw */,
 					   event,
+					   authn_policy_flags,
 					   restrictions,
 					   server_audit_info_out);
 	return status;

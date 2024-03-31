@@ -27,6 +27,7 @@
 #include "../libcli/smb/smb_common.h"
 #include "../librpc/gen_ndr/ndr_security.h"
 #include "../librpc/gen_ndr/ndr_smb2_lease_struct.h"
+#include "../librpc/gen_ndr/ndr_smb3posix.h"
 #include "../lib/util/tevent_ntstatus.h"
 #include "messages.h"
 #include "lib/util_ea.h"
@@ -118,7 +119,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			uint32_t in_file_attributes,
 			uint32_t in_share_access,
 			uint32_t in_create_disposition,
-			uint32_t in_create_options,
+			uint32_t _in_create_options,
 			const char *in_name,
 			struct smb2_create_blobs in_context_blobs);
 static NTSTATUS smbd_smb2_create_recv(struct tevent_req *req,
@@ -560,6 +561,7 @@ struct smbd_smb2_create_state {
 	bool replay_operation;
 	uint8_t in_oplock_level;
 	uint32_t in_create_disposition;
+	uint32_t in_create_options;
 	int requested_oplock_level;
 	int info;
 	char *fname;
@@ -734,7 +736,9 @@ static NTSTATUS smbd_smb2_create_fetch_create_ctx(
 		state->svhdx = smb2_create_blob_find(
 			in_context_blobs, SVHDX_OPEN_DEVICE_CONTEXT);
 	}
-	if (xconn->smb2.server.posix_extensions_negotiated) {
+	if (xconn->smb2.server.posix_extensions_negotiated &&
+	    lp_smb3_unix_extensions(SNUM(state->smb1req->conn)))
+	{
 		/*
 		 * Negprot only allowed this for proto>=3.11
 		 */
@@ -766,7 +770,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 			uint32_t in_file_attributes,
 			uint32_t in_share_access,
 			uint32_t in_create_disposition,
-			uint32_t in_create_options,
+			uint32_t _in_create_options,
 			const char *in_name,
 			struct smb2_create_blobs in_context_blobs)
 {
@@ -790,6 +794,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 		.smb2req = smb2req,
 		.in_oplock_level = in_oplock_level,
 		.in_create_disposition = in_create_disposition,
+		.in_create_options = _in_create_options,
 	};
 
 	smb1req = smbd_smb2_fake_smb_request(smb2req, NULL);
@@ -829,8 +834,8 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 	}
 
 	/* these are ignored for SMB2 */
-	in_create_options &= ~(0x10);/* NTCREATEX_OPTIONS_SYNC_ALERT */
-	in_create_options &= ~(0x20);/* NTCREATEX_OPTIONS_ASYNC_ALERT */
+	state->in_create_options &= ~(0x10); /* NTCREATEX_OPTIONS_SYNC_ALERT */
+	state->in_create_options &= ~(0x20); /* NTCREATEX_OPTIONS_ASYNC_ALERT */
 
 	in_file_attributes &= ~FILE_FLAG_POSIX_SEMANTICS;
 
@@ -928,7 +933,8 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 	}
 
 	/* Check for trailing slash specific directory handling. */
-	status = windows_name_trailing_check(state->fname, in_create_options);
+	status = windows_name_trailing_check(state->fname,
+					     state->in_create_options);
 	if (tevent_req_nterror(req, status)) {
 		return tevent_req_post(req, state->ev);
 	}
@@ -1119,7 +1125,7 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 				     in_desired_access,
 				     in_share_access,
 				     state->in_create_disposition,
-				     in_create_options,
+				     state->in_create_options,
 				     in_file_attributes,
 				     map_smb2_oplock_levels_to_samba(
 					     state->requested_oplock_level),
@@ -1132,6 +1138,21 @@ static struct tevent_req *smbd_smb2_create_send(TALLOC_CTX *mem_ctx,
 				     &state->info,
 				     &in_context_blobs,
 				     state->out_context_blobs);
+	if (NT_STATUS_IS_OK(status) &&
+	    !(state->in_create_options & FILE_OPEN_REPARSE_POINT))
+	{
+
+		mode_t mode = state->result->fsp_name->st.st_ex_mode;
+
+		if (!(S_ISREG(mode) || S_ISDIR(mode))) {
+			/*
+			 * Only open files and dirs without
+			 * FILE_OPEN_REPARSE_POINT
+			 */
+			close_file_free(smb1req, &state->result, ERROR_CLOSE);
+			status = NT_STATUS_IO_REPARSE_TAG_NOT_HANDLED;
+		}
+	}
 	if (!NT_STATUS_IS_OK(status)) {
 		if (open_was_deferred(smb1req->xconn, smb1req->mid)) {
 			SMBPROFILE_IOBYTES_ASYNC_SET_IDLE(smb2req->profile);
@@ -1658,46 +1679,41 @@ static void smbd_smb2_create_after_exec(struct tevent_req *req)
 	}
 
 	if (state->posx != NULL) {
-		struct dom_sid owner = { .sid_rev_num = 0, };
-		struct dom_sid group = { .sid_rev_num = 0, };
 		struct stat_ex *psbuf = &state->result->fsp_name->st;
-		ssize_t cc_len;
+		struct smb3_posix_cc_info cc = {
+			.nlinks = psbuf->st_ex_nlink,
+			.posix_perms = unix_perms_to_wire(psbuf->st_ex_mode &
+							  ~S_IFMT),
+		};
+		uint8_t buf[sizeof(struct smb3_posix_cc_info)];
+		struct ndr_push ndr = {
+			.data = buf,
+			.alloc_size = sizeof(buf),
+			.fixed_buf_size = true,
+		};
+		enum ndr_err_code ndr_err;
 
-		uid_to_sid(&owner, psbuf->st_ex_uid);
-		gid_to_sid(&group, psbuf->st_ex_gid);
+		uid_to_sid(&cc.owner, psbuf->st_ex_uid);
+		gid_to_sid(&cc.group, psbuf->st_ex_gid);
 
-		cc_len = smb2_posix_cc_info(
-			conn, 0, psbuf, &owner, &group, NULL, 0);
-
-		if (cc_len == -1) {
+		ndr_err =
+			ndr_push_smb3_posix_cc_info(&ndr,
+						    NDR_SCALARS | NDR_BUFFERS,
+						    &cc);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 			status = NT_STATUS_INSUFFICIENT_RESOURCES;
 			goto fail;
 		}
 
-		{
-			/*
-			 * cc_len is 68 + 2 SIDs, allocate on the stack
-			 */
-			uint8_t buf[cc_len];
-			DATA_BLOB blob = { .data = buf, .length = cc_len, };
-
-			smb2_posix_cc_info(
-				conn,
-				0,
-				psbuf,
-				&owner,
-				&group,
-				buf,
-				sizeof(buf));
-
-			status = smb2_create_blob_add(
-				state->out_context_blobs,
-				state->out_context_blobs,
-				SMB2_CREATE_TAG_POSIX,
-				blob);
-			if (!NT_STATUS_IS_OK(status)) {
-				goto fail;
-			}
+		status = smb2_create_blob_add(state->out_context_blobs,
+					      state->out_context_blobs,
+					      SMB2_CREATE_TAG_POSIX,
+					      (DATA_BLOB){
+						      .data = buf,
+						      .length = ndr.offset,
+					      });
+		if (!NT_STATUS_IS_OK(status)) {
+			goto fail;
 		}
 	}
 

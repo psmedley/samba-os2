@@ -2,12 +2,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 02/19/2024
+.\"      Date: 03/27/2024
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.19.5
+.\"    Source: Samba 4.20.0
 .\"  Language: English
 .\"
-.TH "NET" "8" "02/19/2024" "Samba 4\&.19\&.5" "System Administration tools"
+.TH "NET" "8" "03/27/2024" "Samba 4\&.20\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 net \- Tool for administration of Samba and remote CIFS servers\&.
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-net {<ads|rap|rpc>} [\-h|\-\-help] [\-d|\-\-debuglevel=DEBUGLEVEL] [\-\-debug\-stdout] [\-\-configfile=CONFIGFILE] [\-\-option=name=value] [\-l|\-\-log\-basename=LOGFILEBASE] [\-\-leak\-report] [\-\-leak\-report\-full] [\-R|\-\-name\-resolve=NAME\-RESOLVE\-ORDER] [\-O|\-\-socket\-options=SOCKETOPTIONS] [\-m|\-\-max\-protocol=MAXPROTOCOL] [\-n|\-\-netbiosname=NETBIOSNAME] [\-\-netbios\-scope=SCOPE] [\-W|\-\-workgroup=WORKGROUP] [\-\-realm=REALM] [\-U|\-\-user=[DOMAIN/]USERNAME[%PASSWORD]] [\-N|\-\-no\-pass] [\-\-password=STRING] [\-\-pw\-nt\-hash] [\-A|\-\-authentication\-file=FILE] [\-P|\-\-machine\-pass] [\-\-simple\-bind\-dn=DN] [\-\-use\-kerberos=desired|required|off] [\-\-use\-krb5\-ccache=CCACHE] [\-\-use\-winbind\-ccache] [\-\-client\-protection=sign|encrypt|off] [\-V|\-\-version] [\-w|\-\-target\-workgroup\ workgroup] [\-I|\-\-ipaddress\ ip\-address] [\-p|\-\-port\ port] [\-\-myname] [\-S|\-\-server\ server] [\-\-long] [\-v|\-\-verbose] [\-f|\-\-force] [\-\-request\-timeout\ seconds] [\-t|\-\-timeout\ seconds] [\-\-dns\-ttl\ TTL\-IN\-SECONDS] [\-i|\-\-stdin]
+net {<ads|rap|rpc>} [\-h|\-\-help] [\-d|\-\-debuglevel=DEBUGLEVEL] [\-\-debug\-stdout] [\-\-configfile=CONFIGFILE] [\-\-option=name=value] [\-l|\-\-log\-basename=LOGFILEBASE] [\-\-leak\-report] [\-\-leak\-report\-full] [\-R|\-\-name\-resolve=NAME\-RESOLVE\-ORDER] [\-O|\-\-socket\-options=SOCKETOPTIONS] [\-m|\-\-max\-protocol=MAXPROTOCOL] [\-n|\-\-netbiosname=NETBIOSNAME] [\-\-netbios\-scope=SCOPE] [\-W|\-\-workgroup=WORKGROUP] [\-\-realm=REALM] [\-U|\-\-user=[DOMAIN/]USERNAME[%PASSWORD]] [\-N|\-\-no\-pass] [\-\-password=STRING] [\-\-pw\-nt\-hash] [\-A|\-\-authentication\-file=FILE] [\-P|\-\-machine\-pass] [\-\-simple\-bind\-dn=DN] [\-\-use\-kerberos=desired|required|off] [\-\-use\-krb5\-ccache=CCACHE] [\-\-use\-winbind\-ccache] [\-\-client\-protection=sign|encrypt|off] [\-V|\-\-version] [\-w|\-\-target\-workgroup\ workgroup] [\-I|\-\-ipaddress\ ip\-address] [\-p|\-\-port\ port] [\-\-myname] [\-S|\-\-server\ server] [\-\-long] [\-v|\-\-verbose] [\-f|\-\-force] [\-\-request\-timeout\ seconds] [\-t|\-\-timeout\ seconds] [\-\-dns\-ttl\ TTL\-IN\-SECONDS] [\-i|\-\-stdin] [\-\-witness\-registration=REGISTRATION_UUID] [\-\-witness\-net\-name=REGEX] [\-\-witness\-share\-name=REGEX] [\-\-witness\-ip\-address=REGEX] [\-\-witness\-client\-computer\-name=REGEX] [\-\-witness\-apply\-to\-all] [\-\-witness\-new\-node=NODEID] [\-\-witness\-new\-ip=IPADDRESS] [\-\-witness\-forced\-response=JSON]
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -259,6 +259,51 @@ Follow symlinks encountered while traversing a directory\&.
 \-\-dns\-ttl TTL\-IN\-SECONDS
 .RS 4
 Specify the Time to Live (TTL) of DNS records\&. DNS records will be created or updated with the given TTL\&. The TTL is specified in seconds\&. Can be used with "net ads dns register" and "net ads join"\&. The default is 3600 seconds\&.
+.RE
+.PP
+\-\-witness\-registration=REGISTRATION_UUID
+.RS 4
+This does a direct lookup for REGISTRATION_UUID instead of doing a database traversal\&.
+.RE
+.PP
+\-\-witness\-net\-name=REGEX
+.RS 4
+This specifies the \*(Aqserver name\*(Aq the client registered for monitoring\&.
+.RE
+.PP
+\-\-witness\-share\-name=REGEX
+.RS 4
+This specifies the \*(Aqshare name\*(Aq the client registered for monitoring\&. Note that the share name is optional in the registration, otherwise an empty string is matched\&.
+.RE
+.PP
+\-\-witness\-ip\-address=REGEX
+.RS 4
+This specifies the ip address the client registered for monitoring\&.
+.RE
+.PP
+\-\-witness\-client\-computer\-name=REGEX
+.RS 4
+This specifies the client computer name the client specified in the registration\&. Note it is just a string chosen by the client itself\&.
+.RE
+.PP
+\-\-witness\-apply\-to\-all
+.RS 4
+This selects all registrations\&.
+.RE
+.PP
+\-\-witness\-new\-node=NODEID
+.RS 4
+By specifying a NODEID all ip addresses currently available on the given node are included in the response\&. By specifying \*(Aq\-1\*(Aq as NODEID all ip addresses of the cluster are included in the response\&.
+.RE
+.PP
+\-\-witness\-new\-ip=IPADDRESS
+.RS 4
+By specifying an IPADDRESS only the specified ip address is included in the response\&.
+.RE
+.PP
+\-\-witness\-forced\-response=JSON
+.RS 4
+This allows the generation of very complex witness_notifyResponse structures\&.
 .RE
 .PP
 \-d|\-\-debuglevel=DEBUGLEVEL
@@ -1302,10 +1347,10 @@ Windows SPN
 A Windows SPN is of the format \*(Aqserviceclass/host:port\*(Aq, it is used to create a kerberos principal \*(Aqserviceclass/host@realm\*(Aq which will be written to the keytab file\&.
 .RE
 .PP
-Unlike old versions no computer AD objects are modified by this command\&. To preserve the bevhaviour of older clients \*(Aqnet ads keytab ad_update_ads\*(Aq is available\&.
+Unlike old versions no computer AD objects are modified by this command\&. To preserve the behaviour of older clients \*(Aqnet ads keytab ad_update_ads\*(Aq is available\&.
 .SS "ADS KEYTAB \fIADD_UPDATE_ADS\fR \fI(principal | machine | serviceclass | windows SPN\fR"
 .PP
-Adds a new keytab entry (see section for net ads keytab add)\&. In addition to adding entries to the keytab file corrosponding Windows SPNs are created from the entry passed to this command\&. These SPN(s) added to the AD computer account object associated with the client machine running this command for the following entry types;
+Adds a new keytab entry (see section for net ads keytab add)\&. In addition to adding entries to the keytab file corresponding Windows SPNs are created from the entry passed to this command\&. These SPN(s) added to the AD computer account object associated with the client machine running this command for the following entry types;
 .PP
 serviceclass
 .RS 4
@@ -1589,14 +1634,8 @@ The default if no "acl" is given is "Everyone:R", which means any authenticated 
 The optional "guest_ok" has the same effect as the parameter of the same name in
 ${prefix}/etc/smb\&.conf, in that it allows guest access to this user defined share\&. This parameter is only allowed if the global parameter "usershare allow guests" has been set to true in the
 ${prefix}/etc/smb\&.conf\&.
-
-
-There is no separate command to modify an existing user defined share,
-just use the "net usershare add [sharename]" command using the same
-sharename as the one you wish to modify and specify the new options
-you wish\&. The Samba smbd daemon notices user defined share modifications
-at connect time so will see the change immediately, there is no need
-to restart smbd on adding, deleting or changing a user defined share\&.
+.PP
+There is no separate command to modify an existing user defined share, just use the "net usershare add [sharename]" command using the same sharename as the one you wish to modify and specify the new options you wish\&. The Samba smbd daemon notices user defined share modifications at connect time so will see the change immediately, there is no need to restart smbd on adding, deleting or changing a user defined share\&.
 .SS "USERSHARE DELETE sharename"
 .PP
 Deletes the user defined share by name\&. The Samba smbd daemon immediately notices this change, although it will not disconnect any users currently connected to the deleted share\&.
@@ -2534,6 +2573,260 @@ is a required parameter to load the provisioning from a file\&.
 .RE
 .PP
 Example: net offlinejoin requestodj \-U administrator%secret loadfile=provisioning\&.txt
+.SS "WITNESS"
+.PP
+Starting with version 4\&.20 Samba has support for the SMB Witness service in a cluster\&.
+.PP
+The following witness commands are implemented:
+.RS 4
+
+net witness list             List witness registrations from rpcd_witness_registration\&.tdb\&.
+.RE
+.RS 4
+
+net witness client\-move      Generate client move notifications for witness registrations to a new ip or node\&.
+.RE
+.RS 4
+
+net witness share\-move       Generate share move notifications for witness registrations to a new ip or node\&.
+.RE
+.RS 4
+
+net witness force\-unregister Force unregistrations for witness registrations\&.
+.RE
+.RS 4
+
+net witness force\-response   Force an AsyncNotify response based on json input (mostly for testing)\&.
+.RE
+.SS "WITNESS LIST"
+.PP
+List witness registrations from rpcd_witness_registration\&.tdb
+.PP
+Note: Only supported with clustering=yes!
+.PP
+Machine readable output can be generated with the following option:
+.PP
+\-\-json
+.PP
+The selection of registrations can be limited by the following options:
+.PP
+\-\-witness\-registration=REGISTRATION_UUID
+.PP
+This does a direct lookup for REGISTRATION_UUID instead of doing a database traversal\&.
+.PP
+The following options all take a POSIX Extended Regular Expression, which can further filter the selection of registrations\&. These options are applied as logical AND, but each REGEX allows specifying multiple strings using the pipe symbol\&.
+.PP
+\-\-witness\-net\-name=REGEX
+.PP
+This specifies the \*(Aqserver name\*(Aq the client registered for monitoring\&.
+.PP
+\-\-witness\-share\-name=REGEX
+.PP
+This specifies the \*(Aqshare name\*(Aq the client registered for monitoring\&. Note that the share name is optional in the registration, otherwise an empty string is matched\&.
+.PP
+\-\-witness\-ip\-address=REGEX
+.PP
+This specifies the ip address the client registered for monitoring\&.
+.PP
+\-\-witness\-client\-computer\-name=REGEX
+.PP
+This specifies the client computer name the client specified in the registration\&. Note it is just a string chosen by the client itself\&.
+.SS "WITNESS CLIENT-MOVE"
+.PP
+Generate client move notifications for witness registrations to a new ip or node
+.PP
+Note: Only supported with clustering=yes!
+.PP
+Machine readable output can be generated with the following option:
+.PP
+\-\-json
+.PP
+The selection of registrations can be limited by the following options:
+.PP
+\-\-witness\-registration=REGISTRATION_UUID
+.PP
+This does a direct lookup for REGISTRATION_UUID instead of doing a database traversal\&.
+.PP
+The following options all take a POSIX Extended Regular Expression, which can further filter the selection of registrations\&. These options are applied as logical AND, but each REGEX allows specifying multiple strings using the pipe symbol\&.
+.PP
+\-\-witness\-net\-name=REGEX
+.PP
+This specifies the \*(Aqserver name\*(Aq the client registered for monitoring\&.
+.PP
+\-\-witness\-share\-name=REGEX
+.PP
+This specifies the \*(Aqshare name\*(Aq the client registered for monitoring\&. Note that the share name is optional in the registration, otherwise an empty string is matched\&.
+.PP
+\-\-witness\-ip\-address=REGEX
+.PP
+This specifies the ip address the client registered for monitoring\&.
+.PP
+\-\-witness\-client\-computer\-name=REGEX
+.PP
+This specifies the client computer name the client specified in the registration\&. Note it is just a string chosen by the client itself\&.
+.PP
+If the update should be applied to all registrations it needs to be explicitly specified:
+.PP
+\-\-witness\-apply\-to\-all
+.PP
+This selects all registrations\&. Note: This is mutual exclusive to the above options\&.
+.PP
+The content of the CLIENT_MOVE notification contains ip addresses specified by (exactly one) of the following options:
+.PP
+\-\-witness\-new\-node=NODEID
+.PP
+By specifying a NODEID all ip addresses currently available on the given node are included in the response\&. By specifying \*(Aq\-1\*(Aq as NODEID all ip addresses of the cluster are included in the response\&.
+.PP
+\-\-witness\-new\-ip=IPADDRESS
+.PP
+By specifying an IPADDRESS only the specified ip address is included in the response\&.
+.SS "WITNESS SHARE-MOVE"
+.PP
+Generate share move notifications for witness registrations to a new ip or node
+.PP
+Note: Only supported with clustering=yes!
+.PP
+Machine readable output can be generated with the following option:
+.PP
+\-\-json
+.PP
+The selection of registrations can be limited by the following options:
+.PP
+\-\-witness\-registration=REGISTRATION_UUID
+.PP
+This does a direct lookup for REGISTRATION_UUID instead of doing a database traversal\&.
+.PP
+The following options all take a POSIX Extended Regular Expression, which can further filter the selection of registrations\&. These options are applied as logical AND, but each REGEX allows specifying multiple strings using the pipe symbol\&.
+.PP
+\-\-witness\-net\-name=REGEX
+.PP
+This specifies the \*(Aqserver name\*(Aq the client registered for monitoring\&.
+.PP
+\-\-witness\-share\-name=REGEX
+.PP
+This specifies the \*(Aqshare name\*(Aq the client registered for monitoring\&. Note that the share name is optional in the registration, otherwise an empty string is matched\&.
+.PP
+\-\-witness\-ip\-address=REGEX
+.PP
+This specifies the ip address the client registered for monitoring\&.
+.PP
+\-\-witness\-client\-computer\-name=REGEX
+.PP
+This specifies the client computer name the client specified in the registration\&. Note it is just a string chosen by the client itself\&.
+.PP
+If the update should be applied to all registrations it needs to be explicitly specified:
+.PP
+\-\-witness\-apply\-to\-all
+.PP
+This selects all registrations\&. Note: This is mutual exclusive to the above options\&.
+.PP
+Note: This only applies to registrations with a non empty share name!
+.PP
+The content of the SHARE_MOVE notification contains ip addresses specified by (exactly one) of the following options:
+.PP
+\-\-witness\-new\-node=NODEID
+.PP
+By specifying a NODEID all ip addresses currently available on the given node are included in the response\&. By specifying \*(Aq\-1\*(Aq as NODEID all ip addresses of the cluster are included in the response\&.
+.PP
+\-\-witness\-new\-ip=IPADDRESS
+.PP
+By specifying an IPADDRESS only the specified ip address is included in the response\&.
+.SS "WITNESS FORCE-UNREGISTER"
+.PP
+Force unregistrations for witness registrations
+.PP
+Note: Only supported with clustering=yes!
+.PP
+Machine readable output can be generated with the following option:
+.PP
+\-\-json
+.PP
+The selection of registrations can be limited by the following options:
+.PP
+\-\-witness\-registration=REGISTRATION_UUID
+.PP
+This does a direct lookup for REGISTRATION_UUID instead of doing a database traversal\&.
+.PP
+The following options all take a POSIX Extended Regular Expression, which can further filter the selection of registrations\&. These options are applied as logical AND, but each REGEX allows specifying multiple strings using the pipe symbol\&.
+.PP
+\-\-witness\-net\-name=REGEX
+.PP
+This specifies the \*(Aqserver name\*(Aq the client registered for monitoring\&.
+.PP
+\-\-witness\-share\-name=REGEX
+.PP
+This specifies the \*(Aqshare name\*(Aq the client registered for monitoring\&. Note that the share name is optional in the registration, otherwise an empty string is matched\&.
+.PP
+\-\-witness\-ip\-address=REGEX
+.PP
+This specifies the ip address the client registered for monitoring\&.
+.PP
+\-\-witness\-client\-computer\-name=REGEX
+.PP
+This specifies the client computer name the client specified in the registration\&. Note it is just a string chosen by the client itself\&.
+.PP
+If the update should be applied to all registrations it needs to be explicitly specified:
+.PP
+\-\-witness\-apply\-to\-all
+.PP
+This selects all registrations\&. Note: This is mutual exclusive to the above options\&.
+.PP
+The selected registrations are removed on the server and any pending AsyncNotify request will get a NOT_FOUND error\&.
+.PP
+Typically this triggers a clean re\-registration on the client\&.
+.SS "WITNESS FORCE-RESPONSE"
+.PP
+Force an AsyncNotify response based on json input (mostly for testing)
+.PP
+Note: Only supported with clustering=yes!
+.PP
+Machine readable output can be generated with the following option:
+.PP
+\-\-json
+.PP
+The selection of registrations can be limited by the following options:
+.PP
+\-\-witness\-registration=REGISTRATION_UUID
+.PP
+This does a direct lookup for REGISTRATION_UUID instead of doing a database traversal\&.
+.PP
+The following options all take a POSIX Extended Regular Expression, which can further filter the selection of registrations\&. These options are applied as logical AND, but each REGEX allows specifying multiple strings using the pipe symbol\&.
+.PP
+\-\-witness\-net\-name=REGEX
+.PP
+This specifies the \*(Aqserver name\*(Aq the client registered for monitoring\&.
+.PP
+\-\-witness\-share\-name=REGEX
+.PP
+This specifies the \*(Aqshare name\*(Aq the client registered for monitoring\&. Note that the share name is optional in the registration, otherwise an empty string is matched\&.
+.PP
+\-\-witness\-ip\-address=REGEX
+.PP
+This specifies the ip address the client registered for monitoring\&.
+.PP
+\-\-witness\-client\-computer\-name=REGEX
+.PP
+This specifies the client computer name the client specified in the registration\&. Note it is just a string chosen by the client itself\&.
+.PP
+If the update should be applied to all registrations it needs to be explicitly specified:
+.PP
+\-\-witness\-apply\-to\-all
+.PP
+This selects all registrations\&. Note: This is mutual exclusive to the above options\&.
+.PP
+Note this is designed for testing and debugging!
+.PP
+In short it is not designed to be used by administrators, but developers and automated tests\&.
+.PP
+By default an empty response with WERR_OK is generated, but basically any valid response can be specified by a specifying a JSON string:
+.PP
+\-\-witness\-forced\-response=JSON
+.PP
+This allows the generation of very complex witness_notifyResponse structures\&.
+.PP
+As this is for developers, please read the code in order to understand all possible values of the JSON string format\&.\&.\&.
+.PP
+See \*(Aqnet help witness force\-response\*(Aq for further details\&.
 .SS "HELP [COMMAND]"
 .PP
 Gives usage information for the specified command\&.

@@ -2,12 +2,12 @@
 .\"     Title: smbcacls
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 02/19/2024
+.\"      Date: 03/27/2024
 .\"    Manual: User Commands
-.\"    Source: Samba 4.19.5
+.\"    Source: Samba 4.20.0
 .\"  Language: English
 .\"
-.TH "SMBCACLS" "1" "02/19/2024" "Samba 4\&.19\&.5" "User Commands"
+.TH "SMBCACLS" "1" "03/27/2024" "Samba 4\&.20\&.0" "User Commands"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -31,7 +31,7 @@
 smbcacls \- Set or get ACLs on an NT file or directory names
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-smbcacls {//server/share} {/filename} [\-D|\-\-delete=ACL] [\-M|\-\-modify=ACL] [\-a|\-\-add=ACL] [\-S|\-\-set=ACLS] [\-C|\-\-chown=USERNAME] [\-G|\-\-chgrp=GROUPNAME] [\-I|\-\-inherit=STRING] [\-\-propagate\-inheritance] [\-\-numeric] [\-\-sddl] [\-\-query\-security\-info=INT] [\-\-set\-security\-info=INT] [\-t|\-\-test\-args] [\-\-domain\-sid=SID] [\-x|\-\-maximum\-access] [\-?|\-\-help] [\-\-usage] [\-d|\-\-debuglevel=DEBUGLEVEL] [\-\-debug\-stdout] [\-\-configfile=CONFIGFILE] [\-\-option=name=value] [\-l|\-\-log\-basename=LOGFILEBASE] [\-\-leak\-report] [\-\-leak\-report\-full] [\-R|\-\-name\-resolve=NAME\-RESOLVE\-ORDER] [\-O|\-\-socket\-options=SOCKETOPTIONS] [\-m|\-\-max\-protocol=MAXPROTOCOL] [\-n|\-\-netbiosname=NETBIOSNAME] [\-\-netbios\-scope=SCOPE] [\-W|\-\-workgroup=WORKGROUP] [\-\-realm=REALM] [\-U|\-\-user=[DOMAIN/]USERNAME[%PASSWORD]] [\-N|\-\-no\-pass] [\-\-password=STRING] [\-\-pw\-nt\-hash] [\-A|\-\-authentication\-file=FILE] [\-P|\-\-machine\-pass] [\-\-simple\-bind\-dn=DN] [\-\-use\-kerberos=desired|required|off] [\-\-use\-krb5\-ccache=CCACHE] [\-\-use\-winbind\-ccache] [\-\-client\-protection=sign|encrypt|off] [\-V|\-\-version]
+smbcacls {//server/share} {/filename} [\-D|\-\-delete=ACL] [\-M|\-\-modify=ACL] [\-a|\-\-add=ACL] [\-S|\-\-set=ACLS] [\-C|\-\-chown=USERNAME] [\-G|\-\-chgrp=GROUPNAME] [\-I|\-\-inherit=STRING] [\-\-recurse] [\-\-propagate\-inheritance] [\-\-save=savefile] [\-\-restore=restorefile] [\-\-numeric] [\-\-sddl] [\-\-query\-security\-info=INT] [\-\-set\-security\-info=INT] [\-t|\-\-test\-args] [\-\-domain\-sid=SID] [\-x|\-\-maximum\-access] [\-?|\-\-help] [\-\-usage] [\-d|\-\-debuglevel=DEBUGLEVEL] [\-\-debug\-stdout] [\-\-configfile=CONFIGFILE] [\-\-option=name=value] [\-l|\-\-log\-basename=LOGFILEBASE] [\-\-leak\-report] [\-\-leak\-report\-full] [\-R|\-\-name\-resolve=NAME\-RESOLVE\-ORDER] [\-O|\-\-socket\-options=SOCKETOPTIONS] [\-m|\-\-max\-protocol=MAXPROTOCOL] [\-n|\-\-netbiosname=NETBIOSNAME] [\-\-netbios\-scope=SCOPE] [\-W|\-\-workgroup=WORKGROUP] [\-\-realm=REALM] [\-U|\-\-user=[DOMAIN/]USERNAME[%PASSWORD]] [\-N|\-\-no\-pass] [\-\-password=STRING] [\-\-pw\-nt\-hash] [\-A|\-\-authentication\-file=FILE] [\-P|\-\-machine\-pass] [\-\-simple\-bind\-dn=DN] [\-\-use\-kerberos=desired|required|off] [\-\-use\-krb5\-ccache=CCACHE] [\-\-use\-winbind\-ccache] [\-\-client\-protection=sign|encrypt|off] [\-V|\-\-version]
 .SH "DESCRIPTION"
 .PP
 This tool is part of the
@@ -40,7 +40,7 @@ suite\&.
 .PP
 The
 smbcacls
-program manipulates NT Access Control Lists (ACLs) on SMB file shares\&. An ACL is comprised zero or more Access Control Entries (ACEs), which define access restrictions for a specific user or group\&.
+program manipulates NT Access Control Lists (ACLs) on SMB file shares\&. An ACL comprises zero or more Access Control Entries (ACEs), which define access restrictions for a specific user or group\&.
 .SH "OPTIONS"
 .PP
 The following options are available to the
@@ -95,6 +95,21 @@ option\&. To set the check box pass allow\&. To unset the check box pass either 
 \-\-propagate\-inheritance
 .RS 4
 Add, modify, delete or set ACEs on an entire directory tree according to the inheritance flags\&. Refer to the INHERITANCE section for details\&.
+.RE
+.PP
+\-\-save savefile
+.RS 4
+stores the DACLs in sddl format of the specified file or folder for later use with restore\&. SACLS, owner or integrity labels are not stored\&.
+.RE
+.PP
+\-\-restore savefile
+.RS 4
+applies the stored DACLS to files in directory\&.
+.RE
+.PP
+\-\-recurse
+.RS 4
+indicates the operation is performed on directory and all files/directories below\&. (only applies to save option)
 .RE
 .PP
 \-\-numeric
@@ -1033,7 +1048,7 @@ smbcacls
 couldn\*(Aqt connect to the specified server, or there was an error getting or setting the ACLs, an exit status of 1 is returned\&. If there was an error parsing any command line arguments, an exit status of 2 is returned\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.19\&.5 of the Samba suite\&.
+This man page is part of version 4\&.20\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

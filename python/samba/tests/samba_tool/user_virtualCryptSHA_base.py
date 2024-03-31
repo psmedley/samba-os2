@@ -16,35 +16,16 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import os
-import time
-import base64
 import ldb
 import samba
 from samba.tests.samba_tool.base import SambaToolCmdTest
 from samba.credentials import Credentials
 from samba.samdb import SamDB
 from samba.auth import system_session
-from samba.ndr import ndr_unpack
-from samba.dcerpc import drsblobs
 from samba import dsdb
-import re
 
 USER_NAME = "CryptSHATestUser"
 HASH_OPTION = "password hash userPassword schemes"
-
-# Get the value of an attribute from the output string
-# Note: Does not correctly handle values spanning multiple lines,
-#       which is acceptable for it's usage in these tests.
-
-
-def _get_attribute(out, name):
-    p = re.compile("^" + name + ":\s+(\S+)")
-    for line in out.split("\n"):
-        m = p.match(line)
-        if m:
-            return m.group(1)
-    return ""
 
 
 class UserCmdCryptShaTestCase(SambaToolCmdTest):
@@ -55,8 +36,11 @@ class UserCmdCryptShaTestCase(SambaToolCmdTest):
     users = []
     samdb = None
 
-    def setUp(self):
-        super(UserCmdCryptShaTestCase, self).setUp()
+    def _get_attribute(self, out, name):
+        parsed = list(self.ldb.parse_ldif(out))
+        self.assertEqual(len(parsed), 1)
+        changetype, msg = parsed[0]
+        return str(msg.get(name, ""))
 
     def add_user(self, hashes=""):
         self.lp = samba.tests.env_loadparm()
@@ -78,7 +62,7 @@ class UserCmdCryptShaTestCase(SambaToolCmdTest):
                        password)
 
     def tearDown(self):
-        super(UserCmdCryptShaTestCase, self).tearDown()
+        super().tearDown()
         self.runsubcmd("user", "delete", USER_NAME)
 
     def _get_password(self, attributes, decrypt=False):
@@ -95,10 +79,7 @@ class UserCmdCryptShaTestCase(SambaToolCmdTest):
                               out,
                               err,
                               "Ensure getpassword runs")
-        self.assertEqual(err, "", "getpassword")
-        self.assertMatch(out,
-                         "Got password OK",
-                         "getpassword out[%s]" % out)
+        self.assertEqual(err, "Got password OK\n", "getpassword")
         return out
 
     # Change the just the NT password hash, as would happen if the password

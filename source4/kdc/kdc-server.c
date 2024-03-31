@@ -132,9 +132,9 @@ static void kdc_udp_call_loop(struct tevent_req *subreq)
 	call->in.data = buf;
 	call->in.length = len;
 
-	DEBUG(10,("Received krb5 UDP packet of length %lu from %s\n",
-		 (long)call->in.length,
-		 tsocket_address_string(call->src, call)));
+	DBG_DEBUG("Received krb5 UDP packet of length %zu from %s\n",
+		  call->in.length,
+		  tsocket_address_string(call->src, call));
 
 	/* Call krb5 */
 	ret = sock->kdc_socket->process(sock->kdc_socket->kdc,
@@ -153,7 +153,7 @@ static void kdc_udp_call_loop(struct tevent_req *subreq)
 		uint16_t port;
 
 		if (!sock->kdc_socket->kdc->am_rodc) {
-			DEBUG(0,("kdc_udp_call_loop: proxying requested when not RODC"));
+			DBG_ERR("proxying requested when not RODC\n");
 			talloc_free(call);
 			goto done;
 		}
@@ -281,9 +281,9 @@ static void kdc_tcp_call_loop(struct tevent_req *subreq)
 		return;
 	}
 
-	DEBUG(10,("Received krb5 TCP packet of length %lu from %s\n",
-		 (long) call->in.length,
-		 tsocket_address_string(kdc_conn->conn->remote_address, call)));
+	DBG_DEBUG("Received krb5 TCP packet of length %zu from %s\n",
+		  call->in.length,
+		  tsocket_address_string(kdc_conn->conn->remote_address, call));
 
 	/* skip length header */
 	call->in.data +=4;
@@ -349,13 +349,13 @@ static void kdc_tcp_call_loop(struct tevent_req *subreq)
 
 	/*
 	 * The krb5 tcp pdu's has the length as 4 byte (initial_read_size),
-	 * packet_full_request_u32 provides the pdu length then.
+	 * tstream_full_request_u32 provides the pdu length then.
 	 */
 	subreq = tstream_read_pdu_blob_send(kdc_conn,
 					    kdc_conn->conn->event.ctx,
 					    kdc_conn->tstream,
 					    4, /* initial_read_size */
-					    packet_full_request_u32,
+					    tstream_full_request_u32,
 					    kdc_conn);
 	if (subreq == NULL) {
 		kdc_tcp_terminate_connection(kdc_conn, "kdc_tcp_call_loop: "
@@ -408,7 +408,7 @@ static void kdc_tcp_call_proxy_done(struct tevent_req *subreq)
 					   kdc_conn->send_queue,
 					   call->out_iov, 2);
 	if (subreq == NULL) {
-		kdc_tcp_terminate_connection(kdc_conn, "kdc_tcp_call_loop: "
+		kdc_tcp_terminate_connection(kdc_conn, "kdc_tcp_call_proxy_done: "
 				"no memory for tstream_writev_queue_send");
 		return;
 	}
@@ -416,16 +416,16 @@ static void kdc_tcp_call_proxy_done(struct tevent_req *subreq)
 
 	/*
 	 * The krb5 tcp pdu's has the length as 4 byte (initial_read_size),
-	 * packet_full_request_u32 provides the pdu length then.
+	 * tstream_full_request_u32 provides the pdu length then.
 	 */
 	subreq = tstream_read_pdu_blob_send(kdc_conn,
 					    kdc_conn->conn->event.ctx,
 					    kdc_conn->tstream,
 					    4, /* initial_read_size */
-					    packet_full_request_u32,
+					    tstream_full_request_u32,
 					    kdc_conn);
 	if (subreq == NULL) {
-		kdc_tcp_terminate_connection(kdc_conn, "kdc_tcp_call_loop: "
+		kdc_tcp_terminate_connection(kdc_conn, "kdc_tcp_call_proxy_done: "
 				"no memory for tstream_read_pdu_blob_send");
 		return;
 	}
@@ -496,6 +496,8 @@ static void kdc_tcp_accept(struct stream_connection *conn)
 				"kdc_tcp_accept: out of memory");
 		return;
 	}
+	/* as server we want to fail early */
+	tstream_bsd_fail_readv_first_error(kdc_conn->tstream, true);
 
 	kdc_conn->conn = conn;
 	kdc_conn->kdc_socket = kdc_socket;
@@ -503,13 +505,13 @@ static void kdc_tcp_accept(struct stream_connection *conn)
 
 	/*
 	 * The krb5 tcp pdu's has the length as 4 byte (initial_read_size),
-	 * packet_full_request_u32 provides the pdu length then.
+	 * tstream_full_request_u32 provides the pdu length then.
 	 */
 	subreq = tstream_read_pdu_blob_send(kdc_conn,
 					    kdc_conn->conn->event.ctx,
 					    kdc_conn->tstream,
 					    4, /* initial_read_size */
-					    packet_full_request_u32,
+					    tstream_full_request_u32,
 					    kdc_conn);
 	if (subreq == NULL) {
 		kdc_tcp_terminate_connection(kdc_conn, "kdc_tcp_accept: "
@@ -584,8 +586,8 @@ NTSTATUS kdc_add_socket(struct kdc_server *kdc,
 					     kdc_socket,
 					     kdc->task->process_context);
 		if (!NT_STATUS_IS_OK(status)) {
-			DEBUG(0,("Failed to bind to %s:%u TCP - %s\n",
-				 address, port, nt_errstr(status)));
+			DBG_ERR("Failed to bind to %s:%u TCP - %s\n",
+				address, port, nt_errstr(status));
 			talloc_free(kdc_socket);
 			return status;
 		}
@@ -602,8 +604,8 @@ NTSTATUS kdc_add_socket(struct kdc_server *kdc,
 				     &kdc_udp_socket->dgram);
 	if (ret != 0) {
 		status = map_nt_error_from_unix_common(errno);
-		DEBUG(0,("Failed to bind to %s:%u UDP - %s\n",
-			 address, port, nt_errstr(status)));
+		DBG_ERR("Failed to bind to %s:%u UDP - %s\n",
+			address, port, nt_errstr(status));
 		return status;
 	}
 

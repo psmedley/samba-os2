@@ -72,13 +72,15 @@ static size_t classic_interfaces(
 
 }
 
-static size_t classic_servers(
+static NTSTATUS classic_servers(
 	struct dcesrv_context *dce_ctx,
 	const struct dcesrv_endpoint_server ***_ep_servers,
+	size_t *_num_ep_servers,
 	void *private_data)
 {
 	static const struct dcesrv_endpoint_server *ep_servers[7] = { NULL };
 	size_t num_servers = ARRAY_SIZE(ep_servers);
+	NTSTATUS status;
 	bool ok;
 
 	ep_servers[0] = srvsvc_get_ep_server();
@@ -113,12 +115,24 @@ static size_t classic_servers(
 		exit(1);
 	}
 
+	status = share_info_db_init();
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("share_info_db_init failed: %s\n", nt_errstr(status));
+		exit(1);
+	}
+
 	lp_load_with_shares(get_dyn_CONFIGFILE());
 
 	mangle_reset_cache();
 
+	status = dcesrv_register_default_auth_types_machine_principal(dce_ctx);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
 	*_ep_servers = ep_servers;
-	return num_servers;
+	*_num_ep_servers = num_servers;
+	return NT_STATUS_OK;
 }
 
 int main(int argc, const char *argv[])

@@ -18,15 +18,34 @@
 """Tests for samba.dcerpc.security"""
 
 from samba.dcerpc import security
-from samba.tests import TestCase, DynamicTestCase
+from samba.tests import TestCase, DynamicTestCase, get_env_dir
 from samba.colour import c_RED, c_GREEN
+import os
 
 
 class SddlDecodeEncodeBase(TestCase):
     maxDiff = 10000
+    case_insensitive = False
+
     @classmethod
     def setUpDynamicTestCases(cls):
         cls.domain_sid = security.dom_sid("S-1-2-3-4")
+
+        strings_dir = getattr(cls, 'strings_dir', None)
+        if strings_dir is not None:
+            cls.read_windows_strings(strings_dir, False)
+
+        for (key, fn) in [
+                ("SAMBA_WRITE_WINDOWS_STRINGS_DIR",
+                 cls.write_windows_strings),
+                ("SAMBA_READ_WINDOWS_STRINGS_DIR",
+                 cls.read_windows_strings),
+                ("SAMBA_WRITE_FUZZ_STRINGS_DIR",
+                 cls.write_sddl_strings_for_fuzz_seeds)]:
+            dir = get_env_dir(key)
+            if dir is not None:
+                fn(dir)
+
         seen = set()
         for pair in cls.strings:
             if isinstance(pair, str):
@@ -50,25 +69,56 @@ class SddlDecodeEncodeBase(TestCase):
     def _test_sddl_with_args(self, s, canonical):
         try:
             sd1 = security.descriptor.from_sddl(s, self.domain_sid)
-        except (TypeError, ValueError) as e:
+        except (TypeError, ValueError, security.SDDLValueError) as e:
             self.fail(f"raised {e}")
 
         sddl = sd1.as_sddl(self.domain_sid)
         sd2 = security.descriptor.from_sddl(sddl, self.domain_sid)
         self.assertEqual(sd1, sd2)
-        if '0X' in canonical.upper():
+        if '0X' in canonical.upper() or self.case_insensitive:
             # let's chill out about case in hex numbers.
             self.assertEqual(sddl.upper(), canonical.upper())
         else:
             self.assertEqual(sddl, canonical)
 
     def _test_sddl_should_fail_with_args(self, s, canonical):
-        with self.assertRaises(ValueError):
+        try:
             sd = security.descriptor.from_sddl(s, self.domain_sid)
-            print(sd.as_sddl(self.domain_sid))
+        except security.SDDLValueError as e:
+            generic_msg, specific_msg, position, sddl = e.args
+            self.assertEqual(generic_msg, "Unable to parse SDDL")
+            self.assertIsInstance(specific_msg, str)
+            self.assertIsInstance(position, int)
+            self.assertLessEqual(position, len(s))
+            self.assertGreaterEqual(position, 0)
+            self.assertEqual(s, sddl)
 
-    def _test_write_test_strings(self):
-        """The file libcli/security/tests/windows/windows-sddl-tests.c, if
+            print(f"{s}\n{' ' * position}^\n {specific_msg}")
+        else:
+            self.fail(f"{sd.as_sddl(self.domain_sid)} should fail to parse")
+
+    @classmethod
+    def write_sddl_strings_for_fuzz_seeds(cls, dir):
+        """write all the SDDL strings we have into a directory as individual
+        files, using a naming convention beloved of fuzzing engines.
+
+        To run this set an environment variable; see
+        cls.setUpDynamicTestCases(), above.
+
+        Note this will only run in subclasses annotated with @DynamicTestCase.
+        """
+        from hashlib import md5
+        for sddl in cls.strings:
+            if not isinstance(sddl, str):
+                sddl = sddl[0]
+            name = md5(sddl.encode()).hexdigest()
+            with open(os.path.join(dir, name), 'w') as f:
+                f.write(sddl)
+
+    @classmethod
+    def write_windows_strings(cls, dir):
+        """Write all test cases in the format used by
+        libcli/security/tests/windows/windows-sddl-tests.c which, if
         compiled on Windows under Cygwin or MSYS64, can run SDDL
         parsing tests using the Windows API. This allows us to run the
         same tests here and on Windows, to ensure we get the same
@@ -82,54 +132,43 @@ class SddlDecodeEncodeBase(TestCase):
         That is, the separator consists of the 4 bytes " -> ".
         Multi-line examples are not possible.
 
-        If you rename this method to start with 'test_' and run these
-        tests, the examples here will be written in this format in
-        files in /tmp. If you then copy them to Windows and run them
-        in your POSIX-y shell with
+        To run this set an environment variable; see
+        cls.setUpDynamicTestCases(), above. Then if you copy the
+        file/s produced to Windows and run them in your POSIX-y shell
+        with
 
           windows-sddl-tests -i path/to/*.txt
 
         the results on Windows will be shown.
-        """
-        if getattr(self, 'name', None) is None:
-            print(f"not reading changes in {c_RED(self)} with no name "
-                  "(it is probably the base class)")
-            return
 
-        name = f"/tmp/{self.name}.txt"
+        Note this will only run in subclasses annotated with @DynamicTestCase.
+        """
+        name = f"{dir}/{cls.name}.txt"
         with open(name, 'w') as f:
-            for p in self.strings:
+            for p in cls.strings:
                 if isinstance(p, str):
                     p = (p, p)
                 print(f"{p[0]} -> {p[1]}", file=f)
 
-    def _test_00_read_test_strings(self):
-        """This is a complementary non-test to _test_write_test_strings, which
-        writes these tests in a format usable on Windows. In this
-        case, if the method is enabled as a test by removing the
-        leading '_', examples will be read. Unlike the write function,
-        this reads from 'libcli/security/tests/windows/' in the source
-        tree, and will replace the examples here with the ones there.
-        Along the way it allerts you to the changes.
+    @classmethod
+    def read_windows_strings(cls, dir, verbose=True):
+        """This is complementary to cls.write_windows_strings(), which writes
+        these tests in a format usable on Windows. In this case
+        examples will be read in, replacing the strings here with the
+        ones listed. Along the way it alerts you to the changes.
 
-        If run, this test should run first, hence the 00 in its name.
+        To run this set an environment variable; see
+        cls.setUpDynamicTestCases(), above.
+
+        Note this will only run in subclasses annotated with @DynamicTestCase.
         """
-        if getattr(self, 'name', None) is None:
-            print(f"not reading changes in {c_RED(self)} with no name "
-                  "(it is probably the base class)")
-            return
+        filename = f"{dir}/{cls.name}.txt"
 
-        from pathlib import Path
-        p = Path(__file__).parent
-        while not (p / 'libcli').is_dir():
-            q = p.parent
-            self.assertNotEqual(p, q)
-            p = q
-
-        filename = p / f"libcli/security/tests/windows/{self.name}.txt"
+        if not hasattr(cls, 'strings'):
+            cls.strings = []
 
         old_pairs = set()
-        for s in self.strings:
+        for s in cls.strings:
             if isinstance(s, str):
                 s = (s, s)
             old_pairs.add(s)
@@ -137,24 +176,31 @@ class SddlDecodeEncodeBase(TestCase):
         new_pairs = set()
         with open(filename) as f:
             for line in f:
-                o, _, c = line.rstrip().partition(' -> ')
+                line = line.rstrip()
+                if line.startswith('#') or line == '':
+                    continue
+                o, _, c = line.partition(' -> ')
+                if c == '':
+                    c = o
                 new_pairs.add((o, c))
 
         if old_pairs == new_pairs:
-            print(f"no change in {c_GREEN(self.name)}")
             # nothing to do
+            if verbose:
+                print(f"no change in {c_GREEN(cls.name)}")
             return
 
-        print(f"change in {c_RED(self.name)}")
-        print("added:")
-        for x in sorted(new_pairs - old_pairs):
-            print(x)
-        print("removed:")
-        for x in sorted(old_pairs - new_pairs):
-            print(x)
+        if verbose:
+            print(f"change in {c_RED(cls.name)}")
+            print("added:")
+            for x in sorted(new_pairs - old_pairs):
+                print(x)
+            print("removed:")
+            for x in sorted(old_pairs - new_pairs):
+                print(x)
 
-        self.strings[:] = sorted(new_pairs)
-        self.fail("test cases out of sync")
+        cls.strings[:] = sorted(new_pairs)
+
 
 @DynamicTestCase
 class SddlNonCanonical(SddlDecodeEncodeBase):
@@ -578,6 +624,7 @@ class SddlNonCanonical(SddlDecodeEncodeBase):
         ("D:AI(A;CI;RP LCLO  RC;;;AU)", "D:AI(A;CI;LCRPLORC;;;AU)"),
         # space before string flags is ignored.
         ("D:(A;; GA;;;LG)", "D:(A;;GA;;;LG)"),
+        ("D:(A;; 0x75bcd15;;;LG)", "D:(A;;0x75bcd15;;;LG)"),
 
         # from 'samba3.blackbox.large_acl.NT1.able to retrieve a large ACL if VFS supports it'
         (("D:(A;;0x001f01ff;;;WD)" +
@@ -696,6 +743,11 @@ class SddlShouldFail(SddlDecodeEncodeBase):
         # Windows accepts space before string flags, not after.
         "D:(A;;GA ;;;LG)",
         "D:(A;;RP ;;;LG)",
+        # wrong numbers of ';'
+        "D:(A;;GA;;;LG;)",
+        "D:(A;;GA;;;LG;;)",
+        "D:(A;;GA)",
+        f"D:(A;{';' * 10000})",
 
         # space after SID is bad
         # but Windows accepts space before SID, after 2-letter SID
@@ -733,6 +785,11 @@ class SddlShouldFail(SddlDecodeEncodeBase):
 
         "O:",
         "O:XX",
+
+        "D:("
+        "D:()"
+        "D:())"
+        "D:(A;;0x75bcd15;;;LG))",
     ]
 
 

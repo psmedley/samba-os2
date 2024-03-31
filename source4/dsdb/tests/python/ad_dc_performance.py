@@ -34,8 +34,8 @@ except ImportError:
 from samba.samdb import SamDB
 from samba.auth import system_session
 from ldb import Message, MessageElement, Dn, LdbError
-from ldb import FLAG_MOD_ADD, FLAG_MOD_REPLACE, FLAG_MOD_DELETE
-from ldb import SCOPE_BASE, SCOPE_SUBTREE, SCOPE_ONELEVEL
+from ldb import FLAG_MOD_ADD, FLAG_MOD_DELETE
+from ldb import SCOPE_SUBTREE
 
 parser = optparse.OptionParser("ad_dc_performance.py [options] <host>")
 sambaopts = options.SambaOptions(parser)
@@ -332,7 +332,8 @@ if "://" not in host:
 
 if ANCIENT_SAMBA:
     runner = SubunitTestRunner()
-    if not runner.run(unittest.makeSuite(UserTests)).wasSuccessful():
+    if not runner.run(unittest.TestLoader().loadTestsFromTestCase(
+            UserTests)).wasSuccessful():
         sys.exit(1)
     sys.exit(0)
 else:

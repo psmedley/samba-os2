@@ -1981,18 +1981,8 @@ NTSTATUS _lsa_CreateTrustedDomainEx2(struct pipes_struct *p,
 NTSTATUS _lsa_CreateTrustedDomainEx(struct pipes_struct *p,
 				    struct lsa_CreateTrustedDomainEx *r)
 {
-	struct lsa_CreateTrustedDomainEx2 q;
-	struct lsa_TrustDomainInfoAuthInfoInternal auth_info;
-
-	ZERO_STRUCT(auth_info);
-
-	q.in.policy_handle	= r->in.policy_handle;
-	q.in.info		= r->in.info;
-	q.in.auth_info_internal	= &auth_info;
-	q.in.access_mask	= r->in.access_mask;
-	q.out.trustdom_handle	= r->out.trustdom_handle;
-
-	return _lsa_CreateTrustedDomainEx2(p, &q);
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+	return NT_STATUS_NOT_IMPLEMENTED;
 }
 
 /***************************************************************************
@@ -2002,26 +1992,8 @@ NTSTATUS _lsa_CreateTrustedDomainEx(struct pipes_struct *p,
 NTSTATUS _lsa_CreateTrustedDomain(struct pipes_struct *p,
 				  struct lsa_CreateTrustedDomain *r)
 {
-	struct lsa_CreateTrustedDomainEx2 c;
-	struct lsa_TrustDomainInfoInfoEx info;
-	struct lsa_TrustDomainInfoAuthInfoInternal auth_info;
-
-	ZERO_STRUCT(auth_info);
-
-	info.domain_name	= r->in.info->name;
-	info.netbios_name	= r->in.info->name;
-	info.sid		= r->in.info->sid;
-	info.trust_direction	= LSA_TRUST_DIRECTION_OUTBOUND;
-	info.trust_type		= LSA_TRUST_TYPE_DOWNLEVEL;
-	info.trust_attributes	= 0;
-
-	c.in.policy_handle	= r->in.policy_handle;
-	c.in.info		= &info;
-	c.in.auth_info_internal	= &auth_info;
-	c.in.access_mask	= r->in.access_mask;
-	c.out.trustdom_handle	= r->out.trustdom_handle;
-
-	return _lsa_CreateTrustedDomainEx2(p, &c);
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+	return NT_STATUS_NOT_IMPLEMENTED;
 }
 
 /***************************************************************************
@@ -2056,7 +2028,7 @@ NTSTATUS _lsa_DeleteTrustedDomain(struct pipes_struct *p,
 
 	if (td->netbios_name == NULL || *td->netbios_name == '\0') {
 		struct dom_sid_buf buf;
-		DEBUG(10, ("Missing netbios name for for trusted domain %s.\n",
+		DEBUG(10, ("Missing netbios name for trusted domain %s.\n",
 			   dom_sid_str_buf(r->in.dom_sid, &buf)));
 		return NT_STATUS_UNSUCCESSFUL;
 	}
@@ -4805,6 +4777,412 @@ NTSTATUS _lsa_LSARADTUNREGISTERSECURITYEVENTSOURCE(struct pipes_struct *p,
 
 NTSTATUS _lsa_LSARADTREPORTSECURITYEVENT(struct pipes_struct *p,
 					 struct lsa_LSARADTREPORTSECURITYEVENT *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+	return NT_STATUS_NOT_IMPLEMENTED;
+}
+
+void _lsa_Opnum82NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum82NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum83NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum83NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum84NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum84NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum85NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum85NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum86NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum86NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum87NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum87NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum88NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum88NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum89NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum89NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum90NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum90NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum91NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum91NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum92NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum92NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum93NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum93NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum94NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum94NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum95NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum95NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum96NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum96NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum97NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum97NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum98NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum98NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum99NotUsedOnWire(struct pipes_struct *p,
+			       struct lsa_Opnum99NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum100NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum100NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum101NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum101NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum102NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum102NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum103NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum103NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum104NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum104NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum105NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum105NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum106NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum106NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum107NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum107NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum108NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum108NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum109NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum109NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum110NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum110NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum111NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum111NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum112NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum112NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum113NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum113NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum114NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum114NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum115NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum115NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum116NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum116NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum117NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum117NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum118NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum118NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum119NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum119NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum120NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum120NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum121NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum121NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum122NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum122NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum123NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum123NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum124NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum124NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum125NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum125NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum126NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum126NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum127NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum127NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+void _lsa_Opnum128NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum128NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+/***************************************************************************
+ _lsa_CreateTrustedDomainEx3
+ ***************************************************************************/
+
+NTSTATUS _lsa_CreateTrustedDomainEx3(struct pipes_struct *p,
+				     struct lsa_CreateTrustedDomainEx3 *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+	return NT_STATUS_NOT_IMPLEMENTED;
+}
+
+/***************************************************************************
+ _lsa_OpenPolicy3
+ ***************************************************************************/
+
+NTSTATUS _lsa_OpenPolicy3(struct pipes_struct *p,
+			  struct lsa_OpenPolicy3 *r)
+{
+	struct dcesrv_call_state *dce_call = p->dce_call;
+	struct auth_session_info *session_info =
+		dcesrv_call_session_info(dce_call);
+	struct security_descriptor *psd = NULL;
+	size_t sd_size;
+	uint32_t des_access = r->in.access_mask;
+	uint32_t acc_granted;
+	NTSTATUS status;
+
+	if (p->transport != NCACN_NP && p->transport != NCALRPC) {
+		p->fault_state = DCERPC_FAULT_ACCESS_DENIED;
+		return NT_STATUS_ACCESS_DENIED;
+	}
+
+	ZERO_STRUCTP(r->out.handle);
+
+	/*
+	 * The attributes have no effect and MUST be ignored, except the
+	 * root_dir which MUST be NULL.
+	 */
+	if (r->in.attr != NULL && r->in.attr->root_dir != NULL) {
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+
+	switch (r->in.in_version) {
+	case 1:
+		*r->out.out_version = 1;
+
+		r->out.out_revision_info->info1.revision = 1;
+		/* TODO: Enable as soon as we support it */
+#if 0
+		r->out.out_revision_info->info1.supported_features =
+			LSA_FEATURE_TDO_AUTH_INFO_AES_CIPHER;
+#endif
+
+		break;
+	default:
+		return NT_STATUS_NOT_SUPPORTED;
+	}
+
+	/* Work out max allowed. */
+	map_max_allowed_access(session_info->security_token,
+			       session_info->unix_token,
+			       &des_access);
+
+	/* map the generic bits to the lsa policy ones */
+	se_map_generic(&des_access, &lsa_policy_mapping);
+
+	/* get the generic lsa policy SD until we store it */
+	status = make_lsa_object_sd(p->mem_ctx,
+				    &psd,
+				    &sd_size,
+				    &lsa_policy_mapping,
+				    NULL,
+				    0);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	status = access_check_object(psd,
+				     session_info->security_token,
+				     SEC_PRIV_INVALID,
+				     SEC_PRIV_INVALID,
+				     0,
+				     des_access,
+				     &acc_granted,
+				     "_lsa_OpenPolicy2");
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	status = create_lsa_policy_handle(p->mem_ctx,
+					  p,
+					  LSA_HANDLE_POLICY_TYPE,
+					  acc_granted,
+					  get_global_sam_sid(),
+					  NULL,
+					  psd,
+					  r->out.handle);
+	if (!NT_STATUS_IS_OK(status)) {
+		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
+	}
+
+	return NT_STATUS_OK;
+}
+
+void _lsa_Opnum131NotUsedOnWire(struct pipes_struct *p,
+				struct lsa_Opnum131NotUsedOnWire *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+}
+
+NTSTATUS _lsa_lsaRQueryForestTrustInformation2(struct pipes_struct *p,
+					       struct lsa_lsaRQueryForestTrustInformation2 *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+	return NT_STATUS_NOT_IMPLEMENTED;
+}
+
+NTSTATUS _lsa_lsaRSetForestTrustInformation2(struct pipes_struct *p,
+					    struct lsa_lsaRSetForestTrustInformation2 *r)
 {
 	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
 	return NT_STATUS_NOT_IMPLEMENTED;

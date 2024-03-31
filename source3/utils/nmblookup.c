@@ -47,7 +47,7 @@ static bool open_sockets(void)
 	if (!interpret_string_addr(&ss, sock_addr,
 				AI_NUMERICHOST|AI_PASSIVE)) {
 		DEBUG(0,("open_sockets: unable to get socket address "
-					"from string %s", sock_addr));
+					"from string %s\n", sock_addr));
 		return false;
 	}
 	ServerFD = open_socket_in(
@@ -164,7 +164,7 @@ static bool do_node_status(const char *name,
 static bool query_one(const char *lookup, unsigned int lookup_type)
 {
 	size_t j, count = 0;
-	uint8_t flags;
+	uint8_t flags = 0;
 	struct sockaddr_storage *ip_list=NULL;
 	NTSTATUS status = NT_STATUS_NOT_FOUND;
 

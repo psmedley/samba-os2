@@ -28,7 +28,7 @@ try:
     from dateutil.parser import isoparse as iso_parse_date
 except ImportError:
     try:
-        from iso8601 import parse_date as iso_parse_date;
+        from iso8601 import parse_date as iso_parse_date
     except ImportError:
         print('Install either python-dateutil >= 2.7.1 or python-iso8601')
 
@@ -69,7 +69,7 @@ def parse_results(msg_ops, statistics, fh):
             msg_ops.control_msg(l)
             try:
                 dt = iso_parse_date(arg.rstrip("\n"))
-            except TypeError as e:
+            except TypeError:
                 print("Unable to parse time line: %s" % arg.rstrip("\n"))
             else:
                 msg_ops.time(dt)
@@ -478,13 +478,12 @@ class PerfFilterOps(unittest.TestResult):
 
     def time(self, time):
         self.latest_time = time
-        #self._ops.output_msg("found time %s\n" % time)
         self.suite_has_time = True
 
     def get_time(self):
         if self.suite_has_time:
             return self.latest_time
-        return datetime.datetime.utcnow()
+        return datetime.datetime.now(tz=datetime.timezone.utc)
 
     def startTest(self, test):
         self.seen_output = True

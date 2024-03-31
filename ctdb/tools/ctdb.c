@@ -82,6 +82,16 @@ struct ctdb_context {
 
 static void usage(const char *command);
 
+static int disable_takeover_runs(TALLOC_CTX *mem_ctx,
+				 struct ctdb_context *ctdb,
+				 uint32_t timeout,
+				 uint32_t *pnn_list,
+				 int count);
+static int send_ipreallocated_control_to_nodes(TALLOC_CTX *mem_ctx,
+					       struct ctdb_context *ctdb,
+					       uint32_t *pnn_list,
+					       int count);
+
 /*
  * Utility Functions
  */
@@ -3846,14 +3856,8 @@ static int moveip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 	uint32_t *pnn_list;
 	unsigned int i;
 	int ret, count;
-
-	ret = ctdb_message_disable_ip_check(mem_ctx, ctdb->ev, ctdb->client,
-					    CTDB_BROADCAST_CONNECTED,
-					    2*options.timelimit);
-	if (ret != 0) {
-		fprintf(stderr, "Failed to disable IP check\n");
-		return ret;
-	}
+	uint32_t *connected_pnn = NULL;
+	int connected_count;
 
 	ret = ctdb_ctrl_get_public_ips(mem_ctx, ctdb->ev, ctdb->client,
 				       pnn, TIMEOUT(), false, &pubip_list);
@@ -3886,6 +3890,34 @@ static int moveip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return 1;
 	}
 
+	connected_count = list_of_connected_nodes(nodemap,
+						  CTDB_UNKNOWN_PNN,
+						  mem_ctx,
+						  &connected_pnn);
+	if (connected_count <= 0) {
+		fprintf(stderr, "Memory allocation error\n");
+		return 1;
+	}
+
+	/*
+	 * Disable takeover runs on all connected nodes.  A reply
+	 * indicating success is needed from each node so all nodes
+	 * will need to be active.
+	 *
+	 * A check could be added to not allow reloading of IPs when
+	 * there are disconnected nodes.  However, this should
+	 * probably be left up to the administrator.
+	 */
+	ret = disable_takeover_runs(mem_ctx,
+				    ctdb,
+				    2*options.timelimit,
+				    connected_pnn,
+				    connected_count);
+	if (ret != 0) {
+		fprintf(stderr, "Failed to disable takeover runs\n");
+		return ret;
+	}
+
 	pubip.pnn = pnn;
 	pubip.addr = *addr;
 	ctdb_req_control_release_ip(&request, &pubip);
@@ -3905,7 +3937,24 @@ static int moveip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return ret;
 	}
 
-	return 0;
+	/*
+	 * It isn't strictly necessary to wait until takeover runs are
+	 * re-enabled but doing so can't hurt.
+	 */
+	ret = disable_takeover_runs(mem_ctx,
+				    ctdb,
+				    0,
+				    connected_pnn,
+				    connected_count);
+	if (ret != 0) {
+		fprintf(stderr, "Failed to enable takeover runs\n");
+		return ret;
+	}
+
+	return send_ipreallocated_control_to_nodes(mem_ctx,
+						   ctdb,
+						   connected_pnn,
+						   connected_count);
 }
 
 static int control_moveip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
@@ -4031,6 +4080,17 @@ static int control_addip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 		return ret;
 	}
 
+	/*
+	 * CTDB_CONTROL_ADD_PUBLIC_IP will implicitly trigger
+	 * CTDB_SRVID_TAKEOVER_RUN broadcast to all connected nodes.
+	 *
+	 * That means CTDB_{CONTROL,EVENT,SRVID}_IPREALLOCATED is
+	 * triggered at the end of the takeover run...
+	 *
+	 * So we don't need to call ipreallocate() nor
+	 * send_ipreallocated_control_to_nodes() here...
+	 */
+
 	return 0;
 }
 
@@ -4085,6 +4145,21 @@ static int control_delip(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,
 			ctdb->cmd_pnn);
 		return ret;
 	}
+
+	/*
+	 * CTDB_CONTROL_DEL_PUBLIC_IP only marks the public ip
+	 * with pending_delete if it's still in use.
+	 *
+	 * Any later takeover run will really move the public ip
+	 * away from the local node and finally removes it.
+	 *
+	 * That means CTDB_{CONTROL,EVENT,SRVID}_IPREALLOCATED is
+	 * triggered at the end of the takeover run that actually
+	 * moves the public ip away.
+	 *
+	 * So we don't need to call ipreallocate() nor
+	 * send_ipreallocated_control_to_nodes() here...
+	 */
 
 	return 0;
 }
@@ -5913,6 +5988,32 @@ fail:
 	ctdb_client_remove_message_handler(ctdb->ev, ctdb->client,
 					   disable.srvid, &state);
 	return ret;
+}
+
+static int send_ipreallocated_control_to_nodes(TALLOC_CTX *mem_ctx,
+					       struct ctdb_context *ctdb,
+					       uint32_t *pnn_list,
+					       int count)
+{
+	struct ctdb_req_control request;
+	int ret;
+
+	ctdb_req_control_ipreallocated(&request);
+	ret = ctdb_client_control_multi(mem_ctx,
+					ctdb->ev,
+					ctdb->client,
+					pnn_list,
+					count,
+					TIMEOUT(),
+					&request,
+					NULL,  /* perr_list */
+					NULL); /* preply */
+	if (ret != 0) {
+		fprintf(stderr, "Failed to send ipreallocated\n");
+		return ret;
+	}
+
+	return 0;
 }
 
 static int control_reloadips(TALLOC_CTX *mem_ctx, struct ctdb_context *ctdb,

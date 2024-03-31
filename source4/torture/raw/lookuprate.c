@@ -283,8 +283,9 @@ bool torture_bench_lookup(struct torture_context *torture)
 
 	/* Ok. We have run all our tests. Walk through the records we
 	 * accumulated and figure out whether the lookups took constant
-	 * time of not.
+	 * time or not.
 	 */
+	result = true;
 	for (i = 0; i < ARRAY_SIZE(records); ++i) {
 		if (!fuzzily_equal(records[0].querypath_persec,
 				    records[i].querypath_persec,

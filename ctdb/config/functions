@@ -160,18 +160,48 @@ ctdb_check_args()
 # determine on what type of system (init style) we are running
 detect_init_style()
 {
-	# only do detection if not already set:
-	if [ -n "$CTDB_INIT_STYLE" ]; then
-		return
+	_init_style_file="${CTDB_SCRIPT_VARDIR}/init-style"
+
+	if [ ! -f "$_init_style_file" ]; then
+		if [ -n "$CTDB_INIT_STYLE" ]; then
+			echo "$CTDB_INIT_STYLE" >"$_init_style_file"
+			return
+		fi
+
+		# Subshell to contain variables in os-release file
+		(
+			_os_release="${CTDB_SYS_ETCDIR}/os-release"
+			if [ -f "$_os_release" ]; then
+				. "$_os_release"
+				case "$ID" in
+				centos | fedora | rhel)
+					echo "redhat"
+					;;
+				debian | ubuntu)
+					echo "debian"
+					;;
+				sles | suse)
+					echo "suse"
+					;;
+				*)
+					case "$ID_LIKE" in
+					*centos* | *rhel*)
+						echo "redhat"
+						;;
+					*)
+						echo "$ID"
+						;;
+					esac
+					;;
+				esac
+			else
+				echo "WARNING: unknown distribution ${ID}" >&2
+				echo "unknown"
+			fi
+		) >"$_init_style_file"
 	fi
 
-	if [ -x /sbin/startproc ]; then
-		CTDB_INIT_STYLE="suse"
-	elif [ -x /sbin/start-stop-daemon ]; then
-		CTDB_INIT_STYLE="debian"
-	else
-		CTDB_INIT_STYLE="redhat"
-	fi
+	read -r CTDB_INIT_STYLE <"$_init_style_file"
 }
 
 ######################################################
@@ -754,10 +784,118 @@ ctdb_counter_get()
 {
 	_ctdb_counter_common "$1"
 	# unary counting!
-	_val=$(wc -c <"$_counter_file" 2>/dev/null || echo 0)
+	_val=$(wc -c 2>/dev/null <"$_counter_file" || echo 0)
 	# Strip leading spaces from output of wc (on freebsd)
 	# shellcheck disable=SC2086
 	echo $_val
+}
+
+#
+# Fail counter/threshold combination to control warnings and node unhealthy
+#
+
+_failcount_validate_threshold()
+{
+	case "$1" in
+	"") return 1 ;; # A failure that doesn't need a warning
+	*)
+		if echo "$1" | grep -qx '[0-9]*'; then
+			return 0
+		fi
+
+		echo "WARNING: ${1} is an invalid threshold in \"${2}\" check"
+		return 1
+		;;
+	esac
+}
+
+_failcount_common()
+{
+	_thing="$1"
+
+	_counter=$(echo "$_thing" | sed -e 's@/@_SLASH_@g' -e 's@ @_@g')
+}
+
+failcount_init()
+{
+	_thing="$1"
+
+	_failcount_common "$_thing"
+
+	ctdb_counter_init "$_counter"
+}
+
+failcount_reset()
+{
+	_thing="$1"
+
+	_failcount_common "$_thing"
+
+	_failcount=$(ctdb_counter_get "$_counter")
+	if [ "$_failcount" -eq 0 ]; then
+		return
+	fi
+
+	printf 'NOTICE: %s: no longer failing\n' "$_thing"
+	ctdb_counter_init "$_counter"
+}
+
+failcount_incr()
+{
+	_thing="$1"
+	_thresholds="$2"
+	_output="$3"
+
+	_failcount_common "$_thing"
+
+	ctdb_counter_incr "$_counter"
+	_failcount=$(ctdb_counter_get "$_counter")
+
+	case "$_thresholds" in
+	*:*)
+		_warn_threshold="${_thresholds%:*}"
+		_unhealthy_threshold="${_thresholds#*:}"
+		;;
+	"")
+		_warn_threshold=1
+		_unhealthy_threshold=""
+		;;
+	*)
+		_warn_threshold="$_thresholds"
+		_unhealthy_threshold=""
+		;;
+	esac
+
+	if _failcount_validate_threshold "$_unhealthy_threshold" "$_thing"; then
+		if [ "$_failcount" -ge "$_unhealthy_threshold" ]; then
+			printf 'ERROR: %s: fail count %d >= threshold %d\n' \
+			       "$_thing" \
+			       "$_failcount" \
+			       "$_unhealthy_threshold"
+			# Only print output when exceeding the
+			# unhealthy threshold
+			if [ "$_failcount" -eq "$_unhealthy_threshold" ] && \
+				   [ -n "$_output" ]; then
+				echo "$_output"
+			fi
+			exit 1
+		fi
+	fi
+
+	if _failcount_validate_threshold "$_warn_threshold" "$_thing"; then
+		if [ "$_failcount" -lt "$_warn_threshold" ]; then
+			return 0
+		fi
+	fi
+
+	printf 'WARNING: %s: fail count %d >= threshold %d\n' \
+	       "$_thing" \
+	       "$_failcount" \
+	       "$_warn_threshold"
+	if [ "$_failcount" -eq "$_warn_threshold" ] && [ -n "$_output" ]; then
+		# Only print output when exceeding the warning threshold
+		echo "$_output"
+	fi
 }
 
 ########################################################

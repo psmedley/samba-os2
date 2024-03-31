@@ -38,9 +38,11 @@ from samba.netcmd.domain.models import AuthenticationPolicy, AuthenticationSilo
 
 import samba.tests
 import samba.tests.krb5.kcrypto as kcrypto
+from samba.hresult import HRES_SEC_E_INVALID_TOKEN, HRES_SEC_E_LOGON_DENIED
 from samba.tests.krb5.kdc_base_test import GroupType
 from samba.tests.krb5.kdc_tgs_tests import KdcTgsBaseTests
 from samba.tests.auth_log_base import AuthLogTestBase, NoMessageException
+from samba.tests.krb5.raw_testcase import RawKerberosTest
 from samba.tests.krb5.rfc4120_constants import (
     FX_FAST_ARMOR_AP_REQUEST,
     KDC_ERR_BADOPTION,
@@ -49,14 +51,14 @@ from samba.tests.krb5.rfc4120_constants import (
     KDC_ERR_POLICY,
     NT_PRINCIPAL,
     NT_SRV_INST,
+    PADATA_FX_FAST,
 )
 import samba.tests.krb5.rfc4120_pyasn1 as krb5_asn1
 
+SidType = RawKerberosTest.SidType
+
 global_asn1_print = False
 global_hexdump = False
-
-HRES_SEC_E_INVALID_TOKEN = 0x80090308
-HRES_SEC_E_LOGON_DENIED = 0x8009030C
 
 
 AUTHN_VERSION = {'major': 1, 'minor': 3}
@@ -160,7 +162,7 @@ def policy_check_fn(fn):
     return wrapper_fn
 
 
-class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
+class AuthnPolicyBaseTests(AuthLogTestBase, KdcTgsBaseTests):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -177,11 +179,6 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
 
         cls._max_ticket_life = None
         cls._max_renew_life = None
-
-    def setUp(self):
-        super().setUp()
-        self.do_asn1_print = global_asn1_print
-        self.do_hexdump = global_hexdump
 
     def take(self, n, iterable, *, take_all=True):
         """Yield n items from an iterable."""
@@ -262,7 +259,12 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
                    ntlm=False,
                    spn=None,
                    allowed_rodc=None,
-                   cached=True):
+                   additional_details=None,
+                   cached=None):
+        if cached is None:
+            # Policies and silos are rarely reused between accounts.
+            cached = assigned_policy is None and assigned_silo is None
+
         opts = {
             'kerberos_enabled': not ntlm,
             'spn': spn,
@@ -278,13 +280,13 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
             members += (member_of,)
         if assigned_policy is not None:
             opts['assigned_policy'] = str(assigned_policy.dn)
-            cached = False   # Policies are rarely reused between accounts.
         if assigned_silo is not None:
             opts['assigned_silo'] = str(assigned_silo.dn)
-            cached = False   # Silos are rarely reused between accounts.
         if allowed_rodc:
             opts['allowed_replication_mock'] = True
             opts['revealed_to_mock_rodc'] = True
+        if additional_details is not None:
+            opts['additional_details'] = self.freeze(additional_details)
 
         if members:
             opts['member_of'] = members
@@ -292,6 +294,115 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
         return self.get_cached_creds(account_type=account_type,
                                      opts=opts,
                                      use_cache=cached)
+
+    def _fast_as_req(self,
+                     client_creds,
+                     target_creds,
+                     armor_tgt,
+                     expected_error=0,
+                     expect_status=None,
+                     expected_status=None,
+                     expected_groups=None,
+                     expect_device_info=None,
+                     expected_device_groups=None,
+                     expect_device_claims=None,
+                     expected_device_claims=None):
+        client_username = client_creds.get_username()
+        client_realm = client_creds.get_realm()
+        client_cname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
+                                                 names=[client_username])
+
+        target_name = target_creds.get_username()
+        target_sname = self.PrincipalName_create(
+            name_type=NT_PRINCIPAL, names=[target_name])
+        target_realm = target_creds.get_realm()
+        target_decryption_key = self.TicketDecryptionKey_from_creds(
+            target_creds)
+        target_etypes = target_creds.tgs_supported_enctypes
+
+        authenticator_subkey = self.RandomKey(kcrypto.Enctype.AES256)
+        armor_key = self.generate_armor_key(authenticator_subkey,
+                                            armor_tgt.session_key)
+
+        preauth_key = self.PasswordKey_from_creds(client_creds,
+                                                  kcrypto.Enctype.AES256)
+
+        client_challenge_key = (
+            self.generate_client_challenge_key(armor_key, preauth_key))
+        fast_padata = [self.get_challenge_pa_data(client_challenge_key)]
+
+        def _generate_fast_padata(kdc_exchange_dict,
+                                  _callback_dict,
+                                  req_body):
+            return list(fast_padata), req_body
+
+        etypes = kcrypto.Enctype.AES256, kcrypto.Enctype.RC4
+
+        if expected_error:
+            check_error_fn = self.generic_check_kdc_error
+            check_rep_fn = None
+        else:
+            check_error_fn = None
+            check_rep_fn = self.generic_check_kdc_rep
+
+        pac_options = '1'  # claims support
+
+        samdb = self.get_samdb()
+        domain_sid_str = samdb.get_domain_sid()
+
+        if expected_groups is not None:
+            expected_groups = self.map_sids(expected_groups, None, domain_sid_str)
+
+        if expected_device_groups is not None:
+            expected_device_groups = self.map_sids(expected_device_groups, None, domain_sid_str)
+
+        kdc_exchange_dict = self.as_exchange_dict(
+            creds=client_creds,
+            expected_crealm=client_realm,
+            expected_cname=client_cname,
+            expected_srealm=target_realm,
+            expected_sname=target_sname,
+            expected_supported_etypes=target_etypes,
+            ticket_decryption_key=target_decryption_key,
+            generate_fast_fn=self.generate_simple_fast,
+            generate_fast_armor_fn=self.generate_ap_req,
+            generate_fast_padata_fn=_generate_fast_padata,
+            fast_armor_type=FX_FAST_ARMOR_AP_REQUEST,
+            check_error_fn=check_error_fn,
+            check_rep_fn=check_rep_fn,
+            check_kdc_private_fn=self.generic_check_kdc_private,
+            expected_error_mode=expected_error,
+            expected_salt=client_creds.get_salt(),
+            expect_status=expect_status,
+            expected_status=expected_status,
+            expected_groups=expected_groups,
+            expect_device_info=expect_device_info,
+            expected_device_domain_sid=domain_sid_str,
+            expected_device_groups=expected_device_groups,
+            expect_device_claims=expect_device_claims,
+            expected_device_claims=expected_device_claims,
+            authenticator_subkey=authenticator_subkey,
+            preauth_key=preauth_key,
+            armor_key=armor_key,
+            armor_tgt=armor_tgt,
+            armor_subkey=authenticator_subkey,
+            kdc_options='0',
+            pac_options=pac_options,
+            # PA-DATA types are not important for these tests.
+            check_patypes=False)
+
+        rep = self._generic_kdc_exchange(
+            kdc_exchange_dict,
+            cname=client_cname,
+            realm=client_realm,
+            sname=target_sname,
+            etypes=etypes)
+        if expected_error:
+            self.check_error_rep(rep, expected_error)
+            return None
+        else:
+            self.check_as_reply(rep)
+            return kdc_exchange_dict['rep_ticket_creds']
 
     @staticmethod
     def audit_type(msg):
@@ -957,6 +1068,182 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
                               audit_event=server_policy_event,
                               reason=server_policy_reason)
 
+    def check_ticket_times(self,
+                           ticket_creds,
+                           expected_life=None,
+                           expected_renew_life=None):
+        ticket = ticket_creds.ticket_private
+
+        authtime = ticket['authtime']
+        starttime = ticket.get('starttime', authtime)
+        endtime = ticket['endtime']
+        renew_till = ticket.get('renew-till', None)
+
+        starttime = self.get_EpochFromKerberosTime(starttime)
+
+        if expected_life is not None:
+            actual_end = self.get_EpochFromKerberosTime(
+                endtime.decode('ascii'))
+            actual_lifetime = actual_end - starttime
+
+            self.assertEqual(expected_life, actual_lifetime)
+
+        if renew_till is None:
+            self.assertIsNone(expected_renew_life)
+        else:
+            if expected_renew_life is not None:
+                actual_renew_till = self.get_EpochFromKerberosTime(
+                    renew_till.decode('ascii'))
+                actual_renew_life = actual_renew_till - starttime
+
+                self.assertEqual(expected_renew_life, actual_renew_life)
+
+    def _get_tgt(self, creds, *,
+                 armor_tgt=None,
+                 till=None,
+                 kdc_options=None,
+                 expected_flags=None,
+                 unexpected_flags=None,
+                 expected_error=0,
+                 expect_status=None,
+                 expected_status=None):
+        user_name = creds.get_username()
+        realm = creds.get_realm()
+        salt = creds.get_salt()
+
+        cname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
+                                          names=user_name.split('/'))
+        sname = self.PrincipalName_create(name_type=NT_SRV_INST,
+                                          names=['krbtgt', realm])
+        expected_sname = self.PrincipalName_create(
+            name_type=NT_SRV_INST, names=['krbtgt', realm.upper()])
+
+        expected_cname = cname
+
+        if till is None:
+            till = self.get_KerberosTime(offset=36000)
+
+        renew_time = till
+
+        krbtgt_creds = self.get_krbtgt_creds()
+        ticket_decryption_key = (
+            self.TicketDecryptionKey_from_creds(krbtgt_creds))
+
+        expected_etypes = krbtgt_creds.tgs_supported_enctypes
+
+        if kdc_options is None:
+            kdc_options = str(krb5_asn1.KDCOptions('renewable'))
+            # Contrary to Microsoft’s documentation, the returned ticket is
+            # renewable.
+            expected_flags = krb5_asn1.TicketFlags('renewable')
+
+        preauth_key = self.PasswordKey_from_creds(creds,
+                                                  kcrypto.Enctype.AES256)
+
+        expected_realm = realm.upper()
+
+        etypes = kcrypto.Enctype.AES256, kcrypto.Enctype.RC4
+
+        if armor_tgt is not None:
+            authenticator_subkey = self.RandomKey(kcrypto.Enctype.AES256)
+            armor_key = self.generate_armor_key(authenticator_subkey,
+                                                armor_tgt.session_key)
+            armor_subkey = authenticator_subkey
+
+            client_challenge_key = self.generate_client_challenge_key(
+                armor_key, preauth_key)
+            enc_challenge_padata = self.get_challenge_pa_data(
+                client_challenge_key)
+
+            def generate_fast_padata_fn(kdc_exchange_dict,
+                                        _callback_dict,
+                                        req_body):
+                return [enc_challenge_padata], req_body
+
+            generate_fast_fn = self.generate_simple_fast
+            generate_fast_armor_fn = self.generate_ap_req
+            generate_padata_fn = None
+
+            fast_armor_type = FX_FAST_ARMOR_AP_REQUEST
+        else:
+            ts_enc_padata = self.get_enc_timestamp_pa_data_from_key(
+                preauth_key)
+
+            def generate_padata_fn(kdc_exchange_dict,
+                                   _callback_dict,
+                                   req_body):
+                return [ts_enc_padata], req_body
+
+            generate_fast_fn = None
+            generate_fast_padata_fn = None
+            generate_fast_armor_fn = None
+
+            armor_key = None
+            armor_subkey = None
+
+            fast_armor_type = None
+
+        if not expected_error:
+            check_error_fn = None
+            check_rep_fn = self.generic_check_kdc_rep
+        else:
+            check_error_fn = self.generic_check_kdc_error
+            check_rep_fn = None
+
+        kdc_exchange_dict = self.as_exchange_dict(
+            creds=creds,
+            expected_error_mode=expected_error,
+            expect_status=expect_status,
+            expected_status=expected_status,
+            expected_crealm=expected_realm,
+            expected_cname=expected_cname,
+            expected_srealm=expected_realm,
+            expected_sname=expected_sname,
+            expected_salt=salt,
+            expected_flags=expected_flags,
+            unexpected_flags=unexpected_flags,
+            expected_supported_etypes=expected_etypes,
+            generate_padata_fn=generate_padata_fn,
+            generate_fast_padata_fn=generate_fast_padata_fn,
+            generate_fast_fn=generate_fast_fn,
+            generate_fast_armor_fn=generate_fast_armor_fn,
+            fast_armor_type=fast_armor_type,
+            check_error_fn=check_error_fn,
+            check_rep_fn=check_rep_fn,
+            check_kdc_private_fn=self.generic_check_kdc_private,
+            armor_key=armor_key,
+            armor_tgt=armor_tgt,
+            armor_subkey=armor_subkey,
+            kdc_options=kdc_options,
+            preauth_key=preauth_key,
+            ticket_decryption_key=ticket_decryption_key,
+            # PA-DATA types are not important for these tests.
+            check_patypes=False)
+
+        rep = self._generic_kdc_exchange(kdc_exchange_dict,
+                                         cname=cname,
+                                         realm=realm,
+                                         sname=sname,
+                                         till_time=till,
+                                         renew_time=renew_time,
+                                         etypes=etypes)
+        if expected_error:
+            self.check_error_rep(rep, expected_error)
+
+            return None
+
+        self.check_as_reply(rep)
+
+        ticket_creds = kdc_exchange_dict['rep_ticket_creds']
+        return ticket_creds
+
+
+class AuthnPolicyTests(AuthnPolicyBaseTests):
+    def setUp(self):
+        super().setUp()
+        self.do_asn1_print = global_asn1_print
+        self.do_hexdump = global_hexdump
+
     def test_authn_policy_tgt_lifetime_user(self):
         # Create an authentication policy with certain TGT lifetimes set.
         user_life = 111
@@ -1435,6 +1722,77 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
                                 expected_renew_life=lifetime)
 
         self.check_as_log(client_creds)
+
+    # This variant of the test is adapted to the behaviour of Windows and MIT
+    # Kerberos. It asserts that tickets issued to Protected Users are neither
+    # forwardable nor proxiable.
+    def test_authn_policy_protected_flags_without_policy_error(self):
+        # Create an authentication policy with a TGT lifetime set.
+        lifetime = 6 * 60 * 60  # 6 hours
+        policy = self.create_authn_policy(enforced=True,
+                                          user_tgt_lifetime=lifetime)
+
+        # Create a user account with the assigned policy, belonging to the
+        # Protected Users group.
+        client_creds = self._get_creds(account_type=self.AccountType.USER,
+                                       protected=True,
+                                       assigned_policy=policy)
+
+        # Request a Kerberos ticket with a lifetime of eight hours, and request
+        # that it be renewable, forwardable and proxiable. Show that the
+        # returned ticket for the protected user is only renewable.
+        till = self.get_KerberosTime(offset=8 * 60 * 60)  # 8 hours
+        tgt = self._get_tgt(
+            client_creds,
+            till=till,
+            kdc_options=str(krb5_asn1.KDCOptions(
+                'renewable,forwardable,proxiable')),
+            expected_flags=krb5_asn1.TicketFlags('renewable'),
+            unexpected_flags=krb5_asn1.TicketFlags('forwardable,proxiable'))
+        self.check_ticket_times(tgt, expected_life=lifetime,
+                                expected_renew_life=lifetime)
+
+        self.check_as_log(client_creds)
+
+    # This variant of the test is adapted to the behaviour of Heimdal
+    # Kerberos. It asserts that we get a policy error when requesting a
+    # proxiable ticket.
+    def test_authn_policy_protected_flags_with_policy_error(self):
+        # Create an authentication policy with a TGT lifetime set.
+        lifetime = 6 * 60 * 60  # 6 hours
+        policy = self.create_authn_policy(enforced=True,
+                                          user_tgt_lifetime=lifetime)
+
+        # Create a user account with the assigned policy, belonging to the
+        # Protected Users group.
+        client_creds = self._get_creds(account_type=self.AccountType.USER,
+                                       protected=True,
+                                       assigned_policy=policy)
+
+        # Request a Kerberos ticket with a lifetime of eight hours, and request
+        # that it be renewable and forwardable. Show that the returned ticket
+        # for the protected user is only renewable.
+        till = self.get_KerberosTime(offset=8 * 60 * 60)  # 8 hours
+        tgt = self._get_tgt(
+            client_creds,
+            till=till,
+            kdc_options=str(krb5_asn1.KDCOptions('renewable,forwardable')),
+            expected_flags=krb5_asn1.TicketFlags('renewable'),
+            unexpected_flags=krb5_asn1.TicketFlags('forwardable'))
+        self.check_ticket_times(tgt, expected_life=lifetime,
+                                expected_renew_life=lifetime)
+
+        self.check_as_log(client_creds)
+
+        # Request that the Kerberos ticket be proxiable. Show that we get a
+        # policy error.
+        self._get_tgt(client_creds,
+                      till=till,
+                      kdc_options=str(krb5_asn1.KDCOptions('proxiable')),
+                      expected_error=KDC_ERR_POLICY)
+
+        self.check_as_log(client_creds,
+                          status=ntstatus.NT_STATUS_INVALID_WORKSTATION)
 
     def test_authn_policy_tgt_lifetime_zero_protected(self):
         # Create an authentication policy with the TGT lifetime set to zero.
@@ -3117,7 +3475,7 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
         target_creds = self._get_creds(account_type=self.AccountType.COMPUTER,
                                        assigned_policy=policy)
 
-        # Show that authentication is allowed.
+        # Show that obtaining a service ticket is allowed.
         self._tgs_req(tgt, 0, client_creds, target_creds,
                       armor_tgt=mach_tgt)
 
@@ -4181,16 +4539,11 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
         target_creds = self._get_creds(account_type=self.AccountType.COMPUTER,
                                        assigned_policy=policy)
 
-        # Show that obtaining a service ticket is not allowed.
-        self._tgs_req(tgt, KDC_ERR_POLICY, client_creds, target_creds,
+        # Show that obtaining a service ticket is allowed.
+        self._tgs_req(tgt, 0, client_creds, target_creds,
                       armor_tgt=mach_tgt)
 
-        self.check_tgs_log(
-            client_creds, target_creds,
-            policy=policy,
-            status=ntstatus.NT_STATUS_AUTHENTICATION_FIREWALL_FAILED,
-            event=AuditEvent.KERBEROS_SERVER_RESTRICTION,
-            reason=AuditReason.ACCESS_DENIED)
+        self.check_tgs_log(client_creds, target_creds, policy=policy)
 
     def test_authn_policy_allowed_to_computer_allow_compounded_authn_from_rodc(self):
         # Create a machine account with which to perform FAST.
@@ -4782,7 +5135,7 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
 
         # Create an authentication policy that applies to a user and explicitly
         # denies authentication with any device.
-        denied = f'O:SYD:(D;;CR;;;WD)'
+        denied = 'O:SYD:(D;;CR;;;WD)'
         policy = self.create_authn_policy(enforced=True,
                                           user_allowed_from=denied)
 
@@ -4820,6 +5173,62 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
         # The client’s policy does not apply for S4U2Self, and thus does not
         # appear in the logs.
         self.check_tgs_log(client_creds, target_creds, policy=None)
+
+    def test_authn_policy_allowed_to_user_allow_s4u2self_inner_fast(self):
+        """Test that the correct Asserted Identity SID is placed into the PAC
+        when an S4U2Self requests contains inner FX‐FAST padata."""
+        mach_creds = self.get_cached_creds(
+            account_type=self.AccountType.COMPUTER)
+        mach_tgt = self.get_tgt(mach_creds)
+
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+        client_cname = self.PrincipalName_create(
+            name_type=NT_PRINCIPAL,
+            names=[client_creds.get_username()])
+        client_realm = client_creds.get_realm()
+
+        # Create a target account.
+        target_creds = self.get_service_creds()
+        target_tgt = self.get_tgt(target_creds)
+
+        def generate_s4u2self_padata(_kdc_exchange_dict,
+                                     _callback_dict,
+                                     req_body):
+            s4u2self_padata = self.PA_S4U2Self_create(
+                name=client_cname,
+                realm=client_realm,
+                tgt_session_key=target_tgt.session_key,
+                ctype=None)
+
+            # Add empty FX‐FAST padata to the inner request.
+            fx_fast_padata = self.PA_DATA_create(PADATA_FX_FAST, b'')
+
+            padata = [s4u2self_padata, fx_fast_padata]
+
+            return padata, req_body
+
+        # Check that the PAC contains the correct groups.
+        self._tgs_req(
+            target_tgt, 0, target_creds, target_creds,
+            expected_cname=client_cname,
+            generate_fast_padata_fn=generate_s4u2self_padata,
+            armor_tgt=mach_tgt,
+            expected_groups={
+                (
+                    # Expect to get the Service Asserted Identity SID.
+                    security.SID_SERVICE_ASSERTED_IDENTITY,
+                    SidType.EXTRA_SID,
+                    security.SE_GROUP_DEFAULT_FLAGS,
+                ),
+                ...,
+            },
+            unexpected_groups={
+                # Expect not to get the Authentication Authority Asserted
+                # Identity SID.
+                security.SID_AUTHENTICATION_AUTHORITY_ASSERTED_IDENTITY,
+            })
 
     def test_authn_policy_allowed_to_user_allow_constrained_delegation(self):
         samdb = self.get_samdb()
@@ -5012,7 +5421,7 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
 
         # Create an authentication policy that applies to a user and explicitly
         # denies authentication with any device.
-        denied = f'O:SYD:(D;;CR;;;WD)'
+        denied = 'O:SYD:(D;;CR;;;WD)'
         policy = self.create_authn_policy(enforced=True,
                                           user_allowed_from=denied)
 
@@ -5104,7 +5513,7 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
 
         # Create an authentication policy that applies to a user and explicitly
         # denies authentication with any device.
-        denied = f'O:SYD:(D;;CR;;;WD)'
+        denied = 'O:SYD:(D;;CR;;;WD)'
         policy = self.create_authn_policy(enforced=True,
                                           user_allowed_from=denied)
 
@@ -6231,6 +6640,269 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
                       armor_tgt=mach_tgt)
 
         self.check_tgs_log(client_creds, target_creds, policy=policy)
+
+    def test_authn_policy_allowed_to_computer_allow_as_req(self):
+        # Create a machine account with which to perform FAST.
+        mach_creds = self.get_cached_creds(
+            account_type=self.AccountType.COMPUTER)
+        mach_tgt = self.get_tgt(mach_creds)
+
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+
+        # Create an authentication policy that applies to a computer and
+        # explicitly allows the user account to obtain a service ticket.
+        allowed = f'O:SYD:(A;;CR;;;{client_creds.get_sid()})'
+        denied = 'O:SYD:(D;;CR;;;WD)'
+        policy = self.create_authn_policy(enforced=True,
+                                          user_allowed_to=denied,
+                                          computer_allowed_to=allowed,
+                                          service_allowed_to=denied)
+
+        # Create a computer account with the assigned policy.
+        target_creds = self._get_creds(account_type=self.AccountType.COMPUTER,
+                                       assigned_policy=policy)
+
+        # Show that obtaining a service ticket with an AS-REQ is allowed.
+        self._fast_as_req(client_creds, target_creds, mach_tgt)
+
+        self.check_as_log(client_creds,
+                          server_policy=policy)
+
+    def test_authn_policy_allowed_to_computer_deny_as_req(self):
+        # Create a machine account with which to perform FAST.
+        mach_creds = self.get_cached_creds(
+            account_type=self.AccountType.COMPUTER)
+        mach_tgt = self.get_tgt(mach_creds)
+
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+
+        # Create an authentication policy that applies to a computer and
+        # explicitly denies the user account to obtain a service ticket.
+        denied = f'O:SYD:(D;;CR;;;{client_creds.get_sid()})'
+        allowed = 'O:SYD:(A;;CR;;;WD)'
+        policy = self.create_authn_policy(enforced=True,
+                                          user_allowed_to=allowed,
+                                          computer_allowed_to=denied,
+                                          service_allowed_to=allowed)
+
+        # Create a computer account with the assigned policy.
+        target_creds = self._get_creds(account_type=self.AccountType.COMPUTER,
+                                       assigned_policy=policy)
+
+        # Show that obtaining a service ticket with an AS-REQ is denied.
+        self._fast_as_req(
+            client_creds, target_creds, mach_tgt,
+            expected_error=KDC_ERR_POLICY,
+            # We aren’t particular about whether or not we get an NTSTATUS.
+            expect_status=None,
+            expected_status=ntstatus.NT_STATUS_AUTHENTICATION_FIREWALL_FAILED)
+
+        self.check_as_log(
+            client_creds,
+            server_policy=policy,
+            server_policy_status=ntstatus.NT_STATUS_AUTHENTICATION_FIREWALL_FAILED,
+            event=AuditEvent.KERBEROS_SERVER_RESTRICTION,
+            reason=AuditReason.ACCESS_DENIED,
+            status=ntstatus.NT_STATUS_INVALID_WORKSTATION)
+
+    def test_authn_policy_allowed_to_user_allow_as_req(self):
+        # Create a machine account with which to perform FAST.
+        mach_creds = self.get_cached_creds(
+            account_type=self.AccountType.COMPUTER)
+        mach_tgt = self.get_tgt(mach_creds)
+
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+
+        # Create an authentication policy that applies to a user and explicitly
+        # allows the user account to obtain a service ticket.
+        allowed = f'O:SYD:(A;;CR;;;{client_creds.get_sid()})'
+        denied = 'O:SYD:(D;;CR;;;WD)'
+        policy = self.create_authn_policy(enforced=True,
+                                          user_allowed_to=allowed,
+                                          computer_allowed_to=denied,
+                                          service_allowed_to=denied)
+
+        # Create a user account with the assigned policy.
+        target_creds = self._get_creds(account_type=self.AccountType.USER,
+                                       assigned_policy=policy,
+                                       spn='host/{account}')
+
+        # Show that obtaining a service ticket with an AS-REQ is allowed.
+        self._fast_as_req(client_creds, target_creds, mach_tgt)
+
+        self.check_as_log(client_creds,
+                          server_policy=policy)
+
+    def test_authn_policy_allowed_to_user_deny_as_req(self):
+        # Create a machine account with which to perform FAST.
+        mach_creds = self.get_cached_creds(
+            account_type=self.AccountType.COMPUTER)
+        mach_tgt = self.get_tgt(mach_creds)
+
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+
+        # Create an authentication policy that applies to a user and
+        # explicitly denies the user account to obtain a service ticket.
+        denied = f'O:SYD:(D;;CR;;;{client_creds.get_sid()})'
+        allowed = 'O:SYD:(A;;CR;;;WD)'
+        policy = self.create_authn_policy(enforced=True,
+                                          user_allowed_to=denied,
+                                          computer_allowed_to=allowed,
+                                          service_allowed_to=allowed)
+
+        # Create a user account with the assigned policy.
+        target_creds = self._get_creds(account_type=self.AccountType.USER,
+                                       assigned_policy=policy,
+                                       spn='host/{account}')
+
+        # Show that obtaining a service ticket with an AS-REQ is denied.
+        self._fast_as_req(
+            client_creds, target_creds, mach_tgt,
+            expected_error=KDC_ERR_POLICY,
+            # We aren’t particular about whether or not we get an NTSTATUS.
+            expect_status=None,
+            expected_status=ntstatus.NT_STATUS_AUTHENTICATION_FIREWALL_FAILED)
+
+        self.check_as_log(
+            client_creds,
+            server_policy=policy,
+            server_policy_status=ntstatus.NT_STATUS_AUTHENTICATION_FIREWALL_FAILED,
+            event=AuditEvent.KERBEROS_SERVER_RESTRICTION,
+            reason=AuditReason.ACCESS_DENIED,
+            status=ntstatus.NT_STATUS_INVALID_WORKSTATION)
+
+    def test_authn_policy_allowed_to_service_allow_as_req(self):
+        # Create a machine account with which to perform FAST.
+        mach_creds = self.get_cached_creds(
+            account_type=self.AccountType.COMPUTER)
+        mach_tgt = self.get_tgt(mach_creds)
+
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+
+        # Create an authentication policy that applies to a managed service and
+        # explicitly allows the user account to obtain a service ticket.
+        allowed = f'O:SYD:(A;;CR;;;{client_creds.get_sid()})'
+        denied = 'O:SYD:(D;;CR;;;WD)'
+        policy = self.create_authn_policy(enforced=True,
+                                          user_allowed_to=denied,
+                                          computer_allowed_to=denied,
+                                          service_allowed_to=allowed)
+
+        # Create a managed service account with the assigned policy.
+        target_creds = self._get_creds(
+            account_type=self.AccountType.MANAGED_SERVICE,
+            assigned_policy=policy)
+
+        # Show that obtaining a service ticket with an AS-REQ is allowed.
+        self._fast_as_req(client_creds, target_creds, mach_tgt)
+
+        self.check_as_log(client_creds,
+                          server_policy=policy)
+
+    def test_authn_policy_allowed_to_service_deny_as_req(self):
+        # Create a machine account with which to perform FAST.
+        mach_creds = self.get_cached_creds(
+            account_type=self.AccountType.COMPUTER)
+        mach_tgt = self.get_tgt(mach_creds)
+
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+
+        # Create an authentication policy that applies to a managed service and
+        # explicitly denies the user account to obtain a service ticket.
+        denied = f'O:SYD:(D;;CR;;;{client_creds.get_sid()})'
+        allowed = 'O:SYD:(A;;CR;;;WD)'
+        policy = self.create_authn_policy(enforced=True,
+                                          user_allowed_to=allowed,
+                                          computer_allowed_to=allowed,
+                                          service_allowed_to=denied)
+
+        # Create a managed service account with the assigned policy.
+        target_creds = self._get_creds(
+            account_type=self.AccountType.MANAGED_SERVICE,
+            assigned_policy=policy)
+
+        # Show that obtaining a service ticket with an AS-REQ is denied.
+        self._fast_as_req(
+            client_creds, target_creds, mach_tgt,
+            expected_error=KDC_ERR_POLICY,
+            # We aren’t particular about whether or not we get an NTSTATUS.
+            expect_status=None,
+            expected_status=ntstatus.NT_STATUS_AUTHENTICATION_FIREWALL_FAILED)
+
+        self.check_as_log(
+            client_creds,
+            server_policy=policy,
+            server_policy_status=ntstatus.NT_STATUS_AUTHENTICATION_FIREWALL_FAILED,
+            event=AuditEvent.KERBEROS_SERVER_RESTRICTION,
+            reason=AuditReason.ACCESS_DENIED,
+            status=ntstatus.NT_STATUS_INVALID_WORKSTATION)
+
+    def test_authn_policy_allowed_to_computer_allow_as_req_no_fast(self):
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+
+        # Create an authentication policy that applies to a computer and
+        # explicitly allows the user account to obtain a service ticket.
+        allowed = f'O:SYD:(A;;CR;;;{client_creds.get_sid()})'
+        denied = 'O:SYD:(D;;CR;;;WD)'
+        policy = self.create_authn_policy(enforced=True,
+                                          user_allowed_to=denied,
+                                          computer_allowed_to=allowed,
+                                          service_allowed_to=denied)
+
+        # Create a computer account with the assigned policy.
+        target_creds = self._get_creds(account_type=self.AccountType.COMPUTER,
+                                       assigned_policy=policy)
+
+        # Show that obtaining a service ticket with an AS-REQ is allowed.
+        self._as_req(client_creds, 0, target_creds,
+                     etype=(kcrypto.Enctype.AES256,))
+
+        self.check_as_log(client_creds,
+                          server_policy=policy)
+
+    def test_authn_policy_allowed_to_computer_deny_as_req_no_fast(self):
+        # Create a user account.
+        client_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER)
+
+        # Create an authentication policy that applies to a computer and
+        # explicitly denies the user account to obtain a service ticket.
+        denied = f'O:SYD:(D;;CR;;;{client_creds.get_sid()})'
+        allowed = 'O:SYD:(A;;CR;;;WD)'
+        policy = self.create_authn_policy(enforced=True,
+                                          user_allowed_to=allowed,
+                                          computer_allowed_to=denied,
+                                          service_allowed_to=allowed)
+
+        # Create a computer account with the assigned policy.
+        target_creds = self._get_creds(account_type=self.AccountType.COMPUTER,
+                                       assigned_policy=policy)
+
+        # Show that obtaining a service ticket with an AS-REQ is denied.
+        self._as_req(client_creds, KDC_ERR_POLICY, target_creds,
+                     etype=(kcrypto.Enctype.AES256,))
+
+        self.check_as_log(
+            client_creds,
+            server_policy=policy,
+            server_policy_status=ntstatus.NT_STATUS_AUTHENTICATION_FIREWALL_FAILED,
+            event=AuditEvent.KERBEROS_SERVER_RESTRICTION,
+            reason=AuditReason.ACCESS_DENIED,
+            status=ntstatus.NT_STATUS_INVALID_WORKSTATION)
 
     def test_authn_policy_ntlm_allow_user(self):
         # Create an authentication policy allowing NTLM authentication for
@@ -8222,170 +8894,6 @@ class AuthnPolicyTests(AuthLogTestBase, KdcTgsBaseTests):
             client_policy=policy,
             client_policy_status=ntstatus.NT_STATUS_ACCOUNT_RESTRICTION,
             event=AuditEvent.NTLM_DEVICE_RESTRICTION)
-
-    def check_ticket_times(self,
-                           ticket_creds,
-                           expected_life=None,
-                           expected_renew_life=None):
-        ticket = ticket_creds.ticket_private
-
-        authtime = ticket['authtime']
-        starttime = ticket.get('starttime', authtime)
-        endtime = ticket['endtime']
-        renew_till = ticket.get('renew-till', None)
-
-        starttime = self.get_EpochFromKerberosTime(starttime)
-
-        if expected_life is not None:
-            actual_end = self.get_EpochFromKerberosTime(
-                endtime.decode('ascii'))
-            actual_lifetime = actual_end - starttime
-
-            self.assertEqual(expected_life, actual_lifetime)
-
-        if renew_till is None:
-            self.assertIsNone(expected_renew_life)
-        else:
-            if expected_renew_life is not None:
-                actual_renew_till = self.get_EpochFromKerberosTime(
-                    renew_till.decode('ascii'))
-                actual_renew_life = actual_renew_till - starttime
-
-                self.assertEqual(expected_renew_life, actual_renew_life)
-
-    def _get_tgt(self, creds, *,
-                 armor_tgt=None,
-                 till=None,
-                 expected_error=0,
-                 expect_status=None,
-                 expected_status=None):
-        user_name = creds.get_username()
-        realm = creds.get_realm()
-        salt = creds.get_salt()
-
-        cname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
-                                          names=user_name.split('/'))
-        sname = self.PrincipalName_create(name_type=NT_SRV_INST,
-                                          names=['krbtgt', realm])
-        expected_sname = self.PrincipalName_create(
-            name_type=NT_SRV_INST, names=['krbtgt', realm.upper()])
-
-        expected_cname = cname
-
-        if till is None:
-            till = self.get_KerberosTime(offset=36000)
-
-        renew_time = till
-
-        krbtgt_creds = self.get_krbtgt_creds()
-        ticket_decryption_key = (
-            self.TicketDecryptionKey_from_creds(krbtgt_creds))
-
-        expected_etypes = krbtgt_creds.tgs_supported_enctypes
-
-        kdc_options = str(krb5_asn1.KDCOptions('renewable'))
-        # Contrary to Microsoft’s documentation, the returned ticket is
-        # renewable.
-        expected_flags = krb5_asn1.TicketFlags('renewable')
-
-        preauth_key = self.PasswordKey_from_creds(creds,
-                                                  kcrypto.Enctype.AES256)
-
-        expected_realm = realm.upper()
-
-        etypes = kcrypto.Enctype.AES256, kcrypto.Enctype.RC4
-
-        if armor_tgt is not None:
-            authenticator_subkey = self.RandomKey(kcrypto.Enctype.AES256)
-            armor_key = self.generate_armor_key(authenticator_subkey,
-                                                armor_tgt.session_key)
-            armor_subkey = authenticator_subkey
-
-            client_challenge_key = self.generate_client_challenge_key(
-                armor_key, preauth_key)
-            enc_challenge_padata = self.get_challenge_pa_data(
-                client_challenge_key)
-
-            def generate_fast_padata_fn(kdc_exchange_dict,
-                                        _callback_dict,
-                                        req_body):
-                return [enc_challenge_padata], req_body
-
-            generate_fast_fn = self.generate_simple_fast
-            generate_fast_armor_fn = self.generate_ap_req
-            generate_padata_fn = None
-
-            fast_armor_type = FX_FAST_ARMOR_AP_REQUEST
-        else:
-            ts_enc_padata = self.get_enc_timestamp_pa_data_from_key(
-                preauth_key)
-
-            def generate_padata_fn(kdc_exchange_dict,
-                                   _callback_dict,
-                                   req_body):
-                return [ts_enc_padata], req_body
-
-            generate_fast_fn = None
-            generate_fast_padata_fn = None
-            generate_fast_armor_fn = None
-
-            armor_key = None
-            armor_subkey = None
-
-            fast_armor_type = None
-
-        if not expected_error:
-            check_error_fn = None
-            check_rep_fn = self.generic_check_kdc_rep
-        else:
-            check_error_fn = self.generic_check_kdc_error
-            check_rep_fn = None
-
-        kdc_exchange_dict = self.as_exchange_dict(
-            creds=creds,
-            expected_error_mode=expected_error,
-            expect_status=expect_status,
-            expected_status=expected_status,
-            expected_crealm=expected_realm,
-            expected_cname=expected_cname,
-            expected_srealm=expected_realm,
-            expected_sname=expected_sname,
-            expected_salt=salt,
-            expected_flags=expected_flags,
-            expected_supported_etypes=expected_etypes,
-            generate_padata_fn=generate_padata_fn,
-            generate_fast_padata_fn=generate_fast_padata_fn,
-            generate_fast_fn=generate_fast_fn,
-            generate_fast_armor_fn=generate_fast_armor_fn,
-            fast_armor_type=fast_armor_type,
-            check_error_fn=check_error_fn,
-            check_rep_fn=check_rep_fn,
-            check_kdc_private_fn=self.generic_check_kdc_private,
-            armor_key=armor_key,
-            armor_tgt=armor_tgt,
-            armor_subkey=armor_subkey,
-            kdc_options=kdc_options,
-            preauth_key=preauth_key,
-            ticket_decryption_key=ticket_decryption_key,
-            # PA-DATA types are not important for these tests.
-            check_patypes=False)
-
-        rep = self._generic_kdc_exchange(kdc_exchange_dict,
-                                         cname=cname,
-                                         realm=realm,
-                                         sname=sname,
-                                         till_time=till,
-                                         renew_time=renew_time,
-                                         etypes=etypes)
-        if expected_error:
-            self.check_error_rep(rep, expected_error)
-
-            return None
-
-        self.check_as_reply(rep)
-
-        ticket_creds = kdc_exchange_dict['rep_ticket_creds']
-        return ticket_creds
 
 
 if __name__ == '__main__':

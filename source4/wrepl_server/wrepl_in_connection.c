@@ -133,6 +133,8 @@ static void wreplsrv_accept(struct stream_connection *conn)
 		return;
 	}
 	socket_set_flags(conn->socket, SOCKET_FLAG_NOCLOSE);
+	/* as server we want to fail early */
+	tstream_bsd_fail_readv_first_error(wrepl_conn->tstream, true);
 
 	wrepl_conn->conn = conn;
 	wrepl_conn->service = service;
@@ -159,13 +161,13 @@ static void wreplsrv_accept(struct stream_connection *conn)
 
 	/*
 	 * The wrepl pdu's has the length as 4 byte (initial_read_size),
-	 * packet_full_request_u32 provides the pdu length then.
+	 * tstream_full_request_u32 provides the pdu length then.
 	 */
 	subreq = tstream_read_pdu_blob_send(wrepl_conn,
 					    wrepl_conn->conn->event.ctx,
 					    wrepl_conn->tstream,
 					    4, /* initial_read_size */
-					    packet_full_request_u32,
+					    tstream_full_request_u32,
 					    wrepl_conn);
 	if (subreq == NULL) {
 		wreplsrv_terminate_in_connection(wrepl_conn, "wrepl_accept: "
@@ -267,7 +269,7 @@ noreply:
 					    wrepl_conn->conn->event.ctx,
 					    wrepl_conn->tstream,
 					    4, /* initial_read_size */
-					    packet_full_request_u32,
+					    tstream_full_request_u32,
 					    wrepl_conn);
 	if (subreq == NULL) {
 		wreplsrv_terminate_in_connection(wrepl_conn, "wreplsrv_call_loop: "
@@ -388,15 +390,18 @@ NTSTATUS wreplsrv_in_connection_merge(struct wreplsrv_partner *partner,
 		return NT_STATUS_NO_MEMORY;
 	}
 
+	/* we're now a server and want to fail early */
+	tstream_bsd_fail_readv_first_error(wrepl_in->tstream, true);
+
 	/*
 	 * The wrepl pdu's has the length as 4 byte (initial_read_size),
-	 * packet_full_request_u32 provides the pdu length then.
+	 * tstream_full_request_u32 provides the pdu length then.
 	 */
 	subreq = tstream_read_pdu_blob_send(wrepl_in,
 					    wrepl_in->conn->event.ctx,
 					    wrepl_in->tstream,
 					    4, /* initial_read_size */
-					    packet_full_request_u32,
+					    tstream_full_request_u32,
 					    wrepl_in);
 	if (subreq == NULL) {
 		wreplsrv_terminate_in_connection(wrepl_in, "wreplsrv_in_connection_merge: "

@@ -66,7 +66,6 @@ from samba.dcerpc.misc import (
 )
 from samba.dsdb import (
     DS_DOMAIN_FUNCTION_2000,
-    DS_DOMAIN_FUNCTION_2003,
     DS_DOMAIN_FUNCTION_2008,
     DS_DOMAIN_FUNCTION_2008_R2,
     DS_DOMAIN_FUNCTION_2012,
@@ -83,7 +82,6 @@ from samba.provision.backend import (
 )
 from samba.descriptor import (
     get_deletedobjects_descriptor,
-    get_empty_descriptor,
     get_config_descriptor,
     get_config_partitions_descriptor,
     get_config_sites_descriptor,
@@ -99,9 +97,6 @@ from samba.descriptor import (
     get_domain_controllers_descriptor,
     get_domain_delete_protected1_descriptor,
     get_domain_delete_protected2_descriptor,
-    get_dns_partition_descriptor,
-    get_dns_forest_microsoft_dns_descriptor,
-    get_dns_domain_microsoft_dns_descriptor,
     get_managed_service_accounts_descriptor,
 )
 from samba.provision.common import (
@@ -110,7 +105,6 @@ from samba.provision.common import (
     setup_modify_ldif,
     FILL_FULL,
     FILL_SUBDOMAIN,
-    FILL_NT4SYNC,
     FILL_DRS
 )
 from samba.provision.sambadns import (
@@ -668,7 +662,7 @@ def guess_names(lp=None, hostname=None, domain=None, dnsdomain=None,
     if serverrole != "active directory domain controller":
         #
         # This is the code path for a domain member
-        # where we provision the database as if we where
+        # where we provision the database as if we were
         # on a domain controller, so we should not use
         # the same dnsdomain as the domain controllers
         # of our primary domain.
@@ -692,6 +686,10 @@ def guess_names(lp=None, hostname=None, domain=None, dnsdomain=None,
     if sitename is None:
         sitename = DEFAULTSITE
 
+    if serverdn is None:
+        serverdn = "CN=%s,CN=Servers,CN=%s,CN=Sites,%s" % (
+            netbiosname, sitename, configdn)
+
     names = ProvisionNames()
     names.rootdn = rootdn
     names.domaindn = domaindn
@@ -704,8 +702,7 @@ def guess_names(lp=None, hostname=None, domain=None, dnsdomain=None,
     names.netbiosname = netbiosname
     names.hostname = hostname
     names.sitename = sitename
-    names.serverdn = "CN=%s,CN=Servers,CN=%s,CN=Sites,%s" % (
-        netbiosname, sitename, configdn)
+    names.serverdn = serverdn
 
     return names
 
@@ -813,7 +810,7 @@ def make_smbconf(smbconf, hostname, domain, realm, targetdir,
 
 
 def setup_name_mappings(idmap, sid, root_uid, nobody_uid,
-                        users_gid, root_gid):
+                        users_gid):
     """setup reasonable name mappings for sam names to unix names.
 
     :param samdb: SamDB object.
@@ -823,7 +820,6 @@ def setup_name_mappings(idmap, sid, root_uid, nobody_uid,
     :param root_uid: uid of the UNIX root user.
     :param nobody_uid: uid of the UNIX nobody user.
     :param users_gid: gid of the UNIX users group.
-    :param root_gid: gid of the UNIX root group.
     """
     idmap.setup_name_mapping("S-1-5-7", idmap.TYPE_UID, nobody_uid)
 
@@ -833,8 +829,8 @@ def setup_name_mappings(idmap, sid, root_uid, nobody_uid,
 
 def setup_samdb_partitions(samdb_path, logger, lp, session_info,
                            provision_backend, names, serverrole,
-                           erase=False, plaintext_secrets=False,
-                           backend_store=None,backend_store_size=None):
+                           plaintext_secrets=False,
+                           backend_store=None):
     """Setup the partitions for the SAM database.
 
     Alternatively, provision() may call this, and then populate the database.
@@ -907,7 +903,6 @@ def setup_samdb_partitions(samdb_path, logger, lp, session_info,
 def secretsdb_self_join(secretsdb, domain,
                         netbiosname, machinepass, domainsid=None,
                         realm=None, dnsdomain=None,
-                        keytab_path=None,
                         key_version_number=1,
                         secure_channel_type=SEC_CHAN_WKSTA):
     """Add domain join-specific bits to a secrets database.
@@ -986,7 +981,7 @@ def secretsdb_self_join(secretsdb, domain,
     else:
         spn = ['HOST/%s' % shortname]
         if secure_channel_type == SEC_CHAN_BDC and dnsname is not None:
-            # we are a domain controller then we add servicePrincipalName
+            # if we are a domain controller then we add servicePrincipalName
             # entries for the keytab code to update.
             spn.extend(['HOST/%s' % dnsname])
         msg["servicePrincipalName"] = spn
@@ -1002,7 +997,6 @@ def setup_secretsdb(paths, session_info, lp):
 
     :param path: Path to the secrets database.
     :param session_info: Session info.
-    :param credentials: Credentials
     :param lp: Loadparm context
     :return: LDB handle for the created secrets database
     """
@@ -1041,7 +1035,6 @@ def setup_privileges(path, session_info, lp):
 
     :param path: Path to the privileges database.
     :param session_info: Session info.
-    :param credentials: Credentials
     :param lp: Loadparm context
     :return: LDB handle for the created secrets database
     """
@@ -1082,7 +1075,6 @@ def setup_registry(path, session_info, lp):
 
     :param path: Path to the registry database
     :param session_info: Session information
-    :param credentials: Credentials
     :param lp: Loadparm context
     """
     reg = samba.registry.Registry()
@@ -1098,7 +1090,6 @@ def setup_idmapdb(path, session_info, lp):
 
     :param path: path to the idmap database
     :param session_info: Session information
-    :param credentials: Credentials
     :param lp: Loadparm context
     """
     if os.path.exists(path):
@@ -1280,7 +1271,7 @@ def create_default_gpo(sysvolpath, dnsdomain, policyguid, policyguid_dc):
 DEFAULT_BACKEND_SIZE = 8 * 1024 * 1024 *1024
 
 def setup_samdb(path, session_info, provision_backend, lp, names,
-                logger, fill, serverrole, schema, am_rodc=False,
+                logger, serverrole, schema, am_rodc=False,
                 plaintext_secrets=False, backend_store=None,
                 backend_store_size=None, batch_mode=False):
     """Setup a complete SAM Database.
@@ -1292,8 +1283,7 @@ def setup_samdb(path, session_info, provision_backend, lp, names,
     setup_samdb_partitions(path, logger=logger, lp=lp,
                            provision_backend=provision_backend, session_info=session_info,
                            names=names, serverrole=serverrole, plaintext_secrets=plaintext_secrets,
-                           backend_store=backend_store,
-                           backend_store_size=backend_store_size)
+                           backend_store=backend_store)
 
     store_size = DEFAULT_BACKEND_SIZE
     if backend_store_size:
@@ -1347,10 +1337,8 @@ def setup_samdb(path, session_info, provision_backend, lp, names,
 
 def fill_samdb(samdb, lp, names, logger, policyguid,
                policyguid_dc, fill, adminpass, krbtgtpass, machinepass, dns_backend,
-               dnspass, invocationid, ntdsguid, serverrole, am_rodc=False,
-               dom_for_fun_level=None, schema=None, next_rid=None, dc_rid=None,
-               backend_store=None,
-               backend_store_size=None):
+               dnspass, invocationid, ntdsguid,
+               dom_for_fun_level=None, schema=None, next_rid=None, dc_rid=None):
 
     if next_rid is None:
         next_rid = 1000
@@ -1663,12 +1651,11 @@ def set_gpos_acl(sysvol, dnsdomain, domainsid, domaindn, samdb, lp, use_ntvfs, p
                     passdb=passdb)
 
 
-def setsysvolacl(samdb, netlogon, sysvol, uid, gid, domainsid, dnsdomain,
+def setsysvolacl(samdb, sysvol, uid, gid, domainsid, dnsdomain,
                  domaindn, lp, use_ntvfs):
     """Set the ACL for the sysvol share and the subfolders
 
     :param samdb: An LDB object on the SAM db
-    :param netlogon: Physical path for the netlogon folder
     :param sysvol: Physical path for the sysvol folder
     :param uid: The UID of the "Administrator" user
     :param gid: The GID of the "Domain administrators" group
@@ -1919,16 +1906,15 @@ def interface_ips_v6(lp):
 
 def provision_fill(samdb, secrets_ldb, logger, names, paths,
                    schema=None,
-                   targetdir=None, samdb_fill=FILL_FULL,
+                   samdb_fill=FILL_FULL,
                    hostip=None, hostip6=None,
                    next_rid=1000, dc_rid=None, adminpass=None, krbtgtpass=None,
                    domainguid=None, policyguid=None, policyguid_dc=None,
                    invocationid=None, machinepass=None, ntdsguid=None,
                    dns_backend=None, dnspass=None,
                    serverrole=None, dom_for_fun_level=None,
-                   am_rodc=False, lp=None, use_ntvfs=False,
-                   skip_sysvolacl=False, backend_store=None,
-                   backend_store_size=None):
+                   lp=None, use_ntvfs=False,
+                   skip_sysvolacl=False):
     # create/adapt the group policy GUIDs
     # Default GUID for default policy are described at
     # "How Core Group Policy Works"
@@ -1961,11 +1947,9 @@ def provision_fill(samdb, secrets_ldb, logger, names, paths,
                            fill=samdb_fill, adminpass=adminpass, krbtgtpass=krbtgtpass,
                            invocationid=invocationid, machinepass=machinepass,
                            dns_backend=dns_backend, dnspass=dnspass,
-                           ntdsguid=ntdsguid, serverrole=serverrole,
-                           dom_for_fun_level=dom_for_fun_level, am_rodc=am_rodc,
-                           next_rid=next_rid, dc_rid=dc_rid,
-                           backend_store=backend_store,
-                           backend_store_size=backend_store_size)
+                           ntdsguid=ntdsguid,
+                           dom_for_fun_level=dom_for_fun_level,
+                           next_rid=next_rid, dc_rid=dc_rid)
 
         # Set up group policies (domain policy and domain controller
         # policy)
@@ -1982,7 +1966,7 @@ def provision_fill(samdb, secrets_ldb, logger, names, paths,
         # Continue setting up sysvol for GPO. This appears to require being
         # outside a transaction.
         if not skip_sysvolacl:
-            setsysvolacl(samdb, paths.netlogon, paths.sysvol, paths.root_uid,
+            setsysvolacl(samdb, paths.sysvol, paths.root_uid,
                          paths.root_gid, names.domainsid, names.dnsdomain,
                          names.domaindn, lp, use_ntvfs)
         else:
@@ -2012,11 +1996,10 @@ def provision_fill(samdb, secrets_ldb, logger, names, paths,
                 # It might be that this attribute does not exist in this schema
                 raise
 
-        setup_ad_dns(samdb, secrets_ldb, names, paths, lp, logger,
+        setup_ad_dns(samdb, secrets_ldb, names, paths, logger,
                      hostip=hostip, hostip6=hostip6, dns_backend=dns_backend,
                      dnspass=dnspass, os_level=dom_for_fun_level,
-                     targetdir=targetdir, fill_level=samdb_fill,
-                     backend_store=backend_store)
+                     fill_level=samdb_fill)
 
         domainguid = samdb.searchone(basedn=samdb.get_default_basedn(),
                                      attribute="objectGUID").decode('utf8')
@@ -2091,8 +2074,7 @@ def sanitize_server_role(role):
         raise ValueError(role)
 
 
-def provision_fake_ypserver(logger, samdb, domaindn, netbiosname, nisdomain,
-                            maxuid, maxgid):
+def provision_fake_ypserver(logger, samdb, domaindn, netbiosname, nisdomain):
     """Create AD entries for the fake ypserver.
 
     This is needed for being able to manipulate posix attrs via ADUC.
@@ -2162,10 +2144,10 @@ def provision(logger, session_info, smbconf=None,
               krbtgtpass=None, domainguid=None, policyguid=None, policyguid_dc=None,
               dns_backend=None, dns_forwarder=None, dnspass=None,
               invocationid=None, machinepass=None, ntdsguid=None,
-              root=None, nobody=None, users=None, backup=None,
+              root=None, nobody=None, users=None,
               sitename=None, serverrole=None, dom_for_fun_level=None,
               useeadb=False, am_rodc=False, lp=None, use_ntvfs=False,
-              use_rfc2307=False, maxuid=None, maxgid=None, skip_sysvolacl=True,
+              use_rfc2307=False, skip_sysvolacl=True,
               base_schema="2019", adprep_level=DS_DOMAIN_FUNCTION_2016,
               plaintext_secrets=False, backend_store=None,
               backend_store_size=None, batch_mode=False):
@@ -2335,13 +2317,13 @@ def provision(logger, session_info, smbconf=None,
 
         setup_name_mappings(idmap, sid=str(domainsid),
                             root_uid=root_uid, nobody_uid=nobody_uid,
-                            users_gid=users_gid, root_gid=root_gid)
+                            users_gid=users_gid)
 
         logger.info("Setting up SAM db")
         samdb = setup_samdb(paths.samdb, session_info,
                             provision_backend, lp, names, logger=logger,
                             serverrole=serverrole,
-                            schema=schema, fill=samdb_fill, am_rodc=am_rodc,
+                            schema=schema, am_rodc=am_rodc,
                             plaintext_secrets=plaintext_secrets,
                             backend_store=backend_store,
                             backend_store_size=backend_store_size,
@@ -2367,7 +2349,7 @@ def provision(logger, session_info, smbconf=None,
 
         if samdb_fill == FILL_FULL:
             provision_fill(samdb, secrets_ldb, logger, names, paths,
-                           schema=schema, targetdir=targetdir, samdb_fill=samdb_fill,
+                           schema=schema, samdb_fill=samdb_fill,
                            hostip=hostip, hostip6=hostip6,
                            next_rid=next_rid, dc_rid=dc_rid, adminpass=adminpass,
                            krbtgtpass=krbtgtpass,
@@ -2375,11 +2357,9 @@ def provision(logger, session_info, smbconf=None,
                            invocationid=invocationid, machinepass=machinepass,
                            ntdsguid=ntdsguid, dns_backend=dns_backend,
                            dnspass=dnspass, serverrole=serverrole,
-                           dom_for_fun_level=dom_for_fun_level, am_rodc=am_rodc,
+                           dom_for_fun_level=dom_for_fun_level,
                            lp=lp, use_ntvfs=use_ntvfs,
-                           skip_sysvolacl=skip_sysvolacl,
-                           backend_store=backend_store,
-                           backend_store_size=backend_store_size)
+                           skip_sysvolacl=skip_sysvolacl)
 
             if adprep_level is not None:
                 updates_allowed_overridden = False
@@ -2436,7 +2416,7 @@ def provision(logger, session_info, smbconf=None,
                     "symlink!")
 
         if serverrole == "active directory domain controller":
-            create_dns_update_list(lp, logger, paths)
+            create_dns_update_list(paths)
 
         backend_result = provision_backend.post_setup()
         provision_backend.shutdown()
@@ -2473,7 +2453,7 @@ def provision(logger, session_info, smbconf=None,
     if use_rfc2307:
         provision_fake_ypserver(logger=logger, samdb=samdb,
                                 domaindn=names.domaindn, netbiosname=names.netbiosname,
-                                nisdomain=names.domain.lower(), maxuid=maxuid, maxgid=maxgid)
+                                nisdomain=names.domain.lower())
 
     return result
 
@@ -2531,14 +2511,14 @@ class InvalidNetbiosName(Exception):
     """A specified name was not a valid NetBIOS name."""
 
     def __init__(self, name):
-        super(InvalidNetbiosName, self).__init__(
+        super().__init__(
             "The name '%r' is not a valid NetBIOS name" % name)
 
 
 class MissingShareError(ProvisioningError):
 
     def __init__(self, name, smbconf):
-        super(MissingShareError, self).__init__(
+        super().__init__(
             "Existing smb.conf does not have a [%s] share, but you are "
             "configuring a DC. Please remove %s or add the share manually." %
             (name, smbconf))

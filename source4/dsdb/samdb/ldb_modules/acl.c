@@ -220,7 +220,7 @@ static int acl_childClasses(struct ldb_module *module,
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	/* Must remove any existing attribute, or else confusion reins */
+	/* Must remove any existing attribute, or else confusion reigns */
 	ldb_msg_remove_attr(msg, attrName);
 	ret = ldb_msg_add_empty(msg, attrName, 0, &allowedClasses);
 	if (ret != LDB_SUCCESS) {
@@ -286,7 +286,7 @@ static int acl_childClassesEffective(struct ldb_module *module,
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	/* Must remove any existing attribute, or else confusion reins */
+	/* Must remove any existing attribute, or else confusion reigns */
 	ldb_msg_remove_attr(msg, "allowedChildClassesEffective");
 
 	oc_el = ldb_msg_find_element(sd_msg, "objectClass");
@@ -361,7 +361,7 @@ static int acl_sDRightsEffective(struct ldb_module *module,
 		as_system->critical = 0;
 	}
 
-	/* Must remove any existing attribute, or else confusion reins */
+	/* Must remove any existing attribute, or else confusion reigns */
 	ldb_msg_remove_attr(msg, "sDRightsEffective");
 	ret = ldb_msg_add_empty(msg, "sDRightsEffective", 0, &rightsEffective);
 	if (ret != LDB_SUCCESS) {
@@ -456,13 +456,13 @@ static int acl_validate_spn_value(TALLOC_CTX *mem_ctx,
 				  const char *netbios_name,
 				  const char *ntds_guid)
 {
-	int ret, princ_size;
+	krb5_error_code ret, princ_size;
 	krb5_context krb_ctx;
 	krb5_error_code kerr;
 	krb5_principal principal;
-	char *instanceName;
-	char *serviceType;
-	char *serviceName;
+	char *instanceName = NULL;
+	char *serviceType = NULL;
+	char *serviceName = NULL;
 	const char *spn_value_str = NULL;
 	size_t account_name_len;
 	const char *forest_name = samdb_forest_name(ldb, mem_ctx);
@@ -509,15 +509,22 @@ static int acl_validate_spn_value(TALLOC_CTX *mem_ctx,
 		goto fail;
 	}
 
-	instanceName = smb_krb5_principal_get_comp_string(mem_ctx, krb_ctx,
-							  principal, 1);
-	serviceType = smb_krb5_principal_get_comp_string(mem_ctx, krb_ctx,
-							 principal, 0);
+	ret = smb_krb5_principal_get_comp_string(mem_ctx, krb_ctx,
+							  principal, 1, &instanceName);
+	if (ret) {
+		goto fail;
+	}
+	ret = smb_krb5_principal_get_comp_string(mem_ctx, krb_ctx,
+						 principal, 0, &serviceType);
+	if (ret) {
+		goto fail;
+	}
 	if (krb5_princ_size(krb_ctx, principal) == 3) {
-		serviceName = smb_krb5_principal_get_comp_string(mem_ctx, krb_ctx,
-								 principal, 2);
-	} else {
-		serviceName = NULL;
+		ret = smb_krb5_principal_get_comp_string(mem_ctx, krb_ctx,
+							 principal, 2, &serviceName);
+		if (ret) {
+			goto fail;
+		}
 	}
 
 	if (serviceName) {
@@ -576,7 +583,7 @@ static int acl_validate_spn_value(TALLOC_CTX *mem_ctx,
 		goto success;
 	}
 	if (is_dc) {
-		const char *guid_str;
+		const char *guid_str = NULL;
 		guid_str = talloc_asprintf(mem_ctx,"%s._msdcs.%s",
 					   ntds_guid,
 					   forest_name);
@@ -2255,7 +2262,7 @@ static int acl_delete(struct ldb_module *module, struct ldb_request *req)
 				    DSDB_FLAG_NEXT_MODULE |
 				    DSDB_FLAG_AS_SYSTEM |
 				    DSDB_SEARCH_SHOW_RECYCLED, req);
-	/* we sould be able to find the parent */
+	/* we should be able to find the parent */
 	if (ret != LDB_SUCCESS) {
 		DEBUG(10,("acl: failed to find object %s\n",
 			  ldb_dn_get_linearized(req->op.rename.olddn)));
@@ -2451,7 +2458,7 @@ static int acl_rename(struct ldb_module *module, struct ldb_request *req)
 				    DSDB_FLAG_NEXT_MODULE |
 				    DSDB_FLAG_AS_SYSTEM |
 				    DSDB_SEARCH_SHOW_RECYCLED, req);
-	/* we sould be able to find the parent */
+	/* we should be able to find the parent */
 	if (ret != LDB_SUCCESS) {
 		DEBUG(10,("acl: failed to find object %s\n",
 			  ldb_dn_get_linearized(req->op.rename.olddn)));

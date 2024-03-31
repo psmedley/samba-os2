@@ -701,7 +701,7 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 
 	enum smb_signing_setting smb_sign_client_connections = lp_client_ipc_signing();
 
-	if (IS_AD_DC) {
+	if (IS_DC) {
 		if (domain->secure_channel_type == SEC_CHAN_NULL) {
 			/*
 			 * Make sure we don't even try to
@@ -782,9 +782,13 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 
 	set_socket_options(sockfd, lp_socket_options());
 
-	result = smbXcli_negprot((*cli)->conn, (*cli)->timeout,
+	result = smbXcli_negprot((*cli)->conn,
+				 (*cli)->timeout,
 				 lp_client_ipc_min_protocol(),
-				 lp_client_ipc_max_protocol());
+				 lp_client_ipc_max_protocol(),
+				 NULL,
+				 NULL,
+				 NULL);
 
 	if (!NT_STATUS_IS_OK(result)) {
 		DEBUG(1, ("cli_negprot failed: %s\n", nt_errstr(result)));
@@ -805,7 +809,7 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 		try_ipc_auth = true;
 	}
 
-	if (IS_AD_DC) {
+	if (IS_DC) {
 		/*
 		 * As AD DC we only use netlogon and lsa
 		 * using schannel over an anonymous transport
@@ -1429,9 +1433,12 @@ static bool connect_preferred_dc(TALLOC_CTX *mem_ctx,
 	 * Check the negative connection cache before talking to it. It going
 	 * down may have triggered the reconnection.
 	 */
-	status = check_negative_conn_cache(domain->name, saf_servername);
-	if (!NT_STATUS_IS_OK(status)) {
-		saf_servername = NULL;
+	if (saf_servername != NULL) {
+		status = check_negative_conn_cache(domain->name,
+						   saf_servername);
+		if (!NT_STATUS_IS_OK(status)) {
+			saf_servername = NULL;
+		}
 	}
 
 	if (saf_servername != NULL) {
@@ -1480,7 +1487,10 @@ static bool connect_preferred_dc(TALLOC_CTX *mem_ctx,
 				 NULL, -1, NULL, -1,
 				 fd, NULL, 10);
 	if (!NT_STATUS_IS_OK(status)) {
-		goto fail;
+		winbind_add_failed_connection_entry(domain,
+						    domain->dcname,
+						    NT_STATUS_UNSUCCESSFUL);
+		return false;
 	}
 	return true;
 
@@ -2170,12 +2180,19 @@ static bool set_dc_type_and_flags_trustinfo( struct winbindd_domain *domain )
 static void set_dc_type_and_flags_connect( struct winbindd_domain *domain )
 {
 	NTSTATUS status, result;
+	NTSTATUS close_status = NT_STATUS_UNSUCCESSFUL;
 	WERROR werr;
 	TALLOC_CTX              *mem_ctx = NULL;
 	struct rpc_pipe_client  *cli = NULL;
-	struct policy_handle pol;
+	struct policy_handle pol = { .handle_type = 0 };
 	union dssetup_DsRoleInfo info;
 	union lsa_PolicyInformation *lsa_info = NULL;
+	union lsa_revision_info out_revision_info = {
+		.info1 = {
+			.revision = 0,
+		},
+	};
+	uint32_t out_version = 0;
 
 	if (!domain->internal && !connection_ok(domain)) {
 		return;
@@ -2264,10 +2281,17 @@ no_dssetup:
 		return;
 	}
 
-	status = rpccli_lsa_open_policy2(cli, mem_ctx, True,
-					 SEC_FLAG_MAXIMUM_ALLOWED, &pol);
+	status = dcerpc_lsa_open_policy_fallback(cli->binding_handle,
+						 mem_ctx,
+						 cli->srv_name_slash,
+						 true,
+						 SEC_FLAG_MAXIMUM_ALLOWED,
+						 &out_version,
+						 &out_revision_info,
+						 &pol,
+						 &result);
 
-	if (NT_STATUS_IS_OK(status)) {
+	if (NT_STATUS_IS_OK(status) && NT_STATUS_IS_OK(result)) {
 		/* This particular query is exactly what Win2k clients use
 		   to determine that the DC is active directory */
 		status = dcerpc_lsa_QueryInfoPolicy2(cli->binding_handle, mem_ctx,
@@ -2277,6 +2301,10 @@ no_dssetup:
 						     &result);
 	}
 
+	/*
+	 * If the status and result will not be OK we will fallback to
+	 * OpenPolicy.
+	 */
 	if (NT_STATUS_IS_OK(status) && NT_STATUS_IS_OK(result)) {
 		domain->active_directory = True;
 
@@ -2427,6 +2455,12 @@ no_dssetup:
 		}
 	}
 done:
+	if (is_valid_policy_hnd(&pol)) {
+		dcerpc_lsa_Close(cli->binding_handle,
+				 mem_ctx,
+				 &pol,
+				 &close_status);
+	}
 
 	DEBUG(5, ("set_dc_type_and_flags_connect: domain %s is %sin native mode.\n",
 		  domain->name, domain->native_mode ? "" : "NOT "));
@@ -2890,7 +2924,7 @@ retry:
 
 	TALLOC_FREE(conn->lsa_pipe);
 
-	if (IS_AD_DC) {
+	if (IS_DC) {
 		/*
 		 * Make sure we only use schannel as AD DC.
 		 */
@@ -3016,7 +3050,7 @@ retry:
 		goto done;
 	}
 
-	if (IS_AD_DC) {
+	if (IS_DC) {
 		/*
 		 * Make sure we only use schannel as AD DC.
 		 */
@@ -3030,7 +3064,7 @@ retry:
 
  anonymous:
 
-	if (IS_AD_DC) {
+	if (IS_DC) {
 		/*
 		 * Make sure we only use schannel as AD DC.
 		 */
@@ -3149,7 +3183,7 @@ static NTSTATUS cm_connect_netlogon_transport(struct winbindd_domain *domain,
 
 	*cli = NULL;
 
-	if (IS_AD_DC) {
+	if (IS_DC) {
 		if (domain->secure_channel_type == SEC_CHAN_NULL) {
 			/*
 			 * Make sure we don't even try to
@@ -3353,7 +3387,7 @@ void winbind_msg_ip_dropped(struct messaging_context *msg_ctx,
 		 */
 		slash = strchr(addr, '/');
 		if (slash == NULL) {
-			DEBUG(1, ("invalid msg_ip_dropped message: %s",
+			DEBUG(1, ("invalid msg_ip_dropped message: %s\n",
 				  addr));
 			return;
 		}

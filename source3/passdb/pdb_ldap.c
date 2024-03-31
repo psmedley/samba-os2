@@ -81,7 +81,7 @@ LDAP *priv2ld(struct ldapsam_privates *priv)
 }
 
 /**********************************************************************
- Get the attribute name given a user schame version.
+ Get the attribute name given a user schema version.
  **********************************************************************/
 
 static const char* get_userattr_key2string( int schema_ver, int key )
@@ -441,7 +441,7 @@ static int ldapsam_delete_entry(struct ldapsam_privates *priv,
 static time_t ldapsam_get_entry_timestamp( struct ldapsam_privates *ldap_state, LDAPMessage * entry)
 {
 	char *temp;
-	struct tm tm;
+	struct tm tm = {};
 
 	temp = smbldap_talloc_single_attribute(
 		smbldap_get_ldap(ldap_state->smbldap_state), entry,
@@ -2849,7 +2849,8 @@ static NTSTATUS ldapsam_enum_group_members(struct pdb_methods *methods,
 						    entry,
 						    get_global_sam_sid(),
 						    &rid)) {
-			DEBUG(0, ("Severe DB error, %s can't miss the samba SID"								"attribute\n", LDAP_OBJ_SAMBASAMACCOUNT));
+			DEBUG(0, ("Severe DB error, %s can't miss the samba SID"
+				  "attribute\n", LDAP_OBJ_SAMBASAMACCOUNT));
 			ret = NT_STATUS_INTERNAL_DB_CORRUPTION;
 			goto done;
 		}
@@ -4619,7 +4620,7 @@ static bool ldapuser2displayentry(struct ldap_search_state *state,
 			      discard_const_p(char *, &result->account_name),
 			      vals[0], &converted_size))
 	{
-		DEBUG(0,("ldapuser2displayentry: pull_utf8_talloc failed: %s",
+		DEBUG(0,("ldapuser2displayentry: pull_utf8_talloc failed: %s\n",
 			 strerror(errno)));
 	}
 
@@ -4632,7 +4633,7 @@ static bool ldapuser2displayentry(struct ldap_search_state *state,
 				   discard_const_p(char *, &result->fullname),
 				   vals[0], &converted_size))
 	{
-		DEBUG(0,("ldapuser2displayentry: pull_utf8_talloc failed: %s",
+		DEBUG(0,("ldapuser2displayentry: pull_utf8_talloc failed: %s\n",
 			 strerror(errno)));
 	}
 
@@ -4645,7 +4646,7 @@ static bool ldapuser2displayentry(struct ldap_search_state *state,
 				   discard_const_p(char *, &result->description),
 				   vals[0], &converted_size))
 	{
-		DEBUG(0,("ldapuser2displayentry: pull_utf8_talloc failed: %s",
+		DEBUG(0,("ldapuser2displayentry: pull_utf8_talloc failed: %s\n",
 			 strerror(errno)));
 	}
 
@@ -4782,7 +4783,7 @@ static bool ldapgroup2displayentry(struct ldap_search_state *state,
 				      vals[0], &converted_size))
 		{
 			DEBUG(0,("ldapgroup2displayentry: pull_utf8_talloc "
-				  "failed: %s", strerror(errno)));
+				  "failed: %s\n", strerror(errno)));
 		}
 	}
 	else if (!pull_utf8_talloc(mem_ctx,
@@ -4790,7 +4791,7 @@ static bool ldapgroup2displayentry(struct ldap_search_state *state,
 						 &result->account_name),
 				   vals[0], &converted_size))
 	{
-		DEBUG(0,("ldapgroup2displayentry: pull_utf8_talloc failed: %s",
+		DEBUG(0,("ldapgroup2displayentry: pull_utf8_talloc failed: %s\n",
 			  strerror(errno)));
 	}
 
@@ -4803,7 +4804,7 @@ static bool ldapgroup2displayentry(struct ldap_search_state *state,
 				   discard_const_p(char *, &result->description),
 				   vals[0], &converted_size))
 	{
-		DEBUG(0,("ldapgroup2displayentry: pull_utf8_talloc failed: %s",
+		DEBUG(0,("ldapgroup2displayentry: pull_utf8_talloc failed: %s\n",
 			  strerror(errno)));
 	}
 	ldap_value_free(vals);
@@ -5961,10 +5962,10 @@ static NTSTATUS ldapsam_change_groupmem(struct pdb_methods *my_methods,
 
 	switch (modop) {
 	case LDAP_MOD_ADD:
-		DEBUG(1,("ldapsam_change_groupmem: add new member(rid=%d) to a domain group(rid=%d)", member_rid, group_rid));
+		DEBUG(1,("ldapsam_change_groupmem: add new member(rid=%d) to a domain group(rid=%d)\n", member_rid, group_rid));
 		break;
 	case LDAP_MOD_DELETE:
-		DEBUG(1,("ldapsam_change_groupmem: delete member(rid=%d) from a domain group(rid=%d)", member_rid, group_rid));
+		DEBUG(1,("ldapsam_change_groupmem: delete member(rid=%d) from a domain group(rid=%d)\n", member_rid, group_rid));
 		break;
 	default:
 		return NT_STATUS_UNSUCCESSFUL;
@@ -6562,7 +6563,7 @@ static void free_private_data(void **vp)
 }
 
 /*********************************************************************
- Intitalise the parts of the pdb_methods structure that are common to
+ Initialise the parts of the pdb_methods structure that are common to
  all pdb_ldap modes
 *********************************************************************/
 

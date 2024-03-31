@@ -65,7 +65,7 @@ class MdssvcHTTPRequestHandler(BaseHTTPRequestHandler):
 class MdfindBlackboxTests(BlackboxTestCase):
 
     def setUp(self):
-        super(MdfindBlackboxTests, self).setUp()
+        super().setUp()
 
         self.server = HTTPServer(('10.53.57.35', 8080),
                                  MdssvcHTTPRequestHandler,
@@ -83,7 +83,7 @@ class MdfindBlackboxTests(BlackboxTestCase):
             f.close()
 
     def tearDown(self):
-        super(BlackboxTestCase, self).tearDown()
+        super().tearDown()
         for file in testfiles:
             os.remove("%s/%s" % (self.sharepath, file))
 

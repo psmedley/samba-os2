@@ -482,7 +482,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 	bool is_schema_nc = getnc_state->is_schema_nc;
 	uint64_t highest_usn = getnc_state->min_usn;
 
-	/* make dsdb sytanx context for conversions */
+	/* make dsdb syntax context for conversions */
 	dsdb_syntax_ctx_init(&syntax_ctx, sam_ctx, schema);
 	syntax_ctx.is_schema_nc = is_schema_nc;
 
@@ -761,7 +761,7 @@ static WERROR get_nc_changes_add_la(TALLOC_CTX *mem_ctx,
 		v = ldb_msg_find_attr_as_string(msg, "isDeleted", "FALSE");
 		if (strncmp(v, "TRUE", 4) == 0) {
 			/*
-			  * Note: we skip the transmition of the deleted link even if the other part used to
+			  * Note: we skip the transmission of the deleted link even if the other part used to
 			  * know about it because when we transmit the deletion of the object, the link will
 			  * be deleted too due to deletion of object where link points and Windows do so.
 			  */
@@ -769,7 +769,7 @@ static WERROR get_nc_changes_add_la(TALLOC_CTX *mem_ctx,
 				v = ldb_msg_find_attr_as_string(msg, "isRecycled", "FALSE");
 				/*
 				 * On Windows 2008R2 isRecycled is always present even if FL or DL are < FL 2K8R2
-				 * if it join an existing domain with deleted objets, it firsts impose to have a
+				 * if it join an existing domain with deleted objects, it firsts impose to have a
 				 * schema with the is-Recycled object and for all deleted objects it adds the isRecycled
 				 * either during initial replication or after the getNCChanges.
 				 * Behavior of samba has been changed to always have this attribute if it's present in the schema.
@@ -1264,7 +1264,7 @@ static WERROR getncchanges_repl_secret(struct drsuapi_bind_state *b_state,
 							&obj_dn,
 							NULL);
 	if (ret != LDB_SUCCESS) {
-		DBG_ERR("RevealSecretRequest for for invalid DN %s\n",
+		DBG_ERR("RevealSecretRequest for invalid DN %s\n",
 			 drs_ObjectIdentifier_to_debug_string(mem_ctx, ncRoot));
 		goto failed;
 	}
@@ -1794,7 +1794,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 						      collect_objects_attrs,
 						      NULL);
 		if (ret != LDB_SUCCESS) {
-			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Manager object %s - %s",
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Manager object %s - %s\n",
 				  ldb_dn_get_linearized(search_dn),
 				  ldb_errstring(b_state->sam_ctx)));
 			TALLOC_FREE(frame);
@@ -1802,7 +1802,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 		}
 
 		if ((*search_res)->count != 1) {
-			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Manager object %s - %u objects returned",
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Manager object %s - %u objects returned\n",
 				  ldb_dn_get_linearized(search_dn),
 				  (*search_res)->count));
 			TALLOC_FREE(frame);
@@ -1835,7 +1835,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 		ret = samdb_reference_dn(b_state->sam_ctx, frame, server_dn,
 					 "serverReference", &machine_dn);
 		if (ret != LDB_SUCCESS) {
-			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to find serverReference in %s - %s",
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to find serverReference in %s - %s\n",
 				  ldb_dn_get_linearized(server_dn),
 				  ldb_errstring(b_state->sam_ctx)));
 			TALLOC_FREE(frame);
@@ -1845,7 +1845,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 		ret = samdb_reference_dn(b_state->sam_ctx, frame, machine_dn,
 					 "rIDSetReferences", &rid_set_dn);
 		if (ret != LDB_SUCCESS) {
-			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to find rIDSetReferences in %s - %s",
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to find rIDSetReferences in %s - %s\n",
 				  ldb_dn_get_linearized(server_dn),
 				  ldb_errstring(b_state->sam_ctx)));
 			TALLOC_FREE(frame);
@@ -1860,7 +1860,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 						      collect_objects_attrs,
 						      NULL);
 		if (ret != LDB_SUCCESS) {
-			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Set object %s - %s",
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Set object %s - %s\n",
 				  ldb_dn_get_linearized(rid_set_dn),
 				  ldb_errstring(b_state->sam_ctx)));
 			TALLOC_FREE(frame);
@@ -1868,7 +1868,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 		}
 
 		if (search_res2->count != 1) {
-			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Set object %s - %u objects returned",
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get RID Set object %s - %u objects returned\n",
 				  ldb_dn_get_linearized(rid_set_dn),
 				  search_res2->count));
 			TALLOC_FREE(frame);
@@ -1882,7 +1882,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 						      collect_objects_attrs,
 						      NULL);
 		if (ret != LDB_SUCCESS) {
-			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get server object %s - %s",
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get server object %s - %s\n",
 				  ldb_dn_get_linearized(server_dn),
 				  ldb_errstring(b_state->sam_ctx)));
 			TALLOC_FREE(frame);
@@ -1890,7 +1890,7 @@ static WERROR getncchanges_collect_objects_exop(struct drsuapi_bind_state *b_sta
 		}
 
 		if (search_res3->count != 1) {
-			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get server object %s - %u objects returned",
+			DEBUG(1, ("DRSUAPI_EXOP_FSMO_RID_ALLOC: Failed to get server object %s - %u objects returned\n",
 				  ldb_dn_get_linearized(server_dn),
 				  search_res3->count));
 			TALLOC_FREE(frame);
@@ -1945,7 +1945,7 @@ static void dcesrv_drsuapi_update_highwatermark(const struct ldb_message *msg,
 		 *
 		 * If this object has changed lately we better
 		 * let the destination dsa refetch the change.
-		 * This is better than the risk of loosing some
+		 * This is better than the risk of losing some
 		 * objects or linked attributes.
 		 */
 		return;
@@ -2048,7 +2048,7 @@ static WERROR getncchanges_get_sorted_array(const struct drsuapi_DsReplicaLinked
 	*ret_array = NULL;
 	guid_array = talloc_array(mem_ctx, struct la_for_sorting, link_count);
 	if (guid_array == NULL) {
-		DEBUG(0, ("Out of memory allocating %u linked attributes for sorting", link_count));
+		DEBUG(0, ("Out of memory allocating %u linked attributes for sorting\n", link_count));
 		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
@@ -2955,7 +2955,7 @@ allowed:
 	}
 
 	if (req10->replica_flags & DRSUAPI_DRS_FULL_SYNC_PACKET) {
-		/* Ignore the _in_ uptpdateness vector*/
+		/* Ignore the _in_ uptodateness vector*/
 		req10->uptodateness_vector = NULL;
 	}
 
@@ -3098,7 +3098,7 @@ allowed:
 					= ldb_dn_get_linearized(ncRoot_dn);
 
 				DBG_NOTICE("Rejecting full replication on "
-					   "not NC %s", dn_str);
+					   "not NC %s\n", dn_str);
 
 				return WERR_DS_CANT_FIND_EXPECTED_NC;
 			}
@@ -3747,7 +3747,7 @@ allowed:
 		r->out.ctr->ctr6.linked_attributes_count = link_count;
 		r->out.ctr->ctr6.linked_attributes = talloc_array(r->out.ctr, struct drsuapi_DsReplicaLinkedAttribute, link_count);
 		if (r->out.ctr->ctr6.linked_attributes == NULL) {
-			DEBUG(0, ("Out of memory allocating %u linked attributes for output", link_count));
+			DEBUG(0, ("Out of memory allocating %u linked attributes for output\n", link_count));
 			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
@@ -3824,7 +3824,7 @@ allowed:
 			 * We need to make sure that we never return the
 			 * same highwatermark within the same replication
 			 * cycle more than once. Otherwise we cannot detect
-			 * when the client uses an unexptected highwatermark.
+			 * when the client uses an unexpected highwatermark.
 			 *
 			 * This is a HACK which is needed because our
 			 * object ordering is wrong and set tmp_highest_usn

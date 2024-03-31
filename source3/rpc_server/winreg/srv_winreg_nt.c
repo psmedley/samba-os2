@@ -55,7 +55,8 @@ static struct registry_key *find_regkey_by_hnd(struct pipes_struct *p,
 				    struct registry_key,
 				    &status);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(2,("find_regkey_index_by_hnd: Registry Key not found: "));
+		DEBUG(2,("find_regkey_index_by_hnd: Registry Key not found: %s\n",
+			 nt_errstr(status)));
 		return NULL;
 	}
 
@@ -501,6 +502,7 @@ WERROR _winreg_EnumValue(struct pipes_struct *p,
 		}
 
 		if (val->data.length > *r->out.size) {
+			*r->out.size = val->data.length;
 			return WERR_MORE_DATA;
 		}
 

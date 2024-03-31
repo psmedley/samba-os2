@@ -10,6 +10,7 @@ packages:
   - bison
   - ccache
   - chrpath
+  - codespell
   - crypto-policies-scripts
   - cups-devel
   - curl
@@ -64,8 +65,6 @@ packages:
   - perl
   - perl-Archive-Tar-Wrapper
   - perl-ExtUtils-MakeMaker
-  - perl-JSON
-  - perl-JSON-XS
   - perl-Parse-Yapp
   - perl-Test-Base
   - pkgconfig

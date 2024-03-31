@@ -22,20 +22,82 @@
 */
 
 #include "replace.h"
+#include <talloc.h>
+#include "lib/util/talloc_stack.h"
 #include "lib/util/debug.h"
 #include "lib/util/fault.h"
 #include "libcli/security/security_token.h"
 #include "libcli/security/dom_sid.h"
 #include "libcli/security/privileges.h"
+#include "librpc/gen_ndr/ndr_security.h"
+#include "lib/util/talloc_stack.h"
 
 /*
   return a blank security token
 */
-struct security_token *security_token_initialise(TALLOC_CTX *mem_ctx)
+struct security_token *security_token_initialise(TALLOC_CTX *mem_ctx,
+						 enum claims_evaluation_control evaluate_claims)
 {
 	struct security_token *st = talloc_zero(
 		mem_ctx, struct security_token);
+	st->evaluate_claims = evaluate_claims;
+
 	return st;
+}
+
+/****************************************************************************
+ Duplicate a SID token.
+****************************************************************************/
+
+struct security_token *security_token_duplicate(TALLOC_CTX *mem_ctx, const struct security_token *src)
+{
+	TALLOC_CTX *frame = NULL;
+	struct security_token *dst = NULL;
+	DATA_BLOB blob;
+	enum ndr_err_code ndr_err;
+
+	if (src == NULL) {
+		return NULL;
+	}
+
+	frame = talloc_stackframe();
+
+	ndr_err = ndr_push_struct_blob(
+		&blob,
+		frame,
+		src,
+		(ndr_push_flags_fn_t)ndr_push_security_token);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		DBG_ERR("Failed to duplicate security_token ndr_push_security_token failed: %s\n",
+			ndr_errstr(ndr_err));
+		TALLOC_FREE(frame);
+		return NULL;
+	}
+
+	dst = talloc_zero(mem_ctx, struct security_token);
+	if (dst == NULL) {
+		DBG_ERR("talloc failed\n");
+		TALLOC_FREE(frame);
+		return NULL;
+	}
+
+	ndr_err = ndr_pull_struct_blob(
+		&blob,
+		dst,
+		dst,
+		(ndr_pull_flags_fn_t)ndr_pull_security_token);
+
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		DBG_ERR("Failed to duplicate security_token ndr_pull_security_token "
+			"failed: %s\n",
+			ndr_errstr(ndr_err));
+		TALLOC_FREE(dst);
+		TALLOC_FREE(frame);
+		return NULL;
+	}
+
+	TALLOC_FREE(frame);
+	return dst;
 }
 
 /****************************************************************************
@@ -43,24 +105,36 @@ struct security_token *security_token_initialise(TALLOC_CTX *mem_ctx)
 ****************************************************************************/
 void security_token_debug(int dbg_class, int dbg_lev, const struct security_token *token)
 {
+	TALLOC_CTX *frame = talloc_stackframe();
+	char *sids = NULL;
+	char *privs = NULL;
 	uint32_t i;
 
 	if (!token) {
 		DEBUGC(dbg_class, dbg_lev, ("Security token: (NULL)\n"));
+		TALLOC_FREE(frame);
 		return;
 	}
 
-	DEBUGC(dbg_class, dbg_lev, ("Security token SIDs (%lu):\n",
-				       (unsigned long)token->num_sids));
+	sids = talloc_asprintf(frame,
+			       "Security token SIDs (%" PRIu32 "):\n",
+			       token->num_sids);
 	for (i = 0; i < token->num_sids; i++) {
 		struct dom_sid_buf sidbuf;
-		DEBUGADDC(dbg_class,
-			  dbg_lev,
-			  ("  SID[%3lu]: %s\n", (unsigned long)i,
-			   dom_sid_str_buf(&token->sids[i], &sidbuf)));
+		talloc_asprintf_addbuf(
+			&sids,
+			"  SID[%3" PRIu32 "]: %s\n",
+			i,
+			dom_sid_str_buf(&token->sids[i], &sidbuf));
 	}
 
-	security_token_debug_privileges(dbg_class, dbg_lev, token);
+	privs = security_token_debug_privileges(frame, token);
+
+	DEBUGC(dbg_class,
+	       dbg_lev,
+	       ("%s%s", sids ? sids : "(NULL)", privs ? privs : "(NULL)"));
+
+	TALLOC_FREE(frame);
 }
 
 /* These really should be cheaper... */
@@ -113,7 +187,7 @@ size_t security_token_count_flag_sids(const struct security_token *token,
 		const struct dom_sid *sid = &token->sids[i];
 		int cmp;
 
-		if ((size_t)sid->num_auths != num_auths_expected) {
+		if (sid->num_auths != num_auths_expected) {
 			continue;
 		}
 

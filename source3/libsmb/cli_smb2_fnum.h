@@ -70,7 +70,8 @@ NTSTATUS cli_smb2_create_fnum(
 struct tevent_req *cli_smb2_close_fnum_send(TALLOC_CTX *mem_ctx,
 					    struct tevent_context *ev,
 					    struct cli_state *cli,
-					    uint16_t fnum);
+					    uint16_t fnum,
+					    uint16_t flags);
 NTSTATUS cli_smb2_close_fnum_recv(struct tevent_req *req);
 NTSTATUS cli_smb2_close_fnum(struct cli_state *cli, uint16_t fnum);
 struct tevent_req *cli_smb2_delete_on_close_send(TALLOC_CTX *mem_ctx,
@@ -105,8 +106,7 @@ struct tevent_req *cli_smb2_list_send(
 	struct tevent_context *ev,
 	struct cli_state *cli,
 	const char *pathname,
-	unsigned int info_level,
-	bool posix);
+	unsigned int info_level);
 NTSTATUS cli_smb2_list_recv(
 	struct tevent_req *req,
 	TALLOC_CTX *mem_ctx,
@@ -115,9 +115,17 @@ NTSTATUS cli_smb2_qpathinfo_basic(struct cli_state *cli,
 			const char *name,
 			SMB_STRUCT_STAT *sbuf,
 			uint32_t *attributes);
-NTSTATUS cli_smb2_qpathinfo_alt_name(struct cli_state *cli,
-			const char *name,
-			fstring alt_name);
+struct tevent_req *cli_smb2_qpathinfo_send(TALLOC_CTX *mem_ctx,
+					   struct tevent_context *ev,
+					   struct cli_state *cli,
+					   const char *fname,
+					   uint16_t level,
+					   uint32_t min_rdata,
+					   uint32_t max_rdata);
+NTSTATUS cli_smb2_qpathinfo_recv(struct tevent_req *req,
+				 TALLOC_CTX *mem_ctx,
+				 uint8_t **rdata,
+				 uint32_t *num_rdata);
 struct tevent_req *cli_smb2_query_info_fnum_send(
 	TALLOC_CTX *mem_ctx,
 	struct tevent_context *ev,
@@ -159,28 +167,6 @@ NTSTATUS cli_smb2_query_info_fnum(
 	uint32_t in_flags,
 	TALLOC_CTX *mem_ctx,
 	DATA_BLOB *outbuf);
-NTSTATUS cli_smb2_getatr(struct cli_state *cli,
-			const char *name,
-			uint32_t *pattr,
-			off_t *size,
-			time_t *write_time);
-struct tevent_req *cli_smb2_qpathinfo2_send(TALLOC_CTX *mem_ctx,
-					    struct tevent_context *ev,
-					    struct cli_state *cli,
-					    const char *fname);
-NTSTATUS cli_smb2_qpathinfo2_recv(struct tevent_req *req,
-				  struct timespec *create_time,
-				  struct timespec *access_time,
-				  struct timespec *write_time,
-				  struct timespec *change_time,
-				  off_t *size,
-				  uint32_t *attr,
-				  SMB_INO_T *ino);
-NTSTATUS cli_smb2_qpathinfo_streams(struct cli_state *cli,
-			const char *name,
-			TALLOC_CTX *mem_ctx,
-			unsigned int *pnum_streams,
-			struct stream_struct **pstreams);
 NTSTATUS cli_smb2_setpathinfo(struct cli_state *cli,
 			const char *name,
 			uint8_t in_info_type,

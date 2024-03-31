@@ -27,7 +27,7 @@ import shutil
 import samba
 
 from samba.common import cmp
-from samba import Ldb, version, ntacls
+from samba import Ldb, version
 from ldb import SCOPE_SUBTREE, SCOPE_ONELEVEL, SCOPE_BASE
 import ldb
 from samba.provision import (provision_paths_from_lp,
@@ -451,7 +451,7 @@ def updateOEMInfo(samdb, rootdn):
         samdb.modify(delta)
 
 
-def update_gpo(paths, samdb, names, lp, message):
+def update_gpo(paths, names):
     """Create missing GPO file object if needed
     """
     dir = getpolicypath(paths.sysvol, names.dnsdomain, names.policyid)

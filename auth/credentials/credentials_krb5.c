@@ -261,6 +261,7 @@ static int cli_credentials_set_from_ccache(struct cli_credentials *cred,
 		(*error_string) = talloc_asprintf(cred, "failed to unparse principal from ccache: %s\n",
 						  smb_get_krb5_error_message(ccache->smb_krb5_context->krb5_context,
 									     ret, cred));
+		krb5_free_principal(ccache->smb_krb5_context->krb5_context, princ);
 		return ret;
 	}
 
@@ -505,7 +506,7 @@ static krb5_error_code krb5_cc_remove_cred_wrap(struct ccache_container *ccc,
 #endif
 
 /*
- * Indicate the we failed to log in to this service/host with these
+ * Indicate that we failed to log in to this service/host with these
  * credentials.  The caller passes an unsigned int which they
  * initialise to the number of times they would like to retry.
  *
@@ -725,7 +726,14 @@ _PUBLIC_ int cli_credentials_get_named_ccache(struct cli_credentials *cred,
 		return ret;
 	}
 
-	ret = kinit_to_ccache(cred, cred, (*ccc)->smb_krb5_context, event_ctx, (*ccc)->ccache, &obtained, error_string);
+	ret = kinit_to_ccache(cred,
+			      cred,
+			      (*ccc)->smb_krb5_context,
+			      lp_ctx,
+			      event_ctx,
+			      (*ccc)->ccache,
+			      &obtained,
+			      error_string);
 	if (ret) {
 		return ret;
 	}
@@ -855,7 +863,7 @@ _PUBLIC_ int cli_credentials_get_client_gss_creds(struct cli_credentials *cred,
 			DEBUG(3, ("Credentials for %s will expire shortly (%u sec), must refresh credentials cache\n", cli_credentials_get_principal(cred, cred), lifetime));
 			expired = true;
 		} else if (maj_stat != GSS_S_COMPLETE) {
-			*error_string = talloc_asprintf(cred, "inquiry of credential lifefime via GSSAPI gss_inquire_cred failed: %s\n",
+			*error_string = talloc_asprintf(cred, "inquiry of credential lifetime via GSSAPI gss_inquire_cred failed: %s\n",
 							gssapi_error_string(cred, maj_stat, min_stat, NULL));
 			return EINVAL;
 		}
@@ -1049,7 +1057,7 @@ _PUBLIC_ int cli_credentials_get_client_gss_creds(struct cli_credentials *cred,
 		gcc->creds = gssapi_cred;
 		talloc_set_destructor(gcc, free_gssapi_creds);
 
-		/* set the clinet_gss_creds_obtained here, as it just
+		/* set the client_gss_creds_obtained here, as it just
 		   got set to UNINITIALISED by the calls above */
 		cred->client_gss_creds_obtained = obtained;
 		cred->client_gss_creds = gcc;
@@ -1124,7 +1132,7 @@ static int cli_credentials_shallow_ccache(struct cli_credentials *cred)
 _PUBLIC_ struct cli_credentials *cli_credentials_shallow_copy(TALLOC_CTX *mem_ctx,
 						struct cli_credentials *src)
 {
-	struct cli_credentials *dst;
+	struct cli_credentials *dst, *armor_credentials;
 	int ret;
 
 	dst = talloc(mem_ctx, struct cli_credentials);
@@ -1133,6 +1141,14 @@ _PUBLIC_ struct cli_credentials *cli_credentials_shallow_copy(TALLOC_CTX *mem_ct
 	}
 
 	*dst = *src;
+
+	if (dst->krb5_fast_armor_credentials != NULL) {
+		armor_credentials = talloc_reference(dst, dst->krb5_fast_armor_credentials);
+		if (armor_credentials == NULL) {
+			TALLOC_FREE(dst);
+			return NULL;
+		}
+	}
 
 	ret = cli_credentials_shallow_ccache(dst);
 	if (ret != 0) {
@@ -1515,7 +1531,7 @@ _PUBLIC_ int cli_credentials_get_aes256_key(struct cli_credentials *cred,
 						   &key);
 	if (krb5_ret != 0) {
 		DEBUG(1,("cli_credentials_get_aes256_key: "
-			 "generation of a aes256-cts-hmac-sha1-96 key failed: %s",
+			 "generation of a aes256-cts-hmac-sha1-96 key failed: %s\n",
 			 smb_get_krb5_error_message(smb_krb5_context->krb5_context,
 						    krb5_ret, mem_ctx)));
 		return EINVAL;
@@ -1530,4 +1546,36 @@ _PUBLIC_ int cli_credentials_get_aes256_key(struct cli_credentials *cred,
 	talloc_keep_secret(aes_256->data);
 
 	return 0;
+}
+
+/* This take a reference to the armor credentials to ensure the lifetime is appropriate */
+
+NTSTATUS cli_credentials_set_krb5_fast_armor_credentials(struct cli_credentials *creds,
+							 struct cli_credentials *armor_creds,
+							 bool require_fast_armor)
+{
+	talloc_unlink(creds, creds->krb5_fast_armor_credentials);
+	if (armor_creds == NULL) {
+		creds->krb5_fast_armor_credentials = NULL;
+		return NT_STATUS_OK;
+	}
+
+	creds->krb5_fast_armor_credentials = talloc_reference(creds, armor_creds);
+	if (creds->krb5_fast_armor_credentials == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	creds->krb5_require_fast_armor = require_fast_armor;
+
+	return NT_STATUS_OK;
+}
+
+struct cli_credentials *cli_credentials_get_krb5_fast_armor_credentials(struct cli_credentials *creds)
+{
+	return creds->krb5_fast_armor_credentials;
+}
+
+bool cli_credentials_get_krb5_require_fast_armor(struct cli_credentials *creds)
+{
+	return creds->krb5_require_fast_armor;
 }

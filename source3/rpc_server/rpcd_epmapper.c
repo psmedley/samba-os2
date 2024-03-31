@@ -47,13 +47,34 @@ static size_t epmapper_interfaces(
 	return num_ifaces;
 }
 
-static size_t epmapper_servers(
+static NTSTATUS epmapper_servers(
 	struct dcesrv_context *dce_ctx,
 	const struct dcesrv_endpoint_server ***_ep_servers,
+	size_t *_num_ep_servers,
 	void *private_data)
 {
 	static const struct dcesrv_endpoint_server *ep_servers[] = { NULL };
 	size_t num_servers = ARRAY_SIZE(ep_servers);
+	NTSTATUS status;
+
+	/*
+	 * Windows Server 2022 registers the following auth_types
+	 * all with an empty principal name:
+	 *
+	 *  principle name for proto 9 (spnego) is ''
+	 *  principle name for proto 10 (ntlmssp) is ''
+	 *  principle name for proto 14 is ''
+	 *  principle name for proto 16 (gssapi_krb5) is ''
+	 *  principle name for proto 22 is ''
+	 *  principle name for proto 30 is ''
+	 *  principle name for proto 31 is ''
+	 *
+	 * We only register what we also support.
+	 */
+	status = dcesrv_register_default_auth_types(dce_ctx, "");
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
 
 	ep_servers[0] = epmapper_get_ep_server();
 
@@ -70,7 +91,8 @@ static size_t epmapper_servers(
 	}
 
 	*_ep_servers = ep_servers;
-	return num_servers;
+	*_num_ep_servers = num_servers;
+	return NT_STATUS_OK;
 }
 
 int main(int argc, const char *argv[])

@@ -35,7 +35,7 @@ def system_mitkrb5_callback(option, opt, value, parser):
 
 def options(opt):
     opt.BUILTIN_DEFAULT('NONE')
-    opt.PRIVATE_EXTENSION_DEFAULT('samba4')
+    opt.PRIVATE_EXTENSION_DEFAULT('private-samba')
     opt.RECURSE('lib/replace')
     opt.RECURSE('dynconfig')
     opt.RECURSE('packaging')
@@ -123,7 +123,7 @@ def options(opt):
                   help=('Disable kernely keyring support for credential storage'),
                   action='store_false', dest='enable_keyring')
 
-    gr = opt.option_group('developer options')
+    opt.option_group('developer options')
 
     opt.load('python') # options for disabling pyc or pyo compilation
     # enable options related to building python extensions
@@ -207,9 +207,9 @@ def configure(conf):
                    mandatory=True)
     conf.CHECK_FUNCS_IN('inflateInit2', 'z')
 
-    if Options.options.enable_keyring != False:
+    if Options.options.enable_keyring is not False:
         conf.env['WITH_KERNEL_KEYRING'] = 'auto'
-        if Options.options.enable_keyring == True:
+        if Options.options.enable_keyring is True:
             conf.env['WITH_KERNEL_KEYRING'] = True
     else:
         conf.env['WITH_KERNEL_KEYRING'] = False
@@ -339,13 +339,13 @@ def configure(conf):
 
     conf.SET_TARGET_TYPE('jansson', 'EMPTY')
 
-    if Options.options.with_json != False:
+    if Options.options.with_json is not False:
         if conf.CHECK_CFG(package='jansson', args='--cflags --libs',
                           msg='Checking for jansson'):
             conf.CHECK_FUNCS_IN('json_object', 'jansson')
 
     if not conf.CONFIG_GET('HAVE_JSON_OBJECT'):
-        if Options.options.with_json != False:
+        if Options.options.with_json is not False:
             conf.fatal("Jansson JSON support not found. "
                        "Try installing libjansson-dev or jansson-devel. "
                        "Otherwise, use --without-json to build without "
@@ -390,8 +390,8 @@ def configure(conf):
                            msg='Checking configure summary'):
         raise Errors.WafError('configure summary failed')
 
-    if Options.options.enable_pie != False:
-        if Options.options.enable_pie == True:
+    if Options.options.enable_pie is not False:
+        if Options.options.enable_pie is True:
                 need_pie = True
         else:
                 # not specified, only build PIEs if supported by compiler
@@ -400,8 +400,8 @@ def configure(conf):
                          msg="Checking compiler for PIE support"):
             conf.env['ENABLE_PIE'] = True
 
-    if Options.options.enable_relro != False:
-        if Options.options.enable_relro == True:
+    if Options.options.enable_relro is not False:
+        if Options.options.enable_relro is True:
             need_relro = True
         else:
             # not specified, only build RELROs if supported by compiler
@@ -411,13 +411,13 @@ def configure(conf):
             conf.env['ENABLE_RELRO'] = True
 
     if conf.CONFIG_GET('ENABLE_SELFTEST') and \
-       Options.options.with_smb1server == False and \
-       Options.options.without_ad_dc != True:
+       Options.options.with_smb1server is False and \
+       Options.options.without_ad_dc is not True:
         conf.fatal('--without-smb1-server cannot be specified with '
                    '--enable-selftest/--enable-developer if '
                    '--without-ad-dc is NOT set!')
 
-    if Options.options.with_smb1server != False:
+    if Options.options.with_smb1server is not False:
         conf.DEFINE('WITH_SMB1SERVER', '1')
 
     #
@@ -452,7 +452,6 @@ def configure(conf):
 
 def etags(ctx):
     '''build TAGS file using etags'''
-    from waflib import Utils
     source_root = os.path.dirname(Context.g_module.root_path)
     cmd = r'rm -f %s/TAGS && (find %s -name "*.[ch]" | egrep -v \.inst\. | xargs -n 100 etags -a)' % (source_root, source_root)
     print("Running: %s" % cmd)
@@ -462,7 +461,6 @@ def etags(ctx):
 
 def ctags(ctx):
     "build 'tags' file using ctags"
-    from waflib import Utils
     source_root = os.path.dirname(Context.g_module.root_path)
     cmd = r'ctags --python-kinds=-i $(find %s -name "*.[ch]" | grep -v "*_proto\.h" | egrep -v \.inst\.) $(find %s -name "*.py")' % (source_root, source_root)
     print("Running: %s" % cmd)
@@ -518,6 +516,11 @@ def distcheck():
     '''test that distribution tarball builds and installs'''
     samba_version.load_version(env=None)
 
+def printversion(ctx):
+    '''print version'''
+    ver = samba_version.load_version(env=None)
+    print('Samba Version: ' + ver.STRING_WITH_NICKNAME)
+
 def wildcard_cmd(cmd):
     '''called on a unknown command'''
     from samba_wildcard import run_named_build_task
@@ -531,7 +534,6 @@ Scripting.main = main
 
 def reconfigure(ctx):
     '''reconfigure if config scripts have changed'''
-    import samba_utils
     samba_utils.reconfigure(ctx)
 
 

@@ -469,8 +469,7 @@ def RECURSE(ctx, directory):
         return ctx.recurse(relpath)
     if 'waflib.extras.compat15' in sys.modules:
         return ctx.recurse(relpath)
-    Logs.error('Unknown RECURSE context class: {}'.format(ctxclass))
-    raise
+    raise Errors.WafError('Unknown RECURSE context class: {}'.format(ctxclass))
 Options.OptionsContext.RECURSE = RECURSE
 Build.BuildContext.RECURSE = RECURSE
 
@@ -710,8 +709,9 @@ def samba_before_apply_obj_vars(self):
     """before apply_obj_vars for uselib, this removes the standard paths"""
 
     def is_standard_libpath(env, path):
+        normalized_path = os.path.normpath(path)
         for _path in env.STANDARD_LIBPATH:
-            if _path == os.path.normpath(path):
+            if _path == normalized_path:
                 return True
         return False
 

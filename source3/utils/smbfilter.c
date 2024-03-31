@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    SMB filter/socket plugin
    Copyright (C) Andrew Tridgell 1999
@@ -120,7 +120,7 @@ static void filter_request(char *buf, size_t buf_len)
 				return;
 			}
 
-			d_printf("sesion_request: %s -> %s\n",
+			d_printf("session_request: %s -> %s\n",
 				 name1, name2);
 			if (netbiosname) {
 				char *mangled = name_mangle(
@@ -243,7 +243,7 @@ static void filter_child(int c, struct sockaddr_storage *dest_ss)
 			if (!send_smb(s, packet)) {
 				d_printf("server is dead\n");
 				exit(1);
-			}			
+			}
 		}
 
 		/*
@@ -265,7 +265,7 @@ static void filter_child(int c, struct sockaddr_storage *dest_ss)
 			if (!send_smb(c, packet)) {
 				d_printf("client is dead\n");
 				exit(1);
-			}			
+			}
 		}
 	}
 	d_printf("Connection closed\n");
@@ -350,6 +350,7 @@ int main(int argc, char *argv[])
 	}
 
 	start_filter(desthost);
+	gfree_all();
 	TALLOC_FREE(frame);
 	return 0;
 }

@@ -37,8 +37,8 @@ from samba.tests.krb5.raw_testcase import (
     ZeroedChecksumKey
 )
 from samba.tests.krb5.rfc4120_constants import (
-    AES256_CTS_HMAC_SHA1_96,
     AD_IF_RELEVANT,
+    AES256_CTS_HMAC_SHA1_96,
     ARCFOUR_HMAC_MD5,
     KDC_ERR_BADMATCH,
     KDC_ERR_BADOPTION,
@@ -48,8 +48,8 @@ from samba.tests.krb5.rfc4120_constants import (
     KDC_ERR_MODIFIED,
     KDC_ERR_SUMTYPE_NOSUPP,
     KDC_ERR_TGT_REVOKED,
-    KU_PA_ENC_TIMESTAMP,
     KU_AS_REP_ENC_PART,
+    KU_PA_ENC_TIMESTAMP,
     KU_TGS_REP_ENC_PART_SUB_KEY,
     KU_TGS_REQ_AUTH_DAT_SESSION,
     KU_TGS_REQ_AUTH_DAT_SUBKEY,
@@ -68,7 +68,7 @@ class S4UKerberosTests(KDCBaseTest):
     default_attrs = security.SE_GROUP_DEFAULT_FLAGS
 
     def setUp(self):
-        super(S4UKerberosTests, self).setUp()
+        super().setUp()
         self.do_asn1_print = global_asn1_print
         self.do_hexdump = global_hexdump
 
@@ -541,7 +541,7 @@ class S4UKerberosTests(KDCBaseTest):
                 'expected_flags': 'forwardable'
             })
 
-    # Do an S4U2Self an check that the service asserted identity is part of
+    # Do an S4U2Self and check that the service asserted identity is part of
     # the sids.
     def test_s4u2self_asserted_identity(self):
         self._run_s4u2self_test(
@@ -1778,7 +1778,7 @@ class S4UKerberosTests(KDCBaseTest):
                                     checksum_keys=checksum_keys,
                                     include_checksums=include_checksums)
 
-    def add_delegation_info(self, ticket, services=None):
+    def add_delegation_info(self, ticket, *, services):
         def modify_pac_fn(pac):
             pac_buffers = pac.buffers
             self.assertNotIn(krb5pac.PAC_TYPE_CONSTRAINED_DELEGATION,

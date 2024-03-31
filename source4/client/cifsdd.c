@@ -31,7 +31,7 @@
 
 const char * const PROGNAME = "cifsdd";
 
-#define SYNTAX_EXIT_CODE	 1	/* Invokation syntax or logic error. */
+#define SYNTAX_EXIT_CODE	 1	/* Invocation syntax or logic error. */
 #define EOM_EXIT_CODE		 9	/* Out of memory error. */
 #define FILESYS_EXIT_CODE	10	/* File manipulation error. */
 #define IOERROR_EXIT_CODE	11	/* Error during IO phase. */
@@ -274,7 +274,7 @@ bool check_arg_bool(const char * name)
 		return(arg->arg_val.bval);
 	}
 
-	DEBUG(0, ("invalid argument name: %s", name));
+	DEBUG(0, ("invalid argument name: %s\n", name));
 	SMB_ASSERT(0);
 	return(false);
 }
@@ -288,7 +288,7 @@ uint64_t check_arg_numeric(const char * name)
 		return(arg->arg_val.nval);
 	}
 
-	DEBUG(0, ("invalid argument name: %s", name));
+	DEBUG(0, ("invalid argument name: %s\n", name));
 	SMB_ASSERT(0);
 	return(-1);
 }
@@ -302,7 +302,7 @@ const char * check_arg_pathname(const char * name)
 		return(arg->arg_val.pval);
 	}
 
-	DEBUG(0, ("invalid argument name: %s", name));
+	DEBUG(0, ("invalid argument name: %s\n", name));
 	SMB_ASSERT(0);
 	return(NULL);
 }

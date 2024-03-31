@@ -226,7 +226,7 @@ static int anr_replace_value(struct anr_context *ac,
 }
 
 /*
-  replace any occurances of an attribute with a new, generated attribute tree
+  replace any occurrences of an attribute with a new, generated attribute tree
 */
 static int anr_replace_subtrees(struct anr_context *ac,
 				struct ldb_parse_tree *tree,
@@ -296,10 +296,14 @@ static int parse_tree_anr_present(struct ldb_parse_tree *tree, void *private_con
 	struct anr_present_ctx *ctx = private_context;
 	switch (tree->operation) {
 	case LDB_OP_EQUALITY:
+		if (ldb_attr_cmp(tree->u.equality.attr, ctx->attr) == 0) {
+			ctx->found_anr = true;
+		}
+		break;
 	case LDB_OP_GREATER:
 	case LDB_OP_LESS:
 	case LDB_OP_APPROX:
-		if (ldb_attr_cmp(tree->u.equality.attr, ctx->attr) == 0) {
+		if (ldb_attr_cmp(tree->u.comparison.attr, ctx->attr) == 0) {
 			ctx->found_anr = true;
 		}
 		break;

@@ -31,16 +31,13 @@ import ctypes
 class NetJoinTests(samba.tests.TestCaseInTempDir):
 
     def setUp(self):
-        super(NetJoinTests, self).setUp()
+        super().setUp()
         self.domain = os.environ["DOMAIN"]
         self.server = os.environ["SERVER"]
         self.lp = self.get_loadparm()
         self.lp.set("private dir", self.tempdir)
         self.lp.set("lock dir", self.tempdir)
         self.lp.set("state directory", self.tempdir)
-
-    def tearDown(self):
-        super(NetJoinTests, self).tearDown()
 
     def test_net_join(self):
         netbios_name = "NetJoinTest"

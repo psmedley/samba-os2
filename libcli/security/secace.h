@@ -22,9 +22,14 @@
 #define _ACE_H_
 
 #include "librpc/gen_ndr/security.h"
+#include "librpc/ndr/libndr.h"
 
 bool sec_ace_object(uint8_t type);
-void sec_ace_copy(struct security_ace *ace_dest, const struct security_ace *ace_src);
+size_t ndr_subcontext_size_of_ace_coda(const struct security_ace *ace, size_t ace_size, libndr_flags flags);
+bool sec_ace_callback(uint8_t type);
+bool sec_ace_resource(uint8_t type);
+bool sec_ace_has_extra_blob(uint8_t type);
+
 void init_sec_ace(struct security_ace *t, const struct dom_sid *sid, enum security_ace_type type,
 		  uint32_t mask, uint8_t flag);
 int nt_ace_inherit_comp( const struct security_ace *a1, const struct security_ace *a2);

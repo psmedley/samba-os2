@@ -355,7 +355,7 @@ static struct ldb_message *process_entry(TALLOC_CTX *mem_ctx, struct conv_option
         char *c, *s;
         int n;
 
-	uint8_t digest[gnutls_hash_get_len(GNUTLS_MAC_SHA256)];
+	uint8_t digest[gnutls_hash_get_len(GNUTLS_DIG_SHA256)];
 	int rc;
 
 	struct GUID guid;
@@ -429,7 +429,7 @@ static struct ldb_message *process_entry(TALLOC_CTX *mem_ctx, struct conv_option
 	}
 
 	c += n;
-	c = skip_spaces(c);	
+	c = skip_spaces(c);
 
 	while (*c != ')') {
 		token = get_next_schema_token(msg, &c);
@@ -613,7 +613,7 @@ struct schema_conv process_file(TALLOC_CTX *mem_ctx, struct conv_options *opt)
 				ret.failures++;
 			}
 		}
-	
+
 		if (c == EOF) break;
 	}
 

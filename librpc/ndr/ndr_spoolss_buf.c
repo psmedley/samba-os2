@@ -319,7 +319,7 @@
 /*
   spoolss_EnumPrinters
 */
-enum ndr_err_code ndr_push_spoolss_EnumPrinters(struct ndr_push *ndr, int flags, const struct spoolss_EnumPrinters *r)
+enum ndr_err_code ndr_push_spoolss_EnumPrinters(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumPrinters *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM_LEVEL(spoolss_EnumPrinters,{
 		_r.in.flags	= r->in.flags;
@@ -331,7 +331,7 @@ enum ndr_err_code ndr_push_spoolss_EnumPrinters(struct ndr_push *ndr, int flags,
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumPrinters(struct ndr_pull *ndr, int flags, struct spoolss_EnumPrinters *r)
+enum ndr_err_code ndr_pull_spoolss_EnumPrinters(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumPrinters *r)
 {
 	NDR_SPOOLSS_PULL_ENUM_LEVEL(spoolss_EnumPrinters,{
 		r->in.flags	= _r.in.flags;
@@ -351,7 +351,7 @@ uint32_t ndr_size_spoolss_EnumPrinters_info(TALLOC_CTX *mem_ctx, uint32_t level,
 /*
   spoolss_EnumJobs
 */
-enum ndr_err_code ndr_push_spoolss_EnumJobs(struct ndr_push *ndr, int flags, const struct spoolss_EnumJobs *r)
+enum ndr_err_code ndr_push_spoolss_EnumJobs(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumJobs *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM_LEVEL(spoolss_EnumJobs,{
 		_r.in.handle	= r->in.handle;
@@ -365,7 +365,7 @@ enum ndr_err_code ndr_push_spoolss_EnumJobs(struct ndr_push *ndr, int flags, con
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumJobs(struct ndr_pull *ndr, int flags, struct spoolss_EnumJobs *r)
+enum ndr_err_code ndr_pull_spoolss_EnumJobs(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumJobs *r)
 {
 	NDR_SPOOLSS_PULL_ENUM_LEVEL(spoolss_EnumJobs,{
 		r->in.handle	= _r.in.handle;
@@ -387,7 +387,7 @@ uint32_t ndr_size_spoolss_EnumJobs_info(TALLOC_CTX *mem_ctx, uint32_t level, uin
 /*
   spoolss_EnumPrinterDrivers
 */
-enum ndr_err_code ndr_push_spoolss_EnumPrinterDrivers(struct ndr_push *ndr, int flags, const struct spoolss_EnumPrinterDrivers *r)
+enum ndr_err_code ndr_push_spoolss_EnumPrinterDrivers(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumPrinterDrivers *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM_LEVEL(spoolss_EnumPrinterDrivers,{
 		_r.in.server		= r->in.server;
@@ -399,7 +399,7 @@ enum ndr_err_code ndr_push_spoolss_EnumPrinterDrivers(struct ndr_push *ndr, int 
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumPrinterDrivers(struct ndr_pull *ndr, int flags, struct spoolss_EnumPrinterDrivers *r)
+enum ndr_err_code ndr_pull_spoolss_EnumPrinterDrivers(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumPrinterDrivers *r)
 {
 	NDR_SPOOLSS_PULL_ENUM_LEVEL(spoolss_EnumPrinterDrivers,{
 		r->in.server		= _r.in.server;
@@ -419,7 +419,7 @@ uint32_t ndr_size_spoolss_EnumPrinterDrivers_info(TALLOC_CTX *mem_ctx, uint32_t 
 /*
   spoolss_EnumForms
 */
-enum ndr_err_code ndr_push_spoolss_EnumForms(struct ndr_push *ndr, int flags, const struct spoolss_EnumForms *r)
+enum ndr_err_code ndr_push_spoolss_EnumForms(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumForms *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM_LEVEL(spoolss_EnumForms,{
 		_r.in.handle	= r->in.handle;
@@ -429,7 +429,7 @@ enum ndr_err_code ndr_push_spoolss_EnumForms(struct ndr_push *ndr, int flags, co
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumForms(struct ndr_pull *ndr, int flags, struct spoolss_EnumForms *r)
+enum ndr_err_code ndr_pull_spoolss_EnumForms(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumForms *r)
 {
 	NDR_SPOOLSS_PULL_ENUM_LEVEL(spoolss_EnumForms,{
 		r->in.handle	= _r.in.handle;
@@ -447,7 +447,7 @@ uint32_t ndr_size_spoolss_EnumForms_info(TALLOC_CTX *mem_ctx, uint32_t level, ui
 /*
   spoolss_EnumPorts
 */
-enum ndr_err_code ndr_push_spoolss_EnumPorts(struct ndr_push *ndr, int flags, const struct spoolss_EnumPorts *r)
+enum ndr_err_code ndr_push_spoolss_EnumPorts(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumPorts *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM_LEVEL(spoolss_EnumPorts,{
 		_r.in.servername= r->in.servername;
@@ -457,7 +457,7 @@ enum ndr_err_code ndr_push_spoolss_EnumPorts(struct ndr_push *ndr, int flags, co
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumPorts(struct ndr_pull *ndr, int flags, struct spoolss_EnumPorts *r)
+enum ndr_err_code ndr_pull_spoolss_EnumPorts(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumPorts *r)
 {
 	NDR_SPOOLSS_PULL_ENUM_LEVEL(spoolss_EnumPorts,{
 		r->in.servername= _r.in.servername;
@@ -475,7 +475,7 @@ uint32_t ndr_size_spoolss_EnumPorts_info(TALLOC_CTX *mem_ctx, uint32_t level, ui
 /*
   spoolss_EnumMonitors
 */
-enum ndr_err_code ndr_push_spoolss_EnumMonitors(struct ndr_push *ndr, int flags, const struct spoolss_EnumMonitors *r)
+enum ndr_err_code ndr_push_spoolss_EnumMonitors(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumMonitors *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM_LEVEL(spoolss_EnumMonitors,{
 		_r.in.servername= r->in.servername;
@@ -485,7 +485,7 @@ enum ndr_err_code ndr_push_spoolss_EnumMonitors(struct ndr_push *ndr, int flags,
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumMonitors(struct ndr_pull *ndr, int flags, struct spoolss_EnumMonitors *r)
+enum ndr_err_code ndr_pull_spoolss_EnumMonitors(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumMonitors *r)
 {
 	NDR_SPOOLSS_PULL_ENUM_LEVEL(spoolss_EnumMonitors,{
 		r->in.servername= _r.in.servername;
@@ -503,7 +503,7 @@ uint32_t ndr_size_spoolss_EnumMonitors_info(TALLOC_CTX *mem_ctx, uint32_t level,
 /*
   spoolss_EnumPrintProcessors
 */
-enum ndr_err_code ndr_push_spoolss_EnumPrintProcessors(struct ndr_push *ndr, int flags, const struct spoolss_EnumPrintProcessors *r)
+enum ndr_err_code ndr_push_spoolss_EnumPrintProcessors(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumPrintProcessors *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM_LEVEL(spoolss_EnumPrintProcessors,{
 		_r.in.servername	= r->in.servername;
@@ -515,7 +515,7 @@ enum ndr_err_code ndr_push_spoolss_EnumPrintProcessors(struct ndr_push *ndr, int
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumPrintProcessors(struct ndr_pull *ndr, int flags, struct spoolss_EnumPrintProcessors *r)
+enum ndr_err_code ndr_pull_spoolss_EnumPrintProcessors(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumPrintProcessors *r)
 {
 	NDR_SPOOLSS_PULL_ENUM_LEVEL(spoolss_EnumPrintProcessors,{
 		r->in.servername	= _r.in.servername;
@@ -527,7 +527,7 @@ enum ndr_err_code ndr_pull_spoolss_EnumPrintProcessors(struct ndr_pull *ndr, int
 	return NDR_ERR_SUCCESS;
 }
 
-uint32_t ndr_size_spoolss_EnumPrintProcessors_info(TALLOC_CTX *mem_ctx, 
+uint32_t ndr_size_spoolss_EnumPrintProcessors_info(TALLOC_CTX *mem_ctx,
 						   uint32_t level, uint32_t count, union spoolss_PrintProcessorInfo *info)
 {
 	NDR_SPOOLSS_SIZE_ENUM_LEVEL(spoolss_EnumPrintProcessors);
@@ -536,7 +536,7 @@ uint32_t ndr_size_spoolss_EnumPrintProcessors_info(TALLOC_CTX *mem_ctx,
 /*
   spoolss_EnumPrintProcessors
 */
-enum ndr_err_code ndr_push_spoolss_EnumPrintProcessorDataTypes(struct ndr_push *ndr, int flags, const struct spoolss_EnumPrintProcessorDataTypes *r)
+enum ndr_err_code ndr_push_spoolss_EnumPrintProcessorDataTypes(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumPrintProcessorDataTypes *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM_LEVEL(spoolss_EnumPrintProcessorDataTypes,{
 		_r.in.servername		= r->in.servername;
@@ -548,7 +548,7 @@ enum ndr_err_code ndr_push_spoolss_EnumPrintProcessorDataTypes(struct ndr_push *
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumPrintProcessorDataTypes(struct ndr_pull *ndr, int flags, struct spoolss_EnumPrintProcessorDataTypes *r)
+enum ndr_err_code ndr_pull_spoolss_EnumPrintProcessorDataTypes(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumPrintProcessorDataTypes *r)
 {
 	NDR_SPOOLSS_PULL_ENUM_LEVEL(spoolss_EnumPrintProcessorDataTypes,{
 		r->in.servername		= _r.in.servername;
@@ -569,7 +569,7 @@ uint32_t ndr_size_spoolss_EnumPrintProcessorDataTypes_info(TALLOC_CTX *mem_ctx,
 /*
   spoolss_EnumPerMachineConnections
 */
-enum ndr_err_code ndr_push_spoolss_EnumPerMachineConnections(struct ndr_push *ndr, int flags, const struct spoolss_EnumPerMachineConnections *r)
+enum ndr_err_code ndr_push_spoolss_EnumPerMachineConnections(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumPerMachineConnections *r)
 {
 	NDR_SPOOLSS_PUSH_ENUM(spoolss_EnumPerMachineConnections,{
 		_r.in.server	= r->in.server;
@@ -579,7 +579,7 @@ enum ndr_err_code ndr_push_spoolss_EnumPerMachineConnections(struct ndr_push *nd
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumPerMachineConnections(struct ndr_pull *ndr, int flags, struct spoolss_EnumPerMachineConnections *r)
+enum ndr_err_code ndr_pull_spoolss_EnumPerMachineConnections(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumPerMachineConnections *r)
 {
 	NDR_SPOOLSS_PULL_ENUM(spoolss_EnumPerMachineConnections,{
 		r->in.server	= _r.in.server;
@@ -598,7 +598,7 @@ uint32_t ndr_size_spoolss_EnumPerMachineConnections_info(TALLOC_CTX *mem_ctx, ui
   spoolss_EnumPrinterDataEx
 */
 
-enum ndr_err_code ndr_push_spoolss_EnumPrinterDataEx(struct ndr_push *ndr, int flags, const struct spoolss_EnumPrinterDataEx *r)
+enum ndr_err_code ndr_push_spoolss_EnumPrinterDataEx(struct ndr_push *ndr, ndr_flags_type flags, const struct spoolss_EnumPrinterDataEx *r)
 {
 	struct _spoolss_EnumPrinterDataEx _r;
 	if (flags & NDR_IN) {
@@ -638,7 +638,7 @@ enum ndr_err_code ndr_push_spoolss_EnumPrinterDataEx(struct ndr_push *ndr, int f
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_pull_spoolss_EnumPrinterDataEx(struct ndr_pull *ndr, int flags, struct spoolss_EnumPrinterDataEx *r)
+enum ndr_err_code ndr_pull_spoolss_EnumPrinterDataEx(struct ndr_pull *ndr, ndr_flags_type flags, struct spoolss_EnumPrinterDataEx *r)
 {
 	struct _spoolss_EnumPrinterDataEx _r;
 	if (flags & NDR_IN) {
@@ -697,13 +697,13 @@ uint32_t ndr_size_spoolss_EnumPrinterDataEx_info(TALLOC_CTX *mem_ctx,
 	NDR_SPOOLSS_SIZE_ENUM(spoolss_EnumPrinterDataEx);
 }
 
-uint32_t _ndr_size_spoolss_DeviceMode(struct spoolss_DeviceMode *devmode, uint32_t flags)
+uint32_t _ndr_size_spoolss_DeviceMode(struct spoolss_DeviceMode *devmode, libndr_flags flags)
 {
 	if (!devmode) return 0;
 	return ndr_size_spoolss_DeviceMode(devmode, flags);
 }
 
-_PUBLIC_ size_t ndr_size_spoolss_StringArray(const struct spoolss_StringArray *r, int flags)
+_PUBLIC_ size_t ndr_size_spoolss_StringArray(const struct spoolss_StringArray *r, libndr_flags flags)
 {
 	if (!r) {
 		return 4;
@@ -715,20 +715,20 @@ _PUBLIC_ size_t ndr_size_spoolss_StringArray(const struct spoolss_StringArray *r
 /* hand marshall as pidl cannot (yet) generate a relative pointer to a fixed array of
  * structs */
 
-_PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, int ndr_flags, const struct spoolss_DriverInfo101 *r)
+_PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct spoolss_DriverInfo101 *r)
 {
 	uint32_t cntr_file_info_1;
 	if (ndr_flags & NDR_SCALARS) {
 		NDR_CHECK(ndr_push_align(ndr, 8));
 		NDR_CHECK(ndr_push_spoolss_DriverOSVersion(ndr, NDR_SCALARS, r->version));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->driver_name));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->architecture));
 			ndr->flags = _flags_save_string;
@@ -736,19 +736,19 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 		NDR_CHECK(ndr_push_relative_ptr1(ndr, r->file_info));
 		NDR_CHECK(ndr_push_uint32(ndr, NDR_SCALARS, r->file_count));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->monitor_name));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->default_datatype));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string_array = ndr->flags;
+			libndr_flags _flags_save_string_array = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->previous_names));
 			ndr->flags = _flags_save_string_array;
@@ -756,25 +756,25 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 		NDR_CHECK(ndr_push_NTTIME(ndr, NDR_SCALARS, r->driver_date));
 		NDR_CHECK(ndr_push_hyper(ndr, NDR_SCALARS, r->driver_version));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->manufacturer_name));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->manufacturer_url));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->hardware_id));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->provider));
 			ndr->flags = _flags_save_string;
@@ -783,7 +783,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 	}
 	if (ndr_flags & NDR_BUFFERS) {
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->driver_name) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->driver_name));
@@ -793,7 +793,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->architecture) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->architecture));
@@ -816,7 +816,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 			NDR_CHECK(ndr_push_relative_ptr2_end(ndr, r->file_info));
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->monitor_name) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->monitor_name));
@@ -826,7 +826,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->default_datatype) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->default_datatype));
@@ -836,7 +836,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string_array = ndr->flags;
+			libndr_flags _flags_save_string_array = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->previous_names) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->previous_names));
@@ -846,7 +846,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 			ndr->flags = _flags_save_string_array;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->manufacturer_name) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->manufacturer_name));
@@ -856,7 +856,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->manufacturer_url) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->manufacturer_url));
@@ -866,7 +866,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->hardware_id) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->hardware_id));
@@ -876,7 +876,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->provider) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->provider));
@@ -889,7 +889,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_DriverInfo101(struct ndr_push *ndr, 
 	return NDR_ERR_SUCCESS;
 }
 
-_PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, int ndr_flags, struct spoolss_DriverInfo101 *r)
+_PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct spoolss_DriverInfo101 *r)
 {
 	uint32_t _ptr_driver_name;
 	TALLOC_CTX *_mem_save_driver_name_0;
@@ -917,7 +917,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 		NDR_CHECK(ndr_pull_align(ndr, 8));
 		NDR_CHECK(ndr_pull_spoolss_DriverOSVersion(ndr, NDR_SCALARS, &r->version));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_driver_name));
 			if (_ptr_driver_name) {
@@ -929,7 +929,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_architecture));
 			if (_ptr_architecture) {
@@ -949,7 +949,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 		}
 		NDR_CHECK(ndr_pull_uint32(ndr, NDR_SCALARS, &r->file_count));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_monitor_name));
 			if (_ptr_monitor_name) {
@@ -961,7 +961,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_default_datatype));
 			if (_ptr_default_datatype) {
@@ -973,7 +973,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string_array = ndr->flags;
+			libndr_flags _flags_save_string_array = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_previous_names));
 			if (_ptr_previous_names) {
@@ -987,7 +987,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 		NDR_CHECK(ndr_pull_NTTIME(ndr, NDR_SCALARS, &r->driver_date));
 		NDR_CHECK(ndr_pull_hyper(ndr, NDR_SCALARS, &r->driver_version));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_manufacturer_name));
 			if (_ptr_manufacturer_name) {
@@ -999,7 +999,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_manufacturer_url));
 			if (_ptr_manufacturer_url) {
@@ -1011,7 +1011,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_hardware_id));
 			if (_ptr_hardware_id) {
@@ -1023,7 +1023,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_pull_generic_ptr(ndr, &_ptr_provider));
 			if (_ptr_provider) {
@@ -1038,7 +1038,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 	}
 	if (ndr_flags & NDR_BUFFERS) {
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->driver_name) {
 				uint32_t _relative_save_offset;
@@ -1056,7 +1056,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->architecture) {
 				uint32_t _relative_save_offset;
@@ -1101,7 +1101,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->offset = _relative_save_offset;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->monitor_name) {
 				uint32_t _relative_save_offset;
@@ -1119,7 +1119,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->default_datatype) {
 				uint32_t _relative_save_offset;
@@ -1137,7 +1137,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string_array = ndr->flags;
+			libndr_flags _flags_save_string_array = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->previous_names) {
 				uint32_t _relative_save_offset;
@@ -1155,7 +1155,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string_array;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->manufacturer_name) {
 				uint32_t _relative_save_offset;
@@ -1173,7 +1173,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->manufacturer_url) {
 				uint32_t _relative_save_offset;
@@ -1191,7 +1191,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->hardware_id) {
 				uint32_t _relative_save_offset;
@@ -1209,7 +1209,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_spoolss_DriverInfo101(struct ndr_pull *ndr, 
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->provider) {
 				uint32_t _relative_save_offset;
@@ -1254,7 +1254,7 @@ void ndr_print_spoolss_Field(struct ndr_print *ndr, const char *name, const unio
 	}
 }
 
-_PUBLIC_ size_t ndr_size_spoolss_PrinterData(const union spoolss_PrinterData *r, uint32_t level, int flags)
+_PUBLIC_ size_t ndr_size_spoolss_PrinterData(const union spoolss_PrinterData *r, uint32_t level, libndr_flags flags)
 {
 	if (!r) {
 		return 0;
@@ -1267,19 +1267,19 @@ void ndr_print_spoolss_security_descriptor(struct ndr_print *ndr, const char *na
 	ndr_print_security_descriptor(ndr, name, r);
 }
 
-enum ndr_err_code ndr_pull_spoolss_security_descriptor(struct ndr_pull *ndr, int ndr_flags, struct security_descriptor *r)
+enum ndr_err_code ndr_pull_spoolss_security_descriptor(struct ndr_pull *ndr, ndr_flags_type ndr_flags, struct security_descriptor *r)
 {
-	uint32_t _flags_save_STRUCT = ndr->flags;
+	libndr_flags _flags_save_STRUCT = ndr->flags;
 	ndr_set_flags(&ndr->flags, LIBNDR_FLAG_NO_RELATIVE_REVERSE);
 	NDR_CHECK(ndr_pull_security_descriptor(ndr, ndr_flags, r));
 	ndr->flags = _flags_save_STRUCT;
 	return NDR_ERR_SUCCESS;
 }
 
-enum ndr_err_code ndr_push_spoolss_security_descriptor(struct ndr_push *ndr, int ndr_flags, const struct security_descriptor *r)
+enum ndr_err_code ndr_push_spoolss_security_descriptor(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct security_descriptor *r)
 {
 	{
-		uint32_t _flags_save_STRUCT = ndr->flags;
+		libndr_flags _flags_save_STRUCT = ndr->flags;
 		ndr_set_flags(&ndr->flags, LIBNDR_FLAG_LITTLE_ENDIAN|LIBNDR_FLAG_NO_RELATIVE_REVERSE);
 		if (ndr_flags & NDR_SCALARS) {
 			NDR_CHECK(ndr_push_align(ndr, 5));
@@ -1318,84 +1318,84 @@ enum ndr_err_code ndr_push_spoolss_security_descriptor(struct ndr_push *ndr, int
 	return NDR_ERR_SUCCESS;
 }
 
-_PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, int ndr_flags, const struct spoolss_PrinterInfo2 *r)
+_PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, ndr_flags_type ndr_flags, const struct spoolss_PrinterInfo2 *r)
 {
 	if (ndr_flags & NDR_SCALARS) {
 		NDR_CHECK(ndr_push_align(ndr, 5));
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->servername));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->printername));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->sharename));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->portname));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->drivername));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->comment));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->location));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_spoolss_DeviceMode = ndr->flags;
+			libndr_flags _flags_save_spoolss_DeviceMode = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_ALIGN4);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->devmode));
 			ndr->flags = _flags_save_spoolss_DeviceMode;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->sepfile));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->printprocessor));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->datatype));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->parameters));
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_spoolss_security_descriptor = ndr->flags;
+			libndr_flags _flags_save_spoolss_security_descriptor = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_ALIGN4);
 			NDR_CHECK(ndr_push_relative_ptr1(ndr, r->secdesc));
 			ndr->flags = _flags_save_spoolss_security_descriptor;
@@ -1412,7 +1412,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 	}
 	if (ndr_flags & NDR_BUFFERS) {
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->servername) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->servername));
@@ -1422,7 +1422,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->printername) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->printername));
@@ -1432,7 +1432,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->sharename) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->sharename));
@@ -1442,7 +1442,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->portname) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->portname));
@@ -1452,7 +1452,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->drivername) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->drivername));
@@ -1462,7 +1462,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->comment) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->comment));
@@ -1472,7 +1472,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->location) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->location));
@@ -1482,7 +1482,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->sepfile) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->sepfile));
@@ -1492,7 +1492,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->printprocessor) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->printprocessor));
@@ -1502,7 +1502,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->datatype) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->datatype));
@@ -1512,7 +1512,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_string = ndr->flags;
+			libndr_flags _flags_save_string = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_STR_NULLTERM);
 			if (r->parameters) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->parameters));
@@ -1522,7 +1522,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_string;
 		}
 		{
-			uint32_t _flags_save_spoolss_DeviceMode = ndr->flags;
+			libndr_flags _flags_save_spoolss_DeviceMode = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_ALIGN4);
 			if (r->devmode) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->devmode));
@@ -1537,7 +1537,7 @@ _PUBLIC_ enum ndr_err_code ndr_push_spoolss_PrinterInfo2(struct ndr_push *ndr, i
 			ndr->flags = _flags_save_spoolss_DeviceMode;
 		}
 		{
-			uint32_t _flags_save_spoolss_security_descriptor = ndr->flags;
+			libndr_flags _flags_save_spoolss_security_descriptor = ndr->flags;
 			ndr_set_flags(&ndr->flags, LIBNDR_FLAG_ALIGN4);
 			if (r->secdesc) {
 				NDR_CHECK(ndr_push_relative_ptr2_start(ndr, r->secdesc));
@@ -1582,7 +1582,7 @@ _PUBLIC_ void ndr_print_spoolss_Time(struct ndr_print *ndr, const char *name, co
 	talloc_free(str);
 }
 
-_PUBLIC_ uint32_t ndr_spoolss_PrinterEnumValues_align(enum winreg_Type type)
+_PUBLIC_ libndr_flags ndr_spoolss_PrinterEnumValues_align(enum winreg_Type type)
 {
 	switch(type) {
 	case REG_NONE:

@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
 APPNAME = 'ldb'
-# For Samba 4.19.x !
-VERSION = '2.8.0'
+# For Samba 4.20.x !
+VERSION = '2.9.0'
 
 import sys, os
 
@@ -14,7 +14,6 @@ sys.path.insert(0, top + '/buildtools/wafsamba')
 
 out = 'bin'
 
-import wafsamba
 from wafsamba import samba_dist, samba_utils
 from waflib import Errors, Options, Logs, Context
 import shutil
@@ -631,7 +630,7 @@ def test(ctx):
          'tests/python/index.py',
          'tests/python/repack.py'],
         extra_env={'SELFTEST_PREFIX': test_prefix,
-                   'LC_ALL': 'tr_TR.UTF-8'})
+                   'LC_ALL': 'tr_TR.UTF-8'}) or pyret
     print("Python testsuite returned %d" % pyret)
 
     cmocka_ret = 0

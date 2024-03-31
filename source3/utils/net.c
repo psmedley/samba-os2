@@ -53,6 +53,7 @@
 #include "auth/credentials/credentials.h"
 #include "source3/utils/passwd_proto.h"
 #include "auth/gensec/gensec.h"
+#include "lib/param/param.h"
 
 #ifdef WITH_FAKE_KASERVER
 #include "utils/net_afs.h"
@@ -904,6 +905,14 @@ static struct functable net_func[] = {
 		   "'net vfs' commands.")
 	},
 
+	{	"witness",
+		net_witness,
+		NET_TRANSPORT_LOCAL,
+		N_("Manage witness registrations"),
+		N_("  Use 'net help witness' to get more information about "
+		   "'net witness' commands.")
+	},
+
 #ifdef WITH_FAKE_KASERVER
 	{	"afs",
 		net_afs,
@@ -1232,6 +1241,61 @@ static struct functable net_func[] = {
 			.arg        = &c->opt_dns_ttl,
 			.descrip    = "TTL in seconds of DNS records",
 		},
+		/* Options for 'net witness {list,...}' */
+		{
+			.longName   = "witness-registration",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &c->opt_witness_registration,
+		},
+		{
+			.longName   = "witness-net-name",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &c->opt_witness_net_name,
+		},
+		{
+			.longName   = "witness-share-name",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &c->opt_witness_share_name,
+		},
+		{
+			.longName   = "witness-ip-address",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &c->opt_witness_ip_address,
+		},
+		{
+			.longName   = "witness-client-computer-name",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &c->opt_witness_client_computer_name,
+		},
+		{
+			.longName   = "witness-apply-to-all",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_NONE,
+			.arg        = &c->opt_witness_apply_to_all,
+		},
+		{
+			.longName   = "witness-new-ip",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &c->opt_witness_new_ip,
+		},
+		{
+			.longName   = "witness-new-node",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_INT,
+			.arg        = &c->opt_witness_new_node,
+		},
+		{
+			.longName   = "witness-forced-response",
+			.shortName  = 0,
+			.argInfo    = POPT_ARG_STRING,
+			.arg        = &c->opt_witness_forced_response,
+		},
 		POPT_COMMON_SAMBA
 		POPT_COMMON_CONNECTION
 		POPT_COMMON_CREDENTIALS
@@ -1244,6 +1308,7 @@ static struct functable net_func[] = {
 	BlockSignals(True, SIGPIPE);
 
 	zero_sockaddr(&c->opt_dest_ip);
+	c->opt_witness_new_node = -2;
 
 	smb_init_locale();
 
@@ -1263,8 +1328,9 @@ static struct functable net_func[] = {
 		TALLOC_FREE(frame);
 		exit(1);
 	}
+	c->lp_ctx = samba_cmdline_get_lp_ctx();
 	/* set default debug level to 0 regardless of what smb.conf sets */
-	lp_set_cmdline("log level", "0");
+	lpcfg_set_cmdline(c->lp_ctx, "log level", "0");
 	c->private_data = net_func;
 
 	pc = samba_popt_get_context(getprogname(),
@@ -1300,7 +1366,6 @@ static struct functable net_func[] = {
 	}
 
 	c->creds = samba_cmdline_get_creds();
-	c->lp_ctx = samba_cmdline_get_lp_ctx();
 
 	{
 		enum credentials_obtained username_obtained =
@@ -1353,7 +1418,7 @@ static struct functable net_func[] = {
 	}
 
 	if (c->opt_requester_name) {
-		lp_set_cmdline("netbios name", c->opt_requester_name);
+		lpcfg_set_cmdline(c->lp_ctx, "netbios name", c->opt_requester_name);
 	}
 
 	if (!c->opt_target_workgroup) {
@@ -1377,6 +1442,9 @@ static struct functable net_func[] = {
 	poptFreeContext(pc);
 
 	cmdline_messaging_context_free();
+
+	gfree_all();
+
 	TALLOC_FREE(frame);
 	return rc;
 }

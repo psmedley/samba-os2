@@ -66,7 +66,7 @@
  * Special cases:
  * x y    It's not possible to search for terms including spaces, Spotlight
  *        will search for x OR y.
- * x(x    Search for terms including ( and ) doesn not work with Spotlight.
+ * x(x    Search for terms including ( and ) does not work with Spotlight.
  *
  * [1] <http://lucene.apache.org/core/8_2_0/queryparser/org/apache/lucene/queryparser/classic/package-summary.html#Escaping_Special_Characters>
  */
@@ -151,7 +151,7 @@ struct es_attr_map *es_map_sl_attr(TALLOC_CTX *mem_ctx,
 {
 	struct es_attr_map *es_map = NULL;
 	const char *typestr = NULL;
-	enum ssm_type type;
+	enum ssm_type type = ssmt_bool;
 	char *es_attr = NULL;
 	size_t i;
 	int cmp;

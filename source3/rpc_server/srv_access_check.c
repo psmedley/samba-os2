@@ -71,8 +71,6 @@ NTSTATUS access_check_object( struct security_descriptor *psd, struct security_t
 		is_root = true;
 	}
 
-	/* Check if we are root */
-
 	/* check privileges; certain SAM access bits should be overridden
 	   by privileges (mostly having to do with creating/modifying/deleting
 	   users and groups) */
@@ -95,9 +93,12 @@ NTSTATUS access_check_object( struct security_descriptor *psd, struct security_t
 	}
 
 	if (is_system || is_root) {
-		DEBUG(4,("%s: ACCESS should be DENIED  (requested: %#010x)\n", debug, des_access));
-		DEBUGADD(4,("but overritten by %s\n",
-			    is_root ? "euid == initial uid" : "system token"));
+		DEBUG(4,
+		      ("%s: ACCESS should be DENIED  (requested: %#010x)\n"
+		       "but overritten by %s\n",
+		       debug,
+		       des_access,
+		       is_root ? "euid == initial uid" : "system token"));
 
 		priv_granted = true;
 		*acc_granted = des_access;

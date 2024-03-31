@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    QUOTA get/set utility
 
@@ -29,6 +29,7 @@
 #include "fake_file.h"
 #include "../libcli/security/security.h"
 #include "libsmb/libsmb.h"
+#include "lib/param/param.h"
 
 static char *server;
 
@@ -71,7 +72,7 @@ static bool cli_open_policy_hnd(void)
 		/* Some systems don't support SEC_FLAG_MAXIMUM_ALLOWED,
 		   but NT sends 0x2000000 so we might as well do it too. */
 
-		if (!NT_STATUS_IS_OK(rpccli_lsa_open_policy(global_pipe_hnd, talloc_tos(), True, 
+		if (!NT_STATUS_IS_OK(rpccli_lsa_open_policy(global_pipe_hnd, talloc_tos(), True,
 							 GENERIC_EXECUTE_ACCESS, &pol))) {
 			return False;
 		}
@@ -97,7 +98,7 @@ static void SidToString(fstring str, struct dom_sid *sid, bool _numeric)
 
 	if (!cli_open_policy_hnd() ||
 	    !NT_STATUS_IS_OK(rpccli_lsa_lookup_sids(global_pipe_hnd, talloc_tos(),
-						 &pol, 1, sid, &domains, 
+						 &pol, 1, sid, &domains,
 						 &names, &types)) ||
 	    !domains || !domains[0] || !names || !names[0]) {
 		return;
@@ -123,7 +124,7 @@ static bool StringToSid(struct dom_sid *sid, const char *str)
 
 	if (!cli_open_policy_hnd() ||
 	    !NT_STATUS_IS_OK(rpccli_lsa_lookup_names(global_pipe_hnd, talloc_tos(),
-						  &pol, 1, &str, NULL, 1, &sids, 
+						  &pol, 1, &str, NULL, 1, &sids,
 						  &types))) {
 		result = False;
 		goto done;
@@ -558,6 +559,7 @@ int main(int argc, char *argv[])
 	poptContext pc;
 	struct cli_credentials *creds = NULL;
 	bool ok;
+	struct loadparm_context *lp_ctx = NULL;
 
 	struct poptOption long_options[] = {
 		POPT_AUTOHELP
@@ -651,8 +653,9 @@ int main(int argc, char *argv[])
 		TALLOC_FREE(frame);
 		exit(1);
 	}
+	lp_ctx = samba_cmdline_get_lp_ctx();
 	/* set default debug level to 1 regardless of what smb.conf sets */
-	lp_set_cmdline("log level", "1");
+	lpcfg_set_cmdline(lp_ctx, "log level", "1");
 
 	setlinebuf(stdout);
 
@@ -720,8 +723,9 @@ int main(int argc, char *argv[])
 			todo = SET_QUOTA;
 			break;
 		case 'm':
-			lp_set_cmdline("client max protocol",
-				       poptGetOptArg(pc));
+			lpcfg_set_cmdline(lp_ctx,
+					  "client max protocol",
+					  poptGetOptArg(pc));
 			break;
 		case POPT_ERROR_BADOPT:
 			fprintf(stderr, "\nInvalid option %s: %s\n\n",
@@ -816,11 +820,12 @@ int main(int argc, char *argv[])
 		case SET_QUOTA:
 			result = do_quota(cli, qtype, cmd, username_str, &qt);
 			break;
-		default: 
+		default:
 			result = EXIT_FAILED;
 			break;
 	}
 
+	gfree_all();
 	talloc_free(frame);
 
 	return result;
