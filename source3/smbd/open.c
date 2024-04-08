@@ -942,7 +942,7 @@ NTSTATUS fd_openat(const struct files_struct *dirfsp,
 
 NTSTATUS fd_close(files_struct *fsp)
 {
-	NTSTATUS status;
+	NTSTATUS stat_status = NT_STATUS_OK;
 	int ret;
 
 	if (fsp == fsp->conn->cwd_fsp) {
@@ -950,23 +950,12 @@ NTSTATUS fd_close(files_struct *fsp)
 	}
 
 	if (fsp->fsp_flags.fstat_before_close) {
-		status = vfs_stat_fsp(fsp);
-		if (!NT_STATUS_IS_OK(status)) {
-			/*
-			 * If this is a stream and delete-on-close was set, the
-			 * backing object (an xattr from streams_xattr) might
-			 * already be deleted so fstat() fails with
-			 * NT_STATUS_NOT_FOUND. So if fsp refers to a stream we
-			 * ignore the error and only bail for normal files where
-			 * an fstat() should still work. NB. We cannot use
-			 * fsp_is_alternate_stream(fsp) for this as the base_fsp
-			 * has already been closed at this point and so the value
-			 * fsp_is_alternate_stream() checks for is already NULL.
-			 */
-			if (fsp->fsp_name->stream_name == NULL) {
-				return status;
-			}
-		}
+		/*
+		 * capture status, if failure
+		 * continue close processing
+		 * and return status
+		 */
+		stat_status = vfs_stat_fsp(fsp);
 	}
 
 	if (fsp->dptr) {
@@ -988,7 +977,7 @@ NTSTATUS fd_close(files_struct *fsp)
 	if (ret == -1) {
 		return map_nt_error_from_unix(errno);
 	}
-	return NT_STATUS_OK;
+	return stat_status;
 }
 
 /****************************************************************************
