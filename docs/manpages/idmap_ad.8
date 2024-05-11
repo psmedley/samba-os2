@@ -2,12 +2,12 @@
 .\"     Title: idmap_ad
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 03/27/2024
+.\"      Date: 05/08/2024
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.20.0
+.\"    Source: Samba 4.20.1
 .\"  Language: English
 .\"
-.TH "IDMAP_AD" "8" "03/27/2024" "Samba 4\&.20\&.0" "System Administration tools"
+.TH "IDMAP_AD" "8" "05/08/2024" "Samba 4\&.20\&.1" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -79,6 +79,15 @@ or the AD LDAP entry lacks the SFU attributes the options
 and
 \fItemplate homedir\fR
 are used\&.
+.sp
+Default: no
+.RE
+.PP
+all_groupmem = yes/no
+.RS 4
+If set to
+\fIyes\fR
+winbind will retrieve all group members for getgrnam(3), getgrgid(3) and getgrent(3) calls, including those with missing uidNumber\&.
 .sp
 Default: no
 .RE
