@@ -150,36 +150,47 @@ bool ldif_comparision_objectSid_isString(const struct ldb_val *v)
 
 /*
   compare two objectSids
+
+  If the SIDs seem to be strings, they are converted to binary form.
 */
 static int ldif_comparison_objectSid(struct ldb_context *ldb, void *mem_ctx,
 				    const struct ldb_val *v1, const struct ldb_val *v2)
 {
-	if (ldif_comparision_objectSid_isString(v1) && ldif_comparision_objectSid_isString(v2)) {
-		return ldb_comparison_binary(ldb, mem_ctx, v1, v2);
-	} else if (ldif_comparision_objectSid_isString(v1)
-		   && !ldif_comparision_objectSid_isString(v2)) {
-		struct ldb_val v;
-		int ret;
-		if (ldif_read_objectSid(ldb, mem_ctx, v1, &v) != 0) {
-			/* Perhaps not a string after all */
-			return ldb_comparison_binary(ldb, mem_ctx, v1, v2);
+	bool v1_is_string = ldif_comparision_objectSid_isString(v1);
+	bool v2_is_string = ldif_comparision_objectSid_isString(v2);
+	struct ldb_val parsed_1 = {};
+	struct ldb_val parsed_2 = {};
+	int ret;
+	/*
+	 * If the ldb_vals look like SID strings (i.e. start with "S-"
+	 * or "s-"), we try to parse them as such. If that fails, we
+	 * assume they are binary SIDs, even though that's not really
+	 * possible -- the first two bytes of a struct dom_sid are the
+	 * version (1), and the number of sub-auths (<= 15), neither
+	 * of which are close to 'S' or '-'.
+	 */
+	if (v1_is_string) {
+		int r = ldif_read_objectSid(ldb, mem_ctx, v1, &parsed_1);
+		if (r == 0) {
+			v1 = &parsed_1;
 		}
-		ret = ldb_comparison_binary(ldb, mem_ctx, &v, v2);
-		talloc_free(v.data);
-		return ret;
-	} else if (!ldif_comparision_objectSid_isString(v1)
-		   && ldif_comparision_objectSid_isString(v2)) {
-		struct ldb_val v;
-		int ret;
-		if (ldif_read_objectSid(ldb, mem_ctx, v2, &v) != 0) {
-			/* Perhaps not a string after all */
-			return ldb_comparison_binary(ldb, mem_ctx, v1, v2);
-		}
-		ret = ldb_comparison_binary(ldb, mem_ctx, v1, &v);
-		talloc_free(v.data);
-		return ret;
 	}
-	return ldb_comparison_binary(ldb, mem_ctx, v1, v2);
+	if (v2_is_string) {
+		int r = ldif_read_objectSid(ldb, mem_ctx, v2, &parsed_2);
+		if (r == 0) {
+			v2 = &parsed_2;
+		}
+	}
+
+	ret = ldb_comparison_binary(ldb, mem_ctx, v1, v2);
+
+	if (v1_is_string) {
+		TALLOC_FREE(parsed_1.data);
+	}
+	if (v2_is_string) {
+		TALLOC_FREE(parsed_2.data);
+	}
+	return ret;
 }
 
 /*
@@ -1148,22 +1159,41 @@ static int samba_ldb_dn_link_comparison(struct ldb_context *ldb, void *mem_ctx,
 	struct ldb_dn *dn1 = NULL, *dn2 = NULL;
 	int ret;
 
+	/*
+	 * In a sort context, Deleted DNs get shifted to the end.
+	 * They never match in an equality
+	 */
 	if (dsdb_dn_is_deleted_val(v1)) {
-		/* If the DN is deleted, then we can't search for it */
-		return -1;
-	}
-
-	if (dsdb_dn_is_deleted_val(v2)) {
-		/* If the DN is deleted, then we can't search for it */
+		if (! dsdb_dn_is_deleted_val(v2)) {
+			return 1;
+		}
+		/*
+		 * They are both deleted!
+		 *
+		 * The soundest thing to do at this point is carry on
+		 * and compare the DNs normally. This matches the
+		 * behaviour of samba_dn_extended_match() below.
+		 */
+	} else if (dsdb_dn_is_deleted_val(v2)) {
 		return -1;
 	}
 
 	dn1 = ldb_dn_from_ldb_val(mem_ctx, ldb, v1);
-	if ( ! ldb_dn_validate(dn1)) return -1;
-
 	dn2 = ldb_dn_from_ldb_val(mem_ctx, ldb, v2);
+
+	if ( ! ldb_dn_validate(dn1)) {
+		TALLOC_FREE(dn1);
+		if ( ! ldb_dn_validate(dn2)) {
+			TALLOC_FREE(dn2);
+			return 0;
+		}
+		TALLOC_FREE(dn2);
+		return 1;
+	}
+
 	if ( ! ldb_dn_validate(dn2)) {
-		talloc_free(dn1);
+		TALLOC_FREE(dn1);
+		TALLOC_FREE(dn2);
 		return -1;
 	}
 

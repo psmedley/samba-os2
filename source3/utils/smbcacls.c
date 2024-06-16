@@ -506,22 +506,23 @@ static int ace_compare(struct security_ace *ace1, struct security_ace *ace2)
 		return -1;
 	if ((ace1->flags & SEC_ACE_FLAG_INHERITED_ACE) &&
 			(ace2->flags & SEC_ACE_FLAG_INHERITED_ACE))
-		return ace1 - ace2;
+		return NUMERIC_CMP(ace2->type, ace1->type);
 
-	if (ace1->type != ace2->type)
-		return ace2->type - ace1->type;
-
+	if (ace1->type != ace2->type) {
+		/* note the reverse order */
+		return NUMERIC_CMP(ace2->type, ace1->type);
+	}
 	if (dom_sid_compare(&ace1->trustee, &ace2->trustee))
 		return dom_sid_compare(&ace1->trustee, &ace2->trustee);
 
 	if (ace1->flags != ace2->flags)
-		return ace1->flags - ace2->flags;
+		return NUMERIC_CMP(ace1->flags, ace2->flags);
 
 	if (ace1->access_mask != ace2->access_mask)
-		return ace1->access_mask - ace2->access_mask;
+		return NUMERIC_CMP(ace1->access_mask, ace2->access_mask);
 
 	if (ace1->size != ace2->size)
-		return ace1->size - ace2->size;
+		return NUMERIC_CMP(ace1->size, ace2->size);
 
 	return memcmp(ace1, ace2, sizeof(struct security_ace));
 }
@@ -893,6 +894,10 @@ static uint8_t get_flags_to_propagate(bool is_container,
 	/* Assume we are not propagating the ACE */
 
 	newflags &= ~SEC_ACE_FLAG_INHERITED_ACE;
+
+	/* Inherit-only flag is not propagated to children */
+
+	newflags &= ~SEC_ACE_FLAG_INHERIT_ONLY;
 	/* all children need to have the SEC_ACE_FLAG_INHERITED_ACE set */
 	if (acl_cntrinherit || acl_objinherit) {
 		/*

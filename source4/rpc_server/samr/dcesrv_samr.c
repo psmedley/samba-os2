@@ -1166,7 +1166,7 @@ static NTSTATUS dcesrv_samr_CreateDomainGroup(struct dcesrv_call_state *dce_call
 */
 static int compare_SamEntry(struct samr_SamEntry *e1, struct samr_SamEntry *e2)
 {
-	return e1->idx - e2->idx;
+	return NUMERIC_CMP(e1->idx, e2->idx);
 }
 
 static int compare_msgRid(struct ldb_message **m1, struct ldb_message **m2) {
@@ -1197,8 +1197,9 @@ static int compare_msgRid(struct ldb_message **m1, struct ldb_message **m2) {
 	}
 
 	/*
-	 * Get and compare the rids, if we fail to extract a rid treat it as a
-	 * missing SID and sort to the end of the list
+	 * Get and compare the rids. If we fail to extract a rid (because
+	 * there are no subauths) the msg goes to the end of the list, but
+	 * before the NULL SIDs.
 	 */
 	status = dom_sid_split_rid(NULL, sid1, NULL, &rid1);
 	if (!NT_STATUS_IS_OK(status)) {
