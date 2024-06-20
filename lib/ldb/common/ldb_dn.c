@@ -1111,7 +1111,7 @@ int ldb_dn_compare_base(struct ldb_dn *base, struct ldb_dn *dn)
 
 		/* compare attr.cf_value. */
 		if (b_vlen != dn_vlen) {
-			return b_vlen - dn_vlen;
+			return NUMERIC_CMP(b_vlen, dn_vlen);
 		}
 		ret = strncmp(b_vdata, dn_vdata, b_vlen);
 		if (ret != 0) return ret;
@@ -1132,8 +1132,32 @@ int ldb_dn_compare(struct ldb_dn *dn0, struct ldb_dn *dn1)
 {
 	unsigned int i;
 	int ret;
+	/*
+	 * If used in sort, we shift NULL and invalid DNs to the end.
+	 *
+	 * If ldb_dn_casefold_internal() fails, that goes to the end too, so
+	 * we end up with:
+	 *
+	 * | normal DNs, sorted | casefold failed DNs | invalid DNs | NULLs |
+	 */
 
-	if (( ! dn0) || dn0->invalid || ! dn1 || dn1->invalid) {
+	if (dn0 == dn1) {
+		/* this includes the both-NULL case */
+		return 0;
+	}
+	if (dn0 == NULL) {
+		return 1;
+	}
+	if (dn1 == NULL) {
+		return -1;
+	}
+	if (dn0->invalid && dn1->invalid) {
+		return 0;
+	}
+	if (dn0->invalid) {
+		return 1;
+	}
+	if (dn1->invalid) {
 		return -1;
 	}
 
@@ -1190,7 +1214,7 @@ int ldb_dn_compare(struct ldb_dn *dn0, struct ldb_dn *dn1)
 
 		/* compare attr.cf_value. */
 		if (dn0_vlen != dn1_vlen) {
-			return dn0_vlen - dn1_vlen;
+			return NUMERIC_CMP(dn0_vlen, dn1_vlen);
 		}
 		ret = strncmp(dn0_vdata, dn1_vdata, dn0_vlen);
 		if (ret != 0) {

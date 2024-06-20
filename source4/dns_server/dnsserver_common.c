@@ -68,6 +68,8 @@ uint8_t werr_to_dns_err(WERROR werr)
 		return DNS_RCODE_NOTZONE;
 	} else if (W_ERROR_EQUAL(DNS_ERR(BADKEY), werr)) {
 		return DNS_RCODE_BADKEY;
+	} else if (W_ERROR_EQUAL(WERR_ACCESS_DENIED, werr)) {
+		return DNS_RCODE_REFUSED;
 	}
 	DEBUG(5, ("No mapping exists for %s\n", win_errstr(werr)));
 	return DNS_RCODE_SERVFAIL;
@@ -642,7 +644,7 @@ static int rec_cmp(const struct dnsp_DnssrvRpcRecord *r1,
 		 * The records are sorted with higher types first,
 		 * which puts tombstones (type 0) last.
 		 */
-		return r2->wType - r1->wType;
+		return NUMERIC_CMP(r2->wType, r1->wType);
 	}
 	/*
 	 * Then we need to sort from the oldest to newest timestamp.
@@ -650,7 +652,7 @@ static int rec_cmp(const struct dnsp_DnssrvRpcRecord *r1,
 	 * Note that dwTimeStamp == 0 (never expiring) records come first,
 	 * then the ones whose expiry is soonest.
 	 */
-	return r1->dwTimeStamp - r2->dwTimeStamp;
+	return NUMERIC_CMP(r1->dwTimeStamp, r2->dwTimeStamp);
 }
 
 /*
@@ -1411,7 +1413,7 @@ static int dns_common_sort_zones(struct ldb_message **m1, struct ldb_message **m
 	/* If the string lengths are not equal just sort by length */
 	if (l1 != l2) {
 		/* If m1 is the larger zone name, return it first */
-		return l2 - l1;
+		return NUMERIC_CMP(l2, l1);
 	}
 
 	/*TODO: We need to compare DNs here, we want the DomainDNSZones first */

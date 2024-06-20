@@ -81,8 +81,8 @@ def SAMBA_PIDL(bld, pname, source,
         else:
             cc = 'CC="%s"' % bld.CONFIG_GET("CC")
 
-#    t = bld(rule='cd ${PIDL_LAUNCH_DIR} && %s%s %s ${PERL} ${PIDL} --quiet ${OPTIONS} --outputdir ${OUTPUTDIR} -- "${IDLSRC}"' % (pidl_dev, cpp, cc),
-    t = bld(rule='cd ${PIDL_LAUNCH_DIR} && ${PERL} ${PIDL} --quiet ${OPTIONS} --outputdir ${OUTPUTDIR} -- "${IDLSRC}"',
+    t = bld(rule=('cd ${PIDL_LAUNCH_DIR} && PERL_HASH_SEED=0  ${PERL} '
+                  '${PIDL} --quiet ${OPTIONS} --outputdir ${OUTPUTDIR} -- "${IDLSRC}"' 
             ext_out    = '.c',
             before     = 'c',
             update_outputs = True,

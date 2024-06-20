@@ -27,6 +27,7 @@
 #include "libcli/util/ntstatus.h"
 #include "auth/auth.h"
 #include "auth/gensec/gensec.h"
+#include "lib/util/bytearray.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_DNS
@@ -106,7 +107,7 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 	struct dns_server_tkey *tkey = NULL;
 	struct dns_fake_tsig_rec *check_rec = talloc_zero(mem_ctx,
 			struct dns_fake_tsig_rec);
-
+	const char *algorithm = NULL;
 
 	/* Find the first TSIG record in the additional records */
 	for (i=0; i < packet->arcount; i++) {
@@ -145,7 +146,7 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 
 	tkey = dns_find_tkey(dns->tkeys, state->tsig->name);
 	if (tkey == NULL) {
-		DBG_DEBUG("dns_find_tkey() => NOTAUTH / DNS_RCODE_BADKEY\n");
+		DBG_DEBUG("dns_find_tkey() => REFUSED / DNS_RCODE_BADKEY\n");
 		/*
 		 * We must save the name for use in the TSIG error
 		 * response and have no choice here but to save the
@@ -157,9 +158,19 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 			return WERR_NOT_ENOUGH_MEMORY;
 		}
 		state->tsig_error = DNS_RCODE_BADKEY;
-		return DNS_ERR(NOTAUTH);
+		return DNS_ERR(REFUSED);
 	}
 	DBG_DEBUG("dns_find_tkey() => found\n");
+
+	algorithm = state->tsig->rdata.tsig_record.algorithm_name;
+	if (strcmp(algorithm, "gss-tsig") == 0) {
+		/* ok */
+	} else if (strcmp(algorithm, "gss.microsoft.com") == 0) {
+		/* ok */
+	} else {
+		state->tsig_error = DNS_RCODE_BADKEY;
+		return DNS_ERR(REFUSED);
+	}
 
 	/*
 	 * Remember the keyname that found an existing tkey, used
@@ -183,7 +194,7 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 	}
 	check_rec->rr_class = DNS_QCLASS_ANY;
 	check_rec->ttl = 0;
-	check_rec->algorithm_name = talloc_strdup(check_rec, tkey->algorithm);
+	check_rec->algorithm_name = talloc_strdup(check_rec, algorithm);
 	if (check_rec->algorithm_name == NULL) {
 		return WERR_NOT_ENOUGH_MEMORY;
 	}
@@ -239,7 +250,7 @@ WERROR dns_verify_tsig(struct dns_server *dns,
 		dump_data_dbgc(DBGC_DNS, 8, buffer, buffer_len);
 		DBG_NOTICE("Verifying tsig failed: %s\n", nt_errstr(status));
 		state->tsig_error = DNS_RCODE_BADSIG;
-		return DNS_ERR(NOTAUTH);
+		return DNS_ERR(REFUSED);
 	}
 
 	if (!NT_STATUS_IS_OK(status)) {
@@ -271,9 +282,17 @@ static WERROR dns_tsig_compute_mac(TALLOC_CTX *mem_ctx,
 	struct dns_fake_tsig_rec *check_rec = talloc_zero(mem_ctx,
 			struct dns_fake_tsig_rec);
 	size_t mac_size = 0;
+	bool gss_tsig;
 
 	if (check_rec == NULL) {
 		return WERR_NOT_ENOUGH_MEMORY;
+	}
+
+	if (strcmp(tkey->algorithm, "gss-tsig") == 0) {
+		gss_tsig = true;
+	} else {
+		/* gss.microsoft.com */
+		gss_tsig = false;
 	}
 
 	/* first build and verify check packet */
@@ -315,6 +334,9 @@ static WERROR dns_tsig_compute_mac(TALLOC_CTX *mem_ctx,
 	}
 
 	buffer_len = mac_size;
+	if (gss_tsig && mac_size > 0) {
+		buffer_len += 2;
+	}
 
 	buffer_len += packet_blob.length;
 	if (buffer_len < packet_blob.length) {
@@ -335,11 +357,21 @@ static WERROR dns_tsig_compute_mac(TALLOC_CTX *mem_ctx,
 	/*
 	 * RFC 2845 "4.2 TSIG on Answers", how to lay out the buffer
 	 * that we're going to sign:
-	 * 1. MAC of request (if present)
+	 * 1. if MAC of request is present
+	 *    - 16bit big endian length of MAC of request
+	 *    - MAC of request
 	 * 2. Outgoing packet
 	 * 3. TSIG record
 	 */
 	if (mac_size > 0) {
+		if (gss_tsig) {
+			/*
+			 * only gss-tsig not with
+			 * gss.microsoft.com
+			 */
+			PUSH_BE_U16(p, 0, mac_size);
+			p += 2;
+		}
 		memcpy(p, state->tsig->rdata.tsig_record.mac, mac_size);
 		p += mac_size;
 	}
@@ -372,6 +404,7 @@ WERROR dns_sign_tsig(struct dns_server *dns,
 		.data = NULL,
 		.length = 0
 	};
+	const char *algorithm = "gss-tsig";
 
 	tsig = talloc_zero(mem_ctx, struct dns_res_rec);
 	if (tsig == NULL) {
@@ -392,6 +425,8 @@ WERROR dns_sign_tsig(struct dns_server *dns,
 		if (!W_ERROR_IS_OK(werror)) {
 			return werror;
 		}
+
+		algorithm = tkey->algorithm;
 	}
 
 	tsig->name = talloc_strdup(tsig, state->key_name);
@@ -402,7 +437,7 @@ WERROR dns_sign_tsig(struct dns_server *dns,
 	tsig->rr_type = DNS_QTYPE_TSIG;
 	tsig->ttl = 0;
 	tsig->length = UINT16_MAX;
-	tsig->rdata.tsig_record.algorithm_name = talloc_strdup(tsig, "gss-tsig");
+	tsig->rdata.tsig_record.algorithm_name = talloc_strdup(tsig, algorithm);
 	if (tsig->rdata.tsig_record.algorithm_name == NULL) {
 		return WERR_NOT_ENOUGH_MEMORY;
 	}

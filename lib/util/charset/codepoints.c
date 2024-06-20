@@ -26,6 +26,7 @@
 #include "dynconfig/dynconfig.h"
 #include "lib/util/debug.h"
 #include "lib/util/byteorder.h"
+#include "lib/util/tsort.h"
 
 #ifdef strcasecmp
 #undef strcasecmp
@@ -16479,11 +16480,23 @@ _PUBLIC_ bool isupper_m(codepoint_t val)
 */
 _PUBLIC_ int codepoint_cmpi(codepoint_t c1, codepoint_t c2)
 {
+	/*
+	 * FIXME: this is unsuitable for use in a sort, as the
+	 * comparison is intransitive.
+	 *
+	 * The problem is toupper_m() is only called on equality case,
+	 * which has strange effects.
+	 *
+	 *    Consider {'a', 'A', 'B'}.
+	 *     'a' == 'A'
+	 *     'a' >  'B'  (lowercase letters come after upper)
+	 *     'A' <  'B'
+	 */
 	if (c1 == c2 ||
 	    toupper_m(c1) == toupper_m(c2)) {
 		return 0;
 	}
-	return c1 - c2;
+	return NUMERIC_CMP(c1, c2);
 }
 
 
