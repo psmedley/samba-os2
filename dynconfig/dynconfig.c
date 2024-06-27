@@ -601,7 +601,7 @@ const char *get_dyn_SAMBA_LIBEXECDIR(void)
 		{
 			snprintf(buffer, 260, "%s", SAMBA_LIBEXECDIR);
 		} else {
-			snprintf(buffer, 260, "%s/%s", exedir, "libexec");
+			snprintf(buffer, 260, "%s", exedir);
 		}
 	}
 
