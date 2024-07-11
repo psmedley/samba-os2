@@ -43,6 +43,7 @@
 #include "common/logging.h"
 #include "common/hash_count.h"
 #ifdef __OS2__
+int os2_pipe(int fds[2]);
 #define pipe(A) os2_pipe(A)
 #endif
 

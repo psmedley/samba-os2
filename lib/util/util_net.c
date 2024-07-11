@@ -30,9 +30,6 @@
 #include "system/select.h"
 #include "lib/util/select.h"
 #include "lib/util/util_net.h"
-#ifdef __OS2__
-#include <netinet/in.h>
-#endif
 
 #undef strcasecmp
 #undef strncasecmp

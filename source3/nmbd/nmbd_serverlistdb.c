@@ -412,9 +412,6 @@ void write_browse_list(time_t t, bool force_write)
 	}
 
 	fclose(fp);
-#ifdef __OS2__
-	close(fp);
-#endif
 	unlink(fname);
 	chmod(fnamenew,0644);
 	rename(fnamenew,fname);

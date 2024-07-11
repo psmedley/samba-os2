@@ -22,6 +22,13 @@
 #include <popt.h>
 #include <ftw.h>
 
+#ifdef __OS2__
+ssize_t getxattr(const char *path, const char *name,
+                 void *value, size_t size);
+int removexattr(const char *path, const char *name);
+int setxattr(const char *path, const char *name,
+              const void *value, size_t size, int flags);
+#endif
 static struct rename_xattr_state {
 	int follow_symlink;
 	int print;

@@ -23,6 +23,7 @@
 #include "modules/vfs_posixacl.h"
 #ifdef __OS2__
 #include <acl.h>
+int acl_get_perm(acl_permset_t permset_d, acl_perm_t perm);
 #endif
 
 /* prototypes for static functions first - for clarity */
