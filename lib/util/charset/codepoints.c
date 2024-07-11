@@ -32,6 +32,11 @@
 #undef strcasecmp
 #endif
 
+#ifdef __OS2__
+const char *lp_dos_charset(void);
+const char *lp_unix_charset(void);
+#endif
+
 /**
  * @file
  * @brief Unicode string manipulation

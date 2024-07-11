@@ -37,7 +37,36 @@
 #include "offload_token.h"
 #include "util_reparse.h"
 #include "lib/util/string_wrappers.h"
-
+#ifdef __OS2__
+int          symlinkat(const char *, int, const char *);
+ssize_t      readlinkat(int, const char *restrict, char *restrict, size_t);
+int mkdirat(int dirfd, const char *pathname, mode_t mode);
+int openat(int dirfd, const char *pathname, int flags, mode_t mode);
+int renameat(int fromfd, const char *old, int tofd,
+     const char *new);
+int          unlinkat(int, const char *, int);
+int futimens(int fd, const struct timespec times[2]);
+int utimensat(int fd, const char *path, const struct timespec times[2],
+       int flag);int	linkat(int, const char *, int, const char *, int);
+ssize_t getxattr(const char *path, const char *name,
+                 void *value, size_t size);
+ssize_t lgetxattr(const char *path, const char *name,
+                 void *value, size_t size);
+ssize_t fgetxattr(int fd, const char *name,
+                 void *value, size_t size);
+ssize_t listxattr(const char *path, char *list, size_t size);
+ssize_t llistxattr(const char *path, char *list, size_t size);
+ssize_t flistxattr(int fd, char *list, size_t size);
+int removexattr(const char *path, const char *name);
+int lremovexattr(const char *path, const char *name);
+int fremovexattr(int fd, const char *name);
+int setxattr(const char *path, const char *name,
+              const void *value, size_t size, int flags);
+int lsetxattr(const char *path, const char *name,
+              const void *value, size_t size, int flags);
+int fsetxattr(int fd, const char *name,
+              const void *value, size_t size, int flags);
+#endif
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_VFS
 
