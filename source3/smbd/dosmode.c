@@ -30,6 +30,10 @@
 #include "lib/util/string_wrappers.h"
 #include "fake_file.h"
 
+#ifdef __OS2__
+int os2_isattribute(char *path, unsigned short attr);
+#endif
+
 static void dos_mode_debug_print(const char *func, uint32_t mode)
 {
 	fstring modestr;

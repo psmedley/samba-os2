@@ -44,6 +44,8 @@
 #include "source3/lib/substitute.h"
 
 #ifdef __OS2__
+#include  <io.h>
+int os2_pipe(int fds[2]);
 #define pipe(A) os2_pipe(A)
 #endif
 

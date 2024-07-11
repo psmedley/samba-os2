@@ -23,6 +23,16 @@
 
 #include "system/network.h"
 
+#ifdef __OS2__
+#include <netinet/in.h>
+unsigned short _swaps (unsigned short _x);
+unsigned long _swapl (unsigned long _x);
+#define htonl(X) _swapl(X)
+#define ntohl(X) _swapl(X)
+#define htons(X) _swaps(X)
+#define ntohs(X) _swaps(X)
+#endif
+
 struct samba_sockaddr {
 	socklen_t sa_socklen;
 	union {

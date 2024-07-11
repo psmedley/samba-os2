@@ -22,7 +22,9 @@
 #include "libsmb/namequery.h"
 #include "libsmb/libsmb.h"
 #include "../libcli/smb/smbXcli_base.h"
-
+#ifdef __OS2__
+int os2_setdatetime(time_t t);
+#endif
 /*
   return the time on a server. This does not require any authentication
 */

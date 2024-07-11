@@ -41,6 +41,9 @@
 #include "replace.h"
 #include "dynconfig.h"
 #include "lib/util/memory.h"
+#ifdef __OS2__
+int os2_GetExePath(char *buff);
+#endif
 
 #ifndef __OS2__
 #define DEFINE_DYN_CONFIG_PARAM(name) \
