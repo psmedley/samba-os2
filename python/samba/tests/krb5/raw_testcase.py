@@ -54,7 +54,9 @@ from samba.dcerpc.misc import (
     SEC_CHAN_WKSTA,
     SEC_CHAN_BDC,
 )
-
+from samba.dsdb import (
+    UF_SMARTCARD_REQUIRED
+)
 import samba.tests
 from samba.tests import TestCase
 
@@ -65,6 +67,7 @@ from samba.tests.krb5.rfc4120_constants import (
     FX_FAST_ARMOR_AP_REQUEST,
     KDC_ERR_CLIENT_REVOKED,
     KDC_ERR_GENERIC,
+    KDC_ERR_KEY_EXPIRED,
     KDC_ERR_POLICY,
     KDC_ERR_PREAUTH_FAILED,
     KDC_ERR_SKEW,
@@ -248,6 +251,13 @@ krb5_asn1.KerbErrorDataType.prettyPrint =\
 
 
 class Krb5EncryptionKey:
+    __slots__ = [
+        'ctype',
+        'etype',
+        'key',
+        'kvno',
+    ]
+
     def __init__(self, key, kvno):
         EncTypeChecksum = {
             kcrypto.Enctype.AES256: kcrypto.Cksumtype.SHA1_AES256,
@@ -304,6 +314,8 @@ class Krb5EncryptionKey:
 
 
 class RodcPacEncryptionKey(Krb5EncryptionKey):
+    __slots__ = ['rodc_id']
+
     def __init__(self, key, kvno, rodc_id=None):
         super().__init__(key, kvno)
 
@@ -351,6 +363,8 @@ class ZeroedChecksumKey(RodcPacEncryptionKey):
 
 
 class WrongLengthChecksumKey(RodcPacEncryptionKey):
+    __slots__ = ['_length']
+
     def __init__(self, key, kvno, length):
         super().__init__(key, kvno)
 
@@ -382,6 +396,21 @@ class WrongLengthChecksumKey(RodcPacEncryptionKey):
 
 
 class KerberosCredentials(Credentials):
+    __slots__ = [
+        '_private_key',
+        'account_type',
+        'ap_supported_enctypes',
+        'as_supported_enctypes',
+        'dn',
+        'forced_keys',
+        'forced_salt',
+        'kvno',
+        'sid',
+        'spn',
+        'tgs_supported_enctypes',
+        'upn',
+        'user_account_control'
+    ]
 
     non_etype_bits = (
         security.KERB_ENCTYPE_FAST_SUPPORTED) | (
@@ -412,6 +441,8 @@ class KerberosCredentials(Credentials):
         self.sid = None
         self.account_type = None
 
+        self.user_account_control = None
+
         self._private_key = None
 
     def set_as_supported_enctypes(self, value):
@@ -422,6 +453,9 @@ class KerberosCredentials(Credentials):
 
     def set_ap_supported_enctypes(self, value):
         self.ap_supported_enctypes = int(value)
+
+    def set_user_account_control(self, value):
+        self.user_account_control = int(value)
 
     etype_map = collections.OrderedDict([
         (kcrypto.Enctype.AES256,
@@ -577,6 +611,18 @@ class KerberosCredentials(Credentials):
 
 
 class KerberosTicketCreds:
+    __slots__ = [
+        'cname',
+        'crealm',
+        'decryption_key',
+        'encpart_private',
+        'session_key',
+        'sname',
+        'srealm',
+        'ticket_private',
+        'ticket',
+    ]
+
     def __init__(self, ticket, session_key,
                  crealm=None, cname=None,
                  srealm=None, sname=None,
@@ -2992,6 +3038,7 @@ class RawKerberosTest(TestCase):
                          expected_sid=None,
                          expected_requester_sid=None,
                          expected_domain_sid=None,
+                         expected_device_domain_sid=None,
                          expected_supported_etypes=None,
                          expected_flags=None,
                          unexpected_flags=None,
@@ -3070,6 +3117,7 @@ class RawKerberosTest(TestCase):
             'expected_sid': expected_sid,
             'expected_requester_sid': expected_requester_sid,
             'expected_domain_sid': expected_domain_sid,
+            'expected_device_domain_sid': expected_device_domain_sid,
             'expected_supported_etypes': expected_supported_etypes,
             'expected_flags': expected_flags,
             'unexpected_flags': unexpected_flags,
@@ -4705,7 +4753,10 @@ class RawKerberosTest(TestCase):
 
                 creds = kdc_exchange_dict['creds']
                 nt_password = bytes(ntlm_package.nt_password.hash)
-                self.assertEqual(creds.get_nt_hash(), nt_password)
+                if creds.user_account_control & UF_SMARTCARD_REQUIRED:
+                    self.assertNotEqual(creds.get_nt_hash(), nt_password)
+                else:
+                    self.assertEqual(creds.get_nt_hash(), nt_password)
 
                 lm_password = bytes(ntlm_package.lm_password.hash)
                 self.assertEqual(bytes(16), lm_password)
@@ -4992,6 +5043,8 @@ class RawKerberosTest(TestCase):
                 if ('1' in sent_pac_options
                         and error_code not in (0, KDC_ERR_GENERIC)):
                     expected_patypes += (PADATA_PAC_OPTIONS,)
+            elif error_code == KDC_ERR_KEY_EXPIRED:
+                expected_patypes += (PADATA_PK_AS_REP,)
             elif error_code != KDC_ERR_GENERIC:
                 if expect_etype_info:
                     expected_patypes += (PADATA_ETYPE_INFO,)

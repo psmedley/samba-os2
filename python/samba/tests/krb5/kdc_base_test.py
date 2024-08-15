@@ -74,13 +74,15 @@ from samba.dsdb import (
     GTYPE_SECURITY_DOMAIN_LOCAL_GROUP,
     GTYPE_SECURITY_GLOBAL_GROUP,
     GTYPE_SECURITY_UNIVERSAL_GROUP,
+    UF_ACCOUNTDISABLE,
     UF_WORKSTATION_TRUST_ACCOUNT,
     UF_NO_AUTH_DATA_REQUIRED,
     UF_NORMAL_ACCOUNT,
     UF_NOT_DELEGATED,
     UF_PARTIAL_SECRETS_ACCOUNT,
     UF_SERVER_TRUST_ACCOUNT,
-    UF_TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION
+    UF_TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION,
+    UF_SMARTCARD_REQUIRED
 )
 from samba.dcerpc.misc import (
     SEC_CHAN_NULL,
@@ -137,6 +139,8 @@ class GroupType(Enum):
 
 # This simple class encapsulates the DN and SID of a Principal.
 class Principal:
+    __slots__ = ['dn', 'sid']
+
     def __init__(self, dn, sid):
         if dn is not None and not isinstance(dn, ldb.Dn):
             raise AssertionError(f'expected {dn} to be an ldb.Dn')
@@ -905,6 +909,7 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
         creds.set_upn(upn)
         creds.set_spn(spn)
         creds.set_type(account_type)
+        creds.set_user_account_control(account_control)
 
         self.creds_set_enctypes(creds)
 
@@ -1710,6 +1715,8 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
             'assigned_policy': None,
             'assigned_silo': None,
             'logon_hours': None,
+            'smartcard_required': False,
+            'enabled': True,
         }
 
         account_opts = {
@@ -1762,7 +1769,9 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
                             force_nt4_hash,
                             assigned_policy,
                             assigned_silo,
-                            logon_hours):
+                            logon_hours,
+                            smartcard_required,
+                            enabled):
         if account_type is self.AccountType.USER:
             self.assertIsNone(delegation_to_spn)
             self.assertIsNone(delegation_from_dn)
@@ -1785,6 +1794,10 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
             user_account_control |= UF_NOT_DELEGATED
         if no_auth_data_required:
             user_account_control |= UF_NO_AUTH_DATA_REQUIRED
+        if smartcard_required:
+            user_account_control |= UF_SMARTCARD_REQUIRED
+        if not enabled:
+            user_account_control |= UF_ACCOUNTDISABLE
 
         if additional_details:
             details = {k: v for k, v in additional_details}
@@ -1842,7 +1855,16 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
                                         preserve=use_cache)
 
         expected_etypes = None
-        if force_nt4_hash:
+
+        # We don't force fetching the keys other than the NT hash as
+        # how the server stores the unused KDC keys for the
+        # smartcard_required case is not important and makes unrelated
+        # tests break because of differences between Samba and
+        # Windows.
+        #
+        # The NT hash is different, as it is returned to the client in
+        # the PAC so is visible in the network behaviour.
+        if force_nt4_hash or smartcard_required:
             expected_etypes = {kcrypto.Enctype.RC4}
         keys = self.get_keys(creds, expected_etypes=expected_etypes)
         self.creds_set_keys(creds, keys)

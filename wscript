@@ -140,7 +140,17 @@ def options(opt):
                                dest='with_smb1server',
                                help=("Build smbd with SMB1 support (default=yes)."))
 
+    opt.add_option('--vendor-suffix',
+                   help=('Specify a vendor (or packager) name to include in the version string'),
+                   type="string",
+                   dest='SAMBA_VERSION_VENDOR_SUFFIX',
+                   default=None)
+
+
 def configure(conf):
+    if Options.options.SAMBA_VERSION_VENDOR_SUFFIX:
+        conf.env.SAMBA_VERSION_VENDOR_SUFFIX = Options.options.SAMBA_VERSION_VENDOR_SUFFIX
+
     version = samba_version.load_version(env=conf.env)
 
     conf.DEFINE('CONFIG_H_IS_FROM_SAMBA', 1)
