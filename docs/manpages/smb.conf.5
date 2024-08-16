@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 06/19/2024
+.\"      Date: 08/06/2024
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.20.2
+.\"    Source: Samba 4.20.4
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "06/19/2024" "Samba 4\&.20\&.2" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "08/06/2024" "Samba 4\&.20\&.4" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -6456,21 +6456,41 @@ The
 \m[blue]\fBldap server require strong auth\fR\m[]
 defines whether the ldap server requires ldap traffic to be signed or signed and encrypted (sealed)\&. Possible values are
 \fIno\fR,
-\fIallow_sasl_over_tls\fR
+\fIallow_sasl_without_tls_channel_bindings\fR
 and
 \fIyes\fR\&.
 .sp
-A value of
-\fIno\fR
-allows simple and sasl binds over all transports\&.
+Windows has
+\fILdapEnforceChannelBinding\fR
+under
+\fIHKLM\eSYSTEM\eCurrentControlSet\eServices\eNTDS\eParameters\e\fR\&.
 .sp
 A value of
+\fIno\fR
+allows simple and sasl binds over all transports\&. This matches LdapEnforceChannelBinding=0\&.
+.sp
+A value of
+\fIallow_sasl_without_tls_channel_bindings\fR
+allows simple and sasl binds (without sign or seal) over TLS encrypted connections\&. Missing tls channel bindings are ignored, so only use this if a value of
+\fIyes\fR
+is not possible\&. Unencrypted connections only allow sasl binds with sign or seal\&. This matches LdapEnforceChannelBinding=1\&.
+.sp
+Before support for tls channel bindings existed in Samba, a value of
 \fIallow_sasl_over_tls\fR
-allows simple and sasl binds (without sign or seal) over TLS encrypted connections\&. Unencrypted connections only allow sasl binds with sign or seal\&.
+was possible in order to allow sasl binds without tls channel bindings\&. This now misleading as a value of
+\fIyes\fR
+will now allow sasl binds with tls channel bindings\&. Configurations should be changed to
+\fIyes\fR
+instead or
+\fIallow_sasl_without_tls_channel_bindings\fR
+if really required\&. Currently
+\fIallow_sasl_over_tls\fR
+is just an alias of
+\fIallow_sasl_without_tls_channel_bindings\fR, but it will be removed in future versions\&.
 .sp
 A value of
 \fIyes\fR
-allows only simple binds over TLS encrypted connections\&. Unencrypted connections only allow sasl binds with sign or seal\&.
+allows only simple binds and sasl binds with correct tls channel bindings over TLS encrypted connections\&. sasl binds without tls channel bindings are not allowed\&. Unencrypted connections only allow sasl binds with sign or seal\&. This matches LdapEnforceChannelBinding=2\&.
 .sp
 Default:
 \fI\fIldap server require strong auth\fR\fR\fI = \fR\fIyes\fR\fI \fR
@@ -14912,7 +14932,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.20\&.2 of the Samba suite\&.
+This man page is part of version 4\&.20\&.4 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),
