@@ -585,14 +585,6 @@ class LockoutTests(KdcTgsBaseTests):
         # Set it temporarily to '0'.
         samdb.set_minPwdAge('0')
 
-    def assertLocalSamDB(self, samdb):
-        if samdb.url.startswith('tdb://'):
-            return
-        if samdb.url.startswith('mdb://'):
-            return
-
-        self.fail(f'connection to {samdb.url} is not local!')
-
     def wait_for_ready(self, pipe, future):
         if pipe.poll(timeout=5):
             return
@@ -936,8 +928,6 @@ class LockoutTests(KdcTgsBaseTests):
         # Create the user account for testing.
         user_creds = self.get_cached_creds(account_type=self.AccountType.USER,
                                            use_cache=False)
-        user_dn = user_creds.get_dn()
-
         admin_creds = self.get_admin_creds()
         lp = self.get_lp()
 
@@ -945,6 +935,7 @@ class LockoutTests(KdcTgsBaseTests):
         samdb = connect_samdb(samdb_url=lp.samdb_url(), lp=lp,
                               credentials=admin_creds)
         self.assertLocalSamDB(samdb)
+        user_dn = ldb.Dn(samdb, str(user_creds.get_dn()))
 
         password = user_creds.get_password()
 
@@ -978,7 +969,6 @@ class LockoutTests(KdcTgsBaseTests):
         # Create the user account for testing.
         user_creds = self.get_cached_creds(account_type=self.AccountType.USER,
                                            use_cache=False)
-        user_dn = user_creds.get_dn()
 
         admin_creds = self.get_admin_creds()
         lp = self.get_lp()
@@ -987,6 +977,8 @@ class LockoutTests(KdcTgsBaseTests):
         samdb = connect_samdb(samdb_url=lp.samdb_url(), lp=lp,
                               credentials=admin_creds)
         self.assertLocalSamDB(samdb)
+
+        user_dn = ldb.Dn(samdb, str(user_creds.get_dn()))
 
         password = user_creds.get_password()
         if not correct_pw:
@@ -1014,9 +1006,10 @@ class LockoutTests(KdcTgsBaseTests):
             samdb.transaction_start()
             try:
                 # Lock out the account. We must do it using an actual password
-                # check like so, rather than directly with a database
+                # change like so, rather than directly with a database
                 # modification, so that the account is also added to the
-                # auxiliary bad password database.
+                # auxiliary bad password database. Our goal is to get lockouts
+                # to happen, i.e. password checking.
 
                 old_utf16pw = '"Secret007"'.encode('utf-16le')  # invalid pwd
                 new_utf16pw = '"Secret008"'.encode('utf-16le')
@@ -1095,7 +1088,6 @@ class LockoutTests(KdcTgsBaseTests):
         # Create the user account for testing.
         user_creds = self.get_cached_creds(account_type=self.AccountType.USER,
                                            use_cache=False)
-        user_dn = user_creds.get_dn()
 
         admin_creds = self.get_admin_creds()
         lp = self.get_lp()
@@ -1104,6 +1096,7 @@ class LockoutTests(KdcTgsBaseTests):
         samdb = connect_samdb(samdb_url=lp.samdb_url(), lp=lp,
                               credentials=admin_creds)
         self.assertLocalSamDB(samdb)
+        user_dn = ldb.Dn(samdb, str(user_creds.get_dn()))
 
         # Prepare to connect to the server with an invalid password.
         with futures.ProcessPoolExecutor(max_workers=1) as executor:
@@ -1193,7 +1186,6 @@ class LockoutTests(KdcTgsBaseTests):
         # Create the user account for testing.
         user_creds = self.get_cached_creds(account_type=self.AccountType.USER,
                                            use_cache=False)
-        user_dn = user_creds.get_dn()
 
         admin_creds = self.get_admin_creds()
         lp = self.get_lp()
@@ -1202,6 +1194,7 @@ class LockoutTests(KdcTgsBaseTests):
         samdb = connect_samdb(samdb_url=lp.samdb_url(), lp=lp,
                               credentials=admin_creds)
         self.assertLocalSamDB(samdb)
+        user_dn = ldb.Dn(samdb, str(user_creds.get_dn()))
 
         # Prepare to connect to the server with an invalid password, using four
         # simultaneous requests. Only three of those attempts should get
@@ -1288,7 +1281,6 @@ class LockoutTests(KdcTgsBaseTests):
         # Create the user account for testing.
         user_creds = self.get_cached_creds(account_type=self.AccountType.USER,
                                            use_cache=False)
-        user_dn = user_creds.get_dn()
 
         admin_creds = self.get_admin_creds()
         lp = self.get_lp()
@@ -1297,7 +1289,7 @@ class LockoutTests(KdcTgsBaseTests):
         samdb = connect_samdb(samdb_url=lp.samdb_url(), lp=lp,
                               credentials=admin_creds)
         self.assertLocalSamDB(samdb)
-
+        user_dn = ldb.Dn(samdb, str(user_creds.get_dn()))
         password = user_creds.get_password()
 
         # Prepare to connect to the server with a valid password.

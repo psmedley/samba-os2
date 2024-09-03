@@ -142,6 +142,8 @@ bool has_other_nonposix_opens(struct share_mode_lock *lck,
 
 int conn_num_open(struct smbd_server_connection *sconn);
 bool conn_snum_used(struct smbd_server_connection *sconn, int snum);
+enum protocol_types conn_protocol(struct smbd_server_connection *sconn);
+bool conn_using_smb2(struct smbd_server_connection *sconn);
 connection_struct *conn_new(struct smbd_server_connection *sconn);
 bool conn_idle_all(struct smbd_server_connection *sconn, time_t t);
 void conn_clear_vuid_caches(struct smbd_server_connection *sconn, uint64_t vuid);
@@ -376,27 +378,17 @@ NTSTATUS open_stream_pathref_fsp(
 	struct files_struct **_base_fsp,
 	struct smb_filename *smb_fname);
 
-struct symlink_reparse_struct;
+struct reparse_data_buffer;
 
-struct open_symlink_err {
-	struct stat_ex st;
-	size_t unparsed;
-	struct symlink_reparse_struct *reparse;
-};
-
-NTSTATUS create_open_symlink_err(TALLOC_CTX *mem_ctx,
-				 files_struct *dirfsp,
-				 struct smb_filename *smb_relname,
-				 struct open_symlink_err **_err);
-
-NTSTATUS openat_pathref_fsp_nosymlink(TALLOC_CTX *mem_ctx,
-				      struct connection_struct *conn,
-				      struct files_struct *dirfsp,
-				      const char *path_in,
-				      NTTIME twrp,
-				      bool posix,
-				      struct smb_filename **_smb_fname,
-				      struct open_symlink_err **_symlink_err);
+NTSTATUS openat_pathref_fsp_nosymlink(
+	TALLOC_CTX *mem_ctx,
+	struct connection_struct *conn,
+	struct files_struct *dirfsp,
+	const char *path_in,
+	NTTIME twrp,
+	bool posix,
+	struct smb_filename **_smb_fname,
+	struct reparse_data_buffer **_symlink_err);
 NTSTATUS openat_pathref_fsp_lcomp(struct files_struct *dirfsp,
 				  struct smb_filename *smb_fname_rel,
 				  uint32_t ucf_flags);
@@ -406,13 +398,10 @@ NTSTATUS readlink_talloc(
 	struct smb_filename *smb_relname,
 	char **_substitute);
 
-struct symlink_reparse_struct;
-
-NTSTATUS read_symlink_reparse(
-	TALLOC_CTX *mem_ctx,
-	struct files_struct *dirfsp,
-	struct smb_filename *smb_relname,
-	struct symlink_reparse_struct **_symlink);
+NTSTATUS read_symlink_reparse(TALLOC_CTX *mem_ctx,
+			      struct files_struct *dirfsp,
+			      struct smb_filename *smb_relname,
+			      struct reparse_data_buffer **_reparse);
 
 void smb_fname_fsp_unlink(struct smb_filename *smb_fname);
 
@@ -739,11 +728,6 @@ void smbd_contend_level2_oplocks_begin(files_struct *fsp,
 				  enum level2_contention_type type);
 void smbd_contend_level2_oplocks_end(files_struct *fsp,
 				enum level2_contention_type type);
-void share_mode_entry_to_message(char *msg, const struct file_id *id,
-				 const struct share_mode_entry *e);
-void message_to_share_mode_entry(struct file_id *id,
-				 struct share_mode_entry *e,
-				 const char *msg);
 bool init_oplocks(struct smbd_server_connection *sconn);
 void init_kernel_oplocks(struct smbd_server_connection *sconn);
 
@@ -1027,13 +1011,15 @@ bool token_contains_name_in_list(const char *username,
 				 const char *domain,
 				 const char *sharename,
 				 const struct security_token *token,
-				 const char **list);
+				 const char **list,
+				 bool *match);
 bool user_ok_token(const char *username, const char *domain,
 		   const struct security_token *token, int snum);
 bool is_share_read_only_for_token(const char *username,
 				  const char *domain,
 				  const struct security_token *token,
-				  connection_struct *conn);
+				  connection_struct *conn,
+				  bool *_read_only);
 
 /* The following definitions come from smbd/srvstr.c  */
 

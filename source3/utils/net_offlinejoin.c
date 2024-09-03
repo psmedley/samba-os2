@@ -24,6 +24,7 @@
 #include "libcli/registry/util_reg.h"
 #include "libcli/security/dom_sid.h"
 #include "lib/cmdline/cmdline.h"
+#include "lib/util/util_file.h"
 
 int net_offlinejoin_usage(struct net_context *c, int argc, const char **argv)
 {
@@ -57,10 +58,6 @@ int net_offlinejoin(struct net_context *c, int argc, const char **argv)
 	status = libnetapi_net_init(&c->netapi_ctx, c->lp_ctx, c->creds);
 	if (status != 0) {
 		return -1;
-	}
-
-	if (c->opt_kerberos) {
-		libnetapi_set_use_kerberos(c->netapi_ctx);
 	}
 
 	if (strcasecmp_m(argv[0], "provision") == 0) {

@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    process incoming packets - main loop
    Copyright (C) Andrew Tridgell 1992-1998
@@ -23,6 +23,7 @@
 #include "system/filesys.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
+#include "source3/smbd/smbXsrv_session.h"
 #include "smbd/smbXsrv_open.h"
 #include "librpc/gen_ndr/netlogon.h"
 #include "../lib/async_req/async_sock.h"
@@ -216,6 +217,7 @@ bool smb1_srv_send(struct smbXsrv_connection *xconn,
 	size_t len = 0;
 	ssize_t ret;
 	char *buf_out = buffer;
+	char *encrypted_buf = NULL;
 
 	if (!NT_STATUS_IS_OK(xconn->transport.status)) {
 		/*
@@ -239,7 +241,7 @@ bool smb1_srv_send(struct smbXsrv_connection *xconn,
 	}
 
 	if (do_encrypt) {
-		NTSTATUS status = srv_encrypt_buffer(xconn, buffer, &buf_out);
+		NTSTATUS status = srv_encrypt_buffer(xconn, buffer, &encrypted_buf);
 		if (!NT_STATUS_IS_OK(status)) {
 			DEBUG(0, ("send_smb: SMB encryption failed "
 				"on outgoing packet! Error %s\n",
@@ -247,11 +249,13 @@ bool smb1_srv_send(struct smbXsrv_connection *xconn,
 			ret = -1;
 			goto out;
 		}
+		buf_out = encrypted_buf;
 	}
 
 	len = smb_len_large(buf_out) + 4;
 
 	ret = write_data(xconn->transport.sock, buf_out, len);
+	srv_free_enc_buffer(xconn, encrypted_buf);
 	if (ret <= 0) {
 		int saved_errno = errno;
 		/*
@@ -264,11 +268,9 @@ bool smb1_srv_send(struct smbXsrv_connection *xconn,
 			 (int)ret, strerror(saved_errno)));
 		errno = saved_errno;
 
-		srv_free_enc_buffer(xconn, buf_out);
 		goto out;
 	}
 
-	srv_free_enc_buffer(xconn, buf_out);
 out:
 	smbd_unlock_socket(xconn);
 	return (ret > 0);
@@ -641,7 +643,7 @@ NTSTATUS allow_new_trans(struct trans_state *list, uint64_t mid)
 }
 
 /*
-These flags determine some of the permissions required to do an operation 
+These flags determine some of the permissions required to do an operation
 
 Note that I don't set NEED_WRITE on some write operations because they
 are used by some brain-dead clients when printing, and I don't want to
@@ -654,7 +656,7 @@ force write permissions on print services.
 #define AS_GUEST (1<<5) /* Must *NOT* be paired with AS_USER */
 #define DO_CHDIR (1<<6)
 
-/* 
+/*
    define a list of possible SMB messages and their corresponding
    functions. Any message that has a NULL function is unimplemented -
    please feel free to contribute implementations!
@@ -1016,7 +1018,7 @@ static void set_current_case_sensitive(connection_struct *conn, uint16_t flags)
 	enum remote_arch_types ra_type;
 
 	SMB_ASSERT(conn != NULL);
-	SMB_ASSERT(!conn->sconn->using_smb2);
+	SMB_ASSERT(!conn_using_smb2(conn->sconn));
 
 	snum = SNUM(conn);
 
@@ -2118,7 +2120,7 @@ bool keepalive_fn(const struct timeval *now, void *private_data)
 	struct smbXsrv_connection *xconn = NULL;
 	bool ret;
 
-	if (sconn->using_smb2) {
+	if (conn_using_smb2(sconn)) {
 		/* Don't do keepalives on an SMB2 connection. */
 		return false;
 	}

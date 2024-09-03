@@ -32,6 +32,8 @@
 #ifndef _LIBADS_ADS_PROTO_H_
 #define _LIBADS_ADS_PROTO_H_
 
+struct cli_credentials;
+
 enum ads_sasl_state_e {
 	ADS_SASL_PLAIN = 0,
 	ADS_SASL_SIGN,
@@ -60,11 +62,7 @@ void ads_disp_sd(ADS_STRUCT *ads, TALLOC_CTX *mem_ctx, struct security_descripto
 
 /* The following definitions come from libads/kerberos_keytab.c  */
 
-int ads_keytab_add_entry(ADS_STRUCT *ads, const char *srvPrinc,
-			 bool update_ads);
-int ads_keytab_delete_entry(ADS_STRUCT *ads, const char *srvPrinc);
 int ads_keytab_flush(ADS_STRUCT *ads);
-int ads_keytab_create_default(ADS_STRUCT *ads);
 int ads_keytab_list(const char *keytab_name);
 
 /* The following definitions come from libads/net_ads_setspn.c  */
@@ -76,14 +74,14 @@ bool ads_setspn_delete(ADS_STRUCT *ads, const char *machine_name,
 
 /* The following definitions come from libads/krb5_errs.c  */
 
-/* The following definitions come from libads/kerberos_util.c  */
-
-int ads_kinit_password(ADS_STRUCT *ads);
-
 /* The following definitions come from libads/ldap.c  */
 
 bool ads_sitename_match(ADS_STRUCT *ads);
 bool ads_closest_dc(ADS_STRUCT *ads);
+ADS_STATUS ads_connect_cldap_only(ADS_STRUCT *ads);
+ADS_STATUS ads_connect_creds(ADS_STRUCT *ads, struct cli_credentials *creds);
+ADS_STATUS ads_connect_simple_anon(ADS_STRUCT *ads);
+ADS_STATUS ads_connect_machine(ADS_STRUCT *ads);
 ADS_STATUS ads_connect(ADS_STRUCT *ads);
 ADS_STATUS ads_connect_user_creds(ADS_STRUCT *ads);
 void ads_zero_ldap(ADS_STRUCT *ads);
@@ -105,8 +103,6 @@ char *ads_ou_string(ADS_STRUCT *ads, const char *org_unit);
 char *ads_default_ou_string(ADS_STRUCT *ads, const char *wknguid);
 ADS_STATUS ads_add_strlist(TALLOC_CTX *ctx, ADS_MODLIST *mods,
 				const char *name, const char **vals);
-uint32_t ads_get_kvno(ADS_STRUCT *ads, const char *account_name);
-uint32_t ads_get_machine_kvno(ADS_STRUCT *ads, const char *machine_name);
 
 bool ads_element_in_array(const char **el_array, size_t num_el, const char *el);
 
@@ -142,14 +138,7 @@ ADS_STATUS ads_get_sid_from_extended_dn(TALLOC_CTX *mem_ctx,
 					const char *extended_dn,
 					enum ads_extended_dn_flags flags,
 					struct dom_sid *sid);
-char* ads_get_dnshostname( ADS_STRUCT *ads, TALLOC_CTX *ctx, const char *machine_name );
-ADS_STATUS ads_get_additional_dns_hostnames(TALLOC_CTX *mem_ctx,
-                                            ADS_STRUCT *ads,
-                                            const char *machine_name,
-                                            char ***hostnames_array,
-                                            size_t *num_hostnames);
 char* ads_get_upn( ADS_STRUCT *ads, TALLOC_CTX *ctx, const char *machine_name );
-bool ads_has_samaccountname( ADS_STRUCT *ads, TALLOC_CTX *ctx, const char *machine_name );
 ADS_STATUS ads_join_realm(ADS_STRUCT *ads, const char *machine_name,
 			uint32_t account_type, const char *org_unit);
 ADS_STATUS ads_leave_realm(ADS_STRUCT *ads, const char *hostname);
@@ -201,7 +190,12 @@ ADS_STATUS ads_ranged_search(ADS_STRUCT *ads,
 
 /* The following definitions come from libads/sasl.c  */
 
-ADS_STATUS ads_sasl_bind(ADS_STRUCT *ads);
+NTSTATUS ads_simple_creds(TALLOC_CTX *mem_ctx,
+			  const char *account_domain,
+			  const char *account_name,
+			  const char *password,
+			  struct cli_credentials **_creds);
+ADS_STATUS ads_sasl_bind(ADS_STRUCT *ads, struct cli_credentials *creds);
 
 /* The following definitions come from libads/sasl_wrapping.c  */
 
@@ -211,6 +205,16 @@ ADS_STATUS ads_setup_sasl_wrapping(struct ads_saslwrap *wrap, LDAP *ld,
 void ndr_print_ads_saslwrap_struct(struct ndr_print *ndr,
 				   const char *name,
 				   const struct ads_saslwrap *r);
+
+/* The following definitions come from libads/tls_wrapping.c  */
+
+void ndr_print_ads_tlswrap_struct(struct ndr_print *ndr,
+				   const char *name,
+				   const struct ads_tlswrap *r);
+ADS_STATUS ads_setup_tls_wrapping(struct ads_tlswrap *wrap,
+				  LDAP *ld,
+				  const char *server_name);
+const DATA_BLOB *ads_tls_channel_bindings(struct ads_tlswrap *wrap);
 
 /* The following definitions come from libads/util.c  */
 
@@ -225,5 +229,7 @@ struct spn_struct {
 
 /* parse a windows style SPN, returns NULL if parsing fails */
 struct spn_struct *parse_spn(TALLOC_CTX *ctx, const char *srvprinc);
+
+NTSTATUS sync_pw2keytabs(void);
 
 #endif /* _LIBADS_ADS_PROTO_H_ */

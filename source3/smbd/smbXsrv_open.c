@@ -74,10 +74,7 @@ NTSTATUS smbXsrv_open_global_init(void)
 			 DBWRAP_FLAG_NONE);
 	TALLOC_FREE(global_path);
 	if (db_ctx == NULL) {
-		NTSTATUS status;
-
-		status = map_nt_error_from_unix_common(errno);
-
+		NTSTATUS status = map_nt_error_from_unix_common(errno);
 		return status;
 	}
 
@@ -532,17 +529,11 @@ NTSTATUS smbXsrv_open_create(struct smbXsrv_connection *conn,
 	}
 	current_token = session_info->security_token;
 
-	if (current_token == NULL) {
+	if ((current_token == NULL) ||
+	    (current_token->num_sids <= PRIMARY_USER_SID_INDEX)) {
 		return NT_STATUS_INVALID_HANDLE;
 	}
-
-	if (current_token->num_sids > PRIMARY_USER_SID_INDEX) {
-		current_sid = &current_token->sids[PRIMARY_USER_SID_INDEX];
-	}
-
-	if (current_sid == NULL) {
-		return NT_STATUS_INVALID_HANDLE;
-	}
+	current_sid = &current_token->sids[PRIMARY_USER_SID_INDEX];
 
 	if (table->local.num_opens >= table->local.max_opens) {
 		return NT_STATUS_INSUFFICIENT_RESOURCES;
@@ -669,28 +660,22 @@ NTSTATUS smbXsrv_open_purge_replay_cache(struct smbXsrv_client *client,
 					 const struct GUID *create_guid)
 {
 	struct GUID_txt_buf buf;
-	char *guid_string;
-	struct db_context *db;
+	NTSTATUS status;
 
 	if (client->open_table == NULL) {
 		return NT_STATUS_OK;
 	}
 
-	db = client->open_table->local.replay_cache_db_ctx;
-
-	guid_string = GUID_buf_string(create_guid, &buf);
-	if (guid_string == NULL) {
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	return dbwrap_purge_bystring(db, guid_string);
+	status = dbwrap_purge_bystring(
+		client->open_table->local.replay_cache_db_ctx,
+		GUID_buf_string(create_guid, &buf));
+	return status;
 }
 
 static NTSTATUS smbXsrv_open_clear_replay_cache(struct smbXsrv_open *op)
 {
 	struct GUID *create_guid;
 	struct GUID_txt_buf buf;
-	char *guid_string;
 	struct db_context *db;
 	NTSTATUS status;
 
@@ -709,12 +694,7 @@ static NTSTATUS smbXsrv_open_clear_replay_cache(struct smbXsrv_open *op)
 		return NT_STATUS_OK;
 	}
 
-	guid_string = GUID_buf_string(create_guid, &buf);
-	if (guid_string == NULL) {
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	status = dbwrap_purge_bystring(db, guid_string);
+	status = dbwrap_purge_bystring(db, GUID_buf_string(create_guid, &buf));
 
 	if (NT_STATUS_IS_OK(status)) {
 		op->flags &= ~SMBXSRV_OPEN_HAVE_REPLAY_CACHE;

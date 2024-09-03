@@ -124,7 +124,7 @@ bool trim_char(char *s,char cfront,char cback)
 		while ((ep >= fp) && (*ep == cback)) {
 			ret = true;
 			if ((ep > fp) && (((unsigned char)ep[-1]) & 0x80)) {
-				/* Could be mb... bail back to tim_string. */
+				/* Could be mb... bail back to trim_string. */
 				char fs[2], bs[2];
 				if (cfront) {
 					fs[0] = cfront;
@@ -190,41 +190,6 @@ char *string_truncate(char *s, unsigned int length)
 	if (s && strlen(s) > length)
 		s[length] = 0;
 	return s;
-}
-
-
-/***********************************************************************
- Return the equivalent of doing strrchr 'n' times - always going
- backwards.
-***********************************************************************/
-
-char *strnrchr_m(const char *s, char c, unsigned int n)
-{
-	smb_ucs2_t *ws = NULL;
-	char *s2 = NULL;
-	smb_ucs2_t *p;
-	char *ret;
-	size_t converted_size;
-
-	if (!push_ucs2_talloc(talloc_tos(), &ws, s, &converted_size)) {
-		/* Too hard to try and get right. */
-		return NULL;
-	}
-	p = strnrchr_w(ws, UCS2_CHAR(c), n);
-	if (!p) {
-		TALLOC_FREE(ws);
-		return NULL;
-	}
-	*p = 0;
-	if (!pull_ucs2_talloc(talloc_tos(), &s2, ws, &converted_size)) {
-		TALLOC_FREE(ws);
-		/* Too hard to try and get right. */
-		return NULL;
-	}
-	ret = discard_const_p(char, (s+strlen(s2)));
-	TALLOC_FREE(ws);
-	TALLOC_FREE(s2);
-	return ret;
 }
 
 static bool unix_strlower(const char *src, size_t srclen, char *dest, size_t destlen)

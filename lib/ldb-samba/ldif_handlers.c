@@ -91,8 +91,14 @@ static int ldif_read_objectSid(struct ldb_context *ldb, void *mem_ctx,
 	struct dom_sid sid;
 	if (in->length > DOM_SID_STR_BUFLEN) {
 		return -1;
+	}
+	if (in->length < 5) { /* "S-1-x" */
+		return -1;
+	}
+	if (in->data[0] != 'S' && in->data[0] != 's') {
+		return -1;
 	} else {
-		char p[in->length+1];
+		char p[DOM_SID_STR_BUFLEN + 1];
 		memcpy(p, in->data, in->length);
 		p[in->length] = '\0';
 
@@ -110,6 +116,7 @@ static int ldif_read_objectSid(struct ldb_context *ldb, void *mem_ctx,
 		ndr_err = ndr_push_struct_into_fixed_blob(out, &sid,
 				(ndr_push_flags_fn_t)ndr_push_dom_sid);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			TALLOC_FREE(out->data);
 			return -1;
 		}
 	}
@@ -137,17 +144,6 @@ int ldif_write_objectSid(struct ldb_context *ldb, void *mem_ctx,
 	return 0;
 }
 
-bool ldif_comparision_objectSid_isString(const struct ldb_val *v)
-{
-	if (v->length < 3) {
-		return false;
-	}
-
-	if (strncmp("S-", (const char *)v->data, 2) != 0) return false;
-
-	return true;
-}
-
 /*
   compare two objectSids
 
@@ -156,40 +152,31 @@ bool ldif_comparision_objectSid_isString(const struct ldb_val *v)
 static int ldif_comparison_objectSid(struct ldb_context *ldb, void *mem_ctx,
 				    const struct ldb_val *v1, const struct ldb_val *v2)
 {
-	bool v1_is_string = ldif_comparision_objectSid_isString(v1);
-	bool v2_is_string = ldif_comparision_objectSid_isString(v2);
-	struct ldb_val parsed_1 = {};
-	struct ldb_val parsed_2 = {};
+	struct ldb_val parsed_1 = {.data = NULL};
+	struct ldb_val parsed_2 = {.data = NULL};
 	int ret;
 	/*
 	 * If the ldb_vals look like SID strings (i.e. start with "S-"
-	 * or "s-"), we try to parse them as such. If that fails, we
-	 * assume they are binary SIDs, even though that's not really
-	 * possible -- the first two bytes of a struct dom_sid are the
-	 * version (1), and the number of sub-auths (<= 15), neither
-	 * of which are close to 'S' or '-'.
+	 * or "s-"), we treat them as strings.
+	 *
+	 * It is not really possible for a blob to be both a SID string and a
+	 * SID struct -- the first two bytes of a struct dom_sid (including in
+	 * NDR form) are the version (1), and the number of sub-auths (<= 15),
+	 * neither of which are close to 'S' or '-'.
 	 */
-	if (v1_is_string) {
-		int r = ldif_read_objectSid(ldb, mem_ctx, v1, &parsed_1);
-		if (r == 0) {
-			v1 = &parsed_1;
-		}
+	ret = ldif_read_objectSid(ldb, mem_ctx, v1, &parsed_1);
+	if (ret == 0) {
+		v1 = &parsed_1;
 	}
-	if (v2_is_string) {
-		int r = ldif_read_objectSid(ldb, mem_ctx, v2, &parsed_2);
-		if (r == 0) {
-			v2 = &parsed_2;
-		}
+	ret = ldif_read_objectSid(ldb, mem_ctx, v2, &parsed_2);
+	if (ret == 0) {
+		v2 = &parsed_2;
 	}
 
 	ret = ldb_comparison_binary(ldb, mem_ctx, v1, v2);
 
-	if (v1_is_string) {
-		TALLOC_FREE(parsed_1.data);
-	}
-	if (v2_is_string) {
-		TALLOC_FREE(parsed_2.data);
-	}
+	TALLOC_FREE(parsed_1.data);
+	TALLOC_FREE(parsed_2.data);
 	return ret;
 }
 
@@ -199,13 +186,11 @@ static int ldif_comparison_objectSid(struct ldb_context *ldb, void *mem_ctx,
 static int ldif_canonicalise_objectSid(struct ldb_context *ldb, void *mem_ctx,
 				      const struct ldb_val *in, struct ldb_val *out)
 {
-	if (ldif_comparision_objectSid_isString(in)) {
-		if (ldif_read_objectSid(ldb, mem_ctx, in, out) != 0) {
-			/* Perhaps not a string after all */
-			return ldb_handler_copy(ldb, mem_ctx, in, out);
-		}
+	/* First try as a string SID */
+	if (ldif_read_objectSid(ldb, mem_ctx, in, out) == 0) {
 		return 0;
 	}
+	/* not a string after all */
 	return ldb_handler_copy(ldb, mem_ctx, in, out);
 }
 
@@ -214,10 +199,9 @@ static int extended_dn_read_SID(struct ldb_context *ldb, void *mem_ctx,
 {
 	struct dom_sid sid;
 	enum ndr_err_code ndr_err;
-	if (ldif_comparision_objectSid_isString(in)) {
-		if (ldif_read_objectSid(ldb, mem_ctx, in, out) == 0) {
-			return 0;
-		}
+
+	if (ldif_read_objectSid(ldb, mem_ctx, in, out) == 0) {
+		return 0;
 	}
 
 	/* Perhaps not a string after all */
@@ -234,6 +218,7 @@ static int extended_dn_read_SID(struct ldb_context *ldb, void *mem_ctx,
 	ndr_err = ndr_pull_struct_blob_all_noalloc(out, &sid,
 					   (ndr_pull_flags_fn_t)ndr_pull_dom_sid);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		TALLOC_FREE(out->data);
 		return -1;
 	}
 	return 0;
@@ -560,7 +545,7 @@ static int ldif_write_schemaInfo(struct ldb_context *ldb, void *mem_ctx,
 				 const struct ldb_val *in, struct ldb_val *out)
 {
 	return ldif_write_NDR(ldb, mem_ctx, in, out,
-			      sizeof(struct repsFromToBlob),
+			      sizeof(struct schemaInfoBlob),
 			      (ndr_pull_flags_fn_t)ndr_pull_schemaInfoBlob,
 			      (ndr_print_fn_t)ndr_print_schemaInfoBlob,
 			      true);

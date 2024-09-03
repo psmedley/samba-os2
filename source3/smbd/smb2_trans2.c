@@ -48,6 +48,7 @@
 #include "source3/lib/substitute.h"
 #include "source3/lib/adouble.h"
 #include "source3/smbd/dir.h"
+#include "source3/modules/util_reparse.h"
 
 #define DIR_ENTRY_SAFETY_MARGIN 4096
 
@@ -164,6 +165,7 @@ bool samba_private_attr_name(const char *unix_ea_name)
 	prohibited |= strequal(unix_ea_name, SAMBA_POSIX_INHERITANCE_EA_NAME);
 	prohibited |= strequal(unix_ea_name, SAMBA_XATTR_DOS_ATTRIB);
 	prohibited |= strequal(unix_ea_name, SAMBA_XATTR_MARKER);
+	prohibited |= strequal(unix_ea_name, SAMBA_XATTR_REPARSE_ATTRIB);
 	prohibited |= strequal(unix_ea_name, XATTR_NTACL_NAME);
 	prohibited |= strequal(unix_ea_name, AFPINFO_EA_NETATALK);
 
@@ -221,7 +223,7 @@ NTSTATUS get_ea_value_fsp(TALLOC_CTX *mem_ctx,
 		return map_nt_error_from_unix(errno);
 	}
 
-	DEBUG(10,("get_ea_value: EA %s is of length %u\n", ea_name, (unsigned int)sizeret));
+	DBG_DEBUG("EA %s is of length %zd\n", ea_name, sizeret);
 	dump_data(10, (uint8_t *)val, sizeret);
 
 	pea->flags = 0;
@@ -461,7 +463,8 @@ static NTSTATUS get_ea_list_from_fsp(TALLOC_CTX *mem_ctx,
 			 */
 			TALLOC_FREE(listp);
 			continue;
-		} else if (listp->ea.value.length > 65536) {
+		}
+		if (listp->ea.value.length > 65536) {
 			/*
 			 * SMB clients may report error with file
 			 * if large EA is presented to them.
@@ -479,9 +482,10 @@ static NTSTATUS get_ea_list_from_fsp(TALLOC_CTX *mem_ctx,
 		*pea_total_len +=
 			4 + strlen(dos_ea_name) + 1 + listp->ea.value.length;
 
-		DEBUG(10,("get_ea_list_from_file: total_len = %u, %s, val len "
-			  "= %u\n", (unsigned int)*pea_total_len, dos_ea_name,
-			  (unsigned int)listp->ea.value.length));
+		DBG_DEBUG("total_len = %zu, %s, val len = %zu\n",
+			  *pea_total_len,
+			  dos_ea_name,
+			  listp->ea.value.length);
 
 		DLIST_ADD_END(ea_list_head, listp);
 
@@ -492,8 +496,7 @@ static NTSTATUS get_ea_list_from_fsp(TALLOC_CTX *mem_ctx,
 		*pea_total_len += 4;
 	}
 
-	DEBUG(10, ("get_ea_list_from_file: total_len = %u\n",
-		   (unsigned int)*pea_total_len));
+	DBG_DEBUG("total_len = %zu\n", *pea_total_len);
 
 	*ea_list = ea_list_head;
 	return NT_STATUS_OK;
@@ -653,7 +656,7 @@ unsigned int estimate_ea_size(files_struct *fsp)
 				   &total_ea_len,
 				   &ea_list);
 
-	if(fsp->conn->sconn->using_smb2) {
+	if(conn_using_smb2(fsp->conn->sconn)) {
 		unsigned int ret_data_size;
 		/*
 		 * We're going to be using fill_ea_chained_buffer() to
@@ -764,10 +767,13 @@ NTSTATUS set_ea(connection_struct *conn, files_struct *fsp,
 
 		canonicalize_ea_name(fsp, unix_ea_name);
 
-		DEBUG(10,("set_ea: ea_name %s ealen = %u\n", unix_ea_name, (unsigned int)ea_list->ea.value.length));
+		DBG_DEBUG("ea_name %s ealen = %zu\n",
+			  unix_ea_name,
+			  ea_list->ea.value.length);
 
 		if (samba_private_attr_name(unix_ea_name)) {
-			DEBUG(10,("set_ea: ea name %s is a private Samba name.\n", unix_ea_name));
+			DBG_DEBUG("ea name %s is a private Samba name.\n",
+				  unix_ea_name);
 			return NT_STATUS_ACCESS_DENIED;
 		}
 
@@ -780,15 +786,17 @@ NTSTATUS set_ea(connection_struct *conn, files_struct *fsp,
 #ifdef ENOATTR
 			/* Removing a non existent attribute always succeeds. */
 			if (ret == -1 && errno == ENOATTR) {
-				DEBUG(10,("set_ea: deleting ea name %s didn't exist - succeeding by default.\n",
-						unix_ea_name));
+				DBG_DEBUG("deleting ea name %s didn't exist - "
+					  "succeeding by default.\n",
+					  unix_ea_name);
 				ret = 0;
 			}
 #endif
 		} else {
-			DEBUG(10,("set_ea: setting ea name %s on file "
+			DBG_DEBUG("setting ea name %s on file "
 				  "%s by file descriptor.\n",
-				  unix_ea_name, fsp_str_dbg(fsp)));
+				  unix_ea_name,
+				  fsp_str_dbg(fsp));
 			ret = SMB_VFS_FSETXATTR(fsp, unix_ea_name,
 						ea_list->ea.value.data, ea_list->ea.value.length, 0);
 		}
@@ -1061,11 +1069,15 @@ static bool smbd_dirptr_lanman2_match_fn(TALLOC_CTX *ctx,
 
 static uint32_t get_dirent_ea_size(uint32_t mode, files_struct *fsp)
 {
-	if (!(mode & FILE_ATTRIBUTE_REPARSE_POINT)) {
-		unsigned ea_size = estimate_ea_size(fsp);
-		return ea_size;
+	uint32_t ea_size = IO_REPARSE_TAG_DFS;
+
+	if (mode & FILE_ATTRIBUTE_REPARSE_POINT) {
+		(void)fsctl_get_reparse_tag(fsp, &ea_size);
+	} else {
+		ea_size = estimate_ea_size(fsp);
 	}
-	return IO_REPARSE_TAG_DFS;
+
+	return ea_size;
 }
 
 static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
@@ -1163,8 +1175,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 	}
 	space_remaining -= pad;
 
-	DEBUG(10,("smbd_marshall_dir_entry: space_remaining = %d\n",
-		space_remaining ));
+	DBG_DEBUG("space_remaining = %d\n", space_remaining);
 
 	pdata += pad;
 	p = pdata;
@@ -1175,7 +1186,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 
 	switch (info_level) {
 	case SMB_FIND_INFO_STANDARD:
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_INFO_STANDARD\n"));
+		DBG_DEBUG("SMB_FIND_INFO_STANDARD\n");
 		if(requires_resume_key) {
 			SIVAL(p,0,reskey);
 			p += 4;
@@ -1214,7 +1225,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		break;
 
 	case SMB_FIND_EA_SIZE:
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_EA_SIZE\n"));
+		DBG_DEBUG("SMB_FIND_EA_SIZE\n");
 		if (requires_resume_key) {
 			SIVAL(p,0,reskey);
 			p += 4;
@@ -1260,7 +1271,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		struct ea_list *file_list = NULL;
 		size_t ea_len = 0;
 
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_EA_LIST\n"));
+		DBG_DEBUG("SMB_FIND_EA_LIST\n");
 		if (!name_list) {
 			return NT_STATUS_INVALID_PARAMETER;
 		}
@@ -1323,7 +1334,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 	}
 
 	case SMB_FIND_FILE_BOTH_DIRECTORY_INFO:
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_FILE_BOTH_DIRECTORY_INFO\n"));
+		DBG_DEBUG("SMB_FIND_FILE_BOTH_DIRECTORY_INFO\n");
 		was_8_3 = mangle_is_8_3(fname, True, conn->params);
 		p += 4;
 		SIVAL(p,0,reskey); p += 4;
@@ -1393,7 +1404,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		break;
 
 	case SMB_FIND_FILE_DIRECTORY_INFO:
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_FILE_DIRECTORY_INFO\n"));
+		DBG_DEBUG("SMB_FIND_FILE_DIRECTORY_INFO\n");
 		p += 4;
 		SIVAL(p,0,reskey); p += 4;
 		put_long_date_full_timespec(conn->ts_res,p,&create_date_ts); p += 8;
@@ -1432,7 +1443,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		break;
 
 	case SMB_FIND_FILE_FULL_DIRECTORY_INFO:
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_FILE_FULL_DIRECTORY_INFO\n"));
+		DBG_DEBUG("SMB_FIND_FILE_FULL_DIRECTORY_INFO\n");
 		p += 4;
 		SIVAL(p,0,reskey); p += 4;
 		put_long_date_full_timespec(conn->ts_res,p,&create_date_ts); p += 8;
@@ -1475,7 +1486,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		break;
 
 	case SMB_FIND_FILE_NAMES_INFO:
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_FILE_NAMES_INFO\n"));
+		DBG_DEBUG("SMB_FIND_FILE_NAMES_INFO\n");
 		p += 4;
 		SIVAL(p,0,reskey); p += 4;
 		p += 4;
@@ -1510,7 +1521,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		break;
 
 	case SMB_FIND_ID_FULL_DIRECTORY_INFO:
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_ID_FULL_DIRECTORY_INFO\n"));
+		DBG_DEBUG("SMB_FIND_ID_FULL_DIRECTORY_INFO\n");
 		p += 4;
 		SIVAL(p,0,reskey); p += 4;
 		put_long_date_full_timespec(conn->ts_res,p,&create_date_ts); p += 8;
@@ -1555,7 +1566,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		break;
 
 	case SMB_FIND_ID_BOTH_DIRECTORY_INFO:
-		DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_ID_BOTH_DIRECTORY_INFO\n"));
+		DBG_DEBUG("SMB_FIND_ID_BOTH_DIRECTORY_INFO\n");
 		was_8_3 = mangle_is_8_3(fname, True, conn->params);
 		p += 4;
 		SIVAL(p,0,reskey); p += 4;
@@ -1682,7 +1693,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 		/* Begin of SMB_QUERY_FILE_UNIX_BASIC */
 
 		if (info_level == SMB_FIND_FILE_UNIX) {
-			DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_FILE_UNIX\n"));
+			DBG_DEBUG("SMB_FIND_FILE_UNIX\n");
 			p = store_file_unix_basic(conn, p,
 						NULL, &smb_fname->st);
 			status = srvstr_push(base_data, flags2, p,
@@ -1692,7 +1703,7 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 				return status;
 			}
 		} else {
-			DEBUG(10,("smbd_marshall_dir_entry: SMB_FIND_FILE_UNIX_INFO2\n"));
+			DBG_DEBUG("SMB_FIND_FILE_UNIX_INFO2\n");
 			p = store_file_unix_basic_info2(conn, p,
 						NULL, &smb_fname->st);
 			nameptr = p;
@@ -1741,12 +1752,12 @@ static NTSTATUS smbd_marshall_dir_entry(TALLOC_CTX *ctx,
 			};
 			enum ndr_err_code ndr_err;
 
+			DBG_DEBUG("SMB2_FILE_POSIX_INFORMATION\n");
+
 			p+= 4;
 			SIVAL(p,0,reskey); p+= 4;
 
-			DBG_DEBUG("SMB2_FILE_POSIX_INFORMATION\n");
-
-			if (!(conn->sconn->using_smb2)) {
+			if (!conn_using_smb2(conn->sconn)) {
 				return NT_STATUS_INVALID_LEVEL;
 			}
 
@@ -1995,7 +2006,7 @@ static bool fsinfo_unix_valid_level(connection_struct *conn,
 				    struct files_struct *fsp,
 				    uint16_t info_level)
 {
-	if (conn->sconn->using_smb2 &&
+	if (conn_using_smb2(conn->sconn) &&
 	    fsp->posix_flags == FSP_POSIX_FLAGS_OPEN &&
 	    info_level == SMB2_FS_POSIX_INFORMATION_INTERNAL)
 	{
@@ -2362,14 +2373,11 @@ cBytesSector=%u, cUnitTotal=%u, cUnitAvail=%d\n", (unsigned int)bsize, (unsigned
 			/* we need to fake up a fsp here,
 			 * because its not send in this call
 			 */
-			files_struct tmpfsp;
-			SMB_NTQUOTA_STRUCT quotas;
-
-			ZERO_STRUCT(tmpfsp);
-			ZERO_STRUCT(quotas);
-
-			tmpfsp.conn = conn;
-			tmpfsp.fnum = FNUM_FIELD_INVALID;
+			files_struct tmpfsp = {
+				.conn = conn,
+				.fnum = FNUM_FIELD_INVALID,
+			};
+			SMB_NTQUOTA_STRUCT quotas = {};
 
 			/* access check */
 			if (get_current_uid(conn) != 0) {
@@ -3043,7 +3051,7 @@ NTSTATUS smbd_do_qfilepathinfo(connection_struct *conn,
 			ok = true;
 		}
 
-		if (conn->sconn->using_smb2 &&
+		if (conn_using_smb2(conn->sconn) &&
 		    (fsp->posix_flags & FSP_POSIX_FLAGS_OPEN))
 		{
 			DBG_DEBUG("SMB2 posix open\n");
@@ -3412,7 +3420,8 @@ NTSTATUS smbd_do_qfilepathinfo(connection_struct *conn,
 		{
 			char *nfname = NULL;
 
-			if (fsp == NULL || !fsp->conn->sconn->using_smb2) {
+			if (fsp == NULL ||
+			    !conn_using_smb2(fsp->conn->sconn)) {
 				return NT_STATUS_INVALID_LEVEL;
 			}
 
@@ -3679,14 +3688,21 @@ NTSTATUS smbd_do_qfilepathinfo(connection_struct *conn,
 			*fixed_portion = 56;
 			break;
 
-		case SMB_FILE_ATTRIBUTE_TAG_INFORMATION:
-			DBG_DEBUG(" SMB_FILE_ATTRIBUTE_TAG_INFORMATION\n");
-			SIVAL(pdata,0,mode);
-			SIVAL(pdata,4,0);
+		case SMB_FILE_ATTRIBUTE_TAG_INFORMATION: {
+			uint32_t tag = 0;
+
+			DBG_DEBUG("SMB_FILE_ATTRIBUTE_TAG_INFORMATION\n");
+
+			(void)fsctl_get_reparse_tag(fsp, &tag);
+
+			DBG_DEBUG("tag=%"PRIu32"\n", tag);
+
+			SIVAL(pdata, 0, mode);
+			SIVAL(pdata, 4, tag);
 			data_size = 8;
 			*fixed_portion = 8;
 			break;
-
+		}
 		/*
 		 * SMB2 UNIX Extensions.
 		 */
@@ -3701,7 +3717,7 @@ NTSTATUS smbd_do_qfilepathinfo(connection_struct *conn,
 			};
 			enum ndr_err_code ndr_err;
 
-			if (!(conn->sconn->using_smb2)) {
+			if (!conn_using_smb2(conn->sconn)) {
 				return NT_STATUS_INVALID_LEVEL;
 			}
 			if (fsp == NULL) {
@@ -4357,8 +4373,7 @@ static NTSTATUS smb2_file_rename_information(connection_struct *conn,
 		return status;
 	}
 
-	DEBUG(10,("smb2_file_rename_information: got name |%s|\n",
-				newname));
+	DBG_DEBUG("got name |%s|\n", newname);
 
 	if (newname[0] == ':') {
 		/* Create an smb_fname to call rename_internals_fsp() with. */
@@ -4398,10 +4413,11 @@ static NTSTATUS smb2_file_rename_information(connection_struct *conn,
 		goto out;
 	}
 
-	DEBUG(10,("smb2_file_rename_information: "
-		  "SMB_FILE_RENAME_INFORMATION (%s) %s -> %s\n",
-		  fsp_fnum_dbg(fsp), fsp_str_dbg(fsp),
-		  smb_fname_str_dbg(smb_fname_dst)));
+	DBG_DEBUG("SMB_FILE_RENAME_INFORMATION (%s) %s -> %s\n",
+		  fsp_fnum_dbg(fsp),
+		  fsp_str_dbg(fsp),
+		  smb_fname_str_dbg(smb_fname_dst));
+
 	status = rename_internals_fsp(conn,
 				fsp,
 				smb_fname_dst,
@@ -5134,15 +5150,6 @@ NTSTATUS smbd_do_setfilepathinfo(connection_struct *conn,
 		case SMB_FILE_DISPOSITION_INFORMATION:
 		case SMB_SET_FILE_DISPOSITION_INFO: /* Set delete on close for open file. */
 		{
-#if 0
-			/* JRA - We used to just ignore this on a path ?
-			 * Shouldn't this be invalid level on a pathname
-			 * based call ?
-			 */
-			if (tran_call != TRANSACT2_SETFILEINFO) {
-				return ERROR_NT(NT_STATUS_INVALID_LEVEL);
-			}
-#endif
 			status = smb_set_file_disposition_info(conn,
 						pdata,
 						total_data,
@@ -5207,7 +5214,7 @@ NTSTATUS smbd_do_setfilepathinfo(connection_struct *conn,
 
 		case SMB_FILE_LINK_INFORMATION:
 		{
-			if (conn->sconn->using_smb2) {
+			if (conn_using_smb2(conn->sconn)) {
 				status = smb2_file_link_information(conn,
 							req,
 							pdata,

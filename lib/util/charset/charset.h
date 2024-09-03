@@ -75,7 +75,7 @@ struct charset_functions {
 /* this type is used for manipulating unicode codepoints */
 typedef uint32_t codepoint_t;
 
-#define INVALID_CODEPOINT ((codepoint_t)-1)
+#define INVALID_CODEPOINT (UINT32_MAX)
 
 /* generic iconv conversion structure */
 typedef struct smb_iconv_s {
@@ -158,6 +158,10 @@ char *talloc_alpha_strcpy(TALLOC_CTX *mem_ctx,
 void string_replace_m(char *s, char oldc, char newc);
 bool strcsequal(const char *s1,const char *s2);
 bool strequal_m(const char *s1, const char *s2);
+int strncasecmp_ldb(const char *s1,
+		    size_t len1,
+		    const char *s2,
+		    size_t len2);
 int strncasecmp_m(const char *s1, const char *s2, size_t n);
 int strncasecmp_m_handle(struct smb_iconv_handle *iconv_handle,
 			 const char *s1, const char *s2, size_t n);
@@ -174,6 +178,7 @@ char *strupper_talloc_n(TALLOC_CTX *ctx, const char *src, size_t n);
  char *strlower_talloc_handle(struct smb_iconv_handle *iconv_handle,
 			      TALLOC_CTX *ctx, const char *src);
 char *strlower_talloc(TALLOC_CTX *ctx, const char *src);
+
 bool strhasupper(const char *string);
 bool strhaslower_handle(struct smb_iconv_handle *ic,
 			const char *string);
@@ -287,7 +292,6 @@ size_t strnlen_w(const smb_ucs2_t *src, size_t max);
 smb_ucs2_t *strchr_w(const smb_ucs2_t *s, smb_ucs2_t c);
 smb_ucs2_t *strchr_wa(const smb_ucs2_t *s, char c);
 smb_ucs2_t *strrchr_w(const smb_ucs2_t *s, smb_ucs2_t c);
-smb_ucs2_t *strnrchr_w(const smb_ucs2_t *s, smb_ucs2_t c, unsigned int n);
 smb_ucs2_t *strstr_w(const smb_ucs2_t *s, const smb_ucs2_t *ins);
 bool strlower_w(smb_ucs2_t *s);
 bool strupper_w(smb_ucs2_t *s);

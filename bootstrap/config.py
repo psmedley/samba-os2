@@ -260,6 +260,28 @@ yum install -y \
 yum clean all
 """
 
+CENTOS9S_DNF_BOOTSTRAP = r"""
+#!/bin/bash
+{GENERATED_MARKER}
+set -xueo pipefail
+
+dnf update -y
+dnf install -y dnf-plugins-core
+dnf install -y epel-release
+dnf install -y centos-release-gluster9
+
+dnf -v repolist all
+dnf config-manager --set-enabled crb -y
+
+dnf update -y
+
+dnf install -y \
+    --setopt=install_weak_deps=False \
+    {pkgs}
+
+dnf clean all
+"""
+
 DNF_BOOTSTRAP = r"""
 #!/bin/bash
 {GENERATED_MARKER}
@@ -485,47 +507,6 @@ DEB_DISTS = {
 
 
 RPM_DISTS = {
-    'centos7': {
-        'docker_image': 'centos:7',
-        'vagrant_box': 'centos/7',
-        'bootstrap': YUM_BOOTSTRAP,
-        'replace': {
-            'lsb-release': 'redhat-lsb',
-            'python3': 'python36',
-            'python3-cryptography': 'python36-cryptography',
-            'python3-devel': 'python36-devel',
-            'python3-dns': 'python36-dns',
-            'python3-pyasn1': 'python36-pyasn1',
-            'python3-gpg': 'python36-gpg',
-            'python3-iso8601' : 'python36-iso8601',
-            'python3-markdown': 'python36-markdown',
-            'python3-requests': 'python36-requests',
-            # although python36-devel is available
-            # after epel-release installed
-            # however, all other python3 pkgs are still python36-ish
-            'python2-gpg': 'pygpgme',
-            '@development-tools': '"@Development Tools"',  # add quotes
-            'glibc-langpack-en': '',  # included in glibc-common
-            'glibc-locale-source': '',  # included in glibc-common
-            # update perl core modules on centos
-            # fix: Can't locate Archive/Tar.pm in @INC
-            'perl': 'perl-core',
-            'perl-FindBin': '',
-            'rpcsvc-proto-devel': '',
-            'glusterfs-api-devel': '',
-            'glusterfs-devel': '',
-            'libcephfs-devel': '',
-            'gnutls-devel': 'compat-gnutls37-devel',
-            'gnutls-utils': 'compat-gnutls37-utils',
-            'liburing-devel': '',   # not available
-            'python3-setproctitle': 'python36-setproctitle',
-            'tracker-devel': '', # do not install
-            'mold': '',
-            'ShellCheck': '',
-            'shfmt': '',
-            'codespell': '',
-        }
-    },
     'centos8s': {
         'docker_image': 'quay.io/centos/centos:stream8',
         'vagrant_box': 'centos/stream8',
@@ -544,9 +525,28 @@ RPM_DISTS = {
             'codespell': '',
         }
     },
-    'fedora39': {
-        'docker_image': 'quay.io/fedora/fedora:39',
-        'vagrant_box': 'fedora/39-cloud-base',
+    'centos9s': {
+        'docker_image': 'quay.io/centos/centos:stream9',
+        'vagrant_box': 'centos/stream9',
+        'bootstrap': CENTOS9S_DNF_BOOTSTRAP,
+        'replace': {
+            'lsb-release': 'lsb_release',
+            '@development-tools': '"@Development Tools"',  # add quotes
+            'lcov': '', # does not exist
+            'perl-JSON-Parse': '', # does not exist?
+            'perl-Test-Base': 'perl-Test-Simple',
+            'perl-FindBin': '',
+            'mold': '',
+            'ShellCheck': '',
+            'shfmt': '',
+            'codespell': '',
+            'libcephfs-devel': '',  # not available anymore
+            'curl': '',  # Use installed curl-minimal
+        }
+    },
+    'fedora40': {
+        'docker_image': 'quay.io/fedora/fedora:40',
+        'vagrant_box': 'fedora/40-cloud-base',
         'bootstrap': DNF_BOOTSTRAP,
         'replace': {
             'lsb-release': 'redhat-lsb',

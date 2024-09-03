@@ -24,6 +24,7 @@
 #include "session.h"
 #include "util_tdb.h"
 #include "smbd/globals.h"
+#include "source3/smbd/smbXsrv_session.h"
 #include "../libcli/security/session.h"
 
 struct sessionid_traverse_read_state {

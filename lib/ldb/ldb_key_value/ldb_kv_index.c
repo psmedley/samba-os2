@@ -275,6 +275,10 @@ static int ldb_kv_dn_list_find_val(struct ldb_kv_private *ldb_kv,
 	unsigned int i;
 	struct ldb_val *exact = NULL, *next = NULL;
 
+	if (unlikely(list->count > INT_MAX)) {
+		return -1;
+	}
+
 	if (ldb_kv->cache->GUID_index_attribute == NULL) {
 		for (i=0; i<list->count; i++) {
 			if (ldb_val_equal_exact(&list->dn[i], v) == 1) {
@@ -375,10 +379,7 @@ static int ldb_kv_dn_list_load(struct ldb_module *module,
 	bool from_primary_cache = false;
 	TDB_DATA key = {0};
 
-	list->dn = NULL;
-	list->count = 0;
-	list->strict = false;
-
+	*list = (struct dn_list){};
 	/*
 	 * See if we have an in memory index cache
 	 */
@@ -446,34 +447,39 @@ static int ldb_kv_dn_list_load(struct ldb_module *module,
 	 * There is an active index sub transaction, and the record was
 	 * found in the primary index transaction cache.  A copy of the
 	 * record needs be taken to prevent the original entry being
-	 * altered, until the index sub transaction is committed.
+	 * altered, until the index sub transaction is committed, but we
+	 * don't copy the actual values, just the array of struct ldb_val
+	 * that points to the values (which are offsets into a GUID array).
+	 *
+	 * As a reminder, our primary cache is an in-memory tdb that
+	 * maps attributes to struct dn_list objects, which point to
+	 * the actual index, which is an array of struct ldb_val, the
+	 * contents of which are {.data = <binary GUID>, .length =
+	 * 16}. The array is sorted by GUID data, and these GUIDs are
+	 * used to look up index entries in the main database. There
+	 * are more layers of indirection than necessary, but what
+	 * makes the index useful is we can use a binary search to
+	 * find if the array contains a GUID.
+	 *
+	 * What we do in a sub-transaction is make a copy of the struct
+	 * dn_list and the array of struct ldb_val, but *not* of the
+	 * .data that they point to. This copy is put into a new
+	 * in-memory tdb which masks the primary cache for the duration
+	 * of the sub-transaction.
+	 *
+	 * In an add operation in a sub-transaction, the new ldb_val
+	 * is a child of the sub-transaction dn_list, which will
+	 * become the main dn_list if the transaction succeeds.
+	 *
+	 * These acrobatics do not affect read-only operations.
 	 */
-
-	{
-		struct ldb_val *dns = NULL;
-		size_t x = 0;
-
-		dns = talloc_array(
-			list,
-			struct ldb_val,
-			list2->count);
-		if (dns == NULL) {
-			return LDB_ERR_OPERATIONS_ERROR;
-		}
-		for (x = 0; x < list2->count; x++) {
-			dns[x].length = list2->dn[x].length;
-			dns[x].data = talloc_memdup(
-				dns,
-				list2->dn[x].data,
-				list2->dn[x].length);
-			if (dns[x].data == NULL) {
-				TALLOC_FREE(dns);
-				return LDB_ERR_OPERATIONS_ERROR;
-			}
-		}
-		list->dn = dns;
-		list->count = list2->count;
+	list->dn = talloc_memdup(list,
+				 list2->dn,
+				 talloc_get_size(list2->dn));
+	if (list->dn == NULL) {
+		return LDB_ERR_OPERATIONS_ERROR;
 	}
+	list->count = list2->count;
 	return LDB_SUCCESS;
 
 	/*
@@ -593,6 +599,7 @@ int ldb_kv_key_dn_from_idx(struct ldb_module *module,
 		ldb_oom(ldb);
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
+	list->strict = false;
 
 	ret = ldb_kv_index_dn_base_dn(module, ldb_kv, dn, list, &truncation);
 	if (ret != LDB_SUCCESS) {
@@ -863,6 +870,7 @@ static int ldb_kv_dn_list_store(struct ldb_module *module,
 	}
 	list2->dn = talloc_steal(list2, list->dn);
 	list2->count = list->count;
+	list2->strict = false;
 
 	rec.dptr = (uint8_t *)&list2;
 	rec.dsize = sizeof(void *);
@@ -962,10 +970,7 @@ int ldb_kv_index_transaction_cancel(struct ldb_module *module)
 		tdb_close(ldb_kv->idxptr->itdb);
 	}
 	TALLOC_FREE(ldb_kv->idxptr);
-	if (ldb_kv->nested_idx_ptr && ldb_kv->nested_idx_ptr->itdb) {
-		tdb_close(ldb_kv->nested_idx_ptr->itdb);
-	}
-	TALLOC_FREE(ldb_kv->nested_idx_ptr);
+	ldb_kv_index_sub_transaction_cancel(ldb_kv);
 	return LDB_SUCCESS;
 }
 
@@ -1261,8 +1266,7 @@ static int ldb_kv_index_dn_simple(struct ldb_module *module,
 
 	ldb = ldb_module_get_ctx(module);
 
-	list->count = 0;
-	list->dn = NULL;
+	*list = (struct dn_list){};
 
 	/* if the attribute isn't in the list of indexed attributes then
 	   this node needs a full search */
@@ -1312,17 +1316,14 @@ static int ldb_kv_index_dn_leaf(struct ldb_module *module,
 				const struct ldb_parse_tree *tree,
 				struct dn_list *list)
 {
+	*list = (struct dn_list){};
 	if (ldb_kv->disallow_dn_filter &&
 	    (ldb_attr_cmp(tree->u.equality.attr, "dn") == 0)) {
 		/* in AD mode we do not support "(dn=...)" search filters */
-		list->dn = NULL;
-		list->count = 0;
 		return LDB_SUCCESS;
 	}
 	if (tree->u.equality.attr[0] == '@') {
 		/* Do not allow a indexed search against an @ */
-		list->dn = NULL;
-		list->count = 0;
 		return LDB_SUCCESS;
 	}
 	if (ldb_attr_dn(tree->u.equality.attr) == 0) {
@@ -1334,16 +1335,12 @@ static int ldb_kv_index_dn_leaf(struct ldb_module *module,
 					      &tree->u.equality.value);
 		if (dn == NULL) {
 			/* If we can't parse it, no match */
-			list->dn = NULL;
-			list->count = 0;
 			return LDB_SUCCESS;
 		}
 
 		valid_dn = ldb_dn_validate(dn);
 		if (valid_dn == false) {
 			/* If we can't parse it, no match */
-			list->dn = NULL;
-			list->count = 0;
 			return LDB_SUCCESS;
 		}
 
@@ -1452,8 +1449,7 @@ static bool list_intersect(struct ldb_kv_private *ldb_kv,
 		return false;
 	}
 
-	list3->dn = talloc_array(list3, struct ldb_val,
-				 MIN(list->count, list2->count));
+	list3->dn = talloc_array(list3, struct ldb_val, short_list->count);
 	if (!list3->dn) {
 		talloc_free(list3);
 		return false;
@@ -3450,6 +3446,7 @@ static int delete_index(struct ldb_kv_private *ldb_kv,
 	 * index entry */
 	list.dn = NULL;
 	list.count = 0;
+	list.strict = false;
 
 	/* the offset of 3 is to remove the DN= prefix. */
 	v.data = key.data + 3;
@@ -3852,9 +3849,7 @@ int ldb_kv_reindex(struct ldb_module *module)
  * Copy the contents of the nested transaction index cache record to the
  * transaction index cache.
  *
- * During this 'commit' of the subtransaction to the main transaction
- * (cache), care must be taken to free any existing index at the top
- * level because otherwise we would leak memory.
+ * This is a 'commit' of the subtransaction to the main transaction cache.
  */
 static int ldb_kv_sub_transaction_traverse(
 	struct tdb_context *tdb,
@@ -3883,8 +3878,7 @@ static int ldb_kv_sub_transaction_traverse(
 
 	/*
 	 * Do we already have an entry in the primary transaction cache
-	 * If so free it's dn_list and replace it with the dn_list from
-	 * the secondary cache
+	 * If so replace dn_list with the one from the subtransaction.
 	 *
 	 * The TDB and so the fetched rec contains NO DATA, just a
 	 * pointer to data held in memory.
@@ -3897,21 +3891,41 @@ static int ldb_kv_sub_transaction_traverse(
 			abort();
 		}
 		/*
-		 * We had this key at the top level.  However we made a copy
-		 * at the sub-transaction level so that we could possibly
-		 * roll back.  We have to free the top level index memory
-		 * otherwise we would leak
+		 * We had this key at the top level, and made a copy
+		 * of the dn list for this sub-transaction level that
+		 * borrowed the top level GUID data. We can't free the
+		 * original dn list just yet.
+		 *
+		 * In this diagram, ... is the C pointer structure
+		 * and --- is the talloc structure (::: is both).
+		 *
+		 *   index_in_top_level ::: dn orig ..............
+		 *	|			|		  :
+		 *	|			`--GUID array	  :
+		 *	|				   |----- val1 data
+		 * ldb_kv				   `----- val2 data
+		 *	|					  :
+		 *   index_in_subtransaction :: dn copy ..........:
+		 *				|		  :
+		 *				`------------ new val3 data
+		 *
+		 * So we don't free the index_in_top_level dn list yet,
+		 * because we are (probably) borrowing most of its
+		 * children. But we can save memory by discarding the
+		 * values and keeping it as an almost empty talloc
+		 * node.
 		 */
-		if (index_in_top_level->count > 0) {
-			TALLOC_FREE(index_in_top_level->dn);
-		}
+		talloc_realloc(index_in_top_level,
+			       index_in_top_level->dn, struct ldb_val *, 1);
 		index_in_top_level->dn
 			= talloc_steal(index_in_top_level,
 				       index_in_subtransaction->dn);
 		index_in_top_level->count = index_in_subtransaction->count;
 		return 0;
 	}
-
+	/*
+	 * We found no top level index in the cache, so we put one in.
+	 */
 	index_in_top_level = talloc(ldb_kv->idxptr, struct dn_list);
 	if (index_in_top_level == NULL) {
 		ldb_kv->idxptr->error = LDB_ERR_OPERATIONS_ERROR;
@@ -3921,6 +3935,7 @@ static int ldb_kv_sub_transaction_traverse(
 		= talloc_steal(index_in_top_level,
 			       index_in_subtransaction->dn);
 	index_in_top_level->count = index_in_subtransaction->count;
+	index_in_top_level->strict = false;
 
 	rec.dptr = (uint8_t *)&index_in_top_level;
 	rec.dsize = sizeof(void *);
@@ -3973,7 +3988,9 @@ int ldb_kv_index_sub_transaction_start(struct ldb_kv_private *ldb_kv)
 int ldb_kv_index_sub_transaction_cancel(struct ldb_kv_private *ldb_kv)
 {
 	if (ldb_kv->nested_idx_ptr != NULL) {
-		tdb_close(ldb_kv->nested_idx_ptr->itdb);
+		if (ldb_kv->nested_idx_ptr->itdb != NULL) {
+			tdb_close(ldb_kv->nested_idx_ptr->itdb);
+		}
 		TALLOC_FREE(ldb_kv->nested_idx_ptr);
 	}
 	return LDB_SUCCESS;

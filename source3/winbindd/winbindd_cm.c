@@ -540,7 +540,8 @@ static bool get_dc_name_via_netlogon(struct winbindd_domain *domain,
 			tmp = talloc_strdup(
 				mem_ctx, domain_info->dc_unc);
 			if (tmp == NULL) {
-				DEBUG(0, ("talloc_strdup failed\n"));
+				DBG_ERR("talloc_strdup failed for dc_unc[%s]\n",
+					domain_info->dc_unc);
 				talloc_destroy(mem_ctx);
 				return false;
 			}
@@ -548,7 +549,9 @@ static bool get_dc_name_via_netlogon(struct winbindd_domain *domain,
 				domain->alt_name = talloc_strdup(domain,
 								 domain_info->domain_name);
 				if (domain->alt_name == NULL) {
-					DEBUG(0, ("talloc_strdup failed\n"));
+					DBG_ERR("talloc_strdup failed for "
+						"domain_info->domain_name[%s]\n",
+						domain_info->domain_name);
 					talloc_destroy(mem_ctx);
 					return false;
 				}
@@ -557,7 +560,9 @@ static bool get_dc_name_via_netlogon(struct winbindd_domain *domain,
 				domain->forest_name = talloc_strdup(domain,
 								    domain_info->forest_name);
 				if (domain->forest_name == NULL) {
-					DEBUG(0, ("talloc_strdup failed\n"));
+					DBG_ERR("talloc_strdup failed for "
+						"domain_info->forest_name[%s]\n",
+						domain_info->forest_name);
 					talloc_destroy(mem_ctx);
 					return false;
 				}
@@ -607,10 +612,11 @@ static bool get_dc_name_via_netlogon(struct winbindd_domain *domain,
 /**
  * Helper function to assemble trust password and account name
  */
-static NTSTATUS get_trust_credentials(struct winbindd_domain *domain,
-				      TALLOC_CTX *mem_ctx,
-				      bool netlogon,
-				      struct cli_credentials **_creds)
+NTSTATUS winbindd_get_trust_credentials(struct winbindd_domain *domain,
+					TALLOC_CTX *mem_ctx,
+					bool netlogon,
+					bool allow_ipc_fallback,
+					struct cli_credentials **_creds)
 {
 	const struct winbindd_domain *creds_domain = NULL;
 	struct cli_credentials *creds;
@@ -663,6 +669,10 @@ static NTSTATUS get_trust_credentials(struct winbindd_domain *domain,
  ipc_fallback:
 	if (netlogon) {
 		return NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
+	}
+
+	if (!allow_ipc_fallback) {
+		return status;
 	}
 
 	status = cm_get_ipc_credentials(mem_ctx, &creds);
@@ -826,10 +836,16 @@ static NTSTATUS cm_prepare_connection(struct winbindd_domain *domain,
 	}
 
 	if (try_ipc_auth) {
-		result = get_trust_credentials(domain, talloc_tos(), false, &creds);
+		result = winbindd_get_trust_credentials(domain,
+							talloc_tos(),
+							false, /* netlogon */
+							true, /* ipc_fallback */
+							&creds);
 		if (!NT_STATUS_IS_OK(result)) {
-			DEBUG(1, ("get_trust_credentials(%s) failed: %s\n",
-				  domain->name, nt_errstr(result)));
+			DBG_WARNING("winbindd_get_trust_credentials(%s) "
+				    "failed: %s\n",
+				    domain->name,
+				    nt_errstr(result));
 			goto done;
 		}
 	} else {
@@ -1118,11 +1134,10 @@ static bool dcip_check_name_ads(const struct winbindd_domain *domain,
 		ads_status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
 		goto out;
 	}
-	ads->auth.flags |= ADS_AUTH_NO_BIND;
 	ads->config.flags |= request_flags;
 	ads->server.no_fallback = true;
 
-	ads_status = ads_connect(ads);
+	ads_status = ads_connect_cldap_only(ads);
 	if (!ADS_ERR_OK(ads_status)) {
 		goto out;
 	}
@@ -2597,7 +2612,11 @@ retry:
 	 * anonymous.
 	 */
 
-	result = get_trust_credentials(domain, talloc_tos(), false, &creds);
+	result = winbindd_get_trust_credentials(domain,
+						talloc_tos(),
+						false, /* netlogon */
+						true, /* ipc_fallback */
+						&creds);
 	if (!NT_STATUS_IS_OK(result)) {
 		DEBUG(10, ("cm_connect_sam: No user available for "
 			   "domain %s, trying schannel\n", domain->name));
@@ -2931,7 +2950,11 @@ retry:
 		goto schannel;
 	}
 
-	result = get_trust_credentials(domain, talloc_tos(), false, &creds);
+	result = winbindd_get_trust_credentials(domain,
+						talloc_tos(),
+						false, /* netlogon */
+						true, /* ipc_fallback */
+						&creds);
 	if (!NT_STATUS_IS_OK(result)) {
 		DEBUG(10, ("cm_connect_lsa: No user available for "
 			   "domain %s, trying schannel\n", domain->name));
@@ -3209,7 +3232,11 @@ static NTSTATUS cm_connect_netlogon_transport(struct winbindd_domain *domain,
 	TALLOC_FREE(conn->netlogon_pipe);
 	TALLOC_FREE(conn->netlogon_creds_ctx);
 
-	result = get_trust_credentials(domain, talloc_tos(), true, &creds);
+	result = winbindd_get_trust_credentials(domain,
+						talloc_tos(),
+						true, /* netlogon */
+						false, /* ipc_fallback */
+						&creds);
 	if (!NT_STATUS_IS_OK(result)) {
 		DBG_DEBUG("No user available for domain %s when trying "
 			  "schannel\n", domain->name);

@@ -88,9 +88,9 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 			 DBWRAP_FLAG_NONE);
 	if (db_ctx == NULL) {
 		status = map_nt_error_from_unix_common(errno);
-		DEBUG(0,("smbXsrv_version_global_init: "
-			 "failed to open[%s] - %s\n",
-			 global_path, nt_errstr(status)));
+		DBG_ERR("failed to open[%s] - %s\n",
+			global_path,
+			nt_errstr(status));
 		TALLOC_FREE(frame);
 		return status;
 	}
@@ -100,9 +100,10 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 	db_rec = dbwrap_fetch_locked(db_ctx, db_ctx, key);
 	if (db_rec == NULL) {
 		status = NT_STATUS_INTERNAL_DB_ERROR;
-		DEBUG(0,("smbXsrv_version_global_init: "
-			 "dbwrap_fetch_locked(%s) - %s\n",
-			 key_string, nt_errstr(status)));
+		DBG_ERR("dbwrap_fetch_locked(%s) - %s\n",
+			key_string,
+			nt_errstr(status));
+
 		TALLOC_FREE(frame);
 		return status;
 	}
@@ -111,14 +112,14 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 	if (val.dsize == 0) {
 		global = talloc_zero(frame, struct smbXsrv_version_global0);
 		if (global == NULL) {
-			DEBUG(0,("smbXsrv_version_global_init: "
-				 "talloc_zero failed - %s\n", __location__));
+			DBG_ERR("talloc_zero failed - %s\n", __location__);
 			TALLOC_FREE(frame);
 			return NT_STATUS_NO_MEMORY;
 		}
-		ZERO_STRUCT(global_blob);
-		global_blob.version = SMBXSRV_VERSION_CURRENT;
-		global_blob.info.info0 = global;
+		global_blob = (struct smbXsrv_version_globalB) {
+			.version = SMBXSRV_VERSION_CURRENT,
+			.info.info0 = global,
+		};
 	} else {
 		blob = data_blob_const(val.dptr, val.dsize);
 
@@ -126,9 +127,8 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 			(ndr_pull_flags_fn_t)ndr_pull_smbXsrv_version_globalB);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 			status = ndr_map_error2ntstatus(ndr_err);
-			DEBUG(0,("smbXsrv_version_global_init: "
-				 "ndr_pull_smbXsrv_version_globalB - %s\n",
-				 nt_errstr(status)));
+			DBG_ERR("ndr_pull_smbXsrv_version_globalB - %s\n",
+				nt_errstr(status));
 			TALLOC_FREE(frame);
 			return status;
 		}
@@ -148,8 +148,7 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 		}
 
 		if (!NT_STATUS_IS_OK(status)) {
-			DEBUG(0,("smbXsrv_version_global_init - %s\n",
-				 nt_errstr(status)));
+			DBG_ERR("%s\n", nt_errstr(status));
 			NDR_PRINT_DEBUG(smbXsrv_version_globalB, &global_blob);
 			TALLOC_FREE(frame);
 			return status;
@@ -160,8 +159,7 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 				  struct smbXsrv_version_node0,
 				  global->num_nodes + 1);
 	if (valid == NULL) {
-		DEBUG(0,("smbXsrv_version_global_init: "
-			 "talloc_zero_array failed - %s\n", __location__));
+		DBG_ERR("talloc_zero_array failed - %s\n", __location__);
 		TALLOC_FREE(frame);
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -177,8 +175,7 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 
 		if (n->min_version > n->max_version) {
 			status = NT_STATUS_INTERNAL_DB_CORRUPTION;
-			DEBUG(0,("smbXsrv_version_global_init - %s\n",
-				 nt_errstr(status)));
+			DBG_ERR("%s\n", nt_errstr(status));
 			NDR_PRINT_DEBUG(smbXsrv_version_globalB, &global_blob);
 			TALLOC_FREE(frame);
 			return status;
@@ -186,8 +183,7 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 
 		if (n->min_version > global_blob.version) {
 			status = NT_STATUS_INTERNAL_DB_CORRUPTION;
-			DEBUG(0,("smbXsrv_version_global_init - %s\n",
-				 nt_errstr(status)));
+			DBG_ERR("%s\n", nt_errstr(status));
 			NDR_PRINT_DEBUG(smbXsrv_version_globalB, &global_blob);
 			TALLOC_FREE(frame);
 			return status;
@@ -195,8 +191,7 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 
 		if (n->max_version < global_blob.version) {
 			status = NT_STATUS_INTERNAL_DB_CORRUPTION;
-			DEBUG(0,("smbXsrv_version_global_init - %s\n",
-				 nt_errstr(status)));
+			DBG_ERR("%s\n", nt_errstr(status));
 			NDR_PRINT_DEBUG(smbXsrv_version_globalB, &global_blob);
 			TALLOC_FREE(frame);
 			return status;
@@ -214,10 +209,12 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 		num_valid++;
 	}
 
-	local_node->server_id = *server_id;
-	local_node->min_version = SMBXSRV_VERSION_0;
-	local_node->max_version = SMBXSRV_VERSION_CURRENT;
-	local_node->current_version = global_blob.version;
+	*local_node = (struct smbXsrv_version_node0){
+		.server_id = *server_id,
+		.min_version = SMBXSRV_VERSION_0,
+		.max_version = SMBXSRV_VERSION_CURRENT,
+		.current_version = global_blob.version,
+	};
 
 	global->num_nodes = num_valid;
 	global->nodes = valid;
@@ -229,9 +226,8 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 			(ndr_push_flags_fn_t)ndr_push_smbXsrv_version_globalB);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		status = ndr_map_error2ntstatus(ndr_err);
-		DEBUG(0,("smbXsrv_version_global_init: "
-			 "ndr_push_smbXsrv_version_globalB - %s\n",
-			 nt_errstr(status)));
+		DBG_ERR("ndr_push_smbXsrv_version_globalB - %s\n",
+			nt_errstr(status));
 		TALLOC_FREE(frame);
 		return status;
 	}
@@ -240,14 +236,12 @@ NTSTATUS smbXsrv_version_global_init(const struct server_id *server_id)
 	status = dbwrap_record_store(db_rec, val, TDB_REPLACE);
 	TALLOC_FREE(db_rec);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0,("smbXsrv_version_global_init: "
-			 "dbwrap_record_store - %s\n",
-			 nt_errstr(status)));
+		DBG_ERR("dbwrap_record_store - %s\n", nt_errstr(status));
 		TALLOC_FREE(frame);
 		return status;
 	}
 
-	DEBUG(10,("smbXsrv_version_global_init\n"));
+	DBG_DEBUG("\n");
 	if (DEBUGLVL(10)) {
 		NDR_PRINT_DEBUG(smbXsrv_version_globalB, &global_blob);
 	}

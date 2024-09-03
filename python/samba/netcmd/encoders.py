@@ -25,7 +25,9 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
-from ldb import Dn
+from ldb import Dn, MessageElement, Result
+
+from samba.dcerpc.security import descriptor
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -38,12 +40,16 @@ class JSONEncoder(json.JSONEncoder):
     """
 
     def default(self, obj):
-        if isinstance(obj, (Decimal, Dn)):
+        if isinstance(obj, (Decimal, Dn, Exception, MessageElement)):
             return str(obj)
+        if isinstance(obj, Result):
+            return obj.msgs
         elif isinstance(obj, Enum):
             return str(obj.value)
         elif isinstance(obj, datetime):
             return obj.isoformat()
+        elif isinstance(obj, descriptor):
+            return obj.as_sddl()
         elif getattr(obj, "__json__", None) and callable(obj.__json__):
             return obj.__json__()
-        return obj
+        return super().default(obj)

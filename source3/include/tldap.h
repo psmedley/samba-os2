@@ -123,9 +123,16 @@ bool tevent_req_ldap_error(struct tevent_req *req, TLDAPRC rc);
 bool tevent_req_is_ldap_error(struct tevent_req *req, TLDAPRC *perr);
 
 struct tldap_context *tldap_context_create(TALLOC_CTX *mem_ctx, int fd);
-struct tstream_context *tldap_get_tstream(struct tldap_context *ld);
-void tldap_set_tstream(struct tldap_context *ld,
-		       struct tstream_context *stream);
+struct tstream_context *tldap_get_plain_tstream(struct tldap_context *ld);
+void tldap_set_starttls_needed(struct tldap_context *ld, bool needed);
+bool tldap_get_starttls_needed(struct tldap_context *ld);
+bool tldap_has_tls_tstream(struct tldap_context *ld);
+const DATA_BLOB *tldap_tls_channel_bindings(struct tldap_context *ld);
+void tldap_set_tls_tstream(struct tldap_context *ld,
+			   struct tstream_context **stream);
+bool tldap_has_gensec_tstream(struct tldap_context *ld);
+void tldap_set_gensec_tstream(struct tldap_context *ld,
+			      struct tstream_context **stream);
 
 bool tldap_connection_ok(struct tldap_context *ld);
 bool tldap_context_setattr(struct tldap_context *ld,
@@ -249,6 +256,30 @@ TLDAPRC tldap_delete_recv(struct tevent_req *req);
 TLDAPRC tldap_delete(struct tldap_context *ld, const char *dn,
 		     struct tldap_control *sctrls, int num_sctrls,
 		     struct tldap_control *cctrls, int num_cctrls);
+
+struct tevent_req *tldap_extended_send(TALLOC_CTX *mem_ctx,
+				       struct tevent_context *ev,
+				       struct tldap_context *ld,
+				       const char *in_oid,
+				       const DATA_BLOB *in_blob,
+				       struct tldap_control *sctrls,
+				       int num_sctrls,
+				       struct tldap_control *cctrls,
+				       int num_cctrls);
+TLDAPRC tldap_extended_recv(struct tevent_req *req,
+			    TALLOC_CTX *mem_ctx,
+			    char **out_oid,
+			    DATA_BLOB *out_blob);
+TLDAPRC tldap_extended(struct tldap_context *ld,
+			const char *in_oid,
+			const DATA_BLOB *in_blob,
+			struct tldap_control *sctrls,
+			int num_sctrls,
+			struct tldap_control *cctrls,
+			int num_cctrls,
+			TALLOC_CTX *mem_ctx,
+			char **out_oid,
+			DATA_BLOB *out_blob);
 
 int tldap_msg_id(const struct tldap_message *msg);
 int tldap_msg_type(const struct tldap_message *msg);

@@ -316,13 +316,6 @@ NTSTATUS change_notify_create(struct files_struct *fsp,
 
 	fsp_fullbasepath(fsp, fullpath, sizeof(fullpath));
 
-	/*
-	 * Avoid /. at the end of the path name. notify can't deal with it.
-	 */
-	if (len > 1 && fullpath[len-1] == '.' && fullpath[len-2] == '/') {
-		fullpath[len-2] = '\0';
-	}
-
 	if ((fsp->notify->filter != 0) ||
 	    (fsp->notify->subdir_filter != 0)) {
 		status = notify_add(fsp->conn->sconn->notify_ctx,
@@ -533,10 +526,6 @@ static struct files_struct *smbd_notifyd_reregister(struct files_struct *fsp,
 		NTSTATUS status;
 
 		fsp_fullbasepath(fsp, fullpath, sizeof(fullpath));
-		if (len > 1 && fullpath[len-1] == '.' &&
-		    fullpath[len-2] == '/') {
-			fullpath[len-2] = '\0';
-		}
 
 		status = notify_add(fsp->conn->sconn->notify_ctx,
 				    fullpath, fsp->notify->filter,
@@ -662,9 +651,14 @@ static bool user_can_stat_name_under_fsp(files_struct *fsp, const char *name)
 					   0,
 					   &fname);
 		if (!NT_STATUS_IS_OK(status)) {
-			DBG_ERR("synthetic_pathref failed for %s, error %s\n",
-				filepath,
-				nt_errstr(status));
+			int dbg_lvl = DBGLVL_ERR;
+			if (NT_STATUS_EQUAL(status, NT_STATUS_OBJECT_NAME_NOT_FOUND)) {
+				dbg_lvl = DBGLVL_DEBUG;
+			}
+			DBG_PREFIX(dbg_lvl, (
+				   "synthetic_pathref failed for %s, error %s\n",
+				   filepath,
+				   nt_errstr(status)));
 			TALLOC_FREE(fname);
 			TALLOC_FREE(filepath);
 			return false;
@@ -865,81 +859,46 @@ char *notify_filter_string(TALLOC_CTX *mem_ctx, uint32_t filter)
 	char *result = NULL;
 
 	result = talloc_strdup(mem_ctx, "");
-	if (result == NULL) {
-		return NULL;
-	}
 
 	if (filter & FILE_NOTIFY_CHANGE_FILE_NAME) {
-		result = talloc_asprintf_append(result, "FILE_NAME|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "FILE_NAME|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_DIR_NAME) {
-		result = talloc_asprintf_append(result, "DIR_NAME|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "DIR_NAME|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_ATTRIBUTES) {
-		result = talloc_asprintf_append(result, "ATTRIBUTES|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "ATTRIBUTES|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_SIZE) {
-		result = talloc_asprintf_append(result, "SIZE|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "SIZE|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_LAST_WRITE) {
-		result = talloc_asprintf_append(result, "LAST_WRITE|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "LAST_WRITE|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_LAST_ACCESS) {
-		result = talloc_asprintf_append(result, "LAST_ACCESS|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "LAST_ACCESS|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_CREATION) {
-		result = talloc_asprintf_append(result, "CREATION|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "CREATION|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_EA) {
-		result = talloc_asprintf_append(result, "EA|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "EA|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_SECURITY) {
-		result = talloc_asprintf_append(result, "SECURITY|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "SECURITY|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_STREAM_NAME) {
-		result = talloc_asprintf_append(result, "STREAM_NAME|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "STREAM_NAME|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_STREAM_SIZE) {
-		result = talloc_asprintf_append(result, "STREAM_SIZE|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "STREAM_SIZE|");
 	}
 	if (filter & FILE_NOTIFY_CHANGE_STREAM_WRITE) {
-		result = talloc_asprintf_append(result, "STREAM_WRITE|");
-		if (result == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&result, "STREAM_WRITE|");
+	}
+
+	if (result == NULL) {
+		return NULL;
 	}
 
 	if (*result == '\0') return result;

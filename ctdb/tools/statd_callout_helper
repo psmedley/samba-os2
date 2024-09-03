@@ -1,0 +1,276 @@
+#!/bin/sh
+
+# statd must be configured to use this script as its high availability call-out.
+#
+# Modern NFS utils versions use /etc/nfs.conf:
+#
+#   [statd]
+#     name = mycluster
+#     ha-callout = /usr/local/libexec/ctdb/statd_callout
+#
+# Older Linux versions may use something like the following...
+#
+# /etc/sysconfig/nfs (Red Hat) or /etc/default/nfs-common (Debian):
+#   NFS_HOSTNAME=mycluster
+#   STATD_HOSTNAME="${NFS_HOSTNAME} -H /usr/local/libexec/ctdb/statd_callout"
+#
+
+if [ -z "$CTDB_BASE" ] ; then
+	export CTDB_BASE="/usr/local/etc/ctdb"
+fi
+
+. "${CTDB_BASE}/functions"
+
+# Overwrite this so we get some logging
+die()
+{
+	script_log "statd_callout_helper" "$@"
+	exit 1
+}
+
+# Try different variables to find config file for NFS_HOSTNAME
+load_system_config "nfs" "nfs-common"
+
+# If NFS_HOSTNAME not set then try to pull it out of /etc/nfs.conf
+if [ -z "$NFS_HOSTNAME" ]; then
+	if type nfsconf >/dev/null 2>&1; then
+		NFS_HOSTNAME=$(nfsconf --get statd name)
+	elif type git >/dev/null 2>&1; then
+		# git to the rescue!
+		NFS_HOSTNAME=$(git config --file=/etc/nfs.conf statd.name)
+	fi
+fi
+
+[ -n "$NFS_HOSTNAME" ] ||
+	die "NFS_HOSTNAME is not configured. statd_callout_helper failed"
+
+############################################################
+
+ctdb_setup_state_dir "service" "nfs"
+
+find_statd_sm_dir()
+{
+	if [ -n "$CTDB_TEST_MODE" ]; then
+		_f="${CTDB_TEST_TMP_DIR}/sm"
+		mkdir -p "$_f" "${_f}.bak"
+		echo "$_f"
+		return
+	fi
+
+	for _sm_dir in /var/lib/nfs/statd/sm /var/lib/nfs/sm; do
+		if [ -d "$_sm_dir" ]; then
+			echo "$_sm_dir"
+			break
+		fi
+	done
+}
+
+# Ensure the state directory exists and can be written when called as
+# a non-root user.  Assume the user to run as is the owner of the
+# system statd sm directory, since both rpc.statd and sm-notify run as
+# this directory's owner, so it can read and modify the directory.
+create_add_del_client_dir()
+{
+	_dir="$1"
+
+	if [ ! -d "$_dir" ]; then
+		mkdir -p "$_dir" || die "Failed to create directory \"${_dir}\""
+		ref=$(find_statd_sm_dir)
+		[ -n "$ref" ] || die "Failed to find statd sm directory"
+		chown --reference="$ref" "$_dir"
+	fi
+}
+
+# script_state_dir set by ctdb_setup_state_dir()
+# shellcheck disable=SC2154
+statd_callout_state_dir="${script_state_dir}/statd_callout"
+
+statd_callout_db="ctdb.tdb"
+statd_callout_queue_dir="${statd_callout_state_dir}/queue"
+
+############################################################
+
+send_notifies()
+{
+	_smnotify="${CTDB_HELPER_BINDIR}/smnotify"
+
+	# State must monotonically increase, across the entire
+	# cluster.  Use seconds since epoch and hope the time is in
+	# sync across nodes.  Even numbers mean service is shut down,
+	# odd numbers mean service is started.
+
+	# Intentionally round to an even number
+	# shellcheck disable=SC2017
+	_state_even=$(($(date '+%s') / 2 * 2))
+
+	_prev=""
+	while read -r _sip _cip; do
+		# NOTE: Consider optimising smnotify to read all the
+		# data from stdin and then run it in the background.
+
+		# Reset stateval for each serverip
+		if [ "$_sip" != "$_prev" ]; then
+			_stateval="$_state_even"
+		fi
+
+		# Send notifies for server shutdown
+		"$_smnotify" --client="$_cip" --ip="$_sip" \
+			--server="$_sip" --stateval="$_stateval"
+		"$_smnotify" --client="$_cip" --ip="$_sip" \
+			--server="$NFS_HOSTNAME" --stateval="$_stateval"
+
+		# Send notifies for server startup
+		_stateval=$((_stateval + 1))
+		"$_smnotify" --client="$_cip" --ip="$_sip" \
+			--server="$_sip" --stateval="$_stateval"
+		"$_smnotify" --client="$_cip" --ip="$_sip" \
+			--server="$NFS_HOSTNAME" --stateval="$_stateval"
+	done
+}
+
+delete_records()
+{
+	while read -r _sip _cip; do
+		_key="statd-state@${_sip}@${_cip}"
+		echo "\"${_key}\" \"\""
+	done | $CTDB ptrans "$statd_callout_db"
+}
+
+############################################################
+
+# Keep a file per server-IP/client-IP pair, to keep track of the last
+# "add-client" or "del-client'.  These get pushed to a database during
+# "update", which will generally be run once each "monitor" cycle.  In
+# this way we avoid scalability problems with flood of persistent
+# transactions after a "notify" when all the clients re-take their
+# locks.
+
+startup()
+{
+	create_add_del_client_dir "$statd_callout_queue_dir"
+
+	$CTDB attach "$statd_callout_db" persistent
+
+	_default="${CTDB_SCRIPT_VARDIR}/statd_callout.conf"
+	_config_file="${CTDB_STATD_CALLOUT_CONFIG_FILE:-"${_default}"}"
+	cat >"$_config_file" <<EOF
+persistent_db
+${statd_callout_queue_dir}
+${CTDB_MY_PUBLIC_IPS_CACHE}
+EOF
+}
+
+############################################################
+
+case "$1" in
+startup)
+	startup
+	;;
+
+update)
+	cd "$statd_callout_queue_dir" ||
+		die "Failed to change directory to \"${statd_callout_queue_dir}\""
+	files=$(echo statd-state@*)
+	if [ "$files" = "statd-state@*" ]; then
+		# No files!
+		exit 0
+	fi
+	sed_expr=$(awk '{
+		ip = $1; gsub(/\./, "\\.", ip);
+		printf "/statd-state@%s@/p\n", ip }' "$CTDB_MY_PUBLIC_IPS_CACHE")
+	# Intentional multi-word expansion for multiple files
+	# shellcheck disable=SC2086
+	items=$(sed -n "$sed_expr" $files)
+	if [ -n "$items" ]; then
+		if echo "$items" | $CTDB ptrans "$statd_callout_db"; then
+			# shellcheck disable=SC2086
+			rm $files
+		fi
+	fi
+	;;
+
+notify)
+	# we must restart the lockmanager (on all nodes) so that we get
+	# a clusterwide grace period (so other clients don't take out
+	# conflicting locks through other nodes before all locks have been
+	# reclaimed)
+
+	# we need these settings to make sure that no tcp connections survive
+	# across a very fast failover/failback
+	#echo 10 > /proc/sys/net/ipv4/tcp_fin_timeout
+	#echo 0 > /proc/sys/net/ipv4/tcp_max_tw_buckets
+	#echo 0 > /proc/sys/net/ipv4/tcp_max_orphans
+
+	# Delete the notification list for statd, we don't want it to
+	# ping any clients
+	dir=$(find_statd_sm_dir)
+	rm -f "${dir}/"* "${dir}.bak/"*
+
+	# We must also let some time pass between stopping and
+	# restarting the lock manager.  Otherwise there is a window
+	# where the lock manager will respond "strangely" immediately
+	# after restarting it, which causes clients to fail to reclaim
+	# their locks.
+	nfs_callout_init
+	"$CTDB_NFS_CALLOUT" "stop" "nlockmgr" >/dev/null 2>&1
+	sleep 2
+	"$CTDB_NFS_CALLOUT" "start" "nlockmgr" >/dev/null 2>&1
+
+	# we now need to send out additional statd notifications to ensure
+	# that clients understand that the lockmanager has restarted.
+	# we have three cases:
+	# 1, clients that ignore the ip address the stat notification came from
+	#    and ONLY care about the 'name' in the notify packet.
+	#    these clients ONLY work with lock failover IFF that name
+	#    can be resolved into an ipaddress that matches the one used
+	#    to mount the share.  (==linux clients)
+	#    This is handled when starting lockmanager above,  but those
+	#    packets are sent from the "wrong" ip address, something linux
+	#    clients are ok with, buth other clients will barf at.
+	# 2, Some clients only accept statd packets IFF they come from the
+	#    'correct' ip address.
+	# 2a,Send out the notification using the 'correct' ip address and also
+	#    specify the 'correct' hostname in the statd packet.
+	#    Some clients require both the correct source address and also the
+	#    correct name. (these clients also ONLY work if the ip addresses
+	#    used to map the share can be resolved into the name returned in
+	#    the notify packet.)
+	# 2b,Other clients require that the source ip address of the notify
+	#    packet matches the ip address used to take out the lock.
+	#    I.e. that the correct source address is used.
+	#    These clients also require that the statd notify packet contains
+	#    the name as the ip address used when the lock was taken out.
+	#
+	# Both 2a and 2b are commonly used in lockmanagers since they maximize
+	# probability that the client will accept the statd notify packet and
+	# not just ignore it.
+	# For all IPs we serve, collect info and push to the config database
+
+	# Construct a sed expression to take catdb output and produce pairs of:
+	#   server-IP client-IP
+	# but only for the server-IPs that are hosted on this node.
+	sed_expr=$(awk '{
+		       ip = $1; gsub(/\./, "\\.", ip);
+		       printf "s/^key.*=.*statd-state@\\(%s\\)@\\([^\"]*\\).*/\\1 \\2/p\n", ip }' \
+			       "$CTDB_MY_PUBLIC_IPS_CACHE")
+
+	statd_state=$($CTDB catdb "$statd_callout_db" |
+		sed -n "$sed_expr" |
+		sort)
+	[ -n "$statd_state" ] || exit 0
+
+	echo "$statd_state" | send_notifies
+	echo "$statd_state" | delete_records
+
+	# Remove any stale touch files (i.e. for IPs not currently
+	# hosted on this node and created since the last "update").
+	# There's nothing else we can do with them at this stage.
+	pnn=$(ctdb_get_pnn)
+	$CTDB ip all |
+		tail -n +2 |
+		awk -v pnn="$pnn" 'pnn != $2 { print $1 }' |
+		while read -r sip; do
+			rm -f "${statd_callout_queue_dir}/statd-state@${sip}@"*
+		done
+	;;
+esac

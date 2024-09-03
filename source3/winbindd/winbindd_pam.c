@@ -623,10 +623,10 @@ static NTSTATUS get_pwd_properties(struct winbindd_domain *domain,
 
 #ifdef HAVE_KRB5
 
-static const char *generate_krb5_ccache(TALLOC_CTX *mem_ctx,
-					const char *type,
-					uid_t uid,
-					const char **user_ccache_file)
+static bool generate_krb5_ccache(TALLOC_CTX *mem_ctx,
+				 const char *type,
+				 uid_t uid,
+				 const char **user_ccache_file)
 {
 	/* accept FILE and WRFILE as krb5_cc_type from the client and then
 	 * build the full ccname string based on the user's uid here -
@@ -638,19 +638,31 @@ static const char *generate_krb5_ccache(TALLOC_CTX *mem_ctx,
 		if (strequal(type, "FILE")) {
 			gen_cc = talloc_asprintf(
 				mem_ctx, "FILE:/tmp/krb5cc_%d", uid);
+			if (gen_cc == NULL) {
+				return false;
+			}
 		}
 		if (strequal(type, "WRFILE")) {
 			gen_cc = talloc_asprintf(
 				mem_ctx, "WRFILE:/tmp/krb5cc_%d", uid);
+			if (gen_cc == NULL) {
+				return false;
+			}
 		}
 		if (strequal(type, "KEYRING")) {
 			gen_cc = talloc_asprintf(
 				mem_ctx, "KEYRING:persistent:%d", uid);
+			if (gen_cc == NULL) {
+				return false;
+			}
 		}
 		if (strequal(type, "KCM")) {
 			gen_cc = talloc_asprintf(mem_ctx,
 						 "KCM:%d",
 						 uid);
+			if (gen_cc == NULL) {
+				return false;
+			}
 		}
 
 		if (strnequal(type, "FILE:/", 6) ||
@@ -681,6 +693,9 @@ static const char *generate_krb5_ccache(TALLOC_CTX *mem_ctx,
 							true,
 							/* allow_trailing_dollar */
 							false);
+					if (gen_cc == NULL) {
+						return false;
+					}
 				}
 			}
 		}
@@ -688,18 +703,9 @@ static const char *generate_krb5_ccache(TALLOC_CTX *mem_ctx,
 
 	*user_ccache_file = gen_cc;
 
-	if (gen_cc == NULL) {
-		gen_cc = talloc_strdup(mem_ctx, "MEMORY:winbindd_pam_ccache");
-	}
-  	if (gen_cc == NULL) {
-		DEBUG(0,("out of memory\n"));
-		return NULL;
-	}
+	DBG_DEBUG("using ccache: %s\n", gen_cc != NULL ? gen_cc : "(internal)");
 
-	DEBUG(10, ("using ccache: %s%s\n", gen_cc,
-		   (*user_ccache_file == NULL) ? " (internal)":""));
-
-	return gen_cc;
+	return true;
 }
 
 #endif
@@ -733,7 +739,6 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 {
 #ifdef HAVE_KRB5
 	NTSTATUS result = NT_STATUS_UNSUCCESSFUL;
-	krb5_error_code krb5_ret;
 	const char *cc = NULL;
 	const char *principal_s = NULL;
 	char *realm = NULL;
@@ -742,7 +747,6 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 	char *name_user = NULL;
 	time_t ticket_lifetime = 0;
 	time_t renewal_until = 0;
-	time_t time_offset = 0;
 	const char *user_ccache_file;
 	struct PAC_LOGON_INFO *logon_info = NULL;
 	struct PAC_UPN_DNS_INFO *upn_dns_info = NULL;
@@ -772,21 +776,17 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 		DEBUG(0,("no valid uid\n"));
 	}
 
-	cc = generate_krb5_ccache(mem_ctx,
+	ok = generate_krb5_ccache(mem_ctx,
 				  krb5_cc_type,
 				  uid,
 				  &user_ccache_file);
-	if (cc == NULL) {
+	if (!ok) {
 		return NT_STATUS_NO_MEMORY;
 	}
-
+	cc = user_ccache_file;
 
 	/* 2nd step:
 	 * get kerberos properties */
-
-	if (domain->backend_data.ads_conn != NULL) {
-		time_offset = domain->backend_data.ads_conn->auth.time_offset;
-	}
 
 
 	/* 3rd step:
@@ -845,10 +845,15 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 		DEBUG(10,("winbindd_raw_kerberos_login: uid is %d\n", uid));
 	}
 
+	/*
+	 * Note cc can be NULL, it means
+	 * kerberos_return_pac() will use
+	 * a temporary krb5 ccache internally.
+	 */
 	result = kerberos_return_pac(mem_ctx,
 				     principal_s,
 				     pass,
-				     time_offset,
+				     0, /* time_offset */
 				     &ticket_lifetime,
 				     &renewal_until,
 				     cc,
@@ -893,13 +898,11 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 	}
 
 	if (logon_info == NULL) {
-		DEBUG(10,("Missing logon_info in ticket of %s\n",
-			principal_s));
+		DBG_DEBUG("Missing logon_info in ticket of %s\n", principal_s);
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
-	DEBUG(10,("winbindd_raw_kerberos_login: winbindd validated ticket of %s\n",
-		principal_s));
+	DBG_DEBUG("winbindd validated ticket of %s\n", principal_s);
 
 	result = create_info6_from_pac(mem_ctx, logon_info,
 				       upn_dns_info, &info6_copy);
@@ -930,21 +933,11 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 					    canon_realm);
 
 		if (!NT_STATUS_IS_OK(result)) {
-			DEBUG(10,("winbindd_raw_kerberos_login: failed to add ccache to list: %s\n",
-				nt_errstr(result)));
+			DBG_DEBUG("failed to add ccache to list: %s\n",
+				  nt_errstr(result));
 		}
-	} else {
-
-		/* need to delete the memory cred cache, it is not used anymore */
-
-		krb5_ret = ads_kdestroy(cc);
-		if (krb5_ret) {
-			DEBUG(3,("winbindd_raw_kerberos_login: "
-				 "could not destroy krb5 credential cache: "
-				 "%s\n", error_message(krb5_ret)));
-		}
-
 	}
+
 	*info6 = info6_copy;
 	return NT_STATUS_OK;
 
@@ -963,17 +956,8 @@ failed:
 	 * local host and therefore didn't get the PAC, we need to remove that
 	 * cache entirely now */
 
-	krb5_ret = ads_kdestroy(cc);
-	if (krb5_ret) {
-		DEBUG(3,("winbindd_raw_kerberos_login: "
-			 "could not destroy krb5 credential cache: "
-			 "%s\n", error_message(krb5_ret)));
-	}
-
 	if (!NT_STATUS_IS_OK(remove_ccache(user))) {
-		DEBUG(3,("winbindd_raw_kerberos_login: "
-			  "could not remove ccache for user %s\n",
-			user));
+		DBG_NOTICE("could not remove ccache for user %s\n", user);
 	}
 
 	return result;
@@ -998,8 +982,7 @@ bool check_request_flags(uint32_t flags)
 		return true;
 	}
 
-	DEBUG(1, ("check_request_flags: invalid request flags[0x%08X]\n",
-		  flags));
+	DBG_WARNING("invalid request flags[0x%08X]\n", flags);
 
 	return false;
 }
@@ -1309,14 +1292,15 @@ static NTSTATUS winbindd_dual_pam_auth_cached(struct winbindd_domain *domain,
 				goto out;
 			}
 
-			cc = generate_krb5_ccache(tmp_ctx,
+			ok = generate_krb5_ccache(tmp_ctx,
 						  krb5_cc_type,
 						  uid,
 						  &user_ccache_file);
-			if (cc == NULL) {
+			if (!ok) {
 				result = NT_STATUS_NO_MEMORY;
 				goto out;
 			}
+			cc = user_ccache_file;
 
 			realm = talloc_strdup(tmp_ctx, domain->alt_name);
 			if (realm == NULL) {
@@ -3433,11 +3417,16 @@ static NTSTATUS extract_pac_vrfy_sigs(TALLOC_CTX *mem_ctx, DATA_BLOB pac_blob,
 					     NULL, /* client_principal */
 					     0, /* tgs_authtime */
 					     p_pac_data);
+		(void)smb_krb5_kt_free_entry(krbctx, &entry);
 		if (NT_STATUS_IS_OK(status)) {
 			break;
 		}
-		k5ret = smb_krb5_kt_free_entry(krbctx, &entry);
 		k5ret = krb5_kt_next_entry(krbctx, keytab, &entry, &cursor);
+	}
+	if (k5ret != 0 && k5ret != KRB5_KT_END) {
+		DEBUG(1, ("Failed to get next entry: %s\n",
+			  error_message(k5ret)));
+		(void)smb_krb5_kt_free_entry(krbctx, &entry);
 	}
 
 	k5ret = krb5_kt_end_seq_get(krbctx, keytab, &cursor);

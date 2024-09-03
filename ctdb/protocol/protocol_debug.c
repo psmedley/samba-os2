@@ -247,6 +247,7 @@ static void ctdb_opcode_print(uint32_t opcode, FILE *fp)
 		{ CTDB_CONTROL_ENABLE_NODE, "ENABLE_NODE" },
 		{ CTDB_CONTROL_TCP_CLIENT_DISCONNECTED, "TCP_CLIENT_DISCONNECTED" },
 		{ CTDB_CONTROL_TCP_CLIENT_PASSED, "TCP_CLIENT_PASSED" },
+		{ CTDB_CONTROL_START_IPREALLOCATE, "START_IPREALLOCATE" },
 		{ MAP_END, "" },
 	};
 
@@ -303,6 +304,8 @@ static void ctdb_srvid_print(uint64_t srvid, FILE *fp)
 		fprintf(fp, "TAKE_IP");
 	} else if (srvid == CTDB_SRVID_IPREALLOCATED) {
 		fprintf(fp, "IPREALLOCATED");
+	} else if (srvid == CTDB_SRVID_START_IPREALLOCATE) {
+		fprintf(fp, "START_IPREALLOCATE");
 	} else if (srvid == CTDB_SRVID_SET_NODE_FLAGS) {
 		fprintf(fp, "SET_NODE_FLAGS");
 	} else if (srvid == CTDB_SRVID_RECD_UPDATE_IP) {

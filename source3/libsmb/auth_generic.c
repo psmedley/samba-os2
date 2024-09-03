@@ -51,7 +51,7 @@ NTSTATUS auth_generic_set_password(struct auth_generic_state *ans,
 NTSTATUS auth_generic_set_creds(struct auth_generic_state *ans,
 				struct cli_credentials *creds)
 {
-	talloc_unlink(ans->credentials, creds);
+	talloc_unlink(ans, ans->credentials);
 	ans->credentials = creds;
 	return NT_STATUS_OK;
 }
@@ -80,7 +80,7 @@ NTSTATUS auth_generic_client_prepare(TALLOC_CTX *mem_ctx, struct auth_generic_st
 	}
 
 	gensec_settings = lpcfg_gensec_settings(ans, lp_ctx);
-	if (lp_ctx == NULL) {
+	if (gensec_settings == NULL) {
 		DEBUG(10, ("lpcfg_gensec_settings failed\n"));
 		TALLOC_FREE(ans);
 		return NT_STATUS_NO_MEMORY;
@@ -98,7 +98,7 @@ NTSTATUS auth_generic_client_prepare(TALLOC_CTX *mem_ctx, struct auth_generic_st
 
 	/* These need to be in priority order, krb5 before NTLMSSP */
 #if defined(HAVE_KRB5)
-	backends[idx++] = &gensec_gse_krb5_security_ops;
+	backends[idx++] = gensec_gse_security_by_oid(GENSEC_OID_KERBEROS5);
 #endif
 
 	backends[idx++] = gensec_security_by_oid(NULL, GENSEC_OID_NTLMSSP);

@@ -116,11 +116,16 @@ NTSTATUS connect_to_service(struct net_context *c,
 		flags |= CLI_FULL_CONNECTION_IPC;
 	}
 
-	nt_status = cli_full_connection_creds(cli_ctx, NULL, server_name,
-					server_ss, c->opt_port,
-					service_name, service_type,
-					c->creds,
-					flags);
+	nt_status = cli_full_connection_creds(c,
+					      cli_ctx,
+					      NULL,
+					      server_name,
+					      server_ss,
+					      c->opt_port,
+					      service_name,
+					      service_type,
+					      c->creds,
+					      flags);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		d_fprintf(stderr, _("Could not connect to server %s\n"),
 			  server_name);
@@ -177,11 +182,16 @@ NTSTATUS connect_to_ipc_anonymous(struct net_context *c,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	nt_status = cli_full_connection_creds(cli_ctx, c->opt_requester_name,
-					server_name, server_ss, c->opt_port,
-					"IPC$", "IPC",
-					anon_creds,
-					CLI_FULL_CONNECTION_IPC);
+	nt_status = cli_full_connection_creds(c,
+					      cli_ctx,
+					      c->opt_requester_name,
+					      server_name,
+					      server_ss,
+					      c->opt_port,
+					      "IPC$",
+					      "IPC",
+					      anon_creds,
+					      CLI_FULL_CONNECTION_IPC);
 
 	if (NT_STATUS_IS_OK(nt_status)) {
 		return nt_status;
@@ -249,22 +259,13 @@ NTSTATUS connect_dst_pipe(struct net_context *c, struct cli_state **cli_dst,
 
 int net_use_krb_machine_account(struct net_context *c)
 {
-	char *user_name = NULL;
-
 	if (!secrets_init()) {
 		d_fprintf(stderr,_("ERROR: Unable to open secrets database\n"));
 		exit(1);
 	}
 
-	c->opt_password = secrets_fetch_machine_password(
-				c->opt_target_workgroup, NULL, NULL);
-	if (asprintf(&user_name, "%s$@%s", lp_netbios_name(), lp_realm()) == -1) {
-		return -1;
-	}
-	c->opt_user_name = user_name;
-	c->opt_user_specified = true;
-
 	cli_credentials_set_machine_account(c->creds, c->lp_ctx);
+	c->explicit_credentials = true;
 	return 0;
 }
 
@@ -430,18 +431,6 @@ done:
 
 /****************************************************************************
 ****************************************************************************/
-
-/* TODO FIXME: Pass cli_creds via net_context and get rid of this function. */
-const char *net_prompt_pass(struct net_context *c, const char *user)
-{
-	struct cli_credentials *creds = samba_cmdline_get_creds();
-
-	if (c->opt_password == NULL) {
-		c->opt_password = cli_credentials_get_password(creds);
-	}
-
-	return c->opt_password;
-}
 
 int net_run_function(struct net_context *c, int argc, const char **argv,
 		      const char *whoami, struct functable *table)

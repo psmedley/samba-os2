@@ -37,21 +37,6 @@
 
 #undef strcasecmp
 
-/* FIXME: These should be in a header file somewhere */
-#define PyErr_LDB_OR_RAISE(py_ldb, ldb) \
-	if (!py_check_dcerpc_type(py_ldb, "ldb", "Ldb")) { \
-		PyErr_SetString(PyExc_TypeError, "Ldb connection object required"); \
-		return NULL; \
-	} \
-	ldb = pyldb_Ldb_AS_LDBCONTEXT(py_ldb);
-
-#define PyErr_LDB_DN_OR_RAISE(py_ldb_dn, dn) \
-	if (!py_check_dcerpc_type(py_ldb_dn, "ldb", "Dn")) { \
-		PyErr_SetString(PyExc_TypeError, "ldb Dn object required"); \
-		return NULL; \
-	} \
-	dn = pyldb_Dn_AS_DN(py_ldb_dn);
-
 static PyObject *py_ldb_get_exception(void)
 {
 	PyObject *mod = PyImport_ImportModule("ldb");
@@ -62,16 +47,6 @@ static PyObject *py_ldb_get_exception(void)
 	result = PyObject_GetAttrString(mod, "LdbError");
 	Py_CLEAR(mod);
 	return result;
-}
-
-static void PyErr_SetLdbError(PyObject *error, int ret, struct ldb_context *ldb_ctx)
-{
-	if (ret == LDB_ERR_PYTHON_EXCEPTION)
-		return; /* Python exception should already be set, just keep that */
-
-	PyErr_SetObject(error, 
-			Py_BuildValue(discard_const_p(char, "(i,s)"), ret,
-			ldb_ctx == NULL?ldb_strerror(ret):ldb_errstring(ldb_ctx)));
 }
 
 static PyObject *py_samdb_server_site_name(PyObject *self, PyObject *args)
@@ -1002,7 +977,7 @@ static PyObject *py_dsdb_get_partitions_dn(PyObject *self, PyObject *args)
 		PyErr_NoMemory();
 		return NULL;
 	}
-	ret = pyldb_Dn_FromDn(dn);
+	ret = pyldb_Dn_FromDn(dn, (PyLdbObject *)py_ldb);
 	talloc_free(dn);
 	return ret;
 }
@@ -1024,7 +999,7 @@ static PyObject *py_dsdb_get_nc_root(PyObject *self, PyObject *args)
 	ret = dsdb_find_nc_root(ldb, ldb, dn, &nc_root);
 	PyErr_LDB_ERROR_IS_ERR_RAISE(py_ldb_get_exception(), ret, ldb);
 
-	py_nc_root = pyldb_Dn_FromDn(nc_root);
+	py_nc_root = pyldb_Dn_FromDn(nc_root, (PyLdbObject *)py_ldb);
 	talloc_unlink(ldb, nc_root);
 	return py_nc_root;
 }
@@ -1051,7 +1026,7 @@ static PyObject *py_dsdb_get_wellknown_dn(PyObject *self, PyObject *args)
 
 	PyErr_LDB_ERROR_IS_ERR_RAISE(py_ldb_get_exception(), ret, ldb);
 
-	py_wk_dn = pyldb_Dn_FromDn(wk_dn);
+	py_wk_dn = pyldb_Dn_FromDn(wk_dn, (PyLdbObject *)py_ldb);
 	talloc_unlink(ldb, wk_dn);
 	return py_wk_dn;
 }
@@ -1168,6 +1143,18 @@ static PyObject *py_dsdb_allocate_rid(PyObject *self, PyObject *args)
 }
 
 #ifdef AD_DC_BUILD_IS_ENABLED
+/*
+ * These functions will not work correctly on non-AD_DC builds.
+ *
+ * The only real principal in deciding whether to put something within
+ * these guards is whether it will compile and work when
+ * bld.AD_DC_BUILD_IS_ENABLED() says no.
+ *
+ * Most of DSDB is built and samba-tool will work fine with remote
+ * servers (using -H ldap://), but some DNS and periodic service
+ * functions are not built.
+ */
+
 static PyObject *py_dns_delete_tombstones(PyObject *self, PyObject *args)
 {
 	PyObject *py_ldb;
@@ -1333,7 +1320,98 @@ static PyObject *py_dsdb_garbage_collect_tombstones(PyObject *self, PyObject *ar
 	return Py_BuildValue("(II)", num_objects_removed,
 			    num_links_removed);
 }
-#endif
+
+#else
+
+static PyObject *py_dsdb_not_implemented(PyObject *self, PyObject *args)
+{
+	PyErr_SetString(PyExc_NotImplementedError,
+			"Library built without AD DC support");
+	return NULL;
+}
+
+#endif /* AD_DC_BUILD_IS_ENABLED */
+
+
+static PyObject *py_dsdb_create_gkdi_root_key(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+	int ret;
+	PyObject *py_ldb = NULL;
+	PyObject *py_dn = NULL;
+	struct ldb_context *samdb;
+	/* long long time for Python conversions, NTTIME for Samba libs */
+	unsigned long long ll_current_time = 0;
+	unsigned long long ll_use_start_time = 0;
+	NTTIME current_time, use_start_time;
+	struct GUID root_key_id = {0};
+	const struct ldb_message * root_key_msg = NULL;
+
+	TALLOC_CTX *tmp_ctx = NULL;
+	const char * const kwnames[] = {
+		"ldb",
+		"current_time",
+		"use_start_time",
+		NULL
+	};
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|KK",
+					 discard_const_p(char *, kwnames),
+					 &py_ldb,
+					 &ll_current_time,
+					 &ll_use_start_time)) {
+		return NULL;
+	}
+
+	PyErr_LDB_OR_RAISE(py_ldb, samdb);
+
+	current_time = ll_current_time;
+	use_start_time = ll_use_start_time;
+	/*
+	 * If current_time or use_start_time are not provided, we use
+	 * now. FIXME? should use_start_time be +10 hours or something?
+	 */
+	if (current_time == 0 || use_start_time == 0) {
+		struct timeval now = timeval_current();
+		NTTIME nt_now = timeval_to_nttime(&now);
+		if (current_time == 0) {
+			current_time = nt_now;
+		}
+		if (use_start_time == 0) {
+			use_start_time = nt_now;
+		}
+	}
+
+	tmp_ctx = talloc_new(samdb);
+	if (tmp_ctx == NULL) {
+		return PyErr_NoMemory();
+	}
+	ret = gkdi_new_root_key(tmp_ctx,
+				samdb,
+				current_time,
+				use_start_time,
+				&root_key_id,
+				&root_key_msg);
+
+	PyErr_LDB_ERROR_IS_ERR_RAISE_FREE(py_ldb_get_exception(), ret,
+					  samdb, tmp_ctx);
+
+
+	py_dn = pyldb_Dn_FromDn(root_key_msg->dn,
+				(PyLdbObject *)py_ldb);
+	if (py_dn == NULL) {
+		PyErr_LDB_ERROR_IS_ERR_RAISE_FREE(py_ldb_get_exception(),
+						  LDB_ERR_OPERATIONS_ERROR,
+						  samdb, tmp_ctx);
+	}
+
+	/*
+	 * py_dn keeps a talloc_reference to it's own dn, and the
+	 * root_key is in the database.
+	 */
+	TALLOC_FREE(tmp_ctx);
+	return py_dn;
+}
+
 
 static PyObject *py_dsdb_load_udv_v2(PyObject *self, PyObject *args)
 {
@@ -1481,7 +1559,7 @@ static PyMethodDef py_dsdb_methods[] = {
 	{ "_samdb_server_site_name", (PyCFunction)py_samdb_server_site_name,
 		METH_VARARGS, "Get the server site name as a string"},
 	{ "_dsdb_convert_schema_to_openldap",
-		(PyCFunction)py_dsdb_convert_schema_to_openldap, METH_VARARGS, 
+		(PyCFunction)py_dsdb_convert_schema_to_openldap, METH_VARARGS,
 		"dsdb_convert_schema_to_openldap(ldb, target_str, mapping) -> str\n"
 		"Create an OpenLDAP schema from a schema." },
 	{ "_samdb_set_domain_sid", (PyCFunction)py_samdb_set_domain_sid,
@@ -1550,7 +1628,19 @@ static PyMethodDef py_dsdb_methods[] = {
 		METH_VARARGS, NULL},
 	{ "_dns_delete_tombstones", (PyCFunction)py_dns_delete_tombstones,
 		METH_VARARGS, NULL},
+#else
+	{ "_dsdb_garbage_collect_tombstones", (PyCFunction)py_dsdb_not_implemented,
+		METH_VARARGS, NULL},
+	{ "_scavenge_dns_records", (PyCFunction)py_dsdb_not_implemented,
+		METH_VARARGS, NULL},
+	{ "_dns_delete_tombstones", (PyCFunction)py_dsdb_not_implemented,
+		METH_VARARGS, NULL},
 #endif
+	{ "_dsdb_create_gkdi_root_key",
+	  (PyCFunction)py_dsdb_create_gkdi_root_key,
+	  METH_VARARGS | METH_KEYWORDS,
+	  PyDoc_STR("_dsdb_create_gkdi_root_key(samdb)"
+		    " -> Dn of the new root key") },
 	{ "_dsdb_create_own_rid_set", (PyCFunction)py_dsdb_create_own_rid_set, METH_VARARGS,
 		"_dsdb_create_own_rid_set(samdb)"
 		" -> None" },

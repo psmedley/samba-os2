@@ -21,6 +21,7 @@
 #include "system/network.h"
 #include "system/filesys.h"
 #include "system/wait.h"
+#include "lib/util/util_file.h"
 
 #include <tdb.h>
 
@@ -138,36 +139,6 @@ bool ctdb_set_helper(const char *type, char *helper, size_t size,
 	      ("Set %s to \"%s\"\n", type, helper));
 	return true;
 }
-
-/*
-  parse a IP:port pair
-*/
-int ctdb_parse_address(TALLOC_CTX *mem_ctx, const char *str,
-		       ctdb_sock_addr *address)
-{
-	struct servent *se;
-	int port;
-	int ret;
-
-	setservent(0);
-	se = getservbyname("ctdb", "tcp");
-	endservent();
-
-	if (se == NULL) {
-		port = CTDB_PORT;
-	} else {
-		port = ntohs(se->s_port);
-	}
-
-	ret = ctdb_sock_addr_from_string(str, address, false);
-	if (ret != 0) {
-		return -1;
-	}
-	ctdb_sock_addr_set_port(address, port);
-
-	return 0;
-}
-
 
 /*
   check if two addresses are the same
@@ -463,110 +434,6 @@ unsigned ctdb_addr_to_port(ctdb_sock_addr *addr)
 	return 0;
 }
 
-/* Add a node to a node map with given address and flags */
-static bool node_map_add(TALLOC_CTX *mem_ctx,
-			 const char *nstr, uint32_t flags,
-			 struct ctdb_node_map_old **node_map)
-{
-	ctdb_sock_addr addr;
-	uint32_t num;
-	size_t s;
-	struct ctdb_node_and_flags *n;
-
-	/* Might as well do this before trying to allocate memory */
-	if (ctdb_parse_address(mem_ctx, nstr, &addr) == -1) {
-		return false;
-	}
-
-	num = (*node_map)->num + 1;
-	s = offsetof(struct ctdb_node_map_old, nodes) +
-		num * sizeof(struct ctdb_node_and_flags);
-	*node_map = talloc_realloc_size(mem_ctx, *node_map, s);
-	if (*node_map == NULL) {
-		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
-		return false;
-	}
-
-	n = &(*node_map)->nodes[(*node_map)->num];
-	n->addr = addr;
-	n->pnn = (*node_map)->num;
-	n->flags = flags;
-
-	(*node_map)->num++;
-
-	return true;
-}
-
-/* Read a nodes file into a node map */
-struct ctdb_node_map_old *ctdb_read_nodes_file(TALLOC_CTX *mem_ctx,
-					   const char *nlist)
-{
-	char **lines;
-	int nlines;
-	int i;
-	struct ctdb_node_map_old *ret;
-
-	/* Allocate node map header */
-	ret = talloc_zero_size(mem_ctx, offsetof(struct ctdb_node_map_old, nodes));
-	if (ret == NULL) {
-		DEBUG(DEBUG_ERR, (__location__ " Out of memory\n"));
-		return false;
-	}
-
-	lines = file_lines_load(nlist, &nlines, 0, mem_ctx);
-	if (lines == NULL) {
-		DEBUG(DEBUG_ERR, ("Failed to read nodes file \"%s\"\n", nlist));
-		return false;
-	}
-	while (nlines > 0 && strcmp(lines[nlines-1], "") == 0) {
-		nlines--;
-	}
-
-	for (i=0; i < nlines; i++) {
-		char *node;
-		uint32_t flags;
-		size_t len;
-
-		node = lines[i];
-		/* strip leading spaces */
-		while((*node == ' ') || (*node == '\t')) {
-			node++;
-		}
-
-		len = strlen(node);
-
-		while ((len > 1) &&
-		       ((node[len-1] == ' ') || (node[len-1] == '\t')))
-		{
-			node[len-1] = '\0';
-			len--;
-		}
-
-		if (len == 0) {
-			continue;
-		}
-		if (*node == '#') {
-			/* A "deleted" node is a node that is
-			   commented out in the nodes file.  This is
-			   used instead of removing a line, which
-			   would cause subsequent nodes to change
-			   their PNN. */
-			flags = NODE_FLAGS_DELETED;
-			node = discard_const("0.0.0.0");
-		} else {
-			flags = 0;
-		}
-		if (!node_map_add(mem_ctx, node, flags, &ret)) {
-			talloc_free(lines);
-			TALLOC_FREE(ret);
-			return NULL;
-		}
-	}
-
-	talloc_free(lines);
-	return ret;
-}
-
 struct ctdb_node_map_old *
 ctdb_node_list_to_map(struct ctdb_node **nodes, uint32_t num_nodes,
 		      TALLOC_CTX *mem_ctx)
@@ -594,66 +461,11 @@ ctdb_node_list_to_map(struct ctdb_node **nodes, uint32_t num_nodes,
 	return node_map;
 }
 
-const char *ctdb_eventscript_call_names[] = {
-	"init",
-	"setup",
-	"startup",
-	"startrecovery",
-	"recovered",
-	"takeip",
-	"releaseip",
-	"stopped",
-	"monitor",
-	"status",
-	"shutdown",
-	"reload",
-	"updateip",
-	"ipreallocated"
-};
-
 /* Runstate handling */
-static struct {
-	enum ctdb_runstate runstate;
-	const char * label;
-} runstate_map[] = {
-	{ CTDB_RUNSTATE_UNKNOWN, "UNKNOWN" },
-	{ CTDB_RUNSTATE_INIT, "INIT" },
-	{ CTDB_RUNSTATE_SETUP, "SETUP" },
-	{ CTDB_RUNSTATE_FIRST_RECOVERY, "FIRST_RECOVERY" },
-	{ CTDB_RUNSTATE_STARTUP, "STARTUP" },
-	{ CTDB_RUNSTATE_RUNNING, "RUNNING" },
-	{ CTDB_RUNSTATE_SHUTDOWN, "SHUTDOWN" },
-	{ -1, NULL },
-};
-
-const char *runstate_to_string(enum ctdb_runstate runstate)
-{
-	int i;
-	for (i=0; runstate_map[i].label != NULL ; i++) {
-		if (runstate_map[i].runstate == runstate) {
-			return runstate_map[i].label;
-		}
-	}
-
-	return runstate_map[0].label;
-}
-
-enum ctdb_runstate runstate_from_string(const char *label)
-{
-	int i;
-	for (i=0; runstate_map[i].label != NULL; i++) {
-		if (strcasecmp(runstate_map[i].label, label) == 0) {
-			return runstate_map[i].runstate;
-		}
-	}
-
-	return CTDB_RUNSTATE_UNKNOWN;
-}
-
 void ctdb_set_runstate(struct ctdb_context *ctdb, enum ctdb_runstate runstate)
 {
 	DEBUG(DEBUG_NOTICE,("Set runstate to %s (%d)\n",
-			    runstate_to_string(runstate), runstate));
+			    ctdb_runstate_to_string(runstate), runstate));
 
 	if (runstate <= ctdb->runstate) {
 		ctdb_fatal(ctdb, "runstate must always increase");

@@ -1069,7 +1069,7 @@ krb5_h_addr2addr (krb5_context context,
  * @param context a Keberos context
  * @param af address family
  * @param sa sockaddr
- * @param sa_size lenght of sa.
+ * @param sa_size length of sa.
  * @param port for to fill into sa.
  *
  * @return Return an error code or 0.
@@ -1210,6 +1210,11 @@ krb5_parse_address(krb5_context context,
     /* if not parsed as numeric address, do a name lookup */
     memset(&hint, 0, sizeof(hint));
     hint.ai_family = AF_UNSPEC;
+    if (krb5_config_get_bool(context, NULL, "libdefaults", "block_dns",
+	    NULL)) {
+	hint.ai_flags &= ~AI_CANONNAME;
+	hint.ai_flags |= AI_NUMERICHOST|AI_NUMERICSERV;
+    }
     error = getaddrinfo (string, NULL, &hint, &ai);
     if (error) {
 	krb5_error_code ret2;
@@ -1444,7 +1449,7 @@ krb5_copy_addresses(krb5_context context,
  *
  * @param context a Keberos context
  * @param dest destination of copy operation
- * @param source adresses that are going to be added to dest
+ * @param source addresses that are going to be added to dest
  *
  * @return Return an error code or 0.
  *

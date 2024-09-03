@@ -11,7 +11,26 @@
 	</para>
 
 	<para>
-	Each entry must be a unix path, not a DOS path and must <emphasis>not</emphasis> include the  
+	<smbconfoption name="veto files"/> can also be used as a
+	parametric option where NAME in</para>
+
+	<para>
+	veto files : NAME =
+	</para>
+
+	<para>
+	specifies a user or group name with the same syntax as
+	<smbconfoption name="valid users"/>. This parametric form can
+	be specified multiple times for different users or
+	groups. This means that &quot;veto files : NAME&quot; set both
+	in the [global] and the share section add up, whereas normally
+	options set in a share section overwrite the default in the
+	[global] section.
+	</para>
+
+	<para>
+	Each filename must be a unix path, not a DOS path and must
+	<emphasis>not</emphasis> include the
 	unix directory 	separator '/'.
 	</para>
 
@@ -38,6 +57,14 @@
 ; any ending in .tmp, and any directory containing the
 ; word root.
 veto files = /*Security*/*.tmp/*root*/
+
+; Veto some files for anyone and some files for specific users and groups
+veto files = /vetoforall1/
+veto files : USER = /vetotoforuser/
+veto files : GROUP = /vetoforgroup/
+veto files : UNIVERSITY\Alumnis = /somefile.txt/
+veto files : john@university.org = /anotherfile.txt/
+veto files : S-1-5-21-123-456-789-1000 = /secretfile.txt/
 
 ; Veto the Apple specific files that a NetAtalk server
 ; creates.

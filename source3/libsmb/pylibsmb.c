@@ -208,12 +208,14 @@ static int py_cli_thread_destructor(struct py_cli_thread *t)
 	ssize_t written;
 	int ret;
 
-	do {
-		/*
-		 * This will wake the poll thread from the poll(2)
-		 */
-		written = write(t->shutdown_pipe[1], &c, 1);
-	} while ((written == -1) && (errno == EINTR));
+	if (t->shutdown_pipe[1] != -1) {
+		do {
+			/*
+			* This will wake the poll thread from the poll(2)
+			*/
+			written = write(t->shutdown_pipe[1], &c, 1);
+		} while ((written == -1) && (errno == EINTR));
+	}
 
 	/*
 	 * Allow the poll thread to do its own cleanup under the GIL
@@ -646,7 +648,7 @@ static int py_cli_state_init(struct py_cli_state *self, PyObject *args,
 	if (!py_tevent_req_wait_exc(self, req)) {
 		return -1;
 	}
-	status = cli_full_connection_creds_recv(req, &self->cli);
+	status = cli_full_connection_creds_recv(req, NULL, &self->cli);
 	TALLOC_FREE(req);
 
 	if (!NT_STATUS_IS_OK(status)) {
@@ -1261,6 +1263,61 @@ static PyObject *py_cli_close(struct py_cli_state *self, PyObject *args)
 		return NULL;
 	}
 	Py_RETURN_NONE;
+}
+
+static PyObject *py_cli_qfileinfo(struct py_cli_state *self, PyObject *args)
+{
+	struct tevent_req *req = NULL;
+	int fnum, level;
+	uint16_t recv_flags2;
+	uint8_t *rdata = NULL;
+	uint32_t num_rdata;
+	PyObject *result = NULL;
+	NTSTATUS status;
+
+	if (!PyArg_ParseTuple(args, "ii", &fnum, &level)) {
+		return NULL;
+	}
+
+	req = cli_qfileinfo_send(
+		NULL, self->ev, self->cli, fnum, level, 0, UINT32_MAX);
+	if (!py_tevent_req_wait_exc(self, req)) {
+		return NULL;
+	}
+	status = cli_qfileinfo_recv(
+		req, NULL, &recv_flags2, &rdata, &num_rdata);
+	TALLOC_FREE(req);
+
+	if (!NT_STATUS_IS_OK(status)) {
+		PyErr_SetNTSTATUS(status);
+		return NULL;
+	}
+
+	switch (level) {
+	case FSCC_FILE_ATTRIBUTE_TAG_INFORMATION: {
+		uint32_t mode = PULL_LE_U32(rdata, 0);
+		uint32_t tag = PULL_LE_U32(rdata, 4);
+
+		if (num_rdata != 8) {
+			PyErr_SetNTSTATUS(NT_STATUS_INVALID_NETWORK_RESPONSE);
+			return NULL;
+		}
+
+		result = Py_BuildValue("{s:K,s:K}",
+				       "mode",
+				       (unsigned long long)mode,
+				       "tag",
+				       (unsigned long long)tag);
+		break;
+	}
+	default:
+		result = PyBytes_FromStringAndSize((char *)rdata, num_rdata);
+		break;
+	}
+
+	TALLOC_FREE(rdata);
+
+	return result;
 }
 
 static PyObject *py_cli_rename(
@@ -1886,6 +1943,7 @@ static NTSTATUS list_posix_helper(struct file_info *finfo,
 {
 	PyObject *result = (PyObject *)state;
 	PyObject *file = NULL;
+	struct dom_sid_buf owner_buf, group_buf;
 	int ret;
 
 	/*
@@ -1895,13 +1953,15 @@ static NTSTATUS list_posix_helper(struct file_info *finfo,
 			     "s:K,s:K,"
 			     "s:l,s:l,s:l,s:l,"
 			     "s:i,s:K,s:i,s:i,s:I,"
-			     "s:s,s:s}",
-			     "name", finfo->name,
-			     "attrib", finfo->attr,
-
-			     "size", finfo->size,
-			     "allocaction_size", finfo->allocated_size,
-
+			     "s:s,s:s,s:k}",
+			     "name",
+			     finfo->name,
+			     "attrib",
+			     finfo->attr,
+			     "size",
+			     finfo->size,
+			     "allocaction_size",
+			     finfo->allocated_size,
 			     "btime",
 			     convert_timespec_to_time_t(finfo->btime_ts),
 			     "atime",
@@ -1910,17 +1970,22 @@ static NTSTATUS list_posix_helper(struct file_info *finfo,
 			     convert_timespec_to_time_t(finfo->mtime_ts),
 			     "ctime",
 			     convert_timespec_to_time_t(finfo->ctime_ts),
-
-			     "perms", finfo->st_ex_mode,
-			     "ino", finfo->ino,
-			     "dev", finfo->st_ex_dev,
-			     "nlink", finfo->st_ex_nlink,
-			     "reparse_tag", finfo->reparse_tag,
-
+			     "perms",
+			     finfo->st_ex_mode,
+			     "ino",
+			     finfo->ino,
+			     "dev",
+			     finfo->st_ex_dev,
+			     "nlink",
+			     finfo->st_ex_nlink,
+			     "reparse_tag",
+			     finfo->reparse_tag,
 			     "owner_sid",
-			     dom_sid_string(finfo, &finfo->owner_sid),
+			     dom_sid_str_buf(&finfo->owner_sid, &owner_buf),
 			     "group_sid",
-			     dom_sid_string(finfo, &finfo->group_sid));
+			     dom_sid_str_buf(&finfo->group_sid, &group_buf),
+			     "reparse_tag",
+			     (unsigned long)finfo->reparse_tag);
 	if (file == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -1954,13 +2019,19 @@ static NTSTATUS list_helper(struct file_info *finfo,
 	 * Build a dictionary representing the file info.
 	 * Note: Windows does not always return short_name (so it may be None)
 	 */
-	file = Py_BuildValue("{s:s,s:i,s:s,s:O,s:l}",
-			     "name", finfo->name,
-			     "attrib", (int)finfo->attr,
-			     "short_name", finfo->short_name,
-			     "size", size,
+	file = Py_BuildValue("{s:s,s:i,s:s,s:O,s:l,s:k}",
+			     "name",
+			     finfo->name,
+			     "attrib",
+			     (int)finfo->attr,
+			     "short_name",
+			     finfo->short_name,
+			     "size",
+			     size,
 			     "mtime",
-			     convert_timespec_to_time_t(finfo->mtime_ts));
+			     convert_timespec_to_time_t(finfo->mtime_ts),
+			     "reparse_tag",
+			     (unsigned long)finfo->reparse_tag);
 
 	Py_CLEAR(size);
 
@@ -2077,7 +2148,7 @@ static PyObject *py_cli_list(struct py_cli_state *self,
 	const char *kwlist[] = { "directory", "mask", "attribs",
 				 "info_level", NULL };
 	NTSTATUS (*callback_fn)(struct file_info *, const char *, void *) =
-		&list_helper;
+		list_helper;
 
 	if (!ParseTupleAndKeywords(args, kwds, "z|sII:list", kwlist,
 				   &base_dir, &user_mask, &attribute,
@@ -2099,7 +2170,7 @@ static PyObject *py_cli_list(struct py_cli_state *self,
 	}
 
 	if (info_level == SMB2_FIND_POSIX_INFORMATION) {
-		callback_fn = &list_posix_helper;
+		callback_fn = list_posix_helper;
 	}
 	status = do_listing(self, base_dir, user_mask, attribute,
 			    info_level, callback_fn, result);
@@ -2773,6 +2844,12 @@ static PyMethodDef py_cli_state_methods[] = {
 	  METH_VARARGS|METH_KEYWORDS,
 	  "fsctl(fnum, ctl_code, in_bytes, max_out) -> out_bytes",
 	},
+	{
+		"qfileinfo",
+		(PyCFunction)py_cli_qfileinfo,
+		METH_VARARGS | METH_KEYWORDS,
+		"qfileinfo(fnum, level) -> blob",
+	},
 	{ "mknod",
 	  PY_DISCARD_FUNC_SIG(PyCFunction, py_cli_mknod),
 	  METH_VARARGS|METH_KEYWORDS,
@@ -2997,6 +3074,54 @@ MODULE_INIT_FUNC(libsmb_samba_cwrapper)
 	ADD_FLAGS(IO_REPARSE_TAG_SIS);
 	ADD_FLAGS(IO_REPARSE_TAG_DFS);
 	ADD_FLAGS(IO_REPARSE_TAG_NFS);
+
+	ADD_FLAGS(FSCC_FILE_DIRECTORY_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_FULL_DIRECTORY_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_BOTH_DIRECTORY_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_BASIC_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_STANDARD_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_INTERNAL_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_EA_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ACCESS_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_NAME_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_RENAME_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_LINK_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_NAMES_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_DISPOSITION_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_POSITION_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_FULL_EA_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_MODE_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ALIGNMENT_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ALL_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ALLOCATION_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_END_OF_FILE_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ALTERNATE_NAME_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_STREAM_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_PIPE_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_PIPE_LOCAL_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_PIPE_REMOTE_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_MAILSLOT_QUERY_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_MAILSLOT_SET_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_COMPRESSION_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_OBJECTID_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_COMPLETION_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_MOVE_CLUSTER_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_QUOTA_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_REPARSEPOINT_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_NETWORK_OPEN_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ATTRIBUTE_TAG_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_TRACKING_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ID_BOTH_DIRECTORY_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ID_FULL_DIRECTORY_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_VALID_DATA_LENGTH_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_SHORT_NAME_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_SFIO_RESERVE_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_SFIO_VOLUME_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_HARD_LINK_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_NORMALIZED_NAME_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_ID_GLOBAL_TX_DIRECTORY_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_STANDARD_LINK_INFORMATION);
+	ADD_FLAGS(FSCC_FILE_MAXIMUM_INFORMATION);
 
 #define ADD_STRING(val) PyModule_AddObject(m, #val, PyBytes_FromString(val))
 

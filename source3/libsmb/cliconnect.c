@@ -24,14 +24,10 @@
 #include "libsmb/libsmb.h"
 #include "libsmb/namequery.h"
 #include "../libcli/auth/libcli_auth.h"
-#include "../libcli/auth/spnego.h"
-#include "smb_krb5.h"
 #include "auth/credentials/credentials.h"
 #include "auth/gensec/gensec.h"
 #include "auth/ntlmssp/ntlmssp.h"
 #include "auth_generic.h"
-#include "libads/kerberos_proto.h"
-#include "krb5_env.h"
 #include "../lib/util/tevent_ntstatus.h"
 #include "async_smb.h"
 #include "libsmb/nmblib.h"
@@ -40,8 +36,6 @@
 #include "../libcli/smb/smb_seal.h"
 #include "lib/param/param.h"
 #include "../libcli/smb/smb2_negotiate_context.h"
-
-#define STAR_SMBSERVER "*SMBSERVER"
 
 static char *cli_session_setup_get_account(TALLOC_CTX *mem_ctx,
 					   const char *principal);
@@ -59,6 +53,7 @@ struct cli_credentials *cli_session_creds_init(TALLOC_CTX *mem_ctx,
 	struct loadparm_context *lp_ctx = NULL;
 	struct cli_credentials *creds = NULL;
 	const char *principal = NULL;
+	enum credentials_use_kerberos creds_use_krb;
 	char *tmp = NULL;
 	char *p = NULL;
 	bool ok;
@@ -124,27 +119,28 @@ struct cli_credentials *cli_session_creds_init(TALLOC_CTX *mem_ctx,
 		principal = NULL;
 	}
 
-	if (use_kerberos && fallback_after_kerberos) {
-		cli_credentials_set_kerberos_state(creds,
-						   CRED_USE_KERBEROS_DESIRED,
-						   CRED_SPECIFIED);
-	} else if (use_kerberos) {
-		cli_credentials_set_kerberos_state(creds,
-						   CRED_USE_KERBEROS_REQUIRED,
-						   CRED_SPECIFIED);
+	if (use_kerberos) {
+		if (fallback_after_kerberos) {
+			/*
+			 * Keep what we learned from the
+			 * "client use kerberos" option.
+			 */
+			creds_use_krb = cli_credentials_get_kerberos_state(
+				creds);
+		} else {
+			creds_use_krb = CRED_USE_KERBEROS_REQUIRED;
+		}
 	} else {
-		cli_credentials_set_kerberos_state(creds,
-						   CRED_USE_KERBEROS_DISABLED,
-						   CRED_SPECIFIED);
+		creds_use_krb = CRED_USE_KERBEROS_DISABLED;
 	}
 
-	if (use_ccache) {
-		uint32_t features;
+	cli_credentials_set_kerberos_state(creds,
+					   creds_use_krb,
+					   CRED_SPECIFIED);
 
-		features = cli_credentials_get_gensec_features(creds);
-		features |= GENSEC_FEATURE_NTLM_CCACHE;
-		cli_credentials_set_gensec_features(creds,
-						    features,
+	if (use_ccache) {
+		cli_credentials_add_gensec_features(creds,
+						    GENSEC_FEATURE_NTLM_CCACHE,
 						    CRED_SPECIFIED);
 
 		if (password != NULL && strlen(password) == 0) {
@@ -219,158 +215,27 @@ struct cli_credentials *cli_session_creds_init(TALLOC_CTX *mem_ctx,
 				goto fail;
 			}
 		}
+	} else if (use_kerberos && !fallback_after_kerberos) {
+		const char *error_string = NULL;
+		int rc;
+
+		rc = cli_credentials_set_ccache(creds,
+						lp_ctx,
+						NULL,
+						CRED_SPECIFIED,
+						&error_string);
+		if (rc != 0) {
+			fprintf(stderr,
+				"Warning reading default "
+				"krb5 credentials cache: %s\n",
+				error_string);
+		}
 	}
 
 	return creds;
 fail:
 	TALLOC_FREE(creds);
 	return NULL;
-}
-
-NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
-					struct cli_credentials *creds)
-{
-	TALLOC_CTX *frame = talloc_stackframe();
-	const char *user_principal = NULL;
-	const char *user_account = NULL;
-	const char *user_domain = NULL;
-	const char *pass = NULL;
-	char *canon_principal = NULL;
-	char *canon_realm = NULL;
-	const char *target_hostname = NULL;
-	enum credentials_use_kerberos krb5_state;
-	bool try_kerberos = false;
-	bool need_kinit = false;
-	bool auth_requested = true;
-	int ret;
-	bool ok;
-
-	target_hostname = smbXcli_conn_remote_name(cli->conn);
-
-	auth_requested = cli_credentials_authentication_requested(creds);
-	if (auth_requested) {
-		errno = 0;
-		user_principal = cli_credentials_get_principal(creds, frame);
-		if (errno != 0) {
-			TALLOC_FREE(frame);
-			return NT_STATUS_NO_MEMORY;
-		}
-	}
-	user_account = cli_credentials_get_username(creds);
-	user_domain = cli_credentials_get_domain(creds);
-	pass = cli_credentials_get_password(creds);
-
-	krb5_state = cli_credentials_get_kerberos_state(creds);
-
-	if (krb5_state != CRED_USE_KERBEROS_DISABLED) {
-		try_kerberos = true;
-	}
-
-	if (user_principal == NULL) {
-		try_kerberos = false;
-	}
-
-	if (target_hostname == NULL) {
-		try_kerberos = false;
-	} else if (is_ipaddress(target_hostname)) {
-		try_kerberos = false;
-	} else if (strequal(target_hostname, "localhost")) {
-		try_kerberos = false;
-	} else if (strequal(target_hostname, STAR_SMBSERVER)) {
-		try_kerberos = false;
-	} else if (!auth_requested) {
-		try_kerberos = false;
-	}
-
-	if (krb5_state == CRED_USE_KERBEROS_REQUIRED && !try_kerberos) {
-		DEBUG(0, ("Kerberos auth with '%s' (%s\\%s) to access "
-			  "'%s' not possible\n",
-			  user_principal, user_domain, user_account,
-			  target_hostname));
-		TALLOC_FREE(frame);
-		return NT_STATUS_ACCESS_DENIED;
-	}
-
-	if (pass == NULL || strlen(pass) == 0) {
-		need_kinit = false;
-	} else if (krb5_state == CRED_USE_KERBEROS_REQUIRED) {
-		need_kinit = try_kerberos;
-	} else {
-		need_kinit = try_kerberos;
-	}
-
-	if (!need_kinit) {
-		TALLOC_FREE(frame);
-		return NT_STATUS_OK;
-	}
-
-	DBG_INFO("Doing kinit for %s to access %s\n",
-		 user_principal, target_hostname);
-
-	/*
-	 * TODO: This should be done within the gensec layer
-	 * only if required!
-	 */
-	setenv(KRB5_ENV_CCNAME, "MEMORY:cliconnect", 1);
-	ret = kerberos_kinit_password_ext(user_principal,
-					  pass,
-					  0,
-					  0,
-					  0,
-					  NULL,
-					  false,
-					  false,
-					  0,
-					  frame,
-					  &canon_principal,
-					  &canon_realm,
-					  NULL);
-	if (ret != 0) {
-		int dbglvl = DBGLVL_NOTICE;
-
-		if (krb5_state == CRED_USE_KERBEROS_REQUIRED) {
-			dbglvl = DBGLVL_ERR;
-		}
-
-		DEBUG(dbglvl, ("Kinit for %s to access %s failed: %s\n",
-			       user_principal, target_hostname,
-			       error_message(ret)));
-		if (krb5_state == CRED_USE_KERBEROS_REQUIRED) {
-			TALLOC_FREE(frame);
-			return krb5_to_nt_status(ret);
-		}
-
-		/*
-		 * Ignore the error and hope that NTLM will work
-		 */
-		TALLOC_FREE(frame);
-		return NT_STATUS_OK;
-	}
-
-	ok = cli_credentials_set_principal(creds,
-					   canon_principal,
-					   CRED_SPECIFIED);
-	if (!ok) {
-		TALLOC_FREE(frame);
-		return NT_STATUS_NO_MEMORY;
-	}
-
-	ok = cli_credentials_set_realm(creds,
-				       canon_realm,
-				       CRED_SPECIFIED);
-	if (!ok) {
-		TALLOC_FREE(frame);
-		return NT_STATUS_NO_MEMORY;
-	}
-
-	DBG_DEBUG("Successfully authenticated as %s (%s) to access %s using "
-		  "Kerberos\n",
-		  user_principal,
-		  canon_principal,
-		  target_hostname);
-
-	TALLOC_FREE(frame);
-	return NT_STATUS_OK;
 }
 
 static NTSTATUS cli_state_update_after_sesssetup(struct cli_state *cli,
@@ -1328,7 +1193,6 @@ static struct tevent_req *cli_session_setup_spnego_send(
 	struct cli_session_setup_spnego_state *state;
 	const char *target_service = NULL;
 	const char *target_hostname = NULL;
-	NTSTATUS status;
 
 	req = tevent_req_create(mem_ctx, &state,
 				struct cli_session_setup_spnego_state);
@@ -1338,11 +1202,6 @@ static struct tevent_req *cli_session_setup_spnego_send(
 
 	target_service = "cifs";
 	target_hostname = smbXcli_conn_remote_name(cli->conn);
-
-	status = cli_session_creds_prepare_krb5(cli, creds);
-	if (tevent_req_nterror(req, status)) {
-		return tevent_req_post(req, ev);
-	}
 
 	DBG_INFO("Connect to %s as %s using SPNEGO\n",
 		 target_hostname,
@@ -2424,9 +2283,25 @@ NTSTATUS cli_tree_connect_creds(struct cli_state *cli,
 				const char *share, const char *dev,
 				struct cli_credentials *creds)
 {
+	bool need_pass = false;
 	const char *pw = NULL;
 
-	if (creds != NULL) {
+	/*
+	 * We should work out if the protocol
+	 * will make use of a password for share level
+	 * authentication before we may cause
+	 * the password prompt to be called.
+	 */
+	if (smbXcli_conn_protocol(cli->conn) < PROTOCOL_SMB2_02) {
+		uint16_t sec_mode = smb1cli_conn_server_security_mode(cli->conn);
+
+		/* in user level security don't send a password now */
+		if (!(sec_mode & NEGOTIATE_SECURITY_USER_LEVEL)) {
+			need_pass = true;
+		}
+	}
+
+	if (need_pass && creds != NULL) {
 		pw = cli_credentials_get_password(creds);
 	}
 
@@ -2683,7 +2558,7 @@ static struct tevent_req *cli_connect_nb_send(
 		}
 	} else {
 		/* No host or dest_ss given. Error out. */
-		tevent_req_error(req, EINVAL);
+		tevent_req_nterror(req, NT_STATUS_INVALID_PARAMETER_MIX);
 		return tevent_req_post(req, ev);
 	}
 
@@ -2722,6 +2597,7 @@ static void cli_connect_nb_done(struct tevent_req *subreq)
 }
 
 static NTSTATUS cli_connect_nb_recv(struct tevent_req *req,
+				    TALLOC_CTX *mem_ctx,
 				    struct cli_state **pcli)
 {
 	struct cli_connect_nb_state *state = tevent_req_data(
@@ -2731,19 +2607,25 @@ static NTSTATUS cli_connect_nb_recv(struct tevent_req *req,
 	if (tevent_req_is_nterror(req, &status)) {
 		return status;
 	}
-	*pcli = talloc_move(NULL, &state->cli);
+	*pcli = talloc_move(mem_ctx, &state->cli);
 	return NT_STATUS_OK;
 }
 
-NTSTATUS cli_connect_nb(const char *host, const struct sockaddr_storage *dest_ss,
-			uint16_t port, int name_type, const char *myname,
-			enum smb_signing_setting signing_state, int flags, struct cli_state **pcli)
+NTSTATUS cli_connect_nb(TALLOC_CTX *mem_ctx,
+			const char *host,
+			const struct sockaddr_storage *dest_ss,
+			uint16_t port,
+			int name_type,
+			const char *myname,
+			enum smb_signing_setting signing_state,
+			int flags,
+			struct cli_state **pcli)
 {
 	struct tevent_context *ev;
 	struct tevent_req *req;
 	NTSTATUS status = NT_STATUS_NO_MEMORY;
 
-	ev = samba_tevent_context_init(talloc_tos());
+	ev = samba_tevent_context_init(mem_ctx);
 	if (ev == NULL) {
 		goto fail;
 	}
@@ -2758,7 +2640,7 @@ NTSTATUS cli_connect_nb(const char *host, const struct sockaddr_storage *dest_ss
 	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
 		goto fail;
 	}
-	status = cli_connect_nb_recv(req, pcli);
+	status = cli_connect_nb_recv(req, mem_ctx, pcli);
 fail:
 	TALLOC_FREE(ev);
 	return status;
@@ -2879,7 +2761,7 @@ static void cli_start_connection_connected(struct tevent_req *subreq)
 		req, struct cli_start_connection_state);
 	NTSTATUS status;
 
-	status = cli_connect_nb_recv(subreq, &state->cli);
+	status = cli_connect_nb_recv(subreq, state, &state->cli);
 	TALLOC_FREE(subreq);
 	if (tevent_req_nterror(req, status)) {
 		return;
@@ -2924,6 +2806,7 @@ static void cli_start_connection_done(struct tevent_req *subreq)
 }
 
 static NTSTATUS cli_start_connection_recv(struct tevent_req *req,
+					  TALLOC_CTX *mem_ctx,
 					  struct cli_state **output_cli)
 {
 	struct cli_start_connection_state *state = tevent_req_data(
@@ -2933,12 +2816,13 @@ static NTSTATUS cli_start_connection_recv(struct tevent_req *req,
 	if (tevent_req_is_nterror(req, &status)) {
 		return status;
 	}
-	*output_cli = state->cli;
+	*output_cli = talloc_move(mem_ctx, &state->cli);
 
 	return NT_STATUS_OK;
 }
 
-NTSTATUS cli_start_connection(struct cli_state **output_cli,
+NTSTATUS cli_start_connection(TALLOC_CTX *mem_ctx,
+			      struct cli_state **output_cli,
 			      const char *my_name,
 			      const char *dest_host,
 			      const struct sockaddr_storage *dest_ss, int port,
@@ -2948,7 +2832,7 @@ NTSTATUS cli_start_connection(struct cli_state **output_cli,
 	struct tevent_req *req;
 	NTSTATUS status = NT_STATUS_NO_MEMORY;
 
-	ev = samba_tevent_context_init(talloc_tos());
+	ev = samba_tevent_context_init(mem_ctx);
 	if (ev == NULL) {
 		goto fail;
 	}
@@ -2960,7 +2844,7 @@ NTSTATUS cli_start_connection(struct cli_state **output_cli,
 	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
 		goto fail;
 	}
-	status = cli_start_connection_recv(req, output_cli);
+	status = cli_start_connection_recv(req, mem_ctx, output_cli);
 fail:
 	TALLOC_FREE(ev);
 	return status;
@@ -3133,11 +3017,6 @@ static struct tevent_req *cli_smb1_setup_encryption_send(TALLOC_CTX *mem_ctx,
 
 	target_service = "cifs";
 	target_hostname = smbXcli_conn_remote_name(cli->conn);
-
-	status = cli_session_creds_prepare_krb5(cli, creds);
-	if (tevent_req_nterror(req, status)) {
-		return tevent_req_post(req, ev);
-	}
 
 	state->es = talloc_zero(state, struct smb_trans_enc_state);
 	if (tevent_req_nomem(state->es, req)) {
@@ -3486,7 +3365,7 @@ static void cli_full_connection_creds_conn_done(struct tevent_req *subreq)
 		req, struct cli_full_connection_creds_state);
 	NTSTATUS status;
 
-	status = cli_start_connection_recv(subreq, &state->cli);
+	status = cli_start_connection_recv(subreq, state, &state->cli);
 	TALLOC_FREE(subreq);
 	if (tevent_req_nterror(req, status)) {
 		return;
@@ -3767,7 +3646,8 @@ static void cli_full_connection_creds_tcon_done(struct tevent_req *subreq)
 }
 
 NTSTATUS cli_full_connection_creds_recv(struct tevent_req *req,
-				  struct cli_state **output_cli)
+					TALLOC_CTX *mem_ctx,
+					struct cli_state **output_cli)
 {
 	struct cli_full_connection_creds_state *state = tevent_req_data(
 		req, struct cli_full_connection_creds_state);
@@ -3776,12 +3656,13 @@ NTSTATUS cli_full_connection_creds_recv(struct tevent_req *req,
 	if (tevent_req_is_nterror(req, &status)) {
 		return status;
 	}
-	*output_cli = state->cli;
+	*output_cli = talloc_move(mem_ctx, &state->cli);
 	talloc_set_destructor(state, NULL);
 	return NT_STATUS_OK;
 }
 
-NTSTATUS cli_full_connection_creds(struct cli_state **output_cli,
+NTSTATUS cli_full_connection_creds(TALLOC_CTX *mem_ctx,
+				   struct cli_state **output_cli,
 				   const char *my_name,
 				   const char *dest_host,
 				   const struct sockaddr_storage *dest_ss, int port,
@@ -3793,7 +3674,7 @@ NTSTATUS cli_full_connection_creds(struct cli_state **output_cli,
 	struct tevent_req *req;
 	NTSTATUS status = NT_STATUS_NO_MEMORY;
 
-	ev = samba_tevent_context_init(talloc_tos());
+	ev = samba_tevent_context_init(mem_ctx);
 	if (ev == NULL) {
 		goto fail;
 	}
@@ -3807,7 +3688,7 @@ NTSTATUS cli_full_connection_creds(struct cli_state **output_cli,
 	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
 		goto fail;
 	}
-	status = cli_full_connection_creds_recv(req, output_cli);
+	status = cli_full_connection_creds_recv(req, mem_ctx, output_cli);
  fail:
 	TALLOC_FREE(ev);
 	return status;
@@ -3932,9 +3813,10 @@ fail:
 
 /* Return a cli_state pointing at the IPC$ share for the given server */
 
-struct cli_state *get_ipc_connect(char *server,
-				struct sockaddr_storage *server_ss,
-				struct cli_credentials *creds)
+static struct cli_state *get_ipc_connect(TALLOC_CTX *mem_ctx,
+					 char *server,
+					 struct sockaddr_storage *server_ss,
+					 struct cli_credentials *creds)
 {
         struct cli_state *cli;
 	NTSTATUS nt_status;
@@ -3943,9 +3825,16 @@ struct cli_state *get_ipc_connect(char *server,
 	flags |= CLI_FULL_CONNECTION_FORCE_SMB1;
 	flags |= CLI_FULL_CONNECTION_IPC;
 
-	nt_status = cli_full_connection_creds(&cli, NULL, server, server_ss, 0, "IPC$", "IPC",
+	nt_status = cli_full_connection_creds(mem_ctx,
+					      &cli,
+					      NULL,
+					      server,
+					      server_ss,
+					      0,
+					      "IPC$",
+					      "IPC",
 					      creds,
-					flags);
+					      flags);
 
 	if (NT_STATUS_IS_OK(nt_status)) {
 		return cli;
@@ -3955,7 +3844,7 @@ struct cli_state *get_ipc_connect(char *server,
 	    fstring remote_name;
 
 	    if (name_status_find("*", 0, 0, server_ss, remote_name)) {
-		cli = get_ipc_connect(remote_name, server_ss, creds);
+		cli = get_ipc_connect(mem_ctx, remote_name, server_ss, creds);
 		if (cli)
 		    return cli;
 	    }
@@ -4020,7 +3909,7 @@ struct cli_state *get_ipc_connect_master_ip(TALLOC_CTX *ctx,
 	DEBUG(4, ("found master browser %s, %s\n", name, addr));
 
 	print_sockaddr(addr, sizeof(addr), &server_ss);
-	cli = get_ipc_connect(addr, &server_ss, creds);
+	cli = get_ipc_connect(ctx, addr, &server_ss, creds);
 
 	return cli;
 }

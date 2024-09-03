@@ -23,9 +23,12 @@
 
 NTSTATUS fsctl_get_reparse_point(struct files_struct *fsp,
 				 TALLOC_CTX *mem_ctx,
-				 char **out_data,
+				 uint32_t *_reparse_tag,
+				 uint8_t **_out_data,
 				 uint32_t max_out_len,
-				 uint32_t *out_len);
+				 uint32_t *_out_len);
+NTSTATUS fsctl_get_reparse_tag(struct files_struct *fsp,
+			       uint32_t *_reparse_tag);
 
 NTSTATUS fsctl_set_reparse_point(struct files_struct *fsp,
 				 TALLOC_CTX *mem_ctx,

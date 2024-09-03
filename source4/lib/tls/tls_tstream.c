@@ -21,6 +21,7 @@
 #include "system/network.h"
 #include "system/filesys.h"
 #include "system/time.h"
+#include "lib/util/util_file.h"
 #include "../util/tevent_unix.h"
 #include "../lib/tsocket/tsocket.h"
 #include "../lib/tsocket/tsocket_internal.h"
@@ -949,6 +950,8 @@ const DATA_BLOB *tstream_tls_channel_bindings(struct tstream_context *tls_tstrea
 }
 
 NTSTATUS tstream_tls_params_client(TALLOC_CTX *mem_ctx,
+				   bool system_cas,
+				   const char * const *ca_dirs,
 				   const char *ca_file,
 				   const char *crl_file,
 				   const char *tls_priority,
@@ -958,6 +961,8 @@ NTSTATUS tstream_tls_params_client(TALLOC_CTX *mem_ctx,
 {
 	struct tstream_tls_params *__tlsp = NULL;
 	struct tstream_tls_params_internal *tlsp = NULL;
+	bool got_ca = false;
+	size_t i;
 	int ret;
 
 	__tlsp = talloc_zero(mem_ctx, struct tstream_tls_params);
@@ -995,6 +1000,40 @@ NTSTATUS tstream_tls_params_client(TALLOC_CTX *mem_ctx,
 		return NT_STATUS_NO_MEMORY;
 	}
 
+	if (system_cas) {
+		ret = gnutls_certificate_set_x509_system_trust(tlsp->x509_cred);
+		if (ret < 0) {
+			DBG_ERR("gnutls_certificate_set_x509_system_trust() - %s\n",
+				gnutls_strerror(ret));
+			TALLOC_FREE(__tlsp);
+			return NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
+		}
+		if (ret > 0) {
+			got_ca = true;
+		}
+	}
+
+	for (i = 0; ca_dirs != NULL && ca_dirs[i] != NULL; i++) {
+		const char *ca_dir = ca_dirs[i];
+
+		if (!directory_exist(ca_dir)) {
+			continue;
+		}
+
+		ret = gnutls_certificate_set_x509_trust_dir(tlsp->x509_cred,
+							    ca_dir,
+							    GNUTLS_X509_FMT_PEM);
+		if (ret < 0) {
+			DBG_ERR("gnutls_certificate_set_x509_trust_dir(%s) - %s\n",
+				ca_dir, gnutls_strerror(ret));
+			TALLOC_FREE(__tlsp);
+			return NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
+		}
+		if (ret > 0) {
+			got_ca = true;
+		}
+	}
+
 	if (ca_file && *ca_file && file_exist(ca_file)) {
 		ret = gnutls_certificate_set_x509_trust_file(tlsp->x509_cred,
 							     ca_file,
@@ -1005,11 +1044,17 @@ NTSTATUS tstream_tls_params_client(TALLOC_CTX *mem_ctx,
 			TALLOC_FREE(__tlsp);
 			return NT_STATUS_CANT_ACCESS_DOMAIN_INFO;
 		}
-	} else if (tlsp->verify_peer >= TLS_VERIFY_PEER_CA_ONLY) {
-		DEBUG(0,("TLS failed to missing cafile %s - "
-			 "with 'tls verify peer = %s'\n",
-			 ca_file,
-			 tls_verify_peer_string(tlsp->verify_peer)));
+		if (ret > 0) {
+			got_ca = true;
+		}
+	}
+
+	if (!got_ca && tlsp->verify_peer >= TLS_VERIFY_PEER_CA_ONLY) {
+		D_ERR("TLS: 'tls verify peer = %s' requires "
+		      "'tls trust system cas', "
+		      "'tls ca directories' or "
+		      "'tls cafile'\n",
+		      tls_verify_peer_string(tlsp->verify_peer));
 		TALLOC_FREE(__tlsp);
 		return NT_STATUS_INVALID_PARAMETER_MIX;
 	}
@@ -1051,6 +1096,8 @@ NTSTATUS tstream_tls_params_client_lpcfg(TALLOC_CTX *mem_ctx,
 					 struct tstream_tls_params **tlsp)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
+	bool system_cas = false;
+	const char * const *ca_dirs = NULL;
 	const char *ptr = NULL;
 	char *ca_file = NULL;
 	char *crl_file = NULL;
@@ -1058,6 +1105,9 @@ NTSTATUS tstream_tls_params_client_lpcfg(TALLOC_CTX *mem_ctx,
 	enum tls_verify_peer_state verify_peer =
 		TLS_VERIFY_PEER_AS_STRICT_AS_POSSIBLE;
 	NTSTATUS status;
+
+	system_cas = lpcfg_tls_trust_system_cas(lp_ctx);
+	ca_dirs = lpcfg_tls_ca_directories(lp_ctx);
 
 	ptr = lpcfg__tls_cafile(lp_ctx);
 	if (ptr != NULL) {
@@ -1081,6 +1131,8 @@ NTSTATUS tstream_tls_params_client_lpcfg(TALLOC_CTX *mem_ctx,
 	verify_peer = lpcfg_tls_verify_peer(lp_ctx);
 
 	status = tstream_tls_params_client(mem_ctx,
+					   system_cas,
+					   ca_dirs,
 					   ca_file,
 					   crl_file,
 					   tls_priority,
@@ -1664,4 +1716,180 @@ int tstream_tls_accept_recv(struct tevent_req *req,
 	*tls_stream = talloc_move(mem_ctx, &state->tls_stream);
 	tevent_req_received(req);
 	return 0;
+}
+
+struct tstream_tls_sync {
+	struct tstream_tls *tlss;
+	void *io_private;
+	ssize_t (*io_send_fn)(void *io_private,
+			      const uint8_t *buf,
+			      size_t len);
+	ssize_t (*io_recv_fn)(void *io_private,
+			      uint8_t *buf,
+			      size_t len);
+};
+
+const DATA_BLOB *tstream_tls_sync_channel_bindings(struct tstream_tls_sync *tlsss)
+{
+	return &tlsss->tlss->channel_bindings;
+}
+
+static ssize_t tstream_tls_sync_push_function(gnutls_transport_ptr_t ptr,
+					      const void *buf, size_t size)
+{
+	struct tstream_tls_sync *tlsss =
+		talloc_get_type_abort(ptr,
+		struct tstream_tls_sync);
+
+	return tlsss->io_send_fn(tlsss->io_private, buf, size);
+}
+
+static ssize_t tstream_tls_sync_pull_function(gnutls_transport_ptr_t ptr,
+					      void *buf, size_t size)
+{
+	struct tstream_tls_sync *tlsss =
+		talloc_get_type_abort(ptr,
+		struct tstream_tls_sync);
+
+	return tlsss->io_recv_fn(tlsss->io_private, buf, size);
+}
+
+ssize_t tstream_tls_sync_read(struct tstream_tls_sync *tlsss,
+			      void *buf, size_t len)
+{
+	int ret;
+
+	ret = gnutls_record_recv(tlsss->tlss->tls_session, buf, len);
+	if (ret == GNUTLS_E_INTERRUPTED) {
+		errno = EINTR;
+		return -1;
+	}
+	if (ret == GNUTLS_E_AGAIN) {
+		errno = EAGAIN;
+		return -1;
+	}
+
+	if (ret < 0) {
+		DBG_WARNING("TLS gnutls_record_recv(%zu) - %s\n",
+			    (size_t)len, gnutls_strerror(ret));
+		errno = EIO;
+		return -1;
+	}
+
+	return ret;
+}
+
+ssize_t tstream_tls_sync_write(struct tstream_tls_sync *tlsss,
+			       const void *buf, size_t len)
+{
+	int ret;
+
+	ret = gnutls_record_send(tlsss->tlss->tls_session, buf, len);
+	if (ret == GNUTLS_E_INTERRUPTED) {
+		errno = EINTR;
+		return -1;
+	}
+	if (ret == GNUTLS_E_AGAIN) {
+		errno = EAGAIN;
+		return -1;
+	}
+
+	if (ret < 0) {
+		DBG_WARNING("TLS gnutls_record_send(%zu) - %s\n",
+			    (size_t)len, gnutls_strerror(ret));
+		errno = EIO;
+		return -1;
+	}
+
+	return ret;
+}
+
+size_t tstream_tls_sync_pending(struct tstream_tls_sync *tlsss)
+{
+	return gnutls_record_check_pending(tlsss->tlss->tls_session);
+}
+
+NTSTATUS tstream_tls_sync_setup(struct tstream_tls_params *_tls_params,
+				void *io_private,
+				ssize_t (*io_send_fn)(void *io_private,
+						      const uint8_t *buf,
+						      size_t len),
+				ssize_t (*io_recv_fn)(void *io_private,
+						      uint8_t *buf,
+						      size_t len),
+				TALLOC_CTX *mem_ctx,
+				struct tstream_tls_sync **_tlsss)
+{
+	struct tstream_tls_sync *tlsss = NULL;
+	struct tstream_tls *tlss = NULL;
+	NTSTATUS status;
+	int ret;
+
+	tlsss = talloc_zero(mem_ctx, struct tstream_tls_sync);
+	if (tlsss == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	tlsss->io_private = io_private;
+	tlsss->io_send_fn = io_send_fn;
+	tlsss->io_recv_fn = io_recv_fn;
+
+	tlss = talloc_zero(tlsss, struct tstream_tls);
+	if (tlss == NULL) {
+		TALLOC_FREE(tlsss);
+		return NT_STATUS_NO_MEMORY;
+	}
+	talloc_set_destructor(tlss, tstream_tls_destructor);
+	tlss->is_server = false;
+
+	tlsss->tlss = tlss;
+
+	status = tstream_tls_prepare_gnutls(_tls_params, tlss);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(tlsss);
+		return status;
+	}
+
+	gnutls_transport_set_ptr(tlss->tls_session,
+				 (gnutls_transport_ptr_t)tlsss);
+	gnutls_transport_set_pull_function(tlss->tls_session,
+					   (gnutls_pull_func)tstream_tls_sync_pull_function);
+	gnutls_transport_set_push_function(tlss->tls_session,
+					   (gnutls_push_func)tstream_tls_sync_push_function);
+
+	do {
+		/*
+		 * The caller should have the socket blocking
+		 * and do the timeout handling in the
+		 * io_send/recv_fn
+		 */
+		ret = gnutls_handshake(tlss->tls_session);
+	} while (ret == GNUTLS_E_INTERRUPTED || ret == GNUTLS_E_AGAIN);
+
+	if (gnutls_error_is_fatal(ret) != 0) {
+		TALLOC_FREE(tlsss);
+		return gnutls_error_to_ntstatus(ret,
+				NT_STATUS_CRYPTO_SYSTEM_INVALID);
+	}
+
+	if (ret != GNUTLS_E_SUCCESS) {
+		TALLOC_FREE(tlsss);
+		return gnutls_error_to_ntstatus(ret,
+				NT_STATUS_CRYPTO_SYSTEM_INVALID);
+	}
+
+	status = tstream_tls_verify_peer(tlss);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(tlsss);
+		return status;
+	}
+
+	status = tstream_tls_setup_channel_bindings(tlss);
+	if (!NT_STATUS_IS_OK(status)) {
+		TALLOC_FREE(tlsss);
+		return status;
+	}
+
+	*_tlsss = tlsss;
+	return NT_STATUS_OK;
 }

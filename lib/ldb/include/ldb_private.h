@@ -103,6 +103,27 @@ struct ldb_schema {
 	const char *GUID_index_dn_component;
 };
 
+/**
+  the user can optionally supply a debug function. The function
+  is based on the vfprintf() style of interface, but with the addition
+  of a severity level
+*/
+struct ldb_debug_ops {
+	void (*debug)(void *context, enum ldb_debug_level level,
+		      const char *fmt, va_list ap) PRINTF_ATTRIBUTE(3,0);
+	void *context;
+};
+
+/**
+  The user can optionally supply a custom utf8 functions,
+  to handle comparisons and casefolding.
+*/
+struct ldb_utf8_fns {
+	void *context;
+	char *(*casefold)(void *context, TALLOC_CTX *mem_ctx, const char *s, size_t n);
+	int (*casecmp)(void *context, const struct ldb_val *v1, const struct ldb_val *v2);
+};
+
 /*
   every ldb connection is started by establishing a ldb_context
 */
@@ -213,6 +234,9 @@ int ldb_subclass_add(struct ldb_context *ldb, const char *classname, const char 
 
 /* The following definitions come from lib/ldb/common/ldb_utf8.c */
 char *ldb_casefold_default(void *context, TALLOC_CTX *mem_ctx, const char *s, size_t n);
+
+int ldb_comparison_fold_ascii(void *ignored,
+			      const struct ldb_val *v1, const struct ldb_val *v2);
 
 void ldb_dump_results(struct ldb_context *ldb, struct ldb_result *result, FILE *f);
 

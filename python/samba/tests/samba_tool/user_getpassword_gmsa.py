@@ -20,22 +20,23 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, "bin/python")
 os.environ["PYTHONUNBUFFERED"] = "1"
 
-from ldb import SCOPE_BASE
+import datetime
+import shlex
 
-from samba.credentials import Credentials, MUST_USE_KERBEROS
-from samba.dcerpc import security, samr
-from samba.dsdb import UF_WORKSTATION_TRUST_ACCOUNT
-from samba.netcmd.domain.models import User
-from samba.ndr import ndr_pack, ndr_unpack
-from samba.tests import connect_samdb, connect_samdb_env, delete_force
+from ldb import ERR_INVALID_CREDENTIALS, LdbError, SCOPE_BASE
 
-from samba.tests import BlackboxTestCase
+from samba.credentials import MUST_USE_KERBEROS
+from samba.dcerpc import samr, security
+from samba.domain.models import GroupManagedServiceAccount, User
+from samba.ndr import ndr_unpack
+from samba.nt_time import nt_time_from_datetime
+from samba.tests import BlackboxTestCase, connect_samdb
 
 DC_SERVER = os.environ["SERVER"]
 SERVER = os.environ["SERVER"]
@@ -62,33 +63,18 @@ class GMSAPasswordTest(BlackboxTestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.username = "GMSA_Test_User$"
-        cls.base_dn = f"CN=Managed Service Accounts,{cls.samdb.domain_dn()}"
-        cls.user_dn = f"CN={cls.username},{cls.base_dn}"
+        cls.gmsa = GroupManagedServiceAccount.create(
+            cls.samdb,
+            name="GMSA_Test_User",
+            dns_host_name="samba.example.com",
+            managed_password_interval=1,
+            group_msa_membership=f"O:SYD:(A;;RP;;;{cls.samdb.connecting_user_sid})")
 
-        msg = cls.samdb.search(base="", scope=SCOPE_BASE, attrs=["tokenGroups"])[0]
-        connecting_user_sid = str(ndr_unpack(security.dom_sid, msg["tokenGroups"][0]))
-
-        domain_sid = security.dom_sid(cls.samdb.get_domain_sid())
-        allow_sddl = f"O:SYD:(A;;RP;;;{connecting_user_sid})"
-        allow_sd = ndr_pack(security.descriptor.from_sddl(allow_sddl, domain_sid))
-
-        details = {
-            "dn": str(cls.user_dn),
-            "objectClass": "msDS-GroupManagedServiceAccount",
-            "msDS-ManagedPasswordInterval": "1",
-            "msDS-GroupMSAMembership": allow_sd,
-            "sAMAccountName": cls.username,
-            "userAccountControl": str(UF_WORKSTATION_TRUST_ACCOUNT),
-        }
-
-        cls.samdb.add(details)
-        cls.addClassCleanup(delete_force, cls.samdb, cls.user_dn)
-
-        cls.user = User.get(cls.samdb, username=cls.username)
+        cls.addClassCleanup(cls.gmsa.delete, cls.samdb)
 
     def getpassword(self, attrs):
-        cmd = f"user getpassword --attributes={attrs} {self.username}"
+        shattrs = shlex.quote(attrs)
+        cmd = f"user getpassword --attributes={shattrs} {self.gmsa.account_name}"
 
         ldif = self.check_output(cmd).decode()
         res = self.samdb.parse_ldif(ldif)
@@ -110,14 +96,21 @@ class GMSAPasswordTest(BlackboxTestCase):
         password = user_msg["virtualClearTextUTF16"][0]
 
         creds = self.insta_creds(template=self.env_creds)
-        creds.set_username(self.username)
+        creds.set_username(self.gmsa.account_name)
         creds.set_utf16_password(password)
-        db = connect_samdb(HOST, credentials=creds, lp=self.lp)
+        try:
+            db = connect_samdb(HOST, credentials=creds, lp=self.lp)
+        except LdbError as err:
+            num, _ = err.args
+            if num == ERR_INVALID_CREDENTIALS:
+                self.fail('failed to authenticate using credentials')
+
+            raise
 
         msg = db.search(base="", scope=SCOPE_BASE, attrs=["tokenGroups"])[0]
         connecting_user_sid = str(ndr_unpack(security.dom_sid, msg["tokenGroups"][0]))
 
-        self.assertEqual(self.user.object_sid, connecting_user_sid)
+        self.assertEqual(self.gmsa.object_sid, connecting_user_sid)
 
     def test_utf8_password(self):
         user_msg = self.getpassword("virtualClearTextUTF8")
@@ -128,29 +121,59 @@ class GMSAPasswordTest(BlackboxTestCase):
         # the nthash is no longer valid. We need to use AES kerberos ciphers
         # for this to work.
         creds.set_kerberos_state(MUST_USE_KERBEROS)
-        creds.set_username(self.username)
+        creds.set_username(self.gmsa.account_name)
         creds.set_password(password)
-        db = connect_samdb(HOST, credentials=creds, lp=self.lp)
+        try:
+            db = connect_samdb(HOST, credentials=creds, lp=self.lp)
+        except LdbError as err:
+            num, _ = err.args
+            if num == ERR_INVALID_CREDENTIALS:
+                self.fail('failed to authenticate using credentials')
+
+            raise
 
         msg = db.search(base="", scope=SCOPE_BASE, attrs=["tokenGroups"])[0]
         connecting_user_sid = str(ndr_unpack(security.dom_sid, msg["tokenGroups"][0]))
 
-        self.assertEqual(self.user.object_sid, connecting_user_sid)
+        self.assertEqual(self.gmsa.object_sid, connecting_user_sid)
 
     def test_unicode_pwd(self):
         user_msg = self.getpassword("unicodePwd")
 
         creds = self.insta_creds(template=self.env_creds)
-        creds.set_username(self.username)
+        creds.set_username(self.gmsa.account_name)
         nt_pass = samr.Password()
         nt_pass.hash = list(user_msg["unicodePwd"][0])
         creds.set_nt_hash(nt_pass)
-        db = connect_samdb(HOST, credentials=creds, lp=self.lp)
+        try:
+            db = connect_samdb(HOST, credentials=creds, lp=self.lp)
+        except LdbError as err:
+            num, _ = err.args
+            if num == ERR_INVALID_CREDENTIALS:
+                self.fail('failed to authenticate using credentials')
+
+            raise
 
         msg = db.search(base="", scope=SCOPE_BASE, attrs=["tokenGroups"])[0]
         connecting_user_sid = str(ndr_unpack(security.dom_sid, msg["tokenGroups"][0]))
 
-        self.assertEqual(self.user.object_sid, connecting_user_sid)
+        self.assertEqual(self.gmsa.object_sid, connecting_user_sid)
+
+    def test_querytime(self):
+        user_msg = self.getpassword("virtualManagedPasswordQueryTime")
+        querytime = int(user_msg["virtualManagedPasswordQueryTime"][0])
+
+        # Just assert the number makes sense
+        self.assertGreater(querytime, nt_time_from_datetime(datetime.datetime.now(tz=datetime.timezone.utc)))
+        self.assertLess(querytime, nt_time_from_datetime(datetime.datetime.now(tz=datetime.timezone.utc) + datetime.timedelta(hours=21)))
+
+    def test_querytime_unixtime(self):
+        user_msg = self.getpassword("virtualManagedPasswordQueryTime;format=UnixTime")
+        querytime = int(user_msg["virtualManagedPasswordQueryTime;format=UnixTime"][0])
+
+        # Just assert the number makes sense
+        self.assertGreater(querytime, datetime.datetime.now(tz=datetime.timezone.utc).timestamp())
+        self.assertLess(querytime, (datetime.datetime.now(tz=datetime.timezone.utc) + datetime.timedelta(hours=21)).timestamp())
 
     @classmethod
     def _make_cmdline(cls, line):

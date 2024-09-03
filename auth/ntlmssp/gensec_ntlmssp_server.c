@@ -68,7 +68,7 @@ NTSTATUS gensec_ntlmssp_session_info(struct gensec_security *gensec_security,
 	session_info_flags |= AUTH_SESSION_INFO_NTLM;
 
 	if (gensec_security->auth_context && gensec_security->auth_context->generate_session_info) {
-		nt_status = gensec_security->auth_context->generate_session_info(gensec_security->auth_context, mem_ctx, 
+		nt_status = gensec_security->auth_context->generate_session_info(gensec_security->auth_context, mem_ctx,
 										 gensec_ntlmssp->server_returned_info,
 										 gensec_ntlmssp->ntlmssp_state->user,
 										 session_info_flags,
@@ -201,22 +201,7 @@ NTSTATUS gensec_ntlmssp_server_start(struct gensec_security *gensec_security)
 	if (gensec_security->settings->server_dns_name) {
 		dns_name = gensec_security->settings->server_dns_name;
 	} else {
-		const char *dnsdomain = lpcfg_dnsdomain(gensec_security->settings->lp_ctx);
-		char *lower_netbiosname;
-
-		lower_netbiosname = strlower_talloc(ntlmssp_state, netbios_name);
-		NT_STATUS_HAVE_NO_MEMORY(lower_netbiosname);
-
-		/* Find out the DNS host name */
-		if (dnsdomain && dnsdomain[0] != '\0') {
-			dns_name = talloc_asprintf(ntlmssp_state, "%s.%s",
-						   lower_netbiosname,
-						   dnsdomain);
-			talloc_free(lower_netbiosname);
-			NT_STATUS_HAVE_NO_MEMORY(dns_name);
-		} else {
-			dns_name = lower_netbiosname;
-		}
+		dns_name = lpcfg_dns_hostname(gensec_security->settings->lp_ctx);
 	}
 
 	if (gensec_security->settings->server_dns_domain) {

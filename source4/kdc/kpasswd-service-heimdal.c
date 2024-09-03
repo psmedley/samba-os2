@@ -43,9 +43,9 @@ static krb5_error_code kpasswd_change_password(struct kdc_server *kdc,
 {
 	NTSTATUS status;
 	NTSTATUS result = NT_STATUS_UNSUCCESSFUL;
-	enum samPwdChangeReason reject_reason;
+	enum samPwdChangeReason reject_reason = SAM_PWD_CHANGE_NO_ERROR;
 	const char *reject_string = NULL;
-	struct samr_DomInfo1 *dominfo;
+	struct samr_DomInfo1 *dominfo = NULL;
 	bool ok;
 	int ret;
 
@@ -213,6 +213,7 @@ static krb5_error_code kpasswd_set_password(struct kdc_server *kdc,
 					      "Failed to parse principal",
 					      kpasswd_reply);
 		if (!ok) {
+			krb5_xfree(target_principal_string);
 			*error_string = "Failed to create reply";
 			return KRB5_KPASSWD_HARDERROR;
 		}
@@ -227,6 +228,7 @@ static krb5_error_code kpasswd_set_password(struct kdc_server *kdc,
 					    &password,
 					    &reject_reason,
 					    &dominfo);
+	krb5_xfree(target_principal_string);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_ERR("kpasswd_samdb_set_password failed - %s\n",
 			nt_errstr(status));

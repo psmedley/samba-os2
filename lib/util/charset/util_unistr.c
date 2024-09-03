@@ -23,6 +23,7 @@
 #include "charset.h"
 #include "lib/util/byteorder.h"
 #include "lib/util/fault.h"
+#include "lib/util/tsort.h"
 
 /**
  String replace.
@@ -164,6 +165,204 @@ _PUBLIC_ char *talloc_strdup_upper(TALLOC_CTX *ctx, const char *src)
 {
 	return strupper_talloc(ctx, src);
 }
+
+
+/*
+ * strncasecmp_ldb() works like a *bit* like strncasecmp, with various
+ * tricks to suit the way LDB compares strings. The differences are:
+ *
+ * 0. each string has it's own length.
+ *
+ * 1. consecutive spaces are collapsed down to one space, so that
+ *    "a  b" equals "a b". (this is why each string needs its own
+ *    length). Leading and trailing spaces are removed altogether.
+ *
+ * 2. Comparisons are done in UPPER CASE, as Windows does, not in
+ *    lowercase as POSIX would have it.
+ *
+ * 3. An invalid byte compares higher than any real character. For example,
+ *    "hello\xc2\xff" would sort higher than "hello\xcd\xb6", because CD
+ *    B6 is a valid sequence and C2 FF is not.
+ *
+ * 4. If two strings become invalid on the same character, the rest
+ *    of the string is compared via ldb ASCII case fold rules.
+ *
+ *    For example, "hellō\xC2\xFFworld" < " hElLŌ\xFE ", because the the
+ *    strings are equal up to 'ō' by utf-8 casefold, but the "\xc2\xff" and
+ *    "\xfe" are invalid sequences. At that point, we skip to the byte-by-byte
+ *    (but space-eating, casefolding) comparison, and 0xc2 < 0xff.
+ */
+
+#define EAT_SPACE(s, len, ends_in_space)			 \
+	do {							 \
+		while (len) {					 \
+			if (*s != ' ') {			 \
+				break;				 \
+			}					 \
+			s++;					 \
+			len--;					 \
+		}						 \
+		ends_in_space = (len == 0 || *s == '\0');	 \
+	} while(0)
+
+
+_PUBLIC_ int strncasecmp_ldb(const char *s1,
+			     size_t len1,
+			     const char *s2,
+			     size_t len2)
+{
+	struct smb_iconv_handle *iconv_handle = get_iconv_handle();
+	codepoint_t c1, c2;
+	size_t cs1, cs2;
+	bool ends_in_space1, ends_in_space2;
+	int ret;
+	bool end1, end2;
+
+	EAT_SPACE(s1, len1, ends_in_space1);
+	EAT_SPACE(s2, len2, ends_in_space2);
+	/*
+	 * if ends_in_space was set, the string was empty or only
+	 * spaces (which we treat as equivalent).
+	 */
+	if (ends_in_space1 && ends_in_space2) {
+		return 0;
+	}
+	if (ends_in_space1) {
+		return -1;
+	}
+	if (ends_in_space2) {
+		return 1;
+	}
+
+	while (true) {
+		/*
+		 * If the next byte is a space, we eat all the spaces,
+		 * and say we found a single codepoint. If the spaces
+		 * were at the end of the string, the codepoint is 0,
+		 * as if there were no spaces. Otherwise it is 0x20,
+		 * as if there was one space.
+		 *
+		 * Setting the codepoint to 0 will break the loop, but
+		 * only after codepoints have been found in both strings.
+		 */
+		if (len1 == 0 || *s1 == 0) {
+			c1 = 0;
+		} else if (*s1 == ' ') {
+			EAT_SPACE(s1, len1, ends_in_space1);
+			c1 = ends_in_space1 ? 0 : ' ';
+		} else if ((*s1 & 0x80) == 0) {
+			c1 = *s1;
+			s1++;
+			len1--;
+		} else {
+			c1 = next_codepoint_handle_ext(iconv_handle, s1, len1,
+						       CH_UNIX, &cs1);
+			if (c1 != INVALID_CODEPOINT) {
+				s1 += cs1;
+				len1 -= cs1;
+			}
+		}
+
+		if (len2 == 0 || *s2 == 0) {
+			c2 = 0;
+		} else if (*s2 == ' ') {
+			EAT_SPACE(s2, len2, ends_in_space2);
+			c2 = ends_in_space2 ? 0 : ' ';
+		} else if ((*s2 & 0x80) == 0) {
+			c2 = *s2;
+			s2++;
+			len2--;
+		} else {
+			c2 = next_codepoint_handle_ext(iconv_handle, s2, len2,
+						       CH_UNIX, &cs2);
+			if (c2 != INVALID_CODEPOINT) {
+				s2 += cs2;
+				len2 -= cs2;
+			}
+		}
+
+		if (c1 == 0 || c2 == 0 ||
+		    c1 == INVALID_CODEPOINT || c2 == INVALID_CODEPOINT) {
+			break;
+		}
+
+		if (c1 == c2) {
+			continue;
+		}
+		c1 = toupper_m(c1);
+		c2 = toupper_m(c2);
+		if (c1 != c2) {
+			break;
+		}
+	}
+
+	/*
+	 * Either a difference has been found, or one or both strings have
+	 * ended or hit invalid codepoints.
+	 */
+	ret = NUMERIC_CMP(c1, c2);
+
+	if (ret != 0) {
+		return ret;
+	}
+	/*
+	 * the strings are equal up to here, but one might be longer.
+	 */
+	end1 = len1 == 0 || *s1 == 0;
+	end2 = len2 == 0 || *s2 == 0;
+
+	if (end1 && end2) {
+		return 0;
+	}
+	if (end1) {
+		return -1;
+	}
+	if (end2) {
+		return -1;
+	}
+
+	/*
+	 * By elimination, if we got here, we have INVALID_CODEPOINT on both
+	 * sides.
+	 *
+	 * THere is no perfect option, but what we choose to do is continue on
+	 * with ascii case fold (as if calling ldb_comparison_fold_ascii()
+	 * which is private to ldb, so we can't just defer to it).
+	 */
+	while (true) {
+		if (len1 == 0 || *s1 == 0) {
+			c1 = 0;
+		} else if (*s1 == ' ') {
+			EAT_SPACE(s1, len1, ends_in_space1);
+			c1 = ends_in_space1 ? 0 : ' ';
+		} else {
+			c1 = *s1;
+			s1++;
+			len1--;
+			c1 = ('a' <= c1 && c1 <= 'z') ? c1 ^ 0x20 : c1;
+		}
+
+		if (len2 == 0 || *s2 == 0) {
+			c2 = 0;
+		} else if (*s2 == ' ') {
+			EAT_SPACE(s2, len2, ends_in_space2);
+			c2 = ends_in_space2 ? 0 : ' ';
+		} else {
+			c2 = *s2;
+			s2++;
+			len2--;
+			c2 = ('a' <= c2 && c2 <= 'z') ? c2 ^ 0x20 : c2;
+		}
+
+		if (c1 == 0 || c2 == 0 || c1 != c2) {
+			break;
+		}
+	}
+	return NUMERIC_CMP(c1, c2);
+}
+
+#undef EAT_SPACE
+
 
 /**
  Find the number of 'c' chars in a string

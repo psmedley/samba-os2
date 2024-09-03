@@ -42,9 +42,7 @@ struct cli_state;
 struct net_context {
 	const char *opt_requester_name;
 	const char *opt_host;
-	const char *opt_password;
-	const char *opt_user_name;
-	bool opt_user_specified;
+	bool explicit_credentials;
 	const char *opt_workgroup;
 	int opt_long_list_entries;
 	int opt_reboot;
@@ -71,9 +69,8 @@ struct net_context {
 	const char *opt_exclude;
 	const char *opt_destination;
 	int opt_testmode;
-	int opt_kerberos;
 	int opt_force_full_repl;
-	int opt_ccache;
+	int legacy_opt_ccache;
 	int opt_single_obj_repl;
 	int opt_clean_old_entries;
 	const char *opt_db;
@@ -103,7 +100,6 @@ struct net_context {
 
 	int opt_have_ip;
 	struct sockaddr_storage opt_dest_ip;
-	bool smb_encrypt;
 	struct libnetapi_ctx *netapi_ctx;
 	struct messaging_context *msg_ctx;
 	struct netlogon_creds_cli_context *netlogon_creds;

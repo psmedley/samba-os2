@@ -1527,7 +1527,7 @@ static WERROR cmd_spoolss_getdriverdir(struct rpc_pipe_client *cli,
 	const char *env = SPOOLSS_ARCHITECTURE_NT_X86;
 	DATA_BLOB buffer;
 	uint32_t offered;
-	union spoolss_DriverDirectoryInfo info;
+	union spoolss_DriverDirectoryInfo info = {};
 	uint32_t needed;
 	struct dcerpc_binding_handle *b = cli->binding_handle;
 
@@ -3516,11 +3516,16 @@ static WERROR cmd_spoolss_printercmp(struct rpc_pipe_client *cli,
 
 	/* first get the connection to the remote server */
 
-	nt_status = cli_full_connection_creds(&cli_server2, lp_netbios_name(), argv[2],
-				NULL, 0,
-				"IPC$", "IPC",
-				creds,
-				CLI_FULL_CONNECTION_IPC);
+	nt_status = cli_full_connection_creds(mem_ctx,
+					      &cli_server2,
+					      lp_netbios_name(),
+					      argv[2],
+					      NULL,
+					      0,
+					      "IPC$",
+					      "IPC",
+					      creds,
+					      CLI_FULL_CONNECTION_IPC);
 	if ( !NT_STATUS_IS_OK(nt_status) )
 		return WERR_GEN_FAILURE;
 

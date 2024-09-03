@@ -95906,7 +95906,7 @@ static int vdbeSorterFlushPMA(VdbeSorter *pSorter){
   ** the background thread from a sub-tasks previous turn is still running,
   ** skip it. If the first (pSorter->nTask-1) sub-tasks are all still busy,
   ** fall back to using the final sub-task. The first (pSorter->nTask-1)
-  ** sub-tasks are prefered as they use background threads - the final
+  ** sub-tasks are preferred as they use background threads - the final
   ** sub-task uses the main thread. */
   for(i=0; i<nWorker; i++){
     int iTest = (pSorter->iPrev + i + 1) % nWorker;

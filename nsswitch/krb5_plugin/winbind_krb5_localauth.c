@@ -113,6 +113,7 @@ static krb5_error_code winbind_userok(krb5_context context,
 	/* match other insane libwbclient return codes */
 	case WBC_ERR_WINBIND_NOT_AVAILABLE:
 	case WBC_ERR_DOMAIN_NOT_FOUND:
+	case WBC_ERR_NOT_MAPPED:
 		code = KRB5_PLUGIN_NO_HANDLE;
 		break;
 	default:
@@ -120,6 +121,7 @@ static krb5_error_code winbind_userok(krb5_context context,
 		break;
 	}
 	wbcFreeMemory(pwd);
+	pwd = NULL;
 	if (code != 0) {
 		goto out;
 	}
@@ -135,6 +137,7 @@ static krb5_error_code winbind_userok(krb5_context context,
 	/* match other insane libwbclient return codes */
 	case WBC_ERR_WINBIND_NOT_AVAILABLE:
 	case WBC_ERR_DOMAIN_NOT_FOUND:
+	case WBC_ERR_NOT_MAPPED:
 		code = KRB5_PLUGIN_NO_HANDLE;
 		break;
 	default:
@@ -218,6 +221,7 @@ static krb5_error_code winbind_an2ln(krb5_context context,
 	/* match other insane libwbclient return codes */
 	case WBC_ERR_WINBIND_NOT_AVAILABLE:
 	case WBC_ERR_DOMAIN_NOT_FOUND:
+	case WBC_ERR_NOT_MAPPED:
 		code = KRB5_LNAME_NOTRANS;
 		break;
 	default:

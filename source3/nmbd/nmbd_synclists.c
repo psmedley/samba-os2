@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    NBT netbios routines and daemon - version 2
    Copyright (C) Andrew Tridgell 1994-1998
@@ -33,6 +33,7 @@
 #include "libsmb/clirap.h"
 #include "../libcli/smb/smbXcli_base.h"
 #include "lib/util/string_wrappers.h"
+#include "lib/util/util_file.h"
 #include "source3/lib/substitute.h"
 
 struct sync_record {
@@ -66,7 +67,7 @@ static void callback(const char *sname, uint32_t stype,
   do a NetServerEnum and record the results in fname
 ******************************************************************/
 
-static void sync_child(char *name, int nm_type, 
+static void sync_child(char *name, int nm_type,
 		       char *workgroup,
 		       struct in_addr ip, bool local, bool servers,
 		       char *fname)
@@ -83,9 +84,15 @@ static void sync_child(char *name, int nm_type,
 
 	in_addr_to_sockaddr_storage(&ss, ip);
 
-	status = cli_connect_nb(name, &ss, NBT_SMB_PORT, nm_type,
-				get_local_machine_name(), SMB_SIGNING_DEFAULT,
-				0, &cli);
+	status = cli_connect_nb(talloc_tos(),
+				name,
+				&ss,
+				NBT_SMB_PORT,
+				nm_type,
+				get_local_machine_name(),
+				SMB_SIGNING_DEFAULT,
+				0,
+				&cli);
 	if (!NT_STATUS_IS_OK(status)) {
 		return;
 	}
@@ -118,13 +125,13 @@ static void sync_child(char *name, int nm_type,
 
 	/* Fetch a workgroup list. */
 	cli_NetServerEnum(cli, unix_workgroup,
-			  local_type|SV_TYPE_DOMAIN_ENUM, 
+			  local_type|SV_TYPE_DOMAIN_ENUM,
 			  callback, NULL);
 
 	/* Now fetch a server list. */
 	if (servers) {
 		fstrcpy(unix_workgroup, workgroup);
-		cli_NetServerEnum(cli, unix_workgroup, 
+		cli_NetServerEnum(cli, unix_workgroup,
 				  local?SV_TYPE_LOCAL_LIST_ONLY:SV_TYPE_ALL,
 				  callback, NULL);
 	}
@@ -139,7 +146,7 @@ static void sync_child(char *name, int nm_type,
 ******************************************************************/
 
 void sync_browse_lists(struct work_record *work,
-		       char *name, int nm_type, 
+		       char *name, int nm_type,
 		       struct in_addr ip, bool local, bool servers)
 {
 	struct sync_record *s;
@@ -219,7 +226,7 @@ static void complete_one(struct sync_record *s,
 			update_workgroup_ttl(work,lp_max_ttl());
 		} else {
 			/* Create the workgroup on the subnet. */
-			work = create_workgroup_on_subnet(unicast_subnet, 
+			work = create_workgroup_on_subnet(unicast_subnet,
 							  sname, lp_max_ttl());
 			if (work) {
 				/* remember who the master is */
@@ -227,7 +234,7 @@ static void complete_one(struct sync_record *s,
 			}
 		}
 		return;
-	} 
+	}
 
 	work = find_workgroup_on_subnet(unicast_subnet, s->workgroup);
 	if (!work) {
@@ -247,9 +254,9 @@ static void complete_one(struct sync_record *s,
 			servrec->serv.type = stype;
 		}
 		return;
-	} 
+	}
 
-	/* Create the server in the workgroup. */ 
+	/* Create the server in the workgroup. */
 	create_server_on_workgroup(work, sname,stype, lp_max_ttl(), comment);
 }
 

@@ -824,6 +824,16 @@ NTSTATUS samba_kdc_add_claims_valid(struct auth_user_info_dc *user_info_dc)
 		&user_info_dc->num_sids);
 }
 
+NTSTATUS samba_kdc_add_fresh_public_key_identity(struct auth_user_info_dc *user_info_dc)
+{
+	return add_sid_to_array_attrs_unique(
+		user_info_dc,
+		&global_sid_Fresh_Public_Key_Identity,
+		SE_GROUP_DEFAULT_FLAGS,
+		&user_info_dc->sids,
+		&user_info_dc->num_sids);
+}
+
 static NTSTATUS samba_kdc_add_compounded_auth(struct auth_user_info_dc *user_info_dc)
 {
 	return add_sid_to_array_attrs_unique(
@@ -1549,6 +1559,7 @@ NTSTATUS samba_kdc_check_client_access(struct samba_kdc_entry *kdc_entry,
 	/* we allow all kinds of trusts here */
 	nt_status = authsam_account_ok(tmp_ctx,
 				       kdc_entry->kdc_db_ctx->samdb,
+				       kdc_entry->current_nttime,
 				       MSV1_0_ALLOW_SERVER_TRUST_ACCOUNT |
 				       MSV1_0_ALLOW_WORKSTATION_TRUST_ACCOUNT,
 				       kdc_entry->realm_dn, kdc_entry->msg,

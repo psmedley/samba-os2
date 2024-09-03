@@ -24,7 +24,7 @@
 bool run_str_match_mswild(int dummy)
 {
 	const char *namelist = "/abc*.txt/xyz*.dat/a0123456789Z/";
-	name_compare_entry *name_entries = NULL;
+	struct name_compare_entry *name_entries = NULL;
 	struct samba_path_matching *pmcs = NULL;
 	struct samba_path_matching *pmci = NULL;
 	const struct str_match_mswild_name {
@@ -66,8 +66,8 @@ bool run_str_match_mswild(int dummy)
 
 	d_fprintf(stderr, "namelist: %s\n", namelist);
 
-	set_namearray(&name_entries, namelist);
-	SMB_ASSERT(name_entries != NULL);
+	ret = set_namearray(talloc_tos(), namelist, &name_entries);
+	SMB_ASSERT(ret && name_entries != NULL);
 
 	status = samba_path_matching_mswild_create(talloc_tos(),
 						   true, /* case_sensitive */

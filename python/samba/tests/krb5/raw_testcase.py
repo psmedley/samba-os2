@@ -532,6 +532,9 @@ class KerberosCredentials(Credentials):
         etype = int(etype)
         return self.forced_keys.get(etype)
 
+    def clear_forced_keys(self):
+        self.forced_keys.clear()
+
     def set_forced_salt(self, salt):
         self.forced_salt = bytes(salt)
 
@@ -1382,6 +1385,14 @@ class RawKerberosTest(TestCase):
                 got = (x for x in got if x not in ignored)
 
             self.assertCountEqual(expected, got, fail_msg)
+
+    def assertLocalSamDB(self, samdb):
+        if samdb.url.startswith('tdb://'):
+            return
+        if samdb.url.startswith('mdb://'):
+            return
+
+        self.fail(f'connection to {samdb.url} is not local!')
 
     def get_KerberosTimeWithUsec(self, epoch=None, offset=None):
         if epoch is None:
@@ -3097,6 +3108,7 @@ class RawKerberosTest(TestCase):
                          expect_resource_groups_flag=None,
                          expected_device_groups=None,
                          expected_extra_pac_buffers=None,
+                         expect_matching_nt_hash_in_pac=None,
                          to_rodc=False):
         if expected_error_mode == 0:
             expected_error_mode = ()
@@ -3177,6 +3189,7 @@ class RawKerberosTest(TestCase):
             'expect_resource_groups_flag': expect_resource_groups_flag,
             'expected_device_groups': expected_device_groups,
             'expected_extra_pac_buffers': expected_extra_pac_buffers,
+            'expect_matching_nt_hash_in_pac': expect_matching_nt_hash_in_pac,
             'to_rodc': to_rodc
         }
         if callback_dict is None:
@@ -3955,7 +3968,9 @@ class RawKerberosTest(TestCase):
                     self.assertElementPresent(ticket_private, 'renew-till')
                 else:
                     self.assertElementMissing(ticket_private, 'renew-till')
-            if self.strict_checking:
+            if self.strict_checking and \
+               self.getElementValue(ticket_private,
+                                    'caddr') != []:
                 self.assertElementMissing(ticket_private, 'caddr')
             if expect_pac is not None:
                 if expect_pac:
@@ -4012,8 +4027,10 @@ class RawKerberosTest(TestCase):
                                         expected_srealm)
             self.assertElementEqualPrincipal(encpart_private, 'sname',
                                              expected_sname)
-            if self.strict_checking:
-                self.assertElementMissing(encpart_private, 'caddr')
+            if self.strict_checking and \
+               self.getElementValue(ticket_private,
+                                    'caddr') != []:
+                self.assertElementMissing(ticket_private, 'caddr')
 
             sent_pac_options = self.get_sent_pac_options(kdc_exchange_dict)
 
@@ -4131,8 +4148,7 @@ class RawKerberosTest(TestCase):
             self.assertIsNotNone(ticket_decryption_key)
 
         if ticket_decryption_key is not None:
-            service_ticket = (rep_msg_type == KRB_TGS_REP
-                              and not self.is_tgs_principal(expected_sname))
+            service_ticket = not self.is_tgs_principal(expected_sname)
             self.verify_ticket(ticket_creds, krbtgt_keys,
                                service_ticket=service_ticket,
                                expect_pac=expect_pac,
@@ -4452,10 +4468,9 @@ class RawKerberosTest(TestCase):
             if expect_device_info is None and compound_id:
                 unchecked.add(krb5pac.PAC_TYPE_DEVICE_INFO)
 
-        if rep_msg_type == KRB_TGS_REP:
-            if not self.is_tgs_principal(expected_sname):
-                expected_types.append(krb5pac.PAC_TYPE_TICKET_CHECKSUM)
-                expected_types.append(krb5pac.PAC_TYPE_FULL_CHECKSUM)
+        if not self.is_tgs_principal(expected_sname):
+            expected_types.append(krb5pac.PAC_TYPE_TICKET_CHECKSUM)
+            expected_types.append(krb5pac.PAC_TYPE_FULL_CHECKSUM)
 
         expect_extra_pac_buffers = self.is_tgs(expected_sname)
 
@@ -4768,10 +4783,12 @@ class RawKerberosTest(TestCase):
 
                 creds = kdc_exchange_dict['creds']
                 nt_password = bytes(ntlm_package.nt_password.hash)
-                if creds.user_account_control & UF_SMARTCARD_REQUIRED:
-                    self.assertNotEqual(creds.get_nt_hash(), nt_password)
-                else:
+                if kdc_exchange_dict['expect_matching_nt_hash_in_pac']:
                     self.assertEqual(creds.get_nt_hash(), nt_password)
+                else:
+                    self.assertNotEqual(creds.get_nt_hash(), nt_password)
+
+                kdc_exchange_dict['nt_hash_from_pac'] = ntlm_package.nt_password
 
                 lm_password = bytes(ntlm_package.lm_password.hash)
                 self.assertEqual(bytes(16), lm_password)
@@ -5083,7 +5100,8 @@ class RawKerberosTest(TestCase):
                 if sent_freshness:
                     expected_patypes += PADATA_AS_FRESHNESS,
 
-                if (self.kdc_fast_support
+                if (error_code != KDC_ERR_PREAUTH_FAILED
+                        and self.kdc_fast_support
                         and not sent_fast
                         and not sent_enc_challenge):
                     expected_patypes += (PADATA_FX_FAST,)
@@ -6038,6 +6056,10 @@ class RawKerberosTest(TestCase):
             name_type=NT_SRV_INST, names=[krbtgt_username, krbtgt_realm])
 
         return krbtgt_sname
+
+    def get_kpasswd_sname(self):
+        return self.PrincipalName_create(name_type=NT_PRINCIPAL,
+                                         names=['kadmin', 'changepw'])
 
     def add_requester_sid(self, pac, sid):
         pac_buffers = pac.buffers

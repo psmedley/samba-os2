@@ -105,6 +105,11 @@ dynconfig = {
          'FHS-PATH':  '${DATADIR}',
          'OVERWRITE': True,
     },
+    'CTDB_DATADIR' : {
+         'STD-PATH':  '${DATADIR}/ctdb',
+         'FHS-PATH':  '${DATADIR}/ctdb',
+         'OVERWRITE': True,
+    },
     'SAMBA_DATADIR' : {
          'STD-PATH':  '${DATADIR}/samba',
          'FHS-PATH':  '${DATADIR}/samba',
@@ -169,6 +174,13 @@ dynconfig = {
          'OPTION':    '--with-modulesdir',
          'HELPTEXT':  'Which directory to use for Samba modules',
          'OVERWRITE': True,
+    },
+    'LDBMODULESDIR' : {
+         'STD-PATH':  '${MODULESDIR}/ldb',
+         'FHS-PATH':  '${MODULESDIR}/ldb',
+         'OPTION':    '--with-ldbmodulesdir',
+         'HELPTEXT':  'Which directory to use for LDB modules',
+         'DELAY': True,
     },
     'PAMMODULESDIR' : {
          'STD-PATH':  '${LIBDIR}/security',

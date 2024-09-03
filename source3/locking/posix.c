@@ -1,18 +1,18 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    Locking functions
    Copyright (C) Jeremy Allison 1992-2006
-   
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
@@ -175,7 +175,7 @@ static bool posix_lock_in_range(off_t *offset_out, off_t *count_out,
 
 	*offset_out = offset;
 	*count_out = count;
-	
+
 	return True;
 }
 
@@ -340,7 +340,7 @@ bool is_posix_locked(files_struct *fsp,
 struct lock_ref_count_key {
 	struct file_id id;
 	char r;
-}; 
+};
 
 /*******************************************************************
  Form a static locking key for a dev/inode pair for the lock ref count
@@ -744,7 +744,7 @@ OR....
 				}
 
 				l_curr = ul_next;
-				
+
 			} else if ( (l_curr->start >= lock->start) &&
 						(l_curr->start < lock->start + lock->size) &&
 						(l_curr->start + l_curr->size > lock->start + lock->size) ) {
@@ -805,7 +805,7 @@ BECOMES....
 					   (uintmax_t)l_curr->size ));
 
 				l_curr = l_curr->next;
-		
+
 			} else if ( (l_curr->start < lock->start) &&
 						(l_curr->start + l_curr->size > lock->start + lock->size) ) {
 				/*
@@ -849,7 +849,7 @@ BECOMES.....
 					   (uintmax_t)l_new->size ));
 
 				/*
-				 * Add into the dlink list after the l_curr point - NOT at lhead. 
+				 * Add into the dlink list after the l_curr point - NOT at lhead.
 				 */
 				DLIST_ADD_AFTER(lhead, l_new, l_curr);
 
@@ -930,7 +930,7 @@ bool set_posix_lock_windows_flavour(files_struct *fsp,
 	 * ------------------------------------------------------------------------
 	 * WRITE LOCK : start = 2, len = 10
 	 *                                            READ LOCK: start =0, len = 10 - FAIL
-	 * READ LOCK : start = 0, len = 14 
+	 * READ LOCK : start = 0, len = 14
 	 *                                            READ LOCK: start =0, len = 10 - FAIL
 	 * UNLOCK : start = 2, len = 10
 	 *                                            READ LOCK: start =0, len = 10 - OK
@@ -938,7 +938,7 @@ bool set_posix_lock_windows_flavour(files_struct *fsp,
 	 * Under POSIX, the same sequence in steps 1 and 2 would not be reference counted, but
 	 * would leave a single read lock over the 0-14 region.
 	 */
-	
+
 	if ((l_ctx = talloc_init("set_posix_lock")) == NULL) {
 		DEBUG(0,("set_posix_lock_windows_flavour: unable to init talloc context.\n"));
 		return False;
@@ -1050,9 +1050,11 @@ bool release_posix_lock_windows_flavour(files_struct *fsp,
 	struct lock_list *ulist = NULL;
 	struct lock_list *ul = NULL;
 
-	DEBUG(5, ("release_posix_lock_windows_flavour: File %s, offset = %ju, "
-		  "count = %ju\n", fsp_str_dbg(fsp),
-		  (uintmax_t)u_offset, (uintmax_t)u_count));
+	DBG_INFO("File %s, offset = %" PRIu64 ", "
+		 "count = %" PRIu64 "\n",
+		 fsp_str_dbg(fsp),
+		 u_offset,
+		 u_count);
 
 	/* Remember the number of locks we have on this dev/ino pair. */
 	decrement_lock_ref_count(fsp);
@@ -1067,12 +1069,12 @@ bool release_posix_lock_windows_flavour(files_struct *fsp,
 	}
 
 	if ((ul_ctx = talloc_init("release_posix_lock")) == NULL) {
-		DEBUG(0,("release_posix_lock_windows_flavour: unable to init talloc context.\n"));
+		DBG_ERR("unable to init talloc context.\n");
 		return False;
 	}
 
 	if ((ul = talloc(ul_ctx, struct lock_list)) == NULL) {
-		DEBUG(0,("release_posix_lock_windows_flavour: unable to talloc unlock list.\n"));
+		DBG_ERR("unable to talloc unlock list.\n");
 		talloc_destroy(ul_ctx);
 		return False;
 	}
@@ -1114,12 +1116,14 @@ bool release_posix_lock_windows_flavour(files_struct *fsp,
 	if (deleted_lock_type == WRITE_LOCK &&
 			(!ulist || ulist->next != NULL || ulist->start != offset || ulist->size != count)) {
 
-		DEBUG(5, ("release_posix_lock_windows_flavour: downgrading "
-			  "lock to READ: offset = %ju, count = %ju\n",
-			  (uintmax_t)offset, (uintmax_t)count ));
+		DBG_INFO("downgrading lock to READ: offset = %" PRIu64
+			 ", count = %" PRIu64 "\n",
+			 offset,
+			 count);
 
 		if (!posix_fcntl_lock(fsp,F_SETLK,offset,count,F_RDLCK)) {
-			DEBUG(0,("release_posix_lock_windows_flavour: downgrade of lock failed with error %s !\n", strerror(errno) ));
+			DBG_ERR("downgrade of lock failed with error %s !\n",
+				strerror(errno));
 			talloc_destroy(ul_ctx);
 			return False;
 		}
@@ -1133,9 +1137,10 @@ bool release_posix_lock_windows_flavour(files_struct *fsp,
 		offset = ulist->start;
 		count = ulist->size;
 
-		DEBUG(5, ("release_posix_lock_windows_flavour: Real unlock: "
-			  "offset = %ju, count = %ju\n",
-			  (uintmax_t)offset, (uintmax_t)count ));
+		DBG_INFO("Real unlock: offset = %" PRIu64 ", count = %" PRIu64
+			 "\n",
+			 offset,
+			 count);
 
 		if (!posix_fcntl_lock(fsp,F_SETLK,offset,count,F_UNLCK)) {
 			ret = False;

@@ -48,6 +48,9 @@ int dsdb_module_search_dn(struct ldb_module *module,
 	struct ldb_result *res;
 
 	tmp_ctx = talloc_new(mem_ctx);
+	if (tmp_ctx == NULL) {
+		return ldb_oom(ldb_module_get_ctx(module));
+	}
 
 	res = talloc_zero(tmp_ctx, struct ldb_result);
 	if (!res) {
@@ -128,6 +131,9 @@ int dsdb_module_search_tree(struct ldb_module *module,
 	struct ldb_result *res;
 
 	tmp_ctx = talloc_new(mem_ctx);
+	if (tmp_ctx == NULL) {
+		return ldb_oom(ldb_module_get_ctx(module));
+	}
 
 	/* cross-partitions searches with a basedn break multi-domain support */
 	SMB_ASSERT(basedn == NULL || (dsdb_flags & DSDB_SEARCH_SEARCH_ALL_PARTITIONS) == 0);
@@ -218,6 +224,9 @@ int dsdb_module_search(struct ldb_module *module,
 	SMB_ASSERT(basedn == NULL || (dsdb_flags & DSDB_SEARCH_SEARCH_ALL_PARTITIONS) == 0);
 
 	tmp_ctx = talloc_new(mem_ctx);
+	if (tmp_ctx == NULL) {
+		return ldb_oom(ldb_module_get_ctx(module));
+	}
 
 	if (format) {
 		va_start(ap, format);
@@ -1147,6 +1156,33 @@ bool dsdb_module_am_administrator(struct ldb_module *module)
 }
 
 /*
+ * Return ‘true’ if the caller has system access. The ‘acl’ module passes
+ * SYSTEM_CONTROL_STRIP_CRITICAL when it wants to strip the critical flag.
+ */
+bool dsdb_have_system_access(
+	struct ldb_module *module,
+	struct ldb_request *req,
+	const enum system_control_strip_critical strip_critical)
+{
+	struct ldb_control *as_system = NULL;
+
+	as_system = ldb_request_get_control(req, LDB_CONTROL_AS_SYSTEM_OID);
+	if (as_system != NULL) {
+		switch (strip_critical) {
+		case SYSTEM_CONTROL_KEEP_CRITICAL:
+			break;
+		case SYSTEM_CONTROL_STRIP_CRITICAL:
+			as_system->critical = 0;
+			break;
+		}
+
+		return true;
+	}
+
+	return dsdb_module_am_system(module);
+}
+
+/*
   check if the recyclebin is enabled
  */
 int dsdb_recyclebin_enabled(struct ldb_module *module, bool *enabled)
@@ -1918,4 +1954,22 @@ int dsdb_make_object_category(struct ldb_context *ldb, const struct dsdb_schema 
 	}
 
 	return LDB_SUCCESS;
+}
+
+/*
+ * Remove all password related attributes.
+ */
+void dsdb_remove_password_related_attrs(struct ldb_message *msg,
+					bool userPassword)
+{
+	if (userPassword) {
+		ldb_msg_remove_attr(msg, "userPassword");
+	}
+	ldb_msg_remove_attr(msg, "clearTextPassword");
+	ldb_msg_remove_attr(msg, "unicodePwd");
+	ldb_msg_remove_attr(msg, "ntPwdHistory");
+	ldb_msg_remove_attr(msg, "dBCSPwd");
+	ldb_msg_remove_attr(msg, "lmPwdHistory");
+	ldb_msg_remove_attr(msg, "supplementalCredentials");
+	ldb_msg_remove_attr(msg, "pwdLastSet");
 }

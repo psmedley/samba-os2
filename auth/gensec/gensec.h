@@ -25,6 +25,7 @@
 
 #include "../lib/util/data_blob.h"
 #include "libcli/util/ntstatus.h"
+#include "lib/util/time.h"
 
 #define GENSEC_SASL_NAME_NTLMSSP "NTLM"
 
@@ -300,8 +301,6 @@ NTSTATUS gensec_wrap(struct gensec_security *gensec_security,
 		     TALLOC_CTX *mem_ctx,
 		     const DATA_BLOB *in,
 		     DATA_BLOB *out);
-
-bool gensec_security_ops_enabled(const struct gensec_security_ops *ops, struct gensec_security *security);
 
 NTSTATUS gensec_start_mech_by_sasl_name(struct gensec_security *gensec_security,
 					const char *sasl_name);

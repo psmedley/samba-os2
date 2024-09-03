@@ -21,20 +21,159 @@
 #
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from xml.etree import ElementTree
 
-from ldb import FLAG_MOD_ADD, MessageElement, SCOPE_ONELEVEL
+from ldb import FLAG_MOD_ADD, SCOPE_ONELEVEL, MessageElement
+
 from samba.dcerpc import security
 from samba.dcerpc.misc import GUID
-from samba.netcmd.domain.models import Group, User, fields
-from samba.netcmd.domain.models.auth_policy import StrongNTLMPolicy
+from samba.domain.models import (AccountType, AuthenticationPolicy,
+                                 AuthenticationSilo, Computer, Group, Site,
+                                 StrongNTLMPolicy, User, fields)
 from samba.ndr import ndr_pack, ndr_unpack
 
 from .base import SambaToolCmdTest
 
 HOST = "ldap://{DC_SERVER}".format(**os.environ)
 CREDS = "-U{DC_USERNAME}%{DC_PASSWORD}".format(**os.environ)
+
+
+class ModelTests(SambaToolCmdTest):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.samdb = cls.getSamDB("-H", HOST, CREDS)
+        super().setUpClass()
+
+    def test_query_count(self):
+        """Test count property on Query object without converting to a list."""
+        groups = Group.query(self.samdb)
+        self.assertEqual(groups.count, len(list(groups)))
+
+    def test_query_filter_bool(self):
+        """Tests filtering by a BooleanField."""
+        total = Group.query(self.samdb).count
+        system_groups = Group.query(self.samdb,
+                                    is_critical_system_object=True).count
+        user_groups = Group.query(self.samdb,
+                                  is_critical_system_object=False).count
+        self.assertNotEqual(system_groups, 0)
+        self.assertNotEqual(user_groups, 0)
+        self.assertEqual(system_groups + user_groups, total)
+
+    def test_query_filter_enum(self):
+        """Tests filtering by an EnumField."""
+        robots_vs_humans = User.query(self.samdb).count
+        robots = User.query(self.samdb,
+                            account_type=AccountType.WORKSTATION_TRUST).count
+        humans = User.query(self.samdb,
+                            account_type=AccountType.NORMAL_ACCOUNT).count
+        self.assertNotEqual(robots, 0)
+        self.assertNotEqual(humans, 0)
+        self.assertEqual(robots + humans, robots_vs_humans)
+
+    def test_as_dict(self):
+        """Test the as_dict method for serializing to dict then JSON."""
+        policy = AuthenticationPolicy.create(self.samdb, name="as_dict_pol")
+        self.addCleanup(policy.delete, self.samdb)
+        silo = AuthenticationSilo.create(self.samdb,
+                                         name="test_as_dict_silo",
+                                         description="test as_dict silo",
+                                         enforced=True,
+                                         user_authentication_policy=None,
+                                         service_authentication_policy=policy.dn,
+                                         computer_authentication_policy=None,
+                                         members=[])
+        self.addCleanup(silo.delete, self.samdb)
+        silo_dict = silo.as_dict()
+
+        # Test various fields with different datatypes.
+        self.assertEqual(silo_dict["name"], "test_as_dict_silo")
+        self.assertEqual(silo_dict["description"], "test as_dict silo")
+        self.assertEqual(silo_dict["msDS-AuthNPolicySiloEnforced"], True)
+
+        # Fields that are None are excluded as that means unsetting a field.
+        self.assertNotIn("msDS-UserAuthNPolicy", silo_dict)
+        self.assertIn("msDS-ServiceAuthNPolicy", silo_dict)
+
+        # Fields with many=True are represented by an empty list,
+        # but should still be excluded by as_dict().
+        self.assertNotIn("msDS-AuthNPolicySiloMembers", silo_dict)
+
+        # Now add a member and see if silo members appears as a key.
+        jane = User.get(self.samdb, account_name="jane")
+        silo.members.append(jane.dn)
+        silo.save(self.samdb)
+        silo_dict = silo.as_dict()
+        self.assertIn("msDS-AuthNPolicySiloMembers", silo_dict)
+
+        # Hidden fields are excluded by default.
+        self.assertNotIn("whenCreated", silo_dict)
+
+        # Unless include_hidden=True is used.
+        silo_dict = silo.as_dict(include_hidden=True)
+        self.assertIn("whenCreated", silo_dict)
+
+
+class UserModelTests(SambaToolCmdTest):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.samdb = cls.getSamDB("-H", HOST, CREDS)
+        super().setUpClass()
+
+    def test_get_primary_group(self):
+        jane = User.get(self.samdb, account_name="jane")
+        domain_sid = self.samdb.domain_sid
+        expected_group = Group.get(self.samdb,
+                                   object_sid=f"{domain_sid}-{jane.primary_group_id}")
+        self.assertEqual(jane.get_primary_group(self.samdb), expected_group)
+
+
+class ComputerModelTests(SambaToolCmdTest):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.samdb = cls.getSamDB("-H", HOST, CREDS)
+        super().setUpClass()
+
+    def test_computer_constructor(self):
+        # Use only name
+        comp1 = Computer.create(self.samdb, name="comp1")
+        self.addCleanup(comp1.delete, self.samdb)
+        self.assertEqual(comp1.name, "comp1")
+        self.assertEqual(comp1.account_name, "comp1$")
+
+        # Use only cn
+        comp2 = Computer.create(self.samdb, cn="comp2")
+        self.addCleanup(comp2.delete, self.samdb)
+        self.assertEqual(comp2.name, "comp2")
+        self.assertEqual(comp2.account_name, "comp2$")
+
+        # Use name and account_name but missing "$" in account_name.
+        comp3 = Computer.create(self.samdb, name="comp3", account_name="comp3")
+        self.addCleanup(comp3.delete, self.samdb)
+        self.assertEqual(comp3.name, "comp3")
+        self.assertEqual(comp3.account_name, "comp3$")
+
+        # Use cn and account_name but missing "$" in account_name.
+        comp4 = Computer.create(self.samdb, cn="comp4", account_name="comp4$")
+        self.addCleanup(comp4.delete, self.samdb)
+        self.assertEqual(comp4.name, "comp4")
+        self.assertEqual(comp4.account_name, "comp4$")
+
+        # Use only account_name, the name should get the "$" removed.
+        comp5 = Computer.create(self.samdb, account_name="comp5$")
+        self.addCleanup(comp5.delete, self.samdb)
+        self.assertEqual(comp5.name, "comp5")
+        self.assertEqual(comp5.account_name, "comp5$")
+
+        # Use only account_name but accidentally forgot the "$" character.
+        comp6 = Computer.create(self.samdb, account_name="comp6")
+        self.addCleanup(comp6.delete, self.samdb)
+        self.assertEqual(comp6.name, "comp6")
+        self.assertEqual(comp6.account_name, "comp6$")
 
 
 class FieldTestMixin:
@@ -159,16 +298,42 @@ class DateTimeFieldTest(FieldTestMixin, SambaToolCmdTest):
     field = fields.DateTimeField("FieldName")
 
     to_db_value = [
-        (datetime(2023, 1, 27, 22, 36, 41), MessageElement("20230127223641.0Z")),
-        ([datetime(2023, 1, 27, 22, 36, 41), datetime(2023, 1, 27, 22, 47, 50)],
+        (datetime(2023, 1, 27, 22, 36, 41, tzinfo=timezone.utc),
+         MessageElement("20230127223641.0Z")),
+        ([datetime(2023, 1, 27, 22, 36, 41, tzinfo=timezone.utc),
+          datetime(2023, 1, 27, 22, 47, 50, tzinfo=timezone.utc)],
          MessageElement(["20230127223641.0Z", "20230127224750.0Z"])),
         (None, None),
     ]
 
     from_db_value = [
-        (MessageElement("20230127223641.0Z"), datetime(2023, 1, 27, 22, 36, 41)),
+        (MessageElement("20230127223641.0Z"),
+         datetime(2023, 1, 27, 22, 36, 41, tzinfo=timezone.utc)),
         (MessageElement(["20230127223641.0Z", "20230127224750.0Z"]),
-         [datetime(2023, 1, 27, 22, 36, 41), datetime(2023, 1, 27, 22, 47, 50)]),
+         [datetime(2023, 1, 27, 22, 36, 41, tzinfo=timezone.utc),
+          datetime(2023, 1, 27, 22, 47, 50, tzinfo=timezone.utc)]),
+        (None, None),
+    ]
+
+
+class NtTimeFieldTest(FieldTestMixin, SambaToolCmdTest):
+    field = fields.NtTimeField("FieldName")
+
+    to_db_value = [
+        (datetime(2023, 1, 27, 22, 36, 41, tzinfo=timezone.utc),
+         MessageElement("133193326010000000")),
+        ([datetime(2023, 1, 27, 22, 36, 41, tzinfo=timezone.utc),
+          datetime(2023, 1, 27, 22, 47, 50, tzinfo=timezone.utc)],
+         MessageElement(["133193326010000000", "133193332700000000"])),
+        (None, None),
+    ]
+
+    from_db_value = [
+        (MessageElement("133193326010000000"),
+         datetime(2023, 1, 27, 22, 36, 41, tzinfo=timezone.utc)),
+        (MessageElement(["133193326010000000", "133193332700000000"]),
+         [datetime(2023, 1, 27, 22, 36, 41, tzinfo=timezone.utc),
+          datetime(2023, 1, 27, 22, 47, 50, tzinfo=timezone.utc)]),
         (None, None),
     ]
 
@@ -178,8 +343,8 @@ class RelatedFieldTest(FieldTestMixin, SambaToolCmdTest):
 
     @property
     def to_db_value(self):
-        alice = User.get(self.samdb, username="alice")
-        joe = User.get(self.samdb, username="joe")
+        alice = User.get(self.samdb, account_name="alice")
+        joe = User.get(self.samdb, account_name="joe")
         return [
             (alice, MessageElement(str(alice.dn))),
             ([joe, alice], MessageElement([str(joe.dn), str(alice.dn)])),
@@ -188,8 +353,8 @@ class RelatedFieldTest(FieldTestMixin, SambaToolCmdTest):
 
     @property
     def from_db_value(self):
-        alice = User.get(self.samdb, username="alice")
-        joe = User.get(self.samdb, username="joe")
+        alice = User.get(self.samdb, account_name="alice")
+        joe = User.get(self.samdb, account_name="joe")
         return [
             (MessageElement(str(alice.dn)), alice),
             (MessageElement([str(joe.dn), str(alice.dn)]), [joe, alice]),
@@ -202,8 +367,8 @@ class DnFieldTest(FieldTestMixin, SambaToolCmdTest):
 
     @property
     def to_db_value(self):
-        alice = User.get(self.samdb, username="alice")
-        joe = User.get(self.samdb, username="joe")
+        alice = User.get(self.samdb, account_name="alice")
+        joe = User.get(self.samdb, account_name="joe")
         return [
             (alice.dn, MessageElement(str(alice.dn))),
             ([joe.dn, alice.dn], MessageElement([str(joe.dn), str(alice.dn)])),
@@ -212,8 +377,8 @@ class DnFieldTest(FieldTestMixin, SambaToolCmdTest):
 
     @property
     def from_db_value(self):
-        alice = User.get(self.samdb, username="alice")
-        joe = User.get(self.samdb, username="joe")
+        alice = User.get(self.samdb, account_name="alice")
+        joe = User.get(self.samdb, account_name="joe")
         return [
             (MessageElement(str(alice.dn)), alice.dn),
             (MessageElement([str(joe.dn), str(alice.dn)]), [joe.dn, alice.dn]),
@@ -326,8 +491,8 @@ class SDDLFieldTest(FieldTestMixin, SambaToolCmdTest):
         super().setUp()
         self.domain_sid = security.dom_sid(self.samdb.get_domain_sid())
 
-    def encode(self, value):
-        return ndr_pack(security.descriptor.from_sddl(value, self.domain_sid))
+    def security_descriptor(self, sddl):
+        return security.descriptor.from_sddl(sddl, self.domain_sid)
 
     @property
     def to_db_value(self):
@@ -337,9 +502,20 @@ class SDDLFieldTest(FieldTestMixin, SambaToolCmdTest):
             "O:SYG:SYD:(XA;OICI;CR;;;WD;((Member_of {SID(AO)}) || (Member_of {SID(BO)})))",
             "O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(%s)}))" % self.domain_sid,
         ]
+
+        # Values coming in are SDDL strings
         expected = [
-            (value, MessageElement(self.encode(value))) for value in values
+            (value, MessageElement(ndr_pack(self.security_descriptor(value))))
+            for value in values
         ]
+
+        # Values coming in are already security descriptors
+        expected.extend([
+            (self.security_descriptor(value),
+             MessageElement(ndr_pack(self.security_descriptor(value))))
+            for value in values
+        ])
+
         expected.append((None, None))
         return expected
 
@@ -352,7 +528,9 @@ class SDDLFieldTest(FieldTestMixin, SambaToolCmdTest):
             "O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(%s)}))" % self.domain_sid,
         ]
         expected = [
-            (MessageElement(self.encode(value)), value) for value in values
+            (MessageElement(ndr_pack(self.security_descriptor(value))),
+             self.security_descriptor(value))
+            for value in values
         ]
         expected.append((None, None))
         return expected

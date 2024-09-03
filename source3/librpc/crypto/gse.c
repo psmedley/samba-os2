@@ -176,7 +176,7 @@ static NTSTATUS gse_setup_server_principal(TALLOC_CTX *mem_ctx,
 
 static NTSTATUS gse_context_init(struct gensec_security *gensec_security,
 				 bool do_sign, bool do_seal,
-				 const char *ccache_name,
+				 const struct gss_OID_desc_struct *mech,
 				 uint32_t add_gss_c_flags,
 				 struct gse_context **_gse_ctx)
 {
@@ -193,7 +193,7 @@ static NTSTATUS gse_context_init(struct gensec_security *gensec_security,
 	gse_ctx->expire_time = GENSEC_EXPIRE_TIME_INFINITY;
 	gse_ctx->max_wrap_buf_size = UINT16_MAX;
 
-	memcpy(&gse_ctx->gss_mech, gss_mech_krb5, sizeof(gss_OID_desc));
+	memcpy(&gse_ctx->gss_mech, mech, sizeof(gss_OID_desc));
 
 	gse_ctx->gss_want_flags = GSS_C_MUTUAL_FLAG |
 				GSS_C_DELEG_POLICY_FLAG |
@@ -254,18 +254,6 @@ static NTSTATUS gse_context_init(struct gensec_security *gensec_security,
 	}
 #endif
 
-	if (!ccache_name) {
-		ccache_name = krb5_cc_default_name(gse_ctx->k5ctx);
-	}
-	k5ret = krb5_cc_resolve(gse_ctx->k5ctx, ccache_name,
-				&gse_ctx->ccache);
-	if (k5ret) {
-		DEBUG(1, ("Failed to resolve credential cache '%s'! (%s)\n",
-			  ccache_name, error_message(k5ret)));
-		status = NT_STATUS_INTERNAL_ERROR;
-		goto err_out;
-	}
-
 	/* TODO: Should we enforce a enc_types list ?
 	ret = krb5_set_default_tgs_ktypes(gse_ctx->k5ctx, enc_types);
 	*/
@@ -281,11 +269,7 @@ err_out:
 static NTSTATUS gse_init_client(struct gensec_security *gensec_security,
 				bool do_sign, bool do_seal,
 				const char *ccache_name,
-				const char *server,
-				const char *service,
-				const char *realm,
-				const char *username,
-				const char *password,
+				const struct gss_OID_desc_struct *mech,
 				uint32_t add_gss_c_flags,
 				struct gse_context **_gse_ctx)
 {
@@ -295,17 +279,31 @@ static NTSTATUS gse_init_client(struct gensec_security *gensec_security,
 	gss_buffer_desc empty_buffer = GSS_C_EMPTY_BUFFER;
 	gss_OID oid = discard_const(GSS_KRB5_CRED_NO_CI_FLAGS_X);
 #endif
+	krb5_error_code k5ret;
 	NTSTATUS status;
 
-	if (!server || !service) {
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-
-	status = gse_context_init(gensec_security, do_sign, do_seal,
-				  ccache_name, add_gss_c_flags,
+	status = gse_context_init(gensec_security,
+				  do_sign,
+				  do_seal,
+				  mech,
+				  add_gss_c_flags,
 				  &gse_ctx);
 	if (!NT_STATUS_IS_OK(status)) {
 		return NT_STATUS_NO_MEMORY;
+	}
+
+	if (ccache_name == NULL) {
+		DBG_ERR("No explicit ccache_name given\n");
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	k5ret = krb5_cc_resolve(gse_ctx->k5ctx,
+				ccache_name,
+				&gse_ctx->ccache);
+	if (k5ret) {
+		DBG_WARNING("Failed to resolve credential cache '%s'! (%s)\n",
+			    ccache_name, error_message(k5ret));
+		return NT_STATUS_INTERNAL_ERROR;
 	}
 
 #ifdef SAMBA4_USES_HEIMDAL
@@ -652,6 +650,7 @@ done:
 
 static NTSTATUS gse_init_server(struct gensec_security *gensec_security,
 				bool do_sign, bool do_seal,
+				const struct gss_OID_desc_struct *mech,
 				uint32_t add_gss_c_flags,
 				struct gse_context **_gse_ctx)
 {
@@ -660,8 +659,12 @@ static NTSTATUS gse_init_server(struct gensec_security *gensec_security,
 	krb5_error_code ret;
 	NTSTATUS status;
 
-	status = gse_context_init(gensec_security, do_sign, do_seal,
-				  NULL, add_gss_c_flags, &gse_ctx);
+	status = gse_context_init(gensec_security,
+				  do_sign,
+				  do_seal,
+				  mech,
+				  add_gss_c_flags,
+				  &gse_ctx);
 	if (!NT_STATUS_IS_OK(status)) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -674,8 +677,9 @@ static NTSTATUS gse_init_server(struct gensec_security *gensec_security,
 	}
 
 	/* This creates a GSSAPI cred_id_t with the keytab set */
-	gss_maj = smb_gss_krb5_import_cred(&gss_min, gse_ctx->k5ctx,
+	gss_maj = smb_gss_mech_import_cred(&gss_min, gse_ctx->k5ctx,
 					   NULL, NULL, gse_ctx->keytab,
+					   &gse_ctx->gss_mech,
 					   &gse_ctx->creds);
 
 	if (gss_maj != 0) {
@@ -816,14 +820,11 @@ done:
 static char *gse_errstr(TALLOC_CTX *mem_ctx, OM_uint32 maj, OM_uint32 min)
 {
 	OM_uint32 gss_min, gss_maj;
-	gss_buffer_desc msg_min;
-	gss_buffer_desc msg_maj;
+	gss_buffer_desc msg_min = {};
+	gss_buffer_desc msg_maj = {};
 	OM_uint32 msg_ctx = 0;
 
 	char *errstr = NULL;
-
-	ZERO_STRUCT(msg_min);
-	ZERO_STRUCT(msg_maj);
 
 	gss_maj = gss_display_status(&gss_min, maj, GSS_C_GSS_CODE,
 				     GSS_C_NO_OID, &msg_ctx, &msg_maj);
@@ -833,9 +834,7 @@ static char *gse_errstr(TALLOC_CTX *mem_ctx, OM_uint32 maj, OM_uint32 min)
 	errstr = talloc_strndup(mem_ctx,
 				(char *)msg_maj.value,
 					msg_maj.length);
-	if (!errstr) {
-		goto done;
-	}
+
 	gss_maj = gss_display_status(&gss_min, min, GSS_C_MECH_CODE,
 				     (gss_OID)discard_const(gss_mech_krb5),
 				     &msg_ctx, &msg_min);
@@ -843,16 +842,10 @@ static char *gse_errstr(TALLOC_CTX *mem_ctx, OM_uint32 maj, OM_uint32 min)
 		goto done;
 	}
 
-	errstr = talloc_strdup_append_buffer(errstr, ": ");
-	if (!errstr) {
-		goto done;
-	}
-	errstr = talloc_strndup_append_buffer(errstr,
-						(char *)msg_min.value,
-							msg_min.length);
-	if (!errstr) {
-		goto done;
-	}
+	talloc_asprintf_addbuf(&errstr,
+			       ": %.*s",
+			       (int)msg_min.length,
+			       (char *)msg_min.value);
 
 done:
 	if (msg_min.value) {
@@ -864,6 +857,240 @@ done:
 	return errstr;
 }
 
+struct gensec_gse_client_prepare_krb5_ccache {
+	krb5_context kctx;
+	krb5_ccache id;
+	char *name;
+};
+
+static int gensec_gse_client_prepare_krb5_ccache_destructor(
+	struct gensec_gse_client_prepare_krb5_ccache *ccache)
+{
+	if (ccache->id != NULL) {
+		krb5_cc_destroy(ccache->kctx, ccache->id);
+		ccache->id = NULL;
+	}
+
+	if (ccache->kctx != NULL) {
+		krb5_free_context(ccache->kctx);
+		ccache->kctx = NULL;
+	}
+
+	return 0;
+}
+
+static NTSTATUS gensec_gse_client_prepare_krb5_ccache_create(TALLOC_CTX *mem_ctx,
+			struct gensec_gse_client_prepare_krb5_ccache **_ccache)
+{
+	struct gensec_gse_client_prepare_krb5_ccache *ccache = NULL;
+	int ret;
+
+	*_ccache = NULL;
+
+	ccache = talloc_zero(mem_ctx, struct gensec_gse_client_prepare_krb5_ccache);
+	if (ccache == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	talloc_set_destructor(ccache,
+		gensec_gse_client_prepare_krb5_ccache_destructor);
+
+	ret = smb_krb5_init_context_common(&ccache->kctx);
+	if (ret != 0) {
+		TALLOC_FREE(ccache);
+		return krb5_to_nt_status(ret);
+	}
+
+	ret = smb_krb5_cc_new_unique_memory(ccache->kctx,
+					    ccache,
+					    &ccache->name,
+					    &ccache->id);
+	if (ret != 0) {
+		TALLOC_FREE(ccache);
+		return krb5_to_nt_status(ret);
+	}
+
+	*_ccache = ccache;
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS gensec_gse_client_prepare_ccache(struct gensec_security *gensec,
+						 const char **_ccache_name)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	struct cli_credentials *creds = gensec_get_credentials(gensec);
+	enum credentials_use_kerberos krb5_state = CRED_USE_KERBEROS_REQUIRED;
+	enum credentials_obtained user_obtained = CRED_UNINITIALISED;
+	const char *user_principal = NULL;
+	const char *debug_username = NULL;
+	const char *debug_target = NULL;
+	enum credentials_obtained pass_obtained = CRED_UNINITIALISED;
+	const char *pass = NULL;
+	bool ccache_valid = false;
+	enum credentials_obtained ccache_obtained = CRED_UNINITIALISED;
+	char *e_ccache_name = NULL;
+	struct gensec_gse_client_prepare_krb5_ccache *ccache = NULL;
+	const char *error_string = NULL;
+	char *canon_principal = NULL;
+	char *canon_realm = NULL;
+	NTSTATUS status;
+	int ret;
+	int dbg_fail_lvl = DBGLVL_NOTICE;
+	bool may_ignore_krb5 = true;
+
+	debug_username = cli_credentials_get_unparsed_name(creds, frame);
+	debug_target = gensec_get_unparsed_target_principal(gensec, frame);
+
+	krb5_state = cli_credentials_get_kerberos_state(creds);
+	if (krb5_state == CRED_USE_KERBEROS_REQUIRED) {
+		DBG_DEBUG("Kerberos required username[%s]\n",
+			  debug_username);
+		dbg_fail_lvl = DBGLVL_ERR;
+		may_ignore_krb5 = false;
+	}
+
+	pass_obtained = cli_credentials_get_password_obtained(creds);
+	ccache_valid = cli_credentials_get_ccache_name_obtained(creds,
+								gensec,
+								&e_ccache_name,
+								&ccache_obtained);
+	if (ccache_valid && ccache_obtained >= pass_obtained) {
+		DBG_INFO("No kinit required for %s to access %s, %s\n",
+			 debug_username, debug_target, e_ccache_name);
+		*_ccache_name = e_ccache_name;
+		TALLOC_FREE(frame);
+		return NT_STATUS_OK;
+	}
+	TALLOC_FREE(e_ccache_name);
+
+	/*
+	 * gensec_kerberos_possible() already checked
+	 * cli_credentials_get_principal() worked
+	 */
+	user_principal = cli_credentials_get_principal_and_obtained(creds,
+								frame,
+								&user_obtained);
+	if (user_principal == NULL) {
+		TALLOC_FREE(frame);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	pass = cli_credentials_get_password(creds);
+	if (pass == NULL) {
+		DBG_PREFIX(dbg_fail_lvl, (
+			   "No password for user principal[%s]\n",
+			   user_principal));
+		TALLOC_FREE(frame);
+		if (may_ignore_krb5) {
+			return NT_STATUS_INVALID_PARAMETER;
+		}
+		return NT_STATUS_WRONG_CREDENTIAL_HANDLE;
+	}
+
+	status = gensec_gse_client_prepare_krb5_ccache_create(creds,
+							      &ccache);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("gensec_gse_client_prepare_krb5_ccache_create(): %s\n",
+			nt_errstr(status));
+		TALLOC_FREE(frame);
+		return status;
+	}
+	/* cleanup via frame on error */
+	talloc_reparent(creds, frame, ccache);
+
+	DBG_INFO("Doing kinit for %s to access %s into %s\n",
+		 user_principal, debug_target, ccache->name);
+
+	ret = kerberos_kinit_password_ext(user_principal,
+					  pass,
+					  0,
+					  0,
+					  0,
+					  ccache->name,
+					  false,
+					  false,
+					  0,
+					  frame,
+					  &canon_principal,
+					  &canon_realm,
+					  NULL);
+	if (ret != 0) {
+		switch (ret) {
+		case KRB5KDC_ERR_PREAUTH_FAILED:
+		case KRB5KDC_ERR_C_PRINCIPAL_UNKNOWN:
+		case KRB5KRB_AP_ERR_BAD_INTEGRITY:
+			/*
+			 * If the fail to authenticate a
+			 * valid user
+			 */
+			dbg_fail_lvl = DBGLVL_ERR;
+			may_ignore_krb5 = false;
+			status = NT_STATUS_LOGON_FAILURE;
+			break;
+		case KRB5KDC_ERR_CLIENT_REVOKED:
+			/*
+			 * If the fail to authenticate a
+			 * valid user
+			 */
+			dbg_fail_lvl = DBGLVL_ERR;
+			may_ignore_krb5 = false;
+			status = NT_STATUS_ACCOUNT_LOCKED_OUT;
+			break;
+		case KRB5_REALM_UNKNOWN:
+		case KRB5_KDC_UNREACH:
+			status = NT_STATUS_NO_LOGON_SERVERS;
+			break;
+		default:
+			status = krb5_to_nt_status(ret);
+			break;
+		}
+
+		DBG_PREFIX(dbg_fail_lvl, (
+			   "Kinit for %s to access %s failed: %s: %s\n",
+			   user_principal,
+			   debug_target,
+			   error_message(ret), nt_errstr(status)));
+		TALLOC_FREE(frame);
+		if (may_ignore_krb5) {
+			return NT_STATUS_INVALID_PARAMETER;
+		}
+		return status;
+	}
+
+	ret = cli_credentials_set_ccache(creds,
+					 gensec->settings->lp_ctx,
+					 ccache->name,
+					 CRED_SPECIFIED,
+					 &error_string);
+	if (ret != 0) {
+		DBG_ERR("cli_credentials_set_ccache(%s) "
+			"for %s to access %s failed: %s\n",
+			ccache->name,
+			user_principal,
+			debug_target,
+			error_string);
+		TALLOC_FREE(frame);
+		return krb5_to_nt_status(ret);
+	}
+
+	DBG_DEBUG("Successfully kinit as %s (%s) to access %s into %s\n",
+		  user_principal,
+		  canon_principal,
+		  debug_target,
+		  ccache->name);
+
+	/*
+	 * keep the ccache for the lifetime
+	 * of creds
+	 */
+	*_ccache_name = ccache->name;
+
+	talloc_move(creds, &ccache);
+
+	TALLOC_FREE(frame);
+	return NT_STATUS_OK;
+}
+
 static NTSTATUS gensec_gse_client_start(struct gensec_security *gensec_security)
 {
 	struct gse_context *gse_ctx;
@@ -871,23 +1098,30 @@ static NTSTATUS gensec_gse_client_start(struct gensec_security *gensec_security)
 	NTSTATUS nt_status;
 	OM_uint32 want_flags = 0;
 	bool do_sign = false, do_seal = false;
-	const char *hostname = gensec_get_target_hostname(gensec_security);
-	const char *service = gensec_get_target_service(gensec_security);
-	const char *username = cli_credentials_get_username(creds);
-	const char *password = cli_credentials_get_password(creds);
-	const char *realm = cli_credentials_get_realm(creds);
+	const char *ccache_name = NULL;
 
-	if (!hostname) {
-		DEBUG(1, ("Could not determine hostname for target computer, cannot use kerberos\n"));
-		return NT_STATUS_INVALID_PARAMETER;
+	nt_status = gensec_kerberos_possible(gensec_security);
+	if (!NT_STATUS_IS_OK(nt_status)) {
+		char *target_name = NULL;
+		char *cred_name = NULL;
+
+		target_name = gensec_get_unparsed_target_principal(gensec_security,
+								   gensec_security);
+		cred_name = cli_credentials_get_unparsed_name(creds,
+							      gensec_security);
+
+		DBG_NOTICE("Not using kerberos to %s as %s: %s\n",
+			   target_name, cred_name, nt_errstr(nt_status));
+
+		TALLOC_FREE(target_name);
+		TALLOC_FREE(cred_name);
+		return nt_status;
 	}
-	if (is_ipaddress(hostname)) {
-		DEBUG(2, ("Cannot do GSE to an IP address\n"));
-		return NT_STATUS_INVALID_PARAMETER;
-	}
-	if (strcmp(hostname, "localhost") == 0) {
-		DEBUG(2, ("GSE to 'localhost' does not make sense\n"));
-		return NT_STATUS_INVALID_PARAMETER;
+
+	nt_status = gensec_gse_client_prepare_ccache(gensec_security,
+						     &ccache_name);
+	if (!NT_STATUS_IS_OK(nt_status)) {
+		return nt_status;
 	}
 
 	if (gensec_security->want_features & GENSEC_FEATURE_SESSION_KEY) {
@@ -917,9 +1151,12 @@ static NTSTATUS gensec_gse_client_start(struct gensec_security *gensec_security)
 	}
 #endif
 
-	nt_status = gse_init_client(gensec_security, do_sign, do_seal, NULL,
-				    hostname, service, realm,
-				    username, password, want_flags,
+	nt_status = gse_init_client(gensec_security,
+				    do_sign,
+				    do_seal,
+				    ccache_name,
+				    gss_mech_krb5,
+				    want_flags,
 				    &gse_ctx);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		return nt_status;
@@ -945,7 +1182,11 @@ static NTSTATUS gensec_gse_server_start(struct gensec_security *gensec_security)
 		want_flags |= GSS_C_DCE_STYLE;
 	}
 
-	nt_status = gse_init_server(gensec_security, do_sign, do_seal, want_flags,
+	nt_status = gse_init_server(gensec_security,
+				    do_sign,
+				    do_seal,
+				    gss_mech_krb5,
+				    want_flags,
 				    &gse_ctx);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		return nt_status;
@@ -1488,7 +1729,7 @@ static const char *gensec_gse_krb5_oids[] = {
 	NULL
 };
 
-const struct gensec_security_ops gensec_gse_krb5_security_ops = {
+static const struct gensec_security_ops gensec_gse_krb5_security_ops = {
 	.name		= "gse_krb5",
 	.auth_type	= DCERPC_AUTH_TYPE_KRB5,
 	.oid            = gensec_gse_krb5_oids,
@@ -1516,4 +1757,16 @@ const struct gensec_security_ops gensec_gse_krb5_security_ops = {
 	.priority       = GENSEC_GSSAPI
 };
 
+const struct gensec_security_ops *gensec_gse_security_by_oid(
+	const char *oid_string)
+{
+	int cmp;
+
+	cmp = strcmp(oid_string, GENSEC_OID_KERBEROS5);
+	if (cmp == 0) {
+		return &gensec_gse_krb5_security_ops;
+	}
+
+	return NULL;
+}
 #endif /* HAVE_KRB5 */

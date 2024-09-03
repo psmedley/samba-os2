@@ -57,6 +57,7 @@ from samba.hresult import (
 )
 from samba.ndr import ndr_pack, ndr_unpack
 from samba.nt_time import (
+    datetime_from_nt_time,
     nt_time_from_datetime,
     NtTime,
     NtTimeDelta,
@@ -74,6 +75,8 @@ RootKey = NewType("RootKey", ldb.Message)
 
 ROOT_KEY_START_TIME = NtTime(KEY_CYCLE_DURATION + MAX_CLOCK_SKEW)
 
+DSDB_GMSA_TIME_OPAQUE = "dsdb_gmsa_time_opaque"
+
 
 class GetKeyError(Exception):
     def __init__(self, status: HResult, message: str):
@@ -89,20 +92,35 @@ class GkdiBaseTest(TestCase):
         b"\x01\x01\x00\x00\x00\x00\x00\x05\x12\x00\x00\x00"
     )
 
-    @staticmethod
-    def current_time(offset: Optional[datetime.timedelta] = None) -> datetime.datetime:
-        if offset is None:
-            # Allow for clock skew.
-            offset = timedelta_from_nt_time_delta(MAX_CLOCK_SKEW)
+    def set_db_time(self, samdb: SamDB, time: Optional[NtTime]) -> None:
+        samdb.set_opaque(DSDB_GMSA_TIME_OPAQUE, time)
 
-        current_time = datetime.datetime.now(tz=datetime.timezone.utc)
-        return current_time + offset
+    def get_db_time(self, samdb: SamDB) -> Optional[NtTime]:
+        return samdb.get_opaque(DSDB_GMSA_TIME_OPAQUE)
 
-    def current_nt_time(self, offset: Optional[datetime.timedelta] = None) -> NtTime:
-        return nt_time_from_datetime(self.current_time(offset))
+    def current_time(
+        self, samdb: SamDB, *, offset: Optional[datetime.timedelta] = None
+    ) -> datetime.datetime:
+        now = self.get_db_time(samdb)
+        if now is None:
+            current_time = datetime.datetime.now(tz=datetime.timezone.utc)
+        else:
+            current_time = datetime_from_nt_time(now)
 
-    def current_gkid(self, offset: Optional[datetime.timedelta] = None) -> Gkid:
-        return Gkid.from_nt_time(self.current_nt_time(offset))
+        if offset is not None:
+            current_time += offset
+
+        return current_time
+
+    def current_nt_time(
+        self, samdb: SamDB, *, offset: Optional[datetime.timedelta] = None
+    ) -> NtTime:
+        return nt_time_from_datetime(self.current_time(samdb, offset=offset))
+
+    def current_gkid(
+        self, samdb: SamDB, *, offset: Optional[datetime.timedelta] = None
+    ) -> Gkid:
+        return Gkid.from_nt_time(self.current_nt_time(samdb, offset=offset))
 
     def gkdi_connect(
         self, host: str, lp: LoadParm, server_creds: Credentials
@@ -242,11 +260,16 @@ class GkdiBaseTest(TestCase):
         return root_key_object, root_key_id
 
     def validate_get_key_request(
-        self, gkid: Gkid, current_gkid: Gkid, root_key_specified: bool
+        self, gkid: Gkid, current_time: NtTime, root_key_specified: bool
     ) -> None:
+        # The key being requested must not be from the future. That said, we
+        # allow for a little bit of clock skew so that we can compute the next
+        # managed password prior to the expiration of the current one.
+        current_gkid = Gkid.from_nt_time(NtTime(current_time + MAX_CLOCK_SKEW))
         if gkid > current_gkid:
             raise GetKeyError(
-                HRES_E_INVALIDARG, "invalid request for a key from the future"
+                HRES_E_INVALIDARG,
+                f"invalid request for a key from the future: {gkid} > {current_gkid}",
             )
 
         gkid_type = gkid.gkid_type()
@@ -271,7 +294,7 @@ class GkdiBaseTest(TestCase):
         gkid: Gkid,
         *,
         root_key_id_hint: Optional[misc.GUID] = None,
-        current_gkid: Optional[Gkid] = None,
+        current_time: Optional[NtTime] = None,
     ) -> SeedKeyPair:
         """Emulate the ISDKey.GetKey() RPC method.
 
@@ -281,8 +304,8 @@ class GkdiBaseTest(TestCase):
         Windows, pass a GUID in the *root_key_id_hint* parameter to specify a
         particular root key to use."""
 
-        if current_gkid is None:
-            current_gkid = self.current_gkid()
+        if current_time is None:
+            current_time = self.current_nt_time(samdb)
 
         root_key_specified = root_key_id is not None
         if root_key_specified:
@@ -290,13 +313,14 @@ class GkdiBaseTest(TestCase):
                 root_key_id_hint, "don’t provide both root key ID parameters"
             )
 
-        self.validate_get_key_request(gkid, current_gkid, root_key_specified)
+        self.validate_get_key_request(gkid, current_time, root_key_specified)
 
         root_key_object, root_key_id = self.get_root_key_object(
             samdb, root_key_id if root_key_specified else root_key_id_hint, gkid
         )
 
         if root_key_specified:
+            current_gkid = Gkid.from_nt_time(current_time)
             if gkid.l0_idx < current_gkid.l0_idx:
                 # All of the seed keys with an L0 index less than the current L0
                 # index are from the past and thus are safe to return. If the
@@ -359,13 +383,13 @@ class GkdiBaseTest(TestCase):
         target_sd: bytes,  # An NDR‐encoded valid security descriptor in self‐relative format.
         root_key_id: Optional[misc.GUID],
         gkid: Gkid,
-        current_gkid: Optional[Gkid] = None,
+        current_time: Optional[NtTime] = None,
     ) -> GroupKey:
-        if current_gkid is None:
-            current_gkid = self.current_gkid()
+        if current_time is None:
+            current_time = self.current_nt_time(samdb)
 
         root_key_specified = root_key_id is not None
-        self.validate_get_key_request(gkid, current_gkid, root_key_specified)
+        self.validate_get_key_request(gkid, current_time, root_key_specified)
 
         root_key_object, root_key_id = self.get_root_key_object(
             samdb, root_key_id, gkid
@@ -510,138 +534,172 @@ class GkdiBaseTest(TestCase):
         guid: Optional[misc.GUID] = None,
         data: Optional[bytes] = None,
     ) -> misc.GUID:
-        # [MS-GKDI] 3.1.4.1.1, “Creating a New Root Key”, states that if the
-        # server receives a GetKey request and the root keys container in Active
-        # Directory is empty, the the server must create a new root key object
-        # based on the default Server Configuration object. Additional root keys
-        # are to be created based on either the default Server Configuration
-        # object or an updated one specifying optional configuration values.
+        # we defer the actual work to the create_root_key() function,
+        # which exists so that the samba-tool tests can borrow that
+        # function.
 
-        guid_specified = guid is not None
-        if not guid_specified:
-            guid = misc.GUID(secrets.token_bytes(16))
-
-        if data is None:
-            data = secrets.token_bytes(KEY_LEN_BYTES)
-
-        create_time = current_nt_time = self.current_nt_time()
-
-        if use_start_time is None:
-            # Root keys created by Windows without the ‘-EffectiveImmediately’
-            # parameter have an effective time of exactly ten days in the
-            # future, presumably to allow time for replication.
-            #
-            # Microsoft’s documentation on creating a KDS root key, located at
-            # https://learn.microsoft.com/en-us/windows-server/security/group-managed-service-accounts/create-the-key-distribution-services-kds-root-key,
-            # claims to the contrary that domain controllers will only wait up
-            # to ten hours before allowing Group Managed Service Accounts to be
-            # created.
-            #
-            # The same page includes instructions for creating a root key with
-            # an effective time of ten hours in the past (for testing purposes),
-            # but I’m not sure why — the KDS will consider a key valid for use
-            # immediately after its start time has passed, without bothering to
-            # wait ten hours first. In fact, it will consider a key to be valid
-            # a full ten hours (plus clock skew) *before* its declared start
-            # time — intentional, or (conceivably) the result of an accidental
-            # negation?
-            current_interval_start_nt_time = Gkid.from_nt_time(
-                current_nt_time
-            ).start_nt_time()
-            use_start_time = NtTime(
-                current_interval_start_nt_time + KEY_CYCLE_DURATION + MAX_CLOCK_SKEW
-            )
-
-        if isinstance(use_start_time, datetime.datetime):
-            use_start_nt_time = nt_time_from_datetime(use_start_time)
-        else:
-            self.assertIsInstance(use_start_time, int)
-            use_start_nt_time = use_start_time
-
-        kdf_parameters = None
-        if hash_algorithm is not None:
-            kdf_parameters = gkdi.KdfParameters()
-            kdf_parameters.hash_algorithm = hash_algorithm.value
-            kdf_parameters = ndr_pack(kdf_parameters)
-
-        # These are the encoded p and g values, respectively, of the “2048‐bit
-        # MODP Group with 256‐bit Prime Order Subgroup” from RFC 5114 section
-        # 2.3.
-        field_order = (
-            b"\x87\xa8\xe6\x1d\xb4\xb6f<\xff\xbb\xd1\x9ce\x19Y\x99\x8c\xee\xf6\x08"
-            b"f\r\xd0\xf2],\xee\xd4C^;\x00\xe0\r\xf8\xf1\xd6\x19W\xd4\xfa\xf7\xdfE"
-            b"a\xb2\xaa0\x16\xc3\xd9\x114\to\xaa;\xf4)m\x83\x0e\x9a|"
-            b" \x9e\x0cd\x97Qz\xbd"
-            b'Z\x8a\x9d0k\xcfg\xed\x91\xf9\xe6r[GX\xc0"\xe0\xb1\xefBu\xbf{l[\xfc\x11'
-            b"\xd4_\x90\x88\xb9A\xf5N\xb1\xe5\x9b\xb8\xbc9\xa0\xbf\x120\x7f\\O\xdbp\xc5"
-            b"\x81\xb2?v\xb6:\xca\xe1\xca\xa6\xb7\x90-RRg5H\x8a\x0e\xf1<m\x9aQ\xbf\xa4\xab"
-            b":\xd84w\x96RM\x8e\xf6\xa1g\xb5\xa4\x18%\xd9g\xe1D\xe5\x14\x05d%"
-            b"\x1c\xca\xcb\x83\xe6\xb4\x86\xf6\xb3\xca?yqP`&\xc0\xb8W\xf6\x89\x96(V"
-            b"\xde\xd4\x01\n\xbd\x0b\xe6!\xc3\xa3\x96\nT\xe7\x10\xc3u\xf2cu\xd7\x01A\x03"
-            b"\xa4\xb5C0\xc1\x98\xaf\x12a\x16\xd2'n\x11q_i8w\xfa\xd7\xef\t\xca\xdb\tJ\xe9"
-            b"\x1e\x1a\x15\x97"
+        root_key_guid, root_key_dn = create_root_key(
+            samdb,
+            domain_dn,
+            current_nt_time=self.current_nt_time(
+                samdb,
+                # Allow for clock skew.
+                offset=timedelta_from_nt_time_delta(MAX_CLOCK_SKEW),
+            ),
+            use_start_time=use_start_time,
+            hash_algorithm=hash_algorithm,
+            guid=guid,
+            data=data,
         )
-        generator = (
-            b"?\xb3,\x9bs\x13M\x0b.wPf`\xed\xbdHL\xa7\xb1\x8f!\xef T\x07\xf4y:"
-            b"\x1a\x0b\xa1%\x10\xdb\xc1Pw\xbeF?\xffO\xedJ\xac\x0b\xb5U\xbe:l\x1b\x0ckG\xb1"
-            b"\xbc7s\xbf~\x8cob\x90\x12(\xf8\xc2\x8c\xbb\x18\xa5Z\xe3\x13A\x00\ne"
-            b"\x01\x96\xf91\xc7zW\xf2\xdd\xf4c\xe5\xe9\xec\x14Kw}\xe6*\xaa\xb8\xa8b"
-            b"\x8a\xc3v\xd2\x82\xd6\xed8d\xe6y\x82B\x8e\xbc\x83\x1d\x144\x8fo/\x91\x93"
-            b"\xb5\x04Z\xf2vqd\xe1\xdf\xc9g\xc1\xfb?.U\xa4\xbd\x1b\xff\xe8;\x9c\x80"
-            b"\xd0R\xb9\x85\xd1\x82\xea\n\xdb*;s\x13\xd3\xfe\x14\xc8HK\x1e\x05%\x88\xb9"
-            b"\xb7\xd2\xbb\xd2\xdf\x01a\x99\xec\xd0n\x15W\xcd\t\x15\xb35;\xbbd\xe0\xec7"
-            b"\x7f\xd0(7\r\xf9+R\xc7\x89\x14(\xcd\xc6~\xb6\x18KR=\x1d\xb2F\xc3/c\x07\x84"
-            b"\x90\xf0\x0e\xf8\xd6G\xd1H\xd4yTQ^#'\xcf\xef\x98\xc5\x82fKL\x0fl\xc4\x16Y"
-        )
-        self.assertEqual(len(field_order), len(generator))
-        key_length = len(field_order)
 
-        ffc_dh_parameters = gkdi.FfcDhParameters()
-        ffc_dh_parameters.field_order = list(field_order)
-        ffc_dh_parameters.generator = list(generator)
-        ffc_dh_parameters.key_length = key_length
-        ffc_dh_parameters = ndr_pack(ffc_dh_parameters)
-
-        root_key_dn = self.get_root_key_container_dn(samdb)
-        root_key_dn.add_child(f"CN={guid}")
-
-        # Avoid deleting root key objects without subsequently restarting the
-        # Microsoft Key Distribution Service. This service will keep its root
-        # key cached even after the corresponding AD object has been deleted,
-        # breaking later tests that try to look up the root key object.
-
-        details = {
-            "dn": root_key_dn,
-            "objectClass": "msKds-ProvRootKey",
-            "msKds-RootKeyData": data,
-            "msKds-CreateTime": str(create_time),
-            "msKds-UseStartTime": str(use_start_nt_time),
-            "msKds-DomainID": str(domain_dn),
-            "msKds-Version": "1",  # comes from Server Configuration object.
-            "msKds-KDFAlgorithmID": (
-                "SP800_108_CTR_HMAC"
-            ),  # comes from Server Configuration.
-            "msKds-SecretAgreementAlgorithmID": (
-                "DH"
-            ),  # comes from Server Configuration.
-            "msKds-SecretAgreementParam": (
-                ffc_dh_parameters
-            ),  # comes from Server Configuration.
-            "msKds-PublicKeyLength": "2048",  # comes from Server Configuration.
-            "msKds-PrivateKeyLength": (
-                "512"
-            ),  # comes from Server Configuration. [MS-GKDI] claims this defaults to ‘256’.
-        }
-        if kdf_parameters is not None:
-            details["msKds-KDFParam"] = (
-                kdf_parameters  # comes from Server Configuration.
-            )
-
-        if guid_specified:
+        if guid is not None:
             # A test may request that a root key have a specific GUID so that
             # results may be reproducible. Ensure these keys are cleaned up
             # afterwards.
             self.addCleanup(delete_force, samdb, root_key_dn)
-        samdb.add(details)
+            self.assertEqual(guid, root_key_guid)
 
-        return guid
+        return root_key_guid
+
+
+def create_root_key(
+    samdb: SamDB,
+    domain_dn: ldb.Dn,
+    *,
+    current_nt_time: NtTime,
+    use_start_time: Optional[Union[datetime.datetime, NtTime]] = None,
+    hash_algorithm: Optional[Algorithm] = Algorithm.SHA512,
+    guid: Optional[misc.GUID] = None,
+    data: Optional[bytes] = None,
+) -> Tuple[misc.GUID, ldb.Dn]:
+    # [MS-GKDI] 3.1.4.1.1, “Creating a New Root Key”, states that if the
+    # server receives a GetKey request and the root keys container in Active
+    # Directory is empty, the the server must create a new root key object
+    # based on the default Server Configuration object. Additional root keys
+    # are to be created based on either the default Server Configuration
+    # object or an updated one specifying optional configuration values.
+
+    if guid is None:
+        guid = misc.GUID(secrets.token_bytes(16))
+
+    if data is None:
+        data = secrets.token_bytes(KEY_LEN_BYTES)
+
+    create_time = current_nt_time
+
+    if use_start_time is None:
+        # Root keys created by Windows without the ‘-EffectiveImmediately’
+        # parameter have an effective time of exactly ten days in the
+        # future, presumably to allow time for replication.
+        #
+        # Microsoft’s documentation on creating a KDS root key, located at
+        # https://learn.microsoft.com/en-us/windows-server/security/group-managed-service-accounts/create-the-key-distribution-services-kds-root-key,
+        # claims to the contrary that domain controllers will only wait up
+        # to ten hours before allowing Group Managed Service Accounts to be
+        # created.
+        #
+        # The same page includes instructions for creating a root key with
+        # an effective time of ten hours in the past (for testing purposes),
+        # but I’m not sure why — the KDS will consider a key valid for use
+        # immediately after its start time has passed, without bothering to
+        # wait ten hours first. In fact, it will consider a key to be valid
+        # a full ten hours (plus clock skew) *before* its declared start
+        # time — intentional, or (conceivably) the result of an accidental
+        # negation?
+        current_interval_start_nt_time = Gkid.from_nt_time(
+            current_nt_time
+        ).start_nt_time()
+        use_start_time = NtTime(
+            current_interval_start_nt_time + KEY_CYCLE_DURATION + MAX_CLOCK_SKEW
+        )
+
+    if isinstance(use_start_time, datetime.datetime):
+        use_start_nt_time = nt_time_from_datetime(use_start_time)
+    elif isinstance(use_start_time, int):
+        use_start_nt_time = use_start_time
+    else:
+        raise ValueError("use_start_time should be a datetime or int")
+
+    kdf_parameters = None
+    if hash_algorithm is not None:
+        kdf_parameters = gkdi.KdfParameters()
+        kdf_parameters.hash_algorithm = hash_algorithm.value
+        kdf_parameters = ndr_pack(kdf_parameters)
+
+    # These are the encoded p and g values, respectively, of the “2048‐bit
+    # MODP Group with 256‐bit Prime Order Subgroup” from RFC 5114 section
+    # 2.3.
+    field_order = (
+        b"\x87\xa8\xe6\x1d\xb4\xb6f<\xff\xbb\xd1\x9ce\x19Y\x99\x8c\xee\xf6\x08"
+        b"f\r\xd0\xf2],\xee\xd4C^;\x00\xe0\r\xf8\xf1\xd6\x19W\xd4\xfa\xf7\xdfE"
+        b"a\xb2\xaa0\x16\xc3\xd9\x114\to\xaa;\xf4)m\x83\x0e\x9a|"
+        b" \x9e\x0cd\x97Qz\xbd"
+        b'Z\x8a\x9d0k\xcfg\xed\x91\xf9\xe6r[GX\xc0"\xe0\xb1\xefBu\xbf{l[\xfc\x11'
+        b"\xd4_\x90\x88\xb9A\xf5N\xb1\xe5\x9b\xb8\xbc9\xa0\xbf\x120\x7f\\O\xdbp\xc5"
+        b"\x81\xb2?v\xb6:\xca\xe1\xca\xa6\xb7\x90-RRg5H\x8a\x0e\xf1<m\x9aQ\xbf\xa4\xab"
+        b":\xd84w\x96RM\x8e\xf6\xa1g\xb5\xa4\x18%\xd9g\xe1D\xe5\x14\x05d%"
+        b"\x1c\xca\xcb\x83\xe6\xb4\x86\xf6\xb3\xca?yqP`&\xc0\xb8W\xf6\x89\x96(V"
+        b"\xde\xd4\x01\n\xbd\x0b\xe6!\xc3\xa3\x96\nT\xe7\x10\xc3u\xf2cu\xd7\x01A\x03"
+        b"\xa4\xb5C0\xc1\x98\xaf\x12a\x16\xd2'n\x11q_i8w\xfa\xd7\xef\t\xca\xdb\tJ\xe9"
+        b"\x1e\x1a\x15\x97"
+    )
+    generator = (
+        b"?\xb3,\x9bs\x13M\x0b.wPf`\xed\xbdHL\xa7\xb1\x8f!\xef T\x07\xf4y:"
+        b"\x1a\x0b\xa1%\x10\xdb\xc1Pw\xbeF?\xffO\xedJ\xac\x0b\xb5U\xbe:l\x1b\x0ckG\xb1"
+        b"\xbc7s\xbf~\x8cob\x90\x12(\xf8\xc2\x8c\xbb\x18\xa5Z\xe3\x13A\x00\ne"
+        b"\x01\x96\xf91\xc7zW\xf2\xdd\xf4c\xe5\xe9\xec\x14Kw}\xe6*\xaa\xb8\xa8b"
+        b"\x8a\xc3v\xd2\x82\xd6\xed8d\xe6y\x82B\x8e\xbc\x83\x1d\x144\x8fo/\x91\x93"
+        b"\xb5\x04Z\xf2vqd\xe1\xdf\xc9g\xc1\xfb?.U\xa4\xbd\x1b\xff\xe8;\x9c\x80"
+        b"\xd0R\xb9\x85\xd1\x82\xea\n\xdb*;s\x13\xd3\xfe\x14\xc8HK\x1e\x05%\x88\xb9"
+        b"\xb7\xd2\xbb\xd2\xdf\x01a\x99\xec\xd0n\x15W\xcd\t\x15\xb35;\xbbd\xe0\xec7"
+        b"\x7f\xd0(7\r\xf9+R\xc7\x89\x14(\xcd\xc6~\xb6\x18KR=\x1d\xb2F\xc3/c\x07\x84"
+        b"\x90\xf0\x0e\xf8\xd6G\xd1H\xd4yTQ^#'\xcf\xef\x98\xc5\x82fKL\x0fl\xc4\x16Y"
+    )
+    assert len(field_order) == len(generator)
+
+    key_length = len(field_order)
+
+    ffc_dh_parameters = gkdi.FfcDhParameters()
+    ffc_dh_parameters.field_order = list(field_order)
+    ffc_dh_parameters.generator = list(generator)
+    ffc_dh_parameters.key_length = key_length
+    ffc_dh_parameters = ndr_pack(ffc_dh_parameters)
+
+    root_key_dn = samdb.get_config_basedn()
+    root_key_dn.add_child(
+        "CN=Master Root Keys,CN=Group Key Distribution Service,CN=Services"
+    )
+
+    root_key_dn.add_child(f"CN={guid}")
+
+    # Avoid deleting root key objects without subsequently restarting the
+    # Microsoft Key Distribution Service. This service will keep its root
+    # key cached even after the corresponding AD object has been deleted,
+    # breaking later tests that try to look up the root key object.
+
+    details = {
+        "dn": root_key_dn,
+        "objectClass": "msKds-ProvRootKey",
+        "msKds-RootKeyData": data,
+        "msKds-CreateTime": str(create_time),
+        "msKds-UseStartTime": str(use_start_nt_time),
+        "msKds-DomainID": str(domain_dn),
+        "msKds-Version": "1",  # comes from Server Configuration object.
+        "msKds-KDFAlgorithmID": (
+            "SP800_108_CTR_HMAC"
+        ),  # comes from Server Configuration.
+        "msKds-SecretAgreementAlgorithmID": "DH",  # comes from Server Configuration.
+        "msKds-SecretAgreementParam": (
+            ffc_dh_parameters
+        ),  # comes from Server Configuration.
+        "msKds-PublicKeyLength": "2048",  # comes from Server Configuration.
+        "msKds-PrivateKeyLength": (
+            "512"
+        ),  # comes from Server Configuration. [MS-GKDI] claims this defaults to ‘256’.
+    }
+    if kdf_parameters is not None:
+        details["msKds-KDFParam"] = kdf_parameters  # comes from Server Configuration.
+
+    samdb.add(details)
+
+    return (guid, root_key_dn)

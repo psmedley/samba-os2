@@ -165,6 +165,16 @@ static krb5_error_code samba_wdc_get_pac(void *priv,
 		return map_errno_from_nt_status(nt_status);
 	}
 
+	if (kdc_request_get_pkinit_freshness_used(r)) {
+		nt_status = samba_kdc_add_fresh_public_key_identity(user_info_dc_shallow_copy);
+		if (!NT_STATUS_IS_OK(nt_status)) {
+			DBG_ERR("Failed to add Fresh Public Key Identity: %s\n",
+				nt_errstr(nt_status));
+			talloc_free(mem_ctx);
+			return map_errno_from_nt_status(nt_status);
+		}
+	}
+
 	ret = samba_kdc_get_claims_data_from_db(server_entry->kdc_db_ctx->samdb,
 						skdc_entry,
 						&auth_claims.user_claims);
@@ -922,8 +932,27 @@ static krb5_error_code samba_wdc_referral_policy(void *priv,
 	return kdc_request_get_error_code((kdc_request_t)r);
 }
 
+static krb5_error_code samba_wdc_hwauth_policy(void *priv, astgs_request_t r)
+{
+	const hdb_entry *client = kdc_request_get_client(r);
+	krb5_error_code ret = 0;
+
+	if (client != NULL && client->flags.require_hwauth) {
+		krb5_error_code ret2;
+
+		ret = KRB5KDC_ERR_POLICY;
+		ret2 = hdb_samba4_set_ntstatus(
+			r, NT_STATUS_SMARTCARD_LOGON_REQUIRED, ret);
+		if (ret2) {
+			ret = ret2;
+		}
+	}
+
+	return ret;
+}
+
 struct krb5plugin_kdc_ftable kdc_plugin_table = {
-	.minor_version = KRB5_PLUGIN_KDC_VERSION_11,
+	.minor_version = KRB5_PLUGIN_KDC_VERSION_12,
 	.init = samba_wdc_plugin_init,
 	.fini = samba_wdc_plugin_fini,
 	.pac_verify = samba_wdc_verify_pac,
@@ -932,6 +961,5 @@ struct krb5plugin_kdc_ftable kdc_plugin_table = {
 	.finalize_reply = samba_wdc_finalize_reply,
 	.pac_generate = samba_wdc_get_pac,
 	.referral_policy = samba_wdc_referral_policy,
+	.hwauth_policy = samba_wdc_hwauth_policy,
 };
-
-

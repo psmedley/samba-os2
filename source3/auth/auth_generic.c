@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/Netbios implementation.
    Version 3.0
    handle GENSEC authentication, server side
@@ -11,12 +11,12 @@
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -29,6 +29,7 @@
 #include "auth/gensec/gensec.h"
 #include "lib/param/param.h"
 #ifdef HAVE_KRB5
+#include "librpc/gen_ndr/ndr_krb5pac.h"
 #include "auth/kerberos/pac_utils.h"
 #include "nsswitch/libwbclient/wbclient.h"
 #endif
@@ -38,34 +39,264 @@
 #include "librpc/gen_ndr/dcerpc.h"
 #include "source3/lib/substitute.h"
 
-static NTSTATUS auth3_generate_session_info_pac(struct auth4_context *auth_ctx,
-						TALLOC_CTX *mem_ctx,
-						struct smb_krb5_context *smb_krb5_context,
-						DATA_BLOB *pac_blob,
-						const char *princ_name,
-						const struct tsocket_address *remote_address,
-						uint32_t session_info_flags,
-						struct auth_session_info **session_info)
+static NTSTATUS generate_pac_session_info(
+	TALLOC_CTX *mem_ctx,
+	const char *princ_name,
+	const char *rhost,
+	DATA_BLOB *pac_blob,
+	struct auth_session_info **psession_info)
 {
-	enum server_role server_role = lp_server_role();
-	TALLOC_CTX *tmp_ctx;
-	bool is_mapped;
-	bool is_guest;
-	char *ntuser;
-	char *ntdomain;
-	char *username;
-	const char *rhost;
-	struct passwd *pw;
+	NTSTATUS status;
+	struct wbcAuthUserParams params = {0};
+	struct wbcAuthUserInfo *info = NULL;
+	struct wbcAuthErrorInfo *err = NULL;
+	struct auth_serversupplied_info *server_info = NULL;
+	char *original_user_name = NULL;
+	char *p = NULL;
+	wbcErr wbc_err;
+
+	/*
+	 * Let winbind decode the PAC.
+	 * This will also store the user
+	 * data in the netsamlogon cache.
+	 *
+	 * This used to be a cache prime
+	 * optimization, but now we delegate
+	 * all logic to winbindd, as we require
+	 * winbindd as domain member anyway.
+	 */
+	params.level = WBC_AUTH_USER_LEVEL_PAC;
+	params.password.pac.data = pac_blob->data;
+	params.password.pac.length = pac_blob->length;
+
+	/* we are contacting the privileged pipe */
+	become_root();
+	wbc_err = wbcAuthenticateUserEx(&params, &info, &err);
+	unbecome_root();
+
+	/*
+	 * As this is merely a cache prime
+	 * WBC_ERR_WINBIND_NOT_AVAILABLE
+	 * is not a fatal error, treat it
+	 * as success.
+	 */
+
+	switch (wbc_err) {
+	case WBC_ERR_SUCCESS:
+		break;
+	case WBC_ERR_WINBIND_NOT_AVAILABLE:
+		status = NT_STATUS_NO_LOGON_SERVERS;
+		DBG_ERR("winbindd not running - "
+			"but required as domain member: %s\n",
+			nt_errstr(status));
+		return status;
+	case WBC_ERR_AUTH_ERROR:
+		wbcFreeMemory(err);
+		return NT_STATUS(err->nt_status);
+	case WBC_ERR_NO_MEMORY:
+		return NT_STATUS_NO_MEMORY;
+	default:
+		return NT_STATUS_LOGON_FAILURE;
+	}
+
+	status = make_server_info_wbcAuthUserInfo(mem_ctx,
+						  info->account_name,
+						  info->domain_name,
+						  info,
+						  &server_info);
+	wbcFreeMemory(info);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(10, ("make_server_info_wbcAuthUserInfo failed: %s\n",
+			   nt_errstr(status)));
+		return status;
+	}
+
+	/* We skip doing this step if the caller asked us not to */
+	if (!(server_info->guest)) {
+		const char *unix_username = server_info->unix_name;
+
+		/* We might not be root if we are an RPC call */
+		become_root();
+		status = smb_pam_accountcheck(unix_username, rhost);
+		unbecome_root();
+
+		if (!NT_STATUS_IS_OK(status)) {
+			DEBUG(3, ("check_ntlm_password:  PAM Account for user [%s] "
+					  "FAILED with error %s\n",
+					  unix_username, nt_errstr(status)));
+			return status;
+		}
+
+		DEBUG(5, ("check_ntlm_password:  PAM Account for user [%s] "
+			  "succeeded\n", unix_username));
+	}
+
+	DEBUG(3, ("Kerberos ticket principal name is [%s]\n", princ_name));
+
+	p = strchr_m(princ_name, '@');
+	if (!p) {
+		DEBUG(3, ("[%s] Doesn't look like a valid principal\n",
+				  princ_name));
+		return NT_STATUS_LOGON_FAILURE;
+	}
+
+	original_user_name = talloc_strndup(mem_ctx,
+					    princ_name,
+					    p - princ_name);
+	if (original_user_name == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = create_local_token(
+		mem_ctx, server_info, NULL, original_user_name, psession_info);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(10, ("create_local_token failed: %s\n",
+				   nt_errstr(status)));
+		return status;
+	}
+
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS generate_krb5_session_info(
+	TALLOC_CTX *mem_ctx,
+	const char *princ_name,
+	const char *rhost,
+	DATA_BLOB *pac_blob,
+	struct auth_session_info **psession_info)
+{
+	bool is_mapped = false;
+	bool is_guest = false;
+	char *ntuser = NULL;
+	char *ntdomain = NULL;
+	char *username = NULL;
+	struct passwd *pw = NULL;
 	NTSTATUS status;
 
+	if (pac_blob != NULL) {
+		struct PAC_LOGON_NAME *logon_name = NULL;
+		struct PAC_LOGON_INFO *logon_info = NULL;
+		struct PAC_DATA *pac_data = NULL;
+		enum ndr_err_code ndr_err;
+		size_t i;
+
+		pac_data = talloc_zero(mem_ctx, struct PAC_DATA);
+		if (pac_data == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+
+		ndr_err = ndr_pull_struct_blob(pac_blob,
+					       pac_data,
+					       pac_data,
+					       (ndr_pull_flags_fn_t)
+						       ndr_pull_PAC_DATA);
+		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+			status = ndr_map_error2ntstatus(ndr_err);
+			DBG_ERR("Can't parse the PAC: %s\n", nt_errstr(status));
+			return status;
+		}
+
+		if (pac_data->num_buffers < 4) {
+			DBG_ERR("We expect at least 4 PAC buffers.\n");
+			return NT_STATUS_INVALID_PARAMETER;
+		}
+
+		for (i = 0; i < pac_data->num_buffers; i++) {
+			struct PAC_BUFFER *data_buf = &pac_data->buffers[i];
+
+			switch (data_buf->type) {
+			case PAC_TYPE_LOGON_NAME:
+				logon_name = &data_buf->info->logon_name;
+				break;
+			case PAC_TYPE_LOGON_INFO:
+				if (!data_buf->info) {
+					break;
+				}
+				logon_info = data_buf->info->logon_info.info;
+				break;
+			default:
+				break;
+			}
+		}
+
+		if (logon_name == NULL) {
+			TALLOC_FREE(pac_data);
+			DBG_ERR("PAC without logon_name\n");
+			return NT_STATUS_INVALID_PARAMETER;
+		}
+
+		if (logon_info != NULL) {
+			/*
+			* In standalone mode we don't expect a MS-PAC!
+			* we only support MIT realms
+			*/
+			TALLOC_FREE(pac_data);
+			status = NT_STATUS_BAD_TOKEN_TYPE;
+			DBG_WARNING("Unexpected PAC for [%s] in standalone mode - %s\n",
+				princ_name, nt_errstr(status));
+			return status;
+		}
+
+		TALLOC_FREE(pac_data);
+	}
+
+	status = get_user_from_kerberos_info(mem_ctx,
+					     rhost,
+					     princ_name,
+					     &is_mapped,
+					     &is_guest,
+					     &ntuser,
+					     &ntdomain,
+					     &username,
+					     &pw);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_NOTICE("Failed to map kerberos principal to system user "
+			  "(%s)\n", nt_errstr(status));
+		return NT_STATUS_ACCESS_DENIED;
+	}
+
+	status = make_session_info_krb5(mem_ctx,
+					ntuser,
+					ntdomain,
+					username,
+					pw,
+					is_guest,
+					is_mapped,
+					psession_info);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(1, ("Failed to map kerberos pac to server info (%s)\n",
+			  nt_errstr(status)));
+		status = nt_status_squash(status);
+		return status;
+	}
+
+	return NT_STATUS_OK;
+}
+
+static NTSTATUS auth3_generate_session_info_pac(
+	struct auth4_context *auth_ctx,
+	TALLOC_CTX *mem_ctx,
+	struct smb_krb5_context *smb_krb5_context,
+	DATA_BLOB *pac_blob,
+	const char *princ_name,
+	const struct tsocket_address *remote_address,
+	uint32_t session_info_flags,
+	struct auth_session_info **psession_info)
+{
+	enum server_role server_role = lp_server_role();
+	struct auth_session_info *session_info = NULL;
+	const char *rhost;
+	NTSTATUS status;
+	TALLOC_CTX *tmp_ctx = NULL;
+
 	tmp_ctx = talloc_new(mem_ctx);
-	if (!tmp_ctx) {
+	if (tmp_ctx == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
 
 	if (tsocket_address_is_inet(remote_address, "ip")) {
-		rhost = tsocket_address_inet_addr_string(
-			remote_address, tmp_ctx);
+		rhost = tsocket_address_inet_addr_string(remote_address,
+							 tmp_ctx);
 		if (rhost == NULL) {
 			status = NT_STATUS_NO_MEMORY;
 			goto done;
@@ -74,187 +305,46 @@ static NTSTATUS auth3_generate_session_info_pac(struct auth4_context *auth_ctx,
 		rhost = "127.0.0.1";
 	}
 
-	if (server_role != ROLE_STANDALONE) {
-		struct wbcAuthUserParams params = { 0 };
-		struct wbcAuthUserInfo *info = NULL;
-		struct wbcAuthErrorInfo *err = NULL;
-		struct auth_serversupplied_info *server_info = NULL;
-		char *original_user_name = NULL;
-		char *p = NULL;
-		wbcErr wbc_err;
-
-		if (pac_blob == NULL) {
-			/*
-			 * This should already be caught at the main
-			 * gensec layer, but better check twice
-			 */
-			status = NT_STATUS_INTERNAL_ERROR;
-			goto done;
-		}
-
-		/*
-		 * Let winbind decode the PAC.
-		 * This will also store the user
-		 * data in the netsamlogon cache.
-		 *
-		 * This used to be a cache prime
-		 * optimization, but now we delegate
-		 * all logic to winbindd, as we require
-		 * winbindd as domain member anyway.
-		 */
-		params.level = WBC_AUTH_USER_LEVEL_PAC;
-		params.password.pac.data = pac_blob->data;
-		params.password.pac.length = pac_blob->length;
-
-		/* we are contacting the privileged pipe */
-		become_root();
-		wbc_err = wbcAuthenticateUserEx(&params, &info, &err);
-		unbecome_root();
-
-		/*
-		 * As this is merely a cache prime
-		 * WBC_ERR_WINBIND_NOT_AVAILABLE
-		 * is not a fatal error, treat it
-		 * as success.
-		 */
-
-		switch (wbc_err) {
-			case WBC_ERR_SUCCESS:
-				break;
-			case WBC_ERR_WINBIND_NOT_AVAILABLE:
-				status = NT_STATUS_NO_LOGON_SERVERS;
-				DBG_ERR("winbindd not running - "
-					"but required as domain member: %s\n",
-					nt_errstr(status));
-				goto done;
-			case WBC_ERR_AUTH_ERROR:
-				status = NT_STATUS(err->nt_status);
-				wbcFreeMemory(err);
-				goto done;
-			case WBC_ERR_NO_MEMORY:
-				status = NT_STATUS_NO_MEMORY;
-				goto done;
-			default:
-				status = NT_STATUS_LOGON_FAILURE;
-				goto done;
-		}
-
-		status = make_server_info_wbcAuthUserInfo(tmp_ctx,
-							  info->account_name,
-							  info->domain_name,
-							  info, &server_info);
-		wbcFreeMemory(info);
-		if (!NT_STATUS_IS_OK(status)) {
-			DEBUG(10, ("make_server_info_wbcAuthUserInfo failed: %s\n",
-				   nt_errstr(status)));
-			goto done;
-		}
-
-		/* We skip doing this step if the caller asked us not to */
-		if (!(server_info->guest)) {
-			const char *unix_username = server_info->unix_name;
-
-			/* We might not be root if we are an RPC call */
-			become_root();
-			status = smb_pam_accountcheck(unix_username, rhost);
-			unbecome_root();
-
-			if (!NT_STATUS_IS_OK(status)) {
-				DEBUG(3, ("check_ntlm_password:  PAM Account for user [%s] "
-					  "FAILED with error %s\n",
-					  unix_username, nt_errstr(status)));
-				goto done;
-			}
-
-			DEBUG(5, ("check_ntlm_password:  PAM Account for user [%s] "
-				  "succeeded\n", unix_username));
-		}
-
-		DEBUG(3, ("Kerberos ticket principal name is [%s]\n", princ_name));
-
-		p = strchr_m(princ_name, '@');
-		if (!p) {
-			DEBUG(3, ("[%s] Doesn't look like a valid principal\n",
-				  princ_name));
-			status = NT_STATUS_LOGON_FAILURE;
-			goto done;
-		}
-
-		original_user_name = talloc_strndup(tmp_ctx, princ_name, p - princ_name);
-		if (original_user_name == NULL) {
-			status = NT_STATUS_NO_MEMORY;
-			goto done;
-		}
-
-		status = create_local_token(mem_ctx,
-					    server_info,
-					    NULL,
-					    original_user_name,
-					    session_info);
-		if (!NT_STATUS_IS_OK(status)) {
-			DEBUG(10, ("create_local_token failed: %s\n",
-				   nt_errstr(status)));
-			goto done;
-		}
-
-		goto session_info_ready;
-	}
-
-	/* This is the standalone legacy code path */
-
-	if (pac_blob != NULL) {
-		/*
-		 * In standalone mode we don't expect a PAC!
-		 * we only support MIT realms
-		 */
-		status = NT_STATUS_BAD_TOKEN_TYPE;
-		DBG_WARNING("Unexpected PAC for [%s] in standalone mode - %s\n",
-			    princ_name, nt_errstr(status));
-		if (!NT_STATUS_IS_OK(status)) {
-			goto done;
-		}
-	}
-
-	status = get_user_from_kerberos_info(tmp_ctx, rhost,
-					     princ_name,
-					     &is_mapped, &is_guest,
-					     &ntuser, &ntdomain,
-					     &username, &pw);
-	if (!NT_STATUS_IS_OK(status)) {
-		DBG_NOTICE("Failed to map kerberos principal to system user "
-			  "(%s)\n", nt_errstr(status));
-		status = NT_STATUS_ACCESS_DENIED;
+	switch (server_role) {
+	case ROLE_DOMAIN_MEMBER:
+	case ROLE_DOMAIN_BDC:
+	case ROLE_DOMAIN_PDC:
+	case ROLE_ACTIVE_DIRECTORY_DC:
+	case ROLE_IPA_DC:
+		/* This requires a complete MS-PAC including logon_info */
+		status = generate_pac_session_info(
+			tmp_ctx, princ_name, rhost, pac_blob, &session_info);
+		break;
+	case ROLE_STANDALONE:
+		/* This requires no PAC or a minimal PAC */
+		status = generate_krb5_session_info(
+			tmp_ctx, princ_name, rhost, pac_blob, &session_info);
+		break;
+	default:
+		status = NT_STATUS_INVALID_PARAMETER;
 		goto done;
 	}
 
-	status = make_session_info_krb5(mem_ctx,
-					ntuser, ntdomain, username, pw,
-					is_guest, is_mapped,
-					session_info);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(1, ("Failed to map kerberos pac to server info (%s)\n",
-			  nt_errstr(status)));
-		status = nt_status_squash(status);
 		goto done;
 	}
-
-session_info_ready:
 
 	/* setup the string used by %U */
-	set_current_user_info((*session_info)->unix_info->sanitized_username,
-			      (*session_info)->unix_info->unix_name,
-			      (*session_info)->info->domain_name);
+	set_current_user_info(session_info->unix_info->sanitized_username,
+			      session_info->unix_info->unix_name,
+			      session_info->info->domain_name);
 
 	/* reload services so that the new %U is taken into account */
 	lp_load_with_shares(get_dyn_CONFIGFILE());
 
 	DEBUG(5, (__location__ "OK: user: %s domain: %s client: %s\n",
-		  (*session_info)->info->account_name,
-		  (*session_info)->info->domain_name,
+		  session_info->info->account_name,
+		  session_info->info->domain_name,
 		  rhost));
 
-	status = NT_STATUS_OK;
+	*psession_info = talloc_move(mem_ctx, &session_info);
 
+	status = NT_STATUS_OK;
 done:
 	TALLOC_FREE(tmp_ctx);
 	return status;
@@ -398,7 +488,8 @@ NTSTATUS auth_generic_prepare(TALLOC_CTX *mem_ctx,
 
 		/* These need to be in priority order, krb5 before NTLMSSP */
 #if defined(HAVE_KRB5)
-		backends[idx++] = &gensec_gse_krb5_security_ops;
+		backends[idx++] = gensec_gse_security_by_oid(
+			GENSEC_OID_KERBEROS5);
 #endif
 
 		backends[idx++] = gensec_security_by_oid(NULL, GENSEC_OID_NTLMSSP);

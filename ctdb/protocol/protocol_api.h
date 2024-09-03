@@ -34,6 +34,11 @@ int ctdb_ltdb_header_pull(uint8_t *buf, size_t buflen,
 
 int ctdb_ltdb_header_extract(TDB_DATA *data, struct ctdb_ltdb_header *header);
 
+size_t ctdb_node_map_len(struct ctdb_node_map *in);
+void ctdb_node_map_push(struct ctdb_node_map *in, uint8_t *buf, size_t *npush);
+int ctdb_node_map_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
+		       struct ctdb_node_map **out, size_t *npull);
+
 size_t ctdb_rec_data_len(struct ctdb_rec_data *in);
 void ctdb_rec_data_push(struct ctdb_rec_data *in, uint8_t *buf, size_t *npush);
 int ctdb_rec_data_pull(uint8_t *buf, size_t buflen, TALLOC_CTX *mem_ctx,
@@ -602,6 +607,9 @@ int ctdb_reply_control_disable_node(struct ctdb_reply_control *reply);
 
 void ctdb_req_control_enable_node(struct ctdb_req_control *request);
 int ctdb_reply_control_enable_node(struct ctdb_reply_control *reply);
+
+void ctdb_req_control_start_ipreallocate(struct ctdb_req_control *request);
+int ctdb_reply_control_start_ipreallocate(struct ctdb_reply_control *reply);
 
 /* From protocol/protocol_debug.c */
 

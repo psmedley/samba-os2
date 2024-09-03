@@ -197,7 +197,6 @@ WERROR _netr_LogonControl2Ex(struct pipes_struct *p,
 	struct netr_NETLOGON_INFO_1 *info1;
 	struct netr_NETLOGON_INFO_2 *info2;
 	struct netr_NETLOGON_INFO_3 *info3;
-	struct netr_NETLOGON_INFO_4 *info4;
 	const char *fn;
 	NTSTATUS status;
 	struct netr_DsRGetDCNameInfo *dc_info;
@@ -264,10 +263,16 @@ WERROR _netr_LogonControl2Ex(struct pipes_struct *p,
 	case NETLOGON_CONTROL_TRUNCATE_LOG:
 	case NETLOGON_CONTROL_TRANSPORT_NOTIFY:
 	case NETLOGON_CONTROL_FORCE_DNS_REG:
-	case NETLOGON_CONTROL_QUERY_DNS_REG:
 		return WERR_NOT_SUPPORTED;
-
+	case NETLOGON_CONTROL_QUERY_DNS_REG:
+		if (r->in.level != 1) {
+			return WERR_INVALID_PARAMETER;
+		}
+		return WERR_NOT_SUPPORTED;
 	case NETLOGON_CONTROL_FIND_USER:
+		if (r->in.level != 4) {
+			return WERR_INVALID_PARAMETER;
+		}
 		if (!r->in.data || !r->in.data->user) {
 			return WERR_NOT_SUPPORTED;
 		}
@@ -278,6 +283,9 @@ WERROR _netr_LogonControl2Ex(struct pipes_struct *p,
 		}
 		break;
 	case NETLOGON_CONTROL_TC_VERIFY:
+		if (r->in.level != 2) {
+			return WERR_INVALID_PARAMETER;
+		}
 		if (!r->in.data || !r->in.data->domain) {
 			return WERR_NOT_SUPPORTED;
 		}
@@ -369,6 +377,12 @@ WERROR _netr_LogonControl2Ex(struct pipes_struct *p,
 		r->out.query->info1 = info1;
 		break;
 	case 2:
+		if (r->in.function_code != NETLOGON_CONTROL_REDISCOVER &&
+		    r->in.function_code != NETLOGON_CONTROL_TC_QUERY &&
+		    r->in.function_code != NETLOGON_CONTROL_TC_VERIFY)
+		{
+			return WERR_INVALID_PARAMETER;
+		}
 		info2 = talloc_zero(p->mem_ctx, struct netr_NETLOGON_INFO_2);
 		W_ERROR_HAVE_NO_MEMORY(info2);
 
@@ -389,14 +403,10 @@ WERROR _netr_LogonControl2Ex(struct pipes_struct *p,
 		r->out.query->info3 = info3;
 		break;
 	case 4:
-		info4 = talloc_zero(p->mem_ctx, struct netr_NETLOGON_INFO_4);
-		W_ERROR_HAVE_NO_MEMORY(info4);
-
-		info4->trusted_dc_name		= dc_name;
-		info4->trusted_domain_name	= r->in.data->domain;
-
-		r->out.query->info4 = info4;
-		break;
+		if (r->in.function_code != NETLOGON_CONTROL_FIND_USER) {
+			return WERR_INVALID_PARAMETER;
+		}
+		return WERR_NOT_SUPPORTED;
 	default:
 		return WERR_INVALID_LEVEL;
 	}

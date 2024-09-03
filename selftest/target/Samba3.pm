@@ -31,7 +31,7 @@ sub have_ads($) {
         open(IN, $smbd_build_options) or die("Unable to run $smbd_build_options: $!");
 
         while (<IN>) {
-                if (/WITH_ADS/) {
+                if (/HAVE_ADS/) {
                        $found_ads = 1;
                 }
         }
@@ -255,7 +255,7 @@ sub check_env($$)
 	ad_member_idmap_nss => ["ad_dc"],
 	ad_member_s3_join   => ["vampire_dc"],
 
-	clusteredmember => ["nt4_dc"],
+	clusteredmember => ["ad_dc"],
 );
 
 %Samba3::ENV_DEPS_POST = ();
@@ -423,6 +423,8 @@ sub setup_nt4_member
 
 	my $member_options = "
 	security = domain
+	lanman auth = yes
+	ntlm auth = yes
 	dbwrap_tdb_mutexes:* = yes
 	${require_mutexes}
 ";
@@ -430,8 +432,8 @@ sub setup_nt4_member
 	    prefix => $prefix,
 	    domain => $nt4_dc_vars->{DOMAIN},
 	    server => "LOCALNT4MEMBER3",
-	    password => "localnt4member3pass",
-	    extra_options => $member_options);
+	    password => "Lnt4member3p14",
+	    extra_options_before_inject => $member_options);
 
 	$ret or return undef;
 
@@ -495,7 +497,7 @@ sub setup_nt4_member
 
 sub setup_clusteredmember
 {
-	my ($self, $prefix, $nt4_dc_vars) = @_;
+	my ($self, $prefix, $dcvars) = @_;
 	my $count = 0;
 	my $rc;
 	my @retvals = ();
@@ -537,7 +539,10 @@ sub setup_clusteredmember
 		}
 
 		my $member_options = "
-       security = domain
+       security = ADS
+       workgroup = $dcvars->{DOMAIN}
+       realm = $dcvars->{REALM}
+       password server = $dcvars->{SERVER}
        server signing = on
        clustering = yes
        rpc start on demand helpers = false
@@ -546,11 +551,12 @@ sub setup_clusteredmember
        include = registry
        dbwrap_tdb_mutexes:* = yes
        ${require_mutexes}
+       sync machine password to keytab = $node_prefix/keytab0:account_name:machine_password:sync_kvno
 ";
 
 		my $node_ret = $self->provision(
 		    prefix => "$node_prefix",
-		    domain => $nt4_dc_vars->{DOMAIN},
+		    domain => $dcvars->{DOMAIN},
 		    server => "$server_name",
 		    password => "clustermember8pass",
 		    netbios_name => "CLUSTEREDMEMBER",
@@ -616,13 +622,28 @@ sub setup_clusteredmember
 
 	$ret = {%$ctdb_data, %{$retvals[0]}};
 
+	my $ctx;
+	$ctx = {};
+	$ctx->{krb5_conf} = "$prefix_abs/lib/krb5.conf";
+	$ctx->{domain} = $dcvars->{DOMAIN};
+	$ctx->{realm} = $dcvars->{REALM};
+	$ctx->{dnsname} = lc($dcvars->{REALM});
+	$ctx->{kdc_ipv4} = $dcvars->{SERVER_IP};
+	$ctx->{kdc_ipv6} = $dcvars->{SERVER_IPV6};
+	$ctx->{krb5_ccname} = "$prefix_abs/krb5cc_%{uid}";
+	Samba::mk_krb5_conf($ctx, "");
+
+	$ret->{KRB5_CONFIG} = $ctx->{krb5_conf};
+
 	my $net = Samba::bindir_path($self, "net");
-	my $cmd = "";
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
 	$cmd .= "UID_WRAPPER_ROOT=1 ";
 	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
+	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
 	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
-	$cmd .= "$net join $ret->{CONFIGURATION} $nt4_dc_vars->{DOMAIN} member";
-	$cmd .= " -U$nt4_dc_vars->{USERNAME}\%$nt4_dc_vars->{PASSWORD}";
+	$cmd .= "$net join $ret->{CONFIGURATION} $dcvars->{DOMAIN} member";
+	$cmd .= " -U$dcvars->{USERNAME}\%$dcvars->{PASSWORD}";
 
 	if (system($cmd) != 0) {
 		warn("Join failed\n$cmd");
@@ -691,13 +712,15 @@ sub setup_clusteredmember
 		close(UNCLIST);
 	}
 
-	$ret->{DOMSID} = $nt4_dc_vars->{DOMSID};
-	$ret->{DC_SERVER} = $nt4_dc_vars->{SERVER};
-	$ret->{DC_SERVER_IP} = $nt4_dc_vars->{SERVER_IP};
-	$ret->{DC_SERVER_IPV6} = $nt4_dc_vars->{SERVER_IPV6};
-	$ret->{DC_NETBIOSNAME} = $nt4_dc_vars->{NETBIOSNAME};
-	$ret->{DC_USERNAME} = $nt4_dc_vars->{USERNAME};
-	$ret->{DC_PASSWORD} = $nt4_dc_vars->{PASSWORD};
+	$ret->{DOMSID} = $dcvars->{DOMSID};
+	$ret->{DC_SERVER} = $dcvars->{SERVER};
+	$ret->{DC_SERVER_IP} = $dcvars->{SERVER_IP};
+	$ret->{DC_SERVER_IPV6} = $dcvars->{SERVER_IPV6};
+	$ret->{DC_NETBIOSNAME} = $dcvars->{NETBIOSNAME};
+	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
+	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
+	$ret->{REALM} = $dcvars->{REALM};
+	$ret->{DOMAIN} = $dcvars->{DOMAIN};
 
 	return $ret;
 }
@@ -713,7 +736,8 @@ sub provision_ad_member
 	    $extra_member_options,
 	    $force_fips_mode,
 	    $offline_logon,
-	    $no_nss_winbind) = @_;
+	    $no_nss_winbind,
+	    $sync_pw2keytab) = @_;
 
 	if (defined($offline_logon) && defined($no_nss_winbind)) {
 		warn ("Offline logon incompatible with no nss winbind\n");
@@ -767,6 +791,26 @@ sub provision_ad_member
 		$extra_member_options = "";
 	}
 
+	my $dns_and_netbios = "";
+	my $keytab = "";
+	if (defined($sync_pw2keytab)) {
+		$dns_and_netbios = "
+	additional dns hostnames =  host1.example.com host2.other.com
+	netbios aliases = NETBIOS1 NETBIOS2 NETBIOS3
+	";
+		$keytab = "
+	sync machine password to keytab = \\
+	\"$prefix_abs/keytab0:account_name:machine_password\", \\
+	\"$prefix_abs/keytab0k:account_name:sync_kvno:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab1:sync_spns:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab1k:sync_spns:sync_kvno:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab2:spn_prefixes=imap,smtp:additional_dns_hostnames:netbios_aliases:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab2k:spn_prefixes=imap,smtp:additional_dns_hostnames:sync_kvno:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab3:spns=wurst/brot\@$dcvars->{REALM}:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab3k:spns=wurst/brot\@$dcvars->{REALM},wurst1/brot\@$dcvars->{REALM},wurst2/brot\@$dcvars->{REALM}:sync_kvno:machine_password:sync_etypes\"
+	";
+	}
+
 	my $member_options = "
 	security = ads
         workgroup = $dcvars->{DOMAIN}
@@ -785,6 +829,8 @@ sub provision_ad_member
 	# Begin extra member options
 	$extra_member_options
 	# End extra member options
+	$dns_and_netbios
+	$keytab
 
 [sub_dug]
 	path = $share_dir/D_%D/U_%U/G_%G
@@ -1689,6 +1735,7 @@ sub setup_ad_member_idmap_nss
 					     $extra_member_options,
 					     undef,
 					     undef,
+					     1,
 					     1);
 
 	open(USERMAP, ">$prefix/lib/username.map") or die("Unable to open $prefix/lib/username.map");
@@ -1710,20 +1757,19 @@ sub setup_simpleserver
 	print "PROVISIONING simple server...";
 
 	my $prefix_abs = abs_path($path);
-	mkdir($prefix_abs, 0777);
 
 	my $external_streams_depot="$prefix_abs/external_streams_depot";
-	remove_tree($external_streams_depot);
-	mkdir($external_streams_depot, 0777);
 
-	my $simpleserver_options = "
+	my $simpleserver_options_globals = "
 	lanman auth = yes
 	ntlm auth = yes
 	vfs objects = xattr_tdb streams_depot
 	change notify = no
 	server smb encrypt = off
         allow trusted domains = no
+";
 
+	my $simpleserver_options = "
 [vfs_aio_pthread]
 	path = $prefix_abs/share
 	read only = no
@@ -1781,9 +1827,35 @@ sub setup_simpleserver
 	    domain => "WORKGROUP",
 	    server => "LOCALSHARE4",
 	    password => "local4pass",
+	    extra_options_before_inject => $simpleserver_options_globals,
 	    extra_options => $simpleserver_options);
 
 	$vars or return undef;
+
+	remove_tree($external_streams_depot);
+	mkdir($external_streams_depot, 0777);
+
+	my $pam_service_dir = "$prefix_abs/pam_services";
+	remove_tree($pam_service_dir);
+	mkdir($pam_service_dir, 0777);
+	my $pam_service_file = "$pam_service_dir/samba";
+	my $pam_matrix_passdb = "$pam_service_dir/samba_pam_matrix_passdb";
+	my $pam_matrix_so_path = Samba::pam_matrix_so_path($self);
+
+	open(FILE, "> $pam_service_file");
+	print FILE "auth required ${pam_matrix_so_path} passdb=${pam_matrix_passdb} verbose\n";
+	print FILE "account required ${pam_matrix_so_path} passdb=${pam_matrix_passdb} verbose\n";
+	close(FILE);
+
+	my $tmpusername = $vars->{USERNAME};
+	my $tmppassword = $vars->{PASSWORD};
+	open(FILE, "> $pam_matrix_passdb");
+	print FILE "$tmpusername:$tmppassword:samba";
+	close(FILE);
+
+	$vars->{PAM_WRAPPER} = "1";
+	$vars->{PAM_WRAPPER_SERVICE_DIR} = $pam_service_dir;
+	#$vars->{PAM_WRAPPER_DEBUGLEVEL} = "3";
 
 	if (not $self->check_or_start(
 		env_vars => $vars,
@@ -1820,10 +1892,6 @@ sub setup_fileserver
 	mkdir($prefix_abs, 0777);
 
 	my $usershare_dir="$prefix_abs/lib/usershare";
-
-	mkdir("$prefix_abs/lib", 0755);
-	remove_tree($usershare_dir);
-	mkdir($usershare_dir, 01770);
 
 	my $share_dir="$prefix_abs/share";
 
@@ -1900,6 +1968,8 @@ sub setup_fileserver
 
 	get quota command = $prefix_abs/getset_quota.py
 	set quota command = $prefix_abs/getset_quota.py
+	veto files : user1 = /user1file/
+	veto files : +group1 = /group1file/
 [tarmode]
 	path = $tarmode_sharedir
 	comment = tar test share
@@ -2012,6 +2082,8 @@ sub setup_fileserver
 [veto_files]
 	path = $veto_sharedir
 	veto files = /veto_name*/
+	veto files : user2 = /user2file/
+	veto files : +group2 = /group2file/
 
 [delete_yes_unwrite]
 	read only = no
@@ -2068,10 +2140,13 @@ sub setup_fileserver
 	    domain => "WORKGROUP",
 	    server => $server,
 	    password => "fileserver",
-	    extra_options => $fileserver_options,
-	    no_delete_prefix => 1);
+	    extra_options => $fileserver_options);
 
 	$vars or return undef;
+
+	mkdir("$prefix_abs/lib", 0755);
+	remove_tree($usershare_dir);
+	mkdir($usershare_dir, 01770);
 
 	if (not $self->check_or_start(
 		env_vars => $vars,
@@ -2554,7 +2629,8 @@ sub provision($$)
 	my $realm = $args{realm};
 	my $server = $args{server};
 	my $password = $args{password};
-	my $extra_options = $args{extra_options};
+	my $extra_options_before_inject = $args{extra_options_before_inject} // "";
+	my $extra_options = $args{extra_options} // "";
 	my $resolv_conf = $args{resolv_conf};
 	my $no_delete_prefix= $args{no_delete_prefix};
 	my $netbios_name = $args{netbios_name} // $server;
@@ -2823,6 +2899,8 @@ sub provision($$)
 	my ($gid_force_user);
 	my ($gid_jackthemapper);
 	my ($gid_jacknomapper);
+	my ($gid_group1);
+	my ($gid_group2);
 	my ($uid_user1);
 	my ($uid_user2);
 	my ($uid_gooduser);
@@ -2873,6 +2951,8 @@ sub provision($$)
 	$gid_force_user = $max_gid - 8;
 	$gid_jackthemapper = $max_gid - 9;
 	$gid_jacknomapper = $max_gid - 10;
+	$gid_group1 = $max_gid - 11;
+	$gid_group2 = $max_gid - 12;
 
 	##
 	## create conffile
@@ -3003,6 +3083,10 @@ sub provision($$)
 	#this does not mean that we use non-secure test env,
 	#it just means we ALLOW one to be configured.
 	allow insecure wide links = yes
+
+	# Begin extra options before global inject
+	$extra_options_before_inject
+	# End extra options befoore global inject
 
 	include = $globalinjectconf
 
@@ -3736,6 +3820,8 @@ everyone:x:$gid_everyone:
 force_user:x:$gid_force_user:
 jackthemappergroup:x:$gid_jackthemapper:jackthemapper
 jacknomappergroup:x:$gid_jacknomapper:jacknomapper
+group1:x:$gid_group1:user1
+group2:x:$gid_group2:user2
 ";
 	if ($unix_gids[0] != 0) {
 		print GROUP "root:x:$gid_root:
@@ -3933,23 +4019,25 @@ sub wait_for_start($$$$$)
 	    print "wait for smbd\n";
 
 	    my $count = 0;
-	    do {
-		if (defined($envvars->{GNUTLS_FORCE_FIPS_MODE})) {
+
+	    if (defined($envvars->{GNUTLS_FORCE_FIPS_MODE})) {
 			# We don't have NTLM in FIPS mode, so lets use
 			# smbcontrol instead of smbclient.
 			$cmd = Samba::bindir_path($self, "smbcontrol");
 			$cmd .= " $envvars->{CONFIGURATION}";
 			$cmd .= " smbd ping";
-		} else {
+	    } else {
 			# This uses NTLM which is not available in FIPS
-			$cmd = Samba::bindir_path($self, "smbclient");
+			$cmd = "NSS_WRAPPER_HOSTS='$envvars->{NSS_WRAPPER_HOSTS}' ";
+			$cmd .= Samba::bindir_path($self, "smbclient");
 			$cmd .= " $envvars->{CONFIGURATION}";
 			$cmd .= " -L $envvars->{SERVER}";
 			$cmd .= " -U%";
 			$cmd .= " -I $envvars->{SERVER_IP}";
 			$cmd .= " -p 139";
-		}
+	    }
 
+	    do {
 		$ret = system($cmd);
 		if ($ret != 0) {
 		    sleep(1);
@@ -3969,18 +4057,12 @@ sub wait_for_start($$$$$)
 	$netcmd .= "UID_WRAPPER_ROOT='1' ";
 	$netcmd .= Samba::bindir_path($self, "net") ." $envvars->{CONFIGURATION} ";
 
-	$cmd = $netcmd . "groupmap delete ntgroup=domusers";
-	$ret = system($cmd);
-
 	$cmd = $netcmd . "groupmap add rid=513 unixgroup=domusers type=domain";
 	$ret = system($cmd);
 	if ($ret != 0) {
 		print("\"$cmd\" failed\n");
 		return 1;
 	}
-
-	$cmd = $netcmd . "groupmap delete ntgroup=domadmins";
-	$ret = system($cmd);
 
 	$cmd = $netcmd . "groupmap add rid=512 unixgroup=domadmins type=domain";
 	$ret = system($cmd);
@@ -3989,10 +4071,21 @@ sub wait_for_start($$$$$)
 		return 1;
 	}
 
-	$cmd = $netcmd . "groupmap delete ntgroup=everyone";
-	$ret = system($cmd);
-
 	$cmd = $netcmd . "groupmap add sid=S-1-1-0 unixgroup=everyone type=builtin";
+	$ret = system($cmd);
+	if ($ret != 0) {
+		print("\"$cmd\" failed\n");
+		return 1;
+	}
+
+	$cmd = $netcmd . "groupmap add unixgroup=group1 type=domain";
+	$ret = system($cmd);
+	if ($ret != 0) {
+		print("\"$cmd\" failed\n");
+		return 1;
+	}
+
+	$cmd = $netcmd . "groupmap add unixgroup=group2 type=domain";
 	$ret = system($cmd);
 	if ($ret != 0) {
 		print("\"$cmd\" failed\n");
@@ -4082,7 +4175,7 @@ sub setup_ctdb($$)
 
 sub provision_ctdb($$$$)
 {
-	my ($self, $prefix, $num_nodes, $no_delete_prefix) = @_;
+	my ($self, $prefix, $num_nodes) = @_;
 	my $rc;
 
 	print "PROVISIONING CTDB...\n";
@@ -4098,10 +4191,7 @@ sub provision_ctdb($$$$)
 	mkdir ($prefix_abs, 0777);
 
 	print "CREATE CTDB TEST ENVIRONMENT in '$prefix_abs'...\n";
-
-	if (not defined($no_delete_prefix) or not $no_delete_prefix) {
-		system("rm -rf $prefix_abs/*");
-	}
+	system("rm -rf $prefix_abs/*");
 
 	#
 	# Per-node data

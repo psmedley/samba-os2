@@ -1,4 +1,4 @@
-/* 
+/*
    ldb database library
 
    Copyright (C) Simo Sorce  2005
@@ -6,7 +6,7 @@
      ** NOTE! The following LGPL license applies to the ldb
      ** library. This does NOT imply that all of Samba is released
      ** under the LGPL
-   
+
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Lesser General Public
    License as published by the Free Software Foundation; either
@@ -35,18 +35,18 @@
 
 /* check if a control with the specified "oid" exist and return it */
 /* returns NULL if not found */
-struct ldb_control *ldb_request_get_control(struct ldb_request *req, const char *oid)
+struct ldb_control *ldb_controls_get_control(struct ldb_control **controls, const char *oid)
 {
 	unsigned int i;
 
-	if (req->controls != NULL) {
-		for (i = 0; req->controls[i]; i++) {
-			if (req->controls[i]->oid && strcmp(oid, req->controls[i]->oid) == 0) {
+	if (controls != NULL) {
+		for (i = 0; controls[i]; i++) {
+			if (controls[i]->oid && strcmp(oid, controls[i]->oid) == 0) {
 				break;
 			}
 		}
 
-		return req->controls[i];
+		return controls[i];
 	}
 
 	return NULL;
@@ -54,21 +54,16 @@ struct ldb_control *ldb_request_get_control(struct ldb_request *req, const char 
 
 /* check if a control with the specified "oid" exist and return it */
 /* returns NULL if not found */
+struct ldb_control *ldb_request_get_control(struct ldb_request *req, const char *oid)
+{
+	return ldb_controls_get_control(req->controls, oid);
+}
+
+/* check if a control with the specified "oid" exist and return it */
+/* returns NULL if not found */
 struct ldb_control *ldb_reply_get_control(struct ldb_reply *rep, const char *oid)
 {
-	unsigned int i;
-
-	if (rep->controls != NULL) {
-		for (i = 0; rep->controls[i]; i++) {
-			if (rep->controls[i]->oid && strcmp(oid, rep->controls[i]->oid) == 0) {
-				break;
-			}
-		}
-
-		return rep->controls[i];
-	}
-
-	return NULL;
+	return ldb_controls_get_control(rep->controls, oid);
 }
 
 /*
@@ -120,8 +115,8 @@ int ldb_save_controls(struct ldb_control *exclude, struct ldb_request *req, stru
  *
  * Returns NULL on error (OOM) or an empty control list.
  */
-struct ldb_control **ldb_controls_except_specified(struct ldb_control **controls_in, 
-					       TALLOC_CTX *mem_ctx, 
+struct ldb_control **ldb_controls_except_specified(struct ldb_control **controls_in,
+					       TALLOC_CTX *mem_ctx,
 					       struct ldb_control *exclude)
 {
 	struct ldb_control **lcs = NULL;
@@ -186,7 +181,7 @@ int ldb_request_add_control(struct ldb_request *req, const char *oid, bool criti
 	struct ldb_control **ctrls;
 	struct ldb_control *ctrl;
 
-	for (n=0; req->controls && req->controls[n];n++) { 
+	for (n=0; req->controls && req->controls[n];n++) {
 		/* having two controls of the same OID makes no sense */
 		if (req->controls[n]->oid && strcmp(oid, req->controls[n]->oid) == 0) {
 			return LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
@@ -224,12 +219,12 @@ int ldb_reply_add_control(struct ldb_reply *ares, const char *oid, bool critical
 	struct ldb_control **ctrls;
 	struct ldb_control *ctrl;
 
-	for (n=0; ares->controls && ares->controls[n];) { 
+	for (n=0; ares->controls && ares->controls[n];) {
 		/* having two controls of the same OID makes no sense */
 		if (ares->controls[n]->oid && strcmp(oid, ares->controls[n]->oid) == 0) {
 			return LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS;
 		}
-		n++; 
+		n++;
 	}
 
 	ctrls = talloc_realloc(ares, ares->controls,
@@ -1338,5 +1333,3 @@ struct ldb_control **ldb_parse_control_strings(struct ldb_context *ldb, TALLOC_C
 
 	return ctrl;
 }
-
-

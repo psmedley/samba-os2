@@ -16,37 +16,40 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, "bin/python")
 os.environ["PYTHONUNBUFFERED"] = "1"
 
 import binascii
 import collections
-from datetime import datetime, timezone
-from enum import Enum
-from functools import partial
 import numbers
 import secrets
 import tempfile
-
 from collections import namedtuple
+from datetime import datetime, timezone
+from enum import Enum
+from functools import partial
+from typing import Dict, Optional
+
 import ldb
 from ldb import SCOPE_BASE
+
 from samba import (
     NTSTATUSError,
     arcfour_encrypt,
     common,
     generate_random_password,
+    net,
     ntstatus,
 )
 from samba.auth import system_session
 from samba.credentials import (
-    Credentials,
     DONT_USE_KERBEROS,
     MUST_USE_KERBEROS,
     SPECIFIED,
+    Credentials,
 )
 from samba.crypto import des_crypt_blob_16, md4_hash_blob
 from samba.dcerpc import (
@@ -62,50 +65,46 @@ from samba.dcerpc import (
     samr,
     security,
 )
+from samba.dcerpc.misc import SEC_CHAN_BDC, SEC_CHAN_NULL, SEC_CHAN_WKSTA
+from samba.domain.models import AuthenticationPolicy, AuthenticationSilo
 from samba.drs_utils import drs_Replicate, drsuapi_connect
 from samba.dsdb import (
-    DSDB_SYNTAX_BINARY_DN,
     DS_DOMAIN_FUNCTION_2000,
     DS_DOMAIN_FUNCTION_2008,
     DS_GUID_COMPUTERS_CONTAINER,
     DS_GUID_DOMAIN_CONTROLLERS_CONTAINER,
     DS_GUID_MANAGED_SERVICE_ACCOUNTS_CONTAINER,
     DS_GUID_USERS_CONTAINER,
+    DSDB_SYNTAX_BINARY_DN,
     GTYPE_SECURITY_DOMAIN_LOCAL_GROUP,
     GTYPE_SECURITY_GLOBAL_GROUP,
     GTYPE_SECURITY_UNIVERSAL_GROUP,
     UF_ACCOUNTDISABLE,
+    UF_NO_AUTH_DATA_REQUIRED,
     UF_NORMAL_ACCOUNT,
     UF_NOT_DELEGATED,
-    UF_NO_AUTH_DATA_REQUIRED,
     UF_PARTIAL_SECRETS_ACCOUNT,
     UF_SERVER_TRUST_ACCOUNT,
     UF_TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION,
     UF_WORKSTATION_TRUST_ACCOUNT,
     UF_SMARTCARD_REQUIRED
 )
-from samba.dcerpc.misc import (
-    SEC_CHAN_BDC,
-    SEC_CHAN_NULL,
-    SEC_CHAN_WKSTA,
-)
 from samba.join import DCJoinContext
 from samba.ndr import ndr_pack, ndr_unpack
-from samba import net
-from samba.netcmd.domain.models import AuthenticationPolicy, AuthenticationSilo
+from samba.param import LoadParm
 from samba.samdb import SamDB, dsdb_Dn
 
 rc4_bit = security.KERB_ENCTYPE_RC4_HMAC_MD5
 aes256_sk_bit = security.KERB_ENCTYPE_AES256_CTS_HMAC_SHA1_96_SK
 
-from samba.tests import TestCaseInTempDir, delete_force
 import samba.tests.krb5.kcrypto as kcrypto
+import samba.tests.krb5.rfc4120_pyasn1 as krb5_asn1
+from samba.tests import TestCaseInTempDir, delete_force
 from samba.tests.krb5.raw_testcase import (
     KerberosCredentials,
     KerberosTicketCreds,
     RawKerberosTest,
 )
-import samba.tests.krb5.rfc4120_pyasn1 as krb5_asn1
 from samba.tests.krb5.rfc4120_constants import (
     AD_IF_RELEVANT,
     AD_WIN2K_PAC,
@@ -122,8 +121,8 @@ from samba.tests.krb5.rfc4120_constants import (
     KU_TICKET,
     NT_PRINCIPAL,
     NT_SRV_INST,
-    PADATA_ENCRYPTED_CHALLENGE,
     PADATA_ENC_TIMESTAMP,
+    PADATA_ENCRYPTED_CHALLENGE,
     PADATA_ETYPE_INFO2,
 )
 
@@ -358,13 +357,13 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
         # current test finishes.
         self.test_accounts = []
 
-    def get_lp(self):
+    def get_lp(self) -> LoadParm:
         if self._lp is None:
             type(self)._lp = self.get_loadparm()
 
         return self._lp
 
-    def get_samdb(self):
+    def get_samdb(self) -> SamDB:
         if self._ldb is None:
             creds = self.get_admin_creds()
             lp = self.get_lp()
@@ -377,7 +376,7 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
 
         return self._ldb
 
-    def get_rodc_samdb(self):
+    def get_rodc_samdb(self) -> SamDB:
         if self._rodc_ldb is None:
             creds = self.get_admin_creds()
             lp = self.get_lp()
@@ -896,7 +895,6 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
             domain = samdb.domain_netbios_name().upper()
 
             password = generate_random_password(32, 32)
-            utf16pw = ('"%s"' % password).encode('utf-16-le')
 
             try:
                 net_ctx.set_password(newpassword=password,
@@ -1145,6 +1143,26 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
 
         return bind, identifier, attributes
 
+    def unpack_supplemental_credentials(
+        self, blob: bytes
+    ) -> Dict[kcrypto.Enctype, str]:
+        spl = ndr_unpack(drsblobs.supplementalCredentialsBlob, blob)
+
+        keys: Dict[kcrypto.Enctype, str] = {}
+
+        for pkg in spl.sub.packages:
+            if pkg.name == 'Primary:Kerberos-Newer-Keys':
+                krb5_new_keys_raw = binascii.a2b_hex(pkg.data)
+                krb5_new_keys = ndr_unpack(
+                    drsblobs.package_PrimaryKerberosBlob, krb5_new_keys_raw
+                )
+                for key in krb5_new_keys.ctr.keys:
+                    keytype = key.keytype
+                    if keytype in (kcrypto.Enctype.AES256, kcrypto.Enctype.AES128):
+                        keys[keytype] = key.value.hex()
+
+        return keys
+
     def get_keys(self, creds, expected_etypes=None):
         admin_creds = self.get_admin_creds()
         samdb = self.get_samdb()
@@ -1163,30 +1181,20 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
         keys = {}
 
         for attr in attributes:
+            if not attr.value_ctr.num_values:
+                continue
+
             if attr.attid == drsuapi.DRSUAPI_ATTID_supplementalCredentials:
                 net_ctx.replicate_decrypt(bind, attr, rid)
-                if attr.value_ctr.num_values == 0:
-                    continue
-                attr_val = attr.value_ctr.values[0].blob
 
-                spl = ndr_unpack(drsblobs.supplementalCredentialsBlob,
-                                 attr_val)
-                for pkg in spl.sub.packages:
-                    if pkg.name == 'Primary:Kerberos-Newer-Keys':
-                        krb5_new_keys_raw = binascii.a2b_hex(pkg.data)
-                        krb5_new_keys = ndr_unpack(
-                            drsblobs.package_PrimaryKerberosBlob,
-                            krb5_new_keys_raw)
-                        for key in krb5_new_keys.ctr.keys:
-                            keytype = key.keytype
-                            if keytype in (kcrypto.Enctype.AES256,
-                                           kcrypto.Enctype.AES128):
-                                keys[keytype] = key.value.hex()
+                keys.update(
+                    self.unpack_supplemental_credentials(attr.value_ctr.values[0].blob)
+                )
             elif attr.attid == drsuapi.DRSUAPI_ATTID_unicodePwd:
                 net_ctx.replicate_decrypt(bind, attr, rid)
-                if attr.value_ctr.num_values > 0:
-                    pwd = attr.value_ctr.values[0].blob
-                    keys[kcrypto.Enctype.RC4] = pwd.hex()
+
+                pwd = attr.value_ctr.values[0].blob
+                keys[kcrypto.Enctype.RC4] = pwd.hex()
 
         if expected_etypes is None:
             expected_etypes = self.get_default_enctypes(creds)
@@ -1970,9 +1978,10 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
         return pac
 
     def get_cached_creds(self, *,
-                         account_type,
-                         opts=None,
-                         use_cache=True):
+                         account_type: AccountType,
+                         opts: Optional[dict]=None,
+                         samdb: Optional[SamDB]=None,
+                         use_cache=True) -> KerberosCredentials:
         if opts is None:
             opts = {}
 
@@ -2019,18 +2028,22 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
         }
 
         if use_cache:
+            self.assertIsNone(samdb)
             cache_key = tuple(sorted(account_opts.items()))
             creds = self.account_cache.get(cache_key)
             if creds is not None:
                 return creds
 
-        creds = self.create_account_opts(use_cache, **account_opts)
+        creds = self.create_account_opts(samdb, use_cache, **account_opts)
         if use_cache:
             self.account_cache[cache_key] = creds
 
         return creds
 
-    def create_account_opts(self, use_cache, *,
+    def create_account_opts(self,
+                            samdb: Optional[SamDB],
+                            use_cache,
+                            *,
                             account_type,
                             name_prefix,
                             name_suffix,
@@ -2072,7 +2085,8 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
         else:
             self.assertFalse(not_delegated)
 
-        samdb = self.get_samdb()
+        if samdb is None:
+            samdb = self.get_samdb()
 
         user_name = self.get_new_username()
         if name_prefix is not None:
@@ -2157,7 +2171,7 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
         #
         # The NT hash is different, as it is returned to the client in
         # the PAC so is visible in the network behaviour.
-        if force_nt4_hash or smartcard_required:
+        if force_nt4_hash:
             expected_etypes = {kcrypto.Enctype.RC4}
         keys = self.get_keys(creds, expected_etypes=expected_etypes)
         self.creds_set_keys(creds, keys)
@@ -2997,6 +3011,7 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
                      str(unexpected_groups),
                      str(expected_cname),
                      rc4_support,
+                     expect_edata,
                      expect_pac, expect_pac_attrs,
                      expect_pac_attrs_pac_request, expect_requester_sid,
                      expect_client_claims, expect_device_claims,
@@ -3086,6 +3101,7 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
             expect_pac_attrs_pac_request=expect_pac_attrs_pac_request,
             expect_requester_sid=expect_requester_sid,
             rc4_support=rc4_support,
+            expect_edata=expect_edata,
             expect_client_claims=expect_client_claims,
             expect_device_claims=expect_device_claims,
             expected_client_claims=expected_client_claims,
@@ -3139,6 +3155,7 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
             expect_pac_attrs_pac_request=expect_pac_attrs_pac_request,
             expect_requester_sid=expect_requester_sid,
             rc4_support=rc4_support,
+            expect_edata=expect_edata,
             expect_client_claims=expect_client_claims,
             expect_device_claims=expect_device_claims,
             expected_client_claims=expected_client_claims,
@@ -3773,3 +3790,34 @@ class KDCBaseTest(TestCaseInTempDir, RawKerberosTest):
             self.assertEqual(0, flags)
 
         return validation
+
+    def check_ticket_times(self,
+                           ticket_creds,
+                           expected_life=None,
+                           expected_renew_life=None,
+                           delta=0):
+        ticket = ticket_creds.ticket_private
+
+        authtime = ticket['authtime']
+        starttime = ticket.get('starttime', authtime)
+        endtime = ticket['endtime']
+        renew_till = ticket.get('renew-till', None)
+
+        starttime = self.get_EpochFromKerberosTime(starttime)
+
+        if expected_life is not None:
+            actual_end = self.get_EpochFromKerberosTime(
+                endtime.decode('ascii'))
+            actual_lifetime = actual_end - starttime
+
+            self.assertAlmostEqual(expected_life, actual_lifetime, delta=delta)
+
+        if renew_till is None:
+            self.assertIsNone(expected_renew_life)
+        else:
+            if expected_renew_life is not None:
+                actual_renew_till = self.get_EpochFromKerberosTime(
+                    renew_till.decode('ascii'))
+                actual_renew_life = actual_renew_till - starttime
+
+                self.assertAlmostEqual(expected_renew_life, actual_renew_life, delta=delta)

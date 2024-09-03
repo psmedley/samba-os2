@@ -22,6 +22,8 @@
 
 #include <tdb.h>
 
+#define CTDB_PORT 4379
+
 #define CTDB_MAGIC	0x43544442 /* CTDB */
 #define CTDB_PROTOCOL	1
 
@@ -142,6 +144,9 @@ struct ctdb_call {
 
 /* SRVID to inform clients that CTDB_EVENT_IPREALLOCATED finished */
 #define CTDB_SRVID_IPREALLOCATED 0xF302000000000000LL
+
+/* SRVID to inform clients that CTDB_EVENT_START_IPREALLOCATE finished */
+#define CTDB_SRVID_START_IPREALLOCATE 0xF303000000000000LL
 
 /* SRVID to inform recovery daemon of the node flags - OBSOLETE */
 #define CTDB_SRVID_SET_NODE_FLAGS 0xF400000000000000LL
@@ -386,6 +391,7 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_ENABLE_NODE             = 158,
 		    CTDB_CONTROL_TCP_CLIENT_DISCONNECTED = 159,
 		    CTDB_CONTROL_TCP_CLIENT_PASSED       = 160,
+		    CTDB_CONTROL_START_IPREALLOCATE      = 161,
 };
 
 #define MAX_COUNT_BUCKETS 16
@@ -764,6 +770,7 @@ enum ctdb_event {
 	CTDB_EVENT_RELOAD,		/* Deprecated, do not use */
 	CTDB_EVENT_UPDATE_IP,		/* IP updating: old interface, new interface, IP address, netmask bits. */
 	CTDB_EVENT_IPREALLOCATED,	/* when a takeover_run() completes */
+	CTDB_EVENT_START_IPREALLOCATE,  /* When a takeover_run() starts */
 	CTDB_EVENT_MAX
 };
 

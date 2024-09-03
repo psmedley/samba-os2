@@ -185,7 +185,7 @@ static NTSTATUS fsctl_srv_copychunk_loop(struct tevent_req *req)
 	 * Windows).
 	 *
 	 * Or it can be a special macOS copyfile request, so we send this into
-	 * the VFS, vfs_fruit if loaded implements the macOS copyile semantics.
+	 * the VFS, vfs_fruit if loaded implements the macOS copyfile semantics.
 	 */
 	if (state->cc_copy.chunk_count > 0) {
 		struct srv_copychunk *chunk = NULL;
@@ -551,7 +551,7 @@ static NTSTATUS fsctl_validate_neg_info(TALLOC_CTX *mem_ctx,
 	if (lp_server_max_protocol() <= PROTOCOL_SMB2_02) {
 		/*
 		 * With SMB 2.02 we didn't get the
-		 * capabitities, client guid, security mode
+		 * capabilities, client guid, security mode
 		 * and dialects the client would have offered.
 		 *
 		 * So we behave compatible with a true
@@ -621,10 +621,7 @@ static NTSTATUS fsctl_validate_neg_info(TALLOC_CTX *mem_ctx,
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
-	status = GUID_to_ndr_buf(&conn->smb2.server.guid, &out_guid_buf);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
+	GUID_to_ndr_buf(&conn->smb2.server.guid, &out_guid_buf);
 
 	*out_output = data_blob_talloc(mem_ctx, NULL, 0x18);
 	if (out_output->data == NULL) {

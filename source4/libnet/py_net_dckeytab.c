@@ -26,21 +26,48 @@
 #include "python/modules.h"
 #include "py_net.h"
 #include "libnet_export_keytab.h"
-
-void initdckeytab(void);
+#include "pyldb.h"
+#include "libcli/util/pyerrors.h"
 
 static PyObject *py_net_export_keytab(py_net_Object *self, PyObject *args, PyObject *kwargs)
 {
-	struct libnet_export_keytab r;
+	struct libnet_export_keytab r = { .in = { .principal = NULL, }};
+	PyObject *py_samdb = NULL;
 	TALLOC_CTX *mem_ctx;
-	const char *kwnames[] = { "keytab", "principal", NULL };
+	const char *kwnames[] = { "keytab",
+				  "samdb",
+				  "principal",
+				  "keep_stale_entries",
+				  "only_current_keys",
+				  "as_for_AS_REQ",
+				  NULL };
 	NTSTATUS status;
-	r.in.principal = NULL;
+	/*
+	 * int, with values true or false, to match expectation of
+	 * PyArg_ParseTupleAndKeywords()
+	 */
+	int keep_stale_entries = false;
+	int only_current_keys = false;
+	int as_for_AS_REQ = false;
 
-	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|z:export_keytab", discard_const_p(char *, kwnames),
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|Ozppp:export_keytab", discard_const_p(char *, kwnames),
 					 &r.in.keytab_name,
-					 &r.in.principal)) {
+					 &py_samdb,
+					 &r.in.principal,
+					 &keep_stale_entries,
+					 &only_current_keys,
+					 &as_for_AS_REQ)) {
 		return NULL;
+	}
+
+	r.in.keep_stale_entries = keep_stale_entries;
+	r.in.only_current_keys = only_current_keys;
+	r.in.as_for_AS_REQ = as_for_AS_REQ;
+
+	if (py_samdb == NULL) {
+		r.in.samdb = NULL;
+	} else {
+		PyErr_LDB_OR_RAISE(py_samdb, r.in.samdb);
 	}
 
 	mem_ctx = talloc_new(self->mem_ctx);
@@ -50,9 +77,12 @@ static PyObject *py_net_export_keytab(py_net_Object *self, PyObject *args, PyObj
 	}
 
 	status = libnet_export_keytab(self->libnet_ctx, mem_ctx, &r);
-	if (NT_STATUS_IS_ERR(status)) {
-		PyErr_SetString(PyExc_RuntimeError,
-				r.out.error_string?r.out.error_string:nt_errstr(status));
+
+	if (!NT_STATUS_IS_OK(status)) {
+		PyErr_SetNTSTATUS_and_string(status,
+					     r.out.error_string
+					     ? r.out.error_string
+					     : nt_errstr(status));
 		talloc_free(mem_ctx);
 		return NULL;
 	}
@@ -62,8 +92,15 @@ static PyObject *py_net_export_keytab(py_net_Object *self, PyObject *args, PyObj
 	Py_RETURN_NONE;
 }
 
-static const char py_net_export_keytab_doc[] = "export_keytab(keytab, name)\n\n"
-"Export the DC keytab to a keytab file.";
+static const char py_net_export_keytab_doc[] =
+	"export_keytab(keytab, samdb=None, principal=None, "
+	"keep_stale_entries=False, only_current_keys=False, "
+	"as_for_AS_REQ=False)\n\n"
+	"Export the DC keytab to a keytab file.\n\n"
+	"Pass as_for_AS_REQ=True to simulate the combination of flags normally "
+	"utilized for an AS‐REQ. Samba’s testsuite uses this to verify which "
+	"keys the KDC would see — some combination of previous and current "
+	"keys — for a Group Managed Service Account performing an AS‐REQ.";
 
 static PyMethodDef export_keytab_method_table[] = {
 	{"export_keytab", PY_DISCARD_FUNC_SIG(PyCFunction,
@@ -78,7 +115,6 @@ static PyMethodDef export_keytab_method_table[] = {
  * the global module table even if we don't really need that record. Thus, we initialize
  * dckeytab module but never use it.
  * */
-void initdckeytab(void);
 static struct PyModuleDef moduledef = {
     PyModuleDef_HEAD_INIT,
     .m_name = "dckeytab",

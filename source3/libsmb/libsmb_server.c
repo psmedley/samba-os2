@@ -529,9 +529,15 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 			/*
 			 * Try 139 first for IPC$
 			 */
-			status = cli_connect_nb(server_n, NULL, NBT_SMB_PORT, 0x20,
-					smbc_getNetbiosName(context),
-					signing_state, flags, &c);
+			status = cli_connect_nb(NULL,
+						server_n,
+						NULL,
+						NBT_SMB_PORT,
+						0x20,
+						smbc_getNetbiosName(context),
+						signing_state,
+						flags,
+						&c);
 		}
 	}
 
@@ -539,9 +545,15 @@ SMBC_server_internal(TALLOC_CTX *ctx,
 		/*
 		 * No IPC$ or 139 did not work
 		 */
-		status = cli_connect_nb(server_n, NULL, port, 0x20,
+		status = cli_connect_nb(NULL,
+					server_n,
+					NULL,
+					port,
+					0x20,
 					smbc_getNetbiosName(context),
-					signing_state, flags, &c);
+					signing_state,
+					flags,
+					&c);
 	}
 
 	if (!NT_STATUS_IS_OK(status)) {
@@ -832,12 +844,17 @@ SMBC_attr_server(TALLOC_CTX *ctx,
 			return NULL;
 		}
 
-		nt_status = cli_full_connection_creds(&ipc_cli,
-						lp_netbios_name(), server,
-						NULL, 0, "IPC$", "?????",
-						creds,
-						flags);
-                if (! NT_STATUS_IS_OK(nt_status)) {
+		nt_status = cli_full_connection_creds(NULL,
+						      &ipc_cli,
+						      lp_netbios_name(),
+						      server,
+						      NULL,
+						      0,
+						      "IPC$",
+						      "?????",
+						      creds,
+						      flags);
+		if (! NT_STATUS_IS_OK(nt_status)) {
 			TALLOC_FREE(creds);
                         DEBUG(1,("cli_full_connection failed! (%s)\n",
                                  nt_errstr(nt_status)));

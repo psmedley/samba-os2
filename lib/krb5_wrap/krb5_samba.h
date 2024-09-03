@@ -25,6 +25,8 @@
 
 #include "lib/util/data_blob.h"
 #include "libcli/util/ntstatus.h"
+#include "lib/util/talloc_stack.h"
+#include "lib/util/debug.h"
 
 #ifdef HAVE_KRB5
 
@@ -189,7 +191,127 @@ krb5_error_code smb_krb5_unparse_name(TALLOC_CTX *mem_ctx,
 				      krb5_const_principal principal,
 				      char **unix_name);
 
+static inline void samba_trace_keytab_entry(krb5_context context,
+			      krb5_keytab_entry kt_entry,
+			      const char *func,
+			      int line,
+			      const char *op)
+{
+	char *princ_s = NULL;
+#define MAX_KEYLEN 64
+	char tmp[2 * MAX_KEYLEN + 1] = { 0, };
+	krb5_enctype enctype = 0;
+	krb5_keyblock *key = NULL;
+	TALLOC_CTX *frame = talloc_stackframe();
+	krb5_error_code code;
+	const uint8_t *ptr = NULL;
+	unsigned len;
+	int i;
+
+	code = smb_krb5_unparse_name(frame,
+				     context,
+				     kt_entry.principal,
+				     &princ_s);
+	if (code != 0) {
+		goto out;
+	}
+	enctype = KRB5_KEY_TYPE(KRB5_KT_KEY(&kt_entry));
+	key = KRB5_KT_KEY(&kt_entry);
+#ifdef DEBUG_PASSWORD
+	ptr = (const uint8_t *) KRB5_KEY_DATA(key);
+	len = KRB5_KEY_LENGTH(key);
+
+	for (i = 0; i < len && i < MAX_KEYLEN; i++) {
+		snprintf(&tmp[2 * i], 3, "%02X", ptr[i]);
+	}
+#else
+	tmp[0] = 0;
+#endif
+	DEBUG(10,("KEYTAB_TRACE %36s:%-4d %3s %78s %3d %2d %s\n",
+		  func,
+		  line,
+		  op,
+		  princ_s,
+		  kt_entry.vno,
+		  enctype,
+		  tmp));
+out:
+	TALLOC_FREE(frame);
+}
+
+#if defined(__GNUC__) && defined(DEVELOPER)
+/* http://gcc.gnu.org/onlinedocs/gcc/Statement-Exprs.html */
+
+#define samba_krb5_kt_add_entry(context, id, entry)                          \
+	({                                                                   \
+		krb5_error_code _code;                                       \
+		_code = krb5_kt_add_entry((context), (id), (entry));         \
+		if (CHECK_DEBUGLVL(10)) {                                    \
+			samba_trace_keytab_entry((context),                  \
+						 *(entry),                   \
+						 __func__,                   \
+						 __LINE__,                   \
+						 _code == 0 ? "add"          \
+							    : "add FAILED"); \
+		}                                                            \
+		_code;                                                       \
+	})
+
+#define samba_krb5_kt_remove_entry(context, id, entry)                       \
+	({                                                                   \
+		krb5_error_code _code;                                       \
+		_code = krb5_kt_remove_entry((context), (id), (entry));      \
+		if (CHECK_DEBUGLVL(10)) {                                    \
+			samba_trace_keytab_entry((context),                  \
+						 *(entry),                   \
+						 __func__,                   \
+						 __LINE__,                   \
+						 _code == 0 ? "rem"          \
+							    : "rem FAILED"); \
+		}                                                            \
+		_code;                                                       \
+	})
+
+#define samba_krb5_kt_next_entry(context, id, entry, cursor) \
+	({                                                   \
+		krb5_error_code _code;                       \
+		_code = krb5_kt_next_entry((context),        \
+					   (id),             \
+					   (entry),          \
+					   (cursor));        \
+		if (_code == 0 && CHECK_DEBUGLVL(10)) {      \
+			samba_trace_keytab_entry((context),  \
+						 *(entry),   \
+						 __func__,   \
+						 __LINE__,   \
+						 "nxt");     \
+		}                                            \
+		_code;                                       \
+	})
+
+#else
+
+#define samba_krb5_kt_add_entry(context, id, entry) \
+	krb5_kt_add_entry((context), (id), (entry))
+#define samba_krb5_kt_remove_entry(context, id, entry) \
+	krb5_kt_remove_entry((context), (id), (entry))
+#define samba_krb5_kt_next_entry(context, id, entry, cursor) \
+	krb5_kt_next_entry((context), (id), (entry), (cursor))
+
+#endif
+
 krb5_error_code smb_krb5_init_context_common(krb5_context *_krb5_context);
+
+/*
+ * This should only be used in code that
+ * really wants to touch the global default ccache!
+ */
+krb5_error_code smb_force_krb5_cc_default(krb5_context ctx, krb5_ccache *id);
+/*
+ * This should only be used in code that
+ * really wants to touch the global default ccache!
+ */
+const char *smb_force_krb5_cc_default_name(krb5_context ctx);
 
 krb5_error_code krb5_set_default_tgs_ktypes(krb5_context ctx, const krb5_enctype *enc);
 
@@ -270,14 +392,6 @@ krb5_error_code smb_krb5_kt_seek_and_delete_old_entries(krb5_context context,
 							const char *princ_s,
 							krb5_principal princ,
 							bool flush);
-krb5_error_code smb_krb5_kt_add_entry(krb5_context context,
-				      krb5_keytab keytab,
-				      krb5_kvno kvno,
-				      const char *princ_s,
-				      const char *salt_principal,
-				      krb5_enctype enctype,
-				      krb5_data *password,
-				      bool no_salt);
 
 krb5_error_code smb_krb5_get_credentials(krb5_context context,
 					 krb5_ccache ccache,
@@ -450,6 +564,11 @@ int smb_krb5_principal_get_type(krb5_context context,
 krb5_error_code krb5_warnx(krb5_context context, const char *fmt, ...)
 	PRINTF_ATTRIBUTE(2, 0);
 #endif
+
+krb5_error_code smb_krb5_cc_new_unique_memory(krb5_context context,
+					      TALLOC_CTX *mem_ctx,
+					      char **ccache_name,
+					      krb5_ccache *id);
 
 krb5_error_code smb_krb5_cc_copy_creds(krb5_context context,
 				       krb5_ccache incc, krb5_ccache outcc);

@@ -34,18 +34,31 @@
  */
 void break_kernel_oplock(struct messaging_context *msg_ctx, files_struct *fsp)
 {
-	uint8_t msg[MSG_SMB_KERNEL_BREAK_SIZE];
-
-	/* Put the kernel break info into the message. */
-	push_file_id_24((char *)msg, &fsp->file_id);
-	SIVAL(msg, 24, fh_get_gen_id(fsp->fh));
+	struct oplock_break_message msg = {
+		.id = fsp->file_id,
+		.share_file_id = fh_get_gen_id(fsp->fh),
+	};
+	enum ndr_err_code ndr_err;
+	uint8_t msgbuf[33];
+	DATA_BLOB blob = {.data = msgbuf, .length = sizeof(msgbuf)};
 
 	/* Don't need to be root here as we're only ever
 	   sending to ourselves. */
 
-	messaging_send_buf(msg_ctx, messaging_server_id(msg_ctx),
-			   MSG_SMB_KERNEL_BREAK,
-			   msg, MSG_SMB_KERNEL_BREAK_SIZE);
+	ndr_err = ndr_push_struct_into_fixed_blob(
+		&blob,
+		&msg,
+		(ndr_push_flags_fn_t)ndr_push_oplock_break_message);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		DBG_WARNING("ndr_push_oplock_break_message failed: %s\n",
+			    ndr_errstr(ndr_err));
+		return;
+	}
+
+	messaging_send(msg_ctx,
+		       messaging_server_id(msg_ctx),
+		       MSG_SMB_KERNEL_BREAK,
+		       &blob);
 }
 
 /****************************************************************************
@@ -829,7 +842,7 @@ static void process_oplock_break_message(struct messaging_context *msg_ctx,
 					 struct server_id src,
 					 DATA_BLOB *data)
 {
-	struct oplock_break_message *msg = NULL;
+	struct oplock_break_message msg;
 	enum ndr_err_code ndr_err;
 	files_struct *fsp;
 	bool use_kernel;
@@ -844,34 +857,22 @@ static void process_oplock_break_message(struct messaging_context *msg_ctx,
 
 	smb_vfs_assert_allowed();
 
-	msg = talloc(talloc_tos(), struct oplock_break_message);
-	if (msg == NULL) {
-		DBG_WARNING("talloc failed\n");
-		return;
-	}
-
-	ndr_err = ndr_pull_struct_blob_all(
-		data,
-		msg,
-		msg,
-		(ndr_pull_flags_fn_t)ndr_pull_oplock_break_message);
+	ndr_err = ndr_pull_struct_blob_all_noalloc(
+		data, &msg, (ndr_pull_flags_fn_t)ndr_pull_oplock_break_message);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		DBG_DEBUG("ndr_pull_oplock_break_message failed: %s\n",
 			  ndr_errstr(ndr_err));
-		TALLOC_FREE(msg);
 		return;
 	}
 	if (DEBUGLEVEL >= 10) {
 		struct server_id_buf buf;
 		DBG_DEBUG("Got break message from %s\n",
 			  server_id_str_buf(src, &buf));
-		NDR_PRINT_DEBUG(oplock_break_message, msg);
+		NDR_PRINT_DEBUG(oplock_break_message, &msg);
 	}
 
-	break_to = msg->break_to;
-	fsp = initial_break_processing(sconn, msg->id, msg->share_file_id);
-
-	TALLOC_FREE(msg);
+	break_to = msg.break_to;
+	fsp = initial_break_processing(sconn, msg.id, msg.share_file_id);
 
 	if (fsp == NULL) {
 		/* We hit a race here. Break messages are sent, and before we
@@ -1033,7 +1034,7 @@ static void process_oplock_break_message(struct messaging_context *msg_ctx,
 	}
 
 #if defined(WITH_SMB1SERVER)
-	if (sconn->using_smb2) {
+	if (conn_using_smb2(sconn)) {
 #endif
 		send_break_message_smb2(fsp, break_from, break_to);
 #if defined(WITH_SMB1SERVER)
@@ -1075,35 +1076,31 @@ static void process_kernel_oplock_break(struct messaging_context *msg_ctx,
 					struct server_id src,
 					DATA_BLOB *data)
 {
-	struct file_id id;
+	struct oplock_break_message msg;
+	enum ndr_err_code ndr_err;
 	struct file_id_buf idbuf;
-	unsigned long file_id;
 	files_struct *fsp;
 	struct smbd_server_connection *sconn =
 		talloc_get_type_abort(private_data,
 		struct smbd_server_connection);
 	struct server_id_buf tmp;
 
-	if (data->data == NULL) {
-		DEBUG(0, ("Got NULL buffer\n"));
+	ndr_err = ndr_pull_struct_blob_all_noalloc(
+		data,
+		&msg,
+		(ndr_pull_flags_fn_t)ndr_pull_oplock_break_message);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		DBG_DEBUG("ndr_pull_oplock_break_message failed: %s\n",
+			  ndr_errstr(ndr_err));
 		return;
 	}
-
-	if (data->length != MSG_SMB_KERNEL_BREAK_SIZE) {
-		DEBUG(0, ("Got invalid msg len %d\n", (int)data->length));
-		return;
-	}
-
-	/* Pull the data from the message. */
-	pull_file_id_24((char *)data->data, &id);
-	file_id = (unsigned long)IVAL(data->data, 24);
 
 	DBG_DEBUG("Got kernel oplock break message from pid %s: %s/%u\n",
 		  server_id_str_buf(src, &tmp),
-		  file_id_str_buf(id, &idbuf),
-		  (unsigned int)file_id);
+		  file_id_str_buf(msg.id, &idbuf),
+		  (unsigned int)msg.share_file_id);
 
-	fsp = initial_break_processing(sconn, id, file_id);
+	fsp = initial_break_processing(sconn, msg.id, msg.share_file_id);
 
 	if (fsp == NULL) {
 		DEBUG(3, ("Got a kernel oplock break message for a file "
@@ -1119,7 +1116,7 @@ static void process_kernel_oplock_break(struct messaging_context *msg_ctx,
 	}
 
 #if defined(WITH_SMB1SERVER)
-	if (sconn->using_smb2) {
+	if (conn_using_smb2(sconn)) {
 #endif
 		send_break_message_smb2(fsp, 0, OPLOCKLEVEL_NONE);
 #if defined(WITH_SMB1SERVER)
@@ -1342,63 +1339,6 @@ void smbd_contend_level2_oplocks_end(files_struct *fsp,
 				enum level2_contention_type type)
 {
 	return;
-}
-
-/****************************************************************************
- Linearize a share mode entry struct to an internal oplock break message.
-****************************************************************************/
-
-void share_mode_entry_to_message(char *msg, const struct file_id *id,
-				 const struct share_mode_entry *e)
-{
-	SIVAL(msg,OP_BREAK_MSG_PID_OFFSET,(uint32_t)e->pid.pid);
-	SBVAL(msg,OP_BREAK_MSG_MID_OFFSET,e->op_mid);
-	SSVAL(msg,OP_BREAK_MSG_OP_TYPE_OFFSET,e->op_type);
-	SIVAL(msg,OP_BREAK_MSG_ACCESS_MASK_OFFSET,e->access_mask);
-	SIVAL(msg,OP_BREAK_MSG_SHARE_ACCESS_OFFSET,e->share_access);
-	SIVAL(msg,OP_BREAK_MSG_PRIV_OFFSET,e->private_options);
-	SIVAL(msg,OP_BREAK_MSG_TIME_SEC_OFFSET,(uint32_t)e->time.tv_sec);
-	SIVAL(msg,OP_BREAK_MSG_TIME_USEC_OFFSET,(uint32_t)e->time.tv_usec);
-	/*
-	 * "id" used to be part of share_mode_entry, thus the strange
-	 * place to put this. Feel free to move somewhere else :-)
-	 */
-	push_file_id_24(msg+OP_BREAK_MSG_DEV_OFFSET, id);
-	SIVAL(msg,OP_BREAK_MSG_FILE_ID_OFFSET,e->share_file_id);
-	SIVAL(msg,OP_BREAK_MSG_UID_OFFSET,e->uid);
-	SSVAL(msg,OP_BREAK_MSG_FLAGS_OFFSET,e->flags);
-	SIVAL(msg,OP_BREAK_MSG_NAME_HASH_OFFSET,e->name_hash);
-	SIVAL(msg,OP_BREAK_MSG_VNN_OFFSET,e->pid.vnn);
-}
-
-/****************************************************************************
- De-linearize an internal oplock break message to a share mode entry struct.
-****************************************************************************/
-
-void message_to_share_mode_entry(struct file_id *id,
-				 struct share_mode_entry *e,
-				 const char *msg)
-{
-	e->pid = (struct server_id){
-		.pid = (pid_t)IVAL(msg, OP_BREAK_MSG_PID_OFFSET),
-		.vnn = IVAL(msg, OP_BREAK_MSG_VNN_OFFSET),
-	};
-	e->op_mid = BVAL(msg,OP_BREAK_MSG_MID_OFFSET);
-	e->op_type = SVAL(msg,OP_BREAK_MSG_OP_TYPE_OFFSET);
-	e->access_mask = IVAL(msg,OP_BREAK_MSG_ACCESS_MASK_OFFSET);
-	e->share_access = IVAL(msg,OP_BREAK_MSG_SHARE_ACCESS_OFFSET);
-	e->private_options = IVAL(msg,OP_BREAK_MSG_PRIV_OFFSET);
-	e->time.tv_sec = (time_t)IVAL(msg,OP_BREAK_MSG_TIME_SEC_OFFSET);
-	e->time.tv_usec = (int)IVAL(msg,OP_BREAK_MSG_TIME_USEC_OFFSET);
-	/*
-	 * "id" used to be part of share_mode_entry, thus the strange
-	 * place to put this. Feel free to move somewhere else :-)
-	 */
-	pull_file_id_24(msg+OP_BREAK_MSG_DEV_OFFSET, id);
-	e->share_file_id = (unsigned long)IVAL(msg,OP_BREAK_MSG_FILE_ID_OFFSET);
-	e->uid = (uint32_t)IVAL(msg,OP_BREAK_MSG_UID_OFFSET);
-	e->flags = (uint16_t)SVAL(msg,OP_BREAK_MSG_FLAGS_OFFSET);
-	e->name_hash = IVAL(msg, OP_BREAK_MSG_NAME_HASH_OFFSET);
 }
 
 /****************************************************************************

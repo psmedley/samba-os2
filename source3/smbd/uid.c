@@ -21,6 +21,7 @@
 #include "system/passwd.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
+#include "source3/smbd/smbXsrv_session.h"
 #include "../librpc/gen_ndr/netlogon.h"
 #include "libcli/security/security.h"
 #include "passdb/lookup_sid.h"
@@ -64,7 +65,7 @@ bool change_to_guest(void)
  talloc free the conn->session_info if not used in the vuid cache.
 ****************************************************************************/
 
-static void free_conn_session_info_if_unused(connection_struct *conn)
+static void free_conn_state_if_unused(connection_struct *conn)
 {
 	unsigned int i;
 
@@ -73,11 +74,13 @@ static void free_conn_session_info_if_unused(connection_struct *conn)
 		ent = &conn->vuid_cache->array[i];
 		if (ent->vuid != UID_FIELD_INVALID &&
 				conn->session_info == ent->session_info) {
-			return;
+			break;
 		}
 	}
-	/* Not used, safe to free. */
-	TALLOC_FREE(conn->session_info);
+	if (i == VUID_CACHE_SIZE) {
+		/* Not used, safe to free. */
+		TALLOC_FREE(conn->session_info);
+	}
 }
 
 /****************************************************************************
@@ -130,6 +133,7 @@ NTSTATUS check_user_share_access(connection_struct *conn,
 	int snum = SNUM(conn);
 	uint32_t share_access = 0;
 	bool readonly_share = false;
+	bool ok;
 
 	if (!user_ok_token(session_info->unix_info->unix_name,
 			   session_info->info->domain_name,
@@ -137,11 +141,15 @@ NTSTATUS check_user_share_access(connection_struct *conn,
 		return NT_STATUS_ACCESS_DENIED;
 	}
 
-	readonly_share = is_share_read_only_for_token(
+	ok = is_share_read_only_for_token(
 		session_info->unix_info->unix_name,
 		session_info->info->domain_name,
 		session_info->security_token,
-		conn);
+		conn,
+		&readonly_share);
+	if (!ok) {
+		return NT_STATUS_ACCESS_DENIED;
+	}
 
 	share_access = create_share_access_mask(snum,
 					readonly_share,
@@ -171,6 +179,81 @@ NTSTATUS check_user_share_access(connection_struct *conn,
 	return NT_STATUS_OK;
 }
 
+struct scan_file_list_state {
+	TALLOC_CTX *mem_ctx;
+	const struct loadparm_substitution *lp_sub;
+	int snum;
+	const char *param_type;
+	struct security_token *token;
+	struct name_compare_entry **list;
+	bool ok;
+};
+
+static bool scan_file_list_cb(const char *string,
+			      regmatch_t matches[],
+			      void *private_data)
+{
+	struct scan_file_list_state *state = private_data;
+
+	if (matches[1].rm_so == -1) {
+		DBG_WARNING("Found match, but no name??\n");
+		goto fail;
+	}
+	if (matches[1].rm_eo <= matches[1].rm_so) {
+		DBG_WARNING("Invalid match\n");
+		goto fail;
+	}
+
+	{
+		regoff_t len = matches[1].rm_eo - matches[1].rm_so;
+		char name[len + 1];
+		bool ok, match;
+		char *files = NULL;
+
+		memcpy(name, string + matches[1].rm_so, len);
+		name[len] = '\0';
+
+		DBG_DEBUG("Found name \"%s : %s\"\n", state->param_type, name);
+
+		ok = token_contains_name(talloc_tos(),
+					 NULL,
+					 NULL,
+					 NULL,
+					 state->token,
+					 name,
+					 &match);
+		if (!ok) {
+			goto fail;
+		}
+		if (!match) {
+			return false; /* don't stop traverse */
+		}
+
+		files = lp_parm_substituted_string(state->mem_ctx,
+						   state->lp_sub,
+						   state->snum,
+						   state->param_type,
+						   name,
+						   NULL);
+		if (files == NULL) {
+			goto fail;
+		}
+
+		ok = append_to_namearray(state->mem_ctx,
+					 files,
+					 state->list);
+		if (!ok) {
+			goto fail;
+		}
+
+		return false; /* don't stop traverse */
+	}
+
+fail:
+	state->ok = false;
+	return true; /* stop traverse */
+}
+
 /*******************************************************************
  Check if a username is OK.
 
@@ -183,12 +266,15 @@ static bool check_user_ok(connection_struct *conn,
 			const struct auth_session_info *session_info,
 			int snum)
 {
+	const struct loadparm_substitution *lp_sub =
+		loadparm_s3_global_substitution();
 	unsigned int i;
 	bool readonly_share = false;
 	bool admin_user = false;
 	struct vuid_cache_entry *ent = NULL;
 	uint32_t share_access = 0;
 	NTSTATUS status;
+	bool ok;
 
 	for (i=0; i<VUID_CACHE_SIZE; i++) {
 		ent = &conn->vuid_cache->array[i];
@@ -200,11 +286,13 @@ static bool check_user_ok(connection_struct *conn,
 				*/
 				continue;
 			}
-			free_conn_session_info_if_unused(conn);
+			free_conn_state_if_unused(conn);
 			conn->session_info = ent->session_info;
 			conn->read_only = ent->read_only;
 			conn->share_access = ent->share_access;
 			conn->vuid = ent->vuid;
+			conn->veto_list = ent->veto_list;
+			conn->hide_list = ent->hide_list;
 			return(True);
 		}
 	}
@@ -217,10 +305,17 @@ static bool check_user_ok(connection_struct *conn,
 		return false;
 	}
 
-	admin_user = token_contains_name_in_list(
+	ok = token_contains_name_in_list(
 		session_info->unix_info->unix_name,
 		session_info->info->domain_name,
-		NULL, session_info->security_token, lp_admin_users(snum));
+		NULL,
+		session_info->security_token,
+		lp_admin_users(snum),
+		&admin_user);
+	if (!ok) {
+		/* Log, but move on */
+		DBG_ERR("Couldn't apply 'admin users'\n");
+	}
 
 	ent = &conn->vuid_cache->array[conn->vuid_cache->next_entry];
 
@@ -228,6 +323,8 @@ static bool check_user_ok(connection_struct *conn,
 		(conn->vuid_cache->next_entry + 1) % VUID_CACHE_SIZE;
 
 	TALLOC_FREE(ent->session_info);
+	TALLOC_FREE(ent->veto_list);
+	TALLOC_FREE(ent->hide_list);
 
 	/*
 	 * If force_user was set, all session_info's are based on the same
@@ -259,8 +356,82 @@ static bool check_user_ok(connection_struct *conn,
 	ent->vuid = vuid;
 	ent->read_only = readonly_share;
 	ent->share_access = share_access;
-	free_conn_session_info_if_unused(conn);
+
+	/* Add veto/hide lists */
+	if (!IS_IPC(conn) && !IS_PRINT(conn)) {
+		struct scan_file_list_state state = {
+			.mem_ctx = conn,
+			.lp_sub = lp_sub,
+			.snum = snum,
+			.token = session_info->security_token,
+			.ok = true,
+		};
+		int ret;
+
+		ok = set_namearray(conn,
+				   lp_veto_files(talloc_tos(), lp_sub, snum),
+				   &ent->veto_list);
+		if (!ok) {
+			return false;
+		}
+
+		/*
+		 * A bit of boilerplate code duplication for userlevel
+		 * hide and veto files in the share and global
+		 * sections, but not enough to justify putting this
+		 * into functions for now :-)
+		 */
+
+		state.param_type = "veto files";
+		state.list = &ent->veto_list;
+
+		ret = lp_wi_scan_global_parametrics("vetofiles:\\(.*\\)",
+						    2,
+						    scan_file_list_cb,
+						    &state);
+		if ((ret != 0) || !state.ok) {
+			return false;
+		}
+		ret = lp_wi_scan_share_parametrics(snum,
+						   "vetofiles:\\(.*\\)",
+						   2,
+						   scan_file_list_cb,
+						   &state);
+		if ((ret != 0) || !state.ok) {
+			return false;
+		}
+
+		ok = set_namearray(conn,
+				   lp_hide_files(talloc_tos(), lp_sub, snum),
+				   &ent->hide_list);
+		if (!ok) {
+			return false;
+		}
+
+		state.param_type = "hide files";
+		state.list = &ent->hide_list;
+
+		ret = lp_wi_scan_global_parametrics("hidefiles:\\(.*\\)",
+						    2,
+						    scan_file_list_cb,
+						    &state);
+		if ((ret != 0) || !state.ok) {
+			return false;
+		}
+		ret = lp_wi_scan_share_parametrics(snum,
+						   "hidefiles:\\(.*\\)",
+						   2,
+						   scan_file_list_cb,
+						   &state);
+		if ((ret != 0) || !state.ok) {
+			return false;
+		}
+	}
+
+	free_conn_state_if_unused(conn);
 	conn->session_info = ent->session_info;
+	conn->veto_list = ent->veto_list;
+	conn->hide_list = ent->hide_list;
 	conn->vuid = ent->vuid;
 	if (vuid == UID_FIELD_INVALID) {
 		/*

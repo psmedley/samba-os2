@@ -21,144 +21,6 @@
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
 #include "../libcli/security/security.h"
-#include "passdb/lookup_sid.h"
-#include "auth.h"
-#include "source3/lib/substitute.h"
-
-/*
- * No prefix means direct username
- * @name means netgroup first, then unix group
- * &name means netgroup
- * +name means unix group
- * + and & may be combined
- */
-
-static bool do_group_checks(const char **name, const char **pattern)
-{
-	if ((*name)[0] == '@') {
-		*pattern = "&+";
-		*name += 1;
-		return True;
-	}
-
-	if (((*name)[0] == '+') && ((*name)[1] == '&')) {
-		*pattern = "+&";
-		*name += 2;
-		return True;
-	}
-
-	if ((*name)[0] == '+') {
-		*pattern = "+";
-		*name += 1;
-		return True;
-	}
-
-	if (((*name)[0] == '&') && ((*name)[1] == '+')) {
-		*pattern = "&+";
-		*name += 2;
-		return True;
-	}
-
-	if ((*name)[0] == '&') {
-		*pattern = "&";
-		*name += 1;
-		return True;
-	}
-
-	return False;
-}
-
-static bool token_contains_name(TALLOC_CTX *mem_ctx,
-				const char *username,
-				const char *domain,
-				const char *sharename,
-				const struct security_token *token,
-				const char *name)
-{
-	const char *prefix;
-	struct dom_sid sid;
-	enum lsa_SidType type;
-
-	if (username != NULL) {
-		size_t domain_len = domain != NULL ? strlen(domain) : 0;
-
-		/* Check if username starts with domain name */
-		if (domain_len > 0) {
-			const char *sep = lp_winbind_separator();
-			int cmp = strncasecmp_m(username, domain, domain_len);
-			if (cmp == 0 && sep[0] == username[domain_len]) {
-				/* Move after the winbind separator */
-				domain_len += 1;
-			} else {
-				domain_len = 0;
-			}
-		}
-		name = talloc_sub_basic(mem_ctx,
-					username + domain_len,
-					domain,
-					name);
-	}
-	if (sharename != NULL) {
-		name = talloc_string_sub(mem_ctx, name, "%S", sharename);
-	}
-
-	if (name == NULL) {
-		/* This is too security sensitive, better panic than return a
-		 * result that might be interpreted in a wrong way. */
-		smb_panic("substitutions failed");
-	}
-
-	if ( string_to_sid( &sid, name ) ) {
-		DEBUG(5,("token_contains_name: Checking for SID [%s] in token\n", name));
-		return nt_token_check_sid( &sid, token );
-	}
-
-	if (!do_group_checks(&name, &prefix)) {
-		if (!lookup_name_smbconf(mem_ctx, name, LOOKUP_NAME_ALL,
-				 NULL, NULL, &sid, &type)) {
-			DEBUG(5, ("lookup_name %s failed\n", name));
-			return False;
-		}
-		if (type != SID_NAME_USER) {
-			DEBUG(5, ("%s is a %s, expected a user\n",
-				  name, sid_type_lookup(type)));
-			return False;
-		}
-		return nt_token_check_sid(&sid, token);
-	}
-
-	for (/* initialized above */ ; *prefix != '\0'; prefix++) {
-		if (*prefix == '+') {
-			if (!lookup_name_smbconf(mem_ctx, name,
-					 LOOKUP_NAME_ALL|LOOKUP_NAME_GROUP,
-					 NULL, NULL, &sid, &type)) {
-				DEBUG(5, ("lookup_name %s failed\n", name));
-				return False;
-			}
-			if ((type != SID_NAME_DOM_GRP) &&
-			    (type != SID_NAME_ALIAS) &&
-			    (type != SID_NAME_WKN_GRP)) {
-				DEBUG(5, ("%s is a %s, expected a group\n",
-					  name, sid_type_lookup(type)));
-				return False;
-			}
-			if (nt_token_check_sid(&sid, token)) {
-				return True;
-			}
-			continue;
-		}
-		if (*prefix == '&') {
-			if (username) {
-				if (user_in_netgroup(mem_ctx, username, name)) {
-					return True;
-				}
-			}
-			continue;
-		}
-		smb_panic("got invalid prefix from do_groups_check");
-	}
-	return False;
-}
 
 /*
  * Check whether a user is contained in the list provided.
@@ -175,24 +37,29 @@ bool token_contains_name_in_list(const char *username,
 				 const char *domain,
 				 const char *sharename,
 				 const struct security_token *token,
-				 const char **list)
+				 const char **list,
+				 bool *match)
 {
+	*match = false;
 	if (list == NULL) {
-		return False;
+		return true;
 	}
 	while (*list != NULL) {
 		TALLOC_CTX *frame = talloc_stackframe();
-		bool ret;
+		bool ok;
 
-		ret = token_contains_name(frame, username, domain, sharename,
-					  token, *list);
+	        ok = token_contains_name(frame, username, domain, sharename,
+					 token, *list, match);
 		TALLOC_FREE(frame);
-		if (ret) {
+		if (!ok) {
+			return false;
+		}
+		if (*match) {
 			return true;
 		}
 		list += 1;
 	}
-	return False;
+	return true;
 }
 
 /*
@@ -213,22 +80,34 @@ bool user_ok_token(const char *username, const char *domain,
 {
 	const struct loadparm_substitution *lp_sub =
 		loadparm_s3_global_substitution();
+	bool match;
+	bool ok;
 
 	if (lp_invalid_users(snum) != NULL) {
-		if (token_contains_name_in_list(username, domain,
-						lp_servicename(talloc_tos(), lp_sub, snum),
-						token,
-						lp_invalid_users(snum))) {
+		ok = token_contains_name_in_list(username, domain,
+						 lp_servicename(talloc_tos(), lp_sub, snum),
+						 token,
+						 lp_invalid_users(snum),
+						 &match);
+		if (!ok) {
+			return false;
+		}
+		if (match) {
 			DEBUG(10, ("User %s in 'invalid users'\n", username));
 			return False;
 		}
 	}
 
 	if (lp_valid_users(snum) != NULL) {
-		if (!token_contains_name_in_list(username, domain,
+		ok = token_contains_name_in_list(username, domain,
 						 lp_servicename(talloc_tos(), lp_sub, snum),
 						 token,
-						 lp_valid_users(snum))) {
+						 lp_valid_users(snum),
+						 &match);
+		if (!ok) {
+			return false;
+		}
+		if (!match) {
 			DEBUG(10, ("User %s not in 'valid users'\n",
 				   username));
 			return False;
@@ -258,34 +137,48 @@ bool user_ok_token(const char *username, const char *domain,
 bool is_share_read_only_for_token(const char *username,
 				  const char *domain,
 				  const struct security_token *token,
-				  connection_struct *conn)
+				  connection_struct *conn,
+				  bool *_read_only)
 {
 	const struct loadparm_substitution *lp_sub =
 		loadparm_s3_global_substitution();
 	int snum = SNUM(conn);
-	bool result = conn->read_only;
+	bool read_only = conn->read_only;
+	bool match;
+	bool ok;
 
 	if (lp_read_list(snum) != NULL) {
-		if (token_contains_name_in_list(username, domain,
-						lp_servicename(talloc_tos(), lp_sub, snum),
-						token,
-						lp_read_list(snum))) {
-			result = True;
+		ok = token_contains_name_in_list(username, domain,
+						 lp_servicename(talloc_tos(), lp_sub, snum),
+						 token,
+						 lp_read_list(snum),
+						 &match);
+		if (!ok) {
+			return false;
+		}
+		if (match) {
+			read_only = true;
 		}
 	}
 
 	if (lp_write_list(snum) != NULL) {
-		if (token_contains_name_in_list(username, domain,
-						lp_servicename(talloc_tos(), lp_sub, snum),
-						token,
-						lp_write_list(snum))) {
-			result = False;
+		ok = token_contains_name_in_list(username, domain,
+						 lp_servicename(talloc_tos(), lp_sub, snum),
+						 token,
+						 lp_write_list(snum),
+						 &match);
+		if (!ok) {
+			return false;
+		}
+		if (match) {
+			read_only = false;
 		}
 	}
 
 	DEBUG(10,("is_share_read_only_for_user: share %s is %s for unix user "
 		  "%s\n", lp_servicename(talloc_tos(), lp_sub, snum),
-		  result ? "read-only" : "read-write", username));
+		  read_only ? "read-only" : "read-write", username));
 
-	return result;
+	*_read_only = read_only;
+	return true;
 }

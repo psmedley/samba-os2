@@ -636,17 +636,48 @@ static NTSTATUS pdb_samba_dsdb_getsamupriv(struct pdb_samba_dsdb_state *state,
 				    TALLOC_CTX *mem_ctx,
 				    struct ldb_message **msg)
 {
-	const char * attrs[] = {
-		"lastLogon", "lastLogoff", "pwdLastSet", "accountExpires",
-		"sAMAccountName", "displayName", "homeDirectory",
-		"homeDrive", "scriptPath", "profilePath", "description",
-		"userWorkstations", "comment", "userParameters", "objectSid",
-		"primaryGroupID", "userAccountControl",
-		"msDS-User-Account-Control-Computed", "logonHours",
-		"badPwdCount", "logonCount", "countryCode", "codePage",
-		"unicodePwd", "dBCSPwd", NULL };
+	static const char *attrs[] = {
+		"lastLogon",
+		"lastLogoff",
+		"pwdLastSet",
+		"accountExpires",
+		"sAMAccountName",
+		"displayName",
+		"homeDirectory",
+		"homeDrive",
+		"scriptPath",
+		"profilePath",
+		"description",
+		"userWorkstations",
+		"comment",
+		"userParameters",
+		"objectSid",
+		"primaryGroupID",
+		"userAccountControl",
+		"msDS-User-Account-Control-Computed",
+		"logonHours",
+		"badPwdCount",
+		"logonCount",
+		"countryCode",
+		"codePage",
+		"unicodePwd",
+		"dBCSPwd",
+		/* Required for Group Managed Service Accounts. */
+		"msDS-ManagedPasswordId",
+		"msDS-ManagedPasswordInterval",
+		"objectClass",
+		"whenCreated",
+		NULL};
 
-	int rc = dsdb_search_one(state->ldb, mem_ctx, msg, ldb_get_default_basedn(state->ldb), LDB_SCOPE_SUBTREE, attrs, 0, "%s", filter);
+	int rc = dsdb_search_one(state->ldb,
+				 mem_ctx,
+				 msg,
+				 ldb_get_default_basedn(state->ldb),
+				 LDB_SCOPE_SUBTREE,
+				 attrs,
+				 DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS,
+				 "%s",
+				 filter);
 	if (rc != LDB_SUCCESS) {
 		DEBUG(10, ("ldap_search failed %s\n",
 			   ldb_errstring(state->ldb)));
@@ -2023,13 +2054,13 @@ static bool pdb_samba_dsdb_search_aliases(struct pdb_methods *m,
 	return true;
 }
 
-/* 
- * Instead of taking a gid or uid, this function takes a pointer to a 
- * unixid. 
+/*
+ * Instead of taking a gid or uid, this function takes a pointer to a
+ * unixid.
  *
  * This acts as an in-out variable so that the idmap functions can correctly
  * receive ID_TYPE_BOTH, and this function ensures cache details are filled
- * correctly rather than forcing the cache to store ID_TYPE_UID or ID_TYPE_GID. 
+ * correctly rather than forcing the cache to store ID_TYPE_UID or ID_TYPE_GID.
  */
 static bool pdb_samba_dsdb_id_to_sid(struct pdb_methods *m, struct unixid *id,
 				     struct dom_sid *sid)

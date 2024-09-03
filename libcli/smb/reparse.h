@@ -63,6 +63,11 @@ struct reparse_data_buffer {
 	} parsed;
 };
 
+NTSTATUS reparse_buffer_check(const uint8_t *in_data,
+			      size_t in_len,
+			      uint32_t *reparse_tag,
+			      const uint8_t **_reparse_data,
+			      size_t *_reparse_data_length);
 NTSTATUS reparse_data_buffer_parse(TALLOC_CTX *mem_ctx,
 				   struct reparse_data_buffer *dst,
 				   const uint8_t *buf,
@@ -73,5 +78,13 @@ char *reparse_data_buffer_str(TALLOC_CTX *mem_ctx,
 ssize_t reparse_data_buffer_marshall(const struct reparse_data_buffer *src,
 				     uint8_t *buf,
 				     size_t buflen);
+
+int symlink_target_path(TALLOC_CTX *ctx,
+			const char *_name_in,
+			size_t num_unparsed,
+			const char *substitute,
+			bool relative,
+			char separator,
+			char **_target);
 
 #endif

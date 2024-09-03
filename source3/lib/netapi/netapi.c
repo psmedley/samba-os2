@@ -22,7 +22,6 @@
 #include "lib/netapi/netapi.h"
 #include "lib/netapi/netapi_private.h"
 #include "secrets.h"
-#include "krb5_env.h"
 #include "source3/param/loadparm.h"
 #include "lib/param/param.h"
 #include "auth/gensec/gensec.h"
@@ -372,6 +371,29 @@ NET_API_STATUS libnetapi_set_creds(struct libnetapi_ctx *ctx,
 	return NET_API_STATUS_SUCCESS;
 }
 
+/**
+ * @brief Get the credentials of the libnet context
+ *
+ * @param[in]  ctx      The netapi context
+ *
+ * @param[in]  creds    A pointer to hold the creds.
+ *
+ * @return 0 on success, an werror code otherwise.
+ */
+NET_API_STATUS libnetapi_get_creds(struct libnetapi_ctx *ctx,
+				   struct cli_credentials **creds)
+{
+	if (ctx == NULL) {
+		return W_ERROR_V(WERR_INVALID_PARAMETER);
+	}
+
+	if (creds != NULL) {
+		*creds = ctx->creds;
+	}
+
+	return NET_API_STATUS_SUCCESS;
+}
+
 /****************************************************************
 ****************************************************************/
 
@@ -407,12 +429,8 @@ NET_API_STATUS libnetapi_get_use_kerberos(struct libnetapi_ctx *ctx,
 
 NET_API_STATUS libnetapi_set_use_ccache(struct libnetapi_ctx *ctx)
 {
-	uint32_t gensec_features;
-
-	gensec_features = cli_credentials_get_gensec_features(ctx->creds);
-	gensec_features |= GENSEC_FEATURE_NTLM_CCACHE;
-	cli_credentials_set_gensec_features(ctx->creds,
-					    gensec_features,
+	cli_credentials_add_gensec_features(ctx->creds,
+					    GENSEC_FEATURE_NTLM_CCACHE,
 					    CRED_SPECIFIED);
 
 	return NET_API_STATUS_SUCCESS;

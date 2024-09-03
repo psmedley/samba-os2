@@ -53,7 +53,6 @@ class SamDB(samba.Ldb):
     """The SAM database."""
 
     hash_oid_name = {}
-    hash_well_known = {}
 
     class _CleanUpOnError:
         def __init__(self, samdb, dn):
@@ -104,6 +103,14 @@ class SamDB(samba.Ldb):
         self.url = url
 
         super().connect(url=url, flags=flags, options=options)
+
+    def __repr__(self):
+        if self.url:
+            return f"<SamDB {id(self):x} ({self.url})>"
+
+        return f"<SamDB {id(self):x} (no connection)>"
+
+    __str__ = __repr__
 
     def am_rodc(self):
         """return True if we are an RODC"""
@@ -963,6 +970,14 @@ accountExpires: %u
     domain_sid = property(get_domain_sid, set_domain_sid,
                           doc="SID for the domain")
 
+    def get_connecting_user_sid(self):
+        """Returns the SID of the connected user."""
+        msg = self.search(base="", scope=ldb.SCOPE_BASE, attrs=["tokenGroups"])[0]
+        return str(ndr_unpack(security.dom_sid, msg["tokenGroups"][0]))
+
+    connecting_user_sid = property(get_connecting_user_sid,
+                                   doc="SID of the connecting user")
+
     def set_invocation_id(self, invocation_id):
         """Set the invocation id for this SamDB handle.
 
@@ -1220,19 +1235,7 @@ schemaUpdateNow: 1
         return dsdb._dsdb_get_nc_root(self, dn)
 
     def get_wellknown_dn(self, nc_root, wkguid):
-        h_nc = self.hash_well_known.get(str(nc_root))
-        dn = None
-        if h_nc is not None:
-            dn = h_nc.get(wkguid)
-        if dn is None:
-            dn = dsdb._dsdb_get_wellknown_dn(self, nc_root, wkguid)
-            if dn is None:
-                return dn
-            if h_nc is None:
-                self.hash_well_known[str(nc_root)] = {}
-                h_nc = self.hash_well_known[str(nc_root)]
-            h_nc[wkguid] = dn
-        return dn
+        return dsdb._dsdb_get_wellknown_dn(self, nc_root, wkguid)
 
     def set_minPwdAge(self, value):
         if not isinstance(value, bytes):
@@ -1548,6 +1551,19 @@ schemaUpdateNow: 1
         if not full_dn.is_child_of(domain_dn):
             full_dn.add_base(domain_dn)
         return full_dn
+
+    def new_gkdi_root_key(self, *args, **kwargs):
+        """ """
+        dn = dsdb._dsdb_create_gkdi_root_key(self, *args, **kwargs)
+        return dn
+
+    def get_admin_sid(self):
+        res = self.search(
+            base="", expression="", scope=ldb.SCOPE_BASE, attrs=["tokenGroups"])
+
+        return self.schema_format_value(
+            "tokenGroups", res[0]["tokenGroups"][0]).decode("utf8")
+
 
 class dsdb_Dn(object):
     """a class for binary DN"""

@@ -25,10 +25,10 @@ from selftesthelpers import plantestsuite, bbdir
 from selftesthelpers import configuration, valgrindify
 from selftesthelpers import skiptestsuite
 
+samba4bindir = bindir()
 try:
     config_h = os.environ["CONFIG_H"]
 except KeyError:
-    samba4bindir = bindir()
     config_h = os.path.join(samba4bindir, "default/include/config.h")
 
 # check available features
@@ -49,6 +49,9 @@ pam_wrapper_so_path = config_hash.get("LIBPAM_WRAPPER_SO_PATH")
 pam_set_items_so_path = config_hash.get("PAM_SET_ITEMS_SO_PATH")
 have_heimdal_support = "SAMBA4_USES_HEIMDAL" in config_hash
 using_system_gssapi = "USING_SYSTEM_GSSAPI" in config_hash
+have_lmdb = "HAVE_LMDB" in config_hash
+have_libldap = "HAVE_LIBLDAP" in config_hash
+have_liblber = "HAVE_LIBLBER" in config_hash
 
 planpythontestsuite("none", "samba.tests.source")
 planpythontestsuite("none", "samba.tests.source_chars")
@@ -64,7 +67,85 @@ else:
     planpythontestsuite("none", "subunit.tests.test_suite")
 planpythontestsuite("none", "samba.tests.blackbox.ndrdump")
 planpythontestsuite("none", "samba.tests.blackbox.check_output")
-planpythontestsuite("none", "api", name="ldb.python", extra_path=['lib/ldb/tests/python'])
+
+# LDB tests for standalone operation
+planpythontestsuite("none", "api",
+                    name="ldb.python.api",
+                    extra_path=['lib/ldb/tests/python'],
+                    environ={'HAVE_LMDB': str(int(have_lmdb))})
+planpythontestsuite("none", "crash",
+                    name="ldb.python.crash",
+                    extra_path=['lib/ldb/tests/python'],
+                    environ={'HAVE_LMDB': str(int(have_lmdb))})
+planpythontestsuite("none", "index",
+                    name="ldb.python.index",
+                    extra_path=['lib/ldb/tests/python'],
+                    environ={'HAVE_LMDB': str(int(have_lmdb))})
+planpythontestsuite("none", "repack",
+                    name="ldb.python.repack",
+                    extra_path=['lib/ldb/tests/python'],
+                    environ={'HAVE_LMDB': str(int(have_lmdb))})
+
+# LDB tests for standalone operation, in the tr_TR.UTF-8 to cover
+# dotless i locales, see
+# https://bugzilla.samba.org/show_bug.cgi?id=15248
+planpythontestsuite("none", "api",
+                    name="ldb.python.api.tr",
+                    extra_path=['lib/ldb/tests/python'],
+                    environ={'LC_ALL': 'tr_TR.UTF-8',
+                             'HAVE_LMDB': str(int(have_lmdb))})
+planpythontestsuite("none", "index",
+                    name="ldb.python.index.tr",
+                    extra_path=['lib/ldb/tests/python'],
+                    environ={'LC_ALL': 'tr_TR.UTF-8',
+                             'HAVE_LMDB': str(int(have_lmdb))})
+
+# LDB cmocka tests
+
+ldb_test_exes = ['test_ldb_qsort',
+                 'test_ldb_dn',
+                 'ldb_msg_test',
+                 'ldb_tdb_mod_op_test',
+                 'ldb_tdb_guid_mod_op_test',
+                 'ldb_tdb_kv_ops_test',
+                 'ldb_tdb_test',
+                 'ldb_match_test',
+                 'ldb_key_value_test',
+                 "test_ldb_comparison_fold",
+                 # we currently don't run ldb_key_value_sub_txn_tdb_test as it
+                 # tests the nested/sub transaction handling
+                 # on operations which the TDB backend does not currently
+                 # support
+                 # 'ldb_key_value_sub_txn_tdb_test'
+                 'ldb_parse_test',
+                 'ldb_filter_attrs_test',
+                 'ldb_filter_attrs_in_place_test',
+                 ]
+# if LIB_LDAP and LIB_LBER defined, then we can test ldb_ldap backend
+# behavior regression for bz#14413
+if have_libldap and have_liblber:
+    ldb_test_exes += ["lldb_ldap_test"]
+
+if have_lmdb:
+    ldb_test_exes += ['ldb_mdb_mod_op_test',
+                      'ldb_lmdb_test',
+                      # we don't want to run ldb_lmdb_size_test (which proves
+                      # we can fit > 4G of data into the DB), it would fill up
+                      # the disk on many of our test instances
+                      'ldb_mdb_kv_ops_test',
+                      'ldb_key_value_sub_txn_mdb_test',
+                      'ldb_lmdb_free_list_test']
+else:
+    ldb_test_exes += ['ldb_no_lmdb_test']
+
+for ldb_test_exe in ldb_test_exes:
+    plantestsuite(f"ldb.unittests.{ldb_test_exe}", "none",
+                  [os.path.join(bindir(), f"default/lib/ldb/{ldb_test_exe}")])
+
+# Shell based LDB blackbox tests and the older ldbtest C tests
+ldbdir = os.path.join(srcdir(), "lib/ldb")
+plantestsuite("ldb.base", "none", "%s/tests/test-tdb-subunit.sh %s" % (ldbdir, samba4bindir))
+
 planpythontestsuite("none", "samba.tests.credentials")
 planpythontestsuite("none", "samba.tests.registry")
 planpythontestsuite("ad_dc_ntvfs:local", "samba.tests.auth")
@@ -486,6 +567,8 @@ plantestsuite("samba.unittests.gnutls_aead_aes_256_cbc_hmac_sha512", "none",
               [os.path.join(bindir(), "test_gnutls_aead_aes_256_cbc_hmac_sha512")])
 plantestsuite("samba.unittests.gnutls_sp800_108", "none",
               [os.path.join(bindir(), "test_gnutls_sp800_108")])
+plantestsuite("samba.unittests.gkdi", "none",
+              [os.path.join(bindir(), "test_gkdi")])
 plantestsuite("samba.unittests.gkdi_key_derivation", "none",
               [os.path.join(bindir(), "test_gkdi_key_derivation")])
 plantestsuite("samba.unittests.encode_decode", "none",

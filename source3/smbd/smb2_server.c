@@ -23,6 +23,7 @@
 #include "system/network.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
+#include "source3/smbd/smbXsrv_session.h"
 #include "smbd/smbXsrv_open.h"
 #include "lib/param/param.h"
 #include "../libcli/smb/smb_common.h"
@@ -532,9 +533,9 @@ static NTSTATUS smbd_smb2_inbuf_parse_compound(struct smbXsrv_connection *xconn,
 								       uid, req, &s);
 			}
 			if (!NT_STATUS_IS_OK(status)) {
-				DEBUG(1, ("invalid session[%llu] in "
-					  "SMB2_TRANSFORM header\n",
-					   (unsigned long long)uid));
+				DBG_WARNING("invalid session[%" PRIu64 "] in "
+					    "SMB2_TRANSFORM header\n",
+					    uid);
 				TALLOC_FREE(iov_alloc);
 				return NT_STATUS_USER_SESSION_DELETED;
 			}
@@ -3049,6 +3050,7 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 	bool signing_required = false;
 	bool encryption_desired = false;
 	bool encryption_required = false;
+	bool session_expired = false;
 
 	inhdr = SMBD_SMB2_IN_HDR_PTR(req);
 
@@ -3097,6 +3099,9 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 		signing_required = x->global->signing_flags & SMBXSRV_SIGNING_REQUIRED;
 		encryption_desired = x->global->encryption_flags & SMBXSRV_ENCRYPTION_DESIRED;
 		encryption_required = x->global->encryption_flags & SMBXSRV_ENCRYPTION_REQUIRED;
+		session_expired =
+			NT_STATUS_EQUAL(session_status,
+					NT_STATUS_NETWORK_SESSION_EXPIRED);
 	}
 
 	req->async_internal = false;
@@ -3112,10 +3117,11 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 		uint64_t tf_session_id = BVAL(intf, SMB2_TF_SESSION_ID);
 
 		if (x != NULL && x->global->session_wire_id != tf_session_id) {
-			DEBUG(0,("smbd_smb2_request_dispatch: invalid session_id"
-				 "in SMB2_HDR[%llu], SMB2_TF[%llu]\n",
-				 (unsigned long long)x->global->session_wire_id,
-				 (unsigned long long)tf_session_id));
+			DBG_ERR("invalid session_id "
+				"in SMB2_HDR[%" PRIu64 "], SMB2_TF[%" PRIu64
+				"]\n",
+				x->global->session_wire_id,
+				tf_session_id);
 			/*
 			 * TODO: windows allows this...
 			 * should we drop the connection?
@@ -3169,7 +3175,7 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 		 * This check is mostly for giving the correct error code
 		 * for compounded requests.
 		 */
-		if (!NT_STATUS_IS_OK(session_status)) {
+		if (!session_expired && !NT_STATUS_IS_OK(session_status)) {
 			return smbd_smb2_request_error(req, NT_STATUS_INVALID_PARAMETER);
 		}
 	} else {
@@ -3255,6 +3261,9 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 		}
 
 		if (!NT_STATUS_IS_OK(session_status)) {
+			if (session_expired && opcode == SMB2_OP_CREATE) {
+				req->compound_create_err = session_status;
+			}
 			return smbd_smb2_request_error(req, session_status);
 		}
 	}
@@ -3306,11 +3315,18 @@ NTSTATUS smbd_smb2_request_dispatch(struct smbd_smb2_request *req)
 skipped_signing:
 
 	if (flags & SMB2_HDR_FLAG_CHAINED) {
+		if (!NT_STATUS_IS_OK(req->compound_create_err)) {
+			return smbd_smb2_request_error(req,
+					req->compound_create_err);
+		}
 		req->compound_related = true;
 	}
 
 	if (call->need_session) {
 		if (!NT_STATUS_IS_OK(session_status)) {
+			if (session_expired && opcode == SMB2_OP_CREATE) {
+				req->compound_create_err = session_status;
+			}
 			return smbd_smb2_request_error(req, session_status);
 		}
 	}

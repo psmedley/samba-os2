@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
 
    RFC2478 Compliant SPNEGO implementation
@@ -66,11 +66,11 @@ struct spnego_neg_ops {
 	const char *name;
 	/*
 	 * The start hook does the initial processing on the incoming packet and
-	 * may starts the first possible subcontext. It indicates that
+	 * may start the first possible subcontext. It indicates that
 	 * gensec_update() is required on the subcontext by returning
 	 * NT_STATUS_MORE_PROCESSING_REQUIRED and return something useful in
 	 * 'in_next'. Note that 'in_mem_ctx' is just passed as a hint, the
-	 * caller should treat 'in_next' as const and don't attempt to free the
+	 * caller should treat 'in_next' as const and not attempt to free the
 	 * content.  NT_STATUS_OK indicates the finish hook should be invoked
 	 * directly within the need of gensec_update() on the subcontext.
 	 * Every other error indicates an error that's returned to the caller.
@@ -88,7 +88,7 @@ struct spnego_neg_ops {
 	 * gensec_update() is required on the subcontext by returning
 	 * NT_STATUS_MORE_PROCESSING_REQUIRED and return something useful in
 	 * 'in_next'. Note that 'in_mem_ctx' is just passed as a hint, the
-	 * caller should treat 'in_next' as const and don't attempt to free the
+	 * caller should treat 'in_next' as const and not attempt to free the
 	 * content.  NT_STATUS_OK indicates the finish hook should be invoked
 	 * directly within the need of gensec_update() on the subcontext.
 	 * Every other error indicates an error that's returned to the caller.
@@ -221,14 +221,14 @@ static NTSTATUS gensec_spnego_server_start(struct gensec_security *gensec_securi
 	return NT_STATUS_OK;
 }
 
-/** Fallback to another GENSEC mechanism, based on magic strings 
+/** Fallback to another GENSEC mechanism, based on magic strings
  *
  * This is the 'fallback' case, where we don't get SPNEGO, and have to
  * try all the other options (and hope they all have a magic string
  * they check)
 */
 
-static NTSTATUS gensec_spnego_server_try_fallback(struct gensec_security *gensec_security, 
+static NTSTATUS gensec_spnego_server_try_fallback(struct gensec_security *gensec_security,
 						  struct spnego_state *spnego_state,
 						  TALLOC_CTX *mem_ctx,
 						  const DATA_BLOB in)
@@ -241,12 +241,6 @@ static NTSTATUS gensec_spnego_server_try_fallback(struct gensec_security *gensec
 	for (i=0; all_ops && all_ops[i]; i++) {
 		bool is_spnego;
 		NTSTATUS nt_status;
-
-		if (gensec_security != NULL &&
-		    !gensec_security_ops_enabled(all_ops[i], gensec_security))
-		{
-			continue;
-		}
 
 		if (!all_ops[i]->oid) {
 			continue;
@@ -273,8 +267,8 @@ static NTSTATUS gensec_spnego_server_try_fallback(struct gensec_security *gensec
 
 		spnego_state->state_position = SPNEGO_FALLBACK;
 
-		nt_status = gensec_subcontext_start(spnego_state, 
-						    gensec_security, 
+		nt_status = gensec_subcontext_start(spnego_state,
+						    gensec_security,
 						    &spnego_state->sub_sec_security);
 
 		if (!NT_STATUS_IS_OK(nt_status)) {
@@ -503,17 +497,7 @@ static NTSTATUS gensec_spnego_client_negTokenInit_start(
 					TALLOC_CTX *in_mem_ctx,
 					DATA_BLOB *in_next)
 {
-	const char *tp = NULL;
-
 	/* The server offers a list of mechanisms */
-
-	tp = spnego_in->negTokenInit.targetPrincipal;
-	if (tp != NULL && strcmp(tp, ADS_IGNORE_PRINCIPAL) != 0) {
-		DBG_INFO("Server claims it's principal name is %s\n", tp);
-		if (lpcfg_client_use_spnego_principal(gensec_security->settings->lp_ctx)) {
-			gensec_set_target_principal(gensec_security, tp);
-		}
-	}
 
 	n->mech_idx = 0;
 
@@ -1114,7 +1098,7 @@ static const struct spnego_neg_ops gensec_spnego_client_negTokenTarg_ops = {
 	.finish_fn = gensec_spnego_client_negTokenTarg_finish,
 };
 
-/** create a server negTokenTarg 
+/** create a server negTokenTarg
  *
  * This is the case, where the client is the first one who sends data
 */
@@ -1126,15 +1110,14 @@ static NTSTATUS gensec_spnego_server_response(struct spnego_state *spnego_state,
 					      DATA_BLOB mech_list_mic,
 					      DATA_BLOB *out)
 {
-	struct spnego_data spnego_out;
+	struct spnego_data spnego_out = {
+		.type = SPNEGO_NEG_TOKEN_TARG,
+		.negTokenTarg.responseToken = unwrapped_out,
+		.negTokenTarg.mechListMIC = mech_list_mic,
+		.negTokenTarg.supportedMech = NULL,
+	};
 
-	/* compose reply */
-	spnego_out.type = SPNEGO_NEG_TOKEN_TARG;
-	spnego_out.negTokenTarg.responseToken = unwrapped_out;
-	spnego_out.negTokenTarg.mechListMIC = mech_list_mic;
-	spnego_out.negTokenTarg.supportedMech = NULL;
-
-	if (NT_STATUS_EQUAL(nt_status, NT_STATUS_MORE_PROCESSING_REQUIRED)) {	
+	if (NT_STATUS_EQUAL(nt_status, NT_STATUS_MORE_PROCESSING_REQUIRED)) {
 		spnego_out.negTokenTarg.supportedMech = spnego_state->neg_oid;
 		if (spnego_state->mic_requested) {
 			spnego_out.negTokenTarg.negResult = SPNEGO_REQUEST_MIC;
@@ -2201,9 +2184,9 @@ static NTSTATUS gensec_spnego_update_recv(struct tevent_req *req,
 	return status;
 }
 
-static const char *gensec_spnego_oids[] = { 
+static const char *gensec_spnego_oids[] = {
 	GENSEC_OID_SPNEGO,
-	NULL 
+	NULL
 };
 
 static const struct gensec_security_ops gensec_spnego_security_ops = {

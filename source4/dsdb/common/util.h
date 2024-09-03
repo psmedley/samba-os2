@@ -22,6 +22,8 @@
 #ifndef __DSDB_COMMON_UTIL_H__
 #define __DSDB_COMMON_UTIL_H__
 
+#include "libcli/util/werror.h"
+
 /*
    flags for dsdb_request_add_controls(). For the module functions,
    the upper 16 bits are in dsdb/samdb/ldb_modules/util.h
@@ -44,6 +46,7 @@
 #define DSDB_PASSWORD_BYPASS_LAST_SET         0x08000
 #define DSDB_REPLMD_VANISH_LINKS              0x10000
 #define DSDB_MARK_REQ_UNTRUSTED               0x20000
+#define DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS  0x40000
 
 #define DSDB_SECRET_ATTRIBUTES_EX(sep) \
 	"pekList" sep \
@@ -83,6 +86,9 @@ struct ldb_context;
 int dsdb_werror_at(struct ldb_context *ldb, int ldb_ecode, WERROR werr,
 		   const char *location, const char *func,
 		   const char *reason);
+
+#define dsdb_werror(ldb, ldb_ecode, werr, reason) \
+	dsdb_werror_at(ldb, ldb_ecode, werr, __location__, __func__, reason)
 
 #define dsdb_module_werror(module, ldb_ecode, werr, reason) \
 	dsdb_werror_at(ldb_module_get_ctx(module), ldb_ecode, werr, \

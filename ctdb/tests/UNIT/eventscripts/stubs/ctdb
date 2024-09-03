@@ -195,8 +195,7 @@ ip_reallocate()
 
 ctdb_ip()
 {
-	# If nobody has done any IP-fu then generate a layout.
-	[ -f "$FAKE_CTDB_IP_LAYOUT" ] || ip_reallocate
+	ip_reallocate
 
 	_mypnn=$(ctdb_pnn)
 
@@ -331,6 +330,11 @@ _t_get()
 _t_del()
 {
 	rm -f "${_t_dir}/$1"
+}
+
+ctdb_attach()
+{
+	_t_setup "$1"
 }
 
 ctdb_pstore()

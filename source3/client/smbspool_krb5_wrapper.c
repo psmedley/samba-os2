@@ -23,10 +23,7 @@
 #include "system/filesys.h"
 #include "system/kerberos.h"
 #include "system/passwd.h"
-
-#include <errno.h>
-#include <stdlib.h>
-#include <string.h>
+#include "lib/krb5_wrap/krb5_samba.h"
 
 #include <cups/backend.h>
 
@@ -82,7 +79,7 @@ static bool kerberos_get_default_ccache(char *ccache_buf, size_t len)
 		return false;
 	}
 
-	ccache_name = krb5_cc_default_name(ctx);
+	ccache_name = smb_force_krb5_cc_default_name(ctx);
 	if (ccache_name == NULL) {
 		krb5_free_context(ctx);
 		return false;

@@ -975,19 +975,6 @@ static void popt_common_credentials_callback(poptContext popt_ctx,
 				"Unable to read defaults from smb.conf\n");
 		}
 
-		(void)cli_credentials_get_password_and_obtained(creds,
-								&password_obtained);
-		if (!skip_password_callback &&
-		    password_obtained < CRED_CALLBACK) {
-			ok = cli_credentials_set_cmdline_callbacks(creds);
-			if (!ok) {
-				fprintf(stderr,
-					"Failed to set cmdline password "
-					"callback\n");
-				exit(1);
-			}
-		}
-
 		if (machine_account_pending) {
 			NTSTATUS status;
 
@@ -1020,6 +1007,40 @@ static void popt_common_credentials_callback(poptContext popt_ctx,
 			cli_credentials_parse_string(creds,
 						     username,
 						     CRED_SPECIFIED);
+		}
+
+		if (cli_credentials_get_kerberos_state(creds) ==
+		    CRED_USE_KERBEROS_REQUIRED)
+		{
+			enum credentials_obtained ccache_obtained =
+				CRED_UNINITIALISED;
+			enum credentials_obtained principal_obtained =
+				CRED_UNINITIALISED;
+			bool ccache_valid;
+
+			principal_obtained =
+				cli_credentials_get_principal_obtained(creds);
+			ccache_valid = cli_credentials_get_ccache_name_obtained(
+				creds, NULL, NULL, &ccache_obtained);
+			if (ccache_valid &&
+			    ccache_obtained == principal_obtained)
+			{
+				skip_password_callback = true;
+			}
+		}
+		if (!skip_password_callback) {
+			(void)cli_credentials_get_password_and_obtained(creds,
+									&password_obtained);
+		}
+		if (!skip_password_callback &&
+		    password_obtained < CRED_CALLBACK) {
+			ok = cli_credentials_set_cmdline_callbacks(creds);
+			if (!ok) {
+				fprintf(stderr,
+					"Failed to set cmdline password "
+					"callback\n");
+				exit(1);
+			}
 		}
 
 		return;
@@ -1160,14 +1181,8 @@ static void popt_common_credentials_callback(poptContext popt_ctx,
 	}
 	case OPT_USE_WINBIND_CCACHE:
 	{
-		uint32_t gensec_features;
-
-		gensec_features = cli_credentials_get_gensec_features(creds);
-		gensec_features |= GENSEC_FEATURE_NTLM_CCACHE;
-
-		ok = cli_credentials_set_gensec_features(creds,
-							 gensec_features,
-							 CRED_SPECIFIED);
+		ok = cli_credentials_add_gensec_features(
+			creds, GENSEC_FEATURE_NTLM_CCACHE, CRED_SPECIFIED);
 		if (!ok) {
 			fprintf(stderr,
 				"Failed to set gensec feature!\n");

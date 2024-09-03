@@ -27,6 +27,7 @@
 #include <regex.h>
 
 #include "lib/util/access.h"
+#include "nsswitch/libwbclient/wbclient.h"
 
 /* The following definitions come from lib/adt_tree.c  */
 
@@ -173,6 +174,8 @@ void update_stat_ex_mtime(struct stat_ex *dst, struct timespec write_ts);
 void update_stat_ex_create_time(struct stat_ex *dst, struct timespec create_time);
 void update_stat_ex_from_saved_stat(struct stat_ex *dst,
 				    const struct stat_ex *src);
+void copy_stat_ex_timestamps(struct stat_ex *st,
+			     const struct smb_file_time *ft);
 int sys_stat(const char *fname, SMB_STRUCT_STAT *sbuf,
 	     bool fake_dir_create_times);
 int sys_fstat(int fd, SMB_STRUCT_STAT *sbuf,
@@ -221,11 +224,6 @@ void init_stat_ex_from_stat (struct stat_ex *dst,
 bool getgroups_unix_user(TALLOC_CTX *mem_ctx, const char *user,
 			 gid_t primary_gid,
 			 gid_t **ret_groups, uint32_t *p_ngroups);
-
-/* The following definitions come from lib/tallocmsg.c  */
-
-void register_msg_pool_usage(TALLOC_CTX *mem_ctx,
-			     struct messaging_context *msg_ctx);
 
 /* The following definitions come from lib/time.c  */
 
@@ -277,7 +275,6 @@ bool is_allowed_domain(const char *domain_name);
 
 /* The following definitions come from lib/util.c  */
 
-enum protocol_types get_Protocol(void);
 void set_Protocol(enum protocol_types  p);
 void gfree_all( void );
 bool file_exist_stat(const char *fname,SMB_STRUCT_STAT *sbuf,
@@ -319,9 +316,22 @@ gid_t nametogid(const char *name);
 void smb_panic_s3(const char *why);
 void log_panic_action(const char *msg);
 const char *readdirname(DIR *p);
-bool is_in_path(const char *name, name_compare_entry *namelist, bool case_sensitive);
-void set_namearray(name_compare_entry **ppname_array, const char *namelist);
-void free_namearray(name_compare_entry *name_array);
+bool is_in_path(const char *name,
+		struct name_compare_entry *namelist,
+		bool case_sensitive);
+bool token_contains_name(TALLOC_CTX *mem_ctx,
+			 const char *username,
+			 const char *domain,
+			 const char *sharename,
+			 const struct security_token *token,
+			 const char *name,
+			 bool *match);
+bool append_to_namearray(TALLOC_CTX *mem_ctx,
+			 const char *namelist_in,
+			 struct name_compare_entry **_name_array);
+bool set_namearray(TALLOC_CTX *mem_ctx,
+		   const char *namelist,
+		   struct name_compare_entry **_name_array);
 bool fcntl_lock(int fd, int op, off_t offset, off_t count, int type);
 bool fcntl_getlock(int fd, int op, off_t *poffset, off_t *pcount, int *ptype, pid_t *ppid);
 int map_process_lock_to_ofd_lock(int op);
@@ -347,7 +357,6 @@ bool ms_has_wild_w(const smb_ucs2_t *s);
 bool mask_match(const char *string, const char *pattern, bool is_case_sensitive);
 bool mask_match_list(const char *string, char **list, int listLen, bool is_case_sensitive);
 #include "lib/util/unix_match.h"
-bool name_to_fqdn(fstring fqdn, const char *name);
 
 #include "lib/util_procid.h"
 
@@ -531,15 +540,8 @@ char *realloc_string_sub(char *string,
 			const char *insert);
 void all_string_sub(char *s,const char *pattern,const char *insert, size_t len);
 char *string_truncate(char *s, unsigned int length);
-char *strchr_m(const char *src, char c);
-char *strrchr_m(const char *s, char c);
-char *strnrchr_m(const char *s, char c, unsigned int n);
-char *strstr_m(const char *src, const char *findstr);
 bool strlower_m(char *s);
 bool strupper_m(char *s);
-size_t strlen_m(const char *s);
-size_t strlen_m_term(const char *s);
-size_t strlen_m_term_null(const char *s);
 int fstr_sprintf(fstring s, const char *fmt, ...);
 
 uint64_t STR_TO_SMB_BIG_UINT(const char *nptr, const char **entptr);
@@ -583,6 +585,7 @@ void flush_negative_conn_cache_for_domain(const char *domain);
 /* The following definitions come from libsmb/errormap.c  */
 
 NTSTATUS dos_to_ntstatus(uint8_t eclass, uint32_t ecode);
+NTSTATUS map_nt_error_from_wbcErr(wbcErr wbc_err);
 
 /* The following definitions come from libsmb/namecache.c  */
 

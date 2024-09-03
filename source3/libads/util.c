@@ -56,7 +56,13 @@ ADS_STATUS ads_change_trust_account_password(ADS_STRUCT *ads, char *host_princip
 						 ads->auth.kdc_server,
 						 new_password,
 						 talloc_tos(),
-						 &info, &prev);
+						 &info,
+						 &prev,
+#ifdef HAVE_ADS
+						 sync_pw2keytabs);
+#else
+						 NULL);
+#endif
 	if (!NT_STATUS_IS_OK(status)) {
 		return ADS_ERROR_NT(status);
 	}
@@ -110,7 +116,10 @@ ADS_STATUS ads_change_trust_account_password(ADS_STRUCT *ads, char *host_princip
 	talloc_keep_secret(new_pw_blob.data);
 	new_password = (const char *)new_pw_blob.data;
 
-	ret = kerberos_set_password(ads->auth.kdc_server, host_principal, password, host_principal, new_password, ads->auth.time_offset);
+	ret = kerberos_set_password(host_principal,
+				    password,
+				    host_principal,
+				    new_password);
 
 	if (!ADS_ERR_OK(ret)) {
 		status = ads_ntstatus(ret);
@@ -125,7 +134,14 @@ ADS_STATUS ads_change_trust_account_password(ADS_STRUCT *ads, char *host_princip
 		return ret;
 	}
 
-	status = secrets_finish_password_change(ads->auth.kdc_server, now, info);
+	status = secrets_finish_password_change(ads->auth.kdc_server,
+						now,
+						info,
+#ifdef HAVE_ADS
+						sync_pw2keytabs);
+#else
+						NULL);
+#endif
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1,("Failed to save machine password\n"));
 		return ADS_ERROR_NT(status);

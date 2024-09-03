@@ -31,6 +31,7 @@
 #include "lib/util/tevent_unix.h"
 #include "lib/util/debug.h"
 #include "lib/util/samba_util.h"
+#include "lib/util/util_file.h"
 #include "lib/async_req/async_sock.h"
 
 #include "protocol/protocol.h"
@@ -44,10 +45,10 @@
 #include "common/srvid.h"
 #include "common/system.h"
 
+#include "conf/node.h"
+
 #include "ipalloc_read_known_ips.h"
 
-
-#define CTDB_PORT 4379
 
 /* A fake flag that is only supported by some functions */
 #define NODE_FLAGS_FAKE_TIMEOUT 0x80000000
@@ -285,107 +286,6 @@ fail:
 
 }
 
-/* Append a node to a node map with given address and flags */
-static bool node_map_add(struct ctdb_node_map *nodemap,
-			 const char *nstr, uint32_t flags)
-{
-	ctdb_sock_addr addr;
-	uint32_t num;
-	struct ctdb_node_and_flags *n;
-	int ret;
-
-	ret = ctdb_sock_addr_from_string(nstr, &addr, false);
-	if (ret != 0) {
-		fprintf(stderr, "Invalid IP address %s\n", nstr);
-		return false;
-	}
-	ctdb_sock_addr_set_port(&addr, CTDB_PORT);
-
-	num = nodemap->num;
-	nodemap->node = talloc_realloc(nodemap, nodemap->node,
-				       struct ctdb_node_and_flags, num+1);
-	if (nodemap->node == NULL) {
-		return false;
-	}
-
-	n = &nodemap->node[num];
-	n->addr = addr;
-	n->pnn = num;
-	n->flags = flags;
-
-	nodemap->num = num+1;
-	return true;
-}
-
-/* Read a nodes file into a node map */
-static struct ctdb_node_map *ctdb_read_nodes_file(TALLOC_CTX *mem_ctx,
-						  const char *nlist)
-{
-	char **lines;
-	int nlines;
-	int i;
-	struct ctdb_node_map *nodemap;
-
-	nodemap = talloc_zero(mem_ctx, struct ctdb_node_map);
-	if (nodemap == NULL) {
-		return NULL;
-	}
-
-	lines = file_lines_load(nlist, &nlines, 0, mem_ctx);
-	if (lines == NULL) {
-		return NULL;
-	}
-
-	while (nlines > 0 && strcmp(lines[nlines-1], "") == 0) {
-		nlines--;
-	}
-
-	for (i=0; i<nlines; i++) {
-		char *node;
-		uint32_t flags;
-		size_t len;
-
-		node = lines[i];
-		/* strip leading spaces */
-		while((*node == ' ') || (*node == '\t')) {
-			node++;
-		}
-
-		len = strlen(node);
-
-		/* strip trailing spaces */
-		while ((len > 1) &&
-		       ((node[len-1] == ' ') || (node[len-1] == '\t')))
-		{
-			node[len-1] = '\0';
-			len--;
-		}
-
-		if (len == 0) {
-			continue;
-		}
-		if (*node == '#') {
-			/* A "deleted" node is a node that is
-			   commented out in the nodes file.  This is
-			   used instead of removing a line, which
-			   would cause subsequent nodes to change
-			   their PNN. */
-			flags = NODE_FLAGS_DELETED;
-			node = discard_const("0.0.0.0");
-		} else {
-			flags = 0;
-		}
-		if (! node_map_add(nodemap, node, flags)) {
-			talloc_free(lines);
-			TALLOC_FREE(nodemap);
-			return NULL;
-		}
-	}
-
-	talloc_free(lines);
-	return nodemap;
-}
-
 static struct ctdb_node_map *read_nodes_file(TALLOC_CTX *mem_ctx,
 					     uint32_t pnn)
 {
@@ -407,7 +307,7 @@ static struct ctdb_node_map *read_nodes_file(TALLOC_CTX *mem_ctx,
 		D_ERR("nodes file path too long\n");
 		return NULL;
 	}
-	nodemap = ctdb_read_nodes_file(mem_ctx, nodes_list);
+	nodemap = ctdb_read_nodes(mem_ctx, nodes_list);
 	if (nodemap != NULL) {
 		/* Fake a load failure for an empty nodemap */
 		if (nodemap->num == 0) {
@@ -426,7 +326,7 @@ static struct ctdb_node_map *read_nodes_file(TALLOC_CTX *mem_ctx,
 		D_ERR("nodes file path too long\n");
 		return NULL;
 	}
-	nodemap = ctdb_read_nodes_file(mem_ctx, nodes_list);
+	nodemap = ctdb_read_nodes(mem_ctx, nodes_list);
 	if (nodemap != NULL) {
 		return nodemap;
 	}
@@ -2498,7 +2398,15 @@ static void control_reload_nodes_file(TALLOC_CTX *mem_ctx,
 	}
 
 	for (i=0; i<nodemap->num; i++) {
-		struct node *node;
+		struct node *node = NULL;
+		ctdb_sock_addr zero = {};
+		int ret;
+
+		ret = ctdb_sock_addr_from_string("0.0.0.0", &zero, false);
+		if (ret != 0) {
+			/* Can't happen, but Coverity... */
+			goto fail;
+		}
 
 		if (i < node_map->num_nodes &&
 		    ctdb_sock_addr_same(&nodemap->node[i].addr,
@@ -2506,18 +2414,12 @@ static void control_reload_nodes_file(TALLOC_CTX *mem_ctx,
 			continue;
 		}
 
-		if (nodemap->node[i].flags & NODE_FLAGS_DELETED) {
-			int ret;
-
+		if (i < node_map->num_nodes &&
+		    nodemap->node[i].flags & NODE_FLAGS_DELETED) {
 			node = &node_map->node[i];
 
 			node->flags |= NODE_FLAGS_DELETED;
-			ret = ctdb_sock_addr_from_string("0.0.0.0", &node->addr,
-							 false);
-			if (ret != 0) {
-				/* Can't happen, but Coverity... */
-				goto fail;
-			}
+			node->addr = zero;
 
 			continue;
 		}
@@ -2542,7 +2444,11 @@ static void control_reload_nodes_file(TALLOC_CTX *mem_ctx,
 
 		node->addr = nodemap->node[i].addr;
 		node->pnn = nodemap->node[i].pnn;
-		node->flags = 0;
+		if (ctdb_sock_addr_same_ip(&node->addr, &zero)) {
+			node->flags = NODE_FLAGS_DELETED;
+		} else {
+			node->flags = 0;
+		}
 		node->capabilities = CTDB_CAP_DEFAULT;
 		node->recovery_disabled = false;
 		node->recovery_substate = NULL;
@@ -3447,6 +3353,21 @@ static void control_set_db_sticky(TALLOC_CTX *mem_ctx,
 	reply.errmsg = NULL;
 
 done:
+	client_send_control(req, header, &reply);
+}
+
+static void control_start_ipreallocate(TALLOC_CTX *mem_ctx,
+				       struct tevent_req *req,
+				       struct ctdb_req_header *header,
+				       struct ctdb_req_control *request)
+{
+	struct ctdb_reply_control reply;
+
+	/* Always succeed */
+	reply.rdata.opcode = request->opcode;
+	reply.status = 0;
+	reply.errmsg = NULL;
+
 	client_send_control(req, header, &reply);
 }
 
@@ -4362,6 +4283,10 @@ static void client_process_control(struct tevent_req *req,
 
 	case CTDB_CONTROL_ENABLE_NODE:
 		control_enable_node(mem_ctx, req, &header, &request);
+		break;
+
+	case CTDB_CONTROL_START_IPREALLOCATE:
+		control_start_ipreallocate(mem_ctx, req, &header, &request);
 		break;
 
 	default:

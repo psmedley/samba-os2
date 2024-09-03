@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    Samba utility functions
 
@@ -19,6 +19,9 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef DSDB_SAMDB_LDB_MODULES_UTIL_H
+#define DSDB_SAMDB_LDB_MODULES_UTIL_H
+
 /* predeclare some structures used by utility functions */
 struct dsdb_schema;
 struct dsdb_attribute;
@@ -26,6 +29,11 @@ struct dsdb_fsmo_extended_op;
 struct security_descriptor;
 struct dom_sid;
 struct netlogon_samlogon_response;
+
+enum system_control_strip_critical {
+	SYSTEM_CONTROL_KEEP_CRITICAL,
+	SYSTEM_CONTROL_STRIP_CRITICAL,
+};
 
 #include "librpc/gen_ndr/misc.h"
 #include "librpc/gen_ndr/security.h"
@@ -41,3 +49,5 @@ struct netlogon_samlogon_response;
 #define DSDB_FLAG_TRUSTED		      0x01000000
 #define DSDB_FLAG_REPLICATED_UPDATE           0x02000000
 #define DSDB_FLAG_FORCE_ALLOW_VALIDATED_DNS_HOSTNAME_SPN_WRITE 0x04000000
+
+#endif /* DSDB_SAMDB_LDB_MODULES_UTIL_H */

@@ -276,7 +276,7 @@ bool asn1_write_BitString(struct asn1_data *data, const void *p, size_t length, 
 
 bool ber_write_OID_String(TALLOC_CTX *mem_ctx, DATA_BLOB *blob, const char *OID)
 {
-	unsigned int v, v2;
+	unsigned long int v, v2;
 	const char *p = (const char *)OID;
 	char *newp;
 	int i;
@@ -308,8 +308,11 @@ bool ber_write_OID_String(TALLOC_CTX *mem_ctx, DATA_BLOB *blob, const char *OID)
 		v = smb_strtoul(p, &newp, 10, &error, SMB_STR_STANDARD);
 		if (newp[0] == '.' || error != 0) {
 			p = newp + 1;
-			/* check for empty last component */
-			if (!*p) return false;
+			if (!*p) {
+				/* empty last component */
+				data_blob_free(blob);
+				return false;
+			}
 		} else if (newp[0] == '\0') {
 			p = newp;
 		} else {
@@ -768,7 +771,7 @@ int asn1_tag_remaining(struct asn1_data *data)
 static bool _ber_read_OID_String_impl(TALLOC_CTX *mem_ctx, DATA_BLOB blob,
 				      char **OID, size_t *bytes_eaten)
 {
-	int i;
+	size_t i;
 	uint8_t *b;
 	unsigned int v;
 	char *tmp_oid = NULL;
@@ -778,7 +781,6 @@ static bool _ber_read_OID_String_impl(TALLOC_CTX *mem_ctx, DATA_BLOB blob,
 	b = blob.data;
 
 	tmp_oid = talloc_asprintf(mem_ctx, "%u.%u", b[0]/40, b[0]%40);
-	if (!tmp_oid) goto nomem;
 
 	if (bytes_eaten != NULL) {
 		*bytes_eaten = 0;
@@ -787,12 +789,15 @@ static bool _ber_read_OID_String_impl(TALLOC_CTX *mem_ctx, DATA_BLOB blob,
 	for(i = 1, v = 0; i < blob.length; i++) {
 		v = (v<<7) | (b[i]&0x7f);
 		if ( ! (b[i] & 0x80)) {
-			tmp_oid = talloc_asprintf_append_buffer(tmp_oid, ".%u",  v);
+			talloc_asprintf_addbuf(&tmp_oid, ".%u",  v);
 			v = 0;
 			if (bytes_eaten)
 				*bytes_eaten = i+1;
 		}
-		if (!tmp_oid) goto nomem;
+	}
+
+	if (tmp_oid == NULL) {
+		goto nomem;
 	}
 
 	*OID = tmp_oid;

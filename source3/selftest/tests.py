@@ -154,7 +154,10 @@ for t in fileserver_tests:
     plantestsuite("samba3.smbtorture_s3.plain.%s" % t, "ad_dc_ntvfs", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER_IP/tmp', '$USERNAME', '$PASSWORD', smbtorture3, "", "-l $LOCAL_PATH"])
 
 t = "TLDAP"
-plantestsuite("samba3.smbtorture_s3.plain.%s" % t, "ad_dc", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER/tmp', '$DC_USERNAME', '$DC_PASSWORD', smbtorture3, "", "-l $LOCAL_PATH"])
+plantestsuite("samba3.smbtorture_s3.%s.sasl-sign" % t, "ad_dc", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER/tmp', '$DC_USERNAME', '$DC_PASSWORD', smbtorture3, "-T 'clientldapsaslwrapping=sign'", "", "-l $LOCAL_PATH"])
+plantestsuite("samba3.smbtorture_s3.%s.sasl-seal" % t, "ad_dc", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER/tmp', '$DC_USERNAME', '$DC_PASSWORD', smbtorture3, "-T 'clientldapsaslwrapping=seal'", "", "-l $LOCAL_PATH"])
+plantestsuite("samba3.smbtorture_s3.%s.ldaps" % t, "ad_dc", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER/tmp', '$DC_USERNAME', '$DC_PASSWORD', smbtorture3,  "-T 'clientldapsaslwrapping=ldaps'", "", "-l $LOCAL_PATH"])
+plantestsuite("samba3.smbtorture_s3.%s.starttls" % t, "ad_dc", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), t, '//$SERVER/tmp', '$DC_USERNAME', '$DC_PASSWORD', smbtorture3, "-T 'clientldapsaslwrapping=starttls'", "", "-l $LOCAL_PATH"])
 
 if have_linux_kernel_oplocks:
     t = "OPLOCK5"
@@ -667,6 +670,24 @@ for env in ["nt4_member", "ad_member"]:
     plantestsuite("samba3.blackbox.net_cred_change", "%s:local" % env, [os.path.join(samba3srcdir, "script/tests/test_net_cred_change.sh"), configuration])
 
 plantestsuite("samba3.blackbox.net_cred_change_at", "ad_member_s3_join:local", [os.path.join(samba3srcdir, "script/tests/test_net_cred_change_at.sh"), configuration, '$DC_SERVER'])
+plantestsuite(
+    "samba3.blackbox.update_keytab",
+    "ad_member_idmap_nss:local",
+    [
+        os.path.join(samba3srcdir, "script/tests/test_update_keytab.sh"),
+        "$DOMAIN",
+        configuration,
+    ],
+)
+plantestsuite(
+    "samba3.blackbox.update_keytab_clustered",
+    "clusteredmember:local",
+    [
+        os.path.join(samba3srcdir, "script/tests/test_update_keytab_clustered.sh"),
+        "$DOMAIN",
+        configuration,
+    ],
+)
 
 env = "ad_member"
 t = "--krb5auth=$DOMAIN/$DC_USERNAME%$DC_PASSWORD"
@@ -1612,6 +1633,14 @@ plantestsuite("samba3.blackbox.smbd_no_krb5", "ad_member:local",
               [os.path.join(samba3srcdir, "script/tests/test_smbd_no_krb5.sh"),
                smbclient3, '$SERVER', "$DC_USERNAME", "$DC_PASSWORD", "$PREFIX"])
 
+plantestsuite("samba3.blackbox.smb1_lanman_plaintext", "simpleserver:local",
+              [os.path.join(samba3srcdir, "script/tests/test_smb1_lanman_plaintext.sh"),
+               smbclient3, '$SERVER', "$USERNAME", "$PASSWORD"])
+
+plantestsuite("samba3.blackbox.smb1_lanman_plaintext", "nt4_member:local",
+              [os.path.join(samba3srcdir, "script/tests/test_smb1_lanman_plaintext.sh"),
+               smbclient3, '$SERVER', "$USERNAME", "$PASSWORD"])
+
 plantestsuite("samba3.blackbox.winbind_ignore_domain", "ad_member_idmap_ad:local",
               [os.path.join(samba3srcdir, "script/tests/test_winbind_ignore_domains.sh")])
 
@@ -1924,6 +1953,6 @@ if have_cluster_support:
              "-N 1000 -o 2000"])
 
 planpythontestsuite("fileserver_smb1", "samba.tests.smb3unix")
-planpythontestsuite("fileserver", "samba.tests.reparsepoints")
+planpythontestsuite("fileserver_smb1", "samba.tests.reparsepoints")
 planpythontestsuite("fileserver_smb1", "samba.tests.smb2symlink")
 planpythontestsuite("fileserver_smb1", "samba.tests.smb1posix")

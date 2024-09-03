@@ -34,6 +34,7 @@
 #include "lib/messaging/irpc.h"
 #include "librpc/gen_ndr/ndr_irpc_c.h"
 #include "../libcli/ldap/ldap_ndr.h"
+#include "dsdb/common/util.h"
 #include "dsdb/samdb/ldb_modules/util.h"
 #include "lib/tsocket/tsocket.h"
 #include "librpc/gen_ndr/ndr_netlogon.h"
@@ -407,11 +408,19 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3_helper(
 	struct samr_Password *curNtHash = NULL;
 	struct samr_Password *prevNtHash = NULL;
 	uint32_t user_account_control;
-	int num_records;
 	struct ldb_message **msgs;
 	NTSTATUS nt_status;
-	const char *attrs[] = {"unicodePwd", "userAccountControl",
-			       "objectSid", "samAccountName", NULL};
+	static const char *attrs[] = {
+		"unicodePwd",
+		"userAccountControl",
+		"objectSid",
+		"samAccountName",
+		/* Required for Group Managed Service Accounts. */
+		"msDS-ManagedPasswordId",
+		"msDS-ManagedPasswordInterval",
+		"objectClass",
+		"whenCreated",
+		NULL};
 	uint32_t server_flags = 0;
 	uint32_t negotiate_flags = 0;
 
@@ -536,12 +545,10 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3_helper(
 	    r->in.secure_channel_type == SEC_CHAN_DNS_DOMAIN)
 	{
 		struct ldb_message *tdo_msg = NULL;
-		const char * const tdo_attrs[] = {
-			"trustAuthIncoming",
-			"trustAttributes",
-			"flatName",
-			NULL
-		};
+		static const char *const tdo_attrs[] = {"trustAuthIncoming",
+							"trustAttributes",
+							"flatName",
+							NULL};
 		char *encoded_name = NULL;
 		size_t len;
 		const char *flatname = NULL;
@@ -641,29 +648,33 @@ static NTSTATUS dcesrv_netr_ServerAuthenticate3_helper(
 		*trust_account_for_search = r->in.account_name;
 	}
 
-	/* pull the user attributes */
-	num_records = gendb_search(sam_ctx, mem_ctx, NULL, &msgs, attrs,
-				   "(&(sAMAccountName=%s)(objectclass=user))",
-				   ldb_binary_encode_string(mem_ctx,
-							    *trust_account_for_search));
+	{
+		struct ldb_result *res = NULL;
+		int ret;
 
-	if (num_records == 0) {
-		DEBUG(3,("Couldn't find user [%s] in samdb.\n",
+		/* pull the user attributes */
+		ret = dsdb_search(
+			sam_ctx,
+			mem_ctx,
+			&res,
+			ldb_get_default_basedn(sam_ctx),
+			LDB_SCOPE_SUBTREE,
+			attrs,
+			DSDB_SEARCH_ONE_ONLY | DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS,
+			"(&(sAMAccountName=%s)(objectclass=user))",
+			ldb_binary_encode_string(mem_ctx,
+						 *trust_account_for_search));
+		if (ret) {
+			DEBUG(3,("Couldn't find user [%s] in samdb.\n",
 			 log_escape(mem_ctx, r->in.account_name)));
-		return dcesrv_netr_ServerAuthenticate3_check_downgrade(
+			return dcesrv_netr_ServerAuthenticate3_check_downgrade(
 				dce_call, r, pipe_state, negotiate_flags,
 				NULL, /* trust_account_in_db */
 				NT_STATUS_NO_TRUST_SAM_ACCOUNT);
-	}
+		}
 
-	if (num_records > 1) {
-		DEBUG(0,("Found %d records matching user [%s]\n",
-			 num_records,
-			 log_escape(mem_ctx, r->in.account_name)));
-		return dcesrv_netr_ServerAuthenticate3_check_downgrade(
-				dce_call, r, pipe_state, negotiate_flags,
-				NULL, /* trust_account_in_db */
-				NT_STATUS_INTERNAL_DB_CORRUPTION);
+		msgs = talloc_steal(mem_ctx, res->msgs);
+		talloc_free(res);
 	}
 
 	*trust_account_in_db = ldb_msg_find_attr_as_string(msgs[0],
@@ -2618,17 +2629,17 @@ static NTSTATUS dcesrv_netr_LogonGetDomainInfo(struct dcesrv_call_state *dce_cal
 	TALLOC_CTX *mem_ctx, struct netr_LogonGetDomainInfo *r)
 {
 	struct netlogon_creds_CredentialState *creds;
-	const char * const trusts_attrs[] = {
-		"securityIdentifier",
-		"flatName",
-		"trustPartner",
-		"trustAttributes",
-		"trustDirection",
-		"trustType",
-		NULL
-	};
-	const char * const attrs2[] = { "sAMAccountName", "dNSHostName",
-		"msDS-SupportedEncryptionTypes", NULL };
+	static const char *const trusts_attrs[] = {"securityIdentifier",
+						   "flatName",
+						   "trustPartner",
+						   "trustAttributes",
+						   "trustDirection",
+						   "trustType",
+						   NULL};
+	static const char *const attrs2[] = {"sAMAccountName",
+					     "dNSHostName",
+					     "msDS-SupportedEncryptionTypes",
+					     NULL};
 	const char *sam_account_name, *old_dns_hostname;
 	struct ldb_context *sam_ctx;
 	const struct GUID *our_domain_guid = NULL;
@@ -2994,11 +3005,15 @@ static bool sam_rodc_access_check(struct ldb_context *sam_ctx,
 				  struct dom_sid *user_sid,
 				  struct ldb_dn *obj_dn)
 {
-	const char *rodc_attrs[] = { "msDS-NeverRevealGroup",
-				     "msDS-RevealOnDemandGroup",
-				     "userAccountControl",
-				     NULL };
-	const char *obj_attrs[] = { "tokenGroups", "objectSid", "UserAccountControl", "msDS-KrbTgtLinkBL", NULL };
+	static const char *rodc_attrs[] = {"msDS-NeverRevealGroup",
+					   "msDS-RevealOnDemandGroup",
+					   "userAccountControl",
+					   NULL};
+	static const char *obj_attrs[] = {"tokenGroups",
+					  "objectSid",
+					  "UserAccountControl",
+					  "msDS-KrbTgtLinkBL",
+					  NULL};
 	struct ldb_dn *rodc_dn;
 	int ret;
 	struct ldb_result *rodc_res = NULL, *obj_res = NULL;
@@ -3938,9 +3953,13 @@ static WERROR fill_trusted_domains_array(TALLOC_CTX *mem_ctx,
 {
 	struct ldb_dn *system_dn;
 	struct ldb_message **dom_res = NULL;
-	const char *trust_attrs[] = { "flatname", "trustPartner",
-				      "securityIdentifier", "trustDirection",
-				      "trustType", "trustAttributes", NULL };
+	static const char *trust_attrs[] = {"flatname",
+					    "trustPartner",
+					    "securityIdentifier",
+					    "trustDirection",
+					    "trustType",
+					    "trustAttributes",
+					    NULL};
 	uint32_t n;
 	int i;
 	int ret;
@@ -3987,7 +4006,7 @@ static WERROR fill_trusted_domains_array(TALLOC_CTX *mem_ctx,
 		trusts->array[n].netbios_name = talloc_steal(trusts->array, ldb_msg_find_attr_as_string(dom_res[i], "flatname", NULL));
 		if (!trusts->array[n].netbios_name) {
 			DEBUG(0, ("DB Error, TrustedDomain entry (%s) "
-				  "without flatname\n", 
+				  "without flatname\n",
 				  ldb_dn_get_linearized(dom_res[i]->dn)));
 		}
 
@@ -4409,10 +4428,16 @@ static NTSTATUS dcesrv_netr_ServerGetTrustInfo(struct dcesrv_call_state *dce_cal
 	struct loadparm_context *lp_ctx = dce_call->conn->dce_ctx->lp_ctx;
 	struct netlogon_creds_CredentialState *creds = NULL;
 	struct ldb_context *sam_ctx = NULL;
-	const char * const attrs[] = {
+	static const char * const attrs[] = {
 		"unicodePwd",
 		"sAMAccountName",
 		"userAccountControl",
+		/* Required for Group Managed Service Accounts. */
+		"msDS-ManagedPasswordId",
+		"msDS-ManagedPasswordInterval",
+		"objectClass",
+		"objectSid",
+		"whenCreated",
 		NULL
 	};
 	struct ldb_message **res = NULL;
@@ -4467,11 +4492,25 @@ static NTSTATUS dcesrv_netr_ServerGetTrustInfo(struct dcesrv_call_state *dce_cal
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	ret = gendb_search(sam_ctx, mem_ctx, NULL, &res, attrs,
-			   "(&(objectClass=user)(objectSid=%s))",
-			   asid);
-	if (ret != 1) {
-		return NT_STATUS_ACCOUNT_DISABLED;
+	{
+		struct ldb_result *result = NULL;
+
+		ret = dsdb_search(sam_ctx,
+				  mem_ctx,
+				  &result,
+				  ldb_get_default_basedn(sam_ctx),
+				  LDB_SCOPE_SUBTREE,
+				  attrs,
+				  DSDB_SEARCH_ONE_ONLY |
+					  DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS,
+				  "(&(objectClass=user)(objectSid=%s))",
+				  asid);
+		if (ret) {
+			return NT_STATUS_ACCOUNT_DISABLED;
+		}
+
+		res = talloc_steal(mem_ctx, result->msgs);
+		talloc_free(result);
 	}
 
 	switch (creds->secure_channel_type) {

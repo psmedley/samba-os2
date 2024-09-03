@@ -228,7 +228,7 @@ struct tevent_req *notifyd_send(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 
 	ret = server_id_db_set_exclusive(names_db, "notify-daemon");
 	if (ret != 0) {
-		DBG_DEBUG("server_id_db_add failed: %s\n",
+		DBG_DEBUG("server_id_db_set_exclusive() failed: %s\n",
 			  strerror(ret));
 		tevent_req_error(req, ret);
 		goto deregister_get_db;
@@ -794,7 +794,7 @@ static void notifyd_send_delete(struct messaging_context *msg_ctx,
 	};
 	uint8_t nul = 0;
 	struct iovec iov[3];
-	int ret;
+	NTSTATUS status;
 
 	/*
 	 * Send a rec_change to ourselves to delete a dead entry
@@ -806,13 +806,17 @@ static void notifyd_send_delete(struct messaging_context *msg_ctx,
 	iov[1] = (struct iovec) { .iov_base = key.dptr, .iov_len = key.dsize };
 	iov[2] = (struct iovec) { .iov_base = &nul, .iov_len = sizeof(nul) };
 
-	ret = messaging_send_iov_from(
-		msg_ctx, instance->client, messaging_server_id(msg_ctx),
-		MSG_SMB_NOTIFY_REC_CHANGE, iov, ARRAY_SIZE(iov), NULL, 0);
+	status = messaging_send_iov(msg_ctx,
+				    instance->client,
+				    MSG_SMB_NOTIFY_REC_CHANGE,
+				    iov,
+				    ARRAY_SIZE(iov),
+				    NULL,
+				    0);
 
-	if (ret != 0) {
-		DBG_WARNING("messaging_send_iov_from returned %s\n",
-			    strerror(ret));
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_WARNING("messaging_send_iov failed: %s\n",
+			    nt_errstr(status));
 	}
 }
 

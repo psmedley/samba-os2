@@ -224,7 +224,13 @@ static int net_changesecretpw(struct net_context *c, int argc,
 							 "localhost",
 							 trust_pw,
 							 talloc_tos(),
-							 &info, &prev);
+							 &info,
+							 &prev,
+#ifdef HAVE_ADS
+							 sync_pw2keytabs);
+#else
+							 NULL);
+#endif
 		if (!NT_STATUS_IS_OK(status)) {
 			d_fprintf(stderr,
 			        _("Unable to write the machine account password in the secrets database"));
@@ -243,7 +249,14 @@ static int net_changesecretpw(struct net_context *c, int argc,
 			}
 			return 1;
 		}
-		status = secrets_finish_password_change("localhost", now, info);
+		status = secrets_finish_password_change("localhost",
+							now,
+							info,
+#ifdef HAVE_ADS
+							sync_pw2keytabs);
+#else
+							NULL);
+#endif
 		if (!NT_STATUS_IS_OK(status)) {
 			d_fprintf(stderr,
 			        _("Unable to write the machine account password in the secrets database"));
@@ -295,7 +308,7 @@ static int net_setauthuser(struct net_context *c, int argc, const char **argv)
 		return 0;
 	}
 
-	if (!c->opt_user_specified) {
+	if (!c->explicit_credentials) {
 		d_fprintf(stderr, _("Usage:\n"));
 		d_fprintf(stderr,
 			  _("    net setauthuser -U user[%%password]\n"
@@ -308,7 +321,7 @@ static int net_setauthuser(struct net_context *c, int argc, const char **argv)
 		return 1;
 	}
 
-	password = net_prompt_pass(c, _("the auth user"));
+	password = cli_credentials_get_password(c->creds);
 	if (password == NULL) {
 		d_fprintf(stderr,_("Failed to get the auth users password.\n"));
 		return 1;
@@ -1047,10 +1060,11 @@ static struct functable net_func[] = {
 			.arg        = &c->opt_request_timeout,
 		},
 		{
+			/* legacy for --use-winbind-ccache */
 			.longName   = "use-ccache",
 			.shortName  = 0,
 			.argInfo    = POPT_ARG_NONE,
-			.arg        = &c->opt_ccache,
+			.arg        = &c->legacy_opt_ccache,
 		},
 		{
 			.longName   = "verbose",
@@ -1368,27 +1382,26 @@ static struct functable net_func[] = {
 	c->creds = samba_cmdline_get_creds();
 
 	{
-		enum credentials_obtained username_obtained =
-			CRED_UNINITIALISED;
-		enum smb_encryption_setting encrypt_state =
-			cli_credentials_get_smb_encryption(c->creds);
-		enum credentials_use_kerberos krb5_state =
-			cli_credentials_get_kerberos_state(c->creds);
-		uint32_t gensec_features;
+		enum credentials_obtained principal_obtained =
+			cli_credentials_get_principal_obtained(c->creds);
+		enum credentials_obtained password_obtained =
+			cli_credentials_get_password_obtained(c->creds);
 
-		c->opt_user_name = cli_credentials_get_username_and_obtained(
-				c->creds,
-				&username_obtained);
-		c->opt_user_specified = (username_obtained == CRED_SPECIFIED);
+		if (principal_obtained == CRED_SPECIFIED) {
+			c->explicit_credentials = true;
+		}
+		if (password_obtained == CRED_SPECIFIED) {
+			c->explicit_credentials = true;
+		}
 
 		c->opt_workgroup = cli_credentials_get_domain(c->creds);
 
-		c->smb_encrypt = (encrypt_state == SMB_ENCRYPTION_REQUIRED);
-
-		c->opt_kerberos = (krb5_state > CRED_USE_KERBEROS_DESIRED);
-
-		gensec_features = cli_credentials_get_gensec_features(c->creds);
-		c->opt_ccache = (gensec_features & GENSEC_FEATURE_NTLM_CCACHE);
+		if (c->legacy_opt_ccache) {
+			cli_credentials_add_gensec_features(
+				c->creds,
+				GENSEC_FEATURE_NTLM_CCACHE,
+				CRED_SPECIFIED);
+		}
 	}
 
 	c->msg_ctx = cmdline_messaging_context(get_dyn_CONFIGFILE());

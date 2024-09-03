@@ -82,10 +82,17 @@ NTSTATUS cli_tree_connect_creds(struct cli_state *cli,
 NTSTATUS cli_tree_connect(struct cli_state *cli, const char *share,
 			  const char *dev, const char *pass);
 NTSTATUS cli_tdis(struct cli_state *cli);
-NTSTATUS cli_connect_nb(const char *host, const struct sockaddr_storage *dest_ss,
-			uint16_t port, int name_type, const char *myname,
-			enum smb_signing_setting signing_state, int flags, struct cli_state **pcli);
-NTSTATUS cli_start_connection(struct cli_state **output_cli,
+NTSTATUS cli_connect_nb(TALLOC_CTX *mem_ctx,
+			const char *host,
+			const struct sockaddr_storage *dest_ss,
+			uint16_t port,
+			int name_type,
+			const char *myname,
+			enum smb_signing_setting signing_state,
+			int flags,
+			struct cli_state **pcli);
+NTSTATUS cli_start_connection(TALLOC_CTX *mem_ctx,
+			      struct cli_state **output_cli,
 			      const char *my_name,
 			      const char *dest_host,
 			      const struct sockaddr_storage *dest_ss, int port,
@@ -103,8 +110,10 @@ struct tevent_req *cli_full_connection_creds_send(
 	int flags,
 	struct smb2_negotiate_contexts *negotiate_contexts);
 NTSTATUS cli_full_connection_creds_recv(struct tevent_req *req,
+					TALLOC_CTX *mem_ctx,
 					struct cli_state **output_cli);
-NTSTATUS cli_full_connection_creds(struct cli_state **output_cli,
+NTSTATUS cli_full_connection_creds(TALLOC_CTX *mem_ctx,
+				   struct cli_state **output_cli,
 				   const char *my_name,
 				   const char *dest_host,
 				   const struct sockaddr_storage *dest_ss, int port,
@@ -114,9 +123,6 @@ NTSTATUS cli_full_connection_creds(struct cli_state **output_cli,
 NTSTATUS cli_raw_tcon(struct cli_state *cli,
 		      const char *service, const char *pass, const char *dev,
 		      uint16_t *max_xmit, uint16_t *tid);
-struct cli_state *get_ipc_connect(char *server,
-				struct sockaddr_storage *server_ss,
-				struct cli_credentials *creds);
 struct cli_state *get_ipc_connect_master_ip(TALLOC_CTX *ctx,
 				struct sockaddr_storage *mb_ip,
 				struct cli_credentials *creds,
@@ -760,13 +766,6 @@ NTSTATUS is_bad_finfo_name(const struct cli_state *cli,
 NTSTATUS cli_list_old(struct cli_state *cli,const char *Mask,uint32_t attribute,
 		      NTSTATUS (*fn)(struct file_info *,
 				 const char *, void *), void *state);
-NTSTATUS cli_list_trans(struct cli_state *cli, const char *mask,
-			uint32_t attribute, int info_level,
-			NTSTATUS (*fn)(
-				struct file_info *finfo,
-				const char *mask,
-				void *private_data),
-			void *private_data);
 struct tevent_req *cli_list_send(TALLOC_CTX *mem_ctx,
 				 struct tevent_context *ev,
 				 struct cli_state *cli,

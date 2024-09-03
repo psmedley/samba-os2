@@ -66,6 +66,7 @@ int lp_cups_encrypt(void);
 bool lp_widelinks(int );
 int lp_rpc_low_port(void);
 int lp_rpc_high_port(void);
+const char *lp_dns_hostname(void);
 bool lp_lanman_auth(void);
 enum samba_weak_crypto lp_weak_crypto(void);
 
@@ -74,6 +75,13 @@ int lp_wi_scan_global_parametrics(
 	bool (*cb)(const char *string, regmatch_t matches[],
 		   void *private_data),
 	void *private_data);
+int lp_wi_scan_share_parametrics(int snum,
+				 const char *regex_str,
+				 size_t max_matches,
+				 bool (*cb)(const char *string,
+					    regmatch_t matches[],
+					    void *private_data),
+				 void *private_data);
 
 const char *lp_parm_const_string(int snum, const char *type, const char *option, const char *def);
 struct loadparm_service;

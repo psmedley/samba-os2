@@ -713,8 +713,6 @@ struct tevent_req *cli_smb2_delete_on_close_send(TALLOC_CTX *mem_ctx,
 	struct tevent_req *req = NULL;
 	struct cli_smb2_delete_on_close_state *state = NULL;
 	struct tevent_req *subreq = NULL;
-	uint8_t in_info_type;
-	uint8_t in_file_info_class;
 
 	req = tevent_req_create(mem_ctx, &state,
 				struct cli_smb2_delete_on_close_state);
@@ -723,26 +721,19 @@ struct tevent_req *cli_smb2_delete_on_close_send(TALLOC_CTX *mem_ctx,
 	}
 	state->cli = cli;
 
-	/*
-	 * setinfo on the handle with info_type SMB2_SETINFO_FILE (1),
-	 * level 13 (SMB_FILE_DISPOSITION_INFORMATION - 1000).
-	 */
-	in_info_type = 1;
-	in_file_info_class = SMB_FILE_DISPOSITION_INFORMATION - 1000;
 	/* Setup data array. */
 	SCVAL(&state->data[0], 0, flag ? 1 : 0);
 	state->inbuf.data = &state->data[0];
 	state->inbuf.length = 1;
 
-	subreq = cli_smb2_set_info_fnum_send(
-		state,
-		ev,
-		cli,
-		fnum,
-		in_info_type,
-		in_file_info_class,
-		&state->inbuf,
-		0);
+	subreq = cli_smb2_set_info_fnum_send(state,
+					     ev,
+					     cli,
+					     fnum,
+					     SMB2_0_INFO_FILE,
+					     FSCC_FILE_DISPOSITION_INFORMATION,
+					     &state->inbuf,
+					     0);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -1350,10 +1341,10 @@ NTSTATUS parse_finfo_id_both_directory_info(const uint8_t *dir_data,
 	finfo->atime_ts = interpret_long_date(BVAL(dir_data, 16));
 	finfo->mtime_ts = interpret_long_date(BVAL(dir_data, 24));
 	finfo->ctime_ts = interpret_long_date(BVAL(dir_data, 32));
-	finfo->size = IVAL2_TO_SMB_BIG_UINT(dir_data + 40, 0);
-	finfo->allocated_size = IVAL2_TO_SMB_BIG_UINT(dir_data + 48, 0);
+	finfo->size = BVAL(dir_data + 40, 0);
+	finfo->allocated_size = BVAL(dir_data + 48, 0);
 	finfo->attr = IVAL(dir_data + 56, 0);
-	finfo->ino = IVAL2_TO_SMB_BIG_UINT(dir_data + 96, 0);
+	finfo->ino = BVAL(dir_data + 96, 0);
 	namelen = IVAL(dir_data + 60,0);
 	if (namelen > (dir_data_length - 104)) {
 		return NT_STATUS_INFO_LENGTH_MISMATCH;
@@ -1932,6 +1923,7 @@ NTSTATUS cli_smb2_query_info_fnum_recv(
 		.data = talloc_move(mem_ctx, &state->outbuf.data),
 		.length = state->outbuf.length,
 	};
+	tevent_req_received(req);
 	return NT_STATUS_OK;
 }
 
@@ -2445,12 +2437,12 @@ NTSTATUS cli_smb2_setatr(struct cli_state *cli,
 	SBVAL(inbuf.data, 8, 0xFFFFFFFFFFFFFFFFLL);
 	SBVAL(inbuf.data, 24, 0xFFFFFFFFFFFFFFFFLL);
 
-	return cli_smb2_setpathinfo(cli,
-				name,
-				1, /* in_info_type */
-				/* in_file_info_class */
-				SMB_FILE_BASIC_INFORMATION - 1000,
-				&inbuf);
+	return cli_smb2_setpathinfo(
+		cli,
+		name,
+		SMB2_0_INFO_FILE,	     /* in_info_type */
+		FSCC_FILE_BASIC_INFORMATION, /* in_file_info_class */
+		&inbuf);
 }
 
 
@@ -2494,13 +2486,13 @@ NTSTATUS cli_smb2_setattrE(struct cli_state *cli,
 		put_long_date((char *)inbuf.data + 16, write_time);
 	}
 
-	status = cli_smb2_set_info_fnum(cli,
-					fnum,
-					1, /* in_info_type */
-					SMB_FILE_BASIC_INFORMATION -
-						1000, /* in_file_info_class */
-					&inbuf,	      /* in_input_buffer */
-					0);	      /* in_additional_info */
+	status = cli_smb2_set_info_fnum(
+		cli,
+		fnum,
+		SMB2_0_INFO_FILE,	     /* in_info_type */
+		FSCC_FILE_BASIC_INFORMATION, /* in_file_info_class */
+		&inbuf,			     /* in_input_buffer */
+		0);			     /* in_additional_info */
 	cli->raw_status = status;
 	return status;
 }
@@ -2655,12 +2647,12 @@ NTSTATUS cli_smb2_get_fs_full_size_info(struct cli_state *cli,
 	status = cli_smb2_query_info_fnum(
 		cli,
 		fnum,
-		SMB2_0_INFO_FILESYSTEM, /* in_info_type */
-		SMB_FS_FULL_SIZE_INFORMATION - 1000, /* in_file_info_class */
-		0xFFFF, /* in_max_output_length */
-		NULL, /* in_input_buffer */
-		0, /* in_additional_info */
-		0, /* in_flags */
+		SMB2_0_INFO_FILESYSTEM,	       /* in_info_type */
+		FSCC_FS_FULL_SIZE_INFORMATION, /* in_file_info_class */
+		0xFFFF,			       /* in_max_output_length */
+		NULL,			       /* in_input_buffer */
+		0,			       /* in_additional_info */
+		0,			       /* in_flags */
 		frame,
 		&outbuf);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -2820,11 +2812,11 @@ NTSTATUS cli_smb2_get_fs_volume_info(struct cli_state *cli,
 		fnum,
 		SMB2_0_INFO_FILESYSTEM, /* in_info_type */
 		/* in_file_info_class */
-		SMB_FS_VOLUME_INFORMATION - 1000,
+		FSCC_FS_VOLUME_INFORMATION,
 		0xFFFF, /* in_max_output_length */
-		NULL, /* in_input_buffer */
-		0, /* in_additional_info */
-		0, /* in_flags */
+		NULL,	/* in_input_buffer */
+		0,	/* in_additional_info */
+		0,	/* in_flags */
 		frame,
 		&outbuf);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -3162,14 +3154,14 @@ static struct tevent_req *cli_smb2_rename_fnum_send(
 	   level SMB2_FILE_RENAME_INFORMATION (SMB_FILE_RENAME_INFORMATION - 1000) */
 
 	subreq = cli_smb2_set_info_fnum_send(
-		state,		/* mem_ctx */
-		ev,		/* ev */
-		cli,		/* cli */
-		fnum,		/* fnum */
-		1,		/* in_info_type */
-		SMB_FILE_RENAME_INFORMATION - 1000, /* in_file_info_class */
-		&state->inbuf,	/* in_input_buffer */
-		0);		/* in_additional_info */
+		state,			      /* mem_ctx */
+		ev,			      /* ev */
+		cli,			      /* cli */
+		fnum,			      /* fnum */
+		SMB2_0_INFO_FILE,	      /* in_info_type */
+		FSCC_FILE_RENAME_INFORMATION, /* in_file_info_class */
+		&state->inbuf,		      /* in_input_buffer */
+		0);			      /* in_additional_info */
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -3382,10 +3374,10 @@ NTSTATUS cli_smb2_set_ea_fnum(struct cli_state *cli,
 	status = cli_smb2_set_info_fnum(
 		cli,
 		fnum,
-		1,		/* in_info_type */
-		SMB_FILE_FULL_EA_INFORMATION - 1000, /* in_file_info_class */
-		&inbuf,		/* in_input_buffer */
-		0);		/* in_additional_info */
+		SMB2_0_INFO_FILE,	       /* in_info_type */
+		FSCC_FILE_FULL_EA_INFORMATION, /* in_file_info_class */
+		&inbuf,			       /* in_input_buffer */
+		0);			       /* in_additional_info */
 
   fail:
 
@@ -3491,12 +3483,12 @@ NTSTATUS cli_smb2_get_ea_list_path(struct cli_state *cli,
 	status = cli_smb2_query_info_fnum(
 		cli,
 		fnum,
-		1, /* in_info_type */
-		SMB_FILE_FULL_EA_INFORMATION - 1000, /* in_file_info_class */
-		0xFFFF, /* in_max_output_length */
-		NULL, /* in_input_buffer */
-		0, /* in_additional_info */
-		0, /* in_flags */
+		SMB2_0_INFO_FILE,	       /* in_info_type */
+		FSCC_FILE_FULL_EA_INFORMATION, /* in_file_info_class */
+		0xFFFF,			       /* in_max_output_length */
+		NULL,			       /* in_input_buffer */
+		0,			       /* in_additional_info */
+		0,			       /* in_flags */
 		frame,
 		&outbuf);
 
@@ -3743,12 +3735,12 @@ NTSTATUS cli_smb2_get_fs_quota_info(struct cli_state *cli,
 	status = cli_smb2_query_info_fnum(
 		cli,
 		quota_fnum,
-		2,				     /* in_info_type */
-		SMB_FS_QUOTA_INFORMATION - 1000, /* in_file_info_class */
-		0xFFFF,			     /* in_max_output_length */
-		NULL,			     /* in_input_buffer */
-		0,				     /* in_additional_info */
-		0,				     /* in_flags */
+		SMB2_0_INFO_FILESYSTEM,	   /* in_info_type */
+		FSCC_FS_QUOTA_INFORMATION, /* in_file_info_class */
+		0xFFFF,			   /* in_max_output_length */
+		NULL,			   /* in_input_buffer */
+		0,			   /* in_additional_info */
+		0,			   /* in_flags */
 		frame,
 		&outbuf);
 
@@ -3831,10 +3823,10 @@ NTSTATUS cli_smb2_set_fs_quota_info(struct cli_state *cli,
 	status = cli_smb2_set_info_fnum(
 		cli,
 		quota_fnum,
-		2,			     /* in_info_type */
-		SMB_FS_QUOTA_INFORMATION - 1000, /* in_file_info_class */
-		&inbuf,			     /* in_input_buffer */
-		0);			     /* in_additional_info */
+		SMB2_0_INFO_FILESYSTEM,	   /* in_info_type */
+		FSCC_FS_QUOTA_INFORMATION, /* in_file_info_class */
+		&inbuf,			   /* in_input_buffer */
+		0);			   /* in_additional_info */
 cleanup:
 	cli->raw_status = status;
 
@@ -4739,9 +4731,9 @@ NTSTATUS cli_smb2_ftruncate(struct cli_state *cli,
 	status = cli_smb2_set_info_fnum(
 		cli,
 		fnum,
-		1, /* in_info_type */
-		SMB_FILE_END_OF_FILE_INFORMATION-1000, /* in_file_info_class */
-		&inbuf, /* in_input_buffer */
+		SMB2_0_INFO_FILE,		   /* in_info_type */
+		FSCC_FILE_END_OF_FILE_INFORMATION, /* in_file_info_class */
+		&inbuf,				   /* in_input_buffer */
 		0);
 
   fail:

@@ -23,6 +23,7 @@
 #include "pycredentials.h"
 #include "param/param.h"
 #include "auth/credentials/credentials_internal.h"
+#include "auth/credentials/credentials_krb5.h"
 #include "librpc/gen_ndr/samr.h" /* for struct samr_Password */
 #include "librpc/gen_ndr/netlogon.h"
 #include "libcli/util/pyerrors.h"
@@ -33,8 +34,6 @@
 #include "system/kerberos.h"
 #include "auth/kerberos/kerberos.h"
 #include "libcli/smb/smb_constants.h"
-
-void initcredentials(void);
 
 static PyObject *py_creds_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
@@ -545,6 +544,9 @@ static PyObject *py_creds_get_nt_hash(PyObject *self, PyObject *unused)
 		return NULL;
 	}
 	ntpw = cli_credentials_get_nt_hash(creds, creds);
+	if (ntpw == NULL) {
+		Py_RETURN_NONE;
+	}
 
 	ret = PyBytes_FromStringAndSize(discard_const_p(char, ntpw->hash), 16);
 	TALLOC_FREE(ntpw);
@@ -573,11 +575,7 @@ static PyObject *py_creds_set_nt_hash(PyObject *self, PyObject *args)
 		return NULL;
 	}
 
-	pwd = pytalloc_get_type(py_cp, struct samr_Password);
-	if (pwd == NULL) {
-		/* pytalloc_get_type sets TypeError */
-		return NULL;
-	}
+	pwd = pytalloc_get_ptr(py_cp);
 
 	return PyBool_FromLong(cli_credentials_set_nt_hash(creds, pwd, obt));
 }
@@ -973,14 +971,55 @@ static PyObject *py_creds_get_secure_channel_type(PyObject *self, PyObject *args
 	return PyLong_FromLong(channel_type);
 }
 
-static PyObject *py_creds_get_aes256_key(PyObject *self, PyObject *args)
+static PyObject *py_creds_set_kerberos_salt_principal(PyObject *self, PyObject *args)
+{
+	char *salt_principal = NULL;
+	struct cli_credentials *creds = PyCredentials_AsCliCredentials(self);
+	if (creds == NULL) {
+		PyErr_Format(PyExc_TypeError, "Credentials expected");
+		return NULL;
+	}
+
+	if (!PyArg_ParseTuple(args, "s", &salt_principal))
+		return NULL;
+
+	cli_credentials_set_salt_principal(
+		creds,
+		salt_principal);
+
+	Py_RETURN_NONE;
+}
+
+static PyObject *py_creds_get_kerberos_salt_principal(PyObject *self, PyObject *unused)
+{
+	TALLOC_CTX *mem_ctx;
+	PyObject *ret = NULL;
+	struct cli_credentials *creds = PyCredentials_AsCliCredentials(self);
+	if (creds == NULL) {
+		PyErr_Format(PyExc_TypeError, "Credentials expected");
+		return NULL;
+	}
+	mem_ctx = talloc_new(NULL);
+	if (mem_ctx == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
+
+	ret = PyString_FromStringOrNULL(cli_credentials_get_salt_principal(creds, mem_ctx));
+
+	TALLOC_FREE(mem_ctx);
+
+	return ret;
+}
+
+static PyObject *py_creds_get_kerberos_key_current_or_old(PyObject *self, PyObject *args, bool old)
 {
 	struct loadparm_context *lp_ctx = NULL;
 	TALLOC_CTX *mem_ctx = NULL;
 	PyObject *py_lp_ctx = Py_None;
-	const char *salt = NULL;
-	DATA_BLOB aes_256;
+	DATA_BLOB key;
 	int code;
+	int enctype;
 	PyObject *ret = NULL;
 	struct cli_credentials *creds = PyCredentials_AsCliCredentials(self);
 	if (creds == NULL) {
@@ -988,7 +1027,7 @@ static PyObject *py_creds_get_aes256_key(PyObject *self, PyObject *args)
 		return NULL;
 	}
 
-	if (!PyArg_ParseTuple(args, "s|O", &salt, &py_lp_ctx))
+	if (!PyArg_ParseTuple(args, "i|O", &enctype, &py_lp_ctx))
 		return NULL;
 
 	mem_ctx = talloc_new(NULL);
@@ -1003,22 +1042,33 @@ static PyObject *py_creds_get_aes256_key(PyObject *self, PyObject *args)
 		return NULL;
 	}
 
-	code = cli_credentials_get_aes256_key(creds,
-					      mem_ctx,
-					      lp_ctx,
-					      salt,
-					      &aes_256);
+	code = cli_credentials_get_kerberos_key(creds,
+						mem_ctx,
+						lp_ctx,
+						enctype,
+						old,
+						&key);
 	if (code != 0) {
 		PyErr_SetString(PyExc_RuntimeError,
-				"Failed to generate AES256 key");
+				"Failed to generate Kerberos key");
 		talloc_free(mem_ctx);
 		return NULL;
 	}
 
-	ret = PyBytes_FromStringAndSize((const char *)aes_256.data,
-					aes_256.length);
+	ret = PyBytes_FromStringAndSize((const char *)key.data,
+					key.length);
 	talloc_free(mem_ctx);
 	return ret;
+}
+
+static PyObject *py_creds_get_kerberos_key(PyObject *self, PyObject *args)
+{
+	return py_creds_get_kerberos_key_current_or_old(self, args, false);
+}
+
+static PyObject *py_creds_get_old_kerberos_key(PyObject *self, PyObject *args)
+{
+	return py_creds_get_kerberos_key_current_or_old(self, args, true);
 }
 
 static PyObject *py_creds_encrypt_netr_crypt_password(PyObject *self,
@@ -1040,7 +1090,12 @@ static PyObject *py_creds_encrypt_netr_crypt_password(PyObject *self,
 		return NULL;
 	}
 
-	pwd = pytalloc_get_type(py_cp, struct netr_CryptPassword);
+	if (!py_check_dcerpc_type(py_cp, "samba.dcerpc.netlogon", "netr_CryptPassword")) {
+		/* py_check_dcerpc_type sets TypeError */
+		return NULL;
+	}
+
+	pwd = pytalloc_get_ptr(py_cp);
 	if (pwd == NULL) {
 		/* pytalloc_get_type sets TypeError */
 		return NULL;
@@ -1587,12 +1642,30 @@ static PyMethodDef py_creds_methods[] = {
 		.ml_flags = METH_VARARGS,
 	},
 	{
-		.ml_name  = "get_aes256_key",
-		.ml_meth  = py_creds_get_aes256_key,
+		.ml_name  = "set_kerberos_salt_principal",
+		.ml_meth  = py_creds_set_kerberos_salt_principal,
 		.ml_flags = METH_VARARGS,
-		.ml_doc   = "S.get_aes256_key(salt[, lp]) -> bytes\n"
-			    "Generate an AES256 key using the current password and\n"
-			    "the specified salt",
+	},
+	{
+		.ml_name  = "get_kerberos_salt_principal",
+		.ml_meth  = py_creds_get_kerberos_salt_principal,
+		.ml_flags = METH_VARARGS,
+	},
+	{
+		.ml_name  = "get_kerberos_key",
+		.ml_meth  = py_creds_get_kerberos_key,
+		.ml_flags = METH_VARARGS,
+		.ml_doc   = "S.get_kerberos_key(enctype, [lp]) -> bytes\n"
+			    "Generate a Kerberos key using the current password and\n"
+			    "the salt on this credentials object",
+	},
+	{
+		.ml_name  = "get_old_kerberos_key",
+		.ml_meth  = py_creds_get_old_kerberos_key,
+		.ml_flags = METH_VARARGS,
+		.ml_doc   = "S.get_old_kerberos_key(enctype, [lp]) -> bytes\n"
+			    "Generate a Kerberos key using the old (previous) password and\n"
+			    "the salt on this credentials object",
 	},
 	{
 		.ml_name  = "encrypt_netr_crypt_password",
@@ -1759,6 +1832,10 @@ MODULE_INIT_FUNC(credentials)
 	PyModule_AddObject(m, "SMB_ENCRYPTION_IF_REQUIRED", PyLong_FromLong(SMB_ENCRYPTION_IF_REQUIRED));
 	PyModule_AddObject(m, "SMB_ENCRYPTION_DESIRED", PyLong_FromLong(SMB_ENCRYPTION_DESIRED));
 	PyModule_AddObject(m, "SMB_ENCRYPTION_REQUIRED", PyLong_FromLong(SMB_ENCRYPTION_REQUIRED));
+
+	PyModule_AddObject(m, "ENCTYPE_ARCFOUR_HMAC", PyLong_FromLong(ENCTYPE_ARCFOUR_HMAC));
+	PyModule_AddObject(m, "ENCTYPE_AES128_CTS_HMAC_SHA1_96", PyLong_FromLong(ENCTYPE_AES128_CTS_HMAC_SHA1_96));
+	PyModule_AddObject(m, "ENCTYPE_AES256_CTS_HMAC_SHA1_96", PyLong_FromLong(ENCTYPE_AES256_CTS_HMAC_SHA1_96));
 
 	Py_INCREF(&PyCredentials);
 	PyModule_AddObject(m, "Credentials", (PyObject *)&PyCredentials);

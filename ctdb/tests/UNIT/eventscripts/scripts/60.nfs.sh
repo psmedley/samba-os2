@@ -65,13 +65,6 @@ EOF
 			;;
 		esac
 	fi
-
-	# This is really nasty.  However, when we test NFS we don't
-	# actually test statd-callout. If we leave it there then left
-	# over, backgrounded instances of statd-callout will do
-	# horrible things with the "ctdb ip" stub and cause the actual
-	# statd-callout tests that follow to fail.
-	rm "${CTDB_BASE}/statd-callout"
 }
 
 rpc_services_down()
@@ -126,6 +119,31 @@ nfs_setup_fake_threads()
 		export FAKE_RPC_THREAD_PIDS="$*"
 		;;
 	esac
+}
+
+nfs_stats_set_changed()
+{
+	FAKE_NFS_STATS_CHANGED=" $* "
+}
+
+nfs_stats_check_changed()
+{
+	_rpc_service="$1"
+	_iteration="$2"
+
+	_t="$FAKE_NFS_STATS_CHANGED"
+	if [ -z "$_t" ]; then
+		return 1
+	fi
+	if [ "${_t#* "${_rpc_service}"}" != "$_t" ]; then
+		return 0
+	fi
+	# Statistics always change on the first iteration
+	if [ "$_iteration" -eq 1 ]; then
+		return 0
+	fi
+
+	return 1
 }
 
 guess_output()
@@ -304,7 +322,12 @@ $_rpc_service failed RPC check:
 rpcinfo: RPC: Program not registered
 program $_rpc_service${_ver:+ version }${_ver} is not available"
 
-		if [ $unhealthy_after -gt 0 ] &&
+		if [ "$_numfails" -eq -1 ]; then
+			_unhealthy=false
+			echo 0 >"$_rc_file"
+			printf 'WARNING: statistics changed but %s\n' \
+				"$_rpc_check_out" >>"$_out"
+		elif [ $unhealthy_after -gt 0 ] &&
 			[ "$_numfails" -ge $unhealthy_after ]; then
 			_unhealthy=true
 			echo 1 >"$_rc_file"
@@ -411,9 +434,17 @@ EOF
 		fi
 		if [ -n "$_rpc_service" ]; then
 			if rpcinfo -T tcp localhost "$_rpc_service" \
-				   >/dev/null 2>&1 ; then
+				>/dev/null 2>&1; then
 				_iterate_failcount=0
+			elif nfs_stats_check_changed \
+				"$_rpc_service" "$_iteration"; then
+				_iterate_failcount=-1
 			else
+				# -1 above is a special case of 0:
+				# hack, unhack ;-)
+				if [ $_iterate_failcount -eq -1 ]; then
+					_iterate_failcount=0
+				fi
 				_iterate_failcount=$((_iterate_failcount + 1))
 			fi
 			rpc_set_service_failure_response \

@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 08/06/2024
+.\"      Date: 09/02/2024
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.20.4
+.\"    Source: Samba 4.21.0
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "08/06/2024" "Samba 4\&.20\&.4" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "09/02/2024" "Samba 4\&.21\&.0" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -2283,6 +2283,11 @@ The default value is
 \fIseal\fR\&. That implies synchronizing the time with the KDC in the case of using
 \fIKerberos\fR\&.
 .sp
+In order to force using LDAP (on port 389) with STARTTLS or LDAPS (on port 636), it is possible to use
+\fIstarttls\fR
+or
+\fIldaps\fR\&. In that case the NTLMSSP or Kerberos authentication using the TLS channel bindings in order to glue it to the connection\&.
+.sp
 Default:
 \fI\fIclient ldap sasl wrapping\fR\fR\fI = \fR\fIseal\fR\fI \fR
 .RE
@@ -2873,27 +2878,6 @@ Default:
 \fI\fIclient use kerberos\fR\fR\fI = \fR\fIdesired\fR\fI \fR
 .RE
 
-client use spnego principal (G)
-.PP
-.RS 4
-This parameter determines whether or not
-\fBsmbclient\fR(8)
-and other samba components acting as a client will attempt to use the server\-supplied principal sometimes given in the SPNEGO exchange\&.
-.sp
-If enabled, Samba can attempt to use Kerberos to contact servers known only by IP address\&. Kerberos relies on names, so ordinarily cannot function in this situation\&.
-.sp
-This is a VERY BAD IDEA for security reasons, and so this parameter SHOULD NOT BE USED\&. It will be removed in a future version of Samba\&.
-.sp
-If disabled, Samba will use the name used to look up the server when asking the KDC for a ticket\&. This avoids situations where a server may impersonate another, soliciting authentication as one principal while being known on the network as another\&.
-.sp
-Note that Windows XP SP2 and later versions already follow this behaviour, and Windows Vista and later servers no longer supply this \*(Aqrfc4178 hint\*(Aq principal on the server side\&.
-.sp
-This parameter is deprecated in Samba 4\&.2\&.1 and will be removed (along with the functionality) in a later release of Samba\&.
-.sp
-Default:
-\fI\fIclient use spnego principal\fR\fR\fI = \fR\fIno\fR\fI \fR
-.RE
-
 client use spnego (G)
 .PP
 .RS 4
@@ -3342,7 +3326,7 @@ winbind debug traceid (G)
 With this boolean parameter enabled, the per request unique traceid will be displayed in the debug header for winbind processes\&.
 .sp
 Default:
-\fI\fIwinbind debug traceid\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fIwinbind debug traceid\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
 debug uid (G)
@@ -3797,6 +3781,35 @@ This parameter is only available if a supported DMAPI implementation was found a
 .sp
 Default:
 \fI\fIdmapi support\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+dns hostname (G)
+.PP
+.RS 4
+
+    This value is used either register with AD during a join or by calling
+    
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+        net ads dns register
+    
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+
+    or during Kerberos authentication to create service principal names\&. This
+    is not supported in samba\-tool yet\&.
+
+Default:
+\fI\fIdns hostname\fR\fR\fI = \fR\fI[netbios name]\&.[realm]\fR\fI \fR
+.sp
+Example:
+\fI\fIdns hostname\fR\fR\fI = \fR\fIclient\-hostname\&.example\&.com\fR\fI \fR
 .RE
 
 dns forwarder (G)
@@ -4981,6 +4994,14 @@ This is a list of files or directories that are not visible but are accessible\&
 .sp
 Each entry in the list must be separated by a \*(Aq/\*(Aq, which allows spaces to be included in the entry\&. \*(Aq*\*(Aq and \*(Aq?\*(Aq can be used to specify multiple files or directories as in DOS wildcards\&.
 .sp
+\m[blue]\fBhide files\fR\m[]
+can also be used as a parametric option where NAME in
+.sp
+hide files : NAME =
+.sp
+specifies a user or group name with the same syntax as
+\m[blue]\fBvalid users\fR\m[]\&. This parametric form can be specified multiple times for different users or groups\&. This means that "hide files : NAME" set both in the [global] and the share section add up, whereas normally options set in a share section overwrite the default in the [global] section\&.
+.sp
 Each entry must be a Unix path, not a DOS path and must not include the Unix directory separator \*(Aq/\*(Aq\&.
 .sp
 Note that the case sensitivity option is applicable in hiding files\&.
@@ -4998,6 +5019,15 @@ An example of us of this parameter is:
 .\}
 .nf
 hide files = /\&.*/DesktopFolderDB/TrashFor%m/resource\&.frk/
+
+; Hide some files for anyone and some files for specific users and groups
+hide files = /hideforall1/
+hide files : USER = /hidetoforuser/
+hide files : GROUP = /hideforgroup/
+hide files : UNIVERSITY\eAlumnis = /somefile\&.txt/
+hide files : john@university\&.org = /anotherfile\&.txt/
+hide files : S\-1\-5\-21\-123\-456\-789\-1000 = /secretfile\&.txt/
+
 .fi
 .if n \{\
 .RE
@@ -5564,7 +5594,13 @@ In order to support SMB3 multi\-channel configurations, smbd understands some ex
 .sp
 "interface[;key1=value1[,key2=value2[\&.\&.\&.]]]"
 .sp
-Known keys are speed, capability, and if_index\&. Speed is specified in bits per second\&. Known capabilities are RSS and RDMA\&. The if_index should be used with care: the values must not coincide with indexes used by the kernel\&. Note that these options are mainly intended for testing and development rather than for production use\&. At least on Linux systems, these values should be auto\-detected, but the settings can serve as last a resort when autodetection is not working or is not available\&. The specified values overwrite the auto\-detected values\&.
+Known keys are speed, capability, if_index and options\&. Speed is specified in bits per second\&. Known capabilities are RSS and RDMA\&. The if_index should be used with care: the values must not coincide with indexes used by the kernel\&. Note that these options are mainly intended for testing and development rather than for production use\&. At least on Linux systems, these values should be auto\-detected, but the settings can serve as last a resort when autodetection is not working or is not available\&. The specified values overwrite the auto\-detected values\&.
+.sp
+The possible values for options are "dynamic" and "nodynamic"\&. Use this option in combination with setting
+\m[blue]\fBbind interfaces only\fR\m[]
+Use the "dynamic" to have smbd open/close listening sockets on the interface, when IP addresses are added to or removed from the interface\&. Use the "nodynamic" option to ignore any ip add/remove events for interface\&. Please note that when an IP address is removed, connections to that IP address are also terminated (traditional behaviour has been to keep the TCP flow alive)\&.
+.sp
+Note that dynamically opening/closing listening sockets is only available on some operating systems (currently Linux)\&.
 .sp
 The first two example below configures three network interfaces corresponding to the eth0 device and IP addresses 192\&.168\&.2\&.10 and 192\&.168\&.3\&.10\&. The netmasks of the latter two interfaces would be set to 255\&.255\&.255\&.0\&.
 .sp
@@ -5590,6 +5626,9 @@ Example:
 .sp
 Example:
 \fI\fIinterfaces\fR\fR\fI = \fR\fI"eth0;capability=RSS" , "rdma1;capability=RDMA" ; "rdma2;capability=RSS,capability=RDMA"\fR\fI \fR
+.sp
+Example:
+\fI\fIinterfaces\fR\fR\fI = \fR\fI"eth0;options=dynamic"\fR\fI \fR
 .RE
 
 invalid users (S)
@@ -5930,6 +5969,10 @@ The major difference between "system keytab" and "dedicated keytab" is that the 
 When the kerberos method is in "dedicated keytab" mode,
 \m[blue]\fBdedicated keytab file\fR\m[]
 must be set to specify the location of the keytab file\&.
+.sp
+Suggested configuration is to use the default value \*(Aqsecrets only\*(Aq together with the
+\m[blue]\fBsync machine password to keytab\fR\m[]
+option\&.
 .sp
 Default:
 \fI\fIkerberos method\fR\fR\fI = \fR\fIdefault\fR\fI \fR
@@ -7317,6 +7360,17 @@ This parameter has been extended since the 2\&.2\&.x series, now it allows one t
 .IP \(bu 2.3
 .\}
 \fIdsdb_group_json_audit\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fIldapsrv\fR
 .RE
 .sp
 .RE
@@ -12111,7 +12165,7 @@ Example:
 \fI\fIset quota command\fR\fR\fI = \fR\fI/usr/local/sbin/set_quota\fR\fI \fR
 .RE
 
-share:fake_fscaps (G)
+share:fake_fscaps (S)
 .PP
 .RS 4
 This is needed to support some special application that makes QFSINFO calls to check whether we set the SPARSE_FILES bit (0x40)\&. If this bit is not set that particular application refuses to work against Samba\&. With
@@ -13378,6 +13432,163 @@ Default:
 \fI\fIsync always\fR\fR\fI = \fR\fIno\fR\fI \fR
 .RE
 
+sync machine password script (G)
+.PP
+.RS 4
+This is the full pathname to a script that will be run by
+\fBwinbindd\fR(8)
+when a machine account password is updated\&.
+.sp
+If keytabs should be generated in clustered environments it is recommended to update them on all nodes\&. You can set the config option to ${prefix}/share/ctdb/scripts/winbind_ctdb_updatekeytab\&.sh in clustering case\&. It is also needed to activate the
+\fB46\&.update\-keytabs\&.script\fR
+in ctdb, it re\-creates the keytab during the ctdb recovered event:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+    onnode all ctdb event script enable legacy 46\&.update\-keytabs\&.script
+    
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+Default:
+\fI\fIsync machine password script\fR\fR\fI = \fR\fI\fR\fI \fR
+.sp
+Example:
+\fI\fIsync machine password script\fR\fR\fI = \fR\fI${prefix}/share/ctdb/scripts/winbind_ctdb_updatekeytab\&.sh\fR\fI \fR
+.RE
+
+sync machine password to keytab (G)
+.PP
+.RS 4
+This option allows you to describe what keytabs and how should be updated when machine account is changed via one of these commands
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+wbinfo \-\-change\-secret
+rpcclient \-\-machine\-pass \-c change_trust_pw
+net rpc changetrustpw
+net ads changetrustpw
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+or by winbindd doing regular updates (see
+\m[blue]\fBmachine password timeout\fR\m[])
+.sp
+The option takes a list of keytab strings\&. Each string has this form:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+absolute_path_to_keytab:spn_spec[:sync_etypes][:sync_kvno][:netbios_aliases][:additional_dns_hostnames][:machine_password]
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+where spn_spec can have exactly one of these four forms:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+account_name
+sync_spns
+spn_prefixes=value1[,value2[\&.\&.\&.]]
+spns=value1[,value2[\&.\&.\&.]]
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+No other combinations are allowed\&.
+.sp
+Specifiers:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+account_name \- creates entry using principal \*(Aqcomputer$@REALM\*(Aq\&.
+sync_spns    \- uses principals received from AD DC\&.
+spn_prefixes \- creates principals from the prefixes and adds netbios_aliases or additional_dns_hostnames if specified\&.
+spns         \- creates only the principals defined in the list\&.
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+Options:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+sync_etypes              \- parameter "msDS\-SupportedEncryptionTypes" is read from DC and is used to find the highest common enc type for AD and KRB5 lib\&.
+sync_kvno                \- the key version number ("msDS\-KeyVersionNumber") is synchronized from DC, otherwise is set to \-1\&.
+netbios_aliases          \- evaluated only for SPN_SPEC_PREFIX\&. If present, PREFIX/netbiosname@REALM and PREFIX/netbiosname\&.domainname@REALM are added for each alias\&. See \m[blue]\fBnetbios aliases\fR\m[]
+additional_dns_hostnames \- evaluated only for SPN_SPEC_PREFIX\&. If present, PREFIX/dnshostname@REALM is  added for each dns name\&. See \m[blue]\fBadditional dns hostnames\fR\m[]
+machine_password         \- mandatory, if missing the entry is ignored\&. For future use\&.
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+Example:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+"/path/to/keytab0:account_name:machine_password",
+"/path/to/keytab1:account_name:sync_etypes:sync_kvno:machine_password",
+"/path/to/keytab2:sync_spns:machine_password",
+"/path/to/keytab3:sync_spns:sync_kvno:machine_password",
+"/path/to/keytab4:spn_prefixes=imap,smtp:machine_password",
+"/path/to/keytab5:spn_prefixes=imap,smtp:netbios_aliases:additional_dns_hostnames:sync_kvno:machine_password",
+"/path/to/keytab6:spns=wurst/brot@REALM:machine_password",
+"/path/to/keytab7:spns=wurst/brot@REALM,wurst2/brot@REALM:sync_kvno:machine_password"
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+If sync_etypes or sync_kvno or sync_spns is present then winbind connects to DC\&. For "offline domain join" it might be useful not to use these options\&.
+.sp
+If no value is present, winbind uses value
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+/path/to/keytab:sync_spns:sync_kvno:machine_password
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+where the path to the keytab is obtained either from the krb5 library or from
+\m[blue]\fBdedicated keytab file\fR\m[]
+.sp
+Suggested configuration is together with
+\m[blue]\fBkerberos method\fR\m[]
+set to the default value \*(Aqsecrets only\*(Aq\&.
+.sp
+In clustered environments it is recommended to set
+\m[blue]\fBsync machine password script\fR\m[]
+to update the machine password on all nodes\&.
+.sp
+\fINo default\fR
+.RE
+
 syslog (G)
 .PP
 .RS 4
@@ -13477,6 +13688,14 @@ Default:
 \fI\fItimestamp logs\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
+tls ca directories (G)
+.PP
+.RS 4
+This option can be set to a list of directories with files (in PEM format) containing CA certificates of root CAs to trust to sign certificates or intermediate CA certificates\&.
+.sp
+\fINo default\fR
+.RE
+
 tls cafile (G)
 .PP
 .RS 4
@@ -13493,7 +13712,7 @@ Default:
 tls certfile (G)
 .PP
 .RS 4
-This option can be set to a file (PEM format) containing the RSA certificate\&.
+This option can be set to a file (PEM format) containing the RSA certificate to be used as TLS server certificate\&. If required it can also contain additional intermediate certificates to be send along during the TLS handshake\&.
 .sp
 This path is relative to
 \m[blue]\fBprivate dir\fR\m[]
@@ -13568,6 +13787,17 @@ Default:
 \fI\fItls priority\fR\fR\fI = \fR\fINORMAL:\-VERS\-SSL3\&.0\fR\fI \fR
 .RE
 
+tls trust system cas (G)
+.PP
+.RS 4
+With this option the system\*(Aqs default trusted CAs are used to trust SSL/TLS connections\&.
+.sp
+Please use this with care, as it really means trusting all CAs installed on the system!
+.sp
+Default:
+\fI\fItls trust system cas\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
 tls verify peer (G)
 .PP
 .RS 4
@@ -13587,9 +13817,11 @@ When set to
 \fBca_only\fR
 the certificate is verified to be signed from a ca specified in the
 \m[blue]\fBtls ca file\fR\m[]
-option\&. Setting
-\m[blue]\fBtls ca file\fR\m[]
-to a valid file is required\&. The certificate lifetime is also verified\&. If the
+option\&. As alternative
+\m[blue]\fBtls ca directories\fR\m[]
+or
+\m[blue]\fBtls trust system cas\fR\m[]
+can be used\&. Providing at least one valid CA certificate is required\&. The certificate lifetime is also verified\&. If the
 \m[blue]\fBtls crl file\fR\m[]
 option is configured, the certificate is also verified against the ca crl\&.
 .sp
@@ -14043,7 +14275,15 @@ veto files (S)
 .RS 4
 This is a list of files and directories that are neither visible nor accessible\&. Each entry in the list must be separated by a \*(Aq/\*(Aq, which allows spaces to be included in the entry\&. \*(Aq*\*(Aq and \*(Aq?\*(Aq can be used to specify multiple files or directories as in DOS wildcards\&.
 .sp
-Each entry must be a unix path, not a DOS path and must
+\m[blue]\fBveto files\fR\m[]
+can also be used as a parametric option where NAME in
+.sp
+veto files : NAME =
+.sp
+specifies a user or group name with the same syntax as
+\m[blue]\fBvalid users\fR\m[]\&. This parametric form can be specified multiple times for different users or groups\&. This means that "veto files : NAME" set both in the [global] and the share section add up, whereas normally options set in a share section overwrite the default in the [global] section\&.
+.sp
+Each filename must be a unix path, not a DOS path and must
 \fInot\fR
 include the unix directory separator \*(Aq/\*(Aq\&.
 .sp
@@ -14070,6 +14310,14 @@ Examples of use include:
 ; any ending in \&.tmp, and any directory containing the
 ; word root\&.
 veto files = /*Security*/*\&.tmp/*root*/
+
+; Veto some files for anyone and some files for specific users and groups
+veto files = /vetoforall1/
+veto files : USER = /vetotoforuser/
+veto files : GROUP = /vetoforgroup/
+veto files : UNIVERSITY\eAlumnis = /somefile\&.txt/
+veto files : john@university\&.org = /anotherfile\&.txt/
+veto files : S\-1\-5\-21\-123\-456\-789\-1000 = /secretfile\&.txt/
 
 ; Veto the Apple specific files that a NetAtalk server
 ; creates\&.
@@ -14932,7 +15180,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.20\&.4 of the Samba suite\&.
+This man page is part of version 4\&.21\&.0 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

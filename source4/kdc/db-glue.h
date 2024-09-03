@@ -42,6 +42,7 @@ enum samba_kdc_ent_type {
  */
 krb5_error_code samba_kdc_message2entry_keys(krb5_context context,
 					     TALLOC_CTX *mem_ctx,
+					     struct ldb_context *ldb,
 					     const struct ldb_message *msg,
 					     bool is_krbtgt,
 					     bool is_rodc,
@@ -67,10 +68,12 @@ krb5_error_code samba_kdc_fetch(krb5_context context,
 
 krb5_error_code samba_kdc_firstkey(krb5_context context,
 				   struct samba_kdc_db_context *kdc_db_ctx,
+				   const unsigned sdb_flags,
 				   struct sdb_entry *entry);
 
 krb5_error_code samba_kdc_nextkey(krb5_context context,
 				  struct samba_kdc_db_context *kdc_db_ctx,
+				  const unsigned sdb_flags,
 				  struct sdb_entry *entry);
 
 krb5_error_code
@@ -105,6 +108,7 @@ NTSTATUS samba_kdc_setup_db_ctx(TALLOC_CTX *mem_ctx, struct samba_kdc_base_conte
 
 krb5_error_code dsdb_extract_aes_256_key(krb5_context context,
 					 TALLOC_CTX *mem_ctx,
+					 struct ldb_context *ldb,
 					 const struct ldb_message *msg,
 					 uint32_t user_account_control,
 					 const uint32_t *kvno,

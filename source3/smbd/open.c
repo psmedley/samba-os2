@@ -43,6 +43,10 @@
 #include "lib/util/time_basic.h"
 #include "source3/smbd/dir.h"
 
+#if defined(HAVE_LINUX_MAGIC_H)
+#include <linux/magic.h>
+#endif
+
 extern const struct generic_mapping file_generic_mapping;
 
 struct deferred_open_record {
@@ -341,7 +345,6 @@ NTSTATUS check_parent_access_fsp(struct files_struct *fsp,
 	NTSTATUS status;
 	struct security_descriptor *parent_sd = NULL;
 	uint32_t access_granted = 0;
-	struct share_mode_lock *lck = NULL;
 	uint32_t name_hash;
 	bool delete_on_close_set;
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -356,7 +359,7 @@ NTSTATUS check_parent_access_fsp(struct files_struct *fsp,
 	}
 
 	status = SMB_VFS_FGET_NT_ACL(fsp,
-				SECINFO_DACL,
+				(SECINFO_OWNER | SECINFO_GROUP | SECINFO_DACL),
 				frame,
 				&parent_sd);
 
@@ -410,20 +413,7 @@ NTSTATUS check_parent_access_fsp(struct files_struct *fsp,
 		goto out;
 	}
 
-	/*
-	 * Don't take a lock here. We just need a snapshot
-	 * of the current state of delete on close and this is
-	 * called in a codepath where we may already have a lock
-	 * (and we explicitly can't hold 2 locks at the same time
-	 * as that may deadlock).
-	 */
-	lck = fetch_share_mode_unlocked(frame, fsp->file_id);
-	if (lck == NULL) {
-		status = NT_STATUS_OK;
-		goto out;
-	}
-
-	delete_on_close_set = is_delete_on_close_set(lck, name_hash);
+	get_file_infos(fsp->file_id, name_hash, &delete_on_close_set, NULL);
 	if (delete_on_close_set) {
 		status = NT_STATUS_DELETE_PENDING;
 		goto out;
@@ -592,6 +582,10 @@ static NTSTATUS symlink_target_below_conn(
 			talloc_tos(), dirfsp, symlink_name, &target);
 	}
 
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
 	status = safe_symlink_target_path(talloc_tos(),
 					  connection_path,
 					  dirfsp->fsp_name->base_name,
@@ -694,7 +688,7 @@ again:
 	} else {
 		/*
 		 * fsp->fsp_name is unchanged as it is already correctly
-		 * relative to conn->cwd.
+		 * relative to dirfsp.
 		 */
 		smb_fname_rel = smb_fname;
 	}
@@ -1171,7 +1165,7 @@ static NTSTATUS reopen_from_fsp(struct files_struct *dirfsp,
 	    ((old_fd = fsp_get_pathref_fd(fsp)) != -1)) {
 
 		struct sys_proc_fd_path_buf buf;
-		struct smb_filename proc_fname = (struct smb_filename){
+		struct smb_filename proc_fname = {
 			.base_name = sys_proc_fd_path(old_fd, &buf),
 		};
 		mode_t mode = fsp->fsp_name->st.st_ex_mode;
@@ -1194,6 +1188,27 @@ static NTSTATUS reopen_from_fsp(struct files_struct *dirfsp,
 					fsp,
 					how);
 		if (new_fd == -1) {
+#if defined(HAVE_FSTATFS) && defined(HAVE_LINUX_MAGIC_H)
+			if (S_ISDIR(fsp->fsp_name->st.st_ex_mode) &&
+			    (errno == ENOENT)) {
+				struct statfs sbuf = {};
+				int ret = fstatfs(old_fd, &sbuf);
+				if (ret == -1) {
+					DBG_ERR("fstatfs failed: %s\n",
+						strerror(errno));
+				} else if (sbuf.f_type == AUTOFS_SUPER_MAGIC) {
+					/*
+					 * When reopening an as-yet
+					 * unmounted autofs mount
+					 * point we get ENOENT. We
+					 * have to retry pathbased.
+					 */
+					goto namebased_open;
+				}
+				/* restore ENOENT if changed in the meantime */
+				errno = ENOENT;
+			}
+#endif
 			status = map_nt_error_from_unix(errno);
 			fd_close(fsp);
 			return status;
@@ -1208,6 +1223,9 @@ static NTSTATUS reopen_from_fsp(struct files_struct *dirfsp,
 		return NT_STATUS_OK;
 	}
 
+#if defined(HAVE_FSTATFS) && defined(HAVE_LINUX_MAGIC_H)
+namebased_open:
+#endif
 	/*
 	 * Close the existing pathref fd and set the fsp flag
 	 * is_pathref to false so we get a "normal" fd this time.
@@ -1995,7 +2013,8 @@ NTSTATUS send_break_message(struct messaging_context *msg_ctx,
 		.break_to = break_to,
 	};
 	enum ndr_err_code ndr_err;
-	DATA_BLOB blob;
+	uint8_t msgbuf[33];
+	DATA_BLOB blob = {.data = msgbuf, .length = sizeof(msgbuf)};
 	NTSTATUS status;
 
 	if (DEBUGLVL(10)) {
@@ -2005,9 +2024,8 @@ NTSTATUS send_break_message(struct messaging_context *msg_ctx,
 		NDR_PRINT_DEBUG(oplock_break_message, &msg);
 	}
 
-	ndr_err = ndr_push_struct_blob(
+	ndr_err = ndr_push_struct_into_fixed_blob(
 		&blob,
-		talloc_tos(),
 		&msg,
 		(ndr_push_flags_fn_t)ndr_push_oplock_break_message);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
@@ -2016,9 +2034,10 @@ NTSTATUS send_break_message(struct messaging_context *msg_ctx,
 		return ndr_map_error2ntstatus(ndr_err);
 	}
 
-	status = messaging_send(
-		msg_ctx, exclusive->pid, MSG_SMB_BREAK_REQUEST, &blob);
-	TALLOC_FREE(blob.data);
+	status = messaging_send(msg_ctx,
+				exclusive->pid,
+				MSG_SMB_BREAK_REQUEST,
+				&blob);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(3, ("Could not send oplock break message: %s\n",
 			  nt_errstr(status)));
@@ -2838,10 +2857,8 @@ static NTSTATUS handle_share_mode_lease(
 
 static bool request_timed_out(struct smb_request *req, struct timeval timeout)
 {
-	struct timeval now, end_time;
-	GetTimeOfDay(&now);
-	end_time = timeval_sum(&req->request_time, &timeout);
-	return (timeval_compare(&end_time, &now) < 0);
+	struct timeval end_time = timeval_sum(&req->request_time, &timeout);
+	return timeval_expired(&end_time);
 }
 
 struct defer_open_state {
@@ -3206,7 +3223,7 @@ static void schedule_defer_open(struct share_mode_lock *lck,
 	 * measure here in case the other smbd is stuck
 	 * somewhere else. */
 
-	timeout = timeval_set(OPLOCK_BREAK_TIMEOUT*2, 0);
+	timeout = tevent_timeval_set(OPLOCK_BREAK_TIMEOUT * 2, 0);
 
 	if (request_timed_out(req, timeout)) {
 		return;
@@ -3230,7 +3247,7 @@ static void schedule_async_open_timer(struct tevent_context *ev,
 static void schedule_async_open(struct smb_request *req)
 {
 	struct deferred_open_record *open_rec = NULL;
-	struct timeval timeout = timeval_set(20, 0);
+	struct timeval timeout = tevent_timeval_set(20, 0);
 	bool ok;
 
 	if (request_timed_out(req, timeout)) {
@@ -4184,11 +4201,11 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 		 * the oplock got removed.
 		 */
 
-		setup_poll_open(
-			req,
-			&fsp->file_id,
-			timeval_set(OPLOCK_BREAK_TIMEOUT*2, 0),
-			timeval_set(1, 0));
+		setup_poll_open(req,
+				&fsp->file_id,
+				tevent_timeval_set(OPLOCK_BREAK_TIMEOUT * 2,
+						   0),
+				tevent_timeval_set(1, 0));
 
 		return NT_STATUS_SHARING_VIOLATION;
 	}
@@ -4399,7 +4416,7 @@ static NTSTATUS open_file_ntcreate(connection_struct *conn,
 	 * According to Samba4, SEC_FILE_READ_ATTRIBUTE is always granted,
 	 * but we don't have to store this - just ignore it on access check.
 	 */
-	if (conn->sconn->using_smb2) {
+	if (conn_using_smb2(conn->sconn)) {
 		/*
 		 * SMB2 doesn't return it (according to Microsoft tests).
 		 * Test Case: TestSuite_ScenarioNo009GrantedAccessTestS0
@@ -5128,7 +5145,7 @@ void msg_file_was_renamed(struct messaging_context *msg_ctx,
 		msg,
 		(ndr_pull_flags_fn_t)ndr_pull_file_rename_message);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		DBG_DEBUG("ndr_pull_oplock_break_message failed: %s\n",
+		DBG_DEBUG("ndr_pull_file_rename_message failed: %s\n",
 			  ndr_errstr(ndr_err));
 		goto out;
 	}
@@ -6037,7 +6054,7 @@ static NTSTATUS create_file_unixpath(connection_struct *conn,
 			goto fail;
 		}
 
-		if (conn->sconn->using_smb2 &&
+		if (conn_using_smb2(conn->sconn) &&
 		    (access_mask == SEC_FLAG_SYSTEM_SECURITY))
 		{
 			/*

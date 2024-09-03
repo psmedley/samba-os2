@@ -32,7 +32,7 @@
 #include "transfer_file.h"
 #include "auth.h"
 #include "messages.h"
-#include "../librpc/gen_ndr/open_files.h"
+#include "librpc/gen_ndr/ndr_open_files.h"
 #include "lib/util/tevent_ntstatus.h"
 #include "source3/smbd/dir.h"
 
@@ -473,8 +473,8 @@ static NTSTATUS close_remove_share_mode(files_struct *fsp,
 	 */
 	lck_state.cleanup_fn = close_share_mode_lock_cleanup;
 
-	DEBUG(5,("close_remove_share_mode: file %s. Delete on close was set "
-		 "- deleting file.\n", fsp_str_dbg(fsp)));
+	DBG_INFO("%s. Delete on close was set - deleting file.\n",
+		 fsp_str_dbg(fsp));
 
 	/*
 	 * Don't try to update the write time when we delete the file
@@ -486,10 +486,9 @@ static NTSTATUS close_remove_share_mode(files_struct *fsp,
 	{
 		/* Become the user who requested the delete. */
 
-		DEBUG(5,("close_remove_share_mode: file %s. "
-			"Change user to uid %u\n",
-			fsp_str_dbg(fsp),
-			(unsigned int)lck_state.del_token->uid));
+		DBG_INFO("file %s. Change user to uid %u\n",
+			 fsp_str_dbg(fsp),
+			 (unsigned int)lck_state.del_token->uid);
 
 		if (!push_sec_ctx()) {
 			smb_panic("close_remove_share_mode: file %s. failed to push "
@@ -510,9 +509,10 @@ static NTSTATUS close_remove_share_mode(files_struct *fsp,
 
 	tmp_status = vfs_stat_fsp(fsp);
 	if (!NT_STATUS_IS_OK(tmp_status)) {
-		DEBUG(5,("close_remove_share_mode: file %s. Delete on close "
+		DBG_INFO("file %s. Delete on close "
 			 "was set and stat failed with error %s\n",
-			 fsp_str_dbg(fsp), nt_errstr(tmp_status)));
+			 fsp_str_dbg(fsp),
+			 nt_errstr(tmp_status));
 		/*
 		 * Don't save the errno here, we ignore this error
 		 */
@@ -523,14 +523,13 @@ static NTSTATUS close_remove_share_mode(files_struct *fsp,
 
 	if (!file_id_equal(&fsp->file_id, &id)) {
 		struct file_id_buf ftmp1, ftmp2;
-		DEBUG(5,("close_remove_share_mode: file %s. Delete on close "
+		DBG_INFO("file %s. Delete on close "
 			 "was set and dev and/or inode does not match\n",
-			 fsp_str_dbg(fsp)));
-		DEBUG(5,("close_remove_share_mode: file %s. stored file_id %s, "
-			 "stat file_id %s\n",
+			 fsp_str_dbg(fsp));
+		DBG_INFO("file %s. stored file_id %s, stat file_id %s\n",
 			 fsp_str_dbg(fsp),
 			 file_id_str_buf(fsp->file_id, &ftmp1),
-			 file_id_str_buf(id, &ftmp2)));
+			 file_id_str_buf(id, &ftmp2));
 		/*
 		 * Don't save the errno here, we ignore this error
 		 */
@@ -591,9 +590,10 @@ static NTSTATUS close_remove_share_mode(files_struct *fsp,
 		 * zero.
 		 */
 
-		DEBUG(5,("close_remove_share_mode: file %s. Delete on close "
+		DBG_INFO("file %s. Delete on close "
 			 "was set and unlink failed with error %s\n",
-			 fsp_str_dbg(fsp), strerror(errno)));
+			 fsp_str_dbg(fsp),
+			 strerror(errno));
 
 		status = map_nt_error_from_unix(errno);
 	}
@@ -636,17 +636,6 @@ static NTSTATUS close_remove_share_mode(files_struct *fsp,
 	}
 
 	if (lck_state.delete_object) {
-		/*
-		 * Do the notification after we released the share
-		 * mode lock. Inside notify_fname we take out another
-		 * tdb lock. With ctdb also accessing our databases,
-		 * this can lead to deadlocks. Putting this notify
-		 * after the TALLOC_FREE(lck) above we avoid locking
-		 * two records simultaneously. Notifies are async and
-		 * informational only, so calling the notify_fname
-		 * without holding the share mode lock should not do
-		 * any harm.
-		 */
 		notify_fname(conn, NOTIFY_ACTION_REMOVED,
 			     FILE_NOTIFY_CHANGE_FILE_NAME,
 			     fsp->fsp_name->base_name);
@@ -1482,7 +1471,7 @@ static NTSTATUS close_directory(struct smb_request *req, files_struct *fsp,
 
 	SMB_ASSERT(fsp->fsp_flags.is_fsa);
 
-	if (fsp->conn->sconn->using_smb2) {
+	if (conn_using_smb2(fsp->conn->sconn)) {
 		notify_status = NT_STATUS_NOTIFY_CLEANUP;
 	} else {
 		notify_status = NT_STATUS_OK;
@@ -1716,26 +1705,24 @@ void msg_close_file(struct messaging_context *msg_ctx,
 			struct server_id server_id,
 			DATA_BLOB *data)
 {
+	struct oplock_break_message msg;
+	enum ndr_err_code ndr_err;
 	files_struct *fsp = NULL;
-	struct file_id id;
-	struct share_mode_entry e;
 	struct smbd_server_connection *sconn =
 		talloc_get_type_abort(private_data,
 		struct smbd_server_connection);
 
-	message_to_share_mode_entry(&id, &e, (char *)data->data);
-
-	if(DEBUGLVL(10)) {
-		char *sm_str = share_mode_str(NULL, 0, &id, &e);
-		if (!sm_str) {
-			smb_panic("talloc failed");
-		}
-		DEBUG(10,("msg_close_file: got request to close share mode "
-			"entry %s\n", sm_str));
-		TALLOC_FREE(sm_str);
+	ndr_err = ndr_pull_struct_blob_all_noalloc(
+		data,
+		&msg,
+		(ndr_pull_flags_fn_t)ndr_pull_oplock_break_message);
+	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
+		DBG_DEBUG("ndr_pull_oplock_break_message failed: %s\n",
+			  ndr_errstr(ndr_err));
+		return;
 	}
 
-	fsp = file_find_dif(sconn, id, e.share_file_id);
+	fsp = file_find_dif(sconn, msg.id, msg.share_file_id);
 	if (!fsp) {
 		DEBUG(10,("msg_close_file: failed to find file.\n"));
 		return;

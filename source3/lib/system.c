@@ -253,6 +253,26 @@ void update_stat_ex_from_saved_stat(struct stat_ex *dst,
 	}
 }
 
+void copy_stat_ex_timestamps(struct stat_ex *st,
+			     const struct smb_file_time *ft)
+{
+	if (!is_omit_timespec(&ft->atime)) {
+		st->st_ex_atime = ft->atime;
+	}
+
+	if (!is_omit_timespec(&ft->create_time)) {
+		st->st_ex_btime = ft->create_time;
+	}
+
+	if (!is_omit_timespec(&ft->ctime)) {
+		st->st_ex_ctime = ft->ctime;
+	}
+
+	if (!is_omit_timespec(&ft->mtime)) {
+		st->st_ex_mtime = ft->mtime;
+	}
+}
+
 void init_stat_ex_from_stat (struct stat_ex *dst,
 			    const struct stat *src,
 			    bool fake_dir_create_times)

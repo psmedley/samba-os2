@@ -22,6 +22,7 @@
 */
 
 #include "includes.h"
+#include "lib/util/util_file.h"
 #include "librpc/gen_ndr/samr.h" /* for struct samrPassword */
 #include "auth/credentials/credentials.h"
 #include "auth/credentials/credentials_internal.h"
@@ -175,11 +176,32 @@ _PUBLIC_ bool cli_credentials_set_gensec_features(struct cli_credentials *creds,
 	return false;
 }
 
+_PUBLIC_ bool cli_credentials_add_gensec_features(
+	struct cli_credentials *creds,
+	uint32_t gensec_features,
+	enum credentials_obtained obtained)
+{
+	return cli_credentials_set_gensec_features(
+		creds, creds->gensec_features | gensec_features, obtained);
+}
+
 _PUBLIC_ uint32_t cli_credentials_get_gensec_features(struct cli_credentials *creds)
 {
 	return creds->gensec_features;
 }
 
+/**
+ * @brief Find out how the username was obtained.
+ *
+ * @param cred A credentials context.
+ *
+ * @return The obtained information for the username.
+ */
+_PUBLIC_ enum credentials_obtained
+cli_credentials_get_username_obtained(struct cli_credentials *cred)
+{
+	return cred->username_obtained;
+}
 
 /**
  * Obtain the username for this credentials context.
@@ -271,6 +293,64 @@ _PUBLIC_ const char *cli_credentials_get_bind_dn(struct cli_credentials *cred)
 	return cred->bind_dn;
 }
 
+
+/**
+ * @brief Find out how the principal was obtained.
+ *
+ * @param cred A credentials context.
+ *
+ * @return The obtained information for the principal.
+ */
+_PUBLIC_ enum credentials_obtained
+cli_credentials_get_principal_obtained(struct cli_credentials *cred)
+{
+	if (cred->machine_account_pending) {
+		cli_credentials_set_machine_account(cred,
+					cred->machine_account_pending_lp_ctx);
+	}
+
+	if (cred->principal_obtained < cred->username_obtained
+	    || cred->principal_obtained < MAX(cred->domain_obtained, cred->realm_obtained)) {
+		const char *effective_username = NULL;
+		const char *effective_realm = NULL;
+		enum credentials_obtained effective_obtained;
+
+		/*
+		 * We don't want to trigger a callbacks in
+		 * cli_credentials_get_username()
+		 * cli_credentials_get_domain()
+		 * nor
+		 * cli_credentials_get_realm()
+		 */
+
+		effective_username = cred->username;
+		if (effective_username == NULL || strlen(effective_username) == 0) {
+			return cred->username_obtained;
+		}
+
+		if (cred->domain_obtained > cred->realm_obtained) {
+			effective_realm = cred->domain;
+			effective_obtained = MIN(cred->domain_obtained,
+						 cred->username_obtained);
+		} else {
+			effective_realm = cred->realm;
+			effective_obtained = MIN(cred->realm_obtained,
+						 cred->username_obtained);
+		}
+
+		if (effective_realm == NULL || strlen(effective_realm) == 0) {
+			effective_realm = cred->domain;
+			effective_obtained = MIN(cred->domain_obtained,
+						 cred->username_obtained);
+		}
+
+		if (effective_realm != NULL && strlen(effective_realm) != 0) {
+			return effective_obtained;
+		}
+	}
+
+	return cred->principal_obtained;
+}
 
 /**
  * Obtain the client principal for this credentials context.
@@ -458,6 +538,19 @@ _PUBLIC_ const char *cli_credentials_get_password(struct cli_credentials *cred)
 }
 
 /**
+ * @brief Find out how the password was obtained.
+ *
+ * @param cred A credentials context.
+ *
+ * @return The obtained information for the password.
+ */
+_PUBLIC_ enum credentials_obtained
+cli_credentials_get_password_obtained(struct cli_credentials *cred)
+{
+	return cred->password_obtained;
+}
+
+/**
  * @brief Obtain the password for this credentials context.
  *
  * @param[in]  cred  The credential context.
@@ -511,6 +604,7 @@ _PUBLIC_ bool cli_credentials_set_password(struct cli_credentials *cred,
 			if (nt_hash == NULL) {
 				return false;
 			}
+			talloc_keep_secret(nt_hash);
 
 			converted = strhex_to_str((char *)nt_hash->hash,
 						  sizeof(nt_hash->hash),
@@ -646,6 +740,7 @@ _PUBLIC_ struct samr_Password *cli_credentials_get_nt_hash(struct cli_credential
 	if (nt_hash == NULL) {
 		return NULL;
 	}
+	talloc_keep_secret(nt_hash);
 
 	if (password_is_nt_hash) {
 		size_t password_len = strlen(password);
@@ -670,6 +765,7 @@ return_hash:
 	if (nt_hash == NULL) {
 		return NULL;
 	}
+	talloc_keep_secret(nt_hash);
 
 	*nt_hash = *cred->nt_hash;
 
@@ -695,6 +791,7 @@ _PUBLIC_ struct samr_Password *cli_credentials_get_old_nt_hash(struct cli_creden
 		if (!nt_hash) {
 			return NULL;
 		}
+		talloc_keep_secret(nt_hash);
 
 		*nt_hash = *cred->old_nt_hash;
 
@@ -707,6 +804,7 @@ _PUBLIC_ struct samr_Password *cli_credentials_get_old_nt_hash(struct cli_creden
 		if (!nt_hash) {
 			return NULL;
 		}
+		talloc_keep_secret(nt_hash);
 
 		E_md4hash(old_password, nt_hash->hash);
 

@@ -1093,6 +1093,80 @@ krb5_error_code smb_krb5_principal_get_comp_string(TALLOC_CTX *mem_ctx,
 	return 0;
 }
 
+krb5_error_code smb_krb5_cc_new_unique_memory(krb5_context context,
+					      TALLOC_CTX *mem_ctx,
+					      char **ccache_name,
+					      krb5_ccache *id)
+{
+	krb5_error_code code;
+	const char *type = NULL;
+	const char *name = NULL;
+
+	if (ccache_name != NULL) {
+		*ccache_name = NULL;
+	}
+	*id = NULL;
+
+#ifdef SAMBA4_USES_HEIMDAL
+	/*
+	 * "MEMORY:anonymous" is not visible to
+	 * the credential cache collection iterator
+	 *
+	 * It creates anonymous-POINTER-UNIQUECOUNTTER
+	 * in the background.
+	 */
+	code = krb5_cc_resolve(context, "MEMORY:anonymous", id);
+	if (code != 0) {
+		DBG_ERR("krb5_cc_resolve(MEMORY:anonymous) failed: %s\n",
+			smb_get_krb5_error_message(
+				context, code, mem_ctx));
+		return code;
+	}
+#else /* MIT */
+	/*
+	 * In MIT the "MEMORY:" credential cache collection
+	 * only contains the default cache (at most).
+	 */
+	code = krb5_cc_new_unique(context, "MEMORY", NULL, id);
+	if (code != 0) {
+		DBG_ERR("krb5_cc_new_unique failed: %s\n",
+			smb_get_krb5_error_message(
+				context, code, mem_ctx));
+		return code;
+	}
+#endif /* MIT */
+
+	type = krb5_cc_get_type(context, *id);
+	if (type == NULL) {
+		DBG_ERR("krb5_cc_get_type failed...\n");
+		krb5_cc_destroy(context, *id);
+		*id = NULL;
+		return KRB5_CC_UNKNOWN_TYPE;
+	}
+
+	name = krb5_cc_get_name(context, *id);
+	if (name == NULL) {
+		DBG_ERR("krb5_cc_get_name failed...\n");
+		krb5_cc_destroy(context, *id);
+		*id = NULL;
+		return KRB5_CC_BADNAME;
+	}
+
+	if (ccache_name == NULL) {
+		return 0;
+	}
+
+	*ccache_name = talloc_asprintf(mem_ctx, "%s:%s", type, name);
+	if (*ccache_name == NULL) {
+		DBG_ERR("krb5_cc_get_name failed...\n");
+		krb5_cc_destroy(context, *id);
+		*id = NULL;
+		return ENOMEM;
+	}
+
+	return 0;
+}
+
 /**
  * @brief
  *
@@ -1140,7 +1214,12 @@ krb5_error_code smb_krb5_renew_ticket(const char *ccache_string,
 	}
 
 	if (!ccache_string) {
-		ccache_string = krb5_cc_default_name(context);
+		/*
+		 * A renew has low risk in mixing different
+		 * ccaches, so we allow callers to pass
+		 * NULL for the default cache.
+		 */
+		ccache_string = smb_force_krb5_cc_default_name(context);
 	}
 
 	if (!ccache_string) {
@@ -1729,7 +1808,7 @@ krb5_error_code smb_krb5_kt_seek_and_delete_old_entries(krb5_context context,
 	}
 
 	DEBUG(3, (__location__ ": Will try to delete old keytab entries\n"));
-	while (!krb5_kt_next_entry(context, keytab, &kt_entry, &cursor)) {
+	while (!samba_krb5_kt_next_entry(context, keytab, &kt_entry, &cursor)) {
 		bool name_ok = false;
 		krb5_enctype kt_entry_enctype =
 			smb_krb5_kt_get_enctype_from_entry(&kt_entry);
@@ -1819,7 +1898,7 @@ krb5_error_code smb_krb5_kt_seek_and_delete_old_entries(krb5_context context,
 				  "failed (%s)\n", error_message(ret)));
 			goto out;
 		}
-		ret = krb5_kt_remove_entry(context, keytab, &kt_entry);
+		ret = samba_krb5_kt_remove_entry(context, keytab, &kt_entry);
 		if (ret) {
 			DEBUG(1, (__location__ ": krb5_kt_remove_entry() "
 				  "failed (%s)\n", error_message(ret)));
@@ -1854,133 +1933,6 @@ out:
 	if (!all_zero((uint8_t *)&cursor, sizeof(cursor))) {
 		krb5_kt_end_seq_get(context, keytab, &cursor);
 	}
-	return ret;
-}
-
-/**
- * @brief Add a keytab entry for the given principal
- *
- * @param[in]  context       The krb5 context to use.
- *
- * @param[in]  keytab        The keytab to add the entry to.
- *
- * @param[in]  kvno          The kvno to use.
- *
- * @param[in]  princ_s       The principal as a string.
- *
- * @param[in]  salt_principal The salt principal to salt the password with.
- *                            Only needed for keys which support salting.
- *                            If no salt is used set no_salt to false and
- *                            pass NULL here.
- *
- * @param[in]  enctype        The encryption type of the keytab entry.
- *
- * @param[in]  password       The password of the keytab entry.
- *
- * @param[in]  no_salt        If the password should not be salted. Normally
- *                            this is only set to false for encryption types
- *                            which do not support salting like RC4.
- *
- * @retval 0 on Success
- *
- * @return A corresponding KRB5 error code.
- *
- * @see smb_krb5_kt_open()
- */
-krb5_error_code smb_krb5_kt_add_entry(krb5_context context,
-				      krb5_keytab keytab,
-				      krb5_kvno kvno,
-				      const char *princ_s,
-				      const char *salt_principal,
-				      krb5_enctype enctype,
-				      krb5_data *password,
-				      bool no_salt)
-{
-	krb5_error_code ret;
-	krb5_keytab_entry kt_entry;
-	krb5_principal princ = NULL;
-	krb5_keyblock *keyp;
-
-	ZERO_STRUCT(kt_entry);
-
-	ret = smb_krb5_parse_name(context, princ_s, &princ);
-	if (ret) {
-		DEBUG(1, (__location__ ": smb_krb5_parse_name(%s) "
-			  "failed (%s)\n", princ_s, error_message(ret)));
-		goto out;
-	}
-
-	/* Seek and delete old keytab entries */
-	ret = smb_krb5_kt_seek_and_delete_old_entries(context,
-						      keytab,
-						      true, /* keep_old_kvno */
-						      kvno,
-						      true, /* enctype_only */
-						      enctype,
-						      princ_s,
-						      princ,
-						      false); /* flush */
-	if (ret) {
-		goto out;
-	}
-
-	/* If we get here, we have deleted all the old entries with kvno's
-	 * not equal to the current kvno-1. */
-
-	keyp = KRB5_KT_KEY(&kt_entry);
-
-	if (no_salt) {
-		KRB5_KEY_DATA(keyp) = (KRB5_KEY_DATA_CAST *)SMB_MALLOC(password->length);
-		if (KRB5_KEY_DATA(keyp) == NULL) {
-			ret = ENOMEM;
-			goto out;
-		}
-		memcpy(KRB5_KEY_DATA(keyp), password->data, password->length);
-		KRB5_KEY_LENGTH(keyp) = password->length;
-		KRB5_KEY_TYPE(keyp) = enctype;
-	} else {
-		krb5_principal salt_princ = NULL;
-
-		/* Now add keytab entries for all encryption types */
-		ret = smb_krb5_parse_name(context, salt_principal, &salt_princ);
-		if (ret) {
-			DBG_WARNING("krb5_parse_name(%s) failed (%s)\n",
-				    salt_principal, error_message(ret));
-			goto out;
-		}
-
-		ret = smb_krb5_create_key_from_string(context,
-						      salt_princ,
-						      NULL,
-						      password,
-						      enctype,
-						      keyp);
-		krb5_free_principal(context, salt_princ);
-		if (ret != 0) {
-			goto out;
-		}
-	}
-
-	kt_entry.principal = princ;
-	kt_entry.vno       = kvno;
-
-	DEBUG(3, (__location__ ": adding keytab entry for (%s) with "
-		  "encryption type (%d) and version (%d)\n",
-		  princ_s, enctype, kt_entry.vno));
-	ret = krb5_kt_add_entry(context, keytab, &kt_entry);
-	krb5_free_keyblock_contents(context, keyp);
-	ZERO_STRUCT(kt_entry);
-	if (ret) {
-		DEBUG(1, (__location__ ": adding entry to keytab "
-			  "failed (%s)\n", error_message(ret)));
-		goto out;
-	}
-
-out:
-	if (princ) {
-		krb5_free_principal(context, princ);
-	}
-
 	return ret;
 }
 
@@ -2183,7 +2135,7 @@ krb5_error_code smb_krb5_keyblock_init_contents(krb5_context context,
  *
  * @param[in]  cc       The credential cache to put the tgt in.
  *
- * @param[in]  principal The client princial
+ * @param[in]  principal The client principal
  *
  * @param[in]  keyblock  The keyblock to use.
  *
@@ -2296,7 +2248,7 @@ done:
  *
  * @param[in]  cc       The credential cache to put the tgt in.
  *
- * @param[in]  principal The client princial
+ * @param[in]  principal The client principal
  *
  * @param[in]  password  The password (or NULL).
  *
@@ -2369,7 +2321,7 @@ done:
  *
  * @param[in]  cc       The credential cache to store the tgt in.
  *
- * @param[in]  principal The initial client princial.
+ * @param[in]  principal The initial client principal.
  *
  * @param[in]  password  The password (or NULL).
  *
@@ -2445,7 +2397,7 @@ krb5_error_code smb_krb5_kinit_s4u2_ccache(krb5_context ctx,
 	 * We need to avoid that and use a temporary krb5_ccache
 	 * in order to pass our TGT to the krb5_get_creds() function.
 	 */
-	code = krb5_cc_new_unique(ctx, NULL, NULL, &tmp_cc);
+	code = smb_krb5_cc_new_unique_memory(ctx, NULL, NULL, &tmp_cc);
 	if (code != 0) {
 		krb5_free_cred_contents(ctx, &store_creds);
 		return code;
@@ -2839,7 +2791,7 @@ krb5_error_code smb_krb5_kinit_s4u2_ccache(krb5_context ctx,
 	bool s4u2proxy = false;
 	bool ok;
 
-	code = krb5_cc_new_unique(ctx, "MEMORY", NULL, &tmp_cc);
+	code = smb_krb5_cc_new_unique_memory(ctx, NULL, NULL, &tmp_cc);
 	if (code != 0) {
 		return code;
 	}
@@ -3045,6 +2997,7 @@ krb5_error_code smb_krb5_cc_get_lifetime(krb5_context context,
 	krb5_cc_cursor cursor;
 	krb5_error_code kerr;
 	krb5_creds cred;
+	krb5_timestamp endtime = 0;
 	krb5_timestamp now;
 
 	*t = 0;
@@ -3060,18 +3013,43 @@ krb5_error_code smb_krb5_cc_get_lifetime(krb5_context context,
 	}
 
 	while ((kerr = krb5_cc_next_cred(context, id, &cursor, &cred)) == 0) {
+		if (krb5_is_config_principal(context, cred.server)) {
+			krb5_free_cred_contents(context, &cred);
+			continue;
+		}
+
 #ifndef HAVE_FLAGS_IN_KRB5_CREDS
 		if (cred.ticket_flags & TKT_FLG_INITIAL) {
 #else
 		if (cred.flags.b.initial) {
 #endif
 			if (now < cred.times.endtime) {
-				*t = (time_t) (cred.times.endtime - now);
+				endtime = cred.times.endtime;
 			}
 			krb5_free_cred_contents(context, &cred);
 			break;
 		}
+
+		if (cred.times.endtime <= now) {
+			/* already expired */
+			krb5_free_cred_contents(context, &cred);
+			continue;
+		}
+
+		/**
+		 * If there was no krbtgt, use the shortest lifetime of
+		 * service tickets that have yet to expire.  If all
+		 * credentials are expired, krb5_cc_get_lifetime() will fail.
+		 */
+		if (endtime == 0 || cred.times.endtime < endtime) {
+			endtime = cred.times.endtime;
+		}
 		krb5_free_cred_contents(context, &cred);
+	}
+
+	if (now < endtime) {
+		*t = (time_t) (endtime - now);
+		kerr = 0;
 	}
 
 	krb5_cc_end_seq_get(context, id, &cursor);
@@ -3902,6 +3880,14 @@ int ads_krb5_cli_get_ticket(TALLOC_CTX *mem_ctx,
 		ENCTYPE_NULL};
 	bool ok;
 
+	if (ccname == NULL) {
+		DBG_ERR("No explicit ccache given for service [%s], "
+			"impersonating [%s]\n",
+			principal, impersonate_princ_s);
+		retval = EINVAL;
+		goto failed;
+	}
+
 	DBG_DEBUG("Getting ticket for service [%s] using creds from [%s] "
 		  "and impersonating [%s]\n",
 		  principal, ccname, impersonate_princ_s);
@@ -3917,12 +3903,10 @@ int ads_krb5_cli_get_ticket(TALLOC_CTX *mem_ctx,
 		krb5_set_real_time(context, time(NULL) + time_offset, 0);
 	}
 
-	retval = krb5_cc_resolve(context,
-				 ccname ? ccname : krb5_cc_default_name(context),
-				 &ccdef);
+	retval = krb5_cc_resolve(context, ccname, &ccdef);
 	if (retval != 0) {
-		DBG_WARNING("krb5_cc_default failed (%s)\n",
-			    error_message(retval));
+		DBG_WARNING("krb5_cc_resolve(%s) failed (%s)\n",
+			    ccname, error_message(retval));
 		goto failed;
 	}
 
@@ -4023,6 +4007,28 @@ krb5_error_code smb_krb5_init_context_common(krb5_context *_krb5_context)
 
 	*_krb5_context = krb5_ctx;
 	return 0;
+}
+
+/*
+ * This should only be used in code that
+ * really wants to touch the global default ccache!
+ */
+krb5_error_code smb_force_krb5_cc_default(krb5_context ctx, krb5_ccache *id)
+{
+#undef krb5_cc_default
+	return krb5_cc_default(ctx, id);
+#define krb5_cc_default __ERROR__XX__NEVER_USE_krb5_cc_default__;
+}
+
+/*
+ * This should only be used in code that
+ * really wants to touch the global default ccache!
+ */
+const char *smb_force_krb5_cc_default_name(krb5_context ctx)
+{
+#undef krb5_cc_default_name
+	return krb5_cc_default_name(ctx);
+#define krb5_cc_default_name __ERROR__XX__NEVER_USE_krb5_cc_default_name__;
 }
 
 #else /* HAVE_KRB5 */

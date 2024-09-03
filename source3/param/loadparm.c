@@ -55,6 +55,7 @@
 
 #define LOADPARM_SUBSTITUTION_INTERNALS 1
 #include "includes.h"
+#include "lib/util/util_file.h"
 #include "system/filesys.h"
 #include "util_tdb.h"
 #include "lib/param/loadparm.h"
@@ -988,6 +989,8 @@ void loadparm_s3_init_globals(struct loadparm_context *lp_ctx,
 
 	Globals.kdc_enable_fast = true;
 
+	Globals.winbind_debug_traceid = true;
+
 	Globals.aio_max_threads = 100;
 
 	lpcfg_string_set(Globals.ctx,
@@ -1239,11 +1242,13 @@ static void discard_whitespace(char *str)
  *                      See "man regexec" for possible errors
  */
 
-int lp_wi_scan_global_parametrics(
-	const char *regex_str, size_t max_matches,
-	bool (*cb)(const char *string, regmatch_t matches[],
-		   void *private_data),
-	void *private_data)
+static int lp_wi_scan_parametrics(struct parmlist_entry *parmlist,
+				  const char *regex_str,
+				  size_t max_matches,
+				  bool (*cb)(const char *string,
+					     regmatch_t matches[],
+					     void *private_data),
+				  void *private_data)
 {
 	struct parmlist_entry *data;
 	regex_t regex;
@@ -1254,7 +1259,7 @@ int lp_wi_scan_global_parametrics(
 		return ret;
 	}
 
-	for (data = Globals.param_opt; data != NULL; data = data->next) {
+	for (data = parmlist; data != NULL; data = data->next) {
 		size_t keylen = strlen(data->key);
 		char key[keylen+1];
 		regmatch_t matches[max_matches];
@@ -1283,6 +1288,42 @@ fail:
 	return ret;
 }
 
+int lp_wi_scan_global_parametrics(const char *regex_str,
+				  size_t max_matches,
+				  bool (*cb)(const char *string,
+					     regmatch_t matches[],
+					     void *private_data),
+				  void *private_data)
+{
+	int ret = lp_wi_scan_parametrics(
+		Globals.param_opt, regex_str, max_matches, cb, private_data);
+	return ret;
+}
+
+int lp_wi_scan_share_parametrics(int snum,
+				 const char *regex_str,
+				 size_t max_matches,
+				 bool (*cb)(const char *string,
+					    regmatch_t matches[],
+					    void *private_data),
+				 void *private_data)
+{
+	struct loadparm_service *s = NULL;
+	int ret;
+
+	if (!LP_SNUM_OK(snum)) {
+		/*
+		 * We return regex return values here, REG_NOMATCH is
+		 * the closest I could find.
+		 */
+		return REG_NOMATCH;
+	}
+	s = ServicePtrs[snum];
+
+	ret = lp_wi_scan_parametrics(
+		s->param_opt, regex_str, max_matches, cb, private_data);
+	return ret;
+}
 
 #define MISSING_PARAMETER(name) \
     DEBUG(0, ("%s(): value is NULL or empty!\n", #name))
@@ -4841,6 +4882,45 @@ int lp_rpc_low_port(void)
 int lp_rpc_high_port(void)
 {
 	return Globals.rpc_high_port;
+}
+
+const char *lp_dns_hostname(void)
+{
+	const char *dns_hostname = lp__dns_hostname();
+	const char *dns_domain = lp_dnsdomain();
+	char *netbios_name = NULL;
+	bool ok;
+
+	if (dns_hostname != NULL && dns_hostname[0] != '\0') {
+		return dns_hostname;
+	}
+
+	netbios_name = talloc_strdup(talloc_tos(), lp_netbios_name());
+	if (netbios_name == NULL) {
+		return NULL;
+	}
+	ok = strlower_m(netbios_name);
+	if (!ok) {
+		return NULL;
+	}
+
+	/* If it isn't set, try to initialize with [netbios name].[realm] */
+	if (dns_domain != NULL && dns_domain[0] != '\0') {
+		Globals._dns_hostname = talloc_asprintf(Globals.ctx,
+							"%s.%s",
+							netbios_name,
+							dns_domain);
+	} else {
+		Globals._dns_hostname = talloc_strdup(Globals.ctx,
+						      netbios_name);
+	}
+	TALLOC_FREE(netbios_name);
+	if (Globals._dns_hostname == NULL) {
+		return NULL;
+	}
+	dns_hostname = Globals._dns_hostname;
+
+	return dns_hostname;
 }
 
 /*

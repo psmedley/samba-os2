@@ -73,9 +73,14 @@ from samba.dsdb import (
     DS_DOMAIN_FUNCTION_2016,
     ENC_ALL_TYPES,
 )
+from samba.gkdi import (
+    KEY_CYCLE_DURATION,
+    MAX_CLOCK_SKEW
+)
 from samba.idmap import IDmapDB
 from samba.ms_display_specifiers import read_ms_ldif
 from samba.ntacls import setntacl, getntacl, dsacl2fsacl
+from samba.nt_time import nt_now
 from samba.ndr import ndr_pack, ndr_unpack
 from samba.provision.backend import (
     LDBBackend,
@@ -1376,10 +1381,10 @@ def fill_samdb(samdb, lp, names, logger, policyguid,
 
     # These will be fixed into the database via the database
     # modifictions below, but we need them set from the start.
-    samdb.set_opaque_integer("domainFunctionality", domainFunctionality)
-    samdb.set_opaque_integer("forestFunctionality", forestFunctionality)
-    samdb.set_opaque_integer("domainControllerFunctionality",
-                             domainControllerFunctionality)
+    samdb.set_opaque("domainFunctionality", domainFunctionality)
+    samdb.set_opaque("forestFunctionality", forestFunctionality)
+    samdb.set_opaque("domainControllerFunctionality",
+                     domainControllerFunctionality)
 
     samdb.set_domain_sid(str(names.domainsid))
     samdb.set_invocation_id(invocationid)
@@ -2387,7 +2392,9 @@ def provision(logger, session_info, smbconf=None,
                 try:
                     from samba.domain_update import DomainUpdate
 
-                    DomainUpdate(samdb, fix=True).check_updates_functional_level(
+                    DomainUpdate(samdb,
+                                 new_install=True,
+                                 fix=True).check_updates_functional_level(
                         adprep_level,
                         DS_DOMAIN_FUNCTION_2008,
                         update_revision=True,
@@ -2400,6 +2407,15 @@ def provision(logger, session_info, smbconf=None,
 
                 if updates_allowed_overridden:
                     lp.set("dsdb:schema update allowed", "no")
+
+                current_time = nt_now()
+                # We want the GKDI key to be instantly available for use
+                use_start_time = current_time \
+                    - KEY_CYCLE_DURATION - MAX_CLOCK_SKEW
+                gkdi_root_key_dn = samdb.new_gkdi_root_key(current_time=current_time,
+                                                           use_start_time=use_start_time)
+                logger.info("gkdi/gmsa root key added with guid "
+                            f"{gkdi_root_key_dn.get_rdn_value()}")
 
         if not is_heimdal_built():
             create_kdc_conf(paths.kdcconf, realm, domain, os.path.dirname(lp.get("log file")))

@@ -319,7 +319,7 @@ int net_rpc_changetrustpw(struct net_context *c, int argc, const char **argv)
 {
 	int conn_flags = NET_FLAGS_PDC;
 
-	if (!c->opt_user_specified && !c->opt_kerberos) {
+	if (!c->explicit_credentials) {
 		conn_flags |= NET_FLAGS_ANONYMOUS;
 	}
 
@@ -410,9 +410,8 @@ static int net_rpc_oldjoin(struct net_context *c, int argc, const char **argv)
 	r->in.domain_name		= domain;
 	r->in.secure_channel_type	= sec_chan_type;
 	r->in.dc_name			= c->opt_host;
-	r->in.admin_account		= "";
-	r->in.admin_password		= strlower_talloc(r, pw);
-	if (r->in.admin_password == NULL) {
+	r->in.passed_machine_password	= strlower_talloc(r, pw);
+	if (r->in.passed_machine_password == NULL) {
 		werr = WERR_NOT_ENOUGH_MEMORY;
 		goto fail;
 	}
@@ -484,6 +483,8 @@ int net_rpc_testjoin(struct net_context *c, int argc, const char **argv)
 	TALLOC_CTX *mem_ctx;
 	const char *domain = c->opt_target_workgroup;
 	const char *dc = c->opt_host;
+	enum credentials_use_kerberos kerberos_state =
+		cli_credentials_get_kerberos_state(c->creds);
 
 	if (c->display_usage) {
 		d_printf("Usage\n"
@@ -528,7 +529,7 @@ int net_rpc_testjoin(struct net_context *c, int argc, const char **argv)
 	status = libnet_join_ok(c->msg_ctx,
 				c->opt_workgroup,
 				dc,
-				c->opt_kerberos);
+				kerberos_state);
 	if (!NT_STATUS_IS_OK(status)) {
 		fprintf(stderr,"Join to domain '%s' is not valid: %s\n",
 			domain, nt_errstr(status));
@@ -601,10 +602,8 @@ static int net_rpc_join_newstyle(struct net_context *c, int argc, const char **a
 	r->in.domain_name		= domain;
 	r->in.secure_channel_type	= sec_chan_type;
 	r->in.dc_name			= c->opt_host;
-	r->in.admin_account		= c->opt_user_name;
-	r->in.admin_password		= net_prompt_pass(c, c->opt_user_name);
+	r->in.admin_credentials		= c->creds;
 	r->in.debug			= true;
-	r->in.use_kerberos		= c->opt_kerberos;
 	r->in.modify_config		= modify_config;
 	r->in.join_flags		= WKSSVC_JOIN_FLAGS_JOIN_TYPE |
 					  WKSSVC_JOIN_FLAGS_ACCOUNT_CREATE |
@@ -880,7 +879,7 @@ int net_rpc_getsid(struct net_context *c, int argc, const char **argv)
 {
 	int conn_flags = NET_FLAGS_PDC;
 
-	if (!c->opt_user_specified && !c->opt_kerberos) {
+	if (!c->explicit_credentials) {
 		conn_flags |= NET_FLAGS_ANONYMOUS;
 	}
 
@@ -6539,7 +6538,7 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 	struct sockaddr_storage server_ss;
 	struct rpc_pipe_client *pipe_hnd = NULL;
 	struct policy_handle connect_hnd;
-	TALLOC_CTX *mem_ctx;
+	TALLOC_CTX *frame = talloc_stackframe();
 	NTSTATUS nt_status, result;
 	struct dom_sid *domain_sid;
 	char* domain_name;
@@ -6554,6 +6553,7 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 		},
 	};
 	uint32_t out_version = 0;
+	int rc = -1;
 
 	/*
 	 * Connect to \\server\ipc$ as 'our domain' account with password
@@ -6563,38 +6563,25 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 		d_printf("%s\n%s",
 			 _("Usage:"),
 			 _("net rpc trustdom establish <domain_name>\n"));
-		return -1;
+		goto out;
 	}
 
-	domain_name = smb_xstrdup(argv[0]);
-	if (!strupper_m(domain_name)) {
-		SAFE_FREE(domain_name);
-		return -1;
+	domain_name = talloc_strdup_upper(frame, argv[0]);
+	if (domain_name == NULL) {
+		goto out;
 	}
 
 	/* account name used at first is our domain's name with '$' */
-	if (asprintf(&acct_name, "%s$", lp_workgroup()) == -1) {
-		return -1;
-	}
-	if (!strupper_m(acct_name)) {
-		SAFE_FREE(domain_name);
-		SAFE_FREE(acct_name);
-		return -1;
+	acct_name = talloc_asprintf_strupper_m(frame, "%s$", lp_workgroup());
+	if (acct_name == NULL) {
+		goto out;
 	}
 	cli_credentials_set_username(c->creds, acct_name, CRED_SPECIFIED);
-
-	/*
-	 * opt_workgroup will be used by connection functions further,
-	 * hence it should be set to remote domain name instead of ours
-	 */
-	if (c->opt_workgroup) {
-		c->opt_workgroup = smb_xstrdup(domain_name);
-	};
 
 	/* find the domain controller */
 	if (!net_find_pdc(&server_ss, pdc_name, domain_name)) {
 		DEBUG(0, ("Couldn't find domain controller for domain %s\n", domain_name));
-		return -1;
+		goto out;
 	}
 
 	/* connect to ipc$ as username/password */
@@ -6604,7 +6591,7 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 		/* Is it trusting domain account for sure ? */
 		DEBUG(0, ("Couldn't verify trusting domain account. Error was %s\n",
 			nt_errstr(nt_status)));
-		return -1;
+		goto out;
 	}
 
 	/* store who we connected to */
@@ -6621,23 +6608,15 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 	if (NT_STATUS_IS_ERR(nt_status)) {
 		DEBUG(0, ("Couldn't connect to domain %s controller. Error was %s.\n",
 			domain_name, nt_errstr(nt_status)));
-		return -1;
+		goto out;
 	}
 
-	if (!(mem_ctx = talloc_init("establishing trust relationship to "
-				    "domain %s", domain_name))) {
-		DEBUG(0, ("talloc_init() failed\n"));
-		cli_shutdown(cli);
-		return -1;
-	}
 
 	/* Make sure we're talking to a proper server */
 
-	nt_status = rpc_trustdom_get_pdc(c, cli, mem_ctx, domain_name);
+	nt_status = rpc_trustdom_get_pdc(c, cli, frame, domain_name);
 	if (!NT_STATUS_IS_OK(nt_status)) {
-		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	/*
@@ -6648,15 +6627,13 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 					     &pipe_hnd);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DEBUG(0, ("Could not initialise lsa pipe. Error was %s\n", nt_errstr(nt_status) ));
-		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	b = pipe_hnd->binding_handle;
 
 	nt_status = dcerpc_lsa_open_policy_fallback(b,
-						    mem_ctx,
+						    frame,
 						    pipe_hnd->srv_name_slash,
 						    true,
 						    KEY_QUERY_VALUE,
@@ -6667,14 +6644,12 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 	if (any_nt_status_not_ok(nt_status, result, &nt_status)) {
 		DBG_ERR("Couldn't open policy handle: %s\n",
 			nt_errstr(nt_status));
-		cli_shutdown(cli);
-		talloc_free(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	/* Querying info level 5 */
 
-	nt_status = dcerpc_lsa_QueryInfoPolicy(b, mem_ctx,
+	nt_status = dcerpc_lsa_QueryInfoPolicy(b, frame,
 					       &connect_hnd,
 					       LSA_POLICY_INFO_ACCOUNT_DOMAIN,
 					       &info,
@@ -6682,16 +6657,12 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 	if (NT_STATUS_IS_ERR(nt_status)) {
 		DEBUG(0, ("LSA Query Info failed. Returned error was %s\n",
 			nt_errstr(nt_status)));
-		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 	if (NT_STATUS_IS_ERR(result)) {
 		DEBUG(0, ("LSA Query Info failed. Returned error was %s\n",
 			nt_errstr(result)));
-		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	domain_sid = info->account_domain.sid;
@@ -6707,30 +6678,27 @@ static int rpc_trustdom_establish(struct net_context *c, int argc,
 
 	if (!pdb_set_trusteddom_pw(domain_name, pwd, domain_sid)) {
 		DEBUG(0, ("Storing password for trusted domain failed.\n"));
-		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	/*
 	 * Close the pipes and clean up
 	 */
 
-	nt_status = dcerpc_lsa_Close(b, mem_ctx, &connect_hnd, &result);
+	nt_status = dcerpc_lsa_Close(b, frame, &connect_hnd, &result);
 	if (NT_STATUS_IS_ERR(nt_status)) {
 		DEBUG(0, ("Couldn't close LSA pipe. Error was %s\n",
 			nt_errstr(nt_status)));
-		cli_shutdown(cli);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
-	cli_shutdown(cli);
-
-	talloc_destroy(mem_ctx);
-
 	d_printf(_("Trust to domain %s established\n"), domain_name);
-	return 0;
+
+	rc = 0;
+out:
+	cli_shutdown(cli);
+	TALLOC_FREE(frame);
+	return rc;
 }
 
 /**
@@ -7501,9 +7469,15 @@ bool net_rpc_check(struct net_context *c, unsigned flags)
 	if (!net_find_server(c, NULL, flags, &server_ss, &server_name))
 		return false;
 
-	status = cli_connect_nb(server_name, &server_ss, 0, 0x20,
-				lp_netbios_name(), SMB_SIGNING_IPC_DEFAULT,
-				0, &cli);
+	status = cli_connect_nb(c,
+				server_name,
+				&server_ss,
+				0,
+				0x20,
+				lp_netbios_name(),
+				SMB_SIGNING_IPC_DEFAULT,
+				0,
+				&cli);
 	if (!NT_STATUS_IS_OK(status)) {
 		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
 			DBG_ERR("NetBIOS support disabled, unable to connect\n");

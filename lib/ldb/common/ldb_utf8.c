@@ -34,6 +34,27 @@
 #include "ldb_private.h"
 #include "system/locale.h"
 
+/*
+ * Set functions for comparing and case-folding case-insensitive ldb val
+ * strings.
+ */
+void ldb_set_utf8_functions(struct ldb_context *ldb,
+			    void *context,
+			    char *(*casefold)(void *, void *, const char *, size_t),
+			    int (*casecmp)(void *ctx,
+					   const struct ldb_val *v1,
+					   const struct ldb_val *v2))
+{
+	if (context) {
+		ldb->utf8_fns.context = context;
+	}
+	if (casefold) {
+		ldb->utf8_fns.casefold = casefold;
+	}
+	if (casecmp) {
+		ldb->utf8_fns.casecmp = casecmp;
+	}
+}
 
 /*
   this allow the user to pass in a caseless comparison
@@ -43,11 +64,9 @@ void ldb_set_utf8_fns(struct ldb_context *ldb,
 		      void *context,
 		      char *(*casefold)(void *, void *, const char *, size_t))
 {
-	if (context)
-		ldb->utf8_fns.context = context;
-	if (casefold)
-		ldb->utf8_fns.casefold = casefold;
+	ldb_set_utf8_functions(ldb, context, casefold, NULL);
 }
+
 
 /*
   a simple case folding function
@@ -62,14 +81,72 @@ char *ldb_casefold_default(void *context, TALLOC_CTX *mem_ctx, const char *s, si
 		return NULL;
 	}
 	for (i=0;ret[i];i++) {
-		ret[i] = ldb_ascii_toupper((unsigned char)ret[i]);
+		ret[i] = ldb_ascii_toupper(ret[i]);
 	}
 	return ret;
 }
 
+
+/*
+ * The default comparison fold function only knows ASCII. Multiple
+ * spaces (0x20) are collapsed into one, and [a-z] map to [A-Z]. All
+ * other bytes are compared without casefolding.
+ *
+ * Note that as well as not handling UTF-8, this function does not exactly
+ * implement RFC 4518 (2.6.1. Insignificant Space Handling and Appendix B).
+ */
+
+int ldb_comparison_fold_ascii(void *ignored,
+			      const struct ldb_val *v1,
+			      const struct ldb_val *v2)
+{
+	const uint8_t *s1 = v1->data;
+	const uint8_t *s2 = v2->data;
+	size_t n1 = v1->length, n2 = v2->length;
+
+	while (n1 && *s1 == ' ') { s1++; n1--; };
+	while (n2 && *s2 == ' ') { s2++; n2--; };
+
+	while (n1 && n2 && *s1 && *s2) {
+		if (ldb_ascii_toupper(*s1) != ldb_ascii_toupper(*s2)) {
+			break;
+		}
+		if (*s1 == ' ') {
+			while (n1 > 1 && s1[0] == s1[1]) { s1++; n1--; }
+			while (n2 > 1 && s2[0] == s2[1]) { s2++; n2--; }
+		}
+		s1++; s2++;
+		n1--; n2--;
+	}
+
+	/* check for trailing spaces only if the other pointers has
+	 * reached the end of the strings otherwise we can
+	 * mistakenly match.  ex. "domain users" <->
+	 * "domainUpdates"
+	 */
+	if (n1 && *s1 == ' ' && (!n2 || !*s2)) {
+		while (n1 && *s1 == ' ') { s1++; n1--; }
+	}
+	if (n2 && *s2 == ' ' && (!n1 || !*s1)) {
+		while (n2 && *s2 == ' ') { s2++; n2--; }
+	}
+	if (n1 == 0 && n2 != 0) {
+		return *s2 ? -1 : 0;
+	}
+	if (n2 == 0 && n1 != 0) {
+		return *s1 ? 1 : 0;
+	}
+	if (n1 == 0 && n2 == 0) {
+		return 0;
+	}
+	return NUMERIC_CMP(*s1, *s2);
+}
+
 void ldb_set_utf8_default(struct ldb_context *ldb)
 {
-	ldb_set_utf8_fns(ldb, NULL, ldb_casefold_default);
+	ldb_set_utf8_functions(ldb, NULL,
+			  ldb_casefold_default,
+			  ldb_comparison_fold_ascii);
 }
 
 char *ldb_casefold(struct ldb_context *ldb, TALLOC_CTX *mem_ctx, const char *s, size_t n)
@@ -118,7 +195,7 @@ char *ldb_attr_casefold(TALLOC_CTX *mem_ctx, const char *s)
 		return NULL;
 	}
 	for (i = 0; ret[i]; i++) {
-		ret[i] = ldb_ascii_toupper((unsigned char)ret[i]);
+		ret[i] = ldb_ascii_toupper(ret[i]);
 	}
 	return ret;
 }
@@ -136,5 +213,15 @@ int ldb_attr_dn(const char *attr)
 }
 
 _PRIVATE_ char ldb_ascii_toupper(char c) {
-	return ('a' <= c && c <= 'z') ? c ^ 0x20 : toupper(c);
+	/*
+	 * We are aiming for a 1970s C-locale toupper(), when all letters
+	 * were 7-bit and behaved with true American spirit.
+	 *
+	 * For example, we don't want the "i" in "<guid=" to be upper-cased to
+	 * "İ" as would happen in some locales, or we won't be able to parse
+	 * that properly. This is unfortunate for cases where we are dealing
+	 * with real text; a search for the name "Ali" would need to be
+	 * written "Alİ" to match.
+	 */
+	return ('a' <= c && c <= 'z') ? c ^ 0x20 : c;
 }

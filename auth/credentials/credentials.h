@@ -91,6 +91,7 @@ struct cli_credentials *cli_credentials_init_server(TALLOC_CTX *mem_ctx,
 void cli_credentials_set_anonymous(struct cli_credentials *cred);
 bool cli_credentials_wrong_password(struct cli_credentials *cred);
 const char *cli_credentials_get_password(struct cli_credentials *cred);
+enum credentials_obtained cli_credentials_get_password_obtained(struct cli_credentials *cred);
 const char *cli_credentials_get_password_and_obtained(struct cli_credentials *cred,
 						      enum credentials_obtained *obtained);
 void cli_credentials_get_ntlm_username_domain(struct cli_credentials *cred, TALLOC_CTX *mem_ctx,
@@ -105,6 +106,7 @@ NTSTATUS cli_credentials_get_ntlm_response(struct cli_credentials *cred, TALLOC_
 					   DATA_BLOB *_lm_session_key, DATA_BLOB *_session_key);
 const char *cli_credentials_get_realm(struct cli_credentials *cred);
 const char *cli_credentials_get_username(struct cli_credentials *cred);
+enum credentials_obtained cli_credentials_get_username_obtained(struct cli_credentials *cred);
 const char *cli_credentials_get_username_and_obtained(struct cli_credentials *cred,
 						      enum credentials_obtained *obtained);
 int cli_credentials_get_krb5_context(struct cli_credentials *cred,
@@ -120,6 +122,10 @@ int cli_credentials_get_named_ccache(struct cli_credentials *cred,
 				     struct loadparm_context *lp_ctx,
 				     char *ccache_name,
 				     struct ccache_container **ccc, const char **error_string);
+bool cli_credentials_get_ccache_name_obtained(struct cli_credentials *cred,
+					      TALLOC_CTX *mem_ctx,
+					      char **ccache_name,
+					      enum credentials_obtained *obtained);
 bool cli_credentials_failed_kerberos_login(struct cli_credentials *cred,
 					   const char *principal,
 					   unsigned int *count);
@@ -247,6 +253,9 @@ bool cli_credentials_set_gensec_features(struct cli_credentials *creds,
 					 uint32_t gensec_features,
 					 enum credentials_obtained obtained);
 uint32_t cli_credentials_get_gensec_features(struct cli_credentials *creds);
+bool cli_credentials_add_gensec_features(struct cli_credentials *creds,
+					 uint32_t gensec_features,
+					 enum credentials_obtained obtained);
 int cli_credentials_set_ccache(struct cli_credentials *cred,
 			       struct loadparm_context *lp_ctx,
 			       const char *name,
@@ -262,7 +271,7 @@ void cli_credentials_set_impersonate_principal(struct cli_credentials *cred,
 					       const char *principal,
 					       const char *self_service);
 void cli_credentials_set_target_service(struct cli_credentials *cred, const char *principal);
-const char *cli_credentials_get_salt_principal(struct cli_credentials *cred);
+char *cli_credentials_get_salt_principal(struct cli_credentials *cred, TALLOC_CTX *mem_ctx);
 const char *cli_credentials_get_impersonate_principal(struct cli_credentials *cred);
 const char *cli_credentials_get_self_service(struct cli_credentials *cred);
 const char *cli_credentials_get_target_service(struct cli_credentials *cred);
@@ -280,6 +289,8 @@ NTSTATUS cli_credentials_set_secrets(struct cli_credentials *cred,
 
 bool cli_credentials_set_username_callback(struct cli_credentials *cred,
 				  const char *(*username_cb) (struct cli_credentials *));
+
+enum credentials_obtained cli_credentials_get_principal_obtained(struct cli_credentials *cred);
 
 /**
  * Obtain the client principal for this credentials context.
@@ -349,12 +360,6 @@ NTSTATUS netlogon_creds_session_encrypt(
 	struct netlogon_creds_CredentialState *state,
 	DATA_BLOB data);
 
-int cli_credentials_get_aes256_key(struct cli_credentials *cred,
-				   TALLOC_CTX *mem_ctx,
-				   struct loadparm_context *lp_ctx,
-				   const char *salt,
-				   DATA_BLOB *aes_256);
-
 /**
  * Kerberos FAST handling
  */
@@ -366,5 +371,19 @@ NTSTATUS cli_credentials_set_krb5_fast_armor_credentials(struct cli_credentials 
 struct cli_credentials *cli_credentials_get_krb5_fast_armor_credentials(struct cli_credentials *creds);
 
 bool cli_credentials_get_krb5_require_fast_armor(struct cli_credentials *creds);
+
+/**
+ * Group Managed Service Account helper
+ */
+
+/*
+ * All current callers set "for_keytab = true", but if we start using
+ * this for getting a TGT we need the logic to ignore a very new
+ * key
+ */
+NTSTATUS cli_credentials_set_gmsa_passwords(struct cli_credentials *creds,
+					    const DATA_BLOB *managed_password_blob,
+					    bool for_keytab,
+					    const char **error_string);
 
 #endif /* __CREDENTIALS_H__ */

@@ -40,9 +40,9 @@
 #include "common/common.h"
 #include "common/path.h"
 #include "common/logging.h"
-#include "common/logging_conf.h"
 
-#include "ctdb_config.h"
+#include "conf/logging_conf.h"
+#include "conf/ctdb_config.h"
 
 int script_log_level;
 bool fast_start;
@@ -232,9 +232,9 @@ int main(int argc, const char *argv[])
 	 * Configuration file handling
 	 */
 
-	ret = ctdbd_config_load(ctdb, &conf);
+	ret = ctdb_config_load(ctdb, &conf);
 	if (ret != 0) {
-		/* ctdbd_config_load() logs the failure */
+		/* ctdb_config_load() logs the failure */
 		goto fail;
 	}
 

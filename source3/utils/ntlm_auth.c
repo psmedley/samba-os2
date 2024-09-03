@@ -1208,7 +1208,7 @@ static NTSTATUS ntlm_auth_prepare_gensec_client(TALLOC_CTX *mem_ctx,
 
 	/* These need to be in priority order, krb5 before NTLMSSP */
 #if defined(HAVE_KRB5)
-	backends[idx++] = &gensec_gse_krb5_security_ops;
+	backends[idx++] = gensec_gse_security_by_oid(GENSEC_OID_KERBEROS5);
 #endif
 
 	backends[idx++] = gensec_security_by_oid(NULL, GENSEC_OID_NTLMSSP);
@@ -1336,7 +1336,7 @@ static NTSTATUS ntlm_auth_prepare_gensec_server(TALLOC_CTX *mem_ctx,
 
 	/* These need to be in priority order, krb5 before NTLMSSP */
 #if defined(HAVE_KRB5)
-	backends[idx++] = &gensec_gse_krb5_security_ops;
+	backends[idx++] = gensec_gse_security_by_oid(GENSEC_OID_KERBEROS5);
 #endif
 
 	backends[idx++] = gensec_security_by_oid(NULL, GENSEC_OID_NTLMSSP);
@@ -1467,7 +1467,7 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 
 	static char *want_feature_list = NULL;
 	static DATA_BLOB session_key;
-
+	bool include_krb5_default_ccache = false;
 	TALLOC_CTX *mem_ctx;
 
 	mem_ctx = talloc_named(NULL, 0, "manage_gensec_request internal mem_ctx");
@@ -1551,6 +1551,9 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 			 * NTLMSSP_CLIENT_1 for now.
 			 */
 			use_cached_creds = false;
+			if (opt_username == NULL && state->set_password == NULL) {
+				include_krb5_default_ccache = true;
+			}
 			FALL_THROUGH;
 		case NTLMSSP_CLIENT_1:
 			/* setup the client side */
@@ -1602,6 +1605,21 @@ static void manage_gensec_request(enum stdio_helper_mode stdio_helper_mode,
 						    GENSEC_FEATURE_NTLM_CCACHE);
 			} else if (state->set_password) {
 				cli_credentials_set_password(creds, state->set_password, CRED_SPECIFIED);
+			} else if (include_krb5_default_ccache) {
+				const char *error_string = NULL;
+				int rc;
+
+				rc = cli_credentials_set_ccache(creds,
+								lp_ctx,
+								NULL,
+								CRED_SPECIFIED,
+								&error_string);
+				if (rc != 0) {
+					fprintf(stderr,
+						"Warning reading default "
+						"krb5 credentials cache: %s\n",
+						error_string);
+				}
 			} else {
 				cli_credentials_set_password_callback(creds, get_password);
 			}
@@ -2715,7 +2733,7 @@ enum {
 			opt_challenge = strhex_to_data_blob(NULL, hex_challenge);
 			if (opt_challenge.length != 8) {
 				fprintf(stderr, "hex decode of %s failed! "
-					"(only got %d bytes)\n",
+					"(got %d bytes, expected 8)\n",
 					hex_challenge,
 					(int)opt_challenge.length);
 				exit(1);
@@ -2725,7 +2743,7 @@ enum {
 			opt_lm_response = strhex_to_data_blob(NULL, hex_lm_response);
 			if (opt_lm_response.length != 24) {
 				fprintf(stderr, "hex decode of %s failed! "
-					"(only got %d bytes)\n",
+					"(got %d bytes, expected 24)\n",
 					hex_lm_response,
 					(int)opt_lm_response.length);
 				exit(1);
@@ -2736,7 +2754,7 @@ enum {
 			opt_nt_response = strhex_to_data_blob(NULL, hex_nt_response);
 			if (opt_nt_response.length < 24) {
 				fprintf(stderr, "hex decode of %s failed! "
-					"(only got %d bytes)\n",
+					"(only got %d bytes, needed at least 24)\n",
 					hex_nt_response,
 					(int)opt_nt_response.length);
 				exit(1);

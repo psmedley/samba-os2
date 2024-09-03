@@ -224,26 +224,6 @@ enum ldb_debug_level {LDB_DEBUG_FATAL, LDB_DEBUG_ERROR,
 #define LDB_DEBUG_ALWAYS_LOG  LDB_DEBUG_FATAL
 
 /**
-  the user can optionally supply a debug function. The function
-  is based on the vfprintf() style of interface, but with the addition
-  of a severity level
-*/
-struct ldb_debug_ops {
-	void (*debug)(void *context, enum ldb_debug_level level,
-		      const char *fmt, va_list ap) PRINTF_ATTRIBUTE(3,0);
-	void *context;
-};
-
-/**
-  The user can optionally supply a custom utf8 functions,
-  to handle comparisons and casefolding.
-*/
-struct ldb_utf8_fns {
-	void *context;
-	char *(*casefold)(void *context, TALLOC_CTX *mem_ctx, const char *s, size_t n);
-};
-
-/**
    Flag value for database connection mode.
 
    If LDB_FLG_RDONLY is used in ldb_connect, then the database will be
@@ -292,6 +272,12 @@ struct ldb_utf8_fns {
    wanted read operations, for example in ldbsearch.
 */
 #define LDB_FLG_DONT_CREATE_DB 64
+
+/**
+ * Allow DB create time flags that have meaning only to our
+ * calling application or modules.  These must be in this range:
+ */
+#define LDB_FLG_PRIVATE_MASK 0xff000000
 
 /*
    structures for ldb_parse_tree handling code
@@ -1160,8 +1146,8 @@ struct ldb_dn *ldb_get_default_basedn(struct ldb_context *ldb);
   from the ares reply passed on by the async core so that in the end all the
   messages will be in the context (ldb_result)  memory tree.
   Freeing the passed context (ldb_result tree) will free all the resources
-  (the request need to be freed separately and the result doe not depend on the
-  request that can be freed as sson as the search request is finished)
+  (the request need to be freed separately and the result does not depend on the
+  request that can be freed as soon as the search request is finished)
 */
 
 int ldb_search_default_callback(struct ldb_request *req, struct ldb_reply *ares);
@@ -1344,7 +1330,16 @@ int ldb_request_replace_control(struct ldb_request *req, const char *oid, bool c
 
 /**
    check if a control with the specified "oid" exist and return it
-  \param req the request struct where to add the control
+  \param controls the array of controls
+  \param oid the object identifier of the control as string
+
+  \return the control, NULL if not found
+*/
+struct ldb_control *ldb_controls_get_control(struct ldb_control **controls, const char *oid);
+
+/**
+   check if a control with the specified "oid" exist and return it
+  \param req the request struct to search for the control
   \param oid the object identifier of the control as string
 
   \return the control, NULL if not found
@@ -1353,7 +1348,7 @@ struct ldb_control *ldb_request_get_control(struct ldb_request *req, const char 
 
 /**
    check if a control with the specified "oid" exist and return it
-  \param rep the reply struct where to add the control
+  \param rep the reply struct to search for the control
   \param oid the object identifier of the control as string
 
   \return the control, NULL if not found
@@ -1457,8 +1452,8 @@ int ldb_delete(struct ldb_context *ldb, struct ldb_dn *dn);
   from the ares reply passed on by the async core so that in the end all the
   messages will be in the context (ldb_result)  memory tree.
   Freeing the passed context (ldb_result tree) will free all the resources
-  (the request need to be freed separately and the result doe not depend on the
-  request that can be freed as sson as the search request is finished)
+  (the request need to be freed separately and the result does not depend on the
+  request that can be freed as soon as the search request is finished)
 */
 
 int ldb_extended_default_callback(struct ldb_request *req, struct ldb_reply *ares);
@@ -1559,7 +1554,7 @@ void ldb_set_utf8_default(struct ldb_context *ldb);
    \brief Casefold a string
 
    Note that the callback needs to be ASCII compatible. So first ASCII needs
-   to be handle before any UTF-8. This is needed to avoid issues with dotted
+   to be handled before any UTF-8. This is needed to avoid issues with dotted
    languages.
 
    \param ldb the ldb context
@@ -1637,7 +1632,7 @@ void ldb_ldif_read_free(struct ldb_context *ldb, struct ldb_ldif *msg);
    integer corresponding to the next byte read (or EOF if there is no
    more data to be read).
    \param private_data pointer that will be provided back to the read
-   function. This is udeful for maintaining state or context.
+   function. This is useful for maintaining state or context.
 
    \return the LDIF message that has been read in
 
@@ -1907,6 +1902,9 @@ bool ldb_dn_add_child_val(struct ldb_dn *dn,
 			  struct ldb_val value);
 
 struct ldb_dn *ldb_dn_copy(TALLOC_CTX *mem_ctx, struct ldb_dn *dn);
+struct ldb_dn *ldb_dn_copy_with_ldb_context(TALLOC_CTX *mem_ctx,
+					    struct ldb_dn *dn,
+					    struct ldb_context *ldb);
 struct ldb_dn *ldb_dn_get_parent(TALLOC_CTX *mem_ctx, struct ldb_dn *dn);
 char *ldb_dn_canonical_string(TALLOC_CTX *mem_ctx, struct ldb_dn *dn);
 char *ldb_dn_canonical_ex_string(TALLOC_CTX *mem_ctx, struct ldb_dn *dn);
@@ -2195,13 +2193,37 @@ int ldb_set_debug(struct ldb_context *ldb,
 		  void *context);
 
 /**
-  this allows the user to set custom utf8 function for error reporting. make
-  sure it is able to handle ASCII first, so it prevents issues with dotted
-  languages.
-*/
+ * This allows the user to set custom utf8 functions.
+ *
+ * Be aware that casefold in some locales will break ldb expectations. In
+ * particular, if 'i' is uppercased to 'İ' (a capital I with a dot, used in
+ * some languages), the string '<guid=' will not equal '<GUID='.
+ *
+ * The default functions casefold ASCII only, and those used by Samba use a
+ * version of the NTFS UCS-2 upcase table which is dotted-i safe.
+ *
+ * The context argument will be passed to the casefold() and casecmp()
+ * functions as the first argument. It is unused in the default and Samba
+ * implementations, but could for example be used to hold a libICU context.
+ *
+ * The second argument for the casefold function is a TALLOC context.
+ */
+void ldb_set_utf8_functions(struct ldb_context *ldb,
+			    void *context,
+			    char *(*casefold)(void *, void *, const char *, size_t n),
+			    int (*casecmp)(void *ctx, const struct ldb_val *v1,
+					   const struct ldb_val *v2));
+
+/**
+ * This legacy function is for setting a custom utf8 casefold function. It
+ * cannot set a comparison function, which makes it very difficult for a
+ * comparison to be both efficient and correct.
+ *
+ * Use ldb_set_utf8_functions() instead!
+ */
 void ldb_set_utf8_fns(struct ldb_context *ldb,
 		      void *context,
-		      char *(*casefold)(void *, void *, const char *, size_t n));
+		      char *(*casefold)(void *, void *, const char *, size_t n)) _DEPRECATED_;
 
 /**
    this sets up debug to print messages on stderr

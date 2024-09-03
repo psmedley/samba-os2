@@ -34,6 +34,8 @@
 #include "lib/param/loadparm.h"
 #include "libsmb/namequery.h"
 #include "../librpc/gen_ndr/ndr_ads.h"
+#include "auth/credentials/credentials.h"
+#include "passdb.h"
 
 #ifdef HAVE_LDAP
 
@@ -153,6 +155,11 @@ static int ldap_search_with_timeout(LDAP *ld,
 	struct timeval timeout;
 	struct timeval *timeout_ptr = NULL;
 	int result;
+
+	DBG_DEBUG("ldap_search: base => [%s], filter => [%s], scope => [%d]\n",
+		 base,
+		 filter,
+		 scope);
 
 	/* Setup timeout for the ldap_search_ext_s call - local and remote. */
 	gotalarm = 0;
@@ -725,7 +732,7 @@ static NTSTATUS ads_find_dc(ADS_STRUCT *ads)
 	 * In case of LDAP we use get_dc_name() as that
 	 * creates the custom krb5.conf file
 	 */
-	if (!(ads->auth.flags & ADS_AUTH_NO_BIND)) {
+	if (ads->auth.flags & ADS_AUTH_GENERATE_KRB5_CONFIG) {
 		fstring srv_name;
 		struct sockaddr_storage ip_out;
 
@@ -805,20 +812,40 @@ static NTSTATUS ads_find_dc(ADS_STRUCT *ads)
 		  c_realm, c_domain, nt_errstr(status)));
 	return status;
 }
+
 /**
  * Connect to the LDAP server
  * @param ads Pointer to an existing ADS_STRUCT
  * @return status of connection
  **/
-ADS_STATUS ads_connect(ADS_STRUCT *ads)
+static ADS_STATUS ads_connect_internal(ADS_STRUCT *ads,
+				       struct cli_credentials *creds)
 {
 	int version = LDAP_VERSION3;
 	ADS_STATUS status;
 	NTSTATUS ntstatus;
 	char addr[INET6_ADDRSTRLEN];
 	struct sockaddr_storage existing_ss;
+	bool tls = false;
+	bool start_tls = false;
 
 	zero_sockaddr(&existing_ss);
+
+	if (!(ads->auth.flags & ADS_AUTH_NO_BIND)) {
+		SMB_ASSERT(creds != NULL);
+	}
+
+	if (ads->auth.flags & ADS_AUTH_ANON_BIND) {
+		/*
+		 * Simple anonyous binds are only
+		 * allowed for anonymous credentials
+		 */
+		SMB_ASSERT(cli_credentials_is_anonymous(creds));
+	}
+
+	if (!(ads->auth.flags & (ADS_AUTH_NO_BIND|ADS_AUTH_ANON_BIND))) {
+		ads->auth.flags |= ADS_AUTH_GENERATE_KRB5_CONFIG;
+	}
 
 	/*
 	 * ads_connect can be passed in a reused ADS_STRUCT
@@ -844,6 +871,7 @@ ADS_STATUS ads_connect(ADS_STRUCT *ads)
 	}
 
 	ads_zero_ldap(ads);
+	ZERO_STRUCT(ads->ldap_tls_data);
 	ZERO_STRUCT(ads->ldap_wrap_data);
 	ads->ldap.last_attempt	= time_mono(NULL);
 	ads->ldap_wrap_data.wrap_type	= ADS_SASLWRAP_TYPE_PLAIN;
@@ -925,27 +953,6 @@ got_connection:
 	print_sockaddr(addr, sizeof(addr), &ads->ldap.ss);
 	DEBUG(3,("Successfully contacted LDAP server %s\n", addr));
 
-	if (!ads->auth.user_name) {
-		/* Must use the userPrincipalName value here or sAMAccountName
-		   and not servicePrincipalName; found by Guenther Deschner */
-		ads->auth.user_name = talloc_asprintf(ads,
-						      "%s$",
-						      lp_netbios_name());
-		if (ads->auth.user_name == NULL) {
-			DBG_ERR("talloc_asprintf failed\n");
-			status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
-			goto out;
-		}
-	}
-
-	if (ads->auth.realm == NULL) {
-		ads->auth.realm = talloc_strdup(ads, ads->config.realm);
-		if (ads->auth.realm == NULL) {
-			status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
-			goto out;
-		}
-	}
-
 	if (!ads->auth.kdc_server) {
 		print_sockaddr(addr, sizeof(addr), &ads->ldap.ss);
 		ads->auth.kdc_server = talloc_strdup(ads, addr);
@@ -962,6 +969,12 @@ got_connection:
 		goto out;
 	}
 
+	ads->ldap_tls_data.mem_ctx = talloc_init("ads LDAP TLS connection memory");
+	if (!ads->ldap_tls_data.mem_ctx) {
+		status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+		goto out;
+	}
+
 	ads->ldap_wrap_data.mem_ctx = talloc_init("ads LDAP connection memory");
 	if (!ads->ldap_wrap_data.mem_ctx) {
 		status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
@@ -969,6 +982,17 @@ got_connection:
 	}
 
 	/* Otherwise setup the TCP LDAP session */
+
+	if (ads->auth.flags & ADS_AUTH_SASL_LDAPS) {
+		tls = true;
+		ads->ldap.port = 636;
+	} else if (ads->auth.flags & ADS_AUTH_SASL_STARTTLS) {
+		tls = true;
+		start_tls = true;
+		ads->ldap.port = 389;
+	} else {
+		ads->ldap.port = 389;
+	}
 
 	ads->ldap.ld = ldap_open_with_timeout(ads->config.ldap_server_name,
 					      &ads->ldap.ss,
@@ -979,13 +1003,84 @@ got_connection:
 	}
 	DEBUG(3,("Connected to LDAP server %s\n", ads->config.ldap_server_name));
 
+	ldap_set_option(ads->ldap.ld, LDAP_OPT_PROTOCOL_VERSION, &version);
+
+	if (start_tls) {
+		unsigned int to = lp_ldap_connection_timeout();
+		struct berval *rspdata = NULL;
+		char *rspoid = NULL;
+		int rc;
+
+		if (to) {
+			/* Setup timeout */
+			gotalarm = 0;
+			CatchSignal(SIGALRM, gotalarm_sig);
+			alarm(to);
+			/* End setup timeout. */
+		}
+
+		rc = ldap_extended_operation_s(ads->ldap.ld,
+					       LDAP_EXOP_START_TLS,
+					       NULL,
+					       NULL,
+					       NULL,
+					       &rspoid,
+					       &rspdata);
+		if (gotalarm != 0 && rc == LDAP_SUCCESS) {
+			rc = LDAP_TIMEOUT;
+		}
+
+		if (to) {
+			/* Teardown timeout. */
+			alarm(0);
+			CatchSignal(SIGALRM, SIG_IGN);
+		}
+
+		if (rspoid != NULL) {
+			ldap_memfree(rspoid);
+		}
+
+		if (rspdata != NULL) {
+			ber_bvfree(rspdata);
+		}
+
+		if (rc != LDAP_SUCCESS) {
+			status = ADS_ERROR_LDAP(rc);
+			goto out;
+		}
+	}
+
+	if (tls) {
+		unsigned int to = lp_ldap_connection_timeout();
+
+		if (to) {
+			/* Setup timeout */
+			gotalarm = 0;
+			CatchSignal(SIGALRM, gotalarm_sig);
+			alarm(to);
+			/* End setup timeout. */
+		}
+
+		status = ads_setup_tls_wrapping(&ads->ldap_tls_data,
+						ads->ldap.ld,
+						ads->config.ldap_server_name);
+
+		if (to) {
+			/* Teardown timeout. */
+			alarm(0);
+			CatchSignal(SIGALRM, SIG_IGN);
+		}
+
+		if ( !ADS_ERR_OK(status) ) {
+			goto out;
+		}
+	}
+
 	/* cache the successful connection for workgroup and realm */
 	if (ads_closest_dc(ads)) {
 		saf_store( ads->server.workgroup, ads->config.ldap_server_name);
 		saf_store( ads->server.realm, ads->config.ldap_server_name);
 	}
-
-	ldap_set_option(ads->ldap.ld, LDAP_OPT_PROTOCOL_VERSION, &version);
 
 	/* fill in the current time and offsets */
 
@@ -1001,12 +1096,7 @@ got_connection:
 		goto out;
 	}
 
-	if (ads->auth.flags & ADS_AUTH_SIMPLE_BIND) {
-		status = ADS_ERROR(ldap_simple_bind_s(ads->ldap.ld, ads->auth.user_name, ads->auth.password));
-		goto out;
-	}
-
-	status = ads_sasl_bind(ads);
+	status = ads_sasl_bind(ads, creds);
 
  out:
 	if (DEBUGLEVEL >= 11) {
@@ -1021,18 +1111,98 @@ got_connection:
 }
 
 /**
- * Connect to the LDAP server using given credentials
+ * Connect to the LDAP server using without a bind
+ * and without a tcp connection at all
+ *
  * @param ads Pointer to an existing ADS_STRUCT
  * @return status of connection
  **/
-ADS_STATUS ads_connect_user_creds(ADS_STRUCT *ads)
+ADS_STATUS ads_connect_cldap_only(ADS_STRUCT *ads)
 {
-	ads->auth.flags |= ADS_AUTH_USER_CREDS;
-
-	return ads_connect(ads);
+	ads->auth.flags |= ADS_AUTH_NO_BIND;
+	return ads_connect_internal(ads, NULL);
 }
 
 /**
+ * Connect to the LDAP server
+ * @param ads Pointer to an existing ADS_STRUCT
+ * @return status of connection
+ **/
+ADS_STATUS ads_connect_creds(ADS_STRUCT *ads, struct cli_credentials *creds)
+{
+	SMB_ASSERT(creds != NULL);
+
+	/*
+	 * We allow upgrades from
+	 * ADS_AUTH_NO_BIND if credentials
+	 * are specified
+	 */
+	ads->auth.flags &= ~ADS_AUTH_NO_BIND;
+
+	/*
+	 * We allow upgrades from ADS_AUTH_ANON_BIND,
+	 * as we don't want to use simple binds with
+	 * non-anon credentials
+	 */
+	if (!cli_credentials_is_anonymous(creds)) {
+		ads->auth.flags &= ~ADS_AUTH_ANON_BIND;
+	}
+
+	return ads_connect_internal(ads, creds);
+}
+
+/**
+ * Connect to the LDAP server using anonymous credentials
+ * using a simple bind without username/password
+ *
+ * @param ads Pointer to an existing ADS_STRUCT
+ * @return status of connection
+ **/
+ADS_STATUS ads_connect_simple_anon(ADS_STRUCT *ads)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	struct cli_credentials *creds = NULL;
+	ADS_STATUS status;
+
+	creds = cli_credentials_init_anon(frame);
+	if (creds == NULL) {
+		TALLOC_FREE(frame);
+		return ADS_ERROR_SYSTEM(errno);
+	}
+
+	ads->auth.flags |= ADS_AUTH_ANON_BIND;
+	status = ads_connect_creds(ads, creds);
+	TALLOC_FREE(frame);
+	return status;
+}
+
+/**
+ * Connect to the LDAP server using the machine account
+ * @param ads Pointer to an existing ADS_STRUCT
+ * @return status of connection
+ **/
+ADS_STATUS ads_connect_machine(ADS_STRUCT *ads)
+{
+	TALLOC_CTX *frame = talloc_stackframe();
+	struct cli_credentials *creds = NULL;
+	ADS_STATUS status;
+	NTSTATUS ntstatus;
+
+	ntstatus = pdb_get_trust_credentials(ads->server.workgroup,
+					     ads->server.realm,
+					     frame,
+					     &creds);
+	if (!NT_STATUS_IS_OK(ntstatus)) {
+		TALLOC_FREE(frame);
+		return ADS_ERROR_NT(ntstatus);
+	}
+
+	status = ads_connect_creds(ads, creds);
+	TALLOC_FREE(frame);
+	return status;
+}
+
+/*
  * Zero out the internal ads->ldap struct and initialize the address to zero IP.
  * @param ads Pointer to an existing ADS_STRUCT
  *
@@ -1061,6 +1231,9 @@ void ads_disconnect(ADS_STRUCT *ads)
 		ldap_unbind(ads->ldap.ld);
 		ads->ldap.ld = NULL;
 	}
+	if (ads->ldap_tls_data.mem_ctx) {
+		talloc_free(ads->ldap_tls_data.mem_ctx);
+	}
 	if (ads->ldap_wrap_data.wrap_ops &&
 		ads->ldap_wrap_data.wrap_ops->disconnect) {
 		ads->ldap_wrap_data.wrap_ops->disconnect(&ads->ldap_wrap_data);
@@ -1069,6 +1242,7 @@ void ads_disconnect(ADS_STRUCT *ads)
 		talloc_free(ads->ldap_wrap_data.mem_ctx);
 	}
 	ads_zero_ldap(ads);
+	ZERO_STRUCT(ads->ldap_tls_data);
 	ZERO_STRUCT(ads->ldap_wrap_data);
 }
 
@@ -1687,9 +1861,9 @@ char *ads_parent_dn(const char *dn)
 		"DnsHostName",
 		"ServicePrincipalName",
 		"userPrincipalName",
-		"unicodePwd",
 
 		/* Additional attributes Samba checks */
+		"msDS-KeyVersionNumber",
 		"msDS-AdditionalDnsHostName",
 		"msDS-SupportedEncryptionTypes",
 		"nTSecurityDescriptor",
@@ -1850,7 +2024,7 @@ static ADS_STATUS ads_mod_ber(TALLOC_CTX *ctx, ADS_MODLIST *mods,
 	if (!val)
 		return ads_modlist_add(ctx, mods, LDAP_MOD_DELETE, name, NULL);
 	return ads_modlist_add(ctx, mods, LDAP_MOD_REPLACE|LDAP_MOD_BVALUES,
-			       name, (const void **) values);
+			       name, (const void *) values);
 }
 
 static void ads_print_error(int ret, LDAP *ld)
@@ -2108,86 +2282,6 @@ ADS_STATUS ads_add_strlist(TALLOC_CTX *ctx, ADS_MODLIST *mods,
 {
 	return ads_modlist_add(ctx, mods, LDAP_MOD_ADD, name,
 			       (const void *) vals);
-}
-
-/**
- * Determines the an account's current KVNO via an LDAP lookup
- * @param ads An initialized ADS_STRUCT
- * @param account_name the NT samaccountname.
- * @return the kvno for the account, or -1 in case of a failure.
- **/
-
-uint32_t ads_get_kvno(ADS_STRUCT *ads, const char *account_name)
-{
-	LDAPMessage *res = NULL;
-	uint32_t kvno = (uint32_t)-1;      /* -1 indicates a failure */
-	char *filter;
-	const char *attrs[] = {"msDS-KeyVersionNumber", NULL};
-	char *dn_string = NULL;
-	ADS_STATUS ret;
-
-	DEBUG(5,("ads_get_kvno: Searching for account %s\n", account_name));
-	if (asprintf(&filter, "(samAccountName=%s)", account_name) == -1) {
-		return kvno;
-	}
-	ret = ads_search(ads, &res, filter, attrs);
-	SAFE_FREE(filter);
-	if (!ADS_ERR_OK(ret) || (ads_count_replies(ads, res) != 1)) {
-		DEBUG(1,("ads_get_kvno: Account for %s not found.\n", account_name));
-		ads_msgfree(ads, res);
-		return kvno;
-	}
-
-	dn_string = ads_get_dn(ads, talloc_tos(), res);
-	if (!dn_string) {
-		DEBUG(0,("ads_get_kvno: out of memory.\n"));
-		ads_msgfree(ads, res);
-		return kvno;
-	}
-	DEBUG(5,("ads_get_kvno: Using: %s\n", dn_string));
-	TALLOC_FREE(dn_string);
-
-	/* ---------------------------------------------------------
-	 * 0 is returned as a default KVNO from this point on...
-	 * This is done because Windows 2000 does not support key
-	 * version numbers.  Chances are that a failure in the next
-	 * step is simply due to Windows 2000 being used for a
-	 * domain controller. */
-	kvno = 0;
-
-	if (!ads_pull_uint32(ads, res, "msDS-KeyVersionNumber", &kvno)) {
-		DEBUG(3,("ads_get_kvno: Error Determining KVNO!\n"));
-		DEBUG(3,("ads_get_kvno: Windows 2000 does not support KVNO's, so this may be normal.\n"));
-		ads_msgfree(ads, res);
-		return kvno;
-	}
-
-	/* Success */
-	DEBUG(5,("ads_get_kvno: Looked Up KVNO of: %d\n", kvno));
-	ads_msgfree(ads, res);
-	return kvno;
-}
-
-/**
- * Determines the computer account's current KVNO via an LDAP lookup
- * @param ads An initialized ADS_STRUCT
- * @param machine_name the NetBIOS name of the computer, which is used to identify the computer account.
- * @return the kvno for the computer account, or -1 in case of a failure.
- **/
-
-uint32_t ads_get_machine_kvno(ADS_STRUCT *ads, const char *machine_name)
-{
-	char *computer_account = NULL;
-	uint32_t kvno = -1;
-
-	if (asprintf(&computer_account, "%s$", machine_name) < 0) {
-		return kvno;
-	}
-
-	kvno = ads_get_kvno(ads, computer_account);
-	free(computer_account);
-
-	return kvno;
 }
 
 /**
@@ -2902,11 +2996,13 @@ static bool ads_dump_field(ADS_STRUCT *ads, char *field, void **values, void *da
 		{"nTSecurityDescriptor", False, dump_sd},
 		{"dnsRecord", False, dump_binary},
 		{"objectSid", False, dump_sid},
+		{"securityIdentifier", False, dump_sid},
 		{"tokenGroups", False, dump_sid},
 		{"tokenGroupsNoGCAcceptable", False, dump_sid},
 		{"tokengroupsGlobalandUniversal", False, dump_sid},
 		{"mS-DS-CreatorSID", False, dump_sid},
 		{"msExchMailboxGuid", False, dump_guid},
+		{"msDS-TrustForestTrustInfo", False, dump_binary},
 		{NULL, True, NULL}
 	};
 	int i;
@@ -3548,8 +3644,7 @@ ADS_STATUS ads_current_time(ADS_STRUCT *ads)
 		 */
 		ads_s->config.flags = 0;
 
-		ads_s->auth.flags = ADS_AUTH_ANON_BIND;
-		status = ads_connect( ads_s );
+		status = ads_connect_simple_anon(ads_s);
 		if ( !ADS_ERR_OK(status))
 			goto done;
 	}
@@ -3571,9 +3666,15 @@ ADS_STATUS ads_current_time(ADS_STRUCT *ads)
 	ads->config.current_time = ads_parse_time(timestr);
 
 	if (ads->config.current_time != 0) {
-		ads->auth.time_offset = ads->config.current_time - time(NULL);
-		DEBUG(4,("KDC time offset is %d seconds\n", ads->auth.time_offset));
+		ads->config.time_offset = ads->config.current_time - time(NULL);
+		DBG_INFO("server time offset is %d seconds\n",
+			 ads->config.time_offset);
+	} else {
+		ads->config.time_offset = 0;
 	}
+
+	DBG_INFO("server time offset is %d seconds\n",
+		 ads->config.time_offset);
 
 	ads_msgfree(ads, res);
 
@@ -3632,8 +3733,7 @@ ADS_STATUS ads_domain_func_level(ADS_STRUCT *ads, uint32_t *val)
 		 */
 		ads_s->config.flags = 0;
 
-		ads_s->auth.flags = ADS_AUTH_ANON_BIND;
-		status = ads_connect( ads_s );
+		status = ads_connect_simple_anon(ads_s);
 		if ( !ADS_ERR_OK(status))
 			goto done;
 	}
@@ -3998,124 +4098,6 @@ ADS_STATUS ads_get_sid_from_extended_dn(TALLOC_CTX *mem_ctx,
 /********************************************************************
 ********************************************************************/
 
-char* ads_get_dnshostname( ADS_STRUCT *ads, TALLOC_CTX *ctx, const char *machine_name )
-{
-	LDAPMessage *res = NULL;
-	ADS_STATUS status;
-	int count = 0;
-	char *name = NULL;
-
-	status = ads_find_machine_acct(ads, &res, machine_name);
-	if (!ADS_ERR_OK(status)) {
-		DEBUG(0,("ads_get_dnshostname: Failed to find account for %s\n",
-			lp_netbios_name()));
-		goto out;
-	}
-
-	if ( (count = ads_count_replies(ads, res)) != 1 ) {
-		DEBUG(1,("ads_get_dnshostname: %d entries returned!\n", count));
-		goto out;
-	}
-
-	if ( (name = ads_pull_string(ads, ctx, res, "dNSHostName")) == NULL ) {
-		DEBUG(0,("ads_get_dnshostname: No dNSHostName attribute!\n"));
-	}
-
-out:
-	ads_msgfree(ads, res);
-
-	return name;
-}
-
-/********************************************************************
-********************************************************************/
-
-static char **get_addl_hosts(ADS_STRUCT *ads, TALLOC_CTX *mem_ctx,
-			      LDAPMessage *msg, size_t *num_values)
-{
-	const char *field = "msDS-AdditionalDnsHostName";
-	struct berval **values = NULL;
-	char **ret = NULL;
-	size_t i, converted_size;
-
-	/*
-	 * Windows DC implicitly adds a short name for each FQDN added to
-	 * msDS-AdditionalDnsHostName, but it comes with a strange binary
-	 * suffix "\0$" which we should ignore (see bug #14406).
-	 */
-
-	values = ldap_get_values_len(ads->ldap.ld, msg, field);
-	if (values == NULL) {
-		return NULL;
-	}
-
-	*num_values = ldap_count_values_len(values);
-
-	ret = talloc_array(mem_ctx, char *, *num_values + 1);
-	if (ret == NULL) {
-		ldap_value_free_len(values);
-		return NULL;
-	}
-
-	for (i = 0; i < *num_values; i++) {
-		ret[i] = NULL;
-		if (!convert_string_talloc(mem_ctx, CH_UTF8, CH_UNIX,
-					   values[i]->bv_val,
-					   strnlen(values[i]->bv_val,
-						   values[i]->bv_len),
-					   &ret[i], &converted_size)) {
-			ldap_value_free_len(values);
-			return NULL;
-		}
-	}
-	ret[i] = NULL;
-
-	ldap_value_free_len(values);
-	return ret;
-}
-
-ADS_STATUS ads_get_additional_dns_hostnames(TALLOC_CTX *mem_ctx,
-					    ADS_STRUCT *ads,
-					    const char *machine_name,
-					    char ***hostnames_array,
-					    size_t *num_hostnames)
-{
-	ADS_STATUS status;
-	LDAPMessage *res = NULL;
-	int count;
-
-	status = ads_find_machine_acct(ads,
-				       &res,
-				       machine_name);
-	if (!ADS_ERR_OK(status)) {
-		DEBUG(1,("Host Account for %s not found... skipping operation.\n",
-			 machine_name));
-		return status;
-	}
-
-	count = ads_count_replies(ads, res);
-	if (count != 1) {
-		status = ADS_ERROR(LDAP_NO_SUCH_OBJECT);
-		goto done;
-	}
-
-	*hostnames_array = get_addl_hosts(ads, mem_ctx, res, num_hostnames);
-	if (*hostnames_array == NULL) {
-		DEBUG(1, ("Host account for %s does not have msDS-AdditionalDnsHostName.\n",
-			  machine_name));
-		status = ADS_ERROR(LDAP_NO_SUCH_OBJECT);
-		goto done;
-	}
-
-done:
-	ads_msgfree(ads, res);
-
-	return status;
-}
-
-/********************************************************************
-********************************************************************/
-
 char* ads_get_upn( ADS_STRUCT *ads, TALLOC_CTX *ctx, const char *machine_name )
 {
 	LDAPMessage *res = NULL;
@@ -4143,42 +4125,6 @@ out:
 	ads_msgfree(ads, res);
 
 	return name;
-}
-
-/********************************************************************
-********************************************************************/
-
-bool ads_has_samaccountname( ADS_STRUCT *ads, TALLOC_CTX *ctx, const char *machine_name )
-{
-	LDAPMessage *res = NULL;
-	ADS_STATUS status;
-	int count = 0;
-	char *name = NULL;
-	bool ok = false;
-
-	status = ads_find_machine_acct(ads, &res, machine_name);
-	if (!ADS_ERR_OK(status)) {
-		DEBUG(0,("ads_has_samaccountname: Failed to find account for %s\n",
-			lp_netbios_name()));
-		goto out;
-	}
-
-	if ( (count = ads_count_replies(ads, res)) != 1 ) {
-		DEBUG(1,("ads_has_samaccountname: %d entries returned!\n", count));
-		goto out;
-	}
-
-	if ( (name = ads_pull_string(ads, ctx, res, "sAMAccountName")) == NULL ) {
-		DEBUG(0,("ads_has_samaccountname: No sAMAccountName attribute!\n"));
-	}
-
-out:
-	ads_msgfree(ads, res);
-	if (name != NULL) {
-		ok = (strlen(name) > 0);
-	}
-	TALLOC_FREE(name);
-	return ok;
 }
 
 #if 0

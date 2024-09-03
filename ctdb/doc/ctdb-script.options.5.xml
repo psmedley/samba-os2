@@ -691,6 +691,51 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 	  </listitem>
 	</varlistentry>
 
+	<varlistentry>
+	  <term>
+	    CTDB_SAMBA_INTERFACES_FILE=<parameter>FILENAME</parameter>
+	  </term>
+	  <listitem>
+	    <para>
+	      Generates FILENAME, containing an smb.conf snippet with
+	      an interfaces setting that includes interfaces for
+	      configured CTDB public IP addresses.  This file then
+	      needs to be explicitly included in smb.conf.
+	    </para>
+	    <para>
+	      For example, if public IP addresses are defined on
+	      interfaces eth0 and eth1, and this is set to
+	      <filename>/etc/samba/interfaces.conf</filename>, then
+	      that file will contain the following before smbd is
+	      started:
+	    </para>
+	    <screen>
+     bind interfaces only = yes
+     interfaces = lo eth0 eth1
+	    </screen>
+	    <para>
+	      This can be useful for limiting the interfaces used by
+	      SMB multichannel.
+	    </para>
+	    <para>
+	      Default is to not generate a file.
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+	<varlistentry>
+	  <term>
+	    CTDB_SAMBA_INTERFACES_EXTRA=<parameter>INTERFACE-LIST</parameter>
+	  </term>
+	  <listitem>
+	    <para>
+	      A space separated list to provide additional interfaces to bind.
+	    </para>
+	    <para>
+	      Default is empty - no extra interfaces are added.
+	    </para>
+	  </listitem>
+	</varlistentry>
       </variablelist>
 
     </refsect2>
@@ -758,8 +803,7 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
       <title>60.nfs</title>
 
       <para>
-	This event script (along with 06.nfs) provides CTDB's NFS
-	service management.
+	This event script provides CTDB's NFS service management.
       </para>
 
       <para>
@@ -814,6 +858,29 @@ CTDB_PER_IP_ROUTING_TABLE_ID_HIGH=9000
 	      <filename>/usr/local/etc/ctdb/nfs-checks.d</filename>,
 	      which contains NFS RPC checks suitable for Linux kernel
 	      NFS.
+	    </para>
+	  </listitem>
+	</varlistentry>
+
+	<varlistentry>
+	  <term>
+	    CTDB_NFS_EXPORTS_FILE=<parameter>FILE</parameter>
+	  </term>
+	  <listitem>
+	    <para>
+	      Set FILE as the path of the file containing NFS exports,
+	      for use by the NFS callout (see CTDB_NFS_CALLOUT,
+	      above).  This is used for share checks when
+	      CTDB_NFS_SKIP_SHARE_CHECK is not set to "yes".  This is
+	      most useful with NFS-Ganesha, since it supports
+	      configuration include files and exports may be stored in
+	      a separate file.
+	    </para>
+	    <para>
+	      Default is <filename>/var/lib/nfs/etab</filename> for
+	      <filename>nfs-linux-kernel-callout</filename>,
+	      <filename>/etc/ganesha/ganesha.conf</filename> for
+	      <filename>nfs-ganesha-callout</filename>.
 	    </para>
 	  </listitem>
 	</varlistentry>

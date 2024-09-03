@@ -17,14 +17,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "replace.h"
+#include "tldap.h"
 #include "tldap_gensec_bind.h"
-#include "tldap_util.h"
+#include "auth/credentials/credentials.h"
 #include "lib/util/tevent_unix.h"
 #include "lib/util/talloc_stack.h"
 #include "lib/util/samba_util.h"
 #include "lib/util/debug.h"
 #include "auth/gensec/gensec.h"
-#include "auth/gensec/gensec_internal.h" /* TODO: remove this */
 #include "lib/param/param.h"
 #include "source4/auth/gensec/gensec_tstream.h"
 
@@ -41,25 +42,25 @@ struct tldap_gensec_bind_state {
 	bool first;
 	struct gensec_security *gensec;
 	NTSTATUS gensec_status;
+	DATA_BLOB gensec_input;
 	DATA_BLOB gensec_output;
 };
 
-static void tldap_gensec_bind_got_mechs(struct tevent_req *subreq);
-static void tldap_gensec_update_done(struct tldap_gensec_bind_state *state,
-				struct tevent_req *subreq);
+static void tldap_gensec_update_next(struct tevent_req *req);
+static void tldap_gensec_update_done(struct tevent_req *subreq);
 static void tldap_gensec_bind_done(struct tevent_req *subreq);
 
-static struct tevent_req *tldap_gensec_bind_send(
+struct tevent_req *tldap_gensec_bind_send(
 	TALLOC_CTX *mem_ctx, struct tevent_context *ev,
 	struct tldap_context *ctx, struct cli_credentials *creds,
 	const char *target_service, const char *target_hostname,
 	const char *target_principal, struct loadparm_context *lp_ctx,
 	uint32_t gensec_features)
 {
-	struct tevent_req *req, *subreq;
-	struct tldap_gensec_bind_state *state;
-
-	const char *attrs[] = { "supportedSASLMechanisms" };
+	struct tevent_req *req = NULL;
+	struct tldap_gensec_bind_state *state = NULL;
+	const DATA_BLOB *tls_cb = NULL;
+	NTSTATUS status;
 
 	req = tevent_req_create(mem_ctx, &state,
 				struct tldap_gensec_bind_state);
@@ -76,85 +77,6 @@ static struct tevent_req *tldap_gensec_bind_send(
 	state->gensec_features = gensec_features;
 	state->first = true;
 
-	subreq = tldap_search_all_send(
-		state, state->ev, state->ctx, "", TLDAP_SCOPE_BASE,
-		"(objectclass=*)", attrs, ARRAY_SIZE(attrs),
-		false, NULL, 0, NULL, 0, 0, 1 /* sizelimit */, 0);
-	if (tevent_req_nomem(subreq, req)) {
-		return tevent_req_post(req, ev);
-	}
-	tevent_req_set_callback(subreq, tldap_gensec_bind_got_mechs, req);
-	return req;
-}
-
-static void tldap_gensec_bind_got_mechs(struct tevent_req *subreq)
-{
-	struct tevent_req *req = tevent_req_callback_data(
-		subreq, struct tevent_req);
-	struct tldap_gensec_bind_state *state = tevent_req_data(
-		req, struct tldap_gensec_bind_state);
-	struct tldap_message **msgs, *msg, *result;
-	struct tldap_attribute *attribs, *attrib;
-	int num_attribs;
-	size_t num_msgs;
-	TLDAPRC rc;
-	int i;
-	bool ok;
-	const char **sasl_mechs;
-	NTSTATUS status;
-
-	rc = tldap_search_all_recv(subreq, state, &msgs, &result);
-	TALLOC_FREE(subreq);
-	if (tevent_req_ldap_error(req, rc)) {
-		return;
-	}
-
-	/*
-	 * TODO: Inspect "Result"
-	 */
-
-	num_msgs = talloc_array_length(msgs);
-	if (num_msgs != 1) {
-		DBG_DEBUG("num_msgs = %zu\n", num_msgs);
-		tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-		return;
-	}
-	msg = msgs[0];
-
-	ok = tldap_entry_attributes(msg, &attribs, &num_attribs);
-	if (!ok) {
-		DBG_DEBUG("tldap_entry_attributes failed\n");
-		tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-		return;
-	}
-
-	if (num_attribs != 1) {
-		DBG_DEBUG("num_attribs = %d\n", num_attribs);
-		tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-		return;
-	}
-	attrib = &attribs[0];
-
-	sasl_mechs = talloc_array(state, const char *, attrib->num_values+1);
-	if (tevent_req_nomem(sasl_mechs, req)) {
-		return;
-	}
-
-	for (i=0; i<attrib->num_values; i++) {
-		DATA_BLOB *v = &attrib->values[i];
-		size_t len;
-
-		ok = convert_string_talloc(sasl_mechs, CH_UTF8, CH_UNIX,
-					   v->data, v->length,
-					   &sasl_mechs[i], &len);
-		if (!ok) {
-			DBG_DEBUG("convert_string_talloc failed\n");
-			tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-			return;
-		}
-	}
-	sasl_mechs[attrib->num_values] = NULL;
-
 	gensec_init();
 
 	status = gensec_client_start(
@@ -164,7 +86,7 @@ static void tldap_gensec_bind_got_mechs(struct tevent_req *subreq)
 		DBG_DEBUG("gensec_client_start failed: %s\n",
 			  nt_errstr(status));
 		tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-		return;
+		return tevent_req_post(req, ev);
 	}
 
 	status = gensec_set_credentials(state->gensec, state->creds);
@@ -172,7 +94,7 @@ static void tldap_gensec_bind_got_mechs(struct tevent_req *subreq)
 		DBG_DEBUG("gensec_set_credentials failed: %s\n",
 			  nt_errstr(status));
 		tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-		return;
+		return tevent_req_post(req, ev);
 	}
 
 	status = gensec_set_target_service(state->gensec,
@@ -181,7 +103,7 @@ static void tldap_gensec_bind_got_mechs(struct tevent_req *subreq)
 		DBG_DEBUG("gensec_set_target_service failed: %s\n",
 			  nt_errstr(status));
 		tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-		return;
+		return tevent_req_post(req, ev);
 	}
 
 	if (state->target_hostname != NULL) {
@@ -191,7 +113,7 @@ static void tldap_gensec_bind_got_mechs(struct tevent_req *subreq)
 			DBG_DEBUG("gensec_set_target_hostname failed: %s\n",
 				  nt_errstr(status));
 			tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-			return;
+			return tevent_req_post(req, ev);
 		}
 	}
 
@@ -202,31 +124,89 @@ static void tldap_gensec_bind_got_mechs(struct tevent_req *subreq)
 			DBG_DEBUG("gensec_set_target_principal failed: %s\n",
 				  nt_errstr(status));
 			tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-			return;
+			return tevent_req_post(req, ev);
+		}
+	}
+
+	if (tldap_has_tls_tstream(state->ctx)) {
+		if (gensec_features & (GENSEC_FEATURE_SIGN|GENSEC_FEATURE_SEAL)) {
+			DBG_WARNING("sign or seal not allowed over tls\n");
+			tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
+			return tevent_req_post(req, ev);
+		}
+
+		tls_cb = tldap_tls_channel_bindings(state->ctx);
+	}
+
+	if (tls_cb != NULL) {
+		uint32_t initiator_addrtype = 0;
+		const DATA_BLOB *initiator_address = NULL;
+		uint32_t acceptor_addrtype = 0;
+		const DATA_BLOB *acceptor_address = NULL;
+		const DATA_BLOB *application_data = tls_cb;
+
+		status = gensec_set_channel_bindings(state->gensec,
+						     initiator_addrtype,
+						     initiator_address,
+						     acceptor_addrtype,
+						     acceptor_address,
+						     application_data);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_DEBUG("gensec_set_channel_bindings: %s\n",
+				  nt_errstr(status));
+			tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
+			return tevent_req_post(req, ev);
 		}
 	}
 
 	gensec_want_feature(state->gensec, state->gensec_features);
 
-	status = gensec_start_mech_by_sasl_list(state->gensec, sasl_mechs);
+	status = gensec_start_mech_by_sasl_name(state->gensec, "GSS-SPNEGO");
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_DEBUG("gensec_start_mech_by_sasl_list failed: %s\n",
-			  nt_errstr(status));
+		DBG_ERR("gensec_start_mech_by_sasl_name(GSS-SPNEGO) failed: %s\n",
+			nt_errstr(status));
 		tevent_req_ldap_error(req, TLDAP_OPERATIONS_ERROR);
-		return;
+		return tevent_req_post(req, ev);
 	}
 
-	state->gensec_status = gensec_update(state->gensec, state,
-						data_blob_null,
-						&state->gensec_output);
-	tldap_gensec_update_done(state, req);
+	tldap_gensec_update_next(req);
+	if (!tevent_req_is_in_progress(req)) {
+		return tevent_req_post(req, ev);
+	}
+
+	return req;
 }
 
-static void tldap_gensec_update_done(struct tldap_gensec_bind_state *state,
-					struct tevent_req *req)
+static void tldap_gensec_update_next(struct tevent_req *req)
 {
-	struct tevent_req *subreq;
+	struct tldap_gensec_bind_state *state = tevent_req_data(
+		req, struct tldap_gensec_bind_state);
+	struct tevent_req *subreq = NULL;
 
+	subreq = gensec_update_send(state,
+				    state->ev,
+				    state->gensec,
+				    state->gensec_input);
+	if (tevent_req_nomem(subreq, req)) {
+		return;
+	}
+	tevent_req_set_callback(subreq,
+				tldap_gensec_update_done,
+				req);
+}
+
+static void tldap_gensec_update_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req = tevent_req_callback_data(
+		subreq, struct tevent_req);
+	struct tldap_gensec_bind_state *state = tevent_req_data(
+		req, struct tldap_gensec_bind_state);
+
+	state->gensec_status = gensec_update_recv(subreq,
+						  state,
+						  &state->gensec_output);
+	TALLOC_FREE(subreq);
+	data_blob_free(&state->gensec_input);
 	if (!NT_STATUS_IS_OK(state->gensec_status) &&
 	    !NT_STATUS_EQUAL(state->gensec_status,
 			     NT_STATUS_MORE_PROCESSING_REQUIRED)) {
@@ -249,10 +229,16 @@ static void tldap_gensec_update_done(struct tldap_gensec_bind_state *state,
 
 	state->first = false;
 
-	subreq = tldap_sasl_bind_send(
-		state, state->ev, state->ctx, "",
-		state->gensec->ops->sasl_name, &state->gensec_output,
-		NULL, 0, NULL, 0);
+	subreq = tldap_sasl_bind_send(state,
+				      state->ev,
+				      state->ctx,
+				      "",
+				      "GSS-SPNEGO",
+				      &state->gensec_output,
+				      NULL,
+				      0,
+				      NULL,
+				      0);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
 	}
@@ -265,11 +251,11 @@ static void tldap_gensec_bind_done(struct tevent_req *subreq)
 		subreq, struct tevent_req);
 	struct tldap_gensec_bind_state *state = tevent_req_data(
 		req, struct tldap_gensec_bind_state);
-	DATA_BLOB input;
 	TLDAPRC rc;
 
-	rc = tldap_sasl_bind_recv(subreq, state, &input);
+	rc = tldap_sasl_bind_recv(subreq, state, &state->gensec_input);
 	TALLOC_FREE(subreq);
+	data_blob_free(&state->gensec_output);
 	if (!TLDAP_RC_IS_SUCCESS(rc) &&
 	    !TLDAP_RC_EQUAL(rc, TLDAP_SASL_BIND_IN_PROGRESS)) {
 		tevent_req_ldap_error(req, rc);
@@ -281,13 +267,10 @@ static void tldap_gensec_bind_done(struct tevent_req *subreq)
 		return;
 	}
 
-	state->gensec_status = gensec_update(state->gensec, state,
-						input,
-						&state->gensec_output);
-	tldap_gensec_update_done(state, req);
+	tldap_gensec_update_next(req);
 }
 
-static TLDAPRC tldap_gensec_bind_recv(struct tevent_req *req)
+TLDAPRC tldap_gensec_bind_recv(struct tevent_req *req)
 {
 	struct tldap_gensec_bind_state *state = tevent_req_data(
 		req, struct tldap_gensec_bind_state);
@@ -319,7 +302,7 @@ static TLDAPRC tldap_gensec_bind_recv(struct tevent_req *req)
 	 */
 	talloc_steal(state->ctx, state->gensec);
 
-	plain = tldap_get_tstream(state->ctx);
+	plain = tldap_get_plain_tstream(state->ctx);
 
 	status = gensec_create_tstream(state->ctx, state->gensec,
 				       plain, &sec);
@@ -329,7 +312,7 @@ static TLDAPRC tldap_gensec_bind_recv(struct tevent_req *req)
 		return TLDAP_OPERATIONS_ERROR;
 	}
 
-	tldap_set_tstream(state->ctx, sec);
+	tldap_set_gensec_tstream(state->ctx, &sec);
 
 	return TLDAP_SUCCESS;
 }

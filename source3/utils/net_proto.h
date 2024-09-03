@@ -55,9 +55,10 @@ int net_ads_setspn(struct net_context *c, int argc, const char **argv);
 int net_ads(struct net_context *c, int argc, const char **argv);
 
 /* The following definitions come from utils/net_ads_join_dns.c  */
-void use_in_memory_ccache(void);
 NTSTATUS net_update_dns_ext(struct net_context *c,
-			    TALLOC_CTX *mem_ctx, ADS_STRUCT *ads,
+			    TALLOC_CTX *mem_ctx,
+			    ADS_STRUCT *ads,
+			    struct cli_credentials *creds,
 			    const char *hostname,
 			    struct sockaddr_storage *iplist,
 			    int num_addrs, bool remove_host);
@@ -445,7 +446,6 @@ NTSTATUS net_make_ipc_connection_ex(struct net_context *c ,const char *domain,
 				    const char *server,
 				    const struct sockaddr_storage *pss,
 				    unsigned flags, struct cli_state **pcli);
-const char *net_prompt_pass(struct net_context *c, const char *user);
 int net_run_function(struct net_context *c, int argc, const char **argv,
 		      const char *whoami, struct functable *table);
 void net_display_usage_from_functable(struct functable *table);

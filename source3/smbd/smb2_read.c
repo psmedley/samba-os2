@@ -204,7 +204,6 @@ static int smb2_smb2_read_state_deny_destructor(struct smbd_smb2_read_state *sta
 /* struct smbd_smb2_read_state destructor. Send the SMB2_READ data. */
 static int smb2_sendfile_send_data(struct smbd_smb2_read_state *state)
 {
-	struct lock_struct lock;
 	uint32_t in_length = state->in_length;
 	uint64_t in_offset = state->in_offset;
 	files_struct *fsp = state->fsp;
@@ -220,9 +219,9 @@ static int smb2_sendfile_send_data(struct smbd_smb2_read_state *state)
 				 hdr,
 				 in_offset,
 				 in_length);
-	DEBUG(10,("smb2_sendfile_send_data: SMB_VFS_SENDFILE returned %d on file %s\n",
-		(int)nread,
-		fsp_str_dbg(fsp) ));
+	DBG_DEBUG("SMB_VFS_SENDFILE returned %zd on file %s\n",
+		  nread,
+		  fsp_str_dbg(fsp));
 
 	if (nread == -1) {
 		saved_errno = errno;
@@ -251,21 +250,22 @@ static int smb2_sendfile_send_data(struct smbd_smb2_read_state *state)
 			nread = fake_sendfile(xconn, fsp, in_offset, in_length);
 			if (nread == -1) {
 				saved_errno = errno;
-				DEBUG(0,("smb2_sendfile_send_data: fake_sendfile "
-					 "failed for file %s (%s) for client %s. "
-					 "Terminating\n",
-					 fsp_str_dbg(fsp), strerror(saved_errno),
-					 smbXsrv_connection_dbg(xconn)));
+				DBG_ERR("fake_sendfile failed for file %s "
+					"(%s) for client %s. Terminating\n",
+					fsp_str_dbg(fsp),
+					strerror(saved_errno),
+					smbXsrv_connection_dbg(xconn));
 				*pstatus = map_nt_error_from_unix_common(saved_errno);
 				return 0;
 			}
 			goto out;
 		}
 
-		DEBUG(0,("smb2_sendfile_send_data: sendfile failed for file "
-			 "%s (%s) for client %s. Terminating\n",
-			 fsp_str_dbg(fsp), strerror(saved_errno),
-			 smbXsrv_connection_dbg(xconn)));
+		DBG_ERR("sendfile failed for file "
+			"%s (%s) for client %s. Terminating\n",
+			fsp_str_dbg(fsp),
+			strerror(saved_errno),
+			smbXsrv_connection_dbg(xconn));
 		*pstatus = map_nt_error_from_unix_common(saved_errno);
 		return 0;
 	} else if (nread == 0) {
@@ -276,9 +276,9 @@ static int smb2_sendfile_send_data(struct smbd_smb2_read_state *state)
 		 * fallback to the normal read path so the header gets
 		 * the correct byte count.
 		 */
-		DEBUG(3, ("send_file_readX: sendfile sent zero bytes "
-			"falling back to the normal read: %s\n",
-			fsp_str_dbg(fsp)));
+		DBG_NOTICE("sendfile sent zero bytes "
+			   "falling back to the normal read: %s\n",
+			   fsp_str_dbg(fsp));
 		goto normal_read;
 	}
 
@@ -293,21 +293,22 @@ normal_read:
 			 (const char *)hdr->data, hdr->length);
 	if (ret != hdr->length) {
 		saved_errno = errno;
-		DEBUG(0,("smb2_sendfile_send_data: write_data failed for file "
-			 "%s (%s) for client %s. Terminating\n",
-			 fsp_str_dbg(fsp), strerror(saved_errno),
-			 smbXsrv_connection_dbg(xconn)));
+		DBG_ERR("write_data failed for file "
+			"%s (%s) for client %s. Terminating\n",
+			fsp_str_dbg(fsp),
+			strerror(saved_errno),
+			smbXsrv_connection_dbg(xconn));
 		*pstatus = map_nt_error_from_unix_common(saved_errno);
 		return 0;
 	}
 	nread = fake_sendfile(xconn, fsp, in_offset, in_length);
 	if (nread == -1) {
 		saved_errno = errno;
-		DEBUG(0,("smb2_sendfile_send_data: fake_sendfile "
-			 "failed for file %s (%s) for client %s. "
-			 "Terminating\n",
-			 fsp_str_dbg(fsp), strerror(saved_errno),
-			 smbXsrv_connection_dbg(xconn)));
+		DBG_ERR("fake_sendfile failed for file %s (%s) for client %s. "
+			"Terminating\n",
+			fsp_str_dbg(fsp),
+			strerror(saved_errno),
+			smbXsrv_connection_dbg(xconn));
 		*pstatus = map_nt_error_from_unix_common(saved_errno);
 		return 0;
 	}
@@ -319,24 +320,16 @@ normal_read:
 					  hdr->length, in_length);
 		if (ret == -1) {
 			saved_errno = errno;
-			DEBUG(0,("%s: sendfile_short_send "
-				 "failed for file %s (%s) for client %s. "
-				 "Terminating\n",
-				 __func__,
-				 fsp_str_dbg(fsp), strerror(saved_errno),
-				 smbXsrv_connection_dbg(xconn)));
+			DBG_ERR("sendfile_short_send "
+				"failed for file %s (%s) for client %s. "
+				"Terminating\n",
+				fsp_str_dbg(fsp),
+				strerror(saved_errno),
+				smbXsrv_connection_dbg(xconn));
 			*pstatus = map_nt_error_from_unix_common(saved_errno);
 			return 0;
 		}
 	}
-
-	init_strict_lock_struct(fsp,
-				fsp->op->global->open_persistent_id,
-				in_offset,
-				in_length,
-				READ_LOCK,
-				lp_posix_cifsu_locktype(fsp),
-				&lock);
 
 	*pstatus = NT_STATUS_OK;
 	return 0;
@@ -579,11 +572,10 @@ static struct tevent_req *smbd_smb2_read_send(TALLOC_CTX *mem_ctx,
 	if (NT_STATUS_IS_OK(status)) {
 		tevent_req_done(req);
 		return tevent_req_post(req, ev);
-	} else {
-		if (!NT_STATUS_EQUAL(status, NT_STATUS_RETRY)) {
-			tevent_req_nterror(req, status);
-			return tevent_req_post(req, ev);
-		}
+	}
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_RETRY)) {
+		tevent_req_nterror(req, status);
+		return tevent_req_post(req, ev);
 	}
 
 	/* Ok, read into memory. Allocate the out buffer. */

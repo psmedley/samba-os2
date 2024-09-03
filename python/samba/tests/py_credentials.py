@@ -99,19 +99,19 @@ class PyCredentialsTests(TestCase):
     # an authenticator
     def test_client_authenticator(self):
         c = self.get_netlogon_connection()
-        (authenticator, subsequent) = self.get_authenticator(c)
+        (authenticator, subsequent) = self.get_authenticator()
         self.do_NetrLogonSamLogonWithFlags(c, authenticator, subsequent)
-        (authenticator, subsequent) = self.get_authenticator(c)
+        (authenticator, subsequent) = self.get_authenticator()
         self.do_NetrLogonGetDomainInfo(c, authenticator, subsequent)
-        (authenticator, subsequent) = self.get_authenticator(c)
+        (authenticator, subsequent) = self.get_authenticator()
         self.do_NetrLogonGetDomainInfo(c, authenticator, subsequent)
-        (authenticator, subsequent) = self.get_authenticator(c)
+        (authenticator, subsequent) = self.get_authenticator()
         self.do_NetrLogonGetDomainInfo(c, authenticator, subsequent)
 
     # Test using LogonGetDomainInfo to update dNSHostName to an allowed value.
     def test_set_dns_hostname_valid(self):
         c = self.get_netlogon_connection()
-        authenticator, subsequent = self.get_authenticator(c)
+        authenticator, subsequent = self.get_authenticator()
 
         domain_hostname = self.ldb.domain_dns_name()
 
@@ -144,7 +144,7 @@ class PyCredentialsTests(TestCase):
     # when we are denied the right to do so.
     def test_set_dns_hostname_valid_denied(self):
         c = self.get_netlogon_connection()
-        authenticator, subsequent = self.get_authenticator(c)
+        authenticator, subsequent = self.get_authenticator()
 
         res = self.ldb.search(self.machine_dn,
                               scope=ldb.SCOPE_BASE,
@@ -192,7 +192,7 @@ class PyCredentialsTests(TestCase):
     # invalid value, even with Validated Write.
     def test_set_dns_hostname_invalid_validated_write(self):
         c = self.get_netlogon_connection()
-        authenticator, subsequent = self.get_authenticator(c)
+        authenticator, subsequent = self.get_authenticator()
 
         res = self.ldb.search(self.machine_dn,
                               scope=ldb.SCOPE_BASE,
@@ -237,7 +237,7 @@ class PyCredentialsTests(TestCase):
     # invalid value, even with Write Property.
     def test_set_dns_hostname_invalid_write_property(self):
         c = self.get_netlogon_connection()
-        authenticator, subsequent = self.get_authenticator(c)
+        authenticator, subsequent = self.get_authenticator()
 
         res = self.ldb.search(self.machine_dn,
                               scope=ldb.SCOPE_BASE,
@@ -282,7 +282,7 @@ class PyCredentialsTests(TestCase):
     # machine name.
     def test_set_dns_hostname_to_machine_name(self):
         c = self.get_netlogon_connection()
-        authenticator, subsequent = self.get_authenticator(c)
+        authenticator, subsequent = self.get_authenticator()
 
         new_dns_hostname = self.machine_name.encode('utf-8')
 
@@ -312,7 +312,7 @@ class PyCredentialsTests(TestCase):
     # suffix.
     def test_set_dns_hostname_invalid_suffix(self):
         c = self.get_netlogon_connection()
-        authenticator, subsequent = self.get_authenticator(c)
+        authenticator, subsequent = self.get_authenticator()
 
         domain_hostname = self.ldb.domain_dns_name()
 
@@ -345,7 +345,7 @@ class PyCredentialsTests(TestCase):
     # update, but other attributes are still updated.
     def test_set_dns_hostname_with_flag(self):
         c = self.get_netlogon_connection()
-        authenticator, subsequent = self.get_authenticator(c)
+        authenticator, subsequent = self.get_authenticator()
 
         domain_hostname = self.ldb.domain_dns_name()
 
@@ -505,21 +505,21 @@ class PyCredentialsTests(TestCase):
 
     def do_Netr_ServerPasswordSet2(self):
         c = self.get_netlogon_connection()
-        (authenticator, subsequent) = self.get_authenticator(c)
+        (authenticator, subsequent) = self.get_authenticator()
         PWD_LEN  = 32
         DATA_LEN = 512
         newpass = samba.generate_random_password(PWD_LEN, PWD_LEN)
         encoded = newpass.encode('utf-16-le')
         pwd_len = len(encoded)
-        filler  = [x if isinstance(x, int) else ord(x) for x in os.urandom(DATA_LEN - pwd_len)]
+        filler  = list(os.urandom(DATA_LEN - pwd_len))
         pwd = netlogon.netr_CryptPassword()
         pwd.length = pwd_len
-        pwd.data = filler + [x if isinstance(x, int) else ord(x) for x in encoded]
+        pwd.data = filler + list(encoded)
         self.machine_creds.encrypt_netr_crypt_password(pwd)
         c.netr_ServerPasswordSet2(self.server,
-                                  self.machine_creds.get_workstation(),
+                                  f'{self.machine_name}$',
                                   SEC_CHAN_WKSTA,
-                                  self.machine_name,
+                                  self.machine_creds.get_workstation(),
                                   authenticator,
                                   pwd)
 
@@ -585,14 +585,13 @@ class PyCredentialsTests(TestCase):
         self.user_creds.set_password(self.user_pass)
         self.user_creds.set_username(self.user_name)
         self.user_creds.set_workstation(self.machine_name)
-        pass
 
     #
     # Get the authenticator from the machine creds.
-    def get_authenticator(self, c):
+    def get_authenticator(self):
         auth = self.machine_creds.new_client_authenticator()
         current = netr_Authenticator()
-        current.cred.data = [x if isinstance(x, int) else ord(x) for x in auth["credential"]]
+        current.cred.data = list(auth["credential"])
         current.timestamp = auth["timestamp"]
 
         subsequent = netr_Authenticator()
@@ -642,10 +641,10 @@ def samlogon_logon_info(domain_name, computer_name, creds,
 
     logon = netlogon.netr_NetworkInfo()
 
-    logon.challenge     = [x if isinstance(x, int) else ord(x) for x in challenge]
+    logon.challenge     = list(challenge)
     logon.nt            = netlogon.netr_ChallengeResponse()
     logon.nt.length     = len(response["nt_response"])
-    logon.nt.data       = [x if isinstance(x, int) else ord(x) for x in response["nt_response"]]
+    logon.nt.data       = list(response["nt_response"])
     logon.identity_info = netlogon.netr_IdentityInfo()
 
     (username, domain)  = creds.get_ntlm_username_domain()

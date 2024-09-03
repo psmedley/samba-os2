@@ -2,12 +2,12 @@
 .\"     Title: samba-tool
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 08/06/2024
+.\"      Date: 09/02/2024
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.20.4
+.\"    Source: Samba 4.21.0
 .\"  Language: English
 .\"
-.TH "SAMBA\-TOOL" "8" "08/06/2024" "Samba 4\&.20\&.4" "System Administration tools"
+.TH "SAMBA\-TOOL" "8" "09/02/2024" "Samba 4\&.21\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -507,6 +507,9 @@ Copy a running DC\*(Aqs DB to backup file, renaming the domain in the process\&.
 .SS "domain backup restore"
 .PP
 Restore the domain\*(Aqs DB from a backup\-file\&.
+.SS "domain auth policy"
+.PP
+Manage authentication policies\&.
 .SS "domain auth policy list"
 .PP
 List authentication policies on the domain\&.
@@ -610,13 +613,6 @@ Must be a valid SDDL string without reference to Device keywords\&.
 Example: O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AU)}))
 .RE
 .PP
-\-\-user\-allowed\-to\-authenticate\-from\-silo
-.RS 4
-User is allowed to authenticate, if the device they authenticate from is assigned and granted membership of a given silo\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-user\-allowed\-to\-authenticate\-from
-.RE
-.PP
 \-\-user\-allowed\-to\-authenticate\-to=SDDL
 .RS 4
 This policy, applying to a user account that is offering a service, eg a web server with a user account, restricts which accounts may access it\&.
@@ -625,21 +621,6 @@ Must be a valid SDDL string\&. The SDDL can reference both bare (user) and Devic
 .sp
 SDDL Example:
 \fBO:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))\fR
-.RE
-.PP
-\-\-user\-allowed\-to\-authenticate\-to\-by\-group=GROUP
-.RS 4
-The user account, offering a network service, covered by this policy, will only be allowed access from other accounts that are members of the given
-\fBGROUP\fR\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-user\-allowed\-to\-authenticate\-to
-.RE
-.PP
-\-\-user\-allowed\-to\-authenticate\-to\-by\-silo=SILO
-.RS 4
-The user account, offering a network service, covered by this policy, will only be allowed access from other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given SILO\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-user\-allowed\-to\-authenticate\-to
 .RE
 .PP
 \-\-service\-tgt\-lifetime\-mins
@@ -662,22 +643,6 @@ SDDL Example:
 \fBO:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AU)}))\fR
 .RE
 .PP
-\-\-service\-allowed\-to\-authenticate\-from\-device\-silo=SILO
-.RS 4
-The service account (eg a Managed Service Account, Group Managed Service Account) is allowed to authenticate, if the device it authenticates from is assigned and granted membership of a given
-\fBSILO\fR\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-service\-allowed\-to\-authenticate\-from
-.RE
-.PP
-\-\-service\-allowed\-to\-authenticate\-from\-device\-group=GROUP
-.RS 4
-The service account (eg a Managed Service Account, Group Managed Service Account) is allowed to authenticate, if the device it authenticates from is a member of the given
-\fBgroup\fR\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-service\-allowed\-to\-authenticate\-from
-.RE
-.PP
 \-\-service\-allowed\-to\-authenticate\-to=SDDL
 .RS 4
 This policy, applying to a service account (eg a Managed Service Account, Group Managed Service Account), restricts which accounts may access it\&.
@@ -686,21 +651,6 @@ Must be a valid SDDL string\&. The SDDL can reference both bare (user) and Devic
 .sp
 SDDL Example:
 \fBO:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))\fR
-.RE
-.PP
-\-\-service\-allowed\-to\-authenticate\-to\-by\-group=GROUP
-.RS 4
-The service account (eg a Managed Service Account, Group Managed Service Account), will only be allowed access by other accounts that are members of the given
-\fBGROUP\fR\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-service\-allowed\-to\-authenticate\-to
-.RE
-.PP
-\-\-service\-allowed\-to\-authenticate\-to\-by\-silo=SILO
-.RS 4
-The service account (eg a Managed Service Account, Group Managed Service Account), will only be allowed access by other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given SILO\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-service\-allowed\-to\-authenticate\-to
 .RE
 .PP
 \-\-computer\-tgt\-lifetime\-mins
@@ -715,21 +665,6 @@ This policy, applying to a computer account (eg a server or workstation), restri
 Must be a valid SDDL string\&. The SDDL can reference both bare (user) and Device conditions\&.
 .sp
 SDDL Example: O:SYG:SYD:(XA;OICI;CR;;;WD;(Member_of {SID(AO)}))
-.RE
-.PP
-\-\-computer\-allowed\-to\-authenticate\-to\-by\-group=GROUP
-.RS 4
-The computer account (eg a server or workstation), will only be allowed access by other accounts that are members of the given
-\fBGROUP\fR\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-computer\-allowed\-to\-authenticate\-to
-.RE
-.PP
-\-\-computer\-allowed\-to\-authenticate\-to\-by\-silo=SILO
-.RS 4
-The computer account (eg a server or workstation), will only be allowed access by other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given SILO\&.
-.sp
-This attribute avoids the need to write SDDL by hand and cannot be used with \-\-computer\-allowed\-to\-authenticate\-to
 .RE
 .SS "domain auth policy modify"
 .PP
@@ -753,6 +688,134 @@ Name of authentication policy to delete (required)\&.
 .RS 4
 Force authentication policy delete even if it is protected\&.
 .RE
+.SS "domain auth policy user-allowed-to-authenticate-from set"
+.PP
+Set the user\-allowed\-to\-authenticate\-from property by scenario\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Name of authentication policy\&.
+.RE
+.PP
+\-\-by\-group=GROUP
+.RS 4
+User is allowed to authenticate, if the device they authenticate from is assigned and granted membership of a given
+\fBGROUP\fR\&.
+.RE
+.PP
+\-\-silo=SILO
+.RS 4
+User is allowed to authenticate, if the device they authenticate from is assigned and granted membership of a given
+\fBSILO\fR\&.
+.RE
+.SS "domain auth policy user-allowed-to-authenticate-to set"
+.PP
+Set the user\-allowed\-to\-authenticate\-to property by scenario\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Name of authentication policy\&.
+.RE
+.PP
+\-\-group=GROUP
+.RS 4
+The user account, offering a network service, covered by this policy, will only be allowed access from other accounts that are members of the given
+\fBGROUP\fR\&.
+.RE
+.PP
+\-\-silo=SILO
+.RS 4
+The user account, offering a network service, covered by this policy, will only be allowed access from other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given
+\fBSILO\fR\&.
+.RE
+.SS "domain auth policy service-allowed-to-authenticate-from set"
+.PP
+Set the service\-allowed\-to\-authenticate\-from property by scenario\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Name of authentication policy\&.
+.RE
+.PP
+\-\-group=GROUP
+.RS 4
+The service account (eg a Managed Service Account, Group Managed Service Account) is allowed to authenticate, if the device it authenticates from is a member of the given
+\fBGROUP\fR\&.
+.RE
+.PP
+\-\-silo=SILO
+.RS 4
+The service account (eg a Managed Service Account, Group Managed Service Account) is allowed to authenticate, if the device it authenticates from is assigned and granted membership of a given
+\fBSILO\fR\&.
+.RE
+.SS "domain auth policy service-allowed-to-authenticate-to set"
+.PP
+Set the service\-allowed\-to\-authenticate\-to property by scenario\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Name of authentication policy\&.
+.RE
+.PP
+\-\-group=GROUP
+.RS 4
+The service account (eg a Managed Service Account, Group Managed Service Account), will only be allowed access by other accounts that are members of the given
+\fBGROUP\fR\&.
+.RE
+.PP
+\-\-silo=SILO
+.RS 4
+The service account (eg a Managed Service Account, Group Managed Service Account), will only be allowed access by other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given
+\fBSILO\fR\&.
+.RE
+.SS "domain auth policy computer-allowed-to-authenticate-to set"
+.PP
+Set the computer\-allowed\-to\-authenticate\-to property by scenario\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Name of authentication policy\&.
+.RE
+.PP
+\-\-group=GROUP
+.RS 4
+The computer account (eg a server or workstation), will only be allowed access by other accounts that are members of the given
+\fBGROUP\fR\&.
+.RE
+.PP
+\-\-silo=SILO
+.RS 4
+The computer account (eg a server or workstation), will only be allowed access by other accounts that are assigned to, granted membership of (and meet any authentication conditions of) the given
+\fBSILO\fR\&.
+.RE
+.SS "domain auth silo"
+.PP
+Manage authentication silos\&.
 .SS "domain auth silo list"
 .PP
 List authentication silos on the domain\&.
@@ -1153,6 +1216,156 @@ LDB URL for database or target server\&.
 \-\-name
 .RS 4
 Display name of claim value type to view (required)\&.
+.RE
+.SS "service\-account"
+.PP
+Service account management\&.
+.SS "service-account list"
+.PP
+List service accounts on the domain\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-json
+.RS 4
+View service accounts as JSON instead of a list\&.
+.RE
+.SS "service-account view"
+.PP
+View a single service account on the domain\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Account name of service account to view (required)\&.
+.RE
+.SS "service-account create"
+.PP
+Create a new service account on the domain\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Account name of service account (required)\&.
+.RE
+.PP
+\-\-dns\-host\-name
+.RS 4
+DNS hostname of this service account (required)\&.
+.RE
+.PP
+\-\-group\-msa\-membership
+.RS 4
+Optional Group MSA Membership SDDL\&.
+.RE
+.PP
+\-\-managed\-password\-interval
+.RS 4
+Managed password refresh interval in days\&.
+.RE
+.SS "service-account modify"
+.PP
+Modify an existing service account on the domain\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Account name of service account (required)\&.
+.RE
+.PP
+\-\-dns\-host\-name
+.RS 4
+Update DNS hostname of this service account\&.
+.RE
+.PP
+\-\-group\-msa\-membership
+.RS 4
+Update Group MSA Membership SDDL\&.
+.RE
+.SS "service-account delete"
+.PP
+Delete a service accounts on the domain\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Account name of service account to delete\&.
+.RE
+.SS "service\-account group\-msa\-membership"
+.PP
+Service account Group MSA Membership management\&.
+.SS "service-account group-msa-membership show"
+.PP
+Display Group MSA Membership for a service account\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Account name of service account (required)\&.
+.RE
+.PP
+\-\-json
+.RS 4
+Return as JSON instead of a list\&.
+.RE
+.SS "service-account group-msa-membership add"
+.PP
+Add a principal to Group MSA Membership for a service account\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Account name of service account (required)\&.
+.RE
+.PP
+\-\-principal
+.RS 4
+Name, DN or SID of principal to add\&.
+.RE
+.SS "service-account group-msa-membership remove"
+.PP
+Remove a principal from Group MSA Membership for a service account\&.
+.PP
+\-H, \-\-URL
+.RS 4
+LDB URL for database or target server\&.
+.RE
+.PP
+\-\-name
+.RS 4
+Account name of service account (required)\&.
+.RE
+.PP
+\-\-principal
+.RS 4
+Name, DN or SID of principal to remove\&.
 .RE
 .SS "domain classicupgrade [options] classic_smb_conf"
 .PP
@@ -1760,6 +1973,11 @@ Do not list expired user accounts\&.
 .RS 4
 Do not list disabled user accounts\&.
 .RE
+.PP
+\-\-locked\-only
+.RS 4
+Only list locked user accounts\&.
+.RE
 .SS "user setprimarygroup username primarygroupname"
 .PP
 Set the primary group a user account\&.
@@ -1951,7 +2169,7 @@ because the repsFrom/To objects are not replicated, and it can reveal replicatio
 Gives usage information\&.
 .SH "VERSION"
 .PP
-This man page is complete for version 4\&.20\&.4 of the Samba suite\&.
+This man page is complete for version 4\&.21\&.0 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

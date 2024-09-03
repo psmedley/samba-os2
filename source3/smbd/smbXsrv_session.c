@@ -19,6 +19,7 @@
 */
 
 #include "includes.h"
+#include "smbXsrv_session.h"
 #include "system/filesys.h"
 #include <tevent.h>
 #include "lib/util/server_id.h"
@@ -300,28 +301,24 @@ static void smbXsrv_session_close_loop(struct tevent_req *subreq)
 			(ndr_pull_flags_fn_t)ndr_pull_smbXsrv_session_closeB);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		status = ndr_map_error2ntstatus(ndr_err);
-		DBG_WARNING("smbXsrv_session_close_loop: "
-			 "ndr_pull_struct_blob - %s\n",
-			 nt_errstr(status));
+		DBG_WARNING("ndr_pull_struct_blob - %s\n", nt_errstr(status));
 		goto next;
 	}
 
-	DBG_DEBUG("smbXsrv_session_close_loop: MSG_SMBXSRV_SESSION_CLOSE\n");
+	DBG_DEBUG("MSG_SMBXSRV_SESSION_CLOSE\n");
 	if (DEBUGLVL(DBGLVL_DEBUG)) {
 		NDR_PRINT_DEBUG(smbXsrv_session_closeB, &close_blob);
 	}
 
 	if (close_blob.version != SMBXSRV_VERSION_0) {
-		DBG_ERR("smbXsrv_session_close_loop: "
-			 "ignore invalid version %u\n", close_blob.version);
+		DBG_ERR("ignore invalid version %u\n", close_blob.version);
 		NDR_PRINT_DEBUG(smbXsrv_session_closeB, &close_blob);
 		goto next;
 	}
 
 	close_info0 = close_blob.info.info0;
 	if (close_info0 == NULL) {
-		DBG_ERR("smbXsrv_session_close_loop: "
-			 "ignore NULL info %u\n", close_blob.version);
+		DBG_ERR("ignore NULL info %u\n", close_blob.version);
 		NDR_PRINT_DEBUG(smbXsrv_session_closeB, &close_blob);
 		goto next;
 	}
@@ -330,9 +327,8 @@ static void smbXsrv_session_close_loop(struct tevent_req *subreq)
 					       close_info0->old_session_wire_id,
 					       now, &session);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_USER_SESSION_DELETED)) {
-		DBG_INFO("smbXsrv_session_close_loop: "
-			 "old_session_wire_id %llu not found\n",
-			 (unsigned long long)close_info0->old_session_wire_id);
+		DBG_INFO("old_session_wire_id %" PRIu64 " not found\n",
+			 close_info0->old_session_wire_id);
 		if (DEBUGLVL(DBGLVL_INFO)) {
 			NDR_PRINT_DEBUG(smbXsrv_session_closeB, &close_blob);
 		}
@@ -341,10 +337,9 @@ static void smbXsrv_session_close_loop(struct tevent_req *subreq)
 	if (!NT_STATUS_IS_OK(status) &&
 	    !NT_STATUS_EQUAL(status, NT_STATUS_MORE_PROCESSING_REQUIRED) &&
 	    !NT_STATUS_EQUAL(status, NT_STATUS_NETWORK_SESSION_EXPIRED)) {
-		DBG_WARNING("smbXsrv_session_close_loop: "
-			 "old_session_wire_id %llu - %s\n",
-			 (unsigned long long)close_info0->old_session_wire_id,
-			 nt_errstr(status));
+		DBG_WARNING("old_session_wire_id %" PRIu64 " - %s\n",
+			    close_info0->old_session_wire_id,
+			    nt_errstr(status));
 		if (DEBUGLVL(DBGLVL_WARNING)) {
 			NDR_PRINT_DEBUG(smbXsrv_session_closeB, &close_blob);
 		}
@@ -352,11 +347,11 @@ static void smbXsrv_session_close_loop(struct tevent_req *subreq)
 	}
 
 	if (session->global->session_global_id != close_info0->old_session_global_id) {
-		DBG_WARNING("smbXsrv_session_close_loop: "
-			 "old_session_wire_id %llu - global %u != %u\n",
-			 (unsigned long long)close_info0->old_session_wire_id,
-			 session->global->session_global_id,
-			 close_info0->old_session_global_id);
+		DBG_WARNING("old_session_wire_id %" PRIu64 " - "
+			    "global %" PRIu32 " != %" PRIu32 "\n",
+			    close_info0->old_session_wire_id,
+			    session->global->session_global_id,
+			    close_info0->old_session_global_id);
 		if (DEBUGLVL(DBGLVL_WARNING)) {
 			NDR_PRINT_DEBUG(smbXsrv_session_closeB, &close_blob);
 		}
@@ -364,14 +359,15 @@ static void smbXsrv_session_close_loop(struct tevent_req *subreq)
 	}
 
 	if (session->global->creation_time != close_info0->old_creation_time) {
-		DBG_WARNING("smbXsrv_session_close_loop: "
-			 "old_session_wire_id %llu - "
-			 "creation %s (%llu) != %s (%llu)\n",
-			 (unsigned long long)close_info0->old_session_wire_id,
-			 nt_time_string(rec, session->global->creation_time),
-			 (unsigned long long)session->global->creation_time,
-			 nt_time_string(rec, close_info0->old_creation_time),
-			 (unsigned long long)close_info0->old_creation_time);
+		DBG_WARNING("old_session_wire_id %" PRIu64 " - "
+			    "creation %s (%" PRIu64 ") != %s (%" PRIu64 ")\n",
+			    close_info0->old_session_wire_id,
+			    nt_time_string(rec,
+					   session->global->creation_time),
+			    session->global->creation_time,
+			    nt_time_string(rec,
+					   close_info0->old_creation_time),
+			    close_info0->old_creation_time);
 		if (DEBUGLVL(DBGLVL_WARNING)) {
 			NDR_PRINT_DEBUG(smbXsrv_session_closeB, &close_blob);
 		}
@@ -382,10 +378,10 @@ static void smbXsrv_session_close_loop(struct tevent_req *subreq)
 					       session, NULL);
 	if (subreq == NULL) {
 		status = NT_STATUS_NO_MEMORY;
-		DBG_ERR("smbXsrv_session_close_loop: "
-			  "smb2srv_session_shutdown_send(%llu) failed: %s\n",
-			  (unsigned long long)session->global->session_wire_id,
-			  nt_errstr(status));
+		DBG_ERR("smb2srv_session_shutdown_send(%" PRIu64
+			") failed: %s\n",
+			session->global->session_wire_id,
+			nt_errstr(status));
 		if (DEBUGLVL(DBGLVL_WARNING)) {
 			NDR_PRINT_DEBUG(smbXsrv_session_closeB, &close_blob);
 		}
@@ -421,18 +417,17 @@ static void smbXsrv_session_close_shutdown_done(struct tevent_req *subreq)
 	status = smb2srv_session_shutdown_recv(subreq);
 	TALLOC_FREE(subreq);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("smbXsrv_session_close_loop: "
-			  "smb2srv_session_shutdown_recv(%llu) failed: %s\n",
-			  (unsigned long long)session->global->session_wire_id,
-			  nt_errstr(status));
+		DBG_ERR("smb2srv_session_shutdown_recv(%" PRIu64
+			") failed: %s\n",
+			session->global->session_wire_id,
+			nt_errstr(status));
 	}
 
 	status = smbXsrv_session_logoff(session);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("smbXsrv_session_close_loop: "
-			  "smbXsrv_session_logoff(%llu) failed: %s\n",
-			  (unsigned long long)session->global->session_wire_id,
-			  nt_errstr(status));
+		DBG_ERR("smbXsrv_session_logoff(%" PRIu64 ") failed: %s\n",
+			session->global->session_wire_id,
+			nt_errstr(status));
 	}
 
 	TALLOC_FREE(session);
@@ -843,10 +838,9 @@ static void smbXsrv_session_global_verify_record(struct db_record *db_rec,
 			(ndr_pull_flags_fn_t)ndr_pull_smbXsrv_session_globalB);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-		DBG_WARNING("smbXsrv_session_global_verify_record: "
-			 "key '%s' ndr_pull_struct_blob - %s\n",
-			 tdb_data_dbg(key),
-			 nt_errstr(status));
+		DBG_WARNING("key '%s' ndr_pull_struct_blob - %s\n",
+			    tdb_data_dbg(key),
+			    nt_errstr(status));
 		TALLOC_FREE(frame);
 		*is_free = true;
 		if (was_free) {
@@ -861,10 +855,9 @@ static void smbXsrv_session_global_verify_record(struct db_record *db_rec,
 	}
 
 	if (global_blob.version != SMBXSRV_VERSION_0) {
-		DBG_ERR("smbXsrv_session_global_verify_record: "
-			 "key '%s' use unsupported version %u\n",
-			 tdb_data_dbg(key),
-			 global_blob.version);
+		DBG_ERR("key '%s' use unsupported version %u\n",
+			tdb_data_dbg(key),
+			global_blob.version);
 		NDR_PRINT_DEBUG(smbXsrv_session_globalB, &global_blob);
 		TALLOC_FREE(frame);
 		*is_free = true;
@@ -896,11 +889,10 @@ static void smbXsrv_session_global_verify_record(struct db_record *db_rec,
 	exists = serverid_exists(&global->channels[0].server_id);
 	if (!exists) {
 		struct server_id_buf idbuf;
-		DBG_NOTICE("smbXsrv_session_global_verify_record: "
-			 "key '%s' server_id %s does not exist.\n",
-			 tdb_data_dbg(key),
-			 server_id_str_buf(global->channels[0].server_id,
-					   &idbuf));
+		DBG_NOTICE("key '%s' server_id %s does not exist.\n",
+			   tdb_data_dbg(key),
+			   server_id_str_buf(global->channels[0].server_id,
+					     &idbuf));
 		if (DEBUGLVL(DBGLVL_NOTICE)) {
 			NDR_PRINT_DEBUG(smbXsrv_session_globalB, &global_blob);
 		}
@@ -934,45 +926,46 @@ static NTSTATUS smbXsrv_session_global_store(struct smbXsrv_session_global0 *glo
 	 * store the information in the old format.
 	 */
 
-	if (global->db_rec == NULL) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
-
 	key = dbwrap_record_get_key(global->db_rec);
 	val = dbwrap_record_get_value(global->db_rec);
 
-	ZERO_STRUCT(global_blob);
-	global_blob.version = smbXsrv_version_global_current();
+	global_blob = (struct smbXsrv_session_globalB){
+		.version = smbXsrv_version_global_current(),
+		.info.info0 = global,
+	};
+
 	if (val.dsize >= 8) {
 		global_blob.seqnum = IVAL(val.dptr, 4);
 	}
 	global_blob.seqnum += 1;
-	global_blob.info.info0 = global;
 
-	ndr_err = ndr_push_struct_blob(&blob, global->db_rec, &global_blob,
-			(ndr_push_flags_fn_t)ndr_push_smbXsrv_session_globalB);
+	ndr_err = ndr_push_struct_blob(
+		&blob,
+		talloc_tos(),
+		&global_blob,
+		(ndr_push_flags_fn_t)ndr_push_smbXsrv_session_globalB);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		status = ndr_map_error2ntstatus(ndr_err);
-		DBG_WARNING("smbXsrv_session_global_store: key '%s' ndr_push - %s\n",
-			 tdb_data_dbg(key),
-			 nt_errstr(status));
+		DBG_WARNING("key '%s' ndr_push - %s\n",
+			    tdb_data_dbg(key),
+			    nt_errstr(status));
 		TALLOC_FREE(global->db_rec);
 		return status;
 	}
 
 	val = make_tdb_data(blob.data, blob.length);
 	status = dbwrap_record_store(global->db_rec, val, TDB_REPLACE);
+	TALLOC_FREE(blob.data);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_WARNING("smbXsrv_session_global_store: key '%s' store - %s\n",
-			 tdb_data_dbg(key),
-			 nt_errstr(status));
+		DBG_WARNING("key '%s' store - %s\n",
+			    tdb_data_dbg(key),
+			    nt_errstr(status));
 		TALLOC_FREE(global->db_rec);
 		return status;
 	}
 
 	if (DEBUGLVL(DBGLVL_DEBUG)) {
-		DBG_DEBUG("smbXsrv_session_global_store: key '%s' stored\n",
-			  tdb_data_dbg(key));
+		DBG_DEBUG("key '%s' stored\n", tdb_data_dbg(key));
 		NDR_PRINT_DEBUG(smbXsrv_session_globalB, &global_blob);
 	}
 
@@ -1017,8 +1010,8 @@ struct tevent_req *smb2srv_session_close_previous_send(TALLOC_CTX *mem_ctx,
 					uint64_t previous_session_id,
 					uint64_t current_session_id)
 {
-	struct tevent_req *req;
-	struct smb2srv_session_close_previous_state *state;
+	struct tevent_req *req = NULL;
+	struct smb2srv_session_close_previous_state *state = NULL;
 	uint32_t global_id = previous_session_id & UINT32_MAX;
 	uint64_t global_zeros = previous_session_id & 0xFFFFFFFF00000000LLU;
 	struct smbXsrv_session_table *table = conn->client->session_table;
@@ -1047,14 +1040,11 @@ struct tevent_req *smb2srv_session_close_previous_send(TALLOC_CTX *mem_ctx,
 	}
 	current_token = session_info->security_token;
 
-	if (current_token->num_sids > PRIMARY_USER_SID_INDEX) {
-		state->current_sid = &current_token->sids[PRIMARY_USER_SID_INDEX];
-	}
-
-	if (state->current_sid == NULL) {
+	if (current_token->num_sids <= PRIMARY_USER_SID_INDEX) {
 		tevent_req_done(req);
 		return tevent_req_post(req, ev);
 	}
+	state->current_sid = &current_token->sids[PRIMARY_USER_SID_INDEX];
 
 	if (!security_token_has_nt_authenticated_users(current_token)) {
 		/* TODO */
@@ -1151,24 +1141,27 @@ static void smb2srv_session_close_previous_check(struct tevent_req *req)
 				smb2srv_session_close_previous_modified,
 				req);
 
-	close_info0.old_session_global_id = global->session_global_id;
-	close_info0.old_session_wire_id = global->session_wire_id;
-	close_info0.old_creation_time = global->creation_time;
-	close_info0.new_session_wire_id = state->current_session_id;
+	close_info0 = (struct smbXsrv_session_close0){
+		.old_session_global_id = global->session_global_id,
+		.old_session_wire_id = global->session_wire_id,
+		.old_creation_time = global->creation_time,
+		.new_session_wire_id = state->current_session_id,
+	};
 
-	ZERO_STRUCT(close_blob);
-	close_blob.version = smbXsrv_version_global_current();
-	close_blob.info.info0 = &close_info0;
+	close_blob = (struct smbXsrv_session_closeB){
+		.version = smbXsrv_version_global_current(),
+		.info.info0 = &close_info0,
+	};
 
 	ndr_err = ndr_push_struct_blob(&blob, state, &close_blob,
 			(ndr_push_flags_fn_t)ndr_push_smbXsrv_session_closeB);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		status = ndr_map_error2ntstatus(ndr_err);
-		DBG_WARNING("smb2srv_session_close_previous_check: "
-			 "old_session[%llu] new_session[%llu] ndr_push - %s\n",
-			 (unsigned long long)close_info0.old_session_wire_id,
-			 (unsigned long long)close_info0.new_session_wire_id,
-			 nt_errstr(status));
+		DBG_WARNING("old_session[%" PRIu64 "] "
+			    "new_session[%" PRIu64 "] ndr_push - %s\n",
+			    close_info0.old_session_wire_id,
+			    close_info0.new_session_wire_id,
+			    nt_errstr(status));
 		tevent_req_nterror(req, status);
 		return;
 	}
@@ -1267,14 +1260,13 @@ static int smbXsrv_session_destructor(struct smbXsrv_session *session)
 {
 	NTSTATUS status;
 
-	DBG_DEBUG("destructing session(%llu)\n",
-		  (unsigned long long)session->global->session_wire_id);
+	DBG_DEBUG("destructing session(%" PRIu64 ")\n",
+		  session->global->session_wire_id);
 
 	status = smbXsrv_session_clear_and_logoff(session);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("smbXsrv_session_destructor: "
-			  "smbXsrv_session_logoff() failed: %s\n",
-			  nt_errstr(status));
+		DBG_ERR("smbXsrv_session_logoff() failed: %s\n",
+			nt_errstr(status));
 	}
 
 	TALLOC_FREE(session->global);
@@ -1387,10 +1379,9 @@ NTSTATUS smbXsrv_session_create(struct smbXsrv_connection *conn,
 
 	status = smbXsrv_session_global_store(global);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("smbXsrv_session_create: "
-			 "global_id (0x%08x) store failed - %s\n",
-			 session->global->session_global_id,
-			 nt_errstr(status));
+		DBG_ERR("global_id (0x%08x) store failed - %s\n",
+			session->global->session_global_id,
+			nt_errstr(status));
 		TALLOC_FREE(session);
 		return status;
 	}
@@ -1401,8 +1392,8 @@ NTSTATUS smbXsrv_session_create(struct smbXsrv_connection *conn,
 			.info.info0 = session,
 		};
 
-		DBG_DEBUG("smbXsrv_session_create: global_id (0x%08x) stored\n",
-			 session->global->session_global_id);
+		DBG_DEBUG("global_id (0x%08x) stored\n",
+			  session->global->session_global_id);
 		NDR_PRINT_DEBUG(smbXsrv_sessionB, &session_blob);
 	}
 
@@ -1435,11 +1426,14 @@ NTSTATUS smbXsrv_session_add_channel(struct smbXsrv_session *session,
 	global->channels = c;
 
 	c = &global->channels[global->num_channels];
-	ZERO_STRUCTP(c);
 
-	c->server_id = messaging_server_id(conn->client->msg_ctx);
-	c->channel_id = conn->channel_id;
-	c->creation_time = now;
+	*c = (struct smbXsrv_channel_global0){
+		.server_id = messaging_server_id(conn->client->msg_ctx),
+		.channel_id = conn->channel_id,
+		.creation_time = now,
+		.connection = conn,
+	};
+
 	c->local_address = tsocket_address_string(conn->local_address,
 						  global->channels);
 	if (c->local_address == NULL) {
@@ -1455,7 +1449,6 @@ NTSTATUS smbXsrv_session_add_channel(struct smbXsrv_session *session,
 	if (c->remote_name == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
-	c->connection = conn;
 
 	global->num_channels += 1;
 
@@ -1492,10 +1485,9 @@ NTSTATUS smbXsrv_session_update(struct smbXsrv_session *session)
 
 	status = smbXsrv_session_global_store(session->global);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("smbXsrv_session_update: "
-			 "global_id (0x%08x) store failed - %s\n",
-			 session->global->session_global_id,
-			 nt_errstr(status));
+		DBG_ERR("global_id (0x%08x) store failed - %s\n",
+			session->global->session_global_id,
+			nt_errstr(status));
 		return status;
 	}
 
@@ -1505,7 +1497,7 @@ NTSTATUS smbXsrv_session_update(struct smbXsrv_session *session)
 			.info.info0 = session,
 		};
 
-		DBG_DEBUG("smbXsrv_session_update: global_id (0x%08x) stored\n",
+		DBG_DEBUG("global_id (0x%08x) stored\n",
 			  session->global->session_global_id);
 		NDR_PRINT_DEBUG(smbXsrv_sessionB, &session_blob);
 	}
@@ -1587,17 +1579,20 @@ NTSTATUS smbXsrv_session_create_auth(struct smbXsrv_session *session,
 		return NT_STATUS_INTERNAL_ERROR;
 	}
 
-	a = talloc_zero(session, struct smbXsrv_session_auth0);
+	a = talloc(session, struct smbXsrv_session_auth0);
 	if (a == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
-	a->session = session;
-	a->connection = conn;
-	a->in_flags = in_flags;
-	a->in_security_mode = in_security_mode;
-	a->creation_time = now;
-	a->idle_time = now;
-	a->channel_id = conn->channel_id;
+
+	*a = (struct smbXsrv_session_auth0){
+		.session = session,
+		.connection = conn,
+		.in_flags = in_flags,
+		.in_security_mode = in_security_mode,
+		.creation_time = now,
+		.idle_time = now,
+		.channel_id = conn->channel_id,
+	};
 
 	if (conn->protocol >= PROTOCOL_SMB3_11) {
 		a->preauth = talloc(a, struct smbXsrv_preauth);
@@ -1671,8 +1666,11 @@ NTSTATUS smbXsrv_session_remove_channel(struct smbXsrv_session *session,
 								xconn_wait_queue);
 				if (subreq == NULL) {
 					status = NT_STATUS_NO_MEMORY;
-					DBG_ERR("tevent_queue_wait_send() session(%llu) failed: %s\n",
-						(unsigned long long)session->global->session_wire_id,
+					DBG_ERR("tevent_queue_wait_send() "
+						"session(%" PRIu64
+						") failed: %s\n",
+						session->global
+							->session_wire_id,
 						nt_errstr(status));
 					return status;
 				}
@@ -1689,8 +1687,9 @@ NTSTATUS smbXsrv_session_remove_channel(struct smbXsrv_session *session,
 							       NULL);
 			if (subreq == NULL) {
 				status = NT_STATUS_NO_MEMORY;
-				DBG_ERR("smb2srv_session_shutdown_send(%llu) failed: %s\n",
-					(unsigned long long)session->global->session_wire_id,
+				DBG_ERR("smb2srv_session_shutdown_send("
+					"%" PRIu64 " failed: %s\n",
+					session->global->session_wire_id,
 					nt_errstr(status));
 				return status;
 			}
@@ -1718,15 +1717,16 @@ static void smbXsrv_session_remove_channel_done(struct tevent_req *subreq)
 	status = smb2srv_session_shutdown_recv(subreq);
 	TALLOC_FREE(subreq);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("smb2srv_session_shutdown_recv(%llu) failed: %s\n",
-			(unsigned long long)session->global->session_wire_id,
+		DBG_ERR("smb2srv_session_shutdown_recv(%" PRIu64
+			") failed: %s\n",
+			session->global->session_wire_id,
 			nt_errstr(status));
 	}
 
 	status = smbXsrv_session_logoff(session);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("smbXsrv_session_logoff(%llu) failed: %s\n",
-			(unsigned long long)session->global->session_wire_id,
+		DBG_ERR("smbXsrv_session_logoff(%" PRIu64 ") failed: %s\n",
+			session->global->session_wire_id,
 			nt_errstr(status));
 	}
 
@@ -1744,9 +1744,9 @@ struct tevent_req *smb2srv_session_shutdown_send(TALLOC_CTX *mem_ctx,
 					struct smbXsrv_session *session,
 					struct smbd_smb2_request *current_req)
 {
-	struct tevent_req *req;
-	struct smb2srv_session_shutdown_state *state;
-	struct tevent_req *subreq;
+	struct tevent_req *req = NULL;
+	struct smb2srv_session_shutdown_state *state = NULL;
+	struct tevent_req *subreq = NULL;
 	struct smbXsrv_connection *xconn = NULL;
 	size_t len = 0;
 
@@ -1949,33 +1949,28 @@ static int smbXsrv_session_logoff_all_callback(struct db_record *local_rec,
 NTSTATUS smbXsrv_session_logoff_all(struct smbXsrv_client *client)
 {
 	struct smbXsrv_session_table *table = client->session_table;
-	struct smbXsrv_session_logoff_all_state state;
+	struct smbXsrv_session_logoff_all_state state = {};
 	NTSTATUS status;
 	int count = 0;
 
 	if (table == NULL) {
-		DBG_DEBUG("smbXsrv_session_logoff_all: "
-			   "empty session_table, nothing to do.\n");
+		DBG_DEBUG("empty session_table, nothing to do.\n");
 		return NT_STATUS_OK;
 	}
-
-	ZERO_STRUCT(state);
 
 	status = dbwrap_traverse(table->local.db_ctx,
 				 smbXsrv_session_logoff_all_callback,
 				 &state, &count);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("smbXsrv_session_logoff_all: "
-			  "dbwrap_traverse() failed: %s\n",
-			  nt_errstr(status));
+		DBG_ERR("dbwrap_traverse() failed: %s\n", nt_errstr(status));
 		return status;
 	}
 
 	if (!NT_STATUS_IS_OK(state.first_status)) {
-		DBG_ERR("smbXsrv_session_logoff_all: "
-			  "count[%d] errors[%d] first[%s]\n",
-			  count, state.errors,
-			  nt_errstr(state.first_status));
+		DBG_ERR("count[%d] errors[%d] first[%s]\n",
+			count,
+			state.errors,
+			nt_errstr(state.first_status));
 		return state.first_status;
 	}
 
@@ -2107,7 +2102,9 @@ NTSTATUS smbXsrv_session_disconnect_xconn(struct smbXsrv_connection *xconn)
 {
 	struct smbXsrv_client *client = xconn->client;
 	struct smbXsrv_session_table *table = client->session_table;
-	struct smbXsrv_session_disconnect_xconn_state state;
+	struct smbXsrv_session_disconnect_xconn_state state = {
+		.xconn = xconn,
+	};
 	NTSTATUS status;
 	int count = 0;
 
@@ -2115,9 +2112,6 @@ NTSTATUS smbXsrv_session_disconnect_xconn(struct smbXsrv_connection *xconn)
 		DBG_ERR("empty session_table, nothing to do.\n");
 		return NT_STATUS_OK;
 	}
-
-	ZERO_STRUCT(state);
-	state.xconn = xconn;
 
 	status = dbwrap_traverse(table->local.db_ctx,
 				 smbXsrv_session_disconnect_xconn_callback,
@@ -2201,7 +2195,6 @@ NTSTATUS smbXsrv_session_info_lookup(struct smbXsrv_client *client,
 	struct smbXsrv_session_table *table = client->session_table;
 	uint8_t key_buf[SMBXSRV_SESSION_LOCAL_TDB_KEY_SIZE];
 	struct smbXsrv_session_local_fetch_state state = {
-		.session = NULL,
 		.status = NT_STATUS_INTERNAL_ERROR,
 	};
 	TDB_DATA key;
@@ -2255,7 +2248,6 @@ NTSTATUS get_valid_smbXsrv_session(struct smbXsrv_client *client,
 	struct smbXsrv_session_table *table = client->session_table;
 	uint8_t key_buf[SMBXSRV_SESSION_LOCAL_TDB_KEY_SIZE];
 	struct smbXsrv_session_local_fetch_state state = {
-		.session = NULL,
 		.status = NT_STATUS_INTERNAL_ERROR,
 	};
 	TDB_DATA key;

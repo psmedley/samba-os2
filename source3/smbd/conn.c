@@ -70,6 +70,26 @@ bool conn_snum_used(struct smbd_server_connection *sconn,
 	return false;
 }
 
+enum protocol_types conn_protocol(struct smbd_server_connection *sconn)
+{
+	if ((sconn != NULL) &&
+	    (sconn->client != NULL) &&
+	    (sconn->client->connections != NULL)) {
+		return sconn->client->connections->protocol;
+	}
+	/*
+	 * Default to what source3/lib/util.c has as default for the
+	 * static Protocol variable to not change behaviour.
+	 */
+	return PROTOCOL_COREPLUS;
+}
+
+bool conn_using_smb2(struct smbd_server_connection *sconn)
+{
+	enum protocol_types proto = conn_protocol(sconn);
+	return (proto >= PROTOCOL_SMB2_02);
+}
+
 /****************************************************************************
  Find first available connection slot, starting from a random position.
  The randomisation stops problems with the server dying and clients
@@ -148,42 +168,48 @@ connection_struct *conn_new(struct smbd_server_connection *sconn)
 
 static void conn_clear_vuid_cache(connection_struct *conn, uint64_t vuid)
 {
+	struct vuid_cache_entry *ent = NULL;
 	int i;
 
 	for (i=0; i<VUID_CACHE_SIZE; i++) {
-		struct vuid_cache_entry *ent;
-
 		ent = &conn->vuid_cache->array[i];
-
-		if (ent->vuid == vuid) {
-			ent->vuid = UID_FIELD_INVALID;
-			/*
-			 * We need to keep conn->session_info around
-			 * if it's equal to ent->session_info as a SMBulogoff
-			 * is often followed by a SMBtdis (with an invalid
-			 * vuid). The debug code (or regular code in
-			 * vfs_full_audit) wants to refer to the
-			 * conn->session_info pointer to print debug
-			 * statements. Theoretically this is a bug,
-			 * as once the vuid is gone the session_info
-			 * on the conn struct isn't valid any more,
-			 * but there's enough code that assumes
-			 * conn->session_info is never null that
-			 * it's easier to hold onto the old pointer
-			 * until we get a new sessionsetupX.
-			 * As everything is hung off the
-			 * conn pointer as a talloc context we're not
-			 * leaking memory here. See bug #6315. JRA.
-			 */
-			if (conn->session_info == ent->session_info) {
-				ent->session_info = NULL;
-			} else {
-				TALLOC_FREE(ent->session_info);
-			}
-			ent->read_only = False;
-			ent->share_access = 0;
+		if (ent->vuid != vuid) {
+			continue;
 		}
 	}
+	if (i == VUID_CACHE_SIZE) {
+		return;
+	}
+
+	ent->vuid = UID_FIELD_INVALID;
+
+	/*
+	 * We need to keep conn->session_info around
+	 * if it's equal to ent->session_info as a SMBulogoff
+	 * is often followed by a SMBtdis (with an invalid
+	 * vuid). The debug code (or regular code in
+	 * vfs_full_audit) wants to refer to the
+	 * conn->session_info pointer to print debug
+	 * statements. Theoretically this is a bug,
+	 * as once the vuid is gone the session_info
+	 * on the conn struct isn't valid any more,
+	 * but there's enough code that assumes
+	 * conn->session_info is never null that
+	 * it's easier to hold onto the old pointer
+	 * until we get a new sessionsetupX.
+	 * As everything is hung off the
+	 * conn pointer as a talloc context we're not
+	 * leaking memory here. See bug #6315. JRA.
+	 */
+	if (conn->session_info == ent->session_info) {
+		ent->session_info = NULL;
+	} else {
+		TALLOC_FREE(ent->session_info);
+	}
+	ent->read_only = False;
+	ent->share_access = 0;
+	TALLOC_FREE(ent->veto_list);
+	TALLOC_FREE(ent->hide_list);
 }
 
 /****************************************************************************
@@ -229,11 +255,6 @@ static void conn_free_internal(connection_struct *conn)
 		SAFE_FREE(state->param);
 		SAFE_FREE(state->data);
 	}
-
-	free_namearray(conn->veto_list);
-	free_namearray(conn->hide_list);
-	free_namearray(conn->veto_oplock_list);
-	free_namearray(conn->aio_write_behind_list);
 
 	ZERO_STRUCTP(conn);
 }

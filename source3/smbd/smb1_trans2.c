@@ -2529,16 +2529,14 @@ static NTSTATUS smb_q_posix_acl(
 static NTSTATUS smb_q_posix_symlink(
 	struct connection_struct *conn,
 	struct smb_request *req,
+	struct files_struct *dirfsp,
 	struct smb_filename *smb_fname,
 	char **ppdata,
 	int *ptotal_data)
 {
-	char buffer[PATH_MAX+1];
+	char *target = NULL;
 	size_t needed, len;
-	int link_len;
 	char *pdata = NULL;
-	struct smb_filename *parent_fname = NULL;
-	struct smb_filename *base_name = NULL;
 	NTSTATUS status;
 
 	DBG_DEBUG("SMB_QUERY_FILE_UNIX_LINK for file %s\n",
@@ -2548,40 +2546,39 @@ static NTSTATUS smb_q_posix_symlink(
 		return NT_STATUS_DOS(ERRSRV, ERRbadlink);
 	}
 
-	status = parent_pathref(
-		talloc_tos(),
-		conn->cwd_fsp,
-		smb_fname,
-		&parent_fname,
-		&base_name);
+	if (fsp_get_pathref_fd(smb_fname->fsp) != -1) {
+		/*
+		 * fsp is an O_PATH open, Linux does a "freadlink"
+		 * with an empty name argument to readlinkat
+		 */
+		status = readlink_talloc(talloc_tos(),
+					 smb_fname->fsp,
+					 NULL,
+					 &target);
+	} else {
+		struct smb_filename smb_fname_rel = *smb_fname;
+		char *slash = NULL;
+
+		slash = strrchr_m(smb_fname->base_name, '/');
+		if (slash != NULL) {
+			smb_fname_rel.base_name = slash + 1;
+		}
+		status = readlink_talloc(talloc_tos(),
+					 dirfsp,
+					 &smb_fname_rel,
+					 &target);
+	}
 
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_DEBUG("parent_pathref failed: %s\n", nt_errstr(status));
+		DBG_DEBUG("readlink_talloc() failed: %s\n", nt_errstr(status));
 		return status;
 	}
 
-	link_len = SMB_VFS_READLINKAT(
-		conn,
-		parent_fname->fsp,
-		base_name,
-		buffer,
-		sizeof(buffer)-1);
-	TALLOC_FREE(parent_fname);
-
-	if (link_len == -1) {
-		status = map_nt_error_from_unix(errno);
-		DBG_DEBUG("READLINKAT failed: %s\n", nt_errstr(status));
-		return status;
-	}
-	if (link_len >= sizeof(buffer)) {
-		return NT_STATUS_INTERNAL_ERROR;
-	}
-	buffer[link_len] = 0;
-
-	needed = (link_len+1)*2;
+	needed = talloc_get_size(target) * 2;
 
 	*ppdata = SMB_REALLOC(*ppdata, needed);
 	if (*ppdata == NULL) {
+		TALLOC_FREE(target);
 		return NT_STATUS_NO_MEMORY;
 	}
 	pdata = *ppdata;
@@ -2590,10 +2587,11 @@ static NTSTATUS smb_q_posix_symlink(
 		pdata,
 		req->flags2,
 		pdata,
-		buffer,
+		target,
 		needed,
 		STR_TERMINATE,
 		&len);
+	TALLOC_FREE(target);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -2618,14 +2616,11 @@ static void call_trans2qpathinfo(
 	struct timespec write_time_ts = { .tv_sec = 0, };
 	struct files_struct *dirfsp = NULL;
 	files_struct *fsp = NULL;
-	struct file_id fileid;
-	uint32_t name_hash;
 	char *fname = NULL;
 	uint32_t ucf_flags = ucf_flags_from_smb_request(req);
 	NTTIME twrp = 0;
 	bool info_level_handled;
 	NTSTATUS status = NT_STATUS_OK;
-	int ret;
 
 	if (!params) {
 		reply_nterror(req, NT_STATUS_INVALID_PARAMETER);
@@ -2715,73 +2710,27 @@ static void call_trans2qpathinfo(
 		return;
 	}
 
-	/*
-	 * smb_fname->fsp may be NULL if smb_fname points at a symlink
-	 * and we're in POSIX context, so be careful when using fsp
-	 * below, it can still be NULL.
-	 */
 	fsp = smb_fname->fsp;
 
 	/* If this is a stream, check if there is a delete_pending. */
-	if ((conn->fs_capabilities & FILE_NAMED_STREAMS)
-	    && is_ntfs_stream_smb_fname(smb_fname)) {
-		struct smb_filename *smb_fname_base;
+	if (fsp_is_alternate_stream(fsp)) {
 
-		/* Create an smb_filename with stream_name == NULL. */
-		smb_fname_base = synthetic_smb_fname(
-			talloc_tos(),
-			smb_fname->base_name,
-			NULL,
-			NULL,
-			smb_fname->twrp,
-			smb_fname->flags);
-		if (smb_fname_base == NULL) {
-			reply_nterror(req, NT_STATUS_NO_MEMORY);
-			return;
-		}
+		struct files_struct *base_fsp = fsp->base_fsp;
 
-		ret = vfs_stat(conn, smb_fname_base);
-		if (ret != 0) {
-			DBG_NOTICE("vfs_stat of %s failed "
-				   "(%s)\n",
-				   smb_fname_str_dbg(smb_fname_base),
-				   strerror(errno));
-			TALLOC_FREE(smb_fname_base);
-			reply_nterror(req,
-				      map_nt_error_from_unix(errno));
-			return;
-		}
-
-		status = file_name_hash(conn,
-					smb_fname_str_dbg(smb_fname_base),
-					&name_hash);
-		if (!NT_STATUS_IS_OK(status)) {
-			TALLOC_FREE(smb_fname_base);
-			reply_nterror(req, status);
-			return;
-		}
-
-		fileid = vfs_file_id_from_sbuf(conn,
-					       &smb_fname_base->st);
-		TALLOC_FREE(smb_fname_base);
-		get_file_infos(fileid, name_hash, &delete_pending, NULL);
+		get_file_infos(base_fsp->file_id,
+			       base_fsp->name_hash,
+			       &delete_pending,
+			       NULL);
 		if (delete_pending) {
 			reply_nterror(req, NT_STATUS_DELETE_PENDING);
 			return;
 		}
 	}
 
-	status = file_name_hash(conn,
-				smb_fname_str_dbg(smb_fname),
-				&name_hash);
-	if (!NT_STATUS_IS_OK(status)) {
-		reply_nterror(req, status);
-		return;
-	}
-
 	if (fsp_getinfo_ask_sharemode(fsp)) {
-		fileid = vfs_file_id_from_sbuf(conn, &smb_fname->st);
-		get_file_infos(fileid, name_hash, &delete_pending,
+		get_file_infos(fsp->file_id,
+			       fsp->name_hash,
+			       &delete_pending,
 			       &write_time_ts);
 	}
 
@@ -2832,6 +2781,7 @@ static void call_trans2qpathinfo(
 		status = smb_q_posix_symlink(
 			conn,
 			req,
+			dirfsp,
 			smb_fname,
 			ppdata,
 			&total_data);
@@ -3725,15 +3675,16 @@ static NTSTATUS smb_set_file_unix_link(connection_struct *conn,
 				       struct smb_request *req,
 				       const char *pdata,
 				       int total_data,
+				       struct files_struct *dirfsp,
 				       struct smb_filename *new_smb_fname)
 {
 	char *link_target = NULL;
 	struct smb_filename target_fname;
 	TALLOC_CTX *ctx = talloc_tos();
+	struct smb_filename new_smb_fname_rel = {};
+	char *slash = NULL;
 	NTSTATUS status;
 	int ret;
-	struct smb_filename *parent_fname = NULL;
-	struct smb_filename *base_name = NULL;
 
 	if (!CAN_WRITE(conn)) {
 		return NT_STATUS_DOS(ERRSRV, ERRaccess);
@@ -3767,28 +3718,23 @@ static NTSTATUS smb_set_file_unix_link(connection_struct *conn,
 		return status;
 	}
 
-	DEBUG(10,("smb_set_file_unix_link: SMB_SET_FILE_UNIX_LINK doing symlink %s -> %s\n",
-			new_smb_fname->base_name, link_target ));
+	DBG_DEBUG("SMB_SET_FILE_UNIX_LINK doing symlink %s -> %s\n",
+		  new_smb_fname->base_name, link_target);
 
-	status = parent_pathref(talloc_tos(),
-				conn->cwd_fsp,
-				new_smb_fname,
-				&parent_fname,
-				&base_name);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
+	new_smb_fname_rel = *new_smb_fname;
+	slash = strrchr_m(new_smb_fname_rel.base_name, '/');
+	if (slash != NULL) {
+		new_smb_fname_rel.base_name = slash + 1;
 	}
 
 	ret = SMB_VFS_SYMLINKAT(conn,
-			&target_fname,
-			parent_fname->fsp,
-			base_name);
+				&target_fname,
+				dirfsp,
+				&new_smb_fname_rel);
 	if (ret != 0) {
-		TALLOC_FREE(parent_fname);
 		return map_nt_error_from_unix(errno);
 	}
 
-	TALLOC_FREE(parent_fname);
 	return NT_STATUS_OK;
 }
 
@@ -4588,7 +4534,7 @@ static void call_trans2setpathinfo(
 
 	case SMB_SET_FILE_UNIX_LINK:
 		status = smb_set_file_unix_link(
-			conn, req, *ppdata, total_data, smb_fname);
+			conn, req, *ppdata, total_data, dirfsp, smb_fname);
 		break;
 
 	case SMB_SET_FILE_UNIX_HLINK:

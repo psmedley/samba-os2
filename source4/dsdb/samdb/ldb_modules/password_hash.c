@@ -1,4 +1,4 @@
-/* 
+/*
    ldb database module
 
    Copyright (C) Simo Sorce  2004-2008
@@ -11,12 +11,12 @@
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -33,11 +33,13 @@
  */
 
 #include "includes.h"
+#include "ldb_errors.h"
 #include "ldb_module.h"
 #include "libcli/auth/libcli_auth.h"
 #include "libcli/security/dom_sid.h"
 #include "system/kerberos.h"
 #include "auth/kerberos/kerberos.h"
+#include "dsdb/gmsa/util.h"
 #include "dsdb/samdb/samdb.h"
 #include "dsdb/samdb/ldb_modules/util.h"
 #include "dsdb/samdb/ldb_modules/password_modules.h"
@@ -133,6 +135,7 @@ struct ph_context {
 	bool pwd_last_set_bypass;
 	bool pwd_last_set_default;
 	bool smartcard_reset;
+	bool kdc_reset_smartcard_account_password;
 	const char **userPassword_schemes;
 };
 
@@ -539,13 +542,13 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 			if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
-						 "ndr_pull_struct_blob PrimaryKerberosNeverKeys");
+						 "ndr_pull_struct_blob PrimaryKerberosNewerKeys");
 			}
 
 			if (k->version != 4) {
 				talloc_free(scb);
 				return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
-						 "KerberosNerverKeys version != 4");
+						 "KerberosNewerKeys version != 4");
 			}
 
 			if (k->ctr.ctr4.salt.string == NULL) {
@@ -663,7 +666,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 			talloc_free(scb);
 			return ldb_error(ldb, LDB_ERR_CONSTRAINT_VIOLATION,
-					 "ndr_pull_struct_blob_all");
+					 "ndr_push_struct_blob");
 		}
 
 		if (sce->values[0].length != blob.length) {
@@ -685,7 +688,7 @@ static int password_hash_bypass(struct ldb_module *module, struct ldb_request *r
 	return ldb_next_request(module, request);
 }
 
-/* Get the NT hash, and fill it in as an entry in the password history, 
+/* Get the NT hash, and fill it in as an entry in the password history,
    and specify it into io->g.nt_hash */
 
 static int setup_nt_fields(struct setup_password_fields_io *io)
@@ -1012,7 +1015,7 @@ static int setup_primary_kerberos(struct setup_password_fields_io *io,
 		old_pkb3 = &_old_pkb.ctr.ctr3;
 	}
 
-	/* if we didn't found the old keys we're done */
+	/* if we didn't find the old keys we're done */
 	if (!old_pkb3) {
 		return LDB_SUCCESS;
 	}
@@ -1127,7 +1130,7 @@ static int setup_primary_kerberos_newer(struct setup_password_fields_io *io,
 		old_pkb4 = &_old_pkb.ctr.ctr4;
 	}
 
-	/* if we didn't found the old keys we're done */
+	/* if we didn't find the old keys we're done */
 	if (!old_pkb4) {
 		return LDB_SUCCESS;
 	}
@@ -1317,14 +1320,14 @@ static int setup_primary_wdigest(struct setup_password_fields_io *io,
 		.user	= &sAMAccountName_l,
 		.realm	= &dns_domain_u,
 		},
-	/* 
+	/*
 	 * userPrincipalName, no realm
 	 */
 		{
 		.user	= &userPrincipalName,
 		},
 		{
-		/* 
+		/*
 		 * NOTE: w2k3 messes this up, if the user has a real userPrincipalName,
 		 *       the fallback to the sAMAccountName based userPrincipalName is correct
 		 */
@@ -1333,7 +1336,7 @@ static int setup_primary_wdigest(struct setup_password_fields_io *io,
 		{
 		.user	= &userPrincipalName_u,
 		},
-	/* 
+	/*
 	 * nt4dom\sAMAccountName, no realm
 	 */
 		{
@@ -1416,7 +1419,7 @@ static int setup_primary_wdigest(struct setup_password_fields_io *io,
 						      io->ac->status->domain_data.dns_domain);
 		if (!user_principal_name) {
 			return ldb_oom(ldb);
-		}	
+		}
 	}
 	userPrincipalName	= data_blob_string_const(user_principal_name);
 	userPrincipalName_l	= data_blob_string_const(strlower_talloc(io->ac, user_principal_name));
@@ -2349,10 +2352,10 @@ static int setup_last_set_field(struct setup_password_fields_io *io)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(io->ac->module);
 	const struct ldb_message *msg = NULL;
-	struct timeval tv = { .tv_sec = 0 };
 	const struct ldb_val *old_val = NULL;
 	const struct ldb_val *new_val = NULL;
 	int ret;
+	bool ok;
 
 	switch (io->ac->req->operation) {
 	case LDB_ADD:
@@ -2487,8 +2490,10 @@ static int setup_last_set_field(struct setup_password_fields_io *io)
 			break;
 		}
 		/* -1 means set it as now */
-		GetTimeOfDay(&tv);
-		io->g.last_set = timeval_to_nttime(&tv);
+		ok = dsdb_gmsa_current_time(ldb, &io->g.last_set);
+		if (!ok) {
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
 		break;
 	default:
 		return dsdb_module_werror(io->ac->module,
@@ -2618,6 +2623,8 @@ static int setup_given_passwords(struct setup_password_fields_io *io,
 static int setup_password_fields(struct setup_password_fields_io *io)
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(io->ac->module);
+	bool prepare_random;
+
 	int ret;
 
 	ret = setup_last_set_field(io);
@@ -2625,17 +2632,11 @@ static int setup_password_fields(struct setup_password_fields_io *io)
 		return ret;
 	}
 
-	if (!io->ac->update_password) {
+	if (!io->ac->update_password && !io->ac->smartcard_reset) {
 		return LDB_SUCCESS;
 	}
 
 	if (io->u.is_krbtgt) {
-		size_t min = 196;
-		size_t max = 255;
-		size_t diff = max - min;
-		size_t len = max;
-		struct ldb_val *krbtgt_utf16 = NULL;
-
 		if (!io->ac->pwd_reset) {
 			return dsdb_module_werror(io->ac->module,
 					LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS,
@@ -2649,6 +2650,23 @@ static int setup_password_fields(struct setup_password_fields_io *io)
 					WERR_DS_INVALID_ATTRIBUTE_SYNTAX,
 					"Password reset on krbtgt requires UTF16!");
 		}
+	}
+
+	prepare_random = io->u.is_krbtgt || io->ac->smartcard_reset ||
+			 io->ac->kdc_reset_smartcard_account_password;
+
+	/*
+	 * krbtgt, smartcard reset (on addition of
+	 * UF_SMARTCARD_REQUIRED) and KDC-triggered rollover (for
+	 * ResetSmartCardAccountPassword) need random passwords for
+	 * all supported keys
+	 */
+	if (prepare_random) {
+		size_t min = 196;
+		size_t max = 255;
+		size_t diff = max - min;
+		size_t len = max;
+		struct ldb_val *krbtgt_utf16 = NULL;
 
 		/*
 		 * Instead of taking the callers value,
@@ -2721,63 +2739,25 @@ static int setup_password_fields(struct setup_password_fields_io *io)
 
 static int setup_smartcard_reset(struct setup_password_fields_io *io)
 {
-	struct ldb_context *ldb = ldb_module_get_ctx(io->ac->module);
-	struct supplementalCredentialsBlob scb = { .__ndr_size = 0 };
-	enum ndr_err_code ndr_err;
 
 	if (!io->ac->smartcard_reset) {
 		return LDB_SUCCESS;
 	}
 
-	io->g.nt_hash = talloc(io->ac, struct samr_Password);
-	if (io->g.nt_hash == NULL) {
-		return ldb_module_oom(io->ac->module);
-	}
-	generate_secret_buffer(io->g.nt_hash->hash,
-			       sizeof(io->g.nt_hash->hash));
+	/*
+	 * We must not keep the old password history otherwise the
+	 * password will not appear to have been randomised until the
+	 * 60min window is over
+	 */
 	io->g.nt_history_len = 0;
 
 	/*
-	 * We take the "old" value and store it
-	 * with num_packages = 0.
-	 *
-	 * On "add" we have scb.sub.signature == 0, which
-	 * results in:
-	 *
-	 * [0000] 00 00 00 00 00 00 00 00   00 00 00 00 00
-	 *
-	 * On modify it's likely to be scb.sub.signature ==
-	 * SUPPLEMENTAL_CREDENTIALS_SIGNATURE (0x0050), which results in
-	 * something like:
-	 *
-	 * [0000] 00 00 00 00 62 00 00 00   00 00 00 00 20 00 20 00
-	 * [0010] 20 00 20 00 20 00 20 00   20 00 20 00 20 00 20 00
-	 * [0020] 20 00 20 00 20 00 20 00   20 00 20 00 20 00 20 00
-	 * [0030] 20 00 20 00 20 00 20 00   20 00 20 00 20 00 20 00
-	 * [0040] 20 00 20 00 20 00 20 00   20 00 20 00 20 00 20 00
-	 * [0050] 20 00 20 00 20 00 20 00   20 00 20 00 20 00 20 00
-	 * [0060] 20 00 20 00 20 00 20 00   20 00 20 00 50 00 00
-	 *
-	 * See https://bugzilla.samba.org/show_bug.cgi?id=11441
-	 * and ndr_{push,pull}_supplementalCredentialsSubBlob().
+	 * The password has been randomly set earlier, but now we need
+	 * to declare this a password update so that the change is
+	 * made (this ensures that the other rules about updates are
+	 * skipped in case, which is the setting of
+	 * UF_SMARTCARD_REQUIRED on an account)
 	 */
-	scb = io->o.scb;
-	scb.sub.num_packages = 0;
-
-	/*
-	 * setup 'supplementalCredentials' value without packages
-	 */
-	ndr_err = ndr_push_struct_blob(&io->g.supplemental, io->ac,
-				       &scb,
-				       (ndr_push_flags_fn_t)ndr_push_supplementalCredentialsBlob);
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
-		ldb_asprintf_errstring(ldb,
-				       "setup_smartcard_reset: "
-				       "failed to push supplementalCredentialsBlob: %s",
-				       nt_errstr(status));
-		return LDB_ERR_OPERATIONS_ERROR;
-	}
 
 	io->ac->update_password = true;
 	return LDB_SUCCESS;
@@ -2954,6 +2934,11 @@ static int check_password_restrictions(struct setup_password_fields_io *io, WERR
 		return ret;
 	}
 
+	/* Do not apply restrictions on a KDC-issued rollover (eg ResetSmartCardAccountPassword) */
+	if (io->ac->kdc_reset_smartcard_account_password) {
+		return LDB_SUCCESS;
+	}
+
 	/*
 	 * First check the old password is correct, for password
 	 * changes when this hasn't already been checked by a
@@ -2994,8 +2979,22 @@ static int check_password_restrictions(struct setup_password_fields_io *io, WERR
 		}
 	}
 
+	/*
+	 * There is no restriction on a smartcard_reset update, even
+	 * if a password was specified, as it is randomised in this
+	 * module.
+	 */
+	if (io->ac->smartcard_reset) {
+		return LDB_SUCCESS;
+	}
+
+	/*
+	 * Only non-trust accounts have restrictions.
+	 *
+	 * This is where a krbtgt random password set will also exit, as
+	 * io->u.restrictions = 0 is called earlier.
+	 */
 	if (io->u.restrictions == 0) {
-		/* FIXME: Is this right? */
 		return LDB_SUCCESS;
 	}
 
@@ -3164,6 +3163,7 @@ static int check_password_restrictions(struct setup_password_fields_io *io, WERR
 		 */
 		krb5_ret = dsdb_extract_aes_256_key(io->smb_krb5_context->krb5_context,
 						    io->ac,
+						    ldb,
 						    io->ac->search_res->message,
 						    io->u.userAccountControl,
 						    &request_kvno, /* kvno */
@@ -3515,11 +3515,11 @@ static int msg_find_old_and_new_pwd_val(const struct ldb_message *msg,
 	return LDB_SUCCESS;
 }
 
-static int setup_io(struct ph_context *ac, 
+static int setup_io(struct ph_context *ac,
 		    const struct ldb_message *client_msg,
 		    const struct ldb_message *existing_msg,
-		    struct setup_password_fields_io *io) 
-{ 
+		    struct setup_password_fields_io *io)
+{
 	const struct ldb_val *quoted_utf16, *old_quoted_utf16, *lm_hash, *old_lm_hash;
 	struct ldb_context *ldb = ldb_module_get_ctx(ac->module);
 	struct loadparm_context *lp_ctx = talloc_get_type(
@@ -3753,7 +3753,7 @@ static int setup_io(struct ph_context *ac,
 
 		if (io->n.cleartext_utf16) {
 			/* refuse the change if someone wants to change with
-			   with both UTF16 possibilities at the same time... */
+			   both UTF16 possibilities at the same time... */
 			ldb_asprintf_errstring(ldb,
 				"setup_io: "
 				"it's only allowed to set the cleartext password as 'unicodePwd' or as 'clearTextPassword'");
@@ -3962,7 +3962,10 @@ static int setup_io(struct ph_context *ac,
 			 * If the DSDB_CONTROL_PASSWORD_ACL_VALIDATION_OID
 			 * control is missing, we require system access!
 			 */
-			ok = dsdb_module_am_system(ac->module);
+			ok = dsdb_have_system_access(
+				ac->module,
+				ac->req,
+				SYSTEM_CONTROL_KEEP_CRITICAL);
 			if (!ok) {
 				return ldb_module_operr(ac->module);
 			}
@@ -4063,6 +4066,7 @@ static int setup_io(struct ph_context *ac,
 		 */
 		krb5_ret = dsdb_extract_aes_256_key(io->smb_krb5_context->krb5_context,
 						    io->ac,
+						    ldb,
 						    existing_msg,
 						    io->u.userAccountControl,
 						    NULL, /* kvno */
@@ -4197,6 +4201,17 @@ static void ph_apply_controls(struct ph_context *ac)
 		/* Mark the "smartcard required" control as uncritical (done) */
 		ctrl->critical = false;
 	}
+
+	ac->kdc_reset_smartcard_account_password = false;
+	ctrl = ldb_request_get_control(ac->req,
+				DSDB_CONTROL_PASSWORD_KDC_RESET_SMARTCARD_ACCOUNT_PASSWORD);
+	if (ctrl != NULL) {
+		ac->kdc_reset_smartcard_account_password = true;
+
+		/* Mark KDC running ResetSmartCardAccountPassword control as uncritical (done) */
+		ctrl->critical = false;
+	}
+
 }
 
 static int ph_op_callback(struct ldb_request *req, struct ldb_reply *ares)
@@ -4738,19 +4753,7 @@ static int password_hash_needed(struct ldb_module *module,
 		return ldb_oom(ldb);
 	}
 
-	/*
-	 * Remove all password related attributes.
-	 */
-	if (ac->userPassword) {
-		ldb_msg_remove_attr(ac->update_msg, "userPassword");
-	}
-	ldb_msg_remove_attr(ac->update_msg, "clearTextPassword");
-	ldb_msg_remove_attr(ac->update_msg, "unicodePwd");
-	ldb_msg_remove_attr(ac->update_msg, "ntPwdHistory");
-	ldb_msg_remove_attr(ac->update_msg, "dBCSPwd");
-	ldb_msg_remove_attr(ac->update_msg, "lmPwdHistory");
-	ldb_msg_remove_attr(ac->update_msg, "supplementalCredentials");
-	ldb_msg_remove_attr(ac->update_msg, "pwdLastSet");
+	dsdb_remove_password_related_attrs(ac->update_msg, ac->userPassword);
 
 	*_ac = ac;
 	return LDB_SUCCESS;

@@ -16,6 +16,26 @@ from waflib.Tools import bison
 samba_dist.DIST_DIRS('.')
 samba_dist.DIST_BLACKLIST('.gitignore .bzrignore source4/selftest/provisions')
 
+# A function so the variables are not in global scope
+def get_default_private_libs():
+    # LDB is used by sssd (was made private by default in Samba 4.21)
+    SSSD_LIBS=["ldb"]
+    # These following libs without ABI checking were made private by default in Samba 4.21
+    # Presumably unused (dcerpc-samr was probably a copy and paste error,
+    # and samba-policy has primary use via python bindings).  tevent-util
+    # was for openchange but was for PIDL output that is no longer
+    # generated
+    POSSIBLY_UNUSED_LIBS=["dcerpc-samr","samba-policy","tevent-util"]
+    # These were used by mapiproxy in OpenChange (also used LDB and
+    # the real public libs tdb, talloc, tevent)
+    OPENCHANGE_SERVER_LIBS = ["dcerpc_server","samdb"]
+    # These (plus LDB, ndr, talloc, tevent) are used by the OpenChange
+    # client, which is still in use (Fedora/Red Hat packages it)
+    OPENCHANGE_LIBS = ["dcerpc","samba-hostconfig","samba-credentials"]
+    return SSSD_LIBS + POSSIBLY_UNUSED_LIBS + OPENCHANGE_LIBS + OPENCHANGE_SERVER_LIBS
+
+DEFAULT_PRIVATE_LIBS = get_default_private_libs()
+
 # install in /usr/local/samba by default
 default_prefix = Options.default_prefix = '/usr/local/samba'
 
@@ -123,6 +143,8 @@ def options(opt):
                   help=('Disable kernely keyring support for credential storage'),
                   action='store_false', dest='enable_keyring')
 
+    opt.samba_add_onoff_option('ldap')
+
     opt.option_group('developer options')
 
     opt.load('python') # options for disabling pyc or pyo compilation
@@ -187,7 +209,7 @@ def configure(conf):
     conf.RECURSE('examples/winexe')
 
     conf.SAMBA_CHECK_PERL(mandatory=True)
-    conf.find_program('xsltproc', var='XSLTPROC')
+    conf.CHECK_XSLTPROC_MANPAGES()
 
     if conf.env.disable_python:
         if not (Options.options.without_ad_dc):
@@ -264,6 +286,56 @@ def configure(conf):
             else:
                 conf.define('USING_SYSTEM_PAM_WRAPPER', 1)
 
+    # Check for LDAP
+    if Options.options.with_ldap:
+        conf.CHECK_HEADERS('ldap.h lber.h ldap_pvt.h')
+        conf.CHECK_TYPE('ber_tag_t', 'unsigned int', headers='ldap.h lber.h')
+        conf.CHECK_FUNCS_IN('ber_scanf ber_sockbuf_add_io', 'lber')
+        conf.CHECK_VARIABLE('LDAP_OPT_SOCKBUF', headers='ldap.h')
+
+        # if we LBER_OPT_LOG_PRINT_FN we can intercept ldap logging and print it out
+        # for the samba logs
+        conf.CHECK_VARIABLE('LBER_OPT_LOG_PRINT_FN',
+                            define='HAVE_LBER_LOG_PRINT_FN', headers='lber.h')
+
+        conf.CHECK_FUNCS_IN('ldap_init ldap_init_fd ldap_initialize ldap_set_rebind_proc', 'ldap')
+        conf.CHECK_FUNCS_IN('ldap_add_result_entry', 'ldap')
+
+        # Check if ldap_set_rebind_proc() takes three arguments
+        if conf.CHECK_CODE('ldap_set_rebind_proc(0, 0, 0)',
+                           'LDAP_SET_REBIND_PROC_ARGS',
+                           msg="Checking whether ldap_set_rebind_proc takes 3 arguments",
+                           headers='ldap.h lber.h', link=False):
+            conf.DEFINE('LDAP_SET_REBIND_PROC_ARGS', '3')
+        else:
+            conf.DEFINE('LDAP_SET_REBIND_PROC_ARGS', '2')
+
+        # last but not least, if ldap_init() exists, we want to use ldap
+        if conf.CONFIG_SET('HAVE_LDAP_INIT') and conf.CONFIG_SET('HAVE_LDAP_H'):
+            conf.DEFINE('HAVE_LDAP', '1')
+            conf.DEFINE('LDAP_DEPRECATED', '1')
+            conf.env['HAVE_LDAP'] = '1'
+            # if ber_sockbuf_add_io() and LDAP_OPT_SOCKBUF are available, we can add
+            # SASL wrapping hooks
+            if conf.CONFIG_SET('HAVE_BER_SOCKBUF_ADD_IO') and \
+                    conf.CONFIG_SET('HAVE_LDAP_OPT_SOCKBUF'):
+                conf.DEFINE('HAVE_LDAP_TRANSPORT_WRAPPING', 1)
+            conf.env.ENABLE_LDAP_BACKEND = True
+        else:
+            conf.fatal("LDAP support not found. "
+                       "Try installing libldap2-dev or openldap-devel. "
+                       "Otherwise, use --without-ldap to build without "
+                       "LDAP support. "
+                       "LDAP support is required for the LDAP passdb backend, "
+                       "LDAP idmap backends and ADS. "
+                       "ADS support improves communication with "
+                       "Active Directory domain controllers.")
+    else:
+        conf.SET_TARGET_TYPE('ldap', 'EMPTY')
+        conf.SET_TARGET_TYPE('lber', 'EMPTY')
+
+    conf.RECURSE('lib/tdb')
+    conf.RECURSE('lib/tevent')
     conf.RECURSE('lib/ldb')
 
     if conf.CHECK_LDFLAGS(['-Wl,--wrap=test']):

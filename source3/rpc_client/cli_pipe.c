@@ -1130,17 +1130,28 @@ static NTSTATUS create_bind_or_alt_ctx_internal(TALLOC_CTX *mem_ctx,
 {
 	uint16_t auth_len = auth_info->length;
 	NTSTATUS status;
-	struct dcerpc_ctx_list ctx_list = {
-		.context_id = 0,
-		.num_transfer_syntaxes = 1,
-		.abstract_syntax = *abstract,
-		.transfer_syntaxes = (struct ndr_syntax_id *)discard_const(transfer),
+	struct ndr_syntax_id bind_time_features = dcerpc_construct_bind_time_features(
+			DCERPC_BIND_TIME_SECURITY_CONTEXT_MULTIPLEXING |
+			DCERPC_BIND_TIME_KEEP_CONNECTION_ON_ORPHAN);
+	struct dcerpc_ctx_list ctx_list[2] = {
+		[0] = {
+			.context_id = 0,
+			.num_transfer_syntaxes = 1,
+			.abstract_syntax = *abstract,
+			.transfer_syntaxes = (struct ndr_syntax_id *)discard_const(transfer),
+		},
+		[1] = {
+			.context_id = 1,
+			.num_transfer_syntaxes = 1,
+			.abstract_syntax = *abstract,
+			.transfer_syntaxes = &bind_time_features,
+		},
 	};
 	union dcerpc_payload u = {
 		.bind.max_xmit_frag	= RPC_MAX_PDU_FRAG_LEN,
 		.bind.max_recv_frag	= RPC_MAX_PDU_FRAG_LEN,
-		.bind.num_contexts	= 1,
-		.bind.ctx_list		= &ctx_list,
+		.bind.num_contexts	= ptype == DCERPC_PKT_BIND ? 2 : 1,
+		.bind.ctx_list		= ctx_list,
 		.bind.auth_info		= *auth_info,
 	};
 	uint8_t pfc_flags = DCERPC_PFC_FLAG_FIRST | DCERPC_PFC_FLAG_LAST;
@@ -1656,8 +1667,9 @@ static NTSTATUS rpc_api_pipe_req_recv(struct tevent_req *req, TALLOC_CTX *mem_ct
 ****************************************************************************/
 
 static bool check_bind_response(const struct dcerpc_bind_ack *r,
-				const struct ndr_syntax_id *transfer)
+				struct rpc_pipe_client *cli)
 {
+	const struct ndr_syntax_id *transfer = &cli->transfer_syntax;
 	struct dcerpc_ack_ctx ctx;
 	bool equal;
 
@@ -1678,9 +1690,22 @@ static bool check_bind_response(const struct dcerpc_bind_ack *r,
 		return False;
 	}
 
-	if (r->num_results != 0x1 || ctx.result != 0) {
-		DEBUG(2,("bind_rpc_pipe: bind denied results: %d reason: %x\n",
-		          r->num_results, ctx.reason.value));
+	if (ctx.result != DCERPC_BIND_ACK_RESULT_ACCEPTANCE) {
+		DBG_NOTICE("bind denied result: %d reason: %x\n",
+			   ctx.result, ctx.reason.value);
+		return false;
+	}
+
+	if (r->num_results >= 2) {
+		const struct dcerpc_ack_ctx *neg = &r->ctx_list[1];
+
+		if (neg->result == DCERPC_BIND_ACK_RESULT_NEGOTIATE_ACK) {
+			cli->bind_time_features = neg->reason.negotiate;
+		} else {
+			DBG_DEBUG("bind_time_feature failed - "
+				  "result: %d reason %x\n",
+				  neg->result, neg->reason.value);
+		}
 	}
 
 	DEBUG(5,("check_bind_response: accepted!\n"));
@@ -1866,7 +1891,7 @@ static void rpc_pipe_bind_step_one_done(struct tevent_req *subreq)
 		return;
 	}
 
-	if (!check_bind_response(&pkt->u.bind_ack, &state->cli->transfer_syntax)) {
+	if (!check_bind_response(&pkt->u.bind_ack, state->cli)) {
 		DEBUG(2, ("rpc_pipe_bind: check_bind_response failed.\n"));
 		tevent_req_nterror(req, NT_STATUS_BUFFER_TOO_SMALL);
 		return;

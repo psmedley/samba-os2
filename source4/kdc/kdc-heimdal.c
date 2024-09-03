@@ -64,12 +64,16 @@ static kdc_code kdc_process(struct kdc_server *kdc,
 	char *pa;
 	struct sockaddr_storage ss;
 	krb5_data k5_reply;
-	krb5_kdc_configuration *kdc_config =
-		(krb5_kdc_configuration *)kdc->private_data;
+	krb5_kdc_configuration *kdc_config = kdc->private_data;
+	struct timespec now_timespec = timespec_current();
+	struct timeval now_timeval = convert_timespec_to_timeval(now_timespec);
 
 	krb5_data_zero(&k5_reply);
 
-	krb5_kdc_update_time(NULL);
+	krb5_kdc_update_time(&now_timeval);
+
+	/* This sets the time into the DSDB opaque */
+	*kdc->base_ctx->current_nttime_ull = full_timespec_to_nt_time(&now_timespec);
 
 	ret = tsocket_address_bsd_sockaddr(peer_addr, (struct sockaddr *) &ss,
 				sizeof(struct sockaddr_storage));
@@ -339,28 +343,6 @@ static void kdc_post_fork(struct task_server *task, struct process_details *pd)
 	}
 	kdc = talloc_get_type_abort(task->private_data, struct kdc_server);
 
-	/* get a samdb connection */
-	kdc->samdb = samdb_connect(kdc,
-				   kdc->task->event_ctx,
-				   kdc->task->lp_ctx,
-				   system_session(kdc->task->lp_ctx),
-				   NULL,
-				   0);
-	if (!kdc->samdb) {
-		DBG_WARNING("kdc_task_init: unable to connect to samdb\n");
-		task_server_terminate(task, "kdc: krb5_init_context samdb connect failed", true);
-		return;
-	}
-
-	ldb_ret = samdb_rodc(kdc->samdb, &kdc->am_rodc);
-	if (ldb_ret != LDB_SUCCESS) {
-		DBG_WARNING("kdc_task_init: "
-			    "Cannot determine if we are an RODC: %s\n",
-			    ldb_errstring(kdc->samdb));
-		task_server_terminate(task, "kdc: krb5_init_context samdb RODC connect failed", true);
-		return;
-	}
-
 	kdc->proxy_timeout = lpcfg_parm_int(kdc->task->lp_ctx, NULL, "kdc", "proxy timeout", 5);
 
 	initialize_krb5_error_table();
@@ -472,11 +454,27 @@ static void kdc_post_fork(struct task_server *task, struct process_details *pd)
 	kdc->base_ctx->lp_ctx = task->lp_ctx;
 	kdc->base_ctx->msg_ctx = task->msg_ctx;
 
+	kdc->base_ctx->current_nttime_ull = talloc_zero(kdc, unsigned long long);
+	if (kdc->base_ctx->current_nttime_ull == NULL) {
+		task_server_terminate(task, "kdc: out of memory creating time variable", true);
+		return;
+	}
+
 	status = hdb_samba4_create_kdc(kdc->base_ctx,
 				       kdc->smb_krb5_context->krb5_context,
-				       &kdc_config->db[0]);
+				       &kdc_config->db[0],
+				       &kdc->kdc_db_ctx);
 	if (!NT_STATUS_IS_OK(status)) {
 		task_server_terminate(task, "kdc: hdb_samba4_create_kdc (setup KDC database) failed", true);
+		return;
+	}
+
+	ldb_ret = samdb_rodc(kdc->kdc_db_ctx->samdb, &kdc->am_rodc);
+	if (ldb_ret != LDB_SUCCESS) {
+		DBG_WARNING("kdc_task_init: "
+			    "Cannot determine if we are an RODC: %s\n",
+			    ldb_errstring(kdc->kdc_db_ctx->samdb));
+		task_server_terminate(task, "kdc: krb5_init_context samdb RODC query failed", true);
 		return;
 	}
 

@@ -22,30 +22,29 @@
 */
 
 #include "includes.h"
-#include "events/events.h"
 #include "ldb.h"
 #include "ldb_module.h"
 #include "ldb_errors.h"
 #include "../lib/util/util_ldb.h"
-#include "../lib/crypto/crypto.h"
+#include "lib/crypto/gmsa.h"
 #include "dsdb/samdb/samdb.h"
-#include "libcli/security/security.h"
 #include "librpc/gen_ndr/ndr_security.h"
 #include "librpc/gen_ndr/ndr_misc.h"
 #include "../libds/common/flags.h"
 #include "dsdb/common/proto.h"
 #include "libcli/ldap/ldap_ndr.h"
 #include "param/param.h"
-#include "libcli/auth/libcli_auth.h"
 #include "librpc/gen_ndr/ndr_drsblobs.h"
-#include "system/locale.h"
-#include "system/filesys.h"
-#include "lib/util/tsort.h"
 #include "dsdb/common/util.h"
+#include "dsdb/gmsa/gkdi.h"
+#include "dsdb/gmsa/util.h"
 #include "lib/socket/socket.h"
 #include "librpc/gen_ndr/irpc.h"
 #include "libds/common/flag_mapping.h"
 #include "lib/util/access.h"
+#include "lib/util/data_blob.h"
+#include "lib/util/debug.h"
+#include "lib/util/fault.h"
 #include "lib/util/sys_rw_data.h"
 #include "libcli/util/ntstatus.h"
 #include "lib/util/smb_strtox.h"
@@ -55,7 +54,7 @@
 #undef strcasecmp
 
 /*
- * This included to allow us to handle DSDB_FLAG_REPLICATED_UPDATE in
+ * This is included to allow us to handle DSDB_FLAG_REPLICATED_UPDATE in
  * dsdb_request_add_controls()
  */
 #include "dsdb/samdb/ldb_modules/util.h"
@@ -528,7 +527,7 @@ NTTIME samdb_result_allow_password_change(struct ldb_context *sam_ldb,
 }
 
 /*
-  pull a samr_Password structutre from a result set.
+  pull a samr_Password structure from a result set.
 */
 struct samr_Password *samdb_result_hash(TALLOC_CTX *mem_ctx, const struct ldb_message *msg, const char *attr)
 {
@@ -539,7 +538,8 @@ struct samr_Password *samdb_result_hash(TALLOC_CTX *mem_ctx, const struct ldb_me
 		if (hash == NULL) {
 			return NULL;
 		}
-		memcpy(hash->hash, val->data, MIN(val->length, sizeof(hash->hash)));
+		talloc_keep_secret(hash);
+		memcpy(hash->hash, val->data, sizeof(hash->hash));
 	}
 	return hash;
 }
@@ -555,6 +555,13 @@ unsigned int samdb_result_hashes(TALLOC_CTX *mem_ctx, const struct ldb_message *
 
 	*hashes = NULL;
 	if (!val) {
+		return 0;
+	}
+	if (val->length % 16 != 0) {
+		/*
+		 * The length is wrong. Don’t try to read beyond the end of the
+		 * buffer.
+		 */
 		return 0;
 	}
 	count = val->length / 16;
@@ -638,7 +645,7 @@ NTSTATUS samdb_result_passwords(TALLOC_CTX *mem_ctx,
 				const struct ldb_message *msg,
 				struct samr_Password **nt_pwd)
 {
-	uint16_t acct_flags;
+	uint32_t acct_flags;
 
 	acct_flags = samdb_result_acct_flags(msg,
 					     "msDS-User-Account-Control-Computed");
@@ -654,7 +661,7 @@ NTSTATUS samdb_result_passwords(TALLOC_CTX *mem_ctx,
 }
 
 /*
-  pull a samr_LogonHours structutre from a result set.
+  pull a samr_LogonHours structure from a result set.
 */
 struct samr_LogonHours samdb_result_logon_hours(TALLOC_CTX *mem_ctx, struct ldb_message *msg, const char *attr)
 {
@@ -1319,6 +1326,89 @@ struct ldb_dn *samdb_extended_rights_dn(struct ldb_context *sam_ctx, TALLOC_CTX 
 	}
 	return new_dn;
 }
+
+struct ldb_dn *samdb_configuration_dn(struct ldb_context *sam_ctx,
+				      TALLOC_CTX *mem_ctx,
+				      const char *dn_str)
+{
+	struct ldb_dn *config_dn = NULL;
+	struct ldb_dn *child_dn = NULL;
+	bool ok;
+
+	config_dn = ldb_dn_copy(mem_ctx, ldb_get_config_basedn(sam_ctx));
+	if (config_dn == NULL) {
+		return NULL;
+	}
+
+	child_dn = ldb_dn_new(mem_ctx, sam_ctx, dn_str);
+	if (child_dn == NULL) {
+		talloc_free(config_dn);
+		return NULL;
+	}
+
+	ok = ldb_dn_add_child(config_dn, child_dn);
+	talloc_free(child_dn);
+	if (!ok) {
+		talloc_free(config_dn);
+		return NULL;
+	}
+
+	return config_dn;
+}
+
+struct ldb_dn *samdb_gkdi_root_key_container_dn(struct ldb_context *sam_ctx,
+						TALLOC_CTX *mem_ctx)
+{
+	/*
+	 * [MS-GKDI] says the root key container is to be found in “CN=Sid Key
+	 * Service,CN=Services”, but that is not correct.
+	 */
+	return samdb_configuration_dn(sam_ctx,
+				      mem_ctx,
+				      "CN=Master Root Keys,"
+				      "CN=Group Key Distribution Service,"
+				      "CN=Services");
+}
+
+struct ldb_dn *samdb_gkdi_root_key_dn(struct ldb_context *sam_ctx,
+				      TALLOC_CTX *mem_ctx,
+				      const struct GUID *root_key_id)
+{
+	struct ldb_dn *root_key_dn = NULL;
+	struct ldb_dn *child_dn = NULL;
+	struct GUID_txt_buf guid_buf;
+	char *root_key_id_string = NULL;
+	bool ok;
+
+	root_key_id_string = GUID_buf_string(root_key_id, &guid_buf);
+	if (root_key_id_string == NULL) {
+		return NULL;
+	}
+
+	root_key_dn = samdb_gkdi_root_key_container_dn(sam_ctx, mem_ctx);
+	if (root_key_dn == NULL) {
+		return NULL;
+	}
+
+	child_dn = ldb_dn_new_fmt(mem_ctx,
+				  sam_ctx,
+				  "CN=%s",
+				  root_key_id_string);
+	if (child_dn == NULL) {
+		talloc_free(root_key_dn);
+		return NULL;
+	}
+
+	ok = ldb_dn_add_child(root_key_dn, child_dn);
+	talloc_free(child_dn);
+	if (!ok) {
+		talloc_free(root_key_dn);
+		return NULL;
+	}
+
+	return root_key_dn;
+}
+
 /*
   work out the domain sid for the current open ldb
 */
@@ -2368,33 +2458,21 @@ int samdb_set_password_callback(struct ldb_request *req, struct ldb_reply *ares)
 	return ldb_request_done(req, LDB_SUCCESS);
 }
 
-/*
- * Sets the user password using plaintext UTF16 (attribute "new_password") or
- * LM (attribute "lmNewHash") or NT (attribute "ntNewHash") hash. Also pass
- * the old LM and/or NT hash (attributes "lmOldHash"/"ntOldHash") if it is a
- * user change or not. The "rejectReason" gives some more information if the
- * change failed.
- *
- * Results: NT_STATUS_OK, NT_STATUS_INVALID_PARAMETER, NT_STATUS_UNSUCCESSFUL,
- *   NT_STATUS_WRONG_PASSWORD, NT_STATUS_PASSWORD_RESTRICTION,
- *   NT_STATUS_ACCESS_DENIED, NT_STATUS_ACCOUNT_LOCKED_OUT, NT_STATUS_NO_MEMORY
- */
-static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
-			    struct ldb_dn *user_dn, struct ldb_dn *domain_dn,
+static NTSTATUS samdb_set_password_request(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
+			    struct ldb_dn *user_dn,
 			    const DATA_BLOB *new_password,
 			    const struct samr_Password *ntNewHash,
 			    enum dsdb_password_checked old_password_checked,
-			    enum samPwdChangeReason *reject_reason,
-			    struct samr_DomInfo1 **_dominfo,
-			    bool permit_interdomain_trust)
+			    bool permit_interdomain_trust,
+			    struct ldb_request **req_out)
 {
 	struct ldb_message *msg;
 	struct ldb_message_element *el;
 	struct ldb_request *req;
-	struct dsdb_control_password_change_status *pwd_stat = NULL;
 	int ret;
 	bool hash_values = false;
-	NTSTATUS status = NT_STATUS_OK;
+
+	*req_out = NULL;
 
 #define CHECK_RET(x) \
 	if (x != LDB_SUCCESS) { \
@@ -2418,7 +2496,7 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 			&& ((ntNewHash != NULL))) {
 		/* we have a password as NT hash */
 		if (ntNewHash != NULL) {
-			CHECK_RET(samdb_msg_add_hash(ldb, mem_ctx, msg,
+			CHECK_RET(samdb_msg_add_hash(ldb, msg, msg,
 				"unicodePwd", ntNewHash));
 			el = ldb_msg_find_element(msg, "unicodePwd");
 			el->flags = LDB_FLAG_MOD_REPLACE;
@@ -2430,6 +2508,8 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
+#undef CHECK_RET
+
 	/* build modify request */
 	ret = ldb_build_mod_req(&req, ldb, mem_ctx, msg, NULL, NULL,
 				samdb_set_password_callback, NULL);
@@ -2438,6 +2518,9 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 		return NT_STATUS_NO_MEMORY;
         }
 
+	/* Tie the lifetime of the message to that of the request. */
+	talloc_steal(req, msg);
+
 	/* A password change operation */
 	if (old_password_checked == DSDB_PASSWORD_CHECKED_AND_CORRECT) {
 		struct dsdb_control_password_change *change;
@@ -2445,7 +2528,6 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 		change = talloc(req, struct dsdb_control_password_change);
 		if (change == NULL) {
 			talloc_free(req);
-			talloc_free(msg);
 			return NT_STATUS_NO_MEMORY;
 		}
 
@@ -2456,7 +2538,16 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 					      true, change);
 		if (ret != LDB_SUCCESS) {
 			talloc_free(req);
-			talloc_free(msg);
+			return NT_STATUS_NO_MEMORY;
+		}
+
+	/* a KDC-triggered smart card password rollover (ResetSmartCardAccountPassword) */
+	} else if (old_password_checked == DSDB_PASSWORD_KDC_RESET_SMARTCARD_ACCOUNT_PASSWORD) {
+		ret = ldb_request_add_control(req,
+					      DSDB_CONTROL_PASSWORD_KDC_RESET_SMARTCARD_ACCOUNT_PASSWORD,
+					      true, NULL);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(req);
 			return NT_STATUS_NO_MEMORY;
 		}
 	}
@@ -2466,7 +2557,6 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 					      true, NULL);
 		if (ret != LDB_SUCCESS) {
 			talloc_free(req);
-			talloc_free(msg);
 			return NT_STATUS_NO_MEMORY;
 		}
 	}
@@ -2476,7 +2566,6 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 					      false, NULL);
 		if (ret != LDB_SUCCESS) {
 			talloc_free(req);
-			talloc_free(msg);
 			return NT_STATUS_NO_MEMORY;
 		}
 	}
@@ -2485,8 +2574,48 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 				      true, NULL);
 	if (ret != LDB_SUCCESS) {
 		talloc_free(req);
-		talloc_free(msg);
 		return NT_STATUS_NO_MEMORY;
+	}
+
+	*req_out = req;
+
+	return NT_STATUS_OK;
+}
+
+/*
+ * Sets the user password using plaintext UTF16 (attribute "new_password") or NT
+ * (attribute "ntNewHash") hash. Also pass the old LM and/or NT hash (attributes
+ * "lmOldHash"/"ntOldHash") if it is a user change or not. The "rejectReason"
+ * gives some more information if the change failed.
+ *
+ * Results: NT_STATUS_OK, NT_STATUS_INVALID_PARAMETER, NT_STATUS_UNSUCCESSFUL,
+ *   NT_STATUS_WRONG_PASSWORD, NT_STATUS_PASSWORD_RESTRICTION,
+ *   NT_STATUS_ACCESS_DENIED, NT_STATUS_ACCOUNT_LOCKED_OUT, NT_STATUS_NO_MEMORY
+ */
+static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
+			    struct ldb_dn *user_dn,
+			    const DATA_BLOB *new_password,
+			    const struct samr_Password *ntNewHash,
+			    enum dsdb_password_checked old_password_checked,
+			    enum samPwdChangeReason *reject_reason,
+			    struct samr_DomInfo1 **_dominfo,
+			    bool permit_interdomain_trust)
+{
+	struct ldb_request *req;
+	struct dsdb_control_password_change_status *pwd_stat = NULL;
+	int ret;
+	NTSTATUS status = NT_STATUS_OK;
+
+	status = samdb_set_password_request(ldb,
+					    mem_ctx,
+					    user_dn,
+					    new_password,
+					    ntNewHash,
+					    old_password_checked,
+					    permit_interdomain_trust,
+					    &req);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
 	}
 
 	ret = ldb_request(ldb, req);
@@ -2503,7 +2632,6 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 	}
 
 	talloc_free(req);
-	talloc_free(msg);
 
 	/* Sets the domain info (if requested) */
 	if (_dominfo != NULL) {
@@ -2573,7 +2701,7 @@ static NTSTATUS samdb_set_password_internal(struct ldb_context *ldb, TALLOC_CTX 
 }
 
 NTSTATUS samdb_set_password(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
-			    struct ldb_dn *user_dn, struct ldb_dn *domain_dn,
+			    struct ldb_dn *user_dn,
 			    const DATA_BLOB *new_password,
 			    const struct samr_Password *ntNewHash,
 			    enum dsdb_password_checked old_password_checked,
@@ -2581,7 +2709,7 @@ NTSTATUS samdb_set_password(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 			    struct samr_DomInfo1 **_dominfo)
 {
 	return samdb_set_password_internal(ldb, mem_ctx,
-			    user_dn, domain_dn,
+			    user_dn,
 			    new_password,
 			    ntNewHash,
 			    old_password_checked,
@@ -2590,11 +2718,10 @@ NTSTATUS samdb_set_password(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 }
 
 /*
- * Sets the user password using plaintext UTF16 (attribute "new_password") or
- * LM (attribute "lmNewHash") or NT (attribute "ntNewHash") hash. Also pass
- * the old LM and/or NT hash (attributes "lmOldHash"/"ntOldHash") if it is a
- * user change or not. The "rejectReason" gives some more information if the
- * change failed.
+ * Sets the user password using plaintext UTF16 (attribute "new_password") or NT
+ * (attribute "ntNewHash") hash. Also pass the old LM and/or NT hash (attributes
+ * "lmOldHash"/"ntOldHash") if it is a user change or not. The "rejectReason"
+ * gives some more information if the change failed.
  *
  * This wrapper function for "samdb_set_password" takes a SID as input rather
  * than a user DN.
@@ -2969,7 +3096,7 @@ NTSTATUS samdb_set_password_sid(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 	}
 
 	nt_status = samdb_set_password_internal(ldb, mem_ctx,
-						user_msg->dn, NULL,
+						user_msg->dn,
 						new_password,
 						ntNewHash,
 						old_password_checked,
@@ -4007,8 +4134,8 @@ const char *samdb_cn_to_lDAPDisplayName(TALLOC_CTX *mem_ctx, const char *cn)
  */
 int dsdb_functional_level(struct ldb_context *ldb)
 {
-	int *domainFunctionality =
-		talloc_get_type(ldb_get_opaque(ldb, "domainFunctionality"), int);
+	unsigned long long *domainFunctionality =
+		talloc_get_type(ldb_get_opaque(ldb, "domainFunctionality"), unsigned long long);
 	if (!domainFunctionality) {
 		/* this is expected during initial provision */
 		DEBUG(4,(__location__ ": WARNING: domainFunctionality not setup\n"));
@@ -4022,8 +4149,8 @@ int dsdb_functional_level(struct ldb_context *ldb)
  */
 int dsdb_forest_functional_level(struct ldb_context *ldb)
 {
-	int *forestFunctionality =
-		talloc_get_type(ldb_get_opaque(ldb, "forestFunctionality"), int);
+	unsigned long long *forestFunctionality =
+		talloc_get_type(ldb_get_opaque(ldb, "forestFunctionality"), unsigned long long);
 	if (!forestFunctionality) {
 		DEBUG(0,(__location__ ": WARNING: forestFunctionality not setup\n"));
 		return DS_DOMAIN_FUNCTION_2000;
@@ -4036,8 +4163,8 @@ int dsdb_forest_functional_level(struct ldb_context *ldb)
  */
 int dsdb_dc_functional_level(struct ldb_context *ldb)
 {
-	int *dcFunctionality =
-		talloc_get_type(ldb_get_opaque(ldb, "domainControllerFunctionality"), int);
+	unsigned long long *dcFunctionality =
+		talloc_get_type(ldb_get_opaque(ldb, "domainControllerFunctionality"), unsigned long long);
 	if (!dcFunctionality) {
 		/* this is expected during initial provision */
 		DEBUG(4,(__location__ ": WARNING: domainControllerFunctionality not setup\n"));
@@ -4181,7 +4308,7 @@ int dsdb_check_and_update_fl(struct ldb_context *ldb_ctx, struct loadparm_contex
 	 * will not re-read the DB
 	 */
 	{
-		int *val = talloc(ldb_ctx, int);
+		unsigned long long *val = talloc(ldb_ctx, unsigned long long);
 		if (!val) {
 			TALLOC_FREE(frame);
 			return LDB_ERR_OPERATIONS_ERROR;
@@ -5443,6 +5570,64 @@ int dsdb_search_by_dn_guid(struct ldb_context *ldb,
 	return ret;
 }
 
+NTSTATUS gmsa_system_password_update_request(
+	struct ldb_context *ldb,
+	TALLOC_CTX *mem_ctx,
+	struct ldb_dn *dn,
+	const uint8_t
+		password_buf[static const GMSA_PASSWORD_NULL_TERMINATED_LEN],
+	struct ldb_request **request_out)
+{
+	DATA_BLOB password_blob = {};
+	struct ldb_request *request = NULL;
+	NTSTATUS status;
+	int ret;
+
+	dn = ldb_dn_copy(mem_ctx, dn);
+	if (dn == NULL) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	/* Make a copy of the password. */
+	password_blob = data_blob_talloc(mem_ctx,
+					 password_buf,
+					 GMSA_PASSWORD_LEN);
+	if (password_blob.data == NULL) {
+		talloc_free(dn);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	status = samdb_set_password_request(ldb,
+					    mem_ctx,
+					    dn,
+					    &password_blob,
+					    NULL,
+					    DSDB_PASSWORD_RESET,
+					    false /* reject trusts */,
+					    &request);
+	if (!NT_STATUS_IS_OK(status)) {
+		data_blob_free(&password_blob);
+		talloc_free(dn);
+		return status;
+	}
+
+	/* Tie the lifetime of the password to that of the request. */
+	talloc_steal(request, password_blob.data);
+
+	/* Tie the lifetime of the DN to that of the request. */
+	talloc_steal(request, dn);
+
+	/* Make sure the password update happens as System. */
+	ret = dsdb_request_add_controls(request, DSDB_FLAG_AS_SYSTEM);
+	if (ret) {
+		talloc_free(request);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	*request_out = request;
+	return NT_STATUS_OK;
+}
+
 /*
   general search with dsdb_flags for controls
  */
@@ -5461,6 +5646,8 @@ int dsdb_search(struct ldb_context *ldb,
 	va_list ap;
 	char *expression = NULL;
 	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
+	int tries;
+	const int max_tries = 5;
 
 	/* cross-partitions searches with a basedn break multi-domain support */
 	SMB_ASSERT(basedn == NULL || (dsdb_flags & DSDB_SEARCH_SEARCH_ALL_PARTITIONS) == 0);
@@ -5469,7 +5656,7 @@ int dsdb_search(struct ldb_context *ldb,
 		return ldb_oom(ldb);
 	}
 
-	res = talloc_zero(tmp_ctx, struct ldb_result);
+	res = talloc(tmp_ctx, struct ldb_result);
 	if (!res) {
 		talloc_free(tmp_ctx);
 		return ldb_oom(ldb);
@@ -5486,70 +5673,111 @@ int dsdb_search(struct ldb_context *ldb,
 		}
 	}
 
-	ret = ldb_build_search_req(&req, ldb, tmp_ctx,
-				   basedn,
-				   scope,
-				   expression,
-				   attrs,
-				   NULL,
-				   res,
-				   ldb_search_default_callback,
-				   NULL);
-	if (ret != LDB_SUCCESS) {
-		talloc_free(tmp_ctx);
-		return ret;
-	}
+	for (tries = 0; tries < max_tries; ++tries) {
+		bool retry = true;
 
-	ret = dsdb_request_add_controls(req, dsdb_flags);
-	if (ret != LDB_SUCCESS) {
+		*res = (struct ldb_result){};
+
+		ret = ldb_build_search_req(&req, ldb, tmp_ctx,
+					   basedn,
+					   scope,
+					   expression,
+					   attrs,
+					   NULL,
+					   res,
+					   ldb_search_default_callback,
+					   NULL);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(tmp_ctx);
+			return ret;
+		}
+
+		ret = dsdb_request_add_controls(req, dsdb_flags);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(tmp_ctx);
+			ldb_reset_err_string(ldb);
+			return ret;
+		}
+
+		ret = ldb_request(ldb, req);
+		if (ret == LDB_SUCCESS) {
+			ret = ldb_wait(req->handle, LDB_WAIT_ALL);
+		}
+
+		if (ret != LDB_SUCCESS) {
+			DBG_INFO("%s flags=0x%08x %s %s -> %s (%s)\n",
+				 dsdb_search_scope_as_string(scope),
+				 dsdb_flags,
+				 basedn?ldb_dn_get_extended_linearized(tmp_ctx,
+								       basedn,
+								       1):"NULL",
+				 expression?expression:"NULL",
+				 ldb_errstring(ldb), ldb_strerror(ret));
+			talloc_free(tmp_ctx);
+			return ret;
+		}
+
+		if (dsdb_flags & DSDB_SEARCH_ONE_ONLY) {
+			if (res->count == 0) {
+				DBG_INFO("%s SEARCH_ONE_ONLY flags=0x%08x %s %s -> %u results\n",
+					 dsdb_search_scope_as_string(scope),
+					 dsdb_flags,
+					 basedn?ldb_dn_get_extended_linearized(tmp_ctx,
+									       basedn,
+									       1):"NULL",
+					 expression?expression:"NULL", res->count);
+				talloc_free(tmp_ctx);
+				ldb_reset_err_string(ldb);
+				return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
+			}
+			if (res->count != 1) {
+				DBG_INFO("%s SEARCH_ONE_ONLY flags=0x%08x %s %s -> %u (expected 1) results\n",
+					 dsdb_search_scope_as_string(scope),
+					 dsdb_flags,
+					 basedn?ldb_dn_get_extended_linearized(tmp_ctx,
+									       basedn,
+									       1):"NULL",
+					 expression?expression:"NULL", res->count);
+				talloc_free(tmp_ctx);
+				ldb_reset_err_string(ldb);
+				return LDB_ERR_CONSTRAINT_VIOLATION;
+			}
+		}
+
+		if (!(dsdb_flags & DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS)) {
+			break;
+		}
+
+		/*
+		 * If we’re searching for passwords, we must account for the
+		 * possibility that one or more of the accounts are Group
+		 * Managed Service Accounts with out‐of‐date keys. In such a
+		 * case, we must derive the new password(s), update the keys,
+		 * and perform the search again to get the updated results.
+		 *
+		 * The following attributes are necessary in order for this to
+		 * work properly:
+		 *
+		 * • msDS-ManagedPasswordId
+		 * • msDS-ManagedPasswordInterval
+		 * • objectClass
+		 * • objectSid
+		 * • whenCreated
+		 */
+
+		ret = dsdb_update_gmsa_keys(tmp_ctx, ldb, res, &retry);
+		if (ret) {
+			talloc_free(tmp_ctx);
+			return ret;
+		}
+		if (!retry) {
+			break;
+		}
+	}
+	if (tries == max_tries) {
 		talloc_free(tmp_ctx);
 		ldb_reset_err_string(ldb);
-		return ret;
-	}
-
-	ret = ldb_request(ldb, req);
-	if (ret == LDB_SUCCESS) {
-		ret = ldb_wait(req->handle, LDB_WAIT_ALL);
-	}
-
-	if (ret != LDB_SUCCESS) {
-		DBG_INFO("%s flags=0x%08x %s %s -> %s (%s)\n",
-			 dsdb_search_scope_as_string(scope),
-			 dsdb_flags,
-			 basedn?ldb_dn_get_extended_linearized(tmp_ctx,
-							       basedn,
-							       1):"NULL",
-			 expression?expression:"NULL",
-			 ldb_errstring(ldb), ldb_strerror(ret));
-		talloc_free(tmp_ctx);
-		return ret;
-	}
-
-	if (dsdb_flags & DSDB_SEARCH_ONE_ONLY) {
-		if (res->count == 0) {
-			DBG_INFO("%s SEARCH_ONE_ONLY flags=0x%08x %s %s -> %u results\n",
-				 dsdb_search_scope_as_string(scope),
-				 dsdb_flags,
-				 basedn?ldb_dn_get_extended_linearized(tmp_ctx,
-								       basedn,
-								       1):"NULL",
-				 expression?expression:"NULL", res->count);
-			talloc_free(tmp_ctx);
-			ldb_reset_err_string(ldb);
-			return ldb_error(ldb, LDB_ERR_NO_SUCH_OBJECT, __func__);
-		}
-		if (res->count != 1) {
-			DBG_INFO("%s SEARCH_ONE_ONLY flags=0x%08x %s %s -> %u (expected 1) results\n",
-				 dsdb_search_scope_as_string(scope),
-				 dsdb_flags,
-				 basedn?ldb_dn_get_extended_linearized(tmp_ctx,
-								       basedn,
-								       1):"NULL",
-				 expression?expression:"NULL", res->count);
-			talloc_free(tmp_ctx);
-			ldb_reset_err_string(ldb);
-			return LDB_ERR_CONSTRAINT_VIOLATION;
-		}
+		return ldb_operr(ldb);
 	}
 
 	*_result = talloc_steal(mem_ctx, res);
@@ -6323,7 +6551,9 @@ NTSTATUS dsdb_update_bad_pwd_count(TALLOC_CTX *mem_ctx,
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	if (badPwdCount >= lockoutThreshold) {
+	if (dsdb_account_is_trust(user_msg)) {
+		/* Trust accounts cannot be locked out. */
+	} else if (badPwdCount >= lockoutThreshold) {
 		ret = samdb_msg_add_int64(sam_ctx, mod_msg, mod_msg, "lockoutTime", now);
 		if (ret != LDB_SUCCESS) {
 			TALLOC_FREE(mod_msg);
@@ -6358,7 +6588,7 @@ int dsdb_user_obj_set_defaults(struct ldb_context *ldb,
 {
 	size_t i;
 	int ret;
-	const struct attribute_values {
+	static const struct attribute_values {
 		const char *name;
 		const char *value;
 		const char *add_value;
@@ -6793,4 +7023,14 @@ int dsdb_is_protected_user(struct ldb_context *ldb,
 	}
 
 	return 0;
+}
+
+bool dsdb_account_is_trust(const struct ldb_message *msg)
+{
+	uint32_t userAccountControl;
+
+	userAccountControl = ldb_msg_find_attr_as_uint(msg,
+						       "userAccountControl",
+						       0);
+	return userAccountControl & UF_TRUST_ACCOUNT_MASK;
 }

@@ -135,13 +135,12 @@ class cmd_delegation_show(Command):
                 self.outf.write(f'msDS-AllowedToActOnBehalfOfOtherIdentity: '
                                 f'{trustee}\n')
 
-
     def run(self, accountname, H=None, credopts=None, sambaopts=None, versionopts=None):
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp)
-        paths = provision.provision_paths_from_lp(lp, lp.get("realm"))
 
         if H is None:
+            paths = provision.provision_paths_from_lp(lp, lp.get("realm"))
             path = paths.samdb
         else:
             path = H
@@ -160,7 +159,8 @@ class cmd_delegation_show(Command):
                                 "msDS-AllowedToActOnBehalfOfOtherIdentity"])
         if len(res) == 0:
             raise CommandError("Unable to find account name '%s'" % accountname)
-        assert(len(res) == 1)
+        elif len(res) != 1:
+            raise CommandError("Found multiple accounts.")
 
         uac = int(res[0].get("userAccountControl")[0])
         allowed = res[0].get("msDS-AllowedToDelegateTo")
@@ -208,7 +208,6 @@ class cmd_delegation_for_any_service(Command):
     def run(self, accountname, onoff, H=None, credopts=None, sambaopts=None,
             versionopts=None):
 
-        on = False
         if onoff == "on":
             on = True
         elif onoff == "off":
@@ -337,7 +336,8 @@ class cmd_delegation_add_service(Command):
                          attrs=["msDS-AllowedToDelegateTo"])
         if len(res) == 0:
             raise CommandError("Unable to find account name '%s'" % accountname)
-        assert(len(res) == 1)
+        elif len(res) != 1:
+            raise CommandError("Found multiple accounts.")
 
         msg = ldb.Message()
         msg.dn = res[0].dn
@@ -392,7 +392,8 @@ class cmd_delegation_del_service(Command):
                          attrs=["msDS-AllowedToDelegateTo"])
         if len(res) == 0:
             raise CommandError("Unable to find account name '%s'" % accountname)
-        assert(len(res) == 1)
+        elif len(res) != 1:
+            raise CommandError("Found multiple accounts.")
 
         msg = ldb.Message()
         msg.dn = res[0].dn
@@ -447,7 +448,8 @@ class cmd_delegation_add_principal(Command):
             attrs=["msDS-AllowedToActOnBehalfOfOtherIdentity"])
         if len(account_res) == 0:
             raise CommandError(f"Unable to find account name '{accountname}'")
-        assert(len(account_res) == 1)
+        elif len(account_res) != 1:
+            raise CommandError("Found multiple accounts.")
 
         data = account_res[0].get(
             "msDS-AllowedToActOnBehalfOfOtherIdentity", idx=0)
@@ -489,7 +491,8 @@ class cmd_delegation_add_principal(Command):
                                attrs=["objectSid"])
         if len(princ_res) == 0:
             raise CommandError(f"Unable to find principal name '{principal}'")
-        assert(len(princ_res) == 1)
+        elif len(princ_res) != 1:
+            raise CommandError("Found multiple accounts.")
 
         princ_sid = security.dom_sid(
             sam.schema_format_value(
@@ -590,7 +593,8 @@ class cmd_delegation_del_principal(Command):
             attrs=["msDS-AllowedToActOnBehalfOfOtherIdentity"])
         if len(account_res) == 0:
             raise CommandError("Unable to find account name '%s'" % accountname)
-        assert(len(account_res) == 1)
+        elif len(account_res) != 1:
+            raise CommandError("Found multiple accounts.")
 
         data = account_res[0].get(
             "msDS-AllowedToActOnBehalfOfOtherIdentity", idx=0)
@@ -624,7 +628,8 @@ class cmd_delegation_del_principal(Command):
                                attrs=["objectSid"])
         if len(princ_res) == 0:
             raise CommandError(f"Unable to find principal name '{principal}'")
-        assert(len(princ_res) == 1)
+        elif len(princ_res) != 1:
+            raise CommandError("Found multiple accounts.")
 
         princ_sid = security.dom_sid(
             sam.schema_format_value(

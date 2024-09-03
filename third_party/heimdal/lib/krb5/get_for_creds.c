@@ -173,7 +173,7 @@ krb5_fwd_tgt_creds(krb5_context	context,
  * out the address to forward the ticket too. This since this might
  * use DNS, its insecure and also doesn't represent configured all
  * addresses of the host. For example, the host might have two
- * adresses, one IPv4 and one IPv6 address where the later is not
+ * addresses, one IPv4 and one IPv6 address where the later is not
  * published in DNS. This IPv6 address might be used communications
  * and thus the resulting ticket useless.
  *
@@ -329,7 +329,7 @@ get_addresses(krb5_context      context,
     krb5_creds *ticket;
     krb5_const_realm realm;
     krb5_boolean noaddr;
-    struct addrinfo *ai;
+    struct addrinfo *ai, hints;
     int eai;
 
     if (hostname == 0)
@@ -349,8 +349,13 @@ get_addresses(krb5_context      context,
 	return 0;
 
     /* Need addresses, get the address of the remote host. */
-
-    eai = getaddrinfo (hostname, NULL, NULL, &ai);
+    memset(&hints, 0, sizeof(hints));
+    if (krb5_config_get_bool(context, NULL, "libdefaults", "block_dns",
+	    NULL)) {
+	hints.ai_flags &= ~AI_CANONNAME;
+	hints.ai_flags |= AI_NUMERICHOST|AI_NUMERICSERV;
+    }
+    eai = getaddrinfo(hostname, NULL, &hints, &ai);
     if (eai) {
 	ret = krb5_eai_to_heim_errno(eai, errno);
 	krb5_set_error_message(context, ret,

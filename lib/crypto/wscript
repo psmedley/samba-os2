@@ -39,6 +39,12 @@ def build(bld):
                         NDR_GKDI
                         ''')
 
+    bld.SAMBA_SUBSYSTEM('gmsa',
+                        source='gmsa.c',
+                        deps='''
+                        gkdi
+                        ''')
+
     bld.SAMBA_PYTHON('python_crypto',
                      source='py_crypto.c',
                      deps='gnutls talloc LIBCLI_AUTH',
@@ -59,6 +65,11 @@ def build(bld):
                             ''',
                      deps='cmocka GNUTLS_HELPERS samba-util',
                      local_include=False,
+                     for_selftest=True)
+
+    bld.SAMBA_BINARY('test_gkdi',
+                     source='test_gkdi.c',
+                     deps='cmocka gkdi gmsa talloc NDR_GKDI NDR_GMSA samba-util samba-security',
                      for_selftest=True)
 
     bld.SAMBA_BINARY('test_gkdi_key_derivation',

@@ -83,14 +83,24 @@ WERROR NetJoinDomain_l(struct libnetapi_ctx *mem_ctx,
 		W_ERROR_HAVE_NO_MEMORY(j->in.account_ou);
 	}
 
-	if (r->in.account) {
-		j->in.admin_account = talloc_strdup(mem_ctx, r->in.account);
-		W_ERROR_HAVE_NO_MEMORY(j->in.admin_account);
-	}
+	if (r->in.account != NULL) {
+		NTSTATUS status;
 
-	if (r->in.password) {
-		j->in.admin_password = talloc_strdup(mem_ctx, r->in.password);
-		W_ERROR_HAVE_NO_MEMORY(j->in.admin_password);
+		status = ads_simple_creds(j,
+					  r->in.domain,
+					  r->in.account,
+					  r->in.password,
+					  &j->in.admin_credentials);
+		if (!NT_STATUS_IS_OK(status)) {
+			TALLOC_FREE(j);
+			return WERR_NERR_BADUSERNAME;
+		}
+	} else {
+		libnetapi_get_creds(mem_ctx, &j->in.admin_credentials);
+		if (j->in.admin_credentials == NULL) {
+			TALLOC_FREE(j);
+			return WERR_NERR_BADUSERNAME;
+		}
 	}
 
 	j->in.join_flags = r->in.join_flags;
@@ -228,14 +238,24 @@ WERROR NetUnjoinDomain_l(struct libnetapi_ctx *mem_ctx,
 		u->in.domain_name = domain;
 	}
 
-	if (r->in.account) {
-		u->in.admin_account = talloc_strdup(mem_ctx, r->in.account);
-		W_ERROR_HAVE_NO_MEMORY(u->in.admin_account);
-	}
+	if (r->in.account != NULL) {
+		NTSTATUS status;
 
-	if (r->in.password) {
-		u->in.admin_password = talloc_strdup(mem_ctx, r->in.password);
-		W_ERROR_HAVE_NO_MEMORY(u->in.admin_password);
+		status = ads_simple_creds(u,
+					  domain,
+					  r->in.account,
+					  r->in.password,
+					  &u->in.admin_credentials);
+		if (!NT_STATUS_IS_OK(status)) {
+			TALLOC_FREE(u);
+			return WERR_NERR_BADUSERNAME;
+		}
+	} else {
+		libnetapi_get_creds(mem_ctx, &u->in.admin_credentials);
+		if (u->in.admin_credentials == NULL) {
+			TALLOC_FREE(u);
+			return WERR_NERR_BADUSERNAME;
+		}
 	}
 
 	u->in.domain_name = domain;
@@ -403,6 +423,7 @@ WERROR NetGetJoinableOUs_l(struct libnetapi_ctx *ctx,
 	NTSTATUS status;
 	ADS_STATUS ads_status;
 	ADS_STRUCT *ads = NULL;
+	struct cli_credentials *creds = NULL;
 	struct netr_DsRGetDCNameInfo *info = NULL;
 	const char *dc = NULL;
 	uint32_t flags = DS_DIRECTORY_SERVICE_REQUIRED |
@@ -435,47 +456,21 @@ WERROR NetGetJoinableOUs_l(struct libnetapi_ctx *ctx,
 		goto out;
 	}
 
-	ADS_TALLOC_CONST_FREE(ads->auth.user_name);
-	if (r->in.account) {
-		ads->auth.user_name = talloc_strdup(ads, r->in.account);
-		if (ads->auth.user_name == NULL) {
-			ret = WERR_NOT_ENOUGH_MEMORY;
+	if (r->in.account != NULL) {
+		status = ads_simple_creds(ads,
+					  r->in.domain,
+					  r->in.account,
+					  r->in.password,
+					  &creds);
+		if (!NT_STATUS_IS_OK(status)) {
+			ret = WERR_NERR_DEFAULTJOINREQUIRED;
 			goto out;
 		}
 	} else {
-		const char *username = NULL;
-
-		libnetapi_get_username(ctx, &username);
-		if (username != NULL) {
-			ads->auth.user_name = talloc_strdup(ads, username);
-			if (ads->auth.user_name == NULL) {
-				ret = WERR_NOT_ENOUGH_MEMORY;
-				goto out;
-			}
-		}
+		libnetapi_get_creds(ctx, &creds);
 	}
 
-	ADS_TALLOC_CONST_FREE(ads->auth.password);
-	if (r->in.password) {
-		ads->auth.password = talloc_strdup(ads, r->in.password);
-		if (ads->auth.password == NULL) {
-			ret = WERR_NOT_ENOUGH_MEMORY;
-			goto out;
-		}
-	} else {
-		const char *password = NULL;
-
-		libnetapi_get_password(ctx, &password);
-		if (password != NULL) {
-			ads->auth.password = talloc_strdup(ads, password);
-			if (ads->auth.password == NULL) {
-				ret = WERR_NOT_ENOUGH_MEMORY;
-				goto out;
-			}
-		}
-	}
-
-	ads_status = ads_connect_user_creds(ads);
+	ads_status = ads_connect_creds(ads, creds);
 	if (!ADS_ERR_OK(ads_status)) {
 		ret = WERR_NERR_DEFAULTJOINREQUIRED;
 		goto out;
@@ -638,8 +633,6 @@ static WERROR NetProvisionComputerAccount_backend(struct libnetapi_ctx *ctx,
 {
 	WERROR werr;
 	struct libnet_JoinCtx *j = NULL;
-	int use_kerberos = 0;
-	const char *username = NULL;
 
 	werr = libnet_init_JoinCtx(mem_ctx, &j);
 	if (!W_ERROR_IS_OK(werr)) {
@@ -675,35 +668,12 @@ static WERROR NetProvisionComputerAccount_backend(struct libnetapi_ctx *ctx,
 		}
 	}
 
-	libnetapi_get_username(ctx, &username);
-	if (username == NULL) {
+	libnetapi_get_creds(ctx, &j->in.admin_credentials);
+	if (j->in.admin_credentials == NULL) {
 		talloc_free(j);
 		return WERR_NERR_BADUSERNAME;
 	}
 
-	j->in.admin_account = talloc_strdup(j, username);
-	if (j->in.admin_account == NULL) {
-		talloc_free(j);
-		return WERR_NOT_ENOUGH_MEMORY;
-	}
-
-	libnetapi_get_use_kerberos(ctx, &use_kerberos);
-	if (!use_kerberos) {
-		const char *password = NULL;
-
-		libnetapi_get_password(ctx, &password);
-		if (password == NULL) {
-			talloc_free(j);
-			return WERR_NERR_BADPASSWORD;
-		}
-		j->in.admin_password = talloc_strdup(j, password);
-		if (j->in.admin_password == NULL) {
-			talloc_free(j);
-			return WERR_NOT_ENOUGH_MEMORY;
-		}
-	}
-
-	j->in.use_kerberos = use_kerberos;
 	j->in.debug = true;
 	j->in.join_flags	= WKSSVC_JOIN_FLAGS_JOIN_TYPE |
 				  WKSSVC_JOIN_FLAGS_ACCOUNT_CREATE;

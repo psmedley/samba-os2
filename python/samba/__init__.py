@@ -26,6 +26,7 @@ import os
 import time
 import ldb
 import samba.param
+import re
 from samba import _glue
 from samba._ldb import Ldb as _Ldb
 
@@ -347,13 +348,51 @@ def current_unix_time():
     return int(time.time())
 
 
-def string_to_byte_array(string):
-    return [c if isinstance(c, int) else ord(c) for c in string]
-
-
 def arcfour_encrypt(key, data):
     from samba.crypto import arcfour_crypt_blob
     return arcfour_crypt_blob(data, key)
+
+
+def aead_aes_256_cbc_hmac_sha512(plaintext, cek, key_salt, mac_salt, iv):
+    from samba.crypto import aead_aes_256_cbc_hmac_sha512_blob
+    return aead_aes_256_cbc_hmac_sha512_blob(
+        plaintext,
+        cek,
+        key_salt,
+        mac_salt,
+        iv
+    )
+
+
+GUID_RE = re.compile(
+    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+GUID_MIXCASE_RE = re.compile(
+    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    flags = re.IGNORECASE)
+
+
+def string_is_guid(string, lower_case_only=False):
+    """Is the string an ordinary undecorated string GUID?
+
+    That is, like 12345678-abcd-1234-FEED-1234567890ab, and not like
+    variants which have surrounding curly brackets or lack hyphens.
+
+    If lower case_only is true, only lowercase hex characters are
+    accepted. This is tighter than we ever require, but matches what
+    we usually emit.
+    """
+    # Note: it is rightly tempting to use misc.GUID() here and catch
+    # the error, but misc.GUID is more forgiving than we want,
+    # allowing all kinds of weird variants.
+    if lower_case_only:
+        m = GUID_RE.fullmatch(string)
+    else:
+        m = GUID_MIXCASE_RE.fullmatch(string)
+
+    if m is None:
+        return False
+    return True
 
 
 def enable_net_export_keytab():
@@ -363,8 +402,8 @@ def enable_net_export_keytab():
     #
     # The dckeytab modules contains nothing, but the act of importing
     # it pushes a method into samba.net.Net. It ended up this way
-    # because Net.export_keytab() only works on Heimdal builds, and
-    # people sometimes want to compile Samba without Heimdal while
+    # because Net.export_keytab() only works on AD DC builds, and
+    # people sometimes want to compile Samba without the AD DC while
     # still having a working samba-tool.
     #
     # There is probably a better way to do this than a magic module

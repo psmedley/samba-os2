@@ -74,6 +74,8 @@ $pad"."struct $fname *r)
 		$res .= "\treturn WERR_NOT_SUPPORTED;\n";
 	} elsif ($d->{RETURN_TYPE} eq "HRESULT") {
 		$res .= "\treturn HRES_ERROR_NOT_SUPPORTED;\n";
+	} elsif ($d->{RETURN_TYPE} eq "int") {
+		$res .= "\treturn ENOTSUP;\n";
 	}
 
 	$res .= "}
@@ -83,7 +85,7 @@ $pad"."struct $fname *r)
 	}
 $res .=
 "/* include the generated boilerplate */
-#include \"librpc/gen_ndr/ndr_$name\_scompat.c\
+#include \"librpc/gen_ndr/ndr_$name\_scompat.c\"\
 ";
 }
 

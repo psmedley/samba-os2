@@ -31,17 +31,32 @@ struct loadparm_context;
 struct tevent_context;
 struct tsocket_address;
 struct dsdb_trust_routing_table;
+struct gmsa_update_pwd_part;
+struct gmsa_update;
+struct gmsa_return_pwd;
+struct KeyEnvelope;
 
 enum dsdb_password_checked {
 	DSDB_PASSWORD_NOT_CHECKED = 0, /* unused */
 	DSDB_PASSWORD_RESET,
-	DSDB_PASSWORD_CHECKED_AND_CORRECT
+	DSDB_PASSWORD_CHECKED_AND_CORRECT,
+	/*
+	 * This disables the password rules for this new random
+	 * password for ResetSmartCardAccountPassword handling.  This
+	 * produces a
+	 * DSDB_CONTROL_PASSWORD_KDC_RESET_SMARTCARD_ACCOUNT_PASSWORD
+	 * control.
+	 */
+	DSDB_PASSWORD_KDC_RESET_SMARTCARD_ACCOUNT_PASSWORD
 };
 
+#include "lib/util/data_blob.h"
 #include "librpc/gen_ndr/security.h"
 #include <ldb.h>
 #include "lib/ldb-samba/ldif_handlers.h"
+#include "lib/util/time.h"
 #include "librpc/gen_ndr/samr.h"
+#include "libcli/util/werror.h"
 #include "librpc/gen_ndr/drsuapi.h"
 #include "librpc/gen_ndr/drsblobs.h"
 #include "dsdb/schema/schema.h"
@@ -49,6 +64,7 @@ enum dsdb_password_checked {
 #include "dsdb/samdb/samdb_proto.h"
 #include "dsdb/common/dsdb_dn.h"
 #include "dsdb/common/util_links.h"
+#include "lib/crypto/gmsa.h"
 #include "dsdb/common/proto.h"
 #include "../libds/common/flags.h"
 
@@ -248,6 +264,18 @@ struct dsdb_control_calculated_default_sd {
 
 #define DSDB_CONTROL_ACL_READ_OID "1.3.6.1.4.1.7165.4.3.37"
 
+/*
+ * Used by the operational module to indicate to the LDAP server that the keys
+ * and Managed Password ID of a Group Managed Service Account are to be updated.
+ */
+#define DSDB_CONTROL_GMSA_UPDATE_OID "1.3.6.1.4.1.7165.4.3.38"
+/* struct gmsa_update */
+
+/*
+ * KDC is running ResetSmartCardAccountPassword behaviour, the password needs to be made random
+ */
+#define DSDB_CONTROL_PASSWORD_KDC_RESET_SMARTCARD_ACCOUNT_PASSWORD "1.3.6.1.4.1.7165.4.3.39"
+
 #define DSDB_EXTENDED_REPLICATED_OBJECTS_OID "1.3.6.1.4.1.7165.4.4.1"
 struct dsdb_extended_replicated_object {
 	struct ldb_message *msg;
@@ -406,5 +434,7 @@ struct dsdb_encrypted_connection_state {
  *   are in lmdb format.
  */
 #define SAMBA_LMDB_LEVEL_ONE_FEATURE "lmdbLevelOne"
+
+#define SAMBA_LDB_WRAP_CONNECT_FLAG_NO_SHARE_CONTEXT 0x01000000
 
 #endif /* __SAMDB_H__ */

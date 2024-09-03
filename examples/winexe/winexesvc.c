@@ -57,7 +57,20 @@ static int CreatePipesSA()
 	PSID pAdminSID = NULL;
 	PACL pACL = NULL;
 	PSECURITY_DESCRIPTOR pSD = NULL;
-	EXPLICIT_ACCESS ea;
+	/*
+	 * Initialize an EXPLICIT_ACCESS structure for an ACE.
+	 * The ACE will allow the Administrators group full access to the key.
+	 */
+	EXPLICIT_ACCESS ea = {
+		.grfAccessPermissions = FILE_ALL_ACCESS,
+		.grfAccessMode = SET_ACCESS,
+		.grfInheritance = NO_INHERITANCE,
+		.Trustee = {
+			.TrusteeForm = TRUSTEE_IS_SID,
+			.TrusteeType = TRUSTEE_IS_GROUP,
+			.ptstrName = (LPTSTR)pAdminSID,
+		},
+	};
 	SID_IDENTIFIER_AUTHORITY SIDAuthNT = {SECURITY_NT_AUTHORITY};
 
 	/* Create a SID for the BUILTIN\Administrators group. */
@@ -72,15 +85,6 @@ static int CreatePipesSA()
 		dbg("AllocateAndInitializeSid Error %lu\n", GetLastError());
 		return 0;
 	}
-	/* Initialize an EXPLICIT_ACCESS structure for an ACE.
-	   The ACE will allow the Administrators group full access to the key.
-	*/
-	ea.grfAccessPermissions = FILE_ALL_ACCESS;
-	ea.grfAccessMode = SET_ACCESS;
-	ea.grfInheritance = NO_INHERITANCE;
-	ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-	ea.Trustee.TrusteeType = TRUSTEE_IS_GROUP;
-	ea.Trustee.ptstrName = (LPTSTR) pAdminSID;
 
 	/* Create a new ACL that contains the new ACEs */
 	dwRes = SetEntriesInAcl(1, &ea, NULL, &pACL);
@@ -144,7 +148,7 @@ finish:
 
 static int hprintf(OV_HANDLE *pipe, const char *fmt, ...)
 {
-	int res;
+	int res = -1;
 	char buf[1024];
 	va_list ap;
 	va_start(ap, fmt);
@@ -681,7 +685,7 @@ static DWORD winexesvcInitialization(DWORD argc, LPTSTR * argv, DWORD * specific
 static void WINAPI winexesvcStart(DWORD argc, LPTSTR * argv)
 {
 	DWORD status;
-	DWORD specificError;
+	DWORD specificError = NO_ERROR;
 
 	winexesvcStatus.dwServiceType = SERVICE_WIN32;
 	winexesvcStatus.dwCurrentState = SERVICE_START_PENDING;

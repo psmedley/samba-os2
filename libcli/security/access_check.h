@@ -23,6 +23,7 @@
 #ifndef _ACCESS_CHECK_H_
 #define _ACCESS_CHECK_H_
 
+#include "lib/util/data_blob.h"
 #include "librpc/gen_ndr/security.h"
 
 /* Map generic access rights to object specific rights.  This technique is
@@ -65,6 +66,7 @@ NTSTATUS se_file_access_check(const struct security_descriptor *sd,
 			 uint32_t access_desired,
 			 uint32_t *access_granted);
 
+struct object_tree;
 NTSTATUS sec_access_check_ds_implicit_owner(const struct security_descriptor *sd,
 					    const struct security_token *token,
 					    uint32_t access_desired,
@@ -82,7 +84,7 @@ NTSTATUS sec_access_check_ds(const struct security_descriptor *sd,
 			     uint32_t access_desired,
 			     uint32_t *access_granted,
 			     struct object_tree *tree,
-			     struct dom_sid *replace_sid);
+			     const struct dom_sid *replace_sid);
 
 bool insert_in_object_tree(TALLOC_CTX *mem_ctx,
 			   const struct GUID *guid,

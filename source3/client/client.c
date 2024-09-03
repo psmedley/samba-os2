@@ -6407,7 +6407,8 @@ static int do_message_op(struct cli_credentials *creds)
 		return 1;
 	}
 
-	status = cli_connect_nb(desthost, have_ip ? &dest_ss : NULL,
+	status = cli_connect_nb(talloc_tos(),
+				desthost, have_ip ? &dest_ss : NULL,
 				port ? port : NBT_SMB_PORT, name_type,
 				lp_netbios_name(),
 				SMB_SIGNING_OFF,
@@ -6626,7 +6627,7 @@ int main(int argc,char *argv[])
 
 		/* if the service has already been retrieved then check if we have also a password */
 		if (service_opt &&
-		    cli_credentials_get_password(creds) == NULL &&
+		    cli_credentials_get_password_obtained(creds) != CRED_SPECIFIED &&
 		    poptPeekArg(pc)) {
 			cli_credentials_set_password(creds,
 						     poptGetArg(pc),
@@ -6730,7 +6731,7 @@ int main(int argc,char *argv[])
 
 	/* if the service has already been retrieved then check if we have also a password */
 	if (service_opt &&
-	    cli_credentials_get_password(creds) == NULL &&
+	    cli_credentials_get_password_obtained(creds) != CRED_SPECIFIED &&
 	    poptPeekArg(pc)) {
 		cli_credentials_set_password(creds,
 					     poptGetArg(pc),

@@ -34,8 +34,6 @@
 
 #ifdef HAVE_KRB5
 
-#define LIBADS_CCACHE_NAME "MEMORY:libads"
-
 /*
   we use a prompter to avoid a crash bug in the kerberos libs when
   dealing with empty passwords
@@ -133,6 +131,14 @@ int kerberos_kinit_password_ext(const char *given_principal,
 
 	ZERO_STRUCT(my_creds);
 
+	if (cache_name == NULL) {
+		DBG_DEBUG("Missing ccache for [%s] and config [%s]\n",
+			  given_principal,
+			  getenv("KRB5_CONFIG"));
+		TALLOC_FREE(frame);
+		return EINVAL;
+	}
+
 	code = smb_krb5_init_context_common(&ctx);
 	if (code != 0) {
 		DBG_ERR("kerberos init context failed (%s)\n",
@@ -147,10 +153,10 @@ int kerberos_kinit_password_ext(const char *given_principal,
 
 	DBG_DEBUG("as %s using [%s] as ccache and config [%s]\n",
 		  given_principal,
-		  cache_name ? cache_name: krb5_cc_default_name(ctx),
+		  cache_name,
 		  getenv("KRB5_CONFIG"));
 
-	if ((code = krb5_cc_resolve(ctx, cache_name ? cache_name : krb5_cc_default_name(ctx), &cc))) {
+	if ((code = krb5_cc_resolve(ctx, cache_name, &cc))) {
 		goto out;
 	}
 
@@ -284,23 +290,25 @@ int ads_kdestroy(const char *cc_name)
 		return code;
 	}
 
-	if (!cc_name) {
-		if ((code = krb5_cc_default(ctx, &cc))) {
-			krb5_free_context(ctx);
-			return code;
-		}
-	} else {
-		if ((code = krb5_cc_resolve(ctx, cc_name, &cc))) {
-			DEBUG(3, ("ads_kdestroy: krb5_cc_resolve failed: %s\n",
-				  error_message(code)));
-			krb5_free_context(ctx);
-			return code;
-		}
+	/*
+	 * This should not happen, if
+	 * we need that behaviour we
+	 * should add an ads_kdestroy_default()
+	 */
+	SMB_ASSERT(cc_name != NULL);
+
+	code = krb5_cc_resolve(ctx, cc_name, &cc);
+	if (code != 0) {
+		DBG_NOTICE("krb5_cc_resolve(%s) failed: %s\n",
+			   cc_name, error_message(code));
+		krb5_free_context(ctx);
+		return code;
 	}
 
-	if ((code = krb5_cc_destroy (ctx, cc))) {
-		DEBUG(3, ("ads_kdestroy: krb5_cc_destroy failed: %s\n",
-			error_message(code)));
+	code = krb5_cc_destroy(ctx, cc);
+	if (code != 0) {
+		DBG_ERR("krb5_cc_destroy(%s) failed: %s\n",
+			cc_name, error_message(code));
 	}
 
 	krb5_free_context (ctx);

@@ -23,9 +23,6 @@
 #include <sys/socket.h>
 #include "protocol/protocol.h"
 
-/* define ctdb port number */
-#define CTDB_PORT 4379
-
 /* we must align packets to ensure ctdb works on all architectures (eg. sparc) */
 #define CTDB_DS_ALIGNMENT 8
 
@@ -51,9 +48,6 @@ struct ctdb_script_list_old {
 	uint32_t num_scripts;
 	struct ctdb_script scripts[1];
 };
-
-/* Mapping from enum to names. */
-extern const char *ctdb_eventscript_call_names[];
 
 /*
   packet structures

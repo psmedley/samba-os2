@@ -158,7 +158,6 @@ cleanup_list = []
 
 builddirs = {
     "ctdb": "ctdb",
-    "ldb": "lib/ldb",
     "tdb": "lib/tdb",
     "talloc": "lib/talloc",
     "replace": "lib/replace",
@@ -175,7 +174,7 @@ samba_libs_envvars += " PKG_CONFIG_PATH=$PKG_CONFIG_PATH:${PREFIX_DIR}/lib/pkgco
 samba_libs_envvars += " ADDITIONAL_CFLAGS='-Wmissing-prototypes'"
 samba_libs_configure_base = samba_libs_envvars + " ./configure --abi-check ${ENABLE_COVERAGE} --enable-debug -C ${PREFIX}"
 samba_libs_configure_libs = samba_libs_configure_base + " --bundled-libraries=cmocka,popt,NONE"
-samba_libs_configure_bundled_libs = " --bundled-libraries=!talloc,!pytalloc-util,!tdb,!pytdb,!ldb,!pyldb,!pyldb-util,!tevent,!pytevent,!popt"
+samba_libs_configure_bundled_libs = " --bundled-libraries=!talloc,!pytalloc-util,!tdb,!pytdb,!tevent,!pytevent,!popt"
 samba_libs_configure_samba = samba_libs_configure_base + samba_libs_configure_bundled_libs
 
 
@@ -860,7 +859,6 @@ tasks = {
          "./configure.developer ${PREFIX} "
          "--with-selftest-prefix=./bin/ab "
          "--with-cluster-support "
-         "--without-ad-dc "
          "--bundled-libraries=!tdb"),
             ("samba-make", "make"),
             ("samba-check", "./bin/smbd --configfile=/dev/null -b | grep CLUSTER_SUPPORT"),
@@ -886,27 +884,64 @@ tasks = {
             ("talloc-configure", "cd lib/talloc && " + samba_libs_configure_libs),
             ("talloc-make", "cd lib/talloc && make"),
             ("talloc-install", "cd lib/talloc && make install"),
+            ("talloc-abi-check1",
+                check_versioned_symbol(
+                    "./lib/talloc/bin/shared/libtalloc.so.2",
+                    "talloc_named",
+                    "TALLOC_2.0.2"
+                )
+            ),
+            ("talloc-abi-check2",
+                check_versioned_symbol(
+                    "./lib/talloc/bin/shared/libtalloc.so.2",
+                    "talloc_asprintf_addbuf",
+                    "TALLOC_2.3.5"
+                )
+            ),
 
             ("tdb-configure", "cd lib/tdb && " + samba_libs_configure_libs),
             ("tdb-make", "cd lib/tdb && make"),
             ("tdb-install", "cd lib/tdb && make install"),
+            ("tdb-abi-check1",
+                check_versioned_symbol(
+                    "./lib/tdb/bin/shared/libtdb.so.1",
+                    "tdb_errorstr",
+                    "TDB_1.2.1"
+                )
+            ),
+            ("tdb-abi-check2",
+                check_versioned_symbol(
+                    "./lib/tdb/bin/shared/libtdb.so.1",
+                    "tdb_traverse_chain",
+                    "TDB_1.3.17"
+                )
+            ),
 
             ("tevent-configure", "cd lib/tevent && " + samba_libs_configure_libs),
             ("tevent-make", "cd lib/tevent && make"),
             ("tevent-install", "cd lib/tevent && make install"),
+            ("tevent-abi-check1",
+                check_versioned_symbol(
+                    "./lib/tevent/bin/shared/libtevent.so.0",
+                    "_tevent_loop_once",
+                    "TEVENT_0.9.9"
+                )
+            ),
+            ("tevent-abi-check2",
+                check_versioned_symbol(
+                    "./lib/tevent/bin/shared/libtevent.so.0",
+                    "__tevent_req_create",
+                    "TEVENT_0.15.0"
+                )
+            ),
 
-            ("ldb-configure", "cd lib/ldb && " + samba_libs_configure_libs),
-            ("ldb-make", "cd lib/ldb && make"),
-            ("ldb-install", "cd lib/ldb && make install"),
-
-            ("nondevel-configure", samba_libs_envvars + " ./configure --vendor-suffix=TEST-STRING~5.1.2 ${PREFIX}"),
+            ("nondevel-configure", samba_libs_envvars + " ./configure --private-libraries='!ldb' --vendor-suffix=TEST-STRING~5.1.2 ${PREFIX}"),
             ("nondevel-make", "make -j"),
             ("nondevel-check", "./bin/smbd -b | grep WITH_NTVFS_FILESERVER && exit 1; exit 0"),
             ("nondevel-check", "./bin/smbd --version | grep -F 'TEST-STRING~5.1.2' && exit 0; exit 1"),
             ("nondevel-no-libtalloc", "find ./bin | grep -v 'libtalloc-report' | grep 'libtalloc' && exit 1; exit 0"),
             ("nondevel-no-libtdb", "find ./bin | grep -v 'libtdb-wrap' | grep 'libtdb' && exit 1; exit 0"),
             ("nondevel-no-libtevent", "find ./bin | grep -v 'libtevent-util' | grep 'libtevent' && exit 1; exit 0"),
-            ("nondevel-no-libldb", "find ./bin | grep -v 'module' | grep -v 'libldbsamba' | grep 'libldb' && exit 1; exit 0"),
             ("nondevel-no-samba-nss_winbind", "ldd ./bin/plugins/libnss_winbind.so.2 | grep 'samba' && exit 1; exit 0"),
             ("nondevel-no-samba-nss_wins", "ldd ./bin/plugins/libnss_wins.so.2 | grep 'samba' && exit 1; exit 0"),
             ("nondevel-no-samba-libwbclient", "ldd ./bin/shared/libwbclient.so.0 | grep 'samba' && exit 1; exit 0"),
@@ -933,7 +968,8 @@ tasks = {
             ("prefix-no-private-libtalloc", "find ${PREFIX_DIR} | grep -v 'libtalloc-report' | grep 'private.*libtalloc' && exit 1; exit 0"),
             ("prefix-no-private-libtdb", "find ${PREFIX_DIR} | grep -v 'libtdb-wrap' | grep 'private.*libtdb' && exit 1; exit 0"),
             ("prefix-no-private-libtevent", "find ${PREFIX_DIR} | grep -v 'libtevent-util' | grep 'private.*libtevent' && exit 1; exit 0"),
-            ("prefix-no-private-libldb", "find ${PREFIX_DIR} | grep -v 'module' | grep -v 'libldbsamba' | grep 'private.*libldb' && exit 1; exit 0"),
+            ("prefix-no-private-libldb", "find ${PREFIX_DIR} | grep -v 'module' | grep -v 'libldbsamba' | grep 'private.*libldb.so' && exit 1; exit 0"),
+            ("prefix-public-libldb", "find ${PREFIX_DIR} | grep 'lib/libldb.so' && exit 0; exit 1"),
             ("prefix-no-samba-nss_winbind", "ldd ${PREFIX_DIR}/lib/libnss_winbind.so.2 | grep 'samba' && exit 1; exit 0"),
             ("prefix-no-samba-nss_wins", "ldd ${PREFIX_DIR}/lib/libnss_wins.so.2 | grep 'samba' && exit 1; exit 0"),
             ("prefix-no-samba-libwbclient", "ldd ${PREFIX_DIR}/lib/libwbclient.so.0 | grep 'samba' && exit 1; exit 0"),
@@ -960,7 +996,6 @@ tasks = {
             ("allshared-no-libtalloc", "find ./bin | grep -v 'libtalloc-report' | grep 'libtalloc' && exit 1; exit 0"),
             ("allshared-no-libtdb", "find ./bin | grep -v 'libtdb-wrap' | grep 'libtdb' && exit 1; exit 0"),
             ("allshared-no-libtevent", "find ./bin | grep -v 'libtevent-util' | grep 'libtevent' && exit 1; exit 0"),
-            ("allshared-no-libldb", "find ./bin | grep -v 'module' | grep -v 'libldbsamba' | grep 'libldb' && exit 1; exit 0"),
             ("allshared-no-samba-nss_winbind", "ldd ./bin/plugins/libnss_winbind.so.2 | grep 'samba' && exit 1; exit 0"),
             ("allshared-no-samba-nss_wins", "ldd ./bin/plugins/libnss_wins.so.2 | grep 'samba' && exit 1; exit 0"),
             ("allshared-no-samba-libwbclient", "ldd ./bin/shared/libwbclient.so.0 | grep 'samba' && exit 1; exit 0"),
@@ -1015,7 +1050,7 @@ tasks = {
             ("allprivate-def-configure", "./configure.developer " + samba_configure_params + " --private-libraries=ALL"),
             ("allprivate-def-make", "make -j"),
             # note wrapper libraries need to be public
-            ("allprivate-def-no-public", "ls ./bin/shared | egrep -v '^private$|lib[nprsu][saeoi][smscd].*-wrapper.so$|pam_set_items.so' | wc -l | grep -q '^0'"),
+            ("allprivate-def-no-public", "ls ./bin/shared | egrep -v '^private$|lib[nprsu][saeoi][smscd].*-wrapper.so$|pam_set_items.so|pam_matrix.so' | wc -l | grep -q '^0'"),
             ("allprivate-def-only-private-ext", "ls ./bin/shared/private | egrep 'private-samba' | wc -l | grep -q '^0' && exit 1; exit 0"),
             ("allprivate-def-no-non-private-ext", "ls ./bin/shared/private | egrep -v 'private-samba|^libpypamtest.so$' | wc -l | grep -q '^0'"),
             ("allprivate-def-test", make_test(TESTS="samba3.smb2.create.*nt4_dc")),
@@ -1029,7 +1064,7 @@ tasks = {
             ("allprivate-ext-configure", "./configure.developer " + samba_configure_params + " --private-libraries=ALL --private-library-extension=private-library --private-extension-exception=pac,ndr"),
             ("allprivate-ext-make", "make -j"),
             # note wrapper libraries need to be public
-            ("allprivate-ext-no-public", "ls ./bin/shared | egrep -v '^private$|lib[nprsu][saeoi][smscd].*-wrapper.so$|pam_set_items.so' | wc -l | grep -q '^0'"),
+            ("allprivate-ext-no-public", "ls ./bin/shared | egrep -v '^private$|lib[nprsu][saeoi][smscd].*-wrapper.so$|pam_set_items.so|pam_matrix.so' | wc -l | grep -q '^0'"),
             ("allprivate-ext-no-private-default-ext", "ls ./bin/shared/private | grep 'private-samba' | wc -l | grep -q '^0'"),
             ("allprivate-ext-has-private-ext", "ls ./bin/shared/private | grep 'private-library' | wc -l | grep -q '^0' && exit 1; exit 0"),
             ("allprivate-ext-libndr-no-private-ext", "ls ./bin/shared/private | grep -v 'private-library' | grep 'libndr' | wc -l | grep -q '^1'"),
@@ -1047,6 +1082,15 @@ tasks = {
             ("nonshared-lcov", LCOV_CMD),
             ("nonshared-check-clean-tree", CLEAN_SOURCE_TREE_CMD),
             ("nonshared-clean", "make clean"),
+
+        # retry without winbindd
+            ("nonwinbind-distclean", "make distclean"),
+            ("nonwinbind-configure", "./configure.developer " + samba_configure_params + " --bundled-libraries=ALL --with-static-modules=ALL --without-winbind"),
+            ("nonwinbind-make", "make -j"),
+            ("nonwinbind-test", make_test(TESTS="samba3.smb2.*.simpleserver")),
+            ("nonwinbind-lcov", LCOV_CMD),
+            ("nonwinbind-check-clean-tree", CLEAN_SOURCE_TREE_CMD),
+            ("nonwinbind-clean", "make clean"),
         ],
     },
 
@@ -1074,10 +1118,6 @@ tasks = {
             ("tevent-make", "cd lib/tevent && make"),
             ("tevent-install", "cd lib/tevent && make install"),
 
-            ("ldb-configure", "cd lib/ldb && " + samba_libs_configure_base + " --bundled-libraries=cmocka,NONE --disable-python"),
-            ("ldb-make", "cd lib/ldb && make"),
-            ("ldb-install", "cd lib/ldb && make install"),
-
         # retry against installed library packages, but no required modules
             ("libs-configure", samba_libs_configure_base + samba_libs_configure_bundled_libs + " --disable-python --without-ad-dc  --with-static-modules=!FORCED,!DEFAULT --with-shared-modules=!FORCED,!DEFAULT"),
             ("libs-make", "make -j"),
@@ -1092,26 +1132,6 @@ tasks = {
         "sequence": [
             ("run", "script/check-shell-scripts.sh ."),
             ("run", "script/codespell.sh ."),
-        ],
-    },
-
-    "ldb": {
-        "sequence": [
-            ("random-sleep", random_sleep(60, 600)),
-            ("configure", "./configure ${ENABLE_COVERAGE} --enable-developer -C ${PREFIX}"),
-            ("make", "make"),
-            ("install", "make install"),
-            ("test", "make test"),
-            ("lcov", LCOV_CMD),
-            ("clean", "make clean"),
-            ("configure-no-lmdb", "./configure ${ENABLE_COVERAGE} --enable-developer --without-ldb-lmdb -C ${PREFIX}"),
-            ("make-no-lmdb", "make"),
-            ("test-no-lmdb", "make test"),
-            ("lcov-no-lmdb", LCOV_CMD),
-            ("install-no-lmdb", "make install"),
-            ("check-clean-tree", CLEAN_SOURCE_TREE_CMD),
-            ("distcheck", "make distcheck"),
-            ("clean", "make clean"),
         ],
     },
 

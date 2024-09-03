@@ -217,6 +217,7 @@ static int virusfilter_vfs_connect(
 	int connect_timeout = 0;
 	int io_timeout = 0;
 	int ret = -1;
+	bool ok;
 
 	config = talloc_zero(handle, struct virusfilter_config);
 	if (config == NULL) {
@@ -255,13 +256,25 @@ static int virusfilter_vfs_connect(
 	exclude_files = lp_parm_const_string(
 		snum, "virusfilter", "exclude files", NULL);
 	if (exclude_files != NULL) {
-		set_namearray(&config->exclude_files, exclude_files);
+		ok = set_namearray(config,
+				   exclude_files,
+				   &config->exclude_files);
+		if (!ok) {
+			DBG_ERR("set_namearray failed\n");
+			return -1;
+		}
 	}
 
 	infected_files = lp_parm_const_string(
 		snum, "virusfilter", "infected files", NULL);
 	if (infected_files != NULL) {
-		set_namearray(&config->infected_files, infected_files);
+		ok = set_namearray(config,
+				   infected_files,
+				   &config->infected_files);
+		if (!ok) {
+			DBG_ERR("set_namearray failed\n");
+			return -1;
+		}
 	}
 
 	config->cache_entry_limit = lp_parm_int(
@@ -494,8 +507,8 @@ static int virusfilter_vfs_connect(
 	 * and becoming root over and over.
 	 */
 	if (config->infected_file_action == VIRUSFILTER_ACTION_QUARANTINE) {
-		bool ok = true;
 		bool dir_exists;
+		ok = true;
 
 		/*
 		 * Do SMB_VFS_NEXT_MKDIR(config->quarantine_dir)
@@ -579,7 +592,6 @@ static void virusfilter_vfs_disconnect(struct vfs_handle_struct *handle)
 		config->backend->fns->disconnect(handle);
 	}
 
-	free_namearray(config->exclude_files);
 	virusfilter_io_disconnect(config->io_h);
 
 	SMB_VFS_NEXT_DISCONNECT(handle);

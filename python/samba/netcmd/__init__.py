@@ -23,7 +23,7 @@ import textwrap
 import traceback
 
 import samba
-from ldb import ERR_INVALID_CREDENTIALS, LdbError
+from ldb import ERR_INVALID_CREDENTIALS, ERR_INSUFFICIENT_ACCESS_RIGHTS, LdbError
 from samba import colour
 from samba.auth import system_session
 from samba.getopt import Option, OptionParser
@@ -82,8 +82,8 @@ class Command(object):
     # synopsis must be defined in all subclasses in order to provide the
     # command usage
     synopsis = None
-    takes_args = []
-    takes_options = []
+    takes_args = ()
+    takes_options = ()
     takes_optiongroups = {}
 
     hidden = False
@@ -93,6 +93,7 @@ class Command(object):
     raw_argv = None
     raw_args = None
     raw_kwargs = None
+    preferred_output_format = None
 
     def _set_files(self, outf=None, errf=None):
         if outf is not None:
@@ -104,10 +105,23 @@ class Command(object):
         self._set_files(outf, errf)
 
     def usage(self, prog=None):
-        parser, _ = self._create_parser(prog)
+        parser, _ = self._create_parser(prog or self.command_name)
         parser.print_usage()
 
     def _print_error(self, msg, evalue=None, klass=None):
+        if self.preferred_output_format == 'json':
+            if evalue is None:
+                evalue = 1
+            else:
+                msg = f"{msg} - {evalue}"
+            if klass is not None:
+                kwargs = {'error class': klass}
+            else:
+                kwargs = {}
+
+            self.print_json_status(evalue, msg, **kwargs)
+            return
+
         err = colour.c_DARK_RED("ERROR")
         klass = '' if klass is None else f'({klass})'
 
@@ -155,6 +169,50 @@ class Command(object):
         json.dump(data, self.outf, cls=JSONEncoder, indent=2, sort_keys=True)
         self.outf.write("\n")
 
+    def print_json_status(self, error=None, message=None, **kwargs):
+        """For commands that really have nothing to say when they succeed
+        (`samba-tool foo delete --json`), we can still emit
+        '{"status": "OK"}\n'. And if they fail they can say:
+        '{"status": "error"}\n'.
+        This function hopes to keep things consistent.
+
+        If error is true-ish but not True, it is stringified and added
+        as a message. For example, if error is an LdbError with an
+        OBJECT_NOT_FOUND code, self.print_json_status(error) results
+        in this:
+
+            '{"status": "error", "message": "object not found"}\n'
+
+        unless an explicit message is added, in which case that is
+        used. A message can be provided on success, like this:
+
+            '{"status": "OK", "message": "thanks for asking!"}\n'
+
+        Extra keywords can be added too.
+
+        In summary, you might go:
+
+            try:
+                samdb.delete(dn)
+            except Exception as e:
+                print_json_status(e)
+                return
+            print_json_status()
+        """
+        data = {}
+        if error:
+            data['status'] = 'error'
+            if error is not True:
+                data['message'] = str(error)
+        else:
+            data['status'] = 'OK'
+
+        if message is not None:
+            data['message'] = message
+
+        data.update(kwargs)
+        self.print_json(data)
+
     def show_command_error(self, e):
         """display a command error"""
         if isinstance(e, CommandError):
@@ -183,6 +241,9 @@ class Command(object):
                 force_traceback = False
             elif ldb_emsg.startswith("Unable to open tdb "):
                 self._print_error(message, ldb_emsg, 'ldb')
+                force_traceback = False
+            elif ldb_ecode == ERR_INSUFFICIENT_ACCESS_RIGHTS:
+                self._print_error("User has insufficient access rights")
                 force_traceback = False
             else:
                 self._print_error(message, ldb_emsg, 'ldb')
@@ -255,6 +316,13 @@ class Command(object):
                 if option.dest is not None and option.dest in kwargs:
                     del kwargs[option.dest]
         kwargs.update(optiongroups)
+
+        if kwargs.get('output_format') == 'json':
+            self.preferred_output_format = 'json'
+        else:
+            # we need to reset this for the tests that reuse the
+            # samba-tool object.
+            self.preferred_output_format = None
 
         if self.use_colour:
             self.apply_colour_choice(kwargs.pop('color', 'auto'))
@@ -363,7 +431,7 @@ class SuperCommand(Command):
         epilog = "\nAvailable subcommands:\n"
 
         subcmds = sorted(self.subcommands.keys())
-        max_length = max([len(c) for c in subcmds])
+        max_length = max([len(c) for c in subcmds], default=0)
         for cmd_name in subcmds:
             cmd = self.subcommands[cmd_name]
             if cmd.hidden:
@@ -371,7 +439,7 @@ class SuperCommand(Command):
             epilog += "  %*s  - %s\n" % (
                 -max_length, cmd_name, cmd.short_description)
 
-        epilog += ("For more help on a specific subcommand, please type: "
+        epilog += ("\nFor more help on a specific subcommand, please type: "
                    f"{self.command_name} <subcommand> (-h|--help)\n")
 
         parser, optiongroups = self._create_parser(self.command_name, epilog=epilog)

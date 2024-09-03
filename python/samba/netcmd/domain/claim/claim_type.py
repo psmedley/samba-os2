@@ -20,14 +20,10 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import binascii
-import os
-
 import samba.getopt as options
+from samba.domain.models import AttributeSchema, ClaimType, ClassSchema
+from samba.domain.models.exceptions import ModelError
 from samba.netcmd import Command, CommandError, Option, SuperCommand
-from samba.netcmd.domain.models import AttributeSchema, ClassSchema,\
-    ClaimType, ValueType
-from samba.netcmd.domain.models.exceptions import ModelError
 
 
 class cmd_domain_claim_claim_type_create(Command):
@@ -87,45 +83,22 @@ class cmd_domain_claim_claim_type_create(Command):
             raise CommandError(f"Claim type {display_name} already exists, "
                                "but you can use --name to use another name.")
 
-        # Lookup attribute and class names in schema.
-        try:
-            applies_to = [ClassSchema.lookup(ldb, name) for name in class_names]
-            attribute = AttributeSchema.lookup(ldb, attribute_name)
-            value_type = ValueType.lookup(ldb, attribute)
-        except (LookupError, ModelError, ValueError) as e:
-            raise CommandError(e)
-
-        # Generate the new Claim Type cn.
-        # Windows creates a random number here containing 16 hex digits.
-        # We can achieve something similar using urandom(8)
-        instance = binascii.hexlify(os.urandom(8)).decode()
-        cn = f"ad://ext/{display_name}:{instance}"
-
-        # adminDescription should be present but still have a fallback.
-        if description is None:
-            description = attribute.admin_description or display_name
-
-        # claim_is_value_space_restricted is always False because we don't
-        # yet support creating claims with a restricted possible values list.
-        claim_type = ClaimType(
-            cn=cn,
-            description=description,
-            display_name=display_name,
-            enabled=not disable,
-            claim_attribute_source=attribute.dn,
-            claim_is_single_valued=attribute.is_single_valued,
-            claim_is_value_space_restricted=False,
-            claim_source_type="AD",
-            claim_type_applies_to_class=[obj.dn for obj in applies_to],
-            claim_value_type=value_type.claim_value_type,
-        )
-
         # Either --enable will be set or --disable but never both.
         # The default if both are missing is enabled=True.
         if enable is not None:
-            claim_type.enabled = enable
+            enabled = enable
         else:
-            claim_type.enabled = not disable
+            enabled = not disable
+
+        # Lookup attribute and class names in schema.
+        try:
+            applies_to = [ClassSchema.find(ldb, name) for name in class_names]
+            attribute = AttributeSchema.find(ldb, attribute_name)
+            claim_type = ClaimType.new_claim_type(
+                ldb, attribute, applies_to, display_name,
+                description, enabled)
+        except (ModelError, ValueError) as e:
+            raise CommandError(e)
 
         # Create claim type
         try:
@@ -137,11 +110,10 @@ class cmd_domain_claim_claim_type_create(Command):
             raise CommandError(e)
 
         # Claim type created successfully.
-        self.outf.write(f"Created claim type: {display_name}")
+        message = f"Created claim type: {display_name}"
         if attribute_name != display_name:
-            self.outf.write(f" ({attribute_name})\n")
-        else:
-            self.outf.write("\n")
+            message += f" ({attribute_name})"
+        print(message, file=self.outf)
 
 
 class cmd_domain_claim_claim_type_modify(Command):
@@ -209,9 +181,8 @@ class cmd_domain_claim_claim_type_modify(Command):
         # Change class names for claim type.
         if class_names is not None:
             try:
-                applies_to = [ClassSchema.lookup(ldb, name)
-                              for name in class_names]
-            except (LookupError, ValueError) as e:
+                applies_to = [ClassSchema.find(ldb, name) for name in class_names]
+            except (ModelError, ValueError) as e:
                 raise CommandError(e)
 
             claim_type.claim_type_applies_to_class = [obj.dn for obj in applies_to]
@@ -228,7 +199,7 @@ class cmd_domain_claim_claim_type_modify(Command):
             raise CommandError(e)
 
         # Claim type updated successfully.
-        self.outf.write(f"Updated claim type: {name}\n")
+        print(f"Updated claim type: {name}", file=self.outf)
 
 
 class cmd_domain_claim_claim_type_delete(Command):
@@ -273,11 +244,11 @@ class cmd_domain_claim_claim_type_delete(Command):
             if not force:
                 raise CommandError(
                     f"{e}\nTry --force to delete protected claim types.")
-            else:
-                raise CommandError(e)
+
+            raise CommandError(e)
 
         # Claim type deleted successfully.
-        self.outf.write(f"Deleted claim type: {name}\n")
+        print(f"Deleted claim type: {name}", file=self.outf)
 
 
 class cmd_domain_claim_claim_type_list(Command):
@@ -301,19 +272,18 @@ class cmd_domain_claim_claim_type_list(Command):
 
         ldb = self.ldb_connect(hostopts, sambaopts, credopts)
 
-        # Claim types grouped by displayName.
         try:
-            claim_types = {claim_type.display_name: claim_type.as_dict()
-                           for claim_type in ClaimType.query(ldb)}
+            claim_types = ClaimType.query(ldb)
         except ModelError as e:
             raise CommandError(e)
 
         # Using json output format gives more detail.
         if output_format == "json":
-            self.print_json(claim_types)
+            self.print_json({claim_type.display_name: claim_type
+                             for claim_type in claim_types})
         else:
-            for claim_type in claim_types.keys():
-                self.outf.write(f"{claim_type}\n")
+            for claim_type in claim_types:
+                print(claim_type.display_name, file=self.outf)
 
 
 class cmd_domain_claim_claim_type_view(Command):

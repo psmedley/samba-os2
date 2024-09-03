@@ -264,7 +264,7 @@ static size_t interpret_long_filename(TALLOC_CTX *ctx,
 			p += 8;
 			finfo->ctime_ts = interpret_long_date(BVAL(p, 0));
 			p += 8;
-			finfo->size = IVAL2_TO_SMB_BIG_UINT(p,0);
+			finfo->size = BVAL(p,0);
 			p += 8;
 			p += 8; /* alloc size */
 			finfo->attr = IVAL(p,0);
@@ -313,12 +313,10 @@ static size_t interpret_long_filename(TALLOC_CTX *ctx,
 			   Namelen doesn't include the terminating unicode null, so
 			   copy it here. */
 
-#ifndef __OS2__
-			if (p_last_name_raw) {
-				*p_last_name_raw = data_blob(NULL, namelen+2);
-				memcpy(p_last_name_raw->data, p, namelen);
-				SSVAL(p_last_name_raw->data, namelen, 0);
-			}
+#ifndef __OS2__x //still required?
+			*p_last_name_raw = data_blob(NULL, namelen + 2);
+			memcpy(p_last_name_raw->data, p, namelen);
+			SSVAL(p_last_name_raw->data, namelen, 0);
 #endif
 			return calc_next_entry_offset(base, pdata_end);
 		}
@@ -691,11 +689,7 @@ static struct tevent_req *cli_list_trans_send(TALLOC_CTX *mem_ctx,
 	}
 	state->ev = ev;
 	state->cli = cli;
-	state->mask = talloc_strdup(state, mask);
-	if (tevent_req_nomem(state->mask, req)) {
-		return tevent_req_post(req, ev);
-	}
-	state->mask = smb1_dfs_share_path(state, cli, state->mask);
+	state->mask = smb1_dfs_share_path(state, cli, mask);
 	if (tevent_req_nomem(state->mask, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -958,55 +952,6 @@ static NTSTATUS cli_list_trans_recv(struct tevent_req *req,
 	}
 	*finfo = talloc_move(mem_ctx, &state->finfo);
 	return NT_STATUS_OK;
-}
-
-NTSTATUS cli_list_trans(struct cli_state *cli, const char *mask,
-			uint32_t attribute, int info_level,
-			NTSTATUS (*fn)(
-				struct file_info *finfo,
-				const char *mask,
-				void *private_data),
-			void *private_data)
-{
-	TALLOC_CTX *frame = talloc_stackframe();
-	struct tevent_context *ev;
-	struct tevent_req *req;
-	int i, num_finfo;
-	struct file_info *finfo = NULL;
-	NTSTATUS status = NT_STATUS_NO_MEMORY;
-
-	if (smbXcli_conn_has_async_calls(cli->conn)) {
-		/*
-		 * Can't use sync call while an async call is in flight
-		 */
-		status = NT_STATUS_INVALID_PARAMETER;
-		goto fail;
-	}
-	ev = samba_tevent_context_init(frame);
-	if (ev == NULL) {
-		goto fail;
-	}
-	req = cli_list_trans_send(frame, ev, cli, mask, attribute, info_level);
-	if (req == NULL) {
-		goto fail;
-	}
-	if (!tevent_req_poll_ntstatus(req, ev, &status)) {
-		goto fail;
-	}
-	status = cli_list_trans_recv(req, frame, &finfo);
-	if (!NT_STATUS_IS_OK(status)) {
-		goto fail;
-	}
-	num_finfo = talloc_array_length(finfo);
-	for (i=0; i<num_finfo; i++) {
-		status = fn(&finfo[i], mask, private_data);
-		if (!NT_STATUS_IS_OK(status)) {
-			goto fail;
-		}
-	}
- fail:
-	TALLOC_FREE(frame);
-	return status;
 }
 
 struct cli_list_state {

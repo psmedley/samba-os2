@@ -130,6 +130,7 @@ bool pyldb_Object_AsDn(TALLOC_CTX *mem_ctx, PyObject *object,
 
 	PyLdb_Dn_Type = PyLdb_GetPyType("Dn");
 	if (PyLdb_Dn_Type == NULL) {
+		PyErr_SetString(PyExc_TypeError, "Expected DN");
 		return false;
 	}
 
@@ -144,7 +145,7 @@ bool pyldb_Object_AsDn(TALLOC_CTX *mem_ctx, PyObject *object,
 	return false;
 }
 
-PyObject *pyldb_Dn_FromDn(struct ldb_dn *dn)
+PyObject *pyldb_Dn_FromDn(struct ldb_dn *dn, PyLdbObject *pyldb)
 {
 	TALLOC_CTX *mem_ctx = NULL;
 	struct ldb_dn *dn_ref = NULL;
@@ -181,5 +182,39 @@ PyObject *pyldb_Dn_FromDn(struct ldb_dn *dn)
 	}
 	py_ret->mem_ctx = mem_ctx;
 	py_ret->dn = dn;
+	py_ret->pyldb = pyldb;
+
+	Py_INCREF(py_ret->pyldb);
 	return (PyObject *)py_ret;
+}
+
+void PyErr_SetLdbError(PyObject *error, int ret, struct ldb_context *ldb_ctx)
+{
+	PyObject *exc = NULL;
+	const char *ldb_error_string = NULL;
+
+	if (ret == LDB_ERR_PYTHON_EXCEPTION) {
+		return; /* Python exception should already be set, just keep that */
+	}
+
+	if (ldb_ctx != NULL) {
+		ldb_error_string = ldb_errstring(ldb_ctx);
+	}
+	/* either no LDB context, no string stored or string reset */
+	if (ldb_error_string == NULL) {
+		ldb_error_string = ldb_strerror(ret);
+	}
+
+	exc = Py_BuildValue("(i,s)", ret, ldb_error_string);
+	if (exc == NULL) {
+		/*
+		 * Py_BuildValue failed, and will have set its own exception.
+		 * It isn't the one we wanted, but it will have to do.
+		 * This is all very unexpected.
+		 */
+		fprintf(stderr, "could not make LdbError %d!\n", ret);
+		return;
+	}
+	PyErr_SetObject(error, exc);
+	Py_DECREF(exc);
 }

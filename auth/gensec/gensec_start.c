@@ -43,7 +43,8 @@
 static const struct gensec_security_ops **generic_security_ops;
 static int gensec_num_backends;
 
-bool gensec_security_ops_enabled(const struct gensec_security_ops *ops, struct gensec_security *security)
+static bool gensec_security_ops_enabled(const struct gensec_security_ops *ops,
+					struct gensec_security *security)
 {
 	bool ok = lpcfg_parm_bool(security->settings->lp_ctx,
 				  NULL,
@@ -79,72 +80,66 @@ bool gensec_security_ops_enabled(const struct gensec_security_ops *ops, struct g
  * more complex.
  */
 
-static const struct gensec_security_ops **gensec_use_kerberos_mechs(
-		TALLOC_CTX *mem_ctx,
-		const struct gensec_security_ops * const *old_gensec_list,
-		enum credentials_use_kerberos use_kerberos,
-		bool keep_schannel)
+static bool gensec_offer_mech(struct gensec_security *gensec_security,
+			      const struct gensec_security_ops *mech)
 {
-	const struct gensec_security_ops **new_gensec_list;
-	int i, j, num_mechs_in;
+	struct cli_credentials *creds = NULL;
+	enum credentials_use_kerberos use_kerberos;
+	bool offer;
 
-	for (num_mechs_in=0; old_gensec_list && old_gensec_list[num_mechs_in]; num_mechs_in++) {
-		/* noop */
+	/*
+	 * We want to always offer SPNEGO and other backends
+	 */
+	offer = mech->glue;
+
+	if (gensec_security != NULL) {
+		creds = gensec_get_credentials(gensec_security);
 	}
 
-	new_gensec_list = talloc_array(mem_ctx,
-				       const struct gensec_security_ops *,
-				       num_mechs_in + 1);
-	if (!new_gensec_list) {
-		return NULL;
-	}
-
-	j = 0;
-	for (i=0; old_gensec_list && old_gensec_list[i]; i++) {
-		bool keep = false;
-
+	if ((mech->auth_type == DCERPC_AUTH_TYPE_SCHANNEL) && (creds != NULL))
+	{
+		if (cli_credentials_get_netlogon_creds(creds) != NULL) {
+			offer = true;
+		}
 		/*
-		 * We want to keep SPNEGO and other backends
+		 * Even if Kerberos is set to REQUIRED, offer the
+		 * schannel auth mechanism so that machine accounts are
+		 * able to authenticate via netlogon.
 		 */
-		keep = old_gensec_list[i]->glue;
-
-		if (old_gensec_list[i]->auth_type == DCERPC_AUTH_TYPE_SCHANNEL) {
-			keep = keep_schannel;
+		if (gensec_security->gensec_role == GENSEC_SERVER) {
+			offer = true;
 		}
-
-		switch (use_kerberos) {
-		case CRED_USE_KERBEROS_DESIRED:
-			keep = true;
-			break;
-
-		case CRED_USE_KERBEROS_DISABLED:
-			if (old_gensec_list[i]->kerberos == false) {
-				keep = true;
-			}
-
-			break;
-
-		case CRED_USE_KERBEROS_REQUIRED:
-			if (old_gensec_list[i]->kerberos == true) {
-				keep = true;
-			}
-
-			break;
-		default:
-			/* Can't happen or invalid parameter */
-			return NULL;
-		}
-
-		if (!keep) {
-			continue;
-		}
-
-		new_gensec_list[j] = old_gensec_list[i];
-		j++;
 	}
-	new_gensec_list[j] = NULL;
 
-	return new_gensec_list;
+	use_kerberos = CRED_USE_KERBEROS_DESIRED;
+	if (creds != NULL) {
+		use_kerberos = cli_credentials_get_kerberos_state(creds);
+	}
+
+	switch (use_kerberos) {
+	case CRED_USE_KERBEROS_DESIRED:
+		offer = true;
+		break;
+	case CRED_USE_KERBEROS_DISABLED:
+		if (!mech->kerberos) {
+			offer = true;
+		}
+		break;
+	case CRED_USE_KERBEROS_REQUIRED:
+		if (mech->kerberos) {
+			offer = true;
+		}
+		break;
+	default:
+		/* Can't happen or invalid parameter */
+		offer = false;
+	}
+
+	if (offer && (gensec_security != NULL)) {
+		offer = gensec_security_ops_enabled(mech, gensec_security);
+	}
+
+	return offer;
 }
 
 _PUBLIC_ const struct gensec_security_ops **gensec_security_mechs(
@@ -153,159 +148,147 @@ _PUBLIC_ const struct gensec_security_ops **gensec_security_mechs(
 {
 	const struct gensec_security_ops * const *backends =
 		generic_security_ops;
-	enum credentials_use_kerberos use_kerberos = CRED_USE_KERBEROS_DESIRED;
-	bool keep_schannel = false;
+	const struct gensec_security_ops **result = NULL;
+	size_t i, j, num_backends;
 
-	if (gensec_security != NULL) {
-		struct cli_credentials *creds = NULL;
+	if ((gensec_security != NULL) &&
+	    (gensec_security->settings->backends != NULL)) {
+		backends = gensec_security->settings->backends;
+	}
 
-		creds = gensec_get_credentials(gensec_security);
-		if (creds != NULL) {
-			use_kerberos = cli_credentials_get_kerberos_state(creds);
-			if (cli_credentials_get_netlogon_creds(creds) != NULL) {
-				keep_schannel = true;
-			}
+	if (backends == NULL) {
+		/* Just return the NULL terminator */
+		return talloc_zero(mem_ctx,
+				   const struct gensec_security_ops *);
+	}
 
-			/*
-			 * Even if Kerberos is set to REQUIRED, keep the
-			 * schannel auth mechanism so that machine accounts are
-			 * able to authenticate via netlogon.
-			 */
-			if (gensec_security->gensec_role == GENSEC_SERVER) {
-				keep_schannel = true;
-			}
-		}
+	for (num_backends = 0; backends[num_backends]; num_backends++) {
+		/* noop */
+	}
 
-		if (gensec_security->settings->backends) {
-			backends = gensec_security->settings->backends;
+	result = talloc_array(
+		mem_ctx, const struct gensec_security_ops *, num_backends + 1);
+	if (result == NULL) {
+		return NULL;
+	}
+
+	j = 0;
+	for (i = 0; backends[i]; i++) {
+		bool offer = gensec_offer_mech(gensec_security, backends[i]);
+		if (offer) {
+			result[j++] = backends[i];
 		}
 	}
 
-	return gensec_use_kerberos_mechs(mem_ctx, backends,
-					 use_kerberos, keep_schannel);
+	result[j] = NULL;
+	return result;
+}
 
+static const struct gensec_security_ops *gensec_security_by_fn(
+	struct gensec_security *gensec_security,
+	bool (*fn)(const struct gensec_security_ops *backend,
+		   const void *private_data),
+	const void *private_data)
+{
+	size_t i;
+	const struct gensec_security_ops **backends = NULL;
+
+	backends = gensec_security_mechs(gensec_security, gensec_security);
+	if (backends == NULL) {
+		return NULL;
+	}
+
+	for (i = 0; backends[i] != NULL; i++) {
+		const struct gensec_security_ops *backend = backends[i];
+		bool ok;
+
+		ok = fn(backend, private_data);
+		if (ok) {
+			TALLOC_FREE(backends);
+			return backend;
+		}
+	}
+
+	TALLOC_FREE(backends);
+	return NULL;
+}
+
+static bool by_oid_fn(const struct gensec_security_ops *backend,
+		      const void *private_data)
+{
+	const char *oid = private_data;
+	int i;
+
+	if (backend->oid == NULL) {
+		return false;
+	}
+
+	for (i = 0; backend->oid[i] != NULL; i++) {
+		if (strcmp(backend->oid[i], oid) == 0) {
+			return true;
+		}
+	}
+	return false;
 }
 
 _PUBLIC_ const struct gensec_security_ops *gensec_security_by_oid(
-				struct gensec_security *gensec_security,
-				const char *oid_string)
+	struct gensec_security *gensec_security,
+	const char *oid_string)
 {
-	int i, j;
-	const struct gensec_security_ops **backends;
-	const struct gensec_security_ops *backend;
-	TALLOC_CTX *mem_ctx = talloc_new(gensec_security);
-	if (!mem_ctx) {
-		return NULL;
-	}
-	backends = gensec_security_mechs(gensec_security, mem_ctx);
-	for (i=0; backends && backends[i]; i++) {
-		if (gensec_security != NULL &&
-				!gensec_security_ops_enabled(backends[i],
-											 gensec_security))
-		    continue;
-		if (backends[i]->oid) {
-			for (j=0; backends[i]->oid[j]; j++) {
-				if (backends[i]->oid[j] &&
-				    (strcmp(backends[i]->oid[j], oid_string) == 0)) {
-					backend = backends[i];
-					talloc_free(mem_ctx);
-					return backend;
-				}
-			}
-		}
-	}
-	talloc_free(mem_ctx);
+	return gensec_security_by_fn(gensec_security, by_oid_fn, oid_string);
+}
 
-	return NULL;
+static bool by_sasl_name_fn(const struct gensec_security_ops *backend,
+			    const void *private_data)
+{
+	const char *sasl_name = private_data;
+	if (backend->sasl_name == NULL) {
+		return false;
+	}
+	return (strcmp(backend->sasl_name, sasl_name) == 0);
 }
 
 _PUBLIC_ const struct gensec_security_ops *gensec_security_by_sasl_name(
-				struct gensec_security *gensec_security,
-				const char *sasl_name)
+	struct gensec_security *gensec_security,
+	const char *sasl_name)
 {
-	int i;
-	const struct gensec_security_ops **backends;
-	const struct gensec_security_ops *backend;
-	TALLOC_CTX *mem_ctx = talloc_new(gensec_security);
-	if (!mem_ctx) {
-		return NULL;
-	}
-	backends = gensec_security_mechs(gensec_security, mem_ctx);
-	for (i=0; backends && backends[i]; i++) {
-		if (gensec_security != NULL &&
-		    !gensec_security_ops_enabled(backends[i], gensec_security)) {
-			continue;
-		}
-		if (backends[i]->sasl_name
-		    && (strcmp(backends[i]->sasl_name, sasl_name) == 0)) {
-			backend = backends[i];
-			talloc_free(mem_ctx);
-			return backend;
-		}
-	}
-	talloc_free(mem_ctx);
+	return gensec_security_by_fn(
+		gensec_security, by_sasl_name_fn, sasl_name);
+}
 
-	return NULL;
+static bool by_auth_type_fn(const struct gensec_security_ops *backend,
+			    const void *private_data)
+{
+	uint32_t auth_type = *((const uint32_t *)private_data);
+	return (backend->auth_type == auth_type);
 }
 
 _PUBLIC_ const struct gensec_security_ops *gensec_security_by_auth_type(
-				struct gensec_security *gensec_security,
-				uint32_t auth_type)
+	struct gensec_security *gensec_security,
+	uint32_t auth_type)
 {
-	int i;
-	const struct gensec_security_ops **backends;
-	const struct gensec_security_ops *backend;
-	TALLOC_CTX *mem_ctx;
-
 	if (auth_type == DCERPC_AUTH_TYPE_NONE) {
 		return NULL;
 	}
-
-	mem_ctx = talloc_new(gensec_security);
-	if (!mem_ctx) {
-		return NULL;
-	}
-	backends = gensec_security_mechs(gensec_security, mem_ctx);
-	for (i=0; backends && backends[i]; i++) {
-		if (gensec_security != NULL &&
-		    !gensec_security_ops_enabled(backends[i], gensec_security)) {
-			continue;
-		}
-		if (backends[i]->auth_type == auth_type) {
-			backend = backends[i];
-			talloc_free(mem_ctx);
-			return backend;
-		}
-	}
-	talloc_free(mem_ctx);
-
-	return NULL;
+	return gensec_security_by_fn(
+		gensec_security, by_auth_type_fn, &auth_type);
 }
 
-const struct gensec_security_ops *gensec_security_by_name(struct gensec_security *gensec_security,
-							  const char *name)
+static bool by_name_fn(const struct gensec_security_ops *backend,
+		       const void *private_data)
 {
-	int i;
-	const struct gensec_security_ops **backends;
-	const struct gensec_security_ops *backend;
-	TALLOC_CTX *mem_ctx = talloc_new(gensec_security);
-	if (!mem_ctx) {
-		return NULL;
+	const char *name = private_data;
+	if (backend->name == NULL) {
+		return false;
 	}
-	backends = gensec_security_mechs(gensec_security, mem_ctx);
-	for (i=0; backends && backends[i]; i++) {
-		if (gensec_security != NULL &&
-				!gensec_security_ops_enabled(backends[i], gensec_security))
-		    continue;
-		if (backends[i]->name
-		    && (strcmp(backends[i]->name, name) == 0)) {
-			backend = backends[i];
-			talloc_free(mem_ctx);
-			return backend;
-		}
-	}
-	talloc_free(mem_ctx);
-	return NULL;
+	return (strcmp(backend->name, name) == 0);
+}
+
+_PUBLIC_ const struct gensec_security_ops *gensec_security_by_name(
+	struct gensec_security *gensec_security,
+	const char *name)
+{
+	return gensec_security_by_fn(gensec_security, by_name_fn, name);
 }
 
 static const char **gensec_security_sasl_names_from_ops(
@@ -334,11 +317,6 @@ static const char **gensec_security_sasl_names_from_ops(
 		}
 
 		if (gensec_security != NULL) {
-			if (!gensec_security_ops_enabled(ops[i],
-							 gensec_security)) {
-				continue;
-			}
-
 			role = gensec_security->gensec_role;
 		}
 
@@ -428,9 +406,6 @@ static const struct gensec_security_ops **gensec_security_by_sasl_list(
 	/* Find backends in our preferred order, by walking our list,
 	 * then looking in the supplied list */
 	for (i=0; backends && backends[i]; i++) {
-		if (gensec_security != NULL &&
-				!gensec_security_ops_enabled(backends[i], gensec_security))
-		    continue;
 		for (sasl_idx = 0; sasl_names[sasl_idx]; sasl_idx++) {
 			if (!backends[i]->sasl_name ||
 			    !(strcmp(backends[i]->sasl_name,
@@ -500,9 +475,6 @@ _PUBLIC_ const struct gensec_security_ops_wrapper *gensec_security_by_oid_list(
 	/* Find backends in our preferred order, by walking our list,
 	 * then looking in the supplied list */
 	for (i=0; backends && backends[i]; i++) {
-		if (gensec_security != NULL &&
-				!gensec_security_ops_enabled(backends[i], gensec_security))
-		    continue;
 		if (!backends[i]->oid) {
 			continue;
 		}
@@ -570,10 +542,6 @@ static const char **gensec_security_oids_from_ops(
 	}
 
 	for (i=0; ops && ops[i]; i++) {
-		if (gensec_security != NULL &&
-			!gensec_security_ops_enabled(ops[i], gensec_security)) {
-			continue;
-		}
 		if (!ops[i]->oid) {
 			continue;
 		}

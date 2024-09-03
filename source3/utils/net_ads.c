@@ -35,13 +35,13 @@
 #include "libnet/libnet_join.h"
 #include "smb_krb5.h"
 #include "secrets.h"
-#include "krb5_env.h"
 #include "../libcli/security/security.h"
 #include "libsmb/libsmb.h"
 #include "lib/param/loadparm.h"
 #include "utils/net_dns.h"
 #include "auth/kerberos/pac_utils.h"
 #include "lib/util/string_wrappers.h"
+#include "lib/util/util_file.h"
 
 #ifdef HAVE_JANSSON
 #include <jansson.h>
@@ -552,7 +552,7 @@ static int net_ads_info_json(ADS_STRUCT *ads)
 	}
 
 	ret = json_add_int (&jsobj, "Server time offset",
-			    ads->auth.time_offset);
+			    ads->config.time_offset);
 	if (ret != 0) {
 		goto failure;
 	}
@@ -640,7 +640,7 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 			 http_timestring(tmp_ctx, ads->config.current_time));
 
 	d_printf(_("KDC server: %s\n"), ads->auth.kdc_server );
-	d_printf(_("Server time offset: %d\n"), ads->auth.time_offset );
+	d_printf(_("Server time offset: %d\n"), ads->config.time_offset );
 
 	d_printf(_("Last machine account password change: %s\n"),
 		 http_timestring(tmp_ctx, pass_time));
@@ -659,13 +659,9 @@ static ADS_STATUS ads_startup_int(struct net_context *c,
 {
 	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
-	bool need_password = false;
-	bool second_time = false;
-	char *cp;
 	const char *realm = NULL;
+	const char *workgroup = NULL;
 	bool tried_closest_dc = false;
-	enum credentials_use_kerberos krb5_state =
-		CRED_USE_KERBEROS_DISABLED;
 
 	/* lp_realm() should be handled by a command line param,
 	   However, the join requires that realm be set in smb.conf
@@ -677,113 +673,36 @@ static ADS_STATUS ads_startup_int(struct net_context *c,
 retry_connect:
  	if (only_own_domain) {
 		realm = lp_realm();
+		workgroup = lp_workgroup();
 	} else {
 		realm = assume_own_realm(c);
+		workgroup = c->opt_target_workgroup;
 	}
 
 	ads = ads_init(mem_ctx,
 		       realm,
-		       c->opt_target_workgroup,
+		       workgroup,
 		       c->opt_host,
-		       ADS_SASL_PLAIN);
+		       ADS_SASL_SEAL);
 	if (ads == NULL) {
-		return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
-	}
-
-	if (!c->opt_user_name) {
-		c->opt_user_name = "administrator";
-	}
-
-	if (c->opt_user_specified) {
-		need_password = true;
-	}
-
-retry:
-	if (!c->opt_password && need_password && !c->opt_machine_pass) {
-		c->opt_password = net_prompt_pass(c, c->opt_user_name);
-		if (!c->opt_password) {
-			TALLOC_FREE(ads);
-			return ADS_ERROR(LDAP_NO_MEMORY);
-		}
-	}
-
-	if (c->opt_password) {
-		use_in_memory_ccache();
-		ADS_TALLOC_CONST_FREE(ads->auth.password);
-		ads->auth.password = talloc_strdup(ads, c->opt_password);
-		if (ads->auth.password == NULL) {
-			TALLOC_FREE(ads);
-			return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
-		}
-	}
-
-	ADS_TALLOC_CONST_FREE(ads->auth.user_name);
-	ads->auth.user_name = talloc_strdup(ads, c->opt_user_name);
-	if (ads->auth.user_name == NULL) {
-		TALLOC_FREE(ads);
 		return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
 	}
 
 	ads->auth.flags |= auth_flags;
 
-	/* The ADS code will handle FIPS mode */
-	krb5_state = cli_credentials_get_kerberos_state(c->creds);
-	switch (krb5_state) {
-	case CRED_USE_KERBEROS_REQUIRED:
-		ads->auth.flags &= ~ADS_AUTH_DISABLE_KERBEROS;
-		ads->auth.flags &= ~ADS_AUTH_ALLOW_NTLMSSP;
-		break;
-	case CRED_USE_KERBEROS_DESIRED:
-		ads->auth.flags &= ~ADS_AUTH_DISABLE_KERBEROS;
-		ads->auth.flags |= ADS_AUTH_ALLOW_NTLMSSP;
-		break;
-	case CRED_USE_KERBEROS_DISABLED:
-		ads->auth.flags |= ADS_AUTH_DISABLE_KERBEROS;
-		ads->auth.flags |= ADS_AUTH_ALLOW_NTLMSSP;
-		break;
-	}
-
-       /*
-        * If the username is of the form "name@realm",
-        * extract the realm and convert to upper case.
-        * This is only used to establish the connection.
-        */
-       if ((cp = strchr_m(ads->auth.user_name, '@'))!=0) {
-		*cp++ = '\0';
-		ADS_TALLOC_CONST_FREE(ads->auth.realm);
-		ads->auth.realm = talloc_asprintf_strupper_m(ads, "%s", cp);
-		if (ads->auth.realm == NULL) {
-			TALLOC_FREE(ads);
-			return ADS_ERROR(LDAP_NO_MEMORY);
-		}
-	} else if (ads->auth.realm == NULL) {
-		const char *c_realm = cli_credentials_get_realm(c->creds);
-
-		if (c_realm != NULL) {
-			ads->auth.realm = talloc_strdup(ads, c_realm);
-			if (ads->auth.realm == NULL) {
-				TALLOC_FREE(ads);
-				return ADS_ERROR(LDAP_NO_MEMORY);
-			}
-		}
-	}
-
-	status = ads_connect(ads);
-
-	if (!ADS_ERR_OK(status)) {
-
-		if (NT_STATUS_EQUAL(ads_ntstatus(status),
-				    NT_STATUS_NO_LOGON_SERVERS)) {
-			DEBUG(0,("ads_connect: %s\n", ads_errstr(status)));
+	if (auth_flags & ADS_AUTH_NO_BIND) {
+		status = ads_connect_cldap_only(ads);
+		if (!ADS_ERR_OK(status)) {
+			DBG_ERR("ads_connect_cldap_only: %s\n",
+				ads_errstr(status));
 			TALLOC_FREE(ads);
 			return status;
 		}
-
-		if (!need_password && !second_time && !(auth_flags & ADS_AUTH_NO_BIND)) {
-			need_password = true;
-			second_time = true;
-			goto retry;
-		} else {
+	} else {
+		status = ads_connect_creds(ads, c->creds);
+		if (!ADS_ERR_OK(status)) {
+			DBG_ERR("ads_connect_creds: %s\n",
+				ads_errstr(status));
 			TALLOC_FREE(ads);
 			return status;
 		}
@@ -852,12 +771,10 @@ static int net_ads_check_int(struct net_context *c,
 		goto out;
 	}
 
-	ads->auth.flags |= ADS_AUTH_NO_BIND;
-
-        status = ads_connect(ads);
-        if ( !ADS_ERR_OK(status) ) {
-                goto out;
-        }
+	status = ads_connect_cldap_only(ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
+	}
 
 	ret = 0;
 out:
@@ -970,12 +887,28 @@ static int ads_user_add(struct net_context *c, int argc, const char **argv)
 	ADS_STATUS status;
 	char *upn, *userdn;
 	LDAPMessage *res=NULL;
+	char *creds_ccname = NULL;
 	int rc = -1;
 	char *ou_str = NULL;
+	bool ok;
 
 	if (argc < 1 || c->display_usage) {
 		TALLOC_FREE(tmp_ctx);
 		return net_ads_user_usage(c, argc, argv);
+	}
+
+	if (argc > 1) {
+		/*
+		 * We rely on ads_krb5_set_password() to
+		 * set the password below.
+		 *
+		 * We could pass the password to
+		 * ads_add_user_acct()
+		 * and set the unicodePwd attribute there...
+		 */
+		cli_credentials_set_kerberos_state(c->creds,
+						   CRED_USE_KERBEROS_REQUIRED,
+						   CRED_SPECIFIED);
 	}
 
 	status = ads_startup(c, false, tmp_ctx, &ads);
@@ -1024,8 +957,17 @@ static int ads_user_add(struct net_context *c, int argc, const char **argv)
 		goto done;
 	}
 
-	status = ads_krb5_set_password(ads->auth.kdc_server, upn, argv[1],
-				       ads->auth.time_offset);
+	ok = cli_credentials_get_ccache_name_obtained(c->creds,
+						      tmp_ctx,
+						      &creds_ccname,
+						      NULL);
+	if (!ok) {
+		d_printf(_("No valid krb5 ccache for: %s\n"),
+			 cli_credentials_get_unparsed_name(c->creds, tmp_ctx));
+		goto done;
+	}
+
+	status = ads_krb5_set_password(upn, argv[1], creds_ccname);
 	if (ADS_ERR_OK(status)) {
 		d_printf(_("User %s added\n"), argv[0]);
 		rc = 0;
@@ -1531,10 +1473,6 @@ static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 		return -1;
 	}
 
-	if (!c->opt_kerberos) {
-		use_in_memory_ccache();
-	}
-
 	if (!c->msg_ctx) {
 		d_fprintf(stderr, _("Could not initialise message context. "
 			"Try running as root\n"));
@@ -1548,11 +1486,9 @@ static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 	}
 
 	r->in.debug		= true;
-	r->in.use_kerberos	= c->opt_kerberos;
 	r->in.dc_name		= c->opt_host;
-	r->in.domain_name	= lp_realm();
-	r->in.admin_account	= c->opt_user_name;
-	r->in.admin_password	= net_prompt_pass(c, c->opt_user_name);
+	r->in.domain_name	= lp_dnsdomain();
+	r->in.admin_credentials	= c->creds;
 	r->in.modify_config	= lp_config_backend_is_registry();
 
 	/* Try to delete it, but if that fails, disable it.  The
@@ -1639,7 +1575,6 @@ out:
 int net_ads_testjoin(struct net_context *c, int argc, const char **argv)
 {
 	ADS_STATUS status;
-	use_in_memory_ccache();
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -1759,10 +1694,6 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 		}
 	}
 
-	if (!c->opt_kerberos) {
-		use_in_memory_ccache();
-	}
-
 	werr = libnet_init_JoinCtx(tmp_ctx, &r);
 	if (!W_ERROR_IS_OK(werr)) {
 		goto fail;
@@ -1847,11 +1778,9 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	r->in.os_version	= os_version;
 	r->in.os_servicepack	= os_servicepack;
 	r->in.dc_name		= c->opt_host;
-	r->in.admin_account	= c->opt_user_name;
-	r->in.admin_password	= net_prompt_pass(c, c->opt_user_name);
+	r->in.admin_credentials	= c->creds;
 	r->in.machine_password  = machine_password;
 	r->in.debug		= true;
-	r->in.use_kerberos	= c->opt_kerberos;
 	r->in.modify_config	= modify_config;
 	r->in.join_flags	= WKSSVC_JOIN_FLAGS_JOIN_TYPE |
 				  WKSSVC_JOIN_FLAGS_ACCOUNT_CREATE |
@@ -1999,6 +1928,7 @@ static int net_ads_dns_register(struct net_context *c, int argc, const char **ar
 	ntstatus = net_update_dns_ext(c,
 				      tmp_ctx,
 				      ads,
+				      c->creds,
 				      hostname,
 				      addrs,
 				      num_addrs,
@@ -2065,6 +1995,7 @@ static int net_ads_dns_unregister(struct net_context *c,
 	ntstatus = net_update_dns_ext(c,
 				      tmp_ctx,
 				      ads,
+				      c->creds,
 				      hostname,
 				      NULL,
 				      0,
@@ -2392,11 +2323,16 @@ static int net_ads_printer_publish(struct net_context *c,
 					   CRED_USE_KERBEROS_REQUIRED,
 					   CRED_SPECIFIED);
 
-	nt_status = cli_full_connection_creds(&cli, lp_netbios_name(), servername,
-					&server_ss, 0,
-					"IPC$", "IPC",
-					c->creds,
-					CLI_FULL_CONNECTION_IPC);
+	nt_status = cli_full_connection_creds(c,
+					      &cli,
+					      lp_netbios_name(),
+					      servername,
+					      &server_ss,
+					      0,
+					      "IPC$",
+					      "IPC",
+					      c->creds,
+					      CLI_FULL_CONNECTION_IPC);
 
 	if (NT_STATUS_IS_ERR(nt_status)) {
 		d_fprintf(stderr, _("Unable to open a connection to %s to "
@@ -2629,7 +2565,6 @@ static int net_ads_password(struct net_context *c, int argc, const char **argv)
 		goto out;
 	}
 
-	use_in_memory_ccache();
 	chr = strchr_m(auth_principal, '@');
 	if (chr) {
 		realm = ++chr;
@@ -2650,7 +2585,8 @@ static int net_ads_password(struct net_context *c, int argc, const char **argv)
 
 	/* we don't actually need a full connect, but it's the easy way to
 		fill in the KDC's address */
-	ads_connect(ads);
+	ads->auth.flags |= ADS_AUTH_GENERATE_KRB5_CONFIG;
+	ads_connect_cldap_only(ads);
 
 	if (!ads->config.realm) {
 		d_fprintf(stderr, _("Didn't find the kerberos server!\n"));
@@ -2681,12 +2617,10 @@ static int net_ads_password(struct net_context *c, int argc, const char **argv)
 		goto out;
 	}
 
-	status = kerberos_set_password(ads->auth.kdc_server,
-				       auth_principal,
+	status = kerberos_set_password(auth_principal,
 				       auth_password,
 				       user,
-				       new_password,
-				       ads->auth.time_offset);
+				       new_password);
 	memset(new_password, '\0', strlen(new_password));
 	if (!ADS_ERR_OK(status)) {
 		d_fprintf(stderr, _("Password change failed: %s\n"),
@@ -2730,8 +2664,6 @@ int net_ads_changetrustpw(struct net_context *c, int argc, const char **argv)
 
 	net_use_krb_machine_account(c);
 
-	use_in_memory_ccache();
-
 	status = ads_startup(c, true, tmp_ctx, &ads);
 	if (!ADS_ERR_OK(status)) {
 		goto out;
@@ -2758,13 +2690,6 @@ int net_ads_changetrustpw(struct net_context *c, int argc, const char **argv)
 	}
 
 	d_printf(_("Password change for principal %s succeeded.\n"), host_principal);
-
-	if (USE_SYSTEM_KEYTAB) {
-		d_printf(_("Attempting to update system keytab with new password.\n"));
-		if (ads_keytab_create_default(ads)) {
-			d_printf(_("Failed to update system keytab.\n"));
-		}
-	}
 
 	ret = 0;
 out:
@@ -2993,7 +2918,7 @@ static int net_ads_keytab_flush(struct net_context *c,
 		return -1;
 	}
 
-	if (!c->opt_user_specified && c->opt_password == NULL) {
+	if (!c->explicit_credentials) {
 		net_use_krb_machine_account(c);
 	}
 
@@ -3008,110 +2933,12 @@ out:
 	return ret;
 }
 
-static int net_ads_keytab_add(struct net_context *c,
-			      int argc,
-			      const char **argv,
-			      bool update_ads)
-{
-	TALLOC_CTX *tmp_ctx = talloc_stackframe();
-	ADS_STRUCT *ads = NULL;
-	ADS_STATUS status;
-	int i;
-	int ret = -1;
-
-	if (c->display_usage) {
-		d_printf("%s\n%s",
-			 _("Usage:"),
-			 _("net ads keytab add <principal> [principal ...]\n"
-			   "  Add principals to local keytab\n"
-			   "    principal\tKerberos principal to add to "
-			   "keytab\n"));
-		TALLOC_FREE(tmp_ctx);
-		return -1;
-	}
-
-	net_warn_member_options();
-
-	d_printf(_("Processing principals to add...\n"));
-
-	if (!c->opt_user_specified && c->opt_password == NULL) {
-		net_use_krb_machine_account(c);
-	}
-
-	status = ads_startup(c, true, tmp_ctx, &ads);
-	if (!ADS_ERR_OK(status)) {
-		goto out;
-	}
-
-	for (ret = 0, i = 0; i < argc; i++) {
-		ret |= ads_keytab_add_entry(ads, argv[i], update_ads);
-	}
-out:
-	TALLOC_FREE(tmp_ctx);
-	return ret;
-}
-
-static int net_ads_keytab_add_default(struct net_context *c,
-				      int argc,
-				      const char **argv)
-{
-	return net_ads_keytab_add(c, argc, argv, false);
-}
-
-static int net_ads_keytab_add_update_ads(struct net_context *c,
-					 int argc,
-					 const char **argv)
-{
-	return net_ads_keytab_add(c, argc, argv, true);
-}
-
-static int net_ads_keytab_delete(struct net_context *c,
-				 int argc,
-				 const char **argv)
-{
-	TALLOC_CTX *tmp_ctx = talloc_stackframe();
-	ADS_STRUCT *ads = NULL;
-	ADS_STATUS status;
-	int i;
-	int ret = -1;
-
-	if (c->display_usage) {
-		d_printf("%s\n%s",
-			 _("Usage:"),
-			 _("net ads keytab delete <principal> [principal ...]\n"
-			   "  Remove entries for service principal, "
-			   "  from the keytab file only."
-			   "  Remove principals from local keytab\n"
-			   "    principal\tKerberos principal to remove from "
-			   "keytab\n"));
-		TALLOC_FREE(tmp_ctx);
-		return -1;
-	}
-
-	d_printf(_("Processing principals to delete...\n"));
-
-	if (!c->opt_user_specified && c->opt_password == NULL) {
-		net_use_krb_machine_account(c);
-	}
-
-	status = ads_startup(c, true, tmp_ctx, &ads);
-	if (!ADS_ERR_OK(status)) {
-		goto out;
-	}
-
-	for (ret = 0, i = 0; i < argc; i++) {
-		ret |= ads_keytab_delete_entry(ads, argv[i]);
-	}
-out:
-	TALLOC_FREE(tmp_ctx);
-	return ret;
-}
-
 static int net_ads_keytab_create(struct net_context *c, int argc, const char **argv)
 {
 	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
+	NTSTATUS ntstatus;
 	int ret = -1;
 
 	if (c->display_usage) {
@@ -3119,14 +2946,14 @@ static int net_ads_keytab_create(struct net_context *c, int argc, const char **a
 			   "net ads keytab create\n"
 			   "    %s\n",
 			 _("Usage:"),
-			 _("Create new default keytab"));
+			 _("Create (sync) new default keytab"));
 		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
 	net_warn_member_options();
 
-	if (!c->opt_user_specified && c->opt_password == NULL) {
+	if (!c->explicit_credentials) {
 		net_use_krb_machine_account(c);
 	}
 
@@ -3135,7 +2962,8 @@ static int net_ads_keytab_create(struct net_context *c, int argc, const char **a
 		goto out;
 	}
 
-	ret = ads_keytab_create_default(ads);
+	ntstatus = sync_pw2keytabs();
+	ret = NT_STATUS_IS_OK(ntstatus) ? 0 : 1;
 out:
 	TALLOC_FREE(tmp_ctx);
 	return ret;
@@ -3161,41 +2989,16 @@ static int net_ads_keytab_list(struct net_context *c, int argc, const char **arg
 	return ads_keytab_list(keytab);
 }
 
-
 int net_ads_keytab(struct net_context *c, int argc, const char **argv)
 {
 	struct functable func[] = {
 		{
-			"add",
-			net_ads_keytab_add_default,
-			NET_TRANSPORT_ADS,
-			N_("Add a service principal"),
-			N_("net ads keytab add\n"
-			   "    Add a service principal, updates keytab file only.")
-		},
-		{
-			"delete",
-			net_ads_keytab_delete,
-			NET_TRANSPORT_ADS,
-			N_("Delete a service principal"),
-			N_("net ads keytab delete\n"
-			   "    Remove entries for service principal, from the keytab file only.")
-		},
-		{
-			"add_update_ads",
-			net_ads_keytab_add_update_ads,
-			NET_TRANSPORT_ADS,
-			N_("Add a service principal"),
-			N_("net ads keytab add_update_ads\n"
-			   "    Add a service principal, depending on the param passed may update ADS computer object in addition to the keytab file.")
-		},
-		{
 			"create",
 			net_ads_keytab_create,
 			NET_TRANSPORT_ADS,
-			N_("Create a fresh keytab"),
+			N_("Create (sync) a fresh keytab"),
 			N_("net ads keytab create\n"
-			   "    Create a fresh keytab or update existing one.")
+			   "    Create (sync) a fresh keytab or update existing one (see also smb.conf 'sync machine password to keytab'.")
 		},
 		{
 			"flush",
@@ -3215,11 +3018,6 @@ int net_ads_keytab(struct net_context *c, int argc, const char **argv)
 		},
 		{NULL, NULL, 0, NULL, NULL}
 	};
-
-	if (!USE_KERBEROS_KEYTAB) {
-		d_printf(_("\nWarning: \"kerberos method\" must be set to a "
-		    "keytab method to use keytab functions.\n"));
-	}
 
 	return net_run_function(c, argc, argv, "net ads keytab", func);
 }
@@ -3252,6 +3050,8 @@ static int net_ads_kerberos_pac_common(struct net_context *c, int argc, const ch
 	int ret = -1;
 	const char *impersonate_princ_s = NULL;
 	const char *local_service = NULL;
+	const char *principal = NULL;
+	const char *password = NULL;
 	int i;
 
 	for (i=0; i<argc; i++) {
@@ -3277,11 +3077,16 @@ static int net_ads_kerberos_pac_common(struct net_context *c, int argc, const ch
 		}
 	}
 
-	c->opt_password = net_prompt_pass(c, c->opt_user_name);
+	principal = cli_credentials_get_principal(c->creds, c);
+	if (principal == NULL) {
+		d_printf("cli_credentials_get_principal() failed\n");
+		goto out;
+	}
+	password = cli_credentials_get_password(c->creds);
 
 	status = kerberos_return_pac(c,
-				     c->opt_user_name,
-				     c->opt_password,
+				     principal,
+				     password,
 				     0,
 				     NULL,
 				     NULL,
@@ -3442,6 +3247,8 @@ static int net_ads_kerberos_kinit(struct net_context *c, int argc, const char **
 {
 	int ret = -1;
 	NTSTATUS status;
+	const char *principal = NULL;
+	const char *password = NULL;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -3452,10 +3259,15 @@ static int net_ads_kerberos_kinit(struct net_context *c, int argc, const char **
 		return -1;
 	}
 
-	c->opt_password = net_prompt_pass(c, c->opt_user_name);
+	principal = cli_credentials_get_principal(c->creds, c);
+	if (principal == NULL) {
+		d_printf("cli_credentials_get_principal() failed\n");
+		return -1;
+	}
+	password = cli_credentials_get_password(c->creds);
 
-	ret = kerberos_kinit_password_ext(c->opt_user_name,
-					  c->opt_password,
+	ret = kerberos_kinit_password_ext(principal,
+					  password,
 					  0,
 					  NULL,
 					  NULL,

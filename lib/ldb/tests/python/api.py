@@ -59,6 +59,7 @@ class NoContextTests(TestCase):
 
     def test_string_to_time(self):
         self.assertEqual(0, ldb.string_to_time("19700101000000.0Z"))
+        self.assertEqual(-1, ldb.string_to_time("19691231235959.0Z"))
         self.assertEqual(1195499412, ldb.string_to_time("20071119191012.0Z"))
 
         self.assertEqual(-62167219200, ldb.string_to_time("00000101000000.0Z"))
@@ -123,6 +124,29 @@ class SimpleLdb(LdbBaseTest):
         x = ldb.Ldb()
         x.connect(self.url(), flags=self.flags())
 
+    def test_connect_twice(self):
+        url = self.url()
+        x = ldb.Ldb(url)
+        with self.assertRaises(ldb.LdbError):
+            x.connect(url, flags=self.flags())
+
+    def test_connect_twice_later(self):
+        url = self.url()
+        flags = self.flags()
+        x = ldb.Ldb()
+        x.connect(url, flags)
+        with self.assertRaises(ldb.LdbError):
+            x.connect(url, flags)
+
+    def test_connect_and_disconnect(self):
+        url = self.url()
+        flags = self.flags()
+        x = ldb.Ldb()
+        x.connect(url, flags)
+        x.disconnect()
+        x.connect(url, flags)
+        x.disconnect()
+
     def test_repr(self):
         x = ldb.Ldb()
         self.assertTrue(repr(x).startswith("<ldb connection"))
@@ -130,23 +154,6 @@ class SimpleLdb(LdbBaseTest):
     def test_set_create_perms(self):
         x = ldb.Ldb()
         x.set_create_perms(0o600)
-
-    def test_modules_none(self):
-        x = ldb.Ldb()
-        self.assertEqual([], x.modules())
-
-    def test_modules_tdb(self):
-        x = ldb.Ldb(self.url(), flags=self.flags())
-        self.assertEqual("[<ldb module 'tdb'>]", repr(x.modules()))
-
-    def test_firstmodule_none(self):
-        x = ldb.Ldb()
-        self.assertEqual(x.firstmodule, None)
-
-    def test_firstmodule_tdb(self):
-        x = ldb.Ldb(self.url(), flags=self.flags())
-        mod = x.firstmodule
-        self.assertEqual(repr(mod), "<ldb module 'tdb'>")
 
     def test_search(self):
         l = ldb.Ldb(self.url(), flags=self.flags())
@@ -187,9 +194,77 @@ class SimpleLdb(LdbBaseTest):
 
     def test_opaque(self):
         l = ldb.Ldb(self.url(), flags=self.flags())
-        l.set_opaque("my_opaque", l)
+        l.set_opaque("my_opaque", True)
         self.assertTrue(l.get_opaque("my_opaque") is not None)
         self.assertEqual(None, l.get_opaque("unknown"))
+
+    def test_opaque_bool(self):
+        """Test that we can set boolean opaque values."""
+
+        db = ldb.Ldb(self.url(), flags=self.flags())
+        name = "my_opaque"
+
+        db.set_opaque(name, False)
+        self.assertEqual(False, db.get_opaque(name))
+
+        db.set_opaque(name, True)
+        self.assertEqual(True, db.get_opaque(name))
+
+    def test_opaque_int(self):
+        """Test that we can set (positive) integer opaque values."""
+
+        db = ldb.Ldb(self.url(), flags=self.flags())
+        name = "my_opaque"
+
+        db.set_opaque(name, 0)
+        self.assertEqual(0, db.get_opaque(name))
+
+        db.set_opaque(name, 12345678)
+        self.assertEqual(12345678, db.get_opaque(name))
+
+        # Negative values can’t be set.
+        self.assertRaises(OverflowError, db.set_opaque, name, -99999)
+
+    def test_opaque_string(self):
+        """Test that we can set string opaque values."""
+
+        db = ldb.Ldb(self.url(), flags=self.flags())
+        name = "my_opaque"
+
+        db.set_opaque(name, "")
+        self.assertEqual("", db.get_opaque(name))
+
+        db.set_opaque(name, "foo bar")
+        self.assertEqual("foo bar", db.get_opaque(name))
+
+    def test_opaque_none(self):
+        """Test that we can set an opaque to None to effectively unset it."""
+
+        db = ldb.Ldb(self.url(), flags=self.flags())
+        name = "my_opaque"
+
+        # An opaque that has not been set is the same as None.
+        self.assertIsNone(db.get_opaque(name))
+
+        # Give the opaque a value.
+        db.set_opaque(name, 3)
+        self.assertEqual(3, db.get_opaque(name))
+
+        # Test that we can set the opaque to None to unset it.
+        db.set_opaque(name, None)
+        self.assertIsNone(db.get_opaque(name))
+
+    def test_opaque_unsupported(self):
+        """Test that trying to set unsupported values raises an error."""
+
+        db = ldb.Ldb(self.url(), flags=self.flags())
+        name = "my_opaque"
+
+        self.assertRaises(ValueError, db.set_opaque, name, [])
+        self.assertRaises(ValueError, db.set_opaque, name, ())
+        self.assertRaises(ValueError, db.set_opaque, name, 3.14)
+        self.assertRaises(ValueError, db.set_opaque, name, 3+2j)
+        self.assertRaises(ValueError, db.set_opaque, name, b'foo')
 
     def test_search_scope_base_empty_db(self):
         l = ldb.Ldb(self.url(), flags=self.flags())
@@ -1265,6 +1340,22 @@ class SearchTests(LdbBaseTest):
                               scope=ldb.SCOPE_SUBTREE,
                               expression="(ou=unique)")
         self.assertEqual(len(res11), 1)
+
+    def test_subtree_uni123_elsewhere(self):
+        """Testing a search, where the search term contains a (normal ASCII)
+        dotted-i, that will be upper-cased to 'İ', U+0130, LATIN
+        CAPITAL LETTER I WITH DOT ABOVE in certain locales including
+        tr_TR in which this test is sometimes run.
+
+        The search term should fail because the ou does not exist, but
+        we used to get it wrong in unindexed searches which stopped
+        comparing at the i, ignoring the rest of the string, which is
+        not the same as the existing ou ('123' != 'que').
+        """
+        res11 = self.l.search(base="DC=EXAMPLE,DC=NET",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(ou=uni123)")
+        self.assertEqual(len(res11), 0)
 
     def test_subtree_unique_elsewhere3(self):
         """Testing a search"""
@@ -2761,6 +2852,10 @@ class DnTests(TestCase):
         x = ldb.Dn(self.ldb, "dc=foo14,bar=bloe")
         self.assertEqual(x.get_casefold(), "DC=FOO14,BAR=bloe")
 
+    def test_get_casefold_dotted_i(self):
+        x = ldb.Dn(self.ldb, "dc=foo14,bir=blie")
+        self.assertEqual(x.get_casefold(), "DC=FOO14,BIR=blie")
+
     def test_validate(self):
         x = ldb.Dn(self.ldb, "dc=foo15,bar=bloe")
         self.assertTrue(x.validate())
@@ -3377,47 +3472,6 @@ class MessageElementTests(TestCase):
     def test_bad_text(self):
         el = ldb.MessageElement(b'\xba\xdd')
         self.assertRaises(UnicodeDecodeError, el.text.__getitem__, 0)
-
-
-class ModuleTests(TestCase):
-
-    def setUp(self):
-        super(ModuleTests, self).setUp()
-        self.testdir = tempdir()
-        self.filename = os.path.join(self.testdir, "test.ldb")
-        self.ldb = ldb.Ldb(self.filename)
-
-    def tearDown(self):
-        shutil.rmtree(self.testdir)
-        super(ModuleTests, self).setUp()
-
-    def test_register_module(self):
-        class ExampleModule:
-            name = "example"
-        ldb.register_module(ExampleModule)
-
-    def test_use_module(self):
-        ops = []
-
-        class ExampleModule:
-            name = "bla"
-
-            def __init__(self, ldb, next):
-                ops.append("init")
-                self.next = next
-
-            def search(self, *args, **kwargs):
-                return self.next.search(*args, **kwargs)
-
-            def request(self, *args, **kwargs):
-                pass
-
-        ldb.register_module(ExampleModule)
-        l = ldb.Ldb(self.filename)
-        l.add({"dn": "@MODULES", "@LIST": "bla"})
-        self.assertEqual([], ops)
-        l = ldb.Ldb(self.filename)
-        self.assertEqual(["init"], ops)
 
 
 class LdbResultTests(LdbBaseTest):

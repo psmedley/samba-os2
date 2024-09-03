@@ -200,6 +200,9 @@ for env in ["ad_dc_ntvfs", "fl2008r2dc", "fl2003dc"]:
         options = '-U"$USERNAME%$PASSWORD" --option="tlsverifypeer=no_check" ' + auth_option
         plantestsuite("samba4.ldb.simple.ldaps with SASL-BIND %s(%s)" % (options, env),
                       env, "%s/test_ldb_simple.sh ldaps $SERVER %s" % (bbdir, options))
+        options += ' --option="clientldapsaslwrapping=starttls"'
+        plantestsuite("samba4.ldb.simple.ldap starttls with SASL-BIND %s(%s)" % (options, env),
+                      env, "%s/test_ldb_simple.sh ldap $SERVER %s" % (bbdir, options))
 
 
 envraw = "fl2008r2dc"
@@ -226,13 +229,6 @@ for t in smbtorture4_testsuites("ldap."):
 
 for t in smbtorture4_testsuites("dsdb."):
     plansmbtorture4testsuite(t, "ad_dc:local", "localhost")
-
-ldbdir = os.path.join(srcdir(), "lib/ldb")
-# Don't run LDB tests when using system ldb, as we won't have ldbtest installed
-if os.path.exists(os.path.join(samba4bindir, "ldbtest")):
-    plantestsuite("ldb.base", "none", "%s/tests/test-tdb-subunit.sh %s" % (ldbdir, samba4bindir))
-else:
-    skiptestsuite("ldb.base", "Using system LDB, ldbtest not available")
 
 plantestsuite_loadlist("samba4.tests.attr_from_server.python(ad_dc_ntvfs)",
                        "ad_dc_ntvfs:local",
@@ -371,13 +367,11 @@ for env in all_fl_envs:
     transport = "ncacn_np"
     plansmbtorture4testsuite('rpc.pac', env, ["%s:$SERVER[]" % (transport, ), '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN'], "samba4.rpc.pac on %s" % (transport,))
     plansmbtorture4testsuite('rpc.lsa.secrets', env, ["%s:$SERVER[]" % (transport, ), '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN', '--option=gensec:target_hostname=$NETBIOSNAME', 'rpc.lsa.secrets'], "samba4.rpc.lsa.secrets on %s with Kerberos" % (transport,))
-    plansmbtorture4testsuite('rpc.lsa.secrets', env, ["%s:$SERVER[]" % (transport, ), '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN', "--option=clientusespnegoprincipal=yes", '--option=gensec:target_hostname=$NETBIOSNAME'], "samba4.rpc.lsa.secrets on %s with Kerberos - use target principal" % (transport,))
     plansmbtorture4testsuite('rpc.lsa.secrets', env, ["%s:$SERVER[target_principal=dcom/$NETBIOSNAME]" % (transport, ), '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN'], "samba4.rpc.lsa.secrets on %s with Kerberos - netbios name principal dcom" % (transport,))
     plansmbtorture4testsuite('rpc.lsa.secrets', env, [r"%s:$SERVER[target_principal=$NETBIOSNAME\$]" % (transport, ), '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN'], "samba4.rpc.lsa.secrets on %s with Kerberos - netbios name principal dollar" % (transport,))
     plansmbtorture4testsuite('rpc.lsa.secrets', env, ["%s:$SERVER[target_principal=$NETBIOSNAME]" % (transport, ), '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN'], "samba4.rpc.lsa.secrets on %s with Kerberos - netbios name principal" % (transport,))
     plansmbtorture4testsuite('rpc.lsa.secrets.none*', env, ["%s:$SERVER" % transport, '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN', "--option=gensec:fake_gssapi_krb5=yes", '--option=gensec:gssapi_krb5=no', '--option=gensec:target_hostname=$NETBIOSNAME'], "samba4.rpc.lsa.secrets on %s with Kerberos - use Samba3 style login" % transport)
     plansmbtorture4testsuite('rpc.lsa.secrets.none*', env, ["%s:$SERVER" % transport, '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN', "--option=gensec:fake_gssapi_krb5=yes", '--option=gensec:gssapi_krb5=no', '--option=gensec:target_hostname=$NETBIOSNAME', '--option=gensec_krb5:send_authenticator_checksum=false'], "samba4.rpc.lsa.secrets on %s with Kerberos - use raw-krb5-no-authenticator-checksum style login" % transport)
-    plansmbtorture4testsuite('rpc.lsa.secrets.none*', env, ["%s:$SERVER" % transport, '-k', 'yes', '-U$USERNAME%$PASSWORD', '--workgroup=$DOMAIN', "--option=clientusespnegoprincipal=yes", '--option=gensec:fake_gssapi_krb5=yes', '--option=gensec:gssapi_krb5=no', '--option=gensec:target_hostname=$NETBIOSNAME'], "samba4.rpc.lsa.secrets on %s with Kerberos - use Samba3 style login, use target principal" % transport)
 
     # Winreg tests test bulk Kerberos encryption of DCE/RPC
     # We test rpc.winreg here too, because the winreg interface if
@@ -595,6 +589,15 @@ plantestsuite_loadlist("samba.tests.sddl_conditional_ace",
 for t in smbtorture4_testsuites("dns_internal."):
     plansmbtorture4testsuite(t, "ad_dc_default:local", '//$SERVER/whavever')
 
+# These tests want to run on a barely changed fresh provision, before
+# too much happens to this environment, it is read only and local
+# (direct to the DB) so we use proclimitdc as it is otherwise empty
+# bar a test for process limits.
+planpythontestsuite("proclimitdc:local", "samba.tests.dsdb_quiet_provision_tests")
+
+# We want this local test to run in an environment where not much is happening that could use root keys
+planpythontestsuite("chgdcpass:local", "samba.tests.dsdb_quiet_env_tests")
+
 # Local tests
 for t in smbtorture4_testsuites("dlz_bind9."):
     # The dlz_bind9 tests needs to look at the DNS database
@@ -635,6 +638,8 @@ plantestsuite("samba4.blackbox.test_alias_membership", "ad_member_idmap_rid:loca
 plantestsuite("samba4.blackbox.test_old_enctypes", "fl2003dc:local", [os.path.join(bbdir, "test_old_enctypes.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$NETBIOSNAME', '$PREFIX_ABS'])
 
 planpythontestsuite("ad_dc_default", "samba.tests.blackbox.claims")
+
+planpythontestsuite("ad_dc_default", "samba.tests.blackbox.gmsa")
 
 if have_heimdal_support:
     plantestsuite("samba4.blackbox.kpasswd",
@@ -1111,11 +1116,11 @@ for env in ["ad_dc:local", "s4member:local", "nt4_dc:local", "ad_member:local", 
 
 if have_gnutls_fips_mode_support:
     planoldpythontestsuite("ad_dc",
-                           "samba.tests.dcerpc.createtrustrelax",
+                           "samba.tests.dcerpc.lsa_utils",
                            environ={'GNUTLS_FORCE_FIPS_MODE': '1',
                                     'OPENSSL_FORCE_FIPS_MODE': '1'})
     planoldpythontestsuite("ad_dc_fips",
-                           "samba.tests.dcerpc.createtrustrelax",
+                           "samba.tests.dcerpc.lsa_utils",
                            environ={'GNUTLS_FORCE_FIPS_MODE': '1',
                                     'OPENSSL_FORCE_FIPS_MODE': '1'})
 
@@ -1205,7 +1210,14 @@ planpythontestsuite("ad_dc_default:local", "samba.tests.samba_tool.schema")
 planpythontestsuite("ad_dc_default", "samba.tests.samba_tool.domain_claim")
 planpythontestsuite("ad_dc_default", "samba.tests.samba_tool.domain_auth_policy")
 planpythontestsuite("ad_dc_default", "samba.tests.samba_tool.domain_auth_silo")
+
+# This test needs to be run in an environment well apart from most
+# other tests as it deletes root keys and we don't want this to happen
+# where a gMSA account might be live.
+planpythontestsuite("chgdcpass", "samba.tests.samba_tool.domain_kds_root_key")
+
 planpythontestsuite("ad_dc_default", "samba.tests.samba_tool.domain_models")
+planpythontestsuite("ad_dc_default", "samba.tests.samba_tool.service_account")
 planpythontestsuite("schema_dc:local", "samba.tests.samba_tool.schema")
 planpythontestsuite("ad_dc:local", "samba.tests.samba_tool.ntacl")
 planpythontestsuite("none", "samba.tests.samba_tool.provision_password_check")
@@ -1410,7 +1422,8 @@ planoldpythontestsuite("ad_dc",
                        extra_args=['-U"$USERNAME%$PASSWORD"'])
 planoldpythontestsuite("ad_dc",
                        "samba.tests.segfault",
-                       extra_args=['-U"$USERNAME%$PASSWORD"'])
+                       extra_args=['-U"$USERNAME%$PASSWORD"'],
+                       environ={"TALLOC_FREE_FILL": "0xab"})
 # Need to test the password hashing in multiple environments to ensure that
 # all the possible options are covered
 #
@@ -2085,6 +2098,10 @@ planoldpythontestsuite(
     'ad_dc',
     'samba.tests.krb5.gkdi_tests',
     environ=krb5_environ)
+planoldpythontestsuite(
+    'ad_dc:local',
+    'samba.tests.krb5.gmsa_tests',
+    environ=krb5_environ)
 
 for env in [
         'vampire_dc',
@@ -2209,7 +2226,7 @@ planpythontestsuite("none", "samba.tests.security_descriptors")
 if have_cluster_support:
     cluster_environ = {
         "SERVER_HOSTNAME": "$NETBIOSNAME",
-        "INTERFACE_GROUP_NAME": "$NETBIOSNAME",
+        "INTERFACE_GROUP_NAME": "$NETBIOSNAME.$REALM",
         "CLUSTER_SHARE": "registry_share",
         "USERNAME": "$DC_USERNAME",
         "PASSWORD": "$DC_PASSWORD",

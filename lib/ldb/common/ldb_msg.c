@@ -1256,7 +1256,7 @@ int ldb_msg_normalize(struct ldb_context *ldb,
 			       sizeof(struct ldb_val) * el2->num_values);
 			el1->num_values += el2->num_values;
 			talloc_free(discard_const_p(char, el2->name));
-			if ((i+1) < msg2->num_elements) {
+			if ((i + 1 > i) && ((i + 1) < msg2->num_elements)) {
 				memmove(el2, el2+1, sizeof(struct ldb_message_element) *
 					(msg2->num_elements - (i+1)));
 			}
@@ -1604,6 +1604,7 @@ char *ldb_timestring(TALLOC_CTX *mem_ctx, time_t t)
 time_t ldb_string_to_time(const char *s)
 {
 	struct tm tm;
+	time_t t;
 
 	if (s == NULL) return 0;
 
@@ -1616,7 +1617,15 @@ time_t ldb_string_to_time(const char *s)
 	tm.tm_year -= 1900;
 	tm.tm_mon -= 1;
 
-	return timegm(&tm);
+	t = timegm(&tm);
+
+	if (t == (time_t)-1 && errno != 0) {
+		/*
+		 * timegm() returns -1 on error, but also for '19691231235959.0Z'.
+		 */
+		return 0;
+	}
+	return t;
 }
 
 /*

@@ -43,7 +43,7 @@ uint32_t ucf_flags_from_smb_request(struct smb_request *req)
 	if (req->posix_pathnames) {
 		ucf_flags |= UCF_POSIX_PATHNAMES;
 
-		if (!req->sconn->using_smb2) {
+		if (!conn_using_smb2(req->sconn)) {
 			ucf_flags |= UCF_LCOMP_LNK_OK;
 		}
 	}
@@ -594,71 +594,6 @@ static NTSTATUS filename_convert_normalize_new(
 	return NT_STATUS_OK;
 }
 
-static const char *previous_slash(const char *name_in, const char *slash)
-{
-	const char *prev = NULL;
-
-	SMB_ASSERT((name_in <= slash) && (slash[0] == '/'));
-
-	prev = strchr_m(name_in, '/');
-
-	if (prev == slash) {
-		/* No previous slash */
-		return NULL;
-	}
-
-	while (true) {
-		const char *next = strchr_m(prev + 1, '/');
-
-		if (next == slash) {
-			return prev;
-		}
-		prev = next;
-	}
-
-	return NULL; /* unreachable */
-}
-
-static char *symlink_target_path(
-	TALLOC_CTX *mem_ctx,
-	const char *name_in,
-	const char *substitute,
-	size_t unparsed)
-{
-	size_t name_in_len = strlen(name_in);
-	const char *p_unparsed = NULL;
-	const char *parent = NULL;
-	char *ret;
-
-	SMB_ASSERT(unparsed <= name_in_len);
-
-	p_unparsed = name_in + (name_in_len - unparsed);
-
-	if (substitute[0] == '/') {
-		ret = talloc_asprintf(mem_ctx, "%s%s", substitute, p_unparsed);
-		return ret;
-	}
-
-	if (unparsed == 0) {
-		parent = strrchr_m(name_in, '/');
-	} else {
-		parent = previous_slash(name_in, p_unparsed);
-	}
-
-	if (parent == NULL) {
-		ret = talloc_asprintf(mem_ctx, "%s%s", substitute, p_unparsed);
-	} else {
-		ret = talloc_asprintf(mem_ctx,
-				      "%.*s/%s%s",
-				      (int)(parent - name_in),
-				      name_in,
-				      substitute,
-				      p_unparsed);
-	}
-
-	return ret;
-}
-
 NTSTATUS safe_symlink_target_path(TALLOC_CTX *mem_ctx,
 				  const char *connectpath,
 				  const char *dir,
@@ -737,12 +672,12 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 	NTTIME twrp,
 	struct files_struct **_dirfsp,
 	struct smb_filename **_smb_fname,
-	struct open_symlink_err **_symlink_err)
+	struct reparse_data_buffer **_symlink_err)
 {
 	struct smb_filename *smb_dirname = NULL;
 	struct smb_filename *smb_fname_rel = NULL;
 	struct smb_filename *smb_fname = NULL;
-	struct open_symlink_err *symlink_err = NULL;
+	struct reparse_data_buffer *symlink_err = NULL;
 	const bool posix = (ucf_flags & UCF_POSIX_PATHNAMES);
 	char *dirname = NULL;
 	const char *fname_rel = NULL;
@@ -755,6 +690,7 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 	SMB_ASSERT(!(ucf_flags & UCF_DFS_PATHNAME));
 
 	if (is_fake_file_path(name_in)) {
+		const struct timespec omit = make_omit_timespec();
 		smb_fname = synthetic_smb_fname_split(mem_ctx, name_in, posix);
 		if (smb_fname == NULL) {
 			return NT_STATUS_NO_MEMORY;
@@ -762,15 +698,11 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 		smb_fname->st = (SMB_STRUCT_STAT){
 			.st_ex_nlink = 1,
 			.st_ex_mode = S_IFREG | 0644,
+			.st_ex_btime = omit,
+			.st_ex_atime = omit,
+			.st_ex_mtime = omit,
+			.st_ex_ctime = omit,
 		};
-		smb_fname->st.st_ex_btime =
-			(struct timespec){0, SAMBA_UTIME_OMIT};
-		smb_fname->st.st_ex_atime =
-			(struct timespec){0, SAMBA_UTIME_OMIT};
-		smb_fname->st.st_ex_mtime =
-			(struct timespec){0, SAMBA_UTIME_OMIT};
-		smb_fname->st.st_ex_ctime =
-			(struct timespec){0, SAMBA_UTIME_OMIT};
 
 		*_dirfsp = conn->cwd_fsp;
 		*_smb_fname = smb_fname;
@@ -846,6 +778,9 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 						      &symlink_err);
 
 		if (NT_STATUS_EQUAL(status, NT_STATUS_STOPPED_ON_SYMLINK)) {
+			struct symlink_reparse_struct
+				*lnk = &symlink_err->parsed.lnk;
+			size_t unparsed = lnk->unparsed_path_length;
 			size_t name_in_len, dirname_len;
 
 			name_in_len = strlen(name_in);
@@ -853,7 +788,14 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 
 			SMB_ASSERT(name_in_len >= dirname_len);
 
-			symlink_err->unparsed += (name_in_len - dirname_len);
+			unparsed += (name_in_len - dirname_len);
+
+			if (unparsed > UINT16_MAX) {
+				status = NT_STATUS_BUFFER_OVERFLOW;
+				goto fail;
+			}
+
+			lnk->unparsed_path_length = unparsed;
 			*_symlink_err = symlink_err;
 
 			goto fail;
@@ -950,10 +892,10 @@ static NTSTATUS filename_convert_dirfsp_nosymlink(
 		 * Upper layers might need the link target. Here we
 		 * still have the relname around, get the symlink err.
 		 */
-		status = create_open_symlink_err(mem_ctx,
-						 smb_dirname->fsp,
-						 smb_fname_rel,
-						 &symlink_err);
+		status = read_symlink_reparse(mem_ctx,
+					      smb_dirname->fsp,
+					      smb_fname_rel,
+					      &symlink_err);
 		if (!NT_STATUS_IS_OK(status)) {
 			DBG_DEBUG("Could not read symlink for %s: %s\n",
 				  smb_fname_str_dbg(
@@ -1126,11 +1068,13 @@ NTSTATUS filename_convert_dirfsp(
 	struct files_struct **_dirfsp,
 	struct smb_filename **_smb_fname)
 {
-	struct open_symlink_err *symlink_err = NULL;
+	struct reparse_data_buffer *symlink_err = NULL;
+	struct symlink_reparse_struct *lnk = NULL;
 	NTSTATUS status;
 	char *target = NULL;
 	char *safe_target = NULL;
 	size_t symlink_redirects = 0;
+	int ret;
 
 next:
 	if (symlink_redirects > 40) {
@@ -1161,13 +1105,14 @@ next:
 	if (!NT_STATUS_EQUAL(status, NT_STATUS_STOPPED_ON_SYMLINK)) {
 		return status;
 	}
+	lnk = &symlink_err->parsed.lnk;
 
 	/*
 	 * If we're on an MSDFS share, see if this is
 	 * an MSDFS link.
 	 */
 	if (lp_host_msdfs() && lp_msdfs_root(SNUM(conn)) &&
-	    strnequal(symlink_err->reparse->substitute_name, "msdfs:", 6))
+	    strnequal(lnk->substitute_name, "msdfs:", 6))
 	{
 		TALLOC_FREE(*_smb_fname);
 		TALLOC_FREE(symlink_err);
@@ -1175,7 +1120,7 @@ next:
 	}
 
 	if (!lp_follow_symlinks(SNUM(conn))) {
-		status = (symlink_err->unparsed == 0)
+		status = (lnk->unparsed_path_length == 0)
 				 ? NT_STATUS_OBJECT_NAME_NOT_FOUND
 				 : NT_STATUS_OBJECT_PATH_NOT_FOUND;
 		TALLOC_FREE(symlink_err);
@@ -1194,19 +1139,22 @@ next:
 	 * resolve all symlinks locally.
 	 */
 
-	target = symlink_target_path(mem_ctx,
-				     name_in,
-				     symlink_err->reparse->substitute_name,
-				     symlink_err->unparsed);
-	if (target == NULL) {
-		return NT_STATUS_NO_MEMORY;
+	ret = symlink_target_path(mem_ctx,
+				  name_in,
+				  lnk->unparsed_path_length,
+				  lnk->substitute_name,
+				  lnk->substitute_name[0] != '/',
+				  '/',
+				  &target);
+	if (ret != 0) {
+		return map_nt_error_from_unix(ret);
 	}
 
 	status = safe_symlink_target_path(mem_ctx,
 					  conn->connectpath,
 					  NULL,
 					  target,
-					  symlink_err->unparsed,
+					  lnk->unparsed_path_length,
 					  &safe_target);
 	TALLOC_FREE(symlink_err);
 	if (!NT_STATUS_IS_OK(status)) {

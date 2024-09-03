@@ -1,60 +1,21 @@
                    ==============================
-                   Release Notes for Samba 4.20.4
-                           August 06, 2024
+                   Release Notes for Samba 4.21.0
+                         September 02, 2024
                    ==============================
 
+This is the first stable release of the Samba 4.21 release series.
+Please read the release notes carefully before upgrading.
 
-This is the latest stable release of the Samba 4.20 release series.
+Hardening of "valid users", "invalid users", "read list" and "write list"
+-------------------------------------------------------------------------
 
-Changes since 4.20.3
---------------------
-
-This only fixes a regression in library version strings in Samba
-4.20.3, see: https://bugzilla.samba.org/show_bug.cgi?id=15673
-
-If you compiled Samba from the sources and don't have other
-applications relying on Samba's public libraries, there's
-no reason to upgrade from 4.20.3 to 4.20.4.
-
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15673: --version-* options are still not ergonomic, and they reject
-     tilde characters.
-
-o  Stefan Metzmacher <metze@samba.org>
-   * BUG 15673: --version-* options are still not ergonomic, and they reject
-     tilde characters.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-Release notes for older releases follow:
-----------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.20.3
-                           August 02, 2024
-                   ==============================
-
-
-This is the latest stable release of the Samba 4.20 release series.
+In previous versions of Samba, if a user or group name in either of the
+mentioned options could not be resolved to a valid SID, the user (or group)
+would be skipped without any notification. This could result in unexpected and
+insecure behaviour. Starting with this version of Samba, if any user or group
+name in any of the options cannot be resolved due to a communication error with
+a domain controller, Samba will log an error and the tree connect will fail.
+Non existing users (or groups) are ignored.
 
 LDAP TLS/SASL channel binding support
 -------------------------------------
@@ -79,475 +40,359 @@ on Windows.
 All client tools using ldaps also include the correct
 channel bindings now.
 
-smb.conf changes
-================
-
-  Parameter Name                          Description     Default
-  --------------                          -----------     -------
-  ldap server require strong auth         new values
-
-Changes since 4.20.2
---------------------
-
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15683: Running samba-bgqd a a standalone systemd service does not work.
-
-o  Andrew Bartlett <abartlet@samba.org>
-   * BUG 15655: When claims enabled with heimdal kerberos, unable to log on to a
-     Windows computer when user account need to change their own password.
-
-o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
-   * BUG 15671: Invalid client warning about command line passwords.
-   * BUG 15672: Version string is truncated in manpages.
-   * BUG 15673: --version-* options are still not ergonomic, and they reject
-     tilde characters.
-   * BUG 15674: cmdline_burn does not always burn secrets.
-   * BUG 15685: Samba does not parse SDDL found in defaultSecurityDescriptor in
-     AD_DS_Classes_Windows_Server_v1903.ldf.
-
-o  Jo Sutton <josutton@catalyst.net.nz>
-   * BUG 15655: When claims enabled with heimdal kerberos, unable to log on to a
-     Windows computer when user account need to change their own password.
-
-o  Pavel Filipenský <pfilipensky@samba.org>
-   * BUG 15660: The images don\'t build after the git security release and
-     CentOS 8 Stream is EOL.
-
-o  Ralph Boehme <slow@samba.org>
-   * BUG 15676: Fix clock skew error message and memory cache clock skew
-     recovery.
-
-o  Stefan Metzmacher <metze@samba.org>
-   * BUG 15603: Heimdal ignores _gsskrb5_decapsulate errors in
-     init_sec_context/repl_mutual.
-   * BUG 15621: s4:ldap_server: does not support tls channel bindings
-     for sasl binds.
-
-o  Xavi Hernandez <xhernandez@redhat.com>
-   * BUG 15678: CTDB socket output queues may suffer unbounded delays under some
-     special conditions.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-----------------------------------------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.20.2
-                           June 19, 2024
-                   ==============================
-
-
-This is the latest stable release of the Samba 4.20 release series.
-
-
-Changes since 4.20.1
---------------------
-
-o  Jeremy Allison <jra@samba.org>
-   * BUG 15662: vfs_widelinks with DFS shares breaks case insensitivity.
-
-o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
-   * BUG 13213: Samba build is not reproducible.
-   * BUG 15569: ldb qsort might r/w out of bounds with an intransitive compare
-     function.
-   * BUG 15625: Many qsort() comparison functions are non-transitive, which can
-     lead to out-of-bounds access in some circumstances.
-
-o  Andrew Bartlett <abartlet@samba.org>
-   * BUG 15638: Need to change gitlab-ci.yml tags in all branches to avoid CI
-     bill.
-   * BUG 15654: We have added new options --vendor-name and --vendor-patch-
-     revision arguments to ./configure to allow distributions and packagers to
-     put their name in the Samba version string so that when debugging Samba the
-     source of the binary is obvious.
-
-o  Günther Deschner <gd@samba.org>
-   * BUG 15665: CTDB RADOS mutex helper misses namespace support.
-
-o  Stefan Metzmacher <metze@samba.org>
-   * BUG 13019: Dynamic DNS updates with the internal DNS are not working.
-   * BUG 14981: netr_LogonSamLogonEx returns NR_STATUS_ACCESS_DENIED with
-     SysvolReady=0.
-   * BUG 15412: Anonymous smb3 signing/encryption should be allowed (similar to
-     Windows Server 2022).
-   * BUG 15573: Panic in dreplsrv_op_pull_source_apply_changes_trigger.
-   * BUG 15620: s4:nbt_server: does not provide unexpected handling, so winbindd
-     can't use nmb requests instead cldap.
-   * BUG 15642: winbindd, net ads join and other things don't work on an ipv6
-     only host.
-   * BUG 15659: Segmentation fault when deleting files in vfs_recycle.
-   * BUG 15664: Panic in vfs_offload_token_db_fetch_fsp().
-   * BUG 15666: "client use kerberos" and --use-kerberos is ignored for the
-     machine account.
-
-o  Noel Power <noel.power@suse.com>
-   * BUG 15435: Regression DFS not working with widelinks = true.
-
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15633: samba-gpupdate - Invalid NtVer in netlogon_samlogon_response.
-   * BUG 15653: idmap_ad creates an incorrect local krb5.conf in case of trusted
-     domain lookups.
-   * BUG 15660: The images don't build after the git security release and CentOS
-     8 Stream is EOL.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-----------------------------------------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.20.1
-                            May 08, 2024
-                   ==============================
-
-
-This is the latest stable release of the Samba 4.20 release series.
-
-
-Changes since 4.20.0
---------------------
-
-o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
-   * BUG 15630: dns update debug message is too noisy.
-
-o  Alexander Bokovoy <ab@samba.org>
-   * BUG 15635: Do not fail PAC validation for RFC8009 checksums types.
-
-o  Pavel Filipenský <pfilipensky@samba.org>
-   * BUG 15605: Improve performance of lookup_groupmem() in idmap_ad.
-
-o  Anna Popova <popova.anna235@gmail.com>
-   * BUG 15636: Smbcacls incorrectly propagates inheritance with Inherit-Only
-     flag.
-
-o  Noel Power <noel.power@suse.com>
-   * BUG 15611: http library doesn't support 'chunked transfer encoding'.
-
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15600: Provide a systemd service file for the background queue daemon.
-
-
-#######################################
-Reporting bugs & Development Discussion
-#######################################
-
-Please discuss this release on the samba-technical mailing list or by
-joining the #samba-technical:matrix.org matrix room, or
-#samba-technical IRC channel on irc.libera.chat.
-
-If you do report problems then please try to send high quality
-feedback. If you don't provide vital information to help us track down
-the problem then you will probably be ignored.  All bug reports should
-be filed under the Samba 4.1 and newer product in the project's Bugzilla
-database (https://bugzilla.samba.org/).
-
-
-======================================================================
-== Our Code, Our Bugs, Our Responsibility.
-== The Samba Team
-======================================================================
-
-
-----------------------------------------------------------------------
-                   ==============================
-                   Release Notes for Samba 4.20.0
-                           March 27, 2024
-                   ==============================
-
-
-This is the first stable release of the Samba 4.20 release series.
-Please read the release notes carefully before upgrading.
-
 
 NEW FEATURES/CHANGES
 ====================
 
-New Minimum MIT Krb5 version for Samba AD Domain Controller
------------------------------------------------------------
-
-Samba now requires MIT 1.21 when built against a system MIT Krb5 and
-acting as an Active Directory DC.  This addresses the issues that were
-fixed in CVE-2022-37967 (KrbtgtFullPacSignature) and ensures that
-Samba builds against the MIT version that allows us to avoid that
-attack.
-
-Removed dependency on Perl JSON module
---------------------------------------
-
-Distributions are advised that the Perl JSON package is no longer
-required by Samba builds that use the imported Heimdal.  The build
-instead uses Perl's JSON::PP built into recent perl5 versions.
-
-Current lists of packages required by Samba for major distributions
-are found in the bootstrap/generated-dists/ directory of a Samba
-source tree.  While there will be some differences - due to features
-chosen by packagers - comparing these lists with the build dependencies
-in a package may locate other dependencies we no longer require.
-
-samba-tool user getpassword / syncpasswords ;rounds= change
------------------------------------------------------------
-
-The password access tool "samba-tool user getpassword" and the
-password sync tool "samba-tool user syncpasswords" allow attributes to
-be chosen for output, and accept parameters like
-pwdLastSet;format=GeneralizedTime
-
-These attributes then appear, in the same format, as the attributes in
-the LDIF output.  This was not the case for the ;rounds= parameter of
-virtualCryptSHA256 and virtualCryptSHA512, for example as
---attributes="virtualCryptSHA256;rounds=50000"
-
-This release makes the behaviour consistent between these two
-features.  Installations using GPG-encrypted passwords (or plaintext
-storage) and the rounds= option, will find the output has changed
-
-from:
-virtualCryptSHA256: {CRYPT}$5$rounds=2561$hXem.M9onhM9Vuix$dFdSBwF
-
-to:
-virtualCryptSHA256;rounds=2561: {CRYPT}$5$rounds=2561$hXem.M9onhM9Vuix$dFdSBwF
-
-Group Managed service account client-side features
---------------------------------------------------
-
-samba-tool has been extended to provide client-side support for Group
-Managed Service accounts.  These accounts have passwords that change
-automatically, giving the advantages of service isolation without risk
-of poor, unchanging passwords.
-
-Where possible, Samba's existing samba-tool password handling
-commands, which in the past have only operated against the local
-sam.ldb have been extended to permit operation against a remote server
-with authenticated access to "-H ldap://$DCNAME"
-
-Supported operations include:
- - reading the current and previous gMSA password via
-   "samba-tool user getpassword"
- - writing a Kerberos Ticket Granting Ticket (TGT) to a local
-   credentials cache with a new command
-   "samba-tool user get-kerberos-ticket"
-
-New Windows Search Protocol Client
+LDB no longer a standalone tarball
 ----------------------------------
 
-Samba now by default builds new experimental Windows Search Protocol (WSP)
-command line client "wspsearch"
+LDB, Samba's LDAP-like local database and the power behind the Samba
+AD DC, is no longer available to build as a distinct tarball, but is
+instead provided as an optional public library.
 
-The "wspsearch" cmd-line utility allows a WSP search request to be sent
-to a server (such as a windows server) that has the (WSP)
-Windows Search Protocol service configured and enabled.
+If you need ldb as a public library, say to build sssd, then use
+ ./configure --private-libraries='!ldb'
 
-For more details see the wspsearch man page.
+This re-integration allows LDB tests to use the Samba's full selftest
+system, including our knownfail infrastructure, and decreases the work
+required during security releases as a coordinated release of the ldb
+tarball is not also required.
 
-Allow 'smbcacls' to save/restore DACLs to file
---------------------------------------------
+This approach has been demonstrated already in Debian, which is already
+building Samba and LDB is this way.
 
-'smbcacls' has been extended to allow DACLs to be saved and restored
-to/from a file. This feature mimics the functionality that windows cmd
-line tool 'icacls.exe' provides. Additionally files created either
-by 'smbcalcs' or 'icacls.exe' are interchangeable and can be used by
-either tool as the same file format is used.
+As part of this work, the pyldb-util public library, not known to be
+used by any other software, is made private to Samba.
 
-New options added are:
- - '--save savefile'    Saves DACLs in sddl format to file
- - '--recurse'          Performs the '--save' operation above on directory
-                        and all files/directories below.
- - '--restore savefile' Restores the stored DACLS to files in directory
+LDB Module API Python bindings removed
+--------------------------------------
 
-Samba-tool extensions for AD Claims, Authentication Policies and Silos
-----------------------------------------------------------------------
+The LDB Modules API, which we do not promise a stable ABI or API for,
+was wrapped in python in early LDB development.  However that wrapping
+never took into account later changes, and so has not worked for a
+number of years.  Samba 4.21 and LDB 2.10 removes this unused and
+broken feature.
 
-samba-tool now allows users to be associated with claims.  In the
-Samba AD DC, claims derive from Active Directory attributes mapped
-into specific names.  These claims can be used in rules, which are
-conditional ACEs in a security descriptor, that decide if a user is
-restricted by an authentication policy.
+Changes in LDB handling of Unicode
+----------------------------------
 
-samba-tool also allows the creation and management of authentication
-policies, which are rules about where a user may authenticate from,
-if NTLM is permitted, and what services a user may authenticate to.
+Developers using LDB up to version 2.9 could call ldb_set_utf8_fns()
+to determine how LDB handled casefolding. This is used internally by
+string comparison functions. In LDB 2.10 this function is deprecated,
+and ldb_set_utf8_functions() is preferred. The new function allows a
+direct comparison function to be set as well as a casefold function.
+This improves performance and allows for more robust handling of
+degenerate cases. The function should be called just after ldb_init(),
+with the following arguments:
 
-Finally, support is added for the creation and management of
-authentication silos, which are helpful in defining network boundaries
-by grouping users and the services they connect to.
+   ldb_set_utf8_functions(ldb, /* the struct ldb_ctx LDB object */
+                          context_variable /* possibly NULL */
+                          casefold_function,
+                          case_insensitive_comparison_function);
 
-Please note: The command line syntax for these tools is not final, and
-may change before the next release, as we gain user feedback.  The
-syntax will be locked in once Samba offers 2016 AD Functional Level as
-a default.
+The default behaviour of LDB remains to perform ASCII casefolding
+only, as if in the "C" locale. Recent versions have become
+increasingly consistent in this.
 
-AD DC support for Authentication Silos and Authentication Policies
+Some Samba public libraries made private by default
+---------------------------------------------------
+
+The following Samba C libraries are currently made public due to their
+use by OpenChange or for historical reasons that are no longer clear.
+
+ dcerpc-samr, samba-policy, tevent-util, dcerpc, samba-hostconfig,
+ samba-credentials, dcerpc_server, samdb
+
+The libraries used by the OpenChange client now private, but can be
+made public (like ldb above) with:
+
+ ./configure --private-libraries='!dcerpc,!samba-hostconfig,!samba-credentials,!ldb'
+
+The C libraries without any known user or used only for the OpenChange
+server (a dead project) may be made private entirely in a future Samba
+version.
+
+If you use a Samba library in this list, please be in touch with the
+samba-technical mailing list.
+
+Using ldaps from 'winbindd' and 'net ads'
+-----------------------------------------
+
+Beginning with Samba 3.0.22 the 'ldap ssl = start tls' option also
+impacted LDAP connections to active directory domain controllers.
+Using the STARTTLS operation on LDAP port 389 connections. Starting
+with Samba 3.5.0 'ldap ssl ads = yes' was required in addition in
+order let to 'ldap ssl = start tls' have any effect on those
+connections.
+
+'ldap ssl ads' was deprecated with Samba 4.8.0 and removed together
+with the whole functionality in Samba 4.14.0, because it didn't support
+tls channel bindings required for the sasl authentication.
+
+The functionality is now re-added using the correct channel bindings
+based on the gnutls based tls implementation we already have, instead
+of using the tls layer provided by openldap. This makes it available
+and consistent with all LDAP client libraries we use and implement on
+our own.
+
+The 'client ldap sasl wrapping' option gained the two new possible values:
+'starttls' (using STARTTLS on tcp port 389)
+and
+'ldaps' (using TLS directly on tcp port 636).
+
+If you had 'ldap ssl = start tls' and 'ldap ssl ads = yes'
+before, you can now use 'client ldap sasl wrapping = starttls'
+in order to get STARTTLS on tcp port 389.
+
+As we no longer use the openldap tls layer it is required to configure the
+correct certificate trusts with at least one of the following options:
+'tls trust system cas', 'tls ca directories' or 'tls cafile'.
+While 'tls verify peer' and 'tls crlfile' are also relevant,
+see 'man smb.conf' for further details.
+
+New DNS hostname config option
+------------------------------
+
+To get `net ads dns register` working correctly running manually or during a
+domain join a special entry in /etc/hosts was required. This not really
+documented and thus the DNS registration mostly didn't work. With the new option
+the default is [netbios name].[realm] which should be correct in the majority of
+use cases.
+
+We will also use the value to create service principal names during a Kerberos
+authentication and DNS functions.
+
+This is not supported in samba-tool yet.
+
+Samba AD will rotate expired passwords on smartcard-required accounts
+---------------------------------------------------------------------
+
+Traditionally in AD, accounts set to be "smart card require for logon"
+will have a password for NTLM fallback and local profile encryption
+(Windows DPAPI). This password previously would not expire.
+
+Matching Windows behaviour, when the DC in a FL 2016 domain and the
+msDS-ExpirePasswordsOnSmartCardOnlyAccounts attribute on the domain
+root is set to TRUE, Samba will now expire these passwords and rotate
+them shortly before they expire.
+
+Note that the password expiry time must be set to twice the TGT lifetime for
+smooth operation, e.g. daily expiry given a default 10 hour TGT
+lifetime, as the password is only rotated in the second half of its
+life.  Again, this matches the Windows behaviour.
+
+Provided the default 2016 schema is used, new Samba domains
+provisioned with Samba 4.21 will have this enabled once the domain
+functional level is set to 2016.
+
+NOTE: Domains upgraded from older Samba versions will not have this
+set, even after the functional level preparation, matching the
+behaviour of upgraded Windows AD domains.
+
+Per-user and group "veto files" and "hide files"
+------------------------------------------------
+
+"veto files" and "hide files" can optionally be restricted to certain users and
+groups. To apply a veto or hide directive to a filename for a specific user or
+group, a parametric option like this can be used:
+ hide files : USERNAME = /somefile.txt/
+ veto files : GROUPNAME = /otherfile.txt/
+For details consult the updated smb.conf manpage.
+
+Automatic keytab update after machine password change
+-----------------------------------------------------
+
+When machine account password is updated, either by winbind doing regular
+updates or manually (e.g. net ads changetrustpw), now winbind will also support
+update of keytab entries in case you use newly added option
+'sync machine password to keytab'.
+The new parameter allows you to describe what keytabs and how should be updated.
+From smb.conf(5) manpage - each keytab can have exactly one of these four forms:
+
+               account_name
+               sync_spns
+               spn_prefixes=value1[,value2[...]]
+               spns=value1[,value2[...]]
+
+The functionaity provided by the removed commands "net ads keytab
+add/delete/add_update_ads" can be achieved via the 'sync machine password to
+keytab' as in these examples:
+
+"net ads keytab add  wurst/brot@REALM"
+
+- this command is not adding <principal> to AD, so the best fit can be specifier
+  "spns"
+- add to smb.conf:
+  sync machine password to keytab = /path/to/keytab1:spns=wurst/brot@REALM:machine_password
+- run:
+  "net ads keytab create"
+
+"net ads keytab delete wurst/brot@REALM"
+
+- remove the principal (or the whole keytab line if there was just one)
+- run:
+  "net ads keytab create"
+
+"net ads keytab add_update_ads wurst/brot@REALM"
+
+- this command was adding the principal to AD, so for this case use a keytab
+  with specifier sync_spns
+- add to smb.conf:
+  sync machine password to keytab = /path/to/keytab2:sync_spns:machine_password
+- run:
+  "net ads setspn add  wurst/brot@REALM"  # this adds the principal to AD
+  "net ads keytab create"  # this sync it from AD to local keytab
+
+
+A new parameter 'sync machine password script' allows to specify external script
+that will be triggered after the automatic keytab update. If keytabs should be
+generated in clustered environments it is recommended to update them on all
+nodes.  Check in smb.conf(5) the scripts winbind_ctdb_updatekeytab.sh and
+46.update-keytabs.script in section 'sync machine password script' for details.
+
+For detailed information check the smb.conf(5) and net(8) manpages.
+
+New cephfs VFS module
+---------------------
+Introduce new vfs-to-cephfs bridge which uses libcephfs low-level APIs (instead
+of path-based operations in the existing module). It allows users to pass
+explicit user-credentials per call (including supplementary groups), as well as
+faster operations using inode and file-handle caching on the Samba side.
+Configuration is identical to existing module, but using 'ceph_new' instead of
+'ceph' for the relevant smb.conf entries. This new module is expected to
+deprecate and replace the old one in next major release.
+
+Group Managed Service Accounts
+------------------------------
+Samba 4.21 adds support for gMSAs (Group Managed Service Accounts),
+completing support for Functional Level 2012.
+
+The purpose of a gMSA is to allow a single host, or a cluster of
+hosts, to share access to an automatically rotating password, avoiding
+the weak static service passwords that are often the entrypoint of
+attackers to AD domains. Each server has a strong and regularly
+rotated password, which is used to access the gMSA account of (e.g.)
+the database server.
+
+Samba provides management and client tools, allowing services on Unix
+hosts to access the current and next gMSA passwords, as well as obtain
+a credentials cache.
+
+Samba 4.20 announced the client-side tools for this feature. To avoid
+duplication and provide consistency, the existing commands for
+password viewing have been extended, so these commands operate both on
+a gMSA (with credentials, over LDAP, specify -H) and locally for
+accounts that have a compatible password (e.g. plaintext via GPG,
+compatible hash)
+
+  samba-tool user getpassword
+  samba-tool user get-kerberos-ticket
+  samba-tool domain exportkeytab
+
+An example command, which gets the NT hash for use with NTLM, is
+
+  samba-tool user getpassword -H ldap://server --machine-pass  \
+      TestUser1 --attributes=unicodePwd
+
+Kerberos is a better choice (gMSA accounts should not use LDAP simple
+binds, for reasons of both security and compatibility). Use
+
+  samba-tool user get-kerberos-ticket -H ldap://server --machine-pass \
+      TestUser1 --output-krb5-ccache=/srv/service/krb5_ccache
+
+gMSAs disclose a current and previous password. To access the previous
+NT hash, use:
+
+  samba-tool user getpassword -H ldap://server --machine-pass TestUser1 \
+     --attrs=unicodePwd;previous=1
+
+To access the previous password as UTF8, use:
+
+  samba-tool user getpassword -H ldap://server --machine-pass TestUser1 \
+      --attributes=pwdLastSet,virtualClearTextUTF8;previous=1
+
+However, Windows tools for dealing with gMSAs tend to use Active
+Directory Web Services (ADWS) from Powershell for setting up the
+accounts, and this separate protocol is not supported by Samba 4.21.
+
+Samba-tool commands for handling gMSA (KDS) root keys
+-----------------------------------------------------
+Group managed service accounts rotate passwords based on root keys,
+which can be managed using samba-tool, with commands such as
+
+  samba-tool domain kds root_key create
+  samba-tool domain kds root_key list
+
+Samba will create a new root key for new domains at provision time,
+but users of gMSA accounts on upgraded domains will need to first
+create a root key.
+
+RFC 8070 PKINIT "Freshness extension" supported in the Heimdal KDC
 ------------------------------------------------------------------
+The Heimdal KDC will recognise when a client provides proof that they
+hold the hardware token used for smart-card authentication 'now' and
+has not used a saved future-dated reply. Samba 4.21 now matches
+Windows and will assign an extra SID to the user in this case,
+allowing sensitive resources to be additionally protected.
 
-The Samba AD DC now also honours any existing claims, authentication
-policy and authentication silo configuration previously created (eg
-from an import of a Microsoft AD), as well as new configurations
-created with samba-tool.  The use of Microsoft's Powershell based
-client tools is not expected to work.
+Only Windows clients are known to support the client side of this
+feature at this time.
 
-To use this feature, the functional level must be set to 2012_R2 or
-later with:
+New samba-tool Authentication Policy management command structure
+-----------------------------------------------------------------
+As foreshadowed in the Samba 4.20 release notes, the "samba-tool
+domain auth policy" commands have been reworked to be more intuitive
+based on user feedback and reflection.
 
- ad dc functional level = 2016
+Support for key features of AD Domain/Forest Functional Level 2012R2
+--------------------------------------------------------------------
+Combined with other changes in recent versions (such as claims support
+in 4.20), Samba can now claim Functional Level 2012R2 support.
 
-in the smb.conf.
+Build system
+------------
+In previous versions of Samba, packagers of Samba would set their
+package-specific version strings using a patch to the
+SAMBA_VERSION_VENDOR_SUFFIX line in the ./VERSION file. Now that is
+achieved by using --vendor-suffix (at configure time), allowing this
+to be more easily scripted. Vendors are encouraged to include their
+name and full package version to assist with upstream debugging.
 
-The smb.conf file on each DC must have 'ad dc functional level = 2016'
-set to have the partially complete feature available.  This will also,
-at first startup, update the server's own AD entry with the configured
-functional level.
+More deterministic builds
+-------------------------
+Samba builds are now more reproducible, providing better assurance
+that the Samba binaries you run are the same as what is expected from
+the source code. If locale settings are not changed, the same objects
+will be produced from each compilation run. If Samba is built in a
+different path, the object code will remain the same, but DWARF
+debugging sections will change (while remaining functionally
+equivalent).
 
-For new domains, add these parameters to 'samba-tool provision'
+See https://reproducible-builds.org/ for more information on this
+industry-wide effort and
+https://tests.reproducible-builds.org/debian/rb-pkg/unstable/amd64/samba.html
+for the status in Debian.
 
---option="ad dc functional level = 2016" --function-level=2016
-
-The second option, setting the overall domain functional level
-indicates that all DCs should be at this functional level.
-
-To raise the domain functional level of an existing domain, after
-updating the smb.conf and restarting Samba run
-samba-tool domain schemaupgrade --schema=2019
-samba-tool domain functionalprep --function-level=2016
-samba-tool domain level raise --domain-level=2016 --forest-level=2016
-
-This support is still new, so is not enabled by default in this
-release.  The above instructions are set at 2016, which while not
-complete, matches what our testing environment validates.
-
-Conditional ACEs and Resource Attribute ACEs
---------------------------------------------
-
-Ordinary Access Control Entries (ACEs) unconditionally allow or deny
-access to a given user or group. Conditional ACEs have an additional
-section that describes conditions under which the ACE applies. If the
-conditional expression is true, the ACE works like an ordinary ACE,
-otherwise it is ignored. The condition terms can refer to claims,
-group memberships, and attributes on the object itself. These
-attributes are described in Resource Attribute ACEs that occur in the
-object's System Access Control List (SACL). Conditional ACEs are
-described in Microsoft documentation.
-
-Conditional ACE evaluation is controlled by the "acl claims
-evaluation" smb.conf option. The default value is "AD DC only" which
-enables them in AD DC settings. The other option is "never", which
-disables them altogether. There is currently no option to enable them
-on the file server (this is likely to change in future releases).
-
-The Security Descriptor Definition Language has extensions for
-conditional ACEs and resource attribute ACEs; these are now supported
-by Samba.
-
-Service Witness Protocol [MS-SWN]
----------------------------------
-
-In a ctdb cluster it is now possible to provide
-the SMB witness service that allows clients to
-monitor their current smb connection to cluster
-node A by asking cluster node B to notify the
-client if the ip address from node A or the
-whole node A becomes unavailable.
-
-For disk shares in a ctdb cluster
-SMB2_SHARE_CAP_SCALEOUT is now always returned
-for SMB3 tree connect responses.
-
-If the witness service is active
-SMB2_SHARE_CAP_CLUSTER is now also returned.
-
-In order to activate the witness service
-"rpc start on demand helpers = no" needs to
-be configured in the global section.
-At the same time the 'samba-dcerpcd' service
-needs to be started explicitly, typically
-with the '--libexec-rpcds' option in order
-to make all available services usable.
-One important aspect is that tcp ports
-135 (for the endpoint mapper) and various
-ports in the 'rpc server dynamic port range'
-will be used to provide the witness service
-(rpcd_witness).
-
-ctdb provides a '47.samba-dcerpcd.script' in order
-to manage the samba-dcerpcd.service.
-Typically as systemd service, but that's up
-to the packager and/or admin.
-
-Please note that current windows client
-requires SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY
-in addition to SMB2_SHARE_CAP_CLUSTER in order
-to make use of the witness service.
-But SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY implies
-the windows clients always ask for persistent handle
-(which are not implemented in samba yet), so
-that every open generates a warning in the
-windows smb client event log.
-That's why SMB2_SHARE_CAP_CONTINUOUS_AVAILABILITY
-is not returned by default.
-An explicit 'smb3 share cap:CONTINUOUS AVAILABILITY = yes'
-is needed.
-
-There are also new 'net witness' commands in order
-to let the admin list active client registrations
-or ask specific clients to move their smb connection
-to another cluster node. These are available:
-
- net witness list
- net witness client-move
- net witness share-move
- net witness force-unregister
- net witness force-response
-
-Consult 'man net' or 'net witness help' for further details.
+Improved command-line redaction
+-------------------------------
+There are several options that can be used with Samba tools for
+specifying secrets. Although this is best avoided, when these options
+are used, Samba will redact the secrets in /proc, so that they won't
+be seen in ps or top. This is now carried out more thoroughly,
+redacting more options. There is a race inherent in this, and the
+passwords will be visible for a short time. The secrets are also not
+removed from .bash_history and similar files.
 
 
 REMOVED FEATURES
 ================
 
-Get locally logged on users from utmp
--------------------------------------
+Following commands are removed:
 
-The Workstation Service Remote Protocol [MS-WKST] calls NetWkstaGetInfo
-level 102 and NetWkstaEnumUsers level 0 and 1 return the list of locally
-logged on users. Samba was getting the list from utmp, which is not
-Y2038 safe. This feature has been completely removed and Samba will
-always return an empty list.
+net ads keytab add <principal>
+net ads keytab delete <principal>
+net ads keytab add_update_ads
 
 
 smb.conf changes
@@ -555,87 +400,99 @@ smb.conf changes
 
   Parameter Name                          Description     Default
   --------------                          -----------     -------
-  ldap server require strong auth         new values             (4.20.3)
-  acl claims evaluation                   new             AD DC only
-  smb3 unix extensions                    Per share       -
-  smb3 share cap:ASYMMETRIC               new             no
-  smb3 share cap:CLUSTER                  new             see 'man smb.conf'
-  smb3 share cap:CONTINUOUS AVAILABILITY  new             no
-  smb3 share cap:SCALE OUT                new             see 'man smb.conf'
+  client ldap sasl wrapping               new values
+  client use spnego principal             removed
+  ldap server require strong auth         new values
+  tls trust system cas                    new
+  tls ca directories                      new
+  dns hostname                            client dns name [netbios name].[realm]
+  valid users                             Hardening
+  invalid users                           Hardening
+  read list                               Hardening
+  write list                              Hardening
+  veto files                              Added per-user and per-group vetos
+  hide files                              Added per-user and per-group hides
+  sync machine password to keytab         keytabs
+  sync machine password script            script
 
 
-Changes since 4.20.0rc4
+CHANGES SINCE 4.21.0rc4
 =======================
 
-o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
-   * BUG 15606: Avoid null-dereference with bad claims.
-   * BUG 15613: ndr_pull_security_ace can leave resource attribute ACE coda
-     claim struct undefined.
-
-o  Ralph Boehme <slow@samba.org>
-   * BUG 15527: fd_handle_destructor() panics within an smbd_smb2_close() if
-     vfs_stat_fsp() fails in fd_close().
-
-o  Björn Jacke <bjacke@samba.org>
-   * BUG 15583: set_nt_acl sometimes fails with NT_STATUS_INVALID_PARAMETER -
-     openat() EACCES.
+o  David Disseldorp <ddiss@samba.org>
+   * BUG 15699: Incorrect FSCTL_QUERY_ALLOCATED_RANGES response when truncated.
 
 o  Noel Power <noel.power@suse.com>
-   * BUG 15527: fd_handle_destructor() panics within an smbd_smb2_close() if
-     vfs_stat_fsp() fails in fd_close().
+   * BUG 15702: Bad variable definition for ParseTuple causing test failure for
+     Smb3UnixTests.test_create_context_reparse.
 
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15599: libgpo: Segfault in python bindings.
-
-o  Jo Sutton <josutton@catalyst.net.nz>
-   * BUG 15607: Samba AD is missing some authentication policy tests.
+o  Shachar Sharon <ssharon@redhat.com>
+   * BUG 15686: Add new vfs_ceph module (based on low level API).
 
 
-CHANGES SINCE 4.20.0rc3
+CHANGES SINCE 4.21.0rc3
 =======================
 
-o  Andreas Schneider <asn@samba.org>
-   * BUG 15588: samba-gpupdate: Correctly implement site support.
+o  Pavel Filipenský <pfilipensky@samba.org>
+   * BUG 15698: samba-tool can not load the default configuration file.
+
+o  Shachar Sharon <ssharon@redhat.com>
+   * BUG 15700: Crash when readlinkat fails.
 
 
-CHANGES SINCE 4.20.0rc2
+CHANGES SINCE 4.21.0rc2
 =======================
 
-o  Rob van der Linde <rob@catalyst.net.nz>
-   * BUG 15575: Remove unsupported "Final" keyword missing from Python 3.6.
+o  Pavel Filipenský <pfilipensky@samba.org>
+   * BUG 15689: Can't add/delete special keys to keytab for nfs, cifs, http etc.
 
 o  Stefan Metzmacher <metze@samba.org>
-   * BUG 15577: Additional witness backports for 4.20.0.
-
-o  Noel Power <noel.power@suse.com>
-   * BUG 15579: Error output with wspsearch.
-
-o  Martin Schwenke <mschwenke@ddn.com>
-   * BUG 15580: Packet marshalling push support missing for
-     CTDB_CONTROL_TCP_CLIENT_DISCONNECTED and
-     CTDB_CONTROL_TCP_CLIENT_PASSED.
-
-o  Jo Sutton <josutton@catalyst.net.nz>
-   * BUG 15575: Remove unsupported "Final" keyword missing from Python 3.6.
-
-
-CHANGES SINCE 4.20.0rc1
-=======================
-
-o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
-   * BUG 15574: Performance regression for NDR parsing of security descriptors.
+   * BUG 15696: Compound SMB2 requests don't return
+     NT_STATUS_NETWORK_SESSION_EXPIRED for all requests, confuses
+     MacOSX clients.
 
 o  Anoop C S <anoopcs@samba.org>
-   * BUG 15565: Build and install man page for wspsearch client utility.
+   * BUG 15689: Can't add/delete special keys to keytab for nfs, cifs, http etc.
+
+
+CHANGES SINCE 4.21.0rc1
+=======================
 
 o  Andreas Schneider <asn@samba.org>
-   * BUG 15558: samba-gpupdate logging doesn't work.
+   * BUG 15673: --version-* options are still not ergonomic, and they reject
+     tilde characters.
+
+o  Anoop C S <anoopcs@samba.org>
+   * BUG 15686: Add new vfs_ceph module (based on low level API)
+
+o  Douglas Bagnall <douglas.bagnall@catalyst.net.nz>
+   * BUG 15673: --version-* options are still not ergonomic, and they reject
+     tilde characters.
+
+o  Jennifer Sutton <jennifersutton@catalyst.net.nz>
+   * BUG 15690: ldb_version.h is missing from ldb public library
+
+o  Pavel Filipenský <pfilipensky@samba.org>
+   * BUG 15689: Can not add/delete special keys to keytab for nfs, cifs, http etc
+
+o  Shachar Sharon <ssharon@redhat.com>
+   * BUG 15686: Add new vfs_ceph module (based on low level API)
+
+o  Stefan Metzmacher <metze@samba.org>
+   * BUG 15673: --version-* options are still not ergonomic, and they reject
+     tilde characters.
+   * BUG 15687: undefined reference to winbind_lookup_name_ex
+   * BUG 15688: per user veto and hide file syntax is to complex
+   * BUG 15689: Can not add/delete special keys to keytab for nfs, cifs, http etc
+
+o  Volker Lendecke <vl@samba.org>
+   * BUG 15688: per user veto and hide file syntax is to complex
 
 
 KNOWN ISSUES
 ============
 
-https://wiki.samba.org/index.php/Release_Planning_for_Samba_4.20#Release_blocking_bugs
+https://wiki.samba.org/index.php/Release_Planning_for_Samba_4.21#Release_blocking_bugs
 
 
 #######################################
@@ -657,4 +514,3 @@ database (https://bugzilla.samba.org/).
 == Our Code, Our Bugs, Our Responsibility.
 == The Samba Team
 ======================================================================
-

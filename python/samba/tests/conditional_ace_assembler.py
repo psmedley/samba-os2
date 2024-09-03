@@ -171,12 +171,15 @@ def assemble(*tokens):
     return program
 
 
-def assemble_ace(tokens=[],
+def assemble_ace(tokens=None,
                  type=security.SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK,
                  trustee=None,
                  flags=None,
                  object=None,
                  access_mask=None):
+    if tokens is None:
+        tokens = []
+
     type_strings = {
         'XA': security.SEC_ACE_TYPE_ACCESS_ALLOWED_CALLBACK,
         'XD': security.SEC_ACE_TYPE_ACCESS_DENIED_CALLBACK,
@@ -219,7 +222,7 @@ def assemble_sd(base_sddl='D:',
         # If the compiled ACE is a deny ACE, we won't know if it
         # worked unless there is a wide ranging allow ACE following
         # it.
-        allow_ace = assemble_ace(type='A',
+        allow_ace = assemble_ace(type=security.SEC_ACE_TYPE_ACCESS_ALLOWED,
                                  trustee=security.dom_sid(security.SID_WORLD),
                                  access_mask=security.SEC_FILE_ALL)
         sd.dacl_add(allow_ace)

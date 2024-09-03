@@ -38,7 +38,7 @@
 
 #define LDB_DN_NULL_FAILED(x) if (!(x)) goto failed
 
-#define LDB_FREE(x) do { talloc_free(x); x = NULL; } while(0)
+#define LDB_FREE(x) TALLOC_FREE(x)
 
 /**
    internal ldb exploded dn structures
@@ -1038,7 +1038,11 @@ char *ldb_dn_alloc_casefold(TALLOC_CTX *mem_ctx, struct ldb_dn *dn)
 
 /* Determine if dn is below base, in the ldap tree.  Used for
  * evaluating a subtree search.
- * 0 if they match, otherwise non-zero
+ *
+ * 0 if they match, otherwise non-zero.
+ *
+ * This is not for use in a qsort()-like function, as the comparison
+ * is not symmetric.
  */
 
 int ldb_dn_compare_base(struct ldb_dn *base, struct ldb_dn *dn)
@@ -1180,8 +1184,15 @@ int ldb_dn_compare(struct ldb_dn *dn0, struct ldb_dn *dn1)
 
 	}
 
-	if (dn0->comp_num != dn1->comp_num) {
-		return (dn1->comp_num - dn0->comp_num);
+	/*
+	 * Notice that for comp_num, Samba reverses the usual order of
+	 * comparison. A DN with fewer components is greater than one
+	 * with more.
+	 */
+	if (dn0->comp_num > dn1->comp_num) {
+		return -1;
+	} else if (dn0->comp_num < dn1->comp_num) {
+		return 1;
 	}
 
 	if (dn0->comp_num == 0) {
@@ -1384,6 +1395,22 @@ struct ldb_dn *ldb_dn_copy(TALLOC_CTX *mem_ctx, struct ldb_dn *dn)
 		}
 	}
 
+	return new_dn;
+}
+
+struct ldb_dn *ldb_dn_copy_with_ldb_context(TALLOC_CTX *mem_ctx,
+					    struct ldb_dn *dn,
+					    struct ldb_context *ldb)
+{
+	struct ldb_dn *new_dn = NULL;
+
+	new_dn = ldb_dn_copy(mem_ctx, dn);
+	if (new_dn == NULL) {
+		return NULL;
+	}
+
+	/* Set the ldb context. */
+	new_dn->ldb = ldb;
 	return new_dn;
 }
 

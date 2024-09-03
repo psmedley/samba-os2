@@ -95,14 +95,16 @@ void init_strict_lock_struct(files_struct *fsp,
 {
 	SMB_ASSERT(lock_type == READ_LOCK || lock_type == WRITE_LOCK);
 
-	plock->context.smblctx = smblctx;
-        plock->context.tid = fsp->conn->cnum;
-        plock->context.pid = messaging_server_id(fsp->conn->sconn->msg_ctx);
-        plock->start = start;
-        plock->size = size;
-        plock->fnum = fsp->fnum;
-        plock->lock_type = lock_type;
-        plock->lock_flav = lp_posix_cifsu_locktype(fsp);
+	*plock = (struct lock_struct) {
+		.context.smblctx = smblctx,
+		.context.tid = fsp->conn->cnum,
+		.context.pid = messaging_server_id(fsp->conn->sconn->msg_ctx),
+		.start = start,
+		.size = size,
+		.fnum = fsp->fnum,
+		.lock_type = lock_type,
+		.lock_flav = lp_posix_cifsu_locktype(fsp),
+	};
 }
 
 bool strict_lock_check_default(files_struct *fsp, struct lock_struct *plock)
@@ -158,12 +160,14 @@ bool strict_lock_check_default(files_struct *fsp, struct lock_struct *plock)
 		TALLOC_FREE(br_lck);
 	}
 
-	DEBUG(10, ("strict_lock_default: flavour = %s brl start=%ju "
-		   "len=%ju %s for fnum %ju file %s\n",
-		   lock_flav_name(plock->lock_flav),
-		   (uintmax_t)plock->start, (uintmax_t)plock->size,
-		   ret ? "unlocked" : "locked",
-		   (uintmax_t)plock->fnum, fsp_str_dbg(fsp)));
+	DBG_DEBUG("flavour = %s brl start=%" PRIu64 " "
+		  "len=%" PRIu64 " %s for fnum %" PRIu64 " file %s\n",
+		  lock_flav_name(plock->lock_flav),
+		  plock->start,
+		  plock->size,
+		  ret ? "unlocked" : "locked",
+		  plock->fnum,
+		  fsp_str_dbg(fsp));
 
 	return ret;
 }
@@ -583,8 +587,9 @@ bool rename_share_filename(struct messaging_context *msg_ctx,
 	NTSTATUS status;
 	bool ok;
 
-	DEBUG(10, ("rename_share_filename: servicepath %s newname %s\n",
-		   servicepath, smb_fname_dst->base_name));
+	DBG_DEBUG("servicepath %s newname %s\n",
+		  servicepath,
+		  smb_fname_dst->base_name);
 
 	status = share_mode_lock_access_private_data(lck, &d);
 	if (!NT_STATUS_IS_OK(status)) {

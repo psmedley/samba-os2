@@ -15,9 +15,9 @@
 #   copy of) this script, making sure it is executable.
 #
 # * Create a new directory alongside the nfs-checks.d directory, for
-#   example nfs-checks-ganesha.d.  Install 20.nfs-ganesha.check in
-#   this directory.  Symlink to any other check files from
-#   nfs-checks.d that should still be used, such as
+#   example nfs-checks-ganesha.d.  Install 20.nfs_ganesha.check and
+#   21.nfs.check in this directory.  Symlink to any other check files
+#   from nfs-checks.d that should still be used, such as
 #   00.portmapper.check.  Set CTDB_NFS_CHECKS_DIR to point to this new
 #   directory of check files.
 #
@@ -41,9 +41,11 @@ set -e
 state_fs="${CTDB_NFS_STATE_FS_TYPE:-gpfs}"
 state_dir="${CTDB_NFS_STATE_MNT}" # No sane default.
 
+# Location of exports file
+nfs_exports_file="${CTDB_NFS_EXPORTS_FILE:-/etc/ganesha/ganesha.conf}"
+
 # To change the following, edit the default values below.  Do not set
 # these - they aren't configuration variables, just hooks for testing.
-nfs_exports_file="${CTDB_NFS_EXPORTS_FILE:-/etc/ganesha/ganesha.conf}"
 nfs_service="${CTDB_NFS_SERVICE:-nfs-ganesha}"
 ganesha_rec_subdir=${CTDB_GANESHA_REC_SUBDIR:-.ganesha}
 procfs=${PROCFS_PATH:-/proc}
@@ -64,26 +66,24 @@ glusterfs)
 	;;
 esac
 
-
 ##################################################
 
-usage ()
+usage()
 {
 	_c=$(basename "$0")
 	cat <<EOF
 usage: $_c { shutdown | startup }
-       $_c { stop | start | check } nfs
-       $_c { releaseip | takeip }
+       $_c { stop | start | check | stats } nfs
+       $_c { releaseip | takeip } <iface> <ip> <maskbits>
        $_c { monitor-list-shares }
 EOF
-    exit 1
+	exit 1
 }
-
 
 ##################################################
 # Basic service stop and start
 
-basic_stop ()
+basic_stop()
 {
 	case "$1" in
 	nfs)
@@ -91,10 +91,11 @@ basic_stop ()
 		;;
 	*)
 		usage
+		;;
 	esac
 }
 
-basic_start ()
+basic_start()
 {
 	case "$1" in
 	nfs)
@@ -102,28 +103,30 @@ basic_start ()
 		;;
 	*)
 		usage
+		;;
 	esac
 }
 
 ##################################################
 # "stop" and "start" options for restarting
 
-service_stop ()
+service_stop()
 {
-    case "$1" in
+	case "$1" in
 	nfs)
-	    basic_stop "nfs"
-	    ;;
+		basic_stop "nfs"
+		;;
 	nlockmgr)
-	    # Do nothing - used by statd-callout
-	    :
-	    ;;
+		# Do nothing - used by statd-callout
+		:
+		;;
 	*)
-	    usage
-    esac
+		usage
+		;;
+	esac
 }
 
-service_start ()
+service_start()
 {
 	case "$1" in
 	nfs)
@@ -135,6 +138,7 @@ service_start ()
 		;;
 	*)
 		usage
+		;;
 	esac
 }
 
@@ -143,13 +147,13 @@ service_start ()
 
 # Check that a symlink exists, create it otherwise.
 # Usage: check_ln <TARGET> <LINK>
-check_ln ()
+check_ln()
 {
-	if [ ! -L "${2}" ] ; then
+	if [ ! -L "${2}" ]; then
 		rm -vrf "${2}"
 	else
 		_t=$(readlink "${2}")
-		if [ "$_t" != "${1}" ] ; then
+		if [ "$_t" != "${1}" ]; then
 			rm -v "${2}"
 		fi
 	fi
@@ -161,9 +165,9 @@ check_ln ()
 }
 
 # Return 'active' if the shared filesystem is accessible.
-get_cluster_fs_state ()
+get_cluster_fs_state()
 {
-	case $state_fs in
+	case "$state_fs" in
 	gpfs)
 		/usr/lpp/mmfs/bin/mmgetstate | awk 'NR == 4 { print $3 }'
 		;;
@@ -178,7 +182,7 @@ get_cluster_fs_state ()
 	esac
 }
 
-create_ganesha_recdirs ()
+create_ganesha_recdirs()
 {
 	if ! _mounts=$(mount | grep "$state_fs"); then
 		echo "Failed to find mounts of type $state_fs"
@@ -189,7 +193,7 @@ create_ganesha_recdirs ()
 		exit 0
 	fi
 
-	case $state_fs in
+	case "$state_fs" in
 	gpfs)
 		_mntpt=$(echo "$_mounts" | sort | awk 'NR == 1 {print $3}')
 		_link_dst="${_mntpt}/${ganesha_rec_subdir}"
@@ -197,7 +201,7 @@ create_ganesha_recdirs ()
 		check_ln "$_link_dst" "$GANRECDIR"
 		;;
 	glusterfs)
-		[ -d /var/lib/nfs.backup ] || \
+		[ -d /var/lib/nfs.backup ] ||
 			mv /var/lib/nfs /var/lib/nfs.backup
 		check_ln "$NODESTATEDIR" /var/lib/nfs
 
@@ -210,41 +214,51 @@ create_ganesha_recdirs ()
 
 		mkdir -p "$GANSTATEDIR"
 		check_ln "$NODESTATEDIR" "$NODESTATELN"
-		for _dir in "${GANSTATEDIR}/"* ; do
+		for _dir in "${GANSTATEDIR}/"*; do
 			# Handle no directories case
-			if [ ! -d "$_dir" ] ; then
+			if [ ! -d "$_dir" ]; then
 				break
 			fi
 
 			_node="${_dir##*/}" # basename
 			if [ "${_node}" != "${host}" ]; then
 				check_ln "${GANSTATEDIR}/${_node}/ganesha" \
-					 "${NODESTATEDIR}/ganesha/${_node}"
+					"${NODESTATEDIR}/ganesha/${_node}"
 				check_ln "${GANSTATEDIR}/${_node}/statd" \
-					 "${NODESTATEDIR}/statd/${_node}"
+					"${NODESTATEDIR}/statd/${_node}"
 			fi
 		done
 		;;
 	esac
 }
 
-service_check ()
+is_ganesha_running()
+{
+	# Check that NFS Ganesha is running, according to PID file
+	_pidfile="/var/run/ganesha/ganesha.pid"
+	_ganesha="ganesha.nfsd"
+	if ! {
+		read -r _pid <"$_pidfile" &&
+			[ "$(ps -p "$_pid" -o comm=)" = "$_ganesha" ]
+	} >/dev/null 2>&1; then
+
+		return 1
+	fi
+
+	return 0
+}
+
+service_check()
 {
 	create_ganesha_recdirs
 
 	# Always succeed if cluster filesystem is not active
 	_cluster_fs_state=$(get_cluster_fs_state)
-	if [ "$_cluster_fs_state" != "active" ] ; then
+	if [ "$_cluster_fs_state" != "active" ]; then
 		return 0
 	fi
 
-	# Check that NFS Ganesha is running, according to PID file
-	_pidfile="/var/run/ganesha.pid"
-	_ganesha="/usr/bin/ganesha.nfsd"
-	if ! { read -r _pid < "$_pidfile" && \
-		grep "$_ganesha" "${procfs}/${_pid}/cmdline" ; } >/dev/null 2>&1
-	then
-
+	if ! is_ganesha_running; then
 		echo "ERROR: NFS Ganesha not running according to PID file"
 		return 1
 	fi
@@ -252,44 +266,115 @@ service_check ()
 	return 0
 }
 
-#-------------------------------------------------
-
-nfs_releaseip ()
+nfs_stats()
 {
-	if [ -x "/usr/bin/grace_period" ]; then
-		/usr/bin/grace_period "2:${2}"
-	else
-		dbus-send --print-reply --system --dest=org.ganesha.nfsd \
-			  /org/ganesha/nfsd/admin org.ganesha.nfsd.admin.grace \
-			  string:"2:${2}"
-	fi
+	_service="$1"
+
+	case "$_service" in
+	nfs)
+		timeout -v 5 ganesha_stats | grep '^Total NFSv.* ops:'
+		;;
+	*)
+		# This will never change, so is intentionally
+		# unhelpful for avoiding an unhealthy service
+		echo "Not implemented" >&2
+		exit 1
+	esac
 }
 
-nfs_takeip ()
+#-------------------------------------------------
+
+grace_period()
 {
-	case  $state_fs in
-	glusterfs)
-		check_ln "$NODESTATEDIR" "${GANSTATEDIR}/${2}"
+	_arg="$1"
+
+	_gp_status=0
+	if [ -x "/usr/bin/grace_period" ]; then
+		_out=$(/usr/bin/grace_period "$_arg" 2>&1) ||
+			_gp_status=$?
+		_down_msg="Error: Can't talk to ganesha service on d-bus"
+	else
+		_out=$(dbus-send \
+			--print-reply --system --dest=org.ganesha.nfsd \
+			/org/ganesha/nfsd/admin org.ganesha.nfsd.admin.grace \
+			string:"$_arg" 2>&1) ||
+			_gp_status=$?
+		_down_msg="Error org.freedesktop.DBus.Error.ServiceUnknown"
+	fi
+
+	if [ -n "$_out" ]; then
+		echo "$_out"
+	fi
+
+	if [ $_gp_status -ne 0 ]; then
+		# If $_out contains $_down_msg then NFS-Ganesha is
+		# either down or is starting, so will be in grace
+		# anyway.
+		if [ "${_out#*"${_down_msg}"}" != "$_out" ]; then
+			return 3 # ESRCH - No such process
+		fi
+	fi
+
+	return $_gp_status
+}
+
+grace_period_if_running()
+{
+	_arg="$1"
+
+	if ! is_ganesha_running; then
+		echo "WARNING: NFS Ganesha not running according to PID file"
+		return 0
+	fi
+
+	_status=0
+	grace_period "$_arg" || _status=$?
+	case $_status in
+	3)
+		# Convert to success
+		return 0
+		;;
+	*)
+		return $_status
 		;;
 	esac
-	if [ -x "/usr/bin/grace_period" ]; then
-		/usr/bin/grace_period "5:${2}"
-	else
-		dbus-send --print-reply --system --dest=org.ganesha.nfsd \
-			  /org/ganesha/nfsd/admin org.ganesha.nfsd.admin.grace \
-			  string:"5:${2}"
-	fi
+}
+
+nfs_startipreallocate()
+{
+	grace_period_if_running "0:"
+}
+
+nfs_releaseip()
+{
+	_ip="$2"
+
+	# NFS-Ganesha recovery code only processes items matching $_ip
+	grace_period_if_running "2:${_ip}"
+}
+
+nfs_takeip()
+{
+	_ip="$2"
+
+	case "$state_fs" in
+	glusterfs)
+		check_ln "$NODESTATEDIR" "${GANSTATEDIR}/${_ip}"
+		;;
+	esac
+
+	grace_period "5:${_ip}"
 }
 
 ##################################################
 # service init startup and final shutdown
 
-nfs_shutdown ()
+nfs_shutdown()
 {
 	basic_stop "nfs"
 }
 
-nfs_startup ()
+nfs_startup()
 {
 	basic_stop "nfs" || true
 
@@ -297,7 +382,7 @@ nfs_startup ()
 
 	basic_start "nfs"
 	_f="${procfs}/sys/net/ipv4/tcp_tw_recycle"
-	if [ -f "$_f" ] ; then
+	if [ -f "$_f" ]; then
 		echo 1 >"$_f"
 	fi
 }
@@ -305,16 +390,36 @@ nfs_startup ()
 ##################################################
 # list share directories
 
-nfs_monitor_list_shares ()
+nfs_monitor_list_shares()
 {
-	grep Path "$nfs_exports_file" |
-		cut -f2 -d\" |
-		sort -u
+	# The 1st sed command prints anything after "Path = ", where
+	# Path is matched case-insensitively, and must be on a word
+	# boundary.  This also deletes any semicolon-terminated items
+	# before Path.  Each output line now starts with a value for
+	# Path, but may have other settings after a semicolon.
+	_s1='s/.*;*[[:space:]]*\<path\>[[:space:]]*=[[:space:]]*//ip'
+
+	# The 2nd sed command has 2 steps:
+	#
+	# a. Attempt to match an unquoted value not containing
+	#    semicolon or double-quote, followed by an optional
+	#    line-terminating semicolon or a semicolon followed by
+	#    anything else.  Keep the value and double-quote it.  If
+	#    the value was already quoted then the line will be
+	#    unchanged.  The pattern space now starts with a
+	#    double-quoted value.
+	_s2a='s/^\([^";][^";]*\)[[:space:]]*\(;*[[:space:]]*$\|;.*\)/"\1"/'
+	# b. Finally, print the contents of double-quotes at the
+	#    beginning of the pattern space, discarding anything
+	#    that follows.
+	_s2b='s/^"\([^"][^"]*\)".*/\1/p'
+
+	sed -n -e "$_s1" "$nfs_exports_file" | sed -n -e "$_s2a" -e "$_s2b"
 }
 
 ##################################################
 
-nfs_register ()
+nfs_register()
 {
 	cat <<EOF
 shutdown
@@ -322,6 +427,8 @@ startup
 stop
 start
 check
+stats
+startipreallocate
 releaseip
 takeip
 monitor-list-shares
@@ -334,19 +441,22 @@ action="$1"
 shift
 
 case "$action" in
-shutdown)            nfs_shutdown            ;;
-startup)             nfs_startup             ;;
-stop)                service_stop "$1"       ;;
-start)               service_start "$1"      ;;
-check)               service_check "$1"      ;;
-releaseip)           nfs_releaseip "$@"      ;;
-takeip)              nfs_takeip "$@"         ;;
+shutdown) nfs_shutdown ;;
+startup) nfs_startup ;;
+stop) service_stop "$1" ;;
+start) service_start "$1" ;;
+check) service_check "$1" ;;
+stats) nfs_stats "$1" ;;
+startipreallocate) nfs_startipreallocate ;;
+releaseip) nfs_releaseip "$@" ;;
+takeip) nfs_takeip "$@" ;;
 monitor-list-shares) nfs_monitor_list_shares ;;
-register)            nfs_register            ;;
-monitor-pre|monitor-post|releaseip-pre|takeip-pre)
+register) nfs_register ;;
+monitor-pre | monitor-post)
 	# Not required/implemented
 	:
 	;;
 *)
 	usage
+	;;
 esac

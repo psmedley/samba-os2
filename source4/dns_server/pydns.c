@@ -31,21 +31,6 @@
 #include "librpc/gen_ndr/ndr_dnsp.h"
 #include "librpc/rpc/pyrpc_util.h"
 
-/* FIXME: These should be in a header file somewhere */
-#define PyErr_LDB_OR_RAISE(py_ldb, ldb) \
-	if (!py_check_dcerpc_type(py_ldb, "ldb", "Ldb")) { \
-		PyErr_SetString(PyExc_TypeError, "Ldb connection object required"); \
-		return NULL; \
-	} \
-	ldb = pyldb_Ldb_AsLdbContext(py_ldb);
-
-#define PyErr_LDB_DN_OR_RAISE(py_ldb_dn, dn) \
-	if (!py_check_dcerpc_type(py_ldb_dn, "ldb", "Dn")) { \
-		PyErr_SetString(PyExc_TypeError, "ldb Dn object required"); \
-		return NULL; \
-	} \
-	dn = pyldb_Dn_AS_DN(py_ldb_dn);
-
 static PyObject *py_dnsp_DnssrvRpcRecord_get_list(struct dnsp_DnssrvRpcRecord *records,
 						  uint16_t num_records)
 {
@@ -157,7 +142,7 @@ static PyObject *py_dsdb_dns_lookup(PyObject *self,
 	}
 
 	ret = py_dnsp_DnssrvRpcRecord_get_list(records, num_records);
-	pydn = pyldb_Dn_FromDn(dn);
+	pydn = pyldb_Dn_FromDn(dn, (PyLdbObject *)py_ldb);
 	talloc_free(frame);
 	result = Py_BuildValue("(OO)", pydn, ret);
 	Py_CLEAR(ret);

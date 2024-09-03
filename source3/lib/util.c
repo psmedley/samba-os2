@@ -44,6 +44,7 @@
 #include "lib/dbwrap/dbwrap_ctdb.h"
 #include "lib/gencache.h"
 #include "lib/util/string_wrappers.h"
+#include "lib/util/strv.h"
 
 #ifdef HAVE_SYS_PRCTL_H
 #include <sys/prctl.h>
@@ -56,11 +57,6 @@
 #define MAX_ALLOC_SIZE (1024*1024*256)
 
 static enum protocol_types Protocol = PROTOCOL_COREPLUS;
-
-enum protocol_types get_Protocol(void)
-{
-	return Protocol;
-}
 
 void set_Protocol(enum protocol_types  p)
 {
@@ -755,7 +751,9 @@ const char *readdirname(DIR *p)
  of a path matches a (possibly wildcarded) entry in a namelist.
 ********************************************************************/
 
-bool is_in_path(const char *name, name_compare_entry *namelist, bool case_sensitive)
+bool is_in_path(const char *name,
+		struct name_compare_entry *namelist,
+		bool case_sensitive)
 {
 	const char *last_component;
 
@@ -795,120 +793,6 @@ bool is_in_path(const char *name, name_compare_entry *namelist, bool case_sensit
 	}
 	DEBUG(8,("is_in_path: match not found\n"));
 	return False;
-}
-
-/*******************************************************************
- Strip a '/' separated list into an array of
- name_compare_enties structures suitable for
- passing to is_in_path(). We do this for
- speed so we can pre-parse all the names in the list
- and don't do it for each call to is_in_path().
- We also check if the entry contains a wildcard to
- remove a potentially expensive call to mask_match
- if possible.
-********************************************************************/
-
-void set_namearray(name_compare_entry **ppname_array, const char *namelist_in)
-{
-	char *name_end;
-	char *namelist;
-	char *namelist_end;
-	char *nameptr;
-	int num_entries = 0;
-	int i;
-
-	(*ppname_array) = NULL;
-
-	if((namelist_in == NULL ) || ((namelist_in != NULL) && (*namelist_in == '\0')))
-		return;
-
-	namelist = talloc_strdup(talloc_tos(), namelist_in);
-	if (namelist == NULL) {
-		DEBUG(0,("set_namearray: talloc fail\n"));
-		return;
-	}
-	nameptr = namelist;
-
-	namelist_end = &namelist[strlen(namelist)];
-
-	/* We need to make two passes over the string. The
-		first to count the number of elements, the second
-		to split it.
-	*/
-
-	while(nameptr <= namelist_end) {
-		if ( *nameptr == '/' ) {
-			/* cope with multiple (useless) /s) */
-			nameptr++;
-			continue;
-		}
-		/* anything left? */
-		if ( *nameptr == '\0' )
-			break;
-
-		/* find the next '/' or consume remaining */
-		name_end = strchr_m(nameptr, '/');
-		if (name_end == NULL) {
-			/* Point nameptr at the terminating '\0' */
-			nameptr += strlen(nameptr);
-		} else {
-			/* next segment please */
-			nameptr = name_end + 1;
-		}
-		num_entries++;
-	}
-
-	if(num_entries == 0) {
-		talloc_free(namelist);
-		return;
-	}
-
-	if(( (*ppname_array) = SMB_MALLOC_ARRAY(name_compare_entry, num_entries + 1)) == NULL) {
-		DEBUG(0,("set_namearray: malloc fail\n"));
-		talloc_free(namelist);
-		return;
-	}
-
-	/* Now copy out the names */
-	nameptr = namelist;
-	i = 0;
-	while(nameptr <= namelist_end) {
-		if ( *nameptr == '/' ) {
-			/* cope with multiple (useless) /s) */
-			nameptr++;
-			continue;
-		}
-		/* anything left? */
-		if ( *nameptr == '\0' )
-			break;
-
-		/* find the next '/' or consume remaining */
-		name_end = strchr_m(nameptr, '/');
-		if (name_end != NULL) {
-			*name_end = '\0';
-		}
-
-		(*ppname_array)[i].is_wild = ms_has_wild(nameptr);
-		if(((*ppname_array)[i].name = SMB_STRDUP(nameptr)) == NULL) {
-			DEBUG(0,("set_namearray: malloc fail (1)\n"));
-			talloc_free(namelist);
-			return;
-		}
-
-		if (name_end == NULL) {
-			/* Point nameptr at the terminating '\0' */
-			nameptr += strlen(nameptr);
-		} else {
-			/* next segment please */
-			nameptr = name_end + 1;
-		}
-		i++;
-	}
-
-	(*ppname_array)[i].name = NULL;
-
-	talloc_free(namelist);
-	return;
 }
 
 #undef DBGC_CLASS
@@ -1078,7 +962,7 @@ const char *get_remote_arch_str(void)
 
 enum remote_arch_types get_remote_arch_from_str(const char *remote_arch_string)
 {
-	int i;
+	size_t i;
 
 	for (i = 0; i < ARRAY_SIZE(remote_arch_strings); i++) {
 		if (strcmp(remote_arch_string, remote_arch_strings[i]) == 0) {
@@ -1519,65 +1403,6 @@ bool mask_match_list(const char *string, char **list, int listLen, bool is_case_
        return False;
 }
 
-/**********************************************************************
-  Converts a name to a fully qualified domain name.
-  Returns true if lookup succeeded, false if not (then fqdn is set to name)
-  Uses getaddrinfo() with AI_CANONNAME flag to obtain the official
-  canonical name of the host. getaddrinfo() may use a variety of sources
-  including /etc/hosts to obtain the domainname. It expects aliases in
-  /etc/hosts to NOT be the FQDN. The FQDN should come first.
-************************************************************************/
-
-bool name_to_fqdn(fstring fqdn, const char *name)
-{
-	char *full = NULL;
-	struct addrinfo hints;
-	struct addrinfo *result;
-	int s;
-
-	/* Configure hints to obtain canonical name */
-
-	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
-	hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
-	hints.ai_flags = AI_CANONNAME;  /* Get host's FQDN */
-	hints.ai_protocol = 0;          /* Any protocol */
-
-	s = getaddrinfo(name, NULL, &hints, &result);
-	if (s != 0) {
-		DBG_WARNING("getaddrinfo lookup for %s failed: %s\n",
-			name,
-			gai_strerror(s));
-		fstrcpy(fqdn, name);
-		return false;
-	}
-	full = result->ai_canonname;
-
-	/* Find out if the FQDN is returned as an alias
-	 * to cope with /etc/hosts files where the first
-	 * name is not the FQDN but the short name.
-	 * getaddrinfo provides no easy way of handling aliases
-	 * in /etc/hosts. Users should make sure the FQDN
-	 * comes first in /etc/hosts. */
-	if (full && (! strchr_m(full, '.'))) {
-		DEBUG(1, ("WARNING: your /etc/hosts file may be broken!\n"));
-		DEBUGADD(1, ("    Full qualified domain names (FQDNs) should not be specified\n"));
-		DEBUGADD(1, ("    as an alias in /etc/hosts. FQDN should be the first name\n"));
-		DEBUGADD(1, ("    prior to any aliases.\n"));
-	}
-	if (full && (strcasecmp_m(full, "localhost.localdomain") == 0)) {
-		DEBUG(1, ("WARNING: your /etc/hosts file may be broken!\n"));
-		DEBUGADD(1, ("    Specifying the machine hostname for address 127.0.0.1 may lead\n"));
-		DEBUGADD(1, ("    to Kerberos authentication problems as localhost.localdomain\n"));
-		DEBUGADD(1, ("    may end up being used instead of the real machine FQDN.\n"));
-	}
-
-	DEBUG(10,("name_to_fqdn: lookup for %s -> %s.\n", name, full));
-	fstrcpy(fqdn, full);
-	freeaddrinfo(result);           /* No longer needed */
-	return true;
-}
-
 struct server_id interpret_pid(const char *pid_string)
 {
 	return server_id_from_string(get_my_vnn(), pid_string);
@@ -1910,9 +1735,12 @@ struct security_unix_token *copy_unix_token(TALLOC_CTX *ctx, const struct securi
 		return NULL;
 	}
 
-	cpy->uid = tok->uid;
-	cpy->gid = tok->gid;
-	cpy->ngroups = tok->ngroups;
+	*cpy = (struct security_unix_token){
+		.uid = tok->uid,
+		.gid = tok->gid,
+		.ngroups = tok->ngroups,
+	};
+
 	if (tok->ngroups) {
 		/* Make this a talloc child of cpy. */
 		cpy->groups = (gid_t *)talloc_memdup(
@@ -1921,8 +1749,6 @@ struct security_unix_token *copy_unix_token(TALLOC_CTX *ctx, const struct securi
 			TALLOC_FREE(cpy);
 			return NULL;
 		}
-	} else {
-		cpy->groups = NULL;
 	}
 	return cpy;
 }

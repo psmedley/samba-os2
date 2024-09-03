@@ -101,9 +101,6 @@ bool ctdb_set_helper(const char *type, char *helper, size_t size,
 		     const char *envvar,
 		     const char *dir, const char *file);
 
-int ctdb_parse_address(TALLOC_CTX *mem_ctx, const char *str,
-		       ctdb_sock_addr *address);
-
 bool ctdb_same_address(ctdb_sock_addr *a1, ctdb_sock_addr *a2);
 
 uint32_t ctdb_hash(const TDB_DATA *key);
@@ -142,16 +139,9 @@ char *ctdb_addr_to_str(ctdb_sock_addr *addr);
 
 unsigned ctdb_addr_to_port(ctdb_sock_addr *addr);
 
-struct ctdb_node_map_old *ctdb_read_nodes_file(TALLOC_CTX *mem_ctx,
-					       const char *nlist);
-
 struct ctdb_node_map_old *ctdb_node_list_to_map(struct ctdb_node **nodes,
 						uint32_t num_nodes,
 						TALLOC_CTX *mem_ctx);
-
-const char *runstate_to_string(enum ctdb_runstate runstate);
-
-enum ctdb_runstate runstate_from_string(const char *label);
 
 void ctdb_set_runstate(struct ctdb_context *ctdb, enum ctdb_runstate runstate);
 

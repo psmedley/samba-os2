@@ -203,22 +203,22 @@ static bool preopen_helper_open_one(int sock_fd, char **pnamebuf,
 				    size_t to_read, void *filebuf)
 {
 	char *namebuf = *pnamebuf;
-	ssize_t nread;
+	size_t nread = 0;
+	ssize_t chunk;
 	char c = 0;
 	int fd;
 
-	nread = 0;
-
 	do {
-		ssize_t thistime;
-
-		thistime = read(sock_fd, namebuf + nread,
+		chunk = read(sock_fd, namebuf + nread,
 				talloc_get_size(namebuf) - nread);
-		if (thistime <= 0) {
+		if (chunk <= 0) {
 			return false;
 		}
 
-		nread += thistime;
+		if (nread + chunk < nread) {
+			return false;
+		}
+		nread += chunk;
 
 		if (nread == talloc_get_size(namebuf)) {
 			namebuf = talloc_realloc(
@@ -235,7 +235,7 @@ static bool preopen_helper_open_one(int sock_fd, char **pnamebuf,
 	if (fd == -1) {
 		goto done;
 	}
-	nread = read(fd, filebuf, to_read);
+	chunk = read(fd, filebuf, to_read);
 	close(fd);
 
  done:

@@ -29,6 +29,7 @@
 #include "locking/share_mode_lock.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
+#include "source3/smbd/smbXsrv_session.h"
 #include "smbd/smbXsrv_open.h"
 #include "registry/reg_init_full.h"
 #include "libcli/auth/schannel.h"
@@ -58,6 +59,7 @@
 #include "g_lock.h"
 #include "lib/global_contexts.h"
 #include "source3/lib/substitute.h"
+#include "lib/addrchange.h"
 
 #ifdef CLUSTER_SUPPORT
 #include "ctdb_protocol.h"
@@ -1286,6 +1288,13 @@ static bool open_sockets_smbd(struct smbd_parent_context *parent,
 	messaging_register(msg_ctx, NULL, MSG_SMB_NOTIFY_STARTED,
 			   smb_parent_send_to_children);
 
+	if (lp_interfaces() && lp_bind_interfaces_only()) {
+		messaging_register(msg_ctx,
+				   NULL,
+				   MSG_SMB_IP_DROPPED,
+				   smb_parent_send_to_children);
+	}
+
 #ifdef DEVELOPER
 	messaging_register(msg_ctx, NULL, MSG_SMB_INJECT_FAULT,
 			   msg_inject_fault);
@@ -1507,7 +1516,7 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 			     NULL,
 			     NULL);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_WARNING("g_lock_lock(G_LOCK_WRITE) failed: %s\n",
+		DBG_WARNING("g_lock_lock(G_LOCK_UPGRADE) failed: %s\n",
 			    nt_errstr(status));
 		DBG_ERR("smbd %s already running, refusing to start "
 			"version %s\n", state.version, version);
@@ -1531,7 +1540,7 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 			     NULL,
 			     NULL);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_WARNING("g_lock_lock(G_LOCK_READ) failed: %s\n",
+		DBG_WARNING("g_lock_lock(G_LOCK_DOWNGRADE) failed: %s\n",
 			    nt_errstr(status));
 		TALLOC_FREE(ctx);
 		return status;
@@ -1541,6 +1550,216 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 	 * Leave "ctx" dangling so that g_lock.tdb keeps opened.
 	 */
 	return NT_STATUS_OK;
+}
+
+/****************************************************************************
+ Open socket communication on given ip address
+****************************************************************************/
+
+static bool smbd_open_socket_for_ip(struct smbd_parent_context *parent,
+				    struct tevent_context *ev_ctx,
+				    struct messaging_context *msg_ctx,
+				    const char *smb_ports,
+				    const struct sockaddr_storage *ifss)
+{
+	int j;
+	const char **ports;
+	unsigned dns_port = 0;
+	TALLOC_CTX *ctx;
+	bool status = true;
+
+	ports = lp_smb_ports();
+	ctx = talloc_stackframe();
+
+	/* use a reasonable default set of ports - listing on 445 and 139 */
+	if (smb_ports) {
+		char **l;
+		l = str_list_make_v3(ctx, smb_ports, NULL);
+		ports = discard_const_p(const char *, l);
+	}
+
+	for (j = 0; ports && ports[j]; j++) {
+		unsigned port = atoi(ports[j]);
+
+		/* Keep the first port for mDNS service
+		 * registration.
+		 */
+		if (dns_port == 0) {
+			dns_port = port;
+		}
+
+		if (!smbd_open_one_socket(parent,
+					  ev_ctx,
+					  ifss,
+					  port)) {
+			status = false;
+			goto out_free;
+		}
+	}
+
+out_free:
+	TALLOC_FREE(ctx);
+	return status;
+}
+
+struct smbd_addrchanged_state {
+	struct addrchange_context *ctx;
+	struct tevent_context *ev;
+	struct messaging_context *msg_ctx;
+	struct smbd_parent_context *parent;
+	char *ports;
+};
+
+static void smbd_addr_changed(struct tevent_req *req);
+
+static void smbd_init_addrchange(TALLOC_CTX *mem_ctx,
+				struct tevent_context *ev,
+				struct messaging_context *msg_ctx,
+				struct smbd_parent_context *parent,
+				char *ports)
+{
+	struct smbd_addrchanged_state *state;
+	struct tevent_req *req;
+	NTSTATUS status;
+
+	state = talloc(mem_ctx, struct smbd_addrchanged_state);
+	if (state == NULL) {
+		DBG_DEBUG("talloc failed\n");
+		return;
+	}
+	*state = (struct smbd_addrchanged_state) {
+		.ev = ev,
+		.msg_ctx = msg_ctx,
+		.parent = parent,
+		.ports = ports
+	};
+
+	status = addrchange_context_create(state, &state->ctx);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_DEBUG("addrchange_context_create failed: %s\n",
+			  nt_errstr(status));
+		TALLOC_FREE(state);
+		return;
+	}
+	req = addrchange_send(state, ev, state->ctx);
+	if (req == NULL) {
+		DBG_ERR("addrchange_send failed\n");
+		TALLOC_FREE(state);
+		return;
+	}
+	tevent_req_set_callback(req, smbd_addr_changed, state);
+}
+
+static void smbd_close_socket_for_ip(struct smbd_parent_context *parent,
+				     struct messaging_context *msg_ctx,
+				     struct sockaddr_storage *addr)
+{
+	struct smbd_open_socket *s = NULL;
+
+	for (s = parent->sockets; s != NULL; s = s->next) {
+		struct sockaddr_storage a;
+		socklen_t addr_len = sizeof(a);
+
+		if (getsockname(s->fd, (struct sockaddr *)&a, &addr_len) < 0) {
+			DBG_NOTICE("smbd: Unable to get address - skip\n");
+			continue;
+		}
+		if (sockaddr_equal((struct sockaddr *)&a,
+				   (struct sockaddr *)addr)) {
+			char addrstr[INET6_ADDRSTRLEN];
+			DATA_BLOB blob;
+			NTSTATUS status;
+
+			DLIST_REMOVE(parent->sockets, s);
+			TALLOC_FREE(s);
+			print_sockaddr(addrstr, sizeof(addrstr), addr);
+			DBG_NOTICE("smbd: Closed listening socket for %s\n",
+				   addrstr);
+
+			blob = data_blob_const(addrstr, strlen(addrstr)+1);
+			status = messaging_send(msg_ctx,
+						messaging_server_id(msg_ctx),
+						MSG_SMB_IP_DROPPED,
+						&blob);
+			if (!NT_STATUS_IS_OK(status)) {
+				DBG_NOTICE(
+					"messaging_send failed: %s - ignoring\n",
+					nt_errstr(status));
+			}
+			return;
+		}
+	}
+}
+
+static void smbd_addr_changed(struct tevent_req *req)
+{
+	struct smbd_addrchanged_state *state = tevent_req_callback_data(
+		req, struct smbd_addrchanged_state);
+	enum addrchange_type type;
+	struct sockaddr_storage addr;
+	NTSTATUS status;
+	uint32_t if_index;
+	bool match;
+
+	status = addrchange_recv(req, &type, &addr, &if_index);
+	TALLOC_FREE(req);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_DEBUG("addrchange_recv failed: %s, stop listening\n",
+			  nt_errstr(status));
+		TALLOC_FREE(state);
+		return;
+	}
+
+	match = interface_ifindex_exists_with_options(if_index,
+						      IFACE_DYNAMIC_OPTION);
+	if (!match) {
+		DBG_NOTICE(
+			"smbd: No interface present for if_index %u "
+			"with dynamic option\n",
+			if_index);
+		goto rearm;
+	}
+
+	if (type == ADDRCHANGE_DEL) {
+		char addrstr[INET6_ADDRSTRLEN];
+
+		print_sockaddr(addrstr, sizeof(addrstr), &addr);
+
+		DBG_NOTICE("smbd: kernel (AF_NETLINK) dropped ip %s "
+			   "on if_index %u\n",
+			   addrstr, if_index);
+
+		smbd_close_socket_for_ip(state->parent, state->msg_ctx, &addr);
+
+		goto rearm;
+	}
+
+	if (type == ADDRCHANGE_ADD) {
+		char addrstr[INET6_ADDRSTRLEN];
+
+		print_sockaddr(addrstr, sizeof(addrstr), &addr);
+
+		DBG_NOTICE("smbd: kernel (AF_NETLINK) added ip %s "
+			   "on if_index %u\n",
+			   addrstr, if_index);
+
+		if (!smbd_open_socket_for_ip(state->parent,
+					     state->ev,
+					     state->msg_ctx,
+					     state->ports,
+					     &addr)) {
+			DBG_NOTICE("smbd: Unable to open socket on %s\n",
+				   addrstr);
+		}
+	}
+rearm:
+	req = addrchange_send(state, state->ev, state->ctx);
+	if (req == NULL) {
+		DBG_ERR("addrchange_send failed\n");
+		TALLOC_FREE(state);
+		return;
+	}
+	tevent_req_set_callback(req, smbd_addr_changed, state);
 }
 
 /****************************************************************************
@@ -2113,6 +2332,10 @@ extern void build_options(bool screen);
 
 		exit_server_cleanly(NULL);
 		return(0);
+	}
+
+	if (lp_interfaces() && lp_bind_interfaces_only()) {
+		smbd_init_addrchange(NULL, ev_ctx, msg_ctx, parent, ports);
 	}
 
 	if (!open_sockets_smbd(parent, ev_ctx, msg_ctx, ports))

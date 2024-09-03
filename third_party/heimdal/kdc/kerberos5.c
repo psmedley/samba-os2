@@ -1061,7 +1061,7 @@ pa_enc_ts_decrypt_kvno(astgs_request_t r,
     krb5_crypto_destroy(r->context, crypto);
     /*
      * Since the user might have several keys with the same
-     * enctype but with diffrent salting, we need to try all
+     * enctype but with different salting, we need to try all
      * the keys with the same enctype.
      */
     if (ret) {
@@ -1143,7 +1143,6 @@ pa_enc_ts_validate(astgs_request_t r, const PA_DATA *pa)
 			       kvno);
 	goto out;
     }
-
     if (ret == KRB5KDC_ERR_PREAUTH_FAILED) {
 	krb5_error_code ret2;
 	const char *msg = krb5_get_error_message(r->context, ret);
@@ -1205,6 +1204,9 @@ pa_enc_ts_validate(astgs_request_t r, const PA_DATA *pa)
 	goto out;
     }
     free_EncryptedData(&enc_data);
+    if (ret) {
+	goto out;
+    }
     ret = decode_PA_ENC_TS_ENC(ts_data.data,
 			       ts_data.length,
 			       &p,
@@ -1383,6 +1385,7 @@ struct kdc_patypes {
 #define PA_REPLACE_REPLY_KEY	8   /* PA mech replaces reply key */
 #define PA_USES_LONG_TERM_KEY	16  /* PA mech uses client's long-term key */
 #define PA_USES_FAST_COOKIE	32  /* Multi-step PA mech maintains state in PA-FX-COOKIE */
+#define PA_HARDWARE_AUTH	64  /* PA mech uses hardware authentication */
     krb5_error_code (*validate)(astgs_request_t, const PA_DATA *pa);
     krb5_error_code (*finalize_pac)(astgs_request_t r);
     void (*cleanup)(astgs_request_t r);
@@ -1392,11 +1395,11 @@ static const struct kdc_patypes pat[] = {
 #ifdef PKINIT
     {
 	KRB5_PADATA_PK_AS_REQ, "PK-INIT(ietf)",
-        PA_ANNOUNCE | PA_SYNTHETIC_OK | PA_REPLACE_REPLY_KEY,
+        PA_ANNOUNCE | PA_SYNTHETIC_OK | PA_REPLACE_REPLY_KEY | PA_HARDWARE_AUTH,
 	pa_pkinit_validate, NULL, NULL
     },
     {
-	KRB5_PADATA_PK_AS_REQ_WIN, "PK-INIT(win2k)", PA_ANNOUNCE | PA_REPLACE_REPLY_KEY,
+	KRB5_PADATA_PK_AS_REQ_WIN, "PK-INIT(win2k)", PA_ANNOUNCE | PA_REPLACE_REPLY_KEY | PA_HARDWARE_AUTH,
 	pa_pkinit_validate, NULL, NULL
     },
     {
@@ -2225,7 +2228,6 @@ generate_pac(astgs_request_t r, const Key *skey, const Key *tkey,
 	     krb5_boolean is_tgs)
 {
     krb5_error_code ret;
-    krb5_data data;
     uint16_t rodc_id;
     krb5_principal client;
     krb5_const_principal canon_princ = NULL;
@@ -2290,18 +2292,18 @@ generate_pac(astgs_request_t r, const Key *skey, const Key *tkey,
 	    return ret;
     }
 
-    ret = _krb5_pac_sign(r->context,
-			 r->pac,
-			 r->et.authtime,
-			 client,
-			 &skey->key, /* Server key */
-			 &tkey->key, /* TGS key */
-			 rodc_id,
-			 NULL, /* UPN */
-			 canon_princ,
-			 FALSE, /* add_full_sig */
-			 is_tgs ? &r->pac_attributes : NULL,
-			 &data);
+    ret = _krb5_kdc_pac_sign_ticket(r->context,
+				    r->pac,
+				    client,
+				    &skey->key, /* Server key */
+				    &tkey->key, /* TGS key */
+				    rodc_id,
+				    NULL, /* UPN */
+				    canon_princ,
+				    !is_tgs, /* add_ticket_sig */
+				    !is_tgs, /* add_full_sig */
+				    &r->et,
+				    is_tgs ? &r->pac_attributes : NULL);
     krb5_free_principal(r->context, client);
     krb5_pac_free(r->context, r->pac);
     r->pac = NULL;
@@ -2310,9 +2312,6 @@ generate_pac(astgs_request_t r, const Key *skey, const Key *tkey,
 		   r->cname);
 	return ret;
     }
-    
-    ret = _kdc_tkt_insert_pac(r->context, &r->et, &data);
-    krb5_data_free(&data);
 
     return ret;
 }
@@ -2691,6 +2690,13 @@ _kdc_as_rep(astgs_request_t r)
                     kdc_log(r->context, config, 4, "UNKNOWN -- %s", r->cname);
                     ret = KRB5KDC_ERR_C_PRINCIPAL_UNKNOWN;
                     goto out;
+                }
+                if (!(pat[n].flags & PA_HARDWARE_AUTH)) {
+                    ret = _kdc_hwauth_policy(r);
+                    if (ret) {
+                        kdc_log(r->context, config, 4, "Hardware authentication required for %s", r->cname);
+                        goto out;
+                    }
                 }
 		kdc_audit_addkv((kdc_request_t)r, KDC_AUDIT_VIS, "pa", "%s",
 				pat[n].name);
@@ -3099,13 +3105,6 @@ _kdc_as_rep(astgs_request_t r)
     if (ret)
 	goto out;
 
-    /* Add the PAC */
-    if (!r->et.flags.anonymous) {
-	ret = generate_pac(r, skey, krbtgt_key, is_tgs);
-	if (ret)
-	    goto out;
-    }
-
     if (r->client->flags.synthetic) {
 	ret = add_synthetic_princ_ad(r);
 	if (ret)
@@ -3148,6 +3147,18 @@ _kdc_as_rep(astgs_request_t r)
 	    goto out;
 	}
     }
+
+    /* Add the PAC */
+    if (!r->et.flags.anonymous) {
+	ret = generate_pac(r, skey, krbtgt_key, is_tgs);
+	if (ret)
+	    goto out;
+    }
+
+    /*
+     * No more changes to the ticket (r->et) from this point on, lest
+     * the checksums in the PAC be invalidated.
+     */
 
     /*
      * Last chance for plugins to update reply

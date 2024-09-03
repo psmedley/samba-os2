@@ -131,9 +131,25 @@ EOF
 gdb)
 	cat <<EOF >${BATCHFILE_MAIN}
 set height 0
+echo \\n### detailed backtrace\\n\\n
 bt full
-thread apply all bt full
+init-if-undefined \$_inferior_thread_count = 0
+if \$_inferior_thread_count != 1
+  echo \\n### info threads\\n\\n
+  info threads
+  echo \\n### backtrace for all threads\\n\\n
+  thread apply all bt full
+end
+echo \\n### info locals\\n\\n
 info locals
+if PyList_New
+  echo \\n### Python traceback\\n\\n
+  py-bt
+  echo \\n### Python locals\\n\\n
+  py-locals
+  echo \\n### Python full traceback\\n\\n
+  py-bt-full
+end
 quit
 EOF
 	${DB_BIN} -batch -x "${BATCHFILE_MAIN}" --pid "${PID}" </dev/null

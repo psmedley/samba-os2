@@ -544,8 +544,14 @@ smb_complete_connection(struct cli_state **output_cli,
 	struct cli_credentials *creds = NULL;
 
 	/* Start the SMB connection */
-	nt_status = cli_start_connection(&cli, myname, server, NULL, port,
-					 SMB_SIGNING_DEFAULT, 0);
+	nt_status = cli_start_connection(talloc_tos(),
+					 &cli,
+					 myname,
+					 server,
+					 NULL,
+					 port,
+					 SMB_SIGNING_DEFAULT,
+					 0);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		fprintf(stderr, "ERROR: Connection failed: %s\n", nt_errstr(nt_status));
 		return nt_status;
@@ -602,7 +608,7 @@ static bool kerberos_ccache_is_valid(void) {
 		return false;
 	}
 
-	ccache_name = krb5_cc_default_name(ctx);
+	ccache_name = smb_force_krb5_cc_default_name(ctx);
 	if (ccache_name == NULL) {
 		DBG_ERR("Failed to get default ccache name\n");
 		krb5_free_context(ctx);

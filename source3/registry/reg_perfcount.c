@@ -1,20 +1,20 @@
-/* 
+/*
  *  Unix SMB/CIFS implementation.
  *  Virtual Windows Registry Layer
  *
  *  Copyright (C) Marcin Krzysztof Porwit    2005,
  *  Copyright (C) Gerald (Jerry) Carter      2005.
- *  
+ *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation; either version 3 of the License, or
  *  (at your option) any later version.
- *  
+ *
  *  This program is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *  
+ *
  *  You should have received a copy of the GNU General Public License
  *  along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
@@ -173,12 +173,15 @@ static uint32_t _reg_perfcount_multi_sz_from_tdb(TDB_CONTEXT *tdb,
 	DATA_BLOB name_index, name;
 	bool ok;
 
+	/* Set to NULL, to avoid possible double frees on error. */
+	*retbuf = NULL;
+
 	snprintf(temp, sizeof(temp), "%d", keyval);
 	kbuf = string_tdb_data(temp);
 	dbuf = tdb_fetch(tdb, kbuf);
 	if(dbuf.dptr == NULL)
 	{
-		/* If a key isn't there, just bypass it -- this really shouldn't 
+		/* If a key isn't there, just bypass it -- this really shouldn't
 		   happen unless someone's mucking around with the tdb */
 		DEBUG(3, ("_reg_perfcount_multi_sz_from_tdb: failed to find key [%s] in [%s].\n",
 			  temp, tdb_name(tdb)));
@@ -259,6 +262,9 @@ uint32_t reg_perfcount_get_counter_help(uint32_t base_index, char **retbuf)
 	for(i = 1; i <= base_index; i++)
 	{
 		buffer_size = _reg_perfcount_multi_sz_from_tdb(names, (i*2)+1, retbuf, buffer_size);
+		if (buffer_size == 0) {
+			return buffer_size;
+		}
 	}
 	tdb_close(names);
 
@@ -307,10 +313,16 @@ uint32_t reg_perfcount_get_counter_names(uint32_t base_index, char **retbuf)
 	TALLOC_FREE(fname);
 
 	buffer_size = _reg_perfcount_multi_sz_from_tdb(names, 1, retbuf, buffer_size);
+	if (buffer_size == 0) {
+		return buffer_size;
+	}
 
 	for(i = 1; i <= base_index; i++)
 	{
 		buffer_size = _reg_perfcount_multi_sz_from_tdb(names, i*2, retbuf, buffer_size);
+		if (buffer_size == 0) {
+			return buffer_size;
+		}
 	}
 	tdb_close(names);
 
@@ -341,7 +353,7 @@ static void _reg_perfcount_make_key(TDB_DATA *key,
 	memset(buf, 0, buflen);
 	if(key_part2 != NULL)
 		snprintf(buf, buflen,"%d%s", key_part1, key_part2);
-	else 
+	else
 		snprintf(buf, buflen, "%d", key_part1);
 
 	*key = string_tdb_data(buf);
@@ -602,7 +614,7 @@ static bool _reg_perfcount_get_counter_info(struct PERF_DATA_BLOCK *block,
 		return False;
 	if(dbuf[0] != 0 || dbuf[1] != 0)
 	{
-		memcpy((void *)(obj->counter_data.data + 
+		memcpy((void *)(obj->counter_data.data +
 				(obj->counter_data.ByteLength - (sizeof(uint32_t) + dsize))),
 		       (const void *)dbuf, dsize);
 	}
@@ -860,7 +872,7 @@ static int _reg_perfcount_assemble_global(struct PERF_DATA_BLOCK *block,
 		}
 		else
 			DEBUG(3, ("NULL relationship for counter [%d] using key [%s].\n", j, keybuf));
-	}	
+	}
 	return retval;
 }
 
@@ -1054,8 +1066,8 @@ static uint32_t _reg_perfcount_perf_data_block_fixup(struct PERF_DATA_BLOCK *blo
 				counter = &(object[obj].counters[object[obj].NumCounters - 1]);
 				counter_data->ByteLength = counter->CounterOffset + counter->CounterSize + sizeof(counter_data->ByteLength);
 				temp = talloc_realloc(mem_ctx,
-							    temp, 
-							    char, 
+							    temp,
+							    char,
 							    counter_data->ByteLength- sizeof(counter_data->ByteLength));
 				if (temp == NULL) {
 					return 0;
@@ -1233,8 +1245,8 @@ static bool _reg_perfcount_marshall_perf_data_block(prs_struct *ps, struct PERF_
 	if(!prs_uint32("SystemNameOffset", ps, depth, &block.SystemNameOffset))
 		return False;
 	/* hack to make sure we're 64-bit aligned at the end of this whole mess */
-	if(!prs_uint8s(False, "SystemName", ps, depth, block.data, 
-		       block.HeaderLength - block.SystemNameOffset)) 
+	if(!prs_uint8s(False, "SystemName", ps, depth, block.data,
+		       block.HeaderLength - block.SystemNameOffset))
 		return False;
 
 	return True;
@@ -1287,7 +1299,7 @@ static bool _reg_perfcount_marshall_perf_counters(prs_struct *ps,
 /*********************************************************************
 *********************************************************************/
 
-static bool _reg_perfcount_marshall_perf_counter_data(prs_struct *ps, 
+static bool _reg_perfcount_marshall_perf_counter_data(prs_struct *ps,
 						      struct PERF_COUNTER_BLOCK counter_data,
 						      int depth)
 {
@@ -1460,4 +1472,4 @@ WERROR reg_perfcount_get_hkpd(prs_struct *ps, uint32_t max_buf_size, uint32_t *o
 
 		return WERR_INSUFFICIENT_BUFFER;
 	}
-}    
+}

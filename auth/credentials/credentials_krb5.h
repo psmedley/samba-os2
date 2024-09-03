@@ -23,9 +23,8 @@
 #ifndef __CREDENTIALS_KRB5_H__
 #define __CREDENTIALS_KRB5_H__
 
-#include <gssapi/gssapi.h>
-#include <gssapi/gssapi_krb5.h>
-#include <krb5.h>
+#include "system/gssapi.h"
+#include "system/kerberos.h"
 
 struct gssapi_creds_container {
 	gss_cred_id_t creds;
@@ -40,6 +39,13 @@ int cli_credentials_set_client_gss_creds(struct cli_credentials *cred,
 
 struct cli_credentials *cli_credentials_shallow_copy(TALLOC_CTX *mem_ctx,
 						struct cli_credentials *src);
+
+int cli_credentials_get_kerberos_key(struct cli_credentials *cred,
+				     TALLOC_CTX *mem_ctx,
+				     struct loadparm_context *lp_ctx,
+				     krb5_enctype enctype,
+				     bool previous,
+				     DATA_BLOB *key_blob);
 
 
 #endif /* __CREDENTIALS_KRB5_H__ */

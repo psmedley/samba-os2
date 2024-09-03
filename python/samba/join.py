@@ -20,7 +20,7 @@
 
 from samba.auth import system_session
 from samba.samdb import SamDB
-from samba import gensec, Ldb, drs_utils, arcfour_encrypt, string_to_byte_array
+from samba import gensec, Ldb, drs_utils, arcfour_encrypt
 import ldb
 import samba
 import uuid
@@ -1096,11 +1096,11 @@ class DCJoinContext(object):
             # was sent, as we are processing all links in the
             # transaction_commit().
             if not ctx.domain_replica_flags & drsuapi.DRSUAPI_DRS_CRITICAL_ONLY:
-                ctx.local_samdb.set_opaque_integer(dsdb.DSDB_FULL_JOIN_REPLICATION_COMPLETED_OPAQUE_NAME,
-                                                   1)
+                ctx.local_samdb.set_opaque(dsdb.DSDB_FULL_JOIN_REPLICATION_COMPLETED_OPAQUE_NAME,
+                                           1)
             ctx.local_samdb.transaction_commit()
-            ctx.local_samdb.set_opaque_integer(dsdb.DSDB_FULL_JOIN_REPLICATION_COMPLETED_OPAQUE_NAME,
-                                               0)
+            ctx.local_samdb.set_opaque(dsdb.DSDB_FULL_JOIN_REPLICATION_COMPLETED_OPAQUE_NAME,
+                                       0)
             ctx.logger.info("Committed SAM database")
 
         # A large replication may have caused our LDB connection to the
@@ -1320,8 +1320,8 @@ class DCJoinContext(object):
         if ctx.RODC:
             print("Setting RODC invocationId")
             ctx.local_samdb.set_invocation_id(str(ctx.invocation_id))
-            ctx.local_samdb.set_opaque_integer("domainFunctionality",
-                                               ctx.behavior_version)
+            ctx.local_samdb.set_opaque("domainFunctionality",
+                                       ctx.behavior_version)
             m = ldb.Message()
             m.dn = ldb.Dn(ctx.local_samdb, "%s" % ctx.ntds_dn)
             m["invocationId"] = ldb.MessageElement(ndr_pack(ctx.invocation_id),
@@ -1407,7 +1407,7 @@ class DCJoinContext(object):
         except RuntimeError:
             pass
 
-        password_blob = string_to_byte_array(ctx.trustdom_pass.encode('utf-16-le'))
+        password_blob = list(ctx.trustdom_pass.encode('utf-16-le'))
 
         clear_value = drsblobs.AuthInfoClear()
         clear_value.size = len(password_blob)
@@ -1443,7 +1443,7 @@ class DCJoinContext(object):
 
         auth_blob = lsa.DATA_BUF2()
         auth_blob.size = len(encrypted_trustpass)
-        auth_blob.data = string_to_byte_array(encrypted_trustpass)
+        auth_blob.data = list(encrypted_trustpass)
 
         auth_info = lsa.TrustDomainInfoAuthInfoInternal()
         auth_info.auth_blob = auth_blob

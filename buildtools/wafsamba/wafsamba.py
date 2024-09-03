@@ -33,6 +33,7 @@ import symbols
 import pkgconfig
 import configure_file
 import samba_waf18
+import samba_bundled
 
 LIB_PATH="shared"
 
@@ -182,6 +183,7 @@ def SAMBA_LIBRARY(bld, libname, source,
 
     if LIB_MUST_BE_PRIVATE(bld, libname) and target_type not in ['PLUGIN']:
         private_library = True
+        public_headers_install = False
 
     if force_unversioned:
         private_library = False
@@ -574,8 +576,7 @@ def SAMBA_MODULE(bld, modname, source,
                  manpages=None,
                  allow_undefined_symbols=False,
                  allow_warnings=False,
-                 install=True
-                 ):
+                 install=True):
     '''define a Samba module.'''
 
     bld.ASSERT(subsystem, "You must specify a subsystem for SAMBA_MODULE(%s)" % modname)
@@ -626,6 +627,11 @@ def SAMBA_MODULE(bld, modname, source,
 
     build_link_name = "modules/%s/%s" % (subsystem, realname)
 
+    if f'{subsystem}_modules_install_dir' in bld.env:
+        install_path = bld.env[f'{subsystem}_modules_install_dir']
+    else:
+        install_path = "${MODULESDIR}/%s" % subsystem
+
     if init_function:
         cflags += " -D%s=%s" % (init_function, module_init_name)
 
@@ -642,7 +648,7 @@ def SAMBA_MODULE(bld, modname, source,
                       vars=vars,
                       bundled_name=build_name,
                       link_name=build_link_name,
-                      install_path="${MODULESDIR}/%s" % subsystem,
+                      install_path=install_path,
                       pyembed=pyembed,
                       manpages=manpages,
                       allow_undefined_symbols=allow_undefined_symbols,

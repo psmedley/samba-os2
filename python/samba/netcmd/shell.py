@@ -28,8 +28,8 @@ import ldb
 
 import samba.getopt as options
 from samba import version
+from samba.domain.models import MODELS
 from samba.netcmd import Command
-from samba.netcmd.domain.models import MODELS
 
 
 class cmd_shell(Command):
@@ -51,7 +51,7 @@ class cmd_shell(Command):
             "samdb": samdb,
             "ldb": ldb,
         })
-        context.update(MODELS)
+        context.update({model.__name__: model for model in MODELS.values()})
 
         banner = rf"""
    _____         __  __ ____
@@ -65,9 +65,12 @@ class cmd_shell(Command):
 Variables:
 
 samdb = {samdb}
+
+Models:
+
 """
         for name, model in MODELS.items():
-            banner += f"{name} = {model}\n"
+            banner += f"{model.__name__}: {name}\n"
 
         readline.parse_and_bind("tab: complete")
         readline.set_completer(rlcompleter.Completer(context).complete)

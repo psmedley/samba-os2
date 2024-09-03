@@ -26,7 +26,7 @@
 #include "lib/util/charset/charset.h"
 #include "lib/util/charset/charset_proto.h"
 
-#ifdef HAVE_ICU_I18N
+#ifdef HAVE_ICUI18N
 #include <unicode/ustring.h>
 #include <unicode/utrans.h>
 #endif
@@ -198,7 +198,7 @@ static size_t sys_iconv(void *cd,
 }
 #endif
 
-#ifdef HAVE_ICU_I18N
+#ifdef HAVE_ICUI18N
 static size_t sys_uconv(void *cd,
 			const char **inbuf,
 			size_t *inbytesleft,
@@ -364,7 +364,7 @@ static bool is_utf16(const char *name)
 
 static int smb_iconv_t_destructor(smb_iconv_t hwd)
 {
-#ifdef HAVE_ICU_I18N
+#ifdef HAVE_ICUI18N
 	/*
 	 * This has to come first, as the cd_direct member won't be an iconv
 	 * handle and must not be passed to iconv_close().
@@ -448,7 +448,7 @@ _PUBLIC_ smb_iconv_t smb_iconv_open_ex(TALLOC_CTX *mem_ctx, const char *tocode,
 	}
 #endif
 
-#ifdef HAVE_ICU_I18N
+#ifdef HAVE_ICUI18N
 	if (strcasecmp(fromcode, "UTF8-NFD") == 0 &&
 	    strcasecmp(tocode, "UTF8-NFC") == 0)
 	{

@@ -23,8 +23,7 @@
 #include "includes.h"
 #include "utils/net.h"
 #include "../lib/addns/dnsquery.h"
-#include "secrets.h"
-#include "krb5_env.h"
+#include "passdb.h"
 #include "utils/net_dns.h"
 #include "lib/util/string_wrappers.h"
 
@@ -37,14 +36,10 @@
 #if defined(HAVE_KRB5)
 #include "../lib/addns/dns.h"
 
-void use_in_memory_ccache(void) {
-	/* Use in-memory credentials cache so we do not interfere with
-	 * existing credentials */
-	setenv(KRB5_ENV_CCNAME, "MEMORY:net_ads", 1);
-}
-
 static NTSTATUS net_update_dns_internal(struct net_context *c,
-					TALLOC_CTX *ctx, ADS_STRUCT *ads,
+					TALLOC_CTX *ctx,
+					ADS_STRUCT *ads,
+					struct cli_credentials *creds,
 					const char *machine_name,
 					const struct sockaddr_storage *addrs,
 					int num_addrs, bool remove_host)
@@ -85,9 +80,10 @@ static NTSTATUS net_update_dns_internal(struct net_context *c,
 		ADS_STATUS ads_status;
 
 		if ( !ads->ldap.ld ) {
-			ads_status = ads_connect( ads );
+			ads_status = ads_connect_creds(ads, creds);
 			if ( !ADS_ERR_OK(ads_status) ) {
 				DEBUG(0,("net_update_dns_internal: Failed to connect to our DC!\n"));
+				status = ads_ntstatus(ads_status);
 				goto done;
 			}
 		}
@@ -95,12 +91,14 @@ static NTSTATUS net_update_dns_internal(struct net_context *c,
 		ads_status = ads_do_search(ads, "", LDAP_SCOPE_BASE,
 				       "(objectclass=*)", rootname_attrs, &msg);
 		if (!ADS_ERR_OK(ads_status)) {
+			status = ads_ntstatus(ads_status);
 			goto done;
 		}
 
 		root_dn = ads_pull_string(ads, ctx, msg,  "rootDomainNamingContext");
 		if ( !root_dn ) {
 			ads_msgfree( ads, msg );
+			status = NT_STATUS_INVALID_NETWORK_RESPONSE;
 			goto done;
 		}
 
@@ -160,6 +158,7 @@ static NTSTATUS net_update_dns_internal(struct net_context *c,
 		dns_err = DoDNSUpdate(dns_server,
 				      dnsdomain,
 				      machine_name,
+				      creds,
 		                      addrs,
 				      num_addrs,
 				      flags,
@@ -192,7 +191,9 @@ done:
 }
 
 NTSTATUS net_update_dns_ext(struct net_context *c,
-			    TALLOC_CTX *mem_ctx, ADS_STRUCT *ads,
+			    TALLOC_CTX *mem_ctx,
+			    ADS_STRUCT *ads,
+			    struct cli_credentials *creds,
 			    const char *hostname,
 			    struct sockaddr_storage *iplist,
 			    int num_addrs, bool remove_host)
@@ -204,7 +205,11 @@ NTSTATUS net_update_dns_ext(struct net_context *c,
 	if (hostname) {
 		fstrcpy(machine_name, hostname);
 	} else {
-		name_to_fqdn( machine_name, lp_netbios_name() );
+		const char *dns_hostname = lp_dns_hostname();
+		if (dns_hostname == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+		fstrcpy(machine_name, lp_dns_hostname());
 	}
 	if (!strlower_m( machine_name )) {
 		return NT_STATUS_INVALID_PARAMETER;
@@ -228,29 +233,27 @@ NTSTATUS net_update_dns_ext(struct net_context *c,
 		iplist = iplist_alloc;
 	}
 
-	status = net_update_dns_internal(c, mem_ctx, ads, machine_name,
-					 iplist, num_addrs, remove_host);
+	status = net_update_dns_internal(c,
+					 mem_ctx,
+					 ads,
+					 creds,
+					 machine_name,
+					 iplist,
+					 num_addrs,
+					 remove_host);
 
 	SAFE_FREE(iplist_alloc);
 	return status;
 }
 
-static NTSTATUS net_update_dns(struct net_context *c, TALLOC_CTX *mem_ctx, ADS_STRUCT *ads, const char *hostname)
-{
-	NTSTATUS status;
-
-	status = net_update_dns_ext(c, mem_ctx, ads, hostname, NULL, 0, false);
-	return status;
-}
 #endif
 
 void net_ads_join_dns_updates(struct net_context *c, TALLOC_CTX *ctx, struct libnet_JoinCtx *r)
 {
 #if defined(HAVE_KRB5)
 	ADS_STRUCT *ads_dns = NULL;
-	int ret;
+	struct cli_credentials *creds = NULL;
 	NTSTATUS status;
-	char *machine_password = NULL;
 
 	/*
 	 * In a clustered environment, don't do dynamic dns updates:
@@ -280,7 +283,7 @@ void net_ads_join_dns_updates(struct net_context *c, TALLOC_CTX *ctx, struct lib
 
 	ads_dns = ads_init(ctx,
 			   lp_realm(),
-			   NULL,
+			   lp_workgroup(),
 			   r->in.dc_name,
 			   ADS_SASL_PLAIN);
 	if (ads_dns == NULL) {
@@ -288,45 +291,24 @@ void net_ads_join_dns_updates(struct net_context *c, TALLOC_CTX *ctx, struct lib
 		goto done;
 	}
 
-	use_in_memory_ccache();
-
-	ads_dns->auth.user_name = talloc_asprintf(ads_dns,
-						  "%s$",
-						  lp_netbios_name());
-	if (ads_dns->auth.user_name == NULL) {
-		d_fprintf(stderr, _("DNS update failed: out of memory\n"));
+	status = pdb_get_trust_credentials(ads_dns->server.workgroup,
+					   ads_dns->server.realm,
+					   ads_dns,
+					   &creds);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "pdb_get_trust_credentials() failed: %s\n",
+			  nt_errstr(status));
 		goto done;
 	}
 
-	machine_password = secrets_fetch_machine_password(
-		r->out.netbios_domain_name, NULL, NULL);
-	if (machine_password != NULL) {
-		ads_dns->auth.password = talloc_strdup(ads_dns,
-						       machine_password);
-		SAFE_FREE(machine_password);
-		if (ads_dns->auth.password == NULL) {
-			d_fprintf(stderr,
-				  _("DNS update failed: out of memory\n"));
-			goto done;
-		}
-	}
-
-	ads_dns->auth.realm = talloc_asprintf_strupper_m(ads_dns, "%s", r->out.dns_domain_name);
-	if (ads_dns->auth.realm == NULL) {
-		d_fprintf(stderr, _("talloc_asprintf_strupper_m %s failed\n"),
-				  ads_dns->auth.realm);
-		goto done;
-	}
-
-	ret = ads_kinit_password(ads_dns);
-	if (ret != 0) {
-		d_fprintf(stderr,
-			  _("DNS update failed: kinit failed: %s\n"),
-			  error_message(ret));
-		goto done;
-	}
-
-	status = net_update_dns(c, ctx, ads_dns, NULL);
+	status = net_update_dns_ext(c,
+				    ads_dns,
+				    ads_dns,
+				    creds,
+				    NULL,
+				    NULL,
+				    0,
+				    false);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_fprintf( stderr, _("DNS update failed: %s\n"),
 			  nt_errstr(status));

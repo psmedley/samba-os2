@@ -62,7 +62,12 @@
 	"accountExpires",			\
 						\
 	/* Needed for RODC rule processing */	\
-	"msDS-KrbTgtLinkBL"
+	"msDS-KrbTgtLinkBL",			\
+						\
+	/* Required for Group Managed Service Accounts. */ \
+	"msDS-ManagedPasswordId",		\
+	"msDS-ManagedPasswordInterval",		\
+	"whenCreated"
 
 #define AUTHN_POLICY_ATTRS                     \
 	/* Required for authentication policies / silos */ \
@@ -199,6 +204,7 @@ static bool logon_hours_ok(struct ldb_message *msg, const char *name_for_logs)
 ****************************************************************************/
 _PUBLIC_ NTSTATUS authsam_account_ok(TALLOC_CTX *mem_ctx,
 				     struct ldb_context *sam_ctx,
+				     NTTIME now,
 				     uint32_t logon_parameters,
 				     struct ldb_dn *domain_dn,
 				     struct ldb_message *msg,
@@ -207,12 +213,10 @@ _PUBLIC_ NTSTATUS authsam_account_ok(TALLOC_CTX *mem_ctx,
 				     bool allow_domain_trust,
 				     bool password_change)
 {
-	uint16_t acct_flags;
+	uint32_t acct_flags;
 	const char *workstation_list;
 	NTTIME acct_expiry;
 	NTTIME must_change_time;
-	struct timeval tv_now = timeval_current();
-	NTTIME now = timeval_to_nttime(&tv_now);
 
 	DEBUG(4,("authsam_account_ok: Checking SMB password for user %s\n", name_for_logs));
 
@@ -255,7 +259,7 @@ _PUBLIC_ NTSTATUS authsam_account_ok(TALLOC_CTX *mem_ctx,
 	}
 
 	/* check for expired password (but not if this is a password change request) */
-	if ((must_change_time < now) && !password_change) {
+	if ((acct_flags & ACB_PW_EXPIRED) && !password_change) {
 		DEBUG(2,("sam_account_ok: Account for user '%s' password expired!.\n",
 			 name_for_logs));
 		DEBUG(2,("sam_account_ok: Password expired at '%s' unix time.\n",
@@ -827,6 +831,7 @@ out:
 NTSTATUS sam_get_results_principal(struct ldb_context *sam_ctx,
 				   TALLOC_CTX *mem_ctx, const char *principal,
 				   const char **attrs,
+				   const uint32_t dsdb_flags,
 				   struct ldb_dn **domain_dn,
 				   struct ldb_message **msg)
 {
@@ -849,7 +854,7 @@ NTSTATUS sam_get_results_principal(struct ldb_context *sam_ctx,
 	/* pull the user attributes */
 	ret = dsdb_search_one(sam_ctx, tmp_ctx, msg, user_dn,
 			      LDB_SCOPE_BASE, attrs,
-			      DSDB_SEARCH_SHOW_EXTENDED_DN | DSDB_SEARCH_NO_GLOBAL_CATALOG,
+			      dsdb_flags | DSDB_SEARCH_SHOW_EXTENDED_DN | DSDB_SEARCH_NO_GLOBAL_CATALOG,
 			      "(objectClass=*)");
 	if (ret != LDB_SUCCESS) {
 		talloc_free(tmp_ctx);
@@ -887,7 +892,7 @@ NTSTATUS authsam_get_user_info_dc_principal(TALLOC_CTX *mem_ctx,
 
 	if (principal) {
 		nt_status = sam_get_results_principal(sam_ctx, tmp_ctx, principal,
-						      user_attrs, &domain_dn, &msg);
+						      user_attrs, DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS, &domain_dn, &msg);
 		if (!NT_STATUS_IS_OK(nt_status)) {
 			talloc_free(tmp_ctx);
 			return nt_status;
@@ -898,7 +903,7 @@ NTSTATUS authsam_get_user_info_dc_principal(TALLOC_CTX *mem_ctx,
 		/* pull the user attributes */
 		ret = dsdb_search_one(sam_ctx, tmp_ctx, &msg, user_dn,
 				      LDB_SCOPE_BASE, user_attrs,
-				      DSDB_SEARCH_SHOW_EXTENDED_DN | DSDB_SEARCH_NO_GLOBAL_CATALOG,
+				      DSDB_SEARCH_SHOW_EXTENDED_DN | DSDB_SEARCH_NO_GLOBAL_CATALOG | DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS,
 				      "(objectClass=*)");
 		if (ret == LDB_ERR_NO_SUCH_OBJECT) {
 			talloc_free(tmp_ctx);
@@ -995,12 +1000,19 @@ NTSTATUS authsam_reread_user_logon_data(
 	const struct ldb_message *user_msg,
 	struct ldb_message **current)
 {
+	TALLOC_CTX *tmp_ctx = NULL;
 	const struct ldb_val *v = NULL;
 	struct ldb_result *res = NULL;
-	uint16_t acct_flags = 0;
+	uint32_t acct_flags = 0;
 	const char *attr_name = "msDS-User-Account-Control-Computed";
-
+	NTSTATUS status = NT_STATUS_OK;
 	int ret;
+
+	tmp_ctx = talloc_new(mem_ctx);
+	if (tmp_ctx == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto out;
+	}
 
 	/*
 	 * Re-read the account details, using the GUID in case the DN
@@ -1011,15 +1023,16 @@ NTSTATUS authsam_reread_user_logon_data(
 	 * subset to ensure that we can reuse existing validation code.
 	 */
 	ret = dsdb_search_dn(sam_ctx,
-			     mem_ctx,
+			     tmp_ctx,
 			     &res,
 			     user_msg->dn,
 			     user_attrs,
-			     DSDB_SEARCH_SHOW_EXTENDED_DN);
+			     DSDB_SEARCH_SHOW_EXTENDED_DN | DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS);
 	if (ret != LDB_SUCCESS) {
 		DBG_ERR("Unable to re-read account control data for %s\n",
 			ldb_dn_get_linearized(user_msg->dn));
-		return NT_STATUS_INTERNAL_ERROR;
+		status = NT_STATUS_INTERNAL_ERROR;
+		goto out;
 	}
 
 	/*
@@ -1030,20 +1043,21 @@ NTSTATUS authsam_reread_user_logon_data(
 		DBG_ERR("No %s attribute for %s\n",
 			attr_name,
 			ldb_dn_get_linearized(user_msg->dn));
-		TALLOC_FREE(res);
-		return NT_STATUS_INTERNAL_ERROR;
+		status = NT_STATUS_INTERNAL_ERROR;
+		goto out;
 	}
 	acct_flags = samdb_result_acct_flags(res->msgs[0], attr_name);
 	if (acct_flags & ACB_AUTOLOCK) {
 		DBG_WARNING(
 			"Account for user %s was locked out.\n",
 			ldb_dn_get_linearized(user_msg->dn));
-		TALLOC_FREE(res);
-		return NT_STATUS_ACCOUNT_LOCKED_OUT;
+		status = NT_STATUS_ACCOUNT_LOCKED_OUT;
+		goto out;
 	}
 	*current = talloc_steal(mem_ctx, res->msgs[0]);
-	TALLOC_FREE(res);
-	return NT_STATUS_OK;
+out:
+	TALLOC_FREE(tmp_ctx);
+	return status;
 }
 
 static struct db_context *authsam_get_bad_password_db(
@@ -1537,7 +1551,7 @@ NTSTATUS authsam_search_account(TALLOC_CTX *mem_ctx, struct ldb_context *sam_ctx
 	/* pull the user attributes */
 	ret = dsdb_search_one(sam_ctx, mem_ctx, ret_msg, domain_dn, LDB_SCOPE_SUBTREE,
 			      user_attrs,
-			      DSDB_SEARCH_SHOW_EXTENDED_DN,
+			      DSDB_SEARCH_SHOW_EXTENDED_DN | DSDB_SEARCH_UPDATE_MANAGED_PASSWORDS,
 			      "(&(sAMAccountName=%s)(objectclass=user))",
 			      account_name_encoded);
 	if (ret == LDB_ERR_NO_SUCH_OBJECT) {
@@ -1575,7 +1589,7 @@ NTSTATUS authsam_logon_success_accounting(struct ldb_context *sam_ctx,
 	NTTIME sync_interval_nt = 0;
 	bool am_rodc = false;
 	bool txn_active = false;
-	bool need_db_reread;
+	bool need_db_reread = false;
 
 	mem_ctx = talloc_new(msg);
 	if (mem_ctx == NULL) {
@@ -1588,7 +1602,7 @@ NTSTATUS authsam_logon_success_accounting(struct ldb_context *sam_ctx,
 	 * And the user data needs to be re-read, and the account re-checked
 	 * for lockout.
 	 *
-	 * Howevver we have long-running transactions like replication
+	 * However we have long-running transactions like replication
 	 * that could otherwise grind the system to a halt so we first
 	 * determine if *this* account has seen a bad password,
 	 * otherwise we only start a transaction if there was a need

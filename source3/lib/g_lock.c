@@ -58,7 +58,8 @@ static bool g_lock_parse(uint8_t *buf, size_t buflen, struct g_lock *lck)
 	uint64_t unique_data_epoch;
 
 	if (buflen < (SERVER_ID_BUF_LENGTH + /* exclusive */
-		      sizeof(uint64_t) +     /* seqnum */
+		      sizeof(uint64_t) +     /* unique_lock_epoch */
+		      sizeof(uint64_t) +     /* unique_data_epoch */
 		      sizeof(uint32_t))) {   /* num_shared */
 		struct g_lock ret = {
 			.exclusive.pid = 0,
@@ -360,7 +361,7 @@ NTSTATUS g_lock_lock_cb_dump(struct g_lock_lock_cb_state *cb_state,
 {
 	struct g_lock *lck = cb_state->lck;
 
-	/* We allow a cn_fn only for G_LOCK_WRITE for now... */
+	/* We allow a cb_fn only for G_LOCK_WRITE for now... */
 	SMB_ASSERT(lck->num_shared == 0);
 
 	fn(lck->exclusive,
@@ -1018,7 +1019,7 @@ struct tevent_req *g_lock_lock_send(TALLOC_CTX *mem_ctx,
 	};
 
 	/*
-	 * We allow a cn_fn only for G_LOCK_WRITE for now.
+	 * We allow a cb_fn only for G_LOCK_WRITE for now.
 	 *
 	 * It's all we currently need and it makes a few things
 	 * easier to implement.
@@ -1238,7 +1239,7 @@ NTSTATUS g_lock_lock(struct g_lock_ctx *ctx, TDB_DATA key,
 	SMB_ASSERT(!ctx->busy);
 
 	/*
-	 * We allow a cn_fn only for G_LOCK_WRITE for now.
+	 * We allow a cb_fn only for G_LOCK_WRITE for now.
 	 *
 	 * It's all we currently need and it makes a few things
 	 * easier to implement.

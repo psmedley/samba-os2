@@ -2,12 +2,12 @@
 .\"     Title: net
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 08/06/2024
+.\"      Date: 09/02/2024
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.20.4
+.\"    Source: Samba 4.21.0
 .\"  Language: English
 .\"
-.TH "NET" "8" "08/06/2024" "Samba 4\&.20\&.4" "System Administration tools"
+.TH "NET" "8" "09/02/2024" "Samba 4\&.21\&.0" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1323,7 +1323,52 @@ Example:
 .SS "ADS KEYTAB \fICREATE\fR"
 .PP
 Creates a new keytab file if one doesn\*(Aqt exist with default entries\&. Default entries are kerberos principals created from the machinename of the client, the UPN (if it exists) and any Windows SPN(s) associated with the computer AD account for the client\&. If a keytab file already exists then only missing kerberos principals from the default entries are added\&. No changes are made to the computer AD account\&.
-.SS "ADS KEYTAB \fIADD\fR \fI(principal | machine | serviceclass | windows SPN\fR"
+.SS "(Removed!) ADS KEYTAB \fIADD\fR \fI(principal | machine | serviceclass | windows SPN\fR"
+.PP
+This command is no longer available in Samba 4\&.21\&.0 and newer\&. See
+\m[blue]\fBsync machine password to keytab\fR\m[]
+for replacement\&.
+
+
+To replace e\&.g\&. call of
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+net ads keytab add wurst/brot@REALM
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+
+Add to smb\&.conf:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+sync machine password to keytab = /path/to/keytab1:spns=wurst/brot@REALM:machine_password
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+
+and run:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+net ads keytab create
+.fi
+.if n \{\
+.RE
+.\}
+.PP
+Original description of this command:
 .PP
 Adds a new keytab entry, the entry can be either;
 .PP
@@ -1348,7 +1393,85 @@ A Windows SPN is of the format \*(Aqserviceclass/host:port\*(Aq, it is used to c
 .RE
 .PP
 Unlike old versions no computer AD objects are modified by this command\&. To preserve the behaviour of older clients \*(Aqnet ads keytab ad_update_ads\*(Aq is available\&.
-.SS "ADS KEYTAB \fIADD_UPDATE_ADS\fR \fI(principal | machine | serviceclass | windows SPN\fR"
+.SS "(Removed!) ADS KEYTAB \fIDELETE\fR \fI(principal | machine | serviceclass | windows SPN\fR"
+.PP
+This command is no longer available in Samba 4\&.21\&.0 and newer\&. See
+\m[blue]\fBsync machine password to keytab\fR\m[]
+for replacement\&.
+.PP
+To replace e\&.g\&. call of
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+net ads keytab delete wurst/brot@REALM
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+Delete from
+\m[blue]\fBsync machine password to keytab\fR\m[]
+principal "wurst/brot@REALM" and run:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+net ads keytab create
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+.SS "(Removed!) ADS KEYTAB \fIADD_UPDATE_ADS\fR \fI(principal | machine | serviceclass | windows SPN\fR"
+.PP
+This command is no longer available in Samba 4\&.21\&.0 and newer\&. See
+\m[blue]\fBsync machine password to keytab\fR\m[]
+for replacement\&.
+
+
+To replace e\&.g\&. call of
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+net ads keytab add_update_ads wurst/brot@REALM
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+
+Add to smb\&.conf:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+sync machine password to keytab = /path/to/keytab2:sync_spns:machine_password
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+
+and run:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+net ads setspn add wurst/brot@REALM
+net ads keytab create
+.fi
+.if n \{\
+.RE
+.\}
+.PP
+Original description of this command:
 .PP
 Adds a new keytab entry (see section for net ads keytab add)\&. In addition to adding entries to the keytab file corresponding Windows SPNs are created from the entry passed to this command\&. These SPN(s) added to the AD computer account object associated with the client machine running this command for the following entry types;
 .PP

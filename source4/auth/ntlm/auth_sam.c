@@ -28,12 +28,14 @@
 #include "../libcli/auth/ntlm_check.h"
 #include "auth/ntlm/auth_proto.h"
 #include "auth/auth_sam.h"
+#include "dsdb/gmsa/util.h"
 #include "dsdb/samdb/samdb.h"
 #include "dsdb/samdb/ldb_modules/util.h"
 #include "dsdb/common/util.h"
 #include "param/param.h"
 #include "librpc/gen_ndr/ndr_irpc_c.h"
 #include "librpc/gen_ndr/ndr_winbind_c.h"
+#include "lib/crypto/gkdi.h"
 #include "lib/messaging/irpc.h"
 #include "libcli/auth/libcli_auth.h"
 #include "libds/common/roles.h"
@@ -320,6 +322,13 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 	uint32_t userAccountControl = 0;
 	uint32_t current_kvno = 0;
 	bool am_rodc;
+	NTTIME now;
+	bool time_ok;
+
+	time_ok = dsdb_gmsa_current_time(sam_ctx, &now);
+	if (!time_ok) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
 
 	tmp_ctx = talloc_new(mem_ctx);
 	if (tmp_ctx == NULL) {
@@ -400,6 +409,7 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 
 		krb5_ret = dsdb_extract_aes_256_key(smb_krb5_context->krb5_context,
 						    tmp_ctx,
+						    sam_ctx,
 						    msg,
 						    userAccountControl,
 						    NULL, /* kvno */
@@ -443,9 +453,9 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 	}
 
 	/*
-	 * We only continue if this was a wrong password
-	 * and we'll always return NT_STATUS_WRONG_PASSWORD
-	 * no matter what error happens.
+	 * We only continue if this was a wrong password and we'll
+	 * return NT_STATUS_WRONG_PASSWORD in most cases, except for a
+	 * (default) 60 min grace period for previous NTLM password
 	 */
 
 	/* pull the domain password property attributes */
@@ -466,10 +476,9 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 	for (i = 1; i < MIN(history_len, 3); i++) {
 		const struct samr_Password *nt_history_pwd = NULL;
 		NTTIME pwdLastSet;
-		struct timeval tv_now;
-		NTTIME now;
 		int allowed_period_mins;
 		NTTIME allowed_period;
+		bool is_gmsa;
 
 		/* Reset these variables back to starting as empty */
 		aes_256_key = NULL;
@@ -551,6 +560,7 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 
 			krb5_ret = dsdb_extract_aes_256_key(smb_krb5_context->krb5_context,
 							    tmp_ctx,
+							    sam_ctx,
 							    msg,
 							    userAccountControl,
 							    &request_kvno, /* kvno */
@@ -637,19 +647,32 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 		 * before the user can lock and unlock their other screens
 		 * (resetting their cached password).
 		 *
-		 * See http://support.microsoft.com/kb/906305
-		 * OldPasswordAllowedPeriod ("old password allowed period")
-		 * is specified in minutes. The default is 60.
 		 */
-		allowed_period_mins = lpcfg_old_password_allowed_period(auth_context->lp_ctx);
+
+		/* Is the account a Group Managed Service Account? */
+		is_gmsa = dsdb_account_is_gmsa(sam_ctx, msg);
+		if (is_gmsa) {
+			/*
+			 * For Group Managed Service Accounts, the previous
+			 * password is allowed for five minutes after a password
+			 * change.
+			 */
+			allowed_period_mins = gkdi_max_clock_skew_mins;
+		} else {
+			/*
+			 * See http://support.microsoft.com/kb/906305
+			 * OldPasswordAllowedPeriod ("old password allowed
+			 * period") is specified in minutes. The default is 60.
+			 */
+			allowed_period_mins = lpcfg_old_password_allowed_period(
+				auth_context->lp_ctx);
+		}
 		/*
 		 * NTTIME uses 100ns units
 		 */
 		allowed_period = (NTTIME) allowed_period_mins *
 				 60 * 1000*1000*10;
 		pwdLastSet = samdb_result_nttime(msg, "pwdLastSet", 0);
-		tv_now = timeval_current();
-		now = timeval_to_nttime(&tv_now);
 
 		if (now < pwdLastSet) {
 			/*
@@ -861,7 +884,17 @@ static NTSTATUS authsam_authenticate(struct auth4_context *auth_context,
 	uint32_t acct_flags = samdb_result_acct_flags(msg, NULL);
 	struct netr_SendToSamBase *send_to_sam = NULL;
 	const struct authn_ntlm_client_policy *authn_client_policy = NULL;
-	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
+	struct ldb_context *sam_ctx = auth_context->sam_ctx;
+	TALLOC_CTX *tmp_ctx = NULL;
+	NTTIME now;
+	bool time_ok;
+
+	time_ok = dsdb_gmsa_current_time(sam_ctx, &now);
+	if (!time_ok) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	tmp_ctx = talloc_new(mem_ctx);
 	if (!tmp_ctx) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -933,6 +966,7 @@ static NTSTATUS authsam_authenticate(struct auth4_context *auth_context,
 	}
 
 	nt_status = authsam_account_ok(tmp_ctx, auth_context->sam_ctx,
+				       now,
 				       user_info->logon_parameters,
 				       domain_dn,
 				       msg,
