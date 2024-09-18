@@ -1,5 +1,5 @@
 '\" t
-.\"     Title: vfs_ceph
+.\"     Title: vfs_ceph_new
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
 .\"      Date: 09/17/2024
@@ -7,7 +7,7 @@
 .\"    Source: Samba 4.20.5
 .\"  Language: English
 .\"
-.TH "VFS_CEPH" "8" "09/17/2024" "Samba 4\&.20\&.5" "System Administration tools"
+.TH "VFS_CEPH_NEW" "8" "09/17/2024" "Samba 4\&.20\&.5" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -28,10 +28,10 @@
 .\" * MAIN CONTENT STARTS HERE *
 .\" -----------------------------------------------------------------
 .SH "NAME"
-vfs_ceph \- Utilize features provided by CephFS
+vfs_ceph_new \- Utilize features provided by libcephfs low\-level APIs
 .SH "SYNOPSIS"
 .HP \w'\ 'u
-vfs objects = ceph
+vfs objects = ceph_new
 .SH "DESCRIPTION"
 .PP
 This VFS module is part of the
@@ -39,7 +39,7 @@ This VFS module is part of the
 suite\&.
 .PP
 The
-vfs_ceph
+vfs_ceph_new
 VFS module exposes CephFS specific features for use by Samba\&.
 .PP
 Ceph is a distributed network file system designed to provide excellent performance, reliability, and scalability\&. This is a shared library allowing applications to access a Ceph distributed file system via a POSIX\-like interface\&.
@@ -48,7 +48,7 @@ This module can be combined with other modules, but it should be the last module
 vfs objects
 list\&. Modules added to this list to the right of the ceph entry may not have any effect at all\&.
 .PP
-vfs_ceph
+vfs_ceph_new
 performs mapping between Windows and POSIX Access Control Lists (ACLs)\&. To ensure correct processing and enforcement of POSIX ACLs, the following Ceph configuration parameters are automatically applied:
 .sp
 .if n \{\
@@ -62,9 +62,13 @@ performs mapping between Windows and POSIX Access Control Lists (ACLs)\&. To ens
 .if n \{\
 .RE
 .\}
+.PP
+\fBNOTE\fR: This is a second implementation of a ceph module which uses libcephfs low\-level APIs (compared to the original
+\fBvfs_ceph\fR(8)
+module which uses path\-based APIs)\&. Using the low\-level API allows more optimized and fine\-grained access to the Ceph storage layer\&.
 .SH "CONFIGURATION"
 .PP
-vfs_ceph
+vfs_ceph_new
 requires that the underlying share path is a Ceph filesystem\&.
 .sp
 .if n \{\
@@ -72,7 +76,7 @@ requires that the underlying share path is a Ceph filesystem\&.
 .\}
 .nf
 		\fI[share]\fR
-		\m[blue]\fBvfs objects = ceph\fR\m[]
+		\m[blue]\fBvfs objects = ceph_new\fR\m[]
 		\m[blue]\fBpath = /non\-mounted/cephfs/path\fR\m[]
 		\m[blue]\fBkernel share modes = no\fR\m[]
 	
@@ -82,7 +86,7 @@ requires that the underlying share path is a Ceph filesystem\&.
 .\}
 .PP
 Since
-vfs_ceph
+vfs_ceph_new
 does not require a filesystem mount, the share
 path
 is treated differently: it is interpreted as an absolute path within the Ceph filesystem on the attached Ceph cluster\&. In a ctdb cluster environment where ctdb manages Samba,
@@ -94,25 +98,25 @@ kernel share modes
 have to be disabled in a share running with the CephFS vfs module for file serving to work properly\&.
 .SH "OPTIONS"
 .PP
-ceph:config_file = path
+ceph_new:config_file = path
 .RS 4
 Allows one to define a ceph configfile to use\&. Empty by default\&.
 .sp
-Example: ceph:config_file = /etc/ceph/ceph\&.conf
+Example: ceph_new:config_file = /etc/ceph/ceph\&.conf
 .RE
 .PP
-ceph:user_id = name
+ceph_new:user_id = name
 .RS 4
 Allows one to explicitly set the client ID used for the CephFS mount handle\&. Empty by default (use the libcephfs client default)\&.
 .sp
-Example: ceph:user_id = samba
+Example: ceph_new:user_id = samba
 .RE
 .PP
-ceph:filesystem = fs_name
+ceph_new:filesystem = fs_name
 .RS 4
 Allows one to explicitly select the CephFS file system to use when the Ceph cluster supports more than one file system\&. Empty by default (use the default file system of the Ceph cluster)\&.
 .sp
-Example: ceph:filesystem = myfs2
+Example: ceph_new:filesystem = myfs2
 .RE
 .SH "VERSION"
 .PP
