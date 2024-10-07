@@ -39,6 +39,9 @@
 #include "system/wait.h"
 #include "tdb.h"
 
+#ifdef __OS2__
+int futimens(int fd, const struct timespec times[2]);
+#endif
 /* #define TDB_TRACE 1 */
 #ifndef HAVE_GETPAGESIZE
 #define getpagesize() 0x2000

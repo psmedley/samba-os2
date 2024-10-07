@@ -92,6 +92,7 @@
 #endif
 
 #ifdef __OS2__
+#define HAVE_STRUCT_ADDRINFO
 #include <libcx/net.h>
 #endif
 

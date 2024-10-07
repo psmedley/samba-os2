@@ -4869,7 +4869,6 @@ static NTSTATUS smbd_smb2_flush_with_sendmsg(struct smbXsrv_connection *xconn)
 			continue;
 		}
 
-#ifndef __OS2__
 		e->msg = (struct msghdr) {
 			.msg_iov = e->vector,
 			.msg_iovlen = e->count,
@@ -4883,10 +4882,7 @@ static NTSTATUS smbd_smb2_flush_with_sendmsg(struct smbXsrv_connection *xconn)
 #endif
 
 		ret = sendmsg(xconn->transport.sock, &e->msg, sendmsg_flags);
-#else
-		/* Need to investigate why, but sendmsg() fails on OS/2, reverting to writev as used in 4.11 fixes things */
-		ret = writev(xconn->transport.sock, e->vector, e->count);
-#endif
+
 		if (ret == 0) {
 			/* propagate end of file */
 			return NT_STATUS_INTERNAL_ERROR;
@@ -5196,7 +5192,6 @@ static NTSTATUS smbd_smb2_io_handler(struct smbXsrv_connection *xconn,
 
 again:
 
-#ifndef __OS2__
 	state->msg = (struct msghdr) {
 		.msg_iov = state->vector,
 		.msg_iovlen = state->count,
@@ -5210,10 +5205,7 @@ again:
 #endif
 
 	ret = recvmsg(xconn->transport.sock, &state->msg, recvmsg_flags);
-#else
-	/* Need to investigate why, but recvmsg() fails on OS/2, reverting to readv as used in 4.11 fixes things */
-	ret = readv(xconn->transport.sock, &state->vector, 1);
-#endif
+
 	if (ret == 0) {
 		/* propagate end of file */
 		status = NT_STATUS_END_OF_FILE;

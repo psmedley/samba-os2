@@ -25,6 +25,9 @@
 #include "lib/util/dlinklist.h"
 #include "lib/util/charset/charset.h"
 #include "lib/util/charset/charset_proto.h"
+#ifdef __OS2__
+#undef HAVE_ICUI18N
+#endif
 
 #ifdef HAVE_ICUI18N
 #include <unicode/ustring.h>
