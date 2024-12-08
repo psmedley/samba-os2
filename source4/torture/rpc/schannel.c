@@ -32,6 +32,7 @@
 #include "libcli/security/security.h"
 #include "system/filesys.h"
 #include "param/param.h"
+#include "param/loadparm.h"
 #include "librpc/rpc/dcerpc_proto.h"
 #include "libcli/composite/composite.h"
 #include "lib/events/events.h"
@@ -63,6 +64,7 @@ bool test_netlogon_ex_ops(struct dcerpc_pipe *p, struct torture_context *tctx,
 	struct netr_SamBaseInfo *base = NULL;
 	const char *crypto_alg = "";
 	bool can_do_validation_6 = true;
+	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
 	enum dcerpc_AuthLevel auth_level = DCERPC_AUTH_LEVEL_NONE;
 
 	if (lpcfg_client_lanman_auth(tctx->lp_ctx)) {
@@ -136,7 +138,7 @@ bool test_netlogon_ex_ops(struct dcerpc_pipe *p, struct torture_context *tctx,
 		}
 	}
 
-	dcerpc_binding_handle_auth_info(b, NULL, &auth_level);
+	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
 		r.in.validation_level = 6;
 
@@ -207,13 +209,12 @@ bool test_netlogon_ex_ops(struct dcerpc_pipe *p, struct torture_context *tctx,
 		dump_data(1, base->key.key, 16);
 		dump_data(1, base->LMSessKey.key, 8);
 
-		if (creds->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
-			netlogon_creds_aes_decrypt(creds, base->key.key, 16);
-			netlogon_creds_aes_decrypt(creds, base->LMSessKey.key, 8);
-		} else if (creds->negotiate_flags & NETLOGON_NEG_ARCFOUR) {
-			netlogon_creds_arcfour_crypt(creds, base->key.key, 16);
-			netlogon_creds_arcfour_crypt(creds, base->LMSessKey.key, 8);
-		}
+		status = netlogon_creds_decrypt_samlogon_validation(creds,
+								    r.in.validation_level,
+								    r.out.validation,
+								    auth_type,
+								    auth_level);
+		torture_assert_ntstatus_ok(tctx, status, "decrypt_samlogon_validation");
 
 		DEBUG(1,("decrypted keys validation_level %d\n",
 			validation_levels[i]));
@@ -276,6 +277,7 @@ static bool test_netlogon_ex_bug14932(struct dcerpc_pipe *p,
 	struct netr_SamBaseInfo *base = NULL;
 	const char *crypto_alg = "";
 	bool can_do_validation_6 = true;
+	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
 	enum dcerpc_AuthLevel auth_level = DCERPC_AUTH_LEVEL_NONE;
 
 	flags |= CLI_CRED_NTLMv2_AUTH;
@@ -341,7 +343,7 @@ static bool test_netlogon_ex_bug14932(struct dcerpc_pipe *p,
 		}
 	}
 
-	dcerpc_binding_handle_auth_info(b, NULL, &auth_level);
+	dcerpc_binding_handle_auth_info(b, &auth_type, &auth_level);
 	if (auth_level == DCERPC_AUTH_LEVEL_PRIVACY) {
 		r.in.validation_level = 6;
 
@@ -412,13 +414,12 @@ static bool test_netlogon_ex_bug14932(struct dcerpc_pipe *p,
 		dump_data(1, base->key.key, 16);
 		dump_data(1, base->LMSessKey.key, 8);
 
-		if (creds->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
-			netlogon_creds_aes_decrypt(creds, base->key.key, 16);
-			netlogon_creds_aes_decrypt(creds, base->LMSessKey.key, 8);
-		} else if (creds->negotiate_flags & NETLOGON_NEG_ARCFOUR) {
-			netlogon_creds_arcfour_crypt(creds, base->key.key, 16);
-			netlogon_creds_arcfour_crypt(creds, base->LMSessKey.key, 8);
-		}
+		status = netlogon_creds_decrypt_samlogon_validation(creds,
+								    r.in.validation_level,
+								    r.out.validation,
+								    auth_type,
+								    auth_level);
+		torture_assert_ntstatus_ok(tctx, status, "decrypt_samlogon_validation");
 
 		DEBUG(1,("decrypted keys validation_level %d\n",
 			validation_levels[i]));
@@ -591,6 +592,7 @@ static bool test_schannel(struct torture_context *tctx,
 	struct netlogon_creds_CredentialState *creds;
 	struct cli_credentials *credentials;
 	enum dcerpc_transport_t transport;
+	uint32_t requested_flags;
 
 	join_ctx = torture_join_domain(tctx,
 				       talloc_asprintf(tctx, "%s%d", TEST_MACHINE_NAME, i),
@@ -630,8 +632,26 @@ static bool test_schannel(struct torture_context *tctx,
 	creds = cli_credentials_get_netlogon_creds(credentials);
 	torture_assert(tctx, (creds != NULL), "schannel creds");
 
+	requested_flags = NETLOGON_NEG_AUTH2_FLAGS;
+	if (dcerpc_flags & DCERPC_SCHANNEL_128) {
+		requested_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	}
+	if (dcerpc_flags & DCERPC_SCHANNEL_AES) {
+		requested_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+		requested_flags |= NETLOGON_NEG_SUPPORTS_AES;
+	}
+	if (dcerpc_flags & DCERPC_SCHANNEL_AUTO) {
+		requested_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+		requested_flags |= NETLOGON_NEG_SUPPORTS_AES;
+	}
+	if (lpcfg_weak_crypto(tctx->lp_ctx) == SAMBA_WEAK_CRYPTO_DISALLOWED) {
+		requested_flags &= ~NETLOGON_NEG_ARCFOUR;
+		requested_flags |= NETLOGON_NEG_SUPPORTS_AES;
+	}
+
 	/* checks the capabilities */
-	torture_assert(tctx, test_netlogon_capabilities(p_netlogon, tctx, credentials, creds),
+	torture_assert(tctx,
+		       test_netlogon_capabilities(p_netlogon, tctx, credentials, requested_flags, creds),
 		       "Failed to process schannel secured capability ops (on fresh connection)");
 
 	/* do a couple of logins */
@@ -719,8 +739,26 @@ static bool test_schannel(struct torture_context *tctx,
 						  tctx, &p_netlogon2);
 	torture_assert_ntstatus_ok(tctx, status, "Failed to create secondary connection");
 
+	requested_flags = NETLOGON_NEG_AUTH2_FLAGS;
+	if (dcerpc_flags & DCERPC_SCHANNEL_128) {
+		requested_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	}
+	if (dcerpc_flags & DCERPC_SCHANNEL_AES) {
+		requested_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+		requested_flags |= NETLOGON_NEG_SUPPORTS_AES;
+	}
+	if (dcerpc_flags & DCERPC_SCHANNEL_AUTO) {
+		requested_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+		requested_flags |= NETLOGON_NEG_SUPPORTS_AES;
+	}
+	if (lpcfg_weak_crypto(tctx->lp_ctx) == SAMBA_WEAK_CRYPTO_DISALLOWED) {
+		requested_flags &= ~NETLOGON_NEG_ARCFOUR;
+		requested_flags |= NETLOGON_NEG_SUPPORTS_AES;
+	}
+
 	/* checks the capabilities */
-	torture_assert(tctx, test_netlogon_capabilities(p_netlogon2, tctx, credentials, creds),
+	torture_assert(tctx,
+		       test_netlogon_capabilities(p_netlogon2, tctx, credentials, requested_flags, creds),
 		       "Failed to process schannel secured capability ops (on fresh connection)");
 
 	/* Try the schannel-only SamLogonEx operation */
@@ -1248,6 +1286,8 @@ bool torture_rpc_schannel_bench1(struct torture_context *torture)
 		struct dcerpc_pipe *net_pipe;
 		struct netr_Authenticator credential, return_authenticator;
 		struct samr_Password new_password;
+		enum dcerpc_AuthType auth_type;
+		enum dcerpc_AuthLevel auth_level;
 
 		status = dcerpc_pipe_connect_b(s, &net_pipe, s->b,
 					       &ndr_table_netlogon,
@@ -1272,7 +1312,14 @@ bool torture_rpc_schannel_bench1(struct torture_context *torture)
 
 		creds_state = cli_credentials_get_netlogon_creds(
 			s->wks_creds1);
-		netlogon_creds_des_encrypt(creds_state, &new_password);
+		dcerpc_binding_handle_auth_info(net_pipe->binding_handle,
+						&auth_type,
+						&auth_level);
+		status = netlogon_creds_encrypt_samr_Password(creds_state,
+							      &new_password,
+							      auth_type,
+							      auth_level);
+		torture_assert_ntstatus_ok(torture, status, "encrypt_samr_Password");
 		netlogon_creds_client_authenticator(creds_state, &credential);
 
 		torture_assert_ntstatus_ok(torture, dcerpc_netr_ServerPasswordSet_r(net_pipe->binding_handle, torture, &pwset),

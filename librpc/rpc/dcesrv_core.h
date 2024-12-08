@@ -275,6 +275,7 @@ struct dcesrv_connection {
 	struct dcesrv_call_state *call_list;
 
 	/* the maximum size the client wants to receive */
+	uint16_t transport_max_recv_frag;
 	uint16_t max_recv_frag;
 	uint16_t max_xmit_frag;
 
@@ -308,6 +309,7 @@ struct dcesrv_connection {
 	struct dcesrv_auth *default_auth_state;
 	size_t max_auth_states;
 	struct dcesrv_auth *auth_states;
+	bool got_explicit_auth_level_non_connect;
 	bool got_explicit_auth_level_connect;
 	struct dcesrv_auth *default_auth_level_connect;
 	bool client_hdr_signing;
@@ -578,6 +580,14 @@ NTSTATUS dcesrv_transport_session_key(struct dcesrv_call_state *call,
 	dce_call->fault_code = code; \
 	return; \
 } while(0)
+
+#define DCESRV_NOT_USED_ON_WIRE(__opname) \
+static void dcesrv_## __opname(struct dcesrv_call_state *dce_call,\
+			       TALLOC_CTX *mem_ctx, \
+			       struct __opname *r) \
+{ \
+        DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR); \
+}
 
 /* a useful macro for checking the validity of a dcerpc policy handle
    and giving the right fault code if invalid */

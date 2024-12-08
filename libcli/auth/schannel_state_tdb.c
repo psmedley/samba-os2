@@ -88,6 +88,10 @@ NTSTATUS schannel_store_session_key_tdb(struct db_context *db_sc,
 	char *name_upper;
 	NTSTATUS status;
 
+	if (creds->ex == NULL) {
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
 	if (strlen(creds->computer_name) > 15) {
 		/*
 		 * We may want to check for a completely
@@ -193,6 +197,11 @@ NTSTATUS schannel_fetch_session_key_tdb(struct db_context *db_sc,
 
 	if (DEBUGLEVEL >= 10) {
 		NDR_PRINT_DEBUG(netlogon_creds_CredentialState, creds);
+	}
+
+	if (creds->ex == NULL) {
+		status = NT_STATUS_INTERNAL_ERROR;
+		goto done;
 	}
 
 	DEBUG(3,("schannel_fetch_session_key_tdb: restored schannel info key %s\n",
@@ -560,6 +569,8 @@ NTSTATUS schannel_check_creds_state(TALLOC_CTX *mem_ctx,
 				    const char *computer_name,
 				    struct netr_Authenticator *received_authenticator,
 				    struct netr_Authenticator *return_authenticator,
+				    enum dcerpc_AuthType auth_type,
+				    enum dcerpc_AuthLevel auth_level,
 				    struct netlogon_creds_CredentialState **creds_out)
 {
 	TALLOC_CTX *tmpctx;
@@ -619,7 +630,9 @@ NTSTATUS schannel_check_creds_state(TALLOC_CTX *mem_ctx,
 
 	status = netlogon_creds_server_step_check(creds,
 						  received_authenticator,
-						  return_authenticator);
+						  return_authenticator,
+						  auth_type,
+						  auth_level);
 	if (!NT_STATUS_IS_OK(status)) {
 		goto done;
 	}

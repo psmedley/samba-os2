@@ -16,10 +16,6 @@
 bool netlogon_creds_is_random_challenge(const struct netr_Credential *challenge);
 void netlogon_creds_random_challenge(struct netr_Credential *challenge);
 
-NTSTATUS netlogon_creds_des_encrypt_LMKey(struct netlogon_creds_CredentialState *creds,
-					  struct netr_LMSessionKey *key);
-NTSTATUS netlogon_creds_des_decrypt_LMKey(struct netlogon_creds_CredentialState *creds,
-					  struct netr_LMSessionKey *key);
 NTSTATUS netlogon_creds_des_encrypt(struct netlogon_creds_CredentialState *creds,
 				    struct samr_Password *pass);
 NTSTATUS netlogon_creds_des_decrypt(struct netlogon_creds_CredentialState *creds,
@@ -46,12 +42,15 @@ struct netlogon_creds_CredentialState *netlogon_creds_client_init(TALLOC_CTX *me
 								  const struct netr_Credential *server_challenge,
 								  const struct samr_Password *machine_password,
 								  struct netr_Credential *initial_credential,
+								  uint32_t client_requested_flags,
 								  uint32_t negotiate_flags);
-struct netlogon_creds_CredentialState *netlogon_creds_client_init_session_key(TALLOC_CTX *mem_ctx,
-									      const uint8_t session_key[16]);
 NTSTATUS
 netlogon_creds_client_authenticator(struct netlogon_creds_CredentialState *creds,
 				    struct netr_Authenticator *next);
+NTSTATUS netlogon_creds_client_verify(struct netlogon_creds_CredentialState *creds,
+			const struct netr_Credential *received_credentials,
+			enum dcerpc_AuthType auth_type,
+			enum dcerpc_AuthLevel auth_level);
 bool netlogon_creds_client_check(struct netlogon_creds_CredentialState *creds,
 			const struct netr_Credential *received_credentials);
 struct netlogon_creds_CredentialState *netlogon_creds_copy(
@@ -71,22 +70,60 @@ struct netlogon_creds_CredentialState *netlogon_creds_server_init(TALLOC_CTX *me
 								  const struct samr_Password *machine_password,
 								  const struct netr_Credential *credentials_in,
 								  struct netr_Credential *credentials_out,
+								  uint32_t client_requested_flags,
+								  const struct dom_sid *client_sid,
 								  uint32_t negotiate_flags);
 NTSTATUS netlogon_creds_server_step_check(struct netlogon_creds_CredentialState *creds,
 				 const struct netr_Authenticator *received_authenticator,
-				 struct netr_Authenticator *return_authenticator) ;
+				 struct netr_Authenticator *return_authenticator,
+				 enum dcerpc_AuthType auth_type,
+				 enum dcerpc_AuthLevel auth_level);
 NTSTATUS netlogon_creds_decrypt_samlogon_validation(struct netlogon_creds_CredentialState *creds,
 						    uint16_t validation_level,
-						    union netr_Validation *validation);
+						    union netr_Validation *validation,
+						    enum dcerpc_AuthType auth_type,
+						    enum dcerpc_AuthLevel auth_level);
 NTSTATUS netlogon_creds_encrypt_samlogon_validation(struct netlogon_creds_CredentialState *creds,
 						    uint16_t validation_level,
-						    union netr_Validation *validation);
+						    union netr_Validation *validation,
+						    enum dcerpc_AuthType auth_type,
+						    enum dcerpc_AuthLevel auth_level);
 NTSTATUS netlogon_creds_decrypt_samlogon_logon(struct netlogon_creds_CredentialState *creds,
 					       enum netr_LogonInfoClass level,
-					       union netr_LogonLevel *logon);
+					       union netr_LogonLevel *logon,
+					       enum dcerpc_AuthType auth_type,
+					       enum dcerpc_AuthLevel auth_level);
 NTSTATUS netlogon_creds_encrypt_samlogon_logon(struct netlogon_creds_CredentialState *creds,
 					       enum netr_LogonInfoClass level,
-					       union netr_LogonLevel *logon);
+					       union netr_LogonLevel *logon,
+					       enum dcerpc_AuthType auth_type,
+					       enum dcerpc_AuthLevel auth_level);
+NTSTATUS netlogon_creds_decrypt_samr_Password(struct netlogon_creds_CredentialState *creds,
+					      struct samr_Password *pass,
+					      enum dcerpc_AuthType auth_type,
+					      enum dcerpc_AuthLevel auth_level);
+NTSTATUS netlogon_creds_encrypt_samr_Password(struct netlogon_creds_CredentialState *creds,
+					      struct samr_Password *pass,
+					      enum dcerpc_AuthType auth_type,
+					      enum dcerpc_AuthLevel auth_level);
+NTSTATUS netlogon_creds_decrypt_samr_CryptPassword(struct netlogon_creds_CredentialState *creds,
+						   struct samr_CryptPassword *pass,
+						   enum dcerpc_AuthType auth_type,
+						   enum dcerpc_AuthLevel auth_level);
+NTSTATUS netlogon_creds_encrypt_samr_CryptPassword(struct netlogon_creds_CredentialState *creds,
+						   struct samr_CryptPassword *pass,
+						   enum dcerpc_AuthType auth_type,
+						   enum dcerpc_AuthLevel auth_level);
+NTSTATUS netlogon_creds_decrypt_SendToSam(struct netlogon_creds_CredentialState *creds,
+					  uint8_t *opaque_data,
+					  size_t opaque_length,
+					  enum dcerpc_AuthType auth_type,
+					  enum dcerpc_AuthLevel auth_level);
+NTSTATUS netlogon_creds_encrypt_SendToSam(struct netlogon_creds_CredentialState *creds,
+					  uint8_t *opaque_data,
+					  size_t opaque_length,
+					  enum dcerpc_AuthType auth_type,
+					  enum dcerpc_AuthLevel auth_level);
 union netr_LogonLevel *netlogon_creds_shallow_copy_logon(TALLOC_CTX *mem_ctx,
 					enum netr_LogonInfoClass level,
 					const union netr_LogonLevel *in);

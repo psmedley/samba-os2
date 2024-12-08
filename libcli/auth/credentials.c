@@ -290,7 +290,7 @@ static NTSTATUS netlogon_creds_step(struct netlogon_creds_CredentialState *creds
 /*
   DES encrypt a 8 byte LMSessionKey buffer using the Netlogon session key
 */
-NTSTATUS netlogon_creds_des_encrypt_LMKey(struct netlogon_creds_CredentialState *creds,
+static NTSTATUS netlogon_creds_des_encrypt_LMKey(struct netlogon_creds_CredentialState *creds,
 					  struct netr_LMSessionKey *key)
 {
 	int rc;
@@ -308,7 +308,7 @@ NTSTATUS netlogon_creds_des_encrypt_LMKey(struct netlogon_creds_CredentialState 
 /*
   DES decrypt a 8 byte LMSessionKey buffer using the Netlogon session key
 */
-NTSTATUS netlogon_creds_des_decrypt_LMKey(struct netlogon_creds_CredentialState *creds,
+static NTSTATUS netlogon_creds_des_decrypt_LMKey(struct netlogon_creds_CredentialState *creds,
 					  struct netr_LMSessionKey *key)
 {
 	int rc;
@@ -473,6 +473,58 @@ NTSTATUS netlogon_creds_aes_decrypt(struct netlogon_creds_CredentialState *creds
 	return NT_STATUS_OK;
 }
 
+static struct netlogon_creds_CredentialState *
+netlogon_creds_alloc(TALLOC_CTX *mem_ctx,
+		     const char *client_account,
+		     const char *client_computer_name,
+		     uint16_t secure_channel_type,
+		     uint32_t client_requested_flags,
+		     const struct dom_sid *client_sid,
+		     uint32_t negotiate_flags)
+{
+	struct netlogon_creds_CredentialState *creds = NULL;
+	struct timeval tv = timeval_current();
+	NTTIME now = timeval_to_nttime(&tv);
+
+	creds = talloc_zero(mem_ctx, struct netlogon_creds_CredentialState);
+	if (creds == NULL) {
+		return NULL;
+	}
+
+	if (client_sid == NULL) {
+		creds->sequence = tv.tv_sec;
+	}
+	creds->negotiate_flags = negotiate_flags;
+	creds->secure_channel_type = secure_channel_type;
+
+	creds->computer_name = talloc_strdup(creds, client_computer_name);
+	if (!creds->computer_name) {
+		talloc_free(creds);
+		return NULL;
+	}
+	creds->account_name = talloc_strdup(creds, client_account);
+	if (!creds->account_name) {
+		talloc_free(creds);
+		return NULL;
+	}
+
+	creds->ex = talloc_zero(creds,
+			struct netlogon_creds_CredentialState_extra_info);
+	if (creds->ex == NULL) {
+		talloc_free(creds);
+		return NULL;
+	}
+	creds->ex->client_requested_flags = client_requested_flags;
+	creds->ex->auth_time = now;
+	if (client_sid != NULL) {
+		creds->ex->client_sid = *client_sid;
+	} else {
+		creds->ex->client_sid = global_sid_NULL;
+	}
+
+	return creds;
+}
+
 /*****************************************************************
 The above functions are common to the client and server interface
 next comes the client specific functions
@@ -491,27 +543,20 @@ struct netlogon_creds_CredentialState *netlogon_creds_client_init(TALLOC_CTX *me
 								  const struct netr_Credential *server_challenge,
 								  const struct samr_Password *machine_password,
 								  struct netr_Credential *initial_credential,
+								  uint32_t client_requested_flags,
 								  uint32_t negotiate_flags)
 {
-	struct netlogon_creds_CredentialState *creds = talloc_zero(mem_ctx, struct netlogon_creds_CredentialState);
+	struct netlogon_creds_CredentialState *creds = NULL;
 	NTSTATUS status;
 
+	creds = netlogon_creds_alloc(mem_ctx,
+				     client_account,
+				     client_computer_name,
+				     secure_channel_type,
+				     client_requested_flags,
+				     NULL, /* client_sid */
+				     negotiate_flags);
 	if (!creds) {
-		return NULL;
-	}
-
-	creds->sequence = time(NULL);
-	creds->negotiate_flags = negotiate_flags;
-	creds->secure_channel_type = secure_channel_type;
-
-	creds->computer_name = talloc_strdup(creds, client_computer_name);
-	if (!creds->computer_name) {
-		talloc_free(creds);
-		return NULL;
-	}
-	creds->account_name = talloc_strdup(creds, client_account);
-	if (!creds->account_name) {
-		talloc_free(creds);
 		return NULL;
 	}
 
@@ -564,25 +609,6 @@ struct netlogon_creds_CredentialState *netlogon_creds_client_init(TALLOC_CTX *me
 }
 
 /*
-  initialise the credentials structure with only a session key.  The caller better know what they are doing!
- */
-
-struct netlogon_creds_CredentialState *netlogon_creds_client_init_session_key(TALLOC_CTX *mem_ctx,
-									      const uint8_t session_key[16])
-{
-	struct netlogon_creds_CredentialState *creds;
-
-	creds = talloc_zero(mem_ctx, struct netlogon_creds_CredentialState);
-	if (!creds) {
-		return NULL;
-	}
-
-	memcpy(creds->session_key, session_key, 16);
-
-	return creds;
-}
-
-/*
   step the credentials to the next element in the chain, updating the
   current client and server credentials and the seed
 
@@ -631,14 +657,34 @@ netlogon_creds_client_authenticator(struct netlogon_creds_CredentialState *creds
 /*
   check that a credentials reply from a server is correct
 */
-bool netlogon_creds_client_check(struct netlogon_creds_CredentialState *creds,
-			const struct netr_Credential *received_credentials)
+NTSTATUS netlogon_creds_client_verify(struct netlogon_creds_CredentialState *creds,
+			const struct netr_Credential *received_credentials,
+			enum dcerpc_AuthType auth_type,
+			enum dcerpc_AuthLevel auth_level)
 {
 	if (!received_credentials ||
 	    !mem_equal_const_time(received_credentials->data, creds->server.data, 8)) {
 		DEBUG(2,("credentials check failed\n"));
+		return NT_STATUS_ACCESS_DENIED;
+	}
+	return NT_STATUS_OK;
+}
+
+bool netlogon_creds_client_check(struct netlogon_creds_CredentialState *creds,
+			const struct netr_Credential *received_credentials)
+{
+	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
+	enum dcerpc_AuthLevel auth_level = DCERPC_AUTH_LEVEL_NONE;
+	NTSTATUS status;
+
+	status = netlogon_creds_client_verify(creds,
+					      received_credentials,
+					      auth_type,
+					      auth_level);
+	if (!NT_STATUS_IS_OK(status)) {
 		return false;
 	}
+
 	return true;
 }
 
@@ -676,19 +722,24 @@ struct netlogon_creds_CredentialState *netlogon_creds_server_init(TALLOC_CTX *me
 								  const struct samr_Password *machine_password,
 								  const struct netr_Credential *credentials_in,
 								  struct netr_Credential *credentials_out,
+								  uint32_t client_requested_flags,
+								  const struct dom_sid *client_sid,
 								  uint32_t negotiate_flags)
 {
-
-	struct netlogon_creds_CredentialState *creds = talloc_zero(mem_ctx, struct netlogon_creds_CredentialState);
+	struct netlogon_creds_CredentialState *creds = NULL;
 	NTSTATUS status;
 	bool ok;
 
+	creds = netlogon_creds_alloc(mem_ctx,
+				     client_account,
+				     client_computer_name,
+				     secure_channel_type,
+				     client_requested_flags,
+				     client_sid,
+				     negotiate_flags);
 	if (!creds) {
 		return NULL;
 	}
-
-	creds->negotiate_flags = negotiate_flags;
-	creds->secure_channel_type = secure_channel_type;
 
 	dump_data_pw("Client chall", client_challenge->data, sizeof(client_challenge->data));
 	dump_data_pw("Server chall", server_challenge->data, sizeof(server_challenge->data));
@@ -704,17 +755,6 @@ struct netlogon_creds_CredentialState *netlogon_creds_server_init(TALLOC_CTX *me
 		dump_data(DBGLVL_WARNING,
 			  client_challenge->data,
 			  sizeof(client_challenge->data));
-		talloc_free(creds);
-		return NULL;
-	}
-
-	creds->computer_name = talloc_strdup(creds, client_computer_name);
-	if (!creds->computer_name) {
-		talloc_free(creds);
-		return NULL;
-	}
-	creds->account_name = talloc_strdup(creds, client_account);
-	if (!creds->account_name) {
 		talloc_free(creds);
 		return NULL;
 	}
@@ -778,7 +818,9 @@ struct netlogon_creds_CredentialState *netlogon_creds_server_init(TALLOC_CTX *me
 
 NTSTATUS netlogon_creds_server_step_check(struct netlogon_creds_CredentialState *creds,
 				 const struct netr_Authenticator *received_authenticator,
-				 struct netr_Authenticator *return_authenticator)
+				 struct netr_Authenticator *return_authenticator,
+				 enum dcerpc_AuthType auth_type,
+				 enum dcerpc_AuthLevel auth_level)
 {
 	NTSTATUS status;
 
@@ -810,6 +852,8 @@ NTSTATUS netlogon_creds_server_step_check(struct netlogon_creds_CredentialState 
 static NTSTATUS netlogon_creds_crypt_samlogon_validation(struct netlogon_creds_CredentialState *creds,
 							 uint16_t validation_level,
 							 union netr_Validation *validation,
+							 enum dcerpc_AuthType auth_type,
+							 enum dcerpc_AuthLevel auth_level,
 							 bool do_encrypt)
 {
 	struct netr_SamBaseInfo *base = NULL;
@@ -925,27 +969,37 @@ static NTSTATUS netlogon_creds_crypt_samlogon_validation(struct netlogon_creds_C
 
 NTSTATUS netlogon_creds_decrypt_samlogon_validation(struct netlogon_creds_CredentialState *creds,
 						    uint16_t validation_level,
-						    union netr_Validation *validation)
+						    union netr_Validation *validation,
+						    enum dcerpc_AuthType auth_type,
+						    enum dcerpc_AuthLevel auth_level)
 {
 	return netlogon_creds_crypt_samlogon_validation(creds,
 							validation_level,
 							validation,
+							auth_type,
+							auth_level,
 							false);
 }
 
 NTSTATUS netlogon_creds_encrypt_samlogon_validation(struct netlogon_creds_CredentialState *creds,
 						    uint16_t validation_level,
-						    union netr_Validation *validation)
+						    union netr_Validation *validation,
+						    enum dcerpc_AuthType auth_type,
+						    enum dcerpc_AuthLevel auth_level)
 {
 	return netlogon_creds_crypt_samlogon_validation(creds,
 							validation_level,
 							validation,
+							auth_type,
+							auth_level,
 							true);
 }
 
 static NTSTATUS netlogon_creds_crypt_samlogon_logon(struct netlogon_creds_CredentialState *creds,
 						    enum netr_LogonInfoClass level,
 						    union netr_LogonLevel *logon,
+						    enum dcerpc_AuthType auth_type,
+						    enum dcerpc_AuthLevel auth_level,
 						    bool do_encrypt)
 {
 	NTSTATUS status;
@@ -1082,6 +1136,7 @@ static NTSTATUS netlogon_creds_crypt_samlogon_logon(struct netlogon_creds_Creden
 			}
 		} else {
 			/* Using DES to verify kerberos tickets makes no sense */
+			return NT_STATUS_INVALID_PARAMETER;
 		}
 		break;
 	}
@@ -1091,16 +1146,178 @@ static NTSTATUS netlogon_creds_crypt_samlogon_logon(struct netlogon_creds_Creden
 
 NTSTATUS netlogon_creds_decrypt_samlogon_logon(struct netlogon_creds_CredentialState *creds,
 					       enum netr_LogonInfoClass level,
-					       union netr_LogonLevel *logon)
+					       union netr_LogonLevel *logon,
+					       enum dcerpc_AuthType auth_type,
+					       enum dcerpc_AuthLevel auth_level)
 {
-	return netlogon_creds_crypt_samlogon_logon(creds, level, logon, false);
+	return netlogon_creds_crypt_samlogon_logon(creds,
+						   level,
+						   logon,
+						   auth_type,
+						   auth_level,
+						   false);
 }
 
 NTSTATUS netlogon_creds_encrypt_samlogon_logon(struct netlogon_creds_CredentialState *creds,
 					       enum netr_LogonInfoClass level,
-					       union netr_LogonLevel *logon)
+					       union netr_LogonLevel *logon,
+					       enum dcerpc_AuthType auth_type,
+					       enum dcerpc_AuthLevel auth_level)
 {
-	return netlogon_creds_crypt_samlogon_logon(creds, level, logon, true);
+	return netlogon_creds_crypt_samlogon_logon(creds,
+						   level,
+						   logon,
+						   auth_type,
+						   auth_level,
+						   true);
+}
+
+static NTSTATUS netlogon_creds_crypt_samr_Password(
+		struct netlogon_creds_CredentialState *creds,
+		struct samr_Password *pass,
+		enum dcerpc_AuthType auth_type,
+		enum dcerpc_AuthLevel auth_level,
+		bool do_encrypt)
+{
+	if (all_zero(pass->hash, ARRAY_SIZE(pass->hash))) {
+		return NT_STATUS_OK;
+	}
+
+	/*
+	 * Even with NETLOGON_NEG_SUPPORTS_AES or
+	 * NETLOGON_NEG_ARCFOUR this uses DES
+	 */
+
+	if (do_encrypt) {
+		return netlogon_creds_des_encrypt(creds, pass);
+	}
+
+	return netlogon_creds_des_decrypt(creds, pass);
+}
+
+NTSTATUS netlogon_creds_decrypt_samr_Password(struct netlogon_creds_CredentialState *creds,
+					      struct samr_Password *pass,
+					      enum dcerpc_AuthType auth_type,
+					      enum dcerpc_AuthLevel auth_level)
+{
+	return netlogon_creds_crypt_samr_Password(creds,
+						  pass,
+						  auth_type,
+						  auth_level,
+						  false);
+}
+
+NTSTATUS netlogon_creds_encrypt_samr_Password(struct netlogon_creds_CredentialState *creds,
+					      struct samr_Password *pass,
+					      enum dcerpc_AuthType auth_type,
+					      enum dcerpc_AuthLevel auth_level)
+{
+	return netlogon_creds_crypt_samr_Password(creds,
+						  pass,
+						  auth_type,
+						  auth_level,
+						  true);
+}
+
+static NTSTATUS netlogon_creds_crypt_samr_CryptPassword(
+		struct netlogon_creds_CredentialState *creds,
+		struct samr_CryptPassword *pass,
+		enum dcerpc_AuthType auth_type,
+		enum dcerpc_AuthLevel auth_level,
+		bool do_encrypt)
+{
+	if (creds->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
+		if (do_encrypt) {
+			return netlogon_creds_aes_encrypt(creds,
+							  pass->data,
+							  ARRAY_SIZE(pass->data));
+		}
+
+		return netlogon_creds_aes_decrypt(creds,
+						  pass->data,
+						  ARRAY_SIZE(pass->data));
+	}
+
+	return netlogon_creds_arcfour_crypt(creds,
+					    pass->data,
+					    ARRAY_SIZE(pass->data));
+}
+
+NTSTATUS netlogon_creds_decrypt_samr_CryptPassword(struct netlogon_creds_CredentialState *creds,
+						   struct samr_CryptPassword *pass,
+						   enum dcerpc_AuthType auth_type,
+						   enum dcerpc_AuthLevel auth_level)
+{
+	return netlogon_creds_crypt_samr_CryptPassword(creds,
+						       pass,
+						       auth_type,
+						       auth_level,
+						       false);
+}
+
+NTSTATUS netlogon_creds_encrypt_samr_CryptPassword(struct netlogon_creds_CredentialState *creds,
+						   struct samr_CryptPassword *pass,
+						   enum dcerpc_AuthType auth_type,
+						   enum dcerpc_AuthLevel auth_level)
+{
+	return netlogon_creds_crypt_samr_CryptPassword(creds,
+						       pass,
+						       auth_type,
+						       auth_level,
+						       true);
+}
+
+static NTSTATUS netlogon_creds_crypt_SendToSam(
+		struct netlogon_creds_CredentialState *creds,
+		uint8_t *opaque_data,
+		size_t opaque_length,
+		enum dcerpc_AuthType auth_type,
+		enum dcerpc_AuthLevel auth_level,
+		bool do_encrypt)
+{
+	if (creds->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
+		if (do_encrypt) {
+			return netlogon_creds_aes_encrypt(creds,
+							  opaque_data,
+							  opaque_length);
+		}
+
+		return netlogon_creds_aes_decrypt(creds,
+						  opaque_data,
+						  opaque_length);
+	}
+
+	return netlogon_creds_arcfour_crypt(creds,
+					    opaque_data,
+					    opaque_length);
+}
+
+NTSTATUS netlogon_creds_decrypt_SendToSam(struct netlogon_creds_CredentialState *creds,
+					  uint8_t *opaque_data,
+					  size_t opaque_length,
+					  enum dcerpc_AuthType auth_type,
+					  enum dcerpc_AuthLevel auth_level)
+{
+	return netlogon_creds_crypt_SendToSam(creds,
+					      opaque_data,
+					      opaque_length,
+					      auth_type,
+					      auth_level,
+					      false);
+}
+
+NTSTATUS netlogon_creds_encrypt_SendToSam(struct netlogon_creds_CredentialState *creds,
+					  uint8_t *opaque_data,
+					  size_t opaque_length,
+					  enum dcerpc_AuthType auth_type,
+					  enum dcerpc_AuthLevel auth_level)
+{
+	return netlogon_creds_crypt_SendToSam(creds,
+					      opaque_data,
+					      opaque_length,
+					      auth_type,
+					      auth_level,
+					      true);
 }
 
 union netr_LogonLevel *netlogon_creds_shallow_copy_logon(TALLOC_CTX *mem_ctx,
@@ -1190,9 +1407,7 @@ struct netlogon_creds_CredentialState *netlogon_creds_copy(
 		return NULL;
 	}
 
-	creds->sequence			= creds_in->sequence;
-	creds->negotiate_flags		= creds_in->negotiate_flags;
-	creds->secure_channel_type	= creds_in->secure_channel_type;
+	*creds = *creds_in;
 
 	creds->computer_name = talloc_strdup(creds, creds_in->computer_name);
 	if (!creds->computer_name) {
@@ -1205,18 +1420,15 @@ struct netlogon_creds_CredentialState *netlogon_creds_copy(
 		return NULL;
 	}
 
-	if (creds_in->sid) {
-		creds->sid = dom_sid_dup(creds, creds_in->sid);
-		if (!creds->sid) {
+	if (creds_in->ex != NULL) {
+		creds->ex = talloc_zero(creds,
+			struct netlogon_creds_CredentialState_extra_info);
+		if (creds->ex == NULL) {
 			talloc_free(creds);
 			return NULL;
 		}
+		*creds->ex = *creds_in->ex;
 	}
-
-	memcpy(creds->session_key, creds_in->session_key, sizeof(creds->session_key));
-	memcpy(creds->seed.data, creds_in->seed.data, sizeof(creds->seed.data));
-	memcpy(creds->client.data, creds_in->client.data, sizeof(creds->client.data));
-	memcpy(creds->server.data, creds_in->server.data, sizeof(creds->server.data));
 
 	return creds;
 }

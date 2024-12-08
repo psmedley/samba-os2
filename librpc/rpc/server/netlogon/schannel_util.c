@@ -70,7 +70,7 @@ static NTSTATUS dcesrv_netr_check_schannel_get_state(struct dcesrv_call_state *d
 			DCESRV_NETR_CHECK_SCHANNEL_STATE_MAGIC,
 			struct dcesrv_netr_check_schannel_state);
 	if (s != NULL) {
-		if (!dom_sid_equal(&s->account_sid, creds->sid)) {
+		if (!dom_sid_equal(&s->account_sid, &creds->ex->client_sid)) {
 			goto new_state;
 		}
 		if (s->auth_type != auth_type) {
@@ -92,7 +92,7 @@ new_state:
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	s->account_sid = *creds->sid;
+	s->account_sid = creds->ex->client_sid;
 	s->auth_type = auth_type;
 	s->auth_level = auth_level;
 	s->result = NT_STATUS_MORE_PROCESSING_REQUIRED;
@@ -548,6 +548,8 @@ NTSTATUS dcesrv_netr_creds_server_step_check(struct dcesrv_call_state *dce_call,
 					       computer_name,
 					       received_authenticator,
 					       return_authenticator,
+					       auth_type,
+					       auth_level,
 					       &creds);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		ZERO_STRUCTP(return_authenticator);

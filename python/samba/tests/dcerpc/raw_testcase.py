@@ -56,7 +56,17 @@ class smb_pipe_socket(object):
         return
 
     def close(self):
-        self.smbconn.close(self.smbfid)
+        try:
+            self.smbconn.close(self.smbfid)
+        except NTSTATUSError as e:
+            if e.args[0] == NT_STATUS_CONNECTION_DISCONNECTED:
+                pass
+            elif e.args[0] == NT_STATUS_PIPE_DISCONNECTED:
+                pass
+            elif e.args[0] == NT_STATUS_IO_TIMEOUT:
+                pass
+            else:
+                raise e
         del self.smbconn
 
     def settimeout(self, timeo):
@@ -152,6 +162,12 @@ class RawDCERPCTest(TestCase):
 
         self.ignore_random_pad = samba.tests.env_get_var_value('IGNORE_RANDOM_PAD',
                                                                allow_missing=True)
+        self.auth_level_connect_lsa = samba.tests.env_get_var_value('AUTH_LEVEL_CONNECT_LSA',
+                                                                    allow_missing=True)
+        self.allow_bind_auth_pad = samba.tests.env_get_var_value('ALLOW_BIND_AUTH_PAD',
+                                                                 allow_missing=True)
+        self.legacy_bind_nak_no_reason = samba.tests.env_get_var_value('LEGACY_BIND_NACK_NO_REASON',
+                                                                       allow_missing=True)
         self.host = samba.tests.env_get_var_value('SERVER')
         self.target_hostname = samba.tests.env_get_var_value('TARGET_HOSTNAME', allow_missing=True)
         if self.target_hostname is None:
@@ -661,33 +677,44 @@ class RawDCERPCTest(TestCase):
         self.secondary_address = None
         self.connect()
 
-    def send_pdu(self, req, ndr_print=None, hexdump=None):
+    def prepare_pdu(self, req, ndr_print=None, hexdump=None):
         if ndr_print is None:
             ndr_print = self.do_ndr_print
         if hexdump is None:
             hexdump = self.do_hexdump
+        req_pdu = ndr_pack(req)
+        if ndr_print:
+            sys.stderr.write("prepare_pdu: %s" % samba.ndr.ndr_print(req))
+        if hexdump:
+            sys.stderr.write("prepare_pdu: %d\n%s" % (len(req_pdu), self.hexdump(req_pdu)))
+        return req_pdu
+
+    def send_pdu_blob(self, req_pdu, hexdump=None):
+        if hexdump is None:
+            hexdump = self.do_hexdump
         try:
-            req_pdu = ndr_pack(req)
-            if ndr_print:
-                sys.stderr.write("send_pdu: %s" % samba.ndr.ndr_print(req))
             if hexdump:
-                sys.stderr.write("send_pdu: %d\n%s" % (len(req_pdu), self.hexdump(req_pdu)))
+                sys.stderr.write("send_pdu_blob: %d\n%s" % (len(req_pdu), self.hexdump(req_pdu)))
             while True:
                 sent = self.s.send(req_pdu, 0)
                 if sent == len(req_pdu):
                     break
                 req_pdu = req_pdu[sent:]
         except socket.error as e:
-            self._disconnect("send_pdu: %s" % e)
+            self._disconnect("send_pdu_blob: %s" % e)
             raise
         except IOError as e:
-            self._disconnect("send_pdu: %s" % e)
+            self._disconnect("send_pdu_blob: %s" % e)
             raise
         except NTSTATUSError as e:
-            self._disconnect("send_pdu: %s" % e)
+            self._disconnect("send_pdu_blob: %s" % e)
             raise
         finally:
             pass
+
+    def send_pdu(self, req, ndr_print=None, hexdump=None):
+        req_pdu = self.prepare_pdu(req, ndr_print=ndr_print, hexdump=False)
+        return self.send_pdu_blob(req_pdu, hexdump=hexdump)
 
     def recv_raw(self, hexdump=None, timeout=None):
         rep_pdu = None
@@ -862,6 +889,7 @@ class RawDCERPCTest(TestCase):
         if len(ai) > samba.dcerpc.dcerpc.DCERPC_AUTH_TRAILER_LENGTH:
             p.auth_length = len(ai) - samba.dcerpc.dcerpc.DCERPC_AUTH_TRAILER_LENGTH
         else:
+            self.assertEqual(len(ai), 0)
             p.auth_length = 0
         p.call_id = call_id
         p.u = payload
@@ -974,10 +1002,10 @@ class RawDCERPCTest(TestCase):
         if len(ai) > samba.dcerpc.dcerpc.DCERPC_AUTH_TRAILER_LENGTH:
             self.assertEqual(p.auth_length,
                              len(ai) - samba.dcerpc.dcerpc.DCERPC_AUTH_TRAILER_LENGTH)
-        elif auth_length is not None:
-            self.assertEqual(p.auth_length, auth_length)
-        else:
+        elif auth_length is None:
             self.assertEqual(p.auth_length, 0)
+        if auth_length is not None:
+            self.assertEqual(p.auth_length, auth_length)
         self.assertEqual(p.call_id, call_id)
 
         return
