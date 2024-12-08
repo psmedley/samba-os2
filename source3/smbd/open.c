@@ -38,6 +38,7 @@
 #include "serverid.h"
 #include "messages.h"
 #include "source3/lib/dbwrap/dbwrap_watch.h"
+#include "source3/lib/server_id_watch.h"
 #include "locking/leases_db.h"
 #include "librpc/gen_ndr/ndr_leases_db.h"
 #include "lib/util/time_basic.h"
@@ -2451,6 +2452,10 @@ static int map_lease_type_to_oplock(uint32_t lease_type)
 	return result;
 }
 
+struct blocker_debug_state {
+	size_t num_blockers;
+};
+
 struct delay_for_oplock_state {
 	struct files_struct *fsp;
 	const struct smb2_lease *lease;
@@ -2459,10 +2464,24 @@ struct delay_for_oplock_state {
 	bool first_open_attempt;
 	bool got_handle_lease;
 	bool got_oplock;
-	bool have_other_lease;
+	bool disallow_write_lease;
 	uint32_t total_lease_types;
 	bool delay;
+	struct blocker_debug_state *blocker_debug_state;
 };
+
+static int blocker_debug_state_destructor(struct blocker_debug_state *state)
+{
+	if (state->num_blockers == 0) {
+		return 0;
+	}
+
+	DBG_DEBUG("blocker_debug_state [%p] num_blockers [%zu]\n",
+		  state, state->num_blockers);
+	return 0;
+}
+
+static void delay_for_oplock_fn_watch_done(struct tevent_req *subreq);
 
 static bool delay_for_oplock_fn(
 	struct share_mode_entry *e,
@@ -2476,6 +2495,8 @@ static bool delay_for_oplock_fn(
 	uint32_t e_lease_type = SMB2_LEASE_NONE;
 	uint32_t break_to;
 	bool lease_is_breaking = false;
+	struct tevent_req *subreq = NULL;
+	struct server_id_buf idbuf = {};
 
 	if (e_is_lease) {
 		NTSTATUS status;
@@ -2551,15 +2572,27 @@ static bool delay_for_oplock_fn(
 	}
 
 	if (!state->got_oplock &&
+	    (e->op_type != NO_OPLOCK) &&
 	    (e->op_type != LEASE_OPLOCK) &&
 	    !share_entry_stale_pid(e)) {
 		state->got_oplock = true;
 	}
 
-	if (!state->have_other_lease &&
+	/*
+	 * Two things prevent a write lease
+	 * to be granted:
+	 *
+	 * 1. Any oplock or lease (even broken to NONE)
+	 * 2. An open with an access mask other than
+	 *    FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES
+	 *    or SYNCHRONIZE_ACCESS
+	 */
+	if (!state->disallow_write_lease &&
+	    (e->op_type != NO_OPLOCK || !is_oplock_stat_open(e->access_mask)) &&
 	    !is_same_lease(fsp, e, lease) &&
-	    !share_entry_stale_pid(e)) {
-		state->have_other_lease = true;
+	    !share_entry_stale_pid(e))
+	{
+		state->disallow_write_lease = true;
 	}
 
 	if (e_is_lease && is_lease_stat_open(fsp->access_mask)) {
@@ -2615,8 +2648,55 @@ static bool delay_for_oplock_fn(
 		state->delay = true;
 	}
 
+	if (!state->delay) {
+		return false;
+	}
+
+	if (state->blocker_debug_state == NULL) {
+		return false;
+	}
+
+	subreq = server_id_watch_send(state->blocker_debug_state,
+				      fsp->conn->sconn->ev_ctx,
+				      e->pid);
+	if (subreq == NULL) {
+		DBG_ERR("server_id_watch_send(%s) returned NULL\n",
+			server_id_str_buf(e->pid, &idbuf));
+		return false;
+	}
+
+	tevent_req_set_callback(subreq,
+				delay_for_oplock_fn_watch_done,
+				state->blocker_debug_state);
+
+	state->blocker_debug_state->num_blockers++;
+
+	DBG_DEBUG("Starting to watch pid [%s] state [%p] num_blockers [%zu]\n",
+		  server_id_str_buf(e->pid, &idbuf),
+		  state->blocker_debug_state,
+		  state->blocker_debug_state->num_blockers);
+
 	return false;
 };
+
+static void delay_for_oplock_fn_watch_done(struct tevent_req *subreq)
+{
+	struct blocker_debug_state *blocker_debug_state = tevent_req_callback_data(
+		subreq, struct blocker_debug_state);
+	struct server_id pid = {};
+	struct server_id_buf idbuf = {};
+	int ret;
+
+	ret = server_id_watch_recv(subreq, &pid);
+	if (ret != 0) {
+		DBG_ERR("server_id_watch_recv failed %s\n", strerror(ret));
+		return;
+	}
+
+	DBG_DEBUG("state [%p] server_id_watch_recv() returned pid [%s] exited\n",
+		  blocker_debug_state,
+		  server_id_str_buf(pid, &idbuf));
+}
 
 static NTSTATUS delay_for_oplock(files_struct *fsp,
 				 int oplock_request,
@@ -2626,7 +2706,8 @@ static NTSTATUS delay_for_oplock(files_struct *fsp,
 				 uint32_t create_disposition,
 				 bool first_open_attempt,
 				 int *poplock_type,
-				 uint32_t *pgranted)
+				 uint32_t *pgranted,
+				 struct blocker_debug_state **blocker_debug_state)
 {
 	struct delay_for_oplock_state state = {
 		.fsp = fsp,
@@ -2672,6 +2753,22 @@ static NTSTATUS delay_for_oplock(files_struct *fsp,
 		goto grant;
 	}
 
+	if (lp_parm_bool(GLOBAL_SECTION_SNUM,
+			 "smbd lease break",
+			 "debug hung procs",
+			 false))
+	{
+		state.blocker_debug_state = talloc_zero(fsp,
+						struct blocker_debug_state);
+		if (state.blocker_debug_state == NULL) {
+			return NT_STATUS_NO_MEMORY;
+		}
+		talloc_steal(talloc_tos(), state.blocker_debug_state);
+
+		talloc_set_destructor(state.blocker_debug_state,
+				      blocker_debug_state_destructor);
+	}
+
 	state.delay_mask = have_sharing_violation ?
 		SMB2_LEASE_HANDLE : SMB2_LEASE_WRITE;
 
@@ -2693,6 +2790,7 @@ static NTSTATUS delay_for_oplock(files_struct *fsp,
 	}
 
 	if (state.delay) {
+		*blocker_debug_state = state.blocker_debug_state;
 		return NT_STATUS_RETRY;
 	}
 
@@ -2728,9 +2826,11 @@ grant:
 		granted &= ~SMB2_LEASE_READ;
 	}
 
-	if (state.have_other_lease) {
+	if (state.disallow_write_lease) {
 		/*
-		 * Can grant only one writer
+		 * Can grant only a write lease
+		 * if there are no other leases
+		 * and no other non-stat opens.
 		 */
 		granted &= ~SMB2_LEASE_WRITE;
 	}
@@ -2806,7 +2906,8 @@ static NTSTATUS handle_share_mode_lease(
 	const struct smb2_lease *lease,
 	bool first_open_attempt,
 	int *poplock_type,
-	uint32_t *pgranted)
+	uint32_t *pgranted,
+	struct blocker_debug_state **blocker_debug_state)
 {
 	bool sharing_violation = false;
 	NTSTATUS status;
@@ -2847,7 +2948,8 @@ static NTSTATUS handle_share_mode_lease(
 		create_disposition,
 		first_open_attempt,
 		poplock_type,
-		pgranted);
+		pgranted,
+		blocker_debug_state);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -2880,7 +2982,8 @@ static void defer_open_done(struct tevent_req *req);
 static void defer_open(struct share_mode_lock *lck,
 		       struct timeval timeout,
 		       struct smb_request *req,
-		       struct file_id id)
+		       struct file_id id,
+		       struct blocker_debug_state **blocker_debug_state)
 {
 	struct deferred_open_record *open_rec = NULL;
 	struct timeval abs_timeout;
@@ -2924,6 +3027,8 @@ static void defer_open(struct share_mode_lock *lck,
 	}
 	tevent_req_set_callback(watch_req, defer_open_done, watch_state);
 
+	talloc_move(watch_req, blocker_debug_state);
+
 	ok = tevent_req_set_endtime(watch_req, req->sconn->ev_ctx, abs_timeout);
 	if (!ok) {
 		exit_server("tevent_req_set_endtime failed");
@@ -2946,8 +3051,9 @@ static void defer_open_done(struct tevent_req *req)
 	status = share_mode_watch_recv(req, NULL, NULL);
 	TALLOC_FREE(req);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(5, ("dbwrap_watched_watch_recv returned %s\n",
-			  nt_errstr(status)));
+		DBG_ERR("share_mode_watch_recv() returned %s, "
+			"rescheduling mid %" PRIu64 "\n",
+			nt_errstr(status), state->mid);
 		/*
 		 * Even if it failed, retry anyway. TODO: We need a way to
 		 * tell a re-scheduled open about that error.
@@ -3205,7 +3311,8 @@ static bool open_match_attributes(connection_struct *conn,
 
 static void schedule_defer_open(struct share_mode_lock *lck,
 				struct file_id id,
-				struct smb_request *req)
+				struct smb_request *req,
+				struct blocker_debug_state **blocker_debug_state)
 {
 	/* This is a relative time, added to the absolute
 	   request_time value to get the absolute timeout time.
@@ -3229,7 +3336,7 @@ static void schedule_defer_open(struct share_mode_lock *lck,
 		return;
 	}
 
-	defer_open(lck, timeout, req, id);
+	defer_open(lck, timeout, req, id, blocker_debug_state);
 }
 
 /****************************************************************************
@@ -3291,6 +3398,7 @@ static NTSTATUS check_and_store_share_mode(
 	int oplock_type = NO_OPLOCK;
 	uint32_t granted_lease = 0;
 	const struct smb2_lease_key *lease_key = NULL;
+	struct blocker_debug_state *blocker_debug_state = NULL;
 	bool delete_on_close;
 	bool ok;
 
@@ -3313,9 +3421,10 @@ static NTSTATUS check_and_store_share_mode(
 					 lease,
 					 first_open_attempt,
 					 &oplock_type,
-					 &granted_lease);
+					 &granted_lease,
+					 &blocker_debug_state);
 	if (NT_STATUS_EQUAL(status, NT_STATUS_RETRY)) {
-		schedule_defer_open(lck, fsp->file_id, req);
+		schedule_defer_open(lck, fsp->file_id, req, &blocker_debug_state);
 		return NT_STATUS_SHARING_VIOLATION;
 	}
 	if (!NT_STATUS_IS_OK(status)) {

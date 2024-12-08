@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 09/02/2024
+.\"      Date: 10/14/2024
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.21.0
+.\"    Source: Samba 4.21.1
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "09/02/2024" "Samba 4\&.21\&.0" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "10/14/2024" "Samba 4\&.21\&.1" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -13482,7 +13482,7 @@ net ads changetrustpw
 or by winbindd doing regular updates (see
 \m[blue]\fBmachine password timeout\fR\m[])
 .sp
-The option takes a list of keytab strings\&. Each string has this form:
+The option takes a list of keytab strings to describe how to synchronize content of those keytabs or a single \*(Aqdisabled\*(Aq value to disable the synchronization\&. Each string has this form:
 .sp
 .if n \{\
 .RS 4
@@ -13563,7 +13563,21 @@ Example:
 .sp
 If sync_etypes or sync_kvno or sync_spns is present then winbind connects to DC\&. For "offline domain join" it might be useful not to use these options\&.
 .sp
-If no value is present, winbind uses value
+If no value is present and
+\m[blue]\fBkerberos method\fR\m[]
+is different from \*(Aqsecrets only\*(Aq, the behavior differs between winbind and net utility:
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBwinbind\fR
+uses value
 .sp
 .if n \{\
 .RS 4
@@ -13576,7 +13590,36 @@ If no value is present, winbind uses value
 .\}
 .sp
 where the path to the keytab is obtained either from the krb5 library or from
-\m[blue]\fBdedicated keytab file\fR\m[]
+\m[blue]\fBdedicated keytab file\fR\m[]\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBnet changesecretpw \-f\fR
+command uses the default \*(Aqdisabled\*(Aq value\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+No other
+\fBnet\fR
+subcommands use the \*(Aqdisabled\*(Aq value\&.
+.RE
+.sp
+.RE
+If a single value \*(Aqdisabled\*(Aq is present, the synchronization process is disabled\&. This is required for FreeIPA domain member setup where keytab synchronization uses a protocol not implemented by Samba\&.
 .sp
 Suggested configuration is together with
 \m[blue]\fBkerberos method\fR\m[]
@@ -15180,7 +15223,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.21\&.0 of the Samba suite\&.
+This man page is part of version 4\&.21\&.1 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),
