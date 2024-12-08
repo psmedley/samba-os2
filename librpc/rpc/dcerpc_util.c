@@ -240,8 +240,10 @@ NTSTATUS dcerpc_pull_auth_trailer(const struct ncacn_packet *pkt,
 	enum ndr_err_code ndr_err;
 	uint16_t data_and_pad;
 	uint16_t auth_length;
+	uint16_t auth_offset;
 	uint32_t tmp_length;
 	uint32_t max_pad_len = 0;
+	DATA_BLOB auth_blob;
 
 	ZERO_STRUCTP(auth);
 	if (_auth_length != NULL) {
@@ -277,24 +279,27 @@ NTSTATUS dcerpc_pull_auth_trailer(const struct ncacn_packet *pkt,
 
 	auth_length = DCERPC_AUTH_TRAILER_LENGTH + pkt->auth_length;
 	if (pkt_trailer->length < auth_length) {
-		return NT_STATUS_RPC_PROTOCOL_ERROR;
+		return NT_STATUS_INTERNAL_ERROR;
 	}
 
 	data_and_pad = pkt_trailer->length - auth_length;
+	auth_offset = pkt->frag_length - auth_length;
+	if ((auth_offset % 4) != 0) {
+		DBG_WARNING("auth_offset[%u] not 4 byte aligned\n",
+			    (unsigned)auth_offset);
+		auth->auth_context_id = DCERPC_BIND_NAK_REASON_NOT_SPECIFIED;
+		return NT_STATUS_RPC_PROTOCOL_ERROR;
+	}
 
-	ndr = ndr_pull_init_blob(pkt_trailer, mem_ctx);
+	auth_blob = data_blob_const(pkt_trailer->data + data_and_pad,
+				    auth_length);
+	ndr = ndr_pull_init_blob(&auth_blob, mem_ctx);
 	if (!ndr) {
 		return NT_STATUS_NO_MEMORY;
 	}
 
 	if (!(pkt->drep[0] & DCERPC_DREP_LE)) {
 		ndr->flags |= LIBNDR_FLAG_BIGENDIAN;
-	}
-
-	ndr_err = ndr_pull_advance(ndr, data_and_pad);
-	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		talloc_free(ndr);
-		return ndr_map_error2ntstatus(ndr_err);
 	}
 
 	ndr_err = ndr_pull_dcerpc_auth(ndr, NDR_SCALARS|NDR_BUFFERS, auth);
@@ -324,11 +329,20 @@ NTSTATUS dcerpc_pull_auth_trailer(const struct ncacn_packet *pkt,
 	 * protection for REQUEST and RESPONSE pdus, where the
 	 * auth_pad_length field is actually used by the caller.
 	 */
-	tmp_length = DCERPC_REQUEST_LENGTH;
-	tmp_length += DCERPC_AUTH_TRAILER_LENGTH;
-	tmp_length += pkt->auth_length;
-	if (tmp_length < pkt->frag_length) {
-		max_pad_len = pkt->frag_length - tmp_length;
+	switch (pkt->ptype) {
+	case DCERPC_PKT_BIND:
+	case DCERPC_PKT_ALTER:
+	case DCERPC_PKT_AUTH3:
+		max_pad_len = 0;
+		break;
+	default:
+		tmp_length = DCERPC_REQUEST_LENGTH;
+		tmp_length += DCERPC_AUTH_TRAILER_LENGTH;
+		tmp_length += pkt->auth_length;
+		if (tmp_length < pkt->frag_length) {
+			max_pad_len = pkt->frag_length - tmp_length;
+		}
+		break;
 	}
 	if (max_pad_len < auth->auth_pad_length) {
 		DEBUG(1, (__location__ ": ERROR: pad length too large. "
@@ -337,6 +351,7 @@ NTSTATUS dcerpc_pull_auth_trailer(const struct ncacn_packet *pkt,
 			  auth->auth_pad_length));
 		talloc_free(ndr);
 		ZERO_STRUCTP(auth);
+		auth->auth_context_id = DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED;
 		return NT_STATUS_RPC_PROTOCOL_ERROR;
 	}
 
@@ -347,10 +362,9 @@ NTSTATUS dcerpc_pull_auth_trailer(const struct ncacn_packet *pkt,
 	 *
 	 * See also bug #11982.
 	 */
-	if (auth_data_only && data_and_pad == 0 &&
-	    auth->auth_pad_length > 0) {
+	if (auth_data_only) {
 		/*
-		 * we need to ignore invalid auth_pad_length
+		 * We need to ignore auth_pad_length
 		 * values for BIND_*, ALTER_* and AUTH3 pdus.
 		 */
 		auth->auth_pad_length = 0;
@@ -366,34 +380,7 @@ NTSTATUS dcerpc_pull_auth_trailer(const struct ncacn_packet *pkt,
 			    auth->auth_pad_length);
 		talloc_free(ndr);
 		ZERO_STRUCTP(auth);
-		return NT_STATUS_RPC_PROTOCOL_ERROR;
-	}
-
-	if (auth_data_only && data_and_pad > auth->auth_pad_length) {
-		DBG_WARNING(__location__ ": ERROR: auth_data_only pad length mismatch. "
-			    "Client sent a longer BIND packet than expected by %"PRIu16" bytes "
-			    "(pkt_trailer->length=%zu - auth_length=%"PRIu16") "
-			    "= %"PRIu16" auth_pad_length=%"PRIu8"\n",
-			    data_and_pad - auth->auth_pad_length,
-			    pkt_trailer->length,
-			    auth_length,
-			    data_and_pad,
-			    auth->auth_pad_length);
-		talloc_free(ndr);
-		ZERO_STRUCTP(auth);
-		return NT_STATUS_RPC_PROTOCOL_ERROR;
-	}
-
-	if (auth_data_only && data_and_pad != auth->auth_pad_length) {
-		DBG_WARNING(__location__ ": ERROR: auth_data_only pad length mismatch. "
-			    "Calculated %"PRIu16" (pkt_trailer->length=%zu - auth_length=%"PRIu16") "
-			    "but auth_pad_length=%"PRIu8"\n",
-			    data_and_pad,
-			    pkt_trailer->length,
-			    auth_length,
-			    auth->auth_pad_length);
-		talloc_free(ndr);
-		ZERO_STRUCTP(auth);
+		auth->auth_context_id = DCERPC_BIND_NAK_REASON_NOT_SPECIFIED;
 		return NT_STATUS_RPC_PROTOCOL_ERROR;
 	}
 

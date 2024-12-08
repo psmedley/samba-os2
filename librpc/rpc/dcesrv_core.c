@@ -36,6 +36,7 @@
 #include "system/network.h"
 #include "lib/util/idtree_random.h"
 #include "nsswitch/winbind_client.h"
+#include "libcli/smb/tstream_smbXcli_np.h"
 
 /**
  * @file
@@ -676,6 +677,8 @@ _PUBLIC_ NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
 {
 	struct dcesrv_auth *auth = NULL;
 	struct dcesrv_connection *p = NULL;
+	enum dcerpc_transport_t transport =
+		dcerpc_binding_get_transport(ep->ep_description);
 
 	if (!session_info) {
 		return NT_STATUS_ACCESS_DENIED;
@@ -695,9 +698,21 @@ _PUBLIC_ NTSTATUS dcesrv_endpoint_connect(struct dcesrv_context *dce_ctx,
 	p->event_ctx = event_ctx;
 	p->state_flags = state_flags;
 	p->allow_bind = true;
-	p->max_recv_frag = 5840;
-	p->max_xmit_frag = 5840;
 	p->max_total_request_size = DCERPC_NCACN_REQUEST_DEFAULT_MAX_SIZE;
+	/*
+	 * SMB uses 4280, while all others use 5480
+	 * note that p->transport_max_recv_frag is fixed
+	 * for the lifetime of the connection, it's not
+	 * negotiated by bind.
+	 */
+	if (transport == NCACN_NP) {
+		p->transport_max_recv_frag = TSTREAM_SMBXCLI_NP_MAX_BUF_SIZE;
+	} else {
+		p->transport_max_recv_frag = DCERPC_FRAG_MAX_SIZE;
+	}
+	/* these might be overwritten by BIND */
+	p->max_recv_frag = p->transport_max_recv_frag;
+	p->max_xmit_frag = p->transport_max_recv_frag;
 
 	p->support_hdr_signing = lpcfg_parm_bool(dce_ctx->lp_ctx,
 						 NULL,
@@ -1116,12 +1131,20 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 			DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED);
 	}
 
+	/*
+	 * Note that BIND and ALTER allow frag_len up to UINT16_MAX,
+	 * so we don't check again frag_len against
+	 * call->conn->transport_max_recv_frag
+	 */
+
 	/* max_recv_frag and max_xmit_frag result always in the same value! */
 	max_req = MIN(call->pkt.u.bind.max_xmit_frag,
 		      call->pkt.u.bind.max_recv_frag);
 	/*
 	 * The values are between 2048 and 5840 tested against Windows 2012R2
 	 * via ncacn_ip_tcp on port 135.
+	 *
+	 * call->conn->transport_max_recv_frag stays fixed at 5840 (4280 for SMB)
 	 */
 	max_req = MAX(2048, max_req);
 	max_rep = MIN(max_req, conn->max_recv_frag);
@@ -1135,13 +1158,23 @@ static NTSTATUS dcesrv_bind(struct dcesrv_call_state *call)
 	status = dce_ctx->callbacks->assoc_group.find(
 		call, dce_ctx->callbacks->assoc_group.private_data);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_NOTICE("Failed to find assoc_group 0x%08x: %s\n",
-			   call->pkt.u.bind.assoc_group_id, nt_errstr(status));
+		char *raddr = NULL;
+
+		raddr = tsocket_address_string(call->conn->remote_address, call);
+
+		endpoint = dcerpc_binding_get_string_option(
+				call->conn->endpoint->ep_description,
+				"endpoint");
+
+		DBG_WARNING("Failed to find assoc_group 0x%08x on ep[%s] raddr[%s]: %s\n",
+			    call->pkt.u.bind.assoc_group_id,
+			    endpoint, raddr, nt_errstr(status));
 		return dcesrv_bind_nak(call, 0);
 	}
 
 	if (call->pkt.u.bind.num_contexts < 1) {
-		return dcesrv_bind_nak(call, 0);
+		return dcesrv_bind_nak(call,
+			DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED);
 	}
 
 	ack_ctx_list = talloc_zero_array(call, struct dcerpc_ack_ctx,
@@ -1329,7 +1362,7 @@ static void dcesrv_bind_done(struct tevent_req *subreq)
 
 	status = dcesrv_auth_complete(call, status);
 	if (!NT_STATUS_IS_OK(status)) {
-		status = dcesrv_bind_nak(call, 0);
+		status = dcesrv_bind_nak(call, DCERPC_BIND_NAK_REASON_INVALID_CHECKSUM);
 		dcesrv_conn_auth_wait_finished(conn, status);
 		return;
 	}
@@ -1385,14 +1418,6 @@ static NTSTATUS dcesrv_auth3(struct dcesrv_call_state *call)
 	struct dcesrv_context_callbacks *cb = call->conn->dce_ctx->callbacks;
 	struct tevent_req *subreq = NULL;
 	NTSTATUS status;
-
-	if (!auth->auth_started) {
-		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
-	}
-
-	if (auth->auth_finished) {
-		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
-	}
 
 	status = dcerpc_verify_ncacn_packet_header(&call->pkt,
 			DCERPC_PKT_AUTH3,
@@ -1749,6 +1774,12 @@ static NTSTATUS dcesrv_alter(struct dcesrv_call_state *call)
 		return dcesrv_fault_disconnect(call, DCERPC_NCA_S_PROTO_ERROR);
 	}
 
+	/*
+	 * Note that BIND and ALTER allow frag_len up to UINT16_MAX,
+	 * so we don't check again frag_len against
+	 * call->conn->transport_max_recv_frag
+	 */
+
 	auth_ok = dcesrv_auth_alter(call);
 	if (!auth_ok) {
 		if (call->fault_code != 0) {
@@ -1866,7 +1897,20 @@ static void dcesrv_alter_done(struct tevent_req *subreq)
 
 	status = dcesrv_auth_complete(call, status);
 	if (!NT_STATUS_IS_OK(status)) {
-		status = dcesrv_fault_disconnect(call, DCERPC_FAULT_SEC_PKG_ERROR);
+		/*
+		 * NT_STATUS_ACCESS_DENIED from gensec means
+		 * a signing check or decryption failure,
+		 * which should result in DCERPC_FAULT_SEC_PKG_ERROR.
+		 *
+		 * Any other status, e.g. NT_STATUS_LOGON_FAILURE or
+		 * NT_STATUS_INVALID_PARAMETER should result in
+		 * DCERPC_FAULT_ACCESS_DENIED.
+		 */
+		if (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
+			status = dcesrv_fault_disconnect(call, DCERPC_FAULT_SEC_PKG_ERROR);
+		} else {
+			status = dcesrv_fault_disconnect(call, DCERPC_FAULT_ACCESS_DENIED);
+		}
 		dcesrv_conn_auth_wait_finished(conn, status);
 		return;
 	}
@@ -2006,6 +2050,16 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 				  auth->auth_level,
 				  derpc_transport_string_by_transport(transport),
 				  addr));
+			if (!call->conn->got_explicit_auth_level_non_connect) {
+				/*
+				 * If there was is no auth context with
+				 * a level higher than DCERPC_AUTH_LEVEL_CONNECT,
+				 * the connection should be disconnected
+				 * after sending the fault.
+				 */
+				return dcesrv_fault_disconnect0(call,
+						DCERPC_FAULT_ACCESS_DENIED);
+			}
 			return dcesrv_fault(call, DCERPC_FAULT_ACCESS_DENIED);
 		}
 		break;
@@ -2026,6 +2080,16 @@ static NTSTATUS dcesrv_request(struct dcesrv_call_state *call)
 			  auth->auth_level,
 			  derpc_transport_string_by_transport(transport),
 			  addr));
+		if (!call->conn->got_explicit_auth_level_non_connect) {
+			/*
+			 * If there was is no auth context with
+			 * a level higher than DCERPC_AUTH_LEVEL_CONNECT,
+			 * the connection should be disconnected
+			 * after sending the fault.
+			 */
+			return dcesrv_fault_disconnect0(call,
+					DCERPC_FAULT_ACCESS_DENIED);
+		}
 		return dcesrv_fault(call, DCERPC_FAULT_ACCESS_DENIED);
 	}
 
@@ -2197,6 +2261,8 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 			dce_conn->default_auth_level_connect = NULL;
 			if (auth_level == DCERPC_AUTH_LEVEL_CONNECT) {
 				dce_conn->got_explicit_auth_level_connect = true;
+			} else if (auth_level >= DCERPC_AUTH_LEVEL_PACKET) {
+				dce_conn->got_explicit_auth_level_non_connect = true;
 			}
 		}
 
@@ -2264,7 +2330,13 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 		dcesrv_default_auth_state_prepare_request(call);
 
 		if (call->auth_state->auth_started &&
+		    !call->auth_state->auth_invalid &&
 		    !call->auth_state->auth_finished) {
+			/*
+			 * We have this check here instead of
+			 * relying on the check in dcesrv_auth_pkt_pull()
+			 * because the fault should have context_id=0
+			 */
 			return dcesrv_fault_disconnect(call,
 					DCERPC_NCA_S_PROTO_ERROR);
 		}
@@ -2286,14 +2358,15 @@ static NTSTATUS dcesrv_process_ncacn_packet(struct dcesrv_connection *dce_conn,
 					DCERPC_NCA_S_PROTO_ERROR);
 		}
 
-		if (call->pkt.frag_length > DCERPC_FRAG_MAX_SIZE) {
+		if (call->pkt.frag_length > call->conn->transport_max_recv_frag) {
 			/*
 			 * We don't use dcesrv_fault_disconnect()
 			 * here, because we don't want to set
 			 * DCERPC_PFC_FLAG_DID_NOT_EXECUTE
 			 *
 			 * Note that we don't check against the negotiated
-			 * max_recv_frag, but a hard coded value.
+			 * max_recv_frag, but a hard coded value from
+			 * the transport.
 			 */
 			return dcesrv_fault_disconnect0(call, DCERPC_NCA_S_PROTO_ERROR);
 		}

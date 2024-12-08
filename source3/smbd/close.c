@@ -1497,7 +1497,8 @@ static NTSTATUS close_directory(struct smb_request *req, files_struct *fsp,
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_ERR("share_mode_entry_prepare_lock_del() failed for %s - %s\n",
 			fsp_str_dbg(fsp), nt_errstr(status));
-		return status;
+		log_stack_trace();
+		goto close_fd;
 	}
 
 	/*
@@ -1586,6 +1587,7 @@ done:
 
 	remove_pending_change_notify_requests_by_fid(fsp, notify_status);
 
+close_fd:
 	status1 = fd_close(fsp);
 
 	if (!NT_STATUS_IS_OK(status1)) {

@@ -896,6 +896,7 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 	/* r->in.negotiate_flags is an aliased pointer to r->out.negotiate_flags,
 	 * so use a copy to avoid destroying the client values. */
 	uint32_t in_neg_flags = *r->in.negotiate_flags;
+	uint32_t neg_flags = 0;
 	const char *fn;
 	struct loadparm_context *lp_ctx = p->dce_call->conn->dce_ctx->lp_ctx;
 	struct dom_sid sid;
@@ -912,7 +913,6 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 	 * an error or not.
 	 */
 
-	/* 0x000001ff */
 	srv_flgs = NETLOGON_NEG_ACCOUNT_LOCKOUT |
 		   NETLOGON_NEG_PERSISTENT_SAMREPL |
 		   NETLOGON_NEG_ARCFOUR |
@@ -922,20 +922,22 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 		   NETLOGON_NEG_MULTIPLE_SIDS |
 		   NETLOGON_NEG_REDO |
 		   NETLOGON_NEG_PASSWORD_CHANGE_REFUSAL |
-		   NETLOGON_NEG_PASSWORD_SET2;
+		   NETLOGON_NEG_PASSWORD_SET2 |
+		   NETLOGON_NEG_STRONG_KEYS |
+		   NETLOGON_NEG_SUPPORTS_AES |
+		   NETLOGON_NEG_SCHANNEL;
 
-	/* Ensure we support strong (128-bit) keys. */
-	if (in_neg_flags & NETLOGON_NEG_STRONG_KEYS) {
-		srv_flgs |= NETLOGON_NEG_STRONG_KEYS;
-	}
-
-	if (in_neg_flags & NETLOGON_NEG_SUPPORTS_AES) {
-		srv_flgs |= NETLOGON_NEG_SUPPORTS_AES;
-	}
-
-	if (in_neg_flags & NETLOGON_NEG_SCHANNEL) {
-		srv_flgs |= NETLOGON_NEG_SCHANNEL;
-	}
+	/*
+	 * With SAMBA_WEAK_CRYPTO_DISALLOWED we will return DOWNGRADE_DETECTED
+	 * with negotiate_flags = 0 below, if NETLOGON_NEG_SUPPORTS_AES was not
+	 * negotiated...
+	 *
+	 * And if NETLOGON_NEG_SUPPORTS_AES was negotiated there's no harm in
+	 * returning the NETLOGON_NEG_ARCFOUR flag too...
+	 *
+	 * So there's no reason to remove NETLOGON_NEG_ARCFOUR nor
+	 * NETLOGON_NEG_STRONG_KEYS from srv_flgs...
+	 */
 
 	/*
 	 * Support authentication of trusted domains.
@@ -950,12 +952,7 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 			    NETLOGON_NEG_NEUTRALIZE_NT4_EMULATION;
 	}
 
-	/*
-	 * If weak crypto is disabled, do not announce that we support RC4.
-	 */
-	if (lp_weak_crypto() == SAMBA_WEAK_CRYPTO_DISALLOWED) {
-		srv_flgs &= ~NETLOGON_NEG_ARCFOUR;
-	}
+	neg_flags = in_neg_flags & srv_flgs;
 
 	switch (dce_call->pkt.u.request.opnum) {
 		case NDR_NETR_SERVERAUTHENTICATE:
@@ -969,6 +966,19 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 			break;
 		default:
 			return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	if (lp_weak_crypto() == SAMBA_WEAK_CRYPTO_DISALLOWED) {
+		if (!(neg_flags & NETLOGON_NEG_SUPPORTS_AES)) {
+			DBG_NOTICE("%s: no AES support negotiated from client %s\n",
+				   fn, r->in.computer_name);
+			/*
+			 * Here we match Windows 2012 and return no flags.
+			 */
+			neg_flags = 0;
+			status = NT_STATUS_DOWNGRADE_DETECTED;
+			goto out;
+		}
 	}
 
 	/* We use this as the key to store the creds: */
@@ -1010,19 +1020,15 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 					   &mach_pwd,
 					   r->in.credentials,
 					   r->out.return_credentials,
-					   srv_flgs);
+					   in_neg_flags,
+					   &sid,
+					   neg_flags);
 	if (!creds) {
 		DEBUG(0,("%s: netlogon_creds_server_check failed. Rejecting auth "
 			"request from client %s machine account %s\n",
 			fn, r->in.computer_name,
 			r->in.account_name));
 		status = NT_STATUS_ACCESS_DENIED;
-		goto out;
-	}
-
-	creds->sid = dom_sid_dup(creds, &sid);
-	if (!creds->sid) {
-		status = NT_STATUS_NO_MEMORY;
 		goto out;
 	}
 
@@ -1042,7 +1048,7 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 
   out:
 
-	*r->out.negotiate_flags = srv_flgs;
+	*r->out.negotiate_flags = neg_flags;
 	return status;
 }
 
@@ -1311,6 +1317,11 @@ NTSTATUS _netr_ServerPasswordSet(struct pipes_struct *p,
 	size_t i;
 	struct netlogon_creds_CredentialState *creds = NULL;
 	struct _samr_Credentials_t cr = { CRED_TYPE_NT_HASH, {0}};
+	const struct dom_sid *client_sid = NULL;
+	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
+	enum dcerpc_AuthLevel auth_level = DCERPC_AUTH_LEVEL_NONE;
+
+	dcesrv_call_auth_info(dce_call, &auth_type, &auth_level);
 
 	DEBUG(5,("_netr_ServerPasswordSet: %d\n", __LINE__));
 
@@ -1335,11 +1346,15 @@ NTSTATUS _netr_ServerPasswordSet(struct pipes_struct *p,
 		TALLOC_FREE(creds);
 		return status;
 	}
+	client_sid = &creds->ex->client_sid;
 
 	DEBUG(3,("_netr_ServerPasswordSet: Server Password Set by remote machine:[%s] on account [%s]\n",
 			r->in.computer_name, creds->computer_name));
 
-	status = netlogon_creds_des_decrypt(creds, r->in.new_password);
+	status = netlogon_creds_decrypt_samr_Password(creds,
+						      r->in.new_password,
+						      auth_type,
+						      auth_level);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -1353,7 +1368,7 @@ NTSTATUS _netr_ServerPasswordSet(struct pipes_struct *p,
 	status = netr_set_machine_account_password(p->mem_ctx,
 						   session_info,
 						   p->msg_ctx,
-						   creds->sid,
+						   client_sid,
 						   &cr);
 	return status;
 }
@@ -1370,6 +1385,7 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
 		dcesrv_call_session_info(dce_call);
 	NTSTATUS status;
 	struct netlogon_creds_CredentialState *creds = NULL;
+	const struct dom_sid *client_sid = NULL;
 	DATA_BLOB plaintext = data_blob_null;
 	DATA_BLOB new_password = data_blob_null;
 	size_t confounder_len;
@@ -1378,6 +1394,10 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
 	struct samr_CryptPassword password_buf;
 	struct _samr_Credentials_t cr = { CRED_TYPE_PLAIN_TEXT, {0}};
 	bool ok;
+	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
+	enum dcerpc_AuthLevel auth_level = DCERPC_AUTH_LEVEL_NONE;
+
+	dcesrv_call_auth_info(dce_call, &auth_type, &auth_level);
 
 	become_root();
 	status = dcesrv_netr_creds_server_step_check(p->dce_call,
@@ -1395,6 +1415,7 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
 		TALLOC_FREE(creds);
 		return status;
 	}
+	client_sid = &creds->ex->client_sid;
 
 	DBG_NOTICE("Server Password Set2 by remote "
 		   "machine:[%s] on account [%s]\n",
@@ -1405,15 +1426,10 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
 	memcpy(password_buf.data, r->in.new_password->data, 512);
 	SIVAL(password_buf.data, 512, r->in.new_password->length);
 
-	if (creds->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
-		status = netlogon_creds_aes_decrypt(creds,
-						    password_buf.data,
-						    516);
-	} else {
-		status = netlogon_creds_arcfour_crypt(creds,
-						      password_buf.data,
-						      516);
-	}
+	status = netlogon_creds_decrypt_samr_CryptPassword(creds,
+							   &password_buf,
+							   auth_type,
+							   auth_level);
 	if (!NT_STATUS_IS_OK(status)) {
 		TALLOC_FREE(creds);
 		return status;
@@ -1515,7 +1531,7 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
 	status = netr_set_machine_account_password(p->mem_ctx,
 						   session_info,
 						   p->msg_ctx,
-						   creds->sid,
+						   client_sid,
 						   &cr);
 	TALLOC_FREE(creds);
 	return status;
@@ -1755,7 +1771,9 @@ static NTSTATUS _netr_LogonSamLogon_base(struct pipes_struct *p,
 
 	status = netlogon_creds_decrypt_samlogon_logon(creds,
 						       r->in.logon_level,
-						       logon);
+						       logon,
+						       auth_type,
+						       auth_level);
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
@@ -1938,7 +1956,9 @@ static NTSTATUS _netr_LogonSamLogon_base(struct pipes_struct *p,
 
 	status = netlogon_creds_encrypt_samlogon_validation(creds,
 							    r->in.validation_level,
-							    r->out.validation);
+							    r->out.validation,
+							    auth_type,
+							    auth_level);
 
 	return status;
 }
@@ -2307,12 +2327,7 @@ NTSTATUS _netr_LogonGetCapabilities(struct pipes_struct *p,
 	case 1:
 		break;
 	case 2:
-		/*
-		 * Until we know the details behind KB5028166
-		 * just return DCERPC_NCA_S_FAULT_INVALID_TAG
-		 * like an unpatched Windows Server.
-		 */
-		FALL_THROUGH;
+		break;
 	default:
 		/*
 		 * There would not be a way to marshall the
@@ -2340,7 +2355,15 @@ NTSTATUS _netr_LogonGetCapabilities(struct pipes_struct *p,
 		return status;
 	}
 
-	r->out.capabilities->server_capabilities = creds->negotiate_flags;
+	switch (r->in.query_level) {
+	case 1:
+		r->out.capabilities->server_capabilities = creds->negotiate_flags;
+		break;
+	case 2:
+		r->out.capabilities->requested_flags =
+			creds->ex->client_requested_flags;
+		break;
+	}
 
 	return NT_STATUS_OK;
 }
@@ -2734,7 +2757,9 @@ static NTSTATUS get_password_from_trustAuth(TALLOC_CTX *mem_ctx,
 					    const DATA_BLOB *trustAuth_blob,
 					    struct netlogon_creds_CredentialState *creds,
 					    struct samr_Password *current_pw_enc,
-					    struct samr_Password *previous_pw_enc)
+					    struct samr_Password *previous_pw_enc,
+					    enum dcerpc_AuthType auth_type,
+					    enum dcerpc_AuthLevel auth_level)
 {
 	enum ndr_err_code ndr_err;
 	struct trustAuthInOutBlob trustAuth;
@@ -2751,7 +2776,10 @@ static NTSTATUS get_password_from_trustAuth(TALLOC_CTX *mem_ctx,
 		mdfour(current_pw_enc->hash,
 		       trustAuth.current.array[0].AuthInfo.clear.password,
 		       trustAuth.current.array[0].AuthInfo.clear.size);
-		status = netlogon_creds_des_encrypt(creds, current_pw_enc);
+		status = netlogon_creds_encrypt_samr_Password(creds,
+							      current_pw_enc,
+							      auth_type,
+							      auth_level);
 		if (!NT_STATUS_IS_OK(status)) {
 			return status;
 		}
@@ -2765,7 +2793,10 @@ static NTSTATUS get_password_from_trustAuth(TALLOC_CTX *mem_ctx,
 		mdfour(previous_pw_enc->hash,
 		       trustAuth.previous.array[0].AuthInfo.clear.password,
 		       trustAuth.previous.array[0].AuthInfo.clear.size);
-		status = netlogon_creds_des_encrypt(creds, previous_pw_enc);
+		status = netlogon_creds_encrypt_samr_Password(creds,
+							      previous_pw_enc,
+							      auth_type,
+							      auth_level);
 		if (!NT_STATUS_IS_OK(status)) {
 			return status;
 		}
@@ -2790,6 +2821,10 @@ NTSTATUS _netr_ServerGetTrustInfo(struct pipes_struct *p,
 	bool trusted;
 	struct netr_TrustInfo *trust_info;
 	struct pdb_trusted_domain *td;
+	enum dcerpc_AuthType auth_type = DCERPC_AUTH_TYPE_NONE;
+	enum dcerpc_AuthLevel auth_level = DCERPC_AUTH_LEVEL_NONE;
+
+	dcesrv_call_auth_info(p->dce_call, &auth_type, &auth_level);
 
 	/* TODO: check server name */
 
@@ -2866,8 +2901,9 @@ NTSTATUS _netr_ServerGetTrustInfo(struct pipes_struct *p,
 						     &td->trust_auth_incoming,
 						     creds,
 						     r->out.new_owf_password,
-						     r->out.old_owf_password);
-
+						     r->out.old_owf_password,
+						     auth_type,
+						     auth_level);
 		if (!NT_STATUS_IS_OK(status)) {
 			return status;
 		}
@@ -2898,6 +2934,31 @@ NTSTATUS _netr_Unused47(struct pipes_struct *p,
 
 NTSTATUS _netr_DsrUpdateReadOnlyServerDnsRecords(struct pipes_struct *p,
 						 struct netr_DsrUpdateReadOnlyServerDnsRecords *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+	return NT_STATUS_NOT_IMPLEMENTED;
+}
+
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum49NotUsedOnWire)
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum50NotUsedOnWire)
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum51NotUsedOnWire)
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum52NotUsedOnWire)
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum53NotUsedOnWire)
+
+NTSTATUS _netr_ChainSetClientAttributes(struct pipes_struct *p,
+					struct netr_ChainSetClientAttributes *r)
+{
+	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
+	return NT_STATUS_NOT_IMPLEMENTED;
+}
+
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum55NotUsedOnWire)
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum56NotUsedOnWire)
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum57NotUsedOnWire)
+DCESRV_COMPAT_NOT_USED_ON_WIRE(netr_Opnum58NotUsedOnWire)
+
+NTSTATUS _netr_ServerAuthenticateKerberos(struct pipes_struct *p,
+					  struct netr_ServerAuthenticateKerberos *r)
 {
 	p->fault_state = DCERPC_FAULT_OP_RNG_ERROR;
 	return NT_STATUS_NOT_IMPLEMENTED;

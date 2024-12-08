@@ -499,7 +499,7 @@ ctdb_check_unix_socket()
 		return 1
 	fi
 
-	_out=$(ss -l -x "src ${_sockpath}" | tail -n +2)
+	_out=$(ss -l -xH "src ${_sockpath}")
 	if [ -z "$_out" ]; then
 		echo "ERROR: ${service_name} not listening on ${_sockpath}"
 		return 1
@@ -602,7 +602,7 @@ get_tcp_connections_for_ip()
 {
 	_ip="$1"
 
-	ss -tn state established "src [$_ip]" | awk 'NR > 1 {print $3, $4}'
+	ss -tnH state established "src [$_ip]" | awk '{print $3, $4}'
 }
 
 ########################################################
@@ -1176,48 +1176,38 @@ nfs_callout()
 
 update_tickles()
 {
-	_port="$1"
-
 	tickledir="${CTDB_SCRIPT_VARDIR}/tickles"
 	mkdir -p "$tickledir"
 
-	# What public IPs do I hold?
-	_pnn=$(ctdb_get_pnn)
-	_ips=$($CTDB -X ip | awk -F'|' -v pnn="$_pnn" '$3 == pnn {print $2}')
+	# If not hosting any public IPs then can't have any connections...
+	if [ ! -s "$CTDB_MY_PUBLIC_IPS_CACHE" ]; then
+		return
+	fi
 
-	# IPs and port as ss filters
+	# IPs ss filter
 	_ip_filter=""
-	for _ip in $_ips; do
+	while read -r _ip; do
 		_ip_filter="${_ip_filter}${_ip_filter:+ || }src [${_ip}]"
-	done
-	_port_filter="sport == :${_port}"
+	done <"$CTDB_MY_PUBLIC_IPS_CACHE"
+
+	# Record our current tickles in a temporary file
+	_my_tickles="${tickledir}/all.tickles.$$"
+	while read -r _i; do
+		$CTDB -X gettickles "$_i" |
+			awk -F'|' 'NR > 1 { printf "%s:%s %s:%s\n", $2, $3, $4, $5 }'
+	done <"$CTDB_MY_PUBLIC_IPS_CACHE" |
+		sort >"$_my_tickles"
 
 	# Record connections to our public IPs in a temporary file.
 	# This temporary file is in CTDB's private state directory and
 	# $$ is used to avoid a very rare race involving CTDB's script
 	# debugging.  No security issue, nothing to see here...
-	_my_connections="${tickledir}/${_port}.connections.$$"
-	# Parentheses are needed around the filters for precedence but
+	_my_connections="${tickledir}/all.connections.$$"
+	# Parentheses are needed around the IP filter for precedence but
 	# the parentheses can't be empty!
-	#
-	# Recent versions of ss print square brackets around IPv6
-	# addresses.  While it is desirable to update CTDB's address
-	# parsing and printing code, something needs to be done here
-	# for backward compatibility, so just delete the brackets.
-	ss -tn state established \
-		"${_ip_filter:+( ${_ip_filter} )}" \
-		"${_port_filter:+( ${_port_filter} )}" |
-		awk 'NR > 1 {print $4, $3}' |
-		tr -d '][' |
+	ss -tnH state established "${_ip_filter:+( ${_ip_filter} )}" |
+		awk '{print $4, $3}' |
 		sort >"$_my_connections"
-
-	# Record our current tickles in a temporary file
-	_my_tickles="${tickledir}/${_port}.tickles.$$"
-	for _i in $_ips; do
-		$CTDB -X gettickles "$_i" "$_port" |
-			awk -F'|' 'NR > 1 { printf "%s:%s %s:%s\n", $2, $3, $4, $5 }'
-	done |
-		sort >"$_my_tickles"
 
 	# Add tickles for connections that we haven't already got tickles for
 	comm -23 "$_my_connections" "$_my_tickles" |

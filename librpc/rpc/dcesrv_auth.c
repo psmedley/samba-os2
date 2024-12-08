@@ -130,6 +130,12 @@ static bool dcesrv_auth_prepare_gensec(struct dcesrv_call_state *call)
 	auth->auth_level = call->in_auth_info.auth_level;
 	auth->auth_context_id = call->in_auth_info.auth_context_id;
 
+	if (auth->auth_level == DCERPC_AUTH_LEVEL_CONNECT &&
+	    !call->conn->got_explicit_auth_level_connect)
+	{
+		call->conn->default_auth_level_connect = auth;
+	}
+
 	cb->auth.become_root();
 	status = cb->auth.gensec_prepare(
 		auth,
@@ -320,8 +326,13 @@ bool dcesrv_auth_bind(struct dcesrv_call_state *call)
 		 */
 		auth->auth_type = DCERPC_AUTH_TYPE_NONE;
 		auth->auth_level = DCERPC_AUTH_LEVEL_NONE;
-		auth->auth_context_id =
-			DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED;
+		if (NT_STATUS_EQUAL(status, NT_STATUS_RPC_PROTOCOL_ERROR)) {
+			auth->auth_context_id =
+				call->in_auth_info.auth_context_id;
+		} else {
+			auth->auth_context_id =
+				DCERPC_BIND_NAK_REASON_NOT_SPECIFIED;
+		}
 		return false;
 	}
 
@@ -373,12 +384,6 @@ NTSTATUS dcesrv_auth_complete(struct dcesrv_call_state *call, NTSTATUS status)
 		return status;
 	}
 	auth->auth_finished = true;
-
-	if (auth->auth_level == DCERPC_AUTH_LEVEL_CONNECT &&
-	    !call->conn->got_explicit_auth_level_connect)
-	{
-		call->conn->default_auth_level_connect = auth;
-	}
 
 	if (call->pkt.ptype != DCERPC_PKT_AUTH3) {
 		return NT_STATUS_OK;
@@ -440,11 +445,38 @@ bool dcesrv_auth_prepare_auth3(struct dcesrv_call_state *call)
 	struct dcesrv_auth *auth = call->auth_state;
 	NTSTATUS status;
 
-	if (pkt->auth_length == 0) {
+	if (pkt->frag_length > call->conn->transport_max_recv_frag) {
+		/*
+		 * Note that we don't check against the negotiated
+		 * max_recv_frag, but a hard coded value from
+		 * the transport.
+		 */
+		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
+		return false;
+	}
+
+	if (pkt->auth_length > 4096) {
+		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
 		return false;
 	}
 
 	if (auth->auth_finished) {
+		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
+		return false;
+	}
+
+	if (!auth->auth_started) {
+		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
+		return false;
+	}
+
+	if (auth->auth_invalid) {
+		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
+		return false;
+	}
+
+	if (pkt->auth_length == 0) {
+		call->fault_code = DCERPC_NCA_S_FAULT_REMOTE_NO_MEMORY;
 		return false;
 	}
 
@@ -460,23 +492,36 @@ bool dcesrv_auth_prepare_auth3(struct dcesrv_call_state *call)
 	status = dcerpc_pull_auth_trailer(pkt, call, &pkt->u.auth3.auth_info,
 					  &call->in_auth_info, NULL, true);
 	if (!NT_STATUS_IS_OK(status)) {
+		struct dcerpc_auth *auth_info = &call->in_auth_info;
+		uint32_t nr = auth_info->auth_context_id;
+
 		/*
 		 * Windows returns DCERPC_NCA_S_FAULT_REMOTE_NO_MEMORY
-		 * instead of DCERPC_NCA_S_PROTO_ERROR.
+		 * instead of DCERPC_NCA_S_PROTO_ERROR in most cases.
 		 */
 		call->fault_code = DCERPC_NCA_S_FAULT_REMOTE_NO_MEMORY;
+
+		if (NT_STATUS_EQUAL(status, NT_STATUS_RPC_PROTOCOL_ERROR) &&
+		    nr != DCERPC_BIND_NAK_REASON_PROTOCOL_VERSION_NOT_SUPPORTED)
+		{
+			call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
+		}
+
 		return false;
 	}
 
 	if (call->in_auth_info.auth_type != auth->auth_type) {
+		call->fault_code = DCERPC_NCA_S_FAULT_REMOTE_NO_MEMORY;
 		return false;
 	}
 
 	if (call->in_auth_info.auth_level != auth->auth_level) {
+		call->fault_code = DCERPC_NCA_S_FAULT_REMOTE_NO_MEMORY;
 		return false;
 	}
 
 	if (call->in_auth_info.auth_context_id != auth->auth_context_id) {
+		call->fault_code = DCERPC_FAULT_ACCESS_DENIED;
 		return false;
 	}
 
@@ -615,12 +660,12 @@ bool dcesrv_auth_pkt_pull(struct dcesrv_call_state *call,
 		return false;
 	}
 
-	if (!auth->auth_finished) {
-		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
+	if (auth->auth_invalid) {
 		return false;
 	}
 
-	if (auth->auth_invalid) {
+	if (!auth->auth_finished) {
+		call->fault_code = DCERPC_NCA_S_PROTO_ERROR;
 		return false;
 	}
 
