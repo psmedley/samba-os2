@@ -561,4 +561,155 @@ int os2_setdatetime(time_t t)
 
 //const struct in6_addr in6addr_any = IN6ADDR_ANY_INIT;
 
+// borrowed from https://github.com/komh/libuv-os2/blob/master/src/unix/os2-send-recv-msg.c
+#include <InnoTekLIBC/tcpip.h>
+#include <assert.h>
+int os2_sendfd(int s, struct msghdr *msg, int flags);
+
+#undef sendmsg
+int os2_sendmsg(int s, struct msghdr *msg, int flags) {
+  struct iovec *saved_iov = msg->msg_iov;
+  int len = msg->msg_iovlen * sizeof(*msg->msg_iov);
+  int bytes;
+  if (msg->msg_control && msg->msg_controllen)
+    return os2_sendfd(s, msg, flags);
+  msg->msg_iov = alloca(len);
+  memcpy(msg->msg_iov, saved_iov, len);
+  bytes = sendmsg(s, msg, flags);
+  msg->msg_iov = saved_iov;
+  return bytes;
+}
+
+#undef recvmsg
+/* FIXME: May receive a signature of SCM_RIGHTS. */
+int os2_recvmsg(int s, struct msghdr *msg, int flags) {
+  struct iovec *saved_iov = msg->msg_iov;
+  int len = msg->msg_iovlen * sizeof(*msg->msg_iov);
+  int bytes;
+  msg->msg_iov = alloca(len);
+  memcpy(msg->msg_iov, saved_iov, len);
+  bytes = recvmsg(s, msg, flags);
+  msg->msg_iov = saved_iov;
+  msg->msg_control = NULL;
+  return bytes;
+}
+
+struct waitackargs {
+  int fd;
+  HEV hev;
+};
+
+static void waitack(void *args) {
+  struct waitackargs *waa = (struct waitackargs *)args;
+  ULONG rc;
+  do
+    rc = DosWaitEventSem(waa->hev, SEM_INDEFINITE_WAIT);
+  while (rc == ERROR_INTERRUPT);
+  close(waa->fd);
+  DosCloseEventSem(waa->hev);
+  free(waa);
+}
+
+#define MAX_MSG_FDS     64  /* up to 64 fds */
+
+static char signature[] = {'\x7f', 'S', 'R', '\x00' };
+
+struct messageheader {
+  char sign[sizeof(signature)]; /* signature for SCM_RIGHTS */
+  size_t total_len;             /* sizeof(msg_len) + sizeof(control_len) +
+                                 * msg_len + control_len */
+  size_t msg_len;               /* length of msg_iov */
+  size_t control_len;           /* length of msg_control */
+};
+
+/* FIXME:
+ * Unexpected behavior may occur if an ancilary data is sent partially.
+ */
+int os2_sendfd(int s, struct msghdr *msg, int flags) {
+  void *saved_msg_control = msg->msg_control;
+  struct messageheader hdr;
+  struct cmsghdr *cmsg;
+  int *fds, fd;
+  char *buf, *p;
+  int buf_len;
+  int bytes;
+  size_t i;
+  size_t count;
+  int saved_errno;
+  struct waitackargs *waas[MAX_MSG_FDS];
+  struct waitackargs **waas_end = waas + MAX_MSG_FDS;
+  struct waitackargs **waa = waas;
+  char semname[50];
+  ULONG rc;
+  for (hdr.msg_len = 0, i = 0; i < msg->msg_iovlen; i++)
+    hdr.msg_len += msg->msg_iov[i].iov_len;
+  msg->msg_control = alloca(msg->msg_controllen);
+  memcpy(msg->msg_control, saved_msg_control, msg->msg_controllen);
+  memset(waas, 0, sizeof(waas));
+  for (cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL;
+       cmsg = CMSG_NXTHDR(msg, cmsg)) {
+    if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
+        continue;
+    count = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(*fds);
+    for (fds = (int *)CMSG_DATA(cmsg), i = 0; i < count; i++) {
+      fd = _getsockhandle(fds[i]);
+      if (fd == -1)
+        goto cleanup;
+      *waa = calloc(sizeof(**waa), 1);
+      if (!waa)
+        goto cleanup;
+      (*waa)->fd = dup(fds[i]);
+      if ((*waa)->fd == -1)
+        goto cleanup;
+      snprintf(semname, sizeof(semname), "\\SEM32\\LIBUV\\sockfd\\%x", fd);
+      rc = DosCreateEventSem(semname, &(*waa)->hev,
+                             DCE_POSTONE | DC_SEM_SHARED, FALSE );
+      if (rc)
+        rc = DosOpenEventSem(semname, &(*waa)->hev);
+      if (rc) {
+        errno = ENOMEM;
+        goto cleanup;
+      }
+      if (_beginthread(waitack, NULL, 256 * 1024, *waa) == -1) {
+cleanup:
+        saved_errno = errno;
+        if (*waa) {
+          DosCloseEventSem((*waa)->hev);
+          close((*waa)->fd);
+          free(*waa);
+          *waa = NULL;
+        }
+        for (waa = waas; waa < waas_end && *waa; waa++)
+          DosPostEventSem((*waa)->hev);
+        errno = saved_errno;
+        return -1;
+      }
+      fds[i] = fd;
+      waa++;
+      assert( waa != waas_end );
+    }
+  }
+  hdr.control_len = msg->msg_controllen;
+  hdr.total_len = sizeof(hdr.msg_len) +     /* msg_len */
+                  sizeof(hdr.control_len) + /* msg_controllen */
+                  hdr.msg_len +             /* msg_iov */
+                  hdr.control_len;          /* msg_control */
+  buf_len = hdr.total_len + sizeof(signature) + sizeof(hdr.total_len);
+  p = buf = alloca(buf_len);
+  memcpy(p, signature, sizeof(signature));
+  p += sizeof(signature);
+  memcpy(p, &hdr.total_len, sizeof(hdr) - sizeof(hdr.sign));
+  p += sizeof(hdr) - sizeof(hdr.sign);
+  for (i = 0; i < msg->msg_iovlen; i++) {
+    memcpy(p, msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
+    p += msg->msg_iov[i].iov_len;
+  }
+  memcpy(p, msg->msg_control, msg->msg_controllen);
+  bytes = send(s, buf, buf_len, flags);
+  if (bytes != -1 && (size_t)bytes > hdr.msg_len)
+    bytes = hdr.msg_len;
+  msg->msg_control = saved_msg_control;
+  return bytes;
+}
+
 #endif
