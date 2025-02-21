@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
 
    implement the DSGetNCChanges call
@@ -11,12 +11,12 @@
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -443,7 +443,7 @@ static WERROR get_nc_changes_filter_attrs(struct drsuapi_DsReplicaObjectListItem
 	return WERR_OK;
 }
 
-/* 
+/*
   drsuapi_DsGetNCChanges for one object
 */
 static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItemEx *obj,
@@ -698,7 +698,7 @@ static WERROR get_nc_changes_build_object(struct drsuapi_DsReplicaObjectListItem
 			}
 			/* some attributes needs to be encrypted
 			   before being sent */
-			werr = drsuapi_encrypt_attribute(obj, session_key, rid, 
+			werr = drsuapi_encrypt_attribute(obj, session_key, rid,
 							 &obj->object.attribute_ctr.attributes[i]);
 			if (!W_ERROR_IS_OK(werr)) {
 				DEBUG(0,("Unable to encrypt %s on %s in DRS object - %s\n",
@@ -2760,7 +2760,7 @@ WERROR dcesrv_drsuapi_DsGetNCChanges(struct dcesrv_call_state *dce_call, TALLOC_
 	r->out.ctr->ctr6.source_dsa_invocation_id = *(samdb_ntds_invocation_id(sam_ctx));
 	r->out.ctr->ctr6.first_object = NULL;
 
-	/* Check request revision. 
+	/* Check request revision.
 	 */
 	switch (r->in.level) {
 	case 8:
@@ -3029,13 +3029,67 @@ allowed:
 		ret = drsuapi_DsReplicaHighWaterMark_cmp(&getnc_state->last_hwm,
 							 &req10->highwatermark);
 		if (ret != 0) {
-			DEBUG(0,(__location__ ": DsGetNCChanges 2nd replication "
-				 "on DN %s %s highwatermark (last_dn %s)\n",
-				 ldb_dn_get_linearized(getnc_state->ncRoot_dn),
-				 (ret > 0) ? "older" : "newer",
-				 ldb_dn_get_linearized(getnc_state->last_dn)));
-			TALLOC_FREE(getnc_state);
-			b_state->getncchanges_full_repl_state = NULL;
+			if (req10->highwatermark.reserved_usn == 0) {
+				/*
+				 * Entra ID Connect / Azure AD is known to set
+				 * reserved_usn to zero in replies, when we
+				 * were expecting it to be returned unchanged
+				 * (it is supposed to be an opaque cookie).
+				 *
+				 * If the only difference is in the
+				 * reserved_usn, and it is 0 on the return, we
+				 * assume it is Azure AD and treat the
+				 * highwatermarks as equal.
+				 */
+				req10->highwatermark.reserved_usn =
+					getnc_state->last_hwm.reserved_usn;
+
+				ret = drsuapi_DsReplicaHighWaterMark_cmp(
+					&getnc_state->last_hwm,
+					&req10->highwatermark);
+
+				/* put things as they were */
+				req10->highwatermark.reserved_usn = 0;
+
+				if (ret != 0) {
+					/* we will start again */
+					DBG_ERR("DsGetNCChanges 2nd replication "
+						"on DN %s %s highwatermark "
+						"(last_dn %s) after Azure AD "
+						"reserved_usn adjustment\n",
+						ldb_dn_get_linearized(
+							getnc_state->ncRoot_dn),
+						(ret > 0) ? "older" : "newer",
+						ldb_dn_get_linearized(
+							getnc_state->last_dn));
+					TALLOC_FREE(getnc_state);
+					b_state->getncchanges_full_repl_state =
+						NULL;
+				} else {
+					/* log and continue as normal */
+					DBG_NOTICE(
+						"DsGetNCChanges 2nd replication "
+						"on DN %s: highwatermark "
+						"matches only after Azure AD "
+						"reserved_usn adjustment "
+						"(last_dn %s)\n",
+						ldb_dn_get_linearized(
+							getnc_state->ncRoot_dn),
+						ldb_dn_get_linearized(
+							getnc_state->last_dn));
+				}
+			} else {
+				DBG_ERR("DsGetNCChanges 2nd replication "
+					"on DN %s %s highwatermark "
+					"(last_dn %s)\n",
+					ldb_dn_get_linearized(
+						getnc_state->ncRoot_dn),
+					(ret > 0) ? "older" : "newer",
+					ldb_dn_get_linearized(
+						getnc_state->last_dn));
+				TALLOC_FREE(getnc_state);
+				b_state->getncchanges_full_repl_state = NULL;
+			}
 		}
 	}
 
@@ -3201,7 +3255,7 @@ allowed:
 		return WERR_DS_DRA_INTERNAL_ERROR;
 	}
 
-	/* 
+	/*
 	   TODO: MS-DRSR section 4.1.10.1.1
 	   Work out if this is the start of a new cycle */
 
@@ -3854,4 +3908,3 @@ allowed:
 
 	return WERR_OK;
 }
-

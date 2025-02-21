@@ -120,7 +120,11 @@ NTSTATUS smbd_smb2_request_process_setinfo(struct smbd_smb2_request *req)
 	}
 	tevent_req_set_callback(subreq, smbd_smb2_request_setinfo_done, req);
 
-	return smbd_smb2_request_pending_queue(req, subreq, 500);
+	/*
+	 * Windows never sends async interim responses if a rename triggers a
+	 * lease break. See test smb2.lease.compound_rename_middle.
+	 */
+	return smbd_smb2_request_pending_queue(req, subreq, 0);
 }
 
 static void smbd_smb2_request_setinfo_done(struct tevent_req *subreq)
@@ -237,10 +241,6 @@ static struct tevent_req *delay_rename_for_lease_break(struct tevent_req *req,
 	struct delay_rename_lease_break_state state = { .fsp = fsp };
 	struct timeval timeout;
 	bool ok;
-
-	if (fsp->oplock_type != LEASE_OPLOCK) {
-		return NULL;
-	}
 
 	ok = share_mode_forall_leases(
 		lck, delay_rename_lease_break_fn, &state);

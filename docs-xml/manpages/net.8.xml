@@ -1548,12 +1548,29 @@ to show in the result.
 <title>ADS KEYTAB <replaceable>CREATE</replaceable></title>
 
 <para>
-Creates a new keytab file if one doesn't exist with default entries. Default
-entries are kerberos principals created from the machinename of the
-client, the UPN (if it exists) and any Windows SPN(s) associated with the
-computer AD account for the client. If a keytab file already exists then only
-missing kerberos principals from the default entries are added. No changes
-are made to the computer AD account.
+Since Samba 4.21.0, keytab file is created as specified in <smbconfoption
+name="sync machine password to keytab"/> . The keytab can be created only when
+machine password is available in secrets.tdb, i.e. only for
+<smbconfoption name="kerberos method">secrets only</smbconfoption> and
+<smbconfoption name="kerberos method">secrets and keytab</smbconfoption>. With
+the smb.conf default values for <smbconfoption name="kerberos method"> secrets
+only</smbconfoption> and <smbconfoption name="sync machine password to keytab"/>
+(default is empty) the keytab is not generated at all.  Keytab with a default
+name containing: SPNs synced from AD, account name COMPUTER$ and principal
+host/dns_hostname is created for <smbconfoption name="kerberos method">secrets
+and keytab</smbconfoption> if <smbconfoption name="sync machine password to
+keytab"/> is missing.
+</para>
+<para>
+Till Samba 4.20, these entries were created by default: the account name
+COMPUTER$, 'host' principal and SPNs synced from AD. Example below generates
+such keytab:
+</para>
+<programlisting>
+<smbconfoption name="sync machine password to keytab">/etc/krb5.keytab:spn_prefixes=host:account_name:sync_spns:sync_kvno:machine_password</smbconfoption>
+</programlisting>
+<para>
+No changes are made to the computer AD account.
 </para>
 </refsect2>
 

@@ -2,12 +2,12 @@
 .\"     Title: vfs_ceph_new
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 11/25/2024
+.\"      Date: 02/17/2025
 .\"    Manual: System Administration tools
-.\"    Source: Samba 4.21.2
+.\"    Source: Samba 4.21.4
 .\"  Language: English
 .\"
-.TH "VFS_CEPH_NEW" "8" "11/25/2024" "Samba 4\&.21\&.2" "System Administration tools"
+.TH "VFS_CEPH_NEW" "8" "02/17/2025" "Samba 4\&.21\&.4" "System Administration tools"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -118,9 +118,58 @@ Allows one to explicitly select the CephFS file system to use when the Ceph clus
 .sp
 Example: ceph_new:filesystem = myfs2
 .RE
+.PP
+ceph_new:proxy = [ yes | no | auto ]
+.RS 4
+Allows one to indicate use of the libcephfs proxy library for optimized resource utilization, allowing more simultaneous client connections\&. Prerequisites include the presence of
+\fIlibcephfs_proxy\&.so\&.X\fR
+shared library file under loadable locations for dynamic linker and an active(running)
+\fIlibcephfsd\fR
+daemon\&.
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBno\fR
+(default) \- Do not use the proxy library but regular connection through
+\fIlibcephfs\&.so\&.X\fR\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fByes\fR
+\- Always use the proxy library and fail the client connection request if prerequisites are unmet\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBauto\fR
+\- Attempt to use the proxy library but fall back to the regular cephfs connection if prerequisites are unmet\&.
+.RE
+.sp
+.RE
+.RE
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.21\&.2 of the Samba suite\&.
+This man page is part of version 4\&.21\&.4 of the Samba suite\&.
 .SH "AUTHOR"
 .PP
 The original Samba software and related utilities were created by Andrew Tridgell\&. Samba is now developed by the Samba Team as an Open Source project similar to the way the Linux kernel is developed\&.

@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
-.\"      Date: 11/25/2024
+.\"      Date: 02/17/2025
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.21.2
+.\"    Source: Samba 4.21.4
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "11/25/2024" "Samba 4\&.21\&.2" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "02/17/2025" "Samba 4\&.21\&.4" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -13488,19 +13488,21 @@ The option takes a list of keytab strings to describe how to synchronize content
 .RS 4
 .\}
 .nf
-absolute_path_to_keytab:spn_spec[:sync_etypes][:sync_kvno][:netbios_aliases][:additional_dns_hostnames][:machine_password]
+absolute_path_to_keytab:spn_spec[:spn_spec]*[:sync_etypes][:sync_kvno][:netbios_aliases][:additional_dns_hostnames][:machine_password]
 .fi
 .if n \{\
 .RE
 .\}
 .sp
-where spn_spec can have exactly one of these four forms:
+spn_spec can be specified multiple times (separated using \*(Aq:\*(Aq) and each spn_spec can have exactly one of these forms:
 .sp
 .if n \{\
 .RS 4
 .\}
 .nf
 account_name
+sync_account_name
+sync_upn
 sync_spns
 spn_prefixes=value1[,value2[\&.\&.\&.]]
 spns=value1[,value2[\&.\&.\&.]]
@@ -13509,22 +13511,32 @@ spns=value1[,value2[\&.\&.\&.]]
 .RE
 .\}
 .sp
-No other combinations are allowed\&.
-.sp
-Specifiers:
+Every keytab contains principals according the specification below:
 .sp
 .if n \{\
 .RS 4
 .\}
 .nf
-account_name \- creates entry using principal \*(Aqcomputer$@REALM\*(Aq\&.
-sync_spns    \- uses principals received from AD DC\&.
-spn_prefixes \- creates principals from the prefixes and adds netbios_aliases or additional_dns_hostnames if specified\&.
-spns         \- creates only the principals defined in the list\&.
+account_name      \- COMPUTER$@REALM
+sync_account_name \- uses attribute "sAMAccountName" from AD
+sync_upn          \- uses attribute "userPrincipalName" (if exists in AD)
+sync_spns         \- uses attribute "servicePrincipalName" (if exists in AD)
+spn_prefixes      \- creates these two principals from each prefix\&. e\&.g\&.:
+                      prefix/\m[blue]\fBnetbios name\fR\m[]@REALM
+                      prefix/\m[blue]\fBdns hostname\fR\m[]@REALM
+                    with :netbios_aliases for each netbiosalias in \m[blue]\fBnetbios aliases\fR\m[]
+                      prefix/netbiosalias@REALM
+                      prefix/netbiosalias\&.dnsdomain@REALM
+                    with :additional_dns_hostnames for each additionaldnshostname in \m[blue]\fBadditional dns hostnames\fR\m[]
+                      prefix/additionaldnshostname@REALM
+                  \- \*(Aqhost\*(Aq principal should be created using specifier spn_prefixes
+spns              \- creates only the principals defined in the list
 .fi
 .if n \{\
 .RE
 .\}
+.sp
+\*(Aqaccount_name\*(Aq and \*(Aqsync_account_name\*(Aq are the same, just the source differs (secrets\&.tdb vs\&. AD)\&.
 .sp
 Options:
 .sp
@@ -13532,10 +13544,10 @@ Options:
 .RS 4
 .\}
 .nf
-sync_etypes              \- parameter "msDS\-SupportedEncryptionTypes" is read from DC and is used to find the highest common enc type for AD and KRB5 lib\&.
-sync_kvno                \- the key version number ("msDS\-KeyVersionNumber") is synchronized from DC, otherwise is set to \-1\&.
-netbios_aliases          \- evaluated only for SPN_SPEC_PREFIX\&. If present, PREFIX/netbiosname@REALM and PREFIX/netbiosname\&.domainname@REALM are added for each alias\&. See \m[blue]\fBnetbios aliases\fR\m[]
-additional_dns_hostnames \- evaluated only for SPN_SPEC_PREFIX\&. If present, PREFIX/dnshostname@REALM is  added for each dns name\&. See \m[blue]\fBadditional dns hostnames\fR\m[]
+sync_etypes              \- attribute "msDS\-SupportedEncryptionTypes" is read from AD and is used to find the highest common enc type for AD and KRB5 lib\&.
+sync_kvno                \- attribute "msDS\-KeyVersionNumber" from AD is used to set KVNO\&. If this option is missing, KVNO is set to \-1\&.
+netbios_aliases          \- evaluated only for spn_prefixes (see details above)\&.
+additional_dns_hostnames \- evaluated only for spn_prefixes (see details above)\&.
 machine_password         \- mandatory, if missing the entry is ignored\&. For future use\&.
 .fi
 .if n \{\
@@ -13555,7 +13567,8 @@ Example:
 "/path/to/keytab4:spn_prefixes=imap,smtp:machine_password",
 "/path/to/keytab5:spn_prefixes=imap,smtp:netbios_aliases:additional_dns_hostnames:sync_kvno:machine_password",
 "/path/to/keytab6:spns=wurst/brot@REALM:machine_password",
-"/path/to/keytab7:spns=wurst/brot@REALM,wurst2/brot@REALM:sync_kvno:machine_password"
+"/path/to/keytab7:spns=wurst/brot@REALM,wurst2/brot@REALM:sync_kvno:machine_password",
+"/path/to/keytab8:sync_account_name:sync_upn:sync_spns:spn_prefixes=host,cifs,http:spns=wurst/brot@REALM:sync_kvno:machine_password"
 .fi
 .if n \{\
 .RE
@@ -13583,7 +13596,7 @@ uses value
 .RS 4
 .\}
 .nf
-/path/to/keytab:sync_spns:sync_kvno:machine_password
+/path/to/keytab:host:account_name:sync_spns:sync_kvno:machine_password
 .fi
 .if n \{\
 .RE
@@ -15223,7 +15236,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.21\&.2 of the Samba suite\&.
+This man page is part of version 4\&.21\&.4 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),

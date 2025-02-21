@@ -804,10 +804,11 @@ sub provision_ad_member
 	\"$prefix_abs/keytab0k:account_name:sync_kvno:machine_password:sync_etypes\", \\
 	\"$prefix_abs/keytab1:sync_spns:machine_password:sync_etypes\", \\
 	\"$prefix_abs/keytab1k:sync_spns:sync_kvno:machine_password:sync_etypes\", \\
-	\"$prefix_abs/keytab2:spn_prefixes=imap,smtp:additional_dns_hostnames:netbios_aliases:machine_password:sync_etypes\", \\
-	\"$prefix_abs/keytab2k:spn_prefixes=imap,smtp:additional_dns_hostnames:sync_kvno:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab2:spn_prefixes=host,imap,smtp:additional_dns_hostnames:netbios_aliases:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab2k:spn_prefixes=host,imap,smtp:additional_dns_hostnames:sync_kvno:machine_password:sync_etypes\", \\
 	\"$prefix_abs/keytab3:spns=wurst/brot\@$dcvars->{REALM}:machine_password:sync_etypes\", \\
-	\"$prefix_abs/keytab3k:spns=wurst/brot\@$dcvars->{REALM},wurst1/brot\@$dcvars->{REALM},wurst2/brot\@$dcvars->{REALM}:sync_kvno:machine_password:sync_etypes\"
+	\"$prefix_abs/keytab3k:spns=wurst/brot\@$dcvars->{REALM},wurst1/brot\@$dcvars->{REALM},wurst2/brot\@$dcvars->{REALM}:sync_kvno:machine_password:sync_etypes\", \\
+	\"$prefix_abs/keytab4k:account_name:sync_account_name:spn_prefixes=host,imap,smtp:additional_dns_hostnames:netbios_aliases:spns=wurst/brot\@$dcvars->{REALM},wurst1/brot\@$dcvars->{REALM},wurst2/brot\@$dcvars->{REALM}:sync_kvno:machine_password:sync_etypes\"
 	";
 	}
 
@@ -2780,6 +2781,9 @@ sub provision($$)
 	my $recycle_shrdir="$shrdir/recycle";
 	push(@dirs,$recycle_shrdir);
 
+	my $recycle_shrdir2="$shrdir/recycle2";
+	push(@dirs,$recycle_shrdir2);
+
 	my $fakedircreatetimes_shrdir="$shrdir/fakedircreatetimes";
 	push(@dirs,$fakedircreatetimes_shrdir);
 
@@ -3714,6 +3718,15 @@ sub provision($$)
 	recycle : repository = .trash
 	recycle : exclude = *.tmp
 	recycle : directory_mode = 755
+
+[recycle2]
+	copy = tmp
+	path = $recycle_shrdir2
+	vfs objects = recycle crossrename
+	recycle : repository = .trash
+	recycle : exclude = *.tmp
+	recycle : directory_mode = 755
+	wide links = yes
 
 [fakedircreatetimes]
 	copy = tmp
