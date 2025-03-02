@@ -2,12 +2,12 @@
 .\"     Title: smb.conf
 .\"    Author: [see the "AUTHOR" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 10/24/2022
+.\"      Date: 12/15/2022
 .\"    Manual: File Formats and Conventions
-.\"    Source: Samba 4.15.11
+.\"    Source: Samba 4.15.13
 .\"  Language: English
 .\"
-.TH "SMB\&.CONF" "5" "10/24/2022" "Samba 4\&.15\&.11" "File Formats and Conventions"
+.TH "SMB\&.CONF" "5" "12/15/2022" "Samba 4\&.15\&.13" "File Formats and Conventions"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1402,7 +1402,7 @@ and epmapper, mgmt and rpcecho have a hard\-coded default of
 .sp
 The behavior can be overwritten per interface name (e\&.g\&. lsarpc, netlogon, samr, srvsvc, winreg, wkssvc \&.\&.\&.) by using \*(Aqallow dcerpc auth level connect:interface = yes\*(Aq as option\&.
 .sp
-This option yields precedence to the implementation specific restrictions\&. E\&.g\&. the drsuapi and backupkey protocols require DCERPC_AUTH_LEVEL_PRIVACY\&. The dnsserver protocol requires DCERPC_AUTH_LEVEL_INTEGRITY\&.
+This option is over\-ridden by the implementation specific restrictions\&. E\&.g\&. the drsuapi and backupkey protocols require DCERPC_AUTH_LEVEL_PRIVACY\&. The dnsserver protocol requires DCERPC_AUTH_LEVEL_INTEGRITY\&.
 .sp
 Default:
 \fI\fIallow dcerpc auth level connect\fR\fR\fI = \fR\fIno\fR\fI \fR
@@ -1457,7 +1457,9 @@ Default:
 allow nt4 crypto (G)
 .PP
 .RS 4
-This option controls whether the netlogon server (currently only in \*(Aqactive directory domain controller\*(Aq mode), will reject clients which does not support NETLOGON_NEG_STRONG_KEYS nor NETLOGON_NEG_SUPPORTS_AES\&.
+This option is deprecated and will be removed in future, as it is a security problem if not set to "no" (which will be the hardcoded behavior in future)\&.
+.sp
+This option controls whether the netlogon server (currently only in \*(Aqactive directory domain controller\*(Aq mode), will reject clients which do not support NETLOGON_NEG_STRONG_KEYS nor NETLOGON_NEG_SUPPORTS_AES\&.
 .sp
 This option was added with Samba 4\&.2\&.0\&. It may lock out clients which worked fine with Samba versions up to 4\&.1\&.x\&. as the effective default was "yes" there, while it is "no" now\&.
 .sp
@@ -1465,10 +1467,60 @@ If you have clients without RequireStrongKey = 1 in the registry, you may need t
 .sp
 "allow nt4 crypto = yes" allows weak crypto to be negotiated, maybe via downgrade attacks\&.
 .sp
-This option yields precedence to the \*(Aqreject md5 clients\*(Aq option\&.
+\fIAvoid using this option!\fR
+Use explicit \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT = yes\fR\m[]\*(Aq instead! Which is available with the patches for
+CVE\-2022\-38023
+see
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15240
+.sp
+Samba will log an error in the log files at log level 0 if legacy a client is rejected or allowed without an explicit, \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT = yes\fR\m[]\*(Aq option for the client\&. The message will indicate the explicit \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT = yes\fR\m[]\*(Aq line to be added, if the legacy client software requires it\&. (The log level can be adjusted with \*(Aq\m[blue]\fBCVE_2022_38023:error_debug_level = 1\fR\m[]\*(Aq in order to complain only at a higher log level)\&.
+.sp
+This allows admins to use "yes" only for a short grace period, in order to collect the explicit \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT = yes\fR\m[]\*(Aq options\&.
+.sp
+This option is over\-ridden by the effective value of \*(Aqyes\*(Aq from the \*(Aq\m[blue]\fBserver reject md5 schannel:COMPUTERACCOUNT\fR\m[]\*(Aq and/or \*(Aq\m[blue]\fBreject md5 clients\fR\m[]\*(Aq options\&.
 .sp
 Default:
 \fI\fIallow nt4 crypto\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+allow nt4 crypto:COMPUTERACCOUNT (G)
+.PP
+.RS 4
+If you still have legacy domain members which required \*(Aqallow nt4 crypto = yes\*(Aq, it is possible to specify an explicit exception per computer account by using \*(Aqallow nt4 crypto:COMPUTERACCOUNT = yes\*(Aq as option\&. Note that COMPUTERACCOUNT has to be the sAMAccountName value of the computer account (including the trailing \*(Aq$\*(Aq sign)\&.
+.sp
+Samba will log a complaint in the log files at log level 0 about the security problem if the option is set to "yes", but the related computer does not require it\&. (The log level can be adjusted with \*(Aq\m[blue]\fBCVE_2022_38023:warn_about_unused_debug_level = 1\fR\m[]\*(Aq in order to complain only at a higher log level)\&.
+.sp
+Samba will log a warning in the log files at log level 5, if a setting is still needed for the specified computer account\&.
+.sp
+See
+CVE\-2022\-38023,
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15240\&.
+.sp
+This option overrides the
+\m[blue]\fBallow nt4 crypto\fR\m[]
+option\&.
+.sp
+This option is over\-ridden by the effective value of \*(Aqyes\*(Aq from the \*(Aq\m[blue]\fBserver reject md5 schannel:COMPUTERACCOUNT\fR\m[]\*(Aq and/or \*(Aq\m[blue]\fBreject md5 clients\fR\m[]\*(Aq options\&.
+.sp
+Which means \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT = yes\fR\m[]\*(Aq is only useful in combination with \*(Aq\m[blue]\fBserver reject md5 schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	allow nt4 crypto:LEGACYCOMPUTER1$ = yes
+	server reject md5 schannel:LEGACYCOMPUTER1$ = no
+	allow nt4 crypto:NASBOX$ = yes
+	server reject md5 schannel:NASBOX$ = no
+	allow nt4 crypto:LEGACYCOMPUTER2$ = yes
+	server reject md5 schannel:LEGACYCOMPUTER2$ = no
+    
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fINo default\fR
 .RE
 
 allow trusted domains (G)
@@ -2455,7 +2507,7 @@ denies access if the server is not able to speak netlogon schannel\&.
 Note that for active directory domains this is hardcoded to
 \m[blue]\fBclient schannel = yes\fR\m[]\&.
 .sp
-This option yields precedence to the
+This option is over\-ridden by the
 \m[blue]\fBrequire strong key\fR\m[]
 option\&.
 .sp
@@ -5360,6 +5412,184 @@ Example:
 \fI\fIiprint server\fR\fR\fI = \fR\fIMYCUPSSERVER\fR\fI \fR
 .RE
 
+kdc default domain supported enctypes (G)
+.PP
+.RS 4
+Set the default value of
+\fBmsDS\-SupportedEncryptionTypes\fR
+for service accounts in Active Directory that are missing this value or where
+\fBmsDS\-SupportedEncryptionTypes\fR
+is set to 0\&.
+.sp
+This allows Samba administrators to match the configuration flexibility provided by the
+\fBHKEY_LOCAL_MACHINE\eSystem\eCurrentControlSet\eservices\eKDC\eDefaultDomainSupportedEncTypes\fR
+Registry Value on Windows\&.
+.sp
+Unlike the Windows registry key (which only takes an base\-10 number), in Samba this may also be expressed in hexadecimal or as a list of Kerberos encryption type names\&.
+.sp
+Specified values are ORed together bitwise, and those currently supported consist of:
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBarcfour\-hmac\-md5\fR,
+\fBrc4\-hmac\fR,
+\fB0x4\fR, or
+\fB4\fR
+.sp
+Known on Windows as Kerberos RC4 encryption
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBaes128\-cts\-hmac\-sha1\-96\fR,
+\fBaes128\-cts\fR,
+\fB0x8\fR, or
+\fB8\fR
+.sp
+Known on Windows as Kerberos AES 128 bit encryption
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBaes256\-cts\-hmac\-sha1\-96\fR,
+\fBaes256\-cts\fR,
+\fB0x10\fR, or
+\fB16\fR
+.sp
+Known on Windows as Kerberos AES 256 bit encryption
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBaes256\-cts\-hmac\-sha1\-96\-sk\fR,
+\fBaes256\-cts\-sk\fR,
+\fB0x20\fR, or
+\fB32\fR
+.sp
+Allow AES session keys\&. When this is set, it indicates to the KDC that AES session keys can be used, even when
+\fBaes256\-cts\fR
+and
+\fBaes128\-cts\fR
+are not set\&. This allows use of AES keys against hosts otherwise only configured with RC4 for ticket keys (which is the default)\&.
+.RE
+.sp
+.RE
+Default:
+\fI\fIkdc default domain supported enctypes\fR\fR\fI = \fR\fI0 # maps to what the software supports currently: arcfour\-hmac\-md5 aes256\-cts\-hmac\-sha1\-96\-sk\fR\fI \fR
+.RE
+
+kdc force enable rc4 weak session keys (G)
+.PP
+.RS 4
+\fBRFC8429\fR
+declares that
+\fBrc4\-hmac\fR
+Kerberos ciphers are weak and there are known attacks on Active Directory use of this cipher suite\&.
+.sp
+However for compatibility with Microsoft Windows this option allows the KDC to assume that regardless of the value set in a service account\*(Aqs
+\fBmsDS\-SupportedEncryptionTypes\fR
+attribute that a
+\fBrc4\-hmac\fR
+Kerberos session key (as distinct from the ticket key, as found in a service keytab) can be used if the potentially older client requests it\&.
+.sp
+Default:
+\fI\fIkdc force enable rc4 weak session keys\fR\fR\fI = \fR\fIno\fR\fI \fR
+.RE
+
+kdc supported enctypes (G)
+.PP
+.RS 4
+On an active directory domain controller, this is the list of supported encryption types for local running kdc\&.
+.sp
+This allows Samba administrators to remove support for weak/unused encryption types, similar the configuration flexibility provided by the
+\fBNetwork security: Configure encryption types allowed for Kerberos\fR
+GPO/Local Policies/Security Options Value, which results in the
+\fBHKEY_LOCAL_MACHINE\eSOFTWARE\eMicrosoft\eWindows\eCurrentVersion\ePolicies\eSystem\eKerberos\eParameters\eSupportedEncryptionTypes\fR
+Registry Value on Windows\&.
+.sp
+Unlike the Windows registry key (which only takes an base\-10 number), in Samba this may also be expressed as hexadecimal or a list of Kerberos encryption type names\&.
+.sp
+Specified values are ORed together bitwise, and those currently supported consist of:
+.RS
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBarcfour\-hmac\-md5\fR,
+\fBrc4\-hmac\fR,
+\fB0x4\fR, or
+\fB4\fR
+.sp
+Known on Windows as Kerberos RC4 encryption
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBaes128\-cts\-hmac\-sha1\-96\fR,
+\fBaes128\-cts\fR,
+\fB0x8\fR, or
+\fB8\fR
+.sp
+Known on Windows as Kerberos AES 128 bit encryption
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBaes256\-cts\-hmac\-sha1\-96\fR,
+\fBaes256\-cts\fR,
+\fB0x10\fR, or
+\fB16\fR
+.sp
+Known on Windows as Kerberos AES 256 bit encryption
+.RE
+.sp
+.RE
+Default:
+\fI\fIkdc supported enctypes\fR\fR\fI = \fR\fI0 # maps to what the software supports currently: arcfour\-hmac\-md5 aes128\-cts\-hmac\-sha1\-96 aes256\-cts\-hmac\-sha1\-96\fR\fI \fR
+.RE
+
 keepalive (G)
 .PP
 .RS 4
@@ -5399,9 +5629,10 @@ When set to
 \fBstrong\fR, only AES\-based encryption types are offered\&. This can be used in hardened environments to prevent downgrade attacks\&.
 .sp
 When set to
-\fBlegacy\fR, only RC4\-HMAC\-MD5 is allowed\&. Avoiding AES this way has one a very specific use\&. Normally, the encryption type is negotiated between the peers\&. However, there is one scenario in which a Windows read\-only domain controller (RODC) advertises AES encryption, but then proxies the request to a writeable DC which may not support AES encryption, leading to failure of the handshake\&. Setting this parameter to
-\fBlegacy\fR
-would cause samba not to negotiate AES encryption\&. It is assumed of course that the weaker legacy encryption types are acceptable for the setup\&.
+\fBlegacy\fR, only RC4\-HMAC\-MD5 is allowed\&. AVOID using this option, because of
+CVE\-2022\-37966
+see
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15237\&.
 .sp
 Default:
 \fI\fIkerberos encryption types\fR\fR\fI = \fR\fIall\fR\fI \fR
@@ -10061,14 +10292,68 @@ Example:
 reject md5 clients (G)
 .PP
 .RS 4
+This option is deprecated and will be removed in a future release, as it is a security problem if not set to "yes" (which will be the hardcoded behavior in the future)\&.
+.sp
 This option controls whether the netlogon server (currently only in \*(Aqactive directory domain controller\*(Aq mode), will reject clients which does not support NETLOGON_NEG_SUPPORTS_AES\&.
 .sp
-You can set this to yes if all domain members support aes\&. This will prevent downgrade attacks\&.
+Support for NETLOGON_NEG_SUPPORTS_AES was added in Windows starting with Server 2008R2 and Windows 7, it\*(Aqs available in Samba starting with 4\&.0, however third party domain members like NetApp ONTAP still uses RC4 (HMAC\-MD5), see
+https://www\&.samba\&.org/samba/security/CVE\-2022\-38023\&.html
+for more details\&.
 .sp
-This option takes precedence to the \*(Aqallow nt4 crypto\*(Aq option\&.
+The default changed from \*(Aqno\*(Aq to \*(Aqyes\*(Aq, with the patches for
+CVE\-2022\-38023
+see
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15240\&.
+.sp
+\fIAvoid using this option!\fR
+Use an explicit per machine account \*(Aq\m[blue]\fBserver reject md5 schannel:COMPUTERACCOUNT\fR\m[]\*(Aq instead! Which is available with the patches for
+CVE\-2022\-38023
+see
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15240\&.
+.sp
+Samba will log an error in the log files at log level 0 if legacy a client is rejected or allowed without an explicit, \*(Aq\m[blue]\fBserver reject md5 schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq option for the client\&. The message will indicate the explicit \*(Aq\m[blue]\fBserver reject md5 schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq line to be added, if the legacy client software requires it\&. (The log level can be adjusted with \*(Aq\m[blue]\fBCVE_2022_38023:error_debug_level = 1\fR\m[]\*(Aq in order to complain only at a higher log level)\&.
+.sp
+This allows admins to use "no" only for a short grace period, in order to collect the explicit \*(Aq\m[blue]\fBserver reject md5 schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq options\&.
+.sp
+When set to \*(Aqyes\*(Aq this option overrides the \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT\fR\m[]\*(Aq and \*(Aq\m[blue]\fBallow nt4 crypto\fR\m[]\*(Aq options and implies \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT = no\fR\m[]\*(Aq\&.
 .sp
 Default:
-\fI\fIreject md5 clients\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fIreject md5 clients\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
+server reject md5 schannel:COMPUTERACCOUNT (G)
+.PP
+.RS 4
+If you still have legacy domain members or trusted domains, which required "reject md5 clients = no" before, it is possible to specify an explicit exception per computer account by setting \*(Aqserver reject md5 schannel:COMPUTERACCOUNT = no\*(Aq\&. Note that COMPUTERACCOUNT has to be the sAMAccountName value of the computer account (including the trailing \*(Aq$\*(Aq sign)\&.
+.sp
+Samba will log a complaint in the log files at log level 0 about the security problem if the option is set to "no", but the related computer does not require it\&. (The log level can be adjusted with \*(Aq\m[blue]\fBCVE_2022_38023:warn_about_unused_debug_level = 1\fR\m[]\*(Aq in order to complain only at a higher log level)\&.
+.sp
+Samba will log a warning in the log files at log level 5 if a setting is still needed for the specified computer account\&.
+.sp
+See
+CVE\-2022\-38023,
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15240\&.
+.sp
+This option overrides the
+\m[blue]\fBreject md5 clients\fR\m[]
+option\&.
+.sp
+When set to \*(Aqyes\*(Aq this option overrides the \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT\fR\m[]\*(Aq and \*(Aq\m[blue]\fBallow nt4 crypto\fR\m[]\*(Aq options and implies \*(Aq\m[blue]\fBallow nt4 crypto:COMPUTERACCOUNT = no\fR\m[]\*(Aq\&.
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	server reject md5 schannel:LEGACYCOMPUTER1$ = no
+	server reject md5 schannel:NASBOX$ = no
+	server reject md5 schannel:LEGACYCOMPUTER2$ = no
+    
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fINo default\fR
 .RE
 
 reject md5 servers (G)
@@ -10080,14 +10365,16 @@ The following flags will be required NETLOGON_NEG_ARCFOUR, NETLOGON_NEG_SUPPORTS
 .sp
 You can set this to yes if all domain controllers support aes\&. This will prevent downgrade attacks\&.
 .sp
-The behavior can be controlled per netbios domain by using \*(Aqreject md5 servers:NETBIOSDOMAIN = yes\*(Aq as option\&.
+The behavior can be controlled per netbios domain by using \*(Aqreject md5 servers:NETBIOSDOMAIN = no\*(Aq as option\&.
 .sp
-This option takes precedence to the
+The default changed from \*(Aqno\*(Aq to \*(Aqyes, with the patches for CVE\-2022\-38023, see https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15240
+.sp
+This option overrides the
 \m[blue]\fBrequire strong key\fR\m[]
 option\&.
 .sp
 Default:
-\fI\fIreject md5 servers\fR\fR\fI = \fR\fIno\fR\fI \fR
+\fI\fIreject md5 servers\fR\fR\fI = \fR\fIyes\fR\fI \fR
 .RE
 
 remote announce (G)
@@ -10203,11 +10490,11 @@ The behavior can be controlled per netbios domain by using \*(Aqrequire strong k
 .sp
 Note for active directory domain this option is hardcoded to \*(Aqyes\*(Aq
 .sp
-This option yields precedence to the
+This option is over\-ridden by the
 \m[blue]\fBreject md5 servers\fR\m[]
 option\&.
 .sp
-This option takes precedence to the
+This option overrides the
 \m[blue]\fBclient schannel\fR\m[]
 option\&.
 .sp
@@ -11114,17 +11401,22 @@ server schannel (G)
 .RS 4
 This option is deprecated and will be removed in future, as it is a security problem if not set to "yes" (which will be the hardcoded behavior in future)\&.
 .sp
-Samba will complain in the log files at log level 0, about the security problem if the option is not set to "yes"\&.
+\fIAvoid using this option!\fR
+Use explicit \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq instead!
 .sp
-See CVE\-2020\-1472(ZeroLogon) https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=14497
+Samba will log an error in the log files at log level 0 if legacy a client is rejected or allowed without an explicit, \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq option for the client\&. The message will indicate the explicit \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq line to be added, if the legacy client software requires it\&. (The log level can be adjusted with \*(Aq\m[blue]\fBCVE_2020_1472:error_debug_level = 1\fR\m[]\*(Aq in order to complain only at a higher log level)\&.
 .sp
-If you still have legacy domain members use the
+This allows admins to use "auto" only for a short grace period, in order to collect the explicit \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq options\&.
+.sp
+See
+CVE\-2020\-1472(ZeroLogon),
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=14497\&.
+.sp
+This option is over\-ridden by the
 \m[blue]\fBserver require schannel:COMPUTERACCOUNT\fR\m[]
 option\&.
 .sp
-This option yields precedence to the
-\m[blue]\fBserver require schannel:COMPUTERACCOUNT\fR\m[]
-option\&.
+This option is over\-ridden by the effective value of \*(Aqyes\*(Aq from the \*(Aq\m[blue]\fBserver schannel require seal:COMPUTERACCOUNT\fR\m[]\*(Aq and/or \*(Aq\m[blue]\fBserver schannel require seal\fR\m[]\*(Aq options\&.
 .sp
 Default:
 \fI\fIserver schannel\fR\fR\fI = \fR\fIyes\fR\fI \fR
@@ -11135,24 +11427,106 @@ server require schannel:COMPUTERACCOUNT (G)
 .RS 4
 If you still have legacy domain members, which required "server schannel = auto" before, it is possible to specify explicit expection per computer account by using \*(Aqserver require schannel:COMPUTERACCOUNT = no\*(Aq as option\&. Note that COMPUTERACCOUNT has to be the sAMAccountName value of the computer account (including the trailing \*(Aq$\*(Aq sign)\&.
 .sp
-Samba will complain in the log files at log level 0, about the security problem if the option is not set to "no", but the related computer is actually using the netlogon secure channel (schannel) feature\&.
+Samba will complain in the log files at log level 0, about the security problem if the option is not set to "no", but the related computer is actually using the netlogon secure channel (schannel) feature\&. (The log level can be adjusted with \*(Aq\m[blue]\fBCVE_2020_1472:warn_about_unused_debug_level = 1\fR\m[]\*(Aq in order to complain only at a higher log level)\&.
 .sp
 Samba will warn in the log files at log level 5, if a setting is still needed for the specified computer account\&.
 .sp
-See CVE\-2020\-1472(ZeroLogon) https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=14497
+See
+CVE\-2020\-1472(ZeroLogon),
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=14497\&.
 .sp
-This option takes precedence to the
+This option overrides the
 \m[blue]\fBserver schannel\fR\m[]
 option\&.
+.sp
+This option is over\-ridden by the effective value of \*(Aqyes\*(Aq from the \*(Aq\m[blue]\fBserver schannel require seal:COMPUTERACCOUNT\fR\m[]\*(Aq and/or \*(Aq\m[blue]\fBserver schannel require seal\fR\m[]\*(Aq options\&.
+.sp
+Which means \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT = no\fR\m[]\*(Aq is only useful in combination with \*(Aq\m[blue]\fBserver schannel require seal:COMPUTERACCOUNT = no\fR\m[]\*(Aq
 .sp
 .if n \{\
 .RS 4
 .\}
 .nf
 	server require schannel:LEGACYCOMPUTER1$ = no
+	server require schannel seal:LEGACYCOMPUTER1$ = no
 	server require schannel:NASBOX$ = no
+	server require schannel seal:NASBOX$ = no
 	server require schannel:LEGACYCOMPUTER2$ = no
+	server require schannel seal:LEGACYCOMPUTER2$ = no
     
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fINo default\fR
+.RE
+
+server schannel require seal (G)
+.PP
+.RS 4
+This option is deprecated and will be removed in future, as it is a security problem if not set to "yes" (which will be the hardcoded behavior in future)\&.
+.sp
+This option controls whether the netlogon server (currently only in \*(Aqactive directory domain controller\*(Aq mode), will reject the usage of netlogon secure channel without privacy/enryption\&.
+.sp
+The option is modelled after the registry key available on Windows\&.
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	HKEY_LOCAL_MACHINE\eSYSTEM\eCurrentControlSet\eServices\eNetlogon\eParameters\eRequireSeal=2
+	
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fIAvoid using this option!\fR
+Use the per computer account specific option \*(Aq\m[blue]\fBserver schannel require seal:COMPUTERACCOUNT\fR\m[]\*(Aq instead! Which is available with the patches for
+CVE\-2022\-38023
+see
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15240\&.
+.sp
+Samba will log an error in the log files at log level 0 if legacy a client is rejected or allowed without an explicit, \*(Aq\m[blue]\fBserver schannel require seal:COMPUTERACCOUNT = no\fR\m[]\*(Aq option for the client\&. The message will indicate the explicit \*(Aq\m[blue]\fBserver schannel require seal:COMPUTERACCOUNT = no\fR\m[]\*(Aq line to be added, if the legacy client software requires it\&. (The log level can be adjusted with \*(Aq\m[blue]\fBCVE_2022_38023:error_debug_level = 1\fR\m[]\*(Aq in order to complain only at a higher log level)\&.
+.sp
+This allows admins to use "no" only for a short grace period, in order to collect the explicit \*(Aq\m[blue]\fBserver schannel require seal:COMPUTERACCOUNT = no\fR\m[]\*(Aq options\&.
+.sp
+When set to \*(Aqyes\*(Aq this option overrides the \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT\fR\m[]\*(Aq and \*(Aq\m[blue]\fBserver schannel\fR\m[]\*(Aq options and implies \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT = yes\fR\m[]\*(Aq\&.
+.sp
+This option is over\-ridden by the
+\m[blue]\fBserver schannel require seal:COMPUTERACCOUNT\fR\m[]
+option\&.
+.sp
+Default:
+\fI\fIserver schannel require seal\fR\fR\fI = \fR\fIyes\fR\fI \fR
+.RE
+
+server schannel require seal:COMPUTERACCOUNT (G)
+.PP
+.RS 4
+If you still have legacy domain members, which required "server schannel require seal = no" before, it is possible to specify explicit exception per computer account by using \*(Aqserver schannel require seal:COMPUTERACCOUNT = no\*(Aq as option\&. Note that COMPUTERACCOUNT has to be the sAMAccountName value of the computer account (including the trailing \*(Aq$\*(Aq sign)\&.
+.sp
+Samba will log a complaint in the log files at log level 0 about the security problem if the option is set to "no", but the related computer does not require it\&. (The log level can be adjusted with \*(Aq\m[blue]\fBCVE_2022_38023:warn_about_unused_debug_level = 1\fR\m[]\*(Aq in order to complain only at a higher log level)\&.
+.sp
+Samba will warn in the log files at log level 5, if a setting is still needed for the specified computer account\&.
+.sp
+See
+CVE\-2022\-38023,
+https://bugzilla\&.samba\&.org/show_bug\&.cgi?id=15240\&.
+.sp
+This option overrides the \*(Aq\m[blue]\fBserver schannel require seal\fR\m[]\*(Aq option\&.
+.sp
+When set to \*(Aqyes\*(Aq this option overrides the \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT\fR\m[]\*(Aq and \*(Aq\m[blue]\fBserver schannel\fR\m[]\*(Aq options and implies \*(Aq\m[blue]\fBserver require schannel:COMPUTERACCOUNT = yes\fR\m[]\*(Aq\&.
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+	server require schannel seal:LEGACYCOMPUTER1$ = no
+	server require schannel seal:NASBOX$ = no
+	server require schannel seal:LEGACYCOMPUTER2$ = no
+	
 .fi
 .if n \{\
 .RE
@@ -14266,7 +14640,7 @@ and
 special sections make life for an administrator easy, but the various combinations of default attributes can be tricky\&. Take extreme care when designing these sections\&. In particular, ensure that the permissions on spool directories are correct\&.
 .SH "VERSION"
 .PP
-This man page is part of version 4\&.15\&.11 of the Samba suite\&.
+This man page is part of version 4\&.15\&.13 of the Samba suite\&.
 .SH "SEE ALSO"
 .PP
 \fBsamba\fR(7),
