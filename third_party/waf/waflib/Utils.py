@@ -265,9 +265,9 @@ def writef(fname, data, m='w', encoding='latin-1'):
 	:type encoding: string
 	:param encoding: encoding value, only used for python 3
 	"""
-	if sys.hexversion > 0x3000000 and not 'b' in m:
-		data = data.encode(encoding)
-		m += 'b'
+#	if sys.hexversion > 0x3000000 and not 'b' in m:
+#		data = data.encode(encoding)
+#		m += 'b'
 	with open(fname, m) as f:
 		f.write(data)
 

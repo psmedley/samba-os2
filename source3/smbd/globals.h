@@ -25,6 +25,14 @@
 #include "librpc/gen_ndr/smbXsrv.h"
 #include "smbprofile.h"
 
+#ifdef __OS2__
+#define AT_EACCESS              1
+#define AT_SYMLINK_NOFOLLOW     2
+#define AT_SYMLINK_FOLLOW       4
+#define AT_REMOVEDIR            8
+#define O_DIRECTORY	00200000	/* must be a directory */
+#endif
+
 #ifdef USE_DMAPI
 struct smbd_dmapi_context;
 extern struct smbd_dmapi_context *dmapi_ctx;

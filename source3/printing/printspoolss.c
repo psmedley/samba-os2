@@ -27,6 +27,9 @@
 #include "../libcli/security/security.h"
 #include "smbd/fd_handle.h"
 #include "source3/printing/rap_jobid.h"
+#ifdef __OS2__
+#include <io.h>
+#endif
 
 struct print_file_data {
 	char *svcname;

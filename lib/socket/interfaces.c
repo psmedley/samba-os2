@@ -27,6 +27,12 @@
 #include "librpc/gen_ndr/ioctl.h"
 #ifdef __OS2__
 #include <netinet/in.h>
+unsigned short _swaps (unsigned short _x);
+unsigned long _swapl (unsigned long _x);
+#define htonl(X) _swapl(X)
+#define ntohl(X) _swapl(X)
+#define htons(X) _swaps(X)
+#define ntohs(X) _swaps(X)
 #endif
 #ifdef HAVE_ETHTOOL
 #include "linux/sockios.h"

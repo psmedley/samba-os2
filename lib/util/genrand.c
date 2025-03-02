@@ -25,6 +25,11 @@
 #include <gnutls/gnutls.h>
 #include <gnutls/crypto.h>
 
+#ifdef __OS2__
+void os2_randget(char * buffer, int length);
+void mdfour(uint8_t *out, const uint8_t *in, int n);
+#endif
+
 /*
  * Details about the GnuTLS CSPRNG:
  *

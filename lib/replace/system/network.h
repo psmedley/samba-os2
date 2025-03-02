@@ -346,20 +346,6 @@ typedef unsigned short int sa_family_t;
 # endif
 #endif
 
-#ifndef HAVE_STRUCT_ADDRINFO
-#define HAVE_STRUCT_ADDRINFO
-struct addrinfo {
-	int			ai_flags;
-	int			ai_family;
-	int			ai_socktype;
-	int			ai_protocol;
-	socklen_t		ai_addrlen;
-	struct sockaddr 	*ai_addr;
-	char			*ai_canonname;
-	struct addrinfo		*ai_next;
-};
-#endif   /* HAVE_STRUCT_ADDRINFO */
-
 #if !defined(HAVE_GETADDRINFO)
 #include "getaddrinfo.h"
 #endif

@@ -36,8 +36,12 @@
 #include <sys/prctl.h>
 #endif
 #ifdef __OS2__
+int os2_pipe(int fds[2]);
 #define pipe(A) os2_pipe(A)
 #undef HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC
+int fstatat(int dirfd, const char *pathname, struct stat *buf,
+            int flags);
+int __libc_Back_ioFHToPath(int fh, char *pszPath, size_t cchPath);
 #endif
 
 /*

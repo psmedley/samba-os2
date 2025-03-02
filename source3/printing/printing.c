@@ -43,7 +43,9 @@
 #include "source3/lib/substitute.h"
 
 #ifdef __OS2__
+int os2_pipe(int fds[2]);
 #define pipe(A) os2_pipe(A)
+#include <io.h>
 #endif
 
 extern userdom_struct current_user_info;

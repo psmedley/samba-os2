@@ -70,6 +70,7 @@
 #include <sys/eventfd.h>
 #endif
 #ifdef __OS2__
+int os2_pipe(int fds[2]);
 #define pipe(A) os2_pipe(A)
 #endif
 
