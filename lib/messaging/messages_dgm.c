@@ -1317,11 +1317,6 @@ static void messaging_dgm_read_handler(struct tevent_context *ev,
 #endif
 
 	received = recvmsg(ctx->sock, &msg, 0);
-#ifdef __OS2__
-	struct cmsghdr *cmsg;
-	cmsg = CMSG_FIRSTHDR(&msg);
-	cmsg = CMSG_NXTHDR(&msg, cmsg);
-#endif
 	if (received == -1) {
 		if ((errno == EAGAIN) ||
 		    (errno == EWOULDBLOCK) ||

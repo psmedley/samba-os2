@@ -32,7 +32,7 @@
 #undef strcasecmp
 #endif
 
-#ifdef __OS2__
+#ifdef __OS2__x
 const char *lp_dos_charset(void);
 const char *lp_unix_charset(void);
 #endif
@@ -16521,7 +16521,7 @@ struct smb_iconv_handle *get_iconv_handle(void)
 	if (global_iconv_handle == NULL) {
 		global_iconv_handle =
 			smb_iconv_handle_reinit(NULL,
-#ifdef __OS2__
+#ifdef __OS2__x
 						lp_dos_charset(), 
 						lp_unix_charset(), 
 						true, 

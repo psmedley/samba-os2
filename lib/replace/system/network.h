@@ -92,7 +92,13 @@
 #endif
 
 #ifdef __OS2__
+#define HAVE_STRUCT_ADDRINFO
 #include <libcx/net.h>
+int os2_sendmsg(int s, struct msghdr *msg, int flags);
+#define sendmsg(s, m, f) os2_sendmsg((s), (m), (f))
+
+int os2_recvmsg(int s, struct msghdr *msg, int flags);
+#define recvmsg(s, m, f) os2_recvmsg((s), (m), (f))
 #endif
 
 #include <limits.h>

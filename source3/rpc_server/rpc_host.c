@@ -76,6 +76,11 @@ extern bool override_logfile;
 struct rpc_server;
 struct rpc_work_process;
 
+#ifdef __OS2__
+int os2_pipe(int fds[2]);
+#define pipe(A) os2_pipe(A)
+#endif
+
 /*
  * samba-dcerpcd state to keep track of rpcd_* servers.
  */
@@ -1932,7 +1937,11 @@ static void rpc_host_msg_shutdown(
  */
 static int rpcd_filter(const struct dirent *d)
 {
+#ifndef __OS2__x
 	int match = fnmatch("rpcd_*", d->d_name, 0);
+#else
+	int match = fnmatch("rpcd_*.exe", d->d_name, 0);
+#endif
 	return (match == 0) ? 1 : 0;
 }
 
@@ -1948,9 +1957,17 @@ static int rpc_host_list_servers(
 	int i, num_servers;
 	int ret = ENOMEM;
 
+#ifndef __OS2__
 	num_servers = scandir(libexecdir, &namelist, rpcd_filter, alphasort);
+#else
+	num_servers = scandir("u:/samba", &namelist, rpcd_filter, alphasort);
+#endif
 	if (num_servers == -1) {
+#if 0
 		DBG_DEBUG("scandir failed: %s\n", strerror(errno));
+#else
+		DBG_DEBUG("scandir of %s failed: %s\n", libexecdir, strerror(errno));
+#endif
 		return errno;
 	}
 
@@ -2782,7 +2799,7 @@ int main(int argc, const char *argv[])
 
 	if (libexec_rpcds != 0) {
 		ret = rpc_host_list_servers(
-			dyn_SAMBA_LIBEXECDIR, frame, &servers);
+			get_dyn_SAMBA_LIBEXECDIR(), frame, &servers);
 		if (ret != 0) {
 			DBG_ERR("Could not list libexec: %s\n",
 				strerror(ret));

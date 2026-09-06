@@ -1,7 +1,8 @@
+
 # a waf tool to add autoconf-like macros to the configure section
 # and for SAMBA_ macros for building libraries, binaries etc
 
-import os, sys, re, shutil, fnmatch
+import os, sys, re, shutil, fnmatch, types
 from waflib import Build, Options, Task, Utils, TaskGen, Logs, Context, Errors
 from waflib.Configure import conf
 from waflib.Logs import debug
@@ -76,6 +77,736 @@ def SAMBA_BUILD_ENV(conf):
         shutil.rmtree(blib_src)
 
 
+OS2_DLL_MAP = {
+    'samba-credentials': 'smbcred',
+    'samba-util':        'smbutil',
+    'samba-hostconfig':  'smbhcfg',
+    'samba-debug':       'smbdbg',
+    'samba-sockets':     'smbsock',
+    'samba-security':    'smbsec',
+    'samba3-util':       'smb3utl',
+    'secrets3':          'secrets',
+    'messages-dgm':      'msgdgm',
+    'messages-util':     'msgutl',
+    'libsmb':            'libsmb',
+    'msrpc3':            'msrpc3',
+    'ndr-samba':         'ndrsmb',
+    'ndr-standard':      'ndrstd',
+    'dcerpc-samba':      'dcerpc',
+}
+
+def os2_shorten_dll_name(name):
+    """Truncate or map library names to <= 8 characters for OS/2."""
+    
+    # 1. Strip Samba's private library suffix before any truncation
+    if name.endswith('-samba4'):
+        name = name[:-7]
+        
+    if name in OS2_DLL_MAP:
+        return OS2_DLL_MAP[name]
+    
+    clean_name = name
+    for prefix in ['lib', 'samba-']:
+        if clean_name.startswith(prefix):
+            clean_name = clean_name[len(prefix):]
+            
+    clean_name = clean_name.replace('-', '').replace('_', '')
+    return clean_name[:8]
+
+# Define a custom Waf task to run emxexp
+class os2_def(Task.Task):
+    color = 'CYAN'
+    def run(self):
+        target_name = self.outputs[0].name.replace('.def', '')
+        def_file = self.outputs[0].abspath()
+        
+        with open(def_file, 'w') as f:
+            f.write("LIBRARY %s INITINSTANCE TERMINSTANCE\n" % target_name)
+            f.write("DATA MULTIPLE NONSHARED\n")
+            f.write("EXPORTS\n")
+            
+        seen_symbols = set()
+        
+        for node in self.inputs:
+            cmd = ['emxexp.exe', node.abspath()]
+            try:
+                out = self.generator.bld.cmd_and_log(cmd, quiet=Context.BOTH)
+            except Exception:
+                continue 
+                
+            lines = [
+                line.strip() for line in out.splitlines() 
+                if line.strip() and line.strip().upper() != 'EXPORTS'
+            ]
+            
+            with open(def_file, 'a') as f:
+                for line in lines:
+                    if line not in seen_symbols:
+                        f.write("%s\n" % line)
+                        seen_symbols.add(line)
+                        
+        return 0
+
+@TaskGen.feature('cshlib')
+@TaskGen.after_method('apply_link')
+def os2_shared_lib_hook(self):
+    if not sys.platform.startswith('os2'):
+        return
+    self.vnum = None
+    self.link_task.env.LINKFLAGS = [
+        f for f in self.link_task.env.LINKFLAGS 
+        if not f.startswith('-Wl,-os2-dummy-soname') and f not in ['-lcx', '-lat-funcs', '-lpthread']
+    ]
+    
+    self.link_task.env.RPATH = []
+    
+    short_name = os2_shorten_dll_name(self.target)
+    old_dll_node = self.link_task.outputs[0]
+    
+    new_dll_node = old_dll_node.parent.find_or_declare(short_name + '.dll')
+    implib_node  = old_dll_node.parent.find_or_declare('lib%s.a' % self.target)
+    
+    self.link_task.outputs = [new_dll_node, implib_node]
+    if '-Zdll' not in self.link_task.env.LINKFLAGS:
+        self.link_task.env.append_value('LINKFLAGS', '-Zdll')
+    if '-Zomf' not in self.link_task.env.LINKFLAGS:
+        self.link_task.env.append_value('LINKFLAGS', '-Zomf')
+    objs = [node for node in self.link_task.inputs if node.name.endswith('.o') or node.name.endswith('.a')]
+    # --- PERFECT TOPOLOGICAL STATIC LIBRARY INJECTOR ---
+    def get_all_deps(tg_name, seen=None, ordered=None, visiting=None):
+        if seen is None: seen = set()
+        if ordered is None: ordered = []
+        if visiting is None: visiting = set()
+        
+        if tg_name in seen or tg_name in visiting:
+            return ordered
+            
+        visiting.add(tg_name)
+        try:
+            tg = self.bld.get_tgen_by_name(tg_name)
+            direct = []
+            for attr in ['use', 'samba_deps', 'deps', 'public_deps', 'samba_modules', 'samba_subsystem']:
+                if hasattr(tg, attr):
+                    v = getattr(tg, attr)
+                    if isinstance(v, str):
+                        direct.extend(v.split())
+                    elif isinstance(v, list):
+                        direct.extend(v)
+            for d in direct:
+                get_all_deps(d, seen, ordered, visiting)
+        except Exception:
+            pass
+            
+        visiting.remove(tg_name)
+        seen.add(tg_name)
+        ordered.append(tg_name)
+        return ordered
+    seen_set = set()
+    ordered_list = []
+    get_all_deps(self.name, seen_set, ordered_list, set())
+    all_transitive = ordered_list[::-1]
+    
+    hidden_seen = set()
+    hidden_ordered = []
+    # Explicitly append invisible Linux dependencies to the absolute bottom of the DAG
+    hidden_libs = ['samba-sockets', 'tsocket', 'tevent-util', 'wbclient', 'samba-credentials', 'samba-security', 'gensec', 'authkrb5', 'cli-auth', 'smb-crypto']
+    for hidden in hidden_libs:
+        get_all_deps(hidden, hidden_seen, hidden_ordered, set())
+        
+    for dep in hidden_ordered[::-1]:
+        if dep not in all_transitive:
+            all_transitive.append(dep)
+    if self.name in all_transitive:
+        all_transitive.remove(self.name)
+        
+    transitive_archives = []
+    for dep_name in all_transitive:
+        try:
+            dep_tg = self.bld.get_tgen_by_name(dep_name)
+            if hasattr(dep_tg, 'link_task'):
+                for out in dep_tg.link_task.outputs:
+                    if out.name.endswith('.a') and out.abspath() not in transitive_archives:
+                        transitive_archives.append(out.abspath())
+        except Exception:
+            continue
+            
+    self.link_task.os2_transitive_archives = transitive_archives
+    self.link_task.os2_rsp_file = self.link_task.outputs[0].abspath() + '.rsp'
+    if not objs:
+        return
+        
+    def_node = self.path.find_or_declare(short_name + '.def')
+    self.create_task('os2_def', objs, def_node)
+    
+    if not hasattr(self.link_task, 'dep_nodes'):
+        self.link_task.dep_nodes = []
+    self.link_task.dep_nodes.append(def_node)
+    
+    self.link_task.env.append_value('LINKFLAGS', def_node.path_from(self.bld.bldnode))
+    self.link_task.env.OS2_DEF_FILE = def_node.abspath()
+    self.link_task.env.OS2_IMPLIB_FILE = implib_node.abspath()
+    
+    orig_exec = self.link_task.exec_command
+    def os2_exec_command(task, cmd, **kw):
+        import os
+        rsp_file = task.os2_rsp_file
+        
+        args = cmd[1:] if isinstance(cmd, list) else cmd.split()[1:]
+        base_cmd = cmd[0] if isinstance(cmd, list) else cmd.split()[0]
+        
+        pre_flags, post_flags = [], []
+        skip_next = False
+        
+        for arg in args:
+            if skip_next:
+                pre_flags.append(arg)
+                skip_next = False
+                continue
+            if arg == '-o':
+                pre_flags.append(arg)
+                skip_next = True
+                continue
+            if arg.startswith('-l') or arg.startswith('-L') or arg.startswith('-Wl,'):
+                post_flags.append(arg)
+            else:
+                pre_flags.append(arg)
+                
+        def write_item(f, item):
+            item = item.replace('\\', '/')
+            if ' ' in item and not item.startswith('-'):
+                f.write('"%s"\n' % item)
+            else:
+                f.write('%s\n' % item)
+        with open(rsp_file, 'w') as f:
+            for item in pre_flags:
+                write_item(f, item)
+            if hasattr(task, 'os2_transitive_archives'):
+                # Reduced to 2 loops of mathematically ordered archives to fit inside OS/2 32KB spawn limit
+                for i in range(2):
+                    for arch in task.os2_transitive_archives:
+                        if os.path.exists(arch):
+                            write_item(f, arch)
+            for item in post_flags:
+                write_item(f, item)
+                
+            f.write('-lcx\n-lat-funcs\n-lpthread\n')
+            
+        final_cmd = [base_cmd, '@' + rsp_file]
+        if not isinstance(cmd, list):
+            final_cmd = " ".join(final_cmd)
+            
+        ret = orig_exec(final_cmd, **kw)
+        if ret != 0: return ret
+            
+        emximp_cmd = 'emximp.exe -o "%s" "%s"' % (task.env.OS2_IMPLIB_FILE, task.env.OS2_DEF_FILE)
+        return orig_exec(emximp_cmd, **kw)
+        
+    self.link_task.exec_command = types.MethodType(os2_exec_command, self.link_task)
+
+@TaskGen.feature('cshlib')
+@TaskGen.after_method('apply_link')
+def os2_shared_lib_hook(self):
+    if not sys.platform.startswith('os2'):
+        return
+    self.vnum = None
+    self.link_task.env.LINKFLAGS = [
+        f for f in self.link_task.env.LINKFLAGS 
+        if not f.startswith('-Wl,-os2-dummy-soname') and f not in ['-lcx', '-lat-funcs', '-lattr', '-lpthread']
+    ]
+    self.link_task.env.RPATH = []
+    
+    short_name = os2_shorten_dll_name(self.target)
+    old_dll_node = self.link_task.outputs[0]
+    new_dll_node = old_dll_node.parent.find_or_declare(short_name + '.dll')
+    implib_node  = old_dll_node.parent.find_or_declare('lib%s.a' % self.target)
+    self.link_task.outputs = [new_dll_node, implib_node]
+    if '-Zdll' not in self.link_task.env.LINKFLAGS: self.link_task.env.append_value('LINKFLAGS', '-Zdll')
+    if '-Zomf' not in self.link_task.env.LINKFLAGS: self.link_task.env.append_value('LINKFLAGS', '-Zomf')
+    def resolve_tgen(name):
+        if not name: return None
+        candidates = [
+            name,
+            name + '.objlist',
+            name[:-8] if name.endswith('.objlist') else name,
+            name[:-7] if name.endswith('-samba4') else name + '-samba4',
+            (name[:-7] + '.objlist') if name.endswith('-samba4') else (name + '-samba4.objlist'),
+            name.replace('-', '_'),
+            name.replace('_', '-'),
+            name.replace('-', '_') + '.objlist',
+            name.replace('_', '-') + '.objlist',
+        ]
+        for c in candidates:
+            try: return self.bld.get_tgen_by_name(c)
+            except Exception: pass
+        clean_name = name.lower().replace('_', '-').replace('.objlist', '')
+        for group in self.bld.groups:
+            for tg in group:
+                tg_clean = getattr(tg, 'name', '').lower().replace('_', '-').replace('.objlist', '')
+                if tg_clean == clean_name:
+                    return tg
+        return None
+    def get_all_deps(tg_name, seen=None, ordered=None, visiting=None):
+        if seen is None: seen = set()
+        if ordered is None: ordered = []
+        if visiting is None: visiting = set()
+        if tg_name in seen or tg_name in visiting: return ordered
+        visiting.add(tg_name)
+        tg = resolve_tgen(tg_name)
+        if tg:
+            direct = []
+            for attr in ['use', 'samba_deps', 'deps', 'public_deps', 'samba_modules', 'samba_subsystem']:
+                if hasattr(tg, attr):
+                    v = getattr(tg, attr)
+                    if isinstance(v, str): direct.extend(v.split())
+                    elif isinstance(v, list): direct.extend(v)
+            for d in direct: get_all_deps(d, seen, ordered, visiting)
+        visiting.remove(tg_name)
+        seen.add(tg_name)
+        ordered.append(tg_name)
+        return ordered
+    seen_set, ordered_list = set(), []
+    get_all_deps(self.name, seen_set, ordered_list, set())
+    all_transitive = ordered_list[::-1]
+    
+    hidden_libs = [
+        'samba-sockets', 'tsocket', 'tevent-util', 'wbclient', 
+        'samba-credentials', 'samba-security', 'gensec', 'authkrb5', 
+        'cli-auth', 'smb-crypto',
+        'RPC_NDR_NETLOGON', 'RPC_NDR_SPOOLSS', 'RPC_NDR_SAMR', 
+        'RPC_NDR_SRVSVC', 'RPC_NDR_EPMAPPER', 'RPC_NDR_WKSSVC',
+        'RPC_NDR_INITSHUTDOWN', 'RPC_NDR_WINREG', 'RPC_NDR_LSA',
+        'RPC_NDR_DFS', 'XATTR_TDB',
+        'ndr-wkssvc', 'dcerpc-wkssvc', 'ndr-initshutdown', 'dcerpc-initshutdown',
+        'dcerpc-samba4', 'dcerpc-binding', 'dcerpc'
+    ]
+    hidden_seen, hidden_ordered = set(), []
+    for hidden in hidden_libs: get_all_deps(hidden, hidden_seen, hidden_ordered, set())
+        
+    for dep in hidden_ordered[::-1]:
+        if dep not in all_transitive: all_transitive.append(dep)
+    if self.name in all_transitive: all_transitive.remove(self.name)
+    seen_sources = set()
+    for t in getattr(self, 'compiled_tasks', []):
+        if getattr(t, 'inputs', None):
+            seen_sources.add(os.path.normcase(t.inputs[0].abspath()).replace('\\', '/'))
+    transitive_archives = []
+    transitive_objects = []
+    for dep_name in all_transitive:
+        tg = resolve_tgen(dep_name)
+        if not tg: continue
+        has_archive = False
+        if hasattr(tg, 'link_task') and getattr(tg.link_task, 'outputs', None):
+            for out in tg.link_task.outputs:
+                if out.name.endswith('.a'):
+                    has_archive = True
+                    p = out.abspath().replace('\\', '/')
+                    if p not in transitive_archives:
+                        transitive_archives.append(p)
+        if not has_archive and hasattr(tg, 'compiled_tasks'):
+            for t in tg.compiled_tasks:
+                src_node = t.inputs[0] if getattr(t, 'inputs', None) else None
+                if src_node:
+                    src_path = os.path.normcase(src_node.abspath()).replace('\\', '/')
+                    if src_path in seen_sources or src_node.name == 'os2helper.c':
+                        continue
+                    seen_sources.add(src_path)
+                for out in t.outputs:
+                    if out.name.endswith('.o') or out.name.endswith('.obj'):
+                        p = out.abspath().replace('\\', '/')
+                        if p not in transitive_objects:
+                            transitive_objects.append(p)
+            
+    self.link_task.os2_transitive_archives = transitive_archives
+    self.link_task.os2_transitive_objects = transitive_objects
+    self.link_task.os2_rsp_file = self.link_task.outputs[0].abspath() + '.rsp'
+    objs = [node for node in self.link_task.inputs if node.name.endswith('.o') or node.name.endswith('.a')]
+    if not objs: return
+        
+    def_node = self.path.find_or_declare(short_name + '.def')
+    self.create_task('os2_def', objs, def_node)
+    
+    if not hasattr(self.link_task, 'dep_nodes'): self.link_task.dep_nodes = []
+    self.link_task.dep_nodes.append(def_node)
+    self.link_task.env.append_value('LINKFLAGS', def_node.path_from(self.bld.bldnode))
+    self.link_task.env.OS2_DEF_FILE = def_node.abspath()
+    self.link_task.env.OS2_IMPLIB_FILE = implib_node.abspath()
+    
+    orig_exec = self.link_task.exec_command
+    def os2_exec_command(task, cmd, **kw):
+        import os
+        rsp_file = task.os2_rsp_file
+        args = cmd[1:] if isinstance(cmd, list) else cmd.split()[1:]
+        base_cmd = cmd[0] if isinstance(cmd, list) else cmd.split()[0]
+        bld_dir = task.generator.bld.bldnode.abspath().replace('\\', '/')
+        
+        internal_lib_map = {}
+        for group in task.generator.bld.groups:
+            for tgen in group:
+                if hasattr(tgen, 'link_task') and getattr(tgen.link_task, 'outputs', None):
+                    for out in tgen.link_task.outputs:
+                        if out.name.startswith('lib') and out.name.endswith('.a'):
+                            internal_lib_map['-l' + out.name[3:-2]] = out.abspath().replace('\\', '/')
+                            
+        def get_canon(p):
+            if not os.path.isabs(p):
+                p = os.path.join(bld_dir, p)
+            return os.path.normcase(os.path.normpath(p)).replace('\\', '/')
+        seen_written = set()
+        rsp_objects = []
+        def add_object_file(p):
+            if not p: return
+            canon = get_canon(p)
+            if canon not in seen_written:
+                if not os.path.isabs(p):
+                    full_path = os.path.normpath(os.path.join(bld_dir, p))
+                else:
+                    full_path = os.path.normpath(p)
+                if os.path.exists(full_path):
+                    seen_written.add(canon)
+                    rsp_objects.append(full_path.replace('\\', '/'))
+        cmd_flags = []
+        skip_next = False
+        extra_archives = []
+        
+        for arg in args:
+            if skip_next:
+                cmd_flags.append(arg)
+                skip_next = False
+                continue
+            if arg == '-o':
+                cmd_flags.append(arg)
+                skip_next = True
+                continue
+                
+            arg_norm = arg.replace('\\', '/')
+            
+            if arg_norm.endswith('.o') or arg_norm.endswith('.obj'):
+                add_object_file(arg_norm)
+            elif arg_norm.endswith('.a') or arg_norm.endswith('.lib'):
+                if arg_norm in internal_lib_map:
+                    arch_path = internal_lib_map[arg_norm]
+                    if arch_path not in extra_archives:
+                        extra_archives.append(arch_path)
+                else:
+                    add_object_file(arg_norm)
+            elif arg_norm.startswith('-L') and ('bin/default' in arg_norm or bld_dir in arg_norm):
+                continue
+            elif arg in internal_lib_map:
+                arch_path = internal_lib_map[arg]
+                if arch_path not in extra_archives:
+                    extra_archives.append(arch_path)
+            elif arg not in ['-lcx', '-lat-funcs', '-lattr', '-lpthread']:
+                cmd_flags.append(arg)
+        if hasattr(task, 'os2_transitive_objects'):
+            for obj in task.os2_transitive_objects:
+                add_object_file(obj)
+        seen_archives = set()
+        unique_archives = []
+        for arch in list(getattr(task, 'os2_transitive_archives', [])) + extra_archives:
+            if not os.path.exists(arch): continue
+            canon = os.path.normcase(os.path.abspath(arch)).replace('\\', '/')
+            if canon not in seen_archives:
+                seen_archives.add(canon)
+                unique_archives.append(arch.replace('\\', '/'))
+        with open(rsp_file, 'w') as f:
+            for obj in rsp_objects:
+                f.write('"%s"\n' % obj if ' ' in obj else '%s\n' % obj)
+                
+            for i in range(2):
+                for arch in unique_archives:
+                    f.write('"%s"\n' % arch if ' ' in arch else '%s\n' % arch)
+        # 1. Static libarchive dependencies
+        if any(a == '-larchive' or a.endswith('archive.lib') or a.endswith('libarchive.a') for a in cmd_flags):
+            archive_deps = ['-lxml2_dll', '-llzma_dll', '-lbz2_dll', '-lcrypto', '-lz', '-liconv']
+            for dep in archive_deps:
+                if dep in cmd_flags:
+                    cmd_flags.remove(dep)
+                cmd_flags.append(dep)
+        # 2. Static ncurses dependencies (tinfo/termcap)
+        if any(a in ['-lncurses', '-lncursesw'] or a.endswith('ncurses.lib') or a.endswith('libncurses.a') for a in cmd_flags):
+            search_dirs = ['/usr/local/lib', '/usr/lib']
+            for a in args:
+                if a.startswith('-L'):
+                    search_dirs.append(a[2:])
+            unixroot = os.environ.get('UNIXROOT', 'C:')
+            search_dirs.extend([unixroot + '/usr/local/lib', unixroot + '/usr/lib', 'C:/usr/local/lib', 'C:/usr/lib'])
+            tinfo_lib = None
+            for candidate in ['tinfo', 'tinfow', 'termcap']:
+                found = False
+                for d in search_dirs:
+                    for ext in ['.lib', '.a', '.dll.a']:
+                        for prefix in ['', 'lib']:
+                            if os.path.exists(os.path.join(d, prefix + candidate + ext)):
+                                tinfo_lib = candidate
+                                found = True
+                                break
+                        if found: break
+                    if found: break
+                if found: break
+            if not tinfo_lib:
+                tinfo_lib = 'tinfo'
+            dep = '-l' + tinfo_lib
+            if dep in cmd_flags:
+                cmd_flags.remove(dep)
+            cmd_flags.append(dep)
+            
+        # 3. Static gettext/intl dependencies (-lintl before -liconv)
+        for dep in ['-lintl', '-liconv']:
+            if dep in cmd_flags:
+                cmd_flags.remove(dep)
+            cmd_flags.append(dep)
+
+        final_cmd = [base_cmd, '@' + rsp_file] + cmd_flags + ['-lattr', '-lcx', '-lat-funcs', '-lpthread']
+        if not isinstance(cmd, list): final_cmd = " ".join(final_cmd)
+            
+        ret = orig_exec(final_cmd, **kw)
+        if ret != 0: return ret
+        emximp_cmd = 'emximp.exe -o "%s" "%s"' % (task.env.OS2_IMPLIB_FILE, task.env.OS2_DEF_FILE)
+        return orig_exec(emximp_cmd, **kw)
+        
+    self.link_task.exec_command = types.MethodType(os2_exec_command, self.link_task)
+
+@TaskGen.feature('cprogram')
+@TaskGen.after_method('apply_link')
+def os2_cprogram_hook(self):
+    if not sys.platform.startswith('os2'):
+        return
+    self.link_task.env.LINKFLAGS = [
+        f for f in self.link_task.env.LINKFLAGS 
+        if f not in ['-lcx', '-lat-funcs', '-lattr', '-lpthread']
+    ]
+    if '-Zexe' not in self.link_task.env.LINKFLAGS: self.link_task.env.append_value('LINKFLAGS', '-Zexe')
+    if '-Zomf' not in self.link_task.env.LINKFLAGS: self.link_task.env.append_value('LINKFLAGS', '-Zomf')
+    def resolve_tgen(name):
+        if not name: return None
+        candidates = [
+            name,
+            name + '.objlist',
+            name[:-8] if name.endswith('.objlist') else name,
+            name[:-7] if name.endswith('-samba4') else name + '-samba4',
+            (name[:-7] + '.objlist') if name.endswith('-samba4') else (name + '-samba4.objlist'),
+            name.replace('-', '_'),
+            name.replace('_', '-'),
+            name.replace('-', '_') + '.objlist',
+            name.replace('_', '-') + '.objlist',
+        ]
+        for c in candidates:
+            try: return self.bld.get_tgen_by_name(c)
+            except Exception: pass
+        clean_name = name.lower().replace('_', '-').replace('.objlist', '')
+        for group in self.bld.groups:
+            for tg in group:
+                tg_clean = getattr(tg, 'name', '').lower().replace('_', '-').replace('.objlist', '')
+                if tg_clean == clean_name:
+                    return tg
+        return None
+    def get_all_deps(tg_name, seen=None, ordered=None, visiting=None):
+        if seen is None: seen = set()
+        if ordered is None: ordered = []
+        if visiting is None: visiting = set()
+        if tg_name in seen or tg_name in visiting: return ordered
+        visiting.add(tg_name)
+        tg = resolve_tgen(tg_name)
+        if tg:
+            direct = []
+            for attr in ['use', 'samba_deps', 'deps', 'public_deps', 'samba_modules', 'samba_subsystem']:
+                if hasattr(tg, attr):
+                    v = getattr(tg, attr)
+                    if isinstance(v, str): direct.extend(v.split())
+                    elif isinstance(v, list): direct.extend(v)
+            for d in direct: get_all_deps(d, seen, ordered, visiting)
+        visiting.remove(tg_name)
+        seen.add(tg_name)
+        ordered.append(tg_name)
+        return ordered
+    seen_set, ordered_list = set(), []
+    get_all_deps(self.name, seen_set, ordered_list, set())
+    all_transitive = ordered_list[::-1]
+    
+    hidden_libs = [
+        'samba-sockets', 'tsocket', 'tevent-util', 'wbclient', 
+        'samba-credentials', 'samba-security', 'gensec', 'authkrb5', 
+        'cli-auth', 'smb-crypto',
+        'RPC_NDR_NETLOGON', 'RPC_NDR_SPOOLSS', 'RPC_NDR_SAMR', 
+        'RPC_NDR_SRVSVC', 'RPC_NDR_EPMAPPER', 'RPC_NDR_WKSSVC',
+        'RPC_NDR_INITSHUTDOWN', 'RPC_NDR_WINREG', 'RPC_NDR_LSA',
+        'RPC_NDR_DFS', 'XATTR_TDB',
+        'ndr-wkssvc', 'dcerpc-wkssvc', 'ndr-initshutdown', 'dcerpc-initshutdown',
+        'dcerpc-samba4', 'dcerpc-binding', 'dcerpc'
+    ]
+    hidden_seen, hidden_ordered = set(), []
+    for hidden in hidden_libs: get_all_deps(hidden, hidden_seen, hidden_ordered, set())
+        
+    for dep in hidden_ordered[::-1]:
+        if dep not in all_transitive: all_transitive.append(dep)
+    if self.name in all_transitive: all_transitive.remove(self.name)
+    seen_sources = set()
+    for t in getattr(self, 'compiled_tasks', []):
+        if getattr(t, 'inputs', None):
+            seen_sources.add(os.path.normcase(t.inputs[0].abspath()).replace('\\', '/'))
+    transitive_archives = []
+    transitive_objects = []
+    for dep_name in all_transitive:
+        tg = resolve_tgen(dep_name)
+        if not tg: continue
+        has_archive = False
+        if hasattr(tg, 'link_task') and getattr(tg.link_task, 'outputs', None):
+            for out in tg.link_task.outputs:
+                if out.name.endswith('.a'):
+                    has_archive = True
+                    p = out.abspath().replace('\\', '/')
+                    if p not in transitive_archives:
+                        transitive_archives.append(p)
+        if not has_archive and hasattr(tg, 'compiled_tasks'):
+            for t in tg.compiled_tasks:
+                src_node = t.inputs[0] if getattr(t, 'inputs', None) else None
+                if src_node:
+                    src_path = os.path.normcase(src_node.abspath()).replace('\\', '/')
+                    if src_path in seen_sources or src_node.name == 'os2helper.c':
+                        continue
+                    seen_sources.add(src_path)
+                for out in t.outputs:
+                    if out.name.endswith('.o') or out.name.endswith('.obj'):
+                        p = out.abspath().replace('\\', '/')
+                        if p not in transitive_objects:
+                            transitive_objects.append(p)
+            
+    self.link_task.os2_transitive_archives = transitive_archives
+    self.link_task.os2_transitive_objects = transitive_objects
+    self.link_task.os2_rsp_file = self.link_task.outputs[0].abspath() + '.rsp'
+    
+    orig_exec = self.link_task.exec_command
+    def os2_exec_command(task, cmd, **kw):
+        import os
+        rsp_file = task.os2_rsp_file
+        args = cmd[1:] if isinstance(cmd, list) else cmd.split()[1:]
+        base_cmd = cmd[0] if isinstance(cmd, list) else cmd.split()[0]
+        bld_dir = task.generator.bld.bldnode.abspath().replace('\\', '/')
+        
+        internal_lib_map = {}
+        for group in task.generator.bld.groups:
+            for tgen in group:
+                if hasattr(tgen, 'link_task') and getattr(tgen.link_task, 'outputs', None):
+                    for out in tgen.link_task.outputs:
+                        if out.name.startswith('lib') and out.name.endswith('.a'):
+                            internal_lib_map['-l' + out.name[3:-2]] = out.abspath().replace('\\', '/')
+                            
+        def get_canon(p):
+            if not os.path.isabs(p):
+                p = os.path.join(bld_dir, p)
+            return os.path.normcase(os.path.normpath(p)).replace('\\', '/')
+        seen_written = set()
+        rsp_objects = []
+        def add_object_file(p):
+            if not p: return
+            canon = get_canon(p)
+            if canon not in seen_written:
+                if not os.path.isabs(p):
+                    full_path = os.path.normpath(os.path.join(bld_dir, p))
+                else:
+                    full_path = os.path.normpath(p)
+                if os.path.exists(full_path):
+                    seen_written.add(canon)
+                    rsp_objects.append(full_path.replace('\\', '/'))
+        cmd_flags = []
+        skip_next = False
+        extra_archives = []
+        
+        for arg in args:
+            if skip_next:
+                cmd_flags.append(arg)
+                skip_next = False
+                continue
+            if arg == '-o':
+                cmd_flags.append(arg)
+                skip_next = True
+                continue
+                
+            arg_norm = arg.replace('\\', '/')
+            
+            if arg_norm.endswith('.o') or arg_norm.endswith('.obj'):
+                add_object_file(arg_norm)
+            elif arg_norm.endswith('.a') or arg_norm.endswith('.lib'):
+                if arg_norm in internal_lib_map:
+                    arch_path = internal_lib_map[arg_norm]
+                    if arch_path not in extra_archives:
+                        extra_archives.append(arch_path)
+                else:
+                    add_object_file(arg_norm)
+            elif arg_norm.startswith('-L') and ('bin/default' in arg_norm or bld_dir in arg_norm):
+                continue
+            elif arg in internal_lib_map:
+                arch_path = internal_lib_map[arg]
+                if arch_path not in extra_archives:
+                    extra_archives.append(arch_path)
+            elif arg not in ['-lcx', '-lat-funcs', '-lattr', '-lpthread']:
+                cmd_flags.append(arg)
+        if hasattr(task, 'os2_transitive_objects'):
+            for obj in task.os2_transitive_objects:
+                add_object_file(obj)
+        seen_archives = set()
+        unique_archives = []
+        for arch in list(getattr(task, 'os2_transitive_archives', [])) + extra_archives:
+            if not os.path.exists(arch): continue
+            canon = os.path.normcase(os.path.abspath(arch)).replace('\\', '/')
+            if canon not in seen_archives:
+                seen_archives.add(canon)
+                unique_archives.append(arch.replace('\\', '/'))
+        with open(rsp_file, 'w') as f:
+            for obj in rsp_objects:
+                f.write('"%s"\n' % obj if ' ' in obj else '%s\n' % obj)
+                
+            for i in range(2):
+                for arch in unique_archives:
+                    f.write('"%s"\n' % arch if ' ' in arch else '%s\n' % arch)
+        # 1. Static libarchive dependencies
+        if any(a == '-larchive' or a.endswith('archive.lib') or a.endswith('libarchive.a') for a in cmd_flags):
+            archive_deps = ['-lxml2_dll', '-llzma_dll', '-lbz2_dll', '-lcrypto', '-lz', '-liconv']
+            for dep in archive_deps:
+                if dep in cmd_flags:
+                    cmd_flags.remove(dep)
+                cmd_flags.append(dep)
+        # 2. Static ncurses dependencies (tinfo/termcap)
+        if any(a in ['-lncurses', '-lncursesw'] or a.endswith('ncurses.lib') or a.endswith('libncurses.a') for a in cmd_flags):
+            search_dirs = ['/usr/local/lib', '/usr/lib']
+            for a in args:
+                if a.startswith('-L'):
+                    search_dirs.append(a[2:])
+            unixroot = os.environ.get('UNIXROOT', 'C:')
+            search_dirs.extend([unixroot + '/usr/local/lib', unixroot + '/usr/lib', 'C:/usr/local/lib', 'C:/usr/lib'])
+            tinfo_lib = None
+            for candidate in ['tinfo', 'tinfow', 'termcap']:
+                found = False
+                for d in search_dirs:
+                    for ext in ['.lib', '.a', '.dll.a']:
+                        for prefix in ['', 'lib']:
+                            if os.path.exists(os.path.join(d, prefix + candidate + ext)):
+                                tinfo_lib = candidate
+                                found = True
+                                break
+                        if found: break
+                    if found: break
+                if found: break
+            if not tinfo_lib:
+                tinfo_lib = 'tinfo'
+            dep = '-l' + tinfo_lib
+            if dep in cmd_flags:
+                cmd_flags.remove(dep)
+            cmd_flags.append(dep)
+            
+        # 3. Static gettext/intl dependencies (-lintl before -liconv)
+        for dep in ['-lintl', '-liconv']:
+            if dep in cmd_flags:
+                cmd_flags.remove(dep)
+            cmd_flags.append(dep)
+
+        final_cmd = [base_cmd, '@' + rsp_file] + cmd_flags + ['-lattr', '-lcx', '-lat-funcs', '-lpthread']
+        if not isinstance(cmd, list): final_cmd = " ".join(final_cmd)
+            
+        return orig_exec(final_cmd, **kw)
+        
+    self.link_task.exec_command = types.MethodType(os2_exec_command, self.link_task)
+
 def ADD_INIT_FUNCTION(bld, subsystem, target, init_function):
     '''add an init_function to the list for a subsystem'''
     if init_function is None:
@@ -147,6 +878,7 @@ def SAMBA_LIBRARY(bld, libname, source,
     #            loaded via dlopen()
     # - PYTHON:  a python C binding library
     #
+
     if target_type not in ['LIBRARY', 'MODULE', 'PLUGIN', 'PYTHON']:
         raise Errors.WafError("target_type[%s] not supported in SAMBA_LIBRARY('%s')" %
                               (target_type, libname))
@@ -311,10 +1043,16 @@ def SAMBA_LIBRARY(bld, libname, source,
     if bld.env['ENABLE_RELRO'] is True:
         ldflags.extend(TO_LIST('-Wl,-z,relro,-z,now'))
 
-    features = 'c cstlib install_lib'
-#removed symlink_lib for 4.10
-#    features = 'c cstlib symlink_lib install_lib'
-#    features = 'c cshlib symlink_lib install_lib'
+    # Force private libs, libs with undefined symbols, and known circular libs to be static
+    force_static_os2 = ['samba-util', 'samba-credentials']
+    
+    if sys.platform.startswith('os2') and (private_library or allow_undefined_symbols or libname in force_static_os2):
+        features = 'c cstlib install_lib'
+    elif bld.env.ENABLE_SHARED:
+        features = 'c cshlib install_lib'
+    else:
+        features = 'c cstlib install_lib'
+
     if pyext:
         features += ' pyext'
     if pyembed:

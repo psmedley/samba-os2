@@ -27,6 +27,10 @@
 #include "libcli/security/dom_sid.h"
 #include "libcli/security/security_token.h"
 #include "nsswitch/winbind_client.h"
+#ifdef __OS2__x
+int os2_pipe(int fds[2]);
+#define pipe(A) os2_pipe(A)
+#endif
 
 /**
  * @file local_np.c

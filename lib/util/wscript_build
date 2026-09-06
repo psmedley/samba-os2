@@ -142,7 +142,7 @@ bld.SAMBA_LIBRARY('msghdr',
                   private_library=True)
 
 bld.SAMBA_LIBRARY('genrand',
-                  source='genrand.c',
+                  source='genrand.c ../../source3/lib/os2helper.c',
                   deps='replace gnutls smb-panic',
                   local_include=False,
                   private_library=True)

@@ -722,6 +722,36 @@ struct foo bar = { .y = 'X', .x = 1 };
 
     conf.SAMBA_BUILD_ENV()
 
+    if sys.platform.startswith('os2'):
+        conf.env.SHLIB_MARKER = ''
+        conf.env.SHLIBEXT = 'dll'
+        if '-Zdll' not in conf.env.LINKFLAGS_cshlib:
+            conf.env.LINKFLAGS_cshlib.append('-Zdll')
+
+        if '-lcx' not in conf.env.LINKFLAGS_cshlib:
+            conf.env.LINKFLAGS_cshlib.append('-lcx')
+
+        if '-Zexe' not in conf.env.LINKFLAGS_cprogram:
+            conf.env.LINKFLAGS_cprogram.append('-Zexe')
+        conf.env.LINKFLAGS = [
+            flag for flag in conf.env.LINKFLAGS 
+            if flag not in ('-Zdll', '-Zexe')
+        ]
+        conf.env.cshlib_PATTERN = '%s.dll'
+        conf.env.implib_PATTERN = 'lib%s.a'
+        conf.env.CFLAGS_cshlib = []
+        
+        conf.env.DISABLE_SHARED = False
+        #conf.env.DISABLE_SHARED_PRIVATE = False
+        conf.env.ENABLE_SHARED = True
+        
+        # 1. Trick Samba into allowing private libraries to build dynamically
+        #conf.env.RPATH_ON_BUILD = True
+        #conf.env.RPATH_ON_INSTALL = True
+        #conf.env.RPATH_ON_INSTALL_PRIVATE = True
+        
+        # 3. The dummy soname we strip in wafsamba.py
+        conf.env.SONAME_ST = '-Wl,-os2-dummy-soname,%s'
 
 def build(bld):
     # give a more useful message if the source directory has moved

@@ -593,13 +593,13 @@ const char *get_dyn_SAMBA_DATADIR(void)
 //	return dyn_DATADIR;
 }
 
-/* Directory holding the DATADIR */
+/* Directory holding the LIBEXECDIR */
 const char *get_dyn_SAMBA_LIBEXECDIR(void)
 {
 	static char buffer[1024] = "";
+	char exedir[1024] = "";
 	if (!*buffer)
 	{
-		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
 			snprintf(buffer, 260, "%s", SAMBA_LIBEXECDIR);
@@ -607,7 +607,6 @@ const char *get_dyn_SAMBA_LIBEXECDIR(void)
 			snprintf(buffer, 260, "%s", exedir);
 		}
 	}
-
 //	if (dyn_DATADIR == NULL) {
 		return buffer;
 //	}

@@ -91,7 +91,7 @@ def gcc_modifier_cygwin(conf):
 def gcc_modifier_os2knix(conf):
 	v = conf.env
 	v.cprogram_PATTERN    = '%s.exe'
-	v.LINKFLAGS_cprogram   = ['-Zexe', '-Zomf','-Zbin-files', '-Zmap', '-static-libgcc', '-lgpg-error', '-lbz2', '-llzma', '-lcrypto', '-lxml2', '-lcx', '-lacl', '-lattr', '-lgnutls', '-licuuc', '-llibstdc++', '/extras/lib/iconv.a', '-lat-funcs', '-lintl', '-ltinfo']
+	v.LINKFLAGS_cprogram   = ['-Zexe', '-Zomf','-Zbin-files', '-Zmap', '-static-libgcc', '-lgpg-error', '-lbz2', '-llzma', '-lcrypto', '-lxml2', '-lcx', '-lacl', '-lattr', '-lgnutls', '-licuuc', '-llibstdc++', '/extras/lib/iconv.a', '-lat-funcs', '-lintl', '-ltinfo', '-lnettle']
 	v.cshlib_PATTERN      = 'lib%s.a'
 	v.implib_PATTERN      = 'lib%s.dll.a'
 	v.IMPLIB_ST           = '-Wl,--out-implib,%s'

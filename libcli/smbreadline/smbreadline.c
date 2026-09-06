@@ -185,8 +185,7 @@ char *smb_readline(const char *prompt, void (*callback)(void),
 		different versions of Readline, so the same function
 		works in all of them to date, but we get compiler
 		warnings in some.  */
-		rl_attempted_completion_function = RL_COMPLETION_CAST completion_fn;
-
+                rl_attempted_completion_function = (char ** (*)(const char *, int, int)) completion_fn;
 		/*
 		 * We only want sensible characters as the word-break chars
 		 * for the most part. This allows us to tab through a path.
