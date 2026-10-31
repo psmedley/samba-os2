@@ -148,18 +148,36 @@ DEFINE_DYN_CONFIG_PARAM(SCRIPTSBINDIR)
 #ifdef __OS2__
 // @todo_port change this file so it also works for rpm
 
+/*
+ * %ETC% normally points at x:\MPTN\ETC. Fall back to /etc (which kLIBC
+ * maps below %UNIXROOT%) instead of crashing or producing "(null)/..."
+ * paths when it is not set.
+ */
+static const char *os2_etc_dir(void)
+{
+	const char *etc = getenv("ETC");
+
+	if (etc == NULL || *etc == '\0') {
+		return "/etc";
+	}
+	return etc;
+}
+
 /* Directory the binary was called from, same as getbindir() */
 const char *get_dyn_SBINDIR(void)
 {
+	if (!is_default_dyn_SBINDIR()) {
+		return dyn_SBINDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
 		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", SBINDIR);
+			snprintf(buffer, sizeof(buffer), "%s", SBINDIR);
 		} else {
-			snprintf(buffer, 260, "%s", exedir);
+			snprintf(buffer, sizeof(buffer), "%s", exedir);
 		}
 	}
 
@@ -172,15 +190,18 @@ const char *get_dyn_SBINDIR(void)
 /* Directory the binary was called from, same as getsbindir() */
 const char *get_dyn_BINDIR(void)
 {
+	if (!is_default_dyn_BINDIR()) {
+		return dyn_BINDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
 		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", BINDIR);
+			snprintf(buffer, sizeof(buffer), "%s", BINDIR);
 		} else {
-			snprintf(buffer, 260, "%s", exedir);
+			snprintf(buffer, sizeof(buffer), "%s", exedir);
 		}
 	}
 
@@ -200,9 +221,9 @@ const char *get_dyn_SWATDIR(void)
 		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", SWATDIR);
+			snprintf(buffer, sizeof(buffer), "%s", SWATDIR);
 		} else {
-			snprintf(buffer, 260, "%s/%s", exedir,"swat");
+			snprintf(buffer, sizeof(buffer), "%s/%s", exedir,"swat");
 		}
 	}
 
@@ -217,29 +238,44 @@ const char *get_dyn_SWATDIR(void)
 const char *get_dyn_CONFIGFILE(void)
 {
 	static char buffer[1024] = "";
+	const char *etc = os2_etc_dir();
+
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/smb.conf", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/smb.conf", etc);
 	}
 	/* Set UNIXROOT to x:\MPTN if UNIXROOT is undefined */
 	if (getenv("UNIXROOT") == NULL) {
-		static char unixroot[1024] = "";
-		strncpy(unixroot,getenv("ETC"),strlen(getenv("ETC"))-4);
-		setenv("UNIXROOT",unixroot,0);
+		char unixroot[1024];
+		size_t len = strlen(etc);
+
+		/* strip the trailing "\ETC" (4 chars) from %ETC% */
+		if (len > 4) {
+			snprintf(unixroot, sizeof(unixroot), "%.*s",
+				 (int)(len - 4), etc);
+			setenv("UNIXROOT", unixroot, 0);
+		}
 	}
-	/* Make sure TMPIR points to a proper value */
-	static char tmpdir[1024] = "";
+	/* Make sure TMPDIR points to a proper value */
 	if (getenv("TMPDIR") == NULL && getenv("TEMP") != NULL) {
-		strncpy(tmpdir,getenv("TEMP"),strlen(getenv("TEMP")));
-		setenv("TMPDIR",tmpdir,0);
+		setenv("TMPDIR", getenv("TEMP"), 0);
 	}
 	if (getenv("TMPDIR") == NULL) {
-		strncpy(tmpdir,getenv("ETC"),2);
-		stpcpy(tmpdir,"/OS2/SYSTEM");
-		setenv("TMPDIR",tmpdir,0);
+		char tmpdir[1024];
+
+		/* keep the drive letter of %ETC%, e.g. "C:/OS2/SYSTEM" */
+		if (strlen(etc) >= 2 && etc[1] == ':') {
+			snprintf(tmpdir, sizeof(tmpdir), "%.2s/OS2/SYSTEM", etc);
+		} else {
+			snprintf(tmpdir, sizeof(tmpdir), "/OS2/SYSTEM");
+		}
+		setenv("TMPDIR", tmpdir, 0);
 	}
-	if (is_default_dyn_CONFIGFILE()) { 
-		dyn_CONFIGFILE = buffer;
+	/*
+	 * Don't store the static buffer in dyn_CONFIGFILE: a later
+	 * set_dyn_CONFIGFILE() would then free() it.
+	 */
+	if (is_default_dyn_CONFIGFILE()) {
 		return buffer;
 	}
 	return dyn_CONFIGFILE;
@@ -248,10 +284,13 @@ const char *get_dyn_CONFIGFILE(void)
 /** Log file directory. **/
 const char *get_dyn_LOGFILEBASE(void)
 {
+	if (!is_default_dyn_LOGFILEBASE()) {
+		return dyn_LOGFILEBASE;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/log", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/log", os2_etc_dir());
 	}
 //	if (dyn_LOGFILEBASE == NULL) {
 		return buffer;
@@ -262,10 +301,13 @@ const char *get_dyn_LOGFILEBASE(void)
 /** Statically configured LanMan hosts. **/
 const char *get_dyn_LMHOSTSFILE(void)
 {
+	if (!is_default_dyn_LMHOSTSFILE()) {
+		return dyn_LMHOSTSFILE;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
  	{
-		snprintf(buffer, 260, "%s/samba/lmhosts", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/lmhosts", os2_etc_dir());
 	}
 //	if (dyn_LMHOSTSFILE == NULL) {
 		return buffer;
@@ -276,20 +318,25 @@ const char *get_dyn_LMHOSTSFILE(void)
 /* Directory holding the codepages */
 const char *get_dyn_CODEPAGEDIR(void)
 {
+	if (!is_default_dyn_CODEPAGEDIR()) {
+		return dyn_CODEPAGEDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
 		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", CODEPAGEDIR);
+			snprintf(buffer, sizeof(buffer), "%s", CODEPAGEDIR);
 		} else {
 #if 0
 			if (!lp_is_in_client()) {
-				snprintf(buffer, 260, "%s/%s", exedir, "codepages");
+				snprintf(buffer, sizeof(buffer), "%s/%s", exedir, "codepages");
 			} else {
 #endif
-				snprintf(buffer, 260, "%s/%s", getenv("SMB_EXE"), "codepages");
+				const char *smb_exe = getenv("SMB_EXE");
+				snprintf(buffer, sizeof(buffer), "%s/%s",
+					 smb_exe ? smb_exe : exedir, "codepages");
 #if 0
 			}
 #endif
@@ -305,15 +352,18 @@ const char *get_dyn_CODEPAGEDIR(void)
 /* Directory holding the libs */
 const char *get_dyn_LIBDIR(void)
 {
+	if (!is_default_dyn_LIBDIR()) {
+		return dyn_LIBDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
 		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", LIBDIR);
+			snprintf(buffer, sizeof(buffer), "%s", LIBDIR);
 		} else {
-			snprintf(buffer, 260, "%s/%s", exedir, "lib");
+			snprintf(buffer, sizeof(buffer), "%s/%s", exedir, "lib");
 		}
 	}
 
@@ -327,15 +377,18 @@ const char *get_dyn_LIBDIR(void)
 /* Directory holding the modules */
 const char *get_dyn_MODULESDIR(void)
 {
+	if (!is_default_dyn_MODULESDIR()) {
+		return dyn_MODULESDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
 		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", MODULESDIR);
+			snprintf(buffer, sizeof(buffer), "%s", MODULESDIR);
 		} else {
-			snprintf(buffer, 260, "%s/%s", exedir, "modules");
+			snprintf(buffer, sizeof(buffer), "%s/%s", exedir, "modules");
 		}
 	}
 
@@ -345,34 +398,22 @@ const char *get_dyn_MODULESDIR(void)
 //	return dyn_MODULESDIR;
 }
 
-/* Directory holding the shared libs (same as libdir) */
+/* Shared library extension (e.g. "dll"), set at build time */
 const char *get_dyn_SHLIBEXT(void)
 {
-	static char buffer[1024] = "";
-	if (!*buffer)
-	{
-		char exedir[1024] = "";
-		if (!os2_GetExePath(exedir))
-		{
-			snprintf(buffer, 260, "%s", LIBDIR);
-		} else {
-			snprintf(buffer, 260, "%s/%s", exedir, "lib");
-		}
-	}
-
-//	if (dyn_SHLIBEXT == NULL) {
-		return buffer;
-//	}
-//	return dyn_SHLIBEXT;
+	return dyn_SHLIBEXT;
 }
 
 /* Directory holding lock files */
 const char *get_dyn_LOCKDIR(void)
 {
+	if (!is_default_dyn_LOCKDIR()) {
+		return dyn_LOCKDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/lock", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/lock", os2_etc_dir());
 	}
 //	if (dyn_LOCKDIR == NULL) {
 		return buffer;
@@ -383,10 +424,13 @@ const char *get_dyn_LOCKDIR(void)
 /* Directory holding persistent state files */
 const char *get_dyn_STATEDIR(void)
 {
+	if (!is_default_dyn_STATEDIR()) {
+		return dyn_STATEDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/lock", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/lock", os2_etc_dir());
 	}
 //	if (dyn_STATEDIR == NULL) {
 		return buffer;
@@ -397,10 +441,13 @@ const char *get_dyn_STATEDIR(void)
 /* Temporary cache files. Default LOCKDIR */
 const char *get_dyn_CACHEDIR(void)
 {
+	if (!is_default_dyn_CACHEDIR()) {
+		return dyn_CACHEDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/lock", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/lock", os2_etc_dir());
 	}
 //	if (dyn_CACHEDIR == NULL) {
 		return buffer;
@@ -411,10 +458,13 @@ const char *get_dyn_CACHEDIR(void)
 /* Directory holding the pid files */
 const char *get_dyn_PIDDIR(void)
 {
+	if (!is_default_dyn_PIDDIR()) {
+		return dyn_PIDDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/pid", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/pid", os2_etc_dir());
 	}
 //	if (dyn_PIDDIR == NULL) {
 		return buffer;
@@ -425,10 +475,13 @@ const char *get_dyn_PIDDIR(void)
 /* Directory holding the NMBDSOCKETDIR */
 const char *get_dyn_NMBDSOCKETDIR(void)
 {
+	if (!is_default_dyn_NMBDSOCKETDIR()) {
+		return dyn_NMBDSOCKETDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/nmbd", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/nmbd", os2_etc_dir());
 	}
 
 //	if (dyn_NMBDSOCKETDIR == NULL) {
@@ -440,10 +493,13 @@ const char *get_dyn_NMBDSOCKETDIR(void)
 /* Directory holding the LOCALEDIR */
 const char *get_dyn_LOCALEDIR(void)
 {
+	if (!is_default_dyn_LOCALEDIR()) {
+		return dyn_LOCALEDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/locale", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/locale", os2_etc_dir());
 	}
 
 //	if (dyn_LOCALEDIR == NULL) {
@@ -455,10 +511,13 @@ const char *get_dyn_LOCALEDIR(void)
 /* Directory holding the NCALRPCDIR */
 const char *get_dyn_NCALRPCDIR(void)
 {
+	if (!is_default_dyn_NCALRPCDIR()) {
+		return dyn_NCALRPCDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/ncalrpc", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/ncalrpc", os2_etc_dir());
 	}
 
 //	if (dyn_NCALRPCDIR == NULL) {
@@ -470,10 +529,13 @@ const char *get_dyn_NCALRPCDIR(void)
 /* Location of smbpasswd */
 const char *get_dyn_SMB_PASSWD_FILE(void)
 {
+	if (!is_default_dyn_SMB_PASSWD_FILE()) {
+		return dyn_SMB_PASSWD_FILE;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/private/smbpasswd", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/private/smbpasswd", os2_etc_dir());
 	}
 //	if (dyn_SMB_PASSWD_FILE == NULL) {
 		return buffer;
@@ -484,10 +546,13 @@ const char *get_dyn_SMB_PASSWD_FILE(void)
 /* Directory holding the private files */
 const char *get_dyn_PRIVATE_DIR(void)
 {
+	if (!is_default_dyn_PRIVATE_DIR()) {
+		return dyn_PRIVATE_DIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/private", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/private", os2_etc_dir());
 	}
 //	if (dyn_PRIVATE_DIR == NULL) {
 		return buffer;
@@ -498,10 +563,13 @@ const char *get_dyn_PRIVATE_DIR(void)
 /* Directory holding the NTP_SIGND_SOCKET_DIR files */
 const char *get_dyn_NTP_SIGND_SOCKET_DIR(void)
 {
+	if (!is_default_dyn_NTP_SIGND_SOCKET_DIR()) {
+		return dyn_NTP_SIGND_SOCKET_DIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/ntp_signd", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/ntp_signd", os2_etc_dir());
 	}
 //	if (dyn_NTP_SIGND_SOCKET_DIR == NULL) {
 		return buffer;
@@ -515,7 +583,7 @@ const char *get_dyn_WINBINDD_PRIVILEGED_SOCKET_DIR(void)
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/winbind", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/winbind", os2_etc_dir());
 	}
 //	if (dyn_WINBINDD_PRIVILEGED_SOCKET_DIR == NULL) {
 		return buffer;
@@ -526,10 +594,13 @@ const char *get_dyn_WINBINDD_PRIVILEGED_SOCKET_DIR(void)
 /* Directory holding the SCRIPTSBINDIR files */
 const char *get_dyn_SCRIPTSBINDIR(void)
 {
+	if (!is_default_dyn_SCRIPTSBINDIR()) {
+		return dyn_SCRIPTSBINDIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
-		snprintf(buffer, 260, "%s/samba/scripts", getenv("ETC"));
+		snprintf(buffer, sizeof(buffer), "%s/samba/scripts", os2_etc_dir());
 	}
 //	if (dyn_SCRIPTSBINDIR == NULL) {
 		return buffer;
@@ -540,10 +611,13 @@ const char *get_dyn_SCRIPTSBINDIR(void)
 /* Directory holding the BINDDNS_DIR files */
 const char *get_dyn_BINDDNS_DIR(void)
 {
+	if (!is_default_dyn_BINDDNS_DIR()) {
+		return dyn_BINDDNS_DIR;
+	}
 	static char buffer[1024] = "";
 //	if (!*buffer)
 //	{
-//		snprintf(buffer, 260, "%s/samba/scripts", getenv("ETC"));
+//		snprintf(buffer, sizeof(buffer), "%s/samba/scripts", os2_etc_dir());
 //	}
 //	if (dyn_SCRIPTSBINDIR == NULL) {
 		return buffer;
@@ -554,15 +628,18 @@ const char *get_dyn_BINDDNS_DIR(void)
 /* Directory holding the DATADIR */
 const char *get_dyn_DATADIR(void)
 {
+	if (!is_default_dyn_DATADIR()) {
+		return dyn_DATADIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
 		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", DATADIR);
+			snprintf(buffer, sizeof(buffer), "%s", DATADIR);
 		} else {
-			snprintf(buffer, 260, "%s/%s", exedir, "data");
+			snprintf(buffer, sizeof(buffer), "%s/%s", exedir, "data");
 		}
 	}
 
@@ -575,15 +652,18 @@ const char *get_dyn_DATADIR(void)
 /* Directory holding the DATADIR */
 const char *get_dyn_SAMBA_DATADIR(void)
 {
+	if (!is_default_dyn_SAMBA_DATADIR()) {
+		return dyn_SAMBA_DATADIR;
+	}
 	static char buffer[1024] = "";
 	if (!*buffer)
 	{
 		char exedir[1024] = "";
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", SAMBA_DATADIR);
+			snprintf(buffer, sizeof(buffer), "%s", SAMBA_DATADIR);
 		} else {
-			snprintf(buffer, 260, "%s/%s", exedir, "sambadata");
+			snprintf(buffer, sizeof(buffer), "%s/%s", exedir, "sambadata");
 		}
 	}
 
@@ -596,15 +676,18 @@ const char *get_dyn_SAMBA_DATADIR(void)
 /* Directory holding the LIBEXECDIR */
 const char *get_dyn_SAMBA_LIBEXECDIR(void)
 {
+	if (!is_default_dyn_SAMBA_LIBEXECDIR()) {
+		return dyn_SAMBA_LIBEXECDIR;
+	}
 	static char buffer[1024] = "";
 	char exedir[1024] = "";
 	if (!*buffer)
 	{
 		if (!os2_GetExePath(exedir))
 		{
-			snprintf(buffer, 260, "%s", SAMBA_LIBEXECDIR);
+			snprintf(buffer, sizeof(buffer), "%s", SAMBA_LIBEXECDIR);
 		} else {
-			snprintf(buffer, 260, "%s", exedir);
+			snprintf(buffer, sizeof(buffer), "%s", exedir);
 		}
 	}
 //	if (dyn_DATADIR == NULL) {

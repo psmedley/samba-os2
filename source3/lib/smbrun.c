@@ -75,7 +75,9 @@ outfd (or discard it if outfd is NULL).
 static int smbrun_internal(const char *cmd, int *outfd, bool sanitize,
 	char * const *env)
 {
+#ifndef __OS2__
 	pid_t pid;
+#endif
 	uid_t uid = current_user.ut.uid;
 	gid_t gid = current_user.ut.gid;
 	void (*saved_handler)(int);
@@ -93,32 +95,82 @@ static int smbrun_internal(const char *cmd, int *outfd, bool sanitize,
 	}
 
 #ifdef __OS2__
+	/* No fork/setuid on OS/2: the command runs as the current process. */
+	(void)uid;
+	(void)gid;
+	(void)env;
+	{
 		char buf[8192];
-		int	n, w;
-		const char *newcmd = sanitize ? escape_shell_string(cmd) : cmd;
-		if (!newcmd) {
-			close(*outfd);
-			*outfd = -1;
-			return(82);
-		}
-		// execute script and capture stdout
-		FILE* pipe = popen( newcmd, "rb");
-		if (pipe) {
-			// get stdout from pipe
-			while( !feof( pipe)) {
-				n = fread( buf, 1, 8192, pipe);
-				// write to file if required
-				if (n>0 && outfd!=NULL)
-					w = write( *outfd, buf, n);
+		size_t n;
+		int status;
+		char *newcmd = NULL;
+		FILE *fp = NULL;
+
+		if (sanitize) {
+			newcmd = escape_shell_string(cmd);
+			if (newcmd == NULL) {
+				if (outfd) {
+					close(*outfd);
+					*outfd = -1;
+				}
+				return 82;
 			}
-			// close and return status
-			pclose( pipe);
-			return 0;
 		}
-		// error, close files
-		close(*outfd);
-		*outfd = -1;
-		return 83;
+
+		/*
+		 * Stop CatchChild from eating the SIGCLD of the popen()ed
+		 * child, otherwise pclose() can't return its exit status.
+		 */
+		saved_handler = CatchChildLeaveStatus();
+
+		/* execute script and capture stdout */
+		fp = popen(newcmd ? newcmd : cmd, "rb");
+		SAFE_FREE(newcmd);
+		if (fp == NULL) {
+			DBG_ERR("smbrun: popen failed: %s\n", strerror(errno));
+			(void)CatchSignal(SIGCLD, saved_handler);
+			if (outfd) {
+				close(*outfd);
+				*outfd = -1;
+			}
+			return 83;
+		}
+
+		/* copy stdout to the output file, if required */
+		while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
+			if (outfd != NULL) {
+				ssize_t w = write(*outfd, buf, n);
+				if (w != (ssize_t)n) {
+					DBG_WARNING("smbrun: short write to "
+						    "output file\n");
+				}
+			}
+		}
+
+		status = pclose(fp);
+		(void)CatchSignal(SIGCLD, saved_handler);
+		if (status == -1) {
+			DBG_ERR("smbrun: pclose failed: %s\n",
+				strerror(errno));
+			if (outfd) {
+				close(*outfd);
+				*outfd = -1;
+			}
+			return -1;
+		}
+
+		/* Reset the seek pointer so callers can read the output. */
+		if (outfd) {
+			lseek(*outfd, 0, SEEK_SET);
+		}
+
+#if defined(WIFEXITED) && defined(WEXITSTATUS)
+		if (WIFEXITED(status)) {
+			return WEXITSTATUS(status);
+		}
+#endif
+		return status;
+	}
 #else
 	/* in this method we will exec /bin/sh with the correct
 	   arguments, after first setting stdout to point at the file */

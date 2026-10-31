@@ -233,22 +233,41 @@ static void exit_server_common(enum server_exit_reason how,
 		}
 	}
 #ifdef __OS2__
-	char lockfile_dir[256];
-	char lockfile_name[256];
-        struct dirent *pDirent;
-        DIR *pDir;
-	int index = 0;
+	/*
+	 * Only the parent cleans up stale messaging lock files; children
+	 * must not touch the lock files of still running processes.
+	 */
+	if (am_parent) {
+		char lockfile_dir[256];
+		char lockfile_name[256];
+		struct dirent *pDirent;
+		DIR *pDir;
 
-	snprintf(lockfile_dir, sizeof(lockfile_dir), "%s/msg.lock", get_dyn_LOCKDIR());
-	pDir = opendir (lockfile_dir);
-	while ((pDirent = readdir(pDir)) != NULL) {
-		if ((pDirent->d_name != '.') && (pDirent->d_name != '..')) {
-			snprintf(lockfile_name, sizeof(lockfile_name), "%s/%s", lockfile_dir, pDirent->d_name);
-			int ret = unlink(lockfile_name);
-			if (ret == -1) DEBUG(1, ("%s: unlink of %s failed: %s\n", __func__, lockfile_name, strerror(errno)));
+		snprintf(lockfile_dir, sizeof(lockfile_dir), "%s/msg.lock",
+			 get_dyn_LOCKDIR());
+		pDir = opendir(lockfile_dir);
+		if (pDir != NULL) {
+			while ((pDirent = readdir(pDir)) != NULL) {
+				int ret;
+
+				if (ISDOT(pDirent->d_name) ||
+				    ISDOTDOT(pDirent->d_name)) {
+					continue;
+				}
+				snprintf(lockfile_name, sizeof(lockfile_name),
+					 "%s/%s", lockfile_dir,
+					 pDirent->d_name);
+				ret = unlink(lockfile_name);
+				if (ret == -1) {
+					DEBUG(1, ("%s: unlink of %s failed: "
+						  "%s\n", __func__,
+						  lockfile_name,
+						  strerror(errno)));
+				}
+			}
+			closedir(pDir);
 		}
-        }
-        closedir (pDir);
+	}
 #endif
 	exit(0);
 }

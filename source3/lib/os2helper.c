@@ -149,16 +149,22 @@ int os2_GetExePath(char *buff)
 	char sExeName [_MAX_PATH];
 	char sDrive [_MAX_PATH], sDir [_MAX_DIR]; 
 
+	size_t dirlen;
+
 	if (!os2_GetExeName(sExeName, sizeof(sExeName)))
-		return false;
+		return 0;
 
 	// we split to the different values
 	_splitpath(sExeName, sDrive, sDir, NULL, NULL);
-	// strcat(sDrive, sDir);
-	strncat(sDrive, sDir, strlen(sDir) -1);
-	strcpy(buff, sDrive);
+	// append the directory without its trailing separator
+	dirlen = strlen(sDir);
+	if (dirlen > 0 && (sDir[dirlen - 1] == '\\' || sDir[dirlen - 1] == '/'))
+		dirlen--;
+	strncat(sDrive, sDir, dirlen);
+	/* callers pass a 1024 byte buffer; _MAX_PATH always fits */
+	snprintf(buff, _MAX_PATH, "%s", sDrive);
 
-	return true;
+	return 1;
 }
 
 /* OS/2 specific pipe implementation, we have to use socketpair as select on 
@@ -170,34 +176,6 @@ int os2_pipe(int fds[2])
 	rc = socketpair(AF_UNIX, SOCK_STREAM, 0, fds);
 	return rc;
 }
-
-/* OS/2-specific random functions. these functions used to be based on APR 
-   random code, but we discovered some nasty problems with it on fast hardware
-   (especially on quadcore) and decided to rewrite it with libc random() */
-void os2_randget(char * buffer, int length)
-{
-	UCHAR randbyte();
-	unsigned int idx;
-
-	for (idx=0; idx<length; idx++)
-	buffer[idx] = randbyte();
-
-}
-
-UCHAR randbyte()
-{
-	int c;
-	UCHAR byte;
-	ULONG ulrandom;
-	ulrandom = random();
-	
-	for (c = 0; c < sizeof(ulrandom); c++) {
-		byte ^= ((UCHAR *)&ulrandom)[c];
-	}
-
-	return byte;
-}
-
 
 #if 0
 void maperrno(int rc)
@@ -591,6 +569,7 @@ int os2_recvmsg(int s, struct msghdr *msg, int flags) {
   bytes = recvmsg(s, msg, flags);
   msg->msg_iov = saved_iov;
   msg->msg_control = NULL;
+  msg->msg_controllen = 0;
   return bytes;
 }
 
@@ -655,8 +634,12 @@ int os2_sendfd(int s, struct msghdr *msg, int flags) {
       fd = _getsockhandle(fds[i]);
       if (fd == -1)
         goto cleanup;
+      if (waa == waas_end) {
+        errno = EMFILE;
+        goto cleanup;
+      }
       *waa = calloc(sizeof(**waa), 1);
-      if (!waa)
+      if (!*waa)
         goto cleanup;
       (*waa)->fd = dup(fds[i]);
       if ((*waa)->fd == -1)
@@ -673,7 +656,7 @@ int os2_sendfd(int s, struct msghdr *msg, int flags) {
       if (_beginthread(waitack, NULL, 256 * 1024, *waa) == -1) {
 cleanup:
         saved_errno = errno;
-        if (*waa) {
+        if (waa < waas_end && *waa) {
           DosCloseEventSem((*waa)->hev);
           close((*waa)->fd);
           free(*waa);
@@ -686,7 +669,6 @@ cleanup:
       }
       fds[i] = fd;
       waa++;
-      assert( waa != waas_end );
     }
   }
   hdr.control_len = msg->msg_controllen;

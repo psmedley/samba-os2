@@ -296,6 +296,9 @@ _PUBLIC_ struct tdb_context *tdb_open_ex(const char *name, int hash_size, int td
 	}
 
 	tdb->fd = -1;
+#ifdef __OS2__
+	tdb->hActiveLock = -1;
+#endif
 #ifdef TDB_TRACE
 	tdb->tracefd = -1;
 #endif
@@ -757,12 +760,15 @@ _PUBLIC_ struct tdb_context *tdb_open_ex(const char *name, int hash_size, int td
  fail:
 	{ int save_errno = errno;
 
-#ifdef __OS2__
-	close(tdb->hActiveLock);
-	tdb->hActiveLock = -1;
-#endif
 	if (!tdb)
 		return NULL;
+
+#ifdef __OS2__
+	if (tdb->hActiveLock != -1) {
+		close(tdb->hActiveLock);
+		tdb->hActiveLock = -1;
+	}
+#endif
 
 #ifdef TDB_TRACE
 	close(tdb->tracefd);
@@ -833,8 +839,10 @@ _PUBLIC_ int tdb_close(struct tdb_context *tdb)
 	}
 
 #ifdef __OS2__
-	close(tdb->hActiveLock);
-	tdb->hActiveLock = -1;
+	if (tdb->hActiveLock != -1) {
+		close(tdb->hActiveLock);
+		tdb->hActiveLock = -1;
+	}
 #endif
 
 #ifdef TDB_TRACE
@@ -921,8 +929,10 @@ static int tdb_reopen_internal(struct tdb_context *tdb, bool active_lock)
 #endif /* fake pread or pwrite */
 
 #ifdef __OS2__
-	close(tdb->hActiveLock);
-	tdb->hActiveLock = -1;
+	if (tdb->hActiveLock != -1) {
+		close(tdb->hActiveLock);
+		tdb->hActiveLock = -1;
+	}
 
 	if (os2_crtActiveLock(tdb, tdb->name, "tdb_reopen") != 0)
 		goto fail;
@@ -998,7 +1008,12 @@ int os2_crtActiveLock(struct tdb_context *tdb, const char *name, const char *ori
 	bool emptytdb = false;
 	char activeLockName[_MAX_PATH];
 	char *emptyString = "used for active lock\n\0";
-	sprintf(activeLockName, "%s_AL", name);
+	if (snprintf(activeLockName, sizeof(activeLockName), "%s_AL", name)
+	    >= (int)sizeof(activeLockName)) {
+		TDB_LOG((tdb, TDB_DEBUG_ERROR, "os2_crtActiveLock: name too long: %s\n", name));
+		errno = ENAMETOOLONG;
+		return -1;
+	}
 
 	if ((stat(activeLockName, &st) == -1) || (st.st_size < strlen(emptyString)))
 		emptytdb = true;

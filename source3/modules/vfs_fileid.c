@@ -110,7 +110,7 @@ static bool fileid_mount_entry_allowed(struct fileid_handle_data *data,
 /* load all the mount entries from the mtab */
 static void fileid_load_mount_entries(struct fileid_handle_data *data)
 {
-	FILE *f;
+	FILE *f = NULL;
 	struct mntent *m;
 
 	data->num_mount_entries = 0;

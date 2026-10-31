@@ -371,7 +371,7 @@ samba-util popt CMDLINE_S3 ndr-table samba-errors NDR_DCERPC replace samba-debug
                      for_selftest=True)
 
     bld.SAMBA_BINARY('test_util_paths',
-                     source='tests/test_util_paths.c../../source3/lib/os2helper.c',
+                     source='tests/test_util_paths.c ../../source3/lib/os2helper.c',
                      deps='cmocka replace talloc samba-util',
                      local_include=False,
                      for_selftest=True)

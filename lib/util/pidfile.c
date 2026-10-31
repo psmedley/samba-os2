@@ -121,9 +121,17 @@ retry:
 		goto fail_unlink;
 	}
 
-	*pfd = fd;
-#ifdef __OS2__ // If we leave the file open & locked on OS/2 - we can't read it, so close the fd
+#ifdef __OS2__
+	/*
+	 * If we leave the file open & locked on OS/2 we can't read it,
+	 * so close the fd. Don't hand the closed descriptor back to the
+	 * caller: it may be reused, and a later pidfile_fd_close() would
+	 * then close an unrelated file.
+	 */
 	close(fd);
+	*pfd = -1;
+#else
+	*pfd = fd;
 #endif
 	return 0;
 
@@ -141,6 +149,10 @@ void pidfile_fd_close(int fd)
 		.l_whence = SEEK_SET,
 	};
 	int ret;
+
+	if (fd == -1) {
+		return;
+	}
 
 	do {
 		ret = fcntl(fd, F_SETLK, &lck);

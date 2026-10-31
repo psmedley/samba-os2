@@ -26,11 +26,6 @@
 #include <gnutls/gnutls.h>
 #include <gnutls/crypto.h>
 
-#ifdef __OS2__
-void os2_randget(char * buffer, int length);
-void mdfour(uint8_t *out, const uint8_t *in, int n);
-#endif
-
 /*
  * Details about the GnuTLS CSPRNG:
  *
@@ -52,37 +47,11 @@ _NORETURN_ static void genrand_panic(int err,
 
 _PUBLIC_ void generate_random_buffer(uint8_t *out, size_t len)
 {
-#ifndef __OS2__
 	/* Random number generator for temporary keys. */
 	int ret = gnutls_rnd(GNUTLS_RND_RANDOM, out, len);
 	if (ret != 0) {
 		genrand_panic(ret, __location__, __func__);
 	}
-#else
-	ssize_t rw_ret;
-
-	unsigned char md4_buf[64];
-	unsigned char tmp_buf[16];
-	unsigned char *p;
-
-	/*
-	 * Generate random numbers in chunks of 64 bytes,
-	 * then md4 them & copy to the output buffer.
-	 * This way the raw state of the stream is never externally
-	 * seen.
-	 */
-
-	p = out;
-	while(len > 0) {
-		int copy_len = len > 16 ? 16 : len;
-
-		os2_randget(md4_buf, sizeof(md4_buf));
-		mdfour(tmp_buf, md4_buf, sizeof(md4_buf));
-		memcpy(p, tmp_buf, copy_len);
-		p += copy_len;
-		len -= copy_len;
-	}
-#endif
 }
 
 _PUBLIC_ void generate_secret_buffer(uint8_t *out, size_t len)
