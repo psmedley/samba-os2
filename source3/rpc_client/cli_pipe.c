@@ -2973,12 +2973,26 @@ NTSTATUS rpc_pipe_open_ncalrpc(TALLOC_CTX *mem_ctx,
 		goto fail;
 	}
 
+#ifdef __OS2__
+	{
+		char *path = talloc_asprintf(
+			talloc_tos(), "%s/%s", lp_ncalrpc_dir(), socket_name);
+		if (path == NULL) {
+			status = NT_STATUS_NO_MEMORY;
+			goto fail;
+		}
+		pathlen = os2_unix_socket_path(
+			addr.sun_path, sizeof(addr.sun_path), path);
+		TALLOC_FREE(path);
+	}
+#else
 	pathlen = snprintf(
 		addr.sun_path,
 		sizeof(addr.sun_path),
 		"%s/%s",
 		lp_ncalrpc_dir(),
 		socket_name);
+#endif
 	if ((pathlen < 0) || ((size_t)pathlen >= sizeof(addr.sun_path))) {
 		DBG_DEBUG("socket_path for %s too long\n", socket_name);
 		status = NT_STATUS_NAME_TOO_LONG;

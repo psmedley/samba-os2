@@ -99,6 +99,12 @@ int os2_sendmsg(int s, struct msghdr *msg, int flags);
 
 int os2_recvmsg(int s, struct msghdr *msg, int flags);
 #define recvmsg(s, m, f) os2_recvmsg((s), (m), (f))
+
+/*
+ * Map a "<dir>/<name>" AF_UNIX socket path into OS/2's \socket\
+ * namespace. Servers (bind) and clients (connect) must both use it.
+ */
+int os2_unix_socket_path(char *buf, size_t buflen, const char *path);
 #endif
 
 #include <limits.h>

@@ -531,6 +531,21 @@ struct tevent_req *nb_packet_reader_send(TALLOC_CTX *mem_ctx,
 	if (tevent_req_nomem(rpath, req)) {
 		return tevent_req_post(req, ev);
 	}
+#ifdef __OS2__
+	{
+		char os2path[sizeof(((struct sockaddr_un *)NULL)->sun_path)];
+		int len = os2_unix_socket_path(os2path, sizeof(os2path), rpath);
+
+		if (len < 0 || (size_t)len >= sizeof(os2path)) {
+			tevent_req_nterror(req, NT_STATUS_NAME_TOO_LONG);
+			return tevent_req_post(req, ev);
+		}
+		rpath = talloc_strdup(state, os2path);
+		if (tevent_req_nomem(rpath, req)) {
+			return tevent_req_post(req, ev);
+		}
+	}
+#endif
 	ret = tsocket_address_unix_from_path(state, rpath, &raddr);
 	if (ret != 0) {
 		tevent_req_nterror(req, map_nt_error_from_unix(errno));

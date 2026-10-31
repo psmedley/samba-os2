@@ -94,9 +94,15 @@ static struct tevent_req *np_sock_connect_send(
 	tevent_req_set_cleanup_fn(req, np_sock_connect_cleanup);
 
 	state->addr.sa_socklen = sizeof(struct sockaddr_un);
+#ifdef __OS2__
+	len = os2_unix_socket_path(state->addr.u.un.sun_path,
+				   sizeof(state->addr.u.un.sun_path),
+				   sockpath);
+#else
 	len = strlcpy(state->addr.u.un.sun_path,
 		      sockpath,
 		      sizeof(state->addr.u.un.sun_path));
+#endif
 	if (len >= sizeof(state->addr.u.un.sun_path)) {
 		tevent_req_error(req, ENAMETOOLONG);
 		return tevent_req_post(req, ev);

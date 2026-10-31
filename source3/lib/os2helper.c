@@ -558,21 +558,6 @@ int os2_sendmsg(int s, struct msghdr *msg, int flags) {
   return bytes;
 }
 
-#undef recvmsg
-/* FIXME: May receive a signature of SCM_RIGHTS. */
-int os2_recvmsg(int s, struct msghdr *msg, int flags) {
-  struct iovec *saved_iov = msg->msg_iov;
-  int len = msg->msg_iovlen * sizeof(*msg->msg_iov);
-  int bytes;
-  msg->msg_iov = alloca(len);
-  memcpy(msg->msg_iov, saved_iov, len);
-  bytes = recvmsg(s, msg, flags);
-  msg->msg_iov = saved_iov;
-  msg->msg_control = NULL;
-  msg->msg_controllen = 0;
-  return bytes;
-}
-
 struct waitackargs {
   int fd;
   HEV hev;
@@ -678,20 +663,267 @@ cleanup:
                   hdr.control_len;          /* msg_control */
   buf_len = hdr.total_len + sizeof(signature) + sizeof(hdr.total_len);
   p = buf = alloca(buf_len);
+  /*
+   * Wire format: signature, total_len, msg_len, control_len, data,
+   * control. Write the fields one by one so struct padding never ends
+   * up on the wire.
+   */
   memcpy(p, signature, sizeof(signature));
   p += sizeof(signature);
-  memcpy(p, &hdr.total_len, sizeof(hdr) - sizeof(hdr.sign));
-  p += sizeof(hdr) - sizeof(hdr.sign);
+  memcpy(p, &hdr.total_len, sizeof(hdr.total_len));
+  p += sizeof(hdr.total_len);
+  memcpy(p, &hdr.msg_len, sizeof(hdr.msg_len));
+  p += sizeof(hdr.msg_len);
+  memcpy(p, &hdr.control_len, sizeof(hdr.control_len));
+  p += sizeof(hdr.control_len);
   for (i = 0; i < msg->msg_iovlen; i++) {
     memcpy(p, msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len);
     p += msg->msg_iov[i].iov_len;
   }
   memcpy(p, msg->msg_control, msg->msg_controllen);
   bytes = send(s, buf, buf_len, flags);
-  if (bytes != -1 && (size_t)bytes > hdr.msg_len)
+  if (bytes == -1) {
+    /*
+     * Nobody will ever acknowledge these handles: wake the waitack()
+     * threads so they close their dup()ed fds and exit. The caller
+     * (e.g. messages_dgm on EAGAIN) may simply retry the whole send.
+     */
+    saved_errno = errno;
+    for (waa = waas; waa < waas_end && *waa; waa++)
+      DosPostEventSem((*waa)->hev);
+    errno = saved_errno;
+  } else if ((size_t)bytes > hdr.msg_len) {
     bytes = hdr.msg_len;
+  }
   msg->msg_control = saved_msg_control;
   return bytes;
+}
+
+/*
+ * Receive side of os2_sendfd().
+ *
+ * The sender converted each SCM_RIGHTS fd into a system wide OS/2 socket
+ * handle (_getsockhandle()) and keeps a dup() of it open in a waitack()
+ * thread until we post the "\SEM32\LIBUV\sockfd\<handle>" event
+ * semaphore. Import every handle into our own fd table, acknowledge it,
+ * and hand the result back to the caller as a normal SCM_RIGHTS message.
+ */
+static int os2_get_sock_type(int s)
+{
+  int type = 0;
+  socklen_t optlen = sizeof(type);
+
+  if (getsockopt(s, SOL_SOCKET, SO_TYPE, &type, &optlen) != 0)
+    return -1;
+  return type;
+}
+
+static void os2_ack_sockhandle(int handle)
+{
+  char semname[50];
+  HEV hev = NULLHANDLE;
+
+  snprintf(semname, sizeof(semname), "\\SEM32\\LIBUV\\sockfd\\%x", handle);
+  if (DosOpenEventSem(semname, &hev) == NO_ERROR) {
+    DosPostEventSem(hev);
+    DosCloseEventSem(hev);
+  }
+}
+
+#define OS2_FD_HDR_LEN (sizeof(signature) + 3 * sizeof(size_t))
+
+static int os2_recvfd(int s, struct msghdr *msg, int flags, size_t total_len)
+{
+  const size_t prefix_len = sizeof(signature) + sizeof(size_t);
+  size_t buf_len;
+  size_t msg_len, control_len, copied, left, i;
+  char *buf, *p, *data, *control;
+  struct msghdr cmsg_msg;
+  struct cmsghdr *cmsg;
+  int out_flags = 0;
+  int bytes, got;
+  int type;
+
+  /* total_len covers msg_len + control_len and the two payloads */
+  if (total_len < 2 * sizeof(size_t) || total_len > 16 * 1024 * 1024) {
+    /* garbage: drop the datagram so we don't spin on it */
+    char dummy;
+    (void)recv(s, &dummy, sizeof(dummy), flags & ~MSG_PEEK);
+    return 0;
+  }
+
+  buf_len = prefix_len + total_len;
+  buf = malloc(buf_len);
+  if (buf == NULL) {
+    errno = ENOMEM;
+    return -1;
+  }
+
+  type = os2_get_sock_type(s);
+  got = 0;
+  do {
+    bytes = recv(s, buf + got, buf_len - got, flags & ~MSG_PEEK);
+    if (bytes == -1) {
+      if (got == 0) {
+        free(buf);
+        return -1;
+      }
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+    if (bytes == 0)
+      break;
+    got += bytes;
+    /* a datagram arrives in one piece, only loop for streams */
+  } while (type == SOCK_STREAM && (size_t)got < buf_len);
+
+  if ((size_t)got < buf_len) {
+    /* truncated framing, nothing usable */
+    free(buf);
+    return 0;
+  }
+
+  p = buf + prefix_len;
+  memcpy(&msg_len, p, sizeof(msg_len));
+  p += sizeof(msg_len);
+  memcpy(&control_len, p, sizeof(control_len));
+  p += sizeof(control_len);
+
+  if (sizeof(msg_len) + sizeof(control_len) + msg_len + control_len !=
+      total_len) {
+    free(buf);
+    return 0;
+  }
+
+  data = p;
+  control = p + msg_len;
+
+  /* import and acknowledge every passed socket handle */
+  memset(&cmsg_msg, 0, sizeof(cmsg_msg));
+  cmsg_msg.msg_control = control;
+  cmsg_msg.msg_controllen = control_len;
+  for (cmsg = CMSG_FIRSTHDR(&cmsg_msg); cmsg != NULL;
+       cmsg = CMSG_NXTHDR(&cmsg_msg, cmsg)) {
+    size_t count;
+    int *fds;
+
+    if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
+      continue;
+    count = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+    fds = (int *)CMSG_DATA(cmsg);
+    for (i = 0; i < count; i++) {
+      int handle = fds[i];
+      int fd = _impsockhandle(handle, 0);
+
+      /* we own a reference now (or failed): let the sender close its */
+      os2_ack_sockhandle(handle);
+      fds[i] = fd;
+    }
+  }
+
+  /* scatter the payload into the caller's iovecs */
+  copied = 0;
+  left = msg_len;
+  for (i = 0; i < (size_t)msg->msg_iovlen && left > 0; i++) {
+    size_t n = msg->msg_iov[i].iov_len;
+    if (n > left)
+      n = left;
+    memcpy(msg->msg_iov[i].iov_base, data + copied, n);
+    copied += n;
+    left -= n;
+  }
+  if (left > 0)
+    out_flags |= MSG_TRUNC;
+
+  /* hand back the control data with the imported fds */
+  if (control_len == 0) {
+    msg->msg_controllen = 0;
+  } else if (msg->msg_control == NULL ||
+             (size_t)msg->msg_controllen < control_len) {
+    /* no room for the fds: don't leak them */
+    for (cmsg = CMSG_FIRSTHDR(&cmsg_msg); cmsg != NULL;
+         cmsg = CMSG_NXTHDR(&cmsg_msg, cmsg)) {
+      size_t count;
+      int *fds;
+
+      if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
+        continue;
+      count = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+      fds = (int *)CMSG_DATA(cmsg);
+      for (i = 0; i < count; i++)
+        if (fds[i] != -1)
+          close(fds[i]);
+    }
+    msg->msg_controllen = 0;
+    out_flags |= MSG_CTRUNC;
+  } else {
+    memcpy(msg->msg_control, control, control_len);
+    msg->msg_controllen = control_len;
+  }
+
+  msg->msg_flags = out_flags;
+  free(buf);
+  return (int)copied;
+}
+
+#undef recvmsg
+int os2_recvmsg(int s, struct msghdr *msg, int flags) {
+  char hdr[OS2_FD_HDR_LEN];
+  struct iovec *saved_iov = msg->msg_iov;
+  int len = msg->msg_iovlen * sizeof(*msg->msg_iov);
+  int bytes;
+
+  /* Was this sent by os2_sendfd()? Peek at the framing header. */
+  bytes = recv(s, &hdr, sizeof(hdr), flags | MSG_PEEK);
+  if (bytes == -1)
+    return -1;
+  if ((size_t)bytes == sizeof(hdr) &&
+      memcmp(hdr, signature, sizeof(signature)) == 0) {
+    size_t total_len;
+
+    if (flags & MSG_PEEK) {
+      /* peeking at fd-passing messages is not supported */
+      errno = EOPNOTSUPP;
+      return -1;
+    }
+    memcpy(&total_len, hdr + sizeof(signature), sizeof(total_len));
+    return os2_recvfd(s, msg, flags, total_len);
+  }
+
+  msg->msg_iov = alloca(len);
+  memcpy(msg->msg_iov, saved_iov, len);
+  bytes = recvmsg(s, msg, flags);
+  msg->msg_iov = saved_iov;
+  /* the OS/2 stack doesn't pass ancillary data itself */
+  msg->msg_control = NULL;
+  msg->msg_controllen = 0;
+  return bytes;
+}
+
+/*
+ * OS/2 AF_UNIX socket names live in the \socket\ namespace. Map a Samba
+ * socket path ("<dir>/<name>") to that namespace the same way for servers
+ * (bind) and clients (connect). Paths already in \socket\ are kept, and
+ * all '/' are turned into '\' so both sides end up with the same name.
+ */
+int os2_unix_socket_path(char *buf, size_t buflen, const char *path)
+{
+  int len;
+  char *q;
+
+  if (strnicmp(path, "\\socket\\", 8) == 0 ||
+      strnicmp(path, "/socket/", 8) == 0)
+    len = snprintf(buf, buflen, "%s", path);
+  else
+    len = snprintf(buf, buflen, "\\socket\\samba\\%s", path);
+  if (len < 0 || (size_t)len >= buflen)
+    return len;
+
+  for (q = buf; *q; q++)
+    if (*q == '/')
+      *q = '\\';
+  return len;
 }
 
 #endif

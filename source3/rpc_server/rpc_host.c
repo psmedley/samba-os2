@@ -77,6 +77,7 @@ struct rpc_server;
 struct rpc_work_process;
 
 #ifdef __OS2__
+#include <process.h>
 int os2_pipe(int fds[2]);
 #define pipe(A) os2_pipe(A)
 #endif
@@ -1125,6 +1126,55 @@ static int rpc_host_exec_worker(struct rpc_server *server, size_t idx)
 		goto fail;
 	}
 
+#ifdef __OS2__
+	/*
+	 * kLIBC has no real exec(): execv() starts the program as a new
+	 * process with a different PID while the forked stub waits for
+	 * it. We address the worker by PID (messaging) and match its
+	 * status message and SIGCHLD by PID, so spawn it directly to get
+	 * the real PID of the rpcd_* process.
+	 */
+	{
+		int saved_stdin;
+		int spawn_errno;
+
+		/*
+		 * The write end must not be inherited, otherwise the worker
+		 * never sees EOF on stdin when we go away.
+		 */
+		smb_set_close_on_exec(server->host->worker_stdin[1]);
+
+		saved_stdin = dup(0);
+		if (saved_stdin != -1) {
+			smb_set_close_on_exec(saved_stdin);
+		}
+		if (dup2(server->host->worker_stdin[0], 0) != 0) {
+			ret = errno;
+			if (saved_stdin != -1) {
+				close(saved_stdin);
+			}
+			goto fail;
+		}
+
+		worker->pid = spawnv(P_NOWAIT, argv[0], argv);
+		spawn_errno = errno;
+
+		/* restore our own stdin */
+		if (saved_stdin != -1) {
+			dup2(saved_stdin, 0);
+			close(saved_stdin);
+		} else {
+			close(0);
+		}
+
+		if (worker->pid == -1) {
+			ret = spawn_errno;
+			DBG_WARNING("spawnv(%s) failed: %s\n",
+				    argv[0], strerror(ret));
+			goto fail;
+		}
+	}
+#else
 	worker->pid = fork();
 	if (worker->pid == -1) {
 		ret = errno;
@@ -1140,6 +1190,7 @@ static int rpc_host_exec_worker(struct rpc_server *server, size_t idx)
 		execv(argv[0], argv);
 		_exit(1);
 	}
+#endif
 
 	DBG_DEBUG("Creating worker %s for index %zu: pid=%d\n",
 		  server->rpc_server_exe,
@@ -1937,10 +1988,18 @@ static void rpc_host_msg_shutdown(
  */
 static int rpcd_filter(const struct dirent *d)
 {
-#ifndef __OS2__x
 	int match = fnmatch("rpcd_*", d->d_name, 0);
-#else
-	int match = fnmatch("rpcd_*.exe", d->d_name, 0);
+#ifdef __OS2__
+	/*
+	 * Only pick up the executables, not rpcd_*.sym/.dbg/.map files
+	 * that may be installed next to them.
+	 */
+	if (match == 0) {
+		size_t len = strlen(d->d_name);
+		if (len < 4 || strcasecmp(d->d_name + len - 4, ".exe") != 0) {
+			match = 1;
+		}
+	}
 #endif
 	return (match == 0) ? 1 : 0;
 }
@@ -1957,11 +2016,7 @@ static int rpc_host_list_servers(
 	int i, num_servers;
 	int ret = ENOMEM;
 
-#ifndef __OS2__
 	num_servers = scandir(libexecdir, &namelist, rpcd_filter, alphasort);
-#else
-	num_servers = scandir("u:/samba", &namelist, rpcd_filter, alphasort);
-#endif
 	if (num_servers == -1) {
 #if 0
 		DBG_DEBUG("scandir failed: %s\n", strerror(errno));

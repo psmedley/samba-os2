@@ -958,13 +958,25 @@ int create_pipe_sock(const char *socket_dir,
                 goto out_close;
 	}
 
-#ifdef __OS2__
-	if (asprintf(&path, "\\socket\\samba\\%s\\%s", socket_dir, socket_name) == -1) {
-#else
 	if (asprintf(&path, "%s/%s", socket_dir, socket_name) == -1) {
-#endif
                 goto out_close;
 	}
+#ifdef __OS2__
+	{
+		char os2path[sizeof(sunaddr.sun_path)];
+		int len = os2_unix_socket_path(os2path, sizeof(os2path), path);
+
+		if (len < 0 || (size_t)len >= sizeof(os2path)) {
+			DBG_ERR("OS/2 socket name for %s too long\n", path);
+			goto out_close;
+		}
+		SAFE_FREE(path);
+		path = strdup(os2path);
+		if (path == NULL) {
+			goto out_close;
+		}
+	}
+#endif
 
 	unlink(path);
 	memset(&sunaddr, 0, sizeof(sunaddr));
